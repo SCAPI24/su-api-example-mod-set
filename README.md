@@ -30,3 +30,8 @@ pwsh sync-gitignore.ps1
 ## 相关仓库
 
 - SuAPI 核心：https://gitee.com/SC-SPM/survivalcraft-su-api
+
+## AI Agent 技能
+
+此仓库包含 AI Agent 技能配置 `SKILL.md`，可导入 QClaw/OpenClaw 获得示例集管理助手。
+触发词：「添加示例」「同步到示例」「example mod set」。
