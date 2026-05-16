@@ -3,15 +3,15 @@ name: su-api-examples
 description: SuAPI Example Mod Set 管理技能。当用户要添加 Mod 到示例集、同步 Mod 项目到示例仓库、管理 su-api-example-mod-set 仓库时触发。触发词：「添加示例」「同步到示例」「add to examples」「example mod set」「示例集」。
 ---
 
-
-> **仓库地址**：git@gitee.com:SC-SPM/su-api-example-mod-set.git
+> **Gitee**: git@gitee.com:SC-SPM/su-api-example-mod-set.git
+> **GitHub**: git@github.com:SCAPI24/su-api-example-mod-set.git
 > 此文件是 AI Agent 技能配置，可用于 QClaw/OpenClaw 导入。
-> {REPO_ROOT} = 本仓库根目录（示例 Mod 集合）
-
 
 # SuAPI Example Mod Set
 
-仓库：`{REPO_ROOT}` → `git@gitee.com:SC-SPM/su-api-example-mod-set.git`
+仓库：`{REPO_ROOT}`
+- origin → Gitee: `git@gitee.com:SC-SPM/su-api-example-mod-set.git`
+- github → GitHub: `git@github.com:SCAPI24/su-api-example-mod-set.git`
 
 ## 同步机制
 
@@ -25,13 +25,15 @@ ConsoleMod
 - 列出的文件夹 → Git 可追踪
 - 未列出的文件夹 → Git 忽略
 - 已追踪文件夹内的 `bin/`、`obj/` 自动排除
+- 根目录保留文件：`.gitignore` / `SYNC_LIST` / `sync-gitignore.ps1` / `README.md` / `SKILL.md` / `AGENT-PROFILE.md`（若新增根文件需同步更新 sync-gitignore.ps1）
 
 ## 添加 Mod 到示例集
 
 ```
 1. 编辑 SYNC_LIST，追加 Mod 文件夹名（一行一个）
 2. 运行 sync-gitignore.ps1 重新生成 .gitignore
-3. git add -A && git commit && git push
+3. 确认新 Mod 目录内无 .git 子目录（独立仓库需先移除 .git）
+4. git add -A && git commit && git push origin master && git push github master
 ```
 
 ### 详细步骤
@@ -43,11 +45,12 @@ Add-Content "SYNC_LIST" "MyNewMod"
 # 2. 重新生成 .gitignore
 pwsh "sync-gitignore.ps1"
 
-# 3. 提交推送
+# 3. 提交推送（双平台）
 cd "{REPO_ROOT}"
 git add -A
 git commit -m "add MyNewMod to example set"
-git push
+git push origin master    # Gitee
+git push github master   # GitHub
 ```
 
 ### 移除 Mod 同步
@@ -57,8 +60,12 @@ git push
 ## SSH 配置
 
 ```powershell
+# Gitee
 git config core.sshCommand "ssh -i ~/.ssh/Gitee -o IdentitiesOnly=yes"
+# 或使用全局 ~/.ssh/config
 ```
+
+> 若已配置 `~/.ssh/config`（Gitee → Gitee key，GitHub → Ugit1 key），无需 repo 级 SSHCommand。
 
 ## .gitignore 生成规则
 
@@ -77,4 +84,7 @@ ModName/obj/
 
 - **添加 Mod 后 bin/obj 仍被追踪**：可能是历史缓存，用 `git rm -r --cached ModName/bin ModName/obj` 清除
 - **推送被拒**：远程仓库可能有新提交，先 `git pull origin master --rebase`
-- **SSH 认证失败**：检查 `~/.ssh/Gitee` 密钥是否正确，`~/.ssh/config` 是否有 Gitee 配置
+- **SSH 认证失败**：检查 `~/.ssh/Gitee` / `~/.ssh/Ugit1` 密钥，`~/.ssh/config` 是否已配置
+- **Mod 目录是独立 Git 仓库无法同步**：移除 `.git` 子目录（`Remove-Item -Recurse -Force ModName\.git`）后重新 add
+- **忘记推送 GitHub**：`git push github master` 补推
+- **pwsh 未安装导致 sync-gitignore.ps1 无法运行**：可用 Python 脚本替代生成 .gitignore
