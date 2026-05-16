@@ -1,0 +1,22 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <GenerateAssemblyInfo>False</GenerateAssemblyInfo>
+	  <!-- 改为多目标框架 -->
+	  <TargetFrameworks>net48;net8.0</TargetFrameworks>
+	  <LangVersion>11.0</LangVersion>
+  </PropertyGroup>
+  <PropertyGroup>
+
+    <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
+
+	  <!-- 确保在不同框架下都能正常工作 -->
+	  <Nullable>enable</Nullable>
+	  <ImplicitUsings>disable</ImplicitUsings>
+  </PropertyGroup>
+  <PropertyGroup>
+    <GenerateDocumentationFile>False</GenerateDocumentationFile>
+    <OutputType>Library</OutputType>
+    <EnableNETAnalyzers>True</EnableNETAnalyzers>
+    <AssemblyName />
+  </PropertyGroup>
+</Project>
