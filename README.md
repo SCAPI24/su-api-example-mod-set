@@ -26,6 +26,8 @@ pwsh sync-gitignore.ps1
 | Mod | 类型 | 说明 |
 |-----|------|------|
 | ConsoleMod | Widget Overlay | 游戏内控制台，按 `·` 打开，`move +x300` 移动角色 |
+| RainWithoutDawn | Subsystem 替换 | 替换天气系统，移除下雨逻辑 |
+| TemperatureImmunity | Component 替换 | 替换体温组件，保持恒温 |
 
 ## 相关仓库
 

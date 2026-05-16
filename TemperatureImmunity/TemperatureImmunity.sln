@@ -1,0 +1,40 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.12.35527.113 d17.12
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TemperatureImmunity", "TemperatureImmunity.csproj", "{F9A8EFB8-3470-4703-AFE5-3056F1D8F8AA}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Survivalcraft", "..\..\Survivalcraft\Survivalcraft.csproj", "{745B1ACF-EA58-49B6-9C89-E638B43077D1}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GameEntitySystem", "..\..\EntitySystem\GameEntitySystem.csproj", "{54A28E29-CA1E-428E-BB73-571C283F9090}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Engine", "..\..\Engine\Engine.csproj", "{6B218D5B-D431-43AA-83EA-648C8A528664}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{F9A8EFB8-3470-4703-AFE5-3056F1D8F8AA}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F9A8EFB8-3470-4703-AFE5-3056F1D8F8AA}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F9A8EFB8-3470-4703-AFE5-3056F1D8F8AA}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F9A8EFB8-3470-4703-AFE5-3056F1D8F8AA}.Release|Any CPU.Build.0 = Release|Any CPU
+		{745B1ACF-EA58-49B6-9C89-E638B43077D1}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{745B1ACF-EA58-49B6-9C89-E638B43077D1}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{745B1ACF-EA58-49B6-9C89-E638B43077D1}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{745B1ACF-EA58-49B6-9C89-E638B43077D1}.Release|Any CPU.Build.0 = Release|Any CPU
+		{54A28E29-CA1E-428E-BB73-571C283F9090}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{54A28E29-CA1E-428E-BB73-571C283F9090}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{54A28E29-CA1E-428E-BB73-571C283F9090}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{54A28E29-CA1E-428E-BB73-571C283F9090}.Release|Any CPU.Build.0 = Release|Any CPU
+		{6B218D5B-D431-43AA-83EA-648C8A528664}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{6B218D5B-D431-43AA-83EA-648C8A528664}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{6B218D5B-D431-43AA-83EA-648C8A528664}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{6B218D5B-D431-43AA-83EA-648C8A528664}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+EndGlobal

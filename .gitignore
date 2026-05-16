@@ -1,19 +1,30 @@
-# SuAPI Example Mod Set — .gitignore
-# 此文件由 SYNC_LIST 驱动，修改 SYNC_LIST 后运行 sync-gitignore.ps1 更新
+# SuAPI Example Mod Set &#8212; .gitignore
+# &#27492;&#25991;&#20214;&#30001; SYNC_LIST &#39537;&#21160;&#65292;&#20462;&#25913; SYNC_LIST &#21518;&#36816;&#34892; sync-gitignore.ps1 &#26356;&#26032;
 
-## 根目录：默认忽略所有文件夹
+## &#26681;&#30446;&#24405;&#65306;&#40664;&#35748;&#24573;&#30053;&#25152;&#26377;&#25991;&#20214;&#22841;
 /*
 
-## 保留项目根文件
+## &#20445;&#30041;&#39033;&#30446;&#26681;&#25991;&#20214;
 !.gitignore
 !SYNC_LIST
 !sync-gitignore.ps1
 !README.md
 !SKILL.md
+!AGENT-PROFILE.md
 
-## ===== 以下由 SYNC_LIST 生成，请勿手动修改 =====
+## ===== &#20197;&#19979;&#30001; SYNC_LIST &#29983;&#25104;&#65292;&#35831;&#21247;&#25163;&#21160;&#20462;&#25913; =====
 ## sync:ConsoleMod
 !ConsoleMod/
 !ConsoleMod/**
 ConsoleMod/bin/
 ConsoleMod/obj/
+## sync:RainWithoutDawn
+!RainWithoutDawn/
+!RainWithoutDawn/**
+RainWithoutDawn/bin/
+RainWithoutDawn/obj/
+## sync:TemperatureImmunity
+!TemperatureImmunity/
+!TemperatureImmunity/**
+TemperatureImmunity/bin/
+TemperatureImmunity/obj/

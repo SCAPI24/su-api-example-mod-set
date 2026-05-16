@@ -3,3 +3,5 @@
 # 未列出的文件夹不会被同步
 # 文件夹内的 bin/、obj/ 自动排除
 ConsoleMod
+RainWithoutDawn
+TemperatureImmunity
