@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Mod>
+	<!-- 当前Mod的基本信息 -->
+	<ModInfo>
+		<Identifier>TemperatureImmunity</Identifier>
+		<LocalizedName>
+			<Text lang="en_US">Temperature Immunity</Text>
+			<Text lang="zh_CN">体温保持</Text>
+		</LocalizedName>
+		<ModVersion>
+			<Version>1.0.0</Version>
+			<APIVersion>2.1.0</APIVersion>
+		</ModVersion>
+		<Asset>
+			<ContentRoot>Content</ContentRoot>
+		</Asset>
+	</ModInfo>
+
+	<!-- 依赖的其他Mod列表 -->
+	<Dependencies>
+		<!-- 示例依赖项（已注释） -->
+		<!--
+        <Dependency>
+            <ModInfo>
+                <Identifier>RequiredMod1</Identifier>
+                <LocalizedName>
+                    <Text lang="en_US">Required Mod 1</Text>
+                </LocalizedName>
+                <ModVersion>
+                    <Version>2.3.0</Version>
+                    <APIVersion>1.5.0</APIVersion>
+                </ModVersion>
+            </ModInfo>
+        </Dependency>
+        -->
+	</Dependencies>
+</Mod>

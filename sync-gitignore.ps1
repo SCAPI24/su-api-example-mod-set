@@ -36,6 +36,7 @@ $header = @(
     "!sync-gitignore.ps1",
     "!README.md",
     "!SKILL.md",
+    "!AGENT-PROFILE.md",
     ""
 )
 
