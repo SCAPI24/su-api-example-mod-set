@@ -1,0 +1,18 @@
+# SuAPI Example Mod Set — .gitignore
+# 此文件由 SYNC_LIST 驱动，修改 SYNC_LIST 后运行 sync-gitignore.ps1 更新
+
+## 根目录：默认忽略所有文件夹
+/*
+
+## 保留项目根文件
+!.gitignore
+!SYNC_LIST
+!sync-gitignore.ps1
+!README.md
+
+## ===== 以下由 SYNC_LIST 生成，请勿手动修改 =====
+## sync:ConsoleMod
+!ConsoleMod/
+!ConsoleMod/**
+ConsoleMod/bin/
+ConsoleMod/obj/

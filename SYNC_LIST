@@ -1,0 +1,5 @@
+# SuAPI Example Mod Set — 同步控制文件
+# 每行一个 Mod 文件夹名，列出的文件夹会被 Git 同步
+# 未列出的文件夹不会被同步
+# 文件夹内的 bin/、obj/ 自动排除
+ConsoleMod

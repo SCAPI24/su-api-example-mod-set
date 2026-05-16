@@ -1,0 +1,32 @@
+# SuAPI Example Mod Set
+
+Survivalcraft 2 SuAPI Mod 示例集合。
+
+## 同步控制
+
+通过 `SYNC_LIST` 文件控制哪些 Mod 文件夹被 Git 同步：
+
+```
+# SYNC_LIST 格式：每行一个文件夹名
+ConsoleMod
+```
+
+- 列出的文件夹 → 同步到仓库
+- 未列出的文件夹 → 不同步
+- 文件夹内的 `bin/`、`obj/` 自动排除
+
+**添加新 Mod 同步**：编辑 `SYNC_LIST`，添加文件夹名，然后运行：
+
+```powershell
+pwsh sync-gitignore.ps1
+```
+
+## 已收录 Mod
+
+| Mod | 类型 | 说明 |
+|-----|------|------|
+| ConsoleMod | Widget Overlay | 游戏内控制台，按 `·` 打开，`move +x300` 移动角色 |
+
+## 相关仓库
+
+- SuAPI 核心：https://gitee.com/SC-SPM/survivalcraft-su-api
