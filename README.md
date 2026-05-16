@@ -28,6 +28,8 @@ pwsh sync-gitignore.ps1
 | ConsoleMod | Widget Overlay | 游戏内控制台，按 `·` 打开，`move +x300` 移动角色 |
 | RainWithoutDawn | Subsystem 替换 | 替换天气系统，移除下雨逻辑 |
 | TemperatureImmunity | Component 替换 | 替换体温组件，保持恒温 |
+| Comms | 联机通信库 | SuAPI 联机 Mod 通信基础库 |
+| ScMultiplayer | 联机 Mod | 复杂联机 Mod 示例 |
 
 ## 相关仓库
 
