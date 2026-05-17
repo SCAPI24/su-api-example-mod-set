@@ -23,14 +23,26 @@ pwsh sync-gitignore.ps1
 
 ## 已收录 Mod
 
+### SurvivalcraftMiniMap
+
+![MiniMap 截图](images/MiniMap.png)
+
+小地图 Mod，通过新建 ComponentTemplate 向 Player 挂载地图组件，实时显示玩家位置和周围地形。
+
+### ConsoleMod
+
+![ConsoleMod 截图](images/ConsoleMod.png)
+
+游戏内控制台，按 `·` 打开，支持 `move +x300` 等指令移动角色，Widget Overlay 模式不暂停游戏。
+
+### 其他 Mod
+
 | Mod | 类型 | 说明 |
 |-----|------|------|
-| ConsoleMod | Widget Overlay | 游戏内控制台，按 `·` 打开，`move +x300` 移动角色 |
 | RainWithoutDawn | Subsystem 替换 | 替换天气系统，移除下雨逻辑 |
 | TemperatureImmunity | Component 替换 | 替换体温组件，保持恒温 |
 | Comms | 联机通信库 | SuAPI 联机 Mod 通信基础库 |
 | ScMultiplayer | 联机 Mod | 复杂联机 Mod 示例 |
-| SurvivalcraftMiniMap | 新组件 | 小地图 Mod，通过新建 ComponentTemplate 向 Player 挂载地图组件 |
 
 ## 相关仓库
 
