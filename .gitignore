@@ -38,3 +38,9 @@ Comms/obj/
 !ScMultiplayer/**
 ScMultiplayer/bin/
 ScMultiplayer/obj/
+## sync:SurvivalcraftMiniMap
+!SurvivalcraftMiniMap/
+!SurvivalcraftMiniMap/**
+SurvivalcraftMiniMap/bin/
+SurvivalcraftMiniMap/obj/
+SurvivalcraftMiniMap/.vs/
