@@ -20,6 +20,7 @@ public class MiniMap : IMod
 
     public void OnLoad(IModEventBus eventBus, IModInjector modInjector)
     {
+        Log.Information("[MiniMap] OnLoad");
         eventBus.SubscribeEvent("GameDatabase.GameDatabase", args =>
         {
             ; return HandleGameDatabase((Database)args[0]);
@@ -71,7 +72,7 @@ public class MiniMap : IMod
             database.FindDatabaseObjectType("EntityTemplate", true),
             true);
 
-        Log.Information($"database{0}", databaseObject1.Name);
+        Log.Information("[MiniMap] HandleGameDatabase DONE");
         return new object[] { true, database };
     }
 
