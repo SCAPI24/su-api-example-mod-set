@@ -13,7 +13,7 @@ ConsoleMod
 
 - 列出的文件夹 → 同步到仓库
 - 未列出的文件夹 → 不同步
-- 文件夹内的 `bin/`、`obj/` 自动排除
+- 文件夹内的 `bin/`、`obj/`、`.vs/` 自动排除
 
 **添加新 Mod 同步**：编辑 `SYNC_LIST`，添加文件夹名，然后运行：
 
@@ -30,6 +30,7 @@ pwsh sync-gitignore.ps1
 | TemperatureImmunity | Component 替换 | 替换体温组件，保持恒温 |
 | Comms | 联机通信库 | SuAPI 联机 Mod 通信基础库 |
 | ScMultiplayer | 联机 Mod | 复杂联机 Mod 示例 |
+| SurvivalcraftMiniMap | 新组件 | 小地图 Mod，通过新建 ComponentTemplate 向 Player 挂载地图组件 |
 
 ## 相关仓库
 
