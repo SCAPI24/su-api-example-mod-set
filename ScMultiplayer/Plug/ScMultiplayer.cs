@@ -326,10 +326,10 @@ namespace ScMultiplayer
         /// <param name="timeOfDay">时间</param>
         /// <param name="totalElapsedGameTime">总游戏时间</param>
         /// <param name="timeOfDayOffset">时间偏移</param>
-        public static void SendWorldInfoMessage(float timeOfDay, double totalElapsedGameTime, float timeOfDayOffset)
+        public static void SendWorldInfoMessage(double timeOfDayOffset, double totalElapsedGameTime, TimeOfDayMode currentTimeMode)
         {
             // 创建消息
-            GameWorldInfoMessage1 message = new GameWorldInfoMessage1(timeOfDay, totalElapsedGameTime, timeOfDayOffset);
+            GameWorldInfoMessage1 message = new GameWorldInfoMessage1(timeOfDayOffset, totalElapsedGameTime, currentTimeMode);
             
             // 发送消息
             ScMultiplayer.client.SendInput(Message.Write(message, ScMultiplayer.client.Address));
@@ -343,10 +343,10 @@ namespace ScMultiplayer
         /// </summary>
         /// <param name="modifiedCells">修改的方块</param>
         /// <param name="cellValues">方块值</param>
-        public static void SendModifiedCellsMessage(Dictionary<Point3, int> modifiedCells, int[] cellValues)
+        public static void SendModifiedCellsMessage(Dictionary<Point3, bool> modifiedCells)
         {
             // 创建消息
-            GameModifiedCellsMessage message = new GameModifiedCellsMessage(modifiedCells, cellValues);
+            GameModifiedCellsMessage message = new GameModifiedCellsMessage(modifiedCells);
             
             // 发送消息
             ScMultiplayer.client.SendInput(Message.Write(message, ScMultiplayer.client.Address));
@@ -361,7 +361,7 @@ namespace ScMultiplayer
         /// <param name="name">名称</param>
         /// <param name="worldData">世界数据</param>
         /// <param name="lastSaveTime">最后保存时间</param>
-        public static void SendPakWorldMessage(string name, byte[] worldData, double lastSaveTime)
+        public static void SendPakWorldMessage(string name, byte[] worldData, DateTime lastSaveTime)
         {
             // 创建消息
             GamePakWorldMessage message = new GamePakWorldMessage(name, worldData, lastSaveTime);
@@ -462,8 +462,10 @@ namespace ScMultiplayer
 
         private object[] HandleLoading(List<Action> actions)
         {
-            //AddScreen("Play", new PlayScreen());
-            actions[803] = () =>
+            // “Play”是倒数第13个action（屏幕注册有固定数量，Play之后还有12个）
+            // 用动态索引而非硬编码803，避免ContentManager.List变动导致偏移
+            int playIndex = actions.Count - 13;
+            actions[playIndex] = () =>
             {
                 ScreensManager.AddScreen("Play", new SuPlayScreen());
             };
@@ -481,7 +483,53 @@ namespace ScMultiplayer
                 Trigger30FrameEvent(dt);
             }
 
+            // 聊天
+            if (Keyboard.IsKeyDownOnce(Key.T))
+            {
+                DialogsManager.ShowDialog(ScreensManager.RootWidget, new TextBoxDialog("Message", "", 125, delegate (string s)
+                {
+                    if (s != null)
+                    {
+                        client.SendInput(Message.Write(new ChatMessage(client.Peer.Address.ToString(), s), client.Address));
+                    }
+                }));
+            }
 
+            // 创建游戏
+            if (Keyboard.IsKeyDownOnce(Key.J))
+            {
+                Log.Information($"IsKeyDown(Key.J)");
+                ServerDescription a = explorer.DiscoveredServers.FirstOrDefault();
+                if (a != null)
+                {
+                    DialogsManager.ShowDialog(ScreensManager.RootWidget, new MessageDialog("Create Game", a.GameDescriptions.Count().ToString(), "CreateGame", "Suppress", delegate (MessageDialogButton b)
+                    {
+                        switch (b)
+                        {
+                            case MessageDialogButton.Button1:
+                                client.CreateGame(a.Address, Message.Write(new ChatMessage("ss", "ss")), client.ClientID.ToString());
+                                break;
+                            case MessageDialogButton.Button2:
+                                break;
+                        }
+                    }));
+                }
+            }
+
+            // 加入游戏
+            if (Keyboard.IsKeyDownOnce(Key.K))
+            {
+                Log.Information($"IsKeyDown(Key.K)");
+                ServerDescription a = explorer.DiscoveredServers.FirstOrDefault();
+                if (a != null)
+                {
+                    DialogsManager.ShowDialog(null, new ListSelectionDialog("Select Sort Order", a.GameDescriptions, 60f, (object item) => { return item.ToString(); }, delegate (object item)
+                    {
+                        client.JoinGame(a.Address, ((GameDescription)item).GameID, Message.Write(new ChatMessage("ss", "ss")), client.ClientID.ToString());
+                        Log.Information("JoinGame:{0}", a.Address);
+                    }));
+                }
+            }
         }
 
         private void Trigger30FrameEvent(float dt)
@@ -778,9 +826,9 @@ namespace ScMultiplayer
             {
                 // 使用NetworkMessageSender发送消息
                 NetworkMessageSender.SendWorldInfoMessage(
-                    subsystemTimeOfDay.TimeOfDay, 
+                    subsystemTimeOfDay.TimeOfDayOffset, 
                     subsystemGameInfo.TotalElapsedGameTime, 
-                    0);
+                    subsystemGameInfo.WorldSettings.TimeOfDayMode);
             }
         }
 
