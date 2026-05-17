@@ -24,6 +24,7 @@ RainWithoutDawn
 TemperatureImmunity
 Comms
 ScMultiplayer
+SurvivalcraftMiniMap
 ```
 
 - 列出的文件夹 → Git 可追踪
