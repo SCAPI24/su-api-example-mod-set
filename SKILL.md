@@ -30,7 +30,7 @@ SurvivalcraftMiniMap
 - 列出的文件夹 → Git 可追踪
 - 未列出的文件夹 → Git 忽略
 - 已追踪文件夹内的 `bin/`、`obj/` 自动排除
-- 根目录保留文件：`.gitignore` / `SYNC_LIST` / `sync-gitignore.ps1` / `README.md` / `SKILL.md` / `AGENT-PROFILE.md`（若新增根文件需同步更新 sync-gitignore.ps1）
+- 根目录保留文件：`.gitignore` / `SYNC_LIST` / `sync-gitignore.ps1` / `README.md` / `SKILL.md` / `AGENT-PROFILE.md` / `images/`（若新增根文件需同步更新 sync-gitignore.ps1）
 
 ## 添加 Mod 到示例集
 
