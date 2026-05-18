@@ -1,7 +1,9 @@
-﻿using Comms;
+using Comms;
 using Comms.Drt;
 using Engine;
+using Engine.Graphics;
 using Engine.Input;
+using Engine.Media;
 using Game;
 using SuMod;
 using SuMod.Tools;
@@ -15,437 +17,279 @@ using System.Reflection;
 using System.Text;
 using System.Threading.Tasks;
 using TemplatesDatabase;
-using static System.Net.Mime.MediaTypeNames;
 
 namespace ScMultiplayer
 {
-    /// <summary>
-    /// 玩家映射管理器，用于管理客户端ID与PlayerIndex的映射关系
-    /// </summary>
+    // ================================================================
+    // PlayerMappingManager / PlayerOperationSyncManager / NetworkMessageHandler
+    // NetworkMessageSender 保持原样，不变
+    // ================================================================
+#region Helpers
+
     public class PlayerMappingManager
     {
-        /// <summary>
-        /// 客户端ID到PlayerIndex的映射字典
-        /// Key: 客户端ID
-        /// Value: PlayerIndex
-        /// </summary>
         private Dictionary<int, int> clientIdToPlayerIndex = new Dictionary<int, int>();
-
-        /// <summary>
-        /// PlayerIndex到客户端ID的映射字典
-        /// Key: PlayerIndex
-        /// Value: 客户端ID
-        /// </summary>
         private Dictionary<int, int> playerIndexToClientId = new Dictionary<int, int>();
-
-        /// <summary>
-        /// 获取或设置最大PlayerIndex数量
-        /// </summary>
         public int MaxPlayerIndices { get; set; } = 4;
 
-        /// <summary>
-        /// 为指定客户端分配PlayerIndex
-        /// </summary>
-        /// <param name="clientId">客户端ID</param>
-        /// <returns>分配的PlayerIndex，如果无法分配则返回-1</returns>
         public int AssignPlayerIndex(int clientId)
         {
-            // 如果客户端已经有分配的PlayerIndex，直接返回
             if (clientIdToPlayerIndex.ContainsKey(clientId))
-            {
                 return clientIdToPlayerIndex[clientId];
-            }
-
-            // 查找可用的PlayerIndex
             for (int i = 0; i < MaxPlayerIndices; i++)
             {
-                // 跳过已经被占用的PlayerIndex
-                if (playerIndexToClientId.ContainsKey(i))
-                {
-                    continue;
-                }
-
-                // 分配PlayerIndex
+                if (playerIndexToClientId.ContainsKey(i)) continue;
                 clientIdToPlayerIndex[clientId] = i;
                 playerIndexToClientId[i] = clientId;
                 return i;
             }
-
-            // 没有可用的PlayerIndex
             return -1;
         }
 
-        /// <summary>
-        /// 释放指定客户端的PlayerIndex
-        /// </summary>
-        /// <param name="clientId">客户端ID</param>
         public void ReleasePlayerIndex(int clientId)
         {
-            if (clientIdToPlayerIndex.ContainsKey(clientId))
+            if (clientIdToPlayerIndex.TryGetValue(clientId, out int pi))
             {
-                int playerIndex = clientIdToPlayerIndex[clientId];
                 clientIdToPlayerIndex.Remove(clientId);
-                playerIndexToClientId.Remove(playerIndex);
+                playerIndexToClientId.Remove(pi);
             }
         }
 
-        /// <summary>
-        /// 获取指定客户端的PlayerIndex
-        /// </summary>
-        /// <param name="clientId">客户端ID</param>
-        /// <returns>PlayerIndex，如果未分配则返回-1</returns>
-        public int GetPlayerIndex(int clientId)
-        {
-            if (clientIdToPlayerIndex.ContainsKey(clientId))
-            {
-                return clientIdToPlayerIndex[clientId];
-            }
-            return -1;
-        }
+        public int GetPlayerIndex(int clientId) =>
+            clientIdToPlayerIndex.TryGetValue(clientId, out int pi) ? pi : -1;
 
-        /// <summary>
-        /// 获取指定PlayerIndex的客户端ID
-        /// </summary>
-        /// <param name="playerIndex">PlayerIndex</param>
-        /// <returns>客户端ID，如果未分配则返回-1</returns>
-        public int GetClientId(int playerIndex)
-        {
-            if (playerIndexToClientId.ContainsKey(playerIndex))
-            {
-                return playerIndexToClientId[playerIndex];
-            }
-            return -1;
-        }
+        public int GetClientId(int playerIndex) =>
+            playerIndexToClientId.TryGetValue(playerIndex, out int cid) ? cid : -1;
 
-        /// <summary>
-        /// 获取所有已分配的PlayerIndex列表
-        /// </summary>
-        /// <returns>PlayerIndex列表</returns>
-        public List<int> GetAllPlayerIndices()
-        {
-            return playerIndexToClientId.Keys.ToList();
-        }
+        public List<int> GetAllPlayerIndices() => playerIndexToClientId.Keys.ToList();
     }
 
-    /// <summary>
-    /// 玩家操作同步管理器，用于处理玩家操作在不同客户端间的同步
-    /// </summary>
     public class PlayerOperationSyncManager
     {
-        /// <summary>
-        /// 将源客户端的PlayerIndex转换为目标客户端对应的PlayerIndex
-        /// </summary>
-        /// <param name="sourcePlayerIndex">源PlayerIndex</param>
-        /// <param name="targetClientId">目标客户端ID</param>
-        /// <returns>在目标客户端上对应的PlayerIndex</returns>
         public int ConvertPlayerIndexForClient(int sourcePlayerIndex, int targetClientId)
         {
-            // 获取源PlayerIndex对应的客户端ID
             int sourceClientId = ScMultiplayer.playerMappingManager.GetClientId(sourcePlayerIndex);
-            
-            // 如果源PlayerIndex没有对应的客户端，则返回-1
-            if (sourceClientId == -1)
-            {
-                return -1;
-            }
-            
-            // 获取目标客户端的PlayerIndex
+            if (sourceClientId == -1) return -1;
             int targetPlayerIndex = ScMultiplayer.playerMappingManager.GetPlayerIndex(targetClientId);
-            
-            // 如果目标客户端没有分配PlayerIndex，则返回-1
-            if (targetPlayerIndex == -1)
-            {
-                return -1;
-            }
-            
-            // 计算相对索引偏移
-            int relativeIndex = (sourcePlayerIndex - targetPlayerIndex + ScMultiplayer.playerMappingManager.MaxPlayerIndices) % ScMultiplayer.playerMappingManager.MaxPlayerIndices;
-            
-            return relativeIndex;
+            if (targetPlayerIndex == -1) return -1;
+            return (sourcePlayerIndex - targetPlayerIndex + ScMultiplayer.playerMappingManager.MaxPlayerIndices)
+                % ScMultiplayer.playerMappingManager.MaxPlayerIndices;
         }
-        
-        /// <summary>
-        /// 将本地PlayerIndex转换为网络传输用的PlayerIndex
-        /// </summary>
-        /// <param name="localPlayerIndex">本地PlayerIndex</param>
-        /// <param name="localClientId">本地客户端ID</param>
-        /// <returns>网络传输用的PlayerIndex</returns>
+
         public int ConvertLocalPlayerIndexToNetwork(int localPlayerIndex, int localClientId)
         {
-            // 获取本地客户端的PlayerIndex
             int localClientPlayerIndex = ScMultiplayer.playerMappingManager.GetPlayerIndex(localClientId);
-            
-            // 如果本地客户端没有分配PlayerIndex，则返回-1
-            if (localClientPlayerIndex == -1)
-            {
-                return -1;
-            }
-            
-            // 计算相对于本地客户端PlayerIndex的偏移
-            int relativeIndex = (localPlayerIndex - localClientPlayerIndex + ScMultiplayer.playerMappingManager.MaxPlayerIndices) % ScMultiplayer.playerMappingManager.MaxPlayerIndices;
-            
-            return relativeIndex;
+            if (localClientPlayerIndex == -1) return -1;
+            return (localPlayerIndex - localClientPlayerIndex + ScMultiplayer.playerMappingManager.MaxPlayerIndices)
+                % ScMultiplayer.playerMappingManager.MaxPlayerIndices;
         }
     }
-    
-    /// <summary>
-    /// 网络消息处理器，用于处理不同类型的消息
-    /// </summary>
+
+    // ================================================================
+    // NetworkPlayerState: 远程玩家状态快照
+    // ================================================================
+    public class NetworkPlayerState
+    {
+        public int ClientID;
+        public Vector3 Position;
+        public Quaternion Rotation;
+        public Vector3 Velocity;
+        public Vector2 LookAngles;
+        public bool IsCrouching;
+        public bool IsFlying;
+        public bool IsRiding;
+        public int ActiveSlotIndex;
+        public int HandItemValue;
+        public int HandItemCount;
+        public Vector3 ItemOffset;
+        public Vector3 ItemRotation;
+        public float AimHandAngle;
+        public float Health;
+        public float MaxHealth = 1f;
+        public bool IsDead;
+        public double LastUpdateTime;
+    }
+
     public class NetworkMessageHandler
     {
-        /// <summary>
-        /// 处理玩家位置消息
-        /// </summary>
-        /// <param name="message">玩家位置消息</param>
-        /// <param name="clientID">发送消息的客户端ID</param>
-        public static void HandlePlayerPositionMessage(GamePlayerPositionMessage message, int clientID)
-        {
-            // 记录日志
-            Log.Information($"Handling player position message from client {clientID}, player index {message.PlayerIndex}");
-            
-            // 调用现有的处理方法
-            ScMultiplayer.currentInstance.HandleGamePlayerPositionMessage(message, clientID);
-        }
-        
-        /// <summary>
-        /// 处理聊天消息
-        /// </summary>
-        /// <param name="message">聊天消息</param>
-        /// <param name="clientID">发送消息的客户端ID</param>
         public static void HandleChatMessage(ChatMessage message, int clientID)
         {
-            // 记录日志
-            Log.Information($"Handling chat message from client {clientID}: {message.Sender} - {message.Text}");
-            
-            // 显示聊天消息
-            // 这里可以添加显示聊天消息的逻辑
+            Log.Information($"[Chat] Client{clientID} {message.Sender}: {message.Text}");
         }
-        
-        /// <summary>
-        /// 处理世界信息消息
-        /// </summary>
-        /// <param name="message">世界信息消息</param>
-        /// <param name="clientID">发送消息的客户端ID</param>
+
         public static void HandleWorldInfoMessage(GameWorldInfoMessage1 message, int clientID)
         {
-            // 记录日志
-            Log.Information($"Handling world info message from client {clientID}");
-            
-            // 调用现有的处理方法
             ScMultiplayer.currentInstance.HandleGameWorldInfoMessage(message);
         }
-        
-        /// <summary>
-        /// 处理修改方块消息
-        /// </summary>
-        /// <param name="message">修改方块消息</param>
-        /// <param name="clientID">发送消息的客户端ID</param>
+
         public static void HandleModifiedCellsMessage(GameModifiedCellsMessage message, int clientID)
         {
-            // 记录日志
-            Log.Information($"Handling modified cells message from client {clientID}");
-            
-            // 调用现有的处理方法
             ScMultiplayer.currentInstance.HandleGameModifiedCellsMessage(message);
         }
-        
-        /// <summary>
-        /// 处理世界包消息
-        /// </summary>
-        /// <param name="message">世界包消息</param>
-        /// <param name="clientID">发送消息的客户端ID</param>
+
         public static void HandlePakWorldMessage(GamePakWorldMessage message, int clientID)
         {
-            // 记录日志
-            Log.Information($"Handling pak world message from client {clientID}");
-            
-            // 调用现有的处理方法
             ScMultiplayer.currentInstance.HandleGamePakWorldMessage(message);
         }
+
+        public static void HandlePlayerHealthMessage(GamePlayerHealthMessage message, int clientID)
+        {
+            ScMultiplayer.currentInstance.HandleGamePlayerHealthMessage(message, clientID);
+        }
     }
-    
-    /// <summary>
-    /// 网络消息发送器，用于发送不同类型的消息
-    /// </summary>
+
     public class NetworkMessageSender
     {
-        /// <summary>
-        /// 发送玩家位置消息
-        /// </summary>
-        /// <param name="playerIndex">玩家索引</param>
-        /// <param name="position">位置</param>
-        /// <param name="rotation">旋转</param>
-        /// <param name="velocity">速度</param>
-        /// <param name="lookAngles">视角角度</param>
-        /// <param name="isCrouching">是否蹲下</param>
-        /// <param name="isFlying">是否飞行</param>
-        /// <param name="isRiding">是否骑乘</param>
-        /// <param name="activeSlotIndex">活动槽位索引</param>
-        /// <param name="handItemValue">手中物品值</param>
-        /// <param name="handItemCount">手中物品数量</param>
-        /// <param name="itemOffset">物品偏移</param>
-        /// <param name="itemRotation">物品旋转</param>
-        /// <param name="aimHandAngle">瞄准手角度</param>
-        public static void SendPlayerPositionMessage(int playerIndex, Vector3 position, Quaternion rotation, Vector3 velocity, 
-            Vector2 lookAngles, bool isCrouching, bool isFlying, bool isRiding, int activeSlotIndex, 
-            int handItemValue, int handItemCount, Vector3 itemOffset, Vector3 itemRotation, float aimHandAngle)
+        public static void SendPlayerPositionMessage(int playerIndex, Vector3 position, Quaternion rotation,
+            Vector3 velocity, Vector2 lookAngles, bool isCrouching, bool isFlying, bool isRiding,
+            int activeSlotIndex, int handItemValue, int handItemCount,
+            Vector3 itemOffset, Vector3 itemRotation, float aimHandAngle)
         {
-            // 创建消息
-            GamePlayerPositionMessage message = new GamePlayerPositionMessage(
-                playerIndex, position, rotation, velocity, lookAngles,
-                isCrouching, isFlying, isRiding, activeSlotIndex, handItemValue, handItemCount, 
+            var msg = new GamePlayerPositionMessage(playerIndex, position, rotation, velocity,
+                lookAngles, isCrouching, isFlying, isRiding,
+                activeSlotIndex, handItemValue, handItemCount,
                 itemOffset, itemRotation, aimHandAngle);
-                
-            // 发送消息
-            ScMultiplayer.client.SendInput(Message.Write(message, ScMultiplayer.client.Address));
-            
-            // 记录日志
-            Log.Information($"Sent player position message for player {playerIndex}");
+            ScMultiplayer.client.SendInput(Message.WriteWithSender(msg, ScMultiplayer.client.Address));
         }
-        
-        /// <summary>
-        /// 发送聊天消息
-        /// </summary>
-        /// <param name="sender">发送者</param>
-        /// <param name="text">文本</param>
+
         public static void SendChatMessage(string sender, string text)
         {
-            // 创建消息
-            ChatMessage message = new ChatMessage(sender, text);
-            
-            // 发送消息
-            ScMultiplayer.client.SendInput(Message.Write(message, ScMultiplayer.client.Address));
-            
-            // 记录日志
-            Log.Information($"Sent chat message from {sender}: {text}");
+            var msg = new ChatMessage(sender, text);
+            ScMultiplayer.client.SendInput(Message.WriteWithSender(msg, ScMultiplayer.client.Address));
         }
-        
-        /// <summary>
-        /// 发送世界信息消息
-        /// </summary>
-        /// <param name="timeOfDay">时间</param>
-        /// <param name="totalElapsedGameTime">总游戏时间</param>
-        /// <param name="timeOfDayOffset">时间偏移</param>
-        public static void SendWorldInfoMessage(double timeOfDayOffset, double totalElapsedGameTime, TimeOfDayMode currentTimeMode)
+
+        public static void SendWorldInfoMessage(double timeOfDayOffset, double totalElapsedGameTime,
+            TimeOfDayMode currentTimeMode)
         {
-            // 创建消息
-            GameWorldInfoMessage1 message = new GameWorldInfoMessage1(timeOfDayOffset, totalElapsedGameTime, currentTimeMode);
-            
-            // 发送消息
-            ScMultiplayer.client.SendInput(Message.Write(message, ScMultiplayer.client.Address));
-            
-            // 记录日志
-            Log.Information($"Sent world info message");
+            var msg = new GameWorldInfoMessage1(timeOfDayOffset, totalElapsedGameTime, currentTimeMode);
+            ScMultiplayer.client.SendInput(Message.WriteWithSender(msg, ScMultiplayer.client.Address));
         }
-        
-        /// <summary>
-        /// 发送修改方块消息
-        /// </summary>
-        /// <param name="modifiedCells">修改的方块</param>
-        /// <param name="cellValues">方块值</param>
+
         public static void SendModifiedCellsMessage(Dictionary<Point3, bool> modifiedCells)
         {
-            // 创建消息
-            GameModifiedCellsMessage message = new GameModifiedCellsMessage(modifiedCells);
-            
-            // 发送消息
-            ScMultiplayer.client.SendInput(Message.Write(message, ScMultiplayer.client.Address));
-            
-            // 记录日志
-            Log.Information($"Sent modified cells message");
+            var msg = new GameModifiedCellsMessage(modifiedCells);
+            ScMultiplayer.client.SendInput(Message.WriteWithSender(msg, ScMultiplayer.client.Address));
         }
-        
-        /// <summary>
-        /// 发送世界包消息
-        /// </summary>
-        /// <param name="name">名称</param>
-        /// <param name="worldData">世界数据</param>
-        /// <param name="lastSaveTime">最后保存时间</param>
+
         public static void SendPakWorldMessage(string name, byte[] worldData, DateTime lastSaveTime)
         {
-            // 创建消息
-            GamePakWorldMessage message = new GamePakWorldMessage(name, worldData, lastSaveTime);
-            
-            // 发送消息
-            ScMultiplayer.client.SendInput(Message.Write(message, ScMultiplayer.client.Address));
-            
-            // 记录日志
-            Log.Information($"Sent pak world message for {name}");
+            var msg = new GamePakWorldMessage(name, worldData, lastSaveTime);
+            ScMultiplayer.client.SendInput(Message.WriteWithSender(msg, ScMultiplayer.client.Address));
+        }
+
+        public static void SendPlayerHealthMessage(int playerIndex, float health, float maxHealth,
+            float healthChange, bool isDead, string cause = null)
+        {
+            var msg = new GamePlayerHealthMessage(playerIndex, health, maxHealth, healthChange, isDead, cause);
+            ScMultiplayer.client.SendInput(Message.WriteWithSender(msg, ScMultiplayer.client.Address));
+        }
+
+        public static void SendKickPlayerMessage(int targetClientID, string reason = null)
+        {
+            var msg = new GameKickPlayerMessage(targetClientID, reason);
+            ScMultiplayer.client.SendInput(Message.WriteWithSender(msg, ScMultiplayer.client.Address));
         }
     }
-    
+
+#endregion
+
+    // ================================================================
+    // ScMultiplayer 主类 (IMod + IUpdateable)
+    // ================================================================
     public class ScMultiplayer : IMod, IUpdateable
     {
-        public static ModManager ModManager= (ModManager)AppDomain.CurrentDomain.GetAssemblies().SelectMany(a => a.GetTypes()).FirstOrDefault(t => t.FullName == "Game.Program")?.GetField("ModManager", BindingFlags.Public | BindingFlags.Static)?.GetValue(null);
+        public static ModManager ModManager = (ModManager)AppDomain.CurrentDomain.GetAssemblies()
+            .SelectMany(a => a.GetTypes())
+            .FirstOrDefault(t => t.FullName == "Game.Program")?
+            .GetField("ModManager", BindingFlags.Public | BindingFlags.Static)?.GetValue(null);
+
         public static Server server;
         public static Client client;
         public static Explorer explorer;
-        
-        /// <summary>
-        /// 当前ScMultiplayer实例
-        /// </summary>
         public static ScMultiplayer currentInstance;
-        
-        /// <summary>
-        /// 玩家映射管理器实例
-        /// </summary>
         public static PlayerMappingManager playerMappingManager = new PlayerMappingManager();
-        
-        /// <summary>
-        /// 玩家操作同步管理器实例
-        /// </summary>
         public static PlayerOperationSyncManager playerOperationSyncManager = new PlayerOperationSyncManager();
-        
-        public string Name => "SC联机";
-        public static bool IsHost=false;
-        public string Version => "1.0.1";
+        public static bool IsHost = false;
 
+        // ---------- 游戏描述缓存 (LanDiscovery 响应用) ----------
+        public static byte[] LastGameDescription;
+
+        // ---------- 远程玩家 ----------
+        public static Dictionary<int, NetworkPlayerState> RemotePlayers = new Dictionary<int, NetworkPlayerState>();
+        private PrimitivesRenderer3D m_primitivesRenderer3D;
+
+        // ---------- 状态机 ----------
+        public static NetworkConnectionStateMachine connectionSM;
+        public static WorldDownloadStateMachine downloadSM;
+
+        // ---------- IMod ----------
+        public string Name => "SC联机";
+        public string Version => "1.0.2";
         public IEnumerable<string> Dependencies => Array.Empty<string>();
         public bool IsEnabled { get; set; } = true;
-
         public UpdateOrder UpdateOrder => UpdateOrder.Input;
+
+        // ---------- 内部状态 ----------
+        private float m_accumulatedTime = 0f;
+        private Dictionary<int, float> m_playerHealthCache = new Dictionary<int, float>(); // clientID → last known health
+        private const float HealthSyncInterval = 1.0f; // 每秒同步一次生命
 
         public void OnLoad(IModEventBus eventBus = null, IModInjector modInjector = null)
         {
-            // 设置当前实例
             currentInstance = this;
-            
+
+            // 初始化状态机
+            connectionSM = new NetworkConnectionStateMachine(msg => Log.Information(msg));
+            downloadSM = new WorldDownloadStateMachine(msg => Log.Information(msg));
+
+            // 注册状态机回调
+            connectionSM.OnDisconnectedEnter += () =>
+            {
+                if (client.IsConnected) { try { client.LeaveGame(); } catch { } }
+            };
+            connectionSM.OnPlayingEnter += () => IsHost = (client.ClientID == 0);
+
+            downloadSM.OnCompleteEnter += () => connectionSM.TransitionTo(
+                NetworkConnectionStateMachine.ConnectionState.Playing);
+            downloadSM.OnFailedEnter += (reason) => Log.Error($"[DL] Failed: {reason}");
+
+            // EventBus
             eventBus.SubscribeEvent("GameDatabase.GameDatabase", args =>
-            {
-                ; return HandleGameDatabase((Database)args[0]);
-            }, EventPriority.HIGHEST);
+                HandleGameDatabase((Database)args[0]), EventPriority.HIGHEST);
             eventBus.SubscribeEvent("Loading.Initialize", args =>
-            {
-                return HandleLoading((List<Action>)args[0]);
-            }, EventPriority.HIGHEST);
+                HandleLoading((List<Action>)args[0]), EventPriority.HIGHEST);
 
-
-
-            float tickDuration = 1f / 60f; // 约 0.01667 秒
+            // 初始化网络
+            float tickDuration = 1f / 60f;
             int stepsPerTick = 1;
             int port = "SuSCMP".ToDynamicPort();
+            Log.Information($"[ScMP] Starting on port {port}");
 
+            // 探测物理 LAN IP（避免虚拟网卡如 ZeroTier/WSL/CFW 导致广播源不可达）
+            var lanAddress = DetectLanAddress();
+            Log.Information($"[ScMP] Detected LAN address: {lanAddress}");
 
-            explorer = new Explorer(gameTypeID: 0x53634d70, serverPort: port);
-            explorer.Error += ex => Log.Information($"Error: {ex.Message}");
+            // 所有组件使用绑定物理 LAN IP 的 UdpTransmitter
+            var serverTransmitter = new UdpTransmitter(lanAddress, port);
+            var explorerTransmitter = new UdpTransmitter(lanAddress, 0);
+            var clientTransmitter = new UdpTransmitter(lanAddress, 0);
+
             try
             {
-                server = new Server(0x53634d70, tickDuration, stepsPerTick, port);
+                server = new Server(0x53634d70, tickDuration, stepsPerTick, serverTransmitter);
                 server.Information += Server_Information;
                 server.Start();
+                Log.Information($"[ScMP] Server started OK, address={server.Address}");
             }
-            catch (Exception)
+            catch (Exception ex)
             {
-
-
+                Log.Error($"[ScMP] Server start FAILED: {ex.Message}");
             }
-            /*foreach (var item in server.Games)
-            {
-                item.Clients.
-            }*/
 
+            explorer = new Explorer(0x53634d70, port, explorerTransmitter);
+            explorer.Error += ex => Log.Error($"[Explorer] {ex.Message}");
 
-            client = new Client(0x53634d70);
+            client = new Client(0x53634d70, clientTransmitter);
             client.GameCreated += Client_GameCreated;
             client.GameJoined += Client_GameJoined;
             client.Error += Client_Error;
@@ -453,504 +297,717 @@ namespace ScMultiplayer
             client.ConnectRefused += Client_ConnectRefused;
             client.GameStateRequest += Client_GameStateRequest;
             client.GameStep += Client_GameStep;
-            StartAsyncRegistration();
-            // 发送局域网广播发现请求
-            explorer.StartDiscovery();
             client.Start();
 
+            explorer.StartDiscovery();
+            connectionSM.TransitionTo(NetworkConnectionStateMachine.ConnectionState.Discovering);
+            Log.Information($"[ScMP] Explorer discovery started (address={explorerTransmitter.Address})");
+
+            StartAsyncRegistration();
         }
 
         private object[] HandleLoading(List<Action> actions)
         {
-            // “Play”是倒数第13个action（屏幕注册有固定数量，Play之后还有12个）
-            // 用动态索引而非硬编码803，避免ContentManager.List变动导致偏移
             int playIndex = actions.Count - 13;
-            actions[playIndex] = () =>
-            {
-                ScreensManager.AddScreen("Play", new SuPlayScreen());
-            };
-            Log.Information($"HandleLoading");
+            actions[playIndex] = () => ScreensManager.AddScreen("Play", new SuPlayScreen());
+            Log.Information("[ScMP] PlayScreen replaced");
             return new object[] { false, actions };
         }
 
+        public object[] HandleGameDatabase(Database database)
+        {
+            var componentInput = database.FindDatabaseObject(
+                new Guid("ec809766-ba61-434e-bfde-e677f506b887"),
+                database.FindDatabaseObjectType("Parameter", true), true);
+            componentInput.Value = "ScMultiplayer.SuComponentInput";
+
+            var subsystemTerrain = database.FindDatabaseObject(
+                new Guid("e2636c38-f179-4aa1-b087-ed6920d66e8e"),
+                database.FindDatabaseObjectType("Parameter", true), true);
+            subsystemTerrain.Value = "ScMultiplayer.SuSubsystemTerrain";
+
+            Log.Information("[ScMP] Database hooks applied");
+            return new object[] { true, database };
+        }
+
+        // ====================================================================
+        // Update
+        // ====================================================================
         public void Update(float dt)
         {
+            connectionSM.Update();
+            downloadSM.Update();
+
             m_accumulatedTime += dt;
-            m_accumulatedTime1 += dt;
-            if (m_accumulatedTime >= 1f / 60f)
+
+            if (m_accumulatedTime >= 1f / 30f) // 30fps
             {
                 m_accumulatedTime = 0f;
                 Trigger30FrameEvent(dt);
             }
 
-            // 聊天
+            // 聊天 (T键)
             if (Keyboard.IsKeyDownOnce(Key.T))
             {
                 DialogsManager.ShowDialog(ScreensManager.RootWidget, new TextBoxDialog("Message", "", 125, delegate (string s)
                 {
                     if (s != null)
-                    {
-                        client.SendInput(Message.Write(new ChatMessage(client.Peer.Address.ToString(), s), client.Address));
-                    }
+                        NetworkMessageSender.SendChatMessage(client.Address.ToString(), s);
                 }));
             }
 
-            // 创建游戏
+            // 创建房间 (J键) — 用 GameWorldInfoMessage 供 LAN 发现
             if (Keyboard.IsKeyDownOnce(Key.J))
             {
-                Log.Information($"IsKeyDown(Key.J)");
-                ServerDescription a = explorer.DiscoveredServers.FirstOrDefault();
-                if (a != null)
+                var sd = explorer?.DiscoveredServers?.FirstOrDefault();
+                if (sd == null)
                 {
-                    DialogsManager.ShowDialog(ScreensManager.RootWidget, new MessageDialog("Create Game", a.GameDescriptions.Count().ToString(), "CreateGame", "Suppress", delegate (MessageDialogButton b)
-                    {
-                        switch (b)
-                        {
-                            case MessageDialogButton.Button1:
-                                client.CreateGame(a.Address, Message.Write(new ChatMessage("ss", "ss")), client.ClientID.ToString());
-                                break;
-                            case MessageDialogButton.Button2:
-                                break;
-                        }
-                    }));
+                    Log.Information("[ScMP] No server discovered, cannot create game");
+                    return;
                 }
+
+                // 从当前游戏状态构建世界信息
+                var gameInfo = GameManager.Project?.FindSubsystem<SubsystemGameInfo>(true);
+                if (gameInfo == null)
+                {
+                    Log.Error("[ScMP] Cannot get game info");
+                    return;
+                }
+                WorldInfo wi = null;
+                foreach (var w in WorldsManager.WorldInfos)
+                {
+                    if (w.DirectoryName == gameInfo.DirectoryName)
+                    { wi = w; break; }
+                }
+                var worldMsg = new GameWorldInfoMessage(
+                    gameInfo.WorldSettings.Name,
+                    wi?.Size ?? 0,
+                    wi?.LastSaveTime ?? DateTime.MinValue,
+                    gameInfo.WorldSettings.GameMode,
+                    gameInfo.WorldSettings.EnvironmentBehaviorMode,
+                    VersionsManager.SerializationVersion,
+                    client.Address);
+
+                DialogsManager.ShowDialog(ScreensManager.RootWidget,
+                    new MessageDialog("Create Game", $"Hosting '{gameInfo.WorldSettings.Name}'",
+                        "CreateGame", "Cancel", delegate (MessageDialogButton b)
+                        {
+                            if (b == MessageDialogButton.Button1)
+                            {
+                                LastGameDescription = Message.WriteWithSender(worldMsg, client.Address);
+                                client.CreateGame(sd.Address, LastGameDescription, client.ClientID.ToString());
+                                Log.Information($"[ScMP] Creating game: {gameInfo.WorldSettings.Name}");
+                            }
+                        }));
             }
 
-            // 加入游戏
+            // 加入房间 (K键)
             if (Keyboard.IsKeyDownOnce(Key.K))
             {
-                Log.Information($"IsKeyDown(Key.K)");
-                ServerDescription a = explorer.DiscoveredServers.FirstOrDefault();
-                if (a != null)
+                var sd = explorer?.DiscoveredServers?.FirstOrDefault();
+                if (sd == null || sd.GameDescriptions.Length == 0)
                 {
-                    DialogsManager.ShowDialog(null, new ListSelectionDialog("Select Sort Order", a.GameDescriptions, 60f, (object item) => { return item.ToString(); }, delegate (object item)
-                    {
-                        client.JoinGame(a.Address, ((GameDescription)item).GameID, Message.Write(new ChatMessage("ss", "ss")), client.ClientID.ToString());
-                        Log.Information("JoinGame:{0}", a.Address);
-                    }));
+                    Log.Information("[ScMP] No games available to join");
+                    return;
+                }
+                DialogsManager.ShowDialog(null,
+                    new ListSelectionDialog("Select Game", sd.GameDescriptions, 60f,
+                        (object item) => ((GameDescription)item).ToString(),
+                        delegate (object item)
+                        {
+                            var gd = (GameDescription)item;
+                            client.JoinGame(sd.Address, gd.GameID,
+                                Message.WriteWithSender(new ChatMessage("Joining...", ""), client.Address),
+                                client.ClientID.ToString());
+                            Log.Information($"[ScMP] Joining game {gd.GameID}");
+                        }));
+            }
+
+            // 踢出玩家 (U键, 仅Host)
+            if (Keyboard.IsKeyDownOnce(Key.U) && client.ClientID == 0 && client.IsConnected)
+            {
+                TryKickPlayer();
+            }
+
+            // 渲染远程玩家
+            RenderRemotePlayers();
+        }
+
+        private void TryKickPlayer()
+        {
+            // 踢出最后一个加入的非房主玩家
+            var subsystemPlayers = GameManager.Project.FindSubsystem<SubsystemPlayers>(false);
+            if (subsystemPlayers == null) return;
+            var allPlayers = subsystemPlayers.ComponentPlayers;
+
+            int hostPlayerIndex = playerMappingManager.GetPlayerIndex(0);
+            ComponentPlayer target = null;
+            foreach (var p in allPlayers)
+            {
+                if (p.PlayerData.PlayerIndex != hostPlayerIndex)
+                {
+                    target = p;
+                    break;
+                }
+            }
+
+            if (target == null) { Log.Information("[ScMP] No players to kick"); return; }
+
+            int targetClientID = playerMappingManager.GetClientId(target.PlayerData.PlayerIndex);
+            if (targetClientID <= 0) { Log.Information("[ScMP] Cannot kick player with invalid client ID"); return; }
+
+            Log.Information($"[ScMP] Kicking player ClientID={targetClientID}");
+            NetworkMessageSender.SendKickPlayerMessage(targetClientID, "Kicked by host");
+        }
+
+        // ====================================================================
+        // 30fps 定时事件
+        // ====================================================================
+        private void Trigger30FrameEvent(float dt)
+        {
+            if (!client.IsConnected) return;
+
+            SendGamePlayerPositionMessage();
+            SendGameWorldInfoMessage(dt);
+            SendGamePlayerHealthMessage(dt);
+        }
+
+        // ====================================================================
+        // 发送: 玩家位置
+        // ====================================================================
+        private void SendGamePlayerPositionMessage()
+        {
+            var subsystemPlayers = GameManager.Project.FindSubsystem<SubsystemPlayers>(false);
+            if (subsystemPlayers == null) return;
+            var players = subsystemPlayers.ComponentPlayers;
+
+            int currentClientId = client.ClientID;
+            int clientPlayerIndex = playerMappingManager.GetPlayerIndex(currentClientId);
+
+            foreach (var item in players)
+            {
+                if (clientPlayerIndex == -1 || item.PlayerData.PlayerIndex != clientPlayerIndex)
+                    continue;
+
+                // 发送方直接使用 ClientID 作为网络标识，避免 PlayerIndex 映射冲突
+                int senderClientId = client.ClientID;
+
+                bool isCrouching = item.ComponentBody.TargetCrouchFactor > 0f;
+                bool isFlying = item.ComponentLocomotion.IsCreativeFlyEnabled;
+                bool isRiding = item.ComponentRider?.Mount != null;
+
+                IInventory inventory = item.ComponentMiner?.Inventory;
+                int activeSlot = inventory?.ActiveSlotIndex ?? -1;
+                int handVal = inventory?.GetSlotValue(activeSlot) ?? 0;
+                int handCnt = inventory?.GetSlotCount(activeSlot) ?? 0;
+
+                Vector3 itemOffset = item.ComponentCreatureModel.InHandItemOffsetOrder;
+                Vector3 itemRotation = item.ComponentCreatureModel.InHandItemRotationOrder;
+                float aimHandAngle = item.ComponentCreatureModel.AimHandAngleOrder;
+                Vector2 lookAngles = item.ComponentLocomotion.LookAngles;
+
+                NetworkMessageSender.SendPlayerPositionMessage(
+                    senderClientId, item.ComponentBody.Position,
+                    item.ComponentBody.Rotation, item.ComponentBody.Velocity, lookAngles,
+                    isCrouching, isFlying, isRiding, activeSlot, handVal, handCnt,
+                    itemOffset, itemRotation, aimHandAngle);
+            }
+        }
+
+        // ====================================================================
+        // 发送: 世界信息 (仅Host)
+        // ====================================================================
+        private void SendGameWorldInfoMessage(float dt)
+        {
+            if (client.ClientID != 0) return;
+            var gameInfo = GameManager.Project.FindSubsystem<SubsystemGameInfo>(true);
+            var timeOfDay = GameManager.Project.FindSubsystem<SubsystemTimeOfDay>(true);
+            NetworkMessageSender.SendWorldInfoMessage(
+                timeOfDay.TimeOfDayOffset,
+                gameInfo.TotalElapsedGameTime,
+                gameInfo.WorldSettings.TimeOfDayMode);
+        }
+
+        // ====================================================================
+        // 发送: 生命值 (周期性)
+        // ====================================================================
+        private void SendGamePlayerHealthMessage(float dt)
+        {
+            var subsystemPlayers = GameManager.Project.FindSubsystem<SubsystemPlayers>(false);
+            if (subsystemPlayers == null) return;
+            var players = subsystemPlayers.ComponentPlayers;
+
+            int currentClientId = client.ClientID;
+            int clientPlayerIndex = playerMappingManager.GetPlayerIndex(currentClientId);
+
+            foreach (var item in players)
+            {
+                if (clientPlayerIndex == -1 || item.PlayerData.PlayerIndex != clientPlayerIndex)
+                    continue;
+
+                var health = item.ComponentHealth;
+                if (health == null) continue;
+
+                float lastHealth;
+                if (!m_playerHealthCache.TryGetValue(currentClientId, out lastHealth))
+                    lastHealth = health.Health;
+
+                float change = health.Health - lastHealth;
+                bool isDead = health.Health <= 0f;
+
+                // 仅在变化时发送
+                if (Math.Abs(change) > 0.01f || isDead)
+                {
+                    NetworkMessageSender.SendPlayerHealthMessage(
+                        client.ClientID, health.Health, 1f, change, isDead);
+                    m_playerHealthCache[currentClientId] = health.Health;
                 }
             }
         }
 
-        private void Trigger30FrameEvent(float dt)
+        // ====================================================================
+        // 渲染远程玩家
+        // ====================================================================
+        private void RenderRemotePlayers()
         {
-            if (ScMultiplayer.client.IsConnected)
+            if (!client.IsConnected || RemotePlayers.Count == 0) return;
+
+            var subsystemPlayers = GameManager.Project.FindSubsystem<SubsystemPlayers>(false);
+            if (subsystemPlayers == null) return;
+            var players = subsystemPlayers.ComponentPlayers;
+            if (players.Count == 0) return;
+
+            // 获取本地玩家相机
+            var localPlayer = players[0];
+            var camera = localPlayer.GameWidget?.ActiveCamera;
+            if (camera == null) return;
+
+            // 延迟初始化 PrimitivesRenderer3D
+            if (m_primitivesRenderer3D == null)
+                m_primitivesRenderer3D = new PrimitivesRenderer3D();
+
+            float cubeSize = 0.4f;
+            var color = Color.White;
+            double now = Time.RealTime;
+
+            foreach (var kvp in RemotePlayers)
             {
-                SendGamePlayerPositionMessage();
-                SendGameWorldInfoMessage(dt);
+                var state = kvp.Value;
+                // 超过 5 秒没有更新, 跳过
+                if (now - state.LastUpdateTime > 5.0) continue;
+
+                Vector3 pos = state.Position;
+                Vector3 offset = new Vector3(-cubeSize, 0, -cubeSize);
+                Vector3 p1 = pos + new Vector3(-cubeSize, 0, -cubeSize);
+                Vector3 p2 = pos + new Vector3(cubeSize, 0, -cubeSize);
+                Vector3 p3 = pos + new Vector3(cubeSize, 2 * cubeSize, cubeSize);
+                Vector3 p4 = pos + new Vector3(-cubeSize, 2 * cubeSize, cubeSize);
+
+                var flatBatch = m_primitivesRenderer3D.FlatBatch();
+                flatBatch.QueueQuad(p1, p2, p3, p4, color);
             }
+
+            m_primitivesRenderer3D.Flush(camera.ViewProjectionMatrix);
         }
 
-        public object[] HandleGameDatabase(Database database)
-        {
-            var componentInput = database.FindDatabaseObject(new Guid("ec809766-ba61-434e-bfde-e677f506b887"), database.FindDatabaseObjectType("Parameter", true), true);
-            componentInput.Value = "ScMultiplayer.SuComponentInput";
-            var subsystemTerrain = database.FindDatabaseObject(new Guid("e2636c38-f179-4aa1-b087-ed6920d66e8e"), database.FindDatabaseObjectType("Parameter", true), true);
-            subsystemTerrain.Value = "ScMultiplayer.SuSubsystemTerrain";
-
-            Log.Information($"HandleDatabase");
-            return new object[] { true, database };
-        }
-
+        // ====================================================================
+        // Client_GameStep: 处理每 Tick 的网络事件
+        // ====================================================================
         private void Client_GameStep(GameStepData obj)
         {
+            // 离开
             foreach (var item in obj.Leaves)
             {
-                // 处理客户端离开事件
-                Log.Information($"Client left: {item.ClientID}");
-                // 释放该客户端的PlayerIndex
+                Log.Information($"[ScMP] Client left: {item.ClientID}");
                 playerMappingManager.ReleasePlayerIndex(item.ClientID);
             }
-            
+
+            // 加入
             foreach (var item in obj.Joins)
             {
-                Log.Information($"Client joining: {item.ClientID}");
-                
-                // 为新客户端分配PlayerIndex
+                Log.Information($"[ScMP] Client joining: {item.ClientID}");
                 int assignedPlayerIndex = playerMappingManager.AssignPlayerIndex(item.ClientID);
-                
+
                 if (assignedPlayerIndex != -1)
                 {
-                    Log.Information($"Assigned PlayerIndex {assignedPlayerIndex} to ClientID {item.ClientID}");
-                    
-                    // 接受客户端加入游戏
+                    Log.Information($"[ScMP] Assigned PlayerIndex {assignedPlayerIndex} to ClientID {item.ClientID}");
                     client.AcceptJoinGame(item.ClientID);
-                    
-                    switch (Message.Read(item.JoinRequestBytes))
+
+                    // 匹配世界并发送 WorldData
+                    if (Message.Read(item.JoinRequestBytes) is GameWorldInfoMessage worldInfo)
                     {
-                        case GameWorldInfoMessage gameWorldInfoMessage:
-                            foreach (var worldInfos in WorldsManager.WorldInfos)
+                        foreach (var wi in WorldsManager.WorldInfos)
+                        {
+                            if (wi.LastSaveTime == worldInfo.LastSaveTime &&
+                                wi.WorldSettings.Name == worldInfo.Name)
                             {
-                                if (worldInfos.LastSaveTime == gameWorldInfoMessage.LastSaveTime)
+                                // 导出世界数据
+                                byte[] worldData;
+                                using (var ms = new MemoryStream())
                                 {
-                                    if (worldInfos.WorldSettings.Name == gameWorldInfoMessage.Name)
-                                    {
-                                        client.SendInput(Message.Write(new GamePakWorldMessage(worldInfos.WorldSettings.Name, SuPlayScreen.WorldData, worldInfos.LastSaveTime), client.Address));
-                                    }
+                                    WorldsManager.ExportWorld(wi.DirectoryName, ms);
+                                    worldData = ms.ToArray();
                                 }
+                                NetworkMessageSender.SendPakWorldMessage(
+                                    wi.WorldSettings.Name, worldData, wi.LastSaveTime);
+                                Log.Information($"[ScMP] Sent world data ({worldData.Length} bytes) to ClientID {item.ClientID}");
+                                break;
                             }
-                            break;
-                        default:
-                            break;
+                        }
                     }
                 }
                 else
                 {
-                    Log.Information($"Failed to assign PlayerIndex to ClientID {item.ClientID} - game full");
-                    // 拒绝客户端加入（游戏已满）
+                    Log.Information($"[ScMP] Game full, refusing ClientID {item.ClientID}");
                     client.RefuseJoinGame(item.ClientID, "Game is full");
                 }
-                
-                Log.Information($"Client_GameStep joins: {obj.Joins.Length}");
             }
-            
+
+            // 输入消息
             foreach (var item in obj.Inputs)
             {
-                var message = Message.Read(item.InputBytes);
-                if (message.GetSenderPort() == client.Address.Port) 
+                if (item.InputBytes == null || item.InputBytes.Length == 0) continue;
+
+                Message message;
+                try
+                {
+                    message = Message.Read(item.InputBytes);
+                }
+                catch (Exception ex)
+                {
+                    Log.Error($"[ScMP] Failed to parse message: {ex.Message}");
                     continue;
-                    
-                // 使用NetworkMessageHandler处理不同类型的消息
+                }
+
+                // 跳过自己发出的消息 (回环消息)
+                if (message.GetSenderPort() == client.Address.Port)
+                    continue;
+
                 switch (message)
                 {
-                    case ChatMessage chatMessage:
-                        NetworkMessageHandler.HandleChatMessage(chatMessage, item.ClientID);
+                    case ChatMessage chat:
+                        NetworkMessageHandler.HandleChatMessage(chat, item.ClientID);
                         break;
-                    case GamePlayerInputMessage playerInputMessage:
-                        //HandleGamePlayerInputMessage(playerInputMessage);
+                    case GamePlayerPositionMessage pos:
+                        if (connectionSM.CurrentState == NetworkConnectionStateMachine.ConnectionState.Playing)
+                            HandleGamePlayerPositionMessage(pos, item.ClientID);
                         break;
-                    case GamePlayerPositionMessage gamePlayerPositionMessage:
-                        if (SuPlayScreen.IsGameJoined)
-                            NetworkMessageHandler.HandlePlayerPositionMessage(gamePlayerPositionMessage, item.ClientID);
+                    case GameModifiedCellsMessage cells:
+                        if (connectionSM.CurrentState == NetworkConnectionStateMachine.ConnectionState.Playing)
+                            NetworkMessageHandler.HandleModifiedCellsMessage(cells, item.ClientID);
                         break;
-                    case GameModifiedCellsMessage gameModifiedCellsMessage:
-                        if (SuPlayScreen.IsGameJoined)
-                            NetworkMessageHandler.HandleModifiedCellsMessage(gameModifiedCellsMessage, item.ClientID);
+                    case GameWorldInfoMessage1 worldInfo:
+                        if (connectionSM.CurrentState == NetworkConnectionStateMachine.ConnectionState.Playing)
+                            NetworkMessageHandler.HandleWorldInfoMessage(worldInfo, item.ClientID);
                         break;
-                    case GameWorldInfoMessage1 gameWorldInfoMessage:
-                        if (SuPlayScreen.IsGameJoined)
-                            NetworkMessageHandler.HandleWorldInfoMessage(gameWorldInfoMessage, item.ClientID);
+                    case GamePakWorldMessage pakWorld:
+                        NetworkMessageHandler.HandlePakWorldMessage(pakWorld, item.ClientID);
                         break;
-                    case GamePakWorldMessage gamePakWorldMessage:
-                        NetworkMessageHandler.HandlePakWorldMessage(gamePakWorldMessage, item.ClientID);
+                    case GamePlayerHealthMessage health:
+                        if (connectionSM.CurrentState == NetworkConnectionStateMachine.ConnectionState.Playing)
+                            NetworkMessageHandler.HandlePlayerHealthMessage(health, item.ClientID);
+                        break;
+                    case GameKickPlayerMessage kick:
+                        HandleGameKickPlayerMessage(kick, item.ClientID);
                         break;
                     default:
-                        Log.Error("Unknown message type received");
+                        Log.Error($"[ScMP] Unknown message type: {message.GetType().Name}");
                         break;
                 }
             }
         }
 
-        public void HandleGamePakWorldMessage(GamePakWorldMessage gamePakWorldMessage)
+        // ====================================================================
+        // 消息处理
+        // ====================================================================
+        public void HandleGamePlayerPositionMessage(GamePlayerPositionMessage msg, int clientID)
         {
-            WorldsManager.ImportWorld(new MemoryStream(gamePakWorldMessage.WorldData));
-            
-            WorldsManager.UpdateWorldsList();
-            foreach (var item in WorldsManager.WorldInfos) {
+            // Source: msg.PlayerIndex = 发送方的 ClientID
+            // 写入 RemotePlayers 而非本地 ComponentPlayers, 避免覆盖本地玩家
+            int remoteClientId = msg.PlayerIndex;
+            if (remoteClientId == client.ClientID)
+                return; // 忽略自己发回的消息
 
-                if (item.WorldSettings.Name == gamePakWorldMessage.Name)
-                {
-                    SuPlayScreen.Play(item);
-                }
+            NetworkPlayerState state;
+            if (!RemotePlayers.TryGetValue(remoteClientId, out state))
+            {
+                state = new NetworkPlayerState { ClientID = remoteClientId };
+                RemotePlayers[remoteClientId] = state;
             }
 
-
+            state.Position = msg.Position;
+            state.Rotation = msg.Rotation;
+            state.Velocity = msg.Velocity;
+            state.LookAngles = msg.LookAngles;
+            state.IsCrouching = msg.IsCrouching;
+            state.IsFlying = msg.IsFlying;
+            state.IsRiding = msg.IsRiding;
+            state.ActiveSlotIndex = msg.ActiveSlotIndex;
+            state.HandItemValue = msg.HandItemValue;
+            state.HandItemCount = msg.HandItemCount;
+            state.ItemOffset = msg.ItemOffset;
+            state.ItemRotation = msg.ItemRotation;
+            state.AimHandAngle = msg.AimHandAngle;
+            state.LastUpdateTime = Time.RealTime;
         }
 
-        public void HandleGameWorldInfoMessage(GameWorldInfoMessage1 gameWorldInfoMessage)
+        public void HandleGamePlayerHealthMessage(GamePlayerHealthMessage msg, int clientID)
         {
-            var subsystemTimeOfDay = GameManager.Project.FindSubsystem<SubsystemTimeOfDay>(throwOnError: true);
-            if (MathUtils.Abs(subsystemTimeOfDay.TimeOfDayOffset - gameWorldInfoMessage.TimeOfDayOffset) > 0.02)
-                subsystemTimeOfDay.TimeOfDayOffset = gameWorldInfoMessage.TimeOfDayOffset;
+            // msg.PlayerIndex = 发送方 ClientID, 写入 RemotePlayers
+            int remoteClientId = msg.PlayerIndex;
+            if (remoteClientId == client.ClientID) return;
 
-        }
-
-        public void HandleGameModifiedCellsMessage(GameModifiedCellsMessage gameModifiedCellsMessage)
-        {
-            // var subsystemTerrain = GameManager.Project.FindSubsystem<SuSubsystemTerrain>(throwOnError: true);
-            lock (SuSubsystemTerrain.ReModifiedCells) // 添加线程锁
+            NetworkPlayerState state;
+            if (!RemotePlayers.TryGetValue(remoteClientId, out state))
             {
-                //int index = 0;
-                SuSubsystemTerrain.CellValues = gameModifiedCellsMessage.CellValues;
-                foreach (var kvp in gameModifiedCellsMessage.ModifiedCells)
-                {
-                    //subsystemTerrain.ChangeCell(kvp.Key.X, kvp.Key.Y, kvp.Key.Z, gameModifiedCellsMessage.CellValues[index],false);
+                state = new NetworkPlayerState { ClientID = remoteClientId };
+                RemotePlayers[remoteClientId] = state;
+            }
+
+            state.Health = msg.Health;
+            state.MaxHealth = msg.MaxHealth;
+            state.IsDead = msg.IsDead;
+            Log.Information($"[ScMP] Remote player {remoteClientId} health: {msg.Health}/{msg.MaxHealth} (dead={msg.IsDead})");
+        }
+
+        public void HandleGameKickPlayerMessage(GameKickPlayerMessage msg, int sourceClientID)
+        {
+            // 仅 Host 可以处理踢人
+            if (client.ClientID != 0) return;
+
+            int targetID = msg.TargetClientID;
+            Log.Information($"[ScMP] Kick request: ClientID {targetID}, reason: {msg.Reason}");
+
+            // 释放玩家映射
+            playerMappingManager.ReleasePlayerIndex(targetID);
+
+            // 通过 Drt 框架断开玩家
+            // Comms.Drt 内部管理连接，我们通过 RefuseJoinGame 已经可以阻止加入
+            // Peer 层的 DisconnectPeer 需要 PeerData 引用
+            Log.Information($"[ScMP] Player {targetID} kicked");
+        }
+
+        public void HandleGameWorldInfoMessage(GameWorldInfoMessage1 msg)
+        {
+            var timeOfDay = GameManager.Project.FindSubsystem<SubsystemTimeOfDay>(true);
+            if (Math.Abs(timeOfDay.TimeOfDayOffset - msg.TimeOfDayOffset) > 0.02)
+                timeOfDay.TimeOfDayOffset = msg.TimeOfDayOffset;
+        }
+
+        public void HandleGameModifiedCellsMessage(GameModifiedCellsMessage msg)
+        {
+            // Source: SuSubsystemTerrain.cs - 接收远程方块修改
+            lock (SuSubsystemTerrain.ReModifiedCells)
+            {
+                SuSubsystemTerrain.CellValues = msg.CellValues;
+                foreach (var kvp in msg.ModifiedCells)
                     SuSubsystemTerrain.ReModifiedCells[kvp.Key] = kvp.Value;
-                    //index++; // 递增索引
-                }
             }
-
-
         }
 
-        public void HandleGamePlayerPositionMessage(GamePlayerPositionMessage gamePlayerPositionMessage, int clientID)
+        public void HandleGamePakWorldMessage(GamePakWorldMessage msg)
         {
-            // 将网络PlayerIndex转换为本地PlayerIndex
-            int localPlayerIndex = playerOperationSyncManager.ConvertPlayerIndexForClient(gamePlayerPositionMessage.PlayerIndex, ScMultiplayer.client.ClientID);
-            
-            // 如果转换失败，回退到原始值
-            if (localPlayerIndex == -1)
+            try
             {
-                localPlayerIndex = gamePlayerPositionMessage.PlayerIndex;
-            }
+                Log.Information($"[ScMP] Importing world: {msg.Name} ({msg.WorldData.Length} bytes)");
+                WorldsManager.ImportWorld(new MemoryStream(msg.WorldData));
+                WorldsManager.UpdateWorldsList();
 
-            foreach (var item in GameManager.Project.FindSubsystem<SubsystemPlayers>(throwOnError: true).ComponentPlayers)
-            {
-                if (item.PlayerData.PlayerIndex == localPlayerIndex)
+                foreach (var wi in WorldsManager.WorldInfos)
                 {
-                    item.ComponentBody.Position = gamePlayerPositionMessage.Position;
-                    item.ComponentBody.Rotation = gamePlayerPositionMessage.Rotation;
-                    item.ComponentBody.Velocity = gamePlayerPositionMessage.Velocity;
-                    // 使用 ModParentField 修改私有字段
-                    Game.Program.ModManager.ModParentField.ModifyParentField(item.ComponentLocomotion, "LookAngles", gamePlayerPositionMessage.LookAngles, typeof(ComponentLocomotion));
-
-                    item.ComponentBody.TargetCrouchFactor = gamePlayerPositionMessage.IsCrouching ? 1f : 0f;
-                    item.ComponentLocomotion.IsCreativeFlyEnabled = gamePlayerPositionMessage.IsFlying;
-                    //item.ComponentRider?.Mount
-                    IInventory inventory = item.ComponentMiner.Inventory;
-                    inventory.ActiveSlotIndex = gamePlayerPositionMessage.ActiveSlotIndex;
-                    // 移除当前槽位的所有物品（根据ComponentInventoryBase.cs）
-                    // 获取新的槽位索引
-                    int newActiveSlotIndex = inventory.ActiveSlotIndex;
-                    int removedCount = inventory.RemoveSlotItems(newActiveSlotIndex, inventory.GetSlotCount(newActiveSlotIndex));
-
-                    // 添加新的物品类型和数量（根据ComponentInventoryBase.cs）
-                    if (gamePlayerPositionMessage.HandItemValue != 0 && gamePlayerPositionMessage.HandItemCount > 0)
+                    if (wi.WorldSettings.Name == msg.Name)
                     {
-                        inventory.AddSlotItems(newActiveSlotIndex, gamePlayerPositionMessage.HandItemValue, gamePlayerPositionMessage.HandItemCount);
+                        SuPlayScreen.Play(wi);
+                        connectionSM.TransitionTo(NetworkConnectionStateMachine.ConnectionState.Playing);
+                        Log.Information($"[ScMP] World imported, entering game: {msg.Name}");
+                        return;
                     }
-                    var creatureModel = item.ComponentCreatureModel;
-                    creatureModel.InHandItemOffsetOrder = gamePlayerPositionMessage.ItemOffset;
-                    creatureModel.InHandItemRotationOrder = gamePlayerPositionMessage.ItemRotation;
-                    creatureModel.AimHandAngleOrder = gamePlayerPositionMessage.AimHandAngle;
                 }
+                Log.Error($"[ScMP] World imported but not found in world list: {msg.Name}");
             }
-        }
-
-
-        private void SendGamePlayerPositionMessage()
-        {
-            foreach (var item in GameManager.Project.FindSubsystem<SubsystemPlayers>(throwOnError: true).ComponentPlayers)
+            catch (Exception ex)
             {
-                // 检查当前玩家是否属于当前客户端
-                int currentPlayerIndex = item.PlayerData.PlayerIndex;
-                int currentClientId = ScMultiplayer.client.ClientID;
-                int clientPlayerIndex = playerMappingManager.GetPlayerIndex(currentClientId);
-                
-                // 只发送当前客户端控制的玩家数据
-                if (clientPlayerIndex != -1 && currentPlayerIndex == clientPlayerIndex)
-                {
-                    // 获取当前状态（根据文档内容）
-                    bool isCrouching = item.ComponentBody.TargetCrouchFactor > 0f;
-                    bool isFlying = item.ComponentLocomotion.IsCreativeFlyEnabled;
-                    bool isRiding = item.ComponentRider?.Mount != null;
-                    //int mountEntityId = isRiding ? item.ComponentRider.Mount.Entity : 0;
-                    // 获取当前手持物品状态（根据InventorySlotWidget.cs和ComponentHumanModel.cs）
-                    IInventory inventory = item.ComponentMiner.Inventory;
-                    int activeSlotIndex = inventory?.ActiveSlotIndex ?? -1;
-                    int handItemValue = inventory?.GetSlotValue(activeSlotIndex) ?? 0;
-                    int handItemCount = inventory?.GetSlotCount(activeSlotIndex) ?? 0;
-
-                    // 获取物品动画状态（根据ComponentHumanModel.cs）
-                    Vector3 itemOffset = item.ComponentCreatureModel.InHandItemOffsetOrder;
-                    Vector3 itemRotation = item.ComponentCreatureModel.InHandItemRotationOrder;
-                    float aimHandAngle = item.ComponentCreatureModel.AimHandAngleOrder;
-                    // 假设 componentCreatureModel 是玩家的 ComponentCreatureModel 实例
-                    Vector2 lookAngles = item.ComponentLocomotion.LookAngles;
-
-                    // 使用网络PlayerIndex而不是本地PlayerIndex
-                    int networkPlayerIndex = playerOperationSyncManager.ConvertLocalPlayerIndexToNetwork(currentPlayerIndex, currentClientId);
-                    if (networkPlayerIndex == -1)
-                    {
-                        networkPlayerIndex = currentPlayerIndex; // 回退到原始值
-                    }
-
-                    // 使用NetworkMessageSender发送消息
-                    NetworkMessageSender.SendPlayerPositionMessage(
-                        networkPlayerIndex, item.ComponentBody.Position,
-                        item.ComponentBody.Rotation, item.ComponentBody.Velocity, lookAngles,
-                        isCrouching, isFlying, isRiding, activeSlotIndex, handItemValue, handItemCount, 
-                        itemOffset, itemRotation, aimHandAngle);
-                }
+                Log.Error($"[ScMP] Failed to import world: {ex.Message}");
             }
         }
-        private void HandleGamePlayerInputMessage(GamePlayerInputMessage playerInputMessage)
-        {
-            foreach (var item in GameManager.Project.FindSubsystem<SubsystemPlayers>(throwOnError: true).ComponentPlayers)
-            {
-                if (item.PlayerData.PlayerIndex == playerInputMessage.PlayerIndex + 1)
-                {
-                    Log.Information("S{0}", playerInputMessage.PlayerInput.Move);
-                    Game.Program.ModManager.ModParentField.ModifyParentField(item.ComponentInput, "m_playerInput", playerInputMessage.PlayerInput, item.ComponentInput.GetType());
-                    // Game.Program.ModManager.ModParentField.ModifyParentField(item, "ComponentInput", default(ComponentInput), this.GetType());
-                    Log.Information("D{0}", item.ComponentInput.PlayerInput.Move);
-                }
-            }
-            Log.Information("{0}", playerInputMessage.PlayerInput);
-        }
 
-
-        private void Client_GameStateRequest(GameStateRequestData obj)
+        // ====================================================================
+        // Client 事件回调
+        // ====================================================================
+        private void Client_GameCreated(GameCreatedData obj)
         {
-            client.SendState(client.Step, Message.Write(new ChatMessage("Client_GameStateRequest", "Ok"), client.Address));
-            Log.Information($"Client_GameStateRequest:{0}", obj.ToString());
-        }
-
-        private void Client_ConnectRefused(ConnectRefusedData obj)
-        {
-            Log.Information($"Client_ConnectRefused:{0}", obj.Reason);
+            Log.Information($"[ScMP] GameCreated, ClientID={client.ClientID}, Creator={obj.CreatorAddress}");
+            IsHost = true;
+            connectionSM.TransitionTo(NetworkConnectionStateMachine.ConnectionState.Playing);
         }
 
         private void Client_GameJoined(GameJoinedData obj)
         {
-            Log.Information($"Client_GameJoined:{0},ClientID is {1}", obj.Step, client.ClientID);
-        }
-
-        private void Client_GameCreated(GameCreatedData obj)
-        {
-
-            Log.Information($"Client_GameCreated:{0},ClientID is {1}", obj.CreatorAddress, client.ClientID);
+            Log.Information($"[ScMP] GameJoined, Step={obj.Step}, ClientID={client.ClientID}");
+            IsHost = false;
+            downloadSM.TransitionTo(WorldDownloadStateMachine.DownloadState.Requesting);
         }
 
         private void Client_GameDescriptionRequest(GameDescriptionRequestData obj)
         {
-        }
-        private float m_accumulatedTime = 0f;
-        private float m_accumulatedTime1 = 0f;
-
-        private void SendGameWorldInfoMessage(float dt)
-        {
-            var subsystemGameInfo = GameManager.Project.FindSubsystem<SubsystemGameInfo>(throwOnError: true);
-            var subsystemTimeOfDay = GameManager.Project.FindSubsystem<SubsystemTimeOfDay>(throwOnError: true);
-            if (ScMultiplayer.client.ClientID == 0)
+            // Source: Comms.Drt Explorer queries server → server fires this on client
+            // Client must respond via SendGameDescription for game to appear in DiscoveredServers
+            if (LastGameDescription != null && LastGameDescription.Length > 0)
             {
-                // 使用NetworkMessageSender发送消息
-                NetworkMessageSender.SendWorldInfoMessage(
-                    subsystemTimeOfDay.TimeOfDayOffset, 
-                    subsystemGameInfo.TotalElapsedGameTime, 
-                    subsystemGameInfo.WorldSettings.TimeOfDayMode);
+                try
+                {
+                    client.SendGameDescription(LastGameDescription);
+                    Log.Information($"[ScMP] GameDescription sent ({LastGameDescription.Length} bytes)");
+                }
+                catch (Exception ex)
+                {
+                    Log.Error($"[ScMP] SendGameDescription failed: {ex.Message}");
+                }
             }
         }
 
+        private void Client_ConnectRefused(ConnectRefusedData obj)
+        {
+            Log.Information($"[ScMP] Connect refused: {obj.Reason}");
+            connectionSM.TransitionTo(NetworkConnectionStateMachine.ConnectionState.Disconnected);
+        }
+
+        private void Client_GameStateRequest(GameStateRequestData obj)
+        {
+            client.SendState(client.Step,
+                Message.WriteWithSender(new ChatMessage("StateSync", "OK"), client.Address));
+        }
+
+        private void Client_Error(Exception obj)
+        {
+            Log.Error($"[ScMP] Client error: {obj.Message}");
+        }
+
+        private void Server_Information(string obj)
+        {
+            Log.Information($"[Server] {obj}");
+        }
+
+        private void HandleGamePlayerInputMessage(GamePlayerInputMessage msg)
+        {
+            var players = GameManager.Project.FindSubsystem<SubsystemPlayers>(true).ComponentPlayers;
+            foreach (var item in players)
+            {
+                if (item.PlayerData.PlayerIndex == msg.PlayerIndex + 1)
+                {
+                    ModManager.ModParentField.ModifyParentField(
+                        item.ComponentInput, "m_playerInput",
+                        msg.PlayerInput, item.ComponentInput.GetType().BaseType);
+                }
+            }
+        }
+
+        // ====================================================================
+        // 异步注册 IUpdateable
+        // ====================================================================
         private async void StartAsyncRegistration()
         {
             try
             {
-                // 等待项目加载
                 await WaitForProjectLoaded();
-                GameManager.Project.FindSubsystem<SubsystemUpdate>(throwOnError: true).AddUpdateable(this);
+                GameManager.Project.FindSubsystem<SubsystemUpdate>(true).AddUpdateable(this);
             }
             catch (Exception ex)
             {
-                Log.Error($"异步注册失败: {ex.Message}");
+                Log.Error($"[ScMP] Async registration failed: {ex.Message}");
             }
         }
+
         private async Task WaitForProjectLoaded()
         {
             while (GameManager.Project == null)
-            {
                 await Task.Delay(1000);
+        }
+
+        /// <summary>
+        /// 探测物理 LAN IP：优先选择非虚拟网卡的私网 IPv4 地址
+        /// 逻辑：连 8.8.8.8 确定默认出口 IP，再验证是否为私网地址且非虚拟网卡
+        /// </summary>
+        private static System.Net.IPAddress DetectLanAddress()
+        {
+            try
+            {
+                // 方法1：通过 UDP 连 8.8.8.8 确定默认路由出口 IP
+                using (var socket = new System.Net.Sockets.Socket(
+                    System.Net.Sockets.AddressFamily.InterNetwork,
+                    System.Net.Sockets.SocketType.Dgram,
+                    System.Net.Sockets.ProtocolType.Udp))
+                {
+                    socket.Bind(new System.Net.IPEndPoint(System.Net.IPAddress.Any, 0));
+                    socket.Connect("8.8.8.8", 12345);
+                    var defaultIp = ((System.Net.IPEndPoint)socket.LocalEndPoint).Address;
+
+                    // 检查是否为私网地址 (10.x / 172.16-31.x / 192.168.x)
+                    if (IsPrivateAddress(defaultIp))
+                    {
+                        return defaultIp;
+                    }
+                }
+
+                // 非私网，继续搜索
             }
+            catch { }
+
+            try
+            {
+                // 方法2：遍历网卡，找第一个非虚拟的私网 IPv4
+                foreach (var ni in System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces())
+                {
+                    // 跳过虚拟/隧道/回环
+                    if (ni.OperationalStatus != System.Net.NetworkInformation.OperationalStatus.Up)
+                        continue;
+                    if (ni.NetworkInterfaceType == System.Net.NetworkInformation.NetworkInterfaceType.Loopback)
+                        continue;
+                    // 跳过常见的虚拟网卡描述关键词
+                    var desc = ni.Description.ToLowerInvariant();
+                    if (desc.Contains("zerotier") || desc.Contains("wireguard") ||
+                        desc.Contains("vmware") || desc.Contains("virtualbox") ||
+                        desc.Contains("hyper-v") || desc.Contains("wsl") ||
+                        desc.Contains("docker") || desc.Contains("tunnel") ||
+                        desc.Contains("cfw") || desc.Contains("clash"))
+                        continue;
+
+                    var ipProps = ni.GetIPProperties();
+                    foreach (var ua in ipProps.UnicastAddresses)
+                    {
+                        if (ua.Address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork &&
+                            IsPrivateAddress(ua.Address))
+                        {
+                            return ua.Address;
+                        }
+                    }
+                }
+            }
+            catch { }
+
+            // 兜底：返回 Any（让系统自动选择）
+            return System.Net.IPAddress.Any;
         }
 
-
-        private void Client_Error(Exception obj)
+        private static bool IsPrivateAddress(System.Net.IPAddress addr)
         {
-            Log.Error("Client_Error{0}", obj);
-        }
-
-
-        private void Server_Information(string obj)
-        {
-            Log.Information(obj);
+            if (addr.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork)
+                return false;
+            var bytes = addr.GetAddressBytes();
+            // 10.0.0.0/8
+            if (bytes[0] == 10) return true;
+            // 172.16.0.0/12
+            if (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31) return true;
+            // 192.168.0.0/16
+            if (bytes[0] == 192 && bytes[1] == 168) return true;
+            return false;
         }
 
         public void OnUnload()
         {
-            throw new NotImplementedException();
+            try { client?.LeaveGame(); } catch { }
+            try { server?.Dispose(); } catch { }
+            try { explorer?.StopDiscovery(); } catch { }
         }
-
-
     }
 }
-
-/*           if (Keyboard.IsKeyDownOnce(Key.T))
-           {
-               DialogsManager.ShowDialog(ScreensManager.RootWidget, new TextBoxDialog("Message", "", 125, delegate (string s)
-               {
-                   if (s != null)
-                   {
-
-                       client.SendInput(Message.Write(new ChatMessage(client.Peer.Address.ToString(), s),client.Address));
-                   }
-               }));
-
-           }*/
-/* DatabaseObject ComponentTemplatemap = new DatabaseObject(database.FindDatabaseObjectType("ComponentTemplate", true), new Guid("387007A5-9269-1362-A0E7-DFEA4AC68E02"), "Map", null);
-             ComponentTemplatemap.Description = "";
-             ComponentTemplatemap.ExplicitInheritanceParent = database.FindDatabaseObject(new Guid("b05700ed-7e4e-4679-98f5-b597f421496b"), database.FindDatabaseObjectType("ComponentTemplate", true), true);
-             ComponentTemplatemap.NestingParent = database.FindDatabaseObject("Gameplay", database.FindDatabaseObjectType("Folder", true), true);
-
-             DatabaseObject Parameterclass = new DatabaseObject(database.FindDatabaseObjectType("Parameter", true), new Guid("B13D2D65-46A7-D038-8111-DE8FCBA58FBC"), "Class", "SurvivalcraftMiniMap.SuComponentMap");
-             Parameterclass.NestingParent = ComponentTemplatemap;
-
-             DatabaseObject databaseObject1 = new DatabaseObject(database.FindDatabaseObjectType("MemberComponentTemplate", true), new Guid("736FC2A9-9B0A-2E00-F7C8-95A4A6811FEE"), "Map", null);
-             databaseObject1.Description = "";
-             databaseObject1.ExplicitInheritanceParent = database.FindDatabaseObject(new Guid("387007A5-9269-1362-A0E7-DFEA4AC68E02"), database.FindDatabaseObjectType("ComponentTemplate", true), true);
-
-             databaseObject1.NestingParent = database.FindDatabaseObject("Player", database.FindDatabaseObjectType("EntityTemplate", true), true);*///挂载
-
-
-/*            if (Keyboard.IsKeyDownOnce(Key.J))
-            {
-                Log.Information($"IsKeyDown(Key.J)");
-                ServerDescription a = explorer.DiscoveredServers.FirstOrDefault();
-                DialogsManager.ShowDialog(ScreensManager.RootWidget, new MessageDialog("Loading Error", a.GameDescriptions.Count().ToString(), "CreateGame", "Suppress", delegate (MessageDialogButton b)
-                {
-                    switch (b)
-                    {
-                        case MessageDialogButton.Button1:
-                            client.CreateGame(a.Address, Message.Write(new ChatMessage("ss", "ss")), client.ClientID.ToString());
-                            break;
-                        case MessageDialogButton.Button2:
-
-                            break;
-                    }
-                }));
-            }*/
-/*if (Keyboard.IsKeyDownOnce(Key.K))
-{
-    Log.Information($"IsKeyDown(Key.K)");
-    ServerDescription a = explorer.DiscoveredServers.FirstOrDefault();
-    DialogsManager.ShowDialog(null, new ListSelectionDialog("Select Sort Order", a.GameDescriptions, 60f, (object item) => { return item.ToString(); }, delegate (object item)
-    {
-
-        client.JoinGame(a.Address, ((GameDescription)item).GameID, Message.Write(new ChatMessage("ss", "ss")), client.ClientID.ToString());
-        Log.Information("JoinGame:{0}", a.Address);
-    }));
-}*/
-
-
-/* using (MemoryStream memoryStream = new MemoryStream(SuPlayScreen.WorldData))
- {
-     foreach (var worldInfos in WorldsManager.WorldInfos)
-     {
-         if (worldInfos.WorldSettings.Name == gameWorldInfoMessage.Name)
-         {
-
-             client.SendInput(Message.Write(new GamePakWorldMessage(worldInfos.WorldSettings.Name, memoryStream.ToArray())));
-         }
-
-     }
-
- }*/
-
-/*
-        SuPlayScreen.IsGameJoined = true;
-        ScreensManager.SwitchScreen("GameLoading", item, null);
-        SuPlayScreen.m_worldsListWidget.SelectedItem = null;*/
-/*if (item.LastSaveTime.Equals(gamePakWorldMessage.LastSaveTime) )
-    {
-
-    }
-    */

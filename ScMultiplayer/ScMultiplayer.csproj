@@ -43,7 +43,9 @@
   <ItemGroup>
     <Compile Include="Func\Component\SuComponentInput.cs" />
     <Compile Include="Func\Screen\SuPlayScreen.cs" />
+    <Compile Include="Message\GameKickPlayerMessage.cs" />
     <Compile Include="Message\GameModifiedCellsMessage.cs" />
+    <Compile Include="Message\GamePlayerHealthMessage.cs" />
     <Compile Include="Message\GamePakWorldMessage.cs" />
     <Compile Include="Message\GamePlayerInputMessage.cs" />
     <Compile Include="Message\GamePlayerPositionMessage.cs" />
@@ -53,6 +55,7 @@
     <Compile Include="Message\ChatMessage.cs" />
     <Compile Include="Message\SuReader.cs" />
     <Compile Include="Message\SuWriter.cs" />
+    <Compile Include="Networking\NetworkStateMachine.cs" />
     <Compile Include="Plug\ScMultiplayer.cs" />
     <Compile Include="String2int.cs" />
     <Compile Include="Func\Subsystem\SuSubsystemTerrain.cs" />
