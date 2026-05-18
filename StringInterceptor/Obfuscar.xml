@@ -1,0 +1,8 @@
+<?xml version='1.0'?>
+<Obfuscator>
+    <Var name="InPath" value=".\bin\Debug\net48" />
+    <Var name="OutPath" value=".\bin\Debug\net48\Obfuscar" />
+    <Var name="SkipExtraDependencies" value="true" />
+    <Module file="$(InPath)\GameEntitySystem.dll"/>
+    <Module file="$(InPath)\StringInterceptor.dll"/>
+</Obfuscator>

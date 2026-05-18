@@ -3,6 +3,7 @@
 
 ## 根目录：默认忽略所有文件夹
 /*
+*.vs/
 
 ## 保留项目根文件
 !.gitignore
@@ -12,7 +13,6 @@
 !SKILL.md
 !AGENT-PROFILE.md
 !images/
-!images/**
 
 ## ===== 以下由 SYNC_LIST 生成，请勿手动修改 =====
 ## sync:ConsoleMod
@@ -20,29 +20,40 @@
 !ConsoleMod/**
 ConsoleMod/bin/
 ConsoleMod/obj/
+ConsoleMod/.vs/
 ## sync:RainWithoutDawn
 !RainWithoutDawn/
 !RainWithoutDawn/**
 RainWithoutDawn/bin/
 RainWithoutDawn/obj/
+RainWithoutDawn/.vs/
 ## sync:TemperatureImmunity
 !TemperatureImmunity/
 !TemperatureImmunity/**
 TemperatureImmunity/bin/
 TemperatureImmunity/obj/
+TemperatureImmunity/.vs/
 ## sync:Comms
 !Comms/
 !Comms/**
 Comms/bin/
 Comms/obj/
+Comms/.vs/
 ## sync:ScMultiplayer
 !ScMultiplayer/
 !ScMultiplayer/**
 ScMultiplayer/bin/
 ScMultiplayer/obj/
+ScMultiplayer/.vs/
 ## sync:SurvivalcraftMiniMap
 !SurvivalcraftMiniMap/
 !SurvivalcraftMiniMap/**
 SurvivalcraftMiniMap/bin/
 SurvivalcraftMiniMap/obj/
 SurvivalcraftMiniMap/.vs/
+## sync:StringInterceptor
+!StringInterceptor/
+!StringInterceptor/**
+StringInterceptor/bin/
+StringInterceptor/obj/
+StringInterceptor/.vs/

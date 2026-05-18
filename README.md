@@ -43,6 +43,7 @@ pwsh sync-gitignore.ps1
 | TemperatureImmunity | Component 替换 | 替换体温组件，保持恒温 |
 | Comms | 联机通信库 | SuAPI 联机 Mod 通信基础库 |
 | ScMultiplayer | 联机 Mod | 复杂联机 Mod 示例 |
+| StringInterceptor | 字符串拦截 | Widget 树文本拦截 + IStringProcessor 翻译接口 |
 
 ## 相关仓库
 
