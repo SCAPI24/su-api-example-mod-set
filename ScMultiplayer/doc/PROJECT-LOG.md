@@ -2,7 +2,47 @@
 
 > 记录所有用户需求、决策和变更
 > 项目: ScMultiplayer 联机 Mod
-> 最后更新: 2026-05-18
+> 最后更新: 2026-05-19
+
+---
+
+## 2026-05-19 03:46 StringInterceptor 中文字体切换
+
+### 字体来源
+`SurvivalcraftApi-SCAPI1.9_MP\Survivalcraft\Content\Assets\Fonts\`
+- `Pericles.webp` → `ChinesePericles.png` (4096×4096 RGBA, 15.7MB)
+- `Pericles.lst` → `ChinesePericlesData.txt` (826KB, 10817 glyphs)
+
+### .lst 格式
+```
+10817                  ← glyph 总数
+<char> <texL> <texT> <texR> <texB> <offX> <offY> <advance>  ×10817
+51                     ← glyphHeight
+2 1                    ← spacing
+0.5                    ← scale
+?                      ← fallbackCode
+7475                   ← kerning 对数
+<char> <char> <amount>  ×7475
+```
+Tex 坐标为归一化 0-1，offset/advance 为像素值。
+
+### 关键发现
+- `BitmapFont.Initialize(Texture2D, Stream)` 是 **internal**，Mod 不可调用
+- 替代：public constructor `BitmapFont(texture, glyphs, fallbackCode, glyphHeight, spacing, scale)`
+- `SetKerning()` 是 public，`m_glyphsByCode` 是 internal
+- ModResource 不加载 .lst，需改 .txt 后缀
+- ContentCache key: `Content/Fonts/FooData.txt` → `Mod/Fonts/FooData`
+
+---
+
+## 2026-05-19 03:23 StringInterceptor TranslationProcessor
+
+### 需求
+主页 "Play" 按钮文字改为 "开始游戏"
+
+### 实现
+`TranslationProcessor : IStringProcessor`，Dictionary 映射 `{"Play", "开始游戏"}`。
+注册顺序：TranslationProcessor → DefaultStringProcessor（翻译先于编号）。
 
 ---
 
