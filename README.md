@@ -41,11 +41,16 @@ pwsh sync-gitignore.ps1
 
 字符串翻译 Mod，通过 Widget 树文本拦截 + IStringProcessor 翻译接口，将游戏界面翻译为中文。支持 .lst 字体加载、动态译文收集、XML 翻译表导出。
 
+### RainWithoutDawn
+
+![RainWithoutDawn 截图](images/RainWithoutDawn.png)
+
+Subsystem 替换天气系统，移除下雨逻辑。简洁的 Subsystem 替换模式参考范例。
+
 ### 其他 Mod
 
 | Mod | 类型 | 说明 |
 |-----|------|------|
-| RainWithoutDawn | Subsystem 替换 | 替换天气系统，移除下雨逻辑 |
 | TemperatureImmunity | Component 替换 | 替换体温组件，保持恒温 |
 | Comms | 联机通信库 | SuAPI 联机 Mod 通信基础库 |
 | ScMultiplayer | 联机 Mod | 复杂联机 Mod 示例 |
