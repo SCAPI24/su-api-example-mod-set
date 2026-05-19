@@ -35,6 +35,12 @@ pwsh sync-gitignore.ps1
 
 游戏内控制台，按 `·` 打开，支持 `move +x300` 等指令移动角色，Widget Overlay 模式不暂停游戏。
 
+### StringInterceptor
+
+![StringInterceptor 截图](images/string-interceptor.png)
+
+字符串翻译 Mod，通过 Widget 树文本拦截 + IStringProcessor 翻译接口，将游戏界面翻译为中文。支持 .lst 字体加载、动态译文收集、XML 翻译表导出。
+
 ### 其他 Mod
 
 | Mod | 类型 | 说明 |
@@ -43,7 +49,6 @@ pwsh sync-gitignore.ps1
 | TemperatureImmunity | Component 替换 | 替换体温组件，保持恒温 |
 | Comms | 联机通信库 | SuAPI 联机 Mod 通信基础库 |
 | ScMultiplayer | 联机 Mod | 复杂联机 Mod 示例 |
-| StringInterceptor | 字符串拦截 | Widget 树文本拦截 + IStringProcessor 翻译接口 |
 
 ## 相关仓库
 
