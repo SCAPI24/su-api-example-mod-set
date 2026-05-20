@@ -26,6 +26,7 @@ Comms
 ScMultiplayer
 SurvivalcraftMiniMap
 StringInterceptor
+MemoryBankDrawMod
 ```
 
 - 列出的文件夹 → Git 可追踪

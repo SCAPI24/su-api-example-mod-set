@@ -4,9 +4,62 @@
 > 项目: ScMultiplayer 联机 Mod
 > 最后更新: 2026-05-19
 
----
+## 2026-05-21 01:56 MemoryBankDrawMod 开发完成
 
-## 2026-05-19 03:46 StringInterceptor 中文字体切换
+### 需求
+为 Memory Bank 方块编辑器添加 Draw 绘图模式：
+- Linear/Grid 按钮改为三态循环切换：Linear → Grid → Draw
+- Draw 界面左侧 9 个颜色按钮（0=橡皮擦 + 8~F=彩色），点击 toggle 选中/取消
+- 右侧 16×16 格子，点击/拖拽填入选中颜色
+- 值 0 和 8-F 显示纯色，值 1-7 显示灰色底+白色 SignFont 数字
+
+### 架构
+- **EventBus 替换** `SubsystemMemoryBankBlockBehavior`（GUID: `32a2d9ef-b01a-4f80-a6f8-5d2d5e9e9275`）
+- **SuEditMemoryBankDialog** 继承 `Dialog`（非 EditMemoryBankDialog），从 `Dialogs/EditMemoryBankDialog` XML 加载布局
+- 完全自建 Draw 模式 UI，不依赖原始对话框逻辑
+
+### 踩坑记录
+
+#### 1. TextBoxWidget 是 internal 类
+跨程序集无法直接引用，必须用反射 `PropertyInfo.GetValue/SetValue` 访问 Text 属性。
+
+#### 2. ClickableWidget 继承 Widget（非 ContainerWidget）
+不能添加 Children。交互元素需 CanvasWidget 容器 + ClickableWidget 叠加层模式：视觉元素设 `IsHitTestVisible=false`，ClickableWidget 放最上层。
+
+#### 3. 构造函数未初始化 TextBox → 数据“丢失”（根因）
+XML 加载的 TextBox 内容为空。第一帧 Update 走 SyncTextBoxesToData 从空 TextBox 读取 → m_tmpMemoryBankData 被空数据覆盖 → 原始数据丢失。
+修复：构造函数中用 `m_tmpMemoryBankData.SaveString()` 初始化所有 TextBox。
+
+#### 4. 反射设置其他类 private 字段抛 ArgumentException
+SuEditMemoryBankDialog 继承 Dialog，`typeof(EditMemoryBankDialog).GetField("m_ignoreTextChanges").SetValue(this, true)` 抛异常——字段不在当前类型上。EventBus 吞异常后对话框不显示。修复：删除 IgnoreTextChanges 逻辑，使用自己的 m_ignoreTextChanges 字段。
+
+#### 5. Widget API 误用
+- StackPanelWidget.Direction → `LayoutDirection` 枚举（非 WidgetDirection）
+- CanvasWidget.SetWidgetPosition → 实例方法（非静态）
+- Widget.Size → 仅 CanvasWidget 有，ClickableWidget 无
+
+#### 6. SignFont FontScale
+- 1.0 太小看不清
+- 1.5 合适（CELL_SIZE=15px 的格子内）
+- 值 1-7 灰色底+白字清晰可辨，保留灰色不改黑
+
+### 文件结构
+```
+Mod/MemoryBankDrawMod/
+├── MemoryBankDrawMod.csproj
+├── ModInfo.xml
+├── Obfuscar.xml
+├── Plug/MemoryBankDrawMod.cs          (IMod 入口，EventBus 替换)
+└── Func/
+    ├── SuSubsystemMemoryBankBlockBehavior.cs  (重写 OnEditInventoryItem/OnEditBlock)
+    └── SuEditMemoryBankDialog.cs             (三态对话框，~530行)
+```
+
+### 部署
+- .scmod: `[SuAPI]DrawMemoryBank.scmod` (~10KB)
+- 位置: `Survivalcraft\bin\Debug\net48\Mods\`
+
+---
 
 ### 字体来源
 `SurvivalcraftApi-SCAPI1.9_MP\Survivalcraft\Content\Assets\Fonts\`
