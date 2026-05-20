@@ -25,11 +25,12 @@ TemperatureImmunity
 Comms
 ScMultiplayer
 SurvivalcraftMiniMap
+StringInterceptor
 ```
 
 - 列出的文件夹 → Git 可追踪
 - 未列出的文件夹 → Git 忽略
-- 已追踪文件夹内的 `bin/`、`obj/`、`.vs/` 自动排除
+- 已追踪文件夹内的 `bin/`、`obj/` 自动排除
 - 根目录保留文件：`.gitignore` / `SYNC_LIST` / `sync-gitignore.ps1` / `README.md` / `SKILL.md` / `AGENT-PROFILE.md` / `images/`（若新增根文件需同步更新 sync-gitignore.ps1）
 
 ## 添加 Mod 到示例集
@@ -85,6 +86,8 @@ ModName/obj/
 
 关键：`bin/` `obj/` 排除必须在 `!ModName/**` **之后**声明，Git 同文件中后匹配的规则优先。
 
+> ⚠ Public 项目不生成 `.vs/` 排除规则。全局可用 `*.vs/` 手动添加到 .gitignore 头部。
+
 ## 常见问题
 
 - **添加 Mod 后 bin/obj 仍被追踪**：可能是历史缓存，用 `git rm -r --cached ModName/bin ModName/obj` 清除
@@ -93,3 +96,5 @@ ModName/obj/
 - **Mod 目录是独立 Git 仓库无法同步**：移除 `.git` 子目录（`Remove-Item -Recurse -Force ModName\.git`）后重新 add
 - **忘记推送 GitHub**：`git push github master` 补推
 - **pwsh 未安装导致 sync-gitignore.ps1 无法运行**：可用 Python 脚本替代生成 .gitignore
+- **添加后 bin/obj 仍被追踪**：`git rm -r --cached ModName/bin ModName/obj` 清除缓存
+- **.gitignore 手动修改后需重新生成**：运行 `sync-gitignore.ps1` 覆盖回标准格式
