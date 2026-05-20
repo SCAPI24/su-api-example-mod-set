@@ -20,36 +20,43 @@
 !ConsoleMod/**
 ConsoleMod/bin/
 ConsoleMod/obj/
+ConsoleMod/.vs/
 ## sync:RainWithoutDawn
 !RainWithoutDawn/
 !RainWithoutDawn/**
 RainWithoutDawn/bin/
 RainWithoutDawn/obj/
+RainWithoutDawn/.vs/
 ## sync:TemperatureImmunity
 !TemperatureImmunity/
 !TemperatureImmunity/**
 TemperatureImmunity/bin/
 TemperatureImmunity/obj/
+TemperatureImmunity/.vs/
 ## sync:Comms
 !Comms/
 !Comms/**
 Comms/bin/
 Comms/obj/
+Comms/.vs/
 ## sync:ScMultiplayer
 !ScMultiplayer/
 !ScMultiplayer/**
 ScMultiplayer/bin/
 ScMultiplayer/obj/
+ScMultiplayer/.vs/
 ## sync:SurvivalcraftMiniMap
 !SurvivalcraftMiniMap/
 !SurvivalcraftMiniMap/**
 SurvivalcraftMiniMap/bin/
 SurvivalcraftMiniMap/obj/
+SurvivalcraftMiniMap/.vs/
 ## sync:StringInterceptor
 !StringInterceptor/
 !StringInterceptor/**
 StringInterceptor/bin/
 StringInterceptor/obj/
+StringInterceptor/.vs/
 
 # 全局忽略 .vs 目录（必须在所有 !Mod/** 之后以覆盖反忽略）
 *.vs/
