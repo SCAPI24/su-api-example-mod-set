@@ -45,10 +45,10 @@ SurvivalcraftMiniMap
 
 ```powershell
 # 1. 追加 Mod 文件夹名到 SYNC_LIST
-Add-Content "SYNC_LIST" "MyNewMod"
+Add-Content "{REPO_ROOT}\SYNC_LIST" "MyNewMod"
 
 # 2. 重新生成 .gitignore
-pwsh "sync-gitignore.ps1"
+pwsh "{REPO_ROOT}\sync-gitignore.ps1"
 
 # 3. 提交推送（双平台）
 cd "{REPO_ROOT}"
