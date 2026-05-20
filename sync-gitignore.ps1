@@ -37,6 +37,7 @@ $header = @(
     "!README.md",
     "!SKILL.md",
     "!AGENT-PROFILE.md",
+    "!images/",
     ""
 )
 
