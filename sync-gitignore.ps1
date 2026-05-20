@@ -52,6 +52,7 @@ foreach ($mod in $mods) {
     # bin/ and obj/ must come AFTER !mod/** to override the un-ignore
     $generated += "$mod/bin/"
     $generated += "$mod/obj/"
+    $generated += "$mod/.vs/"
 }
 
 # Write .gitignore

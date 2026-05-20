@@ -30,7 +30,7 @@ StringInterceptor
 
 - 列出的文件夹 → Git 可追踪
 - 未列出的文件夹 → Git 忽略
-- 已追踪文件夹内的 `bin/`、`obj/` 自动排除
+- 已追踪文件夹内的 `bin/`、`obj/`、`.vs/` 自动排除
 - 根目录保留文件：`.gitignore` / `SYNC_LIST` / `sync-gitignore.ps1` / `README.md` / `SKILL.md` / `AGENT-PROFILE.md` / `images/`（若新增根文件需同步更新 sync-gitignore.ps1）
 
 ## 添加 Mod 到示例集
@@ -82,11 +82,10 @@ git config core.sshCommand "ssh -i ~/.ssh/Gitee -o IdentitiesOnly=yes"
 !ModName/**
 ModName/bin/
 ModName/obj/
+ModName/.vs/
 ```
 
-关键：`bin/` `obj/` 排除必须在 `!ModName/**` **之后**声明，Git 同文件中后匹配的规则优先。
-
-> ⚠ Public 项目不生成 `.vs/` 排除规则。全局可用 `*.vs/` 手动添加到 .gitignore 头部。
+关键：`bin/` `obj/` `.vs/` 排除必须在 `!ModName/**` **之后**声明，Git 同文件中后匹配的规则优先。
 
 ## 常见问题
 
