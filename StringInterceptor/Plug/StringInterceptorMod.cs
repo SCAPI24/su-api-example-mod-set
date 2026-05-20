@@ -260,7 +260,7 @@ namespace StringInterceptor
     public class StringInterceptorMod : IMod
     {
         public string Name => "String Interceptor";
-        public string Version => "1.4.0";
+        public string Version => "1.5.0";
         public IEnumerable<string> Dependencies => Array.Empty<string>();
         public bool IsEnabled { get; set; } = true;
 
@@ -299,7 +299,7 @@ namespace StringInterceptor
                 return HandleLoadingInitialize((List<Action>)args[0]);
             }, EventPriority.LOWEST);
 
-            Log.Information("[StringInterceptor] v1.3.0 Loaded. Chinese font + Pericles coexist.");
+            Log.Information("[StringInterceptor] v1.5.0 Loaded. 4-size Chinese fonts + Pericles coexist.");
         }
 
         private object[] HandleLoadingInitialize(List<Action> actions)

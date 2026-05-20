@@ -35,6 +35,57 @@ Tex 坐标为归一化 0-1，offset/advance 为像素值。
 
 ---
 
+## 2026-05-20 20:27 StringInterceptor 多尺寸中文字体 v1.5.0
+
+### 需求
+原方案从 1 套 ChinesePericles 字体 Clone 出 4 个尺寸，但 Clone 只改 Scale，所有尺寸共享同一纹理和 glyph 坐标——字体在不同尺寸下字形比例不一致。改为分别加载 4 套独立尺寸中文字体。
+
+### 字体文件
+每套字体含 .png 纹理 + glyph 数据（原 .lst 重命名为 *data.txt）：
+
+| 字体 | 纹理 | glyph 数据 | GlyphHeight | Scale | 渲染高度 |
+|------|------|-----------|-------------|-------|----------|
+| chinese12 | chinese12.png | chinese12data.txt | 16 | 0.5 | 8.0 |
+| chinese18 | chinese18.png | chinese18data.txt | 24 | 0.5 | 12.0 |
+| chinese24 | chinese24.png | chinese24data.txt | 32 | 0.5 | 16.0 |
+| chinese32 | chinese32.png | chinese32data.txt | 43 | 0.5 | 21.5 |
+
+underline 变体（chinese12u/18u + *udata.txt）已重命名但未加载（当前 Mod 不涉及 underline 字体）。
+
+### 关键发现: Scale 校准
+
+**问题**: 中文字体 Scale=0.5，Pericles Scale=0.632，渲染高度 = GlyphHeight × Scale。中文字体渲染高度只有 Pericles 的 ~55%，中英文混排时中文明显偏小。
+
+**校准公式**: `校准Scale = PericlesScale × PericlesGH / ChineseGH`
+
+| 字体 | GH | 校准Scale | 渲染高度 ≈ Pericles渲染高度 |
+|------|----|-----------|-----------------------------|
+| chinese12 | 16 | 0.948 | 15.17 ≈ Pericles12(24×0.632) |
+| chinese18 | 24 | 0.895 | 21.49 ≈ Pericles18(34×0.632) |
+| chinese24 | 32 | 0.889 | 28.44 ≈ Pericles24(45×0.632) |
+| chinese32 | 43 | 0.867 | 37.29 ≈ Pericles32(59×0.632) |
+
+**实现**: `rawFont?.Clone(校准Scale, Vector2.Zero)` — Clone 共享纹理和 glyph 数组，只改 Scale，零额外内存。
+
+### 文件重命名规则
+- `.lst` → `*data.txt`: ModResource.LoadResourceFromStream 仅支持 .png/.jpg/.txt/.xml/.dae
+- 命名避免与 .png 同名: `chinese12.png` + `chinese12data.txt`（同 key `Mod/Fonts/chinese12` 但类型不同 Texture2D vs string，ContentCache.Set 会覆盖）
+- 实际无冲突: `chinese12` → Texture2D, `chinese12data` → string，key 不同
+
+### 映射逻辑
+```csharp
+// 按 Pericles GlyphHeight 区间选择中文字体
+if (glyphHeight <= 24f) return ChineseFont12;  // Pericles12 GH=24
+if (glyphHeight <= 34f) return ChineseFont18;  // Pericles18 GH=34
+if (glyphHeight <= 45f) return ChineseFont24;  // Pericles24 GH=45
+return ChineseFont32;                          // Pericles32 GH=59
+```
+
+### DLL 字符串验证技巧
+.NET DLL 中字符串为 UTF-16LE 编码，`[Encoding]::Unicode.GetString($bytes).IndexOf()` 搜索。UTF-8 搜索搜不到标识符字符串。const float 被 JIT 内联为浮点指令，字符串搜索搜不到常量名，但日志字符串可搜。
+
+---
+
 ## 2026-05-19 03:23 StringInterceptor TranslationProcessor
 
 ### 需求
