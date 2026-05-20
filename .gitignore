@@ -57,6 +57,14 @@ SurvivalcraftMiniMap/.vs/
 StringInterceptor/bin/
 StringInterceptor/obj/
 StringInterceptor/.vs/
+## sync:MemoryBankDrawMod
+!MemoryBankDrawMod/
+!MemoryBankDrawMod/**
+MemoryBankDrawMod/bin/
+MemoryBankDrawMod/obj/
+MemoryBankDrawMod/.vs/
+MemoryBankDrawMod/draw.zip
+MemoryBankDrawMod/pack/
 
 # 全局忽略 .vs 目录（必须在所有 !Mod/** 之后以覆盖反忽略）
 *.vs/

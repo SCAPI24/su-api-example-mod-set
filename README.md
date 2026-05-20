@@ -47,6 +47,10 @@ pwsh sync-gitignore.ps1
 
 Subsystem 替换天气系统，移除下雨逻辑。简洁的 Subsystem 替换模式参考范例。
 
+### MemoryBankDrawMod
+
+Memory Bank 绘图编辑器 Mod，替换 `SubsystemMemoryBankBlockBehavior`，用自定义 Dialog 在原始 Linear/Grid 视图基础上增加 Draw 模式——16×16 像素绘图网格，支持 16 色画笔和拖拽填充。演示 Dialog 替换模式、TextBoxWidget 反射、ClickableWidget 叠加层架构。
+
 ### 其他 Mod
 
 | Mod | 类型 | 说明 |
