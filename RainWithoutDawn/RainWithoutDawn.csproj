@@ -31,17 +31,9 @@
     <WarningLevel>4</WarningLevel>
   </PropertyGroup>
   <ItemGroup>
-    <Reference Include="Engine, Version=1.0.0.0, Culture=neutral, processorArchitecture=MSIL">
-      <SpecificVersion>False</SpecificVersion>
-      <HintPath>..\..\..\SurvivalcraftMonodroid\Survivalcraft\bin\Debug\net10.0-windows10.0.19041.0\win-x64\Engine.dll</HintPath>
-    </Reference>
-    <Reference Include="EntitySystem">
-      <HintPath>..\..\..\SurvivalcraftMonodroid\Survivalcraft\bin\Debug\net10.0-windows10.0.19041.0\win-x64\EntitySystem.dll</HintPath>
-    </Reference>
-    <Reference Include="Survivalcraft, Version=2.4.10.5, Culture=neutral, processorArchitecture=MSIL">
-      <SpecificVersion>False</SpecificVersion>
-      <HintPath>..\..\..\SurvivalcraftMonodroid\Survivalcraft\bin\Debug\net10.0-windows10.0.19041.0\win-x64\Survivalcraft.dll</HintPath>
-    </Reference>
+    <ProjectReference Include="..\..\Engine\Engine.csproj" />
+    <ProjectReference Include="..\..\EntitySystem\GameEntitySystem.csproj" />
+    <ProjectReference Include="..\..\Survivalcraft\Survivalcraft.csproj" />
     <Reference Include="System" />
     <Reference Include="System.Core" />
     <Reference Include="System.Xml.Linq" />
