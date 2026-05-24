@@ -1,89 +1,39 @@
-<?xml version="1.0" encoding="utf-8"?>
-<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
-  <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
+<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
-    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
-    <ProjectGuid>{F5CE1E33-2724-45BE-B03E-D0FE941EF5A1}</ProjectGuid>
-    <OutputType>Library</OutputType>
-    <AppDesignerFolder>Properties</AppDesignerFolder>
+    <TargetFrameworks>net10.0-android;net10.0-windows10.0.19041.0</TargetFrameworks>
+    <LangVersion>latest</LangVersion>
     <RootNamespace>ScMultiplayer</RootNamespace>
     <AssemblyName>ScMultiplayer</AssemblyName>
-    <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
-    <FileAlignment>512</FileAlignment>
-    <Deterministic>true</Deterministic>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <ImplicitUsings>disable</ImplicitUsings>
   </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
-    <DebugSymbols>true</DebugSymbols>
-    <DebugType>full</DebugType>
-    <Optimize>false</Optimize>
-    <OutputPath>bin\Debug\</OutputPath>
-    <DefineConstants>DEBUG;TRACE</DefineConstants>
-    <ErrorReport>prompt</ErrorReport>
-    <WarningLevel>4</WarningLevel>
-  </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
-    <DebugType>pdbonly</DebugType>
-    <Optimize>true</Optimize>
-    <OutputPath>bin\Release\</OutputPath>
-    <DefineConstants>TRACE</DefineConstants>
-    <ErrorReport>prompt</ErrorReport>
-    <WarningLevel>4</WarningLevel>
-  </PropertyGroup>
-  <ItemGroup>
-    <Reference Include="System" />
-    <Reference Include="System.Core" />
-    <Reference Include="System.Xml.Linq" />
-    <Reference Include="System.Data.DataSetExtensions" />
-    <Reference Include="Microsoft.CSharp" />
-    <Reference Include="System.Data" />
-    <Reference Include="System.Net.Http" />
-    <Reference Include="System.Xml" />
+
+  <!-- Windows: ProjectReference -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0-windows10.0.19041.0'">
+    <ProjectReference Include="..\..\EntitySystem\EntitySystem.csproj" />
+    <ProjectReference Include="..\..\Survivalcraft\Survivalcraft.csproj" />
+    <ProjectReference Include="..\Comms\Comms.csproj" />
   </ItemGroup>
-  <ItemGroup>
-    <Compile Include="Func\Component\SuComponentInput.cs" />
-    <Compile Include="Func\Screen\SuPlayScreen.cs" />
-    <Compile Include="Message\GameKickPlayerMessage.cs" />
-    <Compile Include="Message\GameModifiedCellsMessage.cs" />
-    <Compile Include="Message\GamePlayerHealthMessage.cs" />
-    <Compile Include="Message\GamePakWorldMessage.cs" />
-    <Compile Include="Message\GamePlayerInputMessage.cs" />
-    <Compile Include="Message\GamePlayerPositionMessage.cs" />
-    <Compile Include="Message\GameWorldInfoMessage.cs" />
-    <Compile Include="Message\GameWorldInfo1Message.cs" />
-    <Compile Include="Message\Message.cs" />
-    <Compile Include="Message\ChatMessage.cs" />
-    <Compile Include="Message\SuReader.cs" />
-    <Compile Include="Message\SuWriter.cs" />
-    <Compile Include="Networking\NetworkStateMachine.cs" />
-    <Compile Include="Plug\ScMultiplayer.cs" />
-    <Compile Include="String2int.cs" />
-    <Compile Include="Func\Subsystem\SuSubsystemTerrain.cs" />
+
+  <!-- Android: DLL references -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0-android'">
+    <Reference Include="EntitySystem">
+      <HintPath>..\..\Survivalcraft\bin\Debug\net10.0-android\EntitySystem.dll</HintPath>
+    </Reference>
+    <Reference Include="Survivalcraft">
+      <HintPath>..\..\Survivalcraft\bin\Debug\net10.0-android\Survivalcraft.dll</HintPath>
+    </Reference>
+    <Reference Include="Comms">
+      <HintPath>..\Comms\bin\Debug\net10.0-android\Comms.dll</HintPath>
+    </Reference>
+    <Reference Include="Engine">
+      <HintPath>..\..\Survivalcraft\bin\Debug\net10.0-android\Engine.dll</HintPath>
+    </Reference>
   </ItemGroup>
-  <ItemGroup>
-    <WCFMetadata Include="Connected Services\" />
+
+  <!-- Obfuscar: Windows only -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0-windows10.0.19041.0'">
+    <PackageReference Include="Obfuscar" Version="2.2.38" />
   </ItemGroup>
-  <ItemGroup>
-    <ProjectReference Include="..\..\Engine\Engine.csproj">
-      <Project>{6b218d5b-d431-43aa-83ea-648c8a528664}</Project>
-      <Name>Engine</Name>
-    </ProjectReference>
-    <ProjectReference Include="..\..\EntitySystem\GameEntitySystem.csproj">
-      <Project>{54a28e29-ca1e-428e-bb73-571c283f9090}</Project>
-      <Name>GameEntitySystem</Name>
-    </ProjectReference>
-    <ProjectReference Include="..\..\Survivalcraft\Survivalcraft.csproj">
-      <Project>{5cc1ad54-154a-1ccd-4ec9-21aee90feef3}</Project>
-      <Name>Survivalcraft</Name>
-    </ProjectReference>
-    <ProjectReference Include="..\Comms\Comms.csproj">
-      <Project>{b0782ebb-1454-4e1b-9ed2-365eabfc6f61}</Project>
-      <Name>Comms</Name>
-    </ProjectReference>
-  </ItemGroup>
-  <ItemGroup>
-    <Folder Include="Peer\" />
-    <Folder Include="Properties\" />
-  </ItemGroup>
-  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>

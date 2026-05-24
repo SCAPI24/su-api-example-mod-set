@@ -257,7 +257,7 @@ namespace ScMultiplayer
             eventBus.SubscribeEvent("GameDatabase.GameDatabase", args =>
                 HandleGameDatabase((Database)args[0]), EventPriority.HIGHEST);
             eventBus.SubscribeEvent("Loading.Initialize", args =>
-                HandleLoading((List<Action>)args[0]), EventPriority.HIGHEST);
+                HandleLoading(args), EventPriority.HIGHEST);
 
             // 初始化网络
             float tickDuration = 1f / 60f;
@@ -269,10 +269,10 @@ namespace ScMultiplayer
             var lanAddress = DetectLanAddress();
             Log.Information($"[ScMP] Detected LAN address: {lanAddress}");
 
-            // 所有组件使用绑定物理 LAN IP 的 UdpTransmitter
-            var serverTransmitter = new UdpTransmitter(lanAddress, port);
-            var explorerTransmitter = new UdpTransmitter(lanAddress, 0);
-            var clientTransmitter = new UdpTransmitter(lanAddress, 0);
+            // UdpTransmitter(now) 只接受 localPort 参数，自动检测 LAN 地址
+            var serverTransmitter = new UdpTransmitter(port);
+            var explorerTransmitter = new UdpTransmitter(0);
+            var clientTransmitter = new UdpTransmitter(0);
 
             try
             {
@@ -306,12 +306,34 @@ namespace ScMultiplayer
             StartAsyncRegistration();
         }
 
-        private object[] HandleLoading(List<Action> actions)
+        private object[] HandleLoading(object[] args)
         {
-            int playIndex = actions.Count - 13;
-            actions[playIndex] = () => ScreensManager.AddScreen("Play", new SuPlayScreen());
-            Log.Information("[ScMP] PlayScreen replaced");
-            return new object[] { false, actions };
+            // MAUI版: Loading.Initialize 事件触发时，加载项已在 LoadingManager 静态类中注册
+            // 用 LoadingManager.ReplaceItem 替换 Play 屏幕加载步骤
+            // 旧版: args[0] 是 List<Action>
+            if (args[0] is List<Action> actions)
+            {
+                int playIndex = actions.Count - 13;
+                actions[playIndex] = () => ScreensManager.AddScreen("Play", new SuPlayScreen());
+                Log.Information("[ScMP] PlayScreen replaced via List<Action>");
+            }
+            else
+            {
+                // LoadingManager 是静态类，无法通过 args 传入，直接用 ReplaceItem
+                bool replaced = Game.LoadingManager.ReplaceItem("Initialize PlayScreen", () => ScreensManager.AddScreen("Play", new SuPlayScreen()));
+                if (!replaced)
+                {
+                    Log.Information("[ScMP] ReplaceItem failed, fallback to QueueItem");
+                    // 如果 ReplaceItem 失败，说明还没到 PlayScreen 加载步骤
+                    // 使用 QueueItem 添加但必须用不同的 name
+                    Game.LoadingManager.QueueItem("Initialize SuPlayScreen", () => ScreensManager.AddScreen("Play", new SuPlayScreen()));
+                }
+                else
+                {
+                    Log.Information("[ScMP] PlayScreen replaced via LoadingManager.ReplaceItem");
+                }
+            }
+            return new object[] { false, args[0] };
         }
 
         public object[] HandleGameDatabase(Database database)
@@ -346,7 +368,8 @@ namespace ScMultiplayer
                 Trigger30FrameEvent(dt);
             }
 
-            // 聊天 (T键)
+            // 聊天 (T键) - 仅Windows
+#if WINDOWS
             if (Keyboard.IsKeyDownOnce(Key.T))
             {
                 DialogsManager.ShowDialog(ScreensManager.RootWidget, new TextBoxDialog("Message", "", 125, delegate (string s)
@@ -356,8 +379,12 @@ namespace ScMultiplayer
                 }));
             }
 
-            // 创建房间 (J键) — 用 GameWorldInfoMessage 供 LAN 发现
+            // 创建房间 (J键)
             if (Keyboard.IsKeyDownOnce(Key.J))
+#else
+            // Android: 触摸UI触发（待实现）
+            if (false)
+#endif
             {
                 var sd = explorer?.DiscoveredServers?.FirstOrDefault();
                 if (sd == null)
@@ -401,8 +428,12 @@ namespace ScMultiplayer
                         }));
             }
 
+#if WINDOWS
             // 加入房间 (K键)
             if (Keyboard.IsKeyDownOnce(Key.K))
+#else
+            if (false)
+#endif
             {
                 var sd = explorer?.DiscoveredServers?.FirstOrDefault();
                 if (sd == null || sd.GameDescriptions.Length == 0)
@@ -423,8 +454,12 @@ namespace ScMultiplayer
                         }));
             }
 
+#if WINDOWS
             // 踢出玩家 (U键, 仅Host)
             if (Keyboard.IsKeyDownOnce(Key.U) && client.ClientID == 0 && client.IsConnected)
+#else
+            if (false)
+#endif
             {
                 TryKickPlayer();
             }
