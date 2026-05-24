@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
-using System.Threading;
 using Engine;
 using System.Xml.Linq;
 using Engine.Content;
@@ -41,6 +40,21 @@ namespace StringInterceptor
     /// </summary>
     public class TranslationProcessor : IStringProcessor
     {
+        /// <summary>
+        /// 获取日志目录路径（与 GameLogSink 一致）
+        /// Android: /sdcard/Download/Survivalcraft2/Logs/
+        /// Windows: AppDomain.CurrentDomain.BaseDirectory + "Logs"
+        /// </summary>
+        public static string GetLogsDir()
+        {
+#if ANDROID
+            return System.IO.Path.Combine(
+                ModLoader.GetPublicDownloadsPath() ?? ModLoader.GetExternalFilesDir() ?? "/data",
+                "Survivalcraft2", "Logs");
+#else
+            return System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Logs");
+#endif
+        }
         // 原文 → 译文（加载自 Content/zh_CN.xml）
         private static readonly Dictionary<string, string> Translations = new Dictionary<string, string>();
 
@@ -110,7 +124,10 @@ namespace StringInterceptor
 
                 try
                 {
-                    string savePath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Logs", "zh_CN.xml");
+                    string savePath = System.IO.Path.Combine(GetLogsDir(), "zh_CN.xml");
+
+                    // 确保 Logs 目录存在
+                    System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(savePath));
 
                     // 加载已有条目 → 按 Screen 分组 + 已见 Original
                     var existingScreens = new Dictionary<string, Dictionary<string, string>>();
@@ -119,18 +136,22 @@ namespace StringInterceptor
                     {
                         try
                         {
-                            var existing = XDocument.Load(savePath);
-                            foreach (var screenEl in existing.Root.Elements("Screen"))
+                            // AOT-safe: XDocument.Load(string) may be trimmed, use Stream
+                            using (var fs = new System.IO.FileStream(savePath, System.IO.FileMode.Open, System.IO.FileAccess.Read))
                             {
-                                string sn = (string)screenEl.Attribute("Name") ?? "";
-                                if (!existingScreens.ContainsKey(sn))
-                                    existingScreens[sn] = new Dictionary<string, string>();
-                                foreach (var el in screenEl.Elements("Entry"))
+                                var existing = XDocument.Load(fs);
+                                foreach (var screenEl in existing.Root.Elements("Screen"))
                                 {
-                                    string orig = (string)el.Attribute("Original");
-                                    string trans = (string)el.Attribute("Translation");
-                                    if (!string.IsNullOrEmpty(orig) && existingOriginals.Add(orig))
-                                        existingScreens[sn][orig] = trans ?? orig;
+                                    string sn = (string)screenEl.Attribute("Name") ?? "";
+                                    if (!existingScreens.ContainsKey(sn))
+                                        existingScreens[sn] = new Dictionary<string, string>();
+                                    foreach (var el in screenEl.Elements("Entry"))
+                                    {
+                                        string orig = (string)el.Attribute("Original");
+                                        string trans = (string)el.Attribute("Translation");
+                                        if (!string.IsNullOrEmpty(orig) && existingOriginals.Add(orig))
+                                            existingScreens[sn][orig] = trans ?? orig;
+                                    }
                                 }
                             }
                         }
@@ -156,21 +177,23 @@ namespace StringInterceptor
                     }
 
                     // 构建输出 XML：Screen 分组 × 组内 ABC 排序
-                    var doc = new XDocument(
-                        new XDeclaration("1.0", "UTF-8", null),
-                        new XElement("Translations")
-                    );
+                    var doc = new XDocument();
+                    doc.Add(new XElement("Translations"));
                     foreach (var screenKv in existingScreens)
                     {
                         var screenEl = new XElement("Screen", new XAttribute("Name", screenKv.Key));
                         var sorted = new List<KeyValuePair<string, string>>(screenKv.Value);
-                        sorted.Sort((a, b) => string.CompareOrdinal(a.Key, b.Key));
+                        // Manual sort (AOT-safe: List.Sort(Comparison) may be trimmed)
+                        for (int si = 0; si < sorted.Count - 1; si++)
+                            for (int sj = si + 1; sj < sorted.Count; sj++)
+                                if (string.CompareOrdinal(sorted[si].Key, sorted[sj].Key) > 0)
+                                    { var tmp = sorted[si]; sorted[si] = sorted[sj]; sorted[sj] = tmp; }
                         foreach (var kv in sorted)
                             screenEl.Add(new XElement("Entry", new XAttribute("Original", kv.Key), new XAttribute("Translation", kv.Value)));
                         doc.Root.Add(screenEl);
                     }
 
-                    System.IO.File.WriteAllText(savePath, doc.ToString(), new System.Text.UTF8Encoding(false));
+                    { var fs = new System.IO.FileStream(savePath, System.IO.FileMode.Create, System.IO.FileAccess.Write); var sw = new System.IO.StreamWriter(fs, new System.Text.UTF8Encoding(false)); sw.Write(doc.ToString()); sw.Close(); fs.Close(); }
                     Log.Information($"[Translator] Appended {appended} new strings (total: {existingOriginals.Count}) to {savePath}.");
                 }
                 catch (Exception ex)
@@ -266,17 +289,18 @@ namespace StringInterceptor
 
         private IModParentField _mpf;
         private readonly List<IStringProcessor> _processors = new List<IStringProcessor>();
-        private Timer _widgetScanTimer;
+        // 帧驱动扫描（替代 Timer，避免 Release Android 上 System.Threading.Timer 不可用）
+        private int _skipFrames; // 0 = 每帧扫描, N = 跳过 N 帧
+        private bool _scannerActive;
+
         private readonly HashSet<LabelWidget> _processedLabels = new HashSet<LabelWidget>();
         private readonly HashSet<ButtonWidget> _processedButtons = new HashSet<ButtonWidget>();
         private int _globalIndex;
         private long _lastScannedFrame = -1;
-
         // 自适应扫描频率
         private int _framesSinceNewWidget;
         private const int IDLE_THRESHOLD = 60;
         private bool _collectedSaved;
-        private int _currentIntervalMs = 16;
 
         public void RegisterProcessor(IStringProcessor processor)
         {
@@ -299,6 +323,12 @@ namespace StringInterceptor
                 return HandleLoadingInitialize((object[])args);
             }, EventPriority.LOWEST);
 
+            eventBus.SubscribeEvent("Frame.Update", args =>
+            {
+                Update();
+                return null;
+            }, EventPriority.LOWEST);
+
             Log.Information("[StringInterceptor] v1.5.0 Loaded. 4-size Chinese fonts + Pericles coexist.");
         }
 
@@ -318,14 +348,18 @@ namespace StringInterceptor
                 {
                     try
                     {
-                        string logPath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Logs", "zh_CN.xml");
+                        string logPath = System.IO.Path.Combine(TranslationProcessor.GetLogsDir(), "zh_CN.xml");
                         if (!System.IO.File.Exists(logPath))
                         {
+                            // 确保 Logs 目录存在
+                            System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(logPath));
+
                             var root = ContentCache.Get<XElement>("Mod/zh_CN", false);
                             if (root != null)
                             {
-                                var doc = new XDocument(new XDeclaration("1.0", "UTF-8", null), root);
-                                System.IO.File.WriteAllText(logPath, doc.ToString(), new System.Text.UTF8Encoding(false));
+                                var doc = new XDocument();
+                                doc.Add(root);
+                                { var fs = new System.IO.FileStream(logPath, System.IO.FileMode.Create, System.IO.FileAccess.Write); var sw = new System.IO.StreamWriter(fs, new System.Text.UTF8Encoding(false)); sw.Write(doc.ToString()); sw.Close(); fs.Close(); }
                                 Log.Information("[StringInterceptor] Seeded Logs/zh_CN.xml from scmod.");
                             }
                         }
@@ -363,14 +397,18 @@ namespace StringInterceptor
                 {
                     try
                     {
-                        string logPath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Logs", "zh_CN.xml");
+                        string logPath = System.IO.Path.Combine(TranslationProcessor.GetLogsDir(), "zh_CN.xml");
                         if (!System.IO.File.Exists(logPath))
                         {
+                            // 确保 Logs 目录存在
+                            System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(logPath));
+
                             var root = ContentCache.Get<XElement>("Mod/zh_CN", false);
                             if (root != null)
                             {
-                                var doc = new XDocument(new XDeclaration("1.0", "UTF-8", null), root);
-                                System.IO.File.WriteAllText(logPath, doc.ToString(), new System.Text.UTF8Encoding(false));
+                                var doc = new XDocument();
+                                doc.Add(root);
+                                { var fs = new System.IO.FileStream(logPath, System.IO.FileMode.Create, System.IO.FileAccess.Write); var sw = new System.IO.StreamWriter(fs, new System.Text.UTF8Encoding(false)); sw.Write(doc.ToString()); sw.Close(); fs.Close(); }
                                 Log.Information("[StringInterceptor] Seeded Logs/zh_CN.xml from scmod.");
                             }
                         }
@@ -408,6 +446,7 @@ namespace StringInterceptor
             }
 
             var keys = new List<string>(strings.Keys);
+            int translated = 0;
             foreach (var key in keys)
             {
                 string original = strings[key];
@@ -417,21 +456,32 @@ namespace StringInterceptor
                     try { result = processor.Process(key, result, ++_globalIndex); }
                     catch (Exception ex) { Log.Error($"[StringInterceptor] Processor failed for key '{key}': {ex.Message}"); }
                 }
+                if (result != original) translated++;
                 strings[key] = result;
             }
 
-            Log.Information($"[StringInterceptor] Processed {strings.Count} StringsManager entries. Index at {_globalIndex}.");
+            Log.Information($"[StringInterceptor] Processed {strings.Count} StringsManager entries ({translated} translated). Index at {_globalIndex}.");
         }
 
         private void StartWidgetScanner()
         {
-            _widgetScanTimer = new Timer(_ =>
-            {
-                try { Dispatcher.Dispatch(() => ScanWidgetTree()); }
-                catch { }
-            }, null, _currentIntervalMs, _currentIntervalMs);
+            _scannerActive = true;
+            _skipFrames = 0;
+            Log.Information("[StringInterceptor] Widget scanner started (frame-driven).");
+        }
 
-            Log.Information("[StringInterceptor] Widget scanner started (adaptive interval).");
+        /// <summary>
+        /// 每帧调用（由 EventBus Update 订阅触发），替代 System.Threading.Timer
+        /// </summary>
+        public void Update()
+        {
+            if (!_scannerActive)
+            {
+                return;
+            }
+            if (_skipFrames > 0) { _skipFrames--; return; }
+
+            ScanWidgetTree();
         }
 
         private void ScanWidgetTree()
@@ -441,11 +491,13 @@ namespace StringInterceptor
             _lastScannedFrame = frame;
 
             var root = ScreensManager.RootWidget;
-            if (root == null) return;
+            if (root == null)
+            {
+                return;
+            }
 
             // 设置当前 Screen 名称
-            var screen = ScreensManager.CurrentScreen;
-            TranslationProcessor.CurrentScreen = screen?.GetType().Name ?? "Unknown";
+            TranslationProcessor.CurrentScreen = ScreensManager.CurrentScreen?.GetType().Name ?? "Unknown";
 
             int labelCount = 0;
             int buttonCount = 0;
@@ -457,19 +509,14 @@ namespace StringInterceptor
             {
                 _framesSinceNewWidget = 0;
                 _collectedSaved = false; // 新 UI → 允许再次保存
-                if (_currentIntervalMs != 16)
-                {
-                    _currentIntervalMs = 16;
-                    _widgetScanTimer?.Change(16, 16);
-                }
+                _skipFrames = 0; // 活跃时每帧扫描
             }
             else
             {
                 _framesSinceNewWidget++;
-                if (_framesSinceNewWidget >= IDLE_THRESHOLD && _currentIntervalMs != 200)
+                if (_framesSinceNewWidget >= IDLE_THRESHOLD)
                 {
-                    _currentIntervalMs = 200;
-                    _widgetScanTimer?.Change(200, 200);
+                    _skipFrames = 11; // 空闲时约每 12 帧扫描一次（~200ms @60fps）
                     // UI 稳定 → 保存收集的字符串
                     if (!_collectedSaved)
                     {
@@ -479,16 +526,24 @@ namespace StringInterceptor
                 }
             }
 
-            int removedLabels = _processedLabels.RemoveWhere(l => l.ParentWidget == null);
-            int removedButtons = _processedButtons.RemoveWhere(b => b.ParentWidget == null);
+            int removedLabels = 0;
+            {
+                var toRemove = new List<LabelWidget>();
+                foreach (var l in _processedLabels)
+                    if (l.ParentWidget == null) toRemove.Add(l);
+                foreach (var l in toRemove) { _processedLabels.Remove(l); removedLabels++; }
+            }
+            int removedButtons = 0;
+            {
+                var toRemove = new List<ButtonWidget>();
+                foreach (var b in _processedButtons)
+                    if (b.ParentWidget == null) toRemove.Add(b);
+                foreach (var b in toRemove) { _processedButtons.Remove(b); removedButtons++; }
+            }
             if (removedLabels > 0 || removedButtons > 0)
             {
                 _framesSinceNewWidget = 0;
-                if (_currentIntervalMs != 16)
-                {
-                    _currentIntervalMs = 16;
-                    _widgetScanTimer?.Change(16, 16);
-                }
+                _skipFrames = 0; // widget 被移除时切换回活跃扫描
             }
         }
 
@@ -511,7 +566,8 @@ namespace StringInterceptor
                             try { result = processor.Process(source, result, ++_globalIndex); }
                             catch { }
                         }
-                        label.Text = result;
+                        if (result != original)
+                            label.Text = result;
 
                         // 如果结果含中文 → 切换为中文字体
                         if (ContainsChinese(result))
@@ -589,8 +645,7 @@ namespace StringInterceptor
         public void OnUnload()
         {
             TranslationProcessor.SaveCollected();
-            _widgetScanTimer?.Dispose();
-            _widgetScanTimer = null;
+            _scannerActive = false;
             _processedLabels.Clear();
             _processedButtons.Clear();
             _processors.Clear();

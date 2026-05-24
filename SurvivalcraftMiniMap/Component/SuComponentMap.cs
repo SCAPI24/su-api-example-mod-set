@@ -89,12 +89,19 @@ namespace SurvivalcraftMiniMap
             if (m_componentPlayer == null) { m_renderState = 0; return; }
 
             Vector2 screenSize = m_componentPlayer.GameWidget.ActiveCamera.ViewportSize;
-            // 小地图中心：右上角区域
-            // X 轴偏右 = screenSize.X * (1 - RmapRadius/2)
-            // Y 轴偏上 = screenSize.Y * RmapRadius/2（用 Y 不用 X）
+            // 小地图定位：右上角，留出边距避开游戏UI
+            float visualRadiusPx = mapRadius * MapScale;
+#if WINDOWS
+            float marginX = screenSize.Y * 0.10f;
+            float marginY = screenSize.Y * 0.10f;
+#else
+            float marginX = screenSize.Y * 0.15f;
+            float marginY = screenSize.Y * 0.15f;
+#endif
             Vector2 center = new Vector2(
-                screenSize.X * (1f - RmapRadius / 2f),
-                screenSize.Y * RmapRadius / 2f);
+                screenSize.X - visualRadiusPx - marginX,
+                visualRadiusPx + marginY);
+
 
             batchUp.Clear();
             batchDown.Clear();
@@ -194,28 +201,21 @@ namespace SurvivalcraftMiniMap
 
         protected override void Load(ValuesDictionary valuesDictionary, IdToEntityMap idToEntityMap)
         {
-            Log.Information("SuComponentMap.Load: start");
             try
             {
                 base.Load(valuesDictionary, idToEntityMap);
-                Log.Information("SuComponentMap.Load: base done");
 
                 Tool.CalculateSlotTexCoordTables();
-                Log.Information("SuComponentMap.Load: Tool done");
 
                 m_componentPlayer = (ComponentPlayer)this.Entity.FindComponent<ComponentPlayer>(true);
-                Log.Information("SuComponentMap.Load: found ComponentPlayer");
 
                 MapTexture = (Texture2D)ContentManager.Get<Texture2D>("Textures/Blocks");
-                Log.Information("SuComponentMap.Load: loaded map texture");
 
                 var texNormal = LoadEmbeddedTexture("SurvivalcraftMiniMap.Content.SuMapButton.png");
                 var texPressed = LoadEmbeddedTexture("SurvivalcraftMiniMap.Content.SuMapButton_Pressed.png");
-                Log.Information("SuComponentMap.Load: loaded embedded textures");
 
                 StackPanelWidget stackPanelWidget = m_componentPlayer.GameWidget.Children
                     .Find<StackPanelWidget>("MoreContents", true);
-                Log.Information("SuComponentMap.Load: found MoreContents");
 
                 mapButton = new BitmapButtonWidget
                 {
@@ -225,14 +225,11 @@ namespace SurvivalcraftMiniMap
                     NormalSubtexture = new Subtexture(texNormal, Vector2.Zero, Vector2.One),
                     ClickedSubtexture = new Subtexture(texPressed, Vector2.Zero, Vector2.One)
                 };
-                Log.Information("SuComponentMap.Load: created button");
 
                 stackPanelWidget.Children.Add(mapButton);
-                Log.Information("SuComponentMap.Load: added button to panel");
 
                 LookVector = m_componentPlayer.ComponentBody.Matrix.Forward.XZ;
                 subsystemTerrain = this.Project.FindSubsystem<SubsystemTerrain>(true);
-                Log.Information("SuComponentMap.Load: found terrain");
 
                 m_activeUp = m_prUp1.TexturedBatch(MapTexture,
                     depthStencilState: DepthStencilState.None,
@@ -250,20 +247,17 @@ namespace SurvivalcraftMiniMap
                     depthStencilState: DepthStencilState.None,
                     blendState: BlendState.Opaque,
                     samplerState: SamplerState.LinearClamp);
-                Log.Information("SuComponentMap.Load: created batches");
 
                 m_indicatorBatch = m_prIndicator.TexturedBatch(
                     (Texture2D)ContentManager.Get<Texture2D>("Textures/Gui/SoftwareMouseCursor"),
                     depthStencilState: DepthStencilState.None,
                     blendState: BlendState.AlphaBlend,
                     samplerState: SamplerState.PointWrap);
-                Log.Information("SuComponentMap.Load: done");
 
-                // 平台参数用条件编译而非 Environment.OSVersion（Android/Mono 上不可靠）
 #if WINDOWS
-                mapRadius = 100; MapScale = 0.5f; RmapRadius = 0.30f;
+                mapRadius = 100; MapScale = 1.4f; RmapRadius = 0.55f;
 #else
-                mapRadius = 100; MapScale = 1.5f; RmapRadius = 0.30f;
+                mapRadius = 100; MapScale = 1.8f; RmapRadius = 0.55f;
 #endif
             }
             catch (Exception ex)

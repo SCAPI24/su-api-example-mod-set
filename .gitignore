@@ -72,3 +72,5 @@ MemoryBankDrawMod/pack/
 # 全局忽略打包产物和临时文件
 *.scmod
 pack-temp/
+pack-temp-release/
+pack_release/
