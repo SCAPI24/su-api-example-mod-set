@@ -33,7 +33,7 @@ pwsh sync-gitignore.ps1
 
 ![ConsoleMod 截图](images/ConsoleMod.png)
 
-游戏内控制台，按 `·` 打开，支持 `move +x300` 等指令移动角色，Widget Overlay 模式不暂停游戏。
+游戏内控制台，按 `·` 打开，支持 `move +x300` 等指令移动角色，Widget Overlay 模式不暂停游戏。双平台支持：Windows 端用 `KeyboardInput` 内联输入 + 鼠标解锁；Android 端用 `Keyboard.ShowKeyboard()` 对话框输入。
 
 ### StringInterceptor
 

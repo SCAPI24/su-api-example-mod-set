@@ -469,3 +469,81 @@ netsh advfirewall firewall add rule name="SC Remote Debug" dir=in action=allow p
 netsh advfirewall firewall add rule name="ScMultiplayer Server" dir=in action=allow protocol=UDP localport=51459
 netsh advfirewall firewall add rule name="ScMultiplayer Dynamic" dir=in action=allow protocol=UDP localport=49152-65535
 ```
+
+---
+
+## 2026-05-23 Android 触摸输入系统深度修复 (15:00–16:12)
+
+### 需求
+Android 端进地图后触摸滑动/Drag 完全无响应，点击 OK 但滑动手势被吞。
+
+### 根因：ProcessTouchMoved 的位置更新条件缺陷
+
+**位置**：`Engine/Platforms/Android/Input/Touch.cs:ProcessTouchMoved()`
+
+原始代码只在 `state == TouchLocationState.Moved` 时更新位置：
+```csharp
+if (m_touchLocations[num].State == TouchLocationState.Moved)
+{
+    m_touchLocations[num] = new TouchLocation { Id = id, Position = position, State = TouchLocationState.Moved };
+}
+```
+
+**时序攻击**：
+```
+Frame N:
+  DispatchTouchEvent → DOWN → adds touch with State=Pressed
+  DispatchTouchEvent → MOVE → finds touch, State==Pressed → 不更新位置！  ← 致命
+  WidgetInput.UpdateFromTouch() → 读到 Pressed 位置（DOWN坐标），Drag 距离为0
+  AfterFrame → Pressed→Moved 转换
+
+Frame N+1:
+  DispatchTouchEvent → MOVE → finds touch, State==Moved → 更新位置 ✓
+  → 但 N 帧的所有中间 MOVE 事件已丢失
+```
+
+AfterFrame 在游戏循环末尾执行，Press→Moved 转换延迟一整帧。在此期间所有 MOVE 事件因状态检查被丢弃。
+
+### 修复
+
+```csharp
+// ✅ 无条件更新位置，保持当前 State
+m_touchLocations[num] = new TouchLocation
+{
+    Id = id,
+    Position = position,
+    State = m_touchLocations[num].State  // Pressed 保持 Pressed，Moved 保持 Moved
+};
+```
+
+### 排查路线
+
+```
+1. [RawTouch] 日志 → 确认 DispatchTouchEvent 收到 DOWN/MOVE/UP (1248 events total)
+2. [TouchDiag] 日志 → 确认 Window.IsActive=True, KeyboardVis=False (守卫未拦截)
+3. 静态分析 → ProcessTouchMoved 的 State==Moved 条件在 Pressed 阶段为 false
+4. 修复 → 构建 → 签名(apksigner) → adb install → 验证
+```
+
+### 修改文件
+| 文件 | 修改 |
+|------|------|
+| `Engine/Platforms/Android/Input/Touch.cs` | ProcessTouchMoved 无条件更新位置；移除 RawTouch/TouchDiag 诊断日志；移除 ProcessTouchMoved 内 TouchState 日志 |
+| `Engine/Platforms/Android/EngineActivity.cs` | 移除冗余 OnTouchEvent override；移除 DispatchTouchEvent try-catch 诊断 |
+| `Survivalcraft/Game/WidgetInput.cs` | 移除 m_debugFrame 诊断字段和 WidgetTouch 日志 |
+
+### 并行发现问题
+
+| 问题 | 根因 | 状态 |
+|------|------|------|
+| Touch.Pressed/Moved/Released 事件无订阅者 | 数据通路通过 `m_touchLocations` list，事件为辅助；WidgetInput 直接读 `Touch.TouchLocations` | 确认非bug |
+| Survivalcraft.dll 早期不在 APK | .NET Android 构建管线问题（类似 Lit shader 卫星程序集），现已确认 APK 含 26MB Survivalcraft.dll.so | 自愈 |
+| ProcessTouchMoved 守卫 IsActive 实为 true | 不同问题，但验证排除了守卫假阳性 | 排除 |
+
+### 教训（铁律）
+
+11. **ProcessTouchMoved 必须无条件更新位置** — 状态检查（`State==Moved`）与 AfterFrame 时序冲突，导致帧内 MOVE 事件被吞
+12. **TouchLocations list 是唯一数据源** — 事件回调（TouchPressed 等）可以没有订阅者，WidgetInput 直接遍历 list
+13. **AfterFrame 在帧末执行 → 状态转换延迟一整帧** — 中间时段的位置更新必须基于当前事件而非缓存状态
+14. **Android touch 用 DispatchTouchEvent 路由** — OnTouchEvent 被 SDL2 消费，不可用于自定义处理
+15. **逐层步进验证法** — 事件入口 → 中间处理 → 状态更新 → 消费者读取，每层加一个日志验证，不跳跃
