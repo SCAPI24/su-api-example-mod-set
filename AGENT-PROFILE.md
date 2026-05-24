@@ -97,6 +97,64 @@ MAUI net10.0 版：`UdpTransmitter(int localPort = 0)`，不再接受 IPAddress 
 
 `KeyboardInput` 类仅 Windows 存在，`Key.T/J/K/U` 等枚举在 Android 不可用。用 `#if WINDOWS` 包裹，Android 端用 `Keyboard.ShowKeyboard(title, description, defaultText, passwordMode, enter, cancel)` 弹出系统对话框。
 
+### 7. Release Android AOT/Linker 裁剪
+
+Release Android 使用 AOT+Linker，裁剪主程序未使用的方法。Mod 使用被裁剪方法→`MissingMethodException`，但 EventBus 静默吞异常→功能直接失效无任何错误。
+
+已验证被裁剪的方法：
+- `HashSet<T>.RemoveWhere(Predicate<T>)` → foreach + 临时列表 + Remove
+- `List<T>.Sort(Comparison<T>)` → 冒泡排序
+- `XDocument.Load(string)` → `XDocument.Load(Stream)` + FileStream
+- `System.Threading.Timer` → Frame.Update 事件驱动
+- `XDocument(params object[])` → `new XDocument()` + `doc.Add(root)`
+- `File.WriteAllText(string,string,Encoding)` → `FileStream` + `StreamWriter(Stream,Encoding)`
+
+通用原则：Mod 只用最基础集合操作（foreach/Add/Remove/索引器），避免 Linq/委托排序/params 构造函数/高级便利方法。
+
+### 8. P/Invoke 同名函数用 EntryPoint 重载
+
+user32.dll 的 `LoadImage` 只有一个入口，不能声明为两个不同名的 P/Invoke（如 `LoadImageFromResource`）。需用 `EntryPoint="LoadImage"` 声明不同参数类型的重载。
+
+### 9. GLFW 窗口不继承 exe 图标
+
+需显式 `SendMessage(WM_SETICON)` 设置窗口图标，且 HWND 只在 `LoadHandler` 内可用（`Window.Create()` 后 HWND=0）。
+
+### 10. 新建 MAUI 项目必须清理模板
+
+删除 appicon.svg/appiconfg.svg（.NET 紫色背景）、splash.svg、dotnet_bot.png，替换为实际资源；否则运行时看到 .NET 模板元素。
+
+### 11. 先用已有机制，再新建
+
+代码中已有 EmbeddedResource 声明或空占位代码时，必须先利用已有机制（如 `GetManifestResourceStream`），禁止绕远路（如 CopyToOutputDirectory + 文件加载）。看到空 `if (x != null) ;` 占位 → 说明前人已预留接口，填空即可。
+
+### 12. 禁止自主推送远程仓库
+
+没有用户明确允许，不得执行 `git push`。本地 commit 可以，但 push 必须等用户确认。
+
+### 13. MAUI 项目必须移除 Microsoft.Extensions.Logging.Debug
+
+MAUI 模板默认引入此包，Debug 配置下通过 DebugLoggerProvider 向 Android logcat 输出大量 MAUI 框架日志（页面生命周期/绑定/布局/手势），导致严重卡顿。Windows 无影响，Android 上 logcat 是系统级 I/O，大量写入→卡顿。csproj 中注释掉或删除该 PackageReference。
+
+### 14. 禁止提交诊断用 Log 标记
+
+临时调试日志（如 `[Window]`、`[SuAPI]`）验证后必须立即移除，不得提交到代码库。Android 上 Engine.Log 通过 GameLogSink 每次 Flush()，频繁日志=频繁磁盘 I/O。
+
+### 15. SC 屏幕坐标系 Y 向上，定位参数必须拆分
+
+OpenGL 坐标系 Y 从下往上，center.Y 越大越靠上。不能用同一个系数（如 RmapRadius）同时控制视觉大小和定位偏移，必须拆分：visualRadiusPx（mapRadius×MapScale）控定位，MapScale 控大小。Android 边距比例需大于 Windows（15% vs 10%）。
+
+### 16. Storage.ProcessPath 只识别 `app:` 和 `data:` 协议
+
+传入绝对路径（如 `/sdcard/Download/...`）会抛 `InvalidOperationException`。Android 上写外部存储文件必须用 `System.IO.FileStream` 直接操作，不能走 `Storage.OpenFile`。
+
+### 17. FileStream 打开日志文件必须用 FileAccess.ReadWrite
+
+游戏内 ViewGameLogDialog 调用 `GetRecentLogLines` 用 `StreamReader` 读取流，`FileAccess.Write` 打开的流不可读，抛 `Argument_StreamNotReadable`。
+
+### 18. adb install 在 PowerShell 中 `-t` 参数被解析为 PowerShell 参数
+
+用 `adb install --user 0` 替代 `adb install -t`，或通过 `cmd /c` 包装。
+
 ## ScreensManager 注册名称对照表
 
 | QueueItem name | Screen name | Screen class |
