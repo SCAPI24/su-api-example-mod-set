@@ -587,3 +587,93 @@ m_touchLocations[num] = new TouchLocation
 - Windows: ScMultiplayer 加载成功，Server/Client/Explorer 正常初始化
 - Android: adb push 部署成功
 - 6个 Mod 全部迁移完成
+
+---
+
+## 2026-05-25 (18:06) SurvivalcraftMiniMap 双平台尺寸/位置调优
+
+### 需求
+MiniMap 在 Windows/Android 上显示太小，且位置偏向屏幕中央。
+
+### 排查过程
+1. 读取 SuComponentMap.cs，发现 RmapRadius 同时控制视觉大小（screenSize.Y * RmapRadius）和中心定位偏移
+2. 第一轮调整: RmapRadius 0.40→0.55，MapScale 翻倍→仍然偏小+偏中央
+3. 第二轮调整: RmapRadius 0.55→更大 → 地图大小满意但位置严重偏中央
+4. **关键发现**: RmapRadius 增大后 center 偏移量也增大，两者耦合导致地图挤向屏幕中间。拆分为独立参数: visualRadiusPx(mapRadius*MapScale) 控定位，MapScale 控大小
+5. **坐标系纠正**: SC 用 OpenGL 坐标系 Y 向上，之前误认为 Y 向下导致多次调整方向错误
+6. 定位公式确定为: center = (screenW - visualRadiusPx - marginX, visualRadiusPx + marginY)
+7. Windows margin=10% 足够，Android margin=10% 被 UI 挡住→增至 15%
+8. Android MapScale 3.6 太大(翻倍了)→降至 1.8
+9. 旋转轻微偏心：双缓冲+增量旋转机制固有特征，不影响使用
+
+### 最终参数
+| 参数 | Windows | Android |
+|------|---------|----------|
+| mapRadius | 100 | 100 |
+| MapScale | 1.4 | 1.8 |
+| marginX/Y | screenSize.Y × 10% | screenSize.Y × 15% |
+
+### 踩坑铁律
+1. **RmapRadius 大小/位置耦合铁律**: 不能用同一个系数同时控制视觉半径和定位偏移。增大 RmapRadius→偏移量增大→地图挤向中间。拆分为 visualRadiusPx + marginX/Y
+2. **SC 坐标系 Y 向上**: OpenGL 坐标系 Y 从下往上。调 UI 位置前先确认坐标系方向
+3. **Android 边距比 Windows 大**: Android UI 元素比例更大，同等百分比边距不够用
+4. **MapScale 不能盲目翻倍**: Windows 0.7→1.4 合理不代表 Android 1.8→3.6 也合理。Android 保持 1.8
+5. **旋转偏心是机制特征**: 双缓冲增量旋转有微小浮点漂移，可接受
+
+## 2026-05-24 (21:00-22:09) StringInterceptor Release Android AOT/Linker 裁剪问题
+
+### 症状
+StringInterceptor Mod 在 Android Release 版加载成功（2505翻译+72 StringsManager条目），但界面上无翻译效果。
+
+### 根因
+3个方法被 .NET AOT Linker 裁剪（主程序未使用）:
+1. **HashSet<T>.RemoveWhere(Predicate<T>)** — ScanWidgetTree() 中清理已移除 Label，被裁剪→MissingMethodException→整个 Scanner 每帧崩溃→翻译失效
+2. **List<T>.Sort(Comparison<T>)** — SaveCollected() 中排序 Entry，被裁剪→排序失败
+3. **XDocument.Load(string)** — SaveCollected() 中加载 zh_CN.xml，被裁剪→加载失败
+
+### 修复方案
+1. HashSet.RemoveWhere → foreach + 临时列表 + Remove
+2. List.Sort(Comparison<T>) → 冒泡排序
+3. XDocument.Load(string) → XDocument.Load(Stream) + FileStream
+
+### 关键教训
+- **ModEventBus 异常吞咽**: TriggerEvent catch 只写 Console.WriteLine，不记 Game.log。Scanner 每帧 MissingMethodException 被完全吞掉，没有任何可见错误
+- **AOT 裁剪通用原则**: Release Android 下，任何主程序未使用的方法/泛型实例都可能被裁剪。Mod 只用最基础集合操作（foreach/Add/Remove/索引器），避免 Linq/委托排序/params 构造函数/高级便利方法
+- **诊断方法**: Mod 在 Release 静默失效时，在 handler 外围加 try-catch + Log.Error() 捕获 MissingMethodException
+
+---
+
+## 2026-05-25 (00:00) StringInterceptor 临时诊断日志清理
+
+### 变更
+移除 StringInterceptorMod.cs 中所有 `[SuAPI]` 前缀的临时诊断日志和对应计数器字段。
+
+### 移除项
+1. `_diagFrameUpdate` 计数器 + `[SuAPI] Frame.Update fired` 日志
+2. `_diagRootNull` 计数器 + `[SuAPI] RootWidget is null` 日志
+3. `_diagScreenName` 计数器 + `[SuAPI] Screen=...` 日志
+4. `_diagUpdateSkips` 计数器 + `[SuAPI] Update skip: not active` 日志
+5. 每 label 翻译日志 `[SuAPI] Label '...' -> '...'`
+
+### 保留项
+- 所有 Error/Warning 级别日志
+- 一次性启动信息（版本、字体加载、翻译加载、scanner 启动）
+- 关键生命周期事件（ProcessStrings 统计、SaveCollected 结果、Unloaded）
+
+### 铁律
+- 临时调试日志（`[SuAPI]`/`[Window]` 等标记）验证后必须立即移除，不得提交
+- Android 上 Engine.Log 通过 GameLogSink 每次 Flush()，频繁日志=频繁磁盘 I/O
+
+---
+
+## 2026-05-25 (00:00) SuComponentMap 临时诊断日志清理 + 双平台定位修复
+
+### 变更
+1. 移除 SuComponentMap.Load() 中所有 `Log.Information("SuComponentMap.Load: ...")` 诊断日志
+2. 修复 center 定位公式：从 `screenSize.X * (1-RmapRadius/2), screenSize.Y * RmapRadius/2` 改为 `screenSize.X - visualRadiusPx - marginX, visualRadiusPx + marginY`
+3. 按平台设置不同 margin 和 MapScale（Windows 10%/1.4，Android 15%/1.8）
+
+### 铁律
+- RmapRadius 大小/位置耦合：不能用同一系数同时控制视觉半径和定位偏移
+- SC 坐标系 Y 向上：OpenGL Y 从下往上，center.Y 越大越靠上
+- Android 边距比例需大于 Windows
