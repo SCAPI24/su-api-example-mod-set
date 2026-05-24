@@ -1,19 +1,47 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net48</TargetFramework>
+    <TargetFrameworks>net10.0-android;net10.0-windows10.0.19041.0</TargetFrameworks>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <PlatformTarget Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">x64</PlatformTarget>
+    <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">21</SupportedOSPlatformVersion>
+    <DefineConstants Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">$(DefineConstants);ANDROID</DefineConstants>
+    <DefineConstants Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">$(DefineConstants);WINDOWS</DefineConstants>
   </PropertyGroup>
-  <ItemGroup>
+
+  <!-- Windows: ProjectReference to main project (cross-TFM resolution works) -->
+  <ItemGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">
     <ProjectReference Include="..\..\Engine\Engine.csproj" />
-    <ProjectReference Include="..\..\EntitySystem\GameEntitySystem.csproj" />
+    <ProjectReference Include="..\..\EntitySystem\EntitySystem.csproj" />
     <ProjectReference Include="..\..\Survivalcraft\Survivalcraft.csproj" />
   </ItemGroup>
+
+  <!-- Android: DLL reference from android build output -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0-android'">
+    <Reference Include="Engine">
+      <HintPath>..\..\Engine\bin\Debug\net10.0-android\Engine.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="EntitySystem">
+      <HintPath>..\..\EntitySystem\bin\Debug\net10.0-android\EntitySystem.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Survivalcraft">
+      <HintPath>..\..\Survivalcraft\bin\Debug\net10.0-android\Survivalcraft.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Obfuscar" Version="2.2.49">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime;build;native;contentfiles;analyzers;buildtransitive</IncludeAssets>
     </PackageReference>
   </ItemGroup>
-  <Target Name="PostBuild" AfterTargets="PostBuildEvent">
+
+  <!-- Obfuscar only for Windows (Android DLL output path is different) -->
+  <Target Name="PostBuild" AfterTargets="PostBuildEvent"
+          Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">
     <Exec Command="&quot;$(Obfuscar)&quot; Obfuscar.xml" />
   </Target>
 </Project>

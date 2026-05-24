@@ -26,6 +26,11 @@ namespace ConsoleMod
         private List<string> m_history = new List<string>();
         private const int MaxHistoryLines = 200; // More lines for scrollback
 
+#if ANDROID
+        // Source: Android — keyboard shown state
+        private bool m_androidKeyboardShown = false;
+#endif
+
         // UI elements
         private CanvasWidget m_consolePanel;
         private CanvasWidget m_outputArea; // Nested canvas to clip output
@@ -45,8 +50,25 @@ namespace ConsoleMod
         // Source: History navigation state
         private int m_historyIndex = -1;
         private string m_savedInput = "";
+#if WINDOWS
         // Source: Modal dialog for mouse cursor unlock (analogous to iron sign)
         private Dialog m_modalDialog;
+#endif
+
+        public ConsoleSubsystemGameWidgets()
+        {
+#if ANDROID
+            // Source: Android — subscribe to character input from virtual keyboard
+            Keyboard.CharacterEntered += OnCharEntered;
+#endif
+        }
+
+#if ANDROID
+        private void OnCharEntered(char c)
+        {
+            // Source: Android — not used, input goes through ShowKeyboard dialog
+        }
+#endif
 
         public override void Update(float dt)
         {
@@ -71,9 +93,7 @@ namespace ConsoleMod
             if (m_consoleOpen)
                 CaptureInput();
 
-            // Source: Block game input when console is open (analogous to iron sign dialog blocking)
-            // Keyboard.Clear() resets all key arrays so ComponentInput sees no key presses -> no movement/actions
-            // Also block on close frame to prevent lingering keys from triggering game actions
+            // Source: Block game input when console is open
             if (m_consoleOpen || m_justClosed)
             {
                 m_justClosed = false;
@@ -150,11 +170,18 @@ namespace ConsoleMod
             m_inputText.Clear();
             m_cursorPos = 0;
 
+#if WINDOWS
             // Source: Show modal dialog to unlock mouse cursor (analogous to iron sign)
             m_modalDialog = new Dialog();
             m_modalDialog.Size = Vector2.Zero;
             DialogsManager.ShowDialog(guiWidget, m_modalDialog);
             MakeCoverTransparent();
+#endif
+
+#if ANDROID
+            // Source: Android — show virtual keyboard for text input
+            ShowAndroidKeyboard();
+#endif
         }
 
         private void DetachUI()
@@ -173,15 +200,49 @@ namespace ConsoleMod
             m_separator = null;
             m_uiAttached = false;
 
+#if WINDOWS
             if (m_modalDialog != null)
             {
                 DialogsManager.HideDialog(m_modalDialog);
                 m_modalDialog = null;
             }
+#endif
+
+#if ANDROID
+            HideAndroidKeyboard();
+#endif
         }
+
+#if ANDROID
+        private void ShowAndroidKeyboard()
+        {
+            if (m_androidKeyboardShown) return;
+            m_androidKeyboardShown = true;
+            Keyboard.ShowKeyboard("Console", "Enter command", "", false,
+                enter: (string text) =>
+                {
+                    m_androidKeyboardShown = false;
+                    if (!string.IsNullOrEmpty(text))
+                    {
+                        ExecuteCommand(text);
+                        m_inputText.Clear();
+                        m_cursorPos = 0;
+                    }
+                },
+                cancel: () => { m_androidKeyboardShown = false; });
+        }
+
+        private void HideAndroidKeyboard()
+        {
+            // Source: Android — keyboard dismisses via cancel callback or Back button
+            // No explicit HideKeyboard API available
+            m_androidKeyboardShown = false;
+        }
+#endif
 
         private void CaptureInput()
         {
+#if WINDOWS
             if (m_justToggled)
             {
                 m_justToggled = false;
@@ -189,6 +250,13 @@ namespace ConsoleMod
                 KeyboardInput.GetInput(); // Drain stale chars accumulated before console opened
                 return;
             }
+#else
+            if (m_justToggled)
+            {
+                m_justToggled = false;
+                return;
+            }
+#endif
 
             // Escape closes console
             if (Keyboard.IsKeyDownOnce(Key.Escape))
@@ -200,13 +268,14 @@ namespace ConsoleMod
                 return;
             }
 
+#if WINDOWS
             // Scroll output area with mouse wheel or PageUp/PageDown
             int wheelDelta = Mouse.MouseWheelMovement;
             if (Keyboard.IsKeyDownOnce(Key.PageUp)) wheelDelta += 120;
             if (Keyboard.IsKeyDownOnce(Key.PageDown)) wheelDelta -= 120;
             if (wheelDelta != 0)
             {
-                int scrollLines = wheelDelta / 120; // positive = scroll up (older)
+                int scrollLines = wheelDelta / 120;
                 int maxScroll = MathUtils.Max(0, m_history.Count - MaxVisibleLines);
                 m_scrollOffset = MathUtils.Clamp(m_scrollOffset + scrollLines, 0, maxScroll);
                 m_autoScroll = (m_scrollOffset == 0);
@@ -226,6 +295,7 @@ namespace ConsoleMod
                 m_autoScroll = true;
                 return;
             }
+#endif
 
             // Left arrow — move cursor left
             if (Keyboard.IsKeyDownOnce(Key.LeftArrow))
@@ -249,11 +319,15 @@ namespace ConsoleMod
                 ExecuteCommand(cmd);
                 m_inputText.Clear();
                 m_cursorPos = 0;
+#if ANDROID
+                // Source: Android — re-show keyboard after command execution
+                ShowAndroidKeyboard();
+#endif
                 return;
             }
 
-            // Delete key — delete char at cursor (must be before Backspace check
-            // because KeyboardInput.DeletePressed is true for both Backspace AND Delete in OpenTK)
+#if WINDOWS
+            // Delete key — delete char at cursor
             if (Keyboard.IsKeyDownOnce(Key.Delete))
             {
                 if (m_cursorPos < m_inputText.Length)
@@ -273,6 +347,26 @@ namespace ConsoleMod
                 KeyboardInput.DeletePressed = false;
                 return;
             }
+#else
+            // Backspace (Android) — no KeyboardInput.DeletePressed needed
+            if (Keyboard.IsKeyDownOnce(Key.BackSpace))
+            {
+                if (m_cursorPos > 0)
+                {
+                    m_inputText.Remove(m_cursorPos - 1, 1);
+                    m_cursorPos--;
+                }
+                return;
+            }
+
+            // Delete (Android)
+            if (Keyboard.IsKeyDownOnce(Key.Delete))
+            {
+                if (m_cursorPos < m_inputText.Length)
+                    m_inputText.Remove(m_cursorPos, 1);
+                return;
+            }
+#endif
 
             // Up arrow — navigate to previous command in history
             if (Keyboard.IsKeyDownOnce(Key.UpArrow))
@@ -320,6 +414,7 @@ namespace ConsoleMod
                 return;
             }
 
+#if WINDOWS
             // Character input via KeyboardInput.GetInput — captures all chars per frame
             string inputChars = KeyboardInput.GetInput();
             if (!string.IsNullOrEmpty(inputChars))
@@ -334,6 +429,9 @@ namespace ConsoleMod
                     }
                 }
             }
+#else
+            // Android: input handled by ShowKeyboard dialog, no inline char processing
+#endif
         }
 
         private void UpdateDisplay()
@@ -571,6 +669,7 @@ namespace ConsoleMod
             return new Vector3(pos.X, topHeight + 1f, pos.Z);
         }
 
+#if WINDOWS
         // Source: DialogsManager.m_animationData — make the modal cover transparent
         // so the dialog doesn't dim the screen, only unlocks the mouse cursor
         private void MakeCoverTransparent()
@@ -596,5 +695,6 @@ namespace ConsoleMod
             }
             catch { }
         }
+#endif
     }
 }
