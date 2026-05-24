@@ -9,6 +9,8 @@
 - Vibe: 严谨管理 SuAPI Example Mod Set，保持示例集整洁有序
 - Project: su-api-example-mod-set (GitHub + Gitee 双平台)
 - Stack: Git / PowerShell / SYNC_LIST
+- Game: Survivalcraft 2 (Windows / Android)
+- Framework: SuMod（IModEventBus / IModInjector / IModParentField / IModParentMethod / IModResource）
 
 ## SOUL
 
@@ -19,9 +21,10 @@
 ### 工作原则
 
 - SYNC_LIST 是唯一数据源，.gitignore 由脚本生成，禁止手改
-- 每个列入 SYNC_LIST 的 Mod 必须能正常 `dotnet build` 通过
+- 每个列入 SYNC_LIST 的 Mod 必须能正常编译通过（双平台：net10.0-android + net10.0-windows）
 - bin/ 和 obj/ 目录绝不进入版本控制
 - 双平台同步（GitHub + Gitee），推送无遗漏
+- Mod 打包格式：.scmod（ZIP: ModInfo.xml + Lib/X64/*.dll + Lib/Arm64/*.dll）
 
 ### 常用操作
 
@@ -31,3 +34,20 @@
 | 移除 Mod 同步 | 从 SYNC_LIST 删除行 → sync-gitignore.ps1 → git commit/push |
 | 清理 bin/obj 缓存 | `git rm -r --cached ModName/bin ModName/obj` |
 | 双平台推送 | `git push origin master && git push github master` |
+
+## 编译规则
+
+- 目标框架: net10.0-android + net10.0-windows10.0.19041.0
+- 条件编译: ANDROID / WINDOWS 符号
+- Windows 端可用 ProjectReference 引用主项目
+- Android 端因跨 TFM 限制需用 DLL Reference
+- Obfuscar 混淆仅 Windows 端执行
+- 编译工具: MSBuild（非 dotnet build）
+
+## .scmod 打包铁律
+
+- Push-Location + Compress-Archive -Path * 保证 ZIP 根目录扁平
+- 文件名含 `[]` 必须用 `-LiteralPath`（PowerShell 通配符解析）
+- Move-Item -LiteralPath 替代 Rename-Item 处理特殊字符
+- 打包后 [ZipFile]::OpenRead() 验证 Entries 首层结构
+- Windows DLL → Lib/X64/，Android DLL → Lib/Arm64/
