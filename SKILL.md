@@ -31,7 +31,7 @@ MemoryBankDrawMod
 
 - 列出的文件夹 → Git 可追踪
 - 未列出的文件夹 → Git 忽略
-- 已追踪文件夹内的 `bin/`、`obj/`、`.vs/` 自动排除
+- 已追踪文件夹内的 `bin/`、`obj/`、`.vs/`、`.scmod`、`pack-temp/` 自动排除
 - 根目录保留文件：`.gitignore` / `SYNC_LIST` / `sync-gitignore.ps1` / `README.md` / `SKILL.md` / `AGENT-PROFILE.md` / `images/`（若新增根文件需同步更新 sync-gitignore.ps1）
 
 ## 添加 Mod 到示例集
@@ -88,6 +88,49 @@ ModName/.vs/
 
 关键：`bin/` `obj/` `.vs/` 排除必须在 `!ModName/**` **之后**声明，Git 同文件中后匹配的规则优先。
 
+## 运行时铁律（从迁移经验中总结）
+
+### 1. ModLoader 依赖加载
+
+ModLoader 只加载 .scmod 内两种 DLL：(1) 与 ModInfo Identifier 同名的 DLL，(2) `<Dependencies>` 中声明的 DLL。未声明的依赖 DLL 即使在 ZIP 中也会被静默跳过，导致 `ReflectionTypeLoadException: Unable to load one or more of the requested types`。
+
+```xml
+<!-- ModInfo.xml 必须声明所有非主 Identifier 的 DLL -->
+<Dependencies>
+    <Dependency>
+        <ModInfo>
+            <Identifier>Comms</Identifier>
+        </ModInfo>
+    </Dependency>
+</Dependencies>
+```
+
+### 2. LoadingManager.ReplaceItem 精确匹配 name
+
+MAUI net10.0 版替换 Screen 加载步骤时，`ReplaceItem(name, action)` 的 name 必须精确匹配原始 `QueueItem` 的 name（如 "Initialize PlayScreen"），不是 Screen 名（如 "Play"）。禁止用 `QueueItem` 添加同名 `AddScreen`——会导致 `ArgumentException: An item with the same key has already been added`。
+
+- `LoadingManager` 是 **static class**，不能声明变量，直接 `Game.LoadingManager.QueueItem/ReplaceItem`
+- `QueueItem(string name, Action action)` 只有 2 个参数
+- `ReplaceItem` 返回 `bool`：`true` = 替换成功，`false` = 未找到
+
+### 3. EventBus 静默吞异常
+
+`TriggerEvent` 的回调异常只写 `Console.WriteLine`，不记入 `Game.log`。调试时在 handler 外围 try-catch 打 `Log.Error()` 或加步进标记。
+
+### 4. Loading.Initialize 事件参数
+
+MAUI net10.0 版：`TriggerEvent("Loading.Initialize", new object[] { typeof(LoadingManager) })`，传 `typeof(LoadingManager)` 而非 `List<Action>` 实例。
+
+## 编译规则
+
+- 目标框架: net10.0-android + net10.0-windows10.0.19041.0
+- 条件编译: ANDROID / WINDOWS 符号（`#if WINDOWS` 包裹 Windows 专属 API）
+- Windows 端用 ProjectReference（EntitySystem.csproj，非 GameEntitySystem.csproj）
+- Android 端用 DLL Reference（HintPath 指向游戏 bin/Debug/net10.0-android/）
+- SDK 样式 csproj 自动包含 `**/*.cs`，显式 `<Compile Include>` 须删除（否则 NETSDK1022）
+- Obfuscar 仅 Windows 端（PostBuild Target Condition）
+- 编译工具: `dotnet build`（net10.0 项目）
+
 ## 常见问题
 
 - **添加 Mod 后 bin/obj 仍被追踪**：可能是历史缓存，用 `git rm -r --cached ModName/bin ModName/obj` 清除
@@ -96,5 +139,6 @@ ModName/.vs/
 - **Mod 目录是独立 Git 仓库无法同步**：移除 `.git` 子目录（`Remove-Item -Recurse -Force ModName\.git`）后重新 add
 - **忘记推送 GitHub**：`git push github master` 补推
 - **pwsh 未安装导致 sync-gitignore.ps1 无法运行**：可用 Python 脚本替代生成 .gitignore
-- **添加后 bin/obj 仍被追踪**：`git rm -r --cached ModName/bin ModName/obj` 清除缓存
-- **.gitignore 手动修改后需重新生成**：运行 `sync-gitignore.ps1` 覆盖回标准格式
+- **.scmod/pack-temp 不应入库**：已在 .gitignore 全局排除，新添加的 Mod 也应排除这些文件
+- **ModInfo.xml 必须声明依赖 DLL**：未声明 → `ReflectionTypeLoadException`，见铁律1
+- **ReplaceItem name 不匹配**：name 是 QueueItem 注册名（"Initialize PlayScreen"）不是 Screen 名（"Play"），见铁律2

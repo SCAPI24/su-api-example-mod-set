@@ -1,16 +1,8 @@
-﻿<?xml version='1.0'?>
+<?xml version='1.0'?>
 <Obfuscator>
-	<Var name="InPath" value="." />
-	<Var name="OutPath" value=".\Obfuscar" />
-
-	<!-- 强制跳过所有外部依赖检查 -->
-	<Var name="SkipExtraDependencies" value="true" />
-
-
-	<!-- 设置仅处理当前程序集 
-		
-	-->
-	<Module file="$(InPath)\GameEntitySystem.dll"/>
-	<Module file="$(InPath)\RainWithoutDawn.dll"/>
-
+    <Var name="InPath" value=".\bin\Debug\net10.0-windows10.0.19041.0" />
+    <Var name="OutPath" value=".\bin\Debug\net10.0-windows10.0.19041.0\Obfuscar" />
+    <Var name="SkipExtraDependencies" value="true" />
+    <Module file="$(InPath)\EntitySystem.dll"/>
+    <Module file="$(InPath)\RainWithoutDawn.dll"/>
 </Obfuscator>

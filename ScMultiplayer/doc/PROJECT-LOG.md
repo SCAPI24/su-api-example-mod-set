@@ -547,3 +547,43 @@ m_touchLocations[num] = new TouchLocation
 13. **AfterFrame 在帧末执行 → 状态转换延迟一整帧** — 中间时段的位置更新必须基于当前事件而非缓存状态
 14. **Android touch 用 DispatchTouchEvent 路由** — OnTouchEvent 被 SDL2 消费，不可用于自定义处理
 15. **逐层步进验证法** — 事件入口 → 中间处理 → 状态更新 → 消费者读取，每层加一个日志验证，不跳跃
+16. **ModLoader 只加载声明的依赖 DLL** — .scmod 内 Lib/ 下的 DLL 不会自动加载，只有与 Identifier 同名的 DLL 和 `<Dependencies>` 中声明的 DLL 才会被加载。未声明的 Comms.dll → `ReflectionTypeLoadException: Unable to load one or more of the requested types`
+17. **LoadingManager.ReplaceItem 精确匹配 name** — 替换 Screen 加载步骤时，name 必须匹配原始 `QueueItem` 的 name（"Initialize PlayScreen"），不是 Screen 名（"Play"）。用 `QueueItem` 添加同名 `AddScreen` → `ArgumentException: An item with the same key has already been added. Key: Play`
+18. **LoadingManager 是 static class** — 不能声明变量，直接 `Game.LoadingManager.QueueItem/ReplaceItem`。`QueueItem(string name, Action action)` 只有 2 个参数
+19. **EventBus 静默吞异常** — InvalidCastException 在 EventBus.SubscribeEvent 回调中被静默吞咽，不报错不崩溃，mod 功能直接失效。StringInterceptor 的翻译失效就是这个原因——参数类型从 `List<Action>` 变为 `typeof(LoadingManager)` 但代码没更新
+
+---
+
+## 2026-05-25 ScMultiplayer 迁移至 net10.0 双平台
+
+### 需求
+将 ScMultiplayer 及其依赖库 Comms 从 net48 迁移至 net10.0 双平台（Android + Windows）。
+
+### 迁移过程
+
+#### Comms 库迁移
+- csproj 从旧格式改为 SDK 样式，双 TFM
+- 添加 `<GenerateAssemblyInfo>false</GenerateAssemblyInfo>` 避免与 AssemblyInfo.cs 冲突
+- 移除显式 Compile 项修复 NETSDK1022
+- 双平台编译成功，仅 CS8618 nullable 警告
+
+#### ScMultiplayer 源码修改
+1. **HandleLoading 修复**：`LoadingManager` 是 static class，移除变量声明。`QueueItem("Initialize PlayScreen", action)` → `ReplaceItem("Initialize PlayScreen", action)`
+2. **UdpTransmitter 构造函数**：旧 `UdpTransmitter(IPAddress, int)` → 新 `UdpTransmitter(int localPort = 0)`，自动检测 LAN 地址
+3. **Keyboard 条件编译**：`Key.T/J/K/U` 用 `#if WINDOWS` 包裹
+4. **ModInfo.xml 创建**：Identifier=ScMultiplayer，声明 Comms 依赖
+5. **Obfuscar.xml 创建**：仅 Windows 端，路径 net10.0-windows10.0.19041.0
+
+#### 运行时加载失败排查
+- **错误1**：`Failed to load mod ScMultiplayer: Unable to load one or more of the requested types.`
+  - 根因：ModInfo.xml 缺少 `<Dependencies>` 声明，Comms.dll 被跳过
+  - 修复：添加 `<Dependencies><Dependency><ModInfo><Identifier>Comms</Identifier></ModInfo></Dependency></Dependencies>`
+
+- **错误2**：`An item with the same key has already been added. Key: Play`
+  - 根因：`QueueItem` 添加新加载步骤执行 `AddScreen("Play", ...)`，但原始 "Initialize PlayScreen" 步骤也执行了 `AddScreen("Play", ...)`，字典键冲突
+  - 修复：改用 `ReplaceItem("Initialize PlayScreen", ...)` 替换原始步骤
+
+### 最终结果
+- Windows: ScMultiplayer 加载成功，Server/Client/Explorer 正常初始化
+- Android: adb push 部署成功
+- 6个 Mod 全部迁移完成

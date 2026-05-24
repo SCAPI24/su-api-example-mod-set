@@ -296,61 +296,105 @@ namespace StringInterceptor
 
             eventBus.SubscribeEvent("Loading.Initialize", args =>
             {
-                return HandleLoadingInitialize((List<Action>)args[0]);
+                return HandleLoadingInitialize((object[])args);
             }, EventPriority.LOWEST);
 
             Log.Information("[StringInterceptor] v1.5.0 Loaded. 4-size Chinese fonts + Pericles coexist.");
         }
 
-        private object[] HandleLoadingInitialize(List<Action> actions)
+        private object[] HandleLoadingInitialize(object[] args)
         {
-            // 加载中文字体（不替换 Pericles32） — ContentCache 此时已包含 ModResource 加载的资源
-            actions.Add(() =>
+            // MAUI版 Loading.Initialize 传 typeof(LoadingManager)，用 QueueItem 添加加载步骤
+            // 旧版传 List<Action>，兼容处理
+            if (args[0] is Type type && type.Name == "LoadingManager")
             {
-                try { ChineseFontLoader.Load(); }
-                catch (Exception ex) { Log.Error($"[StringInterceptor] ChineseFontLoader failed: {ex.Message}"); }
-            });
-
-            // 首次启动时将 scmod 内 zh_CN.xml 复制到 Logs 作为基线
-            actions.Add(() =>
-            {
-                try
+                LoadingManager.QueueItem("ChineseFontLoader", () =>
                 {
-                    string logPath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Logs", "zh_CN.xml");
-                    if (!System.IO.File.Exists(logPath))
+                    try { ChineseFontLoader.Load(); }
+                    catch (Exception ex) { Log.Error($"[StringInterceptor] ChineseFontLoader failed: {ex.Message}"); }
+                });
+
+                LoadingManager.QueueItem("SeedZhCN", () =>
+                {
+                    try
                     {
-                        var root = ContentCache.Get<XElement>("Mod/zh_CN", false);
-                        if (root != null)
+                        string logPath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Logs", "zh_CN.xml");
+                        if (!System.IO.File.Exists(logPath))
                         {
-                            var doc = new XDocument(new XDeclaration("1.0", "UTF-8", null), root);
-                            System.IO.File.WriteAllText(logPath, doc.ToString(), new System.Text.UTF8Encoding(false));
-                            Log.Information("[StringInterceptor] Seeded Logs/zh_CN.xml from scmod.");
+                            var root = ContentCache.Get<XElement>("Mod/zh_CN", false);
+                            if (root != null)
+                            {
+                                var doc = new XDocument(new XDeclaration("1.0", "UTF-8", null), root);
+                                System.IO.File.WriteAllText(logPath, doc.ToString(), new System.Text.UTF8Encoding(false));
+                                Log.Information("[StringInterceptor] Seeded Logs/zh_CN.xml from scmod.");
+                            }
                         }
                     }
-                }
-                catch (Exception ex) { Log.Error($"[StringInterceptor] Seed failed: {ex.Message}"); }
-            });
+                    catch (Exception ex) { Log.Error($"[StringInterceptor] Seed failed: {ex.Message}"); }
+                });
 
-            // 加载翻译文件
-            actions.Add(() =>
+                LoadingManager.QueueItem("LoadTranslations", () =>
+                {
+                    try { TranslationProcessor.LoadTranslations(); }
+                    catch (Exception ex) { Log.Error($"[StringInterceptor] LoadTranslations failed: {ex.Message}"); }
+                });
+
+                LoadingManager.QueueItem("ProcessStrings", () =>
+                {
+                    try { ProcessStrings(); }
+                    catch (Exception ex) { Log.Error($"[StringInterceptor] ProcessStrings failed: {ex.Message}"); }
+                });
+
+                LoadingManager.QueueItem("StartWidgetScanner", () =>
+                {
+                    try { StartWidgetScanner(); }
+                    catch (Exception ex) { Log.Error($"[StringInterceptor] StartWidgetScanner failed: {ex.Message}"); }
+                });
+            }
+            else if (args[0] is List<Action> actions)
             {
-                try { TranslationProcessor.LoadTranslations(); }
-                catch (Exception ex) { Log.Error($"[StringInterceptor] LoadTranslations failed: {ex.Message}"); }
-            });
+                // 旧版兼容：List<Action>
+                actions.Add(() =>
+                {
+                    try { ChineseFontLoader.Load(); }
+                    catch (Exception ex) { Log.Error($"[StringInterceptor] ChineseFontLoader failed: {ex.Message}"); }
+                });
+                actions.Add(() =>
+                {
+                    try
+                    {
+                        string logPath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Logs", "zh_CN.xml");
+                        if (!System.IO.File.Exists(logPath))
+                        {
+                            var root = ContentCache.Get<XElement>("Mod/zh_CN", false);
+                            if (root != null)
+                            {
+                                var doc = new XDocument(new XDeclaration("1.0", "UTF-8", null), root);
+                                System.IO.File.WriteAllText(logPath, doc.ToString(), new System.Text.UTF8Encoding(false));
+                                Log.Information("[StringInterceptor] Seeded Logs/zh_CN.xml from scmod.");
+                            }
+                        }
+                    }
+                    catch (Exception ex) { Log.Error($"[StringInterceptor] Seed failed: {ex.Message}"); }
+                });
+                actions.Add(() =>
+                {
+                    try { TranslationProcessor.LoadTranslations(); }
+                    catch (Exception ex) { Log.Error($"[StringInterceptor] LoadTranslations failed: {ex.Message}"); }
+                });
+                actions.Add(() =>
+                {
+                    try { ProcessStrings(); }
+                    catch (Exception ex) { Log.Error($"[StringInterceptor] ProcessStrings failed: {ex.Message}"); }
+                });
+                actions.Add(() =>
+                {
+                    try { StartWidgetScanner(); }
+                    catch (Exception ex) { Log.Error($"[StringInterceptor] StartWidgetScanner failed: {ex.Message}"); }
+                });
+            }
 
-            actions.Add(() =>
-            {
-                try { ProcessStrings(); }
-                catch (Exception ex) { Log.Error($"[StringInterceptor] ProcessStrings failed: {ex.Message}"); }
-            });
-
-            actions.Add(() =>
-            {
-                try { StartWidgetScanner(); }
-                catch (Exception ex) { Log.Error($"[StringInterceptor] StartWidgetScanner failed: {ex.Message}"); }
-            });
-
-            return new object[] { false, actions };
+            return new object[] { false, args };
         }
 
         private void ProcessStrings()

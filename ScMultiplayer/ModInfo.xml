@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Mod>
+  <ModInfo>
+    <Identifier>ScMultiplayer</Identifier>
+    <LocalizedName>[SuAPI]网络</LocalizedName>
+    <Version>1.0.2</Version>
+    <APIVersion>1.0</APIVersion>
+    <Asset>
+      <ContentRoot>Content/</ContentRoot>
+    </Asset>
+  </ModInfo>
+  <Dependencies>
+    <Dependency>
+      <ModInfo>
+        <Identifier>Comms</Identifier>
+      </ModInfo>
+    </Dependency>
+  </Dependencies>
+</Mod>

@@ -89,9 +89,12 @@ namespace SurvivalcraftMiniMap
             if (m_componentPlayer == null) { m_renderState = 0; return; }
 
             Vector2 screenSize = m_componentPlayer.GameWidget.ActiveCamera.ViewportSize;
+            // 小地图中心：右上角区域
+            // X 轴偏右 = screenSize.X * (1 - RmapRadius/2)
+            // Y 轴偏上 = screenSize.Y * RmapRadius/2（用 Y 不用 X）
             Vector2 center = new Vector2(
-                screenSize.X * (1f - RmapRadius / 2),
-                screenSize.X * RmapRadius / 2);
+                screenSize.X * (1f - RmapRadius / 2f),
+                screenSize.Y * RmapRadius / 2f);
 
             batchUp.Clear();
             batchDown.Clear();
@@ -256,16 +259,12 @@ namespace SurvivalcraftMiniMap
                     samplerState: SamplerState.PointWrap);
                 Log.Information("SuComponentMap.Load: done");
 
-                switch (Environment.OSVersion.Platform.ToString())
-                {
-                    case "Windows":
-                    case "windows":
-                        mapRadius = 100; MapScale = 0.5f; RmapRadius = 0.30f;
-                        break;
-                    default:
-                        mapRadius = 100; MapScale = 1.5f; RmapRadius = 0.30f;
-                        break;
-                }
+                // 平台参数用条件编译而非 Environment.OSVersion（Android/Mono 上不可靠）
+#if WINDOWS
+                mapRadius = 100; MapScale = 0.5f; RmapRadius = 0.30f;
+#else
+                mapRadius = 100; MapScale = 1.5f; RmapRadius = 0.30f;
+#endif
             }
             catch (Exception ex)
             {
