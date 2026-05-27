@@ -31,6 +31,12 @@ pwsh sync-gitignore.ps1
 
 小地图 Mod，通过新建 ComponentTemplate 向 Player 挂载地图组件，实时显示玩家位置和周围地形。
 
+### WatchMod
+
+![WatchMod 截图](images/WatchMod.png)
+
+手表 Mod，通过 ComponentTemplate+IUpdateable 独立组件模式向 Player 挂载时钟 UI，当 handcrafting slot 2 放置 RealTimeClockBlock 时在左侧按钮栏下方显示游戏时间。**不替换 SubsystemGameWidgets**，与 ConsoleMod 等其他 UI Mod 兼容共存。演示 ComponentTemplate 注册 + IUpdateable 每帧检测 + 动态 Attach/Detach Widget 模式。
+
 ### ConsoleMod
 
 ![ConsoleMod 截图](images/ConsoleMod.png)
