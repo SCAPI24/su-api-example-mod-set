@@ -21,7 +21,7 @@
 ### 工作原则
 
 - SYNC_LIST 是唯一数据源，.gitignore 由脚本生成，禁止手改
-- 每个列入 SYNC_LIST 的 Mod 必须能正常编译通过（双平台：net10.0-android + net10.0-windows）
+- 每个列入 SYNC_LIST 的 Mod 必须能正常编译通过（双平台：net8.0 + net8.0-android）
 - bin/ 和 obj/ 目录绝不进入版本控制
 - .scmod 和 pack-temp/ 不进入版本控制
 - 双平台同步（GitHub + Gitee），推送无遗漏
@@ -38,22 +38,27 @@
 
 ## 编译规则
 
-- 目标框架: net10.0-android + net10.0-windows10.0.19041.0
-- 条件编译: ANDROID / WINDOWS 符号（`#if WINDOWS` 包裹 Windows 专属 API）
-- Windows 端可用 ProjectReference 引用主项目（EntitySystem.csproj，非 GameEntitySystem.csproj）
-- Android 端因跨 TFM 限制需用 DLL Reference（HintPath 指向游戏 bin/Debug/net10.0-android/）
+- 目标框架: net8.0 + net8.0-android（已从 net10.0 MAUI 版迁移至 net8.0 Mono 版）
+- 条件编译: ANDROID / WINDOWS 符号（csproj DefineConstants 条件设置，`#if WINDOWS` 包裹 Windows 专属 API）
+- Windows 端可用 ProjectReference 引用主项目（GameEntitySystem.csproj，AssemblyName=GameEntitySystem）
+- Android 端因跨 TFM 限制需用 DLL Reference（HintPath 指向游戏 bin/Debug/net8.0-android/ 或 bin.android/net8.0-android/）
 - SDK 样式 csproj 自动包含 `**/*.cs`，旧项目显式 `<Compile Include>` 须删除（否则 NETSDK1022）
+- `ImplicitUsings` 设为 `disable`，`CheckEolTargetFrameworks` 设为 `false`
 - 若项目有 `AssemblyInfo.cs`，须加 `<GenerateAssemblyInfo>false</GenerateAssemblyInfo>`
-- Obfuscar 混淆仅 Windows 端执行（PostBuild Target 条件编译）
-- 编译工具: `dotnet build`（net10.0 项目）；MSBuild（net48 旧项目，已弃用）
+- Obfuscar 混淆仅 Windows 端执行（PostBuild Target 条件：`Condition="'$(TargetFramework)' == 'net8.0'"`）
+- 编译工具: `dotnet build`（net8.0 项目，必须从项目根目录运行以使用 global.json 锁定的 SDK 8.0.402）；MSBuild（net48 旧项目，已弃用）
+- Windows DLL 输出: `bin/Debug/net8.0/Obfuscar/{ModName}.dll`（混淆后）
+- Android DLL 输出: `bin/Debug/net8.0-android/{ModName}.dll`（直接输出，无混淆）
 
 ## .scmod 打包铁律
 
-- Push-Location + Compress-Archive -Path * 保证 ZIP 根目录扁平
-- 文件名含 `[]` 必须用 `-LiteralPath`（PowerShell 通配符解析）
-- Move-Item -LiteralPath 替代 Rename-Item 处理特殊字符
-- 打包后 [ZipFile]::OpenRead() 验证 Entries 首层结构
-- Windows DLL → Lib/X64/，Android DLL → Lib/Arm64/
+- **必须用 Python zipfile 打包**: Windows Compress-Archive 生成反斜杠路径 `Lib\Arm64\`，ModLoader 用 `Contains("Lib/Arm64")` 匹配正斜杠→匹配失败→No DLL found→Mod 不加载。必须用 `python3 -c "import zipfile..."` + `arc_name.replace(os.sep, '/')`
+- **ModInfo.xml 必须在 ZIP 根目录**: 打包时不能把 ModInfo.xml 误放入 Content/ 子目录→ModLoader 找不到→mod 静默跳过
+- **Compress-Archive 扁平化铁律**: `Compress-Archive -LiteralPath $dir` 会把目录本身打进去→ZIP 根目录变成目录名。必须 `Push-Location $dir; Compress-Archive -Path *` 保证扁平
+- **打包后验证**: 用 Python `[ZipFile]::OpenRead()` 或 `zipfile.ZipFile` 检查: (1) ModInfo.xml 在根 (2) Lib/X64/ 和 Lib/Arm64/ 存在 (3) 路径全正斜杠
+- **net8 DLL 路径**: Windows→`bin/Debug/net8.0/Obfuscar/{ModName}.dll`（混淆后），Android→`bin/Debug/net8.0-android/{ModName}.dll`
+- **.scmod 命名**: 文件名必须加 `[SuAPI]` 前缀，如 `[SuAPI]翻译拦截.scmod`
+- **PowerShell `[]` 通配符**: 操作含 `[SuAPI]` 路径时必须用 `-LiteralPath`
 - **依赖 DLL 必须在 ModInfo.xml 的 `<Dependencies>` 中声明**（见下方铁律）
 
 ## 运行时铁律（从迁移经验中总结）
@@ -75,7 +80,7 @@ ModLoader 只加载 .scmod 内两种 DLL：(1) 与 ModInfo Identifier 同名的 
 
 ### 2. LoadingManager.ReplaceItem 精确匹配 name
 
-MAUI net10.0 版替换 Screen 加载步骤时，`ReplaceItem(name, action)` 的 name 必须精确匹配原始 `QueueItem` 的 name（如 "Initialize PlayScreen"），不是 Screen 名（如 "Play"）。禁止用 `QueueItem` 添加同名 `AddScreen`——会导致 `ArgumentException: An item with the same key has already been added`。
+MAUI net10.0 版→net8.0 Mono版: 替换 Screen 加载步骤时，`ReplaceItem(name, action)` 的 name 必须精确匹配原始 `QueueItem` 的 name（如 "Initialize PlayScreen"），不是 Screen 名（如 "Play"）。禁止用 `QueueItem` 添加同名 `AddScreen`——会导致 `ArgumentException: An item with the same key has already been added`。
 
 - `LoadingManager` 是 **static class**，不能声明变量，直接 `Game.LoadingManager.QueueItem/ReplaceItem`
 - `QueueItem(string name, Action action)` 只有 2 个参数
@@ -87,11 +92,11 @@ MAUI net10.0 版替换 Screen 加载步骤时，`ReplaceItem(name, action)` 的 
 
 ### 4. Loading.Initialize 事件参数变更
 
-MAUI net10.0 版：`TriggerEvent("Loading.Initialize", new object[] { typeof(LoadingManager) })`，传 `typeof(LoadingManager)` 而非 `List<Action>` 实例。旧代码 `(List<Action>)args[0]` 会抛 InvalidCastException（被 EventBus 静默吞咽）。
+net8.0 Mono版：`TriggerEvent("Loading.Initialize", new object[] { typeof(LoadingManager) })`，传 `typeof(LoadingManager)` 而非 `List<Action>` 实例。旧代码 `(List<Action>)args[0]` 会抛 InvalidCastException（被 EventBus 静默吞咽）。
 
 ### 5. UdpTransmitter 构造函数变更
 
-MAUI net10.0 版：`UdpTransmitter(int localPort = 0)`，不再接受 IPAddress 参数，自动检测 LAN 地址。
+MAUI net10.0→net8.0版：`UdpTransmitter(int localPort = 0)`，不再接受 IPAddress 参数，自动检测 LAN 地址。
 
 ### 6. Keyboard API 平台差异
 
