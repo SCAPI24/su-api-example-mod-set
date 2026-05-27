@@ -65,6 +65,12 @@ MemoryBankDrawMod/obj/
 MemoryBankDrawMod/.vs/
 MemoryBankDrawMod/draw.zip
 MemoryBankDrawMod/pack/
+## sync:WatchMod
+!WatchMod/
+!WatchMod/**
+WatchMod/bin/
+WatchMod/obj/
+WatchMod/.vs/
 
 # 全局忽略 .vs 目录（必须在所有 !Mod/** 之后以覆盖反忽略）
 *.vs/

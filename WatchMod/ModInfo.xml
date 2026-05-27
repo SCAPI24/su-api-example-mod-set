@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Mod>
+    <ModInfo>
+        <Identifier>WatchMod</Identifier>
+        <LocalizedName>
+            <Text lang="en_US">Watch</Text>
+            <Text lang="zh_CN">手表</Text>
+        </LocalizedName>
+        <ModVersion>
+            <Version>1.0.0</Version>
+            <APIVersion>2.1.0</APIVersion>
+        </ModVersion>
+        <Asset>
+            <ContentRoot>Content</ContentRoot>
+        </Asset>
+    </ModInfo>
+    <Dependencies>
+    </Dependencies>
+</Mod>

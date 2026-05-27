@@ -64,6 +64,7 @@ D:\Users\Suceru\Desktop\jiejian\SurvivalcraftMonoWinAN\
 │   ├── StringInterceptor/ # 字符串拦截+翻译+字体切换示例
 │   ├── MemoryBankDrawMod/ # Dialog 替换+交互式 Widget 叠加层示例(绘图编辑器)
 │   ├── SurvivalcraftMiniMap/ # 新建 ComponentTemplate 示例(小地图)+ 双平台参数调优示例
+│   ├── WatchMod/         # ComponentTemplate+IUpdateable UI挂载示例(手表)+ 多Mod兼容模式示例
 │   └── Comms/           # 联机通信库(ScMultiplayer 依赖,需在 ModInfo.xml Dependencies 中声明)
 ├── Pak/                 # ⚠ Content.pak 解包内容(仅供查阅参考,代码中不可引用此路径)
 ├── Survivalcraft/       # 游戏主程序(含 Program.cs)
@@ -967,6 +968,48 @@ char? lastChar = Keyboard.LastChar;
 - Dialog 的 `m_animationData.CoverWidget` 通过反射改为透明,否则画面会变暗
 - 关闭控制台后需 `DialogsManager.HideDialog()` 移除模态,否则鼠标光标不恢复
 - 参考 ConsoleMod 完整实现
+
+## ComponentTemplate+IUpdateable UI 挂载模式(与 SubsystemGameWidgets 替换共存)
+
+当需要挂载游戏内 UI 但**不替换 SubsystemGameWidgets** 时(如另一个 Mod 已替换),可用 ComponentTemplate 注册独立 Component 挂到 Player 实体,通过 IUpdateable 每帧检测条件并动态 Attach/Detach Widget。
+
+### 适用场景
+- 需要 UI overlay 但 ConsoleMod 已占据 SubsystemGameWidgets 替换
+- 条件性显示 UI(如检测物品后才显示)
+- 不拦截键盘输入,只做信息展示
+
+### 核心思路
+1. EventBus 订阅 `GameDatabase.GameDatabase` 创建 ComponentTemplate + Parameter + MemberComponentTemplate(模式四)
+2. Component 实现 `IUpdateable`,在 `Update(float dt)` 中:
+   - 检测 `SubsystemGameWidgets.GameWidgets.Count > 0` 后 Attach UI
+   - 检测业务条件(如 handcrafting slot 物品)决定 Show/Hide
+   - 每帧更新 UI 内容(如时钟数值)
+3. UI Widget 挂到 `GameWidget.Children.Find<StackPanelWidget>("LeftControlsContainer")` 等已有容器
+
+### 与 SubSystemGameWidgets 替换的区别
+| 方面 | SubsystemGameWidgets 替换 | ComponentTemplate+IUpdateable |
+|------|--------------------------|-------------------------------|
+| 输入拦截 | 可用 Keyboard.Clear() 清空 | 不拦截,游戏输入正常 |
+| 模态 Dialog | 可用 DialogsManager 透明遮罩 | 不使用 |
+| UpdateOrder | -100(抢先) | Views(正常) |
+| 多Mod共存 | ❌ 只能一个 Mod 替换 | ✅ 多个 Component 独立工作 |
+| 适用 | 控制台/需键盘交互 | 信息显示/条件性HUD |
+
+### WatchMod 参考实现要点
+- **触发条件**: handcrafting slot 2(左下)放置 RealTimeClockBlock(Index=187)时显示手表UI
+- **时间数据**: SubsystemTimeOfDay.TimeOfDay(0-1)+Day(整数),转换为小时:分钟+天数显示
+- **UI**: CanvasWidget(64x48) + RectangleWidget(白色线框) + StackPanelWidget(时间+日期Label)
+- **挂载位置**: LeftControlsContainer.Children.Add,在左侧按钮竖排末尾
+- **Component.Load 签名**: `protected override void Load(ValuesDictionary, IdToEntityMap)` — 不是 `Load(ValuesDictionary)`
+- **跨assembly override**: Component.Load 是 `protected internal virtual`,跨assembly只能用 `protected override`
+- **DatabaseObject 自动注册**: 构造时设 NestingParent 即加入 database,无 AddDatabaseObject 方法
+
+### ⚠️ 铁律
+- **SubsystemGameWidgets 只能被一个 Mod 替换** — 如果 ConsoleMod 已替换(GUID 6bf14dc6),其他 Mod 不能再替换。需要 UI overlay 的 Mod 应改用 ComponentTemplate+IUpdateable 模式
+- **Component.Load 签名**: `Load(ValuesDictionary, IdToEntityMap)`,不是单参数版。IUpdateable.Update 用显式接口实现 `void IUpdateable.Update(float dt)`
+- **GameWidgets 延迟初始化**: Component.Load 时 GameWidgets 列表可能为空,Update 中需先判 `GameWidgets.Count > 0` 再 Attach
+- **Widget 父容器查找**: `gameWidget.Children.Find<StackPanelWidget>("LeftControlsContainer", true)`,不是 `gameWidget.GuiWidget.Children.Find`
+- **DetachUI 必须从 Parent 移除**: `m_watchPanel.ParentWidget.Children.Remove(m_watchPanel)`,否则 Widget 残留
 
 ### Mod 管理(agent 操作)
 
