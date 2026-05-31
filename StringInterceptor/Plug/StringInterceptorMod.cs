@@ -42,15 +42,13 @@ namespace StringInterceptor
     {
         /// <summary>
         /// 获取日志目录路径（与 GameLogSink 一致）
-        /// Android: /sdcard/Download/Survivalcraft2/Logs/
+        /// Android: data: 前缀 -> /sdcard/Download/Survivalcraft/Logs/
         /// Windows: AppDomain.CurrentDomain.BaseDirectory + "Logs"
         /// </summary>
         public static string GetLogsDir()
         {
 #if ANDROID
-            return System.IO.Path.Combine(
-                ModLoader.GetPublicDownloadsPath() ?? ModLoader.GetExternalFilesDir() ?? "/data",
-                "Survivalcraft2", "Logs");
+            return Engine.Storage.GetSystemPath("data:Logs");
 #else
             return System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Logs");
 #endif
@@ -470,6 +468,8 @@ namespace StringInterceptor
             Log.Information("[StringInterceptor] Widget scanner started (frame-driven).");
         }
 
+        private long _scanLogCounter; // [SuAPI] 诊断计数
+
         /// <summary>
         /// 每帧调用（由 EventBus Update 订阅触发），替代 System.Threading.Timer
         /// </summary>
@@ -480,6 +480,10 @@ namespace StringInterceptor
                 return;
             }
             if (_skipFrames > 0) { _skipFrames--; return; }
+
+            _scanLogCounter++; // [SuAPI]
+            if (_scanLogCounter == 1) // [SuAPI] 只输出第1帧
+                Log.Information($"[SuAPI] Frame.Update triggered! scanner active, frame={Time.FrameIndex}");
 
             ScanWidgetTree();
         }
@@ -504,6 +508,9 @@ namespace StringInterceptor
             ScanContainer(root, ref labelCount, ref buttonCount);
 
             bool foundNew = labelCount > 0 || buttonCount > 0;
+
+            if (_scanLogCounter <= 3) // [SuAPI] 诊断前3次扫描
+                Log.Information($"[SuAPI] ScanWidgetTree: labels={labelCount}, buttons={buttonCount}, root={root?.GetType().Name}");
 
             if (foundNew)
             {
