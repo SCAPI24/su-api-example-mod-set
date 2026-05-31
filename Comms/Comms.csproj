@@ -1,14 +1,16 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFrameworks>net10.0-android;net10.0-windows10.0.19041.0</TargetFrameworks>
+    <TargetFrameworks>net8.0;net8.0-android</TargetFrameworks>
     <LangVersion>11.0</LangVersion>
     <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
     <Nullable>enable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
+    <CheckEolTargetFrameworks>false</CheckEolTargetFrameworks>
     <GenerateAssemblyInfo>False</GenerateAssemblyInfo>
     <OutputType>Library</OutputType>
     <RootNamespace>Comms</RootNamespace>
     <AssemblyName>Comms</AssemblyName>
     <EnableDefaultCompileItems>true</EnableDefaultCompileItems>
+    <CheckEolTargetFrameworks>false</CheckEolTargetFrameworks>
   </PropertyGroup>
 </Project>

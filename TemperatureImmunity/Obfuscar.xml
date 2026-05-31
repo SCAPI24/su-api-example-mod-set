@@ -1,7 +1,7 @@
 ﻿<?xml version='1.0'?>
 <Obfuscator>
-	<Var name="InPath" value=".\bin\Debug\net48" />
-	<Var name="OutPath" value=".\bin\Debug\net48\Obfuscar" />
+	<Var name="InPath" value=".\bin\Debug\net8.0" />
+	<Var name="OutPath" value=".\bin\Debug\net8.0\Obfuscar" />
 
 	<!-- 强制跳过所有外部依赖检查 -->
 	<Var name="SkipExtraDependencies" value="true" />

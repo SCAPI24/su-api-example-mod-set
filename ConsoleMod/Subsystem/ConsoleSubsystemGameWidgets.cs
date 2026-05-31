@@ -1,4 +1,5 @@
 using Engine;
+using Engine.Graphics;
 using Engine.Input;
 using Game;
 using GameEntitySystem;
@@ -7,6 +8,7 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 using TemplatesDatabase;
+using SuMod.Tools;
 
 namespace ConsoleMod
 {
@@ -50,30 +52,77 @@ namespace ConsoleMod
         // Source: History navigation state
         private int m_historyIndex = -1;
         private string m_savedInput = "";
+
 #if WINDOWS
         // Source: Modal dialog for mouse cursor unlock (analogous to iron sign)
         private Dialog m_modalDialog;
 #endif
 
-        public ConsoleSubsystemGameWidgets()
+        // Source: Console toggle button — visible on both Windows and Android
+        // Source: SurvivalcraftMiniMap.SuComponentMap.Load — same pattern: MoreContents StackPanel + BitmapButtonWidget
+        private BitmapButtonWidget m_consoleButton;
+        private Texture2D m_buttonNormalTex;
+        private Texture2D m_buttonPressedTex;
+        private bool m_buttonAttached = false;
+
+        protected override void Load(ValuesDictionary valuesDictionary)
         {
-#if ANDROID
-            // Source: Android — subscribe to character input from virtual keyboard
-            Keyboard.CharacterEntered += OnCharEntered;
-#endif
+            base.Load(valuesDictionary);
+
+            // Source: Load embedded button textures (same pattern as MiniMap)
+            m_buttonNormalTex = LoadEmbeddedTexture("ConsoleMod.Content.SuConsoleButton.png");
+            m_buttonPressedTex = LoadEmbeddedTexture("ConsoleMod.Content.SuConsoleButton_Pressed.png");
+
+            // Source: Attach button after base.Load — GameWidgets may not be populated yet (Player added later)
+            AttachConsoleButton();
         }
 
-#if ANDROID
-        private void OnCharEntered(char c)
+        // Source: SurvivalcraftMiniMap.SuComponentMap.Load — same pattern: find MoreContents StackPanel, add BitmapButtonWidget
+        private void AttachConsoleButton()
         {
-            // Source: Android — not used, input goes through ShowKeyboard dialog
+            if (m_buttonAttached) return;
+
+            Log.Information($"[ConsoleMod] AttachConsoleButton: GameWidgets.Count={GameWidgets.Count}");
+            if (GameWidgets.Count == 0) return;
+
+            GameWidget gameWidget = GameWidgets[0];
+
+            // Source: GameWidget.xml — MoreContents is the horizontal StackPanel behind MoreButton
+            StackPanelWidget moreContents = gameWidget.Children.Find<StackPanelWidget>("MoreContents", true);
+            Log.Information($"[ConsoleMod] moreContents={moreContents != null}");
+            if (moreContents == null) return;
+
+            m_consoleButton = new BitmapButtonWidget
+            {
+                Text = "",
+                Size = new Vector2(68f, 64f),
+                Margin = new Vector2(4f, 0f),
+                NormalSubtexture = new Subtexture(m_buttonNormalTex, Vector2.Zero, Vector2.One),
+                ClickedSubtexture = new Subtexture(m_buttonPressedTex, Vector2.Zero, Vector2.One)
+            };
+
+            moreContents.Children.Add(m_consoleButton);
+
+            m_buttonAttached = true;
+            Log.Information("[ConsoleMod] Button attached to MoreContents");
         }
-#endif
+
+        private static Texture2D LoadEmbeddedTexture(string resourceName)
+        {
+            var asm = Assembly.GetExecutingAssembly();
+            var stream = asm.GetManifestResourceStream(resourceName);
+            try { return Texture2D.Load(stream); }
+            finally { stream.Dispose(); }
+        }
 
         public override void Update(float dt)
         {
-            // Source: Engine.Input.Key.Tilde — grave accent / tilde key
-            bool togglePressed = Keyboard.IsKeyDownOnce(Key.Tilde);
+            // Source: Deferred button attach — Load() may run before GameWidgets are populated
+            if (!m_buttonAttached) AttachConsoleButton();
+
+            // Source: Console button click triggers toggle on both platforms
+            // Source: Keyboard.Tilde — grave accent / tilde key (Windows shortcut)
+            bool togglePressed = Keyboard.IsKeyDownOnce(Key.Tilde) || (m_consoleButton != null && m_consoleButton.IsClicked);
 
             if (togglePressed)
             {

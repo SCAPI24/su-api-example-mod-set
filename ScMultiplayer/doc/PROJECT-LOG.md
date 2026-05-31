@@ -677,3 +677,59 @@ StringInterceptor Mod 在 Android Release 版加载成功（2505翻译+72 String
 - RmapRadius 大小/位置耦合：不能用同一系数同时控制视觉半径和定位偏移
 - SC 坐标系 Y 向上：OpenGL Y 从下往上，center.Y 越大越靠上
 - Android 边距比例需大于 Windows
+## 2026-05-27 编译发布 net8 版本
+
+### 需求
+将 Survivalcraft net8 Mono 版编译并发布 Windows 和 Android 版本到 publish 文件夹。
+
+### 项目结构
+- 项目根目录: `D:\Users\Suceru\Desktop\jiejian\SurvivalcraftMonoWinAN\`
+- Windows csproj: `Survivalcraft\Survivalcraft.csproj` (net8.0, WinExe, AssemblyVersion 2.4.40.8)
+- Android csproj: `Survivalcraft\SurvivalcraftAndroid.csproj` (net8.0-android, ApplicationId: com.candyrufusgames.survivalcraft2su, AssemblyVersion 2.4.10.8)
+- Android sln: `SurvivalcraftAn.sln`
+- global.json: 锁定 SDK 8.0.402, rollForward: disable
+- 系统安装 SDK: 8.0.402 + 10.0.300
+
+### 踩坑记录
+
+#### 1. SDK 版本锁定（最关键）
+从工作区目录（无 global.json）运行 `dotnet publish` → SDK 10.0 被选中 → 对 net8.0-android 多目标框架报 NETSDK1202 EOL 错误。
+**修复**: 必须从项目根目录 `D:\Users\Suceru\Desktop\jiejian\SurvivalcraftMonoWinAN\` 运行所有 dotnet 命令，让 global.json 生效。
+
+#### 2. APK 文件名含方括号
+`[SuAPI]Survivalcraft-0.1.2.0.Apk` 文件名中的 `[]` 导致:
+- apksigner 的 `--out` 参数解析失败，输出文件不存在
+- PowerShell 的 `Get-Item`/`Remove-Item`/`Move-Item` 把 `[]` 当字符集通配符
+
+**修复**: 
+- apksigner 签名时 `--out` 指向临时文件名 `signed.apk`（无特殊字符）
+- 签名完成后再用 `Move-Item -LiteralPath` 重命名为含[]的最终文件名
+- PowerShell 操作含[]路径一律用 `-LiteralPath`
+
+#### 3. 版本号管理
+项目搜索 `0.1.1.8` 只在 `SurvivalcraftAndroid.csproj` 的 `<ApplicationDisplayVersion>` 一处。
+改为 `SuAPI 0.1.2.1`，APK 文件名随之更新为 `[SuAPI]Survivalcraft-0.1.2.1.Apk`。
+
+### 发布命令参考
+```powershell
+Set-Location "D:\Users\Suceru\Desktop\jiejian\SurvivalcraftMonoWinAN"
+
+# Windows
+dotnet publish "Survivalcraft\Survivalcraft.csproj" -c Release -r win-x64 --self-contained true -o "publish\win-x64"
+
+# Android
+dotnet publish "Survivalcraft\SurvivalcraftAndroid.csproj" -c Release -f net8.0-android -o "publish\android"
+
+# APK 签名
+$buildTools = "C:\Users\Suceru\AppData\Local\Android\Sdk\build-tools\34.0.0"
+$keystore = "publish\Suceru.jks"
+& "$buildTools\zipalign.exe" -f 4 "publish\android\com.candyrufusgames.survivalcraft2su.apk" "publish\android\aligned.apk"
+& cmd /c "$buildTools\apksigner.bat sign --ks `"$keystore`" --ks-pass pass:927292 --ks-key-alias suceru --key-pass pass:927292 --out `"publish\android\signed.apk`" `"publish\android\aligned.apk`""
+Move-Item -LiteralPath "publish\android\signed.apk" -Destination "publish\android\[SuAPI]Survivalcraft-0.1.2.1.Apk" -Force
+& cmd /c "$buildTools\apksigner.bat verify -v --print-certs `"publish\android\[SuAPI]Survivalcraft-0.1.2.1.Apk`""
+```
+
+### 铁律
+- **global.json SDK 锁定**: 多 SDK 环境下，必须从含 global.json 的项目根目录运行 dotnet 命令
+- **APK 文件名避坑**: 先签名到临时文件再重命名，不要试图让 apksigner 直接输出含[]的文件名
+- **PowerShell -LiteralPath**: 操作含 `[]` 的路径时必须用 -LiteralPath，不能用 -Path
