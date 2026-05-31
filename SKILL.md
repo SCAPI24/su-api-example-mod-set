@@ -65,6 +65,7 @@ D:\Users\Suceru\Desktop\jiejian\SurvivalcraftMonoWinAN\
 │   ├── MemoryBankDrawMod/ # Dialog 替换+交互式 Widget 叠加层示例(绘图编辑器)
 │   ├── SurvivalcraftMiniMap/ # 新建 ComponentTemplate 示例(小地图)+ 双平台参数调优示例
 │   ├── WatchMod/         # ComponentTemplate+IUpdateable UI挂载示例(手表)+ 多Mod兼容模式示例
+│   ├── GodMode/          # 数据库替换多Component示例(无敌+满属性+免疫)
 │   └── Comms/           # 联机通信库(ScMultiplayer 依赖,需在 ModInfo.xml Dependencies 中声明)
 ├── Pak/                 # ⚠ Content.pak 解包内容(仅供查阅参考,代码中不可引用此路径)
 ├── Survivalcraft/       # 游戏主程序(含 Program.cs)
@@ -1010,6 +1011,55 @@ char? lastChar = Keyboard.LastChar;
 - **GameWidgets 延迟初始化**: Component.Load 时 GameWidgets 列表可能为空,Update 中需先判 `GameWidgets.Count > 0` 再 Attach
 - **Widget 父容器查找**: `gameWidget.Children.Find<StackPanelWidget>("LeftControlsContainer", true)`,不是 `gameWidget.GuiWidget.Children.Find`
 - **DetachUI 必须从 Parent 移除**: `m_watchPanel.ParentWidget.Children.Remove(m_watchPanel)`,否则 Widget 残留
+
+## GodMode 多 Component 替换模式
+
+当需要同时替换多个 Component 实现复合效果时,可在同一个 HandleGameDatabase 回调中批量替换多个 Class Parameter。
+
+### 架构
+```
+GodModeMod.OnLoad()
+  → EventBus.Subscribe("GameDatabase.GameDatabase", HandleGameDatabase)
+
+HandleGameDatabase()
+  → 替换 5 个 Component 的 Class Parameter
+  → 每个替换类继承原始类,重写关键方法或通过 IUpdateable.Update 每帧强制设置私有字段
+```
+
+### 替换的 5 个 Component
+| Component | GUID | 效果 |
+|-----------|------|------|
+| ComponentHealth | 4e14ce27-fdef-46ca-8ea0-26af43c215e5 | IsInvulnerable=true, Health=1f, Air=1f |
+| ComponentVitalStats | aa7f845d-165e-4fff-95f0-453cd4e14cea | Food=0.9, Stamina=1, Sleep=0.9, Temp=12, Wetness=0 |
+| ComponentOnFire | 70e6fe52-8205-464a-88d9-40d4faf39d74 | 防火: SetOnFire() 空操作 + 清零 duration |
+| ComponentFlu | 88c778ff-b238-4303-b1c5-468cb0f6c73a | 防流感: StartFlu()/Sneeze() 空操作 + 清零因子 |
+| ComponentSickness | 2ecdc324-1a9e-444f-941d-f313447c00a5 | 防恶心: StartSickness()/NauseaEffect() 空操作 + 清零因子 |
+
+### ModParentField 访问私有字段
+替换类中无法直接访问原始类的私有字段,必须通过反射:
+```csharp
+Program.ModManager.ModParentField.ModifyParentField(
+    this,                      // 当前替换类实例
+    "m_isInvulnerable",        // 原始类私有字段名
+    true,                      // 要设置的值
+    typeof(ComponentHealth)    // 声明该字段的类型
+);
+```
+
+### 关键源码参考
+- **ComponentHealth.Injure()**: 检查 IsInvulnerable,为 true 直接 return 不扣血
+- **ComponentVitalStats**: m_food/m_stamina/m_sleep 范围 0-1, m_temperature 范围 0-24(12=舒适), m_wetness 范围 0-1
+- **ComponentOnFire.SetOnFire()**: 设 m_fireDuration,Update 中递减并伤害
+- **ComponentFlu.StartFlu()**: 设 m_fluOnset,Update 中递减并触发喷嚏/昏厥
+- **ComponentSickness.StartSickness()**: 设 m_sicknessDuration,Update 中递减并触发恶心
+
+### ⚠️ 注意事项
+- **Health=1 是满血,0 是死亡** — 不要设 0
+- **Food/Sleep 建议设 0.9 而非 1.0** — 某些游戏机制在满值时可能触发异常判定
+- **Temperature=12 是舒适温度** — 范围 0-24,中间值
+- **每帧 Update 设置** — 游戏逻辑每帧可能修改这些值,必须在 Update 中持续覆盖
+
+> 详见 `doc/godmode-development.md` 完整开发文档
 
 ### Mod 管理(agent 操作)
 
