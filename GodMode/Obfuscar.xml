@@ -1,0 +1,8 @@
+<?xml version='1.0'?>
+<Obfuscator>
+    <Var name="InPath" value=".\bin\Debug\net8.0" />
+    <Var name="OutPath" value=".\bin\Debug\net8.0\Obfuscar" />
+    <Var name="SkipExtraDependencies" value="true" />
+    <Module file="$(InPath)\GameEntitySystem.dll"/>
+    <Module file="$(InPath)\GodMode.dll"/>
+</Obfuscator>
