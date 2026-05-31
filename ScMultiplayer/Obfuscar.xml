@@ -1,17 +1,39 @@
 <?xml version='1.0'?>
-<Obfuscar>
-  <Var name="InPath" value="bin\Debug\net10.0-windows10.0.19041.0" />
-  <Var name="OutPath" value="bin\Debug\net10.0-windows10.0.19041.0\Obfuscated" />
+<Obfuscator>
+  <Var name="InPath" value="bin\Debug\net8.0" />
+  <Var name="OutPath" value="bin\Debug\net8.0\Obfuscated" />
   <Var name="KeepPublicApi" value="false" />
   <Var name="HidePrivateApi" value="true" />
-  <Var name="HideStrings" value="true" />
+  <Var name="HideStrings" value="false" />
   <Var name="RenameProperties" value="true" />
   <Var name="RenameEvents" value="true" />
   <Var name="RenameFields" value="true" />
   <Var name="UseUnicodeNames" value="true" />
   <Var name="MarkedOnly" value="false" />
   <Module file="$(InPath)\ScMultiplayer.dll">
-    <SkipType name="ScMultiplayer.ScMultiplayerMod" />
+    <SkipType name="ScMultiplayer.ScMultiplayer" />
     <SkipType name="ScMultiplayer.Message" />
+    <SkipType name="ScMultiplayer.SuComponentInput" />
+    <SkipType name="ScMultiplayer.SuSubsystemTerrain" />
+    <SkipType name="ScMultiplayer.SuPlayScreen" />
+    <SkipType name="ScMultiplayer.ChatMessage" />
+    <SkipType name="ScMultiplayer.GameKickPlayerMessage" />
+    <SkipType name="ScMultiplayer.GameModifiedCellsMessage" />
+    <SkipType name="ScMultiplayer.GamePakWorldMessage" />
+    <SkipType name="ScMultiplayer.GamePlayerHealthMessage" />
+    <SkipType name="ScMultiplayer.GamePlayerInputMessage" />
+    <SkipType name="ScMultiplayer.GamePlayerPositionMessage" />
+    <SkipType name="ScMultiplayer.GameWorldInfoMessage" />
+    <SkipType name="ScMultiplayer.GameWorldInfoMessage1" />
+    <SkipType name="ScMultiplayer.SuReader" />
+    <SkipType name="ScMultiplayer.SuWriter" />
+    <SkipType name="ScMultiplayer.NetworkConnectionStateMachine" />
+    <SkipType name="ScMultiplayer.WorldDownloadStateMachine" />
+    <SkipType name="ScMultiplayer.NetworkPlayerState" />
+    <SkipType name="ScMultiplayer.NetworkMessageHandler" />
+    <SkipType name="ScMultiplayer.NetworkMessageSender" />
+    <SkipType name="ScMultiplayer.PlayerMappingManager" />
+    <SkipType name="ScMultiplayer.PlayerOperationSyncManager" />
+    <SkipType name="ScMultiplayer.StringExtensions" />
   </Module>
-</Obfuscar>
+</Obfuscator>
