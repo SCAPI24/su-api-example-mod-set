@@ -1,0 +1,1229 @@
+using System;
+using System.Collections.Generic;
+using Engine;
+using Engine.Content;
+using Engine.Graphics;
+using Engine.Media;
+using Game;
+using GameEntitySystem;
+using TemplatesDatabase;
+
+namespace CircuitAutoRouter
+{
+    // Mod states
+    public enum RouterMode
+    {
+        None,       // Idle — Rod clicks still add to selection
+        SetArea1,   // Confirm selection as Area 1
+        SetArea2,   // Confirm selection as Area 2
+        SetNumber   // Click WireThrough blocks to assign numbers
+    }
+
+    public class SubsystemCircuitRouter : SubsystemBlockBehavior, IDrawable, IUpdateable
+    {
+        // Rod BlockIndex
+        // Source: RodBlock.cs
+        public const int RodBlockIndex = 195;
+
+        public override int[] HandledBlocks => new int[] { RodBlockIndex };
+
+        // IDrawable
+        private static int[] m_drawOrders = new int[] { 100 };
+        public int[] DrawOrders => m_drawOrders;
+
+        // IUpdateable
+        public UpdateOrder UpdateOrder => UpdateOrder.Default;
+
+        // Subsystem refs
+        private SubsystemTerrain m_subsystemTerrain;
+        private SubsystemGameWidgets m_subsystemGameWidgets;
+
+        // State
+        private RouterMode m_mode = RouterMode.None;
+        private CircuitRouterWidget m_routerWidget;
+        private ComponentPlayer m_componentPlayer;
+
+        // Current selection (green wireframe, two-point rectangle mode)
+        private Point3? m_selectionPoint1;
+        private Point3? m_selectionPoint2;
+        private BoundingBox? m_selectedBox;
+        private List<Point3> m_selectedBlocks = new List<Point3>();
+
+        // Confirmed Area 1 (yellow) & Area 2 (red)
+        private List<Point3> m_area1Blocks = new List<Point3>();
+        private BoundingBox? m_area1Box;
+        private int m_area1ActiveFace = -1; // -1=none, 0=+Z, 1=+X, 2=-Z, 3=-X, 4=+Y, 5=-Y
+        private List<Point3> m_area2Blocks = new List<Point3>();
+        private BoundingBox? m_area2Box;
+        private int m_area2ActiveFace = -1;
+
+        // Rendering
+        private PrimitivesRenderer3D m_primitivesRenderer3D = new PrimitivesRenderer3D();
+
+        // Circuit number for the current connection
+        private int m_circuitNumber = 1;
+
+        // SetNumber mode: per-block numbering for WireThrough blocks
+        // Key = block position, Value = assigned number
+        private Dictionary<Point3, int> m_area1Numbers = new Dictionary<Point3, int>();
+        private Dictionary<Point3, int> m_area2Numbers = new Dictionary<Point3, int>();
+        private int m_area1NextNumber = 1;
+        private int m_area2NextNumber = 1;
+        public bool IsSetNumberMode => m_mode == RouterMode.SetNumber;
+
+        public override bool OnUse(Ray3 ray, ComponentMiner componentMiner)
+        {
+            if (componentMiner.ComponentPlayer == null) return false;
+
+            m_componentPlayer = componentMiner.ComponentPlayer;
+
+            TerrainRaycastResult? raycastResult = componentMiner.Raycast<TerrainRaycastResult>(ray, RaycastMode.Digging);
+            if (raycastResult.HasValue)
+            {
+                Point3 hit = raycastResult.Value.CellFace.Point;
+
+                // SetNumber mode: click WireThrough blocks in areas to assign numbers
+                if (m_mode == RouterMode.SetNumber)
+                {
+                    HandleSetNumberClick(hit);
+                    return true;
+                }
+
+                // Normal mode: Rod clicks toggle between point1 and point2
+                if (!m_selectionPoint1.HasValue)
+                {
+                    // First click: set point 1
+                    m_selectionPoint1 = hit;
+                    m_selectionPoint2 = null;
+                    m_selectedBox = new BoundingBox(
+                        new Vector3(hit.X, hit.Y, hit.Z),
+                        new Vector3(hit.X + 1, hit.Y + 1, hit.Z + 1));
+                    m_selectedBlocks.Clear();
+                    m_selectedBlocks.Add(hit);
+                    m_componentPlayer.ComponentGui.DisplaySmallMessage(
+                        $"Point 1: ({hit.X},{hit.Y},{hit.Z})", Color.Green, false, false);
+                }
+                else if (!m_selectionPoint2.HasValue)
+                {
+                    // Second click: set point 2, compute rectangle
+                    m_selectionPoint2 = hit;
+                    ComputeSelectionBox();
+                    m_componentPlayer.ComponentGui.DisplaySmallMessage(
+                        $"Point 2: ({hit.X},{hit.Y},{hit.Z}) [{m_selectedBlocks.Count} blocks]", Color.Green, false, false);
+                }
+                else
+                {
+                    // Third click: keep point2 as new point1, set new point2
+                    m_selectionPoint1 = m_selectionPoint2;
+                    m_selectionPoint2 = hit;
+                    ComputeSelectionBox();
+                    m_componentPlayer.ComponentGui.DisplaySmallMessage(
+                        $"Point 2: ({hit.X},{hit.Y},{hit.Z}) [{m_selectedBlocks.Count} blocks]", Color.Green, false, false);
+                }
+
+                return true;
+            }
+
+            return false;
+        }
+
+        // Source: CreatorWandMod — OnEditInventoryItem opens UI when player taps Rod in inventory
+        public override bool OnEditInventoryItem(IInventory inventory, int slotIndex, ComponentPlayer componentPlayer)
+        {
+            m_componentPlayer = componentPlayer;
+
+            // Toggle router widget
+            if (m_routerWidget != null && m_componentPlayer.ComponentGui.ModalPanelWidget == m_routerWidget)
+            {
+                // Don't reset SetNumber mode when closing panel via G key
+                if (m_mode != RouterMode.SetNumber)
+                    m_mode = RouterMode.None;
+                Log.Information($"[CircuitAutoRouter] Close panel: mode after={m_mode}");
+                m_componentPlayer.ComponentGui.ModalPanelWidget = null;
+                m_routerWidget = null;
+            }
+            else
+            {
+                Log.Information($"[CircuitAutoRouter] Open panel: current mode={m_mode}, IsSetNumber={IsSetNumberMode}");
+                m_routerWidget = new CircuitRouterWidget(this, m_componentPlayer);
+                m_componentPlayer.ComponentGui.ModalPanelWidget = m_routerWidget;
+            }
+            return true;
+        }
+
+        void IUpdateable.Update(float dt)
+        {
+        }
+
+        public void Draw(Camera camera, int drawOrder)
+        {
+            FlatBatch3D flatBatch = m_primitivesRenderer3D.FlatBatch();
+
+            // Draw current selection (green wireframe)
+            if (m_selectedBox.HasValue)
+            {
+                DrawWireframeBox(flatBatch, m_selectedBox.Value, new Color(0, 255, 0, 180));
+            }
+
+            // Draw confirmed Area 1 (yellow wireframe + active face per-block)
+            if (m_area1Box.HasValue)
+            {
+                DrawWireframeBox(flatBatch, m_area1Box.Value, new Color(255, 255, 0, 200));
+                if (m_area1ActiveFace >= 0)
+                    DrawFacePerBlock(flatBatch, m_area1Box.Value, m_area1ActiveFace,
+                        new Color(0, 255, 0, 5), new Color(255, 255, 0, 5));
+            }
+
+            // Draw confirmed Area 2 (red wireframe + active face per-block)
+            if (m_area2Box.HasValue)
+            {
+                DrawWireframeBox(flatBatch, m_area2Box.Value, new Color(255, 60, 60, 200));
+                if (m_area2ActiveFace >= 0)
+                    DrawFacePerBlock(flatBatch, m_area2Box.Value, m_area2ActiveFace,
+                        new Color(0, 255, 0, 5), new Color(255, 60, 60, 5));
+            }
+
+            // Draw numbers on WireThrough blocks
+            FontBatch3D fontBatch = m_primitivesRenderer3D.FontBatch(ContentManager.Get<BitmapFont>("Fonts/Pericles18"), 0, DepthStencilState.None);
+            DrawNumbers(fontBatch, m_area1Numbers, m_area1ActiveFace, Color.Yellow);
+            DrawNumbers(fontBatch, m_area2Numbers, m_area2ActiveFace, new Color(255, 100, 100));
+
+            m_primitivesRenderer3D.Flush(camera.ViewProjectionMatrix);
+        }
+
+        // --- Public API for Widget ---
+
+        public RouterMode Mode => m_mode;
+
+        public void SetMode(RouterMode mode)
+        {
+            if (mode == RouterMode.SetArea1)
+            {
+                if (m_selectedBlocks.Count == 0)
+                {
+                    m_componentPlayer.ComponentGui.DisplaySmallMessage(
+                        "Select blocks with Rod first!", Color.Red, true, false);
+                    return;
+                }
+                m_area1Blocks = new List<Point3>(m_selectedBlocks);
+                m_area1Box = m_selectedBox;
+                m_area1Numbers.Clear();
+                m_area1NextNumber = 1;
+                ClearSelection();
+                m_componentPlayer.ComponentGui.DisplaySmallMessage(
+                    $"Area 1 set: {m_area1Blocks.Count} blocks", Color.Yellow, true, false);
+            }
+            else if (mode == RouterMode.SetArea2)
+            {
+                if (m_selectedBlocks.Count == 0)
+                {
+                    m_componentPlayer.ComponentGui.DisplaySmallMessage(
+                        "Select blocks with Rod first!", Color.Red, true, false);
+                    return;
+                }
+                m_area2Blocks = new List<Point3>(m_selectedBlocks);
+                m_area2Box = m_selectedBox;
+                m_area2Numbers.Clear();
+                m_area2NextNumber = 1;
+                ClearSelection();
+                m_componentPlayer.ComponentGui.DisplaySmallMessage(
+                    $"Area 2 set: {m_area2Blocks.Count} blocks", new Color(255, 60, 60), true, false);
+            }
+            m_mode = mode;
+        }
+
+        // Toggle SetNumber mode on/off
+        public void ToggleSetNumber()
+        {
+            if (m_mode == RouterMode.SetNumber)
+            {
+                m_mode = RouterMode.None;
+                m_componentPlayer.ComponentGui.DisplaySmallMessage(
+                    "Set Number OFF", Color.White, false, false);
+            }
+            else
+            {
+                // Clear old numbering data when entering SetNumber mode
+                m_area1Numbers.Clear();
+                m_area2Numbers.Clear();
+                m_area1NextNumber = 1;
+                m_area2NextNumber = 1;
+                m_mode = RouterMode.SetNumber;
+                m_componentPlayer.ComponentGui.DisplaySmallMessage(
+                    "Set Number ON — click WireThrough blocks", Color.Green, false, false);
+            }
+        }
+
+        // Handle click in SetNumber mode
+        private void HandleSetNumberClick(Point3 hit)
+        {
+            // Check if hit is in Area1 or Area2
+            bool inArea1 = m_area1Blocks.Contains(hit);
+            bool inArea2 = m_area2Blocks.Contains(hit);
+
+            if (!inArea1 && !inArea2)
+            {
+                m_componentPlayer.ComponentGui.DisplaySmallMessage(
+                    "Click inside Area 1 or Area 2!", Color.Red, true, false);
+                return;
+            }
+
+            // Check if it's a WireThrough block with wire on the active face
+            int cellValue = m_subsystemTerrain.Terrain.GetCellValue(hit.X, hit.Y, hit.Z);
+            int contents = Terrain.ExtractContents(cellValue);
+            if (!WireThroughIndices.Contains(contents))
+            {
+                m_componentPlayer.ComponentGui.DisplaySmallMessage(
+                    "Not a WireThrough block!", Color.Red, true, false);
+                return;
+            }
+
+            int data = Terrain.ExtractData(cellValue);
+            int wiredFace = WireThroughBlock.GetWiredFace(data);
+            int activeFace = inArea1 ? m_area1ActiveFace : m_area2ActiveFace;
+            if (activeFace < 0)
+            {
+                m_componentPlayer.ComponentGui.DisplaySmallMessage(
+                    "Set active face first!", Color.Red, true, false);
+                return;
+            }
+
+            // Check if active face matches wired face or its opposite
+            if (activeFace != wiredFace && activeFace != CellFace.OppositeFace(wiredFace))
+            {
+                m_componentPlayer.ComponentGui.DisplaySmallMessage(
+                    $"Wire direction ({FaceNames[wiredFace]}) != active face ({FaceNames[activeFace]})!", Color.Red, true, false);
+                return;
+            }
+
+            // Assign number
+            if (inArea1)
+            {
+                if (!m_area1Numbers.ContainsKey(hit))
+                {
+                    m_area1Numbers[hit] = m_area1NextNumber++;
+                    m_componentPlayer.ComponentGui.DisplaySmallMessage(
+                        $"Area1 [{hit.X},{hit.Y},{hit.Z}] = {m_area1Numbers[hit]}", Color.Yellow, false, false);
+                }
+                else
+                {
+                    // Already numbered, increment
+                    m_area1Numbers[hit]++;
+                    m_componentPlayer.ComponentGui.DisplaySmallMessage(
+                        $"Area1 [{hit.X},{hit.Y},{hit.Z}] = {m_area1Numbers[hit]}", Color.Yellow, false, false);
+                }
+            }
+            else // inArea2
+            {
+                if (!m_area2Numbers.ContainsKey(hit))
+                {
+                    m_area2Numbers[hit] = m_area2NextNumber++;
+                    m_componentPlayer.ComponentGui.DisplaySmallMessage(
+                        $"Area2 [{hit.X},{hit.Y},{hit.Z}] = {m_area2Numbers[hit]}", new Color(255, 100, 100), false, false);
+                }
+                else
+                {
+                    m_area2Numbers[hit]++;
+                    m_componentPlayer.ComponentGui.DisplaySmallMessage(
+                        $"Area2 [{hit.X},{hit.Y},{hit.Z}] = {m_area2Numbers[hit]}", new Color(255, 100, 100), false, false);
+                }
+            }
+        }
+
+        public void Connect()
+        {
+            if (!m_area1Box.HasValue || !m_area2Box.HasValue)
+            {
+                m_componentPlayer.ComponentGui.DisplaySmallMessage(
+                    "Set both areas first!", Color.Red, true, false);
+                return;
+            }
+            if (m_area1ActiveFace < 0 || m_area2ActiveFace < 0)
+            {
+                m_componentPlayer.ComponentGui.DisplaySmallMessage(
+                    "Set active faces first!", Color.Red, true, false);
+                return;
+            }
+
+            // Match by number: find pairs where Area1.Num == Area2.Num
+            var matchedPairs = new List<KeyValuePair<Point3, Point3>>();
+            foreach (var a1 in m_area1Numbers)
+            {
+                foreach (var a2 in m_area2Numbers)
+                {
+                    if (a1.Value == a2.Value)
+                        matchedPairs.Add(new KeyValuePair<Point3, Point3>(a1.Key, a2.Key));
+                }
+            }
+
+            if (matchedPairs.Count == 0)
+            {
+                m_componentPlayer.ComponentGui.DisplaySmallMessage(
+                    "No matching numbers found!", Color.Red, true, false);
+                return;
+            }
+
+            // Pathfind and place wires for each matched pair
+            // Track which turn positions are occupied by which circuit number
+            // to detect color conflicts
+            var turnPositions = new Dictionary<Point3, int>(); // pos -> circuitNumber
+            var paths = new List<List<Point3>>();
+            int successCount = 0;
+
+            for (int i = 0; i < matchedPairs.Count; i++)
+            {
+                Point3 start = matchedPairs[i].Key;
+                Point3 end = matchedPairs[i].Value;
+                int circuitNum = m_area1Numbers[start];
+
+                Log.Information($"[CircuitAutoRouter] FindPath from {start.X},{start.Y},{start.Z} to {end.X},{end.Y},{end.Z}");
+                List<Point3> path = FindPath(start, end);
+                if (path == null || path.Count == 0)
+                {
+                    Log.Information($"[CircuitAutoRouter] No path found for #{circuitNum}");
+                    m_componentPlayer.ComponentGui.DisplaySmallMessage(
+                        $"No path for #{circuitNum}!", Color.Red, false, false);
+                    continue;
+                }
+
+                paths.Add(path);
+
+                // Detect turns and record positions for color conflict detection
+                for (int j = 1; j < path.Count - 1; j++)
+                {
+                    Point3 prev = path[j - 1];
+                    Point3 curr = path[j];
+                    Point3 next = path[j + 1];
+                    Point3 dirIn = new Point3(curr.X - prev.X, curr.Y - prev.Y, curr.Z - prev.Z);
+                    Point3 dirOut = new Point3(next.X - curr.X, next.Y - curr.Y, next.Z - curr.Z);
+                    if (!dirIn.Equals(dirOut))
+                        turnPositions[curr] = circuitNum;
+                }
+                successCount++;
+            }
+
+            // Assign wire colors: circuits sharing a turn position must differ
+            // Simple greedy: assign colors 0..15, conflict -> next color
+            var circuitColors = new Dictionary<int, int>(); // circuitNum -> paintColor
+            var turnColors = new Dictionary<Point3, int>(); // pos -> paintColor
+
+            foreach (var tp in turnPositions)
+            {
+                Point3 pos = tp.Key;
+                int cNum = tp.Value;
+                if (!circuitColors.ContainsKey(cNum))
+                    circuitColors[cNum] = cNum % 16; // default: circuit number mod 16
+
+                if (!turnColors.ContainsKey(pos))
+                {
+                    turnColors[pos] = circuitColors[cNum];
+                }
+                else
+                {
+                    // Conflict: this turn position already has a color from another circuit
+                    int existingColor = turnColors[pos];
+                    int myColor = circuitColors[cNum];
+                    if (myColor == existingColor)
+                    {
+                        // Find a different color for this circuit
+                        for (int c = 0; c < 16; c++)
+                        {
+                            if (c != existingColor)
+                            {
+                                circuitColors[cNum] = c;
+                                myColor = c;
+                                break;
+                            }
+                        }
+                        // Update all turn positions of this circuit
+                        foreach (var tp2 in turnPositions)
+                        {
+                            if (tp2.Value == cNum)
+                                turnColors[tp2.Key] = circuitColors[cNum];
+                        }
+                    }
+                }
+            }
+
+            // Place blocks along paths
+            int pathIdx = 0;
+            foreach (var path in paths)
+            {
+                if (path.Count == 0) continue;
+                int cNum = m_area1Numbers[path[0]];
+                int wirePaintColor = circuitColors.ContainsKey(cNum) ? circuitColors[cNum] : -1;
+
+                PlacePath(path, wirePaintColor, turnColors);
+                pathIdx++;
+            }
+
+            m_componentPlayer.ComponentGui.DisplaySmallMessage(
+                $"Connected {successCount}/{matchedPairs.Count} pairs",
+                Color.Green, true, false);
+        }
+
+        // A* pathfinding with turn penalty and area proximity penalty
+        // Source: Algorithm adapted for 3D grid with direction-change cost
+        // Key: paths should turn in the MIDDLE between areas, not near area surfaces
+        private List<Point3> FindPath(Point3 start, Point3 end)
+        {
+            // Direction vectors for 6 faces
+            // 0=+Z, 1=+X, 2=-Z, 3=-X, 4=+Y, 5=-Y
+            Point3[] dirs = new Point3[]
+            {
+                new Point3(0, 0, 1),  // +Z
+                new Point3(1, 0, 0),  // +X
+                new Point3(0, 0, -1), // -Z
+                new Point3(-1, 0, 0), // -X
+                new Point3(0, 1, 0),  // +Y
+                new Point3(0, -1, 0)  // -Y
+            };
+
+            // Compute area exit planes for proximity penalty
+            // Area1 exit: active face direction from area1 box surface
+            // Area2 exit: active face direction from area2 box surface
+            var areaExitPlanes = new List<(Point3 planePoint, Point3 planeNormal, float maxDist)>();
+            
+            if (m_area1Box.HasValue && m_area1ActiveFace >= 0)
+            {
+                Point3 exitDir = dirs[m_area1ActiveFace];
+                BoundingBox box = m_area1Box.Value;
+                Point3 planePoint = GetBoxFacePoint(box, m_area1ActiveFace);
+                // Max distance: from area1 exit to area2 exit along the exit direction
+                float maxDist = 0f;
+                if (m_area2Box.HasValue)
+                {
+                    Point3 a2Point = GetBoxFacePoint(m_area2Box.Value, m_area2ActiveFace >= 0 ? m_area2ActiveFace : m_area1ActiveFace);
+                    maxDist = Math.Abs(Dot(new Point3(a2Point.X - planePoint.X, a2Point.Y - planePoint.Y, a2Point.Z - planePoint.Z), exitDir));
+                }
+                if (maxDist < 3f) maxDist = 10f; // fallback
+                areaExitPlanes.Add((planePoint, exitDir, maxDist));
+            }
+            if (m_area2Box.HasValue && m_area2ActiveFace >= 0)
+            {
+                Point3 exitDir = dirs[m_area2ActiveFace];
+                BoundingBox box = m_area2Box.Value;
+                Point3 planePoint = GetBoxFacePoint(box, m_area2ActiveFace);
+                float maxDist = 0f;
+                if (m_area1Box.HasValue)
+                {
+                    Point3 a1Point = GetBoxFacePoint(m_area1Box.Value, m_area1ActiveFace >= 0 ? m_area1ActiveFace : m_area2ActiveFace);
+                    maxDist = Math.Abs(Dot(new Point3(a1Point.X - planePoint.X, a1Point.Y - planePoint.Y, a1Point.Z - planePoint.Z), exitDir));
+                }
+                if (maxDist < 3f) maxDist = 10f;
+                areaExitPlanes.Add((planePoint, exitDir, maxDist));
+            }
+
+            // State: (position, directionIndex, justTurned)
+            // directionIndex: 0-5 for entered from that direction, -1 for start
+            // justTurned: 1 if last step was a turn (next step must be straight), 0 otherwise
+            var openSet = new SortedList<float, List<(Point3 pos, int dirIdx, int justTurned)>>();
+            var gScore = new Dictionary<(Point3, int, int), float>();
+            var cameFrom = new Dictionary<(Point3, int, int), (Point3, int, int)>();
+
+            float Heuristic(Point3 a, Point3 b)
+            {
+                return Math.Abs(a.X - b.X) + Math.Abs(a.Y - b.Y) + Math.Abs(a.Z - b.Z);
+            }
+
+            void AddOpen(float f, (Point3, int, int) state)
+            {
+                if (!openSet.ContainsKey(f))
+                    openSet[f] = new List<(Point3, int, int)>();
+                openSet[f].Add(state);
+            }
+
+            // Proximity penalty: higher cost near area exit planes
+            // This forces paths to go straight away from area before turning
+            float ProximityCost(Point3 pos)
+            {
+                float cost = 0f;
+                foreach (var (planePoint, planeNormal, maxDist) in areaExitPlanes)
+                {
+                    // Signed distance from exit plane (positive = outside area)
+                    float dist = Dot(new Point3(pos.X - planePoint.X, pos.Y - planePoint.Y, pos.Z - planePoint.Z), planeNormal);
+                    if (dist > 0f && dist < maxDist)
+                    {
+                        // Quadratic penalty: very high near surface, drops off toward middle
+                        // Normalized: t = dist/maxDist, penalty = (1-t)^2 * ProximityMax
+                        float t = dist / maxDist;
+                        cost += (1f - t) * (1f - t) * 2f; // ProximityMax=2 (reduced from 8)
+                    }
+                }
+                return cost;
+            }
+
+            // Start state: all 6 directions from start position (not justTurned)
+            for (int d = 0; d < 6; d++)
+            {
+                Point3 next = new Point3(start.X + dirs[d].X, start.Y + dirs[d].Y, start.Z + dirs[d].Z);
+                if (!IsPassable(next)) continue;
+                var state = (next, d, 0);
+                float moveCost = 1f + ProximityCost(next);
+                gScore[state] = moveCost;
+                float f = moveCost + Heuristic(next, end);
+                AddOpen(f, state);
+                cameFrom[state] = (start, -1, 0);
+            }
+
+            // Also allow staying at start if start==end
+            if (start.Equals(end))
+                return new List<Point3> { start };
+
+            const float TurnCost = 10f; // Heavy penalty for turns to prefer straight lines
+            const int MaxIterations = 200000;
+            int iterations = 0;
+
+            while (openSet.Count > 0 && iterations < MaxIterations)
+            {
+                iterations++;
+                // Get lowest f
+                var firstKey = openSet.Keys[0];
+                var bestList = openSet[firstKey];
+                var current = bestList[bestList.Count - 1];
+                bestList.RemoveAt(bestList.Count - 1);
+                if (bestList.Count == 0)
+                    openSet.Remove(firstKey);
+
+                Point3 curPos = current.pos;
+                int curDir = current.dirIdx;
+                int curJustTurned = current.justTurned;
+
+                // Goal check
+                if (curPos.Equals(end))
+                    return ReconstructPath(cameFrom, current, start);
+
+                // Expand neighbors
+                for (int d = 0; d < 6; d++)
+                {
+                    // HARD CONSTRAINT: no consecutive turns
+                    // If last step was a turn, this step must be straight
+                    if (curJustTurned == 1 && curDir >= 0 && d != curDir)
+                        continue;
+
+                    Point3 next = new Point3(curPos.X + dirs[d].X, curPos.Y + dirs[d].Y, curPos.Z + dirs[d].Z);
+                    if (!IsPassable(next)) continue;
+
+                    bool isTurn = curDir >= 0 && d != curDir;
+                    float moveCost = 1f + ProximityCost(next);
+                    // Turn penalty: direction changed
+                    if (isTurn)
+                        moveCost += TurnCost;
+
+                    int nextJustTurned = isTurn ? 1 : 0;
+                    float tentativeG = gScore[(curPos, curDir, curJustTurned)] + moveCost;
+                    var nextState = (next, d, nextJustTurned);
+
+                    if (!gScore.ContainsKey(nextState) || tentativeG < gScore[nextState])
+                    {
+                        gScore[nextState] = tentativeG;
+                        cameFrom[nextState] = current;
+                        float f = tentativeG + Heuristic(next, end);
+                        AddOpen(f, nextState);
+                    }
+                }
+            }
+
+            Log.Information($"[CircuitAutoRouter] A* exhausted after {iterations} iterations, openSet={openSet.Count}");
+            return null; // No path found
+        }
+
+        // Dot product for Point3
+        private static float Dot(Point3 a, Point3 b)
+        {
+            return a.X * b.X + a.Y * b.Y + a.Z * b.Z;
+        }
+
+        // Get a point on the specified face of a BoundingBox
+        // Returns the center point of the face, offset one cell outward
+        private static Point3 GetBoxFacePoint(BoundingBox box, int face)
+        {
+            float cx = (box.Min.X + box.Max.X) / 2f;
+            float cy = (box.Min.Y + box.Max.Y) / 2f;
+            float cz = (box.Min.Z + box.Max.Z) / 2f;
+
+            switch (face)
+            {
+                case 0: return new Point3((int)cx, (int)cy, (int)box.Max.Z); // +Z
+                case 1: return new Point3((int)box.Max.X, (int)cy, (int)cz); // +X
+                case 2: return new Point3((int)cx, (int)cy, (int)box.Min.Z - 1); // -Z
+                case 3: return new Point3((int)box.Min.X - 1, (int)cy, (int)cz); // -X
+                case 4: return new Point3((int)cx, (int)box.Max.Y, (int)cz); // +Y
+                case 5: return new Point3((int)cx, (int)box.Min.Y - 1, (int)cz); // -Y
+                default: return new Point3((int)cx, (int)cy, (int)cz);
+            }
+        }
+
+        private List<Point3> ReconstructPath(Dictionary<(Point3, int, int), (Point3, int, int)> cameFrom,
+            (Point3 pos, int dirIdx, int justTurned) current, Point3 start)
+        {
+            var path = new List<Point3> { current.pos };
+            while (cameFrom.ContainsKey(current))
+            {
+                current = cameFrom[current];
+                path.Add(current.pos);
+                if (current.pos.Equals(start)) break;
+            }
+            path.Reverse();
+            return path;
+        }
+
+        // Check if a cell is passable for wire routing
+        // Passable = air, existing WireThrough block, or existing WireBlock
+        private bool IsPassable(Point3 p)
+        {
+            if (!m_subsystemTerrain.Terrain.IsCellValid(p.X, p.Y, p.Z)) return false;
+            int cellValue = m_subsystemTerrain.Terrain.GetCellValue(p.X, p.Y, p.Z);
+            int contents = Terrain.ExtractContents(cellValue);
+            // Air
+            if (contents == 0) return true;
+            // WireThrough blocks are passable
+            if (WireThroughIndices.Contains(contents)) return true;
+            // Existing WireBlock is passable (can add more faces)
+            if (contents == WireBlock.Index) return true;
+            return false;
+        }
+
+        // Place blocks along a path
+        // WireThrough blocks for straight segments, WireBlock for turns
+        // Turn handling: WireBlock placed adjacent to turn point, not at turn point itself
+        private void PlacePath(List<Point3> path, int wirePaintColor, Dictionary<Point3, int> turnColors)
+        {
+            // Log path info
+            int turnCount = 0;
+            for (int i = 1; i < path.Count - 1; i++)
+            {
+                var dIn = new Point3(path[i].X - path[i-1].X, path[i].Y - path[i-1].Y, path[i].Z - path[i-1].Z);
+                var dOut = new Point3(path[i+1].X - path[i].X, path[i+1].Y - path[i].Y, path[i+1].Z - path[i].Z);
+                if (!dIn.Equals(dOut)) turnCount++;
+            }
+            Log.Information($"[CircuitAutoRouter] PlacePath: {path.Count} points, {turnCount} turns");
+            // Determine the default WireThrough block type from Area1's first block
+            int defaultWireThroughContent = 154; // Stone default
+            if (m_area1Blocks.Count > 0)
+            {
+                Point3 sample = m_area1Blocks[0];
+                int cv = m_subsystemTerrain.Terrain.GetCellValue(sample.X, sample.Y, sample.Z);
+                int c = Terrain.ExtractContents(cv);
+                if (WireThroughIndices.Contains(c))
+                    defaultWireThroughContent = c;
+            }
+
+            for (int i = 0; i < path.Count; i++)
+            {
+                Point3 p = path[i];
+                int cellValue = m_subsystemTerrain.Terrain.GetCellValue(p.X, p.Y, p.Z);
+                int contents = Terrain.ExtractContents(cellValue);
+
+                // Determine if this is a turn point
+                bool isTurn = false;
+                Point3 dirIn = Point3.Zero;
+                Point3 dirOut = Point3.Zero;
+                if (i > 0 && i < path.Count - 1)
+                {
+                    dirIn = new Point3(p.X - path[i - 1].X, p.Y - path[i - 1].Y, p.Z - path[i - 1].Z);
+                    dirOut = new Point3(path[i + 1].X - p.X, path[i + 1].Y - p.Y, path[i + 1].Z - p.Z);
+                    isTurn = !dirIn.Equals(dirOut);
+                }
+                else if (i == 0 && path.Count > 1)
+                {
+                    dirOut = new Point3(path[1].X - p.X, path[1].Y - p.Y, path[1].Z - p.Z);
+                    isTurn = false; // Start point, not a turn
+                }
+                else if (i == path.Count - 1 && path.Count > 1)
+                {
+                    dirIn = new Point3(p.X - path[i - 1].X, p.Y - path[i - 1].Y, p.Z - path[i - 1].Z);
+                    isTurn = false; // End point, not a turn
+                }
+
+                if (isTurn)
+                {
+                    Log.Information($"[CircuitAutoRouter] Turn at {p.X},{p.Y},{p.Z} dirIn={dirIn.X},{dirIn.Y},{dirIn.Z} dirOut={dirOut.X},{dirOut.Y},{dirOut.Z} contents={contents} faceIn={DirectionToFace(dirIn)} faceOut={DirectionToFace(new Point3(-dirOut.X, -dirOut.Y, -dirOut.Z))}");
+                    // Turn point handling:
+                    // WireBlock at turn point connects two non-opposite faces.
+                    // WireThrough blocks can only connect opposite faces on one axis.
+                    // So turn point MUST be WireBlock (or skip if already WireThrough).
+                    //
+                    // WireBlock faces: faceIn toward previous cell (-dirIn), faceOut toward next cell (+dirOut)
+                    // These are non-opposite because dirIn and dirOut are different axes.
+                    // Previous cell and next cell should be WireThrough (solid) for dots to attach.
+
+                    if (WireThroughIndices.Contains(contents))
+                    {
+                        // Turn point is inside an area (WireThrough), skip
+                        continue;
+                    }
+
+                    // faceIn = dirIn (confirmed correct: connects to Area1 side)
+                    // faceOut = -dirOut (opposite: connects to Area2 side)
+                    int faceIn = DirectionToFace(dirIn);
+                    int faceOut = DirectionToFace(new Point3(-dirOut.X, -dirOut.Y, -dirOut.Z));
+
+                    if (contents == 0)
+                    {
+                        // Air: place new WireBlock
+                        int wireBitmask = (1 << faceIn) | (1 << faceOut);
+                        int data = wireBitmask & 0x3F;
+                        if (wirePaintColor >= 0)
+                        {
+                            data |= 0x40;
+                            data |= (wirePaintColor & 0xF) << 7;
+                        }
+                        int newValue = Terrain.MakeBlockValue(WireBlock.Index, 0, data);
+                        m_subsystemTerrain.ChangeCell(p.X, p.Y, p.Z, newValue);
+                    }
+                    else if (contents == WireBlock.Index)
+                    {
+                        // Existing WireBlock: add faces
+                        int wireBitmask = WireBlock.GetWireFacesBitmask(cellValue);
+                        wireBitmask |= (1 << faceIn) | (1 << faceOut);
+                        int data = wireBitmask & 0x3F;
+                        int existingData = Terrain.ExtractData(cellValue);
+                        if ((existingData & 0x40) != 0)
+                            data |= existingData & 0x780;
+                        else if (wirePaintColor >= 0)
+                        {
+                            data |= 0x40;
+                            data |= (wirePaintColor & 0xF) << 7;
+                        }
+                        int newValue = Terrain.MakeBlockValue(WireBlock.Index, 0, data);
+                        m_subsystemTerrain.ChangeCell(p.X, p.Y, p.Z, newValue);
+                    }
+                }
+                else
+                {
+                    // Straight segment
+                    Log.Information($"[CircuitAutoRouter] Straight at {p.X},{p.Y},{p.Z} contents={contents}");
+                    if (contents == 0)
+                    {
+                        // Air: place WireThrough block
+                        int axis = GetAxisFromDirection(
+                            i > 0 ? new Point3(p.X - path[i - 1].X, p.Y - path[i - 1].Y, p.Z - path[i - 1].Z)
+                                   : new Point3(path[1].X - p.X, path[1].Y - p.Y, path[1].Z - p.Z));
+                        PlaceWireThroughBlock(p, defaultWireThroughContent, axis);
+                    }
+                    else if (contents == WireBlock.Index)
+                    {
+                        // Existing WireBlock: add faces for through-direction
+                        Point3 dir = i > 0
+                            ? new Point3(p.X - path[i - 1].X, p.Y - path[i - 1].Y, p.Z - path[i - 1].Z)
+                            : new Point3(path[1].X - p.X, path[1].Y - p.Y, path[1].Z - p.Z);
+                        AddWireFaces(p, dir, wirePaintColor);
+                    }
+                    // WireThrough blocks: already in place, no action needed
+                }
+            }
+        }
+
+        // Direction → axis: 0=Z, 1=X, 4=Y
+        // Source: WireThroughBlock.GetWiredFace returns 0(Z), 1(X), 4(Y)
+        private int GetAxisFromDirection(Point3 dir)
+        {
+            if (dir.X != 0) return 1; // X axis
+            if (dir.Z != 0) return 0; // Z axis
+            return 4; // Y axis
+        }
+
+        // Direction → face index
+        // Source: CellFace 0=+Z, 1=+X, 2=-Z, 3=-X, 4=+Y, 5=-Y
+        private int DirectionToFace(Point3 dir)
+        {
+            if (dir.Z > 0) return 0;
+            if (dir.X > 0) return 1;
+            if (dir.Z < 0) return 2;
+            if (dir.X < 0) return 3;
+            if (dir.Y > 0) return 4;
+            return 5; // Y < 0
+        }
+
+        // Place WireThrough block at position with specified axis
+        private void PlaceWireThroughBlock(Point3 p, int contentType, int axis)
+        {
+            // Create WireThrough block value with correct wired face
+            // WireThroughBlock data: wired face is stored in lower bits
+            // GetWiredFace returns axis (0=Z, 1=X, 4=Y)
+            int data = 0;
+            if (axis == 1) data = 1;  // X axis
+            else if (axis == 4) data = 4; // Y axis
+            // axis == 0: data = 0 (Z axis, default)
+
+            int value = Terrain.MakeBlockValue(contentType, 0, data);
+            m_subsystemTerrain.ChangeCell(p.X, p.Y, p.Z, value);
+        }
+
+        // Add wire faces to an existing WireBlock for a straight-through direction
+        private void AddWireFaces(Point3 p, Point3 dir, int paintColor)
+        {
+            int face = DirectionToFace(dir);
+            int oppFace = CellFace.OppositeFace(face);
+
+            int cellValue = m_subsystemTerrain.Terrain.GetCellValue(p.X, p.Y, p.Z);
+            int wireBitmask = WireBlock.GetWireFacesBitmask(cellValue);
+            wireBitmask |= (1 << face) | (1 << oppFace);
+
+            // Rebuild data preserving existing color
+            int data = wireBitmask & 0x3F;
+            int existingData = Terrain.ExtractData(cellValue);
+            // Preserve color bits if already set
+            if ((existingData & 0x40) != 0)
+            {
+                data |= existingData & 0x780; // bits 7-10 = color
+            }
+            else if (paintColor >= 0)
+            {
+                data |= 0x40;
+                data |= (paintColor & 0xF) << 7;
+            }
+
+            int newValue = Terrain.MakeBlockValue(WireBlock.Index, 0, data);
+            m_subsystemTerrain.ChangeCell(p.X, p.Y, p.Z, newValue);
+        }
+
+        public void SetCircuitNumber(int num)
+        {
+            m_circuitNumber = num;
+            m_componentPlayer.ComponentGui.DisplaySmallMessage(
+                $"Circuit number set to {m_circuitNumber}",
+                Color.White, false, false);
+        }
+
+        public int CircuitNumber => m_circuitNumber;
+        public int SelectedCount => m_selectedBlocks.Count;
+        public int Area1Count => m_area1Blocks.Count;
+        public int Area2Count => m_area2Blocks.Count;
+        public int Area1ActiveFace => m_area1ActiveFace;
+        public int Area2ActiveFace => m_area2ActiveFace;
+
+        // Face names: 0=+Z(South), 1=+X(East), 2=-Z(North), 3=-X(West), 4=+Y(Top), 5=-Y(Bottom)
+        private static readonly string[] FaceNames = { "+Z", "+X", "-Z", "-X", "+Y", "-Y" };
+        public string Area1FaceName => m_area1ActiveFace >= 0 ? FaceNames[m_area1ActiveFace] : "--";
+        public string Area2FaceName => m_area2ActiveFace >= 0 ? FaceNames[m_area2ActiveFace] : "--";
+
+        public void CycleArea1Face()
+        {
+            if (!m_area1Box.HasValue) return;
+            m_area1ActiveFace = (m_area1ActiveFace + 1) % 6;
+        }
+
+        public void CycleArea2Face()
+        {
+            if (!m_area2Box.HasValue) return;
+            m_area2ActiveFace = (m_area2ActiveFace + 1) % 6;
+        }
+
+        public void ClearSelection()
+        {
+            m_selectionPoint1 = null;
+            m_selectionPoint2 = null;
+            m_selectedBlocks.Clear();
+            m_selectedBox = null;
+        }
+
+        // --- Internal ---
+
+        private void ComputeSelectionBox()
+        {
+            if (!m_selectionPoint1.HasValue || !m_selectionPoint2.HasValue) return;
+
+            Point3 p1 = m_selectionPoint1.Value;
+            Point3 p2 = m_selectionPoint2.Value;
+
+            int minX = Math.Min(p1.X, p2.X);
+            int maxX = Math.Max(p1.X, p2.X);
+            int minY = Math.Min(p1.Y, p2.Y);
+            int maxY = Math.Max(p1.Y, p2.Y);
+            int minZ = Math.Min(p1.Z, p2.Z);
+            int maxZ = Math.Max(p1.Z, p2.Z);
+
+            m_selectedBox = new BoundingBox(
+                new Vector3(minX, minY, minZ),
+                new Vector3(maxX + 1, maxY + 1, maxZ + 1));
+
+            m_selectedBlocks.Clear();
+            for (int x = minX; x <= maxX; x++)
+            {
+                for (int y = minY; y <= maxY; y++)
+                {
+                    for (int z = minZ; z <= maxZ; z++)
+                    {
+                        m_selectedBlocks.Add(new Point3(x, y, z));
+                    }
+                }
+            }
+        }
+
+        private void DrawWireframeBox(FlatBatch3D flatBatch, BoundingBox box, Color color)
+        {
+            Vector3 min = box.Min;
+            Vector3 max = box.Max;
+
+            // Bottom face edges (Y=min.Y)
+            flatBatch.QueueLine(new Vector3(min.X, min.Y, min.Z), new Vector3(max.X, min.Y, min.Z), color);
+            flatBatch.QueueLine(new Vector3(max.X, min.Y, min.Z), new Vector3(max.X, min.Y, max.Z), color);
+            flatBatch.QueueLine(new Vector3(max.X, min.Y, max.Z), new Vector3(min.X, min.Y, max.Z), color);
+            flatBatch.QueueLine(new Vector3(min.X, min.Y, max.Z), new Vector3(min.X, min.Y, min.Z), color);
+
+            // Top face edges (Y=max.Y)
+            flatBatch.QueueLine(new Vector3(min.X, max.Y, min.Z), new Vector3(max.X, max.Y, min.Z), color);
+            flatBatch.QueueLine(new Vector3(max.X, max.Y, min.Z), new Vector3(max.X, max.Y, max.Z), color);
+            flatBatch.QueueLine(new Vector3(max.X, max.Y, max.Z), new Vector3(min.X, max.Y, max.Z), color);
+            flatBatch.QueueLine(new Vector3(min.X, max.Y, max.Z), new Vector3(min.X, max.Y, min.Z), color);
+
+            // Vertical edges
+            flatBatch.QueueLine(new Vector3(min.X, min.Y, min.Z), new Vector3(min.X, max.Y, min.Z), color);
+            flatBatch.QueueLine(new Vector3(max.X, min.Y, min.Z), new Vector3(max.X, max.Y, min.Z), color);
+            flatBatch.QueueLine(new Vector3(max.X, min.Y, max.Z), new Vector3(max.X, max.Y, max.Z), color);
+            flatBatch.QueueLine(new Vector3(min.X, min.Y, max.Z), new Vector3(min.X, max.Y, max.Z), color);
+        }
+
+        // Face index: 0=+Z, 1=+X, 2=-Z, 3=-X, 4=+Y, 5=-Y
+        // Offset quad slightly outward to avoid z-fighting with block surfaces
+        private void DrawFaceQuad(FlatBatch3D flatBatch, BoundingBox box, int face, Color color)
+        {
+            float e = 0.01f; // epsilon offset
+            Vector3 min = box.Min;
+            Vector3 max = box.Max;
+
+            switch (face)
+            {
+                case 0: // +Z face (max.Z)
+                    flatBatch.QueueQuad(
+                        new Vector3(min.X, min.Y, max.Z + e),
+                        new Vector3(max.X, min.Y, max.Z + e),
+                        new Vector3(max.X, max.Y, max.Z + e),
+                        new Vector3(min.X, max.Y, max.Z + e), color);
+                    break;
+                case 1: // +X face (max.X)
+                    flatBatch.QueueQuad(
+                        new Vector3(max.X + e, min.Y, min.Z),
+                        new Vector3(max.X + e, min.Y, max.Z),
+                        new Vector3(max.X + e, max.Y, max.Z),
+                        new Vector3(max.X + e, max.Y, min.Z), color);
+                    break;
+                case 2: // -Z face (min.Z)
+                    flatBatch.QueueQuad(
+                        new Vector3(max.X, min.Y, min.Z - e),
+                        new Vector3(min.X, min.Y, min.Z - e),
+                        new Vector3(min.X, max.Y, min.Z - e),
+                        new Vector3(max.X, max.Y, min.Z - e), color);
+                    break;
+                case 3: // -X face (min.X)
+                    flatBatch.QueueQuad(
+                        new Vector3(min.X - e, min.Y, max.Z),
+                        new Vector3(min.X - e, min.Y, min.Z),
+                        new Vector3(min.X - e, max.Y, min.Z),
+                        new Vector3(min.X - e, max.Y, max.Z), color);
+                    break;
+                case 4: // +Y face (max.Y)
+                    flatBatch.QueueQuad(
+                        new Vector3(min.X, max.Y + e, min.Z),
+                        new Vector3(max.X, max.Y + e, min.Z),
+                        new Vector3(max.X, max.Y + e, max.Z),
+                        new Vector3(min.X, max.Y + e, max.Z), color);
+                    break;
+                case 5: // -Y face (min.Y)
+                    flatBatch.QueueQuad(
+                        new Vector3(min.X, min.Y - e, max.Z),
+                        new Vector3(max.X, min.Y - e, max.Z),
+                        new Vector3(max.X, min.Y - e, min.Z),
+                        new Vector3(min.X, min.Y - e, min.Z), color);
+                    break;
+            }
+        }
+
+        // Draw numbers on WireThrough blocks' active face
+        private void DrawNumbers(FontBatch3D fontBatch, Dictionary<Point3, int> numbers, int activeFace, Color color)
+        {
+            if (activeFace < 0 || numbers.Count == 0) return;
+
+            foreach (var kv in numbers)
+            {
+                Point3 p = kv.Key;
+                string text = kv.Value.ToString();
+
+                // Position: center of the block face, offset outward slightly
+                float e = 0.02f;
+                Vector3 center = new Vector3(p.X + 0.5f, p.Y + 0.5f, p.Z + 0.5f);
+
+                // right and down vectors for the face, text size per character
+                float size = 0.04f;
+                Vector3 right, down;
+
+                switch (activeFace)
+                {
+                    case 0: // +Z
+                        center.Z = p.Z + 1f + e;
+                        right = new Vector3(size, 0, 0);
+                        down = new Vector3(0, -size, 0);
+                        break;
+                    case 1: // +X
+                        center.X = p.X + 1f + e;
+                        right = new Vector3(0, 0, -size);
+                        down = new Vector3(0, -size, 0);
+                        break;
+                    case 2: // -Z
+                        center.Z = p.Z - e;
+                        right = new Vector3(-size, 0, 0);
+                        down = new Vector3(0, -size, 0);
+                        break;
+                    case 3: // -X
+                        center.X = p.X - e;
+                        right = new Vector3(0, 0, size);
+                        down = new Vector3(0, -size, 0);
+                        break;
+                    case 4: // +Y
+                        center.Y = p.Y + 1f + e;
+                        right = new Vector3(size, 0, 0);
+                        down = new Vector3(0, 0, -size);
+                        break;
+                    case 5: // -Y
+                        center.Y = p.Y - e;
+                        right = new Vector3(size, 0, 0);
+                        down = new Vector3(0, 0, size);
+                        break;
+                    default:
+                        continue;
+                }
+
+                fontBatch.QueueText(text, center, right, down, color, TextAnchor.HorizontalCenter | TextAnchor.VerticalCenter);
+            }
+        }
+
+        // Draw active face per-block: WireThrough blocks get greenColor, others get defaultColor
+        private void DrawFacePerBlock(FlatBatch3D flatBatch, BoundingBox box, int face, Color greenColor, Color defaultColor)
+        {
+            int minIX = (int)box.Min.X;
+            int minIY = (int)box.Min.Y;
+            int minIZ = (int)box.Min.Z;
+            int maxIX = (int)box.Max.X - 1;
+            int maxIY = (int)box.Max.Y - 1;
+            int maxIZ = (int)box.Max.Z - 1;
+
+            switch (face)
+            {
+                case 0: // +Z face: blocks at z=maxIZ
+                    for (int x = minIX; x <= maxIX; x++)
+                        for (int y = minIY; y <= maxIY; y++)
+                        {
+                            Color c = IsWireThroughConnectedAt(x, y, maxIZ, face) ? greenColor : defaultColor;
+                            DrawSingleBlockFace(flatBatch, x, y, maxIZ, face, c);
+                        }
+                    break;
+                case 1: // +X face: blocks at x=maxIX
+                    for (int y = minIY; y <= maxIY; y++)
+                        for (int z = minIZ; z <= maxIZ; z++)
+                        {
+                            Color c = IsWireThroughConnectedAt(maxIX, y, z, face) ? greenColor : defaultColor;
+                            DrawSingleBlockFace(flatBatch, maxIX, y, z, face, c);
+                        }
+                    break;
+                case 2: // -Z face: blocks at z=minIZ
+                    for (int x = minIX; x <= maxIX; x++)
+                        for (int y = minIY; y <= maxIY; y++)
+                        {
+                            Color c = IsWireThroughConnectedAt(x, y, minIZ, face) ? greenColor : defaultColor;
+                            DrawSingleBlockFace(flatBatch, x, y, minIZ, face, c);
+                        }
+                    break;
+                case 3: // -X face: blocks at x=minIX
+                    for (int y = minIY; y <= maxIY; y++)
+                        for (int z = minIZ; z <= maxIZ; z++)
+                        {
+                            Color c = IsWireThroughConnectedAt(minIX, y, z, face) ? greenColor : defaultColor;
+                            DrawSingleBlockFace(flatBatch, minIX, y, z, face, c);
+                        }
+                    break;
+                case 4: // +Y face: blocks at y=maxIY
+                    for (int x = minIX; x <= maxIX; x++)
+                        for (int z = minIZ; z <= maxIZ; z++)
+                        {
+                            Color c = IsWireThroughConnectedAt(x, maxIY, z, face) ? greenColor : defaultColor;
+                            DrawSingleBlockFace(flatBatch, x, maxIY, z, face, c);
+                        }
+                    break;
+                case 5: // -Y face: blocks at y=minIY
+                    for (int x = minIX; x <= maxIX; x++)
+                        for (int z = minIZ; z <= maxIZ; z++)
+                        {
+                            Color c = IsWireThroughConnectedAt(x, minIY, z, face) ? greenColor : defaultColor;
+                            DrawSingleBlockFace(flatBatch, x, minIY, z, face, c);
+                        }
+                    break;
+            }
+        }
+
+        // Draw a single 1x1 block face quad at block (bx,by,bz) on the specified face
+        private void DrawSingleBlockFace(FlatBatch3D flatBatch, int bx, int by, int bz, int face, Color color)
+        {
+            float e = 0.01f;
+            float x0 = bx, y0 = by, z0 = bz;
+            float x1 = bx + 1, y1 = by + 1, z1 = bz + 1;
+
+            switch (face)
+            {
+                case 0: // +Z
+                    flatBatch.QueueQuad(
+                        new Vector3(x0, y0, z1 + e), new Vector3(x1, y0, z1 + e),
+                        new Vector3(x1, y1, z1 + e), new Vector3(x0, y1, z1 + e), color);
+                    break;
+                case 1: // +X
+                    flatBatch.QueueQuad(
+                        new Vector3(x1 + e, y0, z0), new Vector3(x1 + e, y0, z1),
+                        new Vector3(x1 + e, y1, z1), new Vector3(x1 + e, y1, z0), color);
+                    break;
+                case 2: // -Z
+                    flatBatch.QueueQuad(
+                        new Vector3(x1, y0, z0 - e), new Vector3(x0, y0, z0 - e),
+                        new Vector3(x0, y1, z0 - e), new Vector3(x1, y1, z0 - e), color);
+                    break;
+                case 3: // -X
+                    flatBatch.QueueQuad(
+                        new Vector3(x0 - e, y0, z1), new Vector3(x0 - e, y0, z0),
+                        new Vector3(x0 - e, y1, z0), new Vector3(x0 - e, y1, z1), color);
+                    break;
+                case 4: // +Y
+                    flatBatch.QueueQuad(
+                        new Vector3(x0, y1 + e, z0), new Vector3(x1, y1 + e, z0),
+                        new Vector3(x1, y1 + e, z1), new Vector3(x0, y1 + e, z1), color);
+                    break;
+                case 5: // -Y
+                    flatBatch.QueueQuad(
+                        new Vector3(x0, y0 - e, z1), new Vector3(x1, y0 - e, z1),
+                        new Vector3(x1, y0 - e, z0), new Vector3(x0, y0 - e, z0), color);
+                    break;
+            }
+        }
+
+        // WireThrough block indices
+        // Source: WireThroughPlanksBlock.cs Index=153, WireThroughStoneBlock.cs Index=154,
+        //         WireThroughSemiconductorBlock.cs Index=155, WireThroughBricksBlock.cs Index=223,
+        //         WireThroughCobblestoneBlock.cs Index=243
+        private static readonly HashSet<int> WireThroughIndices = new HashSet<int>
+        {
+            153, 154, 155, 223, 243
+        };
+
+        // Check if block at (x,y,z) is a WireThrough block with wire on the specified face
+        // WireThroughBlock: GetWiredFace(data) returns 0(Z-axis), 1(X-axis), or 4(Y-axis)
+        // Wire passes through wiredFace and OppositeFace(wiredFace)
+        // A face is connected if it equals wiredFace or OppositeFace(wiredFace)
+        private bool IsWireThroughConnectedAt(int x, int y, int z, int face)
+        {
+            int cellValue = m_subsystemTerrain.Terrain.GetCellValue(x, y, z);
+            int contents = Terrain.ExtractContents(cellValue);
+            if (!WireThroughIndices.Contains(contents)) return false;
+            int data = Terrain.ExtractData(cellValue);
+            int wiredFace = WireThroughBlock.GetWiredFace(data);
+            // Wire passes through wiredFace and its opposite
+            return face == wiredFace || face == CellFace.OppositeFace(wiredFace);
+        }
+
+        protected override void Load(ValuesDictionary valuesDictionary)
+        {
+            base.Load(valuesDictionary);
+            m_subsystemTerrain = Project.FindSubsystem<SubsystemTerrain>(true);
+            m_subsystemGameWidgets = Project.FindSubsystem<SubsystemGameWidgets>(true);
+            Log.Information("[CircuitAutoRouter] SubsystemCircuitRouter loaded");
+        }
+    }
+}
