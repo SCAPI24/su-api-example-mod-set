@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<Obfuscator>
+  <Var name="InPath" value="bin\Debug\net8.0" />
+  <Var name="OutPath" value="bin\Debug\net8.0\Obfuscar" />
+  <Var name="KeepPublicApi" value="true" />
+  <Var name="HidePrivateApi" value="true" />
+  <Var name="HideStrings" value="true" />
+  <Var name="RenameProperties" value="false" />
+  <Var name="RenameEvents" value="false" />
+  <Var name="RenameFields" value="false" />
+  <Var name="UseUnicodeNames" value="true" />
+  <Module file="$(InPath)\CircuitAutoRouter.dll" />
+</Obfuscator>
