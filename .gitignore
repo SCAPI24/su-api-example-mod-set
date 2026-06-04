@@ -77,8 +77,14 @@ WatchMod/.vs/
 GodMode/bin/
 GodMode/obj/
 GodMode/.vs/
+## sync:CircuitAutoRouter
+!CircuitAutoRouter/
+!CircuitAutoRouter/**
+CircuitAutoRouter/bin/
+CircuitAutoRouter/obj/
+CircuitAutoRouter/.vs/
 
-# 全局忽略 .vs 目录（必须在所有 !Mod/** 之后以覆盖反忽略）
+# 全局忽略 .vs 目录
 *.vs/
 
 # 全局忽略打包产物和临时文件
