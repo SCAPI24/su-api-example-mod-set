@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
@@ -58,7 +59,7 @@ public class PakFile : IDisposable
     public long ContentDataOffset { get; private set; }
 
     /// <summary>PAK文件路径</summary>
-    public string FilePath { get; }
+    public string FilePath { get; private set; }
 
     /// <summary>是否有未保存的修改</summary>
     public bool HasUnsavedChanges { get; private set; }
@@ -70,6 +71,19 @@ public class PakFile : IDisposable
     {
         FilePath = path;
         _tocPad = Encoding.UTF8.GetBytes(GeneratePad());
+    }
+
+    /// <summary>
+    /// 创建空PAK（用于新建）
+    /// </summary>
+    public PakFile()
+    {
+        FilePath = null;
+        _tocPad = Encoding.UTF8.GetBytes(GeneratePad());
+        Entries = new List<PakEntry>();
+        Root = new PakFolder { Name = "" };
+        ContentDataOffset = 4 + 12; // 4(header) + 8(contentOffset+entryCount=0)
+        HasUnsavedChanges = true;
     }
 
     /// <summary>
@@ -375,12 +389,205 @@ public class PakFile : IDisposable
     }
 
     /// <summary>
+    /// 添加或替换条目（用于粘贴）
+    /// </summary>
+    public void AddOrReplaceEntry(string name, string typeName, byte[] data)
+    {
+        _modifiedEntries[name] = data;
+
+        // 如果Entries中不存在该条目，添加一个新的
+        if (!Entries.Any(e => e.Name == name))
+        {
+            var newEntry = new PakEntry
+            {
+                Name = name,
+                TypeName = typeName,
+                Position = 0,
+                Size = data.Length
+            };
+            Entries.Add(newEntry);
+
+            // 确保目标文件夹存在，不存在则自动创建
+            string folderPath = name.Contains('/') ? name.Substring(0, name.LastIndexOf('/')) : "";
+            var folder = EnsureFolder(folderPath);
+            if (folder != null)
+            {
+                folder.Files.Add(newEntry);
+            }
+        }
+
+        HasUnsavedChanges = true;
+    }
+
+    /// <summary>
+    /// 确保指定路径的文件夹存在，不存在则递归创建
+    /// </summary>
+    private PakFolder EnsureFolder(string path)
+    {
+        if (string.IsNullOrEmpty(path))
+        {
+            return Root;
+        }
+
+        var existing = GetFolder(path);
+        if (existing != null)
+        {
+            return existing;
+        }
+
+        // 递归创建：先确保父文件夹存在
+        string[] parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        PakFolder current = Root;
+        string currentPath = "";
+
+        foreach (string part in parts)
+        {
+            currentPath = string.IsNullOrEmpty(currentPath) ? part : currentPath + "/" + part;
+            if (!current.SubFolders.TryGetValue(part, out var next))
+            {
+                next = new PakFolder { Name = part, FullPath = currentPath };
+                current.SubFolders[part] = next;
+            }
+            current = next;
+        }
+
+        return current;
+    }
+
+    /// <summary>
     /// 从外部文件导入替换条目
     /// </summary>
     public void ImportFile(PakEntry entry, string externalFilePath)
     {
         byte[] data = File.ReadAllBytes(externalFilePath);
         ReplaceEntry(entry, data);
+    }
+
+    /// <summary>
+    /// 新建文件夹（仅创建文件夹节点，不写入PAK条目）
+    /// 空文件夹保存后不会持久化，但编辑期间可见
+    /// </summary>
+    public bool CreateFolder(string folderPath)
+    {
+        if (string.IsNullOrEmpty(folderPath)) return false;
+
+        // 已存在则不创建
+        if (GetFolder(folderPath) != null) return false;
+
+        var folder = EnsureFolder(folderPath);
+        return folder != null;
+    }
+
+    /// <summary>
+    /// 新建空文件条目
+    /// </summary>
+    public PakEntry CreateFile(string fullPath, string typeName)
+    {
+        if (string.IsNullOrEmpty(fullPath)) return null;
+
+        // 已存在则不创建
+        if (Entries.Any(e => e.Name == fullPath)) return null;
+
+        var entry = new PakEntry
+        {
+            Name = fullPath,
+            TypeName = typeName,
+            Position = 0,
+            Size = 0
+        };
+        Entries.Add(entry);
+
+        // 添加到文件夹树
+        string folderPath = fullPath.Contains('/') ? fullPath.Substring(0, fullPath.LastIndexOf('/')) : "";
+        var folder = EnsureFolder(folderPath);
+        if (folder != null)
+        {
+            folder.Files.Add(entry);
+        }
+
+        // 记录为修改（空内容）
+        _modifiedEntries[fullPath] = Array.Empty<byte>();
+        HasUnsavedChanges = true;
+
+        return entry;
+    }
+
+    /// <summary>
+    /// 删除条目（从Entries、文件夹树和修改记录中移除）
+    /// </summary>
+    public bool RemoveEntry(PakEntry entry)
+    {
+        if (entry == null) return false;
+
+        // 从Entries列表移除
+        bool removed = Entries.Remove(entry);
+        if (!removed) return false;
+
+        // 从修改记录移除
+        _modifiedEntries.Remove(entry.Name);
+
+        // 从文件夹树移除
+        string folderPath = entry.Name.Contains('/') ? entry.Name.Substring(0, entry.Name.LastIndexOf('/')) : "";
+        var folder = GetFolder(folderPath);
+        if (folder != null)
+        {
+            folder.Files.Remove(entry);
+        }
+
+        // 标记已删除（空内容表示删除）
+        _modifiedEntries[entry.Name] = null;
+        HasUnsavedChanges = true;
+        return true;
+    }
+
+    /// <summary>
+    /// 删除文件夹下所有文件条目（递归），保留文件夹结构
+    /// 用于：右侧DataGrid选中文件删除后，文件夹变空但保留
+    /// </summary>
+    public int RemoveFolderFiles(PakFolder folder)
+    {
+        if (folder == null) return 0;
+
+        int count = 0;
+        foreach (var entry in folder.Files.ToList())
+        {
+            if (RemoveEntry(entry)) count++;
+        }
+
+        foreach (var sub in folder.SubFolders.Values.ToList())
+        {
+            count += RemoveFolderFiles(sub);
+        }
+
+        return count;
+    }
+
+    /// <summary>
+    /// 删除整个文件夹（递归删除所有条目+从父节点SubFolders移除文件夹本身）
+    /// 用于：左侧TreeView选中文件夹删除
+    /// </summary>
+    public int RemoveFolder(PakFolder folder, PakFolder parentFolder, string folderKey)
+    {
+        if (folder == null) return 0;
+
+        int count = 0;
+        foreach (var entry in folder.Files.ToList())
+        {
+            if (RemoveEntry(entry)) count++;
+        }
+
+        foreach (var sub in folder.SubFolders.Values.ToList())
+        {
+            count += RemoveFolder(sub, folder, sub.Name);
+        }
+
+        // 从父节点的SubFolders中移除该文件夹
+        if (parentFolder != null && folderKey != null)
+        {
+            parentFolder.SubFolders.Remove(folderKey);
+        }
+
+        return count;
     }
 
     /// <summary>
@@ -432,73 +639,83 @@ public class PakFile : IDisposable
     public void Save(string outputPath)
     {
         // 1. 计算新的内容区布局
-        //    所有条目按原顺序排列，内容紧跟TOC之后
-        //    TOC格式: Int64(contentOffset) + Int32(entryCount) + [entry...]
-        //    entry: WriteString(name) + WriteString(typeName) + Int64(position) + Int64(size)
-
-        // 先计算TOC大小以确定contentOffset
         long tocSize = CalculateTocSize();
         long contentOffset = 4 + tocSize; // 4字节头 + TOC
 
-        // 2. 计算每个条目的新位置
-        var entryLayouts = new List<(PakEntry Entry, long NewPosition, long NewSize)>();
+        // 2. 计算每个条目的新位置，并预读所有内容到内存
+        var entryLayouts = new List<(PakEntry Entry, long NewPosition, long NewSize, byte[] Data)>();
         long currentPos = contentOffset;
 
         foreach (var entry in Entries)
         {
             long size = GetEntrySize(entry);
-            entryLayouts.Add((entry, currentPos, size));
+            byte[] data = ReadEntryContent(entry);
+            entryLayouts.Add((entry, currentPos, size, data));
             currentPos += size;
         }
 
-        // 3. 写入新文件
-        using var outStream = new FileStream(outputPath, FileMode.Create, FileAccess.Write);
-        using var writer = new BinaryWriter(outStream, Encoding.UTF8, leaveOpen: true);
+        // 3. 关闭读取流（Save写入时可能覆盖原文件，必须先释放锁）
+        bool hadStream = _stream != null;
+        CloseStream(); // 始终关闭，防止文件锁冲突
 
-        // 3a. 写入PK2头（无XOR）
-        writer.Write(HeaderBytes);
-
-        // 3b. 写入TOC（XOR加密）
-        // contentOffset
-        WriteInt64Xor(writer, contentOffset);
-        // entryCount
-        WriteInt32Xor(writer, Entries.Count);
-
-        // 每个条目
-        foreach (var layout in entryLayouts)
+        // 4. 写入新文件
+        using (var outStream = new FileStream(outputPath, FileMode.Create, FileAccess.Write))
+        using (var writer = new BinaryWriter(outStream, Encoding.UTF8))
         {
-            // position在TOC中存储的是相对于contentOffset的偏移
-            // Source: ContentCache.cs line 122: position = binaryReader.ReadInt64() + num
-            // 写入时需要减去contentOffset
-            long relativePosition = layout.NewPosition - contentOffset;
+            // 4a. 写入PK2头（无XOR）
+            writer.Write(HeaderBytes);
 
-            WriteStringXor(writer, layout.Entry.Name);
-            WriteStringXor(writer, layout.Entry.TypeName);
-            WriteInt64Xor(writer, relativePosition);
-            WriteInt64Xor(writer, layout.NewSize);
-        }
+            // 4b. 写入TOC（XOR加密）
+            WriteInt64Xor(writer, contentOffset);
+            WriteInt32Xor(writer, Entries.Count);
 
-        // 3c. 写入内容区（XOR加密）
-        foreach (var layout in entryLayouts)
-        {
-            byte[] data = ReadEntryContent(layout.Entry);
-
-            // XOR加密: 用ContentPad加密，基于绝对位置
-            byte[] encrypted = new byte[data.Length];
-            for (int i = 0; i < data.Length; i++)
+            foreach (var layout in entryLayouts)
             {
-                long absPos = layout.NewPosition + i;
-                encrypted[i] = (byte)(data[i] ^ ContentPad[absPos % ContentPad.Length]);
+                long relativePosition = layout.NewPosition - contentOffset;
+                WriteStringXor(writer, layout.Entry.Name);
+                WriteStringXor(writer, layout.Entry.TypeName);
+                WriteInt64Xor(writer, relativePosition);
+                WriteInt64Xor(writer, layout.NewSize);
             }
 
-            writer.Write(encrypted);
+            // 4c. 写入内容区（XOR加密）
+            foreach (var layout in entryLayouts)
+            {
+                byte[] data = layout.Data;
+                byte[] encrypted = new byte[data.Length];
+                for (int i = 0; i < data.Length; i++)
+                {
+                    long absPos = layout.NewPosition + i;
+                    encrypted[i] = (byte)(data[i] ^ ContentPad[absPos % ContentPad.Length]);
+                }
+                writer.Write(encrypted);
+            }
+
+            writer.Flush();
         }
 
-        writer.Flush();
+        // 5. 更新所有Entry的Position为新文件中的绝对偏移
+        //    这样后续ReadEntryContent才能从新文件中正确读取
+        long newContentDataOffset = contentOffset;
+        foreach (var layout in entryLayouts)
+        {
+            layout.Entry.Position = layout.NewPosition;
+            layout.Entry.Size = layout.NewSize;
+        }
+        ContentDataOffset = newContentDataOffset;
 
-        // 4. 保存成功后清除修改标记
+        // 6. 清除修改标记
         HasUnsavedChanges = false;
         _modifiedEntries.Clear();
+
+        // 7. 更新FilePath
+        FilePath = outputPath;
+
+        // 8. 重新打开读取流
+        if (hadStream || File.Exists(outputPath))
+        {
+            ReopenStream();
+        }
     }
 
     /// <summary>
@@ -888,9 +1105,31 @@ public class PakFile : IDisposable
         };
     }
 
-    public void Dispose()
+    /// <summary>
+    /// 关闭读取流（Save覆盖原文件前调用）
+    /// </summary>
+    private void CloseStream()
     {
         _reader?.Dispose();
+        _reader = null;
         _stream?.Dispose();
+        _stream = null;
+    }
+
+    /// <summary>
+    /// 重新打开读取流（Save覆盖原文件后调用）
+    /// </summary>
+    private void ReopenStream()
+    {
+        if (FilePath != null && File.Exists(FilePath))
+        {
+            _stream = new FileStream(FilePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            _reader = new BinaryReader(_stream, Encoding.UTF8, leaveOpen: true);
+        }
+    }
+
+    public void Dispose()
+    {
+        CloseStream();
     }
 }
