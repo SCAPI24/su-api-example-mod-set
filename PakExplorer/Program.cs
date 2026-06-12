@@ -9,6 +9,7 @@ class Program
     [STAThread]
     public static void Main(string[] args)
     {
+        Lang.Init();
         try
         {
             BuildAvaloniaApp()

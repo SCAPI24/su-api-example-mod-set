@@ -31,6 +31,13 @@ public class MainWindowViewModel : ViewModelBase
         set => SetProperty(ref _title, value);
     }
 
+    private string _menuPreferences = "Preferences(_P)";
+    public string MenuPreferences
+    {
+        get => _menuPreferences;
+        set => SetProperty(ref _menuPreferences, value);
+    }
+
     private bool _isLoaded;
     public bool IsLoaded
     {
@@ -142,7 +149,7 @@ public class MainWindowViewModel : ViewModelBase
             Title = "PakExplorer - " + rootNode.Name;
             IsLoaded = true;
             HasUnsavedChanges = false;
-            StatusText = $"已加载: {pak.Entries.Count} 个条目, 内容偏移: {pak.ContentDataOffset}";
+            StatusText = Lang.Get("Status_Loaded", pak.Entries.Count, pak.ContentDataOffset);
             DetailText = "";
             PreviewText = "";
             IsPreviewVisible = false;
@@ -170,7 +177,7 @@ public class MainWindowViewModel : ViewModelBase
         Title = "PakExplorer - " + name + " *";
         IsLoaded = true;
         HasUnsavedChanges = true;
-        StatusText = $"新建PAK: {name}（空，未保存）";
+        StatusText = Lang.Get("NewPak_Status", name);
         DetailText = "";
         PreviewText = "";
         IsPreviewVisible = false;
@@ -200,7 +207,7 @@ public class MainWindowViewModel : ViewModelBase
             Title = "PakExplorer";
             IsLoaded = false;
             HasUnsavedChanges = false;
-            StatusText = "请打开 Content.pak 文件";
+            StatusText = Lang.Get("Status_OpenHint");
         }
         else
         {
@@ -322,12 +329,12 @@ public class MainWindowViewModel : ViewModelBase
 
         var e = item.Entry;
         string ext = PakFile.GetExtensionForType(e.TypeName);
-        string modified = _pak.IsEntryModified(e) ? " [已修改]" : "";
+        string modified = _pak.IsEntryModified(e) ? Lang.Get("Detail_Modified") : "";
 
-        DetailText = $"名称: {e.Name}\n"
-                   + $"类型: {e.TypeName}\n"
-                   + $"扩展名: {ext}\n"
-                   + $"偏移: 0x{e.Position:X} ({e.Position})\n"
+        DetailText = Lang.Get("Detail_Name", e.Name) + "\n"
+                   + Lang.Get("Detail_Type", e.TypeName) + "\n"
+                   + Lang.Get("Detail_Ext", ext) + "\n"
+                   + Lang.Get("Detail_Position", e.Position, e.Position) + "\n"
                    + $"原始大小: {e.Size} 字节\n"
                    + $"当前大小: {_pak.GetEntrySize(e)} 字节{modified}";
 
@@ -404,7 +411,7 @@ public class MainWindowViewModel : ViewModelBase
         try
         {
             _pak.ExtractEntry(SelectedEntry.Entry, outputPath);
-            StatusText = "已提取: " + outputPath;
+            StatusText = Lang.Get("Status_Extracted", outputPath);
         }
         catch (Exception ex)
         {
@@ -427,7 +434,7 @@ public class MainWindowViewModel : ViewModelBase
             if (folder != null)
             {
                 _pak.ExtractFolder(folder, outputDir);
-                StatusText = "已提取到: " + outputDir;
+                StatusText = Lang.Get("Status_ExtractedTo", outputDir);
             }
         }
         catch (Exception ex)
@@ -842,11 +849,11 @@ public class MainWindowViewModel : ViewModelBase
             RefreshCurrentTree();
             // 刷新右侧列表：新建的子文件夹作为当前文件夹的子项显示
             if (SelectedFolder != null) LoadFolderContents(SelectedFolder);
-            StatusText = $"已新建文件夹: {newPath}";
+            StatusText = Lang.Get("Status_NewFolder", newPath);
         }
         else
         {
-            StatusText = "文件夹已存在: " + newPath;
+            StatusText = Lang.Get("Status_FolderExists", newPath);
         }
     }
 
@@ -868,11 +875,11 @@ public class MainWindowViewModel : ViewModelBase
             HasUnsavedChanges = _pak.HasUnsavedChanges;
             RefreshCurrentTree();
             if (SelectedFolder != null) LoadFolderContents(SelectedFolder);
-            StatusText = $"已新建文件: {fullPath}";
+            StatusText = Lang.Get("Status_NewFile", fullPath);
         }
         else
         {
-            StatusText = "文件已存在: " + fullPath;
+            StatusText = Lang.Get("Status_FileExists", fullPath);
         }
     }
 
