@@ -1,0 +1,119 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:PakExplorer.ViewModels"
+        x:Class="PakExplorer.Views.MainWindow"
+        x:DataType="vm:MainWindowViewModel"
+        Title="{Binding Title}"
+        Width="1100" Height="700" MinWidth="800" MinHeight="500"
+        WindowStartupLocation="CenterScreen">
+
+  <Window.Styles>
+    <Style Selector="TreeViewItem:selected /template/ Border#BackgroundBorder">
+      <Setter Property="Background" Value="#1a73e8"/>
+    </Style>
+  </Window.Styles>
+
+  <DockPanel>
+    <!-- 菜单栏 -->
+    <Menu DockPanel.Dock="Top">
+      <MenuItem Header="文件(_F)">
+        <MenuItem Header="打开PAK...(_O)" Click="OnOpenPak" InputGesture="Ctrl+O"/>
+        <MenuItem Header="关闭(_C)" Click="OnClosePak" InputGesture="Ctrl+W"/>
+        <Separator/>
+        <MenuItem Header="保存修改...(_S)" Click="OnSavePak" InputGesture="Ctrl+S"/>
+        <Separator/>
+        <MenuItem Header="退出(_X)" Click="OnExit" InputGesture="Alt+F4"/>
+      </MenuItem>
+      <MenuItem Header="操作(_A)">
+        <MenuItem Header="提取选中...(_E)" Click="OnExtractSelected" InputGesture="Ctrl+E"/>
+        <MenuItem Header="提取当前文件夹...(_F)" Click="OnExtractFolder"/>
+        <MenuItem Header="提取全部...(_A)" Click="OnExtractAll"/>
+        <Separator/>
+        <MenuItem Header="导入替换选中...(_I)" Click="OnImport" InputGesture="Ctrl+I"/>
+        <Separator/>
+        <MenuItem Header="撤销选中修改(_R)" Click="OnRevertSelected"/>
+        <MenuItem Header="撤销全部修改(_V)" Click="OnRevertAll"/>
+      </MenuItem>
+      <MenuItem Header="视图(_V)">
+        <MenuItem Header="统计信息(_S)" Click="OnStatistics"/>
+      </MenuItem>
+    </Menu>
+
+    <!-- 工具栏 -->
+    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="4,2" Spacing="4">
+      <Button Content="打开" Click="OnOpenPak" Margin="0,0,4,0"/>
+      <Button Content="提取" Click="OnExtractSelected" Margin="0,0,4,0"/>
+      <Button Content="导入" Click="OnImport" Margin="0,0,4,0"/>
+      <Button Content="保存" Click="OnSavePak" Margin="0,0,4,0"/>
+      <Separator Margin="4,0"/>
+      <TextBox Width="200" Watermark="搜索条目..." Text="{Binding SearchKeyword}"
+              KeyDown="OnSearchKeyDown"/>
+      <Button Content="搜索" Click="OnSearch"/>
+      <Button Content="清除" Click="OnClearSearch"/>
+    </StackPanel>
+
+    <!-- 状态栏 -->
+    <Border DockPanel.Dock="Bottom" Background="#1e1e1e" Padding="8,4">
+      <TextBlock Text="{Binding StatusText}" Foreground="#cccccc" FontSize="12"/>
+    </Border>
+
+    <!-- 主体内容 -->
+    <Grid ColumnDefinitions="250,Auto,*" RowDefinitions="*,Auto">
+      <!-- 左侧文件夹树 -->
+      <TreeView Grid.Column="0" Name="FolderTree" ItemsSource="{Binding RootNodes}"
+                SelectionChanged="OnFolderSelectionChanged"
+                Margin="0,0,2,0">
+        <TreeView.ItemTemplate>
+          <TreeDataTemplate ItemsSource="{Binding Children}">
+            <StackPanel Orientation="Horizontal" Spacing="4">
+              <TextBlock Text="&#x1F4C1;" FontSize="14"/>
+              <TextBlock Text="{Binding Name}"/>
+            </StackPanel>
+          </TreeDataTemplate>
+        </TreeView.ItemTemplate>
+      </TreeView>
+
+      <!-- 分割线 -->
+      <GridSplitter Grid.Column="1" Width="4" ResizeBehavior="PreviousAndNext"/>
+
+      <!-- 右侧区域 -->
+      <Grid Grid.Column="2" RowDefinitions="*">
+        <!-- 文件列表 DataGrid -->
+        <DataGrid ItemsSource="{Binding CurrentFiles}"
+                  SelectedItem="{Binding SelectedEntry, Mode=TwoWay}"
+                  IsReadOnly="True" AutoGenerateColumns="False"
+                  CanUserSortColumns="True" SelectionMode="Single"
+                  CanUserResizeColumns="True"
+                  DoubleTapped="OnEntryDoubleTapped">
+          <DataGrid.ContextMenu>
+            <ContextMenu>
+              <MenuItem Header="打开" Click="OnOpenWithSystem"/>
+              <MenuItem Header="打开方式..." Click="OnOpenWithDialog"/>
+              <Separator/>
+              <MenuItem Header="提取..." Click="OnExtractSelected"/>
+              <MenuItem Header="导入替换..." Click="OnImport"/>
+              <Separator/>
+              <MenuItem Header="撤销修改" Click="OnRevertSelected"/>
+            </ContextMenu>
+          </DataGrid.ContextMenu>
+          <DataGrid.Columns>
+            <DataGridTemplateColumn Header="名称" Width="200" SortMemberPath="DisplayName">
+              <DataGridTemplateColumn.CellTemplate>
+                <DataTemplate>
+                  <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding Icon}" FontSize="14" VerticalAlignment="Center"/>
+                    <TextBlock Text="{Binding DisplayName}" VerticalAlignment="Center"/>
+                  </StackPanel>
+                </DataTemplate>
+              </DataGridTemplateColumn.CellTemplate>
+            </DataGridTemplateColumn>
+            <DataGridTextColumn Header="类型" Binding="{Binding TypeName}" Width="Auto"/>
+            <DataGridTextColumn Header="扩展名" Binding="{Binding Extension}" Width="60"/>
+            <DataGridTextColumn Header="大小" Binding="{Binding SizeFormatted}" Width="80"/>
+            <DataGridCheckBoxColumn Header="已修改" Binding="{Binding IsModified}" Width="60"/>
+          </DataGrid.Columns>
+        </DataGrid>
+      </Grid>
+    </Grid>
+  </DockPanel>
+</Window>

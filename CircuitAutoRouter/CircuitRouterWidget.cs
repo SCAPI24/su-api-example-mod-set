@@ -150,6 +150,7 @@ namespace CircuitAutoRouter
 
             // Restore button highlight from current mode
             m_setNumberBtn.ColorTransform = m_router.IsSetNumberMode ? new Color(255, 255, 0) : Color.White;
+            m_chainLinkBtn.ColorTransform = m_router.IsChainLinkMode ? new Color(255, 255, 0) : Color.White;
         }
 
         public override void Update()
@@ -217,8 +218,8 @@ namespace CircuitAutoRouter
             }
             if (m_closeBtn.IsClicked)
             {
-                // Don't reset SetNumber mode when closing panel — user needs it active to click blocks
-                if (m_router.Mode != RouterMode.SetNumber)
+                // Don't reset toggle modes (SetNumber, ChainLink) when closing panel
+                if (m_router.Mode != RouterMode.SetNumber && m_router.Mode != RouterMode.ChainLink)
                     m_router.SetMode(RouterMode.None);
                 m_player.ComponentGui.ModalPanelWidget = null;
                 return;
@@ -231,8 +232,12 @@ namespace CircuitAutoRouter
             m_area1FaceBtn.Text = $"A1 Face: {m_router.Area1FaceName}";
             m_area2FaceBtn.Text = $"A2 Face: {m_router.Area2FaceName}";
 
-            // Highlight active mode (only SetNumber is a toggle mode)
+            // Highlight active mode (toggle modes: SetNumber and ChainLink)
             m_setNumberBtn.ColorTransform = (m_router.Mode == RouterMode.SetNumber) ? new Color(255, 255, 0) : Color.White;
+            m_chainLinkBtn.ColorTransform = (m_router.Mode == RouterMode.ChainLink) ? new Color(255, 255, 0) : Color.White;
+
+            // Chain-link mode: show key hint on buttons
+            m_chainLinkBtn.Text = m_router.IsChainLinkMode ? "Chain Link [ON]" : "Chain Link";
         }
 
         private BevelledButtonWidget CreateHalfButton(string text)

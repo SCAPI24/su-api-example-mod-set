@@ -83,6 +83,13 @@ GodMode/.vs/
 CircuitAutoRouter/bin/
 CircuitAutoRouter/obj/
 CircuitAutoRouter/.vs/
+## sync:PakExplorer
+!PakExplorer/
+!PakExplorer/**
+PakExplorer/bin/
+PakExplorer/obj/
+PakExplorer/.vs/
+PakExplorer/Verify/
 
 # 全局忽略 .vs 目录
 *.vs/
