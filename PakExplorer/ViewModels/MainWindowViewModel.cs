@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
@@ -13,6 +14,13 @@ namespace PakExplorer.ViewModels;
 public class MainWindowViewModel : ViewModelBase
 {
     internal PakFile _pak;
+
+    // 多PAK支持: 每个根节点对应一个PakFile
+    internal Dictionary<FolderNodeViewModel, PakFile> _pakMap = new();
+
+    // 剪贴板
+    private EntryItemViewModel _clipboardEntry;
+    private bool _clipboardIsCut;
 
     // ===== 绑定属性 =====
 
@@ -56,6 +64,7 @@ public class MainWindowViewModel : ViewModelBase
             if (SetProperty(ref _selectedFolder, value))
             {
                 LoadFolderContents(value);
+                RaisePropertyChanged(nameof(HasSelectedEntry));
             }
         }
     }
@@ -69,9 +78,26 @@ public class MainWindowViewModel : ViewModelBase
             if (SetProperty(ref _selectedEntry, value))
             {
                 UpdateEntryDetail(value);
+                RaisePropertyChanged(nameof(HasSelectedEntry));
+                RaisePropertyChanged(nameof(CanPaste));
             }
         }
     }
+
+    /// <summary>
+    /// 是否有选中条目或文件夹（工具栏按钮启用状态）
+    /// </summary>
+    public bool HasSelectedEntry => SelectedEntry != null || SelectedFolder != null;
+
+    /// <summary>
+    /// 是否可以粘贴（剪贴板中有条目或文件夹）
+    /// </summary>
+    public bool CanPaste => _clipboardEntry != null || _clipboardFolder != null;
+
+    /// <summary>
+    /// 多选列表（Extended模式）
+    /// </summary>
+    public List<EntryItemViewModel> SelectedEntries { get; set; } = new();
 
     // 详情面板
     private string _detailText = "";
@@ -99,23 +125,24 @@ public class MainWindowViewModel : ViewModelBase
     /// </summary>
     public void OpenPak(string path)
     {
-        ClosePak();
-
         try
         {
-            _pak = new PakFile(path);
-            _pak.Open();
+            var pak = new PakFile(path);
+            pak.Open();
 
-            // 构建文件夹树
-            RootNodes.Clear();
-            var rootNode = new FolderNodeViewModel(_pak.Root);
+            // 构建文件夹树 — 添加新根节点（不清除已有的）
+            var rootNode = new FolderNodeViewModel(pak.Root);
+            rootNode.Name = Path.GetFileName(path);
             rootNode.IsExpanded = true;
             RootNodes.Add(rootNode);
+            _pakMap[rootNode] = pak;
 
-            Title = "PakExplorer - " + Path.GetFileName(path);
+            // 切换到新打开的PAK
+            _pak = pak;
+            Title = "PakExplorer - " + rootNode.Name;
             IsLoaded = true;
             HasUnsavedChanges = false;
-            StatusText = $"已加载: {_pak.Entries.Count} 个条目, 内容偏移: {_pak.ContentDataOffset}";
+            StatusText = $"已加载: {pak.Entries.Count} 个条目, 内容偏移: {pak.ContentDataOffset}";
             DetailText = "";
             PreviewText = "";
             IsPreviewVisible = false;
@@ -127,24 +154,93 @@ public class MainWindowViewModel : ViewModelBase
     }
 
     /// <summary>
+    /// 新建空PAK
+    /// </summary>
+    public void NewPak(string name)
+    {
+        var pak = new PakFile(); // 空PAK构造
+
+        var rootNode = new FolderNodeViewModel(pak.Root);
+        rootNode.Name = name + " *";
+        rootNode.IsExpanded = true;
+        RootNodes.Add(rootNode);
+        _pakMap[rootNode] = pak;
+
+        _pak = pak;
+        Title = "PakExplorer - " + name + " *";
+        IsLoaded = true;
+        HasUnsavedChanges = true;
+        StatusText = $"新建PAK: {name}（空，未保存）";
+        DetailText = "";
+        PreviewText = "";
+        IsPreviewVisible = false;
+    }
+
+    /// <summary>
     /// 关闭当前PAK
     /// </summary>
     public void ClosePak()
     {
-        if (_pak != null)
+        // 关闭当前选中的PAK（根据SelectedFolder找到根节点）
+        if (SelectedFolder != null)
         {
-            _pak.Dispose();
-            _pak = null;
+            var root = FindRoot(SelectedFolder);
+            if (root != null && _pakMap.TryGetValue(root, out var pak))
+            {
+                pak.Dispose();
+                _pakMap.Remove(root);
+                RootNodes.Remove(root);
+            }
         }
-        RootNodes.Clear();
-        CurrentFiles.Clear();
-        Title = "PakExplorer";
-        IsLoaded = false;
-        HasUnsavedChanges = false;
-        StatusText = "请打开 Content.pak 文件";
+
+        if (_pakMap.Count == 0)
+        {
+            _pak = null;
+            CurrentFiles.Clear();
+            Title = "PakExplorer";
+            IsLoaded = false;
+            HasUnsavedChanges = false;
+            StatusText = "请打开 Content.pak 文件";
+        }
+        else
+        {
+            // 切换到剩余的第一个PAK
+            var first = _pakMap.First();
+            _pak = first.Value;
+            Title = "PakExplorer - " + first.Key.Name;
+            IsLoaded = true;
+        }
+
         DetailText = "";
         PreviewText = "";
         IsPreviewVisible = false;
+    }
+
+    /// <summary>
+    /// 根据子节点找到根节点
+    /// </summary>
+    private FolderNodeViewModel FindRoot(FolderNodeViewModel node)
+    {
+        foreach (var root in RootNodes)
+        {
+            if (root == node || IsDescendant(root, node))
+            {
+                return root;
+            }
+        }
+        return null;
+    }
+
+    private bool IsDescendant(FolderNodeViewModel parent, FolderNodeViewModel target)
+    {
+        foreach (var child in parent.Children)
+        {
+            if (child == target || IsDescendant(child, target))
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     // 预览
@@ -441,6 +537,443 @@ public class MainWindowViewModel : ViewModelBase
         catch (Exception ex)
         {
             StatusText = "保存失败: " + ex.Message;
+        }
+    }
+
+    /// <summary>
+    /// 保存后清除根节点的 * 未保存标记
+    /// </summary>
+    public void ClearUnsavedMarker()
+    {
+        if (SelectedFolder != null)
+        {
+            var root = SelectedFolder;
+            while (root.Parent != null) root = root.Parent;
+            if (root.Name.EndsWith(" *"))
+            {
+                root.Name = root.Name.Substring(0, root.Name.Length - 2);
+                RaisePropertyChanged(nameof(Title));
+                Title = "PakExplorer - " + root.Name;
+            }
+        }
+    }
+
+    // ===== 剪贴板操作 =====
+
+    // 文件夹剪贴板
+    private FolderNodeViewModel _clipboardFolder;
+    private bool _clipboardFolderIsCut;
+    private PakFile _clipboardFolderPak; // 来源PAK
+
+    /// <summary>
+    /// 复制选中的文件夹（TreeView右键/Ctrl+C）
+    /// </summary>
+    public void CopyFolder()
+    {
+        if (SelectedFolder == null) return;
+
+        _clipboardFolder = SelectedFolder;
+        _clipboardFolderIsCut = false;
+        _clipboardFolderPak = _pak;
+
+        // 同时设置条目剪贴板，让粘贴按钮可用
+        _clipboardEntry = null; // 清除条目剪贴板
+        _clipboardItems = null;
+        RaisePropertyChanged(nameof(CanPaste));
+        StatusText = $"已复制文件夹: {SelectedFolder.FullPath}";
+    }
+
+    /// <summary>
+    /// 剪切选中的文件夹（TreeView右键/Ctrl+X）
+    /// </summary>
+    public void CutFolder()
+    {
+        if (SelectedFolder == null) return;
+
+        _clipboardFolder = SelectedFolder;
+        _clipboardFolderIsCut = true;
+        _clipboardFolderPak = _pak;
+
+        _clipboardEntry = null;
+        _clipboardItems = null;
+        RaisePropertyChanged(nameof(CanPaste));
+        StatusText = $"已剪切文件夹: {SelectedFolder.FullPath}";
+    }
+
+    /// <summary>
+    /// 粘贴到当前选中的文件夹（TreeView右键/Ctrl+V）
+    /// </summary>
+    public void PasteToFolder()
+    {
+        // 条目剪贴板优先
+        if (_clipboardItems != null && _clipboardItems.Count > 0)
+        {
+            PasteToCurrentFolder();
+            return;
+        }
+
+        // 文件夹剪贴板
+        if (_clipboardFolder == null || _pak == null) return;
+
+        string targetFolder = SelectedFolder?.FullPath ?? "";
+        var sourcePak = _clipboardFolderPak ?? _pak;
+        int pasted = 0;
+
+        // 复制文件夹下所有文件（递归）
+        var sourceFolder = sourcePak.GetFolder(_clipboardFolder.FullPath);
+        if (sourceFolder == null)
+        {
+            StatusText = "源文件夹未找到: " + _clipboardFolder.FullPath;
+            return;
+        }
+
+        // 文件夹本身也要作为子文件夹复制过去
+        // 目标路径 = targetFolder + "/" + 源文件夹名
+        string folderName = _clipboardFolder.Name;
+        string newTargetPath = string.IsNullOrEmpty(targetFolder)
+            ? folderName
+            : targetFolder + "/" + folderName;
+
+        pasted = PasteFolderRecursive(sourceFolder, sourcePak, newTargetPath, _clipboardFolder.FullPath);
+
+        if (pasted > 0)
+        {
+            HasUnsavedChanges = true;
+            RefreshCurrentTree();
+            if (SelectedFolder != null) LoadFolderContents(SelectedFolder);
+            StatusText = $"已粘贴 {pasted} 个条目到 {targetFolder}";
+        }
+    }
+
+    /// <summary>
+    /// 递归复制文件夹内容到目标路径
+    /// </summary>
+    private int PasteFolderRecursive(PakFile.PakFolder source, PakFile sourcePak, string targetPath, string sourcePath = "")
+    {
+        int count = 0;
+
+        // 复制当前文件夹下的文件
+        foreach (var entry in source.Files)
+        {
+            byte[] data;
+            try
+            {
+                data = sourcePak.ReadEntryContent(entry);
+            }
+            catch
+            {
+                continue;
+            }
+
+            if (data == null || data.Length == 0)
+            {
+                continue;
+            }
+
+            // entry.Name是完整路径如 "Audio/Sub/Click"
+            // 需要替换源前缀为目标路径
+            string targetName;
+            if (!string.IsNullOrEmpty(sourcePath) && entry.Name.StartsWith(sourcePath + "/"))
+            {
+                // 替换前缀: "Audio/Sub/Click" -> targetPath + "/Click"
+                string relativeName = entry.Name.Substring(sourcePath.Length + 1);
+                targetName = string.IsNullOrEmpty(targetPath)
+                    ? relativeName
+                    : targetPath + "/" + relativeName;
+            }
+            else
+            {
+                // 无法替换前缀，取文件名拼目标路径
+                int lastSlash = entry.Name.LastIndexOf('/');
+                string fileName = lastSlash >= 0 ? entry.Name.Substring(lastSlash + 1) : entry.Name;
+                targetName = string.IsNullOrEmpty(targetPath)
+                    ? fileName
+                    : targetPath + "/" + fileName;
+            }
+
+            // 同名加后缀
+            if (sourcePak == _pak && targetName == entry.Name)
+            {
+                targetName += "_copy";
+            }
+
+            _pak.AddOrReplaceEntry(targetName, entry.TypeName, data);
+            count++;
+        }
+
+        // 递归子文件夹
+        foreach (var sub in source.SubFolders.Values)
+        {
+            string subSourcePath = string.IsNullOrEmpty(sourcePath)
+                ? sub.Name
+                : sourcePath + "/" + sub.Name;
+            string subTarget = string.IsNullOrEmpty(targetPath)
+                ? sub.Name
+                : targetPath + "/" + sub.Name;
+            count += PasteFolderRecursive(sub, sourcePak, subTarget, subSourcePath);
+        }
+
+        return count;
+    }
+
+    /// <summary>
+    /// 剪切选中条目
+    /// </summary>
+    public void CutSelected()
+    {
+        if (SelectedEntry == null && SelectedEntries.Count == 0) return;
+
+        var items = SelectedEntries.Count > 0 ? SelectedEntries : new List<EntryItemViewModel> { SelectedEntry };
+        _clipboardEntry = items[0]; // 保存第一个作为CanPaste标记
+        _clipboardIsCut = true;
+        _clipboardItems = items;
+        _clipboardFolder = null; // 清除文件夹剪贴板
+        _clipboardFolderPak = null;
+        RaisePropertyChanged(nameof(CanPaste));
+        StatusText = $"已剪切 {items.Count} 个条目";
+    }
+
+    /// <summary>
+    /// 复制选中条目
+    /// </summary>
+    public void CopySelected()
+    {
+        if (SelectedEntry == null && SelectedEntries.Count == 0) return;
+
+        var items = SelectedEntries.Count > 0 ? SelectedEntries : new List<EntryItemViewModel> { SelectedEntry };
+        _clipboardEntry = items[0];
+        _clipboardIsCut = false;
+        _clipboardItems = items;
+        _clipboardFolder = null; // 清除文件夹剪贴板
+        _clipboardFolderPak = null;
+        RaisePropertyChanged(nameof(CanPaste));
+        StatusText = $"已复制 {items.Count} 个条目";
+    }
+
+    /// <summary>
+    /// 粘贴到当前文件夹
+    /// </summary>
+    public void PasteToCurrentFolder()
+    {
+        if (_clipboardItems == null || _clipboardItems.Count == 0 || _pak == null) return;
+
+        string targetFolder = SelectedFolder?.FullPath ?? "";
+        int pasted = 0;
+
+        foreach (var item in _clipboardItems)
+        {
+            if (item.IsFolder) continue; // 文件夹暂不支持复制
+            if (item.Entry == null) continue;
+
+            // 从源PAK读取内容
+            var sourcePak = FindPakForEntry(item);
+            if (sourcePak == null)
+            {
+                StatusText = "无法找到源PAK: " + item.Entry.Name;
+                continue;
+            }
+
+            byte[] data;
+            try
+            {
+                data = sourcePak.ReadEntryContent(item.Entry);
+            }
+            catch (Exception ex)
+            {
+                StatusText = "读取源内容失败: " + item.Entry.Name + " - " + ex.Message;
+                continue;
+            }
+
+            if (data == null || data.Length == 0)
+            {
+                continue;
+            }
+
+            // Entry.Name是完整路径如 "Audio/Click"，取最后一段作为文件名
+            string fileName = item.Entry.Name;
+            int lastSlash = fileName.LastIndexOf('/');
+            if (lastSlash >= 0)
+            {
+                fileName = fileName.Substring(lastSlash + 1);
+            }
+
+            // 拼接目标完整路径
+            string targetName = string.IsNullOrEmpty(targetFolder)
+                ? fileName
+                : targetFolder + "/" + fileName;
+
+            // 如果目标路径与源路径完全相同（同PAK同位置），加后缀
+            if (sourcePak == _pak && targetName == item.Entry.Name)
+            {
+                targetName += "_copy";
+            }
+
+            _pak.AddOrReplaceEntry(targetName, item.Entry.TypeName, data);
+            pasted++;
+        }
+
+        if (pasted > 0)
+        {
+            HasUnsavedChanges = true;
+            RefreshCurrentTree();
+            // 刷新当前文件夹
+            if (SelectedFolder != null) LoadFolderContents(SelectedFolder);
+            StatusText = $"已粘贴 {pasted} 个条目到 {targetFolder}";
+        }
+    }
+
+    // ===== 新建操作 =====
+
+    /// <summary>
+    /// 在当前选中的文件夹下新建子文件夹
+    /// </summary>
+    public void NewFolder(string folderName)
+    {
+        if (_pak == null || string.IsNullOrEmpty(folderName)) return;
+
+        string parentPath = SelectedFolder?.FullPath ?? "";
+        string newPath = string.IsNullOrEmpty(parentPath)
+            ? folderName
+            : parentPath + "/" + folderName;
+
+        if (_pak.CreateFolder(newPath))
+        {
+            HasUnsavedChanges = _pak.HasUnsavedChanges;
+            RefreshCurrentTree();
+            // 刷新右侧列表：新建的子文件夹作为当前文件夹的子项显示
+            if (SelectedFolder != null) LoadFolderContents(SelectedFolder);
+            StatusText = $"已新建文件夹: {newPath}";
+        }
+        else
+        {
+            StatusText = "文件夹已存在: " + newPath;
+        }
+    }
+
+    /// <summary>
+    /// 在当前选中的文件夹下新建空文件
+    /// </summary>
+    public void NewFile(string fileName, string typeName)
+    {
+        if (_pak == null || string.IsNullOrEmpty(fileName)) return;
+
+        string parentPath = SelectedFolder?.FullPath ?? "";
+        string fullPath = string.IsNullOrEmpty(parentPath)
+            ? fileName
+            : parentPath + "/" + fileName;
+
+        var entry = _pak.CreateFile(fullPath, typeName);
+        if (entry != null)
+        {
+            HasUnsavedChanges = _pak.HasUnsavedChanges;
+            RefreshCurrentTree();
+            if (SelectedFolder != null) LoadFolderContents(SelectedFolder);
+            StatusText = $"已新建文件: {fullPath}";
+        }
+        else
+        {
+            StatusText = "文件已存在: " + fullPath;
+        }
+    }
+
+    // ===== 删除操作 =====
+
+    /// <summary>
+    /// 删除右侧DataGrid选中的条目
+    /// </summary>
+    public void DeleteSelected()
+    {
+        if (_pak == null) return;
+
+        int deleted = 0;
+        var items = SelectedEntries.Count > 0 ? SelectedEntries : (SelectedEntry != null ? new List<EntryItemViewModel> { SelectedEntry } : new List<EntryItemViewModel>());
+
+        foreach (var item in items)
+        {
+            if (item.IsFolder) continue;
+            if (item.Entry == null) continue;
+
+            if (_pak.RemoveEntry(item.Entry))
+            {
+                deleted++;
+            }
+        }
+
+        if (deleted > 0)
+        {
+            HasUnsavedChanges = _pak.HasUnsavedChanges;
+            RefreshCurrentTree();
+            SelectedEntry = null;
+            if (SelectedFolder != null) LoadFolderContents(SelectedFolder);
+            StatusText = $"已删除 {deleted} 个条目";
+        }
+    }
+
+    /// <summary>
+    /// 删除左侧TreeView选中的文件夹（文件夹本身+所有内容）
+    /// </summary>
+    public void DeleteFolder()
+    {
+        if (_pak == null || SelectedFolder == null) return;
+
+        var folder = _pak.GetFolder(SelectedFolder.FullPath);
+        if (folder == null) return;
+
+        // 找到父文件夹和key
+        string folderName = SelectedFolder.Name;
+        string parentPath = "";
+        int lastSlash = SelectedFolder.FullPath.LastIndexOf('/');
+        if (lastSlash >= 0)
+        {
+            parentPath = SelectedFolder.FullPath.Substring(0, lastSlash);
+            folderName = SelectedFolder.FullPath.Substring(lastSlash + 1);
+        }
+
+        var parentFolder = _pak.GetFolder(parentPath);
+        if (parentFolder == null) return;
+
+        int deleted = _pak.RemoveFolder(folder, parentFolder, folderName);
+        if (deleted > 0)
+        {
+            HasUnsavedChanges = _pak.HasUnsavedChanges;
+            RefreshCurrentTree();
+            if (SelectedFolder != null) LoadFolderContents(SelectedFolder);
+            StatusText = $"已删除文件夹 {SelectedFolder.FullPath}（{deleted} 个条目）";
+        }
+    }
+
+    private List<EntryItemViewModel> _clipboardItems;
+
+    /// <summary>
+    /// 查找条目所属的PakFile
+    /// </summary>
+    private PakFile FindPakForEntry(EntryItemViewModel item)
+    {
+        foreach (var kv in _pakMap)
+        {
+            if (kv.Value.Entries.Any(e => e == item.Entry))
+            {
+                return kv.Value;
+            }
+        }
+        return _pak;
+    }
+
+    /// <summary>
+    /// 刷新当前PAK对应的TreeView根节点（粘贴后更新文件夹树）
+    /// </summary>
+    private void RefreshCurrentTree()
+    {
+        if (_pak == null) return;
+
+        // 找到当前PAK对应的根节点
+        foreach (var kv in _pakMap)
+        {
+            if (kv.Value == _pak)
+            {
+                kv.Key.Refresh(_pak.Root);
+                break;
+            }
         }
     }
 

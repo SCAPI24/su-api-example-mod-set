@@ -29,6 +29,11 @@ public class EntryItemViewModel : ViewModelBase
     /// </summary>
     public string Icon { get; }
 
+    /// <summary>
+    /// 名称排序键：文件夹前缀"0"，文件前缀"1"，确保排序时文件夹在前
+    /// </summary>
+    public string SortName { get; }
+
     private bool _isModified;
     public bool IsModified
     {
@@ -54,6 +59,7 @@ public class EntryItemViewModel : ViewModelBase
         IsFolder = false;
         FolderPath = null;
         Icon = GetIconForType(entry.TypeName);
+        SortName = "1_" + DisplayName;
     }
 
     /// <summary>
@@ -72,6 +78,7 @@ public class EntryItemViewModel : ViewModelBase
         IsFolder = true;
         FolderPath = folderPath;
         Icon = "\U0001F4C1"; // 📁
+        SortName = "0_" + folderName;
     }
 
     private static string FormatSize(long bytes)
