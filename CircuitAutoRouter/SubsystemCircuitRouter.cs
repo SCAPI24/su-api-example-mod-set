@@ -4,6 +4,7 @@ using System.Linq;
 using Engine;
 using Engine.Content;
 using Engine.Graphics;
+using Engine.Input;
 using Engine.Media;
 using Game;
 using GameEntitySystem;
@@ -50,6 +51,7 @@ namespace CircuitAutoRouter
         private List<Point3> m_chainBlocks = new List<Point3>();
         // Records the direction each block was placed (for logging/debugging)
         private List<int> m_chainDirections = new List<int>(); // face index of direction
+        private int m_chainNumber = 1; // 当前 ChainLink 的数字编号（对应导线颜色）
         public bool IsChainLinkMode => m_mode == RouterMode.ChainLink;
         public int ChainBlockCount => m_chainBlocks.Count;
 
@@ -145,8 +147,8 @@ namespace CircuitAutoRouter
             // Toggle router widget
             if (m_routerWidget != null && m_componentPlayer.ComponentGui.ModalPanelWidget == m_routerWidget)
             {
-                // Don't reset SetNumber mode when closing panel via G key
-                if (m_mode != RouterMode.SetNumber)
+                // Don't reset toggle modes (SetNumber, ChainLink) when closing panel
+                if (m_mode != RouterMode.SetNumber && m_mode != RouterMode.ChainLink)
                     m_mode = RouterMode.None;
                 Log.Information($"[CircuitAutoRouter] Close panel: mode after={m_mode}");
                 m_componentPlayer.ComponentGui.ModalPanelWidget = null;
@@ -163,6 +165,22 @@ namespace CircuitAutoRouter
 
         void IUpdateable.Update(float dt)
         {
+            // Chain-link mode: detect Ctrl+letter key presses
+            if (m_mode == RouterMode.ChainLink)
+            {
+                // Ctrl+W=-Z, Ctrl+S=+Z, Ctrl+A=-X, Ctrl+D=+X, Ctrl+Q=+Y, Ctrl+E=-Y
+                if (Keyboard.IsKeyDown(Key.Control))
+                {
+                    if (Keyboard.IsKeyDownOnce(Key.W)) HandleChainLinkDirection(2);   // -Z (forward)
+                    else if (Keyboard.IsKeyDownOnce(Key.S)) HandleChainLinkDirection(8);  // +Z (backward)
+                    else if (Keyboard.IsKeyDownOnce(Key.A)) HandleChainLinkDirection(4);  // -X (left)
+                    else if (Keyboard.IsKeyDownOnce(Key.D)) HandleChainLinkDirection(6);  // +X (right)
+                    else if (Keyboard.IsKeyDownOnce(Key.Q)) HandleChainLinkDirection(7);  // +Y (up)
+                    else if (Keyboard.IsKeyDownOnce(Key.E)) HandleChainLinkDirection(9);  // -Y (down)
+                    // Undo with Ctrl+Z
+                    else if (Keyboard.IsKeyDownOnce(Key.Z)) UndoChainLink();
+                }
+            }
         }
 
         public void Draw(Camera camera, int drawOrder)
@@ -390,9 +408,46 @@ namespace CircuitAutoRouter
             new Color(160, 32, 240) // 8 purple
         };
 
+        // 导线 paintColor 映射：数字编号 → WireBlock.SetColor 的 paintColor 值
+        // 游戏导线7种颜色(null=铜色不使用): 0=White, 8=Gray, 15=Black, 11=Blue, 12=Brown, 13=Green, 14=Red
+        // 数字1→White(0), 2→Gray(8), 3→Black(15), 4→Blue(11), 5→Brown(12), 6→Green(13), 7→Red(14), 8→White(0)循环
+        private static readonly int[] WirePaintColors = new int[]
+        {
+            0,   // 数字1 → White
+            8,   // 数字2 → Gray
+            15,  // 数字3 → Black
+            11,  // 数字4 → Blue
+            12,  // 数字5 → Brown
+            13,  // 数字6 → Green
+            14   // 数字7 → Red
+        };
+
+        // 穿线块映射：数字编号 → 穿线块Index（排除木制Planks=153）
+        // Stone(154), Semiconductor(155), Bricks(223), Cobblestone(243)
+        // 数字1→Stone, 2→Semi, 3→Bricks, 4→Cobble, 5→Stone(循环)
+        private static readonly int[] WireThroughByNumber = new int[]
+        {
+            154,  // 数字1 → Stone
+            155,  // 数字2 → Semiconductor
+            223,  // 数字3 → Bricks
+            243   // 数字4 → Cobblestone
+        };
+
         private Color GetCircuitColor(int num)
         {
             return CircuitColors[((num - 1) % CircuitColors.Length)];
+        }
+
+        // 数字编号 → 导线 paintColor（用于 WireBlock.SetColor）
+        private static int GetWirePaintColor(int num)
+        {
+            return WirePaintColors[((num - 1) % WirePaintColors.Length)];
+        }
+
+        // 数字编号 → 穿线块Index（排除木制Planks=153）
+        private static int GetWireThroughIndex(int num)
+        {
+            return WireThroughByNumber[((num - 1) % WireThroughByNumber.Length)];
         }
 
         // Zigzag connection order: n/2, +1, -2, +3, -4...
@@ -417,12 +472,11 @@ namespace CircuitAutoRouter
         }
 
         // Get preferred direction from start area's active face
-        // activeFace indicates the face of the WireThrough block where wire connects,
-        // the actual movement direction is the opposite (moving away from that face)
+        // activeFace 是穿线块导通面 = 导线出发方向（和 ChainLink 按键映射一致）
         private Point3 GetPreferredDirection(bool fromArea1)
         {
             int activeFace = fromArea1 ? m_area1ActiveFace : m_area2ActiveFace;
-            return FaceDirections[CellFace.OppositeFace(activeFace)];
+            return FaceDirections[activeFace];
         }
 
         public void Connect()
@@ -518,9 +572,11 @@ namespace CircuitAutoRouter
                 Point3 preferredDir = GetPreferredDirection(fromArea1);
                 // Banned first direction: opposite of active face (can't go backward on first step from start or end)
                 Point3 bannedStartDir = new Point3(-preferredDir.X, -preferredDir.Y, -preferredDir.Z);
-                // For end point: it belongs to the other area, so use that area's active face
-                Point3 endPreferredDir = GetPreferredDirection(!fromArea1);
-                Point3 bannedEndDir = new Point3(-endPreferredDir.X, -endPreferredDir.Y, -endPreferredDir.Z); // Ban approaching end from its front side (active face direction)
+                // For end point: 到达方向 = OppositeFace(activeFace)
+                // 导线从 OppositeFace(activeFace) 方向进入区域2的穿线块
+                int endAreaActiveFace = fromArea1 ? m_area2ActiveFace : m_area1ActiveFace;
+                Point3 endApproachDir = FaceDirections[CellFace.OppositeFace(endAreaActiveFace)];
+                Point3 bannedEndDir = new Point3(-endApproachDir.X, -endApproachDir.Y, -endApproachDir.Z);
 
                 Log.Information($"[CircuitAutoRouter] Connect #{num}: ({start.X},{start.Y},{start.Z})->({end.X},{end.Y},{end.Z}) from={(fromArea1 ? "A1" : "A2")} pref={preferredDir.X},{preferredDir.Y},{preferredDir.Z}");
 
@@ -541,7 +597,7 @@ namespace CircuitAutoRouter
                 // Start: path must go through start+preferredDir on first step
                 // End: path arrives from end-endPreferredDir side (bannedEndDir=-endPreferredDir bans dirs[d]=-endPreferredDir, so path enters from end-endPreferredDir side via +endPreferredDir)
                 Point3 startApproach = new Point3(start.X + preferredDir.X, start.Y + preferredDir.Y, start.Z + preferredDir.Z);
-                Point3 endApproach = new Point3(end.X - endPreferredDir.X, end.Y - endPreferredDir.Y, end.Z - endPreferredDir.Z);
+                Point3 endApproach = new Point3(end.X + endApproachDir.X, end.Y + endApproachDir.Y, end.Z + endApproachDir.Z);
                 if (!m_area1Blocks.Contains(startApproach) && !m_area2Blocks.Contains(startApproach))
                 {
                     m_occupiedCells.Add(startApproach);
@@ -592,10 +648,11 @@ namespace CircuitAutoRouter
                 m_pathColors.Add(GetCircuitColor(num));
 
                 // 3D Wiring: determine block types and place in terrain
+                // startFace = 导线出发的位移方向 = activeFace（穿线块导通面=导线出发方向）
                 int startActiveFace = fromArea1 ? m_area1ActiveFace : m_area2ActiveFace;
                 int endActiveFace = fromArea1 ? m_area2ActiveFace : m_area1ActiveFace;
-                List<RoutingCell> routingCells = DetermineRouting(path, startActiveFace, endActiveFace);
-                PlaceWires(routingCells);
+                List<RoutingCell> routingCells = DetermineRouting(path, startActiveFace, endActiveFace, num);
+                PlaceWires(routingCells, num);
                 Log.Information($"[CircuitAutoRouter] Placed #{num}: {routingCells.Count} routing cells");
 
                 successCount++;
@@ -633,6 +690,7 @@ namespace CircuitAutoRouter
 
             m_chainBlocks.Clear();
             m_chainDirections.Clear();
+            m_chainNumber = num;
             m_chainBlocks.Add(startPos.Value);
             m_chainDirections.Add(-1); // start block, no direction
 
@@ -642,32 +700,31 @@ namespace CircuitAutoRouter
             RegenerateChainLink();
 
             m_componentPlayer.ComponentGui.DisplaySmallMessage(
-                $"Chain-link: Start at ({startPos.Value.X},{startPos.Value.Y},{startPos.Value.Z}), use Numpad to extend",
+                $"Chain-link: Start at ({startPos.Value.X},{startPos.Value.Y},{startPos.Value.Z}) Ctrl+WSADQE",
                 Color.Yellow, true, false);
             Log.Information($"[CircuitAutoRouter] Chain-link started at ({startPos.Value.X},{startPos.Value.Y},{startPos.Value.Z})");
         }
 
-        // Process numpad key press in chain-link mode
-        // Returns true if a key was handled
-        public bool HandleChainLinkKey(int key)
+        // Process direction key press in chain-link mode
+        // direction: 2=-Z, 4=-X, 6=+X, 8=+Z, 7=+Y, 9=-Y
+        public void HandleChainLinkDirection(int direction)
         {
-            if (m_mode != RouterMode.ChainLink) return false;
+            if (m_mode != RouterMode.ChainLink) return;
 
-            // Map numpad keys to face directions
-            // 2=-Z(Face2), 4=-X(Face3), 6=+X(Face1), 8=+Z(Face0), 7=+Y(Face4), 9=-Y(Face5)
+            // Map direction numbers to face indices
+            // Face: 0=+Z, 1=+X, 2=-Z, 3=-X, 4=+Y, 5=-Y
             int face = -1;
-            switch (key)
+            switch (direction)
             {
-                case 86: face = 2; break; // Numpad2 → -Z (Face 2, 上)
-                case 88: face = 3; break; // Numpad4 → -X (Face 3, 左)
-                case 90: face = 1; break; // Numpad6 → +X (Face 1, 右)
-                case 92: face = 0; break; // Numpad8 → +Z (Face 0, 下)
-                case 91: face = 4; break; // Numpad7 → +Y (Face 4, 上方)
-                case 93: face = 5; break; // Numpad9 → -Y (Face 5, 下方)
-                default: return false;
+                case 2: face = 2; break; // -Z (Face 2)
+                case 4: face = 3; break; // -X (Face 3)
+                case 6: face = 1; break; // +X (Face 1)
+                case 8: face = 0; break; // +Z (Face 0)
+                case 7: face = 4; break; // +Y (Face 4)
+                case 9: face = 5; break; // -Y (Face 5)
+                default: return;
             }
 
-            // Calculate new position from last block + direction
             Point3 lastPos = m_chainBlocks[m_chainBlocks.Count - 1];
             Point3 dir = FaceDirections[face];
             Point3 newPos = new Point3(lastPos.X + dir.X, lastPos.Y + dir.Y, lastPos.Z + dir.Z);
@@ -678,11 +735,26 @@ namespace CircuitAutoRouter
             // Regenerate all blocks from scratch
             RegenerateChainLink();
 
+            // Show world coordinate delta, new position, and surface info as bubble message
+            // face = the direction we moved = the surface of the PREVIOUS block we exit from
+            // = the surface of the NEW block we enter from the opposite side
+            string dirName;
+            switch (face)
+            {
+                case 0: dirName = "+Z"; break;
+                case 1: dirName = "+X"; break;
+                case 2: dirName = "-Z"; break;
+                case 3: dirName = "-X"; break;
+                case 4: dirName = "+Y"; break;
+                case 5: dirName = "-Y"; break;
+                default: dirName = "?"; break;
+            }
+            int oppositeFace = CellFace.OppositeFace(face);
             m_componentPlayer.ComponentGui.DisplaySmallMessage(
-                $"Chain #{m_chainBlocks.Count}: ({newPos.X},{newPos.Y},{newPos.Z}) dir=Face{face}",
+                $"{dirName}: dX={dir.X:+0;-0;0}, dY={dir.Y:+0;-0;0}, dZ={dir.Z:+0;-0;0} -> ({newPos.X},{newPos.Y},{newPos.Z}) | prev exit=Face{face}, enter=Face{oppositeFace}",
                 Color.Yellow, true, false);
 
-            return true;
+            Log.Information($"[CircuitAutoRouter] Chain step #{m_chainBlocks.Count}: {dirName} dX={dir.X:+0;-0;0} dY={dir.Y:+0;-0;0} dZ={dir.Z:+0;-0;0} -> ({newPos.X},{newPos.Y},{newPos.Z}) exit=Face{face} enter=Face{oppositeFace}");
         }
 
         // Undo last chain-link step
@@ -704,6 +776,8 @@ namespace CircuitAutoRouter
         // Exit chain-link mode
         public void ExitChainLink()
         {
+            // Clean up placed blocks before exiting
+            ClearChainLinkBlocks();
             m_mode = RouterMode.None;
             m_chainBlocks.Clear();
             m_chainDirections.Clear();
@@ -742,10 +816,10 @@ namespace CircuitAutoRouter
         {
             foreach (Point3 pos in m_chainPlacedPositions)
             {
-                // Only clear if it's still a wire/wire-through block we placed
+                // Only clear if it's still a wire/wire-through/granite block we placed
                 int cellValue = m_subsystemTerrain.Terrain.GetCellValue(pos.X, pos.Y, pos.Z);
                 int contents = Terrain.ExtractContents(cellValue);
-                if (contents == WireBlock.Index || WireThroughIndices.Contains(contents))
+                if (contents == WireBlock.Index || WireThroughIndices.Contains(contents) || contents == GraniteBlock.Index)
                 {
                     m_subsystemTerrain.ChangeCell(pos.X, pos.Y, pos.Z, 0); // set to air
                 }
@@ -755,6 +829,33 @@ namespace CircuitAutoRouter
 
         // Determine routing for chain-link blocks
         // Similar to DetermineRouting but uses manually defined directions instead of auto-calculated faces
+        // ─────────────────────────────────────────────────────────────────
+        // ChainLink 导线面方向约定（经实测验证）
+        // ─────────────────────────────────────────────────────────────────
+        // WireBlock.WireFacesBitmask 的面编号含义：
+        //   bitmask 中设置 Face N 表示"导线贴在该方块的 Face N 面上"
+        //   Face N 是方块的外向面（朝向方块外部），不是朝向导线来源的面
+        //
+        // 证据：WireBlock.GetPlacementValue 中
+        //   wireFacesBitmask | (1 << raycastResult.CellFace.Face)
+        //   WireBlock 放在被点击方块沿面方向走一步的位置，
+        //   bitmask 设置的是玩家点击的面编号（外向面）
+        //
+        // 推导（以 direction=0(+Z) 为例，表示从块A向+Z走一步到块B）：
+        //   块A 在块B 的 -Z 方向，导线贴在块B 的 +Z 面(Face0) 上
+        //   → 块B 的 InFace = directions[i] = 0(+Z)
+        //   注意：不是 OppositeFace(0)=2(-Z)，-Z 是朝向来源的面，bitmask 不用这个
+        //
+        // 同理，块B 向 direction=3(-X) 走到块C：
+        //   块C 在块B 的 -X 方向，导线贴在块B 的 +X 面(Face1) 上
+        //   → 块B 的 OutFace = OppositeFace(directions[i+1]) = OppositeFace(3) = 1(+X)
+        //   注意：不是 directions[i+1]=3(-X)，-X 是朝向目标的面，bitmask 不用这个
+        //
+        // 结论：
+        //   InFace  = directions[i]              （位移方向 = 外向面）
+        //   OutFace = OppositeFace(directions[i+1])（位移方向取反 = 外向面）
+        // ─────────────────────────────────────────────────────────────────
+
         private List<RoutingCell> DetermineChainRouting(List<Point3> blocks, List<int> directions, int startInFace, int endOutFace)
         {
             var cells = new List<RoutingCell>();
@@ -773,46 +874,46 @@ namespace CircuitAutoRouter
                     WireThroughContentIndex = DefaultWireThroughContentIndex
                 };
 
-                // InFace: direction from previous block (or startFace for first block)
+                // InFace: bitmask 外向面 = 位移方向本身
+                // 例：从 -Z 方向进来 → 外向面 = +Z(Face0) = directions[i]
                 if (i == 0)
                 {
                     cell.InFace = startInFace;
                 }
                 else
                 {
-                    // The face that points toward the previous block
-                    cell.InFace = CellFace.OppositeFace(directions[i]);
+                    cell.InFace = directions[i];
                 }
 
-                // OutFace: direction toward next block (or -1 for last block)
+                // OutFace: bitmask 外向面 = 位移方向取反
+                // 例：向 -X 方向出去 → 外向面 = +X(Face1) = OppositeFace(directions[i+1])
                 if (i == blocks.Count - 1)
                 {
-                    cell.OutFace = endOutFace >= 0 ? endOutFace : -1;
+                    cell.OutFace = (endOutFace >= 0) ? endOutFace : -1;
                 }
                 else
                 {
-                    // The direction the user pressed for this step = the face pointing toward next
-                    cell.OutFace = directions[i + 1];
+                    cell.OutFace = CellFace.OppositeFace(directions[i + 1]);
                 }
 
-                // If OutFace is -1 (end block, no next), just use InFace
+                // Determine wire type based on InFace/OutFace relationship
                 if (cell.OutFace == -1)
                 {
-                    // End block: just mark as WireThrough in the in-face direction
+                    // End block: no next direction
                     cell.IsWireThrough = true;
                     cell.WireThroughWiredFace = FaceToWiredFace(cell.InFace);
-                    cell.WireThroughContentIndex = DetectWireThroughContentType(blocks[i]);
+                    cell.WireThroughContentIndex = GetWireThroughIndex(m_chainNumber);
                 }
-                else if (AreOppositeFaces(cell.InFace, cell.OutFace))
+                else if (cell.InFace == cell.OutFace || AreOppositeFaces(cell.InFace, cell.OutFace))
                 {
-                    // Opposite faces → WireThrough
+                    // Straight: same face or opposite faces → WireThrough
                     cell.IsWireThrough = true;
                     cell.WireThroughWiredFace = FaceToWiredFace(cell.OutFace);
-                    cell.WireThroughContentIndex = DetectWireThroughContentType(blocks[i]);
+                    cell.WireThroughContentIndex = GetWireThroughIndex(m_chainNumber);
                 }
                 else
                 {
-                    // Non-opposite (turn) → WireBlock
+                    // Turn: WireBlock with both faces in bitmask
                     cell.IsWireThrough = false;
                     cell.WireFacesBitmask = (1 << cell.InFace) | (1 << cell.OutFace);
                 }
@@ -821,7 +922,7 @@ namespace CircuitAutoRouter
             }
 
             // Process Z interference
-            ProcessZInterference(cells, blocks);
+            ProcessZInterference(cells, blocks, m_chainNumber);
 
             return cells;
         }
@@ -870,14 +971,26 @@ namespace CircuitAutoRouter
 
                 if (cell.IsWireThrough)
                 {
+                    // WireThrough is a full block, can be placed in air
                     int data = WireThroughBlock.SetWiredFace(0, cell.WireThroughWiredFace);
                     int value = Terrain.MakeBlockValue(cell.WireThroughContentIndex, 0, data);
                     m_subsystemTerrain.ChangeCell(pos.X, pos.Y, pos.Z, value);
                 }
                 else
                 {
+                    // WireBlock needs a solid host block to attach to
+                    // Place GraniteBlock first as support if position is air
                     int existingValue = m_subsystemTerrain.Terrain.GetCellValue(pos.X, pos.Y, pos.Z);
                     int existingContents = Terrain.ExtractContents(existingValue);
+                    if (existingContents == 0)
+                    {
+                        // Air: place GraniteBlock as solid support
+                        m_subsystemTerrain.ChangeCell(pos.X, pos.Y, pos.Z,
+                            Terrain.MakeBlockValue(GraniteBlock.Index));
+                    }
+                    // Re-read after possible granite placement
+                    existingValue = m_subsystemTerrain.Terrain.GetCellValue(pos.X, pos.Y, pos.Z);
+                    existingContents = Terrain.ExtractContents(existingValue);
                     int existingBitmask = (existingContents == WireBlock.Index)
                         ? WireBlock.GetWireFacesBitmask(existingValue)
                         : 0;
@@ -885,6 +998,10 @@ namespace CircuitAutoRouter
                     if (newBitmask == 0) continue;
                     int value = WireBlock.SetWireFacesBitmask(
                         Terrain.MakeBlockValue(WireBlock.Index), newBitmask);
+                    // 设置导线颜色：根据数字编号映射 paintColor
+                    int data = Terrain.ExtractData(value);
+                    data = WireBlock.SetColor(data, GetWirePaintColor(m_chainNumber));
+                    value = Terrain.ReplaceData(value, data);
                     m_subsystemTerrain.ChangeCell(pos.X, pos.Y, pos.Z, value);
                 }
             }
@@ -1546,13 +1663,24 @@ namespace CircuitAutoRouter
         /// &lt;param name="startFace"&gt;Active face of start area (wire enters from this face direction)&lt;/param&gt;
         /// &lt;param name="endFace"&gt;Active face of end area (wire exits toward this face direction)&lt;/param&gt;
         /// &lt;returns&gt;List of RoutingCell including basic blocks and supplement wire points&lt;/returns&gt;
-        private List<RoutingCell> DetermineRouting(List<Point3> path, int startFace, int endFace)
+        private List<RoutingCell> DetermineRouting(List<Point3> path, int startFace, int endFace, int num)
         {
             var cells = new List<RoutingCell>();
             if (path.Count == 0) return cells;
 
+            // 从路径计算每段位移方向（和 ChainLink 的 directions 一致）
+            // directions[i] = 从 path[i-1] 到 path[i] 的位移方向 = 外向面
+            var directions = new List<int>();
+            for (int i = 1; i < path.Count; i++)
+            {
+                int dir = GetFaceToward(path[i - 1], path[i]);
+                directions.Add(dir);
+            }
+
             // Step 1: Calculate in/out faces for each basic block
-            // Rule 2: opposite faces → WireThrough, non-opposite → WireBlock
+            // 使用和 ChainLink 相同的约定：
+            //   InFace = directions[i]（位移方向 = 外向面）
+            //   OutFace = OppositeFace(directions[i+1])（位移方向取反 = 外向面）
             for (int i = 0; i < path.Count; i++)
             {
                 var cell = new RoutingCell
@@ -1566,39 +1694,49 @@ namespace CircuitAutoRouter
                     WireThroughContentIndex = DefaultWireThroughContentIndex
                 };
 
-                                // In face: which face of this cell faces toward the previous block
-                // Need OppositeFace because GetFaceToward gives direction vector,
-                // but wire point sits on the face looking toward the neighbor (opposite side)
+                // InFace: 位移方向 = 外向面
+                // 第一个块：InFace = directions[0]（实际位移方向，而非 startFace）
                 if (i == 0)
                 {
-                    cell.InFace = startFace;
+                    cell.InFace = (directions.Count > 0) ? directions[0] : startFace;
                 }
                 else
                 {
-                    cell.InFace = CellFace.OppositeFace(GetFaceToward(path[i], path[i - 1]));
+                    cell.InFace = directions[i - 1];
                 }
 
-                // Out face: which face of this cell faces toward the next block
+                // OutFace: 位移方向取反 = 外向面
+                // 最后一个块：OutFace = OppositeFace(directions[last])（实际位移方向取反）
                 if (i == path.Count - 1)
                 {
-                    cell.OutFace = endFace;
+                    cell.OutFace = (directions.Count > 0)
+                        ? CellFace.OppositeFace(directions[directions.Count - 1])
+                        : (endFace >= 0 ? endFace : -1);
                 }
                 else
                 {
-                    cell.OutFace = CellFace.OppositeFace(GetFaceToward(path[i], path[i + 1]));
+                    cell.OutFace = CellFace.OppositeFace(directions[i]);
                 }
 
-                // Rule 2: Determine block type based on in/out face relationship
-                if (AreOppositeFaces(cell.InFace, cell.OutFace))
+                // Determine wire type based on InFace/OutFace relationship
+                // 和 ChainLink 相同的规则
+                if (cell.OutFace == -1)
                 {
-                    // Opposite faces → WireThrough (规则2)
+                    // End block: no next direction
+                    cell.IsWireThrough = true;
+                    cell.WireThroughWiredFace = FaceToWiredFace(cell.InFace);
+                    cell.WireThroughContentIndex = GetWireThroughIndex(num);
+                }
+                else if (cell.InFace == cell.OutFace || AreOppositeFaces(cell.InFace, cell.OutFace))
+                {
+                    // Straight: same face or opposite faces → WireThrough
                     cell.IsWireThrough = true;
                     cell.WireThroughWiredFace = FaceToWiredFace(cell.OutFace);
-                    cell.WireThroughContentIndex = DetectWireThroughContentType(path[i]);
+                    cell.WireThroughContentIndex = GetWireThroughIndex(num);
                 }
                 else
                 {
-                    // Non-opposite (turn) → WireBlock (规则2)
+                    // Turn: WireBlock with both faces in bitmask
                     cell.IsWireThrough = false;
                     cell.WireFacesBitmask = (1 << cell.InFace) | (1 << cell.OutFace);
                 }
@@ -1606,9 +1744,8 @@ namespace CircuitAutoRouter
                 cells.Add(cell);
             }
 
-            // Step 2: Z interference detection and processing (规则3+4)
-            // Process in path order: "先处理再考虑连接"
-            ProcessZInterference(cells, path);
+            // Step 2: Z interference detection and processing
+            ProcessZInterference(cells, path, num);
 
             return cells;
         }
@@ -1616,7 +1753,7 @@ namespace CircuitAutoRouter
         // Rules 3+4: Detect and process Z interference between adjacent wire blocks
         // Z interference = two adjacent cells both wire blocks, face-to-face lacks entity support
         // Processing: change the LATER cell to WireThrough, add supplement wire point
-        private void ProcessZInterference(List<RoutingCell> cells, List<Point3> path)
+        private void ProcessZInterference(List<RoutingCell> cells, List<Point3> path, int num)
         {
             // We need to track supplement positions to avoid duplicates
             var supplementPositions = new HashSet<Point3>();
@@ -1645,10 +1782,11 @@ namespace CircuitAutoRouter
                 // 2. WireThrough conduction direction = toward next basic block
                 // 3. Add supplement wire point at conduction reverse end
 
-                int nextBasicFace; // direction from cell2 toward next basic block
+                int nextBasicFace; // cell2 到下一个基本块的方向（外向面）
                 if (i + 2 < cells.Count)
                 {
-                    nextBasicFace = CellFace.OppositeFace(GetFaceToward(cell2.Position, cells[i + 2].Position));
+                    // GetFaceToward 返回位移方向 = 外向面，直接用
+                    nextBasicFace = GetFaceToward(cell2.Position, cells[i + 2].Position);
                 }
                 else
                 {
@@ -1662,54 +1800,82 @@ namespace CircuitAutoRouter
                 // Change cell2 to WireThrough
                 cell2.IsWireThrough = true;
                 cell2.WireThroughWiredFace = wiredFace;
-                cell2.WireThroughContentIndex = DetectWireThroughContentType(cell2.Position);
+                cell2.WireThroughContentIndex = GetWireThroughIndex(num);
                 cell2.WireFacesBitmask = 0;
 
-                // 补点位置: 穿线块 + 导通反向端方向
-                // Same reversal: use opposite face direction to find supplement position
-                int reverseDirFace = CellFace.OppositeFace(reverseFace);
-                Point3 supplementPos = new Point3(
-                    cell2.Position.X + FaceDirections[reverseDirFace].X,
-                    cell2.Position.Y + FaceDirections[reverseDirFace].Y,
-                    cell2.Position.Z + FaceDirections[reverseDirFace].Z);
+                // cell1 朝向 cell2 的面需要确保有导线面
+                // Z干涉后 cell2 变成 WireThrough，cell1 的 bitmask 中必须有朝向 cell2 的面
+                int cell1FaceTowardCell2 = GetFaceToward(cell1.Position, cell2.Position);
+                // 按外向面约定：cell1 朝向 cell2 的面 = OppositeFace(位移方向)
+                int cell1OutwardFace = CellFace.OppositeFace(cell1FaceTowardCell2);
+                cell1.WireFacesBitmask |= (1 << cell1OutwardFace);
 
-                if (!supplementPositions.Contains(supplementPos))
+                // 补点1: 穿线块的导通反向端（reverseFace 方向）
+                Point3 supplementPos1 = new Point3(
+                    cell2.Position.X + FaceDirections[reverseFace].X,
+                    cell2.Position.Y + FaceDirections[reverseFace].Y,
+                    cell2.Position.Z + FaceDirections[reverseFace].Z);
+
+                if (!supplementPositions.Contains(supplementPos1))
                 {
-                    supplementPositions.Add(supplementPos);
+                    supplementPositions.Add(supplementPos1);
 
-                    // Supplement wire point: 1 face only,贴穿线块面
-                    // The face on the supplement that faces toward the WireThrough block
-                    // Same reversal as InFace/OutFace: use reverseFace directly
-                    // (because the face-to-bitmask mapping is reversed, matching the
-                    // OppositeFace correction applied to InFace/OutFace)
-                    int supplementFace = reverseFace;
+                    // 补点在 WireThrough 的 reverseFace 方向
+                    // 导线面 = reverseFace（和 WireThrough 导通反向端面方向一致）
+                    int supplementFace1 = reverseFace;
 
-                    var supplement = new RoutingCell
+                    var supplement1 = new RoutingCell
                     {
-                        Position = supplementPos,
+                        Position = supplementPos1,
                         IsWireThrough = false,
                         IsSupplement = true,
-                        WireFacesBitmask = 1 << supplementFace, // 仅1个面 (规则4 step 5)
+                        WireFacesBitmask = 1 << supplementFace1,
                         InFace = -1,
                         OutFace = -1,
                         WireThroughContentIndex = 0
                     };
 
-                    // Insert supplement after cell2 in the list
-                    cells.Insert(i + 2, supplement);
+                    cells.Insert(i + 2, supplement1);
 
-                    Log.Information($"[CircuitAutoRouter] Z interference: ({cell1.Position.X},{cell1.Position.Y},{cell1.Position.Z}) & ({cell2.Position.X},{cell2.Position.Y},{cell2.Position.Z}) → cell2→WireThrough(wiredFace={wiredFace}), supplement at ({supplementPos.X},{supplementPos.Y},{supplementPos.Z}) face={supplementFace}");
+                    Log.Information($"[CircuitAutoRouter] Z interference supplement1: ({cell2.Position.X},{cell2.Position.Y},{cell2.Position.Z})→WireThrough(wiredFace={wiredFace}), supplement at ({supplementPos1.X},{supplementPos1.Y},{supplementPos1.Z}) face={supplementFace1}");
                 }
-                else
+
+                // 补点2: 穿线块的导通正向端（wiredFace 方向）
+                // 换向穿线块两端都需要补点
+                Point3 supplementPos2 = new Point3(
+                    cell2.Position.X + FaceDirections[wiredFace].X,
+                    cell2.Position.Y + FaceDirections[wiredFace].Y,
+                    cell2.Position.Z + FaceDirections[wiredFace].Z);
+
+                if (!supplementPositions.Contains(supplementPos2))
                 {
-                    Log.Information($"[CircuitAutoRouter] Z interference: ({cell1.Position.X},{cell1.Position.Y},{cell1.Position.Z}) & ({cell2.Position.X},{cell2.Position.Y},{cell2.Position.Z}) → supplement position ({supplementPos.X},{supplementPos.Y},{supplementPos.Z}) already occupied, skipped");
+                    supplementPositions.Add(supplementPos2);
+
+                    // 补点在 WireThrough 的 wiredFace 方向
+                    // 导线面 = wiredFace（和 WireThrough 导通正向端面方向一致）
+                    int supplementFace2 = wiredFace;
+
+                    var supplement2 = new RoutingCell
+                    {
+                        Position = supplementPos2,
+                        IsWireThrough = false,
+                        IsSupplement = true,
+                        WireFacesBitmask = 1 << supplementFace2,
+                        InFace = -1,
+                        OutFace = -1,
+                        WireThroughContentIndex = 0
+                    };
+
+                    cells.Insert(i + 2, supplement2);
+
+                    Log.Information($"[CircuitAutoRouter] Z interference supplement2: ({cell2.Position.X},{cell2.Position.Y},{cell2.Position.Z})→WireThrough(wiredFace={wiredFace}), supplement at ({supplementPos2.X},{supplementPos2.Y},{supplementPos2.Z}) face={supplementFace2}");
                 }
             }
         }
 
         // Place wire blocks in terrain based on routing decisions
         // Merges wire face bitmasks if a cell already has a WireBlock
-        private void PlaceWires(List<RoutingCell> routingCells)
+        private void PlaceWires(List<RoutingCell> routingCells, int num)
         {
             // Group cells by position to merge wire face bitmasks
             var cellMap = new Dictionary<Point3, RoutingCell>();
@@ -1744,7 +1910,6 @@ namespace CircuitAutoRouter
                 if (cell.IsWireThrough)
                 {
                     // Place WireThrough block
-                    // WireThroughBlock.SetWiredFace: wiredFace 0→data&3=0, 1→data&3=1, 4→data&3=2
                     int data = WireThroughBlock.SetWiredFace(0, cell.WireThroughWiredFace);
                     int value = Terrain.MakeBlockValue(cell.WireThroughContentIndex, 0, data);
                     m_subsystemTerrain.ChangeCell(pos.X, pos.Y, pos.Z, value);
@@ -1752,18 +1917,30 @@ namespace CircuitAutoRouter
                 }
                 else
                 {
-                    // Place WireBlock (or merge with existing)
+                    // WireBlock needs a solid host block to attach to
+                    // Place GraniteBlock first as support if position is air
                     int existingValue = m_subsystemTerrain.Terrain.GetCellValue(pos.X, pos.Y, pos.Z);
                     int existingContents = Terrain.ExtractContents(existingValue);
+                    if (existingContents == 0)
+                    {
+                        // Air: place GraniteBlock as solid support
+                        m_subsystemTerrain.ChangeCell(pos.X, pos.Y, pos.Z,
+                            Terrain.MakeBlockValue(GraniteBlock.Index));
+                    }
+                    // Re-read after possible granite placement
+                    existingValue = m_subsystemTerrain.Terrain.GetCellValue(pos.X, pos.Y, pos.Z);
+                    existingContents = Terrain.ExtractContents(existingValue);
                     int existingBitmask = (existingContents == WireBlock.Index)
                         ? WireBlock.GetWireFacesBitmask(existingValue)
                         : 0;
                     int newBitmask = existingBitmask | cell.WireFacesBitmask;
-
-                    if (newBitmask == 0) continue; // No faces to place
-
+                    if (newBitmask == 0) continue;
                     int value = WireBlock.SetWireFacesBitmask(
                         Terrain.MakeBlockValue(WireBlock.Index), newBitmask);
+                    // 设置导线颜色：根据数字编号映射 paintColor
+                    int data = Terrain.ExtractData(value);
+                    data = WireBlock.SetColor(data, GetWirePaintColor(num));
+                    value = Terrain.ReplaceData(value, data);
                     m_subsystemTerrain.ChangeCell(pos.X, pos.Y, pos.Z, value);
 
                     // Log which faces are set
