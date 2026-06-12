@@ -53,9 +53,9 @@ public partial class MainWindow : Window
     {
         if (VM == null) return;
 
-        var input = new TextBox { Text = "NewFolder", Watermark = "文件夹名称", Width = 200 };
-        var cancelBtn = new Button { Content = "取消", Width = 70, Tag = false };
-        var okBtn = new Button { Content = "确定", Width = 70, Tag = true };
+        var input = new TextBox { Text = "NewFolder", Watermark = Lang.Get("Dlg_NewFolder_Watermark"), Width = 200 };
+        var cancelBtn = new Button { Content = Lang.Get("Dlg_Cancel"), Width = 70, Tag = false };
+        var okBtn = new Button { Content = Lang.Get("Dlg_Confirm"), Width = 70, Tag = true };
 
         var buttonPanel = new StackPanel
         {
@@ -68,7 +68,7 @@ public partial class MainWindow : Window
         buttonPanel.Children.Add(okBtn);
 
         var inputPanel = new StackPanel { Spacing = 4 };
-        inputPanel.Children.Add(new TextBlock { Text = "新建文件夹名称:" });
+        inputPanel.Children.Add(new TextBlock { Text = Lang.Get("Dlg_NewFolder_Label") });
         inputPanel.Children.Add(input);
 
         var dock = new DockPanel();
@@ -78,7 +78,7 @@ public partial class MainWindow : Window
 
         var dialog = new Window
         {
-            Title = "新建文件夹",
+            Title = Lang.Get("Dlg_NewFolder_Title"),
             Width = 350, Height = 150,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
             CanResize = false,
@@ -111,7 +111,7 @@ public partial class MainWindow : Window
     {
         if (VM == null) return;
 
-        var nameInput = new TextBox { Text = "NewFile", Watermark = "文件名称", Width = 200 };
+        var nameInput = new TextBox { Text = "NewFile", Watermark = Lang.Get("Dlg_NewFile_NameWatermark"), Width = 200 };
         var typeCombo = new ComboBox { Width = 200 };
         var types = new List<string>
         {
@@ -127,8 +127,8 @@ public partial class MainWindow : Window
         typeCombo.ItemsSource = types;
         typeCombo.SelectedIndex = 0;
 
-        var cancelBtn = new Button { Content = "取消", Width = 70, Tag = false };
-        var okBtn = new Button { Content = "确定", Width = 70, Tag = true };
+        var cancelBtn = new Button { Content = Lang.Get("Dlg_Cancel"), Width = 70, Tag = false };
+        var okBtn = new Button { Content = Lang.Get("Dlg_Confirm"), Width = 70, Tag = true };
 
         var buttonPanel = new StackPanel
         {
@@ -141,9 +141,9 @@ public partial class MainWindow : Window
         buttonPanel.Children.Add(okBtn);
 
         var inputPanel = new StackPanel { Spacing = 4 };
-        inputPanel.Children.Add(new TextBlock { Text = "文件名称:" });
+        inputPanel.Children.Add(new TextBlock { Text = Lang.Get("Dlg_NewFile_NameLabel") });
         inputPanel.Children.Add(nameInput);
-        inputPanel.Children.Add(new TextBlock { Text = "类型:" });
+        inputPanel.Children.Add(new TextBlock { Text = Lang.Get("Dlg_NewFile_TypeLabel") });
         inputPanel.Children.Add(typeCombo);
 
         var dock = new DockPanel();
@@ -153,7 +153,7 @@ public partial class MainWindow : Window
 
         var dialog = new Window
         {
-            Title = "新建文件",
+            Title = Lang.Get("Dlg_NewFile_Title"),
             Width = 350, Height = 200,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
             CanResize = false,
@@ -375,21 +375,21 @@ public partial class MainWindow : Window
         if (VM.SelectedEntry != null)
         {
             // 有选中条目：完整菜单
-            var miOpen = new MenuItem { Header = "打开" };
+            var miOpen = new MenuItem { Header = Lang.Get("Ctx_Open") };
             miOpen.Click += OnOpenWithSystem;
-            var miOpenWith = new MenuItem { Header = "打开方式..." };
+            var miOpenWith = new MenuItem { Header = Lang.Get("Ctx_OpenWith") };
             miOpenWith.Click += OnOpenWithDialog;
-            var miNewFolder = new MenuItem { Header = "新建文件夹" };
+            var miNewFolder = new MenuItem { Header = Lang.Get("Ctx_NewFolder") };
             miNewFolder.Click += OnTreeNewFolder;
-            var miNewFile = new MenuItem { Header = "新建文件" };
+            var miNewFile = new MenuItem { Header = Lang.Get("Ctx_NewFile") };
             miNewFile.Click += OnGridNewFile;
-            var miExtract = new MenuItem { Header = "提取..." };
+            var miExtract = new MenuItem { Header = Lang.Get("Ctx_Extract") };
             miExtract.Click += OnExtractSelected;
-            var miImport = new MenuItem { Header = "导入替换..." };
+            var miImport = new MenuItem { Header = Lang.Get("Ctx_Import") };
             miImport.Click += OnImport;
-            var miDelete = new MenuItem { Header = "删除" };
+            var miDelete = new MenuItem { Header = Lang.Get("Ctx_Delete") };
             miDelete.Click += OnDeleteEntry;
-            var miRevert = new MenuItem { Header = "撤销修改" };
+            var miRevert = new MenuItem { Header = Lang.Get("Ctx_Revert") };
             miRevert.Click += OnRevertSelected;
 
             _rightMenu.Items.Add(miOpen);
@@ -408,9 +408,9 @@ public partial class MainWindow : Window
         else
         {
             // 无选中条目：新建菜单（在当前选中文件夹下操作）
-            var miNewFolder = new MenuItem { Header = "新建文件夹" };
+            var miNewFolder = new MenuItem { Header = Lang.Get("Ctx_NewFolder") };
             miNewFolder.Click += OnTreeNewFolder;
-            var miNewFile = new MenuItem { Header = "新建文件" };
+            var miNewFile = new MenuItem { Header = Lang.Get("Ctx_NewFile") };
             miNewFile.Click += OnGridNewFile;
 
             _rightMenu.Items.Add(miNewFolder);
@@ -453,7 +453,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            VM.StatusText = "打开失败: " + ex.Message;
+            VM.StatusText = Lang.Get("Status_OpenFailed", ex.Message);
         }
     }
 
@@ -470,7 +470,7 @@ public partial class MainWindow : Window
         // 文件夹项不支持打开方式
         if (VM.SelectedEntry.IsFolder)
         {
-            VM.StatusText = "文件夹不支持打开方式操作";
+            VM.StatusText = Lang.Get("Status_FolderNoOpenWith");
             return;
         }
 
@@ -489,7 +489,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            VM.StatusText = "打开失败: " + ex.Message;
+            VM.StatusText = Lang.Get("Status_OpenFailed", ex.Message);
         }
     }
 
@@ -545,6 +545,148 @@ public partial class MainWindow : Window
                 }
             }
         }
+
+        // Language菜单点击
+        var langItem = this.FindControl<MenuItem>("MenuLanguageItem");
+        if (langItem != null)
+        {
+            langItem.Click += OnLanguage;
+        }
+
+        // 订阅语言切换事件，刷新所有UI文本
+        Lang.LanguageChanged += RefreshUITexts;
+        RefreshUITexts();
+    }
+
+    // ===== 语言与翻译 =====
+
+    private async void OnLanguage(object sender, RoutedEventArgs e)
+    {
+        var enRadio = new RadioButton { Content = "English", IsChecked = Lang.Current == "en", Margin = new Avalonia.Thickness(0, 8, 0, 4) };
+        var zhRadio = new RadioButton { Content = "中文", IsChecked = Lang.Current == "zh", Margin = new Avalonia.Thickness(0, 4, 0, 8) };
+
+        var cancelBtn = new Button { Content = Lang.Get("Dlg_Cancel"), Width = 70 };
+        var okBtn = new Button { Content = Lang.Get("Dlg_Confirm"), Width = 70 };
+
+        var buttonPanel = new StackPanel
+        {
+            Orientation = Avalonia.Layout.Orientation.Horizontal,
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
+            Spacing = 8,
+            Margin = new Avalonia.Thickness(0, 12, 0, 0),
+        };
+        buttonPanel.Children.Add(cancelBtn);
+        buttonPanel.Children.Add(okBtn);
+
+        var inputPanel = new StackPanel { Spacing = 4 };
+        inputPanel.Children.Add(new TextBlock { Text = Lang.Get("Dlg_Language_Title") });
+        inputPanel.Children.Add(enRadio);
+        inputPanel.Children.Add(zhRadio);
+
+        var dock = new DockPanel();
+        DockPanel.SetDock(buttonPanel, Dock.Bottom);
+        dock.Children.Add(buttonPanel);
+        dock.Children.Add(inputPanel);
+
+        var dialog = new Window
+        {
+            Title = Lang.Get("Dlg_Language_Title"),
+            Width = 300, Height = 180,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            CanResize = false,
+            Content = new Border { Padding = new Avalonia.Thickness(16), Child = dock }
+        };
+
+        bool confirmed = false;
+        cancelBtn.Click += (_, _) => dialog.Close();
+        okBtn.Click += (_, _) => { confirmed = true; dialog.Close(); };
+
+        await dialog.ShowDialog(this);
+
+        if (confirmed)
+        {
+            string newLang = enRadio.IsChecked == true ? "en" : "zh";
+            if (newLang != Lang.Current)
+            {
+                Lang.LoadLanguage(newLang);
+            }
+        }
+    }
+
+    /// <summary>
+    /// 语言切换后刷新所有UI文本
+    /// </summary>
+    private void RefreshUITexts()
+    {
+        // 菜单栏
+        SetHeader("MenuFile", "Menu_File");
+        SetHeader("MenuFileNewPak", "Menu_File_NewPak");
+        SetHeader("MenuFileOpenPak", "Menu_File_OpenPak");
+        SetHeader("MenuFileClose", "Menu_File_Close");
+        SetHeader("MenuFileSave", "Menu_File_Save");
+        SetHeader("MenuFileExit", "Menu_File_Exit");
+        SetHeader("MenuAction", "Menu_Action");
+        SetHeader("MenuActionExtractSel", "Menu_Action_ExtractSelected");
+        SetHeader("MenuActionExtractFolder", "Menu_Action_ExtractFolder");
+        SetHeader("MenuActionExtractAll", "Menu_Action_ExtractAll");
+        SetHeader("MenuActionImport", "Menu_Action_Import");
+        SetHeader("MenuActionRevertSel", "Menu_Action_RevertSelected");
+        SetHeader("MenuActionRevertAll", "Menu_Action_RevertAll");
+        SetHeader("MenuView", "Menu_View");
+        SetHeader("MenuViewStats", "Menu_View_Stats");
+        SetHeader("MenuPreferencesItem", "Menu_Preferences");
+        SetHeader("MenuLanguageItem", "Menu_Preferences_Language");
+
+        // 工具栏
+        SetContent("BtnOpen", "Toolbar_Open");
+        SetContent("BtnExtract", "Toolbar_Extract");
+        SetContent("BtnImport", "Toolbar_Import");
+        SetContent("BtnSave", "Toolbar_Save");
+        SetContent("BtnSearch", "Toolbar_Search");
+        SetContent("BtnClear", "Status_Clear");
+
+        // 搜索框
+        var searchBox = this.FindControl<TextBox>("SearchBox");
+        if (searchBox != null) searchBox.Watermark = Lang.Get("Toolbar_Search");
+
+        // TreeView右键菜单
+        SetHeader("CtxNewFolder", "Ctx_NewFolder");
+        SetHeader("CtxNewFile", "Ctx_NewFile");
+        SetHeader("CtxCopyFolder", "Ctx_CopyFolder");
+        SetHeader("CtxCutFolder", "Ctx_CutFolder");
+        SetHeader("CtxPasteFolder", "Ctx_PasteToFolder");
+        SetHeader("CtxDeleteFolder", "Ctx_DeleteFolder");
+        SetHeader("CtxExtractFolder", "Ctx_ExtractFolder");
+
+        // DataGrid列头
+        var grid = this.FindControl<Avalonia.Controls.DataGrid>("EntryGrid");
+        if (grid != null)
+        {
+            var headers = new[] { "Col_Name", "Col_Type", "Col_Ext", "Col_Size", "Col_Modified" };
+            for (int i = 0; i < grid.Columns.Count && i < headers.Length; i++)
+            {
+                grid.Columns[i].Header = Lang.Get(headers[i]);
+            }
+        }
+
+        // ViewModel属性
+        if (VM != null)
+        {
+            VM.MenuPreferences = Lang.Get("Menu_Preferences");
+            VM.StatusText = Lang.Get("Status_OpenHint");
+        }
+    }
+
+    private void SetHeader(string name, string key)
+    {
+        var item = this.FindControl<MenuItem>(name);
+        if (item != null) item.Header = Lang.Get(key);
+    }
+
+    private void SetContent(string name, string key)
+    {
+        var btn = this.FindControl<Button>(name);
+        if (btn != null) btn.Content = Lang.Get(key);
     }
 
     // ===== 文件操作 =====
@@ -552,10 +694,10 @@ public partial class MainWindow : Window
     private async void OnNewPak(object sender, RoutedEventArgs e)
     {
         // 弹出输入对话框获取PAK名称
-        var nameInput = new TextBox { Text = "NewPak", Watermark = "输入PAK名称", Width = 200 };
+        var nameInput = new TextBox { Text = "NewPak", Watermark = Lang.Get("Dlg_NewPak_Watermark"), Width = 200 };
 
-        var cancelBtn = new Button { Content = "取消", Width = 70, Tag = false };
-        var okBtn = new Button { Content = "确定", Width = 70, Tag = true };
+        var cancelBtn = new Button { Content = Lang.Get("Dlg_Cancel"), Width = 70, Tag = false };
+        var okBtn = new Button { Content = Lang.Get("Dlg_Confirm"), Width = 70, Tag = true };
 
         var buttonPanel = new StackPanel
         {
@@ -569,7 +711,7 @@ public partial class MainWindow : Window
         buttonPanel.Children.Add(okBtn);
 
         var inputPanel = new StackPanel { Spacing = 4 };
-        inputPanel.Children.Add(new TextBlock { Text = "PAK名称:" });
+        inputPanel.Children.Add(new TextBlock { Text = Lang.Get("Dlg_NewPak_Label") });
         inputPanel.Children.Add(nameInput);
 
         var dock = new DockPanel();
@@ -578,7 +720,7 @@ public partial class MainWindow : Window
 
         var dialog = new Window
         {
-            Title = "新建PAK",
+            Title = Lang.Get("Dlg_NewPak_Title"),
             Width = 350,
             Height = 150,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
@@ -613,15 +755,15 @@ public partial class MainWindow : Window
         var storage = GetTopLevel(this).StorageProvider;
         var result = await storage.OpenFilePickerAsync(new FilePickerOpenOptions
         {
-            Title = "选择 Content.pak 文件",
+            Title = Lang.Get("Dlg_OpenPak_Title"),
             AllowMultiple = false,
             FileTypeFilter = new[]
             {
-                new FilePickerFileType("PAK 文件")
+                new FilePickerFileType(Lang.Get("Dlg_OpenPak_Filter"))
                 {
                     Patterns = new[] { "*.pak" }
                 },
-                new FilePickerFileType("所有文件")
+                new FilePickerFileType(Lang.Get("Dlg_AllFiles"))
                 {
                     Patterns = new[] { "*.*" }
                 }
@@ -647,7 +789,7 @@ public partial class MainWindow : Window
     {
         if (VM.HasUnsavedChanges)
         {
-            var confirm = await ShowConfirmDialog("有未保存的修改，确定退出?");
+            var confirm = await ShowConfirmDialog(Lang.Get("Dlg_UnsavedConfirm"));
             if (!confirm)
             {
                 return;
@@ -671,12 +813,12 @@ public partial class MainWindow : Window
 
         var result = await storage.SaveFilePickerAsync(new FilePickerSaveOptions
         {
-            Title = "提取文件",
+            Title = Lang.Get("Dlg_ExtractFile_Title"),
             SuggestedFileName = defaultName,
             FileTypeChoices = new[]
             {
-                new FilePickerFileType("原始格式") { Patterns = new[] { "*" + ext } },
-                new FilePickerFileType("所有文件") { Patterns = new[] { "*.*" } }
+                new FilePickerFileType(Lang.Get("Dlg_OriginalFormat")) { Patterns = new[] { "*" + ext } },
+                new FilePickerFileType(Lang.Get("Dlg_AllFiles")) { Patterns = new[] { "*.*" } }
             }
         });
 
@@ -700,7 +842,7 @@ public partial class MainWindow : Window
         var storage = GetTopLevel(this).StorageProvider;
         var result = await storage.OpenFolderPickerAsync(new FolderPickerOpenOptions
         {
-            Title = "选择输出目录",
+            Title = Lang.Get("Dlg_SelectOutputDir"),
             AllowMultiple = false
         });
 
@@ -719,7 +861,7 @@ public partial class MainWindow : Window
         var storage = GetTopLevel(this).StorageProvider;
         var result = await storage.OpenFolderPickerAsync(new FolderPickerOpenOptions
         {
-            Title = "选择输出目录",
+            Title = Lang.Get("Dlg_SelectOutputDir"),
             AllowMultiple = false
         });
 
@@ -745,7 +887,7 @@ public partial class MainWindow : Window
         var storage = GetTopLevel(this).StorageProvider;
         var result = await storage.OpenFilePickerAsync(new FilePickerOpenOptions
         {
-            Title = "选择要导入的文件",
+            Title = Lang.Get("Dlg_SelectImportFile"),
             AllowMultiple = false
         });
 
@@ -779,11 +921,11 @@ public partial class MainWindow : Window
         string savePath = null;
         var result = await storage.SaveFilePickerAsync(new FilePickerSaveOptions
         {
-            Title = "保存PAK",
+            Title = Lang.Get("Dlg_SavePak_Title"),
             SuggestedFileName = "NewPak.pak",
             FileTypeChoices = new[]
             {
-                new FilePickerFileType("PAK 文件") { Patterns = new[] { "*.pak" } }
+                new FilePickerFileType(Lang.Get("Dlg_OpenPak_Filter")) { Patterns = new[] { "*.pak" } }
             }
         });
 
@@ -844,7 +986,7 @@ public partial class MainWindow : Window
         {
             var dialog = new Window
             {
-                Title = "PAK 统计信息",
+                Title = Lang.Get("Menu_View_Stats"),
                 Width = 550,
                 Height = 400,
                 WindowStartupLocation = WindowStartupLocation.CenterOwner,
@@ -905,7 +1047,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            VM.StatusText = "打开失败: " + ex.Message;
+            VM.StatusText = Lang.Get("Status_OpenFailed", ex.Message);
         }
     }
 
@@ -936,7 +1078,7 @@ public partial class MainWindow : Window
         }
         else
         {
-            VM.StatusText = "未找到文件夹: " + folderPath;
+            VM.StatusText = Lang.Get("Status_FolderNotFound", folderPath);
         }
     }
 
@@ -991,7 +1133,7 @@ public partial class MainWindow : Window
     {
         var dialog = new Window
         {
-            Title = "确认",
+            Title = Lang.Get("Dlg_ConfirmTitle"),
             Width = 350,
             Height = 150,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
@@ -1009,8 +1151,8 @@ public partial class MainWindow : Window
                         Spacing = 8,
                         Children =
                         {
-                            new Button { Content = "取消", Width = 80, Tag = false },
-                            new Button { Content = "确定", Width = 80, Tag = true }
+                            new Button { Content = Lang.Get("Dlg_Cancel"), Width = 80, Tag = false },
+                            new Button { Content = Lang.Get("Dlg_Confirm"), Width = 80, Tag = true }
                         }
                     }
                 }
@@ -1055,7 +1197,7 @@ public partial class MainWindow : Window
         if (VM != null && VM.SelectedEntry != null)
         {
             // TODO: 重命名功能
-            VM.StatusText = "重命名功能开发中...";
+            VM.StatusText = Lang.Get("Status_RenameWIP");
         }
     }
 
