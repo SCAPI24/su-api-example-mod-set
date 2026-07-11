@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Mod>
     <ModInfo>
-        <Identifier>StringInterceptor</Identifier>
+        <Identifier>SuApocalypse</Identifier>
         <LocalizedName>
-            <Text lang="en_US">String Interceptor</Text>
-            <Text lang="zh_CN">文字拦截器</Text>
+            <Text lang="en_US">Apocalypse</Text>
+            <Text lang="zh_CN">Apocalypse</Text>
         </LocalizedName>
         <ModVersion>
-            <Version>1.5.0</Version>
+            <Version>0.1.0</Version>
             <APIVersion>2.1.0</APIVersion>
         </ModVersion>
         <Asset>
