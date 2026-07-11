@@ -1,0 +1,16 @@
+# Line ending policy: CRLF in working directory, LF in repository
+* text eol=crlf
+
+# Binary files - no normalization
+*.dll binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.scmod binary
+*.jks binary
+*.pak binary
+*.db binary

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Mod>
+    <ModInfo>
+        <Identifier>RateReminder</Identifier>
+        <LocalizedName>
+            <Text lang="en_US">Rate Reminder</Text>
+            <Text lang="zh_CN">好评提醒</Text>
+        </LocalizedName>
+        <ModVersion>
+            <Version>1.0.0</Version>
+            <APIVersion>2.1.0</APIVersion>
+        </ModVersion>
+        <Asset>
+            <ContentRoot>Content</ContentRoot>
+        </Asset>
+            <IsMergeLib>true</IsMergeLib>
+    </ModInfo>
+    <Dependencies>
+    </Dependencies>
+</Mod>
