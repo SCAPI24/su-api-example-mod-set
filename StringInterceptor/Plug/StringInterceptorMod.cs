@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
 using Engine;
@@ -6,7 +6,6 @@ using System.Xml.Linq;
 using Engine.Content;
 using Engine.Media;
 using Game;
-using SuAPI;
 using SuAPI;
 
 namespace StringInterceptor
@@ -283,7 +282,8 @@ namespace StringInterceptor
         public string Name => "String Interceptor";
         public string Version => "1.5.0";
         public IEnumerable<string> Dependencies => Array.Empty<string>();
-        public bool IsEnabled { get; set; } = true;
+        public bool IsEnabled { get; set; }
+        public bool IsMergeLib => true;
 
         private IModParentField _mpf;
         private readonly List<IStringProcessor> _processors = new List<IStringProcessor>();

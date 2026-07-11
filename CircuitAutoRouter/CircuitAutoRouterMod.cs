@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using Engine;
 using Game;
 using SuAPI;
-using SuAPI;
 using TemplatesDatabase;
 
 namespace CircuitAutoRouter
@@ -13,7 +12,8 @@ namespace CircuitAutoRouter
         public string Name => "电路自动排线";
         public string Version => "1.0.0";
         public IEnumerable<string> Dependencies => Array.Empty<string>();
-        public bool IsEnabled { get; set; } = true;
+        public bool IsEnabled { get; set; }
+        public bool IsMergeLib => true;
 
         public void OnLoad(IModEventBus eventBus, IModInjector modInjector)
         {
