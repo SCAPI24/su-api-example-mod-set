@@ -1,8 +1,8 @@
 using Engine;
 using Game;
 using GameEntitySystem;
-using SuMod;
-using SuMod.Tools;
+using SuAPI;
+using SuAPI;
 using System;
 using System.Collections.Generic;
 using TemplatesDatabase;

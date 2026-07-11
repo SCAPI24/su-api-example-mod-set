@@ -3,7 +3,7 @@ using System.Globalization;
 using Engine;
 using Engine.Audio;
 using GameEntitySystem;
-using SuMod;
+using SuAPI;
 using TemplatesDatabase;
 
 namespace Sumod

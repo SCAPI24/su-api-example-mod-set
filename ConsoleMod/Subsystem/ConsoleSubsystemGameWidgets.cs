@@ -8,7 +8,7 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 using TemplatesDatabase;
-using SuMod.Tools;
+using SuAPI;
 
 namespace ConsoleMod
 {

@@ -1,7 +1,7 @@
 using Engine;
 using Game;
 using GameEntitySystem;
-using SuMod;
+using SuAPI;
 using TemplatesDatabase;
 
 namespace GodMode

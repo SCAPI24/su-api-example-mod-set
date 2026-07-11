@@ -1,7 +1,7 @@
 ﻿using Engine;
 using Game;
 using Sumod;
-using SuMod.Tools;
+using SuAPI;
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -15,7 +15,7 @@ using TemplatesDatabase;
 using XmlUtilities;
 using static Game.Program;
 
-namespace SuMod
+namespace SuAPI
 {
     // Example mod implementation
     public class TemperatureImmunity : IMod
