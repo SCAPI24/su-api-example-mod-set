@@ -10,7 +10,7 @@
 - Project: su-api-example-mod-set (GitHub + Gitee 双平台)
 - Stack: Git / PowerShell / SYNC_LIST / dotnet build
 - Game: Survivalcraft 2 (Windows / Android)
-- Framework: SuMod（IModEventBus / IModInjector / IModParentField / IModParentMethod / IModResource）
+- Framework: SuAPI（IModEventBus / IModInjector / IModParentField / IModParentMethod / IModResource）
 
 ## SOUL
 

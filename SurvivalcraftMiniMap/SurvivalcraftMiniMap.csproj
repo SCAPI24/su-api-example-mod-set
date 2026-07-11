@@ -13,7 +13,7 @@
   <ItemGroup Condition="'$(TargetFramework)' == 'net8.0'">
     <ProjectReference Include="..\..\Engine\Engine\Engine.csproj" />
     <ProjectReference Include="..\..\EntitySystem\GameEntitySystem\GameEntitySystem.csproj" />
-    <ProjectReference Include="..\..\EntitySystem\SuMod\SuMod.csproj" />
+    <ProjectReference Include="..\..\EntitySystem\SuAPI\SuAPI.csproj" />
     <ProjectReference Include="..\..\EntitySystem\TemplatesDatabase\TemplatesDatabase.csproj" />
     <ProjectReference Include="..\..\EntitySystem\XmlUtilities\XmlUtilities.csproj" />
     <ProjectReference Include="..\..\Survivalcraft\Survivalcraft.csproj" />
@@ -29,8 +29,8 @@
       <HintPath>..\..\EntitySystem\GameEntitySystem\bin\Debug\net8.0-android\GameEntitySystem.dll</HintPath>
       <Private>false</Private>
     </Reference>
-    <Reference Include="SuMod">
-      <HintPath>..\..\EntitySystem\SuMod\bin\Debug\net8.0-android\SuMod.dll</HintPath>
+    <Reference Include="SuAPI">
+      <HintPath>..\..\EntitySystem\SuAPI\bin\Debug\net8.0-android\SuAPI.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="TemplatesDatabase">

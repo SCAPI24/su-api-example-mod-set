@@ -6,8 +6,8 @@ using System.Xml.Linq;
 using Engine.Content;
 using Engine.Media;
 using Game;
-using SuMod;
-using SuMod.Tools;
+using SuAPI;
+using SuAPI;
 
 namespace StringInterceptor
 {
