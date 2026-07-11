@@ -14,7 +14,8 @@
 		<Asset>
 			<ContentRoot>Content</ContentRoot>
 		</Asset>
-	</ModInfo>
+	        <IsMergeLib>true</IsMergeLib>
+    </ModInfo>
 
 	<!-- 依赖的其他Mod列表 -->
 	<Dependencies>
@@ -30,7 +31,8 @@
                     <Version>2.3.0</Version>
                     <APIVersion>1.5.0</APIVersion>
                 </ModVersion>
-            </ModInfo>
+                    <IsMergeLib>true</IsMergeLib>
+    </ModInfo>
         </Dependency>
         -->
 	</Dependencies>

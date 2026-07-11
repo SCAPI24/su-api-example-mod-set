@@ -83,10 +83,7 @@ namespace Sumod
 
         protected override void Load(ValuesDictionary valuesDictionary, IdToEntityMap idToEntityMap)
         {
-            var cachedImage = ContentCache.Get("Mod/Textures/Cracks1");
-
             base.Load(valuesDictionary, idToEntityMap);
-
         }
     }
 

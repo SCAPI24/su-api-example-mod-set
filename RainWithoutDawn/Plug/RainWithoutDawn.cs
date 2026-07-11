@@ -1,6 +1,5 @@
-﻿using Engine;
+using Engine;
 using Game;
-using SuAPI;
 using SuAPI;
 using System;
 using System.Collections.Generic;
@@ -16,7 +15,8 @@ namespace RainWithoutDawn
         public string Name => "冷雨夜";
         public string Version => "1.0.1";
         public IEnumerable<string> Dependencies => Array.Empty<string>();
-        public bool IsEnabled { get; set; } = true;
+        public bool IsEnabled { get; set; }
+        public bool IsMergeLib => true;
 
         public void OnLoad(IModEventBus eventBus, IModInjector modInjector)
         {

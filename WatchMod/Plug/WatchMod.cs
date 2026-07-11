@@ -13,7 +13,7 @@ namespace WatchMod
         public string Version => "1.0.0";
         public IEnumerable<string> Dependencies => Array.Empty<string>();
         public bool IsEnabled { get; set; } = true;
-        public bool IsMergeLib => false;
+        public bool IsMergeLib => true;
 
         public void OnLoad(IModEventBus eventBus, IModInjector modInjector)
         {

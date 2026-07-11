@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using Engine;
 using SuAPI;
-using SuAPI;
 using TemplatesDatabase;
 
 // Source: D:\Users\Suceru\Desktop\生存战争三件套\Survivalcraft24102mono\SurvivalcraftMiniMap\MiniMap.cs
@@ -16,7 +15,8 @@ public class MiniMap : IMod
 
     public IEnumerable<string> Dependencies => Array.Empty<string>();
 
-    public bool IsEnabled { get; set; } = true;
+    public bool IsEnabled { get; set; }
+        public bool IsMergeLib => true;
 
     public void OnLoad(IModEventBus eventBus, IModInjector modInjector)
     {

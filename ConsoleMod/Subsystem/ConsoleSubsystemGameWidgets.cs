@@ -1,4 +1,5 @@
 using Engine;
+using Engine.Content;
 using Engine.Graphics;
 using Engine.Input;
 using Game;
@@ -69,8 +70,9 @@ namespace ConsoleMod
         {
             base.Load(valuesDictionary);
 
-            // Source: Load embedded button textures (same pattern as MiniMap)
-            m_buttonNormalTex = LoadEmbeddedTexture("ConsoleMod.Content.SuConsoleButton.png");
+            // Source: Normal button texture from scmod Content/ (ContentCache key: Mod/SuConsoleButton)
+            m_buttonNormalTex = ContentCache.Get<Texture2D>("Mod/SuConsoleButton");
+            // Source: Pressed button texture embedded in DLL
             m_buttonPressedTex = LoadEmbeddedTexture("ConsoleMod.Content.SuConsoleButton_Pressed.png");
 
             // Source: Attach button after base.Load — GameWidgets may not be populated yet (Player added later)
