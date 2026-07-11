@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Mod>
+    <ModInfo>
+        <Identifier>SuApocalypse</Identifier>
+        <LocalizedName>
+            <Text lang="en_US">Apocalypse</Text>
+            <Text lang="zh_CN">Apocalypse</Text>
+        </LocalizedName>
+        <ModVersion>
+            <Version>0.1.0</Version>
+            <APIVersion>2.1.0</APIVersion>
+        </ModVersion>
+        <Asset>
+            <ContentRoot>Content</ContentRoot>
+        </Asset>
+            <IsMergeLib>true</IsMergeLib>
+    </ModInfo>
+    <Dependencies>
+    </Dependencies>
+</Mod>
