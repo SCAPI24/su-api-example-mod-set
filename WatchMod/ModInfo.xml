@@ -13,6 +13,7 @@
         <Asset>
             <ContentRoot>Content</ContentRoot>
         </Asset>
+            <IsMergeLib>false</IsMergeLib>
     </ModInfo>
     <Dependencies>
     </Dependencies>

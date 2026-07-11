@@ -123,6 +123,76 @@ Memory Bank 绘图编辑器，替换 `SubsystemMemoryBankBlockBehavior`，增加
 | TemperatureImmunity | Component 替换 | 替换体温组件，保持恒温 |
 | Comms | 联机通信库 | SuAPI 联机 Mod 通信基础库，ScMultiplayer 依赖 |
 
+## 资源加载
+
+Mod 有两种资源加载方式，可按需混用：
+
+### 1. scmod Content/ 目录 → ContentCache
+
+将资源文件放入 scmod 的 `Content/` 目录，ModLoader 启动时自动提取并缓存到 `ContentCache`。
+
+**Key 规则**：`Content/{relativePath}.{ext}` → `ContentCache.Get<T>("Mod/{relativePath}")`（去掉 `Content/` 前缀和扩展名）
+
+```
+Content/SuConsoleButton.png  → ContentCache.Get<Texture2D>("Mod/SuConsoleButton")
+Content/Fonts/chinese12.png  → ContentCache.Get<Texture2D>("Mod/Fonts/chinese12")
+Content/zh_CN.xml            → ContentCache.Get<XElement>("Mod/zh_CN")
+```
+
+**代码**：
+```csharp
+using Engine.Content;
+var tex = ContentCache.Get<Texture2D>("Mod/SuConsoleButton");
+```
+
+**打包**：
+```python
+zf.write("Content/SuConsoleButton.png", "Content/SuConsoleButton.png")
+```
+
+**适用**：纹理、字体、翻译 XML、模型等需要运行时替换的资源。优点是无需重新编译 DLL 即可替换资源。
+
+### 2. DLL 嵌入资源 → GetManifestResourceStream
+
+将资源编译进 DLL 作为嵌入资源，运行时通过 `Assembly.GetManifestResourceStream` 读取。
+
+**Key 规则**：csproj 中 `<EmbeddedResource Include="Content\YourFile.png" />` → 资源名 `{Namespace}.{Content.YourFile.png}`
+
+**csproj**：
+```xml
+<ItemGroup>
+  <EmbeddedResource Include="Content\YourButton_Pressed.png" />
+</ItemGroup>
+```
+
+**代码**：
+```csharp
+using System.Reflection;
+var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("ConsoleMod.Content.YourButton_Pressed.png");
+var tex = Texture2D.Load(stream);
+stream.Dispose();
+```
+
+**适用**：不希望用户替换的资源（如按下状态纹理）、小体积资源。优点是资源与 DLL 一体，不会丢失。
+
+### 混用示例（ConsoleMod）
+
+普通按钮纹理放 Content/（可替换），按下纹理嵌入 DLL（不可替换）：
+
+```xml
+<!-- ConsoleMod.csproj -->
+<ItemGroup>
+  <EmbeddedResource Include="Content\SuConsoleButton_Pressed.png" />
+</ItemGroup>
+```
+
+```csharp
+// 普通纹理：从 ContentCache 加载（scmod Content/ 目录）
+m_buttonNormalTex = ContentCache.Get<Texture2D>("Mod/SuConsoleButton");
+// 按下纹理：从 DLL 嵌入资源加载
+m_buttonPressedTex = LoadEmbeddedTexture("ConsoleMod.Content.SuConsoleButton_Pressed.png");
+```
+
 ## 运行时铁律
 
 1. **ModLoader 依赖加载** — .scmod 内 DLL 不会自动全部加载，只有 Identifier 同名的和 `<Dependencies>` 声明的才会被加载
