@@ -3,7 +3,7 @@ using Engine.Content;
 using Engine.Media;
 using Game;
 using GameEntitySystem;
-using SuMod;
+using SuAPI;
 using System;
 using System.Linq;
 using System.Reflection;

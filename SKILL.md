@@ -1,9 +1,9 @@
 ---
 name: survivalcraft-mod
-description: Survivalcraft 2 SuMod 开发技能。帮助创建、修改、调试第三方 Mod。触发词：Survivalcraft、SC mod、SuMod、IMod、scmod、游戏mod、冷雨夜、联机mod、TemperatureImmunity、RainWithoutDawn、ScMultiplayer。当用户要求创建/修改/调试 Survivalcraft 的 Mod，或提到 SuAPI/SuMod/IMod 接口，或提到 P:\UGIT\SurvivalcraftMonoWin 或 P:\UGIT\Survivalcraft 目录下的 Mod 开发时触发。技能支持引用本地项目和 Git 仓库，公开仓库：https://gitee.com/SC-SPM/survivalcraft-su-api
+description: Survivalcraft 2 SuAPI 开发技能。帮助创建、修改、调试第三方 Mod。触发词：Survivalcraft、SC mod、SuAPI、IMod、scmod、游戏mod、冷雨夜、联机mod、TemperatureImmunity、RainWithoutDawn、ScMultiplayer。当用户要求创建/修改/调试 Survivalcraft 的 Mod，或提到 SuAPI/IMod 接口，或提到 P:\UGIT\SurvivalcraftMonoWin 或 P:\UGIT\Survivalcraft 目录下的 Mod 开发时触发。技能支持引用本地项目和 Git 仓库，公开仓库：https://gitee.com/SC-SPM/survivalcraft-su-api
 ---
 
-# Survivalcraft SuMod 开发指南
+# Survivalcraft SuAPI 开发指南
 
 ## ⚠️ 动手前必读（防漏读）🛡️ 不可删除此段
 
@@ -28,7 +28,7 @@ description: Survivalcraft 2 SuMod 开发技能。帮助创建、修改、调试
 ### 默认：SuAPI Mod 开发者
 
 - **触发条件**：默认身份，或用户说「切换到mod开发」
-- **核心约束**：**禁止修改 Survivalcraft 原始代码**，只允许通过 SuAPI（SuMod）已发布的接口（IModEventBus、IModInjector、IModParentField、IModParentMethod、IModResource 等）去调整游戏行为
+- **核心约束**：**禁止修改 Survivalcraft 原始代码**，只允许通过 SuAPI已发布的接口（IModEventBus、IModInjector、IModParentField、IModParentMethod、IModResource 等）去调整游戏行为
 - **原因**：SuAPI 已发布，其他用户设备上已安装。每个 Mod 功能不应要求用户重新安装 SuAPI
 - **允许的操作**：创建 Mod 项目、编写 IMod 实现类、编写替换子类（继承原始类）、使用 EventBus/Injector/ParentField/ParentMethod 接口、打包 .scmod
 - **禁止的操作**：修改 Engine/EntitySystem/Survivalcraft 中的原始代码、给原始类添加 virtual 标记、修改 Program.cs 等
@@ -37,7 +37,7 @@ description: Survivalcraft 2 SuMod 开发技能。帮助创建、修改、调试
 
 - **触发条件**：用户说「切换到API开发」
 - **输出标识**：使用此身份时，回复中须标注 `[SuAPI core开发者]`
-- **允许修改的范围**：仅限 Engine 库和 EntitySystem 库中 SuAPI（SuMod）相关代码
+- **允许修改的范围**：仅限 Engine 库和 EntitySystem 库中 SuAPI相关代码
 - **修改原则**：
   - 最小嵌入：只添加 Mod 开发者确实需要的接口或钩子，不做多余改动
   - 代码清晰：提交需审核，修改部分必须有明确注释说明用途
@@ -52,7 +52,7 @@ P:\UGIT\Survivalcraft\
 ├── Engine/              # 引擎层（Engine.dll）
 ├── EntitySystem/
 │   ├── GameEntitySystem/  # 游戏实体系统（含 GameDatabase.cs）
-│   └── SuMod/            # ★ Mod 核心接口与实现
+│   └── SuAPI/            # ★ Mod 核心接口与实现
 ├── Mod/                 # ★ 第三方 Mod 示例（均已迁移至 net8.0 双平台）
 │   ├── RainWithoutDawn/  # 替换 Subsystem 示例
 │   ├── TemperatureImmunity/  # 替换 Component 示例
@@ -131,7 +131,7 @@ Android 上所有用户可访问的文件统一放在 `/sdcard/Download/Survival
 - `ModLoader.GetPublicDownloadsPath()` 通过 `Android.OS.Environment.GetExternalStoragePublicDirectory(DirectoryDownloads)` 获取 `/sdcard/Download`
 - 需 `MANAGE_EXTERNAL_STORAGE` 权限（AndroidManifest 已声明）
 
-## SuMod 核心架构
+## SuAPI 核心架构
 
 ### 入口：Program.Main → ModManager
 
@@ -664,8 +664,8 @@ Add-Type -AssemblyName System.IO.Compression
 using Engine;           // Vector3, Log, MathUtils 等
 using Game;             // 游戏类（Subsystem*, Component*, ScreensManager 等）
 using GameEntitySystem; // Project, Subsystem, Component, IUpdateable
-using SuMod;            // IModEventBus, IModInjector, ModManager
-using SuMod.Tools;      // IMod, EventPriority
+using SuAPI;            // IModEventBus, IModInjector, ModManager
+using SuAPI;      // IMod, EventPriority
 using TemplatesDatabase;// Database, DatabaseObject, ValuesDictionary
 ```
 
@@ -775,7 +775,7 @@ dotnet build "P:\UGIT\Survivalcraft\Mod\MyMod\MyMod.csproj" -c Debug --verbosity
 ### Android 日志性能铁律
 
 1. **Microsoft.Extensions.Logging.Debug 包必须移除** — MAUI 模板默认引入，Debug 配置下 `DebugLoggerProvider` 向 Android logcat 输出大量 MAUI 框架内部日志（页面生命周期、绑定追踪、布局更新、手势识别），logcat 是系统级 I/O，大量写入导致严重卡顿。Windows 无影响（输出到 VS Output 窗口）。csproj 中注释掉或删除该 PackageReference
-2. **Console.WriteLine 在 Android 上输出到 logcat** — .NET for Android runtime 将 Console.Write/WriteLine 重定向到 Android logcat（debug tag），即使移除了 ConsoleLogSink，SuMod 中的 Console.WriteLine 仍输出到 logcat
+2. **Console.WriteLine 在 Android 上输出到 logcat** — .NET for Android runtime 将 Console.Write/WriteLine 重定向到 Android logcat（debug tag），即使移除了 ConsoleLogSink，SuAPI 中的 Console.WriteLine 仍输出到 logcat
 3. **Engine.Log + GameLogSink 每次 Flush()** — GameLogSink.Log() 每次调用都 Flush()，高频日志=高频磁盘 I/O。非热路径可用，热路径禁止
 4. **MIUIInput 日志不可控** — MIUI ROM 系统层触摸事件日志（`I/MIUIInput: [MotionEvent]`），每次触摸/滑动都打印，应用侧无法关闭，但不影响应用进程性能（系统级，不经过应用进程）
 5. **诊断日志验证后必须移除** — `[Window]`、`[SuAPI]` 等标记日志是临时诊断用，验证完成后立即删除，不得提交

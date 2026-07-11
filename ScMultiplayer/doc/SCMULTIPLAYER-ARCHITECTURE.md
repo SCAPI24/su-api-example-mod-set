@@ -2,7 +2,7 @@
 
 > 版本: 1.0.1
 > 最后更新: 2026-05-17
-> 依赖: Comms.dll, SuAPI (SuMod)
+> 依赖: Comms.dll, SuAPI
 
 ---
 

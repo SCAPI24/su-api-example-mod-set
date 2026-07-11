@@ -1,8 +1,8 @@
 using System;
 using System.Collections.Generic;
 using Engine;
-using SuMod;
-using SuMod.Tools;
+using SuAPI;
+using SuAPI;
 using TemplatesDatabase;
 
 // Source: D:\Users\Suceru\Desktop\生存战争三件套\Survivalcraft24102mono\SurvivalcraftMiniMap\MiniMap.cs
