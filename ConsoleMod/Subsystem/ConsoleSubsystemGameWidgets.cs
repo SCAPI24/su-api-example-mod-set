@@ -15,6 +15,10 @@ namespace ConsoleMod
 {
     public class ConsoleSubsystemGameWidgets : SubsystemGameWidgets, IUpdateable
     {
+        // Source: Runtime platform detection — replaces #if WINDOWS/#if ANDROID for single-TFM compatibility
+        private static readonly bool IsWindows = System.OperatingSystem.IsWindows();
+        private static readonly bool IsAndroid = System.OperatingSystem.IsAndroid();
+
         // Source: GameEntitySystem.UpdateOrder enum — runs BEFORE Input(-10) to intercept keyboard before ComponentInput
         public new UpdateOrder UpdateOrder => (UpdateOrder)(-100);
 
@@ -29,10 +33,8 @@ namespace ConsoleMod
         private List<string> m_history = new List<string>();
         private const int MaxHistoryLines = 200; // More lines for scrollback
 
-#if ANDROID
         // Source: Android — keyboard shown state
         private bool m_androidKeyboardShown = false;
-#endif
 
         // UI elements
         private CanvasWidget m_consolePanel;
@@ -54,10 +56,8 @@ namespace ConsoleMod
         private int m_historyIndex = -1;
         private string m_savedInput = "";
 
-#if WINDOWS
-        // Source: Modal dialog for mouse cursor unlock (analogous to iron sign)
+        // Source: Modal dialog for mouse cursor unlock (analogous to iron sign) — Windows only
         private Dialog m_modalDialog;
-#endif
 
         // Source: Console toggle button — visible on both Windows and Android
         // Source: SurvivalcraftMiniMap.SuComponentMap.Load — same pattern: MoreContents StackPanel + BitmapButtonWidget
@@ -221,18 +221,20 @@ namespace ConsoleMod
             m_inputText.Clear();
             m_cursorPos = 0;
 
-#if WINDOWS
-            // Source: Show modal dialog to unlock mouse cursor (analogous to iron sign)
-            m_modalDialog = new Dialog();
-            m_modalDialog.Size = Vector2.Zero;
-            DialogsManager.ShowDialog(guiWidget, m_modalDialog);
-            MakeCoverTransparent();
-#endif
+            if (IsWindows)
+            {
+                // Source: Show modal dialog to unlock mouse cursor (analogous to iron sign)
+                m_modalDialog = new Dialog();
+                m_modalDialog.Size = Vector2.Zero;
+                DialogsManager.ShowDialog(guiWidget, m_modalDialog);
+                MakeCoverTransparent();
+            }
 
-#if ANDROID
-            // Source: Android — show virtual keyboard for text input
-            ShowAndroidKeyboard();
-#endif
+            if (IsAndroid)
+            {
+                // Source: Android — show virtual keyboard for text input
+                ShowAndroidKeyboard();
+            }
         }
 
         private void DetachUI()
@@ -251,22 +253,21 @@ namespace ConsoleMod
             m_separator = null;
             m_uiAttached = false;
 
-#if WINDOWS
-            if (m_modalDialog != null)
+            if (IsWindows && m_modalDialog != null)
             {
                 DialogsManager.HideDialog(m_modalDialog);
                 m_modalDialog = null;
             }
-#endif
 
-#if ANDROID
-            HideAndroidKeyboard();
-#endif
+            if (IsAndroid)
+            {
+                HideAndroidKeyboard();
+            }
         }
 
-#if ANDROID
         private void ShowAndroidKeyboard()
         {
+            if (!IsAndroid) return;
             if (m_androidKeyboardShown) return;
             m_androidKeyboardShown = true;
             Keyboard.ShowKeyboard("Console", "Enter command", "", false,
@@ -289,25 +290,19 @@ namespace ConsoleMod
             // No explicit HideKeyboard API available
             m_androidKeyboardShown = false;
         }
-#endif
 
         private void CaptureInput()
         {
-#if WINDOWS
             if (m_justToggled)
             {
                 m_justToggled = false;
-                KeyboardInput.DeletePressed = false;
-                KeyboardInput.GetInput(); // Drain stale chars accumulated before console opened
+                if (IsWindows)
+                {
+                    KeyboardInput.DeletePressed = false;
+                    KeyboardInput.GetInput(); // Drain stale chars accumulated before console opened
+                }
                 return;
             }
-#else
-            if (m_justToggled)
-            {
-                m_justToggled = false;
-                return;
-            }
-#endif
 
             // Escape closes console
             if (Keyboard.IsKeyDownOnce(Key.Escape))
@@ -319,34 +314,35 @@ namespace ConsoleMod
                 return;
             }
 
-#if WINDOWS
-            // Scroll output area with mouse wheel or PageUp/PageDown
-            int wheelDelta = Mouse.MouseWheelMovement;
-            if (Keyboard.IsKeyDownOnce(Key.PageUp)) wheelDelta += 120;
-            if (Keyboard.IsKeyDownOnce(Key.PageDown)) wheelDelta -= 120;
-            if (wheelDelta != 0)
+            // Scroll output area with mouse wheel or PageUp/PageDown (Windows only)
+            if (IsWindows)
             {
-                int scrollLines = wheelDelta / 120;
-                int maxScroll = MathUtils.Max(0, m_history.Count - MaxVisibleLines);
-                m_scrollOffset = MathUtils.Clamp(m_scrollOffset + scrollLines, 0, maxScroll);
-                m_autoScroll = (m_scrollOffset == 0);
-                return;
-            }
+                int wheelDelta = Mouse.MouseWheelMovement;
+                if (Keyboard.IsKeyDownOnce(Key.PageUp)) wheelDelta += 120;
+                if (Keyboard.IsKeyDownOnce(Key.PageDown)) wheelDelta -= 120;
+                if (wheelDelta != 0)
+                {
+                    int scrollLines = wheelDelta / 120;
+                    int maxScroll = MathUtils.Max(0, m_history.Count - MaxVisibleLines);
+                    m_scrollOffset = MathUtils.Clamp(m_scrollOffset + scrollLines, 0, maxScroll);
+                    m_autoScroll = (m_scrollOffset == 0);
+                    return;
+                }
 
-            // Home/End — jump to top/bottom of history
-            if (Keyboard.IsKeyDownOnce(Key.Home))
-            {
-                m_scrollOffset = MathUtils.Max(0, m_history.Count - MaxVisibleLines);
-                m_autoScroll = false;
-                return;
+                // Home/End — jump to top/bottom of history
+                if (Keyboard.IsKeyDownOnce(Key.Home))
+                {
+                    m_scrollOffset = MathUtils.Max(0, m_history.Count - MaxVisibleLines);
+                    m_autoScroll = false;
+                    return;
+                }
+                if (Keyboard.IsKeyDownOnce(Key.End))
+                {
+                    m_scrollOffset = 0;
+                    m_autoScroll = true;
+                    return;
+                }
             }
-            if (Keyboard.IsKeyDownOnce(Key.End))
-            {
-                m_scrollOffset = 0;
-                m_autoScroll = true;
-                return;
-            }
-#endif
 
             // Left arrow — move cursor left
             if (Keyboard.IsKeyDownOnce(Key.LeftArrow))
@@ -370,20 +366,21 @@ namespace ConsoleMod
                 ExecuteCommand(cmd);
                 m_inputText.Clear();
                 m_cursorPos = 0;
-#if ANDROID
-                // Source: Android — re-show keyboard after command execution
-                ShowAndroidKeyboard();
-#endif
+                if (IsAndroid)
+                {
+                    // Source: Android — re-show keyboard after command execution
+                    ShowAndroidKeyboard();
+                }
                 return;
             }
 
-#if WINDOWS
             // Delete key — delete char at cursor
             if (Keyboard.IsKeyDownOnce(Key.Delete))
             {
                 if (m_cursorPos < m_inputText.Length)
                     m_inputText.Remove(m_cursorPos, 1);
-                KeyboardInput.DeletePressed = false;
+                if (IsWindows)
+                    KeyboardInput.DeletePressed = false;
                 return;
             }
 
@@ -395,29 +392,10 @@ namespace ConsoleMod
                     m_inputText.Remove(m_cursorPos - 1, 1);
                     m_cursorPos--;
                 }
-                KeyboardInput.DeletePressed = false;
+                if (IsWindows)
+                    KeyboardInput.DeletePressed = false;
                 return;
             }
-#else
-            // Backspace (Android) — no KeyboardInput.DeletePressed needed
-            if (Keyboard.IsKeyDownOnce(Key.BackSpace))
-            {
-                if (m_cursorPos > 0)
-                {
-                    m_inputText.Remove(m_cursorPos - 1, 1);
-                    m_cursorPos--;
-                }
-                return;
-            }
-
-            // Delete (Android)
-            if (Keyboard.IsKeyDownOnce(Key.Delete))
-            {
-                if (m_cursorPos < m_inputText.Length)
-                    m_inputText.Remove(m_cursorPos, 1);
-                return;
-            }
-#endif
 
             // Up arrow — navigate to previous command in history
             if (Keyboard.IsKeyDownOnce(Key.UpArrow))
@@ -465,24 +443,23 @@ namespace ConsoleMod
                 return;
             }
 
-#if WINDOWS
-            // Character input via KeyboardInput.GetInput — captures all chars per frame
-            string inputChars = KeyboardInput.GetInput();
-            if (!string.IsNullOrEmpty(inputChars))
+            // Character input (Windows: via KeyboardInput.GetInput; Android: via ShowKeyboard dialog)
+            if (IsWindows)
             {
-                m_historyIndex = -1;
-                foreach (char c in inputChars)
+                string inputChars = KeyboardInput.GetInput();
+                if (!string.IsNullOrEmpty(inputChars))
                 {
-                    if (!char.IsControl(c) && c != '`' && c != '~')
+                    m_historyIndex = -1;
+                    foreach (char c in inputChars)
                     {
-                        m_inputText.Insert(m_cursorPos, c);
-                        m_cursorPos++;
+                        if (!char.IsControl(c) && c != '`' && c != '~')
+                        {
+                            m_inputText.Insert(m_cursorPos, c);
+                            m_cursorPos++;
+                        }
                     }
                 }
             }
-#else
-            // Android: input handled by ShowKeyboard dialog, no inline char processing
-#endif
         }
 
         private void UpdateDisplay()
@@ -720,11 +697,11 @@ namespace ConsoleMod
             return new Vector3(pos.X, topHeight + 1f, pos.Z);
         }
 
-#if WINDOWS
         // Source: DialogsManager.m_animationData — make the modal cover transparent
-        // so the dialog doesn't dim the screen, only unlocks the mouse cursor
+        // so the dialog doesn't dim the screen, only unlocks the mouse cursor (Windows only)
         private void MakeCoverTransparent()
         {
+            if (!IsWindows) return;
             try
             {
                 var animDataField = typeof(DialogsManager).GetField("m_animationData",
@@ -746,6 +723,5 @@ namespace ConsoleMod
             }
             catch { }
         }
-#endif
     }
 }
