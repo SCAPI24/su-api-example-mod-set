@@ -15,12 +15,14 @@ namespace ScMultiplayer
         public EnvironmentBehaviorMode EnvironmentBehaviorMode;
         public string SerializationVersion = string.Empty;
         public IPEndPoint HostAddress;
+        public string PlayerName = string.Empty;
+        public string PlayerIdentity = string.Empty;
 
         public GameWorldInfoMessage()
         {
         }
 
-        public GameWorldInfoMessage(string name, long size, DateTime lastSaveTime, GameMode gameMode, EnvironmentBehaviorMode environmentBehaviorMode, string serializationVersion, IPEndPoint hostAddress/*, byte[] worldData*/)
+        public GameWorldInfoMessage(string name, long size, DateTime lastSaveTime, GameMode gameMode, EnvironmentBehaviorMode environmentBehaviorMode, string serializationVersion, IPEndPoint hostAddress, string playerName = "", string playerIdentity = "")
         {
             Name = name;
             Size = size;
@@ -29,6 +31,8 @@ namespace ScMultiplayer
             EnvironmentBehaviorMode = environmentBehaviorMode;
             SerializationVersion = serializationVersion;
             HostAddress = hostAddress;
+            PlayerName = playerName ?? string.Empty;
+            PlayerIdentity = playerIdentity ?? string.Empty;
         }
 
         protected override void Read(SuReader reader)
@@ -40,6 +44,8 @@ namespace ScMultiplayer
             EnvironmentBehaviorMode = (EnvironmentBehaviorMode)reader.ReadInt32();
             SerializationVersion = reader.ReadString();
             HostAddress=reader.ReadIPEndPoint();
+            PlayerName = reader.ReadString();
+            PlayerIdentity = reader.ReadString();
         }
 
         protected override void Write(SuWriter writer)
@@ -51,6 +57,8 @@ namespace ScMultiplayer
             writer.WriteInt32((int)EnvironmentBehaviorMode);
             writer.WriteString(SerializationVersion);
             writer.WriteIPEndPoint(HostAddress);
+            writer.WriteString(PlayerName ?? string.Empty);
+            writer.WriteString(PlayerIdentity ?? string.Empty);
           
         }
     }

@@ -5,6 +5,7 @@
     <LocalizedName>[SuAPI]网络</LocalizedName>
     <Version>1.0.2</Version>
     <APIVersion>1.0</APIVersion>
+    <IsMergeLib>true</IsMergeLib>
     <Asset>
       <ContentRoot>Content/</ContentRoot>
     </Asset>
@@ -13,6 +14,7 @@
     <Dependency>
       <ModInfo>
         <Identifier>Comms</Identifier>
+        <IsMergeLib>true</IsMergeLib>
       </ModInfo>
     </Dependency>
   </Dependencies>

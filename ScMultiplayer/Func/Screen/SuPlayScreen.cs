@@ -18,9 +18,15 @@ namespace ScMultiplayer
     {
         public static ListPanelWidget m_worldsListWidget;
         public List<WorldInfo> m_worldInfos;
-        public Dictionary<string, (DateTime, float)> ServerWorldName = new Dictionary<string, (DateTime, float)>();
+        private readonly Dictionary<string, WorldInfo> m_remoteWorlds = new Dictionary<string, WorldInfo>();
+        private readonly Dictionary<WorldInfo, float> m_remoteWorldPings = new Dictionary<WorldInfo, float>();
+        private readonly Dictionary<WorldInfo, GameDescription> m_remoteGames = new Dictionary<WorldInfo, GameDescription>();
+        private readonly Dictionary<string, double> m_remoteLastSeen = new Dictionary<string, double>();
+        private double m_nextRemoteRefreshTime;
         public static bool IsGameJoined = false;
         public static byte[] WorldData;
+        public static string WorldDataName;
+        public static DateTime WorldDataLastSaveTime;
         public WorldInfo SelectedItem;
 
         public SuPlayScreen() : base()
@@ -57,98 +63,88 @@ namespace ScMultiplayer
                             ? "(unknown)" : ("(" + worldInfo.SerializationVersion + ")"));
 
                     // Show online Ping
-                    foreach (var name in ServerWorldName)
-                    {
-                        if (labelWidget.Text == name.Key && worldInfo.LastSaveTime == name.Value.Item1)
-                            labelWidget2.Text += " | Net (Ping " + (int)(name.Value.Item2 * 1000f) + "ms)";
-                    }
+                    if (m_remoteWorldPings.TryGetValue(worldInfo, out float ping))
+                        labelWidget2.Text += " | Online (Ping " + (int)(ping * 1000f) + "ms)";
                     return containerWidget;
                 });
 
-            // Double-click: auto-detect create/join (search ALL servers for matching game)
+            // Source: Survivalcraft/Game/PlayScreen.cs:PlayScreen.PlayScreen
+            // Replace the base double-click delegate, which always treats an item as a local world.
+            Game.Program.ModManager.ModParentField.ModifyParentField(
+                m_worldsListWidget, "ItemClicked", null, typeof(ListPanelWidget));
             m_worldsListWidget.ItemClicked += delegate (object item)
             {
                 if (item == null || m_worldsListWidget.SelectedItem != item) return;
-                WorldInfo worldInfo = (WorldInfo)item;
-
-                var servers = ScMultiplayer.explorer?.DiscoveredServers;
-                if (servers == null || servers.Count == 0)
-                {
-                    // No servers discovered, create game locally
-                    GameCreate(item);
-                    Play(item);
-                    return;
-                }
-
-                // Search ALL servers for matching remote game
-                foreach (var sd in servers)
-                {
-                    foreach (var gd in sd.GameDescriptions)
-                    {
-                        if (Message.Read(gd.GameDescriptionBytes) is GameWorldInfoMessage remoteInfo)
-                        {
-                            // Skip games created by self
-                            if (remoteInfo.HostAddress != null &&
-                                remoteInfo.HostAddress.Address.Equals(ScMultiplayer.client.Address.Address))
-                                continue;
-
-                            // Match by world name
-                            if (remoteInfo.Name == worldInfo.WorldSettings.Name)
-                            {
-                                GameJoin(item, gd);
-                                return;
-                            }
-                        }
-                    }
-                }
-                // No matching remote game -> create locally
-                GameCreate(item);
-                Play(item);
+                ActivateWorld((WorldInfo)item);
             };
         }
 
         public override void Update()
         {
+            // Source: Comms.Drt.Explorer.DiscoveredServers
+            // Keep the list live when a host creates a room while this screen is already open.
+            if (Time.RealTime >= m_nextRemoteRefreshTime)
+            {
+                m_nextRemoteRefreshTime = Time.RealTime + 1.0;
+                RefreshRemoteWorlds();
+            }
+
             SelectedItem = m_worldsListWidget.SelectedItem as WorldInfo;
 
             if (Children.Find<ButtonWidget>("Play")?.IsClicked == true && SelectedItem != null)
             {
-                WorldInfo worldInfo = SelectedItem;
-                // Find matching GameDescription across ALL servers
-                GameDescription matchGd = null;
-                var servers = ScMultiplayer.explorer?.DiscoveredServers;
-                if (servers != null)
-                {
-                    foreach (var sd in servers)
-                    {
-                        foreach (var gd in sd.GameDescriptions)
-                        {
-                            if (Message.Read(gd.GameDescriptionBytes) is GameWorldInfoMessage gameWorldInfo
-                                && gameWorldInfo.Name == worldInfo.WorldSettings.Name)
-                            {
-                                matchGd = gd;
-                                break;
-                            }
-                        }
-                        if (matchGd != null) break;
-                    }
-                }
-
-                if (matchGd != null)
-                {
-                    var msg = Message.Read(matchGd.GameDescriptionBytes) as GameWorldInfoMessage;
-                    if (msg?.HostAddress != null &&
-                        msg.HostAddress.Address.Equals(ScMultiplayer.client.Address.Address))
-                        GameCreate(worldInfo); // Local game -> create
-                    else
-                        GameJoin(worldInfo, matchGd); // Remote game -> join
-                }
-                else
-                {
-                    GameCreate(worldInfo); // No match -> create locally
-                }
+                ActivateWorld(SelectedItem);
             }
             base.Update();
+        }
+
+        private void ActivateWorld(WorldInfo worldInfo)
+        {
+            if (m_remoteGames.TryGetValue(worldInfo, out GameDescription remoteGame))
+            {
+                GameJoin(worldInfo, remoteGame);
+                return;
+            }
+
+            if (m_remoteWorlds.Values.Contains(worldInfo))
+            {
+                m_worldsListWidget.SelectedItem = null;
+                DialogsManager.ShowDialog(null, new MessageDialog(
+                    "Join Room", "This room is no longer available.", "OK", null, null));
+                return;
+            }
+
+            GameDescription matchingGame = null;
+            GameWorldInfoMessage matchingInfo = null;
+            var servers = ScMultiplayer.explorer?.DiscoveredServers;
+            if (servers != null)
+            {
+                foreach (var server in servers)
+                {
+                    foreach (var game in server.GameDescriptions)
+                    {
+                        try { matchingInfo = Message.Read(game.GameDescriptionBytes) as GameWorldInfoMessage; }
+                        catch { matchingInfo = null; }
+                        if (matchingInfo?.Name == worldInfo.WorldSettings.Name)
+                        {
+                            matchingGame = game;
+                            break;
+                        }
+                    }
+                    if (matchingGame != null) break;
+                }
+            }
+
+            if (matchingGame != null &&
+                (matchingInfo?.HostAddress == null ||
+                 !matchingInfo.HostAddress.Address.Equals(ScMultiplayer.client.Address.Address)))
+            {
+                GameJoin(worldInfo, matchingGame);
+                return;
+            }
+
+            GameCreate(worldInfo);
+            Play(worldInfo);
         }
 
         /// <summary>
@@ -158,6 +154,7 @@ namespace ScMultiplayer
         {
             ScMultiplayer.IsHost = true;
             WorldInfo worldInfo = (WorldInfo)item;
+            RemoveOrphanPlayerEntities(worldInfo.DirectoryName);
             var servers = ScMultiplayer.explorer?.DiscoveredServers;
             ServerDescription localSd = null;
             if (servers != null)
@@ -180,12 +177,15 @@ namespace ScMultiplayer
                 WorldsManager.ExportWorld(worldInfo.DirectoryName, ms);
                 WorldData = ms.ToArray();
             }
+            WorldDataName = worldInfo.WorldSettings.Name;
+            WorldDataLastSaveTime = worldInfo.LastSaveTime;
             Log.Information($"[SuPlay] Exported world: {worldInfo.WorldSettings.Name} ({WorldData.Length} bytes)");
 
             var worldMsg = new GameWorldInfoMessage(
                 worldInfo.WorldSettings.Name, worldInfo.Size, worldInfo.LastSaveTime,
                 worldInfo.WorldSettings.GameMode, worldInfo.WorldSettings.EnvironmentBehaviorMode,
-                worldInfo.SerializationVersion, ScMultiplayer.client.Address);
+                worldInfo.SerializationVersion, ScMultiplayer.client.Address, ScMultiplayer.GetLocalPlayerName(),
+                ScMultiplayer.GetLocalPlayerIdentity());
 
             // Cache game description bytes for LAN discovery response
             ScMultiplayer.LastGameDescription = Message.WriteWithSender(worldMsg, ScMultiplayer.client.Address);
@@ -194,6 +194,46 @@ namespace ScMultiplayer
                 ScMultiplayer.LastGameDescription,
                 ScMultiplayer.client.Address.Port.ToString());
             Log.Information($"[SuPlay] CreateGame sent: {worldInfo.WorldSettings.Name}");
+        }
+
+        // Source: GameEntitySystem/Project.cs:Project.SaveEntities
+        // Source: Survivalcraft/Game/SubsystemPlayers.cs:SubsystemPlayers.Load
+        private static void RemoveOrphanPlayerEntities(string directoryName)
+        {
+            string projectPath = Storage.CombinePaths(directoryName, "Project.xml");
+            if (!Storage.FileExists(projectPath)) return;
+
+            XDocument document;
+            using (Stream stream = Storage.OpenFile(projectPath, OpenFileMode.Read))
+                document = XDocument.Load(stream, LoadOptions.PreserveWhitespace);
+
+            XElement playersSubsystem = document.Root?.Element("Subsystems")?.Elements("Values")
+                .FirstOrDefault(element => (string)element.Attribute("Name") == "Players");
+            XElement playersValues = playersSubsystem?.Elements("Values")
+                .FirstOrDefault(element => (string)element.Attribute("Name") == "Players");
+            if (playersValues == null) return;
+
+            var validPlayerIndices = new HashSet<string>(playersValues.Elements("Values")
+                .Select(element => (string)element.Attribute("Name"))
+                .Where(value => !string.IsNullOrEmpty(value)));
+            XElement entities = document.Root?.Element("Entities");
+            if (entities == null) return;
+
+            XElement[] orphanEntities = entities.Elements("Entity").Where(entity =>
+            {
+                XElement player = entity.Elements("Values")
+                    .FirstOrDefault(element => (string)element.Attribute("Name") == "Player");
+                string playerIndex = (string)player?.Elements("Value")
+                    .FirstOrDefault(element => (string)element.Attribute("Name") == "PlayerIndex")?
+                    .Attribute("Value");
+                return playerIndex != null && !validPlayerIndices.Contains(playerIndex);
+            }).ToArray();
+            if (orphanEntities.Length == 0) return;
+
+            foreach (XElement entity in orphanEntities) entity.Remove();
+            using (Stream stream = Storage.OpenFile(projectPath, OpenFileMode.Create))
+                document.Save(stream, SaveOptions.DisableFormatting);
+            Log.Information($"[ScMP] Removed {orphanEntities.Length} orphan network player entities from {directoryName}");
         }
 
         /// <summary>
@@ -216,11 +256,15 @@ namespace ScMultiplayer
             var worldMsg = new GameWorldInfoMessage(
                 worldInfo.WorldSettings.Name, worldInfo.Size, worldInfo.LastSaveTime,
                 worldInfo.WorldSettings.GameMode, worldInfo.WorldSettings.EnvironmentBehaviorMode,
-                worldInfo.SerializationVersion, ScMultiplayer.client.Address);
+                worldInfo.SerializationVersion, ScMultiplayer.client.Address, ScMultiplayer.GetLocalPlayerName(),
+                ScMultiplayer.GetLocalPlayerIdentity());
 
             ScMultiplayer.client.JoinGame(gd.ServerDescription.Address, gd.GameID,
                 Message.WriteWithSender(worldMsg, ScMultiplayer.client.Address),
                 ScMultiplayer.client.Address.Port.ToString());
+            // Source: Survivalcraft/Game/PlayScreen.cs:PlayScreen.Update
+            // Prevent the base screen from loading this virtual remote WorldInfo as a local directory.
+            m_worldsListWidget.SelectedItem = null;
             Log.Information($"[SuPlay] JoinGame sent: {worldInfo.WorldSettings.Name} -> {gd.GameID}");
         }
 
@@ -232,45 +276,64 @@ namespace ScMultiplayer
                 try { ScMultiplayer.client.LeaveGame(); } catch { }
             }
 
-            // Async load remote world list
-            Task.Run(delegate
-            {
-                Dispatcher.Dispatch(delegate
-                {
-                    ServerWorldName.Clear();
-                    var servers = ScMultiplayer.explorer?.DiscoveredServers;
-                    if (servers == null || servers.Count == 0) { Log.Information("[SuPlay] No servers discovered"); return; }
-
-                    int remoteCount = 0;
-                    foreach (var sd in servers)
-                    {
-                        Log.Information($"[SuPlay] Server {sd.Address}, Games={sd.GameDescriptions.Length}");
-                        foreach (var gd in sd.GameDescriptions)
-                        {
-                            var msg = Message.Read(gd.GameDescriptionBytes);
-                            if (msg is GameWorldInfoMessage worldInfo)
-                            {
-                                Log.Information($"[SuPlay]   Game '{worldInfo.Name}' Host={worldInfo.HostAddress}, MyAddr={ScMultiplayer.client.Address}, Skip={ScMultiplayer.client.Address.Equals(worldInfo.HostAddress)}");
-                                if (ScMultiplayer.client.Address.Equals(worldInfo.HostAddress))
-                                    continue; // Skip self
-
-                                HandleGameWorldInfoMessage(worldInfo, gd);
-                                remoteCount++;
-                            }
-                            else
-                            {
-                                Log.Information($"[SuPlay]   Game desc not GameWorldInfoMessage: " + (msg?.GetType().Name ?? "null"));
-                            }
-                        }
-                    }
-                    Log.Information($"[SuPlay] Loaded {remoteCount} remote games from {servers.Count} servers");
-                });
-            });
-
             base.Enter(parameters);
+            m_worldInfos = Game.Program.ModManager.ModParentField
+                .GetStaticField<List<WorldInfo>>(typeof(Game.WorldsManager), "m_worldInfos");
+            m_remoteWorlds.Clear();
+            m_remoteWorldPings.Clear();
+            m_remoteGames.Clear();
+            m_remoteLastSeen.Clear();
+            m_nextRemoteRefreshTime = 0.0;
+            RefreshRemoteWorlds();
         }
 
-        private void HandleGameWorldInfoMessage(GameWorldInfoMessage gameWorldInfo, GameDescription gd)
+        private void RefreshRemoteWorlds()
+        {
+            var seen = new HashSet<string>();
+            var servers = ScMultiplayer.explorer?.DiscoveredServers;
+            if (servers != null)
+            {
+                foreach (var server in servers.ToArray())
+                {
+                    foreach (var game in server.GameDescriptions)
+                    {
+                        GameWorldInfoMessage info;
+                        try { info = Message.Read(game.GameDescriptionBytes) as GameWorldInfoMessage; }
+                        catch { continue; }
+                        if (info == null || ScMultiplayer.client.Address.Equals(info.HostAddress)) continue;
+
+                        string key = server.Address + "/" + game.GameID;
+                        seen.Add(key);
+                        m_remoteLastSeen[key] = Time.RealTime;
+                        if (!m_remoteWorlds.TryGetValue(key, out WorldInfo remoteWorld))
+                        {
+                            remoteWorld = CreateRemoteWorldInfo(info, game);
+                            m_remoteWorlds.Add(key, remoteWorld);
+                            m_worldInfos.Add(remoteWorld);
+                            m_worldsListWidget.AddItem(remoteWorld);
+                        }
+                        m_remoteWorldPings[remoteWorld] = server.Ping;
+                        m_remoteGames[remoteWorld] = game;
+                    }
+                }
+            }
+
+            foreach (string key in m_remoteWorlds.Keys.Where(key =>
+                !seen.Contains(key) &&
+                (!m_remoteLastSeen.TryGetValue(key, out double lastSeen) || Time.RealTime - lastSeen > 5.0)).ToArray())
+            {
+                WorldInfo remoteWorld = m_remoteWorlds[key];
+                m_worldsListWidget.RemoveItem(remoteWorld);
+                m_worldInfos.Remove(remoteWorld);
+                m_remoteWorldPings.Remove(remoteWorld);
+                m_remoteGames.Remove(remoteWorld);
+                m_remoteLastSeen.Remove(key);
+                m_remoteWorlds.Remove(key);
+            }
+        }
+
+        // Source: Survivalcraft/Game/WorldInfo.cs:WorldInfo
+        private static WorldInfo CreateRemoteWorldInfo(GameWorldInfoMessage gameWorldInfo, GameDescription gd)
         {
             var worldInfo = new WorldInfo
             {
@@ -284,10 +347,7 @@ namespace ScMultiplayer
 
             for (int i = 0; i < gd.ClientsCount; i++)
                 worldInfo.PlayerInfos.Add(new PlayerInfo());
-
-            ServerWorldName[gameWorldInfo.Name] = (gameWorldInfo.LastSaveTime, gd.ServerDescription.Ping);
-            m_worldInfos.Add(worldInfo);
-            m_worldsListWidget.AddItem(worldInfo);
+            return worldInfo;
         }
 
         public static void Play(object item)

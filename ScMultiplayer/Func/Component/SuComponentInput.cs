@@ -1,65 +1,48 @@
 ﻿using Engine;
 using Game;
-using SuAPI;
 using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Reflection;
-using System.Security.AccessControl;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace ScMultiplayer
 {
     public class SuComponentInput : Game.ComponentInput
     {
-
-
         private void SuUpdateInputFromMouseAndKeyboard(WidgetInput input)
         {
-            Game.Program.ModManager.ModParentMethod.InvokeParentMethod(this, "UpdateInputFromMouseAndKeyboard", input);
+            ScMultiplayer.ModManager.ModParentMethod.InvokeParentMethod(this, "UpdateInputFromMouseAndKeyboard", input);
         }
         private void SuUpdateInputFromGamepad(WidgetInput input)
         {
-            Game.Program.ModManager.ModParentMethod.InvokeParentMethod(this, "UpdateInputFromGamepad", input);
+            ScMultiplayer.ModManager.ModParentMethod.InvokeParentMethod(this, "UpdateInputFromGamepad", input);
         }
         private void SuUpdateInputFromVrControllers(WidgetInput input)
         {
-            Game.Program.ModManager.ModParentMethod.InvokeParentMethod(this, "UpdateInputFromVrControllers", input);
+            ScMultiplayer.ModManager.ModParentMethod.InvokeParentMethod(this, "UpdateInputFromVrControllers", input);
         }
         private void SuUpdateInputFromWidgets(WidgetInput input)
         {
-            Game.Program.ModManager.ModParentMethod.InvokeParentMethod(this, "UpdateInputFromWidgets", input);
+            ScMultiplayer.ModManager.ModParentMethod.InvokeParentMethod(this, "UpdateInputFromWidgets", input);
         }
         private PlayerInput Sum_playerInput;
         private ComponentPlayer Sum_componentPlayer;
         private double Sum_lastJumpTime;
-        private bool IsInit = false;
         public override void Update(float dt)
         {
-            if (!IsInit)
-            {
-                Sum_componentPlayer = Game.Program.ModManager.ModParentField.GetParentField<ComponentPlayer>(this, "m_componentPlayer", typeof(SuComponentInput).BaseType);
-                Sum_lastJumpTime = Game.Program.ModManager.ModParentField.GetParentField<double>(this, "m_lastJumpTime", typeof(SuComponentInput).BaseType);
-                IsInit = true;
-            }
-            /*if ( ScMultiplayer.client.IsConnected)
-            {
-                Log.Information("P{0}", base.PlayerInput.Move);
-                ScMultiplayer.client.SendInput(Message.Write(new GamePlayerInputMessage(Sum_componentPlayer.PlayerData.PlayerIndex, PlayerInput)));
-                // client 不为空且已连接到服务器，可以在此执行需要连接的操作
-            }*/
-            base.Update(dt);
-
-            //UpdateNow(dt);
+            // Source: Survivalcraft/Game/ComponentInput.cs:ComponentInput.Update
+            UpdateNow(dt);
         }
         public void UpdateNow(float dt)
         {
-            Game.Program.ModManager.ModParentField.ModifyParentField(this, "m_playerInput", default(PlayerInput), this.GetType().BaseType);
+            // Source: Survivalcraft/Game/ComponentInput.cs:ComponentInput.Update
+            var fields = ScMultiplayer.ModManager.ModParentField;
+            Type parentType = typeof(ComponentInput);
+            Sum_componentPlayer = fields.GetParentField<ComponentPlayer>(this, "m_componentPlayer", parentType);
+            Sum_lastJumpTime = fields.GetParentField<double>(this, "m_lastJumpTime", parentType);
+            fields.ModifyParentField(this, "m_playerInput", default(PlayerInput), parentType);
             SuUpdateInputFromMouseAndKeyboard(Sum_componentPlayer.GameWidget.Input);
             SuUpdateInputFromGamepad(Sum_componentPlayer.GameWidget.Input);
             SuUpdateInputFromVrControllers(Sum_componentPlayer.GameWidget.Input);
             SuUpdateInputFromWidgets(Sum_componentPlayer.GameWidget.Input);
+            Sum_playerInput = fields.GetParentField<PlayerInput>(this, "m_playerInput", parentType);
             if (Sum_playerInput.Jump)
             {
                 if (Time.RealTime - Sum_lastJumpTime < 0.3)
@@ -114,6 +97,8 @@ namespace ScMultiplayer
             {
                 SetSplitSourceInventoryAndSlot(null, -1);
             }
+            fields.ModifyParentField(this, "m_lastJumpTime", Sum_lastJumpTime, parentType);
+            fields.ModifyParentField(this, "m_playerInput", Sum_playerInput, parentType);
         }
     }
 }

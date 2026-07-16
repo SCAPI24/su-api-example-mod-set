@@ -92,7 +92,22 @@ namespace ScMultiplayer
 
         public void TransitionTo(ConnectionState state)
         {
-            m_fsm.TransitionTo(state.ToString());
+            // Source: Survivalcraft/Game/StateMachine.cs:StateMachine.TransitionTo
+            // Enum member names can be renamed by Obfuscar, so never use ToString() as a state key.
+            m_fsm.TransitionTo(GetStateName(state));
+        }
+
+        private static string GetStateName(ConnectionState state)
+        {
+            switch (state)
+            {
+                case ConnectionState.Disconnected: return "Disconnected";
+                case ConnectionState.Discovering: return "Discovering";
+                case ConnectionState.WaitingForWorld: return "WaitingForWorld";
+                case ConnectionState.WorldDownloading: return "WorldDownloading";
+                case ConnectionState.Playing: return "Playing";
+                default: throw new ArgumentOutOfRangeException(nameof(state), state, null);
+            }
         }
 
         public void Update()
@@ -160,7 +175,23 @@ namespace ScMultiplayer
                 OnFailedEnter?.Invoke(failReason ?? "Unknown error");
                 return;
             }
-            m_fsm.TransitionTo(state.ToString());
+            // Source: Survivalcraft/Game/StateMachine.cs:StateMachine.TransitionTo
+            // Keep protocol state keys stable when enum fields are obfuscated.
+            m_fsm.TransitionTo(GetStateName(state));
+        }
+
+        private static string GetStateName(DownloadState state)
+        {
+            switch (state)
+            {
+                case DownloadState.Idle: return "Idle";
+                case DownloadState.Requesting: return "Requesting";
+                case DownloadState.Receiving: return "Receiving";
+                case DownloadState.Importing: return "Importing";
+                case DownloadState.Complete: return "Complete";
+                case DownloadState.Failed: return "Failed";
+                default: throw new ArgumentOutOfRangeException(nameof(state), state, null);
+            }
         }
 
         public void Update()
