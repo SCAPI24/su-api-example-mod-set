@@ -8,6 +8,7 @@ namespace ScMultiplayer
     public class ChatMessage : Message
     {
         public string Sender { get; set; }
+        public string SenderIdentity { get; set; }
         public string Text { get; set; }
         public DateTime Timestamp { get; set; }
         public Guid MessageId { get; set; }
@@ -18,9 +19,10 @@ namespace ScMultiplayer
             Timestamp = DateTime.UtcNow;
         }
 
-        public ChatMessage(string sender, string text) : this()
+        public ChatMessage(string sender, string senderIdentity, string text) : this()
         {
             Sender = sender;
+            SenderIdentity = senderIdentity;
             Text = text;
         }
 
@@ -33,6 +35,7 @@ namespace ScMultiplayer
 
             // 读取消息内容
             Sender = reader.ReadString();
+            SenderIdentity = reader.ReadString();
             Text = reader.ReadString();
         }
 
@@ -44,6 +47,7 @@ namespace ScMultiplayer
 
             // 写入消息内容
             writer.WriteString(Sender ?? string.Empty);
+            writer.WriteString(SenderIdentity ?? string.Empty);
             writer.WriteString(Text ?? string.Empty);
         }
 
