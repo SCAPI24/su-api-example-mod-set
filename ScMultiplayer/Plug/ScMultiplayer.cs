@@ -2,10 +2,9 @@ using Comms;
 using Comms.Drt;
 using Engine;
 using Engine.Graphics;
-using Engine.Input;
 using Engine.Media;
 using Game;
-using SuAPI;
+using GameEntitySystem;
 using SuAPI;
 using System;
 using System.Collections;
@@ -24,7 +23,7 @@ namespace ScMultiplayer
     // PlayerMappingManager / PlayerOperationSyncManager / NetworkMessageHandler
     // NetworkMessageSender 保持原样，不变
     // ================================================================
-#region Helpers
+    #region Helpers
 
     public class PlayerMappingManager
     {
@@ -62,6 +61,12 @@ namespace ScMultiplayer
             playerIndexToClientId.TryGetValue(playerIndex, out int cid) ? cid : -1;
 
         public List<int> GetAllPlayerIndices() => playerIndexToClientId.Keys.ToList();
+
+        public void Reset()
+        {
+            clientIdToPlayerIndex.Clear();
+            playerIndexToClientId.Clear();
+        }
     }
 
     public class PlayerOperationSyncManager
@@ -110,11 +115,22 @@ namespace ScMultiplayer
         public double LastUpdateTime;
     }
 
+    public class NetworkPlayerRecord
+    {
+        public string Name;
+        public PlayerClass PlayerClass;
+        public string SkinName;
+        public Vector3 Position;
+        public int[] SlotValues;
+        public int[] SlotCounts;
+    }
+
     public class NetworkMessageHandler
     {
         public static void HandleChatMessage(ChatMessage message, int clientID)
         {
             Log.Information($"[Chat] Client{clientID} {message.Sender}: {message.Text}");
+            ScMultiplayer.currentInstance.DisplayChatMessage(message, clientID);
         }
 
         public static void HandleWorldInfoMessage(GameWorldInfoMessage1 message, int clientID)
@@ -143,18 +159,19 @@ namespace ScMultiplayer
         public static void SendPlayerPositionMessage(int playerIndex, Vector3 position, Quaternion rotation,
             Vector3 velocity, Vector2 lookAngles, bool isCrouching, bool isFlying, bool isRiding,
             int activeSlotIndex, int handItemValue, int handItemCount,
-            Vector3 itemOffset, Vector3 itemRotation, float aimHandAngle)
+            Vector3 itemOffset, Vector3 itemRotation, float aimHandAngle,
+            int[] slotValues, int[] slotCounts)
         {
             var msg = new GamePlayerPositionMessage(playerIndex, position, rotation, velocity,
                 lookAngles, isCrouching, isFlying, isRiding,
                 activeSlotIndex, handItemValue, handItemCount,
-                itemOffset, itemRotation, aimHandAngle);
+                itemOffset, itemRotation, aimHandAngle, slotValues, slotCounts);
             ScMultiplayer.client.SendInput(Message.WriteWithSender(msg, ScMultiplayer.client.Address));
         }
 
-        public static void SendChatMessage(string sender, string text)
+        public static void SendChatMessage(string sender, string senderIdentity, string text)
         {
-            var msg = new ChatMessage(sender, text);
+            var msg = new ChatMessage(sender, senderIdentity, text);
             ScMultiplayer.client.SendInput(Message.WriteWithSender(msg, ScMultiplayer.client.Address));
         }
 
@@ -191,7 +208,7 @@ namespace ScMultiplayer
         }
     }
 
-#endregion
+    #endregion
 
     // ================================================================
     // ScMultiplayer 主类 (IMod + IUpdateable)
@@ -227,16 +244,44 @@ namespace ScMultiplayer
         public string Version => "1.0.2";
         public IEnumerable<string> Dependencies => Array.Empty<string>();
         public bool IsEnabled { get; set; } = true;
+        public bool IsMergeLib => true;
         public UpdateOrder UpdateOrder => UpdateOrder.Input;
 
         // ---------- 内部状态 ----------
         private float m_accumulatedTime = 0f;
         private Dictionary<int, float> m_playerHealthCache = new Dictionary<int, float>(); // clientID → last known health
+        private readonly Dictionary<int, PlayerData> m_networkPlayerData = new Dictionary<int, PlayerData>();
+        private readonly HashSet<int> m_creatingNetworkPlayers = new HashSet<int>();
+        private readonly object m_updateRegistrationLock = new object();
+        private readonly Dictionary<int, string> m_pendingNetworkPlayers = new Dictionary<int, string>();
+        private readonly Dictionary<int, string> m_pendingNetworkPlayerIdentities = new Dictionary<int, string>();
+        private readonly Dictionary<string, NetworkPlayerRecord> m_playerRecords = new Dictionary<string, NetworkPlayerRecord>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<int, string> m_clientRecordKeys = new Dictionary<int, string>();
         private const float HealthSyncInterval = 1.0f; // 每秒同步一次生命
+        private Project m_registeredProject;
+        private string m_downloadedWorldDirectory;
+        private bool m_hostDisconnectHandled;
+        private bool m_localLeaveInProgress;
+        private bool m_shouldCreateHostAvatar;
+        private bool m_isLoadingDownloadedWorld;
+        private const string DownloadedWorldsRegistryPath = "data:/ScMultiplayerDownloadedWorlds.txt";
+        // Source: Mod/CircuitAutoRouter/SubsystemCircuitRouter.cs:CircuitColors
+        private static readonly Color[] ChatColors =
+        {
+            Color.White,
+            Color.Cyan,
+            Color.Red,
+            Color.Blue,
+            Color.Yellow,
+            Color.Green,
+            new Color(255, 165, 0),
+            new Color(160, 32, 240)
+        };
 
         public void OnLoad(IModEventBus eventBus = null, IModInjector modInjector = null)
         {
             currentInstance = this;
+            ModManager = Game.Program.ModManager;
 
             // 初始化状态机
             connectionSM = new NetworkConnectionStateMachine(msg => Log.Information(msg));
@@ -258,6 +303,14 @@ namespace ScMultiplayer
                 HandleGameDatabase((Database)args[0]), EventPriority.HIGHEST);
             eventBus.SubscribeEvent("Loading.Initialize", args =>
                 HandleLoading(args), EventPriority.HIGHEST);
+            eventBus.SubscribeEvent("Frame.Update", args =>
+            {
+                CleanupDownloadedWorldsIfIdle();
+                return args;
+            }, EventPriority.LOWEST);
+
+            CleanupDownloadedWorldsIfIdle();
+            GameManager.ProjectDisposed += HandleProjectDisposed;
 
             // 初始化网络
             float tickDuration = 1f / 60f;
@@ -308,32 +361,14 @@ namespace ScMultiplayer
 
         private object[] HandleLoading(object[] args)
         {
-            // MAUI版: Loading.Initialize 事件触发时，加载项已在 LoadingManager 静态类中注册
-            // 用 LoadingManager.ReplaceItem 替换 Play 屏幕加载步骤
-            // 旧版: args[0] 是 List<Action>
-            if (args[0] is List<Action> actions)
+            // Source: Survivalcraft/Game/Program.cs:Program.Initialize
+            // Source: Survivalcraft/Game/LoadingManager.cs:LoadingManager.ReplaceItem
+            if (!Game.LoadingManager.ReplaceItem("Initialize PlayScreen",
+                () => ScreensManager.AddScreen("Play", new SuPlayScreen())))
             {
-                int playIndex = actions.Count - 13;
-                actions[playIndex] = () => ScreensManager.AddScreen("Play", new SuPlayScreen());
-                Log.Information("[ScMP] PlayScreen replaced via List<Action>");
+                throw new InvalidOperationException("Loading item 'Initialize PlayScreen' was not found.");
             }
-            else
-            {
-                // LoadingManager 是静态类，无法通过 args 传入，直接用 ReplaceItem
-                bool replaced = Game.LoadingManager.ReplaceItem("Initialize PlayScreen", () => ScreensManager.AddScreen("Play", new SuPlayScreen()));
-                if (!replaced)
-                {
-                    Log.Information("[ScMP] ReplaceItem failed, fallback to QueueItem");
-                    // 如果 ReplaceItem 失败，说明还没到 PlayScreen 加载步骤
-                    // 使用 QueueItem 添加但必须用不同的 name
-                    Game.LoadingManager.QueueItem("Initialize SuPlayScreen", () => ScreensManager.AddScreen("Play", new SuPlayScreen()));
-                }
-                else
-                {
-                    Log.Information("[ScMP] PlayScreen replaced via LoadingManager.ReplaceItem");
-                }
-            }
-            return new object[] { false, args[0] };
+            return args;
         }
 
         public object[] HandleGameDatabase(Database database)
@@ -348,6 +383,32 @@ namespace ScMultiplayer
                 database.FindDatabaseObjectType("Parameter", true), true);
             subsystemTerrain.Value = "ScMultiplayer.SuSubsystemTerrain";
 
+            // Source: Mod/WatchMod/Plug/WatchMod.cs:WatchMod.HandleGameDatabase
+            // Register an independent player component instead of replacing SubsystemGameWidgets.
+            var uiTemplate = new DatabaseObject(
+                database.FindDatabaseObjectType("ComponentTemplate", true),
+                new Guid("61f1848d-baa7-49b1-9652-66410aef1901"),
+                "ScMultiplayerUI", null);
+            uiTemplate.ExplicitInheritanceParent = database.FindDatabaseObject(
+                new Guid("b05700ed-7e4e-4679-98f5-b597f421496b"),
+                database.FindDatabaseObjectType("ComponentTemplate", true), true);
+            uiTemplate.NestingParent = database.FindDatabaseObject(
+                "Gameplay", database.FindDatabaseObjectType("Folder", true), true);
+
+            var uiClass = new DatabaseObject(
+                database.FindDatabaseObjectType("Parameter", true),
+                new Guid("a49522cb-eaf2-47de-acf5-43d20a035f25"),
+                "Class", "ScMultiplayer.MultiplayerUiComponent");
+            uiClass.NestingParent = uiTemplate;
+
+            var uiMember = new DatabaseObject(
+                database.FindDatabaseObjectType("MemberComponentTemplate", true),
+                new Guid("e9d71741-c8ef-4b38-b423-e49b01b3ae5d"),
+                "ScMultiplayerUI", null);
+            uiMember.ExplicitInheritanceParent = uiTemplate;
+            uiMember.NestingParent = database.FindDatabaseObject(
+                "Player", database.FindDatabaseObjectType("EntityTemplate", true), true);
+
             Log.Information("[ScMP] Database hooks applied");
             return new object[] { true, database };
         }
@@ -357,6 +418,7 @@ namespace ScMultiplayer
         // ====================================================================
         public void Update(float dt)
         {
+            EnsureNetworkComponentPlayers();
             connectionSM.Update();
             downloadSM.Update();
 
@@ -368,104 +430,161 @@ namespace ScMultiplayer
                 Trigger30FrameEvent(dt);
             }
 
-            // 聊天 (T键) - 仅Windows
-#if WINDOWS
-            if (Keyboard.IsKeyDownOnce(Key.T))
-            {
-                DialogsManager.ShowDialog(ScreensManager.RootWidget, new TextBoxDialog("Message", "", 125, delegate (string s)
-                {
-                    if (s != null)
-                        NetworkMessageSender.SendChatMessage(client.Address.ToString(), s);
-                }));
-            }
-
-            // 创建房间 (J键)
-            if (Keyboard.IsKeyDownOnce(Key.J))
-#else
-            // Android: 触摸UI触发（待实现）
-            if (false)
-#endif
-            {
-                var sd = explorer?.DiscoveredServers?.FirstOrDefault();
-                if (sd == null)
-                {
-                    Log.Information("[ScMP] No server discovered, cannot create game");
-                    return;
-                }
-
-                // 从当前游戏状态构建世界信息
-                var gameInfo = GameManager.Project?.FindSubsystem<SubsystemGameInfo>(true);
-                if (gameInfo == null)
-                {
-                    Log.Error("[ScMP] Cannot get game info");
-                    return;
-                }
-                WorldInfo wi = null;
-                foreach (var w in WorldsManager.WorldInfos)
-                {
-                    if (w.DirectoryName == gameInfo.DirectoryName)
-                    { wi = w; break; }
-                }
-                var worldMsg = new GameWorldInfoMessage(
-                    gameInfo.WorldSettings.Name,
-                    wi?.Size ?? 0,
-                    wi?.LastSaveTime ?? DateTime.MinValue,
-                    gameInfo.WorldSettings.GameMode,
-                    gameInfo.WorldSettings.EnvironmentBehaviorMode,
-                    VersionsManager.SerializationVersion,
-                    client.Address);
-
-                DialogsManager.ShowDialog(ScreensManager.RootWidget,
-                    new MessageDialog("Create Game", $"Hosting '{gameInfo.WorldSettings.Name}'",
-                        "CreateGame", "Cancel", delegate (MessageDialogButton b)
-                        {
-                            if (b == MessageDialogButton.Button1)
-                            {
-                                LastGameDescription = Message.WriteWithSender(worldMsg, client.Address);
-                                client.CreateGame(sd.Address, LastGameDescription, client.ClientID.ToString());
-                                Log.Information($"[ScMP] Creating game: {gameInfo.WorldSettings.Name}");
-                            }
-                        }));
-            }
-
-#if WINDOWS
-            // 加入房间 (K键)
-            if (Keyboard.IsKeyDownOnce(Key.K))
-#else
-            if (false)
-#endif
-            {
-                var sd = explorer?.DiscoveredServers?.FirstOrDefault();
-                if (sd == null || sd.GameDescriptions.Length == 0)
-                {
-                    Log.Information("[ScMP] No games available to join");
-                    return;
-                }
-                DialogsManager.ShowDialog(null,
-                    new ListSelectionDialog("Select Game", sd.GameDescriptions, 60f,
-                        (object item) => ((GameDescription)item).ToString(),
-                        delegate (object item)
-                        {
-                            var gd = (GameDescription)item;
-                            client.JoinGame(sd.Address, gd.GameID,
-                                Message.WriteWithSender(new ChatMessage("Joining...", ""), client.Address),
-                                client.ClientID.ToString());
-                            Log.Information($"[ScMP] Joining game {gd.GameID}");
-                        }));
-            }
-
-#if WINDOWS
-            // 踢出玩家 (U键, 仅Host)
-            if (Keyboard.IsKeyDownOnce(Key.U) && client.ClientID == 0 && client.IsConnected)
-#else
-            if (false)
-#endif
-            {
-                TryKickPlayer();
-            }
-
             // 渲染远程玩家
             RenderRemotePlayers();
+        }
+
+        // Source: ScMultiplayer.Update keyboard J flow
+        // Source: ConsoleMod.ConsoleSubsystemGameWidgets.Update touch-button command pattern
+        public void ShowCreateRoomDialog()
+        {
+            var sd = explorer?.DiscoveredServers?.FirstOrDefault();
+            var gameInfo = GameManager.Project?.FindSubsystem<SubsystemGameInfo>(false);
+            if (sd == null || gameInfo == null)
+            {
+                DialogsManager.ShowDialog(null, new MessageDialog("Network", "No local server or world is available.", "OK", null, null));
+                return;
+            }
+
+            DialogsManager.ShowDialog(null,
+                new MessageDialog("Create Room", gameInfo.WorldSettings.Name, "Create", "Cancel",
+                    delegate (MessageDialogButton button)
+                    {
+                        if (button != MessageDialogButton.Button1) return;
+                        try
+                        {
+                            CreateRoomFromCurrentWorld(sd, gameInfo);
+                        }
+                        catch (Exception ex)
+                        {
+                            DialogsManager.ShowDialog(null, new MessageDialog(
+                                "Create Room", ex.Message, "OK", null, null));
+                        }
+                    }));
+        }
+
+        // Source: Survivalcraft/Game/ComponentGui.cs:ComponentGui.DisplaySmallMessage
+        // Source: Mod/WeatherTips/Subsystem/SuSubsystemWeather.cs:SuSubsystemWeather.Update
+        public void ShowTalkDialog()
+        {
+            if (client == null || !client.IsConnected)
+            {
+                DialogsManager.ShowDialog(null, new MessageDialog(
+                    "Talk", "Join or create a room before sending messages.", "OK", null, null));
+                return;
+            }
+
+            DialogsManager.ShowDialog(ScreensManager.RootWidget,
+                new TextBoxDialog("Talk", "", 125, delegate (string text)
+                {
+                    if (!string.IsNullOrWhiteSpace(text))
+                    {
+                        NetworkMessageSender.SendChatMessage(
+                            GetLocalPlayerName(), GetLocalPlayerIdentity(), text.Trim());
+                    }
+                }));
+        }
+
+        public void DisplayChatMessage(ChatMessage message, int clientId)
+        {
+            if (message == null || string.IsNullOrWhiteSpace(message.Text)) return;
+            string identity = string.IsNullOrWhiteSpace(message.SenderIdentity)
+                ? clientId.ToString()
+                : message.SenderIdentity;
+            int hash = 17;
+            foreach (char c in identity)
+                hash = unchecked(hash * 31 + c);
+            Color color = ChatColors[(hash & int.MaxValue) % ChatColors.Length];
+            string sender = string.IsNullOrWhiteSpace(message.Sender) ? "Player" : message.Sender;
+
+            SubsystemPlayers players = GameManager.Project?.FindSubsystem<SubsystemPlayers>(false);
+            if (players == null) return;
+            foreach (ComponentPlayer componentPlayer in players.ComponentPlayers)
+            {
+                if (m_networkPlayerData.Values.Contains(componentPlayer.PlayerData)) continue;
+                componentPlayer.ComponentGui.DisplaySmallMessage(
+                    sender + ": " + message.Text, color, blinking: true, playNotificationSound: true);
+            }
+        }
+
+        // Source: Survivalcraft/Game/GameManager.cs:GameManager.SaveProject
+        // Source: Survivalcraft/Game/WorldsManager.cs:WorldsManager.ExportWorld
+        private void CreateRoomFromCurrentWorld(ServerDescription serverDescription, SubsystemGameInfo gameInfo)
+        {
+            string directoryName = gameInfo.DirectoryName;
+            WorldInfo worldInfo = WorldsManager.WorldInfos.FirstOrDefault(world => world.DirectoryName == directoryName);
+            bool snapshotMatches = worldInfo != null && SuPlayScreen.WorldData != null &&
+                SuPlayScreen.WorldDataName == worldInfo.WorldSettings.Name &&
+                SuPlayScreen.WorldDataLastSaveTime == worldInfo.LastSaveTime;
+
+            if (!snapshotMatches)
+            {
+                // Region files are opened exclusively while a project is running. Save and unload once,
+                // then export and immediately reload the same world.
+                GameManager.SaveProject(waitForCompletion: true, showErrorDialog: true);
+                GameManager.DisposeProject();
+                WorldsManager.UpdateWorldsList();
+                worldInfo = WorldsManager.WorldInfos.FirstOrDefault(world => world.DirectoryName == directoryName);
+                if (worldInfo == null)
+                    throw new InvalidOperationException("Saved world was not found after unloading the project.");
+
+                using (var stream = new MemoryStream())
+                {
+                    WorldsManager.ExportWorld(worldInfo.DirectoryName, stream);
+                    SuPlayScreen.WorldData = stream.ToArray();
+                }
+                SuPlayScreen.WorldDataName = worldInfo.WorldSettings.Name;
+                SuPlayScreen.WorldDataLastSaveTime = worldInfo.LastSaveTime;
+            }
+
+            var worldMessage = new GameWorldInfoMessage(
+                worldInfo.WorldSettings.Name, worldInfo.Size, worldInfo.LastSaveTime,
+                worldInfo.WorldSettings.GameMode, worldInfo.WorldSettings.EnvironmentBehaviorMode,
+                worldInfo.SerializationVersion, client.Address);
+            IsHost = true;
+            LastGameDescription = Message.WriteWithSender(worldMessage, client.Address);
+            client.CreateGame(serverDescription.Address, LastGameDescription, client.ClientID.ToString());
+
+            if (GameManager.Project == null)
+                ScreensManager.SwitchScreen("GameLoading", worldInfo, null);
+        }
+
+        // Source: ScMultiplayer.Update keyboard K flow
+        // Source: Comms.Drt.Explorer.DiscoveredServers
+        public void ShowJoinRoomDialog()
+        {
+            var games = explorer?.DiscoveredServers?
+                .SelectMany(serverDescription => serverDescription.GameDescriptions)
+                .ToList() ?? new List<GameDescription>();
+            if (games.Count == 0)
+            {
+                DialogsManager.ShowDialog(null, new MessageDialog("Network", "No rooms were found.", "OK", null, null));
+                return;
+            }
+
+            DialogsManager.ShowDialog(null,
+                new ListSelectionDialog("Join Room", games, 60f,
+                    item =>
+                    {
+                        var game = (GameDescription)item;
+                        var info = Message.Read(game.GameDescriptionBytes) as GameWorldInfoMessage;
+                        return info != null ? info.Name : game.ToString();
+                    },
+                    item =>
+                    {
+                        var game = (GameDescription)item;
+                        var info = Message.Read(game.GameDescriptionBytes) as GameWorldInfoMessage;
+                        if (info == null) return;
+                        IsHost = false;
+                        if (client.IsConnected) client.LeaveGame();
+                        var joinInfo = new GameWorldInfoMessage(
+                            info.Name, info.Size, info.LastSaveTime, info.GameMode,
+                            info.EnvironmentBehaviorMode, info.SerializationVersion, client.Address,
+                            GetLocalPlayerName(), GetLocalPlayerIdentity());
+                        client.JoinGame(game.ServerDescription.Address, game.GameID,
+                            Message.WriteWithSender(joinInfo, client.Address),
+                            client.ClientID.ToString());
+                    }));
         }
 
         private void TryKickPlayer()
@@ -516,14 +635,13 @@ namespace ScMultiplayer
             if (subsystemPlayers == null) return;
             var players = subsystemPlayers.ComponentPlayers;
 
-            int currentClientId = client.ClientID;
-            int clientPlayerIndex = playerMappingManager.GetPlayerIndex(currentClientId);
-
-            foreach (var item in players)
+            // Source: SubsystemPlayers.ComponentPlayers
+            // Network IDs and persisted PlayerData indices are different domains. Send the one
+            // locally controlled player, identified by exclusion from the remote avatar table.
+            ComponentPlayer item = players.FirstOrDefault(player =>
+                !m_networkPlayerData.Values.Contains(player.PlayerData));
+            if (item != null)
             {
-                if (clientPlayerIndex == -1 || item.PlayerData.PlayerIndex != clientPlayerIndex)
-                    continue;
-
                 // 发送方直接使用 ClientID 作为网络标识，避免 PlayerIndex 映射冲突
                 int senderClientId = client.ClientID;
 
@@ -533,8 +651,18 @@ namespace ScMultiplayer
 
                 IInventory inventory = item.ComponentMiner?.Inventory;
                 int activeSlot = inventory?.ActiveSlotIndex ?? -1;
-                int handVal = inventory?.GetSlotValue(activeSlot) ?? 0;
-                int handCnt = inventory?.GetSlotCount(activeSlot) ?? 0;
+                int handVal = inventory != null && activeSlot >= 0 ? inventory.GetSlotValue(activeSlot) : 0;
+                int handCnt = inventory != null && activeSlot >= 0 ? inventory.GetSlotCount(activeSlot) : 0;
+                int[] slotValues = inventory != null ? new int[inventory.SlotsCount] : Array.Empty<int>();
+                int[] slotCounts = inventory != null ? new int[inventory.SlotsCount] : Array.Empty<int>();
+                if (inventory != null)
+                {
+                    for (int i = 0; i < inventory.SlotsCount; i++)
+                    {
+                        slotValues[i] = inventory.GetSlotValue(i);
+                        slotCounts[i] = inventory.GetSlotCount(i);
+                    }
+                }
 
                 Vector3 itemOffset = item.ComponentCreatureModel.InHandItemOffsetOrder;
                 Vector3 itemRotation = item.ComponentCreatureModel.InHandItemRotationOrder;
@@ -545,7 +673,7 @@ namespace ScMultiplayer
                     senderClientId, item.ComponentBody.Position,
                     item.ComponentBody.Rotation, item.ComponentBody.Velocity, lookAngles,
                     isCrouching, isFlying, isRiding, activeSlot, handVal, handCnt,
-                    itemOffset, itemRotation, aimHandAngle);
+                    itemOffset, itemRotation, aimHandAngle, slotValues, slotCounts);
             }
         }
 
@@ -573,15 +701,12 @@ namespace ScMultiplayer
             var players = subsystemPlayers.ComponentPlayers;
 
             int currentClientId = client.ClientID;
-            int clientPlayerIndex = playerMappingManager.GetPlayerIndex(currentClientId);
-
-            foreach (var item in players)
+            ComponentPlayer item = players.FirstOrDefault(player =>
+                !m_networkPlayerData.Values.Contains(player.PlayerData));
+            if (item != null)
             {
-                if (clientPlayerIndex == -1 || item.PlayerData.PlayerIndex != clientPlayerIndex)
-                    continue;
-
                 var health = item.ComponentHealth;
-                if (health == null) continue;
+                if (health == null) return;
 
                 float lastHealth;
                 if (!m_playerHealthCache.TryGetValue(currentClientId, out lastHealth))
@@ -654,6 +779,12 @@ namespace ScMultiplayer
             foreach (var item in obj.Leaves)
             {
                 Log.Information($"[ScMP] Client left: {item.ClientID}");
+                if (!IsHost && item.ClientID == 0)
+                {
+                    HandleHostDisconnected();
+                    continue;
+                }
+                RemoveNetworkPlayer(item.ClientID);
                 playerMappingManager.ReleasePlayerIndex(item.ClientID);
             }
 
@@ -665,30 +796,32 @@ namespace ScMultiplayer
 
                 if (assignedPlayerIndex != -1)
                 {
-                    Log.Information($"[ScMP] Assigned PlayerIndex {assignedPlayerIndex} to ClientID {item.ClientID}");
-                    client.AcceptJoinGame(item.ClientID);
-
-                    // 匹配世界并发送 WorldData
-                    if (Message.Read(item.JoinRequestBytes) is GameWorldInfoMessage worldInfo)
+                    // Source: SuPlayScreen.GameCreate caches a snapshot before the world files are opened.
+                    // Exporting a running world here fails because region files are locked by SubsystemTerrain.
+                    if (Message.Read(item.JoinRequestBytes) is GameWorldInfoMessage worldInfo &&
+                        SuPlayScreen.WorldData != null &&
+                        SuPlayScreen.WorldDataName == worldInfo.Name &&
+                        SuPlayScreen.WorldDataLastSaveTime == worldInfo.LastSaveTime)
                     {
-                        foreach (var wi in WorldsManager.WorldInfos)
+                        Log.Information($"[ScMP] Assigned PlayerIndex {assignedPlayerIndex} to ClientID {item.ClientID}");
+                        if (IsHost) CreateNetworkPlayer(item.ClientID, worldInfo.PlayerName, worldInfo.PlayerIdentity);
+                        client.AcceptJoinGame(item.ClientID);
+                        if (IsHost)
                         {
-                            if (wi.LastSaveTime == worldInfo.LastSaveTime &&
-                                wi.WorldSettings.Name == worldInfo.Name)
-                            {
-                                // 导出世界数据
-                                byte[] worldData;
-                                using (var ms = new MemoryStream())
-                                {
-                                    WorldsManager.ExportWorld(wi.DirectoryName, ms);
-                                    worldData = ms.ToArray();
-                                }
-                                NetworkMessageSender.SendPakWorldMessage(
-                                    wi.WorldSettings.Name, worldData, wi.LastSaveTime);
-                                Log.Information($"[ScMP] Sent world data ({worldData.Length} bytes) to ClientID {item.ClientID}");
-                                break;
-                            }
+                            string playerName = string.IsNullOrWhiteSpace(worldInfo.PlayerName)
+                                ? "Player " + item.ClientID
+                                : worldInfo.PlayerName;
+                            DialogsManager.ShowDialog(null, new MessageDialog(
+                                "Player Joined", playerName + " joined the room.", "OK", "Cancel", null));
                         }
+                        NetworkMessageSender.SendPakWorldMessage(
+                            SuPlayScreen.WorldDataName, SuPlayScreen.WorldData, SuPlayScreen.WorldDataLastSaveTime);
+                        Log.Information($"[ScMP] Sent cached world data ({SuPlayScreen.WorldData.Length} bytes) to ClientID {item.ClientID}");
+                    }
+                    else
+                    {
+                        playerMappingManager.ReleasePlayerIndex(item.ClientID);
+                        client.RefuseJoinGame(item.ClientID, "Host world snapshot is unavailable");
                     }
                 }
                 else
@@ -724,23 +857,19 @@ namespace ScMultiplayer
                         NetworkMessageHandler.HandleChatMessage(chat, item.ClientID);
                         break;
                     case GamePlayerPositionMessage pos:
-                        if (connectionSM.CurrentState == NetworkConnectionStateMachine.ConnectionState.Playing)
-                            HandleGamePlayerPositionMessage(pos, item.ClientID);
+                        HandleGamePlayerPositionMessage(pos, item.ClientID);
                         break;
                     case GameModifiedCellsMessage cells:
-                        if (connectionSM.CurrentState == NetworkConnectionStateMachine.ConnectionState.Playing)
-                            NetworkMessageHandler.HandleModifiedCellsMessage(cells, item.ClientID);
+                        NetworkMessageHandler.HandleModifiedCellsMessage(cells, item.ClientID);
                         break;
                     case GameWorldInfoMessage1 worldInfo:
-                        if (connectionSM.CurrentState == NetworkConnectionStateMachine.ConnectionState.Playing)
-                            NetworkMessageHandler.HandleWorldInfoMessage(worldInfo, item.ClientID);
+                        NetworkMessageHandler.HandleWorldInfoMessage(worldInfo, item.ClientID);
                         break;
                     case GamePakWorldMessage pakWorld:
                         NetworkMessageHandler.HandlePakWorldMessage(pakWorld, item.ClientID);
                         break;
                     case GamePlayerHealthMessage health:
-                        if (connectionSM.CurrentState == NetworkConnectionStateMachine.ConnectionState.Playing)
-                            NetworkMessageHandler.HandlePlayerHealthMessage(health, item.ClientID);
+                        NetworkMessageHandler.HandlePlayerHealthMessage(health, item.ClientID);
                         break;
                     case GameKickPlayerMessage kick:
                         HandleGameKickPlayerMessage(kick, item.ClientID);
@@ -759,7 +888,10 @@ namespace ScMultiplayer
         {
             // Source: msg.PlayerIndex = 发送方的 ClientID
             // 写入 RemotePlayers 而非本地 ComponentPlayers, 避免覆盖本地玩家
-            int remoteClientId = msg.PlayerIndex;
+            // Source: Comms/GameStepData.Inputs
+            // The transport ClientID is authoritative. The ID serialized in a packet can belong
+            // to an earlier connection after a client leaves and rejoins.
+            int remoteClientId = clientID;
             if (remoteClientId == client.ClientID)
                 return; // 忽略自己发回的消息
 
@@ -784,6 +916,201 @@ namespace ScMultiplayer
             state.ItemRotation = msg.ItemRotation;
             state.AimHandAngle = msg.AimHandAngle;
             state.LastUpdateTime = Time.RealTime;
+
+            if (m_networkPlayerData.TryGetValue(remoteClientId, out PlayerData playerData) &&
+                playerData.ComponentPlayer != null)
+            {
+                ComponentBody body = playerData.ComponentPlayer.ComponentBody;
+                body.Position = msg.Position;
+                body.Rotation = msg.Rotation;
+                body.Velocity = msg.Velocity;
+                IInventory inventory = playerData.ComponentPlayer.ComponentMiner?.Inventory;
+                if (inventory != null && msg.SlotValues != null)
+                {
+                    int slotsCount = Math.Min(inventory.SlotsCount, msg.SlotValues.Length);
+                    for (int i = 0; i < slotsCount; i++)
+                    {
+                        if (inventory.GetSlotValue(i) == msg.SlotValues[i] &&
+                            inventory.GetSlotCount(i) == msg.SlotCounts[i]) continue;
+                        inventory.RemoveSlotItems(i, int.MaxValue);
+                        if (msg.SlotCounts[i] > 0)
+                            inventory.AddSlotItems(i, msg.SlotValues[i], msg.SlotCounts[i]);
+                    }
+                }
+            }
+        }
+
+        // Source: Survivalcraft/Game/PlayerScreen.cs:PlayerScreen.Update
+        // Source: Survivalcraft/Game/PlayerData.cs:PlayerData.SpawnPlayer
+        private void CreateNetworkPlayer(int clientId, string requestedName, string playerIdentity = null)
+        {
+            if (GameManager.Project == null)
+            {
+                m_pendingNetworkPlayers[clientId] = requestedName;
+                m_pendingNetworkPlayerIdentities[clientId] = playerIdentity ?? string.Empty;
+                return;
+            }
+
+            lock (m_creatingNetworkPlayers)
+            {
+                if (m_networkPlayerData.ContainsKey(clientId) || !m_creatingNetworkPlayers.Add(clientId)) return;
+            }
+
+            Project project = GameManager.Project;
+            SubsystemPlayers players = project.FindSubsystem<SubsystemPlayers>(true);
+            PlayerData playerData = null;
+            Entity entity = null;
+            try
+            {
+                PlayerData hostPlayer = players.PlayersData.FirstOrDefault();
+                string playerName = string.IsNullOrWhiteSpace(requestedName) ? "NetPlayer" + clientId : requestedName.Trim();
+                if (playerName.Length > 14) playerName = playerName.Substring(0, 14);
+                string recordKey = string.IsNullOrWhiteSpace(playerIdentity) ? playerName : playerIdentity;
+                m_playerRecords.TryGetValue(recordKey, out NetworkPlayerRecord record);
+                playerData = new PlayerData(project)
+                {
+                    Name = record?.Name ?? playerName,
+                    PlayerClass = record?.PlayerClass ?? PlayerClass.Male,
+                    InputDevice = WidgetInputDevice.None,
+                    SpawnPosition = record?.Position ?? hostPlayer?.ComponentPlayer?.ComponentBody.Position ?? players.GlobalSpawnPosition
+                };
+                if (!string.IsNullOrEmpty(record?.SkinName)) playerData.CharacterSkinName = record.SkinName;
+
+                // Source: Survivalcraft/Game/SubsystemPlayers.cs:SubsystemPlayers.AddPlayerData
+                // PlayerIndex 0 belongs to the locally controlled player. Include detached network
+                // avatars when selecting an index because they are intentionally absent from PlayersData.
+                int freePlayerIndex = Enumerable.Range(1, Math.Max(0, SubsystemPlayers.MaxPlayers - 1))
+                    .FirstOrDefault(index =>
+                        !players.PlayersData.Any(player => player.PlayerIndex == index) &&
+                        !m_networkPlayerData.Values.Any(player => player.PlayerIndex == index));
+                if (freePlayerIndex == 0)
+                    throw new InvalidOperationException("No free remote player index.");
+
+                ModManager.ModParentField.ModifyParentField(
+                    players, "m_nextPlayerIndex", freePlayerIndex, typeof(SubsystemPlayers));
+                players.AddPlayerData(playerData);
+
+                var overrides = new ValuesDictionary
+                {
+                    { "Player", new ValuesDictionary { { "PlayerIndex", playerData.PlayerIndex } } },
+                    { "Intro", new ValuesDictionary { { "PlayIntro", false } } }
+                };
+                entity = DatabaseManager.CreateEntity(project, playerData.GetEntityTemplateName(), overrides, true);
+                ComponentBody body = entity.FindComponent<ComponentBody>(true);
+                body.Position = playerData.SpawnPosition + new Vector3(1f, 0f, 0f);
+                project.AddEntity(entity);
+
+                // Source: GameEntitySystem/Project.cs:Project.SaveEntities
+                // Subsystems already received EntityAdded. Remove only from the persistence set;
+                // runtime subsystem references remain active until RemoveNetworkPlayer fires removal events.
+                Dictionary<Entity, bool> projectEntities = ModManager.ModParentField.GetParentField<Dictionary<Entity, bool>>(
+                    project, "m_entities", typeof(Project));
+                projectEntities.Remove(entity);
+
+                IInventory inventory = playerData.ComponentPlayer?.ComponentMiner?.Inventory;
+                if (record?.SlotValues != null && inventory != null)
+                {
+                    int slotsCount = Math.Min(inventory.SlotsCount, record.SlotValues.Length);
+                    for (int i = 0; i < slotsCount; i++)
+                    {
+                        inventory.RemoveSlotItems(i, int.MaxValue);
+                        if (record.SlotCounts[i] > 0)
+                            inventory.AddSlotItems(i, record.SlotValues[i], record.SlotCounts[i]);
+                    }
+                }
+
+                // Source: Survivalcraft/Game/PlayerData.cs:PlayerData.PlayerData
+                StateMachine stateMachine = ModManager.ModParentField.GetParentField<StateMachine>(
+                    playerData, "m_stateMachine", typeof(PlayerData));
+                stateMachine.TransitionTo("Playing");
+
+                // Source: Survivalcraft/Game/SubsystemGameWidgets.cs:SubsystemGameWidgets.RemoveGameWidget
+                SubsystemGameWidgets gameWidgets = project.FindSubsystem<SubsystemGameWidgets>(true);
+                GameWidget networkGameWidget = playerData.GameWidget;
+                MethodInfo removeGameWidget = ModManager.ModParentMethod.GetInstanceMethodInfo(
+                    typeof(SubsystemGameWidgets), "RemoveGameWidget", new[] { typeof(GameWidget) });
+                removeGameWidget.Invoke(gameWidgets, new object[] { networkGameWidget });
+
+                // Source: Survivalcraft/Game/SubsystemPlayers.cs:SubsystemPlayers.Save
+                // Keep network avatars in the runtime component list but out of PlayersData so
+                // autosave and map exit never persist them as local split-screen players.
+                List<PlayerData> playerList = ModManager.ModParentField.GetParentField<List<PlayerData>>(
+                    players, "m_playersData", typeof(SubsystemPlayers));
+                playerList.Remove(playerData);
+                List<ComponentPlayer> componentPlayers = ModManager.ModParentField.GetParentField<List<ComponentPlayer>>(
+                    players, "m_componentPlayers", typeof(SubsystemPlayers));
+                if (playerData.ComponentPlayer != null && !componentPlayers.Contains(playerData.ComponentPlayer))
+                    componentPlayers.Add(playerData.ComponentPlayer);
+
+                m_networkPlayerData.Add(clientId, playerData);
+                m_clientRecordKeys[clientId] = recordKey;
+                m_pendingNetworkPlayers.Remove(clientId);
+                m_pendingNetworkPlayerIdentities.Remove(clientId);
+                if (clientId == 0) m_shouldCreateHostAvatar = false;
+                Log.Information($"[ScMP] Created transient network player for ClientID {clientId}, PlayerIndex={playerData.PlayerIndex}");
+            }
+            catch (Exception ex)
+            {
+                List<PlayerData> playerList = ModManager.ModParentField.GetParentField<List<PlayerData>>(
+                    players, "m_playersData", typeof(SubsystemPlayers));
+                if (playerData != null) playerList.Remove(playerData);
+                if (entity?.IsAddedToProject == true) project.RemoveEntity(entity, true);
+                playerData?.Dispose();
+                m_pendingNetworkPlayers[clientId] = requestedName;
+                m_pendingNetworkPlayerIdentities[clientId] = playerIdentity ?? string.Empty;
+                Log.Error($"[ScMP] Failed to create network player for ClientID {clientId}: {ex.Message}");
+            }
+            finally
+            {
+                lock (m_creatingNetworkPlayers) m_creatingNetworkPlayers.Remove(clientId);
+            }
+        }
+
+        private void RemoveNetworkPlayer(int clientId)
+        {
+            if (!m_networkPlayerData.TryGetValue(clientId, out PlayerData playerData)) return;
+            string recordKey = m_clientRecordKeys.TryGetValue(clientId, out string key) ? key : playerData.Name;
+            var record = new NetworkPlayerRecord
+            {
+                Name = playerData.Name,
+                PlayerClass = playerData.PlayerClass,
+                SkinName = playerData.CharacterSkinName,
+                Position = playerData.ComponentPlayer?.ComponentBody.Position ?? playerData.SpawnPosition
+            };
+            IInventory inventory = playerData.ComponentPlayer?.ComponentMiner?.Inventory;
+            if (inventory != null)
+            {
+                record.SlotValues = new int[inventory.SlotsCount];
+                record.SlotCounts = new int[inventory.SlotsCount];
+                for (int i = 0; i < inventory.SlotsCount; i++)
+                {
+                    record.SlotValues[i] = inventory.GetSlotValue(i);
+                    record.SlotCounts[i] = inventory.GetSlotCount(i);
+                }
+            }
+            m_playerRecords[recordKey] = record;
+            SubsystemPlayers players = GameManager.Project?.FindSubsystem<SubsystemPlayers>(false);
+            if (players != null)
+            {
+                // Source: Survivalcraft/Game/SubsystemPlayers.cs:SubsystemPlayers.RemovePlayerData
+                // The network GameWidget was already detached, so bypass PlayerRemoved to avoid
+                // SubsystemGameWidgets trying to remove the same child twice.
+                List<PlayerData> playerList = ModManager.ModParentField.GetParentField<List<PlayerData>>(
+                    players, "m_playersData", typeof(SubsystemPlayers));
+                playerList.Remove(playerData);
+                List<ComponentPlayer> componentPlayers = ModManager.ModParentField.GetParentField<List<ComponentPlayer>>(
+                    players, "m_componentPlayers", typeof(SubsystemPlayers));
+                if (playerData.ComponentPlayer != null)
+                {
+                    componentPlayers.Remove(playerData.ComponentPlayer);
+                    GameManager.Project.RemoveEntity(playerData.ComponentPlayer.Entity, true);
+                }
+                playerData.Dispose();
+            }
+            m_networkPlayerData.Remove(clientId);
+            m_pendingNetworkPlayers.Remove(clientId);
+            m_pendingNetworkPlayerIdentities.Remove(clientId);
+            m_clientRecordKeys.Remove(clientId);
         }
 
         public void HandleGamePlayerHealthMessage(GamePlayerHealthMessage msg, int clientID)
@@ -824,7 +1151,9 @@ namespace ScMultiplayer
 
         public void HandleGameWorldInfoMessage(GameWorldInfoMessage1 msg)
         {
-            var timeOfDay = GameManager.Project.FindSubsystem<SubsystemTimeOfDay>(true);
+            Project project = GameManager.Project;
+            if (project == null) return;
+            var timeOfDay = project.FindSubsystem<SubsystemTimeOfDay>(true);
             if (Math.Abs(timeOfDay.TimeOfDayOffset - msg.TimeOfDayOffset) > 0.02)
                 timeOfDay.TimeOfDayOffset = msg.TimeOfDayOffset;
         }
@@ -845,23 +1174,38 @@ namespace ScMultiplayer
             try
             {
                 Log.Information($"[ScMP] Importing world: {msg.Name} ({msg.WorldData.Length} bytes)");
-                WorldsManager.ImportWorld(new MemoryStream(msg.WorldData));
+                // Source: Survivalcraft/Game/WorldsManager.cs:WorldsManager.ImportWorld
+                var existingDirectories = new HashSet<string>(WorldsManager.WorldInfos.Select(world => world.DirectoryName));
+                string importedDirectory = WorldsManager.ImportWorld(new MemoryStream(msg.WorldData));
+                m_downloadedWorldDirectory = importedDirectory;
+                RegisterDownloadedWorld(importedDirectory);
                 WorldsManager.UpdateWorldsList();
 
-                foreach (var wi in WorldsManager.WorldInfos)
+                WorldInfo importedWorld = WorldsManager.WorldInfos.FirstOrDefault(world =>
+                    world.DirectoryName == importedDirectory);
+                if (importedWorld == null)
+                    importedWorld = WorldsManager.WorldInfos.FirstOrDefault(world =>
+                        !existingDirectories.Contains(world.DirectoryName) &&
+                        world.WorldSettings.Name == msg.Name);
+                if (importedWorld == null)
+                    importedWorld = WorldsManager.WorldInfos.FirstOrDefault(world =>
+                        world.WorldSettings.Name == msg.Name && world.LastSaveTime == msg.LastSaveTime);
+                if (importedWorld != null)
                 {
-                    if (wi.WorldSettings.Name == msg.Name)
-                    {
-                        SuPlayScreen.Play(wi);
-                        connectionSM.TransitionTo(NetworkConnectionStateMachine.ConnectionState.Playing);
-                        Log.Information($"[ScMP] World imported, entering game: {msg.Name}");
-                        return;
-                    }
+                    SuPlayScreen.Play(importedWorld);
+                    connectionSM.TransitionTo(NetworkConnectionStateMachine.ConnectionState.Playing);
+                    m_shouldCreateHostAvatar = true;
+                    m_pendingNetworkPlayers[0] = "Host";
+                    m_pendingNetworkPlayerIdentities[0] = "host";
+                    Log.Information($"[ScMP] World imported, entering game: {importedWorld.DirectoryName}");
+                    return;
                 }
                 Log.Error($"[ScMP] World imported but not found in world list: {msg.Name}");
+                m_isLoadingDownloadedWorld = false;
             }
             catch (Exception ex)
             {
+                m_isLoadingDownloadedWorld = false;
                 Log.Error($"[ScMP] Failed to import world: {ex.Message}");
             }
         }
@@ -873,6 +1217,12 @@ namespace ScMultiplayer
         {
             Log.Information($"[ScMP] GameCreated, ClientID={client.ClientID}, Creator={obj.CreatorAddress}");
             IsHost = true;
+            m_shouldCreateHostAvatar = false;
+            Project registeredProject = m_registeredProject;
+            ResetTransientNetworkState();
+            if (ReferenceEquals(registeredProject, GameManager.Project))
+                m_registeredProject = registeredProject;
+            playerMappingManager.AssignPlayerIndex(client.ClientID);
             connectionSM.TransitionTo(NetworkConnectionStateMachine.ConnectionState.Playing);
         }
 
@@ -880,7 +1230,27 @@ namespace ScMultiplayer
         {
             Log.Information($"[ScMP] GameJoined, Step={obj.Step}, ClientID={client.ClientID}");
             IsHost = false;
+            m_hostDisconnectHandled = false;
+            m_localLeaveInProgress = false;
+            m_isLoadingDownloadedWorld = true;
+            ResetTransientNetworkState();
+            playerMappingManager.AssignPlayerIndex(client.ClientID);
             downloadSM.TransitionTo(WorldDownloadStateMachine.DownloadState.Requesting);
+        }
+
+        public static string GetLocalPlayerName()
+        {
+            string name = UserManager.ActiveUser?.DisplayName;
+            if (!string.IsNullOrWhiteSpace(name)) return name;
+            PlayerData player = GameManager.Project?.FindSubsystem<SubsystemPlayers>(false)?.PlayersData.FirstOrDefault();
+            return !string.IsNullOrWhiteSpace(player?.Name) ? player.Name : "Player";
+        }
+
+        // Source: Survivalcraft/Game/UserManager.cs:UserManager.UserManager
+        // UniqueId is generated once and persisted in data:/UserId.dat on each installation.
+        public static string GetLocalPlayerIdentity()
+        {
+            return UserManager.ActiveUser?.UniqueId ?? string.Empty;
         }
 
         private void Client_GameDescriptionRequest(GameDescriptionRequestData obj)
@@ -904,18 +1274,159 @@ namespace ScMultiplayer
         private void Client_ConnectRefused(ConnectRefusedData obj)
         {
             Log.Information($"[ScMP] Connect refused: {obj.Reason}");
+            m_isLoadingDownloadedWorld = false;
             connectionSM.TransitionTo(NetworkConnectionStateMachine.ConnectionState.Disconnected);
         }
 
         private void Client_GameStateRequest(GameStateRequestData obj)
         {
             client.SendState(client.Step,
-                Message.WriteWithSender(new ChatMessage("StateSync", "OK"), client.Address));
+                Message.WriteWithSender(new ChatMessage("StateSync", string.Empty, "OK"), client.Address));
         }
 
         private void Client_Error(Exception obj)
         {
             Log.Error($"[ScMP] Client error: {obj.Message}");
+            if (!IsHost && client != null && !client.IsConnected)
+                HandleHostDisconnected();
+        }
+
+        private void HandleHostDisconnected()
+        {
+            if (IsHost || m_hostDisconnectHandled) return;
+            m_hostDisconnectHandled = true;
+            m_isLoadingDownloadedWorld = false;
+            Dispatcher.Dispatch(delegate
+            {
+                string downloadedDirectory = m_downloadedWorldDirectory;
+                if (GameManager.Project != null)
+                    GameManager.DisposeProject();
+                if (!string.IsNullOrEmpty(downloadedDirectory))
+                {
+                    WorldsManager.DeleteWorld(downloadedDirectory);
+                    WorldsManager.UpdateWorldsList();
+                    m_downloadedWorldDirectory = null;
+                }
+                m_networkPlayerData.Clear();
+                m_pendingNetworkPlayers.Clear();
+                RemotePlayers.Clear();
+                ScreensManager.SwitchScreen("Play");
+                DialogsManager.ShowDialog(null, new MessageDialog(
+                    "Host Disconnected", "The host left the room. The downloaded world was removed.",
+                    "OK", "Cancel", null));
+            });
+        }
+
+        public void NotifyPlayerComponentDisposing(PlayerData playerData)
+        {
+            if (playerData == null || IsHost || m_hostDisconnectHandled || m_localLeaveInProgress) return;
+            if (m_networkPlayerData.Values.Contains(playerData)) return;
+
+            m_localLeaveInProgress = true;
+            m_shouldCreateHostAvatar = false;
+            m_isLoadingDownloadedWorld = false;
+            if (client != null && client.IsConnected)
+            {
+                try
+                {
+                    client.LeaveGame();
+                }
+                catch (Exception ex)
+                {
+                    Log.Error($"[ScMP] Failed to leave game: {ex.Message}");
+                }
+            }
+
+            ResetTransientNetworkState();
+        }
+
+        private void ResetTransientNetworkState()
+        {
+            m_networkPlayerData.Clear();
+            lock (m_creatingNetworkPlayers) m_creatingNetworkPlayers.Clear();
+            m_pendingNetworkPlayers.Clear();
+            m_pendingNetworkPlayerIdentities.Clear();
+            m_clientRecordKeys.Clear();
+            m_playerHealthCache.Clear();
+            RemotePlayers.Clear();
+            playerMappingManager.Reset();
+            m_registeredProject = null;
+        }
+
+        private void EnsureNetworkComponentPlayers()
+        {
+            SubsystemPlayers players = GameManager.Project?.FindSubsystem<SubsystemPlayers>(false);
+            if (players == null || m_networkPlayerData.Count == 0) return;
+            List<ComponentPlayer> componentPlayers = ModManager.ModParentField.GetParentField<List<ComponentPlayer>>(
+                players, "m_componentPlayers", typeof(SubsystemPlayers));
+            foreach (PlayerData playerData in m_networkPlayerData.Values)
+            {
+                if (playerData.ComponentPlayer != null && !componentPlayers.Contains(playerData.ComponentPlayer))
+                    componentPlayers.Add(playerData.ComponentPlayer);
+            }
+        }
+
+        private void HandleProjectDisposed(Project project)
+        {
+            foreach (int clientId in m_networkPlayerData
+                .Where(pair => pair.Value.ComponentPlayer?.Entity.Project == project)
+                .Select(pair => pair.Key).ToArray())
+            {
+                RemoveNetworkPlayer(clientId);
+            }
+            m_registeredProject = null;
+        }
+
+        private static HashSet<string> ReadDownloadedWorldRegistry()
+        {
+            if (!Storage.FileExists(DownloadedWorldsRegistryPath))
+                return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            return new HashSet<string>(Storage.ReadAllText(DownloadedWorldsRegistryPath)
+                .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries),
+                StringComparer.OrdinalIgnoreCase);
+        }
+
+        private static void WriteDownloadedWorldRegistry(HashSet<string> directories)
+        {
+            if (directories.Count == 0)
+            {
+                if (Storage.FileExists(DownloadedWorldsRegistryPath))
+                    Storage.DeleteFile(DownloadedWorldsRegistryPath);
+                return;
+            }
+            Storage.WriteAllText(DownloadedWorldsRegistryPath, string.Join("\n", directories));
+        }
+
+        private static void RegisterDownloadedWorld(string directoryName)
+        {
+            HashSet<string> directories = ReadDownloadedWorldRegistry();
+            directories.Add(directoryName);
+            WriteDownloadedWorldRegistry(directories);
+        }
+
+        private void CleanupDownloadedWorldsIfIdle()
+        {
+            if (GameManager.Project != null || m_isLoadingDownloadedWorld) return;
+            HashSet<string> directories = ReadDownloadedWorldRegistry();
+            if (directories.Count == 0) return;
+            var failedDirectories = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string directoryName in directories)
+            {
+                try
+                {
+                    WorldsManager.DeleteWorld(directoryName);
+                    if (string.Equals(m_downloadedWorldDirectory, directoryName, StringComparison.OrdinalIgnoreCase))
+                        m_downloadedWorldDirectory = null;
+                }
+                catch (Exception ex)
+                {
+                    Log.Error($"[ScMP] Failed to delete downloaded world {directoryName}: {ex.Message}");
+                    failedDirectories.Add(directoryName);
+                    continue;
+                }
+            }
+            WriteDownloadedWorldRegistry(failedDirectories);
+            WorldsManager.UpdateWorldsList();
         }
 
         private void Server_Information(string obj)
@@ -945,7 +1456,7 @@ namespace ScMultiplayer
             try
             {
                 await WaitForProjectLoaded();
-                GameManager.Project.FindSubsystem<SubsystemUpdate>(true).AddUpdateable(this);
+                EnsureUpdateRegistration();
             }
             catch (Exception ex)
             {
@@ -957,6 +1468,30 @@ namespace ScMultiplayer
         {
             while (GameManager.Project == null)
                 await Task.Delay(1000);
+        }
+
+        public void EnsureUpdateRegistration()
+        {
+            Project project = GameManager.Project;
+            if (project == null) return;
+            lock (m_updateRegistrationLock)
+            {
+                if (!ReferenceEquals(m_registeredProject, project))
+                {
+                    project.FindSubsystem<SubsystemUpdate>(true).AddUpdateable(this);
+                    m_registeredProject = project;
+                    if (!IsHost) m_isLoadingDownloadedWorld = false;
+                    Log.Information("[ScMP] Registered multiplayer update for current project");
+                }
+            }
+
+            foreach (var pending in m_pendingNetworkPlayers.ToArray())
+            {
+                m_pendingNetworkPlayerIdentities.TryGetValue(pending.Key, out string identity);
+                CreateNetworkPlayer(pending.Key, pending.Value, identity);
+            }
+            if (!IsHost && m_shouldCreateHostAvatar && !m_networkPlayerData.ContainsKey(0))
+                CreateNetworkPlayer(0, "Host", "host");
         }
 
         /// <summary>
