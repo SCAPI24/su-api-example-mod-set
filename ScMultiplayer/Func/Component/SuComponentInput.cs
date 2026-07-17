@@ -36,6 +36,12 @@ namespace ScMultiplayer
             var fields = ScMultiplayer.ModManager.ModParentField;
             Type parentType = typeof(ComponentInput);
             Sum_componentPlayer = fields.GetParentField<ComponentPlayer>(this, "m_componentPlayer", parentType);
+            if (ScMultiplayer.currentInstance?.TryGetNetworkPlayerInput(
+                Sum_componentPlayer, out PlayerInput networkInput) == true)
+            {
+                fields.ModifyParentField(this, "m_playerInput", networkInput, parentType);
+                return;
+            }
             Sum_lastJumpTime = fields.GetParentField<double>(this, "m_lastJumpTime", parentType);
             fields.ModifyParentField(this, "m_playerInput", default(PlayerInput), parentType);
             SuUpdateInputFromMouseAndKeyboard(Sum_componentPlayer.GameWidget.Input);
@@ -43,6 +49,21 @@ namespace ScMultiplayer
             SuUpdateInputFromVrControllers(Sum_componentPlayer.GameWidget.Input);
             SuUpdateInputFromWidgets(Sum_componentPlayer.GameWidget.Input);
             Sum_playerInput = fields.GetParentField<PlayerInput>(this, "m_playerInput", parentType);
+            // Source: Survivalcraft/Game/ComponentGui.cs:ComponentGui.Update
+            // ComponentGui reads the creative touch buttons directly, so include them with the
+            // keyboard-derived PlayerInput flags before it applies the same action locally.
+            ComponentGui gui = Sum_componentPlayer.ComponentGui;
+            WorldControlAction worldActions = WorldControlAction.None;
+            if (Sum_playerInput.TimeOfDay || fields.GetParentField<ButtonWidget>(
+                gui, "m_timeOfDayButtonWidget", typeof(ComponentGui))?.IsClicked == true)
+                worldActions |= WorldControlAction.TimeOfDay;
+            if (Sum_playerInput.Precipitation || fields.GetParentField<ButtonWidget>(
+                gui, "m_precipitationButtonWidget", typeof(ComponentGui))?.IsClicked == true)
+                worldActions |= WorldControlAction.Precipitation;
+            if (Sum_playerInput.Fog || fields.GetParentField<ButtonWidget>(
+                gui, "m_fogButtonWidget", typeof(ComponentGui))?.IsClicked == true)
+                worldActions |= WorldControlAction.Fog;
+            ScMultiplayer.currentInstance?.TrySendWorldControlRequest(Sum_componentPlayer, worldActions);
             if (Sum_playerInput.Jump)
             {
                 if (Time.RealTime - Sum_lastJumpTime < 0.3)
@@ -93,6 +114,8 @@ namespace ScMultiplayer
             {
                 Sum_playerInput.CrouchMove = Vector3.Normalize(Sum_playerInput.CrouchMove);
             }
+            ScMultiplayer.currentInstance?.CaptureLocalPlayerInput(
+                Sum_componentPlayer, Sum_playerInput);
             if (SplitSourceInventory != null && SplitSourceInventory.GetSlotCount(SplitSourceSlotIndex) == 0)
             {
                 SetSplitSourceInventoryAndSlot(null, -1);
