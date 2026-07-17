@@ -74,10 +74,7 @@ namespace ScMultiplayer
         public override void Enter(object[] parameters)
         {
             // Disconnect previous connection
-            if (ScMultiplayer.client.IsConnected)
-            {
-                try { ScMultiplayer.client.LeaveGame(); } catch { }
-            }
+            ScMultiplayer.currentInstance.PrepareClientForGameCreation();
 
             RefreshServerList();
 

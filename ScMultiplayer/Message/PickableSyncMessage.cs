@@ -40,6 +40,8 @@ namespace ScMultiplayer
         {
             public ushort Id;
             public Vector3 Position;
+            public Vector3 Velocity;
+            public Vector3? FlyToPosition;
         }
 
         protected override void Read(SuReader reader)
@@ -53,12 +55,19 @@ namespace ScMultiplayer
                     Value = reader.ReadInt32();
                     Position = reader.ReadVector3(reader);
                     Velocity = reader.ReadVector3(reader);
+                    FlyToPosition = reader.ReadBoolean() ? reader.ReadVector3(reader) : (Vector3?)null;
                     break;
                 case PickAction.UpdatePosition:
                     int cnt = reader.ReadPackedInt32();
                     Positions.Clear();
                     for (int i = 0; i < cnt; i++)
-                        Positions.Add(new PickablePos { Id = (ushort)reader.ReadPackedInt32(), Position = reader.ReadVector3(reader) });
+                        Positions.Add(new PickablePos
+                        {
+                            Id = (ushort)reader.ReadPackedInt32(),
+                            Position = reader.ReadVector3(reader),
+                            Velocity = reader.ReadVector3(reader),
+                            FlyToPosition = reader.ReadBoolean() ? reader.ReadVector3(reader) : (Vector3?)null
+                        });
                     break;
                 case PickAction.Delete:
                     Id = (ushort)reader.ReadPackedInt32();
@@ -82,6 +91,8 @@ namespace ScMultiplayer
                     writer.WriteInt32(Value);
                     writer.WriteVector3(writer, Position);
                     writer.WriteVector3(writer, Velocity);
+                    writer.WriteBoolean(FlyToPosition.HasValue);
+                    if (FlyToPosition.HasValue) writer.WriteVector3(writer, FlyToPosition.Value);
                     break;
                 case PickAction.UpdatePosition:
                     writer.WritePackedInt32(Positions.Count);
@@ -89,6 +100,9 @@ namespace ScMultiplayer
                     {
                         writer.WritePackedInt32(p.Id);
                         writer.WriteVector3(writer, p.Position);
+                        writer.WriteVector3(writer, p.Velocity);
+                        writer.WriteBoolean(p.FlyToPosition.HasValue);
+                        if (p.FlyToPosition.HasValue) writer.WriteVector3(writer, p.FlyToPosition.Value);
                     }
                     break;
                 case PickAction.Delete:

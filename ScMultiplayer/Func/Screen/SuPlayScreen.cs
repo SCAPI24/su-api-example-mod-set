@@ -187,6 +187,7 @@ namespace ScMultiplayer
                 worldInfo.SerializationVersion, ScMultiplayer.client.Address, ScMultiplayer.GetLocalPlayerName(),
                 ScMultiplayer.GetLocalPlayerIdentity());
 
+            ScMultiplayer.currentInstance.PrepareClientForGameCreation();
             // Cache game description bytes for LAN discovery response
             ScMultiplayer.LastGameDescription = Message.WriteWithSender(worldMsg, ScMultiplayer.client.Address);
 
@@ -253,15 +254,13 @@ namespace ScMultiplayer
                 Log.Information($"[SuPlay] Disconnected from previous peer before join");
             }
 
-            var worldMsg = new GameWorldInfoMessage(
-                worldInfo.WorldSettings.Name, worldInfo.Size, worldInfo.LastSaveTime,
-                worldInfo.WorldSettings.GameMode, worldInfo.WorldSettings.EnvironmentBehaviorMode,
-                worldInfo.SerializationVersion, ScMultiplayer.client.Address, ScMultiplayer.GetLocalPlayerName(),
-                ScMultiplayer.GetLocalPlayerIdentity());
+            GameWorldInfoMessage worldMsg;
+            try { worldMsg = Message.Read(gd.GameDescriptionBytes) as GameWorldInfoMessage; }
+            catch { worldMsg = null; }
+            if (worldMsg == null) return;
 
-            ScMultiplayer.client.JoinGame(gd.ServerDescription.Address, gd.GameID,
-                Message.WriteWithSender(worldMsg, ScMultiplayer.client.Address),
-                ScMultiplayer.client.Address.Port.ToString());
+            ScMultiplayer.currentInstance.BeginJoinGame(
+                gd.ServerDescription.Address, gd.GameID, worldMsg);
             // Source: Survivalcraft/Game/PlayScreen.cs:PlayScreen.Update
             // Prevent the base screen from loading this virtual remote WorldInfo as a local directory.
             m_worldsListWidget.SelectedItem = null;
