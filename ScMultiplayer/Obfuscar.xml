@@ -26,6 +26,7 @@
     <SkipType name="ScMultiplayer.GamePlayerPositionMessage" />
     <SkipType name="ScMultiplayer.GameWorldInfoMessage" />
     <SkipType name="ScMultiplayer.GameWorldInfoMessage1" />
+    <SkipType name="ScMultiplayer.WorldControlRequestMessage" />
     <SkipType name="ScMultiplayer.SuReader" />
     <SkipType name="ScMultiplayer.SuWriter" />
     <SkipType name="ScMultiplayer.NetworkConnectionStateMachine" />

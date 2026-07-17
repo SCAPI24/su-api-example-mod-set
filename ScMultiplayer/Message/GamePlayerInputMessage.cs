@@ -7,19 +7,39 @@ namespace ScMultiplayer{
 public class GamePlayerInputMessage : Message
 {
     public int PlayerIndex;
+    public int Sequence;
+    public int ClientTick;
+    public Vector3 BodyPosition;
+    public Vector3 BodyVelocity;
+    public Quaternion BodyRotation;
+    public Vector2 LookAngles;
     public PlayerInput PlayerInput;
 
     public GamePlayerInputMessage() { }
 
-    public GamePlayerInputMessage(int playerIndex, PlayerInput playerInput)
+    public GamePlayerInputMessage(int playerIndex, int sequence, int clientTick,
+        Vector3 bodyPosition, Vector3 bodyVelocity, Quaternion bodyRotation,
+        Vector2 lookAngles, PlayerInput playerInput)
     {
         PlayerIndex = playerIndex;
+        Sequence = sequence;
+        ClientTick = clientTick;
+        BodyPosition = bodyPosition;
+        BodyVelocity = bodyVelocity;
+        BodyRotation = bodyRotation;
+        LookAngles = lookAngles;
         PlayerInput = playerInput;
     }
 
     protected override void Read(SuReader reader)
     {
         PlayerIndex = reader.ReadInt32();
+        Sequence = reader.ReadInt32();
+        ClientTick = reader.ReadInt32();
+        BodyPosition = reader.ReadVector3(reader);
+        BodyVelocity = reader.ReadVector3(reader);
+        BodyRotation = reader.ReadQuaternion(reader);
+        LookAngles = reader.ReadVector2(reader);
 
         // 读取基本向量
         PlayerInput.Look = reader.ReadVector2(reader);
@@ -66,6 +86,12 @@ public class GamePlayerInputMessage : Message
     protected override void Write(SuWriter writer)
     {
         writer.WriteInt32(PlayerIndex);
+        writer.WriteInt32(Sequence);
+        writer.WriteInt32(ClientTick);
+        writer.WriteVector3(writer, BodyPosition);
+        writer.WriteVector3(writer, BodyVelocity);
+        writer.WriteQuaternion(writer, BodyRotation);
+        writer.WriteVector2(writer, LookAngles);
 
             // 写入基本向量
             writer.WriteVector2(writer, PlayerInput.Look);

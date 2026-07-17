@@ -16,7 +16,10 @@ namespace ScMultiplayer
             Rotation = 2,
             Velocity = 4,
             LookAngles = 8,
-            FlyOrder = 16
+            Movement = 16,
+            Template = 32,
+            BehaviorState = 64,
+            Health = 128
         }
 
         public List<BodyItem> Bodies = new List<BodyItem>();
@@ -36,6 +39,18 @@ namespace ScMultiplayer
             public Vector3 Velocity;
             public Vector2 LookAngles;
             public Vector3? FlyOrder;
+            public Vector2? WalkOrder;
+            public Vector3? SwimOrder;
+            public Vector2 TurnOrder;
+            public float JumpOrder;
+            public bool AttackOrder;
+            public bool FeedOrder;
+            public string TemplateName;
+            public byte SyncTier;
+            public string ActiveBehaviorState;
+            public int TargetEntityId;
+            public string HerdName;
+            public float Health;
             public ChangeFlag Flags;
         }
 
@@ -56,8 +71,27 @@ namespace ScMultiplayer
                     item.Velocity = reader.ReadVector3(reader);
                 if (item.Flags.HasFlag(ChangeFlag.LookAngles))
                     item.LookAngles = reader.ReadVector2(reader);
-                if (item.Flags.HasFlag(ChangeFlag.FlyOrder))
-                    item.FlyOrder = reader.ReadVector3(reader);
+                if (item.Flags.HasFlag(ChangeFlag.Movement))
+                {
+                    if (reader.ReadBoolean()) item.WalkOrder = reader.ReadVector2(reader);
+                    if (reader.ReadBoolean()) item.FlyOrder = reader.ReadVector3(reader);
+                    if (reader.ReadBoolean()) item.SwimOrder = reader.ReadVector3(reader);
+                    item.TurnOrder = reader.ReadVector2(reader);
+                    item.JumpOrder = reader.ReadSingle();
+                    item.AttackOrder = reader.ReadBoolean();
+                    item.FeedOrder = reader.ReadBoolean();
+                }
+                if (item.Flags.HasFlag(ChangeFlag.Template))
+                    item.TemplateName = reader.ReadString();
+                if (item.Flags.HasFlag(ChangeFlag.BehaviorState))
+                {
+                    item.SyncTier = reader.ReadByte();
+                    item.ActiveBehaviorState = reader.ReadString();
+                    item.TargetEntityId = reader.ReadInt32();
+                    item.HerdName = reader.ReadString();
+                }
+                if (item.Flags.HasFlag(ChangeFlag.Health))
+                    item.Health = reader.ReadSingle();
                 Bodies.Add(item);
             }
         }
@@ -77,8 +111,30 @@ namespace ScMultiplayer
                     writer.WriteVector3(writer, item.Velocity);
                 if (item.Flags.HasFlag(ChangeFlag.LookAngles))
                     writer.WriteVector2(writer, item.LookAngles);
-                if (item.Flags.HasFlag(ChangeFlag.FlyOrder))
-                    writer.WriteVector3(writer, item.FlyOrder.Value);
+                if (item.Flags.HasFlag(ChangeFlag.Movement))
+                {
+                    writer.WriteBoolean(item.WalkOrder.HasValue);
+                    if (item.WalkOrder.HasValue) writer.WriteVector2(writer, item.WalkOrder.Value);
+                    writer.WriteBoolean(item.FlyOrder.HasValue);
+                    if (item.FlyOrder.HasValue) writer.WriteVector3(writer, item.FlyOrder.Value);
+                    writer.WriteBoolean(item.SwimOrder.HasValue);
+                    if (item.SwimOrder.HasValue) writer.WriteVector3(writer, item.SwimOrder.Value);
+                    writer.WriteVector2(writer, item.TurnOrder);
+                    writer.WriteSingle(item.JumpOrder);
+                    writer.WriteBoolean(item.AttackOrder);
+                    writer.WriteBoolean(item.FeedOrder);
+                }
+                if (item.Flags.HasFlag(ChangeFlag.Template))
+                    writer.WriteString(item.TemplateName ?? string.Empty);
+                if (item.Flags.HasFlag(ChangeFlag.BehaviorState))
+                {
+                    writer.WriteByte(item.SyncTier);
+                    writer.WriteString(item.ActiveBehaviorState ?? string.Empty);
+                    writer.WriteInt32(item.TargetEntityId);
+                    writer.WriteString(item.HerdName ?? string.Empty);
+                }
+                if (item.Flags.HasFlag(ChangeFlag.Health))
+                    writer.WriteSingle(item.Health);
             }
         }
     }

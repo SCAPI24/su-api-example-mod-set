@@ -20,6 +20,7 @@ namespace ScMultiplayer
             // Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.GameWidget
             m_componentPlayer = Entity.FindComponent<ComponentPlayer>(throwOnError: true);
             ScMultiplayer.currentInstance?.EnsureUpdateRegistration();
+            ScMultiplayer.currentInstance?.ApplyRemoteWeatherState();
         }
 
         public override void Dispose()

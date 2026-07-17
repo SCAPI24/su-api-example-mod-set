@@ -17,12 +17,19 @@ namespace ScMultiplayer
         public IPEndPoint HostAddress;
         public string PlayerName = string.Empty;
         public string PlayerIdentity = string.Empty;
+        public bool HasPlayerProfile;
+        public PlayerClass PlayerClass;
+        public string CharacterSkinName = string.Empty;
 
         public GameWorldInfoMessage()
         {
         }
 
-        public GameWorldInfoMessage(string name, long size, DateTime lastSaveTime, GameMode gameMode, EnvironmentBehaviorMode environmentBehaviorMode, string serializationVersion, IPEndPoint hostAddress, string playerName = "", string playerIdentity = "")
+        public GameWorldInfoMessage(string name, long size, DateTime lastSaveTime, GameMode gameMode,
+            EnvironmentBehaviorMode environmentBehaviorMode, string serializationVersion,
+            IPEndPoint hostAddress, string playerName = "", string playerIdentity = "",
+            bool hasPlayerProfile = false, PlayerClass playerClass = PlayerClass.Male,
+            string characterSkinName = "")
         {
             Name = name;
             Size = size;
@@ -33,6 +40,9 @@ namespace ScMultiplayer
             HostAddress = hostAddress;
             PlayerName = playerName ?? string.Empty;
             PlayerIdentity = playerIdentity ?? string.Empty;
+            HasPlayerProfile = hasPlayerProfile;
+            PlayerClass = playerClass;
+            CharacterSkinName = characterSkinName ?? string.Empty;
         }
 
         protected override void Read(SuReader reader)
@@ -46,6 +56,9 @@ namespace ScMultiplayer
             HostAddress=reader.ReadIPEndPoint();
             PlayerName = reader.ReadString();
             PlayerIdentity = reader.ReadString();
+            HasPlayerProfile = reader.ReadBoolean();
+            PlayerClass = (PlayerClass)reader.ReadInt32();
+            CharacterSkinName = reader.ReadString();
         }
 
         protected override void Write(SuWriter writer)
@@ -59,7 +72,9 @@ namespace ScMultiplayer
             writer.WriteIPEndPoint(HostAddress);
             writer.WriteString(PlayerName ?? string.Empty);
             writer.WriteString(PlayerIdentity ?? string.Empty);
-          
+            writer.WriteBoolean(HasPlayerProfile);
+            writer.WriteInt32((int)PlayerClass);
+            writer.WriteString(CharacterSkinName ?? string.Empty);
         }
     }
 }
