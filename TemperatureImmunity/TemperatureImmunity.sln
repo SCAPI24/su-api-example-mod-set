@@ -7,7 +7,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TemperatureImmunity", "Temp
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Survivalcraft", "..\..\Survivalcraft\Survivalcraft.csproj", "{745B1ACF-EA58-49B6-9C89-E638B43077D1}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GameEntitySystem", "..\..\EntitySystem\GameEntitySystem.csproj", "{54A28E29-CA1E-428E-BB73-571C283F9090}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GameEntitySystem", "..\..\EntitySystem\EntitySystem.csproj", "{54A28E29-CA1E-428E-BB73-571C283F9090}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Engine", "..\..\Engine\Engine.csproj", "{6B218D5B-D431-43AA-83EA-648C8A528664}"
 EndProject
