@@ -7,7 +7,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RainWithoutDawn", "RainWith
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Survivalcraft", "..\..\Survivalcraft\Survivalcraft.csproj", "{B0565D6A-AE93-4AF1-A535-EF90CA8E5A16}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GameEntitySystem", "..\..\EntitySystem\GameEntitySystem.csproj", "{54A28E29-CA1E-428E-BB73-571C283F9090}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GameEntitySystem", "..\..\EntitySystem\EntitySystem.csproj", "{54A28E29-CA1E-428E-BB73-571C283F9090}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Engine", "..\..\Engine\Engine.csproj", "{6B218D5B-D431-43AA-83EA-648C8A528664}"
 EndProject
