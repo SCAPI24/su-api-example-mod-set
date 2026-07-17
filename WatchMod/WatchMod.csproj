@@ -11,7 +11,7 @@
 
   <ItemGroup Condition="'$(TargetFramework)' == 'net8.0'">
     <ProjectReference Include="..\..\Engine\Engine\Engine.csproj" />
-    <ProjectReference Include="..\..\EntitySystem\GameEntitySystem\GameEntitySystem.csproj" />
+    <ProjectReference Include="..\..\EntitySystem\EntitySystem.csproj" />
     <ProjectReference Include="..\..\Survivalcraft\Survivalcraft.csproj" />
   </ItemGroup>
 
@@ -20,12 +20,12 @@
       <HintPath>..\..\Engine\Engine.Android\bin\Debug\net8.0-android\Engine.dll</HintPath>
       <Private>false</Private>
     </Reference>
-    <Reference Include="GameEntitySystem">
-      <HintPath>..\..\EntitySystem\GameEntitySystem\bin\Debug\net8.0-android\GameEntitySystem.dll</HintPath>
+    <Reference Include="EntitySystem">
+      <HintPath>..\..\EntitySystem\bin\Debug\net8.0-android\EntitySystem.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="Survivalcraft">
-      <HintPath>..\..\Survivalcraft\bin.android\net8.0-android\Survivalcraft.dll</HintPath>
+      <HintPath>..\..\Survivalcraft\bin\Debug\net8.0-android\Survivalcraft.dll</HintPath>
       <Private>false</Private>
     </Reference>
   </ItemGroup>

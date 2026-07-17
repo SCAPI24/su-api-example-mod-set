@@ -7,7 +7,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\Engine\Engine\Engine.csproj" />
-    <ProjectReference Include="..\..\EntitySystem\GameEntitySystem\GameEntitySystem.csproj" />
+    <ProjectReference Include="..\..\EntitySystem\EntitySystem.csproj" />
     <ProjectReference Include="..\..\Survivalcraft\Survivalcraft.csproj" />
   </ItemGroup>
 

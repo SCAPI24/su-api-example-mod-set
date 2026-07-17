@@ -10,7 +10,7 @@
 	<!-- 设置仅处理当前程序集 
 		
 	-->
-	<Module file="$(InPath)\GameEntitySystem.dll"/>
+	<Module file="$(InPath)\EntitySystem.dll"/>
 	<Module file="$(InPath)\TemperatureImmunity.dll"/>
 
 </Obfuscator>
