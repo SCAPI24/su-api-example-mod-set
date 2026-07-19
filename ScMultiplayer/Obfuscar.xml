@@ -29,6 +29,7 @@
     <SkipType name="ScMultiplayer.GamePlayerInputMessage" />
     <SkipType name="ScMultiplayer.GamePlayerPositionMessage" />
     <SkipType name="ScMultiplayer.GamePlayerPositionsMessage" />
+    <SkipType name="ScMultiplayer.SyncBatchMessage" />
     <SkipType name="ScMultiplayer.PlayerAimMessage" />
     <SkipType name="ScMultiplayer.TerrainDigRequestMessage" />
     <SkipType name="ScMultiplayer.TerrainDigResultMessage" />
