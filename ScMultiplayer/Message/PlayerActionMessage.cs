@@ -10,7 +10,9 @@ namespace ScMultiplayer
         Poke,
         InteractRequest,
         LeaveRequest,
-        RespawnRequest
+        RespawnRequest,
+        DropRequest,
+        Whistle
     }
 
     [Serializable]
@@ -50,13 +52,16 @@ namespace ScMultiplayer
             if (Action == PlayerActionType.HitRequest ||
                 Action == PlayerActionType.InteractRequest)
                 HitRay = reader.ReadRay3(reader);
-            if (Action == PlayerActionType.InteractRequest)
+            if (Action == PlayerActionType.InteractRequest ||
+                Action == PlayerActionType.DropRequest)
             {
                 ActiveSlotIndex = reader.ReadInt32();
                 ItemValue = reader.ReadInt32();
                 ItemCount = reader.ReadInt32();
             }
-            if (Action == PlayerActionType.RespawnRequest)
+            if (Action == PlayerActionType.RespawnRequest ||
+                Action == PlayerActionType.DropRequest ||
+                Action == PlayerActionType.Whistle)
                 Position = reader.ReadVector3(reader);
         }
 
@@ -68,13 +73,16 @@ namespace ScMultiplayer
             if (Action == PlayerActionType.HitRequest ||
                 Action == PlayerActionType.InteractRequest)
                 writer.WriteRay3(writer, HitRay);
-            if (Action == PlayerActionType.InteractRequest)
+            if (Action == PlayerActionType.InteractRequest ||
+                Action == PlayerActionType.DropRequest)
             {
                 writer.WriteInt32(ActiveSlotIndex);
                 writer.WriteInt32(ItemValue);
                 writer.WriteInt32(ItemCount);
             }
-            if (Action == PlayerActionType.RespawnRequest)
+            if (Action == PlayerActionType.RespawnRequest ||
+                Action == PlayerActionType.DropRequest ||
+                Action == PlayerActionType.Whistle)
                 writer.WriteVector3(writer, Position);
         }
     }
