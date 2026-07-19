@@ -186,6 +186,10 @@ namespace Comms
             {
                 if (peer.ConnectedTo != null)
                 {
+                    // Source: Comms/Peer.cs:Peer.Connect
+                    // Reliable UDP can deliver a repeated accept after the first one succeeded.
+                    // The same endpoint is already established, so this is idempotent.
+                    if (object.Equals(peer.ConnectedTo.Address, address)) return;
                     throw new ProtocolViolationException("Unexpected connection accept ignored, peer already connected.");
                 }
                 if (!object.Equals(peer.ConnectingTo, address))
@@ -387,6 +391,7 @@ namespace Comms
                     double time = Comm.GetTime();
                     peerData.NextKeepAliveSendTime = time + (double)peer.Settings.KeepAlivePeriod;
                     peerData.Ping = (float)(time - RequestSendTime);
+                    peer.Comm.UpdateRoundTripTime(address, peerData.Ping);
                 }
             }
         }
@@ -409,12 +414,17 @@ namespace Comms
             {
                 if (peer.ConnectedTo != null && object.Equals(address, peer.ConnectedTo.Address))
                 {
+                    // Source: Comms/Comms/Peer.cs:KeepAliveResponseMessage.Handle
+                    // Any complete application message proves the endpoint is alive. This is
+                    // essential while a chunked world transfer competes with keep-alive packets.
+                    peer.ConnectedTo.LastKeepAliveReceiveTime = Comm.GetTime();
                     peer.DataMessageReceived?.Invoke(new PeerPacket(peer.ConnectedTo, Bytes));
                     return;
                 }
                 PeerData peerData = peer.FindPeer(address);
                 if (peerData != null)
                 {
+                    peerData.LastKeepAliveReceiveTime = Comm.GetTime();
                     peer.DataMessageReceived?.Invoke(new PeerPacket(peerData, Bytes));
                 }
             }
@@ -563,10 +573,25 @@ namespace Comms
                 }
                 else
                 {
-                    InternalSend(new IPEndPoint(UdpTransmitter.IPV4BroadcastAddress, peerPort), DeliveryMode.Raw, new DiscoveryRequestMessage
+                    DiscoveryRequestMessage request = new DiscoveryRequestMessage
                     {
                         DiscoveryRequestData = (discoveryQueryData ?? new byte[0])
-                    });
+                    };
+                    Exception lastError = null;
+                    bool sent = false;
+                    foreach (IPAddress address in UdpTransmitter.GetIPv4DiscoveryAddresses())
+                    {
+                        try
+                        {
+                            InternalSend(new IPEndPoint(address, peerPort), DeliveryMode.Raw, request);
+                            sent = true;
+                        }
+                        catch (Exception error)
+                        {
+                            lastError = error;
+                        }
+                    }
+                    if (!sent && lastError != null) throw lastError;
                 }
             }
         }
@@ -598,6 +623,7 @@ namespace Comms
                 }
                 ConnectingTo = address;
                 ConnectStartTime = Comm.GetTime();
+                Comm.ResetConnection(address);
                 InternalSend(address, DeliveryMode.ReliableSequenced, new ConnectRequestMessage
                 {
                     ConnectRequestData = (connectRequestData ?? new byte[0])

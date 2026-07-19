@@ -53,6 +53,12 @@ namespace ScMultiplayer
             // ComponentGui reads the creative touch buttons directly, so include them with the
             // keyboard-derived PlayerInput flags before it applies the same action locally.
             ComponentGui gui = Sum_componentPlayer.ComponentGui;
+            // Source: Survivalcraft/Game/ComponentGui.cs:ComponentGui.Update
+            // Touch-only buttons mutate ComponentGui directly, so mirror world-affecting clicks
+            // into the network input/request path as well.
+            if (fields.GetParentField<ButtonWidget>(
+                gui, "m_editItemButton", typeof(ComponentGui))?.IsClicked == true)
+                Sum_playerInput.EditItem = true;
             WorldControlAction worldActions = WorldControlAction.None;
             if (Sum_playerInput.TimeOfDay || fields.GetParentField<ButtonWidget>(
                 gui, "m_timeOfDayButtonWidget", typeof(ComponentGui))?.IsClicked == true)
@@ -63,6 +69,9 @@ namespace ScMultiplayer
             if (Sum_playerInput.Fog || fields.GetParentField<ButtonWidget>(
                 gui, "m_fogButtonWidget", typeof(ComponentGui))?.IsClicked == true)
                 worldActions |= WorldControlAction.Fog;
+            if (Sum_playerInput.Lighting || fields.GetParentField<ButtonWidget>(
+                gui, "m_lightningButtonWidget", typeof(ComponentGui))?.IsClicked == true)
+                worldActions |= WorldControlAction.Lightning;
             ScMultiplayer.currentInstance?.TrySendWorldControlRequest(Sum_componentPlayer, worldActions);
             if (Sum_playerInput.Jump)
             {
@@ -114,8 +123,19 @@ namespace ScMultiplayer
             {
                 Sum_playerInput.CrouchMove = Vector3.Normalize(Sum_playerInput.CrouchMove);
             }
+            // Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update
+            // Animal entities are host snapshots, so send their stable network ID instead of
+            // relying on both peers' body raycasts to select the same local Entity instance.
+            bool sentAnimalAttack = Sum_playerInput.Hit.HasValue &&
+                ScMultiplayer.currentInstance?.TrySendAnimalAttackRequest(
+                    Sum_componentPlayer, Sum_playerInput.Hit.Value) == true;
+            PlayerInput networkPlayerInput = Sum_playerInput;
+            // Source: ScMultiplayer.cs:TrySendAnimalAttackRequest
+            // Animals use their stable network entity ID. Do not also enqueue the generic player
+            // ray request, while preserving Sum_playerInput for the client's native prediction.
+            if (sentAnimalAttack) networkPlayerInput.Hit = null;
             ScMultiplayer.currentInstance?.CaptureLocalPlayerInput(
-                Sum_componentPlayer, Sum_playerInput);
+                Sum_componentPlayer, networkPlayerInput);
             if (SplitSourceInventory != null && SplitSourceInventory.GetSlotCount(SplitSourceSlotIndex) == 0)
             {
                 SetSplitSourceInventoryAndSlot(null, -1);

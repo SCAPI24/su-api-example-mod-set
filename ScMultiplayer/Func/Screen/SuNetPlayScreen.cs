@@ -182,6 +182,14 @@ namespace ScMultiplayer
                 try { ScMultiplayer.client.LeaveGame(); } catch { }
             }
 
+            bool isLocalServer = ScMultiplayer.IsLocalServerEndpoint(sd.Address);
+            IPEndPoint connectionAddress = isLocalServer
+                ? ScMultiplayer.GetLocalServerConnectionAddress()
+                : sd.Address;
+            IPEndPoint advertisedAddress = isLocalServer
+                ? ScMultiplayer.server.Address
+                : sd.Address;
+
             // Generate a simple game description for the new room
             var worldMsg = new GameWorldInfoMessage(
                 "NetRoom_" + Environment.TickCount,
@@ -189,13 +197,13 @@ namespace ScMultiplayer
                 GameMode.Survival,
                 EnvironmentBehaviorMode.Living,
                 VersionsManager.SerializationVersion,
-                ScMultiplayer.client.Address);
+                advertisedAddress);
 
             byte[] descBytes = Message.WriteWithSender(worldMsg, ScMultiplayer.client.Address);
             ScMultiplayer.LastGameDescription = descBytes;
 
             ScMultiplayer.client.CreateGame(
-                sd.Address,
+                connectionAddress,
                 descBytes,
                 ScMultiplayer.client.Address.Port.ToString());
 

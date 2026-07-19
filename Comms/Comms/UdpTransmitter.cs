@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
+using System.Net.NetworkInformation;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -23,6 +24,60 @@ public class UdpTransmitter : ITransmitter, IDisposable
     public static IPAddress IPV4BroadcastAddress { get; } = IPAddress.Broadcast;
 
     public static IPAddress IPV6BroadcastAddress { get; } = IPAddress.Parse("ff08::1");
+
+    // Source: System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces
+    // Broadcast discovery on every IPv4 subnet. This includes virtual LAN adapters such as
+    // ZeroTier instead of relying only on the physical network's 255.255.255.255 route.
+    public static IReadOnlyList<IPAddress> GetIPv4DiscoveryAddresses()
+    {
+        var result = new List<IPAddress> { IPV4BroadcastAddress };
+        try
+        {
+            foreach (NetworkInterface networkInterface in NetworkInterface.GetAllNetworkInterfaces())
+            {
+                if (networkInterface.OperationalStatus != OperationalStatus.Up) continue;
+                foreach (UnicastIPAddressInformation address in networkInterface.GetIPProperties().UnicastAddresses)
+                {
+                    if (address.Address.AddressFamily != AddressFamily.InterNetwork) continue;
+                    byte[] ip = address.Address.GetAddressBytes();
+                    byte[] mask = GetIPv4MaskBytes(address);
+                    if (mask == null) continue;
+                    byte[] broadcast = new byte[4];
+                    for (int i = 0; i < 4; i++) broadcast[i] = (byte)(ip[i] | (byte)~mask[i]);
+                    IPAddress endpoint = new IPAddress(broadcast);
+                    if (!result.Contains(endpoint)) result.Add(endpoint);
+                }
+            }
+        }
+        catch
+        {
+        }
+        return result;
+    }
+
+    // Source: System.Net.NetworkInformation.UnicastIPAddressInformation.PrefixLength
+    // Android VPN adapters can omit IPv4Mask while still exposing PrefixLength.
+    private static byte[] GetIPv4MaskBytes(UnicastIPAddressInformation address)
+    {
+        if (address.IPv4Mask != null) return address.IPv4Mask.GetAddressBytes();
+        int prefixLength;
+        try
+        {
+            prefixLength = address.PrefixLength;
+        }
+        catch
+        {
+            return null;
+        }
+        if (prefixLength <= 0 || prefixLength > 32) return null;
+        byte[] mask = new byte[4];
+        for (int i = 0; i < mask.Length; i++)
+        {
+            int bits = Math.Min(Math.Max(prefixLength - i * 8, 0), 8);
+            mask[i] = bits == 0 ? (byte)0 : (byte)(0xff << (8 - bits));
+        }
+        return mask;
+    }
 
     public int MaxPacketSize { get; set; } = 1024;
 
@@ -46,10 +101,7 @@ public class UdpTransmitter : ITransmitter, IDisposable
             {
                 try
                 {
-                    using Socket socket = new(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
-                    socket.Bind(new IPEndPoint(IPAddress.Any, 0));
-                    socket.Connect("8.8.8.8", 12345);
-                    Address = new IPEndPoint(((IPEndPoint)socket.LocalEndPoint).Address, ((IPEndPoint)Socket4.LocalEndPoint).Port);
+                    Address = new IPEndPoint(GetPreferredIPv4Address(), ((IPEndPoint)Socket4.LocalEndPoint).Port);
                 }
                 catch (Exception)
                 {
@@ -105,6 +157,103 @@ public class UdpTransmitter : ITransmitter, IDisposable
         }
         Task = new Task(TaskFunction, TaskCreationOptions.LongRunning);
         Task.Start();
+    }
+
+    // Source: System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces
+    // Android exposes a VpnService adapter as tun/ppp and does not always include the provider
+    // name in Description. Prefer an explicit ZeroTier adapter, then a private tunnel adapter,
+    // before falling back to the default route used for ordinary LAN traffic.
+    public static IPAddress GetPreferredIPv4Address()
+    {
+        IPAddress defaultAddress = GetDefaultIPv4Address();
+        IPAddress tunnelFallback = null;
+        IPAddress fallback = null;
+        try
+        {
+            foreach (NetworkInterface networkInterface in NetworkInterface.GetAllNetworkInterfaces())
+            {
+                if (networkInterface.OperationalStatus != OperationalStatus.Up ||
+                    networkInterface.NetworkInterfaceType == NetworkInterfaceType.Loopback)
+                    continue;
+                string name = (networkInterface.Name ?? string.Empty).ToLowerInvariant();
+                string description = (networkInterface.Description ?? string.Empty).ToLowerInvariant();
+                string adapter = name + " " + description;
+                bool isZeroTier = adapter.Contains("zerotier") ||
+                    name.StartsWith("zt", StringComparison.Ordinal);
+                bool isTunnel = networkInterface.NetworkInterfaceType == NetworkInterfaceType.Tunnel ||
+                    networkInterface.NetworkInterfaceType == NetworkInterfaceType.Ppp ||
+                    name.StartsWith("tun", StringComparison.Ordinal) ||
+                    name.StartsWith("tap", StringComparison.Ordinal);
+                foreach (UnicastIPAddressInformation address in networkInterface.GetIPProperties().UnicastAddresses)
+                {
+                    if (address.Address.AddressFamily != AddressFamily.InterNetwork ||
+                        !IsPrivateIPv4(address.Address))
+                        continue;
+                    if (isZeroTier)
+                        return address.Address;
+                    if (isTunnel && tunnelFallback == null)
+                        tunnelFallback = address.Address;
+                    if (fallback == null && !adapter.Contains("hyper-v") &&
+                        !adapter.Contains("wsl") && !adapter.Contains("virtualbox") &&
+                        !adapter.Contains("vmware"))
+                        fallback = address.Address;
+                }
+            }
+        }
+        catch
+        {
+        }
+
+        if (tunnelFallback != null) return tunnelFallback;
+        if (defaultAddress != null && IsPrivateIPv4(defaultAddress)) return defaultAddress;
+        if (fallback != null) return fallback;
+        return defaultAddress ?? IPAddress.Any;
+    }
+
+    private static IPAddress GetDefaultIPv4Address()
+    {
+        try
+        {
+            using Socket socket = new(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+            socket.Bind(new IPEndPoint(IPAddress.Any, 0));
+            socket.Connect("8.8.8.8", 12345);
+            return ((IPEndPoint)socket.LocalEndPoint).Address;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    // Source: System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces
+    public static bool IsLocalIPv4Address(IPAddress address)
+    {
+        if (address == null || address.AddressFamily != AddressFamily.InterNetwork)
+            return false;
+        if (IPAddress.IsLoopback(address)) return true;
+        try
+        {
+            foreach (NetworkInterface networkInterface in NetworkInterface.GetAllNetworkInterfaces())
+            {
+                foreach (UnicastIPAddressInformation localAddress in
+                    networkInterface.GetIPProperties().UnicastAddresses)
+                {
+                    if (address.Equals(localAddress.Address)) return true;
+                }
+            }
+        }
+        catch
+        {
+        }
+        return false;
+    }
+
+    private static bool IsPrivateIPv4(IPAddress address)
+    {
+        byte[] bytes = address.GetAddressBytes();
+        return bytes[0] == 10 ||
+            (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31) ||
+            (bytes[0] == 192 && bytes[1] == 168);
     }
 
     public void Dispose()

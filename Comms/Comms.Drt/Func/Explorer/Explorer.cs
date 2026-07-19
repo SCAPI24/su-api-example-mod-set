@@ -229,6 +229,19 @@ public class Explorer : IDisposable
         }
     }
 
+    // Source: Comms.Drt/Func/Explorer/Explorer.DiscoverLocalServers
+    // Probe a server endpoint learned from a peer's discovery request. This is needed when an
+    // Android VpnService permits inbound ZeroTier broadcasts but blocks outbound broadcasts.
+    public void DiscoverServer(IPEndPoint serverAddress)
+    {
+        lock (Peer.Lock)
+        {
+            CheckNotDisposed();
+            if (serverAddress == null) throw new ArgumentNullException(nameof(serverAddress));
+            Peer.DiscoverPeer(serverAddress, MessageSerializer.Write(new ClientDiscoveryRequestMessage()));
+        }
+    }
+
     public void RequestResource(string host, int port, string name, int minimumVersion)
     {
         Task.Run(delegate

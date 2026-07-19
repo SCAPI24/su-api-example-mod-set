@@ -15,12 +15,28 @@ namespace ScMultiplayer
         public float MaxHealth;
         public float HealthChange;     // 正=治疗,负=受伤
         public bool IsDead;
+        public float Air;
+        public float Food;
+        public float Stamina;
+        public float Sleep;
+        public float Temperature;
+        public float Wetness;
+        public float Level;
+        public Vector3 BodyVelocity;
+        public bool HasKnockback;
+        public bool IsSleeping;
+        public float FireDuration;
+        public float FluDuration;
+        public float SicknessDuration;
         public string CauseOrSource;   // 伤害/治疗来源
 
         public GamePlayerHealthMessage() { }
 
         public GamePlayerHealthMessage(int playerIndex, float health, float maxHealth,
-            float healthChange, bool isDead, string cause = null)
+            float healthChange, bool isDead, float air, float food, float stamina,
+            float sleep, float temperature, float wetness, float level,
+            Vector3 bodyVelocity, bool hasKnockback, bool isSleeping, float fireDuration,
+            float fluDuration, float sicknessDuration, string cause = null)
         {
             PlayerIndex = playerIndex;
             Health = health;
@@ -28,6 +44,19 @@ namespace ScMultiplayer
             HealthChange = healthChange;
             IsDead = isDead;
             CauseOrSource = cause ?? string.Empty;
+            Air = air;
+            Food = food;
+            Stamina = stamina;
+            Sleep = sleep;
+            Temperature = temperature;
+            Wetness = wetness;
+            Level = level;
+            BodyVelocity = bodyVelocity;
+            HasKnockback = hasKnockback;
+            IsSleeping = isSleeping;
+            FireDuration = fireDuration;
+            FluDuration = fluDuration;
+            SicknessDuration = sicknessDuration;
         }
 
         protected override void Read(SuReader reader)
@@ -38,6 +67,19 @@ namespace ScMultiplayer
             HealthChange = reader.ReadSingle();
             IsDead = reader.ReadBoolean();
             CauseOrSource = reader.ReadString();
+            Air = reader.ReadSingle();
+            Food = reader.ReadSingle();
+            Stamina = reader.ReadSingle();
+            Sleep = reader.ReadSingle();
+            Temperature = reader.ReadSingle();
+            Wetness = reader.ReadSingle();
+            Level = reader.ReadSingle();
+            BodyVelocity = reader.ReadVector3(reader);
+            HasKnockback = reader.ReadBoolean();
+            IsSleeping = reader.ReadBoolean();
+            FireDuration = reader.ReadSingle();
+            FluDuration = reader.ReadSingle();
+            SicknessDuration = reader.ReadSingle();
         }
 
         protected override void Write(SuWriter writer)
@@ -48,6 +90,19 @@ namespace ScMultiplayer
             writer.WriteSingle(HealthChange);
             writer.WriteBoolean(IsDead);
             writer.WriteString(CauseOrSource ?? string.Empty);
+            writer.WriteSingle(Air);
+            writer.WriteSingle(Food);
+            writer.WriteSingle(Stamina);
+            writer.WriteSingle(Sleep);
+            writer.WriteSingle(Temperature);
+            writer.WriteSingle(Wetness);
+            writer.WriteSingle(Level);
+            writer.WriteVector3(writer, BodyVelocity);
+            writer.WriteBoolean(HasKnockback);
+            writer.WriteBoolean(IsSleeping);
+            writer.WriteSingle(FireDuration);
+            writer.WriteSingle(FluDuration);
+            writer.WriteSingle(SicknessDuration);
         }
     }
 }
