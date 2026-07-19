@@ -194,6 +194,8 @@ namespace ScMultiplayer
         public readonly Queue<PlayerActionMessage> HitEvents = new Queue<PlayerActionMessage>();
         public int LastHitSequence;
         public double NextHitExecutionTime;
+        public readonly Queue<PlayerActionMessage> DropEvents = new Queue<PlayerActionMessage>();
+        public int LastDropSequence;
         public int LastRespawnSequence;
     }
 
@@ -624,6 +626,20 @@ namespace ScMultiplayer
                 Message.WriteWithSender(message, ScMultiplayer.client.Address));
         }
 
+        // Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update
+        public static void SendPlayerDropRequest(PlayerActionMessage message)
+        {
+            ScMultiplayer.client.SendDirectInput(0,
+                Message.WriteWithSender(message, ScMultiplayer.client.Address));
+        }
+
+        // Source: Survivalcraft/Game/ComponentMiner.cs:ComponentMiner.AttackBody
+        public static void SendProjectileHit(int targetClientId, ProjectileSyncMessage message)
+        {
+            ScMultiplayer.client.SendDirectInput(targetClientId,
+                Message.WriteWithSender(message, ScMultiplayer.client.Address));
+        }
+
         // Source: Comms/Comms.Drt/Func/Client/Client.cs:Client.LeaveGame
         public static void BroadcastPlayerLeave(PlayerActionMessage message)
         {
@@ -646,6 +662,13 @@ namespace ScMultiplayer
 
         // Source: Survivalcraft/Game/ComponentMiner.cs:ComponentMiner.Poke
         public static void BroadcastPlayerPoke(PlayerActionMessage message)
+        {
+            ScMultiplayer.client.SendDirectInput(-1,
+                Message.WriteWithSender(message, ScMultiplayer.client.Address));
+        }
+
+        // Source: Survivalcraft/Game/SubsystemWhistleBlockBehavior.cs:SubsystemWhistleBlockBehavior.OnUse
+        public static void BroadcastPlayerWhistle(PlayerActionMessage message)
         {
             ScMultiplayer.client.SendDirectInput(-1,
                 Message.WriteWithSender(message, ScMultiplayer.client.Address));
@@ -851,6 +874,7 @@ namespace ScMultiplayer
         private readonly Dictionary<ushort, Projectile> m_remoteProjectiles = new Dictionary<ushort, Projectile>();
         private readonly Dictionary<Projectile, double> m_clientPredictedProjectiles =
             new Dictionary<Projectile, double>();
+        private readonly HashSet<long> m_displayedProjectileHits = new HashSet<long>();
         private ushort m_nextProjectileId = 1;
         private readonly Dictionary<string, ContainerNetworkState> m_containerStates =
             new Dictionary<string, ContainerNetworkState>();
@@ -875,6 +899,9 @@ namespace ScMultiplayer
             new Dictionary<int, float>();
         private readonly Dictionary<int, int> m_hostPlayerPokeSequences =
             new Dictionary<int, int>();
+        private readonly Dictionary<int, int> m_playerWhistleSequences =
+            new Dictionary<int, int>();
+        private readonly Engine.Random m_audioEventRandom = new Engine.Random();
         private readonly Dictionary<int, OutgoingWorldTransfer> m_outgoingWorldTransfers =
             new Dictionary<int, OutgoingWorldTransfer>();
         private readonly Dictionary<int, int> m_worldTransfersAwaitingReady =
@@ -898,6 +925,7 @@ namespace ScMultiplayer
         private double m_nextLocalHitRequestTime;
         private int m_localInteractSequence;
         private double m_nextLocalInteractRequestTime;
+        private int m_localDropSequence;
         private Entity m_observedLocalPlayerEntity;
         private bool m_observedLocalPlayerWasDead;
         private int m_localRespawnSequence;
@@ -914,6 +942,7 @@ namespace ScMultiplayer
         private GameWorldInfoMessage1 m_remoteWeatherState;
         private bool m_remoteLightningActive;
         private bool m_hostLightningActive;
+        private double m_localLightningPredictionUntil;
         private WorldControlAction m_pendingWorldControlActions;
         private double m_worldControlRequestDeadline;
         private const float ServerTickDuration = 0.01f;
@@ -1262,6 +1291,18 @@ namespace ScMultiplayer
                 database.FindDatabaseObjectType("Parameter", true), true);
             subsystemExplosions.Value = "ScMultiplayer.SuSubsystemExplosions";
 
+            // Source: Pak/Database.xml:Projectiles.Class
+            var subsystemProjectiles = database.FindDatabaseObject(
+                new Guid("dafb8e14-11b9-44b7-a208-424b770aeaa9"),
+                database.FindDatabaseObjectType("Parameter", true), true);
+            subsystemProjectiles.Value = "ScMultiplayer.SuSubsystemProjectiles";
+
+            // Source: Pak/Database.xml:WhistleBlockBehavior.Class
+            var subsystemWhistle = database.FindDatabaseObject(
+                new Guid("87c04d2e-b460-4934-a59d-3b63261e16e4"),
+                database.FindDatabaseObjectType("Parameter", true), true);
+            subsystemWhistle.Value = "ScMultiplayer.SuSubsystemWhistleBlockBehavior";
+
             // Source: Mod/WatchMod/Plug/WatchMod.cs:WatchMod.HandleGameDatabase
             // Register an independent player component instead of replacing SubsystemGameWidgets.
             var uiTemplate = new DatabaseObject(
@@ -1355,12 +1396,14 @@ namespace ScMultiplayer
                 m_remoteProjectiles.Clear();
                 m_hostProjectileIds.Clear();
                 m_clientPredictedProjectiles.Clear();
+                m_displayedProjectileHits.Clear();
                 m_pendingTerrainPredictions.Clear();
                 m_pendingTerrainPredictionCells.Clear();
                 m_processedTerrainDigRequests.Clear();
                 m_localTerrainDigIntents.Clear();
                 m_hostPlayerPokingPhases.Clear();
                 m_hostPlayerPokeSequences.Clear();
+                m_playerWhistleSequences.Clear();
                 m_disabledClientContainerUpdates.Clear();
                 if (!IsHost) m_isLoadingDownloadedWorld = false;
                 ApplyHostRandomStates(project);
@@ -2068,6 +2111,33 @@ namespace ScMultiplayer
                     BroadcastPlayerPokeIfStarted(remote.Key,
                         remote.Value?.ComponentPlayer?.ComponentMiner);
             }
+        }
+
+        // Source: Survivalcraft/Game/SubsystemWhistleBlockBehavior.cs:SubsystemWhistleBlockBehavior.OnUse
+        internal void PublishAuthoritativeWhistle(ComponentMiner componentMiner,
+            Vector3 position)
+        {
+            if (!IsHost || client?.IsConnected != true || componentMiner?.ComponentPlayer == null ||
+                !IsFinite(position))
+                return;
+            int playerClientId = 0;
+            foreach (KeyValuePair<int, PlayerData> item in m_networkPlayerData)
+            {
+                if (ReferenceEquals(item.Value?.ComponentPlayer, componentMiner.ComponentPlayer))
+                {
+                    playerClientId = item.Key;
+                    break;
+                }
+            }
+            m_playerWhistleSequences.TryGetValue(playerClientId, out int sequence);
+            sequence = sequence == int.MaxValue ? 1 : sequence + 1;
+            m_playerWhistleSequences[playerClientId] = sequence;
+            var message = new PlayerActionMessage(
+                PlayerActionType.Whistle, playerClientId, sequence, default)
+            {
+                Position = position
+            };
+            NetworkMessageSender.BroadcastPlayerWhistle(message);
         }
 
         private void SendGamePlayerInputMessage(bool includeInventory)
@@ -4234,11 +4304,7 @@ namespace ScMultiplayer
                 foreach (Projectile projectile in active)
                 {
                     bool isNewProjectile = !m_hostProjectileIds.TryGetValue(projectile, out ushort id);
-                    if (isNewProjectile)
-                    {
-                        do { id = m_nextProjectileId++; } while (id == 0 || m_hostProjectileIds.ContainsValue(id));
-                        m_hostProjectileIds[projectile] = id;
-                    }
+                    if (isNewProjectile) id = GetOrCreateHostProjectileId(projectile);
                     ushort ownerClientId = GetProjectileOwnerClientId(projectile);
                     var message = new ProjectileSyncMessage(id,
                         isNewProjectile
@@ -4300,9 +4366,59 @@ namespace ScMultiplayer
             return 0;
         }
 
+        private ushort GetOrCreateHostProjectileId(Projectile projectile)
+        {
+            if (projectile == null) return 0;
+            if (m_hostProjectileIds.TryGetValue(projectile, out ushort id)) return id;
+            do
+            {
+                id = m_nextProjectileId++;
+            }
+            while (id == 0 || m_hostProjectileIds.ContainsValue(id));
+            m_hostProjectileIds[projectile] = id;
+            return id;
+        }
+
+        internal int GetProjectileOwnerClientIdForHit(Projectile projectile)
+        {
+            ushort ownerClientId = GetProjectileOwnerClientId(projectile);
+            return ownerClientId == ushort.MaxValue ? -1 : ownerClientId;
+        }
+
+        internal bool IsLocalPredictedProjectile(Projectile projectile)
+        {
+            return !IsHost && IsLocallyOwnedProjectile(projectile);
+        }
+
+        // Source: Survivalcraft/Game/ComponentMiner.cs:ComponentMiner.AttackBody
+        internal void PublishAuthoritativeProjectileHit(Projectile projectile,
+            int ownerClientId, Vector3 hitPoint, Vector3 hitDirection, float damage)
+        {
+            if (!IsHost || client?.IsConnected != true || projectile == null ||
+                ownerClientId <= 0 || damage <= 0f)
+                return;
+            ushort id = GetOrCreateHostProjectileId(projectile);
+            if (id == 0) return;
+            var message = new ProjectileSyncMessage(id,
+                ProjectileSyncMessage.ProjectileType.Hit, projectile.Value,
+                hitPoint, hitDirection,
+                projectile.Owner?.ComponentBody?.Velocity ?? Vector3.Zero,
+                Vector3.Zero, (ushort)ownerClientId, client.Step,
+                projectile.IsIncendiary)
+            {
+                HitDamage = damage
+            };
+            NetworkMessageSender.SendProjectileHit(ownerClientId, message);
+        }
+
         private void HandleProjectileSyncMessage(ProjectileSyncMessage message, int sourceClientId)
         {
             if (IsHost || sourceClientId != 0 || message == null) return;
+            if (message.Action == ProjectileSyncMessage.ProjectileType.Hit)
+            {
+                HandleProjectileHitResult(message);
+                return;
+            }
             SubsystemProjectiles subsystem = GameManager.Project?.FindSubsystem<SubsystemProjectiles>(false);
             if (subsystem == null) return;
             if (message.Action == ProjectileSyncMessage.ProjectileType.Remove)
@@ -4363,6 +4479,27 @@ namespace ScMultiplayer
             }
             projectile.TrailOffset = message.TrailOffset;
             projectile.IsIncendiary = message.IsFireProjectile;
+        }
+
+        // Source: Survivalcraft/Game/ComponentMiner.cs:ComponentMiner.AttackBody
+        private void HandleProjectileHitResult(ProjectileSyncMessage message)
+        {
+            if (message.OwnerEntityId != client.ClientID || message.HitDamage <= 0f ||
+                !IsFinite(message.Position) || !IsFinite(message.Velocity))
+                return;
+            long hitKey = ((long)message.ProjectileId << 32) | (uint)message.ServerStep;
+            if (!m_displayedProjectileHits.Add(hitKey)) return;
+            if (m_displayedProjectileHits.Count > 512) m_displayedProjectileHits.Clear();
+
+            Vector3 direction = message.Velocity.LengthSquared() > 0.0001f
+                ? Vector3.Normalize(message.Velocity)
+                : Vector3.UnitY;
+            string text = (0f - message.HitDamage).ToString("0", CultureInfo.InvariantCulture);
+            var particleSystem = new HitValueParticleSystem(
+                message.Position + 0.75f * direction,
+                direction + message.AngularVelocity, Color.White, text);
+            GameManager.Project?.FindSubsystem<SubsystemParticles>(false)?
+                .AddParticleSystem(particleSystem);
         }
 
         // Source: Survivalcraft/Game/SubsystemProjectiles.cs:SubsystemProjectiles.Projectiles
@@ -6017,6 +6154,8 @@ namespace ScMultiplayer
             NetworkMessageSender.SendWorldControlRequest(newActions);
             m_pendingWorldControlActions |= newActions;
             m_worldControlRequestDeadline = now + 0.5;
+            if (newActions.HasFlag(WorldControlAction.Lightning))
+                m_localLightningPredictionUntil = now + 3.0;
         }
 
         private void HandleWorldControlRequest(WorldControlRequestMessage message, int sourceClientId)
@@ -6129,7 +6268,9 @@ namespace ScMultiplayer
             SubsystemSky sky = project.FindSubsystem<SubsystemSky>(true);
             if (msg.HasLightningStrike && !m_remoteLightningActive)
             {
-                ApplyRemoteLightningVisual(sky, msg.LightningStrikePosition);
+                bool playThunder = Time.RealTime >= m_localLightningPredictionUntil;
+                ApplyRemoteLightningVisual(sky, msg.LightningStrikePosition, playThunder);
+                m_localLightningPredictionUntil = 0.0;
                 m_remoteLightningActive = true;
             }
             else if (!msg.HasLightningStrike)
@@ -6154,7 +6295,8 @@ namespace ScMultiplayer
         // Source: Survivalcraft/Game/SubsystemSky.cs:SubsystemSky.MakeLightningStrike
         // The original method also damages creatures, starts fires and creates a random explosion.
         // A client replica must only render the host event; terrain effects arrive separately.
-        private void ApplyRemoteLightningVisual(SubsystemSky sky, Vector3 position)
+        private void ApplyRemoteLightningVisual(SubsystemSky sky, Vector3 position,
+            bool playThunder)
         {
             if (sky == null) return;
             SubsystemTime subsystemTime = GameManager.Project?.FindSubsystem<SubsystemTime>(false);
@@ -6166,6 +6308,32 @@ namespace ScMultiplayer
                 typeof(SubsystemSky));
             ModManager.ModParentField.ModifyParentField(
                 sky, "m_lightningStrikeBrightness", 1f, typeof(SubsystemSky));
+            if (playThunder) PlayRemoteThunder(sky, position);
+        }
+
+        // Source: Survivalcraft/Game/SubsystemSky.cs:SubsystemSky.MakeLightningStrike
+        // Reproduce only the listener-distance audio branch. Damage, fire and explosions remain
+        // host-authoritative and arrive through their existing synchronization paths.
+        private void PlayRemoteThunder(SubsystemSky sky, Vector3 position)
+        {
+            SubsystemAudio audio = GameManager.Project?.FindSubsystem<SubsystemAudio>(false);
+            if (audio == null) return;
+            float distance = float.MaxValue;
+            foreach (Vector3 listenerPosition in audio.ListenerPositions)
+            {
+                distance = MathUtils.Min(distance, Vector2.Distance(
+                    new Vector2(listenerPosition.X, listenerPosition.Z),
+                    new Vector2(position.X, position.Z)));
+            }
+            if (distance >= 200f) return;
+            Engine.Random random = ModManager.ModParentField.GetParentField<Engine.Random>(
+                sky, "m_random", typeof(SubsystemSky));
+            float pitch = random != null ? random.Float(-0.2f, 0.2f) : 0f;
+            float delay = audio.CalculateDelay(distance);
+            if (distance < 40f)
+                audio.PlayRandomSound("Audio/ThunderNear", 1f, pitch, 0f, delay);
+            else
+                audio.PlayRandomSound("Audio/ThunderFar", 0.8f, pitch, 0f, delay);
         }
 
         private void ClearRemoteLightningVisual(SubsystemSky sky)
@@ -7134,6 +7302,7 @@ namespace ScMultiplayer
             m_hostProjectileIds.Clear();
             m_remoteProjectiles.Clear();
             m_clientPredictedProjectiles.Clear();
+            m_displayedProjectileHits.Clear();
             m_nextProjectileId = 1;
             lock (m_terrainJournalLock)
             {
@@ -7150,12 +7319,14 @@ namespace ScMultiplayer
             m_incomingWorldTransfers.Clear();
             m_hostPlayerPokingPhases.Clear();
             m_hostPlayerPokeSequences.Clear();
+            m_playerWhistleSequences.Clear();
             m_localDigTarget = null;
             m_nextTerrainDigRequestId = 0;
             m_localHitSequence = 0;
             m_nextLocalHitRequestTime = 0.0;
             m_localInteractSequence = 0;
             m_nextLocalInteractRequestTime = 0.0;
+            m_localDropSequence = 0;
             m_observedLocalPlayerEntity = null;
             m_observedLocalPlayerWasDead = false;
             m_localRespawnSequence = 0;
@@ -7205,6 +7376,7 @@ namespace ScMultiplayer
             m_remoteWeatherState = null;
             m_remoteLightningActive = false;
             m_hostLightningActive = false;
+            m_localLightningPredictionUntil = 0.0;
             m_pendingLocalPlayerRecord = null;
             m_localReplacementPlayerData = null;
             m_localPlayerRecordQueued = false;
@@ -7621,10 +7793,12 @@ namespace ScMultiplayer
             UpdateLocalDigTarget(player, playerInput.Dig);
             UpdateLocalHitRequests(playerInput.Hit);
             UpdateLocalInteractRequests(player, playerInput.Interact);
+            UpdateLocalDropRequests(player, playerInput.Drop);
             // Aim uses its own edge-preserving lifecycle. Dig/Interact are authoritative reliable
-            // requests; retaining Dig in HeldInput for up to RemoteInputHoldDuration can hit the
-            // block behind the completed cell before the client's release packet arrives.
+            // requests. Drop also uses a reliable edge and must not execute again through the
+            // ordinary input snapshot if network delivery order changes.
             playerInput.Aim = null;
+            playerInput.Drop = false;
             m_localPlayerInput = SanitizeNetworkPlayerInput(playerInput);
             m_localPlayerInput.Dig = null;
             m_localPlayerInput.Hit = null;
@@ -7788,6 +7962,33 @@ namespace ScMultiplayer
                 inventory.GetSlotCount(activeSlot)));
         }
 
+        // Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update
+        // Drop is a one-frame edge. Send the pre-prediction slot reliably so a later empty
+        // inventory snapshot cannot erase the item before the host executes the native action.
+        private void UpdateLocalDropRequests(ComponentPlayer player, bool drop)
+        {
+            if (!drop || client?.IsConnected != true ||
+                player?.ComponentMiner?.Inventory == null || player.ComponentBody == null)
+                return;
+            IInventory inventory = player.ComponentMiner.Inventory;
+            int activeSlot = inventory.ActiveSlotIndex;
+            if (activeSlot < 0 || activeSlot >= inventory.SlotsCount) return;
+            int itemValue = inventory.GetSlotValue(activeSlot);
+            int itemCount = inventory.GetSlotCount(activeSlot);
+            if (itemValue == 0 || itemCount <= 0) return;
+
+            m_localDropSequence = m_localDropSequence == int.MaxValue
+                ? 1
+                : m_localDropSequence + 1;
+            var message = new PlayerActionMessage(
+                PlayerActionType.DropRequest, client.ClientID, m_localDropSequence,
+                default, activeSlot, itemValue, itemCount)
+            {
+                Position = player.ComponentBody.Position
+            };
+            NetworkMessageSender.SendPlayerDropRequest(message);
+        }
+
         public bool TryGetNetworkPlayerInput(ComponentPlayer player, out PlayerInput playerInput)
         {
             playerInput = default;
@@ -7798,6 +7999,22 @@ namespace ScMultiplayer
             if (!m_networkPlayerInputs.TryGetValue(sourceClientId, out NetworkPlayerInputState state) ||
                 Time.RealTime - state.LastReceivedTime > RemoteInputHoldDuration)
                 return true;
+
+            if (state.DropEvents.Count > 0)
+            {
+                PlayerActionMessage drop = state.DropEvents.Dequeue();
+                playerInput = state.ConsumedSequence != state.Sequence
+                    ? state.Input
+                    : state.HeldInput;
+                state.ConsumedSequence = state.Sequence;
+                ApplyInteractionInventory(player.ComponentMiner?.Inventory, drop);
+                if (IsFinite(drop.Position) &&
+                    Vector3.DistanceSquared(player.ComponentBody.Position, drop.Position) <= 64f)
+                    player.ComponentBody.Position = drop.Position;
+                playerInput.Drop = true;
+                state.HeldInput = CreateHeldNetworkInput(playerInput);
+                return true;
+            }
 
             if (state.InteractEvents.Count > 0 &&
                 Time.RealTime >= state.NextInteractExecutionTime)
@@ -8054,11 +8271,27 @@ namespace ScMultiplayer
                 playerMappingManager.ReleasePlayerIndex(sourceClientId);
                 return;
             }
+            if (!IsHost && message.Action == PlayerActionType.Whistle)
+            {
+                if (sourceClientId != 0 || message.PlayerIndex == client.ClientID ||
+                    !IsFinite(message.Position))
+                    return;
+                if (m_playerWhistleSequences.TryGetValue(message.PlayerIndex,
+                    out int lastSequence) && message.Sequence <= lastSequence)
+                    return;
+                m_playerWhistleSequences[message.PlayerIndex] = message.Sequence;
+                // Source: Survivalcraft/Game/SubsystemWhistleBlockBehavior.cs:SubsystemWhistleBlockBehavior.OnUse
+                GameManager.Project?.FindSubsystem<SubsystemAudio>(false)?.PlayRandomSound(
+                    "Audio/Whistle", 1f, m_audioEventRandom.Float(-0.2f, 0f),
+                    message.Position, 4f, autoDelay: true);
+                return;
+            }
             if (IsHost)
             {
                 if (sourceClientId <= 0 ||
                     (message.Action != PlayerActionType.HitRequest &&
-                        message.Action != PlayerActionType.InteractRequest) ||
+                        message.Action != PlayerActionType.InteractRequest &&
+                        message.Action != PlayerActionType.DropRequest) ||
                     !m_networkPlayerData.ContainsKey(sourceClientId))
                     return;
                 if (!m_networkPlayerInputs.TryGetValue(sourceClientId,
@@ -8068,7 +8301,16 @@ namespace ScMultiplayer
                     m_networkPlayerInputs[sourceClientId] = state;
                 }
                 state.LastReceivedTime = Time.RealTime;
-                if (message.Action == PlayerActionType.InteractRequest)
+                if (message.Action == PlayerActionType.DropRequest)
+                {
+                    if (message.Sequence <= state.LastDropSequence ||
+                        message.ActiveSlotIndex < 0 || message.ItemValue == 0 ||
+                        message.ItemCount <= 0 || !IsFinite(message.Position))
+                        return;
+                    state.LastDropSequence = message.Sequence;
+                    state.DropEvents.Enqueue(message);
+                }
+                else if (message.Action == PlayerActionType.InteractRequest)
                 {
                     if (message.Sequence <= state.LastInteractSequence) return;
                     state.LastInteractSequence = message.Sequence;
@@ -8166,6 +8408,7 @@ namespace ScMultiplayer
             state.QueuedAimCompletions.Clear();
             state.InteractEvents.Clear();
             state.HitEvents.Clear();
+            state.DropEvents.Clear();
             state.InitialPositionApplied = true;
             state.BodyPosition = spawnPosition;
             state.BodyVelocity = Vector3.Zero;

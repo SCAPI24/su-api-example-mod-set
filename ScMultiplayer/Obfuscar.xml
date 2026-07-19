@@ -20,6 +20,8 @@
     <SkipType name="ScMultiplayer.SuSubsystemCreatureSpawn" />
     <SkipType name="ScMultiplayer.SuSubsystemGrassBlockBehavior" />
     <SkipType name="ScMultiplayer.SuSubsystemExplosions" />
+    <SkipType name="ScMultiplayer.SuSubsystemProjectiles" />
+    <SkipType name="ScMultiplayer.SuSubsystemWhistleBlockBehavior" />
     <SkipType name="ScMultiplayer.SuPlayScreen" />
     <SkipType name="ScMultiplayer.ChatMessage" />
     <SkipType name="ScMultiplayer.GameKickPlayerMessage" />

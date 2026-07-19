@@ -11,7 +11,8 @@ namespace ScMultiplayer
         {
             Add,
             Update,
-            Remove
+            Remove,
+            Hit
         }
 
         public ushort ProjectileId;
@@ -25,6 +26,7 @@ namespace ScMultiplayer
         public ushort OwnerEntityId;
         public int ServerStep;
         public bool IsFireProjectile;
+        public float HitDamage;
 
         // Trail particle info
         public bool HasSmokeTrail;
@@ -56,6 +58,8 @@ namespace ScMultiplayer
             OwnerEntityId = (ushort)reader.ReadPackedInt32();
             ServerStep = reader.ReadInt32();
             IsFireProjectile = reader.ReadBoolean();
+            if (Action == ProjectileType.Hit)
+                HitDamage = reader.ReadSingle();
             HasSmokeTrail = reader.ReadBoolean();
             if (HasSmokeTrail)
             {
@@ -79,6 +83,8 @@ namespace ScMultiplayer
             writer.WritePackedInt32(OwnerEntityId);
             writer.WriteInt32(ServerStep);
             writer.WriteBoolean(IsFireProjectile);
+            if (Action == ProjectileType.Hit)
+                writer.WriteSingle(HitDamage);
             writer.WriteBoolean(HasSmokeTrail);
             if (HasSmokeTrail)
             {
