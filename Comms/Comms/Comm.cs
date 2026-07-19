@@ -46,8 +46,20 @@ public class Comm
 
         public double LastReceiveTime = double.MinValue;
 
+        public double SmoothedRoundTripTime = 0.1;
+
         public void NewTheirGuid(Guid theirGuid)
         {
+            bool isReplacementSession = TheirGuid != Guid.Empty && TheirGuid != theirGuid;
+            if (isReplacementSession)
+            {
+                OurGuid = Guid.NewGuid();
+                InitAckReceived = false;
+                InitAckConfirmed = false;
+                UnackedPackets.Clear();
+                NextUnreliableSendSequenceIndex = 0u;
+                NextReliableSendSequenceIndex = 0u;
+            }
             TheirGuid = theirGuid;
             MessageParts.Clear();
             SequencedBytes.Clear();
@@ -56,6 +68,7 @@ public class Comm
             ReceivedPacketIdsCurrent.Clear();
             NextUnreliableReceiveSequenceIndex = 0u;
             NextReliableReceiveSequenceIndex = 0u;
+            LastInitAckSendTime = double.MinValue;
         }
     }
 
@@ -363,6 +376,29 @@ public class Comm
         }
     }
 
+    // Source: Comms/Comms/Comm.cs:SendMessages
+    // A reconnect starts a new reliable session so stale fragments and sequence gaps cannot block
+    // the new connect request.
+    public void ResetConnection(IPEndPoint address)
+    {
+        lock (Lock)
+        {
+            CheckNotDisposedAndStarted();
+            Connections.Remove(address);
+        }
+    }
+
+    public void UpdateRoundTripTime(IPEndPoint address, double roundTripTime)
+    {
+        lock (Lock)
+        {
+            if (roundTripTime <= 0.0 || !Connections.TryGetValue(address, out Connection connection))
+                return;
+            connection.SmoothedRoundTripTime = 0.875 * connection.SmoothedRoundTripTime +
+                0.125 * roundTripTime;
+        }
+    }
+
     public static double GetTime()
     {
         return (double)(Stopwatch.GetTimestamp() - StartTimestamp) / (double)Stopwatch.Frequency;
@@ -500,6 +536,14 @@ public class Comm
             while (reader.Length - reader.Position >= 4)
             {
                 uint key = reader.ReadUInt32();
+                if (value.UnackedPackets.TryGetValue(key, out UnackedPacket acknowledgedPacket) &&
+                    acknowledgedPacket.SendCount == 1)
+                {
+                    double sample = time - acknowledgedPacket.LastSendTime;
+                    if (sample > 0.0)
+                        value.SmoothedRoundTripTime = 0.875 * value.SmoothedRoundTripTime +
+                            0.125 * sample;
+                }
                 value.UnackedPackets.Remove(key);
             }
         }
@@ -569,7 +613,7 @@ public class Comm
             }
             foreach (KeyValuePair<uint, UnackedPacket> unackedPacket in value.UnackedPackets)
             {
-                float num = Settings.ResendPeriods[Math.Min(unackedPacket.Value.SendCount - 1, Settings.ResendPeriods.Length - 1)];
+                float num = GetResendPeriod(value, unackedPacket.Value.SendCount);
                 if (unackedPacket.Value.SendCount - 1 >= Settings.MaxResends)
                 {
                     ToRemoveUInt.Add(unackedPacket.Key);
@@ -616,6 +660,18 @@ public class Comm
             Connections.Remove(item3);
         }
         ToRemoveEndpoint.Clear();
+    }
+
+    private float GetResendPeriod(Connection connection, int sendCount)
+    {
+        // Source: Comms/Comms/Comm.cs:ProcessConnections
+        // RTT is sampled from reliable ACKs and keep-alives. A small bounded backoff avoids both
+        // the old 500ms recovery pause and overly aggressive retransmission on remote LAN links.
+        double basePeriod = Math.Clamp(connection.SmoothedRoundTripTime * 1.5,
+            Settings.MinimumResendPeriod, Settings.MaximumResendPeriod);
+        double backoff = Math.Pow(1.25, Math.Min(Math.Max(sendCount - 1, 0), 3));
+        return (float)Math.Clamp(basePeriod * backoff,
+            Settings.MinimumResendPeriod, Settings.MaximumResendPeriod);
     }
 
     private void SendMessages(IPEndPoint address, byte[][] bytes, DeliveryMode deliveryMode)

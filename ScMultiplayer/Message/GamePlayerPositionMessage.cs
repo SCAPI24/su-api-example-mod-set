@@ -72,6 +72,11 @@ namespace ScMultiplayer
 
         protected override void Read(SuReader reader)
         {
+            ReadPayload(reader);
+        }
+
+        internal void ReadPayload(SuReader reader)
+        {
             PlayerIndex = reader.ReadInt32();
             ServerTick = reader.ReadInt32();
             Position = reader.ReadVector3(reader);
@@ -105,6 +110,11 @@ namespace ScMultiplayer
         }
 
         protected override void Write(SuWriter writer)
+        {
+            WritePayload(writer);
+        }
+
+        internal void WritePayload(SuWriter writer)
         {
             writer.WriteInt32(PlayerIndex);
             writer.WriteInt32(ServerTick);
