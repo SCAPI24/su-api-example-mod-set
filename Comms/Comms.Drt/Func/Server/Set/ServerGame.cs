@@ -52,6 +52,9 @@ public class ServerGame
 
     private Dictionary<int, List<ClientDirectInputMessage>> PendingDirectInputs = new();
 
+    // Source: Comms.Drt/Func/Server/Set/ServerGame.cs:Handle(ClientDirectInputMessage)
+    private HashSet<int> SuspendedClientTraffic = new();
+
     private DesyncDetector DesyncDetector;
 
     private int NextClientID;
@@ -77,6 +80,19 @@ public class ServerGame
     public int Tick { get; private set; }
 
     public IReadOnlyList<ServerClient> Clients => ServerClients;
+
+    // Source: Comms.Drt/Func/Server/Set/ServerGame.cs:SendDirectInput
+    // Targeted direct messages remain enabled so a suspended client can download its world.
+    public void SetClientGameTrafficEnabled(int clientID, bool enabled)
+    {
+        lock (Server.Peer.Lock)
+        {
+            if (enabled)
+                SuspendedClientTraffic.Remove(clientID);
+            else
+                SuspendedClientTraffic.Add(clientID);
+        }
+    }
 
     internal ServerGame(Server server, PeerData creatorPeerData, int gameID, ClientCreateGameRequestMessage message)
     {
@@ -150,7 +166,10 @@ public class ServerGame
         if (message.TargetClientID < 0)
         {
             foreach (ServerClient target in ServerClients)
+            {
+                if (SuspendedClientTraffic.Contains(target.ClientID)) continue;
                 SendDirectInput(target, serverClient.ClientID, message);
+            }
             return;
         }
 
@@ -240,6 +259,7 @@ public class ServerGame
         serverClient.PeerData.Tag = null;
         Leaves.Add(serverClient.ClientID);
         PendingDirectInputs.Remove(serverClient.ClientID);
+        SuspendedClientTraffic.Remove(serverClient.ClientID);
     }
 
     internal double Run(double time)
