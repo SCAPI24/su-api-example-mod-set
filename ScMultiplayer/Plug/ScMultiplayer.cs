@@ -256,8 +256,11 @@ namespace ScMultiplayer
         public int ChunkCount;
         public int NextChunkIndex;
         public int HighestContiguousChunkIndex = -1;
+        public bool StartRequested;
         public bool InitialSendComplete;
         public GamePakWorldMessage Manifest;
+        // Source: ScMultiplayer.cs:HandleGamePakWorldRepairRequestMessage
+        public double[] ChunkLastQueueTimes = Array.Empty<double>();
         public readonly Queue<int> RepairChunkIndices = new Queue<int>();
         public readonly HashSet<int> QueuedRepairChunkIndices = new HashSet<int>();
     }
@@ -586,7 +589,7 @@ namespace ScMultiplayer
             GamePakWorldChunkMessage message)
         {
             ScMultiplayer.client.SendDirectInput(targetClientId,
-                Message.WriteWithSender(message, ScMultiplayer.client.Address), latest: true);
+                Message.WriteWithSender(message, ScMultiplayer.client.Address));
         }
 
         public static void SendPakWorldReady(GamePakWorldReadyMessage message)
@@ -932,7 +935,10 @@ namespace ScMultiplayer
         private const float ClientProjectilePredictionGrace = 3f;
         private const float PlayerHitRequestInterval = 0.36f;
         private const float PlayerInteractRequestInterval = 0.36f;
-        private const int WorldTransferChunkSize = 768;
+        // Source: Comms/Comms/UdpTransmitter.cs:UdpTransmitter.MaxPacketSize
+        // 940 bytes plus the nested ScMultiplayer, DRT, Peer and Comm headers fits in one
+        // 1024-byte UDP packet for both IPv4 and IPv6 connection-init packets.
+        private const int WorldTransferChunkSize = 940;
         private const int MaximumWorldTransferChunksPerNetworkTick = 32;
         private const int MaximumWorldTransferChunksPerGameplayTick = 16;
         private const int MaximumWorldTransferUnackedPackets = 128;
@@ -2940,6 +2946,10 @@ namespace ScMultiplayer
                 {
                     StartTick = client.Step
                 };
+                // Source: Comms.Drt/Func/Server/Set/ServerGame.cs:ServerGame.SendDataMessageToAllClients
+                // Keep large direct broadcasts off this endpoint until its world is loaded.
+                // Ordered ticks continue so the joining client's expected step stays current.
+                SetServerClientGameTrafficEnabled(joiningClientId, enabled: false);
                 client.AcceptJoinGame(joiningClientId);
                 BeginWorldTransfer(
                     SuPlayScreen.WorldDataName, SuPlayScreen.WorldData,
@@ -2950,6 +2960,7 @@ namespace ScMultiplayer
             }
             catch (Exception ex)
             {
+                SetServerClientGameTrafficEnabled(joiningClientId, enabled: true);
                 RemoveNetworkPlayer(joiningClientId);
                 if (isNewApproval)
                 {
@@ -2992,10 +3003,13 @@ namespace ScMultiplayer
                 TargetClientId = targetClientId,
                 WorldData = worldData,
                 ChunkCount = chunkCount,
-                Manifest = manifest
+                Manifest = manifest,
+                ChunkLastQueueTimes = new double[chunkCount]
             };
             m_worldTransfersAwaitingReady[targetClientId] = transferId;
-            NetworkMessageSender.SendPakWorldManifest(targetClientId, manifest);
+            // The joining peer requests the manifest after ConnectAccepted has been processed.
+            // Sending it here can be ACKed by Comm and then discarded by Peer because the
+            // application connection is not established yet.
         }
 
         internal void RecordJoinCatchUpMessage(byte[] payload, bool sequenced, bool latest)
@@ -3058,7 +3072,11 @@ namespace ScMultiplayer
                 m_worldTransferCursor = (m_worldTransferCursor + 1) % targetClientIds.Length;
                 if (!m_outgoingWorldTransfers.TryGetValue(targetClientId,
                     out OutgoingWorldTransfer transfer) ||
+                    !transfer.StartRequested ||
                     (transfer.InitialSendComplete && transfer.RepairChunkIndices.Count == 0))
+                    continue;
+                if (GetWorldTransferRelayUnackedPackets(targetClientId) >=
+                    MaximumWorldTransferUnackedPackets)
                     continue;
 
                 int chunkIndex;
@@ -3087,6 +3105,7 @@ namespace ScMultiplayer
                         transfer.NextChunkIndex--;
                     break;
                 }
+                transfer.ChunkLastQueueTimes[chunkIndex] = Time.RealTime;
                 budget--;
                 if (!transfer.InitialSendComplete &&
                     transfer.NextChunkIndex >= transfer.ChunkCount)
@@ -3116,6 +3135,7 @@ namespace ScMultiplayer
                     {
                         break;
                     }
+                    int burstCount = 0;
                     while (m_worldTransferSendQueue.TryDequeue(
                         out WorldTransferChunkSendWork work))
                     {
@@ -3141,6 +3161,8 @@ namespace ScMultiplayer
                                     TotalLength = work.WorldData.Length,
                                     Data = data
                                 });
+                            if (++burstCount % 4 == 0)
+                                await Task.Yield();
                         }
                         catch (Exception ex)
                         {
@@ -3218,13 +3240,19 @@ namespace ScMultiplayer
                 (message.TransferId > 0 && transfer.TransferId != message.TransferId))
                 return;
             if (message.RequestManifest && transfer.Manifest != null)
+            {
+                transfer.StartRequested = true;
                 NetworkMessageSender.SendPakWorldManifest(sourceClientId, transfer.Manifest);
+            }
             transfer.HighestContiguousChunkIndex = Math.Max(
                 transfer.HighestContiguousChunkIndex,
                 Math.Min(message.HighestContiguousChunkIndex, transfer.ChunkCount - 1));
             foreach (int index in message.MissingChunkIndices ?? Array.Empty<int>())
             {
                 if (index < 0 || index >= transfer.NextChunkIndex ||
+                    index >= transfer.ChunkLastQueueTimes.Length ||
+                    Time.RealTime - transfer.ChunkLastQueueTimes[index] <
+                        WorldTransferRepairInterval ||
                     !transfer.QueuedRepairChunkIndices.Add(index))
                     continue;
                 transfer.RepairChunkIndices.Enqueue(index);
@@ -3242,6 +3270,14 @@ namespace ScMultiplayer
             if (target?.Address == null)
                 return MaximumWorldTransferUnackedPackets;
             return server.Peer.Comm.GetUnackedPacketsCount(target.Address);
+        }
+
+        // Source: Comms.Drt/Func/Server/Set/ServerGame.cs:ServerGame.SetClientGameTrafficEnabled
+        private void SetServerClientGameTrafficEnabled(int targetClientId, bool enabled)
+        {
+            if (server == null || client == null) return;
+            ServerGame game = server.Games.FirstOrDefault(item => item.GameID == client.GameID);
+            game?.SetClientGameTrafficEnabled(targetClientId, enabled);
         }
 
         // ====================================================================
@@ -6691,6 +6727,7 @@ namespace ScMultiplayer
                 }
                 return;
             }
+            SetServerClientGameTrafficEnabled(sourceClientId, enabled: true);
             m_worldTransfersAwaitingReady.Remove(sourceClientId);
             m_outgoingWorldTransfers.Remove(sourceClientId);
             SendTerrainCatchUp(sourceClientId);
