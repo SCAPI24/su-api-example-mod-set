@@ -9,7 +9,8 @@ namespace ScMultiplayer
         None = 0,
         TimeOfDay = 1,
         Precipitation = 2,
-        Fog = 4
+        Fog = 4,
+        Lightning = 8
     }
 
     [Serializable]

@@ -50,6 +50,8 @@ public class ServerGame
 
     private List<ServerTickMessage> SentTickMessages = new();
 
+    private Dictionary<int, List<ClientDirectInputMessage>> PendingDirectInputs = new();
+
     private DesyncDetector DesyncDetector;
 
     private int NextClientID;
@@ -140,6 +142,38 @@ public class ServerGame
         serverClient.InputsBytes.Add(message.InputBytes);
     }
 
+    // Source: Comms.Drt/Func/Server/Set/ServerGame.cs:Handle(ClientInputMessage, ServerClient)
+    // Immediate broadcasts do not wait behind historical ticks. Targeted ordered transfers are
+    // queued until the joining client has been accepted, then sent only to that endpoint.
+    internal void Handle(ClientDirectInputMessage message, ServerClient serverClient)
+    {
+        if (message.TargetClientID < 0)
+        {
+            foreach (ServerClient target in ServerClients)
+                SendDirectInput(target, serverClient.ClientID, message);
+            return;
+        }
+
+        ServerClient targetClient = ServerClients.FirstOrDefault(
+            client => client.ClientID == message.TargetClientID);
+        if (targetClient != null)
+        {
+            SendDirectInput(targetClient, serverClient.ClientID, message);
+            return;
+        }
+
+        if (JoinRequests.Any(request => request.ClientID == message.TargetClientID && !request.Processed))
+        {
+            if (!PendingDirectInputs.TryGetValue(message.TargetClientID,
+                out List<ClientDirectInputMessage> pending))
+            {
+                pending = new List<ClientDirectInputMessage>();
+                PendingDirectInputs.Add(message.TargetClientID, pending);
+            }
+            pending.Add(message);
+        }
+    }
+
     internal void Handle(ClientStateMessage message, ServerClient serverClient)
     {
         foreach (JoinRequest joinRequest in JoinRequests)
@@ -148,10 +182,16 @@ public class ServerGame
             {
                 int minimumTick = (message.Step + Server.StepsPerTick - 1) / Server.StepsPerTick;
                 ServerTickMessage[] array = SentTickMessages.Where((ServerTickMessage m) => m.Tick >= minimumTick).ToArray();
+                int acceptedStep = message.Step;
                 if (array.Length != 0 && array[0].Tick != minimumTick)
                 {
-                    Server.InvokeWarning($"Not enough stored TickMessages for received state at step {message.Step}, earliest stored tick is {array[0].Tick}, tick required for this step is {minimumTick}.");
-                    continue;
+                    // Source: Comms.Drt/Func/Server/Set/ServerGame.cs:Handle(ClientStateMessage, ServerClient)
+                    // The multiplayer world is transferred independently from lockstep state. If
+                    // the authority temporarily falls behind retained history, start the joining
+                    // peer at the oldest complete tick instead of leaving it in Busy until timeout.
+                    acceptedStep = array[0].Tick * Server.StepsPerTick;
+                    Server.InvokeWarning($"State step {message.Step} is older than retained tick " +
+                        $"{array[0].Tick}; joining client will start at step {acceptedStep}.");
                 }
                 ServerClient serverClient2 = new(this, joinRequest.PeerData, joinRequest.ClientID, joinRequest.ClientName);
                 ServerClients.Add(serverClient2);
@@ -163,11 +203,12 @@ public class ServerGame
                     StepsPerTick = Server.StepsPerTick,
                     DesyncDetectionMode = DesyncDetectionMode,
                     DesyncDetectionPeriod = DesyncDetectionPeriod,
-                    Step = message.Step,
+                    Step = acceptedStep,
                     StateBytes = message.StateBytes,
                     TickMessages = array
                 }));
-                Server.InvokeInformation($"Client \"{joinRequest.ClientName}\" at {joinRequest.PeerData.Address} joined game {GameID} at step {message.Step} (state size {message.StateBytes.Length} bytes).");
+                FlushPendingDirectInputs(serverClient2);
+                Server.InvokeInformation($"Client \"{joinRequest.ClientName}\" at {joinRequest.PeerData.Address} joined game {GameID} at step {acceptedStep} (state size {message.StateBytes.Length} bytes).");
                 joinRequest.Processed = true;
             }
         }
@@ -198,6 +239,7 @@ public class ServerGame
         ServerClients.Remove(serverClient);
         serverClient.PeerData.Tag = null;
         Leaves.Add(serverClient.ClientID);
+        PendingDirectInputs.Remove(serverClient.ClientID);
     }
 
     internal double Run(double time)
@@ -336,6 +378,32 @@ public class ServerGame
         {
             Server.Peer.SendDataMessage(serverClient.PeerData, DeliveryMode.ReliableSequenced, bytes);
         }
+    }
+
+    private void FlushPendingDirectInputs(ServerClient targetClient)
+    {
+        if (!PendingDirectInputs.TryGetValue(targetClient.ClientID,
+            out List<ClientDirectInputMessage> pending))
+            return;
+        PendingDirectInputs.Remove(targetClient.ClientID);
+        foreach (ClientDirectInputMessage message in pending)
+            SendDirectInput(targetClient, 0, message);
+    }
+
+    private void SendDirectInput(ServerClient targetClient, int sourceClientID,
+        ClientDirectInputMessage message)
+    {
+        byte[] bytes = Server.MessageSerializer.Write(new ServerDirectInputMessage
+        {
+            SourceClientID = sourceClientID,
+            InputBytes = message.InputBytes
+        });
+        DeliveryMode deliveryMode = message.IsLatest
+            ? DeliveryMode.Unreliable
+            : message.IsSequenced
+                ? DeliveryMode.ReliableSequenced
+                : DeliveryMode.Reliable;
+        Server.Peer.SendDataMessage(targetClient.PeerData, deliveryMode, bytes);
     }
 
     private double CalculateNextTickTime(double time)

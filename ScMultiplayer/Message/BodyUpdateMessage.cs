@@ -1,4 +1,4 @@
-using Engine;
+﻿using Engine;
 using System;
 using System.Collections.Generic;
 using Comms;
@@ -23,6 +23,8 @@ namespace ScMultiplayer
         }
 
         public List<BodyItem> Bodies = new List<BodyItem>();
+        public int ServerTick;
+        public bool IsFullSnapshot;
 
         public BodyUpdateMessage() { }
 
@@ -50,12 +52,15 @@ namespace ScMultiplayer
             public string ActiveBehaviorState;
             public int TargetEntityId;
             public string HerdName;
+            public int SimulationSeed;
             public float Health;
             public ChangeFlag Flags;
         }
 
         protected override void Read(SuReader reader)
         {
+            ServerTick = reader.ReadInt32();
+            IsFullSnapshot = reader.ReadBoolean();
             int count = reader.ReadPackedInt32();
             Bodies.Clear();
             for (int i = 0; i < count; i++)
@@ -89,6 +94,7 @@ namespace ScMultiplayer
                     item.ActiveBehaviorState = reader.ReadString();
                     item.TargetEntityId = reader.ReadInt32();
                     item.HerdName = reader.ReadString();
+                    item.SimulationSeed = reader.ReadInt32();
                 }
                 if (item.Flags.HasFlag(ChangeFlag.Health))
                     item.Health = reader.ReadSingle();
@@ -98,6 +104,8 @@ namespace ScMultiplayer
 
         protected override void Write(SuWriter writer)
         {
+            writer.WriteInt32(ServerTick);
+            writer.WriteBoolean(IsFullSnapshot);
             writer.WritePackedInt32(Bodies.Count);
             foreach (var item in Bodies)
             {
@@ -132,6 +140,7 @@ namespace ScMultiplayer
                     writer.WriteString(item.ActiveBehaviorState ?? string.Empty);
                     writer.WriteInt32(item.TargetEntityId);
                     writer.WriteString(item.HerdName ?? string.Empty);
+                    writer.WriteInt32(item.SimulationSeed);
                 }
                 if (item.Flags.HasFlag(ChangeFlag.Health))
                     writer.WriteSingle(item.Health);

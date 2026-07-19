@@ -128,52 +128,34 @@ public class Server : IDisposable
             if (!IsDisposed)
             {
                 Message message = MessageSerializer.Read(p.Bytes, p.PeerData.Address);
-                if (!(message is ClientJoinGameAcceptedMessage message2))
+                switch (message)
                 {
-                    if (!(message is ClientJoinGameRefusedMessage message3))
-                    {
-                        if (!(message is ClientInputMessage message4))
-                        {
-                            if (!(message is ClientStateMessage message5))
-                            {
-                                if (!(message is ClientDesyncStateMessage message6))
-                                {
-                                    if (!(message is ClientStateHashesMessage message7))
-                                    {
-                                        if (!(message is ClientGameDescriptionMessage message8))
-                                        {
-                                            throw new ProtocolViolationException($"Unexpected message type {message.GetType()}.");
-                                        }
-                                        Handle(message8, p.PeerData);
-                                    }
-                                    else
-                                    {
-                                        Handle(message7, p.PeerData);
-                                    }
-                                }
-                                else
-                                {
-                                    Handle(message6, p.PeerData);
-                                }
-                            }
-                            else
-                            {
-                                Handle(message5, p.PeerData);
-                            }
-                        }
-                        else
-                        {
-                            Handle(message4, p.PeerData);
-                        }
-                    }
-                    else
-                    {
-                        Handle(message3, p.PeerData);
-                    }
-                }
-                else
-                {
-                    Handle(message2, p.PeerData);
+                    case ClientJoinGameAcceptedMessage accepted:
+                        Handle(accepted, p.PeerData);
+                        break;
+                    case ClientJoinGameRefusedMessage refused:
+                        Handle(refused, p.PeerData);
+                        break;
+                    case ClientInputMessage input:
+                        Handle(input, p.PeerData);
+                        break;
+                    case ClientDirectInputMessage directInput:
+                        Handle(directInput, p.PeerData);
+                        break;
+                    case ClientStateMessage state:
+                        Handle(state, p.PeerData);
+                        break;
+                    case ClientDesyncStateMessage desyncState:
+                        Handle(desyncState, p.PeerData);
+                        break;
+                    case ClientStateHashesMessage stateHashes:
+                        Handle(stateHashes, p.PeerData);
+                        break;
+                    case ClientGameDescriptionMessage description:
+                        Handle(description, p.PeerData);
+                        break;
+                    default:
+                        throw new ProtocolViolationException($"Unexpected message type {message.GetType()}.");
                 }
             }
         };
@@ -398,6 +380,19 @@ public class Server : IDisposable
         else
         {
             InvokeWarning($"Input from {peerData.Address}, which is not a connected client.");
+        }
+    }
+
+    private void Handle(ClientDirectInputMessage message, PeerData peerData)
+    {
+        ServerClient serverClient = ServerClient.FromPeerData(peerData);
+        if (serverClient != null)
+        {
+            serverClient.ServerGame.Handle(message, serverClient);
+        }
+        else
+        {
+            InvokeWarning($"Direct input from {peerData.Address}, which is not a connected client.");
         }
     }
 

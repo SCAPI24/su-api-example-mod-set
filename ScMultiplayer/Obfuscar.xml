@@ -1,4 +1,4 @@
-<?xml version='1.0'?>
+﻿<?xml version='1.0'?>
 <Obfuscator>
   <Var name="InPath" value="bin\Debug\net8.0" />
   <Var name="OutPath" value="bin\Debug\net8.0\Obfuscated" />
@@ -16,6 +16,10 @@
     <SkipType name="ScMultiplayer.SuComponentInput" />
     <SkipType name="ScMultiplayer.MultiplayerUiComponent" />
     <SkipType name="ScMultiplayer.SuSubsystemTerrain" />
+    <SkipType name="ScMultiplayer.SuSubsystemSpawn" />
+    <SkipType name="ScMultiplayer.SuSubsystemCreatureSpawn" />
+    <SkipType name="ScMultiplayer.SuSubsystemGrassBlockBehavior" />
+    <SkipType name="ScMultiplayer.SuSubsystemExplosions" />
     <SkipType name="ScMultiplayer.SuPlayScreen" />
     <SkipType name="ScMultiplayer.ChatMessage" />
     <SkipType name="ScMultiplayer.GameKickPlayerMessage" />
@@ -24,6 +28,10 @@
     <SkipType name="ScMultiplayer.GamePlayerHealthMessage" />
     <SkipType name="ScMultiplayer.GamePlayerInputMessage" />
     <SkipType name="ScMultiplayer.GamePlayerPositionMessage" />
+    <SkipType name="ScMultiplayer.GamePlayerPositionsMessage" />
+    <SkipType name="ScMultiplayer.PlayerAimMessage" />
+    <SkipType name="ScMultiplayer.TerrainDigRequestMessage" />
+    <SkipType name="ScMultiplayer.TerrainDigResultMessage" />
     <SkipType name="ScMultiplayer.GameWorldInfoMessage" />
     <SkipType name="ScMultiplayer.GameWorldInfoMessage1" />
     <SkipType name="ScMultiplayer.WorldControlRequestMessage" />

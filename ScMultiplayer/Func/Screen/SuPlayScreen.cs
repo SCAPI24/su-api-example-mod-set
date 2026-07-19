@@ -1,4 +1,4 @@
-using Comms.Drt;
+﻿using Comms.Drt;
 using Engine;
 using Engine.Input;
 using Game;
@@ -7,8 +7,10 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net;
 using System.Reflection;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Xml.Linq;
 
@@ -22,7 +24,10 @@ namespace ScMultiplayer
         private readonly Dictionary<WorldInfo, float> m_remoteWorldPings = new Dictionary<WorldInfo, float>();
         private readonly Dictionary<WorldInfo, GameDescription> m_remoteGames = new Dictionary<WorldInfo, GameDescription>();
         private readonly Dictionary<string, double> m_remoteLastSeen = new Dictionary<string, double>();
-        private double m_nextRemoteRefreshTime;
+        private DateTime m_nextRemoteRefreshTime;
+        private Explorer m_subscribedExplorer;
+        private volatile bool m_remoteRefreshRequested;
+        private int m_remoteRefreshDispatchPending;
         public static bool IsGameJoined = false;
         public static byte[] WorldData;
         public static string WorldDataName;
@@ -82,10 +87,13 @@ namespace ScMultiplayer
         public override void Update()
         {
             // Source: Comms.Drt.Explorer.DiscoveredServers
+            // Source: Comms.Drt.Explorer.ServerDiscovered
             // Keep the list live when a host creates a room while this screen is already open.
-            if (Time.RealTime >= m_nextRemoteRefreshTime)
+            DateTime now = DateTime.UtcNow;
+            if (m_remoteRefreshRequested || now >= m_nextRemoteRefreshTime)
             {
-                m_nextRemoteRefreshTime = Time.RealTime + 1.0;
+                m_remoteRefreshRequested = false;
+                m_nextRemoteRefreshTime = now.AddSeconds(2.0);
                 RefreshRemoteWorlds();
             }
 
@@ -136,14 +144,12 @@ namespace ScMultiplayer
             }
 
             if (matchingGame != null &&
-                (matchingInfo?.HostAddress == null ||
-                 !matchingInfo.HostAddress.Address.Equals(ScMultiplayer.client.Address.Address)))
+                !ScMultiplayer.IsLocalServerEndpoint(matchingGame.ServerDescription.Address))
             {
                 GameJoin(worldInfo, matchingGame);
                 return;
             }
 
-            GameCreate(worldInfo);
             Play(worldInfo);
         }
 
@@ -155,19 +161,10 @@ namespace ScMultiplayer
             ScMultiplayer.IsHost = true;
             WorldInfo worldInfo = (WorldInfo)item;
             RemoveOrphanPlayerEntities(worldInfo.DirectoryName);
-            var servers = ScMultiplayer.explorer?.DiscoveredServers;
-            ServerDescription localSd = null;
-            if (servers != null)
+            IPEndPoint localServerAddress = ScMultiplayer.GetLocalServerConnectionAddress();
+            if (localServerAddress == null)
             {
-                foreach (var s in servers)
-                {
-                    if (s.Address.Address.Equals(ScMultiplayer.client.Address.Address))
-                    { localSd = s; break; }
-                }
-            }
-            if (localSd == null)
-            {
-                Log.Error("[SuPlay] Cannot create game: no local server discovered");
+                Log.Error("[SuPlay] Cannot create game: local server is unavailable");
                 return;
             }
 
@@ -184,17 +181,17 @@ namespace ScMultiplayer
             var worldMsg = new GameWorldInfoMessage(
                 worldInfo.WorldSettings.Name, worldInfo.Size, worldInfo.LastSaveTime,
                 worldInfo.WorldSettings.GameMode, worldInfo.WorldSettings.EnvironmentBehaviorMode,
-                worldInfo.SerializationVersion, ScMultiplayer.client.Address, ScMultiplayer.GetLocalPlayerName(),
+                worldInfo.SerializationVersion, ScMultiplayer.server.Address, ScMultiplayer.GetLocalPlayerName(),
                 ScMultiplayer.GetLocalPlayerIdentity());
 
             ScMultiplayer.currentInstance.PrepareClientForGameCreation();
             // Cache game description bytes for LAN discovery response
             ScMultiplayer.LastGameDescription = Message.WriteWithSender(worldMsg, ScMultiplayer.client.Address);
 
-            ScMultiplayer.client.CreateGame(localSd.Address,
+            ScMultiplayer.client.CreateGame(localServerAddress,
                 ScMultiplayer.LastGameDescription,
                 ScMultiplayer.client.Address.Port.ToString());
-            Log.Information($"[SuPlay] CreateGame sent: {worldInfo.WorldSettings.Name}");
+            Log.Information($"[SuPlay] CreateGame sent: {worldInfo.WorldSettings.Name}, local={localServerAddress}, advertised={ScMultiplayer.server.Address}");
         }
 
         // Source: GameEntitySystem/Project.cs:Project.SaveEntities
@@ -264,7 +261,7 @@ namespace ScMultiplayer
             // Source: Survivalcraft/Game/PlayScreen.cs:PlayScreen.Update
             // Prevent the base screen from loading this virtual remote WorldInfo as a local directory.
             m_worldsListWidget.SelectedItem = null;
-            Log.Information($"[SuPlay] JoinGame sent: {worldInfo.WorldSettings.Name} -> {gd.GameID}");
+            Log.Information($"[SuPlay] JoinGame sent: {worldInfo.WorldSettings.Name} -> {gd.GameID}, server={gd.ServerDescription.Address}, advertisedHost={worldMsg.HostAddress}");
         }
 
         public override void Enter(object[] parameters)
@@ -282,8 +279,48 @@ namespace ScMultiplayer
             m_remoteWorldPings.Clear();
             m_remoteGames.Clear();
             m_remoteLastSeen.Clear();
-            m_nextRemoteRefreshTime = 0.0;
+            SubscribeToExplorer();
+            m_nextRemoteRefreshTime = DateTime.MinValue;
+            m_remoteRefreshRequested = true;
             RefreshRemoteWorlds();
+        }
+
+        public override void Leave()
+        {
+            if (m_subscribedExplorer != null)
+                m_subscribedExplorer.ServerDiscovered -= HandleServerDiscovered;
+            m_subscribedExplorer = null;
+            m_remoteRefreshRequested = false;
+            Interlocked.Exchange(ref m_remoteRefreshDispatchPending, 0);
+            base.Leave();
+        }
+
+        // Source: Mod/Comms/Comms.Drt/Func/Explorer/Explorer.cs:Explorer.ServerDiscovered
+        private void SubscribeToExplorer()
+        {
+            Explorer explorer = ScMultiplayer.explorer;
+            if (ReferenceEquals(m_subscribedExplorer, explorer)) return;
+            if (m_subscribedExplorer != null)
+                m_subscribedExplorer.ServerDiscovered -= HandleServerDiscovered;
+            m_subscribedExplorer = explorer;
+            if (m_subscribedExplorer != null)
+                m_subscribedExplorer.ServerDiscovered += HandleServerDiscovered;
+        }
+
+        private void HandleServerDiscovered(ServerDescription server)
+        {
+            m_remoteRefreshRequested = true;
+            // Source: Engine/Dispatcher.cs:Dispatcher.Dispatch
+            // Explorer raises this on its network thread. Coalesce repeated discovery responses
+            // and mutate ListPanelWidget only after returning to the game UI thread.
+            if (Interlocked.Exchange(ref m_remoteRefreshDispatchPending, 1) != 0) return;
+            Dispatcher.Dispatch(delegate
+            {
+                Interlocked.Exchange(ref m_remoteRefreshDispatchPending, 0);
+                m_remoteRefreshRequested = false;
+                m_nextRemoteRefreshTime = DateTime.UtcNow.AddSeconds(2.0);
+                RefreshRemoteWorlds();
+            });
         }
 
         private void RefreshRemoteWorlds()
@@ -299,7 +336,10 @@ namespace ScMultiplayer
                         GameWorldInfoMessage info;
                         try { info = Message.Read(game.GameDescriptionBytes) as GameWorldInfoMessage; }
                         catch { continue; }
-                        if (info == null || ScMultiplayer.client.Address.Equals(info.HostAddress)) continue;
+                        if (info == null || ScMultiplayer.IsLocalServerEndpoint(server.Address)) continue;
+                        // Keep the displayed remote world tied to the discovery endpoint.
+                        // HostAddress is metadata and may be stale from an older virtual NIC;
+                        // JoinGame must use server.Address, which is the endpoint that replied.
 
                         string key = server.Address + "/" + game.GameID;
                         seen.Add(key);

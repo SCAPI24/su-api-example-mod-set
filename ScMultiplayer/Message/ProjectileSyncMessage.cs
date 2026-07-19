@@ -10,16 +10,20 @@ namespace ScMultiplayer
         public enum ProjectileType : byte
         {
             Add,
+            Update,
             Remove
         }
 
+        public ushort ProjectileId;
         public ProjectileType Action;
         public int Value;
         public Vector3 Position;
         public Vector3 Velocity;
         public Vector3 AngularVelocity;
         public Vector3 TrailOffset;
+        // Legacy field name. The wire value is the authoritative owner ClientID.
         public ushort OwnerEntityId;
+        public int ServerStep;
         public bool IsFireProjectile;
 
         // Trail particle info
@@ -31,14 +35,18 @@ namespace ScMultiplayer
 
         public ProjectileSyncMessage() { }
 
-        public ProjectileSyncMessage(ProjectileType action, int value, Vector3 pos, Vector3 vel, Vector3 angVel, Vector3 trail, ushort ownerId, bool isFire)
+        public ProjectileSyncMessage(ushort projectileId, ProjectileType action, int value,
+            Vector3 pos, Vector3 vel, Vector3 angVel, Vector3 trail, ushort ownerId,
+            int serverStep, bool isFire)
         {
-            Action = action; Value = value; Position = pos; Velocity = vel;
-            AngularVelocity = angVel; TrailOffset = trail; OwnerEntityId = ownerId; IsFireProjectile = isFire;
+            ProjectileId = projectileId; Action = action; Value = value; Position = pos; Velocity = vel;
+            AngularVelocity = angVel; TrailOffset = trail; OwnerEntityId = ownerId;
+            ServerStep = serverStep; IsFireProjectile = isFire;
         }
 
         protected override void Read(SuReader reader)
         {
+            ProjectileId = (ushort)reader.ReadPackedInt32();
             Action = (ProjectileType)reader.ReadByte();
             Value = reader.ReadInt32();
             Position = reader.ReadVector3(reader);
@@ -46,6 +54,7 @@ namespace ScMultiplayer
             TrailOffset = reader.ReadVector3(reader);
             AngularVelocity = reader.ReadVector3(reader);
             OwnerEntityId = (ushort)reader.ReadPackedInt32();
+            ServerStep = reader.ReadInt32();
             IsFireProjectile = reader.ReadBoolean();
             HasSmokeTrail = reader.ReadBoolean();
             if (HasSmokeTrail)
@@ -60,6 +69,7 @@ namespace ScMultiplayer
 
         protected override void Write(SuWriter writer)
         {
+            writer.WritePackedInt32(ProjectileId);
             writer.WriteByte((byte)Action);
             writer.WriteInt32(Value);
             writer.WriteVector3(writer, Position);
@@ -67,6 +77,7 @@ namespace ScMultiplayer
             writer.WriteVector3(writer, TrailOffset);
             writer.WriteVector3(writer, AngularVelocity);
             writer.WritePackedInt32(OwnerEntityId);
+            writer.WriteInt32(ServerStep);
             writer.WriteBoolean(IsFireProjectile);
             writer.WriteBoolean(HasSmokeTrail);
             if (HasSmokeTrail)

@@ -13,6 +13,9 @@ namespace ScMultiplayer
         public byte[] WorldData;
         public DateTime LastSaveTime;
         public int TargetClientId = -1;
+        public int TransferId;
+        public int ChunkCount;
+        public int TotalLength;
         public int RandomSeed;
         public Dictionary<string, long> RandomStates = new Dictionary<string, long>();
         public string PlayerName = string.Empty;
@@ -21,6 +24,12 @@ namespace ScMultiplayer
         public Vector3 PlayerPosition;
         public float PlayerLevel = 1f;
         public float PlayerHealth = 1f;
+        public float PlayerAir = 1f;
+        public float PlayerFood = 0.9f;
+        public float PlayerStamina = 1f;
+        public float PlayerSleep = 0.9f;
+        public float PlayerTemperature = 12f;
+        public float PlayerWetness;
         public int[] SlotValues = Array.Empty<int>();
         public int[] SlotCounts = Array.Empty<int>();
         public int[][] Clothes = CreateEmptyClothes();
@@ -45,6 +54,12 @@ namespace ScMultiplayer
             PlayerPosition = playerRecord?.Position ?? Vector3.Zero;
             PlayerLevel = playerRecord?.Level ?? 1f;
             PlayerHealth = playerRecord?.Health ?? 1f;
+            PlayerAir = playerRecord?.Air ?? 1f;
+            PlayerFood = playerRecord?.Food ?? 0.9f;
+            PlayerStamina = playerRecord?.Stamina ?? 1f;
+            PlayerSleep = playerRecord?.Sleep ?? 0.9f;
+            PlayerTemperature = playerRecord?.Temperature ?? 12f;
+            PlayerWetness = playerRecord?.Wetness ?? 0f;
             SlotValues = playerRecord?.SlotValues != null
                 ? (int[])playerRecord.SlotValues.Clone() : Array.Empty<int>();
             SlotCounts = playerRecord?.SlotCounts != null
@@ -59,6 +74,9 @@ namespace ScMultiplayer
             WorldData = dataLength > 0 ? reader.ReadFixedBytes(dataLength) : null;
             LastSaveTime = DateTime.FromBinary(reader.ReadInt64());
             TargetClientId = reader.ReadInt32();
+            TransferId = reader.ReadInt32();
+            ChunkCount = reader.ReadInt32();
+            TotalLength = reader.ReadInt32();
             RandomSeed = reader.ReadInt32();
             int count = reader.ReadPackedInt32();
             RandomStates = new Dictionary<string, long>(count);
@@ -70,6 +88,12 @@ namespace ScMultiplayer
             PlayerPosition = reader.ReadVector3(reader);
             PlayerLevel = reader.ReadSingle();
             PlayerHealth = reader.ReadSingle();
+            PlayerAir = reader.ReadSingle();
+            PlayerFood = reader.ReadSingle();
+            PlayerStamina = reader.ReadSingle();
+            PlayerSleep = reader.ReadSingle();
+            PlayerTemperature = reader.ReadSingle();
+            PlayerWetness = reader.ReadSingle();
             int slotsCount = reader.ReadPackedInt32();
             SlotValues = new int[slotsCount];
             SlotCounts = new int[slotsCount];
@@ -95,6 +119,9 @@ namespace ScMultiplayer
                 writer.WriteFixedBytes(WorldData);
             writer.WriteInt64(LastSaveTime.ToBinary());
             writer.WriteInt32(TargetClientId);
+            writer.WriteInt32(TransferId);
+            writer.WriteInt32(ChunkCount);
+            writer.WriteInt32(TotalLength);
             writer.WriteInt32(RandomSeed);
             writer.WritePackedInt32(RandomStates?.Count ?? 0);
             if (RandomStates != null)
@@ -111,6 +138,12 @@ namespace ScMultiplayer
             writer.WriteVector3(writer, PlayerPosition);
             writer.WriteSingle(PlayerLevel);
             writer.WriteSingle(PlayerHealth);
+            writer.WriteSingle(PlayerAir);
+            writer.WriteSingle(PlayerFood);
+            writer.WriteSingle(PlayerStamina);
+            writer.WriteSingle(PlayerSleep);
+            writer.WriteSingle(PlayerTemperature);
+            writer.WriteSingle(PlayerWetness);
             int slotsCount = Math.Min(SlotValues?.Length ?? 0, SlotCounts?.Length ?? 0);
             writer.WritePackedInt32(slotsCount);
             for (int i = 0; i < slotsCount; i++)

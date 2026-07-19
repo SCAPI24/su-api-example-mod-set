@@ -19,7 +19,6 @@ namespace ScMultiplayer
             base.Load(valuesDictionary, idToEntityMap);
             // Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.GameWidget
             m_componentPlayer = Entity.FindComponent<ComponentPlayer>(throwOnError: true);
-            ScMultiplayer.currentInstance?.EnsureUpdateRegistration();
             ScMultiplayer.currentInstance?.ApplyRemoteWeatherState();
         }
 
@@ -37,10 +36,6 @@ namespace ScMultiplayer
 
         void IUpdateable.Update(float dt)
         {
-            // Source: GameEntitySystem/SubsystemUpdate.cs:SubsystemUpdate.Update
-            // A downloaded world creates a new Project. Recheck every frame so ScMultiplayer is
-            // registered even when the previous Project is disposed after the new join callback.
-            ScMultiplayer.currentInstance?.EnsureUpdateRegistration();
             // Source: Mod/ConsoleMod/Subsystem/ConsoleSubsystemGameWidgets.cs:AttachConsoleButton
             if (m_moreContents == null) AttachButtons();
             if (m_createButton != null && m_createButton.IsClicked)

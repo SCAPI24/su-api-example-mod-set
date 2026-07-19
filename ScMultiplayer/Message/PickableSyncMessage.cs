@@ -23,6 +23,7 @@ namespace ScMultiplayer
         public Vector3 Position;
         public Vector3 Velocity;
         public Vector3? FlyToPosition;
+        public Matrix? StuckMatrix;
         public bool PlaySound;
 
         // For batch update
@@ -30,10 +31,13 @@ namespace ScMultiplayer
 
         public PickableSyncMessage() { }
 
-        public PickableSyncMessage(PickAction action, ushort id, int value, int count, Vector3 pos, Vector3 vel, Vector3? flyTo = null, bool playSound = false)
+        public PickableSyncMessage(PickAction action, ushort id, int value, int count,
+            Vector3 pos, Vector3 vel, Vector3? flyTo = null, bool playSound = false,
+            Matrix? stuckMatrix = null)
         {
             Action = action; Id = id; Value = value; Count = count;
             Position = pos; Velocity = vel; FlyToPosition = flyTo; PlaySound = playSound;
+            StuckMatrix = stuckMatrix;
         }
 
         public struct PickablePos
@@ -56,6 +60,7 @@ namespace ScMultiplayer
                     Position = reader.ReadVector3(reader);
                     Velocity = reader.ReadVector3(reader);
                     FlyToPosition = reader.ReadBoolean() ? reader.ReadVector3(reader) : (Vector3?)null;
+                    StuckMatrix = reader.ReadBoolean() ? ReadMatrix(reader) : (Matrix?)null;
                     break;
                 case PickAction.UpdatePosition:
                     int cnt = reader.ReadPackedInt32();
@@ -93,6 +98,8 @@ namespace ScMultiplayer
                     writer.WriteVector3(writer, Velocity);
                     writer.WriteBoolean(FlyToPosition.HasValue);
                     if (FlyToPosition.HasValue) writer.WriteVector3(writer, FlyToPosition.Value);
+                    writer.WriteBoolean(StuckMatrix.HasValue);
+                    if (StuckMatrix.HasValue) WriteMatrix(writer, StuckMatrix.Value);
                     break;
                 case PickAction.UpdatePosition:
                     writer.WritePackedInt32(Positions.Count);
@@ -114,6 +121,27 @@ namespace ScMultiplayer
                     writer.WriteVector3(writer, FlyToPosition.Value);
                     break;
             }
+        }
+
+        private static Matrix ReadMatrix(SuReader reader)
+        {
+            return new Matrix(
+                reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle(),
+                reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle(),
+                reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle(),
+                reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
+        }
+
+        private static void WriteMatrix(SuWriter writer, Matrix matrix)
+        {
+            writer.WriteSingle(matrix.M11); writer.WriteSingle(matrix.M12);
+            writer.WriteSingle(matrix.M13); writer.WriteSingle(matrix.M14);
+            writer.WriteSingle(matrix.M21); writer.WriteSingle(matrix.M22);
+            writer.WriteSingle(matrix.M23); writer.WriteSingle(matrix.M24);
+            writer.WriteSingle(matrix.M31); writer.WriteSingle(matrix.M32);
+            writer.WriteSingle(matrix.M33); writer.WriteSingle(matrix.M34);
+            writer.WriteSingle(matrix.M41); writer.WriteSingle(matrix.M42);
+            writer.WriteSingle(matrix.M43); writer.WriteSingle(matrix.M44);
         }
     }
 }

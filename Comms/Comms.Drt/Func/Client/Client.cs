@@ -22,6 +22,14 @@ public class Client : IDisposable
 
     private double LastStepTime;
 
+    private int AlarmFunctionRunning;
+
+    private const int MaxCatchUpStepsPerBatch = 16;
+
+    private const double CatchUpSpeed = 4.0;
+
+    private const int FastCatchUpThresholdSteps = 200;
+
     internal MessageSerializer MessageSerializer;
 
     private float TickDurationField;
@@ -152,6 +160,8 @@ public class Client : IDisposable
 
     public event Action<GameStepData> GameStep;
 
+    public event Action<int, byte[]> DirectInput;
+
     public event Action<DisconnectedData> Disconnected;
 
     public event Action<Exception> Error;
@@ -227,31 +237,25 @@ public class Client : IDisposable
             if (!IsDisposed)
             {
                 Message message = MessageSerializer.Read(p.Bytes, p.PeerData.Address);
-                if (!(message is ServerStateRequestMessage message2))
+                switch (message)
                 {
-                    if (!(message is ServerDesyncStateRequestMessage message3))
-                    {
-                        if (!(message is ServerGameDescriptionRequestMessage message4))
-                        {
-                            if (!(message is ServerTickMessage message5))
-                            {
-                                throw new ProtocolViolationException($"Unexpected message type {message.GetType()}.");
-                            }
-                            Handle(message5);
-                        }
-                        else
-                        {
-                            Handle(message4);
-                        }
-                    }
-                    else
-                    {
-                        Handle(message3);
-                    }
-                }
-                else
-                {
-                    Handle(message2);
+                    case ServerStateRequestMessage stateRequest:
+                        Handle(stateRequest);
+                        break;
+                    case ServerDesyncStateRequestMessage desyncRequest:
+                        Handle(desyncRequest);
+                        break;
+                    case ServerGameDescriptionRequestMessage descriptionRequest:
+                        Handle(descriptionRequest);
+                        break;
+                    case ServerTickMessage tick:
+                        Handle(tick);
+                        break;
+                    case ServerDirectInputMessage directInput:
+                        Handle(directInput);
+                        break;
+                    default:
+                        throw new ProtocolViolationException($"Unexpected message type {message.GetType()}.");
                 }
             }
         };
@@ -355,6 +359,33 @@ public class Client : IDisposable
             {
                 InputBytes = inputBytes
             }));
+        }
+    }
+
+    // Source: Comms.Drt/Func/Client/Client.cs:SendInput
+    // A negative target broadcasts immediately. A non-negative sequenced target is isolated to
+    // one endpoint and is suitable for large ordered join transfers.
+    public void SendDirectInput(int targetClientID, byte[] inputBytes, bool sequenced = false,
+        bool latest = false)
+    {
+        lock (Peer.Lock)
+        {
+            CheckNotDisposedAndConnected();
+            // Source: Comms/Comm.cs:Comm.ProcessReceivedMessage
+            // Different latest-state message types cannot share one unreliable sequence stream:
+            // a projectile packet would otherwise invalidate a delayed player or animal packet.
+            // Their application payloads carry ticks/IDs and discard stale state independently.
+            DeliveryMode deliveryMode = latest
+                ? DeliveryMode.Unreliable
+                : DeliveryMode.Reliable;
+            Peer.SendDataMessage(Peer.ConnectedTo, deliveryMode,
+                MessageSerializer.Write(new ClientDirectInputMessage
+                {
+                    TargetClientID = targetClientID,
+                    IsSequenced = sequenced,
+                    IsLatest = latest,
+                    InputBytes = inputBytes
+                }));
         }
     }
 
@@ -474,7 +505,16 @@ public class Client : IDisposable
             int num = MaxAllowedStep - Step;
             double num2 = NextTickExpectedTime - time;
             double num3 = (double)((float)num * StepDuration) - num2;
-            return (double)Settings.SafetyLag - num3;
+            double waitTime = (double)Settings.SafetyLag - num3;
+            // Source: Comms.Drt/Func/Client/Client.cs:GetStepWaitTime
+            // Historical ticks remain ordered, but a peer more than two seconds behind processes
+            // bounded batches immediately and releases Peer.Lock between every step. Smaller
+            // timing differences use a smooth accelerated clock.
+            if (waitTime <= 0.0 && num > FastCatchUpThresholdSteps)
+                return 0.0;
+            if (waitTime <= 0.0 && num > StepsPerTick * 2)
+                return Math.Max(LastStepTime + (double)StepDuration / CatchUpSpeed - time, 0.0);
+            return waitTime;
         }
         if (TickMessages.Count <= 0)
         {
@@ -485,56 +525,71 @@ public class Client : IDisposable
 
     private void AlarmFunction()
     {
+        if (Interlocked.Exchange(ref AlarmFunctionRunning, 1) != 0)
+            return;
+        double nextDelay = 1.0 / 0.0;
         try
         {
-            lock (Peer.Lock)
+            int processedSteps = 0;
+            while (processedSteps < MaxCatchUpStepsPerBatch)
             {
-                if (IsDisposed)
+                GameStepData? gameStep = null;
+                lock (Peer.Lock)
                 {
-                    return;
-                }
-                double num = 1.0 / 0.0;
-                if (IsConnected)
-                {
-                    while (true)
+                    if (IsDisposed || !IsConnected)
                     {
-                        double time = Comm.GetTime();
-                        num = GetStepWaitTime(time);
-                        if (!(num <= 0.0))
-                        {
-                            break;
-                        }
-                        ServerTickMessage serverTickMessage;
-                        if (Step % StepsPerTick == 0)
-                        {
-                            serverTickMessage = TickMessages.Dequeue();
-                            if (serverTickMessage.Tick != Step / StepsPerTick)
-                            {
-                                throw new Exception($"Wrong tick message, expected {Step / StepsPerTick} got {serverTickMessage.Tick}.");
-                            }
-                        }
-                        else
-                        {
-                            serverTickMessage = null;
-                        }
-                        int step = Step + 1;
-                        Step = step;
-                        LastStepTime = time;
-                        InvokeGameStep(serverTickMessage);
+                        nextDelay = 1.0 / 0.0;
+                        break;
                     }
+                    double time = Comm.GetTime();
+                    nextDelay = GetStepWaitTime(time);
+                    if (nextDelay > 0.0)
+                        break;
+                    ServerTickMessage serverTickMessage;
+                    if (Step % StepsPerTick == 0)
+                    {
+                        serverTickMessage = TickMessages.Dequeue();
+                        if (serverTickMessage.Tick != Step / StepsPerTick)
+                            throw new Exception($"Wrong tick message, expected {Step / StepsPerTick} got {serverTickMessage.Tick}.");
+                    }
+                    else
+                    {
+                        serverTickMessage = null;
+                    }
+                    Step++;
+                    LastStepTime = time;
+                    gameStep = CreateGameStepData(serverTickMessage);
                 }
-                Alarm.Set(num);
+                if (!gameStep.HasValue)
+                    break;
+                InvokeGameStep(gameStep.Value);
+                processedSteps++;
             }
+            if (processedSteps == MaxCatchUpStepsPerBatch && nextDelay <= 0.0)
+                nextDelay = 0.001;
         }
         catch (Exception error)
         {
             InvokeError(error);
         }
+        finally
+        {
+            Interlocked.Exchange(ref AlarmFunctionRunning, 0);
+            lock (Peer.Lock)
+            {
+                if (!IsDisposed)
+                    Alarm.Set(Math.Max(nextDelay, 0.0));
+            }
+        }
     }
 
     private void InvokeGameStep(ServerTickMessage tickMessage)
     {
-        GameStepData obj = CreateGameStepData(tickMessage);
+        InvokeGameStep(CreateGameStepData(tickMessage));
+    }
+
+    private void InvokeGameStep(GameStepData obj)
+    {
         try
         {
             this.GameStep?.Invoke(obj);
@@ -671,6 +726,11 @@ public class Client : IDisposable
         }
         TickMessages.Enqueue(message);
         Alarm.Set(0.0);
+    }
+
+    private void Handle(ServerDirectInputMessage message)
+    {
+        this.DirectInput?.Invoke(message.SourceClientID, message.InputBytes);
     }
 
     private void HandleDisconnected()

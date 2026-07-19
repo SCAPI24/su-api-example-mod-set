@@ -46,20 +46,28 @@ namespace ScMultiplayer
 
             ApplyNetworkBatches();
 
-            if (ScMultiplayer.client?.IsConnected == true && m_modifiedCells.Count > 0)
-            {
-                var localChanges = new Dictionary<Point3, bool>();
-                foreach (KeyValuePair<Point3, bool> item in m_modifiedCells)
-                {
-                    if (!m_networkReceivedCells.Contains(item.Key))
-                        localChanges[item.Key] = item.Value;
-                }
-                if (localChanges.Count > 0)
-                    ScMultiplayer.currentInstance?.PublishTerrainChanges(localChanges);
-            }
-
-            base.Update(dt);
+            // Source: Survivalcraft/Game/SubsystemTerrain.cs:SubsystemTerrain.Update
+            // TerrainUpdater runs fluid, electricity, fire, piston, weather and pollable block
+            // behavior changes. Capture the modification dictionary after it completes, before
+            // ProcessModifiedCells clears it, so every ChangeCell/DestroyCell result is sent.
+            TerrainUpdater.Update();
+            PublishAllModifiedCells();
+            ProcessModifiedCells();
             m_networkReceivedCells.Clear();
+        }
+
+        private void PublishAllModifiedCells()
+        {
+            if (ScMultiplayer.client?.IsConnected != true || m_modifiedCells.Count == 0)
+                return;
+            var localChanges = new Dictionary<Point3, bool>();
+            foreach (KeyValuePair<Point3, bool> item in m_modifiedCells)
+            {
+                if (!m_networkReceivedCells.Contains(item.Key))
+                    localChanges[item.Key] = item.Value;
+            }
+            if (localChanges.Count > 0)
+                ScMultiplayer.currentInstance?.PublishTerrainChanges(localChanges);
         }
 
         private void ApplyNetworkBatches()
