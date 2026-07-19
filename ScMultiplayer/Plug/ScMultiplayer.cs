@@ -23,6 +23,15 @@ using TemplatesDatabase;
 
 namespace ScMultiplayer
 {
+    public enum NetworkSyncRate
+    {
+        Hz1 = 1,
+        Hz2 = 2,
+        Hz4 = 4,
+        Hz8 = 8,
+        Hz16 = 16
+    }
+
     // ================================================================
     // PlayerMappingManager / PlayerOperationSyncManager / NetworkMessageHandler
     // NetworkMessageSender 保持原样，不变
@@ -257,6 +266,20 @@ namespace ScMultiplayer
         public GamePakWorldMessage Manifest;
     }
 
+    public class JoinCatchUpMessage
+    {
+        public byte[] Payload;
+        public bool Sequenced;
+        public bool Latest;
+    }
+
+    public class JoinCatchUpJournal
+    {
+        public int StartTick;
+        public int TotalBytes;
+        public readonly List<JoinCatchUpMessage> Messages = new List<JoinCatchUpMessage>();
+    }
+
     public class AnimalSyncMetadata
     {
         public double NextSendTime;
@@ -351,6 +374,88 @@ namespace ScMultiplayer
 
     public class NetworkMessageSender
     {
+        private const int MaximumSyncBatchBytes = 1100;
+
+        private sealed class PendingSyncBatch
+        {
+            public int TargetClientId;
+            public bool Sequenced;
+            public bool Latest;
+            public int EstimatedBytes;
+            public readonly List<byte[]> Payloads = new List<byte[]>();
+        }
+
+        private static readonly List<PendingSyncBatch> s_pendingSyncBatches =
+            new List<PendingSyncBatch>();
+        private static bool s_isSyncBatchActive;
+
+        public static void BeginSyncBatch()
+        {
+            FlushSyncBatch();
+            s_isSyncBatchActive = true;
+        }
+
+        public static void FlushSyncBatch()
+        {
+            bool wasActive = s_isSyncBatchActive;
+            s_isSyncBatchActive = false;
+            foreach (PendingSyncBatch batch in s_pendingSyncBatches.ToArray())
+                SendPendingSyncBatch(batch);
+            s_pendingSyncBatches.Clear();
+            if (!wasActive) return;
+        }
+
+        public static void SendScheduledMessage(int targetClientId, Message message,
+            bool sequenced = false, bool latest = false, bool batchable = true)
+        {
+            byte[] payload = Message.WriteWithSender(message, ScMultiplayer.client.Address);
+            if (targetClientId < 0)
+                ScMultiplayer.currentInstance?.RecordJoinCatchUpMessage(
+                    payload, sequenced, latest);
+            if (!s_isSyncBatchActive || !batchable || payload.Length + 24 > MaximumSyncBatchBytes)
+            {
+                if (s_isSyncBatchActive)
+                {
+                    FlushSyncBatch();
+                    s_isSyncBatchActive = true;
+                }
+                ScMultiplayer.client.SendDirectInput(
+                    targetClientId, payload, sequenced, latest);
+                return;
+            }
+
+            PendingSyncBatch batch = s_pendingSyncBatches.LastOrDefault(item =>
+                item.TargetClientId == targetClientId && item.Sequenced == sequenced &&
+                item.Latest == latest);
+            int entryBytes = payload.Length + 5;
+            if (batch == null || batch.EstimatedBytes + entryBytes > MaximumSyncBatchBytes)
+            {
+                batch = new PendingSyncBatch
+                {
+                    TargetClientId = targetClientId,
+                    Sequenced = sequenced,
+                    Latest = latest,
+                    EstimatedBytes = 24
+                };
+                s_pendingSyncBatches.Add(batch);
+            }
+            batch.Payloads.Add(payload);
+            batch.EstimatedBytes += entryBytes;
+        }
+
+        private static void SendPendingSyncBatch(PendingSyncBatch batch)
+        {
+            if (batch.Payloads.Count == 0) return;
+            byte[] payload = batch.Payloads.Count == 1
+                ? batch.Payloads[0]
+                : Message.WriteWithSender(new SyncBatchMessage
+                {
+                    Payloads = batch.Payloads
+                }, ScMultiplayer.client.Address);
+            ScMultiplayer.client.SendDirectInput(
+                batch.TargetClientId, payload, batch.Sequenced, batch.Latest);
+        }
+
         public static void SendPlayerPositionMessage(int playerIndex, int serverTick,
             Vector3 position, Quaternion rotation,
             Vector3 velocity, Vector2 lookAngles, Vector2? walkOrder, float jumpOrder,
@@ -384,8 +489,7 @@ namespace ScMultiplayer
             // Player snapshots carry ServerTick and reject stale state at the receiver. Keeping
             // them out of Comms' shared ReliableSequenced stream prevents a delayed fragmented
             // message from freezing every later player presentation update.
-            ScMultiplayer.client.SendDirectInput(-1,
-                Message.WriteWithSender(message, ScMultiplayer.client.Address), latest: true);
+            SendScheduledMessage(-1, message, latest: true);
         }
 
         public static void SendPlayerInputMessage(int playerIndex, int sequence, int clientTick,
@@ -410,7 +514,8 @@ namespace ScMultiplayer
         }
 
         public static void SendWorldInfoMessage(double timeOfDayOffset, double totalElapsedGameTime,
-            TimeOfDayMode currentTimeMode, SubsystemWeather weather, SubsystemSky sky)
+            TimeOfDayMode currentTimeMode, SubsystemWeather weather, SubsystemSky sky,
+            bool reliable = false)
         {
             // Source: Survivalcraft/Game/SubsystemSky.cs:SubsystemSky.m_lightningStrikePosition
             // Nullable<T> boxes a present value as T. Use SuAPI's non-generic getter so its
@@ -424,8 +529,7 @@ namespace ScMultiplayer
                 weather.IsPrecipitationStarted, weather.PrecipitationIntensity,
                 weather.IsFogStarted, weather.FogProgress, weather.FogIntensity, weather.FogSeed,
                 lightningPosition.HasValue, lightningPosition ?? Vector3.Zero);
-            ScMultiplayer.client.SendDirectInput(-1,
-                Message.WriteWithSender(msg, ScMultiplayer.client.Address));
+            SendScheduledMessage(-1, msg, latest: !reliable, batchable: !reliable);
         }
 
         public static void SendWorldControlRequest(WorldControlAction actions)
@@ -437,20 +541,17 @@ namespace ScMultiplayer
 
         // Source: ScMultiplayer.cs:HandleAnimalEntityMessage
         public static void SendEntityMessage(EntityMessage message) =>
-            ScMultiplayer.client.SendDirectInput(-1,
-                Message.WriteWithSender(message, ScMultiplayer.client.Address));
+            SendScheduledMessage(-1, message);
 
         // Source: ScMultiplayer.cs:HandleAnimalBodyUpdate
         public static void SendBodyUpdateMessage(BodyUpdateMessage message,
             bool reliable = false) =>
-            ScMultiplayer.client.SendDirectInput(-1,
-                Message.WriteWithSender(message, ScMultiplayer.client.Address),
-                latest: !reliable);
+            SendScheduledMessage(-1, message, latest: !reliable,
+                batchable: !reliable);
 
         // Source: ScMultiplayer.cs:HandlePickableSyncMessage
         public static void SendPickableMessage(PickableSyncMessage message) =>
-            ScMultiplayer.client.SendDirectInput(-1,
-                Message.WriteWithSender(message, ScMultiplayer.client.Address),
+            SendScheduledMessage(-1, message,
                 latest: message.Action == PickableSyncMessage.PickAction.UpdatePosition);
 
         public static void SendPakWorldManifest(int targetClientId, GamePakWorldMessage message)
@@ -536,8 +637,7 @@ namespace ScMultiplayer
         {
             var msg = new PlayerProfileMessage(clientId, record);
             // Source: ScMultiplayer.cs:HandlePlayerProfileMessage
-            ScMultiplayer.client.SendDirectInput(-1,
-                Message.WriteWithSender(msg, ScMultiplayer.client.Address));
+            SendScheduledMessage(-1, msg);
         }
 
         public static void SendPlayerHealthMessage(int playerIndex, ComponentPlayer player,
@@ -561,8 +661,7 @@ namespace ScMultiplayer
                 sickness != null ? ScMultiplayer.ModManager.ModParentField.GetParentField<float>(sickness, "m_sicknessDuration", typeof(ComponentSickness)) : 0f,
                 cause);
             // Source: ScMultiplayer.cs:NetworkMessageHandler.HandlePlayerHealthMessage
-            ScMultiplayer.client.SendDirectInput(-1,
-                Message.WriteWithSender(msg, ScMultiplayer.client.Address));
+            SendScheduledMessage(-1, msg);
         }
 
         public static void SendKickPlayerMessage(int targetClientID, string reason = null)
@@ -577,9 +676,9 @@ namespace ScMultiplayer
     #endregion
 
     // ================================================================
-    // ScMultiplayer 主类 (IMod + IUpdateable)
+    // ScMultiplayer 主类
     // ================================================================
-    public class ScMultiplayer : IMod, IUpdateable
+    public class ScMultiplayer : IMod
     {
         public static ModManager ModManager = (ModManager)AppDomain.CurrentDomain.GetAssemblies()
             .SelectMany(a => a.GetTypes())
@@ -611,15 +710,13 @@ namespace ScMultiplayer
         public IEnumerable<string> Dependencies => Array.Empty<string>();
         public bool IsEnabled { get; set; } = true;
         public bool IsMergeLib => true;
-        public UpdateOrder UpdateOrder => UpdateOrder.Body;
 
         // ---------- 内部状态 ----------
-        private float m_networkTickAccumulator;
-        private double m_lastNetworkUpdateTime;
-        private float m_worldInfoSyncTime;
+        private float m_syncPulseAccumulator;
+        private double m_lastSyncUpdateTime;
+        private uint m_syncPulseIndex;
         private Project m_frameProject;
-        private float m_inventorySyncTime;
-        private float m_playerStatsSyncTime;
+        private int m_lastWorldUpdateFrameIndex = -1;
         private Dictionary<int, float> m_playerHealthCache = new Dictionary<int, float>(); // clientID → last known health
         private readonly Dictionary<int, float> m_hostKnockbackHealthCache =
             new Dictionary<int, float>();
@@ -663,6 +760,11 @@ namespace ScMultiplayer
         private bool m_playerRecordsDirty;
         private float m_playerRecordSaveTime;
         private float m_playerProfileSyncTime;
+        private float m_inventoryKeyframeTime;
+        private readonly Dictionary<int, int[]> m_lastSentInventoryValues =
+            new Dictionary<int, int[]>();
+        private readonly Dictionary<int, int[]> m_lastSentInventoryCounts =
+            new Dictionary<int, int[]>();
         private PendingJoinRequest m_pendingJoinRequest;
         private PendingJoinRequest m_activeJoinRequest;
         private string m_activeJoinPlayerName;
@@ -690,9 +792,7 @@ namespace ScMultiplayer
         private double m_pendingLocalKnockbackUntil;
         private ushort m_nextAnimalId = 1;
         private ushort m_nextPickableId = 1;
-        private float m_worldObjectsSyncTime;
         private float m_fullWorldObjectsSyncTime;
-        private float m_animalEvaluationTime;
         private float m_fullAnimalSyncTime;
         private Project m_runawayCreatureCleanupProject;
         private readonly Queue<Entity> m_runawayCreatureCleanup = new Queue<Entity>();
@@ -711,6 +811,7 @@ namespace ScMultiplayer
             new Dictionary<ushort, RemoteAnimalSyncState>();
         private int m_lastFullAnimalSnapshotTick;
         private readonly Dictionary<Pickable, ushort> m_hostPickableIds = new Dictionary<Pickable, ushort>();
+        private SubsystemPickables m_hostPickablesSubsystem;
         private readonly Dictionary<ushort, Pickable> m_remotePickables = new Dictionary<ushort, Pickable>();
         private readonly Dictionary<ushort, RemotePickableNetworkState> m_remotePickableStates =
             new Dictionary<ushort, RemotePickableNetworkState>();
@@ -722,8 +823,6 @@ namespace ScMultiplayer
         private readonly Dictionary<string, ContainerNetworkState> m_containerStates =
             new Dictionary<string, ContainerNetworkState>();
         private readonly HashSet<IUpdateable> m_disabledClientContainerUpdates = new HashSet<IUpdateable>();
-        private float m_containerSyncTime;
-        private float m_projectileSyncTime;
         private readonly Dictionary<ushort, RemotePickableRecord> m_remotePickableRecords = new Dictionary<ushort, RemotePickableRecord>();
         private readonly object m_terrainJournalLock = new object();
         private readonly Dictionary<Point3, TerrainCellState> m_terrainCheckpoint =
@@ -748,6 +847,10 @@ namespace ScMultiplayer
             new Dictionary<int, OutgoingWorldTransfer>();
         private readonly Dictionary<int, int> m_worldTransfersAwaitingReady =
             new Dictionary<int, int>();
+        private readonly Dictionary<int, JoinCatchUpJournal> m_joinCatchUpJournals =
+            new Dictionary<int, JoinCatchUpJournal>();
+        private readonly Dictionary<int, string> m_pendingAcceptedJoinKeys =
+            new Dictionary<int, string>();
         private readonly Dictionary<int, IncomingWorldTransfer> m_incomingWorldTransfers =
             new Dictionary<int, IncomingWorldTransfer>();
         private Point3? m_localDigTarget;
@@ -761,20 +864,22 @@ namespace ScMultiplayer
         private int m_localRespawnSequence;
         private double m_localRespawnPendingUntil;
         private int m_nextWorldTransferId;
+        private int m_pendingWorldReadyTransferId;
         private float m_terrainMergeTime;
-        private float m_terrainRepairTime;
         private int m_sessionRandomSeed;
         private Dictionary<string, long> m_pendingRandomStates = new Dictionary<string, long>();
         private Project m_randomStateAppliedProject;
         private GameWorldInfoMessage1 m_remoteWeatherState;
         private bool m_remoteLightningActive;
+        private bool m_hostLightningActive;
         private WorldControlAction m_pendingWorldControlActions;
         private double m_worldControlRequestDeadline;
         private const float ServerTickDuration = 0.01f;
-        private const float NetworkTickRate = 20f;
-        private const float NetworkTickDuration = 1f / NetworkTickRate;
-        private const int LogicStepsPerNetworkTick = 5;
-        private const int MaxNetworkTicksPerUpdate = 4;
+        private const float TransportTickDuration = 0.05f;
+        private const int LogicStepsPerTransportTick = 5;
+        private const int SyncBaseRate = 16;
+        private const float SyncPulseDuration = 1f / SyncBaseRate;
+        private const int MaxSyncPulsesPerUpdate = 4;
         private const int MaxReconnectAttempts = 5;
         private const float ReconnectInitialDelay = 1f;
         private const float ReconnectMaxDelay = 5f;
@@ -789,13 +894,10 @@ namespace ScMultiplayer
         private const float PlayerHitRequestInterval = 0.36f;
         private const float PlayerInteractRequestInterval = 0.36f;
         private const int WorldTransferChunkSize = 8 * 1024;
-        private const int WorldTransferChunksPerNetworkTick = 2;
+        private const int MinimumWorldTransferChunksPerNetworkTick = 2;
+        private const int MaximumWorldTransferChunksPerNetworkTick = 4;
         private const int MaximumWorldTransferSize = 64 * 1024 * 1024;
-        private const float WorldInfoSyncInterval = 1f / 20f;
-        private const float InventorySyncInterval = 0.25f;
-        private const float ContainerSyncInterval = 0.25f;
-        private const float ProjectileSyncInterval = 0.05f;
-        private const float AnimalEvaluationInterval = 0.1f;
+        private const int MaximumJoinCatchUpBytes = 4 * 1024 * 1024;
         private const int RunawayCreatureThreshold = 256;
         private const int RunawayCreatureKeepCount = 52;
         private const int RunawayCreatureCleanupBatchSize = 256;
@@ -803,11 +905,10 @@ namespace ScMultiplayer
         private const int RemoteSpawnRecordsPerInterval = 2;
         private const int RemoteCreatureTargetCount = 26;
         private const float RemoteCreaturePopulationRadius = 68f;
-        private const float PlayerStatsSyncInterval = 0.25f;
-        private const float PlayerProfileSyncInterval = 1f;
+        private const float PlayerProfileSyncInterval = 5f;
+        private const float WorldObjectFullSyncInterval = 5f;
         private const float PlayerRecordSaveInterval = 5f;
         private const float TerrainMergeInterval = 5f;
-        private const float TerrainRepairInterval = 1f;
         private const int TerrainRepairRepeatCount = 3;
         private const int TerrainCatchUpBatchSize = 128;
         private const int AnimalSyncBatchSize = 12;
@@ -865,8 +966,8 @@ namespace ScMultiplayer
             eventBus.SubscribeEvent("Frame.Update", args =>
             {
                 // Source: Survivalcraft/Game/Program.cs:Program.Run
-                // Frame.Update runs after ScreensManager.Update and outside the world's
-                // SubsystemUpdate enumeration. This is the stable lifecycle for the mod core.
+                // Menu/loading state and the post-game-update network scheduler share this
+                // once-per-rendered-frame entry point.
                 UpdateFrame(Time.FrameDuration);
                 ProcessEndOfFrameActions();
                 CleanupDownloadedWorldsIfIdle();
@@ -879,10 +980,10 @@ namespace ScMultiplayer
             // 初始化网络
             // Source: Mod/Comms/Comms.Drt/Func/Server/Server.cs:Server.Server
             // Source: Comms.Drt/Func/Server/Server.cs:Server.Server
-            // Five 10ms logic steps are batched into one 50ms network tick. Client.Step remains
-            // a 100Hz logical clock while the reliable tick stream is reduced to 20Hz.
-            float tickDuration = NetworkTickDuration;
-            int stepsPerTick = LogicStepsPerNetworkTick;
+            // Five 10ms logic steps remain batched into one 50ms transport tick. The independent
+            // 16Hz power-of-two message scheduler must not alter Client.Step's 100Hz logic clock.
+            float tickDuration = TransportTickDuration;
+            int stepsPerTick = LogicStepsPerTransportTick;
             int port = "SuSCMP".ToDynamicPort();
             Log.Information($"[ScMP] Starting on port {port}");
 
@@ -932,9 +1033,8 @@ namespace ScMultiplayer
             connectionSM.TransitionTo(NetworkConnectionStateMachine.ConnectionState.Discovering);
             Log.Information($"[ScMP] Explorer discovery started (address={explorerTransmitter.Address})");
 
-            // The multiplayer core is driven by Frame.Update. It is intentionally not added
-            // to the current world's SubsystemUpdate because projects are replaced during
-            // room creation and that list is rebuilt by the engine.
+            // World synchronization is registered as a database subsystem and is recreated
+            // together with every Project, including downloaded-world reloads.
         }
 
         // Source: Comms.Drt/Func/Server/Server.cs:Server.PeerDiscoveryRequest
@@ -1143,11 +1243,6 @@ namespace ScMultiplayer
         // ====================================================================
         // Update
         // ====================================================================
-        public void Update(float dt)
-        {
-            UpdateFrame(dt);
-        }
-
         private void UpdateFrame(float dt)
         {
             EnsureNetworkComponentPlayers();
@@ -1155,16 +1250,32 @@ namespace ScMultiplayer
             connectionSM.Update();
             downloadSM.Update();
             UpdateHostReconnect();
-            // Frame.Update also runs on menu/loading screens. Network state machines must
-            // continue there, but world-dependent synchronization must wait for a Project.
-            if (GameManager.Project == null)
-                return;
+            // Source: Survivalcraft/Game/Program.cs:Program.Run
+            // Frame.Update runs after ScreensManager.Update, so all native game updates for this
+            // rendered frame are complete. Keep networking outside SubsystemUpdate's catch-up
+            // loop and execute it exactly once here.
             Project project = GameManager.Project;
+            if (project != null)
+                UpdateWorldSubsystem(dt, project);
+            RenderRemotePlayers();
+        }
+
+        // Source: Survivalcraft/Game/Program.cs:Program.Run
+        // Called once after native world updates, independently of SubsystemUpdate.UpdatesPerFrame.
+        public void UpdateWorldSubsystem(float dt, Project project)
+        {
+            if (project == null || !ReferenceEquals(GameManager.Project, project)) return;
+            // Source: Survivalcraft/Game/SubsystemUpdate.cs:SubsystemUpdate.UpdatesPerFrame
+            // Multiple logical catch-up steps can run in one rendered frame. Real-time network
+            // collection and presentation must execute only once for that frame.
+            if (m_lastWorldUpdateFrameIndex == Time.FrameIndex) return;
+            m_lastWorldUpdateFrameIndex = Time.FrameIndex;
             MaintainMultiplayerTimeFlow(project);
             MaintainRemoteTerrainLocations(project);
             ObserveLocalPlayerRespawn(project);
             if (!ReferenceEquals(m_frameProject, project))
             {
+                DetachHostPickableEvents();
                 m_frameProject = project;
                 m_hasObservedClientHealth = false;
                 m_hasAuthoritativeLocalInventory = false;
@@ -1190,6 +1301,14 @@ namespace ScMultiplayer
                 }
                 if (!IsHost && m_shouldCreateHostAvatar && !m_networkPlayerData.ContainsKey(0))
                     CreateNetworkPlayer(0, "Host", GetNetworkRecordKey(0));
+                if (!IsHost && m_pendingWorldReadyTransferId > 0)
+                {
+                    NetworkMessageSender.SendPakWorldReady(
+                        new GamePakWorldReadyMessage(m_pendingWorldReadyTransferId));
+                    Log.Information($"[ScMP] Client project ready: Transfer={m_pendingWorldReadyTransferId}");
+                    m_pendingWorldReadyTransferId = 0;
+                }
+                AttachHostPickableEvents(project);
                 QueueRunawayCreatureCleanup(project);
                 m_nextRunawayCreatureCheckTime = Time.RealTime + 2.0;
                 Log.Information("[ScMP] Multiplayer project runtime initialized");
@@ -1208,33 +1327,31 @@ namespace ScMultiplayer
                 ApplyPendingLocalKnockback();
                 UpdateRemoteAnimalPresentations(dt);
                 UpdateRemotePickablePresentations(dt);
-                UpdateRemotePlayerPresentations();
+                UpdateRemotePlayerPresentations(dt);
                 UpdatePendingTerrainPredictions();
             }
 
             // Source: Engine/Time.cs:Time.RealTime
             // Real time avoids duplicate network time when SubsystemUpdate runs multiple game
-            // updates in one rendered frame. The accumulator preserves fractional 20Hz ticks.
+            // updates in one rendered frame. The accumulator preserves fractional 16Hz pulses.
             double now = Time.RealTime;
-            if (m_lastNetworkUpdateTime <= 0.0)
-                m_lastNetworkUpdateTime = now;
+            if (m_lastSyncUpdateTime <= 0.0)
+                m_lastSyncUpdateTime = now;
             float elapsed = (float)MathUtils.Clamp(
-                now - m_lastNetworkUpdateTime, 0.0, NetworkTickDuration * MaxNetworkTicksPerUpdate);
-            m_lastNetworkUpdateTime = now;
-            m_networkTickAccumulator += elapsed;
+                now - m_lastSyncUpdateTime, 0.0, SyncPulseDuration * MaxSyncPulsesPerUpdate);
+            m_lastSyncUpdateTime = now;
+            m_syncPulseAccumulator += elapsed;
 
             int ticks = 0;
-            while (m_networkTickAccumulator >= NetworkTickDuration && ticks < MaxNetworkTicksPerUpdate)
+            while (m_syncPulseAccumulator >= SyncPulseDuration && ticks < MaxSyncPulsesPerUpdate)
             {
-                m_networkTickAccumulator -= NetworkTickDuration;
-                TriggerNetworkTick(NetworkTickDuration);
+                m_syncPulseAccumulator -= SyncPulseDuration;
+                TriggerNetworkTick(SyncPulseDuration);
                 ticks++;
             }
-            if (ticks == MaxNetworkTicksPerUpdate && m_networkTickAccumulator >= NetworkTickDuration)
-                m_networkTickAccumulator = 0f;
+            if (ticks == MaxSyncPulsesPerUpdate && m_syncPulseAccumulator >= SyncPulseDuration)
+                m_syncPulseAccumulator = 0f;
 
-            // 渲染远程玩家
-            RenderRemotePlayers();
         }
 
         // Source: ScMultiplayer.Update keyboard J flow
@@ -1533,8 +1650,18 @@ namespace ScMultiplayer
         private void TriggerNetworkTick(float tickDuration)
         {
             // Source: ScMultiplayer.ScMultiplayer.Update
-            // Player transforms match the 100Hz server tick; slower state uses independent intervals.
+            // Real-time messages share one aligned 1/2/4/8/16Hz phase ladder.
             if (!client.IsConnected) return;
+            uint pulse = m_syncPulseIndex++;
+            bool pulse1Hz = IsSyncPulse(pulse, NetworkSyncRate.Hz1);
+            bool pulse2Hz = IsSyncPulse(pulse, NetworkSyncRate.Hz2);
+            bool pulse4Hz = IsSyncPulse(pulse, NetworkSyncRate.Hz4);
+            bool pulse8Hz = IsSyncPulse(pulse, NetworkSyncRate.Hz8);
+            // Source: ScMultiplayer.cs:AcceptNetworkPlayerJoin
+            // A joining client intentionally has no host-side avatar until it reports that the
+            // Loading Project screen started. World chunks must therefore run before the
+            // no-remote-avatar maintenance fast path.
+            if (IsHost) SendPendingWorldTransferChunks();
             if (IsHost && !m_networkPlayerData.Any(item => item.Key > 0))
             {
                 // Source: ScMultiplayer.cs:ScMultiplayer.TriggerNetworkTick
@@ -1556,23 +1683,22 @@ namespace ScMultiplayer
                 }
                 return;
             }
-            if (IsHost) SendPendingWorldTransferChunks();
+            NetworkMessageSender.BeginSyncBatch();
+            try
+            {
+            if (IsHost) SendHostLightningEdge();
 
-            m_inventorySyncTime += tickDuration;
-            bool includeInventory = m_inventorySyncTime >= InventorySyncInterval;
-            if (includeInventory) m_inventorySyncTime -= InventorySyncInterval;
-            SendGamePlayerPositionMessage(includeInventory);
+            m_inventoryKeyframeTime += tickDuration;
+            bool inventoryKeyframe = pulse1Hz && m_inventoryKeyframeTime >= 5f;
+            if (inventoryKeyframe) m_inventoryKeyframeTime -= 5f;
+            SendGamePlayerPositionMessage(pulse1Hz, inventoryKeyframe);
             if (IsHost)
                 SendGamePlayerHealthMessage(false);
             else
                 SendClientDamageRequest();
 
-            m_worldInfoSyncTime += tickDuration;
-            if (m_worldInfoSyncTime >= WorldInfoSyncInterval)
-            {
-                m_worldInfoSyncTime -= WorldInfoSyncInterval;
+            if (pulse2Hz)
                 SendGameWorldInfoMessage();
-            }
 
             m_playerProfileSyncTime += tickDuration;
             if (m_playerProfileSyncTime >= PlayerProfileSyncInterval)
@@ -1581,12 +1707,8 @@ namespace ScMultiplayer
                 SynchronizePlayerProfiles();
             }
 
-            m_playerStatsSyncTime += tickDuration;
-            if (m_playerStatsSyncTime >= PlayerStatsSyncInterval)
-            {
-                m_playerStatsSyncTime -= PlayerStatsSyncInterval;
+            if (pulse1Hz)
                 if (IsHost) SendGamePlayerHealthMessage(true);
-            }
             if (IsHost)
             {
                 m_playerRecordSaveTime += tickDuration;
@@ -1602,44 +1724,39 @@ namespace ScMultiplayer
                     m_terrainMergeTime -= TerrainMergeInterval;
                     MergePendingTerrainChanges();
                 }
-                m_terrainRepairTime += tickDuration;
-                if (m_terrainRepairTime >= TerrainRepairInterval)
-                {
-                    m_terrainRepairTime -= TerrainRepairInterval;
+                if (pulse1Hz)
                     BroadcastTerrainRepairs();
-                }
             }
-            m_worldObjectsSyncTime += tickDuration;
             m_fullWorldObjectsSyncTime += tickDuration;
-            if (m_worldObjectsSyncTime >= 0.1f)
+            if (pulse8Hz)
             {
-                bool fullSync = m_fullWorldObjectsSyncTime >= 1f;
-                m_worldObjectsSyncTime -= 0.1f;
-                if (fullSync) m_fullWorldObjectsSyncTime -= 1f;
+                bool fullSync = m_fullWorldObjectsSyncTime >= WorldObjectFullSyncInterval;
+                if (fullSync) m_fullWorldObjectsSyncTime -= WorldObjectFullSyncInterval;
                 if (IsHost) SendWorldObjects(fullSync);
                 else QueueEndOfFrameAction(MaintainClientWorldObjects);
             }
-            m_animalEvaluationTime += tickDuration;
-            if (IsHost && m_animalEvaluationTime >= AnimalEvaluationInterval)
+            m_fullAnimalSyncTime += tickDuration;
+            if (IsHost && pulse8Hz)
             {
-                m_animalEvaluationTime -= AnimalEvaluationInterval;
-                m_fullAnimalSyncTime += AnimalEvaluationInterval;
                 bool fullSnapshot = m_fullAnimalSyncTime >= 1f;
                 if (fullSnapshot) m_fullAnimalSyncTime -= 1f;
                 SendAdaptiveAnimalUpdates(fullSnapshot);
             }
-            m_projectileSyncTime += tickDuration;
-            if (m_projectileSyncTime >= ProjectileSyncInterval)
-            {
-                m_projectileSyncTime -= ProjectileSyncInterval;
-                SynchronizeProjectiles();
+            SynchronizeProjectiles();
+            if (pulse4Hz) SynchronizeContainers();
             }
-            m_containerSyncTime += tickDuration;
-            if (m_containerSyncTime >= ContainerSyncInterval)
+            finally
             {
-                m_containerSyncTime -= ContainerSyncInterval;
-                SynchronizeContainers();
+                NetworkMessageSender.FlushSyncBatch();
             }
+        }
+
+        // Source: ScMultiplayer.cs:TriggerNetworkTick
+        // Every lower tier divides the same 16Hz phase, so all tiers coincide once per second.
+        private static bool IsSyncPulse(uint pulse, NetworkSyncRate rate)
+        {
+            int divider = SyncBaseRate / (int)rate;
+            return pulse % (uint)divider == 0u;
         }
 
         // Source: Survivalcraft/Game/Program.cs:Program.Run
@@ -1667,7 +1784,7 @@ namespace ScMultiplayer
         // ====================================================================
         // 发送: 玩家位置
         // ====================================================================
-        private void SendGamePlayerPositionMessage(bool includeInventory)
+        private void SendGamePlayerPositionMessage(bool includeInventory, bool forceInventory)
         {
             var subsystemPlayers = GameManager.Project.FindSubsystem<SubsystemPlayers>(false);
             if (subsystemPlayers == null) return;
@@ -1697,20 +1814,8 @@ namespace ScMultiplayer
                 int activeSlot = inventory?.ActiveSlotIndex ?? -1;
                 int handVal = inventory != null && activeSlot >= 0 ? inventory.GetSlotValue(activeSlot) : 0;
                 int handCnt = inventory != null && activeSlot >= 0 ? inventory.GetSlotCount(activeSlot) : 0;
-                int[] slotValues = inventory != null && includeInventory
-                    ? new int[inventory.SlotsCount]
-                    : Array.Empty<int>();
-                int[] slotCounts = inventory != null && includeInventory
-                    ? new int[inventory.SlotsCount]
-                    : Array.Empty<int>();
-                if (inventory != null && includeInventory)
-                {
-                    for (int i = 0; i < inventory.SlotsCount; i++)
-                    {
-                        slotValues[i] = inventory.GetSlotValue(i);
-                        slotCounts[i] = inventory.GetSlotCount(i);
-                    }
-                }
+                GetInventoryDelta(senderClientId, inventory, includeInventory, forceInventory,
+                    out int[] slotValues, out int[] slotCounts);
 
                 Vector3 itemOffset = item.ComponentCreatureModel.InHandItemOffsetOrder;
                 Vector3 itemRotation = item.ComponentCreatureModel.InHandItemRotationOrder;
@@ -1739,33 +1844,21 @@ namespace ScMultiplayer
             foreach (KeyValuePair<int, PlayerData> remote in m_networkPlayerData.ToArray())
             {
                 if (remote.Key > 0 && remote.Value?.ComponentPlayer != null)
-                    SendAuthoritativePlayerState(remote.Key, remote.Value.ComponentPlayer,
-                        includeInventory, positionBatch);
+                        SendAuthoritativePlayerState(remote.Key, remote.Value.ComponentPlayer,
+                        includeInventory, forceInventory, positionBatch);
             }
             NetworkMessageSender.SendPlayerPositionBatch(positionBatch);
         }
 
         private void SendAuthoritativePlayerState(int networkClientId, ComponentPlayer item,
-            bool includeInventory, List<GamePlayerPositionMessage> positionBatch)
+            bool includeInventory, bool forceInventory, List<GamePlayerPositionMessage> positionBatch)
         {
             IInventory inventory = item.ComponentMiner?.Inventory;
             int activeSlot = inventory?.ActiveSlotIndex ?? -1;
             int handValue = inventory != null && activeSlot >= 0 ? inventory.GetSlotValue(activeSlot) : 0;
             int handCount = inventory != null && activeSlot >= 0 ? inventory.GetSlotCount(activeSlot) : 0;
-            int[] slotValues = inventory != null && includeInventory
-                ? new int[inventory.SlotsCount]
-                : Array.Empty<int>();
-            int[] slotCounts = inventory != null && includeInventory
-                ? new int[inventory.SlotsCount]
-                : Array.Empty<int>();
-            if (inventory != null && includeInventory)
-            {
-                for (int i = 0; i < inventory.SlotsCount; i++)
-                {
-                    slotValues[i] = inventory.GetSlotValue(i);
-                    slotCounts[i] = inventory.GetSlotCount(i);
-                }
-            }
+            GetInventoryDelta(networkClientId, inventory, includeInventory, forceInventory,
+                out int[] slotValues, out int[] slotCounts);
             ComponentLocomotion locomotion = item.ComponentLocomotion;
             ComponentCreatureModel model = item.ComponentCreatureModel;
             Vector3 itemOffset = model.InHandItemOffsetOrder;
@@ -1917,10 +2010,31 @@ namespace ScMultiplayer
             m_localInputResendsRemaining--;
         }
 
+        // Source: Survivalcraft/Game/ComponentInventoryBase.cs:ComponentInventoryBase.GetSlotValue
+        // Full inventory arrays are sent only on change, with a five-second recovery keyframe.
+        private void GetInventoryDelta(int ownerId, IInventory inventory, bool check,
+            bool force, out int[] values, out int[] counts)
+        {
+            values = Array.Empty<int>();
+            counts = Array.Empty<int>();
+            if (!check || inventory == null) return;
+            int[] currentValues = CaptureInventoryValues(inventory);
+            int[] currentCounts = CaptureInventoryCounts(inventory);
+            bool changed = force || !m_lastSentInventoryValues.TryGetValue(ownerId,
+                out int[] previousValues) || !ArraysEqual(currentValues, previousValues) ||
+                !m_lastSentInventoryCounts.TryGetValue(ownerId, out int[] previousCounts) ||
+                !ArraysEqual(currentCounts, previousCounts);
+            if (!changed) return;
+            m_lastSentInventoryValues[ownerId] = currentValues;
+            m_lastSentInventoryCounts[ownerId] = currentCounts;
+            values = currentValues;
+            counts = currentCounts;
+        }
+
         // ====================================================================
         // 发送: 世界信息 (仅Host)
         // ====================================================================
-        private void SendGameWorldInfoMessage()
+        private void SendGameWorldInfoMessage(bool reliable = false)
         {
             if (client.ClientID != 0) return;
             var gameInfo = GameManager.Project.FindSubsystem<SubsystemGameInfo>(true);
@@ -1932,7 +2046,21 @@ namespace ScMultiplayer
                 gameInfo.TotalElapsedGameTime,
                 gameInfo.WorldSettings.TimeOfDayMode,
                 weather,
-                sky);
+                sky, reliable);
+        }
+
+        // Source: Survivalcraft/Game/SubsystemSky.cs:SubsystemSky.MakeLightningStrike
+        // Slow weather snapshots use latest delivery, while a short lightning edge remains reliable.
+        private void SendHostLightningEdge()
+        {
+            SubsystemSky sky = GameManager.Project?.FindSubsystem<SubsystemSky>(false);
+            if (sky == null) return;
+            object value = ModManager.ModParentField.GetParentField(
+                sky, "m_lightningStrikePosition", typeof(SubsystemSky));
+            bool active = value is Vector3;
+            if (active && !m_hostLightningActive)
+                SendGameWorldInfoMessage(reliable: true);
+            m_hostLightningActive = active;
         }
 
         // Source: Survivalcraft/Game/SubsystemBodies.cs:SubsystemBodies.Bodies
@@ -2019,6 +2147,60 @@ namespace ScMultiplayer
                 NetworkMessageSender.SendPickableMessage(pickableUpdate);
         }
 
+        // Source: Survivalcraft/Game/SubsystemPickables.cs:SubsystemPickables.PickableAdded
+        // Source: Survivalcraft/Game/SubsystemPickables.cs:SubsystemPickables.PickableRemoved
+        // A short-lived drop can be collected before the next 8Hz snapshot. Publish lifecycle
+        // edges immediately and keep periodic snapshots for movement and recovery only.
+        private void AttachHostPickableEvents(Project project)
+        {
+            if (!IsHost || project == null) return;
+            SubsystemPickables subsystem = project.FindSubsystem<SubsystemPickables>(false);
+            if (subsystem == null || ReferenceEquals(m_hostPickablesSubsystem, subsystem)) return;
+            DetachHostPickableEvents();
+            m_hostPickablesSubsystem = subsystem;
+            subsystem.PickableAdded += HandleHostPickableAdded;
+            subsystem.PickableRemoved += HandleHostPickableRemoved;
+        }
+
+        private void DetachHostPickableEvents()
+        {
+            if (m_hostPickablesSubsystem == null) return;
+            m_hostPickablesSubsystem.PickableAdded -= HandleHostPickableAdded;
+            m_hostPickablesSubsystem.PickableRemoved -= HandleHostPickableRemoved;
+            m_hostPickablesSubsystem = null;
+        }
+
+        private void HandleHostPickableAdded(Pickable pickable)
+        {
+            if (!IsHost || client?.IsConnected != true || pickable == null ||
+                !m_networkPlayerData.Any(item => item.Key > 0))
+                return;
+            if (!m_hostPickableIds.TryGetValue(pickable, out ushort id))
+            {
+                id = m_nextPickableId++;
+                m_hostPickableIds.Add(pickable, id);
+            }
+            NetworkMessageSender.SendPickableMessage(new PickableSyncMessage(
+                PickableSyncMessage.PickAction.Create, id, pickable.Value, pickable.Count,
+                pickable.Position, pickable.Velocity, pickable.FlyToPosition,
+                stuckMatrix: pickable.StuckMatrix));
+        }
+
+        private void HandleHostPickableRemoved(Pickable pickable)
+        {
+            if (!IsHost || pickable == null ||
+                !m_hostPickableIds.TryGetValue(pickable, out ushort id))
+                return;
+            m_hostPickableIds.Remove(pickable);
+            if (client?.IsConnected == true &&
+                m_networkPlayerData.Any(item => item.Key > 0))
+            {
+                NetworkMessageSender.SendPickableMessage(new PickableSyncMessage(
+                    PickableSyncMessage.PickAction.Delete, id, 0, 0,
+                    Vector3.Zero, Vector3.Zero));
+            }
+        }
+
         // Source: Survivalcraft/Game/ComponentBehavior.cs:ComponentBehavior.IsActive
         // Source: Survivalcraft/Game/ComponentHerdBehavior.cs:ComponentHerdBehavior.CallNearbyCreaturesHelp
         private void SendAdaptiveAnimalUpdates(bool forceFullSnapshot)
@@ -2051,21 +2233,21 @@ namespace ScMultiplayer
                 AnimalSyncMetadata metadata = m_hostAnimalSync[entity];
                 float health = creature.ComponentHealth?.Health ?? 0f;
                 bool wasAttacked = metadata.HasSent && health < metadata.LastHealth - 0.001f;
+                if (wasAttacked) metadata.HighPriorityUntil = now + 3.0;
                 string behaviorState = GetActiveBehaviorState(activeBehavior);
                 bool isAttacking = IsAnimalAttackActive(chase, model);
                 bool isFeeding = IsAnimalFeedActive(model, behaviorState);
                 bool targetsPlayer = target?.Entity.FindComponent<ComponentPlayer>() != null;
-                bool userInteraction = targetsPlayer || wasAttacked ||
-                    now < metadata.HighPriorityUntil;
+                bool highPriorityInteraction = wasAttacked || now < metadata.HighPriorityUntil;
 
                 byte tier = 0;
                 float nearestPlayerDistanceSquared = playerPositions.Length > 0
                     ? playerPositions.Min(position => Vector3.DistanceSquared(position, body.Position))
                     : float.MaxValue;
                 if (nearestPlayerDistanceSquared <= 64f * 64f) tier = 1;
-                if (nearestPlayerDistanceSquared <= 24f * 24f) tier = 2;
-                if (userInteraction) tier = 3;
-                if (isAttacking && userInteraction) tier = 4;
+                if (targetsPlayer) tier = Math.Max(tier, (byte)2);
+                if (highPriorityInteraction) tier = 3;
+                if (isAttacking && targetsPlayer) tier = 4;
 
                 candidates.Add(new AnimalSyncCandidate
                 {
@@ -2102,10 +2284,6 @@ namespace ScMultiplayer
             {
                 AnimalSyncMetadata metadata = m_hostAnimalSync[candidate.Entity];
                 bool isInitialState = !metadata.HasSent;
-                if (candidate.SyncTier >= 3)
-                    metadata.HighPriorityUntil = now + 3.0;
-                else if (now < metadata.HighPriorityUntil)
-                    candidate.SyncTier = 3;
 
                 candidate.StateChanged = !metadata.HasSent ||
                     metadata.BehaviorState != candidate.BehaviorState ||
@@ -2125,8 +2303,9 @@ namespace ScMultiplayer
                     BodyUpdateMessage.ChangeFlag.Velocity |
                     BodyUpdateMessage.ChangeFlag.LookAngles |
                     BodyUpdateMessage.ChangeFlag.Movement |
-                    BodyUpdateMessage.ChangeFlag.Template |
                     BodyUpdateMessage.ChangeFlag.Health;
+                if (isInitialState || forceFullSnapshot)
+                    flags |= BodyUpdateMessage.ChangeFlag.Template;
                 if (candidate.StateChanged || forceFullSnapshot)
                     flags |= BodyUpdateMessage.ChangeFlag.BehaviorState;
                 bodyMessage.Bodies.Add(new BodyUpdateMessage.BodyItem
@@ -2218,8 +2397,8 @@ namespace ScMultiplayer
         private static double GetAnimalSyncInterval(byte tier)
         {
             // Source: ScMultiplayer.cs:HandleAnimalInteractionMessage
-            // Normal replicas use 2 Hz. An interacted animal and its promoted herd use 10 Hz.
-            return tier >= 3 ? 0.1 : 0.5;
+            // Aggro against a player raises 2Hz to 4Hz. Direct interaction and herd help use 8Hz.
+            return tier >= 3 ? 0.125 : tier >= 2 ? 0.25 : 0.5;
         }
 
         private int CalculateAnimalSimulationSeed(ushort id)
@@ -2515,6 +2694,21 @@ namespace ScMultiplayer
 
                 switch (message)
                 {
+                    case SyncBatchMessage syncBatch:
+                        foreach (byte[] payload in syncBatch.Payloads)
+                        {
+                            try
+                            {
+                                if (Message.Read(payload) is SyncBatchMessage)
+                                    throw new InvalidOperationException("Nested sync batch is not allowed.");
+                                Client_DirectInput(item.ClientID, payload);
+                            }
+                            catch (Exception ex)
+                            {
+                                Log.Error($"[ScMP] Failed to unpack sync batch item: {ex.Message}");
+                            }
+                        }
+                        break;
                     case ChatMessage chat:
                         QueueEndOfFrameAction(() =>
                             NetworkMessageHandler.HandleChatMessage(chat, item.ClientID));
@@ -2639,15 +2833,17 @@ namespace ScMultiplayer
         {
             try
             {
-                CreateNetworkPlayer(joiningClientId, joiningRecord.Name, recordKey);
-                if (!m_networkPlayerData.TryGetValue(joiningClientId, out PlayerData joinedPlayer) ||
-                    joinedPlayer?.ComponentPlayer == null)
-                    throw new InvalidOperationException("Network player could not be created.");
-                joiningRecord = CapturePlayerRecord(joinedPlayer);
+                m_lastSentInventoryValues.Remove(joiningClientId);
+                m_lastSentInventoryCounts.Remove(joiningClientId);
                 m_playerRecords[recordKey] = joiningRecord;
+                m_pendingAcceptedJoinKeys[joiningClientId] = recordKey;
                 m_containerStates.Clear();
                 m_playerRecordsDirty = true;
                 SavePlayerRecords();
+                m_joinCatchUpJournals[joiningClientId] = new JoinCatchUpJournal
+                {
+                    StartTick = client.Step
+                };
                 client.AcceptJoinGame(joiningClientId);
                 BeginWorldTransfer(
                     SuPlayScreen.WorldDataName, SuPlayScreen.WorldData,
@@ -2705,9 +2901,62 @@ namespace ScMultiplayer
             NetworkMessageSender.SendPakWorldManifest(targetClientId, manifest);
         }
 
+        internal void RecordJoinCatchUpMessage(byte[] payload, bool sequenced, bool latest)
+        {
+            if (!IsHost || payload == null || payload.Length == 0 ||
+                m_joinCatchUpJournals.Count == 0)
+                return;
+            foreach (JoinCatchUpJournal journal in m_joinCatchUpJournals.Values)
+            {
+                if (journal.TotalBytes + payload.Length > MaximumJoinCatchUpBytes)
+                    continue;
+                byte[] copy = new byte[payload.Length];
+                Buffer.BlockCopy(payload, 0, copy, 0, payload.Length);
+                journal.Messages.Add(new JoinCatchUpMessage
+                {
+                    Payload = copy,
+                    Sequenced = sequenced,
+                    Latest = latest
+                });
+                journal.TotalBytes += copy.Length;
+            }
+        }
+
+        private void FlushJoinCatchUpJournal(int targetClientId)
+        {
+            if (!m_joinCatchUpJournals.TryGetValue(targetClientId,
+                out JoinCatchUpJournal journal))
+                return;
+            m_joinCatchUpJournals.Remove(targetClientId);
+            foreach (JoinCatchUpMessage item in journal.Messages)
+            {
+                if (item?.Payload == null) continue;
+                client.SendDirectInput(targetClientId, item.Payload,
+                    item.Sequenced, item.Latest);
+            }
+            Log.Information($"[ScMP] Join catch-up flushed: ClientID={targetClientId}, " +
+                $"StartTick={journal.StartTick}, Messages={journal.Messages.Count}, " +
+                $"Bytes={journal.TotalBytes}");
+        }
+
         private void SendPendingWorldTransferChunks()
         {
-            int budget = WorldTransferChunksPerNetworkTick;
+            if (m_outgoingWorldTransfers.Count == 0) return;
+            // Source: Comms/Comms/Comm.cs:Comm.GetUnackedPacketsCount
+            // Increase throughput only while the reliable queue is healthy. Falling back to two
+            // chunks prevents fragmented world data from starving gameplay acknowledgements.
+            int unacked = 0;
+            if (server != null)
+            {
+                foreach (PeerData peer in server.Peer.Peers)
+                {
+                    if (peer?.Address != null)
+                        unacked += server.Peer.Comm.GetUnackedPacketsCount(peer.Address);
+                }
+            }
+            int budget = unacked <= 16
+                ? MaximumWorldTransferChunksPerNetworkTick
+                : (unacked <= 48 ? 3 : MinimumWorldTransferChunksPerNetworkTick);
             foreach (OutgoingWorldTransfer transfer in m_outgoingWorldTransfers.Values.ToArray())
             {
                 while (budget > 0 && transfer.NextChunkIndex < transfer.ChunkCount)
@@ -3705,16 +3954,16 @@ namespace ScMultiplayer
                         projectile.AngularVelocity, projectile.TrailOffset, ownerClientId,
                         client.Step, projectile.IsIncendiary);
                     // Source: ScMultiplayer.cs:HandleProjectileSyncMessage
-                    client.SendDirectInput(-1, Message.WriteWithSender(message, client.Address),
+                    NetworkMessageSender.SendScheduledMessage(-1, message,
                         latest: message.Action == ProjectileSyncMessage.ProjectileType.Update);
                 }
                 foreach (KeyValuePair<Projectile, ushort> item in m_hostProjectileIds.ToArray())
                 {
                     if (active.Contains(item.Key)) continue;
-                    client.SendDirectInput(-1, Message.WriteWithSender(new ProjectileSyncMessage(
+                    NetworkMessageSender.SendScheduledMessage(-1, new ProjectileSyncMessage(
                         item.Value, ProjectileSyncMessage.ProjectileType.Remove, 0,
                         Vector3.Zero, Vector3.Zero, Vector3.Zero, Vector3.Zero, 0,
-                        client.Step, false), client.Address));
+                        client.Step, false));
                     m_hostProjectileIds.Remove(item.Key);
                 }
                 return;
@@ -3990,8 +4239,7 @@ namespace ScMultiplayer
                 SlotCounts = state.Counts
             };
             // Source: ScMultiplayer.cs:HandleContainerSyncMessage
-            client.SendDirectInput(isRequest ? 0 : -1,
-                Message.WriteWithSender(message, client.Address));
+            NetworkMessageSender.SendScheduledMessage(isRequest ? 0 : -1, message);
         }
 
         private void MaintainClientWorldObjects()
@@ -4197,6 +4445,8 @@ namespace ScMultiplayer
         {
             m_outgoingWorldTransfers.Remove(clientId);
             m_worldTransfersAwaitingReady.Remove(clientId);
+            m_joinCatchUpJournals.Remove(clientId);
+            m_pendingAcceptedJoinKeys.Remove(clientId);
             m_hostPlayerPokingPhases.Remove(clientId);
             m_hostPlayerPokeSequences.Remove(clientId);
             m_hostKnockbackHealthCache.Remove(clientId);
@@ -6156,10 +6406,26 @@ namespace ScMultiplayer
         {
             if (!IsHost || message == null || sourceClientId <= 0 ||
                 !m_worldTransfersAwaitingReady.TryGetValue(sourceClientId,
-                    out int transferId) || transferId != message.TransferId)
+                out int transferId) || transferId != message.TransferId)
                 return;
+            if (!message.IsProjectReady)
+            {
+                if (m_pendingAcceptedJoinKeys.TryGetValue(sourceClientId, out string recordKey) &&
+                    m_playerRecords.TryGetValue(recordKey, out NetworkPlayerRecord record))
+                {
+                    CreateNetworkPlayer(sourceClientId, record.Name, recordKey);
+                    if (!m_networkPlayerData.ContainsKey(sourceClientId))
+                        throw new InvalidOperationException("Network player could not be created at Loading Project stage.");
+                    m_pendingAcceptedJoinKeys.Remove(sourceClientId);
+                    Log.Information($"[ScMP] Client entered Loading Project: ClientID={sourceClientId}, " +
+                        $"Transfer={transferId}");
+                }
+                return;
+            }
             m_worldTransfersAwaitingReady.Remove(sourceClientId);
             SendTerrainCatchUp(sourceClientId);
+            FlushJoinCatchUpJournal(sourceClientId);
+            m_fullWorldObjectsSyncTime = WorldObjectFullSyncInterval;
             Log.Information($"[ScMP] World transfer ready: ClientID={sourceClientId}, " +
                 $"Transfer={transferId}");
         }
@@ -6229,9 +6495,16 @@ namespace ScMultiplayer
                     m_shouldCreateHostAvatar = true;
                     m_pendingNetworkPlayers[0] = "Host";
                     m_pendingNetworkPlayerIdentities[0] = GetNetworkRecordKey(0);
+                    // Source: Survivalcraft/Game/GameManager.cs:GameManager.Project
+                    // Play() starts loading asynchronously. Acknowledging here lets catch-up
+                    // messages arrive before the imported Project exists, so defer Ready until
+                    // UpdateWorldSubsystem observes the initialized Project.
                     if (msg.TransferId > 0)
+                    {
+                        m_pendingWorldReadyTransferId = msg.TransferId;
                         NetworkMessageSender.SendPakWorldReady(
-                            new GamePakWorldReadyMessage(msg.TransferId));
+                            new GamePakWorldReadyMessage(msg.TransferId, isProjectReady: false));
+                    }
                     Log.Information($"[ScMP] World imported, entering game: {importedWorld.DirectoryName}");
                     return;
                 }
@@ -6528,6 +6801,8 @@ namespace ScMultiplayer
             m_networkPlayerInputs.Clear();
             m_clientRecordKeys.Clear();
             m_playerHealthCache.Clear();
+            m_lastSentInventoryValues.Clear();
+            m_lastSentInventoryCounts.Clear();
             m_hostKnockbackHealthCache.Clear();
             m_hostPainSoundTimes.Clear();
             m_hostRemoteKnockbackUntil.Clear();
@@ -6574,27 +6849,24 @@ namespace ScMultiplayer
             m_localRespawnPendingUntil = 0.0;
             m_nextWorldTransferId = 0;
             m_terrainMergeTime = 0f;
-            m_terrainRepairTime = 0f;
             SuSubsystemTerrain.ResetNetworkState();
             m_sessionRandomSeed = 0;
             m_pendingRandomStates.Clear();
             m_randomStateAppliedProject = null;
             m_nextAnimalId = 1;
             m_nextPickableId = 1;
-            m_worldObjectsSyncTime = 0f;
             m_fullWorldObjectsSyncTime = 0f;
-            m_animalEvaluationTime = 0f;
             m_fullAnimalSyncTime = 0f;
             m_runawayCreatureCleanup.Clear();
             m_runawayCreatureCleanupProject = null;
             m_nextRunawayCreatureCheckTime = 0.0;
             m_nextRemoteCreatureSpawnTime = 0.0;
             m_remoteCreatureSpawnCursor = 0;
-            m_networkTickAccumulator = 0f;
-            m_lastNetworkUpdateTime = 0.0;
-            m_worldInfoSyncTime = 0f;
-            m_inventorySyncTime = 0f;
+            m_syncPulseAccumulator = 0f;
+            m_lastSyncUpdateTime = 0.0;
+            m_syncPulseIndex = 0;
             m_playerProfileSyncTime = 0f;
+            m_inventoryKeyframeTime = 0f;
             m_playerRecordSaveTime = 0f;
             m_localPlayerInput = default;
             m_localInputBodyPosition = Vector3.Zero;
@@ -6616,6 +6888,7 @@ namespace ScMultiplayer
             m_clientWorldObjectsProject = null;
             m_remoteWeatherState = null;
             m_remoteLightningActive = false;
+            m_hostLightningActive = false;
             m_pendingLocalPlayerRecord = null;
             m_localReplacementPlayerData = null;
             m_localPlayerRecordQueued = false;
@@ -6711,6 +6984,9 @@ namespace ScMultiplayer
             // Source: Survivalcraft/Game/GameManager.cs:GameManager.DisposeProject
             // ProjectDisposed fires before Project.Dispose, so this covers the game-menu Quit path
             // even when component disposal callbacks have not run yet.
+            if (ReferenceEquals(m_hostPickablesSubsystem,
+                project?.FindSubsystem<SubsystemPickables>(false)))
+                DetachHostPickableEvents();
             if (!m_hostDisconnectHandled)
                 BeginLocalGameLeave();
             foreach (int clientId in m_networkPlayerData
@@ -6782,7 +7058,7 @@ namespace ScMultiplayer
         // Source: Comms/Drt/GameStepData.Inputs
         // Remote host/peer avatars are presentation replicas. Extrapolate the last authoritative
         // snapshot to the current server step, then interpolate the visible body toward it.
-        private void UpdateRemotePlayerPresentations()
+        private void UpdateRemotePlayerPresentations(float dt)
         {
             foreach (KeyValuePair<int, NetworkPlayerState> item in RemotePlayers.ToArray())
             {
@@ -6837,8 +7113,11 @@ namespace ScMultiplayer
                 float extrapolationTime = MathUtils.Min(state.EstimatedDelay,
                     RemoteExtrapolationLimit);
                 Vector3 targetPosition = state.Position;
-                targetPosition.X += state.Velocity.X * extrapolationTime;
-                targetPosition.Z += state.Velocity.Z * extrapolationTime;
+                if (!state.IsFlying)
+                {
+                    targetPosition.X += state.Velocity.X * extrapolationTime;
+                    targetPosition.Z += state.Velocity.Z * extrapolationTime;
+                }
                 if (!state.IsGrounded && !state.IsFlying)
                 {
                     targetPosition.Y += state.Velocity.Y * extrapolationTime -
@@ -6856,6 +7135,21 @@ namespace ScMultiplayer
                 }
                 else
                 {
+                    if (state.IsFlying)
+                    {
+                        // Source: Survivalcraft/Game/ComponentLocomotion.cs:ComponentLocomotion.CreativeFly
+                        // A flying replica has no local input and must not integrate the previous
+                        // snapshot velocity beyond its last authoritative position. Smooth the
+                        // sampled positions directly and leave movement animation to WalkOrder.
+                        float positionBlend = 1f - MathUtils.Pow(
+                            0.001f, MathUtils.Min(dt, 0.1f));
+                        body.Position = Vector3.Lerp(body.Position,
+                            state.Position, positionBlend);
+                        body.Velocity = Vector3.Zero;
+                        body.Rotation = Quaternion.Slerp(
+                            body.Rotation, state.Rotation, positionBlend);
+                        continue;
+                    }
                     float delayFactor = MathUtils.Saturate(state.EstimatedDelay / 0.2f);
                     Vector3 error = targetPosition - body.Position;
                     float deadZone = state.IsGrounded ? 0.4f : 0.65f;
@@ -7109,7 +7403,7 @@ namespace ScMultiplayer
                     m_localAimRay = aim;
                     m_localAimItemValue = itemValue;
                     m_localAimItemCount = inventory.GetSlotCount(activeSlot);
-                    if (now - m_lastAimUpdateSentTime >= NetworkTickDuration)
+                    if (now - m_lastAimUpdateSentTime >= SyncPulseDuration)
                     {
                         m_lastAimUpdateSentTime = now;
                         SendLocalAimEvent(player, PlayerAimAction.Update, aim);
