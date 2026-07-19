@@ -376,6 +376,18 @@ public class Comm
         }
     }
 
+    // Source: Comms/Comm.cs:Comm.UpdateRoundTripTime
+    public double GetSmoothedRoundTripTime(IPEndPoint address)
+    {
+        lock (Lock)
+        {
+            CheckNotDisposedAndStarted();
+            return Connections.TryGetValue(address, out var connection)
+                ? connection.SmoothedRoundTripTime
+                : 0.0;
+        }
+    }
+
     // Source: Comms/Comms/Comm.cs:SendMessages
     // A reconnect starts a new reliable session so stale fragments and sequence gaps cannot block
     // the new connect request.
