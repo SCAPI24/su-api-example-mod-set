@@ -17,6 +17,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Xml.Linq;
 using TemplatesDatabase;
@@ -254,6 +255,11 @@ namespace ScMultiplayer
         public byte[] WorldData = Array.Empty<byte>();
         public int ChunkCount;
         public int NextChunkIndex;
+        public int HighestContiguousChunkIndex = -1;
+        public bool InitialSendComplete;
+        public GamePakWorldMessage Manifest;
+        public readonly Queue<int> RepairChunkIndices = new Queue<int>();
+        public readonly HashSet<int> QueuedRepairChunkIndices = new HashSet<int>();
     }
 
     public class IncomingWorldTransfer
@@ -263,7 +269,23 @@ namespace ScMultiplayer
         public int TotalLength;
         public byte[][] Chunks;
         public int ReceivedChunkCount;
+        public int ReceivedBytes;
+        public int HighestContiguousChunkIndex = -1;
+        public int HighestReceivedChunkIndex = -1;
         public GamePakWorldMessage Manifest;
+        public double LastProgressTime;
+        public double LastRepairRequestTime;
+        public int RepairRequestCount;
+    }
+
+    public class WorldTransferChunkSendWork
+    {
+        public int Generation;
+        public int TransferId;
+        public int TargetClientId;
+        public int ChunkIndex;
+        public int ChunkCount;
+        public byte[] WorldData;
     }
 
     public class JoinCatchUpMessage
@@ -564,10 +586,16 @@ namespace ScMultiplayer
             GamePakWorldChunkMessage message)
         {
             ScMultiplayer.client.SendDirectInput(targetClientId,
-                Message.WriteWithSender(message, ScMultiplayer.client.Address));
+                Message.WriteWithSender(message, ScMultiplayer.client.Address), latest: true);
         }
 
         public static void SendPakWorldReady(GamePakWorldReadyMessage message)
+        {
+            ScMultiplayer.client.SendDirectInput(0,
+                Message.WriteWithSender(message, ScMultiplayer.client.Address));
+        }
+
+        public static void SendPakWorldRepairRequest(GamePakWorldRepairRequestMessage message)
         {
             ScMultiplayer.client.SendDirectInput(0,
                 Message.WriteWithSender(message, ScMultiplayer.client.Address));
@@ -809,6 +837,7 @@ namespace ScMultiplayer
         private readonly Dictionary<ushort, string> m_remoteAnimalTemplates = new Dictionary<ushort, string>();
         private readonly Dictionary<ushort, RemoteAnimalSyncState> m_remoteAnimalSync =
             new Dictionary<ushort, RemoteAnimalSyncState>();
+        private readonly HashSet<ushort> m_loggedRemoteAnimalFailures = new HashSet<ushort>();
         private int m_lastFullAnimalSnapshotTick;
         private readonly Dictionary<Pickable, ushort> m_hostPickableIds = new Dictionary<Pickable, ushort>();
         private SubsystemPickables m_hostPickablesSubsystem;
@@ -853,6 +882,13 @@ namespace ScMultiplayer
             new Dictionary<int, string>();
         private readonly Dictionary<int, IncomingWorldTransfer> m_incomingWorldTransfers =
             new Dictionary<int, IncomingWorldTransfer>();
+        private readonly ConcurrentQueue<WorldTransferChunkSendWork> m_worldTransferSendQueue =
+            new ConcurrentQueue<WorldTransferChunkSendWork>();
+        private readonly SemaphoreSlim m_worldTransferSendSignal = new SemaphoreSlim(0);
+        private CancellationTokenSource m_worldTransferSendCancellation;
+        private Task m_worldTransferSendTask;
+        private int m_worldTransferQueuedWorkCount;
+        private int m_worldTransferGeneration;
         private Point3? m_localDigTarget;
         private int m_nextTerrainDigRequestId;
         private int m_localHitSequence;
@@ -864,6 +900,9 @@ namespace ScMultiplayer
         private int m_localRespawnSequence;
         private double m_localRespawnPendingUntil;
         private int m_nextWorldTransferId;
+        private int m_worldTransferCursor;
+        private double m_nextWorldTransferManifestRequestTime;
+        private double m_nextWorldTransferUiUpdateTime;
         private int m_pendingWorldReadyTransferId;
         private float m_terrainMergeTime;
         private int m_sessionRandomSeed;
@@ -893,9 +932,15 @@ namespace ScMultiplayer
         private const float ClientProjectilePredictionGrace = 3f;
         private const float PlayerHitRequestInterval = 0.36f;
         private const float PlayerInteractRequestInterval = 0.36f;
-        private const int WorldTransferChunkSize = 8 * 1024;
-        private const int MinimumWorldTransferChunksPerNetworkTick = 2;
-        private const int MaximumWorldTransferChunksPerNetworkTick = 4;
+        private const int WorldTransferChunkSize = 768;
+        private const int MaximumWorldTransferChunksPerNetworkTick = 32;
+        private const int MaximumWorldTransferChunksPerGameplayTick = 16;
+        private const int MaximumWorldTransferUnackedPackets = 128;
+        private const int MaximumWorldTransferRepairChunks = 48;
+        private const int MaximumQueuedWorldTransferChunks = 64;
+        private const int WorldTransferWindowChunks = 96;
+        private const double WorldTransferStatusInterval = 0.25;
+        private const double WorldTransferRepairInterval = 0.75;
         private const int MaximumWorldTransferSize = 64 * 1024 * 1024;
         private const int MaximumJoinCatchUpBytes = 4 * 1024 * 1024;
         private const int RunawayCreatureThreshold = 256;
@@ -932,6 +977,7 @@ namespace ScMultiplayer
         {
             currentInstance = this;
             ModManager = Game.Program.ModManager;
+            StartWorldTransferSender();
 
             // 初始化状态机
             connectionSM = new NetworkConnectionStateMachine(msg => Log.Information(msg));
@@ -1250,6 +1296,24 @@ namespace ScMultiplayer
             connectionSM.Update();
             downloadSM.Update();
             UpdateHostReconnect();
+            UpdateWorldTransferBusyStatus();
+            // Source: Survivalcraft/Game/Program.cs:Program.Run
+            // Downloading clients have no Project yet, so repair requests must run from the
+            // menu/loading frame path instead of UpdateWorldSubsystem.
+            if (!IsHost && client?.IsConnected == true && m_incomingWorldTransfers.Count > 0)
+                RequestMissingWorldTransferChunks();
+            else if (!IsHost && client?.IsConnected == true && m_isLoadingDownloadedWorld &&
+                Time.RealTime >= m_nextWorldTransferManifestRequestTime)
+            {
+                m_nextWorldTransferManifestRequestTime =
+                    Time.RealTime + WorldTransferRepairInterval;
+                NetworkMessageSender.SendPakWorldRepairRequest(
+                    new GamePakWorldRepairRequestMessage
+                    {
+                        TransferId = 0,
+                        RequestManifest = true
+                    });
+            }
             // Source: Survivalcraft/Game/Program.cs:Program.Run
             // Frame.Update runs after ScreensManager.Update, so all native game updates for this
             // rendered frame are complete. Keep networking outside SubsystemUpdate's catch-up
@@ -1307,6 +1371,7 @@ namespace ScMultiplayer
                         new GamePakWorldReadyMessage(m_pendingWorldReadyTransferId));
                     Log.Information($"[ScMP] Client project ready: Transfer={m_pendingWorldReadyTransferId}");
                     m_pendingWorldReadyTransferId = 0;
+                    HideJoinRoomBusyDialog();
                 }
                 AttachHostPickableEvents(project);
                 QueueRunawayCreatureCleanup(project);
@@ -1588,6 +1653,33 @@ namespace ScMultiplayer
             if (m_joinRoomBusyDialog == null) return;
             DialogsManager.HideDialog(m_joinRoomBusyDialog);
             m_joinRoomBusyDialog = null;
+        }
+
+        private void UpdateWorldTransferBusyStatus()
+        {
+            if (m_joinRoomBusyDialog == null || !m_isLoadingDownloadedWorld || IsHost ||
+                Time.RealTime < m_nextWorldTransferUiUpdateTime)
+                return;
+            m_nextWorldTransferUiUpdateTime = Time.RealTime + 0.25;
+            IncomingWorldTransfer transfer = m_incomingWorldTransfers.Values
+                .OrderByDescending(item => item.TransferId).FirstOrDefault();
+            if (transfer == null)
+            {
+                m_joinRoomBusyDialog.SmallMessage =
+                    "Connected.\nWaiting for the host world manifest...";
+                return;
+            }
+            double percent = transfer.Chunks.Length > 0
+                ? 100.0 * transfer.ReceivedChunkCount / transfer.Chunks.Length
+                : 0.0;
+            string stage = transfer.RepairRequestCount > 0 &&
+                Time.RealTime - transfer.LastProgressTime >= WorldTransferRepairInterval
+                    ? $"Recovering missing chunks (request {transfer.RepairRequestCount})..."
+                    : "Downloading host world...";
+            m_joinRoomBusyDialog.SmallMessage = string.Format(CultureInfo.InvariantCulture,
+                "Connected.\n{0}\n{1} / {2} chunks ({3:0.0}%)\n{4:0.00} MB / {5:0.00} MB",
+                stage, transfer.ReceivedChunkCount, transfer.Chunks.Length, percent,
+                transfer.ReceivedBytes / 1048576.0, transfer.TotalLength / 1048576.0);
         }
 
         private void SubmitPendingJoin(string playerName, PlayerClass playerClass,
@@ -2771,6 +2863,10 @@ namespace ScMultiplayer
                         QueueEndOfFrameAction(() =>
                             HandleGamePakWorldReadyMessage(worldReady, item.ClientID));
                         break;
+                    case GamePakWorldRepairRequestMessage repairRequest:
+                        QueueEndOfFrameAction(() =>
+                            HandleGamePakWorldRepairRequestMessage(repairRequest, item.ClientID));
+                        break;
                     case GamePlayerHealthMessage health:
                         QueueEndOfFrameAction(() =>
                             NetworkMessageHandler.HandlePlayerHealthMessage(health, item.ClientID));
@@ -2895,7 +2991,8 @@ namespace ScMultiplayer
                 TransferId = transferId,
                 TargetClientId = targetClientId,
                 WorldData = worldData,
-                ChunkCount = chunkCount
+                ChunkCount = chunkCount,
+                Manifest = manifest
             };
             m_worldTransfersAwaitingReady[targetClientId] = transferId;
             NetworkMessageSender.SendPakWorldManifest(targetClientId, manifest);
@@ -2942,51 +3039,209 @@ namespace ScMultiplayer
         private void SendPendingWorldTransferChunks()
         {
             if (m_outgoingWorldTransfers.Count == 0) return;
-            // Source: Comms/Comms/Comm.cs:Comm.GetUnackedPacketsCount
-            // Increase throughput only while the reliable queue is healthy. Falling back to two
-            // chunks prevents fragmented world data from starving gameplay acknowledgements.
-            int unacked = 0;
-            if (server != null)
+            // Source: ScMultiplayer.cs:RequestMissingWorldTransferChunks
+            // World chunks use their own application-level sliding window. Do not couple this
+            // channel to reliable gameplay backlog, otherwise a client joining an active game can
+            // be permanently blocked by unrelated player/animal acknowledgements.
+            int maximumBudget = m_networkPlayerData.Any(item => item.Key > 0)
+                ? MaximumWorldTransferChunksPerGameplayTick
+                : MaximumWorldTransferChunksPerNetworkTick;
+            int budget = maximumBudget;
+            int[] targetClientIds = m_outgoingWorldTransfers.Keys.OrderBy(id => id).ToArray();
+            if (targetClientIds.Length == 0) return;
+            m_worldTransferCursor %= targetClientIds.Length;
+            int attemptsRemaining = targetClientIds.Length *
+                (MaximumWorldTransferChunksPerNetworkTick + 1);
+            while (budget > 0 && attemptsRemaining-- > 0)
             {
-                foreach (PeerData peer in server.Peer.Peers)
+                int targetClientId = targetClientIds[m_worldTransferCursor];
+                m_worldTransferCursor = (m_worldTransferCursor + 1) % targetClientIds.Length;
+                if (!m_outgoingWorldTransfers.TryGetValue(targetClientId,
+                    out OutgoingWorldTransfer transfer) ||
+                    (transfer.InitialSendComplete && transfer.RepairChunkIndices.Count == 0))
+                    continue;
+
+                int chunkIndex;
+                bool isRepair = transfer.RepairChunkIndices.Count > 0;
+                if (isRepair)
                 {
-                    if (peer?.Address != null)
-                        unacked += server.Peer.Comm.GetUnackedPacketsCount(peer.Address);
+                    chunkIndex = transfer.RepairChunkIndices.Dequeue();
+                    transfer.QueuedRepairChunkIndices.Remove(chunkIndex);
                 }
-            }
-            int budget = unacked <= 16
-                ? MaximumWorldTransferChunksPerNetworkTick
-                : (unacked <= 48 ? 3 : MinimumWorldTransferChunksPerNetworkTick);
-            foreach (OutgoingWorldTransfer transfer in m_outgoingWorldTransfers.Values.ToArray())
-            {
-                while (budget > 0 && transfer.NextChunkIndex < transfer.ChunkCount)
+                else
                 {
-                    int offset = transfer.NextChunkIndex * WorldTransferChunkSize;
-                    int count = Math.Min(WorldTransferChunkSize,
-                        transfer.WorldData.Length - offset);
-                    var data = new byte[count];
-                    Array.Copy(transfer.WorldData, offset, data, 0, count);
-                    NetworkMessageSender.SendPakWorldChunk(transfer.TargetClientId,
-                        new GamePakWorldChunkMessage
-                        {
-                            TransferId = transfer.TransferId,
-                            TargetClientId = transfer.TargetClientId,
-                            ChunkIndex = transfer.NextChunkIndex,
-                            ChunkCount = transfer.ChunkCount,
-                            TotalLength = transfer.WorldData.Length,
-                            Data = data
-                        });
-                    transfer.NextChunkIndex++;
-                    budget--;
+                    int windowEnd = Math.Min(transfer.ChunkCount,
+                        transfer.HighestContiguousChunkIndex + 1 + WorldTransferWindowChunks);
+                    if (transfer.NextChunkIndex >= windowEnd)
+                        continue;
+                    chunkIndex = transfer.NextChunkIndex++;
                 }
-                if (transfer.NextChunkIndex >= transfer.ChunkCount)
+                if (!QueueWorldTransferChunk(transfer, chunkIndex))
                 {
-                    m_outgoingWorldTransfers.Remove(transfer.TargetClientId);
-                    Log.Information($"[ScMP] World transfer sent: ClientID={transfer.TargetClientId}, " +
+                    if (isRepair)
+                    {
+                        if (transfer.QueuedRepairChunkIndices.Add(chunkIndex))
+                            transfer.RepairChunkIndices.Enqueue(chunkIndex);
+                    }
+                    else
+                        transfer.NextChunkIndex--;
+                    break;
+                }
+                budget--;
+                if (!transfer.InitialSendComplete &&
+                    transfer.NextChunkIndex >= transfer.ChunkCount)
+                {
+                    transfer.InitialSendComplete = true;
+                    Log.Information($"[ScMP] World transfer initially queued: ClientID={transfer.TargetClientId}, " +
                         $"Transfer={transfer.TransferId}, Chunks={transfer.ChunkCount}");
                 }
-                if (budget <= 0) break;
             }
+        }
+
+        // Source: Comms/Comms.Drt/Func/Client/Client.cs:Client.SendDirectInput
+        private void StartWorldTransferSender()
+        {
+            if (m_worldTransferSendTask != null) return;
+            m_worldTransferSendCancellation = new CancellationTokenSource();
+            CancellationToken cancellationToken = m_worldTransferSendCancellation.Token;
+            m_worldTransferSendTask = Task.Run(async () =>
+            {
+                while (!cancellationToken.IsCancellationRequested)
+                {
+                    try
+                    {
+                        await m_worldTransferSendSignal.WaitAsync(cancellationToken);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        break;
+                    }
+                    while (m_worldTransferSendQueue.TryDequeue(
+                        out WorldTransferChunkSendWork work))
+                    {
+                        Interlocked.Decrement(ref m_worldTransferQueuedWorkCount);
+                        if (work == null || work.Generation !=
+                                Volatile.Read(ref m_worldTransferGeneration) ||
+                            cancellationToken.IsCancellationRequested)
+                            continue;
+                        try
+                        {
+                            int offset = work.ChunkIndex * WorldTransferChunkSize;
+                            int count = Math.Min(WorldTransferChunkSize,
+                                work.WorldData.Length - offset);
+                            var data = new byte[count];
+                            Array.Copy(work.WorldData, offset, data, 0, count);
+                            NetworkMessageSender.SendPakWorldChunk(work.TargetClientId,
+                                new GamePakWorldChunkMessage
+                                {
+                                    TransferId = work.TransferId,
+                                    TargetClientId = work.TargetClientId,
+                                    ChunkIndex = work.ChunkIndex,
+                                    ChunkCount = work.ChunkCount,
+                                    TotalLength = work.WorldData.Length,
+                                    Data = data
+                                });
+                        }
+                        catch (Exception ex)
+                        {
+                            if (!cancellationToken.IsCancellationRequested)
+                                Log.Error($"[ScMP] World transfer sender failed: {ex.Message}");
+                        }
+                    }
+                }
+            }, cancellationToken);
+        }
+
+        private bool QueueWorldTransferChunk(OutgoingWorldTransfer transfer, int chunkIndex)
+        {
+            if (transfer == null || chunkIndex < 0 || chunkIndex >= transfer.ChunkCount ||
+                Interlocked.CompareExchange(ref m_worldTransferQueuedWorkCount, 0, 0) >=
+                    MaximumQueuedWorldTransferChunks)
+                return false;
+            Interlocked.Increment(ref m_worldTransferQueuedWorkCount);
+            m_worldTransferSendQueue.Enqueue(new WorldTransferChunkSendWork
+            {
+                Generation = Volatile.Read(ref m_worldTransferGeneration),
+                TransferId = transfer.TransferId,
+                TargetClientId = transfer.TargetClientId,
+                ChunkIndex = chunkIndex,
+                ChunkCount = transfer.ChunkCount,
+                WorldData = transfer.WorldData
+            });
+            m_worldTransferSendSignal.Release();
+            return true;
+        }
+
+        // Source: ScMultiplayer.cs:HandleGamePakWorldChunkMessage
+        private void RequestMissingWorldTransferChunks()
+        {
+            double now = Time.RealTime;
+            foreach (IncomingWorldTransfer transfer in m_incomingWorldTransfers.Values.ToArray())
+            {
+                if (transfer == null || transfer.Chunks == null ||
+                    transfer.ReceivedChunkCount >= transfer.Chunks.Length ||
+                    now - transfer.LastRepairRequestTime < WorldTransferStatusInterval)
+                    continue;
+                bool stalled = now - transfer.LastProgressTime >= WorldTransferRepairInterval;
+                int missingEnd = stalled
+                    ? Math.Min(transfer.HighestContiguousChunkIndex + 1 +
+                        WorldTransferWindowChunks, transfer.Chunks.Length)
+                    : Math.Min(transfer.HighestReceivedChunkIndex + 1,
+                        transfer.Chunks.Length);
+                int[] missing = Enumerable.Range(
+                        transfer.HighestContiguousChunkIndex + 1,
+                        Math.Max(0, missingEnd - transfer.HighestContiguousChunkIndex - 1))
+                    .Where(index => transfer.Chunks[index] == null)
+                    .Take(MaximumWorldTransferRepairChunks)
+                    .ToArray();
+                transfer.LastRepairRequestTime = now;
+                if (missing.Length > 0 && stalled)
+                    transfer.RepairRequestCount++;
+                NetworkMessageSender.SendPakWorldRepairRequest(
+                    new GamePakWorldRepairRequestMessage
+                    {
+                        TransferId = transfer.TransferId,
+                        RequestManifest = transfer.Manifest == null,
+                        HighestContiguousChunkIndex = transfer.HighestContiguousChunkIndex,
+                        HighestReceivedChunkIndex = transfer.HighestReceivedChunkIndex,
+                        MissingChunkIndices = missing
+                    });
+            }
+        }
+
+        private void HandleGamePakWorldRepairRequestMessage(
+            GamePakWorldRepairRequestMessage message, int sourceClientId)
+        {
+            if (!IsHost || message == null || sourceClientId <= 0 ||
+                !m_outgoingWorldTransfers.TryGetValue(sourceClientId,
+                    out OutgoingWorldTransfer transfer) ||
+                (message.TransferId > 0 && transfer.TransferId != message.TransferId))
+                return;
+            if (message.RequestManifest && transfer.Manifest != null)
+                NetworkMessageSender.SendPakWorldManifest(sourceClientId, transfer.Manifest);
+            transfer.HighestContiguousChunkIndex = Math.Max(
+                transfer.HighestContiguousChunkIndex,
+                Math.Min(message.HighestContiguousChunkIndex, transfer.ChunkCount - 1));
+            foreach (int index in message.MissingChunkIndices ?? Array.Empty<int>())
+            {
+                if (index < 0 || index >= transfer.NextChunkIndex ||
+                    !transfer.QueuedRepairChunkIndices.Add(index))
+                    continue;
+                transfer.RepairChunkIndices.Enqueue(index);
+            }
+        }
+
+        // Source: Comms/Comms.Drt/Func/Server/Set/ServerGame.cs:ServerGame.Clients
+        private int GetWorldTransferRelayUnackedPackets(int targetClientId)
+        {
+            if (server == null || client == null)
+                return MaximumWorldTransferUnackedPackets;
+            ServerGame game = server.Games.FirstOrDefault(item => item.GameID == client.GameID);
+            ServerClient target = game?.Clients.FirstOrDefault(item =>
+                item.ClientID == targetClientId);
+            if (target?.Address == null)
+                return MaximumWorldTransferUnackedPackets;
+            return server.Peer.Comm.GetUnackedPacketsCount(target.Address);
         }
 
         // ====================================================================
@@ -3284,6 +3539,7 @@ namespace ScMultiplayer
             }
             m_remoteAnimalTemplates.Remove(id);
             m_remoteAnimalSync.Remove(id);
+            m_loggedRemoteAnimalFailures.Remove(id);
         }
 
         private Entity EnsureRemoteAnimal(ushort id, Vector3 position, Quaternion rotation, Vector3 velocity)
@@ -3319,11 +3575,13 @@ namespace ScMultiplayer
                 }
                 StopRemoteAnimalShapeshiftEffect(entity);
                 m_remoteAnimals[id] = entity;
+                m_loggedRemoteAnimalFailures.Remove(id);
                 return entity;
             }
             catch (Exception ex)
             {
-                Log.Error($"[ScMP] Failed to recreate animal {id} ({templateName}): {ex.Message}");
+                if (m_loggedRemoteAnimalFailures.Add(id))
+                    Log.Error($"[ScMP] Failed to recreate animal {id} ({templateName}): {ex.Message}");
                 m_remoteAnimals.Remove(id);
                 return null;
             }
@@ -6354,7 +6612,8 @@ namespace ScMultiplayer
                 TransferId = transferId,
                 TargetClientId = targetClientId,
                 TotalLength = totalLength,
-                Chunks = new byte[chunkCount][]
+                Chunks = new byte[chunkCount][],
+                LastProgressTime = Time.RealTime
             };
             m_incomingWorldTransfers.Add(transferId, transfer);
             return transfer;
@@ -6376,6 +6635,13 @@ namespace ScMultiplayer
             {
                 transfer.Chunks[message.ChunkIndex] = message.Data;
                 transfer.ReceivedChunkCount++;
+                transfer.ReceivedBytes += message.Data.Length;
+                transfer.HighestReceivedChunkIndex = Math.Max(
+                    transfer.HighestReceivedChunkIndex, message.ChunkIndex);
+                while (transfer.HighestContiguousChunkIndex + 1 < transfer.Chunks.Length &&
+                    transfer.Chunks[transfer.HighestContiguousChunkIndex + 1] != null)
+                    transfer.HighestContiguousChunkIndex++;
+                transfer.LastProgressTime = Time.RealTime;
             }
             TryCompleteIncomingWorldTransfer(transfer);
         }
@@ -6395,6 +6661,9 @@ namespace ScMultiplayer
             }
             if (offset != worldData.Length) return;
             GamePakWorldMessage manifest = transfer.Manifest;
+            if (m_joinRoomBusyDialog != null)
+                m_joinRoomBusyDialog.SmallMessage =
+                    "Connected.\nWorld download complete.\nImporting world...";
             manifest.WorldData = worldData;
             manifest.ChunkCount = 0;
             m_incomingWorldTransfers.Remove(transfer.TransferId);
@@ -6423,6 +6692,7 @@ namespace ScMultiplayer
                 return;
             }
             m_worldTransfersAwaitingReady.Remove(sourceClientId);
+            m_outgoingWorldTransfers.Remove(sourceClientId);
             SendTerrainCatchUp(sourceClientId);
             FlushJoinCatchUpJournal(sourceClientId);
             m_fullWorldObjectsSyncTime = WorldObjectFullSyncInterval;
@@ -6440,6 +6710,7 @@ namespace ScMultiplayer
                     msg.TransferId, msg.TargetClientId, msg.ChunkCount, msg.TotalLength);
                 if (transfer == null) return;
                 transfer.Manifest = msg;
+                transfer.LastProgressTime = Time.RealTime;
                 TryCompleteIncomingWorldTransfer(transfer);
                 return;
             }
@@ -6489,7 +6760,9 @@ namespace ScMultiplayer
                         world.WorldSettings.Name == msg.Name && world.LastSaveTime == msg.LastSaveTime);
                 if (importedWorld != null)
                 {
-                    HideJoinRoomBusyDialog();
+                    if (m_joinRoomBusyDialog != null)
+                        m_joinRoomBusyDialog.SmallMessage =
+                            "Connected.\nWorld imported.\nLoading project...";
                     SuPlayScreen.Play(importedWorld);
                     connectionSM.TransitionTo(NetworkConnectionStateMachine.ConnectionState.Playing);
                     m_shouldCreateHostAvatar = true;
@@ -6614,7 +6887,6 @@ namespace ScMultiplayer
                 try
                 {
                     client.SendGameDescription(LastGameDescription);
-                    Log.Information($"[ScMP] GameDescription sent ({LastGameDescription.Length} bytes)");
                 }
                 catch (Exception ex)
                 {
@@ -6794,6 +7066,9 @@ namespace ScMultiplayer
 
         private void ResetTransientNetworkState()
         {
+            Interlocked.Increment(ref m_worldTransferGeneration);
+            while (m_worldTransferSendQueue.TryDequeue(out _))
+                Interlocked.Decrement(ref m_worldTransferQueuedWorkCount);
             m_networkPlayerData.Clear();
             lock (m_creatingNetworkPlayers) m_creatingNetworkPlayers.Clear();
             m_pendingNetworkPlayers.Clear();
@@ -6813,6 +7088,7 @@ namespace ScMultiplayer
             m_remoteAnimals.Clear();
             m_remoteAnimalTemplates.Clear();
             m_remoteAnimalSync.Clear();
+            m_loggedRemoteAnimalFailures.Clear();
             m_lastFullAnimalSnapshotTick = 0;
             m_hostPickableIds.Clear();
             m_remotePickables.Clear();
@@ -6848,6 +7124,9 @@ namespace ScMultiplayer
             m_localRespawnSequence = 0;
             m_localRespawnPendingUntil = 0.0;
             m_nextWorldTransferId = 0;
+            m_worldTransferCursor = 0;
+            m_nextWorldTransferManifestRequestTime = 0.0;
+            m_nextWorldTransferUiUpdateTime = 0.0;
             m_terrainMergeTime = 0f;
             SuSubsystemTerrain.ResetNetworkState();
             m_sessionRandomSeed = 0;
@@ -8119,6 +8398,13 @@ namespace ScMultiplayer
 
         public void OnUnload()
         {
+            try
+            {
+                m_worldTransferSendCancellation?.Cancel();
+                m_worldTransferSendSignal.Release();
+                m_worldTransferSendTask?.Wait(1000);
+            }
+            catch { }
             try { client?.LeaveGame(); } catch { }
             try { server?.Dispose(); } catch { }
             try { explorer?.StopDiscovery(); } catch { }
