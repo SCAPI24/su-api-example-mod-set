@@ -4,7 +4,7 @@ using System.Collections.Generic;
 
 namespace ScMultiplayer
 {
-    public class SuSubsystemGrassBlockBehavior : SubsystemGrassBlockBehavior
+    public class SuSubsystemGrassBlockBehavior : SubsystemGrassBlockBehavior, IUpdateable
     {
         private static bool IsAuthoritative =>
             ScMultiplayer.client?.IsConnected != true || ScMultiplayer.IsHost;
@@ -31,7 +31,7 @@ namespace ScMultiplayer
             if (IsAuthoritative) base.OnExplosion(value, x, y, z, damage);
         }
 
-        public override void Update(float dt)
+        void IUpdateable.Update(float dt)
         {
             // Source: Survivalcraft/Game/SubsystemGrassBlockBehavior.cs:SubsystemGrassBlockBehavior.Update
             if (IsAuthoritative)

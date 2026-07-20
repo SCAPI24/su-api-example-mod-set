@@ -5,7 +5,7 @@ using System.Collections.Generic;
 
 namespace ScMultiplayer
 {
-    public class SuSubsystemTerrain : SubsystemTerrain
+    public class SuSubsystemTerrain : SubsystemTerrain, IUpdateable
     {
         private static readonly ConcurrentQueue<GameModifiedCellsMessage> m_receivedBatches =
             new ConcurrentQueue<GameModifiedCellsMessage>();
@@ -29,7 +29,7 @@ namespace ScMultiplayer
             LastAppliedTerrainTick = 0;
         }
 
-        public override void Update(float dt)
+        void IUpdateable.Update(float dt)
         {
             if (!m_isInitialized)
             {

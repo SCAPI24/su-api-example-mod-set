@@ -3,9 +3,9 @@ using System;
 
 namespace ScMultiplayer
 {
-    public class SuSubsystemSpawn : SubsystemSpawn
+    public class SuSubsystemSpawn : SubsystemSpawn, IUpdateable
     {
-        public override void Update(float dt)
+        void IUpdateable.Update(float dt)
         {
             // Source: Survivalcraft/Game/SubsystemSpawn.cs:SubsystemSpawn.Update
             // Keep local views on the native path. Remote chunks are activated gradually after the
