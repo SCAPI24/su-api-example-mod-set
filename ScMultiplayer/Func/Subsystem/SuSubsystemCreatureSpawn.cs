@@ -3,9 +3,9 @@ using System;
 
 namespace ScMultiplayer
 {
-    public class SuSubsystemCreatureSpawn : SubsystemCreatureSpawn
+    public class SuSubsystemCreatureSpawn : SubsystemCreatureSpawn, IUpdateable
     {
-        public override void Update(float dt)
+        void IUpdateable.Update(float dt)
         {
             // Source: Survivalcraft/Game/SubsystemCreatureSpawn.cs:SubsystemCreatureSpawn.Update
             // Keep random creature selection on the original split-screen code path while exposing

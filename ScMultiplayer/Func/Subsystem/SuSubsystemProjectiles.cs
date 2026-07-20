@@ -4,7 +4,7 @@ using System.Collections.Generic;
 
 namespace ScMultiplayer
 {
-    public class SuSubsystemProjectiles : SubsystemProjectiles
+    public class SuSubsystemProjectiles : SubsystemProjectiles, IUpdateable
     {
         private sealed class ProjectileHitCandidate
         {
@@ -17,7 +17,7 @@ namespace ScMultiplayer
         }
 
         // Source: Survivalcraft/Game/SubsystemProjectiles.cs:SubsystemProjectiles.Update
-        public override void Update(float dt)
+        void IUpdateable.Update(float dt)
         {
             ScMultiplayer multiplayer = ScMultiplayer.currentInstance;
             if (multiplayer == null || ScMultiplayer.client?.IsConnected != true)

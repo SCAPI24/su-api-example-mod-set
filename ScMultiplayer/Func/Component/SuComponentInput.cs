@@ -4,7 +4,7 @@ using System;
 
 namespace ScMultiplayer
 {
-    public class SuComponentInput : Game.ComponentInput
+    public class SuComponentInput : Game.ComponentInput, IUpdateable
     {
         private void SuUpdateInputFromMouseAndKeyboard(WidgetInput input)
         {
@@ -25,7 +25,7 @@ namespace ScMultiplayer
         private PlayerInput Sum_playerInput;
         private ComponentPlayer Sum_componentPlayer;
         private double Sum_lastJumpTime;
-        public override void Update(float dt)
+        void IUpdateable.Update(float dt)
         {
             // Source: Survivalcraft/Game/ComponentInput.cs:ComponentInput.Update
             UpdateNow(dt);
