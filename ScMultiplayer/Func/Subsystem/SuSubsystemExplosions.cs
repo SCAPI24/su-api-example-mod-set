@@ -4,9 +4,9 @@ using System.Reflection;
 
 namespace ScMultiplayer
 {
-    public class SuSubsystemExplosions : SubsystemExplosions
+    public class SuSubsystemExplosions : SubsystemExplosions, IUpdateable
     {
-        public override void Update(float dt)
+        void IUpdateable.Update(float dt)
         {
             // Source: Survivalcraft/Game/SubsystemExplosions.cs:SubsystemExplosions.Update
             if (ScMultiplayer.IsHost && ScMultiplayer.client?.IsConnected == true)
