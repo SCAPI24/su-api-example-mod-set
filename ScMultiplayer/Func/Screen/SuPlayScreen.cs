@@ -227,9 +227,8 @@ namespace ScMultiplayer
             // Cache game description bytes for LAN discovery response
             ScMultiplayer.LastGameDescription = Message.WriteWithSender(worldMsg, ScMultiplayer.client.Address);
 
-            ScMultiplayer.client.CreateGame(localServerAddress,
-                ScMultiplayer.LastGameDescription,
-                ScMultiplayer.client.Address.Port.ToString());
+            ScMultiplayer.currentInstance.BeginLocalGameCreation(
+                localServerAddress, ScMultiplayer.LastGameDescription);
             Log.Information($"[SuPlay] CreateGame sent: {worldInfo.WorldSettings.Name}, local={localServerAddress}, advertised={ScMultiplayer.server.Address}");
         }
 
@@ -280,15 +279,6 @@ namespace ScMultiplayer
         {
             ScMultiplayer.IsHost = false;
             WorldInfo worldInfo = (WorldInfo)item;
-
-            // Source: Comms.Peer.Connect throws "Peer is already connected"
-            // if Peer.ConnectedTo != null. Client may still be connected
-            // to local Server from previous session or discovery.
-            if (ScMultiplayer.client.IsConnected)
-            {
-                ScMultiplayer.client.LeaveGame();
-                Log.Information($"[SuPlay] Disconnected from previous peer before join");
-            }
 
             GameWorldInfoMessage worldMsg;
             try { worldMsg = Message.Read(gd.GameDescriptionBytes) as GameWorldInfoMessage; }

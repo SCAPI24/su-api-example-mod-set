@@ -25,7 +25,9 @@ namespace ScMultiplayer
         public int ActiveSlotIndex = -1;
         public int ItemValue;
         public int ItemCount;
+        public int DropCount;
         public Vector3 Position;
+        public Vector3 Velocity;
 
         public PlayerActionMessage()
         {
@@ -58,11 +60,15 @@ namespace ScMultiplayer
                 ActiveSlotIndex = reader.ReadInt32();
                 ItemValue = reader.ReadInt32();
                 ItemCount = reader.ReadInt32();
+                if (Action == PlayerActionType.DropRequest)
+                    DropCount = reader.ReadInt32();
             }
             if (Action == PlayerActionType.RespawnRequest ||
                 Action == PlayerActionType.DropRequest ||
                 Action == PlayerActionType.Whistle)
                 Position = reader.ReadVector3(reader);
+            if (Action == PlayerActionType.DropRequest)
+                Velocity = reader.ReadVector3(reader);
         }
 
         protected override void Write(SuWriter writer)
@@ -79,11 +85,15 @@ namespace ScMultiplayer
                 writer.WriteInt32(ActiveSlotIndex);
                 writer.WriteInt32(ItemValue);
                 writer.WriteInt32(ItemCount);
+                if (Action == PlayerActionType.DropRequest)
+                    writer.WriteInt32(DropCount);
             }
             if (Action == PlayerActionType.RespawnRequest ||
                 Action == PlayerActionType.DropRequest ||
                 Action == PlayerActionType.Whistle)
                 writer.WriteVector3(writer, Position);
+            if (Action == PlayerActionType.DropRequest)
+                writer.WriteVector3(writer, Velocity);
         }
     }
 }

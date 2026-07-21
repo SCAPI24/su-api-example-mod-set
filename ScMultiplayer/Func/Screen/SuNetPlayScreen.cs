@@ -199,13 +199,11 @@ namespace ScMultiplayer
                 VersionsManager.SerializationVersion,
                 advertisedAddress);
 
+            ScMultiplayer.currentInstance.PrepareClientForGameCreation();
             byte[] descBytes = Message.WriteWithSender(worldMsg, ScMultiplayer.client.Address);
             ScMultiplayer.LastGameDescription = descBytes;
 
-            ScMultiplayer.client.CreateGame(
-                connectionAddress,
-                descBytes,
-                ScMultiplayer.client.Address.Port.ToString());
+            ScMultiplayer.currentInstance.BeginLocalGameCreation(connectionAddress, descBytes);
 
             // Switch to game loading screen
             ScreensManager.SwitchScreen("GameLoading", null, null);

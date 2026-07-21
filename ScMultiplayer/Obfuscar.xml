@@ -14,6 +14,8 @@
     <SkipType name="ScMultiplayer.ScMultiplayer" />
     <SkipType name="ScMultiplayer.Message" />
     <SkipType name="ScMultiplayer.SuComponentInput" />
+    <SkipType name="ScMultiplayer.SuComponentVitalStats" />
+    <SkipType name="ScMultiplayer.SuComponentFlu" />
     <SkipType name="ScMultiplayer.MultiplayerUiComponent" />
     <SkipType name="ScMultiplayer.SuSubsystemTerrain" />
     <SkipType name="ScMultiplayer.SuSubsystemSpawn" />
@@ -21,6 +23,7 @@
     <SkipType name="ScMultiplayer.SuSubsystemGrassBlockBehavior" />
     <SkipType name="ScMultiplayer.SuSubsystemExplosions" />
     <SkipType name="ScMultiplayer.SuSubsystemProjectiles" />
+    <SkipType name="ScMultiplayer.SuSubsystemPickables" />
     <SkipType name="ScMultiplayer.SuSubsystemWhistleBlockBehavior" />
     <SkipType name="ScMultiplayer.SuPlayScreen" />
     <SkipType name="ScMultiplayer.ChatMessage" />

@@ -9,7 +9,8 @@ namespace ScMultiplayer
     {
         private static readonly ConcurrentQueue<GameModifiedCellsMessage> m_receivedBatches =
             new ConcurrentQueue<GameModifiedCellsMessage>();
-        private readonly HashSet<Point3> m_networkReceivedCells = new HashSet<Point3>();
+        private readonly Dictionary<Point3, int> m_networkReceivedCellValues =
+            new Dictionary<Point3, int>();
         private readonly Dictionary<Point3, int> m_appliedCellTicks = new Dictionary<Point3, int>();
         private Dictionary<Point3, bool> m_modifiedCells;
         private bool m_isInitialized;
@@ -53,7 +54,7 @@ namespace ScMultiplayer
             TerrainUpdater.Update();
             PublishAllModifiedCells();
             ProcessModifiedCells();
-            m_networkReceivedCells.Clear();
+            m_networkReceivedCellValues.Clear();
         }
 
         private void PublishAllModifiedCells()
@@ -63,7 +64,11 @@ namespace ScMultiplayer
             var localChanges = new Dictionary<Point3, bool>();
             foreach (KeyValuePair<Point3, bool> item in m_modifiedCells)
             {
-                if (!m_networkReceivedCells.Contains(item.Key))
+                int currentValue = Terrain.GetCellValue(item.Key.X, item.Key.Y, item.Key.Z);
+                bool hasNetworkValue = m_networkReceivedCellValues.TryGetValue(
+                    item.Key, out int networkValue);
+                bool isLocalChange = !hasNetworkValue || currentValue != networkValue;
+                if (isLocalChange)
                     localChanges[item.Key] = item.Value;
             }
             if (localChanges.Count > 0)
@@ -83,8 +88,9 @@ namespace ScMultiplayer
                             message.Tick >= appliedTick)
                         {
                             m_appliedCellTicks[item.Key] = message.Tick;
-                            m_networkReceivedCells.Add(item.Key);
-                            ChangeCell(item.Key.X, item.Key.Y, item.Key.Z, message.CellValues[index], true);
+                            int networkValue = message.CellValues[index];
+                            m_networkReceivedCellValues[item.Key] = networkValue;
+                            ChangeCell(item.Key.X, item.Key.Y, item.Key.Z, networkValue, true);
                         }
                     }
                     index++;
