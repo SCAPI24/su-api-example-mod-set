@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Mod>
+  <ModInfo>
+    <Identifier>HeadlessRenderingMod</Identifier>
+    <LocalizedName>
+      <Text lang="en_US">Headless Server</Text>
+      <Text lang="zh_CN">无画面服务器</Text>
+    </LocalizedName>
+    <ModVersion>
+      <Version>1.2.2</Version>
+      <APIVersion>2.1.0</APIVersion>
+    </ModVersion>
+    <Asset>
+      <ContentRoot>Content</ContentRoot>
+    </Asset>
+    <IsMergeLib>true</IsMergeLib>
+  </ModInfo>
+  <Dependencies>
+  </Dependencies>
+</Mod>

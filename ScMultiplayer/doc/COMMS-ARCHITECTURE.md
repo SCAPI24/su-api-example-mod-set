@@ -132,7 +132,7 @@ struct GameStepData {
 6. **无断线重连**: Disconnected 后需手动重新 JoinGame
 7. **端口确定性**: "SuSCMP".ToDynamicPort() -> 49152-65535, 同字符串得同端口
 8. **序列化小端序**: Reader/Writer 均为 Little Endian
-9. **.scmod 依赖**: Comms.dll 必须打包进 .scmod 的 Lib/X64/
+9. **.scmod 依赖**: `IsMergeLib=true`，Comms.dll 必须打包进 `.scmod` 的 `Lib/`
 10. **ModInfo.xml Dependencies**: 声明 Comms 依赖
 
 ---
