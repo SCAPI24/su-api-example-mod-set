@@ -52,6 +52,8 @@ public class Explorer : IDisposable
 
     private double LocalLastTime;
 
+    private int LocalServerPortIndex;
+
     private double InternetLastTime;
 
     private Dictionary<IPEndPoint, double> InternetRequestTimes = new();
@@ -186,6 +188,7 @@ public class Explorer : IDisposable
             LocalBroadcast = localBroadcast;
             InternetHosts = ((internetHosts != null) ? internetHosts.ToArray() : Array.Empty<string>());
             LocalLastTime = -1.7976931348623157E+308;
+            LocalServerPortIndex = 0;
             InternetLastTime = -1.7976931348623157E+308;
             Cache.Clear();
             if (Alarm != null)
@@ -294,12 +297,23 @@ public class Explorer : IDisposable
         {
             return;
         }
-        int[] serverPorts = ServerPorts;
-        foreach (int peerPort in serverPorts)
+        if (ServerPorts.Length == 0)
         {
+            return;
+        }
+        // Source: Comms.Drt/Func/Explorer/Explorer.cs:Explorer.DiscoverLocalServers
+        // Rotate a small port batch so VPN adapters are not flooded every discovery period.
+        int count = Math.Min(
+            Math.Max(Settings.LocalDiscoveryPortBatchSize, 1),
+            ServerPorts.Length);
+        byte[] request = MessageSerializer.Write(new ClientDiscoveryRequestMessage());
+        for (int i = 0; i < count; i++)
+        {
+            int peerPort = ServerPorts[LocalServerPortIndex];
+            LocalServerPortIndex = (LocalServerPortIndex + 1) % ServerPorts.Length;
             try
             {
-                Peer.DiscoverLocalPeers(peerPort, MessageSerializer.Write(new ClientDiscoveryRequestMessage()));
+                Peer.DiscoverLocalPeers(peerPort, request);
             }
             catch (Exception error)
             {

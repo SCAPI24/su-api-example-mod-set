@@ -20,6 +20,7 @@ namespace ScMultiplayer
         public float Stamina;
         public float Sleep;
         public float Temperature;
+        public float TargetTemperature;
         public float Wetness;
         public float Level;
         public Vector3 BodyVelocity;
@@ -28,15 +29,18 @@ namespace ScMultiplayer
         public float FireDuration;
         public float FluDuration;
         public float SicknessDuration;
+        public int CoughSequence;
+        public bool IsCoughing;
         public string CauseOrSource;   // 伤害/治疗来源
 
         public GamePlayerHealthMessage() { }
 
         public GamePlayerHealthMessage(int playerIndex, float health, float maxHealth,
             float healthChange, bool isDead, float air, float food, float stamina,
-            float sleep, float temperature, float wetness, float level,
+            float sleep, float temperature, float targetTemperature, float wetness, float level,
             Vector3 bodyVelocity, bool hasKnockback, bool isSleeping, float fireDuration,
-            float fluDuration, float sicknessDuration, string cause = null)
+            float fluDuration, float sicknessDuration, int coughSequence,
+            bool isCoughing, string cause = null)
         {
             PlayerIndex = playerIndex;
             Health = health;
@@ -49,6 +53,7 @@ namespace ScMultiplayer
             Stamina = stamina;
             Sleep = sleep;
             Temperature = temperature;
+            TargetTemperature = targetTemperature;
             Wetness = wetness;
             Level = level;
             BodyVelocity = bodyVelocity;
@@ -57,6 +62,8 @@ namespace ScMultiplayer
             FireDuration = fireDuration;
             FluDuration = fluDuration;
             SicknessDuration = sicknessDuration;
+            CoughSequence = coughSequence;
+            IsCoughing = isCoughing;
         }
 
         protected override void Read(SuReader reader)
@@ -72,6 +79,7 @@ namespace ScMultiplayer
             Stamina = reader.ReadSingle();
             Sleep = reader.ReadSingle();
             Temperature = reader.ReadSingle();
+            TargetTemperature = reader.ReadSingle();
             Wetness = reader.ReadSingle();
             Level = reader.ReadSingle();
             BodyVelocity = reader.ReadVector3(reader);
@@ -80,6 +88,8 @@ namespace ScMultiplayer
             FireDuration = reader.ReadSingle();
             FluDuration = reader.ReadSingle();
             SicknessDuration = reader.ReadSingle();
+            CoughSequence = reader.ReadInt32();
+            IsCoughing = reader.ReadBoolean();
         }
 
         protected override void Write(SuWriter writer)
@@ -95,6 +105,7 @@ namespace ScMultiplayer
             writer.WriteSingle(Stamina);
             writer.WriteSingle(Sleep);
             writer.WriteSingle(Temperature);
+            writer.WriteSingle(TargetTemperature);
             writer.WriteSingle(Wetness);
             writer.WriteSingle(Level);
             writer.WriteVector3(writer, BodyVelocity);
@@ -103,6 +114,8 @@ namespace ScMultiplayer
             writer.WriteSingle(FireDuration);
             writer.WriteSingle(FluDuration);
             writer.WriteSingle(SicknessDuration);
+            writer.WriteInt32(CoughSequence);
+            writer.WriteBoolean(IsCoughing);
         }
     }
 }

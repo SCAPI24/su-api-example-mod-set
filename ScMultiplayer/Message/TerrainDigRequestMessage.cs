@@ -18,6 +18,8 @@ namespace ScMultiplayer
         public int CompletedClientTick;
         public int ActiveSlotIndex;
         public int ToolValue;
+        public int ToolCount;
+        public Vector3 BodyPosition;
 
         public TerrainDigRequestMessage()
         {
@@ -66,6 +68,8 @@ namespace ScMultiplayer
             CompletedClientTick = reader.ReadInt32();
             ActiveSlotIndex = reader.ReadInt32();
             ToolValue = reader.ReadInt32();
+            ToolCount = reader.ReadInt32();
+            BodyPosition = reader.ReadVector3(reader);
         }
 
         protected override void Write(SuWriter writer)
@@ -80,6 +84,8 @@ namespace ScMultiplayer
             writer.WriteInt32(CompletedClientTick);
             writer.WriteInt32(ActiveSlotIndex);
             writer.WriteInt32(ToolValue);
+            writer.WriteInt32(ToolCount);
+            writer.WriteVector3(writer, BodyPosition);
         }
     }
 }
