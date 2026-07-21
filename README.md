@@ -6,7 +6,7 @@ Survivalcraft 2 SuAPI Mod 示例集合，演示 SuAPI 接口的各种用法。
 
 - **net8.0** — 所有 Mod 基于 .NET 8.0，SDK 样式 csproj
 - **SuAPI 接口** — 通过 IModEventBus / IModInjector / IModParentField / IModParentMethod / IModResource 调整游戏行为，不修改原始代码
-- **IsMergeLib** — 支持 `IsMergeLib=true`（DLL 放 `Lib/`，双端共用）或 `false`（按平台放 `Lib/X64` + `Lib/Arm64`）
+- **IsMergeLib** — 默认并优先使用 `IsMergeLib=true`（DLL 放 `Lib/`，双端共用）；只有明确要求平台专用程序集时才使用 `false`（按平台放 `Lib/X64` + `Lib/Arm64`）
 - **Python zipfile 打包** — .scmod 必须用 Python zipfile 打包，确保正斜杠路径
 
 ## 使用方法
@@ -23,7 +23,7 @@ dotnet build Mod/<ModName>/<ModName>.csproj -c Debug --framework net8.0
 dotnet build Mod/<ModName>/<ModName>.csproj -c Debug --framework net8.0-android
 ```
 
-IsMergeLib=true 的 Mod 只需编译 Windows 版（单 TFM `net8.0`），DLL 双端共用。
+所有 Mod 默认使用 IsMergeLib=true，只需编译单 TFM `net8.0`，DLL 双端共用。不得仅因为需要同时运行于 Windows 和 Android 就建立 X64/Arm64 分包。
 
 ### 打包 .scmod
 
@@ -115,6 +115,10 @@ Memory Bank 绘图编辑器，替换 `SubsystemMemoryBankBlockBehavior`，增加
 ### ScMultiplayer
 
 多人联机 Mod，基于 Comms 通信库。演示复杂 Mod：Dependencies 声明、LoadingManager.ReplaceItem、条件编译。
+
+### HeadlessRenderingMod
+
+Windows 无画面服务器 Mod。直接运行实例目录中的 `Survivalcraft.exe`，关闭世界和 UI 实际绘制，并通过本机 TCP JSON 接口提供命令行和 AI 控制。
 
 ### 其他 Mod
 

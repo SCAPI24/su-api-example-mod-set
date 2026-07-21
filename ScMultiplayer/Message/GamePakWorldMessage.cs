@@ -16,6 +16,9 @@ namespace ScMultiplayer
         public int TransferId;
         public int ChunkCount;
         public int TotalLength;
+        public int TcpTransferPort;
+        public Guid TcpTransferToken;
+        public byte[] TcpSha256 = Array.Empty<byte>();
         public int RandomSeed;
         public Dictionary<string, long> RandomStates = new Dictionary<string, long>();
         public string PlayerName = string.Empty;
@@ -77,6 +80,9 @@ namespace ScMultiplayer
             TransferId = reader.ReadInt32();
             ChunkCount = reader.ReadInt32();
             TotalLength = reader.ReadInt32();
+            TcpTransferPort = reader.ReadInt32();
+            TcpTransferToken = new Guid(reader.ReadFixedBytes(16));
+            TcpSha256 = reader.ReadBytes();
             RandomSeed = reader.ReadInt32();
             int count = reader.ReadPackedInt32();
             RandomStates = new Dictionary<string, long>(count);
@@ -122,6 +128,9 @@ namespace ScMultiplayer
             writer.WriteInt32(TransferId);
             writer.WriteInt32(ChunkCount);
             writer.WriteInt32(TotalLength);
+            writer.WriteInt32(TcpTransferPort);
+            writer.WriteFixedBytes(TcpTransferToken.ToByteArray());
+            writer.WriteBytes(TcpSha256 ?? Array.Empty<byte>());
             writer.WriteInt32(RandomSeed);
             writer.WritePackedInt32(RandomStates?.Count ?? 0);
             if (RandomStates != null)

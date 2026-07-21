@@ -207,7 +207,7 @@ ScMultiplayer.Message (不同于 Comms Peer 内部 Message):
 
 1. **Mod 开发者模式**: 不修改原始游戏代码, 通过 EventBus 替换
 2. **禁止打包引擎 DLL**: Engine/EntitySystem/Survivalcraft.dll 不得打入 .scmod
-3. **Comms 依赖**: .scmod Lib/X64/ 含 Comms.dll + ModInfo.xml Dependencies
+3. **Comms 依赖**: `IsMergeLib=true`，`.scmod` 的 `Lib/` 同时包含 ScMultiplayer.dll、Comms.dll，并在 ModInfo.xml 声明 Dependencies
 4. **端口唯一性**: 同一主机仅一个实例 (哈希确定性端口)
 5. **Play Screen 索引动态**: actions.Count-13, 不硬编码
 6. **MSBuild 编译**: 不用 dotnet build

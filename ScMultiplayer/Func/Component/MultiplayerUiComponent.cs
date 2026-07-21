@@ -11,6 +11,7 @@ namespace ScMultiplayer
         private StackPanelWidget m_moreContents;
         private BevelledButtonWidget m_createButton;
         private BevelledButtonWidget m_talkButton;
+        private BevelledButtonWidget m_manageButton;
 
         public UpdateOrder UpdateOrder => UpdateOrder.Views;
 
@@ -31,6 +32,8 @@ namespace ScMultiplayer
                 m_createButton.ParentWidget.Children.Remove(m_createButton);
             if (m_talkButton?.ParentWidget != null)
                 m_talkButton.ParentWidget.Children.Remove(m_talkButton);
+            if (m_manageButton?.ParentWidget != null)
+                m_manageButton.ParentWidget.Children.Remove(m_manageButton);
             base.Dispose();
         }
 
@@ -38,10 +41,25 @@ namespace ScMultiplayer
         {
             // Source: Mod/ConsoleMod/Subsystem/ConsoleSubsystemGameWidgets.cs:AttachConsoleButton
             if (m_moreContents == null) AttachButtons();
-            if (m_createButton != null && m_createButton.IsClicked)
-                ScMultiplayer.currentInstance?.ShowCreateRoomDialog();
+            ScMultiplayer multiplayer = ScMultiplayer.currentInstance;
+            if (m_createButton != null)
+            {
+                bool joined = multiplayer?.IsInRoom == true;
+                string buttonText = joined ? "IF" : "CR";
+                if (m_createButton.Text != buttonText)
+                    m_createButton.Text = buttonText;
+                if (m_createButton.IsClicked)
+                {
+                    if (joined)
+                        multiplayer.ShowJoinedPlayerInformation();
+                    else
+                        multiplayer?.ShowCreateRoomDialog();
+                }
+            }
             if (m_talkButton != null && m_talkButton.IsClicked)
-                ScMultiplayer.currentInstance?.ShowTalkDialog();
+                multiplayer?.ShowTalkDialog();
+            if (m_manageButton != null && m_manageButton.IsClicked)
+                multiplayer?.ShowMultiplayerManagementDialog();
         }
 
         private void AttachButtons()
@@ -54,8 +72,10 @@ namespace ScMultiplayer
 
             m_createButton = CreateButton("CR", new Color(45, 115, 75));
             m_talkButton = CreateButton("TA", new Color(45, 85, 135));
+            m_manageButton = CreateButton("MP", new Color(115, 75, 45));
             m_moreContents.Children.Add(m_createButton);
             m_moreContents.Children.Add(m_talkButton);
+            m_moreContents.Children.Add(m_manageButton);
         }
 
         // Source: Survivalcraft/Game/BevelledButtonWidget.cs:BevelledButtonWidget

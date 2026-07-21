@@ -195,7 +195,7 @@ mpm.InvokeStaticMethod(typeof(TargetType), "StaticMethod", arg1);
 
 ### .scmod 文件（ZIP 格式）
 
-**IsMergeLib=true（双端共用）**：
+**IsMergeLib=true（默认，双端共用）**：
 ```
 MyMod.scmod
 ├── ModInfo.xml
@@ -203,7 +203,7 @@ MyMod.scmod
     └── MyMod.dll
 ```
 
-**IsMergeLib=false（按平台分目录）**：
+**IsMergeLib=false（仅在需求明确要求平台专用程序集时按平台分目录）**：
 ```
 MyMod.scmod
 ├── ModInfo.xml
@@ -262,7 +262,7 @@ with zipfile.ZipFile(os.path.join(MODS_DIR, f"[SuAPI]你的Mod名.scmod"), 'w', 
 
 ## 项目配置（.csproj）
 
-### IsMergeLib=true（单 TFM，推荐）
+### IsMergeLib=true（单 TFM，强制默认）
 
 ```xml
 <Project Sdk="Microsoft.NET.Sdk">
@@ -288,7 +288,7 @@ with zipfile.ZipFile(os.path.join(MODS_DIR, f"[SuAPI]你的Mod名.scmod"), 'w', 
 </Project>
 ```
 
-### IsMergeLib=false（双 TFM）
+### IsMergeLib=false（双 TFM，仅限明确要求分包）
 
 ```xml
 <TargetFrameworks>net8.0;net8.0-android</TargetFrameworks>
