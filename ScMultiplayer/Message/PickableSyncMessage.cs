@@ -13,7 +13,8 @@ namespace ScMultiplayer
             Create,
             UpdatePosition,
             Delete,
-            SetFlyTo
+            SetFlyTo,
+            Acquire
         }
 
         public PickAction Action;
@@ -25,6 +26,10 @@ namespace ScMultiplayer
         public Vector3? FlyToPosition;
         public Matrix? StuckMatrix;
         public bool PlaySound;
+        public int CollectorClientId = -1;
+        public int ServerTick;
+        public int[] SlotValues = Array.Empty<int>();
+        public int[] SlotCounts = Array.Empty<int>();
 
         // For batch update
         public List<PickablePos> Positions = new List<PickablePos>();
@@ -82,6 +87,21 @@ namespace ScMultiplayer
                     Id = (ushort)reader.ReadPackedInt32();
                     FlyToPosition = reader.ReadVector3(reader);
                     break;
+                case PickAction.Acquire:
+                    Id = (ushort)reader.ReadPackedInt32();
+                    CollectorClientId = reader.ReadInt32();
+                    ServerTick = reader.ReadInt32();
+                    Count = reader.ReadPackedInt32();
+                    PlaySound = reader.ReadBoolean();
+                    int slotsCount = reader.ReadPackedInt32();
+                    SlotValues = new int[slotsCount];
+                    SlotCounts = new int[slotsCount];
+                    for (int i = 0; i < slotsCount; i++)
+                    {
+                        SlotValues[i] = reader.ReadInt32();
+                        SlotCounts[i] = reader.ReadInt32();
+                    }
+                    break;
             }
         }
 
@@ -119,6 +139,21 @@ namespace ScMultiplayer
                 case PickAction.SetFlyTo:
                     writer.WritePackedInt32(Id);
                     writer.WriteVector3(writer, FlyToPosition.Value);
+                    break;
+                case PickAction.Acquire:
+                    writer.WritePackedInt32(Id);
+                    writer.WriteInt32(CollectorClientId);
+                    writer.WriteInt32(ServerTick);
+                    writer.WritePackedInt32(Count);
+                    writer.WriteBoolean(PlaySound);
+                    int slotsCount = Math.Min(SlotValues?.Length ?? 0,
+                        SlotCounts?.Length ?? 0);
+                    writer.WritePackedInt32(slotsCount);
+                    for (int i = 0; i < slotsCount; i++)
+                    {
+                        writer.WriteInt32(SlotValues[i]);
+                        writer.WriteInt32(SlotCounts[i]);
+                    }
                     break;
             }
         }

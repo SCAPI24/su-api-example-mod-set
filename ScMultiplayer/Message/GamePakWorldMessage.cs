@@ -30,7 +30,16 @@ namespace ScMultiplayer
         public float PlayerStamina = 1f;
         public float PlayerSleep = 0.9f;
         public float PlayerTemperature = 12f;
+        public float PlayerTargetTemperature = 12f;
         public float PlayerWetness;
+        public float PlayerFluDuration;
+        public float PlayerFluOnset;
+        public float PlayerSicknessDuration;
+        public bool PlayerIsCreativeFlying;
+        public bool InventoryWasCreative;
+        public int ActiveSlotIndex;
+        public int CreativeCategoryIndex;
+        public int CreativePageIndex;
         public int[] SlotValues = Array.Empty<int>();
         public int[] SlotCounts = Array.Empty<int>();
         public int[][] Clothes = CreateEmptyClothes();
@@ -60,7 +69,16 @@ namespace ScMultiplayer
             PlayerStamina = playerRecord?.Stamina ?? 1f;
             PlayerSleep = playerRecord?.Sleep ?? 0.9f;
             PlayerTemperature = playerRecord?.Temperature ?? 12f;
+            PlayerTargetTemperature = playerRecord?.TargetTemperature ?? 12f;
             PlayerWetness = playerRecord?.Wetness ?? 0f;
+            PlayerFluDuration = playerRecord?.FluDuration ?? 0f;
+            PlayerFluOnset = playerRecord?.FluOnset ?? 0f;
+            PlayerSicknessDuration = playerRecord?.SicknessDuration ?? 0f;
+            PlayerIsCreativeFlying = playerRecord?.IsCreativeFlying ?? false;
+            InventoryWasCreative = playerRecord?.InventoryWasCreative ?? false;
+            ActiveSlotIndex = playerRecord?.ActiveSlotIndex ?? 0;
+            CreativeCategoryIndex = playerRecord?.CreativeCategoryIndex ?? 0;
+            CreativePageIndex = playerRecord?.CreativePageIndex ?? 0;
             SlotValues = playerRecord?.SlotValues != null
                 ? (int[])playerRecord.SlotValues.Clone() : Array.Empty<int>();
             SlotCounts = playerRecord?.SlotCounts != null
@@ -95,7 +113,16 @@ namespace ScMultiplayer
             PlayerStamina = reader.ReadSingle();
             PlayerSleep = reader.ReadSingle();
             PlayerTemperature = reader.ReadSingle();
+            PlayerTargetTemperature = reader.ReadSingle();
             PlayerWetness = reader.ReadSingle();
+            PlayerFluDuration = reader.ReadSingle();
+            PlayerFluOnset = reader.ReadSingle();
+            PlayerSicknessDuration = reader.ReadSingle();
+            PlayerIsCreativeFlying = reader.ReadBoolean();
+            InventoryWasCreative = reader.ReadBoolean();
+            ActiveSlotIndex = reader.ReadInt32();
+            CreativeCategoryIndex = reader.ReadInt32();
+            CreativePageIndex = reader.ReadInt32();
             int slotsCount = reader.ReadPackedInt32();
             SlotValues = new int[slotsCount];
             SlotCounts = new int[slotsCount];
@@ -146,7 +173,16 @@ namespace ScMultiplayer
             writer.WriteSingle(PlayerStamina);
             writer.WriteSingle(PlayerSleep);
             writer.WriteSingle(PlayerTemperature);
+            writer.WriteSingle(PlayerTargetTemperature);
             writer.WriteSingle(PlayerWetness);
+            writer.WriteSingle(PlayerFluDuration);
+            writer.WriteSingle(PlayerFluOnset);
+            writer.WriteSingle(PlayerSicknessDuration);
+            writer.WriteBoolean(PlayerIsCreativeFlying);
+            writer.WriteBoolean(InventoryWasCreative);
+            writer.WriteInt32(ActiveSlotIndex);
+            writer.WriteInt32(CreativeCategoryIndex);
+            writer.WriteInt32(CreativePageIndex);
             int slotsCount = Math.Min(SlotValues?.Length ?? 0, SlotCounts?.Length ?? 0);
             writer.WritePackedInt32(slotsCount);
             for (int i = 0; i < slotsCount; i++)

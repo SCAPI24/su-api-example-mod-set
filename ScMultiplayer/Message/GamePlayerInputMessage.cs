@@ -14,11 +14,14 @@ public class GamePlayerInputMessage : Message
     public Quaternion BodyRotation;
     public Vector2 LookAngles;
     public PlayerInput PlayerInput;
+    public float PokingPhase;
+    public bool IsControlledByTouch;
     public bool IsCrouching;
     public bool IsFlying;
     public bool IsRiding;
     public ushort MountEntityId;
     public int ActiveSlotIndex;
+    public int InventoryAuthorityTick;
     public int[] SlotValues = Array.Empty<int>();
     public int[] SlotCounts = Array.Empty<int>();
 
@@ -26,8 +29,11 @@ public class GamePlayerInputMessage : Message
 
     public GamePlayerInputMessage(int playerIndex, int sequence, int clientTick,
         Vector3 bodyPosition, Vector3 bodyVelocity, Quaternion bodyRotation,
-        Vector2 lookAngles, PlayerInput playerInput, bool isCrouching, bool isFlying, bool isRiding,
-        ushort mountEntityId, int activeSlotIndex, int[] slotValues, int[] slotCounts)
+        Vector2 lookAngles, PlayerInput playerInput, float pokingPhase,
+        bool isControlledByTouch,
+        bool isCrouching, bool isFlying, bool isRiding,
+        ushort mountEntityId, int activeSlotIndex, int inventoryAuthorityTick,
+        int[] slotValues, int[] slotCounts)
     {
         PlayerIndex = playerIndex;
         Sequence = sequence;
@@ -37,11 +43,14 @@ public class GamePlayerInputMessage : Message
         BodyRotation = bodyRotation;
         LookAngles = lookAngles;
         PlayerInput = playerInput;
+        PokingPhase = pokingPhase;
+        IsControlledByTouch = isControlledByTouch;
         IsCrouching = isCrouching;
         IsFlying = isFlying;
         IsRiding = isRiding;
         MountEntityId = mountEntityId;
         ActiveSlotIndex = activeSlotIndex;
+        InventoryAuthorityTick = inventoryAuthorityTick;
         SlotValues = slotValues ?? Array.Empty<int>();
         SlotCounts = slotCounts ?? Array.Empty<int>();
     }
@@ -96,11 +105,14 @@ public class GamePlayerInputMessage : Message
         PlayerInput.Aim = reader.ReadBoolean() ? reader.ReadRay3(reader) : (Ray3?)null;
         PlayerInput.Interact = reader.ReadBoolean() ? reader.ReadRay3(reader) : (Ray3?)null;
         PlayerInput.PickBlockType = reader.ReadBoolean() ? reader.ReadRay3(reader) : (Ray3?)null;
+        PokingPhase = reader.ReadSingle();
+        IsControlledByTouch = reader.ReadBoolean();
         IsCrouching = reader.ReadBoolean();
         IsFlying = reader.ReadBoolean();
         IsRiding = reader.ReadBoolean();
         MountEntityId = (ushort)reader.ReadPackedInt32();
         ActiveSlotIndex = reader.ReadInt32();
+        InventoryAuthorityTick = reader.ReadInt32();
         int slotsCount = reader.ReadPackedInt32();
         SlotValues = new int[slotsCount];
         SlotCounts = new int[slotsCount];
@@ -175,11 +187,14 @@ public class GamePlayerInputMessage : Message
 
         writer.WriteBoolean(PlayerInput.PickBlockType.HasValue);
         if (PlayerInput.PickBlockType.HasValue) writer.WriteRay3(writer, PlayerInput.PickBlockType.Value);
+        writer.WriteSingle(PokingPhase);
+        writer.WriteBoolean(IsControlledByTouch);
         writer.WriteBoolean(IsCrouching);
         writer.WriteBoolean(IsFlying);
         writer.WriteBoolean(IsRiding);
         writer.WritePackedInt32(MountEntityId);
         writer.WriteInt32(ActiveSlotIndex);
+        writer.WriteInt32(InventoryAuthorityTick);
         int slotsCount = Math.Min(SlotValues?.Length ?? 0, SlotCounts?.Length ?? 0);
         writer.WritePackedInt32(slotsCount);
         for (int i = 0; i < slotsCount; i++)

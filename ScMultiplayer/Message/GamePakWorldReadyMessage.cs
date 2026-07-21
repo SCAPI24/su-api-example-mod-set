@@ -3,32 +3,41 @@ using System;
 
 namespace ScMultiplayer
 {
+    public enum GamePakWorldReadyStage
+    {
+        LoadingProject,
+        ProjectReady,
+        CatchUpBatchApplied,
+        CatchUpBatchComplete,
+        ReadyToPlay
+    }
+
     [Serializable]
     public class GamePakWorldReadyMessage : Message
     {
         public int TransferId;
-        public bool IsProjectReady;
+        public GamePakWorldReadyStage Stage;
 
         public GamePakWorldReadyMessage()
         {
         }
 
-        public GamePakWorldReadyMessage(int transferId, bool isProjectReady = true)
+        public GamePakWorldReadyMessage(int transferId, GamePakWorldReadyStage stage)
         {
             TransferId = transferId;
-            IsProjectReady = isProjectReady;
+            Stage = stage;
         }
 
         protected override void Read(SuReader reader)
         {
             TransferId = reader.ReadInt32();
-            IsProjectReady = reader.ReadBoolean();
+            Stage = (GamePakWorldReadyStage)reader.ReadInt32();
         }
 
         protected override void Write(SuWriter writer)
         {
             writer.WriteInt32(TransferId);
-            writer.WriteBoolean(IsProjectReady);
+            writer.WriteInt32((int)Stage);
         }
     }
 }
