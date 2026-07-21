@@ -22,8 +22,8 @@
 - bin/ 和 obj/ 目录绝不进入版本控制
 - .scmod 和 pack-temp/ 不进入版本控制
 - 双平台同步（GitHub + Gitee），推送无遗漏
-- IsMergeLib=true 的 Mod：DLL 放 Lib/，双端共用，单 TFM net8.0
-- IsMergeLib=false 的 Mod：DLL 按 Lib/X64 + Lib/Arm64 分平台
+- 所有 Mod 默认使用 IsMergeLib=true：DLL 放 Lib/，双端共用，单 TFM net8.0
+- 只有需求明确要求平台专用程序集时才使用 IsMergeLib=false：DLL 按 Lib/X64 + Lib/Arm64 分平台
 
 ### 常用操作
 
@@ -35,7 +35,7 @@
 
 ## 编译规则
 
-- 目标框架: net8.0（IsMergeLib=true）或 net8.0 + net8.0-android（IsMergeLib=false）
+- 目标框架默认 net8.0（IsMergeLib=true）；仅在明确要求分包时使用 net8.0 + net8.0-android（IsMergeLib=false）
 - 条件编译: ANDROID / WINDOWS 符号
 - Windows 端可用 ProjectReference；Android 端用 DLL Reference
 - SDK 样式 csproj，`ImplicitUsings=disable`

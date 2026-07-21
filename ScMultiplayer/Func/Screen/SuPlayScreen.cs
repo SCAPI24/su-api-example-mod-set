@@ -27,6 +27,7 @@ namespace ScMultiplayer
         private Explorer m_subscribedExplorer;
         private volatile bool m_remoteRefreshRequested;
         private int m_remoteRefreshDispatchPending;
+        private const double RemoteWorldRetentionSeconds = 15.0;
         private static readonly SemaphoreSlim s_worldScanLock = new SemaphoreSlim(1, 1);
         private int m_enterGeneration;
         private bool m_worldScanPending;
@@ -96,7 +97,7 @@ namespace ScMultiplayer
                 RefreshRemoteWorlds();
             }
 
-            SelectedItem = m_worldsListWidget.SelectedItem as WorldInfo;
+            SelectedItem = GetSelectedWorldInfo();
             bool isRemote = SelectedItem != null && m_remoteGames.ContainsKey(SelectedItem);
             if (SelectedItem != null && !isRemote &&
                 WorldsManager.WorldInfos.IndexOf(SelectedItem) < 0)
@@ -343,7 +344,7 @@ namespace ScMultiplayer
             HideScanningWorldsDialog();
             m_scanningWorldsDialog = new BusyDialog("Scanning Worlds", null);
             DialogsManager.ShowDialog(null, m_scanningWorldsDialog);
-            WorldInfo selectedItem = m_worldsListWidget.SelectedItem as WorldInfo;
+            WorldInfo selectedItem = GetSelectedWorldInfo();
             Task.Run(async () =>
             {
                 await s_worldScanLock.WaitAsync();
@@ -463,9 +464,14 @@ namespace ScMultiplayer
                 }
             }
 
-            foreach (string key in m_remoteWorlds.Keys.Where(key =>
+            string[] staleKeys = m_remoteWorlds.Keys.Where(key =>
                 !seen.Contains(key) &&
-                (!m_remoteLastSeen.TryGetValue(key, out double lastSeen) || Time.RealTime - lastSeen > 5.0)).ToArray())
+                (!m_remoteLastSeen.TryGetValue(key, out double lastSeen) ||
+                Time.RealTime - lastSeen > RemoteWorldRetentionSeconds)).ToArray();
+            WorldInfo selectedWorld = GetSelectedWorldInfo();
+            if (staleKeys.Length > 0)
+                m_worldsListWidget.SelectedIndex = null;
+            foreach (string key in staleKeys)
             {
                 WorldInfo remoteWorld = m_remoteWorlds[key];
                 m_worldsListWidget.RemoveItem(remoteWorld);
@@ -474,6 +480,24 @@ namespace ScMultiplayer
                 m_remoteLastSeen.Remove(key);
                 m_remoteWorlds.Remove(key);
             }
+            if (selectedWorld != null &&
+                m_worldsListWidget.Items.Any(item => ReferenceEquals(item, selectedWorld)))
+            {
+                m_worldsListWidget.SelectedItem = selectedWorld;
+            }
+        }
+
+        // Source: Survivalcraft/Game/ListPanelWidget.cs:ListPanelWidget.SelectedItem
+        private WorldInfo GetSelectedWorldInfo()
+        {
+            int? selectedIndex = m_worldsListWidget?.SelectedIndex;
+            if (!selectedIndex.HasValue) return null;
+            if (selectedIndex.Value < 0 || selectedIndex.Value >= m_worldsListWidget.Items.Count)
+            {
+                m_worldsListWidget.SelectedIndex = null;
+                return null;
+            }
+            return m_worldsListWidget.Items[selectedIndex.Value] as WorldInfo;
         }
 
         // Source: Survivalcraft/Game/WorldInfo.cs:WorldInfo
@@ -486,7 +510,12 @@ namespace ScMultiplayer
                 LastSaveTime = gameWorldInfo.LastSaveTime,
                 PlayerInfos = new List<PlayerInfo>(),
                 SerializationVersion = gameWorldInfo.SerializationVersion,
-                WorldSettings = new WorldSettings { Name = gameWorldInfo.Name }
+                WorldSettings = new WorldSettings
+                {
+                    Name = gameWorldInfo.Name,
+                    GameMode = gameWorldInfo.GameMode,
+                    EnvironmentBehaviorMode = gameWorldInfo.EnvironmentBehaviorMode
+                }
             };
 
             for (int i = 0; i < gd.ClientsCount; i++)

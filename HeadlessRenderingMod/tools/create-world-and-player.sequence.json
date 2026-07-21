@@ -1,0 +1,32 @@
+{
+  "sequenceId": "create-server-world",
+  "steps": [
+    {
+      "command": "world.create",
+      "args": {
+        "name": "ServerWorld",
+        "seed": "",
+        "gameMode": "Survival",
+        "startingPosition": "Easy",
+        "terrainGeneration": "Continent"
+      }
+    },
+    {
+      "waitFor": "world.ready",
+      "timeoutSeconds": 180
+    },
+    {
+      "command": "player.create",
+      "args": {
+        "name": "Server Player",
+        "playerClass": "Male",
+        "skin": "$Male1",
+        "enterGame": true
+      }
+    },
+    {
+      "waitFor": "screen:Game",
+      "timeoutSeconds": 60
+    }
+  ]
+}

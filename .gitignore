@@ -104,6 +104,13 @@ SuApocalypse/bin/
 SuApocalypse/obj/
 SuApocalypse/.vs/
 SuApocalypse/staging/
+## sync:HeadlessRenderingMod
+!HeadlessRenderingMod/
+!HeadlessRenderingMod/**
+HeadlessRenderingMod/bin/
+HeadlessRenderingMod/obj/
+HeadlessRenderingMod/.vs/
+HeadlessRenderingMod/**/__pycache__/
 
 # 全局忽略 .vs 目录
 *.vs/
