@@ -3,7 +3,7 @@
   <ModInfo>
     <Identifier>ScMultiplayer</Identifier>
     <LocalizedName>[SuAPI]网络</LocalizedName>
-    <Version>1.3.6</Version>
+    <Version>1.3.7</Version>
     <APIVersion>1.0</APIVersion>
     <IsMergeLib>true</IsMergeLib>
     <Asset>

@@ -16,6 +16,7 @@ using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
+using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -267,7 +268,6 @@ namespace ScMultiplayer
     {
         public int TransferId;
         public int TargetClientId;
-        public Guid TcpTransferToken;
         public double StartTime;
         public byte[] WorldData = Array.Empty<byte>();
         public int ChunkCount;
@@ -299,9 +299,6 @@ namespace ScMultiplayer
         public double LastStatusRequestTime;
         public double LastRepairRequestTime;
         public int RepairRequestCount;
-        public bool TcpDownloadStarted;
-        public bool UdpFallbackRequested;
-        public int TcpReceivedBytes;
     }
 
     public class WorldTransferChunkSendWork
@@ -783,7 +780,7 @@ namespace ScMultiplayer
 
         // ---------- IMod ----------
         public string Name => "SC联机";
-        public string Version => "1.3.6";
+        public string Version => "1.3.7";
         public IEnumerable<string> Dependencies => Array.Empty<string>();
         public bool IsEnabled { get; set; } = true;
         public bool IsMergeLib => true;
@@ -946,9 +943,6 @@ namespace ScMultiplayer
         private int m_activeJoinDecisionClientId = -1;
         private readonly Dictionary<int, IncomingWorldTransfer> m_incomingWorldTransfers =
             new Dictionary<int, IncomingWorldTransfer>();
-        private readonly ConcurrentDictionary<int, CancellationTokenSource> m_tcpWorldDownloads =
-            new ConcurrentDictionary<int, CancellationTokenSource>();
-        private WorldTransferTcpService m_worldTransferTcpService;
         private readonly ConcurrentQueue<WorldTransferChunkSendWork> m_worldTransferSendQueue =
             new ConcurrentQueue<WorldTransferChunkSendWork>();
         private readonly SemaphoreSlim m_worldTransferSendSignal = new SemaphoreSlim(0);
@@ -1007,12 +1001,12 @@ namespace ScMultiplayer
         // 940 bytes plus the nested ScMultiplayer, DRT, Peer and Comm headers fits in one
         // 1024-byte UDP packet for both IPv4 and IPv6 connection-init packets.
         private const int WorldTransferChunkSize = 940;
-        private const int MaximumWorldTransferChunksPerNetworkTick = 32;
-        private const int MaximumWorldTransferChunksPerGameplayTick = 16;
-        private const int MaximumWorldTransferUnackedPackets = 128;
-        private const int MaximumWorldTransferRepairChunks = 48;
-        private const int MaximumQueuedWorldTransferChunks = 64;
-        private const int WorldTransferWindowChunks = 96;
+        private const int MaximumWorldTransferChunksPerNetworkTick = 8;
+        private const int MaximumWorldTransferChunksPerGameplayTick = 4;
+        private const int MaximumWorldTransferUnackedPackets = 32;
+        private const int MaximumWorldTransferRepairChunks = 24;
+        private const int MaximumQueuedWorldTransferChunks = 32;
+        private const int WorldTransferWindowChunks = 24;
         private const double WorldTransferStatusInterval = 0.25;
         private const double WorldTransferRepairInterval = 0.75;
         private const double WorldTransferRepairRequestInterval = 1.5;
@@ -1131,7 +1125,6 @@ namespace ScMultiplayer
                 server.Information += Server_Information;
                 server.Start();
                 Log.Information($"[ScMP] Server started OK, address={server.Address}");
-                EnsureWorldTransferTcpServiceStarted();
             }
             catch (Exception ex)
             {
@@ -1215,6 +1208,12 @@ namespace ScMultiplayer
         private static void ConfigurePeerTimeout(Peer peer, float connectionLostPeriod)
         {
             if (peer == null) return;
+            // Source: RuthlessConquest/Net/Client.cs:Client.Client
+            // Source: Mod/Comms/Comms/Comm.cs:Comm.GetResendPeriod
+            peer.Comm.Settings.ResendPeriods = new[] { 0.5f, 0.5f, 1f, 1.5f, 2f };
+            peer.Comm.Settings.MaxResends = 20;
+            peer.Comm.Settings.MinimumResendPeriod = 0.25f;
+            peer.Comm.Settings.MaximumResendPeriod = 2f;
             peer.Settings.KeepAlivePeriod = 2f;
             peer.Settings.KeepAliveResendPeriod = 1f;
             peer.Settings.ConnectTimeOut = 300f;
@@ -1237,36 +1236,6 @@ namespace ScMultiplayer
             newClient.DirectInput += Client_DirectInput;
             newClient.Start();
             return newClient;
-        }
-
-        // Source: Server/WorldTransferTcpService.cs:WorldTransferTcpService.Start
-        private bool EnsureWorldTransferTcpServiceStarted()
-        {
-            if (m_worldTransferTcpService?.IsRunning == true)
-                return true;
-            try
-            {
-                m_worldTransferTcpService = new WorldTransferTcpService(
-                    message => Log.Information("[ScMP] " + message),
-                    message => Log.Warning("[ScMP] " + message),
-                    message => Log.Error("[ScMP] " + message));
-                m_worldTransferTcpService.Start(server.Address.Port);
-                return true;
-            }
-            catch (Exception ex)
-            {
-                m_worldTransferTcpService?.Dispose();
-                m_worldTransferTcpService = null;
-                Log.Warning($"[ScMP] TCP world transfer unavailable; UDP fallback remains active: {ex.Message}");
-                return false;
-            }
-        }
-
-        private void StopWorldTransferTcpService()
-        {
-            try { m_worldTransferTcpService?.Dispose(); }
-            catch { }
-            m_worldTransferTcpService = null;
         }
 
         // Source: Mod/Comms/Comms/Peer.cs:Peer.ProcessPeers
@@ -2201,18 +2170,6 @@ namespace ScMultiplayer
             {
                 m_joinRoomBusyDialog.SmallMessage =
                     "Connected.\r\nWaiting for the host world manifest...";
-                return;
-            }
-            if (transfer.TcpDownloadStarted && !transfer.UdpFallbackRequested)
-            {
-                int receivedBytes = Volatile.Read(ref transfer.TcpReceivedBytes);
-                double tcpPercent = transfer.TotalLength > 0
-                    ? 100.0 * receivedBytes / transfer.TotalLength
-                    : 0.0;
-                m_joinRoomBusyDialog.SmallMessage = string.Format(
-                    CultureInfo.InvariantCulture,
-                    "Connected.\r\nDownloading host world over TCP...\r\n{0:0.0}%\r\n{1:0.00} MB / {2:0.00} MB",
-                    tcpPercent, receivedBytes / 1048576.0, transfer.TotalLength / 1048576.0);
                 return;
             }
             double percent = transfer.Chunks.Length > 0
@@ -3707,9 +3664,9 @@ namespace ScMultiplayer
             }
         }
 
-        // Source: Server/WorldTransferTcpService.cs:WorldTransferTcpService.Register
-        // TCP is the primary bulk channel. The chunk manifest remains sufficient to start the
-        // existing reliable-UDP transfer when TCP is unavailable or rejected by the client.
+        // Source: RuthlessConquest/Net/Client.cs:Client.Client
+        // The world uses Comms reliable UDP with an application-level sliding window and repair
+        // requests. A full SHA-256 keeps the independently delivered chunks end-to-end verifiable.
         private void BeginWorldTransfer(string name, byte[] worldData, DateTime lastSaveTime,
             int targetClientId, int randomSeed, Dictionary<string, long> randomStates,
             NetworkPlayerRecord playerRecord)
@@ -3728,22 +3685,13 @@ namespace ScMultiplayer
             {
                 TransferId = transferId,
                 ChunkCount = chunkCount,
-                TotalLength = worldData.Length
+                TotalLength = worldData.Length,
+                WorldSha256 = SHA256.HashData(worldData)
             };
-            IPAddress clientAddress = GetServerClientAddress(targetClientId)?.Address;
-            WorldTransferTcpTicket tcpTicket = m_worldTransferTcpService?.Register(
-                transferId, targetClientId, clientAddress, worldData);
-            if (tcpTicket != null)
-            {
-                manifest.TcpTransferPort = m_worldTransferTcpService.Port;
-                manifest.TcpTransferToken = tcpTicket.Token;
-                manifest.TcpSha256 = tcpTicket.Sha256;
-            }
             m_outgoingWorldTransfers[targetClientId] = new OutgoingWorldTransfer
             {
                 TransferId = transferId,
                 TargetClientId = targetClientId,
-                TcpTransferToken = tcpTicket?.Token ?? Guid.Empty,
                 StartTime = Time.RealTime,
                 WorldData = worldData,
                 ChunkCount = chunkCount,
@@ -3804,9 +3752,9 @@ namespace ScMultiplayer
         {
             if (m_outgoingWorldTransfers.Count == 0) return;
             // Source: ScMultiplayer.cs:RequestMissingWorldTransferChunks
-            // World chunks use their own application-level sliding window. Do not couple this
-            // channel to reliable gameplay backlog, otherwise a client joining an active game can
-            // be permanently blocked by unrelated player/animal acknowledgements.
+            // Source: RuthlessConquest/Net/ServerGame.cs:ServerGame.Run
+            // Keep a small reliable-UDP window so delayed ACKs on a lossy remote link do not turn
+            // premature retransmissions into a self-sustaining burst.
             int maximumBudget = m_networkPlayerData.Any(item => item.Key > 0)
                 ? MaximumWorldTransferChunksPerGameplayTick
                 : MaximumWorldTransferChunksPerNetworkTick;
@@ -3952,7 +3900,6 @@ namespace ScMultiplayer
             {
                 if (transfer == null || transfer.Chunks == null ||
                     transfer.ReceivedChunkCount >= transfer.Chunks.Length ||
-                    (transfer.TcpDownloadStarted && !transfer.UdpFallbackRequested) ||
                     now - transfer.LastStatusRequestTime < WorldTransferStatusInterval)
                     continue;
                 bool stalled = now - transfer.LastProgressTime >= WorldTransferRepairInterval;
@@ -3982,7 +3929,6 @@ namespace ScMultiplayer
                     {
                         TransferId = transfer.TransferId,
                         RequestManifest = transfer.Manifest == null,
-                        RequestUdpFallback = transfer.UdpFallbackRequested,
                         HighestContiguousChunkIndex = transfer.HighestContiguousChunkIndex,
                         HighestReceivedChunkIndex = transfer.HighestReceivedChunkIndex,
                         MissingChunkIndices = missing
@@ -4002,8 +3948,7 @@ namespace ScMultiplayer
             {
                 NetworkMessageSender.SendPakWorldManifest(sourceClientId, transfer.Manifest);
             }
-            if (message.RequestUdpFallback || transfer.Manifest?.TcpTransferToken == Guid.Empty)
-                transfer.StartRequested = true;
+            transfer.StartRequested = true;
             transfer.HighestContiguousChunkIndex = Math.Max(
                 transfer.HighestContiguousChunkIndex,
                 Math.Min(message.HighestContiguousChunkIndex, transfer.ChunkCount - 1));
@@ -5571,9 +5516,6 @@ namespace ScMultiplayer
 
         private void RemoveNetworkPlayer(int clientId)
         {
-            if (m_outgoingWorldTransfers.TryGetValue(
-                clientId, out OutgoingWorldTransfer outgoingTransfer))
-                m_worldTransferTcpService?.Remove(outgoingTransfer.TcpTransferToken);
             m_outgoingWorldTransfers.Remove(clientId);
             m_worldTransfersAwaitingReady.Remove(clientId);
             m_joinCatchUpJournals.Remove(clientId);
@@ -7531,7 +7473,6 @@ namespace ScMultiplayer
                 message.TransferId, message.TargetClientId,
                 message.ChunkCount, message.TotalLength);
             if (transfer == null || message.ChunkIndex < 0 ||
-                (transfer.TcpDownloadStarted && !transfer.UdpFallbackRequested) ||
                 message.ChunkIndex >= transfer.Chunks.Length || message.Data == null)
                 return;
             int expectedLength = Math.Min(WorldTransferChunkSize,
@@ -7567,6 +7508,14 @@ namespace ScMultiplayer
             }
             if (offset != worldData.Length) return;
             GamePakWorldMessage manifest = transfer.Manifest;
+            byte[] expectedHash = manifest.WorldSha256;
+            byte[] actualHash = SHA256.HashData(worldData);
+            if (expectedHash == null || expectedHash.Length != actualHash.Length ||
+                !CryptographicOperations.FixedTimeEquals(expectedHash, actualHash))
+            {
+                ResetIncomingWorldTransferAfterChecksumFailure(transfer);
+                return;
+            }
             double elapsed = Math.Max(Time.RealTime - transfer.StartTime, 0.0);
             Log.Information($"[ScMP] World download complete: Transfer={transfer.TransferId}, " +
                 $"Transport=UDP, Bytes={transfer.TotalLength}, Seconds={elapsed:0.00}, " +
@@ -7580,127 +7529,21 @@ namespace ScMultiplayer
             HandleGamePakWorldMessage(manifest);
         }
 
-        // Source: Server/WorldTransferTcpService.cs:WorldTransferTcpService.DownloadAsync
-        private void StartTcpWorldDownload(
-            IncomingWorldTransfer transfer,
-            GamePakWorldMessage manifest)
+        // Source: ScMultiplayer.cs:RequestMissingWorldTransferChunks
+        private static void ResetIncomingWorldTransferAfterChecksumFailure(
+            IncomingWorldTransfer transfer)
         {
-            if (transfer == null || manifest == null || transfer.TcpDownloadStarted ||
-                transfer.UdpFallbackRequested)
-                return;
-            IPEndPoint joinedServer = m_activeJoinRequest?.ServerAddress;
-            IPAddress address = joinedServer?.Address ?? manifest.SenderEndPoint?.Address;
-            if (address == null)
-            {
-                BeginUdpWorldTransferFallback(transfer, "Host TCP address is unavailable.");
-                return;
-            }
-
-            var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(120));
-            if (!m_tcpWorldDownloads.TryAdd(transfer.TransferId, cancellation))
-            {
-                cancellation.Dispose();
-                return;
-            }
-            transfer.TcpDownloadStarted = true;
-            transfer.StartTime = Time.RealTime;
-            _ = DownloadTcpWorldAsync(
-                transfer,
-                manifest,
-                new IPEndPoint(address, manifest.TcpTransferPort),
-                cancellation);
-        }
-
-        private async Task DownloadTcpWorldAsync(
-            IncomingWorldTransfer transfer,
-            GamePakWorldMessage manifest,
-            IPEndPoint serverAddress,
-            CancellationTokenSource cancellation)
-        {
-            try
-            {
-                byte[] data = await WorldTransferTcpService.DownloadAsync(
-                    serverAddress,
-                    manifest.TcpTransferPort,
-                    transfer.TransferId,
-                    transfer.TargetClientId,
-                    manifest.TcpTransferToken,
-                    transfer.TotalLength,
-                    manifest.TcpSha256,
-                    received => Interlocked.Exchange(ref transfer.TcpReceivedBytes, received),
-                    cancellation.Token);
-                QueueEndOfFrameAction(() => CompleteTcpWorldDownload(
-                    transfer.TransferId, manifest.TcpTransferToken, data));
-            }
-            catch (Exception exception)
-            {
-                QueueEndOfFrameAction(() =>
-                {
-                    if (m_incomingWorldTransfers.TryGetValue(
-                        transfer.TransferId, out IncomingWorldTransfer current) &&
-                        current.Manifest?.TcpTransferToken == manifest.TcpTransferToken)
-                    {
-                        BeginUdpWorldTransferFallback(current, exception.Message);
-                    }
-                });
-            }
-        }
-
-        private void CompleteTcpWorldDownload(int transferId, Guid token, byte[] data)
-        {
-            RemoveTcpWorldDownload(transferId);
-            if (!m_incomingWorldTransfers.TryGetValue(
-                    transferId, out IncomingWorldTransfer transfer) ||
-                transfer.Manifest?.TcpTransferToken != token ||
-                data == null || data.Length != transfer.TotalLength)
-                return;
-            double elapsed = Math.Max(Time.RealTime - transfer.StartTime, 0.0);
-            Log.Information($"[ScMP] World download complete: Transfer={transfer.TransferId}, " +
-                $"Transport=TCP, Bytes={data.Length}, Seconds={elapsed:0.00}");
-            if (m_joinRoomBusyDialog != null)
-                m_joinRoomBusyDialog.SmallMessage =
-                    "Connected.\r\nWorld download complete.\r\nImporting world...";
-            GamePakWorldMessage manifest = transfer.Manifest;
-            manifest.WorldData = data;
-            manifest.ChunkCount = 0;
-            m_incomingWorldTransfers.Remove(transferId);
-            HandleGamePakWorldMessage(manifest);
-        }
-
-        private void BeginUdpWorldTransferFallback(
-            IncomingWorldTransfer transfer,
-            string reason)
-        {
-            if (transfer == null || transfer.UdpFallbackRequested)
-                return;
-            RemoveTcpWorldDownload(transfer.TransferId);
-            transfer.TcpDownloadStarted = false;
-            transfer.UdpFallbackRequested = true;
-            transfer.StartTime = Time.RealTime;
+            Array.Clear(transfer.Chunks, 0, transfer.Chunks.Length);
+            transfer.ReceivedChunkCount = 0;
+            transfer.ReceivedBytes = 0;
+            transfer.HighestContiguousChunkIndex = -1;
+            transfer.HighestReceivedChunkIndex = -1;
             transfer.LastProgressTime = Time.RealTime;
             transfer.LastStatusRequestTime = 0.0;
             transfer.LastRepairRequestTime = 0.0;
-            Log.Warning($"[ScMP] TCP world download failed; using UDP fallback: {reason}");
-            NetworkMessageSender.SendPakWorldRepairRequest(
-                new GamePakWorldRepairRequestMessage
-                {
-                    TransferId = transfer.TransferId,
-                    RequestManifest = true,
-                    RequestUdpFallback = true,
-                    HighestContiguousChunkIndex = transfer.HighestContiguousChunkIndex,
-                    HighestReceivedChunkIndex = transfer.HighestReceivedChunkIndex,
-                    MissingChunkIndices = Array.Empty<int>()
-                });
-        }
-
-        private void RemoveTcpWorldDownload(int transferId)
-        {
-            if (!m_tcpWorldDownloads.TryRemove(
-                transferId, out CancellationTokenSource cancellation))
-                return;
-            try { cancellation.Cancel(); }
-            catch { }
-            cancellation.Dispose();
+            transfer.RepairRequestCount++;
+            Log.Warning($"[ScMP] World transfer checksum failed; requesting all chunks again: " +
+                $"Transfer={transfer.TransferId}, Attempt={transfer.RepairRequestCount}");
         }
 
         private void HandleGamePakWorldReadyMessage(
@@ -7729,19 +7572,14 @@ namespace ScMultiplayer
             m_outgoingWorldTransfers.TryGetValue(sourceClientId,
                 out OutgoingWorldTransfer completedTransfer);
             m_outgoingWorldTransfers.Remove(sourceClientId);
-            if (completedTransfer != null)
-                m_worldTransferTcpService?.Remove(completedTransfer.TcpTransferToken);
             SendTerrainCatchUp(sourceClientId);
             FlushJoinCatchUpJournal(sourceClientId);
             m_fullWorldObjectsSyncTime = WorldObjectFullSyncInterval;
             double elapsed = completedTransfer != null
                 ? Math.Max(Time.RealTime - completedTransfer.StartTime, 0.0)
                 : 0.0;
-            string transport = completedTransfer != null &&
-                completedTransfer.TcpTransferToken != Guid.Empty &&
-                !completedTransfer.StartRequested ? "TCP" : "UDP";
             Log.Information($"[ScMP] World transfer ready: ClientID={sourceClientId}, " +
-                $"Transfer={transferId}, Transport={transport}, Seconds={elapsed:0.00}, " +
+                $"Transfer={transferId}, Transport=UDP, Seconds={elapsed:0.00}, " +
                 $"RepairChunks={completedTransfer?.RepairChunkQueueCount ?? 0}");
         }
 
@@ -7754,15 +7592,14 @@ namespace ScMultiplayer
                 IncomingWorldTransfer transfer = GetOrCreateIncomingWorldTransfer(
                     msg.TransferId, msg.TargetClientId, msg.ChunkCount, msg.TotalLength);
                 if (transfer == null) return;
+                if (msg.WorldSha256 == null || msg.WorldSha256.Length != 32)
+                {
+                    Log.Error($"[ScMP] Invalid world checksum manifest: Transfer={msg.TransferId}");
+                    return;
+                }
                 transfer.Manifest = msg;
                 transfer.LastProgressTime = Time.RealTime;
-                bool canUseTcp = !transfer.UdpFallbackRequested &&
-                    msg.TcpTransferPort > 0 && msg.TcpTransferPort <= 65535 &&
-                    msg.TcpTransferToken != Guid.Empty && msg.TcpSha256?.Length == 32;
-                if (canUseTcp)
-                    StartTcpWorldDownload(transfer, msg);
-                else
-                    TryCompleteIncomingWorldTransfer(transfer);
+                TryCompleteIncomingWorldTransfer(transfer);
                 return;
             }
             if (msg.WorldData == null || msg.WorldData.Length == 0) return;
@@ -8117,9 +7954,6 @@ namespace ScMultiplayer
 
         private void ResetTransientNetworkState()
         {
-            foreach (int transferId in m_tcpWorldDownloads.Keys.ToArray())
-                RemoveTcpWorldDownload(transferId);
-            m_worldTransferTcpService?.ClearTransfers();
             Interlocked.Increment(ref m_worldTransferGeneration);
             while (m_worldTransferSendQueue.TryDequeue(out _))
                 Interlocked.Decrement(ref m_worldTransferQueuedWorkCount);
@@ -9608,8 +9442,6 @@ namespace ScMultiplayer
                 m_worldTransferSendTask?.Wait(1000);
             }
             catch { }
-            try { m_worldTransferTcpService?.Dispose(); } catch { }
-            m_worldTransferTcpService = null;
             try { client?.LeaveGame(); } catch { }
             try { server?.Dispose(); } catch { }
             try { explorer?.StopDiscovery(); } catch { }
