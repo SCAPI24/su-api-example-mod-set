@@ -22,6 +22,7 @@ namespace ScMultiplayer
         private readonly Dictionary<string, WorldInfo> m_remoteWorlds = new Dictionary<string, WorldInfo>();
         private readonly Dictionary<WorldInfo, float> m_remoteWorldPings = new Dictionary<WorldInfo, float>();
         private readonly Dictionary<WorldInfo, GameDescription> m_remoteGames = new Dictionary<WorldInfo, GameDescription>();
+        private readonly HashSet<WorldInfo> m_serviceWorlds = new HashSet<WorldInfo>();
         private readonly Dictionary<string, double> m_remoteLastSeen = new Dictionary<string, double>();
         private DateTime m_nextRemoteRefreshTime;
         private Explorer m_subscribedExplorer;
@@ -68,7 +69,11 @@ namespace ScMultiplayer
 
                     // Show online Ping
                     if (m_remoteWorldPings.TryGetValue(worldInfo, out float ping))
-                        labelWidget2.Text += " | Online (Ping " + (int)(ping * 1000f) + "ms)";
+                    {
+                        string status = m_serviceWorlds.Contains(worldInfo) ? "Service" : "Online";
+                        labelWidget2.Text += " | " + status + " (Ping " +
+                            (int)(ping * 1000f) + "ms)";
+                    }
                     return containerWidget;
                 });
 
@@ -309,6 +314,7 @@ namespace ScMultiplayer
             m_remoteWorlds.Clear();
             m_remoteWorldPings.Clear();
             m_remoteGames.Clear();
+            m_serviceWorlds.Clear();
             m_remoteLastSeen.Clear();
             SubscribeToExplorer();
             m_nextRemoteRefreshTime = DateTime.MinValue;
@@ -440,13 +446,27 @@ namespace ScMultiplayer
                         // JoinGame must use server.Address, which is the endpoint that replied.
 
                         string key = server.Address + "/" + game.GameID;
+                        bool isService = !server.IsLocal;
+                        string serviceHost = isService
+                            ? ScMultiplayer.GetServiceDiscoveryHost(server.Address)
+                            : null;
+                        string displayName = !string.IsNullOrEmpty(serviceHost)
+                            ? info.Name + " (" + serviceHost + ")"
+                            : info.Name;
                         seen.Add(key);
                         m_remoteLastSeen[key] = Time.RealTime;
                         if (!m_remoteWorlds.TryGetValue(key, out WorldInfo remoteWorld))
                         {
-                            remoteWorld = CreateRemoteWorldInfo(info, game);
+                            remoteWorld = CreateRemoteWorldInfo(info, game, displayName);
                             m_remoteWorlds.Add(key, remoteWorld);
+                            if (isService) m_serviceWorlds.Add(remoteWorld);
                             m_worldsListWidget.AddItem(remoteWorld);
+                        }
+                        else
+                        {
+                            remoteWorld.WorldSettings.Name = displayName;
+                            if (isService) m_serviceWorlds.Add(remoteWorld);
+                            else m_serviceWorlds.Remove(remoteWorld);
                         }
                         m_remoteWorldPings[remoteWorld] = server.Ping;
                         m_remoteGames[remoteWorld] = game;
@@ -467,6 +487,7 @@ namespace ScMultiplayer
                 m_worldsListWidget.RemoveItem(remoteWorld);
                 m_remoteWorldPings.Remove(remoteWorld);
                 m_remoteGames.Remove(remoteWorld);
+                m_serviceWorlds.Remove(remoteWorld);
                 m_remoteLastSeen.Remove(key);
                 m_remoteWorlds.Remove(key);
             }
@@ -491,7 +512,8 @@ namespace ScMultiplayer
         }
 
         // Source: Survivalcraft/Game/WorldInfo.cs:WorldInfo
-        private static WorldInfo CreateRemoteWorldInfo(GameWorldInfoMessage gameWorldInfo, GameDescription gd)
+        private static WorldInfo CreateRemoteWorldInfo(GameWorldInfoMessage gameWorldInfo,
+            GameDescription gd, string displayName)
         {
             var worldInfo = new WorldInfo
             {
@@ -502,7 +524,7 @@ namespace ScMultiplayer
                 SerializationVersion = gameWorldInfo.SerializationVersion,
                 WorldSettings = new WorldSettings
                 {
-                    Name = gameWorldInfo.Name,
+                    Name = displayName,
                     GameMode = gameWorldInfo.GameMode,
                     EnvironmentBehaviorMode = gameWorldInfo.EnvironmentBehaviorMode
                 }

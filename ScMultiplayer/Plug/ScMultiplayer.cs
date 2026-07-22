@@ -900,6 +900,7 @@ namespace ScMultiplayer
         private double m_nextNetworkStatsUpdateTime;
         private readonly Dictionary<IPAddress, double> m_reverseDiscoveryProbeTimes =
             new Dictionary<IPAddress, double>();
+        private RemoteServerDirectory m_remoteServerDirectory;
         private string m_playerRecordsWorldDirectory;
         private bool m_playerRecordsDirty;
         private float m_playerRecordSaveTime;
@@ -1256,7 +1257,9 @@ namespace ScMultiplayer
 
             client = CreateStartedClient(RemoteConnectionLostPeriod);
 
-            explorer.StartDiscovery();
+            // Source: Mod/Comms/Comms.Drt/Func/Explorer/Explorer.cs:Explorer.StartDiscovery
+            m_remoteServerDirectory = new RemoteServerDirectory(explorer);
+            m_remoteServerDirectory.Start();
             connectionSM.TransitionTo(NetworkConnectionStateMachine.ConnectionState.Discovering);
             Log.Information($"[ScMP] Explorer discovery started (address={explorerTransmitter.Address})");
 
@@ -1561,6 +1564,7 @@ namespace ScMultiplayer
         // ====================================================================
         private void UpdateFrame(float dt)
         {
+            m_remoteServerDirectory?.Update();
             EnsureNetworkComponentPlayers();
             EnsureLocalPlayerRecordApplied();
             connectionSM.Update();
@@ -9551,6 +9555,12 @@ namespace ScMultiplayer
             return UserManager.ActiveUser?.UniqueId ?? string.Empty;
         }
 
+        // Source: Mod/ScMultiplayer/Networking/RemoteServerDirectory.cs:ResolveHostNames
+        public static string GetServiceDiscoveryHost(IPEndPoint endpoint)
+        {
+            return currentInstance?.m_remoteServerDirectory?.GetHostName(endpoint);
+        }
+
         private void Client_GameDescriptionRequest(GameDescriptionRequestData obj)
         {
             // Source: Comms.Drt Explorer queries server → server fires this on client
@@ -11371,6 +11381,7 @@ namespace ScMultiplayer
             try { client?.LeaveGame(); } catch { }
             try { server?.Dispose(); } catch { }
             try { explorer?.StopDiscovery(); } catch { }
+            m_remoteServerDirectory = null;
         }
     }
 }
