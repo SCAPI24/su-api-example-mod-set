@@ -9,6 +9,8 @@ namespace ScMultiplayer
         private List<ComponentPlayer> m_componentPlayers;
         private readonly List<ComponentPlayer> m_savedComponentPlayers =
             new List<ComponentPlayer>();
+        private readonly List<Pickable> m_waterSplashCandidates = new List<Pickable>();
+        private SubsystemFluidBlockBehavior m_subsystemFluidBlockBehavior;
 
         protected override void Load(ValuesDictionary valuesDictionary)
         {
@@ -18,12 +20,45 @@ namespace ScMultiplayer
             m_componentPlayers = ScMultiplayer.ModManager.ModParentField
                 .GetParentField<List<ComponentPlayer>>(
                     subsystemPlayers, "m_componentPlayers", typeof(SubsystemPlayers));
+            m_subsystemFluidBlockBehavior = Project.FindSubsystem<SubsystemFluidBlockBehavior>(true);
         }
 
         // Source: Survivalcraft/Game/SubsystemPickables.cs:SubsystemPickables.Update
         void IUpdateable.Update(float dt)
         {
-            if (ScMultiplayer.IsHost || ScMultiplayer.client?.IsConnected != true ||
+            if (ScMultiplayer.IsHost)
+            {
+                bool publishSplash = ScMultiplayer.client?.IsConnected == true;
+                m_waterSplashCandidates.Clear();
+                if (publishSplash)
+                {
+                    foreach (Pickable pickable in Pickables)
+                    {
+                        if (pickable != null && !pickable.ToRemove && !pickable.SplashGenerated)
+                            m_waterSplashCandidates.Add(pickable);
+                    }
+                }
+                base.Update(dt);
+                if (publishSplash)
+                {
+                    foreach (Pickable pickable in m_waterSplashCandidates)
+                    {
+                        if (pickable == null || pickable.ToRemove || !pickable.SplashGenerated)
+                            continue;
+                        m_subsystemFluidBlockBehavior.CalculateFlowSpeed(
+                            Terrain.ToCell(pickable.Position.X),
+                            Terrain.ToCell(pickable.Position.Y + 0.1f),
+                            Terrain.ToCell(pickable.Position.Z),
+                            out FluidBlock surfaceBlock, out _);
+                        if (surfaceBlock is WaterBlock)
+                            ScMultiplayer.currentInstance?.PublishPickableWaterSplash(pickable);
+                    }
+                }
+                m_waterSplashCandidates.Clear();
+                return;
+            }
+
+            if (ScMultiplayer.client?.IsConnected != true ||
                 m_componentPlayers == null || m_componentPlayers.Count == 0)
             {
                 base.Update(dt);
