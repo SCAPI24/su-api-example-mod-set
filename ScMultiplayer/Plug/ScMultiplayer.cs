@@ -892,6 +892,11 @@ namespace ScMultiplayer
         private readonly HashSet<Guid> m_recentChatMessageIds = new HashSet<Guid>();
         private IModInjector m_modInjector;
         private LabelWidget m_networkStatsLabel;
+        // Source: Comms/Comms/DiagnosticTransmitter.cs:DiagnosticStats
+        private DiagnosticStats m_serverNetworkStats;
+        private DiagnosticStats m_clientNetworkStats;
+        private long m_lastNetworkByteSample;
+        private double m_lastNetworkByteSampleTime;
         private double m_nextNetworkStatsUpdateTime;
         private readonly Dictionary<IPAddress, double> m_reverseDiscoveryProbeTimes =
             new Dictionary<IPAddress, double>();
@@ -1222,10 +1227,13 @@ namespace ScMultiplayer
                 ScMultiplayerSettings.ServerBindPorts,
                 out int port);
             var explorerTransmitter = new UdpTransmitter(0);
+            var serverDiagnosticTransmitter = new DiagnosticTransmitter(serverTransmitter);
+            m_serverNetworkStats = serverDiagnosticTransmitter.Stats;
 
             try
             {
-                server = new Server(0x53634d70, tickDuration, stepsPerTick, serverTransmitter);
+                server = new Server(0x53634d70, tickDuration, stepsPerTick,
+                    serverDiagnosticTransmitter);
                 ConfigurePeerTimeout(server.Peer, RemoteConnectionLostPeriod);
                 // Source: Mod/Comms/Comms.Drt/Func/Server/Set/ServerSettings.cs:ServerSettings.JoinRequestTimeout
                 // Manual approval can remain pending while the host finishes another action.
@@ -1330,7 +1338,11 @@ namespace ScMultiplayer
         // Source: Mod/Comms/Comms.Drt/Func/Client/Client.cs:Client.Client
         private Client CreateStartedClient(float connectionLostPeriod)
         {
-            var newClient = new Client(0x53634d70, new UdpTransmitter(0));
+            var clientDiagnosticTransmitter = new DiagnosticTransmitter(new UdpTransmitter(0));
+            m_clientNetworkStats = clientDiagnosticTransmitter.Stats;
+            m_lastNetworkByteSample = 0;
+            m_lastNetworkByteSampleTime = 0.0;
+            var newClient = new Client(0x53634d70, clientDiagnosticTransmitter);
             ConfigurePeerTimeout(newClient.Peer, connectionLostPeriod);
             newClient.GameCreated += Client_GameCreated;
             newClient.GameJoined += Client_GameJoined;
@@ -1793,13 +1805,26 @@ namespace ScMultiplayer
             m_networkStatsLabel.IsVisible = visible;
             if (!visible || Time.RealTime < m_nextNetworkStatsUpdateTime) return;
             m_nextNetworkStatsUpdateTime = Time.RealTime + 1.0;
-            ReadNetworkStats(out float latencyMs, out int syncQueue,
-                out int applyQueue, out int worldQueue, out int reliableQueue,
+            ReadNetworkStats(out float throughputBytesPerSecond, out float latencyMs,
+                out int syncQueue, out int applyQueue, out int reliableQueue,
                 out float retransmitPercent);
             m_networkStatsLabel.Text = string.Format(CultureInfo.InvariantCulture,
-                "NET {0:0}ms, Retr {5:0.0}%\nQ Sync {1}, Apply {2}, World {3}, Rel {4}",
-                latencyMs, syncQueue, applyQueue, worldQueue, reliableQueue,
+                "NET {0}, {1:0}ms, Retr {5:0.0}%\nQ Sync {2}, Apply {3}, Rel {4}",
+                FormatNetworkThroughput(throughputBytesPerSecond), latencyMs,
+                syncQueue, applyQueue, reliableQueue,
                 retransmitPercent);
+        }
+
+        // Source: Comms/Comms/DiagnosticTransmitter.cs:DiagnosticStats.BytesSent/BytesReceived
+        private static string FormatNetworkThroughput(float bytesPerSecond)
+        {
+            if (bytesPerSecond >= 1024f * 1024f)
+                return string.Format(CultureInfo.InvariantCulture,
+                    "{0:0.0}MB/s", bytesPerSecond / (1024f * 1024f));
+            if (bytesPerSecond >= 1024f)
+                return string.Format(CultureInfo.InvariantCulture,
+                    "{0:0.0}KB/s", bytesPerSecond / 1024f);
+            return string.Format(CultureInfo.InvariantCulture, "{0:0}B/s", bytesPerSecond);
         }
 
         private void EnsureNetworkStatsLabel()
@@ -1829,16 +1854,32 @@ namespace ScMultiplayer
                 root.Children.Add(m_networkStatsLabel);
         }
 
-        private void ReadNetworkStats(out float latencyMs, out int syncQueue,
-            out int applyQueue, out int worldQueue, out int reliableQueue,
+        private void ReadNetworkStats(out float throughputBytesPerSecond, out float latencyMs,
+            out int syncQueue, out int applyQueue, out int reliableQueue,
             out float retransmitPercent)
         {
+            throughputBytesPerSecond = 0f;
             latencyMs = 0f;
             retransmitPercent = 0f;
             syncQueue = NetworkMessageSender.PendingSyncBatchCount;
             applyQueue = m_endOfFrameActions.Count;
-            worldQueue = Math.Max(Volatile.Read(ref m_worldTransferQueuedWorkCount), 0);
             reliableQueue = 0;
+            DiagnosticStats stats = IsHost ? m_serverNetworkStats : m_clientNetworkStats;
+            if (stats != null)
+            {
+                long totalBytes = Math.Max(0L,
+                    Volatile.Read(ref stats.BytesSent) + Volatile.Read(ref stats.BytesReceived));
+                double now = Time.RealTime;
+                if (m_lastNetworkByteSampleTime > 0.0 && now > m_lastNetworkByteSampleTime)
+                {
+                    long deltaBytes = totalBytes - m_lastNetworkByteSample;
+                    if (deltaBytes >= 0)
+                        throughputBytesPerSecond = (float)(deltaBytes /
+                            (now - m_lastNetworkByteSampleTime));
+                }
+                m_lastNetworkByteSample = totalBytes;
+                m_lastNetworkByteSampleTime = now;
+            }
             if (IsHost && server?.Peer != null)
             {
                 foreach (ServerClient remote in GetConnectedRemoteClients())
@@ -2805,6 +2846,7 @@ namespace ScMultiplayer
             bool pulse2Hz = IsSyncPulse(pulse, NetworkSyncRate.Hz2);
             bool pulse4Hz = IsSyncPulse(pulse, NetworkSyncRate.Hz4);
             bool pulse8Hz = IsSyncPulse(pulse, NetworkSyncRate.Hz8);
+            bool pulse16Hz = IsSyncPulse(pulse, NetworkSyncRate.Hz16);
             if (IsHost && pulse1Hz)
             {
                 lock (m_terrainJournalLock)
@@ -2893,7 +2935,7 @@ namespace ScMultiplayer
                 else QueueEndOfFrameAction(MaintainClientWorldObjects);
             }
             m_fullAnimalSyncTime += tickDuration;
-            if (IsHost && pulse8Hz)
+            if (IsHost && pulse16Hz)
             {
                 bool fullSnapshot = m_fullAnimalSyncTime >= 1f;
                 if (fullSnapshot) m_fullAnimalSyncTime -= 1f;
@@ -3408,6 +3450,29 @@ namespace ScMultiplayer
                 stuckMatrix: pickable.StuckMatrix));
         }
 
+        // Source: Survivalcraft/Game/SubsystemPickables.cs:SubsystemPickables.Update
+        internal void PublishPickableWaterSplash(Pickable pickable)
+        {
+            if (!IsHost || client?.IsConnected != true || pickable == null || pickable.ToRemove ||
+                !m_networkPlayerData.Any(item => item.Key > 0))
+                return;
+            if (!m_hostPickableIds.TryGetValue(pickable, out ushort id))
+            {
+                id = m_nextPickableId++;
+                m_hostPickableIds.Add(pickable, id);
+                NetworkMessageSender.SendPickableMessage(new PickableSyncMessage(
+                    PickableSyncMessage.PickAction.Create, id, pickable.Value, pickable.Count,
+                    pickable.Position, pickable.Velocity, pickable.FlyToPosition,
+                    stuckMatrix: pickable.StuckMatrix));
+            }
+            NetworkMessageSender.SendPickableMessage(new PickableSyncMessage
+            {
+                Action = PickableSyncMessage.PickAction.WaterSplash,
+                Id = id,
+                Position = pickable.Position
+            });
+        }
+
         private void HandleClientPredictedPickableAdded(Pickable pickable)
         {
             if (m_applyingNetworkPickable || pickable == null || client?.IsConnected != true ||
@@ -3585,8 +3650,12 @@ namespace ScMultiplayer
                 float nearestPlayerDistanceSquared = playerPositions.Length > 0
                     ? playerPositions.Min(position => Vector3.DistanceSquared(position, body.Position))
                     : float.MaxValue;
-                if (nearestPlayerDistanceSquared <= 64f * 64f) tier = 1;
-                if (targetsPlayer) tier = Math.Max(tier, (byte)2);
+                float nearPlayerThreshold = metadata.SyncTier >= 2 ? 12f : 10f;
+                bool isNearPlayer = nearestPlayerDistanceSquared <=
+                    nearPlayerThreshold * nearPlayerThreshold;
+                if (targetsPlayer) tier = 1;
+                if (isNearPlayer)
+                    tier = Math.Max(tier, (byte)2);
                 if (highPriorityInteraction) tier = 3;
                 if (isAttacking && targetsPlayer) tier = 4;
 
@@ -3738,8 +3807,9 @@ namespace ScMultiplayer
         private static double GetAnimalSyncInterval(byte tier)
         {
             // Source: ScMultiplayer.cs:HandleAnimalInteractionMessage
-            // Aggro against a player raises 2Hz to 4Hz. Direct interaction and herd help use 8Hz.
-            return tier >= 3 ? 0.125 : tier >= 2 ? 0.25 : 0.5;
+            // Player targets use 4Hz, any animal within 10 blocks uses 8Hz, and direct
+            // interaction, herd help, or an active player attack uses 16Hz.
+            return tier >= 3 ? 0.0625 : tier >= 2 ? 0.125 : tier >= 1 ? 0.25 : 0.5;
         }
 
         private int CalculateAnimalSimulationSeed(ushort id)
@@ -5896,6 +5966,15 @@ namespace ScMultiplayer
                         targetState.FlyToPosition = message.FlyToPosition;
                         targetState.LastUpdateTime = Time.RealTime;
                     }
+                    break;
+                case PickableSyncMessage.PickAction.WaterSplash:
+                    SubsystemTerrain terrain = GameManager.Project.FindSubsystem<SubsystemTerrain>(false);
+                    SubsystemParticles particles = GameManager.Project.FindSubsystem<SubsystemParticles>(false);
+                    particles?.AddParticleSystem(new WaterSplashParticleSystem(
+                        terrain, message.Position, large: false));
+                    GameManager.Project.FindSubsystem<SubsystemAudio>(false)?.PlayRandomSound(
+                        "Audio/Splashes", 1f, m_audioEventRandom.Float(-0.2f, 0.2f),
+                        message.Position, 6f, autoDelay: true);
                     break;
             }
         }
@@ -9558,6 +9637,27 @@ namespace ScMultiplayer
                 Message.WriteWithSender(new ChatMessage("StateSync", string.Empty, "OK"), client.Address));
         }
 
+        // Source: Mod/Comms/Comms/UdpTransmitter.cs:UdpTransmitter.TaskFunction
+        // Android can briefly rebuild its Wi-Fi route while the UDP socket and game process remain
+        // usable. Do not turn that transient transport error into an immediate world exit.
+        private static bool IsTransientNetworkSocketError(Exception error)
+        {
+            if (!(error is SocketException socketError)) return false;
+            switch (socketError.SocketErrorCode)
+            {
+                case SocketError.NetworkDown:
+                case SocketError.NetworkUnreachable:
+                case SocketError.NetworkReset:
+                case SocketError.HostDown:
+                case SocketError.HostUnreachable:
+                case SocketError.ConnectionAborted:
+                case SocketError.ConnectionReset:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
         private void Client_Error(Exception obj)
         {
             Log.Error($"[ScMP] Client error: {obj.Message}");
@@ -9566,6 +9666,12 @@ namespace ScMultiplayer
             bool activeClientSession = !IsHost && !m_localLeaveInProgress &&
                 (m_isLoadingDownloadedWorld || !string.IsNullOrEmpty(m_downloadedWorldDirectory) ||
                     m_shouldCreateHostAvatar);
+            if (activeClientSession && IsTransientNetworkSocketError(obj))
+            {
+                Log.Warning($"[ScMP] Transient client network error; waiting for transport recovery: " +
+                    obj.Message);
+                return;
+            }
             if (activeClientSession && obj is KeepAliveTimeoutException &&
                 m_activeJoinRequest?.WorldInfo != null)
             {
