@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
@@ -501,6 +502,28 @@ namespace HeadlessRenderingMod
                 return true;
             }
             throw new InvalidDataException($"{name} must be an integer.");
+        }
+
+        public bool TryGetFloat(string name, out float value)
+        {
+            value = 0f;
+            if (!TryGetArgument(name, out JsonElement element))
+                return false;
+            if (element.ValueKind == JsonValueKind.Number &&
+                element.TryGetSingle(out value))
+            {
+                return true;
+            }
+            if (element.ValueKind == JsonValueKind.String &&
+                float.TryParse(
+                    element.GetString(),
+                    NumberStyles.Float,
+                    CultureInfo.InvariantCulture,
+                    out value))
+            {
+                return true;
+            }
+            throw new InvalidDataException($"{name} must be a number.");
         }
 
         public bool TryGetElement(string name, out JsonElement value)
