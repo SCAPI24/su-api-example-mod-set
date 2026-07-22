@@ -372,11 +372,11 @@ public class Client : IDisposable
         {
             CheckNotDisposedAndConnected();
             // Source: Comms/Comm.cs:Comm.ProcessReceivedMessage
-            // Different latest-state message types cannot share one unreliable sequence stream:
-            // a projectile packet would otherwise invalidate a delayed player or animal packet.
-            // Their application payloads carry ticks/IDs and discard stale state independently.
+            // The client currently marks only its high-frequency player-input snapshot as latest.
+            // Sequencing it lets the receiver discard stale snapshots before they accumulate in
+            // the reliable input queue; action requests keep the reliable path below.
             DeliveryMode deliveryMode = latest
-                ? DeliveryMode.Unreliable
+                ? DeliveryMode.UnreliableSequenced
                 : DeliveryMode.Reliable;
             Peer.SendDataMessage(Peer.ConnectedTo, deliveryMode,
                 MessageSerializer.Write(new ClientDirectInputMessage

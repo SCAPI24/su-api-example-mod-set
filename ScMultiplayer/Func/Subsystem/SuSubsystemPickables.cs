@@ -38,6 +38,11 @@ namespace ScMultiplayer
             m_componentPlayers.Clear();
             try
             {
+                // Source: Survivalcraft/Game/SubsystemPickables.cs:SubsystemPickables.Update
+                // Remote pickables are positioned by the host. Re-running the local water-entry
+                // effect at a shoreline correction can generate an endless splash on clients.
+                foreach (Pickable pickable in Pickables)
+                    if (pickable != null) pickable.SplashGenerated = true;
                 base.Update(dt);
             }
             finally
