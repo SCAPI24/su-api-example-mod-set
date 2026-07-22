@@ -14,7 +14,8 @@ namespace ScMultiplayer
             UpdatePosition,
             Delete,
             SetFlyTo,
-            Acquire
+            Acquire,
+            WaterSplash
         }
 
         public PickAction Action;
@@ -102,6 +103,10 @@ namespace ScMultiplayer
                         SlotCounts[i] = reader.ReadInt32();
                     }
                     break;
+                case PickAction.WaterSplash:
+                    Id = (ushort)reader.ReadPackedInt32();
+                    Position = reader.ReadVector3(reader);
+                    break;
             }
         }
 
@@ -154,6 +159,10 @@ namespace ScMultiplayer
                         writer.WriteInt32(SlotValues[i]);
                         writer.WriteInt32(SlotCounts[i]);
                     }
+                    break;
+                case PickAction.WaterSplash:
+                    writer.WritePackedInt32(Id);
+                    writer.WriteVector3(writer, Position);
                     break;
             }
         }
