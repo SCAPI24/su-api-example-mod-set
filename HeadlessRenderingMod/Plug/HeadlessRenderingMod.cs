@@ -59,8 +59,9 @@ namespace HeadlessRenderingMod
                 return;
             }
 
-            if (m_config.DisableAudio)
-                HeadlessAudioFallback.Ensure(instanceRoot);
+            if (m_config.DisableAudio || m_config.DisableDrawing)
+                HeadlessAudioFallback.Ensure(
+                    instanceRoot, m_config.DisableAudio, m_config.DisableDrawing);
             HeadlessDisplayDeviceFallback.Ensure();
 
             m_server = new HeadlessControlServer(m_config);

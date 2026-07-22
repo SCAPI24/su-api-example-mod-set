@@ -8,6 +8,7 @@ The published `Survivalcraft.exe` starts normally and loads the Mod. The Mod the
 - hides the game window after its console is ready;
 - supplies 1280x720 OpenTK display metadata when no desktop display is active;
 - uses OpenAL Soft's null backend and sets process audio output to zero without changing persistent audio settings;
+- embeds Windows OpenGL compatibility libraries and prefers real GL2 entry points before using no-op fallbacks;
 - limits the update loop to the configured target rate;
 - exposes a local keyboard console for human control;
 - exposes authenticated TCP JSON commands for AI control.
@@ -142,3 +143,5 @@ Arguments can be placed in `args` or at the request root. The listener accepts n
 Each server instance needs its own executable directory, `server.json`, `Settings.xml`, `Worlds/`, `Logs/` and `Scworld/`.
 
 When `disableAudio=true`, the Mod creates `alsoft-headless.ini` beside the executable and points OpenAL Soft at its null backend. No desktop audio device is required.
+
+The Windows game publish must provide an `openal32.dll` build whose OpenAL Soft null backend works on Windows Server. The OpenGL fallback DLLs are embedded in `HeadlessRenderingMod.dll`, so building or running the Mod does not require downloading Mesa, llvmpipe or another OpenGL package.

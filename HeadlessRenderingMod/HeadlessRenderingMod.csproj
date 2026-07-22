@@ -14,6 +14,13 @@
   </ItemGroup>
 
   <ItemGroup>
+    <EmbeddedResource Include="Native\libGLESv2.dll"
+                      LogicalName="HeadlessRenderingMod.Native.libGLESv2.dll" />
+    <EmbeddedResource Include="Native\opengl32-headless.dll"
+                      LogicalName="HeadlessRenderingMod.Native.opengl32-headless.dll" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Obfuscar" Version="2.2.49">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime;build;native;contentfiles;analyzers;buildtransitive</IncludeAssets>
