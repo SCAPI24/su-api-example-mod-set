@@ -94,7 +94,7 @@ namespace ScMultiplayer
             Widget playBtn = Children.Find("Play");
             Widget propBtn = Children.Find("Properties");
             if (playBtn != null) playBtn.IsEnabled = selected != null;
-            if (propBtn != null) propBtn.IsEnabled = selected != null;
+            if (propBtn != null) propBtn.IsEnabled = selected != null && selected.IsLocal;
 
             // 标记在按钮点击时，在 Update 中忽略 ItemClicked
             ButtonWidget playBtnW = Children.Find<ButtonWidget>("Play");
@@ -106,7 +106,7 @@ namespace ScMultiplayer
 
             // Create room button clicked
             ButtonWidget propBtnW = Children.Find<ButtonWidget>("Properties");
-            if (propBtnW != null && propBtnW.IsClicked && selected != null)
+            if (propBtnW != null && propBtnW.IsClicked && selected?.IsLocal == true)
             {
                 CreateRoomOnServer(selected);
             }
@@ -161,12 +161,11 @@ namespace ScMultiplayer
             }
             else
             {
-                // No games available; prompt user or just create a room
+                string message = sd.IsLocal
+                    ? "This local server has no rooms."
+                    : "This service currently has no rooms.";
                 DialogsManager.ShowDialog(null, new MessageDialog(
-                    "No Games",
-                    "This server has no games. Create a room first?",
-                    "Create", "Cancel", null
-                ));
+                    "No Rooms", message, "OK", null, null));
             }
         }
 
@@ -175,6 +174,9 @@ namespace ScMultiplayer
         /// </summary>
         private void CreateRoomOnServer(ServerDescription sd)
         {
+            // Source: Mod/ScMultiplayer/Func/Screen/SuPlayScreen.cs:GameCreate
+            // Remote services create their own rooms; clients can only join advertised rooms.
+            if (sd == null || !sd.IsLocal) return;
             ScMultiplayer.IsHost = true;
 
             if (ScMultiplayer.client.IsConnected)

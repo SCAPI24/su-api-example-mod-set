@@ -15,6 +15,7 @@
   <ItemGroup>
     <!-- Later server-admin experiment was never connected to the multiplayer core. -->
     <Compile Remove="Func\Server\ServerManager.cs" />
+    <EmbeddedResource Include="ServerDns.txt" LogicalName="ScMultiplayer.ServerDns.txt" />
   </ItemGroup>
 
   <ItemGroup>
