@@ -14,6 +14,7 @@
     <SkipType name="ScMultiplayer.ScMultiplayer" />
     <SkipType name="ScMultiplayer.Message" />
     <SkipType name="ScMultiplayer.SuComponentInput" />
+    <SkipType name="ScMultiplayer.SuComponentHumanModel" />
     <SkipType name="ScMultiplayer.SuComponentVitalStats" />
     <SkipType name="ScMultiplayer.SuComponentFlu" />
     <SkipType name="ScMultiplayer.MultiplayerUiComponent" />

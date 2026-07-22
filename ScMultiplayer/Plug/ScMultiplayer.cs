@@ -467,6 +467,8 @@ namespace ScMultiplayer
             new List<PendingSyncBatch>();
         private static bool s_isSyncBatchActive;
 
+        public static int PendingSyncBatchCount => s_pendingSyncBatches.Count;
+
         public static void BeginSyncBatch()
         {
             FlushSyncBatch();
@@ -873,6 +875,9 @@ namespace ScMultiplayer
         private readonly Dictionary<int, string> m_clientRecordKeys = new Dictionary<int, string>();
         private readonly Queue<ChatMessage> m_recentChatMessages = new Queue<ChatMessage>();
         private readonly HashSet<Guid> m_recentChatMessageIds = new HashSet<Guid>();
+        private IModInjector m_modInjector;
+        private LabelWidget m_networkStatsLabel;
+        private double m_nextNetworkStatsUpdateTime;
         private readonly Dictionary<IPAddress, double> m_reverseDiscoveryProbeTimes =
             new Dictionary<IPAddress, double>();
         private string m_playerRecordsWorldDirectory;
@@ -1106,6 +1111,9 @@ namespace ScMultiplayer
         {
             currentInstance = this;
             ModManager = Game.Program.ModManager;
+            m_modInjector = modInjector;
+            modInjector.Register("Game.ComponentHumanModel",
+                "ScMultiplayer.SuComponentHumanModel");
             ScMultiplayerSettings.Load();
             StartWorldTransferSender();
 
@@ -1383,6 +1391,8 @@ namespace ScMultiplayer
         {
             // Source: Survivalcraft/Game/Program.cs:Program.Initialize
             // Source: Survivalcraft/Game/LoadingManager.cs:LoadingManager.ReplaceItem
+            Game.LoadingManager.QueueItem("Load ScMultiplayer Chinese Font",
+                MultiplayerChineseFont.Load);
             if (!Game.LoadingManager.ReplaceItem("Initialize PlayScreen", delegate
             {
                 ScreensManager.AddScreen("Play", new SuPlayScreen());
@@ -1401,6 +1411,8 @@ namespace ScMultiplayer
                 new Guid("ec809766-ba61-434e-bfde-e677f506b887"),
                 database.FindDatabaseObjectType("Parameter", true), true);
             componentInput.Value = "ScMultiplayer.SuComponentInput";
+
+            m_modInjector?.Apply(database, "ScMultiplayer");
 
             // Source: Pak/Database.xml:ComponentVitalStats.Class
             var componentVitalStats = database.FindDatabaseObject(
@@ -1531,6 +1543,92 @@ namespace ScMultiplayer
                 UpdateWorldSubsystem(dt, project);
             MaintainHostAimPresentation();
             RenderRemotePlayers();
+            UpdateNetworkStatsOverlay();
+        }
+
+        // Source: Survivalcraft/Game/PerformanceManager.cs:PerformanceManager.Draw
+        private void UpdateNetworkStatsOverlay()
+        {
+            EnsureNetworkStatsLabel();
+            if (m_networkStatsLabel == null) return;
+            float rootScale = MathUtils.Max(
+                ScreensManager.RootWidget?.GlobalScale ?? 1f, 0.01f);
+            float displayScale = MathUtils.Round(
+                MathUtils.Clamp(rootScale, 1f, 4f));
+            float widgetScaleCompensation = displayScale / rootScale;
+            BitmapFont statsFont = BitmapFont.DebugFont;
+            float lineHeight = (statsFont.GlyphHeight + statsFont.Spacing.Y) *
+                statsFont.Scale;
+            m_networkStatsLabel.FontScale = widgetScaleCompensation;
+            m_networkStatsLabel.Margin = new Vector2(
+                0f, lineHeight * widgetScaleCompensation);
+            bool visible = SettingsManager.DisplayFpsCounter &&
+                client?.IsConnected == true;
+            m_networkStatsLabel.IsVisible = visible;
+            if (!visible || Time.RealTime < m_nextNetworkStatsUpdateTime) return;
+            m_nextNetworkStatsUpdateTime = Time.RealTime + 1.0;
+            ReadNetworkStats(out float latencyMs, out int pendingPackets,
+                out float lossPercent);
+            m_networkStatsLabel.Text = string.Format(CultureInfo.InvariantCulture,
+                "NET {0:0}ms, Queue {1}, Loss {2:0.0}%",
+                latencyMs, pendingPackets, lossPercent);
+        }
+
+        private void EnsureNetworkStatsLabel()
+        {
+            ContainerWidget root = ScreensManager.RootWidget;
+            if (root == null) return;
+            if (m_networkStatsLabel == null)
+            {
+                BitmapFont font = BitmapFont.DebugFont;
+                float lineHeight = (font.GlyphHeight + font.Spacing.Y) * font.Scale;
+                m_networkStatsLabel = new LabelWidget
+                {
+                    Name = "ScMultiplayer.NetworkStats",
+                    Font = font,
+                    FontScale = 1f,
+                    TextureLinearFilter = false,
+                    Color = Color.White,
+                    HorizontalAlignment = WidgetAlignment.Far,
+                    VerticalAlignment = WidgetAlignment.Near,
+                    TextAnchor = TextAnchor.Right,
+                    Margin = new Vector2(0f, lineHeight),
+                    IsHitTestVisible = false,
+                    IsVisible = false
+                };
+            }
+            if (m_networkStatsLabel.ParentWidget == null)
+                root.Children.Add(m_networkStatsLabel);
+        }
+
+        private void ReadNetworkStats(out float latencyMs, out int pendingPackets,
+            out float lossPercent)
+        {
+            latencyMs = 0f;
+            lossPercent = 0f;
+            pendingPackets = NetworkMessageSender.PendingSyncBatchCount +
+                m_endOfFrameActions.Count +
+                Math.Max(Volatile.Read(ref m_worldTransferQueuedWorkCount), 0);
+            if (IsHost && server?.Peer != null)
+            {
+                foreach (ServerClient remote in GetConnectedRemoteClients())
+                {
+                    PeerData peer = server.Peer.FindPeer(remote.Address);
+                    if (peer == null) continue;
+                    latencyMs = MathUtils.Max(latencyMs, peer.Ping * 1000f);
+                    pendingPackets += server.Peer.Comm.GetUnackedPacketsCount(peer.Address);
+                    lossPercent = MathUtils.Max(lossPercent,
+                        (float)(100.0 * server.Peer.Comm.GetPacketLossRate(
+                            peer.Address)));
+                }
+                return;
+            }
+            PeerData connected = client?.Peer?.ConnectedTo;
+            if (connected == null) return;
+            latencyMs = connected.Ping * 1000f;
+            pendingPackets += client.Peer.Comm.GetUnackedPacketsCount(connected.Address);
+            lossPercent = (float)(100.0 *
+                client.Peer.Comm.GetPacketLossRate(connected.Address));
         }
 
         // Source: Survivalcraft/Game/GameLoadingScreen.cs:GameLoadingScreen.Enter
@@ -1721,16 +1819,26 @@ namespace ScMultiplayer
                 return;
             }
 
-            DialogsManager.ShowDialog(ScreensManager.RootWidget,
-                new TextBoxDialog("Talk", "", 125, delegate (string text)
+            var dialog = new TextBoxDialog("Talk", "", 125, delegate (string text)
+            {
+                if (!string.IsNullOrWhiteSpace(text))
                 {
-                    if (!string.IsNullOrWhiteSpace(text))
-                    {
-                        ChatMessage message = NetworkMessageSender.SendChatMessage(
-                            GetLocalPlayerName(), GetLocalPlayerIdentity(), text.Trim());
-                        DisplayChatMessage(message, client.ClientID);
-                    }
-                }));
+                    ChatMessage message = NetworkMessageSender.SendChatMessage(
+                        GetLocalPlayerName(), GetLocalPlayerIdentity(), text.Trim());
+                    DisplayChatMessage(message, client.ClientID);
+                }
+            });
+            BitmapFont chatFont = MultiplayerChineseFont.TextInputFont ??
+                MultiplayerChineseFont.Font;
+            Widget textBox = dialog.Children.Find("TextBoxDialog.TextBox", false);
+            if (chatFont != null && textBox != null)
+            {
+                ModManager.ModParentField.ModifyParentField(
+                    textBox, "Font", chatFont, textBox.GetType());
+                ModManager.ModParentField.ModifyParentField(
+                    textBox, "TextureLinearFilter", true, textBox.GetType());
+            }
+            DialogsManager.ShowDialog(ScreensManager.RootWidget, dialog);
         }
 
         // Source: Survivalcraft/Game/SubsystemPlayers.cs:SubsystemPlayers.ComponentPlayers
@@ -1770,12 +1878,18 @@ namespace ScMultiplayer
 
             if (entries.Count == 0)
                 entries.Add("No joined player information is available.");
-            DialogsManager.ShowDialog(null, new ListSelectionDialog(
+            var dialog = new ListSelectionDialog(
                 "Joined Players",
                 entries,
-                60f,
-                item => item.ToString(),
-                item => { }));
+                44f,
+                item => CreateMultiplayerTextLabel(item.ToString(), 1f,
+                    WidgetAlignment.Near),
+                item => { });
+            float availableWidth = MathUtils.Max(
+                ScreensManager.RootWidget.ActualSize.X - 40f, 0f);
+            dialog.ContentSize = new Vector2(
+                MathUtils.Min(800f, availableWidth), dialog.ContentSize.Y);
+            DialogsManager.ShowDialog(null, dialog);
         }
 
         private static string FormatJoinedPlayer(string name, string role, Vector3 position)
@@ -1855,16 +1969,57 @@ namespace ScMultiplayer
                 "Talk",
                 messages,
                 60f,
-                item => FormatChatMessage((ChatMessage)item),
+                item => CreateMultiplayerTextLabel(
+                    FormatChatMessage((ChatMessage)item), 0.82f,
+                    WidgetAlignment.Near),
                 item =>
                 {
                     ChatMessage message = (ChatMessage)item;
                     string sender = string.IsNullOrWhiteSpace(message.Sender)
                         ? "Player"
                         : message.Sender;
-                    DialogsManager.ShowDialog(null, new MessageDialog(
-                        sender, message.Text, "OK", null, null));
+                    var messageDialog = new MessageDialog(
+                        sender, message.Text, "OK", null, null);
+                    ApplyChatDialogFont(messageDialog);
+                    DialogsManager.ShowDialog(null, messageDialog);
                 }));
+        }
+
+        private static LabelWidget CreateMultiplayerTextLabel(string text,
+            float fontScale, WidgetAlignment horizontalAlignment)
+        {
+            return new LabelWidget
+            {
+                Text = text ?? string.Empty,
+                Font = MultiplayerChineseFont.Font ??
+                    ContentManager.Get<BitmapFont>("Fonts/Pericles18"),
+                FontScale = fontScale,
+                TextureLinearFilter = true,
+                HorizontalAlignment = horizontalAlignment,
+                VerticalAlignment = WidgetAlignment.Center,
+                TextAnchor = horizontalAlignment == WidgetAlignment.Near
+                    ? TextAnchor.Left
+                    : TextAnchor.Center
+            };
+        }
+
+        private static void ApplyChatDialogFont(MessageDialog dialog)
+        {
+            if (dialog == null || MultiplayerChineseFont.Font == null) return;
+            LabelWidget title = dialog.Children.Find<LabelWidget>(
+                "MessageDialog.LargeLabel", true);
+            LabelWidget message = dialog.Children.Find<LabelWidget>(
+                "MessageDialog.SmallLabel", true);
+            if (title != null)
+            {
+                title.Font = MultiplayerChineseFont.Font;
+                title.TextureLinearFilter = true;
+            }
+            if (message != null)
+            {
+                message.Font = MultiplayerChineseFont.Font;
+                message.TextureLinearFilter = true;
+            }
         }
 
         private static string FormatChatMessage(ChatMessage message)
@@ -2060,6 +2215,21 @@ namespace ScMultiplayer
                 if (m_networkPlayerData.Values.Contains(componentPlayer.PlayerData)) continue;
                 componentPlayer.ComponentGui.DisplaySmallMessage(
                     sender + ": " + message.Text, color, blinking: true, playNotificationSound: true);
+                ApplyLatestChatMessageFont(componentPlayer.ComponentGui);
+            }
+        }
+
+        // Source: Survivalcraft/Game/MessageWidget.cs:MessageWidget.DisplayMessage
+        private static void ApplyLatestChatMessageFont(ComponentGui gui)
+        {
+            if (gui == null || MultiplayerChineseFont.Font == null) return;
+            MessageWidget messageWidget = ModManager.ModParentField
+                .GetParentField<MessageWidget>(gui, "m_messageWidget", typeof(ComponentGui));
+            LabelWidget label = messageWidget?.Children.LastOrDefault() as LabelWidget;
+            if (label != null)
+            {
+                label.Font = MultiplayerChineseFont.Font;
+                label.TextureLinearFilter = true;
             }
         }
 
@@ -6475,7 +6645,21 @@ namespace ScMultiplayer
                     continue;
 
                 bool isDead = spawn.ComponentCreature?.ComponentHealth?.Health <= 0f;
-                if (spawn.IsDespawning && !isDead)
+                // Source: Survivalcraft/Game/ComponentShapeshifter.cs:ComponentShapeshifter.ShapeshiftTo
+                // Shapeshifting deliberately uses ComponentSpawn.Despawn. Do not mistake that
+                // transition for an out-of-range auto-despawn or the old form keeps emitting
+                // particles forever without creating the replacement entity.
+                ComponentShapeshifter shapeshifter =
+                    spawn.Entity.FindComponent<ComponentShapeshifter>();
+                string shapeshiftTarget = shapeshifter == null
+                    ? null
+                    : ModManager.ModParentField.GetParentField(
+                        shapeshifter, "m_spawnEntityTemplateName",
+                        typeof(ComponentShapeshifter)) as string;
+                bool isShapeshifting = !string.IsNullOrEmpty(shapeshiftTarget);
+                if (isShapeshifting && !spawn.IsDespawning)
+                    spawn.Despawn();
+                else if (spawn.IsDespawning && !isDead && !isShapeshifting)
                 {
                     ModManager.ModParentField.ModifyParentField(
                         spawn, "<DespawnTime>k__BackingField", (double?)null,
@@ -6713,9 +6897,19 @@ namespace ScMultiplayer
             if (spawnModeType == null)
                 throw new MissingMemberException(typeof(PlayerData).FullName, "SpawnMode");
             object initialNoIntro = Enum.Parse(spawnModeType, "InitialNoIntro");
+            // Source: Survivalcraft/Game/PlayerData.cs:PlayerData.FindNoIntroSpawnPosition
+            // Spread transient players around the requested host position before the native
+            // collision/terrain search, and retain that result as their respawn anchor.
+            float angle = 2f * MathUtils.PI * ((playerData.PlayerIndex - 1) % 3) / 3f;
+            Vector3 desiredPosition = position + 3f * new Vector3(
+                MathUtils.Cos(angle), 0f, MathUtils.Sin(angle));
+            Vector3 spawnPosition = ModManager.ModParentMethod.InvokeParentMethod<Vector3>(
+                playerData, "FindNoIntroSpawnPosition",
+                new[] { typeof(Vector3), typeof(bool) }, desiredPosition, false);
+            playerData.SpawnPosition = spawnPosition;
             ModManager.ModParentMethod.InvokeParentMethod(
                 playerData, "SpawnPlayer", new[] { typeof(Vector3), spawnModeType },
-                position, initialNoIntro);
+                spawnPosition, initialNoIntro);
         }
 
         // Source: Survivalcraft/Game/GameManager.cs:GameManager.SaveProject
@@ -10510,6 +10704,9 @@ namespace ScMultiplayer
 
         public void OnUnload()
         {
+            if (m_networkStatsLabel?.ParentWidget != null)
+                m_networkStatsLabel.ParentWidget.Children.Remove(m_networkStatsLabel);
+            m_networkStatsLabel = null;
             try
             {
                 m_worldTransferSendCancellation?.Cancel();

@@ -48,6 +48,18 @@ public class Comm
 
         public double SmoothedRoundTripTime = 0.1;
 
+        public double SmoothedPacketLossRate;
+
+        // Source: Comms/Comms/Comm.cs:Comm.ProcessConnections
+        // Source: Comms/Comms/Comm.cs:Comm.ProcessReceivedPacket
+        public void RecordReliablePacketOutcome(bool wasRetransmitted)
+        {
+            const double smoothingFactor = 1.0 / 64.0;
+            double sample = wasRetransmitted ? 1.0 : 0.0;
+            SmoothedPacketLossRate += smoothingFactor *
+                (sample - SmoothedPacketLossRate);
+        }
+
         public void NewTheirGuid(Guid theirGuid)
         {
             bool isReplacementSession = TheirGuid != Guid.Empty && TheirGuid != theirGuid;
@@ -59,6 +71,7 @@ public class Comm
                 UnackedPackets.Clear();
                 NextUnreliableSendSequenceIndex = 0u;
                 NextReliableSendSequenceIndex = 0u;
+                SmoothedPacketLossRate = 0.0;
             }
             TheirGuid = theirGuid;
             MessageParts.Clear();
@@ -388,6 +401,18 @@ public class Comm
         }
     }
 
+    // Source: Comms/Comms/Comm.cs:Connection.RecordReliablePacketOutcome
+    public double GetPacketLossRate(IPEndPoint address)
+    {
+        lock (Lock)
+        {
+            CheckNotDisposedAndStarted();
+            return Connections.TryGetValue(address, out var connection)
+                ? connection.SmoothedPacketLossRate
+                : 0.0;
+        }
+    }
+
     // Source: Comms/Comms/Comm.cs:SendMessages
     // A reconnect starts a new reliable session so stale fragments and sequence gaps cannot block
     // the new connect request.
@@ -548,15 +573,19 @@ public class Comm
             while (reader.Length - reader.Position >= 4)
             {
                 uint key = reader.ReadUInt32();
-                if (value.UnackedPackets.TryGetValue(key, out UnackedPacket acknowledgedPacket) &&
-                    acknowledgedPacket.SendCount == 1)
+                if (value.UnackedPackets.TryGetValue(key, out UnackedPacket acknowledgedPacket))
                 {
-                    double sample = time - acknowledgedPacket.LastSendTime;
-                    if (sample > 0.0)
-                        value.SmoothedRoundTripTime = 0.875 * value.SmoothedRoundTripTime +
-                            0.125 * sample;
+                    if (acknowledgedPacket.SendCount == 1)
+                    {
+                        double sample = time - acknowledgedPacket.LastSendTime;
+                        if (sample > 0.0)
+                            value.SmoothedRoundTripTime = 0.875 * value.SmoothedRoundTripTime +
+                                0.125 * sample;
+                    }
+                    value.RecordReliablePacketOutcome(
+                        acknowledgedPacket.SendCount > 1);
+                    value.UnackedPackets.Remove(key);
                 }
-                value.UnackedPackets.Remove(key);
             }
         }
         else if (packetHeader.PacketType == PacketType.InitAck)
@@ -628,6 +657,7 @@ public class Comm
                 float num = GetResendPeriod(value, unackedPacket.Value.SendCount);
                 if (unackedPacket.Value.SendCount - 1 >= Settings.MaxResends)
                 {
+                    value.RecordReliablePacketOutcome(true);
                     ToRemoveUInt.Add(unackedPacket.Key);
                 }
                 else if (time >= unackedPacket.Value.LastSendTime + (double)num)
