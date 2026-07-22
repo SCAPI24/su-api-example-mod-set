@@ -1,6 +1,9 @@
 using Engine;
+using Engine.Serialization;
+using Game;
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -15,6 +18,31 @@ namespace HeadlessRenderingMod
         private const int MenuPageSize = 10;
         private static readonly JsonSerializerOptions s_jsonOptions =
             new JsonSerializerOptions { WriteIndented = true };
+        private static readonly float[] IslandSizes =
+        {
+            30f, 40f, 50f, 60f, 80f, 100f, 120f, 150f, 200f, 250f,
+            300f, 400f, 500f, 600f, 800f, 1000f, 1200f, 1500f, 2000f, 2500f
+        };
+        private static readonly float[] BiomeSizes =
+            { 0.25f, 0.33f, 0.5f, 0.75f, 1f, 1.5f, 2f, 3f, 4f };
+        private static readonly float[] YearDays =
+            { 8f, 12f, 16f, 20f, 24f, 32f, 48f, 64f, 96f };
+        private static readonly int[] FlatTerrainBlocks =
+            { 8, 2, 7, 3, 67, 66, 4, 5, 26, 73, 21, 46, 47, 15, 62, 68, 126, 71, 1 };
+        private static readonly string[] TimeOfYearNames =
+        {
+            "Early Summer", "Summer", "Late Summer",
+            "Early Autumn", "Autumn", "Late Autumn",
+            "Early Winter", "Winter", "Late Winter",
+            "Early Spring", "Spring", "Late Spring"
+        };
+        private static readonly float[] TimeOfYearValues =
+        {
+            0.03125f, 0.125f, 0.21875f,
+            0.28125f, 0.375f, 0.46875f,
+            0.53125f, 0.625f, 0.71875f,
+            0.78125f, 0.875f, 0.96875f
+        };
 
         private readonly HeadlessControlServer m_server;
         private readonly HeadlessServerConfig m_config;
@@ -139,23 +167,24 @@ namespace HeadlessRenderingMod
 
         private void RunMainMenu()
         {
-            string[] actions =
-            {
-                "Create World",
-                "Join World",
-                "List Worlds",
-                "Export World",
-                "Delete World",
-                "Create Player",
-                "Manage Players",
-                "Server Status",
-                "Command Line",
-                "Shutdown"
-            };
-
             int selected = 0;
             while (m_running)
             {
+                string[] actions =
+                {
+                    "Create World",
+                    "Join World",
+                    GetCurrentWorldMenuLabel(),
+                    "List Worlds",
+                    "Export World",
+                    "Delete World",
+                    "Create Player",
+                    "Manage Players",
+                    "Server Status",
+                    "Command Line",
+                    "Shutdown"
+                };
+                selected = Math.Clamp(selected, 0, actions.Length - 1);
                 try
                 {
                     int? choice = SelectMenu("Server Control", actions, selected);
@@ -171,27 +200,30 @@ namespace HeadlessRenderingMod
                             JoinWorld();
                             break;
                         case 2:
-                            ShowWorlds();
+                            ShowCurrentWorld();
                             break;
                         case 3:
-                            ExportWorld();
+                            ShowWorlds();
                             break;
                         case 4:
-                            DeleteWorld();
+                            ExportWorld();
                             break;
                         case 5:
-                            CreatePlayer();
+                            DeleteWorld();
                             break;
                         case 6:
-                            ManagePlayers();
+                            CreatePlayer();
                             break;
                         case 7:
-                            ShowResponse("status");
+                            ManagePlayers();
                             break;
                         case 8:
-                            RunCommandLine();
+                            ShowResponse("status");
                             break;
                         case 9:
+                            RunCommandLine();
+                            break;
+                        case 10:
                             if (PromptBoolean("Shut down Survivalcraft", false))
                             {
                                 PrintResponse(m_server.SubmitLocal("shutdown"));
@@ -312,67 +344,314 @@ namespace HeadlessRenderingMod
         // Source: Survivalcraft/Game/NewWorldScreen.cs:NewWorldScreen.Update
         private void CreateWorld()
         {
-            Console.Clear();
-            Console.WriteLine(GetCurrentScreen() + "> Create World");
-            string name;
-            do
+            WorldCreationDraft draft = new WorldCreationDraft();
+            int page = 0;
+            while (m_running)
             {
-                name = PromptText("World name", "ServerWorld");
-                if (!IsValidWorldName(name))
-                    Console.WriteLine("Use 1-14 ASCII letters, digits or spaces.");
-            }
-            while (!IsValidWorldName(name));
+                WorldEditorResult result = EditWorldPage(draft, page);
+                if (result == WorldEditorResult.Cancel)
+                    return;
+                if (result == WorldEditorResult.PreviousPage)
+                {
+                    page = Math.Max(0, page - 1);
+                    continue;
+                }
+                if (result == WorldEditorResult.NextPage)
+                {
+                    page = Math.Min(1, page + 1);
+                    continue;
+                }
+                if (result != WorldEditorResult.Submit)
+                    continue;
 
-            string seed = PromptText("Seed", string.Empty, "random");
-            string gameMode = PromptChoice(
-                "Game mode",
-                new[] { "Creative", "Harmless", "Survival", "Challenging", "Cruel" },
-                "Survival");
-            string startingPosition = PromptChoice(
-                "Starting position",
-                new[] { "Easy", "Medium", "Hard" },
-                "Easy");
-            string terrainGeneration = PromptChoice(
-                "Terrain generation",
-                gameMode == "Creative"
-                    ? new[] { "Continent", "Island", "FlatContinent", "FlatIsland" }
-                    : new[] { "Continent", "Island" },
-                "Continent");
+                if (!IsValidWorldName(draft.Name))
+                {
+                    Console.WriteLine("Use 1-14 ASCII letters, digits or spaces for the world name.");
+                    Pause();
+                    page = 0;
+                    continue;
+                }
+                Dictionary<string, object> values = BuildWorldCreateArguments(draft);
+                Console.Clear();
+                Console.WriteLine(GetCurrentScreen() + "> Create World > Review");
+                Console.WriteLine(JsonSerializer.Serialize(values, s_jsonOptions));
+                if (!PromptBoolean("Create and load this world", true))
+                    continue;
 
-            Dictionary<string, object> values = new Dictionary<string, object>(StringComparer.Ordinal)
-            {
-                ["name"] = name,
-                ["seed"] = seed,
-                ["gameMode"] = gameMode,
-                ["startingPosition"] = startingPosition,
-                ["terrainGeneration"] = terrainGeneration,
-                ["supernaturalCreatures"] = PromptBoolean("Enable supernatural creatures", true),
-                ["friendlyFire"] = PromptBoolean("Allow friendly fire", true),
-                ["seasonsChanging"] = PromptBoolean("Enable changing seasons", true)
-            };
-            if (gameMode == "Creative")
-            {
-                values["environmentBehavior"] = PromptChoice(
-                    "Environment behavior",
-                    new[] { "Living", "Static" },
-                    "Living");
-                values["timeOfDay"] = PromptChoice(
-                    "Time of day",
-                    new[] { "Changing", "Day", "Night", "Sunrise", "Sunset" },
-                    "Changing");
-                values["weatherEffects"] = PromptBoolean("Enable weather effects", true);
-            }
-
-            Console.WriteLine(JsonSerializer.Serialize(values, s_jsonOptions));
-            if (!PromptBoolean("Create and load this world", true))
+                PrintResponse(RequireSuccess(m_server.SubmitLocal("world.create", values)));
+                WaitForWorldReady();
+                Console.WriteLine("World is ready. Current screen: " + GetCurrentScreen());
+                if (PromptBoolean("Create the first player now", true))
+                    CreatePlayer();
+                else
+                    Pause();
                 return;
-            PrintResponse(RequireSuccess(m_server.SubmitLocal("world.create", values)));
-            WaitForWorldReady();
-            Console.WriteLine("World is ready. Current screen: " + GetCurrentScreen());
-            if (PromptBoolean("Create the first player now", true))
-                CreatePlayer();
-            else
-                Pause();
+            }
+        }
+
+        // Source: Survivalcraft/Game/NewWorldScreen.cs:NewWorldScreen.Update
+        private WorldEditorResult EditWorldPage(WorldCreationDraft draft, int page)
+        {
+            int selected = 0;
+            while (m_running)
+            {
+                List<WorldEditorItem> items = page == 0
+                    ? BuildNewWorldPage(draft)
+                    : BuildWorldOptionsPage(draft);
+                selected = Math.Clamp(selected, 0, items.Count - 1);
+                Console.Clear();
+                Console.WriteLine(GetCurrentScreen() + "> Create World [" + (page + 1) + "/2]");
+                Console.WriteLine("Up/Down select  Right edit  Left previous  PageUp/PageDown page");
+                Console.WriteLine("For text fields, type the value and press Enter to return.");
+                Console.WriteLine();
+                for (int i = 0; i < items.Count; i++)
+                {
+                    Console.WriteLine((i == selected ? "> " : "  ") + items[i].Label);
+                }
+
+                ConsoleKey key = Console.ReadKey(true).Key;
+                if (key == ConsoleKey.UpArrow)
+                    selected = selected > 0 ? selected - 1 : items.Count - 1;
+                else if (key == ConsoleKey.DownArrow)
+                    selected = selected < items.Count - 1 ? selected + 1 : 0;
+                else if (key == ConsoleKey.Home)
+                    selected = 0;
+                else if (key == ConsoleKey.End)
+                    selected = items.Count - 1;
+                else if (key == ConsoleKey.PageUp)
+                    return page > 0 ? WorldEditorResult.PreviousPage : WorldEditorResult.Cancel;
+                else if (key == ConsoleKey.PageDown)
+                    return page < 1 ? WorldEditorResult.NextPage : WorldEditorResult.Submit;
+                else if (key == ConsoleKey.LeftArrow || key == ConsoleKey.Escape)
+                    return page > 0 ? WorldEditorResult.PreviousPage : WorldEditorResult.Cancel;
+                else if (key == ConsoleKey.RightArrow || key == ConsoleKey.Enter)
+                {
+                    WorldEditorItem item = items[selected];
+                    if (item.Result != WorldEditorResult.Stay)
+                        return item.Result;
+                    item.Edit?.Invoke();
+                }
+            }
+            return WorldEditorResult.Cancel;
+        }
+
+        private List<WorldEditorItem> BuildNewWorldPage(WorldCreationDraft draft)
+        {
+            return new List<WorldEditorItem>
+            {
+                new WorldEditorItem("World name: " + draft.Name, delegate
+                {
+                    string value = PromptText("World name", draft.Name);
+                    if (!IsValidWorldName(value))
+                        throw new InvalidOperationException(
+                            "Use 1-14 ASCII letters, digits or spaces.");
+                    draft.Name = value;
+                }),
+                new WorldEditorItem(
+                    "Seed: " + (draft.Seed.Length == 0 ? "<random>" : draft.Seed),
+                    delegate { draft.Seed = PromptText("Seed", draft.Seed, "random"); }),
+                new WorldEditorItem("Game mode: " + draft.GameMode, delegate
+                {
+                    draft.GameMode = PromptChoice(
+                        "Game mode",
+                        new[] { "Creative", "Harmless", "Survival", "Challenging", "Cruel" },
+                        draft.GameMode);
+                    if (draft.GameMode != "Creative" &&
+                        (draft.TerrainGeneration == "FlatContinent" ||
+                        draft.TerrainGeneration == "FlatIsland"))
+                    {
+                        draft.TerrainGeneration = draft.TerrainGeneration == "FlatIsland"
+                            ? "Island"
+                            : "Continent";
+                    }
+                }),
+                new WorldEditorItem("Starting position: " + draft.StartingPosition, delegate
+                {
+                    draft.StartingPosition = PromptChoice(
+                        "Starting position",
+                        new[] { "Easy", "Medium", "Hard" },
+                        draft.StartingPosition);
+                }),
+                new WorldEditorItem("World options...", WorldEditorResult.NextPage)
+            };
+        }
+
+        // Source: Survivalcraft/Game/WorldOptionsScreen.cs:WorldOptionsScreen.Update
+        private List<WorldEditorItem> BuildWorldOptionsPage(WorldCreationDraft draft)
+        {
+            List<WorldEditorItem> items = new List<WorldEditorItem>();
+            items.Add(new WorldEditorItem("Terrain type: " + draft.TerrainGeneration, delegate
+            {
+                draft.TerrainGeneration = PromptChoice(
+                    "Terrain type",
+                    draft.GameMode == "Creative"
+                        ? new[] { "Continent", "Island", "FlatContinent", "FlatIsland" }
+                        : new[] { "Continent", "Island" },
+                    draft.TerrainGeneration);
+            }));
+
+            bool island = draft.TerrainGeneration == "Island" ||
+                draft.TerrainGeneration == "FlatIsland";
+            bool continent = draft.TerrainGeneration == "Continent" ||
+                draft.TerrainGeneration == "FlatContinent";
+            bool flat = draft.TerrainGeneration == "FlatContinent" ||
+                draft.TerrainGeneration == "FlatIsland";
+            if (island)
+            {
+                items.Add(new WorldEditorItem("Island size east-west: " + draft.IslandSizeEW, delegate
+                {
+                    draft.IslandSizeEW = PromptFloatChoice(
+                        "Island size east-west", IslandSizes, draft.IslandSizeEW);
+                }));
+                items.Add(new WorldEditorItem("Island size north-south: " + draft.IslandSizeNS, delegate
+                {
+                    draft.IslandSizeNS = PromptFloatChoice(
+                        "Island size north-south", IslandSizes, draft.IslandSizeNS);
+                }));
+            }
+            if (continent)
+            {
+                items.Add(new WorldEditorItem("Sea level: " + FormatOffset(draft.SeaLevelOffset), delegate
+                {
+                    draft.SeaLevelOffset = PromptIntegerChoice(
+                        "Sea level", IntegerRange(-4, 4), draft.SeaLevelOffset);
+                }));
+                items.Add(new WorldEditorItem("Temperature: " + FormatOffset(draft.TemperatureOffset), delegate
+                {
+                    draft.TemperatureOffset = PromptFloatChoice(
+                        "Temperature", FloatRange(-8, 8), draft.TemperatureOffset);
+                }));
+                items.Add(new WorldEditorItem("Humidity: " + FormatOffset(draft.HumidityOffset), delegate
+                {
+                    draft.HumidityOffset = PromptFloatChoice(
+                        "Humidity", FloatRange(-8, 8), draft.HumidityOffset);
+                }));
+                items.Add(new WorldEditorItem("Biome size: " + FormatNumber(draft.BiomeSize) + "x", delegate
+                {
+                    draft.BiomeSize = PromptFloatChoice(
+                        "Biome size", BiomeSizes, draft.BiomeSize, "x");
+                }));
+            }
+            if (flat)
+            {
+                items.Add(new WorldEditorItem("Flat terrain level: " + draft.TerrainLevel, delegate
+                {
+                    draft.TerrainLevel = PromptInteger(
+                        "Flat terrain level", draft.TerrainLevel, 2, 252);
+                }));
+                items.Add(new WorldEditorItem(
+                    "Flat shore roughness: " + FormatNumber(draft.ShoreRoughness * 100f) + "%",
+                    delegate
+                    {
+                        draft.ShoreRoughness = PromptFloatChoice(
+                            "Flat shore roughness",
+                            new[] { 0f, 0.25f, 0.5f, 0.75f, 1f },
+                            draft.ShoreRoughness,
+                            null,
+                            100f,
+                            "%");
+                    }));
+                items.Add(new WorldEditorItem(
+                    "Flat terrain block: " + GetBlockLabel(draft.TerrainBlockIndex),
+                    delegate { draft.TerrainBlockIndex = SelectTerrainBlock(draft.TerrainBlockIndex); }));
+                items.Add(new WorldEditorItem(
+                    "Magma ocean: " + FormatEnabled(draft.TerrainOceanBlockIndex == 92),
+                    delegate { draft.TerrainOceanBlockIndex = ToggleBoolean("Magma ocean", draft.TerrainOceanBlockIndex == 92) ? 92 : 18; }));
+            }
+
+            items.Add(new WorldEditorItem(
+                "Blocks texture: " + GetBlocksTextureLabel(draft.BlocksTextureName),
+                delegate { draft.BlocksTextureName = SelectBlocksTexture(draft.BlocksTextureName); }));
+            items.Add(new WorldEditorItem(
+                "Customize paint colors...",
+                delegate { EditPalette(draft); }));
+            items.Add(new WorldEditorItem(
+                "Changing seasons: " + FormatEnabled(draft.SeasonsChanging),
+                delegate { draft.SeasonsChanging = ToggleBoolean("Changing seasons", draft.SeasonsChanging); }));
+            if (draft.SeasonsChanging)
+            {
+                items.Add(new WorldEditorItem("Length of year: " + FormatNumber(draft.YearDays) + " days", delegate
+                {
+                    draft.YearDays = PromptFloatChoice(
+                        "Length of year", YearDays, draft.YearDays, " days");
+                }));
+            }
+            items.Add(new WorldEditorItem("Season: " + FormatTimeOfYear(draft.TimeOfYear), delegate
+            {
+                draft.TimeOfYear = PromptTimeOfYear(draft.TimeOfYear);
+            }));
+            items.Add(new WorldEditorItem(
+                "Supernatural creatures: " + FormatEnabled(draft.SupernaturalCreatures),
+                delegate { draft.SupernaturalCreatures = ToggleBoolean("Supernatural creatures", draft.SupernaturalCreatures); }));
+            items.Add(new WorldEditorItem(
+                "Player-on-player attacks: " + (draft.FriendlyFire ? "Allowed" : "Disallowed"),
+                delegate { draft.FriendlyFire = ToggleBoolean("Player-on-player attacks", draft.FriendlyFire, "Allowed", "Disallowed"); }));
+
+            if (draft.GameMode == "Creative")
+            {
+                items.Add(new WorldEditorItem("Environment behavior: " + draft.EnvironmentBehavior, delegate
+                {
+                    draft.EnvironmentBehavior = PromptChoice(
+                        "Environment behavior",
+                        new[] { "Living", "Static" },
+                        draft.EnvironmentBehavior);
+                }));
+                items.Add(new WorldEditorItem("Time of day: " + draft.TimeOfDay, delegate
+                {
+                    draft.TimeOfDay = PromptChoice(
+                        "Time of day",
+                        new[] { "Changing", "Day", "Night", "Sunrise", "Sunset" },
+                        draft.TimeOfDay);
+                }));
+                items.Add(new WorldEditorItem(
+                    "Weather effects: " + FormatEnabled(draft.WeatherEffects),
+                    delegate { draft.WeatherEffects = ToggleBoolean("Weather effects", draft.WeatherEffects); }));
+                items.Add(new WorldEditorItem(
+                    "Adventure respawn: " + (draft.AdventureRespawn ? "Allowed" : "Not allowed"),
+                    delegate { draft.AdventureRespawn = ToggleBoolean("Adventure respawn", draft.AdventureRespawn, "Allowed", "Not allowed"); }));
+                items.Add(new WorldEditorItem(
+                    "Adventure survival mechanics: " + FormatEnabled(draft.AdventureSurvivalMechanics),
+                    delegate { draft.AdventureSurvivalMechanics = ToggleBoolean("Adventure survival mechanics", draft.AdventureSurvivalMechanics); }));
+            }
+
+            items.Add(new WorldEditorItem("Create and load world", WorldEditorResult.Submit));
+            return items;
+        }
+
+        private static Dictionary<string, object> BuildWorldCreateArguments(
+            WorldCreationDraft draft)
+        {
+            return new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["name"] = draft.Name,
+                ["seed"] = draft.Seed,
+                ["gameMode"] = draft.GameMode,
+                ["startingPosition"] = draft.StartingPosition,
+                ["terrainGeneration"] = draft.TerrainGeneration,
+                ["environmentBehavior"] = draft.EnvironmentBehavior,
+                ["timeOfDay"] = draft.TimeOfDay,
+                ["weatherEffects"] = draft.WeatherEffects,
+                ["supernaturalCreatures"] = draft.SupernaturalCreatures,
+                ["friendlyFire"] = draft.FriendlyFire,
+                ["seasonsChanging"] = draft.SeasonsChanging,
+                ["seaLevelOffset"] = draft.SeaLevelOffset,
+                ["temperatureOffset"] = draft.TemperatureOffset,
+                ["humidityOffset"] = draft.HumidityOffset,
+                ["biomeSize"] = draft.BiomeSize,
+                ["yearDays"] = draft.YearDays,
+                ["timeOfYear"] = draft.TimeOfYear,
+                ["blocksTextureName"] = draft.BlocksTextureName,
+                ["islandSizeEW"] = draft.IslandSizeEW,
+                ["islandSizeNS"] = draft.IslandSizeNS,
+                ["terrainLevel"] = draft.TerrainLevel,
+                ["shoreRoughness"] = draft.ShoreRoughness,
+                ["terrainBlockIndex"] = draft.TerrainBlockIndex,
+                ["terrainOceanBlockIndex"] = draft.TerrainOceanBlockIndex,
+                ["adventureRespawn"] = draft.AdventureRespawn,
+                ["adventureSurvivalMechanics"] = draft.AdventureSurvivalMechanics,
+                ["paletteColors"] = string.Join(";", draft.PaletteColors),
+                ["paletteNames"] = string.Join(";", draft.PaletteNames)
+            };
         }
 
         // Source: Survivalcraft/Game/PlayScreen.cs:PlayScreen.Play
@@ -392,9 +671,102 @@ namespace HeadlessRenderingMod
 
         private void ShowWorlds()
         {
+            Dictionary<string, object> world = SelectWorld("Worlds");
+            if (world != null)
+                ShowWorldDetails(world);
+        }
+
+        private void ShowCurrentWorld()
+        {
+            List<Dictionary<string, object>> worlds = GetResult<List<Dictionary<string, object>>>(
+                m_server.SubmitLocal("world.list"));
+            Dictionary<string, object> current = null;
+            foreach (Dictionary<string, object> world in worlds)
+            {
+                if (world.TryGetValue("loaded", out object loaded) &&
+                    loaded is bool isLoaded && isLoaded)
+                {
+                    current = world;
+                    break;
+                }
+            }
+
+            if (current == null)
+            {
+                Console.Clear();
+                Console.WriteLine(GetCurrentScreen() + "> Current World");
+                Console.WriteLine("No world is currently loaded.");
+                Pause();
+                return;
+            }
+
+            ShowWorldDetails(current);
+        }
+
+        private string GetCurrentWorldMenuLabel()
+        {
+            try
+            {
+                List<Dictionary<string, object>> worlds = GetResult<List<Dictionary<string, object>>>(
+                    m_server.SubmitLocal("world.list"));
+                foreach (Dictionary<string, object> world in worlds)
+                {
+                    if (world.TryGetValue("loaded", out object loaded) &&
+                        loaded is bool isLoaded && isLoaded)
+                    {
+                        return "Current World: " + world["name"];
+                    }
+                }
+            }
+            catch
+            {
+            }
+            return "Current World: <none>";
+        }
+
+        private void ShowWorldDetails(Dictionary<string, object> world)
+        {
             Console.Clear();
-            Console.WriteLine(GetCurrentScreen() + "> Worlds");
-            PrintResponse(RequireSuccess(m_server.SubmitLocal("world.list")));
+            bool loaded = world.TryGetValue("loaded", out object loadedValue) &&
+                loadedValue is bool isLoaded && isLoaded;
+            Console.WriteLine(GetCurrentScreen() + "> World: " + world["name"]);
+            Console.WriteLine("Game mode: " + world["gameMode"]);
+            Console.WriteLine("Terrain: " + world["terrainGeneration"]);
+            Console.WriteLine("Saved players: " + world["players"]);
+            Console.WriteLine("Directory: " + world["directoryName"]);
+            Console.WriteLine("Status: " + (loaded ? "CURRENT / LOADED" : "Not loaded"));
+            Console.WriteLine();
+
+            if (!loaded)
+            {
+                Console.WriteLine("Online players are available only for the loaded world.");
+                Pause();
+                return;
+            }
+
+            Console.WriteLine("Players in current world:");
+            List<Dictionary<string, object>> players = GetResult<List<Dictionary<string, object>>>(
+                m_server.SubmitLocal("player.list"));
+            if (players.Count == 0)
+            {
+                Console.WriteLine("  (none)");
+            }
+            else
+            {
+                foreach (Dictionary<string, object> player in players)
+                {
+                    bool spawned = player.TryGetValue("spawned", out object spawnedValue) &&
+                        spawnedValue is bool isSpawned && isSpawned;
+                    bool ready = player.TryGetValue("readyForPlaying", out object readyValue) &&
+                        readyValue is bool isReady && isReady;
+                    Console.WriteLine(
+                        "  #" + player["playerIndex"] + " " + player["name"] +
+                        " | " + player["playerClass"] +
+                        " | " + player["skinDisplayName"] +
+                        " | " + (spawned ? "Online" : "Saved") +
+                        " | " + (ready ? "Ready" : "Loading"));
+                }
+            }
             Pause();
         }
 
@@ -527,8 +899,10 @@ namespace HeadlessRenderingMod
             List<string> labels = new List<string>();
             foreach (Dictionary<string, object> world in worlds)
             {
+                bool loaded = world["loaded"] is bool isLoaded && isLoaded;
                 labels.Add(world["name"] + " | " + world["gameMode"] +
-                    (world["loaded"] is bool loaded && loaded ? " | loaded" : string.Empty));
+                    (loaded ? " | CURRENT" : string.Empty) +
+                    " | players " + world["players"]);
             }
             int? selected = SelectMenu(title, labels.ToArray(), 0);
             return selected.HasValue ? worlds[selected.Value] : null;
@@ -619,6 +993,239 @@ namespace HeadlessRenderingMod
             string[] choices = { "Yes", "No" };
             int? selected = SelectMenu(label, choices, defaultValue ? 0 : 1);
             return selected.HasValue ? selected.Value == 0 : defaultValue;
+        }
+
+        private bool ToggleBoolean(
+            string label,
+            bool value,
+            string trueLabel = "Enabled",
+            string falseLabel = "Disabled")
+        {
+            string[] choices = { trueLabel, falseLabel };
+            int? selected = SelectMenu(label, choices, value ? 0 : 1);
+            return selected.HasValue ? selected.Value == 0 : value;
+        }
+
+        private float PromptFloatChoice(
+            string label,
+            float[] choices,
+            float defaultValue,
+            string suffix = null,
+            float displayScale = 1f,
+            string displaySuffix = null)
+        {
+            string[] labels = new string[choices.Length];
+            int selectedIndex = 0;
+            for (int i = 0; i < choices.Length; i++)
+            {
+                labels[i] = FormatNumber(choices[i] * displayScale) +
+                    (displaySuffix ?? suffix ?? string.Empty);
+                if (Math.Abs(choices[i] - defaultValue) <
+                    Math.Abs(choices[selectedIndex] - defaultValue))
+                {
+                    selectedIndex = i;
+                }
+            }
+            int? selected = SelectMenu(label, labels, selectedIndex);
+            return selected.HasValue ? choices[selected.Value] : defaultValue;
+        }
+
+        private int PromptIntegerChoice(string label, int[] choices, int defaultValue)
+        {
+            string[] labels = new string[choices.Length];
+            int selectedIndex = 0;
+            for (int i = 0; i < choices.Length; i++)
+            {
+                labels[i] = choices[i] == 0 ? "Normal" :
+                    (choices[i] > 0 ? "+" : string.Empty) + choices[i];
+                if (Math.Abs(choices[i] - defaultValue) <
+                    Math.Abs(choices[selectedIndex] - defaultValue))
+                {
+                    selectedIndex = i;
+                }
+            }
+            int? selected = SelectMenu(label, labels, selectedIndex);
+            return selected.HasValue ? choices[selected.Value] : defaultValue;
+        }
+
+        private static int PromptInteger(
+            string label,
+            int defaultValue,
+            int minimum,
+            int maximum)
+        {
+            while (true)
+            {
+                string text = PromptText(label, defaultValue.ToString(CultureInfo.InvariantCulture));
+                if (int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out int value) &&
+                    value >= minimum && value <= maximum)
+                {
+                    return value;
+                }
+                Console.WriteLine("Enter a whole number from " + minimum + " to " + maximum + ".");
+            }
+        }
+
+        private static int[] IntegerRange(int minimum, int maximum)
+        {
+            int[] result = new int[maximum - minimum + 1];
+            for (int i = 0; i < result.Length; i++)
+                result[i] = minimum + i;
+            return result;
+        }
+
+        private static float[] FloatRange(int minimum, int maximum)
+        {
+            float[] result = new float[maximum - minimum + 1];
+            for (int i = 0; i < result.Length; i++)
+                result[i] = minimum + i;
+            return result;
+        }
+
+        private static string FormatNumber(float value)
+        {
+            return value.ToString("0.##", CultureInfo.InvariantCulture);
+        }
+
+        private static string FormatOffset(float value)
+        {
+            return Math.Abs(value) < 0.0001f
+                ? "Normal"
+                : (value > 0f ? "+" : string.Empty) + FormatNumber(value);
+        }
+
+        private static string FormatEnabled(bool enabled)
+        {
+            return enabled ? "Enabled" : "Disabled";
+        }
+
+        private static string FormatTimeOfYear(float value)
+        {
+            return SubsystemSeasons.GetTimeOfYearName(value) ?? FormatNumber(value);
+        }
+
+        private float PromptTimeOfYear(float defaultValue)
+        {
+            int selectedIndex = 0;
+            for (int i = 1; i < TimeOfYearValues.Length; i++)
+            {
+                if (Math.Abs(TimeOfYearValues[i] - defaultValue) <
+                    Math.Abs(TimeOfYearValues[selectedIndex] - defaultValue))
+                {
+                    selectedIndex = i;
+                }
+            }
+            int? selected = SelectMenu("Season", TimeOfYearNames, selectedIndex);
+            return selected.HasValue ? TimeOfYearValues[selected.Value] : defaultValue;
+        }
+
+        private static string GetBlockLabel(int blockIndex)
+        {
+            try
+            {
+                Block block = BlocksManager.Blocks[blockIndex];
+                return block.GetDisplayName(null, Terrain.MakeBlockValue(blockIndex)) +
+                    " (#" + blockIndex + ")";
+            }
+            catch
+            {
+                return "Block #" + blockIndex;
+            }
+        }
+
+        private int SelectTerrainBlock(int defaultValue)
+        {
+            string[] labels = new string[FlatTerrainBlocks.Length];
+            int selectedIndex = 0;
+            for (int i = 0; i < FlatTerrainBlocks.Length; i++)
+            {
+                labels[i] = GetBlockLabel(FlatTerrainBlocks[i]);
+                if (FlatTerrainBlocks[i] == defaultValue)
+                    selectedIndex = i;
+            }
+            int? selected = SelectMenu("Flat terrain block", labels, selectedIndex);
+            return selected.HasValue ? FlatTerrainBlocks[selected.Value] : defaultValue;
+        }
+
+        private static string GetBlocksTextureLabel(string textureName)
+        {
+            try
+            {
+                return BlocksTexturesManager.GetDisplayName(textureName) +
+                    (string.IsNullOrEmpty(textureName) ? " 512x512" : string.Empty);
+            }
+            catch
+            {
+                return string.IsNullOrEmpty(textureName) ? "Survivalcraft" : textureName;
+            }
+        }
+
+        private string SelectBlocksTexture(string defaultValue)
+        {
+            try
+            {
+                BlocksTexturesManager.UpdateBlocksTexturesList();
+                List<string> names = new List<string>();
+                List<string> labels = new List<string>();
+                int selectedIndex = 0;
+                foreach (string name in BlocksTexturesManager.BlockTexturesNames)
+                {
+                    if (string.Equals(name, defaultValue, StringComparison.OrdinalIgnoreCase))
+                        selectedIndex = names.Count;
+                    names.Add(name);
+                    labels.Add(GetBlocksTextureLabel(name));
+                }
+                if (names.Count == 0)
+                    return defaultValue;
+                int? selected = SelectMenu("Blocks texture", labels.ToArray(), selectedIndex);
+                return selected.HasValue ? names[selected.Value] : defaultValue;
+            }
+            catch
+            {
+                return PromptText("Blocks texture resource name", defaultValue, "Survivalcraft");
+            }
+        }
+
+        private void EditPalette(WorldCreationDraft draft)
+        {
+            int selected = 0;
+            while (m_running)
+            {
+                string[] labels = new string[WorldPalette.MaxColors];
+                for (int i = 0; i < labels.Length; i++)
+                {
+                    string name = string.IsNullOrEmpty(draft.PaletteNames[i])
+                        ? WorldPalette.DefaultNames[i]
+                        : draft.PaletteNames[i];
+                    string color = string.IsNullOrEmpty(draft.PaletteColors[i])
+                        ? HumanReadableConverter.ConvertToString(WorldPalette.DefaultColors[i])
+                        : draft.PaletteColors[i];
+                    labels[i] = (i + 1) + ". " + name + " = " + color;
+                }
+                int? choice = SelectMenu("Customize Paint Colors", labels, selected);
+                if (!choice.HasValue)
+                    return;
+                selected = choice.Value;
+                string currentName = string.IsNullOrEmpty(draft.PaletteNames[selected])
+                    ? WorldPalette.DefaultNames[selected]
+                    : draft.PaletteNames[selected];
+                string currentColor = string.IsNullOrEmpty(draft.PaletteColors[selected])
+                    ? HumanReadableConverter.ConvertToString(WorldPalette.DefaultColors[selected])
+                    : draft.PaletteColors[selected];
+                string newName = PromptText("Color name", currentName);
+                if (!WorldPalette.VerifyColorName(newName))
+                    throw new InvalidOperationException(
+                        "Color name must contain 1-16 letters, digits, spaces or hyphens.");
+                string newColor = PromptText("Color (#RRGGBB or R,G,B)", currentColor);
+                if (!HumanReadableConverter.TryConvertFromString(newColor, out Color parsedColor))
+                    throw new InvalidOperationException("Invalid color value.");
+                draft.PaletteNames[selected] = newName == WorldPalette.DefaultNames[selected]
+                    ? string.Empty
+                    : newName;
+                draft.PaletteColors[selected] = parsedColor == WorldPalette.DefaultColors[selected]
+                    ? string.Empty
+                    : HumanReadableConverter.ConvertToString(parsedColor);
+            }
         }
 
         private void WaitForWorldCommands()
@@ -790,6 +1397,69 @@ namespace HeadlessRenderingMod
             if (current.Length > 0)
                 result.Add(current.ToString());
             return result;
+        }
+
+        private enum WorldEditorResult
+        {
+            Stay,
+            Cancel,
+            PreviousPage,
+            NextPage,
+            Submit
+        }
+
+        private sealed class WorldEditorItem
+        {
+            public WorldEditorItem(string label, Action edit)
+            {
+                Label = label;
+                Edit = edit;
+                Result = WorldEditorResult.Stay;
+            }
+
+            public WorldEditorItem(string label, WorldEditorResult result)
+            {
+                Label = label;
+                Result = result;
+            }
+
+            public string Label { get; }
+
+            public Action Edit { get; }
+
+            public WorldEditorResult Result { get; }
+        }
+
+        private sealed class WorldCreationDraft
+        {
+            public string Name = "ServerWorld";
+            public string Seed = string.Empty;
+            public string GameMode = "Survival";
+            public string StartingPosition = "Easy";
+            public string TerrainGeneration = "Continent";
+            public string EnvironmentBehavior = "Living";
+            public string TimeOfDay = "Changing";
+            public bool WeatherEffects = true;
+            public bool AdventureRespawn = true;
+            public bool AdventureSurvivalMechanics = true;
+            public bool SupernaturalCreatures = true;
+            public bool FriendlyFire = true;
+            public bool SeasonsChanging = true;
+            public int SeaLevelOffset;
+            public float TemperatureOffset;
+            public float HumidityOffset;
+            public float BiomeSize = 1f;
+            public float YearDays = 24f;
+            public float TimeOfYear = 0.125f;
+            public string BlocksTextureName = string.Empty;
+            public float IslandSizeEW = 400f;
+            public float IslandSizeNS = 400f;
+            public int TerrainLevel = 64;
+            public float ShoreRoughness = 0.5f;
+            public int TerrainBlockIndex = 8;
+            public int TerrainOceanBlockIndex = 18;
+            public string[] PaletteColors = new string[WorldPalette.MaxColors];
+            public string[] PaletteNames = new string[WorldPalette.MaxColors];
         }
 
         [DllImport("kernel32.dll", SetLastError = true)]

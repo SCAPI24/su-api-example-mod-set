@@ -6,6 +6,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
+using TemplatesDatabase;
 
 namespace HeadlessRenderingMod
 {
@@ -34,7 +35,7 @@ namespace HeadlessRenderingMod
 
         public string Name => "无画面服务器";
 
-        public string Version => "1.2.2";
+        public string Version => "1.3.0";
 
         public IEnumerable<string> Dependencies => Array.Empty<string>();
 
@@ -455,6 +456,14 @@ namespace HeadlessRenderingMod
                 settings.Seed = seed ?? string.Empty;
             if (request.TryGetBoolean("weatherEffects", out bool weatherEffects))
                 settings.AreWeatherEffectsEnabled = weatherEffects;
+            if (request.TryGetBoolean("adventureRespawn", out bool adventureRespawn))
+                settings.IsAdventureRespawnAllowed = adventureRespawn;
+            if (request.TryGetBoolean(
+                "adventureSurvivalMechanics",
+                out bool adventureSurvivalMechanics))
+            {
+                settings.AreAdventureSurvivalMechanicsEnabled = adventureSurvivalMechanics;
+            }
             if (request.TryGetBoolean(
                 "supernaturalCreatures",
                 out bool supernaturalCreatures))
@@ -465,6 +474,51 @@ namespace HeadlessRenderingMod
                 settings.IsFriendlyFireEnabled = friendlyFire;
             if (request.TryGetBoolean("seasonsChanging", out bool seasonsChanging))
                 settings.AreSeasonsChanging = seasonsChanging;
+
+            // Source: Survivalcraft/Game/WorldOptionsScreen.cs:WorldOptionsScreen.Update
+            settings.SeaLevelOffset = ReadIntegerOption(
+                request, "seaLevelOffset", settings.SeaLevelOffset, -4, 4);
+            settings.TemperatureOffset = ReadFloatOption(
+                request, "temperatureOffset", settings.TemperatureOffset, -8f, 8f);
+            settings.HumidityOffset = ReadFloatOption(
+                request, "humidityOffset", settings.HumidityOffset, -8f, 8f);
+            settings.BiomeSize = ReadChoiceFloatOption(
+                request,
+                "biomeSize",
+                settings.BiomeSize,
+                new[] { 0.25f, 0.33f, 0.5f, 0.75f, 1f, 1.5f, 2f, 3f, 4f });
+            settings.YearDays = ReadChoiceFloatOption(
+                request,
+                "yearDays",
+                settings.YearDays,
+                new[] { 8f, 12f, 16f, 20f, 24f, 32f, 48f, 64f, 96f });
+            settings.TimeOfYear = ReadFloatOption(
+                request, "timeOfYear", settings.TimeOfYear, 0f, 0.999f);
+            if (request.TryGetString("blocksTextureName", out string blocksTextureName))
+                settings.BlocksTextureName = blocksTextureName ?? string.Empty;
+            if (request.TryGetFloat("islandSizeEW", out float islandSizeEW))
+                settings.IslandSize.X = ValidateRange("islandSizeEW", islandSizeEW, 30f, 2500f);
+            if (request.TryGetFloat("islandSizeNS", out float islandSizeNS))
+                settings.IslandSize.Y = ValidateRange("islandSizeNS", islandSizeNS, 30f, 2500f);
+            if (request.TryGetInteger("terrainLevel", out int terrainLevel))
+                settings.TerrainLevel = ValidateRange("terrainLevel", terrainLevel, 2, 252);
+            if (request.TryGetFloat("shoreRoughness", out float shoreRoughness))
+                settings.ShoreRoughness = ValidateRange("shoreRoughness", shoreRoughness, 0f, 1f);
+            if (request.TryGetInteger("terrainBlockIndex", out int terrainBlockIndex))
+                settings.TerrainBlockIndex = ValidateRange("terrainBlockIndex", terrainBlockIndex, 0, 1023);
+            if (request.TryGetInteger("terrainOceanBlockIndex", out int terrainOceanBlockIndex))
+                settings.TerrainOceanBlockIndex = ValidateRange("terrainOceanBlockIndex", terrainOceanBlockIndex, 0, 1023);
+            bool hasPaletteColors = request.TryGetString(
+                "paletteColors", out string paletteColors);
+            bool hasPaletteNames = request.TryGetString(
+                "paletteNames", out string paletteNames);
+            if (hasPaletteColors || hasPaletteNames)
+            {
+                ValuesDictionary paletteValues = new ValuesDictionary();
+                paletteValues.SetValue("Colors", paletteColors ?? new string(';', 15));
+                paletteValues.SetValue("Names", paletteNames ?? new string(';', 15));
+                settings.Palette = new WorldPalette(paletteValues);
+            }
 
             if (settings.GameMode != GameMode.Creative)
                 settings.ResetOptionsForNonCreativeMode(null);
@@ -542,6 +596,77 @@ namespace HeadlessRenderingMod
             throw new ControlCommandException(
                 "invalid_argument",
                 $"'{value}' is not a valid {argumentName} value.");
+        }
+
+        private static float ReadFloatOption(
+            ControlRequest request,
+            string argumentName,
+            float defaultValue,
+            float minimum,
+            float maximum)
+        {
+            if (!request.TryGetFloat(argumentName, out float value))
+                return defaultValue;
+            return ValidateRange(argumentName, value, minimum, maximum);
+        }
+
+        private static int ReadIntegerOption(
+            ControlRequest request,
+            string argumentName,
+            int defaultValue,
+            int minimum,
+            int maximum)
+        {
+            if (!request.TryGetInteger(argumentName, out int value))
+                return defaultValue;
+            return ValidateRange(argumentName, value, minimum, maximum);
+        }
+
+        private static float ReadChoiceFloatOption(
+            ControlRequest request,
+            string argumentName,
+            float defaultValue,
+            float[] choices)
+        {
+            if (!request.TryGetFloat(argumentName, out float value))
+                return defaultValue;
+            foreach (float choice in choices)
+            {
+                if (Math.Abs(choice - value) < 0.0001f)
+                    return choice;
+            }
+            throw new ControlCommandException(
+                "invalid_argument",
+                $"'{argumentName}' must be one of: {string.Join(", ", choices)}.");
+        }
+
+        private static int ValidateRange(
+            string argumentName,
+            int value,
+            int minimum,
+            int maximum)
+        {
+            if (value < minimum || value > maximum)
+                throw new ControlCommandException(
+                    "invalid_argument",
+                    $"'{argumentName}' must be between {minimum} and {maximum}.");
+            return value;
+        }
+
+        private static float ValidateRange(
+            string argumentName,
+            float value,
+            float minimum,
+            float maximum)
+        {
+            if (float.IsNaN(value) || float.IsInfinity(value) ||
+                value < minimum || value > maximum)
+            {
+                throw new ControlCommandException(
+                    "invalid_argument",
+                    $"'{argumentName}' must be between {minimum} and {maximum}.");
+            }
+            return value;
         }
 
         // Source: Survivalcraft/Game/ScreensManager.cs and GameManager.cs
