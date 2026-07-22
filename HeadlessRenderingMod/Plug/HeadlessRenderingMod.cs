@@ -341,11 +341,21 @@ namespace HeadlessRenderingMod
             for (int i = 0; i < DialogsManager.Dialogs.Count; i++)
             {
                 Dialog dialog = DialogsManager.Dialogs[i];
-                result.Add(new Dictionary<string, object>(StringComparer.Ordinal)
+                Dictionary<string, object> item = new Dictionary<string, object>(StringComparer.Ordinal)
                 {
                     ["index"] = i,
                     ["type"] = dialog.GetType().FullName
-                });
+                };
+                if (dialog is MessageDialog)
+                {
+                    LabelWidget largeLabel = ModManager.Instance.ModParentField
+                        .GetParentField<LabelWidget>(dialog, "m_largeLabelWidget", typeof(MessageDialog));
+                    LabelWidget smallLabel = ModManager.Instance.ModParentField
+                        .GetParentField<LabelWidget>(dialog, "m_smallLabelWidget", typeof(MessageDialog));
+                    item["largeText"] = largeLabel?.Text;
+                    item["smallText"] = smallLabel?.Text;
+                }
+                result.Add(item);
             }
             return result;
         }
