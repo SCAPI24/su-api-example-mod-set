@@ -1,0 +1,5 @@
+# ScMultiplayer service discovery DNS list.
+# One DNS name or IP address per line. Comma, semicolon, tab and pipe tables are supported.
+# Inline comments can start with # or //.
+
+suceru.site
