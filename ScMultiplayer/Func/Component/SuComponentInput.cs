@@ -42,6 +42,13 @@ namespace ScMultiplayer
                 fields.ModifyParentField(this, "m_playerInput", networkInput, parentType);
                 return;
             }
+            // Source: ScMultiplayer.cs:ScMultiplayer.ShouldSuppressClientInput
+            // Terrain recovery must reach its live barrier before local world actions resume.
+            if (ScMultiplayer.currentInstance?.ShouldSuppressClientInput == true)
+            {
+                fields.ModifyParentField(this, "m_playerInput", default(PlayerInput), parentType);
+                return;
+            }
             Sum_lastJumpTime = fields.GetParentField<double>(this, "m_lastJumpTime", parentType);
             fields.ModifyParentField(this, "m_playerInput", default(PlayerInput), parentType);
             SuUpdateInputFromMouseAndKeyboard(Sum_componentPlayer.GameWidget.Input);

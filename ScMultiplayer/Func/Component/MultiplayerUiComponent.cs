@@ -39,6 +39,7 @@ namespace ScMultiplayer
 
         void IUpdateable.Update(float dt)
         {
+            ScMultiplayer.currentInstance?.NotifyProjectSimulationStep(Project);
             // Source: Mod/ConsoleMod/Subsystem/ConsoleSubsystemGameWidgets.cs:AttachConsoleButton
             if (m_moreContents == null) AttachButtons();
             ScMultiplayer multiplayer = ScMultiplayer.currentInstance;
