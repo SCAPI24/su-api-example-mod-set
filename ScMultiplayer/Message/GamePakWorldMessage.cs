@@ -18,6 +18,7 @@ namespace ScMultiplayer
         public int TotalLength;
         public byte[] WorldSha256 = Array.Empty<byte>();
         public int RandomSeed;
+        public long TerrainSequenceBaseline;
         public Dictionary<string, long> RandomStates = new Dictionary<string, long>();
         public string PlayerName = string.Empty;
         public PlayerClass PlayerClass;
@@ -98,6 +99,7 @@ namespace ScMultiplayer
             TotalLength = reader.ReadInt32();
             WorldSha256 = reader.ReadBytes();
             RandomSeed = reader.ReadInt32();
+            TerrainSequenceBaseline = reader.ReadInt64();
             int count = reader.ReadPackedInt32();
             RandomStates = new Dictionary<string, long>(count);
             for (int i = 0; i < count; i++)
@@ -153,6 +155,7 @@ namespace ScMultiplayer
             writer.WriteInt32(TotalLength);
             writer.WriteBytes(WorldSha256 ?? Array.Empty<byte>());
             writer.WriteInt32(RandomSeed);
+            writer.WriteInt64(TerrainSequenceBaseline);
             writer.WritePackedInt32(RandomStates?.Count ?? 0);
             if (RandomStates != null)
             {

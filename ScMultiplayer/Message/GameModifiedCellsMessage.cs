@@ -12,6 +12,7 @@ namespace ScMultiplayer
         public Dictionary<Point3, bool> ModifiedCells;
         public List<int> CellValues;
         public int Tick;
+        public long Sequence;
         public bool IsCatchUp;
         public int TargetClientId = -1;
 
@@ -37,11 +38,12 @@ namespace ScMultiplayer
         }
 
         public GameModifiedCellsMessage(Dictionary<Point3, bool> modifiedCells, List<int> cellValues,
-            int tick, bool isCatchUp, int targetClientId)
+            int tick, bool isCatchUp, int targetClientId, long sequence = 0)
         {
             ModifiedCells = new Dictionary<Point3, bool>(modifiedCells);
             CellValues = new List<int>(cellValues);
             Tick = tick;
+            Sequence = sequence;
             IsCatchUp = isCatchUp;
             TargetClientId = targetClientId;
         }
@@ -51,6 +53,7 @@ namespace ScMultiplayer
             Tick = reader.ReadInt32();
             IsCatchUp = reader.ReadBoolean();
             TargetClientId = reader.ReadInt32();
+            Sequence = reader.ReadInt64();
             int count = reader.ReadPackedInt32();
             ModifiedCells = new Dictionary<Point3, bool>(count);
             CellValues = new List<int>(count);
@@ -67,6 +70,7 @@ namespace ScMultiplayer
             writer.WriteInt32(Tick);
             writer.WriteBoolean(IsCatchUp);
             writer.WriteInt32(TargetClientId);
+            writer.WriteInt64(Sequence);
             writer.WritePackedInt32(ModifiedCells?.Count ?? 0);
             if (ModifiedCells == null) return;
 

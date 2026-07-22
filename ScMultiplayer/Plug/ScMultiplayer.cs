@@ -1,4 +1,4 @@
-﻿using Comms;
+using Comms;
 using Comms.Drt;
 using Engine;
 using Engine.Graphics;
@@ -31,7 +31,8 @@ namespace ScMultiplayer
         Hz2 = 2,
         Hz4 = 4,
         Hz8 = 8,
-        Hz16 = 16
+        Hz16 = 16,
+        Hz32 = 32
     }
 
     // ================================================================
@@ -262,6 +263,14 @@ namespace ScMultiplayer
         public int Tick;
     }
 
+    public class TerrainJournalEntry
+    {
+        public long Sequence;
+        public int ServerStep;
+        public double CreatedTime;
+        public byte[] Payload;
+    }
+
     public class PendingTerrainPrediction
     {
         public TerrainDigRequestMessage Request;
@@ -355,6 +364,7 @@ namespace ScMultiplayer
         public byte[] WorldData;
         public DateTime LastSaveTime;
         public int Tick;
+        public long TerrainSequence;
         public Dictionary<string, long> RandomStates;
     }
 
@@ -636,6 +646,7 @@ namespace ScMultiplayer
         // Source: ScMultiplayer.cs:HandlePickableSyncMessage
         public static void SendPickableMessage(PickableSyncMessage message) =>
             SendScheduledMessage(-1, message,
+                sequenced: message.Action != PickableSyncMessage.PickAction.UpdatePosition,
                 latest: message.Action == PickableSyncMessage.PickAction.UpdatePosition);
 
         public static void SendPakWorldManifest(int targetClientId, GamePakWorldMessage message)
@@ -823,7 +834,7 @@ namespace ScMultiplayer
 
         // ---------- IMod ----------
         public string Name => "SC联机";
-        public string Version => "1.3.7";
+        public string Version => "1.6.0";
         public IEnumerable<string> Dependencies => Array.Empty<string>();
         public bool IsEnabled { get; set; } = true;
         public bool IsMergeLib => true;
@@ -855,6 +866,10 @@ namespace ScMultiplayer
         private readonly Dictionary<int, string> m_pendingNetworkPlayerIdentities = new Dictionary<int, string>();
         private readonly Dictionary<int, NetworkPlayerInputState> m_networkPlayerInputs =
             new Dictionary<int, NetworkPlayerInputState>();
+        // Source: Mod/Comms/Comms.Drt/Func/Server/Set/ServerGame.cs:ServerGame.Handle
+        // Client IDs increase for the lifetime of a room, so a leave tombstone safely rejects
+        // delayed profile/entity messages until the next room resets transient state.
+        private readonly HashSet<int> m_departedRemoteClientIds = new HashSet<int>();
         private PlayerInput m_localPlayerInput;
         private Vector3 m_localInputBodyPosition;
         private Vector3 m_localInputBodyVelocity;
@@ -940,6 +955,7 @@ namespace ScMultiplayer
         private int m_lastFullAnimalSnapshotTick;
         private readonly Dictionary<Pickable, ushort> m_hostPickableIds = new Dictionary<Pickable, ushort>();
         private SubsystemPickables m_hostPickablesSubsystem;
+        private bool m_forceHostInventorySync;
         private readonly Dictionary<ushort, Pickable> m_remotePickables = new Dictionary<ushort, Pickable>();
         private bool m_applyingNetworkPickable;
         private int m_lastAuthoritativeLocalInventoryTick;
@@ -965,6 +981,24 @@ namespace ScMultiplayer
         private readonly HashSet<IUpdateable> m_disabledClientContainerUpdates = new HashSet<IUpdateable>();
         private readonly Dictionary<ushort, RemotePickableRecord> m_remotePickableRecords = new Dictionary<ushort, RemotePickableRecord>();
         private readonly object m_terrainJournalLock = new object();
+        private readonly Queue<TerrainJournalEntry> m_hostTerrainJournal =
+            new Queue<TerrainJournalEntry>();
+        private readonly Dictionary<int, long> m_hostTerrainRecoveryTargets =
+            new Dictionary<int, long>();
+        private long m_hostTerrainSequence;
+        private long m_pendingTerrainSequenceBaseline;
+        private volatile bool m_clientTerrainRecoveryActive;
+        private volatile bool m_clientTerrainRecoveryPending;
+        private bool m_clientTerrainRecoveryRequestInFlight;
+        private volatile bool m_clientSuspensionRequested;
+        private long m_clientTerrainRecoveryTarget = -1;
+        private long m_clientTerrainRecoveryAcknowledged = -1;
+        private long m_clientTerrainRecoveryReady = -1;
+        private double m_clientTerrainGapDetectedTime;
+        private bool m_clientGameplayScreenObserved;
+        private bool m_wasClientGameScreenActive;
+        private volatile bool m_clientWindowDeactivated;
+        private int m_lastProjectSimulationFrameIndex = -1;
         private readonly Dictionary<Point3, TerrainCellState> m_terrainCheckpoint =
             new Dictionary<Point3, TerrainCellState>();
         private readonly Dictionary<Point3, TerrainCellState> m_pendingTerrainChanges =
@@ -1040,7 +1074,7 @@ namespace ScMultiplayer
         private const float ServerTickDuration = 0.01f;
         private const float TransportTickDuration = 0.05f;
         private const int LogicStepsPerTransportTick = 5;
-        private const int SyncBaseRate = 16;
+        private const int SyncBaseRate = 32;
         private const float SyncPulseDuration = 1f / SyncBaseRate;
         private const int MaxSyncPulsesPerUpdate = 4;
         private const int MaxReconnectAttempts = 5;
@@ -1076,6 +1110,10 @@ namespace ScMultiplayer
         private const double WorldTransferRepairRequestInterval = 1.5;
         private const int MaximumWorldTransferSize = 64 * 1024 * 1024;
         private const int MaximumJoinCatchUpBytes = 4 * 1024 * 1024;
+        private const double TerrainRecoveryRetention = 15.0;
+        private const int MaximumTerrainRecoveryRanges = 64;
+        private const int MaximumTerrainRecoveryBatchBytes = 256 * 1024;
+        private const double TerrainGapRecoveryDelay = 0.75;
         private const int RunawayCreatureThreshold = 256;
         private const int RunawayCreatureKeepCount = 52;
         private const int RunawayCreatureCleanupBatchSize = 256;
@@ -1154,18 +1192,21 @@ namespace ScMultiplayer
                 // once-per-rendered-frame entry point.
                 UpdateFrame(Time.FrameDuration);
                 ProcessEndOfFrameActions();
+                UpdateClientTerrainRecoveryAfterNetworkActions();
                 CleanupDownloadedWorldsIfIdle();
                 return args;
             }, EventPriority.LOWEST);
 
             CleanupDownloadedWorldsIfIdle();
             GameManager.ProjectDisposed += HandleProjectDisposed;
+            Window.Deactivated += HandleWindowDeactivated;
+            Window.Activated += HandleWindowActivated;
 
             // 初始化网络
             // Source: Mod/Comms/Comms.Drt/Func/Server/Server.cs:Server.Server
             // Source: Comms.Drt/Func/Server/Server.cs:Server.Server
             // Five 10ms logic steps remain batched into one 50ms transport tick. The independent
-            // 16Hz power-of-two message scheduler must not alter Client.Step's 100Hz logic clock.
+            // 32Hz power-of-two message scheduler must not alter Client.Step's 100Hz logic clock.
             float tickDuration = TransportTickDuration;
             int stepsPerTick = LogicStepsPerTransportTick;
             IReadOnlyList<int> serverPorts = ScMultiplayerSettings.ServerPorts;
@@ -1540,10 +1581,195 @@ namespace ScMultiplayer
             // loop and execute it exactly once here.
             Project project = GameManager.Project;
             if (project != null)
+            {
+                MaintainMultiplayerTimeFlow(project);
+                // Source: Survivalcraft/Game/GameScreen.cs:GameScreen.Update
+                // Settings and help screens remove GameScreen from the update hierarchy. A room
+                // host must continue advancing the authoritative Project exactly once per frame.
+                if (IsHost && client?.IsConnected == true &&
+                    m_lastProjectSimulationFrameIndex != Time.FrameIndex)
+                    GameManager.UpdateProject();
                 UpdateWorldSubsystem(dt, project);
+            }
+            UpdateClientSuspensionState(project);
             MaintainHostAimPresentation();
             RenderRemotePlayers();
             UpdateNetworkStatsOverlay();
+        }
+
+        public bool ShouldSuppressClientInput =>
+            !IsHost && client?.IsConnected == true && m_clientTerrainRecoveryActive;
+
+        // Source: Survivalcraft/Game/GameManager.cs:GameManager.UpdateProject
+        public void NotifyProjectSimulationStep(Project project)
+        {
+            if (project != null && ReferenceEquals(project, GameManager.Project))
+                m_lastProjectSimulationFrameIndex = Time.FrameIndex;
+        }
+
+        // Source: Engine/Window.cs:Window.Deactivated
+        private void HandleWindowDeactivated()
+        {
+            if (!IsHost && client?.IsConnected == true)
+            {
+                m_clientWindowDeactivated = true;
+                m_clientSuspensionRequested = true;
+                m_clientTerrainRecoveryActive = true;
+            }
+        }
+
+        // Source: Engine/Window.cs:Window.Activated
+        private void HandleWindowActivated()
+        {
+            if (!m_clientWindowDeactivated) return;
+            m_clientWindowDeactivated = false;
+            if (!IsHost && client?.IsConnected == true)
+                m_clientTerrainRecoveryPending = true;
+        }
+
+        // Source: Survivalcraft/Game/ScreensManager.cs:ScreensManager.CurrentScreen
+        private void UpdateClientSuspensionState(Project project)
+        {
+            if (m_clientSuspensionRequested)
+            {
+                m_clientSuspensionRequested = false;
+                BeginClientTerrainSuspension();
+            }
+            bool eligible = !IsHost && client?.IsConnected == true && project != null &&
+                !m_isLoadingDownloadedWorld && m_pendingWorldReadyTransferId <= 0;
+            bool gameScreenActive = eligible && ScreensManager.CurrentScreen is GameScreen;
+            if (!eligible)
+            {
+                m_clientGameplayScreenObserved = false;
+                m_wasClientGameScreenActive = false;
+                return;
+            }
+            if (!m_clientGameplayScreenObserved)
+            {
+                if (gameScreenActive)
+                {
+                    m_clientGameplayScreenObserved = true;
+                    m_wasClientGameScreenActive = true;
+                }
+                return;
+            }
+            if (m_wasClientGameScreenActive && !gameScreenActive)
+                BeginClientTerrainSuspension();
+            else if (!m_wasClientGameScreenActive && gameScreenActive &&
+                m_clientTerrainRecoveryActive)
+                m_clientTerrainRecoveryPending = true;
+            m_wasClientGameScreenActive = gameScreenActive;
+        }
+
+    private void BeginClientTerrainSuspension()
+    {
+        if (IsHost || client?.IsConnected != true || !m_clientGameplayScreenObserved)
+            return;
+        m_clientTerrainRecoveryActive = true;
+        // Queue the request immediately. If the Android lifecycle does not emit an Activated
+        // event after returning to the game, waiting for that callback leaves input suppressed
+        // forever with no recovery request in flight.
+        m_clientTerrainRecoveryPending = true;
+            m_clientTerrainRecoveryRequestInFlight = false;
+            m_clientTerrainRecoveryTarget = -1;
+            m_clientTerrainRecoveryAcknowledged = -1;
+            m_clientTerrainRecoveryReady = -1;
+            m_localPlayerInput = default;
+            m_localInputResendsRemaining = 0;
+            m_localAimActive = false;
+            m_localAimSlot = -1;
+            m_localTerrainDigIntents.Clear();
+            m_pendingTerrainPredictions.Clear();
+            m_pendingTerrainPredictionCells.Clear();
+        }
+
+        // Source: ScMultiplayer.cs:ScMultiplayer.ProcessEndOfFrameActions
+        private void UpdateClientTerrainRecoveryAfterNetworkActions()
+        {
+            if (IsHost || client?.IsConnected != true || GameManager.Project == null ||
+                m_isLoadingDownloadedWorld || m_pendingWorldReadyTransferId > 0)
+                return;
+
+            bool gameScreenActive = ScreensManager.CurrentScreen is GameScreen;
+            if (gameScreenActive && m_clientTerrainRecoveryActive &&
+                !m_clientTerrainRecoveryPending && m_clientTerrainRecoveryTarget < 0 &&
+                m_clientTerrainRecoveryReady < 0 && !m_clientTerrainRecoveryRequestInFlight)
+                m_clientTerrainRecoveryPending = true;
+            if (!m_clientTerrainRecoveryActive && SuSubsystemTerrain.HasBufferedSequenceGap())
+            {
+                if (m_clientTerrainGapDetectedTime <= 0.0)
+                    m_clientTerrainGapDetectedTime = Time.RealTime;
+                else if (Time.RealTime - m_clientTerrainGapDetectedTime >=
+                    TerrainGapRecoveryDelay)
+                {
+                    m_clientTerrainRecoveryActive = true;
+                    m_clientTerrainRecoveryPending = true;
+                }
+            }
+            else if (!SuSubsystemTerrain.HasBufferedSequenceGap())
+            {
+                m_clientTerrainGapDetectedTime = 0.0;
+            }
+
+            if (m_clientTerrainRecoveryPending && gameScreenActive)
+                SendClientTerrainRecoveryRequest();
+
+            long applied = SuSubsystemTerrain.LastAppliedTerrainSequence;
+            if (m_clientTerrainRecoveryTarget >= 0 &&
+                applied >= m_clientTerrainRecoveryTarget &&
+                m_clientTerrainRecoveryAcknowledged < m_clientTerrainRecoveryTarget)
+            {
+                m_clientTerrainRecoveryAcknowledged = m_clientTerrainRecoveryTarget;
+                SendTerrainRecoveryMessage(0, new TerrainRecoveryMessage
+                {
+                    Stage = TerrainRecoveryStage.Acknowledge,
+                    LastAppliedSequence = applied,
+                    HeadSequence = m_clientTerrainRecoveryTarget,
+                    ServerStep = client.Step
+                });
+            }
+
+            if (m_clientTerrainRecoveryReady >= 0 &&
+                applied >= m_clientTerrainRecoveryReady)
+            {
+                Log.Information($"[ScMP] Terrain recovery complete: Sequence={applied}");
+                m_clientTerrainRecoveryActive = false;
+                m_clientTerrainRecoveryPending = false;
+                m_clientTerrainRecoveryRequestInFlight = false;
+                m_clientTerrainRecoveryTarget = -1;
+                m_clientTerrainRecoveryAcknowledged = -1;
+                m_clientTerrainRecoveryReady = -1;
+                m_clientTerrainGapDetectedTime = 0.0;
+            }
+        }
+
+        private void SendClientTerrainRecoveryRequest()
+        {
+            m_clientTerrainRecoveryPending = false;
+            m_clientTerrainRecoveryRequestInFlight = true;
+            m_clientTerrainRecoveryTarget = -1;
+            m_clientTerrainRecoveryAcknowledged = -1;
+            m_clientTerrainRecoveryReady = -1;
+            long applied = SuSubsystemTerrain.LastAppliedTerrainSequence;
+            var request = new TerrainRecoveryMessage
+            {
+                Stage = TerrainRecoveryStage.Request,
+                LastAppliedSequence = applied,
+                ServerStep = client.Step,
+                BufferedRanges = SuSubsystemTerrain.GetBufferedSequenceRanges(
+                    applied, MaximumTerrainRecoveryRanges)
+            };
+            SendTerrainRecoveryMessage(0, request);
+            Log.Information($"[ScMP] Terrain recovery requested: Applied={applied}, " +
+                $"BufferedRanges={request.BufferedRanges.Count}");
+        }
+
+        private static void SendTerrainRecoveryMessage(int targetClientId,
+            TerrainRecoveryMessage message)
+        {
+            if (client?.IsConnected != true || message == null) return;
+            client.SendDirectInput(targetClientId,
+                Message.WriteWithSender(message, client.Address), sequenced: true);
         }
 
         // Source: Survivalcraft/Game/PerformanceManager.cs:PerformanceManager.Draw
@@ -1567,11 +1793,13 @@ namespace ScMultiplayer
             m_networkStatsLabel.IsVisible = visible;
             if (!visible || Time.RealTime < m_nextNetworkStatsUpdateTime) return;
             m_nextNetworkStatsUpdateTime = Time.RealTime + 1.0;
-            ReadNetworkStats(out float latencyMs, out int pendingPackets,
-                out float lossPercent);
+            ReadNetworkStats(out float latencyMs, out int syncQueue,
+                out int applyQueue, out int worldQueue, out int reliableQueue,
+                out float retransmitPercent);
             m_networkStatsLabel.Text = string.Format(CultureInfo.InvariantCulture,
-                "NET {0:0}ms, Queue {1}, Loss {2:0.0}%",
-                latencyMs, pendingPackets, lossPercent);
+                "NET {0:0}ms, Retr {5:0.0}%\nQ Sync {1}, Apply {2}, World {3}, Rel {4}",
+                latencyMs, syncQueue, applyQueue, worldQueue, reliableQueue,
+                retransmitPercent);
         }
 
         private void EnsureNetworkStatsLabel()
@@ -1601,14 +1829,16 @@ namespace ScMultiplayer
                 root.Children.Add(m_networkStatsLabel);
         }
 
-        private void ReadNetworkStats(out float latencyMs, out int pendingPackets,
-            out float lossPercent)
+        private void ReadNetworkStats(out float latencyMs, out int syncQueue,
+            out int applyQueue, out int worldQueue, out int reliableQueue,
+            out float retransmitPercent)
         {
             latencyMs = 0f;
-            lossPercent = 0f;
-            pendingPackets = NetworkMessageSender.PendingSyncBatchCount +
-                m_endOfFrameActions.Count +
-                Math.Max(Volatile.Read(ref m_worldTransferQueuedWorkCount), 0);
+            retransmitPercent = 0f;
+            syncQueue = NetworkMessageSender.PendingSyncBatchCount;
+            applyQueue = m_endOfFrameActions.Count;
+            worldQueue = Math.Max(Volatile.Read(ref m_worldTransferQueuedWorkCount), 0);
+            reliableQueue = 0;
             if (IsHost && server?.Peer != null)
             {
                 foreach (ServerClient remote in GetConnectedRemoteClients())
@@ -1616,8 +1846,9 @@ namespace ScMultiplayer
                     PeerData peer = server.Peer.FindPeer(remote.Address);
                     if (peer == null) continue;
                     latencyMs = MathUtils.Max(latencyMs, peer.Ping * 1000f);
-                    pendingPackets += server.Peer.Comm.GetUnackedPacketsCount(peer.Address);
-                    lossPercent = MathUtils.Max(lossPercent,
+                    reliableQueue = Math.Max(reliableQueue,
+                        server.Peer.Comm.GetUnackedPacketsCount(peer.Address));
+                    retransmitPercent = MathUtils.Max(retransmitPercent,
                         (float)(100.0 * server.Peer.Comm.GetPacketLossRate(
                             peer.Address)));
                 }
@@ -1626,8 +1857,8 @@ namespace ScMultiplayer
             PeerData connected = client?.Peer?.ConnectedTo;
             if (connected == null) return;
             latencyMs = connected.Ping * 1000f;
-            pendingPackets += client.Peer.Comm.GetUnackedPacketsCount(connected.Address);
-            lossPercent = (float)(100.0 *
+            reliableQueue = client.Peer.Comm.GetUnackedPacketsCount(connected.Address);
+            retransmitPercent = (float)(100.0 *
                 client.Peer.Comm.GetPacketLossRate(connected.Address));
         }
 
@@ -1709,6 +1940,9 @@ namespace ScMultiplayer
                 m_playerWhistleSequences.Clear();
                 m_disabledClientContainerUpdates.Clear();
                 if (!IsHost) m_isLoadingDownloadedWorld = false;
+                if (!IsHost)
+                    SuSubsystemTerrain.ConfigureTerrainSequence(
+                        m_pendingTerrainSequenceBaseline);
                 ApplyHostRandomStates(project);
                 foreach (var pending in m_pendingNetworkPlayers.ToArray())
                 {
@@ -1752,7 +1986,7 @@ namespace ScMultiplayer
 
             // Source: Engine/Time.cs:Time.RealTime
             // Real time avoids duplicate network time when SubsystemUpdate runs multiple game
-            // updates in one rendered frame. The accumulator preserves fractional 16Hz pulses.
+            // updates in one rendered frame. The accumulator preserves fractional 32Hz pulses.
             double now = Time.RealTime;
             if (m_lastSyncUpdateTime <= 0.0)
                 m_lastSyncUpdateTime = now;
@@ -2559,18 +2793,23 @@ namespace ScMultiplayer
         }
 
         // ====================================================================
-        // 30fps 定时事件
+        // 32Hz 定时事件
         // ====================================================================
         private void TriggerNetworkTick(float tickDuration)
         {
             // Source: ScMultiplayer.ScMultiplayer.Update
-            // Real-time messages share one aligned 1/2/4/8/16Hz phase ladder.
+            // Real-time messages share one aligned 1/2/4/8/16/32Hz phase ladder.
             if (!client.IsConnected) return;
             uint pulse = m_syncPulseIndex++;
             bool pulse1Hz = IsSyncPulse(pulse, NetworkSyncRate.Hz1);
             bool pulse2Hz = IsSyncPulse(pulse, NetworkSyncRate.Hz2);
             bool pulse4Hz = IsSyncPulse(pulse, NetworkSyncRate.Hz4);
             bool pulse8Hz = IsSyncPulse(pulse, NetworkSyncRate.Hz8);
+            if (IsHost && pulse1Hz)
+            {
+                lock (m_terrainJournalLock)
+                    TrimHostTerrainJournalLocked(Time.RealTime);
+            }
             // Source: ScMultiplayer.cs:AcceptNetworkPlayerJoin
             // A joining client intentionally has no host-side avatar until it reports that the
             // Loading Project screen started. World chunks must therefore run before the
@@ -2605,7 +2844,11 @@ namespace ScMultiplayer
             m_inventoryKeyframeTime += tickDuration;
             bool inventoryKeyframe = pulse1Hz && m_inventoryKeyframeTime >= 5f;
             if (inventoryKeyframe) m_inventoryKeyframeTime -= 5f;
-            SendGamePlayerPositionMessage(pulse1Hz, inventoryKeyframe);
+            bool forceHostInventorySync = IsHost && m_forceHostInventorySync;
+            SendGamePlayerPositionMessage(
+                pulse1Hz || forceHostInventorySync,
+                inventoryKeyframe || forceHostInventorySync);
+            if (forceHostInventorySync) m_forceHostInventorySync = false;
             if (IsHost)
                 SendGamePlayerHealthMessage(false);
             else
@@ -2666,7 +2909,7 @@ namespace ScMultiplayer
         }
 
         // Source: ScMultiplayer.cs:TriggerNetworkTick
-        // Every lower tier divides the same 16Hz phase, so all tiers coincide once per second.
+        // Every lower tier divides the same 32Hz phase, so all tiers coincide once per second.
         private static bool IsSyncPulse(uint pulse, NetworkSyncRate rate)
         {
             int divider = SyncBaseRate / (int)rate;
@@ -3194,7 +3437,10 @@ namespace ScMultiplayer
             if (player.GameWidget?.ActiveCamera == null ||
                 Vector3.DistanceSquared(pickable.Position,
                     player.GameWidget.ActiveCamera.ViewPosition) > 0.0001f)
+            {
+                pickable.ToRemove = true;
                 return;
+            }
 
             int sourceSlot = -1;
             int sourceCount = 0;
@@ -3243,6 +3489,7 @@ namespace ScMultiplayer
                     TryGetHostPickableCollector(pickable,
                         out int collectorClientId, out IInventory inventory))
                 {
+                    m_forceHostInventorySync = true;
                     var message = new PickableSyncMessage
                     {
                         Action = PickableSyncMessage.PickAction.Acquire,
@@ -3708,6 +3955,8 @@ namespace ScMultiplayer
                     HandleHostDisconnected();
                     continue;
                 }
+                if (!IsHost)
+                    m_departedRemoteClientIds.Add(item.ClientID);
                 RemoveNetworkPlayer(item.ClientID);
                 playerMappingManager.ReleasePlayerIndex(item.ClientID);
             }
@@ -3716,6 +3965,7 @@ namespace ScMultiplayer
             foreach (var item in obj.Joins)
             {
                 Log.Information($"[ScMP] Client joining: {item.ClientID}");
+                m_departedRemoteClientIds.Remove(item.ClientID);
                 // Source: Comms/Comms.Drt/Func/Server/Set/ServerGame.cs:ServerGame.Handle
                 // A single existing peer accepts or refuses a join. Only the room owner is allowed
                 // to decide, otherwise another client can accept before the host requests a profile.
@@ -3805,6 +4055,10 @@ namespace ScMultiplayer
                     case GameModifiedCellsMessage cells:
                         QueueEndOfFrameAction(() =>
                             NetworkMessageHandler.HandleModifiedCellsMessage(cells, item.ClientID));
+                        break;
+                    case TerrainRecoveryMessage terrainRecovery:
+                        QueueEndOfFrameAction(() =>
+                            HandleTerrainRecoveryMessage(terrainRecovery, item.ClientID));
                         break;
                     case GameWorldInfoMessage1 worldInfo:
                         if (item.ClientID == 0)
@@ -4132,7 +4386,8 @@ namespace ScMultiplayer
                 client.AcceptJoinGame(joiningClientId);
                 BeginWorldTransfer(
                     snapshot.Name, snapshot.WorldData, snapshot.LastSaveTime, joiningClientId,
-                    m_sessionRandomSeed, snapshot.RandomStates, joiningRecord);
+                    m_sessionRandomSeed, snapshot.TerrainSequence,
+                    snapshot.RandomStates, joiningRecord);
                 Log.Information($"[ScMP] Accepted ClientID {joiningClientId} and queued live world snapshot " +
                     $"(Tick={snapshot.Tick}, Bytes={snapshot.WorldData.Length})");
             }
@@ -4199,6 +4454,7 @@ namespace ScMultiplayer
                 WorldData = sanitizedWorld,
                 LastSaveTime = worldInfo?.LastSaveTime ?? DateTime.Now,
                 Tick = client.Step,
+                TerrainSequence = m_hostTerrainSequence,
                 RandomStates = CaptureSubsystemRandomStates()
             };
         }
@@ -4298,8 +4554,8 @@ namespace ScMultiplayer
         // The world uses Comms reliable UDP with an application-level sliding window and repair
         // requests. A full SHA-256 keeps the independently delivered chunks end-to-end verifiable.
         private void BeginWorldTransfer(string name, byte[] worldData, DateTime lastSaveTime,
-            int targetClientId, int randomSeed, Dictionary<string, long> randomStates,
-            NetworkPlayerRecord playerRecord)
+            int targetClientId, int randomSeed, long terrainSequence,
+            Dictionary<string, long> randomStates, NetworkPlayerRecord playerRecord)
         {
             if (worldData == null || worldData.Length == 0 ||
                 worldData.Length > MaximumWorldTransferSize)
@@ -4316,7 +4572,8 @@ namespace ScMultiplayer
                 TransferId = transferId,
                 ChunkCount = chunkCount,
                 TotalLength = worldData.Length,
-                WorldSha256 = SHA256.HashData(worldData)
+                WorldSha256 = SHA256.HashData(worldData),
+                TerrainSequenceBaseline = terrainSequence
             };
             m_outgoingWorldTransfers[targetClientId] = new OutgoingWorldTransfer
             {
@@ -4648,6 +4905,10 @@ namespace ScMultiplayer
                 ApplyAuthoritativeLocalPlayerState(msg);
             if (remoteClientId == client.ClientID)
                 return; // 忽略自己发回的消息
+            // A delayed position packet can arrive after Client_GameStep reports a leave. Do not
+            // recreate a presentation-only avatar until the current connection registers it again.
+            if (!m_networkPlayerData.ContainsKey(remoteClientId))
+                return;
 
             NetworkPlayerState state;
             if (!RemotePlayers.TryGetValue(remoteClientId, out state))
@@ -4737,15 +4998,7 @@ namespace ScMultiplayer
                 {
                     if (msg.ActiveSlotIndex >= 0 && msg.ActiveSlotIndex < inventory.SlotsCount)
                         inventory.ActiveSlotIndex = msg.ActiveSlotIndex;
-                    int slotsCount = Math.Min(inventory.SlotsCount, msg.SlotValues.Length);
-                    for (int i = 0; i < slotsCount; i++)
-                    {
-                        if (inventory.GetSlotValue(i) == msg.SlotValues[i] &&
-                            inventory.GetSlotCount(i) == msg.SlotCounts[i]) continue;
-                        inventory.RemoveSlotItems(i, int.MaxValue);
-                        if (msg.SlotCounts[i] > 0)
-                            inventory.AddSlotItems(i, msg.SlotValues[i], msg.SlotCounts[i]);
-                    }
+                    ApplyInventory(inventory, msg.SlotValues, msg.SlotCounts);
                 }
             }
         }
@@ -4786,14 +5039,7 @@ namespace ScMultiplayer
                 InventoryMatches(inventory, msg.SlotValues, msg.SlotCounts, slotsCount);
             if (localInventoryChanged && !hostAcknowledgedLocalInventory)
                 return;
-            for (int i = 0; i < slotsCount; i++)
-            {
-                if (inventory.GetSlotValue(i) == msg.SlotValues[i] &&
-                    inventory.GetSlotCount(i) == msg.SlotCounts[i]) continue;
-                inventory.RemoveSlotItems(i, int.MaxValue);
-                if (msg.SlotCounts[i] > 0)
-                    inventory.AddSlotItems(i, msg.SlotValues[i], msg.SlotCounts[i]);
-            }
+            ApplyInventory(inventory, msg.SlotValues, msg.SlotCounts);
             m_authoritativeLocalSlotValues = msg.SlotValues.Take(slotsCount).ToArray();
             m_authoritativeLocalSlotCounts = msg.SlotCounts.Take(slotsCount).ToArray();
             m_lastAuthoritativeLocalInventoryTick = msg.ServerTick;
@@ -6144,6 +6390,8 @@ namespace ScMultiplayer
         // Source: Survivalcraft/Game/PlayerData.cs:PlayerData.SpawnPlayer
         private void CreateNetworkPlayer(int clientId, string requestedName, string playerIdentity = null)
         {
+            if (!IsHost && clientId != 0 && m_departedRemoteClientIds.Contains(clientId))
+                return;
             if (GameManager.Project == null)
             {
                 m_pendingNetworkPlayers[clientId] = requestedName;
@@ -6240,6 +6488,7 @@ namespace ScMultiplayer
                 projectEntities.Remove(entity);
 
                 IInventory inventory = playerData.ComponentPlayer?.ComponentMiner?.Inventory;
+                ConfigureNetworkPlayerInventory(inventory);
                 RestorePlayerRecordInventory(inventory, record);
                 ApplyClothes(playerData.ComponentPlayer, record?.Clothes);
                 if (record != null)
@@ -6302,9 +6551,14 @@ namespace ScMultiplayer
 
         private void RemoveNetworkPlayer(int clientId)
         {
+            // Source: ScMultiplayer.cs:RenderRemotePlayers
+            // The presentation cache is independent from m_networkPlayerData. Remove it here so
+            // a transport leave cannot leave a departed avatar visible on other clients.
+            RemotePlayers.Remove(clientId);
             m_outgoingWorldTransfers.Remove(clientId);
             m_worldTransfersAwaitingReady.Remove(clientId);
             m_joinCatchUpJournals.Remove(clientId);
+            m_hostTerrainRecoveryTargets.Remove(clientId);
             m_pendingAcceptedJoinKeys.Remove(clientId);
             m_hostPlayerPokingPhases.Remove(clientId);
             m_hostPlayerPokeSequences.Remove(clientId);
@@ -7365,6 +7619,8 @@ namespace ScMultiplayer
                 ApplyProfileToLocalPlayer(message);
                 return;
             }
+            if (m_departedRemoteClientIds.Contains(message.ClientId))
+                return;
 
             string networkKey = GetNetworkRecordKey(message.ClientId);
             NetworkPlayerRecord record = m_playerRecords.TryGetValue(networkKey, out NetworkPlayerRecord existing)
@@ -7526,14 +7782,43 @@ namespace ScMultiplayer
             m_frameProject = null;
         }
 
+        // Source: Survivalcraft/Game/ShortInventoryWidget.cs:ShortInventoryWidget.MeasureOverride
+        // Source: Survivalcraft/Game/ComponentInventory.cs:ComponentInventory.GetSlotCapacity
+        private static void ConfigureNetworkPlayerInventory(IInventory inventory)
+        {
+            // Network avatars have no ShortInventoryWidget, so normal inventories otherwise retain
+            // the template default of 10 and incorrectly treat reserved slots 7-9 as usable.
+            if (inventory is ComponentInventory && inventory.VisibleSlotsCount != 7)
+                inventory.VisibleSlotsCount = 7;
+        }
+
+        // Source: Survivalcraft/Game/ComponentInventoryBase.cs:ComponentInventoryBase.AddSlotItems
         private static void ApplyInventory(IInventory inventory, int[] values, int[] counts)
         {
             if (inventory == null || values == null || counts == null) return;
             int slotsCount = Math.Min(inventory.SlotsCount, Math.Min(values.Length, counts.Length));
             for (int i = 0; i < slotsCount; i++)
             {
+                int value = values[i];
+                int count = counts[i];
+                if (count < 0 || (count > 0 && value == 0)) continue;
+                if (count > 0)
+                {
+                    int capacity;
+                    try
+                    {
+                        capacity = inventory.GetSlotCapacity(i, value);
+                    }
+                    catch
+                    {
+                        continue;
+                    }
+                    if (count > capacity) continue;
+                }
+                if (inventory.GetSlotValue(i) == value && inventory.GetSlotCount(i) == count)
+                    continue;
                 inventory.RemoveSlotItems(i, int.MaxValue);
-                if (counts[i] > 0) inventory.AddSlotItems(i, values[i], counts[i]);
+                if (count > 0) inventory.AddSlotItems(i, value, count);
             }
         }
 
@@ -7647,6 +7932,10 @@ namespace ScMultiplayer
                 }
                 return;
             }
+            // Ignore delayed health snapshots from a client that has already left. Without this
+            // guard the health handler can recreate the same stale RemotePlayers entry.
+            if (!m_networkPlayerData.ContainsKey(remoteClientId))
+                return;
 
             NetworkPlayerState state;
             if (!RemotePlayers.TryGetValue(remoteClientId, out state))
@@ -7983,9 +8272,237 @@ namespace ScMultiplayer
                 return;
             }
             var message = new GameModifiedCellsMessage(modifiedCells, client.Step);
-            if (IsHost) RecordHostTerrainChanges(message, client.Step);
+            lock (m_terrainJournalLock)
+                message.Sequence = ++m_hostTerrainSequence;
+            RecordHostTerrainChanges(message, client.Step);
+            RecordHostTerrainJournal(message);
             // Source: ScMultiplayer.cs:NetworkMessageHandler.HandleModifiedCellsMessage
             NetworkMessageSender.SendScheduledMessage(-1, message);
+        }
+
+        // Source: Survivalcraft/Game/SubsystemTerrain.cs:SubsystemTerrain.ChangeCell
+        private void RecordHostTerrainJournal(GameModifiedCellsMessage message)
+        {
+            if (!IsHost || message?.Sequence <= 0) return;
+            byte[] payload = Message.WriteWithSender(message, client.Address);
+            lock (m_terrainJournalLock)
+            {
+                m_hostTerrainJournal.Enqueue(new TerrainJournalEntry
+                {
+                    Sequence = message.Sequence,
+                    ServerStep = message.Tick,
+                    CreatedTime = Time.RealTime,
+                    Payload = payload
+                });
+                TrimHostTerrainJournalLocked(Time.RealTime);
+            }
+        }
+
+        private void TrimHostTerrainJournalLocked(double now)
+        {
+            while (m_hostTerrainJournal.Count > 0 &&
+                now - m_hostTerrainJournal.Peek().CreatedTime > TerrainRecoveryRetention)
+                m_hostTerrainJournal.Dequeue();
+        }
+
+        // Source: ScMultiplayer.cs:ScMultiplayer.Client_GameStep
+        private void HandleTerrainRecoveryMessage(TerrainRecoveryMessage message,
+            int sourceClientId)
+        {
+            if (message == null) return;
+            if (IsHost)
+            {
+                if (sourceClientId <= 0 || !m_networkPlayerData.ContainsKey(sourceClientId))
+                    return;
+                if (message.Stage == TerrainRecoveryStage.Request)
+                {
+                    SendHostTerrainRecoveryRound(sourceClientId,
+                        message.LastAppliedSequence, message.BufferedRanges);
+                }
+                else if (message.Stage == TerrainRecoveryStage.Acknowledge &&
+                    m_hostTerrainRecoveryTargets.TryGetValue(sourceClientId,
+                        out long target) && message.LastAppliedSequence >= target)
+                {
+                    long head;
+                    lock (m_terrainJournalLock) head = m_hostTerrainSequence;
+                    if (message.LastAppliedSequence < head)
+                    {
+                        SendHostTerrainRecoveryRound(sourceClientId,
+                            message.LastAppliedSequence, null);
+                    }
+                    else
+                    {
+                        m_hostTerrainRecoveryTargets.Remove(sourceClientId);
+                        m_forceHostInventorySync = true;
+                        m_fullWorldObjectsSyncTime = WorldObjectFullSyncInterval;
+                        m_fullAnimalSyncTime = 1f;
+                        SendTerrainRecoveryMessage(sourceClientId,
+                            new TerrainRecoveryMessage
+                            {
+                                Stage = TerrainRecoveryStage.Ready,
+                                LastAppliedSequence = message.LastAppliedSequence,
+                                HeadSequence = head,
+                                ServerStep = client.Step
+                            });
+                    }
+                }
+                return;
+            }
+
+            if (sourceClientId != 0) return;
+            switch (message.Stage)
+            {
+                case TerrainRecoveryStage.ReplayBatch:
+                    foreach (byte[] payload in message.Payloads)
+                    {
+                        try
+                        {
+                            if (Message.Read(payload) is GameModifiedCellsMessage terrain &&
+                                terrain.Sequence > 0 && terrain.Sequence <= message.HeadSequence)
+                                SuSubsystemTerrain.EnqueueNetworkBatch(terrain);
+                        }
+                        catch (Exception ex)
+                        {
+                            Log.Error($"[ScMP] Invalid terrain replay payload: {ex.Message}");
+                        }
+                    }
+                    break;
+                case TerrainRecoveryStage.Barrier:
+                    m_clientTerrainRecoveryActive = true;
+                    m_clientTerrainRecoveryRequestInFlight = false;
+                    m_clientTerrainRecoveryTarget = message.HeadSequence;
+                    m_clientTerrainRecoveryAcknowledged = -1;
+                    break;
+                case TerrainRecoveryStage.Ready:
+                    m_clientTerrainRecoveryActive = true;
+                    m_clientTerrainRecoveryRequestInFlight = false;
+                    m_clientTerrainRecoveryReady = message.HeadSequence;
+                    break;
+                case TerrainRecoveryStage.ResyncRequired:
+                    RestartClientWorldDownload();
+                    break;
+            }
+        }
+
+        private void SendHostTerrainRecoveryRound(int targetClientId, long lastApplied,
+            List<TerrainSequenceRange> bufferedRanges)
+        {
+            List<TerrainJournalEntry> replay;
+            long head;
+            long oldest;
+            lock (m_terrainJournalLock)
+            {
+                TrimHostTerrainJournalLocked(Time.RealTime);
+                head = m_hostTerrainSequence;
+                if (lastApplied < 0 || lastApplied > head)
+                {
+                    SendTerrainRecoveryResyncRequired(targetClientId, head);
+                    return;
+                }
+                TerrainJournalEntry[] journal = m_hostTerrainJournal.ToArray();
+                oldest = journal.Length > 0 ? journal[0].Sequence : head + 1;
+                long unavailableEnd = Math.Min(head, oldest - 1);
+                if (lastApplied < unavailableEnd && !RangesCoverInterval(
+                    bufferedRanges, lastApplied + 1, unavailableEnd))
+                {
+                    SendTerrainRecoveryResyncRequired(targetClientId, head);
+                    return;
+                }
+                replay = journal.Where(entry => entry.Sequence > lastApplied &&
+                    entry.Sequence <= head &&
+                    !SequenceIsBuffered(entry.Sequence, bufferedRanges)).ToList();
+                m_hostTerrainRecoveryTargets[targetClientId] = head;
+            }
+
+            var payloads = new List<byte[]>();
+            int payloadBytes = 0;
+            foreach (TerrainJournalEntry entry in replay)
+            {
+                if (payloads.Count > 0 && (payloads.Count >= 64 ||
+                    payloadBytes + entry.Payload.Length > MaximumTerrainRecoveryBatchBytes))
+                {
+                    SendTerrainRecoveryReplayBatch(targetClientId, head, payloads);
+                    payloads = new List<byte[]>();
+                    payloadBytes = 0;
+                }
+                payloads.Add(entry.Payload);
+                payloadBytes += entry.Payload.Length;
+            }
+            if (payloads.Count > 0)
+                SendTerrainRecoveryReplayBatch(targetClientId, head, payloads);
+            SendTerrainRecoveryMessage(targetClientId, new TerrainRecoveryMessage
+            {
+                Stage = TerrainRecoveryStage.Barrier,
+                LastAppliedSequence = lastApplied,
+                HeadSequence = head,
+                ServerStep = client.Step
+            });
+            Log.Information($"[ScMP] Terrain recovery round: ClientID={targetClientId}, " +
+                $"Applied={lastApplied}, Oldest={oldest}, Head={head}, Replay={replay.Count}");
+        }
+
+        private static void SendTerrainRecoveryReplayBatch(int targetClientId,
+            long head, List<byte[]> payloads)
+        {
+            SendTerrainRecoveryMessage(targetClientId, new TerrainRecoveryMessage
+            {
+                Stage = TerrainRecoveryStage.ReplayBatch,
+                HeadSequence = head,
+                ServerStep = client.Step,
+                Payloads = payloads
+            });
+        }
+
+        private void SendTerrainRecoveryResyncRequired(int targetClientId, long head)
+        {
+            m_hostTerrainRecoveryTargets.Remove(targetClientId);
+            SendTerrainRecoveryMessage(targetClientId, new TerrainRecoveryMessage
+            {
+                Stage = TerrainRecoveryStage.ResyncRequired,
+                HeadSequence = head,
+                ServerStep = client.Step
+            });
+            Log.Warning($"[ScMP] Terrain recovery history expired for ClientID={targetClientId}");
+        }
+
+        private static bool SequenceIsBuffered(long sequence,
+            List<TerrainSequenceRange> ranges) =>
+            ranges != null && ranges.Any(range => range != null &&
+                sequence >= range.Start && sequence <= range.End);
+
+        private static bool RangesCoverInterval(List<TerrainSequenceRange> ranges,
+            long start, long end)
+        {
+            if (start > end) return true;
+            long cursor = start;
+            foreach (TerrainSequenceRange range in (ranges ?? new List<TerrainSequenceRange>())
+                .Where(item => item != null).OrderBy(item => item.Start))
+            {
+                if (range.End < cursor) continue;
+                if (range.Start > cursor) return false;
+                cursor = Math.Max(cursor, range.End + 1);
+                if (cursor > end) return true;
+            }
+            return false;
+        }
+
+        private void RestartClientWorldDownload()
+        {
+            Log.Warning("[ScMP] Terrain recovery requires a fresh host world snapshot");
+            if (m_activeJoinRequest?.WorldInfo == null)
+            {
+                HandleHostDisconnected();
+                return;
+            }
+            ShowJoinRoomBusyDialog();
+            if (m_joinRoomBusyDialog != null)
+                m_joinRoomBusyDialog.SmallMessage =
+                    "Terrain history expired.\r\nDownloading the current host world...";
+            PrepareClientForRemoteJoin();
+            m_pendingJoinRequest = m_activeJoinRequest;
+            m_isLoadingDownloadedWorld = true;
+            SubmitPendingJoin(m_activeJoinPlayerName, m_activeJoinPlayerClass,
+                m_activeJoinSkinName, m_activeJoinHasPlayerProfile);
         }
 
         // Source: Survivalcraft/Game/SubsystemTerrain.cs:SubsystemTerrain.m_modifiedCells
@@ -8214,7 +8731,7 @@ namespace ScMultiplayer
             if (cells.Count == message.ModifiedCells.Count) return message;
             return cells.Count > 0
                 ? new GameModifiedCellsMessage(cells, values, message.Tick,
-                    message.IsCatchUp, message.TargetClientId)
+                    message.IsCatchUp, message.TargetClientId, message.Sequence)
                 : null;
         }
 
@@ -8645,6 +9162,15 @@ namespace ScMultiplayer
                 Log.Information($"[ScMP] Client catch-up complete: Transfer={message.TransferId}");
                 m_pendingWorldReadyTransferId = 0;
                 m_isLoadingDownloadedWorld = false;
+                // A fresh world transfer supersedes any lifecycle recovery state left by the
+                // previous project. Never carry the input lock into the newly joined world.
+                m_clientTerrainRecoveryActive = false;
+                m_clientTerrainRecoveryPending = false;
+                m_clientTerrainRecoveryRequestInFlight = false;
+                m_clientTerrainRecoveryTarget = -1;
+                m_clientTerrainRecoveryAcknowledged = -1;
+                m_clientTerrainRecoveryReady = -1;
+                m_clientTerrainGapDetectedTime = 0.0;
                 HideJoinRoomBusyDialog();
                 return;
             }
@@ -8770,6 +9296,7 @@ namespace ScMultiplayer
             }
             if (msg.WorldData == null || msg.WorldData.Length == 0) return;
             m_sessionRandomSeed = msg.RandomSeed;
+            m_pendingTerrainSequenceBaseline = msg.TerrainSequenceBaseline;
             m_pendingRandomStates = msg.RandomStates ?? new Dictionary<string, long>();
             m_randomStateAppliedProject = null;
             m_pendingLocalPlayerRecord = new NetworkPlayerRecord
@@ -9141,6 +9668,7 @@ namespace ScMultiplayer
             m_pendingNetworkPlayers.Clear();
             m_pendingNetworkPlayerIdentities.Clear();
             m_networkPlayerInputs.Clear();
+            m_departedRemoteClientIds.Clear();
             m_clientRecordKeys.Clear();
             m_recentChatMessages.Clear();
             m_recentChatMessageIds.Clear();
@@ -9187,10 +9715,25 @@ namespace ScMultiplayer
             m_nextProjectileId = 1;
             lock (m_terrainJournalLock)
             {
+                m_hostTerrainJournal.Clear();
                 m_terrainCheckpoint.Clear();
                 m_pendingTerrainChanges.Clear();
                 m_terrainRepairRepeats.Clear();
+                m_hostTerrainSequence = 0;
             }
+            m_hostTerrainRecoveryTargets.Clear();
+            m_pendingTerrainSequenceBaseline = 0;
+            m_clientTerrainRecoveryActive = false;
+            m_clientTerrainRecoveryPending = false;
+            m_clientTerrainRecoveryRequestInFlight = false;
+            m_clientSuspensionRequested = false;
+            m_clientTerrainRecoveryTarget = -1;
+            m_clientTerrainRecoveryAcknowledged = -1;
+            m_clientTerrainRecoveryReady = -1;
+            m_clientTerrainGapDetectedTime = 0.0;
+            m_clientGameplayScreenObserved = false;
+            m_wasClientGameScreenActive = false;
+            m_clientWindowDeactivated = false;
             m_pendingTerrainPredictions.Clear();
             m_pendingTerrainPredictionCells.Clear();
             m_processedTerrainDigRequests.Clear();
@@ -10172,6 +10715,8 @@ namespace ScMultiplayer
                     HandleHostDisconnected();
                     return;
                 }
+                if (!IsHost)
+                    m_departedRemoteClientIds.Add(sourceClientId);
                 RemoveNetworkPlayer(sourceClientId);
                 playerMappingManager.ReleasePlayerIndex(sourceClientId);
                 return;
@@ -10704,6 +11249,9 @@ namespace ScMultiplayer
 
         public void OnUnload()
         {
+            Window.Deactivated -= HandleWindowDeactivated;
+            Window.Activated -= HandleWindowActivated;
+            GameManager.ProjectDisposed -= HandleProjectDisposed;
             if (m_networkStatsLabel?.ParentWidget != null)
                 m_networkStatsLabel.ParentWidget.Children.Remove(m_networkStatsLabel);
             m_networkStatsLabel = null;
