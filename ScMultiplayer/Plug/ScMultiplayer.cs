@@ -2133,7 +2133,13 @@ namespace ScMultiplayer
                 return;
             }
 
-            var dialog = new TextBoxDialog("Talk", "", 125, delegate (string text)
+            // Source: Engine/Engine/Input/Keyboard.cs:Keyboard.KeyPressHandler
+            // Windows IMEs commit a candidate as multiple characters in one frame.
+            TextBoxDialog dialog = OperatingSystem.IsWindows()
+                ? new WindowsTalkDialog("Talk", "", 125, SendTalkMessage)
+                : new TextBoxDialog("Talk", "", 125, SendTalkMessage);
+
+            void SendTalkMessage(string text)
             {
                 if (!string.IsNullOrWhiteSpace(text))
                 {
@@ -2141,7 +2147,7 @@ namespace ScMultiplayer
                         GetLocalPlayerName(), GetLocalPlayerIdentity(), text.Trim());
                     DisplayChatMessage(message, client.ClientID);
                 }
-            });
+            }
             BitmapFont chatFont = MultiplayerChineseFont.TextInputFont ??
                 MultiplayerChineseFont.Font;
             Widget textBox = dialog.Children.Find("TextBoxDialog.TextBox", false);
