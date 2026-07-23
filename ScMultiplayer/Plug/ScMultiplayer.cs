@@ -173,6 +173,17 @@ namespace ScMultiplayer
         public int[][] Clothes;
     }
 
+    internal sealed class EquipmentSnapshot
+    {
+        public int ActiveSlotIndex;
+        public int[] SlotValues = Array.Empty<int>();
+        public int[] SlotCounts = Array.Empty<int>();
+        public int[][] Clothes = CreateEmptyClothes();
+
+        private static int[][] CreateEmptyClothes() =>
+            new[] { Array.Empty<int>(), Array.Empty<int>(), Array.Empty<int>(), Array.Empty<int>() };
+    }
+
     public class PendingJoinRequest
     {
         public IPEndPoint ServerAddress;
@@ -764,6 +775,14 @@ namespace ScMultiplayer
             SendScheduledMessage(-1, msg);
         }
 
+        public static void SendPlayerEquipmentMessage(int targetClientId,
+            PlayerEquipmentMessage message)
+        {
+            if (message == null || ScMultiplayer.client == null) return;
+            SendScheduledMessage(targetClientId, message, sequenced: true, latest: false,
+                batchable: false);
+        }
+
         public static void SendPlayerHealthMessage(int playerIndex, ComponentPlayer player,
             float healthChange, string cause = null, bool hasKnockback = false)
         {
@@ -910,6 +929,16 @@ namespace ScMultiplayer
             new Dictionary<int, int[]>();
         private readonly Dictionary<int, int[]> m_lastSentInventoryCounts =
             new Dictionary<int, int[]>();
+        private readonly Dictionary<int, int> m_equipmentAuthorityRevisions =
+            new Dictionary<int, int>();
+        private readonly Dictionary<int, int> m_lastClientEquipmentRevisions =
+            new Dictionary<int, int>();
+        private readonly Dictionary<int, int> m_lastReceivedEquipmentRevisions =
+            new Dictionary<int, int>();
+        private readonly Dictionary<int, EquipmentSnapshot> m_lastEquipmentSnapshots =
+            new Dictionary<int, EquipmentSnapshot>();
+        private readonly HashSet<int> m_equipmentSynchronizedClients = new HashSet<int>();
+        private int m_localEquipmentRevision;
         private PendingJoinRequest m_pendingJoinRequest;
         private PendingJoinRequest m_activeJoinRequest;
         private string m_activeJoinPlayerName;
@@ -1983,6 +2012,12 @@ namespace ScMultiplayer
                 m_hostPlayerPokingPhases.Clear();
                 m_hostPlayerPokeSequences.Clear();
                 m_playerWhistleSequences.Clear();
+                m_equipmentAuthorityRevisions.Clear();
+                m_lastClientEquipmentRevisions.Clear();
+                m_lastReceivedEquipmentRevisions.Clear();
+                m_lastEquipmentSnapshots.Clear();
+                m_equipmentSynchronizedClients.Clear();
+                m_localEquipmentRevision = 0;
                 m_disabledClientContainerUpdates.Clear();
                 if (!IsHost) m_isLoadingDownloadedWorld = false;
                 if (!IsHost)
@@ -2895,6 +2930,7 @@ namespace ScMultiplayer
                 pulse1Hz || forceHostInventorySync,
                 inventoryKeyframe || forceHostInventorySync);
             if (forceHostInventorySync) m_forceHostInventorySync = false;
+            SynchronizePlayerEquipment();
             if (IsHost)
                 SendGamePlayerHealthMessage(false);
             else
@@ -3271,6 +3307,157 @@ namespace ScMultiplayer
                 m_lastAuthoritativeLocalInventoryTick, slotValues, slotCounts);
             m_lastSentInputSequence = m_localInputSequence;
             m_localInputResendsRemaining--;
+        }
+
+        // Source: Survivalcraft/Game/ComponentClothing.cs:ComponentClothing.SetClothes
+        // Source: Survivalcraft/Game/ComponentInventoryBase.cs:ComponentInventoryBase.GetSlotValue
+        // Equipment changes are sent as one reliable snapshot so a clothing move cannot be
+        // observed as two independent inventory operations on the host.
+        private void SynchronizePlayerEquipment()
+        {
+            if (client?.IsConnected != true || GameManager.Project == null) return;
+            SubsystemPlayers players = GameManager.Project.FindSubsystem<SubsystemPlayers>(false);
+            if (players == null) return;
+
+            if (IsHost)
+            {
+                ComponentPlayer localPlayer = players.ComponentPlayers.FirstOrDefault(player =>
+                    !m_networkPlayerData.Values.Contains(player.PlayerData));
+                SynchronizeHostEquipment(0, localPlayer);
+                foreach (KeyValuePair<int, PlayerData> item in m_networkPlayerData.ToArray())
+                    SynchronizeHostEquipment(item.Key, item.Value?.ComponentPlayer);
+                return;
+            }
+
+            ComponentPlayer local = players.ComponentPlayers.FirstOrDefault(player =>
+                !m_networkPlayerData.Values.Contains(player.PlayerData));
+            if (local == null) return;
+            EquipmentSnapshot snapshot = CaptureEquipmentSnapshot(local);
+            if (m_lastEquipmentSnapshots.TryGetValue(client.ClientID, out EquipmentSnapshot previous) &&
+                EquipmentSnapshotsEqual(previous, snapshot)) return;
+
+            m_lastEquipmentSnapshots[client.ClientID] = snapshot;
+            m_localEquipmentRevision = m_localEquipmentRevision == int.MaxValue
+                ? 1 : m_localEquipmentRevision + 1;
+            NetworkMessageSender.SendPlayerEquipmentMessage(0, new PlayerEquipmentMessage(
+                client.ClientID, m_localEquipmentRevision, snapshot.ActiveSlotIndex,
+                snapshot.SlotValues, snapshot.SlotCounts, snapshot.Clothes));
+        }
+
+        private void SynchronizeHostEquipment(int clientId, ComponentPlayer player)
+        {
+            if (player == null) return;
+            EquipmentSnapshot snapshot = CaptureEquipmentSnapshot(player);
+            if (m_lastEquipmentSnapshots.TryGetValue(clientId, out EquipmentSnapshot previous) &&
+                EquipmentSnapshotsEqual(previous, snapshot)) return;
+
+            m_lastEquipmentSnapshots[clientId] = snapshot;
+            int revision = m_equipmentAuthorityRevisions.TryGetValue(clientId, out int current)
+                ? (current == int.MaxValue ? 1 : current + 1) : 1;
+            m_equipmentAuthorityRevisions[clientId] = revision;
+            m_lastReceivedEquipmentRevisions[clientId] = revision;
+            m_equipmentSynchronizedClients.Add(clientId);
+            BroadcastPlayerEquipment(clientId, revision, snapshot);
+        }
+
+        private void BroadcastPlayerEquipment(int clientId, int revision, EquipmentSnapshot snapshot)
+        {
+            NetworkMessageSender.SendPlayerEquipmentMessage(-1, new PlayerEquipmentMessage(
+                clientId, revision, snapshot.ActiveSlotIndex, snapshot.SlotValues,
+                snapshot.SlotCounts, snapshot.Clothes));
+        }
+
+        private void HandlePlayerEquipmentMessage(PlayerEquipmentMessage message, int sourceClientId)
+        {
+            if (message == null) return;
+            if (IsHost)
+            {
+                if (sourceClientId <= 0 || message.ClientId != sourceClientId ||
+                    !m_networkPlayerData.TryGetValue(sourceClientId, out PlayerData playerData) ||
+                    playerData?.ComponentPlayer == null) return;
+                if (m_lastClientEquipmentRevisions.TryGetValue(sourceClientId, out int previousRevision) &&
+                    message.Revision <= previousRevision) return;
+
+                m_lastClientEquipmentRevisions[sourceClientId] = message.Revision;
+                ApplyEquipmentSnapshot(playerData.ComponentPlayer, message);
+                EquipmentSnapshot snapshot = CaptureEquipmentSnapshot(playerData.ComponentPlayer);
+                m_lastEquipmentSnapshots[sourceClientId] = snapshot;
+                int currentAuthority = m_equipmentAuthorityRevisions.TryGetValue(sourceClientId,
+                    out int authorityRevision) ? authorityRevision : 0;
+                int revision = Math.Max(currentAuthority + 1, message.Revision);
+                m_equipmentAuthorityRevisions[sourceClientId] = revision;
+                m_lastReceivedEquipmentRevisions[sourceClientId] = revision;
+                m_equipmentSynchronizedClients.Add(sourceClientId);
+                BroadcastPlayerEquipment(sourceClientId, revision, snapshot);
+                if (m_clientRecordKeys.TryGetValue(sourceClientId, out string recordKey))
+                {
+                    m_playerRecords[recordKey] = CapturePlayerRecord(playerData);
+                    m_playerRecordsDirty = true;
+                }
+                return;
+            }
+
+            if (sourceClientId != 0 || m_departedRemoteClientIds.Contains(message.ClientId)) return;
+            if (m_lastReceivedEquipmentRevisions.TryGetValue(message.ClientId,
+                out int lastRevision) && message.Revision <= lastRevision) return;
+            if (message.ClientId == client.ClientID && message.Revision < m_localEquipmentRevision) return;
+
+            ComponentPlayer player = null;
+            if (message.ClientId == client.ClientID)
+            {
+                SubsystemPlayers players = GameManager.Project?.FindSubsystem<SubsystemPlayers>(false);
+                player = players?.ComponentPlayers.FirstOrDefault(item =>
+                    !m_networkPlayerData.Values.Contains(item.PlayerData));
+                m_localEquipmentRevision = Math.Max(m_localEquipmentRevision, message.Revision);
+            }
+            else if (m_networkPlayerData.TryGetValue(message.ClientId, out PlayerData remotePlayer))
+            {
+                player = remotePlayer?.ComponentPlayer;
+            }
+            if (player == null) return;
+
+            ApplyEquipmentSnapshot(player, message);
+            m_lastReceivedEquipmentRevisions[message.ClientId] = message.Revision;
+            m_lastEquipmentSnapshots[message.ClientId] = CaptureEquipmentSnapshot(player);
+            m_equipmentSynchronizedClients.Add(message.ClientId);
+        }
+
+        private static EquipmentSnapshot CaptureEquipmentSnapshot(ComponentPlayer player)
+        {
+            IInventory inventory = player?.ComponentMiner?.Inventory;
+            return new EquipmentSnapshot
+            {
+                ActiveSlotIndex = inventory?.ActiveSlotIndex ?? -1,
+                SlotValues = inventory == null ? Array.Empty<int>() : CaptureInventoryValues(inventory),
+                SlotCounts = inventory == null ? Array.Empty<int>() : CaptureInventoryCounts(inventory),
+                Clothes = CaptureClothes(player)
+            };
+        }
+
+        private static void ApplyEquipmentSnapshot(ComponentPlayer player, PlayerEquipmentMessage message)
+        {
+            if (player == null || message == null) return;
+            IInventory inventory = player.ComponentMiner?.Inventory;
+            if (inventory != null)
+            {
+                if (message.ActiveSlotIndex >= 0 && message.ActiveSlotIndex < inventory.SlotsCount)
+                    inventory.ActiveSlotIndex = message.ActiveSlotIndex;
+                ApplyInventory(inventory, message.SlotValues, message.SlotCounts);
+            }
+            ApplyClothes(player, message.Clothes);
+        }
+
+        private static bool EquipmentSnapshotsEqual(EquipmentSnapshot left, EquipmentSnapshot right)
+        {
+            if (left == null || right == null || left.ActiveSlotIndex != right.ActiveSlotIndex ||
+                !ArraysEqual(left.SlotValues, right.SlotValues) ||
+                !ArraysEqual(left.SlotCounts, right.SlotCounts)) return false;
+            int[][] leftClothes = left.Clothes ?? Array.Empty<int[]>();
+            int[][] rightClothes = right.Clothes ?? Array.Empty<int[]>();
+            if (leftClothes.Length != rightClothes.Length) return false;
+            for (int i = 0; i < leftClothes.Length; i++)
+                if (!ArraysEqual(leftClothes[i], rightClothes[i])) return false;
+            return true;
         }
 
         // Source: Survivalcraft/Game/ComponentInventoryBase.cs:ComponentInventoryBase.GetSlotValue
@@ -4144,6 +4331,10 @@ namespace ScMultiplayer
                         break;
                     case PlayerProfileMessage playerProfile:
                         QueueEndOfFrameAction(() => HandlePlayerProfileMessage(playerProfile, item.ClientID));
+                        break;
+                    case PlayerEquipmentMessage playerEquipment:
+                        QueueEndOfFrameAction(() => HandlePlayerEquipmentMessage(
+                            playerEquipment, item.ClientID));
                         break;
                     case GamePakWorldMessage pakWorld:
                         if (item.ClientID == 0)
@@ -7687,7 +7878,8 @@ namespace ScMultiplayer
                     playerData.Name = message.Name.Trim();
                 if (IsSkinValidForClass(message.SkinName, playerData.PlayerClass))
                     playerData.CharacterSkinName = message.SkinName;
-                ApplyClothes(playerData.ComponentPlayer, message.Clothes);
+                if (!m_equipmentSynchronizedClients.Contains(sourceClientId))
+                    ApplyClothes(playerData.ComponentPlayer, message.Clothes);
                 if (m_clientRecordKeys.TryGetValue(sourceClientId, out string recordKey))
                 {
                     m_playerRecords[recordKey] = CapturePlayerRecord(playerData);
@@ -7727,7 +7919,8 @@ namespace ScMultiplayer
             {
                 remotePlayer.Name = record.Name;
                 remotePlayer.CharacterSkinName = record.SkinName;
-                ApplyClothes(remotePlayer.ComponentPlayer, record.Clothes);
+                if (!m_equipmentSynchronizedClients.Contains(message.ClientId))
+                    ApplyClothes(remotePlayer.ComponentPlayer, record.Clothes);
             }
             else
             {
@@ -7754,7 +7947,8 @@ namespace ScMultiplayer
                 localPlayer.PlayerData.Name = message.Name.Trim();
             if (IsSkinValidForClass(message.SkinName, message.PlayerClass))
                 localPlayer.PlayerData.CharacterSkinName = message.SkinName;
-            ApplyClothes(localPlayer, message.Clothes);
+            if (!m_equipmentSynchronizedClients.Contains(message.ClientId))
+                ApplyClothes(localPlayer, message.Clothes);
         }
 
         // Source: Survivalcraft/Game/PlayerData.cs:PlayerData.PlayerDead
@@ -9799,6 +9993,12 @@ namespace ScMultiplayer
             m_playerHealthCache.Clear();
             m_lastSentInventoryValues.Clear();
             m_lastSentInventoryCounts.Clear();
+            m_equipmentAuthorityRevisions.Clear();
+            m_lastClientEquipmentRevisions.Clear();
+            m_lastReceivedEquipmentRevisions.Clear();
+            m_lastEquipmentSnapshots.Clear();
+            m_equipmentSynchronizedClients.Clear();
+            m_localEquipmentRevision = 0;
             m_hostKnockbackHealthCache.Clear();
             m_hostPainSoundTimes.Clear();
             m_hostRemoteKnockbackUntil.Clear();
