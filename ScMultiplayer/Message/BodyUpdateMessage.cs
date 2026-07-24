@@ -53,6 +53,7 @@ namespace ScMultiplayer
             public int TargetEntityId;
             public string HerdName;
             public int SimulationSeed;
+            public string ShapeshiftTarget;
             public float Health;
             public ChangeFlag Flags;
         }
@@ -95,6 +96,7 @@ namespace ScMultiplayer
                     item.TargetEntityId = reader.ReadInt32();
                     item.HerdName = reader.ReadString();
                     item.SimulationSeed = reader.ReadInt32();
+                    item.ShapeshiftTarget = reader.ReadString();
                 }
                 if (item.Flags.HasFlag(ChangeFlag.Health))
                     item.Health = reader.ReadSingle();
@@ -141,6 +143,7 @@ namespace ScMultiplayer
                     writer.WriteInt32(item.TargetEntityId);
                     writer.WriteString(item.HerdName ?? string.Empty);
                     writer.WriteInt32(item.SimulationSeed);
+                    writer.WriteString(item.ShapeshiftTarget ?? string.Empty);
                 }
                 if (item.Flags.HasFlag(ChangeFlag.Health))
                     writer.WriteSingle(item.Health);

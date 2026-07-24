@@ -105,6 +105,46 @@ python serverctl.py sequence create-world-and-player.sequence.json --wait
 
 The second form is recommended. The sample JSON file is deployed beside `serverctl.py`.
 
+## Remote server operating rule
+
+The project's named remote headless server is `139.155.99.152:22`, with the
+installation rooted at `C:\SurvivalcraftServer`. The deployed control tools are:
+
+```text
+C:\SurvivalcraftServer\tools\serverctl.py
+C:\SurvivalcraftServer\tools\remote_server_ops.py
+```
+
+The `Server Control` main menu does **not** close or take ownership of the TCP
+control interface. It is valid for the process to remain on `MainMenu> Server
+Control`; automation must use the control API instead of keyboard injection or
+asking a user to operate the menu manually.
+
+Run these commands on the server through the approved SSH connection:
+
+```text
+python C:\SurvivalcraftServer\tools\serverctl.py --root C:\SurvivalcraftServer direct ping
+python C:\SurvivalcraftServer\tools\serverctl.py --root C:\SurvivalcraftServer direct status
+python C:\SurvivalcraftServer\tools\serverctl.py --root C:\SurvivalcraftServer direct world.join world="Jolia Poru"
+```
+
+The required recovery order is:
+
+1. Send `ping`. It is handled directly by the control server and does not enter
+   the game-thread command queue.
+2. Send `status`. Confirm `currentScreen`, `screenAnimating`, `worldLoaded`,
+   `queuedCommands`, `serverError`, and `frameError`.
+3. When the server is stable at `MainMenu` with no loaded world, send
+   `world.join world="Jolia Poru"`.
+4. Poll `status` until `currentScreen="Game"`, `worldLoaded=true`,
+   `serverError=null`, and `frameError=null`.
+5. Confirm the ScMultiplayer log contains `created game 0` or `GameCreated`.
+
+If `ping` succeeds but `status` times out, investigate `Frame.Update` and
+`ProcessQueuedCommands`; do not blame the menu or fall back to GUI key presses.
+Keep `hideWindow=true`, `disableDrawing=true`, and `enableConsole=true` on this
+GPU-less server. Never expose the token in documentation or command output.
+
 ## TCP wire format
 
 One UTF-8 JSON object per line:

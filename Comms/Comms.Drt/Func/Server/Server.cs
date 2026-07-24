@@ -16,7 +16,7 @@ public class Server : IDisposable
 
     private int NextGameId;
 
-    private byte[] DiscoveryResponseMessage;
+    private ServerDiscoveryResponseMessage DiscoveryResponseMessage;
 
     private double DiscoveryResponseMessageTime;
 
@@ -273,15 +273,24 @@ public class Server : IDisposable
         if (DiscoveryResponseMessage == null || time > DiscoveryResponseMessageTime + (double)Settings.GameListCacheTime)
         {
             DiscoveryResponseMessageTime = time;
-            DiscoveryResponseMessage = MessageSerializer.Write(new ServerDiscoveryResponseMessage
+            DiscoveryResponseMessage = new ServerDiscoveryResponseMessage
             {
                 Name = Settings.Name,
                 Priority = Settings.Priority,
                 GamesDescriptions = (from g in ServerGames.OrderBy((ServerGame g) => g.Tick).Take(Settings.MaxGamesToList)
                                      select g.CreateGameDescription()).ToArray()
-            });
+            };
         }
-        Peer.RespondToDiscovery(address, DeliveryMode.Unreliable, DiscoveryResponseMessage);
+        // Source: Comms/Comms/Peer.cs:KeepAliveResponseMessage.Handle
+        // Echo the request timestamp so Explorer measures only this discovery round trip.
+        Peer.RespondToDiscovery(address, DeliveryMode.Unreliable,
+            MessageSerializer.Write(new ServerDiscoveryResponseMessage
+            {
+                Name = DiscoveryResponseMessage.Name,
+                Priority = DiscoveryResponseMessage.Priority,
+                GamesDescriptions = DiscoveryResponseMessage.GamesDescriptions,
+                ProbeSendTime = message.ProbeSendTime
+            }));
     }
 
     private void Handle(ClientResourceRequestMessage message, IPEndPoint address)

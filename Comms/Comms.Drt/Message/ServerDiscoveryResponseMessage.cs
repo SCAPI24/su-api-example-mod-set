@@ -8,6 +8,8 @@ internal class ServerDiscoveryResponseMessage : Message
 
     public GameDescription[] GamesDescriptions;
 
+    public double ProbeSendTime;
+
     internal override void Read(Reader reader)
     {
         Name = reader.ReadString();
@@ -18,6 +20,8 @@ internal class ServerDiscoveryResponseMessage : Message
             GamesDescriptions[i] = new GameDescription();
             GamesDescriptions[i].Read(reader);
         }
+        if (reader.Length - reader.Position >= 8)
+            ProbeSendTime = reader.ReadDouble();
     }
 
     internal override void Write(Writer writer)
@@ -30,5 +34,7 @@ internal class ServerDiscoveryResponseMessage : Message
         {
             gamesDescriptions[i].Write(writer);
         }
+        if (ProbeSendTime > 0.0)
+            writer.WriteDouble(ProbeSendTime);
     }
 }
