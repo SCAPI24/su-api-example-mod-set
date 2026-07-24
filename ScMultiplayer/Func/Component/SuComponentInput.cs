@@ -1,4 +1,4 @@
-﻿using Engine;
+using Engine;
 using Game;
 using System;
 
@@ -43,12 +43,9 @@ namespace ScMultiplayer
                 return;
             }
             // Source: ScMultiplayer.cs:ScMultiplayer.ShouldSuppressClientInput
-            // Terrain recovery must reach its live barrier before local world actions resume.
-            if (ScMultiplayer.currentInstance?.ShouldSuppressClientInput == true)
-            {
-                fields.ModifyParentField(this, "m_playerInput", default(PlayerInput), parentType);
-                return;
-            }
+            // Recovery blocks world writes, but movement and camera input must remain responsive.
+            bool suppressWorldActions =
+                ScMultiplayer.currentInstance?.ShouldSuppressClientInput == true;
             Sum_lastJumpTime = fields.GetParentField<double>(this, "m_lastJumpTime", parentType);
             fields.ModifyParentField(this, "m_playerInput", default(PlayerInput), parentType);
             SuUpdateInputFromMouseAndKeyboard(Sum_componentPlayer.GameWidget.Input);
@@ -79,7 +76,9 @@ namespace ScMultiplayer
             if (Sum_playerInput.Lighting || fields.GetParentField<ButtonWidget>(
                 gui, "m_lightningButtonWidget", typeof(ComponentGui))?.IsClicked == true)
                 worldActions |= WorldControlAction.Lightning;
-            ScMultiplayer.currentInstance?.TrySendWorldControlRequest(Sum_componentPlayer, worldActions);
+            if (!suppressWorldActions)
+                ScMultiplayer.currentInstance?.TrySendWorldControlRequest(
+                    Sum_componentPlayer, worldActions);
             if (Sum_playerInput.Jump)
             {
                 if (Time.RealTime - Sum_lastJumpTime < 0.3)
@@ -130,6 +129,20 @@ namespace ScMultiplayer
             {
                 Sum_playerInput.CrouchMove = Vector3.Normalize(Sum_playerInput.CrouchMove);
             }
+            if (suppressWorldActions)
+            {
+                Sum_playerInput.EditItem = false;
+                Sum_playerInput.TimeOfDay = false;
+                Sum_playerInput.Lighting = false;
+                Sum_playerInput.Precipitation = false;
+                Sum_playerInput.Fog = false;
+                Sum_playerInput.Dig = null;
+                Sum_playerInput.Hit = null;
+                Sum_playerInput.Aim = null;
+                Sum_playerInput.Interact = null;
+                Sum_playerInput.PickBlockType = null;
+                Sum_playerInput.Drop = false;
+            }
             // Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update
             // Animal entities are host snapshots, so send their stable network ID instead of
             // relying on both peers' body raycasts to select the same local Entity instance.
@@ -141,6 +154,16 @@ namespace ScMultiplayer
             // Animals use their stable network entity ID. Do not also enqueue the generic player
             // ray request, while preserving Sum_playerInput for the client's native prediction.
             if (sentAnimalAttack) networkPlayerInput.Hit = null;
+            // Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update
+            // Circuit buttons execute on the host-assigned 10ms step, so suppress native prediction.
+            bool scheduledCircuitInteraction = ScMultiplayer.currentInstance?
+                .TryScheduleLocalCircuitInteraction(Sum_componentPlayer,
+                    networkPlayerInput.Interact) == true;
+            if (scheduledCircuitInteraction)
+            {
+                networkPlayerInput.Interact = null;
+                Sum_playerInput.Interact = null;
+            }
             ScMultiplayer.currentInstance?.CaptureLocalPlayerInput(
                 Sum_componentPlayer, networkPlayerInput);
             if (SplitSourceInventory != null && SplitSourceInventory.GetSlotCount(SplitSourceSlotIndex) == 0)

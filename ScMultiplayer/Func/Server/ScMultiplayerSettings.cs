@@ -11,6 +11,8 @@ namespace ScMultiplayer
         private const int DefaultServerBasePort = 51459;
         private const int DefaultServerPortCount = 64;
         private const int MaximumServerPortCount = 256;
+        private const int DefaultMaxPlayers = 4;
+        private const int MaximumMaxPlayers = 32;
 
         public static bool AutoApproveJoinRequests { get; private set; }
 
@@ -26,6 +28,8 @@ namespace ScMultiplayer
 
         public static int ServerPreferredPort { get; private set; }
 
+        public static int MaxPlayers { get; private set; }
+
         // Source: Survivalcraft/Game/SettingsManager.cs:SettingsManager.LoadSettings
         public static void Load()
         {
@@ -34,6 +38,7 @@ namespace ScMultiplayer
             ServerBasePort = DefaultServerBasePort;
             ServerPortCount = DefaultServerPortCount;
             ServerPreferredPort = DefaultServerBasePort;
+            MaxPlayers = DefaultMaxPlayers;
             if (!Storage.FileExists(SettingsPath))
             {
                 BuildServerPorts();
@@ -81,6 +86,13 @@ namespace ScMultiplayer
                 {
                     ServerPreferredPort = preferredPort;
                 }
+                if (document.RootElement.TryGetProperty(
+                    "maxPlayers",
+                    out JsonElement maxPlayersValue) &&
+                    maxPlayersValue.TryGetInt32(out int maxPlayers))
+                {
+                    MaxPlayers = maxPlayers;
+                }
             }
             catch (Exception ex)
             {
@@ -117,6 +129,7 @@ namespace ScMultiplayer
             writer.WriteNumber("serverBasePort", ServerBasePort);
             writer.WriteNumber("serverPortCount", ServerPortCount);
             writer.WriteNumber("serverPreferredPort", ServerPreferredPort);
+            writer.WriteNumber("maxPlayers", MaxPlayers);
             writer.WriteEndObject();
         }
 
@@ -141,6 +154,12 @@ namespace ScMultiplayer
                 Log.Warning($"[ScMP] Invalid serverPreferredPort {ServerPreferredPort}; " +
                     $"using {ServerBasePort}.");
                 ServerPreferredPort = ServerBasePort;
+            }
+            if (MaxPlayers < 1 || MaxPlayers > MaximumMaxPlayers)
+            {
+                Log.Warning($"[ScMP] Invalid maxPlayers {MaxPlayers}; using " +
+                    $"{DefaultMaxPlayers}.");
+                MaxPlayers = DefaultMaxPlayers;
             }
         }
 

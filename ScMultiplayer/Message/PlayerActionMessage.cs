@@ -12,7 +12,8 @@ namespace ScMultiplayer
         LeaveRequest,
         RespawnRequest,
         DropRequest,
-        Whistle
+        Whistle,
+        InteractResult
     }
 
     [Serializable]
@@ -28,6 +29,14 @@ namespace ScMultiplayer
         public int DropCount;
         public Vector3 Position;
         public Vector3 Velocity;
+        public bool HasTerrainPrediction;
+        public int RequestId;
+        public Point3 Cell;
+        public int ExpectedValue;
+        public int PredictedValue;
+        public bool Accepted;
+        public int AuthoritativeValue;
+        public int ServerTick;
 
         public PlayerActionMessage()
         {
@@ -63,6 +72,26 @@ namespace ScMultiplayer
                 if (Action == PlayerActionType.DropRequest)
                     DropCount = reader.ReadInt32();
             }
+            // Source: Survivalcraft/Game/ComponentMiner.cs:ComponentMiner.Place
+            if (Action == PlayerActionType.InteractRequest)
+            {
+                HasTerrainPrediction = reader.ReadBoolean();
+                if (HasTerrainPrediction)
+                {
+                    RequestId = reader.ReadInt32();
+                    Cell = reader.ReadPoint3();
+                    ExpectedValue = reader.ReadInt32();
+                    PredictedValue = reader.ReadInt32();
+                }
+            }
+            if (Action == PlayerActionType.InteractResult)
+            {
+                RequestId = reader.ReadInt32();
+                Cell = reader.ReadPoint3();
+                Accepted = reader.ReadBoolean();
+                AuthoritativeValue = reader.ReadInt32();
+                ServerTick = reader.ReadInt32();
+            }
             if (Action == PlayerActionType.RespawnRequest ||
                 Action == PlayerActionType.DropRequest ||
                 Action == PlayerActionType.Whistle)
@@ -87,6 +116,26 @@ namespace ScMultiplayer
                 writer.WriteInt32(ItemCount);
                 if (Action == PlayerActionType.DropRequest)
                     writer.WriteInt32(DropCount);
+            }
+            // Source: Survivalcraft/Game/ComponentMiner.cs:ComponentMiner.Place
+            if (Action == PlayerActionType.InteractRequest)
+            {
+                writer.WriteBoolean(HasTerrainPrediction);
+                if (HasTerrainPrediction)
+                {
+                    writer.WriteInt32(RequestId);
+                    writer.WritePoint3(Cell);
+                    writer.WriteInt32(ExpectedValue);
+                    writer.WriteInt32(PredictedValue);
+                }
+            }
+            if (Action == PlayerActionType.InteractResult)
+            {
+                writer.WriteInt32(RequestId);
+                writer.WritePoint3(Cell);
+                writer.WriteBoolean(Accepted);
+                writer.WriteInt32(AuthoritativeValue);
+                writer.WriteInt32(ServerTick);
             }
             if (Action == PlayerActionType.RespawnRequest ||
                 Action == PlayerActionType.DropRequest ||
