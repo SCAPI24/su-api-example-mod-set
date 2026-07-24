@@ -30,6 +30,10 @@ namespace ScMultiplayer
         private const int HashLeadSteps = 20;
         private const double JournalRetention = 45.0;
         private const double FenceStaleTime = 0.75;
+        private const double FenceRequestRetryTime = 1.0;
+        private const double SnapshotRequestRetryTime = 1.5;
+        private const double RecoveryRequestRetryTime = 1.5;
+        private const double MaximumRequestRetryTime = 5.0;
         private const int CatchUpInputSuppressionSteps = 30;
         private const int MaximumEventsPerBatch = 40;
         private const int MaximumStatesPerSnapshot = 40;
@@ -109,6 +113,11 @@ namespace ScMultiplayer
         private int m_snapshotLastSequence;
         private int m_lastObservedHostCircuitStep;
         private double m_lastHostProgressRealTime;
+        private double m_lastFenceRequestRealTime;
+        private double m_snapshotRequestRealTime;
+        private double m_recoveryRequestRealTime;
+        private int m_snapshotRequestAttempts;
+        private int m_recoveryRequestAttempts;
 
         public CircuitSynchronizer(ScMultiplayer owner)
         {
@@ -119,7 +128,11 @@ namespace ScMultiplayer
         {
             get
             {
-                if (!ScMultiplayer.IsHost) TryCompleteRecoveryHold();
+                if (!ScMultiplayer.IsHost)
+                {
+                    MaintainRecoveryRequests();
+                    TryCompleteRecoveryHold();
+                }
                 return m_localSuspended || (!ScMultiplayer.IsHost &&
                     (IsRepairBarrierReached() ||
                     (!m_hasFence || m_hostPaused || m_recoveryHold || IsFenceStale())));
@@ -182,6 +195,15 @@ namespace ScMultiplayer
                 EnableDeterministicRandom();
                 SendFence(-1);
             }
+            else
+            {
+                // Source: Mod/ScMultiplayer/Plug/ScMultiplayer.cs:
+                // ScMultiplayer.UpdateFrame
+                // Circuit messages received while GameLoading is replacing the Project can be
+                // discarded before this synchronizer is bound. Ask for a current reliable fence
+                // immediately instead of waiting indefinitely for incidental live traffic.
+                SendCheckpointRequest();
+            }
         }
 
         // Source: Engine/Window.cs:Window.Deactivated
@@ -205,13 +227,7 @@ namespace ScMultiplayer
             m_requiredFenceSerial = m_receivedFenceSerial + 1;
             m_recoveryRequested = false;
             if (!suspended && m_epoch > 0)
-            {
-                NetworkMessageSender.SendCircuitSync(0, new CircuitSyncMessage
-                {
-                    Stage = CircuitSyncStage.CheckpointRequest,
-                    Epoch = m_epoch
-                });
-            }
+                SendCheckpointRequest();
         }
 
         // Source: Survivalcraft/Game/ComponentMiner.cs:ComponentMiner.Raycast
@@ -265,7 +281,10 @@ namespace ScMultiplayer
                         HandleHashReport(message, sourceClientId);
                         break;
                     case CircuitSyncStage.CheckpointRequest:
-                        if (message.Epoch == m_epoch)
+                        // Source: CircuitSynchronizer.EnsureBound
+                        // Epoch zero is the bootstrap request sent before the client has received
+                        // its first authoritative fence. The response always carries host epoch.
+                        if (message.Epoch == 0 || message.Epoch == m_epoch)
                         {
                             ScheduleHostCheckpoint();
                             SendFence(sourceClientId);
@@ -354,11 +373,7 @@ namespace ScMultiplayer
             if (m_subsystem == null || m_epoch <= 0 ||
                 ScMultiplayer.client?.IsConnected != true)
                 return;
-            NetworkMessageSender.SendCircuitSync(0, new CircuitSyncMessage
-            {
-                Stage = CircuitSyncStage.CheckpointRequest,
-                Epoch = m_epoch
-            });
+            SendCheckpointRequest();
         }
 
         public void Reset()
@@ -413,6 +428,11 @@ namespace ScMultiplayer
             m_snapshotLastSequence = 0;
             m_lastObservedHostCircuitStep = 0;
             m_lastHostProgressRealTime = 0.0;
+            m_lastFenceRequestRealTime = 0.0;
+            m_snapshotRequestRealTime = 0.0;
+            m_recoveryRequestRealTime = 0.0;
+            m_snapshotRequestAttempts = 0;
+            m_recoveryRequestAttempts = 0;
         }
 
         // Source: Survivalcraft/Game/SubsystemElectricity.cs:SubsystemElectricity.Update
@@ -729,6 +749,8 @@ namespace ScMultiplayer
                 }
                 m_expectedSequence++;
                 m_recoveryRequested = false;
+                m_recoveryRequestRealTime = 0.0;
+                m_recoveryRequestAttempts = 0;
             }
             if (m_receivedEvents.Count > 0 && m_receivedEvents.Keys.Min() > m_expectedSequence)
                 RequestRecovery();
@@ -954,19 +976,14 @@ namespace ScMultiplayer
             m_timelineGeneration = message.TimelineGeneration;
             m_receivedFenceSerial++;
             m_lastFenceRealTime = Time.RealTime;
+            m_lastFenceRequestRealTime = 0.0;
             m_hasFence = true;
             m_safeThroughHostCircuitStep = message.SafeThroughHostCircuitStep;
             m_fenceTerrainSequence = Math.Max(message.RequiredTerrainSequence, 0L);
             m_hostPaused = message.IsPaused;
             AcceptRemoteCheckpoint(message.NextHashStep);
             if ((wasHostPaused && !m_hostPaused) || wasStale)
-            {
-                NetworkMessageSender.SendCircuitSync(0, new CircuitSyncMessage
-                {
-                    Stage = CircuitSyncStage.CheckpointRequest,
-                    Epoch = m_epoch
-                });
-            }
+                SendCheckpointRequest();
 
             if (!m_hasClock)
             {
@@ -1112,6 +1129,8 @@ namespace ScMultiplayer
             m_repairCheckpointStep = message.HashStep;
             m_repairBarrierHostStep = message.HostCircuitStep;
             m_snapshotRequested = true;
+            m_snapshotRequestRealTime = Time.RealTime;
+            m_snapshotRequestAttempts = 0;
         }
 
         private bool IsRepairBarrierReached()
@@ -1119,6 +1138,60 @@ namespace ScMultiplayer
             return !ScMultiplayer.IsHost && m_subsystem != null &&
                 m_repairBarrierHostStep > 0 &&
                 m_subsystem.CircuitStep >= HostToLocal(m_repairBarrierHostStep) - 1;
+        }
+
+        // Source: CircuitSynchronizer.IsSimulationPaused
+        // Source: CircuitSynchronizer.TryCompleteRecoveryHold
+        private void MaintainRecoveryRequests()
+        {
+            if (ScMultiplayer.IsHost || m_subsystem == null ||
+                ScMultiplayer.client?.IsConnected != true || m_localSuspended)
+                return;
+
+            double now = Time.RealTime;
+            if ((!m_hasFence || IsFenceStale()) &&
+                (m_lastFenceRequestRealTime <= 0.0 ||
+                now - m_lastFenceRequestRealTime >= FenceRequestRetryTime))
+            {
+                SendCheckpointRequest();
+            }
+
+            if (m_snapshotRequested)
+            {
+                double retryTime = GetRequestRetryTime(
+                    SnapshotRequestRetryTime, m_snapshotRequestAttempts);
+                if (m_snapshotRequestRealTime <= 0.0 ||
+                    now - m_snapshotRequestRealTime >= retryTime)
+                    SendSnapshotRequest();
+                return;
+            }
+
+            if (m_recoveryRequested)
+            {
+                double retryTime = GetRequestRetryTime(
+                    RecoveryRequestRetryTime, m_recoveryRequestAttempts);
+                if (m_recoveryRequestRealTime <= 0.0 ||
+                    now - m_recoveryRequestRealTime >= retryTime)
+                    SendRecoveryRequest();
+            }
+        }
+
+        // Source: CircuitSynchronizer.HandleMessage
+        private void SendCheckpointRequest()
+        {
+            m_lastFenceRequestRealTime = Time.RealTime;
+            NetworkMessageSender.SendCircuitSync(0, new CircuitSyncMessage
+            {
+                Stage = CircuitSyncStage.CheckpointRequest,
+                Epoch = m_epoch
+            });
+        }
+
+        // Source: CircuitSynchronizer.RequestSnapshot
+        private static double GetRequestRetryTime(double initialTime, int attempts)
+        {
+            int shift = MathUtils.Clamp(attempts - 1, 0, 2);
+            return Math.Min(initialTime * (1 << shift), MaximumRequestRetryTime);
         }
 
         private void TryCompleteRecoveryHold()
@@ -1164,6 +1237,15 @@ namespace ScMultiplayer
         {
             if (m_recoveryRequested || m_epoch <= 0) return;
             m_recoveryRequested = true;
+            m_recoveryRequestAttempts = 0;
+            SendRecoveryRequest();
+        }
+
+        private void SendRecoveryRequest()
+        {
+            if (!m_recoveryRequested || m_epoch <= 0) return;
+            m_recoveryRequestAttempts++;
+            m_recoveryRequestRealTime = Time.RealTime;
             NetworkMessageSender.SendCircuitSync(0, new CircuitSyncMessage
             {
                 Stage = CircuitSyncStage.RecoveryRequest,
@@ -1190,6 +1272,15 @@ namespace ScMultiplayer
         {
             if (m_snapshotRequested || m_epoch <= 0) return;
             m_snapshotRequested = true;
+            m_snapshotRequestAttempts = 0;
+            SendSnapshotRequest();
+        }
+
+        private void SendSnapshotRequest()
+        {
+            if (!m_snapshotRequested || m_epoch <= 0) return;
+            m_snapshotRequestAttempts++;
+            m_snapshotRequestRealTime = Time.RealTime;
             NetworkMessageSender.SendCircuitSync(0, new CircuitSyncMessage
             {
                 Stage = CircuitSyncStage.SnapshotRequest,
@@ -1236,6 +1327,7 @@ namespace ScMultiplayer
                 m_snapshotLastSequence = message.LastSequence;
             }
             m_snapshotParts[message.SnapshotPartIndex] = message.States.ToList();
+            m_snapshotRequestRealTime = Time.RealTime;
             TryFinalizeSnapshot();
         }
 
@@ -1269,6 +1361,10 @@ namespace ScMultiplayer
             m_lastAppliedSequence = m_snapshotLastSequence;
             m_snapshotRequested = false;
             m_recoveryRequested = false;
+            m_snapshotRequestRealTime = 0.0;
+            m_recoveryRequestRealTime = 0.0;
+            m_snapshotRequestAttempts = 0;
+            m_recoveryRequestAttempts = 0;
             m_snapshotPartCount = 0;
             m_repairBarrierHostStep = 0;
             m_repairCheckpointStep = 0;
