@@ -1,4 +1,4 @@
-﻿using Comms.Drt;
+using Comms.Drt;
 using Engine;
 using Engine.Input;
 using Game;
@@ -468,7 +468,12 @@ namespace ScMultiplayer
                             if (isService) m_serviceWorlds.Add(remoteWorld);
                             else m_serviceWorlds.Remove(remoteWorld);
                         }
-                        m_remoteWorldPings[remoteWorld] = server.Ping;
+                        // Source: Comms/Comms/Peer.cs:KeepAliveResponseMessage.Handle
+                        // The discovery response now carries one exact echoed-timestamp RTT.
+                        // Keep the first valid sample for this screen entry instead of folding
+                        // later background discovery scheduling into the displayed value.
+                        if (!m_remoteWorldPings.ContainsKey(remoteWorld))
+                            m_remoteWorldPings[remoteWorld] = server.Ping;
                         m_remoteGames[remoteWorld] = game;
                     }
                 }

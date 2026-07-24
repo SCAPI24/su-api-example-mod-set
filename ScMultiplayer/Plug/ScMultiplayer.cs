@@ -10,6 +10,7 @@ using System;
 using System.Collections;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -225,7 +226,6 @@ namespace ScMultiplayer
         public int ActiveAimItemCount;
         public readonly Queue<PlayerActionMessage> InteractEvents = new Queue<PlayerActionMessage>();
         public int LastInteractSequence;
-        public double NextInteractExecutionTime;
         public readonly Queue<PlayerActionMessage> HitEvents = new Queue<PlayerActionMessage>();
         public int LastHitSequence;
         public double NextHitExecutionTime;
@@ -274,6 +274,12 @@ namespace ScMultiplayer
         public int Tick;
     }
 
+    public class PendingFluidSettlement
+    {
+        public int TransientValue;
+        public double DueGameTime;
+    }
+
     public class TerrainJournalEntry
     {
         public long Sequence;
@@ -302,6 +308,21 @@ namespace ScMultiplayer
         public int ToolCount;
         public Vector3 BodyPosition;
         public double LastSeenTime;
+    }
+
+    public class PendingTerrainPlacePrediction
+    {
+        public PlayerActionMessage Request;
+        public int LocalPredictedValue;
+        public bool HasLocalPrediction;
+        public double LastSendTime;
+        public int SendCount;
+    }
+
+    public class HostTerrainPlaceExecution
+    {
+        public int ClientId;
+        public PlayerActionMessage Request;
     }
 
     public class OutgoingWorldTransfer
@@ -391,6 +412,7 @@ namespace ScMultiplayer
         public bool AttackOrder;
         public bool FeedOrder;
         public int SimulationSeed;
+        public string ShapeshiftTarget = string.Empty;
         public bool HasSent;
     }
 
@@ -406,6 +428,7 @@ namespace ScMultiplayer
         public bool StateChanged;
         public bool AttackOrder;
         public bool FeedOrder;
+        public string ShapeshiftTarget;
     }
 
     public class RemoteAnimalSyncState
@@ -440,6 +463,7 @@ namespace ScMultiplayer
         public bool SimulationSeedApplied;
         public double? DeathTime;
         public bool LocalDespawnStarted;
+        public string ShapeshiftTarget = string.Empty;
     }
 
     public class NetworkMessageHandler
@@ -708,7 +732,14 @@ namespace ScMultiplayer
         public static void SendPlayerInteractRequest(PlayerActionMessage message)
         {
             ScMultiplayer.client.SendDirectInput(0,
-                Message.WriteWithSender(message, ScMultiplayer.client.Address));
+                Message.WriteWithSender(message, ScMultiplayer.client.Address), sequenced: true);
+        }
+
+        public static void SendPlayerInteractResult(int targetClientId,
+            PlayerActionMessage message)
+        {
+            ScMultiplayer.client.SendDirectInput(targetClientId,
+                Message.WriteWithSender(message, ScMultiplayer.client.Address), sequenced: true);
         }
 
         // Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update
@@ -783,6 +814,42 @@ namespace ScMultiplayer
                 batchable: false);
         }
 
+        // Source: Survivalcraft/Game/SubsystemEditableItemBehavior.cs:SubsystemEditableItemBehavior<T>
+        public static void SendEditableDataRequest(EditableDataRequestMessage message)
+        {
+            if (message == null || ScMultiplayer.client == null) return;
+            ScMultiplayer.client.SendDirectInput(0,
+                Message.WriteWithSender(message, ScMultiplayer.client.Address), sequenced: true);
+        }
+
+        public static void SendEditableDataState(int targetClientId,
+            EditableDataStateMessage message)
+        {
+            if (message == null || ScMultiplayer.client == null) return;
+            SendScheduledMessage(targetClientId, message, sequenced: true, latest: false);
+        }
+
+        // Source: Mod/ScMultiplayer/Func/Circuit/CircuitSynchronizer.cs:CircuitSynchronizer.PublishNetworkState
+        public static void SendCircuitSync(int targetClientId, CircuitSyncMessage message,
+            bool latest = false)
+        {
+            if (message == null || ScMultiplayer.client == null) return;
+            byte[] payload = Message.WriteWithSender(message, ScMultiplayer.client.Address);
+            ScMultiplayer.client.SendDirectInput(targetClientId, payload,
+                sequenced: !latest, latest: latest);
+        }
+
+        // Source: Mod/ScMultiplayer/Func/WorldObjectSynchronizer.cs:
+        // WorldObjectSynchronizer.Update
+        public static void SendWorldObjectSync(int targetClientId,
+            WorldObjectSyncMessage message, bool latest = false)
+        {
+            if (message == null || ScMultiplayer.client == null) return;
+            byte[] payload = Message.WriteWithSender(message, ScMultiplayer.client.Address);
+            ScMultiplayer.client.SendDirectInput(targetClientId, payload,
+                sequenced: !latest, latest: latest);
+        }
+
         public static void SendPlayerHealthMessage(int playerIndex, ComponentPlayer player,
             float healthChange, string cause = null, bool hasKnockback = false)
         {
@@ -853,7 +920,7 @@ namespace ScMultiplayer
 
         // ---------- IMod ----------
         public string Name => "SC联机";
-        public string Version => "1.6.0";
+        public string Version => "1.8.0";
         public IEnumerable<string> Dependencies => Array.Empty<string>();
         public bool IsEnabled { get; set; } = true;
         public bool IsMergeLib => true;
@@ -880,6 +947,8 @@ namespace ScMultiplayer
         private int[] m_authoritativeLocalSlotValues = Array.Empty<int>();
         private int[] m_authoritativeLocalSlotCounts = Array.Empty<int>();
         private readonly Dictionary<int, PlayerData> m_networkPlayerData = new Dictionary<int, PlayerData>();
+        private readonly Dictionary<int, int> m_reservedNetworkPlayerIndices =
+            new Dictionary<int, int>();
         private readonly HashSet<int> m_creatingNetworkPlayers = new HashSet<int>();
         private readonly Dictionary<int, string> m_pendingNetworkPlayers = new Dictionary<int, string>();
         private readonly Dictionary<int, string> m_pendingNetworkPlayerIdentities = new Dictionary<int, string>();
@@ -939,6 +1008,19 @@ namespace ScMultiplayer
             new Dictionary<int, EquipmentSnapshot>();
         private readonly HashSet<int> m_equipmentSynchronizedClients = new HashSet<int>();
         private int m_localEquipmentRevision;
+        // Source: Survivalcraft/Game/SubsystemEditableItemBehavior.cs:SubsystemEditableItemBehavior<T>
+        private readonly Dictionary<int, int> m_lastEditableDataRequestIds =
+            new Dictionary<int, int>();
+        private readonly Dictionary<string, int> m_lastEditableDataRevisions =
+            new Dictionary<string, int>();
+        private readonly Dictionary<string, string> m_lastEditableDataPayloads =
+            new Dictionary<string, string>();
+        private int m_localEditableDataRequestId;
+        private int m_editableDataRevision;
+        private CircuitSynchronizer m_circuitSynchronizer;
+        private WorldObjectSynchronizer m_worldObjectSynchronizer;
+
+        internal CircuitSynchronizer CircuitSynchronizer => m_circuitSynchronizer;
         private PendingJoinRequest m_pendingJoinRequest;
         private PendingJoinRequest m_activeJoinRequest;
         private string m_activeJoinPlayerName;
@@ -949,6 +1031,8 @@ namespace ScMultiplayer
         private bool m_reconnectPending;
         private int m_reconnectAttempts;
         private double m_nextReconnectAttemptTime;
+        private bool m_joinAwaitingWorldProgress;
+        private double m_lastJoinWorldProgressTime;
         private NetworkPlayerRecord m_pendingLocalPlayerRecord;
         private PlayerData m_localReplacementPlayerData;
         private bool m_localPlayerRecordQueued;
@@ -978,6 +1062,9 @@ namespace ScMultiplayer
         private int m_remoteCreatureSpawnCursor;
         private Project m_clientWorldObjectsProject;
         private readonly ConcurrentQueue<Action> m_endOfFrameActions = new ConcurrentQueue<Action>();
+        // Source: ScMultiplayer.cs:ProcessEndOfFrameActions
+        // World-transfer control must not wait behind high-rate gameplay presentation work.
+        private readonly ConcurrentQueue<Action> m_worldTransferActions = new ConcurrentQueue<Action>();
         private readonly Dictionary<Entity, ushort> m_hostAnimalIds = new Dictionary<Entity, ushort>();
         private readonly List<Entity> m_hostAnimals = new List<Entity>();
         private readonly Dictionary<Entity, AnimalSyncMetadata> m_hostAnimalSync =
@@ -1040,6 +1127,9 @@ namespace ScMultiplayer
             new Dictionary<Point3, TerrainCellState>();
         private readonly Dictionary<Point3, int> m_terrainRepairRepeats =
             new Dictionary<Point3, int>();
+        private readonly Dictionary<Point3, PendingFluidSettlement>
+            m_pendingFluidSettlements =
+                new Dictionary<Point3, PendingFluidSettlement>();
         private readonly Dictionary<int, PendingTerrainPrediction> m_pendingTerrainPredictions =
             new Dictionary<int, PendingTerrainPrediction>();
         private readonly Dictionary<Point3, int> m_pendingTerrainPredictionCells =
@@ -1048,6 +1138,15 @@ namespace ScMultiplayer
             new Dictionary<long, TerrainDigResultMessage>();
         private readonly Dictionary<Point3, LocalTerrainDigIntent> m_localTerrainDigIntents =
             new Dictionary<Point3, LocalTerrainDigIntent>();
+        private readonly Dictionary<int, PendingTerrainPlacePrediction>
+            m_pendingTerrainPlacePredictions =
+                new Dictionary<int, PendingTerrainPlacePrediction>();
+        private readonly Dictionary<Point3, int> m_pendingTerrainPlacePredictionCells =
+            new Dictionary<Point3, int>();
+        private readonly List<HostTerrainPlaceExecution> m_hostTerrainPlaceExecutions =
+            new List<HostTerrainPlaceExecution>();
+        private readonly Dictionary<long, PlayerActionMessage> m_processedTerrainPlaceRequests =
+            new Dictionary<long, PlayerActionMessage>();
         private readonly Dictionary<int, float> m_hostPlayerPokingPhases =
             new Dictionary<int, float>();
         private readonly Dictionary<int, int> m_hostPlayerPokeSequences =
@@ -1081,7 +1180,6 @@ namespace ScMultiplayer
         private int m_localHitSequence;
         private double m_nextLocalHitRequestTime;
         private int m_localInteractSequence;
-        private double m_nextLocalInteractRequestTime;
         private int m_localDropSequence;
         private Entity m_observedLocalPlayerEntity;
         private bool m_observedLocalPlayerWasDead;
@@ -1100,6 +1198,7 @@ namespace ScMultiplayer
         private bool m_remoteLightningActive;
         private bool m_hostLightningActive;
         private double m_localLightningPredictionUntil;
+        private const double HostLightningStaleDuration = 1.0;
         private WorldControlAction m_pendingWorldControlActions;
         private double m_worldControlRequestDeadline;
         private byte[] m_pendingLocalCreateDescription;
@@ -1117,6 +1216,7 @@ namespace ScMultiplayer
         private const double LocalCreateRetryInterval = 1.5;
         private const float ReconnectInitialDelay = 1f;
         private const float ReconnectMaxDelay = 5f;
+        private const double JoinWorldNoProgressTimeout = 15.0;
         private const float RemoteConnectionLostPeriod = 15f;
         private const float LocalHostConnectionLostPeriod = float.MaxValue;
         private const float LocalKnockbackHoldDuration = 0.35f;
@@ -1128,7 +1228,6 @@ namespace ScMultiplayer
         private const float RemoteAnimalSnapDistance = 24f;
         private const float ClientProjectilePredictionGrace = 3f;
         private const float PlayerHitRequestInterval = 0.36f;
-        private const float PlayerInteractRequestInterval = 0.36f;
         // Source: Comms/Comms/UdpTransmitter.cs:UdpTransmitter.MaxPacketSize
         // 940 bytes plus the nested ScMultiplayer, DRT, Peer and Comm headers fits in one
         // 1024-byte UDP packet for both IPv4 and IPv6 connection-init packets.
@@ -1149,6 +1248,9 @@ namespace ScMultiplayer
         private const int MaximumTerrainRecoveryRanges = 64;
         private const int MaximumTerrainRecoveryBatchBytes = 256 * 1024;
         private const double TerrainGapRecoveryDelay = 0.75;
+        // Source: ScMultiplayer.cs:ScMultiplayer.ProcessEndOfFrameActions
+        private const int MaximumEndOfFrameActionsPerFrame = 256;
+        private const long EndOfFrameActionBudgetMilliseconds = 4;
         private const int RunawayCreatureThreshold = 256;
         private const int RunawayCreatureKeepCount = 52;
         private const int RunawayCreatureCleanupBatchSize = 256;
@@ -1162,6 +1264,8 @@ namespace ScMultiplayer
         private const float TerrainMergeInterval = 5f;
         private const int TerrainRepairRepeatCount = 3;
         private const int TerrainCatchUpBatchSize = 128;
+        private const double WaterSettlementDelay = 0.35;
+        private const double SlowFluidSettlementDelay = 2.1;
         private const int AnimalSyncBatchSize = 12;
         private const int MaximumRecentChatMessages = 50;
         private const string DownloadedWorldsRegistryPath = "data:/ScMultiplayerDownloadedWorlds.txt";
@@ -1183,11 +1287,28 @@ namespace ScMultiplayer
         public void OnLoad(IModEventBus eventBus = null, IModInjector modInjector = null)
         {
             currentInstance = this;
+            m_circuitSynchronizer ??= new CircuitSynchronizer(this);
+            m_worldObjectSynchronizer ??= new WorldObjectSynchronizer(this);
             ModManager = Game.Program.ModManager;
             m_modInjector = modInjector;
             modInjector.Register("Game.ComponentHumanModel",
                 "ScMultiplayer.SuComponentHumanModel");
+            modInjector.Register("Game.SubsystemElectricity",
+                "ScMultiplayer.SuSubsystemElectricity");
+            modInjector.RegisterBlock(Game.ButtonBlock.Index,
+                typeof(global::ScMultiplayer.ButtonBlock), Name);
+            modInjector.RegisterBlock(Game.PressurePlateBlock.Index,
+                typeof(global::ScMultiplayer.PressurePlateBlock), Name);
+            modInjector.RegisterBlock(Game.RandomGeneratorBlock.Index,
+                typeof(global::ScMultiplayer.RandomGeneratorBlock), Name);
+            modInjector.RegisterBlock(Game.DetonatorBlock.Index,
+                typeof(global::ScMultiplayer.DetonatorBlock), Name);
+            modInjector.RegisterBlock(Game.DispenserBlock.Index,
+                typeof(global::ScMultiplayer.DispenserBlock), Name);
+            modInjector.RegisterBlock(Game.PistonBlock.Index,
+                typeof(global::ScMultiplayer.PistonBlock), Name);
             ScMultiplayerSettings.Load();
+            playerMappingManager.MaxPlayerIndices = ScMultiplayerSettings.MaxPlayers;
             StartWorldTransferSender();
 
             // 初始化状态机
@@ -1218,6 +1339,8 @@ namespace ScMultiplayer
             // EventBus
             eventBus.SubscribeEvent("GameDatabase.GameDatabase", args =>
                 HandleGameDatabase((Database)args[0]), EventPriority.HIGHEST);
+            eventBus.SubscribeEvent("BlocksManager.Initialize",
+                HandleBlocksManagerInitialize, EventPriority.HIGHEST);
             eventBus.SubscribeEvent("Loading.Initialize", args =>
                 HandleLoading(args), EventPriority.HIGHEST);
             eventBus.SubscribeEvent("Frame.Update", args =>
@@ -1278,7 +1401,23 @@ namespace ScMultiplayer
             }
 
             explorer = new Explorer(0x53634d70, serverPorts, explorerTransmitter);
-            explorer.Error += ex => Log.Error($"[Explorer] {ex.Message}");
+            double nextExplorerErrorLogTime = 0.0;
+            int suppressedExplorerErrors = 0;
+            explorer.Error += ex =>
+            {
+                double now = Time.RealTime;
+                if (now < nextExplorerErrorLogTime)
+                {
+                    suppressedExplorerErrors++;
+                    return;
+                }
+                string suffix = suppressedExplorerErrors > 0
+                    ? $" (suppressed {suppressedExplorerErrors} repeats)"
+                    : string.Empty;
+                Log.Error($"[Explorer] {ex.Message}{suffix}");
+                suppressedExplorerErrors = 0;
+                nextExplorerErrorLogTime = now + 5.0;
+            };
             // Source: Comms/Comms/Peer.cs:Peer.DiscoverLocalPeers
             // On Android, tun0 may receive a ZeroTier broadcast but reject sending one back.
             // Let the local Explorer unicast-probe the request source, with per-address throttling.
@@ -1490,6 +1629,16 @@ namespace ScMultiplayer
             return args;
         }
 
+        private object[] HandleBlocksManagerInitialize(object[] args)
+        {
+            // Source: Survivalcraft/Game/BlocksManager.cs:BlocksManager.Initialize
+            if (args?.Length != 1 || args[0] is not Block[] blocks)
+                return new object[] { false, args != null && args.Length > 0 ? args[0] : null };
+
+            m_modInjector?.ApplyBlocks(blocks, Name);
+            return new object[] { true, blocks };
+        }
+
         public object[] HandleGameDatabase(Database database)
         {
             var componentInput = database.FindDatabaseObject(
@@ -1510,6 +1659,12 @@ namespace ScMultiplayer
                 new Guid("88c778ff-b238-4303-b1c5-468cb0f6c73a"),
                 database.FindDatabaseObjectType("Parameter", true), true);
             componentFlu.Value = "ScMultiplayer.SuComponentFlu";
+
+            // Source: Pak/Database.xml:ComponentFurnace.Class
+            var componentFurnace = database.FindDatabaseObject(
+                new Guid("f04c23fe-1d3c-467e-81bc-1796f686be51"),
+                database.FindDatabaseObjectType("Parameter", true), true);
+            componentFurnace.Value = "ScMultiplayer.SuComponentFurnace";
 
             var subsystemTerrain = database.FindDatabaseObject(
                 new Guid("e2636c38-f179-4aa1-b087-ed6920d66e8e"),
@@ -1534,6 +1689,13 @@ namespace ScMultiplayer
                 database.FindDatabaseObjectType("Parameter", true), true);
             subsystemGrass.Value = "ScMultiplayer.SuSubsystemGrassBlockBehavior";
 
+            // Source: Pak/Database.xml:DeciduousLeavesBlockBehavior.Class
+            var subsystemDeciduousLeaves = database.FindDatabaseObject(
+                new Guid("ea363abf-49f7-4106-a487-1726304f8214"),
+                database.FindDatabaseObjectType("Parameter", true), true);
+            subsystemDeciduousLeaves.Value =
+                "ScMultiplayer.SuSubsystemDeciduousLeavesBlockBehavior";
+
             // Source: Pak/Database.xml:SubsystemExplosions.Class
             var subsystemExplosions = database.FindDatabaseObject(
                 new Guid("96e79f99-a082-4190-9ab6-835dc49ebbdd"),
@@ -1557,6 +1719,45 @@ namespace ScMultiplayer
                 new Guid("87c04d2e-b460-4934-a59d-3b63261e16e4"),
                 database.FindDatabaseObjectType("Parameter", true), true);
             subsystemWhistle.Value = "ScMultiplayer.SuSubsystemWhistleBlockBehavior";
+
+            // Source: Pak/Database.xml:SubsystemMemoryBankBlockBehavior.Class
+            var subsystemMemoryBank = database.FindDatabaseObject(
+                new Guid("32a2d9ef-b01a-4f80-a6f8-5d2d5e9e9275"),
+                database.FindDatabaseObjectType("Parameter", true), true);
+            subsystemMemoryBank.Value =
+                "ScMultiplayer.SuSubsystemMemoryBankBlockBehavior";
+
+            // Source: Pak/Database.xml:SubsystemTruthTableCircuitBlockBehavior.Class
+            var subsystemTruthTable = database.FindDatabaseObject(
+                new Guid("a66d56a3-a8e1-4407-9a77-05ecdcb9766b"),
+                database.FindDatabaseObjectType("Parameter", true), true);
+            subsystemTruthTable.Value =
+                "ScMultiplayer.SuSubsystemTruthTableCircuitBlockBehavior";
+
+            // Source: Pak/Database.xml:AdjustableDelayGateBlockBehavior.Class
+            var subsystemAdjustableDelay = database.FindDatabaseObject(
+                new Guid("64552991-c904-476c-a0bb-3b2710e54433"),
+                database.FindDatabaseObjectType("Parameter", true), true);
+            subsystemAdjustableDelay.Value =
+                "ScMultiplayer.SuSubsystemAdjustableDelayGateBlockBehavior";
+
+            // Source: Pak/Database.xml:SwitchBlockBehavior.Class
+            var subsystemSwitch = database.FindDatabaseObject(
+                new Guid("4e3b2bf3-e8b9-4317-b52a-26ce3070d2e3"),
+                database.FindDatabaseObjectType("Parameter", true), true);
+            subsystemSwitch.Value = "ScMultiplayer.SuSubsystemSwitchBlockBehavior";
+
+            // Source: Pak/Database.xml:ButtonBlockBehavior.Class
+            var subsystemButton = database.FindDatabaseObject(
+                new Guid("4407e30b-89ee-40c7-b1d2-eb100c2b8ac4"),
+                database.FindDatabaseObjectType("Parameter", true), true);
+            subsystemButton.Value = "ScMultiplayer.SuSubsystemButtonBlockBehavior";
+
+            // Source: Pak/Database.xml:PistonBlockBehavior.Class
+            var subsystemPiston = database.FindDatabaseObject(
+                new Guid("937999c9-9570-4cbd-8390-23f1e4609cdd"),
+                database.FindDatabaseObjectType("Parameter", true), true);
+            subsystemPiston.Value = "ScMultiplayer.SuSubsystemPistonBlockBehavior";
 
             // Source: Mod/WatchMod/Plug/WatchMod.cs:WatchMod.HandleGameDatabase
             // Register an independent player component instead of replacing SubsystemGameWidgets.
@@ -1603,6 +1804,7 @@ namespace ScMultiplayer
             UpdateHostJoinRequests();
             UpdateAutoHostCurrentWorld();
             UpdateWorldTransferBusyStatus();
+            UpdateJoinWorldProgressTimeout();
             // Source: Survivalcraft/Game/Program.cs:Program.Run
             // Downloading clients have no Project yet, so repair requests must run from the
             // menu/loading frame path instead of UpdateWorldSubsystem.
@@ -1624,9 +1826,14 @@ namespace ScMultiplayer
             // Frame.Update runs after ScreensManager.Update, so all native game updates for this
             // rendered frame are complete. Keep networking outside SubsystemUpdate's catch-up
             // loop and execute it exactly once here.
+            // Source: Engine/Window.cs:Window.IsActive
+            // Poll as a lifecycle fallback because some Android resumes do not emit Activated.
+            m_circuitSynchronizer?.SetWindowActive(Window.IsActive);
             Project project = GameManager.Project;
             if (project != null)
             {
+                m_circuitSynchronizer?.EnsureBound(project);
+                m_worldObjectSynchronizer?.Update(project);
                 MaintainMultiplayerTimeFlow(project);
                 // Source: Survivalcraft/Game/GameScreen.cs:GameScreen.Update
                 // Settings and help screens remove GameScreen from the update hierarchy. A room
@@ -1643,7 +1850,21 @@ namespace ScMultiplayer
         }
 
         public bool ShouldSuppressClientInput =>
-            !IsHost && client?.IsConnected == true && m_clientTerrainRecoveryActive;
+            !IsHost && client?.IsConnected == true &&
+            m_clientTerrainRecoveryActive;
+
+        internal long CircuitTerrainSequence => IsHost
+            ? m_hostTerrainSequence
+            : SuSubsystemTerrain.LastAppliedTerrainSequence;
+
+        // Source: ScMultiplayer.cs:ScMultiplayer.GetEditableDataPlayer
+        internal ComponentPlayer GetCircuitPlayer(int sourceClientId) =>
+            GetEditableDataPlayer(sourceClientId);
+
+        // Source: Survivalcraft/Game/ComponentMiner.cs:ComponentMiner.Interact
+        public bool TryScheduleLocalCircuitInteraction(ComponentPlayer player, Ray3? ray) =>
+            client?.IsConnected == true &&
+            m_circuitSynchronizer?.TryScheduleLocalInteraction(player, ray) == true;
 
         // Source: Survivalcraft/Game/GameManager.cs:GameManager.UpdateProject
         public void NotifyProjectSimulationStep(Project project)
@@ -1655,6 +1876,7 @@ namespace ScMultiplayer
         // Source: Engine/Window.cs:Window.Deactivated
         private void HandleWindowDeactivated()
         {
+            m_circuitSynchronizer?.SetWindowActive(false);
             if (!IsHost && client?.IsConnected == true)
             {
                 m_clientWindowDeactivated = true;
@@ -1666,6 +1888,7 @@ namespace ScMultiplayer
         // Source: Engine/Window.cs:Window.Activated
         private void HandleWindowActivated()
         {
+            m_circuitSynchronizer?.SetWindowActive(true);
             if (!m_clientWindowDeactivated) return;
             m_clientWindowDeactivated = false;
             if (!IsHost && client?.IsConnected == true)
@@ -1710,6 +1933,13 @@ namespace ScMultiplayer
     {
         if (IsHost || client?.IsConnected != true || !m_clientGameplayScreenObserved)
             return;
+        if (m_clientTerrainRecoveryActive)
+        {
+            if (!m_clientTerrainRecoveryRequestInFlight &&
+                m_clientTerrainRecoveryTarget < 0 && m_clientTerrainRecoveryReady < 0)
+                m_clientTerrainRecoveryPending = true;
+            return;
+        }
         m_clientTerrainRecoveryActive = true;
         // Queue the request immediately. If the Android lifecycle does not emit an Activated
         // event after returning to the game, waiting for that callback leaves input suppressed
@@ -1726,6 +1956,8 @@ namespace ScMultiplayer
             m_localTerrainDigIntents.Clear();
             m_pendingTerrainPredictions.Clear();
             m_pendingTerrainPredictionCells.Clear();
+            m_pendingTerrainPlacePredictions.Clear();
+            m_pendingTerrainPlacePredictionCells.Clear();
         }
 
         // Source: ScMultiplayer.cs:ScMultiplayer.ProcessEndOfFrameActions
@@ -1919,7 +2151,10 @@ namespace ScMultiplayer
                 {
                     PeerData peer = server.Peer.FindPeer(remote.Address);
                     if (peer == null) continue;
-                    latencyMs = MathUtils.Max(latencyMs, peer.Ping * 1000f);
+                    double smoothedRtt = server.Peer.Comm
+                        .GetSmoothedRoundTripTime(peer.Address);
+                    latencyMs = MathUtils.Max(latencyMs, (float)(1000.0 *
+                        (smoothedRtt > 0.0 ? smoothedRtt : peer.Ping)));
                     reliableQueue = Math.Max(reliableQueue,
                         server.Peer.Comm.GetUnackedPacketsCount(peer.Address));
                     retransmitPercent = MathUtils.Max(retransmitPercent,
@@ -1930,7 +2165,10 @@ namespace ScMultiplayer
             }
             PeerData connected = client?.Peer?.ConnectedTo;
             if (connected == null) return;
-            latencyMs = connected.Ping * 1000f;
+            double clientSmoothedRtt = client.Peer.Comm
+                .GetSmoothedRoundTripTime(connected.Address);
+            latencyMs = (float)(1000.0 * (clientSmoothedRtt > 0.0
+                ? clientSmoothedRtt : connected.Ping));
             reliableQueue = client.Peer.Comm.GetUnackedPacketsCount(connected.Address);
             retransmitPercent = (float)(100.0 *
                 client.Peer.Comm.GetPacketLossRate(connected.Address));
@@ -2009,6 +2247,10 @@ namespace ScMultiplayer
                 m_pendingTerrainPredictionCells.Clear();
                 m_processedTerrainDigRequests.Clear();
                 m_localTerrainDigIntents.Clear();
+                m_pendingTerrainPlacePredictions.Clear();
+                m_pendingTerrainPlacePredictionCells.Clear();
+                m_hostTerrainPlaceExecutions.Clear();
+                m_processedTerrainPlaceRequests.Clear();
                 m_hostPlayerPokingPhases.Clear();
                 m_hostPlayerPokeSequences.Clear();
                 m_playerWhistleSequences.Clear();
@@ -2050,6 +2292,7 @@ namespace ScMultiplayer
             ProcessRunawayCreatureCleanup(project);
             if (IsHost)
             {
+                CompleteHostTerrainPlaceExecutions();
                 BroadcastHostPlayerPokes();
                 CaptureHostRemoteKnockbacks();
                 ApplyHostRemoteFollowVelocities();
@@ -2158,7 +2401,14 @@ namespace ScMultiplayer
                 ModManager.ModParentField.ModifyParentField(
                     textBox, "TextureLinearFilter", true, textBox.GetType());
             }
-            DialogsManager.ShowDialog(ScreensManager.RootWidget, dialog);
+            // Source: Survivalcraft/Game/SubsystemSignBlockBehavior.cs:
+            // SubsystemSignBlockBehavior.OnInteract
+            // Attach text input to the local player's GuiWidget like the stock sign editor.
+            // ComponentInput then sees the modal dialog and suppresses gameplay keys while typing.
+            SubsystemPlayers players = GameManager.Project?.FindSubsystem<SubsystemPlayers>(false);
+            ComponentPlayer localPlayer = players?.ComponentPlayers.FirstOrDefault(player =>
+                player != null && !m_networkPlayerData.Values.Contains(player.PlayerData));
+            DialogsManager.ShowDialog(localPlayer?.GuiWidget ?? ScreensManager.RootWidget, dialog);
         }
 
         // Source: Survivalcraft/Game/SubsystemPlayers.cs:SubsystemPlayers.ComponentPlayers
@@ -2779,6 +3029,7 @@ namespace ScMultiplayer
             m_activeJoinRequest = null;
             m_reconnectRequested = false;
             m_reconnectPending = false;
+            m_joinAwaitingWorldProgress = false;
         }
 
         // Source: Survivalcraft/Game/BusyDialog.cs:BusyDialog
@@ -2822,6 +3073,26 @@ namespace ScMultiplayer
                 "Connected.\r\n{0}\r\n{1} / {2} chunks ({3:0.0}%)\r\n{4:0.00} MB / {5:0.00} MB",
                 stage, transfer.ReceivedChunkCount, transfer.Chunks.Length, percent,
                 transfer.ReceivedBytes / 1048576.0, transfer.TotalLength / 1048576.0);
+        }
+
+        // Source: Mod/ScMultiplayer/Plug/ScMultiplayer.cs:
+        // ScMultiplayer.HandleGamePakWorldMessage
+        // Source: Mod/ScMultiplayer/Plug/ScMultiplayer.cs:
+        // ScMultiplayer.HandleGamePakWorldChunkMessage
+        private void UpdateJoinWorldProgressTimeout()
+        {
+            if (!m_joinAwaitingWorldProgress || IsHost || m_hostDisconnectHandled ||
+                !m_isLoadingDownloadedWorld)
+                return;
+            double stalledTime = Time.RealTime - m_lastJoinWorldProgressTime;
+            if (stalledTime < JoinWorldNoProgressTimeout) return;
+
+            m_joinAwaitingWorldProgress = false;
+            Log.Error($"[ScMP] Join world transfer stopped making progress for " +
+                $"{stalledTime:0.0} seconds");
+            HandleHostDisconnected(
+                "Reconnect Interrupted",
+                "The host connection stopped making progress. Please return to the room list and try again.");
         }
 
         private void SubmitPendingJoin(string playerName, PlayerClass playerClass,
@@ -2892,22 +3163,30 @@ namespace ScMultiplayer
             bool pulse4Hz = IsSyncPulse(pulse, NetworkSyncRate.Hz4);
             bool pulse8Hz = IsSyncPulse(pulse, NetworkSyncRate.Hz8);
             bool pulse16Hz = IsSyncPulse(pulse, NetworkSyncRate.Hz16);
+            // Source: CircuitSynchronizer.SendFence
+            // Refresh the 200ms execution window at 16Hz, leaving overlapping authorized time
+            // without sending per-step circuit state.
+            m_circuitSynchronizer?.PublishNetworkState(pulse1Hz, pulse16Hz);
             if (IsHost && pulse1Hz)
             {
                 lock (m_terrainJournalLock)
                     TrimHostTerrainJournalLocked(Time.RealTime);
             }
+            if (IsHost)
+                ConfirmPendingFluidSettlements();
             // Source: ScMultiplayer.cs:AcceptNetworkPlayerJoin
             // A joining client intentionally has no host-side avatar until it reports that the
             // Loading Project screen started. World chunks must therefore run before the
             // no-remote-avatar maintenance fast path.
             if (IsHost) SendPendingWorldTransferChunks();
+            if (IsHost) MaintainHostLightningLifecycle();
             if (IsHost && !m_networkPlayerData.Any(item => item.Key > 0))
             {
                 // Source: ScMultiplayer.cs:ScMultiplayer.TriggerNetworkTick
                 // With no remote recipients, world-object scans and serialization cannot produce
                 // useful network state. Keep only persistent host maintenance until a join creates
                 // its authoritative avatar, at which point normal synchronization resumes.
+                m_hostLightningActive = false;
                 m_playerRecordSaveTime += tickDuration;
                 if (m_playerRecordSaveTime >= PlayerRecordSaveInterval)
                 {
@@ -2952,6 +3231,8 @@ namespace ScMultiplayer
                 SynchronizePlayerProfiles();
             }
 
+            if (pulse1Hz)
+                SynchronizeEditableData();
             if (pulse1Hz)
                 if (IsHost) SendGamePlayerHealthMessage(true);
             if (IsHost)
@@ -3011,9 +3292,42 @@ namespace ScMultiplayer
             if (action != null) m_endOfFrameActions.Enqueue(action);
         }
 
+        // Source: ScMultiplayer.cs:QueueEndOfFrameAction
+        private void QueueWorldTransferAction(Action action)
+        {
+            if (action != null) m_worldTransferActions.Enqueue(action);
+        }
+
         private void ProcessEndOfFrameActions()
         {
-            while (m_endOfFrameActions.TryDequeue(out Action action))
+            // Source: Survivalcraft/Game/Program.cs:Program.Run
+            // Background recovery can enqueue several seconds of network work. Preserve FIFO,
+            // but leave excess work for later frames so returning to the game does not stall one
+            // render frame while draining the entire queue.
+            long start = Stopwatch.GetTimestamp();
+            long budgetTicks = Math.Max(1L, Stopwatch.Frequency *
+                EndOfFrameActionBudgetMilliseconds / 1000L);
+            int count = 0;
+            // Source: ScMultiplayer.cs:Client_GameStep
+            // Drain join/download control first. LAN peers can otherwise produce gameplay actions
+            // faster than the normal FIFO reaches a manifest request or response.
+            while (count < MaximumEndOfFrameActionsPerFrame &&
+                Stopwatch.GetTimestamp() - start < budgetTicks &&
+                m_worldTransferActions.TryDequeue(out Action transferAction))
+            {
+                try
+                {
+                    transferAction();
+                }
+                catch (Exception ex)
+                {
+                    Log.Error($"[ScMP] World-transfer action failed: {ex.Message}");
+                }
+                count++;
+            }
+            while (count < MaximumEndOfFrameActionsPerFrame &&
+                Stopwatch.GetTimestamp() - start < budgetTicks &&
+                m_endOfFrameActions.TryDequeue(out Action action))
             {
                 try
                 {
@@ -3023,6 +3337,7 @@ namespace ScMultiplayer
                 {
                     Log.Error($"[ScMP] End-of-frame network action failed: {ex.Message}");
                 }
+                count++;
             }
         }
 
@@ -3505,8 +3820,30 @@ namespace ScMultiplayer
                 sky, reliable);
         }
 
+        // Source: Survivalcraft/Game/SubsystemSky.cs:SubsystemSky.DrawLightning
+        // Vanilla clears lightning while drawing. A headless host has no draw pass, so clear only
+        // after the maximum vanilla visual duration. GPU hosts normally clear it first.
+        private void MaintainHostLightningLifecycle()
+        {
+            Project project = GameManager.Project;
+            SubsystemSky sky = project?.FindSubsystem<SubsystemSky>(false);
+            if (sky == null) return;
+            object position = ModManager.ModParentField.GetParentField(
+                sky, "m_lightningStrikePosition", typeof(SubsystemSky));
+            if (position is not Vector3) return;
+            SubsystemTime time = project.FindSubsystem<SubsystemTime>(false);
+            if (time == null) return;
+            double started = ModManager.ModParentField.GetParentField<double>(
+                sky, "m_lastLightningStrikeTime", typeof(SubsystemSky));
+            if (time.GameTime - started <= HostLightningStaleDuration) return;
+            ModManager.ModParentField.ModifyParentField(
+                sky, "m_lightningStrikePosition", (Vector3?)null, typeof(SubsystemSky));
+            ModManager.ModParentField.ModifyParentField(
+                sky, "m_lightningStrikeBrightness", 0f, typeof(SubsystemSky));
+        }
+
         // Source: Survivalcraft/Game/SubsystemSky.cs:SubsystemSky.MakeLightningStrike
-        // Slow weather snapshots use latest delivery, while a short lightning edge remains reliable.
+        // Slow weather snapshots use latest delivery, while both lightning edges remain reliable.
         private void SendHostLightningEdge()
         {
             SubsystemSky sky = GameManager.Project?.FindSubsystem<SubsystemSky>(false);
@@ -3514,7 +3851,7 @@ namespace ScMultiplayer
             object value = ModManager.ModParentField.GetParentField(
                 sky, "m_lightningStrikePosition", typeof(SubsystemSky));
             bool active = value is Vector3;
-            if (active && !m_hostLightningActive)
+            if (active != m_hostLightningActive)
                 SendGameWorldInfoMessage(reliable: true);
             m_hostLightningActive = active;
         }
@@ -3833,6 +4170,13 @@ namespace ScMultiplayer
                 ComponentCreature target = chase?.Target;
                 ComponentHerdBehavior herd = entity.FindComponent<ComponentHerdBehavior>();
                 ComponentCreatureModel model = creature.ComponentCreatureModel;
+                ComponentShapeshifter shapeshifter = entity.FindComponent<ComponentShapeshifter>();
+                // Source: Survivalcraft/Game/ComponentShapeshifter.cs:ComponentShapeshifter.ShapeshiftTo
+                string shapeshiftTarget = shapeshifter == null
+                    ? string.Empty
+                    : ModManager.ModParentField.GetParentField(
+                        shapeshifter, "m_spawnEntityTemplateName",
+                        typeof(ComponentShapeshifter)) as string ?? string.Empty;
                 AnimalSyncMetadata metadata = m_hostAnimalSync[entity];
                 float health = creature.ComponentHealth?.Health ?? 0f;
                 bool wasAttacked = metadata.HasSent && health < metadata.LastHealth - 0.001f;
@@ -3866,7 +4210,8 @@ namespace ScMultiplayer
                     HerdName = herd?.HerdName ?? string.Empty,
                     SyncTier = tier,
                     AttackOrder = isAttacking,
-                    FeedOrder = isFeeding
+                    FeedOrder = isFeeding,
+                    ShapeshiftTarget = shapeshiftTarget
                 });
             }
 
@@ -3898,7 +4243,10 @@ namespace ScMultiplayer
                     metadata.HerdName != candidate.HerdName ||
                     metadata.SyncTier != candidate.SyncTier ||
                     metadata.AttackOrder != candidate.AttackOrder ||
-                    metadata.FeedOrder != candidate.FeedOrder;
+                    metadata.FeedOrder != candidate.FeedOrder ||
+                    metadata.ShapeshiftTarget != candidate.ShapeshiftTarget;
+                bool shapeshiftStarted = !string.IsNullOrEmpty(candidate.ShapeshiftTarget) &&
+                    metadata.ShapeshiftTarget != candidate.ShapeshiftTarget;
                 if (!forceFullSnapshot && !candidate.StateChanged &&
                     now < metadata.NextSendTime)
                     continue;
@@ -3936,9 +4284,10 @@ namespace ScMultiplayer
                     TargetEntityId = candidate.TargetEntityId,
                     HerdName = candidate.HerdName,
                     SimulationSeed = metadata.SimulationSeed,
+                    ShapeshiftTarget = candidate.ShapeshiftTarget,
                     Health = candidate.Creature.ComponentHealth?.Health ?? 0f
                 });
-                bodyBatchRequiresReliable |= isInitialState;
+                bodyBatchRequiresReliable |= isInitialState || shapeshiftStarted;
 
                 metadata.HasSent = true;
                 metadata.BehaviorState = candidate.BehaviorState;
@@ -3947,6 +4296,7 @@ namespace ScMultiplayer
                 metadata.SyncTier = candidate.SyncTier;
                 metadata.AttackOrder = candidate.AttackOrder;
                 metadata.FeedOrder = candidate.FeedOrder;
+                metadata.ShapeshiftTarget = candidate.ShapeshiftTarget;
                 metadata.LastHealth = candidate.Creature.ComponentHealth?.Health ?? 0f;
                 metadata.NextSendTime = now + GetAnimalSyncInterval(candidate.SyncTier);
 
@@ -4222,6 +4572,9 @@ namespace ScMultiplayer
                     HandleHostDisconnected();
                     continue;
                 }
+                // Source: Mod/ScMultiplayer/Func/Circuit/CircuitSynchronizer.cs:
+                // CircuitSynchronizer.NotifyClientDeparted
+                m_circuitSynchronizer?.NotifyClientDeparted(item.ClientID);
                 if (!IsHost)
                     m_departedRemoteClientIds.Add(item.ClientID);
                 RemoveNetworkPlayer(item.ClientID);
@@ -4342,21 +4695,37 @@ namespace ScMultiplayer
                         QueueEndOfFrameAction(() => HandlePlayerEquipmentMessage(
                             playerEquipment, item.ClientID));
                         break;
+                    case EditableDataRequestMessage editableDataRequest:
+                        QueueEndOfFrameAction(() => HandleEditableDataRequest(
+                            editableDataRequest, item.ClientID));
+                        break;
+                    case EditableDataStateMessage editableDataState:
+                        QueueEndOfFrameAction(() => HandleEditableDataState(
+                            editableDataState, item.ClientID));
+                        break;
+                    case CircuitSyncMessage circuitSync:
+                        QueueEndOfFrameAction(() => m_circuitSynchronizer?.HandleMessage(
+                            circuitSync, item.ClientID));
+                        break;
+                    case WorldObjectSyncMessage worldObjectSync:
+                        QueueEndOfFrameAction(() => m_worldObjectSynchronizer?.HandleMessage(
+                            worldObjectSync, item.ClientID));
+                        break;
                     case GamePakWorldMessage pakWorld:
                         if (item.ClientID == 0)
-                            QueueEndOfFrameAction(() =>
+                            QueueWorldTransferAction(() =>
                                 NetworkMessageHandler.HandlePakWorldMessage(pakWorld, item.ClientID));
                         break;
                     case GamePakWorldChunkMessage worldChunk:
                         if (item.ClientID == 0)
-                            QueueEndOfFrameAction(() => HandleGamePakWorldChunkMessage(worldChunk));
+                            QueueWorldTransferAction(() => HandleGamePakWorldChunkMessage(worldChunk));
                         break;
                     case GamePakWorldReadyMessage worldReady:
-                        QueueEndOfFrameAction(() =>
+                        QueueWorldTransferAction(() =>
                             HandleGamePakWorldReadyMessage(worldReady, item.ClientID));
                         break;
                     case GamePakWorldRepairRequestMessage repairRequest:
-                        QueueEndOfFrameAction(() =>
+                        QueueWorldTransferAction(() =>
                             HandleGamePakWorldRepairRequestMessage(repairRequest, item.ClientID));
                         break;
                     case GamePlayerHealthMessage health:
@@ -4424,9 +4793,16 @@ namespace ScMultiplayer
             if (!IsHost || m_hostJoinRequests.ContainsKey(joiningClientId))
                 return;
 
-            int assignedPlayerIndex = playerMappingManager.AssignPlayerIndex(joiningClientId);
-            if (assignedPlayerIndex == -1)
+            if (!TryReserveNetworkPlayerIndex(joiningClientId,
+                out int assignedPlayerIndex))
             {
+                Log.Information($"[ScMP] Game full, refusing ClientID {joiningClientId}");
+                client.RefuseJoinGame(joiningClientId, "Game is full");
+                return;
+            }
+            if (playerMappingManager.AssignPlayerIndex(joiningClientId) == -1)
+            {
+                m_reservedNetworkPlayerIndices.Remove(joiningClientId);
                 Log.Information($"[ScMP] Game full, refusing ClientID {joiningClientId}");
                 client.RefuseJoinGame(joiningClientId, "Game is full");
                 return;
@@ -4440,6 +4816,7 @@ namespace ScMultiplayer
                     SuPlayScreen.WorldDataName != worldInfo.Name ||
                     SuPlayScreen.WorldDataLastSaveTime != worldInfo.LastSaveTime)
                 {
+                    m_reservedNetworkPlayerIndices.Remove(joiningClientId);
                     playerMappingManager.ReleasePlayerIndex(joiningClientId);
                     client.RefuseJoinGame(joiningClientId, "Host world snapshot is unavailable");
                     return;
@@ -4456,6 +4833,7 @@ namespace ScMultiplayer
                 {
                     if (!IsValidRequestedProfile(worldInfo))
                     {
+                        m_reservedNetworkPlayerIndices.Remove(joiningClientId);
                         playerMappingManager.ReleasePlayerIndex(joiningClientId);
                         client.RefuseJoinGame(joiningClientId, PlayerProfileRequiredReason);
                         return;
@@ -4486,6 +4864,7 @@ namespace ScMultiplayer
             }
             catch (Exception ex)
             {
+                m_reservedNetworkPlayerIndices.Remove(joiningClientId);
                 playerMappingManager.ReleasePlayerIndex(joiningClientId);
                 try
                 {
@@ -4496,6 +4875,44 @@ namespace ScMultiplayer
                 }
                 Log.Error($"[ScMP] Failed to process ClientID {joiningClientId} join: {ex.Message}");
             }
+        }
+
+        // Source: Survivalcraft/Game/SubsystemPlayers.cs:SubsystemPlayers.MaxPlayers
+        // MaxPlayers is a local split-screen count, not an index range. Network avatars are
+        // detached from PlayersData, so admission and the actual PlayerIndex reservation must be
+        // maintained together by the multiplayer host.
+        private bool TryReserveNetworkPlayerIndex(int clientId, out int playerIndex)
+        {
+            if (m_reservedNetworkPlayerIndices.TryGetValue(clientId, out playerIndex))
+                return true;
+            SubsystemPlayers players = GameManager.Project?.FindSubsystem<SubsystemPlayers>(false);
+            if (players == null)
+            {
+                playerIndex = -1;
+                return false;
+            }
+            int playerCount = players.PlayersData.Count +
+                m_networkPlayerData.Count(item => item.Key > 0) +
+                m_reservedNetworkPlayerIndices.Count;
+            if (playerCount >= ScMultiplayerSettings.MaxPlayers)
+            {
+                playerIndex = -1;
+                return false;
+            }
+            playerIndex = FindAvailableNetworkPlayerIndex(players);
+            m_reservedNetworkPlayerIndices[clientId] = playerIndex;
+            return true;
+        }
+
+        // Source: Survivalcraft/Game/SubsystemPlayers.cs:SubsystemPlayers.AddPlayerData
+        private int FindAvailableNetworkPlayerIndex(SubsystemPlayers players)
+        {
+            var used = new HashSet<int>(players.PlayersData.Select(item => item.PlayerIndex));
+            used.UnionWith(m_networkPlayerData.Values.Select(item => item.PlayerIndex));
+            used.UnionWith(m_reservedNetworkPlayerIndices.Values);
+            int playerIndex = 0;
+            while (used.Contains(playerIndex)) playerIndex++;
+            return playerIndex;
         }
 
         // Source: Survivalcraft/Game/DialogsManager.cs:DialogsManager.Dialogs
@@ -4601,6 +5018,7 @@ namespace ScMultiplayer
                 return;
             m_hostJoinRequests.Remove(request.ClientId);
             CloseActiveJoinDecision(request.ClientId);
+            m_reservedNetworkPlayerIndices.Remove(request.ClientId);
             playerMappingManager.ReleasePlayerIndex(request.ClientId);
             try
             {
@@ -5526,7 +5944,6 @@ namespace ScMultiplayer
                     !string.IsNullOrWhiteSpace(item.TemplateName))
                     SetRemoteAnimalTemplate(item.EntityId, item.TemplateName);
                 Entity entity = EnsureRemoteAnimal(item.EntityId, item.Position, item.Rotation, item.Velocity);
-                StopRemoteAnimalShapeshiftEffect(entity);
                 ComponentCreature creature = entity?.FindComponent<ComponentCreature>();
                 ComponentBody body = creature?.ComponentBody;
                 if (creature == null || body == null) continue;
@@ -5733,6 +6150,11 @@ namespace ScMultiplayer
             state.BehaviorState = item.ActiveBehaviorState ?? string.Empty;
             state.TargetEntityId = item.TargetEntityId;
             state.HerdName = item.HerdName ?? string.Empty;
+            string shapeshiftTarget = item.ShapeshiftTarget ?? string.Empty;
+            if (!string.IsNullOrEmpty(shapeshiftTarget) &&
+                state.ShapeshiftTarget != shapeshiftTarget)
+                StartRemoteAnimalShapeshiftEffect(entity, shapeshiftTarget);
+            state.ShapeshiftTarget = shapeshiftTarget;
             string activeBehaviorName = (item.ActiveBehaviorState ?? string.Empty).Split(':')[0];
             int separator = (item.ActiveBehaviorState ?? string.Empty).IndexOf(':');
             string stateName = separator >= 0
@@ -5818,6 +6240,45 @@ namespace ScMultiplayer
                 typeof(ComponentShapeshifter));
         }
 
+        // Source: Survivalcraft/Game/ComponentShapeshifter.cs:ComponentShapeshifter.Update
+        // Source: Survivalcraft/Game/ComponentShapeshifter.cs:ComponentShapeshifter.ShapeshiftTo
+        private static void StartRemoteAnimalShapeshiftEffect(Entity entity, string targetTemplate)
+        {
+            ComponentShapeshifter shapeshifter = entity?.FindComponent<ComponentShapeshifter>();
+            ComponentBody body = entity?.FindComponent<ComponentBody>();
+            Project project = entity?.Project;
+            if (shapeshifter == null || body == null || project == null ||
+                string.IsNullOrEmpty(targetTemplate))
+                return;
+
+            ShapeshiftParticleSystem particleSystem = new ShapeshiftParticleSystem
+            {
+                BoundingBox = body.BoundingBox
+            };
+            project.FindSubsystem<SubsystemParticles>(true).AddParticleSystem(particleSystem);
+            ModManager.ModParentField.ModifyParentField(
+                shapeshifter, "m_particleSystem", particleSystem,
+                typeof(ComponentShapeshifter));
+            ModManager.ModParentField.ModifyParentField(
+                shapeshifter, "m_spawnEntityTemplateName", targetTemplate,
+                typeof(ComponentShapeshifter));
+            project.FindSubsystem<SubsystemAudio>(true).PlaySound(
+                "Audio/Shapeshift", 1f, 0f, body.Position, 3f, autoDelay: true);
+        }
+
+        // Source: Survivalcraft/Game/ComponentShapeshifter.cs:ComponentShapeshifter.Update
+        private static void UpdateRemoteAnimalShapeshiftEffect(Entity entity)
+        {
+            ComponentShapeshifter shapeshifter = entity?.FindComponent<ComponentShapeshifter>();
+            ComponentBody body = entity?.FindComponent<ComponentBody>();
+            if (shapeshifter == null || body == null) return;
+            ShapeshiftParticleSystem particleSystem =
+                ModManager.ModParentField.GetParentField(
+                    shapeshifter, "m_particleSystem", typeof(ComponentShapeshifter))
+                    as ShapeshiftParticleSystem;
+            if (particleSystem != null) particleSystem.BoundingBox = body.BoundingBox;
+        }
+
         // Source: Survivalcraft/Game/ComponentBody.cs:ComponentBody.Update
         // Source: Survivalcraft/Game/ComponentCreatureModel.cs:ComponentCreatureModel.Update
         private void UpdateRemoteAnimalPresentations(float dt)
@@ -5837,6 +6298,7 @@ namespace ScMultiplayer
                 ComponentCreature creature = entity.FindComponent<ComponentCreature>();
                 ComponentBody body = creature?.ComponentBody;
                 RemoteAnimalSyncState state = item.Value;
+                UpdateRemoteAnimalShapeshiftEffect(entity);
                 if (body == null || !state.HasTransform) continue;
 
                 float arrivalAge = (float)MathUtils.Clamp(
@@ -6633,6 +7095,459 @@ namespace ScMultiplayer
             NetworkMessageSender.SendScheduledMessage(isRequest ? 0 : -1, message);
         }
 
+        // Source: Survivalcraft/Game/ComponentGui.cs:ComponentGui.Update
+        // Source: Survivalcraft/Game/SubsystemEditableItemBehavior.cs:SubsystemEditableItemBehavior<T>
+        internal bool CanSubmitEditableDataEdit(ComponentPlayer player)
+        {
+            if (client?.IsConnected != true || GameManager.Project == null || player == null)
+                return false;
+            return !m_networkPlayerData.Values.Any(item =>
+                ReferenceEquals(item?.ComponentPlayer, player));
+        }
+
+        internal bool ShouldSuppressRemoteEditableDataEdit(ComponentPlayer player)
+        {
+            return IsHost && client?.IsConnected == true && player != null &&
+                m_networkPlayerData.Values.Any(item =>
+                    ReferenceEquals(item?.ComponentPlayer, player));
+        }
+
+        internal bool TrySubmitEditableItemData(EditableDataKind kind, IInventory inventory,
+            int slotIndex, ComponentPlayer player, int expectedValue, string payload)
+        {
+            if (!CanSubmitEditableDataEdit(player) || inventory == null ||
+                slotIndex < 0 || slotIndex >= inventory.SlotsCount)
+                return false;
+            var message = new EditableDataRequestMessage
+            {
+                RequestId = NextEditableDataRequestId(),
+                Kind = kind,
+                Scope = EditableDataScope.InventoryItem,
+                SlotIndex = slotIndex,
+                ExpectedValue = expectedValue,
+                Payload = payload ?? string.Empty
+            };
+            if (IsHost)
+                HandleEditableDataRequest(message, 0);
+            else
+                NetworkMessageSender.SendEditableDataRequest(message);
+            return true;
+        }
+
+        internal bool TrySubmitEditableBlockData(EditableDataKind kind, Point3 point,
+            ComponentPlayer player, int expectedValue, string payload)
+        {
+            if (!CanSubmitEditableDataEdit(player)) return false;
+            var message = new EditableDataRequestMessage
+            {
+                RequestId = NextEditableDataRequestId(),
+                Kind = kind,
+                Scope = EditableDataScope.Block,
+                SlotIndex = -1,
+                ExpectedValue = expectedValue,
+                Coordinates = point,
+                Payload = payload ?? string.Empty
+            };
+            if (IsHost)
+                HandleEditableDataRequest(message, 0);
+            else
+                NetworkMessageSender.SendEditableDataRequest(message);
+            return true;
+        }
+
+        private int NextEditableDataRequestId()
+        {
+            m_localEditableDataRequestId = m_localEditableDataRequestId == int.MaxValue
+                ? 1
+                : m_localEditableDataRequestId + 1;
+            return m_localEditableDataRequestId;
+        }
+
+        private void HandleEditableDataRequest(EditableDataRequestMessage message,
+            int sourceClientId)
+        {
+            if (!IsHost || message == null || sourceClientId < 0 ||
+                message.RequestId <= 0 || !IsValidEditableDataKind(message.Kind) ||
+                !IsValidEditableDataScope(message.Scope) ||
+                (message.Payload?.Length ?? 0) > 512)
+                return;
+            if (m_lastEditableDataRequestIds.TryGetValue(sourceClientId, out int lastRequestId) &&
+                message.RequestId <= lastRequestId)
+                return;
+            m_lastEditableDataRequestIds[sourceClientId] = message.RequestId;
+
+            ComponentPlayer player = GetEditableDataPlayer(sourceClientId);
+            if (player == null) return;
+            if (message.Scope == EditableDataScope.InventoryItem)
+                ApplyEditableItemRequest(message, sourceClientId, player);
+            else
+                ApplyEditableBlockRequest(message, player);
+        }
+
+        private void ApplyEditableItemRequest(EditableDataRequestMessage message,
+            int sourceClientId, ComponentPlayer player)
+        {
+            IInventory inventory = player.ComponentMiner?.Inventory;
+            if (inventory == null || message.SlotIndex < 0 ||
+                message.SlotIndex >= inventory.SlotsCount ||
+                inventory.GetSlotCount(message.SlotIndex) <= 0)
+                return;
+            int currentValue = inventory.GetSlotValue(message.SlotIndex);
+            if (currentValue != message.ExpectedValue ||
+                Terrain.ExtractContents(currentValue) != GetEditableDataContents(message.Kind))
+                return;
+
+            int dataId;
+            if (IsDirectBlockDataKind(message.Kind))
+            {
+                if (!TryGetAuthoritativeEditableData(message.Kind,
+                    Terrain.ExtractData(currentValue), message.Payload, out dataId))
+                    return;
+            }
+            else
+            {
+                dataId = StoreAuthoritativeEditableItemData(message.Kind, message.Payload);
+            }
+            if (dataId < 0) return;
+            int authoritativeValue = Terrain.ReplaceData(currentValue, dataId);
+            inventory.RemoveSlotItems(message.SlotIndex, int.MaxValue);
+            inventory.AddSlotItems(message.SlotIndex, authoritativeValue, 1);
+            PublishEditableDataState(message.Kind, EditableDataScope.InventoryItem,
+                dataId, default, message.Payload);
+
+            m_lastEquipmentSnapshots.Remove(sourceClientId);
+            m_lastSentInventoryValues.Remove(sourceClientId);
+            m_lastSentInventoryCounts.Remove(sourceClientId);
+            m_forceHostInventorySync = true;
+        }
+
+        private void ApplyEditableBlockRequest(EditableDataRequestMessage message,
+            ComponentPlayer player)
+        {
+            SubsystemTerrain terrain = GameManager.Project?.FindSubsystem<SubsystemTerrain>(false);
+            if (terrain == null || player.ComponentBody == null ||
+                Vector3.DistanceSquared(player.ComponentBody.Position,
+                    new Vector3(message.Coordinates) + new Vector3(0.5f)) > 64f)
+                return;
+            int currentValue = terrain.Terrain.GetCellValue(
+                message.Coordinates.X, message.Coordinates.Y, message.Coordinates.Z);
+            if (Terrain.ReplaceLight(currentValue, 0) !=
+                    Terrain.ReplaceLight(message.ExpectedValue, 0) ||
+                Terrain.ExtractContents(currentValue) != GetEditableDataContents(message.Kind))
+                return;
+
+            EditableDataKind kind = message.Kind;
+            Point3 point = message.Coordinates;
+            string payload = message.Payload ?? string.Empty;
+            int executeHostCircuitStep = m_circuitSynchronizer?.ScheduleHostAction(point, () =>
+            {
+                ApplyEditableBlockData(kind, point, payload);
+            }) ?? 0;
+            if (executeHostCircuitStep <= 0 &&
+                !ApplyEditableBlockData(kind, point, payload)) return;
+            PublishEditableDataState(message.Kind, EditableDataScope.Block, 0,
+                message.Coordinates, payload, executeHostCircuitStep);
+        }
+
+        private ComponentPlayer GetEditableDataPlayer(int sourceClientId)
+        {
+            if (sourceClientId > 0)
+                return m_networkPlayerData.TryGetValue(sourceClientId, out PlayerData remote)
+                    ? remote?.ComponentPlayer
+                    : null;
+            SubsystemPlayers players = GameManager.Project?.FindSubsystem<SubsystemPlayers>(false);
+            return players?.ComponentPlayers.FirstOrDefault(player =>
+                !m_networkPlayerData.Values.Contains(player.PlayerData));
+        }
+
+        private int StoreAuthoritativeEditableItemData(EditableDataKind kind, string payload)
+        {
+            Project project = GameManager.Project;
+            if (project == null) return -1;
+            if (kind == EditableDataKind.MemoryBank)
+                return project.FindSubsystem<SuSubsystemMemoryBankBlockBehavior>(false)?
+                    .StoreNetworkItemData(payload) ?? -1;
+            if (kind == EditableDataKind.TruthTable)
+                return project.FindSubsystem<SuSubsystemTruthTableCircuitBlockBehavior>(false)?
+                    .StoreNetworkItemData(payload) ?? -1;
+            return -1;
+        }
+
+        private bool ApplyEditableBlockData(EditableDataKind kind, Point3 point,
+            string payload)
+        {
+            Project project = GameManager.Project;
+            if (project == null) return false;
+            if (IsDirectBlockDataKind(kind))
+            {
+                SubsystemTerrain terrain = project.FindSubsystem<SubsystemTerrain>(false);
+                if (terrain == null) return false;
+                int value = terrain.Terrain.GetCellValue(point.X, point.Y, point.Z);
+                if (Terrain.ExtractContents(value) != GetEditableDataContents(kind) ||
+                    !TryGetAuthoritativeEditableData(kind, Terrain.ExtractData(value),
+                        payload, out int data))
+                    return false;
+                int newValue = Terrain.ReplaceData(value, data);
+                if (newValue != value)
+                    terrain.ChangeCell(point.X, point.Y, point.Z, newValue);
+                int face = kind == EditableDataKind.AdjustableDelay
+                    ? ((AdjustableDelayGateBlock)BlocksManager.Blocks[
+                        AdjustableDelayGateBlock.Index]).GetFace(newValue)
+                    : 0;
+                SubsystemElectricity electricity =
+                    project.FindSubsystem<SubsystemElectricity>(false);
+                ElectricElement element = electricity?.GetElectricElement(
+                    point.X, point.Y, point.Z, face);
+                if (element != null)
+                    electricity.QueueElectricElementForSimulation(element,
+                        electricity.CircuitStep + 1);
+                return true;
+            }
+            if (kind == EditableDataKind.MemoryBank)
+            {
+                SuSubsystemMemoryBankBlockBehavior behavior =
+                    project.FindSubsystem<SuSubsystemMemoryBankBlockBehavior>(false);
+                if (behavior == null) return false;
+                behavior.ApplyNetworkBlockData(point, payload);
+                return true;
+            }
+            if (kind == EditableDataKind.TruthTable)
+            {
+                SuSubsystemTruthTableCircuitBlockBehavior behavior =
+                    project.FindSubsystem<SuSubsystemTruthTableCircuitBlockBehavior>(false);
+                if (behavior == null) return false;
+                behavior.ApplyNetworkBlockData(point, payload);
+                return true;
+            }
+            return false;
+        }
+
+        private void HandleEditableDataState(EditableDataStateMessage message,
+            int sourceClientId)
+        {
+            if (IsHost || sourceClientId != 0 || message == null || message.Revision <= 0 ||
+                !IsValidEditableDataKind(message.Kind) ||
+                !IsValidEditableDataScope(message.Scope) ||
+                (message.Payload?.Length ?? 0) > 512)
+                return;
+            string key = GetEditableDataKey(message.Kind, message.Scope,
+                message.DataId, message.Coordinates);
+            if (m_lastEditableDataRevisions.TryGetValue(key, out int revision) &&
+                message.Revision <= revision)
+                return;
+
+            if (message.Scope == EditableDataScope.Block &&
+                message.ExecuteHostCircuitStep > 0)
+            {
+                EditableDataKind kind = message.Kind;
+                Point3 point = message.Coordinates;
+                string payload = message.Payload ?? string.Empty;
+                if (m_circuitSynchronizer?.ScheduleRemoteAction(point,
+                    message.ExecuteHostCircuitStep, () =>
+                    {
+                        ApplyEditableBlockData(kind, point, payload);
+                    }) == true)
+                {
+                    m_lastEditableDataRevisions[key] = message.Revision;
+                    m_lastEditableDataPayloads[key] = payload;
+                    return;
+                }
+            }
+
+            bool applied;
+            if (message.Scope == EditableDataScope.InventoryItem)
+                applied = ApplyEditableItemData(message.Kind, message.DataId, message.Payload);
+            else
+                applied = ApplyEditableBlockData(message.Kind, message.Coordinates,
+                    message.Payload);
+            if (!applied) return;
+            m_lastEditableDataRevisions[key] = message.Revision;
+            m_lastEditableDataPayloads[key] = message.Payload ?? string.Empty;
+        }
+
+        private bool ApplyEditableItemData(EditableDataKind kind, int dataId, string payload)
+        {
+            if (GameManager.Project == null) return false;
+            if (IsDirectBlockDataKind(kind)) return dataId >= 0;
+            if (dataId < 0 || dataId >= 1000) return false;
+            if (kind == EditableDataKind.MemoryBank)
+            {
+                SuSubsystemMemoryBankBlockBehavior behavior =
+                    GameManager.Project.FindSubsystem<SuSubsystemMemoryBankBlockBehavior>(false);
+                if (behavior == null) return false;
+                behavior.ApplyNetworkItemData(dataId, payload);
+                return true;
+            }
+            if (kind == EditableDataKind.TruthTable)
+            {
+                SuSubsystemTruthTableCircuitBlockBehavior behavior =
+                    GameManager.Project.FindSubsystem<SuSubsystemTruthTableCircuitBlockBehavior>(false);
+                if (behavior == null) return false;
+                behavior.ApplyNetworkItemData(dataId, payload);
+                return true;
+            }
+            return false;
+        }
+
+        // Source: Survivalcraft/Game/MemoryBankElectricElement.cs:MemoryBankElectricElement.Simulate
+        // Memory banks can change without an edit dialog, so publish registry deltas once per second.
+        private void SynchronizeEditableData()
+        {
+            if (!IsHost || client?.IsConnected != true || GameManager.Project == null) return;
+            SuSubsystemMemoryBankBlockBehavior memory =
+                GameManager.Project.FindSubsystem<SuSubsystemMemoryBankBlockBehavior>(false);
+            if (memory != null)
+            {
+                PublishEditableItemData(EditableDataKind.MemoryBank,
+                    memory.CaptureNetworkItemData());
+                PublishEditableBlockData(EditableDataKind.MemoryBank,
+                    memory.CaptureNetworkBlockData());
+            }
+            SuSubsystemTruthTableCircuitBlockBehavior truth =
+                GameManager.Project.FindSubsystem<SuSubsystemTruthTableCircuitBlockBehavior>(false);
+            if (truth != null)
+            {
+                PublishEditableItemData(EditableDataKind.TruthTable,
+                    truth.CaptureNetworkItemData());
+                PublishEditableBlockData(EditableDataKind.TruthTable,
+                    truth.CaptureNetworkBlockData());
+            }
+        }
+
+        private void PublishEditableItemData(EditableDataKind kind,
+            Dictionary<int, string> items)
+        {
+            foreach (KeyValuePair<int, string> item in items)
+                PublishEditableDataState(kind, EditableDataScope.InventoryItem,
+                    item.Key, default, item.Value);
+        }
+
+        private void PublishEditableBlockData(EditableDataKind kind,
+            Dictionary<Point3, string> blocks)
+        {
+            foreach (KeyValuePair<Point3, string> item in blocks)
+                PublishEditableDataState(kind, EditableDataScope.Block,
+                    0, item.Key, item.Value);
+        }
+
+        private void PublishEditableDataState(EditableDataKind kind,
+            EditableDataScope scope, int dataId, Point3 point, string payload,
+            int executeHostCircuitStep = 0)
+        {
+            string key = GetEditableDataKey(kind, scope, dataId, point);
+            string safePayload = payload ?? string.Empty;
+            if (m_lastEditableDataPayloads.TryGetValue(key, out string previous) &&
+                previous == safePayload)
+                return;
+            if (scope == EditableDataScope.Block && executeHostCircuitStep <= 0)
+            {
+                EditableDataKind scheduledKind = kind;
+                Point3 scheduledPoint = point;
+                string scheduledPayload = safePayload;
+                executeHostCircuitStep = m_circuitSynchronizer?.ScheduleHostAction(
+                    scheduledPoint, () =>
+                    {
+                        ApplyEditableBlockData(scheduledKind, scheduledPoint,
+                            scheduledPayload);
+                    }) ?? 0;
+            }
+            m_lastEditableDataPayloads[key] = safePayload;
+            m_editableDataRevision = m_editableDataRevision == int.MaxValue
+                ? 1
+                : m_editableDataRevision + 1;
+            NetworkMessageSender.SendEditableDataState(-1, new EditableDataStateMessage
+            {
+                Revision = m_editableDataRevision,
+                ExecuteHostCircuitStep = executeHostCircuitStep,
+                Kind = kind,
+                Scope = scope,
+                DataId = dataId,
+                Coordinates = point,
+                Payload = safePayload
+            });
+        }
+
+        private static string GetEditableDataKey(EditableDataKind kind,
+            EditableDataScope scope, int dataId, Point3 point)
+        {
+            return scope == EditableDataScope.InventoryItem
+                ? ((int)kind).ToString(CultureInfo.InvariantCulture) + ":I:" +
+                    dataId.ToString(CultureInfo.InvariantCulture)
+                : ((int)kind).ToString(CultureInfo.InvariantCulture) + ":B:" +
+                    point.X.ToString(CultureInfo.InvariantCulture) + "," +
+                    point.Y.ToString(CultureInfo.InvariantCulture) + "," +
+                    point.Z.ToString(CultureInfo.InvariantCulture);
+        }
+
+        private static int GetEditableDataContents(EditableDataKind kind)
+        {
+            return kind == EditableDataKind.MemoryBank ? 186 :
+                kind == EditableDataKind.TruthTable ? 188 :
+                kind == EditableDataKind.AdjustableDelay ? AdjustableDelayGateBlock.Index :
+                kind == EditableDataKind.SwitchVoltage ? SwitchBlock.Index :
+                kind == EditableDataKind.ButtonVoltage ? ButtonBlock.Index :
+                kind == EditableDataKind.Piston ? PistonBlock.Index : 0;
+        }
+
+        private static bool IsValidEditableDataKind(EditableDataKind kind) =>
+            kind == EditableDataKind.MemoryBank || kind == EditableDataKind.TruthTable ||
+            IsDirectBlockDataKind(kind);
+
+        private static bool IsDirectBlockDataKind(EditableDataKind kind) =>
+            kind == EditableDataKind.AdjustableDelay ||
+            kind == EditableDataKind.SwitchVoltage ||
+            kind == EditableDataKind.ButtonVoltage ||
+            kind == EditableDataKind.Piston;
+
+        // Source: Survivalcraft/Game/SubsystemAdjustableDelayGateBlockBehavior.cs:
+        // SubsystemAdjustableDelayGateBlockBehavior.OnEditBlock
+        // Source: Survivalcraft/Game/SubsystemSwitchBlockBehavior.cs:
+        // SubsystemSwitchBlockBehavior.OnEditBlock
+        // Source: Survivalcraft/Game/SubsystemButtonBlockBehavior.cs:
+        // SubsystemButtonBlockBehavior.OnEditBlock
+        // Source: Survivalcraft/Game/SubsystemPistonBlockBehavior.cs:
+        // SubsystemPistonBlockBehavior.OnEditBlock
+        private static bool TryGetAuthoritativeEditableData(EditableDataKind kind,
+            int currentData, string payload, out int data)
+        {
+            data = currentData;
+            if (!int.TryParse(payload, NumberStyles.Integer,
+                CultureInfo.InvariantCulture, out int requestedData))
+                return false;
+            if (kind == EditableDataKind.AdjustableDelay)
+            {
+                data = AdjustableDelayGateBlock.SetDelay(currentData,
+                    AdjustableDelayGateBlock.GetDelay(requestedData));
+                return true;
+            }
+            if (kind == EditableDataKind.SwitchVoltage)
+            {
+                data = SwitchBlock.SetVoltageLevel(currentData,
+                    SwitchBlock.GetVoltageLevel(requestedData));
+                return true;
+            }
+            if (kind == EditableDataKind.ButtonVoltage)
+            {
+                data = ButtonBlock.SetVoltageLevel(currentData,
+                    ButtonBlock.GetVoltageLevel(requestedData));
+                return true;
+            }
+            if (kind == EditableDataKind.Piston)
+            {
+                data = PistonBlock.SetMode(currentData, PistonBlock.GetMode(requestedData));
+                data = PistonBlock.SetMaxExtension(data,
+                    PistonBlock.GetMaxExtension(requestedData));
+                data = PistonBlock.SetPullCount(data,
+                    PistonBlock.GetPullCount(requestedData));
+                data = PistonBlock.SetSpeed(data, PistonBlock.GetSpeed(requestedData));
+                return true;
+            }
+            return false;
+        }
+
+        private static bool IsValidEditableDataScope(EditableDataScope scope) =>
+            scope == EditableDataScope.InventoryItem || scope == EditableDataScope.Block;
+
         private void MaintainClientWorldObjects()
         {
             Project project = GameManager.Project;
@@ -6712,14 +7627,17 @@ namespace ScMultiplayer
                 if (!string.IsNullOrEmpty(record?.SkinName)) playerData.CharacterSkinName = record.SkinName;
 
                 // Source: Survivalcraft/Game/SubsystemPlayers.cs:SubsystemPlayers.AddPlayerData
-                // PlayerIndex 0 belongs to the locally controlled player. Include detached network
-                // avatars when selecting an index because they are intentionally absent from PlayersData.
-                int freePlayerIndex = Enumerable.Range(1, Math.Max(0, SubsystemPlayers.MaxPlayers - 1))
-                    .FirstOrDefault(index =>
-                        !players.PlayersData.Any(player => player.PlayerIndex == index) &&
-                        !m_networkPlayerData.Values.Any(player => player.PlayerIndex == index));
-                if (freePlayerIndex == 0)
-                    throw new InvalidOperationException("No free remote player index.");
+                // A saved local player is not guaranteed to own index 0. The host uses the index
+                // reserved before accepting the join; imported clients allocate any unused index.
+                int freePlayerIndex = m_reservedNetworkPlayerIndices.TryGetValue(
+                    clientId, out int reservedPlayerIndex)
+                    ? reservedPlayerIndex
+                    : FindAvailableNetworkPlayerIndex(players);
+                if (players.PlayersData.Any(player =>
+                        player.PlayerIndex == freePlayerIndex) ||
+                    m_networkPlayerData.Values.Any(player =>
+                        player.PlayerIndex == freePlayerIndex))
+                    throw new InvalidOperationException("Reserved remote player index is occupied.");
 
                 ModManager.ModParentField.ModifyParentField(
                     players, "m_nextPlayerIndex", freePlayerIndex, typeof(SubsystemPlayers));
@@ -6805,6 +7723,7 @@ namespace ScMultiplayer
                     componentPlayers.Add(playerData.ComponentPlayer);
 
                 m_networkPlayerData.Add(clientId, playerData);
+                m_reservedNetworkPlayerIndices.Remove(clientId);
                 m_clientRecordKeys[clientId] = recordKey;
                 m_pendingNetworkPlayers.Remove(clientId);
                 m_pendingNetworkPlayerIdentities.Remove(clientId);
@@ -6845,8 +7764,10 @@ namespace ScMultiplayer
             m_hostKnockbackHealthCache.Remove(clientId);
             m_hostPainSoundTimes.Remove(clientId);
             m_hostRemoteKnockbackUntil.Remove(clientId);
+            m_reservedNetworkPlayerIndices.Remove(clientId);
+            m_worldObjectSynchronizer?.ForgetClient(clientId);
             if (!m_networkPlayerData.TryGetValue(clientId, out PlayerData playerData)) return;
-            if (playerData?.PlayerIndex > 0)
+            if (playerData?.PlayerIndex >= 0)
                 GameManager.Project?.FindSubsystem<SubsystemTerrain>(false)?.TerrainUpdater
                     .RemoveUpdateLocation(playerData.PlayerIndex);
             string recordKey = m_clientRecordKeys.TryGetValue(clientId, out string key) ? key : playerData.Name;
@@ -6911,7 +7832,7 @@ namespace ScMultiplayer
                 project.FindSubsystem<SubsystemSky>(false)?.VisibilityRange ?? 64f, 64f);
             foreach (PlayerData playerData in m_networkPlayerData.Values.ToArray())
             {
-                if (playerData?.ComponentPlayer?.ComponentBody == null || playerData.PlayerIndex <= 0)
+                if (playerData?.ComponentPlayer?.ComponentBody == null || playerData.PlayerIndex < 0)
                     continue;
                 Vector3 position = playerData.ComponentPlayer.ComponentBody.Position;
                 terrain.TerrainUpdater.SetUpdateLocation(playerData.PlayerIndex,
@@ -8464,9 +9385,9 @@ namespace ScMultiplayer
             if (msg.HasLightningStrike && !m_remoteLightningActive)
             {
                 bool playThunder = Time.RealTime >= m_localLightningPredictionUntil;
-                ApplyRemoteLightningVisual(sky, msg.LightningStrikePosition, playThunder);
-                m_localLightningPredictionUntil = 0.0;
                 m_remoteLightningActive = true;
+                m_localLightningPredictionUntil = 0.0;
+                ApplyRemoteLightningVisual(sky, msg.LightningStrikePosition, playThunder);
             }
             else if (!msg.HasLightningStrike)
             {
@@ -8503,13 +9424,13 @@ namespace ScMultiplayer
                 typeof(SubsystemSky));
             ModManager.ModParentField.ModifyParentField(
                 sky, "m_lightningStrikeBrightness", 1f, typeof(SubsystemSky));
-            if (playThunder) PlayRemoteThunder(sky, position);
+            if (playThunder) PlayRemoteThunder(position);
         }
 
         // Source: Survivalcraft/Game/SubsystemSky.cs:SubsystemSky.MakeLightningStrike
         // Reproduce only the listener-distance audio branch. Damage, fire and explosions remain
         // host-authoritative and arrive through their existing synchronization paths.
-        private void PlayRemoteThunder(SubsystemSky sky, Vector3 position)
+        private void PlayRemoteThunder(Vector3 position)
         {
             SubsystemAudio audio = GameManager.Project?.FindSubsystem<SubsystemAudio>(false);
             if (audio == null) return;
@@ -8521,9 +9442,7 @@ namespace ScMultiplayer
                     new Vector2(position.X, position.Z)));
             }
             if (distance >= 200f) return;
-            Engine.Random random = ModManager.ModParentField.GetParentField<Engine.Random>(
-                sky, "m_random", typeof(SubsystemSky));
-            float pitch = random != null ? random.Float(-0.2f, 0.2f) : 0f;
+            float pitch = m_audioEventRandom.Float(-0.2f, 0.2f);
             float delay = audio.CalculateDelay(distance);
             if (distance < 40f)
                 audio.PlayRandomSound("Audio/ThunderNear", 1f, pitch, 0f, delay);
@@ -8796,6 +9715,16 @@ namespace ScMultiplayer
             var repairCells = new Dictionary<Point3, bool>();
             foreach (Point3 cell in modifiedCells.Keys)
             {
+                if (m_pendingTerrainPlacePredictionCells.TryGetValue(cell,
+                    out int placeRequestId) &&
+                    m_pendingTerrainPlacePredictions.TryGetValue(placeRequestId,
+                        out PendingTerrainPlacePrediction placePrediction))
+                {
+                    placePrediction.LocalPredictedValue = Terrain.ReplaceLight(
+                        terrain.Terrain.GetCellValue(cell.X, cell.Y, cell.Z), 0);
+                    placePrediction.HasLocalPrediction = true;
+                    continue;
+                }
                 bool pending = m_pendingTerrainPredictionCells.ContainsKey(cell);
                 bool hasIntent = m_localTerrainDigIntents.TryGetValue(cell,
                     out LocalTerrainDigIntent intent);
@@ -8804,6 +9733,15 @@ namespace ScMultiplayer
                     continue;
                 int predictedValue = Terrain.ReplaceLight(
                     terrain.Terrain.GetCellValue(cell.X, cell.Y, cell.Z), 0);
+                // Source: Survivalcraft/Game/SubsystemDeciduousLeavesBlockBehavior.cs:
+                // SubsystemDeciduousLeavesBlockBehavior.UpdateTimeOfYear
+                // Leaf season metadata is derived locally and host-authoritative. It is not a
+                // player terrain prediction and must not trigger a repair round trip.
+                if (!hasIntent && BlocksManager.Blocks[
+                    Terrain.ExtractContents(predictedValue)] is DeciduousLeavesBlock)
+                {
+                    continue;
+                }
                 if (hasIntent && intentAge <= 2.0 && predictedValue != intent.ExpectedValue)
                     QueueTerrainDigRequest(cell, intent, predictedValue);
                 else if (!hasIntent || intentAge > 2.0)
@@ -8858,6 +9796,14 @@ namespace ScMultiplayer
         {
             if (client?.IsConnected != true) return;
             double now = Time.RealTime;
+            foreach (PendingTerrainPlacePrediction prediction in
+                m_pendingTerrainPlacePredictions.Values.ToArray())
+            {
+                if (now - prediction.LastSendTime < 0.5) continue;
+                prediction.LastSendTime = now;
+                prediction.SendCount++;
+                NetworkMessageSender.SendPlayerInteractRequest(prediction.Request);
+            }
             SubsystemTerrain terrain = GameManager.Project?.FindSubsystem<SubsystemTerrain>(false);
             if (terrain != null)
             {
@@ -8927,7 +9873,7 @@ namespace ScMultiplayer
         {
             var cells = new Dictionary<Point3, bool> { [message.Cell] = true };
             var values = new List<int> { message.AuthoritativeValue };
-            SuSubsystemTerrain.EnqueueNetworkBatch(new GameModifiedCellsMessage(
+            SuSubsystemTerrain.EnqueuePriorityNetworkBatch(new GameModifiedCellsMessage(
                 cells, values, message.ServerTick, false, client.ClientID));
         }
 
@@ -8952,11 +9898,47 @@ namespace ScMultiplayer
             }
             else if (!IsHost && sourceClientId == 0)
             {
+                msg = FilterPendingTerrainPlacePredictions(msg);
+                if (msg == null || (msg.ModifiedCells.Count == 0 && msg.Sequence <= 0)) return;
                 msg = FilterStaleTerrainRepairs(msg);
-                if (msg == null || msg.ModifiedCells.Count == 0) return;
+                if (msg == null || (msg.ModifiedCells.Count == 0 && msg.Sequence <= 0)) return;
                 ConfirmTerrainPredictions(msg);
             }
             SuSubsystemTerrain.EnqueueNetworkBatch(msg);
+        }
+
+        // Source: Survivalcraft/Game/SubsystemTerrain.cs:SubsystemTerrain.ChangeCell
+        private GameModifiedCellsMessage FilterPendingTerrainPlacePredictions(
+            GameModifiedCellsMessage message)
+        {
+            if (message?.ModifiedCells == null || message.CellValues == null ||
+                m_pendingTerrainPlacePredictionCells.Count == 0)
+                return message;
+
+            var cells = new Dictionary<Point3, bool>();
+            var values = new List<int>();
+            int index = 0;
+            foreach (KeyValuePair<Point3, bool> item in message.ModifiedCells)
+            {
+                int value = index < message.CellValues.Count
+                    ? message.CellValues[index]
+                    : 0;
+                bool conflictsWithPrediction = m_pendingTerrainPlacePredictionCells.TryGetValue(
+                    item.Key, out int requestId) &&
+                    m_pendingTerrainPlacePredictions.TryGetValue(requestId,
+                        out PendingTerrainPlacePrediction prediction) &&
+                    prediction.HasLocalPrediction && value != prediction.LocalPredictedValue &&
+                    value == prediction.Request.ExpectedValue;
+                if (!conflictsWithPrediction)
+                {
+                    cells[item.Key] = item.Value;
+                    values.Add(value);
+                }
+                index++;
+            }
+            if (cells.Count == message.ModifiedCells.Count) return message;
+            return new GameModifiedCellsMessage(cells, values, message.Tick,
+                message.IsCatchUp, message.TargetClientId, message.Sequence);
         }
 
         private void SendAuthoritativeTerrainRepair(int targetClientId,
@@ -9188,7 +10170,8 @@ namespace ScMultiplayer
             }
         }
 
-        private void RecordHostTerrainChanges(GameModifiedCellsMessage message, int authoritativeTick)
+        private void RecordHostTerrainChanges(GameModifiedCellsMessage message,
+            int authoritativeTick, bool isFluidSettlementConfirmation = false)
         {
             if (message?.ModifiedCells == null) return;
             lock (m_terrainJournalLock)
@@ -9204,11 +10187,118 @@ namespace ScMultiplayer
                             CellValue = message.CellValues[index],
                             Tick = authoritativeTick
                         };
-                        m_terrainRepairRepeats[item.Key] = TerrainRepairRepeatCount;
+                        int cellValue = message.CellValues[index];
+                        if (!isFluidSettlementConfirmation &&
+                            Terrain.ExtractContents(cellValue) == 0 &&
+                            TryGetFluidSettlementDelay(item.Key, out double delay))
+                        {
+                            double dueGameTime = GetCurrentGameTime() + delay;
+                            if (m_pendingFluidSettlements.TryGetValue(item.Key,
+                                out PendingFluidSettlement pending))
+                            {
+                                pending.TransientValue = cellValue;
+                                pending.DueGameTime = Math.Min(
+                                    pending.DueGameTime, dueGameTime);
+                            }
+                            else
+                            {
+                                m_pendingFluidSettlements[item.Key] =
+                                    new PendingFluidSettlement
+                                    {
+                                        TransientValue = cellValue,
+                                        DueGameTime = dueGameTime
+                                    };
+                            }
+                            m_terrainRepairRepeats.Remove(item.Key);
+                        }
+                        else
+                        {
+                            m_pendingFluidSettlements.Remove(item.Key);
+                            m_terrainRepairRepeats[item.Key] = TerrainRepairRepeatCount;
+                        }
                     }
                     index++;
                 }
             }
+        }
+
+        // Source: Survivalcraft/Game/SubsystemFluidBlockBehavior.cs:
+        // SubsystemFluidBlockBehavior.SpreadFluid
+        // Fluid changes call ProcessModifiedCells internally, before SuSubsystemTerrain can
+        // journal them. Confirm only transient air cells beside fluid after the native spread
+        // interval, then reuse one terrain read for comparison, broadcast and persistence.
+        private void ConfirmPendingFluidSettlements()
+        {
+            if (!IsHost || m_pendingFluidSettlements.Count == 0) return;
+            double gameTime = GetCurrentGameTime();
+            Point3[] dueCells;
+            lock (m_terrainJournalLock)
+            {
+                dueCells = m_pendingFluidSettlements.Where(item =>
+                    gameTime >= item.Value.DueGameTime).Select(item => item.Key).ToArray();
+            }
+            if (dueCells.Length == 0) return;
+
+            SubsystemTerrain terrain = GameManager.Project?
+                .FindSubsystem<SubsystemTerrain>(false);
+            if (terrain == null) return;
+            foreach (Point3 cell in dueCells)
+            {
+                PendingFluidSettlement pending;
+                lock (m_terrainJournalLock)
+                {
+                    if (!m_pendingFluidSettlements.TryGetValue(cell, out pending) ||
+                        gameTime < pending.DueGameTime)
+                        continue;
+                    m_pendingFluidSettlements.Remove(cell);
+                }
+
+                int finalValue = Terrain.ReplaceLight(terrain.Terrain.GetCellValue(
+                    cell.X, cell.Y, cell.Z), 0);
+                var cells = new Dictionary<Point3, bool> { [cell] = true };
+                var values = new List<int> { finalValue };
+                var confirmation = new GameModifiedCellsMessage(cells, values,
+                    client.Step, false, -1);
+                lock (m_terrainJournalLock)
+                    confirmation.Sequence = ++m_hostTerrainSequence;
+                RecordHostTerrainChanges(confirmation, client.Step,
+                    isFluidSettlementConfirmation: true);
+                RecordHostTerrainJournal(confirmation);
+                NetworkMessageSender.SendScheduledMessage(-1, confirmation);
+            }
+        }
+
+        // Source: Survivalcraft/Game/SubsystemWaterBlockBehavior.cs:
+        // SubsystemWaterBlockBehavior.Update
+        private bool TryGetFluidSettlementDelay(Point3 cell, out double delay)
+        {
+            delay = 0.0;
+            SubsystemTerrain terrain = GameManager.Project?
+                .FindSubsystem<SubsystemTerrain>(false);
+            if (terrain == null) return false;
+            bool slowFluidFound = false;
+            for (int face = 0; face < 6; face++)
+            {
+                Point3 offset = CellFace.FaceToPoint3(face);
+                int value = terrain.Terrain.GetCellValue(
+                    cell.X + offset.X, cell.Y + offset.Y, cell.Z + offset.Z);
+                Block block = BlocksManager.Blocks[Terrain.ExtractContents(value)];
+                if (block is WaterBlock)
+                {
+                    delay = WaterSettlementDelay;
+                    return true;
+                }
+                if (block is FluidBlock)
+                    slowFluidFound = true;
+            }
+            if (slowFluidFound)
+                delay = SlowFluidSettlementDelay;
+            return slowFluidFound;
+        }
+
+        private static double GetCurrentGameTime()
+        {
+            return GameManager.Project?.FindSubsystem<SubsystemTime>(false)?.GameTime ?? 0.0;
         }
 
         private void MergePendingTerrainChanges()
@@ -9367,6 +10457,7 @@ namespace ScMultiplayer
                     transfer.Chunks[transfer.HighestContiguousChunkIndex + 1] != null)
                     transfer.HighestContiguousChunkIndex++;
                 transfer.LastProgressTime = Time.RealTime;
+                m_lastJoinWorldProgressTime = Time.RealTime;
             }
             TryCompleteIncomingWorldTransfer(transfer);
         }
@@ -9401,6 +10492,7 @@ namespace ScMultiplayer
             if (m_joinRoomBusyDialog != null)
                 m_joinRoomBusyDialog.SmallMessage =
                     "Connected.\r\nWorld download complete.\r\nImporting world...";
+            m_joinAwaitingWorldProgress = false;
             manifest.WorldData = worldData;
             manifest.ChunkCount = 0;
             m_incomingWorldTransfers.Remove(transfer.TransferId);
@@ -9574,10 +10666,12 @@ namespace ScMultiplayer
                 }
                 transfer.Manifest = msg;
                 transfer.LastProgressTime = Time.RealTime;
+                m_lastJoinWorldProgressTime = Time.RealTime;
                 TryCompleteIncomingWorldTransfer(transfer);
                 return;
             }
             if (msg.WorldData == null || msg.WorldData.Length == 0) return;
+            m_joinAwaitingWorldProgress = false;
             m_sessionRandomSeed = msg.RandomSeed;
             m_pendingTerrainSequenceBaseline = msg.TerrainSequenceBaseline;
             m_pendingRandomStates = msg.RandomStates ?? new Dictionary<string, long>();
@@ -9724,6 +10818,19 @@ namespace ScMultiplayer
             m_localLeaveInProgress = false;
             m_isLoadingDownloadedWorld = true;
             ResetTransientNetworkState();
+            m_joinAwaitingWorldProgress = true;
+            m_lastJoinWorldProgressTime = Time.RealTime;
+            // Source: ScMultiplayer.cs:UpdateFrame
+            // Start the manifest handshake immediately after transient state has been reset. The
+            // periodic request remains as loss recovery and no longer has to provide the first try.
+            m_nextWorldTransferManifestRequestTime =
+                Time.RealTime + WorldTransferRepairInterval;
+            NetworkMessageSender.SendPakWorldRepairRequest(
+                new GamePakWorldRepairRequestMessage
+                {
+                    TransferId = 0,
+                    RequestManifest = true
+                });
             m_reconnectRequested = false;
             m_reconnectPending = false;
             m_reconnectAttempts = 0;
@@ -9896,12 +11003,13 @@ namespace ScMultiplayer
             if (activeClientSession) HandleHostDisconnected();
         }
 
-        private void HandleHostDisconnected()
+        private void HandleHostDisconnected(string dialogTitle = null, string dialogMessage = null)
         {
             if (IsHost || m_hostDisconnectHandled) return;
             m_hostDisconnectHandled = true;
             m_reconnectRequested = false;
             m_reconnectPending = false;
+            m_joinAwaitingWorldProgress = false;
             m_activeJoinRequest = null;
             m_isLoadingDownloadedWorld = false;
             // Source: Comms/Comms.Drt/Func/Client/Client.cs:Client.LeaveGame
@@ -9927,8 +11035,10 @@ namespace ScMultiplayer
                 m_pendingNetworkPlayers.Clear();
                 RemotePlayers.Clear();
                 ScreensManager.SwitchScreen("Play");
+                HideJoinRoomBusyDialog();
                 DialogsManager.ShowDialog(null, new MessageDialog(
-                    "Host Disconnected", "The host left the room. The downloaded world was removed.",
+                    dialogTitle ?? "Host Disconnected",
+                    dialogMessage ?? "The host left the room. The downloaded world was removed.",
                     "OK", "Cancel", null));
             });
         }
@@ -9976,10 +11086,16 @@ namespace ScMultiplayer
 
         private void ResetTransientNetworkState()
         {
+            m_circuitSynchronizer?.Reset();
+            m_worldObjectSynchronizer?.Reset();
             Interlocked.Increment(ref m_worldTransferGeneration);
             while (m_worldTransferSendQueue.TryDequeue(out _))
                 Interlocked.Decrement(ref m_worldTransferQueuedWorkCount);
+            while (m_worldTransferActions.TryDequeue(out _))
+            {
+            }
             m_networkPlayerData.Clear();
+            m_reservedNetworkPlayerIndices.Clear();
             lock (m_creatingNetworkPlayers) m_creatingNetworkPlayers.Clear();
             m_pendingNetworkPlayers.Clear();
             m_pendingNetworkPlayerIdentities.Clear();
@@ -10005,6 +11121,11 @@ namespace ScMultiplayer
             m_lastEquipmentSnapshots.Clear();
             m_equipmentSynchronizedClients.Clear();
             m_localEquipmentRevision = 0;
+            m_lastEditableDataRequestIds.Clear();
+            m_lastEditableDataRevisions.Clear();
+            m_lastEditableDataPayloads.Clear();
+            m_localEditableDataRequestId = 0;
+            m_editableDataRevision = 0;
             m_hostKnockbackHealthCache.Clear();
             m_hostPainSoundTimes.Clear();
             m_hostRemoteKnockbackUntil.Clear();
@@ -10041,6 +11162,7 @@ namespace ScMultiplayer
                 m_terrainCheckpoint.Clear();
                 m_pendingTerrainChanges.Clear();
                 m_terrainRepairRepeats.Clear();
+                m_pendingFluidSettlements.Clear();
                 m_hostTerrainSequence = 0;
             }
             m_hostTerrainRecoveryTargets.Clear();
@@ -10060,6 +11182,10 @@ namespace ScMultiplayer
             m_pendingTerrainPredictionCells.Clear();
             m_processedTerrainDigRequests.Clear();
             m_localTerrainDigIntents.Clear();
+            m_pendingTerrainPlacePredictions.Clear();
+            m_pendingTerrainPlacePredictionCells.Clear();
+            m_hostTerrainPlaceExecutions.Clear();
+            m_processedTerrainPlaceRequests.Clear();
             m_outgoingWorldTransfers.Clear();
             m_worldTransfersAwaitingReady.Clear();
             m_incomingWorldTransfers.Clear();
@@ -10071,7 +11197,6 @@ namespace ScMultiplayer
             m_localHitSequence = 0;
             m_nextLocalHitRequestTime = 0.0;
             m_localInteractSequence = 0;
-            m_nextLocalInteractRequestTime = 0.0;
             m_localDropSequence = 0;
             m_observedLocalPlayerEntity = null;
             m_observedLocalPlayerWasDead = false;
@@ -10703,24 +11828,90 @@ namespace ScMultiplayer
         }
 
         // Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update
-        // Interact/Use/Place is a cooldown-limited edge. Include the inventory state observed
-        // immediately before local prediction so the host executes the same native action once.
+        // Interact/Use/Place is already a one-frame input edge. Include the inventory state and
+        // bind a possible terrain prediction to this request before native local execution.
         private void UpdateLocalInteractRequests(ComponentPlayer player, Ray3? interactRay)
         {
-            if (!interactRay.HasValue || Time.RealTime < m_nextLocalInteractRequestTime ||
-                client?.IsConnected != true || player?.ComponentMiner?.Inventory == null)
+            if (!interactRay.HasValue || client?.IsConnected != true ||
+                player?.ComponentMiner?.Inventory == null)
                 return;
             IInventory inventory = player.ComponentMiner.Inventory;
             int activeSlot = inventory.ActiveSlotIndex;
             if (activeSlot < 0 || activeSlot >= inventory.SlotsCount) return;
-            m_nextLocalInteractRequestTime = Time.RealTime + PlayerInteractRequestInterval;
+            int itemValue = inventory.GetSlotValue(activeSlot);
+            int itemCount = inventory.GetSlotCount(activeSlot);
+            if (!IsHost && itemValue != 0 &&
+                BlocksManager.Blocks[Terrain.ExtractContents(itemValue)] is FurnitureBlock)
+                m_worldObjectSynchronizer?.PublishLocalFurnitureChangesNow();
             m_localInteractSequence = m_localInteractSequence == int.MaxValue
                 ? 1
                 : m_localInteractSequence + 1;
-            NetworkMessageSender.SendPlayerInteractRequest(new PlayerActionMessage(
+            var request = new PlayerActionMessage(
                 PlayerActionType.InteractRequest, client.ClientID, m_localInteractSequence,
-                interactRay.Value, activeSlot, inventory.GetSlotValue(activeSlot),
-                inventory.GetSlotCount(activeSlot)));
+                interactRay.Value, activeSlot, itemValue, itemCount);
+            if (TryGetTerrainPlacePrediction(player, interactRay.Value,
+                out Point3 cell, out int expectedValue, out int predictedValue))
+            {
+                request.HasTerrainPrediction = true;
+                request.RequestId = m_localInteractSequence;
+                request.Cell = cell;
+                request.ExpectedValue = expectedValue;
+                request.PredictedValue = predictedValue;
+                if (m_pendingTerrainPlacePredictionCells.TryGetValue(cell,
+                    out int previousRequestId))
+                    RemovePendingTerrainPlacePrediction(previousRequestId);
+                m_pendingTerrainPlacePredictions[request.RequestId] =
+                    new PendingTerrainPlacePrediction
+                    {
+                        Request = request,
+                        LocalPredictedValue = predictedValue,
+                        // Source: Survivalcraft/Game/SubsystemTerrain.cs:
+                        // SubsystemTerrain.ChangeCell
+                        // Some block behaviors do not perform a local ChangeCell immediately.
+                        // SubmitClientTerrainPredictions marks this true only after observing one.
+                        HasLocalPrediction = false,
+                        LastSendTime = Time.RealTime,
+                        SendCount = 1
+                    };
+                m_pendingTerrainPlacePredictionCells[cell] = request.RequestId;
+            }
+            NetworkMessageSender.SendPlayerInteractRequest(request);
+        }
+
+        // Source: Survivalcraft/Game/ComponentMiner.cs:ComponentMiner.Place
+        private static bool TryGetTerrainPlacePrediction(ComponentPlayer player, Ray3 ray,
+            out Point3 cell, out int expectedValue, out int predictedValue)
+        {
+            cell = default;
+            expectedValue = 0;
+            predictedValue = 0;
+            ComponentMiner miner = player?.ComponentMiner;
+            IInventory inventory = miner?.Inventory;
+            SubsystemTerrain terrain = GameManager.Project?.FindSubsystem<SubsystemTerrain>(false);
+            if (miner == null || inventory == null || terrain == null)
+                return false;
+            int activeSlot = inventory.ActiveSlotIndex;
+            if (activeSlot < 0 || activeSlot >= inventory.SlotsCount)
+                return false;
+            int itemValue = inventory.GetSlotValue(activeSlot);
+            if (itemValue == 0 || inventory.GetSlotCount(activeSlot) <= 0)
+                return false;
+            Block block = BlocksManager.Blocks[Terrain.ExtractContents(itemValue)];
+            if (!block.IsPlaceable) return false;
+            TerrainRaycastResult? hit = miner.Raycast<TerrainRaycastResult>(
+                ray, RaycastMode.Interaction);
+            if (!hit.HasValue) return false;
+            BlockPlacementData placement = block.GetPlacementValue(
+                terrain, miner, itemValue, hit.Value);
+            if (placement.Value == 0) return false;
+            Point3 offset = CellFace.FaceToPoint3(placement.CellFace.Face);
+            cell = new Point3(placement.CellFace.X + offset.X,
+                placement.CellFace.Y + offset.Y, placement.CellFace.Z + offset.Z);
+            if (!terrain.Terrain.IsCellValid(cell.X, cell.Y, cell.Z)) return false;
+            expectedValue = Terrain.ReplaceLight(
+                terrain.Terrain.GetCellValue(cell.X, cell.Y, cell.Z), 0);
+            predictedValue = Terrain.ReplaceLight(placement.Value, 0);
+            return predictedValue != 0;
         }
 
         // Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update
@@ -10786,8 +11977,7 @@ namespace ScMultiplayer
                 return true;
             }
 
-            if (state.InteractEvents.Count > 0 &&
-                Time.RealTime >= state.NextInteractExecutionTime)
+            if (state.InteractEvents.Count > 0)
             {
                 PlayerActionMessage interact = state.InteractEvents.Dequeue();
                 playerInput = state.ConsumedSequence != state.Sequence
@@ -10795,9 +11985,26 @@ namespace ScMultiplayer
                     : state.HeldInput;
                 state.ConsumedSequence = state.Sequence;
                 ApplyInteractionInventory(player.ComponentMiner?.Inventory, interact);
+                if (interact.HasTerrainPrediction)
+                {
+                    bool validPrediction = TryGetTerrainPlacePrediction(player,
+                        interact.HitRay, out Point3 cell, out int expectedValue,
+                        out _) && cell == interact.Cell &&
+                        expectedValue == interact.ExpectedValue;
+                    if (!validPrediction)
+                    {
+                        SendHostTerrainPlaceResult(sourceClientId, interact, false);
+                        state.HeldInput = CreateHeldNetworkInput(playerInput);
+                        return true;
+                    }
+                    m_hostTerrainPlaceExecutions.Add(new HostTerrainPlaceExecution
+                    {
+                        ClientId = sourceClientId,
+                        Request = interact
+                    });
+                }
                 playerInput.Interact = interact.HitRay;
                 state.HeldInput = CreateHeldNetworkInput(playerInput);
-                state.NextInteractExecutionTime = Time.RealTime + PlayerInteractRequestInterval;
                 return true;
             }
 
@@ -10873,6 +12080,81 @@ namespace ScMultiplayer
             }
             playerInput.Aim = null;
             return true;
+        }
+
+        // Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update
+        // Runs after native component updates, so the authoritative placement result is visible.
+        private void CompleteHostTerrainPlaceExecutions()
+        {
+            if (!IsHost || m_hostTerrainPlaceExecutions.Count == 0) return;
+            foreach (HostTerrainPlaceExecution execution in
+                m_hostTerrainPlaceExecutions.ToArray())
+            {
+                SubsystemTerrain terrain = GameManager.Project?.FindSubsystem<SubsystemTerrain>(false);
+                int authoritativeValue = terrain == null
+                    ? execution.Request.ExpectedValue
+                    : Terrain.ReplaceLight(terrain.Terrain.GetCellValue(
+                        execution.Request.Cell.X, execution.Request.Cell.Y,
+                        execution.Request.Cell.Z), 0);
+                SendHostTerrainPlaceResult(execution.ClientId, execution.Request,
+                    authoritativeValue != execution.Request.ExpectedValue);
+            }
+            m_hostTerrainPlaceExecutions.Clear();
+        }
+
+        // Source: Survivalcraft/Game/SubsystemTerrain.cs:SubsystemTerrain.ChangeCell
+        private void SendHostTerrainPlaceResult(int targetClientId,
+            PlayerActionMessage request, bool accepted)
+        {
+            SubsystemTerrain terrain = GameManager.Project?.FindSubsystem<SubsystemTerrain>(false);
+            int authoritativeValue = terrain == null ||
+                !terrain.Terrain.IsCellValid(request.Cell.X, request.Cell.Y, request.Cell.Z)
+                ? request.ExpectedValue
+                : Terrain.ReplaceLight(terrain.Terrain.GetCellValue(
+                    request.Cell.X, request.Cell.Y, request.Cell.Z), 0);
+            var result = new PlayerActionMessage(
+                PlayerActionType.InteractResult, targetClientId, request.Sequence, default)
+            {
+                RequestId = request.RequestId,
+                Cell = request.Cell,
+                Accepted = accepted,
+                AuthoritativeValue = authoritativeValue,
+                ServerTick = client.Step
+            };
+            long requestKey = ((long)targetClientId << 32) | (uint)request.RequestId;
+            if (m_processedTerrainPlaceRequests.Count >= 2048)
+                m_processedTerrainPlaceRequests.Clear();
+            m_processedTerrainPlaceRequests[requestKey] = result;
+            NetworkMessageSender.SendPlayerInteractResult(targetClientId, result);
+            MarkHostInventoryAuthoritative(targetClientId);
+            m_forceHostInventorySync = true;
+        }
+
+        // Source: Survivalcraft/Game/SubsystemTerrain.cs:SubsystemTerrain.ChangeCell
+        private void HandleTerrainPlaceResult(PlayerActionMessage result, int sourceClientId)
+        {
+            if (IsHost || sourceClientId != 0 || result == null ||
+                !m_pendingTerrainPlacePredictions.TryGetValue(result.RequestId,
+                    out PendingTerrainPlacePrediction prediction) ||
+                prediction.Request.Cell != result.Cell)
+                return;
+            var cells = new Dictionary<Point3, bool> { [result.Cell] = true };
+            var values = new List<int> { result.AuthoritativeValue };
+            RemovePendingTerrainPlacePrediction(result.RequestId);
+            SuSubsystemTerrain.EnqueuePriorityNetworkBatch(new GameModifiedCellsMessage(
+                cells, values, result.ServerTick, true, client.ClientID));
+        }
+
+        private void RemovePendingTerrainPlacePrediction(int requestId)
+        {
+            if (!m_pendingTerrainPlacePredictions.TryGetValue(requestId,
+                out PendingTerrainPlacePrediction prediction))
+                return;
+            m_pendingTerrainPlacePredictions.Remove(requestId);
+            if (m_pendingTerrainPlacePredictionCells.TryGetValue(
+                prediction.Request.Cell, out int mappedRequestId) &&
+                mappedRequestId == requestId)
+                m_pendingTerrainPlacePredictionCells.Remove(prediction.Request.Cell);
         }
 
         // Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update
@@ -11009,6 +12291,11 @@ namespace ScMultiplayer
         private void HandlePlayerActionMessage(PlayerActionMessage message, int sourceClientId)
         {
             if (message == null) return;
+            if (message.Action == PlayerActionType.InteractResult)
+            {
+                HandleTerrainPlaceResult(message, sourceClientId);
+                return;
+            }
             if (message.Action == PlayerActionType.RespawnRequest)
             {
                 if (IsHost)
@@ -11037,6 +12324,9 @@ namespace ScMultiplayer
                     HandleHostDisconnected();
                     return;
                 }
+                // Source: Mod/ScMultiplayer/Func/Circuit/CircuitSynchronizer.cs:
+                // CircuitSynchronizer.NotifyClientDeparted
+                m_circuitSynchronizer?.NotifyClientDeparted(sourceClientId);
                 if (!IsHost)
                     m_departedRemoteClientIds.Add(sourceClientId);
                 RemoveNetworkPlayer(sourceClientId);
@@ -11073,6 +12363,26 @@ namespace ScMultiplayer
                     m_networkPlayerInputs[sourceClientId] = state;
                 }
                 state.LastReceivedTime = Time.RealTime;
+                if (message.Action == PlayerActionType.InteractRequest &&
+                    message.HasTerrainPrediction)
+                {
+                    if (message.PlayerIndex != sourceClientId || message.RequestId <= 0 ||
+                        message.RequestId != message.Sequence)
+                        return;
+                    long requestKey = ((long)sourceClientId << 32) |
+                        (uint)message.RequestId;
+                    if (m_processedTerrainPlaceRequests.TryGetValue(requestKey,
+                        out PlayerActionMessage previousResult))
+                    {
+                        NetworkMessageSender.SendPlayerInteractResult(
+                            sourceClientId, previousResult);
+                        return;
+                    }
+                    if (m_hostTerrainPlaceExecutions.Any(item =>
+                        item.ClientId == sourceClientId &&
+                        item.Request.RequestId == message.RequestId))
+                        return;
+                }
                 if (message.Action == PlayerActionType.DropRequest)
                 {
                     if (message.Sequence <= state.LastDropSequence ||
@@ -11088,6 +12398,12 @@ namespace ScMultiplayer
                 else if (message.Action == PlayerActionType.InteractRequest)
                 {
                     if (message.Sequence <= state.LastInteractSequence) return;
+                    message.ItemValue = m_worldObjectSynchronizer?.RemapFurnitureValue(
+                        sourceClientId, message.ItemValue) ?? message.ItemValue;
+                    if (message.HasTerrainPrediction)
+                        message.PredictedValue = m_worldObjectSynchronizer?
+                            .RemapFurnitureValue(sourceClientId, message.PredictedValue) ??
+                            message.PredictedValue;
                     state.LastInteractSequence = message.Sequence;
                     state.InteractEvents.Enqueue(message);
                 }
@@ -11404,6 +12720,7 @@ namespace ScMultiplayer
             input.ToggleCreativeFly = false;
             input.ToggleCrouch = false;
             input.ToggleMount = false;
+            input.EditItem = false;
             input.ScrollInventory = 0;
             input.SelectInventorySlot = null;
             input.ToggleInventory = false;

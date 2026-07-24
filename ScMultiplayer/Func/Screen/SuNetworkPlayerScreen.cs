@@ -21,6 +21,7 @@ namespace ScMultiplayer
         private Action<string, PlayerClass, string> m_completed;
         private PlayerClass m_playerClass;
         private string m_skinName;
+        private string m_defaultName;
 
         // Source: Survivalcraft/Game/PlayerScreen.cs:PlayerScreen.PlayerScreen
         public SuNetworkPlayerScreen()
@@ -48,9 +49,7 @@ namespace ScMultiplayer
             m_completed = parameters.FirstOrDefault() as Action<string, PlayerClass, string>;
             m_playerClass = PlayerClass.Male;
             RandomizeSkin();
-            string name = ScMultiplayer.GetLocalPlayerName();
-            NameText = PlayerData.VerifyName(name) ? name :
-                CharacterSkinsManager.GetDisplayName(m_skinName);
+            ResetDefaultName();
         }
 
         public override void Leave()
@@ -74,8 +73,10 @@ namespace ScMultiplayer
 
             if (m_playerClassButton.IsClicked)
             {
+                bool isDefaultName = NameText == m_defaultName;
                 m_playerClass = m_playerClass == PlayerClass.Male ? PlayerClass.Female : PlayerClass.Male;
                 RandomizeSkin();
+                if (isDefaultName) ResetDefaultName();
             }
             if (m_characterSkinButton.IsClicked) ShowSkinSelection();
             if (m_playButton.IsClicked && VerifyName()) Complete();
@@ -112,6 +113,13 @@ namespace ScMultiplayer
                 CharacterSkinsManager.CharacterSkinsNames.First();
         }
 
+        // Source: Survivalcraft/Game/PlayerData.cs:PlayerData.ResetName
+        private void ResetDefaultName()
+        {
+            m_defaultName = CharacterSkinsManager.GetDisplayName(m_skinName);
+            NameText = m_defaultName;
+        }
+
         private void ShowSkinSelection()
         {
             CharacterSkinsManager.UpdateCharacterSkinsList();
@@ -133,7 +141,12 @@ namespace ScMultiplayer
                     model.PlayerClass = m_playerClass;
                     model.CharacterSkinTexture = texture;
                     return widget;
-                }, item => m_skinName = (string)item));
+                }, item =>
+                {
+                    bool isDefaultName = NameText == m_defaultName;
+                    m_skinName = (string)item;
+                    if (isDefaultName) ResetDefaultName();
+                }));
         }
 
         // Source: Survivalcraft/Game/PlayerScreen.cs:PlayerScreen.m_nameTextBox

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -57,6 +57,8 @@ public class Explorer : IDisposable
     private double InternetLastTime;
 
     private Dictionary<IPEndPoint, double> InternetRequestTimes = new();
+
+    private Dictionary<IPEndPoint, double> DirectRequestTimes = new();
 
     private Alarm Alarm;
 
@@ -190,6 +192,8 @@ public class Explorer : IDisposable
             LocalLastTime = -1.7976931348623157E+308;
             LocalServerPortIndex = 0;
             InternetLastTime = -1.7976931348623157E+308;
+            InternetRequestTimes.Clear();
+            DirectRequestTimes.Clear();
             Cache.Clear();
             if (Alarm != null)
             {
@@ -241,7 +245,10 @@ public class Explorer : IDisposable
         {
             CheckNotDisposed();
             if (serverAddress == null) throw new ArgumentNullException(nameof(serverAddress));
-            Peer.DiscoverPeer(serverAddress, MessageSerializer.Write(new ClientDiscoveryRequestMessage()));
+            double sendTime = Comm.GetTime();
+            DirectRequestTimes[serverAddress] = sendTime;
+            Peer.DiscoverPeer(serverAddress, MessageSerializer.Write(
+                new ClientDiscoveryRequestMessage { ProbeSendTime = sendTime }));
         }
     }
 
@@ -306,7 +313,9 @@ public class Explorer : IDisposable
         int count = Math.Min(
             Math.Max(Settings.LocalDiscoveryPortBatchSize, 1),
             ServerPorts.Length);
-        byte[] request = MessageSerializer.Write(new ClientDiscoveryRequestMessage());
+        double sendTime = Comm.GetTime();
+        byte[] request = MessageSerializer.Write(
+            new ClientDiscoveryRequestMessage { ProbeSendTime = sendTime });
         for (int i = 0; i < count; i++)
         {
             int peerPort = ServerPorts[LocalServerPortIndex];
@@ -342,8 +351,13 @@ public class Explorer : IDisposable
                                 try
                                 {
                                     IPEndPoint iPEndPoint = new(iPAddress, num);
-                                    InternetRequestTimes[iPEndPoint] = Comm.GetTime();
-                                    Peer.DiscoverPeer(iPEndPoint, MessageSerializer.Write(new ClientDiscoveryRequestMessage()));
+                                    double sendTime = Comm.GetTime();
+                                    InternetRequestTimes[iPEndPoint] = sendTime;
+                                    Peer.DiscoverPeer(iPEndPoint, MessageSerializer.Write(
+                                        new ClientDiscoveryRequestMessage
+                                        {
+                                            ProbeSendTime = sendTime
+                                        }));
                                 }
                                 catch (Exception error)
                                 {
@@ -387,17 +401,37 @@ public class Explorer : IDisposable
         if (!IsDisposed && Alarm != null)
         {
             double time = Comm.GetTime();
-            bool isLocal;
-            float ping;
-            if (InternetRequestTimes.TryGetValue(address, out var num))
+            bool direct = DirectRequestTimes.TryGetValue(address,
+                out var directRequestTime);
+            bool internet = InternetRequestTimes.TryGetValue(address,
+                out var internetRequestTime);
+            bool isLocal = !internet;
+            if (direct)
             {
-                isLocal = false;
-                ping = (float)(time - num);
+                isLocal = true;
+                DirectRequestTimes.Remove(address);
+            }
+
+            // Source: Comms/Comms/Peer.cs:KeepAliveResponseMessage.Handle
+            // Prefer the echoed timestamp from this exact request. Older peers omit it and use
+            // the per-endpoint fallback below without including a whole discovery scan period.
+            double elapsed = time - message.ProbeSendTime;
+            float ping;
+            if (message.ProbeSendTime > 0.0 && elapsed >= 0.0 && elapsed <= 10.0)
+            {
+                ping = (float)elapsed;
+            }
+            else if (direct)
+            {
+                ping = (float)Math.Max(time - directRequestTime, 0.0);
+            }
+            else if (internet)
+            {
+                ping = (float)Math.Max(time - internetRequestTime, 0.0);
             }
             else
             {
-                isLocal = true;
-                ping = (float)(time - LocalLastTime);
+                ping = (float)Math.Max(time - LocalLastTime, 0.0);
             }
             ServersList.RemoveAll((ServerDescription s) => object.Equals(s.Address, address));
             ServerDescription serverDescription = new()
