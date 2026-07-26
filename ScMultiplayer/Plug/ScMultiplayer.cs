@@ -203,6 +203,35 @@ namespace ScMultiplayer
         public double ReceivedTime;
     }
 
+    // Source: Mod/ScMultiplayer/Message/WorldControlRequestMessage.cs:WorldControlRequestMessage.RequestId
+    internal sealed class PendingWorldControlRequest
+    {
+        public WorldControlAction Actions;
+        public ComponentPlayer ComponentPlayer;
+        public double ExpirationTime;
+        public bool TimedOut;
+        public string FailureMessage;
+    }
+
+    // Source: Mod/ScMultiplayer/Plug/ScMultiplayer.cs:
+    // ScMultiplayer.TrySendWorldControlRequest
+    internal sealed class QueuedWorldControlRequest
+    {
+        public WorldControlAction Actions;
+        public ComponentPlayer ComponentPlayer;
+    }
+
+    // Source: Mod/ScMultiplayer/Plug/ScMultiplayer.cs:ScMultiplayer.HandleWorldControlRequest
+    internal sealed class HostWorldControlRequestState
+    {
+        public int NextExpectedRequestId = 1;
+        public readonly SortedDictionary<int, WorldControlRequestMessage> Pending =
+            new SortedDictionary<int, WorldControlRequestMessage>();
+        public readonly Dictionary<int, WorldControlResultMessage> Completed =
+            new Dictionary<int, WorldControlResultMessage>();
+        public readonly Queue<int> CompletedOrder = new Queue<int>();
+    }
+
     public class NetworkPlayerInputState
     {
         public PlayerInput Input;
@@ -679,11 +708,19 @@ namespace ScMultiplayer
             SendScheduledMessage(-1, msg, latest: !reliable, batchable: !reliable);
         }
 
-        public static void SendWorldControlRequest(WorldControlAction actions)
+        public static void SendWorldControlRequest(int requestId, WorldControlAction actions)
         {
-            var msg = new WorldControlRequestMessage(actions);
+            var msg = new WorldControlRequestMessage(requestId, actions);
             ScMultiplayer.client.SendDirectInput(0,
                 Message.WriteWithSender(msg, ScMultiplayer.client.Address));
+        }
+
+        // Source: Mod/ScMultiplayer/Plug/ScMultiplayer.cs:NetworkMessageSender.SendWorldControlRequest
+        public static void SendWorldControlResult(int targetClientId,
+            WorldControlResultMessage message)
+        {
+            ScMultiplayer.client.SendDirectInput(targetClientId,
+                Message.WriteWithSender(message, ScMultiplayer.client.Address));
         }
 
         // Source: ScMultiplayer.cs:HandleAnimalEntityMessage
@@ -1031,6 +1068,8 @@ namespace ScMultiplayer
         private readonly Dictionary<int, EquipmentSnapshot> m_lastEquipmentSnapshots =
             new Dictionary<int, EquipmentSnapshot>();
         private readonly HashSet<int> m_equipmentSynchronizedClients = new HashSet<int>();
+        private readonly Dictionary<int, PlayerEquipmentMessage> m_pendingPlayerEquipmentMessages =
+            new Dictionary<int, PlayerEquipmentMessage>();
         private int m_localEquipmentRevision;
         // Source: Survivalcraft/Game/SubsystemEditableItemBehavior.cs:SubsystemEditableItemBehavior<T>
         private readonly Dictionary<int, int> m_lastEditableDataRequestIds =
@@ -1045,6 +1084,10 @@ namespace ScMultiplayer
         private WorldObjectSynchronizer m_worldObjectSynchronizer;
 
         internal CircuitSynchronizer CircuitSynchronizer => m_circuitSynchronizer;
+        // Source: Mod/ScMultiplayer/Plug/ScMultiplayer.cs:
+        // ScMultiplayer.UpdateReliableTransportHealth
+        internal bool ShouldHoldCircuitForReconnect => !IsHost &&
+            (m_reconnectRequested || m_reconnectPending);
         private PendingJoinRequest m_pendingJoinRequest;
         private PendingJoinRequest m_activeJoinRequest;
         private string m_activeJoinPlayerName;
@@ -1056,6 +1099,8 @@ namespace ScMultiplayer
         private int m_reconnectAttempts;
         private double m_nextReconnectAttemptTime;
         private double m_reconnectAttemptDeadline;
+        private long m_reliableRetryLimitBaseline;
+        private bool m_reliableStallReconnectIssued;
         private bool m_joinAwaitingWorldProgress;
         private double m_lastJoinWorldProgressTime;
         private NetworkPlayerRecord m_pendingLocalPlayerRecord;
@@ -1235,8 +1280,20 @@ namespace ScMultiplayer
         private bool m_hostLightningActive;
         private double m_localLightningPredictionUntil;
         private const double HostLightningStaleDuration = 1.0;
-        private WorldControlAction m_pendingWorldControlActions;
-        private double m_worldControlRequestDeadline;
+        private readonly Dictionary<int, PendingWorldControlRequest>
+            m_pendingWorldControlRequests = new Dictionary<int, PendingWorldControlRequest>();
+        private readonly Queue<QueuedWorldControlRequest> m_queuedWorldControlRequests =
+            new Queue<QueuedWorldControlRequest>();
+        private readonly Dictionary<int, WorldControlResultMessage>
+            m_bufferedWorldControlResults = new Dictionary<int, WorldControlResultMessage>();
+        private readonly Dictionary<int, HostWorldControlRequestState>
+            m_hostWorldControlRequestStates = new Dictionary<int, HostWorldControlRequestState>();
+        private int m_nextWorldControlRequestId;
+        private int m_nextWorldControlFeedbackRequestId = 1;
+        private bool m_worldControlQueueNoticeShown;
+        private const double WorldControlResultTimeout = 5.0;
+        private const int MaximumCachedWorldControlResults = 64;
+        private const int MaximumPendingWorldControlRequests = 64;
         private byte[] m_pendingLocalCreateDescription;
         private IPEndPoint m_pendingLocalCreateAddress;
         private int m_localCreateAttempts;
@@ -1565,6 +1622,8 @@ namespace ScMultiplayer
             m_clientNetworkStats = clientDiagnosticTransmitter.Stats;
             m_lastNetworkByteSample = 0;
             m_lastNetworkByteSampleTime = 0.0;
+            m_reliableRetryLimitBaseline = 0L;
+            m_reliableStallReconnectIssued = false;
             var newClient = new Client(0x53634d70, clientDiagnosticTransmitter);
             ConfigurePeerTimeout(newClient.Peer, connectionLostPeriod);
             newClient.GameCreated += Client_GameCreated;
@@ -1655,6 +1714,52 @@ namespace ScMultiplayer
                 Log.Error($"[ScMP] Host reconnect attempt {m_reconnectAttempts} failed: {ex.Message}");
                 m_reconnectAttemptDeadline = 0.0;
                 m_nextReconnectAttemptTime = now + ReconnectInitialDelay;
+            }
+        }
+
+        // Source: Mod/Comms/Comms/Comm.cs:Comm.ProcessConnections
+        // A reliable packet remains in the resend set after MaxResends and otherwise retries
+        // forever. Once a fully joined client observes that limit while packets are still
+        // outstanding, rebuild the transport through the existing authoritative rejoin flow.
+        private void UpdateReliableTransportHealth()
+        {
+            if (IsHost || m_localLeaveInProgress || m_hostDisconnectHandled ||
+                m_reconnectRequested || m_reconnectPending || client?.IsConnected != true ||
+                m_activeJoinRequest?.WorldInfo == null || GameManager.Project == null ||
+                m_isLoadingDownloadedWorld || m_pendingWorldReadyTransferId > 0 ||
+                m_incomingWorldTransfers.Count > 0)
+                return;
+
+            try
+            {
+                PeerData connected = client.Peer?.ConnectedTo;
+                if (connected == null) return;
+                int reliableQueue = client.Peer.Comm.GetUnackedPacketsCount(
+                    connected.Address);
+                long retryLimit = client.Peer.Comm.GetReliableRetryLimitCount(
+                    connected.Address);
+                if (reliableQueue <= 0)
+                {
+                    m_reliableRetryLimitBaseline = retryLimit;
+                    m_reliableStallReconnectIssued = false;
+                    return;
+                }
+                if (m_reliableStallReconnectIssued ||
+                    retryLimit <= m_reliableRetryLimitBaseline)
+                    return;
+
+                m_reliableStallReconnectIssued = true;
+                m_reconnectRequested = true;
+                Log.Warning($"[ScMP] Reliable transport stalled: Rel={reliableQueue}, " +
+                    $"Limit={retryLimit}; reconnecting to refresh authoritative state");
+                try { client.LeaveGame(); }
+                catch (Exception ex)
+                {
+                    Log.Warning($"[ScMP] Failed to close stalled transport: {ex.Message}");
+                }
+            }
+            catch (ObjectDisposedException)
+            {
             }
         }
 
@@ -1889,11 +1994,13 @@ namespace ScMultiplayer
             downloadSM.Update();
             UpdatePendingLocalGameCreation();
             UpdateHostReconnect();
+            UpdateReliableTransportHealth();
             UpdateHostJoinRequests();
             UpdateAutoHostCurrentWorld();
             UpdateWorldTransferBusyStatus();
             UpdateJoinWorldProgressTimeout();
             UpdateClientJoinBarrier();
+            UpdatePendingWorldControlRequests();
             // Source: Survivalcraft/Game/Program.cs:Program.Run
             // Downloading clients have no Project yet, so repair requests must run from the
             // menu/loading frame path instead of UpdateWorldSubsystem.
@@ -3955,6 +4062,10 @@ namespace ScMultiplayer
             ComponentPlayer local = players.ComponentPlayers.FirstOrDefault(player =>
                 !m_networkPlayerData.Values.Contains(player.PlayerData));
             if (local == null) return;
+            // Source: Mod/ScMultiplayer/Plug/ScMultiplayer.cs:ScMultiplayer.HandlePlayerEquipmentMessage
+            // A newly joined client must not publish its empty placeholder inventory before the
+            // host's first authoritative equipment snapshot has been applied.
+            if (!m_equipmentSynchronizedClients.Contains(client.ClientID)) return;
             EquipmentSnapshot snapshot = CaptureEquipmentSnapshot(local);
             if (m_lastEquipmentSnapshots.TryGetValue(client.ClientID, out EquipmentSnapshot previous) &&
                 EquipmentSnapshotsEqual(previous, snapshot)) return;
@@ -4025,6 +4136,13 @@ namespace ScMultiplayer
                 out int lastRevision) && message.Revision <= lastRevision) return;
             if (message.ClientId == client.ClientID && message.Revision < m_localEquipmentRevision) return;
 
+            if (message.ClientId == client.ClientID && m_pendingLocalPlayerRecord != null &&
+                (!m_localPlayerRecordApplied || m_localReplacementPlayerData?.ComponentPlayer == null))
+            {
+                CachePendingPlayerEquipment(message);
+                return;
+            }
+
             ComponentPlayer player = null;
             if (message.ClientId == client.ClientID)
             {
@@ -4037,12 +4155,35 @@ namespace ScMultiplayer
             {
                 player = remotePlayer?.ComponentPlayer;
             }
-            if (player == null) return;
+            if (player == null)
+            {
+                CachePendingPlayerEquipment(message);
+                return;
+            }
 
             ApplyEquipmentSnapshot(player, message);
             m_lastReceivedEquipmentRevisions[message.ClientId] = message.Revision;
             m_lastEquipmentSnapshots[message.ClientId] = CaptureEquipmentSnapshot(player);
             m_equipmentSynchronizedClients.Add(message.ClientId);
+        }
+
+        // Source: Mod/ScMultiplayer/Message/PlayerEquipmentMessage.cs:PlayerEquipmentMessage
+        private void CachePendingPlayerEquipment(PlayerEquipmentMessage message)
+        {
+            if (message == null) return;
+            if (!m_pendingPlayerEquipmentMessages.TryGetValue(message.ClientId,
+                    out PlayerEquipmentMessage pending) || message.Revision > pending.Revision)
+                m_pendingPlayerEquipmentMessages[message.ClientId] = message;
+        }
+
+        // Source: Mod/ScMultiplayer/Plug/ScMultiplayer.cs:ScMultiplayer.HandlePlayerEquipmentMessage
+        private void TryApplyPendingPlayerEquipment(int playerClientId)
+        {
+            if (IsHost || !m_pendingPlayerEquipmentMessages.TryGetValue(playerClientId,
+                    out PlayerEquipmentMessage message))
+                return;
+            m_pendingPlayerEquipmentMessages.Remove(playerClientId);
+            HandlePlayerEquipmentMessage(message, 0);
         }
 
         private static EquipmentSnapshot CaptureEquipmentSnapshot(ComponentPlayer player)
@@ -5017,6 +5158,10 @@ namespace ScMultiplayer
                         break;
                     case WorldControlRequestMessage worldControl:
                         QueueEndOfFrameAction(() => HandleWorldControlRequest(worldControl, item.ClientID));
+                        break;
+                    case WorldControlResultMessage worldControlResult:
+                        QueueEndOfFrameAction(() => HandleWorldControlResult(
+                            worldControlResult, item.ClientID));
                         break;
                     case PlayerProfileMessage playerProfile:
                         QueueEndOfFrameAction(() => HandlePlayerProfileMessage(playerProfile, item.ClientID));
@@ -8084,7 +8229,11 @@ namespace ScMultiplayer
                     { "Player", new ValuesDictionary { { "PlayerIndex", playerData.PlayerIndex } } },
                     { "Intro", new ValuesDictionary { { "PlayIntro", false } } }
                 };
-                if (record != null && !record.HasReceivedInitialItems)
+                // Source: Survivalcraft/Game/PlayerData.cs:PlayerData.SpawnPlayer
+                // Only the host may run InitialNoIntro. It can create a boat as well as starter
+                // equipment, so running it on presentation clients would duplicate world entities.
+                bool initialSpawn = IsHost && record != null && !record.HasReceivedInitialItems;
+                if (initialSpawn)
                 {
                     InvokeInitialPlayerSpawn(playerData, record.Position);
                     entity = playerData.ComponentPlayer?.Entity ??
@@ -8132,6 +8281,17 @@ namespace ScMultiplayer
                         record.Temperature, record.Wetness, record.Level);
                     ApplyPlayerRecordState(playerData.ComponentPlayer, record);
                 }
+                if (IsHost && initialSpawn)
+                {
+                    // Source: Survivalcraft/Game/PlayerData.cs:PlayerData.SpawnPlayer
+                    // Capture native first-spawn clothing and inventory before the client can
+                    // publish an equipment snapshot for this newly approved player.
+                    record = CapturePlayerRecord(playerData);
+                    record.HasReceivedInitialItems = true;
+                    m_playerRecords[recordKey] = record;
+                    m_playerRecordsDirty = true;
+                    SavePlayerRecords();
+                }
 
                 // Source: Survivalcraft/Game/PlayerData.cs:PlayerData.PlayerData
                 StateMachine stateMachine = ModManager.ModParentField.GetParentField<StateMachine>(
@@ -8164,6 +8324,17 @@ namespace ScMultiplayer
                 m_pendingNetworkPlayers.Remove(clientId);
                 m_pendingNetworkPlayerIdentities.Remove(clientId);
                 if (clientId == 0) m_shouldCreateHostAvatar = false;
+                if (IsHost)
+                {
+                    // Source: Mod/ScMultiplayer/Plug/ScMultiplayer.cs:ScMultiplayer.SynchronizeHostEquipment
+                    // Force one authoritative snapshot into join catch-up after native first spawn.
+                    m_lastEquipmentSnapshots.Remove(clientId);
+                    SynchronizeHostEquipment(clientId, playerData.ComponentPlayer);
+                }
+                else
+                {
+                    TryApplyPendingPlayerEquipment(clientId);
+                }
                 Log.Information($"[ScMP] Created transient network player for ClientID {clientId}, PlayerIndex={playerData.PlayerIndex}");
             }
             catch (Exception ex)
@@ -8202,6 +8373,13 @@ namespace ScMultiplayer
             m_hostKnockbackHealthCache.Remove(clientId);
             m_hostPainSoundTimes.Remove(clientId);
             m_hostRemoteKnockbackUntil.Remove(clientId);
+            m_hostWorldControlRequestStates.Remove(clientId);
+            m_pendingPlayerEquipmentMessages.Remove(clientId);
+            m_equipmentAuthorityRevisions.Remove(clientId);
+            m_lastClientEquipmentRevisions.Remove(clientId);
+            m_lastReceivedEquipmentRevisions.Remove(clientId);
+            m_lastEquipmentSnapshots.Remove(clientId);
+            m_equipmentSynchronizedClients.Remove(clientId);
             m_reservedNetworkPlayerIndices.Remove(clientId);
             m_worldObjectSynchronizer?.ForgetClient(clientId);
             if (!m_networkPlayerData.TryGetValue(clientId, out PlayerData playerData)) return;
@@ -8805,6 +8983,23 @@ namespace ScMultiplayer
                 spawnPosition, initialNoIntro);
         }
 
+        // Source: Survivalcraft/Game/PlayerData.cs:PlayerData.SpawnPlayer
+        private static void InvokeClientPlaceholderPlayerSpawn(PlayerData playerData,
+            Vector3 position)
+        {
+            Type spawnModeType = typeof(PlayerData).GetNestedType(
+                "SpawnMode", BindingFlags.NonPublic);
+            if (spawnModeType == null)
+                throw new MissingMemberException(typeof(PlayerData).FullName, "SpawnMode");
+            object respawn = Enum.Parse(spawnModeType, "Respawn");
+            playerData.SpawnPosition = position;
+            // Respawn creates only the local player entity. Starter items, clothing, and a possible
+            // ocean boat remain host-authoritative and arrive in PlayerEquipmentMessage/world sync.
+            ModManager.ModParentMethod.InvokeParentMethod(
+                playerData, "SpawnPlayer", new[] { typeof(Vector3), spawnModeType },
+                position, respawn);
+        }
+
         // Source: Survivalcraft/Game/GameManager.cs:GameManager.SaveProject
         // The multiplayer file is a sibling of Project.xml and is ignored by the base game.
         private void EnsurePlayerRecordsLoaded()
@@ -9376,6 +9571,7 @@ namespace ScMultiplayer
                 record.Stamina, record.Sleep, record.Temperature, record.Wetness, record.Level);
             ApplyPlayerRecordState(player, record);
             m_localPlayerRecordApplied = true;
+            TryApplyPendingPlayerEquipment(client.ClientID);
         }
 
         // Source: Survivalcraft/Game/SubsystemPlayers.cs:SubsystemPlayers.RemovePlayerData
@@ -9414,6 +9610,13 @@ namespace ScMultiplayer
                 ModManager.ModParentField.ModifyParentField(
                     players, "m_nextPlayerIndex", playerIndex, typeof(SubsystemPlayers));
                 players.AddPlayerData(replacement);
+                // Source: Survivalcraft/Game/PlayerData.cs:PlayerData.SpawnPlayer
+                // Spawn an immediate client-only placeholder without executing InitialNoIntro.
+                InvokeClientPlaceholderPlayerSpawn(replacement, record.Position);
+                StateMachine stateMachine = ModManager.ModParentField
+                    .GetParentField<StateMachine>(replacement, "m_stateMachine",
+                        typeof(PlayerData));
+                stateMachine.TransitionTo("Playing");
             }
             finally
             {
@@ -9690,7 +9893,6 @@ namespace ScMultiplayer
             gameInfo.WorldSettings.TimeOfDayMode = msg.CurrentTimeMode;
             if (Math.Abs(timeOfDay.TimeOfDayOffset - msg.TimeOfDayOffset) > 0.0001)
                 timeOfDay.TimeOfDayOffset = msg.TimeOfDayOffset;
-            m_pendingWorldControlActions = WorldControlAction.None;
             m_remoteWeatherState = msg;
             ApplyRemoteWeatherState();
         }
@@ -9700,34 +9902,167 @@ namespace ScMultiplayer
             if (actions == WorldControlAction.None || IsHost || client?.IsConnected != true ||
                 componentPlayer == null || m_networkPlayerData.Values.Contains(componentPlayer.PlayerData))
                 return;
-            double now = Time.RealTime;
-            WorldControlAction newActions = now < m_worldControlRequestDeadline
-                ? actions & ~m_pendingWorldControlActions
-                : actions;
-            if (newActions == WorldControlAction.None) return;
-            NetworkMessageSender.SendWorldControlRequest(newActions);
-            m_pendingWorldControlActions |= newActions;
-            m_worldControlRequestDeadline = now + 0.5;
-            if (newActions.HasFlag(WorldControlAction.Lightning))
-                m_localLightningPredictionUntil = now + 3.0;
+
+            // Source: Mod/ScMultiplayer/Func/Circuit/CircuitSynchronizer.cs:
+            // CircuitSynchronizer.ShouldSuppressClientInput
+            // A blocking recovery owns the circuit timeline. Preserve every accepted physical
+            // click locally and release it in order after the authority fence is healthy again.
+            if (ShouldDeferWorldControlRequest() || m_queuedWorldControlRequests.Count > 0)
+            {
+                if (m_pendingWorldControlRequests.Count + m_queuedWorldControlRequests.Count >=
+                    MaximumPendingWorldControlRequests)
+                {
+                    DisplayWorldControlFeedback(componentPlayer,
+                        "World control queue is full. Please wait for synchronization.");
+                    return;
+                }
+                m_queuedWorldControlRequests.Enqueue(new QueuedWorldControlRequest
+                {
+                    Actions = actions,
+                    ComponentPlayer = componentPlayer
+                });
+                if (!m_worldControlQueueNoticeShown)
+                {
+                    m_worldControlQueueNoticeShown = true;
+                    DisplayWorldControlFeedback(componentPlayer,
+                        "World control queued. Waiting for synchronization.");
+                }
+                return;
+            }
+
+            SendWorldControlRequestNow(componentPlayer, actions);
+        }
+
+        // Source: Mod/ScMultiplayer/Plug/ScMultiplayer.cs:
+        // ScMultiplayer.TrySendWorldControlRequest
+        private bool ShouldDeferWorldControlRequest() =>
+            !IsHost && client?.IsConnected == true &&
+            (m_clientTerrainRecoveryActive ||
+            m_circuitSynchronizer?.ShouldSuppressClientInput == true);
+
+        // Source: Mod/ScMultiplayer/Plug/ScMultiplayer.cs:
+        // ScMultiplayer.TrySendWorldControlRequest
+        private void SendWorldControlRequestNow(ComponentPlayer componentPlayer,
+            WorldControlAction actions)
+        {
+            do
+            {
+                m_nextWorldControlRequestId = m_nextWorldControlRequestId == int.MaxValue
+                    ? 1
+                    : m_nextWorldControlRequestId + 1;
+            }
+            while (m_pendingWorldControlRequests.ContainsKey(m_nextWorldControlRequestId));
+
+            int requestId = m_nextWorldControlRequestId;
+            // Register before sending. A low-latency host can return the authoritative result from
+            // another network callback before this game frame completes.
+            m_pendingWorldControlRequests[requestId] = new PendingWorldControlRequest
+            {
+                Actions = actions,
+                ComponentPlayer = componentPlayer,
+                ExpirationTime = Time.RealTime + WorldControlResultTimeout
+            };
+            try
+            {
+                NetworkMessageSender.SendWorldControlRequest(requestId, actions);
+            }
+            catch (Exception ex)
+            {
+                PendingWorldControlRequest failed =
+                    m_pendingWorldControlRequests[requestId];
+                failed.TimedOut = true;
+                failed.FailureMessage = "World control request failed: " + ex.Message;
+                DrainWorldControlResults();
+                return;
+            }
+            if (actions.HasFlag(WorldControlAction.Lightning))
+                m_localLightningPredictionUntil = Time.RealTime + 3.0;
         }
 
         private void HandleWorldControlRequest(WorldControlRequestMessage message, int sourceClientId)
         {
-            // Source: Survivalcraft/Game/ComponentGui.cs:ComponentGui.Update
             Project project = GameManager.Project;
-            if (!IsHost || sourceClientId <= 0 || message == null || project == null ||
+            if (!IsHost || sourceClientId <= 0 || message == null || message.RequestId <= 0 ||
+                project == null ||
                 !m_networkPlayerData.ContainsKey(sourceClientId))
                 return;
+            if (!m_hostWorldControlRequestStates.TryGetValue(sourceClientId,
+                    out HostWorldControlRequestState state))
+            {
+                state = new HostWorldControlRequestState();
+                m_hostWorldControlRequestStates.Add(sourceClientId, state);
+            }
+
+            // Source: Mod/Comms/Comms.Drt/Func/Client/Client.cs:Client.SendDirectInput
+            // Each physical click owns a new RequestId. Only a retransmission of an already
+            // completed id is deduplicated, and it receives the cached authoritative result.
+            if (state.Completed.TryGetValue(message.RequestId,
+                    out WorldControlResultMessage completed))
+            {
+                NetworkMessageSender.SendWorldControlResult(sourceClientId, completed);
+                return;
+            }
+            if (message.RequestId == state.NextExpectedRequestId)
+            {
+                ProcessOrderedWorldControlRequests(sourceClientId, state, message);
+                return;
+            }
+
+            long forwardDistance = message.RequestId - (long)state.NextExpectedRequestId;
+            if (forwardDistance < 0) forwardDistance += int.MaxValue;
+            if (forwardDistance > 0 && forwardDistance <= int.MaxValue / 2 &&
+                state.Pending.Count < MaximumPendingWorldControlRequests &&
+                !state.Pending.ContainsKey(message.RequestId))
+                state.Pending.Add(message.RequestId, message);
+        }
+
+        // Source: Mod/ScMultiplayer/Plug/ScMultiplayer.cs:ScMultiplayer.HandleWorldControlRequest
+        private void ProcessOrderedWorldControlRequests(int sourceClientId,
+            HostWorldControlRequestState state, WorldControlRequestMessage first)
+        {
+            WorldControlRequestMessage message = first;
+            while (message != null)
+            {
+                WorldControlResultMessage result = ExecuteWorldControlRequest(
+                    message, sourceClientId);
+                state.Completed[message.RequestId] = result;
+                state.CompletedOrder.Enqueue(message.RequestId);
+                while (state.CompletedOrder.Count > MaximumCachedWorldControlResults)
+                    state.Completed.Remove(state.CompletedOrder.Dequeue());
+                NetworkMessageSender.SendWorldControlResult(sourceClientId, result);
+
+                state.NextExpectedRequestId = message.RequestId == int.MaxValue
+                    ? 1
+                    : message.RequestId + 1;
+                if (!state.Pending.TryGetValue(state.NextExpectedRequestId, out message))
+                    break;
+                state.Pending.Remove(state.NextExpectedRequestId);
+            }
+        }
+
+        // Source: Survivalcraft/Game/ComponentGui.cs:ComponentGui.Update
+        private WorldControlResultMessage ExecuteWorldControlRequest(
+            WorldControlRequestMessage message, int sourceClientId)
+        {
+            Project project = GameManager.Project;
+            WorldControlAction validActions = message.Actions &
+                (WorldControlAction.TimeOfDay | WorldControlAction.Precipitation |
+                WorldControlAction.Fog | WorldControlAction.Lightning);
+            var result = new WorldControlResultMessage(message.RequestId, validActions);
+            if (project == null) return result;
             SubsystemGameInfo gameInfo = project.FindSubsystem<SubsystemGameInfo>(true);
-            if (gameInfo.WorldSettings.GameMode != GameMode.Creative) return;
+            if (gameInfo.WorldSettings.GameMode != GameMode.Creative)
+            {
+                result.Actions = WorldControlAction.None;
+                return result;
+            }
 
             SubsystemWeather weather = project.FindSubsystem<SubsystemWeather>(true);
             SubsystemTimeOfDay timeOfDay = project.FindSubsystem<SubsystemTimeOfDay>(true);
+            SubsystemSky sky = project.FindSubsystem<SubsystemSky>(true);
             ComponentGui hostGui = project.FindSubsystem<SubsystemPlayers>(true).ComponentPlayers
                 .FirstOrDefault(player => !m_networkPlayerData.Values.Contains(player.PlayerData))?.ComponentGui;
-
-            if (message.Actions.HasFlag(WorldControlAction.Precipitation))
+            if (validActions.HasFlag(WorldControlAction.Precipitation))
             {
                 if (weather.IsPrecipitationStarted)
                 {
@@ -9739,8 +10074,9 @@ namespace ScMultiplayer
                     weather.ManualPrecipitationStart();
                     hostGui?.DisplaySmallMessage("Precipitation On", Color.White, false, false);
                 }
+                result.PrecipitationStarted = weather.IsPrecipitationStarted;
             }
-            if (message.Actions.HasFlag(WorldControlAction.Fog))
+            if (validActions.HasFlag(WorldControlAction.Fog))
             {
                 if (weather.IsFogStarted)
                 {
@@ -9752,8 +10088,9 @@ namespace ScMultiplayer
                     weather.ManualFogStart();
                     hostGui?.DisplaySmallMessage("Fog On", Color.White, false, false);
                 }
+                result.FogStarted = weather.IsFogStarted;
             }
-            if (message.Actions.HasFlag(WorldControlAction.TimeOfDay))
+            if (validActions.HasFlag(WorldControlAction.TimeOfDay))
             {
                 float dawn = IntervalUtils.Interval(timeOfDay.TimeOfDay, timeOfDay.Middawn);
                 float noon = IntervalUtils.Interval(timeOfDay.TimeOfDay, timeOfDay.Midday);
@@ -9764,32 +10101,163 @@ namespace ScMultiplayer
                 {
                     timeOfDay.TimeOfDayOffset += dawn;
                     hostGui?.DisplaySmallMessage("Dawn", Color.White, false, false);
+                    result.TimeResult = WorldControlTimeResult.Dawn;
                 }
                 else if (noon == nearest)
                 {
                     timeOfDay.TimeOfDayOffset += noon;
                     hostGui?.DisplaySmallMessage("Noon", Color.White, false, false);
+                    result.TimeResult = WorldControlTimeResult.Noon;
                 }
                 else if (dusk == nearest)
                 {
                     timeOfDay.TimeOfDayOffset += dusk;
                     hostGui?.DisplaySmallMessage("Dusk", Color.White, false, false);
+                    result.TimeResult = WorldControlTimeResult.Dusk;
                 }
                 else
                 {
                     timeOfDay.TimeOfDayOffset += midnight;
                     hostGui?.DisplaySmallMessage("Midnight", Color.White, false, false);
+                    result.TimeResult = WorldControlTimeResult.Midnight;
                 }
             }
-            if (message.Actions.HasFlag(WorldControlAction.Lightning) &&
+            if (validActions.HasFlag(WorldControlAction.Lightning) &&
                 m_networkPlayerData.TryGetValue(sourceClientId, out PlayerData sourcePlayer) &&
                 sourcePlayer?.ComponentPlayer != null)
             {
+                double previousStrikeTime = ModManager.ModParentField.GetParentField<double>(
+                    sky, "m_lastLightningStrikeTime", typeof(SubsystemSky));
                 ComponentCreatureModel model = sourcePlayer.ComponentPlayer.ComponentCreatureModel;
                 Matrix eyeMatrix = Matrix.CreateFromQuaternion(model.EyeRotation);
                 weather.ManualLightingStrike(model.EyePosition, eyeMatrix.Forward);
+                double currentStrikeTime = ModManager.ModParentField.GetParentField<double>(
+                    sky, "m_lastLightningStrikeTime", typeof(SubsystemSky));
+                result.LightningTriggered = currentStrikeTime > previousStrikeTime;
             }
             SendGameWorldInfoMessage();
+            return result;
+        }
+
+        // Source: Survivalcraft/Game/ComponentGui.cs:ComponentGui.DisplaySmallMessage
+        private void HandleWorldControlResult(WorldControlResultMessage message,
+            int sourceClientId)
+        {
+            if (IsHost || sourceClientId != 0 || message == null ||
+                !m_pendingWorldControlRequests.ContainsKey(message.RequestId))
+                return;
+            m_bufferedWorldControlResults[message.RequestId] = message;
+            DrainWorldControlResults();
+        }
+
+        // Source: Mod/ScMultiplayer/Message/WorldControlResultMessage.cs:
+        // WorldControlResultMessage.RequestId
+        private void DrainWorldControlResults()
+        {
+            while (m_pendingWorldControlRequests.TryGetValue(
+                m_nextWorldControlFeedbackRequestId, out PendingWorldControlRequest pending))
+            {
+                if (m_bufferedWorldControlResults.TryGetValue(
+                    m_nextWorldControlFeedbackRequestId,
+                    out WorldControlResultMessage message))
+                {
+                    m_bufferedWorldControlResults.Remove(m_nextWorldControlFeedbackRequestId);
+                    m_pendingWorldControlRequests.Remove(m_nextWorldControlFeedbackRequestId);
+                    DisplayWorldControlResult(message, pending);
+                    AdvanceWorldControlFeedbackRequestId();
+                    continue;
+                }
+                if (!pending.TimedOut) break;
+
+                m_pendingWorldControlRequests.Remove(m_nextWorldControlFeedbackRequestId);
+                DisplayWorldControlFeedback(pending.ComponentPlayer,
+                    pending.FailureMessage ??
+                    "Host did not confirm the world control request.");
+                AdvanceWorldControlFeedbackRequestId();
+            }
+        }
+
+        // Source: Survivalcraft/Game/ComponentGui.cs:ComponentGui.DisplaySmallMessage
+        private void DisplayWorldControlResult(WorldControlResultMessage message,
+            PendingWorldControlRequest pending)
+        {
+
+            WorldControlAction confirmed = message.Actions & pending.Actions;
+            var feedback = new List<string>();
+            if (confirmed.HasFlag(WorldControlAction.Precipitation))
+                feedback.Add(message.PrecipitationStarted
+                    ? "Precipitation On"
+                    : "Precipitation Off");
+            if (confirmed.HasFlag(WorldControlAction.Fog))
+                feedback.Add(message.FogStarted ? "Fog On" : "Fog Off");
+            if (confirmed.HasFlag(WorldControlAction.TimeOfDay) &&
+                message.TimeResult != WorldControlTimeResult.None)
+                feedback.Add(message.TimeResult.ToString());
+            if (confirmed.HasFlag(WorldControlAction.Lightning))
+                feedback.Add(message.LightningTriggered ? "Lightning" : "Lightning unavailable");
+            if (feedback.Count == 0) return;
+
+            DisplayWorldControlFeedback(pending.ComponentPlayer,
+                string.Join("\n", feedback));
+        }
+
+        // Source: Survivalcraft/Game/ComponentGui.cs:ComponentGui.DisplaySmallMessage
+        private void DisplayWorldControlFeedback(ComponentPlayer preferredPlayer,
+            string message)
+        {
+            ComponentPlayer localPlayer = preferredPlayer;
+            if (localPlayer?.ComponentGui == null)
+                localPlayer = m_localReplacementPlayerData?.ComponentPlayer;
+            SubsystemPlayers players = GameManager.Project?.FindSubsystem<SubsystemPlayers>(false);
+            if (localPlayer?.ComponentGui == null)
+                localPlayer = players?.ComponentPlayers.FirstOrDefault(player =>
+                    !m_networkPlayerData.Values.Contains(player.PlayerData));
+            localPlayer?.ComponentGui.DisplaySmallMessage(
+                message, Color.White, false, false);
+        }
+
+        private void AdvanceWorldControlFeedbackRequestId()
+        {
+            m_nextWorldControlFeedbackRequestId =
+                m_nextWorldControlFeedbackRequestId == int.MaxValue
+                    ? 1
+                    : m_nextWorldControlFeedbackRequestId + 1;
+        }
+
+        // Source: Engine/Time.cs:Time.RealTime
+        private void UpdatePendingWorldControlRequests()
+        {
+            FlushQueuedWorldControlRequest();
+            if (m_pendingWorldControlRequests.Count == 0) return;
+            double now = Time.RealTime;
+            foreach (PendingWorldControlRequest pending in m_pendingWorldControlRequests
+                .Where(item => item.Value.ExpirationTime <= now)
+                .Select(item => item.Value).ToArray())
+                pending.TimedOut = true;
+            DrainWorldControlResults();
+        }
+
+        // Source: Mod/ScMultiplayer/Plug/ScMultiplayer.cs:
+        // ScMultiplayer.TrySendWorldControlRequest
+        private void FlushQueuedWorldControlRequest()
+        {
+            if (m_queuedWorldControlRequests.Count == 0)
+            {
+                m_worldControlQueueNoticeShown = false;
+                return;
+            }
+            if (IsHost || client?.IsConnected != true)
+            {
+                m_queuedWorldControlRequests.Clear();
+                m_worldControlQueueNoticeShown = false;
+                return;
+            }
+            if (ShouldDeferWorldControlRequest()) return;
+
+            QueuedWorldControlRequest queued = m_queuedWorldControlRequests.Dequeue();
+            SendWorldControlRequestNow(queued.ComponentPlayer, queued.Actions);
+            if (m_queuedWorldControlRequests.Count == 0)
+                m_worldControlQueueNoticeShown = false;
         }
 
         public void ApplyRemoteWeatherState()
@@ -11203,6 +11671,7 @@ namespace ScMultiplayer
                 FluOnset = msg.PlayerFluOnset,
                 SicknessDuration = msg.PlayerSicknessDuration,
                 IsCreativeFlying = msg.PlayerIsCreativeFlying,
+                HasReceivedInitialItems = msg.HasReceivedInitialItems,
                 InventoryWasCreative = msg.InventoryWasCreative,
                 ActiveSlotIndex = msg.ActiveSlotIndex,
                 CreativeCategoryIndex = msg.CreativeCategoryIndex,
@@ -11803,10 +12272,20 @@ namespace ScMultiplayer
             m_remoteLightningActive = false;
             m_hostLightningActive = false;
             m_localLightningPredictionUntil = 0.0;
+            m_pendingWorldControlRequests.Clear();
+            m_queuedWorldControlRequests.Clear();
+            m_bufferedWorldControlResults.Clear();
+            m_hostWorldControlRequestStates.Clear();
+            m_nextWorldControlRequestId = 0;
+            m_nextWorldControlFeedbackRequestId = 1;
+            m_worldControlQueueNoticeShown = false;
+            m_reliableRetryLimitBaseline = 0L;
+            m_reliableStallReconnectIssued = false;
             m_pendingLocalPlayerRecord = null;
             m_localReplacementPlayerData = null;
             m_localPlayerRecordQueued = false;
             m_localPlayerRecordApplied = false;
+            m_pendingPlayerEquipmentMessages.Clear();
             if (!IsHost)
             {
                 m_playerRecords.Clear();

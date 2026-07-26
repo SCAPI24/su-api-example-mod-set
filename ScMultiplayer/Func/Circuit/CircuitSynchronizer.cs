@@ -39,6 +39,8 @@ namespace ScMultiplayer
         private const int HashLeadSteps = 20;
         private const double JournalRetention = 45.0;
         private const double FenceStaleTime = 0.75;
+        // Source: CircuitSynchronizer.GetCircuitStepTarget
+        private const double WindowDisplayDelay = 0.1;
         private const double FenceRequestRetryTime = 1.0;
         private const double SnapshotRequestRetryTime = 1.5;
         private const double RecoveryRequestRetryTime = 1.5;
@@ -129,6 +131,7 @@ namespace ScMultiplayer
         private int m_snapshotSequence;
         private int m_timelineGeneration;
         private int m_safeThroughHostCircuitStep;
+        private int m_lastFenceServerStep;
         private int m_receivedFenceSerial;
         private int m_requiredFenceSerial;
         private long m_fenceTerrainSequence;
@@ -152,6 +155,7 @@ namespace ScMultiplayer
         private double m_worldTimeAnchorTotalElapsedGameTime;
         private double m_worldTimeAnchorTimeOfDayOffset;
         private double m_snapshotProgressRealTime;
+        private double m_windowExhaustedSince;
 
         public CircuitSynchronizer(ScMultiplayer owner)
         {
@@ -172,6 +176,7 @@ namespace ScMultiplayer
             {
                 if (ScMultiplayer.IsHost) return "Host";
                 if (m_subsystem == null) return "Unbound";
+                UpdateWindowExhaustionState();
                 if (m_localSuspended) return "LocalPause";
                 if (!m_hasClock) return "Clock";
                 if (!m_hasFence || IsFenceStale()) return "Fence";
@@ -184,6 +189,13 @@ namespace ScMultiplayer
                         : "Snapshot";
                 }
                 if (m_recoveryRequested || m_recoveryHold) return "Recovery";
+                // Source: CircuitSynchronizer.UpdateWindowExhaustionState
+                if (m_windowExhaustedSince > 0.0)
+                {
+                    double duration = Time.RealTime - m_windowExhaustedSince;
+                    if (duration >= WindowDisplayDelay)
+                        return $"Window {Math.Max(0.0, duration * 1000.0):0}ms";
+                }
                 return m_initialSnapshotApplied ? "Ready" : "Bootstrap";
             }
         }
@@ -509,6 +521,7 @@ namespace ScMultiplayer
             m_lastHash = 0;
             m_timelineGeneration = 0;
             m_safeThroughHostCircuitStep = 0;
+            m_lastFenceServerStep = 0;
             m_receivedFenceSerial = 0;
             m_requiredFenceSerial = 0;
             m_fenceTerrainSequence = 0;
@@ -538,6 +551,7 @@ namespace ScMultiplayer
         internal int? GetCircuitStepTarget()
         {
             if (ScMultiplayer.IsHost || !m_hasClock) return null;
+            UpdateWindowExhaustionState();
             TryCompleteRecoveryHold();
             if (IsSimulationPaused) return m_subsystem.CircuitStep;
             int target = HostToLocal(m_epochHostCircuitStep + StepDelta(NetworkStep,
@@ -560,6 +574,26 @@ namespace ScMultiplayer
             if (m_repairBarrierHostStep > 0)
                 target = Math.Min(target, HostToLocal(m_repairBarrierHostStep) - 1);
             return target;
+        }
+
+        // Source: CircuitSynchronizer.GetCircuitStepTarget
+        // Source: CircuitSynchronizer.ClientStateText
+        private void UpdateWindowExhaustionState()
+        {
+            bool canTrack = !ScMultiplayer.IsHost && m_subsystem != null &&
+                m_hasClock && m_hasFence && m_initialSnapshotApplied &&
+                !m_localSuspended && !m_hostPaused && !m_recoveryHold &&
+                !m_recoveryRequested && !m_snapshotRequested &&
+                m_repairBarrierHostStep <= 0 && !IsFenceStale();
+            bool exhausted = canTrack && StepDelta(m_safeThroughHostCircuitStep,
+                LocalToHost(m_subsystem.CircuitStep)) <= 0;
+            if (!exhausted)
+            {
+                m_windowExhaustedSince = 0.0;
+                return;
+            }
+            if (m_windowExhaustedSince <= 0.0)
+                m_windowExhaustedSince = Time.RealTime;
         }
 
         // Source: Survivalcraft/Game/SubsystemElectricity.cs:SubsystemElectricity.Update
@@ -1103,6 +1137,13 @@ namespace ScMultiplayer
             if (m_timelineGeneration > 0 &&
                 message.TimelineGeneration < m_timelineGeneration)
                 return;
+            // Source: Mod/Comms/Comms.Drt/Func/Server/Set/ServerGame.cs:
+            // ServerGame.SendDirectInput
+            // Latest circuit packets are forwarded as ordinary unreliable datagrams. Reject an
+            // older fence from the same timeline before it can move the execution window back.
+            if (m_hasFence && message.TimelineGeneration == m_timelineGeneration &&
+                StepDelta(message.ServerStep, m_lastFenceServerStep) < 0)
+                return;
 
             bool generationChanged = message.TimelineGeneration != m_timelineGeneration;
             bool wasStale = IsFenceStale();
@@ -1112,6 +1153,7 @@ namespace ScMultiplayer
             m_lastFenceRealTime = Time.RealTime;
             m_lastFenceRequestRealTime = 0.0;
             m_hasFence = true;
+            m_lastFenceServerStep = message.ServerStep;
             m_safeThroughHostCircuitStep = message.SafeThroughHostCircuitStep;
             m_fenceTerrainSequence = Math.Max(message.RequiredTerrainSequence, 0L);
             m_hostPaused = message.IsPaused;
@@ -2394,6 +2436,7 @@ namespace ScMultiplayer
             m_subsystem = null;
             m_gameInfo = null;
             m_timeOfDay = null;
+            m_windowExhaustedSince = 0.0;
         }
 
         // Source: Survivalcraft/Game/RandomGeneratorElectricElement.cs:RandomGeneratorElectricElement.Simulate

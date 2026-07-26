@@ -27,8 +27,22 @@ namespace ScMultiplayer
         // Source: Survivalcraft/Game/SubsystemElectricity.cs:SubsystemElectricity.Update
         void IUpdateable.Update(float dt)
         {
-            if (ScMultiplayer.client?.IsConnected != true || m_synchronizer == null)
+            if (m_synchronizer == null)
             {
+                base.Update(dt);
+                return;
+            }
+            if (ScMultiplayer.client?.IsConnected != true)
+            {
+                // Source: Mod/ScMultiplayer/Plug/ScMultiplayer.cs:
+                // ScMultiplayer.UpdateReliableTransportHealth
+                // Do not let the client run an independent circuit timeline while a stalled
+                // reliable transport is being replaced and an authoritative rejoin is pending.
+                if (ScMultiplayer.currentInstance?.ShouldHoldCircuitForReconnect == true)
+                {
+                    m_remainingNetworkSimulationTime = 0f;
+                    return;
+                }
                 base.Update(dt);
                 return;
             }
