@@ -38,10 +38,14 @@ namespace ScMultiplayer
             new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private readonly HashSet<string> m_remoteHosts =
             new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private readonly HashSet<string> m_personalHosts =
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private readonly object m_resolvedHostsLock = new object();
         private Dictionary<IPAddress, string> m_resolvedHosts =
             new Dictionary<IPAddress, string>();
         private IPEndPoint[] m_resolvedExplicitEndpoints = Array.Empty<IPEndPoint>();
+        private ResolvedPersonalRoute[] m_resolvedPersonalRoutes =
+            Array.Empty<ResolvedPersonalRoute>();
         private string[] m_activeHosts = Array.Empty<string>();
         private HashSet<string> m_pendingRemoteHosts;
         private bool m_contentRootChecked;
@@ -56,6 +60,13 @@ namespace ScMultiplayer
         private double m_nextRawRefreshTime = double.MinValue;
         private double m_nextExplicitDiscoveryTime = double.MinValue;
 
+        private sealed class ResolvedPersonalRoute
+        {
+            public IPAddress Address;
+            public int Port;
+            public PersonalServerRecord Record;
+        }
+
         public RemoteServerDirectory(Explorer explorer)
         {
             m_explorer = explorer ?? throw new ArgumentNullException(nameof(explorer));
@@ -64,11 +75,24 @@ namespace ScMultiplayer
         // Source: EntitySystem/SuAPI/ModResource.cs:ModResource.LoadModResources
         public void Start()
         {
+            PersonalServerDirectory.Load();
+            PersonalServerDirectory.Changed += HandlePersonalServersChanged;
+            ReloadPersonalHosts();
             AddHosts(m_localHosts, ReadEmbeddedDirectory());
             if (m_localHosts.Count == 0)
                 m_localHosts.Add("suceru.site");
             ApplyHosts();
             SetDiscoveryEnabled(true);
+        }
+
+        // Source: EntitySystem/SuAPICore/Plug/SuAPICoreMod.cs:SuAPICoreMod.OnUnload
+        public void Stop()
+        {
+            PersonalServerDirectory.Changed -= HandlePersonalServersChanged;
+            Interlocked.Increment(ref m_resolveGeneration);
+            Interlocked.Increment(ref m_discoveryGeneration);
+            Interlocked.Increment(ref m_rawRequestId);
+            m_rawRefreshProgress?.Cancel();
         }
 
         // Source: Survivalcraft/Game/ContentManager.cs:ContentManager.List
@@ -117,6 +141,33 @@ namespace ScMultiplayer
                     ? host
                     : null;
             }
+        }
+
+        // Source: Mod/ScMultiplayer/Networking/RemoteServerDirectory.cs:RemoteServerDirectory.GetHostName
+        public PersonalServerRecord GetPersonalServer(IPEndPoint endpoint)
+        {
+            if (endpoint == null) return null;
+            lock (m_resolvedHostsLock)
+            {
+                return m_resolvedPersonalRoutes.FirstOrDefault(route =>
+                    route.Address.Equals(endpoint.Address) &&
+                    (route.Port == 0 || route.Port == endpoint.Port))?.Record;
+            }
+        }
+
+        // Source: Mod/ScMultiplayer/Networking/RemoteServerDirectory.cs:RemoteServerDirectory.ApplyHosts
+        private void HandlePersonalServersChanged()
+        {
+            ReloadPersonalHosts();
+            ApplyHosts(forceResolve: true);
+        }
+
+        // Source: Mod/ScMultiplayer/Networking/RemoteServerDirectory.cs:RemoteServerDirectory.ApplyHosts
+        private void ReloadPersonalHosts()
+        {
+            m_personalHosts.Clear();
+            AddHosts(m_personalHosts,
+                PersonalServerDirectory.Records.Select(record => record.Address));
         }
 
         // Source: EntitySystem/SuAPI/ModResource.cs:ModResource.LoadModResources
@@ -235,14 +286,21 @@ namespace ScMultiplayer
         }
 
         // Source: Mod/Comms/Comms.Drt/Func/Explorer/Explorer.cs:Explorer.StartDiscovery
-        private void ApplyHosts()
+        private void ApplyHosts(bool forceResolve = false)
         {
-            string[] hosts = m_localHosts.Concat(m_remoteHosts)
+            string[] hosts = m_personalHosts.OrderBy(host => host,
+                    StringComparer.OrdinalIgnoreCase)
+                .Concat(m_localHosts.Concat(m_remoteHosts).OrderBy(host => host,
+                    StringComparer.OrdinalIgnoreCase))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
-                .OrderBy(host => host, StringComparer.OrdinalIgnoreCase)
                 .Take(MaximumHosts)
                 .ToArray();
-            if (hosts.SequenceEqual(m_activeHosts, StringComparer.OrdinalIgnoreCase)) return;
+            if (hosts.SequenceEqual(m_activeHosts, StringComparer.OrdinalIgnoreCase))
+            {
+                if (forceResolve && m_discoveryEnabled)
+                    ResolveDirectoryEntries(m_activeHosts);
+                return;
+            }
             m_activeHosts = hosts;
             if (!m_discoveryEnabled) return;
             StartExplorerDiscovery();
@@ -274,15 +332,20 @@ namespace ScMultiplayer
         {
             int generation = ++m_resolveGeneration;
             string[] entryArray = entries.ToArray();
+            var personalRecords = PersonalServerDirectory.Records.ToDictionary(
+                record => record.Address, StringComparer.OrdinalIgnoreCase);
             Task.Run(delegate
             {
                 var resolved = new Dictionary<IPAddress, string>();
                 var explicitEndpoints = new HashSet<IPEndPoint>();
+                var personalRoutes = new List<ResolvedPersonalRoute>();
                 foreach (string entry in entryArray)
                 {
                     if (generation != Volatile.Read(ref m_resolveGeneration)) break;
                     if (!TryParseDirectoryEntry(entry, out string host, out int port))
                         continue;
+                    personalRecords.TryGetValue(FormatDirectoryEntry(host, port),
+                        out PersonalServerRecord personalRecord);
                     try
                     {
                         IPAddress[] addresses = IPAddress.TryParse(host, out IPAddress literal)
@@ -296,6 +359,15 @@ namespace ScMultiplayer
                                 resolved.Add(address, host);
                             if (port > 0)
                                 explicitEndpoints.Add(new IPEndPoint(address, port));
+                            if (personalRecord != null)
+                            {
+                                personalRoutes.Add(new ResolvedPersonalRoute
+                                {
+                                    Address = address,
+                                    Port = port,
+                                    Record = personalRecord
+                                });
+                            }
                         }
                     }
                     catch (Exception error)
@@ -309,6 +381,7 @@ namespace ScMultiplayer
                     {
                         m_resolvedHosts = resolved;
                         m_resolvedExplicitEndpoints = explicitEndpoints.ToArray();
+                        m_resolvedPersonalRoutes = personalRoutes.ToArray();
                         m_nextExplicitDiscoveryTime = double.MinValue;
                     }
                 }
@@ -387,7 +460,8 @@ namespace ScMultiplayer
         // Source: Mod/ScMultiplayer/ServerDns.txt
         // Accept a normal host (scanned over the configured server range), host:port, and
         // bracketed IPv6 [address]:port. Explicit ports are UDP discovery endpoints.
-        private static bool TryParseDirectoryEntry(string token, out string host, out int port)
+        internal static bool TryParseDirectoryEntry(string token, out string host,
+            out int port)
         {
             host = string.Empty;
             port = 0;
@@ -429,7 +503,7 @@ namespace ScMultiplayer
             return host.IndexOf('.') >= 0 || host.IndexOf(':') >= 0;
         }
 
-        private static string FormatDirectoryEntry(string host, int port)
+        internal static string FormatDirectoryEntry(string host, int port)
         {
             if (port <= 0) return host;
             return host.IndexOf(':') >= 0

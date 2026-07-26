@@ -1356,6 +1356,7 @@ namespace ScMultiplayer
             modInjector.RegisterBlock(Game.PistonBlock.Index,
                 typeof(global::ScMultiplayer.PistonBlock), Name);
             ScMultiplayerSettings.Load();
+            PersonalServerDirectory.Load();
             playerMappingManager.MaxPlayerIndices = ScMultiplayerSettings.MaxPlayers;
             StartWorldTransferSender();
 
@@ -1683,6 +1684,12 @@ namespace ScMultiplayer
 
         private object[] HandleLoading(object[] args)
         {
+            // Source: EntitySystem/SuAPICore/Plug/SuAPICoreMod.cs:SuAPICoreMod.HandleScreen
+            // Loading.Initialize can be published by compatibility layers. Register screens only
+            // for the authoritative LoadingManager initialization event.
+            if (args == null || args.Length == 0 || args[0] is not Type type ||
+                type.Name != "LoadingManager")
+                return args;
             // Source: Survivalcraft/Game/Program.cs:Program.Initialize
             // Source: Survivalcraft/Game/LoadingManager.cs:LoadingManager.ReplaceItem
             Game.LoadingManager.QueueItem("Load ScMultiplayer Chinese Font",
@@ -1692,9 +1699,20 @@ namespace ScMultiplayer
                 ScreensManager.AddScreen("Play", new SuPlayScreen());
                 // Source: Survivalcraft/Game/PlayerScreen.cs:PlayerScreen.PlayerScreen
                 ScreensManager.AddScreen("ScMultiplayerPlayer", new SuNetworkPlayerScreen());
+                // Source: Survivalcraft/Game/ScreensManager.cs:ScreensManager.Initialize
+                ScreensManager.AddScreen("ScMultiplayerModifyNetWorld",
+                    new SuModifyNetWorldScreen());
             }))
             {
                 throw new InvalidOperationException("Loading item 'Initialize PlayScreen' was not found.");
+            }
+            if (!Game.LoadingManager.ReplaceItem("Initialize ContentScreen", delegate
+            {
+                ScreensManager.AddScreen("Content", new SuContentScreen());
+            }))
+            {
+                throw new InvalidOperationException(
+                    "Loading item 'Initialize ContentScreen' was not found.");
             }
             return args;
         }
@@ -5324,9 +5342,9 @@ namespace ScMultiplayer
             if (request == null || !m_hostJoinRequests.ContainsKey(request.ClientId))
                 return;
 
-            string[] decisions = { "允许加入", "拒绝加入", "稍后处理" };
+            string[] decisions = { "Allow", "Reject", "Decide" };
             var dialog = new ListSelectionDialog(
-                "加入请求: " + GetHostJoinRequestLabel(request),
+                "Join Request: " + GetHostJoinRequestLabel(request),
                 decisions,
                 60f,
                 item => item.ToString(),
@@ -11366,6 +11384,12 @@ namespace ScMultiplayer
             return currentInstance?.m_remoteServerDirectory?.GetHostName(endpoint);
         }
 
+        // Source: Mod/ScMultiplayer/Networking/RemoteServerDirectory.cs:RemoteServerDirectory.GetPersonalServer
+        internal static PersonalServerRecord GetPersonalServer(IPEndPoint endpoint)
+        {
+            return currentInstance?.m_remoteServerDirectory?.GetPersonalServer(endpoint);
+        }
+
         private void Client_GameDescriptionRequest(GameDescriptionRequestData obj)
         {
             // Source: Comms.Drt Explorer queries server → server fires this on client
@@ -11938,6 +11962,12 @@ namespace ScMultiplayer
             }
             WriteDownloadedWorldRegistry(failedDirectories);
             WorldsManager.UpdateWorldsList();
+        }
+
+        // Source: Mod/ScMultiplayer/Plug/ScMultiplayer.cs:ScMultiplayer.CleanupDownloadedWorldsIfIdle
+        internal void CleanupDownloadedWorldsBeforeWorldList()
+        {
+            CleanupDownloadedWorldsIfIdle();
         }
 
         private void Server_Information(string obj)
@@ -13479,6 +13509,7 @@ namespace ScMultiplayer
             try { client?.LeaveGame(); } catch { }
             try { server?.Dispose(); } catch { }
             try { explorer?.StopDiscovery(); } catch { }
+            m_remoteServerDirectory?.Stop();
             m_remoteServerDirectory = null;
         }
     }

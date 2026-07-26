@@ -23,6 +23,12 @@ namespace ScMultiplayer
         private readonly Dictionary<WorldInfo, float> m_remoteWorldPings = new Dictionary<WorldInfo, float>();
         private readonly Dictionary<WorldInfo, GameDescription> m_remoteGames = new Dictionary<WorldInfo, GameDescription>();
         private readonly HashSet<WorldInfo> m_serviceWorlds = new HashSet<WorldInfo>();
+        private readonly Dictionary<string, WorldInfo> m_personalWorlds =
+            new Dictionary<string, WorldInfo>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<WorldInfo, PersonalServerRecord> m_personalRecords =
+            new Dictionary<WorldInfo, PersonalServerRecord>();
+        private readonly Dictionary<string, double> m_personalLastSeen =
+            new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, double> m_remoteLastSeen = new Dictionary<string, double>();
         private readonly Dictionary<string, double> m_remoteRouteLastSeen = new Dictionary<string, double>();
         private readonly Dictionary<string, WorldInfo> m_localWorlds =
@@ -34,6 +40,7 @@ namespace ScMultiplayer
         private DateTime m_nextRemoteExpiryTime;
         private DateTime m_nextPingProbeTime;
         private int m_pingProbePending;
+        private int m_personalDirectoryRevision = -1;
         private const double RemoteWorldRetentionSeconds = 15.0;
         private const double PreferredServiceRouteSeconds = 7.0;
         private const double RemotePingProbePeriodSeconds = 1.0;
@@ -71,6 +78,9 @@ namespace ScMultiplayer
         public override void Update()
         {
             DateTime now = DateTime.UtcNow;
+            if (!m_worldScanPending &&
+                m_personalDirectoryRevision != PersonalServerDirectory.Revision)
+                SynchronizePersonalWorlds();
             if (!m_worldScanPending && m_remoteApplyRequested)
             {
                 m_remoteApplyRequested = false;
@@ -88,7 +98,9 @@ namespace ScMultiplayer
             }
 
             SelectedItem = GetSelectedWorldInfo();
-            bool isRemote = SelectedItem != null && m_remoteGames.ContainsKey(SelectedItem);
+            bool isPersonal = SelectedItem != null &&
+                m_personalRecords.ContainsKey(SelectedItem);
+            bool isRemote = SelectedItem != null && IsRemoteWorld(SelectedItem);
             if (SelectedItem != null && !isRemote &&
                 !WorldsManager.WorldInfos.Any(world =>
                     string.Equals(world.DirectoryName, SelectedItem.DirectoryName,
@@ -103,8 +115,10 @@ namespace ScMultiplayer
                         m_worldsListWidget.Items.Count == 1 ? "world" : "worlds",
                         DataSizeFormatter.Format(m_totalWorldsSize, 2))
                     : "No worlds";
-            Children.Find("Play").IsEnabled = SelectedItem != null;
-            Children.Find("Properties").IsEnabled = SelectedItem != null && !isRemote;
+            Children.Find("Play").IsEnabled = SelectedItem != null &&
+                (!isPersonal || m_remoteGames.ContainsKey(SelectedItem));
+            Children.Find("Properties").IsEnabled = SelectedItem != null &&
+                (!isRemote || isPersonal);
             if (Children.Find<ButtonWidget>("Play")?.IsClicked == true && SelectedItem != null)
             {
                 ActivateWorld(SelectedItem);
@@ -124,10 +138,19 @@ namespace ScMultiplayer
                 }
             }
             if (Children.Find<ButtonWidget>("Properties").IsClicked &&
-                SelectedItem != null && !isRemote)
+                SelectedItem != null)
             {
-                ScreensManager.SwitchScreen("ModifyWorld", SelectedItem.DirectoryName,
-                    SelectedItem.WorldSettings);
+                if (m_personalRecords.TryGetValue(SelectedItem,
+                    out PersonalServerRecord personalRecord))
+                {
+                    ScreensManager.SwitchScreen("ScMultiplayerModifyNetWorld",
+                        personalRecord.Id);
+                }
+                else if (!isRemote)
+                {
+                    ScreensManager.SwitchScreen("ModifyWorld", SelectedItem.DirectoryName,
+                        SelectedItem.WorldSettings);
+                }
             }
             if (Input.Back || Input.Cancel ||
                 Children.Find<ButtonWidget>("TopBar.Back").IsClicked)
@@ -154,6 +177,13 @@ namespace ScMultiplayer
             LabelWidget name = container.Children.Find<LabelWidget>("WorldItem.Name");
             LabelWidget details = container.Children.Find<LabelWidget>("WorldItem.Details");
             name.Text = worldInfo.WorldSettings.Name;
+            bool isPersonalOffline = m_personalRecords.ContainsKey(worldInfo) &&
+                !m_remoteGames.ContainsKey(worldInfo);
+            if (isPersonalOffline)
+            {
+                details.Text = "Net World | Offline (Ping -)";
+                return;
+            }
             details.Text = string.Format("{0} | {1:dd MMM yyyy HH:mm} | {2} | {3} | {4}",
                 DataSizeFormatter.Format(worldInfo.Size),
                 worldInfo.LastSaveTime.ToLocalTime(),
@@ -170,7 +200,9 @@ namespace ScMultiplayer
             }
             if (m_remoteWorldPings.TryGetValue(worldInfo, out float ping))
             {
-                string status = m_serviceWorlds.Contains(worldInfo) ? "Service" : "Online";
+                string status = m_personalRecords.ContainsKey(worldInfo)
+                    ? "Online"
+                    : m_serviceWorlds.Contains(worldInfo) ? "Service" : "Online";
                 string pingText = ping > 0f && ping < 3f
                     ? Math.Round(ping * 1000f).ToString() + "ms"
                     : "unknown";
@@ -194,6 +226,16 @@ namespace ScMultiplayer
             if (m_remoteGames.TryGetValue(worldInfo, out GameDescription remoteGame))
             {
                 GameJoin(worldInfo, remoteGame);
+                return;
+            }
+
+            if (m_personalRecords.ContainsKey(worldInfo))
+            {
+                m_worldsListWidget.SelectedItem = null;
+                DialogsManager.ShowDialog(null, new MessageDialog(
+                    "Net World", "This is an online Net World and its server is currently " +
+                    "offline. Wait for it to come online before joining.",
+                    "OK", null, null));
                 return;
             }
 
@@ -321,6 +363,9 @@ namespace ScMultiplayer
             {
                 try { ScMultiplayer.client.LeaveGame(); } catch { }
             }
+            // Source: Mod/ScMultiplayer/Plug/ScMultiplayer.cs:ScMultiplayer.CleanupDownloadedWorldsIfIdle
+            // Remove a downloaded room before the asynchronous local-world scan can observe it.
+            ScMultiplayer.currentInstance?.CleanupDownloadedWorldsBeforeWorldList();
 
             // Source: Survivalcraft/Game/PlayScreen.cs:PlayScreen.Enter
             // The native task has no screen-generation guard. Repeated Enter/Leave can let an old
@@ -330,6 +375,8 @@ namespace ScMultiplayer
             while (m_pendingRemoteServers.TryDequeue(out _)) { }
             m_remoteApplyRequested = false;
             SubscribeToExplorer();
+            SynchronizePersonalWorlds();
+            ResetPersonalOnlineState();
             QueueCurrentExplorerSnapshot(generation);
             m_nextRemoteExpiryTime = DateTime.MinValue;
             m_nextPingProbeTime = DateTime.MinValue;
@@ -428,6 +475,7 @@ namespace ScMultiplayer
 
             var desiredItems = new List<WorldInfo>(orderedLocalWorlds);
             desiredItems.AddRange(m_remoteWorlds.Values);
+            desiredItems.AddRange(m_personalWorlds.Values);
             bool sequenceChanged = desiredItems.Count != m_worldsListWidget.Items.Count;
             if (!sequenceChanged)
             {
@@ -524,12 +572,37 @@ namespace ScMultiplayer
             bool changed = false;
             while (m_pendingRemoteServers.TryDequeue(out ServerDescription server))
             {
+                PersonalServerRecord personalRecord =
+                    ScMultiplayer.GetPersonalServer(server.Address);
+                bool personalGameApplied = false;
                 foreach (GameDescription game in server.GameDescriptions)
                 {
                     GameWorldInfoMessage info;
                     try { info = Message.Read(game.GameDescriptionBytes) as GameWorldInfoMessage; }
                     catch { continue; }
-                    if (info == null || ScMultiplayer.IsLocalServerEndpoint(server.Address))
+                    if (info == null)
+                        continue;
+
+                    if (personalRecord != null)
+                    {
+                        if (personalGameApplied ||
+                            !m_personalWorlds.TryGetValue(personalRecord.Id,
+                                out WorldInfo personalWorld))
+                            continue;
+                        RemoveDynamicRemoteWorld(GetRemoteRoomKey(info, game,
+                            server.Address));
+                        UpdateRemoteWorldInfo(personalWorld, info, game,
+                            GetPersonalDisplayName(personalRecord));
+                        m_remoteWorldPings[personalWorld] = server.Ping;
+                        m_remoteGames[personalWorld] = game;
+                        m_serviceWorlds.Remove(personalWorld);
+                        m_personalLastSeen[personalRecord.Id] = Time.RealTime;
+                        personalGameApplied = true;
+                        changed = true;
+                        continue;
+                    }
+
+                    if (ScMultiplayer.IsLocalServerEndpoint(server.Address))
                         continue;
 
                     string key = GetRemoteRoomKey(info, game, server.Address);
@@ -578,6 +651,19 @@ namespace ScMultiplayer
             }
             if (changed)
                 RefreshVisibleWorldItems();
+        }
+
+        // Source: Mod/ScMultiplayer/Func/Screen/SuPlayScreen.cs:SuPlayScreen.RemoveStaleRemoteWorlds
+        private void RemoveDynamicRemoteWorld(string key)
+        {
+            if (!m_remoteWorlds.TryGetValue(key, out WorldInfo world)) return;
+            m_worldsListWidget.RemoveItem(world);
+            m_remoteWorldPings.Remove(world);
+            m_remoteGames.Remove(world);
+            m_serviceWorlds.Remove(world);
+            m_remoteLastSeen.Remove(key);
+            m_remoteRouteLastSeen.Remove(key);
+            m_remoteWorlds.Remove(key);
         }
 
         private static string GetRemoteRoomKey(GameWorldInfoMessage info,
@@ -629,12 +715,22 @@ namespace ScMultiplayer
                 m_remoteRouteLastSeen.Remove(key);
                 m_remoteWorlds.Remove(key);
             }
+            bool personalChanged = false;
+            foreach (KeyValuePair<string, WorldInfo> pair in m_personalWorlds)
+            {
+                if (m_personalLastSeen.TryGetValue(pair.Key, out double lastSeen) &&
+                    now - lastSeen <= RemoteWorldRetentionSeconds)
+                    continue;
+                personalChanged |= m_remoteGames.Remove(pair.Value);
+                personalChanged |= m_remoteWorldPings.Remove(pair.Value);
+                personalChanged |= m_serviceWorlds.Remove(pair.Value);
+            }
             if (selectedWorld != null &&
                 m_worldsListWidget.Items.Any(item => ReferenceEquals(item, selectedWorld)))
             {
                 m_worldsListWidget.SelectedItem = selectedWorld;
             }
-            if (staleKeys.Length > 0)
+            if (staleKeys.Length > 0 || personalChanged)
                 RefreshVisibleWorldItems();
         }
 
@@ -648,7 +744,8 @@ namespace ScMultiplayer
             var endpoints = m_remoteGames.Select(pair => new
                 {
                     Address = pair.Value.ServerDescription.Address,
-                    IsInternet = m_serviceWorlds.Contains(pair.Key) ||
+                    IsInternet = m_personalRecords.ContainsKey(pair.Key) ||
+                        m_serviceWorlds.Contains(pair.Key) ||
                         !pair.Value.ServerDescription.IsLocal
                 })
                 .GroupBy(item => item.Address)
@@ -674,6 +771,107 @@ namespace ScMultiplayer
                     Interlocked.Exchange(ref m_pingProbePending, 0);
                 }
             });
+        }
+
+        // Source: Survivalcraft/Game/PlayScreen.cs:PlayScreen.Enter
+        // Source: Mod/ScMultiplayer/Networking/PersonalServerDirectory.cs:PersonalServerDirectory.Records
+        private void SynchronizePersonalWorlds()
+        {
+            int revision = PersonalServerDirectory.Revision;
+            PersonalServerRecord[] records = PersonalServerDirectory.Records;
+            var activeIds = new HashSet<string>(records.Select(record => record.Id),
+                StringComparer.OrdinalIgnoreCase);
+            WorldInfo selectedWorld = GetSelectedWorldInfo();
+            bool changed = false;
+
+            foreach (string id in m_personalWorlds.Keys
+                .Where(id => !activeIds.Contains(id)).ToArray())
+            {
+                WorldInfo world = m_personalWorlds[id];
+                if (m_worldsListWidget.Items.Any(item => ReferenceEquals(item, world)))
+                    m_worldsListWidget.RemoveItem(world);
+                m_remoteWorldPings.Remove(world);
+                m_remoteGames.Remove(world);
+                m_serviceWorlds.Remove(world);
+                m_personalRecords.Remove(world);
+                m_personalLastSeen.Remove(id);
+                m_personalWorlds.Remove(id);
+                changed = true;
+            }
+
+            foreach (PersonalServerRecord record in records)
+            {
+                if (!m_personalWorlds.TryGetValue(record.Id, out WorldInfo world))
+                {
+                    world = CreatePersonalWorldInfo(record);
+                    m_personalWorlds.Add(record.Id, world);
+                    if (!m_worldScanPending)
+                        m_worldsListWidget.AddItem(world);
+                    changed = true;
+                }
+                else
+                {
+                    string displayName = GetPersonalDisplayName(record);
+                    if (!string.Equals(world.WorldSettings.Name, displayName,
+                        StringComparison.Ordinal))
+                    {
+                        world.WorldSettings.Name = displayName;
+                        changed = true;
+                    }
+                }
+                m_personalRecords[world] = record;
+            }
+
+            m_personalDirectoryRevision = revision;
+            if (selectedWorld != null && m_worldsListWidget.Items.Any(item =>
+                ReferenceEquals(item, selectedWorld)))
+                m_worldsListWidget.SelectedItem = selectedWorld;
+            if (changed)
+                RefreshVisibleWorldItems();
+        }
+
+        // Source: Mod/ScMultiplayer/Func/Screen/SuPlayScreen.cs:SuPlayScreen.ActivateWorld
+        private bool IsRemoteWorld(WorldInfo worldInfo)
+        {
+            return m_personalRecords.ContainsKey(worldInfo) ||
+                m_remoteWorlds.Values.Contains(worldInfo);
+        }
+
+        // Source: Mod/ScMultiplayer/Func/Screen/SuPlayScreen.cs:SuPlayScreen.ApplyPendingRemoteServers
+        private static string GetPersonalDisplayName(PersonalServerRecord record)
+        {
+            return record.Name + " (" + record.Address + ")";
+        }
+
+        // Source: Mod/ScMultiplayer/Func/Screen/SuPlayScreen.cs:SuPlayScreen.RemoveStaleRemoteWorlds
+        private void ResetPersonalOnlineState()
+        {
+            foreach (KeyValuePair<WorldInfo, PersonalServerRecord> pair in
+                m_personalRecords.ToArray())
+            {
+                m_remoteGames.Remove(pair.Key);
+                m_remoteWorldPings.Remove(pair.Key);
+                m_serviceWorlds.Remove(pair.Key);
+            }
+            m_personalLastSeen.Clear();
+            RefreshVisibleWorldItems();
+        }
+
+        // Source: Survivalcraft/Game/WorldInfo.cs:WorldInfo
+        private static WorldInfo CreatePersonalWorldInfo(PersonalServerRecord record)
+        {
+            return new WorldInfo
+            {
+                DirectoryName = "scmp-personal:" + record.Id,
+                Size = 0,
+                LastSaveTime = DateTime.MinValue,
+                PlayerInfos = new List<PlayerInfo>(),
+                SerializationVersion = VersionsManager.SerializationVersion,
+                WorldSettings = new WorldSettings
+                {
+                    Name = GetPersonalDisplayName(record)
+                }
+            };
         }
 
         // Source: Survivalcraft/Game/ListPanelWidget.cs:ListPanelWidget.SelectedItem
