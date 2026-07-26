@@ -240,6 +240,13 @@ namespace ScMultiplayer
         public Vector2 LookAngles;
         public Vector3 BodyPosition;
         public Vector3 BodyVelocity;
+        // Source: Survivalcraft/Game/ComponentBody.cs:ComponentBody.StandingOnValue
+        public bool IsGrounded;
+        // Source: Mod/Comms/Comms/PeerData.cs:PeerData.Ping
+        public float LatestPositionRtt;
+        public float SmoothedPositionRtt;
+        public float PositionRttDeviation;
+        public double NextPositionRttSampleTime;
         public int ClientTick;
         public bool InitialPositionApplied;
         public int Sequence = -1;
@@ -260,8 +267,18 @@ namespace ScMultiplayer
         public double NextHitExecutionTime;
         public readonly Queue<PlayerActionMessage> DropEvents = new Queue<PlayerActionMessage>();
         public int LastDropSequence;
+        // Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update
+        // Jump is a one-frame edge, so it cannot share the replaceable input snapshot queue.
+        public readonly Queue<PendingNetworkJump> JumpEvents = new Queue<PendingNetworkJump>();
+        public int LastJumpSequence;
         public int LastRespawnSequence;
         public int LastAuthoritativeInventoryTick;
+    }
+
+    public class PendingNetworkJump
+    {
+        public PlayerActionMessage Message;
+        public double ReceivedTime;
     }
 
     public class RemotePickableRecord
@@ -667,14 +684,15 @@ namespace ScMultiplayer
             Vector3 bodyPosition, Vector3 bodyVelocity, Quaternion bodyRotation,
             Vector2 lookAngles, PlayerInput playerInput, float pokingPhase,
             bool isControlledByTouch,
-            bool isCrouching, bool isFlying, bool isRiding, ushort mountEntityId,
+            bool isCrouching, bool isFlying, bool isGrounded, bool isRiding,
+            ushort mountEntityId,
             int activeSlotIndex, int inventoryAuthorityTick,
             int[] slotValues, int[] slotCounts)
         {
             var msg = new GamePlayerInputMessage(
                 playerIndex, sequence, clientTick, bodyPosition, bodyVelocity,
                 bodyRotation, lookAngles, playerInput, pokingPhase, isControlledByTouch,
-                isCrouching, isFlying, isRiding,
+                isCrouching, isFlying, isGrounded, isRiding,
                 mountEntityId, activeSlotIndex, inventoryAuthorityTick,
                 slotValues, slotCounts);
             ScMultiplayer.client.SendDirectInput(0,
@@ -704,7 +722,10 @@ namespace ScMultiplayer
             var msg = new GameWorldInfoMessage1(timeOfDayOffset, totalElapsedGameTime, currentTimeMode,
                 weather.IsPrecipitationStarted, weather.PrecipitationIntensity,
                 weather.IsFogStarted, weather.FogProgress, weather.FogIntensity, weather.FogSeed,
-                lightningPosition.HasValue, lightningPosition ?? Vector3.Zero);
+                lightningPosition.HasValue, lightningPosition ?? Vector3.Zero)
+            {
+                ServerTick = ScMultiplayer.client.Step
+            };
             SendScheduledMessage(-1, msg, latest: !reliable, batchable: !reliable);
         }
 
@@ -802,6 +823,18 @@ namespace ScMultiplayer
         {
             ScMultiplayer.client.SendDirectInput(0,
                 Message.WriteWithSender(message, ScMultiplayer.client.Address), sequenced: true);
+        }
+
+        // Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update
+        public static void SendPlayerJumpRequest(PlayerActionMessage message)
+        {
+            byte[] payload = Message.WriteWithSender(message, ScMultiplayer.client.Address);
+            // Source: Mod/Comms/Comms.Drt/Func/Client/Client.cs:Client.SendDirectInput
+            // Two tiny unreliable copies bypass reliable head-of-line blocking. The reliable copy
+            // remains a fallback, and the host deduplicates all three by JumpRequest.Sequence.
+            ScMultiplayer.client.SendDirectInput(0, payload, latest: true);
+            ScMultiplayer.client.SendDirectInput(0, payload, latest: true);
+            ScMultiplayer.client.SendDirectInput(0, payload, sequenced: true);
         }
 
         // Source: Survivalcraft/Game/ComponentMiner.cs:ComponentMiner.AttackBody
@@ -1134,6 +1167,10 @@ namespace ScMultiplayer
         private readonly ConcurrentQueue<QueuedFrameAction> m_endOfFrameActions =
             new ConcurrentQueue<QueuedFrameAction>();
         // Source: ScMultiplayer.cs:ProcessEndOfFrameActions
+        // Short player edges must not wait behind circuit snapshot or repair work.
+        private readonly ConcurrentQueue<QueuedFrameAction> m_priorityInputActions =
+            new ConcurrentQueue<QueuedFrameAction>();
+        // Source: ScMultiplayer.cs:ProcessEndOfFrameActions
         // World-transfer control must not wait behind high-rate gameplay presentation work.
         private readonly ConcurrentQueue<Action> m_worldTransferActions = new ConcurrentQueue<Action>();
         private readonly Dictionary<Entity, ushort> m_hostAnimalIds = new Dictionary<Entity, ushort>();
@@ -1258,6 +1295,7 @@ namespace ScMultiplayer
         private double m_nextLocalHitRequestTime;
         private int m_localInteractSequence;
         private int m_localDropSequence;
+        private int m_localJumpSequence;
         private Entity m_observedLocalPlayerEntity;
         private bool m_observedLocalPlayerWasDead;
         private int m_localRespawnSequence;
@@ -1276,9 +1314,10 @@ namespace ScMultiplayer
         private Dictionary<string, long> m_pendingRandomStates = new Dictionary<string, long>();
         private Project m_randomStateAppliedProject;
         private GameWorldInfoMessage1 m_remoteWeatherState;
+        private int m_lastRemoteWorldInfoTick = -1;
+        private bool m_remoteFogPresentationInitialized;
         private bool m_remoteLightningActive;
         private bool m_hostLightningActive;
-        private double m_localLightningPredictionUntil;
         private const double HostLightningStaleDuration = 1.0;
         private readonly Dictionary<int, PendingWorldControlRequest>
             m_pendingWorldControlRequests = new Dictionary<int, PendingWorldControlRequest>();
@@ -1326,6 +1365,10 @@ namespace ScMultiplayer
         private const int MaximumProjectileReleaseCompensationSteps = 25;
         private const float MaximumProjectileReleaseVelocity = 64f;
         private const float PlayerHitRequestInterval = 0.36f;
+        private const int PlayerJumpRequestMaxInputLagSteps = 50;
+        private const double PlayerJumpRequestReceiptLifetime = 1.0;
+        private const int MaximumPendingJumpRequests = 4;
+        private const int MaximumPriorityInputActionsPerFrame = 16;
         // Source: Comms/Comms/UdpTransmitter.cs:UdpTransmitter.MaxPacketSize
         // 940 bytes plus the nested ScMultiplayer, DRT, Peer and Comm headers fits in one
         // 1024-byte UDP packet for both IPv4 and IPv6 connection-init packets.
@@ -2539,6 +2582,7 @@ namespace ScMultiplayer
             else
             {
                 SuppressClientRandomLightning(project);
+                UpdateRemoteFogPresentation(dt);
                 ApplyPendingLocalKnockback();
                 UpdateRemoteAnimalPresentations(dt);
                 UpdateRemotePickablePresentations(dt);
@@ -3701,6 +3745,17 @@ namespace ScMultiplayer
             });
         }
 
+        // Source: ScMultiplayer.cs:ProcessEndOfFrameActions
+        private void QueuePriorityInputAction(Action action)
+        {
+            if (action == null) return;
+            m_priorityInputActions.Enqueue(new QueuedFrameAction
+            {
+                Action = action,
+                EnqueuedTimestamp = Stopwatch.GetTimestamp()
+            });
+        }
+
         // Source: ScMultiplayer.cs:QueueEndOfFrameAction
         private void QueueWorldTransferAction(Action action)
         {
@@ -3717,6 +3772,23 @@ namespace ScMultiplayer
             long budgetTicks = Math.Max(1L, Stopwatch.Frequency *
                 EndOfFrameActionBudgetMilliseconds / 1000L);
             int count = 0;
+            // Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update
+            // Drain one-frame player edges before bulk circuit recovery. The queue contains only
+            // bounded, sequence-deduplicated actions and therefore cannot starve normal work.
+            while (count < MaximumPriorityInputActionsPerFrame &&
+                Stopwatch.GetTimestamp() - start < budgetTicks &&
+                m_priorityInputActions.TryDequeue(out QueuedFrameAction priorityAction))
+            {
+                try
+                {
+                    priorityAction.Action();
+                }
+                catch (Exception ex)
+                {
+                    Log.Error($"[ScMP] Priority input action failed: {ex.Message}");
+                }
+                count++;
+            }
             // Source: ScMultiplayer.cs:Client_GameStep
             // Drain join/download control first. LAN peers can otherwise produce gameplay actions
             // faster than the normal FIFO reaches a manifest request or response.
@@ -4032,6 +4104,8 @@ namespace ScMultiplayer
                 localPlayer.ComponentInput.IsControlledByTouch,
                 localPlayer.ComponentBody.TargetCrouchFactor > 0f,
                 localPlayer.ComponentLocomotion.IsCreativeFlyEnabled,
+                localPlayer.ComponentBody.StandingOnValue.HasValue ||
+                    localPlayer.ComponentBody.StandingOnBody != null,
                 localPlayer.ComponentRider?.Mount != null,
                 GetClientMountEntityId(localPlayer), activeSlotIndex,
                 m_lastAuthoritativeLocalInventoryTick, slotValues, slotCounts);
@@ -4612,6 +4686,7 @@ namespace ScMultiplayer
                 ComponentCreature target = chase?.Target;
                 ComponentHerdBehavior herd = entity.FindComponent<ComponentHerdBehavior>();
                 ComponentCreatureModel model = creature.ComponentCreatureModel;
+                ComponentLocomotion locomotion = creature.ComponentLocomotion;
                 ComponentShapeshifter shapeshifter = entity.FindComponent<ComponentShapeshifter>();
                 // Source: Survivalcraft/Game/ComponentShapeshifter.cs:ComponentShapeshifter.ShapeshiftTo
                 string shapeshiftTarget = shapeshifter == null
@@ -4652,6 +4727,11 @@ namespace ScMultiplayer
                     }
                 }
                 bool highPriorityInteraction = wasAttacked || now < metadata.HighPriorityUntil;
+                // Source: Survivalcraft/Game/ComponentBirdModel.cs:ComponentBirdModel.Animate
+                // LastFlyOrder is also the native wing-flight presentation edge. Give visible flying
+                // birds a wider high-rate range without increasing updates for grounded animals.
+                bool isFlyingBird = model is ComponentBirdModel &&
+                    locomotion?.LastFlyOrder.HasValue == true;
 
                 byte tier = 0;
                 float nearPlayerThreshold = metadata.SyncTier >= 2 ? 12f : 10f;
@@ -4660,6 +4740,10 @@ namespace ScMultiplayer
                 if (targetsPlayer) tier = 1;
                 if (isNearPlayer)
                     tier = Math.Max(tier, (byte)2);
+                if (isFlyingBird && nearestPlayerDistanceSquared <= 64f * 64f)
+                    tier = Math.Max(tier, (byte)2);
+                if (isFlyingBird && nearestPlayerDistanceSquared <= 24f * 24f)
+                    tier = Math.Max(tier, (byte)3);
                 if (highPriorityInteraction) tier = 3;
                 if (isAttacking && targetsPlayer) tier = 4;
 
@@ -5079,13 +5163,6 @@ namespace ScMultiplayer
                     continue;
                 }
 
-                // Source: ScMultiplayer.cs:ScMultiplayer.SendTerrainCatchUp
-                // While normal game traffic is gated, successfully decoded host messages are
-                // catch-up progress and keep the 30-second join countdown alive.
-                if (!IsHost && item.ClientID == 0 && m_pendingWorldReadyTransferId > 0 &&
-                    message is not GamePakWorldReadyMessage)
-                    RecordClientJoinProgress();
-
                 // 跳过自己发出的消息 (回环消息)
                 if (message.GetSenderPort() == client.Address.Port)
                 {
@@ -5132,8 +5209,12 @@ namespace ScMultiplayer
                         QueueEndOfFrameAction(() => HandlePlayerAimMessage(playerAim, item.ClientID));
                         break;
                     case PlayerActionMessage playerAction:
-                        QueueEndOfFrameAction(() =>
-                            HandlePlayerActionMessage(playerAction, item.ClientID));
+                        if (playerAction.Action == PlayerActionType.JumpRequest)
+                            QueuePriorityInputAction(() =>
+                                HandlePlayerActionMessage(playerAction, item.ClientID));
+                        else
+                            QueueEndOfFrameAction(() =>
+                                HandlePlayerActionMessage(playerAction, item.ClientID));
                         break;
                     case TerrainDigRequestMessage terrainDigRequest:
                         QueueEndOfFrameAction(() =>
@@ -5802,6 +5883,11 @@ namespace ScMultiplayer
             if (!IsHost || payload == null || payload.Length == 0 ||
                 m_joinCatchUpJournals.Count == 0)
                 return;
+            // Source: NetworkMessageSender.SendScheduledMessage
+            // Latest-state position/body samples are immediately refreshed after normal traffic
+            // is enabled. Recording every sample here creates a large obsolete replay burst and
+            // delays the reliable join completion marker without adding authoritative history.
+            if (latest) return;
             foreach (JoinCatchUpJournal journal in m_joinCatchUpJournals.Values)
             {
                 if (journal.TotalBytes + payload.Length > MaximumJoinCatchUpBytes)
@@ -6607,6 +6693,11 @@ namespace ScMultiplayer
                     if (hadTransform && snapshotInterval > 0.001f)
                     {
                         Vector3 acceleration = (item.Velocity - previousVelocity) / snapshotInterval;
+                        // Source: Survivalcraft/Game/ComponentBody.cs:ComponentBody.Update
+                        // Vertical velocity contains discrete jump and collision impulses. Treating
+                        // those keyframe deltas as continuous acceleration doubles takeoff impulses
+                        // and reverses landing impulses into false upward movement.
+                        acceleration.Y = 0f;
                         float accelerationLength = acceleration.Length();
                         const float maxAnimalAcceleration = 24f;
                         if (accelerationLength > maxAnimalAcceleration)
@@ -6865,6 +6956,12 @@ namespace ScMultiplayer
                 UpdateRemoteAnimalShapeshiftEffect(entity);
                 if (body == null || !state.HasTransform) continue;
 
+                // Source: Survivalcraft/Game/ComponentBody.cs:ComponentBody.Update
+                // Retain only the local collision floor. It may prevent a presentation replica from
+                // entering terrain, but never becomes the next network interpolation baseline.
+                bool locallyStanding = body.StandingOnValue.HasValue || body.StandingOnBody != null;
+                float localCollisionFloor = body.Position.Y;
+
                 float arrivalAge = (float)MathUtils.Clamp(
                     now - state.LastUpdateTime, 0.0, RemoteAnimalPredictionLimit);
                 float stepAge = MathUtils.Clamp(
@@ -6904,11 +7001,17 @@ namespace ScMultiplayer
                     Vector3 remainingError = predictedPosition - state.PresentationPosition;
                     const float correctionHorizon = 0.4f;
                     Vector3 correctionVelocity = remainingError / correctionHorizon;
+                    // Source: Survivalcraft/Game/ComponentBody.cs:ComponentBody.Update
+                    // Horizontal motion uses velocity prediction. Vertical motion follows the
+                    // authoritative trajectory directly so correction velocity cannot add a second
+                    // jump impulse or overshoot a landing.
+                    correctionVelocity.Y = 0f;
                     const float maxCorrectionSpeed = 3f;
                     float correctionSpeed = correctionVelocity.Length();
                     if (correctionSpeed > maxCorrectionSpeed)
                         correctionVelocity *= maxCorrectionSpeed / correctionSpeed;
                     Vector3 desiredVelocity = predictedVelocity + correctionVelocity;
+                    desiredVelocity.Y = state.Velocity.Y;
                     if (!state.HasSmoothedVelocity)
                     {
                         state.SmoothedVelocity = state.Velocity;
@@ -6918,12 +7021,23 @@ namespace ScMultiplayer
                         -8f * step);
                     state.SmoothedVelocity = Vector3.Lerp(
                         state.SmoothedVelocity, desiredVelocity, velocityBlend);
-                    state.PresentationPosition += state.SmoothedVelocity * step;
+                    state.PresentationPosition.X += state.SmoothedVelocity.X * step;
+                    state.PresentationPosition.Z += state.SmoothedVelocity.Z * step;
+                    float verticalBlend = 1f - (float)Math.Exp(-12f * step);
+                    state.PresentationPosition.Y = MathUtils.Lerp(
+                        state.PresentationPosition.Y, predictedPosition.Y, verticalBlend);
 
                     float rotationBlend = 1f - (float)Math.Exp(
                         -10f * step);
                     body.Rotation = Quaternion.Slerp(
                         body.Rotation, state.Rotation, rotationBlend);
+                }
+
+                if (locallyStanding && state.PresentationPosition.Y < localCollisionFloor)
+                {
+                    state.PresentationPosition.Y = localCollisionFloor;
+                    if (state.SmoothedVelocity.Y < 0f)
+                        state.SmoothedVelocity.Y = 0f;
                 }
 
                 // Source: Survivalcraft/Game/ComponentBody.cs:ComponentBody.Update
@@ -9876,6 +9990,10 @@ namespace ScMultiplayer
         {
             Project project = GameManager.Project;
             if (project == null || IsHost) return;
+            // Source: Mod/ScMultiplayer/Plug/ScMultiplayer.cs:ScMultiplayer.TriggerNetworkTick
+            // A delayed latest-state datagram must not rewind fog intensity or restart its ramp.
+            if (msg.ServerTick < m_lastRemoteWorldInfoTick) return;
+            m_lastRemoteWorldInfoTick = msg.ServerTick;
             SubsystemGameInfo gameInfo = project.FindSubsystem<SubsystemGameInfo>(true);
             var timeOfDay = project.FindSubsystem<SubsystemTimeOfDay>(true);
             // Source: Survivalcraft/Game/SubsystemTimeOfDay.cs:SubsystemTimeOfDay.TimeOfDay
@@ -9975,8 +10093,6 @@ namespace ScMultiplayer
                 DrainWorldControlResults();
                 return;
             }
-            if (actions.HasFlag(WorldControlAction.Lightning))
-                m_localLightningPredictionUntil = Time.RealTime + 3.0;
         }
 
         private void HandleWorldControlRequest(WorldControlRequestMessage message, int sourceClientId)
@@ -10273,16 +10389,17 @@ namespace ScMultiplayer
                 else weather.ManualPrecipitationEnd();
             }
             if (weather.IsFogStarted != msg.IsFogStarted)
-            {
-                if (msg.IsFogStarted) weather.ManualFogStart();
-                else weather.ManualFogEnd();
-            }
+                ConfigureRemoteFogSchedule(weather, msg.IsFogStarted);
             ModManager.ModParentField.ModifyParentField(
                 weather, "<PrecipitationIntensity>k__BackingField", msg.PrecipitationIntensity, typeof(SubsystemWeather));
-            ModManager.ModParentField.ModifyParentField(
-                weather, "<FogProgress>k__BackingField", msg.FogProgress, typeof(SubsystemWeather));
-            ModManager.ModParentField.ModifyParentField(
-                weather, "<FogIntensity>k__BackingField", msg.FogIntensity, typeof(SubsystemWeather));
+            if (!m_remoteFogPresentationInitialized)
+            {
+                ModManager.ModParentField.ModifyParentField(
+                    weather, "<FogProgress>k__BackingField", msg.FogProgress, typeof(SubsystemWeather));
+                ModManager.ModParentField.ModifyParentField(
+                    weather, "<FogIntensity>k__BackingField", msg.FogIntensity, typeof(SubsystemWeather));
+                m_remoteFogPresentationInitialized = true;
+            }
             ModManager.ModParentField.ModifyParentField(
                 weather, "<FogSeed>k__BackingField", msg.FogSeed, typeof(SubsystemWeather));
             SuppressClientRandomLightning(project);
@@ -10290,16 +10407,56 @@ namespace ScMultiplayer
             SubsystemSky sky = project.FindSubsystem<SubsystemSky>(true);
             if (msg.HasLightningStrike && !m_remoteLightningActive)
             {
-                bool playThunder = Time.RealTime >= m_localLightningPredictionUntil;
                 m_remoteLightningActive = true;
-                m_localLightningPredictionUntil = 0.0;
-                ApplyRemoteLightningVisual(sky, msg.LightningStrikePosition, playThunder);
+                ApplyRemoteLightningVisual(sky, msg.LightningStrikePosition);
             }
             else if (!msg.HasLightningStrike)
             {
                 ClearRemoteLightningVisual(sky);
                 m_remoteLightningActive = false;
             }
+        }
+
+        // Source: Survivalcraft/Game/SubsystemWeather.cs:SubsystemWeather.UpdateFog
+        // Disable the client's independent random fog schedule while retaining the original
+        // SubsystemWeather renderer and all weather effects.
+        private static void ConfigureRemoteFogSchedule(SubsystemWeather weather, bool isStarted)
+        {
+            SubsystemGameInfo gameInfo = GameManager.Project?.FindSubsystem<SubsystemGameInfo>(false);
+            if (weather == null || gameInfo == null) return;
+            double startTime = isStarted
+                ? gameInfo.TotalElapsedGameTime
+                : double.MaxValue;
+            ModManager.ModParentField.ModifyParentField(
+                weather, "m_fogStartTime", startTime, typeof(SubsystemWeather));
+            ModManager.ModParentField.ModifyParentField(
+                weather, "m_fogEndTime", double.MaxValue, typeof(SubsystemWeather));
+            ModManager.ModParentField.ModifyParentField(
+                weather, "m_fogRampTime", float.MaxValue, typeof(SubsystemWeather));
+        }
+
+        // Source: Survivalcraft/Game/SubsystemWeather.cs:SubsystemWeather.UpdateFog
+        // World info arrives at 2Hz. Interpolate its authority every rendered frame instead of
+        // alternating between the local weather ramp and a hard network correction.
+        private void UpdateRemoteFogPresentation(float dt)
+        {
+            GameWorldInfoMessage1 msg = m_remoteWeatherState;
+            Project project = GameManager.Project;
+            if (msg == null || project == null || IsHost) return;
+            SubsystemWeather weather = project.FindSubsystem<SubsystemWeather>(false);
+            if (weather == null) return;
+            if (weather.IsFogStarted != msg.IsFogStarted)
+                ConfigureRemoteFogSchedule(weather, msg.IsFogStarted);
+            float step = MathUtils.Clamp(dt, 0f, 0.05f);
+            float blend = 1f - (float)Math.Exp(-8f * step);
+            float fogProgress = MathUtils.Lerp(weather.FogProgress, msg.FogProgress, blend);
+            float fogIntensity = MathUtils.Lerp(weather.FogIntensity, msg.FogIntensity, blend);
+            ModManager.ModParentField.ModifyParentField(
+                weather, "<FogProgress>k__BackingField", fogProgress, typeof(SubsystemWeather));
+            ModManager.ModParentField.ModifyParentField(
+                weather, "<FogIntensity>k__BackingField", fogIntensity, typeof(SubsystemWeather));
+            ModManager.ModParentField.ModifyParentField(
+                weather, "<FogSeed>k__BackingField", msg.FogSeed, typeof(SubsystemWeather));
         }
 
         // Source: Survivalcraft/Game/SubsystemWeather.cs:SubsystemWeather.UpdateLightning
@@ -10317,8 +10474,7 @@ namespace ScMultiplayer
         // Source: Survivalcraft/Game/SubsystemSky.cs:SubsystemSky.MakeLightningStrike
         // The original method also damages creatures, starts fires and creates a random explosion.
         // A client replica must only render the host event; terrain effects arrive separately.
-        private void ApplyRemoteLightningVisual(SubsystemSky sky, Vector3 position,
-            bool playThunder)
+        private void ApplyRemoteLightningVisual(SubsystemSky sky, Vector3 position)
         {
             if (sky == null) return;
             SubsystemTime subsystemTime = GameManager.Project?.FindSubsystem<SubsystemTime>(false);
@@ -10330,7 +10486,10 @@ namespace ScMultiplayer
                 typeof(SubsystemSky));
             ModManager.ModParentField.ModifyParentField(
                 sky, "m_lightningStrikeBrightness", 1f, typeof(SubsystemSky));
-            if (playThunder) PlayRemoteThunder(position);
+            // Source: ScMultiplayer.SendWorldControlRequestNow
+            // World-control clients do not predict the native strike locally. Every client,
+            // including the requester, therefore plays the authoritative rising-edge thunder.
+            PlayRemoteThunder(position);
         }
 
         // Source: Survivalcraft/Game/SubsystemSky.cs:SubsystemSky.MakeLightningStrike
@@ -10809,6 +10968,11 @@ namespace ScMultiplayer
                 msg = FilterStaleTerrainRepairs(msg);
                 if (msg == null || (msg.ModifiedCells.Count == 0 && msg.Sequence <= 0)) return;
                 ConfirmTerrainPredictions(msg);
+                // Source: ScMultiplayer.SendTerrainCatchUp
+                // Only an accepted authoritative catch-up batch advances the join countdown.
+                // Ordinary position, keepalive and steady-state packets are not join progress.
+                if (msg.IsCatchUp && m_pendingWorldReadyTransferId > 0)
+                    RecordClientJoinProgress();
             }
             SuSubsystemTerrain.EnqueueNetworkBatch(msg);
         }
@@ -10926,10 +11090,6 @@ namespace ScMultiplayer
             {
                 ComponentPlayer player = playerData.ComponentPlayer;
                 ComponentMiner miner = player.ComponentMiner;
-                if (IsFinite(message.BodyPosition) &&
-                    Vector3.DistanceSquared(player.ComponentBody.Position,
-                        message.BodyPosition) <= 64f)
-                    player.ComponentBody.Position = message.BodyPosition;
                 SubsystemTerrain terrain = project.FindSubsystem<SubsystemTerrain>(true);
                 int currentCellValue = terrain.Terrain.GetCellValue(
                     message.Cell.X, message.Cell.Y, message.Cell.Z);
@@ -10947,6 +11107,9 @@ namespace ScMultiplayer
                         project.FindSubsystem<SubsystemGameInfo>(true);
                     bool creative = gameInfo.WorldSettings.GameMode == GameMode.Creative;
                     float reach = creative ? SettingsManager.CreativeReach : 5f;
+                    // Source: ComponentMiner.Dig
+                    // The sampled client position is only a reach check. Never rewind the host
+                    // replica body to the historical position captured with this request.
                     Vector3 authoritativePlayerPosition = player.ComponentBody.Position;
                     if (m_networkPlayerInputs.TryGetValue(sourceClientId,
                         out NetworkPlayerInputState inputState) &&
@@ -12108,6 +12271,9 @@ namespace ScMultiplayer
             while (m_worldTransferActions.TryDequeue(out _))
             {
             }
+            while (m_priorityInputActions.TryDequeue(out _))
+            {
+            }
             m_networkPlayerData.Clear();
             m_reservedNetworkPlayerIndices.Clear();
             lock (m_creatingNetworkPlayers) m_creatingNetworkPlayers.Clear();
@@ -12215,6 +12381,7 @@ namespace ScMultiplayer
             m_nextLocalHitRequestTime = 0.0;
             m_localInteractSequence = 0;
             m_localDropSequence = 0;
+            m_localJumpSequence = 0;
             m_observedLocalPlayerEntity = null;
             m_observedLocalPlayerWasDead = false;
             m_localRespawnSequence = 0;
@@ -12269,9 +12436,10 @@ namespace ScMultiplayer
             m_pendingLocalKnockbackUntil = 0.0;
             m_clientWorldObjectsProject = null;
             m_remoteWeatherState = null;
+            m_lastRemoteWorldInfoTick = -1;
+            m_remoteFogPresentationInitialized = false;
             m_remoteLightningActive = false;
             m_hostLightningActive = false;
-            m_localLightningPredictionUntil = 0.0;
             m_pendingWorldControlRequests.Clear();
             m_queuedWorldControlRequests.Clear();
             m_bufferedWorldControlResults.Clear();
@@ -12623,9 +12791,80 @@ namespace ScMultiplayer
             }
         }
 
+        // Source: Mod/Comms/Comms/PeerData.cs:PeerData.Ping
+        // Ping is a round-trip measurement. A client transform packet reaches the host after
+        // approximately half that time, so position prediction must use RTT / 2 rather than a
+        // difference between independently advancing simulation steps.
+        private void SampleRemotePositionRtt(
+            int clientId, NetworkPlayerInputState state)
+        {
+            if (clientId <= 0 || state == null || server?.Peer == null || client == null)
+                return;
+            // Source: Mod/Comms/Comms/Peer.cs:Peer.KeepAliveResponseMessage.Handle
+            // PeerData.Ping changes much more slowly than input snapshots. Sampling it at 4 Hz
+            // prevents one unchanged probe result from being counted as dozens of stable samples.
+            double now = Time.RealTime;
+            if (now < state.NextPositionRttSampleTime) return;
+            state.NextPositionRttSampleTime = now + 0.25;
+            float ping = 0f;
+            try
+            {
+                lock (server.Peer.Lock)
+                {
+                    ServerGame game = server.Games.FirstOrDefault(item =>
+                        item.GameID == client.GameID);
+                    ServerClient remoteClient = game?.Clients.FirstOrDefault(item =>
+                        item.ClientID == clientId);
+                    PeerData peer = remoteClient == null
+                        ? null
+                        : server.Peer.FindPeer(remoteClient.Address);
+                    ping = peer?.Ping ?? 0f;
+                }
+            }
+            catch
+            {
+                return;
+            }
+            if (ping <= 0f || float.IsNaN(ping) || float.IsInfinity(ping))
+                return;
+
+            ping = MathUtils.Clamp(ping, 0f, 2f * RemoteDelaySampleLimit);
+            state.LatestPositionRtt = ping;
+            if (state.SmoothedPositionRtt <= 0f)
+            {
+                state.SmoothedPositionRtt = ping;
+                state.PositionRttDeviation = 0f;
+            }
+            else
+            {
+                float deviation = MathUtils.Abs(ping - state.SmoothedPositionRtt);
+                state.PositionRttDeviation = MathUtils.Lerp(
+                    state.PositionRttDeviation, deviation, 0.1f);
+                state.SmoothedPositionRtt = MathUtils.Lerp(
+                    state.SmoothedPositionRtt, ping, 0.1f);
+            }
+        }
+
+        // Source: Mod/Comms/Comms/PeerData.cs:PeerData.Ping
+        private static float GetRemotePositionPredictionTime(NetworkPlayerInputState state)
+        {
+            if (state == null || state.SmoothedPositionRtt <= 0f) return 0f;
+            // Source: Mod/ScMultiplayer/Func/Circuit/CircuitSynchronizer.cs:
+            // CircuitSynchronizer.GetCircuitLeadSteps
+            // Do not react to a single high RTT sample by moving the avatar farther ahead. A low
+            // sample can reduce lead immediately; a sustained increase is admitted by the EWMA.
+            float stableThreshold = MathUtils.Max(
+                0.005f, 0.25f * state.SmoothedPositionRtt);
+            bool stable = state.PositionRttDeviation <= stableThreshold;
+            float effectiveRtt = stable
+                ? state.SmoothedPositionRtt
+                : MathUtils.Min(state.LatestPositionRtt, state.SmoothedPositionRtt);
+            return 0.5f * effectiveRtt;
+        }
+
         // Source: Survivalcraft/Game/ComponentLocomotion.cs:ComponentLocomotion.NormalMovement
-        // Remote host avatars keep original locomotion, then receive a bounded velocity addition
-        // that makes them converge on the client's continuous A-B-C trajectory without teleporting.
+        // Original host locomotion remains authoritative. Client position samples can only add a
+        // bounded correction that does not point backwards relative to the client's current travel.
         private void ApplyHostRemoteFollowVelocities()
         {
             foreach (KeyValuePair<int, PlayerData> remote in m_networkPlayerData.ToArray())
@@ -12640,48 +12879,133 @@ namespace ScMultiplayer
                     m_hostRemoteKnockbackUntil.Remove(remote.Key);
                 }
                 ComponentPlayer player = remote.Value.ComponentPlayer;
+                if (player.ComponentRider?.Mount != null)
+                    continue;
                 ComponentBody body = player.ComponentBody;
                 ComponentLocomotion locomotion = player.ComponentLocomotion;
-                float delay = MathUtils.Clamp(
-                    (client.Step - state.ClientTick) * ServerTickDuration, 0f,
-                    RemoteDelaySampleLimit);
-                Vector3 targetPosition = state.BodyPosition + state.BodyVelocity * delay;
+                float delay = GetRemotePositionPredictionTime(state);
+                // Source: Survivalcraft/Game/ComponentBody.cs:ComponentBody.StanceBoxSize
+                // Host locomotion already advances the remote replica from its input. Limit the
+                // additional network look-ahead to half a body width so latency compensation does
+                // not place it several blocks ahead and then visibly pull it back.
+                Vector3 predictionOffset = state.BodyVelocity * delay;
+                float maximumPredictionDistance = 0.5f * MathUtils.Max(
+                    body.StanceBoxSize.X, body.StanceBoxSize.Z);
+                float predictionDistance = predictionOffset.Length();
+                if (predictionDistance > maximumPredictionDistance &&
+                    predictionDistance > 0.0001f)
+                {
+                    predictionOffset *= maximumPredictionDistance / predictionDistance;
+                }
+                Vector3 targetPosition = state.BodyPosition + predictionOffset;
                 Vector3 error = targetPosition - body.Position;
-                if (!locomotion.IsCreativeFlyEnabled && body.StandingOnValue.HasValue &&
-                    Math.Abs(error.Y) < 0.75f)
+                Vector3 travelVelocity = state.BodyVelocity;
+                // Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update
+                // Use the current movement order as direction authority. BodyVelocity can still
+                // point along the previous direction for a frame after a rapid reversal.
+                Vector3 localIntent = body.CrouchFactor > 0f
+                    ? 0.66f * state.Input.CrouchMove
+                    : state.Input.Move;
+                Vector3 right = body.Matrix.Right;
+                Vector3 forward = body.Matrix.Forward;
+                Vector3 travelIntent;
+                if (!locomotion.IsCreativeFlyEnabled)
+                {
+                    // Source: ComponentLocomotion.NormalMovement
+                    // Ground locomotion and jumping remain host-simulated. A delayed client height
+                    // must not overwrite gravity, collision response or the native jump arc.
                     error.Y = 0f;
+                    travelVelocity.Y = 0f;
+                    right.Y = 0f;
+                    forward.Y = 0f;
+                    if (right.LengthSquared() > 0.0001f) right = Vector3.Normalize(right);
+                    if (forward.LengthSquared() > 0.0001f) forward = Vector3.Normalize(forward);
+                    travelIntent = right * localIntent.X + forward * localIntent.Z;
+                }
+                else
+                    travelIntent = right * localIntent.X + Vector3.UnitY * localIntent.Y +
+                        forward * localIntent.Z;
+
+                float intentLength = travelIntent.Length();
+                // Source: Survivalcraft/Game/ComponentBody.cs:ComponentBody.StandingOnValue
+                // The client owns its sampled ground contact. Host-side replicas can otherwise
+                // drift a few centimeters beyond a ledge and fall forever because normal ground
+                // tracking intentionally ignores vertical error.
+                bool clientStanding = state.IsGrounded &&
+                    !locomotion.IsCreativeFlyEnabled &&
+                    MathUtils.Abs(state.BodyVelocity.Y) < 0.5f &&
+                    body.Velocity.Y < 0.1f;
+                if (clientStanding)
+                {
+                    Vector3 groundedError = state.BodyPosition - body.Position;
+                    if (MathUtils.Abs(groundedError.Y) > 0.025f)
+                    {
+                        body.Position = new Vector3(
+                            body.Position.X, state.BodyPosition.Y, body.Position.Z);
+                    }
+                    body.Velocity = new Vector3(
+                        body.Velocity.X, state.BodyVelocity.Y, body.Velocity.Z);
+                    if (intentLength < 0.05f)
+                    {
+                        // Source: Mod/ScMultiplayer/Message/GamePlayerInputMessage.cs:BodyPosition
+                        // No movement order means the old direction-based correction has no axis
+                        // to follow. Re-anchor the stationary replica to the fresh client sample;
+                        // cap a large recovery to one block per frame instead of teleporting.
+                        groundedError = state.BodyPosition - body.Position;
+                        float correctionLength = groundedError.Length();
+                        Vector3 correction = correctionLength > 1f
+                            ? groundedError / correctionLength
+                            : groundedError;
+                        body.Position += correction;
+                        body.Velocity = state.BodyVelocity;
+                        continue;
+                    }
+                }
+                if (intentLength < 0.05f)
+                    continue;
+                Vector3 travelDirection = travelIntent / intentLength;
+                float forwardError = Vector3.Dot(error, travelDirection);
+                if (forwardError < 0f)
+                {
+                    // The host replica is already ahead of the delayed client sample. Remove only
+                    // that reverse component instead of pulling the visible avatar backwards.
+                    error -= travelDirection * forwardError;
+                }
+                float staleVelocity = Vector3.Dot(travelVelocity, travelDirection);
+                if (staleVelocity < 0f)
+                    travelVelocity -= travelDirection * staleVelocity;
+
                 float trackingRadius = locomotion.IsCreativeFlyEnabled ? 32f : 16f;
                 float errorLength = error.Length();
                 if (errorLength > trackingRadius)
+                {
                     error *= trackingRadius / errorLength;
+                    errorLength = trackingRadius;
+                }
 
                 bool isInteracting = state.Input.Dig.HasValue || state.Input.Hit.HasValue ||
                     state.Input.Interact.HasValue || state.Input.Aim.HasValue;
                 float deadZone = locomotion.IsCreativeFlyEnabled ? 0.35f : 0.15f;
-                Vector3 desiredVelocity;
-                float blend;
-                if (error.LengthSquared() <= deadZone * deadZone)
-                {
-                    // Once close enough, stop chasing position and match velocity. This brakes
-                    // the extra catch-up speed before it crosses the target and reverses direction.
-                    desiredVelocity = state.BodyVelocity;
-                    blend = 0.45f;
-                }
-                else
-                {
-                    float delayFactor = MathUtils.Saturate(delay / 0.2f);
-                    float horizon = MathUtils.Lerp(0.45f, 0.22f, delayFactor);
-                    Vector3 catchUpVelocity = error / horizon;
-                    float maxExtraSpeed = locomotion.IsCreativeFlyEnabled
-                        ? MathUtils.Lerp(4f, 10f, delayFactor)
-                        : MathUtils.Lerp(2f, 6f, delayFactor);
-                    float extraSpeed = catchUpVelocity.Length();
-                    if (extraSpeed > maxExtraSpeed)
-                        catchUpVelocity *= maxExtraSpeed / extraSpeed;
-                    desiredVelocity = state.BodyVelocity + catchUpVelocity;
-                    blend = MathUtils.Lerp(0.14f, 0.28f, delayFactor);
-                    if (isInteracting) blend = MathUtils.Max(blend, 0.35f);
-                }
+                if (errorLength <= deadZone)
+                    continue;
+
+                float delayFactor = MathUtils.Saturate(delay / 0.2f);
+                float horizon = MathUtils.Lerp(0.45f, 0.22f, delayFactor);
+                Vector3 catchUpVelocity = error / horizon;
+                float maxExtraSpeed = locomotion.IsCreativeFlyEnabled
+                    ? MathUtils.Lerp(4f, 10f, delayFactor)
+                    : MathUtils.Lerp(2f, 6f, delayFactor);
+                float extraSpeed = catchUpVelocity.Length();
+                if (extraSpeed > maxExtraSpeed)
+                    catchUpVelocity *= maxExtraSpeed / extraSpeed;
+                Vector3 desiredVelocity = travelVelocity + catchUpVelocity;
+                if (!locomotion.IsCreativeFlyEnabled)
+                    desiredVelocity.Y = body.Velocity.Y;
+                float blend = MathUtils.Lerp(0.14f, 0.28f, delayFactor);
+                if (isInteracting) blend = MathUtils.Max(blend, 0.35f);
+                // Source: ComponentLocomotion.NormalMovement
+                // Blend only while the host is behind the current direction of travel. Preserve
+                // the host vertical velocity so gravity, jumping and collision response stay native.
                 body.Velocity = Vector3.Lerp(body.Velocity, desiredVelocity, blend);
             }
         }
@@ -12708,11 +13032,13 @@ namespace ScMultiplayer
             UpdateLocalHitRequests(playerInput.Hit);
             UpdateLocalInteractRequests(player, playerInput.Interact);
             UpdateLocalDropRequests(player, playerInput.Drop);
+            UpdateLocalJumpRequests(playerInput.Jump);
             // Aim uses its own edge-preserving lifecycle. Dig completion is authoritative through
             // TerrainDigRequestMessage; PokingPhase is synchronized separately for presentation.
             // Interact and Drop use reliable edges and must not execute again through snapshots.
             playerInput.Aim = null;
             playerInput.Drop = false;
+            playerInput.Jump = false;
             m_localPlayerInput = SanitizeNetworkPlayerInput(playerInput);
             m_localPlayerInput.Dig = null;
             m_localPlayerInput.Hit = null;
@@ -12993,6 +13319,22 @@ namespace ScMultiplayer
             m_pendingLocalDropPredictionUntil = Time.RealTime + 0.5;
         }
 
+        // Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update
+        // PlayerInput.Jump is sampled for one frame. Send its edge reliably and remove it from the
+        // replaceable latest-state snapshot so a later non-jump frame cannot erase the request.
+        private void UpdateLocalJumpRequests(bool jump)
+        {
+            if (!jump || client?.IsConnected != true) return;
+            m_localJumpSequence = m_localJumpSequence == int.MaxValue
+                ? 1
+                : m_localJumpSequence + 1;
+            NetworkMessageSender.SendPlayerJumpRequest(new PlayerActionMessage(
+                PlayerActionType.JumpRequest, client.ClientID, m_localJumpSequence, default)
+            {
+                ServerTick = client.Step
+            });
+        }
+
         public bool TryGetNetworkPlayerInput(ComponentPlayer player, out PlayerInput playerInput)
         {
             playerInput = default;
@@ -13004,6 +13346,25 @@ namespace ScMultiplayer
                 Time.RealTime - state.LastReceivedTime > RemoteInputHoldDuration)
                 return true;
 
+            // Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update
+            // Consume at most one fresh edge in the next native player update. Expired edges are
+            // discarded instead of being retained until the player lands and causing an auto-jump.
+            while (state.JumpEvents.Count > 0 &&
+                Time.RealTime - state.JumpEvents.Peek().ReceivedTime >
+                    PlayerJumpRequestReceiptLifetime)
+                state.JumpEvents.Dequeue();
+            if (state.JumpEvents.Count > 0)
+            {
+                state.JumpEvents.Dequeue();
+                playerInput = state.ConsumedSequence != state.Sequence
+                    ? state.Input
+                    : state.HeldInput;
+                state.ConsumedSequence = state.Sequence;
+                playerInput.Jump = true;
+                state.HeldInput = CreateHeldNetworkInput(playerInput);
+                return true;
+            }
+
             if (state.DropEvents.Count > 0)
             {
                 PlayerActionMessage drop = state.DropEvents.Dequeue();
@@ -13012,9 +13373,8 @@ namespace ScMultiplayer
                     : state.HeldInput;
                 state.ConsumedSequence = state.Sequence;
                 ApplyInteractionInventory(player.ComponentMiner?.Inventory, drop);
-                if (IsFinite(drop.Position) &&
-                    Vector3.DistanceSquared(player.ComponentBody.Position, drop.Position) <= 64f)
-                    player.ComponentBody.Position = drop.Position;
+                // Source: ScMultiplayer.HandleGamePlayerDropRequest
+                // Drop.Position is the pickable spawn point, not a player-body correction.
                 playerInput.Drop = true;
                 state.HeldInput = CreateHeldNetworkInput(playerInput);
                 return true;
@@ -13231,11 +13591,8 @@ namespace ScMultiplayer
                 return;
 
             // Source: SubsystemThrowableBlockBehavior.cs:SubsystemThrowableBlockBehavior.OnAim
-            // The projectile origin is derived from the authoritative replica body, so align it
-            // to the pose captured with this aim edge before the original throw runs.
-            if (IsFinite(message.BodyPosition) &&
-                Vector3.DistanceSquared(player.ComponentBody.Position, message.BodyPosition) <= 64f)
-                player.ComponentBody.Position = message.BodyPosition;
+            // Projectile creation uses the current collision-resolved host replica. The historical
+            // client pose must not move the player body backwards when an aim edge arrives late.
             player.ComponentBody.Rotation = message.BodyRotation;
 
             if (message.Action == PlayerAimAction.Start ||
@@ -13437,7 +13794,8 @@ namespace ScMultiplayer
                 if (sourceClientId <= 0 ||
                     (message.Action != PlayerActionType.HitRequest &&
                         message.Action != PlayerActionType.InteractRequest &&
-                        message.Action != PlayerActionType.DropRequest) ||
+                        message.Action != PlayerActionType.DropRequest &&
+                        message.Action != PlayerActionType.JumpRequest) ||
                     !m_networkPlayerData.ContainsKey(sourceClientId))
                     return;
                 if (!m_networkPlayerInputs.TryGetValue(sourceClientId,
@@ -13478,6 +13836,30 @@ namespace ScMultiplayer
                         return;
                     state.LastDropSequence = message.Sequence;
                     ExecuteHostDropRequest(sourceClientId, message);
+                }
+                else if (message.Action == PlayerActionType.JumpRequest)
+                {
+                    // Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update
+                    if (message.PlayerIndex != sourceClientId ||
+                        message.Sequence <= state.LastJumpSequence)
+                        return;
+                    state.LastJumpSequence = message.Sequence;
+                    // Source: Mod/ScMultiplayer/Message/GamePlayerInputMessage.cs:
+                    // GamePlayerInputMessage.ClientTick
+                    // Compare clocks from the same client. Host circuit or network-step stalls must
+                    // not age a newly received jump, while a reliable fallback older than the
+                    // client's latest input is discarded instead of firing after landing.
+                    long inputLagSteps = (long)state.ClientTick - message.ServerTick;
+                    if (state.ClientTick > 0 &&
+                        inputLagSteps > PlayerJumpRequestMaxInputLagSteps)
+                        return;
+                    while (state.JumpEvents.Count >= MaximumPendingJumpRequests)
+                        state.JumpEvents.Dequeue();
+                    state.JumpEvents.Enqueue(new PendingNetworkJump
+                    {
+                        Message = message,
+                        ReceivedTime = Time.RealTime
+                    });
                 }
                 else if (message.Action == PlayerActionType.InteractRequest)
                 {
@@ -13790,11 +14172,16 @@ namespace ScMultiplayer
             state.Input = SanitizeNetworkPlayerInput(msg.PlayerInput);
             state.BodyPosition = msg.BodyPosition;
             state.BodyVelocity = msg.BodyVelocity;
+            state.IsGrounded = msg.IsGrounded;
             state.ClientTick = msg.ClientTick;
             state.BodyRotation = msg.BodyRotation;
             state.LookAngles = msg.LookAngles;
             state.Sequence = msg.Sequence;
             state.LastReceivedTime = Time.RealTime;
+            // Source: Mod/Comms/Comms/PeerData.cs:PeerData.Ping
+            // Sample once per accepted input snapshot instead of locking the Comms peer table on
+            // every rendered frame.
+            SampleRemotePositionRtt(sourceClientId, state);
         }
 
         private static PlayerInput SanitizeNetworkPlayerInput(PlayerInput input)

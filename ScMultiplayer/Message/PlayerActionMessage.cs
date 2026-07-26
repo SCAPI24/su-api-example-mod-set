@@ -13,7 +13,9 @@ namespace ScMultiplayer
         RespawnRequest,
         DropRequest,
         Whistle,
-        InteractResult
+        InteractResult,
+        // Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update
+        JumpRequest
     }
 
     [Serializable]
@@ -92,6 +94,9 @@ namespace ScMultiplayer
                 AuthoritativeValue = reader.ReadInt32();
                 ServerTick = reader.ReadInt32();
             }
+            // Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update
+            if (Action == PlayerActionType.JumpRequest)
+                ServerTick = reader.ReadInt32();
             if (Action == PlayerActionType.RespawnRequest ||
                 Action == PlayerActionType.DropRequest ||
                 Action == PlayerActionType.Whistle)
@@ -137,6 +142,9 @@ namespace ScMultiplayer
                 writer.WriteInt32(AuthoritativeValue);
                 writer.WriteInt32(ServerTick);
             }
+            // Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update
+            if (Action == PlayerActionType.JumpRequest)
+                writer.WriteInt32(ServerTick);
             if (Action == PlayerActionType.RespawnRequest ||
                 Action == PlayerActionType.DropRequest ||
                 Action == PlayerActionType.Whistle)
