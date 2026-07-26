@@ -25,34 +25,133 @@ public class UdpTransmitter : ITransmitter, IDisposable
 
     public static IPAddress IPV6BroadcastAddress { get; } = IPAddress.Parse("ff08::1");
 
+    private sealed class IPv4NetworkSnapshot
+    {
+        public readonly HashSet<IPAddress> LocalAddresses;
+
+        public readonly IReadOnlyList<IPAddress> DiscoveryAddresses;
+
+        public IPv4NetworkSnapshot(HashSet<IPAddress> localAddresses,
+            List<IPAddress> discoveryAddresses)
+        {
+            LocalAddresses = localAddresses;
+            DiscoveryAddresses = discoveryAddresses.AsReadOnly();
+        }
+    }
+
+    private static IPv4NetworkSnapshot s_ipv4NetworkSnapshot = CreateIPv4NetworkSnapshot();
+
+    private static int s_ipv4NetworkSnapshotInvalidated;
+
+    private static int s_ipv4NetworkSnapshotRefreshRunning;
+
+    private static readonly Timer s_ipv4NetworkSnapshotRefreshTimer;
+
+    static UdpTransmitter()
+    {
+        // Source: System.Net.NetworkInformation.NetworkChange.NetworkAddressChanged
+        // The callback must not enumerate adapters. Windows can invoke it from a system thread,
+        // so only mark the immutable snapshot stale and let background discovery refresh it.
+        try
+        {
+            NetworkChange.NetworkAddressChanged += delegate
+            {
+                Interlocked.Exchange(ref s_ipv4NetworkSnapshotInvalidated, 1);
+            };
+        }
+        catch
+        {
+        }
+
+        // Source: Comms/UdpTransmitter.cs:UdpTransmitter.GetIPv4DiscoveryAddresses
+        // Some Android VPN adapters do not raise NetworkAddressChanged. Refresh in the background
+        // every five seconds as a fallback, never on the UI caller of IsLocalIPv4Address.
+        s_ipv4NetworkSnapshotRefreshTimer = new Timer(delegate
+        {
+            InvalidateIPv4NetworkSnapshot();
+        }, null, TimeSpan.FromSeconds(5.0), TimeSpan.FromSeconds(5.0));
+    }
+
     // Source: System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces
     // Broadcast discovery on every IPv4 subnet. This includes virtual LAN adapters such as
     // ZeroTier instead of relying only on the physical network's 255.255.255.255 route.
     public static IReadOnlyList<IPAddress> GetIPv4DiscoveryAddresses()
     {
-        var result = new List<IPAddress> { IPV4BroadcastAddress };
+        RequestIPv4NetworkSnapshotRefresh();
+        return Volatile.Read(ref s_ipv4NetworkSnapshot).DiscoveryAddresses;
+    }
+
+    // Source: Engine/Window.cs:Window.Activated
+    // Resume and timer callers invalidate immediately, while enumeration stays on a worker.
+    public static void InvalidateIPv4NetworkSnapshot()
+    {
+        Interlocked.Exchange(ref s_ipv4NetworkSnapshotInvalidated, 1);
+        RequestIPv4NetworkSnapshotRefresh();
+    }
+
+    // Source: System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces
+    // Build both local-address and directed-broadcast lookup data in one pass. The completed
+    // object is atomically published, so readers never observe a partially refreshed snapshot.
+    private static IPv4NetworkSnapshot CreateIPv4NetworkSnapshot()
+    {
+        var localAddresses = new HashSet<IPAddress>();
+        var discoveryAddresses = new List<IPAddress> { IPV4BroadcastAddress };
         try
         {
             foreach (NetworkInterface networkInterface in NetworkInterface.GetAllNetworkInterfaces())
             {
                 if (networkInterface.OperationalStatus != OperationalStatus.Up) continue;
-                foreach (UnicastIPAddressInformation address in networkInterface.GetIPProperties().UnicastAddresses)
+                IPInterfaceProperties properties;
+                try
+                {
+                    properties = networkInterface.GetIPProperties();
+                }
+                catch
+                {
+                    continue;
+                }
+                foreach (UnicastIPAddressInformation address in properties.UnicastAddresses)
                 {
                     if (address.Address.AddressFamily != AddressFamily.InterNetwork) continue;
+                    localAddresses.Add(address.Address);
                     byte[] ip = address.Address.GetAddressBytes();
                     byte[] mask = GetIPv4MaskBytes(address);
                     if (mask == null) continue;
                     byte[] broadcast = new byte[4];
                     for (int i = 0; i < 4; i++) broadcast[i] = (byte)(ip[i] | (byte)~mask[i]);
                     IPAddress endpoint = new IPAddress(broadcast);
-                    if (!result.Contains(endpoint)) result.Add(endpoint);
+                    if (!discoveryAddresses.Contains(endpoint)) discoveryAddresses.Add(endpoint);
                 }
             }
         }
         catch
         {
         }
-        return result;
+        return new IPv4NetworkSnapshot(localAddresses, discoveryAddresses);
+    }
+
+    // Source: System.Threading.Interlocked.CompareExchange
+    // Coalesce address-change, timer and LAN-discovery requests into at most one refresh task.
+    private static void RequestIPv4NetworkSnapshotRefresh()
+    {
+        if (Volatile.Read(ref s_ipv4NetworkSnapshotInvalidated) == 0 ||
+            Interlocked.CompareExchange(ref s_ipv4NetworkSnapshotRefreshRunning, 1, 0) != 0)
+            return;
+        System.Threading.Tasks.Task.Run(delegate
+        {
+            Interlocked.Exchange(ref s_ipv4NetworkSnapshotInvalidated, 0);
+            try
+            {
+                IPv4NetworkSnapshot snapshot = CreateIPv4NetworkSnapshot();
+                Volatile.Write(ref s_ipv4NetworkSnapshot, snapshot);
+            }
+            finally
+            {
+                Interlocked.Exchange(ref s_ipv4NetworkSnapshotRefreshRunning, 0);
+                if (Volatile.Read(ref s_ipv4NetworkSnapshotInvalidated) != 0)
+                    RequestIPv4NetworkSnapshotRefresh();
+            }
+        });
     }
 
     // Source: System.Net.NetworkInformation.UnicastIPAddressInformation.PrefixLength
@@ -231,21 +330,7 @@ public class UdpTransmitter : ITransmitter, IDisposable
         if (address == null || address.AddressFamily != AddressFamily.InterNetwork)
             return false;
         if (IPAddress.IsLoopback(address)) return true;
-        try
-        {
-            foreach (NetworkInterface networkInterface in NetworkInterface.GetAllNetworkInterfaces())
-            {
-                foreach (UnicastIPAddressInformation localAddress in
-                    networkInterface.GetIPProperties().UnicastAddresses)
-                {
-                    if (address.Equals(localAddress.Address)) return true;
-                }
-            }
-        }
-        catch
-        {
-        }
-        return false;
+        return Volatile.Read(ref s_ipv4NetworkSnapshot).LocalAddresses.Contains(address);
     }
 
     private static bool IsPrivateIPv4(IPAddress address)

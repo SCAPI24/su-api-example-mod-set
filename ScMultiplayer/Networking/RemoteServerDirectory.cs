@@ -9,6 +9,7 @@ using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace ScMultiplayer
@@ -49,6 +50,9 @@ namespace ScMultiplayer
         private int m_rawSourceIndex;
         private int m_rawRequestId;
         private int m_resolveGeneration;
+        private int m_discoveryGeneration;
+        private bool m_discoveryEnabled;
+        private CancellableProgress m_rawRefreshProgress;
         private double m_nextRawRefreshTime = double.MinValue;
         private double m_nextExplicitDiscoveryTime = double.MinValue;
 
@@ -64,16 +68,44 @@ namespace ScMultiplayer
             if (m_localHosts.Count == 0)
                 m_localHosts.Add("suceru.site");
             ApplyHosts();
+            SetDiscoveryEnabled(true);
         }
 
         // Source: Survivalcraft/Game/ContentManager.cs:ContentManager.List
         public void Update()
         {
+            if (!m_discoveryEnabled) return;
             if (!m_contentRootChecked)
                 LoadMatchingContentRootFile();
             if (!m_rawRefreshInProgress && Time.RealTime >= m_nextRawRefreshTime)
                 BeginRawRefresh();
             UpdateExplicitEndpointDiscovery();
+        }
+
+        // Source: Mod/Comms/Comms.Drt/Func/Explorer/Explorer.cs:Explorer.StartDiscovery
+        // Source: Mod/Comms/Comms.Drt/Func/Explorer/Explorer.cs:Explorer.StopDiscovery
+        public void SetDiscoveryEnabled(bool enabled)
+        {
+            if (m_discoveryEnabled == enabled) return;
+            m_discoveryEnabled = enabled;
+            Interlocked.Increment(ref m_discoveryGeneration);
+            if (enabled)
+            {
+                StartExplorerDiscovery();
+                m_nextRawRefreshTime = double.MinValue;
+                m_nextExplicitDiscoveryTime = double.MinValue;
+                Log.Information("[ScMP] Explorer discovery resumed");
+                return;
+            }
+
+            Interlocked.Increment(ref m_resolveGeneration);
+            Interlocked.Increment(ref m_rawRequestId);
+            m_rawRefreshProgress?.Cancel();
+            m_rawRefreshProgress = null;
+            m_rawRefreshInProgress = false;
+            m_pendingRemoteHosts = null;
+            m_explorer.StopDiscovery();
+            Log.Information("[ScMP] Explorer discovery paused while a room is active");
         }
 
         public string GetHostName(IPEndPoint endpoint)
@@ -150,6 +182,7 @@ namespace ScMultiplayer
             string url = RawDirectoryUrls[m_rawSourceIndex++];
             int requestId = ++m_rawRequestId;
             var progress = new CancellableProgress();
+            m_rawRefreshProgress = progress;
             Task.Run(async delegate
             {
                 await Task.Delay(RawRequestTimeoutMilliseconds);
@@ -168,6 +201,7 @@ namespace ScMultiplayer
         private void CompleteRawSource(int requestId, string url, byte[] data, Exception error)
         {
             if (!m_rawRefreshInProgress || requestId != m_rawRequestId) return;
+            m_rawRefreshProgress = null;
             if (error == null && data != null && data.Length <= MaximumDirectoryBytes)
             {
                 string text = Encoding.UTF8.GetString(data, 0, data.Length);
@@ -210,6 +244,13 @@ namespace ScMultiplayer
                 .ToArray();
             if (hosts.SequenceEqual(m_activeHosts, StringComparer.OrdinalIgnoreCase)) return;
             m_activeHosts = hosts;
+            if (!m_discoveryEnabled) return;
+            StartExplorerDiscovery();
+        }
+
+        // Source: Mod/Comms/Comms.Drt/Func/Explorer/Explorer.cs:Explorer.StartDiscovery
+        private void StartExplorerDiscovery()
+        {
             string[] standardHosts = m_activeHosts.Select(entry =>
                     TryParseDirectoryEntry(entry, out string host, out int port) && port == 0
                         ? host
@@ -239,6 +280,7 @@ namespace ScMultiplayer
                 var explicitEndpoints = new HashSet<IPEndPoint>();
                 foreach (string entry in entryArray)
                 {
+                    if (generation != Volatile.Read(ref m_resolveGeneration)) break;
                     if (!TryParseDirectoryEntry(entry, out string host, out int port))
                         continue;
                     try
@@ -275,24 +317,34 @@ namespace ScMultiplayer
 
         private void UpdateExplicitEndpointDiscovery()
         {
+            if (!m_discoveryEnabled) return;
             if (Time.RealTime < m_nextExplicitDiscoveryTime) return;
             m_nextExplicitDiscoveryTime = Time.RealTime +
                 Math.Max(m_explorer.Settings.InternetDiscoveryPeriod, 1f);
+            int generation = Volatile.Read(ref m_discoveryGeneration);
             IPEndPoint[] endpoints;
             lock (m_resolvedHostsLock)
                 endpoints = m_resolvedExplicitEndpoints.ToArray();
-            foreach (IPEndPoint endpoint in endpoints)
+            // Source: Mod/Comms/Comms.Drt/Func/Explorer/Explorer.DiscoverServer
+            // Socket.SendTo is synchronous. Keep explicit service probes off the frame thread.
+            Task.Run(delegate
             {
-                try
+                foreach (IPEndPoint endpoint in endpoints)
                 {
-                    m_explorer.DiscoverServer(endpoint);
+                    if (generation != Volatile.Read(ref m_discoveryGeneration)) break;
+                    try
+                    {
+                        // A host:port directory entry is still an internet service endpoint even
+                        // though it uses a direct unicast probe.
+                        m_explorer.DiscoverServer(endpoint, isInternet: true);
+                    }
+                    catch (Exception error)
+                    {
+                        Log.Warning($"[ScMP] Explicit endpoint probe failed for {endpoint}: " +
+                            error.Message);
+                    }
                 }
-                catch (Exception error)
-                {
-                    Log.Warning($"[ScMP] Explicit endpoint probe failed for {endpoint}: " +
-                        error.Message);
-                }
-            }
+            });
         }
 
         private static void AddHosts(ISet<string> target, IEnumerable<string> hosts)

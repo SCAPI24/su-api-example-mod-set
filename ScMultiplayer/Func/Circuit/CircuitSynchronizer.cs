@@ -2239,9 +2239,13 @@ namespace ScMultiplayer
             // Source: Survivalcraft/Game/GameManager.cs:GameManager.UpdateProject
             // Host focus is presentation state. If its Project is still advancing, electricity
             // must advance as well. A genuinely stopped Project is detected from CircuitStep
-            // progress when publishing fences. Clients still suspend their own local simulation
-            // while inactive and validate at a future checkpoint after resuming.
-            return !ScMultiplayer.IsHost && !windowActive;
+            // progress when publishing fences.
+            // Source: Survivalcraft/Game/Program.cs:Program.Run
+            // Windows keeps updating the Project after losing focus, so its client must continue
+            // consuming authoritative circuit steps and world-time anchors. Android retains the
+            // suspension barrier because its lifecycle can stop frame processing entirely.
+            return !ScMultiplayer.IsHost && !windowActive &&
+                !OperatingSystem.IsWindows();
         }
 
         private int CreateEpoch()
