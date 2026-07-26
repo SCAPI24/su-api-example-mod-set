@@ -1119,6 +1119,8 @@ namespace ScMultiplayer
             m_pendingPickablePickups =
                 new Dictionary<ushort, PendingPickablePickupPresentation>();
         private readonly Dictionary<Projectile, ushort> m_hostProjectileIds = new Dictionary<Projectile, ushort>();
+        private readonly Dictionary<Projectile, int> m_hostProjectileReleaseCompensationSteps =
+            new Dictionary<Projectile, int>();
         private readonly Dictionary<ushort, Projectile> m_remoteProjectiles = new Dictionary<ushort, Projectile>();
         private readonly Dictionary<Projectile, double> m_clientPredictedProjectiles =
             new Dictionary<Projectile, double>();
@@ -1264,6 +1266,8 @@ namespace ScMultiplayer
         private const float RemoteAnimalPredictionLimit = 1.15f;
         private const float RemoteAnimalSnapDistance = 3f;
         private const float ClientProjectilePredictionGrace = 3f;
+        private const int MaximumProjectileReleaseCompensationSteps = 25;
+        private const float MaximumProjectileReleaseVelocity = 64f;
         private const float PlayerHitRequestInterval = 0.36f;
         // Source: Comms/Comms/UdpTransmitter.cs:UdpTransmitter.MaxPacketSize
         // 940 bytes plus the nested ScMultiplayer, DRT, Peer and Comm headers fits in one
@@ -2344,6 +2348,7 @@ namespace ScMultiplayer
                 m_containerStates.Clear();
                 m_remoteProjectiles.Clear();
                 m_hostProjectileIds.Clear();
+                m_hostProjectileReleaseCompensationSteps.Clear();
                 m_clientPredictedProjectiles.Clear();
                 m_displayedProjectileHits.Clear();
                 m_pendingTerrainPredictions.Clear();
@@ -7135,13 +7140,18 @@ namespace ScMultiplayer
                     bool isNewProjectile = !m_hostProjectileIds.TryGetValue(projectile, out ushort id);
                     if (isNewProjectile) id = GetOrCreateHostProjectileId(projectile);
                     ushort ownerClientId = GetProjectileOwnerClientId(projectile);
+                    int projectileTimelineStep = client.Step;
+                    if (m_hostProjectileReleaseCompensationSteps.TryGetValue(projectile,
+                        out int releaseCompensationSteps))
+                        projectileTimelineStep = unchecked(projectileTimelineStep -
+                            releaseCompensationSteps);
                     var message = new ProjectileSyncMessage(id,
                         isNewProjectile
                             ? ProjectileSyncMessage.ProjectileType.Add
                             : ProjectileSyncMessage.ProjectileType.Update,
                         projectile.Value, projectile.Position, projectile.Velocity,
                         projectile.AngularVelocity, projectile.TrailOffset, ownerClientId,
-                        client.Step, projectile.IsIncendiary);
+                        projectileTimelineStep, projectile.IsIncendiary);
                     // Source: ScMultiplayer.cs:HandleProjectileSyncMessage
                     NetworkMessageSender.SendScheduledMessage(-1, message,
                         latest: message.Action == ProjectileSyncMessage.ProjectileType.Update);
@@ -7154,6 +7164,7 @@ namespace ScMultiplayer
                         Vector3.Zero, Vector3.Zero, Vector3.Zero, Vector3.Zero, 0,
                         client.Step, false));
                     m_hostProjectileIds.Remove(item.Key);
+                    m_hostProjectileReleaseCompensationSteps.Remove(item.Key);
                 }
                 return;
             }
@@ -11662,6 +11673,7 @@ namespace ScMultiplayer
             m_pendingLocalDropPosition = Vector3.Zero;
             m_pendingLocalDropPredictionUntil = 0.0;
             m_hostProjectileIds.Clear();
+            m_hostProjectileReleaseCompensationSteps.Clear();
             m_remoteProjectiles.Clear();
             m_clientPredictedProjectiles.Clear();
             m_displayedProjectileHits.Clear();
@@ -12326,10 +12338,13 @@ namespace ScMultiplayer
         private void SendLocalAimEvent(ComponentPlayer player, PlayerAimAction action, Ray3 aim)
         {
             if (client?.IsConnected != true || player?.ComponentBody == null) return;
+            bool isRelease = action == PlayerAimAction.Release;
             NetworkMessageSender.SendPlayerAimMessage(new PlayerAimMessage(
                 m_localAimSequence, action, aim, m_localAimSlot, m_localAimItemValue,
                 m_localAimItemCount, player.ComponentBody.Position,
-                player.ComponentBody.Rotation));
+                player.ComponentBody.Rotation,
+                isRelease ? player.ComponentBody.Velocity : Vector3.Zero,
+                isRelease ? client.Step : 0));
         }
 
         // Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update
@@ -12769,12 +12784,53 @@ namespace ScMultiplayer
                 message.Action, message.Aim, state.ActiveAimSlotIndex,
                 state.ActiveAimItemValue, state.ActiveAimItemCount,
                 message.BodyPosition, message.BodyRotation));
-            player.ComponentMiner.Aim(message.Aim,
-                message.Action == PlayerAimAction.Release
-                    ? AimState.Completed
-                    : AimState.Cancelled);
+            if (message.Action == PlayerAimAction.Release)
+                ExecuteHostAimRelease(player, message);
+            else
+                player.ComponentMiner.Aim(message.Aim, AimState.Cancelled);
             CompleteHostAimLifecycle(player, state, message.Sequence,
                 updateLastActionTime: message.Action == PlayerAimAction.Release);
+        }
+
+        // Source: Survivalcraft/Game/SubsystemThrowableBlockBehavior.cs:OnAim
+        // Source: Survivalcraft/Game/SubsystemProjectiles.cs:FireProjectile
+        private void ExecuteHostAimRelease(ComponentPlayer player, PlayerAimMessage message)
+        {
+            SubsystemProjectiles projectiles = GameManager.Project?
+                .FindSubsystem<SubsystemProjectiles>(false);
+            HashSet<Projectile> existingProjectiles = projectiles != null
+                ? new HashSet<Projectile>(projectiles.Projectiles)
+                : null;
+            ComponentBody body = player.ComponentBody;
+            Vector3 previousVelocity = body.Velocity;
+            bool useReleaseVelocity = IsFinite(message.BodyVelocity) &&
+                message.BodyVelocity.LengthSquared() <=
+                    MaximumProjectileReleaseVelocity * MaximumProjectileReleaseVelocity;
+            if (useReleaseVelocity)
+                body.Velocity = message.BodyVelocity;
+            try
+            {
+                player.ComponentMiner.Aim(message.Aim, AimState.Completed);
+            }
+            finally
+            {
+                if (useReleaseVelocity)
+                    body.Velocity = previousVelocity;
+            }
+
+            if (projectiles == null || existingProjectiles == null ||
+                message.ClientTick <= 0) return;
+            int delaySteps = unchecked(client.Step - message.ClientTick);
+            delaySteps = MathUtils.Clamp(delaySteps, 0,
+                MaximumProjectileReleaseCompensationSteps);
+            if (delaySteps <= 0) return;
+            ComponentCreature owner = player.ComponentMiner.ComponentCreature;
+            foreach (Projectile projectile in projectiles.Projectiles)
+            {
+                if (projectile == null || existingProjectiles.Contains(projectile) ||
+                    !ReferenceEquals(projectile.Owner, owner)) continue;
+                m_hostProjectileReleaseCompensationSteps[projectile] = delaySteps;
+            }
         }
 
         // Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update
