@@ -37,6 +37,8 @@ namespace ScMultiplayer
         public float PlayerFluOnset;
         public float PlayerSicknessDuration;
         public bool PlayerIsCreativeFlying;
+        // Source: Mod/ScMultiplayer/Plug/ScMultiplayer.cs:NetworkPlayerRecord.HasReceivedInitialItems
+        public bool HasReceivedInitialItems = true;
         public bool InventoryWasCreative;
         public int ActiveSlotIndex;
         public int CreativeCategoryIndex;
@@ -76,6 +78,7 @@ namespace ScMultiplayer
             PlayerFluOnset = playerRecord?.FluOnset ?? 0f;
             PlayerSicknessDuration = playerRecord?.SicknessDuration ?? 0f;
             PlayerIsCreativeFlying = playerRecord?.IsCreativeFlying ?? false;
+            HasReceivedInitialItems = playerRecord?.HasReceivedInitialItems ?? true;
             InventoryWasCreative = playerRecord?.InventoryWasCreative ?? false;
             ActiveSlotIndex = playerRecord?.ActiveSlotIndex ?? 0;
             CreativeCategoryIndex = playerRecord?.CreativeCategoryIndex ?? 0;
@@ -121,6 +124,7 @@ namespace ScMultiplayer
             PlayerFluOnset = reader.ReadSingle();
             PlayerSicknessDuration = reader.ReadSingle();
             PlayerIsCreativeFlying = reader.ReadBoolean();
+            HasReceivedInitialItems = reader.ReadBoolean();
             InventoryWasCreative = reader.ReadBoolean();
             ActiveSlotIndex = reader.ReadInt32();
             CreativeCategoryIndex = reader.ReadInt32();
@@ -182,6 +186,7 @@ namespace ScMultiplayer
             writer.WriteSingle(PlayerFluOnset);
             writer.WriteSingle(PlayerSicknessDuration);
             writer.WriteBoolean(PlayerIsCreativeFlying);
+            writer.WriteBoolean(HasReceivedInitialItems);
             writer.WriteBoolean(InventoryWasCreative);
             writer.WriteInt32(ActiveSlotIndex);
             writer.WriteInt32(CreativeCategoryIndex);

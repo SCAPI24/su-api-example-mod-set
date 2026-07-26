@@ -16,24 +16,29 @@ namespace ScMultiplayer
     [Serializable]
     public class WorldControlRequestMessage : Message
     {
+        // Source: Mod/ScMultiplayer/Plug/ScMultiplayer.cs:ScMultiplayer.TrySendWorldControlRequest
+        public int RequestId;
         public WorldControlAction Actions;
 
         public WorldControlRequestMessage()
         {
         }
 
-        public WorldControlRequestMessage(WorldControlAction actions)
+        public WorldControlRequestMessage(int requestId, WorldControlAction actions)
         {
+            RequestId = requestId;
             Actions = actions;
         }
 
         protected override void Read(SuReader reader)
         {
+            RequestId = reader.ReadInt32();
             Actions = (WorldControlAction)reader.ReadByte();
         }
 
         protected override void Write(SuWriter writer)
         {
+            writer.WriteInt32(RequestId);
             writer.WriteByte((byte)Actions);
         }
     }

@@ -76,9 +76,12 @@ namespace ScMultiplayer
             if (Sum_playerInput.Lighting || fields.GetParentField<ButtonWidget>(
                 gui, "m_lightningButtonWidget", typeof(ComponentGui))?.IsClicked == true)
                 worldActions |= WorldControlAction.Lightning;
-            if (!suppressWorldActions)
-                ScMultiplayer.currentInstance?.TrySendWorldControlRequest(
-                    Sum_componentPlayer, worldActions);
+            // Source: Mod/ScMultiplayer/Plug/ScMultiplayer.cs:
+            // ScMultiplayer.TrySendWorldControlRequest
+            // The multiplayer layer queues these authority requests while circuit/terrain recovery
+            // blocks local world writes. Capturing the click here prevents a silent lost action.
+            ScMultiplayer.currentInstance?.TrySendWorldControlRequest(
+                Sum_componentPlayer, worldActions);
             if (!ScMultiplayer.IsHost && worldActions != WorldControlAction.None)
             {
                 // Source: Survivalcraft/Game/ComponentGui.cs:ComponentGui.Update

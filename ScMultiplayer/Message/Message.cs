@@ -11,7 +11,7 @@ namespace ScMultiplayer
     [Serializable]
     public abstract class Message
     {
-        public const string ModVersion = "1.8.8";
+        public const string ModVersion = "1.8.9";
         public const int ProtocolVersion = 1;
 
         private static readonly Dictionary<int, Type> MessageTypesById = new();
@@ -37,7 +37,7 @@ namespace ScMultiplayer
             Register<EditableDataStateMessage>(3, nameof(EditableDataStateMessage), 1);
             Register<GameKickPlayerMessage>(4, nameof(GameKickPlayerMessage), 1);
             Register<GameModifiedCellsMessage>(5, nameof(GameModifiedCellsMessage), 1);
-            Register<GamePakWorldMessage>(6, nameof(GamePakWorldMessage), 1);
+            Register<GamePakWorldMessage>(6, nameof(GamePakWorldMessage), 2);
             Register<GamePlayerHealthMessage>(7, nameof(GamePlayerHealthMessage), 1);
             Register<GamePlayerInputMessage>(8, nameof(GamePlayerInputMessage), 1);
             Register<GamePlayerPositionMessage>(9, nameof(GamePlayerPositionMessage), 1);
@@ -48,7 +48,7 @@ namespace ScMultiplayer
             Register<SyncBatchMessage>(14, nameof(SyncBatchMessage), 1);
             Register<TerrainDigRequestMessage>(15, nameof(TerrainDigRequestMessage), 1);
             Register<TerrainDigResultMessage>(16, nameof(TerrainDigResultMessage), 1);
-            Register<WorldControlRequestMessage>(17, nameof(WorldControlRequestMessage), 1);
+            Register<WorldControlRequestMessage>(17, nameof(WorldControlRequestMessage), 2);
             Register<AnimalInteractionMessage>(18, nameof(AnimalInteractionMessage), 1);
             Register<BodyUpdateMessage>(19, nameof(BodyUpdateMessage), 1);
             Register<ContainerSyncMessage>(20, nameof(ContainerSyncMessage), 1);
@@ -66,6 +66,7 @@ namespace ScMultiplayer
             Register<ProjectileSyncMessage>(31, nameof(ProjectileSyncMessage), 1);
             Register<TerrainRecoveryMessage>(32, nameof(TerrainRecoveryMessage), 1);
             Register<WorldObjectSyncMessage>(33, nameof(WorldObjectSyncMessage), 1);
+            Register<WorldControlResultMessage>(34, nameof(WorldControlResultMessage), 1);
 
             foreach (TypeInfo typeInfo in typeof(Message).Assembly.DefinedTypes)
             {
