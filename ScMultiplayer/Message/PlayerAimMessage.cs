@@ -26,6 +26,8 @@ namespace ScMultiplayer
         public int ItemCount;
         public Vector3 BodyPosition;
         public Quaternion BodyRotation;
+        public Vector3 BodyVelocity;
+        public int ClientTick;
 
         public PlayerAimMessage()
         {
@@ -33,7 +35,7 @@ namespace ScMultiplayer
 
         public PlayerAimMessage(int sequence, PlayerAimAction action, Ray3 aim,
             int activeSlotIndex, int itemValue, int itemCount, Vector3 bodyPosition,
-            Quaternion bodyRotation)
+            Quaternion bodyRotation, Vector3 bodyVelocity = default, int clientTick = 0)
         {
             Sequence = sequence;
             Action = action;
@@ -43,6 +45,8 @@ namespace ScMultiplayer
             ItemCount = itemCount;
             BodyPosition = bodyPosition;
             BodyRotation = bodyRotation;
+            BodyVelocity = bodyVelocity;
+            ClientTick = clientTick;
         }
 
         protected override void Read(SuReader reader)
@@ -55,6 +59,14 @@ namespace ScMultiplayer
             ItemCount = reader.ReadInt32();
             BodyPosition = reader.ReadVector3(reader);
             BodyRotation = reader.ReadQuaternion(reader);
+            // Source: Survivalcraft/Game/SubsystemThrowableBlockBehavior.cs:OnAim
+            // Only release needs the exact inherited velocity and timeline. Start/Update remain
+            // unchanged so holding aim does not continuously enlarge network traffic.
+            if (Action == PlayerAimAction.Release)
+            {
+                BodyVelocity = reader.ReadVector3(reader);
+                ClientTick = reader.ReadPackedInt32();
+            }
         }
 
         protected override void Write(SuWriter writer)
@@ -67,6 +79,11 @@ namespace ScMultiplayer
             writer.WriteInt32(ItemCount);
             writer.WriteVector3(writer, BodyPosition);
             writer.WriteQuaternion(writer, BodyRotation);
+            if (Action == PlayerAimAction.Release)
+            {
+                writer.WriteVector3(writer, BodyVelocity);
+                writer.WritePackedInt32(ClientTick);
+            }
         }
     }
 }
