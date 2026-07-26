@@ -40,6 +40,7 @@ namespace ScMultiplayer
         private readonly object m_resolvedHostsLock = new object();
         private Dictionary<IPAddress, string> m_resolvedHosts =
             new Dictionary<IPAddress, string>();
+        private IPEndPoint[] m_resolvedExplicitEndpoints = Array.Empty<IPEndPoint>();
         private string[] m_activeHosts = Array.Empty<string>();
         private HashSet<string> m_pendingRemoteHosts;
         private bool m_contentRootChecked;
@@ -49,6 +50,7 @@ namespace ScMultiplayer
         private int m_rawRequestId;
         private int m_resolveGeneration;
         private double m_nextRawRefreshTime = double.MinValue;
+        private double m_nextExplicitDiscoveryTime = double.MinValue;
 
         public RemoteServerDirectory(Explorer explorer)
         {
@@ -71,6 +73,7 @@ namespace ScMultiplayer
                 LoadMatchingContentRootFile();
             if (!m_rawRefreshInProgress && Time.RealTime >= m_nextRawRefreshTime)
                 BeginRawRefresh();
+            UpdateExplicitEndpointDiscovery();
         }
 
         public string GetHostName(IPEndPoint endpoint)
@@ -207,23 +210,37 @@ namespace ScMultiplayer
                 .ToArray();
             if (hosts.SequenceEqual(m_activeHosts, StringComparer.OrdinalIgnoreCase)) return;
             m_activeHosts = hosts;
-            m_explorer.StartDiscovery(localBroadcast: true, internetHosts: m_activeHosts);
-            ResolveHostNames(m_activeHosts);
-            Log.Information($"[ScMP] Service discovery enabled for {m_activeHosts.Length} DNS " +
+            string[] standardHosts = m_activeHosts.Select(entry =>
+                    TryParseDirectoryEntry(entry, out string host, out int port) && port == 0
+                        ? host
+                        : null)
+                .Where(host => !string.IsNullOrEmpty(host))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            int explicitCount = m_activeHosts.Count(entry =>
+                TryParseDirectoryEntry(entry, out _, out int port) && port > 0);
+            m_explorer.StartDiscovery(localBroadcast: true, internetHosts: standardHosts);
+            ResolveDirectoryEntries(m_activeHosts);
+            Log.Information($"[ScMP] Service discovery enabled for {standardHosts.Length} DNS " +
                 $"entries across ports {ScMultiplayerSettings.ServerPorts[0]}-" +
-                $"{ScMultiplayerSettings.ServerPorts[ScMultiplayerSettings.ServerPorts.Length - 1]}");
+                $"{ScMultiplayerSettings.ServerPorts[ScMultiplayerSettings.ServerPorts.Length - 1]} " +
+                $"and {explicitCount} explicit endpoints");
         }
 
         // Source: SCAPI24/RuthlessConquest:RuthlessConquest/Net/ServersManager.DnsQueryServerAddresses
-        private void ResolveHostNames(IEnumerable<string> hosts)
+        // Source: Mod/Comms/Comms.Drt/Func/Explorer/Explorer.cs:Explorer.DiscoverServer
+        private void ResolveDirectoryEntries(IEnumerable<string> entries)
         {
             int generation = ++m_resolveGeneration;
-            string[] hostArray = hosts.ToArray();
+            string[] entryArray = entries.ToArray();
             Task.Run(delegate
             {
                 var resolved = new Dictionary<IPAddress, string>();
-                foreach (string host in hostArray)
+                var explicitEndpoints = new HashSet<IPEndPoint>();
+                foreach (string entry in entryArray)
                 {
+                    if (!TryParseDirectoryEntry(entry, out string host, out int port))
+                        continue;
                     try
                     {
                         IPAddress[] addresses = IPAddress.TryParse(host, out IPAddress literal)
@@ -235,6 +252,8 @@ namespace ScMultiplayer
                                 address.AddressFamily == AddressFamily.InterNetworkV6) &&
                                 !resolved.ContainsKey(address))
                                 resolved.Add(address, host);
+                            if (port > 0)
+                                explicitEndpoints.Add(new IPEndPoint(address, port));
                         }
                     }
                     catch (Exception error)
@@ -245,9 +264,35 @@ namespace ScMultiplayer
                 lock (m_resolvedHostsLock)
                 {
                     if (generation == m_resolveGeneration)
+                    {
                         m_resolvedHosts = resolved;
+                        m_resolvedExplicitEndpoints = explicitEndpoints.ToArray();
+                        m_nextExplicitDiscoveryTime = double.MinValue;
+                    }
                 }
             });
+        }
+
+        private void UpdateExplicitEndpointDiscovery()
+        {
+            if (Time.RealTime < m_nextExplicitDiscoveryTime) return;
+            m_nextExplicitDiscoveryTime = Time.RealTime +
+                Math.Max(m_explorer.Settings.InternetDiscoveryPeriod, 1f);
+            IPEndPoint[] endpoints;
+            lock (m_resolvedHostsLock)
+                endpoints = m_resolvedExplicitEndpoints.ToArray();
+            foreach (IPEndPoint endpoint in endpoints)
+            {
+                try
+                {
+                    m_explorer.DiscoverServer(endpoint);
+                }
+                catch (Exception error)
+                {
+                    Log.Warning($"[ScMP] Explicit endpoint probe failed for {endpoint}: " +
+                        error.Message);
+                }
+            }
         }
 
         private static void AddHosts(ISet<string> target, IEnumerable<string> hosts)
@@ -279,13 +324,65 @@ namespace ScMultiplayer
                 foreach (string rawToken in line.Split(
                     new[] { ' ', '\t', ',', ';', '|' }, StringSplitOptions.RemoveEmptyEntries))
                 {
-                    string token = rawToken.Trim('"', '\'', '[', ']', '(', ')', '<', '>', '.');
+                    string token = rawToken.Trim('"', '\'', '(', ')', '<', '>').TrimEnd('.');
                     if (token.Length == 0 || token.Length > 253) continue;
-                    if (Uri.CheckHostName(token) == UriHostNameType.Unknown) continue;
-                    if (token.IndexOf('.') < 0 && token.IndexOf(':') < 0) continue;
-                    yield return token;
+                    if (!TryParseDirectoryEntry(token, out string host, out int port)) continue;
+                    yield return FormatDirectoryEntry(host, port);
                 }
             }
+        }
+
+        // Source: Mod/ScMultiplayer/ServerDns.txt
+        // Accept a normal host (scanned over the configured server range), host:port, and
+        // bracketed IPv6 [address]:port. Explicit ports are UDP discovery endpoints.
+        private static bool TryParseDirectoryEntry(string token, out string host, out int port)
+        {
+            host = string.Empty;
+            port = 0;
+            if (string.IsNullOrWhiteSpace(token)) return false;
+            string value = token.Trim();
+            if (value.StartsWith("[", StringComparison.Ordinal))
+            {
+                int closingBracket = value.IndexOf(']');
+                if (closingBracket <= 1) return false;
+                host = value.Substring(1, closingBracket - 1);
+                if (closingBracket + 1 < value.Length)
+                {
+                    if (value[closingBracket + 1] != ':' ||
+                        !int.TryParse(value.Substring(closingBracket + 2), out port))
+                        return false;
+                }
+            }
+            else
+            {
+                int firstColon = value.IndexOf(':');
+                int lastColon = value.LastIndexOf(':');
+                if (firstColon > 0 && firstColon == lastColon &&
+                    int.TryParse(value.Substring(lastColon + 1), out int explicitPort))
+                {
+                    host = value.Substring(0, lastColon);
+                    port = explicitPort;
+                }
+                else
+                {
+                    host = value;
+                }
+            }
+            if (port < 0 || port > ushort.MaxValue || (value.Contains(":") && port == 0 &&
+                !IPAddress.TryParse(host, out _)))
+                return false;
+            if (!IPAddress.TryParse(host, out _) &&
+                Uri.CheckHostName(host) == UriHostNameType.Unknown)
+                return false;
+            return host.IndexOf('.') >= 0 || host.IndexOf(':') >= 0;
+        }
+
+        private static string FormatDirectoryEntry(string host, int port)
+        {
+            if (port <= 0) return host;
+            return host.IndexOf(':') >= 0
+                ? $"[{host}]:{port}"
+                : $"{host}:{port}";
         }
     }
 }

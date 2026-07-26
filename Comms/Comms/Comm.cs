@@ -50,6 +50,8 @@ public class Comm
 
         public double SmoothedPacketLossRate;
 
+        public long ReliableRetryLimitCount;
+
         // Source: Comms/Comms/Comm.cs:Comm.ProcessConnections
         // Source: Comms/Comms/Comm.cs:Comm.ProcessReceivedPacket
         public void RecordReliablePacketOutcome(bool wasRetransmitted)
@@ -72,6 +74,7 @@ public class Comm
                 NextUnreliableSendSequenceIndex = 0u;
                 NextReliableSendSequenceIndex = 0u;
                 SmoothedPacketLossRate = 0.0;
+                ReliableRetryLimitCount = 0;
             }
             TheirGuid = theirGuid;
             MessageParts.Clear();
@@ -267,6 +270,8 @@ public class Comm
 
         public int SendCount;
 
+        public bool RetryLimitRecorded;
+
         public Packet Packet;
     }
 
@@ -386,6 +391,18 @@ public class Comm
                 return 0;
             }
             return value.UnackedPackets.Count;
+        }
+    }
+
+    // Source: Comm.ProcessConnections
+    public long GetReliableRetryLimitCount(IPEndPoint address)
+    {
+        lock (Lock)
+        {
+            CheckNotDisposedAndStarted();
+            return Connections.TryGetValue(address, out var connection)
+                ? connection.ReliableRetryLimitCount
+                : 0L;
         }
     }
 
@@ -655,16 +672,18 @@ public class Comm
             foreach (KeyValuePair<uint, UnackedPacket> unackedPacket in value.UnackedPackets)
             {
                 float num = GetResendPeriod(value, unackedPacket.Value.SendCount);
-                if (unackedPacket.Value.SendCount - 1 >= Settings.MaxResends)
+                if (unackedPacket.Value.SendCount - 1 >= Settings.MaxResends &&
+                    !unackedPacket.Value.RetryLimitRecorded)
                 {
-                    value.RecordReliablePacketOutcome(true);
-                    ToRemoveUInt.Add(unackedPacket.Key);
+                    unackedPacket.Value.RetryLimitRecorded = true;
+                    value.ReliableRetryLimitCount++;
                 }
-                else if (time >= unackedPacket.Value.LastSendTime + (double)num)
+                if (time >= unackedPacket.Value.LastSendTime + (double)num)
                 {
                     SendPacket(unackedPacket.Value.Packet, value);
                     unackedPacket.Value.LastSendTime = time;
-                    unackedPacket.Value.SendCount++;
+                    if (unackedPacket.Value.SendCount < int.MaxValue)
+                        unackedPacket.Value.SendCount++;
                 }
             }
             foreach (uint item in ToRemoveUInt)

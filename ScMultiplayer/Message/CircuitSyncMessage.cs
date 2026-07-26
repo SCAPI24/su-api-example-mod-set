@@ -2,6 +2,7 @@ using Comms;
 using Engine;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace ScMultiplayer
 {
@@ -17,7 +18,8 @@ namespace ScMultiplayer
         ButtonReleaseConfirm = 8,
         HashReport = 9,
         RepairPlan = 10,
-        CheckpointRequest = 11
+        CheckpointRequest = 11,
+        RepairApplied = 12
     }
 
     public enum CircuitOperationType : byte
@@ -54,6 +56,7 @@ namespace ScMultiplayer
         public int NextSimulationSteps;
         public int ElementTypeCode;
         public sbyte AuxiliaryVoltageLevel;
+        public int RuntimeState;
         public readonly List<CircuitScheduledVoltageRecord> ScheduledVoltages =
             new List<CircuitScheduledVoltageRecord>();
     }
@@ -97,6 +100,9 @@ namespace ScMultiplayer
         public int SafeThroughHostCircuitStep;
         public bool IsPaused;
         public bool HashAvailable;
+        public double TotalElapsedGameTime;
+        public double TimeOfDayOffset;
+        public readonly List<int> SnapshotMissingParts = new List<int>();
         public readonly List<CircuitStateRecord> States = new List<CircuitStateRecord>();
 
         protected override void Read(SuReader reader)
@@ -125,9 +131,11 @@ namespace ScMultiplayer
                     NextHashStep = reader.ReadPackedInt32();
                     break;
                 case CircuitSyncStage.RecoveryRequest:
-                case CircuitSyncStage.SnapshotRequest:
                     Epoch = reader.ReadPackedInt32(1, int.MaxValue);
                     ExpectedSequence = reader.ReadPackedInt32();
+                    break;
+                case CircuitSyncStage.SnapshotRequest:
+                    ReadSnapshotRequest(reader);
                     break;
                 case CircuitSyncStage.Snapshot:
                     ReadSnapshot(reader);
@@ -147,6 +155,11 @@ namespace ScMultiplayer
                 case CircuitSyncStage.HashReport:
                     Epoch = reader.ReadPackedInt32(1, int.MaxValue);
                     HashStep = reader.ReadPackedInt32();
+                    // Source: Mod/ScMultiplayer/Func/Circuit/CircuitSynchronizer.cs:
+                    // CircuitSynchronizer.HandleHashReport
+                    LastSequence = reader.ReadPackedInt32();
+                    RequiredTerrainSequence = reader.ReadInt64();
+                    TimelineGeneration = reader.ReadPackedInt32(1, int.MaxValue);
                     byte hashAvailable = reader.ReadByte();
                     if (hashAvailable > 1)
                         throw new InvalidOperationException("Invalid circuit hash availability.");
@@ -159,7 +172,15 @@ namespace ScMultiplayer
                     HostCircuitStep = reader.ReadPackedInt32();
                     break;
                 case CircuitSyncStage.CheckpointRequest:
+                    // Source: Mod/ScMultiplayer/Func/Circuit/CircuitSynchronizer.cs:
+                    // CircuitSynchronizer.SendCheckpointRequest
+                    // Epoch zero asks for the first authoritative fence before bootstrap.
+                    Epoch = reader.ReadPackedInt32(0, int.MaxValue);
+                    break;
+                case CircuitSyncStage.RepairApplied:
                     Epoch = reader.ReadPackedInt32(1, int.MaxValue);
+                    HashStep = reader.ReadPackedInt32();
+                    HostCircuitStep = reader.ReadPackedInt32();
                     break;
                 default:
                     throw new InvalidOperationException("Invalid circuit sync stage.");
@@ -192,9 +213,11 @@ namespace ScMultiplayer
                     writer.WritePackedInt32(NextHashStep);
                     break;
                 case CircuitSyncStage.RecoveryRequest:
-                case CircuitSyncStage.SnapshotRequest:
                     writer.WritePackedInt32(Epoch);
                     writer.WritePackedInt32(ExpectedSequence);
+                    break;
+                case CircuitSyncStage.SnapshotRequest:
+                    WriteSnapshotRequest(writer);
                     break;
                 case CircuitSyncStage.Snapshot:
                     WriteSnapshot(writer);
@@ -214,6 +237,9 @@ namespace ScMultiplayer
                 case CircuitSyncStage.HashReport:
                     writer.WritePackedInt32(Epoch);
                     writer.WritePackedInt32(HashStep);
+                    writer.WritePackedInt32(LastSequence);
+                    writer.WriteInt64(RequiredTerrainSequence);
+                    writer.WritePackedInt32(TimelineGeneration);
                     writer.WriteByte(HashAvailable ? (byte)1 : (byte)0);
                     if (HashAvailable) writer.WriteUInt32(StateHash);
                     break;
@@ -225,9 +251,56 @@ namespace ScMultiplayer
                 case CircuitSyncStage.CheckpointRequest:
                     writer.WritePackedInt32(Epoch);
                     break;
+                case CircuitSyncStage.RepairApplied:
+                    writer.WritePackedInt32(Epoch);
+                    writer.WritePackedInt32(HashStep);
+                    writer.WritePackedInt32(HostCircuitStep);
+                    break;
                 default:
                     throw new InvalidOperationException("Invalid circuit sync stage.");
             }
+        }
+
+        // Source: Mod/ScMultiplayer/Func/Circuit/CircuitSynchronizer.cs:
+        // CircuitSynchronizer.SendSnapshotRequest
+        private void ReadSnapshotRequest(SuReader reader)
+        {
+            Epoch = reader.ReadPackedInt32(1, int.MaxValue);
+            ExpectedSequence = reader.ReadPackedInt32();
+            HostCircuitStep = reader.ReadPackedInt32();
+            LastSequence = reader.ReadPackedInt32();
+            SnapshotPartCount = reader.ReadPackedInt32(0, 4096);
+            int missingCount = reader.ReadPackedInt32(0, 4096);
+            if (SnapshotPartCount == 0 && missingCount != 0)
+                throw new InvalidOperationException("Snapshot generation is unavailable.");
+            SnapshotMissingParts.Clear();
+            for (int i = 0; i < missingCount; i++)
+            {
+                int part = reader.ReadPackedInt32(0, 4095);
+                if (part >= SnapshotPartCount || SnapshotMissingParts.Contains(part))
+                    throw new InvalidOperationException("Invalid missing snapshot part.");
+                SnapshotMissingParts.Add(part);
+            }
+        }
+
+        // Source: Mod/ScMultiplayer/Func/Circuit/CircuitSynchronizer.cs:
+        // CircuitSynchronizer.SendSnapshotRequest
+        private void WriteSnapshotRequest(SuWriter writer)
+        {
+            if (SnapshotPartCount < 0 || SnapshotPartCount > 4096 ||
+                SnapshotMissingParts.Count > 4096 ||
+                (SnapshotPartCount == 0 && SnapshotMissingParts.Count != 0) ||
+                SnapshotMissingParts.Any(part => part < 0 || part >= SnapshotPartCount) ||
+                SnapshotMissingParts.Distinct().Count() != SnapshotMissingParts.Count)
+                throw new InvalidOperationException("Invalid snapshot repair request.");
+            writer.WritePackedInt32(Epoch);
+            writer.WritePackedInt32(ExpectedSequence);
+            writer.WritePackedInt32(HostCircuitStep);
+            writer.WritePackedInt32(LastSequence);
+            writer.WritePackedInt32(SnapshotPartCount);
+            writer.WritePackedInt32(SnapshotMissingParts.Count);
+            foreach (int part in SnapshotMissingParts)
+                writer.WritePackedInt32(part);
         }
 
         // Source: Mod/ScMultiplayer/Func/Circuit/CircuitSynchronizer.cs:
@@ -246,6 +319,12 @@ namespace ScMultiplayer
             if (paused > 1)
                 throw new InvalidOperationException("Invalid circuit fence pause state.");
             IsPaused = paused != 0;
+            TotalElapsedGameTime = reader.ReadDouble();
+            TimeOfDayOffset = reader.ReadDouble();
+            if (double.IsNaN(TotalElapsedGameTime) ||
+                double.IsInfinity(TotalElapsedGameTime) ||
+                double.IsNaN(TimeOfDayOffset) || double.IsInfinity(TimeOfDayOffset))
+                throw new InvalidOperationException("Invalid circuit world-time anchor.");
         }
 
         // Source: Mod/ScMultiplayer/Func/Circuit/CircuitSynchronizer.cs:
@@ -254,6 +333,10 @@ namespace ScMultiplayer
         {
             if (TimelineGeneration <= 0)
                 throw new InvalidOperationException("Invalid circuit timeline generation.");
+            if (double.IsNaN(TotalElapsedGameTime) ||
+                double.IsInfinity(TotalElapsedGameTime) ||
+                double.IsNaN(TimeOfDayOffset) || double.IsInfinity(TimeOfDayOffset))
+                throw new InvalidOperationException("Invalid circuit world-time anchor.");
             writer.WritePackedInt32(Epoch);
             writer.WritePackedInt32(TimelineGeneration);
             writer.WritePackedInt32(ServerStep);
@@ -263,6 +346,8 @@ namespace ScMultiplayer
             writer.WriteInt64(RequiredTerrainSequence);
             writer.WritePackedInt32(NextHashStep);
             writer.WriteByte(IsPaused ? (byte)1 : (byte)0);
+            writer.WriteDouble(TotalElapsedGameTime);
+            writer.WriteDouble(TimeOfDayOffset);
         }
 
         // Source: Mod/ScMultiplayer/Message/SyncBatchMessage.cs:SyncBatchMessage.Read
@@ -362,6 +447,8 @@ namespace ScMultiplayer
                     ElementTypeCode = reader.ReadPackedInt32(),
                     AuxiliaryVoltageLevel = unchecked((sbyte)reader.ReadByte())
                 };
+                if ((state.StateFlags & 128) != 0)
+                    state.RuntimeState = ReadSignedPackedInt32(reader);
                 int scheduledCount = reader.ReadPackedInt32(0, 300);
                 for (int j = 0; j < scheduledCount; j++)
                 {
@@ -405,6 +492,8 @@ namespace ScMultiplayer
                 writer.WritePackedInt32(MathUtils.Clamp(item.NextSimulationSteps, 0, 10000));
                 writer.WritePackedInt32(item.ElementTypeCode);
                 writer.WriteByte(unchecked((byte)item.AuxiliaryVoltageLevel));
+                if ((item.StateFlags & 128) != 0)
+                    WriteSignedPackedInt32(writer, item.RuntimeState);
                 if (item.ScheduledVoltages.Count > 300)
                     throw new InvalidOperationException("Too many scheduled circuit voltages.");
                 writer.WritePackedInt32(item.ScheduledVoltages.Count);
