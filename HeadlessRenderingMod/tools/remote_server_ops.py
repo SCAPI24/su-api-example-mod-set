@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import getpass
 import hashlib
 import json
 from pathlib import Path
@@ -13,6 +14,7 @@ import subprocess
 import sys
 import time
 import zipfile
+from xml.sax.saxutils import escape
 
 import serverctl
 
@@ -69,8 +71,17 @@ def install_manual_task(root: Path) -> None:
     if not definition.is_file():
         raise RuntimeError(f"missing task definition: {definition}")
     temporary = definition.with_name("SurvivalcraftServer-Manual.utf16.xml")
-    xml = definition.read_text(encoding="utf-8").replace(
-        'encoding="UTF-8"', 'encoding="UTF-16"'
+    # Source: tools/SurvivalcraftServer-Manual.xml:Principal/Actions
+    # Keep account names and installation paths out of the repository. Resolve both on the
+    # server that installs the task and XML-escape them before creating the temporary definition.
+    task_user = getpass.getuser().strip()
+    if not task_user:
+        raise RuntimeError("cannot determine the current task user")
+    xml = (
+        definition.read_text(encoding="utf-8")
+        .replace('encoding="UTF-8"', 'encoding="UTF-16"')
+        .replace("__TASK_USER__", escape(task_user))
+        .replace("__SERVER_ROOT__", escape(str(root)))
     )
     temporary.write_text(xml, encoding="utf-16")
     try:
