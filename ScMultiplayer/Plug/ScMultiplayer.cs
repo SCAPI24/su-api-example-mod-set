@@ -1915,6 +1915,12 @@ namespace ScMultiplayer
             RenderRemotePlayers();
         }
 
+        // Source: Mod/ScMultiplayer/Networking/RemoteServerDirectory.cs:RemoteServerDirectory.SetDiscoveryEnabled
+        public void SetServerDiscoveryEnabled(bool enabled)
+        {
+            m_remoteServerDirectory?.SetDiscoveryEnabled(enabled);
+        }
+
         public bool ShouldSuppressClientInput =>
             !IsHost && client?.IsConnected == true &&
             (m_clientTerrainRecoveryActive ||
@@ -1944,6 +1950,10 @@ namespace ScMultiplayer
         private void HandleWindowDeactivated()
         {
             m_circuitSynchronizer?.SetWindowActive(false);
+            // Source: Survivalcraft/Game/Program.cs:Program.Run
+            // Losing focus does not stop the Windows Project update loop. Keep receiving terrain,
+            // circuit and world-time state instead of starting an unnecessary recovery barrier.
+            if (OperatingSystem.IsWindows()) return;
             if (!IsHost && client?.IsConnected == true)
             {
                 m_clientWindowDeactivated = true;
@@ -1955,6 +1965,8 @@ namespace ScMultiplayer
         // Source: Engine/Window.cs:Window.Activated
         private void HandleWindowActivated()
         {
+            // Source: Comms/UdpTransmitter.cs:UdpTransmitter.InvalidateIPv4NetworkSnapshot
+            UdpTransmitter.InvalidateIPv4NetworkSnapshot();
             m_circuitSynchronizer?.SetWindowActive(true);
             if (!m_clientWindowDeactivated) return;
             m_clientWindowDeactivated = false;
@@ -11249,6 +11261,7 @@ namespace ScMultiplayer
             m_localCreateAttempts = 0;
             Log.Information($"[ScMP] GameCreated, ClientID={client.ClientID}, Creator={obj.CreatorAddress}");
             IsHost = true;
+            SetServerDiscoveryEnabled(false);
             m_localLeaveInProgress = false;
             m_shouldCreateHostAvatar = false;
             ResetTransientNetworkState();
@@ -11286,6 +11299,7 @@ namespace ScMultiplayer
             bool wasReconnect = m_reconnectPending;
             Log.Information($"[ScMP] GameJoined, Step={obj.Step}, ClientID={client.ClientID}");
             IsHost = false;
+            SetServerDiscoveryEnabled(false);
             m_hostDisconnectHandled = false;
             m_localLeaveInProgress = false;
             m_isLoadingDownloadedWorld = true;

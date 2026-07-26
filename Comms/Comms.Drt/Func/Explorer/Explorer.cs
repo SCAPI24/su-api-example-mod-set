@@ -239,14 +239,26 @@ public class Explorer : IDisposable
     // Source: Comms.Drt/Func/Explorer/Explorer.DiscoverLocalServers
     // Probe a server endpoint learned from a peer's discovery request. This is needed when an
     // Android VpnService permits inbound ZeroTier broadcasts but blocks outbound broadcasts.
-    public void DiscoverServer(IPEndPoint serverAddress)
+    public void DiscoverServer(IPEndPoint serverAddress, bool isInternet = false)
     {
         lock (Peer.Lock)
         {
             CheckNotDisposed();
             if (serverAddress == null) throw new ArgumentNullException(nameof(serverAddress));
             double sendTime = Comm.GetTime();
-            DirectRequestTimes[serverAddress] = sendTime;
+            // Source: SCAPI24/RuthlessConquest:ServersManager.SendInternetDiscoveryRequests
+            // Preserve how the endpoint was obtained. Explicit service endpoints and dynamic
+            // internet RTT probes must not be reclassified as LAN merely because they are unicast.
+            if (isInternet)
+            {
+                InternetRequestTimes[serverAddress] = sendTime;
+                DirectRequestTimes.Remove(serverAddress);
+            }
+            else
+            {
+                DirectRequestTimes[serverAddress] = sendTime;
+                InternetRequestTimes.Remove(serverAddress);
+            }
             Peer.DiscoverPeer(serverAddress, MessageSerializer.Write(
                 new ClientDiscoveryRequestMessage { ProbeSendTime = sendTime }));
         }
@@ -340,29 +352,22 @@ public class Explorer : IDisposable
                 IPAddress[] array = DnsQueryHost(host);
                 if (array != null)
                 {
-                    lock (Peer.Lock)
+                    IPAddress[] array2 = array;
+                    foreach (IPAddress iPAddress in array2)
                     {
-                        IPAddress[] array2 = array;
-                        foreach (IPAddress iPAddress in array2)
+                        int[] serverPorts = ServerPorts;
+                        foreach (int num in serverPorts)
                         {
-                            int[] serverPorts = ServerPorts;
-                            foreach (int num in serverPorts)
+                            try
                             {
-                                try
-                                {
-                                    IPEndPoint iPEndPoint = new(iPAddress, num);
-                                    double sendTime = Comm.GetTime();
-                                    InternetRequestTimes[iPEndPoint] = sendTime;
-                                    Peer.DiscoverPeer(iPEndPoint, MessageSerializer.Write(
-                                        new ClientDiscoveryRequestMessage
-                                        {
-                                            ProbeSendTime = sendTime
-                                        }));
-                                }
-                                catch (Exception error)
-                                {
-                                    InvokeError(error);
-                                }
+                                // Source: Comms.Drt/Func/Explorer/Explorer.DiscoveredServers
+                                // Lock one datagram at a time so UI snapshots are not blocked by
+                                // an entire DNS-host x port-range discovery batch.
+                                DiscoverServer(new IPEndPoint(iPAddress, num), isInternet: true);
+                            }
+                            catch (Exception error)
+                            {
+                                InvokeError(error);
                             }
                         }
                     }
