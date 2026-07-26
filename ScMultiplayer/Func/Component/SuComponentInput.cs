@@ -79,6 +79,29 @@ namespace ScMultiplayer
             if (!suppressWorldActions)
                 ScMultiplayer.currentInstance?.TrySendWorldControlRequest(
                     Sum_componentPlayer, worldActions);
+            if (!ScMultiplayer.IsHost && worldActions != WorldControlAction.None)
+            {
+                // Source: Survivalcraft/Game/ComponentGui.cs:ComponentGui.Update
+                // ComponentGui also reads these buttons directly. Consume the click after sending
+                // the request so the client does not mutate authoritative world time/weather and
+                // then get visibly pulled back by the next host snapshot.
+                if (worldActions.HasFlag(WorldControlAction.TimeOfDay))
+                    ConsumeButtonClick(fields.GetParentField<ButtonWidget>(gui,
+                        "m_timeOfDayButtonWidget", typeof(ComponentGui)));
+                if (worldActions.HasFlag(WorldControlAction.Precipitation))
+                    ConsumeButtonClick(fields.GetParentField<ButtonWidget>(gui,
+                        "m_precipitationButtonWidget", typeof(ComponentGui)));
+                if (worldActions.HasFlag(WorldControlAction.Fog))
+                    ConsumeButtonClick(fields.GetParentField<ButtonWidget>(gui,
+                        "m_fogButtonWidget", typeof(ComponentGui)));
+                if (worldActions.HasFlag(WorldControlAction.Lightning))
+                    ConsumeButtonClick(fields.GetParentField<ButtonWidget>(gui,
+                        "m_lightningButtonWidget", typeof(ComponentGui)));
+                Sum_playerInput.TimeOfDay = false;
+                Sum_playerInput.Precipitation = false;
+                Sum_playerInput.Fog = false;
+                Sum_playerInput.Lighting = false;
+            }
             if (Sum_playerInput.Jump)
             {
                 if (Time.RealTime - Sum_lastJumpTime < 0.3)
@@ -172,6 +195,23 @@ namespace ScMultiplayer
             }
             fields.ModifyParentField(this, "m_lastJumpTime", Sum_lastJumpTime, parentType);
             fields.ModifyParentField(this, "m_playerInput", Sum_playerInput, parentType);
+        }
+
+        // Source: Survivalcraft/Game/BitmapButtonWidget.cs:BitmapButtonWidget.IsClicked
+        // Source: Survivalcraft/Game/ClickableWidget.cs:ClickableWidget.IsClicked
+        private static void ConsumeButtonClick(ButtonWidget button)
+        {
+            ClickableWidget clickable = button is BitmapButtonWidget
+                ? ScMultiplayer.ModManager.ModParentField.GetParentField<ClickableWidget>(
+                    button, "m_clickableWidget", typeof(BitmapButtonWidget))
+                : button is BevelledButtonWidget
+                    ? ScMultiplayer.ModManager.ModParentField
+                        .GetParentField<ClickableWidget>(button, "m_clickableWidget",
+                            typeof(BevelledButtonWidget))
+                    : null;
+            if (clickable != null)
+                ScMultiplayer.ModManager.ModParentField.ModifyParentField(clickable,
+                    "<IsClicked>k__BackingField", false, typeof(ClickableWidget));
         }
     }
 }

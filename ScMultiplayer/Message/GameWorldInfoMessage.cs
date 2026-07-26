@@ -20,6 +20,10 @@ namespace ScMultiplayer
         public bool HasPlayerProfile;
         public PlayerClass PlayerClass;
         public string CharacterSkinName = string.Empty;
+        public string MultiplayerModVersion = Message.ModVersion;
+        public int MultiplayerProtocolVersion = Message.ProtocolVersion;
+        public string MultiplayerProtocolHash = Message.ProtocolHash;
+        public string MultiplayerBuildFingerprint = Message.BuildFingerprint;
 
         public GameWorldInfoMessage()
         {
@@ -59,6 +63,21 @@ namespace ScMultiplayer
             HasPlayerProfile = reader.ReadBoolean();
             PlayerClass = (PlayerClass)reader.ReadInt32();
             CharacterSkinName = reader.ReadString();
+            // Source: Mod/ScMultiplayer/Message/Message.cs:Message.ProtocolHash
+            // Legacy room descriptions have no protocol trailer and remain readable so the
+            // client can show an explicit incompatibility message before joining.
+            MultiplayerModVersion = reader.Position < reader.Length
+                ? reader.ReadString()
+                : string.Empty;
+            MultiplayerProtocolVersion = reader.Position < reader.Length
+                ? reader.ReadPackedInt32()
+                : 0;
+            MultiplayerProtocolHash = reader.Position < reader.Length
+                ? reader.ReadString()
+                : string.Empty;
+            MultiplayerBuildFingerprint = reader.Position < reader.Length
+                ? reader.ReadString()
+                : string.Empty;
         }
 
         protected override void Write(SuWriter writer)
@@ -75,6 +94,10 @@ namespace ScMultiplayer
             writer.WriteBoolean(HasPlayerProfile);
             writer.WriteInt32((int)PlayerClass);
             writer.WriteString(CharacterSkinName ?? string.Empty);
+            writer.WriteString(MultiplayerModVersion ?? string.Empty);
+            writer.WritePackedInt32(MultiplayerProtocolVersion);
+            writer.WriteString(MultiplayerProtocolHash ?? string.Empty);
+            writer.WriteString(MultiplayerBuildFingerprint ?? string.Empty);
         }
     }
 }
