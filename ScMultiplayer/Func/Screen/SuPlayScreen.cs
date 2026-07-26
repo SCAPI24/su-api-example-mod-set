@@ -4,11 +4,11 @@ using Engine.Input;
 using Game;
 using SuAPI;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net;
-using System.Reflection;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -24,11 +24,19 @@ namespace ScMultiplayer
         private readonly Dictionary<WorldInfo, GameDescription> m_remoteGames = new Dictionary<WorldInfo, GameDescription>();
         private readonly HashSet<WorldInfo> m_serviceWorlds = new HashSet<WorldInfo>();
         private readonly Dictionary<string, double> m_remoteLastSeen = new Dictionary<string, double>();
-        private DateTime m_nextRemoteRefreshTime;
+        private readonly Dictionary<string, double> m_remoteRouteLastSeen = new Dictionary<string, double>();
+        private readonly Dictionary<string, WorldInfo> m_localWorlds =
+            new Dictionary<string, WorldInfo>(StringComparer.OrdinalIgnoreCase);
+        private readonly ConcurrentQueue<ServerDescription> m_pendingRemoteServers =
+            new ConcurrentQueue<ServerDescription>();
         private Explorer m_subscribedExplorer;
-        private volatile bool m_remoteRefreshRequested;
-        private int m_remoteRefreshDispatchPending;
+        private volatile bool m_remoteApplyRequested;
+        private DateTime m_nextRemoteExpiryTime;
+        private DateTime m_nextPingProbeTime;
+        private int m_pingProbePending;
         private const double RemoteWorldRetentionSeconds = 15.0;
+        private const double PreferredServiceRouteSeconds = 7.0;
+        private const double RemotePingProbePeriodSeconds = 1.0;
         private static readonly SemaphoreSlim s_worldScanLock = new SemaphoreSlim(1, 1);
         private int m_enterGeneration;
         private bool m_worldScanPending;
@@ -44,38 +52,10 @@ namespace ScMultiplayer
         {
             m_worldsListWidget = Children.Find<ListPanelWidget>("WorldsList");
 
-            // Enhanced world list display: add online info
-            m_worldsListWidget.ItemWidgetFactory = (Func<object, Widget>)Delegate.Combine(
-                m_worldsListWidget.ItemWidgetFactory,
-                (Func<object, Widget>)delegate (object item)
-                {
-                    WorldInfo worldInfo = (WorldInfo)item;
-                    XElement node2 = ContentManager.Get<XElement>("Widgets/SavedWorldItem");
-                    ContainerWidget containerWidget = (ContainerWidget)Widget.LoadWidget(this, node2, null);
-                    LabelWidget labelWidget = containerWidget.Children.Find<LabelWidget>("WorldItem.Name");
-                    LabelWidget labelWidget2 = containerWidget.Children.Find<LabelWidget>("WorldItem.Details");
-                    containerWidget.Tag = worldInfo;
-                    labelWidget.Text = worldInfo.WorldSettings.Name;
-                    labelWidget2.Text = string.Format("{0} | {1:dd MMM yyyy HH:mm} | {2} | {3} | {4}",
-                        DataSizeFormatter.Format(worldInfo.Size),
-                        worldInfo.LastSaveTime.ToLocalTime(),
-                        (worldInfo.PlayerInfos.Count > 1) ? $"{worldInfo.PlayerInfos.Count} players" : "1 player",
-                        worldInfo.WorldSettings.GameMode.ToString(),
-                        worldInfo.WorldSettings.EnvironmentBehaviorMode.ToString());
-
-                    if (worldInfo.SerializationVersion != VersionsManager.SerializationVersion)
-                        labelWidget2.Text += " | " + (string.IsNullOrEmpty(worldInfo.SerializationVersion)
-                            ? "(unknown)" : ("(" + worldInfo.SerializationVersion + ")"));
-
-                    // Show online Ping
-                    if (m_remoteWorldPings.TryGetValue(worldInfo, out float ping))
-                    {
-                        string status = m_serviceWorlds.Contains(worldInfo) ? "Service" : "Online";
-                        labelWidget2.Text += " | " + status + " (Ping " +
-                            (int)(ping * 1000f) + "ms)";
-                    }
-                    return containerWidget;
-                });
+            // Source: Survivalcraft/Game/PlayScreen.cs:PlayScreen.PlayScreen
+            // The base screen already combines the default LabelWidget factory with its saved-
+            // world factory. Combining once more would construct three widgets and discard two.
+            m_worldsListWidget.ItemWidgetFactory = CreateWorldItemWidget;
 
             // Source: Survivalcraft/Game/PlayScreen.cs:PlayScreen.PlayScreen
             // Replace the base double-click delegate, which always treats an item as a local world.
@@ -90,22 +70,29 @@ namespace ScMultiplayer
 
         public override void Update()
         {
-            // Source: Comms.Drt.Explorer.DiscoveredServers
-            // Source: Comms.Drt.Explorer.ServerDiscovered
-            // Keep the list live when a host creates a room while this screen is already open.
             DateTime now = DateTime.UtcNow;
-            if (!m_worldScanPending &&
-                (m_remoteRefreshRequested || now >= m_nextRemoteRefreshTime))
+            if (!m_worldScanPending && m_remoteApplyRequested)
             {
-                m_remoteRefreshRequested = false;
-                m_nextRemoteRefreshTime = now.AddSeconds(2.0);
-                RefreshRemoteWorlds();
+                m_remoteApplyRequested = false;
+                ApplyPendingRemoteServers();
+            }
+            if (!m_worldScanPending && now >= m_nextRemoteExpiryTime)
+            {
+                m_nextRemoteExpiryTime = now.AddSeconds(1.0);
+                RemoveStaleRemoteWorlds();
+            }
+            if (!m_worldScanPending && now >= m_nextPingProbeTime)
+            {
+                m_nextPingProbeTime = now.AddSeconds(RemotePingProbePeriodSeconds);
+                BeginRemotePingProbes();
             }
 
             SelectedItem = GetSelectedWorldInfo();
             bool isRemote = SelectedItem != null && m_remoteGames.ContainsKey(SelectedItem);
             if (SelectedItem != null && !isRemote &&
-                WorldsManager.WorldInfos.IndexOf(SelectedItem) < 0)
+                !WorldsManager.WorldInfos.Any(world =>
+                    string.Equals(world.DirectoryName, SelectedItem.DirectoryName,
+                        StringComparison.OrdinalIgnoreCase)))
             {
                 m_worldsListWidget.SelectedItem = null;
                 SelectedItem = null;
@@ -150,6 +137,58 @@ namespace ScMultiplayer
             }
         }
 
+        // Source: Survivalcraft/Game/PlayScreen.cs:PlayScreen.PlayScreen
+        private Widget CreateWorldItemWidget(object item)
+        {
+            WorldInfo worldInfo = (WorldInfo)item;
+            XElement node = ContentManager.Get<XElement>("Widgets/SavedWorldItem");
+            ContainerWidget container = (ContainerWidget)Widget.LoadWidget(this, node, null);
+            container.Tag = worldInfo;
+            UpdateWorldItemWidget(container, worldInfo);
+            return container;
+        }
+
+        // Source: Survivalcraft/Game/PlayScreen.cs:PlayScreen.PlayScreen
+        private void UpdateWorldItemWidget(ContainerWidget container, WorldInfo worldInfo)
+        {
+            LabelWidget name = container.Children.Find<LabelWidget>("WorldItem.Name");
+            LabelWidget details = container.Children.Find<LabelWidget>("WorldItem.Details");
+            name.Text = worldInfo.WorldSettings.Name;
+            details.Text = string.Format("{0} | {1:dd MMM yyyy HH:mm} | {2} | {3} | {4}",
+                DataSizeFormatter.Format(worldInfo.Size),
+                worldInfo.LastSaveTime.ToLocalTime(),
+                worldInfo.PlayerInfos.Count > 1
+                    ? $"{worldInfo.PlayerInfos.Count} players"
+                    : "1 player",
+                worldInfo.WorldSettings.GameMode,
+                worldInfo.WorldSettings.EnvironmentBehaviorMode);
+            if (worldInfo.SerializationVersion != VersionsManager.SerializationVersion)
+            {
+                details.Text += " | " + (string.IsNullOrEmpty(worldInfo.SerializationVersion)
+                    ? "(unknown)"
+                    : "(" + worldInfo.SerializationVersion + ")");
+            }
+            if (m_remoteWorldPings.TryGetValue(worldInfo, out float ping))
+            {
+                string status = m_serviceWorlds.Contains(worldInfo) ? "Service" : "Online";
+                string pingText = ping > 0f && ping < 3f
+                    ? Math.Round(ping * 1000f).ToString() + "ms"
+                    : "unknown";
+                details.Text += " | " + status + " (Ping " + pingText + ")";
+            }
+        }
+
+        private void RefreshVisibleWorldItems()
+        {
+            // Source: Survivalcraft/Game/ListPanelWidget.cs:ListPanelWidget.CreateListWidgets
+            // Only visible rows are children, so dynamic RTT updates do not rebuild the list.
+            foreach (Widget child in m_worldsListWidget.Children)
+            {
+                if (child is ContainerWidget container && container.Tag is WorldInfo worldInfo)
+                    UpdateWorldItemWidget(container, worldInfo);
+            }
+        }
+
         private void ActivateWorld(WorldInfo worldInfo)
         {
             if (m_remoteGames.TryGetValue(worldInfo, out GameDescription remoteGame))
@@ -166,34 +205,9 @@ namespace ScMultiplayer
                 return;
             }
 
-            GameDescription matchingGame = null;
-            GameWorldInfoMessage matchingInfo = null;
-            var servers = ScMultiplayer.explorer?.DiscoveredServers;
-            if (servers != null)
-            {
-                foreach (var server in servers)
-                {
-                    foreach (var game in server.GameDescriptions)
-                    {
-                        try { matchingInfo = Message.Read(game.GameDescriptionBytes) as GameWorldInfoMessage; }
-                        catch { matchingInfo = null; }
-                        if (matchingInfo?.Name == worldInfo.WorldSettings.Name)
-                        {
-                            matchingGame = game;
-                            break;
-                        }
-                    }
-                    if (matchingGame != null) break;
-                }
-            }
-
-            if (matchingGame != null &&
-                !ScMultiplayer.IsLocalServerEndpoint(matchingGame.ServerDescription.Address))
-            {
-                GameJoin(worldInfo, matchingGame);
-                return;
-            }
-
+            // Source: Comms.Drt.Explorer.DiscoveredServers
+            // Remote rows always carry m_remoteGames. Do not take Peer.Lock on the UI thread as
+            // a fallback, and do not join a same-named remote room when a local world was clicked.
             Play(worldInfo);
         }
 
@@ -300,6 +314,8 @@ namespace ScMultiplayer
 
         public override void Enter(object[] parameters)
         {
+            // Source: Mod/ScMultiplayer/Networking/RemoteServerDirectory.cs:RemoteServerDirectory.SetDiscoveryEnabled
+            ScMultiplayer.currentInstance?.SetServerDiscoveryEnabled(true);
             // Disconnect previous connection
             if (ScMultiplayer.client.IsConnected)
             {
@@ -311,27 +327,27 @@ namespace ScMultiplayer
             // scan rewrite this list after remote rooms were added, leaving null/incomplete items.
             int generation = Interlocked.Increment(ref m_enterGeneration);
             m_worldScanPending = true;
-            m_remoteWorlds.Clear();
-            m_remoteWorldPings.Clear();
-            m_remoteGames.Clear();
-            m_serviceWorlds.Clear();
-            m_remoteLastSeen.Clear();
+            while (m_pendingRemoteServers.TryDequeue(out _)) { }
+            m_remoteApplyRequested = false;
             SubscribeToExplorer();
-            m_nextRemoteRefreshTime = DateTime.MinValue;
-            m_remoteRefreshRequested = true;
+            QueueCurrentExplorerSnapshot(generation);
+            m_nextRemoteExpiryTime = DateTime.MinValue;
+            m_nextPingProbeTime = DateTime.MinValue;
             StartWorldScan(generation);
         }
 
         public override void Leave()
         {
+            // Source: Mod/ScMultiplayer/Networking/RemoteServerDirectory.cs:RemoteServerDirectory.SetDiscoveryEnabled
+            ScMultiplayer.currentInstance?.SetServerDiscoveryEnabled(false);
             Interlocked.Increment(ref m_enterGeneration);
             m_worldScanPending = false;
             HideScanningWorldsDialog();
             if (m_subscribedExplorer != null)
                 m_subscribedExplorer.ServerDiscovered -= HandleServerDiscovered;
             m_subscribedExplorer = null;
-            m_remoteRefreshRequested = false;
-            Interlocked.Exchange(ref m_remoteRefreshDispatchPending, 0);
+            m_remoteApplyRequested = false;
+            while (m_pendingRemoteServers.TryDequeue(out _)) { }
             base.Leave();
         }
 
@@ -374,19 +390,84 @@ namespace ScMultiplayer
                         Log.Error($"[ScMP] Failed to scan worlds: {scanError.Message}");
                         return;
                     }
-                    m_worldsListWidget.ClearItems();
-                    foreach (WorldInfo world in worlds)
-                        m_worldsListWidget.AddItem(world);
-                    m_totalWorldsSize = worlds.Sum(world => world.Size);
-                    if (selectedItem != null)
-                    {
-                        m_worldsListWidget.SelectedItem = worlds.FirstOrDefault(world =>
-                            world.DirectoryName == selectedItem.DirectoryName);
-                    }
+                    ApplyLocalWorlds(worlds, selectedItem);
                     HideScanningWorldsDialog();
-                    RefreshRemoteWorlds();
+                    ApplyPendingRemoteServers();
+                    RemoveStaleRemoteWorlds();
                 });
             });
+        }
+
+        private void ApplyLocalWorlds(IReadOnlyList<WorldInfo> scannedWorlds,
+            WorldInfo selectedItem)
+        {
+            // Source: Survivalcraft/Game/PlayScreen.cs:PlayScreen.Enter
+            // Reuse unchanged local rows. ListPanelWidget.ClearItems invalidates every visible
+            // widget, so rebuild only when the actual local/remote item sequence has changed.
+            var orderedLocalWorlds = new List<WorldInfo>(scannedWorlds.Count);
+            var activeDirectories = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (WorldInfo scanned in scannedWorlds)
+            {
+                activeDirectories.Add(scanned.DirectoryName);
+                if (!m_localWorlds.TryGetValue(scanned.DirectoryName, out WorldInfo current))
+                {
+                    current = scanned;
+                    m_localWorlds.Add(scanned.DirectoryName, current);
+                }
+                else
+                {
+                    CopyWorldInfo(scanned, current);
+                }
+                orderedLocalWorlds.Add(current);
+            }
+            foreach (string directory in m_localWorlds.Keys
+                .Where(directory => !activeDirectories.Contains(directory)).ToArray())
+            {
+                m_localWorlds.Remove(directory);
+            }
+
+            var desiredItems = new List<WorldInfo>(orderedLocalWorlds);
+            desiredItems.AddRange(m_remoteWorlds.Values);
+            bool sequenceChanged = desiredItems.Count != m_worldsListWidget.Items.Count;
+            if (!sequenceChanged)
+            {
+                for (int i = 0; i < desiredItems.Count; i++)
+                {
+                    if (!ReferenceEquals(desiredItems[i], m_worldsListWidget.Items[i]))
+                    {
+                        sequenceChanged = true;
+                        break;
+                    }
+                }
+            }
+            if (sequenceChanged)
+            {
+                m_worldsListWidget.ClearItems();
+                foreach (WorldInfo world in desiredItems)
+                    m_worldsListWidget.AddItem(world);
+            }
+
+            m_totalWorldsSize = scannedWorlds.Sum(world => world.Size);
+            if (selectedItem != null)
+            {
+                WorldInfo selected = desiredItems.FirstOrDefault(world =>
+                    ReferenceEquals(world, selectedItem) ||
+                    (!m_remoteGames.ContainsKey(world) &&
+                        world.DirectoryName == selectedItem.DirectoryName));
+                m_worldsListWidget.SelectedItem = selected;
+            }
+            RefreshVisibleWorldItems();
+        }
+
+        // Source: Survivalcraft/Game/WorldInfo.cs:WorldInfo
+        private static void CopyWorldInfo(WorldInfo source, WorldInfo target)
+        {
+            target.DirectoryName = source.DirectoryName;
+            target.Size = source.Size;
+            target.LastSaveTime = source.LastSaveTime;
+            target.SerializationVersion = source.SerializationVersion;
+            target.WorldSettings = source.WorldSettings;
+            target.PlayerInfos = source.PlayerInfos;
         }
 
         private void HideScanningWorldsDialog()
@@ -410,79 +491,130 @@ namespace ScMultiplayer
 
         private void HandleServerDiscovered(ServerDescription server)
         {
-            m_remoteRefreshRequested = true;
-            int generation = m_enterGeneration;
-            // Source: Engine/Dispatcher.cs:Dispatcher.Dispatch
-            // Explorer raises this on its network thread. Coalesce repeated discovery responses
-            // and mutate ListPanelWidget only after returning to the game UI thread.
-            if (Interlocked.Exchange(ref m_remoteRefreshDispatchPending, 1) != 0) return;
-            Dispatcher.Dispatch(delegate
+            // Source: Mod/Comms/Comms.Drt/Func/Explorer/Explorer.ServerDiscovered
+            // The callback runs while Explorer owns Peer.Lock. Queue the immutable response and
+            // let Screen.Update apply it without reading DiscoveredServers on the UI thread.
+            if (server == null) return;
+            m_pendingRemoteServers.Enqueue(server);
+            m_remoteApplyRequested = true;
+        }
+
+        // Source: Mod/Comms/Comms.Drt/Func/Explorer/Explorer.DiscoveredServers
+        private void QueueCurrentExplorerSnapshot(int generation)
+        {
+            Explorer explorer = m_subscribedExplorer;
+            if (explorer == null) return;
+            Task.Run(delegate
             {
-                Interlocked.Exchange(ref m_remoteRefreshDispatchPending, 0);
-                if (generation != m_enterGeneration) return;
-                m_remoteRefreshRequested = false;
-                m_nextRemoteRefreshTime = DateTime.UtcNow.AddSeconds(2.0);
-                if (!m_worldScanPending)
-                    RefreshRemoteWorlds();
+                ServerDescription[] servers;
+                try { servers = explorer.DiscoveredServers.ToArray(); }
+                catch { return; }
+                if (generation != m_enterGeneration ||
+                    !ReferenceEquals(explorer, m_subscribedExplorer)) return;
+                foreach (ServerDescription server in servers)
+                    m_pendingRemoteServers.Enqueue(server);
+                if (servers.Length > 0)
+                    m_remoteApplyRequested = true;
             });
         }
 
-        private void RefreshRemoteWorlds()
+        // Source: Mod/Comms/Comms.Drt/Func/Explorer/Explorer.ServerDiscovered
+        private void ApplyPendingRemoteServers()
         {
-            var seen = new HashSet<string>();
-            var servers = ScMultiplayer.explorer?.DiscoveredServers;
-            if (servers != null)
+            bool changed = false;
+            while (m_pendingRemoteServers.TryDequeue(out ServerDescription server))
             {
-                foreach (var server in servers.ToArray())
+                foreach (GameDescription game in server.GameDescriptions)
                 {
-                    foreach (var game in server.GameDescriptions)
-                    {
-                        GameWorldInfoMessage info;
-                        try { info = Message.Read(game.GameDescriptionBytes) as GameWorldInfoMessage; }
-                        catch { continue; }
-                        if (info == null || ScMultiplayer.IsLocalServerEndpoint(server.Address)) continue;
-                        // Keep the displayed remote world tied to the discovery endpoint.
-                        // HostAddress is metadata and may be stale from an older virtual NIC;
-                        // JoinGame must use server.Address, which is the endpoint that replied.
+                    GameWorldInfoMessage info;
+                    try { info = Message.Read(game.GameDescriptionBytes) as GameWorldInfoMessage; }
+                    catch { continue; }
+                    if (info == null || ScMultiplayer.IsLocalServerEndpoint(server.Address))
+                        continue;
 
-                        string key = server.Address + "/" + game.GameID;
-                        bool isService = !server.IsLocal;
-                        string serviceHost = isService
-                            ? ScMultiplayer.GetServiceDiscoveryHost(server.Address)
-                            : null;
-                        string displayName = !string.IsNullOrEmpty(serviceHost)
-                            ? info.Name + " (" + serviceHost + ")"
-                            : info.Name;
-                        seen.Add(key);
-                        m_remoteLastSeen[key] = Time.RealTime;
-                        if (!m_remoteWorlds.TryGetValue(key, out WorldInfo remoteWorld))
+                    string key = GetRemoteRoomKey(info, game, server.Address);
+                    double now = Time.RealTime;
+                    m_remoteLastSeen[key] = now;
+                    string serviceHost = ScMultiplayer.GetServiceDiscoveryHost(server.Address);
+                    bool isService = !string.IsNullOrEmpty(serviceHost);
+                    if (m_remoteWorlds.TryGetValue(key, out WorldInfo existingWorld) &&
+                        m_remoteGames.TryGetValue(existingWorld, out GameDescription existingGame))
+                    {
+                        bool currentIsService = m_serviceWorlds.Contains(existingWorld);
+                        bool sameEndpoint = Equals(existingGame.ServerDescription.Address,
+                            server.Address);
+                        if (currentIsService && !isService && !sameEndpoint &&
+                            m_remoteRouteLastSeen.TryGetValue(key, out double routeLastSeen) &&
+                            now - routeLastSeen <= PreferredServiceRouteSeconds)
                         {
-                            remoteWorld = CreateRemoteWorldInfo(info, game, displayName);
-                            m_remoteWorlds.Add(key, remoteWorld);
-                            if (isService) m_serviceWorlds.Add(remoteWorld);
-                            m_worldsListWidget.AddItem(remoteWorld);
+                            continue;
                         }
-                        else
-                        {
-                            remoteWorld.WorldSettings.Name = displayName;
-                            if (isService) m_serviceWorlds.Add(remoteWorld);
-                            else m_serviceWorlds.Remove(remoteWorld);
-                        }
-                        // Source: Comms/Comms/Peer.cs:KeepAliveResponseMessage.Handle
-                        // The discovery response now carries one exact echoed-timestamp RTT.
-                        // Keep the first valid sample for this screen entry instead of folding
-                        // later background discovery scheduling into the displayed value.
-                        if (!m_remoteWorldPings.ContainsKey(remoteWorld))
-                            m_remoteWorldPings[remoteWorld] = server.Ping;
-                        m_remoteGames[remoteWorld] = game;
                     }
+
+                    string displayName = isService
+                        ? info.Name + " (" + serviceHost + ")"
+                        : info.Name;
+                    if (!m_remoteWorlds.TryGetValue(key, out WorldInfo remoteWorld))
+                    {
+                        remoteWorld = CreateRemoteWorldInfo(info, game, displayName);
+                        m_remoteWorlds.Add(key, remoteWorld);
+                        m_worldsListWidget.AddItem(remoteWorld);
+                    }
+                    else
+                    {
+                        UpdateRemoteWorldInfo(remoteWorld, info, game, displayName);
+                    }
+                    if (isService) m_serviceWorlds.Add(remoteWorld);
+                    else m_serviceWorlds.Remove(remoteWorld);
+
+                    // Source: SCAPI24/RuthlessConquest:ServersManager.Handle
+                    // Replace the sample on every discovery response. The echoed request time in
+                    // Comms supplies the current endpoint RTT rather than a screen-entry constant.
+                    m_remoteWorldPings[remoteWorld] = server.Ping;
+                    m_remoteGames[remoteWorld] = game;
+                    m_remoteRouteLastSeen[key] = now;
+                    changed = true;
                 }
             }
+            if (changed)
+                RefreshVisibleWorldItems();
+        }
 
+        private static string GetRemoteRoomKey(GameWorldInfoMessage info,
+            GameDescription game, IPEndPoint discoveredAddress)
+        {
+            // Source: Mod/ScMultiplayer/Message/GameWorldInfoMessage.cs:PlayerIdentity
+            // One host can be discovered through LAN, VPN, public DNS and explicit forwarding.
+            // Merge those routes so a service response upgrades the same visible room.
+            if (!string.IsNullOrEmpty(info.PlayerIdentity))
+                return "player:" + info.PlayerIdentity + "/" + game.GameID;
+            IPEndPoint advertised = info.HostAddress ?? discoveredAddress;
+            return "room:" + advertised + "/" + game.GameID + "/" + info.Name;
+        }
+
+        // Source: Mod/ScMultiplayer/Func/Screen/SuPlayScreen.CreateRemoteWorldInfo
+        private static void UpdateRemoteWorldInfo(WorldInfo worldInfo,
+            GameWorldInfoMessage info, GameDescription game, string displayName)
+        {
+            worldInfo.Size = info.Size;
+            worldInfo.LastSaveTime = info.LastSaveTime;
+            worldInfo.SerializationVersion = info.SerializationVersion;
+            worldInfo.WorldSettings.Name = displayName;
+            worldInfo.WorldSettings.GameMode = info.GameMode;
+            worldInfo.WorldSettings.EnvironmentBehaviorMode = info.EnvironmentBehaviorMode;
+            while (worldInfo.PlayerInfos.Count < game.ClientsCount)
+                worldInfo.PlayerInfos.Add(new PlayerInfo());
+            while (worldInfo.PlayerInfos.Count > game.ClientsCount)
+                worldInfo.PlayerInfos.RemoveAt(worldInfo.PlayerInfos.Count - 1);
+        }
+
+        // Source: Mod/Comms/Comms.Drt/Func/Explorer/Set/ExplorerSettings.cs
+        private void RemoveStaleRemoteWorlds()
+        {
+            double now = Time.RealTime;
             string[] staleKeys = m_remoteWorlds.Keys.Where(key =>
-                !seen.Contains(key) &&
-                (!m_remoteLastSeen.TryGetValue(key, out double lastSeen) ||
-                Time.RealTime - lastSeen > RemoteWorldRetentionSeconds)).ToArray();
+                !m_remoteLastSeen.TryGetValue(key, out double lastSeen) ||
+                now - lastSeen > RemoteWorldRetentionSeconds).ToArray();
             WorldInfo selectedWorld = GetSelectedWorldInfo();
             if (staleKeys.Length > 0)
                 m_worldsListWidget.SelectedIndex = null;
@@ -494,6 +626,7 @@ namespace ScMultiplayer
                 m_remoteGames.Remove(remoteWorld);
                 m_serviceWorlds.Remove(remoteWorld);
                 m_remoteLastSeen.Remove(key);
+                m_remoteRouteLastSeen.Remove(key);
                 m_remoteWorlds.Remove(key);
             }
             if (selectedWorld != null &&
@@ -501,6 +634,46 @@ namespace ScMultiplayer
             {
                 m_worldsListWidget.SelectedItem = selectedWorld;
             }
+            if (staleKeys.Length > 0)
+                RefreshVisibleWorldItems();
+        }
+
+        // Source: SCAPI24/RuthlessConquest:ServersManager.SendInternetDiscoveryRequests
+        private void BeginRemotePingProbes()
+        {
+            Explorer explorer = m_subscribedExplorer;
+            if (explorer == null || Interlocked.Exchange(ref m_pingProbePending, 1) != 0)
+                return;
+            int generation = Volatile.Read(ref m_enterGeneration);
+            var endpoints = m_remoteGames.Select(pair => new
+                {
+                    Address = pair.Value.ServerDescription.Address,
+                    IsInternet = m_serviceWorlds.Contains(pair.Key) ||
+                        !pair.Value.ServerDescription.IsLocal
+                })
+                .GroupBy(item => item.Address)
+                .Select(group => new
+                {
+                    Address = group.Key,
+                    IsInternet = group.Any(item => item.IsInternet)
+                }).ToArray();
+            Task.Run(delegate
+            {
+                try
+                {
+                    foreach (var endpoint in endpoints)
+                    {
+                        if (generation != Volatile.Read(ref m_enterGeneration) ||
+                            !ReferenceEquals(explorer, m_subscribedExplorer)) break;
+                        try { explorer.DiscoverServer(endpoint.Address, endpoint.IsInternet); }
+                        catch { }
+                    }
+                }
+                finally
+                {
+                    Interlocked.Exchange(ref m_pingProbePending, 0);
+                }
+            });
         }
 
         // Source: Survivalcraft/Game/ListPanelWidget.cs:ListPanelWidget.SelectedItem
