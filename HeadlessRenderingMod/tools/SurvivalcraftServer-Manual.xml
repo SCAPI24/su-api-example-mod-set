@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
-    <Description>Manual-only launcher for C:\SurvivalcraftServer. No automatic triggers.</Description>
+    <Description>Manual-only launcher for __SERVER_ROOT__. No automatic triggers.</Description>
   </RegistrationInfo>
   <Triggers />
   <Principals>
     <Principal id="Author">
-      <UserId>Administrator</UserId>
+      <UserId>__TASK_USER__</UserId>
       <LogonType>InteractiveToken</LogonType>
       <RunLevel>HighestAvailable</RunLevel>
     </Principal>
@@ -34,8 +34,8 @@
   </Settings>
   <Actions Context="Author">
     <Exec>
-      <Command>C:\SurvivalcraftServer\Survivalcraft.exe</Command>
-      <WorkingDirectory>C:\SurvivalcraftServer</WorkingDirectory>
+      <Command>__SERVER_ROOT__\Survivalcraft.exe</Command>
+      <WorkingDirectory>__SERVER_ROOT__</WorkingDirectory>
     </Exec>
   </Actions>
 </Task>
