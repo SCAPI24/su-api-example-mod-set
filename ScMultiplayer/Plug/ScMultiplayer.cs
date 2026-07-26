@@ -387,7 +387,16 @@ namespace ScMultiplayer
         public int TotalBytesSent;
         public int ReplayRound;
         public int DroppedMessages;
+        public bool CutoffSealed;
         public readonly List<JoinCatchUpMessage> Messages = new List<JoinCatchUpMessage>();
+        public readonly List<JoinCatchUpMessage> PostCutoffMessages =
+            new List<JoinCatchUpMessage>();
+    }
+
+    public sealed class QueuedFrameAction
+    {
+        public Action Action;
+        public long EnqueuedTimestamp;
     }
 
     public class HostedWorldSnapshot
@@ -404,6 +413,9 @@ namespace ScMultiplayer
     {
         public double NextSendTime;
         public double HighPriorityUntil;
+        // Source: Survivalcraft/Game/ComponentRunAwayBehavior.cs:ComponentRunAwayBehavior.RunAwayFrom
+        // Limit repeated proximity startles while the host retains the native behavior path.
+        public double NextPassiveStartleTime;
         public string BehaviorState = string.Empty;
         public int TargetEntityId;
         public string HerdName = string.Empty;
@@ -445,11 +457,17 @@ namespace ScMultiplayer
         public Vector3 Velocity;
         public Vector3 Acceleration;
         public Vector3 SmoothedVelocity;
+        // Source: Survivalcraft/Game/ComponentBody.cs:ComponentBody.Update
+        // PresentationPosition is intentionally separate from ComponentBody.Position. A local
+        // collision may move a presentation replica for one physics frame, but must never become
+        // the baseline used to predict its next host-authoritative transform.
+        public Vector3 PresentationPosition;
         public Vector2 LookAngles;
         public bool AttackOrder;
         public bool FeedOrder;
         public bool HasTransform;
         public bool HasSmoothedVelocity;
+        public bool HasPresentationPosition;
         public bool PresentationInitialized;
         public float EstimatedSnapshotInterval = 0.1f;
         public float EstimatedDelay;
@@ -835,8 +853,12 @@ namespace ScMultiplayer
         {
             if (message == null || ScMultiplayer.client == null) return;
             byte[] payload = Message.WriteWithSender(message, ScMultiplayer.client.Address);
+            // Source: Mod/Comms/Comms.Drt/Func/Server/Set/ServerGame.cs:
+            // ServerGame.SendDirectInput
+            // Circuit events carry their own EventSequence/recovery ordering. Keep reliable
+            // delivery without coupling unrelated circuit messages to ReliableSequenced HOL.
             ScMultiplayer.client.SendDirectInput(targetClientId, payload,
-                sequenced: !latest, latest: latest);
+                sequenced: false, latest: latest);
         }
 
         // Source: Mod/ScMultiplayer/Func/WorldObjectSynchronizer.cs:
@@ -920,7 +942,7 @@ namespace ScMultiplayer
 
         // ---------- IMod ----------
         public string Name => "SC联机";
-        public string Version => "1.8.0";
+        public string Version => Message.ModVersion;
         public IEnumerable<string> Dependencies => Array.Empty<string>();
         public bool IsEnabled { get; set; } = true;
         public bool IsMergeLib => true;
@@ -932,6 +954,8 @@ namespace ScMultiplayer
         private double m_lastSyncUpdateTime;
         private uint m_syncPulseIndex;
         private Project m_frameProject;
+        private Project m_projectReadySentProject;
+        private int m_projectReadySentTransferId;
         private int m_lastWorldUpdateFrameIndex = -1;
         private Dictionary<int, float> m_playerHealthCache = new Dictionary<int, float>(); // clientID → last known health
         private readonly Dictionary<int, float> m_hostKnockbackHealthCache =
@@ -1031,6 +1055,7 @@ namespace ScMultiplayer
         private bool m_reconnectPending;
         private int m_reconnectAttempts;
         private double m_nextReconnectAttemptTime;
+        private double m_reconnectAttemptDeadline;
         private bool m_joinAwaitingWorldProgress;
         private double m_lastJoinWorldProgressTime;
         private NetworkPlayerRecord m_pendingLocalPlayerRecord;
@@ -1061,7 +1086,8 @@ namespace ScMultiplayer
         private double m_nextRemoteCreatureSpawnTime;
         private int m_remoteCreatureSpawnCursor;
         private Project m_clientWorldObjectsProject;
-        private readonly ConcurrentQueue<Action> m_endOfFrameActions = new ConcurrentQueue<Action>();
+        private readonly ConcurrentQueue<QueuedFrameAction> m_endOfFrameActions =
+            new ConcurrentQueue<QueuedFrameAction>();
         // Source: ScMultiplayer.cs:ProcessEndOfFrameActions
         // World-transfer control must not wait behind high-rate gameplay presentation work.
         private readonly ConcurrentQueue<Action> m_worldTransferActions = new ConcurrentQueue<Action>();
@@ -1158,6 +1184,10 @@ namespace ScMultiplayer
             new Dictionary<int, OutgoingWorldTransfer>();
         private readonly Dictionary<int, int> m_worldTransfersAwaitingReady =
             new Dictionary<int, int>();
+        private readonly Dictionary<int, int> m_hostProjectReadyTransfers =
+            new Dictionary<int, int>();
+        private readonly Dictionary<int, int> m_completedWorldReadyTransfers =
+            new Dictionary<int, int>();
         private readonly Dictionary<int, JoinCatchUpJournal> m_joinCatchUpJournals =
             new Dictionary<int, JoinCatchUpJournal>();
         private readonly Dictionary<int, string> m_pendingAcceptedJoinKeys =
@@ -1190,6 +1220,10 @@ namespace ScMultiplayer
         private double m_nextWorldTransferManifestRequestTime;
         private double m_nextWorldTransferUiUpdateTime;
         private int m_pendingWorldReadyTransferId;
+        private int m_pendingCircuitReadyTransferId;
+        private GamePakWorldReadyStage m_clientJoinReadyStage;
+        private double m_nextClientJoinReadyRetryTime;
+        private double m_lastClientJoinBarrierProgressTime;
         private float m_terrainMergeTime;
         private int m_sessionRandomSeed;
         private Dictionary<string, long> m_pendingRandomStates = new Dictionary<string, long>();
@@ -1216,7 +1250,10 @@ namespace ScMultiplayer
         private const double LocalCreateRetryInterval = 1.5;
         private const float ReconnectInitialDelay = 1f;
         private const float ReconnectMaxDelay = 5f;
-        private const double JoinWorldNoProgressTimeout = 15.0;
+        private const double ReconnectHandshakeTimeout = 12.0;
+        private const double JoinWorldNoProgressTimeout = 30.0;
+        private const double JoinBarrierRetryInterval = 1.5;
+        private const double JoinBarrierNoProgressTimeout = 30.0;
         private const float RemoteConnectionLostPeriod = 15f;
         private const float LocalHostConnectionLostPeriod = float.MaxValue;
         private const float LocalKnockbackHoldDuration = 0.35f;
@@ -1225,7 +1262,7 @@ namespace ScMultiplayer
         private const float RemoteExtrapolationLimit = 0.35f;
         private const float RemotePresentationStaleTime = 2f;
         private const float RemoteAnimalPredictionLimit = 1.15f;
-        private const float RemoteAnimalSnapDistance = 24f;
+        private const float RemoteAnimalSnapDistance = 3f;
         private const float ClientProjectilePredictionGrace = 3f;
         private const float PlayerHitRequestInterval = 0.36f;
         // Source: Comms/Comms/UdpTransmitter.cs:UdpTransmitter.MaxPacketSize
@@ -1271,6 +1308,7 @@ namespace ScMultiplayer
         private const string DownloadedWorldsRegistryPath = "data:/ScMultiplayerDownloadedWorlds.txt";
         private const string PlayerRecordsFileName = "ScMultiplayerPlayers.xml";
         private const string PlayerProfileRequiredReason = "SCMP_PROFILE_REQUIRED";
+        private const string ProtocolMismatchReasonPrefix = "SCMP_PROTOCOL_MISMATCH";
         // Source: Mod/CircuitAutoRouter/SubsystemCircuitRouter.cs:CircuitColors
         private static readonly Color[] ChatColors =
         {
@@ -1287,6 +1325,12 @@ namespace ScMultiplayer
         public void OnLoad(IModEventBus eventBus = null, IModInjector modInjector = null)
         {
             currentInstance = this;
+            // Source: Mod/ScMultiplayer/Message/Message.cs:Message.ProtocolHash
+            string protocolLabel = Message.GetProtocolLabel(
+                Message.ModVersion, Message.ProtocolVersion,
+                Message.ProtocolHash, Message.BuildFingerprint);
+            Log.Information($"[ScMP] Wire protocol {protocolLabel}, " +
+                $"hash={Message.ProtocolHash}, build={Message.BuildFingerprint}");
             m_circuitSynchronizer ??= new CircuitSynchronizer(this);
             m_worldObjectSynchronizer ??= new WorldObjectSynchronizer(this);
             ModManager = Game.Program.ModManager;
@@ -1350,6 +1394,9 @@ namespace ScMultiplayer
                 // once-per-rendered-frame entry point.
                 UpdateFrame(Time.FrameDuration);
                 ProcessEndOfFrameActions();
+                // Source: ScMultiplayer.cs:ScMultiplayer.ProcessEndOfFrameActions
+                // Sample Apply only after this frame consumed its network work.
+                UpdateNetworkStatsOverlay();
                 UpdateClientTerrainRecoveryAfterNetworkActions();
                 CleanupDownloadedWorldsIfIdle();
                 return args;
@@ -1541,6 +1588,7 @@ namespace ScMultiplayer
                 {
                     m_reconnectPending = true;
                     m_reconnectAttempts = 0;
+                    m_reconnectAttemptDeadline = 0.0;
                     m_nextReconnectAttemptTime = Time.RealTime + ReconnectInitialDelay;
                     Log.Information("[ScMP] Host connection interrupted; reconnect scheduled");
                 }
@@ -1552,13 +1600,28 @@ namespace ScMultiplayer
                 m_reconnectPending = false;
                 return;
             }
+            double now = Time.RealTime;
+            if (m_reconnectAttemptDeadline > 0.0 && now >= m_reconnectAttemptDeadline)
+            {
+                // Source: Mod/Comms/Comms.Drt/Func/Client/Client.cs:Client.Dispose
+                // A route change can leave Peer.ConnectingTo set indefinitely. Do not wait for
+                // its broad transport timeout; a reconnect attempt owns a short handshake window
+                // and must use a fresh UDP endpoint after that window expires.
+                Log.Warning($"[ScMP] Reconnect attempt {m_reconnectAttempts}/" +
+                    $"{MaxReconnectAttempts} exceeded its handshake deadline");
+                try { client?.Dispose(); }
+                catch (Exception ex) { Log.Warning($"[ScMP] Failed to dispose stalled reconnect client: {ex.Message}"); }
+                client = CreateStartedClient(RemoteConnectionLostPeriod);
+                m_reconnectAttemptDeadline = 0.0;
+                m_nextReconnectAttemptTime = now;
+            }
             if (client == null || m_activeJoinRequest?.WorldInfo == null)
             {
                 m_reconnectPending = false;
                 HandleHostDisconnected();
                 return;
             }
-            if (client.IsConnected || client.IsConnecting || Time.RealTime < m_nextReconnectAttemptTime)
+            if (client.IsConnected || client.IsConnecting || now < m_nextReconnectAttemptTime)
                 return;
             if (m_reconnectAttempts >= MaxReconnectAttempts)
             {
@@ -1571,7 +1634,7 @@ namespace ScMultiplayer
             m_reconnectAttempts++;
             double retryDelay = Math.Min(ReconnectMaxDelay,
                 ReconnectInitialDelay * Math.Pow(2.0, m_reconnectAttempts - 1));
-            m_nextReconnectAttemptTime = Time.RealTime + retryDelay;
+            m_nextReconnectAttemptTime = now + retryDelay;
             m_pendingJoinRequest = m_activeJoinRequest;
             m_isLoadingDownloadedWorld = true;
             try
@@ -1580,10 +1643,13 @@ namespace ScMultiplayer
                     $"{MaxReconnectAttempts} to {m_activeJoinRequest.ServerAddress}");
                 SubmitPendingJoin(m_activeJoinPlayerName, m_activeJoinPlayerClass,
                     m_activeJoinSkinName, m_activeJoinHasPlayerProfile);
+                m_reconnectAttemptDeadline = now + ReconnectHandshakeTimeout;
             }
             catch (Exception ex)
             {
                 Log.Error($"[ScMP] Host reconnect attempt {m_reconnectAttempts} failed: {ex.Message}");
+                m_reconnectAttemptDeadline = 0.0;
+                m_nextReconnectAttemptTime = now + ReconnectInitialDelay;
             }
         }
 
@@ -1805,6 +1871,7 @@ namespace ScMultiplayer
             UpdateAutoHostCurrentWorld();
             UpdateWorldTransferBusyStatus();
             UpdateJoinWorldProgressTimeout();
+            UpdateClientJoinBarrier();
             // Source: Survivalcraft/Game/Program.cs:Program.Run
             // Downloading clients have no Project yet, so repair requests must run from the
             // menu/loading frame path instead of UpdateWorldSubsystem.
@@ -1846,12 +1913,12 @@ namespace ScMultiplayer
             UpdateClientSuspensionState(project);
             MaintainHostAimPresentation();
             RenderRemotePlayers();
-            UpdateNetworkStatsOverlay();
         }
 
         public bool ShouldSuppressClientInput =>
             !IsHost && client?.IsConnected == true &&
-            m_clientTerrainRecoveryActive;
+            (m_clientTerrainRecoveryActive ||
+            m_circuitSynchronizer?.ShouldSuppressClientInput == true);
 
         internal long CircuitTerrainSequence => IsHost
             ? m_hostTerrainSequence
@@ -2071,13 +2138,21 @@ namespace ScMultiplayer
             if (!visible || Time.RealTime < m_nextNetworkStatsUpdateTime) return;
             m_nextNetworkStatsUpdateTime = Time.RealTime + 1.0;
             ReadNetworkStats(out float throughputBytesPerSecond, out float latencyMs,
-                out int syncQueue, out int applyQueue, out int reliableQueue,
-                out float retransmitPercent);
+                out float ackLatencyMs, out int syncQueue, out int applyQueue,
+                out float applyOldestMs, out int reliableQueue,
+                out float retransmitPercent, out long reliableRetryLimitCount);
+            string circuitState = m_circuitSynchronizer?.ClientStateText ??
+                (IsHost ? "Host" : "Unbound");
+            float fenceAge = m_circuitSynchronizer?.FenceAgeMilliseconds ?? -1f;
+            string fenceText = fenceAge < 0f ? "--" :
+                string.Format(CultureInfo.InvariantCulture, "{0:0}ms", fenceAge);
             m_networkStatsLabel.Text = string.Format(CultureInfo.InvariantCulture,
-                "NET {0}, {1:0}ms, Retr {5:0.0}%\nQ Sync {2}, Apply {3}, Rel {4}",
-                FormatNetworkThroughput(throughputBytesPerSecond), latencyMs,
-                syncQueue, applyQueue, reliableQueue,
-                retransmitPercent);
+                "NET {0}, Ping {1:0}ms, Ack {2:0}ms, ReTx {7:0.0}%\n" +
+                "Q Sync {3}, Apply {4} ({5:0}ms), Rel {6}\n" +
+                "Ckt {8}, Fence {9}, Limit {10}",
+                FormatNetworkThroughput(throughputBytesPerSecond), latencyMs, ackLatencyMs,
+                syncQueue, applyQueue, applyOldestMs, reliableQueue,
+                retransmitPercent, circuitState, fenceText, reliableRetryLimitCount);
         }
 
         // Source: Comms/Comms/DiagnosticTransmitter.cs:DiagnosticStats.BytesSent/BytesReceived
@@ -2120,14 +2195,24 @@ namespace ScMultiplayer
         }
 
         private void ReadNetworkStats(out float throughputBytesPerSecond, out float latencyMs,
-            out int syncQueue, out int applyQueue, out int reliableQueue,
-            out float retransmitPercent)
+            out float ackLatencyMs, out int syncQueue, out int applyQueue,
+            out float applyOldestMs, out int reliableQueue, out float retransmitPercent,
+            out long reliableRetryLimitCount)
         {
             throughputBytesPerSecond = 0f;
             latencyMs = 0f;
+            ackLatencyMs = 0f;
             retransmitPercent = 0f;
+            reliableRetryLimitCount = 0L;
             syncQueue = NetworkMessageSender.PendingSyncBatchCount;
             applyQueue = m_endOfFrameActions.Count;
+            applyOldestMs = 0f;
+            if (m_endOfFrameActions.TryPeek(out QueuedFrameAction oldestAction))
+            {
+                long elapsed = Stopwatch.GetTimestamp() - oldestAction.EnqueuedTimestamp;
+                if (elapsed > 0)
+                    applyOldestMs = (float)(1000.0 * elapsed / Stopwatch.Frequency);
+            }
             reliableQueue = 0;
             DiagnosticStats stats = IsHost ? m_serverNetworkStats : m_clientNetworkStats;
             if (stats != null)
@@ -2153,13 +2238,17 @@ namespace ScMultiplayer
                     if (peer == null) continue;
                     double smoothedRtt = server.Peer.Comm
                         .GetSmoothedRoundTripTime(peer.Address);
-                    latencyMs = MathUtils.Max(latencyMs, (float)(1000.0 *
-                        (smoothedRtt > 0.0 ? smoothedRtt : peer.Ping)));
+                    latencyMs = MathUtils.Max(latencyMs,
+                        (float)(1000.0 * peer.Ping));
+                    ackLatencyMs = MathUtils.Max(ackLatencyMs,
+                        (float)(1000.0 * smoothedRtt));
                     reliableQueue = Math.Max(reliableQueue,
                         server.Peer.Comm.GetUnackedPacketsCount(peer.Address));
                     retransmitPercent = MathUtils.Max(retransmitPercent,
                         (float)(100.0 * server.Peer.Comm.GetPacketLossRate(
                             peer.Address)));
+                    reliableRetryLimitCount += server.Peer.Comm
+                        .GetReliableRetryLimitCount(peer.Address);
                 }
                 return;
             }
@@ -2167,11 +2256,13 @@ namespace ScMultiplayer
             if (connected == null) return;
             double clientSmoothedRtt = client.Peer.Comm
                 .GetSmoothedRoundTripTime(connected.Address);
-            latencyMs = (float)(1000.0 * (clientSmoothedRtt > 0.0
-                ? clientSmoothedRtt : connected.Ping));
+            latencyMs = (float)(1000.0 * connected.Ping);
+            ackLatencyMs = (float)(1000.0 * clientSmoothedRtt);
             reliableQueue = client.Peer.Comm.GetUnackedPacketsCount(connected.Address);
             retransmitPercent = (float)(100.0 *
                 client.Peer.Comm.GetPacketLossRate(connected.Address));
+            reliableRetryLimitCount = client.Peer.Comm
+                .GetReliableRetryLimitCount(connected.Address);
         }
 
         // Source: Survivalcraft/Game/GameLoadingScreen.cs:GameLoadingScreen.Enter
@@ -2273,15 +2364,21 @@ namespace ScMultiplayer
                 }
                 if (!IsHost && m_shouldCreateHostAvatar && !m_networkPlayerData.ContainsKey(0))
                     CreateNetworkPlayer(0, "Host", GetNetworkRecordKey(0));
-                if (!IsHost && m_pendingWorldReadyTransferId > 0)
+                if (!IsHost && m_pendingWorldReadyTransferId > 0 &&
+                    (!ReferenceEquals(m_projectReadySentProject, project) ||
+                    m_projectReadySentTransferId != m_pendingWorldReadyTransferId))
                 {
-                    NetworkMessageSender.SendPakWorldReady(
-                        new GamePakWorldReadyMessage(m_pendingWorldReadyTransferId,
-                            GamePakWorldReadyStage.ProjectReady));
+                    // Source: ScMultiplayer.ReplaceLocalPlayerData
+                    // Rebinding the same Project after replacing PlayerData must not restart the
+                    // join barrier or resend the entire host catch-up batch.
+                    m_projectReadySentProject = project;
+                    m_projectReadySentTransferId = m_pendingWorldReadyTransferId;
+                    RecordClientJoinProgress();
+                    SendClientJoinReadyStage(GamePakWorldReadyStage.ProjectReady);
                     Log.Information($"[ScMP] Client project ready: Transfer={m_pendingWorldReadyTransferId}");
                     if (m_joinRoomBusyDialog != null)
                         m_joinRoomBusyDialog.SmallMessage =
-                            "Connected.\r\nWorld loaded.\r\nApplying host changes...";
+                            "Connected.\rWorld loaded.\rApplying host changes...";
                 }
                 AttachHostPickableEvents(project);
                 QueueRunawayCreatureCleanup(project);
@@ -2605,10 +2702,10 @@ namespace ScMultiplayer
             string status;
             if (IsHost && client?.IsConnected == true)
             {
-                status = $"Room ID: {client.GameID}\r\n" +
-                    $"World: {SuPlayScreen.WorldDataName}\r\n" +
-                    $"Connected players: {GetConnectedRemoteClients().Count}\r\n" +
-                    $"Pending requests: {m_hostJoinRequests.Count}\r\n" +
+                status = $"Room ID: {client.GameID}\r" +
+                    $"World: {SuPlayScreen.WorldDataName}\r" +
+                    $"Connected players: {GetConnectedRemoteClients().Count}\r" +
+                    $"Pending requests: {m_hostJoinRequests.Count}\r" +
                     "Auto approve: " +
                     (ScMultiplayerSettings.AutoApproveJoinRequests ? "On" : "Off");
             }
@@ -3003,6 +3100,32 @@ namespace ScMultiplayer
         public void BeginJoinGame(IPEndPoint serverAddress, int gameId, GameWorldInfoMessage worldInfo)
         {
             if (serverAddress == null || worldInfo == null) return;
+            // Source: Mod/ScMultiplayer/Message/GameWorldInfoMessage.cs:
+            // GameWorldInfoMessage.Read
+            if (!Message.IsProtocolCompatible(worldInfo.MultiplayerModVersion,
+                    worldInfo.MultiplayerProtocolVersion,
+                    worldInfo.MultiplayerProtocolHash,
+                    worldInfo.MultiplayerBuildFingerprint))
+            {
+                string hostProtocol = Message.GetProtocolLabel(
+                    worldInfo.MultiplayerModVersion,
+                    worldInfo.MultiplayerProtocolVersion,
+                    worldInfo.MultiplayerProtocolHash,
+                    worldInfo.MultiplayerBuildFingerprint);
+                string localProtocol = Message.GetProtocolLabel(
+                    Message.ModVersion,
+                    Message.ProtocolVersion, Message.ProtocolHash,
+                    Message.BuildFingerprint);
+                Log.Warning($"[ScMP] Refused incompatible room before join: " +
+                    $"host={hostProtocol}, local={localProtocol}");
+                DialogsManager.ShowDialog(null, new MessageDialog(
+                    "Join Room",
+                    $"Multiplayer Mod protocol mismatch.\r" +
+                    $"Host: {hostProtocol}\rLocal: {localProtocol}\r" +
+                    "Install the same ScMultiplayer package on all devices.",
+                    "OK", null, null));
+                return;
+            }
             PrepareClientForRemoteJoin();
             ShowJoinRoomBusyDialog();
             m_activeJoinRequest = new PendingJoinRequest
@@ -3019,6 +3142,7 @@ namespace ScMultiplayer
             m_reconnectRequested = false;
             m_reconnectPending = false;
             m_reconnectAttempts = 0;
+            m_reconnectAttemptDeadline = 0.0;
             SubmitPendingJoin(null, PlayerClass.Male, null, hasPlayerProfile: false);
         }
 
@@ -3029,6 +3153,7 @@ namespace ScMultiplayer
             m_activeJoinRequest = null;
             m_reconnectRequested = false;
             m_reconnectPending = false;
+            m_reconnectAttemptDeadline = 0.0;
             m_joinAwaitingWorldProgress = false;
         }
 
@@ -3037,7 +3162,20 @@ namespace ScMultiplayer
         {
             if (m_joinRoomBusyDialog != null) return;
             m_joinRoomBusyDialog = new BusyDialog(
-                "Joining Room", "Connecting to the host and preparing the world...");
+                "Joining Room", "Status: Connecting to host");
+            // Source: Survivalcraft/Game/BusyDialog.cs:BusyDialog.BusyDialog
+            // Source: Survivalcraft/Game/LabelWidget.cs:LabelWidget.MeasureOverride
+            // BusyDialog normally sizes its small label from the changing longest line. Keep a
+            // stable area and use explicit semantic lines so changing counters cannot reflow or
+            // move every line below them.
+            LabelWidget statusLabel = m_joinRoomBusyDialog.Children.Find<LabelWidget>(
+                "BusyDialog.SmallLabel", true);
+            if (statusLabel != null)
+            {
+                statusLabel.Size = new Vector2(640f, 190f);
+                statusLabel.WordWrap = false;
+                statusLabel.MaxLines = 5;
+            }
             DialogsManager.ShowDialog(ScreensManager.RootWidget, m_joinRoomBusyDialog);
         }
 
@@ -3050,16 +3188,34 @@ namespace ScMultiplayer
 
         private void UpdateWorldTransferBusyStatus()
         {
-            if (m_joinRoomBusyDialog == null || !m_isLoadingDownloadedWorld || IsHost ||
+            if (m_joinRoomBusyDialog == null || IsHost ||
+                (!m_isLoadingDownloadedWorld && m_pendingWorldReadyTransferId <= 0) ||
                 Time.RealTime < m_nextWorldTransferUiUpdateTime)
                 return;
             m_nextWorldTransferUiUpdateTime = Time.RealTime + 0.25;
+            string countdown = GetClientJoinCountdownText();
+            if (m_pendingWorldReadyTransferId > 0)
+            {
+                bool projectReady = m_projectReadySentTransferId ==
+                    m_pendingWorldReadyTransferId;
+                SetJoinRoomBusyStatus(
+                    "Connection: Connected",
+                    projectReady ? "World: Loaded" : "World: Imported",
+                    projectReady ? "Status: Applying host changes" : "Status: Loading project",
+                    "Circuit: " + (m_circuitSynchronizer?.IsClientBootstrapReady == true
+                        ? "Ready" : "Synchronizing"),
+                    countdown);
+                return;
+            }
             IncomingWorldTransfer transfer = m_incomingWorldTransfers.Values
                 .OrderByDescending(item => item.TransferId).FirstOrDefault();
             if (transfer == null)
             {
-                m_joinRoomBusyDialog.SmallMessage =
-                    "Connected.\r\nWaiting for the host world manifest...";
+                SetJoinRoomBusyStatus(
+                    "Connection: Connected",
+                    "Status: Waiting for host",
+                    "Data: World manifest",
+                    countdown);
                 return;
             }
             double percent = transfer.Chunks.Length > 0
@@ -3067,12 +3223,66 @@ namespace ScMultiplayer
                 : 0.0;
             string stage = transfer.RepairRequestCount > 0 &&
                 Time.RealTime - transfer.LastProgressTime >= WorldTransferRepairInterval
-                    ? $"Recovering missing chunks (request {transfer.RepairRequestCount})..."
-                    : "Downloading host world...";
-            m_joinRoomBusyDialog.SmallMessage = string.Format(CultureInfo.InvariantCulture,
-                "Connected.\r\n{0}\r\n{1} / {2} chunks ({3:0.0}%)\r\n{4:0.00} MB / {5:0.00} MB",
-                stage, transfer.ReceivedChunkCount, transfer.Chunks.Length, percent,
-                transfer.ReceivedBytes / 1048576.0, transfer.TotalLength / 1048576.0);
+                    ? $"Status: Recovering chunks (request {transfer.RepairRequestCount})"
+                    : "Status: Downloading world";
+            SetJoinRoomBusyStatus(
+                "Connection: Connected",
+                stage,
+                string.Format(CultureInfo.InvariantCulture,
+                    "Chunks: {0} / {1} ({2:0.0}%)",
+                    transfer.ReceivedChunkCount, transfer.Chunks.Length, percent),
+                string.Format(CultureInfo.InvariantCulture,
+                    "Data: {0:0.00} / {1:0.00} MB",
+                    transfer.ReceivedBytes / 1048576.0,
+                    transfer.TotalLength / 1048576.0),
+                countdown);
+        }
+
+        private void SetJoinRoomBusyStatus(params string[] lines)
+        {
+            if (m_joinRoomBusyDialog == null) return;
+            // Source: Survivalcraft/Game/LabelWidget.cs:LabelWidget.UpdateLines
+            // LabelWidget splits explicit lines only on LF. CR remains ordinary text and makes
+            // the entire status appear on one line when word wrapping is disabled.
+            m_joinRoomBusyDialog.SmallMessage = string.Join("\n",
+                (lines ?? Array.Empty<string>()).Where(line =>
+                    !string.IsNullOrWhiteSpace(line)));
+        }
+
+        // Source: Mod/ScMultiplayer/Plug/ScMultiplayer.cs:
+        // ScMultiplayer.UpdateJoinWorldProgressTimeout
+        // Source: Mod/ScMultiplayer/Plug/ScMultiplayer.cs:
+        // ScMultiplayer.UpdateClientJoinBarrier
+        private void RecordClientJoinProgress()
+        {
+            double now = Time.RealTime;
+            m_lastJoinWorldProgressTime = now;
+            m_lastClientJoinBarrierProgressTime = now;
+        }
+
+        // Source: Mod/ScMultiplayer/Func/Circuit/CircuitSynchronizer.cs:
+        // CircuitSynchronizer.HandleSnapshot
+        internal void RecordCircuitJoinProgress()
+        {
+            if (!IsHost && m_pendingWorldReadyTransferId > 0)
+                RecordClientJoinProgress();
+        }
+
+        private string GetClientJoinCountdownText()
+        {
+            if (m_reconnectPending && m_reconnectAttemptDeadline > 0.0)
+            {
+                int reconnectSeconds = Math.Max(0, (int)Math.Ceiling(
+                    m_reconnectAttemptDeadline - Time.RealTime));
+                return $"Reconnect: {m_reconnectAttempts} / {MaxReconnectAttempts} | " +
+                    $"Timeout: {reconnectSeconds}s";
+            }
+            double lastProgressTime = Math.Max(m_lastJoinWorldProgressTime,
+                m_lastClientJoinBarrierProgressTime);
+            if (lastProgressTime <= 0.0) return string.Empty;
+            int seconds = Math.Max(0, (int)Math.Ceiling(
+                JoinBarrierNoProgressTimeout - (Time.RealTime - lastProgressTime)));
+            return $"No-progress timeout: {seconds}s";
         }
 
         // Source: Mod/ScMultiplayer/Plug/ScMultiplayer.cs:
@@ -3093,6 +3303,56 @@ namespace ScMultiplayer
             HandleHostDisconnected(
                 "Reconnect Interrupted",
                 "The host connection stopped making progress. Please return to the room list and try again.");
+        }
+
+        // Source: ScMultiplayer.HandleGamePakWorldReadyMessage
+        private void UpdateClientJoinBarrier()
+        {
+            if (IsHost || m_pendingWorldReadyTransferId <= 0 ||
+                client?.IsConnected != true)
+                return;
+
+            double now = Time.RealTime;
+            TryAcknowledgeClientCatchUpApplied();
+            if (now - m_lastClientJoinBarrierProgressTime >= JoinBarrierNoProgressTimeout)
+            {
+                Log.Error($"[ScMP] Join barrier timed out: " +
+                    $"Transfer={m_pendingWorldReadyTransferId}, Stage={m_clientJoinReadyStage}");
+                m_nextClientJoinReadyRetryTime = 0.0;
+                HandleHostDisconnected(
+                    "Join Interrupted",
+                    "The host did not finish applying synchronized world state. " +
+                    "Verify that all devices use the same ScMultiplayer package.");
+                return;
+            }
+
+            if (m_nextClientJoinReadyRetryTime > 0.0 &&
+                now >= m_nextClientJoinReadyRetryTime)
+                SendClientJoinReadyStage(m_clientJoinReadyStage);
+        }
+
+        // Source: Mod/ScMultiplayer/Func/Circuit/CircuitSynchronizer.cs:
+        // CircuitSynchronizer.IsClientBootstrapReady
+        private void TryAcknowledgeClientCatchUpApplied()
+        {
+            if (m_pendingCircuitReadyTransferId <= 0 ||
+                m_pendingCircuitReadyTransferId != m_pendingWorldReadyTransferId ||
+                m_circuitSynchronizer?.IsClientBootstrapReady != true)
+                return;
+            int transferId = m_pendingCircuitReadyTransferId;
+            m_pendingCircuitReadyTransferId = 0;
+            RecordClientJoinProgress();
+            SendClientJoinReadyStage(GamePakWorldReadyStage.CatchUpBatchApplied);
+            Log.Information($"[ScMP] Client circuit bootstrap complete: Transfer={transferId}");
+        }
+
+        private void SendClientJoinReadyStage(GamePakWorldReadyStage stage)
+        {
+            if (m_pendingWorldReadyTransferId <= 0 || client?.IsConnected != true) return;
+            m_clientJoinReadyStage = stage;
+            m_nextClientJoinReadyRetryTime = Time.RealTime + JoinBarrierRetryInterval;
+            NetworkMessageSender.SendPakWorldReady(new GamePakWorldReadyMessage(
+                m_pendingWorldReadyTransferId, stage));
         }
 
         private void SubmitPendingJoin(string playerName, PlayerClass playerClass,
@@ -3289,7 +3549,14 @@ namespace ScMultiplayer
         // Frame.Update runs after ScreensManager.Update, outside SubsystemUpdate.Update enumeration.
         private void QueueEndOfFrameAction(Action action)
         {
-            if (action != null) m_endOfFrameActions.Enqueue(action);
+            if (action == null) return;
+            // Source: ScMultiplayer.cs:ScMultiplayer.ReadNetworkStats
+            // Timestamp queued work so NET distinguishes current-frame traffic from backlog.
+            m_endOfFrameActions.Enqueue(new QueuedFrameAction
+            {
+                Action = action,
+                EnqueuedTimestamp = Stopwatch.GetTimestamp()
+            });
         }
 
         // Source: ScMultiplayer.cs:QueueEndOfFrameAction
@@ -3327,11 +3594,11 @@ namespace ScMultiplayer
             }
             while (count < MaximumEndOfFrameActionsPerFrame &&
                 Stopwatch.GetTimestamp() - start < budgetTicks &&
-                m_endOfFrameActions.TryDequeue(out Action action))
+                m_endOfFrameActions.TryDequeue(out QueuedFrameAction queuedAction))
             {
                 try
                 {
-                    action();
+                    queuedAction.Action();
                 }
                 catch (Exception ex)
                 {
@@ -4149,11 +4416,10 @@ namespace ScMultiplayer
             if (project == null || (!forceFullSnapshot && m_hostAnimals.Count == 0)) return;
 
             double now = Time.RealTime;
-            Vector3[] playerPositions = project.FindSubsystem<SubsystemPlayers>(false)?
+            ComponentPlayer[] players = project.FindSubsystem<SubsystemPlayers>(false)?
                 .ComponentPlayers
                 .Where(player => player?.ComponentBody != null)
-                .Select(player => player.ComponentBody.Position)
-                .ToArray() ?? Array.Empty<Vector3>();
+                .ToArray() ?? Array.Empty<ComponentPlayer>();
             var candidates = new List<AnimalSyncCandidate>(m_hostAnimals.Count);
             foreach (Entity entity in m_hostAnimals.ToArray())
             {
@@ -4185,12 +4451,33 @@ namespace ScMultiplayer
                 bool isAttacking = IsAnimalAttackActive(chase, model);
                 bool isFeeding = IsAnimalFeedActive(model, behaviorState);
                 bool targetsPlayer = target?.Entity.FindComponent<ComponentPlayer>() != null;
+                ComponentPlayer nearestPlayer = players.OrderBy(player => Vector3.DistanceSquared(
+                    player.ComponentBody.Position, body.Position)).FirstOrDefault();
+                float nearestPlayerDistanceSquared = nearestPlayer != null
+                    ? Vector3.DistanceSquared(nearestPlayer.ComponentBody.Position, body.Position)
+                    : float.MaxValue;
+                // Source: Survivalcraft/Game/ComponentRunAwayBehavior.cs:
+                // ComponentRunAwayBehavior.RunAwayFrom
+                // Remote players do not forward every native footstep/noise event to the host.
+                // Stimulate only an existing non-predator run-away behavior; its native host
+                // state machine remains responsible for the chosen path and movement velocity.
+                CreatureCategory predatorMask = CreatureCategory.LandPredator |
+                    CreatureCategory.WaterPredator;
+                if ((creature.Category & predatorMask) == 0 && nearestPlayer != null &&
+                    nearestPlayerDistanceSquared <= 6f * 6f &&
+                    now >= metadata.NextPassiveStartleTime)
+                {
+                    ComponentRunAwayBehavior runAway = entity.FindComponent<ComponentRunAwayBehavior>();
+                    if (runAway != null)
+                    {
+                        runAway.RunAwayFrom(nearestPlayer.ComponentBody);
+                        metadata.NextPassiveStartleTime = now + 1.0;
+                        metadata.HighPriorityUntil = Math.Max(metadata.HighPriorityUntil, now + 3.0);
+                    }
+                }
                 bool highPriorityInteraction = wasAttacked || now < metadata.HighPriorityUntil;
 
                 byte tier = 0;
-                float nearestPlayerDistanceSquared = playerPositions.Length > 0
-                    ? playerPositions.Min(position => Vector3.DistanceSquared(position, body.Position))
-                    : float.MaxValue;
                 float nearPlayerThreshold = metadata.SyncTier >= 2 ? 12f : 10f;
                 bool isNearPlayer = nearestPlayerDistanceSquared <=
                     nearPlayerThreshold * nearPlayerThreshold;
@@ -4611,9 +4898,17 @@ namespace ScMultiplayer
                 }
                 catch (Exception ex)
                 {
-                    Log.Error($"[ScMP] Failed to parse message: {ex.Message}");
+                    Log.Error($"[ScMP] Failed to parse message: ClientID={item.ClientID}, " +
+                        $"Bytes={item.InputBytes.Length}, Error={ex.Message}");
                     continue;
                 }
+
+                // Source: ScMultiplayer.cs:ScMultiplayer.SendTerrainCatchUp
+                // While normal game traffic is gated, successfully decoded host messages are
+                // catch-up progress and keep the 30-second join countdown alive.
+                if (!IsHost && item.ClientID == 0 && m_pendingWorldReadyTransferId > 0 &&
+                    message is not GamePakWorldReadyMessage)
+                    RecordClientJoinProgress();
 
                 // 跳过自己发出的消息 (回环消息)
                 if (message.GetSenderPort() == client.Address.Port)
@@ -4793,6 +5088,48 @@ namespace ScMultiplayer
             if (!IsHost || m_hostJoinRequests.ContainsKey(joiningClientId))
                 return;
 
+            // Source: Mod/ScMultiplayer/Message/GameWorldInfoMessage.cs:
+            // GameWorldInfoMessage.Read
+            // Reject an incompatible multiplayer Mod before it can reserve a player slot.
+            GameWorldInfoMessage worldInfo;
+            try
+            {
+                worldInfo = Message.Read(joinRequestBytes) as GameWorldInfoMessage;
+            }
+            catch (Exception ex)
+            {
+                client.RefuseJoinGame(joiningClientId,
+                    "Invalid join request: " + ex.Message);
+                Log.Error($"[ScMP] Failed to parse ClientID {joiningClientId} join: " +
+                    ex.Message);
+                return;
+            }
+            if (worldInfo == null)
+            {
+                client.RefuseJoinGame(joiningClientId, "Invalid join request type");
+                return;
+            }
+            if (!Message.IsProtocolCompatible(worldInfo.MultiplayerModVersion,
+                    worldInfo.MultiplayerProtocolVersion,
+                    worldInfo.MultiplayerProtocolHash,
+                    worldInfo.MultiplayerBuildFingerprint))
+            {
+                string remoteProtocol = Message.GetProtocolLabel(
+                    worldInfo.MultiplayerModVersion,
+                    worldInfo.MultiplayerProtocolVersion,
+                    worldInfo.MultiplayerProtocolHash,
+                    worldInfo.MultiplayerBuildFingerprint);
+                string hostProtocol = Message.GetProtocolLabel(
+                    Message.ModVersion, Message.ProtocolVersion,
+                    Message.ProtocolHash, Message.BuildFingerprint);
+                string reason = $"{ProtocolMismatchReasonPrefix}: " +
+                    $"host={hostProtocol}, client={remoteProtocol}";
+                Log.Warning($"[ScMP] Refused incompatible ClientID {joiningClientId}: " +
+                    $"host={hostProtocol}, client={remoteProtocol}");
+                client.RefuseJoinGame(joiningClientId, reason);
+                return;
+            }
+
             if (!TryReserveNetworkPlayerIndex(joiningClientId,
                 out int assignedPlayerIndex))
             {
@@ -4810,9 +5147,7 @@ namespace ScMultiplayer
 
             try
             {
-                GameWorldInfoMessage worldInfo = Message.Read(joinRequestBytes) as GameWorldInfoMessage;
-                if (worldInfo == null ||
-                    SuPlayScreen.WorldData == null ||
+                if (SuPlayScreen.WorldData == null ||
                     SuPlayScreen.WorldDataName != worldInfo.Name ||
                     SuPlayScreen.WorldDataLastSaveTime != worldInfo.LastSaveTime)
                 {
@@ -5275,6 +5610,8 @@ namespace ScMultiplayer
                 ChunkLastQueueTimes = new double[chunkCount]
             };
             m_worldTransfersAwaitingReady[targetClientId] = transferId;
+            m_hostProjectReadyTransfers.Remove(targetClientId);
+            m_completedWorldReadyTransfers.Remove(targetClientId);
             // The joining peer requests the manifest after ConnectAccepted has been processed.
             // Sending it here can be ACKed by Comm and then discarded by Peer because the
             // application connection is not established yet.
@@ -5294,12 +5631,19 @@ namespace ScMultiplayer
                 }
                 byte[] copy = new byte[payload.Length];
                 Buffer.BlockCopy(payload, 0, copy, 0, payload.Length);
-                journal.Messages.Add(new JoinCatchUpMessage
+                var item = new JoinCatchUpMessage
                 {
                     Payload = copy,
                     Sequenced = sequenced,
                     Latest = latest
-                });
+                };
+                // Source: ScMultiplayer.cs:ScMultiplayer.SealAndSendJoinCatchUp
+                // Once the cutoff is sealed, new live messages wait in a second buffer and can
+                // no longer extend the acknowledged catch-up batch indefinitely.
+                if (journal.CutoffSealed)
+                    journal.PostCutoffMessages.Add(item);
+                else
+                    journal.Messages.Add(item);
                 journal.TotalBytes += copy.Length;
             }
         }
@@ -5328,6 +5672,25 @@ namespace ScMultiplayer
             if (journal.DroppedMessages > 0)
                 Log.Warning($"[ScMP] Join catch-up limit reached for ClientID={targetClientId}; " +
                     $"{journal.DroppedMessages} transient messages were replaced by subsequent full-state sync.");
+        }
+
+        // Source: ScMultiplayer.cs:ScMultiplayer.RecordJoinCatchUpMessage
+        private void DrainPostCutoffJournal(int targetClientId, JoinCatchUpJournal journal)
+        {
+            JoinCatchUpMessage[] batch = journal.PostCutoffMessages.ToArray();
+            journal.PostCutoffMessages.Clear();
+            journal.TotalBytes = 0;
+            foreach (JoinCatchUpMessage item in batch)
+            {
+                if (item?.Payload == null) continue;
+                client.SendDirectInput(targetClientId, item.Payload,
+                    sequenced: true, latest: false);
+                journal.TotalMessagesSent++;
+                journal.TotalBytesSent += item.Payload.Length;
+            }
+            Log.Information($"[ScMP] Join post-cutoff batch sent: ClientID={targetClientId}, " +
+                $"Messages={batch.Length}, Bytes={batch.Sum(item => item?.Payload?.Length ?? 0)}, " +
+                $"Dropped={journal.DroppedMessages}");
         }
 
         private void SendPendingWorldTransferChunks()
@@ -5829,6 +6192,15 @@ namespace ScMultiplayer
                 ComponentHerdBehavior herd = targetEntity.FindComponent<ComponentHerdBehavior>();
                 herd?.CallNearbyCreaturesHelp(attacker, 20f, 30f, false);
             }
+            else
+            {
+                // Source: Survivalcraft/Game/ComponentRunAwayBehavior.cs:
+                // ComponentRunAwayBehavior.RunAwayFrom
+                // Establish the same native attacker reference that ComponentHealth.Attacked
+                // would create locally, even when a valid host-side tool hit later misses RNG.
+                targetEntity.FindComponent<ComponentRunAwayBehavior>()?.RunAwayFrom(
+                    attacker.ComponentBody);
+            }
 
             // Source: Survivalcraft/Game/ComponentMiner.cs:ComponentMiner.Hit
             // The host recomputes hit probability, tool power, damage and Attacked events.
@@ -6075,6 +6447,8 @@ namespace ScMultiplayer
                     body.Velocity = networkState.Velocity;
                     networkState.HasTransform = true;
                     networkState.PresentationInitialized = true;
+                    networkState.PresentationPosition = networkState.Position;
+                    networkState.HasPresentationPosition = true;
                     networkState.SmoothedVelocity = networkState.Velocity;
                     networkState.HasSmoothedVelocity = true;
                 }
@@ -6146,7 +6520,17 @@ namespace ScMultiplayer
                 state = new RemoteAnimalSyncState();
                 m_remoteAnimalSync[id] = state;
             }
-            state.SyncTier = item.SyncTier;
+            if (state.SyncTier != item.SyncTier)
+            {
+                // Source: ScMultiplayer.cs:GetAnimalSyncInterval
+                // A tier change changes host cadence, not the visible correction speed. Discard
+                // the previous cadence estimate without resetting the independent presentation
+                // position to a value that local body collision could have displaced.
+                state.SyncTier = item.SyncTier;
+                state.Acceleration = Vector3.Zero;
+                state.EstimatedDelay = 0f;
+                state.EstimatedSnapshotInterval = (float)GetAnimalSyncInterval(item.SyncTier);
+            }
             state.BehaviorState = item.ActiveBehaviorState ?? string.Empty;
             state.TargetEntityId = item.TargetEntityId;
             state.HerdName = item.HerdName ?? string.Empty;
@@ -6318,12 +6702,17 @@ namespace ScMultiplayer
                 Vector3 predictedPosition = state.Position +
                     state.Velocity * predictionTime +
                     0.5f * state.Acceleration * accelerationTime * accelerationTime;
-                Vector3 error = predictedPosition - body.Position;
+                if (!state.HasPresentationPosition)
+                {
+                    state.PresentationPosition = state.Position;
+                    state.HasPresentationPosition = true;
+                }
+                Vector3 error = predictedPosition - state.PresentationPosition;
                 float errorSquared = error.LengthSquared();
                 if (!state.PresentationInitialized ||
                     errorSquared > MathUtils.Sqr(RemoteAnimalSnapDistance))
                 {
-                    body.Position = state.Position;
+                    state.PresentationPosition = state.Position;
                     body.Rotation = state.Rotation;
                     body.Velocity = state.Velocity;
                     state.SmoothedVelocity = state.Velocity;
@@ -6332,31 +6721,37 @@ namespace ScMultiplayer
                 }
                 else
                 {
-                    float tierFactor = MathUtils.Saturate(state.SyncTier / 4f);
-                    Vector3 remainingError = predictedPosition - body.Position;
-                    float correctionHorizon = MathUtils.Lerp(0.5f, 0.2f, tierFactor);
+                    Vector3 remainingError = predictedPosition - state.PresentationPosition;
+                    const float correctionHorizon = 0.4f;
                     Vector3 correctionVelocity = remainingError / correctionHorizon;
-                    float maxCorrectionSpeed = MathUtils.Lerp(3f, 9f, tierFactor);
+                    const float maxCorrectionSpeed = 3f;
                     float correctionSpeed = correctionVelocity.Length();
                     if (correctionSpeed > maxCorrectionSpeed)
                         correctionVelocity *= maxCorrectionSpeed / correctionSpeed;
                     Vector3 desiredVelocity = predictedVelocity + correctionVelocity;
                     if (!state.HasSmoothedVelocity)
                     {
-                        state.SmoothedVelocity = body.Velocity;
+                        state.SmoothedVelocity = state.Velocity;
                         state.HasSmoothedVelocity = true;
                     }
                     float velocityBlend = 1f - (float)Math.Exp(
-                        -MathUtils.Lerp(5f, 11f, tierFactor) * step);
+                        -8f * step);
                     state.SmoothedVelocity = Vector3.Lerp(
                         state.SmoothedVelocity, desiredVelocity, velocityBlend);
-                    body.Velocity = state.SmoothedVelocity;
+                    state.PresentationPosition += state.SmoothedVelocity * step;
 
                     float rotationBlend = 1f - (float)Math.Exp(
-                        -MathUtils.Lerp(7f, 14f, tierFactor) * step);
+                        -10f * step);
                     body.Rotation = Quaternion.Slerp(
                         body.Rotation, state.Rotation, rotationBlend);
                 }
+
+                // Source: Survivalcraft/Game/ComponentBody.cs:ComponentBody.Update
+                // Restore the host-driven presentation after this client's physics pass. This
+                // prevents player/animal collision impulses from being fed into the next frame's
+                // interpolation, while retaining the original replica and animation components.
+                body.Position = state.PresentationPosition;
+                body.Velocity = state.SmoothedVelocity;
 
                 ComponentLocomotion locomotion = creature.ComponentLocomotion;
                 if (locomotion != null)
@@ -7756,6 +8151,8 @@ namespace ScMultiplayer
             RemotePlayers.Remove(clientId);
             m_outgoingWorldTransfers.Remove(clientId);
             m_worldTransfersAwaitingReady.Remove(clientId);
+            m_hostProjectReadyTransfers.Remove(clientId);
+            m_completedWorldReadyTransfers.Remove(clientId);
             m_joinCatchUpJournals.Remove(clientId);
             m_hostTerrainRecoveryTargets.Remove(clientId);
             m_pendingAcceptedJoinKeys.Remove(clientId);
@@ -9699,7 +10096,7 @@ namespace ScMultiplayer
             ShowJoinRoomBusyDialog();
             if (m_joinRoomBusyDialog != null)
                 m_joinRoomBusyDialog.SmallMessage =
-                    "Terrain history expired.\r\nDownloading the current host world...";
+                    "Terrain history expired.\rDownloading the current host world...";
             PrepareClientForRemoteJoin();
             m_pendingJoinRequest = m_activeJoinRequest;
             m_isLoadingDownloadedWorld = true;
@@ -10457,7 +10854,7 @@ namespace ScMultiplayer
                     transfer.Chunks[transfer.HighestContiguousChunkIndex + 1] != null)
                     transfer.HighestContiguousChunkIndex++;
                 transfer.LastProgressTime = Time.RealTime;
-                m_lastJoinWorldProgressTime = Time.RealTime;
+                RecordClientJoinProgress();
             }
             TryCompleteIncomingWorldTransfer(transfer);
         }
@@ -10491,7 +10888,7 @@ namespace ScMultiplayer
                 $"RepairRounds={transfer.RepairRequestCount}");
             if (m_joinRoomBusyDialog != null)
                 m_joinRoomBusyDialog.SmallMessage =
-                    "Connected.\r\nWorld download complete.\r\nImporting world...";
+                    "Connected.\rWorld download complete.\rImporting world...";
             m_joinAwaitingWorldProgress = false;
             manifest.WorldData = worldData;
             manifest.ChunkCount = 0;
@@ -10529,31 +10926,59 @@ namespace ScMultiplayer
                     return;
                 if (message.Stage == GamePakWorldReadyStage.CatchUpBatchComplete)
                 {
-                    NetworkMessageSender.SendPakWorldReady(new GamePakWorldReadyMessage(
-                        message.TransferId, GamePakWorldReadyStage.CatchUpBatchApplied));
+                    RecordClientJoinProgress();
+                    if (m_clientJoinReadyStage == GamePakWorldReadyStage.CatchUpBatchApplied)
+                    {
+                        SendClientJoinReadyStage(GamePakWorldReadyStage.CatchUpBatchApplied);
+                        return;
+                    }
+                    // Source: ScMultiplayer.cs:ScMultiplayer.ProcessEndOfFrameActions
+                    // The ready marker uses the priority control queue. Put its acknowledgement
+                    // behind all preceding gameplay actions so Applied means actually applied.
+                    int clientTransferId = message.TransferId;
+                    QueueEndOfFrameAction(() =>
+                    {
+                        if (m_pendingWorldReadyTransferId == clientTransferId)
+                        {
+                            // Source: CircuitSynchronizer.TryFinalizeSnapshot
+                            // Do not tell the host that catch-up is applied until the downloaded
+                            // Project has also consumed its first authoritative circuit snapshot.
+                            if (m_pendingCircuitReadyTransferId != clientTransferId)
+                            {
+                                m_circuitSynchronizer?.BeginJoinBootstrap();
+                                m_pendingCircuitReadyTransferId = clientTransferId;
+                            }
+                            TryAcknowledgeClientCatchUpApplied();
+                        }
+                    });
                     return;
                 }
                 if (message.Stage != GamePakWorldReadyStage.ReadyToPlay) return;
-                Log.Information($"[ScMP] Client catch-up complete: Transfer={message.TransferId}");
-                m_pendingWorldReadyTransferId = 0;
-                m_isLoadingDownloadedWorld = false;
-                // A fresh world transfer supersedes any lifecycle recovery state left by the
-                // previous project. Never carry the input lock into the newly joined world.
-                m_clientTerrainRecoveryActive = false;
-                m_clientTerrainRecoveryPending = false;
-                m_clientTerrainRecoveryRequestInFlight = false;
-                m_clientTerrainRecoveryTarget = -1;
-                m_clientTerrainRecoveryAcknowledged = -1;
-                m_clientTerrainRecoveryReady = -1;
-                m_clientTerrainGapDetectedTime = 0.0;
-                HideJoinRoomBusyDialog();
+                int readyTransferId = message.TransferId;
+                QueueEndOfFrameAction(() => CompleteClientJoinAfterApply(readyTransferId));
                 return;
             }
 
-            if (sourceClientId <= 0 ||
-                !m_worldTransfersAwaitingReady.TryGetValue(sourceClientId,
-                    out int transferId) || transferId != message.TransferId)
+            if (sourceClientId <= 0)
                 return;
+            if (!m_worldTransfersAwaitingReady.TryGetValue(sourceClientId,
+                    out int transferId) || transferId != message.TransferId)
+            {
+                // Source: ScMultiplayer.CompleteJoiningClient
+                // ReadyToPlay can be lost after the host has removed the active catch-up journal.
+                // A retry of the client's last stage must recover that final acknowledgement.
+                if (m_completedWorldReadyTransfers.TryGetValue(sourceClientId,
+                        out int completedTransferId) &&
+                    completedTransferId == message.TransferId &&
+                    (message.Stage == GamePakWorldReadyStage.ProjectReady ||
+                    message.Stage == GamePakWorldReadyStage.CatchUpBatchApplied))
+                {
+                    NetworkMessageSender.SendPakWorldReady(sourceClientId,
+                        new GamePakWorldReadyMessage(message.TransferId,
+                            GamePakWorldReadyStage.ReadyToPlay));
+                }
+                return;
+            }
             switch (message.Stage)
             {
                 case GamePakWorldReadyStage.LoadingProject:
@@ -10584,9 +11009,17 @@ namespace ScMultiplayer
                             "The network player was not initialized.");
                         return;
                     }
+                    if (m_hostProjectReadyTransfers.TryGetValue(sourceClientId,
+                            out int readyTransferId) && readyTransferId == transferId)
+                    {
+                        NetworkMessageSender.SendPakWorldReady(sourceClientId,
+                            new GamePakWorldReadyMessage(transferId,
+                                GamePakWorldReadyStage.CatchUpBatchComplete));
+                        return;
+                    }
+                    m_hostProjectReadyTransfers[sourceClientId] = transferId;
                     m_outgoingWorldTransfers.Remove(sourceClientId);
-                    SendTerrainCatchUp(sourceClientId);
-                    SendJoinCatchUpBatch(sourceClientId, transferId);
+                    SealAndSendJoinCatchUp(sourceClientId, transferId);
                     break;
 
                 case GamePakWorldReadyStage.CatchUpBatchApplied:
@@ -10599,14 +11032,33 @@ namespace ScMultiplayer
                     if (!m_joinCatchUpJournals.TryGetValue(sourceClientId,
                             out JoinCatchUpJournal journal))
                         return;
-                    if (journal.Messages.Count > 0)
-                    {
-                        SendJoinCatchUpBatch(sourceClientId, transferId);
-                        return;
-                    }
                     CompleteJoiningClient(sourceClientId, transferId, journal);
                     break;
             }
+        }
+
+        // Source: ScMultiplayer.cs:ScMultiplayer.HandleGamePakWorldReadyMessage
+        private void CompleteClientJoinAfterApply(int transferId)
+        {
+            if (m_pendingWorldReadyTransferId != transferId) return;
+            Log.Information($"[ScMP] Client catch-up complete: Transfer={transferId}");
+            m_pendingWorldReadyTransferId = 0;
+            m_pendingCircuitReadyTransferId = 0;
+            m_projectReadySentProject = null;
+            m_projectReadySentTransferId = 0;
+            m_nextClientJoinReadyRetryTime = 0.0;
+            m_lastClientJoinBarrierProgressTime = 0.0;
+            m_isLoadingDownloadedWorld = false;
+            // A fresh world transfer supersedes any lifecycle recovery state left by the
+            // previous project. Never carry the input lock into the newly joined world.
+            m_clientTerrainRecoveryActive = false;
+            m_clientTerrainRecoveryPending = false;
+            m_clientTerrainRecoveryRequestInFlight = false;
+            m_clientTerrainRecoveryTarget = -1;
+            m_clientTerrainRecoveryAcknowledged = -1;
+            m_clientTerrainRecoveryReady = -1;
+            m_clientTerrainGapDetectedTime = 0.0;
+            HideJoinRoomBusyDialog();
         }
 
         // Source: Mod/Comms/Comms/Peer.cs:Peer.DisconnectPeer
@@ -10624,10 +11076,18 @@ namespace ScMultiplayer
             Log.Error($"[ScMP] Aborted joining ClientID {sourceClientId}: {reason}");
         }
 
-        // Source: ScMultiplayer.cs:RecordJoinCatchUpMessage
-        private void SendJoinCatchUpBatch(int targetClientId, int transferId)
+        // Source: ScMultiplayer.cs:ScMultiplayer.RecordJoinCatchUpMessage
+        private void SealAndSendJoinCatchUp(int targetClientId, int transferId)
         {
+            if (!m_joinCatchUpJournals.TryGetValue(targetClientId,
+                    out JoinCatchUpJournal journal))
+                return;
+            // Source: ScMultiplayer.cs:ScMultiplayer.SendTerrainCatchUp
+            // Seal one fixed cutoff. Replay older events first, then send the current terrain
+            // checkpoint, so historical terrain messages cannot overwrite the authoritative state.
+            journal.CutoffSealed = true;
             FlushJoinCatchUpJournal(targetClientId);
+            SendTerrainCatchUp(targetClientId);
             NetworkMessageSender.SendPakWorldReady(targetClientId,
                 new GamePakWorldReadyMessage(transferId,
                     GamePakWorldReadyStage.CatchUpBatchComplete));
@@ -10637,8 +11097,14 @@ namespace ScMultiplayer
         private void CompleteJoiningClient(int sourceClientId, int transferId,
             JoinCatchUpJournal journal)
         {
+            // Source: ScMultiplayer.cs:ScMultiplayer.SealAndSendJoinCatchUp
+            // Drain the bounded post-cutoff gap once. This callback runs on the frame thread, so
+            // enabling normal traffic afterwards cannot leave an unrecorded interval.
+            DrainPostCutoffJournal(sourceClientId, journal);
             m_joinCatchUpJournals.Remove(sourceClientId);
             m_worldTransfersAwaitingReady.Remove(sourceClientId);
+            m_hostProjectReadyTransfers.Remove(sourceClientId);
+            m_completedWorldReadyTransfers[sourceClientId] = transferId;
             NetworkMessageSender.SendPakWorldReady(sourceClientId,
                 new GamePakWorldReadyMessage(transferId,
                     GamePakWorldReadyStage.ReadyToPlay));
@@ -10664,9 +11130,10 @@ namespace ScMultiplayer
                     Log.Error($"[ScMP] Invalid world checksum manifest: Transfer={msg.TransferId}");
                     return;
                 }
+                bool receivedNewManifest = transfer.Manifest == null;
                 transfer.Manifest = msg;
                 transfer.LastProgressTime = Time.RealTime;
-                m_lastJoinWorldProgressTime = Time.RealTime;
+                if (receivedNewManifest) RecordClientJoinProgress();
                 TryCompleteIncomingWorldTransfer(transfer);
                 return;
             }
@@ -10729,7 +11196,7 @@ namespace ScMultiplayer
                 {
                     if (m_joinRoomBusyDialog != null)
                         m_joinRoomBusyDialog.SmallMessage =
-                            "Connected.\r\nWorld imported.\r\nLoading project...";
+                            "Connected.\rWorld imported.\rLoading project...";
                     SuPlayScreen.Play(importedWorld);
                     connectionSM.TransitionTo(NetworkConnectionStateMachine.ConnectionState.Playing);
                     m_shouldCreateHostAvatar = true;
@@ -10742,6 +11209,11 @@ namespace ScMultiplayer
                     if (msg.TransferId > 0)
                     {
                         m_pendingWorldReadyTransferId = msg.TransferId;
+                        m_pendingCircuitReadyTransferId = 0;
+                        m_projectReadySentProject = null;
+                        m_projectReadySentTransferId = 0;
+                        m_nextClientJoinReadyRetryTime = 0.0;
+                        RecordClientJoinProgress();
                         NetworkMessageSender.SendPakWorldReady(
                             new GamePakWorldReadyMessage(msg.TransferId,
                                 GamePakWorldReadyStage.LoadingProject));
@@ -10819,7 +11291,7 @@ namespace ScMultiplayer
             m_isLoadingDownloadedWorld = true;
             ResetTransientNetworkState();
             m_joinAwaitingWorldProgress = true;
-            m_lastJoinWorldProgressTime = Time.RealTime;
+            RecordClientJoinProgress();
             // Source: ScMultiplayer.cs:UpdateFrame
             // Start the manifest handshake immediately after transient state has been reset. The
             // periodic request remains as loss recovery and no longer has to provide the first try.
@@ -10835,6 +11307,7 @@ namespace ScMultiplayer
             m_reconnectPending = false;
             m_reconnectAttempts = 0;
             m_nextReconnectAttemptTime = 0.0;
+            m_reconnectAttemptDeadline = 0.0;
             m_pendingJoinRequest = null;
             playerMappingManager.AssignPlayerIndex(client.ClientID);
             downloadSM.TransitionTo(WorldDownloadStateMachine.DownloadState.Requesting);
@@ -10888,8 +11361,29 @@ namespace ScMultiplayer
         private void Client_ConnectRefused(ConnectRefusedData obj)
         {
             Log.Information($"[ScMP] Connect refused: {obj.Reason}");
+            // Source: ScMultiplayer.HandleHostJoinRequest
+            if (obj.Reason?.StartsWith(ProtocolMismatchReasonPrefix,
+                    StringComparison.Ordinal) == true)
+            {
+                m_reconnectPending = false;
+                m_isLoadingDownloadedWorld = false;
+                m_pendingJoinRequest = null;
+                m_activeJoinRequest = null;
+                connectionSM.TransitionTo(
+                    NetworkConnectionStateMachine.ConnectionState.Disconnected);
+                Dispatcher.Dispatch(() =>
+                {
+                    HideJoinRoomBusyDialog();
+                    DialogsManager.ShowDialog(null, new MessageDialog(
+                        "Join Room",
+                        obj.Reason + "\rInstall the same ScMultiplayer package on all devices.",
+                        "OK", null, null));
+                });
+                return;
+            }
             if (m_reconnectPending && obj.Reason != PlayerProfileRequiredReason)
             {
+                m_reconnectAttemptDeadline = 0.0;
                 m_nextReconnectAttemptTime = Math.Max(m_nextReconnectAttemptTime,
                     Time.RealTime + ReconnectInitialDelay);
                 Log.Information("[ScMP] Reconnect was refused; another attempt remains scheduled");
@@ -10928,6 +11422,7 @@ namespace ScMultiplayer
             string address = obj.Address?.ToString() ?? "host";
             if (m_reconnectPending)
             {
+                m_reconnectAttemptDeadline = 0.0;
                 m_nextReconnectAttemptTime = Math.Max(
                     m_nextReconnectAttemptTime, Time.RealTime + ReconnectInitialDelay);
                 Log.Information($"[ScMP] Reconnect attempt to {address} timed out; retry remains scheduled");
@@ -11009,6 +11504,7 @@ namespace ScMultiplayer
             m_hostDisconnectHandled = true;
             m_reconnectRequested = false;
             m_reconnectPending = false;
+            m_reconnectAttemptDeadline = 0.0;
             m_joinAwaitingWorldProgress = false;
             m_activeJoinRequest = null;
             m_isLoadingDownloadedWorld = false;
@@ -11188,6 +11684,8 @@ namespace ScMultiplayer
             m_processedTerrainPlaceRequests.Clear();
             m_outgoingWorldTransfers.Clear();
             m_worldTransfersAwaitingReady.Clear();
+            m_hostProjectReadyTransfers.Clear();
+            m_completedWorldReadyTransfers.Clear();
             m_incomingWorldTransfers.Clear();
             m_hostPlayerPokingPhases.Clear();
             m_hostPlayerPokeSequences.Clear();
@@ -11206,6 +11704,13 @@ namespace ScMultiplayer
             m_worldTransferCursor = 0;
             m_nextWorldTransferManifestRequestTime = 0.0;
             m_nextWorldTransferUiUpdateTime = 0.0;
+            m_pendingWorldReadyTransferId = 0;
+            m_pendingCircuitReadyTransferId = 0;
+            m_projectReadySentProject = null;
+            m_projectReadySentTransferId = 0;
+            m_clientJoinReadyStage = GamePakWorldReadyStage.ProjectReady;
+            m_nextClientJoinReadyRetryTime = 0.0;
+            m_lastClientJoinBarrierProgressTime = 0.0;
             m_terrainMergeTime = 0f;
             SuSubsystemTerrain.ResetNetworkState();
             m_sessionRandomSeed = 0;
@@ -11374,7 +11879,7 @@ namespace ScMultiplayer
                     Storage.DeleteFile(DownloadedWorldsRegistryPath);
                 return;
             }
-            Storage.WriteAllText(DownloadedWorldsRegistryPath, string.Join("\r\n", directories));
+            Storage.WriteAllText(DownloadedWorldsRegistryPath, string.Join("\r", directories));
         }
 
         private static void RegisterDownloadedWorld(string directoryName)
