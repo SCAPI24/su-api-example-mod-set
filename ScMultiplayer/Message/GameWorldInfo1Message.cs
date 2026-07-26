@@ -8,6 +8,7 @@ namespace ScMultiplayer
     [Serializable]
     public class GameWorldInfoMessage1 : Message
     {
+        public int ServerTick;
         public double TimeOfDayOffset;
         public double TotalElapsedGameTime;
         public TimeOfDayMode CurrentTimeMode;
@@ -44,6 +45,8 @@ namespace ScMultiplayer
 
         protected override void Read(SuReader reader)
         {
+            // Source: Mod/ScMultiplayer/Plug/ScMultiplayer.cs:ScMultiplayer.TriggerNetworkTick
+            ServerTick = reader.ReadInt32();
             TimeOfDayOffset = reader.ReadDouble();
             TotalElapsedGameTime = reader.ReadDouble();
             CurrentTimeMode = (TimeOfDayMode)reader.ReadInt32();
@@ -59,6 +62,8 @@ namespace ScMultiplayer
 
         protected override void Write(SuWriter writer)
         {
+            // Source: Mod/ScMultiplayer/Plug/ScMultiplayer.cs:ScMultiplayer.TriggerNetworkTick
+            writer.WriteInt32(ServerTick);
             writer.WriteDouble(TimeOfDayOffset);
             writer.WriteDouble(TotalElapsedGameTime);
             writer.WriteInt32((int)CurrentTimeMode);

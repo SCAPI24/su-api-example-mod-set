@@ -18,6 +18,8 @@ public class GamePlayerInputMessage : Message
     public bool IsControlledByTouch;
     public bool IsCrouching;
     public bool IsFlying;
+    // Source: Survivalcraft/Game/ComponentBody.cs:ComponentBody.StandingOnValue
+    public bool IsGrounded;
     public bool IsRiding;
     public ushort MountEntityId;
     public int ActiveSlotIndex;
@@ -31,7 +33,7 @@ public class GamePlayerInputMessage : Message
         Vector3 bodyPosition, Vector3 bodyVelocity, Quaternion bodyRotation,
         Vector2 lookAngles, PlayerInput playerInput, float pokingPhase,
         bool isControlledByTouch,
-        bool isCrouching, bool isFlying, bool isRiding,
+        bool isCrouching, bool isFlying, bool isGrounded, bool isRiding,
         ushort mountEntityId, int activeSlotIndex, int inventoryAuthorityTick,
         int[] slotValues, int[] slotCounts)
     {
@@ -47,6 +49,7 @@ public class GamePlayerInputMessage : Message
         IsControlledByTouch = isControlledByTouch;
         IsCrouching = isCrouching;
         IsFlying = isFlying;
+        IsGrounded = isGrounded;
         IsRiding = isRiding;
         MountEntityId = mountEntityId;
         ActiveSlotIndex = activeSlotIndex;
@@ -109,6 +112,7 @@ public class GamePlayerInputMessage : Message
         IsControlledByTouch = reader.ReadBoolean();
         IsCrouching = reader.ReadBoolean();
         IsFlying = reader.ReadBoolean();
+        IsGrounded = reader.ReadBoolean();
         IsRiding = reader.ReadBoolean();
         MountEntityId = (ushort)reader.ReadPackedInt32();
         ActiveSlotIndex = reader.ReadInt32();
@@ -191,6 +195,7 @@ public class GamePlayerInputMessage : Message
         writer.WriteBoolean(IsControlledByTouch);
         writer.WriteBoolean(IsCrouching);
         writer.WriteBoolean(IsFlying);
+        writer.WriteBoolean(IsGrounded);
         writer.WriteBoolean(IsRiding);
         writer.WritePackedInt32(MountEntityId);
         writer.WriteInt32(ActiveSlotIndex);
