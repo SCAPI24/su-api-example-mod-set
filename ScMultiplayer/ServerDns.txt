@@ -3,6 +3,3 @@
 # Inline comments can start with # or //.
 
 suceru.site
-mc7.rhymc.com
-sd.s1.natgo.cn:31717
-frp-gap.com:61089
