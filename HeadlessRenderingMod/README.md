@@ -145,6 +145,29 @@ If `ping` succeeds but `status` times out, investigate `Frame.Update` and
 Keep `hideWindow=true`, `disableDrawing=true`, and `enableConsole=true` on this
 GPU-less server. Never expose the token in documentation or command output.
 
+## Workstation deployment tools
+
+The scripts under `tools/` are the maintained workstation entry points for the
+server at `139.155.99.152:22`, whose installation root is always
+`C:\SurvivalcraftServer`. They contain no password, token, private configuration,
+world, or signing key. Install their workstation dependency once:
+
+```text
+py -3 -m pip install -r tools/requirements-remote.txt
+```
+
+Omit `--password` to enter the SSH password without showing it in shell history:
+
+```text
+py -3 tools/check_remote_runtime.py --host 139.155.99.152 --user <ssh-user>
+py -3 tools/deploy_remote_mod.py --host 139.155.99.152 --user <ssh-user> --source <package.scmod>
+py -3 tools/deploy_remote_current.py --host 139.155.99.152 --user <ssh-user> --source <windows-publish-directory>
+```
+
+`deploy_remote_current.py` stops the server, uploads the selected publish
+directory, restarts it, returns to the previously loaded world when known, and
+verifies the actual core DLL and `.scmod` hashes found in that directory.
+
 ## TCP wire format
 
 One UTF-8 JSON object per line:
