@@ -144,6 +144,9 @@ namespace ScMultiplayer
         public bool PresentationInitialized;
         public double LastUpdateTime;
         public double LastPokeEventTime;
+        public double KnockbackCorrectionUntil;
+        public int KnockbackCorrectionStartTick = -1;
+        public int LastKnockbackSequence = -1;
     }
 
     public class NetworkPlayerRecord
@@ -944,7 +947,9 @@ namespace ScMultiplayer
         }
 
         public static void SendPlayerHealthMessage(int playerIndex, ComponentPlayer player,
-            float healthChange, string cause = null, bool hasKnockback = false)
+            float healthChange, string cause = null, bool hasKnockback = false,
+            int knockbackSequence = 0, int knockbackServerTick = 0,
+            float knockbackStunTime = 0f)
         {
             ComponentHealth health = player?.ComponentHealth;
             ComponentVitalStats vitalStats = player?.ComponentVitalStats;
@@ -968,7 +973,22 @@ namespace ScMultiplayer
                 (flu as SuComponentFlu)?.CoughSequence ?? 0,
                 flu?.IsCoughing == true,
                 cause);
+            msg.KnockbackSequence = knockbackSequence;
+            msg.KnockbackServerTick = knockbackServerTick;
+            msg.KnockbackStunTime = knockbackStunTime;
             // Source: ScMultiplayer.cs:NetworkMessageHandler.HandlePlayerHealthMessage
+            if (hasKnockback)
+            {
+                byte[] payload = Message.WriteWithSender(msg, ScMultiplayer.client.Address);
+                // Source: ScMultiplayer.cs:NetworkMessageSender.SendPlayerJumpRequest
+                // Knockback is an immediate gameplay edge. Two replaceable fast copies bypass a
+                // congested reliable queue; the reliable copy remains a fallback. Receivers use
+                // KnockbackSequence to ensure that all three copies apply the impulse only once.
+                ScMultiplayer.client.SendDirectInput(-1, payload, latest: true);
+                ScMultiplayer.client.SendDirectInput(-1, payload, latest: true);
+                ScMultiplayer.client.SendDirectInput(-1, payload);
+                return;
+            }
             SendScheduledMessage(-1, msg);
         }
 
@@ -1037,6 +1057,8 @@ namespace ScMultiplayer
             new Dictionary<int, double>();
         private readonly Dictionary<int, double> m_hostRemoteKnockbackUntil =
             new Dictionary<int, double>();
+        private readonly Dictionary<int, int> m_hostKnockbackSequences =
+            new Dictionary<int, int>();
         private bool m_hasObservedClientHealth;
         private float m_observedClientHealth;
         private bool m_observedClientSleeping;
@@ -1156,8 +1178,10 @@ namespace ScMultiplayer
         private Project m_autoHostProject;
         private bool m_autoHostAttempted;
         private double m_nextAutoHostAttemptTime;
-        private Vector3 m_pendingLocalKnockbackVelocity;
-        private double m_pendingLocalKnockbackUntil;
+        private double m_localKnockbackPositionCorrectionUntil;
+        private int m_localKnockbackCorrectionStartTick = -1;
+        private int m_lastLocalKnockbackSequence = -1;
+        private int m_lastAuthoritativeLocalPositionTick = -1;
         private ushort m_nextAnimalId = 1;
         private ushort m_nextPickableId = 1;
         private float m_fullWorldObjectsSyncTime;
@@ -1358,7 +1382,7 @@ namespace ScMultiplayer
         private const double JoinBarrierNoProgressTimeout = 30.0;
         private const float RemoteConnectionLostPeriod = 15f;
         private const float LocalHostConnectionLostPeriod = float.MaxValue;
-        private const float LocalKnockbackHoldDuration = 0.35f;
+        private const float LocalKnockbackPositionCorrectionDuration = 0.75f;
         private const float RemoteInputHoldDuration = 0.75f;
         private const float RemoteDelaySampleLimit = 0.6f;
         private const float RemoteExtrapolationLimit = 0.35f;
@@ -1811,30 +1835,6 @@ namespace ScMultiplayer
             catch (ObjectDisposedException)
             {
             }
-        }
-
-        // Source: Survivalcraft/Game/ComponentBody.cs:ComponentBody.Update
-        // Network damage arrives after the local physics step. Hold the authoritative velocity for
-        // a few frames so local locomotion cannot erase the host-side knockback immediately.
-        private void ApplyPendingLocalKnockback()
-        {
-            if (m_pendingLocalKnockbackUntil <= 0.0) return;
-            double remaining = m_pendingLocalKnockbackUntil - Time.RealTime;
-            if (remaining <= 0.0)
-            {
-                m_pendingLocalKnockbackUntil = 0.0;
-                m_pendingLocalKnockbackVelocity = Vector3.Zero;
-                return;
-            }
-
-            SubsystemPlayers players = GameManager.Project?.FindSubsystem<SubsystemPlayers>(false);
-            ComponentPlayer localPlayer = players?.ComponentPlayers.FirstOrDefault(player =>
-                !m_networkPlayerData.Values.Contains(player.PlayerData));
-            ComponentBody body = localPlayer?.ComponentBody;
-            if (body == null) return;
-            float blend = MathUtils.Clamp((float)(remaining / LocalKnockbackHoldDuration), 0.25f, 1f);
-            body.Velocity = Vector3.Lerp(body.Velocity, m_pendingLocalKnockbackVelocity, blend);
-            m_localInputBodyVelocity = body.Velocity;
         }
 
         private object[] HandleLoading(object[] args)
@@ -2582,7 +2582,6 @@ namespace ScMultiplayer
             {
                 SuppressClientRandomLightning(project);
                 UpdateRemoteFogPresentation(dt);
-                ApplyPendingLocalKnockback();
                 UpdateRemoteAnimalPresentations(dt);
                 UpdateRemotePickablePresentations(dt);
                 UpdateRemotePlayerPresentations(dt);
@@ -3875,7 +3874,11 @@ namespace ScMultiplayer
                     item.ComponentBody.Rotation, item.ComponentBody.Velocity, lookAngles,
                     walkOrder, jumpOrder, pokingPhase, attackOrder, rowLeftOrder, rowRightOrder,
                     isCrouching, isFlying, isRiding,
-                    item.ComponentBody.StandingOnValue.HasValue,
+                    // Source: Survivalcraft/Game/ComponentBody.cs:ComponentBody.Update
+                    // StandingOnValue can survive through a take-off or landing frame. Significant
+                    // vertical velocity is authoritative evidence that the body is still airborne.
+                    item.ComponentBody.StandingOnValue.HasValue &&
+                        MathUtils.Abs(item.ComponentBody.Velocity.Y) < 0.1f,
                     activeSlot, handVal, handCnt,
                     itemOffset, itemRotation, aimHandAngle, slotValues, slotCounts,
                     positionBatch);
@@ -3914,7 +3917,9 @@ namespace ScMultiplayer
                 model.RowLeftOrder, model.RowRightOrder,
                 item.ComponentBody.TargetCrouchFactor > 0f,
                 locomotion.IsCreativeFlyEnabled, item.ComponentRider?.Mount != null,
-                item.ComponentBody.StandingOnValue.HasValue,
+                // Source: Survivalcraft/Game/ComponentBody.cs:ComponentBody.Update
+                item.ComponentBody.StandingOnValue.HasValue &&
+                    MathUtils.Abs(item.ComponentBody.Velocity.Y) < 0.1f,
                 activeSlot, handValue, handCount,
                 itemOffset, itemRotation, aimHandAngle, slotValues, slotCounts,
                 positionBatch);
@@ -4103,8 +4108,9 @@ namespace ScMultiplayer
                 localPlayer.ComponentInput.IsControlledByTouch,
                 localPlayer.ComponentBody.TargetCrouchFactor > 0f,
                 localPlayer.ComponentLocomotion.IsCreativeFlyEnabled,
-                localPlayer.ComponentBody.StandingOnValue.HasValue ||
-                    localPlayer.ComponentBody.StandingOnBody != null,
+                (localPlayer.ComponentBody.StandingOnValue.HasValue ||
+                    localPlayer.ComponentBody.StandingOnBody != null) &&
+                    MathUtils.Abs(localPlayer.ComponentBody.Velocity.Y) < 0.1f,
                 localPlayer.ComponentRider?.Mount != null,
                 GetClientMountEntityId(localPlayer), activeSlotIndex,
                 m_lastAuthoritativeLocalInventoryTick, slotValues, slotCounts);
@@ -6214,14 +6220,20 @@ namespace ScMultiplayer
             // to an earlier connection after a client leaves and rejoins.
             if (IsHost || clientID != 0) return;
             int remoteClientId = msg.PlayerIndex;
-            if (remoteClientId != client.ClientID &&
-                RemotePlayers.TryGetValue(remoteClientId, out NetworkPlayerState previousState) &&
+            if (remoteClientId == client.ClientID)
+            {
+                // Source: Mod/ScMultiplayer/Message/GamePlayerPositionMessage.cs:ServerTick
+                // The local player now consumes host snapshots for post-hit velocity correction,
+                // so reject an older latest-state packet before it can pull that correction back.
+                if (msg.ServerTick <= m_lastAuthoritativeLocalPositionTick) return;
+                m_lastAuthoritativeLocalPositionTick = msg.ServerTick;
+                ApplyAuthoritativeLocalPlayerState(msg);
+                return;
+            }
+            if (RemotePlayers.TryGetValue(remoteClientId,
+                out NetworkPlayerState previousState) &&
                 msg.ServerTick < previousState.ServerTick)
                 return;
-            if (remoteClientId == client.ClientID)
-                ApplyAuthoritativeLocalPlayerState(msg);
-            if (remoteClientId == client.ClientID)
-                return; // 忽略自己发回的消息
             // A delayed position packet can arrive after Client_GameStep reports a leave. Do not
             // recreate a presentation-only avatar until the current connection registers it again.
             if (!m_networkPlayerData.ContainsKey(remoteClientId))
@@ -6334,6 +6346,51 @@ namespace ScMultiplayer
                 : MathUtils.Lerp(m_smoothedNetworkDelay, delaySample, 0.1f);
             // Client movement is predicted and never rewound. The host-side split-screen avatar
             // follows this trajectory with a bounded catch-up velocity instead.
+            // Source: Survivalcraft/Game/ComponentMiner.cs:ComponentMiner.AttackBody
+            // After a host-authoritative hit, use the following host snapshots to close only the
+            // horizontal trajectory error. Never write Position, Rotation or LookAngles here, so
+            // the owning player's view cannot be snapped or rotated by network reconciliation.
+            ComponentBody localBody = localPlayer.ComponentBody;
+            double now = Time.RealTime;
+            if (localBody != null && now < m_localKnockbackPositionCorrectionUntil &&
+                msg.ServerTick >= m_localKnockbackCorrectionStartTick)
+            {
+                // Source: Survivalcraft/Game/ComponentBody.cs:ComponentBody.Update
+                // Host position is authoritative for the knockback trajectory. Correct velocity
+                // toward that sampled position without ever writing Position, Rotation or view.
+                float predictionTime = MathUtils.Min(
+                    MathUtils.Min(delaySample, m_smoothedNetworkDelay), 0.15f);
+                Vector3 hostPosition = msg.Position + msg.Velocity * predictionTime;
+                Vector3 positionError = hostPosition - localBody.Position;
+                positionError.Y = 0f;
+                float errorLength = positionError.Length();
+                if (errorLength > 0.02f)
+                {
+                    Vector3 correctionVelocity = positionError / 0.25f;
+                    float correctionSpeed = correctionVelocity.Length();
+                    if (correctionSpeed > 2.5f)
+                        correctionVelocity *= 2.5f / correctionSpeed;
+                    Vector3 localHorizontalVelocity = new Vector3(
+                        localBody.Velocity.X, 0f, localBody.Velocity.Z);
+                    // Small delayed errors may slow an overshooting client, but do not make it
+                    // visibly reverse. A material divergence still converges to the host.
+                    if (errorLength < 0.25f &&
+                        Vector3.Dot(correctionVelocity, localHorizontalVelocity) < 0f)
+                    {
+                        correctionVelocity = Vector3.Zero;
+                    }
+                    Vector3 desiredVelocity = msg.Velocity + correctionVelocity;
+                    localBody.Velocity = new Vector3(
+                        MathUtils.Lerp(localBody.Velocity.X, desiredVelocity.X, 0.35f),
+                        localBody.Velocity.Y,
+                        MathUtils.Lerp(localBody.Velocity.Z, desiredVelocity.Z, 0.35f));
+                    m_localInputBodyVelocity = localBody.Velocity;
+                }
+            }
+            else if (now >= m_localKnockbackPositionCorrectionUntil)
+            {
+                m_localKnockbackPositionCorrectionUntil = 0.0;
+            }
 
             IInventory inventory = localPlayer.ComponentMiner?.Inventory;
             if (inventory == null) return;
@@ -9881,11 +9938,28 @@ namespace ScMultiplayer
                 m_hasObservedClientHealth = true;
                 m_observedClientHealth = msg.Health;
                 m_observedClientSleeping = msg.IsSleeping;
-                if (msg.HasKnockback && targetPlayer?.ComponentBody != null)
+                if (msg.HasKnockback &&
+                    msg.KnockbackSequence > m_lastLocalKnockbackSequence &&
+                    targetPlayer?.ComponentBody != null)
                 {
+                    m_lastLocalKnockbackSequence = msg.KnockbackSequence;
                     targetPlayer.ComponentBody.Velocity = msg.BodyVelocity;
-                    m_pendingLocalKnockbackVelocity = msg.BodyVelocity;
-                    m_pendingLocalKnockbackUntil = Time.RealTime + LocalKnockbackHoldDuration;
+                    // Source: Survivalcraft/Game/ComponentLocomotion.cs:ComponentLocomotion.Update
+                    // Apply the host's native stun once so local movement input cannot compete
+                    // with the one-shot authoritative knockback impulse.
+                    if (targetPlayer.ComponentLocomotion != null)
+                    {
+                        float elapsedSinceHit = MathUtils.Max(
+                            (client.Step - msg.KnockbackServerTick) * ServerTickDuration, 0f);
+                        float remainingStun = MathUtils.Max(
+                            msg.KnockbackStunTime - elapsedSinceHit, 0f);
+                        targetPlayer.ComponentLocomotion.StunTime = MathUtils.Max(
+                            targetPlayer.ComponentLocomotion.StunTime,
+                            remainingStun);
+                    }
+                    m_localKnockbackPositionCorrectionUntil = Time.RealTime +
+                        LocalKnockbackPositionCorrectionDuration;
+                    m_localKnockbackCorrectionStartTick = msg.KnockbackServerTick;
                     m_localInputBodyVelocity = msg.BodyVelocity;
                 }
                 return;
@@ -9905,6 +9979,18 @@ namespace ScMultiplayer
             state.Health = msg.Health;
             state.MaxHealth = msg.MaxHealth;
             state.IsDead = msg.IsDead;
+            if (msg.HasKnockback &&
+                msg.KnockbackSequence > state.LastKnockbackSequence)
+            {
+                state.LastKnockbackSequence = msg.KnockbackSequence;
+                // Source: Survivalcraft/Game/ComponentMiner.cs:ComponentMiner.AttackBody
+                // All observers already receive host position snapshots. Temporarily tighten only
+                // their presentation dead zone after a confirmed hit so the struck avatar settles
+                // on the same host trajectory without adding another message type or steady traffic.
+                state.KnockbackCorrectionUntil = Time.RealTime +
+                    LocalKnockbackPositionCorrectionDuration;
+                state.KnockbackCorrectionStartTick = msg.KnockbackServerTick;
+            }
         }
 
         // Source: ComponentHealth.cs:ComponentHealth.Update
@@ -12331,6 +12417,7 @@ namespace ScMultiplayer
             m_hostKnockbackHealthCache.Clear();
             m_hostPainSoundTimes.Clear();
             m_hostRemoteKnockbackUntil.Clear();
+            m_hostKnockbackSequences.Clear();
             RemotePlayers.Clear();
             m_hostAnimalIds.Clear();
             m_hostAnimals.Clear();
@@ -12454,8 +12541,10 @@ namespace ScMultiplayer
             m_localAimItemCount = 0;
             m_lastAimUpdateSentTime = 0.0;
             m_smoothedNetworkDelay = 0f;
-            m_pendingLocalKnockbackVelocity = Vector3.Zero;
-            m_pendingLocalKnockbackUntil = 0.0;
+            m_localKnockbackPositionCorrectionUntil = 0.0;
+            m_localKnockbackCorrectionStartTick = -1;
+            m_lastLocalKnockbackSequence = -1;
+            m_lastAuthoritativeLocalPositionTick = -1;
             m_clientWorldObjectsProject = null;
             m_remoteWeatherState = null;
             m_lastRemoteWorldInfoTick = -1;
@@ -12749,7 +12838,12 @@ namespace ScMultiplayer
                     }
                     float delayFactor = MathUtils.Saturate(state.EstimatedDelay / 0.2f);
                     Vector3 error = targetPosition - body.Position;
-                    float deadZone = state.IsGrounded ? 0.4f : 0.65f;
+                    bool correctingHostKnockback =
+                        Time.RealTime < state.KnockbackCorrectionUntil &&
+                        state.ServerTick >= state.KnockbackCorrectionStartTick;
+                    float deadZone = correctingHostKnockback
+                        ? (state.IsGrounded ? 0.05f : 0.1f)
+                        : (state.IsGrounded ? 0.4f : 0.1f);
                     Vector3 targetVelocity = state.Velocity;
                     if (state.IsGrounded) targetVelocity.Y = 0f;
                     Vector3 desiredVelocity;
@@ -12770,6 +12864,12 @@ namespace ScMultiplayer
                         desiredVelocity = targetVelocity + catchUpVelocity;
                         blend = MathUtils.Lerp(0.2f, 0.35f, delayFactor);
                     }
+                    // Source: Survivalcraft/Game/ComponentBody.cs:ComponentBody.Update
+                    // An airborne remote avatar must leave the ground promptly. The old 0.65m
+                    // vertical dead zone could keep its presentation body visibly grounded through
+                    // most of a short jump even though the host position was already airborne.
+                    if (!state.IsGrounded)
+                        blend = MathUtils.Max(blend, 0.45f);
                     body.Velocity = Vector3.Lerp(body.Velocity, desiredVelocity, blend);
                     body.Rotation = Quaternion.Slerp(body.Rotation, state.Rotation, 0.4f);
                 }
@@ -12799,16 +12899,32 @@ namespace ScMultiplayer
                 bool healthDecreased = health.Health < previousHealth - 0.0001f;
                 bool alreadyHeld = m_hostRemoteKnockbackUntil.TryGetValue(
                     remote.Key, out double heldUntil) && heldUntil > now;
-                bool attackStun = player.ComponentLocomotion?.StunTime > 0f;
+                float knockbackStunTime = MathUtils.Max(
+                    player.ComponentLocomotion?.StunTime ?? 0f, 0f);
+                bool attackStun = knockbackStunTime > 0f;
                 if ((healthDecreased || (attackStun && !alreadyHeld)) &&
                     body.Velocity.LengthSquared() > 0.0001f)
                 {
                     float lastSentHealth = m_playerHealthCache.TryGetValue(
                         remote.Key, out float cachedHealth) ? cachedHealth : previousHealth;
-                    m_hostRemoteKnockbackUntil[remote.Key] = now + LocalKnockbackHoldDuration;
+                    m_hostKnockbackSequences.TryGetValue(remote.Key,
+                        out int knockbackSequence);
+                    knockbackSequence = knockbackSequence == int.MaxValue
+                        ? 1
+                        : knockbackSequence + 1;
+                    m_hostKnockbackSequences[remote.Key] = knockbackSequence;
+                    // Source: Survivalcraft/Game/ComponentBody.cs:ComponentBody.Update
+                    // Keep client-follow correction out of the entire knockback trajectory. The
+                    // host therefore retains the original drag, gravity and collision decay, while
+                    // the owning client follows the authoritative position snapshots it produces.
+                    m_hostRemoteKnockbackUntil[remote.Key] = now +
+                        LocalKnockbackPositionCorrectionDuration;
                     NetworkMessageSender.SendPlayerHealthMessage(
                         remote.Key, player, health.Health - lastSentHealth,
-                        hasKnockback: true);
+                        hasKnockback: true,
+                        knockbackSequence: knockbackSequence,
+                        knockbackServerTick: client.Step,
+                        knockbackStunTime: knockbackStunTime);
                     m_playerHealthCache[remote.Key] = health.Health;
                 }
                 m_hostKnockbackHealthCache[remote.Key] = health.Health;
@@ -12818,6 +12934,7 @@ namespace ScMultiplayer
             {
                 m_hostKnockbackHealthCache.Remove(clientId);
                 m_hostRemoteKnockbackUntil.Remove(clientId);
+                m_hostKnockbackSequences.Remove(clientId);
             }
         }
 
@@ -12957,6 +13074,17 @@ namespace ScMultiplayer
                         forward * localIntent.Z;
 
                 float intentLength = travelIntent.Length();
+                if (intentLength < 0.05f && locomotion.IsCreativeFlyEnabled)
+                {
+                    // Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update
+                    // Creative flight can keep vertical velocity after the input rose returns to
+                    // center. Fall back to the sampled position/velocity so a purely vertical rise
+                    // is not frozen until the player also supplies horizontal movement.
+                    travelIntent = error.LengthSquared() > 0.0025f
+                        ? error
+                        : travelVelocity;
+                    intentLength = travelIntent.Length();
+                }
                 // Source: Survivalcraft/Game/ComponentBody.cs:ComponentBody.StandingOnValue
                 // The client owns its sampled ground contact. Host-side replicas can otherwise
                 // drift a few centimeters beyond a ledge and fall forever because normal ground
