@@ -12,6 +12,7 @@
   <Var name="MarkedOnly" value="false" />
   <Module file="$(InPath)\ScMultiplayer.dll">
     <SkipType name="ScMultiplayer.ScMultiplayer" />
+    <SkipType name="ScMultiplayer.NetWorldFromLinkProvider" />
     <SkipType name="ScMultiplayer.Message" />
     <SkipType name="ScMultiplayer.SuComponentInput" />
     <SkipType name="ScMultiplayer.SuComponentHumanModel" />
