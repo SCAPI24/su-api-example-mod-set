@@ -1,4 +1,4 @@
-# SuAPI Mod DNS v1
-# Fields: ModId | ShortCode | APIVersion | ModVersion | JSON array of download URLs
-HeadlessRenderingMod | Su-HRM | 0.1.3.4 | 1.3.0 | ["https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/Beta0.1.3.4/%5BSuAPI%5DHeadlessRenderingMod-1.3.0.scmod"]
-ScMultiplayer | Su-ScMP | 0.1.3.4 | 1.9.0 | ["https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/Beta0.1.3.4/%5BSuAPI%5DScMultiplayer-1.9.0.scmod","https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.3.4/SuAPI.ScMultiplayer-1.9.0.scmod"]
+# SuAPI Mod DNS v2
+# Fields: ModId | ShortCode | JSON array of supported SuAPI versions | ModVersion | JSON array of download URLs
+HeadlessRenderingMod | Su-HRM | ["0.1.3.4","0.1.4.0"] | 1.3.0 | ["https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/Beta0.1.3.4/%5BSuAPI%5DHeadlessRenderingMod-1.3.0.scmod"]
+ScMultiplayer | Su-ScMP | ["0.1.3.4","0.1.4.0"] | 1.9.0 | ["https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/Beta0.1.3.4/%5BSuAPI%5DScMultiplayer-1.9.0.scmod","https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.3.4/SuAPI.ScMultiplayer-1.9.0.scmod"]
