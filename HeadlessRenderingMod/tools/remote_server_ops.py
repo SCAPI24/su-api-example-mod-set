@@ -147,6 +147,51 @@ def loaded_world_selector(root: Path) -> str | None:
     return None
 
 
+def try_loaded_world_selector(root: Path) -> str | None:
+    # Source: HeadlessRenderingMod/tools/serverctl.py:command
+    # A restart must remain available even when the game-thread control path is unhealthy.
+    try:
+        return loaded_world_selector(root)
+    except (OSError, RuntimeError, json.JSONDecodeError):
+        return None
+
+
+def status(root: Path) -> None:
+    # Source: HeadlessRenderingMod/Server/HeadlessControlServer.cs:SubmitLocal
+    pids = tasklist_pids()
+    if not pids:
+        print(json.dumps({
+            "id": "process-status",
+            "ok": True,
+            "result": {
+                "running": False,
+                "processIds": [],
+                "controlAvailable": False,
+            },
+        }))
+        return
+
+    try:
+        response = serverctl.command(root, "status")
+        result = response.get("result")
+        if isinstance(result, dict):
+            result["running"] = True
+            result["processIds"] = pids
+            result["controlAvailable"] = True
+        serverctl.print_response(response)
+    except (OSError, RuntimeError, json.JSONDecodeError) as error:
+        print(json.dumps({
+            "id": "process-status",
+            "ok": True,
+            "result": {
+                "running": True,
+                "processIds": pids,
+                "controlAvailable": False,
+                "controlError": str(error),
+            },
+        }))
+
+
 def join_world(root: Path, selector: str, timeout: float) -> None:
     # Source: HeadlessRenderingMod/Server/GameControlCommands.cs:JoinWorld
     deadline = time.monotonic() + timeout
@@ -258,10 +303,20 @@ def main() -> int:
     parser.add_argument("--timeout", type=float, default=30.0)
     subparsers = parser.add_subparsers(dest="action", required=True)
     subparsers.add_parser("install-task")
+    subparsers.add_parser("ping")
     subparsers.add_parser("status")
-    subparsers.add_parser("start")
+    start_parser = subparsers.add_parser("start")
+    start_parser.add_argument("--world")
     subparsers.add_parser("stop")
-    subparsers.add_parser("restart")
+    restart_parser = subparsers.add_parser("restart")
+    restart_parser.add_argument("--world")
+    join_parser = subparsers.add_parser("join")
+    join_parser.add_argument("world")
+    subparsers.add_parser("close")
+    subparsers.add_parser("save")
+    direct = subparsers.add_parser("direct")
+    direct.add_argument("command")
+    direct.add_argument("values", nargs="*")
     deploy = subparsers.add_parser("deploy-mod")
     deploy.add_argument("path", type=Path)
     args = parser.parse_args()
@@ -269,18 +324,34 @@ def main() -> int:
     try:
         if args.action == "install-task":
             install_manual_task(root)
+        elif args.action == "ping":
+            serverctl.print_response(serverctl.command(root, "ping"))
         elif args.action == "status":
-            serverctl.print_response(serverctl.command(root, "status"))
+            status(root)
         elif args.action == "start":
             start(root, args.timeout)
+            if args.world:
+                join_world(root, args.world, max(args.timeout, 180.0))
         elif args.action == "stop":
             stop(root, args.timeout)
         elif args.action == "restart":
-            world = loaded_world_selector(root)
+            world = args.world or try_loaded_world_selector(root)
             stop(root, args.timeout)
             start(root, args.timeout)
             if world:
-                join_world(root, world, args.timeout)
+                join_world(root, world, max(args.timeout, 180.0))
+        elif args.action == "join":
+            join_world(root, args.world, max(args.timeout, 180.0))
+        elif args.action == "close":
+            serverctl.print_response(serverctl.command(root, "world.close"))
+        elif args.action == "save":
+            serverctl.print_response(serverctl.command(root, "world.save"))
+        elif args.action == "direct":
+            serverctl.print_response(serverctl.command(
+                root,
+                args.command,
+                serverctl.parse_values(args.values),
+            ))
         elif args.action == "deploy-mod":
             deploy_mod(root, args.path, args.timeout)
         return 0

@@ -285,6 +285,9 @@ namespace HeadlessRenderingMod
                 case "joinworld":
                     JoinWorld();
                     break;
+                case "saveworld":
+                    PrintResponse(m_server.SubmitLocal("world.save"));
+                    break;
                 case "exportworld":
                     ExportWorld();
                     break;
@@ -335,7 +338,7 @@ namespace HeadlessRenderingMod
         private static void PrintHelp()
         {
             Console.WriteLine();
-            Console.WriteLine("CreateWorld, WorldList, JoinWorld, ExportWorld, DeleteWorld");
+            Console.WriteLine("CreateWorld, WorldList, JoinWorld, SaveWorld, ExportWorld, DeleteWorld");
             Console.WriteLine("CreatePlayer, ManagePlayers, Status, ScreenList");
             Console.WriteLine("SwitchScreen <name>, DialogList, SequenceList, Shutdown, Menu");
             Console.WriteLine();

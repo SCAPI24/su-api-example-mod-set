@@ -14,6 +14,7 @@ def main() -> int:
     # Source: publish/check_remote_runtime.py:main
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", required=True)
+    parser.add_argument("--ssh-port", type=int, default=22)
     parser.add_argument("--user", required=True)
     parser.add_argument("--password")
     parser.add_argument("--root", default="C:/SurvivalcraftServer")
@@ -31,6 +32,7 @@ def main() -> int:
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     client.connect(
         args.host,
+        port=args.ssh_port,
         username=args.user,
         password=password,
         timeout=15,
@@ -55,7 +57,11 @@ def main() -> int:
             sftp.close()
 
         for line in log.splitlines()[-400:]:
-            if "[ScMP]" in line or "ERROR" in line or "Exception" in line:
+            if (
+                "[HeadlessRenderingMod]" in line
+                or "ERROR" in line
+                or "Exception" in line
+            ):
                 print(line)
     finally:
         client.close()

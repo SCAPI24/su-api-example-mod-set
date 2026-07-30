@@ -28,6 +28,9 @@ namespace HeadlessRenderingMod
                 case "world.close":
                     result = CloseWorld();
                     return true;
+                case "world.save":
+                    result = SaveWorld();
+                    return true;
                 case "world.export":
                     result = ExportWorld(request);
                     return true;
@@ -109,6 +112,25 @@ namespace HeadlessRenderingMod
                 ["closed"] = closed,
                 ["worldName"] = worldName,
                 ["screen"] = "MainMenu"
+            };
+        }
+
+        // Source: Survivalcraft/Game/GameManager.cs:GameManager.SaveProject
+        private static Dictionary<string, object> SaveWorld()
+        {
+            if (GameManager.Project == null || GameManager.WorldInfo == null)
+            {
+                throw new ControlCommandException(
+                    "world_not_loaded",
+                    "A world must be loaded before it can be saved.");
+            }
+
+            GameManager.SaveProject(waitForCompletion: true, showErrorDialog: false);
+            return new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["saved"] = true,
+                ["worldName"] = GameManager.WorldInfo.WorldSettings.Name,
+                ["savedAtUtc"] = DateTime.UtcNow.ToString("O")
             };
         }
 
