@@ -1,6 +1,6 @@
 # HeadlessRenderingMod
 
-SuAPI-only headless server control for the published Windows Survivalcraft build. The Mod does not patch or replace the game DLLs.
+SuAPI-only headless server control for the published Windows Survivalcraft build. The Mod does not patch or replace the game DLLs and does not require any external Mod.
 
 The published `Survivalcraft.exe` starts normally and loads the Mod. The Mod then:
 
@@ -41,6 +41,7 @@ All commands except `ping` execute on the game thread.
 world.create
 world.list
 world.join       world=<name-or-directory>
+world.save
 world.close
 world.export     world=<name-or-directory> [fileName=name.scworld]
 world.delete     world=<name-or-directory>
@@ -105,10 +106,11 @@ python serverctl.py sequence create-world-and-player.sequence.json --wait
 
 The second form is recommended. The sample JSON file is deployed beside `serverctl.py`.
 
-## Remote server operating rule
+## Remote server control
 
-The project's named remote headless server is `139.155.99.152:22`, with the
-installation rooted at `C:\SurvivalcraftServer`. The deployed control tools are:
+Every target supplies its own SSH address, account and installation root. The
+runtime contains no fixed server address or world name. Deploy these tools under
+the selected installation root:
 
 ```text
 C:\SurvivalcraftServer\tools\serverctl.py
@@ -120,12 +122,25 @@ control interface. It is valid for the process to remain on `MainMenu> Server
 Control`; automation must use the control API instead of keyboard injection or
 asking a user to operate the menu manually.
 
-Run these commands on the server through the approved SSH connection:
+Run these commands directly on any server, replacing the root when required:
 
 ```text
 python C:\SurvivalcraftServer\tools\serverctl.py --root C:\SurvivalcraftServer direct ping
 python C:\SurvivalcraftServer\tools\serverctl.py --root C:\SurvivalcraftServer direct status
+python C:\SurvivalcraftServer\tools\serverctl.py --root C:\SurvivalcraftServer direct world.save
 python C:\SurvivalcraftServer\tools\serverctl.py --root C:\SurvivalcraftServer direct world.join world="Jolia Poru"
+```
+
+`remote_server_ops.py` supplies process-aware commands whose `status` result also
+works while Survivalcraft is stopped:
+
+```text
+python C:\SurvivalcraftServer\tools\remote_server_ops.py --root C:\SurvivalcraftServer ping
+python C:\SurvivalcraftServer\tools\remote_server_ops.py --root C:\SurvivalcraftServer status
+python C:\SurvivalcraftServer\tools\remote_server_ops.py --root C:\SurvivalcraftServer start --world "Jolia Poru"
+python C:\SurvivalcraftServer\tools\remote_server_ops.py --root C:\SurvivalcraftServer save
+python C:\SurvivalcraftServer\tools\remote_server_ops.py --root C:\SurvivalcraftServer restart
+python C:\SurvivalcraftServer\tools\remote_server_ops.py --root C:\SurvivalcraftServer stop
 ```
 
 The required recovery order is:
@@ -138,7 +153,8 @@ The required recovery order is:
    `world.join world="Jolia Poru"`.
 4. Poll `status` until `currentScreen="Game"`, `worldLoaded=true`,
    `serverError=null`, and `frameError=null`.
-5. Confirm the ScMultiplayer log contains `created game 0` or `GameCreated`.
+5. Confirm `modVersion`, `serverError` and `frameError` in `status`, then inspect
+   `[HeadlessRenderingMod]` or error entries in `Logs\Game.log`.
 
 If `ping` succeeds but `status` times out, investigate `Frame.Update` and
 `ProcessQueuedCommands`; do not blame the menu or fall back to GUI key presses.
@@ -147,10 +163,9 @@ GPU-less server. Never expose the token in documentation or command output.
 
 ## Workstation deployment tools
 
-The scripts under `tools/` are the maintained workstation entry points for the
-server at `139.155.99.152:22`, whose installation root is always
-`C:\SurvivalcraftServer`. They contain no password, token, private configuration,
-world, or signing key. Install their workstation dependency once:
+The scripts under `tools/` are maintained workstation entry points. They contain
+no password, token, private configuration, world, signing key, fixed host or
+required installation root. Install their workstation dependency once:
 
 ```text
 py -3 -m pip install -r tools/requirements-remote.txt
@@ -159,9 +174,12 @@ py -3 -m pip install -r tools/requirements-remote.txt
 Omit `--password` to enter the SSH password without showing it in shell history:
 
 ```text
-py -3 tools/check_remote_runtime.py --host 139.155.99.152 --user <ssh-user>
-py -3 tools/deploy_remote_mod.py --host 139.155.99.152 --user <ssh-user> --source <package.scmod>
-py -3 tools/deploy_remote_current.py --host 139.155.99.152 --user <ssh-user> --source <windows-publish-directory>
+py -3 tools/control_remote.py --host <server> --ssh-port 22 --user <ssh-user> --root C:/SurvivalcraftServer status
+py -3 tools/control_remote.py --host <server> --user <ssh-user> --root C:/SurvivalcraftServer restart --world "Server World"
+py -3 tools/control_remote.py --host <server> --user <ssh-user> --root C:/SurvivalcraftServer direct world.list
+py -3 tools/check_remote_runtime.py --host <server> --user <ssh-user> --root C:/SurvivalcraftServer
+py -3 tools/deploy_remote_mod.py --host <server> --user <ssh-user> --root C:/SurvivalcraftServer --source <package.scmod>
+py -3 tools/deploy_remote_current.py --host <server> --user <ssh-user> --root C:/SurvivalcraftServer --source <windows-publish-directory>
 ```
 
 `deploy_remote_current.py` stops the server, uploads the selected publish
