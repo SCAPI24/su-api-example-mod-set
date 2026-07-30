@@ -25,6 +25,13 @@ namespace ScMultiplayer
         public float Level;
         public Vector3 BodyVelocity;
         public bool HasKnockback;
+        // Source: Mod/ScMultiplayer/Plug/ScMultiplayer.cs:NetworkMessageSender.SendPlayerJumpRequest
+        // Deduplicates the immediate copies and fences post-hit position snapshots.
+        public int KnockbackSequence;
+        public int KnockbackServerTick;
+        // Source: Survivalcraft/Game/ComponentMiner.cs:ComponentMiner.AttackBody
+        // Keeps the owning client under the same native locomotion stun as the host.
+        public float KnockbackStunTime;
         public bool IsSleeping;
         public float FireDuration;
         public float FluDuration;
@@ -84,6 +91,12 @@ namespace ScMultiplayer
             Level = reader.ReadSingle();
             BodyVelocity = reader.ReadVector3(reader);
             HasKnockback = reader.ReadBoolean();
+            if (HasKnockback)
+            {
+                KnockbackSequence = reader.ReadInt32();
+                KnockbackServerTick = reader.ReadInt32();
+                KnockbackStunTime = reader.ReadSingle();
+            }
             IsSleeping = reader.ReadBoolean();
             FireDuration = reader.ReadSingle();
             FluDuration = reader.ReadSingle();
@@ -110,6 +123,12 @@ namespace ScMultiplayer
             writer.WriteSingle(Level);
             writer.WriteVector3(writer, BodyVelocity);
             writer.WriteBoolean(HasKnockback);
+            if (HasKnockback)
+            {
+                writer.WriteInt32(KnockbackSequence);
+                writer.WriteInt32(KnockbackServerTick);
+                writer.WriteSingle(KnockbackStunTime);
+            }
             writer.WriteBoolean(IsSleeping);
             writer.WriteSingle(FireDuration);
             writer.WriteSingle(FluDuration);
