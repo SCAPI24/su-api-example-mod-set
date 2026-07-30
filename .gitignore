@@ -111,6 +111,12 @@ HeadlessRenderingMod/bin/
 HeadlessRenderingMod/obj/
 HeadlessRenderingMod/.vs/
 HeadlessRenderingMod/**/__pycache__/
+## sync:SuAPIModDownload
+!SuAPIModDownload/
+!SuAPIModDownload/**
+SuAPIModDownload/bin/
+SuAPIModDownload/obj/
+SuAPIModDownload/.vs/
 
 # 全局忽略 .vs 目录
 *.vs/
