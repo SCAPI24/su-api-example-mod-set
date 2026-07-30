@@ -36,7 +36,7 @@ namespace HeadlessRenderingMod
 
         public string Name => "无画面服务器";
 
-        public string Version => "1.3.0";
+        public string Version => "1.3.1";
 
         public IEnumerable<string> Dependencies => Array.Empty<string>();
 
@@ -287,6 +287,7 @@ namespace HeadlessRenderingMod
             return new Dictionary<string, object>(StringComparer.Ordinal)
             {
                 ["instanceId"] = m_config.InstanceId,
+                ["modVersion"] = Version,
                 ["processId"] = Environment.ProcessId,
                 ["currentScreen"] = currentScreen,
                 ["screenAnimating"] = ScreensManager.IsAnimating,
