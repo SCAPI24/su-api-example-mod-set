@@ -20,6 +20,7 @@ namespace HeadlessRenderingMod
         private CommandSequenceManager m_sequences;
         private WindowsConsoleController m_consoleController;
         private FrameRateLimiter m_frameRateLimiter;
+        private IDisposable m_windowPresentationLease;
         private bool m_rootDrawStateCaptured;
         private bool m_originalRootDrawEnabled;
         private bool m_settingsStateCaptured;
@@ -70,6 +71,12 @@ namespace HeadlessRenderingMod
             m_sequences = new CommandSequenceManager();
             try
             {
+                // Source: EntitySystem/SuAPI/WindowPresentationControl.cs:WindowPresentationControl.Request
+                // Pass process-local presentation intent without coupling SuAPICore to this Mod.
+                m_windowPresentationLease = WindowPresentationControl.Request(
+                    new WindowPresentationParameters(
+                        m_config.HideWindow,
+                        m_config.DisableDrawing));
                 m_server.Start();
                 m_frameRateLimiter = new FrameRateLimiter(m_config.TargetFrameRate);
                 m_eventBus = eventBus;
@@ -99,6 +106,8 @@ namespace HeadlessRenderingMod
             }
             catch
             {
+                m_windowPresentationLease?.Dispose();
+                m_windowPresentationLease = null;
                 m_server.Stop();
                 m_server = null;
                 throw;
@@ -124,6 +133,9 @@ namespace HeadlessRenderingMod
                 m_server.Stop();
                 m_server = null;
             }
+
+            m_windowPresentationLease?.Dispose();
+            m_windowPresentationLease = null;
         }
 
         // Source: Survivalcraft/Game/Program.cs:Program.Run

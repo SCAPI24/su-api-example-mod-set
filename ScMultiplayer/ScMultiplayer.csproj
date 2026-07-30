@@ -21,6 +21,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\Engine\Engine\Engine.csproj" />
     <ProjectReference Include="..\..\EntitySystem\EntitySystem.csproj" />
+    <ProjectReference Include="..\..\EntitySystem\SuAPICore\SuAPICore.csproj" />
     <ProjectReference Include="..\..\Survivalcraft\Survivalcraft.csproj" />
     <ProjectReference Include="..\Comms\Comms.csproj" />
   </ItemGroup>

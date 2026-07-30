@@ -6,6 +6,7 @@ using Engine.Media;
 using Game;
 using GameEntitySystem;
 using SuAPI;
+using SuAPICore;
 using System;
 using System.Collections;
 using System.Collections.Concurrent;
@@ -1021,6 +1022,8 @@ namespace ScMultiplayer
 
         // ---------- 内部状态 ----------
         private float m_syncPulseAccumulator;
+        private IModEventBus m_eventBus;
+        private EventSubscriptionToken m_fromLinkToken;
         private double m_lastSyncUpdateTime;
         private uint m_syncPulseIndex;
         private Project m_frameProject;
@@ -1429,6 +1432,7 @@ namespace ScMultiplayer
         public void OnLoad(IModEventBus eventBus = null, IModInjector modInjector = null)
         {
             currentInstance = this;
+            m_eventBus = eventBus;
             // Source: Mod/ScMultiplayer/Message/Message.cs:Message.ProtocolHash
             string protocolLabel = Message.GetProtocolLabel(
                 Message.ModVersion, Message.ProtocolVersion,
@@ -1457,6 +1461,8 @@ namespace ScMultiplayer
                 typeof(global::ScMultiplayer.PistonBlock), Name);
             ScMultiplayerSettings.Load();
             PersonalServerDirectory.Load();
+            m_fromLinkToken = SuFromLinkProviders.Subscribe(eventBus,
+                new NetWorldFromLinkProvider());
             playerMappingManager.MaxPlayerIndices = ScMultiplayerSettings.MaxPlayers;
             StartWorldTransferSender();
 
@@ -1853,14 +1859,6 @@ namespace ScMultiplayer
             }))
             {
                 throw new InvalidOperationException("Loading item 'Initialize PlayScreen' was not found.");
-            }
-            if (!Game.LoadingManager.ReplaceItem("Initialize ContentScreen", delegate
-            {
-                ScreensManager.AddScreen("Content", new SuContentScreen());
-            }))
-            {
-                throw new InvalidOperationException(
-                    "Loading item 'Initialize ContentScreen' was not found.");
             }
             return args;
         }
@@ -14359,6 +14357,10 @@ namespace ScMultiplayer
 
         public void OnUnload()
         {
+            if (m_eventBus != null && m_fromLinkToken != null)
+                m_eventBus.UnsubscribeEvent(m_fromLinkToken);
+            m_fromLinkToken = null;
+            m_eventBus = null;
             Window.Deactivated -= HandleWindowDeactivated;
             Window.Activated -= HandleWindowActivated;
             GameManager.ProjectDisposed -= HandleProjectDisposed;
