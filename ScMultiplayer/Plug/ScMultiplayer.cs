@@ -1146,6 +1146,7 @@ namespace ScMultiplayer
         private bool m_replacingLocalPlayerData;
         private const float HealthSyncInterval = 1.0f; // 每秒同步一次生命
         private string m_downloadedWorldDirectory;
+        private Project m_clientWorldRefreshProject;
         private bool m_hostDisconnectHandled;
         private bool m_localLeaveInProgress;
         private bool m_shouldCreateHostAvatar;
@@ -3492,12 +3493,12 @@ namespace ScMultiplayer
         // Source: ScMultiplayer.HandleGamePakWorldReadyMessage
         private void UpdateClientJoinBarrier()
         {
-            if (IsHost || m_pendingWorldReadyTransferId <= 0 ||
-                client?.IsConnected != true)
+            if (IsHost || m_pendingWorldReadyTransferId <= 0)
                 return;
 
             double now = Time.RealTime;
-            TryAcknowledgeClientCatchUpApplied();
+            if (client?.IsConnected == true)
+                TryAcknowledgeClientCatchUpApplied();
             if (now - m_lastClientJoinBarrierProgressTime >= JoinBarrierNoProgressTimeout)
             {
                 Log.Error($"[ScMP] Join barrier timed out: " +
@@ -3510,7 +3511,7 @@ namespace ScMultiplayer
                 return;
             }
 
-            if (m_nextClientJoinReadyRetryTime > 0.0 &&
+            if (client?.IsConnected == true && m_nextClientJoinReadyRetryTime > 0.0 &&
                 now >= m_nextClientJoinReadyRetryTime)
                 SendClientJoinReadyStage(m_clientJoinReadyStage);
         }
@@ -10763,6 +10764,10 @@ namespace ScMultiplayer
             if (m_joinRoomBusyDialog != null)
                 m_joinRoomBusyDialog.SmallMessage =
                     "Terrain history expired.\rDownloading the current host world...";
+            // Source: Survivalcraft/Game/GameLoadingScreen.cs:GameLoadingScreen.Enter
+            // Loading the refreshed snapshot disposes the currently running client Project. Keep
+            // that known replacement separate from an intentional game-menu leave.
+            m_clientWorldRefreshProject = GameManager.Project;
             PrepareClientForRemoteJoin();
             m_pendingJoinRequest = m_activeJoinRequest;
             m_isLoadingDownloadedWorld = true;
@@ -11425,7 +11430,7 @@ namespace ScMultiplayer
         // Source: Comms/Drt/Client.cs:Client.GameJoined
         // The base world is the room-creation snapshot. This targeted checkpoint advances a
         // rejoining client from that snapshot to the host's current authoritative terrain tick.
-        private void SendTerrainCatchUp(int targetClientId)
+        private void SendTerrainCatchUp(int targetClientId, int snapshotStartTick)
         {
             List<KeyValuePair<Point3, TerrainCellState>> snapshot;
             int targetTick = client.Step;
@@ -11434,7 +11439,11 @@ namespace ScMultiplayer
                 foreach (KeyValuePair<Point3, TerrainCellState> item in m_pendingTerrainChanges)
                     m_terrainCheckpoint[item.Key] = item.Value;
                 m_pendingTerrainChanges.Clear();
+                // Source: ScMultiplayer.AcceptNetworkPlayerJoin
+                // The live world archive already contains terrain through the join start tick.
+                // Only cells changed while that archive was transferred need a final checkpoint.
                 snapshot = m_terrainCheckpoint
+                    .Where(item => item.Value.Tick > snapshotStartTick)
                     .OrderBy(item => item.Value.Tick)
                     .ThenBy(item => item.Key.X)
                     .ThenBy(item => item.Key.Y)
@@ -11467,7 +11476,8 @@ namespace ScMultiplayer
                 client.SendDirectInput(targetClientId,
                     Message.WriteWithSender(message, client.Address), sequenced: true);
             }
-            Log.Information($"[ScMP] Sent terrain catch-up: ClientID={targetClientId}, Tick={targetTick}, Cells={snapshot.Count}");
+            Log.Information($"[ScMP] Sent terrain catch-up: ClientID={targetClientId}, " +
+                $"Tick={targetTick}, StartTick={snapshotStartTick}, Cells={snapshot.Count}");
         }
 
         private IncomingWorldTransfer GetOrCreateIncomingWorldTransfer(
@@ -11728,6 +11738,7 @@ namespace ScMultiplayer
             m_clientTerrainRecoveryAcknowledged = -1;
             m_clientTerrainRecoveryReady = -1;
             m_clientTerrainGapDetectedTime = 0.0;
+            m_clientWorldRefreshProject = null;
             HideJoinRoomBusyDialog();
         }
 
@@ -11757,7 +11768,7 @@ namespace ScMultiplayer
             // checkpoint, so historical terrain messages cannot overwrite the authoritative state.
             journal.CutoffSealed = true;
             FlushJoinCatchUpJournal(targetClientId);
-            SendTerrainCatchUp(targetClientId);
+            SendTerrainCatchUp(targetClientId, journal.StartTick);
             NetworkMessageSender.SendPakWorldReady(targetClientId,
                 new GamePakWorldReadyMessage(transferId,
                     GamePakWorldReadyStage.CatchUpBatchComplete));
@@ -11893,6 +11904,7 @@ namespace ScMultiplayer
                     return;
                 }
                 Log.Error($"[ScMP] World imported but not found in world list: {msg.Name}");
+                m_clientWorldRefreshProject = null;
                 m_isLoadingDownloadedWorld = false;
                 HideJoinRoomBusyDialog();
                 DialogsManager.ShowDialog(null, new MessageDialog(
@@ -11901,6 +11913,7 @@ namespace ScMultiplayer
             }
             catch (Exception ex)
             {
+                m_clientWorldRefreshProject = null;
                 m_isLoadingDownloadedWorld = false;
                 HideJoinRoomBusyDialog();
                 Log.Error($"[ScMP] Failed to import world: {ex.Message}");
@@ -11958,6 +11971,11 @@ namespace ScMultiplayer
             bool wasReconnect = m_reconnectPending;
             Log.Information($"[ScMP] GameJoined, Step={obj.Step}, ClientID={client.ClientID}");
             IsHost = false;
+            // Source: Survivalcraft/Game/GameLoadingScreen.cs:GameLoadingScreen.Enter
+            // Any successful rejoin with a Project already loaded will replace that Project after
+            // the new world is imported. Preserve the new connection across the old disposal.
+            if (GameManager.Project != null)
+                m_clientWorldRefreshProject = GameManager.Project;
             SetServerDiscoveryEnabled(false);
             m_hostDisconnectHandled = false;
             m_localLeaveInProgress = false;
@@ -12040,6 +12058,7 @@ namespace ScMultiplayer
         private void Client_ConnectRefused(ConnectRefusedData obj)
         {
             Log.Information($"[ScMP] Connect refused: {obj.Reason}");
+            m_clientWorldRefreshProject = null;
             // Source: ScMultiplayer.HandleHostJoinRequest
             if (obj.Reason?.StartsWith(ProtocolMismatchReasonPrefix,
                     StringComparison.Ordinal) == true)
@@ -12109,6 +12128,7 @@ namespace ScMultiplayer
             }
 
             Log.Error($"[ScMP] Join request to {address} timed out");
+            m_clientWorldRefreshProject = null;
             m_isLoadingDownloadedWorld = false;
             m_pendingJoinRequest = null;
             m_activeJoinRequest = null;
@@ -12187,6 +12207,7 @@ namespace ScMultiplayer
             m_joinAwaitingWorldProgress = false;
             m_activeJoinRequest = null;
             m_isLoadingDownloadedWorld = false;
+            m_clientWorldRefreshProject = null;
             // Source: Comms/Comms.Drt/Func/Client/Client.cs:Client.LeaveGame
             // A host LeaveRequest can arrive while the transport is still healthy. Explicitly
             // leave so the local server does not retain this client after its world is removed.
@@ -12236,7 +12257,10 @@ namespace ScMultiplayer
         // Source: Comms/Comms.Drt/Func/Client/Client.cs:Client.LeaveGame
         private void BeginLocalGameLeave()
         {
-            if (m_localLeaveInProgress || client?.IsConnected != true) return;
+            if (m_localLeaveInProgress) return;
+            m_clientWorldRefreshProject = null;
+            HideJoinRoomBusyDialog();
+            if (client?.IsConnected != true) return;
             m_localLeaveInProgress = true;
             m_reconnectRequested = false;
             m_reconnectPending = false;
@@ -12546,7 +12570,14 @@ namespace ScMultiplayer
             if (ReferenceEquals(m_hostPickablesSubsystem,
                 project?.FindSubsystem<SubsystemPickables>(false)))
                 DetachHostPickableEvents();
-            if (!m_hostDisconnectHandled)
+            // Source: Survivalcraft/Game/GameLoadingScreen.cs:GameLoadingScreen.Enter
+            // A terrain resync replaces the old Project after the new transport is already joined.
+            // Disposing that one known Project must not leave or reset the replacement session.
+            bool isClientWorldRefresh = !IsHost &&
+                ReferenceEquals(project, m_clientWorldRefreshProject);
+            if (isClientWorldRefresh)
+                m_clientWorldRefreshProject = null;
+            if (!m_hostDisconnectHandled && !isClientWorldRefresh)
                 BeginLocalGameLeave();
             foreach (int clientId in m_networkPlayerData
                 .Where(pair => pair.Value.ComponentPlayer?.Entity.Project == project)
@@ -12554,7 +12585,8 @@ namespace ScMultiplayer
             {
                 RemoveNetworkPlayer(clientId);
             }
-            ResetTransientNetworkState();
+            if (!isClientWorldRefresh)
+                ResetTransientNetworkState();
         }
 
         private static HashSet<string> ReadDownloadedWorldRegistry()
