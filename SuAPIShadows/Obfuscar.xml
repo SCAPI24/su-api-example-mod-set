@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<Obfuscator>
+  <Var name="InPath" value="bin\Debug\net8.0" />
+  <Var name="OutPath" value="bin\Debug\net8.0\Obfuscated" />
+  <Var name="KeepPublicApi" value="false" />
+  <Var name="HidePrivateApi" value="true" />
+  <Var name="HideStrings" value="false" />
+  <Var name="RenameProperties" value="true" />
+  <Var name="RenameEvents" value="true" />
+  <Var name="RenameFields" value="true" />
+  <Var name="UseUnicodeNames" value="true" />
+  <Var name="MarkedOnly" value="false" />
+  <Module file="$(InPath)\SuAPIShadows.dll">
+    <SkipType name="SuAPIShadows.ShadowsMod" />
+    <SkipType name="SuAPIShadows.SubsystemDynamicShadows" />
+  </Module>
+</Obfuscator>
