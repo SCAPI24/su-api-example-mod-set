@@ -10100,11 +10100,11 @@ namespace ScMultiplayer
             ApplyRemoteWeatherState();
         }
 
-        public void TrySendWorldControlRequest(ComponentPlayer componentPlayer, WorldControlAction actions)
+        public bool TrySendWorldControlRequest(ComponentPlayer componentPlayer, WorldControlAction actions)
         {
             if (actions == WorldControlAction.None || IsHost || client?.IsConnected != true ||
                 componentPlayer == null || m_networkPlayerData.Values.Contains(componentPlayer.PlayerData))
-                return;
+                return false;
 
             // Source: Mod/ScMultiplayer/Func/Circuit/CircuitSynchronizer.cs:
             // CircuitSynchronizer.ShouldSuppressClientInput
@@ -10117,7 +10117,7 @@ namespace ScMultiplayer
                 {
                     DisplayWorldControlFeedback(componentPlayer,
                         "World control queue is full. Please wait for synchronization.");
-                    return;
+                    return true;
                 }
                 m_queuedWorldControlRequests.Enqueue(new QueuedWorldControlRequest
                 {
@@ -10130,10 +10130,11 @@ namespace ScMultiplayer
                     DisplayWorldControlFeedback(componentPlayer,
                         "World control queued. Waiting for synchronization.");
                 }
-                return;
+                return true;
             }
 
             SendWorldControlRequestNow(componentPlayer, actions);
+            return true;
         }
 
         // Source: Mod/ScMultiplayer/Plug/ScMultiplayer.cs:

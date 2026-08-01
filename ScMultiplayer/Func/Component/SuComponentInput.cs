@@ -80,9 +80,9 @@ namespace ScMultiplayer
             // ScMultiplayer.TrySendWorldControlRequest
             // The multiplayer layer queues these authority requests while circuit/terrain recovery
             // blocks local world writes. Capturing the click here prevents a silent lost action.
-            ScMultiplayer.currentInstance?.TrySendWorldControlRequest(
-                Sum_componentPlayer, worldActions);
-            if (!ScMultiplayer.IsHost && worldActions != WorldControlAction.None)
+            bool worldActionsHandled = ScMultiplayer.currentInstance?
+                .TrySendWorldControlRequest(Sum_componentPlayer, worldActions) == true;
+            if (worldActionsHandled)
             {
                 // Source: Survivalcraft/Game/ComponentGui.cs:ComponentGui.Update
                 // ComponentGui also reads these buttons directly. Consume the click after sending
