@@ -11,7 +11,7 @@ namespace ScMultiplayer
     [Serializable]
     public abstract class Message
     {
-        public const string ModVersion = "1.9.1";
+        public const string ModVersion = "1.9.2";
         public const int ProtocolVersion = 1;
 
         private static readonly Dictionary<int, Type> MessageTypesById = new();
@@ -36,14 +36,14 @@ namespace ScMultiplayer
             Register<EditableDataRequestMessage>(2, nameof(EditableDataRequestMessage), 1);
             Register<EditableDataStateMessage>(3, nameof(EditableDataStateMessage), 1);
             Register<GameKickPlayerMessage>(4, nameof(GameKickPlayerMessage), 1);
-            Register<GameModifiedCellsMessage>(5, nameof(GameModifiedCellsMessage), 1);
+            Register<GameModifiedCellsMessage>(5, nameof(GameModifiedCellsMessage), 2);
             Register<GamePakWorldMessage>(6, nameof(GamePakWorldMessage), 2);
             Register<GamePlayerHealthMessage>(7, nameof(GamePlayerHealthMessage), 1);
             Register<GamePlayerInputMessage>(8, nameof(GamePlayerInputMessage), 1);
             Register<GamePlayerPositionMessage>(9, nameof(GamePlayerPositionMessage), 1);
             Register<GamePlayerPositionsMessage>(10, nameof(GamePlayerPositionsMessage), 1);
             Register<GameWorldInfoMessage>(11, nameof(GameWorldInfoMessage), 2);
-            Register<GameWorldInfoMessage1>(12, nameof(GameWorldInfoMessage1), 2);
+            Register<GameWorldInfoMessage1>(12, nameof(GameWorldInfoMessage1), 3);
             Register<PlayerAimMessage>(13, nameof(PlayerAimMessage), 1);
             Register<SyncBatchMessage>(14, nameof(SyncBatchMessage), 1);
             Register<TerrainDigRequestMessage>(15, nameof(TerrainDigRequestMessage), 1);
@@ -59,14 +59,16 @@ namespace ScMultiplayer
             Register<GamePakWorldRepairRequestMessage>(25,
                 nameof(GamePakWorldRepairRequestMessage), 1);
             Register<PickableSyncMessage>(26, nameof(PickableSyncMessage), 1);
-            Register<PlayerActionMessage>(27, nameof(PlayerActionMessage), 2);
+            Register<PlayerActionMessage>(27, nameof(PlayerActionMessage), 3);
             Register<PlayerDataSyncMessage>(28, nameof(PlayerDataSyncMessage), 1);
             Register<PlayerEquipmentMessage>(29, nameof(PlayerEquipmentMessage), 1);
-            Register<PlayerProfileMessage>(30, nameof(PlayerProfileMessage), 1);
+            Register<PlayerProfileMessage>(30, nameof(PlayerProfileMessage), 2);
             Register<ProjectileSyncMessage>(31, nameof(ProjectileSyncMessage), 1);
             Register<TerrainRecoveryMessage>(32, nameof(TerrainRecoveryMessage), 1);
             Register<WorldObjectSyncMessage>(33, nameof(WorldObjectSyncMessage), 1);
             Register<WorldControlResultMessage>(34, nameof(WorldControlResultMessage), 1);
+            Register<PlayerSkinAssetMessage>(35, nameof(PlayerSkinAssetMessage), 2);
+            Register<TerrainChunkSyncMessage>(36, nameof(TerrainChunkSyncMessage), 1);
 
             foreach (TypeInfo typeInfo in typeof(Message).Assembly.DefinedTypes)
             {

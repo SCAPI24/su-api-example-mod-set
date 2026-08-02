@@ -154,6 +154,7 @@ namespace ScMultiplayer
         public string Name;
         public PlayerClass PlayerClass;
         public string SkinName;
+        public byte[] SkinSha256 = Array.Empty<byte>();
         public Vector3 Position;
         public float Level = 1f;
         public float Health = 1f;
@@ -375,6 +376,13 @@ namespace ScMultiplayer
         public PlayerActionMessage Request;
     }
 
+    public class PendingHostTerrainPlaceFallback
+    {
+        public int ExpectedValue;
+        public int CheckAfterFrameIndex;
+        public double ExpiresAt;
+    }
+
     public class OutgoingWorldTransfer
     {
         public int TransferId;
@@ -457,6 +465,35 @@ namespace ScMultiplayer
         public int Tick;
         public long TerrainSequence;
         public Dictionary<string, long> RandomStates;
+    }
+
+    internal sealed class SkinSessionAsset
+    {
+        public string SkinName = string.Empty;
+        public PlayerClass PlayerClass;
+        public string Hash = string.Empty;
+        public byte[] Data = Array.Empty<byte>();
+    }
+
+    internal sealed class SkinAssetTransfer
+    {
+        public string SkinName = string.Empty;
+        public PlayerClass PlayerClass;
+        public string Hash = string.Empty;
+        public int TransferId;
+        public int TotalLength;
+        public byte[][] Chunks = Array.Empty<byte[]>();
+        public int ReceivedChunks;
+        public int ReceivedBytes;
+    }
+
+    internal sealed class NetworkWorldSessionAssets
+    {
+        public string BlocksTextureName = string.Empty;
+        public byte[] BlocksTextureData = Array.Empty<byte>();
+        public Texture2D BlocksTexture;
+        public bool BlocksTextureLoadFailed;
+        public Project AppliedProject;
     }
 
     public class AnimalSyncMetadata
@@ -566,6 +603,8 @@ namespace ScMultiplayer
     public class NetworkMessageSender
     {
         private const int MaximumSyncBatchBytes = 1100;
+        private const int SkinAssetChunkBytes = 640;
+        private static int s_nextSkinAssetTransferId;
 
         private sealed class PendingSyncBatch
         {
@@ -728,7 +767,8 @@ namespace ScMultiplayer
                 weather.IsFogStarted, weather.FogProgress, weather.FogIntensity, weather.FogSeed,
                 lightningPosition.HasValue, lightningPosition ?? Vector3.Zero)
             {
-                ServerTick = ScMultiplayer.client.Step
+                ServerTick = ScMultiplayer.client.Step,
+                TerrainSequence = ScMultiplayer.currentInstance?.CircuitTerrainSequence ?? 0L
             };
             SendScheduledMessage(-1, msg, latest: !reliable, batchable: !reliable);
         }
@@ -896,6 +936,51 @@ namespace ScMultiplayer
             var msg = new PlayerProfileMessage(clientId, record);
             // Source: ScMultiplayer.cs:HandlePlayerProfileMessage
             SendScheduledMessage(-1, msg);
+        }
+
+        // Source: Mod/ScMultiplayer/Plug/ScMultiplayer.cs:ScMultiplayer.HandlePlayerSkinAssetMessage
+        public static void SendPlayerSkinAssetMessage(int targetClientId,
+            PlayerSkinAssetMessage message)
+        {
+            if (message == null || ScMultiplayer.client == null) return;
+            if (message.Action != PlayerSkinAssetMessage.SkinAssetAction.Data ||
+                message.Data == null || message.Data.Length <= SkinAssetChunkBytes)
+            {
+                message.TransferId = message.TransferId != 0
+                    ? message.TransferId
+                    : Interlocked.Increment(ref s_nextSkinAssetTransferId);
+                message.ChunkIndex = 0;
+                message.ChunkCount = 1;
+                message.TotalLength = message.Data?.Length ?? 0;
+                ScMultiplayer.client.SendDirectInput(targetClientId,
+                    Message.WriteWithSender(message, ScMultiplayer.client.Address),
+                    sequenced: true);
+                return;
+            }
+
+            int transferId = Interlocked.Increment(ref s_nextSkinAssetTransferId);
+            int totalLength = message.Data.Length;
+            int chunkCount = (totalLength + SkinAssetChunkBytes - 1) / SkinAssetChunkBytes;
+            for (int chunkIndex = 0; chunkIndex < chunkCount; chunkIndex++)
+            {
+                int offset = chunkIndex * SkinAssetChunkBytes;
+                int count = Math.Min(SkinAssetChunkBytes, totalLength - offset);
+                byte[] chunk = new byte[count];
+                Buffer.BlockCopy(message.Data, offset, chunk, 0, count);
+                var part = new PlayerSkinAssetMessage(
+                    PlayerSkinAssetMessage.SkinAssetAction.Data,
+                    message.ClientId, message.SkinName, message.PlayerClass,
+                    message.Sha256, chunk)
+                {
+                    TransferId = transferId,
+                    ChunkIndex = chunkIndex,
+                    ChunkCount = chunkCount,
+                    TotalLength = totalLength
+                };
+                ScMultiplayer.client.SendDirectInput(targetClientId,
+                    Message.WriteWithSender(part, ScMultiplayer.client.Address),
+                    sequenced: true);
+            }
         }
 
         public static void SendPlayerEquipmentMessage(int targetClientId,
@@ -1111,7 +1196,6 @@ namespace ScMultiplayer
         private string m_playerRecordsWorldDirectory;
         private bool m_playerRecordsDirty;
         private float m_playerRecordSaveTime;
-        private float m_playerProfileSyncTime;
         private float m_inventoryKeyframeTime;
         private readonly Dictionary<int, int[]> m_lastSentInventoryValues =
             new Dictionary<int, int[]>();
@@ -1159,6 +1243,11 @@ namespace ScMultiplayer
         private double m_reconnectAttemptDeadline;
         private long m_reliableRetryLimitBaseline;
         private bool m_reliableStallReconnectIssued;
+        private readonly Dictionary<int, long> m_hostReliableRetryLimitBaselines =
+            new Dictionary<int, long>();
+        private readonly HashSet<int> m_hostReliableStallDisconnectIssued =
+            new HashSet<int>();
+        private double m_nextHostReliableHealthTime;
         private bool m_joinAwaitingWorldProgress;
         private double m_lastJoinWorldProgressTime;
         private NetworkPlayerRecord m_pendingLocalPlayerRecord;
@@ -1245,6 +1334,8 @@ namespace ScMultiplayer
             new Queue<TerrainJournalEntry>();
         private readonly Dictionary<int, long> m_hostTerrainRecoveryTargets =
             new Dictionary<int, long>();
+        private readonly Dictionary<Point2, long> m_hostTerrainChunkRevisions =
+            new Dictionary<Point2, long>();
         private long m_hostTerrainSequence;
         private long m_pendingTerrainSequenceBaseline;
         private volatile bool m_clientTerrainRecoveryActive;
@@ -1254,6 +1345,7 @@ namespace ScMultiplayer
         private long m_clientTerrainRecoveryTarget = -1;
         private long m_clientTerrainRecoveryAcknowledged = -1;
         private long m_clientTerrainRecoveryReady = -1;
+        private long m_remoteTerrainHeadSequence;
         private double m_clientTerrainGapDetectedTime;
         private bool m_clientGameplayScreenObserved;
         private bool m_wasClientGameScreenActive;
@@ -1261,10 +1353,24 @@ namespace ScMultiplayer
         private int m_lastProjectSimulationFrameIndex = -1;
         private readonly Dictionary<Point3, TerrainCellState> m_terrainCheckpoint =
             new Dictionary<Point3, TerrainCellState>();
+        private readonly Dictionary<Point2, Dictionary<Point3, TerrainCellState>>
+            m_terrainCheckpointByChunk =
+                new Dictionary<Point2, Dictionary<Point3, TerrainCellState>>();
         private readonly Dictionary<Point3, TerrainCellState> m_pendingTerrainChanges =
             new Dictionary<Point3, TerrainCellState>();
-        private readonly Dictionary<Point3, int> m_terrainRepairRepeats =
-            new Dictionary<Point3, int>();
+        private TerrainUpdater m_clientTerrainChunkSyncUpdater;
+        private readonly Queue<Point2> m_clientTerrainChunkSyncQueue =
+            new Queue<Point2>();
+        private readonly HashSet<Point2> m_clientTerrainChunkSyncQueued =
+            new HashSet<Point2>();
+        private readonly Dictionary<Point2, double> m_clientTerrainChunkSyncPending =
+            new Dictionary<Point2, double>();
+        private readonly Dictionary<Point2, long> m_clientTerrainChunkRevisions =
+            new Dictionary<Point2, long>();
+        private double m_nextTerrainChunkSyncRequestTime;
+        private readonly Dictionary<Point3, PendingHostTerrainPlaceFallback>
+            m_hostTerrainPlaceFallbacks =
+                new Dictionary<Point3, PendingHostTerrainPlaceFallback>();
         private readonly Dictionary<Point3, PendingFluidSettlement>
             m_pendingFluidSettlements =
                 new Dictionary<Point3, PendingFluidSettlement>();
@@ -1346,6 +1452,18 @@ namespace ScMultiplayer
         private bool m_remoteFogPresentationInitialized;
         private bool m_remoteLightningActive;
         private bool m_hostLightningActive;
+        private readonly Dictionary<string, SkinSessionAsset> m_sessionSkinAssets =
+            new Dictionary<string, SkinSessionAsset>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<int, string> m_playerSkinHashes =
+            new Dictionary<int, string>();
+        private readonly HashSet<string> m_requestedSkinAssetKeys =
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, SkinAssetTransfer> m_incomingSkinAssetTransfers =
+            new Dictionary<string, SkinAssetTransfer>(StringComparer.OrdinalIgnoreCase);
+        private readonly HashSet<string> m_sentLocalSkinAssetHashes =
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private NetworkWorldSessionAssets m_networkWorldSessionAssets;
+        private string m_lastLocalProfileSignature;
         private const double HostLightningStaleDuration = 1.0;
         private readonly Dictionary<int, PendingWorldControlRequest>
             m_pendingWorldControlRequests = new Dictionary<int, PendingWorldControlRequest>();
@@ -1427,15 +1545,20 @@ namespace ScMultiplayer
         private const int RemoteSpawnRecordsPerInterval = 2;
         private const int RemoteCreatureTargetCount = 26;
         private const float RemoteCreaturePopulationRadius = 68f;
-        private const float PlayerProfileSyncInterval = 5f;
         private const float WorldObjectFullSyncInterval = 5f;
         private const float PlayerRecordSaveInterval = 5f;
         private const float TerrainMergeInterval = 5f;
-        private const int TerrainRepairRepeatCount = 3;
         private const int TerrainCatchUpBatchSize = 128;
+        private const int TerrainChunkSyncBatchSize = 32;
+        private const int TerrainChunkSyncRequestsPerInterval = 4;
+        private const double TerrainChunkSyncRequestInterval = 0.1;
+        private const double TerrainChunkSyncRetryInterval = 2.0;
+        private const double HostTerrainPlaceFallbackLifetime = 0.5;
         private const double WaterSettlementDelay = 0.35;
         private const double SlowFluidSettlementDelay = 2.1;
         private const int AnimalSyncBatchSize = 12;
+        private const int MaximumSkinAssetBytes = 512 * 1024;
+        private const int MaximumBlocksTextureAssetBytes = 4 * 1024 * 1024;
         private const int MaximumRecentChatMessages = 50;
         private const string DownloadedWorldsRegistryPath = "data:/ScMultiplayerDownloadedWorlds.txt";
         private const string PlayerRecordsFileName = "ScMultiplayerPlayers.xml";
@@ -1797,7 +1920,12 @@ namespace ScMultiplayer
         // outstanding, rebuild the transport through the existing authoritative rejoin flow.
         private void UpdateReliableTransportHealth()
         {
-            if (IsHost || m_localLeaveInProgress || m_hostDisconnectHandled ||
+            if (IsHost)
+            {
+                UpdateHostReliableTransportHealth();
+                return;
+            }
+            if (m_localLeaveInProgress || m_hostDisconnectHandled ||
                 m_reconnectRequested || m_reconnectPending || client?.IsConnected != true ||
                 m_activeJoinRequest?.WorldInfo == null || GameManager.Project == null ||
                 m_isLoadingDownloadedWorld || m_pendingWorldReadyTransferId > 0 ||
@@ -1834,6 +1962,55 @@ namespace ScMultiplayer
             }
             catch (ObjectDisposedException)
             {
+            }
+        }
+
+        // Source: Mod/Comms/Comms/Comm.cs:Comm.ProcessConnections
+        // The host owns one reliable connection per remote client. A dead peer can otherwise
+        // retain every unacknowledged fragment forever and create a continuous resend storm.
+        private void UpdateHostReliableTransportHealth()
+        {
+            if (m_localLeaveInProgress || server?.Peer == null ||
+                client?.IsConnected != true || Time.RealTime < m_nextHostReliableHealthTime)
+                return;
+            m_nextHostReliableHealthTime = Time.RealTime + 0.5;
+
+            HashSet<int> connectedIds = new HashSet<int>();
+            foreach (ServerClient remote in GetConnectedRemoteClients())
+            {
+                connectedIds.Add(remote.ClientID);
+                PeerData peer = server.Peer.FindPeer(remote.Address);
+                if (peer == null) continue;
+
+                int reliableQueue = server.Peer.Comm.GetUnackedPacketsCount(peer.Address);
+                long retryLimit = server.Peer.Comm.GetReliableRetryLimitCount(peer.Address);
+                if (reliableQueue <= 0)
+                {
+                    m_hostReliableRetryLimitBaselines[remote.ClientID] = retryLimit;
+                    m_hostReliableStallDisconnectIssued.Remove(remote.ClientID);
+                    continue;
+                }
+
+                if (!m_hostReliableRetryLimitBaselines.TryGetValue(
+                    remote.ClientID, out long baseline))
+                {
+                    m_hostReliableRetryLimitBaselines[remote.ClientID] = retryLimit;
+                    continue;
+                }
+                if (retryLimit <= baseline ||
+                    !m_hostReliableStallDisconnectIssued.Add(remote.ClientID))
+                    continue;
+
+                Log.Warning($"[ScMP] Host reliable transport stalled: ClientID={remote.ClientID}, " +
+                    $"Rel={reliableQueue}, Limit={retryLimit}; disconnecting stale peer");
+                DisconnectNetworkClient(remote);
+            }
+
+            foreach (int clientId in m_hostReliableRetryLimitBaselines.Keys
+                .Where(id => !connectedIds.Contains(id)).ToArray())
+            {
+                m_hostReliableRetryLimitBaselines.Remove(clientId);
+                m_hostReliableStallDisconnectIssued.Remove(clientId);
             }
         }
 
@@ -2222,7 +2399,10 @@ namespace ScMultiplayer
                 !m_clientTerrainRecoveryPending && m_clientTerrainRecoveryTarget < 0 &&
                 m_clientTerrainRecoveryReady < 0 && !m_clientTerrainRecoveryRequestInFlight)
                 m_clientTerrainRecoveryPending = true;
-            if (!m_clientTerrainRecoveryActive && SuSubsystemTerrain.HasBufferedSequenceGap())
+            bool sequenceGap = SuSubsystemTerrain.HasBufferedSequenceGap() ||
+                (m_remoteTerrainHeadSequence > SuSubsystemTerrain.LastAppliedTerrainSequence &&
+                !SuSubsystemTerrain.HasPendingSequenceWork());
+            if (!m_clientTerrainRecoveryActive && sequenceGap)
             {
                 if (m_clientTerrainGapDetectedTime <= 0.0)
                     m_clientTerrainGapDetectedTime = Time.RealTime;
@@ -2233,7 +2413,7 @@ namespace ScMultiplayer
                     m_clientTerrainRecoveryPending = true;
                 }
             }
-            else if (!SuSubsystemTerrain.HasBufferedSequenceGap())
+            else if (!sequenceGap)
             {
                 m_clientTerrainGapDetectedTime = 0.0;
             }
@@ -2330,8 +2510,8 @@ namespace ScMultiplayer
             string fenceText = fenceAge < 0f ? "--" :
                 string.Format(CultureInfo.InvariantCulture, "{0:0}ms", fenceAge);
             m_networkStatsLabel.Text = string.Format(CultureInfo.InvariantCulture,
-                "NET {0}, Ping {1:0}ms, Ack {2:0}ms, ReTx {7:0.0}%\n" +
-                "Q Sync {3}, Apply {4} ({5:0}ms), Rel {6}\n" +
+                "NET {0}, Ping {1:0}ms, Ack {2:0}ms, ReTx {7:0.0}%\r\n" +
+                "Q Sync {3}, Apply {4} ({5:0}ms), Rel {6}\r\n" +
                 "Ckt {8}, Fence {9}, Limit {10}",
                 FormatNetworkThroughput(throughputBytesPerSecond), latencyMs, ackLatencyMs,
                 syncQueue, applyQueue, applyOldestMs, reliableQueue,
@@ -2501,8 +2681,8 @@ namespace ScMultiplayer
             if (m_lastWorldUpdateFrameIndex == Time.FrameIndex) return;
             m_lastWorldUpdateFrameIndex = Time.FrameIndex;
             MaintainMultiplayerTimeFlow(project);
-            MaintainRemoteTerrainLocations(project);
             ObserveLocalPlayerRespawn(project);
+            SynchronizeLocalProfileIfChanged(project);
             if (!ReferenceEquals(m_frameProject, project))
             {
                 DetachHostPickableEvents();
@@ -2525,6 +2705,7 @@ namespace ScMultiplayer
                 m_pendingTerrainPlacePredictions.Clear();
                 m_pendingTerrainPlacePredictionCells.Clear();
                 m_hostTerrainPlaceExecutions.Clear();
+                m_hostTerrainPlaceFallbacks.Clear();
                 m_processedTerrainPlaceRequests.Clear();
                 m_hostPlayerPokingPhases.Clear();
                 m_hostPlayerPokeSequences.Clear();
@@ -2541,6 +2722,7 @@ namespace ScMultiplayer
                     SuSubsystemTerrain.ConfigureTerrainSequence(
                         m_pendingTerrainSequenceBaseline);
                 ApplyHostRandomStates(project);
+                ApplyNetworkWorldTexture(project);
                 foreach (var pending in m_pendingNetworkPlayers.ToArray())
                 {
                     m_pendingNetworkPlayerIdentities.TryGetValue(pending.Key, out string identity);
@@ -2562,17 +2744,19 @@ namespace ScMultiplayer
                     Log.Information($"[ScMP] Client project ready: Transfer={m_pendingWorldReadyTransferId}");
                     if (m_joinRoomBusyDialog != null)
                         m_joinRoomBusyDialog.SmallMessage =
-                            "Connected.\rWorld loaded.\rApplying host changes...";
+                            "Connected.\r\nWorld loaded.\r\nApplying host changes...";
                 }
                 AttachHostPickableEvents(project);
                 QueueRunawayCreatureCleanup(project);
                 m_nextRunawayCreatureCheckTime = Time.RealTime + 2.0;
                 Log.Information("[ScMP] Multiplayer project runtime initialized");
             }
+            ApplyNetworkWorldTexture(project);
             SanitizeRunawayCreatureState(project);
             ProcessRunawayCreatureCleanup(project);
             if (IsHost)
             {
+                UpdateHostTerrainPlaceFallbacks(project);
                 CompleteHostTerrainPlaceExecutions();
                 BroadcastHostPlayerPokes();
                 CaptureHostRemoteKnockbacks();
@@ -2587,6 +2771,8 @@ namespace ScMultiplayer
                 UpdateRemotePlayerPresentations(dt);
                 UpdatePendingTerrainPredictions();
             }
+            MaintainRemoteTerrainLocations(project);
+            UpdateClientTerrainChunkSync(project);
 
             // Source: Engine/Time.cs:Time.RealTime
             // Real time avoids duplicate network time when SubsystemUpdate runs multiple game
@@ -2886,10 +3072,10 @@ namespace ScMultiplayer
             string status;
             if (IsHost && client?.IsConnected == true)
             {
-                status = $"Room ID: {client.GameID}\r" +
-                    $"World: {SuPlayScreen.WorldDataName}\r" +
-                    $"Connected players: {GetConnectedRemoteClients().Count}\r" +
-                    $"Pending requests: {m_hostJoinRequests.Count}\r" +
+                status = $"Room ID: {client.GameID}\r\n" +
+                    $"World: {SuPlayScreen.WorldDataName}\r\n" +
+                    $"Connected players: {GetConnectedRemoteClients().Count}\r\n" +
+                    $"Pending requests: {m_hostJoinRequests.Count}\r\n" +
                     "Auto approve: " +
                     (ScMultiplayerSettings.AutoApproveJoinRequests ? "On" : "Off");
             }
@@ -2943,6 +3129,7 @@ namespace ScMultiplayer
 
         private void ShowPendingJoinRequestsDialog()
         {
+            DeferDismissedHostJoinDecision();
             HostJoinRequest[] requests = m_hostJoinRequests.Values
                 .OrderBy(item => item.ReceivedTime)
                 .ToArray();
@@ -2966,6 +3153,7 @@ namespace ScMultiplayer
                 },
                 item =>
                 {
+                    DeferDismissedHostJoinDecision();
                     var request = (HostJoinRequest)item;
                     request.Deferred = false;
                     ShowHostJoinDecision(request);
@@ -3304,8 +3492,8 @@ namespace ScMultiplayer
                     $"host={hostProtocol}, local={localProtocol}");
                 DialogsManager.ShowDialog(null, new MessageDialog(
                     "Join Room",
-                    $"Multiplayer Mod protocol mismatch.\r" +
-                    $"Host: {hostProtocol}\rLocal: {localProtocol}\r" +
+                    $"Multiplayer Mod protocol mismatch.\r\n" +
+                    $"Host: {hostProtocol}\r\nLocal: {localProtocol}\r\n" +
                     "Install the same ScMultiplayer package on all devices.",
                     "OK", null, null));
                 return;
@@ -3428,7 +3616,7 @@ namespace ScMultiplayer
             // Source: Survivalcraft/Game/LabelWidget.cs:LabelWidget.UpdateLines
             // LabelWidget splits explicit lines only on LF. CR remains ordinary text and makes
             // the entire status appear on one line when word wrapping is disabled.
-            m_joinRoomBusyDialog.SmallMessage = string.Join("\n",
+            m_joinRoomBusyDialog.SmallMessage = string.Join("\r\n",
                 (lines ?? Array.Empty<string>()).Where(line =>
                     !string.IsNullOrWhiteSpace(line)));
         }
@@ -3557,11 +3745,15 @@ namespace ScMultiplayer
             IsHost = false;
             if (client.IsConnected) client.LeaveGame();
             GameWorldInfoMessage info = pending.WorldInfo;
+            byte[] skinSha256 = hasPlayerProfile
+                ? GetLocalCharacterSkinSha256(skinName)
+                : Array.Empty<byte>();
             var joinInfo = new GameWorldInfoMessage(
                 info.Name, info.Size, info.LastSaveTime, info.GameMode,
                 info.EnvironmentBehaviorMode, info.SerializationVersion, client.Address,
                 hasPlayerProfile ? playerName : GetLocalPlayerName(), GetLocalPlayerIdentity(),
                 hasPlayerProfile, playerClass, skinName);
+            joinInfo.CharacterSkinSha256 = skinSha256;
             client.JoinGame(pending.ServerAddress, pending.GameId,
                 Message.WriteWithSender(joinInfo, client.Address), client.Address.Port.ToString());
         }
@@ -3668,13 +3860,6 @@ namespace ScMultiplayer
             if (pulse2Hz)
                 SendGameWorldInfoMessage();
 
-            m_playerProfileSyncTime += tickDuration;
-            if (m_playerProfileSyncTime >= PlayerProfileSyncInterval)
-            {
-                m_playerProfileSyncTime -= PlayerProfileSyncInterval;
-                SynchronizePlayerProfiles();
-            }
-
             if (pulse1Hz)
                 SynchronizeEditableData();
             if (pulse1Hz)
@@ -3694,8 +3879,6 @@ namespace ScMultiplayer
                     m_terrainMergeTime -= TerrainMergeInterval;
                     MergePendingTerrainChanges();
                 }
-                if (pulse1Hz)
-                    BroadcastTerrainRepairs();
             }
             m_fullWorldObjectsSyncTime += tickDuration;
             if (pulse8Hz)
@@ -4193,6 +4376,12 @@ namespace ScMultiplayer
 
                 m_lastClientEquipmentRevisions[sourceClientId] = message.Revision;
                 ApplyEquipmentSnapshot(playerData.ComponentPlayer, message);
+                // Source: Survivalcraft/Game/ComponentInventoryBase.cs:
+                // ComponentInventoryBase.AddSlotItems
+                // Loading a musket consumes the powder/wad/bullet locally and changes the
+                // complete equipment snapshot. Mark that snapshot authoritative before older
+                // input snapshots can restore the pre-load inventory.
+                MarkHostInventoryAuthoritative(sourceClientId);
                 EquipmentSnapshot snapshot = CaptureEquipmentSnapshot(playerData.ComponentPlayer);
                 m_lastEquipmentSnapshots[sourceClientId] = snapshot;
                 int currentAuthority = m_equipmentAuthorityRevisions.TryGetValue(sourceClientId,
@@ -4207,6 +4396,11 @@ namespace ScMultiplayer
                     m_playerRecords[recordKey] = CapturePlayerRecord(playerData);
                     m_playerRecordsDirty = true;
                 }
+                // Source: ScMultiplayer.cs:SynchronizeLocalProfileIfChanged
+                // A profile change is a single authoritative event. Broadcast it once so runtime
+                // skin changes remain supported without a periodic profile stream.
+                NetworkMessageSender.SendPlayerProfileMessage(sourceClientId,
+                    CapturePlayerRecord(playerData));
                 return;
             }
 
@@ -5237,6 +5431,10 @@ namespace ScMultiplayer
                         QueueEndOfFrameAction(() =>
                             HandleTerrainRecoveryMessage(terrainRecovery, item.ClientID));
                         break;
+                    case TerrainChunkSyncMessage terrainChunkSync:
+                        QueueEndOfFrameAction(() =>
+                            HandleTerrainChunkSyncMessage(terrainChunkSync, item.ClientID));
+                        break;
                     case GameWorldInfoMessage1 worldInfo:
                         if (item.ClientID == 0)
                             Dispatcher.Dispatch(() =>
@@ -5251,6 +5449,10 @@ namespace ScMultiplayer
                         break;
                     case PlayerProfileMessage playerProfile:
                         QueueEndOfFrameAction(() => HandlePlayerProfileMessage(playerProfile, item.ClientID));
+                        break;
+                    case PlayerSkinAssetMessage playerSkinAsset:
+                        QueueEndOfFrameAction(() => HandlePlayerSkinAssetMessage(
+                            playerSkinAsset, item.ClientID));
                         break;
                     case PlayerEquipmentMessage playerEquipment:
                         QueueEndOfFrameAction(() => HandlePlayerEquipmentMessage(
@@ -5519,18 +5721,7 @@ namespace ScMultiplayer
         // Source: Survivalcraft/Game/DialogsManager.cs:DialogsManager.Dialogs
         private void UpdateHostJoinRequests()
         {
-            if (m_activeJoinDecisionDialog != null &&
-                !DialogsManager.Dialogs.Contains(m_activeJoinDecisionDialog))
-            {
-                if (m_hostJoinRequests.TryGetValue(
-                    m_activeJoinDecisionClientId,
-                    out HostJoinRequest dismissed))
-                {
-                    dismissed.Deferred = true;
-                }
-                m_activeJoinDecisionDialog = null;
-                m_activeJoinDecisionClientId = -1;
-            }
+            DeferDismissedHostJoinDecision();
 
             if (!IsHost || m_hostJoinRequests.Count == 0)
                 return;
@@ -5554,6 +5745,7 @@ namespace ScMultiplayer
 
         private void TryShowNextHostJoinRequest()
         {
+            DeferDismissedHostJoinDecision();
             if (!IsHost || ScMultiplayerSettings.AutoApproveJoinRequests ||
                 m_activeJoinDecisionDialog != null)
             {
@@ -5565,6 +5757,25 @@ namespace ScMultiplayer
                 .FirstOrDefault();
             if (request != null)
                 ShowHostJoinDecision(request);
+        }
+
+        // Source: Survivalcraft/Game/ListSelectionDialog.cs:ListSelectionDialog.Update
+        // Source: Survivalcraft/Game/DialogsManager.cs:DialogsManager.HideDialog
+        // An outside click dismisses ListSelectionDialog without invoking its selection callback.
+        // Finalize that path before reopening MP request UI so the same transport request remains
+        // pending and can be approved later instead of retaining a stale active-dialog marker.
+        private void DeferDismissedHostJoinDecision()
+        {
+            if (m_activeJoinDecisionDialog == null ||
+                DialogsManager.Dialogs.Contains(m_activeJoinDecisionDialog))
+                return;
+            if (m_hostJoinRequests.TryGetValue(
+                m_activeJoinDecisionClientId, out HostJoinRequest dismissed))
+            {
+                dismissed.Deferred = true;
+            }
+            m_activeJoinDecisionDialog = null;
+            m_activeJoinDecisionClientId = -1;
         }
 
         // Source: Survivalcraft/Game/ListSelectionDialog.cs:ListSelectionDialog
@@ -5596,7 +5807,14 @@ namespace ScMultiplayer
                 });
             m_activeJoinDecisionDialog = dialog;
             m_activeJoinDecisionClientId = request.ClientId;
-            DialogsManager.ShowDialog(null, dialog);
+            // Source: Survivalcraft/Game/DialogsManager.cs:DialogsManager.HasDialogs
+            // Source: Survivalcraft/Game/ComponentInput.cs:ComponentInput.UpdateInputFromMouseAndKeyboard
+            // Attach to the local host player's GUI so the stock input guard treats the join
+            // approval list as a gameplay modal and prevents mouse/keyboard passthrough.
+            SubsystemPlayers players = GameManager.Project?.FindSubsystem<SubsystemPlayers>(false);
+            ComponentPlayer localPlayer = players?.ComponentPlayers.FirstOrDefault(player =>
+                player?.PlayerData != null && !m_networkPlayerData.Values.Contains(player.PlayerData));
+            DialogsManager.ShowDialog(localPlayer?.GuiWidget ?? ScreensManager.RootWidget, dialog);
         }
 
         private void ApproveHostJoinRequest(HostJoinRequest request)
@@ -5660,6 +5878,10 @@ namespace ScMultiplayer
                 m_lastSentInventoryValues.Remove(joiningClientId);
                 m_lastSentInventoryCounts.Remove(joiningClientId);
                 m_playerRecords[recordKey] = joiningRecord;
+                RegisterPlayerSkinHash(joiningClientId, joiningRecord);
+                RequestSkinAssetIfMissing(joiningClientId, joiningRecord?.SkinName,
+                    joiningRecord?.PlayerClass ?? PlayerClass.Male,
+                    joiningRecord?.SkinSha256);
                 m_pendingAcceptedJoinKeys[joiningClientId] = recordKey;
                 m_containerStates.Clear();
                 m_playerRecordsDirty = true;
@@ -7487,6 +7709,7 @@ namespace ScMultiplayer
                         projectileTimelineStep, projectile.IsIncendiary);
                     // Source: ScMultiplayer.cs:HandleProjectileSyncMessage
                     NetworkMessageSender.SendScheduledMessage(-1, message,
+                        sequenced: message.Action != ProjectileSyncMessage.ProjectileType.Update,
                         latest: message.Action == ProjectileSyncMessage.ProjectileType.Update);
                 }
                 foreach (KeyValuePair<Projectile, ushort> item in m_hostProjectileIds.ToArray())
@@ -7495,7 +7718,7 @@ namespace ScMultiplayer
                     NetworkMessageSender.SendScheduledMessage(-1, new ProjectileSyncMessage(
                         item.Value, ProjectileSyncMessage.ProjectileType.Remove, 0,
                         Vector3.Zero, Vector3.Zero, Vector3.Zero, Vector3.Zero, 0,
-                        client.Step, false));
+                        client.Step, false), sequenced: true);
                     m_hostProjectileIds.Remove(item.Key);
                     m_hostProjectileReleaseCompensationSteps.Remove(item.Key);
                 }
@@ -7550,6 +7773,31 @@ namespace ScMultiplayer
             while (id == 0 || m_hostProjectileIds.ContainsValue(id));
             m_hostProjectileIds[projectile] = id;
             return id;
+        }
+
+        // Source: Survivalcraft/Game/SubsystemProjectiles.cs:SubsystemProjectiles.FireProjectile
+        // A fast projectile can hit and be removed before the next 32Hz snapshot. Publish its
+        // creation immediately and reliably so clients can still render the shot.
+        private void BroadcastNewHostProjectile(Projectile projectile)
+        {
+            if (!IsHost || client?.IsConnected != true || projectile == null ||
+                projectile.ToRemove)
+                return;
+            ushort id = GetOrCreateHostProjectileId(projectile);
+            if (id == 0) return;
+            int projectileTimelineStep = client.Step;
+            if (m_hostProjectileReleaseCompensationSteps.TryGetValue(projectile,
+                out int releaseCompensationSteps))
+            {
+                projectileTimelineStep = unchecked(projectileTimelineStep -
+                    releaseCompensationSteps);
+            }
+            NetworkMessageSender.SendScheduledMessage(-1, new ProjectileSyncMessage(
+                id, ProjectileSyncMessage.ProjectileType.Add, projectile.Value,
+                projectile.Position, projectile.Velocity, projectile.AngularVelocity,
+                projectile.TrailOffset, GetProjectileOwnerClientId(projectile),
+                projectileTimelineStep, projectile.IsIncendiary),
+                sequenced: true, batchable: false);
         }
 
         internal int GetProjectileOwnerClientIdForHit(Projectile projectile)
@@ -8361,6 +8609,8 @@ namespace ScMultiplayer
                 if (playerName.Length > 14) playerName = playerName.Substring(0, 14);
                 string recordKey = string.IsNullOrWhiteSpace(playerIdentity) ? playerName : playerIdentity;
                 m_playerRecords.TryGetValue(recordKey, out NetworkPlayerRecord record);
+                if (record != null)
+                    RegisterPlayerSkinHash(clientId, record);
                 playerData = new PlayerData(project)
                 {
                     Name = record?.Name ?? playerName,
@@ -8505,6 +8755,7 @@ namespace ScMultiplayer
                 {
                     TryApplyPendingPlayerEquipment(clientId);
                 }
+                ApplySessionSkinToPlayer(playerData.ComponentPlayer, clientId, record);
                 Log.Information($"[ScMP] Created transient network player for ClientID {clientId}, PlayerIndex={playerData.PlayerIndex}");
             }
             catch (Exception ex)
@@ -8605,16 +8856,32 @@ namespace ScMultiplayer
         }
 
         // Source: Survivalcraft/Game/TerrainUpdater.cs:TerrainUpdater.SetUpdateLocation
+        // Source: Survivalcraft/Game/TerrainUpdater.cs:TerrainUpdater.PrepareForDrawing
         // Source: Survivalcraft/Game/PlayerData.cs:PlayerData.PlayerIndex
         // Split-screen registers one terrain/content center per player. Network avatars do not
-        // own a visible GameWidget, so register the same center explicitly from their authority
-        // position while retaining the remote presentation-only entity.
+        // own a visible GameWidget, so register the same center explicitly. The client must keep
+        // the host avatar's chunks loaded at its own visibility radius before terrain changes
+        // arrive, otherwise Terrain.SetCellValueFast defers them against an empty chunk.
         private void MaintainRemoteTerrainLocations(Project project)
         {
-            if (!IsHost || project == null) return;
+            if (project == null) return;
             SubsystemTerrain terrain = project.FindSubsystem<SubsystemTerrain>(false);
             if (terrain?.TerrainUpdater == null) return;
-            float visibility = MathUtils.Min(
+            if (!IsHost)
+            {
+                if (!m_networkPlayerData.TryGetValue(0, out PlayerData hostPlayer) ||
+                    hostPlayer?.ComponentPlayer?.ComponentBody == null ||
+                    hostPlayer.PlayerIndex < 0)
+                    return;
+                float clientVisibility = project.FindSubsystem<SubsystemSky>(false)?
+                    .VisibilityRange ?? 64f;
+                terrain.TerrainUpdater.SetUpdateLocation(hostPlayer.PlayerIndex,
+                    hostPlayer.ComponentPlayer.ComponentBody.Position.XZ,
+                    clientVisibility, clientVisibility);
+                return;
+            }
+
+            float hostVisibility = MathUtils.Min(
                 project.FindSubsystem<SubsystemSky>(false)?.VisibilityRange ?? 64f, 64f);
             foreach (PlayerData playerData in m_networkPlayerData.Values.ToArray())
             {
@@ -8622,8 +8889,112 @@ namespace ScMultiplayer
                     continue;
                 Vector3 position = playerData.ComponentPlayer.ComponentBody.Position;
                 terrain.TerrainUpdater.SetUpdateLocation(playerData.PlayerIndex,
-                    position.XZ, visibility, 64f);
+                    position.XZ, hostVisibility, 64f);
             }
+        }
+
+        // Source: Survivalcraft/Game/TerrainUpdater.cs:TerrainUpdater.ChunkInitialized
+        // Source: Survivalcraft/Game/TerrainUpdater.cs:TerrainUpdater.SetUpdateLocation
+        // A joined world already contains the base terrain snapshot. Request a compact
+        // authoritative checkpoint only when a newly allocated client chunk becomes usable.
+        private void UpdateClientTerrainChunkSync(Project project)
+        {
+            if (IsHost || project == null)
+            {
+                if (m_clientTerrainChunkSyncUpdater != null)
+                    DetachClientTerrainChunkSyncUpdater();
+                if (m_clientTerrainChunkSyncQueue.Count > 0 ||
+                    m_clientTerrainChunkSyncQueued.Count > 0 ||
+                    m_clientTerrainChunkSyncPending.Count > 0 ||
+                    m_clientTerrainChunkRevisions.Count > 0)
+                    ResetClientTerrainChunkSyncState();
+                return;
+            }
+
+            SubsystemTerrain terrain = project.FindSubsystem<SubsystemTerrain>(false);
+            TerrainUpdater updater = terrain?.TerrainUpdater;
+            if (!ReferenceEquals(m_clientTerrainChunkSyncUpdater, updater))
+            {
+                DetachClientTerrainChunkSyncUpdater();
+                ResetClientTerrainChunkSyncState();
+                if (updater != null)
+                {
+                    m_clientTerrainChunkSyncUpdater = updater;
+                    updater.ChunkInitialized += OnClientTerrainChunkInitialized;
+                }
+            }
+            if (updater == null || client?.IsConnected != true ||
+                m_isLoadingDownloadedWorld || m_pendingWorldReadyTransferId > 0)
+                return;
+
+            double now = Time.RealTime;
+            foreach (Point2 coordinates in m_clientTerrainChunkSyncPending
+                .Where(item => now - item.Value >= TerrainChunkSyncRetryInterval)
+                .Select(item => item.Key).ToArray())
+            {
+                m_clientTerrainChunkSyncPending.Remove(coordinates);
+                QueueClientTerrainChunkSync(coordinates);
+            }
+            if (now < m_nextTerrainChunkSyncRequestTime) return;
+
+            int sent = 0;
+            while (sent < TerrainChunkSyncRequestsPerInterval &&
+                m_clientTerrainChunkSyncQueue.Count > 0)
+            {
+                Point2 coordinates = m_clientTerrainChunkSyncQueue.Dequeue();
+                m_clientTerrainChunkSyncQueued.Remove(coordinates);
+                TerrainChunk chunk = terrain.Terrain.GetChunkAtCoords(
+                    coordinates.X, coordinates.Y);
+                if (chunk == null || chunk.State < TerrainChunkState.Valid ||
+                    m_clientTerrainChunkSyncPending.ContainsKey(coordinates))
+                    continue;
+                m_clientTerrainChunkRevisions.TryGetValue(coordinates,
+                    out long knownRevision);
+                client.SendDirectInput(0, Message.WriteWithSender(
+                    new TerrainChunkSyncMessage
+                    {
+                        Stage = TerrainChunkSyncStage.Request,
+                        ChunkX = coordinates.X,
+                        ChunkZ = coordinates.Y,
+                        KnownRevision = knownRevision
+                    }, client.Address), sequenced: true);
+                m_clientTerrainChunkSyncPending[coordinates] = now;
+                sent++;
+            }
+            if (sent > 0)
+                m_nextTerrainChunkSyncRequestTime =
+                    now + TerrainChunkSyncRequestInterval;
+        }
+
+        private void OnClientTerrainChunkInitialized(TerrainChunk chunk)
+        {
+            if (IsHost || chunk == null) return;
+            QueueClientTerrainChunkSync(chunk.Coords);
+        }
+
+        private void QueueClientTerrainChunkSync(Point2 coordinates)
+        {
+            if (m_clientTerrainChunkSyncPending.ContainsKey(coordinates) ||
+                !m_clientTerrainChunkSyncQueued.Add(coordinates))
+                return;
+            m_clientTerrainChunkSyncQueue.Enqueue(coordinates);
+        }
+
+        private void DetachClientTerrainChunkSyncUpdater()
+        {
+            if (m_clientTerrainChunkSyncUpdater != null)
+                m_clientTerrainChunkSyncUpdater.ChunkInitialized -=
+                    OnClientTerrainChunkInitialized;
+            m_clientTerrainChunkSyncUpdater = null;
+        }
+
+        private void ResetClientTerrainChunkSyncState()
+        {
+            m_clientTerrainChunkSyncQueue.Clear();
+            m_clientTerrainChunkSyncQueued.Clear();
+            m_clientTerrainChunkSyncPending.Clear();
+            m_clientTerrainChunkRevisions.Clear();
+            m_nextTerrainChunkSyncRequestTime = 0.0;
         }
 
         // Source: Survivalcraft/Game/SubsystemGameWidgets.cs:SubsystemGameWidgets.m_gameWidgets
@@ -9107,6 +9478,9 @@ namespace ScMultiplayer
                 string.IsNullOrWhiteSpace(message.PlayerIdentity) ||
                 string.IsNullOrWhiteSpace(message.CharacterSkinName))
                 return false;
+            if (IsCustomSkinName(message.CharacterSkinName))
+                return IsValidSkinHash(message.CharacterSkinSha256) &&
+                    IsSkinClassCompatible(message.CharacterSkinName, message.PlayerClass);
             CharacterSkinsManager.UpdateCharacterSkinsList();
             if (!CharacterSkinsManager.CharacterSkinsNames.Contains(message.CharacterSkinName)) return false;
             PlayerClass? skinClass = CharacterSkinsManager.GetPlayerClass(message.CharacterSkinName);
@@ -9123,6 +9497,7 @@ namespace ScMultiplayer
                 Name = message.PlayerName.Trim(),
                 PlayerClass = message.PlayerClass,
                 SkinName = message.CharacterSkinName,
+                SkinSha256 = CloneBytes(message.CharacterSkinSha256),
                 Position = position,
                 Level = 1f,
                 Health = 1f,
@@ -9199,6 +9574,7 @@ namespace ScMultiplayer
                         Name = (string)element.Attribute("Name") ?? "Player",
                         PlayerClass = ParsePlayerClass((string)element.Attribute("Class")),
                         SkinName = (string)element.Attribute("Skin") ?? string.Empty,
+                        SkinSha256 = ParseHashBytes((string)element.Attribute("SkinSha256")),
                         Position = new Vector3(
                             ParseFloat((string)element.Attribute("X")),
                             ParseFloat((string)element.Attribute("Y")),
@@ -9289,6 +9665,7 @@ namespace ScMultiplayer
                         new XAttribute("Name", record.Name ?? "Player"),
                         new XAttribute("Class", record.PlayerClass),
                         new XAttribute("Skin", record.SkinName ?? string.Empty),
+                        new XAttribute("SkinSha256", FormatHash(record.SkinSha256)),
                         new XAttribute("X", FormatFloat(record.Position.X)),
                         new XAttribute("Y", FormatFloat(record.Position.Y)),
                         new XAttribute("Z", FormatFloat(record.Position.Z)),
@@ -9350,6 +9727,7 @@ namespace ScMultiplayer
                 Name = playerData?.Name ?? "Player",
                 PlayerClass = playerData?.PlayerClass ?? PlayerClass.Male,
                 SkinName = playerData?.CharacterSkinName ?? string.Empty,
+                SkinSha256 = GetLocalCharacterSkinSha256(playerData?.CharacterSkinName),
                 Position = player?.ComponentBody.Position ?? playerData?.SpawnPosition ?? Vector3.Zero,
                 Level = playerData?.Level ?? 1f,
                 Health = player?.ComponentHealth?.Health ?? 1f,
@@ -9558,7 +9936,9 @@ namespace ScMultiplayer
             {
                 if (!m_clientRecordKeys.TryGetValue(item.Key, out string recordKey) ||
                     item.Value?.ComponentPlayer == null) continue;
-                m_playerRecords[recordKey] = CapturePlayerRecord(item.Value);
+                NetworkPlayerRecord record = CapturePlayerRecord(item.Value);
+                ApplySessionSkinHash(item.Key, record);
+                m_playerRecords[recordKey] = record;
                 m_playerRecordsDirty = true;
             }
         }
@@ -9581,8 +9961,12 @@ namespace ScMultiplayer
                 foreach (KeyValuePair<int, PlayerData> item in m_networkPlayerData.ToArray())
                 {
                     if (item.Value?.ComponentPlayer != null)
+                    {
+                        NetworkPlayerRecord record = CapturePlayerRecord(item.Value);
+                        ApplySessionSkinHash(item.Key, record);
                         NetworkMessageSender.SendPlayerProfileMessage(
-                            item.Key, CapturePlayerRecord(item.Value));
+                            item.Key, record);
+                    }
                 }
             }
             else
@@ -9606,8 +9990,15 @@ namespace ScMultiplayer
                     return;
                 if (PlayerData.VerifyName((message.Name ?? string.Empty).Trim()))
                     playerData.Name = message.Name.Trim();
-                if (IsSkinValidForClass(message.SkinName, playerData.PlayerClass))
+                if (IsProfileSkinAccepted(message.SkinName, message.SkinSha256,
+                    playerData.PlayerClass))
+                {
                     playerData.CharacterSkinName = message.SkinName;
+                    RegisterPlayerSkinHash(sourceClientId, message.SkinName,
+                        message.SkinSha256);
+                    RequestSkinAssetIfMissing(sourceClientId, message.SkinName,
+                        playerData.PlayerClass, message.SkinSha256);
+                }
                 if (!m_equipmentSynchronizedClients.Contains(sourceClientId))
                     ApplyClothes(playerData.ComponentPlayer, message.Clothes);
                 if (m_clientRecordKeys.TryGetValue(sourceClientId, out string recordKey))
@@ -9633,7 +10024,11 @@ namespace ScMultiplayer
             record.Name = message.Name;
             record.PlayerClass = message.PlayerClass;
             record.SkinName = message.SkinName;
+            record.SkinSha256 = CloneBytes(message.SkinSha256);
             record.Clothes = message.Clothes;
+            RegisterPlayerSkinHash(message.ClientId, record);
+            RequestSkinAssetIfMissing(message.ClientId, record.SkinName,
+                record.PlayerClass, record.SkinSha256);
 
             if (m_networkPlayerData.TryGetValue(message.ClientId, out PlayerData remotePlayer) &&
                 remotePlayer.PlayerClass != record.PlayerClass)
@@ -9651,6 +10046,8 @@ namespace ScMultiplayer
                 remotePlayer.CharacterSkinName = record.SkinName;
                 if (!m_equipmentSynchronizedClients.Contains(message.ClientId))
                     ApplyClothes(remotePlayer.ComponentPlayer, record.Clothes);
+                ApplySessionSkinToPlayer(remotePlayer.ComponentPlayer,
+                    message.ClientId, record);
             }
             else
             {
@@ -9667,6 +10064,486 @@ namespace ScMultiplayer
             return !skinClass.HasValue || skinClass.Value == playerClass;
         }
 
+        private static byte[] CloneBytes(byte[] bytes) =>
+            bytes == null || bytes.Length == 0 ? Array.Empty<byte>() : (byte[])bytes.Clone();
+
+        private static bool IsCustomSkinName(string skinName) =>
+            !string.IsNullOrWhiteSpace(skinName) &&
+            !skinName.TrimStart().StartsWith("$", StringComparison.Ordinal) &&
+            string.Equals(Storage.GetExtension(skinName), ".scskin",
+                StringComparison.OrdinalIgnoreCase);
+
+        private static bool IsSkinClassCompatible(string skinName, PlayerClass playerClass)
+        {
+            if (string.IsNullOrWhiteSpace(skinName)) return false;
+            PlayerClass? skinClass = CharacterSkinsManager.GetPlayerClass(skinName);
+            return !skinClass.HasValue || skinClass.Value == playerClass;
+        }
+
+        private static bool IsValidSkinHash(byte[] hash) =>
+            hash != null && hash.Length == 32 && hash.Any(value => value != 0);
+
+        private static string FormatHash(byte[] hash) =>
+            IsValidSkinHash(hash)
+                ? Convert.ToHexString(hash).ToLowerInvariant()
+                : string.Empty;
+
+        private static byte[] ParseHashBytes(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return Array.Empty<byte>();
+            string text = value.Trim();
+            if (text.Length != 64) return Array.Empty<byte>();
+            try
+            {
+                byte[] hash = Convert.FromHexString(text);
+                return IsValidSkinHash(hash) ? hash : Array.Empty<byte>();
+            }
+            catch
+            {
+                return Array.Empty<byte>();
+            }
+        }
+
+        // Source: Survivalcraft/Game/CharacterSkinsManager.cs:CharacterSkinsManager.GetFileName
+        // Source: Survivalcraft/Game/CharacterSkinsManager.cs:CharacterSkinsManager.ValidateCharacterSkin
+        private static byte[] GetLocalCharacterSkinSha256(string skinName)
+        {
+            return TryReadLocalCharacterSkinAsset(skinName, null, out _, out byte[] hash)
+                ? hash
+                : Array.Empty<byte>();
+        }
+
+        // Source: Survivalcraft/Game/CharacterSkinsManager.cs:CharacterSkinsManager.LoadTexture
+        private static bool TryReadLocalCharacterSkinAsset(string skinName,
+            byte[] expectedHash, out byte[] data, out byte[] hash)
+        {
+            data = Array.Empty<byte>();
+            hash = Array.Empty<byte>();
+            if (!IsCustomSkinName(skinName)) return false;
+            string fileName = CharacterSkinsManager.GetFileName(skinName);
+            if (string.IsNullOrEmpty(fileName) || !Storage.FileExists(fileName)) return false;
+            try
+            {
+                using Stream stream = Storage.OpenFile(fileName, OpenFileMode.Read);
+                data = ReadLimitedStream(stream, MaximumSkinAssetBytes);
+                hash = SHA256.HashData(data);
+                if (IsValidSkinHash(expectedHash) && !hash.SequenceEqual(expectedHash))
+                    return false;
+                ValidateSkinAssetData(data, skinName);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Log.Warning($"[ScMP] Could not read character skin \"{skinName}\": {ex.Message}");
+                data = Array.Empty<byte>();
+                hash = Array.Empty<byte>();
+                return false;
+            }
+        }
+
+        private static byte[] ReadLimitedStream(Stream stream, int maximumBytes)
+        {
+            if (stream == null) return Array.Empty<byte>();
+            if (stream.CanSeek && stream.Length > maximumBytes)
+                throw new InvalidOperationException($"Asset is larger than {maximumBytes} bytes.");
+            using var memory = new MemoryStream();
+            byte[] buffer = new byte[8192];
+            while (true)
+            {
+                int read = stream.Read(buffer, 0, buffer.Length);
+                if (read <= 0) break;
+                if (memory.Length + read > maximumBytes)
+                    throw new InvalidOperationException($"Asset is larger than {maximumBytes} bytes.");
+                memory.Write(buffer, 0, read);
+            }
+            return memory.ToArray();
+        }
+
+        // Source: Survivalcraft/Game/CharacterSkinsManager.cs:CharacterSkinsManager.ValidateCharacterSkin
+        private static void ValidateSkinAssetData(byte[] data, string skinName)
+        {
+            if (data == null || data.Length == 0 || data.Length > MaximumSkinAssetBytes)
+                throw new InvalidOperationException("Invalid character skin size.");
+            Image image = Image.Load(new MemoryStream(data));
+            if (image.Width > 256 || image.Height > 256)
+                throw new InvalidOperationException(
+                    $"Character skin is larger than 256x256 pixels (size={image.Width}x{image.Height}).");
+            if (!MathUtils.IsPowerOf2(image.Width) || !MathUtils.IsPowerOf2(image.Height))
+                throw new InvalidOperationException(
+                    $"Character skin does not have power-of-two size (size={image.Width}x{image.Height}).");
+            if (!IsSkinClassCompatible(skinName, CharacterSkinsManager.GetPlayerClass(skinName) ??
+                PlayerClass.Male))
+                throw new InvalidOperationException("Character skin class is invalid.");
+        }
+
+        private static bool IsProfileSkinAccepted(string skinName, byte[] skinSha256,
+            PlayerClass playerClass)
+        {
+            if (IsCustomSkinName(skinName))
+                return IsValidSkinHash(skinSha256) &&
+                    IsSkinClassCompatible(skinName, playerClass);
+            return IsSkinValidForClass(skinName, playerClass);
+        }
+
+        private void RegisterPlayerSkinHash(int clientId, NetworkPlayerRecord record)
+        {
+            if (record == null) return;
+            RegisterPlayerSkinHash(clientId, record.SkinName, record.SkinSha256);
+        }
+
+        private void RegisterPlayerSkinHash(int clientId, string skinName, byte[] hash)
+        {
+            if (clientId < 0 || !IsCustomSkinName(skinName) || !IsValidSkinHash(hash))
+            {
+                if (clientId >= 0 && !IsCustomSkinName(skinName))
+                    m_playerSkinHashes.Remove(clientId);
+                return;
+            }
+            m_playerSkinHashes[clientId] = FormatHash(hash);
+        }
+
+        private void ApplySessionSkinHash(int clientId, NetworkPlayerRecord record)
+        {
+            if (record == null || !IsCustomSkinName(record.SkinName)) return;
+            if (IsValidSkinHash(record.SkinSha256))
+            {
+                RegisterPlayerSkinHash(clientId, record);
+                return;
+            }
+            if (m_playerSkinHashes.TryGetValue(clientId, out string hashText))
+                record.SkinSha256 = ParseHashBytes(hashText);
+        }
+
+        private void RequestSkinAssetIfMissing(int ownerClientId, string skinName,
+            PlayerClass playerClass, byte[] hash)
+        {
+            if (client?.IsConnected != true || !IsCustomSkinName(skinName) ||
+                !IsValidSkinHash(hash) || !IsSkinClassCompatible(skinName, playerClass))
+                return;
+            string hashText = FormatHash(hash);
+            if (m_sessionSkinAssets.ContainsKey(hashText)) return;
+            if (ownerClientId == client.ClientID)
+            {
+                SendOwnedSkinAsset(IsHost ? -1 : 0, ownerClientId, skinName,
+                    playerClass, hash, force: false);
+                return;
+            }
+            string requestKey = ownerClientId + ":" + hashText;
+            if (!m_requestedSkinAssetKeys.Add(requestKey))
+                return;
+            int targetClientId = IsHost ? ownerClientId : 0;
+            if (targetClientId < 0) return;
+            NetworkMessageSender.SendPlayerSkinAssetMessage(targetClientId,
+                new PlayerSkinAssetMessage(PlayerSkinAssetMessage.SkinAssetAction.Request,
+                    ownerClientId, skinName, playerClass, hash));
+        }
+
+        private bool SendOwnedSkinAsset(int targetClientId, int ownerClientId,
+            string skinName, PlayerClass playerClass, byte[] expectedHash, bool force)
+        {
+            if (client?.IsConnected != true || !IsCustomSkinName(skinName) ||
+                !IsSkinClassCompatible(skinName, playerClass))
+                return false;
+            if (!TryReadLocalCharacterSkinAsset(skinName, expectedHash,
+                out byte[] data, out byte[] hash) || !IsValidSkinHash(hash))
+                return false;
+            string hashText = FormatHash(hash);
+            if (!force && m_sentLocalSkinAssetHashes.Contains(hashText))
+                return true;
+            if (!StoreSessionSkinAsset(ownerClientId, skinName, playerClass, hash, data))
+                return false;
+            m_sentLocalSkinAssetHashes.Add(hashText);
+            NetworkMessageSender.SendPlayerSkinAssetMessage(targetClientId,
+                new PlayerSkinAssetMessage(PlayerSkinAssetMessage.SkinAssetAction.Data,
+                    ownerClientId, skinName, playerClass, hash, data));
+            return true;
+        }
+
+        private bool StoreSessionSkinAsset(int ownerClientId, string skinName,
+            PlayerClass playerClass, byte[] hash, byte[] data)
+        {
+            if (!IsCustomSkinName(skinName) || !IsValidSkinHash(hash) ||
+                !IsSkinClassCompatible(skinName, playerClass) ||
+                data == null || data.Length == 0 || data.Length > MaximumSkinAssetBytes)
+                return false;
+            string hashText = FormatHash(hash);
+            if (!SHA256.HashData(data).SequenceEqual(hash)) return false;
+            try
+            {
+                ValidateSkinAssetData(data, skinName);
+            }
+            catch (Exception ex)
+            {
+                Log.Warning($"[ScMP] Rejected character skin asset \"{skinName}\": {ex.Message}");
+                return false;
+            }
+            if (!m_sessionSkinAssets.TryGetValue(hashText, out SkinSessionAsset asset))
+            {
+                asset = new SkinSessionAsset();
+                m_sessionSkinAssets[hashText] = asset;
+            }
+            asset.SkinName = skinName;
+            asset.PlayerClass = playerClass;
+            asset.Hash = hashText;
+            asset.Data = CloneBytes(data);
+            RegisterPlayerSkinHash(ownerClientId, skinName, hash);
+            m_requestedSkinAssetKeys.Remove(ownerClientId + ":" + hashText);
+            return true;
+        }
+
+        private void HandlePlayerSkinAssetMessage(PlayerSkinAssetMessage message,
+            int sourceClientId)
+        {
+            if (message == null || !IsCustomSkinName(message.SkinName) ||
+                !IsValidSkinHash(message.Sha256) ||
+                !IsSkinClassCompatible(message.SkinName, message.PlayerClass))
+                return;
+            if (message.Action == PlayerSkinAssetMessage.SkinAssetAction.Request)
+            {
+                HandlePlayerSkinAssetRequest(message, sourceClientId);
+                return;
+            }
+            if (message.Action != PlayerSkinAssetMessage.SkinAssetAction.Data)
+                return;
+            if (IsHost && sourceClientId > 0 && message.ClientId != sourceClientId)
+                return;
+            if (!IsHost && sourceClientId != 0)
+                return;
+            if (!TryAssemblePlayerSkinAsset(message, out byte[] assetData))
+                return;
+            if (!StoreSessionSkinAsset(message.ClientId, message.SkinName,
+                message.PlayerClass, message.Sha256, assetData))
+                return;
+            ApplySessionSkinToKnownPlayer(message.ClientId);
+            if (IsHost)
+            {
+                NetworkMessageSender.SendPlayerSkinAssetMessage(-1,
+                    new PlayerSkinAssetMessage(PlayerSkinAssetMessage.SkinAssetAction.Data,
+                        message.ClientId, message.SkinName, message.PlayerClass,
+                        message.Sha256, assetData));
+            }
+        }
+
+        private bool TryAssemblePlayerSkinAsset(PlayerSkinAssetMessage message,
+            out byte[] data)
+        {
+            data = Array.Empty<byte>();
+            if (message == null || message.Data == null ||
+                message.ChunkCount <= 0 || message.ChunkIndex < 0 ||
+                message.ChunkIndex >= message.ChunkCount ||
+                message.TotalLength <= 0 || message.TotalLength > MaximumSkinAssetBytes ||
+                message.Data.Length > message.TotalLength)
+                return false;
+            if (message.ChunkCount == 1)
+            {
+                if (message.ChunkIndex != 0 || message.Data.Length != message.TotalLength)
+                    return false;
+                data = message.Data;
+                return true;
+            }
+
+            string key = message.ClientId + ":" + FormatHash(message.Sha256);
+            if (!m_incomingSkinAssetTransfers.TryGetValue(key,
+                    out SkinAssetTransfer transfer) ||
+                transfer.TransferId != message.TransferId ||
+                transfer.TotalLength != message.TotalLength ||
+                transfer.Chunks.Length != message.ChunkCount)
+            {
+                transfer = new SkinAssetTransfer
+                {
+                    SkinName = message.SkinName,
+                    PlayerClass = message.PlayerClass,
+                    Hash = FormatHash(message.Sha256),
+                    TransferId = message.TransferId,
+                    TotalLength = message.TotalLength,
+                    Chunks = new byte[message.ChunkCount][]
+                };
+                m_incomingSkinAssetTransfers[key] = transfer;
+            }
+
+            if (transfer.Chunks[message.ChunkIndex] == null)
+            {
+                transfer.Chunks[message.ChunkIndex] = CloneBytes(message.Data);
+                transfer.ReceivedChunks++;
+                transfer.ReceivedBytes += message.Data.Length;
+            }
+            if (transfer.ReceivedChunks != transfer.Chunks.Length ||
+                transfer.ReceivedBytes != transfer.TotalLength)
+                return false;
+
+            data = new byte[transfer.TotalLength];
+            int offset = 0;
+            foreach (byte[] chunk in transfer.Chunks)
+            {
+                if (chunk == null || offset + chunk.Length > data.Length)
+                {
+                    m_incomingSkinAssetTransfers.Remove(key);
+                    data = Array.Empty<byte>();
+                    return false;
+                }
+                Buffer.BlockCopy(chunk, 0, data, offset, chunk.Length);
+                offset += chunk.Length;
+            }
+            m_incomingSkinAssetTransfers.Remove(key);
+            return offset == data.Length;
+        }
+
+        private void HandlePlayerSkinAssetRequest(PlayerSkinAssetMessage message,
+            int sourceClientId)
+        {
+            if (!IsHost)
+            {
+                if (sourceClientId == 0 && message.ClientId == client?.ClientID)
+                    SendOwnedSkinAsset(0, client.ClientID, message.SkinName,
+                        message.PlayerClass, message.Sha256, force: true);
+                return;
+            }
+            if (sourceClientId <= 0) return;
+            string hashText = FormatHash(message.Sha256);
+            if (m_sessionSkinAssets.TryGetValue(hashText, out SkinSessionAsset asset) &&
+                asset.Data?.Length > 0)
+            {
+                NetworkMessageSender.SendPlayerSkinAssetMessage(sourceClientId,
+                    new PlayerSkinAssetMessage(PlayerSkinAssetMessage.SkinAssetAction.Data,
+                        message.ClientId, asset.SkinName, asset.PlayerClass,
+                        message.Sha256, asset.Data));
+                return;
+            }
+            if (message.ClientId == client?.ClientID)
+            {
+                SendOwnedSkinAsset(sourceClientId, client.ClientID, message.SkinName,
+                    message.PlayerClass, message.Sha256, force: true);
+                return;
+            }
+            if (message.ClientId > 0 && m_networkPlayerData.ContainsKey(message.ClientId))
+                NetworkMessageSender.SendPlayerSkinAssetMessage(message.ClientId, message);
+        }
+
+        private void ApplySessionSkinToKnownPlayer(int ownerClientId)
+        {
+            if (m_networkPlayerData.TryGetValue(ownerClientId, out PlayerData networkPlayer) &&
+                networkPlayer?.ComponentPlayer != null)
+            {
+                ApplySessionSkinToPlayer(networkPlayer.ComponentPlayer, ownerClientId,
+                    new NetworkPlayerRecord
+                    {
+                        SkinName = networkPlayer.CharacterSkinName,
+                        PlayerClass = networkPlayer.PlayerClass,
+                        SkinSha256 = m_playerSkinHashes.TryGetValue(ownerClientId,
+                            out string hashText) ? ParseHashBytes(hashText) : Array.Empty<byte>()
+                    });
+            }
+            if (ownerClientId != client?.ClientID) return;
+            ComponentPlayer localPlayer = GameManager.Project?
+                .FindSubsystem<SubsystemPlayers>(false)?.ComponentPlayers
+                .FirstOrDefault(player => player?.PlayerData != null &&
+                    !m_networkPlayerData.Values.Contains(player.PlayerData));
+            if (localPlayer != null)
+                ApplySessionSkinToPlayer(localPlayer, ownerClientId,
+                    new NetworkPlayerRecord
+                    {
+                        SkinName = localPlayer.PlayerData.CharacterSkinName,
+                        PlayerClass = localPlayer.PlayerData.PlayerClass,
+                        SkinSha256 = m_playerSkinHashes.TryGetValue(ownerClientId,
+                            out string hashText) ? ParseHashBytes(hashText) : Array.Empty<byte>()
+                    });
+        }
+
+        // Source: Survivalcraft/Game/ComponentClothing.cs:ComponentClothing.UpdateRenderTargets
+        private void ApplySessionSkinToPlayer(ComponentPlayer player, int ownerClientId,
+            NetworkPlayerRecord record)
+        {
+            if (player?.Entity == null || record == null ||
+                !IsCustomSkinName(record.SkinName) ||
+                !IsSkinClassCompatible(record.SkinName, record.PlayerClass))
+                return;
+            ApplySessionSkinHash(ownerClientId, record);
+            if (!IsValidSkinHash(record.SkinSha256))
+                return;
+            string hashText = FormatHash(record.SkinSha256);
+            if (!m_sessionSkinAssets.TryGetValue(hashText, out SkinSessionAsset asset) ||
+                asset.Data == null || asset.Data.Length == 0)
+            {
+                RequestSkinAssetIfMissing(ownerClientId, record.SkinName,
+                    record.PlayerClass, record.SkinSha256);
+                return;
+            }
+            ComponentClothing clothing = player.Entity.FindComponent<ComponentClothing>();
+            if (clothing == null) return;
+            string textureTag = "ScMP:Skin:" + hashText;
+            // Source: SuAPI/ModParentField.cs:ModParentField.GetParentField
+            // ComponentClothing initializes these reference fields as null. The generic accessor
+            // treats null as a failed type test, so use the raw accessor for nullable fields.
+            Texture2D currentTexture = ModManager.ModParentField.GetParentField(
+                clothing, "m_skinTexture", typeof(ComponentClothing)) as Texture2D;
+            string currentName = ModManager.ModParentField.GetParentField(
+                clothing, "m_skinTextureName", typeof(ComponentClothing)) as string;
+            if (string.Equals(currentName, record.SkinName, StringComparison.Ordinal) &&
+                currentTexture?.Tag is string tag &&
+                string.Equals(tag, textureTag, StringComparison.Ordinal))
+                return;
+            Texture2D texture;
+            try
+            {
+                texture = Texture2D.Load(new MemoryStream(asset.Data));
+                texture.Tag = textureTag;
+            }
+            catch (Exception ex)
+            {
+                Log.Warning($"[ScMP] Could not create session skin texture \"{record.SkinName}\": {ex.Message}");
+                return;
+            }
+            if (currentTexture != null && !ContentManager.IsContent(currentTexture))
+                currentTexture.Dispose();
+            DisposeClothingRenderTarget(clothing, "m_innerClothedTexture");
+            DisposeClothingRenderTarget(clothing, "m_outerClothedTexture");
+            player.PlayerData.CharacterSkinName = record.SkinName;
+            ModManager.ModParentField.ModifyParentField(
+                clothing, "m_skinTexture", texture, typeof(ComponentClothing));
+            ModManager.ModParentField.ModifyParentField(
+                clothing, "m_skinTextureName", record.SkinName, typeof(ComponentClothing));
+            ModManager.ModParentField.ModifyParentField(
+                clothing, "m_clothedTexturesValid", false, typeof(ComponentClothing));
+        }
+
+        private static void DisposeClothingRenderTarget(ComponentClothing clothing,
+            string fieldName)
+        {
+            RenderTarget2D renderTarget = ModManager.ModParentField
+                .GetParentField(clothing, fieldName, typeof(ComponentClothing))
+                as RenderTarget2D;
+            if (renderTarget != null) renderTarget.Dispose();
+            ModManager.ModParentField.ModifyParentField(
+                clothing, fieldName, null, typeof(ComponentClothing));
+        }
+
+        private void SynchronizeLocalProfileIfChanged(Project project)
+        {
+            if (client?.IsConnected != true || project == null)
+            {
+                m_lastLocalProfileSignature = null;
+                return;
+            }
+            ComponentPlayer localPlayer = project.FindSubsystem<SubsystemPlayers>(false)?
+                .ComponentPlayers.FirstOrDefault(player => player?.PlayerData != null &&
+                    !m_networkPlayerData.Values.Contains(player.PlayerData));
+            if (localPlayer?.PlayerData == null) return;
+            string signature = string.Join("|",
+                localPlayer.PlayerData.Name ?? string.Empty,
+                localPlayer.PlayerData.PlayerClass,
+                localPlayer.PlayerData.CharacterSkinName ?? string.Empty);
+            if (string.Equals(signature, m_lastLocalProfileSignature,
+                StringComparison.Ordinal))
+                return;
+            m_lastLocalProfileSignature = signature;
+            NetworkPlayerRecord record = CapturePlayerRecord(localPlayer.PlayerData);
+            RegisterPlayerSkinHash(client.ClientID, record);
+            NetworkMessageSender.SendPlayerProfileMessage(client.ClientID, record);
+            if (IsCustomSkinName(record.SkinName) && IsValidSkinHash(record.SkinSha256))
+                SendOwnedSkinAsset(IsHost ? -1 : 0, client.ClientID, record.SkinName,
+                    record.PlayerClass, record.SkinSha256, force: false);
+        }
+
         private void ApplyProfileToLocalPlayer(PlayerProfileMessage message)
         {
             SubsystemPlayers players = GameManager.Project?.FindSubsystem<SubsystemPlayers>(false);
@@ -9675,10 +10552,24 @@ namespace ScMultiplayer
             if (localPlayer == null || localPlayer.PlayerData.PlayerClass != message.PlayerClass) return;
             if (PlayerData.VerifyName((message.Name ?? string.Empty).Trim()))
                 localPlayer.PlayerData.Name = message.Name.Trim();
-            if (IsSkinValidForClass(message.SkinName, message.PlayerClass))
+            if (IsProfileSkinAccepted(message.SkinName, message.SkinSha256,
+                message.PlayerClass))
+            {
                 localPlayer.PlayerData.CharacterSkinName = message.SkinName;
+                RegisterPlayerSkinHash(message.ClientId, message.SkinName,
+                    message.SkinSha256);
+                RequestSkinAssetIfMissing(message.ClientId, message.SkinName,
+                    message.PlayerClass, message.SkinSha256);
+            }
             if (!m_equipmentSynchronizedClients.Contains(message.ClientId))
                 ApplyClothes(localPlayer, message.Clothes);
+            ApplySessionSkinToPlayer(localPlayer, message.ClientId,
+                new NetworkPlayerRecord
+                {
+                    SkinName = message.SkinName,
+                    SkinSha256 = CloneBytes(message.SkinSha256),
+                    PlayerClass = message.PlayerClass
+                });
         }
 
         // Source: Survivalcraft/Game/PlayerData.cs:PlayerData.PlayerDead
@@ -10097,6 +10988,8 @@ namespace ScMultiplayer
             if (Math.Abs(timeOfDay.TimeOfDayOffset - msg.TimeOfDayOffset) > 0.0001)
                 timeOfDay.TimeOfDayOffset = msg.TimeOfDayOffset;
             m_remoteWeatherState = msg;
+            m_remoteTerrainHeadSequence = Math.Max(
+                m_remoteTerrainHeadSequence, msg.TerrainSequence);
             ApplyRemoteWeatherState();
         }
 
@@ -10400,7 +11293,7 @@ namespace ScMultiplayer
             if (feedback.Count == 0) return;
 
             DisplayWorldControlFeedback(pending.ComponentPlayer,
-                string.Join("\n", feedback));
+                string.Join("\r\n", feedback));
         }
 
         // Source: Survivalcraft/Game/ComponentGui.cs:ComponentGui.DisplaySmallMessage
@@ -10629,8 +11522,63 @@ namespace ScMultiplayer
                 message.Sequence = ++m_hostTerrainSequence;
             RecordHostTerrainChanges(message, client.Step);
             RecordHostTerrainJournal(message);
+            AcknowledgeHostTerrainPlaceFallbacks(message);
             // Source: ScMultiplayer.cs:NetworkMessageHandler.HandleModifiedCellsMessage
             NetworkMessageSender.SendScheduledMessage(-1, message);
+        }
+
+        // Source: Survivalcraft/Game/SubsystemFluidBlockBehavior.cs:
+        // SubsystemFluidBlockBehavior.Update
+        // Fluid processing can call ProcessModifiedCells before UpdateOrder.Terrain observes a
+        // host placement. Remove candidates that entered the normal publication path first.
+        private void AcknowledgeHostTerrainPlaceFallbacks(GameModifiedCellsMessage message)
+        {
+            if (message?.ModifiedCells == null || m_hostTerrainPlaceFallbacks.Count == 0)
+                return;
+            foreach (Point3 cell in message.ModifiedCells.Keys)
+                m_hostTerrainPlaceFallbacks.Remove(cell);
+        }
+
+        // Source: Survivalcraft/Game/SubsystemFluidBlockBehavior.cs:
+        // SubsystemFluidBlockBehavior.Update
+        // Source: Survivalcraft/Game/SubsystemTerrain.cs:SubsystemTerrain.ChangeCell
+        // Fluid processing can consume m_modifiedCells between a native host placement and the
+        // regular terrain publisher. If that happens, republish only the final changed cell through
+        // the existing global sequence, journal and reliable terrain path.
+        private void UpdateHostTerrainPlaceFallbacks(Project project)
+        {
+            if (!IsHost || project == null || m_hostTerrainPlaceFallbacks.Count == 0)
+                return;
+            SubsystemTerrain terrain = project.FindSubsystem<SubsystemTerrain>(false);
+            if (terrain == null)
+                return;
+
+            double now = Time.RealTime;
+            foreach (KeyValuePair<Point3, PendingHostTerrainPlaceFallback> item in
+                m_hostTerrainPlaceFallbacks.ToArray())
+            {
+                PendingHostTerrainPlaceFallback pending = item.Value;
+                if (now > pending.ExpiresAt)
+                {
+                    m_hostTerrainPlaceFallbacks.Remove(item.Key);
+                    continue;
+                }
+                if (Time.FrameIndex < pending.CheckAfterFrameIndex)
+                    continue;
+
+                m_hostTerrainPlaceFallbacks.Remove(item.Key);
+                if (!terrain.Terrain.IsCellValid(item.Key.X, item.Key.Y, item.Key.Z))
+                    continue;
+                int finalValue = Terrain.ReplaceLight(terrain.Terrain.GetCellValue(
+                    item.Key.X, item.Key.Y, item.Key.Z), 0);
+                if (finalValue == pending.ExpectedValue)
+                    continue;
+
+                PublishTerrainChanges(new Dictionary<Point3, bool>
+                {
+                    [item.Key] = true
+                });
+            }
         }
 
         // Source: Survivalcraft/Game/SubsystemTerrain.cs:SubsystemTerrain.ChangeCell
@@ -10735,6 +11683,121 @@ namespace ScMultiplayer
                     RestartClientWorldDownload();
                     break;
             }
+        }
+
+        // Source: Survivalcraft/Game/TerrainUpdater.cs:TerrainUpdater.ChunkInitialized
+        // The client asks only after a Chunk exists. The host replies from the coalesced
+        // post-snapshot checkpoint, never by rebroadcasting every terrain change.
+        private void HandleTerrainChunkSyncMessage(TerrainChunkSyncMessage message,
+            int sourceClientId)
+        {
+            if (message == null) return;
+            Point2 coordinates = new Point2(message.ChunkX, message.ChunkZ);
+            if (IsHost)
+            {
+                if (message.Stage != TerrainChunkSyncStage.Request || sourceClientId <= 0 ||
+                    !m_networkPlayerData.ContainsKey(sourceClientId))
+                    return;
+                SendHostTerrainChunkSync(sourceClientId, coordinates,
+                    Math.Max(message.KnownRevision, 0L));
+                return;
+            }
+
+            if (sourceClientId != 0) return;
+            if (message.Stage == TerrainChunkSyncStage.Data)
+            {
+                if (message.Revision <= 0 || message.Cells == null ||
+                    message.CellValues == null)
+                    return;
+                var cells = new Dictionary<Point3, bool>();
+                var values = new List<int>();
+                int count = Math.Min(message.Cells.Count, message.CellValues.Count);
+                for (int i = 0; i < count; i++)
+                {
+                    Point3 cell = message.Cells[i];
+                    if (Terrain.ToChunk(cell.X, cell.Z) != coordinates)
+                        continue;
+                    cells[cell] = true;
+                    values.Add(message.CellValues[i]);
+                }
+                if (cells.Count > 0)
+                {
+                    // Source: ScMultiplayer.Func.Subsystem.SuSubsystemTerrain:
+                    // SuSubsystemTerrain.EnqueuePriorityNetworkBatch
+                    // Chunk checkpoint data carries its chunk revision for per-cell stale-write
+                    // rejection, but must not advance the global terrain sequence.
+                    SuSubsystemTerrain.EnqueuePriorityNetworkBatch(
+                        new GameModifiedCellsMessage(cells, values, message.ServerTick,
+                            false, client.ClientID, message.Revision));
+                }
+                return;
+            }
+
+            if (message.Stage != TerrainChunkSyncStage.Complete) return;
+            m_clientTerrainChunkSyncPending.Remove(coordinates);
+            SubsystemTerrain terrain = GameManager.Project?
+                .FindSubsystem<SubsystemTerrain>(false);
+            TerrainChunk chunk = terrain?.Terrain.GetChunkAtCoords(
+                coordinates.X, coordinates.Y);
+            if (chunk != null && chunk.State >= TerrainChunkState.Valid)
+                m_clientTerrainChunkRevisions[coordinates] = Math.Max(message.Revision, 0L);
+            else
+                m_clientTerrainChunkRevisions.Remove(coordinates);
+        }
+
+        private void SendHostTerrainChunkSync(int targetClientId, Point2 coordinates,
+            long knownRevision)
+        {
+            List<KeyValuePair<Point3, TerrainCellState>> snapshot =
+                new List<KeyValuePair<Point3, TerrainCellState>>();
+            long revision;
+            int serverTick;
+            lock (m_terrainJournalLock)
+            {
+                MergePendingTerrainChangesLocked();
+                m_hostTerrainChunkRevisions.TryGetValue(coordinates, out revision);
+                if (revision > knownRevision &&
+                    m_terrainCheckpointByChunk.TryGetValue(coordinates,
+                        out Dictionary<Point3, TerrainCellState> cells))
+                {
+                    snapshot = cells.OrderBy(item => item.Key.X)
+                        .ThenBy(item => item.Key.Y).ThenBy(item => item.Key.Z).ToList();
+                }
+                serverTick = client.Step;
+            }
+
+            for (int offset = 0; offset < snapshot.Count;
+                offset += TerrainChunkSyncBatchSize)
+            {
+                int count = Math.Min(TerrainChunkSyncBatchSize, snapshot.Count - offset);
+                var message = new TerrainChunkSyncMessage
+                {
+                    Stage = TerrainChunkSyncStage.Data,
+                    ChunkX = coordinates.X,
+                    ChunkZ = coordinates.Y,
+                    Revision = revision,
+                    ServerTick = serverTick
+                };
+                for (int i = 0; i < count; i++)
+                {
+                    KeyValuePair<Point3, TerrainCellState> item = snapshot[offset + i];
+                    message.Cells.Add(item.Key);
+                    message.CellValues.Add(item.Value.CellValue);
+                }
+                client.SendDirectInput(targetClientId,
+                    Message.WriteWithSender(message, client.Address), sequenced: true);
+            }
+
+            client.SendDirectInput(targetClientId, Message.WriteWithSender(
+                new TerrainChunkSyncMessage
+                {
+                    Stage = TerrainChunkSyncStage.Complete,
+                    ChunkX = coordinates.X,
+                    ChunkZ = coordinates.Y,
+                    KnownRevision = knownRevision,
+                    Revision = revision,
+                    ServerTick = serverTick
+                }, client.Address), sequenced: true);
         }
 
         private void SendHostTerrainRecoveryRound(int targetClientId, long lastApplied,
@@ -10850,7 +11913,7 @@ namespace ScMultiplayer
             ShowJoinRoomBusyDialog();
             if (m_joinRoomBusyDialog != null)
                 m_joinRoomBusyDialog.SmallMessage =
-                    "Terrain history expired.\rDownloading the current host world...";
+                    "Terrain history expired.\r\nDownloading the current host world...";
             // Source: Survivalcraft/Game/GameLoadingScreen.cs:GameLoadingScreen.Enter
             // Loading the refreshed snapshot disposes the currently running client Project. Keep
             // that known replacement separate from an intentional game-menu leave.
@@ -11065,6 +12128,21 @@ namespace ScMultiplayer
                     RecordClientJoinProgress();
             }
             SuSubsystemTerrain.EnqueueNetworkBatch(msg);
+        }
+
+        private void TrackHostTerrainPlaceIntent(ComponentPlayer player, Ray3? interactRay)
+        {
+            if (player == null || !interactRay.HasValue || client?.IsConnected != true ||
+                GetConnectedRemoteClients().Count == 0 ||
+                !TryGetTerrainPlacePrediction(player, interactRay.Value, out Point3 cell,
+                    out int expectedValue, out _))
+                return;
+            m_hostTerrainPlaceFallbacks[cell] = new PendingHostTerrainPlaceFallback
+            {
+                ExpectedValue = expectedValue,
+                CheckAfterFrameIndex = Time.FrameIndex + 1,
+                ExpiresAt = Time.RealTime + HostTerrainPlaceFallbackLifetime
+            };
         }
 
         // Source: Survivalcraft/Game/SubsystemTerrain.cs:SubsystemTerrain.ChangeCell
@@ -11346,6 +12424,11 @@ namespace ScMultiplayer
                             CellValue = message.CellValues[index],
                             Tick = authoritativeTick
                         };
+                        if (message.Sequence > 0)
+                        {
+                            Point2 coordinates = Terrain.ToChunk(item.Key.X, item.Key.Z);
+                            m_hostTerrainChunkRevisions[coordinates] = message.Sequence;
+                        }
                         int cellValue = message.CellValues[index];
                         if (!isFluidSettlementConfirmation &&
                             Terrain.ExtractContents(cellValue) == 0 &&
@@ -11368,12 +12451,10 @@ namespace ScMultiplayer
                                         DueGameTime = dueGameTime
                                     };
                             }
-                            m_terrainRepairRepeats.Remove(item.Key);
                         }
                         else
                         {
                             m_pendingFluidSettlements.Remove(item.Key);
-                            m_terrainRepairRepeats[item.Key] = TerrainRepairRepeatCount;
                         }
                     }
                     index++;
@@ -11463,55 +12544,24 @@ namespace ScMultiplayer
         private void MergePendingTerrainChanges()
         {
             lock (m_terrainJournalLock)
-            {
-                foreach (KeyValuePair<Point3, TerrainCellState> item in m_pendingTerrainChanges)
-                    m_terrainCheckpoint[item.Key] = item.Value;
-                m_pendingTerrainChanges.Clear();
-            }
+                MergePendingTerrainChangesLocked();
         }
 
-        // Source: Comms/Drt/GameStepData.Inputs
-        // Live terrain deltas are sent once. Repeat each authoritative final value a bounded
-        // number of times so a lost UDP input cannot leave one cell permanently divergent.
-        private void BroadcastTerrainRepairs()
+        private void MergePendingTerrainChangesLocked()
         {
-            List<KeyValuePair<Point3, TerrainCellState>> repairs;
-            lock (m_terrainJournalLock)
+            foreach (KeyValuePair<Point3, TerrainCellState> item in m_pendingTerrainChanges)
             {
-                repairs = new List<KeyValuePair<Point3, TerrainCellState>>(m_terrainRepairRepeats.Count);
-                foreach (Point3 point in m_terrainRepairRepeats.Keys.ToArray())
+                m_terrainCheckpoint[item.Key] = item.Value;
+                Point2 coordinates = Terrain.ToChunk(item.Key.X, item.Key.Z);
+                if (!m_terrainCheckpointByChunk.TryGetValue(coordinates,
+                        out Dictionary<Point3, TerrainCellState> chunkCheckpoint))
                 {
-                    TerrainCellState state;
-                    if (!m_pendingTerrainChanges.TryGetValue(point, out state) &&
-                        !m_terrainCheckpoint.TryGetValue(point, out state))
-                    {
-                        m_terrainRepairRepeats.Remove(point);
-                        continue;
-                    }
-                    repairs.Add(new KeyValuePair<Point3, TerrainCellState>(point, state));
-                    int repeats = m_terrainRepairRepeats[point] - 1;
-                    if (repeats > 0) m_terrainRepairRepeats[point] = repeats;
-                    else m_terrainRepairRepeats.Remove(point);
+                    chunkCheckpoint = new Dictionary<Point3, TerrainCellState>();
+                    m_terrainCheckpointByChunk.Add(coordinates, chunkCheckpoint);
                 }
+                chunkCheckpoint[item.Key] = item.Value;
             }
-            if (repairs.Count == 0) return;
-
-            int authoritativeTick = client.Step;
-            for (int offset = 0; offset < repairs.Count; offset += TerrainCatchUpBatchSize)
-            {
-                var cells = new Dictionary<Point3, bool>();
-                var values = new List<int>();
-                int count = Math.Min(TerrainCatchUpBatchSize, repairs.Count - offset);
-                for (int i = 0; i < count; i++)
-                {
-                    KeyValuePair<Point3, TerrainCellState> item = repairs[offset + i];
-                    cells[item.Key] = item.Value.IsModified;
-                    values.Add(item.Value.CellValue);
-                }
-                // Source: ScMultiplayer.cs:NetworkMessageHandler.HandleModifiedCellsMessage
-                NetworkMessageSender.SendScheduledMessage(-1, new GameModifiedCellsMessage(
-                    cells, values, authoritativeTick, true, -1));
-            }
+            m_pendingTerrainChanges.Clear();
         }
 
         // Source: Comms/Drt/Client.cs:Client.GameJoined
@@ -11521,11 +12571,11 @@ namespace ScMultiplayer
         {
             List<KeyValuePair<Point3, TerrainCellState>> snapshot;
             int targetTick = client.Step;
+            long headSequence;
             lock (m_terrainJournalLock)
             {
-                foreach (KeyValuePair<Point3, TerrainCellState> item in m_pendingTerrainChanges)
-                    m_terrainCheckpoint[item.Key] = item.Value;
-                m_pendingTerrainChanges.Clear();
+                headSequence = m_hostTerrainSequence;
+                MergePendingTerrainChangesLocked();
                 // Source: ScMultiplayer.AcceptNetworkPlayerJoin
                 // The live world archive already contains terrain through the join start tick.
                 // Only cells changed while that archive was transferred need a final checkpoint.
@@ -11542,6 +12592,7 @@ namespace ScMultiplayer
             {
                 var marker = new GameModifiedCellsMessage(
                     new Dictionary<Point3, bool>(), new List<int>(), targetTick, true, targetClientId);
+                marker.HeadSequence = headSequence;
                 client.SendDirectInput(targetClientId,
                     Message.WriteWithSender(marker, client.Address), sequenced: true);
                 return;
@@ -11560,6 +12611,7 @@ namespace ScMultiplayer
                 }
                 var message = new GameModifiedCellsMessage(
                     cells, values, targetTick, true, targetClientId);
+                message.HeadSequence = headSequence;
                 client.SendDirectInput(targetClientId,
                     Message.WriteWithSender(message, client.Address), sequenced: true);
             }
@@ -11655,7 +12707,7 @@ namespace ScMultiplayer
                 $"RepairRounds={transfer.RepairRequestCount}");
             if (m_joinRoomBusyDialog != null)
                 m_joinRoomBusyDialog.SmallMessage =
-                    "Connected.\rWorld download complete.\rImporting world...";
+                    "Connected.\r\nWorld download complete.\r\nImporting world...";
             m_joinAwaitingWorldProgress = false;
             manifest.WorldData = worldData;
             manifest.ChunkCount = 0;
@@ -11765,6 +12817,7 @@ namespace ScMultiplayer
                         return;
                     }
                     m_pendingAcceptedJoinKeys.Remove(sourceClientId);
+                    SynchronizePlayerProfiles();
                     Log.Information($"[ScMP] Client entered Loading Project: ClientID={sourceClientId}, " +
                         $"Transfer={transferId}");
                     break;
@@ -11916,6 +12969,7 @@ namespace ScMultiplayer
                 Name = msg.PlayerName,
                 PlayerClass = msg.PlayerClass,
                 SkinName = msg.SkinName,
+                SkinSha256 = CloneBytes(msg.SkinSha256),
                 Position = msg.PlayerPosition,
                 Level = msg.PlayerLevel,
                 Health = msg.PlayerHealth,
@@ -11946,8 +13000,11 @@ namespace ScMultiplayer
             {
                 Log.Information($"[ScMP] Importing world: {msg.Name} ({msg.WorldData.Length} bytes)");
                 // Source: Survivalcraft/Game/WorldsManager.cs:WorldsManager.ImportWorld
+                // Network worlds keep EmbeddedContent as session assets. The native import path
+                // writes embedded skins/textures into global Content folders, which would pollute
+                // the user's local library after joining other rooms.
                 var existingDirectories = new HashSet<string>(WorldsManager.WorldInfos.Select(world => world.DirectoryName));
-                string importedDirectory = WorldsManager.ImportWorld(new MemoryStream(msg.WorldData));
+                string importedDirectory = ImportNetworkWorld(new MemoryStream(msg.WorldData));
                 m_downloadedWorldDirectory = importedDirectory;
                 RegisterDownloadedWorld(importedDirectory);
                 WorldsManager.UpdateWorldsList();
@@ -11965,7 +13022,7 @@ namespace ScMultiplayer
                 {
                     if (m_joinRoomBusyDialog != null)
                         m_joinRoomBusyDialog.SmallMessage =
-                            "Connected.\rWorld imported.\rLoading project...";
+                            "Connected.\r\nWorld imported.\r\nLoading project...";
                     SuPlayScreen.Play(importedWorld);
                     connectionSM.TransitionTo(NetworkConnectionStateMachine.ConnectionState.Playing);
                     m_shouldCreateHostAvatar = true;
@@ -12008,6 +13065,238 @@ namespace ScMultiplayer
                     "Join Room", "Failed to load the host world: " + ex.Message,
                     "OK", null, null));
             }
+        }
+
+        // Source: Survivalcraft/Game/WorldsManager.cs:WorldsManager.ImportWorld
+        // Source: Survivalcraft/Game/WorldsManager.cs:WorldsManager.UnpackWorld
+        private string ImportNetworkWorld(Stream sourceStream)
+        {
+            if (MarketplaceManager.IsTrialMode)
+                throw new InvalidOperationException("Cannot import worlds in trial mode.");
+            if (WorldsManager.WorldInfos.Count >= 30)
+                throw new InvalidOperationException(
+                    "Too many worlds on device, maximum allowed is 30. Delete some to free up space.");
+            string directoryName = GetUnusedNetworkWorldDirectoryName();
+            var sessionAssets = new NetworkWorldSessionAssets();
+            Storage.CreateDirectory(directoryName);
+            try
+            {
+                using Game.ZipArchive zipArchive =
+                    Game.ZipArchive.Open(sourceStream, keepStreamOpen: true);
+                foreach (Game.ZipArchiveEntry entry in zipArchive.ReadCentralDir())
+                {
+                    string filename = NormalizeNetworkWorldZipPath(entry.FilenameInZip);
+                    if (string.IsNullOrEmpty(filename)) continue;
+                    string extension = Storage.GetExtension(filename).ToLowerInvariant();
+                    if (filename.StartsWith("EmbeddedContent/", StringComparison.OrdinalIgnoreCase))
+                    {
+                        ImportNetworkWorldEmbeddedAsset(zipArchive, entry, filename,
+                            extension, sessionAssets);
+                        continue;
+                    }
+                    string path = Storage.CombinePaths(directoryName, filename);
+                    Storage.CreateDirectory(Storage.GetDirectoryName(path));
+                    using Stream target = Storage.OpenFile(path, OpenFileMode.Create);
+                    zipArchive.ExtractFile(entry, target);
+                }
+                if (!TestNetworkWorldProjectXml(directoryName))
+                    throw new InvalidOperationException(
+                        "Cannot import world because it does not contain valid world data.");
+                m_networkWorldSessionAssets = sessionAssets;
+                return directoryName;
+            }
+            catch
+            {
+                try { WorldsManager.DeleteWorld(directoryName); }
+                catch { }
+                ClearNetworkWorldSessionAssets(sessionAssets);
+                throw;
+            }
+        }
+
+        private static string GetUnusedNetworkWorldDirectoryName()
+        {
+            string root = Storage.CombinePaths("data:/Worlds", "World");
+            for (int i = 0; i < 1000; i++)
+            {
+                string directory = Storage.CombinePaths(Storage.GetDirectoryName(root),
+                    Storage.GetFileNameWithoutExtension(root) +
+                    (i > 0 ? i.ToString(CultureInfo.InvariantCulture) : string.Empty) +
+                    Storage.GetExtension(root));
+                if (!Storage.DirectoryExists(directory) && !Storage.FileExists(directory))
+                    return directory;
+            }
+            throw new InvalidOperationException("Out of filenames for network world import.");
+        }
+
+        private static string NormalizeNetworkWorldZipPath(string filename)
+        {
+            string text = (filename ?? string.Empty).Replace('\\', '/').Trim();
+            if (text.Length == 0 || text.EndsWith("/", StringComparison.Ordinal) ||
+                text.StartsWith("/", StringComparison.Ordinal) ||
+                text.Split('/').Any(part => part == ".."))
+                return string.Empty;
+            return text;
+        }
+
+        private void ImportNetworkWorldEmbeddedAsset(Game.ZipArchive zipArchive,
+            Game.ZipArchiveEntry entry, string filename, string extension,
+            NetworkWorldSessionAssets sessionAssets)
+        {
+            try
+            {
+                if (extension == ".scskin")
+                {
+                    if (entry.FileSize > MaximumSkinAssetBytes) return;
+                    byte[] data = ExtractZipEntryBytes(zipArchive, entry,
+                        MaximumSkinAssetBytes);
+                    byte[] hash = SHA256.HashData(data);
+                    string skinName = Storage.GetFileName(filename);
+                    StoreSessionSkinAsset(0, skinName,
+                        CharacterSkinsManager.GetPlayerClass(skinName) ?? PlayerClass.Male,
+                        hash, data);
+                    return;
+                }
+                if (extension == ".scbtex")
+                {
+                    if (entry.FileSize > MaximumBlocksTextureAssetBytes ||
+                        sessionAssets.BlocksTextureData.Length > 0)
+                        return;
+                    byte[] data = ExtractZipEntryBytes(zipArchive, entry,
+                        MaximumBlocksTextureAssetBytes);
+                    ValidateBlocksTextureAssetData(data);
+                    sessionAssets.BlocksTextureName = Storage.GetFileName(filename);
+                    sessionAssets.BlocksTextureData = data;
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Warning($"[ScMP] Skipped embedded network asset \"{filename}\": {ex.Message}");
+            }
+        }
+
+        private static byte[] ExtractZipEntryBytes(Game.ZipArchive zipArchive,
+            Game.ZipArchiveEntry entry, int maximumBytes)
+        {
+            using var memory = new MemoryStream();
+            zipArchive.ExtractFile(entry, memory);
+            if (memory.Length > maximumBytes)
+                throw new InvalidOperationException($"Asset is larger than {maximumBytes} bytes.");
+            return memory.ToArray();
+        }
+
+        // Source: Survivalcraft/Game/BlocksTexturesManager.cs:BlocksTexturesManager.ValidateBlocksTexture
+        private static Image ValidateBlocksTextureAssetData(byte[] data)
+        {
+            if (data == null || data.Length == 0 ||
+                data.Length > MaximumBlocksTextureAssetBytes)
+                throw new InvalidOperationException("Invalid blocks texture size.");
+            Image image = Image.Load(new MemoryStream(data));
+            if (image.Width > 1024 || image.Height > 1024)
+                throw new InvalidOperationException(
+                    $"Blocks texture is larger than 1024x1024 pixels (size={image.Width}x{image.Height}).");
+            if (!MathUtils.IsPowerOf2(image.Width) || !MathUtils.IsPowerOf2(image.Height))
+                throw new InvalidOperationException(
+                    $"Blocks texture does not have power-of-two size (size={image.Width}x{image.Height}).");
+            return image;
+        }
+
+        private static bool TestNetworkWorldProjectXml(string directoryName)
+        {
+            try
+            {
+                string fileName = Storage.CombinePaths(directoryName, "Project.xml");
+                if (!Storage.FileExists(fileName)) return false;
+                using Stream stream = Storage.OpenFile(fileName, OpenFileMode.Read);
+                XElement element = XElement.Load(stream);
+                return element.Name == "Project";
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        // Source: Survivalcraft/Game/SubsystemBlocksTexture.cs:SubsystemBlocksTexture.LoadBlocksTexture
+        // Source: Survivalcraft/Game/SubsystemAnimatedTextures.cs:SubsystemAnimatedTextures.Update
+        private void ApplyNetworkWorldTexture(Project project)
+        {
+            NetworkWorldSessionAssets assets = m_networkWorldSessionAssets;
+            if (IsHost || project == null || assets == null ||
+                assets.BlocksTextureData == null || assets.BlocksTextureData.Length == 0 ||
+                assets.BlocksTextureLoadFailed)
+                return;
+            SubsystemGameInfo gameInfo = project.FindSubsystem<SubsystemGameInfo>(false);
+            string expectedName = gameInfo?.WorldSettings.BlocksTextureName ?? string.Empty;
+            if (BlocksTexturesManager.IsBuiltIn(expectedName) ||
+                (!string.IsNullOrEmpty(assets.BlocksTextureName) &&
+                !string.Equals(assets.BlocksTextureName, expectedName,
+                    StringComparison.OrdinalIgnoreCase)))
+                return;
+            if (assets.BlocksTexture == null)
+            {
+                try
+                {
+                    Image image = ValidateBlocksTextureAssetData(assets.BlocksTextureData);
+                    assets.BlocksTexture = Texture2D.Load(image);
+                    assets.BlocksTexture.Tag = image;
+                }
+                catch (Exception ex)
+                {
+                    assets.BlocksTextureLoadFailed = true;
+                    Log.Warning($"[ScMP] Could not create session blocks texture \"{expectedName}\": {ex.Message}");
+                    return;
+                }
+            }
+            SubsystemBlocksTexture subsystemBlocksTexture =
+                project.FindSubsystem<SubsystemBlocksTexture>(false);
+            if (subsystemBlocksTexture == null) return;
+            Texture2D currentTexture = subsystemBlocksTexture.BlocksTexture;
+            if (ReferenceEquals(currentTexture, assets.BlocksTexture))
+            {
+                assets.AppliedProject = project;
+                return;
+            }
+            if (currentTexture != null && !ContentManager.IsContent(currentTexture))
+                currentTexture.Dispose();
+            ModManager.ModParentField.ModifyParentField(subsystemBlocksTexture,
+                "<BlocksTexture>k__BackingField", assets.BlocksTexture,
+                typeof(SubsystemBlocksTexture));
+            ResetAnimatedBlocksTexture(project);
+            assets.AppliedProject = project;
+        }
+
+        private static void ResetAnimatedBlocksTexture(Project project)
+        {
+            SubsystemAnimatedTextures animatedTextures =
+                project?.FindSubsystem<SubsystemAnimatedTextures>(false);
+            if (animatedTextures == null) return;
+            RenderTarget2D renderTarget = ModManager.ModParentField
+                .GetParentField<RenderTarget2D>(animatedTextures,
+                    "m_animatedBlocksTexture", typeof(SubsystemAnimatedTextures));
+            if (renderTarget != null) renderTarget.Dispose();
+            ModManager.ModParentField.ModifyParentField(animatedTextures,
+                "m_animatedBlocksTexture", null, typeof(SubsystemAnimatedTextures));
+        }
+
+        private void ClearSessionAssets()
+        {
+            m_sessionSkinAssets.Clear();
+            m_playerSkinHashes.Clear();
+            m_requestedSkinAssetKeys.Clear();
+            m_incomingSkinAssetTransfers.Clear();
+            m_sentLocalSkinAssetHashes.Clear();
+            ClearNetworkWorldSessionAssets(m_networkWorldSessionAssets);
+            m_networkWorldSessionAssets = null;
+            m_lastLocalProfileSignature = null;
+        }
+
+        private static void ClearNetworkWorldSessionAssets(
+            NetworkWorldSessionAssets assets)
+        {
+            if (assets?.BlocksTexture != null && assets.AppliedProject == null &&
+                !ContentManager.IsContent(assets.BlocksTexture))
+                assets.BlocksTexture.Dispose();
         }
 
         // ====================================================================
@@ -12161,7 +13450,7 @@ namespace ScMultiplayer
                     HideJoinRoomBusyDialog();
                     DialogsManager.ShowDialog(null, new MessageDialog(
                         "Join Room",
-                        obj.Reason + "\rInstall the same ScMultiplayer package on all devices.",
+                        obj.Reason + "\r\nInstall the same ScMultiplayer package on all devices.",
                         "OK", null, null));
                 });
                 return;
@@ -12450,14 +13739,18 @@ namespace ScMultiplayer
             lock (m_terrainJournalLock)
             {
                 m_hostTerrainJournal.Clear();
+                m_hostTerrainChunkRevisions.Clear();
                 m_terrainCheckpoint.Clear();
+                m_terrainCheckpointByChunk.Clear();
                 m_pendingTerrainChanges.Clear();
-                m_terrainRepairRepeats.Clear();
                 m_pendingFluidSettlements.Clear();
                 m_hostTerrainSequence = 0;
             }
             m_hostTerrainRecoveryTargets.Clear();
             m_pendingTerrainSequenceBaseline = 0;
+            DetachClientTerrainChunkSyncUpdater();
+            ResetClientTerrainChunkSyncState();
+            m_hostTerrainPlaceFallbacks.Clear();
             m_clientTerrainRecoveryActive = false;
             m_clientTerrainRecoveryPending = false;
             m_clientTerrainRecoveryRequestInFlight = false;
@@ -12524,7 +13817,6 @@ namespace ScMultiplayer
             m_syncPulseAccumulator = 0f;
             m_lastSyncUpdateTime = 0.0;
             m_syncPulseIndex = 0;
-            m_playerProfileSyncTime = 0f;
             m_inventoryKeyframeTime = 0f;
             m_playerRecordSaveTime = 0f;
             m_localPlayerInput = default;
@@ -12549,9 +13841,11 @@ namespace ScMultiplayer
             m_clientWorldObjectsProject = null;
             m_remoteWeatherState = null;
             m_lastRemoteWorldInfoTick = -1;
+            m_remoteTerrainHeadSequence = 0;
             m_remoteFogPresentationInitialized = false;
             m_remoteLightningActive = false;
             m_hostLightningActive = false;
+            ClearSessionAssets();
             m_pendingWorldControlRequests.Clear();
             m_queuedWorldControlRequests.Clear();
             m_bufferedWorldControlResults.Clear();
@@ -12561,6 +13855,9 @@ namespace ScMultiplayer
             m_worldControlQueueNoticeShown = false;
             m_reliableRetryLimitBaseline = 0L;
             m_reliableStallReconnectIssued = false;
+            m_hostReliableRetryLimitBaselines.Clear();
+            m_hostReliableStallDisconnectIssued.Clear();
+            m_nextHostReliableHealthTime = 0.0;
             m_pendingLocalPlayerRecord = null;
             m_localReplacementPlayerData = null;
             m_localPlayerRecordQueued = false;
@@ -12696,7 +13993,7 @@ namespace ScMultiplayer
                     Storage.DeleteFile(DownloadedWorldsRegistryPath);
                 return;
             }
-            Storage.WriteAllText(DownloadedWorldsRegistryPath, string.Join("\r", directories));
+            Storage.WriteAllText(DownloadedWorldsRegistryPath, string.Join("\r\n", directories));
         }
 
         private static void RegisterDownloadedWorld(string directoryName)
@@ -13171,7 +14468,12 @@ namespace ScMultiplayer
 
         public void CaptureLocalPlayerInput(ComponentPlayer player, PlayerInput playerInput)
         {
-            if (IsHost || client?.IsConnected != true || player == null ||
+            if (IsHost)
+            {
+                TrackHostTerrainPlaceIntent(player, playerInput.Interact);
+                return;
+            }
+            if (client?.IsConnected != true || player == null ||
                 m_networkPlayerData.Values.Contains(player.PlayerData))
                 return;
             // Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update
@@ -13302,8 +14604,17 @@ namespace ScMultiplayer
                 else
                 {
                     m_localAimRay = aim;
-                    m_localAimItemValue = itemValue;
-                    m_localAimItemCount = inventory.GetSlotCount(activeSlot);
+                    // Source: Survivalcraft/Game/SubsystemMusketBlockBehavior.cs:OnAim
+                    // A musket cocks its hammer during AimState.InProgress. Keep that updated
+                    // data bit in the release snapshot; only preserve the previous value when
+                    // native prediction has already consumed the item on the release frame.
+                    if (itemValue != 0 && activeSlot == m_localAimSlot &&
+                        Terrain.ExtractContents(itemValue) ==
+                        Terrain.ExtractContents(m_localAimItemValue))
+                    {
+                        m_localAimItemValue = itemValue;
+                        m_localAimItemCount = Math.Max(inventory.GetSlotCount(activeSlot), 1);
+                    }
                     if (now - m_lastAimUpdateSentTime >= SyncPulseDuration)
                     {
                         m_lastAimUpdateSentTime = now;
@@ -13314,13 +14625,29 @@ namespace ScMultiplayer
             }
 
             if (!m_localAimActive) return;
-            bool sameItem = isAimable && activeSlot == m_localAimSlot &&
-                Terrain.ExtractContents(itemValue) == Terrain.ExtractContents(m_localAimItemValue);
-            if (sameItem)
+            // Source: Survivalcraft/Game/SubsystemThrowableBlockBehavior.cs:
+            // SubsystemThrowableBlockBehavior.OnAim
+            // Client prediction can consume a throwable before this release edge is captured.
+            // Keep the held pre-throw value for the authoritative Release when the same slot is
+            // now empty; changing to a different non-empty item remains a Cancel.
+            bool sameSlot = activeSlot == m_localAimSlot;
+            bool sameItem = sameSlot &&
+                ((isAimable &&
+                    Terrain.ExtractContents(itemValue) ==
+                    Terrain.ExtractContents(m_localAimItemValue)) ||
+                    itemValue == 0);
+            if (sameSlot && itemValue != 0 &&
+                Terrain.ExtractContents(itemValue) ==
+                Terrain.ExtractContents(m_localAimItemValue))
             {
                 m_localAimItemValue = itemValue;
-                m_localAimItemCount = inventory.GetSlotCount(activeSlot);
+                m_localAimItemCount = Math.Max(inventory.GetSlotCount(activeSlot), 1);
             }
+            // Source: Survivalcraft/Game/SubsystemMusketBlockBehavior.cs:
+            // SubsystemMusketBlockBehavior.OnAim
+            // Keep the item value/count captured at Start. Native prediction may already have
+            // consumed the loaded shot by this release edge; the host must receive the
+            // pre-action loaded value to execute the authoritative Completed transition.
             SendLocalAimEvent(player,
                 sameItem ? PlayerAimAction.Release : PlayerAimAction.Cancel, m_localAimRay);
             m_localAimActive = false;
@@ -13734,7 +15061,7 @@ namespace ScMultiplayer
             ComponentPlayer player = playerData.ComponentPlayer;
             IInventory inventory = player.ComponentMiner?.Inventory;
             if (inventory == null || message.ActiveSlotIndex < 0 ||
-                message.ActiveSlotIndex >= inventory.VisibleSlotsCount ||
+                message.ActiveSlotIndex >= inventory.SlotsCount ||
                 message.ItemCount <= 0 ||
                 !BlocksManager.Blocks[Terrain.ExtractContents(message.ItemValue)].IsAimable)
                 return;
@@ -13797,20 +15124,71 @@ namespace ScMultiplayer
                     CompleteHostAimLifecycle(player, state, message.Sequence,
                         updateLastActionTime: false);
                 }
+                else if (state.ActiveAimSequence == message.Sequence &&
+                    inventory.ActiveSlotIndex == state.ActiveAimSlotIndex &&
+                    inventory.GetSlotCount(state.ActiveAimSlotIndex) > 0 &&
+                    Terrain.ExtractContents(inventory.GetSlotValue(
+                        state.ActiveAimSlotIndex)) ==
+                    Terrain.ExtractContents(state.ActiveAimItemValue))
+                {
+                    // Source: Survivalcraft/Game/SubsystemMusketBlockBehavior.cs:OnAim
+                    // The host-side native InProgress call may cock a musket hammer. Retain the
+                    // resulting authoritative value for the later Completed edge.
+                    state.ActiveAimItemValue = inventory.GetSlotValue(state.ActiveAimSlotIndex);
+                    state.ActiveAimItemCount = inventory.GetSlotCount(
+                        state.ActiveAimSlotIndex);
+                }
                 return;
             }
 
-            if (state.ActiveAimSequence != message.Sequence || !state.HeldAim.HasValue ||
-                message.ActiveSlotIndex != state.ActiveAimSlotIndex ||
-                Terrain.ExtractContents(message.ItemValue) !=
-                    Terrain.ExtractContents(state.ActiveAimItemValue))
-                return;
-            ApplyAimReservation(inventory, new PlayerAimMessage(message.Sequence,
+            bool matchesActiveAim = state.ActiveAimSequence == message.Sequence &&
+                message.ActiveSlotIndex == state.ActiveAimSlotIndex &&
+                Terrain.ExtractContents(message.ItemValue) ==
+                    Terrain.ExtractContents(state.ActiveAimItemValue);
+            if (!matchesActiveAim)
+            {
+                // Source: Survivalcraft/Game/SubsystemThrowableBlockBehavior.cs:
+                // SubsystemThrowableBlockBehavior.OnAim
+                // A reliable Release carries the reserved pre-action item. If a Start was lost
+                // while the game thread was busy, execute this one completed edge rather than
+                // losing eggs, arrows or bullets entirely.
+                if (message.Action != PlayerAimAction.Release)
+                    return;
+                state.ActiveAimSequence = message.Sequence;
+                state.ActiveAimSlotIndex = message.ActiveSlotIndex;
+                state.ActiveAimItemValue = message.ItemValue;
+                state.ActiveAimItemCount = message.ItemCount;
+                state.HeldAim = message.Aim;
+            }
+            int authoritativeItemValue = state.ActiveAimItemValue;
+            int authoritativeItemCount = state.ActiveAimItemCount;
+            if (message.Action == PlayerAimAction.Release &&
+                message.ActiveSlotIndex == state.ActiveAimSlotIndex &&
+                Terrain.ExtractContents(message.ItemValue) ==
+                Terrain.ExtractContents(authoritativeItemValue) &&
+                IsCockedMusketValue(message.ItemValue) &&
+                !IsCockedMusketValue(authoritativeItemValue))
+            {
+                // Source: Survivalcraft/Game/SubsystemMusketBlockBehavior.cs:OnAim
+                // If the final reliable release carries a newer cocked value than the host's
+                // last InProgress sample, prefer it so Completed can create the shot.
+                authoritativeItemValue = message.ItemValue;
+                authoritativeItemCount = Math.Max(message.ItemCount, 1);
+                state.ActiveAimItemValue = authoritativeItemValue;
+                state.ActiveAimItemCount = authoritativeItemCount;
+            }
+            PlayerAimMessage authoritativeMessage = new PlayerAimMessage(message.Sequence,
                 message.Action, message.Aim, state.ActiveAimSlotIndex,
-                state.ActiveAimItemValue, state.ActiveAimItemCount,
-                message.BodyPosition, message.BodyRotation));
+                authoritativeItemValue, authoritativeItemCount,
+                message.BodyPosition, message.BodyRotation,
+                message.BodyVelocity, message.ClientTick);
+            ApplyAimReservation(inventory, authoritativeMessage);
             if (message.Action == PlayerAimAction.Release)
-                ExecuteHostAimRelease(player, message);
+            {
+                ExecuteHostAimRelease(player, authoritativeMessage);
+                MarkHostInventoryAuthoritative(sourceClientId);
+                m_forceHostInventorySync = true;
+            }
             else
                 player.ComponentMiner.Aim(message.Aim, AimState.Cancelled);
             CompleteHostAimLifecycle(player, state, message.Sequence,
@@ -13826,11 +15204,13 @@ namespace ScMultiplayer
             HashSet<Projectile> existingProjectiles = projectiles != null
                 ? new HashSet<Projectile>(projectiles.Projectiles)
                 : null;
+            bool broadcastMusketFire = TryGetMusketFireEffect(player, message,
+                out Vector3 musketMuzzlePosition, out Vector3 musketDirection);
             ComponentBody body = player.ComponentBody;
             Vector3 previousVelocity = body.Velocity;
             bool useReleaseVelocity = IsFinite(message.BodyVelocity) &&
                 message.BodyVelocity.LengthSquared() <=
-                    MaximumProjectileReleaseVelocity * MaximumProjectileReleaseVelocity;
+                MaximumProjectileReleaseVelocity * MaximumProjectileReleaseVelocity;
             if (useReleaseVelocity)
                 body.Velocity = message.BodyVelocity;
             try
@@ -13843,19 +15223,66 @@ namespace ScMultiplayer
                     body.Velocity = previousVelocity;
             }
 
-            if (projectiles == null || existingProjectiles == null ||
-                message.ClientTick <= 0) return;
-            int delaySteps = unchecked(client.Step - message.ClientTick);
-            delaySteps = MathUtils.Clamp(delaySteps, 0,
-                MaximumProjectileReleaseCompensationSteps);
-            if (delaySteps <= 0) return;
+            if (broadcastMusketFire)
+            {
+                NetworkMessageSender.SendScheduledMessage(-1, new PlayerActionMessage(
+                    PlayerActionType.MusketFire,
+                    GetProjectileOwnerClientIdForPlayer(player), message.Sequence, default)
+                {
+                    Position = musketMuzzlePosition,
+                    Velocity = musketDirection
+                }, sequenced: true, batchable: false);
+            }
+
+            if (projectiles == null || existingProjectiles == null) return;
+            int delaySteps = message.ClientTick > 0
+                ? MathUtils.Clamp(unchecked(client.Step - message.ClientTick), 0,
+                    MaximumProjectileReleaseCompensationSteps)
+                : 0;
             ComponentCreature owner = player.ComponentMiner.ComponentCreature;
             foreach (Projectile projectile in projectiles.Projectiles)
             {
                 if (projectile == null || existingProjectiles.Contains(projectile) ||
                     !ReferenceEquals(projectile.Owner, owner)) continue;
-                m_hostProjectileReleaseCompensationSteps[projectile] = delaySteps;
+                if (delaySteps > 0)
+                    m_hostProjectileReleaseCompensationSteps[projectile] = delaySteps;
+                BroadcastNewHostProjectile(projectile);
             }
+        }
+
+        // Source: Survivalcraft/Game/SubsystemMusketBlockBehavior.cs:
+        // SubsystemMusketBlockBehavior.OnAim
+        private static bool TryGetMusketFireEffect(ComponentPlayer player,
+            PlayerAimMessage message, out Vector3 muzzlePosition, out Vector3 direction)
+        {
+            muzzlePosition = Vector3.Zero;
+            direction = Vector3.Zero;
+            if (player?.ComponentMiner == null || player.ComponentCreatureModel == null ||
+                player.ComponentBody == null || message == null ||
+                BlocksManager.Blocks[Terrain.ExtractContents(message.ItemValue)] is not MusketBlock)
+                return false;
+            int data = Terrain.ExtractData(message.ItemValue);
+            MusketBlock.LoadState loadState = MusketBlock.GetLoadState(data);
+            if (!MusketBlock.GetHammerState(data) ||
+                loadState == MusketBlock.LoadState.Empty ||
+                player.ComponentBody.ImmersionFactor > 0.4f ||
+                message.Aim.Direction.LengthSquared() <= 0.0001f)
+                return false;
+            muzzlePosition = player.ComponentCreatureModel.EyePosition +
+                player.ComponentBody.Matrix.Right * 0.3f -
+                player.ComponentBody.Matrix.Up * 0.2f;
+            direction = Vector3.Normalize(message.Aim.Direction);
+            return true;
+        }
+
+        private int GetProjectileOwnerClientIdForPlayer(ComponentPlayer player)
+        {
+            foreach (KeyValuePair<int, PlayerData> item in m_networkPlayerData)
+            {
+                if (ReferenceEquals(item.Value?.ComponentPlayer, player))
+                    return item.Key;
+            }
+            return 0;
         }
 
         // Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update
@@ -13883,6 +15310,14 @@ namespace ScMultiplayer
             inventory.ActiveSlotIndex = message.ActiveSlotIndex;
             inventory.RemoveSlotItems(message.ActiveSlotIndex, int.MaxValue);
             inventory.AddSlotItems(message.ActiveSlotIndex, message.ItemValue, message.ItemCount);
+        }
+
+        // Source: Survivalcraft/Game/SubsystemMusketBlockBehavior.cs:OnAim
+        private static bool IsCockedMusketValue(int value)
+        {
+            if (value == 0) return false;
+            return BlocksManager.Blocks[Terrain.ExtractContents(value)] is MusketBlock &&
+                MusketBlock.GetHammerState(Terrain.ExtractData(value));
         }
 
         // Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update
@@ -13931,6 +15366,25 @@ namespace ScMultiplayer
                     m_departedRemoteClientIds.Add(sourceClientId);
                 RemoveNetworkPlayer(sourceClientId);
                 playerMappingManager.ReleasePlayerIndex(sourceClientId);
+                return;
+            }
+            if (!IsHost && message.Action == PlayerActionType.MusketFire)
+            {
+                if (sourceClientId != 0 || message.PlayerIndex == client.ClientID ||
+                    !IsFinite(message.Position) || !IsFinite(message.Velocity) ||
+                    message.Velocity.LengthSquared() <= 0.0001f)
+                    return;
+                // Source: Survivalcraft/Game/SubsystemMusketBlockBehavior.cs:
+                // SubsystemMusketBlockBehavior.OnAim
+                SubsystemTerrain terrain = GameManager.Project?
+                    .FindSubsystem<SubsystemTerrain>(false);
+                GameManager.Project?.FindSubsystem<SubsystemAudio>(false)?.PlaySound(
+                    "Audio/MusketFire", 1f, m_audioEventRandom.Float(-0.1f, 0.1f),
+                    message.Position, 10f, autoDelay: true);
+                GameManager.Project?.FindSubsystem<SubsystemParticles>(false)?
+                    .AddParticleSystem(new GunSmokeParticleSystem(terrain,
+                        message.Position + 0.3f * Vector3.Normalize(message.Velocity),
+                        Vector3.Normalize(message.Velocity)));
                 return;
             }
             if (!IsHost && message.Action == PlayerActionType.Whistle)

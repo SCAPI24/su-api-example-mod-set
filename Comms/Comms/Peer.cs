@@ -745,6 +745,9 @@ namespace Comms
                 }
                 InternalSend(peerData.Address, DeliveryMode.ReliableSequenced, new DisconnectedMessage());
                 PeersByAddress.Remove(peerData.Address);
+                // Source: Comms/Comms/Peer.cs:Peer.DisconnectPeer
+                // Peer removal must also remove Comm's reliable resend state immediately.
+                Comm.RemoveConnection(peerData.Address);
                 if (Settings.SendPeerConnectDisconnectNotifications)
                 {
                     foreach (PeerData value in PeersByAddress.Values)

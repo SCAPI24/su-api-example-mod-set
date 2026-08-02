@@ -13,6 +13,7 @@ namespace ScMultiplayer
         public List<int> CellValues;
         public int Tick;
         public long Sequence;
+        public long HeadSequence;
         public bool IsCatchUp;
         public int TargetClientId = -1;
 
@@ -63,6 +64,9 @@ namespace ScMultiplayer
                 ModifiedCells[point] = reader.ReadBoolean();
                 CellValues.Add(reader.ReadInt32());
             }
+            HeadSequence = reader.Position + 8 <= reader.Length
+                ? reader.ReadInt64()
+                : 0L;
         }
 
         protected override void Write(SuWriter writer)
@@ -82,6 +86,8 @@ namespace ScMultiplayer
                 writer.WriteInt32(CellValues != null && index < CellValues.Count ? CellValues[index] : 0);
                 index++;
             }
+            if (HeadSequence > 0)
+                writer.WriteInt64(HeadSequence);
         }
     }
 }
