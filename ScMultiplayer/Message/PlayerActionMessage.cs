@@ -15,7 +15,9 @@ namespace ScMultiplayer
         Whistle,
         InteractResult,
         // Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update
-        JumpRequest
+        JumpRequest,
+        // Source: Survivalcraft/Game/SubsystemMusketBlockBehavior.cs:SubsystemMusketBlockBehavior.OnAim
+        MusketFire
     }
 
     [Serializable]
@@ -99,9 +101,11 @@ namespace ScMultiplayer
                 ServerTick = reader.ReadInt32();
             if (Action == PlayerActionType.RespawnRequest ||
                 Action == PlayerActionType.DropRequest ||
-                Action == PlayerActionType.Whistle)
+                Action == PlayerActionType.Whistle ||
+                Action == PlayerActionType.MusketFire)
                 Position = reader.ReadVector3(reader);
-            if (Action == PlayerActionType.DropRequest)
+            if (Action == PlayerActionType.DropRequest ||
+                Action == PlayerActionType.MusketFire)
                 Velocity = reader.ReadVector3(reader);
         }
 
@@ -147,9 +151,11 @@ namespace ScMultiplayer
                 writer.WriteInt32(ServerTick);
             if (Action == PlayerActionType.RespawnRequest ||
                 Action == PlayerActionType.DropRequest ||
-                Action == PlayerActionType.Whistle)
+                Action == PlayerActionType.Whistle ||
+                Action == PlayerActionType.MusketFire)
                 writer.WriteVector3(writer, Position);
-            if (Action == PlayerActionType.DropRequest)
+            if (Action == PlayerActionType.DropRequest ||
+                Action == PlayerActionType.MusketFire)
                 writer.WriteVector3(writer, Velocity);
         }
     }

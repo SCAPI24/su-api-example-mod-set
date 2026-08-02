@@ -20,6 +20,7 @@ namespace ScMultiplayer
         public bool HasPlayerProfile;
         public PlayerClass PlayerClass;
         public string CharacterSkinName = string.Empty;
+        public byte[] CharacterSkinSha256 = Array.Empty<byte>();
         public string MultiplayerModVersion = Message.ModVersion;
         public int MultiplayerProtocolVersion = Message.ProtocolVersion;
         public string MultiplayerProtocolHash = Message.ProtocolHash;
@@ -78,6 +79,9 @@ namespace ScMultiplayer
             MultiplayerBuildFingerprint = reader.Position < reader.Length
                 ? reader.ReadString()
                 : string.Empty;
+            CharacterSkinSha256 = reader.Position < reader.Length
+                ? reader.ReadBytes()
+                : Array.Empty<byte>();
         }
 
         protected override void Write(SuWriter writer)
@@ -98,6 +102,7 @@ namespace ScMultiplayer
             writer.WritePackedInt32(MultiplayerProtocolVersion);
             writer.WriteString(MultiplayerProtocolHash ?? string.Empty);
             writer.WriteString(MultiplayerBuildFingerprint ?? string.Empty);
+            writer.WriteBytes(CharacterSkinSha256 ?? Array.Empty<byte>());
         }
     }
 }

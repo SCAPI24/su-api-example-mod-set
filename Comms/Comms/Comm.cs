@@ -394,6 +394,19 @@ public class Comm
         }
     }
 
+    // Source: Comms/Comms/Comm.cs:Comm.ProcessConnections
+    // A Peer can be removed before Comm reaches its normal idle timeout. Drop the transport
+    // state at disconnect time so unacknowledged reliable packets cannot keep retransmitting.
+    public void RemoveConnection(IPEndPoint address)
+    {
+        lock (Lock)
+        {
+            CheckNotDisposedAndStarted();
+            if (address != null)
+                Connections.Remove(address);
+        }
+    }
+
     // Source: Comm.ProcessConnections
     public long GetReliableRetryLimitCount(IPEndPoint address)
     {
@@ -672,13 +685,19 @@ public class Comm
             foreach (KeyValuePair<uint, UnackedPacket> unackedPacket in value.UnackedPackets)
             {
                 float num = GetResendPeriod(value, unackedPacket.Value.SendCount);
-                if (unackedPacket.Value.SendCount - 1 >= Settings.MaxResends &&
-                    !unackedPacket.Value.RetryLimitRecorded)
+                bool retryLimitReached = unackedPacket.Value.SendCount - 1 >=
+                    Settings.MaxResends;
+                if (retryLimitReached && !unackedPacket.Value.RetryLimitRecorded)
                 {
                     unackedPacket.Value.RetryLimitRecorded = true;
                     value.ReliableRetryLimitCount++;
                 }
-                if (time >= unackedPacket.Value.LastSendTime + (double)num)
+                // Source: Comm.ProcessConnections
+                // A packet that already exhausted its retry budget must stay visible to the
+                // transport-health watchdog, but must not be retransmitted forever. Otherwise one
+                // lost ACK creates a permanent resend storm and an ever-growing network rate.
+                if (!retryLimitReached &&
+                    time >= unackedPacket.Value.LastSendTime + (double)num)
                 {
                     SendPacket(unackedPacket.Value.Packet, value);
                     unackedPacket.Value.LastSendTime = time;

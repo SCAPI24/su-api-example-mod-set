@@ -11,6 +11,7 @@ namespace ScMultiplayer
     public class SuSubsystemTerrain : SubsystemTerrain, IUpdateable
     {
         private const int MaximumNetworkTerrainCellsPerFrame = 128;
+        private const int MaximumDeferredNetworkTerrainCells = 8192;
 
         private static readonly ConcurrentDictionary<long, GameModifiedCellsMessage>
             m_receivedSequencedBatches =
@@ -20,9 +21,22 @@ namespace ScMultiplayer
         private static readonly ConcurrentQueue<GameModifiedCellsMessage>
             m_receivedPriorityRepairs = new ConcurrentQueue<GameModifiedCellsMessage>();
         private static int m_networkStateGeneration;
+        private static volatile bool m_sequenceBatchInProgress;
         private readonly Dictionary<Point3, int> m_networkReceivedCellValues =
             new Dictionary<Point3, int>();
         private readonly Dictionary<Point3, int> m_appliedCellTicks = new Dictionary<Point3, int>();
+        private readonly Dictionary<Point3, long> m_appliedCellSequences =
+            new Dictionary<Point3, long>();
+        private sealed class DeferredNetworkCell
+        {
+            public bool IsModified;
+            public int CellValue;
+            public int Tick;
+            public long Sequence;
+        }
+
+        private readonly Dictionary<Point3, DeferredNetworkCell> m_deferredNetworkCells =
+            new Dictionary<Point3, DeferredNetworkCell>();
         private readonly HashSet<Point3> m_clientCircuitBaselineCells =
             new HashSet<Point3>();
         private readonly HashSet<Point3> m_clientCircuitGeneratedCells =
@@ -110,6 +124,12 @@ namespace ScMultiplayer
             long next = LastAppliedTerrainSequence + 1;
             return !m_receivedSequencedBatches.ContainsKey(next) &&
                 m_receivedSequencedBatches.Keys.Any(sequence => sequence > next);
+        }
+
+        public static bool HasPendingSequenceWork()
+        {
+            return m_sequenceBatchInProgress ||
+                m_receivedSequencedBatches.ContainsKey(LastAppliedTerrainSequence + 1);
         }
 
         public static void ResetNetworkState()
@@ -220,9 +240,12 @@ namespace ScMultiplayer
             {
                 ClearActiveNetworkBatch();
                 m_appliedCellTicks.Clear();
+                m_appliedCellSequences.Clear();
+                m_deferredNetworkCells.Clear();
                 m_observedNetworkStateGeneration = generation;
             }
 
+            ApplyDeferredNetworkCells();
             ApplyPriorityNetworkBatches();
 
             // Source: Mod/ScMultiplayer/Func/Subsystem/SuSubsystemTerrain.cs:
@@ -247,15 +270,13 @@ namespace ScMultiplayer
                     {
                         continue;
                     }
-                    if (!m_appliedCellTicks.TryGetValue(item.Key, out int appliedTick) ||
-                        m_activeNetworkBatch.Tick >= appliedTick)
+                    int networkValue = m_activeNetworkBatch.CellValues[valueIndex];
+                    if (!TryApplyNetworkCell(item.Key, networkValue,
+                        m_activeNetworkBatch.Tick, m_activeNetworkBatch.Sequence))
                     {
-                        m_appliedCellTicks[item.Key] = m_activeNetworkBatch.Tick;
-                        int networkValue = m_activeNetworkBatch.CellValues[valueIndex];
-                        m_networkReceivedCellValues[item.Key] = networkValue;
-                        ChangeCell(item.Key.X, item.Key.Y, item.Key.Z,
-                            networkValue, true);
-                        ForceNetworkCellGeometry(item.Key);
+                        DeferNetworkCell(item.Key, item.Value,
+                            networkValue, m_activeNetworkBatch.Tick,
+                            m_activeNetworkBatch.Sequence);
                     }
                 }
 
@@ -296,17 +317,84 @@ namespace ScMultiplayer
                     if (message.CellValues == null || i >= message.CellValues.Count)
                         continue;
                     Point3 point = cells[i].Key;
-                    if (m_appliedCellTicks.TryGetValue(point, out int appliedTick) &&
-                        message.Tick < appliedTick)
-                        continue;
-                    m_appliedCellTicks[point] = message.Tick;
                     int networkValue = message.CellValues[i];
-                    m_networkReceivedCellValues[point] = networkValue;
-                    ChangeCell(point.X, point.Y, point.Z, networkValue, true);
-                    ForceNetworkCellGeometry(point);
+                    if (!TryApplyNetworkCell(point, networkValue, message.Tick,
+                        message.Sequence))
+                    {
+                        DeferNetworkCell(point, cells[i].Value, networkValue,
+                            message.Tick, message.Sequence);
+                    }
                 }
                 LastAppliedTerrainTick = Math.Max(LastAppliedTerrainTick, message.Tick);
             }
+        }
+
+        private void ApplyDeferredNetworkCells()
+        {
+            if (m_deferredNetworkCells.Count == 0) return;
+            foreach (KeyValuePair<Point3, DeferredNetworkCell> item in
+                m_deferredNetworkCells.ToArray())
+            {
+                DeferredNetworkCell deferred = item.Value;
+                if (!TryApplyNetworkCell(item.Key, deferred.CellValue, deferred.Tick,
+                    deferred.Sequence))
+                    continue;
+                m_deferredNetworkCells.Remove(item.Key);
+            }
+        }
+
+        private bool TryApplyNetworkCell(Point3 point, int networkValue, int tick,
+            long sequence)
+        {
+            // Terrain.SetCellValueFast silently ignores an unloaded chunk. Do not mark the
+            // network cell as applied until its chunk exists, otherwise a later chunk load
+            // restores the stale snapshot permanently.
+            if (Terrain.GetChunkAtCell(point.X, point.Z) == null)
+            {
+                return false;
+            }
+            if (sequence > 0 && m_appliedCellSequences.TryGetValue(point,
+                    out long appliedSequence) && sequence <= appliedSequence)
+            {
+                return true;
+            }
+            if (m_appliedCellTicks.TryGetValue(point, out int appliedTick) &&
+                tick < appliedTick)
+            {
+                return true;
+            }
+            if (sequence > 0)
+                m_appliedCellSequences[point] = sequence;
+            m_appliedCellTicks[point] = tick;
+            m_networkReceivedCellValues[point] = networkValue;
+            ChangeCell(point.X, point.Y, point.Z, networkValue, true);
+            ForceNetworkCellGeometry(point);
+            LastAppliedTerrainTick = Math.Max(LastAppliedTerrainTick, tick);
+            return true;
+        }
+
+        private void DeferNetworkCell(Point3 point, bool isModified, int cellValue,
+            int tick, long sequence)
+        {
+            if (m_deferredNetworkCells.TryGetValue(point,
+                out DeferredNetworkCell existing) &&
+                (sequence < existing.Sequence ||
+                sequence == existing.Sequence && tick < existing.Tick))
+                return;
+            m_deferredNetworkCells[point] = new DeferredNetworkCell
+            {
+                IsModified = isModified,
+                CellValue = cellValue,
+                Tick = tick,
+                Sequence = sequence
+            };
+            if (m_deferredNetworkCells.Count <= MaximumDeferredNetworkTerrainCells)
+                return;
+            Point3 oldest = m_deferredNetworkCells
+                .OrderBy(item => item.Value.Sequence)
+                .ThenBy(item => item.Value.Tick)
+                .First().Key;
+            m_deferredNetworkCells.Remove(oldest);
         }
 
         // Source: Survivalcraft/Game/TerrainUpdater.cs:
@@ -358,6 +446,7 @@ namespace ScMultiplayer
                 Array.Empty<KeyValuePair<Point3, bool>>();
             m_activeNetworkCellIndex = 0;
             m_activeNetworkBatchIsSequenced = isSequenced;
+            if (isSequenced) m_sequenceBatchInProgress = true;
         }
 
         private void CompleteActiveNetworkBatch()
@@ -369,6 +458,12 @@ namespace ScMultiplayer
                 m_receivedSequencedBatches.TryRemove(message.Sequence, out _);
                 LastAppliedTerrainSequence = message.Sequence;
             }
+            else if (message.IsCatchUp && message.HeadSequence > LastAppliedTerrainSequence)
+            {
+                // Join catch-up is a coalesced snapshot, not a replayable event stream. Advance the
+                // custom sequence baseline only after its batch has been applied.
+                LastAppliedTerrainSequence = message.HeadSequence;
+            }
             ClearActiveNetworkBatch();
         }
 
@@ -378,6 +473,7 @@ namespace ScMultiplayer
             m_activeNetworkCells = Array.Empty<KeyValuePair<Point3, bool>>();
             m_activeNetworkCellIndex = 0;
             m_activeNetworkBatchIsSequenced = false;
+            m_sequenceBatchInProgress = false;
         }
     }
 }

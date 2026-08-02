@@ -58,6 +58,7 @@
     <SkipType name="ScMultiplayer.CircuitSyncMessage" />
     <SkipType name="ScMultiplayer.TerrainDigRequestMessage" />
     <SkipType name="ScMultiplayer.TerrainDigResultMessage" />
+    <SkipType name="ScMultiplayer.TerrainChunkSyncMessage" />
     <SkipType name="ScMultiplayer.GameWorldInfoMessage" />
     <SkipType name="ScMultiplayer.GameWorldInfoMessage1" />
     <SkipType name="ScMultiplayer.WorldControlRequestMessage" />
