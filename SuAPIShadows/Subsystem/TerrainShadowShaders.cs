@@ -238,15 +238,15 @@ vec4 samplePointLightFor(
     // this light's shadow contribution is culled on its illuminated receiver.
     float localLight = abs(directionStrength.w) * directionalMask;
     float visibility = 0.25 * lit;
-    // Source: LightbulbBlock.GetFace and LedElectricElement.OnAdded. Keep
-    // the emitting block itself at its own light level even when a nearby
-    // light's shadow map covers that block.
-    float sourceLightFloor = (1.0 - smoothstep(0.5, 0.95, distanceToLight)) *
-        localLight;
+    // Source: LightbulbBlock.GenerateTerrainVertices and LedBlock.GenerateTerrainVertices.
+    // The emitting mesh itself is not a receiver for other shadows; only the area lit by
+    // the source should be darkened by blockers.  Store a near-source no-shadow mask in w.
+    float sourceNoShadow = (1.0 - smoothstep(0.55, 0.95, distanceToLight)) *
+        directionalMask;
     return vec4((1.0 - visibility) * localLight,
         visibility * localLight,
         localLight,
-        sourceLightFloor);
+        sourceNoShadow);
 }
 
 vec4 samplePointLight()
@@ -283,13 +283,13 @@ void main()
     float celestialVisible = u_celestialLightFloor * (1.0 - celestialShadow);
     float bakedLight = max(max(v_color.r, v_color.g), v_color.b);
     float originalMax = max(bakedLight, max(u_celestialLightFloor, pointLight.z));
-    float visibleMax = max(max(celestialVisible, pointLight.y), pointLight.w);
+    float visibleMax = max(celestialVisible, pointLight.y);
     float unionShadow = max(celestialShadow, pointLight.x);
     float shadowMultiplier = 1.0 - unionShadow;
     float visibleLightFloor = originalMax > 0.001
         ? clamp(visibleMax / originalMax, 0.0, 1.0)
         : 1.0;
-    result.rgb *= max(shadowMultiplier, visibleLightFloor);
+    result.rgb *= max(max(shadowMultiplier, visibleLightFloor), pointLight.w);
     result.rgb = mix(result.rgb, u_fogColor * v_color.a, v_fog);
     gl_FragColor = result;
 }
