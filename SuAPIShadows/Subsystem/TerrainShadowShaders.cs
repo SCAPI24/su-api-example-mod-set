@@ -143,14 +143,14 @@ float sampleShadow()
     return (1.0 - 0.25 * lit) * smoothstep(0.0, 0.08, edge);
 }
 
-vec3 samplePointLightFor(
+vec4 samplePointLightFor(
     vec2 origin,
     vec4 positionRadius,
     vec4 directionStrength,
     float rowOffset)
 {
     if (u_pointShadowEnabled < 0.5)
-        return vec3(0.0);
+        return vec4(0.0);
     vec3 direction = vec3(
         v_worldPosition.x - origin.x,
         v_worldPosition.y,
@@ -158,14 +158,14 @@ vec3 samplePointLightFor(
     vec3 absoluteDirection = abs(direction);
     float distanceToLight = length(direction);
     if (distanceToLight <= 0.08 || distanceToLight >= positionRadius.w)
-        return vec3(0.0);
+        return vec4(0.0);
     float directionalMask = 1.0;
     if (directionStrength.w > 0.0)
     {
         float cosine = dot(direction / distanceToLight, directionStrength.xyz);
         directionalMask = step(0.0, cosine);
         if (directionalMask <= 0.0)
-            return vec3(0.0);
+            return vec4(0.0);
     }
 
     vec2 projected;
@@ -238,14 +238,20 @@ vec3 samplePointLightFor(
     // this light's shadow contribution is culled on its illuminated receiver.
     float localLight = abs(directionStrength.w) * directionalMask;
     float visibility = 0.25 * lit;
-    return vec3((1.0 - visibility) * localLight,
+    // Source: LightbulbBlock.GetFace and LedElectricElement.OnAdded. Keep
+    // the emitting block itself at its own light level even when a nearby
+    // light's shadow map covers that block.
+    float sourceLightFloor = (1.0 - smoothstep(0.5, 0.95, distanceToLight)) *
+        localLight;
+    return vec4((1.0 - visibility) * localLight,
         visibility * localLight,
-        localLight);
+        localLight,
+        sourceLightFloor);
 }
 
-vec3 samplePointLight()
+vec4 samplePointLight()
 {
-    vec3 result = vec3(0.0);
+    vec4 result = vec4(0.0);
     for (int i = 0; i < 10; i++)
     {
         if (float(i) >= u_pointShadowCount)
@@ -271,13 +277,13 @@ void main()
     // terrain vertex color as the no-shadow scanline result.  Shadow masks
     // merge as a union (max darkness) instead of multiplying, while visible
     // lights keep their own brightness floor.
-    vec3 pointLight = samplePointLight();
+    vec4 pointLight = samplePointLight();
     float celestialOcclusion = sampleShadow() * v_celestialShadowVisibility;
     float celestialShadow = u_shadowStrength * celestialOcclusion;
     float celestialVisible = u_celestialLightFloor * (1.0 - celestialShadow);
     float bakedLight = max(max(v_color.r, v_color.g), v_color.b);
     float originalMax = max(bakedLight, max(u_celestialLightFloor, pointLight.z));
-    float visibleMax = max(celestialVisible, pointLight.y);
+    float visibleMax = max(max(celestialVisible, pointLight.y), pointLight.w);
     float unionShadow = max(celestialShadow, pointLight.x);
     float shadowMultiplier = 1.0 - unionShadow;
     float visibleLightFloor = originalMax > 0.001
