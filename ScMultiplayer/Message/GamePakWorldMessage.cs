@@ -23,6 +23,7 @@ namespace ScMultiplayer
         public string PlayerName = string.Empty;
         public PlayerClass PlayerClass;
         public string SkinName = string.Empty;
+        public byte[] SkinSha256 = Array.Empty<byte>();
         public Vector3 PlayerPosition;
         public float PlayerLevel = 1f;
         public float PlayerHealth = 1f;
@@ -64,6 +65,9 @@ namespace ScMultiplayer
             PlayerName = playerRecord?.Name ?? string.Empty;
             PlayerClass = playerRecord?.PlayerClass ?? PlayerClass.Male;
             SkinName = playerRecord?.SkinName ?? string.Empty;
+            SkinSha256 = playerRecord?.SkinSha256 != null
+                ? (byte[])playerRecord.SkinSha256.Clone()
+                : Array.Empty<byte>();
             PlayerPosition = playerRecord?.Position ?? Vector3.Zero;
             PlayerLevel = playerRecord?.Level ?? 1f;
             PlayerHealth = playerRecord?.Health ?? 1f;
@@ -144,6 +148,9 @@ namespace ScMultiplayer
                 Clothes[slot] = new int[clothesCount];
                 for (int i = 0; i < clothesCount; i++) Clothes[slot][i] = reader.ReadInt32();
             }
+            SkinSha256 = reader.Position < reader.Length
+                ? reader.ReadBytes()
+                : Array.Empty<byte>();
         }
 
         protected override void Write(SuWriter writer)
@@ -204,6 +211,7 @@ namespace ScMultiplayer
                 writer.WritePackedInt32(clothes[slot].Length);
                 foreach (int value in clothes[slot]) writer.WriteInt32(value);
             }
+            writer.WriteBytes(SkinSha256 ?? Array.Empty<byte>());
         }
 
         private static int[][] CreateEmptyClothes() =>
