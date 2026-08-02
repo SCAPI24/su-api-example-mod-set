@@ -679,10 +679,36 @@ public sealed class SubsystemDynamicShadows : SubsystemBlockBehavior, IDrawable,
             useInteractionBoxes: false,
             skipAirBlocks: true,
             (value, rayDistance) =>
-                BlocksManager.Blocks[Terrain.ExtractContents(value)].ObjectShadowStrength > 0.25f);
+                BlocksManager.Blocks[Terrain.ExtractContents(value)].ObjectShadowStrength > 0.25f ||
+                IsTerrainPointLightBlock(value));
         if (hit.HasValue)
+        {
+            int value = m_terrain.Terrain.GetCellValue(
+                hit.Value.CellFace.X,
+                hit.Value.CellFace.Y,
+                hit.Value.CellFace.Z);
+            if (IsTerrainPointLightBlock(value))
+                return camera.ViewPosition;
             return hit.Value.HitPoint(0.02f);
+        }
         return camera.ViewPosition + 8f * camera.ViewDirection;
+    }
+
+    private static bool IsTerrainPointLightBlock(int value)
+    {
+        // Source: TorchBlock, WickerLampBlock, LightbulbBlock and LED electric
+        // elements.  Looking directly at a mounted light should keep that light
+        // selected for its own surface, instead of sampling the back side of the
+        // light geometry and dropping its directional score to zero.
+        Block block = BlocksManager.Blocks[Terrain.ExtractContents(value)];
+        return block is TorchBlock ||
+            block is WickerLampBlock ||
+            block is LightbulbBlock ||
+            block is LedBlock ||
+            block is OneLedBlock ||
+            block is FourLedBlock ||
+            block is MulticoloredLedBlock ||
+            block is SevenSegmentDisplayBlock;
     }
 
     private static Vector3 GetStableShadowAnchor(
@@ -2542,7 +2568,9 @@ public sealed class SubsystemDynamicShadows : SubsystemBlockBehavior, IDrawable,
             if (distance >= light.Radius)
                 continue;
             float attenuation = MathUtils.Saturate(1f - distance / light.Radius);
-            float directionalAttenuation = GetDirectionalAttenuation(light, sample);
+            float directionalAttenuation = MathUtils.Max(
+                GetDirectionalAttenuation(light, sample),
+                GetDirectionalAttenuation(light, camera.ViewPosition));
             Vector3 toLight = light.Position - camera.ViewPosition;
             float cameraDistance = toLight.Length();
             float viewFactor = cameraDistance > 0.2f
