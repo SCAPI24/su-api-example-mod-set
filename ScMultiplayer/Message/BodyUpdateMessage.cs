@@ -55,6 +55,8 @@ namespace ScMultiplayer
             public int SimulationSeed;
             public string ShapeshiftTarget;
             public float Health;
+            // Source: Survivalcraft/Game/ComponentHealth.cs:ComponentHealth.Update
+            public int DamageSequence;
             public ChangeFlag Flags;
         }
 
@@ -99,7 +101,10 @@ namespace ScMultiplayer
                     item.ShapeshiftTarget = reader.ReadString();
                 }
                 if (item.Flags.HasFlag(ChangeFlag.Health))
+                {
                     item.Health = reader.ReadSingle();
+                    item.DamageSequence = reader.ReadInt32();
+                }
                 Bodies.Add(item);
             }
         }
@@ -146,7 +151,10 @@ namespace ScMultiplayer
                     writer.WriteString(item.ShapeshiftTarget ?? string.Empty);
                 }
                 if (item.Flags.HasFlag(ChangeFlag.Health))
+                {
                     writer.WriteSingle(item.Health);
+                    writer.WriteInt32(item.DamageSequence);
+                }
             }
         }
     }
