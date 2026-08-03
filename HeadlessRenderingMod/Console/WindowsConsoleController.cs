@@ -49,8 +49,23 @@ namespace HeadlessRenderingMod
         private Thread m_thread;
         private volatile bool m_running;
         private bool m_ownsConsole;
+        private string m_multiplayerTelemetry;
 
         public bool IsRunning => m_running;
+
+        public void SetMultiplayerTelemetry(string value)
+        {
+            m_multiplayerTelemetry = value;
+            if (!m_running) return;
+            try
+            {
+                Console.Title = "Survivalcraft Headless Server - " + m_config.InstanceId +
+                    (string.IsNullOrWhiteSpace(value) ? string.Empty : " | " + value);
+            }
+            catch
+            {
+            }
+        }
 
         public WindowsConsoleController(
             HeadlessControlServer server,
@@ -135,7 +150,7 @@ namespace HeadlessRenderingMod
             Console.SetError(writer);
             try
             {
-                Console.Title = "Survivalcraft Headless Server - " + m_config.InstanceId;
+            Console.Title = "Survivalcraft Headless Server - " + m_config.InstanceId;
             }
             catch
             {
@@ -149,7 +164,9 @@ namespace HeadlessRenderingMod
             {
                 Console.WriteLine();
                 Console.WriteLine("Survivalcraft Headless Server");
-                Console.WriteLine("Instance: " + m_config.InstanceId);
+            Console.WriteLine("Instance: " + m_config.InstanceId);
+            if (!string.IsNullOrWhiteSpace(m_multiplayerTelemetry))
+                Console.WriteLine(m_multiplayerTelemetry);
                 Console.WriteLine("Waiting for game screens...");
                 WaitForWorldCommands();
                 RunMainMenu();
@@ -173,13 +190,14 @@ namespace HeadlessRenderingMod
                 string[] actions =
                 {
                     "Create World",
-                    "Join World",
+                    "Load World",
                     GetCurrentWorldMenuLabel(),
                     "List Worlds",
                     "Export World",
                     "Delete World",
                     "Create Player",
                     "Manage Players",
+                    "Multiplayer Bandwidth",
                     "Server Status",
                     "Command Line",
                     "Shutdown"
@@ -218,12 +236,15 @@ namespace HeadlessRenderingMod
                             ManagePlayers();
                             break;
                         case 8:
-                            ShowResponse("status");
+                            ConfigureMultiplayerBandwidth();
                             break;
                         case 9:
-                            RunCommandLine();
+                            ShowResponse("status");
                             break;
                         case 10:
+                            RunCommandLine();
+                            break;
+                        case 11:
                             if (PromptBoolean("Shut down Survivalcraft", false))
                             {
                                 PrintResponse(m_server.SubmitLocal("shutdown"));
@@ -294,6 +315,9 @@ namespace HeadlessRenderingMod
                 case "deleteworld":
                     DeleteWorld();
                     break;
+                case "worldmode":
+                    ChangeCurrentWorldMode();
+                    break;
                 case "createplayer":
                     CreatePlayer();
                     break;
@@ -303,6 +327,10 @@ namespace HeadlessRenderingMod
                     break;
                 case "status":
                     PrintResponse(m_server.SubmitLocal("status"));
+                    break;
+                case "multiplayer":
+                case "multiplayer.settings":
+                    ConfigureMultiplayerBandwidth();
                     break;
                 case "screenlist":
                 case "screen.list":
@@ -338,8 +366,8 @@ namespace HeadlessRenderingMod
         private static void PrintHelp()
         {
             Console.WriteLine();
-            Console.WriteLine("CreateWorld, WorldList, JoinWorld, SaveWorld, ExportWorld, DeleteWorld");
-            Console.WriteLine("CreatePlayer, ManagePlayers, Status, ScreenList");
+            Console.WriteLine("CreateWorld, WorldList, JoinWorld, SaveWorld, ExportWorld, DeleteWorld, WorldMode");
+            Console.WriteLine("CreatePlayer, ManagePlayers, Multiplayer, Status, ScreenList");
             Console.WriteLine("SwitchScreen <name>, DialogList, SequenceList, Shutdown, Menu");
             Console.WriteLine();
         }
@@ -660,15 +688,16 @@ namespace HeadlessRenderingMod
         // Source: Survivalcraft/Game/PlayScreen.cs:PlayScreen.Play
         private void JoinWorld()
         {
-            Dictionary<string, object> world = SelectWorld("Join World");
+            Dictionary<string, object> world = SelectWorld("Load World");
             if (world == null)
                 return;
             Dictionary<string, object> response = m_server.SubmitLocal(
                 "world.join",
                 Args("world", world["directoryName"]));
             PrintResponse(RequireSuccess(response));
-            WaitForWorldReady();
-            Console.WriteLine("World is ready. Current screen: " + GetCurrentScreen());
+            WaitForWorldReady(world["name"].ToString());
+            Console.WriteLine("World loaded: " + world["name"] + ". Current screen: " +
+                GetCurrentScreen());
             Pause();
         }
 
@@ -681,24 +710,13 @@ namespace HeadlessRenderingMod
 
         private void ShowCurrentWorld()
         {
-            List<Dictionary<string, object>> worlds = GetResult<List<Dictionary<string, object>>>(
-                m_server.SubmitLocal("world.list"));
-            Dictionary<string, object> current = null;
-            foreach (Dictionary<string, object> world in worlds)
-            {
-                if (world.TryGetValue("loaded", out object loaded) &&
-                    loaded is bool isLoaded && isLoaded)
-                {
-                    current = world;
-                    break;
-                }
-            }
+            Dictionary<string, object> current = GetLoadedWorld();
 
             if (current == null)
             {
                 Console.Clear();
                 Console.WriteLine(GetCurrentScreen() + "> Current World");
-                Console.WriteLine("No world is currently loaded.");
+                Console.WriteLine(GetCurrentWorldMenuLabel());
                 Pause();
                 return;
             }
@@ -710,21 +728,23 @@ namespace HeadlessRenderingMod
         {
             try
             {
-                List<Dictionary<string, object>> worlds = GetResult<List<Dictionary<string, object>>>(
-                    m_server.SubmitLocal("world.list"));
-                foreach (Dictionary<string, object> world in worlds)
-                {
-                    if (world.TryGetValue("loaded", out object loaded) &&
-                        loaded is bool isLoaded && isLoaded)
-                    {
-                        return "Current World: " + world["name"];
-                    }
-                }
+                // Source: HeadlessRenderingMod.cs:BuildStatus
+                // The status snapshot is the authoritative loaded-world state and does not
+                // rescan save directories while the game is loading.
+                Dictionary<string, object> status = GetResult<Dictionary<string, object>>(
+                    m_server.SubmitLocal("status"));
+                bool loaded = status.TryGetValue("worldLoaded", out object loadedValue) &&
+                    loadedValue is bool isLoaded && isLoaded;
+                if (!loaded) return "Current World: <none>";
+                if (status.TryGetValue("worldName", out object worldNameValue) &&
+                    worldNameValue is string worldName && !string.IsNullOrWhiteSpace(worldName))
+                    return "Current World: " + worldName;
+                return "Current World: Loading...";
             }
             catch
             {
+                return "Current World: Unavailable";
             }
-            return "Current World: <none>";
         }
 
         private void ShowWorldDetails(Dictionary<string, object> world)
@@ -770,6 +790,49 @@ namespace HeadlessRenderingMod
                         " | " + (ready ? "Ready" : "Loading"));
                 }
             }
+            int? action = SelectMenu("World Actions", new[] { "Edit game mode", "Back" }, 1);
+            if (action == 0)
+                ChangeWorldMode(world);
+        }
+
+        // Source: Survivalcraft/Game/ModifyWorldScreen.cs:ModifyWorldScreen.Update
+        private void ChangeCurrentWorldMode()
+        {
+            Dictionary<string, object> current = GetLoadedWorld();
+            if (current == null)
+            {
+                Console.WriteLine("No world is currently loaded.");
+                Pause();
+                return;
+            }
+            ChangeWorldMode(current);
+        }
+
+        // Source: Survivalcraft/Game/ModifyWorldScreen.cs:ModifyWorldScreen.Update
+        private void ChangeWorldMode(Dictionary<string, object> world)
+        {
+            string gameMode = PromptChoice("Game mode", new[]
+            {
+                "Creative", "Harmless", "Challenging", "Survival", "Cruel", "Adventure"
+            }, world["gameMode"].ToString());
+            if (string.IsNullOrEmpty(gameMode)) return;
+            Dictionary<string, object> response = RequireSuccess(m_server.SubmitLocal(
+                "world.settings", new Dictionary<string, object>
+                {
+                    ["world"] = world["directoryName"],
+                    ["gameMode"] = gameMode
+                }));
+            PrintResponse(response);
+            string appliedWorldName = response.TryGetValue("worldName", out object worldNameValue)
+                ? worldNameValue?.ToString()
+                : world["name"].ToString();
+            string appliedGameMode = response.TryGetValue("gameMode", out object gameModeValue)
+                ? gameModeValue?.ToString()
+                : gameMode;
+            if (response.TryGetValue("reloading", out object reloading) && reloading is bool value && value)
+                WaitForWorldReady(appliedWorldName);
+            Console.WriteLine("Applied: " + appliedWorldName + " | Game mode: " +
+                appliedGameMode);
             Pause();
         }
 
@@ -899,16 +962,36 @@ namespace HeadlessRenderingMod
                 m_server.SubmitLocal("world.list"));
             if (worlds.Count == 0)
                 throw new InvalidOperationException("No worlds are available.");
+            // Source: HeadlessRenderingMod.cs:BuildStatus
+            // Keep the active map first so a world-mode edit cannot be applied to a similarly
+            // named inactive save by mistake.
+            worlds.Sort((left, right) =>
+            {
+                bool leftLoaded = left["loaded"] is bool isLeftLoaded && isLeftLoaded;
+                bool rightLoaded = right["loaded"] is bool isRightLoaded && isRightLoaded;
+                if (leftLoaded != rightLoaded) return leftLoaded ? -1 : 1;
+                return string.Compare(left["name"].ToString(), right["name"].ToString(),
+                    StringComparison.OrdinalIgnoreCase);
+            });
             List<string> labels = new List<string>();
             foreach (Dictionary<string, object> world in worlds)
             {
                 bool loaded = world["loaded"] is bool isLoaded && isLoaded;
-                labels.Add(world["name"] + " | " + world["gameMode"] +
-                    (loaded ? " | CURRENT" : string.Empty) +
+                labels.Add((loaded ? "CURRENT | " : string.Empty) + world["name"] + " | " +
+                    world["gameMode"] +
                     " | players " + world["players"]);
             }
             int? selected = SelectMenu(title, labels.ToArray(), 0);
             return selected.HasValue ? worlds[selected.Value] : null;
+        }
+
+        // Source: HeadlessRenderingMod.cs:BuildStatus
+        private Dictionary<string, object> GetLoadedWorld()
+        {
+            List<Dictionary<string, object>> worlds = GetResult<List<Dictionary<string, object>>>(
+                m_server.SubmitLocal("world.list"));
+            return worlds.Find(world =>
+                world.TryGetValue("loaded", out object value) && value is bool loaded && loaded);
         }
 
         private Dictionary<string, object> SelectPlayer(string title)
@@ -1249,7 +1332,8 @@ namespace HeadlessRenderingMod
             throw new TimeoutException("Game screens did not initialize within 60 seconds.");
         }
 
-        private void WaitForWorldReady()
+        // Source: HeadlessRenderingMod.cs:BuildStatus
+        private void WaitForWorldReady(string expectedWorldName = null)
         {
             DateTime deadline = DateTime.UtcNow.AddSeconds(180);
             while (m_running && DateTime.UtcNow < deadline)
@@ -1258,10 +1342,18 @@ namespace HeadlessRenderingMod
                     m_server.SubmitLocal("status"));
                 bool loaded = status.TryGetValue("worldLoaded", out object worldLoaded) &&
                     worldLoaded is bool loadedValue && loadedValue;
+                string actualWorldName = status.TryGetValue("worldName", out object worldName)
+                    ? worldName as string
+                    : null;
+                bool hasWorldName = !string.IsNullOrWhiteSpace(actualWorldName);
+                bool expectedWorldLoaded = string.IsNullOrWhiteSpace(expectedWorldName) ||
+                    (hasWorldName && string.Equals(actualWorldName, expectedWorldName,
+                        StringComparison.OrdinalIgnoreCase));
                 string screen = status.TryGetValue("currentScreen", out object currentScreen)
                     ? currentScreen?.ToString()
                     : null;
-                if (loaded && !string.Equals(screen, "GameLoading", StringComparison.Ordinal))
+                if (loaded && hasWorldName && expectedWorldLoaded &&
+                    !string.Equals(screen, "GameLoading", StringComparison.Ordinal))
                     return;
                 Thread.Sleep(500);
             }
@@ -1282,6 +1374,203 @@ namespace HeadlessRenderingMod
             {
                 return "Unavailable";
             }
+        }
+
+        private void ConfigureMultiplayerBandwidth()
+        {
+            Dictionary<string, object> response = RequireSuccess(
+                m_server.SubmitLocal("multiplayer.settings"));
+            if (!(response.TryGetValue("result", out object result) &&
+                result is Dictionary<string, object> settings))
+            {
+                throw new InvalidOperationException("Multiplayer settings response is invalid.");
+            }
+
+            string mode = settings.TryGetValue("bandwidthMode", out object modeValue) &&
+                string.Equals(modeValue?.ToString(), "separate", StringComparison.OrdinalIgnoreCase)
+                ? "separate" : "shared";
+            bool configurationEnabled = ReadBoolean(settings,
+                "bandwidthConfigurationEnabled", false);
+            int? setup = SelectMenu("Multiplayer Bandwidth",
+                new[]
+                {
+                    "View current configuration",
+                    "Simple setup (recommended)",
+                    "Advanced settings",
+                    "Back"
+                }, 0);
+            if (!setup.HasValue || setup.Value == 3) return;
+            if (setup.Value == 0)
+                ShowMultiplayerBandwidthConfiguration(settings, mode, configurationEnabled);
+            else if (setup.Value == 1)
+                ConfigureSimpleBandwidth(settings, mode, configurationEnabled);
+            else
+                ConfigureAdvancedBandwidth(settings, mode);
+            Pause();
+        }
+
+        // Source: ScMultiplayer/Func/Server/ScMultiplayerSettings.cs:HandleServerSettings
+        private void ShowMultiplayerBandwidthConfiguration(
+            Dictionary<string, object> settings, string mode, bool configurationEnabled)
+        {
+            Console.Clear();
+            Console.WriteLine(GetCurrentScreen() + "> Multiplayer Bandwidth");
+            Console.WriteLine();
+            Console.WriteLine("Mode: " + (configurationEnabled ? "Configured" : "Automatic"));
+            Console.WriteLine("Bandwidth scheme: " + (mode == "separate"
+                ? "Separate upload / download" : "Shared total"));
+            if (!configurationEnabled)
+            {
+                Console.WriteLine("Saved caps are inactive. Automatic adapts join transfer to available capacity.");
+            }
+            Console.WriteLine();
+            Console.WriteLine("Shared total safe cap (Kbps): " + ReadInteger(settings,
+                "sharedTotalSafeCapKbps"));
+            Console.WriteLine("Upload safe cap (Kbps): " + ReadInteger(settings,
+                "serverUploadLimitKbps"));
+            Console.WriteLine("Download reference (Kbps): " + ReadInteger(settings,
+                "serverDownloadLimitKbps"));
+            Console.WriteLine("Gameplay reserve (Kbps): " + ReadInteger(settings,
+                "joinTransferGameplayHeadroomKbps"));
+            Console.WriteLine("Join fixed cap (Kbps): " + DisplayAutomatic(settings,
+                "joinTransferMaxKbps"));
+            Console.WriteLine("Per-join fixed cap (Kbps): " + DisplayAutomatic(settings,
+                "joinTransferPerJoinMaxKbps"));
+            Console.WriteLine("Join burst (KiB): " + ReadInteger(settings,
+                "joinTransferBurstKiB"));
+        }
+
+        // Source: ScMultiplayer/Func/Server/ScMultiplayerSettings.cs:HandleServerSettings
+        private static string DisplayAutomatic(Dictionary<string, object> settings, string name)
+        {
+            int value = ReadInteger(settings, name);
+            return value > 0 ? value.ToString(CultureInfo.InvariantCulture) : "Automatic [0]";
+        }
+
+        private void ConfigureSimpleBandwidth(Dictionary<string, object> settings, string mode,
+            bool configurationEnabled)
+        {
+            Console.Clear();
+            Console.WriteLine(GetCurrentScreen() + "> Simple Bandwidth");
+            Console.WriteLine("Automatic ignores saved caps; Configured uses them without changing their values.");
+            Console.WriteLine();
+            configurationEnabled = PromptBoolean("Bandwidth configuration [" +
+                (configurationEnabled ? "On" : "Automatic") + "]", configurationEnabled);
+            if (!configurationEnabled)
+            {
+                PrintResponse(RequireSuccess(m_server.SubmitLocal("multiplayer.settings",
+                    new Dictionary<string, object>(StringComparer.Ordinal)
+                    {
+                        ["bandwidthConfigurationEnabled"] = false
+                    })));
+                return;
+            }
+            Console.WriteLine("The value below is your already-safe application limit. It is not reduced automatically.");
+            Console.WriteLine("Join transfer stays Automatic [0] and shares the safe default schedule among up to four clients.");
+            Console.WriteLine();
+            mode = PromptChoice("Bandwidth mode",
+                new[] { "Shared total", "Separate upload / download" },
+                mode == "shared" ? "Shared total" : "Separate upload / download");
+            mode = mode.StartsWith("Shared", StringComparison.OrdinalIgnoreCase)
+                ? "shared" : "separate";
+            var values = new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["bandwidthMode"] = mode,
+                ["joinTransferMaxKbps"] = 0,
+                ["joinTransferPerJoinMaxKbps"] = 0,
+                ["joinTransferBurstKiB"] = 32
+            };
+            if (mode == "shared")
+            {
+                int cap = PromptInteger("Shared total safe cap (Kbps)[" +
+                    ReadInteger(settings, "sharedTotalSafeCapKbps") + "]",
+                    ReadInteger(settings, "sharedTotalSafeCapKbps"), 0, 1048576);
+                values["sharedTotalSafeCapKbps"] = cap;
+                values["joinTransferGameplayHeadroomKbps"] = RecommendedGameplayReserve(cap);
+                Console.WriteLine("Recommended gameplay reserve (Kbps)[" +
+                    RecommendedGameplayReserve(cap) + "]");
+            }
+            else
+            {
+                int upload = PromptInteger("Upload safe cap (Kbps)[" +
+                    ReadInteger(settings, "serverUploadLimitKbps") + "]",
+                    ReadInteger(settings, "serverUploadLimitKbps"), 0, 1048576);
+                int download = PromptInteger("Download reference (Kbps)[" +
+                    ReadInteger(settings, "serverDownloadLimitKbps") + "]",
+                    ReadInteger(settings, "serverDownloadLimitKbps"), 0, 1048576);
+                values["serverUploadLimitKbps"] = upload;
+                values["serverDownloadLimitKbps"] = download;
+                values["joinTransferGameplayHeadroomKbps"] = RecommendedGameplayReserve(upload);
+                Console.WriteLine("Recommended gameplay reserve (Kbps)[" +
+                    RecommendedGameplayReserve(upload) + "]");
+            }
+            PrintResponse(RequireSuccess(m_server.SubmitLocal("multiplayer.settings", values)));
+        }
+
+        private void ConfigureAdvancedBandwidth(Dictionary<string, object> settings, string mode)
+        {
+            Console.Clear();
+            Console.WriteLine(GetCurrentScreen() + "> Advanced Bandwidth");
+            Console.WriteLine("Join fixed cap (Kbps)[0] means Automatic and is recommended.");
+            Console.WriteLine();
+            var values = new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["bandwidthMode"] = PromptChoice("Bandwidth mode",
+                    new[] { "Shared total", "Separate upload / download" },
+                    mode == "shared" ? "Shared total" : "Separate upload / download"),
+                ["sharedTotalSafeCapKbps"] = PromptInteger(
+                    "Shared total safe cap (Kbps)[" + ReadInteger(settings,
+                        "sharedTotalSafeCapKbps") + "]",
+                    ReadInteger(settings, "sharedTotalSafeCapKbps"), 0, 1048576),
+                ["serverUploadLimitKbps"] = PromptInteger(
+                    "Upload safe cap (Kbps)[" + ReadInteger(settings,
+                        "serverUploadLimitKbps") + "]",
+                    ReadInteger(settings, "serverUploadLimitKbps"), 0, 1048576),
+                ["serverDownloadLimitKbps"] = PromptInteger(
+                    "Download reference (Kbps)[" + ReadInteger(settings,
+                        "serverDownloadLimitKbps") + "]",
+                    ReadInteger(settings, "serverDownloadLimitKbps"), 0, 1048576),
+                ["joinTransferMaxKbps"] = PromptInteger(
+                    "Join fixed cap (Kbps)[" + ReadInteger(settings,
+                        "joinTransferMaxKbps") + "] (0 Automatic)",
+                    ReadInteger(settings, "joinTransferMaxKbps"), 0, 1048576),
+                ["joinTransferGameplayHeadroomKbps"] = PromptInteger(
+                    "Gameplay reserve (Kbps)[" + ReadInteger(settings,
+                        "joinTransferGameplayHeadroomKbps") + "]",
+                    ReadInteger(settings, "joinTransferGameplayHeadroomKbps"), 0, 1048576),
+                ["joinTransferBurstKiB"] = PromptInteger(
+                    "Join burst (KiB)[" + ReadInteger(settings,
+                        "joinTransferBurstKiB") + "]",
+                    ReadInteger(settings, "joinTransferBurstKiB"), 0, 1024),
+                ["joinTransferPerJoinMaxKbps"] = PromptInteger(
+                    "Per-join fixed cap (Kbps)[" + ReadInteger(settings,
+                        "joinTransferPerJoinMaxKbps") + "] (0 Automatic)",
+                    ReadInteger(settings, "joinTransferPerJoinMaxKbps"), 0, 1048576)
+            };
+            values["bandwidthMode"] = values["bandwidthMode"].ToString().StartsWith(
+                "Shared", StringComparison.OrdinalIgnoreCase) ? "shared" : "separate";
+            PrintResponse(RequireSuccess(m_server.SubmitLocal("multiplayer.settings", values)));
+        }
+
+        private static int RecommendedGameplayReserve(int safeCapKbps)
+        {
+            if (safeCapKbps >= 3000) return 512;
+            if (safeCapKbps >= 1000) return 256;
+            return 96;
+        }
+
+        private static int ReadInteger(Dictionary<string, object> values, string name)
+        {
+            return values.TryGetValue(name, out object value) ?
+                Convert.ToInt32(value, CultureInfo.InvariantCulture) : 0;
+        }
+
+        private static bool ReadBoolean(Dictionary<string, object> values, string name,
+            bool defaultValue)
+        {
+            return values.TryGetValue(name, out object value) && value != null
+                ? Convert.ToBoolean(value, CultureInfo.InvariantCulture)
+                : defaultValue;
         }
 
         private void ShowResponse(string command)

@@ -3,6 +3,7 @@ using Game;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using TemplatesDatabase;
 
 namespace HeadlessRenderingMod
 {
@@ -30,6 +31,9 @@ namespace HeadlessRenderingMod
                     return true;
                 case "world.save":
                     result = SaveWorld();
+                    return true;
+                case "world.settings":
+                    result = UpdateWorldSettings(request);
                     return true;
                 case "world.export":
                     result = ExportWorld(request);
@@ -131,6 +135,66 @@ namespace HeadlessRenderingMod
                 ["saved"] = true,
                 ["worldName"] = GameManager.WorldInfo.WorldSettings.Name,
                 ["savedAtUtc"] = DateTime.UtcNow.ToString("O")
+            };
+        }
+
+        // Source: Survivalcraft/Game/ModifyWorldScreen.cs:ModifyWorldScreen.Update
+        private Dictionary<string, object> UpdateWorldSettings(ControlRequest request)
+        {
+            EnsureScreenStable();
+            WorldInfo worldInfo = FindWorld(request);
+            if (!request.TryGetString("gameMode", out string modeText) ||
+                !Enum.TryParse(modeText, true, out GameMode gameMode))
+            {
+                throw new ControlCommandException("invalid_game_mode",
+                    "world.settings requires gameMode: Creative, Harmless, Challenging, " +
+                    "Survival, Cruel or Adventure.");
+            }
+
+            bool wasLoaded = GameManager.WorldInfo != null && string.Equals(
+                GameManager.WorldInfo.DirectoryName, worldInfo.DirectoryName,
+                StringComparison.OrdinalIgnoreCase);
+            WorldSettings settings = worldInfo.WorldSettings;
+            WorldSettings original = new WorldSettings();
+            ValuesDictionary originalValues = new ValuesDictionary();
+            settings.Save(originalValues, liveModifiableParametersOnly: false);
+            original.Load(originalValues);
+            settings.GameMode = gameMode;
+            if (gameMode != GameMode.Creative && gameMode != GameMode.Adventure)
+                settings.ResetOptionsForNonCreativeMode(original);
+
+            if (wasLoaded)
+                GameManager.SaveProject(waitForCompletion: true, showErrorDialog: false);
+            WorldsManager.ChangeWorld(worldInfo.DirectoryName, settings);
+            WorldsManager.UpdateWorldsList();
+            WorldInfo updatedWorld = null;
+            foreach (WorldInfo candidate in WorldsManager.WorldInfos)
+            {
+                if (string.Equals(candidate.DirectoryName, worldInfo.DirectoryName,
+                    StringComparison.OrdinalIgnoreCase))
+                {
+                    updatedWorld = candidate;
+                    break;
+                }
+            }
+            if (updatedWorld == null)
+                throw new ControlCommandException("world_update_failed",
+                    "World settings were written but could not be read back.");
+
+            if (wasLoaded)
+            {
+                // Reload through the normal close/load route so all subsystems read the new mode.
+                // The project was saved before ChangeWorld. Saving it again here would write the
+                // old in-memory GameMode back over the newly updated Project.xml.
+                CloseLoadedProject(switchToMainMenu: false, saveProject: false);
+                ScreensManager.SwitchScreen("GameLoading", updatedWorld, null);
+            }
+            return new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["worldName"] = updatedWorld.WorldSettings.Name,
+                ["gameMode"] = updatedWorld.WorldSettings.GameMode.ToString(),
+                ["reloading"] = wasLoaded,
+                ["screen"] = wasLoaded ? "GameLoading" : ScreensManager.CurrentScreen?.GetType().Name
             };
         }
 
@@ -354,11 +418,13 @@ namespace HeadlessRenderingMod
             }
         }
 
-        private static void CloseLoadedProject(bool switchToMainMenu)
+        // Source: Survivalcraft/Game/GameManager.cs:SaveProject and DisposeProject
+        private static void CloseLoadedProject(bool switchToMainMenu, bool saveProject = true)
         {
             if (GameManager.Project != null)
             {
-                GameManager.SaveProject(waitForCompletion: true, showErrorDialog: false);
+                if (saveProject)
+                    GameManager.SaveProject(waitForCompletion: true, showErrorDialog: false);
                 GameManager.DisposeProject();
             }
             if (switchToMainMenu)

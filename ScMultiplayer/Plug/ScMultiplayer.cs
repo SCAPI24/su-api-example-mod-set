@@ -400,6 +400,8 @@ namespace ScMultiplayer
         public readonly Queue<int> RepairChunkIndices = new Queue<int>();
         public readonly HashSet<int> QueuedRepairChunkIndices = new HashSet<int>();
         public int RepairChunkQueueCount;
+        public double BandwidthTokens;
+        public double LastBandwidthTokenTime;
     }
 
     public class IncomingWorldTransfer
@@ -435,6 +437,36 @@ namespace ScMultiplayer
         public byte[] Payload;
         public bool Sequenced;
         public bool Latest;
+    }
+
+    internal sealed class PendingJoinCatchUp
+    {
+        public int TargetClientId;
+        public readonly Queue<JoinCatchUpMessage> Messages = new Queue<JoinCatchUpMessage>();
+        public Action CompletionAction;
+    }
+
+    internal readonly struct JoinTransferTrafficSample
+    {
+        public JoinTransferTrafficSample(double time, long gameplayBytes)
+        {
+            Time = time;
+            GameplayBytes = gameplayBytes;
+        }
+
+        public double Time { get; }
+
+        public long GameplayBytes { get; }
+    }
+
+    internal sealed class JoinedPlayerInformation
+    {
+        public string Name;
+        public string Role;
+        public Vector3 Position;
+        public bool IsSelf;
+        public float Distance;
+        public int ClockDirection;
     }
 
     public class JoinCatchUpJournal
@@ -507,6 +539,8 @@ namespace ScMultiplayer
         public int TargetEntityId;
         public string HerdName = string.Empty;
         public float LastHealth = 1f;
+        // Source: Survivalcraft/Game/ComponentHealth.cs:ComponentHealth.Update
+        public int DamageSequence;
         public byte SyncTier;
         public bool AttackOrder;
         public bool FeedOrder;
@@ -538,6 +572,8 @@ namespace ScMultiplayer
         public string HerdName;
         public float LastHealth;
         public bool HasHealth;
+        // Source: Survivalcraft/Game/ComponentHealth.cs:ComponentHealth.Update
+        public int LastDamageSequence;
         public int LastServerTick;
         public Vector3 Position;
         public Quaternion Rotation = Quaternion.Identity;
@@ -569,6 +605,16 @@ namespace ScMultiplayer
         public double? DeathTime;
         public bool LocalDespawnStarted;
         public string ShapeshiftTarget = string.Empty;
+    }
+
+    // Source: Survivalcraft/Game/ComponentDiggingCracks.cs:ComponentDiggingCracks.Draw
+    internal sealed class RemoteDigPresentation
+    {
+        public int Sequence;
+        public CellFace CellFace;
+        public float DisplayProgress;
+        public float TargetProgress;
+        public double LastUpdateTime;
     }
 
     public class NetworkMessageHandler
@@ -931,6 +977,15 @@ namespace ScMultiplayer
                 Message.WriteWithSender(message, ScMultiplayer.client.Address));
         }
 
+        // Source: Survivalcraft/Game/ComponentDiggingCracks.cs:ComponentDiggingCracks.Draw
+        public static void SendDigPresentation(int targetClientId, DigPresentationMessage message,
+            bool latest)
+        {
+            if (message == null || ScMultiplayer.client == null) return;
+            SendScheduledMessage(targetClientId, message, sequenced: false, latest: latest,
+                batchable: true);
+        }
+
         public static void SendPlayerProfileMessage(int clientId, NetworkPlayerRecord record)
         {
             var msg = new PlayerProfileMessage(clientId, record);
@@ -1061,6 +1116,8 @@ namespace ScMultiplayer
             msg.KnockbackSequence = knockbackSequence;
             msg.KnockbackServerTick = knockbackServerTick;
             msg.KnockbackStunTime = knockbackStunTime;
+            msg.DamageSequence = ScMultiplayer.currentInstance?.GetDamageSequence(
+                playerIndex, healthChange) ?? 0;
             // Source: ScMultiplayer.cs:NetworkMessageHandler.HandlePlayerHealthMessage
             if (hasKnockback)
             {
@@ -1140,6 +1197,9 @@ namespace ScMultiplayer
             new Dictionary<int, float>();
         private readonly Dictionary<int, double> m_hostPainSoundTimes =
             new Dictionary<int, double>();
+        // Source: Survivalcraft/Game/ComponentHealth.cs:ComponentHealth.Update
+        private readonly Dictionary<int, int> m_damageSequences = new Dictionary<int, int>();
+        private readonly Dictionary<int, int> m_receivedDamageSequences = new Dictionary<int, int>();
         private readonly Dictionary<int, double> m_hostRemoteKnockbackUntil =
             new Dictionary<int, double>();
         private readonly Dictionary<int, int> m_hostKnockbackSequences =
@@ -1183,6 +1243,7 @@ namespace ScMultiplayer
         private readonly Queue<ChatMessage> m_recentChatMessages = new Queue<ChatMessage>();
         private readonly HashSet<Guid> m_recentChatMessageIds = new HashSet<Guid>();
         private IModInjector m_modInjector;
+        private EventSubscriptionToken m_serverSettingsToken;
         private LabelWidget m_networkStatsLabel;
         // Source: Comms/Comms/DiagnosticTransmitter.cs:DiagnosticStats
         private DiagnosticStats m_serverNetworkStats;
@@ -1190,6 +1251,41 @@ namespace ScMultiplayer
         private long m_lastNetworkByteSample;
         private double m_lastNetworkByteSampleTime;
         private double m_nextNetworkStatsUpdateTime;
+        // Source: Comms/Comms/DiagnosticTransmitter.cs:DiagnosticStats.BytesSent
+        // The sender records join bytes separately. Any retransmission not attributable to the
+        // first send is intentionally treated as gameplay pressure, which conservatively pauses
+        // new joins on a congested link instead of stealing capacity from connected players.
+        private long m_joinTransferBytesSentSinceSample;
+        private long m_lastJoinTransferBytesSample;
+        private long m_lastJoinTransferNetworkBytesSample;
+        private long m_lastJoinTransferReceiveBytesSample;
+        private double m_lastJoinTransferSampleTime;
+        private readonly Queue<JoinTransferTrafficSample> m_joinTransferTrafficSamples =
+            new Queue<JoinTransferTrafficSample>();
+        private double m_joinTransferTokens;
+        private double m_joinTransferLastTokenTime;
+        private double m_joinTransferAvailableBytesPerSecond;
+        private double m_joinTransferGameplayBytesPerSecond;
+        private double m_joinTransferBytesPerSecond;
+        private double m_joinTransferReceiveBytesPerSecond;
+        private bool m_joinTransferPausedByGameplay;
+        // Source: Comms/Comms/Peer.cs:GetPacketLossRate
+        // Automatic mode uses additive growth with an immediate multiplicative backoff. Saved
+        // configured limits stay untouched and are never consulted while Automatic is selected.
+        private double m_automaticJoinTransferKbps = AutomaticJoinTransferStartKbps;
+        private double m_nextAutomaticJoinTransferAdjustmentTime;
+        private double m_automaticJoinTransferCooldownUntil;
+        private double m_automaticJoinRttBaseline;
+        // Source: Comms/Comms/DiagnosticTransmitter.cs:DiagnosticStats.BytesSent
+        // The headless title samples only during its final one-second window. This is separate
+        // from the join scheduler, which must continue responding immediately to game traffic.
+        private double m_nextServerTrafficSampleStartTime;
+        private double m_serverTrafficSampleStartTime;
+        private long m_serverTrafficSampleStartBytesSent;
+        private long m_serverTrafficSampleStartBytesReceived;
+        private long m_lastServerTrafficSampleBytesSent = -1L;
+        private long m_lastServerTrafficSampleBytesReceived = -1L;
+        private bool m_serverTrafficSampleActive;
         private readonly Dictionary<IPAddress, double> m_reverseDiscoveryProbeTimes =
             new Dictionary<IPAddress, double>();
         private RemoteServerDirectory m_remoteServerDirectory;
@@ -1408,6 +1504,8 @@ namespace ScMultiplayer
             new Dictionary<int, int>();
         private readonly Dictionary<int, JoinCatchUpJournal> m_joinCatchUpJournals =
             new Dictionary<int, JoinCatchUpJournal>();
+        private readonly Dictionary<int, PendingJoinCatchUp> m_pendingJoinCatchUps =
+            new Dictionary<int, PendingJoinCatchUp>();
         private readonly Dictionary<int, string> m_pendingAcceptedJoinKeys =
             new Dictionary<int, string>();
         private readonly Dictionary<int, HostJoinRequest> m_hostJoinRequests =
@@ -1424,6 +1522,13 @@ namespace ScMultiplayer
         private int m_worldTransferQueuedWorkCount;
         private int m_worldTransferGeneration;
         private Point3? m_localDigTarget;
+        private int m_localDigPresentationSequence;
+        private double m_nextLocalDigPresentationTime;
+        private bool m_localDigPresentationActive;
+        private CellFace? m_localDigPresentationFace;
+        // Source: Survivalcraft/Game/ComponentDiggingCracks.cs:ComponentDiggingCracks.Draw
+        private readonly Dictionary<int, RemoteDigPresentation> m_remoteDigPresentations =
+            new Dictionary<int, RemoteDigPresentation>();
         private int m_nextTerrainDigRequestId;
         private int m_localHitSequence;
         private double m_nextLocalHitRequestTime;
@@ -1522,11 +1627,31 @@ namespace ScMultiplayer
         private const int MaximumWorldTransferChunksPerNetworkTick = 8;
         private const int MaximumWorldTransferChunksPerGameplayTick = 4;
         private const int MaximumWorldTransferUnackedPackets = 32;
+        private const int MaximumDynamicWorldTransferChunksPerNetworkTick = 64;
+        private const int MaximumDynamicWorldTransferUnackedPackets = 128;
+        // Source: Comms/Comms/Comm.cs:Comm.GetUnackedPacketsCount
+        // The transport count includes gameplay packets and world-transfer packets together.
+        // Configured join transfers therefore need a separate in-flight allowance, otherwise
+        // normal gameplay can consume the 32-packet legacy ceiling before the map is sent.
+        private const int ConfiguredWorldTransferGameplayQueueAllowance = 32;
+        private const double AutomaticJoinTransferStartKbps = 1200.0;
+        private const double AutomaticJoinTransferMaximumKbps = 9600.0;
+        private const double AutomaticJoinTransferGrowthFactor = 1.25;
+        private const double AutomaticJoinTransferBackoffFactor = 0.5;
+        private const double AutomaticJoinTransferAdjustmentInterval = 1.0;
+        private const double AutomaticJoinTransferCooldown = 3.0;
+        private const double AutomaticJoinTransferMaximumLossRate = 0.02;
+        private const int AutomaticJoinTransferPressureUnackedPackets = 96;
+        private const int AutomaticJoinTransferGameplayReserveKbps = 96;
         private const int MaximumWorldTransferRepairChunks = 24;
-        private const int MaximumQueuedWorldTransferChunks = 32;
+        private const int MaximumQueuedWorldTransferChunks = 128;
         private const int WorldTransferWindowChunks = 24;
         private const int ReverseDiscoveryPortProbeCount = 4;
-        private const double WorldTransferStatusInterval = 0.25;
+        // Source: Comms/Comms/Comm.cs:Comm.ProcessConnections
+        // Progress acknowledgements only run while a client is downloading a world. At 50ms, the
+        // 24-chunk application window can use the configured join bandwidth without changing
+        // loss repair or normal gameplay traffic.
+        private const double WorldTransferProgressStatusInterval = 0.05;
         private const double WorldTransferRepairInterval = 0.75;
         private const double WorldTransferRepairRequestInterval = 1.5;
         private const int MaximumWorldTransferSize = 64 * 1024 * 1024;
@@ -1560,6 +1685,7 @@ namespace ScMultiplayer
         private const int MaximumSkinAssetBytes = 512 * 1024;
         private const int MaximumBlocksTextureAssetBytes = 4 * 1024 * 1024;
         private const int MaximumRecentChatMessages = 50;
+        private const string ServerAuditEventName = "ScMultiplayer.ServerAudit";
         private const string DownloadedWorldsRegistryPath = "data:/ScMultiplayerDownloadedWorlds.txt";
         private const string PlayerRecordsFileName = "ScMultiplayerPlayers.xml";
         private const string PlayerProfileRequiredReason = "SCMP_PROFILE_REQUIRED";
@@ -1608,6 +1734,10 @@ namespace ScMultiplayer
             modInjector.RegisterBlock(Game.PistonBlock.Index,
                 typeof(global::ScMultiplayer.PistonBlock), Name);
             ScMultiplayerSettings.Load();
+            m_serverSettingsToken = eventBus.SubscribeEvent(
+                "ScMultiplayer.ServerSettings",
+                HandleServerSettingsEvent,
+                EventPriority.HIGHEST);
             PersonalServerDirectory.Load();
             m_fromLinkToken = SuFromLinkProviders.Subscribe(eventBus,
                 new NetWorldFromLinkProvider());
@@ -2510,8 +2640,8 @@ namespace ScMultiplayer
             string fenceText = fenceAge < 0f ? "--" :
                 string.Format(CultureInfo.InvariantCulture, "{0:0}ms", fenceAge);
             m_networkStatsLabel.Text = string.Format(CultureInfo.InvariantCulture,
-                "NET {0}, Ping {1:0}ms, Ack {2:0}ms, ReTx {7:0.0}%\r\n" +
-                "Q Sync {3}, Apply {4} ({5:0}ms), Rel {6}\r\n" +
+                "NET {0}, Ping {1:0}ms, Ack {2:0}ms, ReTx {7:0.0}%\n" +
+                "Q Sync {3}, Apply {4} ({5:0}ms), Rel {6}\n" +
                 "Ckt {8}, Fence {9}, Limit {10}",
                 FormatNetworkThroughput(throughputBytesPerSecond), latencyMs, ackLatencyMs,
                 syncQueue, applyQueue, applyOldestMs, reliableQueue,
@@ -2628,6 +2758,409 @@ namespace ScMultiplayer
                 .GetReliableRetryLimitCount(connected.Address);
         }
 
+        // Source: Comms/Comms/DiagnosticTransmitter.cs:DiagnosticTransmitter.SendPacket
+        // Retransmissions cannot be tagged after Comms has queued them. Treating that excess as
+        // gameplay pressure is deliberately conservative: a lossy join pauses before it harms
+        // connected players.
+        private void UpdateJoinTransferBandwidthBudget()
+        {
+            DiagnosticStats stats = m_serverNetworkStats;
+            if (stats == null) return;
+
+            double now = Time.RealTime;
+            UpdateAutomaticJoinTransferRate(now);
+            long networkBytes = Math.Max(0L, Volatile.Read(ref stats.BytesSent));
+            long receiveBytes = Math.Max(0L, Volatile.Read(ref stats.BytesReceived));
+            long joinBytes = Interlocked.Read(ref m_joinTransferBytesSentSinceSample);
+            if (m_lastJoinTransferSampleTime <= 0.0)
+            {
+                m_lastJoinTransferSampleTime = now;
+                m_lastJoinTransferNetworkBytesSample = networkBytes;
+                m_lastJoinTransferReceiveBytesSample = receiveBytes;
+                m_lastJoinTransferBytesSample = joinBytes;
+                m_joinTransferLastTokenTime = now;
+                return;
+            }
+
+            double elapsed = now - m_lastJoinTransferSampleTime;
+            if (elapsed <= 0.0) return;
+            long networkDelta = Math.Max(0L, networkBytes - m_lastJoinTransferNetworkBytesSample);
+            long receiveDelta = Math.Max(0L, receiveBytes - m_lastJoinTransferReceiveBytesSample);
+            long joinDelta = Math.Max(0L, joinBytes - m_lastJoinTransferBytesSample);
+            long gameplayOutboundBytes = Math.Max(0L, networkDelta - joinDelta);
+            // Source: Comms/Comms.Drt/Func/Client/Client.cs:SendDirectInput
+            // World chunks pass through the host's local Client before Server relays them to the
+            // joiner. DiagnosticStats therefore sees that loopback hop as received traffic even
+            // though it never consumes WAN bandwidth. Charge only the unmatched external input
+            // against a shared external-bandwidth cap.
+            long externalReceiveBytes = Math.Max(0L, receiveDelta - joinDelta);
+            long bandwidthUsageBytes = gameplayOutboundBytes +
+                (!ScMultiplayerSettings.BandwidthConfigurationEnabled ||
+                    ScMultiplayerSettings.BandwidthMode == BandwidthLimitMode.SharedTotal
+                    ? externalReceiveBytes
+                    : 0L);
+            m_joinTransferTrafficSamples.Enqueue(new JoinTransferTrafficSample(now,
+                bandwidthUsageBytes));
+            // Source: ScMultiplayer.cs:UpdateJoinTransferBandwidthBudget
+            // Retain only a short gameplay history so a completed traffic spike does not
+            // throttle a later join for the full display window. The current sample remains
+            // authoritative for immediate protection of already-connected players.
+            while (m_joinTransferTrafficSamples.Count > 0 &&
+                now - m_joinTransferTrafficSamples.Peek().Time > 2.0)
+                m_joinTransferTrafficSamples.Dequeue();
+
+            long recentGameplayBytes = 0L;
+            foreach (JoinTransferTrafficSample sample in m_joinTransferTrafficSamples)
+                recentGameplayBytes += sample.GameplayBytes;
+            double recentWindow = m_joinTransferTrafficSamples.Count > 0
+                ? Math.Max(0.25, now - m_joinTransferTrafficSamples.Peek().Time)
+                : elapsed;
+            double gameplayBytesPerSecond = Math.Max(bandwidthUsageBytes / elapsed,
+                recentGameplayBytes / recentWindow);
+            m_joinTransferGameplayBytesPerSecond = gameplayOutboundBytes / elapsed;
+            m_joinTransferBytesPerSecond = joinDelta / elapsed;
+            m_joinTransferReceiveBytesPerSecond = externalReceiveBytes / elapsed;
+            double configuredLimit = KilobitsPerSecondToBytes(
+                GetJoinTransferBandwidthLimitKbps());
+            double configuredJoinLimit = KilobitsPerSecondToBytes(
+                ScMultiplayerSettings.BandwidthConfigurationEnabled
+                    ? ScMultiplayerSettings.JoinTransferMaxKbps
+                    : 0);
+            double headroom = KilobitsPerSecondToBytes(
+                ScMultiplayerSettings.BandwidthConfigurationEnabled
+                    ? ScMultiplayerSettings.JoinTransferGameplayHeadroomKbps
+                    : AutomaticJoinTransferGameplayReserveKbps);
+            double available = configuredLimit > 0.0
+                ? Math.Max(0.0, configuredLimit - gameplayBytesPerSecond - headroom)
+                : double.PositiveInfinity;
+            if (configuredJoinLimit > 0.0)
+                available = Math.Min(available, configuredJoinLimit);
+
+            m_joinTransferAvailableBytesPerSecond = available;
+            m_joinTransferPausedByGameplay = configuredLimit > 0.0 && available <= 0.0 &&
+                (m_outgoingWorldTransfers.Count > 0 || m_pendingJoinCatchUps.Count > 0);
+            double tokenElapsed = Math.Max(0.0, now - m_joinTransferLastTokenTime);
+            m_joinTransferLastTokenTime = now;
+            if (double.IsPositiveInfinity(available))
+            {
+                m_joinTransferTokens = double.PositiveInfinity;
+            }
+            else
+            {
+                double burstBytes = GetEffectiveJoinTransferBurstBytes();
+                m_joinTransferTokens = Math.Min(burstBytes,
+                    Math.Max(0.0, m_joinTransferTokens) + available * tokenElapsed);
+            }
+            m_lastJoinTransferSampleTime = now;
+            m_lastJoinTransferNetworkBytesSample = networkBytes;
+            m_lastJoinTransferReceiveBytesSample = receiveBytes;
+            m_lastJoinTransferBytesSample = joinBytes;
+        }
+
+        private bool TryReserveJoinTransferBytes(OutgoingWorldTransfer transfer, int payloadBytes)
+        {
+            int reservedBytes = EstimateJoinTransferPacketBytes(payloadBytes);
+            if (!HasGlobalJoinTransferTokens(reservedBytes))
+                return false;
+
+            double perJoinLimit = KilobitsPerSecondToBytes(
+                ScMultiplayerSettings.BandwidthConfigurationEnabled
+                    ? ScMultiplayerSettings.JoinTransferPerJoinMaxKbps
+                    : 0);
+            if (transfer != null && perJoinLimit > 0.0)
+            {
+                double now = Time.RealTime;
+                double burstBytes = Math.Max(WorldTransferChunkSize + 96,
+                    Math.Min(GetEffectiveJoinTransferBurstBytes(), perJoinLimit));
+                if (transfer.LastBandwidthTokenTime <= 0.0)
+                {
+                    transfer.LastBandwidthTokenTime = now;
+                    transfer.BandwidthTokens = burstBytes;
+                }
+                else
+                {
+                    transfer.BandwidthTokens = Math.Min(burstBytes, transfer.BandwidthTokens +
+                        perJoinLimit * Math.Max(0.0, now - transfer.LastBandwidthTokenTime));
+                    transfer.LastBandwidthTokenTime = now;
+                }
+                if (transfer.BandwidthTokens < reservedBytes) return false;
+                transfer.BandwidthTokens -= reservedBytes;
+            }
+            if (!double.IsPositiveInfinity(m_joinTransferTokens))
+                m_joinTransferTokens -= reservedBytes;
+            return true;
+        }
+
+        private bool HasGlobalJoinTransferTokens(int reservedBytes)
+        {
+            return double.IsPositiveInfinity(m_joinTransferTokens) ||
+                m_joinTransferTokens >= reservedBytes;
+        }
+
+        private void RefundJoinTransferBytes(OutgoingWorldTransfer transfer, int payloadBytes)
+        {
+            int reservedBytes = EstimateJoinTransferPacketBytes(payloadBytes);
+            double perJoinLimit = KilobitsPerSecondToBytes(
+                ScMultiplayerSettings.BandwidthConfigurationEnabled
+                    ? ScMultiplayerSettings.JoinTransferPerJoinMaxKbps
+                    : 0);
+            if (transfer != null && perJoinLimit > 0.0)
+            {
+                double burstBytes = Math.Max(WorldTransferChunkSize + 96,
+                    Math.Min(GetEffectiveJoinTransferBurstBytes(), perJoinLimit));
+                transfer.BandwidthTokens = Math.Min(burstBytes,
+                    transfer.BandwidthTokens + reservedBytes);
+            }
+            if (double.IsPositiveInfinity(m_joinTransferTokens)) return;
+            double globalBurstBytes = GetEffectiveJoinTransferBurstBytes();
+            m_joinTransferTokens = Math.Min(globalBurstBytes, m_joinTransferTokens +
+                reservedBytes);
+        }
+
+        private static int EstimateJoinTransferPacketBytes(int payloadBytes)
+        {
+            return Math.Max(1, payloadBytes) + 96;
+        }
+
+        private bool HasManagedJoinTransferRate()
+        {
+            return !ScMultiplayerSettings.BandwidthConfigurationEnabled ||
+                ScMultiplayerSettings.EffectiveJoinBandwidthCapKbps > 0 ||
+                ScMultiplayerSettings.JoinTransferMaxKbps > 0;
+        }
+
+        private double GetJoinTransferBandwidthLimitKbps()
+        {
+            return ScMultiplayerSettings.BandwidthConfigurationEnabled
+                ? ScMultiplayerSettings.EffectiveJoinBandwidthCapKbps
+                : m_automaticJoinTransferKbps;
+        }
+
+        // Source: Comms/Comms/Comm.cs:GetUnackedPacketsCount
+        // Ramp only after a full stable second. Packet loss, a nearly full reliable window, or a
+        // material RTT increase immediately halves the join rate and holds it for three seconds.
+        private void UpdateAutomaticJoinTransferRate(double now)
+        {
+            if (ScMultiplayerSettings.BandwidthConfigurationEnabled)
+            {
+                m_automaticJoinTransferKbps = AutomaticJoinTransferStartKbps;
+                m_nextAutomaticJoinTransferAdjustmentTime = 0.0;
+                m_automaticJoinTransferCooldownUntil = 0.0;
+                m_automaticJoinRttBaseline = 0.0;
+                return;
+            }
+
+            bool hasActiveJoin = m_outgoingWorldTransfers.Count > 0 ||
+                m_pendingJoinCatchUps.Count > 0;
+            if (!hasActiveJoin)
+            {
+                m_automaticJoinTransferKbps = AutomaticJoinTransferStartKbps;
+                m_nextAutomaticJoinTransferAdjustmentTime = 0.0;
+                m_automaticJoinTransferCooldownUntil = 0.0;
+                m_automaticJoinRttBaseline = 0.0;
+                return;
+            }
+            if (now < m_nextAutomaticJoinTransferAdjustmentTime) return;
+            m_nextAutomaticJoinTransferAdjustmentTime = now +
+                AutomaticJoinTransferAdjustmentInterval;
+
+            bool pressure = false;
+            double highestRtt = 0.0;
+            if (server?.Peer != null)
+            {
+                foreach (ServerClient remote in GetConnectedRemoteClients())
+                {
+                    if (remote?.Address == null) continue;
+                    double lossRate = server.Peer.Comm.GetPacketLossRate(remote.Address);
+                    int unacked = server.Peer.Comm.GetUnackedPacketsCount(remote.Address);
+                    double rtt = server.Peer.Comm.GetSmoothedRoundTripTime(remote.Address);
+                    highestRtt = Math.Max(highestRtt, rtt);
+                    if (lossRate >= AutomaticJoinTransferMaximumLossRate ||
+                        unacked >= AutomaticJoinTransferPressureUnackedPackets)
+                    {
+                        pressure = true;
+                    }
+                }
+            }
+            if (highestRtt > 0.0)
+            {
+                if (m_automaticJoinRttBaseline > 0.0 && highestRtt > Math.Max(
+                    m_automaticJoinRttBaseline * 1.5,
+                    m_automaticJoinRttBaseline + 0.03))
+                {
+                    pressure = true;
+                }
+                if (!pressure)
+                {
+                    m_automaticJoinRttBaseline = m_automaticJoinRttBaseline <= 0.0
+                        ? highestRtt
+                        : Math.Min(highestRtt,
+                            m_automaticJoinRttBaseline * 0.9 + highestRtt * 0.1);
+                }
+            }
+
+            if (pressure)
+            {
+                m_automaticJoinTransferKbps = Math.Max(AutomaticJoinTransferStartKbps,
+                    m_automaticJoinTransferKbps * AutomaticJoinTransferBackoffFactor);
+                m_automaticJoinTransferCooldownUntil = now + AutomaticJoinTransferCooldown;
+            }
+            else if (now >= m_automaticJoinTransferCooldownUntil)
+            {
+                m_automaticJoinTransferKbps = Math.Min(AutomaticJoinTransferMaximumKbps,
+                    m_automaticJoinTransferKbps * AutomaticJoinTransferGrowthFactor);
+            }
+        }
+
+        // Source: Comms/Comms/DiagnosticTransmitter.cs:DiagnosticStats.BytesReceived
+        // Preserve four seconds with no display-stat reads, then capture one full second. The
+        // resulting counters are raw bytes for that final second, not a five-second average.
+        private void UpdateServerTrafficDisplaySample()
+        {
+            DiagnosticStats stats = m_serverNetworkStats;
+            if (stats == null) return;
+
+            double now = Time.RealTime;
+            if (!m_serverTrafficSampleActive)
+            {
+                if (m_nextServerTrafficSampleStartTime <= 0.0)
+                {
+                    m_nextServerTrafficSampleStartTime = now + 4.0;
+                    return;
+                }
+                if (now < m_nextServerTrafficSampleStartTime) return;
+
+                m_serverTrafficSampleStartBytesSent = Math.Max(0L,
+                    Volatile.Read(ref stats.BytesSent));
+                m_serverTrafficSampleStartBytesReceived = Math.Max(0L,
+                    Volatile.Read(ref stats.BytesReceived));
+                m_serverTrafficSampleStartTime = now;
+                m_serverTrafficSampleActive = true;
+                return;
+            }
+
+            if (now - m_serverTrafficSampleStartTime < 1.0) return;
+            long bytesSent = Math.Max(0L, Volatile.Read(ref stats.BytesSent));
+            long bytesReceived = Math.Max(0L, Volatile.Read(ref stats.BytesReceived));
+            m_lastServerTrafficSampleBytesSent = Math.Max(0L,
+                bytesSent - m_serverTrafficSampleStartBytesSent);
+            m_lastServerTrafficSampleBytesReceived = Math.Max(0L,
+                bytesReceived - m_serverTrafficSampleStartBytesReceived);
+            m_serverTrafficSampleActive = false;
+            m_nextServerTrafficSampleStartTime = now + 4.0;
+        }
+
+        private double GetEffectiveJoinTransferBurstBytes()
+        {
+            double configuredBurst = (ScMultiplayerSettings.BandwidthConfigurationEnabled
+                ? ScMultiplayerSettings.JoinTransferBurstKiB
+                : 32) * 1024.0;
+            double tickCapacity = double.IsPositiveInfinity(
+                m_joinTransferAvailableBytesPerSecond)
+                ? 0.0
+                // Source: ScMultiplayer.cs:TriggerNetworkTick
+                // Keep two transport ticks of budget so normal frame/ack jitter cannot discard
+                // already-approved join bandwidth. The token refill rate remains unchanged.
+                : m_joinTransferAvailableBytesPerSecond * TransportTickDuration * 2.0;
+            return Math.Max(WorldTransferChunkSize + 96,
+                Math.Max(configuredBurst, tickCapacity));
+        }
+
+        private int GetJoinTransferSendBudget(bool gameplayActive)
+        {
+            int legacyBudget = gameplayActive
+                ? MaximumWorldTransferChunksPerGameplayTick
+                : MaximumWorldTransferChunksPerNetworkTick;
+            if (!HasManagedJoinTransferRate())
+                return legacyBudget;
+            if (!double.IsFinite(m_joinTransferTokens) &&
+                !double.IsPositiveInfinity(m_joinTransferTokens))
+            {
+                return 0;
+            }
+            if (m_joinTransferTokens <= 0.0)
+                return 0;
+            return Math.Min(MaximumDynamicWorldTransferChunksPerNetworkTick,
+                Math.Max(0, (int)Math.Floor(m_joinTransferTokens /
+                    EstimateJoinTransferPacketBytes(WorldTransferChunkSize))));
+        }
+
+        private int GetWorldTransferUnackedPacketLimit(int targetClientId)
+        {
+            if (!HasManagedJoinTransferRate() ||
+                m_joinTransferAvailableBytesPerSecond <= 0.0 ||
+                double.IsPositiveInfinity(m_joinTransferAvailableBytesPerSecond))
+            {
+                return MaximumWorldTransferUnackedPackets;
+            }
+
+            IPEndPoint address = GetServerClientAddress(targetClientId);
+            double rtt = address != null
+                ? server.Peer.Comm.GetSmoothedRoundTripTime(address)
+                : 0.1;
+            double flightTime = Math.Max(0.075, Math.Min(0.5, rtt * 1.25));
+            int desired = (int)Math.Ceiling(m_joinTransferAvailableBytesPerSecond *
+                flightTime / EstimateJoinTransferPacketBytes(WorldTransferChunkSize)) + 4;
+            return Math.Min(MaximumDynamicWorldTransferUnackedPackets,
+                Math.Max(MaximumWorldTransferUnackedPackets +
+                    ConfiguredWorldTransferGameplayQueueAllowance,
+                    desired + ConfiguredWorldTransferGameplayQueueAllowance));
+        }
+
+        private int GetWorldTransferChunkWindow(int targetClientId)
+        {
+            return Math.Max(WorldTransferWindowChunks,
+                GetWorldTransferUnackedPacketLimit(targetClientId) - 8);
+        }
+
+        private static double KilobitsPerSecondToBytes(int value)
+        {
+            return value > 0 ? value * 1000.0 / 8.0 : 0.0;
+        }
+
+        private static double KilobitsPerSecondToBytes(double value)
+        {
+            return value > 0.0 ? value * 1000.0 / 8.0 : 0.0;
+        }
+
+        private void RecordJoinTransferBytesSent(int payloadBytes)
+        {
+            Interlocked.Add(ref m_joinTransferBytesSentSinceSample,
+                EstimateJoinTransferPacketBytes(payloadBytes));
+        }
+
+        private object[] HandleServerSettingsEvent(object[] args)
+        {
+            IDictionary<string, object> request = args != null && args.Length > 0
+                ? args[0] as IDictionary<string, object> : null;
+            string operation = request != null && request.TryGetValue("operation", out object value)
+                ? value as string : "get";
+            if (string.Equals(operation, "set", StringComparison.OrdinalIgnoreCase) && IsHost)
+                ScMultiplayerSettings.UpdateJoinTransferSettings(request);
+
+            Dictionary<string, object> result = ScMultiplayerSettings.GetJoinTransferSettings();
+            result["activeJoins"] = m_outgoingWorldTransfers.Count + m_pendingJoinCatchUps.Count;
+            result["connectedClients"] = GetConnectedRemoteClients().Count;
+            result["gameplayTxKbps"] = m_joinTransferGameplayBytesPerSecond * 8.0 / 1000.0;
+            result["joinTxKbps"] = m_joinTransferBytesPerSecond * 8.0 / 1000.0;
+            result["rxKbps"] = m_joinTransferReceiveBytesPerSecond * 8.0 / 1000.0;
+            result["lastUdpOutBytes"] = m_lastServerTrafficSampleBytesSent;
+            result["lastUdpInBytes"] = m_lastServerTrafficSampleBytesReceived;
+            result["joinState"] = result["activeJoins"] is int active && active > 0
+                ? (m_joinTransferPausedByGameplay ? "Paused" : "Ready")
+                : "idle";
+            result["availableJoinKbps"] = double.IsPositiveInfinity(
+                m_joinTransferAvailableBytesPerSecond) ? 0.0 :
+                m_joinTransferAvailableBytesPerSecond * 8.0 / 1000.0;
+            result["joinChunksPerTick"] = GetJoinTransferSendBudget(
+                m_networkPlayerData.Any(item => item.Key > 0));
+            result["joinWindowPackets"] = m_outgoingWorldTransfers.Count > 0
+                ? GetWorldTransferUnackedPacketLimit(m_outgoingWorldTransfers.Keys.First())
+                : MaximumWorldTransferUnackedPackets;
+            result["pausedByGameplay"] = m_joinTransferPausedByGameplay;
+            return new object[] { result };
+        }
+
         // Source: Survivalcraft/Game/GameLoadingScreen.cs:GameLoadingScreen.Enter
         // Source: ScMultiplayer.CreateRoomFromCurrentWorld
         private void UpdateAutoHostCurrentWorld()
@@ -2698,6 +3231,8 @@ namespace ScMultiplayer
                 m_hostProjectileReleaseCompensationSteps.Clear();
                 m_clientPredictedProjectiles.Clear();
                 m_displayedProjectileHits.Clear();
+                m_receivedDamageSequences.Clear();
+                m_remoteDigPresentations.Clear();
                 m_pendingTerrainPredictions.Clear();
                 m_pendingTerrainPredictionCells.Clear();
                 m_processedTerrainDigRequests.Clear();
@@ -2744,7 +3279,7 @@ namespace ScMultiplayer
                     Log.Information($"[ScMP] Client project ready: Transfer={m_pendingWorldReadyTransferId}");
                     if (m_joinRoomBusyDialog != null)
                         m_joinRoomBusyDialog.SmallMessage =
-                            "Connected.\r\nWorld loaded.\r\nApplying host changes...";
+                            "Connected.\nWorld loaded.\nApplying host changes...";
                 }
                 AttachHostPickableEvents(project);
                 QueueRunawayCreatureCleanup(project);
@@ -2769,6 +3304,7 @@ namespace ScMultiplayer
                 UpdateRemoteAnimalPresentations(dt);
                 UpdateRemotePickablePresentations(dt);
                 UpdateRemotePlayerPresentations(dt);
+                UpdateRemoteDigPresentations();
                 UpdatePendingTerrainPredictions();
             }
             MaintainRemoteTerrainLocations(project);
@@ -2889,19 +3425,26 @@ namespace ScMultiplayer
                 return;
             }
 
-            var entries = new List<string>();
+            var entries = new List<JoinedPlayerInformation>();
             SubsystemPlayers players = GameManager.Project.FindSubsystem<SubsystemPlayers>(false);
+            ComponentPlayer localPlayer = players?.ComponentPlayers.FirstOrDefault(player =>
+                player?.PlayerData != null && !m_networkPlayerData.Values.Contains(player.PlayerData));
+            Vector3 referencePosition = localPlayer?.ComponentBody?.Position ?? Vector3.Zero;
+            Vector3 referenceViewDirection = GetJoinedPlayerViewDirection(localPlayer);
             if (players != null)
             {
                 foreach (ComponentPlayer componentPlayer in players.ComponentPlayers.Where(player =>
                     player?.PlayerData != null &&
                     !m_networkPlayerData.Values.Contains(player.PlayerData)))
                 {
-                    string role = IsHost ? "Host" : "You";
-                    entries.Add(FormatJoinedPlayer(
+                    bool isSelf = ReferenceEquals(componentPlayer, localPlayer);
+                    entries.Add(CreateJoinedPlayerInformation(
                         componentPlayer.PlayerData.Name,
-                        role,
-                        componentPlayer.ComponentBody.Position));
+                        IsHost ? "Host" : "Client",
+                        componentPlayer.ComponentBody.Position,
+                        isSelf,
+                        referencePosition,
+                        referenceViewDirection));
                 }
             }
             foreach (KeyValuePair<int, PlayerData> item in m_networkPlayerData.OrderBy(pair => pair.Key))
@@ -2910,36 +3453,113 @@ namespace ScMultiplayer
                 Vector3 position = playerData?.ComponentPlayer?.ComponentBody?.Position ??
                     playerData?.SpawnPosition ?? Vector3.Zero;
                 string role = item.Key == 0 ? "Host" : $"Client {item.Key}";
-                entries.Add(FormatJoinedPlayer(playerData?.Name, role, position));
+                entries.Add(CreateJoinedPlayerInformation(playerData?.Name, role, position,
+                    isSelf: false, referencePosition, referenceViewDirection));
             }
 
             if (entries.Count == 0)
-                entries.Add("No joined player information is available.");
+            {
+                DialogsManager.ShowDialog(null, new MessageDialog(
+                    "Joined Players", "No joined player information is available.",
+                    "OK", null, null));
+                return;
+            }
             var dialog = new ListSelectionDialog(
                 "Joined Players",
                 entries,
                 44f,
-                item => CreateMultiplayerTextLabel(item.ToString(), 1f,
-                    WidgetAlignment.Near),
+                item => CreateJoinedPlayerInformationRow((JoinedPlayerInformation)item),
                 item => { });
             float availableWidth = MathUtils.Max(
                 ScreensManager.RootWidget.ActualSize.X - 40f, 0f);
             dialog.ContentSize = new Vector2(
                 MathUtils.Min(800f, availableWidth), dialog.ContentSize.Y);
+            // Source: Survivalcraft/Game/ListPanelWidget.cs:ListPanelWidget.ScrollPosition
+            // ListSelectionDialog inherits residual touch momentum from its initial widget state.
+            // A fresh IF dialog must always begin with the first player row visible.
+            ListPanelWidget list = dialog.Children.Find<ListPanelWidget>(
+                "ListSelectionDialog.List", true);
+            if (list != null)
+            {
+                list.ScrollPosition = 0f;
+                list.ScrollSpeed = 0f;
+            }
             DialogsManager.ShowDialog(null, dialog);
         }
 
-        private static string FormatJoinedPlayer(string name, string role, Vector3 position)
+        // Source: Survivalcraft/Game/ComponentInput.cs:ComponentInput.UpdateInputFromMouseAndKeyboard
+        private static Vector3 GetJoinedPlayerViewDirection(ComponentPlayer localPlayer)
         {
-            if (string.IsNullOrWhiteSpace(name)) name = "Player";
-            return string.Format(
-                CultureInfo.InvariantCulture,
-                "{0} | {1} | X {2:0.0} Y {3:0.0} Z {4:0.0}",
-                name,
-                role,
-                position.X,
-                position.Y,
-                position.Z);
+            Vector3 direction = localPlayer?.GameWidget?.ActiveCamera?.ViewDirection ??
+                localPlayer?.ComponentBody?.Matrix.Forward ?? Vector3.UnitZ;
+            float length = MathF.Sqrt(direction.X * direction.X + direction.Z * direction.Z);
+            if (length < 0.0001f)
+                return Vector3.UnitZ;
+            return new Vector3(direction.X / length, 0f, direction.Z / length);
+        }
+
+        private static JoinedPlayerInformation CreateJoinedPlayerInformation(string name,
+            string role, Vector3 position, bool isSelf, Vector3 referencePosition,
+            Vector3 referenceViewDirection)
+        {
+            float deltaX = position.X - referencePosition.X;
+            float deltaZ = position.Z - referencePosition.Z;
+            float distance = MathF.Sqrt(deltaX * deltaX + deltaZ * deltaZ);
+            return new JoinedPlayerInformation
+            {
+                Name = string.IsNullOrWhiteSpace(name) ? "Player" : name,
+                Role = role ?? "Client",
+                Position = position,
+                IsSelf = isSelf,
+                Distance = distance,
+                ClockDirection = isSelf ? 0 : GetClockDirection(referenceViewDirection,
+                    deltaX, deltaZ, distance)
+            };
+        }
+
+        // Source: Survivalcraft/Game/ComponentInput.cs:ComponentInput.UpdateInputFromMouseAndKeyboard
+        private static int GetClockDirection(Vector3 forward, float deltaX, float deltaZ,
+            float distance)
+        {
+            if (distance < 0.01f)
+                return 12;
+            double dot = forward.X * deltaX + forward.Z * deltaZ;
+            double clockwiseCross = forward.X * deltaZ - forward.Z * deltaX;
+            int hour = (int)Math.Round(Math.Atan2(clockwiseCross, dot) * 6.0 / Math.PI,
+                MidpointRounding.AwayFromZero);
+            hour %= 12;
+            if (hour < 0) hour += 12;
+            return hour == 0 ? 12 : hour;
+        }
+
+        private static Widget CreateJoinedPlayerInformationRow(JoinedPlayerInformation entry)
+        {
+            float availableWidth = MathUtils.Clamp(
+                (ScreensManager.RootWidget?.ActualSize.X ?? 760f) - 40f, 520f, 760f);
+            float scale = availableWidth / 760f;
+            var row = new CanvasWidget { Size = new Vector2(availableWidth, 44f) };
+            AddJoinedPlayerColumn(row, entry.Name, 8f, 178f, scale);
+            AddJoinedPlayerColumn(row, entry.Role, 186f, 92f, scale);
+            AddJoinedPlayerColumn(row, string.Format(CultureInfo.InvariantCulture,
+                "X {0:0.0} Y {1:0.0} Z {2:0.0}", entry.Position.X,
+                entry.Position.Y, entry.Position.Z), 286f, 258f, scale);
+            string relative = entry.IsSelf
+                ? "(self)"
+                : string.Format(CultureInfo.InvariantCulture, "({0:0}m, {1:00} o'clock)",
+                    entry.Distance, entry.ClockDirection);
+            AddJoinedPlayerColumn(row, relative, 552f, 200f, scale);
+            return row;
+        }
+
+        private static void AddJoinedPlayerColumn(CanvasWidget row, string text, float x,
+            float width, float scale)
+        {
+            LabelWidget label = CreateMultiplayerTextLabel(text, 0.82f * scale,
+                WidgetAlignment.Near);
+            label.Size = new Vector2(width * scale, 44f);
+            label.TextAnchor = TextAnchor.Left;
+            row.Children.Add(label);
+            CanvasWidget.SetPosition(label, new Vector2(x * scale, 0f));
         }
 
         // Source: Survivalcraft/Game/ComponentGui.cs:ComponentGui.m_moreContentsWidget
@@ -2970,6 +3590,9 @@ namespace ScMultiplayer
                 actions.Add(Tuple.Create(
                     "Auto Host Current World: " + autoHost,
                     (Action)ToggleAutoHostCurrentWorld));
+                actions.Add(Tuple.Create(
+                    "Join Bandwidth: " + FormatJoinBandwidthLimit(),
+                    (Action)ShowJoinTransferSettingsDialog));
             }
             if (IsHost && client?.IsConnected == true)
             {
@@ -3072,10 +3695,10 @@ namespace ScMultiplayer
             string status;
             if (IsHost && client?.IsConnected == true)
             {
-                status = $"Room ID: {client.GameID}\r\n" +
-                    $"World: {SuPlayScreen.WorldDataName}\r\n" +
-                    $"Connected players: {GetConnectedRemoteClients().Count}\r\n" +
-                    $"Pending requests: {m_hostJoinRequests.Count}\r\n" +
+                status = $"Room ID: {client.GameID}\n" +
+                    $"World: {SuPlayScreen.WorldDataName}\n" +
+                    $"Connected players: {GetConnectedRemoteClients().Count}\n" +
+                    $"Pending requests: {m_hostJoinRequests.Count}\n" +
                     "Auto approve: " +
                     (ScMultiplayerSettings.AutoApproveJoinRequests ? "On" : "Off");
             }
@@ -3125,6 +3748,220 @@ namespace ScMultiplayer
                     ? "A room will be created whenever a world finishes loading."
                     : "Loaded worlds will no longer be hosted automatically.",
                 "OK", null, null));
+        }
+
+        // Source: ScMultiplayer.ShowMultiplayerManagementDialog
+        // Keep normal hosting configuration small. Fixed join limits are available only to an
+        // administrator who deliberately opens Advanced, because zero is normally optimal.
+        private void ShowJoinTransferSettingsDialog()
+        {
+            if (!ScMultiplayerSettings.BandwidthConfigurationEnabled)
+            {
+                ShowAutomaticBandwidthSettingsDialog();
+                return;
+            }
+            ShowSimpleBandwidthSettingsDialog();
+        }
+
+        private void ShowAutomaticBandwidthSettingsDialog()
+        {
+            var actions = new List<Tuple<string, Action>>
+            {
+                Tuple.Create("Bandwidth: Automatic [On]",
+                    (Action)ToggleBandwidthConfiguration),
+                Tuple.Create("Automatic mode information",
+                    (Action)(() => DialogsManager.ShowDialog(null, new MessageDialog(
+                        "Automatic bandwidth",
+                        "Saved bandwidth values are not used. Join transfer increases while " +
+                        "connected players stay stable and immediately slows on network " +
+                        "pressure. Select the first item to configure a measured server limit.",
+                        "OK", null, null))))
+            };
+            DialogsManager.ShowDialog(null, new ListSelectionDialog(
+                "Bandwidth", actions, 60f,
+                item => ((Tuple<string, Action>)item).Item1,
+                item => ((Tuple<string, Action>)item).Item2()));
+        }
+
+        private void ToggleBandwidthConfiguration()
+        {
+            bool enabled = !ScMultiplayerSettings.BandwidthConfigurationEnabled;
+            ScMultiplayerSettings.SetBandwidthConfigurationEnabled(enabled);
+            if (enabled)
+                ShowSimpleBandwidthSettingsDialog();
+            else
+                ShowAutomaticBandwidthSettingsDialog();
+        }
+
+        private void ShowSimpleBandwidthSettingsDialog()
+        {
+            var actions = new List<Tuple<string, Action>>
+            {
+                Tuple.Create("Bandwidth: Configured [On]",
+                    (Action)ToggleBandwidthConfiguration),
+                Tuple.Create("Mode: " + (ScMultiplayerSettings.BandwidthMode ==
+                    BandwidthLimitMode.SharedTotal ? "Shared total" : "Separate upload / download"),
+                    (Action)SelectSimpleBandwidthMode)
+            };
+
+            if (ScMultiplayerSettings.BandwidthMode == BandwidthLimitMode.SharedTotal)
+            {
+                actions.Add(Tuple.Create("Shared total safe cap (Kbps)[" +
+                    ScMultiplayerSettings.SharedTotalSafeCapKbps + "]",
+                    (Action)(() => PromptBandwidthInteger("Shared total safe cap (Kbps)",
+                        "sharedTotalSafeCapKbps", ScMultiplayerSettings.SharedTotalSafeCapKbps,
+                        true))));
+            }
+            else
+            {
+                actions.Add(Tuple.Create("Upload safe cap (Kbps)[" +
+                    ScMultiplayerSettings.ServerUploadLimitKbps + "]",
+                    (Action)(() => PromptBandwidthInteger("Upload safe cap (Kbps)",
+                        "serverUploadLimitKbps", ScMultiplayerSettings.ServerUploadLimitKbps,
+                        true))));
+                actions.Add(Tuple.Create("Download reference (Kbps)[" +
+                    ScMultiplayerSettings.ServerDownloadLimitKbps + "]",
+                    (Action)(() => PromptBandwidthInteger("Download reference (Kbps)",
+                        "serverDownloadLimitKbps", ScMultiplayerSettings.ServerDownloadLimitKbps,
+                        true))));
+            }
+            actions.Add(Tuple.Create("Join capacity: Automatic [0] (up to four clients)",
+                (Action)ShowAutomaticJoinCapacityInfo));
+            DialogsManager.ShowDialog(null, new ListSelectionDialog(
+                "Simple Bandwidth", actions, 60f,
+                item => ((Tuple<string, Action>)item).Item1,
+                item => ((Tuple<string, Action>)item).Item2()));
+        }
+
+        private void SelectSimpleBandwidthMode()
+        {
+            DialogsManager.ShowDialog(null, new ListSelectionDialog(
+                "Bandwidth mode", new[] { "Shared total", "Separate upload / download" }, 60f,
+                item => (string)item,
+                item =>
+                {
+                    bool shared = string.Equals((string)item, "Shared total",
+                        StringComparison.Ordinal);
+                    ApplySimpleBandwidthSettings(null, 0, shared);
+                    ShowSimpleBandwidthSettingsDialog();
+                }));
+        }
+
+        private void PromptBandwidthInteger(string title, string setting, int value,
+            bool simple)
+        {
+            DialogsManager.ShowDialog(null, new TextBoxDialog(title, value.ToString(
+                CultureInfo.InvariantCulture), 7, text =>
+            {
+                if (text == null) return;
+                if (!int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture,
+                    out int parsed) || parsed < 0 || parsed > 1048576)
+                {
+                    DialogsManager.ShowDialog(null, new MessageDialog(title,
+                        "Enter a whole number from 0 to 1048576.", "OK", null, null));
+                    return;
+                }
+                if (simple)
+                    ApplySimpleBandwidthSettings(setting, parsed,
+                        ScMultiplayerSettings.BandwidthMode == BandwidthLimitMode.SharedTotal);
+                else
+                    ScMultiplayerSettings.UpdateJoinTransferSettings(
+                        new Dictionary<string, object>(StringComparer.Ordinal)
+                        {
+                            [setting] = parsed
+                        });
+                if (simple) ShowSimpleBandwidthSettingsDialog();
+                else ShowAdvancedBandwidthSettingsDialog();
+            }));
+        }
+
+        private void ApplySimpleBandwidthSettings(string setting, int value, bool shared)
+        {
+            int cap = setting == "sharedTotalSafeCapKbps" ? value :
+                shared ? ScMultiplayerSettings.SharedTotalSafeCapKbps :
+                setting == "serverUploadLimitKbps" ? value :
+                ScMultiplayerSettings.ServerUploadLimitKbps;
+            var values = new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["bandwidthMode"] = shared ? "shared" : "separate",
+                ["joinTransferMaxKbps"] = 0,
+                ["joinTransferPerJoinMaxKbps"] = 0,
+                ["joinTransferBurstKiB"] = 32,
+                ["joinTransferGameplayHeadroomKbps"] = GetRecommendedGameplayReserve(cap)
+            };
+            if (!string.IsNullOrEmpty(setting)) values[setting] = value;
+            ScMultiplayerSettings.UpdateJoinTransferSettings(values);
+        }
+
+        private static int GetRecommendedGameplayReserve(int safeCapKbps)
+        {
+            if (safeCapKbps >= 3000) return 512;
+            if (safeCapKbps >= 1000) return 256;
+            return 96;
+        }
+
+        private void ShowAutomaticJoinCapacityInfo()
+        {
+            DialogsManager.ShowDialog(null, new MessageDialog("Automatic join capacity",
+                "With no fixed bandwidth value, the safe transfer scheduler shares world data " +
+                "among up to four default clients and increases while the connection stays " +
+                "stable. Set a shared cap in Simple setup to use a measured server limit.",
+                "OK", null, null));
+        }
+
+        private void ShowAdvancedBandwidthSettingsDialog()
+        {
+            var actions = new List<Tuple<string, Action>>
+            {
+                Tuple.Create("Mode: " + (ScMultiplayerSettings.BandwidthMode ==
+                    BandwidthLimitMode.SharedTotal ? "Shared total" : "Separate upload / download"),
+                    (Action)SelectSimpleBandwidthMode),
+                Tuple.Create("Shared total safe cap (Kbps)[" +
+                    ScMultiplayerSettings.SharedTotalSafeCapKbps + "]",
+                    (Action)(() => PromptBandwidthInteger("Shared total safe cap (Kbps)",
+                        "sharedTotalSafeCapKbps", ScMultiplayerSettings.SharedTotalSafeCapKbps,
+                        false))),
+                Tuple.Create("Upload safe cap (Kbps)[" + ScMultiplayerSettings.ServerUploadLimitKbps + "]",
+                    (Action)(() => PromptBandwidthInteger("Upload safe cap (Kbps)",
+                        "serverUploadLimitKbps", ScMultiplayerSettings.ServerUploadLimitKbps,
+                        false))),
+                Tuple.Create("Download reference (Kbps)[" +
+                    ScMultiplayerSettings.ServerDownloadLimitKbps + "]",
+                    (Action)(() => PromptBandwidthInteger("Download reference (Kbps)",
+                        "serverDownloadLimitKbps", ScMultiplayerSettings.ServerDownloadLimitKbps,
+                        false))),
+                Tuple.Create("Join fixed cap (Kbps)[" +
+                    ScMultiplayerSettings.JoinTransferMaxKbps + "] (0 Automatic)",
+                    (Action)(() => PromptBandwidthInteger("Join fixed cap (Kbps, 0 Automatic)",
+                        "joinTransferMaxKbps", ScMultiplayerSettings.JoinTransferMaxKbps,
+                        false))),
+                Tuple.Create("Gameplay reserve (Kbps)[" +
+                    ScMultiplayerSettings.JoinTransferGameplayHeadroomKbps + "]",
+                    (Action)(() => PromptBandwidthInteger("Gameplay reserve (Kbps)",
+                        "joinTransferGameplayHeadroomKbps",
+                        ScMultiplayerSettings.JoinTransferGameplayHeadroomKbps, false))),
+                Tuple.Create("Per-join fixed cap (Kbps)[" +
+                    ScMultiplayerSettings.JoinTransferPerJoinMaxKbps + "] (0 Automatic)",
+                    (Action)(() => PromptBandwidthInteger("Per-join fixed cap (Kbps, 0 Automatic)",
+                        "joinTransferPerJoinMaxKbps",
+                        ScMultiplayerSettings.JoinTransferPerJoinMaxKbps, false))),
+                Tuple.Create("Join burst (KiB)[" + ScMultiplayerSettings.JoinTransferBurstKiB + "]",
+                    (Action)(() => PromptBandwidthInteger("Join burst (KiB)", "joinTransferBurstKiB",
+                        ScMultiplayerSettings.JoinTransferBurstKiB, false)))
+            };
+            DialogsManager.ShowDialog(null, new ListSelectionDialog(
+                "Advanced Bandwidth", actions, 60f,
+                item => ((Tuple<string, Action>)item).Item1,
+                item => ((Tuple<string, Action>)item).Item2()));
+        }
+
+        private static string FormatJoinBandwidthLimit()
+        {
+            if (!ScMultiplayerSettings.BandwidthConfigurationEnabled)
+                return "Automatic [On]";
+            return ScMultiplayerSettings.BandwidthMode == BandwidthLimitMode.SharedTotal
+                ? "Shared (Kbps)[" + ScMultiplayerSettings.SharedTotalSafeCapKbps + "]"
+                : "Separate (Kbps)[" + ScMultiplayerSettings.ServerUploadLimitKbps + "]";
         }
 
         private void ShowPendingJoinRequestsDialog()
@@ -3234,10 +4071,38 @@ namespace ScMultiplayer
             }
         }
 
+        // Source: EntitySystem/SuAPI/IModEventBus.cs:IModEventBus.TriggerEvent
+        // Only host-authoritative, low-frequency events are published for server audit storage.
+        private void PublishServerAudit(string eventName, int clientId, string details)
+        {
+            if (!IsHost || m_eventBus == null || clientId <= 0) return;
+            string playerName = m_networkPlayerData.TryGetValue(clientId, out PlayerData data)
+                ? data?.Name
+                : null;
+            string record = "event=" + NormalizeServerAuditValue(eventName, 48) +
+                " client=" + clientId.ToString(CultureInfo.InvariantCulture) +
+                " player=\"" + NormalizeServerAuditValue(playerName, 64) + "\"";
+            if (!string.IsNullOrWhiteSpace(details))
+                record += " " + NormalizeServerAuditValue(details, 256);
+            m_eventBus.TriggerEvent(ServerAuditEventName, new object[] { record });
+        }
+
+        private static string NormalizeServerAuditValue(string value, int maximumLength)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return "unknown";
+            string normalized = value.Replace('\r', ' ').Replace('\n', ' ').Replace('"', '\'').Trim();
+            return normalized.Length <= maximumLength
+                ? normalized
+                : normalized.Substring(0, maximumLength);
+        }
+
         public void DisplayChatMessage(ChatMessage message, int clientId)
         {
             if (message == null || string.IsNullOrWhiteSpace(message.Text)) return;
             if (!RecordChatMessage(message)) return;
+            if (IsHost && clientId > 0)
+                PublishServerAudit("chat", clientId,
+                    "length=" + message.Text.Length.ToString(CultureInfo.InvariantCulture));
             string identity = string.IsNullOrWhiteSpace(message.SenderIdentity)
                 ? clientId.ToString()
                 : message.SenderIdentity;
@@ -3492,8 +4357,8 @@ namespace ScMultiplayer
                     $"host={hostProtocol}, local={localProtocol}");
                 DialogsManager.ShowDialog(null, new MessageDialog(
                     "Join Room",
-                    $"Multiplayer Mod protocol mismatch.\r\n" +
-                    $"Host: {hostProtocol}\r\nLocal: {localProtocol}\r\n" +
+                    $"Multiplayer Mod protocol mismatch.\n" +
+                    $"Host: {hostProtocol}\nLocal: {localProtocol}\n" +
                     "Install the same ScMultiplayer package on all devices.",
                     "OK", null, null));
                 return;
@@ -3616,7 +4481,7 @@ namespace ScMultiplayer
             // Source: Survivalcraft/Game/LabelWidget.cs:LabelWidget.UpdateLines
             // LabelWidget splits explicit lines only on LF. CR remains ordinary text and makes
             // the entire status appear on one line when word wrapping is disabled.
-            m_joinRoomBusyDialog.SmallMessage = string.Join("\r\n",
+            m_joinRoomBusyDialog.SmallMessage = string.Join("\n",
                 (lines ?? Array.Empty<string>()).Where(line =>
                     !string.IsNullOrWhiteSpace(line)));
         }
@@ -3809,12 +4674,17 @@ namespace ScMultiplayer
                     TrimHostTerrainJournalLocked(Time.RealTime);
             }
             if (IsHost)
+            {
+                UpdateJoinTransferBandwidthBudget();
+                UpdateServerTrafficDisplaySample();
                 ConfirmPendingFluidSettlements();
+            }
             // Source: ScMultiplayer.cs:AcceptNetworkPlayerJoin
             // A joining client intentionally has no host-side avatar until it reports that the
             // Loading Project screen started. World chunks must therefore run before the
             // no-remote-avatar maintenance fast path.
             if (IsHost) SendPendingWorldTransferChunks();
+            if (IsHost) SendPendingJoinCatchUps();
             if (IsHost) MaintainHostLightningLifecycle();
             if (IsHost && !m_networkPlayerData.Any(item => item.Key > 0))
             {
@@ -5009,6 +5879,13 @@ namespace ScMultiplayer
                     flags |= BodyUpdateMessage.ChangeFlag.Template;
                 if (candidate.StateChanged || forceFullSnapshot)
                     flags |= BodyUpdateMessage.ChangeFlag.BehaviorState;
+                float currentHealth = candidate.Creature.ComponentHealth?.Health ?? 0f;
+                bool healthDecreased = metadata.HasSent &&
+                    currentHealth < metadata.LastHealth - 0.0001f;
+                if (healthDecreased)
+                    metadata.DamageSequence = metadata.DamageSequence == int.MaxValue
+                        ? 1
+                        : metadata.DamageSequence + 1;
                 bodyMessage.Bodies.Add(new BodyUpdateMessage.BodyItem
                 {
                     EntityId = m_hostAnimalIds[candidate.Entity],
@@ -5031,9 +5908,12 @@ namespace ScMultiplayer
                     HerdName = candidate.HerdName,
                     SimulationSeed = metadata.SimulationSeed,
                     ShapeshiftTarget = candidate.ShapeshiftTarget,
-                    Health = candidate.Creature.ComponentHealth?.Health ?? 0f
+                    Health = currentHealth,
+                    DamageSequence = metadata.DamageSequence
                 });
-                bodyBatchRequiresReliable |= isInitialState || shapeshiftStarted;
+                // Source: Survivalcraft/Game/ComponentCreatureSounds.cs:PlayPainSound
+                // A health-loss edge must not be discarded with replaceable animal movement.
+                bodyBatchRequiresReliable |= isInitialState || shapeshiftStarted || healthDecreased;
 
                 metadata.HasSent = true;
                 metadata.BehaviorState = candidate.BehaviorState;
@@ -5043,7 +5923,7 @@ namespace ScMultiplayer
                 metadata.AttackOrder = candidate.AttackOrder;
                 metadata.FeedOrder = candidate.FeedOrder;
                 metadata.ShapeshiftTarget = candidate.ShapeshiftTarget;
-                metadata.LastHealth = candidate.Creature.ComponentHealth?.Health ?? 0f;
+                metadata.LastHealth = currentHealth;
                 metadata.NextSendTime = now + GetAnimalSyncInterval(candidate.SyncTier);
 
                 if (!forceFullSnapshot && bodyMessage.Bodies.Count >= AnimalSyncBatchSize)
@@ -5313,24 +6193,31 @@ namespace ScMultiplayer
             foreach (var item in obj.Leaves)
             {
                 Log.Information($"[ScMP] Client left: {item.ClientID}");
+                PublishServerAudit("connection.leave", item.ClientID, null);
                 if (!IsHost && item.ClientID == 0)
                 {
                     HandleHostDisconnected();
                     continue;
                 }
-                // Source: Mod/ScMultiplayer/Func/Circuit/CircuitSynchronizer.cs:
-                // CircuitSynchronizer.NotifyClientDeparted
-                m_circuitSynchronizer?.NotifyClientDeparted(item.ClientID);
-                if (!IsHost)
-                    m_departedRemoteClientIds.Add(item.ClientID);
-                RemoveNetworkPlayer(item.ClientID);
-                playerMappingManager.ReleasePlayerIndex(item.ClientID);
+                int departedClientId = item.ClientID;
+                // Source: ScMultiplayer.cs:ProcessEndOfFrameActions
+                // GameStep can arrive while SubsystemUpdate is iterating. Entity removal is
+                // therefore deferred to Frame.Update, after native world updates finish.
+                QueueEndOfFrameAction(() =>
+                {
+                    m_circuitSynchronizer?.NotifyClientDeparted(departedClientId);
+                    if (!IsHost)
+                        m_departedRemoteClientIds.Add(departedClientId);
+                    RemoveNetworkPlayer(departedClientId);
+                    playerMappingManager.ReleasePlayerIndex(departedClientId);
+                });
             }
 
             // 加入
             foreach (var item in obj.Joins)
             {
                 Log.Information($"[ScMP] Client joining: {item.ClientID}");
+                PublishServerAudit("connection.request", item.ClientID, null);
                 m_departedRemoteClientIds.Remove(item.ClientID);
                 // Source: Comms/Comms.Drt/Func/Server/Set/ServerGame.cs:ServerGame.Handle
                 // A single existing peer accepts or refuses a join. Only the room owner is allowed
@@ -5422,6 +6309,10 @@ namespace ScMultiplayer
                     case TerrainDigResultMessage terrainDigResult:
                         QueueEndOfFrameAction(() =>
                             HandleTerrainDigResult(terrainDigResult, item.ClientID));
+                        break;
+                    case DigPresentationMessage digPresentation:
+                        QueueEndOfFrameAction(() => HandleDigPresentationMessage(
+                            digPresentation, item.ClientID));
                         break;
                     case GameModifiedCellsMessage cells:
                         QueueEndOfFrameAction(() =>
@@ -5839,6 +6730,7 @@ namespace ScMultiplayer
             CloseActiveJoinDecision(request.ClientId);
             m_reservedNetworkPlayerIndices.Remove(request.ClientId);
             playerMappingManager.ReleasePlayerIndex(request.ClientId);
+            PublishServerAudit("join.rejected", request.ClientId, null);
             try
             {
                 client.RefuseJoinGame(request.ClientId, reason);
@@ -5902,6 +6794,8 @@ namespace ScMultiplayer
                     snapshot.RandomStates, joiningRecord);
                 Log.Information($"[ScMP] Accepted ClientID {joiningClientId} and queued live world snapshot " +
                     $"(Tick={snapshot.Tick}, Bytes={snapshot.WorldData.Length})");
+                PublishServerAudit("join.snapshot_queued", joiningClientId,
+                    "bytes=" + snapshot.WorldData.Length.ToString(CultureInfo.InvariantCulture));
             }
             catch (Exception ex)
             {
@@ -6150,15 +7044,13 @@ namespace ScMultiplayer
             journal.Messages.Clear();
             journal.TotalBytes = 0;
             journal.ReplayRound++;
+            PendingJoinCatchUp pending = GetOrCreatePendingJoinCatchUp(targetClientId);
             foreach (JoinCatchUpMessage item in batch)
             {
                 if (item?.Payload == null) continue;
-                client.SendDirectInput(targetClientId, item.Payload,
-                    sequenced: true, latest: false);
-                journal.TotalMessagesSent++;
-                journal.TotalBytesSent += item.Payload.Length;
+                pending.Messages.Enqueue(item);
             }
-            Log.Information($"[ScMP] Join catch-up batch sent: ClientID={targetClientId}, " +
+            Log.Information($"[ScMP] Join catch-up batch queued: ClientID={targetClientId}, " +
                 $"Round={journal.ReplayRound}, StartTick={journal.StartTick}, " +
                 $"Messages={batch.Length}, Bytes={batch.Sum(item => item?.Payload?.Length ?? 0)}, " +
                 $"Dropped={journal.DroppedMessages}");
@@ -6173,17 +7065,83 @@ namespace ScMultiplayer
             JoinCatchUpMessage[] batch = journal.PostCutoffMessages.ToArray();
             journal.PostCutoffMessages.Clear();
             journal.TotalBytes = 0;
+            PendingJoinCatchUp pending = GetOrCreatePendingJoinCatchUp(targetClientId);
             foreach (JoinCatchUpMessage item in batch)
             {
                 if (item?.Payload == null) continue;
-                client.SendDirectInput(targetClientId, item.Payload,
-                    sequenced: true, latest: false);
-                journal.TotalMessagesSent++;
-                journal.TotalBytesSent += item.Payload.Length;
+                pending.Messages.Enqueue(item);
             }
-            Log.Information($"[ScMP] Join post-cutoff batch sent: ClientID={targetClientId}, " +
+            Log.Information($"[ScMP] Join post-cutoff batch queued: ClientID={targetClientId}, " +
                 $"Messages={batch.Length}, Bytes={batch.Sum(item => item?.Payload?.Length ?? 0)}, " +
                 $"Dropped={journal.DroppedMessages}");
+        }
+
+        private PendingJoinCatchUp GetOrCreatePendingJoinCatchUp(int targetClientId)
+        {
+            if (!m_pendingJoinCatchUps.TryGetValue(targetClientId, out PendingJoinCatchUp pending))
+            {
+                pending = new PendingJoinCatchUp { TargetClientId = targetClientId };
+                m_pendingJoinCatchUps.Add(targetClientId, pending);
+            }
+            return pending;
+        }
+
+        private void QueueJoinCatchUpPayload(int targetClientId, byte[] payload)
+        {
+            if (payload == null || payload.Length == 0) return;
+            GetOrCreatePendingJoinCatchUp(targetClientId).Messages.Enqueue(
+                new JoinCatchUpMessage { Payload = payload, Sequenced = true });
+        }
+
+        // Source: ScMultiplayer.cs:SendPendingWorldTransferChunks
+        // Catch-up uses the same spare-bandwidth bucket as the initial world archive. Completion
+        // remains ordered after the last catch-up payload, so a throttled join cannot pass its
+        // readiness barrier early.
+        private void SendPendingJoinCatchUps()
+        {
+            if (m_pendingJoinCatchUps.Count == 0) return;
+            int budget = GetJoinTransferSendBudget(
+                m_networkPlayerData.Any(item => item.Key > 0));
+            int[] targetClientIds = m_pendingJoinCatchUps.Keys.OrderBy(id => id).ToArray();
+            int attempts = targetClientIds.Length * (budget + 1);
+            int cursor = m_worldTransferCursor % Math.Max(1, targetClientIds.Length);
+            while (budget > 0 && attempts-- > 0 && targetClientIds.Length > 0)
+            {
+                int targetClientId = targetClientIds[cursor];
+                cursor = (cursor + 1) % targetClientIds.Length;
+                if (!m_pendingJoinCatchUps.TryGetValue(targetClientId, out PendingJoinCatchUp pending))
+                    continue;
+                if (GetWorldTransferRelayUnackedPackets(targetClientId) >=
+                    GetWorldTransferUnackedPacketLimit(targetClientId))
+                    continue;
+                if (pending.Messages.Count == 0)
+                {
+                    m_pendingJoinCatchUps.Remove(targetClientId);
+                    pending.CompletionAction?.Invoke();
+                    continue;
+                }
+
+                JoinCatchUpMessage item = pending.Messages.Peek();
+                if (item?.Payload == null)
+                {
+                    pending.Messages.Dequeue();
+                    continue;
+                }
+                if (!TryReserveJoinTransferBytes(null, item.Payload.Length))
+                    break;
+                pending.Messages.Dequeue();
+                client.SendDirectInput(targetClientId, item.Payload,
+                    sequenced: true, latest: false);
+                RecordJoinTransferBytesSent(item.Payload.Length);
+                if (m_joinCatchUpJournals.TryGetValue(targetClientId,
+                    out JoinCatchUpJournal journal))
+                {
+                    journal.TotalMessagesSent++;
+                    journal.TotalBytesSent += item.Payload.Length;
+                }
+                budget--;
+            }
+            m_worldTransferCursor = cursor;
         }
 
         private void SendPendingWorldTransferChunks()
@@ -6193,15 +7151,12 @@ namespace ScMultiplayer
             // Source: RuthlessConquest/Net/ServerGame.cs:ServerGame.Run
             // Keep a small reliable-UDP window so delayed ACKs on a lossy remote link do not turn
             // premature retransmissions into a self-sustaining burst.
-            int maximumBudget = m_networkPlayerData.Any(item => item.Key > 0)
-                ? MaximumWorldTransferChunksPerGameplayTick
-                : MaximumWorldTransferChunksPerNetworkTick;
-            int budget = maximumBudget;
+            bool gameplayActive = m_networkPlayerData.Any(item => item.Key > 0);
+            int budget = GetJoinTransferSendBudget(gameplayActive);
             int[] targetClientIds = m_outgoingWorldTransfers.Keys.OrderBy(id => id).ToArray();
             if (targetClientIds.Length == 0) return;
             m_worldTransferCursor %= targetClientIds.Length;
-            int attemptsRemaining = targetClientIds.Length *
-                (MaximumWorldTransferChunksPerNetworkTick + 1);
+            int attemptsRemaining = targetClientIds.Length * (budget + 1);
             while (budget > 0 && attemptsRemaining-- > 0)
             {
                 int targetClientId = targetClientIds[m_worldTransferCursor];
@@ -6212,7 +7167,7 @@ namespace ScMultiplayer
                     (transfer.InitialSendComplete && transfer.RepairChunkIndices.Count == 0))
                     continue;
                 if (GetWorldTransferRelayUnackedPackets(targetClientId) >=
-                    MaximumWorldTransferUnackedPackets)
+                    GetWorldTransferUnackedPacketLimit(targetClientId))
                     continue;
 
                 int chunkIndex;
@@ -6225,13 +7180,33 @@ namespace ScMultiplayer
                 else
                 {
                     int windowEnd = Math.Min(transfer.ChunkCount,
-                        transfer.HighestContiguousChunkIndex + 1 + WorldTransferWindowChunks);
+                        transfer.HighestContiguousChunkIndex + 1 +
+                        GetWorldTransferChunkWindow(targetClientId));
                     if (transfer.NextChunkIndex >= windowEnd)
                         continue;
                     chunkIndex = transfer.NextChunkIndex++;
                 }
+                int payloadBytes = Math.Min(WorldTransferChunkSize,
+                    transfer.WorldData.Length - chunkIndex * WorldTransferChunkSize);
+                if (!TryReserveJoinTransferBytes(transfer, payloadBytes))
+                {
+                    if (isRepair)
+                    {
+                        if (transfer.QueuedRepairChunkIndices.Add(chunkIndex))
+                            transfer.RepairChunkIndices.Enqueue(chunkIndex);
+                    }
+                    else
+                    {
+                        transfer.NextChunkIndex--;
+                    }
+                    if (!HasGlobalJoinTransferTokens(
+                        EstimateJoinTransferPacketBytes(payloadBytes)))
+                        break;
+                    continue;
+                }
                 if (!QueueWorldTransferChunk(transfer, chunkIndex))
                 {
+                    RefundJoinTransferBytes(transfer, payloadBytes);
                     if (isRepair)
                     {
                         if (transfer.QueuedRepairChunkIndices.Add(chunkIndex))
@@ -6297,6 +7272,7 @@ namespace ScMultiplayer
                                     TotalLength = work.WorldData.Length,
                                     Data = data
                                 });
+                            RecordJoinTransferBytesSent(data.Length);
                             if (++burstCount % 4 == 0)
                                 await Task.Delay(1, cancellationToken);
                         }
@@ -6338,7 +7314,7 @@ namespace ScMultiplayer
             {
                 if (transfer == null || transfer.Chunks == null ||
                     transfer.ReceivedChunkCount >= transfer.Chunks.Length ||
-                    now - transfer.LastStatusRequestTime < WorldTransferStatusInterval)
+                    now - transfer.LastStatusRequestTime < WorldTransferProgressStatusInterval)
                     continue;
                 bool stalled = now - transfer.LastProgressTime >= WorldTransferRepairInterval;
                 bool requestRepair = stalled &&
@@ -6930,8 +7906,14 @@ namespace ScMultiplayer
                         ModManager.ModParentField.ModifyParentField(
                             creature.ComponentCreatureModel, "m_injuryColorFactor", 1f,
                             typeof(ComponentCreatureModel));
-                        // Source: Survivalcraft/Game/ComponentCreatureSounds.cs:ComponentCreatureSounds.PlayPainSound
-                        creature.ComponentCreatureSounds?.PlayPainSound();
+                    }
+                    if (item.DamageSequence > 0 &&
+                        item.DamageSequence > state.LastDamageSequence)
+                    {
+                        state.LastDamageSequence = item.DamageSequence;
+                        // Source: Survivalcraft/Game/ComponentCreatureSounds.cs:PlayPainSound
+                        PlayConfirmedPainSound(creature.ComponentCreatureSounds,
+                            GameManager.Project);
                     }
                     state.LastHealth = health;
                     state.HasHealth = true;
@@ -8783,6 +9765,7 @@ namespace ScMultiplayer
             // a transport leave cannot leave a departed avatar visible on other clients.
             RemotePlayers.Remove(clientId);
             m_outgoingWorldTransfers.Remove(clientId);
+            m_pendingJoinCatchUps.Remove(clientId);
             m_worldTransfersAwaitingReady.Remove(clientId);
             m_hostProjectReadyTransfers.Remove(clientId);
             m_completedWorldReadyTransfers.Remove(clientId);
@@ -10824,6 +11807,13 @@ namespace ScMultiplayer
                     targetPlayer.ComponentHealth, "m_lastHealth", previousHealth,
                     typeof(ComponentHealth));
             }
+            if (msg.DamageSequence > 0 && targetPlayer?.ComponentCreatureSounds != null &&
+                (!m_receivedDamageSequences.TryGetValue(remoteClientId, out int lastDamageSequence) ||
+                    msg.DamageSequence > lastDamageSequence))
+            {
+                m_receivedDamageSequences[remoteClientId] = msg.DamageSequence;
+                PlayConfirmedPainSound(targetPlayer.ComponentCreatureSounds, targetPlayer.Project);
+            }
             if (remoteClientId == client.ClientID)
             {
                 m_hasObservedClientHealth = true;
@@ -10902,6 +11892,28 @@ namespace ScMultiplayer
                 sounds, "m_lastSoundTime", subsystemTime.GameTime - 2.0,
                 typeof(ComponentCreatureSounds));
             sounds.PlayPainSound();
+        }
+
+        // Source: Survivalcraft/Game/ComponentCreatureSounds.cs:PlayPainSound
+        private static void PlayConfirmedPainSound(ComponentCreatureSounds sounds, Project project)
+        {
+            SubsystemTime subsystemTime = project?.FindSubsystem<SubsystemTime>(false);
+            if (sounds == null || subsystemTime == null) return;
+            // A remote creature is a presentation replica, so unrelated idle/attack sounds must
+            // not consume the one-second native limiter before its confirmed pain edge arrives.
+            ModManager.ModParentField.ModifyParentField(sounds, "m_lastSoundTime",
+                subsystemTime.GameTime - 2.0, typeof(ComponentCreatureSounds));
+            sounds.PlayPainSound();
+        }
+
+        // Source: Survivalcraft/Game/ComponentHealth.cs:ComponentHealth.Update
+        internal int GetDamageSequence(int playerIndex, float healthChange)
+        {
+            if (!m_damageSequences.TryGetValue(playerIndex, out int sequence)) sequence = 0;
+            if (healthChange < -0.0001f)
+                sequence = sequence == int.MaxValue ? 1 : sequence + 1;
+            m_damageSequences[playerIndex] = sequence;
+            return sequence;
         }
 
         // Source: SubsystemTime.cs:SubsystemTime.NextFrame
@@ -11125,6 +12137,11 @@ namespace ScMultiplayer
                 while (state.CompletedOrder.Count > MaximumCachedWorldControlResults)
                     state.Completed.Remove(state.CompletedOrder.Dequeue());
                 NetworkMessageSender.SendWorldControlResult(sourceClientId, result);
+                if (result.Actions != WorldControlAction.None)
+                    PublishServerAudit("world.control", sourceClientId,
+                        "actions=" + result.Actions + " time=" + result.TimeResult +
+                        " rain=" + result.PrecipitationStarted + " fog=" + result.FogStarted +
+                        " lightning=" + result.LightningTriggered);
 
                 state.NextExpectedRequestId = message.RequestId == int.MaxValue
                     ? 1
@@ -11239,36 +12256,26 @@ namespace ScMultiplayer
             int sourceClientId)
         {
             if (IsHost || sourceClientId != 0 || message == null ||
-                !m_pendingWorldControlRequests.ContainsKey(message.RequestId))
+                !m_pendingWorldControlRequests.TryGetValue(message.RequestId,
+                    out PendingWorldControlRequest pending))
                 return;
-            m_bufferedWorldControlResults[message.RequestId] = message;
-            DrainWorldControlResults();
+            // A result is self-identifying. Waiting for an earlier button result can suppress the
+            // feedback for a later accepted click even though its world mutation already happened.
+            m_pendingWorldControlRequests.Remove(message.RequestId);
+            DisplayWorldControlResult(message, pending);
         }
 
         // Source: Mod/ScMultiplayer/Message/WorldControlResultMessage.cs:
         // WorldControlResultMessage.RequestId
         private void DrainWorldControlResults()
         {
-            while (m_pendingWorldControlRequests.TryGetValue(
-                m_nextWorldControlFeedbackRequestId, out PendingWorldControlRequest pending))
+            foreach (KeyValuePair<int, PendingWorldControlRequest> item in
+                m_pendingWorldControlRequests.Where(entry => entry.Value.TimedOut).ToArray())
             {
-                if (m_bufferedWorldControlResults.TryGetValue(
-                    m_nextWorldControlFeedbackRequestId,
-                    out WorldControlResultMessage message))
-                {
-                    m_bufferedWorldControlResults.Remove(m_nextWorldControlFeedbackRequestId);
-                    m_pendingWorldControlRequests.Remove(m_nextWorldControlFeedbackRequestId);
-                    DisplayWorldControlResult(message, pending);
-                    AdvanceWorldControlFeedbackRequestId();
-                    continue;
-                }
-                if (!pending.TimedOut) break;
-
-                m_pendingWorldControlRequests.Remove(m_nextWorldControlFeedbackRequestId);
-                DisplayWorldControlFeedback(pending.ComponentPlayer,
-                    pending.FailureMessage ??
+                m_pendingWorldControlRequests.Remove(item.Key);
+                DisplayWorldControlFeedback(item.Value.ComponentPlayer,
+                    item.Value.FailureMessage ??
                     "Host did not confirm the world control request.");
-                AdvanceWorldControlFeedbackRequestId();
             }
         }
 
@@ -11293,7 +12300,7 @@ namespace ScMultiplayer
             if (feedback.Count == 0) return;
 
             DisplayWorldControlFeedback(pending.ComponentPlayer,
-                string.Join("\r\n", feedback));
+                string.Join("\n", feedback));
         }
 
         // Source: Survivalcraft/Game/ComponentGui.cs:ComponentGui.DisplaySmallMessage
@@ -11913,7 +12920,7 @@ namespace ScMultiplayer
             ShowJoinRoomBusyDialog();
             if (m_joinRoomBusyDialog != null)
                 m_joinRoomBusyDialog.SmallMessage =
-                    "Terrain history expired.\r\nDownloading the current host world...";
+                    "Terrain history expired.\nDownloading the current host world...";
             // Source: Survivalcraft/Game/GameLoadingScreen.cs:GameLoadingScreen.Enter
             // Loading the refreshed snapshot disposes the currently running client Project. Keep
             // that known replacement separate from an intentional game-menu leave.
@@ -12085,6 +13092,52 @@ namespace ScMultiplayer
                     prediction.ReconcileTime = Time.RealTime + 0.25;
                 }
             }
+        }
+
+        // Source: Survivalcraft/Game/ComponentDiggingCracks.cs:ComponentDiggingCracks.Draw
+        private void HandleDigPresentationMessage(DigPresentationMessage message, int sourceClientId)
+        {
+            if (message == null) return;
+            if (IsHost)
+            {
+                if (sourceClientId <= 0 || message.PlayerIndex != sourceClientId ||
+                    !m_networkPlayerData.TryGetValue(sourceClientId, out PlayerData playerData) ||
+                    playerData?.ComponentPlayer?.ComponentCreatureModel == null)
+                    return;
+                if (message.IsActive)
+                {
+                    SubsystemTerrain terrain = GameManager.Project?.FindSubsystem<SubsystemTerrain>(false);
+                    if (terrain == null || !terrain.Terrain.IsCellValid(message.X, message.Y, message.Z) ||
+                        message.Face < 0 || message.Face > 5 ||
+                        Vector3.DistanceSquared(playerData.ComponentPlayer.ComponentCreatureModel.EyePosition,
+                            new Vector3(message.X + 0.5f, message.Y + 0.5f, message.Z + 0.5f)) >
+                            2.25f * 2.25f)
+                        return;
+                    message.Progress = MathUtils.Saturate(message.Progress);
+                }
+                NetworkMessageSender.SendDigPresentation(-1, message, latest: !message.IsActive);
+                return;
+            }
+            if (sourceClientId != 0 || message.PlayerIndex == client?.ClientID ||
+                !m_networkPlayerData.ContainsKey(message.PlayerIndex))
+                return;
+            if (!m_remoteDigPresentations.TryGetValue(message.PlayerIndex,
+                out RemoteDigPresentation state))
+            {
+                state = new RemoteDigPresentation();
+                m_remoteDigPresentations[message.PlayerIndex] = state;
+            }
+            if (message.Sequence <= state.Sequence) return;
+            state.Sequence = message.Sequence;
+            state.LastUpdateTime = Time.RealTime;
+            if (!message.IsActive)
+            {
+                m_remoteDigPresentations.Remove(message.PlayerIndex);
+                return;
+            }
+            state.CellFace = new CellFace(message.X, message.Y, message.Z, message.Face);
+            state.TargetProgress = MathUtils.Saturate(message.Progress);
+            state.DisplayProgress = MathUtils.Min(state.DisplayProgress, state.TargetProgress);
         }
 
         private void ApplyTerrainDigResult(TerrainDigResultMessage message)
@@ -12367,6 +13420,10 @@ namespace ScMultiplayer
                 if (m_processedTerrainDigRequests.Count >= 2048)
                     m_processedTerrainDigRequests.Clear();
                 m_processedTerrainDigRequests[requestKey] = result;
+                PublishServerAudit("terrain.dig", sourceClientId,
+                    "cell=" + message.Cell.X.ToString(CultureInfo.InvariantCulture) + "," +
+                    message.Cell.Y.ToString(CultureInfo.InvariantCulture) + "," +
+                    message.Cell.Z.ToString(CultureInfo.InvariantCulture));
             }
             NetworkMessageSender.SendTerrainDigResult(sourceClientId, result);
         }
@@ -12593,8 +13650,8 @@ namespace ScMultiplayer
                 var marker = new GameModifiedCellsMessage(
                     new Dictionary<Point3, bool>(), new List<int>(), targetTick, true, targetClientId);
                 marker.HeadSequence = headSequence;
-                client.SendDirectInput(targetClientId,
-                    Message.WriteWithSender(marker, client.Address), sequenced: true);
+                QueueJoinCatchUpPayload(targetClientId,
+                    Message.WriteWithSender(marker, client.Address));
                 return;
             }
 
@@ -12612,8 +13669,8 @@ namespace ScMultiplayer
                 var message = new GameModifiedCellsMessage(
                     cells, values, targetTick, true, targetClientId);
                 message.HeadSequence = headSequence;
-                client.SendDirectInput(targetClientId,
-                    Message.WriteWithSender(message, client.Address), sequenced: true);
+                QueueJoinCatchUpPayload(targetClientId,
+                    Message.WriteWithSender(message, client.Address));
             }
             Log.Information($"[ScMP] Sent terrain catch-up: ClientID={targetClientId}, " +
                 $"Tick={targetTick}, StartTick={snapshotStartTick}, Cells={snapshot.Count}");
@@ -12707,7 +13764,7 @@ namespace ScMultiplayer
                 $"RepairRounds={transfer.RepairRequestCount}");
             if (m_joinRoomBusyDialog != null)
                 m_joinRoomBusyDialog.SmallMessage =
-                    "Connected.\r\nWorld download complete.\r\nImporting world...";
+                    "Connected.\nWorld download complete.\nImporting world...";
             m_joinAwaitingWorldProgress = false;
             manifest.WorldData = worldData;
             manifest.ChunkCount = 0;
@@ -12909,9 +13966,10 @@ namespace ScMultiplayer
             journal.CutoffSealed = true;
             FlushJoinCatchUpJournal(targetClientId);
             SendTerrainCatchUp(targetClientId, journal.StartTick);
-            NetworkMessageSender.SendPakWorldReady(targetClientId,
-                new GamePakWorldReadyMessage(transferId,
-                    GamePakWorldReadyStage.CatchUpBatchComplete));
+            GetOrCreatePendingJoinCatchUp(targetClientId).CompletionAction = () =>
+                NetworkMessageSender.SendPakWorldReady(targetClientId,
+                    new GamePakWorldReadyMessage(transferId,
+                        GamePakWorldReadyStage.CatchUpBatchComplete));
         }
 
         // Source: Comms/Comms.Drt/Func/Server/Set/ServerGame.cs:ServerGame.SendDataMessageToAllClients
@@ -12922,6 +13980,13 @@ namespace ScMultiplayer
             // Drain the bounded post-cutoff gap once. This callback runs on the frame thread, so
             // enabling normal traffic afterwards cannot leave an unrecorded interval.
             DrainPostCutoffJournal(sourceClientId, journal);
+            GetOrCreatePendingJoinCatchUp(sourceClientId).CompletionAction = () =>
+                FinishJoiningClient(sourceClientId, transferId, journal);
+        }
+
+        private void FinishJoiningClient(int sourceClientId, int transferId,
+            JoinCatchUpJournal journal)
+        {
             m_joinCatchUpJournals.Remove(sourceClientId);
             m_worldTransfersAwaitingReady.Remove(sourceClientId);
             m_hostProjectReadyTransfers.Remove(sourceClientId);
@@ -13022,7 +14087,7 @@ namespace ScMultiplayer
                 {
                     if (m_joinRoomBusyDialog != null)
                         m_joinRoomBusyDialog.SmallMessage =
-                            "Connected.\r\nWorld imported.\r\nLoading project...";
+                            "Connected.\nWorld imported.\nLoading project...";
                     SuPlayScreen.Play(importedWorld);
                     connectionSM.TransitionTo(NetworkConnectionStateMachine.ConnectionState.Playing);
                     m_shouldCreateHostAvatar = true;
@@ -13450,7 +14515,7 @@ namespace ScMultiplayer
                     HideJoinRoomBusyDialog();
                     DialogsManager.ShowDialog(null, new MessageDialog(
                         "Join Room",
-                        obj.Reason + "\r\nInstall the same ScMultiplayer package on all devices.",
+                        obj.Reason + "\nInstall the same ScMultiplayer package on all devices.",
                         "OK", null, null));
                 });
                 return;
@@ -13771,6 +14836,7 @@ namespace ScMultiplayer
             m_hostTerrainPlaceExecutions.Clear();
             m_processedTerrainPlaceRequests.Clear();
             m_outgoingWorldTransfers.Clear();
+            m_pendingJoinCatchUps.Clear();
             m_worldTransfersAwaitingReady.Clear();
             m_hostProjectReadyTransfers.Clear();
             m_completedWorldReadyTransfers.Clear();
@@ -13779,6 +14845,10 @@ namespace ScMultiplayer
             m_hostPlayerPokeSequences.Clear();
             m_playerWhistleSequences.Clear();
             m_localDigTarget = null;
+            m_localDigPresentationSequence = 0;
+            m_localDigPresentationActive = false;
+            m_localDigPresentationFace = null;
+            m_remoteDigPresentations.Clear();
             m_nextTerrainDigRequestId = 0;
             m_localHitSequence = 0;
             m_nextLocalHitRequestTime = 0.0;
@@ -13791,6 +14861,26 @@ namespace ScMultiplayer
             m_localRespawnPendingUntil = 0.0;
             m_nextWorldTransferId = 0;
             m_worldTransferCursor = 0;
+            m_joinTransferTrafficSamples.Clear();
+            m_joinTransferTokens = 0.0;
+            m_joinTransferLastTokenTime = 0.0;
+            m_joinTransferAvailableBytesPerSecond = 0.0;
+            m_joinTransferPausedByGameplay = false;
+            m_automaticJoinTransferKbps = AutomaticJoinTransferStartKbps;
+            m_nextAutomaticJoinTransferAdjustmentTime = 0.0;
+            m_automaticJoinTransferCooldownUntil = 0.0;
+            m_automaticJoinRttBaseline = 0.0;
+            m_lastJoinTransferSampleTime = 0.0;
+            m_lastJoinTransferNetworkBytesSample = 0L;
+            m_lastJoinTransferReceiveBytesSample = 0L;
+            m_lastJoinTransferBytesSample = Interlocked.Read(ref m_joinTransferBytesSentSinceSample);
+            m_nextServerTrafficSampleStartTime = 0.0;
+            m_serverTrafficSampleStartTime = 0.0;
+            m_serverTrafficSampleStartBytesSent = 0L;
+            m_serverTrafficSampleStartBytesReceived = 0L;
+            m_lastServerTrafficSampleBytesSent = -1L;
+            m_lastServerTrafficSampleBytesReceived = -1L;
+            m_serverTrafficSampleActive = false;
             m_nextWorldTransferManifestRequestTime = 0.0;
             m_nextWorldTransferUiUpdateTime = 0.0;
             m_pendingWorldReadyTransferId = 0;
@@ -13981,8 +15071,7 @@ namespace ScMultiplayer
             if (!Storage.FileExists(DownloadedWorldsRegistryPath))
                 return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             return new HashSet<string>(Storage.ReadAllText(DownloadedWorldsRegistryPath)
-                .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries),
-                StringComparer.OrdinalIgnoreCase);
+                .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries),StringComparer.OrdinalIgnoreCase);
         }
 
         private static void WriteDownloadedWorldRegistry(HashSet<string> directories)
@@ -13993,7 +15082,7 @@ namespace ScMultiplayer
                     Storage.DeleteFile(DownloadedWorldsRegistryPath);
                 return;
             }
-            Storage.WriteAllText(DownloadedWorldsRegistryPath, string.Join("\r\n", directories));
+            Storage.WriteAllText(DownloadedWorldsRegistryPath, string.Join("\n", directories));
         }
 
         private static void RegisterDownloadedWorld(string directoryName)
@@ -14466,6 +15555,39 @@ namespace ScMultiplayer
             }
         }
 
+        // Source: Survivalcraft/Game/ComponentMiner.cs:ComponentMiner.Update
+        private void UpdateRemoteDigPresentations()
+        {
+            if (m_remoteDigPresentations.Count == 0) return;
+            SubsystemTime subsystemTime = GameManager.Project?.FindSubsystem<SubsystemTime>(false);
+            if (subsystemTime == null) return;
+            double now = Time.RealTime;
+            foreach (KeyValuePair<int, RemoteDigPresentation> entry in
+                m_remoteDigPresentations.ToArray())
+            {
+                if (now - entry.Value.LastUpdateTime > 0.35 ||
+                    !m_networkPlayerData.TryGetValue(entry.Key, out PlayerData playerData) ||
+                    playerData?.ComponentPlayer?.ComponentMiner == null)
+                {
+                    m_remoteDigPresentations.Remove(entry.Key);
+                    continue;
+                }
+                ComponentMiner miner = playerData.ComponentPlayer.ComponentMiner;
+                RemoteDigPresentation state = entry.Value;
+                state.DisplayProgress = MathUtils.Lerp(state.DisplayProgress,
+                    state.TargetProgress, 0.28f);
+                ModManager.ModParentField.ModifyParentField(miner,
+                    "<DigCellFace>k__BackingField", (CellFace?)state.CellFace,
+                    typeof(ComponentMiner));
+                ModManager.ModParentField.ModifyParentField(miner, "m_digProgress",
+                    state.DisplayProgress, typeof(ComponentMiner));
+                ModManager.ModParentField.ModifyParentField(miner, "m_digStartTime",
+                    subsystemTime.GameTime - 0.25, typeof(ComponentMiner));
+                ModManager.ModParentField.ModifyParentField(miner, "m_lastDigFrameIndex",
+                    Time.FrameIndex, typeof(ComponentMiner));
+            }
+        }
+
         public void CaptureLocalPlayerInput(ComponentPlayer player, PlayerInput playerInput)
         {
             if (IsHost)
@@ -14490,6 +15612,7 @@ namespace ScMultiplayer
                 if (block.IsAimable) playerInput.Dig = null;
             }
             UpdateLocalDigTarget(player, playerInput.Dig);
+            UpdateLocalDigPresentation(player);
             UpdateLocalHitRequests(playerInput.Hit);
             UpdateLocalInteractRequests(player, playerInput.Interact);
             UpdateLocalDropRequests(player, playerInput.Drop);
@@ -14569,6 +15692,36 @@ namespace ScMultiplayer
             intent.ToolCount = toolCount;
             intent.BodyPosition = player.ComponentBody.Position;
             intent.LastSeenTime = Time.RealTime;
+        }
+
+        // Source: Survivalcraft/Game/ComponentMiner.cs:ComponentMiner.Dig
+        private void UpdateLocalDigPresentation(ComponentPlayer player)
+        {
+            ComponentMiner miner = player?.ComponentMiner;
+            CellFace? cellFace = m_localDigTarget.HasValue ? miner?.DigCellFace : null;
+            bool active = cellFace.HasValue && miner.DigTime > 0f && miner.DigProgress < 1f;
+            double now = Time.RealTime;
+            bool changed = active != m_localDigPresentationActive ||
+                (active && (!m_localDigPresentationFace.HasValue ||
+                    m_localDigPresentationFace.Value.X != cellFace.Value.X ||
+                    m_localDigPresentationFace.Value.Y != cellFace.Value.Y ||
+                    m_localDigPresentationFace.Value.Z != cellFace.Value.Z ||
+                    m_localDigPresentationFace.Value.Face != cellFace.Value.Face));
+            if (!changed && (!active || now < m_nextLocalDigPresentationTime)) return;
+
+            m_localDigPresentationSequence = m_localDigPresentationSequence == int.MaxValue
+                ? 1
+                : m_localDigPresentationSequence + 1;
+            int x = active ? cellFace.Value.X : 0;
+            int y = active ? cellFace.Value.Y : 0;
+            int z = active ? cellFace.Value.Z : 0;
+            int face = active ? cellFace.Value.Face : 0;
+            NetworkMessageSender.SendDigPresentation(0, new DigPresentationMessage(
+                client.ClientID, m_localDigPresentationSequence, active, x, y, z, face,
+                active ? MathUtils.Saturate(miner.DigProgress) : 0f), latest: !changed);
+            m_localDigPresentationActive = active;
+            m_localDigPresentationFace = active ? cellFace : null;
+            m_nextLocalDigPresentationTime = now + 0.125;
         }
 
         // Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update
@@ -14987,6 +16140,11 @@ namespace ScMultiplayer
                         execution.Request.Cell.Z), 0);
                 SendHostTerrainPlaceResult(execution.ClientId, execution.Request,
                     authoritativeValue != execution.Request.ExpectedValue);
+                if (authoritativeValue != execution.Request.ExpectedValue)
+                    PublishServerAudit("terrain.place", execution.ClientId,
+                        "cell=" + execution.Request.Cell.X.ToString(CultureInfo.InvariantCulture) + "," +
+                        execution.Request.Cell.Y.ToString(CultureInfo.InvariantCulture) + "," +
+                        execution.Request.Cell.Z.ToString(CultureInfo.InvariantCulture));
             }
             m_hostTerrainPlaceExecutions.Clear();
         }
@@ -15341,6 +16499,7 @@ namespace ScMultiplayer
                         return;
                     NetworkMessageSender.BroadcastPlayerRespawn(message);
                     SendGamePlayerHealthMessage(true);
+                    PublishServerAudit("player.respawn", sourceClientId, null);
                 }
                 else if (sourceClientId == 0 && message.PlayerIndex != client.ClientID)
                 {
@@ -15448,7 +16607,9 @@ namespace ScMultiplayer
                         !IsFinite(message.Velocity))
                         return;
                     state.LastDropSequence = message.Sequence;
-                    ExecuteHostDropRequest(sourceClientId, message);
+                    if (ExecuteHostDropRequest(sourceClientId, message))
+                        PublishServerAudit("item.drop", sourceClientId,
+                            "count=" + message.DropCount.ToString(CultureInfo.InvariantCulture));
                 }
                 else if (message.Action == PlayerActionType.JumpRequest)
                 {
@@ -15684,22 +16845,22 @@ namespace ScMultiplayer
 
         // Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update
         // Source: Survivalcraft/Game/ComponentInventoryBase.cs:ComponentInventoryBase.DropSlotItems
-        private void ExecuteHostDropRequest(int sourceClientId, PlayerActionMessage message)
+        private bool ExecuteHostDropRequest(int sourceClientId, PlayerActionMessage message)
         {
-            if (!m_networkPlayerData.TryGetValue(sourceClientId, out PlayerData playerData)) return;
+            if (!m_networkPlayerData.TryGetValue(sourceClientId, out PlayerData playerData)) return false;
             ComponentPlayer player = playerData?.ComponentPlayer;
             IInventory inventory = player?.ComponentMiner?.Inventory;
             ComponentBody body = player?.ComponentBody;
             if (inventory == null || body == null || message.ActiveSlotIndex < 0 ||
                 message.ActiveSlotIndex >= inventory.SlotsCount)
-                return;
+                return false;
             ApplyInteractionInventory(inventory, message);
             int slotValue = inventory.GetSlotValue(message.ActiveSlotIndex);
             int count = Math.Min(message.DropCount,
                 inventory.GetSlotCount(message.ActiveSlotIndex));
-            if (slotValue != message.ItemValue || count <= 0) return;
+            if (slotValue != message.ItemValue || count <= 0) return false;
             int removed = inventory.RemoveSlotItems(message.ActiveSlotIndex, count);
-            if (removed <= 0) return;
+            if (removed <= 0) return false;
             Vector3 defaultPosition = body.Position +
                 new Vector3(0f, body.StanceBoxSize.Y * 0.66f, 0f) +
                 0.25f * body.Matrix.Forward;
@@ -15712,6 +16873,7 @@ namespace ScMultiplayer
             GameManager.Project.FindSubsystem<SubsystemPickables>(true).AddPickable(
                 slotValue, removed, position, velocity, null);
             MarkHostInventoryAuthoritative(sourceClientId);
+            return true;
         }
 
         private void MarkHostInventoryAuthoritative(int sourceClientId)
@@ -15972,6 +17134,9 @@ namespace ScMultiplayer
 
         public void OnUnload()
         {
+            if (m_eventBus != null && m_serverSettingsToken != null)
+                m_eventBus.UnsubscribeEvent(m_serverSettingsToken);
+            m_serverSettingsToken = null;
             if (m_eventBus != null && m_fromLinkToken != null)
                 m_eventBus.UnsubscribeEvent(m_fromLinkToken);
             m_fromLinkToken = null;

@@ -39,6 +39,8 @@ namespace ScMultiplayer
         public int CoughSequence;
         public bool IsCoughing;
         public string CauseOrSource;   // 伤害/治疗来源
+        // Source: Survivalcraft/Game/ComponentHealth.cs:ComponentHealth.Update
+        public int DamageSequence;
 
         public GamePlayerHealthMessage() { }
 
@@ -103,6 +105,7 @@ namespace ScMultiplayer
             SicknessDuration = reader.ReadSingle();
             CoughSequence = reader.ReadInt32();
             IsCoughing = reader.ReadBoolean();
+            DamageSequence = reader.ReadInt32();
         }
 
         protected override void Write(SuWriter writer)
@@ -135,6 +138,7 @@ namespace ScMultiplayer
             writer.WriteSingle(SicknessDuration);
             writer.WriteInt32(CoughSequence);
             writer.WriteBoolean(IsCoughing);
+            writer.WriteInt32(DamageSequence);
         }
     }
 }

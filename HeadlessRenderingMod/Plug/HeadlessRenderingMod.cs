@@ -14,6 +14,7 @@ namespace HeadlessRenderingMod
     {
         private IModEventBus m_eventBus;
         private EventSubscriptionToken m_frameToken;
+        private EventSubscriptionToken m_serverAuditToken;
         private HeadlessServerConfig m_config;
         private HeadlessControlServer m_server;
         private GameControlCommands m_gameCommands;
@@ -33,10 +34,12 @@ namespace HeadlessRenderingMod
         private PropertyInfo m_windowVisibleProperty;
         private bool? m_originalWindowVisible;
         private string m_lastFrameError;
+        private double m_nextMultiplayerTelemetryTime;
+        private ServerAuditLog m_serverAuditLog;
 
         public string Name => "无画面服务器";
 
-        public string Version => "1.3.1";
+        public string Version => "1.3.2";
 
         public IEnumerable<string> Dependencies => Array.Empty<string>();
 
@@ -86,6 +89,11 @@ namespace HeadlessRenderingMod
                     "Frame.Update",
                     HandleFrameUpdate,
                     EventPriority.LOWEST);
+                // Source: EntitySystem/SuAPI/IModEventBus.cs:IModEventBus.SubscribeEvent
+                m_serverAuditLog = new ServerAuditLog(Path.Combine(instanceRoot, "Logs", "Server"));
+                m_serverAuditToken = eventBus.SubscribeEvent(
+                    "ScMultiplayer.ServerAudit", HandleServerAuditEvent, EventPriority.LOWEST);
+                m_serverAuditLog.Enqueue("event=server.start instance=" + m_config.InstanceId);
 
                 if (m_config.EnableConsole && OperatingSystem.IsWindows())
                 {
@@ -118,9 +126,15 @@ namespace HeadlessRenderingMod
         {
             if (m_eventBus != null && m_frameToken != null)
                 m_eventBus.UnsubscribeEvent(m_frameToken);
+            if (m_eventBus != null && m_serverAuditToken != null)
+                m_eventBus.UnsubscribeEvent(m_serverAuditToken);
 
             m_frameToken = null;
+            m_serverAuditToken = null;
             m_eventBus = null;
+            m_serverAuditLog?.Enqueue("event=server.stop");
+            m_serverAuditLog?.Dispose();
+            m_serverAuditLog = null;
             if (m_consoleController != null)
             {
                 m_consoleController.Stop();
@@ -146,6 +160,7 @@ namespace HeadlessRenderingMod
                 ApplyHeadlessState();
                 m_server.ProcessQueuedCommands(ExecuteCommand, m_config.MaxCommandsPerFrame);
                 m_sequences.Update(ExecuteCommand, EvaluateSequenceCondition);
+                UpdateMultiplayerTelemetry();
                 m_frameRateLimiter.WaitForNextFrame();
                 m_lastFrameError = null;
             }
@@ -158,6 +173,14 @@ namespace HeadlessRenderingMod
                     Log.Error("[HeadlessRenderingMod] Frame handler failed: " + message);
                 }
             }
+            return null;
+        }
+
+        // Source: EntitySystem/SuAPI/IModEventBus.cs:IModEventBus.TriggerEvent
+        private object[] HandleServerAuditEvent(object[] args)
+        {
+            if (args != null && args.Length > 0 && args[0] is string record)
+                m_serverAuditLog?.Enqueue(record);
             return null;
         }
 
@@ -201,6 +224,70 @@ namespace HeadlessRenderingMod
                 HideWindowOnce();
         }
 
+        // Source: EntitySystem/SuAPI/IModEventBus.cs:IModEventBus.TriggerEvent
+        // A five-second console-title refresh keeps the server's traffic state visible without
+        // writing over interactive console input or adding a per-frame networking operation.
+        private void UpdateMultiplayerTelemetry()
+        {
+            if (m_consoleController == null || Time.RealTime < m_nextMultiplayerTelemetryTime)
+                return;
+            m_nextMultiplayerTelemetryTime = Time.RealTime + 5.0;
+            object[][] results = m_eventBus?.TriggerEvent(
+                "ScMultiplayer.ServerSettings",
+                new object[] { new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    ["operation"] = "get"
+                } }) ?? Array.Empty<object[]>();
+            foreach (object[] result in results)
+            {
+                if (result != null && result.Length > 0 &&
+                    result[0] is Dictionary<string, object> values)
+                {
+                    m_consoleController.SetMultiplayerTelemetry(string.Format(
+                        System.Globalization.CultureInfo.InvariantCulture,
+                        "Clients {0} | UDP OUT {1} | UDP IN {2} | Join {3}",
+                        ReadTelemetryNumber(values, "connectedClients"),
+                        FormatLastSecondBytes(values, "lastUdpOutBytes"),
+                        FormatLastSecondBytes(values, "lastUdpInBytes"),
+                        ReadTelemetryText(values, "joinState", "idle")));
+                    break;
+                }
+            }
+        }
+
+        private static double ReadTelemetryNumber(Dictionary<string, object> values, string name)
+        {
+            return values.TryGetValue(name, out object value) && value != null
+                ? Convert.ToDouble(value, System.Globalization.CultureInfo.InvariantCulture)
+                : 0.0;
+        }
+
+        private static string ReadTelemetryText(Dictionary<string, object> values, string name,
+            string fallback)
+        {
+            return values.TryGetValue(name, out object value) && value != null
+                ? Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture)
+                : fallback;
+        }
+
+        private static string FormatLastSecondBytes(Dictionary<string, object> values, string name)
+        {
+            double bytes = ReadTelemetryNumber(values, name);
+            if (bytes < 0.0) return "--";
+            if (bytes >= 1024.0 * 1024.0)
+            {
+                return string.Format(System.Globalization.CultureInfo.InvariantCulture,
+                    "{0:0.0} MiB/s", bytes / (1024.0 * 1024.0));
+            }
+            if (bytes >= 1024.0)
+            {
+                return string.Format(System.Globalization.CultureInfo.InvariantCulture,
+                    "{0:0.0} KiB/s", bytes / 1024.0);
+            }
+            return string.Format(System.Globalization.CultureInfo.InvariantCulture,
+                "{0:0} B/s", bytes);
+        }
+
         // Source: Engine/Engine/Window.cs:Window.m_gameWindow
         private void HideWindowOnce()
         {
@@ -240,6 +327,8 @@ namespace HeadlessRenderingMod
             {
                 case "status":
                     return BuildStatus();
+                case "multiplayer.settings":
+                    return UpdateMultiplayerSettings(request);
                 case "screen.list":
                     return ListScreens();
                 case "screen.switch":
@@ -284,7 +373,7 @@ namespace HeadlessRenderingMod
                 ? GameManager.WorldInfo.WorldSettings.Name
                 : null;
 
-            return new Dictionary<string, object>(StringComparer.Ordinal)
+            var result = new Dictionary<string, object>(StringComparer.Ordinal)
             {
                 ["instanceId"] = m_config.InstanceId,
                 ["modVersion"] = Version,
@@ -306,6 +395,80 @@ namespace HeadlessRenderingMod
                 ["serverError"] = m_server.LastError,
                 ["frameError"] = m_lastFrameError
             };
+            object[][] settingsResults = m_eventBus?.TriggerEvent(
+                "ScMultiplayer.ServerSettings",
+                new object[] { new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    ["operation"] = "get"
+                } }) ?? Array.Empty<object[]>();
+            foreach (object[] settingsResult in settingsResults)
+            {
+                if (settingsResult != null && settingsResult.Length > 0 &&
+                    settingsResult[0] is Dictionary<string, object> settings)
+                {
+                    result["multiplayer"] = settings;
+                    break;
+                }
+            }
+            return result;
+        }
+
+        // Source: EntitySystem/SuAPI/IModEventBus.cs:IModEventBus.TriggerEvent
+        // Keep the headless server independent from ScMultiplayer. A missing listener simply
+        // means this instance has no multiplayer configuration surface.
+        private Dictionary<string, object> UpdateMultiplayerSettings(ControlRequest request)
+        {
+            var values = new Dictionary<string, object>(StringComparer.Ordinal);
+            bool changed = CopyOptionalBoolean(request, values, "bandwidthConfigurationEnabled") |
+                CopyOptionalString(request, values, "bandwidthMode") |
+                CopyOptionalInteger(request, values, "sharedTotalSafeCapKbps") |
+                CopyOptionalInteger(request, values, "serverUploadLimitKbps") |
+                CopyOptionalInteger(request, values, "serverDownloadLimitKbps") |
+                CopyOptionalInteger(request, values, "joinTransferMaxKbps") |
+                CopyOptionalInteger(request, values, "joinTransferGameplayHeadroomKbps") |
+                CopyOptionalInteger(request, values, "joinTransferBurstKiB") |
+                CopyOptionalInteger(request, values, "joinTransferPerJoinMaxKbps");
+            values["operation"] = changed ? "set" : "get";
+            object[][] results = m_eventBus?.TriggerEvent(
+                "ScMultiplayer.ServerSettings", new object[] { values }) ??
+                Array.Empty<object[]>();
+            foreach (object[] result in results)
+            {
+                if (result != null && result.Length > 0 &&
+                    result[0] is Dictionary<string, object> settings)
+                {
+                    return settings;
+                }
+            }
+            throw new ControlCommandException("multiplayer_unavailable",
+                "ScMultiplayer is not loaded on this server.");
+        }
+
+        private static bool CopyOptionalInteger(ControlRequest request,
+            Dictionary<string, object> values, string name)
+        {
+            if (!request.TryGetInteger(name, out int value))
+                return false;
+            values[name] = value;
+            return true;
+        }
+
+        private static bool CopyOptionalString(ControlRequest request,
+            Dictionary<string, object> values, string name)
+        {
+            if (!request.TryGetString(name, out string value))
+                return false;
+            values[name] = value;
+            return true;
+        }
+
+        private static bool CopyOptionalBoolean(ControlRequest request,
+            Dictionary<string, object> values, string name)
+        {
+            if (!request.TryGetBoolean(name, out bool value))
+                return false;
+            values[name] = value;
+            return true;
         }
 
         // Source: Survivalcraft/Game/ScreensManager.cs:ScreensManager.m_screens
