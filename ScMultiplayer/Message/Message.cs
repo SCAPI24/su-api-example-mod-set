@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Net;
 using System.Reflection;
@@ -11,7 +11,7 @@ namespace ScMultiplayer
     [Serializable]
     public abstract class Message
     {
-        public const string ModVersion = "1.9.4";
+        public const string ModVersion = "1.9.5";
         public const int ProtocolVersion = 1;
 
         private static readonly Dictionary<int, Type> MessageTypesById = new();

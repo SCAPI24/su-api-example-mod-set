@@ -1,6 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>TranslationMod</AssemblyName>
+    <RootNamespace>TranslationMod</RootNamespace>
     <ImplicitUsings>disable</ImplicitUsings>
     <Nullable>disable</Nullable>
   </PropertyGroup>
@@ -8,6 +10,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\Engine\Engine\Engine.csproj" />
     <ProjectReference Include="..\..\EntitySystem\EntitySystem.csproj" />
+    <ProjectReference Include="..\..\EntitySystem\SuAPICore\SuAPICore.csproj" />
     <ProjectReference Include="..\..\Survivalcraft\Survivalcraft.csproj" />
   </ItemGroup>
 
