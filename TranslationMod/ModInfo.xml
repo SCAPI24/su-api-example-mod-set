@@ -6,10 +6,8 @@
             <Text lang="en_US">Translation Mod</Text>
             <Text lang="zh_CN">翻译Mod</Text>
         </LocalizedName>
-        <ModVersion>
-            <Version>1.6.4</Version>
-            <APIVersion>0.1.5.0</APIVersion>
-        </ModVersion>
+        <Version>1.6.4</Version>
+        <APIVersion>0.1.5.0</APIVersion>
         <Asset>
             <ContentRoot>Content</ContentRoot>
         </Asset>

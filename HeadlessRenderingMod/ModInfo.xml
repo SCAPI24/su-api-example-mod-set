@@ -6,10 +6,8 @@
       <Text lang="en_US">Headless Server</Text>
       <Text lang="zh_CN">无画面服务器</Text>
     </LocalizedName>
-    <ModVersion>
-      <Version>1.3.3</Version>
-      <APIVersion>0.1.5.0</APIVersion>
-    </ModVersion>
+    <Version>1.3.3</Version>
+    <APIVersion>0.1.5.0</APIVersion>
     <Asset>
       <ContentRoot>Content</ContentRoot>
     </Asset>
