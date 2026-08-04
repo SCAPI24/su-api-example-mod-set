@@ -123,6 +123,13 @@ SuAPIModDownload/.vs/
 SuAPIShadows/bin/
 SuAPIShadows/obj/
 SuAPIShadows/.vs/
+## sync:SuAPIFontSource
+!SuAPIFontSource/
+!SuAPIFontSource/**
+SuAPIFontSource/bin/
+SuAPIFontSource/obj/
+SuAPIFontSource/.vs/
+SuAPIFontSource/__pycache__/
 
 # 全局忽略 .vs 目录
 *.vs/
