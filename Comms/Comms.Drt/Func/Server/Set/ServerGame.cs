@@ -423,7 +423,8 @@ public class ServerGame
             : message.IsSequenced
                 ? DeliveryMode.ReliableSequenced
                 : DeliveryMode.Reliable;
-        Server.Peer.SendDataMessage(targetClient.PeerData, deliveryMode, bytes);
+        Server.Peer.SendDataMessage(targetClient.PeerData, deliveryMode, bytes,
+            "ServerGame.SendDirectInput", message.InputBytes);
     }
 
     private double CalculateNextTickTime(double time)

@@ -19,6 +19,8 @@ namespace HeadlessRenderingMod
         private const long RetainedDirectoryBytes = 700L * 1024L * 1024L;
 
         private readonly string m_directory;
+        private readonly string m_filePrefix;
+        private readonly int m_wakeBatchSize;
         private readonly ConcurrentQueue<string> m_records = new ConcurrentQueue<string>();
         private readonly AutoResetEvent m_signal = new AutoResetEvent(false);
         private readonly CancellationTokenSource m_cancellation = new CancellationTokenSource();
@@ -30,8 +32,15 @@ namespace HeadlessRenderingMod
         private bool m_disposed;
 
         public ServerAuditLog(string directory)
+            : this(directory, string.Empty, 1)
+        {
+        }
+
+        public ServerAuditLog(string directory, string filePrefix, int wakeBatchSize)
         {
             m_directory = directory ?? throw new ArgumentNullException(nameof(directory));
+            m_filePrefix = filePrefix ?? string.Empty;
+            m_wakeBatchSize = Math.Max(1, wakeBatchSize);
             m_worker = Task.Factory.StartNew(WriterLoop, CancellationToken.None,
                 TaskCreationOptions.LongRunning, TaskScheduler.Default);
         }
@@ -47,7 +56,8 @@ namespace HeadlessRenderingMod
             }
 
             m_records.Enqueue(TrimRecord(record));
-            m_signal.Set();
+            if (Volatile.Read(ref m_queuedRecords) >= m_wakeBatchSize)
+                m_signal.Set();
         }
 
         public void Dispose()
@@ -96,7 +106,8 @@ namespace HeadlessRenderingMod
             {
                 writer?.Dispose();
                 writerDate = now.Date;
-                string path = Path.Combine(m_directory, writerDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) + ".log");
+                string path = Path.Combine(m_directory,
+                    m_filePrefix + writerDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) + ".log");
                 writer = new StreamWriter(path, append: true, new UTF8Encoding(false));
                 RescanAndTrim(path);
             }
@@ -117,7 +128,7 @@ namespace HeadlessRenderingMod
             writer.Flush();
             if (m_directoryBytes > MaximumDirectoryBytes || DateTime.UtcNow >= m_nextRescanUtc)
                 RescanAndTrim(Path.Combine(m_directory,
-                    writerDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) + ".log"));
+                    m_filePrefix + writerDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) + ".log"));
         }
 
         private void WriteLine(StreamWriter writer, DateTime now, string record)

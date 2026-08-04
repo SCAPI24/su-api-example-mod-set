@@ -1,6 +1,8 @@
 using Engine;
+using Engine.Input;
 using Game;
 using GameEntitySystem;
+using System;
 using TemplatesDatabase;
 
 namespace ScMultiplayer
@@ -57,8 +59,18 @@ namespace ScMultiplayer
                         multiplayer?.ShowCreateRoomDialog();
                 }
             }
-            if (m_talkButton != null && m_talkButton.IsClicked)
+            // Source: Survivalcraft/Game/WidgetInput.cs:WidgetInput.IsKeyDownOnce
+            // Enter opens Windows chat only while the game owns keyboard input. Once a dialog is
+            // visible, TextBoxDialog keeps its native Enter-to-submit behavior instead.
+            bool talkHotkey = OperatingSystem.IsWindows() && multiplayer?.IsInRoom == true &&
+                m_componentPlayer?.GameWidget?.Input.IsKeyDownOnce(Key.Enter) == true &&
+                !DialogsManager.HasDialogs(m_componentPlayer.GuiWidget);
+            if (m_talkButton != null && m_talkButton.IsClicked || talkHotkey)
+            {
+                if (talkHotkey)
+                    m_componentPlayer.GameWidget.Input.Clear();
                 multiplayer?.ShowTalkDialog();
+            }
             if (m_manageButton != null && m_manageButton.IsClicked)
                 multiplayer?.ShowMultiplayerManagementDialog();
         }

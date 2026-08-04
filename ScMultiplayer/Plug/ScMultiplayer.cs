@@ -308,7 +308,20 @@ namespace ScMultiplayer
         public int CollectorClientId;
         public int RemainingCount;
         public double CompleteTime;
-        public bool PlaySound;
+    }
+
+    public class PendingPickableAcquireRequest
+    {
+        public int RequestId;
+        public double LastSendTime;
+        public bool Rejected;
+    }
+
+    public class ProcessedPickableAcquireRequest
+    {
+        public int RequestId;
+        public double ProcessedTime;
+        public PickableSyncMessage Response;
     }
 
     public class ContainerNetworkState
@@ -316,6 +329,19 @@ namespace ScMultiplayer
         public int Revision;
         public int[] Values = Array.Empty<int>();
         public int[] Counts = Array.Empty<int>();
+    }
+
+    public class PendingContainerTransaction
+    {
+        public ContainerSyncMessage Request;
+        public double LastSendTime;
+    }
+
+    public class ProcessedContainerTransaction
+    {
+        public int RequestId;
+        public double ProcessedTime;
+        public ContainerSyncMessage Response;
     }
 
     public class TerrainCellState
@@ -361,10 +387,17 @@ namespace ScMultiplayer
         public double LastSeenTime;
     }
 
+    public class LocalTerrainUsePrediction
+    {
+        public int ExpectedValue;
+        public double LastSeenTime;
+    }
+
     public class PendingTerrainPlacePrediction
     {
         public PlayerActionMessage Request;
         public int LocalPredictedValue;
+        public bool IsCollapsingBlock;
         public bool HasLocalPrediction;
         public double LastSendTime;
         public int SendCount;
@@ -374,6 +407,26 @@ namespace ScMultiplayer
     {
         public int ClientId;
         public PlayerActionMessage Request;
+        public PlayerStats PlayerStats;
+        public long PreviousBlocksPlaced;
+    }
+
+    public class HostMeleeHitExecution
+    {
+        public int ClientId;
+        public int RequestSequence;
+        public ComponentHealth TargetHealth;
+        public float PreviousHealth;
+        public Vector3 HitPoint;
+        public Vector3 HitDirection;
+        public Vector3 AttackerVelocity;
+    }
+
+    public class LocalMeleePrediction
+    {
+        public ComponentMiner Miner;
+        public double PreviousHitTime;
+        public double CreatedTime;
     }
 
     public class PendingHostTerrainPlaceFallback
@@ -546,6 +599,12 @@ namespace ScMultiplayer
         public bool FeedOrder;
         public int SimulationSeed;
         public string ShapeshiftTarget = string.Empty;
+        // Source: Survivalcraft/Game/ComponentCreatureSounds.cs:ComponentCreatureSounds.PlayIdleSound
+        public double LastCreatureSoundTime;
+        // Source: Survivalcraft/Game/ComponentHowlBehavior.cs:ComponentHowlBehavior.Update
+        public float LastHowlTime;
+        public int SoundSequence;
+        public bool SoundStateInitialized;
         public bool HasSent;
     }
 
@@ -574,6 +633,7 @@ namespace ScMultiplayer
         public bool HasHealth;
         // Source: Survivalcraft/Game/ComponentHealth.cs:ComponentHealth.Update
         public int LastDamageSequence;
+        public int LastSoundSequence;
         public int LastServerTick;
         public Vector3 Position;
         public Quaternion Rotation = Quaternion.Identity;
@@ -844,10 +904,18 @@ namespace ScMultiplayer
             SendScheduledMessage(-1, message, latest: !reliable,
                 batchable: !reliable);
 
+        // Source: Survivalcraft/Game/ComponentCreatureSounds.cs:ComponentCreatureSounds.PlayIdleSound
+        public static void BroadcastAnimalSound(AnimalSoundMessage message)
+        {
+            ScMultiplayer.client.SendDirectInput(-1,
+                Message.WriteWithSender(message, ScMultiplayer.client.Address));
+        }
+
         // Source: ScMultiplayer.cs:HandlePickableSyncMessage
-        public static void SendPickableMessage(PickableSyncMessage message) =>
-            SendScheduledMessage(-1, message,
-                sequenced: message.Action != PickableSyncMessage.PickAction.UpdatePosition,
+        public static void SendPickableMessage(PickableSyncMessage message,
+            int targetClientId = -1) =>
+            SendScheduledMessage(targetClientId, message,
+                sequenced: false,
                 latest: message.Action == PickableSyncMessage.PickAction.UpdatePosition);
 
         public static void SendPakWorldManifest(int targetClientId, GamePakWorldMessage message)
@@ -892,6 +960,13 @@ namespace ScMultiplayer
         {
             ScMultiplayer.client.SendDirectInput(0,
                 Message.WriteWithSender(message, ScMultiplayer.client.Address), sequenced: true);
+        }
+
+        // Source: Survivalcraft/Game/ComponentMiner.cs:ComponentMiner.AttackBody
+        public static void SendMeleeHitResult(int targetClientId, MeleeHitResultMessage message)
+        {
+            ScMultiplayer.client.SendDirectInput(targetClientId,
+                Message.WriteWithSender(message, ScMultiplayer.client.Address));
         }
 
         // Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update
@@ -1193,10 +1268,13 @@ namespace ScMultiplayer
         private int m_projectReadySentTransferId;
         private int m_lastWorldUpdateFrameIndex = -1;
         private Dictionary<int, float> m_playerHealthCache = new Dictionary<int, float>(); // clientID → last known health
+        private readonly Dictionary<int, float> m_playerFoodCache =
+            new Dictionary<int, float>();
+        private readonly Dictionary<int, int> m_playerWholeLevelCache =
+            new Dictionary<int, int>();
+        private int m_lastAuthoritativeLocalWholeLevel = -1;
         private readonly Dictionary<int, float> m_hostKnockbackHealthCache =
             new Dictionary<int, float>();
-        private readonly Dictionary<int, double> m_hostPainSoundTimes =
-            new Dictionary<int, double>();
         // Source: Survivalcraft/Game/ComponentHealth.cs:ComponentHealth.Update
         private readonly Dictionary<int, int> m_damageSequences = new Dictionary<int, int>();
         private readonly Dictionary<int, int> m_receivedDamageSequences = new Dictionary<int, int>();
@@ -1206,6 +1284,7 @@ namespace ScMultiplayer
             new Dictionary<int, int>();
         private bool m_hasObservedClientHealth;
         private float m_observedClientHealth;
+        private float m_observedClientFood;
         private bool m_observedClientSleeping;
         private bool m_hasAuthoritativeLocalInventory;
         private int[] m_authoritativeLocalSlotValues = Array.Empty<int>();
@@ -1283,8 +1362,12 @@ namespace ScMultiplayer
         private double m_serverTrafficSampleStartTime;
         private long m_serverTrafficSampleStartBytesSent;
         private long m_serverTrafficSampleStartBytesReceived;
+        private long m_serverTrafficSampleStartPacketsSent;
+        private long m_serverTrafficSampleStartPacketsReceived;
         private long m_lastServerTrafficSampleBytesSent = -1L;
         private long m_lastServerTrafficSampleBytesReceived = -1L;
+        private long m_lastServerTrafficSamplePacketsSent = -1L;
+        private long m_lastServerTrafficSamplePacketsReceived = -1L;
         private bool m_serverTrafficSampleActive;
         private readonly Dictionary<IPAddress, double> m_reverseDiscoveryProbeTimes =
             new Dictionary<IPAddress, double>();
@@ -1305,6 +1388,8 @@ namespace ScMultiplayer
             new Dictionary<int, int>();
         private readonly Dictionary<int, EquipmentSnapshot> m_lastEquipmentSnapshots =
             new Dictionary<int, EquipmentSnapshot>();
+        private readonly Queue<EquipmentSnapshot> m_recentLocalEquipmentSnapshots =
+            new Queue<EquipmentSnapshot>();
         private readonly HashSet<int> m_equipmentSynchronizedClients = new HashSet<int>();
         private readonly Dictionary<int, PlayerEquipmentMessage> m_pendingPlayerEquipmentMessages =
             new Dictionary<int, PlayerEquipmentMessage>();
@@ -1379,6 +1464,13 @@ namespace ScMultiplayer
         private Project m_clientWorldObjectsProject;
         private readonly ConcurrentQueue<QueuedFrameAction> m_endOfFrameActions =
             new ConcurrentQueue<QueuedFrameAction>();
+        // Source: Comms/Comms/Comm.cs:Comm.ProcessConnections
+        // The transport Alarm thread only queues a compact resend record. Message decoding and
+        // event-bus dispatch happen on the game frame so a diagnostic observer cannot delay UDP.
+        private readonly ConcurrentQueue<ReliableRetransmitInfo> m_reliableRetransmitRecords =
+            new ConcurrentQueue<ReliableRetransmitInfo>();
+        private int m_queuedReliableRetransmitRecords;
+        private long m_droppedReliableRetransmitRecords;
         // Source: ScMultiplayer.cs:ProcessEndOfFrameActions
         // Short player edges must not wait behind circuit snapshot or repair work.
         private readonly ConcurrentQueue<QueuedFrameAction> m_priorityInputActions =
@@ -1398,6 +1490,7 @@ namespace ScMultiplayer
         private int m_lastFullAnimalSnapshotTick;
         private readonly Dictionary<Pickable, ushort> m_hostPickableIds = new Dictionary<Pickable, ushort>();
         private SubsystemPickables m_hostPickablesSubsystem;
+        private GameWidget m_clientDropDragHostGameWidget;
         private bool m_forceHostInventorySync;
         private readonly Dictionary<ushort, Pickable> m_remotePickables = new Dictionary<ushort, Pickable>();
         private bool m_applyingNetworkPickable;
@@ -1413,6 +1506,16 @@ namespace ScMultiplayer
         private readonly Dictionary<ushort, PendingPickablePickupPresentation>
             m_pendingPickablePickups =
                 new Dictionary<ushort, PendingPickablePickupPresentation>();
+        private readonly Dictionary<ushort, PendingPickableAcquireRequest>
+            m_pendingPickableAcquireRequests =
+                new Dictionary<ushort, PendingPickableAcquireRequest>();
+        private readonly Dictionary<long, ProcessedPickableAcquireRequest>
+            m_processedPickableAcquireRequests =
+                new Dictionary<long, ProcessedPickableAcquireRequest>();
+        private readonly HashSet<ushort> m_authoritativePickableAcquireIds =
+            new HashSet<ushort>();
+        private int m_nextPickableAcquireRequestId;
+        private double m_nextPickableAcquireScanTime;
         private readonly Dictionary<Projectile, ushort> m_hostProjectileIds = new Dictionary<Projectile, ushort>();
         private readonly Dictionary<Projectile, int> m_hostProjectileReleaseCompensationSteps =
             new Dictionary<Projectile, int>();
@@ -1423,6 +1526,15 @@ namespace ScMultiplayer
         private ushort m_nextProjectileId = 1;
         private readonly Dictionary<string, ContainerNetworkState> m_containerStates =
             new Dictionary<string, ContainerNetworkState>();
+        private readonly Dictionary<string, PendingContainerTransaction>
+            m_pendingContainerTransactions =
+                new Dictionary<string, PendingContainerTransaction>();
+        private readonly Dictionary<string, ProcessedContainerTransaction>
+            m_processedContainerTransactions =
+                new Dictionary<string, ProcessedContainerTransaction>();
+        private int m_nextContainerRequestId;
+        private bool m_wasNetworkContainerOpen;
+        private bool m_forceContainerFullSync;
         private readonly HashSet<IUpdateable> m_disabledClientContainerUpdates = new HashSet<IUpdateable>();
         private readonly Dictionary<ushort, RemotePickableRecord> m_remotePickableRecords = new Dictionary<ushort, RemotePickableRecord>();
         private readonly object m_terrainJournalLock = new object();
@@ -1478,13 +1590,19 @@ namespace ScMultiplayer
             new Dictionary<long, TerrainDigResultMessage>();
         private readonly Dictionary<Point3, LocalTerrainDigIntent> m_localTerrainDigIntents =
             new Dictionary<Point3, LocalTerrainDigIntent>();
+        private readonly Dictionary<Point3, LocalTerrainUsePrediction> m_localTerrainUsePredictions =
+            new Dictionary<Point3, LocalTerrainUsePrediction>();
         private readonly Dictionary<int, PendingTerrainPlacePrediction>
             m_pendingTerrainPlacePredictions =
                 new Dictionary<int, PendingTerrainPlacePrediction>();
         private readonly Dictionary<Point3, int> m_pendingTerrainPlacePredictionCells =
             new Dictionary<Point3, int>();
+        private readonly Dictionary<Point3, double> m_localCollapsingPlacePredictions =
+            new Dictionary<Point3, double>();
         private readonly List<HostTerrainPlaceExecution> m_hostTerrainPlaceExecutions =
             new List<HostTerrainPlaceExecution>();
+        private readonly List<HostMeleeHitExecution> m_hostMeleeHitExecutions =
+            new List<HostMeleeHitExecution>();
         private readonly Dictionary<long, PlayerActionMessage> m_processedTerrainPlaceRequests =
             new Dictionary<long, PlayerActionMessage>();
         private readonly Dictionary<int, float> m_hostPlayerPokingPhases =
@@ -1532,6 +1650,8 @@ namespace ScMultiplayer
         private int m_nextTerrainDigRequestId;
         private int m_localHitSequence;
         private double m_nextLocalHitRequestTime;
+        private readonly Dictionary<int, LocalMeleePrediction> m_localMeleePredictions =
+            new Dictionary<int, LocalMeleePrediction>();
         private int m_localInteractSequence;
         private int m_localDropSequence;
         private int m_localJumpSequence;
@@ -1613,6 +1733,7 @@ namespace ScMultiplayer
         private const float RemoteAnimalPredictionLimit = 1.15f;
         private const float RemoteAnimalSnapDistance = 3f;
         private const float ClientProjectilePredictionGrace = 3f;
+        private const float ClientProjectileDuplicateDistance = 1.25f;
         private const int MaximumProjectileReleaseCompensationSteps = 25;
         private const float MaximumProjectileReleaseVelocity = 64f;
         private const float PlayerHitRequestInterval = 0.36f;
@@ -1629,6 +1750,7 @@ namespace ScMultiplayer
         private const int MaximumWorldTransferUnackedPackets = 32;
         private const int MaximumDynamicWorldTransferChunksPerNetworkTick = 64;
         private const int MaximumDynamicWorldTransferUnackedPackets = 128;
+        private const int ReliableCriticalReservePackets = 16;
         // Source: Comms/Comms/Comm.cs:Comm.GetUnackedPacketsCount
         // The transport count includes gameplay packets and world-transfer packets together.
         // Configured join transfers therefore need a separate in-flight allowance, otherwise
@@ -1686,6 +1808,7 @@ namespace ScMultiplayer
         private const int MaximumBlocksTextureAssetBytes = 4 * 1024 * 1024;
         private const int MaximumRecentChatMessages = 50;
         private const string ServerAuditEventName = "ScMultiplayer.ServerAudit";
+        private const string ServerRetransmitAuditEventName = "ScMultiplayer.ServerRetransmitAudit";
         private const string DownloadedWorldsRegistryPath = "data:/ScMultiplayerDownloadedWorlds.txt";
         private const string PlayerRecordsFileName = "ScMultiplayerPlayers.xml";
         private const string PlayerProfileRequiredReason = "SCMP_PROFILE_REQUIRED";
@@ -1707,6 +1830,7 @@ namespace ScMultiplayer
         {
             currentInstance = this;
             m_eventBus = eventBus;
+            ReliableRetransmitDiagnostics.PacketRetransmitted += HandleReliableRetransmit;
             // Source: Mod/ScMultiplayer/Message/Message.cs:Message.ProtocolHash
             string protocolLabel = Message.GetProtocolLabel(
                 Message.ModVersion, Message.ProtocolVersion,
@@ -1783,6 +1907,7 @@ namespace ScMultiplayer
                 // once-per-rendered-frame entry point.
                 UpdateFrame(Time.FrameDuration);
                 ProcessEndOfFrameActions();
+                FlushReliableRetransmitRecords();
                 // Source: ScMultiplayer.cs:ScMultiplayer.ProcessEndOfFrameActions
                 // Sample Apply only after this frame consumed its network work.
                 UpdateNetworkStatsOverlay();
@@ -2508,13 +2633,16 @@ namespace ScMultiplayer
             m_clientTerrainRecoveryReady = -1;
             m_localPlayerInput = default;
             m_localInputResendsRemaining = 0;
-            m_localAimActive = false;
-            m_localAimSlot = -1;
-            m_localTerrainDigIntents.Clear();
-            m_pendingTerrainPredictions.Clear();
+             m_localAimActive = false;
+             m_localAimSlot = -1;
+             m_localTerrainDigIntents.Clear();
+             m_localTerrainUsePredictions.Clear();
+             m_pendingTerrainPredictions.Clear();
             m_pendingTerrainPredictionCells.Clear();
             m_pendingTerrainPlacePredictions.Clear();
             m_pendingTerrainPlacePredictionCells.Clear();
+            m_localCollapsingPlacePredictions.Clear();
+            m_recentLocalEquipmentSnapshots.Clear();
         }
 
         // Source: ScMultiplayer.cs:ScMultiplayer.ProcessEndOfFrameActions
@@ -2640,8 +2768,8 @@ namespace ScMultiplayer
             string fenceText = fenceAge < 0f ? "--" :
                 string.Format(CultureInfo.InvariantCulture, "{0:0}ms", fenceAge);
             m_networkStatsLabel.Text = string.Format(CultureInfo.InvariantCulture,
-                "NET {0}, Ping {1:0}ms, Ack {2:0}ms, ReTx {7:0.0}%\n" +
-                "Q Sync {3}, Apply {4} ({5:0}ms), Rel {6}\n" +
+                "NET {0}, Ping {1:0}ms, Ack {2:0}ms, ReTx {7:0.0}%\r\n" +
+                "Q Sync {3}, Apply {4} ({5:0}ms), Rel {6}\r\n" +
                 "Ckt {8}, Fence {9}, Limit {10}",
                 FormatNetworkThroughput(throughputBytesPerSecond), latencyMs, ackLatencyMs,
                 syncQueue, applyQueue, applyOldestMs, reliableQueue,
@@ -3034,6 +3162,10 @@ namespace ScMultiplayer
                     Volatile.Read(ref stats.BytesSent));
                 m_serverTrafficSampleStartBytesReceived = Math.Max(0L,
                     Volatile.Read(ref stats.BytesReceived));
+                m_serverTrafficSampleStartPacketsSent = Math.Max(0L,
+                    Volatile.Read(ref stats.PacketsSent));
+                m_serverTrafficSampleStartPacketsReceived = Math.Max(0L,
+                    Volatile.Read(ref stats.PacketsReceived));
                 m_serverTrafficSampleStartTime = now;
                 m_serverTrafficSampleActive = true;
                 return;
@@ -3042,10 +3174,16 @@ namespace ScMultiplayer
             if (now - m_serverTrafficSampleStartTime < 1.0) return;
             long bytesSent = Math.Max(0L, Volatile.Read(ref stats.BytesSent));
             long bytesReceived = Math.Max(0L, Volatile.Read(ref stats.BytesReceived));
+            long packetsSent = Math.Max(0L, Volatile.Read(ref stats.PacketsSent));
+            long packetsReceived = Math.Max(0L, Volatile.Read(ref stats.PacketsReceived));
             m_lastServerTrafficSampleBytesSent = Math.Max(0L,
                 bytesSent - m_serverTrafficSampleStartBytesSent);
             m_lastServerTrafficSampleBytesReceived = Math.Max(0L,
                 bytesReceived - m_serverTrafficSampleStartBytesReceived);
+            m_lastServerTrafficSamplePacketsSent = Math.Max(0L,
+                packetsSent - m_serverTrafficSampleStartPacketsSent);
+            m_lastServerTrafficSamplePacketsReceived = Math.Max(0L,
+                packetsReceived - m_serverTrafficSampleStartPacketsReceived);
             m_serverTrafficSampleActive = false;
             m_nextServerTrafficSampleStartTime = now + 4.0;
         }
@@ -3110,7 +3248,26 @@ namespace ScMultiplayer
         private int GetWorldTransferChunkWindow(int targetClientId)
         {
             return Math.Max(WorldTransferWindowChunks,
-                GetWorldTransferUnackedPacketLimit(targetClientId) - 8);
+                GetReliableBulkUnackedPacketLimit(targetClientId) - 8);
+        }
+
+        // Source: Comms/Comms/Comm.cs:Comm.GetUnackedPacketsCount
+        // Bulk transfers stop before the transport window is full. The remaining packets are for
+        // gameplay confirmations such as circuit edges, pickables, containers and terrain edits.
+        private int GetReliableBulkUnackedPacketLimit(int targetClientId)
+        {
+            return Math.Max(8, GetWorldTransferUnackedPacketLimit(targetClientId) -
+                ReliableCriticalReservePackets);
+        }
+
+        internal bool CanSendReliableBulk(int targetClientId, int estimatedPackets)
+        {
+            if (!IsHost || server?.Peer == null || targetClientId <= 0) return false;
+            IPEndPoint address = GetServerClientAddress(targetClientId);
+            if (address == null) return false;
+            int packets = Math.Max(estimatedPackets, 1);
+            return server.Peer.Comm.GetUnackedPacketsCount(address) + packets <=
+                GetReliableBulkUnackedPacketLimit(targetClientId);
         }
 
         private static double KilobitsPerSecondToBytes(int value)
@@ -3146,6 +3303,8 @@ namespace ScMultiplayer
             result["rxKbps"] = m_joinTransferReceiveBytesPerSecond * 8.0 / 1000.0;
             result["lastUdpOutBytes"] = m_lastServerTrafficSampleBytesSent;
             result["lastUdpInBytes"] = m_lastServerTrafficSampleBytesReceived;
+            result["lastUdpOutPackets"] = m_lastServerTrafficSamplePacketsSent;
+            result["lastUdpInPackets"] = m_lastServerTrafficSamplePacketsReceived;
             result["joinState"] = result["activeJoins"] is int active && active > 0
                 ? (m_joinTransferPausedByGameplay ? "Paused" : "Ready")
                 : "idle";
@@ -3155,8 +3314,8 @@ namespace ScMultiplayer
             result["joinChunksPerTick"] = GetJoinTransferSendBudget(
                 m_networkPlayerData.Any(item => item.Key > 0));
             result["joinWindowPackets"] = m_outgoingWorldTransfers.Count > 0
-                ? GetWorldTransferUnackedPacketLimit(m_outgoingWorldTransfers.Keys.First())
-                : MaximumWorldTransferUnackedPackets;
+                ? GetReliableBulkUnackedPacketLimit(m_outgoingWorldTransfers.Keys.First())
+                : MaximumWorldTransferUnackedPackets - ReliableCriticalReservePackets;
             result["pausedByGameplay"] = m_joinTransferPausedByGameplay;
             return new object[] { result };
         }
@@ -3221,25 +3380,35 @@ namespace ScMultiplayer
                 DetachHostPickableEvents();
                 m_frameProject = project;
                 m_hasObservedClientHealth = false;
+                m_lastAuthoritativeLocalWholeLevel = -1;
+                m_playerWholeLevelCache.Clear();
                 m_hasAuthoritativeLocalInventory = false;
                 m_lastAuthoritativeLocalInventoryTick = 0;
                 m_authoritativeLocalSlotValues = Array.Empty<int>();
                 m_authoritativeLocalSlotCounts = Array.Empty<int>();
                 m_containerStates.Clear();
+                m_forceContainerFullSync = IsHost;
+                m_pendingContainerTransactions.Clear();
+                m_processedContainerTransactions.Clear();
+                m_wasNetworkContainerOpen = false;
                 m_remoteProjectiles.Clear();
                 m_hostProjectileIds.Clear();
                 m_hostProjectileReleaseCompensationSteps.Clear();
                 m_clientPredictedProjectiles.Clear();
                 m_displayedProjectileHits.Clear();
                 m_receivedDamageSequences.Clear();
+                m_localMeleePredictions.Clear();
                 m_remoteDigPresentations.Clear();
                 m_pendingTerrainPredictions.Clear();
                 m_pendingTerrainPredictionCells.Clear();
                 m_processedTerrainDigRequests.Clear();
                 m_localTerrainDigIntents.Clear();
+                m_localTerrainUsePredictions.Clear();
                 m_pendingTerrainPlacePredictions.Clear();
                 m_pendingTerrainPlacePredictionCells.Clear();
+                m_localCollapsingPlacePredictions.Clear();
                 m_hostTerrainPlaceExecutions.Clear();
+                m_hostMeleeHitExecutions.Clear();
                 m_hostTerrainPlaceFallbacks.Clear();
                 m_processedTerrainPlaceRequests.Clear();
                 m_hostPlayerPokingPhases.Clear();
@@ -3249,8 +3418,10 @@ namespace ScMultiplayer
                 m_lastClientEquipmentRevisions.Clear();
                 m_lastReceivedEquipmentRevisions.Clear();
                 m_lastEquipmentSnapshots.Clear();
+                m_recentLocalEquipmentSnapshots.Clear();
                 m_equipmentSynchronizedClients.Clear();
                 m_localEquipmentRevision = 0;
+                m_nextContainerRequestId = 0;
                 m_disabledClientContainerUpdates.Clear();
                 if (!IsHost) m_isLoadingDownloadedWorld = false;
                 if (!IsHost)
@@ -3279,7 +3450,7 @@ namespace ScMultiplayer
                     Log.Information($"[ScMP] Client project ready: Transfer={m_pendingWorldReadyTransferId}");
                     if (m_joinRoomBusyDialog != null)
                         m_joinRoomBusyDialog.SmallMessage =
-                            "Connected.\nWorld loaded.\nApplying host changes...";
+                            "Connected.\r\nWorld loaded.\r\nApplying host changes...";
                 }
                 AttachHostPickableEvents(project);
                 QueueRunawayCreatureCleanup(project);
@@ -3293,6 +3464,7 @@ namespace ScMultiplayer
             {
                 UpdateHostTerrainPlaceFallbacks(project);
                 CompleteHostTerrainPlaceExecutions();
+                CompleteHostMeleeHitExecutions();
                 BroadcastHostPlayerPokes();
                 CaptureHostRemoteKnockbacks();
                 ApplyHostRemoteFollowVelocities();
@@ -3695,10 +3867,10 @@ namespace ScMultiplayer
             string status;
             if (IsHost && client?.IsConnected == true)
             {
-                status = $"Room ID: {client.GameID}\n" +
-                    $"World: {SuPlayScreen.WorldDataName}\n" +
-                    $"Connected players: {GetConnectedRemoteClients().Count}\n" +
-                    $"Pending requests: {m_hostJoinRequests.Count}\n" +
+                status = $"Room ID: {client.GameID}\r\n" +
+                    $"World: {SuPlayScreen.WorldDataName}\r\n" +
+                    $"Connected players: {GetConnectedRemoteClients().Count}\r\n" +
+                    $"Pending requests: {m_hostJoinRequests.Count}\r\n" +
                     "Auto approve: " +
                     (ScMultiplayerSettings.AutoApproveJoinRequests ? "On" : "Off");
             }
@@ -4087,6 +4259,52 @@ namespace ScMultiplayer
             m_eventBus.TriggerEvent(ServerAuditEventName, new object[] { record });
         }
 
+        // Source: Comms/Comms/Comm.cs:Comm.ProcessConnections
+        private void HandleReliableRetransmit(ReliableRetransmitInfo info)
+        {
+            const int maximumQueuedRecords = 512;
+            if (Interlocked.Increment(ref m_queuedReliableRetransmitRecords) > maximumQueuedRecords)
+            {
+                Interlocked.Decrement(ref m_queuedReliableRetransmitRecords);
+                Interlocked.Increment(ref m_droppedReliableRetransmitRecords);
+                return;
+            }
+
+            m_reliableRetransmitRecords.Enqueue(info);
+        }
+
+        // Source: Survivalcraft/Game/Program.cs:Program.Run
+        private void FlushReliableRetransmitRecords()
+        {
+            if (!IsHost || m_eventBus == null)
+                return;
+
+            int processed = 0;
+            while (processed++ < 24 && m_reliableRetransmitRecords.TryDequeue(
+                out ReliableRetransmitInfo info))
+            {
+                Interlocked.Decrement(ref m_queuedReliableRetransmitRecords);
+                string content = Message.DescribeRetransmission(info.Payload);
+                string record = "endpoint=\"" + NormalizeServerAuditValue(
+                    info.Address?.ToString(), 96) + "\" packet=" +
+                    info.PacketId.ToString(CultureInfo.InvariantCulture) +
+                    " retry=" + info.RetryNumber.ToString(CultureInfo.InvariantCulture) +
+                    " bytes=" + info.Bytes.ToString(CultureInfo.InvariantCulture) +
+                    " source=" + NormalizeServerAuditValue(info.Source, 96) +
+                    " " + content;
+                m_eventBus.TriggerEvent(ServerRetransmitAuditEventName,
+                    new object[] { record });
+            }
+
+            long dropped = Interlocked.Exchange(ref m_droppedReliableRetransmitRecords, 0L);
+            if (dropped > 0)
+            {
+                m_eventBus.TriggerEvent(ServerRetransmitAuditEventName,
+                    new object[] { "event=retransmit.queue_drop count=" +
+                        dropped.ToString(CultureInfo.InvariantCulture) });
+            }
+        }
+
         private static string NormalizeServerAuditValue(string value, int maximumLength)
         {
             if (string.IsNullOrWhiteSpace(value)) return "unknown";
@@ -4357,8 +4575,8 @@ namespace ScMultiplayer
                     $"host={hostProtocol}, local={localProtocol}");
                 DialogsManager.ShowDialog(null, new MessageDialog(
                     "Join Room",
-                    $"Multiplayer Mod protocol mismatch.\n" +
-                    $"Host: {hostProtocol}\nLocal: {localProtocol}\n" +
+                    $"Multiplayer Mod protocol mismatch.\r\n" +
+                    $"Host: {hostProtocol}\r\nLocal: {localProtocol}\r\n" +
                     "Install the same ScMultiplayer package on all devices.",
                     "OK", null, null));
                 return;
@@ -4481,7 +4699,7 @@ namespace ScMultiplayer
             // Source: Survivalcraft/Game/LabelWidget.cs:LabelWidget.UpdateLines
             // LabelWidget splits explicit lines only on LF. CR remains ordinary text and makes
             // the entire status appear on one line when word wrapping is disabled.
-            m_joinRoomBusyDialog.SmallMessage = string.Join("\n",
+            m_joinRoomBusyDialog.SmallMessage = string.Join("\r\n",
                 (lines ?? Array.Empty<string>()).Where(line =>
                     !string.IsNullOrWhiteSpace(line)));
         }
@@ -4721,6 +4939,12 @@ namespace ScMultiplayer
                 pulse1Hz || forceHostInventorySync,
                 inventoryKeyframe || forceHostInventorySync);
             if (forceHostInventorySync) m_forceHostInventorySync = false;
+            bool networkContainerOpen = !IsHost && IsNetworkContainerOpen();
+            bool synchronizedClientContainers = !IsHost &&
+                (networkContainerOpen || m_wasNetworkContainerOpen ||
+                m_pendingContainerTransactions.Count > 0);
+            if (synchronizedClientContainers) SynchronizeContainers();
+            m_wasNetworkContainerOpen = networkContainerOpen;
             SynchronizePlayerEquipment();
             if (IsHost)
                 SendGamePlayerHealthMessage(false);
@@ -4766,7 +4990,7 @@ namespace ScMultiplayer
                 SendAdaptiveAnimalUpdates(fullSnapshot);
             }
             SynchronizeProjectiles();
-            if (pulse4Hz) SynchronizeContainers();
+            if (pulse4Hz && !synchronizedClientContainers) SynchronizeContainers();
             }
             finally
             {
@@ -5136,23 +5360,11 @@ namespace ScMultiplayer
             if (localPlayer == null) return;
             IInventory inventory = localPlayer.ComponentMiner?.Inventory;
             int activeSlotIndex = inventory?.ActiveSlotIndex ?? -1;
-            bool creativeInventory = inventory is ComponentCreativeInventory;
-            bool localInventoryChanged = inventory != null && m_hasAuthoritativeLocalInventory &&
-                !InventoryMatches(inventory, m_authoritativeLocalSlotValues,
-                    m_authoritativeLocalSlotCounts);
-            bool sendInventory = includeInventory && (creativeInventory || localInventoryChanged);
-            int slotsCount = sendInventory
-                ? (creativeInventory
-                    ? Math.Min(inventory.SlotsCount, inventory.VisibleSlotsCount)
-                    : inventory.SlotsCount)
-                : 0;
-            int[] slotValues = new int[slotsCount];
-            int[] slotCounts = new int[slotsCount];
-            for (int i = 0; i < slotsCount; i++)
-            {
-                slotValues[i] = inventory.GetSlotValue(i);
-                slotCounts[i] = inventory.GetSlotCount(i);
-            }
+            // Source: ScMultiplayer.SynchronizePlayerEquipment
+            // Full inventory state is a reliable equipment transaction. Position/input snapshots
+            // can arrive after that transaction and must never restore an older slot layout.
+            int[] slotValues = Array.Empty<int>();
+            int[] slotCounts = Array.Empty<int>();
             NetworkMessageSender.SendPlayerInputMessage(
                 client.ClientID, m_localInputSequence, client.Step,
                 m_localInputBodyPosition, m_localInputBodyVelocity, m_localInputBodyRotation,
@@ -5194,6 +5406,13 @@ namespace ScMultiplayer
             ComponentPlayer local = players.ComponentPlayers.FirstOrDefault(player =>
                 !m_networkPlayerData.Values.Contains(player.PlayerData));
             if (local == null) return;
+            NormalizeCrossbowSlot(local.ComponentMiner?.Inventory,
+                local.ComponentMiner?.Inventory?.ActiveSlotIndex ?? -1);
+            // Source: Survivalcraft/Game/InventorySlotWidget.cs:InventorySlotWidget.Update
+            // Player-only rearrangements remain valid while a container panel is open. A real
+            // container transfer creates a pending transaction earlier in this frame and still
+            // owns both inventories atomically.
+            if (m_pendingContainerTransactions.Count > 0) return;
             // Source: Mod/ScMultiplayer/Plug/ScMultiplayer.cs:ScMultiplayer.HandlePlayerEquipmentMessage
             // A newly joined client must not publish its empty placeholder inventory before the
             // host's first authoritative equipment snapshot has been applied.
@@ -5213,6 +5432,8 @@ namespace ScMultiplayer
         private void SynchronizeHostEquipment(int clientId, ComponentPlayer player)
         {
             if (player == null) return;
+            NormalizeCrossbowSlot(player.ComponentMiner?.Inventory,
+                player.ComponentMiner?.Inventory?.ActiveSlotIndex ?? -1);
             EquipmentSnapshot snapshot = CaptureEquipmentSnapshot(player);
             if (m_lastEquipmentSnapshots.TryGetValue(clientId, out EquipmentSnapshot previous) &&
                 EquipmentSnapshotsEqual(previous, snapshot)) return;
@@ -5256,7 +5477,15 @@ namespace ScMultiplayer
                 m_lastEquipmentSnapshots[sourceClientId] = snapshot;
                 int currentAuthority = m_equipmentAuthorityRevisions.TryGetValue(sourceClientId,
                     out int authorityRevision) ? authorityRevision : 0;
-                int revision = Math.Max(currentAuthority + 1, message.Revision);
+                // Source: ScMultiplayer.SynchronizePlayerEquipment
+                // A host acknowledgement must be newer than its client request. Otherwise a
+                // periodic host snapshot and a local drag can share one revision and the old
+                // snapshot can overwrite the client's newer slot layout.
+                int nextAuthorityRevision = currentAuthority == int.MaxValue
+                    ? 1 : currentAuthority + 1;
+                int nextRequestedRevision = message.Revision == int.MaxValue
+                    ? 1 : message.Revision + 1;
+                int revision = Math.Max(nextAuthorityRevision, nextRequestedRevision);
                 m_equipmentAuthorityRevisions[sourceClientId] = revision;
                 m_lastReceivedEquipmentRevisions[sourceClientId] = revision;
                 m_equipmentSynchronizedClients.Add(sourceClientId);
@@ -5277,7 +5506,11 @@ namespace ScMultiplayer
             if (sourceClientId != 0 || m_departedRemoteClientIds.Contains(message.ClientId)) return;
             if (m_lastReceivedEquipmentRevisions.TryGetValue(message.ClientId,
                 out int lastRevision) && message.Revision <= lastRevision) return;
-            if (message.ClientId == client.ClientID && message.Revision < m_localEquipmentRevision) return;
+            // Source: ScMultiplayer.SynchronizePlayerEquipment
+            // Host confirmations are strictly newer than local requests. Equal revisions can only
+            // be an older host snapshot, so accepting one would undo a drag or stack split.
+            if (message.ClientId == client.ClientID &&
+                message.Revision <= m_localEquipmentRevision) return;
 
             if (message.ClientId == client.ClientID && m_pendingLocalPlayerRecord != null &&
                 (!m_localPlayerRecordApplied || m_localReplacementPlayerData?.ComponentPlayer == null))
@@ -5308,6 +5541,18 @@ namespace ScMultiplayer
             m_lastReceivedEquipmentRevisions[message.ClientId] = message.Revision;
             m_lastEquipmentSnapshots[message.ClientId] = CaptureEquipmentSnapshot(player);
             m_equipmentSynchronizedClients.Add(message.ClientId);
+            if (message.ClientId == client.ClientID)
+            {
+                IInventory inventory = player.ComponentMiner?.Inventory;
+                if (inventory != null)
+                {
+                    m_authoritativeLocalSlotValues = CaptureInventoryValues(inventory);
+                    m_authoritativeLocalSlotCounts = CaptureInventoryCounts(inventory);
+                    m_lastLocalInventoryValues = (int[])m_authoritativeLocalSlotValues.Clone();
+                    m_lastLocalInventoryCounts = (int[])m_authoritativeLocalSlotCounts.Clone();
+                    m_hasAuthoritativeLocalInventory = true;
+                }
+            }
         }
 
         // Source: Mod/ScMultiplayer/Message/PlayerEquipmentMessage.cs:PlayerEquipmentMessage
@@ -5493,8 +5738,12 @@ namespace ScMultiplayer
                 pickable == null || !currentPickables.Contains(pickable) || pickable.ToRemove).ToArray())
             {
                 ushort id = m_hostPickableIds[removed];
-                NetworkMessageSender.SendPickableMessage(new PickableSyncMessage(
-                    PickableSyncMessage.PickAction.Delete, id, 0, 0, Vector3.Zero, Vector3.Zero));
+                if (!m_authoritativePickableAcquireIds.Remove(id))
+                {
+                    NetworkMessageSender.SendPickableMessage(new PickableSyncMessage(
+                        PickableSyncMessage.PickAction.Delete, id, 0, 0,
+                        Vector3.Zero, Vector3.Zero));
+                }
                 m_hostPickableIds.Remove(removed);
             }
 
@@ -5629,36 +5878,274 @@ namespace ScMultiplayer
 
             int sourceSlot = -1;
             int sourceCount = 0;
-            int slotsCount = Math.Min(inventory.SlotsCount,
-                Math.Min(m_lastLocalInventoryValues.Length, m_lastLocalInventoryCounts.Length));
-            for (int i = 0; i < slotsCount; i++)
+            int itemValue = NormalizeCrossbowValue(pickable.Value);
+            // Source: Survivalcraft/Game/ViewWidget.cs:ViewWidget.DragDrop
+            // Container and player drops create the same predicted pickable. Resolve the open
+            // block container first so an identical item in the player inventory is not selected.
+            if (TryQueueContainerDrop(pickable, inventory))
             {
-                if (m_lastLocalInventoryValues[i] != pickable.Value) continue;
-                int currentCount = inventory.GetSlotValue(i) == pickable.Value
-                    ? inventory.GetSlotCount(i)
-                    : 0;
-                if (m_lastLocalInventoryCounts[i] - currentCount < pickable.Count) continue;
-                sourceSlot = i;
-                sourceCount = m_lastLocalInventoryCounts[i];
-                break;
+                pickable.ToRemove = true;
+                return;
             }
-            if (sourceSlot < 0 || sourceCount <= 0) return;
 
+            // Source: Survivalcraft/Game/ViewWidget.cs:ViewWidget.DragDrop
+            // Use the latest local equipment snapshot first. The last host-confirmed arrays can
+            // lag behind a split, rearrangement or preceding drop and fail to identify the slot.
+            if (m_lastEquipmentSnapshots.TryGetValue(client.ClientID,
+                    out EquipmentSnapshot equipmentSnapshot))
+                TryFindUiDropSource(inventory, equipmentSnapshot.SlotValues,
+                    equipmentSnapshot.SlotCounts, itemValue, pickable.Count,
+                    out sourceSlot, out sourceCount);
+            if (sourceSlot < 0)
+            {
+                foreach (EquipmentSnapshot snapshot in
+                    m_recentLocalEquipmentSnapshots.Reverse())
+                {
+                    if (TryFindUiDropSource(inventory, snapshot.SlotValues,
+                            snapshot.SlotCounts, itemValue, pickable.Count,
+                            out sourceSlot, out sourceCount))
+                        break;
+                }
+            }
+            if (sourceSlot < 0)
+                TryFindUiDropSource(inventory, m_lastLocalInventoryValues,
+                    m_lastLocalInventoryCounts, itemValue, pickable.Count,
+                    out sourceSlot, out sourceCount);
+            if (sourceSlot < 0 || sourceCount <= 0)
+                return;
+
+            // Source: Survivalcraft/Game/ViewWidget.cs:ViewWidget.DragDrop
+            // Native UI code has already removed the item. Reconstruct the exact pre-drop player
+            // inventory so a delayed pre-split equipment message cannot restore the old layout.
+            int[] preDropValues = CaptureInventoryValues(inventory);
+            int[] preDropCounts = CaptureInventoryCounts(inventory);
+            preDropValues[sourceSlot] = itemValue;
+            preDropCounts[sourceSlot] = sourceCount;
+            SendUiDropRequest(player, sourceSlot, itemValue, sourceCount, pickable.Count,
+                pickable.Count,
+                preDropValues, preDropCounts, pickable.Position, pickable.Velocity);
+            // The host recreates and broadcasts the authoritative pickable. Keeping this local
+            // prediction would leave an extra client-only item after the host response arrives.
+            pickable.ToRemove = true;
+        }
+
+        // Source: Survivalcraft/Game/ViewWidget.cs:ViewWidget.DragDrop
+        // Player inventory drops must capture the source before native UI removal. Container drops
+        // intentionally return false and continue through the existing ContainerSync transaction.
+        public bool TryHandlePlayerInventoryDragDrop(ViewWidget viewWidget, Widget dragWidget,
+            object data)
+        {
+            if (IsHost || client?.IsConnected != true || GameManager.Project == null ||
+                !(data is InventoryDragData dragData) || viewWidget?.GameWidget == null ||
+                dragWidget == null)
+                return false;
+            ComponentPlayer player = viewWidget.GameWidget.PlayerData?.ComponentPlayer;
+            IInventory inventory = player?.ComponentMiner?.Inventory;
+            if (player == null || inventory == null ||
+                m_networkPlayerData.Values.Contains(player.PlayerData) ||
+                !ReferenceEquals(dragData.Inventory, inventory) ||
+                dragData.SlotIndex < 0 || dragData.SlotIndex >= inventory.SlotsCount ||
+                viewWidget.GameWidget.ActiveCamera == null)
+                return false;
+
+            int sourceValue = inventory.GetSlotValue(dragData.SlotIndex);
+            int sourceCount = inventory.GetSlotCount(dragData.SlotIndex);
+            if (sourceValue == 0 || sourceCount <= 0)
+                return true;
+            // Source: Survivalcraft/Game/InventorySlotWidget.cs:InventorySlotWidget.IsSplitMode
+            // The explicit split source is the only single-item player drop. A normal drag from
+            // the inventory or hotbar must discard the complete source stack, regardless of the
+            // input device's drag button mode.
+            bool isSplitSource = player.ComponentInput.SplitSourceInventory == inventory &&
+                player.ComponentInput.SplitSourceSlotIndex == dragData.SlotIndex;
+            int dropCount = isSplitSource
+                ? 1
+                : dragData.DragMode != DragMode.SingleItem
+                    ? sourceCount
+                    : MathUtils.Min(sourceCount, 1);
+            if (dropCount <= 0)
+                return true;
+
+            int itemValue = NormalizeCrossbowValue(sourceValue);
+            int[] preDropValues = CaptureInventoryValues(inventory);
+            int[] preDropCounts = CaptureInventoryCounts(inventory);
+            preDropValues[dragData.SlotIndex] = itemValue;
+            preDropCounts[dragData.SlotIndex] = sourceCount;
+            Vector2 screenPosition = dragWidget.WidgetToScreen(dragWidget.ActualSize / 2f);
+            Vector3 velocity = Vector3.Normalize(viewWidget.GameWidget.ActiveCamera.ScreenToWorld(
+                new Vector3(screenPosition.X, screenPosition.Y, 1f), Matrix.Identity) -
+                viewWidget.GameWidget.ActiveCamera.ViewPosition) * 12f;
+            int removed = inventory.RemoveSlotItems(dragData.SlotIndex, dropCount);
+            if (removed <= 0)
+                return true;
+
+            SendUiDropRequest(player, dragData.SlotIndex, itemValue, sourceCount, removed,
+                dropCount,
+                preDropValues, preDropCounts, viewWidget.GameWidget.ActiveCamera.ViewPosition,
+                velocity);
+            return true;
+        }
+
+        // Source: Survivalcraft/Game/ComponentInventoryBase.cs:ComponentInventoryBase.DropSlotItems
+        private void SendUiDropRequest(ComponentPlayer player, int sourceSlot, int itemValue,
+            int sourceCount, int dropCount, int removeCount, int[] preDropValues,
+            int[] preDropCounts,
+            Vector3 position, Vector3 velocity)
+        {
+            m_localEquipmentRevision = m_localEquipmentRevision == int.MaxValue
+                ? 1
+                : m_localEquipmentRevision + 1;
             m_localDropSequence = m_localDropSequence == int.MaxValue
                 ? 1
                 : m_localDropSequence + 1;
             var message = new PlayerActionMessage(
-                PlayerActionType.DropRequest, client.ClientID, m_localDropSequence,
-                default, sourceSlot, pickable.Value, sourceCount)
+                PlayerActionType.DropRequest, client.ClientID, m_localDropSequence, default,
+                sourceSlot, itemValue, sourceCount)
             {
-                DropCount = pickable.Count,
-                Position = pickable.Position,
-                Velocity = pickable.Velocity
+                DropCount = dropCount,
+                RemoveCount = removeCount,
+                RequestId = m_localEquipmentRevision,
+                InventorySlotValues = preDropValues,
+                InventorySlotCounts = preDropCounts,
+                Position = position,
+                Velocity = velocity
             };
             NetworkMessageSender.SendPlayerDropRequest(message);
-            // The host recreates and broadcasts the authoritative pickable. Keeping this local
-            // prediction would leave an extra client-only item after the host response arrives.
-            pickable.ToRemove = true;
+            m_lastEquipmentSnapshots[client.ClientID] = CaptureEquipmentSnapshot(player);
+            IInventory inventory = player?.ComponentMiner?.Inventory;
+            m_lastLocalInventoryValues = CaptureInventoryValues(inventory);
+            m_lastLocalInventoryCounts = CaptureInventoryCounts(inventory);
+        }
+
+        // Source: Survivalcraft/Game/ViewWidget.cs:ViewWidget.DragDrop
+        private static bool TryFindUiDropSource(IInventory inventory, int[] previousValues,
+            int[] previousCounts, int itemValue, int dropCount,
+            out int sourceSlot, out int sourceCount)
+        {
+            sourceSlot = -1;
+            sourceCount = 0;
+            if (inventory == null || previousValues == null || previousCounts == null)
+                return false;
+            int slotsCount = Math.Min(inventory.SlotsCount,
+                Math.Min(previousValues.Length, previousCounts.Length));
+            for (int i = 0; i < slotsCount; i++)
+            {
+                if (NormalizeCrossbowValue(previousValues[i]) != itemValue) continue;
+                int currentCount = NormalizeCrossbowValue(inventory.GetSlotValue(i)) == itemValue
+                    ? inventory.GetSlotCount(i)
+                    : 0;
+                if (previousCounts[i] - currentCount != dropCount) continue;
+                sourceSlot = i;
+                sourceCount = currentCount + dropCount;
+                return true;
+            }
+
+            // Source: Survivalcraft/Game/ViewWidget.cs:ViewWidget.DragDrop
+            // UI removal can race the equipment publisher. A newer snapshot can therefore retain
+            // the same slot state after an earlier player-only rearrangement, while this one still
+            // proves that the slot contained the items now being dropped. Rebuild from the current
+            // layout below, so only this drop is restored for the host transaction.
+            for (int i = 0; i < slotsCount; i++)
+            {
+                if (NormalizeCrossbowValue(previousValues[i]) != itemValue) continue;
+                int currentValue = NormalizeCrossbowValue(inventory.GetSlotValue(i));
+                int currentCount = currentValue == itemValue ? inventory.GetSlotCount(i) : 0;
+                if (currentValue != 0 && currentValue != itemValue) continue;
+                if (previousCounts[i] < currentCount + dropCount) continue;
+                sourceSlot = i;
+                sourceCount = currentCount + dropCount;
+                return true;
+            }
+            return false;
+        }
+
+        // Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update
+        private void RememberLocalEquipmentSnapshot(IInventory inventory)
+        {
+            if (inventory == null) return;
+            var snapshot = new EquipmentSnapshot
+            {
+                ActiveSlotIndex = inventory.ActiveSlotIndex,
+                SlotValues = CaptureInventoryValues(inventory),
+                SlotCounts = CaptureInventoryCounts(inventory)
+            };
+            if (m_recentLocalEquipmentSnapshots.Count > 0 &&
+                EquipmentSnapshotsEqual(m_recentLocalEquipmentSnapshots.Last(), snapshot))
+                return;
+            m_recentLocalEquipmentSnapshots.Enqueue(snapshot);
+            while (m_recentLocalEquipmentSnapshots.Count > 8)
+                m_recentLocalEquipmentSnapshots.Dequeue();
+        }
+
+        // Source: Survivalcraft/Game/ViewWidget.cs:ViewWidget.DragDrop
+        // UI drops remove items before creating their predicted pickable. Match that exact loss
+        // against the authoritative state of the open block inventory and reuse its transaction.
+        private bool TryQueueContainerDrop(Pickable pickable, IInventory playerInventory)
+        {
+            Project project = GameManager.Project;
+            if (!IsNetworkContainerOpen() || !m_hasAuthoritativeLocalInventory ||
+                project == null || playerInventory == null)
+                return false;
+            int dropValue = NormalizeCrossbowValue(pickable.Value);
+            int[] playerValues = CaptureInventoryValues(playerInventory);
+            int[] playerCounts = CaptureInventoryCounts(playerInventory);
+            foreach (Entity entity in project.Entities)
+            {
+                ComponentBlockEntity blockEntity = entity?.FindComponent<ComponentBlockEntity>();
+                if (blockEntity == null) continue;
+                foreach (ComponentInventoryBase container in
+                    entity.FindComponents<ComponentInventoryBase>())
+                {
+                    string type = container.GetType().FullName;
+                    string key = GetContainerKey(blockEntity.Coordinates, type);
+                    if (m_pendingContainerTransactions.ContainsKey(key) ||
+                        !m_containerStates.TryGetValue(key, out ContainerNetworkState state))
+                        continue;
+                    int[] values = CaptureInventoryValues(container);
+                    int[] counts = CaptureInventoryCounts(container);
+                    if (!HasContainerDropDelta(container, state.Values, state.Counts,
+                            values, counts, dropValue, pickable.Count))
+                        continue;
+
+                    m_nextContainerRequestId = m_nextContainerRequestId == int.MaxValue
+                        ? 1
+                        : m_nextContainerRequestId + 1;
+                    m_localEquipmentRevision = m_localEquipmentRevision == int.MaxValue
+                        ? 1
+                        : m_localEquipmentRevision + 1;
+                    var request = new ContainerSyncMessage
+                    {
+                        Coordinates = blockEntity.Coordinates,
+                        ComponentType = type,
+                        Revision = state.Revision,
+                        RequestId = m_nextContainerRequestId,
+                        RequesterClientId = client.ClientID,
+                        PlayerRevision = m_localEquipmentRevision,
+                        IsRequest = true,
+                        IsDrop = true,
+                        DropValue = dropValue,
+                        DropCount = pickable.Count,
+                        DropPosition = pickable.Position,
+                        DropVelocity = pickable.Velocity,
+                        SlotValues = values,
+                        SlotCounts = counts,
+                        BaseSlotValues = (int[])state.Values.Clone(),
+                        BaseSlotCounts = (int[])state.Counts.Clone(),
+                        PlayerBaseSlotValues = (int[])m_authoritativeLocalSlotValues.Clone(),
+                        PlayerBaseSlotCounts = (int[])m_authoritativeLocalSlotCounts.Clone(),
+                        PlayerSlotValues = playerValues,
+                        PlayerSlotCounts = playerCounts
+                    };
+                    m_pendingContainerTransactions[key] = new PendingContainerTransaction
+                    {
+                        Request = request,
+                        LastSendTime = Time.RealTime
+                    };
+                    SendContainerRequest(request);
+                    return true;
+                }
+            }
+            return false;
         }
 
         private void HandleHostPickableRemoved(Pickable pickable)
@@ -5667,6 +6154,10 @@ namespace ScMultiplayer
                 !m_hostPickableIds.TryGetValue(pickable, out ushort id))
                 return;
             m_hostPickableIds.Remove(pickable);
+            // Source: ScMultiplayer.HandlePickableAcquireRequest
+            // The request transaction already broadcast the authoritative result. Do not emit a
+            // second acquisition with RequestId zero when native removal runs on the next frame.
+            if (m_authoritativePickableAcquireIds.Remove(id)) return;
             if (client?.IsConnected == true &&
                 m_networkPlayerData.Any(item => item.Key > 0))
             {
@@ -5770,6 +6261,8 @@ namespace ScMultiplayer
                 string behaviorState = GetActiveBehaviorState(activeBehavior);
                 bool isAttacking = IsAnimalAttackActive(chase, model);
                 bool isFeeding = IsAnimalFeedActive(model, behaviorState);
+                PublishHostAnimalSoundEvents(entity, creature, metadata,
+                    isAttacking, wasAttacked);
                 bool targetsPlayer = target?.Entity.FindComponent<ComponentPlayer>() != null;
                 ComponentPlayer nearestPlayer = players.OrderBy(player => Vector3.DistanceSquared(
                     player.ComponentBody.Position, body.Position)).FirstOrDefault();
@@ -5948,6 +6441,54 @@ namespace ScMultiplayer
             }
         }
 
+        // Source: Survivalcraft/Game/ComponentCreatureSounds.cs:ComponentCreatureSounds.PlayIdleSound
+        // Source: Survivalcraft/Game/ComponentHowlBehavior.cs:ComponentHowlBehavior.Update
+        private void PublishHostAnimalSoundEvents(Entity entity, ComponentCreature creature,
+            AnimalSyncMetadata metadata, bool isAttacking, bool wasAttacked)
+        {
+            ComponentCreatureSounds sounds = creature?.ComponentCreatureSounds;
+            ComponentHowlBehavior howl = entity?.FindComponent<ComponentHowlBehavior>();
+            double soundTime = sounds != null
+                ? ModManager.ModParentField.GetParentField<double>(
+                    sounds, "m_lastSoundTime", typeof(ComponentCreatureSounds))
+                : -1000.0;
+            float howlTime = howl != null
+                ? ModManager.ModParentField.GetParentField<float>(
+                    howl, "m_howlTime", typeof(ComponentHowlBehavior))
+                : 0f;
+            if (!metadata.SoundStateInitialized)
+            {
+                metadata.SoundStateInitialized = true;
+                metadata.LastCreatureSoundTime = soundTime;
+                metadata.LastHowlTime = howlTime;
+                return;
+            }
+
+            if (soundTime > metadata.LastCreatureSoundTime + 0.0001)
+            {
+                // Pain already has a reliable DamageSequence in BodyUpdateMessage.
+                if (!wasAttacked)
+                    BroadcastAnimalSound(entity, creature.ComponentBody.Position, metadata,
+                        isAttacking ? AnimalSoundType.Attack : AnimalSoundType.Idle);
+                metadata.LastCreatureSoundTime = soundTime;
+            }
+            if (howl != null && metadata.LastHowlTime <= 0.5f && howlTime > 0.5f)
+                BroadcastAnimalSound(entity, creature.ComponentBody.Position, metadata,
+                    AnimalSoundType.Howl);
+            metadata.LastHowlTime = howlTime;
+        }
+
+        private void BroadcastAnimalSound(Entity entity, Vector3 position,
+            AnimalSyncMetadata metadata, AnimalSoundType soundType)
+        {
+            if (!m_hostAnimalIds.TryGetValue(entity, out ushort id)) return;
+            metadata.SoundSequence = metadata.SoundSequence == int.MaxValue
+                ? 1
+                : metadata.SoundSequence + 1;
+            NetworkMessageSender.BroadcastAnimalSound(new AnimalSoundMessage(
+                id, metadata.SoundSequence, client.Step, soundType, position));
+        }
+
         private string GetActiveBehaviorState(ComponentBehavior behavior)
         {
             if (behavior == null) return string.Empty;
@@ -6073,10 +6614,14 @@ namespace ScMultiplayer
                 if (!m_playerHealthCache.TryGetValue(currentClientId, out lastHealth))
                     lastHealth = health.Health;
 
+                float food = item.ComponentVitalStats?.Food ?? 0f;
+                if (!m_playerFoodCache.TryGetValue(currentClientId, out float lastFood))
+                    lastFood = food;
                 float change = health.Health - lastHealth;
-                if (force || Math.Abs(change) > 0.0001f)
+                if (force || Math.Abs(change) > 0.0001f || Math.Abs(food - lastFood) > 0.0001f)
                     NetworkMessageSender.SendPlayerHealthMessage(client.ClientID, item, change);
                 m_playerHealthCache[currentClientId] = health.Health;
+                m_playerFoodCache[currentClientId] = food;
             }
             foreach (KeyValuePair<int, PlayerData> remote in m_networkPlayerData.ToArray())
             {
@@ -6091,10 +6636,19 @@ namespace ScMultiplayer
             if (health == null) return;
             if (!m_playerHealthCache.TryGetValue(networkClientId, out float lastHealth))
                 lastHealth = health.Health;
+            float food = player.ComponentVitalStats?.Food ?? 0f;
+            if (!m_playerFoodCache.TryGetValue(networkClientId, out float lastFood))
+                lastFood = food;
             float change = health.Health - lastHealth;
-            if (force || Math.Abs(change) > 0.0001f)
+            int wholeLevel = (int)MathUtils.Floor(MathUtils.Max(player.PlayerData.Level, 1f));
+            if (!m_playerWholeLevelCache.TryGetValue(networkClientId, out int lastWholeLevel))
+                lastWholeLevel = wholeLevel;
+            if (force || Math.Abs(change) > 0.0001f || Math.Abs(food - lastFood) > 0.0001f ||
+                wholeLevel != lastWholeLevel)
                 NetworkMessageSender.SendPlayerHealthMessage(networkClientId, player, change);
             m_playerHealthCache[networkClientId] = health.Health;
+            m_playerFoodCache[networkClientId] = food;
+            m_playerWholeLevelCache[networkClientId] = wholeLevel;
         }
 
         // Source: Survivalcraft/Game/ComponentFlu.cs:ComponentFlu.Update
@@ -6122,20 +6676,25 @@ namespace ScMultiplayer
             ComponentPlayer localPlayer = players?.ComponentPlayers.FirstOrDefault(player =>
                 !m_networkPlayerData.Values.Contains(player.PlayerData));
             ComponentHealth health = localPlayer?.ComponentHealth;
-            if (health == null) return;
+            ComponentVitalStats vital = localPlayer?.ComponentVitalStats;
+            if (health == null || vital == null) return;
             if (!m_hasObservedClientHealth)
             {
                 m_hasObservedClientHealth = true;
                 m_observedClientHealth = health.Health;
+                m_observedClientFood = vital.Food;
                 m_observedClientSleeping = localPlayer.ComponentSleep?.IsSleeping == true;
                 return;
             }
             float change = health.Health - m_observedClientHealth;
+            bool foodIncreased = vital.Food > m_observedClientFood + 0.0001f;
             bool isSleeping = localPlayer.ComponentSleep?.IsSleeping == true;
-            if (change < -0.0001f || isSleeping != m_observedClientSleeping)
+            if (change < -0.0001f || foodIncreased || isSleeping != m_observedClientSleeping)
                 NetworkMessageSender.SendPlayerHealthMessage(
-                    client.ClientID, localPlayer, change, "Client state request");
+                    client.ClientID, localPlayer, change,
+                    foodIncreased ? "Client food request" : "Client state request");
             m_observedClientHealth = health.Health;
+            m_observedClientFood = vital.Food;
             m_observedClientSleeping = isSleeping;
         }
 
@@ -6398,6 +6957,14 @@ namespace ScMultiplayer
                     case AnimalInteractionMessage animalInteraction:
                         QueueEndOfFrameAction(() => HandleAnimalInteractionMessage(
                             animalInteraction, item.ClientID));
+                        break;
+                    case AnimalSoundMessage animalSound:
+                        QueueEndOfFrameAction(() => HandleAnimalSoundMessage(
+                            animalSound, item.ClientID));
+                        break;
+                    case MeleeHitResultMessage meleeHitResult:
+                        QueueEndOfFrameAction(() => HandleMeleeHitResultMessage(
+                            meleeHitResult, item.ClientID));
                         break;
                     case PickableSyncMessage pickableSync:
                         QueueEndOfFrameAction(() => HandlePickableSyncMessage(pickableSync, item.ClientID));
@@ -6775,7 +7342,7 @@ namespace ScMultiplayer
                     joiningRecord?.PlayerClass ?? PlayerClass.Male,
                     joiningRecord?.SkinSha256);
                 m_pendingAcceptedJoinKeys[joiningClientId] = recordKey;
-                m_containerStates.Clear();
+                m_forceContainerFullSync = true;
                 m_playerRecordsDirty = true;
                 SavePlayerRecords();
                 m_joinCatchUpJournals[joiningClientId] = new JoinCatchUpJournal
@@ -7112,7 +7679,7 @@ namespace ScMultiplayer
                 if (!m_pendingJoinCatchUps.TryGetValue(targetClientId, out PendingJoinCatchUp pending))
                     continue;
                 if (GetWorldTransferRelayUnackedPackets(targetClientId) >=
-                    GetWorldTransferUnackedPacketLimit(targetClientId))
+                    GetReliableBulkUnackedPacketLimit(targetClientId))
                     continue;
                 if (pending.Messages.Count == 0)
                 {
@@ -7167,7 +7734,7 @@ namespace ScMultiplayer
                     (transfer.InitialSendComplete && transfer.RepairChunkIndices.Count == 0))
                     continue;
                 if (GetWorldTransferRelayUnackedPackets(targetClientId) >=
-                    GetWorldTransferUnackedPacketLimit(targetClientId))
+                    GetReliableBulkUnackedPacketLimit(targetClientId))
                     continue;
 
                 int chunkIndex;
@@ -7628,7 +8195,8 @@ namespace ScMultiplayer
             if (count != inventory.SlotsCount && slotsCount < 0) return false;
             for (int i = 0; i < count; i++)
             {
-                if (inventory.GetSlotValue(i) != values[i] ||
+                if (NormalizeCrossbowValue(inventory.GetSlotValue(i)) !=
+                        NormalizeCrossbowValue(values[i]) ||
                     inventory.GetSlotCount(i) != counts[i])
                     return false;
             }
@@ -7661,10 +8229,17 @@ namespace ScMultiplayer
             Vector3 hitPoint = result.Value.HitPoint();
             if (Vector3.DistanceSquared(hitPoint, player.ComponentCreatureModel.EyePosition) > 2.25f * 2.25f)
                 return false;
+            // This is still an animal hit even while the native attack cooldown is active. Keep
+            // suppressing the generic body ray request, but do not flood the host with duplicates.
+            if (Time.RealTime < m_nextLocalHitRequestTime) return true;
+            m_nextLocalHitRequestTime = Time.RealTime + PlayerHitRequestInterval;
+            m_localHitSequence = m_localHitSequence == int.MaxValue ? 1 : m_localHitSequence + 1;
+            TrackLocalMeleePrediction(player, m_localHitSequence);
             Vector3 direction = hitRay.Direction.LengthSquared() > 0.0001f
                 ? Vector3.Normalize(hitRay.Direction)
                 : Vector3.UnitZ;
-            var message = new AnimalInteractionMessage(targetId, client.Step, hitPoint, direction);
+            var message = new AnimalInteractionMessage(
+                targetId, m_localHitSequence, hitPoint, direction);
             // Source: ScMultiplayer.cs:HandleAnimalInteractionMessage
             client.SendDirectInput(0, Message.WriteWithSender(message, client.Address));
             return true;
@@ -7724,12 +8299,54 @@ namespace ScMultiplayer
 
             // Source: Survivalcraft/Game/ComponentMiner.cs:ComponentMiner.Hit
             // The host recomputes hit probability, tool power, damage and Attacked events.
+            float previousHealth = target.ComponentHealth?.Health ?? 0f;
             miner.Hit(targetBody, targetPoint, direction);
+            SendAuthoritativeMeleeHitResult(sourceClientId, message.ClientTick,
+                target.ComponentHealth, previousHealth, targetPoint, direction,
+                attacker.ComponentBody?.Velocity ?? Vector3.Zero);
             if (m_hostAnimalSync.TryGetValue(targetEntity, out AnimalSyncMetadata metadata))
             {
                 metadata.NextSendTime = 0.0;
                 metadata.HighPriorityUntil = Time.RealTime + 3.0;
             }
+        }
+
+        // Source: Survivalcraft/Game/ComponentMiner.cs:ComponentMiner.Hit
+        // Source: Survivalcraft/Game/ComponentMiner.cs:ComponentMiner.AttackBody
+        private void HandleMeleeHitResultMessage(MeleeHitResultMessage message, int sourceClientId)
+        {
+            if (IsHost || sourceClientId != 0 || message == null ||
+                message.RequestSequence <= 0 || message.Damage <= 0f ||
+                !float.IsFinite(message.Damage) || !IsFinite(message.HitPoint) ||
+                !IsFinite(message.HitDirection) || !IsFinite(message.AttackerVelocity) ||
+                !m_localMeleePredictions.TryGetValue(message.RequestSequence,
+                    out LocalMeleePrediction prediction))
+                return;
+            m_localMeleePredictions.Remove(message.RequestSequence);
+            double currentHitTime = ModManager.ModParentField.GetParentField<double>(
+                prediction.Miner, "m_lastHitTime", typeof(ComponentMiner));
+            if (currentHitTime > prediction.PreviousHitTime + 0.0001) return;
+
+            Project project = GameManager.Project;
+            ComponentPlayer localPlayer = project?.FindSubsystem<SubsystemPlayers>(false)?
+                .ComponentPlayers.FirstOrDefault(player => player != null &&
+                    !m_networkPlayerData.Values.Contains(player.PlayerData));
+            if (localPlayer?.ComponentMiner == null) return;
+            Vector3 direction = message.HitDirection.LengthSquared() > 0.0001f
+                ? Vector3.Normalize(message.HitDirection)
+                : Vector3.UnitZ;
+            localPlayer.ComponentMiner.Poke(forceRestart: true);
+            SubsystemAudio audio = project.FindSubsystem<SubsystemAudio>(false);
+            audio?.PlaySound("Audio/Swoosh", 1f,
+                m_audioEventRandom.Float(-0.2f, 0.2f), message.HitPoint, 3f,
+                autoDelay: false);
+            audio?.PlayRandomSound("Audio/Impacts/Body", 1f,
+                m_audioEventRandom.Float(-0.3f, 0.3f), message.HitPoint, 4f,
+                autoDelay: false);
+            string text = (0f - message.Damage).ToString("0", CultureInfo.InvariantCulture);
+            project.FindSubsystem<SubsystemParticles>(false)?.AddParticleSystem(
+                new HitValueParticleSystem(message.HitPoint + 0.75f * direction,
+                    direction + message.AttackerVelocity, Color.White, text));
         }
 
         private void HandleAnimalEntityMessage(EntityMessage message, int sourceClientId)
@@ -7911,9 +8528,8 @@ namespace ScMultiplayer
                         item.DamageSequence > state.LastDamageSequence)
                     {
                         state.LastDamageSequence = item.DamageSequence;
-                        // Source: Survivalcraft/Game/ComponentCreatureSounds.cs:PlayPainSound
-                        PlayConfirmedPainSound(creature.ComponentCreatureSounds,
-                            GameManager.Project);
+                        // Source: Survivalcraft/Game/ComponentHealth.cs:ComponentHealth.Update
+                        creature.ComponentCreatureSounds.PlayPainSound();
                     }
                     state.LastHealth = health;
                     state.HasHealth = true;
@@ -8041,6 +8657,70 @@ namespace ScMultiplayer
                         state.LastServerTick <= message.ServerTick)).ToArray())
                     RemoveRemoteAnimal(id);
                 m_lastFullAnimalSnapshotTick = message.ServerTick;
+            }
+        }
+
+        // Source: Survivalcraft/Game/ComponentCreatureSounds.cs:ComponentCreatureSounds.PlayIdleSound
+        // Source: Survivalcraft/Game/ComponentHowlBehavior.cs:ComponentHowlBehavior.Update
+        private void HandleAnimalSoundMessage(AnimalSoundMessage message, int sourceClientId)
+        {
+            if (IsHost || sourceClientId != 0 || message == null ||
+                message.Sequence <= 0 || !IsFinite(message.Position) || GameManager.Project == null)
+                return;
+            Entity entity = m_remoteAnimals.TryGetValue(message.EntityId, out Entity existing)
+                ? existing
+                : EnsureRemoteAnimal(message.EntityId, message.Position,
+                    Quaternion.Identity, Vector3.Zero);
+            ComponentCreatureSounds sounds = entity?.FindComponent<ComponentCreatureSounds>();
+            if (entity == null || sounds == null) return;
+            if (!m_remoteAnimalSync.TryGetValue(message.EntityId,
+                out RemoteAnimalSyncState state))
+            {
+                state = new RemoteAnimalSyncState();
+                m_remoteAnimalSync[message.EntityId] = state;
+            }
+            if (message.Sequence <= state.LastSoundSequence) return;
+            state.LastSoundSequence = message.Sequence;
+
+            string soundName = string.Empty;
+            float minDistance = 0f;
+            bool autoDelay = false;
+            if (message.SoundType == AnimalSoundType.Idle)
+            {
+                soundName = ModManager.ModParentField.GetParentField(
+                    sounds, "m_idleSound", typeof(ComponentCreatureSounds)) as string;
+                minDistance = ModManager.ModParentField.GetParentField<float>(
+                    sounds, "m_idleSoundMinDistance", typeof(ComponentCreatureSounds));
+                if (string.IsNullOrEmpty(soundName))
+                {
+                    soundName = ModManager.ModParentField.GetParentField(
+                        sounds, "m_rareIdleSound", typeof(ComponentCreatureSounds)) as string;
+                    minDistance = ModManager.ModParentField.GetParentField<float>(
+                        sounds, "m_rareIdleSoundMinDistance", typeof(ComponentCreatureSounds));
+                }
+            }
+            else if (message.SoundType == AnimalSoundType.Attack)
+            {
+                soundName = ModManager.ModParentField.GetParentField(
+                    sounds, "m_attackSound", typeof(ComponentCreatureSounds)) as string;
+                minDistance = ModManager.ModParentField.GetParentField<float>(
+                    sounds, "m_attackSoundMinDistance", typeof(ComponentCreatureSounds));
+            }
+            else if (message.SoundType == AnimalSoundType.Howl)
+            {
+                ComponentHowlBehavior howl = entity.FindComponent<ComponentHowlBehavior>();
+                soundName = howl == null
+                    ? string.Empty
+                    : ModManager.ModParentField.GetParentField(
+                        howl, "m_howlSoundName", typeof(ComponentHowlBehavior)) as string;
+                minDistance = 10f;
+                autoDelay = true;
+            }
+            if (!string.IsNullOrEmpty(soundName))
+            {
+                GameManager.Project.FindSubsystem<SubsystemAudio>(false)?.PlayRandomSound(
+                    soundName, 1f, m_audioEventRandom.Float(-0.1f, 0.1f),
+                    message.Position, minDistance, autoDelay);
             }
         }
 
@@ -8456,12 +9136,6 @@ namespace ScMultiplayer
                     else
                     {
                         m_pendingPickablePickups.Remove(item.Key);
-                        if (pickup.PlaySound)
-                        {
-                            GameManager.Project.FindSubsystem<SubsystemAudio>(false)?.PlaySound(
-                                "Audio/PickableCollected", 0.7f, -0.4f,
-                                pickable.Position, 2f, autoDelay: false);
-                        }
                         if (pickup.RemainingCount <= 0)
                         {
                             pickable.ToRemove = true;
@@ -8503,9 +9177,180 @@ namespace ScMultiplayer
             return pickable;
         }
 
+        // Source: Survivalcraft/Game/SubsystemPickables.cs:SubsystemPickables.Update
+        internal void RequestNearbyPickableAcquisition()
+        {
+            if (IsHost || client?.IsConnected != true || GameManager.Project == null ||
+                Time.RealTime < m_nextPickableAcquireScanTime)
+                return;
+            m_nextPickableAcquireScanTime = Time.RealTime + 0.05;
+
+            ComponentPlayer player = GameManager.Project.FindSubsystem<SubsystemPlayers>(false)?
+                .ComponentPlayers.FirstOrDefault(item =>
+                    item?.ComponentBody != null && item.ComponentMiner?.Inventory != null &&
+                    !m_networkPlayerData.Values.Contains(item.PlayerData));
+            if (player?.ComponentHealth?.Health <= 0f) return;
+            SubsystemGameInfo gameInfo = GameManager.Project.FindSubsystem<SubsystemGameInfo>(false);
+            if (gameInfo == null) return;
+            Vector3 target = player.ComponentBody.Position + new Vector3(0f, 0.75f, 0f);
+            double now = Time.RealTime;
+
+            foreach (ushort stale in m_pendingPickableAcquireRequests.Keys.Where(id =>
+                !m_remotePickables.ContainsKey(id) || !m_remotePickableRecords.ContainsKey(id))
+                .ToArray())
+                m_pendingPickableAcquireRequests.Remove(stale);
+
+            foreach (KeyValuePair<ushort, Pickable> item in m_remotePickables.ToArray())
+            {
+                Pickable pickable = item.Value;
+                if (pickable == null || pickable.ToRemove) continue;
+                // Source: Survivalcraft/Game/SubsystemPickables.cs:SubsystemPickables.Update
+                // Preserve the native creation grace. Requesting a replicated throw sooner lets
+                // the host collect it before its authoritative trajectory leaves the player.
+                if (gameInfo.TotalElapsedGameTime - pickable.CreationTime <= 0.5) continue;
+                float distanceSquared = Vector3.DistanceSquared(target, pickable.Position);
+                if (distanceSquared >= 3.0625f || pickable.StuckMatrix.HasValue) continue;
+                pickable.FlyToPosition = target + 0.1f * MathUtils.Sqrt(distanceSquared) *
+                    player.ComponentBody.Velocity;
+                if (distanceSquared >= 1f) continue;
+
+                if (!m_pendingPickableAcquireRequests.TryGetValue(item.Key,
+                        out PendingPickableAcquireRequest pending))
+                {
+                    m_nextPickableAcquireRequestId = m_nextPickableAcquireRequestId == int.MaxValue
+                        ? 1
+                        : m_nextPickableAcquireRequestId + 1;
+                    pending = new PendingPickableAcquireRequest
+                    {
+                        RequestId = m_nextPickableAcquireRequestId
+                    };
+                    m_pendingPickableAcquireRequests[item.Key] = pending;
+                }
+                else if (pending.Rejected)
+                {
+                    if (now - pending.LastSendTime < 0.75) continue;
+                    m_nextPickableAcquireRequestId = m_nextPickableAcquireRequestId == int.MaxValue
+                        ? 1
+                        : m_nextPickableAcquireRequestId + 1;
+                    pending.RequestId = m_nextPickableAcquireRequestId;
+                    pending.Rejected = false;
+                }
+                if (now - pending.LastSendTime < 0.75) continue;
+                pending.LastSendTime = now;
+                NetworkMessageSender.SendPickableMessage(new PickableSyncMessage
+                {
+                    Action = PickableSyncMessage.PickAction.RequestAcquire,
+                    Id = item.Key,
+                    RequestId = pending.RequestId,
+                    Position = target
+                }, 0);
+            }
+        }
+
+        // Source: Survivalcraft/Game/SubsystemPickables.cs:SubsystemPickables.Update
+        private void HandlePickableAcquireRequest(PickableSyncMessage message, int sourceClientId)
+        {
+            if (!IsHost || message == null || message.RequestId <= 0 || sourceClientId <= 0)
+                return;
+            long key = ((long)sourceClientId << 32) | message.Id;
+            if (m_processedPickableAcquireRequests.TryGetValue(key,
+                    out ProcessedPickableAcquireRequest processed) &&
+                message.RequestId <= processed.RequestId)
+            {
+                if (message.RequestId == processed.RequestId && processed.Response != null)
+                    NetworkMessageSender.SendPickableMessage(processed.Response, sourceClientId);
+                return;
+            }
+
+            Pickable pickable = m_hostPickableIds.FirstOrDefault(item =>
+                item.Value == message.Id).Key;
+            SubsystemGameInfo gameInfo = GameManager.Project?
+                .FindSubsystem<SubsystemGameInfo>(false);
+            var response = new PickableSyncMessage
+            {
+                Action = PickableSyncMessage.PickAction.Acquire,
+                Id = message.Id,
+                RequestId = message.RequestId,
+                CollectorClientId = -1,
+                ServerTick = client?.Step ?? 0,
+                Count = pickable?.Count ?? 0
+            };
+            bool accepted = false;
+            if (pickable != null && !pickable.ToRemove && gameInfo != null &&
+                gameInfo.TotalElapsedGameTime - pickable.CreationTime > 0.5 &&
+                IsFinite(message.Position) &&
+                m_networkPlayerData.TryGetValue(sourceClientId, out PlayerData playerData) &&
+                playerData?.ComponentPlayer?.ComponentBody != null &&
+                playerData.ComponentPlayer.ComponentHealth?.Health > 0f &&
+                Vector3.DistanceSquared(message.Position, pickable.Position) <= 1.21f &&
+                Vector3.DistanceSquared(playerData.ComponentPlayer.ComponentBody.Position +
+                    new Vector3(0f, 0.75f, 0f), message.Position) <= 4f)
+            {
+                int contents = Terrain.ExtractContents(pickable.Value);
+                if (contents == 248)
+                {
+                    playerData.ComponentPlayer.ComponentLevel?.AddExperience(
+                        pickable.Count, playSound: true);
+                    pickable.Count = 0;
+                    accepted = true;
+                }
+                else
+                {
+                    IInventory inventory = playerData.ComponentPlayer.ComponentMiner?.Inventory;
+                    if (inventory != null &&
+                        ComponentInventoryBase.FindAcquireSlotForItem(inventory,
+                            pickable.Value) >= 0)
+                    {
+                        int previousCount = pickable.Count;
+                        pickable.Count = ComponentInventoryBase.AcquireItems(
+                            inventory, pickable.Value, pickable.Count);
+                        accepted = pickable.Count < previousCount;
+                        if (accepted)
+                        {
+                            m_forceHostInventorySync = true;
+                            MarkHostInventoryAuthoritative(sourceClientId);
+                            response.SlotValues = CaptureInventoryValues(inventory);
+                            response.SlotCounts = CaptureInventoryCounts(inventory);
+                        }
+                    }
+                }
+            }
+
+            response.Count = pickable?.Count ?? 0;
+            if (accepted)
+            {
+                response.CollectorClientId = sourceClientId;
+                response.PlaySound = response.Count == 0;
+                if (response.Count == 0 && pickable != null)
+                {
+                    m_authoritativePickableAcquireIds.Add(message.Id);
+                    pickable.ToRemove = true;
+                }
+            }
+            processed = new ProcessedPickableAcquireRequest
+            {
+                RequestId = message.RequestId,
+                ProcessedTime = Time.RealTime,
+                Response = response
+            };
+            m_processedPickableAcquireRequests[key] = processed;
+            foreach (long stale in m_processedPickableAcquireRequests.Where(item =>
+                Time.RealTime - item.Value.ProcessedTime > 30.0).Select(item => item.Key).ToArray())
+                m_processedPickableAcquireRequests.Remove(stale);
+            NetworkMessageSender.SendPickableMessage(response,
+                accepted ? -1 : sourceClientId);
+        }
+
         private void HandlePickableSyncMessage(PickableSyncMessage message, int sourceClientId)
         {
-            if (IsHost || sourceClientId != 0 || message == null || GameManager.Project == null) return;
+            if (message == null || GameManager.Project == null) return;
+            if (IsHost)
+            {
+                if (message.Action == PickableSyncMessage.PickAction.RequestAcquire)
+                    HandlePickableAcquireRequest(message, sourceClientId);
+                return;
+            }
+            if (sourceClientId != 0) return;
             MaintainClientWorldObjects();
             switch (message.Action)
             {
@@ -8568,6 +9413,7 @@ namespace ScMultiplayer
                     m_remotePickableRecords.Remove(message.Id);
                     m_remotePickableStates.Remove(message.Id);
                     m_pendingPickablePickups.Remove(message.Id);
+                    m_pendingPickableAcquireRequests.Remove(message.Id);
                     break;
                 case PickableSyncMessage.PickAction.SetFlyTo:
                     if (m_remotePickables.TryGetValue(message.Id, out Pickable target) && target != null)
@@ -8594,6 +9440,22 @@ namespace ScMultiplayer
         // Source: Survivalcraft/Game/SubsystemPickables.cs:SubsystemPickables.Update
         private void HandleAuthoritativePickableAcquire(PickableSyncMessage message)
         {
+            bool confirmsLocalRequest = message.CollectorClientId == client.ClientID &&
+                m_pendingPickableAcquireRequests.TryGetValue(message.Id,
+                    out PendingPickableAcquireRequest localRequest) &&
+                localRequest.RequestId == message.RequestId;
+            if (message.CollectorClientId < 0 && message.Count > 0 &&
+                m_pendingPickableAcquireRequests.TryGetValue(message.Id,
+                    out PendingPickableAcquireRequest rejected) &&
+                rejected.RequestId == message.RequestId)
+            {
+                rejected.Rejected = true;
+                rejected.LastSendTime = Time.RealTime;
+            }
+            else
+            {
+                m_pendingPickableAcquireRequests.Remove(message.Id);
+            }
             if (message.CollectorClientId == client.ClientID &&
                 message.ServerTick >= m_lastAuthoritativeLocalInventoryTick &&
                 message.SlotValues != null && message.SlotCounts != null)
@@ -8627,6 +9489,18 @@ namespace ScMultiplayer
                 return;
             }
 
+            if (message.CollectorClientId < 0)
+            {
+                if (m_remotePickables.TryGetValue(message.Id, out Pickable missing) &&
+                    missing != null)
+                    missing.ToRemove = true;
+                m_remotePickables.Remove(message.Id);
+                m_remotePickableRecords.Remove(message.Id);
+                m_remotePickableStates.Remove(message.Id);
+                m_pendingPickablePickups.Remove(message.Id);
+                return;
+            }
+
             Vector3 target = ResolvePickupPresentationTarget(
                 message.CollectorClientId, Vector3.Zero);
             double duration = 0.12;
@@ -8637,12 +9511,21 @@ namespace ScMultiplayer
                 duration = MathUtils.Clamp(distance / 6f, 0.08f, 0.3f);
                 pickable.FlyToPosition = target;
             }
+            // Source: Survivalcraft/Game/SubsystemPickables.cs:SubsystemPickables.Update
+            // Play from the reliable acquisition edge. Presentation cleanup must not cancel it.
+            if (message.PlaySound && (message.RequestId <= 0 ||
+                message.CollectorClientId != client.ClientID || confirmsLocalRequest))
+            {
+                Vector3 soundPosition = pickable?.Position ?? target;
+                GameManager.Project.FindSubsystem<SubsystemAudio>(false)?.PlaySound(
+                    "Audio/PickableCollected", 0.7f, -0.4f,
+                    soundPosition, 2f, autoDelay: false);
+            }
             m_pendingPickablePickups[message.Id] = new PendingPickablePickupPresentation
             {
                 CollectorClientId = message.CollectorClientId,
                 RemainingCount = message.Count,
-                CompleteTime = Time.RealTime + duration,
-                PlaySound = message.PlaySound
+                CompleteTime = Time.RealTime + duration
             };
         }
 
@@ -8882,6 +9765,35 @@ namespace ScMultiplayer
             }
             projectile.TrailOffset = message.TrailOffset;
             projectile.IsIncendiary = message.IsFireProjectile;
+            RemoveDuplicateClientPredictedProjectiles(subsystem, projectile, message,
+                targetVelocity);
+        }
+
+        // Source: Survivalcraft/Game/SubsystemProjectiles.cs:SubsystemProjectiles.FireProjectile
+        // The owning client predicts one projectile while the host sends the authoritative one.
+        // If adoption misses because the prediction crossed a collision boundary, remove only
+        // same-value, same-direction predictions born at the same point; separate rapid shots
+        // remain untouched.
+        private void RemoveDuplicateClientPredictedProjectiles(
+            SubsystemProjectiles subsystem, Projectile authoritative,
+            ProjectileSyncMessage message, Vector3 targetVelocity)
+        {
+            if (authoritative == null || message.OwnerEntityId != client.ClientID)
+                return;
+            float maxDistanceSquared = ClientProjectileDuplicateDistance *
+                ClientProjectileDuplicateDistance;
+            foreach (Projectile candidate in subsystem.Projectiles.ToArray())
+            {
+                if (candidate == null || candidate == authoritative || candidate.ToRemove ||
+                    candidate.Value != message.Value ||
+                    !IsLocallyOwnedProjectile(candidate) ||
+                    Vector3.DistanceSquared(candidate.Position, authoritative.Position) >
+                        maxDistanceSquared ||
+                    !AreProjectileDirectionsCompatible(candidate.Velocity, targetVelocity))
+                    continue;
+                candidate.ToRemove = true;
+                m_clientPredictedProjectiles.Remove(candidate);
+            }
         }
 
         // Source: Survivalcraft/Game/ComponentMiner.cs:ComponentMiner.AttackBody
@@ -8962,6 +9874,9 @@ namespace ScMultiplayer
         {
             Project project = GameManager.Project;
             if (project == null) return;
+            bool forceFullSync = IsHost && m_forceContainerFullSync;
+            bool allowClientRequest = !IsHost && IsNetworkContainerOpen();
+            IInventory localPlayerInventory = !IsHost ? GetLocalPlayerInventory() : null;
             foreach (Entity entity in project.Entities)
             {
                 ComponentBlockEntity blockEntity = entity?.FindComponent<ComponentBlockEntity>();
@@ -8975,14 +9890,16 @@ namespace ScMultiplayer
                     {
                         if (m_containerStates.TryGetValue(key, out ContainerNetworkState state) &&
                             ArraysEqual(values, state.Values) && ArraysEqual(counts, state.Counts))
+                        {
+                            if (forceFullSync)
+                                SendContainerState(blockEntity.Coordinates,
+                                    inventory.GetType().FullName, state);
                             continue;
-                        state = state ?? new ContainerNetworkState();
-                        state.Revision++;
-                        state.Values = values;
-                        state.Counts = counts;
+                        }
+                        state = AdvanceContainerState(state, values, counts);
                         m_containerStates[key] = state;
-                        SendContainerMessage(blockEntity.Coordinates, inventory.GetType().FullName,
-                            state, false);
+                        SendContainerState(blockEntity.Coordinates,
+                            inventory.GetType().FullName, state);
                     }
                     else
                     {
@@ -8990,13 +9907,57 @@ namespace ScMultiplayer
                             m_disabledClientContainerUpdates.Add(updateable))
                             QueueEndOfFrameAction(() =>
                                 project.FindSubsystem<SubsystemUpdate>(true).RemoveUpdateable(updateable));
-                        if (m_containerStates.TryGetValue(key, out ContainerNetworkState state) &&
-                            (!ArraysEqual(values, state.Values) || !ArraysEqual(counts, state.Counts)))
-                            SendContainerMessage(blockEntity.Coordinates, inventory.GetType().FullName,
-                                new ContainerNetworkState { Revision = state.Revision, Values = values, Counts = counts }, true);
+                        if (m_pendingContainerTransactions.TryGetValue(key,
+                                out PendingContainerTransaction pending))
+                        {
+                            if (Time.RealTime - pending.LastSendTime >= 2.0)
+                            {
+                                pending.LastSendTime = Time.RealTime;
+                                SendContainerRequest(pending.Request);
+                            }
+                            continue;
+                        }
+                        if (!m_containerStates.TryGetValue(key, out ContainerNetworkState state) ||
+                            ArraysEqual(values, state.Values) && ArraysEqual(counts, state.Counts))
+                            continue;
+                        if (!allowClientRequest || localPlayerInventory == null ||
+                            !m_hasAuthoritativeLocalInventory)
+                            continue;
+
+                        m_nextContainerRequestId = m_nextContainerRequestId == int.MaxValue
+                            ? 1
+                            : m_nextContainerRequestId + 1;
+                        m_localEquipmentRevision = m_localEquipmentRevision == int.MaxValue
+                            ? 1
+                            : m_localEquipmentRevision + 1;
+                        var request = new ContainerSyncMessage
+                        {
+                            Coordinates = blockEntity.Coordinates,
+                            ComponentType = inventory.GetType().FullName,
+                            Revision = state.Revision,
+                            RequestId = m_nextContainerRequestId,
+                            RequesterClientId = client.ClientID,
+                            PlayerRevision = m_localEquipmentRevision,
+                            IsRequest = true,
+                            SlotValues = values,
+                            SlotCounts = counts,
+                            BaseSlotValues = (int[])state.Values.Clone(),
+                            BaseSlotCounts = (int[])state.Counts.Clone(),
+                            PlayerBaseSlotValues = (int[])m_authoritativeLocalSlotValues.Clone(),
+                            PlayerBaseSlotCounts = (int[])m_authoritativeLocalSlotCounts.Clone(),
+                            PlayerSlotValues = CaptureInventoryValues(localPlayerInventory),
+                            PlayerSlotCounts = CaptureInventoryCounts(localPlayerInventory)
+                        };
+                        m_pendingContainerTransactions[key] = new PendingContainerTransaction
+                        {
+                            Request = request,
+                            LastSendTime = Time.RealTime
+                        };
+                        SendContainerRequest(request);
                     }
                 }
             }
+            if (IsHost) m_forceContainerFullSync = false;
         }
 
         private void HandleContainerSyncMessage(ContainerSyncMessage message, int sourceClientId)
@@ -9008,24 +9969,152 @@ namespace ScMultiplayer
             if (IsHost)
             {
                 if (!message.IsRequest || sourceClientId <= 0 ||
+                    message.RequestId <= 0 || message.RequesterClientId != sourceClientId ||
                     !m_networkPlayerData.TryGetValue(sourceClientId, out PlayerData player) ||
                     player?.ComponentPlayer?.ComponentBody == null ||
                     Vector3.DistanceSquared(player.ComponentPlayer.ComponentBody.Position,
                         new Vector3(message.Coordinates) + new Vector3(0.5f)) > 8f * 8f)
                     return;
-                if (!m_containerStates.TryGetValue(key, out ContainerNetworkState state) ||
-                    message.Revision != state.Revision)
+
+                string transactionKey = sourceClientId + "|" + key;
+                if (m_processedContainerTransactions.TryGetValue(transactionKey,
+                        out ProcessedContainerTransaction processed) &&
+                    message.RequestId <= processed.RequestId)
                 {
-                    if (state != null) SendContainerMessage(message.Coordinates, message.ComponentType, state, false);
+                    if (message.RequestId == processed.RequestId && processed.Response != null)
+                        SendContainerResponse(processed.Response, sourceClientId);
                     return;
                 }
-                ApplyInventory(inventory, message.SlotValues, message.SlotCounts);
+
+                int[] currentValues = CaptureInventoryValues(inventory);
+                int[] currentCounts = CaptureInventoryCounts(inventory);
+                if (!m_containerStates.TryGetValue(key, out ContainerNetworkState state))
+                {
+                    state = AdvanceContainerState(null, currentValues, currentCounts);
+                    m_containerStates[key] = state;
+                }
+                else if (!ArraysEqual(currentValues, state.Values) ||
+                    !ArraysEqual(currentCounts, state.Counts))
+                {
+                    state = AdvanceContainerState(state, currentValues, currentCounts);
+                    m_containerStates[key] = state;
+                    SendContainerState(message.Coordinates, message.ComponentType, state);
+                }
+
+                IInventory playerInventory = player.ComponentPlayer.ComponentMiner?.Inventory;
+                ComponentCraftingTable craftingTable = inventory as ComponentCraftingTable;
+                int craftedResultCount = 0;
+                bool isContainerDrop = IsContainerDropRequestValid(inventory, message);
+                bool isCraftingResultTransfer = !message.IsDrop && craftingTable != null &&
+                    TryGetCraftingResultTransfer(craftingTable, message,
+                        out craftedResultCount);
+                bool validRequest = message.Revision == state.Revision &&
+                    ArraysEqual(message.BaseSlotValues, state.Values) &&
+                    ArraysEqual(message.BaseSlotCounts, state.Counts) &&
+                    IsInventorySnapshotValid(inventory,
+                        message.SlotValues, message.SlotCounts) &&
+                    IsInventorySnapshotValid(playerInventory,
+                        message.PlayerBaseSlotValues, message.PlayerBaseSlotCounts) &&
+                    IsInventorySnapshotValid(playerInventory,
+                        message.PlayerSlotValues, message.PlayerSlotCounts) &&
+                    (InventoryMatches(playerInventory, message.PlayerBaseSlotValues,
+                        message.PlayerBaseSlotCounts) ||
+                    InventoryMatches(playerInventory, message.PlayerSlotValues,
+                        message.PlayerSlotCounts)) &&
+                    (isContainerDrop || !message.IsDrop &&
+                    (playerInventory is ComponentCreativeInventory ||
+                    isCraftingResultTransfer || HaveSameCombinedItems(inventory,
+                        message.BaseSlotValues, message.BaseSlotCounts,
+                        message.PlayerBaseSlotValues, message.PlayerBaseSlotCounts,
+                        message.SlotValues, message.SlotCounts,
+                        message.PlayerSlotValues, message.PlayerSlotCounts)));
+
+                if (validRequest)
+                {
+                    if (isCraftingResultTransfer)
+                    {
+                        // Source: Survivalcraft/Game/ComponentCraftingTable.RemoveSlotItems
+                        // The crafting result and remains slots are host-derived. Calling the
+                        // original removal method consumes the matching grid items atomically.
+                        validRequest = craftingTable.RemoveSlotItems(
+                            craftingTable.ResultSlotIndex, craftedResultCount) == craftedResultCount;
+                        if (validRequest)
+                        {
+                            ApplyInventory(playerInventory,
+                                message.PlayerSlotValues, message.PlayerSlotCounts);
+                        }
+                    }
+                    else
+                    {
+                        ApplyInventory(inventory, message.SlotValues, message.SlotCounts);
+                        ApplyInventory(playerInventory,
+                            message.PlayerSlotValues, message.PlayerSlotCounts);
+                        if (isContainerDrop)
+                        {
+                            ComponentBody body = player.ComponentPlayer.ComponentBody;
+                            Vector3 defaultPosition = body.Position +
+                                new Vector3(0f, body.StanceBoxSize.Y * 0.66f, 0f) +
+                                0.25f * body.Matrix.Forward;
+                            Vector3 position = Vector3.DistanceSquared(body.Position,
+                                message.DropPosition) <= 64f
+                                ? message.DropPosition
+                                : defaultPosition;
+                            Vector3 velocity = message.DropVelocity;
+                            if (velocity.LengthSquared() > 20f * 20f)
+                                velocity = Vector3.Normalize(velocity) * 20f;
+                            GameManager.Project.FindSubsystem<SubsystemPickables>(true)
+                                .AddPickable(NormalizeCrossbowValue(message.DropValue),
+                                    message.DropCount,
+                                    position, velocity, null);
+                        }
+                    }
+                    if (validRequest)
+                    {
+                        state = AdvanceContainerState(state,
+                            CaptureInventoryValues(inventory), CaptureInventoryCounts(inventory));
+                        m_containerStates[key] = state;
+                    }
+                }
+                else if (playerInventory != null &&
+                    InventoryMatches(playerInventory, message.PlayerSlotValues,
+                        message.PlayerSlotCounts) &&
+                    IsInventorySnapshotValid(playerInventory,
+                        message.PlayerBaseSlotValues, message.PlayerBaseSlotCounts))
+                {
+                    // Source: ScMultiplayer.HandlePlayerEquipmentMessage
+                    // An unordered equipment snapshot can arrive just before a rejected container
+                    // transaction. Restore its declared base so stale furnace output cannot remain
+                    // in the player inventory after the container authority rejects the transfer.
+                    ApplyInventory(playerInventory,
+                        message.PlayerBaseSlotValues, message.PlayerBaseSlotCounts);
+                }
+
+                int playerRevision = PublishPlayerInventoryAuthority(
+                    sourceClientId, player.ComponentPlayer, message.PlayerRevision);
+                var response = CreateContainerResponse(message, state,
+                    sourceClientId, playerRevision, playerInventory);
+                m_processedContainerTransactions[transactionKey] =
+                    new ProcessedContainerTransaction
+                    {
+                        RequestId = message.RequestId,
+                        ProcessedTime = Time.RealTime,
+                        Response = response
+                    };
+                foreach (string stale in m_processedContainerTransactions.Where(item =>
+                    Time.RealTime - item.Value.ProcessedTime > 30.0)
+                    .Select(item => item.Key).ToArray())
+                    m_processedContainerTransactions.Remove(stale);
+                SendContainerResponse(response, -1);
                 return;
             }
             if (sourceClientId != 0 || message.IsRequest) return;
-            if (m_containerStates.TryGetValue(key, out ContainerNetworkState oldState) &&
-                (!InventoryMatches(inventory, oldState.Values, oldState.Counts)) &&
-                !InventoryMatches(inventory, message.SlotValues, message.SlotCounts))
+            bool matchingPending = message.RequesterClientId == client.ClientID &&
+                m_pendingContainerTransactions.TryGetValue(key,
+                    out PendingContainerTransaction pendingTransaction) &&
+                pendingTransaction.Request.RequestId == message.RequestId;
+            if (!matchingPending && m_containerStates.TryGetValue(key,
+                    out ContainerNetworkState oldState) &&
+                message.Revision <= oldState.Revision)
                 return;
             ApplyInventory(inventory, message.SlotValues, message.SlotCounts);
             m_containerStates[key] = new ContainerNetworkState
@@ -9034,6 +10123,60 @@ namespace ScMultiplayer
                 Values = (int[])message.SlotValues.Clone(),
                 Counts = (int[])message.SlotCounts.Clone()
             };
+            if (matchingPending)
+            {
+                m_pendingContainerTransactions.Remove(key);
+                ApplyContainerPlayerAuthority(message);
+            }
+        }
+
+        // Source: ScMultiplayer.SynchronizePlayerEquipment
+        private int PublishPlayerInventoryAuthority(int clientId,
+            ComponentPlayer player, int clientRevision)
+        {
+            if (player == null) return 0;
+            m_lastClientEquipmentRevisions.TryGetValue(clientId, out int lastClientRevision);
+            m_lastClientEquipmentRevisions[clientId] = Math.Max(lastClientRevision,
+                clientRevision);
+            int currentAuthority = m_equipmentAuthorityRevisions.TryGetValue(clientId,
+                out int authorityRevision) ? authorityRevision : 0;
+            int revision = Math.Max(currentAuthority == int.MaxValue ? 1 : currentAuthority + 1,
+                clientRevision == int.MaxValue ? 1 : clientRevision + 1);
+            EquipmentSnapshot snapshot = CaptureEquipmentSnapshot(player);
+            m_equipmentAuthorityRevisions[clientId] = revision;
+            m_lastReceivedEquipmentRevisions[clientId] = revision;
+            m_lastEquipmentSnapshots[clientId] = snapshot;
+            m_equipmentSynchronizedClients.Add(clientId);
+            MarkHostInventoryAuthoritative(clientId);
+            BroadcastPlayerEquipment(clientId, revision, snapshot);
+            return revision;
+        }
+
+        private void ApplyContainerPlayerAuthority(ContainerSyncMessage message)
+        {
+            if (message.PlayerSlotValues == null || message.PlayerSlotCounts == null ||
+                message.PlayerSlotValues.Length == 0 ||
+                message.PlayerRevision < m_lastReceivedEquipmentRevisions.GetValueOrDefault(
+                    client.ClientID))
+                return;
+            IInventory inventory = GetLocalPlayerInventory();
+            if (inventory == null) return;
+            ApplyInventory(inventory, message.PlayerSlotValues, message.PlayerSlotCounts);
+            int slotsCount = Math.Min(inventory.SlotsCount,
+                Math.Min(message.PlayerSlotValues.Length, message.PlayerSlotCounts.Length));
+            m_authoritativeLocalSlotValues = message.PlayerSlotValues.Take(slotsCount).ToArray();
+            m_authoritativeLocalSlotCounts = message.PlayerSlotCounts.Take(slotsCount).ToArray();
+            m_lastAuthoritativeLocalInventoryTick = Math.Max(
+                m_lastAuthoritativeLocalInventoryTick, client.Step);
+            m_hasAuthoritativeLocalInventory = true;
+            m_localEquipmentRevision = Math.Max(m_localEquipmentRevision,
+                message.PlayerRevision);
+            m_lastReceivedEquipmentRevisions[client.ClientID] = message.PlayerRevision;
+            ComponentPlayer player = GetLocalPlayer();
+            if (player != null)
+                m_lastEquipmentSnapshots[client.ClientID] = CaptureEquipmentSnapshot(player);
+            m_lastLocalInventoryValues = CaptureInventoryValues(inventory);
+            m_lastLocalInventoryCounts = CaptureInventoryCounts(inventory);
         }
 
         private static string GetContainerKey(Point3 point, string type) =>
@@ -9052,7 +10195,9 @@ namespace ScMultiplayer
         }
 
         private static int[] CaptureInventoryValues(IInventory inventory) =>
-            Enumerable.Range(0, inventory.SlotsCount).Select(inventory.GetSlotValue).ToArray();
+            Enumerable.Range(0, inventory.SlotsCount)
+                .Select(index => NormalizeCrossbowValue(inventory.GetSlotValue(index)))
+                .ToArray();
 
         private static int[] CaptureInventoryCounts(IInventory inventory) =>
             Enumerable.Range(0, inventory.SlotsCount).Select(inventory.GetSlotCount).ToArray();
@@ -9060,20 +10205,304 @@ namespace ScMultiplayer
         private static bool ArraysEqual(int[] a, int[] b) =>
             a != null && b != null && a.SequenceEqual(b);
 
-        private static void SendContainerMessage(Point3 point, string type,
-            ContainerNetworkState state, bool isRequest)
+        // Source: Survivalcraft/Game/CrossbowBlock.cs:CrossbowBlock.GetDraw
+        // CrossbowBlockBehavior only accepts a bolt at draw==15. Normalize the one invalid value
+        // that the native failed-FireProjectile path can leave behind; do not touch bow or musket
+        // data and do not alter item counts.
+        private static int NormalizeCrossbowValue(int value)
+        {
+            if (value == 0 || Terrain.ExtractContents(value) != 200)
+                return value;
+            int data = Terrain.ExtractData(value);
+            if (!CrossbowBlock.GetArrowType(data).HasValue ||
+                CrossbowBlock.GetDraw(data) == 15)
+                return value;
+            return Terrain.MakeBlockValue(200, 0, CrossbowBlock.SetDraw(data, 15));
+        }
+
+        // Source: Survivalcraft/Game/ComponentInventoryBase.cs:ComponentInventoryBase.AddSlotItems
+        private static void NormalizeCrossbowSlot(IInventory inventory, int slotIndex)
+        {
+            if (inventory == null || slotIndex < 0 || slotIndex >= inventory.SlotsCount)
+                return;
+            int value = inventory.GetSlotValue(slotIndex);
+            int normalized = NormalizeCrossbowValue(value);
+            if (normalized == value) return;
+            int count = inventory.GetSlotCount(slotIndex);
+            inventory.RemoveSlotItems(slotIndex, int.MaxValue);
+            if (count > 0) inventory.AddSlotItems(slotIndex, normalized, count);
+        }
+
+        private ComponentPlayer GetLocalPlayer() =>
+            GameManager.Project?.FindSubsystem<SubsystemPlayers>(false)?
+                .ComponentPlayers.FirstOrDefault(player =>
+                    player != null && !m_networkPlayerData.Values.Contains(player.PlayerData));
+
+        private IInventory GetLocalPlayerInventory() =>
+            GetLocalPlayer()?.ComponentMiner?.Inventory;
+
+        // Source: Survivalcraft/Game/SubsystemFurnaceBlockBehavior.cs:
+        // SubsystemFurnaceBlockBehavior.OnInteract
+        private bool IsNetworkContainerOpen()
+        {
+            string widgetName = GetLocalPlayer()?.ComponentGui?.ModalPanelWidget?
+                .GetType().Name;
+            return widgetName == "ChestWidget" || widgetName == "DispenserWidget" ||
+                widgetName == "FurnaceWidget" || widgetName == "CraftingTableWidget";
+        }
+
+        private static bool IsInventorySnapshotValid(IInventory inventory,
+            int[] values, int[] counts)
+        {
+            if (inventory == null || values == null || counts == null ||
+                values.Length != inventory.SlotsCount || counts.Length != inventory.SlotsCount)
+                return false;
+            for (int i = 0; i < inventory.SlotsCount; i++)
+            {
+                if (IsCraftingTableDerivedSlot(inventory, i))
+                    continue;
+                int value = NormalizeCrossbowValue(values[i]);
+                if (counts[i] < 0 || counts[i] > 0 && value == 0) return false;
+                if (counts[i] == 0) continue;
+                try
+                {
+                    if (counts[i] > inventory.GetSlotCapacity(i, value)) return false;
+                }
+                catch
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        // Source: Survivalcraft/Game/ComponentCraftingTable.ResultSlotIndex
+        // Source: Survivalcraft/Game/ComponentCraftingTable.RemainsSlotIndex
+        private static bool IsCraftingTableDerivedSlot(IInventory inventory, int slotIndex)
+        {
+            if (!(inventory is ComponentCraftingTable craftingTable))
+                return false;
+            return slotIndex == craftingTable.ResultSlotIndex ||
+                slotIndex == craftingTable.RemainsSlotIndex;
+        }
+
+        // Source: Survivalcraft/Game/ComponentCraftingTable.RemoveSlotItems
+        private static bool TryGetCraftingResultTransfer(ComponentCraftingTable craftingTable,
+            ContainerSyncMessage message, out int craftedResultCount)
+        {
+            craftedResultCount = 0;
+            if (craftingTable == null || message?.BaseSlotValues == null ||
+                message.BaseSlotCounts == null || message.SlotValues == null ||
+                message.SlotCounts == null || message.PlayerBaseSlotValues == null ||
+                message.PlayerBaseSlotCounts == null || message.PlayerSlotValues == null ||
+                message.PlayerSlotCounts == null ||
+                message.BaseSlotValues.Length != craftingTable.SlotsCount ||
+                message.BaseSlotCounts.Length != craftingTable.SlotsCount ||
+                message.SlotValues.Length != craftingTable.SlotsCount ||
+                message.SlotCounts.Length != craftingTable.SlotsCount ||
+                message.PlayerBaseSlotValues.Length != message.PlayerSlotValues.Length ||
+                message.PlayerBaseSlotCounts.Length != message.PlayerSlotCounts.Length ||
+                message.PlayerBaseSlotValues.Length != message.PlayerBaseSlotCounts.Length)
+                return false;
+
+            int resultSlotIndex = craftingTable.ResultSlotIndex;
+            int resultValue = NormalizeCrossbowValue(craftingTable.GetSlotValue(resultSlotIndex));
+            int availableResultCount = craftingTable.GetSlotCount(resultSlotIndex);
+            if (resultValue == 0 || availableResultCount <= 0 ||
+                NormalizeCrossbowValue(message.BaseSlotValues[resultSlotIndex]) != resultValue ||
+                message.BaseSlotCounts[resultSlotIndex] != availableResultCount)
+                return false;
+
+            long addedResultCount = 0;
+            for (int i = 0; i < message.PlayerSlotValues.Length; i++)
+            {
+                int baseCount = message.PlayerBaseSlotCounts[i];
+                int desiredCount = message.PlayerSlotCounts[i];
+                int baseValue = baseCount > 0
+                    ? NormalizeCrossbowValue(message.PlayerBaseSlotValues[i]) : 0;
+                int desiredValue = desiredCount > 0
+                    ? NormalizeCrossbowValue(message.PlayerSlotValues[i]) : 0;
+                if (baseCount == desiredCount && baseValue == desiredValue)
+                    continue;
+                if (desiredCount <= baseCount || desiredValue != resultValue ||
+                    (baseCount > 0 && baseValue != resultValue))
+                    return false;
+                addedResultCount += desiredCount - baseCount;
+            }
+            if (addedResultCount <= 0 || addedResultCount > availableResultCount ||
+                addedResultCount > int.MaxValue)
+                return false;
+
+            CraftingRecipe recipe;
+            string[] matchedIngredients;
+            try
+            {
+                recipe = ModManager.ModParentField.GetParentField<CraftingRecipe>(
+                    craftingTable, "m_matchedRecipe", typeof(ComponentCraftingTable));
+                matchedIngredients = ModManager.ModParentField.GetParentField<string[]>(
+                    craftingTable, "m_matchedIngredients", typeof(ComponentCraftingTable));
+            }
+            catch
+            {
+                return false;
+            }
+            if (recipe == null || recipe.ResultCount <= 0 ||
+                NormalizeCrossbowValue(recipe.ResultValue) != resultValue ||
+                addedResultCount % recipe.ResultCount != 0 ||
+                matchedIngredients == null || matchedIngredients.Length < 9)
+                return false;
+
+            int batches = (int)(addedResultCount / recipe.ResultCount);
+            int gridSize = (int)MathUtils.Sqrt(craftingTable.SlotsCount - 2);
+            if (gridSize < 1 || gridSize > 3)
+                return false;
+            for (int y = 0; y < gridSize; y++)
+            {
+                for (int x = 0; x < gridSize; x++)
+                {
+                    int slotIndex = x + y * gridSize;
+                    int ingredientIndex = x + y * 3;
+                    int baseCount = message.BaseSlotCounts[slotIndex];
+                    int expectedCount = !string.IsNullOrEmpty(matchedIngredients[ingredientIndex])
+                        ? baseCount - batches : baseCount;
+                    if (expectedCount < 0 || message.SlotCounts[slotIndex] != expectedCount)
+                        return false;
+                    int expectedValue = expectedCount > 0
+                        ? NormalizeCrossbowValue(message.BaseSlotValues[slotIndex]) : 0;
+                    int desiredValue = message.SlotCounts[slotIndex] > 0
+                        ? NormalizeCrossbowValue(message.SlotValues[slotIndex]) : 0;
+                    if (desiredValue != expectedValue)
+                        return false;
+                }
+            }
+            craftedResultCount = (int)addedResultCount;
+            return true;
+        }
+
+        private static bool HaveSameCombinedItems(IInventory container,
+            int[] baseContainerValues, int[] baseContainerCounts,
+            int[] basePlayerValues, int[] basePlayerCounts,
+            int[] desiredContainerValues, int[] desiredContainerCounts,
+            int[] desiredPlayerValues, int[] desiredPlayerCounts)
+        {
+            var balance = new Dictionary<int, long>();
+            AddInventoryCounts(balance, baseContainerValues, baseContainerCounts, 1, container);
+            AddInventoryCounts(balance, basePlayerValues, basePlayerCounts, 1);
+            AddInventoryCounts(balance, desiredContainerValues, desiredContainerCounts, -1, container);
+            AddInventoryCounts(balance, desiredPlayerValues, desiredPlayerCounts, -1);
+            return balance.Values.All(value => value == 0L);
+        }
+
+        // Source: Survivalcraft/Game/ViewWidget.cs:ViewWidget.DragDrop
+        private static bool IsContainerDropRequestValid(IInventory container,
+            ContainerSyncMessage message)
+        {
+            return message?.IsDrop == true && message.DropValue != 0 &&
+                message.DropCount > 0 && IsFinite(message.DropPosition) &&
+                IsFinite(message.DropVelocity) &&
+                ArraysEqual(message.PlayerBaseSlotValues, message.PlayerSlotValues) &&
+                ArraysEqual(message.PlayerBaseSlotCounts, message.PlayerSlotCounts) &&
+                HasContainerDropDelta(container,
+                    message.BaseSlotValues, message.BaseSlotCounts,
+                    message.SlotValues, message.SlotCounts,
+                    NormalizeCrossbowValue(message.DropValue), message.DropCount);
+        }
+
+        private static bool HasContainerDropDelta(IInventory container,
+            int[] baseValues, int[] baseCounts, int[] desiredValues, int[] desiredCounts,
+            int dropValue, int dropCount)
+        {
+            if (container == null || dropValue == 0 || dropCount <= 0 ||
+                baseValues == null || baseCounts == null || desiredValues == null ||
+                desiredCounts == null || baseValues.Length != container.SlotsCount ||
+                baseCounts.Length != container.SlotsCount ||
+                desiredValues.Length != container.SlotsCount ||
+                desiredCounts.Length != container.SlotsCount)
+                return false;
+            var balance = new Dictionary<int, long>();
+            AddInventoryCounts(balance, baseValues, baseCounts, 1, container);
+            AddInventoryCounts(balance, desiredValues, desiredCounts, -1, container);
+            int normalizedDropValue = NormalizeCrossbowValue(dropValue);
+            return balance.TryGetValue(normalizedDropValue, out long removed) &&
+                removed == dropCount && balance.All(item =>
+                    item.Key == normalizedDropValue || item.Value == 0L);
+        }
+
+        private static void AddInventoryCounts(Dictionary<int, long> balance,
+            int[] values, int[] counts, int direction, IInventory inventory = null)
+        {
+            int length = Math.Min(values?.Length ?? 0, counts?.Length ?? 0);
+            for (int i = 0; i < length; i++)
+            {
+                if (IsCraftingTableDerivedSlot(inventory, i))
+                    continue;
+                if (values[i] == 0 || counts[i] <= 0) continue;
+                balance.TryGetValue(values[i], out long current);
+                balance[values[i]] = current + (long)direction * counts[i];
+            }
+        }
+
+        private static ContainerNetworkState AdvanceContainerState(ContainerNetworkState state,
+            int[] values, int[] counts)
+        {
+            int revision = state?.Revision ?? 0;
+            return new ContainerNetworkState
+            {
+                Revision = revision == int.MaxValue ? 1 : revision + 1,
+                Values = (int[])values.Clone(),
+                Counts = (int[])counts.Clone()
+            };
+        }
+
+        private static void SendContainerState(Point3 point, string type,
+            ContainerNetworkState state)
         {
             var message = new ContainerSyncMessage
             {
                 Coordinates = point,
                 ComponentType = type,
                 Revision = state.Revision,
-                IsRequest = isRequest,
+                IsRequest = false,
                 SlotValues = state.Values,
                 SlotCounts = state.Counts
             };
-            // Source: ScMultiplayer.cs:HandleContainerSyncMessage
-            NetworkMessageSender.SendScheduledMessage(isRequest ? 0 : -1, message);
+            NetworkMessageSender.SendScheduledMessage(-1, message,
+                sequenced: false, latest: false);
+        }
+
+        private static void SendContainerRequest(ContainerSyncMessage message)
+        {
+            NetworkMessageSender.SendScheduledMessage(0, message,
+                sequenced: false, latest: false, batchable: false);
+        }
+
+        private static void SendContainerResponse(ContainerSyncMessage message,
+            int targetClientId)
+        {
+            NetworkMessageSender.SendScheduledMessage(targetClientId, message,
+                sequenced: false, latest: false, batchable: false);
+        }
+
+        private static ContainerSyncMessage CreateContainerResponse(
+            ContainerSyncMessage request, ContainerNetworkState state,
+            int requesterClientId, int playerRevision, IInventory playerInventory)
+        {
+            return new ContainerSyncMessage
+            {
+                Coordinates = request.Coordinates,
+                ComponentType = request.ComponentType,
+                Revision = state.Revision,
+                RequestId = request.RequestId,
+                RequesterClientId = requesterClientId,
+                PlayerRevision = playerRevision,
+                IsRequest = false,
+                SlotValues = (int[])state.Values.Clone(),
+                SlotCounts = (int[])state.Counts.Clone(),
+                PlayerSlotValues = playerInventory == null
+                    ? Array.Empty<int>() : CaptureInventoryValues(playerInventory),
+                PlayerSlotCounts = playerInventory == null
+                    ? Array.Empty<int>() : CaptureInventoryCounts(playerInventory)
+            };
         }
 
         // Source: Survivalcraft/Game/ComponentGui.cs:ComponentGui.Update
@@ -9542,6 +10971,7 @@ namespace ScMultiplayer
                 m_remotePickables.Clear();
                 m_remotePickableStates.Clear();
                 m_pendingPickablePickups.Clear();
+                m_pendingPickableAcquireRequests.Clear();
             }
 
             var remoteAnimalSet = new HashSet<Entity>(m_remoteAnimals.Values.Where(entity => entity != null));
@@ -9775,7 +11205,6 @@ namespace ScMultiplayer
             m_hostPlayerPokingPhases.Remove(clientId);
             m_hostPlayerPokeSequences.Remove(clientId);
             m_hostKnockbackHealthCache.Remove(clientId);
-            m_hostPainSoundTimes.Remove(clientId);
             m_hostRemoteKnockbackUntil.Remove(clientId);
             m_hostWorldControlRequestStates.Remove(clientId);
             m_pendingPlayerEquipmentMessages.Remove(clientId);
@@ -11688,7 +13117,7 @@ namespace ScMultiplayer
             int slotsCount = Math.Min(inventory.SlotsCount, Math.Min(values.Length, counts.Length));
             for (int i = 0; i < slotsCount; i++)
             {
-                int value = values[i];
+                int value = NormalizeCrossbowValue(values[i]);
                 int count = counts[i];
                 if (count < 0 || (count > 0 && value == 0)) continue;
                 if (count > 0)
@@ -11769,7 +13198,25 @@ namespace ScMultiplayer
                     requestedHealth.Injure(requestedHealth.Health - requestedValue, null,
                         ignoreInvulnerability: true, "Client damage request");
                     if (requestedHealth.Health < requestedPreviousHealth - 0.0001f)
-                        PlayAuthoritativePainSound(clientID, requestedPlayer.ComponentPlayer);
+                    {
+                        // Source: Survivalcraft/Game/ComponentHealth.cs:ComponentHealth.Update
+                        requestedPlayer.ComponentPlayer.ComponentCreatureSounds?.PlayPainSound();
+                    }
+                }
+                // Source: Survivalcraft/Game/ComponentClothing.cs:ComponentClothing.ProcessSlotItems
+                // Eating is predicted by the local clothing inventory. Accept only an upward food
+                // edge, then let the normal reliable equipment snapshot carry the consumed item.
+                ComponentVitalStats requestedVital = requestedPlayer.ComponentPlayer.ComponentVitalStats;
+                float requestedFood = MathUtils.Saturate(msg.Food);
+                if (requestedVital != null &&
+                    string.Equals(msg.CauseOrSource, "Client food request",
+                        StringComparison.Ordinal) &&
+                    requestedFood > requestedVital.Food + 0.0001f)
+                {
+                    ModManager.ModParentField.ModifyParentField(requestedVital, "m_food",
+                        requestedFood, typeof(ComponentVitalStats));
+                    ModManager.ModParentField.ModifyParentField(requestedVital, "m_lastFood",
+                        requestedFood, typeof(ComponentVitalStats));
                 }
                 ComponentSleep requestedSleep = requestedPlayer.ComponentPlayer.ComponentSleep;
                 if (requestedSleep != null && requestedSleep.IsSleeping != msg.IsSleeping)
@@ -11795,8 +13242,13 @@ namespace ScMultiplayer
                 return;
             if (remoteClientId == client.ClientID && msg.Health > 0f)
                 m_localRespawnPendingUntil = 0.0;
+            int previousWholeLevel = targetPlayer?.PlayerData != null
+                ? (int)MathUtils.Floor(MathUtils.Max(targetPlayer.PlayerData.Level, 1f))
+                : -1;
             ApplyAuthoritativePlayerStats(targetPlayer, msg.Health, msg.Air, msg.Food,
                 msg.Stamina, msg.Sleep, msg.Temperature, msg.Wetness, msg.Level);
+            if (remoteClientId == client.ClientID)
+                UpdateLocalLevelPresentation(targetPlayer, previousWholeLevel, msg.Level);
             (targetPlayer?.ComponentVitalStats as SuComponentVitalStats)?
                 .ApplyAuthoritativeTargetTemperature(msg.TargetTemperature);
             ApplyAuthoritativePlayerEffects(targetPlayer, msg);
@@ -11812,12 +13264,14 @@ namespace ScMultiplayer
                     msg.DamageSequence > lastDamageSequence))
             {
                 m_receivedDamageSequences[remoteClientId] = msg.DamageSequence;
-                PlayConfirmedPainSound(targetPlayer.ComponentCreatureSounds, targetPlayer.Project);
+                // Source: Survivalcraft/Game/ComponentHealth.cs:ComponentHealth.Update
+                targetPlayer.ComponentCreatureSounds.PlayPainSound();
             }
             if (remoteClientId == client.ClientID)
             {
                 m_hasObservedClientHealth = true;
                 m_observedClientHealth = msg.Health;
+                m_observedClientFood = msg.Food;
                 m_observedClientSleeping = msg.IsSleeping;
                 if (msg.HasKnockback &&
                     msg.KnockbackSequence > m_lastLocalKnockbackSequence &&
@@ -11874,36 +13328,54 @@ namespace ScMultiplayer
             }
         }
 
-        // Source: ComponentHealth.cs:ComponentHealth.Update
-        // Source: ComponentCreatureSounds.cs:ComponentCreatureSounds.PlayPainSound
-        private void PlayAuthoritativePainSound(int clientId, ComponentPlayer player)
+        // Source: Survivalcraft/Game/ComponentLevel.cs:ComponentLevel.AddExperience
+        private void UpdateLocalLevelPresentation(ComponentPlayer player, int previousWholeLevel,
+            float authoritativeLevel)
         {
-            ComponentCreatureSounds sounds = player?.ComponentCreatureSounds;
-            SubsystemTime subsystemTime = player?.Project?.FindSubsystem<SubsystemTime>(false);
-            if (sounds == null || subsystemTime == null) return;
-            if (m_hostPainSoundTimes.TryGetValue(clientId, out double lastPainTime) &&
-                subsystemTime.GameTime < lastPainTime + 1.0)
+            int wholeLevel = (int)MathUtils.Floor(MathUtils.Max(authoritativeLevel, 1f));
+            if (m_lastAuthoritativeLocalWholeLevel < 0)
+            {
+                m_lastAuthoritativeLocalWholeLevel = wholeLevel;
                 return;
-            m_hostPainSoundTimes[clientId] = subsystemTime.GameTime;
-            // This accepted damage request is already deduplicated by its lower authoritative
-            // health value. Let that edge through the shared one-second creature-sound limiter;
-            // the following ComponentHealth update is then naturally suppressed as a duplicate.
-            ModManager.ModParentField.ModifyParentField(
-                sounds, "m_lastSoundTime", subsystemTime.GameTime - 2.0,
-                typeof(ComponentCreatureSounds));
-            sounds.PlayPainSound();
+            }
+
+            bool gainedLevel = player != null &&
+                wholeLevel > m_lastAuthoritativeLocalWholeLevel &&
+                wholeLevel > previousWholeLevel;
+            m_lastAuthoritativeLocalWholeLevel = Math.Max(
+                m_lastAuthoritativeLocalWholeLevel, wholeLevel);
+            if (!gainedLevel)
+                return;
+
+            Project project = GameManager.Project;
+            SubsystemAudio audio = project?.FindSubsystem<SubsystemAudio>(false);
+            if (project == null || audio == null || player.ComponentGui == null)
+                return;
+
+            double startTime = Time.FrameStartTime + 0.5;
+            Time.QueueTimeDelayedExecution(startTime, () =>
+            {
+                if (ReferenceEquals(GameManager.Project, project))
+                    player.ComponentGui.DisplaySmallMessage("You've gained a level!",
+                        Color.White, blinking: true, playNotificationSound: false);
+            });
+            QueueLevelUpSound(project, audio, startTime, 0.0, -0.2f);
+            QueueLevelUpSound(project, audio, startTime, 0.15, -0.03333333f);
+            QueueLevelUpSound(project, audio, startTime, 0.3, 2f / 15f);
+            QueueLevelUpSound(project, audio, startTime, 0.45, 23f / 60f);
+            QueueLevelUpSound(project, audio, startTime, 0.75, -0.03333333f);
+            QueueLevelUpSound(project, audio, startTime, 0.9, 23f / 60f);
         }
 
-        // Source: Survivalcraft/Game/ComponentCreatureSounds.cs:PlayPainSound
-        private static void PlayConfirmedPainSound(ComponentCreatureSounds sounds, Project project)
+        // Source: Survivalcraft/Game/ComponentLevel.cs:ComponentLevel.AddExperience
+        private static void QueueLevelUpSound(Project project, SubsystemAudio audio,
+            double startTime, double delay, float pitch)
         {
-            SubsystemTime subsystemTime = project?.FindSubsystem<SubsystemTime>(false);
-            if (sounds == null || subsystemTime == null) return;
-            // A remote creature is a presentation replica, so unrelated idle/attack sounds must
-            // not consume the one-second native limiter before its confirmed pain edge arrives.
-            ModManager.ModParentField.ModifyParentField(sounds, "m_lastSoundTime",
-                subsystemTime.GameTime - 2.0, typeof(ComponentCreatureSounds));
-            sounds.PlayPainSound();
+            Time.QueueTimeDelayedExecution(startTime + delay, () =>
+            {
+                if (ReferenceEquals(GameManager.Project, project))
+                    audio.PlaySound("Audio/ExperienceCollected", 1f, pitch, 0f, 0f);
+            });
         }
 
         // Source: Survivalcraft/Game/ComponentHealth.cs:ComponentHealth.Update
@@ -12300,7 +13772,7 @@ namespace ScMultiplayer
             if (feedback.Count == 0) return;
 
             DisplayWorldControlFeedback(pending.ComponentPlayer,
-                string.Join("\n", feedback));
+                string.Join("\r\n", feedback));
         }
 
         // Source: Survivalcraft/Game/ComponentGui.cs:ComponentGui.DisplaySmallMessage
@@ -12920,7 +14392,7 @@ namespace ScMultiplayer
             ShowJoinRoomBusyDialog();
             if (m_joinRoomBusyDialog != null)
                 m_joinRoomBusyDialog.SmallMessage =
-                    "Terrain history expired.\nDownloading the current host world...";
+                    "Terrain history expired.\r\nDownloading the current host world...";
             // Source: Survivalcraft/Game/GameLoadingScreen.cs:GameLoadingScreen.Enter
             // Loading the refreshed snapshot disposes the currently running client Project. Keep
             // that known replacement separate from an intentional game-menu leave.
@@ -12948,6 +14420,14 @@ namespace ScMultiplayer
                     placePrediction.LocalPredictedValue = Terrain.ReplaceLight(
                         terrain.Terrain.GetCellValue(cell.X, cell.Y, cell.Z), 0);
                     placePrediction.HasLocalPrediction = true;
+                    // Source: Survivalcraft/Game/SubsystemCollapsingBlockBehavior.cs:
+                    // SubsystemCollapsingBlockBehavior.TryCollapseColumn
+                    // A successful sand/gravel placement immediately restores its source cell to
+                    // air while the moving-block animation owns the falling block.
+                    if (placePrediction.IsCollapsingBlock &&
+                        placePrediction.LocalPredictedValue ==
+                            placePrediction.Request.ExpectedValue)
+                        m_localCollapsingPlacePredictions[cell] = Time.RealTime + 3.0;
                     continue;
                 }
                 bool pending = m_pendingTerrainPredictionCells.ContainsKey(cell);
@@ -12956,6 +14436,18 @@ namespace ScMultiplayer
                 double intentAge = hasIntent ? Time.RealTime - intent.LastSeenTime : -1.0;
                 if (pending)
                     continue;
+                if (m_localTerrainUsePredictions.TryGetValue(cell,
+                    out LocalTerrainUsePrediction terrainUsePrediction))
+                {
+                    int currentValue = Terrain.ReplaceLight(terrain.Terrain.GetCellValue(
+                        cell.X, cell.Y, cell.Z), 0);
+                    if (currentValue != terrainUsePrediction.ExpectedValue)
+                    {
+                        terrainUsePrediction.LastSeenTime = Time.RealTime;
+                        continue;
+                    }
+                    m_localTerrainUsePredictions.Remove(cell);
+                }
                 int predictedValue = Terrain.ReplaceLight(
                     terrain.Terrain.GetCellValue(cell.X, cell.Y, cell.Z), 0);
                 // Source: Survivalcraft/Game/SubsystemDeciduousLeavesBlockBehavior.cs:
@@ -13021,6 +14513,33 @@ namespace ScMultiplayer
         {
             if (client?.IsConnected != true) return;
             double now = Time.RealTime;
+            SubsystemTerrain terrain = GameManager.Project?.FindSubsystem<SubsystemTerrain>(false);
+            if (terrain != null)
+            {
+                var expiredTerrainUseRepairs = new Dictionary<Point3, bool>();
+                foreach (KeyValuePair<Point3, LocalTerrainUsePrediction> item in
+                    m_localTerrainUsePredictions.ToArray())
+                {
+                    if (now - item.Value.LastSeenTime <= 2.0) continue;
+                    int currentValue = Terrain.ReplaceLight(terrain.Terrain.GetCellValue(
+                        item.Key.X, item.Key.Y, item.Key.Z), 0);
+                    m_localTerrainUsePredictions.Remove(item.Key);
+                    if (currentValue != item.Value.ExpectedValue)
+                        expiredTerrainUseRepairs[item.Key] = true;
+                }
+                if (expiredTerrainUseRepairs.Count > 0)
+                    RequestAuthoritativeTerrainRepair(expiredTerrainUseRepairs);
+            }
+            var expiredCollapsingRepairs = new Dictionary<Point3, bool>();
+            foreach (KeyValuePair<Point3, double> item in
+                m_localCollapsingPlacePredictions.ToArray())
+            {
+                if (now <= item.Value) continue;
+                m_localCollapsingPlacePredictions.Remove(item.Key);
+                expiredCollapsingRepairs[item.Key] = true;
+            }
+            if (expiredCollapsingRepairs.Count > 0)
+                RequestAuthoritativeTerrainRepair(expiredCollapsingRepairs);
             foreach (PendingTerrainPlacePrediction prediction in
                 m_pendingTerrainPlacePredictions.Values.ToArray())
             {
@@ -13029,7 +14548,6 @@ namespace ScMultiplayer
                 prediction.SendCount++;
                 NetworkMessageSender.SendPlayerInteractRequest(prediction.Request);
             }
-            SubsystemTerrain terrain = GameManager.Project?.FindSubsystem<SubsystemTerrain>(false);
             if (terrain != null)
             {
                 foreach (KeyValuePair<Point3, LocalTerrainDigIntent> item in
@@ -13203,7 +14721,8 @@ namespace ScMultiplayer
             GameModifiedCellsMessage message)
         {
             if (message?.ModifiedCells == null || message.CellValues == null ||
-                m_pendingTerrainPlacePredictionCells.Count == 0)
+                (m_pendingTerrainPlacePredictionCells.Count == 0 &&
+                m_localCollapsingPlacePredictions.Count == 0))
                 return message;
 
             var cells = new Dictionary<Point3, bool>();
@@ -13214,13 +14733,15 @@ namespace ScMultiplayer
                 int value = index < message.CellValues.Count
                     ? message.CellValues[index]
                     : 0;
+                bool collapsingPrediction = m_localCollapsingPlacePredictions.TryGetValue(
+                    item.Key, out double expiresAt) && Time.RealTime <= expiresAt;
                 bool conflictsWithPrediction = m_pendingTerrainPlacePredictionCells.TryGetValue(
                     item.Key, out int requestId) &&
                     m_pendingTerrainPlacePredictions.TryGetValue(requestId,
                         out PendingTerrainPlacePrediction prediction) &&
                     prediction.HasLocalPrediction && value != prediction.LocalPredictedValue &&
                     value == prediction.Request.ExpectedValue;
-                if (!conflictsWithPrediction)
+                if (!collapsingPrediction && !conflictsWithPrediction)
                 {
                     cells[item.Key] = item.Value;
                     values.Add(value);
@@ -13460,6 +14981,7 @@ namespace ScMultiplayer
                         out PendingTerrainPrediction prediction) &&
                     message.CellValues[index] == prediction.Request.PredictedValue)
                     RemovePendingTerrainPrediction(requestId);
+                m_localTerrainUsePredictions.Remove(cell);
                 index++;
             }
         }
@@ -13764,7 +15286,7 @@ namespace ScMultiplayer
                 $"RepairRounds={transfer.RepairRequestCount}");
             if (m_joinRoomBusyDialog != null)
                 m_joinRoomBusyDialog.SmallMessage =
-                    "Connected.\nWorld download complete.\nImporting world...";
+                    "Connected.\r\nWorld download complete.\r\nImporting world...";
             m_joinAwaitingWorldProgress = false;
             manifest.WorldData = worldData;
             manifest.ChunkCount = 0;
@@ -14087,7 +15609,7 @@ namespace ScMultiplayer
                 {
                     if (m_joinRoomBusyDialog != null)
                         m_joinRoomBusyDialog.SmallMessage =
-                            "Connected.\nWorld imported.\nLoading project...";
+                            "Connected.\r\nWorld imported.\r\nLoading project...";
                     SuPlayScreen.Play(importedWorld);
                     connectionSM.TransitionTo(NetworkConnectionStateMachine.ConnectionState.Playing);
                     m_shouldCreateHostAvatar = true;
@@ -14515,7 +16037,7 @@ namespace ScMultiplayer
                     HideJoinRoomBusyDialog();
                     DialogsManager.ShowDialog(null, new MessageDialog(
                         "Join Room",
-                        obj.Reason + "\nInstall the same ScMultiplayer package on all devices.",
+                        obj.Reason + "\r\nInstall the same ScMultiplayer package on all devices.",
                         "OK", null, null));
                 });
                 return;
@@ -14756,6 +16278,9 @@ namespace ScMultiplayer
             m_activeJoinDecisionDialog = null;
             m_activeJoinDecisionClientId = -1;
             m_playerHealthCache.Clear();
+            m_playerFoodCache.Clear();
+            m_playerWholeLevelCache.Clear();
+            m_lastAuthoritativeLocalWholeLevel = -1;
             m_lastSentInventoryValues.Clear();
             m_lastSentInventoryCounts.Clear();
             m_equipmentAuthorityRevisions.Clear();
@@ -14770,7 +16295,6 @@ namespace ScMultiplayer
             m_localEditableDataRequestId = 0;
             m_editableDataRevision = 0;
             m_hostKnockbackHealthCache.Clear();
-            m_hostPainSoundTimes.Clear();
             m_hostRemoteKnockbackUntil.Clear();
             m_hostKnockbackSequences.Clear();
             RemotePlayers.Clear();
@@ -14787,6 +16311,11 @@ namespace ScMultiplayer
             m_remotePickableRecords.Clear();
             m_remotePickableStates.Clear();
             m_pendingPickablePickups.Clear();
+            m_pendingPickableAcquireRequests.Clear();
+            m_processedPickableAcquireRequests.Clear();
+            m_authoritativePickableAcquireIds.Clear();
+            m_nextPickableAcquireRequestId = 0;
+            m_nextPickableAcquireScanTime = 0.0;
             m_applyingNetworkPickable = false;
             m_lastAuthoritativeLocalInventoryTick = 0;
             m_lastLocalInventoryValues = Array.Empty<int>();
@@ -14831,9 +16360,13 @@ namespace ScMultiplayer
             m_pendingTerrainPredictionCells.Clear();
             m_processedTerrainDigRequests.Clear();
             m_localTerrainDigIntents.Clear();
+            m_localTerrainUsePredictions.Clear();
             m_pendingTerrainPlacePredictions.Clear();
             m_pendingTerrainPlacePredictionCells.Clear();
+            m_localCollapsingPlacePredictions.Clear();
+            m_recentLocalEquipmentSnapshots.Clear();
             m_hostTerrainPlaceExecutions.Clear();
+            m_hostMeleeHitExecutions.Clear();
             m_processedTerrainPlaceRequests.Clear();
             m_outgoingWorldTransfers.Clear();
             m_pendingJoinCatchUps.Clear();
@@ -14852,6 +16385,7 @@ namespace ScMultiplayer
             m_nextTerrainDigRequestId = 0;
             m_localHitSequence = 0;
             m_nextLocalHitRequestTime = 0.0;
+            m_localMeleePredictions.Clear();
             m_localInteractSequence = 0;
             m_localDropSequence = 0;
             m_localJumpSequence = 0;
@@ -14878,8 +16412,12 @@ namespace ScMultiplayer
             m_serverTrafficSampleStartTime = 0.0;
             m_serverTrafficSampleStartBytesSent = 0L;
             m_serverTrafficSampleStartBytesReceived = 0L;
+            m_serverTrafficSampleStartPacketsSent = 0L;
+            m_serverTrafficSampleStartPacketsReceived = 0L;
             m_lastServerTrafficSampleBytesSent = -1L;
             m_lastServerTrafficSampleBytesReceived = -1L;
+            m_lastServerTrafficSamplePacketsSent = -1L;
+            m_lastServerTrafficSamplePacketsReceived = -1L;
             m_serverTrafficSampleActive = false;
             m_nextWorldTransferManifestRequestTime = 0.0;
             m_nextWorldTransferUiUpdateTime = 0.0;
@@ -15071,7 +16609,7 @@ namespace ScMultiplayer
             if (!Storage.FileExists(DownloadedWorldsRegistryPath))
                 return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             return new HashSet<string>(Storage.ReadAllText(DownloadedWorldsRegistryPath)
-                .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries),StringComparer.OrdinalIgnoreCase);
+                .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries), StringComparer.OrdinalIgnoreCase);
         }
 
         private static void WriteDownloadedWorldRegistry(HashSet<string> directories)
@@ -15082,7 +16620,7 @@ namespace ScMultiplayer
                     Storage.DeleteFile(DownloadedWorldsRegistryPath);
                 return;
             }
-            Storage.WriteAllText(DownloadedWorldsRegistryPath, string.Join("\n", directories));
+            Storage.WriteAllText(DownloadedWorldsRegistryPath, string.Join("\r\n", directories));
         }
 
         private static void RegisterDownloadedWorld(string directoryName)
@@ -15598,11 +17136,14 @@ namespace ScMultiplayer
             if (client?.IsConnected != true || player == null ||
                 m_networkPlayerData.Values.Contains(player.PlayerData))
                 return;
+            EnsureClientDropDragHost(player);
             // Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update
             // Touch hold supplies both Dig and Aim. The local player suppresses Dig when the held
             // item is aimable; preserve that resolved intent for the host-side replica as well.
             IInventory inventory = player.ComponentMiner?.Inventory;
             int activeSlot = inventory?.ActiveSlotIndex ?? -1;
+            NormalizeCrossbowSlot(inventory, activeSlot);
+            RememberLocalEquipmentSnapshot(inventory);
             UpdateLocalAimLifecycle(player, playerInput, inventory, activeSlot);
             if (playerInput.Aim.HasValue && inventory != null && activeSlot >= 0 &&
                 activeSlot < inventory.SlotsCount)
@@ -15613,7 +17154,7 @@ namespace ScMultiplayer
             }
             UpdateLocalDigTarget(player, playerInput.Dig);
             UpdateLocalDigPresentation(player);
-            UpdateLocalHitRequests(playerInput.Hit);
+            UpdateLocalHitRequests(player, playerInput.Hit);
             UpdateLocalInteractRequests(player, playerInput.Interact);
             UpdateLocalDropRequests(player, playerInput.Drop);
             UpdateLocalJumpRequests(playerInput.Jump);
@@ -15642,6 +17183,46 @@ namespace ScMultiplayer
                 m_lastLocalInventoryCounts = Enumerable.Range(0, inventory.SlotsCount)
                     .Select(inventory.GetSlotCount).ToArray();
             }
+        }
+
+        // Source: Survivalcraft/Game/GameWidget.cs:GameWidget.LoadContents
+        // Source: Survivalcraft/Game/InventorySlotWidget.cs:InventorySlotWidget.DragHostWidget
+        private void EnsureClientDropDragHost(ComponentPlayer player)
+        {
+            GameWidget gameWidget = player?.PlayerData?.GameWidget;
+            if (gameWidget == null || ReferenceEquals(m_clientDropDragHostGameWidget, gameWidget))
+                return;
+            DragHostWidget dragHost = gameWidget.Children.Find<DragHostWidget>("DragHost",
+                throwIfNotFound: false);
+            if (dragHost == null || dragHost is SuNetworkDragHostWidget ||
+                dragHost.IsDragInProgress || dragHost.ParentWidget == null)
+                return;
+
+            ContainerWidget parent = dragHost.ParentWidget;
+            int childIndex = parent.Children.IndexOf(dragHost);
+            var replacement = new SuNetworkDragHostWidget
+            {
+                Name = dragHost.Name,
+                Tag = dragHost.Tag,
+                IsVisible = dragHost.IsVisible,
+                IsEnabled = dragHost.IsEnabled,
+                IsHitTestVisible = dragHost.IsHitTestVisible,
+                ClampToBounds = dragHost.ClampToBounds,
+                Margin = dragHost.Margin,
+                HorizontalAlignment = dragHost.HorizontalAlignment,
+                VerticalAlignment = dragHost.VerticalAlignment,
+                LayoutTransform = dragHost.LayoutTransform,
+                RenderTransform = dragHost.RenderTransform
+            };
+            parent.Children.Remove(dragHost);
+            parent.Children.Insert(childIndex, replacement);
+            foreach (InventorySlotWidget slotWidget in gameWidget.AllChildren
+                .OfType<InventorySlotWidget>())
+            {
+                ModManager.ModParentField.ModifyParentField(slotWidget, "m_dragHostWidget",
+                    replacement, typeof(InventorySlotWidget));
+            }
+            m_clientDropDragHostGameWidget = gameWidget;
         }
 
         // Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update
@@ -15824,15 +17405,33 @@ namespace ScMultiplayer
         // Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update
         // Hit is a cooldown-limited edge, not continuous movement state. Send it reliably at the
         // same cadence the original ComponentPlayer accepts while local prediction remains native.
-        private void UpdateLocalHitRequests(Ray3? hitRay)
+        private void UpdateLocalHitRequests(ComponentPlayer player, Ray3? hitRay)
         {
             if (!hitRay.HasValue || Time.RealTime < m_nextLocalHitRequestTime ||
                 client?.IsConnected != true)
                 return;
             m_nextLocalHitRequestTime = Time.RealTime + PlayerHitRequestInterval;
             m_localHitSequence = m_localHitSequence == int.MaxValue ? 1 : m_localHitSequence + 1;
+            TrackLocalMeleePrediction(player, m_localHitSequence);
             NetworkMessageSender.SendPlayerHitRequest(new PlayerActionMessage(
                 PlayerActionType.HitRequest, client.ClientID, m_localHitSequence, hitRay.Value));
+        }
+
+        // Source: Survivalcraft/Game/ComponentMiner.cs:ComponentMiner.Hit
+        private void TrackLocalMeleePrediction(ComponentPlayer player, int sequence)
+        {
+            ComponentMiner miner = player?.ComponentMiner;
+            if (miner == null || sequence <= 0) return;
+            foreach (int expired in m_localMeleePredictions.Where(item =>
+                Time.RealTime - item.Value.CreatedTime > 3.0).Select(item => item.Key).ToArray())
+                m_localMeleePredictions.Remove(expired);
+            m_localMeleePredictions[sequence] = new LocalMeleePrediction
+            {
+                Miner = miner,
+                PreviousHitTime = ModManager.ModParentField.GetParentField<double>(
+                    miner, "m_lastHitTime", typeof(ComponentMiner)),
+                CreatedTime = Time.RealTime
+            };
         }
 
         // Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update
@@ -15854,6 +17453,15 @@ namespace ScMultiplayer
             m_localInteractSequence = m_localInteractSequence == int.MaxValue
                 ? 1
                 : m_localInteractSequence + 1;
+            if (TryGetTerrainUsePrediction(player, interactRay.Value,
+                    out Point3 terrainUseCell, out int terrainUseExpectedValue))
+            {
+                m_localTerrainUsePredictions[terrainUseCell] = new LocalTerrainUsePrediction
+                {
+                    ExpectedValue = terrainUseExpectedValue,
+                    LastSeenTime = Time.RealTime
+                };
+            }
             var request = new PlayerActionMessage(
                 PlayerActionType.InteractRequest, client.ClientID, m_localInteractSequence,
                 interactRay.Value, activeSlot, itemValue, itemCount);
@@ -15873,6 +17481,7 @@ namespace ScMultiplayer
                     {
                         Request = request,
                         LocalPredictedValue = predictedValue,
+                        IsCollapsingBlock = IsCollapsingBlockValue(predictedValue),
                         // Source: Survivalcraft/Game/SubsystemTerrain.cs:
                         // SubsystemTerrain.ChangeCell
                         // Some block behaviors do not perform a local ChangeCell immediately.
@@ -15881,9 +17490,53 @@ namespace ScMultiplayer
                         LastSendTime = Time.RealTime,
                         SendCount = 1
                     };
+                if (m_pendingTerrainPlacePredictions[request.RequestId].IsCollapsingBlock)
+                    m_localCollapsingPlacePredictions[cell] = Time.RealTime + 3.0;
                 m_pendingTerrainPlacePredictionCells[cell] = request.RequestId;
             }
             NetworkMessageSender.SendPlayerInteractRequest(request);
+        }
+
+        // Source: Survivalcraft/Game/SubsystemRakeBlockBehavior.cs:SubsystemRakeBlockBehavior.OnUse
+        // Source: Survivalcraft/Game/SubsystemTrapdoorBlockBehavior.cs:SubsystemTrapdoorBlockBehavior.OnInteract
+        private static bool TryGetTerrainUsePrediction(ComponentPlayer player, Ray3 ray,
+            out Point3 cell, out int expectedValue)
+        {
+            cell = default;
+            expectedValue = 0;
+            ComponentMiner miner = player?.ComponentMiner;
+            IInventory inventory = miner?.Inventory;
+            if (miner == null)
+                return false;
+            TerrainRaycastResult? hit = miner.Raycast<TerrainRaycastResult>(
+                ray, RaycastMode.Interaction);
+            if (!hit.HasValue)
+                return false;
+            cell = new Point3(hit.Value.CellFace.X, hit.Value.CellFace.Y,
+                hit.Value.CellFace.Z);
+            expectedValue = Terrain.ReplaceLight(hit.Value.Value, 0);
+            if (BlocksManager.Blocks[Terrain.ExtractContents(hit.Value.Value)] is TrapdoorBlock)
+                return true;
+            if (inventory == null || inventory.ActiveSlotIndex < 0 ||
+                inventory.ActiveSlotIndex >= inventory.SlotsCount ||
+                hit.Value.CellFace.Face != 4)
+                return false;
+            int toolValue = inventory.GetSlotValue(inventory.ActiveSlotIndex);
+            if (toolValue == 0 || !(BlocksManager.Blocks[Terrain.ExtractContents(toolValue)]
+                is RakeBlock))
+                return false;
+            int targetContents = Terrain.ExtractContents(hit.Value.Value);
+            if (targetContents != 2 && targetContents != 8)
+                return false;
+            return true;
+        }
+
+        // Source: Survivalcraft/Game/SubsystemCollapsingBlockBehavior.cs:
+        // SubsystemCollapsingBlockBehavior.HandledBlocks
+        private static bool IsCollapsingBlockValue(int value)
+        {
+            int contents = Terrain.ExtractContents(value);
+            return contents == 6 || contents == 7;
         }
 
         // Source: Survivalcraft/Game/ComponentMiner.cs:ComponentMiner.Place
@@ -15945,6 +17598,8 @@ namespace ScMultiplayer
                 default, activeSlot, itemValue, itemCount)
             {
                 DropCount = itemCount,
+                RemoveCount = itemCount,
+                RequestId = m_localEquipmentRevision,
                 Position = player.ComponentBody.Position +
                     new Vector3(0f, player.ComponentBody.StanceBoxSize.Y * 0.66f, 0f) +
                     0.25f * player.ComponentBody.Matrix.Forward,
@@ -16042,7 +17697,9 @@ namespace ScMultiplayer
                     m_hostTerrainPlaceExecutions.Add(new HostTerrainPlaceExecution
                     {
                         ClientId = sourceClientId,
-                        Request = interact
+                        Request = interact,
+                        PlayerStats = player.PlayerStats,
+                        PreviousBlocksPlaced = player.PlayerStats?.BlocksPlaced ?? 0L
                     });
                 }
                 playerInput.Interact = interact.HitRay;
@@ -16097,6 +17754,31 @@ namespace ScMultiplayer
                     ? state.Input
                     : state.HeldInput;
                 state.ConsumedSequence = state.Sequence;
+                // Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update
+                // Capture the same target before native ComponentPlayer executes the request. The
+                // post-update health delta becomes the attacker's authoritative feedback receipt.
+                BodyRaycastResult? target = player.ComponentMiner?.Raycast<BodyRaycastResult>(
+                    hit.HitRay, RaycastMode.Interaction);
+                if (target.HasValue && player.ComponentCreatureModel != null &&
+                    Vector3.Distance(target.Value.HitPoint(),
+                        player.ComponentCreatureModel.EyePosition) <= 2f)
+                {
+                    ComponentHealth health = target.Value.ComponentBody?.Entity?
+                        .FindComponent<ComponentHealth>();
+                    if (health != null)
+                    {
+                        m_hostMeleeHitExecutions.Add(new HostMeleeHitExecution
+                        {
+                            ClientId = sourceClientId,
+                            RequestSequence = hit.Sequence,
+                            TargetHealth = health,
+                            PreviousHealth = health.Health,
+                            HitPoint = target.Value.HitPoint(),
+                            HitDirection = hit.HitRay.Direction,
+                            AttackerVelocity = player.ComponentBody?.Velocity ?? Vector3.Zero
+                        });
+                    }
+                }
                 playerInput.Hit = hit.HitRay;
                 state.HeldInput = CreateHeldNetworkInput(playerInput);
                 state.NextHitExecutionTime = Time.RealTime + PlayerHitRequestInterval;
@@ -16138,15 +17820,50 @@ namespace ScMultiplayer
                     : Terrain.ReplaceLight(terrain.Terrain.GetCellValue(
                         execution.Request.Cell.X, execution.Request.Cell.Y,
                         execution.Request.Cell.Z), 0);
+                // Source: Survivalcraft/Game/ComponentMiner.cs:ComponentMiner.Place
+                // BlocksPlaced increments only when native placement succeeds, including a
+                // collapsing block whose source cell has already returned to air.
+                bool accepted = authoritativeValue != execution.Request.ExpectedValue ||
+                    execution.PlayerStats?.BlocksPlaced > execution.PreviousBlocksPlaced;
                 SendHostTerrainPlaceResult(execution.ClientId, execution.Request,
-                    authoritativeValue != execution.Request.ExpectedValue);
-                if (authoritativeValue != execution.Request.ExpectedValue)
+                    accepted);
+                if (accepted)
                     PublishServerAudit("terrain.place", execution.ClientId,
                         "cell=" + execution.Request.Cell.X.ToString(CultureInfo.InvariantCulture) + "," +
                         execution.Request.Cell.Y.ToString(CultureInfo.InvariantCulture) + "," +
                         execution.Request.Cell.Z.ToString(CultureInfo.InvariantCulture));
             }
             m_hostTerrainPlaceExecutions.Clear();
+        }
+
+        // Source: Survivalcraft/Game/ComponentMiner.cs:ComponentMiner.AttackBody
+        private void CompleteHostMeleeHitExecutions()
+        {
+            if (!IsHost || m_hostMeleeHitExecutions.Count == 0) return;
+            foreach (HostMeleeHitExecution execution in m_hostMeleeHitExecutions)
+            {
+                SendAuthoritativeMeleeHitResult(execution.ClientId,
+                    execution.RequestSequence, execution.TargetHealth,
+                    execution.PreviousHealth, execution.HitPoint,
+                    execution.HitDirection, execution.AttackerVelocity);
+            }
+            m_hostMeleeHitExecutions.Clear();
+        }
+
+        private void SendAuthoritativeMeleeHitResult(int targetClientId, int requestSequence,
+            ComponentHealth targetHealth, float previousHealth, Vector3 hitPoint,
+            Vector3 hitDirection, Vector3 attackerVelocity)
+        {
+            if (!IsHost || targetClientId <= 0 || requestSequence <= 0 || targetHealth == null)
+                return;
+            float damage = (previousHealth - targetHealth.Health) * targetHealth.AttackResilience;
+            if (damage <= 0.0001f) return;
+            Vector3 direction = hitDirection.LengthSquared() > 0.0001f
+                ? Vector3.Normalize(hitDirection)
+                : Vector3.UnitZ;
+            NetworkMessageSender.SendMeleeHitResult(targetClientId,
+                new MeleeHitResultMessage(requestSequence, client.Step, hitPoint,
+                    direction, attackerVelocity, damage));
         }
 
         // Source: Survivalcraft/Game/SubsystemTerrain.cs:SubsystemTerrain.ChangeCell
@@ -16187,7 +17904,11 @@ namespace ScMultiplayer
                 return;
             var cells = new Dictionary<Point3, bool> { [result.Cell] = true };
             var values = new List<int> { result.AuthoritativeValue };
+            bool keepLocalCollapse = result.Accepted && prediction.IsCollapsingBlock &&
+                m_localCollapsingPlacePredictions.ContainsKey(result.Cell);
             RemovePendingTerrainPlacePrediction(result.RequestId);
+            if (keepLocalCollapse) return;
+            m_localCollapsingPlacePredictions.Remove(result.Cell);
             SuSubsystemTerrain.EnqueuePriorityNetworkBatch(new GameModifiedCellsMessage(
                 cells, values, result.ServerTick, true, client.ClientID));
         }
@@ -16344,6 +18065,11 @@ namespace ScMultiplayer
             if (message.Action == PlayerAimAction.Release)
             {
                 ExecuteHostAimRelease(player, authoritativeMessage);
+                // Source: Survivalcraft/Game/SubsystemCrossbowBlockBehavior.cs:OnAim
+                // FireProjectile can fail against a nearby collidable face after the original
+                // behavior has already reset draw to zero. Preserve the loaded bolt as the only
+                // legal crossbow state instead of exposing draw<15 with an attached bolt.
+                NormalizeCrossbowSlot(inventory, state.ActiveAimSlotIndex);
                 MarkHostInventoryAuthoritative(sourceClientId);
                 m_forceHostInventorySync = true;
             }
@@ -16468,6 +18194,7 @@ namespace ScMultiplayer
             inventory.ActiveSlotIndex = message.ActiveSlotIndex;
             inventory.RemoveSlotItems(message.ActiveSlotIndex, int.MaxValue);
             inventory.AddSlotItems(message.ActiveSlotIndex, message.ItemValue, message.ItemCount);
+            NormalizeCrossbowSlot(inventory, message.ActiveSlotIndex);
         }
 
         // Source: Survivalcraft/Game/SubsystemMusketBlockBehavior.cs:OnAim
@@ -16603,13 +18330,25 @@ namespace ScMultiplayer
                         message.PlayerIndex != sourceClientId ||
                         message.ActiveSlotIndex < 0 || message.ItemValue == 0 ||
                         message.ItemCount <= 0 || message.DropCount <= 0 ||
-                        message.DropCount > message.ItemCount || !IsFinite(message.Position) ||
+                        message.RemoveCount <= 0 || message.DropCount > message.RemoveCount ||
+                        message.RemoveCount > message.ItemCount || !IsFinite(message.Position) ||
                         !IsFinite(message.Velocity))
                         return;
                     state.LastDropSequence = message.Sequence;
-                    if (ExecuteHostDropRequest(sourceClientId, message))
+                    // Source: ScMultiplayer.SynchronizePlayerEquipment
+                    // A drop transaction always closes with a newer authoritative inventory,
+                    // including rejection, so a racing equipment snapshot cannot win silently.
+                    bool dropped = ExecuteHostDropRequest(sourceClientId, message);
+                    PublishPlayerInventoryAuthority(sourceClientId,
+                        m_networkPlayerData.TryGetValue(sourceClientId, out PlayerData dropPlayer)
+                            ? dropPlayer.ComponentPlayer
+                            : null,
+                        message.RequestId);
+                    if (dropped)
+                    {
                         PublishServerAudit("item.drop", sourceClientId,
                             "count=" + message.DropCount.ToString(CultureInfo.InvariantCulture));
+                    }
                 }
                 else if (message.Action == PlayerActionType.JumpRequest)
                 {
@@ -16854,13 +18593,34 @@ namespace ScMultiplayer
             if (inventory == null || body == null || message.ActiveSlotIndex < 0 ||
                 message.ActiveSlotIndex >= inventory.SlotsCount)
                 return false;
-            ApplyInteractionInventory(inventory, message);
+            bool hasInventorySnapshot = (message.InventorySlotValues?.Length ?? 0) > 0 ||
+                (message.InventorySlotCounts?.Length ?? 0) > 0;
+            if (hasInventorySnapshot)
+            {
+                bool validSnapshot = IsInventorySnapshotValid(inventory,
+                    message.InventorySlotValues, message.InventorySlotCounts);
+                bool matchingSource = validSnapshot &&
+                    message.InventorySlotValues[message.ActiveSlotIndex] == message.ItemValue &&
+                    message.InventorySlotCounts[message.ActiveSlotIndex] == message.ItemCount;
+                bool matchingItems = matchingSource && HaveSameInventoryItems(inventory,
+                    message.InventorySlotValues, message.InventorySlotCounts);
+                if (!matchingItems)
+                    return false;
+                ApplyInventory(inventory,
+                    message.InventorySlotValues, message.InventorySlotCounts);
+            }
+            else
+            {
+                ApplyInteractionInventory(inventory, message);
+            }
             int slotValue = inventory.GetSlotValue(message.ActiveSlotIndex);
-            int count = Math.Min(message.DropCount,
+            int count = Math.Min(message.RemoveCount,
                 inventory.GetSlotCount(message.ActiveSlotIndex));
-            if (slotValue != message.ItemValue || count <= 0) return false;
+            if (slotValue != message.ItemValue || count <= 0)
+                return false;
             int removed = inventory.RemoveSlotItems(message.ActiveSlotIndex, count);
-            if (removed <= 0) return false;
+            if (removed <= 0)
+                return false;
             Vector3 defaultPosition = body.Position +
                 new Vector3(0f, body.StanceBoxSize.Y * 0.66f, 0f) +
                 0.25f * body.Matrix.Forward;
@@ -16870,10 +18630,21 @@ namespace ScMultiplayer
             Vector3 velocity = message.Velocity;
             if (velocity.LengthSquared() > 20f * 20f)
                 velocity = Vector3.Normalize(velocity) * 20f;
-            GameManager.Project.FindSubsystem<SubsystemPickables>(true).AddPickable(
-                slotValue, removed, position, velocity, null);
+            GameManager.Project.FindSubsystem<SubsystemPickables>(true)
+                .AddPickable(slotValue, removed, position, velocity, null);
             MarkHostInventoryAuthoritative(sourceClientId);
             return true;
+        }
+
+        // Source: Survivalcraft/Game/InventorySlotWidget.cs:InventorySlotWidget.HandleMoveItem
+        private static bool HaveSameInventoryItems(IInventory inventory,
+            int[] desiredValues, int[] desiredCounts)
+        {
+            var balance = new Dictionary<int, long>();
+            AddInventoryCounts(balance,
+                CaptureInventoryValues(inventory), CaptureInventoryCounts(inventory), 1);
+            AddInventoryCounts(balance, desiredValues, desiredCounts, -1);
+            return balance.Values.All(value => value == 0L);
         }
 
         private void MarkHostInventoryAuthoritative(int sourceClientId)
@@ -16934,13 +18705,9 @@ namespace ScMultiplayer
                     if (inventory != null && msg.ActiveSlotIndex >= 0 &&
                         msg.ActiveSlotIndex < inventory.VisibleSlotsCount)
                         inventory.ActiveSlotIndex = msg.ActiveSlotIndex;
-                    // Source: Survivalcraft/Game/SubsystemThrowableBlockBehavior.cs:OnAim
-                    // The host-owned throw must consume the reserved item. Do not let the local
-                    // prediction's already-decremented snapshot erase it before Aim Completed.
-                    if (inventory != null && msg.SlotValues?.Length > 0 &&
-                        !msg.PlayerInput.Drop &&
-                        msg.InventoryAuthorityTick >= state.LastAuthoritativeInventoryTick)
-                        ApplyInventory(inventory, msg.SlotValues, msg.SlotCounts);
+                    // Source: ScMultiplayer.SynchronizePlayerEquipment
+                    // Inventory layouts are replicated only through reliable equipment messages.
+                    // This latest-only input stream may contain an older complete snapshot.
                 }
                 MatchRemoteRidingState(remotePlayer, msg.IsRiding, msg.MountEntityId);
             }
@@ -17134,6 +18901,7 @@ namespace ScMultiplayer
 
         public void OnUnload()
         {
+            ReliableRetransmitDiagnostics.PacketRetransmitted -= HandleReliableRetransmit;
             if (m_eventBus != null && m_serverSettingsToken != null)
                 m_eventBus.UnsubscribeEvent(m_serverSettingsToken);
             m_serverSettingsToken = null;
