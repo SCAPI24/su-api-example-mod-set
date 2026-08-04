@@ -31,6 +31,12 @@ namespace ScMultiplayer
                 new List<CircuitSyncMessage>();
         }
 
+        private sealed class PendingReliableCircuitMessage
+        {
+            public CircuitSyncMessage Message;
+            public int EstimatedPackets;
+        }
+
         private const int DefaultCircuitLeadSteps = 5;
         private const int MinimumCircuitLeadSteps = 3;
         private const int MaximumCircuitLeadSteps = 30;
@@ -51,6 +57,8 @@ namespace ScMultiplayer
         private const int CatchUpInputSuppressionSteps = 30;
         private const int MaximumEventsPerBatch = 40;
         private const int MaximumStatesPerSnapshot = 40;
+        private const int MaximumReliableBulkMessagesPerTick = 2;
+        private const int MaximumPendingReliableBulkMessagesPerClient = 128;
         private const int TrackedCircuitRetentionSteps = 3000;
         private const int RepairBarrierMinimumLeadSteps = 20;
         private const byte RuntimeStateFlag = 128;
@@ -97,6 +105,10 @@ namespace ScMultiplayer
             new Dictionary<int, int>();
         private readonly Dictionary<int, OutgoingSnapshotBatch> m_outgoingSnapshots =
             new Dictionary<int, OutgoingSnapshotBatch>();
+        private readonly Dictionary<int, Queue<PendingReliableCircuitMessage>>
+            m_pendingReliableCircuitMessages =
+                new Dictionary<int, Queue<PendingReliableCircuitMessage>>();
+        private int m_reliableBulkCursor;
 
         private SuSubsystemElectricity m_subsystem;
         private SubsystemGameInfo m_gameInfo;
@@ -424,6 +436,7 @@ namespace ScMultiplayer
         {
             if (!ScMultiplayer.IsHost || m_subsystem == null) return;
             TrimJournal();
+            DrainReliableCircuitMessages();
             FlushPendingEvents(-1);
             if (publishFence) SendFence(-1);
             if (!checkpoint) return;
@@ -459,6 +472,7 @@ namespace ScMultiplayer
                 m_clientRepairVerifiedThrough.Remove(clientId);
                 m_clientHashMismatchCounts.Remove(clientId);
                 m_outgoingSnapshots.Remove(clientId);
+                m_pendingReliableCircuitMessages.Remove(clientId);
                 if (m_subsystem != null && m_epoch > 0)
                 {
                     ScheduleHostCheckpoint();
@@ -498,6 +512,8 @@ namespace ScMultiplayer
             m_clientRepairVerifiedThrough.Clear();
             m_clientHashMismatchCounts.Clear();
             m_outgoingSnapshots.Clear();
+            m_pendingReliableCircuitMessages.Clear();
+            m_reliableBulkCursor = 0;
             m_hasClock = false;
             m_hasFence = false;
             m_localSuspended = false;
@@ -843,7 +859,8 @@ namespace ScMultiplayer
             SendEventRecords(targetClientId, outgoing);
         }
 
-        private void SendEventRecords(int targetClientId, List<CircuitEventRecord> records)
+        private void SendEventRecords(int targetClientId, List<CircuitEventRecord> records,
+            bool reliableBulk = false)
         {
             for (int offset = 0; offset < records.Count;)
             {
@@ -863,7 +880,10 @@ namespace ScMultiplayer
                     RequiredTerrainSequence = terrainSequence
                 };
                 message.Events.AddRange(batch);
-                NetworkMessageSender.SendCircuitSync(targetClientId, message);
+                if (reliableBulk)
+                    QueueReliableCircuitMessage(targetClientId, message);
+                else
+                    NetworkMessageSender.SendCircuitSync(targetClientId, message);
             }
         }
 
@@ -1550,7 +1570,7 @@ namespace ScMultiplayer
                 SendSnapshot(sourceClientId);
                 return;
             }
-            SendEventRecords(sourceClientId, records);
+            SendEventRecords(sourceClientId, records, reliableBulk: true);
         }
 
         private void RequestSnapshot()
@@ -1640,8 +1660,80 @@ namespace ScMultiplayer
                 HashSet<int> missing = request.SnapshotMissingParts.ToHashSet();
                 outgoing = batch.Parts.Where(item => missing.Contains(item.SnapshotPartIndex));
             }
-            foreach (CircuitSyncMessage message in outgoing)
-                NetworkMessageSender.SendCircuitSync(targetClientId, message);
+            QueueReliableCircuitMessages(targetClientId, outgoing,
+                replaceSnapshots: true);
+        }
+
+        // Source: Mod/Comms/Comms/Comm.cs:Comm.SendDataPacket
+        // Circuit recovery is application-sequenced and can wait for ACK capacity. Keep it out of
+        // the critical reserve used by live circuit edges and other gameplay transactions.
+        private void QueueReliableCircuitMessages(int targetClientId,
+            IEnumerable<CircuitSyncMessage> messages, bool replaceSnapshots)
+        {
+            if (targetClientId <= 0 || messages == null) return;
+            if (!m_pendingReliableCircuitMessages.TryGetValue(targetClientId,
+                    out Queue<PendingReliableCircuitMessage> queue))
+            {
+                queue = new Queue<PendingReliableCircuitMessage>();
+                m_pendingReliableCircuitMessages[targetClientId] = queue;
+            }
+            if (replaceSnapshots && queue.Count > 0)
+            {
+                queue = new Queue<PendingReliableCircuitMessage>(queue.Where(item =>
+                    item.Message?.Stage != CircuitSyncStage.Snapshot));
+                m_pendingReliableCircuitMessages[targetClientId] = queue;
+            }
+            foreach (CircuitSyncMessage message in messages)
+                QueueReliableCircuitMessage(targetClientId, message);
+        }
+
+        private void QueueReliableCircuitMessage(int targetClientId,
+            CircuitSyncMessage message)
+        {
+            if (targetClientId <= 0 || message == null) return;
+            if (!m_pendingReliableCircuitMessages.TryGetValue(targetClientId,
+                    out Queue<PendingReliableCircuitMessage> queue))
+            {
+                queue = new Queue<PendingReliableCircuitMessage>();
+                m_pendingReliableCircuitMessages[targetClientId] = queue;
+            }
+            if (queue.Count >= MaximumPendingReliableBulkMessagesPerClient) return;
+            int payloadBytes = Message.WriteWithSender(message,
+                ScMultiplayer.client.Address).Length;
+            queue.Enqueue(new PendingReliableCircuitMessage
+            {
+                Message = message,
+                // Keep enough room for nested DRT/Comm headers and fragmentation.
+                EstimatedPackets = Math.Max(1, (payloadBytes + 899) / 900)
+            });
+        }
+
+        private void DrainReliableCircuitMessages()
+        {
+            if (!ScMultiplayer.IsHost || m_pendingReliableCircuitMessages.Count == 0) return;
+            int[] clientIds = m_pendingReliableCircuitMessages.Keys.OrderBy(id => id).ToArray();
+            if (clientIds.Length == 0) return;
+            m_reliableBulkCursor %= clientIds.Length;
+            int budget = MaximumReliableBulkMessagesPerTick;
+            int attempts = clientIds.Length * (budget + 1);
+            while (budget > 0 && attempts-- > 0)
+            {
+                int clientId = clientIds[m_reliableBulkCursor];
+                m_reliableBulkCursor = (m_reliableBulkCursor + 1) % clientIds.Length;
+                if (!m_pendingReliableCircuitMessages.TryGetValue(clientId,
+                        out Queue<PendingReliableCircuitMessage> queue) || queue.Count == 0)
+                {
+                    m_pendingReliableCircuitMessages.Remove(clientId);
+                    continue;
+                }
+                PendingReliableCircuitMessage pending = queue.Peek();
+                if (!m_owner.CanSendReliableBulk(clientId, pending.EstimatedPackets)) continue;
+                queue.Dequeue();
+                NetworkMessageSender.SendCircuitSync(clientId, pending.Message);
+                budget--;
+                if (queue.Count == 0)
+                    m_pendingReliableCircuitMessages.Remove(clientId);
+            }
         }
 
         private void HandleSnapshot(CircuitSyncMessage message)

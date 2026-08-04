@@ -385,7 +385,7 @@ public class Client : IDisposable
                     IsSequenced = sequenced,
                     IsLatest = latest,
                     InputBytes = inputBytes
-                }));
+                }), "Client.SendDirectInput", inputBytes);
         }
     }
 

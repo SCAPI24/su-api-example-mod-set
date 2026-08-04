@@ -15,6 +15,7 @@ namespace HeadlessRenderingMod
         private IModEventBus m_eventBus;
         private EventSubscriptionToken m_frameToken;
         private EventSubscriptionToken m_serverAuditToken;
+        private EventSubscriptionToken m_serverRetransmitToken;
         private HeadlessServerConfig m_config;
         private HeadlessControlServer m_server;
         private GameControlCommands m_gameCommands;
@@ -36,6 +37,7 @@ namespace HeadlessRenderingMod
         private string m_lastFrameError;
         private double m_nextMultiplayerTelemetryTime;
         private ServerAuditLog m_serverAuditLog;
+        private ServerAuditLog m_serverRetransmitLog;
 
         public string Name => "无画面服务器";
 
@@ -93,6 +95,11 @@ namespace HeadlessRenderingMod
                 m_serverAuditLog = new ServerAuditLog(Path.Combine(instanceRoot, "Logs", "Server"));
                 m_serverAuditToken = eventBus.SubscribeEvent(
                     "ScMultiplayer.ServerAudit", HandleServerAuditEvent, EventPriority.LOWEST);
+                m_serverRetransmitLog = new ServerAuditLog(
+                    Path.Combine(instanceRoot, "Logs", "Server"), "Retransmit-", 64);
+                m_serverRetransmitToken = eventBus.SubscribeEvent(
+                    "ScMultiplayer.ServerRetransmitAudit",
+                    HandleServerRetransmitEvent, EventPriority.LOWEST);
                 m_serverAuditLog.Enqueue("event=server.start instance=" + m_config.InstanceId);
 
                 if (m_config.EnableConsole && OperatingSystem.IsWindows())
@@ -128,13 +135,18 @@ namespace HeadlessRenderingMod
                 m_eventBus.UnsubscribeEvent(m_frameToken);
             if (m_eventBus != null && m_serverAuditToken != null)
                 m_eventBus.UnsubscribeEvent(m_serverAuditToken);
+            if (m_eventBus != null && m_serverRetransmitToken != null)
+                m_eventBus.UnsubscribeEvent(m_serverRetransmitToken);
 
             m_frameToken = null;
             m_serverAuditToken = null;
+            m_serverRetransmitToken = null;
             m_eventBus = null;
             m_serverAuditLog?.Enqueue("event=server.stop");
             m_serverAuditLog?.Dispose();
             m_serverAuditLog = null;
+            m_serverRetransmitLog?.Dispose();
+            m_serverRetransmitLog = null;
             if (m_consoleController != null)
             {
                 m_consoleController.Stop();
@@ -181,6 +193,14 @@ namespace HeadlessRenderingMod
         {
             if (args != null && args.Length > 0 && args[0] is string record)
                 m_serverAuditLog?.Enqueue(record);
+            return null;
+        }
+
+        // Source: EntitySystem/SuAPI/IModEventBus.cs:IModEventBus.TriggerEvent
+        private object[] HandleServerRetransmitEvent(object[] args)
+        {
+            if (args != null && args.Length > 0 && args[0] is string record)
+                m_serverRetransmitLog?.Enqueue(record);
             return null;
         }
 
@@ -247,8 +267,10 @@ namespace HeadlessRenderingMod
                         System.Globalization.CultureInfo.InvariantCulture,
                         "Clients {0} | UDP OUT {1} | UDP IN {2} | Join {3}",
                         ReadTelemetryNumber(values, "connectedClients"),
-                        FormatLastSecondBytes(values, "lastUdpOutBytes"),
-                        FormatLastSecondBytes(values, "lastUdpInBytes"),
+                        FormatLastSecondTraffic(values, "lastUdpOutBytes",
+                            "lastUdpOutPackets"),
+                        FormatLastSecondTraffic(values, "lastUdpInBytes",
+                            "lastUdpInPackets"),
                         ReadTelemetryText(values, "joinState", "idle")));
                     break;
                 }
@@ -270,22 +292,34 @@ namespace HeadlessRenderingMod
                 : fallback;
         }
 
-        private static string FormatLastSecondBytes(Dictionary<string, object> values, string name)
+        // Source: Comms/Comms/DiagnosticTransmitter.cs:DiagnosticTransmitter.SendPacket
+        // Packet.Bytes is the actual UDP payload handled by Comms. It excludes IP/UDP headers and
+        // includes ACKs, heartbeats, fragments and retransmissions, matching socket activity.
+        private static string FormatLastSecondTraffic(Dictionary<string, object> values,
+            string bytesName, string packetsName)
         {
-            double bytes = ReadTelemetryNumber(values, name);
+            double bytes = ReadTelemetryNumber(values, bytesName);
+            double packets = ReadTelemetryNumber(values, packetsName);
             if (bytes < 0.0) return "--";
+            string rate;
             if (bytes >= 1024.0 * 1024.0)
             {
-                return string.Format(System.Globalization.CultureInfo.InvariantCulture,
+                rate = string.Format(System.Globalization.CultureInfo.InvariantCulture,
                     "{0:0.0} MiB/s", bytes / (1024.0 * 1024.0));
             }
-            if (bytes >= 1024.0)
+            else if (bytes >= 1024.0)
             {
-                return string.Format(System.Globalization.CultureInfo.InvariantCulture,
+                rate = string.Format(System.Globalization.CultureInfo.InvariantCulture,
                     "{0:0.0} KiB/s", bytes / 1024.0);
             }
+            else
+            {
+                rate = string.Format(System.Globalization.CultureInfo.InvariantCulture,
+                    "{0:0} B/s", bytes);
+            }
+            double average = packets > 0.0 ? bytes / packets : 0.0;
             return string.Format(System.Globalization.CultureInfo.InvariantCulture,
-                "{0:0} B/s", bytes);
+                "{0}, {1:0} pkt/s, {2:0} B/pkt", rate, Math.Max(0.0, packets), average);
         }
 
         // Source: Engine/Engine/Window.cs:Window.m_gameWindow
