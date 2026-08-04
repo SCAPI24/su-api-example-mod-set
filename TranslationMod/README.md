@@ -96,7 +96,7 @@ The local file in `Logs/Translations` is loaded first. It therefore overrides a 
 The package uses the required merge-library layout:
 
 ```
-[SuAPI]TranslationMod-1.6.3.scmod
+[SuAPI]TranslationMod-1.6.4.scmod
 |- ModInfo.xml
 |- Lib/TranslationMod.dll
 `- Content/zh_CN.xml

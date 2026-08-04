@@ -774,7 +774,7 @@ namespace TranslationMod
             new Dictionary<string, ExternalTranslationCatalog>();
 
         public string Name => "Translation Mod";
-        public string Version => "1.6.3";
+        public string Version => "1.6.4";
         public IEnumerable<string> Dependencies => Array.Empty<string>();
         public bool IsEnabled { get; set; }
 
@@ -898,7 +898,7 @@ namespace TranslationMod
                 return null;
             }, EventPriority.LOWEST);
 
-            Log.Information("[TranslationMod] v1.6.3 Loaded. Shared SuAPI font profiles are lazy.");
+            Log.Information("[TranslationMod] v1.6.4 Loaded. Shared SuAPI font profiles are lazy.");
         }
 
         private object[] HandleLoadingInitialize(object[] args)
