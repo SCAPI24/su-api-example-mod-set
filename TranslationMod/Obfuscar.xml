@@ -1,0 +1,13 @@
+<?xml version='1.0'?>
+<Obfuscator>
+    <Var name="InPath" value=".\bin\Debug\net8.0" />
+    <Var name="OutPath" value=".\bin\Debug\net8.0\Obfuscar" />
+    <Var name="SkipExtraDependencies" value="true" />
+    <Module file="$(InPath)\EntitySystem.dll"/>
+    <Module file="$(InPath)\TranslationMod.dll">
+        <!-- Source: TranslationMod/Plug/TranslationMod.cs:TranslationApi -->
+        <SkipType name="TranslationMod.TranslationMod" />
+        <SkipType name="TranslationMod.TranslationApi" />
+        <SkipType name="TranslationMod.TranslationContext" />
+    </Module>
+</Obfuscator>

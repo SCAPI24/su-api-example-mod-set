@@ -52,12 +52,12 @@ ScMultiplayer/.vs/
 SurvivalcraftMiniMap/bin/
 SurvivalcraftMiniMap/obj/
 SurvivalcraftMiniMap/.vs/
-## sync:StringInterceptor
-!StringInterceptor/
-!StringInterceptor/**
-StringInterceptor/bin/
-StringInterceptor/obj/
-StringInterceptor/.vs/
+## sync:TranslationMod
+!TranslationMod/
+!TranslationMod/**
+TranslationMod/bin/
+TranslationMod/obj/
+TranslationMod/.vs/
 ## sync:MemoryBankDrawMod
 !MemoryBankDrawMod/
 !MemoryBankDrawMod/**

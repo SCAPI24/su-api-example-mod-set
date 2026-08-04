@@ -30,7 +30,7 @@ description: Survivalcraft 2 SuAPI 开发技能。帮助创建、修改、调试
 │   └── SuAPI/             # ★ Mod 核心接口与实现
 ├── Mod/                   # ★ 第三方 Mod 示例
 │   ├── ConsoleMod/        # Widget overlay + 条件编译示例
-│   ├── StringInterceptor/ # 字符串拦截+翻译示例
+│   ├── TranslationMod/ # 固定界面翻译与导出
 │   ├── MemoryBankDrawMod/ # Dialog 替换示例（IsMergeLib=true）
 │   ├── SurvivalcraftMiniMap/ # 新建 ComponentTemplate 示例
 │   ├── WatchMod/          # ComponentTemplate+IUpdateable UI 挂载示例

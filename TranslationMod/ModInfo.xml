@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Mod>
+    <ModInfo>
+        <Identifier>TranslationMod</Identifier>
+        <LocalizedName>
+            <Text lang="en_US">Translation Mod</Text>
+            <Text lang="zh_CN">翻译Mod</Text>
+        </LocalizedName>
+        <ModVersion>
+            <Version>1.6.3</Version>
+            <APIVersion>0.1.4.2</APIVersion>
+        </ModVersion>
+        <Asset>
+            <ContentRoot>Content</ContentRoot>
+        </Asset>
+            <IsMergeLib>true</IsMergeLib>
+
+    </ModInfo>
+    <Dependencies>
+    </Dependencies>
+</Mod>
