@@ -39,7 +39,7 @@ namespace HeadlessRenderingMod
 
         public string Name => "无画面服务器";
 
-        public string Version => "1.3.2";
+        public string Version => "1.3.3";
 
         public IEnumerable<string> Dependencies => Array.Empty<string>();
 

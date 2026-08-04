@@ -7,8 +7,8 @@
       <Text lang="zh_CN">动态光影</Text>
     </LocalizedName>
     <ModVersion>
-      <Version>1.0.0</Version>
-      <APIVersion>0.1.4.1</APIVersion>
+      <Version>1.0.1</Version>
+      <APIVersion>0.1.5.0</APIVersion>
     </ModVersion>
     <Asset>
       <ContentRoot>Content</ContentRoot>
