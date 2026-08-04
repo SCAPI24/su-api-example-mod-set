@@ -9,7 +9,7 @@ public sealed class ShadowsMod : IMod
 {
     public string Name => "Dynamic Shadows";
 
-    public string Version => "1.0.0";
+    public string Version => "1.0.1";
 
     public IEnumerable<string> Dependencies => Array.Empty<string>();
 
