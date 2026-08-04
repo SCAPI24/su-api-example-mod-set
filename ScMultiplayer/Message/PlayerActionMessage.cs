@@ -31,6 +31,13 @@ namespace ScMultiplayer
         public int ItemValue;
         public int ItemCount;
         public int DropCount;
+        // Source: Survivalcraft/Game/ComponentInventoryBase.cs:ComponentInventoryBase.DropSlotItems
+        // The item count spawned on the ground can differ from the count requested for removal.
+        // ComponentCreativeInventory, for example, clears an all-items slot but returns one item.
+        public int RemoveCount;
+        // Source: Survivalcraft/Game/ViewWidget.cs:ViewWidget.DragDrop
+        public int[] InventorySlotValues = Array.Empty<int>();
+        public int[] InventorySlotCounts = Array.Empty<int>();
         public Vector3 Position;
         public Vector3 Velocity;
         public bool HasTerrainPrediction;
@@ -74,7 +81,21 @@ namespace ScMultiplayer
                 ItemValue = reader.ReadInt32();
                 ItemCount = reader.ReadInt32();
                 if (Action == PlayerActionType.DropRequest)
+                {
                     DropCount = reader.ReadInt32();
+                    RemoveCount = reader.ReadInt32();
+                    // Source: ScMultiplayer.UpdateLocalDropRequests
+                    // Fences delayed pre-drop equipment snapshots on the host.
+                    RequestId = reader.ReadInt32();
+                    int slotsCount = reader.ReadPackedInt32();
+                    InventorySlotValues = new int[slotsCount];
+                    InventorySlotCounts = new int[slotsCount];
+                    for (int i = 0; i < slotsCount; i++)
+                    {
+                        InventorySlotValues[i] = reader.ReadInt32();
+                        InventorySlotCounts[i] = reader.ReadInt32();
+                    }
+                }
             }
             // Source: Survivalcraft/Game/ComponentMiner.cs:ComponentMiner.Place
             if (Action == PlayerActionType.InteractRequest)
@@ -124,7 +145,19 @@ namespace ScMultiplayer
                 writer.WriteInt32(ItemValue);
                 writer.WriteInt32(ItemCount);
                 if (Action == PlayerActionType.DropRequest)
+                {
                     writer.WriteInt32(DropCount);
+                    writer.WriteInt32(RemoveCount);
+                    writer.WriteInt32(RequestId);
+                    int slotsCount = Math.Min(InventorySlotValues?.Length ?? 0,
+                        InventorySlotCounts?.Length ?? 0);
+                    writer.WritePackedInt32(slotsCount);
+                    for (int i = 0; i < slotsCount; i++)
+                    {
+                        writer.WriteInt32(InventorySlotValues[i]);
+                        writer.WriteInt32(InventorySlotCounts[i]);
+                    }
+                }
             }
             // Source: Survivalcraft/Game/ComponentMiner.cs:ComponentMiner.Place
             if (Action == PlayerActionType.InteractRequest)

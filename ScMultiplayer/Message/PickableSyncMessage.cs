@@ -15,7 +15,8 @@ namespace ScMultiplayer
             Delete,
             SetFlyTo,
             Acquire,
-            WaterSplash
+            WaterSplash,
+            RequestAcquire
         }
 
         public PickAction Action;
@@ -27,6 +28,7 @@ namespace ScMultiplayer
         public Vector3? FlyToPosition;
         public Matrix? StuckMatrix;
         public bool PlaySound;
+        public int RequestId;
         public int CollectorClientId = -1;
         public int ServerTick;
         public int[] SlotValues = Array.Empty<int>();
@@ -90,6 +92,7 @@ namespace ScMultiplayer
                     break;
                 case PickAction.Acquire:
                     Id = (ushort)reader.ReadPackedInt32();
+                    RequestId = reader.ReadInt32();
                     CollectorClientId = reader.ReadInt32();
                     ServerTick = reader.ReadInt32();
                     Count = reader.ReadPackedInt32();
@@ -105,6 +108,11 @@ namespace ScMultiplayer
                     break;
                 case PickAction.WaterSplash:
                     Id = (ushort)reader.ReadPackedInt32();
+                    Position = reader.ReadVector3(reader);
+                    break;
+                case PickAction.RequestAcquire:
+                    Id = (ushort)reader.ReadPackedInt32();
+                    RequestId = reader.ReadInt32();
                     Position = reader.ReadVector3(reader);
                     break;
             }
@@ -147,6 +155,7 @@ namespace ScMultiplayer
                     break;
                 case PickAction.Acquire:
                     writer.WritePackedInt32(Id);
+                    writer.WriteInt32(RequestId);
                     writer.WriteInt32(CollectorClientId);
                     writer.WriteInt32(ServerTick);
                     writer.WritePackedInt32(Count);
@@ -162,6 +171,11 @@ namespace ScMultiplayer
                     break;
                 case PickAction.WaterSplash:
                     writer.WritePackedInt32(Id);
+                    writer.WriteVector3(writer, Position);
+                    break;
+                case PickAction.RequestAcquire:
+                    writer.WritePackedInt32(Id);
+                    writer.WriteInt32(RequestId);
                     writer.WriteVector3(writer, Position);
                     break;
             }

@@ -85,6 +85,10 @@ namespace ScMultiplayer
                 m_componentPlayers.AddRange(m_savedComponentPlayers);
                 m_savedComponentPlayers.Clear();
             }
+            // Source: Survivalcraft/Game/SubsystemPickables.cs:SubsystemPickables.Update
+            // Native client acquisition is suppressed above, so request the nearby authoritative
+            // pickable once without allowing the local inventory to mutate speculatively.
+            ScMultiplayer.currentInstance?.RequestNearbyPickableAcquisition();
         }
     }
 }

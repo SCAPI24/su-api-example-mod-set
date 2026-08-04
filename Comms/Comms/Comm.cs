@@ -273,6 +273,10 @@ public class Comm
         public bool RetryLimitRecorded;
 
         public Packet Packet;
+
+        public string DiagnosticSource;
+
+        public byte[] DiagnosticPayload;
     }
 
     private volatile bool IsDisposed;
@@ -363,12 +367,14 @@ public class Comm
         Transmitter?.Dispose();
     }
 
-    public void Send(IPEndPoint address, DeliveryMode deliveryMode, byte[] bytes)
+    public void Send(IPEndPoint address, DeliveryMode deliveryMode, byte[] bytes,
+        string diagnosticSource = null, byte[] diagnosticPayload = null)
     {
-        Send(address, deliveryMode, new byte[1][] { bytes });
+        Send(address, deliveryMode, new byte[1][] { bytes }, diagnosticSource, diagnosticPayload);
     }
 
-    public void Send(IPEndPoint address, DeliveryMode deliveryMode, IEnumerable<byte[]> bytes)
+    public void Send(IPEndPoint address, DeliveryMode deliveryMode, IEnumerable<byte[]> bytes,
+        string diagnosticSource = null, byte[] diagnosticPayload = null)
     {
         lock (Lock)
         {
@@ -377,7 +383,7 @@ public class Comm
             {
                 throw new InvalidOperationException("Broadcast messages must use DeliveryMode.Raw");
             }
-            SendMessages(address, bytes.ToArray(), deliveryMode);
+            SendMessages(address, bytes.ToArray(), deliveryMode, diagnosticSource, diagnosticPayload);
         }
     }
 
@@ -699,6 +705,15 @@ public class Comm
                 if (!retryLimitReached &&
                     time >= unackedPacket.Value.LastSendTime + (double)num)
                 {
+                    // Source: Comms/Comms/Comm.cs:Comm.SendDataPacket
+                    // Report before sending, but never let the optional observer affect retry.
+                    ReliableRetransmitDiagnostics.Report(new ReliableRetransmitInfo(
+                        key,
+                        unackedPacket.Key,
+                        unackedPacket.Value.SendCount,
+                        unackedPacket.Value.Packet.Bytes?.Length ?? 0,
+                        unackedPacket.Value.DiagnosticSource,
+                        unackedPacket.Value.DiagnosticPayload));
                     SendPacket(unackedPacket.Value.Packet, value);
                     unackedPacket.Value.LastSendTime = time;
                     if (unackedPacket.Value.SendCount < int.MaxValue)
@@ -754,7 +769,8 @@ public class Comm
             Settings.MinimumResendPeriod, Settings.MaximumResendPeriod);
     }
 
-    private void SendMessages(IPEndPoint address, byte[][] bytes, DeliveryMode deliveryMode)
+    private void SendMessages(IPEndPoint address, byte[][] bytes, DeliveryMode deliveryMode,
+        string diagnosticSource, byte[] diagnosticPayload)
     {
         if (deliveryMode == DeliveryMode.Raw)
         {
@@ -837,16 +853,20 @@ public class Comm
             {
                 writer2.Length = position;
             }
-            SendDataPacket(address, writer2.GetBytes(), packetId, deliveryMode, value);
+                    SendDataPacket(address, writer2.GetBytes(), packetId, deliveryMode, value,
+                        diagnosticSource, diagnosticPayload);
             writer2 = null;
         }
         if (writer2 != null && writer2.Position > 0)
         {
-            SendDataPacket(address, writer2.GetBytes(), packetId, deliveryMode, value);
+            SendDataPacket(address, writer2.GetBytes(), packetId, deliveryMode, value,
+                diagnosticSource, diagnosticPayload);
         }
     }
 
-    private void SendDataPacket(IPEndPoint address, byte[] bytes, uint packetId, DeliveryMode deliveryMode, Connection connection)
+    private void SendDataPacket(IPEndPoint address, byte[] bytes, uint packetId,
+        DeliveryMode deliveryMode, Connection connection, string diagnosticSource,
+        byte[] diagnosticPayload)
     {
         Packet packet = new(address, bytes);
         if (deliveryMode == DeliveryMode.Reliable || deliveryMode == DeliveryMode.ReliableSequenced)
@@ -855,7 +875,9 @@ public class Comm
             {
                 Packet = packet,
                 SendCount = 1,
-                LastSendTime = GetTime()
+                LastSendTime = GetTime(),
+                DiagnosticSource = diagnosticSource ?? string.Empty,
+                DiagnosticPayload = diagnosticPayload
             });
         }
         SendPacket(packet, connection);

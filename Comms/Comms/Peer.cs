@@ -701,7 +701,8 @@ namespace Comms
             }
         }
 
-        public void SendDataMessage(PeerData peerData, DeliveryMode deliveryMode, byte[] bytes)
+        public void SendDataMessage(PeerData peerData, DeliveryMode deliveryMode, byte[] bytes,
+            string diagnosticSource = null, byte[] diagnosticPayload = null)
         {
             lock (Lock)
             {
@@ -713,11 +714,13 @@ namespace Comms
                 InternalSend(peerData.Address, deliveryMode, new DataMessage
                 {
                     Bytes = bytes
-                });
+                }, diagnosticSource, diagnosticPayload);
             }
         }
 
-        public void SendDataMessages(PeerData peerData, DeliveryMode deliveryMode, IEnumerable<byte[]> bytes)
+        public void SendDataMessages(PeerData peerData, DeliveryMode deliveryMode,
+            IEnumerable<byte[]> bytes, string diagnosticSource = null,
+            byte[] diagnosticPayload = null)
         {
             lock (Lock)
             {
@@ -730,7 +733,8 @@ namespace Comms
                 {
                     Bytes = b
                 });
-                InternalSend(peerData.Address, deliveryMode, messages);
+                InternalSend(peerData.Address, deliveryMode, messages, diagnosticSource,
+                    diagnosticPayload);
             }
         }
 
@@ -849,20 +853,24 @@ namespace Comms
             this.Disconnected?.Invoke();
         }
 
-        private void InternalSend(IPEndPoint address, DeliveryMode deliveryMode, Message message)
+        private void InternalSend(IPEndPoint address, DeliveryMode deliveryMode, Message message,
+            string diagnosticSource = null, byte[] diagnosticPayload = null)
         {
             byte[] bytes = Message.Write(message);
-            Comm.Send(address, deliveryMode, bytes);
+            Comm.Send(address, deliveryMode, bytes,
+                diagnosticSource ?? message.GetType().Name, diagnosticPayload);
         }
 
-        private void InternalSend(IPEndPoint address, DeliveryMode deliveryMode, IEnumerable<Message> messages)
+        private void InternalSend(IPEndPoint address, DeliveryMode deliveryMode,
+            IEnumerable<Message> messages, string diagnosticSource = null,
+            byte[] diagnosticPayload = null)
         {
             List<byte[]> list = new();
             foreach (Message message in messages)
             {
                 list.Add(Message.Write(message));
             }
-            Comm.Send(address, deliveryMode, list);
+            Comm.Send(address, deliveryMode, list, diagnosticSource, diagnosticPayload);
         }
 
         private void CheckNotDisposed()
