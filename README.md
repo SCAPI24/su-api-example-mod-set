@@ -94,9 +94,9 @@ with zipfile.ZipFile(os.path.join(MODS_DIR, f"[SuAPI]你的Mod名.scmod"), 'w', 
 
 游戏内控制台，按 `·` 打开，支持 `move +x300` 等指令。Windows 端用 KeyboardInput 内联输入，Android 端用 `Keyboard.ShowKeyboard()` 对话框输入。
 
-### StringInterceptor
+### TranslationMod
 
-![StringInterceptor 截图](images/string-interceptor.png)
+![TranslationMod 截图](images/string-interceptor.png)
 
 字符串翻译 Mod，Widget 树文本拦截 + IStringProcessor 翻译接口，将游戏界面翻译为中文。演示 `LoadingManager.QueueItem` 和 `ReplaceItem` 用法。
 
