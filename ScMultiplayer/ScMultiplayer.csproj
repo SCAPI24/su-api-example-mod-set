@@ -33,7 +33,7 @@
     </PackageReference>
   </ItemGroup>
 
-  <Target Name="PostBuild" AfterTargets="PostBuildEvent">
+  <Target Name="PostBuild" AfterTargets="PostBuildEvent" Condition="'$(Configuration)' == 'Release'">
     <Exec Command="&quot;$(NuGetPackageRoot)obfuscar\2.2.49\tools\Obfuscar.Console.exe&quot; Obfuscar.xml" />
   </Target>
 </Project>

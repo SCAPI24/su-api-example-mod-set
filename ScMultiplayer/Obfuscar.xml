@@ -1,7 +1,7 @@
 ﻿<?xml version='1.0'?>
 <Obfuscator>
-  <Var name="InPath" value="bin\Debug\net8.0" />
-  <Var name="OutPath" value="bin\Debug\net8.0\Obfuscated" />
+  <Var name="InPath" value="bin\Release\net8.0" />
+  <Var name="OutPath" value="bin\Release\net8.0\Obfuscated" />
   <Var name="KeepPublicApi" value="false" />
   <Var name="HidePrivateApi" value="true" />
   <Var name="HideStrings" value="false" />
