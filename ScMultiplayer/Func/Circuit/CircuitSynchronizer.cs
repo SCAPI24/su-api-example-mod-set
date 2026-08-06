@@ -61,6 +61,7 @@ namespace ScMultiplayer
         private const int MaximumPendingReliableBulkMessagesPerClient = 128;
         private const int TrackedCircuitRetentionSteps = 3000;
         private const int RepairBarrierMinimumLeadSteps = 20;
+        private const double LocalButtonSoundCredentialLifetime = 2.0;
         private const byte RuntimeStateFlag = 128;
 
         private readonly ScMultiplayer m_owner;
@@ -87,6 +88,8 @@ namespace ScMultiplayer
             new SortedDictionary<int, List<CircuitStateRecord>>();
         private readonly Dictionary<CellFace, ButtonPulseState> m_buttonPulses =
             new Dictionary<CellFace, ButtonPulseState>();
+        private readonly Dictionary<CellFace, double> m_localButtonSoundCredentials =
+            new Dictionary<CellFace, double>();
         private readonly Dictionary<Point3, PendingSwitchState> m_pendingSwitchStates =
             new Dictionary<Point3, PendingSwitchState>();
         private readonly Dictionary<int, uint> m_hostCheckpointHashes =
@@ -168,6 +171,7 @@ namespace ScMultiplayer
         private double m_worldTimeAnchorTimeOfDayOffset;
         private double m_snapshotProgressRealTime;
         private double m_windowExhaustedSince;
+        private bool m_joinBootstrapPending;
 
         public CircuitSynchronizer(ScMultiplayer owner)
         {
@@ -216,7 +220,20 @@ namespace ScMultiplayer
         // ScMultiplayer.HandleGamePakWorldReadyMessage
         internal void BeginJoinBootstrap()
         {
-            if (ScMultiplayer.IsHost || m_subsystem == null || m_epoch <= 0) return;
+            if (ScMultiplayer.IsHost) return;
+            m_joinBootstrapPending = true;
+            TryBeginPendingJoinBootstrap();
+        }
+
+        // Source: CircuitSynchronizer.BeginJoinBootstrap
+        // CatchUpBatchComplete can arrive while GameLoading is replacing the Project. Preserve
+        // that request until both the new electricity subsystem and its host epoch are available.
+        private void TryBeginPendingJoinBootstrap()
+        {
+            if (!m_joinBootstrapPending || ScMultiplayer.IsHost || m_subsystem == null ||
+                m_epoch <= 0)
+                return;
+            m_joinBootstrapPending = false;
             m_initialSnapshotApplied = false;
             m_snapshotParts.Clear();
             m_snapshotPartCount = 0;
@@ -314,6 +331,7 @@ namespace ScMultiplayer
                 // discarded before this synchronizer is bound. Ask for a current reliable fence
                 // immediately instead of waiting indefinitely for incidental live traffic.
                 SendCheckpointRequest();
+                TryBeginPendingJoinBootstrap();
             }
         }
 
@@ -356,6 +374,13 @@ namespace ScMultiplayer
             else
             {
                 m_nextRequestId = m_nextRequestId == int.MaxValue ? 1 : m_nextRequestId + 1;
+                if (operation == CircuitOperationType.Interact &&
+                    TryPrepareLocalButtonSound(target))
+                {
+                    // The host event remains authoritative for voltage and timing. This local
+                    // prediction only removes input-to-audio latency and sends no packet.
+                    PlayCircuitClick(target);
+                }
                 NetworkMessageSender.SendCircuitSync(0, new CircuitSyncMessage
                 {
                     Stage = CircuitSyncStage.Request,
@@ -503,6 +528,7 @@ namespace ScMultiplayer
             m_trackedCircuitCells.Clear();
             m_snapshotParts.Clear();
             m_buttonPulses.Clear();
+            m_localButtonSoundCredentials.Clear();
             m_pendingSwitchStates.Clear();
             m_hostCheckpointHashes.Clear();
             m_hostCheckpointEventSequences.Clear();
@@ -522,6 +548,7 @@ namespace ScMultiplayer
             m_recoveryRequested = false;
             m_snapshotRequested = false;
             m_initialSnapshotApplied = false;
+            m_joinBootstrapPending = false;
             m_hasWorldTimeAnchor = false;
             m_randomGeneratorsInitialized = false;
             m_worldTimeReschedulePending = false;
@@ -1084,6 +1111,16 @@ namespace ScMultiplayer
                 PressSequence = item.Sequence,
                 ReleaseHostStep = releaseHostStep
             };
+            bool suppressDuplicateSound = false;
+            if (!ScMultiplayer.IsHost && m_localButtonSoundCredentials.TryGetValue(
+                face, out double createdTime))
+            {
+                suppressDuplicateSound = Time.RealTime - createdTime <=
+                    LocalButtonSoundCredentialLifetime;
+                m_localButtonSoundCredentials.Remove(face);
+            }
+            if (!suppressDuplicateSound)
+                PlayCircuitClick(face);
             if (ScMultiplayer.IsHost)
             {
                 int confirmHostStep = releaseHostStep + 1;
@@ -1529,12 +1566,14 @@ namespace ScMultiplayer
             if (m_epoch == 0)
             {
                 m_epoch = epoch;
+                TryBeginPendingJoinBootstrap();
                 return true;
             }
             if (m_epoch == epoch) return true;
             Reset();
             EnsureBound(GameManager.Project);
             m_epoch = epoch;
+            TryBeginPendingJoinBootstrap();
             return true;
         }
 
@@ -2250,6 +2289,23 @@ namespace ScMultiplayer
         {
             m_subsystem.SubsystemAudio.PlaySound("Audio/Click", 1f, 0f,
                 new Vector3(face.X, face.Y, face.Z), 2f, autoDelay: true);
+        }
+
+        // Source: Survivalcraft/Game/ButtonElectricElement.cs:ButtonElectricElement.Press
+        private bool TryPrepareLocalButtonSound(CellFace face)
+        {
+            ElectricElement element = m_subsystem.GetElectricElement(
+                face.X, face.Y, face.Z, face.Face);
+            if (!TryGetButtonDeclaringType(element, out Type declaringType))
+                return false;
+            bool wasPressed = ScMultiplayer.ModManager.ModParentField.GetParentField<bool>(
+                element, "m_wasPressed", declaringType);
+            float voltage = ScMultiplayer.ModManager.ModParentField.GetParentField<float>(
+                element, "m_voltage", declaringType);
+            if (wasPressed || ElectricElement.IsSignalHigh(voltage))
+                return false;
+            m_localButtonSoundCredentials[face] = Time.RealTime;
+            return true;
         }
 
         // Source: EntitySystem/SuAPI/ModParentField.cs:ModParentField

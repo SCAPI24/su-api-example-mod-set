@@ -13,7 +13,7 @@ namespace ScMultiplayer
     [Serializable]
     public abstract class Message
     {
-        public const string ModVersion = "1.9.22";
+        public const string ModVersion = "2.0.7";
         public const int ProtocolVersion = 1;
 
         private static readonly Dictionary<int, Type> MessageTypesById = new();
@@ -41,7 +41,7 @@ namespace ScMultiplayer
             Register<EditableDataStateMessage>(3, nameof(EditableDataStateMessage), 1);
             Register<GameKickPlayerMessage>(4, nameof(GameKickPlayerMessage), 1);
             Register<GameModifiedCellsMessage>(5, nameof(GameModifiedCellsMessage), 2);
-            Register<GamePakWorldMessage>(6, nameof(GamePakWorldMessage), 2);
+            Register<GamePakWorldMessage>(6, nameof(GamePakWorldMessage), 3);
             Register<GamePlayerHealthMessage>(7, nameof(GamePlayerHealthMessage), 1);
             Register<GamePlayerInputMessage>(8, nameof(GamePlayerInputMessage), 1);
             Register<GamePlayerPositionMessage>(9, nameof(GamePlayerPositionMessage), 1);
@@ -55,7 +55,7 @@ namespace ScMultiplayer
             Register<WorldControlRequestMessage>(17, nameof(WorldControlRequestMessage), 2);
             Register<AnimalInteractionMessage>(18, nameof(AnimalInteractionMessage), 1);
             Register<BodyUpdateMessage>(19, nameof(BodyUpdateMessage), 1);
-            Register<ContainerSyncMessage>(20, nameof(ContainerSyncMessage), 2);
+            Register<ContainerSyncMessage>(20, nameof(ContainerSyncMessage), 3);
             Register<EntityMessage>(21, nameof(EntityMessage), 1);
             Register<ExplosionSyncMessage>(22, nameof(ExplosionSyncMessage), 1);
             Register<GamePakWorldChunkMessage>(23, nameof(GamePakWorldChunkMessage), 1);

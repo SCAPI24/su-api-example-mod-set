@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Net;
+using System.Threading;
 
 namespace Comms;
 
@@ -279,6 +280,17 @@ public class Comm
         public byte[] DiagnosticPayload;
     }
 
+    // Source: Comms/Comms/Comm.cs:Comm.Start
+    // A synchronous in-process transmitter can re-enter PacketReceived while an
+    // application callback is being dispatched. Keep a FIFO and drain it without
+    // enumerating a collection that callbacks may mutate.
+    private sealed class ReceivedPacketDispatchState
+    {
+        public readonly Queue<Packet> Pending = new();
+
+        public bool IsDispatching;
+    }
+
     private volatile bool IsDisposed;
 
     private Alarm Alarm;
@@ -292,6 +304,9 @@ public class Comm
     private List<uint> ToRemoveUInt = new();
 
     private List<IPEndPoint> ToRemoveEndpoint = new();
+
+    private readonly ThreadLocal<ReceivedPacketDispatchState> ReceivedPacketsToDispatch =
+        new(() => new ReceivedPacketDispatchState());
 
     private static long StartTimestamp = Stopwatch.GetTimestamp();
 
@@ -336,6 +351,7 @@ public class Comm
             };
             Transmitter.PacketReceived += delegate (Packet packet)
             {
+                ReceivedPacketDispatchState dispatchState = ReceivedPacketsToDispatch.Value;
                 lock (Lock)
                 {
                     if (!IsDisposed)
@@ -343,6 +359,7 @@ public class Comm
                         ProcessReceivedPacket(packet);
                     }
                 }
+                DrainReceivedPackets(dispatchState);
             };
             Alarm = new Alarm(AlarmFunction);
             Alarm.Error += delegate (Exception e)
@@ -350,6 +367,27 @@ public class Comm
                 InvokeError(e);
             };
             Alarm.Set(0.0);
+        }
+    }
+
+    private void DrainReceivedPackets(ReceivedPacketDispatchState dispatchState)
+    {
+        if (dispatchState.IsDispatching)
+            return;
+        dispatchState.IsDispatching = true;
+        try
+        {
+            while (dispatchState.Pending.Count > 0)
+            {
+                Packet receivedPacket = dispatchState.Pending.Dequeue();
+                // Source: Comms/Comms/Comm.cs:Comm.AlarmFunction
+                // Dispatch outside Lock so application handlers cannot block ACK generation.
+                InvokeReceived(receivedPacket.Address, receivedPacket.Bytes);
+            }
+        }
+        finally
+        {
+            dispatchState.IsDispatching = false;
         }
     }
 
@@ -504,7 +542,7 @@ public class Comm
         {
             int count = reader.Length - reader.Position;
             byte[] bytes = reader.ReadFixedBytes(count);
-            InvokeReceived(packet.Address, bytes);
+            ReceivedPacketsToDispatch.Value.Pending.Enqueue(new Packet(packet.Address, bytes));
             return;
         }
         if (!Connections.TryGetValue(packet.Address, out var value))
@@ -650,13 +688,13 @@ public class Comm
                 if (!connection.NextReliableReceiveSequenceIndex.HasValue || messagePartHeader.SequenceIndex.Value == connection.NextReliableReceiveSequenceIndex)
                 {
                     connection.NextReliableReceiveSequenceIndex = messagePartHeader.SequenceIndex.Value + 1;
-                    InvokeReceived(address, bytes);
+                    ReceivedPacketsToDispatch.Value.Pending.Enqueue(new Packet(address, bytes));
                     byte[] value;
                     while (connection.SequencedBytes.TryGetValue(connection.NextReliableReceiveSequenceIndex.Value, out value))
                     {
                         connection.SequencedBytes.Remove(connection.NextReliableReceiveSequenceIndex.Value);
                         connection.NextReliableReceiveSequenceIndex++;
-                        InvokeReceived(address, value);
+                        ReceivedPacketsToDispatch.Value.Pending.Enqueue(new Packet(address, value));
                     }
                 }
                 else
@@ -667,12 +705,12 @@ public class Comm
             else if (!connection.NextUnreliableReceiveSequenceIndex.HasValue || CompareSequenceNumbers(messagePartHeader.SequenceIndex.Value, connection.NextUnreliableReceiveSequenceIndex.Value) >= 0)
             {
                 connection.NextUnreliableReceiveSequenceIndex = messagePartHeader.SequenceIndex.Value + 1;
-                InvokeReceived(address, bytes);
+                ReceivedPacketsToDispatch.Value.Pending.Enqueue(new Packet(address, bytes));
             }
         }
         else
         {
-            InvokeReceived(address, bytes);
+            ReceivedPacketsToDispatch.Value.Pending.Enqueue(new Packet(address, bytes));
         }
     }
 

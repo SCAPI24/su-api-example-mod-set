@@ -660,35 +660,41 @@ public class Client : IDisposable
 
     private void Handle(ServerCreateGameAcceptedMessage message)
     {
-        GameID = message.GameID;
-        ClientID = 0;
-        TickDuration = message.TickDuration;
-        StepsPerTick = message.StepsPerTick;
-        DesyncDetectionMode = message.DesyncDetectionMode;
-        DesyncDetectionPeriod = message.DesyncDetectionPeriod;
-        Step = 0;
-        InitializeConnection(null);
-        this.GameCreated?.Invoke(new GameCreatedData
+        lock (Peer.Lock)
         {
-            CreatorAddress = message.CreatorAddress
-        });
+            GameID = message.GameID;
+            ClientID = 0;
+            TickDuration = message.TickDuration;
+            StepsPerTick = message.StepsPerTick;
+            DesyncDetectionMode = message.DesyncDetectionMode;
+            DesyncDetectionPeriod = message.DesyncDetectionPeriod;
+            Step = 0;
+            InitializeConnection(null);
+            this.GameCreated?.Invoke(new GameCreatedData
+            {
+                CreatorAddress = message.CreatorAddress
+            });
+        }
     }
 
     private void Handle(ServerJoinGameAcceptedMessage message)
     {
-        GameID = message.GameID;
-        ClientID = message.ClientID;
-        TickDuration = message.TickDuration;
-        StepsPerTick = message.StepsPerTick;
-        DesyncDetectionMode = message.DesyncDetectionMode;
-        DesyncDetectionPeriod = message.DesyncDetectionPeriod;
-        Step = message.Step;
-        InitializeConnection(message.TickMessages);
-        this.GameJoined?.Invoke(new GameJoinedData
+        lock (Peer.Lock)
         {
-            Step = message.Step,
-            StateBytes = message.StateBytes
-        });
+            GameID = message.GameID;
+            ClientID = message.ClientID;
+            TickDuration = message.TickDuration;
+            StepsPerTick = message.StepsPerTick;
+            DesyncDetectionMode = message.DesyncDetectionMode;
+            DesyncDetectionPeriod = message.DesyncDetectionPeriod;
+            Step = message.Step;
+            InitializeConnection(message.TickMessages);
+            this.GameJoined?.Invoke(new GameJoinedData
+            {
+                Step = message.Step,
+                StateBytes = message.StateBytes
+            });
+        }
     }
 
     private void Handle(ServerConnectRefusedMessage message, IPEndPoint address)
@@ -720,12 +726,15 @@ public class Client : IDisposable
 
     private void Handle(ServerTickMessage message)
     {
-        if (!DesyncDetectedStep.HasValue && message.DesyncDetectedStep.HasValue)
+        lock (Peer.Lock)
         {
-            DesyncDetectedStep = message.DesyncDetectedStep;
+            if (!DesyncDetectedStep.HasValue && message.DesyncDetectedStep.HasValue)
+            {
+                DesyncDetectedStep = message.DesyncDetectedStep;
+            }
+            TickMessages.Enqueue(message);
+            Alarm.Set(0.0);
         }
-        TickMessages.Enqueue(message);
-        Alarm.Set(0.0);
     }
 
     private void Handle(ServerDirectInputMessage message)
