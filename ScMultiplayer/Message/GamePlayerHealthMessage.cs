@@ -41,6 +41,10 @@ namespace ScMultiplayer
         public string CauseOrSource;   // 伤害/治疗来源
         // Source: Survivalcraft/Game/ComponentHealth.cs:ComponentHealth.Update
         public int DamageSequence;
+        // Source: Mod/ScMultiplayer/Plug/ScMultiplayer.cs:SendAuthoritativePlayerHealth
+        // Monotonically increases on the host so delayed reliable snapshots cannot restore
+        // an older sleep, temperature or vital-stat state on a client.
+        public int AuthoritativeStateSequence;
 
         public GamePlayerHealthMessage() { }
 
@@ -106,6 +110,7 @@ namespace ScMultiplayer
             CoughSequence = reader.ReadInt32();
             IsCoughing = reader.ReadBoolean();
             DamageSequence = reader.ReadInt32();
+            AuthoritativeStateSequence = reader.ReadInt32();
         }
 
         protected override void Write(SuWriter writer)
@@ -139,6 +144,7 @@ namespace ScMultiplayer
             writer.WriteInt32(CoughSequence);
             writer.WriteBoolean(IsCoughing);
             writer.WriteInt32(DamageSequence);
+            writer.WriteInt32(AuthoritativeStateSequence);
         }
     }
 }

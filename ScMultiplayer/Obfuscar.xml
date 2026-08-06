@@ -27,6 +27,7 @@
     <SkipType name="ScMultiplayer.SuSubsystemGrassBlockBehavior" />
     <SkipType name="ScMultiplayer.SuSubsystemDeciduousLeavesBlockBehavior" />
     <SkipType name="ScMultiplayer.SuSubsystemExplosions" />
+    <SkipType name="ScMultiplayer.SuSubsystemFireBlockBehavior" />
     <SkipType name="ScMultiplayer.SuSubsystemProjectiles" />
     <SkipType name="ScMultiplayer.SuSubsystemPickables" />
     <SkipType name="ScMultiplayer.SuSubsystemWhistleBlockBehavior" />

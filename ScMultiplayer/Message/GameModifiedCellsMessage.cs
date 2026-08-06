@@ -17,6 +17,13 @@ namespace ScMultiplayer
         public bool IsCatchUp;
         public int TargetClientId = -1;
 
+        // Source: ScMultiplayer.HandleTerrainChunkSyncMessage
+        // Local-only checkpoint provenance. It is intentionally not serialized with ordinary
+        // terrain traffic; the receiving client uses it to acknowledge a Chunk revision only
+        // after this batch has reached valid terrain storage.
+        internal Point2? ChunkCheckpointCoordinates;
+        internal long ChunkCheckpointRevision;
+
         public GameModifiedCellsMessage()
         {
         }

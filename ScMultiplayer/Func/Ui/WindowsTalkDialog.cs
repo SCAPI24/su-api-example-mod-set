@@ -5,6 +5,7 @@ using System;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
+using SuAPI;
 
 namespace ScMultiplayer
 {
@@ -27,6 +28,7 @@ namespace ScMultiplayer
         }
 
         private readonly TextBoxAccessor m_textBox;
+        private IDisposable m_textInputLease;
         private bool m_inputSessionClosed;
 
         public WindowsTalkDialog(string title, string text, int maximumLength,
@@ -43,6 +45,10 @@ namespace ScMultiplayer
             KeyboardInput.GetInput();
             KeyboardInput.DeletePressed = false;
             Keyboard.Clear();
+            // Source: EntitySystem/SuAPI/TextInputControl.cs:TextInputControl.Request
+            // The request transition lets SuAPI attach the IME on the frame after a mouse-opened
+            // dialog, without waiting for the first keyboard message.
+            m_textInputLease = TextInputControl.Request();
         }
 
         public override void Update()
@@ -155,6 +161,8 @@ namespace ScMultiplayer
         {
             m_inputSessionClosed = true;
             m_textBox.HasFocus = false;
+            m_textInputLease?.Dispose();
+            m_textInputLease = null;
             KeyboardInput.GetInput();
             KeyboardInput.DeletePressed = false;
             Keyboard.Clear();

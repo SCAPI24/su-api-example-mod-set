@@ -47,6 +47,13 @@ namespace ScMultiplayer
         public int[] SlotValues = Array.Empty<int>();
         public int[] SlotCounts = Array.Empty<int>();
         public int[][] Clothes = CreateEmptyClothes();
+        // Source: Mod/ScMultiplayer/Plug/ScMultiplayer.cs:NetworkPlayerRecord
+        public Quaternion PlayerBodyRotation = Quaternion.Identity;
+        public Vector2 PlayerLookAngles;
+        public float PlayerFireDuration;
+        public Dictionary<int, float> PlayerSatiation = new Dictionary<int, float>();
+        public int[] HandcraftSlotValues = Array.Empty<int>();
+        public int[] HandcraftSlotCounts = Array.Empty<int>();
 
         public GamePakWorldMessage()
         {
@@ -92,6 +99,16 @@ namespace ScMultiplayer
             SlotCounts = playerRecord?.SlotCounts != null
                 ? (int[])playerRecord.SlotCounts.Clone() : Array.Empty<int>();
             Clothes = CloneClothes(playerRecord?.Clothes);
+            PlayerBodyRotation = playerRecord?.BodyRotation ?? Quaternion.Identity;
+            PlayerLookAngles = playerRecord?.LookAngles ?? Vector2.Zero;
+            PlayerFireDuration = playerRecord?.FireDuration ?? 0f;
+            PlayerSatiation = playerRecord?.Satiation != null
+                ? new Dictionary<int, float>(playerRecord.Satiation)
+                : new Dictionary<int, float>();
+            HandcraftSlotValues = playerRecord?.HandcraftSlotValues != null
+                ? (int[])playerRecord.HandcraftSlotValues.Clone() : Array.Empty<int>();
+            HandcraftSlotCounts = playerRecord?.HandcraftSlotCounts != null
+                ? (int[])playerRecord.HandcraftSlotCounts.Clone() : Array.Empty<int>();
         }
 
         protected override void Read(SuReader reader)
@@ -151,6 +168,21 @@ namespace ScMultiplayer
             SkinSha256 = reader.Position < reader.Length
                 ? reader.ReadBytes()
                 : Array.Empty<byte>();
+            if (reader.Position < reader.Length)
+                PlayerBodyRotation = reader.ReadQuaternion(reader);
+            if (reader.Position < reader.Length)
+                PlayerLookAngles = reader.ReadVector2(reader);
+            if (reader.Position < reader.Length)
+                PlayerFireDuration = reader.ReadSingle();
+            if (reader.Position < reader.Length)
+            {
+                int satiationCount = reader.ReadPackedInt32();
+                PlayerSatiation = new Dictionary<int, float>(satiationCount);
+                for (int i = 0; i < satiationCount; i++)
+                    PlayerSatiation[reader.ReadInt32()] = reader.ReadSingle();
+            }
+            if (reader.Position < reader.Length)
+                ReadSlots(reader, out HandcraftSlotValues, out HandcraftSlotCounts);
         }
 
         protected override void Write(SuWriter writer)
@@ -212,6 +244,19 @@ namespace ScMultiplayer
                 foreach (int value in clothes[slot]) writer.WriteInt32(value);
             }
             writer.WriteBytes(SkinSha256 ?? Array.Empty<byte>());
+            writer.WriteQuaternion(writer, PlayerBodyRotation);
+            writer.WriteVector2(writer, PlayerLookAngles);
+            writer.WriteSingle(PlayerFireDuration);
+            writer.WritePackedInt32(PlayerSatiation?.Count ?? 0);
+            if (PlayerSatiation != null)
+            {
+                foreach (KeyValuePair<int, float> item in PlayerSatiation)
+                {
+                    writer.WriteInt32(item.Key);
+                    writer.WriteSingle(item.Value);
+                }
+            }
+            WriteSlots(writer, HandcraftSlotValues, HandcraftSlotCounts);
         }
 
         private static int[][] CreateEmptyClothes() =>
@@ -224,6 +269,29 @@ namespace ScMultiplayer
             for (int i = 0; i < Math.Min(result.Length, clothes.Length); i++)
                 result[i] = clothes[i] != null ? (int[])clothes[i].Clone() : Array.Empty<int>();
             return result;
+        }
+
+        private static void ReadSlots(SuReader reader, out int[] values, out int[] counts)
+        {
+            int count = reader.ReadPackedInt32();
+            values = new int[count];
+            counts = new int[count];
+            for (int i = 0; i < count; i++)
+            {
+                values[i] = reader.ReadInt32();
+                counts[i] = reader.ReadInt32();
+            }
+        }
+
+        private static void WriteSlots(SuWriter writer, int[] values, int[] counts)
+        {
+            int count = Math.Min(values?.Length ?? 0, counts?.Length ?? 0);
+            writer.WritePackedInt32(count);
+            for (int i = 0; i < count; i++)
+            {
+                writer.WriteInt32(values[i]);
+                writer.WriteInt32(counts[i]);
+            }
         }
     }
 }

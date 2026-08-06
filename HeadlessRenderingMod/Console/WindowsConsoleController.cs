@@ -197,6 +197,7 @@ namespace HeadlessRenderingMod
                     "Delete World",
                     "Create Player",
                     "Manage Players",
+                    "Multiplayer Hosting",
                     "Multiplayer Bandwidth",
                     "Server Status",
                     "Command Line",
@@ -236,15 +237,18 @@ namespace HeadlessRenderingMod
                             ManagePlayers();
                             break;
                         case 8:
-                            ConfigureMultiplayerBandwidth();
+                            ConfigureMultiplayerHosting();
                             break;
                         case 9:
-                            ShowResponse("status");
+                            ConfigureMultiplayerBandwidth();
                             break;
                         case 10:
-                            RunCommandLine();
+                            ShowResponse("status");
                             break;
                         case 11:
+                            RunCommandLine();
+                            break;
+                        case 12:
                             if (PromptBoolean("Shut down Survivalcraft", false))
                             {
                                 PrintResponse(m_server.SubmitLocal("shutdown"));
@@ -332,6 +336,9 @@ namespace HeadlessRenderingMod
                 case "multiplayer.settings":
                     ConfigureMultiplayerBandwidth();
                     break;
+                case "multiplayer.hosting":
+                    ConfigureMultiplayerHosting();
+                    break;
                 case "screenlist":
                 case "screen.list":
                     PrintResponse(m_server.SubmitLocal("screen.list"));
@@ -367,7 +374,7 @@ namespace HeadlessRenderingMod
         {
             Console.WriteLine();
             Console.WriteLine("CreateWorld, WorldList, JoinWorld, SaveWorld, ExportWorld, DeleteWorld, WorldMode");
-            Console.WriteLine("CreatePlayer, ManagePlayers, Multiplayer, Status, ScreenList");
+            Console.WriteLine("CreatePlayer, ManagePlayers, Multiplayer, Multiplayer.Hosting, Status, ScreenList");
             Console.WriteLine("SwitchScreen <name>, DialogList, SequenceList, Shutdown, Menu");
             Console.WriteLine();
         }
@@ -1376,7 +1383,38 @@ namespace HeadlessRenderingMod
             }
         }
 
-        private void ConfigureMultiplayerBandwidth()
+        // Source: ScMultiplayer/Func/Server/ScMultiplayerSettings.cs:ScMultiplayerSettings.Save
+        private void ConfigureMultiplayerHosting()
+        {
+            int selected = 0;
+            while (m_running)
+            {
+                Dictionary<string, object> settings = GetMultiplayerSettings();
+                bool autoHost = ReadBoolean(settings, "autoCreateRoomFromCurrentWorld", false);
+                bool autoApprove = ReadBoolean(settings, "autoApproveJoinRequests", false);
+                int? choice = SelectMenu("Multiplayer Hosting",
+                    new[]
+                    {
+                        "Auto host loaded world [" + (autoHost ? "On" : "Off") + "]",
+                        "Auto approve joins [" + (autoApprove ? "On" : "Off") + "]",
+                        "Back"
+                    }, selected);
+                if (!choice.HasValue || choice.Value == 2)
+                    return;
+                selected = choice.Value;
+                string name = selected == 0
+                    ? "autoCreateRoomFromCurrentWorld"
+                    : "autoApproveJoinRequests";
+                bool value = selected == 0 ? !autoHost : !autoApprove;
+                RequireSuccess(m_server.SubmitLocal("multiplayer.settings",
+                    new Dictionary<string, object>(StringComparer.Ordinal)
+                    {
+                        [name] = value
+                    }));
+            }
+        }
+
+        private Dictionary<string, object> GetMultiplayerSettings()
         {
             Dictionary<string, object> response = RequireSuccess(
                 m_server.SubmitLocal("multiplayer.settings"));
@@ -1385,6 +1423,12 @@ namespace HeadlessRenderingMod
             {
                 throw new InvalidOperationException("Multiplayer settings response is invalid.");
             }
+            return settings;
+        }
+
+        private void ConfigureMultiplayerBandwidth()
+        {
+            Dictionary<string, object> settings = GetMultiplayerSettings();
 
             string mode = settings.TryGetValue("bandwidthMode", out object modeValue) &&
                 string.Equals(modeValue?.ToString(), "separate", StringComparison.OrdinalIgnoreCase)
