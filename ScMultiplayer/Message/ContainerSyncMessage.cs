@@ -28,6 +28,10 @@ namespace ScMultiplayer
         public int[] PlayerBaseSlotCounts = Array.Empty<int>();
         public int[] PlayerSlotValues = Array.Empty<int>();
         public int[] PlayerSlotCounts = Array.Empty<int>();
+        // Source: Game/ComponentCraftingTable.cs:ComponentCraftingTable.FindInteractingPlayer
+        // A non-negative owner identifies the crafting inventory attached to that player's entity.
+        public int OwnerClientId = -1;
+        public bool IsBaselineRequest;
 
         protected override void Read(SuReader reader)
         {
@@ -50,6 +54,10 @@ namespace ScMultiplayer
             ReadSlots(reader, out BaseSlotValues, out BaseSlotCounts);
             ReadSlots(reader, out PlayerBaseSlotValues, out PlayerBaseSlotCounts);
             ReadSlots(reader, out PlayerSlotValues, out PlayerSlotCounts);
+            if (reader.Position < reader.Length)
+                OwnerClientId = reader.ReadInt32();
+            if (reader.Position < reader.Length)
+                IsBaselineRequest = reader.ReadBoolean();
         }
 
         protected override void Write(SuWriter writer)
@@ -73,6 +81,8 @@ namespace ScMultiplayer
             WriteSlots(writer, BaseSlotValues, BaseSlotCounts);
             WriteSlots(writer, PlayerBaseSlotValues, PlayerBaseSlotCounts);
             WriteSlots(writer, PlayerSlotValues, PlayerSlotCounts);
+            writer.WriteInt32(OwnerClientId);
+            writer.WriteBoolean(IsBaselineRequest);
         }
 
         private static void ReadSlots(SuReader reader, out int[] values, out int[] counts)

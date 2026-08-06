@@ -453,7 +453,9 @@ namespace HeadlessRenderingMod
         private Dictionary<string, object> UpdateMultiplayerSettings(ControlRequest request)
         {
             var values = new Dictionary<string, object>(StringComparer.Ordinal);
-            bool changed = CopyOptionalBoolean(request, values, "bandwidthConfigurationEnabled") |
+            bool changed = CopyOptionalBoolean(request, values, "autoCreateRoomFromCurrentWorld") |
+                CopyOptionalBoolean(request, values, "autoApproveJoinRequests") |
+                CopyOptionalBoolean(request, values, "bandwidthConfigurationEnabled") |
                 CopyOptionalString(request, values, "bandwidthMode") |
                 CopyOptionalInteger(request, values, "sharedTotalSafeCapKbps") |
                 CopyOptionalInteger(request, values, "serverUploadLimitKbps") |

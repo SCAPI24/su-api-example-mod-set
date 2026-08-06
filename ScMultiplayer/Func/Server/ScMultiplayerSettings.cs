@@ -220,6 +220,8 @@ namespace ScMultiplayer
         {
             return new Dictionary<string, object>(StringComparer.Ordinal)
             {
+                ["autoApproveJoinRequests"] = AutoApproveJoinRequests,
+                ["autoCreateRoomFromCurrentWorld"] = AutoCreateRoomFromCurrentWorld,
                 ["bandwidthConfigurationEnabled"] = BandwidthConfigurationEnabled,
                 ["bandwidthMode"] = BandwidthMode == BandwidthLimitMode.SharedTotal
                     ? "shared" : "separate",
@@ -238,6 +240,10 @@ namespace ScMultiplayer
             if (values == null)
                 return;
 
+            AutoApproveJoinRequests = UpdateBoolean(values,
+                "autoApproveJoinRequests", AutoApproveJoinRequests);
+            AutoCreateRoomFromCurrentWorld = UpdateBoolean(values,
+                "autoCreateRoomFromCurrentWorld", AutoCreateRoomFromCurrentWorld);
             if (values.TryGetValue("bandwidthConfigurationEnabled", out object enabled) &&
                 enabled != null)
             {
@@ -280,6 +286,21 @@ namespace ScMultiplayer
                 "joinTransferPerJoinMaxKbps", JoinTransferPerJoinMaxKbps,
                 MaximumBandwidthKbps);
             Save();
+        }
+
+        private static bool UpdateBoolean(IDictionary<string, object> values,
+            string name, bool target)
+        {
+            if (!values.TryGetValue(name, out object item) || item == null)
+                return target;
+            try
+            {
+                return Convert.ToBoolean(item, System.Globalization.CultureInfo.InvariantCulture);
+            }
+            catch (Exception)
+            {
+                throw new ArgumentException(name + " must be boolean.", name);
+            }
         }
 
         private static void Save()
