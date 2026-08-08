@@ -384,13 +384,47 @@ namespace ScMultiplayer
                 m_remoteTimeAccelerated = false;
         }
 
+        // Source: CircuitSynchronizer.NotifyRemoteTimeAccelerationChanged
+        // The reliable world edge or the fence-rate fallback can end the host sleep session.
+        // Preserve that fact independently from a single player-health snapshot so a client
+        // cannot remain asleep after the authoritative circuit boundary is ready.
+        internal void MarkClientSleepWakeBoundaryPending()
+        {
+            if (!IsHost)
+                m_clientSleepWakeBoundaryPending = true;
+        }
+
         // Source: CircuitSynchronizer.IsClientBootstrapReady
         // The host snapshot rebases directly to the final accelerated circuit boundary. Do not
         // replay the night's missing steps; wake the presentation only after that rebase is ready.
         private void CompletePendingClientSleepWakeups()
         {
-            if (m_pendingClientSleepWakeups.Count == 0 ||
-                ShouldDeferClientSleepWakeup())
+            if (ShouldDeferClientSleepWakeup())
+                return;
+
+            if (m_clientSleepWakeBoundaryPending)
+            {
+                SubsystemPlayers players = GameManager.Project?
+                    .FindSubsystem<SubsystemPlayers>(false);
+                if (players == null)
+                    return;
+
+                bool foundLocalPlayer = false;
+                foreach (ComponentPlayer player in players.ComponentPlayers.ToArray())
+                {
+                    if (player?.PlayerData == null ||
+                        m_networkPlayerData.Values.Contains(player.PlayerData))
+                        continue;
+                    foundLocalPlayer = true;
+                    if (player.ComponentSleep?.IsSleeping == true)
+                        m_pendingClientSleepWakeups.Add(player.ComponentSleep);
+                }
+                if (!foundLocalPlayer)
+                    return;
+                m_clientSleepWakeBoundaryPending = false;
+            }
+
+            if (m_pendingClientSleepWakeups.Count == 0)
                 return;
             foreach (ComponentSleep sleep in m_pendingClientSleepWakeups.ToArray())
             {
