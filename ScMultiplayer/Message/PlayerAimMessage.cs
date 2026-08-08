@@ -28,6 +28,11 @@ namespace ScMultiplayer
         public Quaternion BodyRotation;
         public Vector3 BodyVelocity;
         public int ClientTick;
+        public bool HasProjectileLaunch;
+        public int ProjectileValue;
+        public Vector3 ProjectilePosition;
+        public Vector3 ProjectileVelocity;
+        public Vector3 ProjectileAngularVelocity;
 
         public PlayerAimMessage()
         {
@@ -66,6 +71,14 @@ namespace ScMultiplayer
             {
                 BodyVelocity = reader.ReadVector3(reader);
                 ClientTick = reader.ReadPackedInt32();
+                HasProjectileLaunch = reader.ReadBoolean();
+                if (HasProjectileLaunch)
+                {
+                    ProjectileValue = reader.ReadInt32();
+                    ProjectilePosition = reader.ReadVector3(reader);
+                    ProjectileVelocity = reader.ReadVector3(reader);
+                    ProjectileAngularVelocity = reader.ReadVector3(reader);
+                }
             }
         }
 
@@ -83,6 +96,14 @@ namespace ScMultiplayer
             {
                 writer.WriteVector3(writer, BodyVelocity);
                 writer.WritePackedInt32(ClientTick);
+                writer.WriteBoolean(HasProjectileLaunch);
+                if (HasProjectileLaunch)
+                {
+                    writer.WriteInt32(ProjectileValue);
+                    writer.WriteVector3(writer, ProjectilePosition);
+                    writer.WriteVector3(writer, ProjectileVelocity);
+                    writer.WriteVector3(writer, ProjectileAngularVelocity);
+                }
             }
         }
     }

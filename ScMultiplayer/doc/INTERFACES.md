@@ -182,3 +182,20 @@
 | ModResource.LoadModResources() | Content 加载 | 自定义纹理/音效 |
 | ModResource KV Store | 键值存储 | Mod 配置持久化 |
 | ModInjector.Register() | 类名映射 | Block 类型替换 |
+
+## 六、2.0.8 Mod-only 端口
+
+为避免业务模块直接依赖 Comms 或另一个巨型 partial，控制单元提供以下最小端口：
+
+| 端口 | 所有者 | 约束 |
+|------|--------|------|
+| `INetworkTransport` | `CommsTransportAdapter` | 只暴露目标端点、步数和原始发送 |
+| `IReliableChannel` | `ReliableChannelCoordinator` | 只表达可靠策略，不复制 ACK/重传状态 |
+| `IGameThreadDispatcher` | 游戏线程适配器 | 只排队主线程和帧尾动作 |
+| `IAuthoritativeWorld` | 世界适配器 | 主机权威世界句柄和客户端清理边界 |
+| `IWorldSnapshotStore` | 加入/地形快照模块 | revision 读取与按客户端重置 |
+| `IPlayerStateStore` | 玩家状态/档案模块 | 玩家快照读取与按客户端重置 |
+| `IMultiplayerRuntimeHost` | `ScMultiplayer` 兼容外壳 | 只提供八个固定阶段的调用端口 |
+
+这些接口位于 Mod 内部，不改变原版程序集、线上消息字段或协议版本。稳定业务实现继续复用
+原版类型和现有 SuAPI 注入点，只有在回归证据充分时才从兼容外壳移到独立类。

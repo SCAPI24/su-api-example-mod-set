@@ -33,6 +33,11 @@ namespace ScMultiplayer
         // Keeps the owning client under the same native locomotion stun as the host.
         public float KnockbackStunTime;
         public bool IsSleeping;
+        // Source: Survivalcraft/Game/ComponentSleep.cs:ComponentSleep.Sleep
+        // Host time is the shared sleep session boundary. Clients must not derive it from
+        // the local request arrival time, otherwise automatic wake-up happens at different times.
+        public double SleepStartTime;
+        public float SleepFactor;
         public float FireDuration;
         public float FluDuration;
         public float SicknessDuration;
@@ -53,7 +58,8 @@ namespace ScMultiplayer
             float sleep, float temperature, float targetTemperature, float wetness, float level,
             Vector3 bodyVelocity, bool hasKnockback, bool isSleeping, float fireDuration,
             float fluDuration, float sicknessDuration, int coughSequence,
-            bool isCoughing, string cause = null)
+            bool isCoughing, string cause = null, double sleepStartTime = 0.0,
+            float sleepFactor = 0f)
         {
             PlayerIndex = playerIndex;
             Health = health;
@@ -72,6 +78,8 @@ namespace ScMultiplayer
             BodyVelocity = bodyVelocity;
             HasKnockback = hasKnockback;
             IsSleeping = isSleeping;
+            SleepStartTime = sleepStartTime;
+            SleepFactor = sleepFactor;
             FireDuration = fireDuration;
             FluDuration = fluDuration;
             SicknessDuration = sicknessDuration;
@@ -104,6 +112,12 @@ namespace ScMultiplayer
                 KnockbackStunTime = reader.ReadSingle();
             }
             IsSleeping = reader.ReadBoolean();
+            SleepStartTime = reader.Position + 8 <= reader.Length
+                ? reader.ReadDouble()
+                : 0.0;
+            SleepFactor = reader.Position + 4 <= reader.Length
+                ? reader.ReadSingle()
+                : 0f;
             FireDuration = reader.ReadSingle();
             FluDuration = reader.ReadSingle();
             SicknessDuration = reader.ReadSingle();
@@ -138,6 +152,8 @@ namespace ScMultiplayer
                 writer.WriteSingle(KnockbackStunTime);
             }
             writer.WriteBoolean(IsSleeping);
+            writer.WriteDouble(SleepStartTime);
+            writer.WriteSingle(SleepFactor);
             writer.WriteSingle(FireDuration);
             writer.WriteSingle(FluDuration);
             writer.WriteSingle(SicknessDuration);

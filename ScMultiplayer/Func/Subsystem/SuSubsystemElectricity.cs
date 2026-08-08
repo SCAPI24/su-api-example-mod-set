@@ -27,8 +27,30 @@ namespace ScMultiplayer
         // Source: Survivalcraft/Game/SubsystemElectricity.cs:SubsystemElectricity.Update
         void IUpdateable.Update(float dt)
         {
+            // Source: Survivalcraft/Game/SubsystemUpdate.cs:SubsystemUpdate.Update
+            // SubsystemTime.NextFrame decides the logical loop count before updateables run.
+            // Apply the client authority rule before any circuit/synchronizer early return, so
+            // maps without circuits cannot accidentally execute the whole client world 20 times.
+            ScMultiplayer.currentInstance?.MaintainClientAuthoritativeTimeFlow(Project);
             if (m_synchronizer == null)
             {
+                // Source: Mod/ScMultiplayer/Func/Circuit/CircuitSynchronizer.cs:
+                // CircuitSynchronizer.EnsureBound
+                // A connected client must not run the native bootstrap circuit before the
+                // synchronizer has attached and received an authoritative fence/snapshot. The
+                // project loader queues newly created elements for simulation; executing that
+                // queue here can create a client-only edge before host state is applied.
+                if (!ScMultiplayer.IsHost &&
+                    ScMultiplayer.client?.IsConnected == true)
+                {
+                    // Source: Survivalcraft/Game/SubsystemElectricity.cs:SubsystemElectricity.Update
+                    // A newly loaded client Project can run one native bootstrap step before
+                    // CircuitSynchronizer.EnsureBound. Holding every connected client here,
+                    // rather than relying on the join-state flag, prevents a client-only
+                    // voltage edge during that short binding window.
+                    m_remainingNetworkSimulationTime = 0f;
+                    return;
+                }
                 base.Update(dt);
                 return;
             }
@@ -38,7 +60,8 @@ namespace ScMultiplayer
                 // ScMultiplayer.UpdateReliableTransportHealth
                 // Do not let the client run an independent circuit timeline while a stalled
                 // reliable transport is being replaced and an authoritative rejoin is pending.
-                if (ScMultiplayer.currentInstance?.ShouldHoldCircuitForReconnect == true)
+                if (ScMultiplayer.currentInstance?.ShouldHoldCircuitForReconnect == true ||
+                    ScMultiplayer.currentInstance?.ShouldHoldClientCircuitBeforeBinding == true)
                 {
                     m_remainingNetworkSimulationTime = 0f;
                     return;

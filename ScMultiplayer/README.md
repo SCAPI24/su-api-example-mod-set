@@ -15,6 +15,14 @@ No multiplayer management item is added to the main menu or world list.
 
 Clients see `IF`, `TA` and `MP`, but server controls such as join approval, pending requests and disconnecting players are shown only to the host. `MP > Talk` retains the 50 most recent messages for the current room session.
 
+## 2.0.8 modular runtime
+
+The networking control unit now schedules Session, JoinTransfer, WorldControl, Circuit, World,
+Player, Entity and UI phases. Message decoding and domain queue selection are centralized in a
+router, while the existing terrain, circuit, inventory and entity adapters remain authoritative.
+This is a Mod-only refactor: the wire IDs, field order, reliable sequence and Comms transport are
+unchanged, and `Comms.dll` is packaged beside `ScMultiplayer.dll` under the flat `Lib/` directory.
+
 Remote room entries tolerate temporary discovery packet loss and preserve valid selection indices while the list refreshes. Respawning creates a clean authoritative player state, including normal body temperature, dry clothing, full vital stats and cleared transient illness effects.
 
 ## Current-world room

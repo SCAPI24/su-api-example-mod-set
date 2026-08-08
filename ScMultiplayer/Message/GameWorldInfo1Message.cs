@@ -21,6 +21,8 @@ namespace ScMultiplayer
         public bool HasLightningStrike;
         public Vector3 LightningStrikePosition;
         public long TerrainSequence;
+        public int WorldTimeRevision;
+        public bool IsTimeAccelerated;
 
         public GameWorldInfoMessage1()
         {
@@ -62,11 +64,15 @@ namespace ScMultiplayer
             TerrainSequence = reader.Position + 8 <= reader.Length
                 ? reader.ReadInt64()
                 : 0L;
+            WorldTimeRevision = reader.ReadPackedInt32(1, int.MaxValue);
+            IsTimeAccelerated = reader.Position < reader.Length && reader.ReadBoolean();
         }
 
         protected override void Write(SuWriter writer)
         {
             // Source: Mod/ScMultiplayer/Plug/ScMultiplayer.cs:ScMultiplayer.TriggerNetworkTick
+            if (WorldTimeRevision <= 0)
+                throw new InvalidOperationException("Invalid world-time revision.");
             writer.WriteInt32(ServerTick);
             writer.WriteDouble(TimeOfDayOffset);
             writer.WriteDouble(TotalElapsedGameTime);
@@ -80,6 +86,8 @@ namespace ScMultiplayer
             writer.WriteBoolean(HasLightningStrike);
             if (HasLightningStrike) writer.WriteVector3(writer, LightningStrikePosition);
             writer.WriteInt64(TerrainSequence);
+            writer.WritePackedInt32(WorldTimeRevision);
+            writer.WriteBoolean(IsTimeAccelerated);
         }
     }
 }
