@@ -701,7 +701,7 @@ StringInterceptor Mod 在 Android Release 版加载成功（2505翻译+72 String
 - apksigner 的 `--out` 参数解析失败，输出文件不存在
 - PowerShell 的 `Get-Item`/`Remove-Item`/`Move-Item` 把 `[]` 当字符集通配符
 
-**修复**: 
+**修复**:
 - apksigner 签名时 `--out` 指向临时文件名 `signed.apk`（无特殊字符）
 - 签名完成后再用 `Move-Item -LiteralPath` 重命名为含[]的最终文件名
 - PowerShell 操作含[]路径一律用 `-LiteralPath`

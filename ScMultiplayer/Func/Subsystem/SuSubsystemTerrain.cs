@@ -19,6 +19,11 @@ namespace ScMultiplayer
         private const int MaximumDeferredNetworkTerrainCells = 8192;
         private const int MaximumDeferredNetworkRetriesPerFrame = 128;
         private const double DeferredNetworkCellRetryInterval = 0.1;
+        // Source: Survivalcraft/Game/SubsystemTerrain.cs:SubsystemTerrain.ProcessModifiedCells
+        // Mounted electric elements and wire faces can create several neighbor-change waves.
+        // Drain small chains in one frame, but keep large cascades bounded.
+        private const int MaximumHostModifiedCellPropagationPasses = 8;
+        private const int MaximumHostModifiedCellsPerPropagation = 1024;
 
         private static readonly ConcurrentDictionary<long, GameModifiedCellsMessage>
             m_receivedSequencedBatches =
@@ -96,7 +101,14 @@ namespace ScMultiplayer
             if (message.Sequence > 0)
             {
                 if (message.Sequence > LastAppliedTerrainSequence)
+                {
+                    // Recovery compaction can omit a sequence that changed no final cell. Keep
+                    // that sequence in the ordered stream as an empty barrier, so acknowledgments
+                    // remain contiguous without replaying obsolete intermediate terrain states.
+                    if (message.ModifiedCells == null || message.ModifiedCells.Count == 0)
+                        message.ModifiedCells = new Dictionary<Point3, bool>();
                     m_receivedSequencedBatches.TryAdd(message.Sequence, message);
+                }
             }
             else
             {
@@ -228,20 +240,55 @@ namespace ScMultiplayer
             // behavior changes. Capture the modification dictionary after it completes, before
             // ProcessModifiedCells clears it, so every ChangeCell/DestroyCell result is sent.
             TerrainUpdater.Update();
-            PublishAllModifiedCells();
-            ProcessModifiedCells();
-            // Source: Survivalcraft/Game/SubsystemTerrain.cs:SubsystemTerrain.ProcessModifiedCells
-            // Support removal can destroy a mounted circuit element while neighbor callbacks are
-            // running. Publish and process that derived terrain wave before another subsystem can
-            // clear it, while keeping the native neighbor algorithm authoritative on the host.
-            if (m_modifiedCells.Count > 0)
+            if (ScMultiplayer.client?.IsConnected == true && ScMultiplayer.IsHost)
+            {
+                PublishHostModifiedCellClosure();
+            }
+            else
             {
                 PublishAllModifiedCells();
                 ProcessModifiedCells();
+                // Source: Survivalcraft/Game/SubsystemTerrain.cs:
+                // SubsystemTerrain.ProcessModifiedCells
+                // Preserve the existing client prediction/repair path for one derived wave.
+                if (m_modifiedCells.Count > 0)
+                {
+                    PublishAllModifiedCells();
+                    ProcessModifiedCells();
+                }
             }
             m_networkReceivedCellValues.Clear();
             m_clientCircuitGeneratedCells.Clear();
             m_clientCircuitBaselineCells.Clear();
+        }
+
+        // Source: Survivalcraft/Game/SubsystemTerrain.cs:SubsystemTerrain.ProcessModifiedCells
+        // A wire face or mounted LED can be changed by a neighbor callback which then changes
+        // another wire face. Publish the final host values for the whole bounded closure instead
+        // of exposing intermediate states as separate terrain sequences.
+        private void PublishHostModifiedCellClosure()
+        {
+            var hostChanges = new Dictionary<Point3, bool>();
+            int passes = 0;
+            int processedCells = 0;
+            do
+            {
+                foreach (KeyValuePair<Point3, bool> item in m_modifiedCells)
+                    hostChanges[item.Key] = item.Value;
+                processedCells += m_modifiedCells.Count;
+                ProcessModifiedCells();
+                passes++;
+            }
+            while (m_modifiedCells.Count > 0 &&
+                passes < MaximumHostModifiedCellPropagationPasses &&
+                processedCells < MaximumHostModifiedCellsPerPropagation);
+
+            // A large cascade continues through the native next-frame path. Its already-written
+            // cells are still published now so clients never wait for an unrelated later change.
+            foreach (KeyValuePair<Point3, bool> item in m_modifiedCells)
+                hostChanges[item.Key] = item.Value;
+            if (hostChanges.Count > 0)
+                ScMultiplayer.currentInstance?.PublishTerrainChanges(hostChanges);
         }
 
         private void PublishAllModifiedCells()

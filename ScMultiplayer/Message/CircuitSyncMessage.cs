@@ -97,11 +97,17 @@ namespace ScMultiplayer
         public int SnapshotPartIndex;
         public int SnapshotPartCount;
         public int TimelineGeneration;
+        public int WorldTimeRevision;
         public int SafeThroughHostCircuitStep;
         public bool IsPaused;
         public bool HashAvailable;
         public double TotalElapsedGameTime;
         public double TimeOfDayOffset;
+        public bool HasSnapshotScope;
+        public int SnapshotMinChunkX;
+        public int SnapshotMinChunkZ;
+        public int SnapshotMaxChunkX;
+        public int SnapshotMaxChunkZ;
         public readonly List<int> SnapshotMissingParts = new List<int>();
         public readonly List<CircuitStateRecord> States = new List<CircuitStateRecord>();
 
@@ -165,6 +171,7 @@ namespace ScMultiplayer
                         throw new InvalidOperationException("Invalid circuit hash availability.");
                     HashAvailable = hashAvailable != 0;
                     StateHash = HashAvailable ? reader.ReadUInt32() : 0u;
+                    ReadSnapshotScope(reader);
                     break;
                 case CircuitSyncStage.RepairPlan:
                     Epoch = reader.ReadPackedInt32(1, int.MaxValue);
@@ -242,6 +249,7 @@ namespace ScMultiplayer
                     writer.WritePackedInt32(TimelineGeneration);
                     writer.WriteByte(HashAvailable ? (byte)1 : (byte)0);
                     if (HashAvailable) writer.WriteUInt32(StateHash);
+                    WriteSnapshotScope(writer);
                     break;
                 case CircuitSyncStage.RepairPlan:
                     writer.WritePackedInt32(Epoch);
@@ -270,6 +278,7 @@ namespace ScMultiplayer
             HostCircuitStep = reader.ReadPackedInt32();
             LastSequence = reader.ReadPackedInt32();
             SnapshotPartCount = reader.ReadPackedInt32(0, 4096);
+            ReadSnapshotScope(reader);
             int missingCount = reader.ReadPackedInt32(0, 4096);
             if (SnapshotPartCount == 0 && missingCount != 0)
                 throw new InvalidOperationException("Snapshot generation is unavailable.");
@@ -298,9 +307,47 @@ namespace ScMultiplayer
             writer.WritePackedInt32(HostCircuitStep);
             writer.WritePackedInt32(LastSequence);
             writer.WritePackedInt32(SnapshotPartCount);
+            WriteSnapshotScope(writer);
             writer.WritePackedInt32(SnapshotMissingParts.Count);
             foreach (int part in SnapshotMissingParts)
                 writer.WritePackedInt32(part);
+        }
+
+        private void ReadSnapshotScope(SuReader reader)
+        {
+            byte hasScope = reader.ReadByte();
+            if (hasScope > 1)
+                throw new InvalidOperationException("Invalid circuit snapshot scope flag.");
+            HasSnapshotScope = hasScope != 0;
+            SnapshotMinChunkX = SnapshotMinChunkZ = 0;
+            SnapshotMaxChunkX = SnapshotMaxChunkZ = 0;
+            if (!HasSnapshotScope)
+                return;
+            SnapshotMinChunkX = reader.ReadPackedInt32();
+            SnapshotMinChunkZ = reader.ReadPackedInt32();
+            SnapshotMaxChunkX = reader.ReadPackedInt32();
+            SnapshotMaxChunkZ = reader.ReadPackedInt32();
+            if (SnapshotMaxChunkX < SnapshotMinChunkX ||
+                SnapshotMaxChunkZ < SnapshotMinChunkZ ||
+                SnapshotMaxChunkX - SnapshotMinChunkX > 64 ||
+                SnapshotMaxChunkZ - SnapshotMinChunkZ > 64)
+                throw new InvalidOperationException("Invalid circuit snapshot scope.");
+        }
+
+        private void WriteSnapshotScope(SuWriter writer)
+        {
+            writer.WriteByte(HasSnapshotScope ? (byte)1 : (byte)0);
+            if (!HasSnapshotScope)
+                return;
+            if (SnapshotMaxChunkX < SnapshotMinChunkX ||
+                SnapshotMaxChunkZ < SnapshotMinChunkZ ||
+                SnapshotMaxChunkX - SnapshotMinChunkX > 64 ||
+                SnapshotMaxChunkZ - SnapshotMinChunkZ > 64)
+                throw new InvalidOperationException("Invalid circuit snapshot scope.");
+            writer.WritePackedInt32(SnapshotMinChunkX);
+            writer.WritePackedInt32(SnapshotMinChunkZ);
+            writer.WritePackedInt32(SnapshotMaxChunkX);
+            writer.WritePackedInt32(SnapshotMaxChunkZ);
         }
 
         // Source: Mod/ScMultiplayer/Func/Circuit/CircuitSynchronizer.cs:
@@ -309,6 +356,7 @@ namespace ScMultiplayer
         {
             Epoch = reader.ReadPackedInt32(1, int.MaxValue);
             TimelineGeneration = reader.ReadPackedInt32(1, int.MaxValue);
+            WorldTimeRevision = reader.ReadPackedInt32(1, int.MaxValue);
             ServerStep = reader.ReadPackedInt32();
             HostCircuitStep = reader.ReadPackedInt32();
             SafeThroughHostCircuitStep = reader.ReadPackedInt32();
@@ -331,14 +379,15 @@ namespace ScMultiplayer
         // CircuitSynchronizer.SendFence
         private void WriteFence(SuWriter writer)
         {
-            if (TimelineGeneration <= 0)
-                throw new InvalidOperationException("Invalid circuit timeline generation.");
+            if (TimelineGeneration <= 0 || WorldTimeRevision <= 0)
+                throw new InvalidOperationException("Invalid circuit fence authority.");
             if (double.IsNaN(TotalElapsedGameTime) ||
                 double.IsInfinity(TotalElapsedGameTime) ||
                 double.IsNaN(TimeOfDayOffset) || double.IsInfinity(TimeOfDayOffset))
                 throw new InvalidOperationException("Invalid circuit world-time anchor.");
             writer.WritePackedInt32(Epoch);
             writer.WritePackedInt32(TimelineGeneration);
+            writer.WritePackedInt32(WorldTimeRevision);
             writer.WritePackedInt32(ServerStep);
             writer.WritePackedInt32(HostCircuitStep);
             writer.WritePackedInt32(SafeThroughHostCircuitStep);
@@ -416,6 +465,7 @@ namespace ScMultiplayer
             LastSequence = reader.ReadPackedInt32();
             SnapshotPartIndex = reader.ReadPackedInt32(0, 4095);
             SnapshotPartCount = reader.ReadPackedInt32(1, 4096);
+            ReadSnapshotScope(reader);
             int count = reader.ReadPackedInt32(0, MaximumStates);
             States.Clear();
             Point3 previous = default;
@@ -473,6 +523,7 @@ namespace ScMultiplayer
             writer.WritePackedInt32(LastSequence);
             writer.WritePackedInt32(SnapshotPartIndex);
             writer.WritePackedInt32(SnapshotPartCount);
+            WriteSnapshotScope(writer);
             writer.WritePackedInt32(States.Count);
             Point3 previous = default;
             foreach (CircuitStateRecord item in States)

@@ -9,9 +9,6 @@ namespace ScMultiplayer
     {
         private SubsystemGameInfo m_subsystemGameInfo;
 
-        private static bool IsAuthoritative =>
-            ScMultiplayer.client?.IsConnected != true || ScMultiplayer.IsHost;
-
         public override void OnBlockGenerated(
             int value, int x, int y, int z, bool isLoaded)
         {
@@ -29,7 +26,8 @@ namespace ScMultiplayer
                 // Source: Survivalcraft/Game/SubsystemDeciduousLeavesBlockBehavior.cs:
                 // SubsystemDeciduousLeavesBlockBehavior.UpdateTimeOfYear
                 // Fallen-leaf terrain remains host-authoritative; clients receive that change.
-                if (IsAuthoritative &&
+                if (HostTerrainAuthority.IsReadyForAuthoritativeMutation(
+                        SubsystemTerrain, x, z) &&
                     DeciduousLeavesBlock.GetSeason(newData) == Season.Winter &&
                     DeciduousLeavesBlock.GetSeason(oldData) != Season.Winter)
                 {
@@ -50,7 +48,8 @@ namespace ScMultiplayer
             // SubsystemDeciduousLeavesBlockBehavior.OnPoll
             // Only the host advances persistent leaf season data. A synchronized client still
             // runs the native path to retain local falling-leaf particles.
-            if (IsAuthoritative || GetNormalizedValue(value, x, y, z) == value)
+            if (HostTerrainAuthority.IsAuthoritative ||
+                GetNormalizedValue(value, x, y, z) == value)
                 base.OnPoll(value, x, y, z, pollPass);
         }
 

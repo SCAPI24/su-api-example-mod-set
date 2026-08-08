@@ -17,6 +17,7 @@
     <SkipType name="ScMultiplayer.SuComponentInput" />
     <SkipType name="ScMultiplayer.SuComponentHumanModel" />
     <SkipType name="ScMultiplayer.SuComponentVitalStats" />
+    <SkipType name="ScMultiplayer.SuComponentSleep" />
     <SkipType name="ScMultiplayer.SuComponentFlu" />
     <SkipType name="ScMultiplayer.SuComponentFurnace" />
     <SkipType name="ScMultiplayer.MultiplayerUiComponent" />
@@ -26,6 +27,7 @@
     <SkipType name="ScMultiplayer.SuSubsystemCreatureSpawn" />
     <SkipType name="ScMultiplayer.SuSubsystemGrassBlockBehavior" />
     <SkipType name="ScMultiplayer.SuSubsystemDeciduousLeavesBlockBehavior" />
+    <SkipType name="ScMultiplayer.SuSubsystemPlantBlockBehavior" />
     <SkipType name="ScMultiplayer.SuSubsystemExplosions" />
     <SkipType name="ScMultiplayer.SuSubsystemFireBlockBehavior" />
     <SkipType name="ScMultiplayer.SuSubsystemProjectiles" />
@@ -33,6 +35,7 @@
     <SkipType name="ScMultiplayer.SuSubsystemWhistleBlockBehavior" />
     <SkipType name="ScMultiplayer.SuSubsystemMemoryBankBlockBehavior" />
     <SkipType name="ScMultiplayer.SuSubsystemTruthTableCircuitBlockBehavior" />
+    <SkipType name="ScMultiplayer.SuSubsystemDispenserBlockBehavior" />
     <SkipType name="ScMultiplayer.SuSubsystemAdjustableDelayGateBlockBehavior" />
     <SkipType name="ScMultiplayer.SuSubsystemSwitchBlockBehavior" />
     <SkipType name="ScMultiplayer.SuSubsystemButtonBlockBehavior" />

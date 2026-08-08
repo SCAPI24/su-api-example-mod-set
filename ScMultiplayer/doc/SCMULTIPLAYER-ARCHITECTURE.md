@@ -235,3 +235,29 @@ Client: 选世界 -> SuPlayScreen.GameJoin()
   4. Server 收集 Host 状态 -> 发送给新 Client
   5. Client.GameJoined 事件
   6. 收到 GamePakWorld -> ImportWorld -> Play
+
+## 九、模块化控制边界（2.0.8）
+
+当前实现采用兼容外壳 + 控制单元的绞杀式迁移：
+
+```text
+Frame.Update
+    -> MultiplayerControlUnit
+       -> SessionState / SessionRuntime
+       -> JoinTransfer
+       -> WorldControl
+       -> Circuit
+       -> World
+       -> Player
+       -> Entity
+       -> UI
+    -> ProcessEndOfFrameActions（保持原帧尾 Apply 顺序）
+```
+
+`ScMultiplayer.UpdateFrame` 不再直接编排业务调用。模块通过
+`IMultiplayerRuntimeHost` 请求兼容宿主执行，宿主仍调用已验证的原版适配器和业务 partial，
+因此没有复制 `SubsystemTerrain`、实体、电路或库存实现。
+
+网络入口由 `Control/NetworkMessageRouter` 统一负责解码、来源端口过滤、批次展开和队列选择；
+`Networking/NetworkMessageSender` 仍是实际协议发送者。`Transport/ReliableChannelCoordinator`
+和 `LatestStateChannel` 只提供策略端口，可靠 ACK/重传仍由 Comms 持有。

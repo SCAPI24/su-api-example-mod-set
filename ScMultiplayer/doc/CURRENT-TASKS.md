@@ -1,11 +1,340 @@
 # ScMultiplayer 当前修改清单
 
+## 加入下载与 Joining Room 过慢（当前轮）
+
+状态：已完成 Release 构建并部署 Windows/华为，待在线回归
+
+本轮产物：`[SuAPI]ScMultiplayer-2.0.8.scmod`，SHA-256：
+`896facf3f2094e08a3f543ce48b4254e552f2b423cfeafd130a4ad2bdd353791`
+
+复现证据：
+
+- 最新一次加入在 `12:31:14.959` 被接受，直到 `12:31:50.574` 才排完 650 个地图分片，地图阶段约 35.6 秒。
+- `12:31:52.925` 已生成首批 catch-up，但直到 `12:32:39.620` 才排完 136 条 post-cutoff 消息，`World transfer ready` 延迟到 `12:32:39.820`。
+
+原因：
+
+1. 940 字节地图分片原本按设计可装入一个可靠 UDP 包，上一轮却按 2 包预留。
+2. 本地 DRT 转发在两个采样点之间完成时，预留无法及时观察到，只能等待固定 1.5 秒过期，造成地图传输批次被人为压小。
+3. 地图完成后，过期的分片预留和仍在 ACK 中的可靠包继续占用加入窗口，catch-up/post-cutoff 不能及时发送。
+
+本轮修复：
+
+1. 地图分片恢复按 1 个可靠包预留；catch-up 和电路 Snapshot 仍按实际序列化长度估算。
+2. 转发预留寿命改为按 RTT 动态限制在 150ms 到 500ms，避免长时间空等，同时仍保留短暂本地 DRT 转发保护。
+3. 客户端报告 `ProjectReady` 后清理已完成地图归档的本地转发预留；实际 Comms 未确认包仍由传输层计数保护 catch-up。
+4. 不改 ACK、重传、可靠序列和在线玩家流量保留策略。
+
+验证标准：
+
+- 相同地图和带宽配置下，地图下载时间回到数秒级，并能使用可用加入带宽。
+- 地图完成后 catch-up、post-cutoff 和 `World transfer ready` 不再因 1.5 秒预留周期长时间停滞。
+- 雨雪、雾、已有在线玩家和高 RTT 情况下仍不突破可靠窗口，丢包只触发原有重传。
+
+## 首次加入可靠队列计数滞后导致 Joining Room 卡住（当前轮）
+
+状态：已完成 Release 构建并部署 Windows/华为，待首次加入在线回归
+
+本轮产物：`[SuAPI]ScMultiplayer-2.0.8.scmod`，SHA-256：
+`7a83ce1482369a97c961c5c71bb93e44b76fe6edb2a22a8629e358b0804eb1b2`
+
+复现现象：
+
+- 主机开启雨雪和雾时，客户端第一次加入偶发长期停在 `Joining Room`。
+- HUD 的 `CKT` 长时间停在 `Snapshot`，`fence` 延迟从约 75ms 上升到 700ms 后又回落。
+- 主机日志先出现 `Join catch-up batch queued`，随后可靠队列达到 `Rel=226`，却没有出现 `World transfer ready`；第二次加入通常可正常完成。
+
+原因：
+
+1. 主机发送给远程客户端的消息实际经过“主机本地 Client -> 本地 DRT Server -> 远程 Client”两段路径。
+2. 地图分片还会先进入后台发送队列；`GetUnackedPacketsCount()` 只统计已经进入 Comms 的远程包，不包含本 tick 已批准但尚未由本地 DRT Server 转发的分片。
+3. 世界分片、join catch-up 和电路 Snapshot 因此连续使用同一份过期未确认数，在动态窗口为 128 时仍可瞬间堆到 226，完成标记被可靠队列阻塞。
+
+修复范围：
+
+1. 为每个客户端增加 Mod 内的可靠转发预留计数，世界分片入后台队列、catch-up、Snapshot、Manifest 和 `ReadyToPlay` 等定向可靠消息在进入本地转发路径前先占用预留。
+2. 队列检查统一使用“Comms 已确认未确认包 + 尚未反映到 Comms 的预留包”，严格受现有加入窗口和正常游戏关键包保留限制。
+3. 后台分片取消、连接退出或发送异常时释放对应预留；真实远程队列增长时结算预留，超过有界时间的旧预留自动清理。
+4. 不修改 Comms 的可靠序列、ACK、重传和消息类型；普通游戏可靠消息仍使用原有路径。
+
+验证标准：
+
+- 首次开启雨、雪、雾的加入不再因可靠队列从 128 越界而卡在 `Joining Room`；日志依次出现电路 bootstrap、catch-up complete 和 `World transfer ready`。
+- 主机可靠队列不再出现“已批准包数未计入导致的瞬时 226”越界；加入客户端和已在线玩家的可靠消息均保留窗口。
+- 世界分片取消/客户端退出后预留清零，不影响后续房间和其他客户端。
+
+## 客户端切换时间时提示显示在主机端（本轮）
+
+状态：已完成 Release 构建并部署 Windows/华为，待双端在线验证
+
+本轮产物：`[SuAPI]ScMultiplayer-2.0.8.scmod`，Windows 与华为平板 SHA-256：
+`2d57ceaf40defeec4ba1d340dc1fb41dc5380bbb33ec563cccbdce5abaf38d35`
+
+复现现象：
+
+- 客户端点击创造模式时间按钮后，世界时间由主机正确切换，但 `Dawn/Noon/Dusk/Midnight` 提示显示在主机端。
+
+原因与修复：
+
+1. 主机执行客户端 `WorldControlRequestMessage` 时直接调用了主机角色的 `ComponentGui.DisplaySmallMessage()`。
+2. 客户端请求原本已有定向 `WorldControlResultMessage`，并按请求 ID 在发起客户端显示相同提示；主机端直接显示属于重复且归属错误的副作用。
+3. 客户端请求路径现在只修改主机权威时间并返回结果，不再显示主机提示；主机自己点击时间按钮仍走原版 `ComponentGui`，行为不变。
+4. 2026-08-08 在线验证中，主机能执行时间切换，但客户端仍无底部提示。检查发现请求和定向结果均为一次性非可靠 UDP；结果丢失后，世界已经改变，但客户端没有可用于显示提示的确认。
+5. 本轮将请求与结果改为可靠有序小消息。主机继续按 `RequestId` 去重，客户端只在收到对应结果后显示提示，不增加乐观本地提示。
+6. 2026-08-08 第二次在线验证：主机和客户端均不再显示时间提示。主机不显示属于预期；客户端仍不显示，证明单纯把结果改为可靠消息没有解决根因。
+7. 一次完整追踪已证明请求、主机执行、定向结果、pending 命中和客户端 `ComponentGui` 调用均正常；最终文本却是不可见 Unicode 标识符。
+8. Release 混淆会重命名 `WorldControlTimeResult` 的枚举成员，`TimeResult.ToString()` 因此不再稳定返回 `Dawn/Noon/Dusk/Midnight`。现改为显式枚举到固定 UI 文本的映射，并删除全部临时追踪。
+
+验证标准：
+
+- 客户端每次切换时间后，仅发起请求的客户端显示对应时间提示。
+- 主机不显示客户端操作的提示；主机自己切换时间时仍正常显示。
+- 时间权威同步、请求去重、结果超时和睡眠后的电路时间锚不受影响。
+
+## 雨雪或雾开启时客户端卡在 Joining Room（本轮）
+
+状态：已完成 Release 构建并部署 Windows/华为，待双端在线验证
+
+本轮 Release 产物：`[SuAPI]ScMultiplayer-2.0.8.scmod`，Windows 与华为平板 SHA-256：
+`2d57ceaf40defeec4ba1d340dc1fb41dc5380bbb33ec563cccbdce5abaf38d35`
+
+复现与证据：
+
+- 主机保持雨雪和雾时，客户端完成世界下载与 Project 加载后停留在 `Joining Room`，没有进入电路 bootstrap 完成阶段。
+- 第一次失败的加入 catch-up 为 17 条消息、69 个地形单元，最终可靠队列达到 `Rel=223`；第二次为 13 条消息、206 个地形单元，最终达到 `Rel=225`。
+- 主机关闭雨和雾后，同一客户端于 `10:44:36.084` 开始加入，`10:44:44.360` 完成电路 bootstrap，随后完成 catch-up。
+
+原因与修复：
+
+1. 加入期间的天气、冻结、融雪和积雪仍会产生主机权威地形变化，这些变化需要进入加入 catch-up。
+2. `SendPendingJoinCatchUps()` 原本使用保留正常游戏关键包后的 bulk 窗口；加入客户端尚未进入正常游戏，却会被该保留量阻塞，形成加入完成屏障的优先级倒置。
+3. catch-up 发送前只检查当前未确认包数，没有估算下一条可靠消息会拆成多少个 1024 字节 UDP 包，较大消息可能在一次调用中越过窗口。
+4. 加入 catch-up 现使用完整加入传输窗口，并按 940 字节安全载荷估算整条消息的实际分片数后再入队；超大单条消息仅在未确认队列为空时启动，避免永久停滞。
+5. 客户端仍处于加入屏障时，将本地雨雪强度、雾进度和闪电表现保持为零，减少 Project 加载阶段的渲染与天气处理压力；主机天气权威和地形模拟不变。
+6. 收到 `ReadyToPlay` 并清除加入屏障后，客户端立即重新应用最后一个主机权威天气状态，不修改或保存临时世界天气配置。
+
+验证标准：
+
+- 主机分别开启雨、雪和雾后，Windows 与华为平板均能在正常时间内从 `Joining Room` 进入游戏。
+- 加入期间可靠未确认队列不再越过动态加入窗口，能依次出现 `Client circuit bootstrap complete`、`Client catch-up complete` 和主机 `World transfer ready`。
+- 进入游戏后雨雪、雾、雷电表现与主机一致，积雪、冻结和天气地形变化仍只以主机最终状态为准。
+- 已在线玩家的普通可靠消息、电路同步和地形同步不因新客户端加入而被挤占。
+
+## 初始电路边沿与睡眠会话时间统一（本轮）
+
+状态：已完成 Release 构建并部署 Windows/华为，待双端在线验证
+
+复现现象：
+
+- 客户端首次进入地图，加载电压后偶发产生主机没有的额外电路边沿，计数器/加法器相差一个值。
+- 主机和客户端同时睡眠时，双方进入加速和醒来的时刻不一致；醒来后的电路快照边界也随之不同。
+
+原因与修复：
+
+1. 首次权威电路快照应用时不再恢复普通元件的通用 `NextSimulationSteps`，避免把客户端原版加载队列叠加成一次本地输入；延迟门自己的明确历史队列仍保留。
+2. 延迟快照记录沿用首次快照的抑制标记，避免远处区块稍后实例化时再次触发本地初始化边沿；后续严格修复快照仍可恢复必要的通用调度。
+3. `GamePlayerHealthMessage` 增加主机权威 `SleepStartTime` 与 `SleepFactor`，客户端按主机睡眠会话起点重置私有状态，不再用本地请求到达时间计算自动醒来。
+4. 客户端对每个已接受的权威 world-info 都刷新加速边沿；即使加速状态由 fence 速率推断，也不会漏掉主机的 `false` 唤醒边沿。
+
+验证标准：
+
+- 首次加入后持续高/低电平和振荡电路不出现客户端独有的一次边沿。
+- 两端睡眠进入加速后使用同一个 `SleepStartTime`，主机醒来时客户端不提前或延后自动醒来；醒来后的首个权威快照内级联加法器/计数器一致。
+- 非睡眠电路、延迟门历史、可靠序列和 Joining Room 流程不回归。
+
+## 首次加入电路快照阻塞与范围延迟同步（current round）
+
+状态：修复已在线验证通过，保留后续重连回归
+
+本轮 Release 产物：`[SuAPI]ScMultiplayer-2.0.8.scmod`，Windows 与华为平板 SHA-256：
+`7c99732d6bc541b34711bf4d3880eae90f639742d5c5fee7bedc303f681b6a19`
+
+复现现象：
+
+- 客户端地图下载完成后长期停留在 `Joining Room`。
+- HUD 的 `CKT` 长期显示 `Snapshot`，fence age 在几十毫秒和数百毫秒之间跳变。
+- 主机日志能看到 catch-up batch queued，但没有后续 `World transfer ready`。
+- 2026-08-08 实测：世界下载用时 3.97 秒，客户端 Project 在 `10:09:22.585` 就绪；电路 bootstrap 到 `10:10:12.310` 才完成，单独耗时约 49.7 秒，随后 `10:10:12.560` 立即完成 catch-up。
+
+原因：
+
+- 主机快照包含当前已实例化的全部电路元件。
+- 客户端对尚未加载区块中的元件找不到 `ElectricElement`，旧逻辑把它视为快照失败并重启完整快照。
+- `CatchUpBatchApplied` 依赖电路快照完成，导致加入屏障和快照重试互相等待。
+- 首次快照虽然是加入完成的必需条件，却和普通恢复共用 `GetReliableBulkUnackedPacketLimit()`。默认 32 包窗口再扣除 16 包关键保留后，快照长期等在世界/catch-up 可靠包之后，形成加入屏障的优先级倒置。
+
+本轮修改：
+
+1. 快照请求和响应增加有界区块范围；主机按客户端请求范围生成当前时刻快照。
+2. 初次加入允许远处未实例化元件进入待同步表，当前已加载范围仍要求正常应用，不再阻塞 Joining Room。
+3. 客户端区块范围变化后主动请求该范围的新快照，待同步元件在电路实例创建后应用。
+4. 睡眠恢复、哈希修复仍使用严格快照，不把类型不匹配或已加载范围的应用失败当作可忽略状态。
+5. checkpoint hash 按客户端确认的范围计算，避免主机和客户端加载范围不同造成永久误判。
+6. 本轮只允许仍在 `TransfersAwaitingReady` 中的客户端，其 `Snapshot` 消息使用完整加入传输窗口；普通电路修复和已进入游戏后的快照继续保留关键包余量。
+7. 2026-08-08 修复后实测：客户端 Project 于 `10:36:08.645` 就绪，电路 bootstrap 于 `10:36:10.322` 完成，耗时约 1.68 秒；随后 `10:36:10.366` 完成 catch-up。
+
+验证标准：
+
+- 首次加入时即使远处存在未加载电路，`CKT` 能从 `Snapshot` 进入 `Ready`，主机能完成 `World transfer ready`。
+- 移动到远处电路后，该范围收到主机当前快照，计数器、延迟门历史、电压和锁存状态一致。
+- 睡眠恢复仍在严格 fence 后完成，不出现旧 fence 回退、快照重试洪泛或 CPU 持续升高。
+- Release Windows 与 Huawei 使用同一协议哈希和同一 `.scmod` 内容。
+
+## Host-authoritative lightning and season boundaries (current)
+
+Scope:
+
+1. Automatic and manually requested lightning remain host-generated. The client only receives
+   the lightning presentation and authoritative terrain/entity results.
+2. A connected host defers an explosion while an already allocated chunk inside its conservative
+   pressure envelope is not Valid or has not notified block behaviors. Missing chunks are not
+   allocated and remain untouched.
+3. Plant lifecycle and growth are host-only in a connected room. Clients keep the host terrain
+   values and do not publish local seasonal growth as player terrain changes.
+4. Deciduous leaf color/particle presentation remains local, while fallen-leaf terrain changes
+   remain host-only and are gated by a ready host chunk.
+5. Seasons remain a global world clock; no client-distance simulation or client authority is
+   added. When a later host chunk load exposes a seasonal change, the existing terrain revision,
+   checkpoint, and circuit synchronization paths must deliver the final host value.
+
+Validation:
+
+- Trigger automatic and manual lightning near a host loaded-range boundary. Confirm no cell in an
+  unallocated or not-ready chunk is destroyed, while ready neighboring chunks preserve native
+  explosion behavior.
+- Change the season while clients have a larger local visibility range than the host. Confirm
+  client-only outer chunks do not become authoritative changes, and later host loading replaces
+  them with the host value.
+- Verify plant growth, leaf fall, lightning explosion, terrain sequence, and reliable queue
+  behavior in Release builds with no extra diagnostic logging.
+
 本文件只保留尚未处理完成的任务，用于跨轮次继续工作。
 
 - 新发现或未完成的问题立即加入本文件。
 - 完成源码修改、Release 编译和要求的部署后，从本文件删除对应任务。
 - 已完成任务不在本文件保留历史记录，历史以 Git 提交和发布包为准。
 - 每轮修改 ScMultiplayer 前先核对本文件，避免上下文压缩后遗漏任务。
+
+## 主机邻近算法派生的导线/LED 状态未及时同步（当前轮）
+
+状态：已完成 Release 构建并部署 Windows/华为，待双端在线验证
+
+本轮产物：`[SuAPI]ScMultiplayer-2.0.8.scmod`，Windows 与华为平板 SHA-256：
+`4441e38bd7749377baf7927a53f9594cb952c3c127a2ab31add7680405bb4220`
+
+复现现象：
+
+- 主机挖掉导线附着方块后，主机邻近算法会正确移除导线，但客户端仍显示导线悬空连接。
+- 主机直接移除导线后，客户端也可能继续显示原导线。
+- 客户端挖掉挂墙 LED 后，主机先看到掉落物，但墙面保留一个不亮的 LED，数秒后才消失。
+- 主机直接移除 LED 时，客户端能及时看到 LED 消失，说明普通单格地形删除链路本身可用。
+
+源码结论：
+
+- 原版 `SubsystemTerrain.ProcessModifiedCells()` 每轮先复制并清空 `m_modifiedCells`，邻近回调中的 `DestroyCell/ChangeCell` 会形成下一轮修改。
+- `MountedElectricElement.OnNeighborBlockChanged()` 会在支撑面失效时销毁挂墙电器；`WireDomainElectricElement.OnNeighborBlockChanged()` 还会修改 wire face bitmask 或销毁整格导线，因此一次操作可能形成多轮派生变化。
+- 当前 Mod 固定发布并处理两轮修改，而且每轮在邻近算法尚未收敛前就独立生成 terrain sequence。客户端可能先落地中间 wire bitmask，再等待后续序列补最终状态，形成悬空导线或不亮 LED 残影。
+
+本轮修改：
+
+1. 主机在 `SuSubsystemTerrain` 内对同一批修改执行有界邻近传播，最多 8 轮或 1024 个输入单元，避免大型连锁更新占满一帧。
+2. 同一传播闭包内只收集坐标，邻近算法结束后由现有 `PublishTerrainChanges` 读取并发布最终值；继续复用 terrain sequence、journal、checkpoint 和恢复机制。
+3. 超出上限的连锁修改保留在原生 `m_modifiedCells` 中供下一帧继续处理，同时先发布已经写入的当前值，不丢弃变化。
+4. 客户端现有预测、修复及主机权威应用路径保持不变，不新建电路消息或另一套可靠序列。
+
+验证范围：
+
+- 主机移除导线附着方块，所有客户端的导线和碰撞/电路状态在同一轮更新后消失。
+- 主机直接移除单面及多面导线，客户端不保留旧 face bitmask，不出现悬空连接。
+- 客户端移除 LED、四 LED、多色 LED 等挂墙电器，主机和其他客户端不出现不亮残影，掉落物只生成一次。
+- 大片导线、爆炸和流体更新时无明显单帧卡顿，terrain sequence 连续，电路可靠队列不增加新的阻塞。
+
+## 客户端加入时电路电压快照产生一次伪信号（当前轮）
+
+状态：已完成 Release 构建并部署 Windows/华为，待双端在线验证
+
+本轮产物：`[SuAPI]ScMultiplayer-2.0.8.scmod`，Windows 与华为平板 SHA-256：
+`f10c85ee4782688a7f60175e7d1684619bb5ee700fda97d0f6454cb542b556df`
+
+复现现象：
+
+- 客户端每次进入游戏并加载主机电路电压时，会额外产生一次主机端不存在的信号。
+- 边沿敏感电路因此在客户端多执行一次，最终显示值与主机相差一个单位。
+
+源码结论：
+
+- `CircuitSynchronizer.ApplyStateRecord()` 写入完整快照后，无条件调用 `QueueElectricElementConnectionsForSimulation(... + 1)`。
+- 完整快照已经代表主机在 `SnapshotHostCircuitStep` 的稳定状态；再次唤醒每个下游，相当于把“恢复电压”错误解释为“电压刚发生变化”。
+- SR 锁存器、存储器和随机信号发生器此前只同步了输出电压，没有同步其输入边沿允许位。即使不立即唤醒，下次输入变化前也可能使用客户端构造时的默认边沿状态。
+- 仍存在第二个时序窗口：客户端 `Project` 已加载但 `CircuitSynchronizer` 尚未绑定时，`SuSubsystemElectricity.Update()` 可能因为 `client.IsConnected` 尚未更新而回落到原版 `base.Update(dt)`；原版加载队列先执行一次，产生主机不存在的初始边沿。
+
+本轮修改：
+
+1. 快照恢复只写入权威状态并恢复主机已有的 `NextSimulationSteps`，不再为每个快照元素额外唤醒全部下游。
+2. 补齐 `SRLatchElectricElement` 的 set/reset/clock allowed、`MemoryBankElectricElement` 的 write/clock allowed，以及 `RandomGeneratorElectricElement` 的 clock allowed 状态。
+3. 正常电路事件、按钮释放和真实输出变化仍使用原版连接排队模拟，不改变联机电路事件的可靠序列。
+4. 联机 Project 处于加入/下载/切换阶段且同步器尚未绑定时，`SuSubsystemElectricity.Update()` 清空本地时间余量并跳过原版 bootstrap 模拟，避免客户端独有初始边沿。
+5. 同步器继续只由既有帧末 `RunCircuitPhaseCore` 绑定；禁止在原生电路 `Update()` 内提前启动 checkpoint/snapshot，避免电路恢复可靠流量与加入 catch-up 批次争用窗口并卡在 `Joining Room / CKT Recovery`。
+
+验证范围：
+
+- 在持续高、持续低和脉冲输入下分别让客户端加入，计数器及显示器数值加入前后不变，并与主机一致。
+- SR 锁存器、存储器和随机信号发生器在高电平保持期间加入时不产生第二次边沿；电平先回落再上升后，两端只执行一次真实边沿。
+- 按钮、压力板及正常电路切换仍能立即传播，电路快照恢复和 Joining Room 完成条件不受影响。
+
+## 本机睡眠结束后 Apply 持续增长（当前轮）
+
+状态：源码已修复，待本机验证
+
+现象：所有角色睡眠结束后，本机 HUD 显示 `Apply 3974 (48000ms)`，队列数量和最旧动作年龄仍继续升高，操作逐渐卡顿。
+
+原因判断：客户端只有本地角色时，原版 `SubsystemTime.NextFrame` 会误判“所有人睡眠”，把客户端 `FixedTimeStep` 设为 `0.05` 并把 `SubsystemUpdate.UpdatesPerFrame` 设为 `20`。这会让客户端整套逻辑、输入和网络相关更新重复执行；低帧率下 `Frame.Update` 的 4ms Apply 消费预算赶不上持续进入的网络动作，形成积压正反馈。它不是可靠 ACK 或电路序列本身堵塞。
+
+修复范围：客户端在每个原生逻辑步最前面、早于电路同步器的任何提前返回，始终强制 `FixedTimeStep=null`、`UpdatesPerFrame=1`，只接受主机的 `TotalElapsedGameTime + TimeOfDayOffset` 权威时间；主机在睡眠加速时把世界时间快照从 2Hz 临时提高到 8Hz，避免客户端运行 20 倍完整模拟。
+
+待验证：睡眠结束后 Apply 数量停止增长并回落，最旧动作年龄回落到正常范围；两端仍能在主机睡眠结束后进入同一昼夜，正常挖掘、交互和电路同步不受影响。
+
+## Terrain Recovery 回放导致 Apply 队列爆发（当前轮）
+
+状态：修复中
+
+现象：华为端收到大量历史 `GameModifiedCellsMessage` 后，`Apply` 达到千级、CPU 100%、帧率降到 1 FPS 左右；可靠重传和 ACK 正常，恢复完成后性能恢复。
+
+处理范围：
+
+1. 恢复回放仍保留连续 terrain sequence 和 barrier 语义，但同一坐标只保留恢复窗口内的最终值；中间状态只推进 sequence，不再重复调用 `ChangeCell`。
+2. 恢复批次继续使用客户端跨帧地形预算，不能阻塞普通玩家操作、可靠队列或电路序列。
+3. 历史过期仍使用完整主机世界快照兜底，不跳过 barrier、不修改 ACK/可靠序列定义。
+
+## VR-05 交互与世界时间同步
+
+状态：修复中
+
+1. 电路按钮本地预测与主机确认只允许一次点击音效。
+2. 发射器 `Dispense/Shoot` 与 `Accepts drops` 配置走现有主机权威 editable-data 链，客户端不能只改本地 UI。
+3. 双端睡眠加速、时间按钮和电路时间锚点必须以主机 `TotalElapsedGameTime + TimeOfDayOffset` 为最终权威；客户端保持单步模拟，通过主机权威时间快照跟随睡眠加速，旧 fence 不得覆盖新世界时间。
+4. 弓/弩保留本地即时发射，但主机权威箭矢必须使用经过校验的同一起点和初速度，避免两端分别计算晃动与随机散布后再持续修正落点。
+5. 合成桌权威快照整表落地后只计算一次配方，提示发送给实际打开面板的本地角色，不能按逐格中间状态或主机上的最近远程角色显示。
+6. 进入房间后的首个生命快照只建立历史受伤序号基线，不得播放一次历史受伤音效。
+
+实施结果：
+
+- `GameWorldInfoMessage1` 与电路 `Fence` 现在携带同一条主机世界时间修订号。主机每次发布权威世界状态时推进修订号；客户端收到更高修订后，较低修订的旧 fence 只能刷新电路窗口，不能再写回旧的昼夜锚点。
+- 主机正常状态按 2Hz、睡眠加速期间按 8Hz 发布权威世界时间；客户端始终保持 `FixedTimeStep=null`、`UpdatesPerFrame=1`，避免整套客户端世界执行 20 倍更新并把 `Apply` 队列拖入正反馈积压。
+- 电路按钮用请求携带的安装面确认释放，并复用本地预测音效凭证；发射器配置已接入主机权威 editable-data 链。
+- 客户端释放弓/弩时先执行原版动作并捕获实际箭矢起点、速度和角速度；主机校验箭矢类型、距离、速度和方向后应用到权威箭矢，碰撞与伤害仍只由主机决定。
+- 合成桌网络快照不再逐格调用 `Remove/Add`，而是一次写入最终输入格后调用一次原版配方计算；主机本地提示不再被最近的远程角色截走。
+- 生命同步首包现在记录 `DamageSequence` 基线而不播放声音，之后真实递增仍正常播放受伤音效。
+- 协议签名已同步提升，`2.0.8` Release 构建和重构契约检查通过；正式包已替换 Windows 发布目录并部署华为平板，SHA-256 为 `728bedadb7427b4f9998dfad277157d91962eca2e3bd0403ee9aaad0970bbf1a`。
+
+待验证：
+
+- 主机与客户端同时睡眠后，两端在同一时刻进入白天，客户端不再停留在夜间。
+- 睡眠结束后本机 `Apply` 不再持续增长，队列年龄能够回落，角色操作和画面帧率保持正常。
+- 客户端随后点击时间按钮，两端昼夜结果一致；后续 fence 不得把任一端恢复到按钮前或睡眠前的时间。
+- 客户端分别用弓和弩射击近、远目标，预测箭矢被主机接管时不改变方向，最终落点与首次看到的轨迹一致。
+- 主机和客户端分别向合成桌放入可熔炼物品，操作端各显示一次 `Use a furnace to smelt this item`，另一端不出现逐格中间提示。
+- 客户端重进创造模式房间时不再凭空播放一次主机或其他角色的受伤声；后续真实受击仍逐次有声音。
 
 ## 爆炸/岩浆后地形恢复洪泛并阻塞玩家操作（2.0.7）
 
@@ -231,6 +560,32 @@
 - 客户端序列已追上但单个方块未落地时，能够通过 Chunk 权威校验修复。
 - 恢复期间电路、角色操作和正常地形同步没有明显延迟，空闲流量不会持续增长。
 
+## 睡眠加速期间的网络降频与受击唤醒（2.0.8）
+
+状态：已完成 Release 构建与部署，待在线验证
+
+本轮产物：`[SuAPI]ScMultiplayer-2.0.8.scmod`，Windows 与华为平板 SHA-256：
+`ad071e691169b2e86eb8a7dda915b18955bfdec9f2784958c7c35fea34f40880`
+
+实施内容：
+
+- 主机依据原版 `SubsystemTime.FixedTimeStep` 判断全员睡眠加速；客户端只依据主机
+  `GameWorldInfo1Message.IsTimeAccelerated` 判断网络档位，不在客户端重复运行 20 倍世界模拟。
+- 睡眠加速期间，玩家位置同步降为 1Hz，世界对象同步降为 2Hz，投射物状态同步降为 4Hz。
+  位置/对象/投射物均为可替换状态；投射物创建、命中、移除等已有关键边沿仍通过原有即时或可靠路径发送。
+- 睡眠加速期间普通玩家状态的重复生命/体力/温度广播最多 2Hz；生命下降、睡眠状态边沿和强制权威状态立即发送。
+- 动物同步档位调整为：普通动物 1Hz、目标或附近动物 4Hz、高优先级/攻击动物 16Hz；非睡眠状态保持原有频率。
+- 主机为每个玩家注册 `ComponentHealth.Attacked`。非玩家动物攻击正在睡眠的角色时立即调用 `WakeUp()`，发送权威生命/睡眠状态，使 `SleepFactor` 低于 1 并退出世界加速。玩家对玩家攻击不走该无条件唤醒分支。
+- 不降低 ACK、可靠序列、电路 fence、地形 journal/recovery、伤害边沿、关键音效和容器/装备边沿同步；睡眠期间只降低可替换的连续状态。
+- 在线复现发现：主机睡眠时原版每帧执行 20 次电路更新，而客户端仅执行一次。醒来后客户端需要追赶数万步 circuit step，`ShouldSuppressClientInput` 因此持续禁止移动和交互。修复后客户端在主机睡眠加速期间保持当前电路边界；收到 `IsTimeAccelerated=false` 后请求当前权威电路快照，按快照 host step 重设本地 offset，再恢复正常增量同步。
+- 第二轮在线复现中客户端醒来后约为 CPU 97%、4 FPS、长时间不能移动，但最终自行恢复到约 57 FPS；状态栏期间仍显示 `Ckt Ready`。这确认客户端在慢速追赶大 circuit step 差，而不是断线或快照永久阻塞。原因是 `IsTimeAccelerated=true` 属于可替换世界状态，全部丢失时电路没有进入冻结档位。现由连续 fence 的 `HostCircuitStep/ServerStep` 增长比例直接识别 20 倍睡眠；连续 4 个 fence 恢复正常速率后触发一次快照重锚，不再依赖世界状态边沿必达。
+
+待验证：
+
+- 全员睡眠时客户端世界时间连续跟随主机，Apply 不持续堆积，普通 UDP 流量下降且关键电路/地形仍正常。
+- 动物攻击任一睡眠角色后，主机立即退出睡眠加速，客户端收到生命/睡眠状态，`SleepFactor` 不再保持为 1。
+- 睡眠结束、角色死亡、断线、重连和切换 Project 后，频率恢复正常且没有重复事件处理器或旧时间 fence 把昼夜拉回去。
+
 ## 首次加入后卡在 Joining Room 的电路引导竞态（2.0.4）
 
 状态：待修复
@@ -264,4 +619,112 @@
 4. 将加入 catch-up 与普通实时可靠流量隔离，并为每个 joining client 保留严格有界的可靠窗口：未完成 catch-up 的客户端只接收其 journal/checkpoint，不让新的 live 广播持续堆入同一未确认队列。
 5. 为 `CatchUpBatchComplete` 增加与 Transfer 绑定的确认/重发屏障：主机在 join journal 实际发送完后按有限间隔重发 completion marker，直至收到 `CatchUpBatchApplied`；客户端按 Transfer 去重但每次均可触发待执行 bootstrap。该 marker 不走电路可靠序列，也不依赖 bulk catch-up 队列清空后的一次性 callback。
 
-\n
+## 睡眠加速结束后级联电路状态滞后（2.0.8 后续修复）
+
+状态：已完成 Release 构建与 Windows/华为部署，待双端在线验证
+
+本轮产物：`[SuAPI]ScMultiplayer-2.0.8.scmod`，Windows 与华为平板 SHA-256：
+`121da1abca562197c038bfb64dc0d08680a0d24ec4429dd57513ed337dd3eaef`
+
+复现现象：
+
+- 主机和客户端同时睡眠，世界进入加速时间流动；醒来后，已被新信号修改的加法器/计数器能够逐步一致，但没有立即收到新边沿的后级电路仍保留旧值。
+- NOT 门振荡器连接多级加法器或计数器时，主机可显示 `65`，客户端仍显示 `23`；后续边沿到来后客户端逐级追赶，主机到 `70` 时客户端才整体接近 `70`。
+- 级联层数越深，客户端自我修正所需时间越长，不能依赖等待振荡信号自然传播。
+
+原因判断：
+
+- 当前客户端虽然在唤醒边沿请求完整快照，但快照没有绑定一个由主机确认的唤醒最终电路边界；主机抓取快照和继续推进电路之间存在时间窗口。
+- 客户端收到全部分片后，主要按可靠序列和分片数量放行，没有要求收到不早于快照主机步的新的正常 fence。
+- 快照应用过程中，部分原版待模拟队列和边界前的 Mod 调度可能残留；同时 `ApplyStateRecord()` 对缺失或类型不匹配的元件直接跳过，仍会把快照标记为完成。
+- `NotifyRemoteTimeAccelerationChanged(false)` 之前会在远端标记已经是 `false` 时直接返回；当加速状态是由 fence 速率推断出来时，`m_inferredTimeAccelerated` 仍会保持为 `true`，客户端继续冻结电路，直到后续 fence 样本触发自愈。
+- 客户端 Project 加载后、`CircuitSynchronizer` 绑定前，原版 `SubsystemElectricity.Update()` 仍可能执行一次加载队列，产生主机不存在的本地边沿。
+
+修复范围：
+
+1. 唤醒快照建立明确的主机边界和代次，客户端在边界确认前保持电路恢复锁。
+2. 快照应用前清理旧的原版电路调度和边界前的 Mod 调度，只恢复快照记录中的电压、计数器、边沿状态和 `NextSimulationSteps`。
+3. 快照应用必须统计并验证所有元件；存在缺失或类型不匹配时不能放行，按现有分片请求机制重试。
+4. 保留边界之后的有效事件，丢弃边界之前的旧事件；不重放整段睡眠期间的 circuit step。
+5. 恢复后第一个 checkpoint 必须重新校验，不能改变电路可靠序列、地形序列或普通玩家操作的可靠性。
+
+本轮实施：
+
+- 联机客户端在同步器尚未绑定时跳过原版电路更新，并清零本地时间余量，避免加载阶段提前模拟。
+- 主机权威的“不再加速”状态会清除 fence 速率推断标志，并在加速到正常的边沿触发一次重锚快照。
+- 重锚保存快照的 `HostCircuitStep`、`LastSequence` 和时间线代次；客户端必须收到覆盖这些边界的 fence 才解除恢复锁。
+- 快照应用前同时清理 `m_nextStepSimulateList` 和 future simulation 中的旧条目，保留现有快照字段与延迟历史恢复逻辑。
+
+验收标准：
+
+- 睡眠结束后的第一个有效 fence 内，振荡器及所有级联加法器/计数器与主机一致，不再逐级追赶。
+- 快照期间不会出现 CPU 97% 以上、Apply 队列持续增长或输入长时间被禁止。
+- 丢失 world-info、fence、快照分片或客户端重连时仍能恢复；正常非睡眠电路同步行为不变。
+
+构建约束：
+
+- 发布和验证必须使用 Release 配置，禁止用 Debug DLL 或 Debug `.scmod` 作为最终产物。
+- 由于根项目的历史循环引用，Release 依赖按 `Engine → EntitySystem → Survivalcraft(CoreCompile) → SuAPICore → Survivalcraft(完整 Build) → Comms → ScMultiplayer` 顺序构建；不修改项目引用来绕过该顺序。
+
+## 客户端睡眠加速导致 1 FPS 与 Apply 持续积压（2.0.8 后续修复）
+
+状态：已完成 Release 构建与 Windows/华为部署，待双端在线验证
+
+复现现象：
+
+- 客户端先睡、主机随后睡下并进入加速后，客户端帧率可降到约 1 FPS。
+- 醒来后右上角 `Apply` 每次刷新增加 100 以上，最老等待时间持续按秒增长。
+- 客户端先于主机醒来后，客户端电路恢复正常速度，主机电路仍在 20 倍睡眠速度运行。
+- 客户端帧率正常时可消费约 2000 条 Apply/秒；因此瓶颈不是 Apply 上限，而是睡眠期间本地逻辑占满帧时间，导致既有 4ms Apply 窗口失去调度机会。
+
+原因判断：
+
+- 客户端仍运行原版 `ComponentSleep.Update`。复制到客户端的角色全部达到 `SleepFactor == 1` 后，原版 `SubsystemTime.NextFrame` 会把客户端误判为权威的全员睡眠世界。
+- 每个角色原本保存独立的 `SleepStartTime`；先睡角色可以先满足自动唤醒条件，使客户端在主机仍加速时提前恢复本地电路。
+- 客户端 Project 已加载但 `CircuitSynchronizer` 尚未绑定的窗口仍可能执行一次原版电路加载队列，产生主机不存在的初始电压边沿。
+
+本轮实施：
+
+- 使用 Mod 数据库替换新增 `SuComponentSleep`。主机保持原版睡眠更新；客户端由主机权威的加速状态约束自动唤醒，并将复制睡眠因子限制在小于原版全员睡眠判定值，避免客户端进入 20 倍世界循环。
+- 手动唤醒输入仍走现有客户端请求，不能被权威睡眠保护吞掉。
+- 主机首次进入睡眠加速时，将所有已睡角色的 `SleepStartTime` 统一为同一个主机世界时间，并立即发布角色状态。
+- 客户端已连接而电路同步器尚未绑定时，`SuSubsystemElectricity` 始终跳过原版 bootstrap 模拟。
+- 切图、断线和重连时清除共享睡眠会话状态。
+
+验收标准：
+
+- 两端全部睡下后，客户端保持正常帧率，不出现约 1 FPS。
+- 睡眠和醒来期间 Apply 队列可及时清空，数量与最老等待时间不持续增长。
+- 主机与客户端在同一权威睡眠边界醒来；客户端不得在主机仍加速时提前恢复电路。
+- 客户端首次进入地图时不再产生主机不存在的初始电压信号。
+
+## 首次加入电路快照提前启动并卡在 Recovery（2.0.8 后续修复）
+
+状态：已完成 Release 构建与 Windows/华为部署，待双端在线验证
+
+本轮产物：`[SuAPI]ScMultiplayer-2.0.8.scmod`，Windows 与华为平板 SHA-256：
+`121da1abca562197c038bfb64dc0d08680a0d24ec4429dd57513ed337dd3eaef`
+
+复现与证据：
+
+- 客户端世界已加载但持续显示 `Joining Room`，右上角 `Ckt Recovery`；`Fence` 从约
+  `56ms` 增长到 `700ms` 后回落并反复循环。
+- Fence 年龄周期性回落说明主机 fence 仍在到达，不是双向 UDP 中断。
+- 2026-08-08 主机日志中，31,555 B 的首轮 join catch-up 从 `13:34:25` 排队到
+  `13:37:59` 才完成；期间又累积 480 条、49,574 B post-cutoff 消息。
+- `HandleFence()` / `HandleClock()` 在收到 `CatchUpBatchComplete` 之前提前请求首次
+  电路快照，使电路 bulk 与地图 catch-up 争用同一可靠加入窗口。
+- 首次快照完成后又错误复用睡眠重锚的“等待快照之后新 fence”屏障，恢复锁无法按
+  普通首次加入条件及时解除。
+
+本轮修复：
+
+- 首次权威电路快照只由 `CatchUpBatchComplete -> BeginJoinBootstrap()` 启动；普通
+  fence/clock 在此前仅建立 epoch 和时钟，不提前请求快照。
+- 首次快照仍清理客户端加载阶段的原版电路调度、应用权威运行时状态，并延迟保存尚未
+  实例化的远处电路状态。
+- “快照应用后必须收到覆盖边界的新 fence”仅用于睡眠结束重锚；首次加入不再增加该
+  屏障，避免 `Recovery` 循环。
+- Release 验证必须确认 catch-up 完成后才开始电路 bootstrap，且依次出现
+  `World transfer ready`、`Client circuit bootstrap complete` 和
+  `Client catch-up complete`。

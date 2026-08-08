@@ -2,6 +2,7 @@ using Engine;
 using Engine.Input;
 using Game;
 using GameEntitySystem;
+using ScMultiplayer.Ports;
 using System;
 using TemplatesDatabase;
 
@@ -45,34 +46,35 @@ namespace ScMultiplayer
             // Source: Mod/ConsoleMod/Subsystem/ConsoleSubsystemGameWidgets.cs:AttachConsoleButton
             if (m_moreContents == null) AttachButtons();
             ScMultiplayer multiplayer = ScMultiplayer.currentInstance;
+            IMultiplayerUiCommandPort commands = multiplayer?.UiCommands;
             if (m_createButton != null)
             {
-                bool joined = multiplayer?.IsInRoom == true;
+                bool joined = commands?.IsInRoom == true;
                 string buttonText = joined ? "IF" : "CR";
                 if (m_createButton.Text != buttonText)
                     m_createButton.Text = buttonText;
                 if (m_createButton.IsClicked)
                 {
                     if (joined)
-                        multiplayer.ShowJoinedPlayerInformation();
+                        commands.ShowJoinedPlayerInformation();
                     else
-                        multiplayer?.ShowCreateRoomDialog();
+                        commands?.ShowCreateRoomDialog();
                 }
             }
             // Source: Survivalcraft/Game/WidgetInput.cs:WidgetInput.IsKeyDownOnce
             // Enter opens Windows chat only while the game owns keyboard input. Once a dialog is
             // visible, TextBoxDialog keeps its native Enter-to-submit behavior instead.
-            bool talkHotkey = OperatingSystem.IsWindows() && multiplayer?.IsInRoom == true &&
+            bool talkHotkey = OperatingSystem.IsWindows() && commands?.IsInRoom == true &&
                 m_componentPlayer?.GameWidget?.Input.IsKeyDownOnce(Key.Enter) == true &&
                 !DialogsManager.HasDialogs(m_componentPlayer.GuiWidget);
             if (m_talkButton != null && m_talkButton.IsClicked || talkHotkey)
             {
                 if (talkHotkey)
                     m_componentPlayer.GameWidget.Input.Clear();
-                multiplayer?.ShowTalkDialog();
+                commands?.ShowTalkDialog();
             }
             if (m_manageButton != null && m_manageButton.IsClicked)
-                multiplayer?.ShowMultiplayerManagementDialog();
+                commands?.ShowMultiplayerManagementDialog();
         }
 
         private void AttachButtons()

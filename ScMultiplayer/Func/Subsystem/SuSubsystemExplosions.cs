@@ -23,6 +23,8 @@ namespace ScMultiplayer
             new List<PredictedExplosion>();
         private readonly HashSet<object> m_skipQueuedExplosionPredictions =
             new HashSet<object>();
+        private readonly List<object> m_deferredHostExplosions =
+            new List<object>();
 
         void IUpdateable.Update(float dt)
         {
@@ -40,21 +42,54 @@ namespace ScMultiplayer
                     this, "m_queuedExplosions", typeof(SubsystemExplosions));
                 if (queued != null)
                 {
+                    DeferUnreadyHostExplosions(queued);
                     foreach (object explosion in queued)
                     {
-                        TypeInfo type = explosion.GetType().GetTypeInfo();
-                        int x = (int)type.GetField("X").GetValue(explosion);
-                        int y = (int)type.GetField("Y").GetValue(explosion);
-                        int z = (int)type.GetField("Z").GetValue(explosion);
-                        float pressure = (float)type.GetField("Pressure").GetValue(explosion);
-                        bool incendiary = (bool)type.GetField("IsIncendiary").GetValue(explosion);
-                        bool noSound = (bool)type.GetField("NoExplosionSound").GetValue(explosion);
+                        if (!TryReadExplosion(explosion, out Point3 point, out float pressure,
+                            out bool incendiary, out bool noSound))
+                            continue;
                         ScMultiplayer.currentInstance?.BroadcastExplosion(
-                            x, y, z, pressure, incendiary, noSound);
+                            point.X, point.Y, point.Z, pressure, incendiary, noSound);
                     }
                 }
             }
+            else
+            {
+                m_deferredHostExplosions.Clear();
+            }
             base.Update(dt);
+        }
+
+        // Source: Survivalcraft/Game/SubsystemExplosions.cs:SubsystemExplosions.Update
+        // The native explosion walk reads and writes terrain immediately. Keep a queued host
+        // explosion out of that walk until the already allocated cells in its envelope are ready;
+        // this preserves host authority without allocating or mutating remote chunks.
+        private void DeferUnreadyHostExplosions(IList queued)
+        {
+            SubsystemTerrain terrain = GameManager.Project?.FindSubsystem<SubsystemTerrain>(false);
+            if (terrain == null) return;
+
+            for (int i = m_deferredHostExplosions.Count - 1; i >= 0; i--)
+            {
+                object explosion = m_deferredHostExplosions[i];
+                if (!TryReadExplosion(explosion, out Point3 point, out float pressure,
+                    out bool _, out bool _) ||
+                    !HostTerrainAuthority.IsExplosionEnvelopeReady(terrain, point, pressure))
+                    continue;
+                queued.Add(explosion);
+                m_deferredHostExplosions.RemoveAt(i);
+            }
+
+            for (int i = queued.Count - 1; i >= 0; i--)
+            {
+                object explosion = queued[i];
+                if (!TryReadExplosion(explosion, out Point3 point, out float pressure,
+                    out bool _, out bool _) ||
+                    HostTerrainAuthority.IsExplosionEnvelopeReady(terrain, point, pressure))
+                    continue;
+                queued.RemoveAt(i);
+                m_deferredHostExplosions.Add(explosion);
+            }
         }
 
         // Source: Survivalcraft/Game/SubsystemExplosions.cs:SubsystemExplosions.AddExplosion
