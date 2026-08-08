@@ -241,9 +241,15 @@ namespace ScMultiplayer
             m_worldTransferRegistry.PendingWorldReadyTransferId > 0 ||
             m_clientWorldRefreshProject != null);
 
-        internal bool ShouldHoldClientSleepTimeline(ComponentPlayer player) =>
-            !IsHost && client?.IsConnected == true && m_remoteTimeAccelerated &&
-            player?.ComponentSleep?.IsSleeping == true;
+        // Source: Survivalcraft/Game/ComponentSleep.cs:ComponentSleep.Update
+        internal bool ShouldHoldClientSleepTimeline(ComponentPlayer player)
+        {
+            ComponentSleep sleep = player?.ComponentSleep;
+            if (IsHost || client?.IsConnected != true || sleep?.IsSleeping != true)
+                return false;
+            return m_pendingClientSleepWakeups.Contains(sleep) ||
+                ShouldDeferClientSleepWakeup();
+        }
 
         private PendingJoinRequest m_pendingJoinRequest;
         private PendingJoinRequest m_activeJoinRequest;
@@ -537,6 +543,8 @@ namespace ScMultiplayer
         private bool m_remoteTimeAccelerated;
         private bool m_hostSleepAccelerationSessionActive;
         private double m_hostSleepAccelerationStartTime;
+        private readonly HashSet<ComponentSleep> m_pendingClientSleepWakeups =
+            new HashSet<ComponentSleep>();
         private readonly Dictionary<int, double> m_nextSleepHealthSendTimes =
             new Dictionary<int, double>();
         private readonly Dictionary<ComponentHealth, Action<ComponentCreature>>

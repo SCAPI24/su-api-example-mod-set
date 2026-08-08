@@ -147,8 +147,20 @@ namespace ScMultiplayer
             bool accelerated = subsystemTime.FixedTimeStep.HasValue;
             if (!accelerated)
             {
+                bool accelerationEnded = m_hostSleepAccelerationSessionActive;
                 m_hostSleepAccelerationSessionActive = false;
                 m_hostSleepAccelerationStartTime = 0.0;
+                if (accelerationEnded && client?.IsConnected == true)
+                {
+                    // Source: Survivalcraft/Game/SubsystemTime.cs:SubsystemTime.NextFrame
+                    // Publish the authoritative falling edge before player wake snapshots. The
+                    // ordinary world stream is replaceable and only 2Hz outside acceleration;
+                    // waiting for it lets a client wake while its circuit still has the pre-sleep
+                    // counter values.
+                    SendGameWorldInfoMessage(reliable: true);
+                    foreach (ComponentPlayer player in players.ComponentPlayers.ToArray())
+                        PublishHostSleepWakeState(player);
+                }
                 return;
             }
             if (m_hostSleepAccelerationSessionActive) return;

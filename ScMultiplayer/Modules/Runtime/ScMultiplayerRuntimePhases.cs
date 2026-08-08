@@ -86,6 +86,8 @@ namespace ScMultiplayer
             Project project = GameManager.Project;
             if (project != null)
                 m_circuitSynchronizer?.EnsureBound(project);
+            if (!IsHost)
+                CompletePendingClientSleepWakeups();
         }
 
         // Source: Survivalcraft/Game/GameManager.cs:GameManager.UpdateProject
