@@ -167,6 +167,12 @@ namespace ScMultiplayer
 
             m_hostSleepAccelerationSessionActive = true;
             m_hostSleepAccelerationStartTime = gameInfo.TotalElapsedGameTime;
+            // Source: Mod/ScMultiplayer/Modules/Player/
+            // ScMultiplayerHealthWorldControlHandlers.cs:HandleGameWorldInfoMessage
+            // Publish the rising edge reliably. Clients freeze at their current one-step timeline
+            // and wait for the falling-edge snapshot instead of following accelerated host time.
+            if (client?.IsConnected == true)
+                SendGameWorldInfoMessage(reliable: true);
             foreach (ComponentPlayer player in players.ComponentPlayers.ToArray())
             {
                 if (player?.ComponentSleep?.IsSleeping != true) continue;
@@ -256,6 +262,20 @@ namespace ScMultiplayer
             m_observedClientHealth = health.Health;
             m_observedClientFood = vital.Food;
             m_observedClientSleeping = isSleeping;
+        }
+
+        // Source: Survivalcraft/Game/ComponentSleep.cs:ComponentSleep.Update
+        // Manual wake is a host-authoritative request. Do not clear the local sleep state before
+        // the host ends acceleration and the client has applied the final circuit snapshot.
+        internal bool RequestClientWakeUp(ComponentPlayer localPlayer)
+        {
+            if (IsHost || client?.IsConnected != true || localPlayer?.ComponentSleep == null ||
+                !localPlayer.ComponentSleep.IsSleeping ||
+                m_networkPlayerData.Values.Contains(localPlayer.PlayerData))
+                return false;
+            NetworkMessageSender.SendPlayerHealthMessage(client.ClientID, localPlayer, 0f,
+                "Client wake request", isSleepingOverride: false);
+            return true;
         }
 
         // ====================================================================

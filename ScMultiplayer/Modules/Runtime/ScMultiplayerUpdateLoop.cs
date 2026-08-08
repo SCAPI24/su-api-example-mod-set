@@ -1502,6 +1502,10 @@ namespace ScMultiplayer
             }
             if (client?.IsConnected == true)
                 actions.Add(Tuple.Create(
+                    "Circuit Synchronization",
+                    (Action)SynchronizeCircuitsNow));
+            if (client?.IsConnected == true)
+                actions.Add(Tuple.Create(
                     $"Talk ({m_recentChatMessages.Count})",
                     (Action)ShowRecentMessagesDialog));
 
@@ -1511,6 +1515,24 @@ namespace ScMultiplayer
                 60f,
                 item => ((Tuple<string, Action>)item).Item1,
                 item => ((Tuple<string, Action>)item).Item2()));
+        }
+
+        // Source: Mod/ScMultiplayer/Func/Circuit/CircuitSynchronizer.cs:
+        // CircuitSynchronizer.RequestManualSynchronization
+        private void SynchronizeCircuitsNow()
+        {
+            if (client?.IsConnected != true || m_circuitSynchronizer == null)
+                return;
+            if (IsHost)
+            {
+                m_circuitSynchronizer.RequestManualSynchronization(
+                    GetConnectedRemoteClients()
+                        .Where(remote => remote.ClientID > 0 &&
+                            !m_joinCatchUpRegistry.Journals.ContainsKey(remote.ClientID))
+                        .Select(remote => remote.ClientID));
+            }
+            else
+                m_circuitSynchronizer.RequestManualSynchronization();
         }
 
         private void ShowRecentMessagesDialog()
@@ -2637,10 +2659,10 @@ namespace ScMultiplayer
                 SendClientDamageRequest();
 
             // Source: Survivalcraft/Game/SubsystemTime.cs:SubsystemTime.NextFrame
-            // Sleeping clients stay at one logical update per rendered frame. During host sleep
-            // catch-up, publish the authoritative clock more often so their sky advances smoothly
-            // without running every client subsystem at UpdatesPerFrame=20.
-            if (pulse2Hz || (sleepAcceleration && IsHost && pulse8Hz))
+            // Sleeping clients stay at one logical update per rendered frame and do not follow
+            // every accelerated host clock sample. Reliable acceleration edges delimit a single
+            // final time/circuit rebase; the ordinary 2Hz state remains weather authority.
+            if (pulse2Hz)
                 SendGameWorldInfoMessage();
 
             if (pulse1Hz)

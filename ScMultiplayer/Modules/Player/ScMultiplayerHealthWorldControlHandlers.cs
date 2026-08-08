@@ -319,9 +319,14 @@ namespace ScMultiplayer
                             player.ComponentSleep, "m_sleepStartTime",
                             (double?)message.SleepStartTime, typeof(ComponentSleep));
                     }
+                    // Source: Survivalcraft/Game/SubsystemTime.cs:SubsystemTime.NextFrame
+                    // A replicated value of exactly 1 would make the client run the native 20x
+                    // all-players-sleep loop before the next circuit update can clamp it.
+                    float authoritativeSleepFactor = MathUtils.Min(
+                        MathUtils.Clamp(message.SleepFactor, 0f, 1f), 0.999f);
                     ModManager.ModParentField.ModifyParentField(
                         player.ComponentSleep, "m_sleepFactor",
-                        MathUtils.Clamp(message.SleepFactor, 0f, 1f),
+                        authoritativeSleepFactor,
                         typeof(ComponentSleep));
                 }
                 else if (player.ComponentSleep.IsSleeping)
@@ -422,10 +427,16 @@ namespace ScMultiplayer
             m_lastRemoteWorldInfoTick = msg.ServerTick;
             SubsystemGameInfo gameInfo = project.FindSubsystem<SubsystemGameInfo>(true);
             var timeOfDay = project.FindSubsystem<SubsystemTimeOfDay>(true);
+            // Source: Survivalcraft/Game/SubsystemTime.cs:SubsystemTime.NextFrame
+            // Only the host executes the accelerated sleep timeline. During the rising/active
+            // phase the client retains its one-step clock; the reliable falling edge applies the
+            // final host clock once before circuit rebase and visual wakeup.
+            bool applyAuthoritativeTime = !msg.IsTimeAccelerated;
             // Source: Survivalcraft/Game/SubsystemTimeOfDay.cs:SubsystemTimeOfDay.TimeOfDay
             // TimeOfDay depends on both values. Synchronizing only the offset allows the imported
             // client clock to remain minutes away from the host clock.
-            if (Math.Abs(gameInfo.TotalElapsedGameTime - msg.TotalElapsedGameTime) > 0.25)
+            if (applyAuthoritativeTime &&
+                Math.Abs(gameInfo.TotalElapsedGameTime - msg.TotalElapsedGameTime) > 0.25)
             {
                 ModManager.ModParentField.ModifyParentField(
                     gameInfo, "<TotalElapsedGameTime>k__BackingField",
@@ -434,13 +445,17 @@ namespace ScMultiplayer
                     gameInfo, "m_lastTotalElapsedGameTime",
                     (double?)msg.TotalElapsedGameTime, typeof(SubsystemGameInfo));
             }
-            gameInfo.WorldSettings.TimeOfDayMode = msg.CurrentTimeMode;
-            if (Math.Abs(timeOfDay.TimeOfDayOffset - msg.TimeOfDayOffset) > 0.0001)
-                timeOfDay.TimeOfDayOffset = msg.TimeOfDayOffset;
+            if (applyAuthoritativeTime)
+            {
+                gameInfo.WorldSettings.TimeOfDayMode = msg.CurrentTimeMode;
+                if (Math.Abs(timeOfDay.TimeOfDayOffset - msg.TimeOfDayOffset) > 0.0001)
+                    timeOfDay.TimeOfDayOffset = msg.TimeOfDayOffset;
+            }
             // The latest world state is the clock authority. Refresh the electricity anchor now
             // so an older fence cannot restore pre-sleep or pre-button time on the next circuit step.
-            m_circuitSynchronizer?.UpdateAuthoritativeWorldTime(msg.TotalElapsedGameTime,
-                msg.TimeOfDayOffset, msg.ServerTick, msg.WorldTimeRevision);
+            if (applyAuthoritativeTime)
+                m_circuitSynchronizer?.UpdateAuthoritativeWorldTime(msg.TotalElapsedGameTime,
+                    msg.TimeOfDayOffset, msg.ServerTick, msg.WorldTimeRevision);
             // Source: CircuitSynchronizer.NotifyRemoteTimeAccelerationChanged
             // Notify on every accepted authoritative world snapshot. A fence-rate inference can
             // mark acceleration locally while m_remoteTimeAccelerated is still false; guarding
