@@ -765,10 +765,10 @@ Validation:
 
 ## 主机醒来后客户端保持睡眠（2.0.8 后续修复）
 
-状态：已完成 Release 构建与 Windows/华为部署，待双端在线验证
+状态：代码修复完成，已完成 Release 构建与 Windows/华为部署，待双端在线验证
 
 本轮产物：`[SuAPI]ScMultiplayer-2.0.8.scmod`，Windows 与华为平板 SHA-256：
-`0ce670695a4fed7ccd45006a5c3e431921cc2fb8d73220add1811e59e0951fc3`
+`c79e6d17d4d3506b00e1afe93d16b8c84230e42ad9aec093ace06b94e67a052e`
 
 复现现象：
 
@@ -782,13 +782,18 @@ Validation:
   `CircuitSynchronizer.m_remoteTimeAccelerated`。
 - 世界状态下降沿缺失或较晚时，`CircuitSynchronizer` 能通过连续正常 Fence 判断加速
   已结束，并完成重锚；但该判断此前只清除了同步器内部状态。
-- 外层旧状态仍为 `true`，`ShouldDeferClientSleepWakeup()` 因此持续阻止待唤醒队列，
-  即使 `Ckt Ready` 也无法执行 `ComponentSleep.WakeUp()`。
+- 即使加速状态已清除，客户端仍依赖单次 `IsSleeping=false` 健康包先把角色加入待唤醒
+  集合；该包丢失或在恢复窗口外到达时，集合为空，`Ckt Ready` 后没有再次唤醒动作。
 
 本轮修复：
 
 - 连续正常 Fence 确认加速结束时，同时回写并清除外层加速状态，使睡眠门控和网络降频
   使用同一恢复结论。
+- 世界状态下降沿和 Fence 推断下降沿都会设置独立的“睡眠会话结束待处理”标记；它不
+  依赖单个健康包，并在电路恢复屏障完成后扫描当前已加载的本地角色，将仍睡眠的角色
+  加入现有待唤醒集合，再统一执行原版 `WakeUp()`。
+- 切图、断线和重连时清除该标记；没有本地角色或电路仍在恢复时保留标记，避免过早丢失
+  唤醒边界。
 - 同步器存在时，睡眠门控以同步器的加速状态和 `IsClientBootstrapReady` 为准；外层状态
   仅在同步器尚不可用时作为加载阶段兜底。
 - 保留原有规则：加速仍在进行或睡眠后电路重锚尚未完成时继续延迟醒来；只有重锚完成
