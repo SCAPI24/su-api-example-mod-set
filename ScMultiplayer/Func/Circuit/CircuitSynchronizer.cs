@@ -267,6 +267,10 @@ namespace ScMultiplayer
         private bool IsHostTimeAccelerated =>
             m_remoteTimeAccelerated || m_inferredTimeAccelerated;
 
+        // Source: CircuitSynchronizer.UpdateHostTimeAccelerationFromFence
+        internal bool IsHostTimeAccelerationActive =>
+            !ScMultiplayer.IsHost && IsHostTimeAccelerated;
+
         public CircuitSynchronizer(ScMultiplayer owner)
         {
             m_owner = owner ?? throw new ArgumentNullException(nameof(owner));
@@ -1625,6 +1629,7 @@ namespace ScMultiplayer
             // A normal fence stream is a stronger circuit-timeline signal than an older
             // replaceable world-info datagram, so it also clears a stale acceleration flag.
             m_remoteTimeAccelerated = false;
+            m_owner.ConfirmRemoteTimeAccelerationEndedFromCircuitFence();
             BeginPostAccelerationRebase();
         }
 

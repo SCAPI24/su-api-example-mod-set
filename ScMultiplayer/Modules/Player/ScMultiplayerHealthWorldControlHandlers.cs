@@ -297,7 +297,7 @@ namespace ScMultiplayer
 
         // Source: Survivalcraft/Game/ComponentSleep.cs:ComponentSleep.Sleep
         // Source: Survivalcraft/Game/ComponentOnFire.cs:ComponentOnFire.Update
-        private static void ApplyAuthoritativePlayerEffects(
+        private void ApplyAuthoritativePlayerEffects(
             ComponentPlayer player, GamePlayerHealthMessage message)
         {
             if (player == null || message == null) return;
@@ -305,6 +305,7 @@ namespace ScMultiplayer
             {
                 if (message.IsSleeping)
                 {
+                    m_pendingClientSleepWakeups.Remove(player.ComponentSleep);
                     if (!player.ComponentSleep.IsSleeping)
                         player.ComponentSleep.Sleep(true);
                     if (message.SleepStartTime > 0.0 &&
@@ -324,7 +325,18 @@ namespace ScMultiplayer
                         typeof(ComponentSleep));
                 }
                 else if (player.ComponentSleep.IsSleeping)
-                    player.ComponentSleep.WakeUp();
+                {
+                    // Source: Mod/ScMultiplayer/Func/Circuit/CircuitSynchronizer.cs:
+                    // CircuitSynchronizer.BeginPostAccelerationRebase
+                    // A reliable player snapshot can arrive before the host acceleration edge.
+                    // Keep the sleep presentation until the authoritative circuit snapshot and
+                    // its following fence have completed, so the player never wakes onto stale
+                    // counter values.
+                    if (ShouldDeferClientSleepWakeup())
+                        m_pendingClientSleepWakeups.Add(player.ComponentSleep);
+                    else
+                        player.ComponentSleep.WakeUp();
+                }
             }
             ComponentOnFire onFire = player.Entity.FindComponent<ComponentOnFire>();
             ComponentFlu flu = player.Entity.FindComponent<ComponentFlu>();
@@ -341,7 +353,46 @@ namespace ScMultiplayer
             }
             if (sickness != null)
                 ModManager.ModParentField.ModifyParentField(
-                    sickness, "m_sicknessDuration", MathUtils.Max(message.SicknessDuration, 0f), typeof(ComponentSickness));
+                sickness, "m_sicknessDuration", MathUtils.Max(message.SicknessDuration, 0f), typeof(ComponentSickness));
+        }
+
+        private bool ShouldDeferClientSleepWakeup()
+        {
+            if (IsHost || client?.IsConnected != true)
+                return false;
+            // Source: Mod/ScMultiplayer/Func/Circuit/CircuitSynchronizer.cs:
+            // CircuitSynchronizer.UpdateHostTimeAccelerationFromFence
+            // Once bound, the circuit timeline is the stronger acceleration authority. It can
+            // recover from a missing world-info falling edge, so an older outer flag must not
+            // keep a ready client asleep forever.
+            if (m_circuitSynchronizer != null)
+                return m_circuitSynchronizer.IsHostTimeAccelerationActive ||
+                    !m_circuitSynchronizer.IsClientBootstrapReady;
+            return m_remoteTimeAccelerated;
+        }
+
+        // Source: Mod/ScMultiplayer/Func/Circuit/CircuitSynchronizer.cs:
+        // CircuitSynchronizer.UpdateHostTimeAccelerationFromFence
+        internal void ConfirmRemoteTimeAccelerationEndedFromCircuitFence()
+        {
+            if (!IsHost)
+                m_remoteTimeAccelerated = false;
+        }
+
+        // Source: CircuitSynchronizer.IsClientBootstrapReady
+        // The host snapshot rebases directly to the final accelerated circuit boundary. Do not
+        // replay the night's missing steps; wake the presentation only after that rebase is ready.
+        private void CompletePendingClientSleepWakeups()
+        {
+            if (m_pendingClientSleepWakeups.Count == 0 ||
+                ShouldDeferClientSleepWakeup())
+                return;
+            foreach (ComponentSleep sleep in m_pendingClientSleepWakeups.ToArray())
+            {
+                if (sleep?.IsSleeping == true)
+                    sleep.WakeUp();
+            }
+            m_pendingClientSleepWakeups.Clear();
         }
 
         public void HandleGameKickPlayerMessage(GameKickPlayerMessage msg, int sourceClientID)

@@ -728,3 +728,74 @@ Validation:
 - Release 验证必须确认 catch-up 完成后才开始电路 bootstrap，且依次出现
   `World transfer ready`、`Client circuit bootstrap complete` 和
   `Client catch-up complete`。
+
+## 睡眠加速结束时客户端提前醒来（2.0.8 后续修复）
+
+状态：已完成 Release 构建与 Windows/华为部署，待双端在线验证
+
+本轮产物：`[SuAPI]ScMultiplayer-2.0.8.scmod`，Windows 与华为平板 SHA-256：
+`67724cf6992887f143114460805dde3e12a1cf438de0040950ff51c9b46cfe63`
+
+复现现象：
+
+- 主机与客户端均睡眠并进入加速后，客户端会比主机提前醒来一瞬间。
+- 客户端醒来时仍显示睡前电路值，主机计数器已经在 20 倍模拟中前进很多；稍后才开始
+  电路恢复。
+
+原因：
+
+- 主机睡眠状态下降沿作为玩家生命状态立即发送，而 `IsTimeAccelerated=false` 原本只随
+  普通 2Hz 可替换世界状态发送。
+- 客户端可能先执行玩家 `WakeUp()`，之后才得知主机电路已经退出加速并开始权威快照
+  重锚，因此出现醒来画面和电路状态边界错位。
+
+本轮修复：
+
+- 主机检测到 `FixedTimeStep` 下降沿后立即可靠发布加速结束的世界状态，并发布所有玩家
+  的最终睡眠状态，不等待普通世界同步周期。
+- 客户端先收到 `IsSleeping=false` 时，若主机仍加速或电路重锚未完成，则暂存该醒来状态。
+- 客户端继续使用当前权威快照直接重锚到主机最终电路边界，不重放睡眠期间的数万步；
+  快照和后续 fence 完成后才执行暂存的 `WakeUp()`。
+- 断线、切图和重连时清理暂存醒来状态。
+
+验收标准：
+
+- 客户端不会早于主机醒来；客户端醒来时计数器、加法器及后级电路已与主机一致。
+- 睡眠退出不产生高 CPU、Apply 持续增长或逐步追赶数万 circuit step。
+
+## 主机醒来后客户端保持睡眠（2.0.8 后续修复）
+
+状态：已完成 Release 构建与 Windows/华为部署，待双端在线验证
+
+本轮产物：`[SuAPI]ScMultiplayer-2.0.8.scmod`，Windows 与华为平板 SHA-256：
+`0ce670695a4fed7ccd45006a5c3e431921cc2fb8d73220add1811e59e0951fc3`
+
+复现现象：
+
+- 主机与客户端完成睡眠加速后，主机已经醒来，客户端仍保持睡眠状态。
+- 客户端状态栏已经显示 `Ckt Ready`、`Apply 0`，说明电路重锚已完成，不是快照或
+  Fence 恢复仍在阻塞。
+
+原因：
+
+- 加速状态分别保存在 `ScMultiplayer.m_remoteTimeAccelerated` 和
+  `CircuitSynchronizer.m_remoteTimeAccelerated`。
+- 世界状态下降沿缺失或较晚时，`CircuitSynchronizer` 能通过连续正常 Fence 判断加速
+  已结束，并完成重锚；但该判断此前只清除了同步器内部状态。
+- 外层旧状态仍为 `true`，`ShouldDeferClientSleepWakeup()` 因此持续阻止待唤醒队列，
+  即使 `Ckt Ready` 也无法执行 `ComponentSleep.WakeUp()`。
+
+本轮修复：
+
+- 连续正常 Fence 确认加速结束时，同时回写并清除外层加速状态，使睡眠门控和网络降频
+  使用同一恢复结论。
+- 同步器存在时，睡眠门控以同步器的加速状态和 `IsClientBootstrapReady` 为准；外层状态
+  仅在同步器尚不可用时作为加载阶段兜底。
+- 保留原有规则：加速仍在进行或睡眠后电路重锚尚未完成时继续延迟醒来；只有重锚完成
+  并达到 `Ckt Ready` 后才释放待唤醒角色。
+
+验收标准：
+
+- 主机结束加速后，客户端在电路重锚完成时自动醒来，不需要触摸屏幕或重新进入房间。
+- 客户端醒来时计数器和级联电路已与主机一致，不能提前显示睡前状态。
+- 睡眠结束后网络同步恢复正常档位，`Ckt Ready`、`Apply` 和 Fence 不持续异常。

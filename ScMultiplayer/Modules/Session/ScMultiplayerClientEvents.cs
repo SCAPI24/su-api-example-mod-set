@@ -705,6 +705,7 @@ namespace ScMultiplayer
 		m_remoteTimeAccelerated = false;
 		m_hostSleepAccelerationSessionActive = false;
 		m_hostSleepAccelerationStartTime = 0.0;
+		m_pendingClientSleepWakeups.Clear();
 		m_remoteTerrainHeadSequence = 0L;
 		m_remoteFogPresentationInitialized = false;
 		m_remoteLightningActive = false;
