@@ -13,7 +13,7 @@ namespace ScMultiplayer
     [Serializable]
     public abstract class Message
     {
-        public const string ModVersion = "2.0.7";
+        public const string ModVersion = "2.0.8";
         public const int ProtocolVersion = 1;
 
         private static readonly Dictionary<int, Type> MessageTypesById = new();
@@ -36,19 +36,19 @@ namespace ScMultiplayer
             // Wire IDs must never depend on reflection order, type names or obfuscation.
             // IDs are append-only. Increment a message revision whenever its wire schema changes.
             Register<ChatMessage>(0, nameof(ChatMessage), 1);
-            Register<CircuitSyncMessage>(1, nameof(CircuitSyncMessage), 5);
+            Register<CircuitSyncMessage>(1, nameof(CircuitSyncMessage), 6);
             Register<EditableDataRequestMessage>(2, nameof(EditableDataRequestMessage), 1);
             Register<EditableDataStateMessage>(3, nameof(EditableDataStateMessage), 1);
             Register<GameKickPlayerMessage>(4, nameof(GameKickPlayerMessage), 1);
             Register<GameModifiedCellsMessage>(5, nameof(GameModifiedCellsMessage), 2);
             Register<GamePakWorldMessage>(6, nameof(GamePakWorldMessage), 3);
-            Register<GamePlayerHealthMessage>(7, nameof(GamePlayerHealthMessage), 1);
+            Register<GamePlayerHealthMessage>(7, nameof(GamePlayerHealthMessage), 2);
             Register<GamePlayerInputMessage>(8, nameof(GamePlayerInputMessage), 1);
             Register<GamePlayerPositionMessage>(9, nameof(GamePlayerPositionMessage), 1);
             Register<GamePlayerPositionsMessage>(10, nameof(GamePlayerPositionsMessage), 1);
             Register<GameWorldInfoMessage>(11, nameof(GameWorldInfoMessage), 2);
-            Register<GameWorldInfoMessage1>(12, nameof(GameWorldInfoMessage1), 3);
-            Register<PlayerAimMessage>(13, nameof(PlayerAimMessage), 1);
+            Register<GameWorldInfoMessage1>(12, nameof(GameWorldInfoMessage1), 5);
+            Register<PlayerAimMessage>(13, nameof(PlayerAimMessage), 2);
             Register<SyncBatchMessage>(14, nameof(SyncBatchMessage), 1);
             Register<TerrainDigRequestMessage>(15, nameof(TerrainDigRequestMessage), 1);
             Register<TerrainDigResultMessage>(16, nameof(TerrainDigResultMessage), 1);
@@ -317,7 +317,7 @@ namespace ScMultiplayer
         private static string SanitizeDiagnosticValue(string value)
         {
             if (string.IsNullOrWhiteSpace(value)) return "-";
-            string normalized = value.Replace('\r', ' ').Replace('\n', ' ').Replace('"', '\'');
+            string normalized = value.Replace((char)13, ' ').Replace((char)10, ' ').Replace('"', '\'');
             return normalized.Length <= 96 ? normalized : normalized.Substring(0, 96);
         }
 

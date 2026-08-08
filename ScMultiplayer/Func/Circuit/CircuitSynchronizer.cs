@@ -26,6 +26,7 @@ namespace ScMultiplayer
         {
             public int HostCircuitStep;
             public int LastSequence;
+            public SnapshotScope Scope;
             public double CreatedTime;
             public readonly List<CircuitSyncMessage> Parts =
                 new List<CircuitSyncMessage>();
@@ -35,6 +36,61 @@ namespace ScMultiplayer
         {
             public CircuitSyncMessage Message;
             public int EstimatedPackets;
+        }
+
+        private readonly struct SnapshotScope : IEquatable<SnapshotScope>
+        {
+            public readonly bool HasScope;
+            public readonly int MinChunkX;
+            public readonly int MinChunkZ;
+            public readonly int MaxChunkX;
+            public readonly int MaxChunkZ;
+
+            public SnapshotScope(bool hasScope, int minChunkX, int minChunkZ,
+                int maxChunkX, int maxChunkZ)
+            {
+                HasScope = hasScope;
+                MinChunkX = minChunkX;
+                MinChunkZ = minChunkZ;
+                MaxChunkX = maxChunkX;
+                MaxChunkZ = maxChunkZ;
+            }
+
+            public bool Contains(Point3 point)
+            {
+                if (!HasScope) return true;
+                int chunkX = point.X >> 4;
+                int chunkZ = point.Z >> 4;
+                return chunkX >= MinChunkX && chunkX <= MaxChunkX &&
+                    chunkZ >= MinChunkZ && chunkZ <= MaxChunkZ;
+            }
+
+            public bool Equals(SnapshotScope other) => HasScope == other.HasScope &&
+                (!HasScope || (MinChunkX == other.MinChunkX &&
+                MinChunkZ == other.MinChunkZ && MaxChunkX == other.MaxChunkX &&
+                MaxChunkZ == other.MaxChunkZ));
+
+            public override bool Equals(object obj) => obj is SnapshotScope other &&
+                Equals(other);
+
+            public override int GetHashCode() => HashCode.Combine(HasScope, MinChunkX,
+                MinChunkZ, MaxChunkX, MaxChunkZ);
+
+            public static SnapshotScope FromMessage(CircuitSyncMessage message) =>
+                message == null || !message.HasSnapshotScope
+                    ? new SnapshotScope(false, 0, 0, 0, 0)
+                    : new SnapshotScope(true, message.SnapshotMinChunkX,
+                        message.SnapshotMinChunkZ, message.SnapshotMaxChunkX,
+                        message.SnapshotMaxChunkZ);
+
+            public void WriteTo(CircuitSyncMessage message)
+            {
+                message.HasSnapshotScope = HasScope;
+                message.SnapshotMinChunkX = MinChunkX;
+                message.SnapshotMinChunkZ = MinChunkZ;
+                message.SnapshotMaxChunkX = MaxChunkX;
+                message.SnapshotMaxChunkZ = MaxChunkZ;
+            }
         }
 
         private const int DefaultCircuitLeadSteps = 5;
@@ -52,15 +108,20 @@ namespace ScMultiplayer
         private const double RecoveryRequestRetryTime = 1.5;
         private const double MaximumRequestRetryTime = 5.0;
         private const double SnapshotBatchRetention = 20.0;
+        private const double SnapshotScopeRequestInterval = 1.0;
         private const double RepairSnapshotProgressTimeout = 4.0;
         private const int RepairBarrierRestartLimit = 2;
         private const int CatchUpInputSuppressionSteps = 30;
+        private const int AcceleratedFenceMinimumHostStepDelta = 24;
+        private const int AcceleratedFenceHostStepsPerServerStep = 12;
+        private const int NormalFenceSamplesToEndAcceleration = 4;
         private const int MaximumEventsPerBatch = 40;
         private const int MaximumStatesPerSnapshot = 40;
         private const int MaximumReliableBulkMessagesPerTick = 2;
         private const int MaximumPendingReliableBulkMessagesPerClient = 128;
         private const int TrackedCircuitRetentionSteps = 3000;
         private const int RepairBarrierMinimumLeadSteps = 20;
+        private const int MaximumDeferredSnapshotStates = 16384;
         private const double LocalButtonSoundCredentialLifetime = 2.0;
         private const byte RuntimeStateFlag = 128;
 
@@ -108,6 +169,12 @@ namespace ScMultiplayer
             new Dictionary<int, int>();
         private readonly Dictionary<int, OutgoingSnapshotBatch> m_outgoingSnapshots =
             new Dictionary<int, OutgoingSnapshotBatch>();
+        private readonly Dictionary<CellFace, CircuitStateRecord> m_deferredSnapshotStates =
+            new Dictionary<CellFace, CircuitStateRecord>();
+        private readonly Dictionary<int, SnapshotScope> m_clientSnapshotScopes =
+            new Dictionary<int, SnapshotScope>();
+        private readonly Dictionary<int, Dictionary<int, uint>>
+            m_hostScopedCheckpointHashes = new Dictionary<int, Dictionary<int, uint>>();
         private readonly Dictionary<int, Queue<PendingReliableCircuitMessage>>
             m_pendingReliableCircuitMessages =
                 new Dictionary<int, Queue<PendingReliableCircuitMessage>>();
@@ -147,6 +214,8 @@ namespace ScMultiplayer
         private int m_timelineGeneration;
         private int m_safeThroughHostCircuitStep;
         private int m_lastFenceServerStep;
+        private int m_lastWorldTimeAuthorityServerStep;
+        private int m_worldTimeRevision;
         private int m_receivedFenceSerial;
         private int m_requiredFenceSerial;
         private long m_fenceTerrainSequence;
@@ -170,8 +239,33 @@ namespace ScMultiplayer
         private double m_worldTimeAnchorTotalElapsedGameTime;
         private double m_worldTimeAnchorTimeOfDayOffset;
         private double m_snapshotProgressRealTime;
+        private double m_lastSnapshotScopeRequestTime;
         private double m_windowExhaustedSince;
         private bool m_joinBootstrapPending;
+        private bool m_snapshotAllowDeferred;
+        private bool m_snapshotBlocksJoin;
+        // Initial world loading must not replay generic native AddElectricElement wake-ups after
+        // the authoritative voltage has been written. Delay-gate history remains explicit state;
+        // this flag only controls the deferred records from that first bootstrap snapshot.
+        private bool m_deferredSnapshotSuppressGenericSimulation;
+        private SnapshotScope m_requestedSnapshotScope;
+        private SnapshotScope m_confirmedSnapshotScope;
+        private SnapshotScope m_incomingSnapshotScope;
+        private bool m_remoteTimeAccelerated;
+        private bool m_inferredTimeAccelerated;
+        private bool m_rebaseOnNextSnapshot;
+        private bool m_rebaseAwaitingFence;
+        private int m_rebaseSnapshotHostStep;
+        private int m_rebaseSnapshotLastSequence;
+        private int m_rebaseSnapshotTimelineGeneration;
+        private int m_lastFenceSequence;
+        private bool m_hasFenceRateSample;
+        private int m_lastFenceRateServerStep;
+        private int m_lastFenceRateHostStep;
+        private int m_normalFenceRateSamples;
+
+        private bool IsHostTimeAccelerated =>
+            m_remoteTimeAccelerated || m_inferredTimeAccelerated;
 
         public CircuitSynchronizer(ScMultiplayer owner)
         {
@@ -180,7 +274,7 @@ namespace ScMultiplayer
 
         public bool IsClientBootstrapReady => ScMultiplayer.IsHost ||
             (m_subsystem != null && m_hasClock && m_hasFence && m_initialSnapshotApplied &&
-            !m_snapshotRequested && !m_recoveryHold && !IsFenceStale());
+            !m_snapshotBlocksJoin && !m_recoveryHold && !IsFenceStale());
 
         public float FenceAgeMilliseconds => !m_hasFence || m_lastFenceRealTime <= 0.0
             ? -1f
@@ -198,7 +292,7 @@ namespace ScMultiplayer
                 if (!m_hasFence || IsFenceStale()) return "Fence";
                 if (m_hostPaused) return "HostPause";
                 if (m_repairBarrierHostStep > 0) return "Repair";
-                if (m_snapshotRequested)
+                if (m_snapshotRequested && m_snapshotBlocksJoin)
                 {
                     return m_snapshotPartCount > 0
                         ? $"Snapshot {m_snapshotParts.Count}/{m_snapshotPartCount}"
@@ -242,7 +336,7 @@ namespace ScMultiplayer
             m_snapshotRequested = false;
             m_recoveryHold = true;
             m_requiredFenceSerial = m_receivedFenceSerial;
-            RequestSnapshot();
+            RequestSnapshot(allowDeferred: true, blocksJoin: true);
         }
 
         public bool IsSimulationPaused
@@ -265,10 +359,11 @@ namespace ScMultiplayer
             get
             {
                 if (ScMultiplayer.IsHost || m_subsystem == null) return false;
+                if (IsHostTimeAccelerated) return false;
                 // Source: CircuitSynchronizer.IsSimulationPaused
                 // A repair snapshot pauses only circuit execution at its barrier. It must not
                 // suppress unrelated world input such as attacks, mining or creature reactions.
-                bool blockingSnapshot = m_snapshotRequested &&
+                bool blockingSnapshot = m_snapshotRequested && m_snapshotBlocksJoin &&
                     m_repairBarrierHostStep <= 0;
                 if (!m_hasFence || m_localSuspended || m_hostPaused || m_recoveryHold ||
                     blockingSnapshot || IsFenceStale())
@@ -290,6 +385,11 @@ namespace ScMultiplayer
                 : null;
             if (ReferenceEquals(m_project, project) && ReferenceEquals(m_subsystem, electricity))
             {
+                if (!ScMultiplayer.IsHost)
+                {
+                    ApplyDeferredSnapshotStates();
+                    MaintainLoadedSnapshotScope();
+                }
                 return;
             }
 
@@ -333,6 +433,100 @@ namespace ScMultiplayer
                 SendCheckpointRequest();
                 TryBeginPendingJoinBootstrap();
             }
+        }
+
+        private void MaintainLoadedSnapshotScope()
+        {
+            if (ScMultiplayer.IsHost || m_subsystem == null ||
+                !m_initialSnapshotApplied || m_snapshotBlocksJoin ||
+                ScMultiplayer.client?.IsConnected != true ||
+                Time.RealTime - m_lastSnapshotScopeRequestTime <
+                SnapshotScopeRequestInterval)
+                return;
+            if (!TryGetLoadedSnapshotScope(out SnapshotScope scope) ||
+                scope.Equals(m_confirmedSnapshotScope) ||
+                (m_snapshotRequested && scope.Equals(m_requestedSnapshotScope)))
+                return;
+            m_requestedSnapshotScope = scope;
+            m_lastSnapshotScopeRequestTime = Time.RealTime;
+            RequestSnapshot(allowDeferred: true, blocksJoin: false);
+        }
+
+        private bool TryGetLoadedSnapshotScope(out SnapshotScope scope)
+        {
+            scope = default;
+            Terrain terrain = m_subsystem?.SubsystemTerrain?.Terrain;
+            if (terrain == null) return false;
+            TerrainChunk[] chunks = terrain.AllocatedChunks?.Where(chunk =>
+                chunk != null && chunk.IsLoaded && chunk.State >= TerrainChunkState.Valid &&
+                chunk.AreBehaviorsNotified).ToArray();
+            if (chunks == null || chunks.Length == 0) return false;
+            int minChunkX = chunks.Min(chunk => chunk.Origin.X >> 4);
+            int minChunkZ = chunks.Min(chunk => chunk.Origin.Y >> 4);
+            int maxChunkX = chunks.Max(chunk => chunk.Origin.X >> 4);
+            int maxChunkZ = chunks.Max(chunk => chunk.Origin.Y >> 4);
+            if (maxChunkX - minChunkX > 64 || maxChunkZ - minChunkZ > 64)
+                return false;
+            scope = new SnapshotScope(true, minChunkX, minChunkZ, maxChunkX, maxChunkZ);
+            return true;
+        }
+
+        private bool IsCircuitChunkReady(Point3 point)
+        {
+            TerrainChunk chunk = m_subsystem?.SubsystemTerrain?.Terrain?.GetChunkAtCell(
+                point.X, point.Z);
+            return chunk != null && chunk.IsLoaded &&
+                chunk.State >= TerrainChunkState.Valid && chunk.AreBehaviorsNotified;
+        }
+
+        private void ApplyDeferredSnapshotStates()
+        {
+            if (m_subsystem == null || m_deferredSnapshotStates.Count == 0)
+                return;
+            foreach (CellFace face in m_deferredSnapshotStates.Keys.ToArray())
+            {
+                if (!m_deferredSnapshotStates.TryGetValue(face,
+                    out CircuitStateRecord state))
+                    continue;
+                ElectricElement element = m_subsystem.GetElectricElement(
+                    state.Point.X, state.Point.Y, state.Point.Z, state.MountingFace);
+                if (element == null) continue;
+                if (GetStableTypeCode(element.GetType()) != state.ElementTypeCode)
+                {
+                    m_deferredSnapshotStates.Remove(face);
+                    RequestSnapshot();
+                    continue;
+                }
+                bool previousAllowDeferred = m_snapshotAllowDeferred;
+                m_snapshotAllowDeferred = false;
+                bool applied = ApplyStateRecord(state, m_snapshotHostCircuitStep,
+                    !m_deferredSnapshotSuppressGenericSimulation);
+                m_snapshotAllowDeferred = previousAllowDeferred;
+                if (applied)
+                    m_deferredSnapshotStates.Remove(face);
+                else
+                {
+                    m_deferredSnapshotStates.Remove(face);
+                    RequestSnapshot();
+                }
+            }
+        }
+
+        private void StoreDeferredSnapshotState(CircuitStateRecord state)
+        {
+            var face = new CellFace(state.Point.X, state.Point.Y, state.Point.Z,
+                state.MountingFace);
+            if (!m_deferredSnapshotStates.ContainsKey(face) &&
+                m_deferredSnapshotStates.Count >= MaximumDeferredSnapshotStates)
+                m_deferredSnapshotStates.Remove(m_deferredSnapshotStates.Keys.First());
+            m_deferredSnapshotStates[face] = state;
+        }
+
+        private void ClearDeferredSnapshotStates(SnapshotScope scope)
+        {
+            foreach (CellFace face in m_deferredSnapshotStates.Keys.Where(item =>
+                scope.Contains(item.Point)).ToArray())
+                m_deferredSnapshotStates.Remove(face);
         }
 
         // Source: Engine/Window.cs:Window.Deactivated
@@ -497,6 +691,10 @@ namespace ScMultiplayer
                 m_clientRepairVerifiedThrough.Remove(clientId);
                 m_clientHashMismatchCounts.Remove(clientId);
                 m_outgoingSnapshots.Remove(clientId);
+                m_clientSnapshotScopes.Remove(clientId);
+                foreach (Dictionary<int, uint> hashes in
+                    m_hostScopedCheckpointHashes.Values)
+                    hashes.Remove(clientId);
                 m_pendingReliableCircuitMessages.Remove(clientId);
                 if (m_subsystem != null && m_epoch > 0)
                 {
@@ -527,6 +725,7 @@ namespace ScMultiplayer
             m_nextPressureScheduleSteps.Clear();
             m_trackedCircuitCells.Clear();
             m_snapshotParts.Clear();
+            m_deferredSnapshotStates.Clear();
             m_buttonPulses.Clear();
             m_localButtonSoundCredentials.Clear();
             m_pendingSwitchStates.Clear();
@@ -538,6 +737,8 @@ namespace ScMultiplayer
             m_clientRepairVerifiedThrough.Clear();
             m_clientHashMismatchCounts.Clear();
             m_outgoingSnapshots.Clear();
+            m_clientSnapshotScopes.Clear();
+            m_hostScopedCheckpointHashes.Clear();
             m_pendingReliableCircuitMessages.Clear();
             m_reliableBulkCursor = 0;
             m_hasClock = false;
@@ -549,6 +750,11 @@ namespace ScMultiplayer
             m_snapshotRequested = false;
             m_initialSnapshotApplied = false;
             m_joinBootstrapPending = false;
+            m_snapshotAllowDeferred = false;
+            m_snapshotBlocksJoin = false;
+            m_requestedSnapshotScope = default;
+            m_confirmedSnapshotScope = default;
+            m_incomingSnapshotScope = default;
             m_hasWorldTimeAnchor = false;
             m_randomGeneratorsInitialized = false;
             m_worldTimeReschedulePending = false;
@@ -565,6 +771,9 @@ namespace ScMultiplayer
             m_timelineGeneration = 0;
             m_safeThroughHostCircuitStep = 0;
             m_lastFenceServerStep = 0;
+            m_lastFenceSequence = 0;
+            m_lastWorldTimeAuthorityServerStep = 0;
+            m_worldTimeRevision = 0;
             m_receivedFenceSerial = 0;
             m_requiredFenceSerial = 0;
             m_fenceTerrainSequence = 0;
@@ -588,12 +797,75 @@ namespace ScMultiplayer
             m_worldTimeAnchorTotalElapsedGameTime = 0.0;
             m_worldTimeAnchorTimeOfDayOffset = 0.0;
             m_snapshotProgressRealTime = 0.0;
+            m_lastSnapshotScopeRequestTime = 0.0;
+            m_deferredSnapshotSuppressGenericSimulation = false;
+            m_remoteTimeAccelerated = false;
+            m_inferredTimeAccelerated = false;
+            m_rebaseOnNextSnapshot = false;
+            m_rebaseAwaitingFence = false;
+            m_rebaseSnapshotHostStep = 0;
+            m_rebaseSnapshotLastSequence = 0;
+            m_rebaseSnapshotTimelineGeneration = 0;
+            m_hasFenceRateSample = false;
+            m_lastFenceRateServerStep = 0;
+            m_lastFenceRateHostStep = 0;
+            m_normalFenceRateSamples = 0;
+        }
+
+        // Source: ScMultiplayer.HandleGameWorldInfoMessage
+        // A sleeping host advances the native circuit 20 times per rendered frame. Clients keep
+        // one local circuit step and must not spend the whole sleep interval replaying that gap.
+        // On the wake edge, a current authoritative snapshot provides the same state boundary
+        // without discarding reliable circuit sequencing.
+        internal void NotifyRemoteTimeAccelerationChanged(bool accelerated)
+        {
+            if (ScMultiplayer.IsHost)
+                return;
+            bool wasAccelerated = IsHostTimeAccelerated;
+            // Source: Survivalcraft/Game/SubsystemTime.cs:SubsystemTime.NextFrame
+            // A normal world-info update is authoritative even when acceleration was inferred
+            // from the fence rate. Clear the inferred flag before testing the falling edge;
+            // otherwise a false update can be ignored while the client remains frozen.
+            if (!accelerated)
+                m_inferredTimeAccelerated = false;
+            m_remoteTimeAccelerated = accelerated;
+            if (wasAccelerated && !IsHostTimeAccelerated)
+                BeginPostAccelerationRebase();
+        }
+
+        private void BeginPostAccelerationRebase()
+        {
+            if (m_subsystem == null || m_epoch <= 0 || !m_initialSnapshotApplied ||
+                ScMultiplayer.client?.IsConnected != true || m_rebaseOnNextSnapshot)
+                return;
+            m_rebaseOnNextSnapshot = true;
+            m_rebaseAwaitingFence = false;
+            m_rebaseSnapshotHostStep = 0;
+            m_recoveryHold = true;
+            m_requiredFenceSerial = m_receivedFenceSerial;
+            m_recoveryRequested = false;
+            m_snapshotParts.Clear();
+            m_snapshotPartCount = 0;
+            m_snapshotSequence = 0;
+            m_snapshotHostCircuitStep = 0;
+            m_snapshotLastSequence = 0;
+            m_snapshotRequested = false;
+            m_snapshotRequestRealTime = 0.0;
+            m_snapshotProgressRealTime = 0.0;
+            RequestSnapshot();
         }
 
         // Source: Survivalcraft/Game/SubsystemElectricity.cs:SubsystemElectricity.Update
         internal int? GetCircuitStepTarget()
         {
             if (ScMultiplayer.IsHost || !m_hasClock) return null;
+            if (IsHostTimeAccelerated)
+            {
+                // Source: Survivalcraft/Game/SubsystemTime.cs:SubsystemTime.NextFrame
+                // The host is intentionally running a shared sleep catch-up. Holding the client
+                // at its current circuit boundary avoids an unbounded replay backlog.
+                return m_subsystem.CircuitStep;
+            }
             UpdateWindowExhaustionState();
             TryCompleteRecoveryHold();
             if (IsSimulationPaused) return m_subsystem.CircuitStep;
@@ -623,10 +895,16 @@ namespace ScMultiplayer
         // Source: CircuitSynchronizer.ClientStateText
         private void UpdateWindowExhaustionState()
         {
+            if (IsHostTimeAccelerated)
+            {
+                m_windowExhaustedSince = 0.0;
+                return;
+            }
             bool canTrack = !ScMultiplayer.IsHost && m_subsystem != null &&
                 m_hasClock && m_hasFence && m_initialSnapshotApplied &&
                 !m_localSuspended && !m_hostPaused && !m_recoveryHold &&
-                !m_recoveryRequested && !m_snapshotRequested &&
+                !m_recoveryRequested &&
+                (!m_snapshotRequested || !m_snapshotBlocksJoin) &&
                 m_repairBarrierHostStep <= 0 && !IsFenceStale();
             bool exhausted = canTrack && StepDelta(m_safeThroughHostCircuitStep,
                 LocalToHost(m_subsystem.CircuitStep)) <= 0;
@@ -688,7 +966,10 @@ namespace ScMultiplayer
                 // then publish a later verification checkpoint without it being erased.
                 m_nextHashStep = 0;
                 bool exact = hostStep == checkpointStep;
-                uint hash = exact ? ComputeStateHash() : 0u;
+                uint hash = exact ? ComputeStateHash(
+                    !ScMultiplayer.IsHost && m_confirmedSnapshotScope.HasScope
+                        ? (SnapshotScope?)m_confirmedSnapshotScope
+                        : null) : 0u;
                 if (ScMultiplayer.IsHost)
                 {
                     if (exact)
@@ -705,6 +986,16 @@ namespace ScMultiplayer
                             m_owner.CircuitTerrainSequence;
                         m_hostCheckpointTimelineGenerations[checkpointStep] =
                             m_timelineGeneration;
+                        var scopedHashes = new Dictionary<int, uint>();
+                        foreach (KeyValuePair<int, SnapshotScope> clientScope in
+                            m_clientSnapshotScopes)
+                        {
+                            scopedHashes[clientScope.Key] = ComputeStateHash(
+                                clientScope.Value.HasScope
+                                    ? (SnapshotScope?)clientScope.Value
+                                    : null);
+                        }
+                        m_hostScopedCheckpointHashes[checkpointStep] = scopedHashes;
                         while (m_hostCheckpointHashes.Count > 4)
                         {
                             int staleStep = m_hostCheckpointHashes.Keys.Min();
@@ -712,6 +1003,7 @@ namespace ScMultiplayer
                             m_hostCheckpointEventSequences.Remove(staleStep);
                             m_hostCheckpointTerrainSequences.Remove(staleStep);
                             m_hostCheckpointTimelineGenerations.Remove(staleStep);
+                            m_hostScopedCheckpointHashes.Remove(staleStep);
                         }
                     }
                 }
@@ -719,7 +1011,7 @@ namespace ScMultiplayer
                     m_repairBarrierHostStep <= 0 && !m_snapshotRequested)
                 {
                     m_lastReportedHashStep = checkpointStep;
-                    NetworkMessageSender.SendCircuitSync(0, new CircuitSyncMessage
+                    var hashMessage = new CircuitSyncMessage
                     {
                         Stage = CircuitSyncStage.HashReport,
                         Epoch = m_epoch,
@@ -729,7 +1021,9 @@ namespace ScMultiplayer
                         LastSequence = m_lastAppliedSequence,
                         RequiredTerrainSequence = m_owner.CircuitTerrainSequence,
                         TimelineGeneration = m_timelineGeneration
-                    });
+                    };
+                    m_confirmedSnapshotScope.WriteTo(hashMessage);
+                    NetworkMessageSender.SendCircuitSync(0, hashMessage);
                 }
             }
             TryFinalizeSnapshot();
@@ -1101,7 +1395,8 @@ namespace ScMultiplayer
                 furnitureButton.Press();
             else return;
 
-            CellFace face = GetStableCellFace(element);
+            CellFace face = new CellFace(item.Point.X, item.Point.Y, item.Point.Z,
+                item.MountingFace);
             // Source: Survivalcraft/Game/SubsystemElectricity.cs:SubsystemElectricity.Update
             // ApplyEvent runs immediately before the assigned native step. Press queues the
             // button into that step, so ten high steps end at H+10 and H+11 is confirmation.
@@ -1205,17 +1500,26 @@ namespace ScMultiplayer
             bool generationChanged = message.TimelineGeneration != m_timelineGeneration;
             bool wasStale = IsFenceStale();
             bool wasHostPaused = m_hostPaused;
+            UpdateHostTimeAccelerationFromFence(message, generationChanged);
             m_timelineGeneration = message.TimelineGeneration;
             m_receivedFenceSerial++;
             m_lastFenceRealTime = Time.RealTime;
             m_lastFenceRequestRealTime = 0.0;
             m_hasFence = true;
             m_lastFenceServerStep = message.ServerStep;
+            m_lastFenceSequence = Math.Max(m_lastFenceSequence, message.LastSequence);
             m_safeThroughHostCircuitStep = message.SafeThroughHostCircuitStep;
             m_fenceTerrainSequence = Math.Max(message.RequiredTerrainSequence, 0L);
             m_hostPaused = message.IsPaused;
-            if (!m_hasWorldTimeAnchor || StepDelta(message.HostCircuitStep,
-                    m_worldTimeAnchorHostCircuitStep) >= 0)
+            bool newerWorldTimeRevision = m_worldTimeRevision <= 0 ||
+                StepDelta(message.WorldTimeRevision, m_worldTimeRevision) > 0;
+            bool currentWorldTimeRevision = message.WorldTimeRevision == m_worldTimeRevision;
+            if ((newerWorldTimeRevision ||
+                    (currentWorldTimeRevision && (!m_hasWorldTimeAnchor ||
+                    StepDelta(message.HostCircuitStep,
+                        m_worldTimeAnchorHostCircuitStep) >= 0))) &&
+                (newerWorldTimeRevision ||
+                    StepDelta(message.ServerStep, m_lastWorldTimeAuthorityServerStep) >= 0))
             {
                 // Source: Survivalcraft/Game/RealTimeClockElectricElement.cs:
                 // RealTimeClockElectricElement.Simulate
@@ -1232,6 +1536,8 @@ namespace ScMultiplayer
                         message.TimeOfDayOffset) > 0.000001)
                     m_worldTimeReschedulePending = true;
                 m_hasWorldTimeAnchor = true;
+                m_worldTimeRevision = message.WorldTimeRevision;
+                m_lastWorldTimeAuthorityServerStep = message.ServerStep;
                 m_worldTimeAnchorHostCircuitStep = message.HostCircuitStep;
                 m_worldTimeAnchorTotalElapsedGameTime = message.TotalElapsedGameTime;
                 m_worldTimeAnchorTimeOfDayOffset = message.TimeOfDayOffset;
@@ -1250,13 +1556,7 @@ namespace ScMultiplayer
                 m_hasClock = true;
                 EnableDeterministicRandom();
                 DrainPendingRemoteActions();
-                // Source: CircuitSynchronizer.SendSnapshot
-                // Runtime voltages are not guaranteed to be serialized in the downloaded world.
-                // Bootstrap from a full host snapshot even when no circuit event exists yet.
-                RequestSnapshot();
             }
-            if (!m_initialSnapshotApplied && !m_snapshotRequested)
-                RequestSnapshot();
             if (StepDelta(message.ServerStep, m_epochServerStep) > 0 ||
                 m_epochServerStep == 0)
             {
@@ -1276,6 +1576,58 @@ namespace ScMultiplayer
             TryCompleteRecoveryHold();
         }
 
+        // Source: CircuitSynchronizer.SendFence
+        // Normal electricity advances at roughly a few circuit steps per network step. During
+        // vanilla all-player sleep, the host runs twenty world updates per rendered frame and the
+        // ratio rises by an order of magnitude. Infer that state from replaceable fences so a lost
+        // GameWorldInfo datagram cannot leave the client replaying the whole night.
+        private void UpdateHostTimeAccelerationFromFence(CircuitSyncMessage message,
+            bool generationChanged)
+        {
+            if (generationChanged || !m_hasFenceRateSample)
+            {
+                m_hasFenceRateSample = true;
+                m_lastFenceRateServerStep = message.ServerStep;
+                m_lastFenceRateHostStep = message.HostCircuitStep;
+                m_normalFenceRateSamples = 0;
+                return;
+            }
+
+            int serverStepDelta = StepDelta(message.ServerStep,
+                m_lastFenceRateServerStep);
+            int hostStepDelta = StepDelta(message.HostCircuitStep,
+                m_lastFenceRateHostStep);
+            m_lastFenceRateServerStep = message.ServerStep;
+            m_lastFenceRateHostStep = message.HostCircuitStep;
+            if (serverStepDelta <= 0 || hostStepDelta < 0)
+                return;
+
+            bool accelerated = hostStepDelta >= AcceleratedFenceMinimumHostStepDelta &&
+                hostStepDelta > serverStepDelta * AcceleratedFenceHostStepsPerServerStep;
+            if (accelerated)
+            {
+                m_inferredTimeAccelerated = true;
+                m_normalFenceRateSamples = 0;
+                return;
+            }
+
+            if (!IsHostTimeAccelerated)
+            {
+                m_normalFenceRateSamples = 0;
+                return;
+            }
+            m_normalFenceRateSamples++;
+            if (m_normalFenceRateSamples < NormalFenceSamplesToEndAcceleration)
+                return;
+
+            m_normalFenceRateSamples = 0;
+            m_inferredTimeAccelerated = false;
+            // A normal fence stream is a stronger circuit-timeline signal than an older
+            // replaceable world-info datagram, so it also clears a stale acceleration flag.
+            m_remoteTimeAccelerated = false;
+            BeginPostAccelerationRebase();
+        }
+
         private void HandleClock(CircuitSyncMessage message)
         {
             if (!AcceptEpoch(message.Epoch)) return;
@@ -1293,12 +1645,7 @@ namespace ScMultiplayer
                 m_hasClock = true;
                 EnableDeterministicRandom();
                 DrainPendingRemoteActions();
-                // Source: CircuitSynchronizer.SendSnapshot
-                // Sequence zero still has authoritative runtime voltages to bootstrap.
-                RequestSnapshot();
             }
-            if (!m_initialSnapshotApplied && !m_snapshotRequested)
-                RequestSnapshot();
             m_epochServerStep = message.ServerStep;
             m_epochHostCircuitStep = message.HostCircuitStep;
             m_knownHostSequence = Math.Max(m_knownHostSequence, message.LastSequence);
@@ -1332,8 +1679,7 @@ namespace ScMultiplayer
             if (m_clientRepairVerifiedThrough.TryGetValue(sourceClientId,
                 out int verifiedThrough) && message.HashStep <= verifiedThrough)
                 return;
-            if (!m_hostCheckpointHashes.TryGetValue(message.HashStep,
-                out uint authoritativeHash))
+            if (!m_hostCheckpointHashes.ContainsKey(message.HashStep))
             {
                 // Source: CircuitSynchronizer.CompleteCircuitStep
                 // The host has no matching boundary context yet (or already pruned it), so the
@@ -1342,6 +1688,29 @@ namespace ScMultiplayer
                 RequestHashRecheck();
                 return;
             }
+            SnapshotScope reportScope = SnapshotScope.FromMessage(message);
+            if (!m_clientSnapshotScopes.TryGetValue(sourceClientId,
+                    out SnapshotScope expectedScope) ||
+                !expectedScope.Equals(reportScope))
+            {
+                m_clientHashMismatchCounts.Remove(sourceClientId);
+                RequestHashRecheck();
+                return;
+            }
+            uint authoritativeHash;
+            if (reportScope.HasScope)
+            {
+                if (!m_hostScopedCheckpointHashes.TryGetValue(message.HashStep,
+                    out Dictionary<int, uint> scopedHashes) ||
+                    !scopedHashes.TryGetValue(sourceClientId, out authoritativeHash))
+                {
+                    m_clientHashMismatchCounts.Remove(sourceClientId);
+                    RequestHashRecheck();
+                    return;
+                }
+            }
+            else
+                authoritativeHash = m_hostCheckpointHashes[message.HashStep];
             if (!m_hostCheckpointEventSequences.TryGetValue(message.HashStep,
                     out int eventSequence) ||
                 !m_hostCheckpointTerrainSequences.TryGetValue(message.HashStep,
@@ -1448,6 +1817,8 @@ namespace ScMultiplayer
             // Continue simulation up to barrier - 1. Setting RecoveryHold here would pause at the
             // current step, making the repair barrier unreachable and leaving Ckt Repair forever.
             m_snapshotRequested = true;
+            m_snapshotAllowDeferred = false;
+            m_snapshotBlocksJoin = false;
             m_snapshotRequestRealTime = Time.RealTime;
             m_snapshotProgressRealTime = Time.RealTime;
             m_snapshotRequestAttempts = 0;
@@ -1542,6 +1913,15 @@ namespace ScMultiplayer
                 return;
             if (m_receivedFenceSerial < m_requiredFenceSerial)
                 return;
+            if (m_rebaseAwaitingFence &&
+                StepDelta(m_safeThroughHostCircuitStep, m_rebaseSnapshotHostStep) < 0)
+                return;
+            if (m_rebaseAwaitingFence &&
+                StepDelta(m_lastFenceSequence, m_rebaseSnapshotLastSequence) < 0)
+                return;
+            if (m_rebaseAwaitingFence &&
+                m_timelineGeneration < m_rebaseSnapshotTimelineGeneration)
+                return;
             if (SuSubsystemTerrain.LastAppliedTerrainSequence < m_fenceTerrainSequence)
                 return;
             if (m_snapshotRequested)
@@ -1551,6 +1931,10 @@ namespace ScMultiplayer
                 RequestRecovery();
                 return;
             }
+            m_rebaseAwaitingFence = false;
+            m_rebaseSnapshotHostStep = 0;
+            m_rebaseSnapshotLastSequence = 0;
+            m_rebaseSnapshotTimelineGeneration = 0;
             m_recoveryHold = false;
         }
 
@@ -1612,10 +1996,18 @@ namespace ScMultiplayer
             SendEventRecords(sourceClientId, records, reliableBulk: true);
         }
 
-        private void RequestSnapshot()
+        private void RequestSnapshot(bool allowDeferred = false, bool blocksJoin = false)
         {
-            if (m_snapshotRequested || m_epoch <= 0) return;
+            if (m_epoch <= 0) return;
+            if (m_snapshotRequested)
+            {
+                m_snapshotAllowDeferred &= allowDeferred;
+                m_snapshotBlocksJoin |= blocksJoin;
+                return;
+            }
             m_snapshotRequested = true;
+            m_snapshotAllowDeferred = allowDeferred;
+            m_snapshotBlocksJoin = blocksJoin;
             m_snapshotRequestAttempts = 0;
             m_snapshotProgressRealTime = Time.RealTime;
             SendSnapshotRequest();
@@ -1635,6 +2027,7 @@ namespace ScMultiplayer
                 LastSequence = m_snapshotLastSequence,
                 SnapshotPartCount = m_snapshotPartCount
             };
+            m_requestedSnapshotScope.WriteTo(request);
             // Source: CircuitSynchronizer.HandleSnapshot
             // Once a generation is known, request only missing pieces. The host keeps that
             // immutable generation briefly so a lossy link does not restart the entire snapshot.
@@ -1658,21 +2051,27 @@ namespace ScMultiplayer
                 .Select(item => item.Key).ToArray())
                 m_outgoingSnapshots.Remove(staleClientId);
 
+            SnapshotScope requestScope = SnapshotScope.FromMessage(request);
+            if (request != null)
+                m_clientSnapshotScopes[targetClientId] = requestScope;
             OutgoingSnapshotBatch batch = null;
             bool generationMatches = request != null && request.SnapshotPartCount > 0 &&
                 m_outgoingSnapshots.TryGetValue(targetClientId, out batch) &&
                 batch.HostCircuitStep == request.HostCircuitStep &&
                 batch.LastSequence == request.LastSequence &&
+                batch.Scope.Equals(requestScope) &&
                 batch.Parts.Count == request.SnapshotPartCount;
             if (!generationMatches)
             {
-                List<CircuitStateRecord> states = CaptureStateRecords();
+                List<CircuitStateRecord> states = CaptureStateRecords(
+                    request == null ? (SnapshotScope?)null : requestScope);
                 int partCount = Math.Max((states.Count + MaximumStatesPerSnapshot - 1) /
                     MaximumStatesPerSnapshot, 1);
                 batch = new OutgoingSnapshotBatch
                 {
                     HostCircuitStep = m_subsystem.CircuitStep,
                     LastSequence = m_lastAppliedSequence,
+                    Scope = requestScope,
                     CreatedTime = now
                 };
                 for (int part = 0; part < partCount; part++)
@@ -1686,6 +2085,7 @@ namespace ScMultiplayer
                         SnapshotPartIndex = part,
                         SnapshotPartCount = partCount
                     };
+                    batch.Scope.WriteTo(message);
                     message.States.AddRange(states.Skip(part * MaximumStatesPerSnapshot)
                         .Take(MaximumStatesPerSnapshot));
                     batch.Parts.Add(message);
@@ -1743,7 +2143,7 @@ namespace ScMultiplayer
             {
                 Message = message,
                 // Keep enough room for nested DRT/Comm headers and fragmentation.
-                EstimatedPackets = Math.Max(1, (payloadBytes + 899) / 900)
+                EstimatedPackets = ScMultiplayer.EstimateReliableRelayPackets(payloadBytes)
             });
         }
 
@@ -1766,7 +2166,11 @@ namespace ScMultiplayer
                     continue;
                 }
                 PendingReliableCircuitMessage pending = queue.Peek();
-                if (!m_owner.CanSendReliableBulk(clientId, pending.EstimatedPackets)) continue;
+                bool joinCriticalSnapshot =
+                    pending.Message?.Stage == CircuitSyncStage.Snapshot;
+                if (!m_owner.CanSendReliableBulk(clientId, pending.EstimatedPackets,
+                        joinCriticalSnapshot))
+                    continue;
                 queue.Dequeue();
                 NetworkMessageSender.SendCircuitSync(clientId, pending.Message);
                 budget--;
@@ -1781,15 +2185,18 @@ namespace ScMultiplayer
                 message.SnapshotPartIndex >= message.SnapshotPartCount) return;
             m_snapshotRequested = true;
             m_recoveryRequested = false;
+            SnapshotScope messageScope = SnapshotScope.FromMessage(message);
             if (m_snapshotSequence != message.LastSequence ||
                 m_snapshotPartCount != message.SnapshotPartCount ||
-                m_snapshotHostCircuitStep != message.HostCircuitStep)
+                m_snapshotHostCircuitStep != message.HostCircuitStep ||
+                !m_incomingSnapshotScope.Equals(messageScope))
             {
                 m_snapshotParts.Clear();
                 m_snapshotSequence = message.LastSequence;
                 m_snapshotPartCount = message.SnapshotPartCount;
                 m_snapshotHostCircuitStep = message.HostCircuitStep;
                 m_snapshotLastSequence = message.LastSequence;
+                m_incomingSnapshotScope = messageScope;
             }
             bool receivedNewPart = !m_snapshotParts.ContainsKey(message.SnapshotPartIndex);
             m_snapshotParts[message.SnapshotPartIndex] = message.States.ToList();
@@ -1811,32 +2218,64 @@ namespace ScMultiplayer
 
             int appliedRepairCheckpoint = m_repairCheckpointStep;
             int appliedRepairHostStep = m_snapshotHostCircuitStep;
-            if (!m_initialSnapshotApplied && m_repairBarrierHostStep <= 0)
+            bool initialBootstrapSnapshot = !m_initialSnapshotApplied &&
+                m_repairBarrierHostStep <= 0;
+            bool postAccelerationRebaseSnapshot = m_rebaseOnNextSnapshot &&
+                m_repairBarrierHostStep <= 0;
+            bool rebaseSnapshot = initialBootstrapSnapshot ||
+                postAccelerationRebaseSnapshot;
+            List<CircuitEventRecord> postSnapshotEvents = null;
+            List<CircuitEventRecord> pendingPostSnapshotEvents = null;
+            if (rebaseSnapshot)
             {
                 // Source: Survivalcraft/Game/SubsystemElectricity.cs:
                 // SubsystemElectricity.CircuitStep
                 // A downloaded snapshot already represents SnapshotHostCircuitStep. Rebase the
                 // held local step to that host step instead of replaying the download interval a
                 // second time from a future state.
-                List<CircuitEventRecord> postSnapshotEvents = m_scheduledEvents.Values
-                    .SelectMany(items => items).Where(item =>
-                        item.Sequence > m_snapshotLastSequence).ToList();
+                postSnapshotEvents = m_scheduledEvents.Values.SelectMany(items => items)
+                    .Where(item => item.Sequence > m_snapshotLastSequence &&
+                        StepDelta(item.HostCircuitStep, m_snapshotHostCircuitStep) > 0)
+                    .GroupBy(item => item.Sequence).Select(group => group.First()).ToList();
+                pendingPostSnapshotEvents = m_receivedEvents.Values
+                    .Where(item => item.Sequence > m_snapshotLastSequence &&
+                        StepDelta(item.HostCircuitStep, m_snapshotHostCircuitStep) > 0)
+                    .GroupBy(item => item.Sequence).Select(group => group.First()).ToList();
                 m_localCircuitOffset = m_subsystem.CircuitStep - m_snapshotHostCircuitStep;
+                m_epochHostCircuitStep = m_snapshotHostCircuitStep;
+                m_epochServerStep = NetworkStep;
                 m_scheduledEvents.Clear();
                 m_scheduledActions.Clear();
+                ClearAllScheduledSimulation();
+            }
+
+            ClearDeferredSnapshotStates(m_incomingSnapshotScope);
+            m_trackedCircuitCells.Clear();
+            int rejectedStateCount = 0;
+            foreach (CircuitStateRecord state in m_snapshotParts.Values.SelectMany(x => x))
+            {
+                if (!ApplyStateRecord(state, m_snapshotHostCircuitStep,
+                    restoreGenericSimulation: !rebaseSnapshot))
+                    rejectedStateCount++;
+            }
+            if (rejectedStateCount > 0)
+            {
+                RestartSnapshotAfterApplyFailure();
+                return;
+            }
+            m_snapshotParts.Clear();
+            m_receivedEvents.Clear();
+            if (postSnapshotEvents != null)
+            {
                 foreach (CircuitEventRecord item in postSnapshotEvents)
                 {
                     int localStep = Math.Max(m_subsystem.CircuitStep + 1,
                         HostToLocal(item.HostCircuitStep));
                     QueueScheduledEvent(item, localStep);
                 }
+                foreach (CircuitEventRecord item in pendingPostSnapshotEvents)
+                    m_receivedEvents[item.Sequence] = item;
             }
-
-            m_trackedCircuitCells.Clear();
-            foreach (CircuitStateRecord state in m_snapshotParts.Values.SelectMany(x => x))
-                ApplyStateRecord(state, m_snapshotHostCircuitStep);
-            m_snapshotParts.Clear();
-            m_receivedEvents.Clear();
             foreach (int step in m_scheduledEvents.Keys.ToArray())
             {
                 m_scheduledEvents[step].RemoveAll(item =>
@@ -1854,7 +2293,11 @@ namespace ScMultiplayer
             }
             m_lastAppliedSequence = m_snapshotLastSequence;
             m_snapshotRequested = false;
+            m_snapshotAllowDeferred = false;
+            m_snapshotBlocksJoin = false;
+            m_confirmedSnapshotScope = m_incomingSnapshotScope;
             m_initialSnapshotApplied = true;
+            m_deferredSnapshotSuppressGenericSimulation = rebaseSnapshot;
             m_recoveryRequested = false;
             m_snapshotRequestRealTime = 0.0;
             m_recoveryRequestRealTime = 0.0;
@@ -1865,6 +2308,20 @@ namespace ScMultiplayer
             m_snapshotPartCount = 0;
             m_repairBarrierHostStep = 0;
             m_repairCheckpointStep = 0;
+            // Source: CircuitSynchronizer.BeginPostAccelerationRebase
+            // The post-sleep snapshot needs a later fence to prove the host has advanced beyond
+            // its captured boundary. Initial join already runs behind CatchUpBatchComplete and
+            // must not add this second barrier or compete with the catch-up reliable window.
+            if (postAccelerationRebaseSnapshot)
+            {
+                m_rebaseOnNextSnapshot = false;
+                m_rebaseAwaitingFence = true;
+                m_rebaseSnapshotHostStep = appliedRepairHostStep;
+                m_rebaseSnapshotLastSequence = m_snapshotLastSequence;
+                m_rebaseSnapshotTimelineGeneration = m_timelineGeneration;
+                m_requiredFenceSerial = Math.Max(m_requiredFenceSerial,
+                    m_receivedFenceSerial + 1);
+            }
             if (appliedRepairCheckpoint > 0)
             {
                 // Source: CircuitSynchronizer.HandleRepairApplied
@@ -1877,10 +2334,58 @@ namespace ScMultiplayer
                 });
             }
             if (m_expectedSequence <= m_knownHostSequence) RequestRecovery();
+            DrainReceivedEvents();
             TryCompleteRecoveryHold();
         }
 
-        private List<CircuitStateRecord> CaptureStateRecords()
+        // Source: Survivalcraft/Game/SubsystemElectricity.cs:
+        // SubsystemElectricity.m_futureSimulateLists
+        // A sleep rebase replaces the local timeline. No native simulation item calculated before
+        // that boundary may run after the authoritative snapshot has been applied.
+        private void ClearAllScheduledSimulation()
+        {
+            // Source: Survivalcraft/Game/SubsystemElectricity.cs:
+            // SubsystemElectricity.m_nextStepSimulateList
+            // This one-step dictionary can be detached from m_futureSimulateLists between native
+            // updates. Clear it explicitly or a load/sleep bootstrap can replay a stale local
+            // edge after the authoritative snapshot has been applied.
+            try
+            {
+                Dictionary<ElectricElement, bool> nextStep =
+                    ScMultiplayer.ModManager.ModParentField.GetParentField<
+                        Dictionary<ElectricElement, bool>>(m_subsystem,
+                        "m_nextStepSimulateList", typeof(SubsystemElectricity));
+                nextStep?.Clear();
+            }
+            catch
+            {
+                // The existing per-element cleanup below remains the compatibility fallback.
+            }
+            foreach (ElectricElement element in GetElectricElements())
+                ClearScheduledSimulation(element);
+        }
+
+        // Source: CircuitSynchronizer.TryFinalizeSnapshot
+        // A partial state import is not a valid recovery boundary. Keep the recovery hold and ask
+        // the host for a fresh complete generation instead of letting untouched elements converge
+        // only when a later signal reaches them.
+        private void RestartSnapshotAfterApplyFailure()
+        {
+            bool allowDeferred = m_snapshotAllowDeferred;
+            bool blocksJoin = m_snapshotBlocksJoin;
+            m_snapshotParts.Clear();
+            m_snapshotPartCount = 0;
+            m_snapshotSequence = 0;
+            m_snapshotHostCircuitStep = 0;
+            m_snapshotLastSequence = 0;
+            m_snapshotRequested = false;
+            m_snapshotRequestRealTime = 0.0;
+            m_snapshotProgressRealTime = 0.0;
+            m_lastSnapshotScopeRequestTime = 0.0;
+            RequestSnapshot(allowDeferred, blocksJoin);
+        }
+
+        private List<CircuitStateRecord> CaptureStateRecords(SnapshotScope? scope = null)
         {
             var result = new List<CircuitStateRecord>();
             int hostStep = LocalToHost(m_subsystem.CircuitStep);
@@ -1891,6 +2396,8 @@ namespace ScMultiplayer
             foreach (ElectricElement element in GetElectricElements())
             {
                 CellFace face = GetStableCellFace(element);
+                if (scope.HasValue && !scope.Value.Contains(face.Point))
+                    continue;
                 var record = new CircuitStateRecord
                 {
                     Point = face.Point,
@@ -1909,10 +2416,10 @@ namespace ScMultiplayer
                 .ThenBy(item => item.Point.Z).ThenBy(item => item.MountingFace).ToList();
         }
 
-        private uint ComputeStateHash()
+        private uint ComputeStateHash(SnapshotScope? scope = null)
         {
             uint hash = 2166136261u;
-            foreach (CircuitStateRecord item in CaptureStateRecords())
+            foreach (CircuitStateRecord item in CaptureStateRecords(scope))
             {
                 Hash(ref hash, item.Point.X);
                 Hash(ref hash, item.Point.Y);
@@ -2077,6 +2584,46 @@ namespace ScMultiplayer
                     element, "m_voltage", declaringType);
                 state.VoltageLevel = (sbyte)MathUtils.Clamp(
                     (int)MathUtils.Round(voltage * 15f), -15, 15);
+                // Source: Survivalcraft/Game/SRLatchElectricElement.cs:
+                // SRLatchElectricElement.Simulate
+                // Source: Survivalcraft/Game/MemoryBankElectricElement.cs:
+                // MemoryBankElectricElement.Simulate
+                // Source: Survivalcraft/Game/RandomGeneratorElectricElement.cs:
+                // RandomGeneratorElectricElement.Simulate
+                // A voltage alone is not a complete edge-triggered state. Preserve the host's
+                // armed/disarmed inputs so importing a high level cannot become a new client edge.
+                if (element is SRLatchElectricElement)
+                {
+                    bool setAllowed = ScMultiplayer.ModManager.ModParentField
+                        .GetParentField<bool>(element, "m_setAllowed",
+                            typeof(SRLatchElectricElement));
+                    bool resetAllowed = ScMultiplayer.ModManager.ModParentField
+                        .GetParentField<bool>(element, "m_resetAllowed",
+                            typeof(SRLatchElectricElement));
+                    bool clockAllowed = ScMultiplayer.ModManager.ModParentField
+                        .GetParentField<bool>(element, "m_clockAllowed",
+                            typeof(SRLatchElectricElement));
+                    state.StateFlags = (byte)((setAllowed ? 1 : 0) |
+                        (resetAllowed ? 2 : 0) | (clockAllowed ? 4 : 0));
+                }
+                else if (element is MemoryBankElectricElement)
+                {
+                    bool writeAllowed = ScMultiplayer.ModManager.ModParentField
+                        .GetParentField<bool>(element, "m_writeAllowed",
+                            typeof(MemoryBankElectricElement));
+                    bool clockAllowed = ScMultiplayer.ModManager.ModParentField
+                        .GetParentField<bool>(element, "m_clockAllowed",
+                            typeof(MemoryBankElectricElement));
+                    state.StateFlags = (byte)((writeAllowed ? 1 : 0) |
+                        (clockAllowed ? 2 : 0));
+                }
+                else if (element is RandomGeneratorElectricElement)
+                {
+                    bool clockAllowed = ScMultiplayer.ModManager.ModParentField
+                        .GetParentField<bool>(element, "m_clockAllowed",
+                            typeof(RandomGeneratorElectricElement));
+                    state.StateFlags = (byte)(clockAllowed ? 1 : 0);
+                }
                 if (element is BaseDelayGateElectricElement)
                 {
                     float lastStored = ScMultiplayer.ModManager.ModParentField
@@ -2108,12 +2655,22 @@ namespace ScMultiplayer
             }
         }
 
-        private void ApplyStateRecord(CircuitStateRecord state, int hostCircuitStep)
+        private bool ApplyStateRecord(CircuitStateRecord state, int hostCircuitStep,
+            bool restoreGenericSimulation = true)
         {
             ElectricElement element = m_subsystem.GetElectricElement(state.Point.X,
                 state.Point.Y, state.Point.Z, state.MountingFace);
-            if (element == null || GetStableTypeCode(element.GetType()) !=
-                state.ElementTypeCode) return;
+            if (element == null)
+            {
+                if (m_snapshotAllowDeferred || !IsCircuitChunkReady(state.Point))
+                {
+                    StoreDeferredSnapshotState(state);
+                    return true;
+                }
+                return false;
+            }
+            if (GetStableTypeCode(element.GetType()) != state.ElementTypeCode)
+                return false;
             TrackCircuit(element, hostCircuitStep);
             try
             {
@@ -2183,21 +2740,52 @@ namespace ScMultiplayer
                     float voltage = (float)state.VoltageLevel / 15f;
                     Type declaringType = FindFieldDeclaringType(
                         element.GetType(), "m_voltage");
-                    if (declaringType == null) return;
+                    if (declaringType == null) return false;
                     ScMultiplayer.ModManager.ModParentField.ModifyParentField(element,
                         "m_voltage", voltage, declaringType);
+                    if (element is SRLatchElectricElement)
+                    {
+                        ScMultiplayer.ModManager.ModParentField.ModifyParentField(element,
+                            "m_setAllowed", (state.StateFlags & 1) != 0,
+                            typeof(SRLatchElectricElement));
+                        ScMultiplayer.ModManager.ModParentField.ModifyParentField(element,
+                            "m_resetAllowed", (state.StateFlags & 2) != 0,
+                            typeof(SRLatchElectricElement));
+                        ScMultiplayer.ModManager.ModParentField.ModifyParentField(element,
+                            "m_clockAllowed", (state.StateFlags & 4) != 0,
+                            typeof(SRLatchElectricElement));
+                    }
+                    else if (element is MemoryBankElectricElement)
+                    {
+                        ScMultiplayer.ModManager.ModParentField.ModifyParentField(element,
+                            "m_writeAllowed", (state.StateFlags & 1) != 0,
+                            typeof(MemoryBankElectricElement));
+                        ScMultiplayer.ModManager.ModParentField.ModifyParentField(element,
+                            "m_clockAllowed", (state.StateFlags & 2) != 0,
+                            typeof(MemoryBankElectricElement));
+                    }
+                    else if (element is RandomGeneratorElectricElement)
+                    {
+                        ScMultiplayer.ModManager.ModParentField.ModifyParentField(element,
+                            "m_clockAllowed", (state.StateFlags & 1) != 0,
+                            typeof(RandomGeneratorElectricElement));
+                    }
                     if (element is SRLatchElectricElement ||
                         element is RandomGeneratorElectricElement)
                         m_subsystem.WritePersistentVoltage(state.Point, voltage);
                 }
-                m_subsystem.QueueElectricElementConnectionsForSimulation(element,
-                    m_subsystem.CircuitStep + 1);
-                if (!isButton && state.NextSimulationSteps > 0)
+                // Source: Survivalcraft/Game/SubsystemElectricity.cs:
+                // SubsystemElectricity.SimulateElectricElement
+                // A complete snapshot is an already-settled host state, not a voltage-change
+                // event. Do not queue every connection here; doing so creates a client-only edge.
+                if (restoreGenericSimulation && !isButton && state.NextSimulationSteps > 0)
                     m_subsystem.QueueElectricElementForSimulation(element,
                         m_subsystem.CircuitStep + state.NextSimulationSteps);
+                return true;
             }
             catch
             {
+                return false;
             }
         }
 
@@ -2304,8 +2892,47 @@ namespace ScMultiplayer
                 element, "m_voltage", declaringType);
             if (wasPressed || ElectricElement.IsSignalHigh(voltage))
                 return false;
-            m_localButtonSoundCredentials[face] = Time.RealTime;
+            // Resolve the same stable face the host event uses. Interaction raycasts choose the
+            // first player-operable face; an element can expose multiple CellFaces in a different
+            // order, which previously left the local prediction credential unmatched.
+            double now = Time.RealTime;
+            m_localButtonSoundCredentials[face] = now;
+            m_localButtonSoundCredentials[GetStableCellFace(element)] = now;
             return true;
+        }
+
+        // Source: ScMultiplayer.HandleGameWorldInfoMessage
+        internal void UpdateAuthoritativeWorldTime(double totalElapsedGameTime,
+            double timeOfDayOffset, int serverStep, int worldTimeRevision)
+        {
+            if (ScMultiplayer.IsHost || worldTimeRevision <= 0 ||
+                double.IsNaN(totalElapsedGameTime) || double.IsInfinity(totalElapsedGameTime) ||
+                double.IsNaN(timeOfDayOffset) || double.IsInfinity(timeOfDayOffset))
+                return;
+
+            int hostStep = m_subsystem != null && m_hasClock
+                ? m_epochHostCircuitStep + StepDelta(serverStep, m_epochServerStep)
+                : m_worldTimeAnchorHostCircuitStep;
+            bool newerRevision = m_worldTimeRevision <= 0 ||
+                StepDelta(worldTimeRevision, m_worldTimeRevision) > 0;
+            if (!newerRevision && worldTimeRevision != m_worldTimeRevision)
+                return;
+            bool changed = !m_hasWorldTimeAnchor ||
+                Math.Abs(m_worldTimeAnchorTotalElapsedGameTime - totalElapsedGameTime) > 0.05 ||
+                Math.Abs(m_worldTimeAnchorTimeOfDayOffset - timeOfDayOffset) > 0.000001;
+            if (!newerRevision && m_hasWorldTimeAnchor &&
+                StepDelta(hostStep, m_worldTimeAnchorHostCircuitStep) < 0)
+                return;
+            if (!newerRevision && m_hasWorldTimeAnchor &&
+                StepDelta(serverStep, m_lastWorldTimeAuthorityServerStep) < 0)
+                return;
+            m_hasWorldTimeAnchor = true;
+            m_worldTimeRevision = worldTimeRevision;
+            m_lastWorldTimeAuthorityServerStep = serverStep;
+            m_worldTimeAnchorHostCircuitStep = hostStep;
+            m_worldTimeAnchorTotalElapsedGameTime = totalElapsedGameTime;
+            m_worldTimeAnchorTimeOfDayOffset = timeOfDayOffset;
+            m_worldTimeReschedulePending |= changed;
         }
 
         // Source: EntitySystem/SuAPI/ModParentField.cs:ModParentField
@@ -2469,6 +3096,7 @@ namespace ScMultiplayer
                 Stage = CircuitSyncStage.Fence,
                 Epoch = m_epoch,
                 TimelineGeneration = Math.Max(m_timelineGeneration, 1),
+                WorldTimeRevision = m_owner.CurrentHostWorldTimeRevision,
                 ServerStep = NetworkStep,
                 HostCircuitStep = hostStep,
                 SafeThroughHostCircuitStep = safeThrough,

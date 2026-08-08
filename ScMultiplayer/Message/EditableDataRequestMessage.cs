@@ -11,7 +11,8 @@ namespace ScMultiplayer
         AdjustableDelay = 3,
         SwitchVoltage = 4,
         ButtonVoltage = 5,
-        Piston = 6
+        Piston = 6,
+        Dispenser = 7
     }
 
     public enum EditableDataScope : byte
