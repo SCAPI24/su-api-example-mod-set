@@ -19,7 +19,8 @@ namespace ScMultiplayer
         HashReport = 9,
         RepairPlan = 10,
         CheckpointRequest = 11,
-        RepairApplied = 12
+        RepairApplied = 12,
+        ManualSnapshotRequest = 13
     }
 
     public enum CircuitOperationType : byte
@@ -189,6 +190,9 @@ namespace ScMultiplayer
                     HashStep = reader.ReadPackedInt32();
                     HostCircuitStep = reader.ReadPackedInt32();
                     break;
+                case CircuitSyncStage.ManualSnapshotRequest:
+                    Epoch = reader.ReadPackedInt32(1, int.MaxValue);
+                    break;
                 default:
                     throw new InvalidOperationException("Invalid circuit sync stage.");
             }
@@ -263,6 +267,9 @@ namespace ScMultiplayer
                     writer.WritePackedInt32(Epoch);
                     writer.WritePackedInt32(HashStep);
                     writer.WritePackedInt32(HostCircuitStep);
+                    break;
+                case CircuitSyncStage.ManualSnapshotRequest:
+                    writer.WritePackedInt32(Epoch);
                     break;
                 default:
                     throw new InvalidOperationException("Invalid circuit sync stage.");

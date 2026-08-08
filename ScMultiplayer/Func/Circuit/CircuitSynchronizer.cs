@@ -254,6 +254,7 @@ namespace ScMultiplayer
         private bool m_remoteTimeAccelerated;
         private bool m_inferredTimeAccelerated;
         private bool m_rebaseOnNextSnapshot;
+        private bool m_manualRebaseOnNextSnapshot;
         private bool m_rebaseAwaitingFence;
         private int m_rebaseSnapshotHostStep;
         private int m_rebaseSnapshotLastSequence;
@@ -651,7 +652,67 @@ namespace ScMultiplayer
                 case CircuitSyncStage.RepairPlan:
                     HandleRepairPlan(message);
                     break;
+                case CircuitSyncStage.ManualSnapshotRequest:
+                    if (message.Epoch == m_epoch)
+                        RequestManualSynchronization();
+                    break;
             }
+        }
+
+        // Source: CircuitSynchronizer.BeginPostAccelerationRebase
+        // Manual synchronization is an explicit full authority rebase, not a background scope
+        // refresh. Hold local simulation, discard the old snapshot generation and ask the host
+        // for every currently instantiated circuit state.
+        internal bool RequestManualSynchronization()
+        {
+            if (ScMultiplayer.IsHost || m_subsystem == null || m_epoch <= 0 ||
+                ScMultiplayer.client?.IsConnected != true || !m_initialSnapshotApplied ||
+                m_snapshotRequested || m_recoveryHold || m_recoveryRequested ||
+                m_rebaseOnNextSnapshot || m_manualRebaseOnNextSnapshot || IsFenceStale())
+                return false;
+
+            m_manualRebaseOnNextSnapshot = true;
+            m_rebaseAwaitingFence = false;
+            m_rebaseSnapshotHostStep = 0;
+            m_rebaseSnapshotLastSequence = 0;
+            m_rebaseSnapshotTimelineGeneration = 0;
+            m_recoveryHold = true;
+            m_requiredFenceSerial = m_receivedFenceSerial;
+            m_recoveryRequested = false;
+            m_requestedSnapshotScope = default;
+            m_snapshotParts.Clear();
+            m_snapshotPartCount = 0;
+            m_snapshotSequence = 0;
+            m_snapshotHostCircuitStep = 0;
+            m_snapshotLastSequence = 0;
+            m_snapshotRequested = false;
+            m_snapshotRequestRealTime = 0.0;
+            m_snapshotProgressRealTime = 0.0;
+            m_lastSnapshotScopeRequestTime = Time.RealTime;
+            RequestSnapshot(allowDeferred: true, blocksJoin: false);
+            return m_snapshotRequested;
+        }
+
+        // Source: CircuitSynchronizer.RequestManualSynchronization
+        // Ask ready clients to start the full rebase locally. The existing reliable snapshot
+        // queue still performs bounded part delivery and missing-part retries.
+        internal int RequestManualSynchronization(IEnumerable<int> targetClientIds)
+        {
+            if (!ScMultiplayer.IsHost || m_subsystem == null || m_epoch <= 0 ||
+                ScMultiplayer.client?.IsConnected != true || targetClientIds == null)
+                return 0;
+
+            int count = 0;
+            foreach (int targetClientId in targetClientIds.Where(id => id > 0).Distinct())
+            {
+                NetworkMessageSender.SendCircuitSync(targetClientId, new CircuitSyncMessage
+                {
+                    Stage = CircuitSyncStage.ManualSnapshotRequest,
+                    Epoch = m_epoch
+                });
+                count++;
+            }
+            return count;
         }
 
         // Source: ScMultiplayer.cs:ScMultiplayer.TriggerNetworkTick
@@ -806,6 +867,7 @@ namespace ScMultiplayer
             m_remoteTimeAccelerated = false;
             m_inferredTimeAccelerated = false;
             m_rebaseOnNextSnapshot = false;
+            m_manualRebaseOnNextSnapshot = false;
             m_rebaseAwaitingFence = false;
             m_rebaseSnapshotHostStep = 0;
             m_rebaseSnapshotLastSequence = 0;
@@ -2227,8 +2289,10 @@ namespace ScMultiplayer
                 m_repairBarrierHostStep <= 0;
             bool postAccelerationRebaseSnapshot = m_rebaseOnNextSnapshot &&
                 m_repairBarrierHostStep <= 0;
+            bool manualRebaseSnapshot = m_manualRebaseOnNextSnapshot &&
+                m_repairBarrierHostStep <= 0;
             bool rebaseSnapshot = initialBootstrapSnapshot ||
-                postAccelerationRebaseSnapshot;
+                postAccelerationRebaseSnapshot || manualRebaseSnapshot;
             List<CircuitEventRecord> postSnapshotEvents = null;
             List<CircuitEventRecord> pendingPostSnapshotEvents = null;
             if (rebaseSnapshot)
@@ -2260,7 +2324,7 @@ namespace ScMultiplayer
             foreach (CircuitStateRecord state in m_snapshotParts.Values.SelectMany(x => x))
             {
                 if (!ApplyStateRecord(state, m_snapshotHostCircuitStep,
-                    restoreGenericSimulation: !rebaseSnapshot))
+                    restoreCapturedSchedule: true))
                     rejectedStateCount++;
             }
             if (rejectedStateCount > 0)
@@ -2300,7 +2364,10 @@ namespace ScMultiplayer
             m_snapshotRequested = false;
             m_snapshotAllowDeferred = false;
             m_snapshotBlocksJoin = false;
-            m_confirmedSnapshotScope = m_incomingSnapshotScope;
+            m_confirmedSnapshotScope = manualRebaseSnapshot &&
+                TryGetLoadedSnapshotScope(out SnapshotScope loadedScope)
+                    ? loadedScope
+                    : m_incomingSnapshotScope;
             m_initialSnapshotApplied = true;
             m_deferredSnapshotSuppressGenericSimulation = rebaseSnapshot;
             m_recoveryRequested = false;
@@ -2314,12 +2381,13 @@ namespace ScMultiplayer
             m_repairBarrierHostStep = 0;
             m_repairCheckpointStep = 0;
             // Source: CircuitSynchronizer.BeginPostAccelerationRebase
-            // The post-sleep snapshot needs a later fence to prove the host has advanced beyond
-            // its captured boundary. Initial join already runs behind CatchUpBatchComplete and
-            // must not add this second barrier or compete with the catch-up reliable window.
-            if (postAccelerationRebaseSnapshot)
+            // A post-sleep or manual authority rebase needs a later fence to prove the host has
+            // advanced beyond its captured boundary. Initial join already runs behind
+            // CatchUpBatchComplete and must not add this second barrier.
+            if (postAccelerationRebaseSnapshot || manualRebaseSnapshot)
             {
                 m_rebaseOnNextSnapshot = false;
+                m_manualRebaseOnNextSnapshot = false;
                 m_rebaseAwaitingFence = true;
                 m_rebaseSnapshotHostStep = appliedRepairHostStep;
                 m_rebaseSnapshotLastSequence = m_snapshotLastSequence;
@@ -2661,7 +2729,7 @@ namespace ScMultiplayer
         }
 
         private bool ApplyStateRecord(CircuitStateRecord state, int hostCircuitStep,
-            bool restoreGenericSimulation = true)
+            bool restoreCapturedSchedule = true)
         {
             ElectricElement element = m_subsystem.GetElectricElement(state.Point.X,
                 state.Point.Y, state.Point.Z, state.MountingFace);
@@ -2782,8 +2850,10 @@ namespace ScMultiplayer
                 // Source: Survivalcraft/Game/SubsystemElectricity.cs:
                 // SubsystemElectricity.SimulateElectricElement
                 // A complete snapshot is an already-settled host state, not a voltage-change
-                // event. Do not queue every connection here; doing so creates a client-only edge.
-                if (restoreGenericSimulation && !isButton && state.NextSimulationSteps > 0)
+                // event. Restore only the host-captured continuation slot; do not queue every
+                // connection here because that would create a client-only edge.
+                QueueSnapshotPresentationRefresh(element, state);
+                if (restoreCapturedSchedule && !isButton && state.NextSimulationSteps > 0)
                     m_subsystem.QueueElectricElementForSimulation(element,
                         m_subsystem.CircuitStep + state.NextSimulationSteps);
                 return true;
@@ -2792,6 +2862,37 @@ namespace ScMultiplayer
             {
                 return false;
             }
+        }
+
+        // Source: Survivalcraft/Game/SevenSegmentDisplayElectricElement.cs:Simulate
+        // Source: Survivalcraft/Game/LedElectricElement.cs:Simulate
+        // Snapshot import writes m_voltage directly, but these sink elements update their glow
+        // caches only when native Simulate observes a voltage transition. Invalidate only that
+        // presentation cache and let the original implementation rebuild it from authoritative
+        // upstream values on the first released circuit step.
+        private void QueueSnapshotPresentationRefresh(ElectricElement element,
+            CircuitStateRecord state)
+        {
+            Type declaringType = element is SevenSegmentDisplayElectricElement
+                ? typeof(SevenSegmentDisplayElectricElement)
+                : element is FourLedElectricElement
+                    ? typeof(FourLedElectricElement)
+                    : element is OneLedElectricElement
+                        ? typeof(OneLedElectricElement)
+                        : element is MulticoloredLedElectricElement
+                            ? typeof(MulticoloredLedElectricElement)
+                            : element is LedElectricElement
+                                ? typeof(LedElectricElement)
+                                : null;
+            if (declaringType == null) return;
+
+            float invalidVoltage = element is LedElectricElement
+                ? (ElectricElement.IsSignalHigh((float)state.VoltageLevel / 15f) ? 0f : 1f)
+                : float.PositiveInfinity;
+            ScMultiplayer.ModManager.ModParentField.ModifyParentField(element,
+                "m_voltage", invalidVoltage, declaringType);
+            m_subsystem.QueueElectricElementForSimulation(element,
+                m_subsystem.CircuitStep + 1);
         }
 
         // Source: Survivalcraft/Game/ButtonElectricElement.cs:
