@@ -575,7 +575,7 @@ namespace ScMultiplayer
         public static void SendPlayerHealthMessage(int playerIndex, ComponentPlayer player,
             float healthChange, string cause = null, bool hasKnockback = false,
             int knockbackSequence = 0, int knockbackServerTick = 0,
-            float knockbackStunTime = 0f)
+            float knockbackStunTime = 0f, bool? isSleepingOverride = null)
         {
             ComponentHealth health = player?.ComponentHealth;
             ComponentVitalStats vitalStats = player?.ComponentVitalStats;
@@ -604,7 +604,7 @@ namespace ScMultiplayer
                 vitalStats.Wetness, player.PlayerData.Level,
                 player.ComponentBody?.Velocity ?? Vector3.Zero,
                 hasKnockback,
-                player.ComponentSleep?.IsSleeping == true,
+                isSleepingOverride ?? player.ComponentSleep?.IsSleeping == true,
                 onFire != null ? ScMultiplayer.ModManager.ModParentField.GetParentField<float>(onFire, "m_fireDuration", typeof(ComponentOnFire)) : 0f,
                 flu != null ? ScMultiplayer.ModManager.ModParentField.GetParentField<float>(flu, "m_fluDuration", typeof(ComponentFlu)) : 0f,
                 sickness != null ? ScMultiplayer.ModManager.ModParentField.GetParentField<float>(sickness, "m_sicknessDuration", typeof(ComponentSickness)) : 0f,
