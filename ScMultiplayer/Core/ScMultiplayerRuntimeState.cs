@@ -543,6 +543,9 @@ namespace ScMultiplayer
         private bool m_remoteTimeAccelerated;
         private bool m_hostSleepAccelerationSessionActive;
         private double m_hostSleepAccelerationStartTime;
+        // Source: CircuitSynchronizer.NotifyRemoteTimeAccelerationChanged
+        // Keep the host wake boundary until the post-sleep circuit rebase is ready.
+        private bool m_clientSleepWakeBoundaryPending;
         private readonly HashSet<ComponentSleep> m_pendingClientSleepWakeups =
             new HashSet<ComponentSleep>();
         private readonly Dictionary<int, double> m_nextSleepHealthSendTimes =

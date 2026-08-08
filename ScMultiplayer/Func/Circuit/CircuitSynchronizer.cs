@@ -896,7 +896,10 @@ namespace ScMultiplayer
                 m_inferredTimeAccelerated = false;
             m_remoteTimeAccelerated = accelerated;
             if (wasAccelerated && !IsHostTimeAccelerated)
+            {
+                m_owner.MarkClientSleepWakeBoundaryPending();
                 BeginPostAccelerationRebase();
+            }
         }
 
         private void BeginPostAccelerationRebase()
@@ -1692,6 +1695,7 @@ namespace ScMultiplayer
             // replaceable world-info datagram, so it also clears a stale acceleration flag.
             m_remoteTimeAccelerated = false;
             m_owner.ConfirmRemoteTimeAccelerationEndedFromCircuitFence();
+            m_owner.MarkClientSleepWakeBoundaryPending();
             BeginPostAccelerationRebase();
         }
 
