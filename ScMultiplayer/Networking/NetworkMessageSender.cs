@@ -370,6 +370,11 @@ namespace ScMultiplayer
                 Message.WriteWithSender(message, s_transport.Address));
         }
 
+        public static void BroadcastMeleeHitResult(MeleeHitResultMessage message)
+        {
+            SendScheduledMessage(-1, message);
+        }
+
         // Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update
         public static void SendPlayerInteractRequest(PlayerActionMessage message)
         {

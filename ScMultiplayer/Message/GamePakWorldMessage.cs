@@ -54,6 +54,8 @@ namespace ScMultiplayer
         public Dictionary<int, float> PlayerSatiation = new Dictionary<int, float>();
         public int[] HandcraftSlotValues = Array.Empty<int>();
         public int[] HandcraftSlotCounts = Array.Empty<int>();
+        // Source: Survivalcraft/Game/PlayerData.cs:PlayerData.SpawnPosition
+        public Vector3 PlayerSpawnPosition;
 
         public GamePakWorldMessage()
         {
@@ -109,6 +111,7 @@ namespace ScMultiplayer
                 ? (int[])playerRecord.HandcraftSlotValues.Clone() : Array.Empty<int>();
             HandcraftSlotCounts = playerRecord?.HandcraftSlotCounts != null
                 ? (int[])playerRecord.HandcraftSlotCounts.Clone() : Array.Empty<int>();
+            PlayerSpawnPosition = playerRecord?.SpawnPosition ?? Vector3.Zero;
         }
 
         protected override void Read(SuReader reader)
@@ -183,6 +186,8 @@ namespace ScMultiplayer
             }
             if (reader.Position < reader.Length)
                 ReadSlots(reader, out HandcraftSlotValues, out HandcraftSlotCounts);
+            if (reader.Position < reader.Length)
+                PlayerSpawnPosition = reader.ReadVector3(reader);
         }
 
         protected override void Write(SuWriter writer)
@@ -257,6 +262,7 @@ namespace ScMultiplayer
                 }
             }
             WriteSlots(writer, HandcraftSlotValues, HandcraftSlotCounts);
+            writer.WriteVector3(writer, PlayerSpawnPosition);
         }
 
         private static int[][] CreateEmptyClothes() =>

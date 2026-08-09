@@ -8,6 +8,8 @@ namespace ScMultiplayer
     {
         public int ClientId;
         public int Revision;
+        public bool HasDelta;
+        public int[] SlotIndices = Array.Empty<int>();
         public int ActiveSlotIndex;
         public int[] SlotValues = Array.Empty<int>();
         public int[] SlotCounts = Array.Empty<int>();
@@ -28,11 +30,32 @@ namespace ScMultiplayer
             Clothes = CloneClothes(clothes);
         }
 
+        public PlayerEquipmentMessage(int clientId, int revision, int activeSlotIndex,
+            int[] slotIndices, int[] slotValues, int[] slotCounts, int[][] clothes)
+        {
+            ClientId = clientId;
+            Revision = revision;
+            ActiveSlotIndex = activeSlotIndex;
+            HasDelta = true;
+            SlotIndices = CloneArray(slotIndices);
+            SlotValues = CloneArray(slotValues);
+            SlotCounts = CloneArray(slotCounts);
+            Clothes = CloneClothes(clothes);
+        }
+
         protected override void Read(SuReader reader)
         {
             ClientId = reader.ReadInt32();
             Revision = reader.ReadInt32();
             ActiveSlotIndex = reader.ReadInt32();
+            HasDelta = reader.ReadBoolean();
+            if (HasDelta)
+            {
+                int indicesCount = reader.ReadPackedInt32();
+                SlotIndices = new int[indicesCount];
+                for (int i = 0; i < indicesCount; i++)
+                    SlotIndices[i] = reader.ReadInt32();
+            }
             int slotsCount = reader.ReadPackedInt32();
             SlotValues = new int[slotsCount];
             SlotCounts = new int[slotsCount];
@@ -56,6 +79,15 @@ namespace ScMultiplayer
             writer.WriteInt32(ClientId);
             writer.WriteInt32(Revision);
             writer.WriteInt32(ActiveSlotIndex);
+            writer.WriteBoolean(HasDelta);
+            if (HasDelta)
+            {
+                int indicesCount = Math.Min(SlotIndices?.Length ?? 0,
+                    Math.Min(SlotValues?.Length ?? 0, SlotCounts?.Length ?? 0));
+                writer.WritePackedInt32(indicesCount);
+                for (int i = 0; i < indicesCount; i++)
+                    writer.WriteInt32(SlotIndices[i]);
+            }
             int slotsCount = Math.Min(SlotValues?.Length ?? 0, SlotCounts?.Length ?? 0);
             writer.WritePackedInt32(slotsCount);
             for (int i = 0; i < slotsCount; i++)

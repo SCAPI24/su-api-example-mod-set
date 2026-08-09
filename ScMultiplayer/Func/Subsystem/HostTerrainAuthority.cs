@@ -6,8 +6,23 @@ namespace ScMultiplayer
 {
     internal static class HostTerrainAuthority
     {
+        private static bool s_networkMutationClosureActive;
+
         internal static bool IsAuthoritative =>
             ScMultiplayer.client?.IsConnected != true || ScMultiplayer.IsHost;
+
+        // Source: Survivalcraft/Game/SubsystemTerrain.cs:SubsystemTerrain.ProcessModifiedCells
+        // A direct network mutation has already proven the target chunk is usable. Allow its
+        // native neighbor closure to run while behavior-notification bookkeeping catches up.
+        internal static void BeginNetworkMutationClosure()
+        {
+            s_networkMutationClosureActive = true;
+        }
+
+        internal static void EndNetworkMutationClosure()
+        {
+            s_networkMutationClosureActive = false;
+        }
 
         internal static bool IsReadyForAuthoritativeMutation(
             SubsystemTerrain subsystemTerrain, int x, int z)
@@ -17,8 +32,11 @@ namespace ScMultiplayer
             if (ScMultiplayer.client?.IsConnected != true)
                 return true;
             TerrainChunk chunk = subsystemTerrain?.Terrain?.GetChunkAtCell(x, z);
-            return chunk != null && chunk.State >= TerrainChunkState.Valid &&
-                chunk.AreBehaviorsNotified;
+            if (chunk == null)
+                return false;
+            if (s_networkMutationClosureActive)
+                return chunk.State >= TerrainChunkState.InvalidLight;
+            return chunk.State >= TerrainChunkState.Valid && chunk.AreBehaviorsNotified;
         }
 
         // Source: Survivalcraft/Game/SubsystemExplosions.cs:SubsystemExplosions.SimulateExplosion

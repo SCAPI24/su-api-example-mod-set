@@ -57,6 +57,10 @@ namespace ScMultiplayer
 
 	private void SendTerrainCatchUp(int targetClientId, int snapshotStartTick)
 	{
+		// Source: ScMultiplayer.UpdateHostTerrainInterestTable
+		// Refresh once before projecting the join snapshot so a client does not
+		// receive deferred cells from chunks outside its initial terrain window.
+		UpdateHostTerrainInterestTable(GameManager.Project);
 		int targetTick = client.Step;
 		long headSequence;
 		List<KeyValuePair<Point3, TerrainCellState>> snapshot;
@@ -65,7 +69,10 @@ namespace ScMultiplayer
 			headSequence = m_hostTerrainSequence;
 			MergePendingTerrainChangesLocked();
 			snapshot = (from item in m_terrainCheckpoint
-				where item.Value.Tick > snapshotStartTick
+				where item.Value.Tick > snapshotStartTick &&
+					(!m_hostTerrainInterestChunks.TryGetValue(targetClientId,
+						out HashSet<Point2> interestedChunks) ||
+						interestedChunks.Contains(Terrain.ToChunk(item.Key.X, item.Key.Z)))
 				orderby item.Value.Tick, item.Key.X, item.Key.Y, item.Key.Z
 				select item).ToList();
 		}
@@ -408,6 +415,7 @@ namespace ScMultiplayer
 		NetworkMessageSender.SendPakWorldReady(sourceClientId, new GamePakWorldReadyMessage(transferId, GamePakWorldReadyStage.ReadyToPlay));
 		SetServerClientGameTrafficEnabled(sourceClientId, enabled: true);
 		m_controlUnit?.Context.Connections.TryTransition(sourceClientId, PlayerConnectionPhase.Ready, Time.RealTime);
+		m_pendingHostPickableSnapshots.Add(sourceClientId);
 		m_fullWorldObjectsSyncTime = 5f;
 		m_fullAnimalSyncTime = 5f;
 		Log.Information($"[ScMP] World transfer ready: ClientID={sourceClientId}, Transfer={transferId}, CatchUpRounds={journal.ReplayRound}, CatchUpMessages={journal.TotalMessagesSent}, CatchUpBytes={journal.TotalBytesSent}, Dropped={journal.DroppedMessages}");
@@ -458,6 +466,7 @@ namespace ScMultiplayer
 				SkinName = msg.SkinName,
 				SkinSha256 = SkinHashCodec.CloneBytes(msg.SkinSha256),
 				Position = msg.PlayerPosition,
+				SpawnPosition = msg.PlayerSpawnPosition,
 				Level = msg.PlayerLevel,
 				Health = msg.PlayerHealth,
 				Air = msg.PlayerAir,

@@ -295,7 +295,9 @@ namespace ScMultiplayer
             ReadNetworkStats(out float throughputBytesPerSecond, out float latencyMs,
                 out float ackLatencyMs, out int syncQueue, out int applyQueue,
                 out float applyOldestMs, out int reliableQueue,
-                out float retransmitPercent, out long reliableRetryLimitCount);
+                out float retransmitPercent, out long reliableRetryLimitCount,
+                out long pendingBlocks, out long blockWindowReceived,
+                out int blocksReceivedPerSecond, out int blocksConsumedPerSecond);
             string circuitState = m_circuitSynchronizer?.ClientStateText ??
                 (IsHost ? "Host" : "Unbound");
             float fenceAge = m_circuitSynchronizer?.FenceAgeMilliseconds ?? -1f;
@@ -304,10 +306,13 @@ namespace ScMultiplayer
             m_networkStatsLabel.Text = string.Format(CultureInfo.InvariantCulture,
                 "NET {0}, Ping {1:0}ms, Ack {2:0}ms, ReTx {7:0.0}%\r\n" +
                 "Q Sync {3}, Apply {4} ({5:0}ms), Rel {6}\r\n" +
-                "Ckt {8}, Fence {9}, Limit {10}",
+                "Ckt {8}, Fence {9}, Limit {10}\r\n" +
+                "Block {11} (+{12}, +{13}/s, -{14}/s)",
                 FormatNetworkThroughput(throughputBytesPerSecond), latencyMs, ackLatencyMs,
                 syncQueue, applyQueue, applyOldestMs, reliableQueue,
-                retransmitPercent, circuitState, fenceText, reliableRetryLimitCount);
+                retransmitPercent, circuitState, fenceText, reliableRetryLimitCount,
+                pendingBlocks, blockWindowReceived, blocksReceivedPerSecond,
+                blocksConsumedPerSecond);
         }
 
         // Source: Comms/Comms/DiagnosticTransmitter.cs:DiagnosticStats.BytesSent/BytesReceived
@@ -346,13 +351,17 @@ namespace ScMultiplayer
         private void ReadNetworkStats(out float throughputBytesPerSecond, out float latencyMs,
             out float ackLatencyMs, out int syncQueue, out int applyQueue,
             out float applyOldestMs, out int reliableQueue, out float retransmitPercent,
-            out long reliableRetryLimitCount)
+            out long reliableRetryLimitCount, out long pendingBlocks,
+            out long blockWindowReceived, out int blocksReceivedPerSecond,
+            out int blocksConsumedPerSecond)
         {
             throughputBytesPerSecond = 0f;
             latencyMs = 0f;
             ackLatencyMs = 0f;
             retransmitPercent = 0f;
             reliableRetryLimitCount = 0L;
+            SuSubsystemTerrain.ReadBlockStats(out pendingBlocks, out blockWindowReceived,
+                out blocksReceivedPerSecond, out blocksConsumedPerSecond);
             syncQueue = NetworkMessageSender.PendingSyncBatchCount;
             applyQueue = m_endOfFrameActions.Count + m_terrainChunkSyncActions.Count +
                 SuSubsystemTerrain.PendingChunkCheckpointCount;
@@ -2602,6 +2611,7 @@ namespace ScMultiplayer
                 UpdateJoinTransferBandwidthBudget();
                 UpdateServerTrafficDisplaySample();
                 ConfirmPendingFluidSettlements();
+                FlushPendingTerrainBroadcasts();
             }
             // Source: ScMultiplayer.cs:AcceptNetworkPlayerJoin
             // A joining client intentionally has no host-side avatar until it reports that the

@@ -194,7 +194,11 @@ namespace ScMultiplayer
 				PlayerClass = (record?.PlayerClass ?? PlayerClass.Male),
 				Level = (record?.Level ?? 1f),
 				InputDevice = WidgetInputDevice.None,
-				SpawnPosition = ((players.GlobalSpawnPosition != Vector3.Zero) ? players.GlobalSpawnPosition : (hostPlayer?.ComponentPlayer?.ComponentBody.Position ?? record?.Position ?? Vector3.Zero))
+				SpawnPosition = (record?.SpawnPosition != Vector3.Zero
+					? record.SpawnPosition
+					: (players.GlobalSpawnPosition != Vector3.Zero
+						? players.GlobalSpawnPosition
+						: (hostPlayer?.ComponentPlayer?.ComponentBody.Position ?? record?.Position ?? Vector3.Zero)))
 			};
 			if (!string.IsNullOrEmpty(record?.SkinName))
 			{
@@ -439,10 +443,26 @@ namespace ScMultiplayer
 		}
 		if (!IsHost)
 		{
-			if (m_networkPlayerData.TryGetValue(0, out var hostPlayer) && hostPlayer?.ComponentPlayer?.ComponentBody != null && hostPlayer.PlayerIndex >= 0)
+			// Source: Survivalcraft/Game/TerrainUpdater.cs:TerrainUpdater.SetUpdateLocation
+			// A client owns only its local terrain window. Remote avatars must not create extra
+			// updater locations, otherwise their exploration becomes this client's Apply backlog.
+			foreach (PlayerData remotePlayer in m_networkPlayerData.Values.ToArray())
+			{
+				if (remotePlayer?.PlayerIndex >= 0)
+					terrain.TerrainUpdater.RemoveUpdateLocation(remotePlayer.PlayerIndex);
+			}
+			SubsystemPlayers localPlayers = project.FindSubsystem<SubsystemPlayers>(throwOnError: false);
+			PlayerData localPlayer = localPlayers?.PlayersData.FirstOrDefault(item =>
+				!m_networkPlayerData.Values.Contains(item));
+			if (localPlayer?.ComponentPlayer?.ComponentBody != null && localPlayer.PlayerIndex >= 0)
 			{
 				float clientVisibility = project.FindSubsystem<SubsystemSky>(throwOnError: false)?.VisibilityRange ?? 64f;
-				terrain.TerrainUpdater.SetUpdateLocation(hostPlayer.PlayerIndex, hostPlayer.ComponentPlayer.ComponentBody.Position.XZ, clientVisibility, clientVisibility);
+				terrain.TerrainUpdater.SetUpdateLocation(localPlayer.PlayerIndex,
+					localPlayer.ComponentPlayer.ComponentBody.Position.XZ,
+					clientVisibility, clientVisibility);
+				RefreshClientTerrainInterestChunks(project,
+					localPlayer.ComponentPlayer.ComponentBody.Position.XZ,
+					MathUtils.Min(clientVisibility, 64f));
 			}
 			return;
 		}
@@ -456,6 +476,46 @@ namespace ScMultiplayer
 				terrain.TerrainUpdater.SetUpdateLocation(playerData.PlayerIndex, position.XZ, hostVisibility, 64f);
 			}
 		}
+		UpdateHostTerrainInterestTable(project);
+	}
+
+	// Source: Survivalcraft/Game/TerrainUpdater.cs:TerrainUpdater.SetUpdateLocation
+	// A chunk may already be Valid when a player enters its range. Queue a compact authoritative
+	// checkpoint for newly entered chunks so remote edits are visible without a manual interaction.
+	private void RefreshClientTerrainInterestChunks(Project project, Vector2 center,
+		float visibility)
+	{
+		if (IsHost || project == null) return;
+		Point2 chunkCenter = Terrain.ToChunk(center);
+		int radius = Math.Max(1, (int)Math.Ceiling(visibility / 16f));
+		var desired = new HashSet<Point2>();
+		for (int x = chunkCenter.X - radius; x <= chunkCenter.X + radius; x++)
+		{
+			for (int z = chunkCenter.Y - radius; z <= chunkCenter.Y + radius; z++)
+			{
+				var coordinates = new Point2(x, z);
+				desired.Add(coordinates);
+				bool enteredInterest = !m_clientTerrainInterestInitialized ||
+					!m_clientTerrainInterestChunks.Contains(coordinates);
+				TerrainChunk chunk = project.FindSubsystem<SubsystemTerrain>(false)?
+					.Terrain.GetChunkAtCoords(x, z);
+				// Source: Survivalcraft/Game/TerrainUpdater.cs:TerrainUpdater.ChunkInitialized
+				// ChunkInitialized can be missed when the chunk becomes Valid before the
+				// checkpoint updater is attached. Re-check every valid chunk in the local
+				// interest window until it has a per-chunk confirmed revision.
+				bool checkpointMissing = !m_clientTerrainChunkRevisions.ContainsKey(coordinates) &&
+					!m_clientTerrainChunkSyncPending.ContainsKey(coordinates) &&
+					!m_clientTerrainChunkSyncQueued.Contains(coordinates);
+				if ((enteredInterest || checkpointMissing) &&
+					chunk != null && chunk.State >= TerrainChunkState.Valid)
+				{
+					QueueClientTerrainChunkSync(coordinates);
+				}
+			}
+		}
+		m_clientTerrainInterestChunks.Clear();
+		m_clientTerrainInterestChunks.UnionWith(desired);
+		m_clientTerrainInterestInitialized = true;
 	}
 
 	private void UpdateClientTerrainChunkSync(Project project)
@@ -556,19 +616,27 @@ namespace ScMultiplayer
 
 	private void OnClientTerrainChunkInitialized(TerrainChunk chunk)
 	{
-		if (!IsHost && chunk != null && m_clientTerrainChunkVerifications.TryGetValue(chunk.Coords, out var verification) && GetClientTerrainChunkRevision(chunk.Coords) < verification.RequiredRevision)
+		if (IsHost || chunk == null) return;
+		if (m_clientTerrainInterestChunks.Contains(chunk.Coords))
 		{
 			QueueClientTerrainChunkSync(chunk.Coords);
+			return;
 		}
+		if (m_clientTerrainChunkVerifications.TryGetValue(chunk.Coords,
+			out var verification) &&
+			GetClientTerrainChunkRevision(chunk.Coords) < verification.RequiredRevision)
+			QueueClientTerrainChunkSync(chunk.Coords);
 	}
 
 	private long GetClientTerrainChunkRevision(Point2 coordinates)
 	{
-		if (!m_clientTerrainChunkRevisions.TryGetValue(coordinates, out var revision))
-		{
-			return m_worldTransferRegistry.ClientTerrainChunkBaselineRevision;
-		}
-		return Math.Max(revision, m_worldTransferRegistry.ClientTerrainChunkBaselineRevision);
+		// Source: ScMultiplayer.OnClientTerrainChunkCheckpointBatchApplied
+		// The join baseline is a global sequence barrier, not proof that this
+		// particular chunk was received. An unseen chunk must request its full
+		// retained checkpoint from revision zero.
+		return m_clientTerrainChunkRevisions.TryGetValue(coordinates, out var revision)
+			? Math.Max(revision, 0L)
+			: 0L;
 	}
 
 	private void QueueClientTerrainChunkSync(Point2 coordinates)
@@ -594,6 +662,8 @@ namespace ScMultiplayer
 		m_clientTerrainChunkSyncQueued.Clear();
 		m_clientTerrainChunkSyncPending.Clear();
 		m_clientTerrainChunkRevisions.Clear();
+		m_clientTerrainInterestChunks.Clear();
+		m_clientTerrainInterestInitialized = false;
 		m_worldTransferRegistry.ResetClientTerrainBaselines();
 		m_clientTerrainChunkVerifications.Clear();
 		m_clientTerrainChunkCheckpoints.Clear();
