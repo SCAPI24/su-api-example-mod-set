@@ -590,6 +590,7 @@ namespace ScMultiplayer
 			m_pendingFluidSettlements.Clear();
 			m_hostTerrainSequence = 0L;
 		}
+		ResetHostTerrainSyncStateStorage();
 		m_hostTerrainRecoveryTargets.Clear();
 		m_pendingTerrainSequenceBaseline = 0L;
 		DetachClientTerrainChunkSyncUpdater();
@@ -2737,10 +2738,20 @@ namespace ScMultiplayer
 			return false;
 		}
 		state.LastRespawnSequence = sequence;
-		Vector3 spawnPosition = position;
-		if (playerData.SpawnPosition != Vector3.Zero && Vector3.DistanceSquared(spawnPosition, playerData.SpawnPosition) > 4096f)
+		// Source: ScMultiplayerProfileHandlers.cs:UpdateNetworkPlayerRespawnAnchor
+		// The client reports that its local respawn entity exists, but the host alone chooses the
+		// location. Never let a request position replace the persisted network-player anchor.
+		Vector3 spawnPosition = playerData.SpawnPosition;
+		if (spawnPosition == Vector3.Zero && m_clientRecordKeys.TryGetValue(playerClientId,
+			out string anchorRecordKey) && m_playerRecords.TryGetValue(anchorRecordKey,
+			out NetworkPlayerRecord record) && record?.SpawnPosition != Vector3.Zero)
 		{
-			spawnPosition = playerData.SpawnPosition;
+			spawnPosition = record.SpawnPosition;
+		}
+		if (spawnPosition == Vector3.Zero)
+		{
+			spawnPosition = GameManager.Project?.FindSubsystem<SubsystemPlayers>(false)?
+				.GlobalSpawnPosition ?? Vector3.Zero;
 		}
 		player.ComponentBody.Position = spawnPosition;
 		player.ComponentBody.Velocity = Vector3.Zero;

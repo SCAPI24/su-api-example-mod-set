@@ -989,6 +989,13 @@ namespace ScMultiplayer
             Project project = GameManager.Project ??
                 throw new InvalidOperationException("The hosted project is not loaded.");
             SubsystemGameInfo gameInfo = project.FindSubsystem<SubsystemGameInfo>(true);
+            // Source: ScMultiplayer.FlushPendingTerrainBroadcasts
+            // The exported host world is the joining client's complete terrain baseline. Seal
+            // current revision metadata first; any later terrain sequence is join catch-up.
+            EnsureHostTerrainSyncStateLoaded();
+            FlushPendingTerrainBroadcasts();
+            MergePendingTerrainChanges();
+            SaveHostTerrainSyncState();
             GameManager.SaveProject(waitForCompletion: true, showErrorDialog: false);
 
             string snapshotDirectory = Storage.CombinePaths(

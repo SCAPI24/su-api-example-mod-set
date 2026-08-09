@@ -2608,6 +2608,7 @@ namespace ScMultiplayer
             }
             if (IsHost)
             {
+                EnsureHostTerrainSyncStateLoaded();
                 UpdateJoinTransferBandwidthBudget();
                 UpdateServerTrafficDisplaySample();
                 ConfirmPendingFluidSettlements();
@@ -2633,6 +2634,7 @@ namespace ScMultiplayer
                     m_playerRecordSaveTime -= PlayerRecordSaveInterval;
                     RefreshHostPlayerRecords();
                     SavePlayerRecords();
+                    SaveHostTerrainSyncState();
                 }
                 m_terrainMergeTime += tickDuration;
                 if (m_terrainMergeTime >= TerrainMergeInterval)
@@ -2687,6 +2689,7 @@ namespace ScMultiplayer
                     m_playerRecordSaveTime -= PlayerRecordSaveInterval;
                     RefreshHostPlayerRecords();
                     SavePlayerRecords();
+                    SaveHostTerrainSyncState();
                 }
                 m_terrainMergeTime += tickDuration;
                 if (m_terrainMergeTime >= TerrainMergeInterval)

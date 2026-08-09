@@ -72,7 +72,12 @@ namespace ScMultiplayer
                 if (requestedSleep != null && requestedSleep.IsSleeping != msg.IsSleeping)
                 {
                     if (!msg.IsSleeping) requestedSleep.WakeUp();
-                    else if (requestedSleep.CanSleep(out _)) requestedSleep.Sleep(true);
+                    else if (requestedSleep.CanSleep(out _))
+                    {
+                        requestedSleep.Sleep(true);
+                        if (requestedSleep.IsSleeping)
+                            UpdateNetworkPlayerRespawnAnchor(clientID, requestedPlayer);
+                    }
                 }
                 return;
             }

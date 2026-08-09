@@ -332,6 +332,9 @@ namespace ScMultiplayer
             if (!m_joinBootstrapPending || ScMultiplayer.IsHost || m_subsystem == null ||
                 m_epoch <= 0)
                 return;
+            if (!TryGetLoadedSnapshotScope(out SnapshotScope loadedScope) &&
+                !TryGetLocalBootstrapSnapshotScope(out loadedScope))
+                return;
             m_joinBootstrapPending = false;
             m_initialSnapshotApplied = false;
             m_snapshotParts.Clear();
@@ -341,6 +344,7 @@ namespace ScMultiplayer
             m_snapshotRequested = false;
             m_recoveryHold = true;
             m_requiredFenceSerial = m_receivedFenceSerial;
+            m_requestedSnapshotScope = loadedScope;
             RequestSnapshot(allowDeferred: true, blocksJoin: true);
         }
 
@@ -393,6 +397,11 @@ namespace ScMultiplayer
                 if (!ScMultiplayer.IsHost)
                 {
                     ApplyDeferredSnapshotStates();
+                    // Source: CircuitSynchronizer.BeginJoinBootstrap
+                    // The first project frame may not have valid terrain chunks yet. Keep the
+                    // pending bootstrap alive and start it from the first bounded loaded scope,
+                    // instead of falling back to a whole-host circuit snapshot.
+                    TryBeginPendingJoinBootstrap();
                     MaintainLoadedSnapshotScope();
                 }
                 return;
@@ -473,6 +482,31 @@ namespace ScMultiplayer
             if (maxChunkX - minChunkX > 64 || maxChunkZ - minChunkZ > 64)
                 return false;
             scope = new SnapshotScope(true, minChunkX, minChunkZ, maxChunkX, maxChunkZ);
+            return true;
+        }
+
+        // Source: Survivalcraft/Game/TerrainUpdater.cs:TerrainUpdater.SetUpdateLocation
+        // A newly imported world can reach ProjectReady before TerrainUpdater has initialized the
+            // first visible chunk. Join must still request the full local interest window so every
+            // circuit the player can load is host-anchored; it never expands into a host-wide snapshot.
+        private bool TryGetLocalBootstrapSnapshotScope(out SnapshotScope scope)
+        {
+            scope = default;
+            SubsystemPlayers players = m_project?.FindSubsystem<SubsystemPlayers>(false);
+            ComponentPlayer localPlayer = players?.ComponentPlayers.FirstOrDefault(player =>
+                player?.PlayerData?.InputDevice != WidgetInputDevice.None) ??
+                players?.ComponentPlayers.FirstOrDefault();
+            ComponentBody body = localPlayer?.ComponentBody;
+            if (body == null || float.IsNaN(body.Position.X) || float.IsInfinity(body.Position.X) ||
+                float.IsNaN(body.Position.Z) || float.IsInfinity(body.Position.Z))
+                return false;
+            Point2 center = Terrain.ToChunk(body.Position.XZ);
+            SubsystemSky sky = m_project.FindSubsystem<SubsystemSky>(false);
+            float visibility = MathUtils.Min(sky?.VisibilityRange ?? 64f, 64f);
+            int bootstrapRadius = Math.Max(1, (int)Math.Ceiling(visibility / 16f));
+            scope = new SnapshotScope(true, center.X - bootstrapRadius,
+                center.Y - bootstrapRadius, center.X + bootstrapRadius,
+                center.Y + bootstrapRadius);
             return true;
         }
 
@@ -2223,13 +2257,22 @@ namespace ScMultiplayer
             if (!ScMultiplayer.IsHost || m_pendingReliableCircuitMessages.Count == 0) return;
             int[] clientIds = m_pendingReliableCircuitMessages.Keys.OrderBy(id => id).ToArray();
             if (clientIds.Length == 0) return;
-            m_reliableBulkCursor %= clientIds.Length;
+            // Source: CircuitSynchronizer.SendSnapshot
+            // A joining client cannot leave its bootstrap snapshot behind ordinary recovery
+            // traffic from already-ready clients. Keep the same global per-tick cap, but visit
+            // join-critical queues first so a busy three-player room cannot starve Joining Room.
+            int[] criticalClientIds = clientIds.Where(IsJoinCriticalCircuitQueue).ToArray();
+            int[] orderedClientIds = criticalClientIds.Length == 0
+                ? clientIds
+                : criticalClientIds.Concat(clientIds.Where(id =>
+                    !criticalClientIds.Contains(id))).ToArray();
+            m_reliableBulkCursor %= orderedClientIds.Length;
             int budget = MaximumReliableBulkMessagesPerTick;
-            int attempts = clientIds.Length * (budget + 1);
+            int attempts = orderedClientIds.Length * (budget + 1);
             while (budget > 0 && attempts-- > 0)
             {
-                int clientId = clientIds[m_reliableBulkCursor];
-                m_reliableBulkCursor = (m_reliableBulkCursor + 1) % clientIds.Length;
+                int clientId = orderedClientIds[m_reliableBulkCursor];
+                m_reliableBulkCursor = (m_reliableBulkCursor + 1) % orderedClientIds.Length;
                 if (!m_pendingReliableCircuitMessages.TryGetValue(clientId,
                         out Queue<PendingReliableCircuitMessage> queue) || queue.Count == 0)
                 {
@@ -2248,6 +2291,15 @@ namespace ScMultiplayer
                 if (queue.Count == 0)
                     m_pendingReliableCircuitMessages.Remove(clientId);
             }
+        }
+
+        // Source: CircuitSynchronizer.DrainReliableCircuitMessages
+        private bool IsJoinCriticalCircuitQueue(int clientId)
+        {
+            if (!m_pendingReliableCircuitMessages.TryGetValue(clientId,
+                    out Queue<PendingReliableCircuitMessage> queue) || queue.Count == 0)
+                return false;
+            return queue.Peek()?.Message?.Stage == CircuitSyncStage.Snapshot;
         }
 
         private void HandleSnapshot(CircuitSyncMessage message)

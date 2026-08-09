@@ -146,6 +146,7 @@ namespace ScMultiplayer
         {
             if (client?.IsConnected != true || !IsHost)
                 return;
+            EnsureHostTerrainSyncStateLoaded();
             UpdateHostTerrainInterestTable(GameManager.Project);
             Dictionary<Point3, bool> pending;
             lock (m_terrainJournalLock)
@@ -408,7 +409,19 @@ namespace ScMultiplayer
                 coordinates.X, coordinates.Y);
             if (chunk == null || chunk.State < TerrainChunkState.Valid)
             {
-                m_clientTerrainChunkRevisions.Remove(coordinates);
+                // Source: ScMultiplayer.OnClientTerrainChunkInitialized
+                // A chunk can unload while its targeted reply is in flight. Keep the imported
+                // world baseline and request the newer revision after this chunk is valid again.
+                m_clientTerrainChunkSyncPending.Remove(coordinates);
+                if (message.Revision > GetClientTerrainChunkRevision(coordinates))
+                {
+                    m_clientTerrainChunkVerifications[coordinates] =
+                        new PendingTerrainChunkVerification
+                        {
+                            RequiredRevision = message.Revision,
+                            DueTime = Time.RealTime
+                        };
+                }
                 return;
             }
             if (m_clientTerrainChunkFailedRevisions.TryGetValue(coordinates,
@@ -1484,6 +1497,8 @@ namespace ScMultiplayer
                     index++;
                 }
             }
+            if (message.Sequence > 0)
+                MarkHostTerrainSyncStateDirty();
         }
 
         // Source: Survivalcraft/Game/SubsystemFluidBlockBehavior.cs:
@@ -1494,6 +1509,7 @@ namespace ScMultiplayer
         private void ConfirmPendingFluidSettlements()
         {
             if (!IsHost || m_pendingFluidSettlements.Count == 0) return;
+            EnsureHostTerrainSyncStateLoaded();
             double gameTime = GetCurrentGameTime();
             Point3[] dueCells;
             lock (m_terrainJournalLock)

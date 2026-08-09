@@ -499,14 +499,15 @@ namespace ScMultiplayer
 					!m_clientTerrainInterestChunks.Contains(coordinates);
 				TerrainChunk chunk = project.FindSubsystem<SubsystemTerrain>(false)?
 					.Terrain.GetChunkAtCoords(x, z);
-				// Source: Survivalcraft/Game/TerrainUpdater.cs:TerrainUpdater.ChunkInitialized
-				// ChunkInitialized can be missed when the chunk becomes Valid before the
-				// checkpoint updater is attached. Re-check every valid chunk in the local
-				// interest window until it has a per-chunk confirmed revision.
-				bool checkpointMissing = !m_clientTerrainChunkRevisions.ContainsKey(coordinates) &&
+				// Source: ScMultiplayer.CompleteClientJoinAfterApply
+				// A transferred host world is a complete baseline. Re-entering a region only
+				// probes its revision; it must not turn a previously synchronized area into a
+				// full checkpoint request merely because it left the interest window.
+				bool checkpointMissing = GetClientTerrainChunkRevision(coordinates) <= 0L &&
 					!m_clientTerrainChunkSyncPending.ContainsKey(coordinates) &&
 					!m_clientTerrainChunkSyncQueued.Contains(coordinates);
-				if ((enteredInterest || checkpointMissing) &&
+				bool needsRevisionProbe = enteredInterest && ShouldProbeClientTerrainChunk(coordinates);
+				if ((checkpointMissing || needsRevisionProbe) &&
 					chunk != null && chunk.State >= TerrainChunkState.Valid)
 				{
 					QueueClientTerrainChunkSync(coordinates);
@@ -526,7 +527,7 @@ namespace ScMultiplayer
 			{
 				DetachClientTerrainChunkSyncUpdater();
 			}
-			if (m_clientTerrainChunkSyncQueue.Count > 0 || m_clientTerrainChunkSyncQueued.Count > 0 || m_clientTerrainChunkSyncPending.Count > 0 || m_clientTerrainChunkRevisions.Count > 0 || m_clientTerrainChunkVerifications.Count > 0 || m_worldTransferRegistry.ClientTerrainChunkBaselineRevision > 0 || m_worldTransferRegistry.ClientTerrainJoinBaselineRevision > 0)
+			if (m_clientTerrainChunkSyncQueue.Count > 0 || m_clientTerrainChunkSyncQueued.Count > 0 || m_clientTerrainChunkSyncPending.Count > 0 || m_clientTerrainChunkRevisions.Count > 0 || m_clientTerrainChunkProbeTimes.Count > 0 || m_clientTerrainChunkVerifications.Count > 0 || m_worldTransferRegistry.ClientTerrainChunkBaselineRevision > 0 || m_worldTransferRegistry.ClientTerrainJoinBaselineRevision > 0)
 			{
 				ResetClientTerrainChunkSyncState();
 			}
@@ -597,6 +598,7 @@ namespace ScMultiplayer
 			if (chunk != null && chunk.State >= TerrainChunkState.Valid && !m_clientTerrainChunkSyncPending.ContainsKey(coordinates))
 			{
 				long knownRevision = GetClientTerrainChunkRevision(coordinates);
+				m_clientTerrainChunkProbeTimes[coordinates] = now;
                 NetworkMessageSender.SendRawMessage(0, new TerrainChunkSyncMessage
                 {
                     Stage = TerrainChunkSyncStage.Request,
@@ -619,7 +621,9 @@ namespace ScMultiplayer
 		if (IsHost || chunk == null) return;
 		if (m_clientTerrainInterestChunks.Contains(chunk.Coords))
 		{
-			QueueClientTerrainChunkSync(chunk.Coords);
+			if (GetClientTerrainChunkRevision(chunk.Coords) <= 0L ||
+				ShouldProbeClientTerrainChunk(chunk.Coords))
+				QueueClientTerrainChunkSync(chunk.Coords);
 			return;
 		}
 		if (m_clientTerrainChunkVerifications.TryGetValue(chunk.Coords,
@@ -630,13 +634,21 @@ namespace ScMultiplayer
 
 	private long GetClientTerrainChunkRevision(Point2 coordinates)
 	{
-		// Source: ScMultiplayer.OnClientTerrainChunkCheckpointBatchApplied
-		// The join baseline is a global sequence barrier, not proof that this
-		// particular chunk was received. An unseen chunk must request its full
-		// retained checkpoint from revision zero.
+		// Source: ScMultiplayer.CompleteClientJoinAfterApply
+		// The imported host snapshot is a complete world baseline. Sparse per-chunk
+		// revisions record only changes observed after that snapshot.
+		long baseline = Math.Max(m_worldTransferRegistry.ClientTerrainChunkBaselineRevision,
+			m_worldTransferRegistry.ClientTerrainJoinBaselineRevision);
 		return m_clientTerrainChunkRevisions.TryGetValue(coordinates, out var revision)
-			? Math.Max(revision, 0L)
-			: 0L;
+			? Math.Max(Math.Max(revision, 0L), baseline)
+			: baseline;
+	}
+
+	private bool ShouldProbeClientTerrainChunk(Point2 coordinates)
+	{
+		if (!m_clientTerrainChunkProbeTimes.TryGetValue(coordinates, out double lastProbe))
+			return true;
+		return Time.RealTime - lastProbe >= TerrainChunkRevisionProbeInterval;
 	}
 
 	private void QueueClientTerrainChunkSync(Point2 coordinates)
@@ -662,6 +674,7 @@ namespace ScMultiplayer
 		m_clientTerrainChunkSyncQueued.Clear();
 		m_clientTerrainChunkSyncPending.Clear();
 		m_clientTerrainChunkRevisions.Clear();
+		m_clientTerrainChunkProbeTimes.Clear();
 		m_clientTerrainInterestChunks.Clear();
 		m_clientTerrainInterestInitialized = false;
 		m_worldTransferRegistry.ResetClientTerrainBaselines();
