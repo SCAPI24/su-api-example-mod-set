@@ -114,7 +114,65 @@ Memory Bank 绘图编辑器，替换 `SubsystemMemoryBankBlockBehavior`，增加
 
 ### ScMultiplayer
 
-多人联机 Mod，基于 Comms 通信库。演示复杂 Mod：Dependencies 声明、LoadingManager.ReplaceItem、条件编译。
+![ScMultiplayer 联机实机截图](images/ScMultiplayer.png)
+
+当前版本：`2.0.9`
+
+适配 SuAPI：`0.1.5.0` / `0.1.5.1`
+
+[下载 Beta0.1.5.1](https://gitee.com/SC-SPM/su-api-example-mod-set/releases/tag/Beta0.1.5.1)
+
+多人联机 Mod，基于 Comms 通信库和主机权威架构，同步玩家、地形、容器、掉落物、投射物、动物、天气、电路、睡眠和世界时间。支持 Windows 与 Android 客户端、无头服务器、地图传输、断线恢复和网络诊断。
+
+#### 从 Beta0.1.3.4 到 2.0.9
+
+统计范围为 [`Beta0.1.3.4`](https://gitee.com/SC-SPM/su-api-example-mod-set/tree/Beta0.1.3.4)（`a7a36dc`，2026-07-24）之后至 `2.0.9`（`d0859d8`，2026-08-10）。共计 **33 次 ScMultiplayer 相关提交**：其中 31 次直接修改 `ScMultiplayer/` 或 `Comms/`，包含 309 个文件修改记录、增加 45,752 行、删除 23,855 行；另有 2 次只更新发布目录和兼容信息。
+
+- `1.9.x`：集中修复加入恢复、玩家与地形同步、移动投射物、电路控制、世界刷新和权威击退。
+- `2.0.0`：完善容器拖放、物品丢弃与拾取、交互同步及联机输入处理。
+- `2.0.7`：发布地形兴趣范围、批量恢复、可靠传输与网络诊断相关改进。
+- `2.0.8`：完成联机模块化重构，继续收口睡眠、电路、地形 checkpoint、复活、骑乘和发射器同步。
+- `2.0.9`：修复发射器主机权威执行、创建时序和多端容器状态同步。
+
+#### 逐提交更新记录
+
+| 日期 | 提交 | 修改量 | 更新内容 |
+|------|------|--------|----------|
+| 2026-07-25 | [`5c910c4`](https://gitee.com/SC-SPM/su-api-example-mod-set/commit/5c910c4) | 1 文件，+117/-21 | 修复加入房间后的电路同步恢复。 |
+| 2026-07-25 | [`9a4de42`](https://gitee.com/SC-SPM/su-api-example-mod-set/commit/9a4de42) | 1 文件，+1/-0 | 更新联机服务器目录。 |
+| 2026-07-25 | [`0ae9728`](https://gitee.com/SC-SPM/su-api-example-mod-set/commit/0ae9728) | 1 文件，+2/-1 | 再次更新联机服务器目录。 |
+| 2026-07-26 | [`e14889f`](https://gitee.com/SC-SPM/su-api-example-mod-set/commit/e14889f) | 9 文件，+1503/-212 | 提升多人同步可靠性。 |
+| 2026-07-26 | [`4240f23`](https://gitee.com/SC-SPM/su-api-example-mod-set/commit/4240f23) | 6 文件，+536/-203 | 稳定服务器发现和后台模拟。 |
+| 2026-07-26 | [`8ca035b`](https://gitee.com/SC-SPM/su-api-example-mod-set/commit/8ca035b) | 2 文件，+80/-7 | 补偿移动状态下释放投射物的偏移。 |
+| 2026-07-26 | [`9f0f522`](https://gitee.com/SC-SPM/su-api-example-mod-set/commit/9f0f522) | 7 文件，+1044/-19 | 增加可持久保存的联机世界链接。 |
+| 2026-07-26 | [`f0535fd`](https://gitee.com/SC-SPM/su-api-example-mod-set/commit/f0535fd) | 9 文件，+641/-33 | 加固电路与控制操作同步。 |
+| 2026-07-26 | [`4d2441c`](https://gitee.com/SC-SPM/su-api-example-mod-set/commit/4d2441c) | 1 文件，+1/-4 | 从服务器目录移除非永久服务器。 |
+| 2026-07-26 | [`a2a8d8f`](https://gitee.com/SC-SPM/su-api-example-mod-set/commit/a2a8d8f) | 6 文件，+487/-82 | 稳定世界与玩家状态同步。 |
+| 2026-07-30 | [`bf18316`](https://gitee.com/SC-SPM/su-api-example-mod-set/commit/bf18316) | 7 文件，+91/-324 | 发布 ScMultiplayer 1.9.1，并更新无头服务器工具。 |
+| 2026-07-30 | [`3d10824`](https://gitee.com/SC-SPM/su-api-example-mod-set/commit/3d10824) | 1 文件，+42/-10 | 在世界刷新时保留联机会话。 |
+| 2026-07-31 | [`dad0ab4`](https://gitee.com/SC-SPM/su-api-example-mod-set/commit/dad0ab4) | 2 文件，+195/-48 | 同步主机权威的角色击退与飞行状态。 |
+| 2026-08-02 | [`c1b6b80`](https://gitee.com/SC-SPM/su-api-example-mod-set/commit/c1b6b80) | 2 文件，+8/-7 | 更新 Mod 元数据和世界控制。 |
+| 2026-08-03 | [`3a6784b`](https://gitee.com/SC-SPM/su-api-example-mod-set/commit/3a6784b) | 15 文件，+2025/-247 | 修复地形方块放置的多端复制。 |
+| 2026-08-04 | [`de30972`](https://gitee.com/SC-SPM/su-api-example-mod-set/commit/de30972) | 7 文件，+1561/-106 | 发布 ScMultiplayer 1.9.4，并更新无头服务器 Mod。 |
+| 2026-08-04 | [`48794cb`](https://gitee.com/SC-SPM/su-api-example-mod-set/commit/48794cb) | 5 文件，+13/-89 | 整理联机引用的翻译与字体资源。 |
+| 2026-08-04 | [`4d4d77a`](https://gitee.com/SC-SPM/su-api-example-mod-set/commit/4d4d77a) | 2 文件，+3/-3 | 更新至 SuAPI 0.1.5.0。 |
+| 2026-08-05 | [`fd99b2e`](https://gitee.com/SC-SPM/su-api-example-mod-set/commit/fd99b2e) | 18 文件，+2691/-234 | 修复容器拖放、物品丢弃和交互同步。 |
+| 2026-08-05 | [`218117f`](https://gitee.com/SC-SPM/su-api-example-mod-set/commit/218117f) | 3 文件，+4/-4 | 发布 ScMultiplayer 2.0.0。 |
+| 2026-08-06 | [`1a30d2b`](https://gitee.com/SC-SPM/su-api-example-mod-set/commit/1a30d2b) | 17 文件，+2891/-489 | 发布 ScMultiplayer 2.0.7，并更新 ModDns。 |
+| 2026-08-08 | [`233a97b`](https://gitee.com/SC-SPM/su-api-example-mod-set/commit/233a97b) | 95 文件，+27008/-20383 | 将大型联机实现拆分为独立模块，并稳定加入、地形和网络同步。 |
+| 2026-08-08 | [`e1be835`](https://gitee.com/SC-SPM/su-api-example-mod-set/commit/e1be835) | 1 文件，+1/-1 | 将 ModDns 中的 ScMultiplayer 更新至 2.0.8。 |
+| 2026-08-08 | [`f1b9f7d`](https://gitee.com/SC-SPM/su-api-example-mod-set/commit/f1b9f7d) | 1 文件，+4/-4 | 增加 SuAPI 0.1.5.1 发布兼容信息。 |
+| 2026-08-08 | [`8e30e5d`](https://gitee.com/SC-SPM/su-api-example-mod-set/commit/8e30e5d) | 7 文件，+156/-6 | 在电路恢复期间同步睡眠唤醒状态。 |
+| 2026-08-08 | [`18f5397`](https://gitee.com/SC-SPM/su-api-example-mod-set/commit/18f5397) | 8 文件，+297/-31 | 稳定电路与睡眠同步。 |
+| 2026-08-08 | [`7984e2a`](https://gitee.com/SC-SPM/su-api-example-mod-set/commit/7984e2a) | 5 文件，+53/-6 | 在主机权威时间加速结束后唤醒客户端。 |
+| 2026-08-09 | [`28eff36`](https://gitee.com/SC-SPM/su-api-example-mod-set/commit/28eff36) | 30 文件，+2807/-1134 | 按客户端兴趣范围协调地形 checkpoint 与恢复。 |
+| 2026-08-09 | [`98fd750`](https://gitee.com/SC-SPM/su-api-example-mod-set/commit/98fd750) | 11 文件，+386/-24 | 保留地形修订记录和联机角色复活状态。 |
+| 2026-08-09 | [`2c1eb59`](https://gitee.com/SC-SPM/su-api-example-mod-set/commit/2c1eb59) | 25 文件，+1076/-73 | 同步远程骑乘状态，并建立发射器主机权威路径。 |
+| 2026-08-10 | [`c7b7adb`](https://gitee.com/SC-SPM/su-api-example-mod-set/commit/c7b7adb) | 1 文件，+8/-1 | 保持发射器效果只由主机权威执行。 |
+| 2026-08-10 | [`7f9b7c7`](https://gitee.com/SC-SPM/su-api-example-mod-set/commit/7f9b7c7) | 1 文件，+11/-0 | 在电路元件创建完成后排队执行发射器操作。 |
+| 2026-08-10 | [`d0859d8`](https://gitee.com/SC-SPM/su-api-example-mod-set/commit/d0859d8) | 4 文件，+14/-54 | 发布 ScMultiplayer 2.0.9，完成发射器同步收口。 |
+
+[查看 Beta0.1.3.4 至当前版本的完整差异](https://gitee.com/SC-SPM/su-api-example-mod-set/compare/Beta0.1.3.4...master)
 
 ### HeadlessRenderingMod
 
