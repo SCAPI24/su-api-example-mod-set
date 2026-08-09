@@ -51,10 +51,12 @@ namespace ScMultiplayer
                 int[] counts = CaptureInventoryCounts(inventory);
                 if (IsHost)
                 {
-                    if (m_containerStates.TryGetValue(key, out ContainerNetworkState state) &&
+                    m_containerStates.TryGetValue(key, out ContainerNetworkState state);
+                    ContainerNetworkState previousState = state;
+                    if (state != null &&
                         ArraysEqual(values, state.Values) && ArraysEqual(counts, state.Counts))
                     {
-                        if (forceFullSync) SendContainerState(container, state);
+                        if (forceFullSync) SendContainerState(container, null, state);
                         continue;
                     }
                     state = AdvanceContainerState(state, values, counts);
@@ -62,7 +64,7 @@ namespace ScMultiplayer
                     if (inventory is ComponentCraftingTable craftingTable &&
                         hostOpenContainer?.Key == key)
                         DisplayLocalCraftingFeedback(craftingTable);
-                    SendContainerState(container, state);
+                    SendContainerState(container, previousState, state);
                 }
                 else
                 {
@@ -87,6 +89,9 @@ namespace ScMultiplayer
                         localPlayerInventory == null || !m_hasAuthoritativeLocalInventory)
                         continue;
 
+                    int[] currentPlayerValues = CaptureInventoryValues(localPlayerInventory);
+                    int[] currentPlayerCounts = CaptureInventoryCounts(localPlayerInventory);
+
                     m_nextContainerRequestId = m_nextContainerRequestId == int.MaxValue
                         ? 1
                         : m_nextContainerRequestId + 1;
@@ -102,16 +107,60 @@ namespace ScMultiplayer
                         RequestId = m_nextContainerRequestId,
                         RequesterClientId = client.ClientID,
                         PlayerRevision = m_localEquipmentRevision,
-                        IsRequest = true,
-                        SlotValues = values,
-                        SlotCounts = counts,
-                        BaseSlotValues = (int[])state.Values.Clone(),
-                        BaseSlotCounts = (int[])state.Counts.Clone(),
-                        PlayerBaseSlotValues = (int[])m_authoritativeLocalSlotValues.Clone(),
-                        PlayerBaseSlotCounts = (int[])m_authoritativeLocalSlotCounts.Clone(),
-                        PlayerSlotValues = CaptureInventoryValues(localPlayerInventory),
-                        PlayerSlotCounts = CaptureInventoryCounts(localPlayerInventory)
+                        IsRequest = true
                     };
+                    if (!(inventory is ComponentCraftingTable) &&
+                        TryBuildInventoryDelta(state.Values, state.Counts, values, counts,
+                            out int[] containerIndices, out int[] containerBaseValues,
+                            out int[] containerBaseCounts, out int[] containerDesiredValues,
+                            out int[] containerDesiredCounts))
+                    {
+                        request.HasSlotDelta = true;
+                        request.SlotIndices = containerIndices;
+                        request.BaseSlotValues = containerBaseValues;
+                        request.BaseSlotCounts = containerBaseCounts;
+                        request.SlotValues = containerDesiredValues;
+                        request.SlotCounts = containerDesiredCounts;
+                    }
+                    else
+                    {
+                        request.SlotValues = values;
+                        request.SlotCounts = counts;
+                        request.BaseSlotValues = (int[])state.Values.Clone();
+                        request.BaseSlotCounts = (int[])state.Counts.Clone();
+                    }
+
+                    if (TryBuildInventoryDelta(m_authoritativeLocalSlotValues,
+                            m_authoritativeLocalSlotCounts, currentPlayerValues,
+                            currentPlayerCounts, out int[] playerIndices,
+                            out int[] playerBaseValues, out int[] playerBaseCounts,
+                            out int[] playerDesiredValues, out int[] playerDesiredCounts))
+                    {
+                        request.HasPlayerSlotDelta = true;
+                        request.PlayerSlotIndices = playerIndices;
+                        request.PlayerBaseSlotValues = playerBaseValues;
+                        request.PlayerBaseSlotCounts = playerBaseCounts;
+                        request.PlayerSlotValues = playerDesiredValues;
+                        request.PlayerSlotCounts = playerDesiredCounts;
+                    }
+                    else
+                    {
+                        request.PlayerBaseSlotValues = (int[])m_authoritativeLocalSlotValues.Clone();
+                        request.PlayerBaseSlotCounts = (int[])m_authoritativeLocalSlotCounts.Clone();
+                        if (ArraysEqual(currentPlayerValues, m_authoritativeLocalSlotValues) &&
+                            ArraysEqual(currentPlayerCounts, m_authoritativeLocalSlotCounts))
+                        {
+                            request.PlayerSlotValues = Array.Empty<int>();
+                            request.PlayerSlotCounts = Array.Empty<int>();
+                            request.PlayerBaseSlotValues = Array.Empty<int>();
+                            request.PlayerBaseSlotCounts = Array.Empty<int>();
+                        }
+                        else
+                        {
+                            request.PlayerSlotValues = currentPlayerValues;
+                            request.PlayerSlotCounts = currentPlayerCounts;
+                        }
+                    }
                     m_pendingContainerTransactions[key] = new PendingContainerTransaction
                     {
                         Request = request,
@@ -266,7 +315,7 @@ namespace ScMultiplayer
                     state = AdvanceContainerState(state, currentValues, currentCounts);
                     m_containerStates[key] = state;
                     SendContainerState(CreateContainerReference(inventory,
-                        message.Coordinates, message.OwnerClientId), state);
+                        message.Coordinates, message.OwnerClientId), null, state);
                 }
 
                 if (message.IsBaselineRequest)
@@ -290,11 +339,36 @@ namespace ScMultiplayer
 
                 IInventory playerInventory = player.ComponentPlayer.ComponentMiner?.Inventory;
                 ComponentCraftingTable craftingTable = inventory as ComponentCraftingTable;
+                int[] containerBaseValues = message.BaseSlotValues;
+                int[] containerBaseCounts = message.BaseSlotCounts;
+                int[] containerDesiredValues = message.SlotValues;
+                int[] containerDesiredCounts = message.SlotCounts;
+                int[] playerBaseValues = message.PlayerBaseSlotValues;
+                int[] playerBaseCounts = message.PlayerBaseSlotCounts;
+                int[] playerDesiredValues = message.PlayerSlotValues;
+                int[] playerDesiredCounts = message.PlayerSlotCounts;
+                if (craftingTable == null)
+                {
+                    TryExpandInventoryTransaction(inventory, message.HasSlotDelta,
+                        message.SlotIndices, message.BaseSlotValues,
+                        message.BaseSlotCounts, message.SlotValues, message.SlotCounts,
+                        out containerBaseValues, out containerBaseCounts,
+                        out containerDesiredValues, out containerDesiredCounts);
+                    TryExpandInventoryTransaction(playerInventory, message.HasPlayerSlotDelta,
+                        message.PlayerSlotIndices, message.PlayerBaseSlotValues,
+                        message.PlayerBaseSlotCounts, message.PlayerSlotValues,
+                        message.PlayerSlotCounts, out playerBaseValues,
+                        out playerBaseCounts, out playerDesiredValues,
+                        out playerDesiredCounts);
+                }
                 int craftedResultCount = 0;
                 int craftedResultValue = craftingTable != null
                     ? NormalizeCrossbowValue(craftingTable.GetSlotValue(
                         craftingTable.ResultSlotIndex)) : 0;
-                bool isContainerDrop = IsContainerDropRequestValid(inventory, message);
+                bool isContainerDrop = IsContainerDropRequestValid(inventory,
+                    containerBaseValues, containerBaseCounts, containerDesiredValues,
+                    containerDesiredCounts, playerBaseValues, playerBaseCounts,
+                    playerDesiredValues, playerDesiredCounts, message);
                 int craftedDropCount = 0;
                 bool isCraftingResultDrop = craftingTable != null && message.IsDrop &&
                     TryGetCraftingResultDrop(craftingTable, message,
@@ -303,41 +377,126 @@ namespace ScMultiplayer
                 bool isCraftingResultTransfer = !message.IsDrop && craftingTable != null &&
                     TryGetCraftingResultTransfer(craftingTable, message,
                         out craftedResultCount, out craftingTargetSlot);
-                bool validRequest = message.Revision == state.Revision &&
-                    ArraysEqual(message.BaseSlotValues, state.Values) &&
-                    ArraysEqual(message.BaseSlotCounts, state.Counts) &&
-                    IsInventorySnapshotValid(inventory,
-                        message.SlotValues, message.SlotCounts) &&
-                    IsInventorySnapshotValid(playerInventory,
-                        message.PlayerBaseSlotValues, message.PlayerBaseSlotCounts) &&
-                    IsInventorySnapshotValid(playerInventory,
-                        message.PlayerSlotValues, message.PlayerSlotCounts) &&
-                    (InventoryMatches(playerInventory, message.PlayerBaseSlotValues,
-                        message.PlayerBaseSlotCounts) ||
-                    InventoryMatches(playerInventory, message.PlayerSlotValues,
-                        message.PlayerSlotCounts)) &&
-                    (craftingTable == null || isCraftingResultTransfer ||
-                    isCraftingResultDrop || IsCraftingRemainsRemoval(craftingTable, message)) &&
-                    (isContainerDrop || isCraftingResultDrop || !message.IsDrop &&
-                    (playerInventory is ComponentCreativeInventory ||
-                    isCraftingResultTransfer || HaveSameCombinedItems(inventory,
-                        message.BaseSlotValues, message.BaseSlotCounts,
-                        message.PlayerBaseSlotValues, message.PlayerBaseSlotCounts,
-                        message.SlotValues, message.SlotCounts,
-                        message.PlayerSlotValues, message.PlayerSlotCounts)));
-
-                if (validRequest)
+                bool validRequest;
+                if (craftingTable != null)
                 {
-                    if (isCraftingResultTransfer || isCraftingResultDrop)
+                    validRequest = message.Revision == state.Revision &&
+                        ArraysEqual(containerBaseValues, state.Values) &&
+                        ArraysEqual(containerBaseCounts, state.Counts) &&
+                        IsInventorySnapshotValid(inventory,
+                            containerDesiredValues, containerDesiredCounts) &&
+                        IsInventorySnapshotValid(playerInventory,
+                            playerBaseValues, playerBaseCounts) &&
+                        IsInventorySnapshotValid(playerInventory,
+                            playerDesiredValues, playerDesiredCounts) &&
+                        (InventoryMatches(playerInventory, playerBaseValues,
+                            playerBaseCounts) ||
+                        InventoryMatches(playerInventory, playerDesiredValues,
+                            playerDesiredCounts)) &&
+                        (isCraftingResultTransfer || isCraftingResultDrop ||
+                            IsCraftingRemainsRemoval(craftingTable, message));
+                    if (validRequest)
                     {
-                        // Source: Survivalcraft/Game/ComponentCraftingTable.RemoveSlotItems
-                        // The crafting result and remains slots are host-derived. Calling the
-                        // original removal method consumes the matching grid items atomically.
-                        validRequest = craftingTable.RemoveSlotItems(
-                            craftingTable.ResultSlotIndex,
-                            isCraftingResultDrop ? craftedDropCount : craftedResultCount) ==
-                            (isCraftingResultDrop ? craftedDropCount : craftedResultCount);
-                        if (validRequest && isCraftingResultDrop)
+                        if (isCraftingResultTransfer || isCraftingResultDrop)
+                        {
+                            int removedCount = isCraftingResultDrop
+                                ? craftedDropCount : craftedResultCount;
+                            // Source: Survivalcraft/Game/ComponentCraftingTable.RemoveSlotItems
+                            // The crafting result and remains slots are host-derived. Calling the
+                            // original removal method consumes the matching grid items atomically.
+                            validRequest = craftingTable.RemoveSlotItems(
+                                craftingTable.ResultSlotIndex, removedCount) == removedCount;
+                            if (validRequest)
+                            {
+                                if (isCraftingResultDrop)
+                                {
+                                    ComponentBody body = player.ComponentPlayer.ComponentBody;
+                                    Vector3 defaultPosition = body.Position +
+                                        new Vector3(0f, body.StanceBoxSize.Y * 0.66f, 0f) +
+                                        0.25f * body.Matrix.Forward;
+                                    Vector3 position = Vector3.DistanceSquared(body.Position,
+                                        message.DropPosition) <= 64f
+                                        ? message.DropPosition : defaultPosition;
+                                    Vector3 velocity = message.DropVelocity;
+                                    if (velocity.LengthSquared() > 20f * 20f)
+                                        velocity = Vector3.Normalize(velocity) * 20f;
+                                    GameManager.Project.FindSubsystem<SubsystemPickables>(true)
+                                        .AddPickable(craftedResultValue, craftedDropCount,
+                                            position, velocity, null);
+                                }
+                                else if (craftingTargetSlot >= 0)
+                                {
+                                    craftingTable.AddSlotItems(craftingTargetSlot,
+                                        craftedResultValue, craftedResultCount);
+                                }
+                                else
+                                {
+                                    ApplyInventory(playerInventory,
+                                        playerDesiredValues, playerDesiredCounts);
+                                }
+                            }
+                        }
+                        else
+                        {
+                            ApplyInventory(inventory, containerDesiredValues,
+                                containerDesiredCounts);
+                            ApplyInventory(playerInventory, playerDesiredValues,
+                                playerDesiredCounts);
+                            if (isContainerDrop)
+                            {
+                                ComponentBody body = player.ComponentPlayer.ComponentBody;
+                                Vector3 defaultPosition = body.Position +
+                                    new Vector3(0f, body.StanceBoxSize.Y * 0.66f, 0f) +
+                                    0.25f * body.Matrix.Forward;
+                                Vector3 position = Vector3.DistanceSquared(body.Position,
+                                    message.DropPosition) <= 64f
+                                    ? message.DropPosition : defaultPosition;
+                                Vector3 velocity = message.DropVelocity;
+                                if (velocity.LengthSquared() > 20f * 20f)
+                                    velocity = Vector3.Normalize(velocity) * 20f;
+                                GameManager.Project.FindSubsystem<SubsystemPickables>(true)
+                                    .AddPickable(NormalizeCrossbowValue(message.DropValue),
+                                        message.DropCount, position, velocity, null);
+                            }
+                        }
+                        if (validRequest)
+                        {
+                            state = AdvanceContainerState(state,
+                                CaptureInventoryValues(inventory),
+                                CaptureInventoryCounts(inventory));
+                            m_containerStates[key] = state;
+                        }
+                    }
+                }
+                else
+                {
+                    validRequest = message.Revision == state.Revision &&
+                        ArraysEqual(containerBaseValues, state.Values) &&
+                        ArraysEqual(containerBaseCounts, state.Counts) &&
+                        IsInventorySnapshotValid(inventory, containerDesiredValues,
+                            containerDesiredCounts) &&
+                        IsInventorySnapshotValid(playerInventory, playerBaseValues,
+                            playerBaseCounts) &&
+                        IsInventorySnapshotValid(playerInventory, playerDesiredValues,
+                            playerDesiredCounts) &&
+                        (InventoryMatches(playerInventory, playerBaseValues,
+                            playerBaseCounts) ||
+                        InventoryMatches(playerInventory, playerDesiredValues,
+                            playerDesiredCounts)) &&
+                        (isContainerDrop || isCraftingResultDrop || !message.IsDrop &&
+                        (playerInventory is ComponentCreativeInventory ||
+                        isCraftingResultTransfer || HaveSameCombinedItems(inventory,
+                            containerBaseValues, containerBaseCounts,
+                            playerBaseValues, playerBaseCounts,
+                            containerDesiredValues, containerDesiredCounts,
+                            playerDesiredValues, playerDesiredCounts)));
+                    if (validRequest)
+                    {
+                        ApplyInventory(inventory, containerDesiredValues,
+                            containerDesiredCounts);
+                        ApplyInventory(playerInventory, playerDesiredValues,
+                            playerDesiredCounts);
+                        if (isContainerDrop)
                         {
                             ComponentBody body = player.ComponentPlayer.ComponentBody;
                             Vector3 defaultPosition = body.Position +
@@ -350,63 +509,27 @@ namespace ScMultiplayer
                             if (velocity.LengthSquared() > 20f * 20f)
                                 velocity = Vector3.Normalize(velocity) * 20f;
                             GameManager.Project.FindSubsystem<SubsystemPickables>(true)
-                                .AddPickable(craftedResultValue, craftedDropCount,
-                                    position, velocity, null);
-                        }
-                        else if (validRequest)
-                        {
-                            if (craftingTargetSlot >= 0)
-                                craftingTable.AddSlotItems(craftingTargetSlot,
-                                    craftedResultValue,
-                                    craftedResultCount);
-                            else
-                                ApplyInventory(playerInventory,
-                                    message.PlayerSlotValues, message.PlayerSlotCounts);
-                        }
-                    }
-                    else
-                    {
-                        ApplyInventory(inventory, message.SlotValues, message.SlotCounts);
-                        ApplyInventory(playerInventory,
-                            message.PlayerSlotValues, message.PlayerSlotCounts);
-                        if (isContainerDrop)
-                        {
-                            ComponentBody body = player.ComponentPlayer.ComponentBody;
-                            Vector3 defaultPosition = body.Position +
-                                new Vector3(0f, body.StanceBoxSize.Y * 0.66f, 0f) +
-                                0.25f * body.Matrix.Forward;
-                            Vector3 position = Vector3.DistanceSquared(body.Position,
-                                message.DropPosition) <= 64f
-                                ? message.DropPosition
-                                : defaultPosition;
-                            Vector3 velocity = message.DropVelocity;
-                            if (velocity.LengthSquared() > 20f * 20f)
-                                velocity = Vector3.Normalize(velocity) * 20f;
-                            GameManager.Project.FindSubsystem<SubsystemPickables>(true)
                                 .AddPickable(NormalizeCrossbowValue(message.DropValue),
-                                    message.DropCount,
-                                    position, velocity, null);
+                                    message.DropCount, position, velocity, null);
                         }
-                    }
-                    if (validRequest)
-                    {
                         state = AdvanceContainerState(state,
-                            CaptureInventoryValues(inventory), CaptureInventoryCounts(inventory));
+                            CaptureInventoryValues(inventory),
+                            CaptureInventoryCounts(inventory));
                         m_containerStates[key] = state;
                     }
                 }
-                else if (playerInventory != null &&
-                    InventoryMatches(playerInventory, message.PlayerSlotValues,
-                        message.PlayerSlotCounts) &&
+                if (!validRequest && playerInventory != null &&
+                    InventoryMatches(playerInventory, playerDesiredValues,
+                        playerDesiredCounts) &&
                     IsInventorySnapshotValid(playerInventory,
-                        message.PlayerBaseSlotValues, message.PlayerBaseSlotCounts))
+                        playerBaseValues, playerBaseCounts))
                 {
                     // Source: ScMultiplayer.HandlePlayerEquipmentMessage
                     // An unordered equipment snapshot can arrive just before a rejected container
                     // transaction. Restore its declared base so stale furnace output cannot remain
                     // in the player inventory after the container authority rejects the transfer.
                     ApplyInventory(playerInventory,
-                        message.PlayerBaseSlotValues, message.PlayerBaseSlotCounts);
+                        playerBaseValues, playerBaseCounts);
                 }
 
                 int playerRevision = PublishPlayerInventoryAuthority(
@@ -443,12 +566,20 @@ namespace ScMultiplayer
                 (message.Revision < oldState.Revision ||
                     !message.IsBaselineRequest && message.Revision == oldState.Revision))
                 return;
-            ApplyInventory(inventory, message.SlotValues, message.SlotCounts);
+            if (message.HasSlotDelta)
+                ApplyInventoryDelta(inventory, message.SlotIndices, message.SlotValues,
+                    message.SlotCounts);
+            else
+                ApplyInventory(inventory, message.SlotValues, message.SlotCounts);
             m_containerStates[key] = new ContainerNetworkState
             {
                 Revision = message.Revision,
-                Values = (int[])message.SlotValues.Clone(),
-                Counts = (int[])message.SlotCounts.Clone()
+                Values = message.HasSlotDelta
+                    ? CaptureInventoryValues(inventory)
+                    : (int[])message.SlotValues.Clone(),
+                Counts = message.HasSlotDelta
+                    ? CaptureInventoryCounts(inventory)
+                    : (int[])message.SlotCounts.Clone()
             };
             if (matchingPending)
             {
@@ -469,30 +600,44 @@ namespace ScMultiplayer
                 out int authorityRevision) ? authorityRevision : 0;
             int revision = Math.Max(currentAuthority == int.MaxValue ? 1 : currentAuthority + 1,
                 clientRevision == int.MaxValue ? 1 : clientRevision + 1);
+            m_lastEquipmentSnapshots.TryGetValue(clientId,
+                out EquipmentSnapshot previousSnapshot);
             EquipmentSnapshot snapshot = CaptureEquipmentSnapshot(player);
             m_equipmentAuthorityRevisions[clientId] = revision;
             m_lastReceivedEquipmentRevisions[clientId] = revision;
             m_lastEquipmentSnapshots[clientId] = snapshot;
             m_equipmentSynchronizedClients.Add(clientId);
             MarkHostInventoryAuthoritative(clientId);
-            BroadcastPlayerEquipment(clientId, revision, snapshot);
+            BroadcastPlayerEquipment(clientId, revision, previousSnapshot, snapshot);
             return revision;
         }
 
         private void ApplyContainerPlayerAuthority(ContainerSyncMessage message)
         {
-            if (message.PlayerSlotValues == null || message.PlayerSlotCounts == null ||
-                message.PlayerSlotValues.Length == 0 ||
+            if (message == null ||
                 message.PlayerRevision < m_lastReceivedEquipmentRevisions.GetValueOrDefault(
                     client.ClientID))
                 return;
             IInventory inventory = GetLocalPlayerInventory();
             if (inventory == null) return;
-            ApplyInventory(inventory, message.PlayerSlotValues, message.PlayerSlotCounts);
-            int slotsCount = Math.Min(inventory.SlotsCount,
-                Math.Min(message.PlayerSlotValues.Length, message.PlayerSlotCounts.Length));
-            m_authoritativeLocalSlotValues = message.PlayerSlotValues.Take(slotsCount).ToArray();
-            m_authoritativeLocalSlotCounts = message.PlayerSlotCounts.Take(slotsCount).ToArray();
+            bool hasDelta = message.HasPlayerSlotDelta &&
+                message.PlayerSlotIndices != null && message.PlayerSlotIndices.Length > 0;
+            if (hasDelta)
+            {
+                ApplyInventoryDelta(inventory, message.PlayerSlotIndices,
+                    message.PlayerSlotValues, message.PlayerSlotCounts);
+            }
+            else if (message.PlayerSlotValues != null && message.PlayerSlotCounts != null &&
+                message.PlayerSlotValues.Length > 0)
+            {
+                ApplyInventory(inventory, message.PlayerSlotValues, message.PlayerSlotCounts);
+            }
+            else
+            {
+                return;
+            }
+            m_authoritativeLocalSlotValues = CaptureInventoryValues(inventory);
+            m_authoritativeLocalSlotCounts = CaptureInventoryCounts(inventory);
             m_lastAuthoritativeLocalInventoryTick = Math.Max(
                 m_lastAuthoritativeLocalInventoryTick, client.Step);
             m_hasAuthoritativeLocalInventory = true;
@@ -546,6 +691,172 @@ namespace ScMultiplayer
 
         private static int[] CaptureInventoryCounts(IInventory inventory) =>
             Enumerable.Range(0, inventory.SlotsCount).Select(inventory.GetSlotCount).ToArray();
+
+        private static bool TryBuildInventoryDelta(int[] previousValues,
+            int[] previousCounts, int[] currentValues, int[] currentCounts,
+            out int[] indices, out int[] baseValues, out int[] baseCounts,
+            out int[] desiredValues, out int[] desiredCounts)
+        {
+            indices = Array.Empty<int>();
+            baseValues = Array.Empty<int>();
+            baseCounts = Array.Empty<int>();
+            desiredValues = Array.Empty<int>();
+            desiredCounts = Array.Empty<int>();
+            int slotsCount = Math.Min(previousValues?.Length ?? 0,
+                Math.Min(previousCounts?.Length ?? 0,
+                    Math.Min(currentValues?.Length ?? 0, currentCounts?.Length ?? 0)));
+            if (slotsCount <= 0) return false;
+            List<int> changedIndices = new List<int>();
+            List<int> changedBaseValues = new List<int>();
+            List<int> changedBaseCounts = new List<int>();
+            List<int> changedValues = new List<int>();
+            List<int> changedCounts = new List<int>();
+            for (int i = 0; i < slotsCount; i++)
+            {
+                int previousValue = NormalizeCrossbowValue(previousValues[i]);
+                int currentValue = NormalizeCrossbowValue(currentValues[i]);
+                int previousCount = previousCounts[i];
+                int currentCount = currentCounts[i];
+                if (previousValue == currentValue && previousCount == currentCount)
+                    continue;
+                changedIndices.Add(i);
+                changedBaseValues.Add(previousValue);
+                changedBaseCounts.Add(previousCount);
+                changedValues.Add(currentValue);
+                changedCounts.Add(currentCount);
+            }
+            if (changedIndices.Count == 0) return false;
+            indices = changedIndices.ToArray();
+            baseValues = changedBaseValues.ToArray();
+            baseCounts = changedBaseCounts.ToArray();
+            desiredValues = changedValues.ToArray();
+            desiredCounts = changedCounts.ToArray();
+            return true;
+        }
+
+        private static void CopyInventorySlots(int[] values, int[] counts, int[] indices,
+            out int[] selectedValues, out int[] selectedCounts)
+        {
+            int length = Math.Min(indices?.Length ?? 0,
+                Math.Min(values?.Length ?? 0, counts?.Length ?? 0));
+            if (length <= 0)
+            {
+                selectedValues = Array.Empty<int>();
+                selectedCounts = Array.Empty<int>();
+                return;
+            }
+            selectedValues = new int[length];
+            selectedCounts = new int[length];
+            for (int i = 0; i < length; i++)
+            {
+                int index = indices[i];
+                if (index < 0 || index >= values.Length || index >= counts.Length)
+                    continue;
+                selectedValues[i] = NormalizeCrossbowValue(values[index]);
+                selectedCounts[i] = counts[index];
+            }
+        }
+
+        private static bool TryExpandInventoryTransaction(IInventory inventory,
+            bool hasDelta, int[] indices, int[] baseValues, int[] baseCounts,
+            int[] desiredValues, int[] desiredCounts, out int[] expandedBaseValues,
+            out int[] expandedBaseCounts, out int[] expandedDesiredValues,
+            out int[] expandedDesiredCounts)
+        {
+            expandedBaseValues = Array.Empty<int>();
+            expandedBaseCounts = Array.Empty<int>();
+            expandedDesiredValues = Array.Empty<int>();
+            expandedDesiredCounts = Array.Empty<int>();
+            if (inventory == null) return false;
+            if (!hasDelta)
+            {
+                bool emptySnapshot = (baseValues?.Length ?? 0) == 0 &&
+                    (baseCounts?.Length ?? 0) == 0 &&
+                    (desiredValues?.Length ?? 0) == 0 &&
+                    (desiredCounts?.Length ?? 0) == 0;
+                if (emptySnapshot)
+                {
+                    expandedBaseValues = CaptureInventoryValues(inventory);
+                    expandedBaseCounts = CaptureInventoryCounts(inventory);
+                    expandedDesiredValues = (int[])expandedBaseValues.Clone();
+                    expandedDesiredCounts = (int[])expandedBaseCounts.Clone();
+                    return true;
+                }
+                if (baseValues == null || baseCounts == null || desiredValues == null ||
+                    desiredCounts == null ||
+                    baseValues.Length != inventory.SlotsCount ||
+                    baseCounts.Length != inventory.SlotsCount ||
+                    desiredValues.Length != inventory.SlotsCount ||
+                    desiredCounts.Length != inventory.SlotsCount)
+                    return false;
+                expandedBaseValues = baseValues;
+                expandedBaseCounts = baseCounts;
+                expandedDesiredValues = desiredValues;
+                expandedDesiredCounts = desiredCounts;
+                return true;
+            }
+            int deltaCount = Math.Min(indices?.Length ?? 0,
+                Math.Min(Math.Min(baseValues?.Length ?? 0, baseCounts?.Length ?? 0),
+                    Math.Min(desiredValues?.Length ?? 0, desiredCounts?.Length ?? 0)));
+            if (deltaCount <= 0) return false;
+            expandedBaseValues = CaptureInventoryValues(inventory);
+            expandedBaseCounts = CaptureInventoryCounts(inventory);
+            expandedDesiredValues = (int[])expandedBaseValues.Clone();
+            expandedDesiredCounts = (int[])expandedBaseCounts.Clone();
+            for (int i = 0; i < deltaCount; i++)
+            {
+                int index = indices[i];
+                if (index < 0 || index >= inventory.SlotsCount)
+                    return false;
+                int previousValue = NormalizeCrossbowValue(baseValues[i]);
+                int previousCount = baseCounts[i];
+                int currentValue = inventory.GetSlotValue(index);
+                int currentCount = inventory.GetSlotCount(index);
+                if (NormalizeCrossbowValue(currentValue) != previousValue ||
+                    currentCount != previousCount)
+                    return false;
+                int desiredValue = NormalizeCrossbowValue(desiredValues[i]);
+                int desiredCount = desiredCounts[i];
+                if (desiredCount < 0 || (desiredCount > 0 && desiredValue == 0))
+                    return false;
+                if (desiredCount > 0)
+                {
+                    try
+                    {
+                        if (desiredCount > inventory.GetSlotCapacity(index, desiredValue))
+                            return false;
+                    }
+                    catch
+                    {
+                        return false;
+                    }
+                }
+                expandedBaseValues[index] = previousValue;
+                expandedBaseCounts[index] = previousCount;
+                expandedDesiredValues[index] = desiredValue;
+                expandedDesiredCounts[index] = desiredCount;
+            }
+            return true;
+        }
+
+        private static void ApplyInventoryDelta(IInventory inventory, int[] indices,
+            int[] values, int[] counts)
+        {
+            if (inventory == null || indices == null || values == null || counts == null)
+                return;
+            int length = Math.Min(indices.Length, Math.Min(values.Length, counts.Length));
+            if (length <= 0) return;
+            int[] snapshotValues = CaptureInventoryValues(inventory);
+            int[] snapshotCounts = CaptureInventoryCounts(inventory);
+            for (int i = 0; i < length; i++)
+            {
+                int index = indices[i];
+                if (index < 0 || index >= inventory.SlotsCount) continue;
+                snapshotValues[index] = NormalizeCrossbowValue(values[i]);
+                snapshotCounts[index] = counts[i];
+            }
+            ApplyInventory(inventory, snapshotValues, snapshotCounts);
+        }
 
         private static bool ArraysEqual(int[] a, int[] b) =>
             a != null && b != null && a.SequenceEqual(b);
@@ -938,16 +1249,18 @@ namespace ScMultiplayer
 
         // Source: Survivalcraft/Game/ViewWidget.cs:ViewWidget.DragDrop
         private static bool IsContainerDropRequestValid(IInventory container,
-            ContainerSyncMessage message)
+            int[] baseValues, int[] baseCounts, int[] desiredValues, int[] desiredCounts,
+            int[] playerBaseValues, int[] playerBaseCounts, int[] playerDesiredValues,
+            int[] playerDesiredCounts, ContainerSyncMessage message)
         {
             return message?.IsDrop == true && message.DropValue != 0 &&
                 message.DropCount > 0 && IsFinite(message.DropPosition) &&
                 IsFinite(message.DropVelocity) &&
-                ArraysEqual(message.PlayerBaseSlotValues, message.PlayerSlotValues) &&
-                ArraysEqual(message.PlayerBaseSlotCounts, message.PlayerSlotCounts) &&
+                ArraysEqual(playerBaseValues, playerDesiredValues) &&
+                ArraysEqual(playerBaseCounts, playerDesiredCounts) &&
                 HasContainerDropDelta(container,
-                    message.BaseSlotValues, message.BaseSlotCounts,
-                    message.SlotValues, message.SlotCounts,
+                    baseValues, baseCounts,
+                    desiredValues, desiredCounts,
                     NormalizeCrossbowValue(message.DropValue), message.DropCount);
         }
 
@@ -998,18 +1311,44 @@ namespace ScMultiplayer
         }
 
         private static void SendContainerState(NetworkContainerReference container,
-            ContainerNetworkState state)
+            ContainerNetworkState previousState, ContainerNetworkState state)
         {
-            var message = new ContainerSyncMessage
+            ContainerSyncMessage message;
+            if (container?.Inventory is not ComponentCraftingTable &&
+                previousState != null &&
+                TryBuildInventoryDelta(previousState.Values, previousState.Counts,
+                    state.Values, state.Counts, out int[] indices, out int[] baseValues,
+                    out int[] baseCounts, out int[] desiredValues,
+                    out int[] desiredCounts))
             {
-                Coordinates = container.Coordinates,
-                ComponentType = container.ComponentType,
-                OwnerClientId = container.OwnerClientId,
-                Revision = state.Revision,
-                IsRequest = false,
-                SlotValues = state.Values,
-                SlotCounts = state.Counts
-            };
+                message = new ContainerSyncMessage
+                {
+                    Coordinates = container.Coordinates,
+                    ComponentType = container.ComponentType,
+                    OwnerClientId = container.OwnerClientId,
+                    Revision = state.Revision,
+                    IsRequest = false,
+                    HasSlotDelta = true,
+                    SlotIndices = indices,
+                    BaseSlotValues = baseValues,
+                    BaseSlotCounts = baseCounts,
+                    SlotValues = desiredValues,
+                    SlotCounts = desiredCounts
+                };
+            }
+            else
+            {
+                message = new ContainerSyncMessage
+                {
+                    Coordinates = container.Coordinates,
+                    ComponentType = container.ComponentType,
+                    OwnerClientId = container.OwnerClientId,
+                    Revision = state.Revision,
+                    IsRequest = false,
+                    SlotValues = state.Values,
+                    SlotCounts = state.Counts
+                };
+            }
             NetworkMessageSender.SendScheduledMessage(
                 container.OwnerClientId >= 0 ? container.OwnerClientId : -1, message,
                 sequenced: false, latest: false);
@@ -1032,7 +1371,7 @@ namespace ScMultiplayer
             ContainerSyncMessage request, ContainerNetworkState state,
             int requesterClientId, int playerRevision, IInventory playerInventory)
         {
-            return new ContainerSyncMessage
+            ContainerSyncMessage response = new ContainerSyncMessage
             {
                 Coordinates = request.Coordinates,
                 ComponentType = request.ComponentType,
@@ -1042,14 +1381,61 @@ namespace ScMultiplayer
                 RequesterClientId = requesterClientId,
                 PlayerRevision = playerRevision,
                 IsRequest = false,
-                IsBaselineRequest = request.IsBaselineRequest,
-                SlotValues = (int[])state.Values.Clone(),
-                SlotCounts = (int[])state.Counts.Clone(),
-                PlayerSlotValues = playerInventory == null
-                    ? Array.Empty<int>() : CaptureInventoryValues(playerInventory),
-                PlayerSlotCounts = playerInventory == null
-                    ? Array.Empty<int>() : CaptureInventoryCounts(playerInventory)
+                IsBaselineRequest = request.IsBaselineRequest
             };
+            if (request.IsBaselineRequest || playerInventory == null)
+            {
+                response.SlotValues = (int[])state.Values.Clone();
+                response.SlotCounts = (int[])state.Counts.Clone();
+                response.PlayerSlotValues = playerInventory == null
+                    ? Array.Empty<int>() : CaptureInventoryValues(playerInventory);
+                response.PlayerSlotCounts = playerInventory == null
+                    ? Array.Empty<int>() : CaptureInventoryCounts(playerInventory);
+                return response;
+            }
+
+            bool hasSlotDelta = request.HasSlotDelta && request.SlotIndices != null &&
+                request.SlotIndices.Length > 0;
+            if (hasSlotDelta)
+            {
+                response.HasSlotDelta = true;
+                response.SlotIndices = (int[])request.SlotIndices.Clone();
+                response.BaseSlotValues = (int[])request.BaseSlotValues.Clone();
+                response.BaseSlotCounts = (int[])request.BaseSlotCounts.Clone();
+                CopyInventorySlots(state.Values, state.Counts, request.SlotIndices,
+                    out response.SlotValues, out response.SlotCounts);
+            }
+            else
+            {
+                response.SlotValues = (int[])state.Values.Clone();
+                response.SlotCounts = (int[])state.Counts.Clone();
+            }
+
+            bool hasPlayerDelta = request.HasPlayerSlotDelta &&
+                request.PlayerSlotIndices != null && request.PlayerSlotIndices.Length > 0;
+            if (hasPlayerDelta)
+            {
+                response.HasPlayerSlotDelta = true;
+                response.PlayerSlotIndices = (int[])request.PlayerSlotIndices.Clone();
+                response.PlayerBaseSlotValues = (int[])request.PlayerBaseSlotValues.Clone();
+                response.PlayerBaseSlotCounts = (int[])request.PlayerBaseSlotCounts.Clone();
+                int[] playerValues = CaptureInventoryValues(playerInventory);
+                int[] playerCounts = CaptureInventoryCounts(playerInventory);
+                CopyInventorySlots(playerValues, playerCounts, request.PlayerSlotIndices,
+                    out response.PlayerSlotValues, out response.PlayerSlotCounts);
+            }
+            else if (request.PlayerSlotValues != null &&
+                request.PlayerSlotValues.Length > 0)
+            {
+                response.PlayerSlotValues = CaptureInventoryValues(playerInventory);
+                response.PlayerSlotCounts = CaptureInventoryCounts(playerInventory);
+            }
+            else
+            {
+                response.PlayerSlotValues = Array.Empty<int>();
+                response.PlayerSlotCounts = Array.Empty<int>();
+            }
+            return response;
         }
 
         // Source: Survivalcraft/Game/ComponentGui.cs:ComponentGui.Update
@@ -1175,7 +1561,6 @@ namespace ScMultiplayer
             m_lastEquipmentSnapshots.Remove(sourceClientId);
             m_lastSentInventoryValues.Remove(sourceClientId);
             m_lastSentInventoryCounts.Remove(sourceClientId);
-            m_forceHostInventorySync = true;
         }
 
         private void ApplyEditableBlockRequest(EditableDataRequestMessage message,

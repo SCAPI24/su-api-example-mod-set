@@ -138,6 +138,10 @@ namespace ScMultiplayer
                             PlayerProfileValueCodec.ParseFloat((string)element.Attribute("X")),
                             PlayerProfileValueCodec.ParseFloat((string)element.Attribute("Y")),
                             PlayerProfileValueCodec.ParseFloat((string)element.Attribute("Z"))),
+                        SpawnPosition = new Vector3(
+                            PlayerProfileValueCodec.ParseFloat((string)element.Attribute("SpawnX")),
+                            PlayerProfileValueCodec.ParseFloat((string)element.Attribute("SpawnY")),
+                            PlayerProfileValueCodec.ParseFloat((string)element.Attribute("SpawnZ"))),
                         Level = PlayerRecordValuePolicy.ParseFloat((string)element.Attribute("Level"), PlayerRecordValuePolicy.DefaultLevel),
                         Health = PlayerRecordValuePolicy.ParseFloat((string)element.Attribute("Health"), PlayerRecordValuePolicy.DefaultHealth),
                         Air = PlayerRecordValuePolicy.ParseFloat((string)element.Attribute("Air"), PlayerRecordValuePolicy.DefaultAir),
@@ -173,6 +177,10 @@ namespace ScMultiplayer
                             (int?)element.Attribute("CreativeCategory") ?? 0,
                         CreativePageIndex = (int?)element.Attribute("CreativePage") ?? 0
                     };
+                    // Legacy records did not persist SpawnPosition. Keep their previous saved
+                    // position as the respawn anchor instead of falling back to the creation point.
+                    if (record.SpawnPosition == Vector3.Zero)
+                        record.SpawnPosition = record.Position;
                     XElement inventory = element.Element("Inventory");
                     XElement[] slots = inventory?.Elements("Slot").OrderBy(slot =>
                         (int?)slot.Attribute("Index") ?? 0).ToArray() ?? Array.Empty<XElement>();
@@ -249,7 +257,7 @@ namespace ScMultiplayer
             if (!IsHost || !m_playerRecordsDirty || string.IsNullOrEmpty(m_playerRecordsWorldDirectory)) return;
             try
             {
-                var root = new XElement("ScMultiplayerPlayers", new XAttribute("Version", 4));
+                var root = new XElement("ScMultiplayerPlayers", new XAttribute("Version", 5));
                 foreach (KeyValuePair<string, NetworkPlayerRecord> item in m_playerRecords.OrderBy(pair => pair.Key))
                 {
                     NetworkPlayerRecord record = item.Value;
@@ -263,6 +271,9 @@ namespace ScMultiplayer
                         new XAttribute("X", PlayerProfileValueCodec.FormatFloat(record.Position.X)),
                         new XAttribute("Y", PlayerProfileValueCodec.FormatFloat(record.Position.Y)),
                         new XAttribute("Z", PlayerProfileValueCodec.FormatFloat(record.Position.Z)),
+                        new XAttribute("SpawnX", PlayerProfileValueCodec.FormatFloat(record.SpawnPosition.X)),
+                        new XAttribute("SpawnY", PlayerProfileValueCodec.FormatFloat(record.SpawnPosition.Y)),
+                        new XAttribute("SpawnZ", PlayerProfileValueCodec.FormatFloat(record.SpawnPosition.Z)),
                         new XAttribute("Level", PlayerProfileValueCodec.FormatFloat(record.Level)),
                         new XAttribute("Health", PlayerProfileValueCodec.FormatFloat(record.Health)),
                         new XAttribute("Air", PlayerProfileValueCodec.FormatFloat(record.Air)),
@@ -356,6 +367,7 @@ namespace ScMultiplayer
                 SkinName = playerData?.CharacterSkinName ?? string.Empty,
                 SkinSha256 = GetLocalCharacterSkinSha256(playerData?.CharacterSkinName),
                 Position = player?.ComponentBody.Position ?? playerData?.SpawnPosition ?? Vector3.Zero,
+                SpawnPosition = playerData?.SpawnPosition ?? Vector3.Zero,
                 Level = playerData?.Level ?? PlayerRecordValuePolicy.DefaultLevel,
                 Health = player?.ComponentHealth?.Health ?? PlayerRecordValuePolicy.DefaultHealth,
                 Air = player?.ComponentHealth?.Air ?? PlayerRecordValuePolicy.DefaultAir,
@@ -1292,10 +1304,12 @@ namespace ScMultiplayer
                     Level = record.Level,
                     InputDevice = inputDevice,
                     // Source: Survivalcraft/Game/SubsystemPlayers.cs:SubsystemPlayers.GlobalSpawnPosition
-                    // Login position is applied after spawning; retain the world birth point for death.
-                    SpawnPosition = players.GlobalSpawnPosition != Vector3.Zero
-                        ? players.GlobalSpawnPosition
-                        : record.Position
+                    // Login position is applied after spawning; retain the persisted respawn point.
+                    SpawnPosition = record.SpawnPosition != Vector3.Zero
+                        ? record.SpawnPosition
+                        : (players.GlobalSpawnPosition != Vector3.Zero
+                            ? players.GlobalSpawnPosition
+                            : record.Position)
                 };
                 ModManager.ModParentField.ModifyParentField(
                     players, "m_nextPlayerIndex", playerIndex, typeof(SubsystemPlayers));

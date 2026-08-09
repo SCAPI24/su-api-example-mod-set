@@ -119,6 +119,7 @@ namespace ScMultiplayer
     {
         public int ClientID;
         public Vector3 Position;
+        public Vector3 SpawnPosition;
         public Quaternion Rotation;
         public Vector3 Velocity;
         public Vector2 LookAngles;
@@ -158,6 +159,8 @@ namespace ScMultiplayer
         public string SkinName;
         public byte[] SkinSha256 = Array.Empty<byte>();
         public Vector3 Position;
+        // Source: Survivalcraft/Game/PlayerData.cs:PlayerData.SpawnPosition
+        public Vector3 SpawnPosition;
         public float Level = 1f;
         public float Health = 1f;
         public float Air = 1f;
@@ -413,6 +416,7 @@ namespace ScMultiplayer
     public class LocalTerrainDigIntent
     {
         public int ExpectedValue;
+        public int PredictedValue;
         public Ray3 DigRay;
         public int HitFace;
         public int StartClientTick;
@@ -631,9 +635,6 @@ namespace ScMultiplayer
     {
         public double NextSendTime;
         public double HighPriorityUntil;
-        // Source: Survivalcraft/Game/ComponentRunAwayBehavior.cs:ComponentRunAwayBehavior.RunAwayFrom
-        // Limit repeated proximity startles while the host retains the native behavior path.
-        public double NextPassiveStartleTime;
         public string BehaviorState = string.Empty;
         public int TargetEntityId;
         public string HerdName = string.Empty;
@@ -706,6 +707,7 @@ namespace ScMultiplayer
         public Vector3? SwimOrder;
         public Vector2 TurnOrder;
         public float JumpOrder;
+        public BodyUpdateMessage.BodyItem.MotionFlag MotionFlags;
         public int SimulationSeed;
         public bool SimulationSeedApplied;
         public double? DeathTime;

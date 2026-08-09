@@ -321,18 +321,32 @@ namespace ScMultiplayer
             ComponentBody targetBody = target?.ComponentBody;
             if (targetEntity?.IsAddedToProject != true || targetBody == null ||
                 target.ComponentHealth?.Health <= 0f)
+            {
+                SendRejectedMeleeHitResult(sourceClientId, message.ClientTick,
+                    message.HitPoint, message.HitDirection,
+                    attacker.ComponentBody?.Velocity ?? Vector3.Zero);
                 return;
+            }
 
             Vector3 eyePosition = attacker.ComponentCreatureModel.EyePosition;
             Vector3 targetPoint = targetBody.BoundingBox.Center();
             Vector3 toTarget = targetPoint - eyePosition;
-            if (toTarget.LengthSquared() > 4f * 4f) return;
+            if (toTarget.LengthSquared() > 4f * 4f)
+            {
+                SendRejectedMeleeHitResult(sourceClientId, message.ClientTick, targetPoint,
+                    message.HitDirection, attacker.ComponentBody?.Velocity ?? Vector3.Zero);
+                return;
+            }
             Vector3 direction = message.HitDirection.LengthSquared() > 0.0001f
                 ? Vector3.Normalize(message.HitDirection)
                 : Vector3.Normalize(toTarget);
             if (toTarget.LengthSquared() > 0.0001f &&
                 Vector3.Dot(direction, Vector3.Normalize(toTarget)) < 0.2f)
+            {
+                SendRejectedMeleeHitResult(sourceClientId, message.ClientTick, targetPoint,
+                    direction, attacker.ComponentBody?.Velocity ?? Vector3.Zero);
                 return;
+            }
 
             // Source: Survivalcraft/Game/ComponentChaseBehavior.cs:ComponentChaseBehavior.Attack
             // A network attack is already spatially validated above. Establish predator aggro
@@ -359,7 +373,17 @@ namespace ScMultiplayer
             // Source: Survivalcraft/Game/ComponentMiner.cs:ComponentMiner.Hit
             // The host recomputes hit probability, tool power, damage and Attacked events.
             float previousHealth = target.ComponentHealth?.Health ?? 0f;
-            miner.Hit(targetBody, targetPoint, direction);
+            bool randomStateChanged = TryApplyDeterministicMeleeRandomState(miner,
+                sourceClientId, message.ClientTick, out ulong previousRandomState);
+            try
+            {
+                miner.Hit(targetBody, targetPoint, direction);
+            }
+            finally
+            {
+                if (randomStateChanged)
+                    RestoreDeterministicMeleeRandomState(miner, previousRandomState);
+            }
             SendAuthoritativeMeleeHitResult(sourceClientId, message.ClientTick,
                 target.ComponentHealth, previousHealth, targetPoint, direction,
                 attacker.ComponentBody?.Velocity ?? Vector3.Zero);
@@ -375,22 +399,31 @@ namespace ScMultiplayer
         private void HandleMeleeHitResultMessage(MeleeHitResultMessage message, int sourceClientId)
         {
             if (IsHost || sourceClientId != 0 || message == null ||
-                message.RequestSequence <= 0 || message.Damage <= 0f ||
+                message.RequestSequence <= 0 ||
                 !float.IsFinite(message.Damage) || !IsFinite(message.HitPoint) ||
-                !IsFinite(message.HitDirection) || !IsFinite(message.AttackerVelocity) ||
-                !m_localMeleePredictions.TryGetValue(message.RequestSequence,
-                    out LocalMeleePrediction prediction))
+                !IsFinite(message.HitDirection) || !IsFinite(message.AttackerVelocity))
                 return;
-            m_localMeleePredictions.Remove(message.RequestSequence);
-            double currentHitTime = ModManager.ModParentField.GetParentField<double>(
-                prediction.Miner, "m_lastHitTime", typeof(ComponentMiner));
-            if (currentHitTime > prediction.PreviousHitTime + 0.0001) return;
+            bool hasPrediction = m_localMeleePredictions.TryGetValue(message.RequestSequence,
+                out LocalMeleePrediction prediction);
+            if (hasPrediction)
+                m_localMeleePredictions.Remove(message.RequestSequence);
+            if (message.ResultKind == MeleeHitResultMessage.MeleeHitResultKind.Rejected)
+                return;
 
             Project project = GameManager.Project;
             ComponentPlayer localPlayer = project?.FindSubsystem<SubsystemPlayers>(false)?
                 .ComponentPlayers.FirstOrDefault(player => player != null &&
                     !m_networkPlayerData.Values.Contains(player.PlayerData));
             if (localPlayer?.ComponentMiner == null) return;
+            // Source: Survivalcraft/Game/ComponentMiner.cs:ComponentMiner.Hit
+            // The native local prediction already emitted swoosh, hit/miss particles and impact
+            // audio when it advanced m_lastHitTime. The authoritative reply only confirms it.
+            bool nativePredictionExecuted = hasPrediction &&
+                ReferenceEquals(prediction.Miner, localPlayer.ComponentMiner) &&
+                ModManager.ModParentField.GetParentField<double>(prediction.Miner,
+                    "m_lastHitTime", typeof(ComponentMiner)) > prediction.PreviousHitTime;
+            if (nativePredictionExecuted)
+                return;
             Vector3 direction = message.HitDirection.LengthSquared() > 0.0001f
                 ? Vector3.Normalize(message.HitDirection)
                 : Vector3.UnitZ;
@@ -399,6 +432,13 @@ namespace ScMultiplayer
             audio?.PlaySound("Audio/Swoosh", 1f,
                 m_audioEventRandom.Float(-0.2f, 0.2f), message.HitPoint, 3f,
                 autoDelay: false);
+            if (message.ResultKind == MeleeHitResultMessage.MeleeHitResultKind.Miss)
+            {
+                project.FindSubsystem<SubsystemParticles>(false)?.AddParticleSystem(
+                    new HitValueParticleSystem(message.HitPoint + 0.75f * direction,
+                        direction + message.AttackerVelocity, Color.White, "miss"));
+                return;
+            }
             audio?.PlayRandomSound("Audio/Impacts/Body", 1f,
                 m_audioEventRandom.Float(-0.3f, 0.3f), message.HitPoint, 4f,
                 autoDelay: false);
@@ -505,8 +545,29 @@ namespace ScMultiplayer
             HashSet<ushort> fullSnapshotIds = message.IsFullSnapshot
                 ? new HashSet<ushort>()
                 : null;
+            // Source: Survivalcraft/Game/TerrainUpdater.cs:TerrainUpdater.SetUpdateLocation
+            // The host remains authoritative for the whole animal population, but a client only
+            // owns replicas in its local visibility window. Hysteresis prevents an overlapping
+            // A/B boundary from repeatedly destroying and recreating the same animal.
+            ComponentPlayer localPlayer = GameManager.Project.FindSubsystem<SubsystemPlayers>(false)?
+                .ComponentPlayers.FirstOrDefault(player =>
+                    !m_networkPlayerData.Values.Contains(player.PlayerData));
+            bool hasVisibility = localPlayer?.ComponentBody != null;
+            Vector3 localPosition = hasVisibility
+                ? localPlayer.ComponentBody.Position
+                : Vector3.Zero;
+            float visibility = MathUtils.Min(
+                GameManager.Project.FindSubsystem<SubsystemSky>(false)?.VisibilityRange ?? 64f,
+                64f);
             foreach (BodyUpdateMessage.BodyItem item in message.Bodies)
             {
+                if (hasVisibility)
+                {
+                    bool alreadyVisible = m_remoteAnimals.ContainsKey(item.EntityId);
+                    float radius = visibility + (alreadyVisible ? 8f : 0f);
+                    if (Vector3.DistanceSquared(localPosition, item.Position) > radius * radius)
+                        continue;
+                }
                 fullSnapshotIds?.Add(item.EntityId);
                 if (item.Flags.HasFlag(BodyUpdateMessage.ChangeFlag.Template) &&
                     !string.IsNullOrWhiteSpace(item.TemplateName))
@@ -670,6 +731,7 @@ namespace ScMultiplayer
                         networkState.SwimOrder = item.SwimOrder;
                         networkState.TurnOrder = item.TurnOrder;
                         networkState.JumpOrder = item.JumpOrder;
+                        networkState.MotionFlags = item.MotionFlags;
                         locomotion.WalkOrder = item.WalkOrder;
                         locomotion.FlyOrder = item.FlyOrder;
                         locomotion.SwimOrder = item.SwimOrder;
@@ -726,6 +788,18 @@ namespace ScMultiplayer
             if (IsHost || sourceClientId != 0 || message == null ||
                 message.Sequence <= 0 || !IsFinite(message.Position) || GameManager.Project == null)
                 return;
+            ComponentPlayer localPlayer = GameManager.Project.FindSubsystem<SubsystemPlayers>(false)?
+                .ComponentPlayers.FirstOrDefault(player =>
+                    !m_networkPlayerData.Values.Contains(player.PlayerData));
+            if (localPlayer?.ComponentBody != null)
+            {
+                float visibility = MathUtils.Min(
+                    GameManager.Project.FindSubsystem<SubsystemSky>(false)?.VisibilityRange ?? 64f,
+                    64f) + 8f;
+                if (Vector3.DistanceSquared(localPlayer.ComponentBody.Position,
+                    message.Position) > visibility * visibility)
+                    return;
+            }
             Entity entity = m_remoteAnimals.TryGetValue(message.EntityId, out Entity existing)
                 ? existing
                 : EnsureRemoteAnimal(message.EntityId, message.Position,
@@ -958,8 +1032,16 @@ namespace ScMultiplayer
                 // Source: Survivalcraft/Game/ComponentBody.cs:ComponentBody.Update
                 // Retain only the local collision floor. It may prevent a presentation replica from
                 // entering terrain, but never becomes the next network interpolation baseline.
-                bool locallyStanding = body.StandingOnValue.HasValue || body.StandingOnBody != null;
-                float localCollisionFloor = body.Position.Y;
+                bool hostGrounded =
+                    state.MotionFlags.HasFlag(BodyUpdateMessage.BodyItem.MotionFlag.Grounded);
+                bool hostImmersed =
+                    state.MotionFlags.HasFlag(BodyUpdateMessage.BodyItem.MotionFlag.Immersed);
+                bool hostFlying =
+                    state.MotionFlags.HasFlag(BodyUpdateMessage.BodyItem.MotionFlag.Flying);
+                bool locallyStanding = hostGrounded &&
+                    (body.StandingOnValue.HasValue || body.StandingOnBody != null) &&
+                    !hostImmersed && !hostFlying;
+                float localCollisionFloor = MathUtils.Min(body.Position.Y, state.Position.Y);
 
                 float arrivalAge = (float)MathUtils.Clamp(
                     now - state.LastUpdateTime, 0.0, RemoteAnimalPredictionLimit);

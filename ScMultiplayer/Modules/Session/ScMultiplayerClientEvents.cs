@@ -190,6 +190,10 @@ namespace ScMultiplayer
 		if (reason != null && reason.StartsWith("SCMP_PROTOCOL_MISMATCH", StringComparison.Ordinal))
 		{
 			m_reconnectPending = false;
+			m_reconnectRequested = false;
+			m_reconnectAttempts = 0;
+			m_reconnectAttemptDeadline = 0.0;
+			m_nextReconnectAttemptTime = 0.0;
 			m_isLoadingDownloadedWorld = false;
 			m_pendingJoinRequest = null;
 			m_activeJoinRequest = null;
@@ -203,16 +207,20 @@ namespace ScMultiplayer
 		}
 		if (m_reconnectPending && obj.Reason != "SCMP_PROFILE_REQUIRED")
 		{
+			m_reconnectRequested = false;
+			m_reconnectPending = false;
+			m_reconnectAttempts = 0;
 			m_reconnectAttemptDeadline = 0.0;
-			m_nextReconnectAttemptTime = Math.Max(m_nextReconnectAttemptTime, Time.RealTime + 1.0);
-			Log.Information("[ScMP] Reconnect was refused; another attempt remains scheduled");
-			return;
+			m_nextReconnectAttemptTime = 0.0;
+			Log.Information("[ScMP] Reconnect refusal is final; stopping retry loop");
 		}
 		if (obj.Reason == "SCMP_PROFILE_REQUIRED")
 		{
 			m_reconnectRequested = false;
 			m_reconnectPending = false;
+			m_reconnectAttempts = 0;
 			m_reconnectAttemptDeadline = 0.0;
+			m_nextReconnectAttemptTime = 0.0;
 		}
 		m_isLoadingDownloadedWorld = false;
 		connectionSM.TransitionTo(NetworkConnectionStateMachine.ConnectionState.Disconnected);
@@ -239,6 +247,7 @@ namespace ScMultiplayer
 				DialogsManager.ShowDialog(null, new MessageDialog("Join Room", obj.Reason ?? "The host refused the connection.", "OK", null, null));
 			});
 			m_pendingJoinRequest = null;
+			m_activeJoinRequest = null;
 		}
 	}
 
@@ -543,6 +552,7 @@ namespace ScMultiplayer
 		m_loggedRemoteAnimalFailures.Clear();
 		m_lastFullAnimalSnapshotTick = 0;
 		m_hostPickableIds.Clear();
+		m_pendingHostPickableSnapshots.Clear();
 		m_remotePickables.Clear();
 		m_remotePickableRecords.Clear();
 		m_remotePickableStates.Clear();
@@ -570,6 +580,10 @@ namespace ScMultiplayer
 		{
 			m_hostTerrainJournal.Clear();
 			m_hostTerrainChunkRevisions.Clear();
+			m_hostTerrainInterestChunks.Clear();
+			m_hostTerrainChunkSubscribers.Clear();
+			m_hostTerrainInterestCenters.Clear();
+			m_hostTerrainInterestRadii.Clear();
 			m_terrainCheckpoint.Clear();
 			m_terrainCheckpointByChunk.Clear();
 			m_pendingTerrainChanges.Clear();
@@ -706,6 +720,7 @@ namespace ScMultiplayer
 		m_hostSleepAccelerationSessionActive = false;
 		m_hostSleepAccelerationStartTime = 0.0;
 		m_clientSleepWakeBoundaryPending = false;
+		m_clientSleepWakeBoundaryPendingTime = 0.0;
 		m_pendingClientSleepWakeups.Clear();
 		m_remoteTerrainHeadSequence = 0L;
 		m_remoteFogPresentationInitialized = false;
@@ -950,7 +965,7 @@ namespace ScMultiplayer
 			}
 			float delaySample = MathUtils.Clamp((float)(client.Step - state.ServerTick) * 0.01f, 0f, 0.6f);
 			state.EstimatedDelay = ((state.EstimatedDelay <= 0f) ? delaySample : MathUtils.Lerp(state.EstimatedDelay, delaySample, 0.12f));
-			float extrapolationTime = MathUtils.Min(state.EstimatedDelay, 0.35f);
+            float extrapolationTime = MathUtils.Min(state.EstimatedDelay, RemoteExtrapolationLimit);
 			Vector3 targetPosition = state.Position;
 			if (!state.IsFlying)
 			{
@@ -962,7 +977,7 @@ namespace ScMultiplayer
 				targetPosition.Y += state.Velocity.Y * extrapolationTime - 4.9f * extrapolationTime * extrapolationTime;
 			}
 			float errorSquared = Vector3.DistanceSquared(body.Position, targetPosition);
-			if (!state.PresentationInitialized || errorSquared > 64f)
+			if (!state.PresentationInitialized || errorSquared > 9f)
 			{
 				body.Position = state.Position;
 				body.Rotation = state.Rotation;
@@ -980,7 +995,7 @@ namespace ScMultiplayer
 			}
 			float delayFactor = MathUtils.Saturate(state.EstimatedDelay / 0.2f);
 			Vector3 error = targetPosition - body.Position;
-			float deadZone = ((!(Time.RealTime < state.KnockbackCorrectionUntil) || state.ServerTick < state.KnockbackCorrectionStartTick) ? (state.IsGrounded ? 0.4f : 0.1f) : (state.IsGrounded ? 0.05f : 0.1f));
+			float deadZone = ((!(Time.RealTime < state.KnockbackCorrectionUntil) || state.ServerTick < state.KnockbackCorrectionStartTick) ? (state.IsGrounded ? 0.2f : 0.1f) : (state.IsGrounded ? 0.05f : 0.1f));
 			Vector3 targetVelocity = state.Velocity;
 			if (state.IsGrounded)
 			{
@@ -1396,15 +1411,21 @@ namespace ScMultiplayer
 		int activeSlot = inventory?.ActiveSlotIndex ?? (-1);
 		int toolValue = ((inventory != null && activeSlot >= 0 && activeSlot < inventory.SlotsCount) ? inventory.GetSlotValue(activeSlot) : 0);
 		int toolCount = ((inventory != null && activeSlot >= 0 && activeSlot < inventory.SlotsCount) ? inventory.GetSlotCount(activeSlot) : 0);
+		BlockPlacementData predictedDig = BlocksManager.Blocks[Terrain.ExtractContents(expectedValue)].GetDigValue(
+			GameManager.Project.FindSubsystem<SubsystemTerrain>(true), player.ComponentMiner,
+			hit.Value.Value, toolValue, hit.Value);
+		int predictedValue = Terrain.ReplaceLight(predictedDig.Value, 0);
 		if (!m_localTerrainDigIntents.TryGetValue(point, out var intent) || intent.ExpectedValue != expectedValue)
 		{
 			intent = new LocalTerrainDigIntent
 			{
 				ExpectedValue = expectedValue,
+				PredictedValue = predictedValue,
 				StartClientTick = client.Step
 			};
 			m_localTerrainDigIntents[point] = intent;
 		}
+		intent.PredictedValue = predictedValue;
 		intent.DigRay = digRay.Value;
 		intent.HitFace = hit.Value.CellFace.Face;
 		intent.ActiveSlotIndex = activeSlot;
@@ -1543,17 +1564,78 @@ namespace ScMultiplayer
 
 	private void UpdateLocalHitRequests(ComponentPlayer player, Ray3? hitRay)
 	{
-		if (hitRay.HasValue && !(Time.RealTime < m_nextLocalHitRequestTime))
+		if (!hitRay.HasValue || player?.ComponentMiner == null ||
+			player.ComponentCreatureModel == null)
+			return;
+
+		// Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update
+		// Hit is a body-only action. Digging has its own request path and must never receive a
+		// host melee Miss merely because the same input ray intersects terrain instead of a body.
+		BodyRaycastResult? target = player.ComponentMiner.Raycast<BodyRaycastResult>(
+			hitRay.Value, RaycastMode.Interaction);
+		if (!target.HasValue || Vector3.Distance(target.Value.HitPoint(),
+			player.ComponentCreatureModel.EyePosition) > 2f)
+			return;
+
+		if (!(Time.RealTime < m_nextLocalHitRequestTime))
 		{
 			Client obj = client;
 			if (obj != null && obj.IsConnected)
 			{
 				m_nextLocalHitRequestTime = Time.RealTime + 0.36000001430511475;
 				m_localHitSequence = PlayerActionSequencePolicy.Next(m_localHitSequence);
+				ComponentMiner miner = player?.ComponentMiner;
+				if (TryApplyDeterministicMeleeRandomState(miner, obj.ClientID,
+					m_localHitSequence, out ulong previousRandomState))
+				{
+					QueueEndOfFrameAction(() =>
+						RestoreDeterministicMeleeRandomState(miner, previousRandomState));
+				}
 				TrackLocalMeleePrediction(player, m_localHitSequence);
 				NetworkMessageSender.SendPlayerHitRequest(new PlayerActionMessage(PlayerActionType.HitRequest, client.ClientID, m_localHitSequence, hitRay.Value));
 			}
 		}
+	}
+
+	private static ulong BuildDeterministicMeleeRandomState(int clientId, int sequence,
+		int sessionSeed)
+	{
+		unchecked
+		{
+			ulong state = 1469598103934665603UL;
+			state ^= (uint)sessionSeed;
+			state *= 1099511628211UL;
+			state ^= (uint)clientId;
+			state *= 1099511628211UL;
+			state ^= (uint)sequence;
+			state *= 1099511628211UL;
+			state ^= state >> 32;
+			return state == 0UL ? 1UL : state;
+		}
+	}
+
+	private bool TryApplyDeterministicMeleeRandomState(ComponentMiner miner, int clientId,
+		int sequence, out ulong previousState)
+	{
+		previousState = 0UL;
+		if (miner == null || sequence <= 0) return false;
+		Game.Random random = ModManager.ModParentField.GetParentField<Game.Random>(
+			miner, "m_random", typeof(ComponentMiner));
+		if (random == null) return false;
+		previousState = random.State;
+		random.State = BuildDeterministicMeleeRandomState(clientId, sequence,
+			m_sessionRandomSeed);
+		return true;
+	}
+
+	private static void RestoreDeterministicMeleeRandomState(ComponentMiner miner,
+		ulong previousState)
+	{
+		if (miner == null) return;
+		Game.Random random = ModManager.ModParentField.GetParentField<Game.Random>(
+			miner, "m_random", typeof(ComponentMiner));
+		if (random != null)
+			random.State = previousState;
 	}
 
 	private void TrackLocalMeleePrediction(ComponentPlayer player, int sequence)
@@ -1820,6 +1902,12 @@ namespace ScMultiplayer
 					Position = player.ComponentBody.Position + new Vector3(0f, player.ComponentBody.StanceBoxSize.Y * 0.66f, 0f) + 0.25f * player.ComponentBody.Matrix.Forward,
 					Velocity = 8f * Matrix.CreateFromQuaternion(player.ComponentCreatureModel.EyeRotation).Forward
 				};
+				message.HasInventoryDelta = true;
+				message.InventorySlotIndices = new[] { activeSlot };
+				message.InventoryBaseValues = new[] { itemValue };
+				message.InventoryBaseCounts = new[] { itemCount };
+				message.InventorySlotValues = new[] { itemValue };
+				message.InventorySlotCounts = new[] { 0 };
 				NetworkMessageSender.SendPlayerDropRequest(message);
 				m_pendingLocalDropValue = itemValue;
 				m_pendingLocalDropCount = itemCount;
@@ -1951,9 +2039,16 @@ namespace ScMultiplayer
 		{
 			PlayerActionMessage hit = state.HitEvents.Dequeue();
 			ApplyHostActionPose(player, state);
+			ComponentMiner miner = player?.ComponentMiner;
+			if (TryApplyDeterministicMeleeRandomState(miner, sourceClientId,
+				hit.Sequence, out ulong previousRandomState))
+			{
+				QueueEndOfFrameAction(() =>
+					RestoreDeterministicMeleeRandomState(miner, previousRandomState));
+			}
 			playerInput = ((state.ConsumedSequence != state.Sequence) ? state.Input : state.HeldInput);
 			state.ConsumedSequence = state.Sequence;
-			BodyRaycastResult? target = player.ComponentMiner?.Raycast<BodyRaycastResult>(hit.HitRay, RaycastMode.Interaction);
+			BodyRaycastResult? target = miner?.Raycast<BodyRaycastResult>(hit.HitRay, RaycastMode.Interaction);
 			if (target.HasValue && player.ComponentCreatureModel != null && Vector3.Distance(target.Value.HitPoint(), player.ComponentCreatureModel.EyePosition) <= 2f)
 			{
 				ComponentHealth health = target.Value.ComponentBody?.Entity?.FindComponent<ComponentHealth>();
@@ -1969,8 +2064,27 @@ namespace ScMultiplayer
 						HitDirection = hit.HitRay.Direction,
 						AttackerVelocity = (player.ComponentBody?.Velocity ?? Vector3.Zero)
 					});
+					playerInput.Hit = hit.HitRay;
+					state.HeldInput = PlayerInputStatePolicy.CreateHeld(playerInput);
+					state.NextHitExecutionTime = Time.RealTime + 0.36000001430511475;
+					return true;
 				}
 			}
+			m_hostMeleeHitExecutions.Add(new HostMeleeHitExecution
+			{
+				ClientId = sourceClientId,
+				RequestSequence = hit.Sequence,
+				TargetHealth = null,
+				PreviousHealth = 0f,
+				HitPoint = target.HasValue ? target.Value.HitPoint() :
+					(player.ComponentCreatureModel != null
+						? player.ComponentCreatureModel.EyePosition + 0.75f *
+							player.ComponentBody.Matrix.Forward
+						: player.ComponentBody.Position + 0.75f *
+							player.ComponentBody.Matrix.Forward),
+				HitDirection = hit.HitRay.Direction,
+				AttackerVelocity = (player.ComponentBody?.Velocity ?? Vector3.Zero)
+			});
 			playerInput.Hit = hit.HitRay;
 			state.HeldInput = PlayerInputStatePolicy.CreateHeld(playerInput);
 			state.NextHitExecutionTime = Time.RealTime + 0.36000001430511475;
@@ -2046,18 +2160,43 @@ namespace ScMultiplayer
 		m_hostMeleeHitExecutions.Clear();
 	}
 
-	private void SendAuthoritativeMeleeHitResult(int targetClientId, int requestSequence, ComponentHealth targetHealth, float previousHealth, Vector3 hitPoint, Vector3 hitDirection, Vector3 attackerVelocity)
-	{
-		if (IsHost && targetClientId > 0 && requestSequence > 0 && targetHealth != null)
-		{
-			float damage = (previousHealth - targetHealth.Health) * targetHealth.AttackResilience;
-			if (!(damage <= 0.0001f))
-			{
-				Vector3 direction = ((hitDirection.LengthSquared() > 0.0001f) ? Vector3.Normalize(hitDirection) : Vector3.UnitZ);
-				NetworkMessageSender.SendMeleeHitResult(targetClientId, new MeleeHitResultMessage(requestSequence, client.Step, hitPoint, direction, attackerVelocity, damage));
-			}
-		}
-	}
+    private void SendAuthoritativeMeleeHitResult(int targetClientId, int requestSequence, ComponentHealth targetHealth, float previousHealth, Vector3 hitPoint, Vector3 hitDirection, Vector3 attackerVelocity)
+    {
+        if (IsHost && targetClientId > 0 && requestSequence > 0)
+        {
+            float damage = targetHealth != null
+                ? (previousHealth - targetHealth.Health) * targetHealth.AttackResilience
+                : 0f;
+            Vector3 direction = ((hitDirection.LengthSquared() > 0.0001f) ? Vector3.Normalize(hitDirection) : Vector3.UnitZ);
+            NetworkMessageSender.SendMeleeHitResult(targetClientId,
+                new MeleeHitResultMessage(requestSequence, client.Step, hitPoint, direction,
+                    attackerVelocity, damage)
+                {
+                    ResultKind = targetHealth == null
+                        ? MeleeHitResultMessage.MeleeHitResultKind.Miss
+                        : (damage > 0f
+                            ? MeleeHitResultMessage.MeleeHitResultKind.Hit
+                            : MeleeHitResultMessage.MeleeHitResultKind.Miss)
+                });
+        }
+    }
+
+    private void SendRejectedMeleeHitResult(int targetClientId, int requestSequence,
+        Vector3 hitPoint, Vector3 hitDirection, Vector3 attackerVelocity)
+    {
+        if (IsHost && targetClientId > 0 && requestSequence > 0)
+        {
+            Vector3 direction = hitDirection.LengthSquared() > 0.0001f
+                ? Vector3.Normalize(hitDirection)
+                : Vector3.UnitZ;
+            NetworkMessageSender.SendMeleeHitResult(targetClientId,
+                new MeleeHitResultMessage(requestSequence, client.Step, hitPoint, direction,
+                    attackerVelocity, 0f)
+                {
+                    ResultKind = MeleeHitResultMessage.MeleeHitResultKind.Rejected
+                });
+        }
+    }
 
 	private void SendHostTerrainPlaceResult(int targetClientId, PlayerActionMessage request, bool accepted)
 	{
@@ -2553,6 +2692,11 @@ namespace ScMultiplayer
 				state.LastHitSequence = message.Sequence;
 				state.HitEvents.Enqueue(message);
 			}
+			else if (message.Action == PlayerActionType.HitRequest)
+			{
+				SendRejectedMeleeHitResult(sourceClientId, message.Sequence,
+					message.HitRay.Position, message.HitRay.Direction, Vector3.Zero);
+			}
 		}
 		else if (sourceClientId == 0 && message.Action == PlayerActionType.Poke && message.PlayerIndex != client.ClientID && m_networkPlayerData.TryGetValue(message.PlayerIndex, out playerData))
 		{
@@ -2736,22 +2880,40 @@ namespace ScMultiplayer
 			return false;
 		}
 		int[] inventorySlotValues = message.InventorySlotValues;
-		if (((inventorySlotValues != null && inventorySlotValues.Length != 0) ? 1 : 0) <= (false ? 1 : 0))
+		int[] inventorySlotCounts = message.InventorySlotCounts;
+		if (message.HasInventoryDelta)
 		{
-			int[] inventorySlotCounts = message.InventorySlotCounts;
-			if (((inventorySlotCounts != null && inventorySlotCounts.Length != 0) ? 1 : 0) <= (false ? 1 : 0))
+			if (!TryExpandInventoryTransaction(inventory, true, message.InventorySlotIndices,
+				message.InventoryBaseValues, message.InventoryBaseCounts,
+				message.InventorySlotValues, message.InventorySlotCounts,
+				out int[] expandedBaseValues, out int[] expandedBaseCounts,
+				out int[] expandedDesiredValues, out int[] expandedDesiredCounts))
+				return false;
+			if (!IsInventorySnapshotValid(inventory, expandedBaseValues, expandedBaseCounts) ||
+				expandedBaseValues[message.ActiveSlotIndex] != message.ItemValue ||
+				expandedBaseCounts[message.ActiveSlotIndex] != message.ItemCount ||
+				expandedDesiredValues[message.ActiveSlotIndex] != message.ItemValue ||
+				expandedDesiredCounts[message.ActiveSlotIndex] !=
+					Math.Max(0, message.ItemCount - message.RemoveCount))
+				return false;
+			ApplyInventory(inventory, expandedBaseValues, expandedBaseCounts);
+		}
+		else
+		{
+			if (inventorySlotValues == null || inventorySlotCounts == null ||
+				inventorySlotValues.Length == 0 || inventorySlotCounts.Length == 0)
+				return false;
+			if (!IsInventorySnapshotValid(inventory, inventorySlotValues, inventorySlotCounts) ||
+				message.InventorySlotValues[message.ActiveSlotIndex] != message.ItemValue ||
+				message.InventorySlotCounts[message.ActiveSlotIndex] != message.ItemCount ||
+				!HaveSameInventoryItems(inventory, message.InventorySlotValues,
+					message.InventorySlotCounts))
 			{
-				ApplyInteractionInventory(inventory, message);
-				goto IL_0104;
+				return false;
 			}
+			ApplyInventory(inventory, message.InventorySlotValues,
+				message.InventorySlotCounts);
 		}
-		if (!IsInventorySnapshotValid(inventory, message.InventorySlotValues, message.InventorySlotCounts) || message.InventorySlotValues[message.ActiveSlotIndex] != message.ItemValue || message.InventorySlotCounts[message.ActiveSlotIndex] != message.ItemCount || !HaveSameInventoryItems(inventory, message.InventorySlotValues, message.InventorySlotCounts))
-		{
-			return false;
-		}
-		ApplyInventory(inventory, message.InventorySlotValues, message.InventorySlotCounts);
-		goto IL_0104;
-		IL_0104:
 		int slotValue = inventory.GetSlotValue(message.ActiveSlotIndex);
 		int count = Math.Min(message.RemoveCount, inventory.GetSlotCount(message.ActiveSlotIndex));
 		if (slotValue != message.ItemValue || count <= 0)

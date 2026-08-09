@@ -1,4 +1,4 @@
-﻿<?xml version='1.0'?>
+<?xml version='1.0'?>
 <Obfuscator>
   <Var name="InPath" value="bin\Release\net8.0" />
   <Var name="OutPath" value="bin\Release\net8.0\Obfuscated" />
@@ -22,6 +22,7 @@
     <SkipType name="ScMultiplayer.SuComponentFurnace" />
     <SkipType name="ScMultiplayer.MultiplayerUiComponent" />
     <SkipType name="ScMultiplayer.SuSubsystemTerrain" />
+    <SkipType name="ScMultiplayer.SuSubsystemWeather" />
     <SkipType name="ScMultiplayer.SuSubsystemElectricity" />
     <SkipType name="ScMultiplayer.SuSubsystemSpawn" />
     <SkipType name="ScMultiplayer.SuSubsystemCreatureSpawn" />

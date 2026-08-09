@@ -585,6 +585,12 @@ namespace ScMultiplayer
                 database.FindDatabaseObjectType("Parameter", true), true);
             subsystemTerrain.Value = "ScMultiplayer.SuSubsystemTerrain";
 
+            // Source: Pak/Database.xml:SubsystemWeather.Class
+            var subsystemWeather = database.FindDatabaseObject(
+                new Guid("b4f7e5b0-df22-47ea-a1eb-df191df54f2e"),
+                database.FindDatabaseObjectType("Parameter", true), true);
+            subsystemWeather.Value = "ScMultiplayer.SuSubsystemWeather";
+
             // Source: Pak/Database.xml:SubsystemSpawn.Class
             var subsystemSpawn = database.FindDatabaseObject(
                 new Guid("09091863-1852-4c05-ade0-d57fe04289e3"),

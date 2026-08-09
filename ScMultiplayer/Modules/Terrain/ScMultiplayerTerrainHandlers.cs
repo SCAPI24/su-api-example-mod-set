@@ -31,7 +31,8 @@ namespace ScMultiplayer
 {
     public partial class ScMultiplayer
     {
-        public void PublishTerrainChanges(Dictionary<Point3, bool> modifiedCells)
+        public void PublishTerrainChanges(Dictionary<Point3, bool> modifiedCells,
+            bool immediate = false)
         {
             if (client?.IsConnected != true || modifiedCells == null || modifiedCells.Count == 0)
                 return;
@@ -43,11 +44,119 @@ namespace ScMultiplayer
                 SubmitClientTerrainPredictions(modifiedCells);
                 return;
             }
-            // Source: Comms/Comm.cs:Comm.SendDataMessage
-            // Keep ordinary terrain broadcasts below the reliable packet payload limit. A large
-            // explosion or fire wave must not become one fragmented reliable message whose missing
-            // fragment delays every cell in that wave.
-            KeyValuePair<Point3, bool>[] items = modifiedCells.ToArray();
+            // Source: Survivalcraft/Game/SubsystemTerrain.cs:SubsystemTerrain.ChangeCell
+            // Environmental changes arrive from several simulation frames. Coalesce them in the
+            // network tick window and keep the final value for each coordinate; direct player
+            // actions pass immediate=true and bypass this small window.
+            lock (m_terrainJournalLock)
+            {
+                foreach (KeyValuePair<Point3, bool> item in modifiedCells)
+                    m_pendingHostTerrainBroadcastCells[item.Key] = item.Value;
+            }
+            if (!immediate)
+                return;
+            FlushPendingTerrainBroadcasts();
+        }
+
+        // Source: Survivalcraft/Game/TerrainUpdater.cs:TerrainUpdater.SetUpdateLocation
+        // Maintain a chunk subscription table only when a player's center/radius changes. The
+        // reverse map lets a terrain batch be projected once per interested client without
+        // repeatedly scanning every player for every modified cell.
+        private void UpdateHostTerrainInterestTable(Project project)
+        {
+            if (!IsHost || project == null) return;
+            SubsystemSky sky = project.FindSubsystem<SubsystemSky>(false);
+            int radius = Math.Max(1, (int)Math.Ceiling(
+                MathUtils.Min(sky?.VisibilityRange ?? 64f, 64f) / 16f));
+            var activeClients = new HashSet<int>();
+            foreach (KeyValuePair<int, PlayerData> item in m_networkPlayerData.ToArray())
+            {
+                int clientId = item.Key;
+                PlayerData player = item.Value;
+                if (clientId <= 0 || player?.ComponentPlayer?.ComponentBody == null)
+                    continue;
+                activeClients.Add(clientId);
+                Point2 center = Terrain.ToChunk(player.ComponentPlayer.ComponentBody.Position.XZ);
+                if (m_hostTerrainInterestChunks.TryGetValue(clientId,
+                        out HashSet<Point2> previous) &&
+                    m_hostTerrainInterestCenters.TryGetValue(clientId, out Point2 oldCenter) &&
+                    m_hostTerrainInterestRadii.TryGetValue(clientId, out int oldRadius) &&
+                    oldCenter == center && oldRadius == radius)
+                    continue;
+
+                if (previous != null)
+                {
+                    foreach (Point2 chunk in previous)
+                    {
+                        if (m_hostTerrainChunkSubscribers.TryGetValue(chunk,
+                                out HashSet<int> subscribers))
+                        {
+                            subscribers.Remove(clientId);
+                            if (subscribers.Count == 0)
+                                m_hostTerrainChunkSubscribers.Remove(chunk);
+                        }
+                    }
+                }
+
+                var chunks = new HashSet<Point2>();
+                for (int x = center.X - radius; x <= center.X + radius; x++)
+                {
+                    for (int z = center.Y - radius; z <= center.Y + radius; z++)
+                    {
+                        var chunk = new Point2(x, z);
+                        chunks.Add(chunk);
+                        if (!m_hostTerrainChunkSubscribers.TryGetValue(chunk,
+                                out HashSet<int> subscribers))
+                        {
+                            subscribers = new HashSet<int>();
+                            m_hostTerrainChunkSubscribers.Add(chunk, subscribers);
+                        }
+                        subscribers.Add(clientId);
+                    }
+                }
+                m_hostTerrainInterestChunks[clientId] = chunks;
+                m_hostTerrainInterestCenters[clientId] = center;
+                m_hostTerrainInterestRadii[clientId] = radius;
+            }
+
+            foreach (int clientId in m_hostTerrainInterestChunks.Keys.ToArray())
+            {
+                if (activeClients.Contains(clientId)) continue;
+                foreach (Point2 chunk in m_hostTerrainInterestChunks[clientId])
+                {
+                    if (m_hostTerrainChunkSubscribers.TryGetValue(chunk,
+                            out HashSet<int> subscribers))
+                    {
+                        subscribers.Remove(clientId);
+                        if (subscribers.Count == 0)
+                            m_hostTerrainChunkSubscribers.Remove(chunk);
+                    }
+                }
+                m_hostTerrainInterestChunks.Remove(clientId);
+                m_hostTerrainInterestCenters.Remove(clientId);
+                m_hostTerrainInterestRadii.Remove(clientId);
+            }
+        }
+
+        // Source: ScMultiplayerUpdateLoop.TriggerNetworkTick
+        // Submit one bounded logical terrain batch per network window. The transport retains its
+        // reliable sequence and performs normal UDP fragmentation when the serialized message is
+        // larger than one datagram.
+        internal void FlushPendingTerrainBroadcasts()
+        {
+            if (client?.IsConnected != true || !IsHost)
+                return;
+            UpdateHostTerrainInterestTable(GameManager.Project);
+            Dictionary<Point3, bool> pending;
+            lock (m_terrainJournalLock)
+            {
+                if (m_pendingHostTerrainBroadcastCells.Count == 0)
+                    return;
+                pending = new Dictionary<Point3, bool>(
+                    m_pendingHostTerrainBroadcastCells);
+                m_pendingHostTerrainBroadcastCells.Clear();
+            }
+            KeyValuePair<Point3, bool>[] items = pending.ToArray();
             for (int offset = 0; offset < items.Length; offset += TerrainReliableBatchSize)
             {
                 var batch = new Dictionary<Point3, bool>();
@@ -60,8 +169,30 @@ namespace ScMultiplayer
                 RecordHostTerrainChanges(message, client.Step);
                 RecordHostTerrainJournal(message);
                 AcknowledgeHostTerrainPlaceFallbacks(message);
+
                 // Source: ScMultiplayer.cs:NetworkMessageHandler.HandleModifiedCellsMessage
-                NetworkMessageSender.SendScheduledMessage(-1, message);
+                // Project this sequence to each client. Empty projections are intentional: they
+                // advance the client's global sequence barrier without sending out-of-interest
+                // cells, so a later chunk checkpoint can fill the area when it becomes loaded.
+                foreach (ServerClient remote in GetConnectedRemoteClients())
+                {
+                    if (remote == null || remote.ClientID <= 0) continue;
+                    var projected = new Dictionary<Point3, bool>();
+                    foreach (KeyValuePair<Point3, bool> item in message.ModifiedCells)
+                    {
+                        Point2 chunk = Terrain.ToChunk(item.Key.X, item.Key.Z);
+                        if (m_hostTerrainChunkSubscribers.TryGetValue(chunk,
+                                out HashSet<int> subscribers) && subscribers.Contains(remote.ClientID))
+                            projected[item.Key] = item.Value;
+                    }
+                    var projectedMessage = new GameModifiedCellsMessage(projected, client.Step)
+                    {
+                        Sequence = message.Sequence,
+                        TargetClientId = remote.ClientID
+                    };
+                    NetworkMessageSender.SendScheduledMessage(remote.ClientID, projectedMessage,
+                        sequenced: false, latest: false, batchable: false);
+                }
             }
         }
 
@@ -169,11 +300,12 @@ namespace ScMultiplayer
                         SendHostTerrainRecoveryRound(sourceClientId,
                             message.LastAppliedSequence, message.BufferedRanges);
                     }
-                    else
-                    {
-                        m_hostTerrainRecoveryTargets.Remove(sourceClientId);
-                        m_forceHostInventorySync = true;
-                        m_fullWorldObjectsSyncTime = WorldObjectFullSyncInterval;
+					else
+					{
+						m_hostTerrainRecoveryTargets.Remove(sourceClientId);
+						m_forceHostInventorySync = true;
+						m_pendingHostPickableSnapshots.Add(sourceClientId);
+						m_fullWorldObjectsSyncTime = WorldObjectFullSyncInterval;
                         m_fullAnimalSyncTime = 5f;
                         SendTerrainRecoveryMessage(sourceClientId,
                             new TerrainRecoveryMessage
@@ -708,8 +840,9 @@ namespace ScMultiplayer
                 {
                     continue;
                 }
-                if (hasIntent && intentAge <= 2.0 && predictedValue != intent.ExpectedValue)
-                    QueueTerrainDigRequest(cell, intent, predictedValue);
+				if (hasIntent && intentAge <= 2.0 && predictedValue != intent.ExpectedValue &&
+					predictedValue == intent.PredictedValue)
+					QueueTerrainDigRequest(cell, intent, predictedValue);
                 else if (!hasIntent || intentAge > 2.0)
                     repairCells[cell] = modifiedCells[cell];
             }
@@ -1121,15 +1254,17 @@ namespace ScMultiplayer
                 SubsystemTerrain terrain = project.FindSubsystem<SubsystemTerrain>(true);
                 int currentCellValue = terrain.Terrain.GetCellValue(
                     message.Cell.X, message.Cell.Y, message.Cell.Z);
-                authoritativeValue = Terrain.ReplaceLight(currentCellValue, 0);
+                authoritativeValue = currentCellValue;
+                int authoritativeContents = Terrain.ExtractContents(authoritativeValue);
+                int expectedContents = Terrain.ExtractContents(message.ExpectedValue);
                 Vector3 center = new Vector3(message.Cell.X + 0.5f,
                     message.Cell.Y + 0.5f, message.Cell.Z + 0.5f);
-                if (authoritativeValue == message.PredictedValue)
-                {
-                    accepted = true;
-                }
-                else if (miner != null &&
-                    authoritativeValue == message.ExpectedValue)
+                Block targetBlock = BlocksManager.Blocks[authoritativeContents];
+                bool contentsMatch = authoritativeContents == expectedContents;
+                bool isLeafBlock = targetBlock is DeciduousLeavesBlock;
+                bool leafContentsMatch = authoritativeContents == expectedContents;
+                TerrainRaycastResult? targetRaycast = null;
+                if (miner != null && (contentsMatch || isLeafBlock && leafContentsMatch))
                 {
                     SubsystemGameInfo gameInfo =
                         project.FindSubsystem<SubsystemGameInfo>(true);
@@ -1149,34 +1284,51 @@ namespace ScMultiplayer
                         authoritativePlayerPosition, center) <=
                         MathUtils.Sqr(reach + 1.5f);
                     Vector3 rayDirection = message.DigRay.Direction;
-                    TerrainRaycastResult? targetRaycast = null;
-                    if (inReach && message.HitFace >= 0 && message.HitFace <= 5 &&
-                        rayDirection.LengthSquared() > 0.0001f)
+                    if (inReach && message.HitFace >= 0 && message.HitFace <= 5)
                     {
-                        // Source: SubsystemTerrain.cs:SubsystemTerrain.Raycast
-                        // Test the client's requested cell directly. A preceding predicted cell may
-                        // still exist on the host while fast consecutive dig requests are in flight.
-                        rayDirection = Vector3.Normalize(rayDirection);
-                        var ray = new Ray3(message.DigRay.Position, rayDirection);
-                        Block targetBlock = BlocksManager.Blocks[
-                            Terrain.ExtractContents(currentCellValue)];
-                        var localRay = new Ray3(ray.Position - new Vector3(
-                            message.Cell.X, message.Cell.Y, message.Cell.Z), ray.Direction);
-                        float? distance = targetBlock.Raycast(localRay, terrain,
-                            currentCellValue, true, out int collisionBoxIndex,
-                            out BoundingBox collisionBox);
-                        if (!targetBlock.IsDiggingTransparent && distance.HasValue &&
-                            distance.Value >= 0f && distance.Value <= 15f)
+                        // Source: Survivalcraft/Game/SubsystemDeciduousLeavesBlockBehavior.cs:
+                        // Leaf seasonal data can differ between peers. Dig requests only need the
+                        // stable block contents index to match; the final host value is broadcast
+                        // unchanged through the normal terrain change path.
+                        if (contentsMatch || isLeafBlock && leafContentsMatch)
                         {
                             targetRaycast = new TerrainRaycastResult
                             {
-                                Ray = ray,
+                                Ray = message.DigRay,
                                 Value = currentCellValue,
                                 CellFace = new CellFace(message.Cell.X, message.Cell.Y,
                                     message.Cell.Z, message.HitFace),
-                                CollisionBoxIndex = collisionBoxIndex,
-                                Distance = distance.Value
+                                CollisionBoxIndex = 0,
+                                Distance = 0f
                             };
+                        }
+
+                        // Source: SubsystemTerrain.cs:SubsystemTerrain.Raycast
+                        // Test the client's requested cell directly. A preceding predicted cell may
+                        // still exist on the host while fast consecutive dig requests are in flight.
+                        if (!targetRaycast.HasValue &&
+                            rayDirection.LengthSquared() > 0.0001f)
+                        {
+                            rayDirection = Vector3.Normalize(rayDirection);
+                            var ray = new Ray3(message.DigRay.Position, rayDirection);
+                            var localRay = new Ray3(ray.Position - new Vector3(
+                                message.Cell.X, message.Cell.Y, message.Cell.Z), ray.Direction);
+                            float? distance = targetBlock.Raycast(localRay, terrain,
+                                currentCellValue, true, out int collisionBoxIndex,
+                                out BoundingBox collisionBox);
+                            if (!targetBlock.IsDiggingTransparent && distance.HasValue &&
+                                distance.Value >= 0f && distance.Value <= 15f)
+                            {
+                                targetRaycast = new TerrainRaycastResult
+                                {
+                                    Ray = ray,
+                                    Value = currentCellValue,
+                                    CellFace = new CellFace(message.Cell.X, message.Cell.Y,
+                                        message.Cell.Z, message.HitFace),
+                                    CollisionBoxIndex = collisionBoxIndex,
+                                    Distance = distance.Value
+                                };
+                            }
                         }
                     }
                     if (targetRaycast.HasValue)
@@ -1193,22 +1345,27 @@ namespace ScMultiplayer
                             miner, "CalculateDigTime", authoritativeValue, toolContents);
                         float elapsedTime = MathUtils.Max(0f,
                             (message.CompletedClientTick - message.StartClientTick) * ServerTickDuration);
-                        BlockPlacementData digValue = block.GetDigValue(
-                            terrain, miner, currentCellValue, toolValue, targetRaycast.Value);
-                        Point3 digPoint = new Point3(digValue.CellFace.X,
+						BlockPlacementData digValue = block.GetDigValue(
+							terrain, miner, currentCellValue, toolValue, targetRaycast.Value);
+						int predictedDigValue = Terrain.ReplaceLight(digValue.Value, 0);
+						bool predictedValueMatches = predictedDigValue ==
+							Terrain.ReplaceLight(message.PredictedValue, 0);
+						Point3 digPoint = new Point3(digValue.CellFace.X,
                             digValue.CellFace.Y, digValue.CellFace.Z);
                         bool matchingDigProgress = miner.DigCellFace.HasValue &&
                             miner.DigCellFace.Value.X == message.Cell.X &&
                             miner.DigCellFace.Value.Y == message.Cell.Y &&
                             miner.DigCellFace.Value.Z == message.Cell.Z &&
                             miner.DigProgress >= 0.85f;
-                        if (validToolSlot && levelSufficient && digPoint == message.Cell &&
+						if (validToolSlot && levelSufficient && predictedValueMatches && digPoint == message.Cell &&
                             (creative || matchingDigProgress ||
                                 elapsedTime + 0.4f >= requiredTime))
                         {
                             terrain.DestroyCell(tool.ToolLevel, digPoint.X, digPoint.Y,
                                 digPoint.Z, digValue.Value, false, false);
                             terrain.TerrainUpdater.RequestSynchronousUpdate();
+                            (terrain as SuSubsystemTerrain)?
+                                .FlushHostModifiedCellClosureForNetworkAction();
                             miner.DamageActiveTool(1);
                             if (miner.ComponentCreature.PlayerStats != null)
                                 miner.ComponentCreature.PlayerStats.BlocksDug++;
@@ -1235,6 +1392,7 @@ namespace ScMultiplayer
             NetworkMessageSender.SendTerrainDigResult(sourceClientId, result);
         }
 
+        // Source: Survivalcraft/Game/SubsystemDeciduousLeavesBlockBehavior.cs:
         // Source: Survivalcraft/Game/ComponentMiner.cs:ComponentMiner.Dig
         // Source: Survivalcraft/Game/ComponentInventoryBase.cs:ComponentInventoryBase.AddSlotItems
         private static bool ApplyTerrainDigToolState(IInventory inventory,

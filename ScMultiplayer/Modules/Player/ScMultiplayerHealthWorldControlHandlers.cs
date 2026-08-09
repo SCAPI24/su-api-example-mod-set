@@ -391,7 +391,11 @@ namespace ScMultiplayer
         internal void MarkClientSleepWakeBoundaryPending()
         {
             if (!IsHost)
+            {
+                if (!m_clientSleepWakeBoundaryPending)
+                    m_clientSleepWakeBoundaryPendingTime = Time.RealTime;
                 m_clientSleepWakeBoundaryPending = true;
+            }
         }
 
         // Source: CircuitSynchronizer.IsClientBootstrapReady
@@ -399,7 +403,9 @@ namespace ScMultiplayer
         // replay the night's missing steps; wake the presentation only after that rebase is ready.
         private void CompletePendingClientSleepWakeups()
         {
-            if (ShouldDeferClientSleepWakeup())
+            bool shouldDeferClientSleepWakeup = ShouldDeferClientSleepWakeup();
+            if (shouldDeferClientSleepWakeup &&
+                !ShouldForceClientSleepWakeupAfterBoundaryTimeout())
                 return;
 
             if (m_clientSleepWakeBoundaryPending)
@@ -422,6 +428,7 @@ namespace ScMultiplayer
                 if (!foundLocalPlayer)
                     return;
                 m_clientSleepWakeBoundaryPending = false;
+                m_clientSleepWakeBoundaryPendingTime = 0.0;
             }
 
             if (m_pendingClientSleepWakeups.Count == 0)
@@ -432,6 +439,24 @@ namespace ScMultiplayer
                     sleep.WakeUp();
             }
             m_pendingClientSleepWakeups.Clear();
+        }
+
+        private bool ShouldForceClientSleepWakeupAfterBoundaryTimeout()
+        {
+            if (!m_clientSleepWakeBoundaryPending ||
+                m_clientSleepWakeBoundaryPendingTime <= 0.0)
+                return false;
+            if (m_circuitSynchronizer != null)
+            {
+                if (m_circuitSynchronizer.IsHostTimeAccelerationActive)
+                    return false;
+            }
+            else if (m_remoteTimeAccelerated)
+            {
+                return false;
+            }
+            return Time.RealTime - m_clientSleepWakeBoundaryPendingTime >=
+                ClientSleepWakeBoundaryTimeout;
         }
 
         public void HandleGameKickPlayerMessage(GameKickPlayerMessage msg, int sourceClientID)

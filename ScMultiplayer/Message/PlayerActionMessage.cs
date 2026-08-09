@@ -38,6 +38,10 @@ namespace ScMultiplayer
         // Source: Survivalcraft/Game/ViewWidget.cs:ViewWidget.DragDrop
         public int[] InventorySlotValues = Array.Empty<int>();
         public int[] InventorySlotCounts = Array.Empty<int>();
+        public bool HasInventoryDelta;
+        public int[] InventorySlotIndices = Array.Empty<int>();
+        public int[] InventoryBaseValues = Array.Empty<int>();
+        public int[] InventoryBaseCounts = Array.Empty<int>();
         public Vector3 Position;
         public Vector3 Velocity;
         public bool HasTerrainPrediction;
@@ -87,13 +91,34 @@ namespace ScMultiplayer
                     // Source: ScMultiplayer.UpdateLocalDropRequests
                     // Fences delayed pre-drop equipment snapshots on the host.
                     RequestId = reader.ReadInt32();
-                    int slotsCount = reader.ReadPackedInt32();
-                    InventorySlotValues = new int[slotsCount];
-                    InventorySlotCounts = new int[slotsCount];
-                    for (int i = 0; i < slotsCount; i++)
+                    HasInventoryDelta = reader.ReadBoolean();
+                    if (HasInventoryDelta)
                     {
-                        InventorySlotValues[i] = reader.ReadInt32();
-                        InventorySlotCounts[i] = reader.ReadInt32();
+                        int deltaCount = reader.ReadPackedInt32();
+                        InventorySlotIndices = new int[deltaCount];
+                        InventoryBaseValues = new int[deltaCount];
+                        InventoryBaseCounts = new int[deltaCount];
+                        InventorySlotValues = new int[deltaCount];
+                        InventorySlotCounts = new int[deltaCount];
+                        for (int i = 0; i < deltaCount; i++)
+                        {
+                            InventorySlotIndices[i] = reader.ReadInt32();
+                            InventoryBaseValues[i] = reader.ReadInt32();
+                            InventoryBaseCounts[i] = reader.ReadInt32();
+                            InventorySlotValues[i] = reader.ReadInt32();
+                            InventorySlotCounts[i] = reader.ReadInt32();
+                        }
+                    }
+                    else
+                    {
+                        int slotsCount = reader.ReadPackedInt32();
+                        InventorySlotValues = new int[slotsCount];
+                        InventorySlotCounts = new int[slotsCount];
+                        for (int i = 0; i < slotsCount; i++)
+                        {
+                            InventorySlotValues[i] = reader.ReadInt32();
+                            InventorySlotCounts[i] = reader.ReadInt32();
+                        }
                     }
                 }
             }
@@ -149,13 +174,34 @@ namespace ScMultiplayer
                     writer.WriteInt32(DropCount);
                     writer.WriteInt32(RemoveCount);
                     writer.WriteInt32(RequestId);
-                    int slotsCount = Math.Min(InventorySlotValues?.Length ?? 0,
-                        InventorySlotCounts?.Length ?? 0);
-                    writer.WritePackedInt32(slotsCount);
-                    for (int i = 0; i < slotsCount; i++)
+                    writer.WriteBoolean(HasInventoryDelta);
+                    if (HasInventoryDelta)
                     {
-                        writer.WriteInt32(InventorySlotValues[i]);
-                        writer.WriteInt32(InventorySlotCounts[i]);
+                        int deltaCount = Math.Min(InventorySlotIndices?.Length ?? 0,
+                            Math.Min(InventoryBaseValues?.Length ?? 0,
+                                Math.Min(InventoryBaseCounts?.Length ?? 0,
+                                    Math.Min(InventorySlotValues?.Length ?? 0,
+                                        InventorySlotCounts?.Length ?? 0))));
+                        writer.WritePackedInt32(deltaCount);
+                        for (int i = 0; i < deltaCount; i++)
+                        {
+                            writer.WriteInt32(InventorySlotIndices[i]);
+                            writer.WriteInt32(InventoryBaseValues[i]);
+                            writer.WriteInt32(InventoryBaseCounts[i]);
+                            writer.WriteInt32(InventorySlotValues[i]);
+                            writer.WriteInt32(InventorySlotCounts[i]);
+                        }
+                    }
+                    else
+                    {
+                        int slotsCount = Math.Min(InventorySlotValues?.Length ?? 0,
+                            InventorySlotCounts?.Length ?? 0);
+                        writer.WritePackedInt32(slotsCount);
+                        for (int i = 0; i < slotsCount; i++)
+                        {
+                            writer.WriteInt32(InventorySlotValues[i]);
+                            writer.WriteInt32(InventorySlotCounts[i]);
+                        }
                     }
                 }
             }

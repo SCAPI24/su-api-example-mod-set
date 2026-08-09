@@ -105,6 +105,12 @@ namespace ScMultiplayer
             Project project = GameManager.Project;
             if (project == null) return;
 
+            // Full pickable snapshots are directed to clients that just completed world transfer
+            // or terrain recovery. Periodic position updates remain broadcast and do not recreate
+            // every existing pickable for every client.
+            int[] snapshotTargets = m_pendingHostPickableSnapshots.ToArray();
+            m_pendingHostPickableSnapshots.Clear();
+
             SubsystemBodies subsystemBodies = project.FindSubsystem<SubsystemBodies>(true);
             Entity[] animals = subsystemBodies.Bodies
                 .Select(body => body?.Entity)
@@ -161,18 +167,26 @@ namespace ScMultiplayer
             var pickableUpdate = new PickableSyncMessage { Action = PickableSyncMessage.PickAction.UpdatePosition };
             foreach (Pickable pickable in pickables)
             {
-                if (!m_hostPickableIds.TryGetValue(pickable, out ushort id))
+                bool isNew = !m_hostPickableIds.TryGetValue(pickable, out ushort id);
+                if (isNew)
                 {
                     id = m_nextPickableId++;
                     m_hostPickableIds.Add(pickable, id);
-                    fullSync = true;
                 }
-                if (fullSync)
+                if (isNew)
                 {
                     NetworkMessageSender.SendPickableMessage(new PickableSyncMessage(
                         PickableSyncMessage.PickAction.Create, id, pickable.Value, pickable.Count,
                         pickable.Position, pickable.Velocity, pickable.FlyToPosition,
                         stuckMatrix: pickable.StuckMatrix));
+                }
+                foreach (int targetClientId in snapshotTargets)
+                {
+                    if (targetClientId > 0)
+                        NetworkMessageSender.SendPickableMessage(new PickableSyncMessage(
+                            PickableSyncMessage.PickAction.Create, id, pickable.Value, pickable.Count,
+                            pickable.Position, pickable.Velocity, pickable.FlyToPosition,
+                            stuckMatrix: pickable.StuckMatrix), targetClientId);
                 }
                 pickableUpdate.Positions.Add(new PickableSyncMessage.PickablePos
                 {
@@ -416,11 +430,15 @@ namespace ScMultiplayer
                 DropCount = dropCount,
                 RemoveCount = removeCount,
                 RequestId = m_localEquipmentRevision,
-                InventorySlotValues = preDropValues,
-                InventorySlotCounts = preDropCounts,
                 Position = position,
                 Velocity = velocity
             };
+            message.HasInventoryDelta = true;
+            message.InventorySlotIndices = new[] { sourceSlot };
+            message.InventoryBaseValues = new[] { preDropValues[sourceSlot] };
+            message.InventoryBaseCounts = new[] { preDropCounts[sourceSlot] };
+            message.InventorySlotValues = new[] { itemValue };
+            message.InventorySlotCounts = new[] { Math.Max(0, sourceCount - removeCount) };
             NetworkMessageSender.SendPlayerDropRequest(message);
             m_lastEquipmentSnapshots[client.ClientID] = CaptureEquipmentSnapshot(player);
             IInventory inventory = player?.ComponentMiner?.Inventory;
@@ -518,6 +536,22 @@ namespace ScMultiplayer
                 ? 1 : m_nextContainerRequestId + 1;
             m_localEquipmentRevision = m_localEquipmentRevision == int.MaxValue
                 ? 1 : m_localEquipmentRevision + 1;
+            int[] containerIndices = Array.Empty<int>();
+            int[] containerBaseValues = Array.Empty<int>();
+            int[] containerBaseCounts = Array.Empty<int>();
+            int[] containerDesiredValues = Array.Empty<int>();
+            int[] containerDesiredCounts = Array.Empty<int>();
+            bool hasContainerDelta = !(container.Inventory is ComponentCraftingTable);
+            if (hasContainerDelta)
+                hasContainerDelta = TryBuildInventoryDelta(state.Values, state.Counts,
+                    values, counts, out containerIndices, out containerBaseValues,
+                    out containerBaseCounts, out containerDesiredValues,
+                    out containerDesiredCounts);
+            bool hasPlayerDelta = TryBuildInventoryDelta(m_authoritativeLocalSlotValues,
+                m_authoritativeLocalSlotCounts, playerValues, playerCounts,
+                out int[] playerIndices, out int[] playerBaseValues,
+                out int[] playerBaseCounts, out int[] playerDesiredValues,
+                out int[] playerDesiredCounts);
             var request = new ContainerSyncMessage
             {
                 Coordinates = container.Coordinates,
@@ -532,16 +566,40 @@ namespace ScMultiplayer
                 DropValue = dropValue,
                 DropCount = pickable.Count,
                 DropPosition = pickable.Position,
-                DropVelocity = pickable.Velocity,
-                SlotValues = values,
-                SlotCounts = counts,
-                BaseSlotValues = (int[])state.Values.Clone(),
-                BaseSlotCounts = (int[])state.Counts.Clone(),
-                PlayerBaseSlotValues = (int[])m_authoritativeLocalSlotValues.Clone(),
-                PlayerBaseSlotCounts = (int[])m_authoritativeLocalSlotCounts.Clone(),
-                PlayerSlotValues = playerValues,
-                PlayerSlotCounts = playerCounts
+                DropVelocity = pickable.Velocity
             };
+            if (hasContainerDelta)
+            {
+                request.HasSlotDelta = true;
+                request.SlotIndices = containerIndices;
+                request.BaseSlotValues = containerBaseValues;
+                request.BaseSlotCounts = containerBaseCounts;
+                request.SlotValues = containerDesiredValues;
+                request.SlotCounts = containerDesiredCounts;
+            }
+            else
+            {
+                request.SlotValues = values;
+                request.SlotCounts = counts;
+                request.BaseSlotValues = (int[])state.Values.Clone();
+                request.BaseSlotCounts = (int[])state.Counts.Clone();
+            }
+            if (hasPlayerDelta)
+            {
+                request.HasPlayerSlotDelta = true;
+                request.PlayerSlotIndices = playerIndices;
+                request.PlayerBaseSlotValues = playerBaseValues;
+                request.PlayerBaseSlotCounts = playerBaseCounts;
+                request.PlayerSlotValues = playerDesiredValues;
+                request.PlayerSlotCounts = playerDesiredCounts;
+            }
+            else
+            {
+                request.PlayerBaseSlotValues = (int[])m_authoritativeLocalSlotValues.Clone();
+                request.PlayerBaseSlotCounts = (int[])m_authoritativeLocalSlotCounts.Clone();
+                request.PlayerSlotValues = playerValues;
+                request.PlayerSlotCounts = playerCounts;
+            }
             m_pendingContainerTransactions[key] = new PendingContainerTransaction
             {
                 Request = request,
@@ -586,7 +644,6 @@ namespace ScMultiplayer
                     TryGetHostPickableCollector(pickable,
                         out int collectorClientId, out IInventory inventory))
                 {
-                    m_forceHostInventorySync = true;
                     var message = new PickableSyncMessage
                     {
                         Action = PickableSyncMessage.PickAction.Acquire,
@@ -690,25 +747,6 @@ namespace ScMultiplayer
                 float nearestPlayerDistanceSquared = nearestPlayer != null
                     ? Vector3.DistanceSquared(nearestPlayer.ComponentBody.Position, body.Position)
                     : float.MaxValue;
-                // Source: Survivalcraft/Game/ComponentRunAwayBehavior.cs:
-                // ComponentRunAwayBehavior.RunAwayFrom
-                // Remote players do not forward every native footstep/noise event to the host.
-                // Stimulate only an existing non-predator run-away behavior; its native host
-                // state machine remains responsible for the chosen path and movement velocity.
-                CreatureCategory predatorMask = CreatureCategory.LandPredator |
-                    CreatureCategory.WaterPredator;
-                if ((creature.Category & predatorMask) == 0 && nearestPlayer != null &&
-                    nearestPlayerDistanceSquared <= 6f * 6f &&
-                    now >= metadata.NextPassiveStartleTime)
-                {
-                    ComponentRunAwayBehavior runAway = entity.FindComponent<ComponentRunAwayBehavior>();
-                    if (runAway != null)
-                    {
-                        runAway.RunAwayFrom(nearestPlayer.ComponentBody);
-                        metadata.NextPassiveStartleTime = now + 1.0;
-                        metadata.HighPriorityUntil = Math.Max(metadata.HighPriorityUntil, now + 3.0);
-                    }
-                }
                 bool highPriorityInteraction = wasAttacked || now < metadata.HighPriorityUntil;
                 // Source: Survivalcraft/Game/ComponentBirdModel.cs:ComponentBirdModel.Animate
                 // LastFlyOrder is also the native wing-flight presentation edge. Give visible flying
@@ -787,6 +825,12 @@ namespace ScMultiplayer
 
                 ComponentLocomotion locomotion = candidate.Creature.ComponentLocomotion;
                 ComponentCreatureModel model = candidate.Creature.ComponentCreatureModel;
+                bool grounded = candidate.Body.StandingOnValue.HasValue ||
+                    candidate.Body.StandingOnBody != null;
+                bool gravityEnabled = candidate.Body.IsGravityEnabled;
+                bool immersed = candidate.Body.ImmersionFactor > 0f;
+                bool flying = locomotion != null && locomotion.FlySpeed > 0f &&
+                    locomotion.FlyOrder.HasValue;
                 BodyUpdateMessage.ChangeFlag flags = BodyUpdateMessage.ChangeFlag.Position |
                     BodyUpdateMessage.ChangeFlag.Rotation |
                     BodyUpdateMessage.ChangeFlag.Velocity |
@@ -827,6 +871,10 @@ namespace ScMultiplayer
                     SimulationSeed = metadata.SimulationSeed,
                     ShapeshiftTarget = candidate.ShapeshiftTarget,
                     Health = currentHealth,
+                    MotionFlags = (grounded ? BodyUpdateMessage.BodyItem.MotionFlag.Grounded : 0) |
+                        (gravityEnabled ? BodyUpdateMessage.BodyItem.MotionFlag.GravityEnabled : 0) |
+                        (immersed ? BodyUpdateMessage.BodyItem.MotionFlag.Immersed : 0) |
+                        (flying ? BodyUpdateMessage.BodyItem.MotionFlag.Flying : 0),
                     DamageSequence = metadata.DamageSequence
                 };
                 if (forceFullSnapshot)

@@ -331,6 +331,7 @@ namespace ScMultiplayer
         private readonly HashSet<ushort> m_loggedRemoteAnimalFailures = new HashSet<ushort>();
         private int m_lastFullAnimalSnapshotTick;
         private readonly Dictionary<Pickable, ushort> m_hostPickableIds = new Dictionary<Pickable, ushort>();
+        private readonly HashSet<int> m_pendingHostPickableSnapshots = new HashSet<int>();
         private SubsystemPickables m_hostPickablesSubsystem;
         private GameWidget m_clientDropDragHostGameWidget;
         private bool m_forceHostInventorySync;
@@ -383,12 +384,26 @@ namespace ScMultiplayer
         private readonly HashSet<IUpdateable> m_disabledClientContainerUpdates = new HashSet<IUpdateable>();
         private readonly Dictionary<ushort, RemotePickableRecord> m_remotePickableRecords = new Dictionary<ushort, RemotePickableRecord>();
         private readonly object m_terrainJournalLock = new object();
+        private readonly Dictionary<Point3, bool> m_pendingHostTerrainBroadcastCells =
+            new Dictionary<Point3, bool>();
         private readonly Queue<TerrainJournalEntry> m_hostTerrainJournal =
             new Queue<TerrainJournalEntry>();
         private readonly Dictionary<int, long> m_hostTerrainRecoveryTargets =
             new Dictionary<int, long>();
         private readonly Dictionary<Point2, long> m_hostTerrainChunkRevisions =
             new Dictionary<Point2, long>();
+        // Source: Survivalcraft/Game/TerrainUpdater.cs:TerrainUpdater.SetUpdateLocation
+        // Host-only interest table. A terrain sequence is projected to each client by chunk;
+        // clients outside the chunk do not receive the cell payload, but still receive an empty
+        // sequence barrier so the global stream remains contiguous.
+        private readonly Dictionary<int, HashSet<Point2>> m_hostTerrainInterestChunks =
+            new Dictionary<int, HashSet<Point2>>();
+        private readonly Dictionary<Point2, HashSet<int>> m_hostTerrainChunkSubscribers =
+            new Dictionary<Point2, HashSet<int>>();
+        private readonly Dictionary<int, Point2> m_hostTerrainInterestCenters =
+            new Dictionary<int, Point2>();
+        private readonly Dictionary<int, int> m_hostTerrainInterestRadii =
+            new Dictionary<int, int>();
         private long m_hostTerrainSequence;
         private long m_pendingTerrainSequenceBaseline;
         private volatile bool m_clientTerrainRecoveryActive;
@@ -426,7 +441,13 @@ namespace ScMultiplayer
                 new Dictionary<Point2, PendingTerrainChunkVerification>();
         private readonly Dictionary<Point2, PendingTerrainChunkCheckpoint>
             m_clientTerrainChunkCheckpoints =
-                new Dictionary<Point2, PendingTerrainChunkCheckpoint>();
+            new Dictionary<Point2, PendingTerrainChunkCheckpoint>();
+        // Source: Survivalcraft/Game/TerrainUpdater.cs:TerrainUpdater.SetUpdateLocation
+        // Tracks the local client's current interest window so an already initialized chunk is
+        // checked when it enters the window, not only when TerrainUpdater first creates it.
+        private readonly HashSet<Point2> m_clientTerrainInterestChunks =
+            new HashSet<Point2>();
+        private bool m_clientTerrainInterestInitialized;
         private readonly Dictionary<Point2, long> m_clientTerrainChunkFailedRevisions =
             new Dictionary<Point2, long>();
         private double m_nextTerrainChunkSyncRequestTime;
@@ -546,6 +567,8 @@ namespace ScMultiplayer
         // Source: CircuitSynchronizer.NotifyRemoteTimeAccelerationChanged
         // Keep the host wake boundary until the post-sleep circuit rebase is ready.
         private bool m_clientSleepWakeBoundaryPending;
+        private double m_clientSleepWakeBoundaryPendingTime;
+        private const double ClientSleepWakeBoundaryTimeout = 4.0;
         private readonly HashSet<ComponentSleep> m_pendingClientSleepWakeups =
             new HashSet<ComponentSleep>();
         private readonly Dictionary<int, double> m_nextSleepHealthSendTimes =
@@ -600,7 +623,10 @@ namespace ScMultiplayer
         private const float RemoteInputHoldDuration = 0.75f;
         private const float MaximumHostActionPoseCorrection = 2f;
         private const float RemoteDelaySampleLimit = 0.6f;
-        private const float RemoteExtrapolationLimit = 0.35f;
+        // Source: Survivalcraft/Game/ComponentBody.cs:ComponentBody.Update
+        // Keep presentation prediction below one typical movement correction interval. A larger
+        // horizon lets a remote player pass the authoritative position and visibly step backward.
+        private const float RemoteExtrapolationLimit = 0.15f;
         private const float RemotePresentationStaleTime = 2f;
         private const float RemoteAnimalPredictionLimit = 1.15f;
         private const float RemoteAnimalSnapDistance = 3f;
@@ -677,7 +703,11 @@ namespace ScMultiplayer
         private const float PlayerRecordSaveInterval = 5f;
         private const float TerrainMergeInterval = 5f;
         private const int TerrainCatchUpBatchSize = 48;
-        private const int TerrainReliableBatchSize = 48;
+        // Source: Mod/ScMultiplayer/Modules/Terrain/ScMultiplayerTerrainHandlers.cs:
+        // PublishTerrainChanges
+        // Two legacy 48-cell updates are coalesced into one reliable logical message. Comms still
+        // fragments at its 1024-byte UDP boundary, while the application sequence advances once.
+        private const int TerrainReliableBatchSize = 96;
         private const int TerrainChunkSyncBatchSize = 32;
         private const int TerrainChunkSyncRequestsPerInterval = 4;
         private const double TerrainChunkSyncRequestInterval = 0.1;
