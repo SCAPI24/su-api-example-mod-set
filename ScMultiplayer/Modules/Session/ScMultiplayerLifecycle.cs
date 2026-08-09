@@ -697,6 +697,12 @@ namespace ScMultiplayer
                 database.FindDatabaseObjectType("Parameter", true), true);
             subsystemDispenser.Value = "ScMultiplayer.SuSubsystemDispenserBlockBehavior";
 
+            // Source: Pak/Database.xml:HammerBlockBehavior.Class
+            var subsystemHammer = database.FindDatabaseObject(
+                new Guid("d447f324-eda9-47d4-8671-af13a1a858cd"),
+                database.FindDatabaseObjectType("Parameter", true), true);
+            subsystemHammer.Value = "ScMultiplayer.SuSubsystemHammerBlockBehavior";
+
             // Source: Mod/WatchMod/Plug/WatchMod.cs:WatchMod.HandleGameDatabase
             // Register an independent player component instead of replacing SubsystemGameWidgets.
             var uiTemplate = new DatabaseObject(

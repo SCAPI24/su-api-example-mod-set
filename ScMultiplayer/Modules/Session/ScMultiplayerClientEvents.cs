@@ -539,14 +539,22 @@ namespace ScMultiplayer
 		m_lastEditableDataPayloads.Clear();
 		m_localEditableDataRequestId = 0;
 		m_editableDataRevision = 0;
+		m_pendingFurnitureBuild = null;
+		m_nextFurnitureBuildRequestId = 0;
+		m_lastFurnitureBuildRequestIds.Clear();
 		m_hostKnockbackHealthCache.Clear();
 		m_hostRemoteKnockbackUntil.Clear();
 		m_hostKnockbackSequences.Clear();
 		RemotePlayers.Clear();
-		m_hostAnimalIds.Clear();
-		m_hostAnimals.Clear();
+        m_hostAnimalIds.Clear();
+        m_hostMountIds.Clear();
+        m_nextMountId = MountEntityIdStart;
+        m_hostAnimals.Clear();
 		m_hostAnimalSync.Clear();
-		m_remoteAnimals.Clear();
+        m_remoteAnimals.Clear();
+        m_remoteMounts.Clear();
+        m_remoteMountTemplates.Clear();
+        m_remoteMountSync.Clear();
 		m_remoteAnimalTemplates.Clear();
 		m_remoteAnimalSync.Clear();
 		m_loggedRemoteAnimalFailures.Clear();
@@ -584,6 +592,7 @@ namespace ScMultiplayer
 			m_hostTerrainChunkSubscribers.Clear();
 			m_hostTerrainInterestCenters.Clear();
 			m_hostTerrainInterestRadii.Clear();
+			m_hostTerrainReportedInterestRadii.Clear();
 			m_terrainCheckpoint.Clear();
 			m_terrainCheckpointByChunk.Clear();
 			m_pendingTerrainChanges.Clear();
@@ -963,6 +972,15 @@ namespace ScMultiplayer
 				model.InHandItemOffsetOrder = state.ItemOffset;
 				model.InHandItemRotationOrder = state.ItemRotation;
 				model.AimHandAngleOrder = state.AimHandAngle;
+			}
+			// Source: Survivalcraft/Game/ComponentRider.cs:ComponentRider.Update
+			// A mounted body follows ParentBody. Direct network correction of the rider body
+			// makes the native out-of-mount distance test dismount it after collisions.
+			ComponentRider rider = playerData.ComponentPlayer.ComponentRider;
+			if (state.IsRiding && rider?.Mount != null)
+			{
+				state.PresentationInitialized = true;
+				continue;
 			}
 			float delaySample = MathUtils.Clamp((float)(client.Step - state.ServerTick) * 0.01f, 0f, 0.6f);
 			state.EstimatedDelay = ((state.EstimatedDelay <= 0f) ? delaySample : MathUtils.Lerp(state.EstimatedDelay, delaySample, 0.12f));
@@ -3033,31 +3051,70 @@ namespace ScMultiplayer
 				return item.Key;
 			}
 		}
+		// Source: Mod/ScMultiplayer/Modules/World/ScMultiplayerWorldSync.cs:SendWorldObjects
+		// A host player rides the authoritative creature entity, which is tracked in
+		// m_hostAnimalIds before the position snapshot is broadcast. Use that identity
+		// instead of falling through to zero, otherwise peers cannot bind the rider.
+		foreach (KeyValuePair<Entity, ushort> item in m_hostAnimalIds)
+		{
+			if (item.Key == mountEntity)
+			{
+				return item.Value;
+			}
+		}
+		foreach (KeyValuePair<Entity, ushort> item in m_hostMountIds)
+		{
+			if (item.Key == mountEntity)
+				return item.Value;
+		}
+		foreach (KeyValuePair<ushort, Entity> item in m_remoteMounts)
+		{
+			if (item.Value == mountEntity)
+				return item.Key;
+		}
 		return 0;
 	}
 
 	private void MatchRemoteRidingState(ComponentPlayer player, bool shouldBeRiding, ushort mountEntityId)
 	{
 		ComponentRider rider = player?.ComponentRider;
-		if (rider == null || rider.Mount != null == shouldBeRiding)
+		if (rider == null)
 		{
 			return;
 		}
+		ComponentMount currentMount = rider.Mount;
 		if (!shouldBeRiding)
+		{
+			if (currentMount != null)
+				rider.StartDismounting();
+			return;
+		}
+		ComponentMount mount = ResolveNetworkMount(mountEntityId);
+		if (mount == null)
+			return;
+		if (currentMount != null && currentMount.Entity != mount.Entity)
 		{
 			rider.StartDismounting();
 			return;
 		}
-		ComponentMount mount = null;
-		if (mountEntityId != 0)
-		{
-			mount = m_hostAnimalIds.FirstOrDefault((KeyValuePair<Entity, ushort> item) => item.Value == mountEntityId).Key?.FindComponent<ComponentMount>();
-		}
-		mount = mount ?? rider.FindNearestMount();
-		if (mount != null)
+		if (currentMount == null)
 		{
 			rider.StartMounting(mount);
 		}
+	}
+
+	private ComponentMount ResolveNetworkMount(ushort mountEntityId)
+	{
+		if (mountEntityId == 0) return null;
+		Entity hostEntity = m_hostAnimalIds.FirstOrDefault(
+			item => item.Value == mountEntityId).Key;
+		if (hostEntity != null)
+			return hostEntity.FindComponent<ComponentMount>();
+		if (m_remoteAnimals.TryGetValue(mountEntityId, out Entity remoteAnimal))
+			return remoteAnimal?.FindComponent<ComponentMount>();
+		if (m_remoteMounts.TryGetValue(mountEntityId, out Entity remoteMount))
+			return remoteMount?.FindComponent<ComponentMount>();
+		return null;
 	}
 
         private static IEnumerable<FieldInfo> GetSubsystemRandomFields(Type type)

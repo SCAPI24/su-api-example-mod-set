@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using Engine;
 using Comms;
 
@@ -23,6 +23,7 @@ namespace ScMultiplayer
         public bool IsCrouching;
         public bool IsFlying;
         public bool IsRiding;
+        public ushort MountEntityId;
         public bool IsGrounded;
         public int ActiveSlotIndex;
         public int HandItemValue;
@@ -39,7 +40,8 @@ namespace ScMultiplayer
             Vector3 position, Quaternion rotation, Vector3 velocity, Vector2 lookAngles,
             Vector2? walkOrder, float jumpOrder, float pokingPhase,
             bool attackOrder, bool rowLeftOrder, bool rowRightOrder,
-            bool isCrouching, bool isFlying, bool isRiding, bool isGrounded,
+            bool isCrouching, bool isFlying, bool isRiding, ushort mountEntityId,
+            bool isGrounded,
             int activeSlotIndex, int handItemValue, int handItemCount,
             Vector3 itemOffset, Vector3 itemRotation, float aimHandAngle,
             int[] slotValues, int[] slotCounts)
@@ -59,6 +61,7 @@ namespace ScMultiplayer
             IsCrouching = isCrouching;
             IsFlying = isFlying;
             IsRiding = isRiding;
+            MountEntityId = mountEntityId;
             IsGrounded = isGrounded;
             ActiveSlotIndex = activeSlotIndex;
             HandItemValue = handItemValue;
@@ -92,6 +95,7 @@ namespace ScMultiplayer
             IsCrouching = reader.ReadBoolean();
             IsFlying = reader.ReadBoolean();
             IsRiding = reader.ReadBoolean();
+            MountEntityId = (ushort)reader.ReadPackedInt32();
             IsGrounded = reader.ReadBoolean();
             ActiveSlotIndex = reader.ReadInt32();
             HandItemValue = reader.ReadInt32();
@@ -132,6 +136,7 @@ namespace ScMultiplayer
             writer.WriteBoolean(IsCrouching);
             writer.WriteBoolean(IsFlying);
             writer.WriteBoolean(IsRiding);
+            writer.WritePackedInt32(MountEntityId);
             writer.WriteBoolean(IsGrounded);
             writer.WriteInt32(ActiveSlotIndex);
             writer.WriteInt32(HandItemValue);

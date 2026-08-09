@@ -1217,6 +1217,7 @@ namespace ScMultiplayer
                     UpdateRemoteFogPresentation(dt);
                 }
                 UpdateRemoteAnimalPresentations(dt);
+                UpdateRemoteMountPresentations(dt);
                 UpdateRemotePickablePresentations(dt);
                 UpdateRemotePlayerPresentations(dt);
                 UpdateRemoteDigPresentations();
@@ -2705,6 +2706,7 @@ namespace ScMultiplayer
                 if (fullSync) m_fullWorldObjectsSyncTime -= WorldObjectFullSyncInterval;
                 if (IsHost) SendWorldObjects(fullSync);
                 else QueueEndOfFrameAction(MaintainClientWorldObjects);
+                if (IsHost) SendMountUpdates();
             }
             m_fullAnimalSyncTime += tickDuration;
             if (IsHost && pulse16Hz)

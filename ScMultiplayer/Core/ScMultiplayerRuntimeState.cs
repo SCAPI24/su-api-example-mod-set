@@ -305,6 +305,8 @@ namespace ScMultiplayer
         private double m_nextRemoteCreatureSpawnTime;
         private int m_remoteCreatureSpawnCursor;
         private Project m_clientWorldObjectsProject;
+        private const ushort MountEntityIdStart = 0x8000;
+        private ushort m_nextMountId = MountEntityIdStart;
         private readonly ConcurrentQueue<QueuedFrameAction> m_endOfFrameActions =
             new ConcurrentQueue<QueuedFrameAction>();
         // Source: ScMultiplayer.cs:ScMultiplayer.Client_GameStep
@@ -328,6 +330,14 @@ namespace ScMultiplayer
         private readonly Dictionary<ushort, string> m_remoteAnimalTemplates = new Dictionary<ushort, string>();
         private readonly Dictionary<ushort, RemoteAnimalSyncState> m_remoteAnimalSync =
             new Dictionary<ushort, RemoteAnimalSyncState>();
+        private readonly Dictionary<Entity, ushort> m_hostMountIds =
+            new Dictionary<Entity, ushort>();
+        private readonly Dictionary<ushort, Entity> m_remoteMounts =
+            new Dictionary<ushort, Entity>();
+        private readonly Dictionary<ushort, string> m_remoteMountTemplates =
+            new Dictionary<ushort, string>();
+        private readonly Dictionary<ushort, RemoteMountSyncState> m_remoteMountSync =
+            new Dictionary<ushort, RemoteMountSyncState>();
         private readonly HashSet<ushort> m_loggedRemoteAnimalFailures = new HashSet<ushort>();
         private int m_lastFullAnimalSnapshotTick;
         private readonly Dictionary<Pickable, ushort> m_hostPickableIds = new Dictionary<Pickable, ushort>();
@@ -409,6 +419,8 @@ namespace ScMultiplayer
             new Dictionary<int, Point2>();
         private readonly Dictionary<int, int> m_hostTerrainInterestRadii =
             new Dictionary<int, int>();
+        private readonly Dictionary<int, int> m_hostTerrainReportedInterestRadii =
+            new Dictionary<int, int>();
         private long m_hostTerrainSequence;
         private long m_pendingTerrainSequenceBaseline;
         private volatile bool m_clientTerrainRecoveryActive;
@@ -455,6 +467,10 @@ namespace ScMultiplayer
         private readonly HashSet<Point2> m_clientTerrainInterestChunks =
             new HashSet<Point2>();
         private bool m_clientTerrainInterestInitialized;
+        private Point2 m_clientTerrainInterestCenter;
+        private int m_clientTerrainInterestRadius;
+        private bool m_clientTerrainInterestUpdateSent;
+        private int m_lastSentClientTerrainInterestRadius;
         private readonly Dictionary<Point2, long> m_clientTerrainChunkFailedRevisions =
             new Dictionary<Point2, long>();
         private double m_nextTerrainChunkSyncRequestTime;
@@ -710,6 +726,7 @@ namespace ScMultiplayer
         private const float PlayerRecordSaveInterval = 5f;
         private const float TerrainMergeInterval = 5f;
         private const double TerrainChunkRevisionProbeInterval = 1.0;
+        private const int MaximumTerrainInterestRadius = 32;
         private const int TerrainCatchUpBatchSize = 48;
         // Source: Mod/ScMultiplayer/Modules/Terrain/ScMultiplayerTerrainHandlers.cs:
         // PublishTerrainChanges

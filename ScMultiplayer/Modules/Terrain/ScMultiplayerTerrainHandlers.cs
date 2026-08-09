@@ -66,8 +66,7 @@ namespace ScMultiplayer
         {
             if (!IsHost || project == null) return;
             SubsystemSky sky = project.FindSubsystem<SubsystemSky>(false);
-            int radius = Math.Max(1, (int)Math.Ceiling(
-                MathUtils.Min(sky?.VisibilityRange ?? 64f, 64f) / 16f));
+            int defaultRadius = GetTerrainInterestRadius(sky?.VisibilityRange ?? 64f);
             var activeClients = new HashSet<int>();
             foreach (KeyValuePair<int, PlayerData> item in m_networkPlayerData.ToArray())
             {
@@ -77,6 +76,10 @@ namespace ScMultiplayer
                     continue;
                 activeClients.Add(clientId);
                 Point2 center = Terrain.ToChunk(player.ComponentPlayer.ComponentBody.Position.XZ);
+                int radius = m_hostTerrainReportedInterestRadii.TryGetValue(clientId,
+                    out int reportedRadius)
+                    ? Math.Max(1, Math.Min(MaximumTerrainInterestRadius, reportedRadius))
+                    : defaultRadius;
                 if (m_hostTerrainInterestChunks.TryGetValue(clientId,
                         out HashSet<Point2> previous) &&
                     m_hostTerrainInterestCenters.TryGetValue(clientId, out Point2 oldCenter) &&
@@ -135,6 +138,7 @@ namespace ScMultiplayer
                 m_hostTerrainInterestChunks.Remove(clientId);
                 m_hostTerrainInterestCenters.Remove(clientId);
                 m_hostTerrainInterestRadii.Remove(clientId);
+                m_hostTerrainReportedInterestRadii.Remove(clientId);
             }
         }
 
@@ -354,8 +358,19 @@ namespace ScMultiplayer
             Point2 coordinates = new Point2(message.ChunkX, message.ChunkZ);
             if (IsHost)
             {
-                if (message.Stage != TerrainChunkSyncStage.Request || sourceClientId <= 0 ||
-                    !m_networkPlayerData.ContainsKey(sourceClientId))
+                if (sourceClientId <= 0 || !m_networkPlayerData.ContainsKey(sourceClientId))
+                    return;
+                if (message.Stage == TerrainChunkSyncStage.Interest)
+                {
+                    if (message.InterestRadius < 1 ||
+                        message.InterestRadius > MaximumTerrainInterestRadius)
+                        return;
+                    m_hostTerrainReportedInterestRadii[sourceClientId] =
+                        message.InterestRadius;
+                    UpdateHostTerrainInterestTable(GameManager.Project);
+                    return;
+                }
+                if (message.Stage != TerrainChunkSyncStage.Request)
                     return;
                 SendHostTerrainChunkSync(sourceClientId, coordinates,
                     Math.Max(message.KnownRevision, 0L));
