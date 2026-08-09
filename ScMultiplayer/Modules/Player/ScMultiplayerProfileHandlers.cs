@@ -104,6 +104,22 @@ namespace ScMultiplayer
                 position, respawn);
         }
 
+        // Source: Survivalcraft/Game/ComponentSleep.cs:ComponentSleep.Sleep
+        // Network identity records are independent from the base game's fixed local player slots.
+        // A successful host sleep establishes the next death respawn anchor, not the logout point.
+        private void UpdateNetworkPlayerRespawnAnchor(int clientId, PlayerData playerData)
+        {
+            if (!IsHost || clientId <= 0 || playerData?.ComponentPlayer?.ComponentBody == null ||
+                !m_clientRecordKeys.TryGetValue(clientId, out string recordKey))
+                return;
+            Vector3 anchor = playerData.ComponentPlayer.ComponentBody.Position;
+            playerData.SpawnPosition = anchor;
+            NetworkPlayerRecord record = CapturePlayerRecord(playerData);
+            record.SpawnPosition = anchor;
+            m_playerRecords[recordKey] = record;
+            m_playerRecordsDirty = true;
+        }
+
         // Source: Survivalcraft/Game/GameManager.cs:GameManager.SaveProject
         // The multiplayer file is a sibling of Project.xml and is ignored by the base game.
         private void EnsurePlayerRecordsLoaded()
