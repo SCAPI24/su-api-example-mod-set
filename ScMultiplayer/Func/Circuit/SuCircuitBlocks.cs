@@ -322,7 +322,14 @@ namespace ScMultiplayer
             // Keep the client presentation-only. The host/offline path mirrors the original
             // edge latch and invokes ComponentDispenser directly so a replaced block cannot
             // lose the native side effect while the network circuit wrapper is active.
-            if (ScMultiplayer.client?.IsConnected != true || ScMultiplayer.IsHost)
+            // Source: Mod/ScMultiplayer/Modules/Session/ScMultiplayerLifecycle.cs:
+            // connectionSM.OnPlayingEnter
+            // A host can briefly be reclassified while the transport enters Playing. Client
+            // zero is still the authoritative endpoint, so do not suppress the native world
+            // effect merely because the transient host flag has not caught up yet.
+            bool worldEffectAuthority = ScMultiplayer.IsHost ||
+                ScMultiplayer.client?.ClientID == 0;
+            if (ScMultiplayer.client?.IsConnected != true || worldEffectAuthority)
             {
                 if (CalculateHighInputsCount() > 0)
                 {
