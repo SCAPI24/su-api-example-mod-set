@@ -20,10 +20,14 @@ namespace ScMultiplayer
         public int DropCount;
         public Vector3 DropPosition;
         public Vector3 DropVelocity;
+        public bool HasSlotDelta;
+        public bool HasPlayerSlotDelta;
+        public int[] SlotIndices = Array.Empty<int>();
         public int[] SlotValues = Array.Empty<int>();
         public int[] SlotCounts = Array.Empty<int>();
         public int[] BaseSlotValues = Array.Empty<int>();
         public int[] BaseSlotCounts = Array.Empty<int>();
+        public int[] PlayerSlotIndices = Array.Empty<int>();
         public int[] PlayerBaseSlotValues = Array.Empty<int>();
         public int[] PlayerBaseSlotCounts = Array.Empty<int>();
         public int[] PlayerSlotValues = Array.Empty<int>();
@@ -50,8 +54,14 @@ namespace ScMultiplayer
                 DropPosition = reader.ReadVector3(reader);
                 DropVelocity = reader.ReadVector3(reader);
             }
+            HasSlotDelta = reader.ReadBoolean();
+            if (HasSlotDelta)
+                ReadIndices(reader, out SlotIndices);
             ReadSlots(reader, out SlotValues, out SlotCounts);
             ReadSlots(reader, out BaseSlotValues, out BaseSlotCounts);
+            HasPlayerSlotDelta = reader.ReadBoolean();
+            if (HasPlayerSlotDelta)
+                ReadIndices(reader, out PlayerSlotIndices);
             ReadSlots(reader, out PlayerBaseSlotValues, out PlayerBaseSlotCounts);
             ReadSlots(reader, out PlayerSlotValues, out PlayerSlotCounts);
             if (reader.Position < reader.Length)
@@ -77,8 +87,14 @@ namespace ScMultiplayer
                 writer.WriteVector3(writer, DropPosition);
                 writer.WriteVector3(writer, DropVelocity);
             }
+            writer.WriteBoolean(HasSlotDelta);
+            if (HasSlotDelta)
+                WriteIndices(writer, SlotIndices);
             WriteSlots(writer, SlotValues, SlotCounts);
             WriteSlots(writer, BaseSlotValues, BaseSlotCounts);
+            writer.WriteBoolean(HasPlayerSlotDelta);
+            if (HasPlayerSlotDelta)
+                WriteIndices(writer, PlayerSlotIndices);
             WriteSlots(writer, PlayerBaseSlotValues, PlayerBaseSlotCounts);
             WriteSlots(writer, PlayerSlotValues, PlayerSlotCounts);
             writer.WriteInt32(OwnerClientId);
@@ -106,6 +122,22 @@ namespace ScMultiplayer
                 writer.WriteInt32(values[i]);
                 writer.WriteInt32(counts[i]);
             }
+        }
+
+        private static void ReadIndices(SuReader reader, out int[] indices)
+        {
+            int count = reader.ReadPackedInt32();
+            indices = new int[count];
+            for (int i = 0; i < count; i++)
+                indices[i] = reader.ReadInt32();
+        }
+
+        private static void WriteIndices(SuWriter writer, int[] indices)
+        {
+            int count = indices?.Length ?? 0;
+            writer.WritePackedInt32(count);
+            for (int i = 0; i < count; i++)
+                writer.WriteInt32(indices[i]);
         }
     }
 }

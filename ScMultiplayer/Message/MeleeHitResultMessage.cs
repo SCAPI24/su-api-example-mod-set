@@ -7,12 +7,20 @@ namespace ScMultiplayer
     [Serializable]
     public class MeleeHitResultMessage : Message
     {
+        public enum MeleeHitResultKind : byte
+        {
+            Rejected = 0,
+            Miss = 1,
+            Hit = 2
+        }
+
         public int RequestSequence;
         public int ServerTick;
         public Vector3 HitPoint;
         public Vector3 HitDirection;
         public Vector3 AttackerVelocity;
         public float Damage;
+        public MeleeHitResultKind ResultKind;
 
         public MeleeHitResultMessage()
         {
@@ -27,6 +35,7 @@ namespace ScMultiplayer
             HitDirection = hitDirection;
             AttackerVelocity = attackerVelocity;
             Damage = damage;
+            ResultKind = damage > 0f ? MeleeHitResultKind.Hit : MeleeHitResultKind.Miss;
         }
 
         protected override void Read(SuReader reader)
@@ -37,6 +46,9 @@ namespace ScMultiplayer
             HitDirection = reader.ReadVector3(reader);
             AttackerVelocity = reader.ReadVector3(reader);
             Damage = reader.ReadSingle();
+            ResultKind = reader.Position < reader.Length
+                ? (MeleeHitResultKind)reader.ReadByte()
+                : (Damage > 0f ? MeleeHitResultKind.Hit : MeleeHitResultKind.Miss);
         }
 
         protected override void Write(SuWriter writer)
@@ -47,6 +59,7 @@ namespace ScMultiplayer
             writer.WriteVector3(writer, HitDirection);
             writer.WriteVector3(writer, AttackerVelocity);
             writer.WriteSingle(Damage);
+            writer.WriteByte((byte)ResultKind);
         }
     }
 }

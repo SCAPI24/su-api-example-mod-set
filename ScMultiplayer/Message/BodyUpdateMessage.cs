@@ -35,6 +35,16 @@ namespace ScMultiplayer
 
         public struct BodyItem
         {
+            [Flags]
+            public enum MotionFlag : byte
+            {
+                None = 0,
+                Grounded = 1,
+                GravityEnabled = 2,
+                Immersed = 4,
+                Flying = 8
+            }
+
             public ushort EntityId;
             public Vector3 Position;
             public Quaternion Rotation;
@@ -55,6 +65,7 @@ namespace ScMultiplayer
             public int SimulationSeed;
             public string ShapeshiftTarget;
             public float Health;
+            public MotionFlag MotionFlags;
             // Source: Survivalcraft/Game/ComponentHealth.cs:ComponentHealth.Update
             public int DamageSequence;
             public ChangeFlag Flags;
@@ -88,6 +99,7 @@ namespace ScMultiplayer
                     item.JumpOrder = reader.ReadSingle();
                     item.AttackOrder = reader.ReadBoolean();
                     item.FeedOrder = reader.ReadBoolean();
+                    item.MotionFlags = (BodyItem.MotionFlag)reader.ReadByte();
                 }
                 if (item.Flags.HasFlag(ChangeFlag.Template))
                     item.TemplateName = reader.ReadString();
@@ -138,6 +150,7 @@ namespace ScMultiplayer
                     writer.WriteSingle(item.JumpOrder);
                     writer.WriteBoolean(item.AttackOrder);
                     writer.WriteBoolean(item.FeedOrder);
+                    writer.WriteByte((byte)item.MotionFlags);
                 }
                 if (item.Flags.HasFlag(ChangeFlag.Template))
                     writer.WriteString(item.TemplateName ?? string.Empty);

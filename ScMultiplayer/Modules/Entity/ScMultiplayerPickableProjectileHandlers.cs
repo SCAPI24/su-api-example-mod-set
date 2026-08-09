@@ -283,7 +283,6 @@ namespace ScMultiplayer
                         accepted = pickable.Count < previousCount;
                         if (accepted)
                         {
-                            m_forceHostInventorySync = true;
                             MarkHostInventoryAuthoritative(sourceClientId);
                             response.SlotValues = CaptureInventoryValues(inventory);
                             response.SlotCounts = CaptureInventoryCounts(inventory);
@@ -327,7 +326,6 @@ namespace ScMultiplayer
                 return;
             }
             if (sourceClientId != 0) return;
-            MaintainClientWorldObjects();
             switch (message.Action)
             {
                 case PickableSyncMessage.PickAction.Create:

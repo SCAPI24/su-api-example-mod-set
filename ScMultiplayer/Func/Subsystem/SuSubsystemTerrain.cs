@@ -10,12 +10,12 @@ namespace ScMultiplayer
 {
     public class SuSubsystemTerrain : SubsystemTerrain, IUpdateable
     {
-        private const int MaximumNetworkTerrainCellsPerFrame = 128;
+        private const int MaximumNetworkTerrainCellsPerFrame = 2048;
         // Source: ScMultiplayer.cs:ScMultiplayer.ProcessEndOfFrameActions
         // Checkpoint input is now dispatched above the 40-request/s producer rate. Keep its
         // landing budget above the old 64-cell equilibrium so a burst can drain without creating
         // another verification round, while the normal terrain budget remains unchanged.
-        private const int MaximumNetworkChunkCheckpointCellsPerFrame = 128;
+        private const int MaximumNetworkChunkCheckpointCellsPerFrame = 2048;
         private const int MaximumDeferredNetworkTerrainCells = 8192;
         private const int MaximumDeferredNetworkRetriesPerFrame = 128;
         private const double DeferredNetworkCellRetryInterval = 0.1;
@@ -39,6 +39,14 @@ namespace ScMultiplayer
             m_receivedChunkCheckpoints = new ConcurrentQueue<GameModifiedCellsMessage>();
         private static int m_networkStateGeneration;
         private static volatile bool m_sequenceBatchInProgress;
+        private static long m_pendingTerrainBlockCount;
+        private static long m_terrainWindowReceivedCount;
+        private static long m_terrainReceivedSinceSample;
+        private static long m_terrainConsumedSinceSample;
+        private static long m_terrainReceivedPerSecond;
+        private static long m_terrainConsumedPerSecond;
+        private static double m_terrainStatsSampleTime;
+        private static readonly object m_terrainStatsLock = new object();
         private readonly Dictionary<Point3, int> m_networkReceivedCellValues =
             new Dictionary<Point3, int>();
         private readonly Dictionary<Point3, int> m_appliedCellTicks = new Dictionary<Point3, int>();
@@ -95,6 +103,51 @@ namespace ScMultiplayer
 
         internal static int PendingChunkCheckpointCount => m_receivedChunkCheckpoints.Count;
 
+        internal static void ReadBlockStats(out long pending, out long windowReceived,
+            out int receivedPerSecond, out int consumedPerSecond)
+        {
+            lock (m_terrainStatsLock)
+            {
+                double now = Time.RealTime;
+                if (m_terrainStatsSampleTime <= 0.0)
+                    m_terrainStatsSampleTime = now;
+                else if (now - m_terrainStatsSampleTime >= 1.0)
+                {
+                    m_terrainReceivedPerSecond = Interlocked.Exchange(
+                        ref m_terrainReceivedSinceSample, 0L);
+                    m_terrainConsumedPerSecond = Interlocked.Exchange(
+                        ref m_terrainConsumedSinceSample, 0L);
+                    m_terrainStatsSampleTime = now;
+                    if (Interlocked.Read(ref m_pendingTerrainBlockCount) <
+                        m_terrainConsumedPerSecond)
+                        Interlocked.Exchange(ref m_terrainWindowReceivedCount, 0L);
+                }
+                pending = Math.Max(0L, Interlocked.Read(ref m_pendingTerrainBlockCount));
+                windowReceived = Math.Max(0L,
+                    Interlocked.Read(ref m_terrainWindowReceivedCount));
+                receivedPerSecond = (int)Math.Min(int.MaxValue,
+                    Math.Max(0L, m_terrainReceivedPerSecond));
+                consumedPerSecond = (int)Math.Min(int.MaxValue,
+                    Math.Max(0L, m_terrainConsumedPerSecond));
+            }
+        }
+
+        private static void RecordTerrainReceived(int count)
+        {
+            if (count <= 0) return;
+            Interlocked.Add(ref m_pendingTerrainBlockCount, count);
+            Interlocked.Add(ref m_terrainWindowReceivedCount, count);
+            Interlocked.Add(ref m_terrainReceivedSinceSample, count);
+        }
+
+        private static void RecordTerrainConsumed()
+        {
+            long remaining = Interlocked.Decrement(ref m_pendingTerrainBlockCount);
+            if (remaining < 0L)
+                Interlocked.Exchange(ref m_pendingTerrainBlockCount, 0L);
+            Interlocked.Increment(ref m_terrainConsumedSinceSample);
+        }
+
         public static void EnqueueNetworkBatch(GameModifiedCellsMessage message)
         {
             if (message == null) return;
@@ -107,12 +160,14 @@ namespace ScMultiplayer
                     // remain contiguous without replaying obsolete intermediate terrain states.
                     if (message.ModifiedCells == null || message.ModifiedCells.Count == 0)
                         message.ModifiedCells = new Dictionary<Point3, bool>();
-                    m_receivedSequencedBatches.TryAdd(message.Sequence, message);
+                    if (m_receivedSequencedBatches.TryAdd(message.Sequence, message))
+                        RecordTerrainReceived(message.ModifiedCells?.Count ?? 0);
                 }
             }
             else
             {
                 m_receivedRepairs.Enqueue(message);
+                RecordTerrainReceived(message.ModifiedCells?.Count ?? 0);
             }
         }
 
@@ -125,12 +180,14 @@ namespace ScMultiplayer
                 message.ChunkCheckpointRevision > 0)
             {
                 m_receivedChunkCheckpoints.Enqueue(message);
+                RecordTerrainReceived(message.ModifiedCells?.Count ?? 0);
                 return;
             }
             if ((message.ModifiedCells?.Count ?? 0) <= 8)
                 m_receivedPriorityRepairs.Enqueue(message);
             else
                 m_receivedRepairs.Enqueue(message);
+            RecordTerrainReceived(message.ModifiedCells?.Count ?? 0);
         }
 
         // Source: ScMultiplayer.cs:ScMultiplayer.HandleGamePakWorldMessage
@@ -198,6 +255,16 @@ namespace ScMultiplayer
             }
             LastAppliedTerrainTick = 0;
             LastAppliedTerrainSequence = 0;
+            Interlocked.Exchange(ref m_pendingTerrainBlockCount, 0L);
+            Interlocked.Exchange(ref m_terrainWindowReceivedCount, 0L);
+            Interlocked.Exchange(ref m_terrainReceivedSinceSample, 0L);
+            Interlocked.Exchange(ref m_terrainConsumedSinceSample, 0L);
+            lock (m_terrainStatsLock)
+            {
+                m_terrainReceivedPerSecond = 0L;
+                m_terrainConsumedPerSecond = 0L;
+                m_terrainStatsSampleTime = Time.RealTime;
+            }
             Interlocked.Increment(ref m_networkStateGeneration);
         }
 
@@ -239,6 +306,9 @@ namespace ScMultiplayer
             // TerrainUpdater runs fluid, electricity, fire, piston, weather and pollable block
             // behavior changes. Capture the modification dictionary after it completes, before
             // ProcessModifiedCells clears it, so every ChangeCell/DestroyCell result is sent.
+            if (!ScMultiplayer.IsHost)
+                (GameManager.Project?.FindSubsystem<SubsystemWeather>(false)
+                    as SuSubsystemWeather)?.DisableClientPersistentTerrainHandlers();
             TerrainUpdater.Update();
             if (ScMultiplayer.client?.IsConnected == true && ScMultiplayer.IsHost)
             {
@@ -266,7 +336,7 @@ namespace ScMultiplayer
         // A wire face or mounted LED can be changed by a neighbor callback which then changes
         // another wire face. Publish the final host values for the whole bounded closure instead
         // of exposing intermediate states as separate terrain sequences.
-        private void PublishHostModifiedCellClosure()
+        private void PublishHostModifiedCellClosure(bool immediate = false)
         {
             var hostChanges = new Dictionary<Point3, bool>();
             int passes = 0;
@@ -288,7 +358,27 @@ namespace ScMultiplayer
             foreach (KeyValuePair<Point3, bool> item in m_modifiedCells)
                 hostChanges[item.Key] = item.Value;
             if (hostChanges.Count > 0)
-                ScMultiplayer.currentInstance?.PublishTerrainChanges(hostChanges);
+                ScMultiplayer.currentInstance?.PublishTerrainChanges(hostChanges, immediate);
+        }
+
+        // Source: Survivalcraft/Game/SubsystemTerrain.cs:SubsystemTerrain.ProcessModifiedCells
+        // Network actions execute outside the normal terrain update. Flush their bounded native
+        // neighbor callback closure immediately so unsupported blocks and mounted elements are
+        // included in the same authoritative result instead of waiting for a later frame.
+        internal void FlushHostModifiedCellClosureForNetworkAction()
+        {
+            if (ScMultiplayer.client?.IsConnected != true || !ScMultiplayer.IsHost ||
+                !EnsureModifiedCellsBound())
+                return;
+            HostTerrainAuthority.BeginNetworkMutationClosure();
+            try
+            {
+                PublishHostModifiedCellClosure(immediate: true);
+            }
+            finally
+            {
+                HostTerrainAuthority.EndNetworkMutationClosure();
+            }
         }
 
         private void PublishAllModifiedCells()
@@ -580,18 +670,25 @@ namespace ScMultiplayer
             // network cell as applied until its chunk exists, otherwise a later chunk load
             // restores the stale snapshot permanently.
             TerrainChunk chunk = Terrain.GetChunkAtCell(point.X, point.Z);
-            if (chunk == null || chunk.State < TerrainChunkState.Valid)
+            if (chunk == null || chunk.State < TerrainChunkState.InvalidLight)
                 return false;
             // Source: ScMultiplayer.HandleTerrainChunkSyncMessage
-            // A directed chunk checkpoint is the host's final value for this cell. It must
-            // overwrite local bookkeeping from an earlier live sequence; otherwise a received
-            // but unsuccessfully applied update can make its own repair a no-op forever.
-            if (!isChunkCheckpoint && sequence > 0 && m_appliedCellSequences.TryGetValue(point,
+            // A directed chunk checkpoint may refresh bookkeeping from an older live sequence,
+            // but it must never overwrite a newer live write that already reached the client.
+            // Otherwise a delayed checkpoint can briefly resurrect terrain that the host has
+            // already replaced.
+            if (sequence > 0 && m_appliedCellSequences.TryGetValue(point,
                     out long appliedSequence) && sequence <= appliedSequence)
+            {
+                RecordTerrainConsumed();
                 return true;
+            }
             if (!isChunkCheckpoint && m_appliedCellTicks.TryGetValue(point, out int appliedTick) &&
                 tick < appliedTick)
+            {
+                RecordTerrainConsumed();
                 return true;
+            }
             if (sequence > 0)
                 m_appliedCellSequences[point] = sequence;
             m_appliedCellTicks[point] = tick;
@@ -610,6 +707,7 @@ namespace ScMultiplayer
                     point, sequence);
             m_pendingNetworkGeometryCells.Add(point);
             LastAppliedTerrainTick = Math.Max(LastAppliedTerrainTick, tick);
+            RecordTerrainConsumed();
             return true;
         }
 

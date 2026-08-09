@@ -353,9 +353,9 @@ namespace ScMultiplayer
             m_lastEquipmentSnapshots[client.ClientID] = snapshot;
             m_localEquipmentRevision = m_localEquipmentRevision == int.MaxValue
                 ? 1 : m_localEquipmentRevision + 1;
-            NetworkMessageSender.SendPlayerEquipmentMessage(0, new PlayerEquipmentMessage(
-                client.ClientID, m_localEquipmentRevision, snapshot.ActiveSlotIndex,
-                snapshot.SlotValues, snapshot.SlotCounts, snapshot.Clothes));
+            NetworkMessageSender.SendPlayerEquipmentMessage(0,
+                CreatePlayerEquipmentMessage(client.ClientID, m_localEquipmentRevision,
+                    previous, snapshot));
         }
 
         private void SynchronizeHostEquipment(int clientId, ComponentPlayer player)
@@ -373,14 +373,52 @@ namespace ScMultiplayer
             m_equipmentAuthorityRevisions[clientId] = revision;
             m_lastReceivedEquipmentRevisions[clientId] = revision;
             m_equipmentSynchronizedClients.Add(clientId);
-            BroadcastPlayerEquipment(clientId, revision, snapshot);
+            BroadcastPlayerEquipment(clientId, revision, previous, snapshot);
         }
 
-        private void BroadcastPlayerEquipment(int clientId, int revision, EquipmentSnapshot snapshot)
+        private void BroadcastPlayerEquipment(int clientId, int revision,
+            EquipmentSnapshot snapshot)
         {
-            NetworkMessageSender.SendPlayerEquipmentMessage(-1, new PlayerEquipmentMessage(
-                clientId, revision, snapshot.ActiveSlotIndex, snapshot.SlotValues,
-                snapshot.SlotCounts, snapshot.Clothes));
+            EquipmentSnapshot previous = m_lastEquipmentSnapshots.TryGetValue(clientId,
+                out EquipmentSnapshot value) ? value : null;
+            BroadcastPlayerEquipment(clientId, revision, previous, snapshot);
+        }
+
+        private void BroadcastPlayerEquipment(int clientId, int revision,
+            EquipmentSnapshot previous, EquipmentSnapshot snapshot)
+        {
+            NetworkMessageSender.SendPlayerEquipmentMessage(-1,
+                CreatePlayerEquipmentMessage(clientId, revision, previous, snapshot));
+        }
+
+        // Source: Mod/ScMultiplayer/Message/PlayerEquipmentMessage.cs:PlayerEquipmentMessage
+        private static PlayerEquipmentMessage CreatePlayerEquipmentMessage(int clientId,
+            int revision, EquipmentSnapshot previous, EquipmentSnapshot snapshot)
+        {
+            if (snapshot == null)
+                return new PlayerEquipmentMessage(clientId, revision, -1,
+                    Array.Empty<int>(), Array.Empty<int>(), Array.Empty<int[]>());
+            bool clothesChanged = previous == null ||
+                !ClothesSnapshotsEqual(previous.Clothes, snapshot.Clothes);
+            if (!clothesChanged && previous?.SlotValues != null &&
+                previous.SlotCounts != null &&
+                TryBuildInventoryDelta(previous.SlotValues, previous.SlotCounts,
+                    snapshot.SlotValues, snapshot.SlotCounts, out int[] indices,
+                    out _, out _, out int[] values, out int[] counts))
+            {
+                return new PlayerEquipmentMessage(clientId, revision,
+                    snapshot.ActiveSlotIndex, indices, values, counts,
+                    CreateEmptyClothesSnapshot());
+            }
+            if (!clothesChanged && previous != null)
+            {
+                return new PlayerEquipmentMessage(clientId, revision,
+                    snapshot.ActiveSlotIndex, Array.Empty<int>(), Array.Empty<int>(),
+                    Array.Empty<int>(), CreateEmptyClothesSnapshot());
+            }
+            return new PlayerEquipmentMessage(clientId, revision,
+                snapshot.ActiveSlotIndex, snapshot.SlotValues, snapshot.SlotCounts,
+                snapshot.Clothes);
         }
 
         private void HandlePlayerEquipmentMessage(PlayerEquipmentMessage message, int sourceClientId)
@@ -395,6 +433,8 @@ namespace ScMultiplayer
                     message.Revision <= previousRevision) return;
 
                 m_lastClientEquipmentRevisions[sourceClientId] = message.Revision;
+                m_lastEquipmentSnapshots.TryGetValue(sourceClientId,
+                    out EquipmentSnapshot previousSnapshot);
                 ApplyEquipmentSnapshot(playerData.ComponentPlayer, message);
                 // Source: Survivalcraft/Game/ComponentInventoryBase.cs:
                 // ComponentInventoryBase.AddSlotItems
@@ -418,7 +458,8 @@ namespace ScMultiplayer
                 m_equipmentAuthorityRevisions[sourceClientId] = revision;
                 m_lastReceivedEquipmentRevisions[sourceClientId] = revision;
                 m_equipmentSynchronizedClients.Add(sourceClientId);
-                BroadcastPlayerEquipment(sourceClientId, revision, snapshot);
+                BroadcastPlayerEquipment(sourceClientId, revision, previousSnapshot,
+                    snapshot);
                 if (m_clientRecordKeys.TryGetValue(sourceClientId, out string recordKey))
                 {
                     m_playerRecords[recordKey] = CapturePlayerRecord(playerData);
@@ -523,9 +564,15 @@ namespace ScMultiplayer
             {
                 if (message.ActiveSlotIndex >= 0 && message.ActiveSlotIndex < inventory.SlotsCount)
                     inventory.ActiveSlotIndex = message.ActiveSlotIndex;
-                ApplyInventory(inventory, message.SlotValues, message.SlotCounts);
+                if (message.HasDelta)
+                    ApplyInventoryDelta(inventory, message.SlotIndices,
+                        message.SlotValues, message.SlotCounts);
+                else
+                    ApplyInventory(inventory, message.SlotValues, message.SlotCounts);
             }
-            ApplyClothes(player, message.Clothes);
+            if (!message.HasDelta || !ClothesSnapshotsEqual(message.Clothes,
+                    CreateEmptyClothesSnapshot()))
+                ApplyClothes(player, message.Clothes);
         }
 
         private static bool EquipmentSnapshotsEqual(EquipmentSnapshot left, EquipmentSnapshot right)
@@ -535,6 +582,20 @@ namespace ScMultiplayer
                 !ArraysEqual(left.SlotCounts, right.SlotCounts)) return false;
             int[][] leftClothes = left.Clothes ?? Array.Empty<int[]>();
             int[][] rightClothes = right.Clothes ?? Array.Empty<int[]>();
+            if (leftClothes.Length != rightClothes.Length) return false;
+            for (int i = 0; i < leftClothes.Length; i++)
+                if (!ArraysEqual(leftClothes[i], rightClothes[i])) return false;
+            return true;
+        }
+
+        private static int[][] CreateEmptyClothesSnapshot() =>
+            new[] { Array.Empty<int>(), Array.Empty<int>(), Array.Empty<int>(),
+                Array.Empty<int>() };
+
+        private static bool ClothesSnapshotsEqual(int[][] left, int[][] right)
+        {
+            int[][] leftClothes = left ?? Array.Empty<int[]>();
+            int[][] rightClothes = right ?? Array.Empty<int[]>();
             if (leftClothes.Length != rightClothes.Length) return false;
             for (int i = 0; i < leftClothes.Length; i++)
                 if (!ArraysEqual(leftClothes[i], rightClothes[i])) return false;

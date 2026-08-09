@@ -8,7 +8,7 @@ namespace ScMultiplayer.Core
     {
         public AuthoritativePlayerStateSnapshot(float health, float air, float food,
             float stamina, float sleep, float temperature, float targetTemperature,
-            float wetness, int wholeLevel, bool isSleeping)
+            float wetness, float level, bool isSleeping)
         {
             Health = health;
             Air = air;
@@ -18,7 +18,7 @@ namespace ScMultiplayer.Core
             Temperature = temperature;
             TargetTemperature = targetTemperature;
             Wetness = wetness;
-            WholeLevel = wholeLevel;
+            Level = level;
             IsSleeping = isSleeping;
         }
 
@@ -30,7 +30,7 @@ namespace ScMultiplayer.Core
         public float Temperature { get; }
         public float TargetTemperature { get; }
         public float Wetness { get; }
-        public int WholeLevel { get; }
+        public float Level { get; }
         public bool IsSleeping { get; }
 
         public bool HasMeaningfulChangeFrom(AuthoritativePlayerStateSnapshot previous)
@@ -43,7 +43,8 @@ namespace ScMultiplayer.Core
                 Math.Abs(Temperature - previous.Temperature) >= 0.1f ||
                 Math.Abs(TargetTemperature - previous.TargetTemperature) >= 0.1f ||
                 Math.Abs(Wetness - previous.Wetness) >= 0.02f ||
-                WholeLevel != previous.WholeLevel || IsSleeping != previous.IsSleeping;
+                Math.Abs(Level - previous.Level) > 0.001f ||
+                IsSleeping != previous.IsSleeping;
         }
     }
 }

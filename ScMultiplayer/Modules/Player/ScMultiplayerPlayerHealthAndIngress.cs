@@ -90,7 +90,7 @@ namespace ScMultiplayer
             return new AuthoritativePlayerStateSnapshot(player.ComponentHealth.Health,
                 player.ComponentHealth.Air, vital.Food, vital.Stamina, vital.Sleep,
                 vital.Temperature, targetTemperature, vital.Wetness,
-                (int)MathUtils.Floor(MathUtils.Max(player.PlayerData.Level, 1f)),
+                MathUtils.Max(player.PlayerData.Level, 1f),
                 player.ComponentSleep?.IsSleeping == true);
         }
 
@@ -1242,8 +1242,9 @@ namespace ScMultiplayer
                     continue;
                 if (!TryReserveJoinTransferBytes(null, item.Payload.Length))
                     break;
+                // Leave the final join-control packet room in the critical reserve.
                 if (!TryReserveReliableRelayPackets(targetClientId, estimatedPackets,
-                        joinCritical: true))
+                        joinCritical: false))
                 {
                     RefundJoinTransferBytes(null, item.Payload.Length);
                     continue;
