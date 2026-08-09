@@ -36,6 +36,9 @@ namespace ScMultiplayer
     public sealed class SuDispenserWidget : DispenserWidget
     {
         private readonly ComponentPlayer m_componentPlayer;
+        private int? m_pendingData;
+        private Point3 m_pendingPoint;
+        private double m_pendingSince;
 
         public SuDispenserWidget(IInventory inventory, ComponentDispenser dispenser,
             ComponentPlayer componentPlayer)
@@ -52,17 +55,73 @@ namespace ScMultiplayer
             SubsystemTerrain terrain = GameManager.Project?
                 .FindSubsystem<SubsystemTerrain>(false);
             Point3 point = blockEntity?.Coordinates ?? default;
-            int before = terrain?.Terrain.GetCellValue(point.X, point.Y, point.Z) ?? 0;
-            base.Update();
             if (ScMultiplayer.IsHost || ScMultiplayer.client?.IsConnected != true ||
                 terrain == null || blockEntity == null ||
                 !terrain.Terrain.IsCellValid(point.X, point.Y, point.Z))
+            {
+                base.Update();
                 return;
-            int after = terrain.Terrain.GetCellValue(point.X, point.Y, point.Z);
-            if (Terrain.ReplaceLight(before, 0) == Terrain.ReplaceLight(after, 0)) return;
-            ScMultiplayer.currentInstance?.TrySubmitEditableBlockData(
-                EditableDataKind.Dispenser, point, m_componentPlayer, before,
-                Terrain.ExtractData(after).ToString(System.Globalization.CultureInfo.InvariantCulture));
+            }
+
+            // Source: Survivalcraft/Game/DispenserWidget.cs:DispenserWidget.Update
+            // Keep online clients presentation-only until the host confirms the block data.
+            ButtonWidget dispenseButton = ScMultiplayer.ModManager.ModParentField
+                .GetParentField<ButtonWidget>(this, "m_dispenseButton", typeof(DispenserWidget));
+            ButtonWidget shootButton = ScMultiplayer.ModManager.ModParentField
+                .GetParentField<ButtonWidget>(this, "m_shootButton", typeof(DispenserWidget));
+            CheckboxWidget acceptsDropsBox = ScMultiplayer.ModManager.ModParentField
+                .GetParentField<CheckboxWidget>(this, "m_acceptsDropsBox", typeof(DispenserWidget));
+            int value = terrain.Terrain.GetCellValue(point.X, point.Y, point.Z);
+            int actualData = Terrain.ExtractData(value);
+            if (m_pendingData.HasValue && m_pendingPoint == point)
+            {
+                if (actualData == m_pendingData.Value || Time.RealTime - m_pendingSince > 1.5)
+                    m_pendingData = null;
+            }
+            int displayData = m_pendingData ?? actualData;
+            bool changed = false;
+            if (dispenseButton?.IsClicked == true)
+            {
+                displayData = DispenserBlock.SetMode(displayData, DispenserBlock.Mode.Dispense);
+                changed = true;
+            }
+            if (shootButton?.IsClicked == true)
+            {
+                displayData = DispenserBlock.SetMode(displayData, DispenserBlock.Mode.Shoot);
+                changed = true;
+            }
+            if (acceptsDropsBox?.IsClicked == true)
+            {
+                displayData = DispenserBlock.SetAcceptsDrops(displayData,
+                    !DispenserBlock.GetAcceptsDrops(displayData));
+                changed = true;
+            }
+            if (changed && displayData != actualData &&
+                (!m_pendingData.HasValue || m_pendingData.Value != displayData))
+            {
+                m_pendingData = displayData;
+                m_pendingPoint = point;
+                m_pendingSince = Time.RealTime;
+                ScMultiplayer.currentInstance?.TrySubmitEditableBlockData(
+                    EditableDataKind.Dispenser, point, m_componentPlayer, value,
+                    displayData.ToString(CultureInfo.InvariantCulture));
+            }
+            if (dispenseButton != null)
+                dispenseButton.IsChecked = DispenserBlock.GetMode(displayData) == DispenserBlock.Mode.Dispense;
+            if (shootButton != null)
+                shootButton.IsChecked = DispenserBlock.GetMode(displayData) == DispenserBlock.Mode.Shoot;
+            if (acceptsDropsBox != null)
+                acceptsDropsBox.IsChecked = DispenserBlock.GetAcceptsDrops(displayData);
+            if (!m_componentDispenserIsAdded())
+                ParentWidget?.Children.Remove(this);
+        }
+
+        private bool m_componentDispenserIsAdded()
+        {
+            ComponentDispenser dispenser = ScMultiplayer.ModManager.ModParentField
+                .GetParentField<ComponentDispenser>(this, "m_componentDispenser",
+                    typeof(DispenserWidget));
+            return dispenser?.IsAddedToProject == true;
         }
     }
 

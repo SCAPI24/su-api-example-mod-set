@@ -1828,7 +1828,8 @@ namespace ScMultiplayer
                 kind == EditableDataKind.AdjustableDelay ? AdjustableDelayGateBlock.Index :
                 kind == EditableDataKind.SwitchVoltage ? SwitchBlock.Index :
                 kind == EditableDataKind.ButtonVoltage ? ButtonBlock.Index :
-                kind == EditableDataKind.Piston ? PistonBlock.Index : 0;
+                kind == EditableDataKind.Piston ? PistonBlock.Index :
+                kind == EditableDataKind.Dispenser ? DispenserBlock.Index : 0;
         }
 
         private static bool IsValidEditableDataKind(EditableDataKind kind) =>

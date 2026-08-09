@@ -278,6 +278,17 @@ namespace ScMultiplayer
             IInventory inventory = player?.ComponentMiner?.Inventory;
             if (inventory == null || player.ComponentBody == null) return;
 
+            // Source: Survivalcraft/Game/SubsystemFurnitureBlockBehavior.cs:
+            // SubsystemFurnitureBlockBehavior.ScanDesign
+            // The native dialog has already created the local preview design and pickable.
+            // Convert that edge into one host-authoritative build request before the generic
+            // non-camera pickable filter removes it.
+            if (TrySubmitPendingFurnitureBuild(pickable, player))
+            {
+                pickable.ToRemove = true;
+                return;
+            }
+
             // Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update
             // Q/gamepad drop already sent a request before native prediction creates its pickable.
             if (Time.RealTime <= m_pendingLocalDropPredictionUntil &&
@@ -698,7 +709,7 @@ namespace ScMultiplayer
 
         // Source: Survivalcraft/Game/ComponentBehavior.cs:ComponentBehavior.IsActive
         // Source: Survivalcraft/Game/ComponentHerdBehavior.cs:ComponentHerdBehavior.CallNearbyCreaturesHelp
-        private void SendAdaptiveAnimalUpdates(bool forceFullSnapshot)
+    private void SendAdaptiveAnimalUpdates(bool forceFullSnapshot)
         {
             Project project = GameManager.Project;
             if (project == null || (!forceFullSnapshot && m_hostAnimals.Count == 0)) return;
@@ -1106,5 +1117,71 @@ namespace ScMultiplayer
             return stateName == "Eat" || stateName == "Feed" || stateName == "Peck";
         }
 
+    // Source: Survivalcraft/Game/ComponentMount.cs:ComponentMount.Load
+    // Boats do not contain ComponentCreature, so they are synchronized through the same
+    // authoritative body channel with a separate ID range. This keeps rider binding independent
+    // from the animal-only simulation and lets clients display a moving boat without simulating it.
+    private void SendMountUpdates()
+    {
+        Project project = GameManager.Project;
+        SubsystemBodies subsystemBodies = project?.FindSubsystem<SubsystemBodies>(false);
+        if (subsystemBodies == null) return;
+
+        Entity[] mounts = subsystemBodies.Bodies
+            .Select(body => body?.Entity)
+            .Where(entity => entity?.FindComponent<ComponentMount>() != null &&
+                entity.FindComponent<ComponentPlayer>() == null &&
+                entity.FindComponent<ComponentCreature>() == null)
+            .Distinct()
+            .ToArray();
+        var current = new HashSet<Entity>(mounts);
+        foreach (Entity removed in m_hostMountIds.Keys.Where(entity =>
+            entity == null || !current.Contains(entity) || !entity.IsAddedToProject).ToArray())
+        {
+            ushort id = m_hostMountIds[removed];
+            NetworkMessageSender.SendEntityMessage(new EntityMessage(
+                id, EntityMessage.EntityAction.Remove));
+            m_hostMountIds.Remove(removed);
+        }
+
+        var updates = new List<BodyUpdateMessage.BodyItem>(mounts.Length);
+        foreach (Entity entity in mounts)
+        {
+            bool isNew = !m_hostMountIds.TryGetValue(entity, out ushort id);
+            if (isNew)
+            {
+                id = m_nextMountId++;
+                if (id < MountEntityIdStart) id = m_nextMountId = MountEntityIdStart;
+                m_hostMountIds[entity] = id;
+                NetworkMessageSender.SendEntityMessage(new EntityMessage(
+                    id, EntityMessage.EntityAction.Add,
+                    entity.ValuesDictionary?.DatabaseObject?.Name ?? "Boat"));
+            }
+            ComponentBody body = entity.FindComponent<ComponentBody>();
+            if (body == null) continue;
+            updates.Add(new BodyUpdateMessage.BodyItem
+            {
+                EntityId = id,
+                Flags = BodyUpdateMessage.ChangeFlag.Position |
+                    BodyUpdateMessage.ChangeFlag.Rotation |
+                    BodyUpdateMessage.ChangeFlag.Velocity |
+                    (isNew ? BodyUpdateMessage.ChangeFlag.Template :
+                        BodyUpdateMessage.ChangeFlag.None),
+                Position = body.Position,
+                Rotation = body.Rotation,
+                Velocity = body.Velocity,
+                TemplateName = entity.ValuesDictionary?.DatabaseObject?.Name ?? "Boat"
+            });
+        }
+        if (updates.Count > 0)
+        {
+            NetworkMessageSender.SendBodyUpdateMessage(new BodyUpdateMessage
+            {
+                ServerTick = client.Step,
+                IsFullSnapshot = false,
+                Bodies = updates
+            });
+        }
     }
+}
 }
