@@ -304,9 +304,6 @@ namespace ScMultiplayer
 
     public sealed class SuDispenserElectricElement : DispenserElectricElement
     {
-        private bool m_networkDispenseAllowed = true;
-        private double? m_networkLastDispenseTime;
-
         public SuDispenserElectricElement(SubsystemElectricity subsystemElectricity,
             Point3 point)
             : base(subsystemElectricity, point)
@@ -328,56 +325,16 @@ namespace ScMultiplayer
         // DispenserElectricElement.Simulate
         public override bool Simulate()
         {
-            // Source: Survivalcraft/Game/DispenserElectricElement.cs:
-            // DispenserElectricElement.Simulate
-            // Keep the client presentation-only. The host/offline path mirrors the original
-            // edge latch and invokes ComponentDispenser directly so a replaced block cannot
-            // lose the native side effect while the network circuit wrapper is active.
             // Source: Mod/ScMultiplayer/Modules/Session/ScMultiplayerLifecycle.cs:
             // connectionSM.OnPlayingEnter
-            // A host can briefly be reclassified while the transport enters Playing. Client
-            // zero is still the authoritative endpoint, so do not suppress the native world
-            // effect merely because the transient host flag has not caught up yet.
+            // Only the authoritative world executes the native dispenser side effect. Keeping
+            // the original implementation on that endpoint preserves its private edge latch,
+            // cooldown, block-entity lookup, item removal and fallback behavior exactly.
             bool worldEffectAuthority = ScMultiplayer.IsHost ||
                 ScMultiplayer.client?.ClientID == 0;
-            if (ScMultiplayer.client?.IsConnected != true || worldEffectAuthority)
-            {
-                if (CalculateHighInputsCount() > 0)
-                {
-                    double gameTime = SubsystemElectricity.SubsystemTime.GameTime;
-                    if (m_networkDispenseAllowed && (!m_networkLastDispenseTime.HasValue ||
-                        gameTime - m_networkLastDispenseTime.Value > 0.1))
-                    {
-                        m_networkDispenseAllowed = false;
-                        m_networkLastDispenseTime = gameTime;
-                        SubsystemBlockEntities entities = SubsystemElectricity.Project
-                            .FindSubsystem<SubsystemBlockEntities>(throwOnError: true);
-                        CellFace face = CellFaces[0];
-                        entities.GetBlockEntity(face.Point.X, face.Point.Y, face.Point.Z)
-                            ?.Entity.FindComponent<ComponentDispenser>()?.Dispense();
-                    }
-                }
-                else
-                {
-                    m_networkDispenseAllowed = true;
-                }
+            if (ScMultiplayer.client?.IsConnected == true && !worldEffectAuthority)
                 return false;
-            }
-            if (CalculateHighInputsCount() > 0)
-            {
-                double gameTime = SubsystemElectricity.SubsystemTime.GameTime;
-                if (m_networkDispenseAllowed && (!m_networkLastDispenseTime.HasValue ||
-                    gameTime - m_networkLastDispenseTime > 0.1))
-                {
-                    m_networkDispenseAllowed = false;
-                    m_networkLastDispenseTime = gameTime;
-                }
-            }
-            else
-            {
-                m_networkDispenseAllowed = true;
-            }
-            return false;
+            return base.Simulate();
         }
     }
 

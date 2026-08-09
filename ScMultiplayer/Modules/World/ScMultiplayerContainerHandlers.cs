@@ -180,10 +180,13 @@ namespace ScMultiplayer
         {
             ComponentPlayer player = GetLocalPlayer();
             ContainerWidget panel = player?.ComponentGui?.ModalPanelWidget as ContainerWidget;
-            string panelName = panel?.GetType().Name;
-            bool supported = panelName == "ChestWidget" || panelName == "DispenserWidget" ||
-                panelName == "FurnaceWidget" || panelName == "CraftingTableWidget" ||
-                panelName == "FullInventoryWidget";
+            // Source: Survivalcraft/Game/DispenserWidget.cs:DispenserWidget
+            // The multiplayer dispenser panel is SuDispenserWidget, a subclass of the native
+            // widget. Use type compatibility so its inventory participates in the same
+            // authoritative container transaction as the other native container panels.
+            bool supported = panel is ChestWidget || panel is DispenserWidget ||
+                panel is FurnaceWidget || panel is CraftingTableWidget ||
+                panel is FullInventoryWidget;
             if (!supported)
             {
                 m_openContainerPanel = null;
