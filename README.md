@@ -2,6 +2,8 @@
 
 Survivalcraft 2 SuAPI Mod 示例集合，演示 SuAPI 接口的各种用法。
 
+[English README](README_EN.md)
+
 ## 项目特性
 
 - **net8.0** — 所有 Mod 基于 .NET 8.0，SDK 样式 csproj
