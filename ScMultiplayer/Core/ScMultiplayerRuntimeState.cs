@@ -392,6 +392,11 @@ namespace ScMultiplayer
             new Dictionary<int, long>();
         private readonly Dictionary<Point2, long> m_hostTerrainChunkRevisions =
             new Dictionary<Point2, long>();
+        // Source: ScMultiplayerPlayers.xml persistence pattern
+        // Terrain data remains in the original world save. This sparse metadata tracks only
+        // revisions used by multiplayer delta synchronization.
+        private string m_hostTerrainSyncWorldDirectory;
+        private bool m_hostTerrainSyncStateDirty;
         // Source: Survivalcraft/Game/TerrainUpdater.cs:TerrainUpdater.SetUpdateLocation
         // Host-only interest table. A terrain sequence is projected to each client by chunk;
         // clients outside the chunk do not receive the cell payload, but still receive an empty
@@ -436,6 +441,8 @@ namespace ScMultiplayer
             new Dictionary<Point2, double>();
         private readonly Dictionary<Point2, long> m_clientTerrainChunkRevisions =
             new Dictionary<Point2, long>();
+        private readonly Dictionary<Point2, double> m_clientTerrainChunkProbeTimes =
+            new Dictionary<Point2, double>();
         private readonly Dictionary<Point2, PendingTerrainChunkVerification>
             m_clientTerrainChunkVerifications =
                 new Dictionary<Point2, PendingTerrainChunkVerification>();
@@ -702,6 +709,7 @@ namespace ScMultiplayer
         private const float WorldObjectFullSyncInterval = 5f;
         private const float PlayerRecordSaveInterval = 5f;
         private const float TerrainMergeInterval = 5f;
+        private const double TerrainChunkRevisionProbeInterval = 1.0;
         private const int TerrainCatchUpBatchSize = 48;
         // Source: Mod/ScMultiplayer/Modules/Terrain/ScMultiplayerTerrainHandlers.cs:
         // PublishTerrainChanges
@@ -725,6 +733,7 @@ namespace ScMultiplayer
         private const string ServerRetransmitAuditEventName = "ScMultiplayer.ServerRetransmitAudit";
         private const string DownloadedWorldsRegistryPath = "data:/ScMultiplayerDownloadedWorlds.txt";
         private const string PlayerRecordsFileName = "ScMultiplayerPlayers.xml";
+        private const string TerrainSyncStateFileName = "ScMultiplayerTerrainSync.xml";
         private const string PlayerProfileRequiredReason = "SCMP_PROFILE_REQUIRED";
         private const string ProtocolMismatchReasonPrefix = "SCMP_PROTOCOL_MISMATCH";
         // Source: Mod/CircuitAutoRouter/SubsystemCircuitRouter.cs:CircuitColors
