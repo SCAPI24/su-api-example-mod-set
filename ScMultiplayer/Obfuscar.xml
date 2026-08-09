@@ -37,6 +37,7 @@
     <SkipType name="ScMultiplayer.SuSubsystemMemoryBankBlockBehavior" />
     <SkipType name="ScMultiplayer.SuSubsystemTruthTableCircuitBlockBehavior" />
     <SkipType name="ScMultiplayer.SuSubsystemDispenserBlockBehavior" />
+    <SkipType name="ScMultiplayer.SuSubsystemHammerBlockBehavior" />
     <SkipType name="ScMultiplayer.SuSubsystemAdjustableDelayGateBlockBehavior" />
     <SkipType name="ScMultiplayer.SuSubsystemSwitchBlockBehavior" />
     <SkipType name="ScMultiplayer.SuSubsystemButtonBlockBehavior" />

@@ -118,9 +118,12 @@ namespace ScMultiplayer
 		}
 		if (m_clientWorldObjectsProject != project)
 		{
-			m_clientWorldObjectsProject = project;
-			m_remoteAnimals.Clear();
-			m_remoteAnimalSync.Clear();
+            m_clientWorldObjectsProject = project;
+            m_remoteAnimals.Clear();
+            m_remoteMounts.Clear();
+            m_remoteMountTemplates.Clear();
+            m_remoteMountSync.Clear();
+            m_remoteAnimalSync.Clear();
 			m_lastFullAnimalSnapshotTick = 0;
 			m_remotePickables.Clear();
 			m_remotePickableStates.Clear();
@@ -129,13 +132,25 @@ namespace ScMultiplayer
 		}
 		HashSet<Entity> remoteAnimalSet = new HashSet<Entity>(m_remoteAnimals.Values.Where((Entity entity) => entity != null));
 		Entity[] array = project.Entities.Where((Entity entity) => entity?.FindComponent<ComponentCreature>() != null && entity.FindComponent<ComponentPlayer>() == null && !remoteAnimalSet.Contains(entity)).ToArray();
-		foreach (Entity entity2 in array)
+        foreach (Entity entity2 in array)
 		{
 			if (entity2 != null && entity2.IsAddedToProject)
 			{
-				project.RemoveEntity(entity2, disposeEntity: true);
-			}
-		}
+                project.RemoveEntity(entity2, disposeEntity: true);
+            }
+        }
+        HashSet<Entity> remoteMountSet = new HashSet<Entity>(m_remoteMounts.Values.Where(entity => entity != null));
+        Entity[] localMounts = project.Entities.Where(entity =>
+            entity?.FindComponent<ComponentMount>() != null &&
+            entity.FindComponent<ComponentPlayer>() == null &&
+            !remoteMountSet.Contains(entity) &&
+            string.Equals(entity.ValuesDictionary?.DatabaseObject?.Name, "Boat",
+                StringComparison.Ordinal)).ToArray();
+        foreach (Entity localMount in localMounts)
+        {
+            if (localMount.IsAddedToProject)
+                project.RemoveEntity(localMount, disposeEntity: true);
+        }
 		SubsystemPickables subsystem = project.FindSubsystem<SubsystemPickables>(throwOnError: false);
 		if (subsystem == null)
 		{
@@ -457,23 +472,32 @@ namespace ScMultiplayer
 			if (localPlayer?.ComponentPlayer?.ComponentBody != null && localPlayer.PlayerIndex >= 0)
 			{
 				float clientVisibility = project.FindSubsystem<SubsystemSky>(throwOnError: false)?.VisibilityRange ?? 64f;
+				int clientRadius = GetTerrainInterestRadius(clientVisibility);
 				terrain.TerrainUpdater.SetUpdateLocation(localPlayer.PlayerIndex,
 					localPlayer.ComponentPlayer.ComponentBody.Position.XZ,
 					clientVisibility, clientVisibility);
 				RefreshClientTerrainInterestChunks(project,
 					localPlayer.ComponentPlayer.ComponentBody.Position.XZ,
-					MathUtils.Min(clientVisibility, 64f));
+					clientVisibility);
+				SendClientTerrainInterestUpdate(clientRadius);
 			}
 			return;
 		}
-		float hostVisibility = MathUtils.Min(project.FindSubsystem<SubsystemSky>(throwOnError: false)?.VisibilityRange ?? 64f, 64f);
-		PlayerData[] array = m_networkPlayerData.Values.ToArray();
-		foreach (PlayerData playerData in array)
+		float hostVisibility = project.FindSubsystem<SubsystemSky>(throwOnError: false)?.VisibilityRange ?? 64f;
+		int defaultRadius = GetTerrainInterestRadius(hostVisibility);
+		foreach (KeyValuePair<int, PlayerData> item in m_networkPlayerData.ToArray())
 		{
+			PlayerData playerData = item.Value;
 			if (playerData?.ComponentPlayer?.ComponentBody != null && playerData.PlayerIndex >= 0)
 			{
 				Vector3 position = playerData.ComponentPlayer.ComponentBody.Position;
-				terrain.TerrainUpdater.SetUpdateLocation(playerData.PlayerIndex, position.XZ, hostVisibility, 64f);
+				int radius = m_hostTerrainReportedInterestRadii.TryGetValue(item.Key,
+					out int reportedRadius)
+					? Math.Max(1, Math.Min(MaximumTerrainInterestRadius, reportedRadius))
+					: defaultRadius;
+				float remoteVisibility = radius * 16f;
+				terrain.TerrainUpdater.SetUpdateLocation(playerData.PlayerIndex, position.XZ,
+					remoteVisibility, 64f);
 			}
 		}
 		UpdateHostTerrainInterestTable(project);
@@ -482,12 +506,42 @@ namespace ScMultiplayer
 	// Source: Survivalcraft/Game/TerrainUpdater.cs:TerrainUpdater.SetUpdateLocation
 	// A chunk may already be Valid when a player enters its range. Queue a compact authoritative
 	// checkpoint for newly entered chunks so remote edits are visible without a manual interaction.
+	private int GetTerrainInterestRadius(float visibility)
+	{
+		int radius = (int)Math.Ceiling(Math.Max(visibility, 16f) / 16f);
+		return Math.Max(1, Math.Min(MaximumTerrainInterestRadius, radius));
+	}
+
+	// Source: ScMultiplayerTerrainHandlers.cs:HandleTerrainChunkSyncMessage
+	// The host uses the authoritative remote-player position; this update carries only the local
+	// view radius and never grants a client control over its subscribed center.
+	private void SendClientTerrainInterestUpdate(int radius)
+	{
+		if (IsHost || client?.IsConnected != true) return;
+		if (m_clientTerrainInterestUpdateSent &&
+			m_lastSentClientTerrainInterestRadius == radius)
+			return;
+		m_clientTerrainInterestUpdateSent = true;
+		m_lastSentClientTerrainInterestRadius = radius;
+		NetworkMessageSender.SendRawMessage(0, new TerrainChunkSyncMessage
+		{
+			Stage = TerrainChunkSyncStage.Interest,
+			InterestRadius = radius
+		}, sequenced: true);
+	}
+
 	private void RefreshClientTerrainInterestChunks(Project project, Vector2 center,
 		float visibility)
 	{
 		if (IsHost || project == null) return;
 		Point2 chunkCenter = Terrain.ToChunk(center);
-		int radius = Math.Max(1, (int)Math.Ceiling(visibility / 16f));
+		int radius = GetTerrainInterestRadius(visibility);
+		if (m_clientTerrainInterestInitialized &&
+			m_clientTerrainInterestCenter == chunkCenter &&
+			m_clientTerrainInterestRadius == radius)
+			return;
+		m_clientTerrainInterestCenter = chunkCenter;
+		m_clientTerrainInterestRadius = radius;
 		var desired = new HashSet<Point2>();
 		for (int x = chunkCenter.X - radius; x <= chunkCenter.X + radius; x++)
 		{
@@ -677,6 +731,10 @@ namespace ScMultiplayer
 		m_clientTerrainChunkProbeTimes.Clear();
 		m_clientTerrainInterestChunks.Clear();
 		m_clientTerrainInterestInitialized = false;
+		m_clientTerrainInterestCenter = default;
+		m_clientTerrainInterestRadius = 0;
+		m_clientTerrainInterestUpdateSent = false;
+		m_lastSentClientTerrainInterestRadius = 0;
 		m_worldTransferRegistry.ResetClientTerrainBaselines();
 		m_clientTerrainChunkVerifications.Clear();
 		m_clientTerrainChunkCheckpoints.Clear();

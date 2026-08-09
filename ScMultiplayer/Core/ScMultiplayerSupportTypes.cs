@@ -132,6 +132,7 @@ namespace ScMultiplayer
         public bool IsCrouching;
         public bool IsFlying;
         public bool IsRiding;
+        public ushort MountEntityId;
         public bool IsGrounded;
         public int ActiveSlotIndex;
         public int HandItemValue;
@@ -713,6 +714,16 @@ namespace ScMultiplayer
         public double? DeathTime;
         public bool LocalDespawnStarted;
         public string ShapeshiftTarget = string.Empty;
+    }
+
+    public class RemoteMountSyncState
+    {
+        public int LastServerTick;
+        public Vector3 Position;
+        public Quaternion Rotation = Quaternion.Identity;
+        public Vector3 Velocity;
+        public double LastUpdateTime;
+        public bool HasTransform;
     }
 
     // Source: Survivalcraft/Game/ComponentDiggingCracks.cs:ComponentDiggingCracks.Draw

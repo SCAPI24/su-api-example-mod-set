@@ -306,20 +306,45 @@ namespace ScMultiplayer
     {
         private bool m_networkDispenseAllowed = true;
         private double? m_networkLastDispenseTime;
-        private readonly SubsystemBlockEntities m_subsystemBlockEntities;
 
         public SuDispenserElectricElement(SubsystemElectricity subsystemElectricity,
             Point3 point)
             : base(subsystemElectricity, point)
         {
-            m_subsystemBlockEntities = subsystemElectricity.Project
-                .FindSubsystem<SubsystemBlockEntities>(true);
         }
 
         // Source: Survivalcraft/Game/DispenserElectricElement.cs:
         // DispenserElectricElement.Simulate
         public override bool Simulate()
         {
+            // Source: Survivalcraft/Game/DispenserElectricElement.cs:
+            // DispenserElectricElement.Simulate
+            // Keep the client presentation-only. The host/offline path mirrors the original
+            // edge latch and invokes ComponentDispenser directly so a replaced block cannot
+            // lose the native side effect while the network circuit wrapper is active.
+            if (ScMultiplayer.client?.IsConnected != true || ScMultiplayer.IsHost)
+            {
+                if (CalculateHighInputsCount() > 0)
+                {
+                    double gameTime = SubsystemElectricity.SubsystemTime.GameTime;
+                    if (m_networkDispenseAllowed && (!m_networkLastDispenseTime.HasValue ||
+                        gameTime - m_networkLastDispenseTime.Value > 0.1))
+                    {
+                        m_networkDispenseAllowed = false;
+                        m_networkLastDispenseTime = gameTime;
+                        SubsystemBlockEntities entities = SubsystemElectricity.Project
+                            .FindSubsystem<SubsystemBlockEntities>(throwOnError: true);
+                        CellFace face = CellFaces[0];
+                        entities.GetBlockEntity(face.Point.X, face.Point.Y, face.Point.Z)
+                            ?.Entity.FindComponent<ComponentDispenser>()?.Dispense();
+                    }
+                }
+                else
+                {
+                    m_networkDispenseAllowed = true;
+                }
+                return false;
+            }
             if (CalculateHighInputsCount() > 0)
             {
                 double gameTime = SubsystemElectricity.SubsystemTime.GameTime;
@@ -328,12 +353,6 @@ namespace ScMultiplayer
                 {
                     m_networkDispenseAllowed = false;
                     m_networkLastDispenseTime = gameTime;
-                    if (ScMultiplayer.client?.IsConnected != true || ScMultiplayer.IsHost)
-                    {
-                        CellFace face = CellFaces[0];
-                        m_subsystemBlockEntities.GetBlockEntity(face.X, face.Y, face.Z)?
-                            .Entity.FindComponent<ComponentDispenser>()?.Dispense();
-                    }
                 }
             }
             else

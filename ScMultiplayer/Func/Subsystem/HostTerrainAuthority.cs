@@ -8,6 +8,9 @@ namespace ScMultiplayer
     {
         private static bool s_networkMutationClosureActive;
 
+        internal static bool IsNetworkMutationClosureActive =>
+            s_networkMutationClosureActive;
+
         internal static bool IsAuthoritative =>
             ScMultiplayer.client?.IsConnected != true || ScMultiplayer.IsHost;
 

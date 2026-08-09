@@ -181,7 +181,8 @@ namespace ScMultiplayer
             Vector3 position, Quaternion rotation,
             Vector3 velocity, Vector2 lookAngles, Vector2? walkOrder, float jumpOrder,
             float pokingPhase, bool attackOrder, bool rowLeftOrder, bool rowRightOrder,
-            bool isCrouching, bool isFlying, bool isRiding, bool isGrounded,
+            bool isCrouching, bool isFlying, bool isRiding, ushort mountEntityId,
+            bool isGrounded,
             int activeSlotIndex, int handItemValue, int handItemCount,
             Vector3 itemOffset, Vector3 itemRotation, float aimHandAngle,
             int[] slotValues, int[] slotCounts,
@@ -190,7 +191,7 @@ namespace ScMultiplayer
             var msg = new GamePlayerPositionMessage(playerIndex, serverTick, position, rotation, velocity,
                 lookAngles, walkOrder, jumpOrder, pokingPhase,
                 attackOrder, rowLeftOrder, rowRightOrder,
-                isCrouching, isFlying, isRiding, isGrounded,
+                isCrouching, isFlying, isRiding, mountEntityId, isGrounded,
                 activeSlotIndex, handItemValue, handItemCount,
                 itemOffset, itemRotation, aimHandAngle, slotValues, slotCounts);
             if (batch != null)
@@ -529,6 +530,15 @@ namespace ScMultiplayer
 
         // Source: Survivalcraft/Game/SubsystemEditableItemBehavior.cs:SubsystemEditableItemBehavior<T>
         public static void SendEditableDataRequest(EditableDataRequestMessage message)
+        {
+            if (message == null || ScMultiplayer.client == null) return;
+            s_transport.SendDirectInput(0,
+                Message.WriteWithSender(message, s_transport.Address), sequenced: true);
+        }
+
+        // Source: Survivalcraft/Game/SubsystemFurnitureBlockBehavior.cs:
+        // SubsystemFurnitureBlockBehavior.ScanDesign
+        public static void SendFurnitureBuildRequest(FurnitureBuildRequestMessage message)
         {
             if (message == null || ScMultiplayer.client == null) return;
             s_transport.SendDirectInput(0,

@@ -44,7 +44,7 @@ namespace ScMultiplayer
             Register<GamePakWorldMessage>(6, nameof(GamePakWorldMessage), 3);
             Register<GamePlayerHealthMessage>(7, nameof(GamePlayerHealthMessage), 2);
             Register<GamePlayerInputMessage>(8, nameof(GamePlayerInputMessage), 1);
-            Register<GamePlayerPositionMessage>(9, nameof(GamePlayerPositionMessage), 1);
+            Register<GamePlayerPositionMessage>(9, nameof(GamePlayerPositionMessage), 2);
             Register<GamePlayerPositionsMessage>(10, nameof(GamePlayerPositionsMessage), 1);
             Register<GameWorldInfoMessage>(11, nameof(GameWorldInfoMessage), 2);
             Register<GameWorldInfoMessage1>(12, nameof(GameWorldInfoMessage1), 5);
@@ -76,6 +76,8 @@ namespace ScMultiplayer
             Register<DigPresentationMessage>(37, nameof(DigPresentationMessage), 1);
             Register<MeleeHitResultMessage>(38, nameof(MeleeHitResultMessage), 1);
             Register<AnimalSoundMessage>(39, nameof(AnimalSoundMessage), 1);
+            Register<FurnitureBuildRequestMessage>(40,
+                nameof(FurnitureBuildRequestMessage), 1);
 
             foreach (TypeInfo typeInfo in typeof(Message).Assembly.DefinedTypes)
             {

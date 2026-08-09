@@ -90,6 +90,7 @@ namespace ScMultiplayer
             state.ActiveSlotIndex = msg.ActiveSlotIndex;
             state.HandItemValue = msg.HandItemValue;
             state.HandItemCount = msg.HandItemCount;
+            state.MountEntityId = msg.MountEntityId;
             state.ItemOffset = msg.ItemOffset;
             state.ItemRotation = msg.ItemRotation;
             state.AimHandAngle = msg.AimHandAngle;
@@ -151,6 +152,7 @@ namespace ScMultiplayer
                         inventory.ActiveSlotIndex = msg.ActiveSlotIndex;
                     ApplyInventory(inventory, msg.SlotValues, msg.SlotCounts);
                 }
+                MatchRemoteRidingState(playerData.ComponentPlayer, msg.IsRiding, msg.MountEntityId);
             }
         }
 
@@ -161,6 +163,12 @@ namespace ScMultiplayer
             ComponentPlayer localPlayer = players?.ComponentPlayers.FirstOrDefault(player =>
                 !m_networkPlayerData.Values.Contains(player.PlayerData));
             if (localPlayer == null) return;
+
+            // Source: Survivalcraft/Game/ComponentRider.cs:ComponentRider.StartMounting
+            // The owning client predicts the button press, while the host snapshot closes stale
+            // mount/dismount state. Resolve only the advertised mount ID; nearby mounts are not
+            // interchangeable network identities.
+            MatchRemoteRidingState(localPlayer, msg.IsRiding, msg.MountEntityId);
 
             float delaySample = MathUtils.Clamp(
                 (client.Step - msg.ServerTick) * ServerTickDuration, 0f, 0.5f);
@@ -453,12 +461,132 @@ namespace ScMultiplayer
             if (IsHost || sourceClientId != 0 || message == null) return;
             if (message.Action == EntityMessage.EntityAction.Add)
             {
-                if (!string.IsNullOrWhiteSpace(message.TemplateName))
+                if (IsMountNetworkId(message.EntityId))
+                {
+                    if (!string.IsNullOrWhiteSpace(message.TemplateName))
+                        m_remoteMountTemplates[message.EntityId] = message.TemplateName;
+                }
+                else if (!string.IsNullOrWhiteSpace(message.TemplateName))
                     m_remoteAnimalTemplates[message.EntityId] = message.TemplateName;
                 return;
             }
 
-            RemoveRemoteAnimal(message.EntityId);
+            if (IsMountNetworkId(message.EntityId))
+                RemoveRemoteMount(message.EntityId);
+            else
+                RemoveRemoteAnimal(message.EntityId);
+        }
+
+        private bool IsMountNetworkId(ushort id) => id >= MountEntityIdStart;
+
+        private void RemoveRemoteMount(ushort id)
+        {
+            if (m_remoteMounts.TryGetValue(id, out Entity entity))
+            {
+                foreach (PlayerData playerData in m_networkPlayerData.Values.ToArray())
+                {
+                    ComponentRider rider = playerData?.ComponentPlayer?.ComponentRider;
+                    if (rider?.Mount?.Entity == entity)
+                        rider.StartDismounting();
+                }
+                if (entity?.IsAddedToProject == true && entity.Project == GameManager.Project)
+                    entity.Project.RemoveEntity(entity, true);
+                m_remoteMounts.Remove(id);
+            }
+            m_remoteMountTemplates.Remove(id);
+            m_remoteMountSync.Remove(id);
+        }
+
+        private Entity EnsureRemoteMount(ushort id, Vector3 position,
+            Quaternion rotation, Vector3 velocity)
+        {
+            if (m_remoteMounts.TryGetValue(id, out Entity existing) &&
+                existing?.IsAddedToProject == true)
+                return existing;
+            if (!m_remoteMountTemplates.TryGetValue(id, out string templateName) ||
+                string.IsNullOrWhiteSpace(templateName) || GameManager.Project == null)
+                return null;
+            try
+            {
+                Entity entity = DatabaseManager.CreateEntity(
+                    GameManager.Project, templateName, new ValuesDictionary(), true);
+                ComponentBody body = entity?.FindComponent<ComponentBody>();
+                if (entity == null || body == null) return null;
+                body.Position = position;
+                body.Rotation = rotation;
+                body.Velocity = velocity;
+                GameManager.Project.AddEntity(entity);
+                SubsystemUpdate subsystemUpdate = GameManager.Project.FindSubsystem<SubsystemUpdate>(true);
+                foreach (IUpdateable updateable in entity.FindComponents<IUpdateable>())
+                {
+                    if (updateable is ComponentBoat || updateable is ComponentSpawn)
+                        subsystemUpdate.RemoveUpdateable(updateable);
+                }
+                m_remoteMounts[id] = entity;
+                m_remoteMountSync[id] = new RemoteMountSyncState
+                {
+                    LastServerTick = client.Step,
+                    Position = position,
+                    Rotation = rotation,
+                    Velocity = velocity,
+                    LastUpdateTime = Time.RealTime,
+                    HasTransform = true
+                };
+                return entity;
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"[ScMP] Failed to recreate mount {id}: {ex.Message}");
+                m_remoteMounts.Remove(id);
+                return null;
+            }
+        }
+
+        private void HandleRemoteMountBodyUpdate(BodyUpdateMessage.BodyItem item, int serverTick)
+        {
+            ComponentPlayer localPlayer = GameManager.Project?.FindSubsystem<SubsystemPlayers>(false)?
+                .ComponentPlayers.FirstOrDefault(player =>
+                    !m_networkPlayerData.Values.Contains(player.PlayerData));
+            if (localPlayer?.ComponentBody != null)
+            {
+                float visibility = MathUtils.Min(
+                    GameManager.Project.FindSubsystem<SubsystemSky>(false)?.VisibilityRange ?? 64f,
+                    64f) + 8f;
+                if (Vector3.DistanceSquared(localPlayer.ComponentBody.Position, item.Position) >
+                    visibility * visibility)
+                {
+                    if (m_remoteMounts.ContainsKey(item.EntityId))
+                        RemoveRemoteMount(item.EntityId);
+                    return;
+                }
+            }
+            Entity entity = EnsureRemoteMount(item.EntityId, item.Position,
+                item.Rotation, item.Velocity);
+            ComponentBody body = entity?.FindComponent<ComponentBody>();
+            if (body == null) return;
+            if (!m_remoteMountSync.TryGetValue(item.EntityId, out RemoteMountSyncState state))
+            {
+                state = new RemoteMountSyncState();
+                m_remoteMountSync[item.EntityId] = state;
+            }
+            if (serverTick < state.LastServerTick) return;
+            state.LastServerTick = serverTick;
+            state.Position = item.Position;
+            state.Rotation = item.Rotation;
+            state.Velocity = item.Velocity;
+            state.LastUpdateTime = Time.RealTime;
+            state.HasTransform = true;
+            TryMatchRemoteRidersForMount(item.EntityId);
+        }
+
+        private void TryMatchRemoteRidersForMount(ushort mountEntityId)
+        {
+            foreach (KeyValuePair<int, NetworkPlayerState> item in RemotePlayers.ToArray())
+            {
+                if (item.Value.IsRiding && item.Value.MountEntityId == mountEntityId &&
+                    m_networkPlayerData.TryGetValue(item.Key, out PlayerData playerData))
+                    MatchRemoteRidingState(playerData.ComponentPlayer, true, mountEntityId);
+            }
         }
 
         // Source: Survivalcraft/Game/ComponentSpawn.cs:ComponentSpawn.Update
@@ -569,6 +697,15 @@ namespace ScMultiplayer
                         continue;
                 }
                 fullSnapshotIds?.Add(item.EntityId);
+                if (IsMountNetworkId(item.EntityId) ||
+                    m_remoteMountTemplates.ContainsKey(item.EntityId))
+                {
+                    if (item.Flags.HasFlag(BodyUpdateMessage.ChangeFlag.Template) &&
+                        !string.IsNullOrWhiteSpace(item.TemplateName))
+                        m_remoteMountTemplates[item.EntityId] = item.TemplateName;
+                    HandleRemoteMountBodyUpdate(item, message.ServerTick);
+                    continue;
+                }
                 if (item.Flags.HasFlag(BodyUpdateMessage.ChangeFlag.Template) &&
                     !string.IsNullOrWhiteSpace(item.TemplateName))
                     SetRemoteAnimalTemplate(item.EntityId, item.TemplateName);
@@ -765,7 +902,14 @@ namespace ScMultiplayer
                     model.AttackOrder = networkState.AttackOrder;
                     model.FeedOrder = networkState.FeedOrder;
                 }
-            }
+				// Source: Mod/ScMultiplayer/Modules/Session/ScMultiplayerClientEvents.cs:
+				// TryMatchRemoteRidersForMount
+				// Player snapshots and animal snapshots are independent messages. When the
+				// rider arrives first, retry as soon as the horse replica is available so the
+				// remote body is parented to the authoritative mount instead of remaining at
+				// its pre-mount position.
+				TryMatchRemoteRidersForMount(item.EntityId);
+			}
             if (fullSnapshotIds != null &&
                 message.ServerTick >= m_lastFullAnimalSnapshotTick)
             {
@@ -1190,6 +1334,30 @@ namespace ScMultiplayer
                 }
             }
             foreach (ushort id in expiredAnimals) RemoveRemoteAnimal(id);
+        }
+
+        // Source: Survivalcraft/Game/ComponentBody.cs:ComponentBody.Update
+        // Remote mounts are presentation replicas. Their transform remains host-authoritative;
+        // local boat physics is disabled in EnsureRemoteMount so it cannot drift between snapshots.
+        private void UpdateRemoteMountPresentations(float dt)
+        {
+            if (IsHost || GameManager.Project == null) return;
+            double now = Time.RealTime;
+            foreach (KeyValuePair<ushort, RemoteMountSyncState> item in
+                m_remoteMountSync.ToArray())
+            {
+                if (!m_remoteMounts.TryGetValue(item.Key, out Entity entity) ||
+                    entity?.IsAddedToProject != true || !item.Value.HasTransform)
+                    continue;
+                ComponentBody body = entity.FindComponent<ComponentBody>();
+                if (body == null) continue;
+                float age = MathUtils.Clamp((float)(now - item.Value.LastUpdateTime), 0f, 0.25f);
+                Vector3 target = item.Value.Position + item.Value.Velocity * age;
+                float blend = MathUtils.Clamp(dt * 12f, 0.15f, 1f);
+                body.Position = Vector3.Lerp(body.Position, target, blend);
+                body.Rotation = Quaternion.Slerp(body.Rotation, item.Value.Rotation, blend);
+                body.Velocity = item.Value.Velocity;
+            }
         }
 
         // Source: Survivalcraft/Game/SubsystemPickables.cs:SubsystemPickables.Update

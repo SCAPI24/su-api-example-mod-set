@@ -338,27 +338,42 @@ namespace ScMultiplayer
         // of exposing intermediate states as separate terrain sequences.
         private void PublishHostModifiedCellClosure(bool immediate = false)
         {
-            var hostChanges = new Dictionary<Point3, bool>();
-            int passes = 0;
-            int processedCells = 0;
-            do
+            // Source: Survivalcraft/Game/SubsystemTerrain.cs:SubsystemTerrain.ProcessModifiedCells
+            // Remote placement is still a native host mutation. Let its same-cell and neighbor
+            // callbacks run before behavior-notification bookkeeping catches up, so unsupported
+            // plants are destroyed with the original drops and particles.
+            bool alreadyActive = HostTerrainAuthority.IsNetworkMutationClosureActive;
+            if (!alreadyActive)
+                HostTerrainAuthority.BeginNetworkMutationClosure();
+            try
             {
+                var hostChanges = new Dictionary<Point3, bool>();
+                int passes = 0;
+                int processedCells = 0;
+                do
+                {
+                    foreach (KeyValuePair<Point3, bool> item in m_modifiedCells)
+                        hostChanges[item.Key] = item.Value;
+                    processedCells += m_modifiedCells.Count;
+                    ProcessModifiedCells();
+                    passes++;
+                }
+                while (m_modifiedCells.Count > 0 &&
+                    passes < MaximumHostModifiedCellPropagationPasses &&
+                    processedCells < MaximumHostModifiedCellsPerPropagation);
+
+                // A large cascade continues through the native next-frame path. Its already-written
+                // cells are still published now so clients never wait for an unrelated later change.
                 foreach (KeyValuePair<Point3, bool> item in m_modifiedCells)
                     hostChanges[item.Key] = item.Value;
-                processedCells += m_modifiedCells.Count;
-                ProcessModifiedCells();
-                passes++;
+                if (hostChanges.Count > 0)
+                    ScMultiplayer.currentInstance?.PublishTerrainChanges(hostChanges, immediate);
             }
-            while (m_modifiedCells.Count > 0 &&
-                passes < MaximumHostModifiedCellPropagationPasses &&
-                processedCells < MaximumHostModifiedCellsPerPropagation);
-
-            // A large cascade continues through the native next-frame path. Its already-written
-            // cells are still published now so clients never wait for an unrelated later change.
-            foreach (KeyValuePair<Point3, bool> item in m_modifiedCells)
-                hostChanges[item.Key] = item.Value;
-            if (hostChanges.Count > 0)
-                ScMultiplayer.currentInstance?.PublishTerrainChanges(hostChanges, immediate);
+            finally
+            {
+                if (!alreadyActive)
+                    HostTerrainAuthority.EndNetworkMutationClosure();
+            }
         }
 
         // Source: Survivalcraft/Game/SubsystemTerrain.cs:SubsystemTerrain.ProcessModifiedCells

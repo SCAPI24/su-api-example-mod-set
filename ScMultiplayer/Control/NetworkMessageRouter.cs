@@ -198,6 +198,11 @@ namespace ScMultiplayer
                         m_owner.QueueEndOfFrameAction(command, () =>
                             m_owner.HandleContainerSyncMessage(containerSync, sourceClientId));
                         break;
+                    case FurnitureBuildRequestMessage furnitureBuild:
+                        m_owner.QueueEndOfFrameAction(command, () =>
+                            m_owner.HandleFurnitureBuildRequest(furnitureBuild,
+                                sourceClientId));
+                        break;
                     default:
                         ReportFailure(sourceClientId,
                             "Unknown message type: " + message.GetType().Name);
