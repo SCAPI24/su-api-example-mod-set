@@ -313,6 +313,17 @@ namespace ScMultiplayer
         {
         }
 
+        // Source: Survivalcraft/Game/SubsystemElectricity.cs:AddElectricElement
+        // Circuit recovery can rebuild the element after the original topology pass. Queue one
+        // authoritative evaluation so a dispenser connected to an already-high wire does not
+        // miss its first trigger.
+        public override void OnAdded()
+        {
+            base.OnAdded();
+            SubsystemElectricity.QueueElectricElementForSimulation(this,
+                SubsystemElectricity.CircuitStep + 1);
+        }
+
         // Source: Survivalcraft/Game/DispenserElectricElement.cs:
         // DispenserElectricElement.Simulate
         public override bool Simulate()
