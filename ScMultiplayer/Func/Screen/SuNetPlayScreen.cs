@@ -177,8 +177,6 @@ namespace ScMultiplayer
             // Source: Mod/ScMultiplayer/Func/Screen/SuPlayScreen.cs:GameCreate
             // Remote services create their own rooms; clients can only join advertised rooms.
             if (sd == null || !sd.IsLocal) return;
-            ScMultiplayer.IsHost = true;
-
             if (ScMultiplayer.client.IsConnected)
             {
                 try { ScMultiplayer.client.LeaveGame(); } catch { }
@@ -217,8 +215,6 @@ namespace ScMultiplayer
         /// </summary>
         private void ConnectToGame(ServerDescription sd, GameDescription gd)
         {
-            ScMultiplayer.IsHost = false;
-
             if (ScMultiplayer.client.IsConnected)
             {
                 try { ScMultiplayer.client.LeaveGame(); } catch { }

@@ -7,7 +7,8 @@ namespace ScMultiplayer
     public class SuSubsystemGrassBlockBehavior : SubsystemGrassBlockBehavior, IUpdateable
     {
         private static bool IsAuthoritative =>
-            ScMultiplayer.client?.IsConnected != true || ScMultiplayer.IsHost;
+            ScMultiplayer.currentInstance?.IsNetworkSessionActive(GameManager.Project) != true ||
+            ScMultiplayer.currentInstance?.IsNetworkHost(GameManager.Project) == true;
 
         public override void OnPoll(int value, int x, int y, int z, int pollPass)
         {

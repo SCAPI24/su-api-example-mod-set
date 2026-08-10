@@ -85,7 +85,10 @@ namespace ScMultiplayer
             {
                 if (client.IsConnected) { try { client.LeaveGame(); } catch { } }
             };
-            connectionSM.OnPlayingEnter += () => IsHost = (client.ClientID == 0);
+            connectionSM.OnPlayingEnter += () =>
+            {
+                IsHost = m_sessionMode == Core.MultiplayerSessionMode.Host;
+            };
 
             downloadSM.OnCompleteEnter += () => connectionSM.TransitionTo(
                 NetworkConnectionStateMachine.ConnectionState.Playing);
@@ -519,9 +522,6 @@ namespace ScMultiplayer
                 type.Name != "LoadingManager")
                 return args;
             // Source: Survivalcraft/Game/Program.cs:Program.Initialize
-            // Source: Survivalcraft/Game/LoadingManager.cs:LoadingManager.ReplaceItem
-            Game.LoadingManager.QueueItem("Load ScMultiplayer Chinese Font",
-                MultiplayerChineseFont.Load);
             if (!Game.LoadingManager.ReplaceItem("Initialize PlayScreen", delegate
             {
                 ScreensManager.AddScreen("Play", new SuPlayScreen());

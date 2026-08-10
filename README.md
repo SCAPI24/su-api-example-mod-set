@@ -118,7 +118,7 @@ Memory Bank 绘图编辑器，替换 `SubsystemMemoryBankBlockBehavior`，增加
 
 ![ScMultiplayer 联机实机截图](images/ScMultiplayer.png)
 
-当前版本：`2.0.9`
+当前版本：`2.1.0`
 
 适配 SuAPI：`0.1.5.0` / `0.1.5.1`
 

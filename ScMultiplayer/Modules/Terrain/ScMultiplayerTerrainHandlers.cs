@@ -910,6 +910,8 @@ namespace ScMultiplayer
                 ToolCount = intent.ToolCount,
                 BodyPosition = intent.BodyPosition
             };
+            if (Terrain.ExtractContents(intent.ExpectedValue) == 62)
+                SuSubsystemTerrain.BeginIceTrace(cell);
             m_pendingTerrainPredictions[request.RequestId] = new PendingTerrainPrediction
             {
                 Request = request,
@@ -1376,8 +1378,13 @@ namespace ScMultiplayer
 						BlockPlacementData digValue = block.GetDigValue(
 							terrain, miner, currentCellValue, toolValue, targetRaycast.Value);
 						int predictedDigValue = Terrain.ReplaceLight(digValue.Value, 0);
-						bool predictedValueMatches = predictedDigValue ==
-							Terrain.ReplaceLight(message.PredictedValue, 0);
+			// Source: Survivalcraft/Game/Block.GetDigValue
+			// Ice can be locally converted to water by fluid/weather simulation before
+			// the request is evaluated. The host remains authoritative for the final
+			// value, so only the stable ice target must match in this special case.
+			bool dynamicIceDig = authoritativeContents == 62 && expectedContents == 62;
+			bool predictedValueMatches = dynamicIceDig || predictedDigValue ==
+				Terrain.ReplaceLight(message.PredictedValue, 0);
 						Point3 digPoint = new Point3(digValue.CellFace.X,
                             digValue.CellFace.Y, digValue.CellFace.Z);
                         bool matchingDigProgress = miner.DigCellFace.HasValue &&
@@ -1385,10 +1392,13 @@ namespace ScMultiplayer
                             miner.DigCellFace.Value.Y == message.Cell.Y &&
                             miner.DigCellFace.Value.Z == message.Cell.Z &&
                             miner.DigProgress >= 0.85f;
-						if (validToolSlot && levelSufficient && predictedValueMatches && digPoint == message.Cell &&
+                        if (validToolSlot && levelSufficient && predictedValueMatches && digPoint == message.Cell &&
                             (creative || matchingDigProgress ||
                                 elapsedTime + 0.4f >= requiredTime))
                         {
+                            bool dugIce = authoritativeContents == 62;
+                            if (dugIce)
+                                SuSubsystemTerrain.BeginIceTrace(digPoint);
                             terrain.DestroyCell(tool.ToolLevel, digPoint.X, digPoint.Y,
                                 digPoint.Z, digValue.Value, false, false);
                             terrain.TerrainUpdater.RequestSynchronousUpdate();
@@ -1482,8 +1492,9 @@ namespace ScMultiplayer
                             m_hostTerrainChunkRevisions[coordinates] = message.Sequence;
                         }
                         int cellValue = message.CellValues[index];
+                        int contents = Terrain.ExtractContents(cellValue);
                         if (!isFluidSettlementConfirmation &&
-                            Terrain.ExtractContents(cellValue) == 0 &&
+                            contents == 0 &&
                             TryGetFluidSettlementDelay(item.Key, out double delay))
                         {
                             double dueGameTime = GetCurrentGameTime() + delay;

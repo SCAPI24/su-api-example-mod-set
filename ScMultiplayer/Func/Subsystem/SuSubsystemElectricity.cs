@@ -27,6 +27,12 @@ namespace ScMultiplayer
         // Source: Survivalcraft/Game/SubsystemElectricity.cs:SubsystemElectricity.Update
         void IUpdateable.Update(float dt)
         {
+            if (ScMultiplayer.currentInstance?.IsNetworkSessionActive(Project) != true)
+            {
+                m_remainingNetworkSimulationTime = 0f;
+                base.Update(dt);
+                return;
+            }
             // Source: Survivalcraft/Game/SubsystemUpdate.cs:SubsystemUpdate.Update
             // SubsystemTime.NextFrame decides the logical loop count before updateables run.
             // Apply the client authority rule before any circuit/synchronizer early return, so

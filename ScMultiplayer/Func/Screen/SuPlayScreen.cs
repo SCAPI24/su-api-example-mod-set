@@ -258,7 +258,6 @@ namespace ScMultiplayer
         /// </summary>
         private void GameCreate(object item)
         {
-            ScMultiplayer.IsHost = true;
             WorldInfo worldInfo = (WorldInfo)item;
             RemoveOrphanPlayerEntities(worldInfo.DirectoryName);
             IPEndPoint localServerAddress = ScMultiplayer.GetLocalServerConnectionAddress();
@@ -338,7 +337,6 @@ namespace ScMultiplayer
         /// </summary>
         private void GameJoin(object item, GameDescription gd)
         {
-            ScMultiplayer.IsHost = false;
             WorldInfo worldInfo = (WorldInfo)item;
 
             GameWorldInfoMessage worldMsg;

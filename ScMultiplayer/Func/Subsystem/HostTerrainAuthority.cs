@@ -12,7 +12,8 @@ namespace ScMultiplayer
             s_networkMutationClosureActive;
 
         internal static bool IsAuthoritative =>
-            ScMultiplayer.client?.IsConnected != true || ScMultiplayer.IsHost;
+            ScMultiplayer.currentInstance?.IsNetworkSessionActive(GameManager.Project) != true ||
+            ScMultiplayer.currentInstance?.IsNetworkHost(GameManager.Project) == true;
 
         // Source: Survivalcraft/Game/SubsystemTerrain.cs:SubsystemTerrain.ProcessModifiedCells
         // A direct network mutation has already proven the target chunk is usable. Allow its
@@ -32,7 +33,7 @@ namespace ScMultiplayer
         {
             if (!IsAuthoritative)
                 return false;
-            if (ScMultiplayer.client?.IsConnected != true)
+            if (ScMultiplayer.currentInstance?.IsNetworkSessionActive(GameManager.Project) != true)
                 return true;
             TerrainChunk chunk = subsystemTerrain?.Terrain?.GetChunkAtCell(x, z);
             if (chunk == null)
@@ -50,7 +51,8 @@ namespace ScMultiplayer
         internal static bool IsExplosionEnvelopeReady(
             SubsystemTerrain subsystemTerrain, Point3 center, float pressure)
         {
-            if (!IsAuthoritative || ScMultiplayer.client?.IsConnected != true)
+            if (!IsAuthoritative ||
+                ScMultiplayer.currentInstance?.IsNetworkSessionActive(GameManager.Project) != true)
                 return true;
             if (subsystemTerrain?.Terrain == null)
                 return false;

@@ -55,7 +55,8 @@ namespace ScMultiplayer
             SubsystemTerrain terrain = GameManager.Project?
                 .FindSubsystem<SubsystemTerrain>(false);
             Point3 point = blockEntity?.Coordinates ?? default;
-            if (ScMultiplayer.IsHost || ScMultiplayer.client?.IsConnected != true ||
+            if (ScMultiplayer.currentInstance?.IsNetworkSessionActive(GameManager.Project) != true ||
+                ScMultiplayer.currentInstance?.IsNetworkHost(GameManager.Project) == true ||
                 terrain == null || blockEntity == null ||
                 !terrain.Terrain.IsCellValid(point.X, point.Y, point.Z))
             {
@@ -286,7 +287,8 @@ namespace ScMultiplayer
         // SubsystemPistonBlockBehavior.Update
         void IUpdateable.Update(float dt)
         {
-            if (ScMultiplayer.client?.IsConnected != true || ScMultiplayer.IsHost)
+            if (ScMultiplayer.currentInstance?.IsNetworkSessionActive(Project) != true ||
+                ScMultiplayer.currentInstance?.IsNetworkHost(Project) == true)
             {
                 base.Update(dt);
                 return;
@@ -311,7 +313,8 @@ namespace ScMultiplayer
         // SubsystemPistonBlockBehavior.OnBlockRemoved
         public override void OnBlockRemoved(int value, int newValue, int x, int y, int z)
         {
-            if (ScMultiplayer.client?.IsConnected == true && !ScMultiplayer.IsHost)
+            if (ScMultiplayer.currentInstance?.IsNetworkSessionActive(Project) == true &&
+                ScMultiplayer.currentInstance?.IsNetworkHost(Project) != true)
             {
                 int contents = Terrain.ExtractContents(value);
                 if (contents == PistonHeadBlock.Index)
