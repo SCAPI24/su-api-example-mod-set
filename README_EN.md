@@ -50,15 +50,16 @@ SuAPI compatibility: `0.1.5.0` / `0.1.5.1`
 
 A host-authoritative multiplayer mod built on the Comms library. It synchronizes players, terrain, containers, dropped items, projectiles, animals, weather, circuits, sleep, and world time. It supports Windows and Android clients, headless servers, map transfer, reconnect recovery, and network diagnostics.
 
-#### Update Summary: Beta0.1.3.4 To 2.0.9
+#### Update Summary: Beta0.1.3.4 To 2.1.0
 
-The baseline is [`Beta0.1.3.4`](https://gitee.com/SC-SPM/su-api-example-mod-set/tree/Beta0.1.3.4) (`a7a36dc`, July 24, 2026), and the current head is `2.0.9` (`d0859d8`, August 10, 2026). There are **33 ScMultiplayer-related commits**: 31 commits directly changing `ScMultiplayer/` or `Comms/`, plus 2 release-directory compatibility updates. Together they contain 309 file-change records, 45,752 added lines, and 23,855 removed lines.
+The baseline is [`Beta0.1.3.4`](https://gitee.com/SC-SPM/su-api-example-mod-set/tree/Beta0.1.3.4) (`a7a36dc`, July 24, 2026). The previous 33-commit ScMultiplayer summary through `2.0.9` remains unchanged; two later commits completed join finalization and mount/boat synchronization. The current head is `2.1.0` (`6e45d62`, August 11, 2026).
 
 - `1.9.x`: joining recovery, player and terrain synchronization, moving projectiles, circuit controls, world refresh, and authoritative knockback fixes.
 - `2.0.0`: container drag-and-drop, item dropping and pickup, interaction synchronization, and multiplayer input handling.
 - `2.0.7`: terrain interest ranges, batched recovery, reliable transport, and network diagnostics.
 - `2.0.8`: modular multiplayer architecture plus sleep, circuit, terrain checkpoint, respawn, mount, and dispenser synchronization.
 - `2.0.9`: host-authoritative dispenser execution, creation ordering, and multi-client container state fixes.
+- `2.1.0`: reliable mount and dismount actions/states, host-side mount identity allocation, protection against stale position snapshots remounting a rider, join-time snapshots for existing boats, and delayed creation for boats outside the initial view range.
 
 #### Commit-by-Commit History
 
@@ -97,6 +98,8 @@ The baseline is [`Beta0.1.3.4`](https://gitee.com/SC-SPM/su-api-example-mod-set/
 | 2026-08-10 | [`c7b7adb`](https://gitee.com/SC-SPM/su-api-example-mod-set/commit/c7b7adb) | 1 file, +8/-1 | Keep dispenser effects authoritative on the host. |
 | 2026-08-10 | [`7f9b7c7`](https://gitee.com/SC-SPM/su-api-example-mod-set/commit/7f9b7c7) | 1 file, +11/-0 | Queue dispenser actions after circuit element creation. |
 | 2026-08-10 | [`d0859d8`](https://gitee.com/SC-SPM/su-api-example-mod-set/commit/d0859d8) | 4 files, +14/-54 | Release ScMultiplayer 2.0.9 and finish dispenser synchronization. |
+| 2026-08-10 | [`516a1db`](https://gitee.com/SC-SPM/su-api-example-mod-set/commit/516a1db) | 3 files, +17/-10 | Remove the extra reliable-window gate from join completion to prevent clients remaining in Joining Room. |
+| 2026-08-11 | [`6e45d62`](https://gitee.com/SC-SPM/su-api-example-mod-set/commit/6e45d62) | 16 files, +826/-51 | Release ScMultiplayer 2.1.0 with reliable mount actions/states, host mount ID allocation, existing-boat join snapshots, and delayed remote boat creation. |
 
 [View the complete Beta0.1.3.4 to current diff](https://gitee.com/SC-SPM/su-api-example-mod-set/compare/Beta0.1.3.4...master)
 
