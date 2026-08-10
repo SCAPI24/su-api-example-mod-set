@@ -232,6 +232,27 @@ namespace ScMultiplayer
                 Message.WriteWithSender(msg, s_transport.Address), latest: true);
         }
 
+        // Source: Survivalcraft/Game/ComponentGui.cs:ComponentGui.Update
+        // Mount and dismount are one-shot gameplay edges. They must use the reliable sequenced
+        // path instead of the latest-only player snapshot channel.
+        public static void SendMountActionMessage(MountActionMessage message)
+        {
+            if (message == null || ScMultiplayer.client == null) return;
+            s_transport.SendDirectInput(0,
+                Message.WriteWithSender(message, s_transport.Address),
+                sequenced: true, latest: false);
+        }
+
+        // Source: Survivalcraft/Game/ComponentRider.cs:ComponentRider.StartMounting
+        // The host result is an ordered state transition and must reach every ready peer.
+        public static void BroadcastMountStateMessage(MountStateMessage message)
+        {
+            if (message == null || ScMultiplayer.client == null) return;
+            SendDirectBroadcast(
+                Message.WriteWithSender(message, s_transport.Address),
+                sequenced: true, latest: false);
+        }
+
         public static ChatMessage SendChatMessage(string sender, string senderIdentity, string text)
         {
             var msg = new ChatMessage(sender, senderIdentity, text);

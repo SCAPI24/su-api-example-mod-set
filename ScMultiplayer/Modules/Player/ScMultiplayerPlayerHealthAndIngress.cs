@@ -406,6 +406,14 @@ namespace ScMultiplayer
                         QueueEndOfFrameAction(() => HandleGamePlayerInputMessage(
                             playerInput, item.ClientID));
                         break;
+                    case MountActionMessage mountAction:
+                        QueuePriorityInputAction(() => HandleMountActionMessage(
+                            mountAction, item.ClientID));
+                        break;
+                    case MountStateMessage mountState:
+                        QueuePriorityInputAction(() => HandleMountStateMessage(
+                            mountState, item.ClientID));
+                        break;
                     case PlayerAimMessage playerAim:
                         QueueEndOfFrameAction(() => HandlePlayerAimMessage(playerAim, item.ClientID));
                         break;

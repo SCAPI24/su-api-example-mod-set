@@ -60,6 +60,12 @@ namespace ScMultiplayer
             // Source: Survivalcraft/Game/ComponentGui.cs:ComponentGui.Update
             // Touch-only buttons mutate ComponentGui directly, so mirror world-affecting clicks
             // into the network input/request path as well.
+            // Source: Survivalcraft/Game/ComponentGui.cs:ComponentGui.Update
+            // The native GUI consumes this one-shot action in the same frame. Capture it before
+            // that consumer runs so the host executes the identical mount/dismount transition.
+            if (fields.GetParentField<ButtonWidget>(
+                gui, "m_mountButtonWidget", typeof(ComponentGui))?.IsClicked == true)
+                Sum_playerInput.ToggleMount = true;
             if (fields.GetParentField<ButtonWidget>(
                 gui, "m_editItemButton", typeof(ComponentGui))?.IsClicked == true)
                 Sum_playerInput.EditItem = true;
@@ -168,6 +174,13 @@ namespace ScMultiplayer
                 Sum_playerInput.Interact = null;
                 Sum_playerInput.PickBlockType = null;
                 Sum_playerInput.Drop = false;
+            }
+            // Source: Survivalcraft/Game/SubsystemSaddleBlockBehavior.cs:OnUse
+            // A saddle tap is consumed by ComponentMiner.Use. Suppress the parallel Hit edge so
+            // neither local prediction nor the host attack channel produces damage feedback.
+            if (ScMultiplayer.IsSaddleActive(Sum_componentPlayer))
+            {
+                Sum_playerInput.Hit = null;
             }
             // Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update
             // Animal entities are host snapshots, so send their stable network ID instead of
