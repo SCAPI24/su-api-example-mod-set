@@ -2313,11 +2313,12 @@ namespace ScMultiplayer
             m_reconnectPending = false;
             m_reconnectAttempts = 0;
             m_reconnectAttemptDeadline = 0.0;
-            SubmitPendingJoin(null, PlayerClass.Male, null, hasPlayerProfile: false);
             // Source: Mod/ScMultiplayer/Func/Ui/MultiplayerChineseFont.cs:
             // MultiplayerChineseFont.Load
             // Defer one frame so the Joining Room dialog is rendered before synchronous
-            // graphics resources are initialized while world transfer is already active.
+            // graphics resources are initialized. Start the world transfer only after this
+            // first Joining Room phase has completed.
+            m_deferredInitialJoinSubmit = true;
             m_pendingMultiplayerFontWarmupFrame = Time.FrameIndex + 1;
         }
 
@@ -2327,13 +2328,21 @@ namespace ScMultiplayer
                 Time.FrameIndex < m_pendingMultiplayerFontWarmupFrame)
                 return;
             m_pendingMultiplayerFontWarmupFrame = -1;
-            if (m_joinRoomBusyDialog != null && !IsHost && client?.IsConnected == true)
-                MultiplayerChineseFont.Load();
+            if (m_joinRoomBusyDialog == null || IsHost)
+                return;
+            MultiplayerChineseFont.Load();
+            if (m_deferredInitialJoinSubmit)
+            {
+                m_deferredInitialJoinSubmit = false;
+                SubmitPendingJoin(null, PlayerClass.Male, null, hasPlayerProfile: false);
+            }
         }
 
         public void CancelPendingJoin()
         {
             HideJoinRoomBusyDialog();
+            m_deferredInitialJoinSubmit = false;
+            m_pendingMultiplayerFontWarmupFrame = -1;
             m_pendingJoinRequest = null;
             m_activeJoinRequest = null;
             m_reconnectRequested = false;

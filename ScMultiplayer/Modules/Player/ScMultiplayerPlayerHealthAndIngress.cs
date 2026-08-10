@@ -1202,8 +1202,9 @@ namespace ScMultiplayer
 
         // Source: ScMultiplayer.cs:SendPendingWorldTransferChunks
         // Catch-up uses the same spare-bandwidth bucket as the initial world archive. Completion
-        // remains ordered after the last catch-up payload, so a throttled join cannot pass its
-        // readiness barrier early.
+        // remains ordered after the last catch-up payload on the reliable transport, but must not
+        // wait for the application's bulk-window estimate to fall below its limit. That extra
+        // gate can strand the completion marker while the client is already waiting in recovery.
         private void SendPendingJoinCatchUps()
         {
             if (m_joinCatchUpRegistry.Pending.Count == 0) return;
@@ -1220,10 +1221,6 @@ namespace ScMultiplayer
                     continue;
                 if (pending.Messages.Count == 0)
                 {
-                    if (pending.CompletionAction != null &&
-                        !CanSendReliableBulk(targetClientId, 1,
-                            joinCritical: true))
-                        continue;
                     m_joinCatchUpRegistry.Pending.Remove(targetClientId);
                     pending.CompletionAction?.Invoke();
                     continue;

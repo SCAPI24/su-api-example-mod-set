@@ -115,6 +115,7 @@ namespace ScMultiplayer
         private int m_projectReadySentTransferId;
         private int m_lastWorldUpdateFrameIndex = -1;
         private int m_pendingMultiplayerFontWarmupFrame = -1;
+        private bool m_deferredInitialJoinSubmit;
         // Source: Survivalcraft/Game/ComponentVitalStats.cs:ComponentVitalStats.Update
         // Store only values actually sent by the host. This keeps small natural changes quiet
         // while allowing meaningful heat, stamina, wetness and sleep changes through promptly.
