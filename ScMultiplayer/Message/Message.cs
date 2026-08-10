@@ -78,6 +78,8 @@ namespace ScMultiplayer
             Register<AnimalSoundMessage>(39, nameof(AnimalSoundMessage), 1);
             Register<FurnitureBuildRequestMessage>(40,
                 nameof(FurnitureBuildRequestMessage), 1);
+            Register<MountActionMessage>(41, nameof(MountActionMessage), 1);
+            Register<MountStateMessage>(42, nameof(MountStateMessage), 1);
 
             foreach (TypeInfo typeInfo in typeof(Message).Assembly.DefinedTypes)
             {

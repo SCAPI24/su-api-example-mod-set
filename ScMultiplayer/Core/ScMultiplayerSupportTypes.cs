@@ -133,6 +133,8 @@ namespace ScMultiplayer
         public bool IsFlying;
         public bool IsRiding;
         public ushort MountEntityId;
+        public int MountActionSequence = -1;
+        public int MountStateSequence = -1;
         public bool IsGrounded;
         public int ActiveSlotIndex;
         public int HandItemValue;
@@ -286,6 +288,14 @@ namespace ScMultiplayer
         public readonly Queue<PlayerActionMessage> HitEvents = new Queue<PlayerActionMessage>();
         public int LastHitSequence;
         public double NextHitExecutionTime;
+        // Source: Survivalcraft/Game/SubsystemSaddleBlockBehavior.cs:OnUse
+        // A saddle use is an interaction transaction. Keep a short host-side guard so a
+        // duplicate HitRequest from the same touch frame cannot become melee damage.
+        public double MeleeSuppressedUntil;
+        public int LastMountActionSequence = -1;
+        public int LastMountStateSequence = -1;
+        public MountStateKind LastMountState = MountStateKind.Rejected;
+        public ushort LastMountEntityId;
         public readonly Queue<PlayerActionMessage> DropEvents = new Queue<PlayerActionMessage>();
         public int LastDropSequence;
         // Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update

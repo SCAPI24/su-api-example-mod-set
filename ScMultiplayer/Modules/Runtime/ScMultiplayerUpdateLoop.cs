@@ -2680,6 +2680,9 @@ namespace ScMultiplayer
                 SendGamePlayerPositionMessage(
                     pulse1Hz || forceHostInventorySync,
                     inventoryKeyframe || forceHostInventorySync);
+            // Source: Survivalcraft/Game/ComponentRider.cs:ComponentRider.Update
+            // Publish completion and native automatic dismount transitions after the host update.
+            if (IsHost) PublishHostMountStateChanges();
             if (forceHostInventorySync) m_forceHostInventorySync = false;
             bool networkContainerOpen = !IsHost && IsNetworkContainerOpen();
             bool synchronizedClientContainers = !IsHost &&

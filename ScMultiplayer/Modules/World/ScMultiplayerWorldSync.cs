@@ -1129,6 +1129,12 @@ namespace ScMultiplayer
         SubsystemBodies subsystemBodies = project?.FindSubsystem<SubsystemBodies>(false);
         if (subsystemBodies == null) return;
 
+        // Source: ScMultiplayerPlayerHealthAndIngress.cs:RecordJoinCatchUpMessage
+        // Latest presentation samples are intentionally omitted from a joining client's journal.
+        // Send one reliable template-bearing snapshot per join journal instead.
+        if (m_joinCatchUpRegistry.Journals.Count == 0)
+            m_hostMountJoinSnapshotClients.Clear();
+
         Entity[] mounts = subsystemBodies.Bodies
             .Select(body => body?.Entity)
             .Where(entity => entity?.FindComponent<ComponentMount>() != null &&
@@ -1147,6 +1153,7 @@ namespace ScMultiplayer
         }
 
         var updates = new List<BodyUpdateMessage.BodyItem>(mounts.Length);
+        var newlyCreatedUpdates = new List<BodyUpdateMessage.BodyItem>();
         foreach (Entity entity in mounts)
         {
             bool isNew = !m_hostMountIds.TryGetValue(entity, out ushort id);
@@ -1161,7 +1168,7 @@ namespace ScMultiplayer
             }
             ComponentBody body = entity.FindComponent<ComponentBody>();
             if (body == null) continue;
-            updates.Add(new BodyUpdateMessage.BodyItem
+            BodyUpdateMessage.BodyItem bodyItem = new BodyUpdateMessage.BodyItem
             {
                 EntityId = id,
                 Flags = BodyUpdateMessage.ChangeFlag.Position |
@@ -1173,7 +1180,46 @@ namespace ScMultiplayer
                 Rotation = body.Rotation,
                 Velocity = body.Velocity,
                 TemplateName = entity.ValuesDictionary?.DatabaseObject?.Name ?? "Boat"
-            });
+            };
+            updates.Add(bodyItem);
+            if (isNew)
+                newlyCreatedUpdates.Add(bodyItem);
+        }
+
+        if (newlyCreatedUpdates.Count > 0)
+        {
+            NetworkMessageSender.SendBodyUpdateMessage(new BodyUpdateMessage
+            {
+                ServerTick = client.Step,
+                IsFullSnapshot = false,
+                Bodies = newlyCreatedUpdates
+            }, reliable: true);
+        }
+
+        if (m_joinCatchUpRegistry.Journals.Count > 0)
+        {
+            int[] joiningClientIds = m_joinCatchUpRegistry.Journals.Keys.ToArray();
+            if (joiningClientIds.Any(id => !m_hostMountJoinSnapshotClients.Contains(id)) &&
+                updates.Count > 0)
+            {
+                var snapshot = updates.Select(item => new BodyUpdateMessage.BodyItem
+                {
+                    EntityId = item.EntityId,
+                    Flags = item.Flags | BodyUpdateMessage.ChangeFlag.Template,
+                    Position = item.Position,
+                    Rotation = item.Rotation,
+                    Velocity = item.Velocity,
+                    TemplateName = item.TemplateName
+                }).ToList();
+                NetworkMessageSender.SendBodyUpdateMessage(new BodyUpdateMessage
+                {
+                    ServerTick = client.Step,
+                    IsFullSnapshot = false,
+                    Bodies = snapshot
+                }, reliable: true);
+                foreach (int clientId in joiningClientIds)
+                    m_hostMountJoinSnapshotClients.Add(clientId);
+            }
         }
         if (updates.Count > 0)
         {

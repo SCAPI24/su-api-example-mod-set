@@ -203,7 +203,7 @@ namespace ScMultiplayer
 			Dispatcher.Dispatch(delegate
 			{
 				HideJoinRoomBusyDialog();
-				DialogsManager.ShowDialog(null, new MessageDialog("Join Room", obj.Reason + "\r\nInstall the same ScMultiplayer package on all devices.", "OK", null, null));
+				DialogsManager.ShowDialog(null, new MessageDialog("Join Room", obj.Reason + "\nInstall the same ScMultiplayer package on all devices.", "OK", null, null));
 			});
 			return;
 		}
@@ -554,6 +554,7 @@ namespace ScMultiplayer
 		RemotePlayers.Clear();
         m_hostAnimalIds.Clear();
         m_hostMountIds.Clear();
+        m_hostMountJoinSnapshotClients.Clear();
         m_nextMountId = MountEntityIdStart;
         m_hostAnimals.Clear();
 		m_hostAnimalSync.Clear();
@@ -717,6 +718,12 @@ namespace ScMultiplayer
 		m_localInputSequence = 0;
 		m_lastSentInputSequence = -1;
 		m_localInputResendsRemaining = 0;
+		m_localMountActionSequence = 0;
+		m_localMountActionExpectedRiding = false;
+		m_lastLocalMountStateSequence = -1;
+		m_lastLocalMountStateServerTick = -1;
+		m_receivedMountStates.Clear();
+		m_hostMountStateSequences.Clear();
 		m_localAimActive = false;
 		m_localAimSequence = 0;
 		m_localAimSlot = -1;
@@ -894,7 +901,7 @@ namespace ScMultiplayer
 		}
 		else
 		{
-			Storage.WriteAllText("data:/ScMultiplayerDownloadedWorlds.txt", string.Join("\r\n", directories));
+			Storage.WriteAllText("data:/ScMultiplayerDownloadedWorlds.txt", string.Join("\n", directories));
 		}
 	}
 
@@ -1337,6 +1344,24 @@ namespace ScMultiplayer
 			return;
 		}
 		EnsureClientDropDragHost(player);
+		// Source: Survivalcraft/Game/ComponentGui.cs:ComponentGui.Update
+		// The local GUI still predicts the native animation, but its one-shot action must travel
+		// through MountActionMessage, not the latest-only input snapshot.
+		if (playerInput.ToggleMount)
+		{
+			ComponentMount currentMount = player.ComponentRider?.Mount;
+			m_localMountActionExpectedRiding = currentMount == null;
+			MountActionKind action = currentMount == null
+				? MountActionKind.Mount
+				: MountActionKind.Dismount;
+			ComponentMount targetMount = currentMount ?? player.ComponentRider?.FindNearestMount();
+			m_localMountActionSequence = PlayerActionSequencePolicy.Next(m_localMountActionSequence);
+			NetworkMessageSender.SendMountActionMessage(new MountActionMessage(
+				obj.ClientID, m_localMountActionSequence, action,
+				GetNetworkMountEntityId(targetMount?.Entity),
+				player.ComponentBody.Position, player.ComponentBody.Rotation,
+				player.ComponentLocomotion?.LookAngles ?? Vector2.Zero, obj.Step));
+		}
 		IInventory inventory = player.ComponentMiner?.Inventory;
 		int activeSlot = inventory?.ActiveSlotIndex ?? (-1);
 		NormalizeCrossbowSlot(inventory, activeSlot);
@@ -1356,6 +1381,10 @@ namespace ScMultiplayer
 		UpdateLocalInteractRequests(player, playerInput.Interact);
 		UpdateLocalDropRequests(player, playerInput.Drop);
 		UpdateLocalJumpRequests(playerInput.Jump);
+		// Source: Survivalcraft/Game/ComponentGui.cs:ComponentGui.Update
+		// The reliable MountActionMessage above owns this edge. Keep it out of the replaceable
+		// GamePlayerInputMessage snapshot so the host cannot execute it a second time.
+		playerInput.ToggleMount = false;
 		playerInput.Aim = null;
 		playerInput.Drop = false;
 		playerInput.Jump = false;
@@ -1587,9 +1616,20 @@ namespace ScMultiplayer
 		}
 	}
 
+	// Source: Survivalcraft/Game/SubsystemSaddleBlockBehavior.cs:HandledBlocks
+	// Saddle use is resolved by the native interaction path, never by ComponentMiner.Hit.
+	internal static bool IsSaddleActive(ComponentPlayer player)
+	{
+		IInventory inventory = player?.ComponentMiner?.Inventory;
+		int activeSlot = inventory?.ActiveSlotIndex ?? -1;
+		if (inventory == null || activeSlot < 0 || activeSlot >= inventory.SlotsCount)
+			return false;
+		return Terrain.ExtractContents(inventory.GetSlotValue(activeSlot)) == 158;
+	}
+
 	private void UpdateLocalHitRequests(ComponentPlayer player, Ray3? hitRay)
 	{
-		if (!hitRay.HasValue || player?.ComponentMiner == null ||
+		if (IsSaddleActive(player) || !hitRay.HasValue || player?.ComponentMiner == null ||
 			player.ComponentCreatureModel == null)
 			return;
 
@@ -2004,6 +2044,14 @@ namespace ScMultiplayer
 			ApplyHostActionPose(player, state);
 			playerInput = ((state.ConsumedSequence != state.Sequence) ? state.Input : state.HeldInput);
 			state.ConsumedSequence = state.Sequence;
+			// Source: Survivalcraft/Game/SubsystemSaddleBlockBehavior.cs:OnUse
+			// A saddle interaction replaces the target entity and must not leave a same-frame
+			// melee request queued behind it.
+			if (Terrain.ExtractContents(interact.ItemValue) == 158)
+			{
+				state.MeleeSuppressedUntil = Time.RealTime + 0.6;
+				state.HitEvents.Clear();
+			}
 			ApplyInteractionInventory(player.ComponentMiner?.Inventory, interact);
 			if (interact.HasTerrainPrediction)
 			{
@@ -2059,6 +2107,22 @@ namespace ScMultiplayer
 				state.ActiveAimItemCount = 0;
 			}
 			state.HeldInput = PlayerInputStatePolicy.CreateHeld(playerInput);
+			return true;
+		}
+		if (state.HitEvents.Count > 0 && Time.RealTime < state.MeleeSuppressedUntil)
+		{
+			state.HitEvents.Clear();
+			if (state.ConsumedSequence != state.Sequence)
+			{
+				playerInput = state.Input;
+				state.ConsumedSequence = state.Sequence;
+				state.HeldInput = PlayerInputStatePolicy.CreateHeld(playerInput);
+			}
+			else
+			{
+				playerInput = state.HeldInput;
+			}
+			playerInput.Hit = null;
 			return true;
 		}
 		if (state.HitEvents.Count > 0 && Time.RealTime >= state.NextHitExecutionTime)
@@ -2895,6 +2959,20 @@ namespace ScMultiplayer
 		return false;
 	}
 
+	private static bool IsFinite(Vector2 value)
+	{
+		return !float.IsNaN(value.X) && !float.IsInfinity(value.X) &&
+			!float.IsNaN(value.Y) && !float.IsInfinity(value.Y);
+	}
+
+	private static bool IsFinite(Quaternion value)
+	{
+		return !float.IsNaN(value.X) && !float.IsInfinity(value.X) &&
+			!float.IsNaN(value.Y) && !float.IsInfinity(value.Y) &&
+			!float.IsNaN(value.Z) && !float.IsInfinity(value.Z) &&
+			!float.IsNaN(value.W) && !float.IsInfinity(value.W);
+	}
+
 	private static void ApplyInteractionInventory(IInventory inventory, PlayerActionMessage message)
 	{
 		if (inventory != null && message != null && message.ActiveSlotIndex >= 0 && message.ActiveSlotIndex < inventory.SlotsCount && message.ItemCount >= 0)
@@ -3043,7 +3121,9 @@ namespace ScMultiplayer
 			{
 				inventory.ActiveSlotIndex = msg.ActiveSlotIndex;
 			}
-			MatchRemoteRidingState(remotePlayer, msg.IsRiding, msg.MountEntityId);
+			// Source: Survivalcraft/Game/ComponentGui.cs:ComponentGui.Update
+			// ToggleMount is the only host-side mount transition command. Do not infer a new mount
+			// from a stale IsRiding snapshot after the native dismount has completed.
 		}
 		state.Input = PlayerInputStatePolicy.Sanitize(msg.PlayerInput);
 		state.BodyPosition = msg.BodyPosition;
@@ -3059,7 +3139,13 @@ namespace ScMultiplayer
 
 	private ushort GetClientMountEntityId(ComponentPlayer player)
 	{
-		Entity mountEntity = player?.ComponentRider?.Mount?.Entity;
+		return GetNetworkMountEntityId(player?.ComponentRider?.Mount?.Entity);
+	}
+
+	// Source: Survivalcraft/Game/ComponentMount.cs:ComponentMount.Load
+	// Network identities are assigned by the host for both saddled creatures and boats.
+	private ushort GetNetworkMountEntityId(Entity mountEntity)
+	{
 		if (mountEntity == null)
 		{
 			return 0;
@@ -3092,34 +3178,316 @@ namespace ScMultiplayer
 			if (item.Value == mountEntity)
 				return item.Key;
 		}
-		return 0;
+		return IsHost ? EnsureHostMountNetworkId(mountEntity) : (ushort)0;
 	}
 
-	private void MatchRemoteRidingState(ComponentPlayer player, bool shouldBeRiding, ushort mountEntityId)
+	// Source: Survivalcraft/Game/ComponentRider.StartMounting
+	// Allocate the authoritative identity at the action boundary. The next world-object pulse may
+	// not have run yet, but a mount acknowledgement must never carry MountEntityId=0.
+	private ushort EnsureHostMountNetworkId(Entity mountEntity)
 	{
+		if (!IsHost || mountEntity == null || mountEntity.FindComponent<ComponentMount>() == null)
+			return 0;
+		if (mountEntity.FindComponent<ComponentCreature>() != null)
+		{
+			if (m_hostAnimalIds.TryGetValue(mountEntity, out ushort animalId))
+				return animalId;
+			animalId = m_nextAnimalId++;
+			m_hostAnimalIds[mountEntity] = animalId;
+			if (!m_hostAnimalSync.ContainsKey(mountEntity))
+			{
+				int simulationSeed = CalculateAnimalSimulationSeed(animalId);
+				m_hostAnimalSync[mountEntity] = new AnimalSyncMetadata
+				{
+					SimulationSeed = simulationSeed
+				};
+				ApplyAnimalSimulationSeed(mountEntity, simulationSeed);
+			}
+			return animalId;
+		}
+		if (m_hostMountIds.TryGetValue(mountEntity, out ushort mountId))
+			return mountId;
+		mountId = m_nextMountId++;
+		if (mountId < MountEntityIdStart)
+			mountId = m_nextMountId = MountEntityIdStart;
+		m_hostMountIds[mountEntity] = mountId;
+		NetworkMessageSender.SendEntityMessage(new EntityMessage(
+			mountId, EntityMessage.EntityAction.Add,
+			mountEntity.ValuesDictionary?.DatabaseObject?.Name ?? "Boat"));
+		return mountId;
+	}
+
+	// Source: Survivalcraft/Game/ComponentGui.cs:ComponentGui.Update
+	// Source: Survivalcraft/Game/ComponentRider.cs:ComponentRider.StartMounting
+	// A client action is acknowledged only after the host has decided its outcome. Position
+	// snapshots never call this path, so stale IsRiding values cannot replay an old transition.
+	private void HandleMountActionMessage(MountActionMessage message, int sourceClientId)
+	{
+		if (!IsHost || message == null || sourceClientId <= 0 ||
+			message.PlayerIndex != sourceClientId ||
+			!m_networkPlayerData.TryGetValue(sourceClientId, out PlayerData playerData))
+			return;
+		ComponentPlayer player = playerData.ComponentPlayer;
 		ComponentRider rider = player?.ComponentRider;
-		if (rider == null)
+		NetworkPlayerInputState inputState = m_networkPlayerInputs.TryGetValue(sourceClientId,
+			out NetworkPlayerInputState existing) ? existing : new NetworkPlayerInputState();
+		m_networkPlayerInputs[sourceClientId] = inputState;
+		if (message.ActionSequence <= inputState.LastMountActionSequence)
 		{
+			BroadcastMountState(sourceClientId, inputState.LastMountActionSequence,
+				inputState.LastMountState, inputState.LastMountEntityId, player,
+				advanceStateSequence: false);
 			return;
 		}
-		ComponentMount currentMount = rider.Mount;
-		if (!shouldBeRiding)
+		inputState.LastMountActionSequence = message.ActionSequence;
+		// Source: Survivalcraft/Game/ComponentGui.cs:ComponentGui.Update
+		// Mount selection is position-sensitive. The action carries the same local body pose that
+		// produced the button edge, so apply that pose before the host reruns FindNearestMount;
+		// otherwise a delayed input snapshot can leave the authoritative avatar behind the horse.
+		if (IsFinite(message.BodyPosition) && IsFinite(message.BodyRotation) &&
+			IsFinite(message.LookAngles))
 		{
-			if (currentMount != null)
-				rider.StartDismounting();
+			inputState.BodyPosition = message.BodyPosition;
+			inputState.BodyRotation = message.BodyRotation;
+			inputState.LookAngles = message.LookAngles;
+			inputState.LastReceivedTime = Time.RealTime;
+		}
+		ApplyHostActionPose(player, inputState);
+		ComponentMount currentMount = rider?.Mount;
+		if (rider == null || player.ComponentHealth?.Health <= 0f)
+		{
+			BroadcastMountState(sourceClientId, message.ActionSequence, MountStateKind.Rejected,
+				0, player);
 			return;
 		}
-		ComponentMount mount = ResolveNetworkMount(mountEntityId);
-		if (mount == null)
-			return;
-		if (currentMount != null && currentMount.Entity != mount.Entity)
+		if (message.Action == MountActionKind.Dismount)
 		{
+			// Source: Survivalcraft/Game/ComponentRider.cs:ComponentRider.Mount
+			// The host's actual parent relationship is authoritative. The client target ID is
+			// only a hint and may be stale when the mount snapshot races the input edge.
+			if (currentMount == null)
+			{
+				BroadcastMountState(sourceClientId, message.ActionSequence, MountStateKind.Rejected,
+					0, player);
+				return;
+			}
 			rider.StartDismounting();
+			BroadcastMountState(sourceClientId, message.ActionSequence,
+				MountStateKind.Dismounting, GetNetworkMountEntityId(currentMount.Entity), player);
 			return;
 		}
-		if (currentMount == null)
+		if (message.Action != MountActionKind.Mount || currentMount != null)
+		{
+			BroadcastMountState(sourceClientId, message.ActionSequence, MountStateKind.Rejected,
+				GetNetworkMountEntityId(currentMount?.Entity), player);
+			return;
+		}
+		// Source: Survivalcraft/Game/ComponentRider.cs:ComponentRider.FindNearestMount
+		// Prefer the host entity represented by the client's stable network ID. This preserves
+		// identity when two mounts are close together, while the same native visibility checks
+		// below keep the client from selecting an invalid or occupied host mount.
+		ComponentMount mount = ResolveHostMount(message.MountEntityId);
+		if (mount == null || !IsHostMountTargetValid(rider, mount))
+			mount = rider.FindNearestMount();
+		// Source: Survivalcraft/Game/ComponentRider.cs:ComponentRider.FindNearestMount
+		// Re-run the original host-side selection. A missing or stale client ID must not reject
+		// a valid interaction; the host still validates occupancy through ComponentMount.Rider.
+		if (mount == null || (mount.Rider != null && mount.Rider != rider))
+		{
+			BroadcastMountState(sourceClientId, message.ActionSequence, MountStateKind.Rejected,
+				0, player);
+			return;
+		}
+		rider.StartMounting(mount);
+		BroadcastMountState(sourceClientId, message.ActionSequence, MountStateKind.Mounting,
+			GetNetworkMountEntityId(mount.Entity), player);
+	}
+
+	// Source: Mod/ScMultiplayer/Modules/World/ScMultiplayerWorldSync.cs:SendWorldObjects
+	// Animal IDs are allocated by the host and reused by every client. Mount-only bodies use the
+	// high ID range and are resolved from the separate host mount table.
+	private ComponentMount ResolveHostMount(ushort mountEntityId)
+	{
+		if (mountEntityId == 0) return null;
+		Entity animal = m_hostAnimalIds.FirstOrDefault(item => item.Value == mountEntityId).Key;
+		ComponentMount mount = animal?.FindComponent<ComponentMount>();
+		if (mount != null) return mount;
+		Entity body = m_hostMountIds.FirstOrDefault(item => item.Value == mountEntityId).Key;
+		return body?.FindComponent<ComponentMount>();
+	}
+
+	// Source: Survivalcraft/Game/ComponentRider.cs:ComponentRider.ScoreMount
+	// Keep the original distance, facing, velocity and occupancy constraints when resolving a
+	// network identity instead of accepting an arbitrary client-provided entity ID.
+	private static bool IsHostMountTargetValid(ComponentRider rider, ComponentMount mount)
+	{
+		if (rider?.ComponentCreature?.ComponentCreatureModel == null || mount?.ComponentBody == null)
+			return false;
+		if (mount.Rider != null && mount.Rider != rider || mount.ComponentBody.Velocity.LengthSquared() >= 1f)
+			return false;
+		Vector3 offset = mount.ComponentBody.Position +
+			Vector3.Transform(mount.MountOffset, mount.ComponentBody.Rotation) -
+			rider.ComponentCreature.ComponentCreatureModel.EyePosition;
+		if (offset.Length() >= 2.5f) return false;
+		Vector3 direction = Vector3.Normalize(offset);
+		Vector3 forward = Matrix.CreateFromQuaternion(
+			rider.ComponentCreature.ComponentCreatureModel.EyeRotation).Forward;
+		return Vector3.Dot(direction, forward) > 0.33f;
+	}
+
+	private void BroadcastMountState(int playerClientId, int actionSequence,
+		MountStateKind state, ushort mountEntityId, ComponentPlayer player,
+		bool advanceStateSequence = true)
+	{
+		// Source: Survivalcraft/Game/ComponentRider.cs:ComponentRider.Mount
+		// Rejections and native dismount animation must report the actual host mount, not just
+		// the requested target. A rejected dismount can therefore restore the mounted state.
+		ushort authoritativeMountId = GetNetworkMountEntityId(
+			player?.ComponentRider?.Mount?.Entity);
+		if (authoritativeMountId != 0) mountEntityId = authoritativeMountId;
+		int stateSequence;
+		if (!m_hostMountStateSequences.TryGetValue(playerClientId, out stateSequence))
+			stateSequence = -1;
+		if (advanceStateSequence)
+		{
+			stateSequence = PlayerActionSequencePolicy.Next(stateSequence);
+			m_hostMountStateSequences[playerClientId] = stateSequence;
+		}
+		if (m_networkPlayerInputs.TryGetValue(playerClientId, out NetworkPlayerInputState inputState))
+		{
+			inputState.LastMountStateSequence = stateSequence;
+			inputState.LastMountState = state;
+			inputState.LastMountEntityId = mountEntityId;
+		}
+		ComponentBody body = ResolveNetworkMount(mountEntityId)?.ComponentBody;
+		NetworkMessageSender.BroadcastMountStateMessage(new MountStateMessage(playerClientId,
+			actionSequence, stateSequence, state, mountEntityId, client?.Step ?? 0,
+			body?.Position ?? player?.ComponentBody?.Position ?? Vector3.Zero,
+			body?.Rotation ?? Quaternion.Identity));
+	}
+
+	private void HandleMountStateMessage(MountStateMessage message, int sourceClientId)
+	{
+		if (IsHost || sourceClientId != 0 || message == null || message.PlayerIndex < 0) return;
+		if (message.PlayerIndex == client?.ClientID)
+		{
+			if (message.StateSequence < m_lastLocalMountStateSequence ||
+				(message.StateSequence == m_lastLocalMountStateSequence &&
+					message.ServerTick <= m_lastLocalMountStateServerTick)) return;
+			m_lastLocalMountStateSequence = Math.Max(m_lastLocalMountStateSequence,
+				message.StateSequence);
+			m_lastLocalMountStateServerTick = Math.Max(m_lastLocalMountStateServerTick,
+				message.ServerTick);
+		}
+		else if (RemotePlayers.TryGetValue(message.PlayerIndex, out NetworkPlayerState remoteState))
+		{
+			if (message.StateSequence < remoteState.MountStateSequence) return;
+			remoteState.MountStateSequence = message.StateSequence;
+			remoteState.MountActionSequence = Math.Max(remoteState.MountActionSequence,
+				message.ActionSequence);
+		}
+		m_receivedMountStates[message.PlayerIndex] = message;
+		TryApplyReceivedMountState(message.PlayerIndex);
+	}
+
+	private void TryApplyReceivedMountState(int playerClientId)
+	{
+		if (!m_receivedMountStates.TryGetValue(playerClientId, out MountStateMessage message)) return;
+		ComponentPlayer player = playerClientId == client?.ClientID
+			? GameManager.Project?.FindSubsystem<SubsystemPlayers>(false)?.ComponentPlayers
+				.FirstOrDefault(item => !m_networkPlayerData.Values.Contains(item.PlayerData))
+			: (m_networkPlayerData.TryGetValue(playerClientId, out PlayerData playerData)
+				? playerData.ComponentPlayer : null);
+		ComponentRider rider = player?.ComponentRider;
+		if (rider == null) return;
+		if (message.State == MountStateKind.Dismounting ||
+			message.State == MountStateKind.Dismounted)
+		{
+			if (rider.Mount != null) rider.StartDismounting();
+			return;
+		}
+		if (message.State == MountStateKind.Rejected && !message.IsRiding)
+		{
+			if (rider.Mount != null) rider.StartDismounting();
+			return;
+		}
+		ComponentMount mount = ResolveNetworkMount(message.MountEntityId);
+		if (mount == null) return;
+		if (message.State == MountStateKind.Rejected || message.State == MountStateKind.Mounted ||
+			message.State == MountStateKind.Mounting)
+		{
+			RestoreMountedState(rider, mount);
+		}
+	}
+
+	// Source: Survivalcraft/Game/ComponentRider.cs:ComponentRider.Update
+	// A rejected dismount must cancel the local prediction animation. The original game has no
+	// public "cancel dismount" operation, so this narrow ModParentField bridge restores the same
+	// parent relationship and animation fields that StartMounting would leave authoritative.
+	private void RestoreMountedState(ComponentRider rider, ComponentMount mount)
+	{
+		if (rider?.ComponentCreature?.ComponentBody == null || mount?.ComponentBody == null) return;
+		ComponentBody body = rider.ComponentCreature.ComponentBody;
+		if (rider.Mount == null)
 		{
 			rider.StartMounting(mount);
+			return;
+		}
+		if (rider.Mount != mount) return;
+		Vector3 riderOffset = ModManager.ModParentField.GetParentField<Vector3>(
+			rider, "m_riderOffset", typeof(ComponentRider));
+		body.ParentBody = mount.ComponentBody;
+		body.ParentBodyPositionOffset = mount.MountOffset + riderOffset;
+		body.ParentBodyRotationOffset = Quaternion.Identity;
+		ModManager.ModParentField.ModifyParentField(rider, "m_isAnimating", false,
+			typeof(ComponentRider));
+		ModManager.ModParentField.ModifyParentField(rider, "m_isDismounting", false,
+			typeof(ComponentRider));
+		ModManager.ModParentField.ModifyParentField(rider, "m_animationTime", 0f,
+			typeof(ComponentRider));
+		ModManager.ModParentField.ModifyParentField(rider, "m_outOfMountTime", 0f,
+			typeof(ComponentRider));
+	}
+
+	private void PublishHostMountStateChanges()
+	{
+		if (!IsHost) return;
+		var players = new List<KeyValuePair<int, ComponentPlayer>>();
+		ComponentPlayer localPlayer = GameManager.Project?.FindSubsystem<SubsystemPlayers>(false)?.ComponentPlayers
+			.FirstOrDefault(item => !m_networkPlayerData.Values.Contains(item.PlayerData));
+		if (localPlayer != null) players.Add(new KeyValuePair<int, ComponentPlayer>(0, localPlayer));
+		foreach (KeyValuePair<int, PlayerData> entry in m_networkPlayerData.ToArray())
+			if (entry.Key > 0 && entry.Value?.ComponentPlayer != null)
+				players.Add(new KeyValuePair<int, ComponentPlayer>(entry.Key, entry.Value.ComponentPlayer));
+		foreach (KeyValuePair<int, ComponentPlayer> entry in players)
+		{
+			ComponentPlayer player = entry.Value;
+			ComponentMount mount = player.ComponentRider?.Mount;
+			MountStateKind observedState = mount == null
+				? MountStateKind.Dismounted : MountStateKind.Mounted;
+			if (!m_networkPlayerInputs.TryGetValue(entry.Key, out NetworkPlayerInputState state))
+			{
+				state = new NetworkPlayerInputState();
+				m_networkPlayerInputs[entry.Key] = state;
+			}
+			if (state.LastMountActionSequence < 0 && state.LastMountStateSequence < 0)
+			{
+				BroadcastMountState(entry.Key, -1, observedState,
+					GetNetworkMountEntityId(mount?.Entity), player);
+				continue;
+			}
+			if (state.LastMountState == MountStateKind.Mounting && mount != null)
+				BroadcastMountState(entry.Key, state.LastMountActionSequence, MountStateKind.Mounted,
+					GetNetworkMountEntityId(mount.Entity), player);
+			else if (state.LastMountState == MountStateKind.Dismounting && mount == null)
+				BroadcastMountState(entry.Key, state.LastMountActionSequence, MountStateKind.Dismounted,
+					0, player);
+			else if (state.LastMountState == MountStateKind.Mounted && mount == null)
+				BroadcastMountState(entry.Key, state.LastMountActionSequence, MountStateKind.Dismounted,
+					0, player);
+			else if (state.LastMountState == MountStateKind.Dismounted && mount != null)
+				BroadcastMountState(entry.Key, state.LastMountActionSequence, MountStateKind.Mounted,
+					GetNetworkMountEntityId(mount.Entity), player);
 		}
 	}
 

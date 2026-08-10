@@ -152,7 +152,10 @@ namespace ScMultiplayer
                         inventory.ActiveSlotIndex = msg.ActiveSlotIndex;
                     ApplyInventory(inventory, msg.SlotValues, msg.SlotCounts);
                 }
-                MatchRemoteRidingState(playerData.ComponentPlayer, msg.IsRiding, msg.MountEntityId);
+                // Source: ScMultiplayer.HandleMountStateMessage
+                // Position snapshots update presentation only. Mount parentage is changed solely
+                // by the ordered host MountStateMessage.
+                TryApplyReceivedMountState(msg.PlayerIndex);
             }
         }
 
@@ -164,11 +167,9 @@ namespace ScMultiplayer
                 !m_networkPlayerData.Values.Contains(player.PlayerData));
             if (localPlayer == null) return;
 
-            // Source: Survivalcraft/Game/ComponentRider.cs:ComponentRider.StartMounting
-            // The owning client predicts the button press, while the host snapshot closes stale
-            // mount/dismount state. Resolve only the advertised mount ID; nearby mounts are not
-            // interchangeable network identities.
-            MatchRemoteRidingState(localPlayer, msg.IsRiding, msg.MountEntityId);
+            // Source: ScMultiplayer.HandleMountStateMessage
+            // The ordered action result, not this latest position snapshot, owns local mount state.
+            TryApplyReceivedMountState(client?.ClientID ?? 0);
 
             float delaySample = MathUtils.Clamp(
                 (client.Step - msg.ServerTick) * ServerTickDuration, 0f, 0.5f);
@@ -273,7 +274,9 @@ namespace ScMultiplayer
         // Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update
         public bool TrySendAnimalAttackRequest(ComponentPlayer player, Ray3 hitRay)
         {
-            if (IsHost || client?.IsConnected != true || player?.ComponentMiner == null ||
+            // Source: Survivalcraft/Game/SubsystemSaddleBlockBehavior.cs:OnUse
+            // A saddle is an interaction item. Do not convert its body ray into melee damage.
+            if (IsSaddleActive(player) || IsHost || client?.IsConnected != true || player?.ComponentMiner == null ||
                 GameManager.Project == null)
                 return false;
             BodyRaycastResult? result = player.ComponentMiner.Raycast<BodyRaycastResult>(
@@ -320,7 +323,9 @@ namespace ScMultiplayer
                 return;
             ComponentPlayer attacker = playerData?.ComponentPlayer;
             ComponentMiner miner = attacker?.ComponentMiner;
-            if (attacker == null || miner == null || attacker.ComponentHealth?.Health <= 0f)
+            // Source: Survivalcraft/Game/SubsystemSaddleBlockBehavior.cs:OnUse
+            // Keep the host-side validation aligned with the client-side saddle guard.
+            if (IsSaddleActive(attacker) || attacker == null || miner == null || attacker.ComponentHealth?.Health <= 0f)
                 return;
 
             Entity targetEntity = m_hostAnimalIds
@@ -576,17 +581,8 @@ namespace ScMultiplayer
             state.Velocity = item.Velocity;
             state.LastUpdateTime = Time.RealTime;
             state.HasTransform = true;
-            TryMatchRemoteRidersForMount(item.EntityId);
-        }
-
-        private void TryMatchRemoteRidersForMount(ushort mountEntityId)
-        {
-            foreach (KeyValuePair<int, NetworkPlayerState> item in RemotePlayers.ToArray())
-            {
-                if (item.Value.IsRiding && item.Value.MountEntityId == mountEntityId &&
-                    m_networkPlayerData.TryGetValue(item.Key, out PlayerData playerData))
-                    MatchRemoteRidingState(playerData.ComponentPlayer, true, mountEntityId);
-            }
+            foreach (int playerClientId in m_receivedMountStates.Keys.ToArray())
+                TryApplyReceivedMountState(playerClientId);
         }
 
         // Source: Survivalcraft/Game/ComponentSpawn.cs:ComponentSpawn.Update
@@ -689,6 +685,13 @@ namespace ScMultiplayer
                 64f);
             foreach (BodyUpdateMessage.BodyItem item in message.Bodies)
             {
+                // Source: ScMultiplayerWorldSync.cs:SendMountUpdates
+                // Cache a mount template before visibility filtering. A boat outside the initial
+                // camera radius can be recreated when the client later approaches it.
+                if (IsMountNetworkId(item.EntityId) &&
+                    item.Flags.HasFlag(BodyUpdateMessage.ChangeFlag.Template) &&
+                    !string.IsNullOrWhiteSpace(item.TemplateName))
+                    m_remoteMountTemplates[item.EntityId] = item.TemplateName;
                 if (hasVisibility)
                 {
                     bool alreadyVisible = m_remoteAnimals.ContainsKey(item.EntityId);
@@ -700,9 +703,6 @@ namespace ScMultiplayer
                 if (IsMountNetworkId(item.EntityId) ||
                     m_remoteMountTemplates.ContainsKey(item.EntityId))
                 {
-                    if (item.Flags.HasFlag(BodyUpdateMessage.ChangeFlag.Template) &&
-                        !string.IsNullOrWhiteSpace(item.TemplateName))
-                        m_remoteMountTemplates[item.EntityId] = item.TemplateName;
                     HandleRemoteMountBodyUpdate(item, message.ServerTick);
                     continue;
                 }
@@ -902,13 +902,11 @@ namespace ScMultiplayer
                     model.AttackOrder = networkState.AttackOrder;
                     model.FeedOrder = networkState.FeedOrder;
                 }
-				// Source: Mod/ScMultiplayer/Modules/Session/ScMultiplayerClientEvents.cs:
-				// TryMatchRemoteRidersForMount
-				// Player snapshots and animal snapshots are independent messages. When the
-				// rider arrives first, retry as soon as the horse replica is available so the
-				// remote body is parented to the authoritative mount instead of remaining at
-				// its pre-mount position.
-				TryMatchRemoteRidersForMount(item.EntityId);
+				// Source: ScMultiplayer.HandleMountStateMessage
+				// A rider state may arrive before its animal replica. Retry ordered mount results
+				// once the authoritative animal entity becomes available.
+				foreach (int playerClientId in m_receivedMountStates.Keys.ToArray())
+					TryApplyReceivedMountState(playerClientId);
 			}
             if (fullSnapshotIds != null &&
                 message.ServerTick >= m_lastFullAnimalSnapshotTick)
@@ -1301,6 +1299,7 @@ namespace ScMultiplayer
                         locomotion, "m_lookAngles", lookAngles,
                         typeof(ComponentLocomotion));
                 }
+                ApplyLocalMountedAnimalLook(entity, creature, step);
                 ComponentCreature aggroTarget = ResolveRemoteAnimalTarget(state.TargetEntityId);
                 ApplyRemoteAnimalAggroTarget(entity, state.TargetEntityId);
                 ComponentCreatureModel model = creature.ComponentCreatureModel;
@@ -1334,6 +1333,35 @@ namespace ScMultiplayer
                 }
             }
             foreach (ushort id in expiredAnimals) RemoveRemoteAnimal(id);
+        }
+
+        // Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update
+        // Source: Survivalcraft/Game/ComponentLocomotion.cs:ComponentLocomotion.Update
+        // Remote animal locomotion is intentionally disabled to preserve host authority. When the
+        // local player is mounted, apply only the local head-look delta to the presentation model;
+        // position, collision and riding ownership remain driven by host snapshots.
+        private void ApplyLocalMountedAnimalLook(Entity entity, ComponentCreature creature, float dt)
+        {
+            if (IsHost || entity == null || creature?.ComponentLocomotion == null)
+                return;
+            ComponentPlayer localPlayer = GameManager.Project.FindSubsystem<SubsystemPlayers>(false)?
+                .ComponentPlayers.FirstOrDefault(player =>
+                    !m_networkPlayerData.Values.Contains(player.PlayerData));
+            if (localPlayer?.ComponentRider?.Mount?.Entity != entity)
+                return;
+            PlayerInput input = localPlayer.ComponentInput?.PlayerInput ?? default(PlayerInput);
+            if (input.Look.LengthSquared() <= 0.000001f)
+                return;
+            ComponentLocomotion locomotion = creature.ComponentLocomotion;
+            Vector2 lookAngles = locomotion.LookAngles;
+            lookAngles.X += locomotion.LookSpeed * input.Look.X * dt;
+            lookAngles.Y += locomotion.LookSpeed * input.Look.Y * dt;
+            lookAngles.X = MathUtils.Clamp(lookAngles.X,
+                0f - MathUtils.DegToRad(140f), MathUtils.DegToRad(140f));
+            lookAngles.Y = MathUtils.Clamp(lookAngles.Y,
+                0f - MathUtils.DegToRad(82f), MathUtils.DegToRad(82f));
+            ModManager.ModParentField.ModifyParentField(
+                locomotion, "m_lookAngles", lookAngles, typeof(ComponentLocomotion));
         }
 
         // Source: Survivalcraft/Game/ComponentBody.cs:ComponentBody.Update
