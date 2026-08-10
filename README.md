@@ -126,15 +126,16 @@ Memory Bank 绘图编辑器，替换 `SubsystemMemoryBankBlockBehavior`，增加
 
 多人联机 Mod，基于 Comms 通信库和主机权威架构，同步玩家、地形、容器、掉落物、投射物、动物、天气、电路、睡眠和世界时间。支持 Windows 与 Android 客户端、无头服务器、地图传输、断线恢复和网络诊断。
 
-#### 从 Beta0.1.3.4 到 2.0.9
+#### 从 Beta0.1.3.4 到 2.1.0
 
-统计范围为 [`Beta0.1.3.4`](https://gitee.com/SC-SPM/su-api-example-mod-set/tree/Beta0.1.3.4)（`a7a36dc`，2026-07-24）之后至 `2.0.9`（`d0859d8`，2026-08-10）。共计 **33 次 ScMultiplayer 相关提交**：其中 31 次直接修改 `ScMultiplayer/` 或 `Comms/`，包含 309 个文件修改记录、增加 45,752 行、删除 23,855 行；另有 2 次只更新发布目录和兼容信息。
+统计基线为 [`Beta0.1.3.4`](https://gitee.com/SC-SPM/su-api-example-mod-set/tree/Beta0.1.3.4)（`a7a36dc`，2026-07-24）。截至 `2.0.9` 的 33 次 ScMultiplayer 相关提交统计保持不变；之后新增加入收尾和乘骑/船只同步两个提交，当前版本为 `2.1.0`（`6e45d62`，2026-08-11）。
 
 - `1.9.x`：集中修复加入恢复、玩家与地形同步、移动投射物、电路控制、世界刷新和权威击退。
 - `2.0.0`：完善容器拖放、物品丢弃与拾取、交互同步及联机输入处理。
 - `2.0.7`：发布地形兴趣范围、批量恢复、可靠传输与网络诊断相关改进。
 - `2.0.8`：完成联机模块化重构，继续收口睡眠、电路、地形 checkpoint、复活、骑乘和发射器同步。
 - `2.0.9`：修复发射器主机权威执行、创建时序和多端容器状态同步。
+- `2.1.0`：将上马、下马、上船和下船拆为可靠动作与状态消息；主机按坐骑网络 ID 执行原版状态机，防止旧位置快照重复挂载；加入阶段补发已有船只的权威初始状态，并修复动作早于 8Hz 坐骑扫描时的网络 ID 竞态。
 
 #### 逐提交更新记录
 
@@ -173,6 +174,8 @@ Memory Bank 绘图编辑器，替换 `SubsystemMemoryBankBlockBehavior`，增加
 | 2026-08-10 | [`c7b7adb`](https://gitee.com/SC-SPM/su-api-example-mod-set/commit/c7b7adb) | 1 文件，+8/-1 | 保持发射器效果只由主机权威执行。 |
 | 2026-08-10 | [`7f9b7c7`](https://gitee.com/SC-SPM/su-api-example-mod-set/commit/7f9b7c7) | 1 文件，+11/-0 | 在电路元件创建完成后排队执行发射器操作。 |
 | 2026-08-10 | [`d0859d8`](https://gitee.com/SC-SPM/su-api-example-mod-set/commit/d0859d8) | 4 文件，+14/-54 | 发布 ScMultiplayer 2.0.9，完成发射器同步收口。 |
+| 2026-08-10 | [`516a1db`](https://gitee.com/SC-SPM/su-api-example-mod-set/commit/516a1db) | 3 文件，+17/-10 | 解除加入收尾对可靠窗口的额外阻塞，避免客户端长期停留在 Joining Room。 |
+| 2026-08-11 | [`6e45d62`](https://gitee.com/SC-SPM/su-api-example-mod-set/commit/6e45d62) | 16 文件，+826/-51 | 发布 ScMultiplayer 2.1.0：可靠乘骑动作/状态、主机坐骑 ID 分配、已有船只加入快照和远处船只延迟创建。 |
 
 [查看 Beta0.1.3.4 至当前版本的完整差异](https://gitee.com/SC-SPM/su-api-example-mod-set/compare/Beta0.1.3.4...master)
 
