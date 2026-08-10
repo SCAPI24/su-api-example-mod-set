@@ -163,6 +163,14 @@ namespace ScMultiplayer
         private int m_localInputSequence;
         private int m_lastSentInputSequence = -1;
         private int m_localInputResendsRemaining;
+        private int m_localMountActionSequence;
+        private bool m_localMountActionExpectedRiding;
+        private int m_lastLocalMountStateSequence = -1;
+        private int m_lastLocalMountStateServerTick = -1;
+        private readonly Dictionary<int, MountStateMessage> m_receivedMountStates =
+            new Dictionary<int, MountStateMessage>();
+        private readonly Dictionary<int, int> m_hostMountStateSequences =
+            new Dictionary<int, int>();
         private bool m_localAimActive;
         private int m_localAimSequence;
         private int m_localAimSlot = -1;
@@ -366,6 +374,10 @@ namespace ScMultiplayer
             new Dictionary<ushort, RemoteAnimalSyncState>();
         private readonly Dictionary<Entity, ushort> m_hostMountIds =
             new Dictionary<Entity, ushort>();
+        // Source: Mod/ScMultiplayer/Modules/World/ScMultiplayerWorldSync.cs:SendMountUpdates
+        // A mount ID is global on the host, but its initial body state is per joining client.
+        // Track join journals that already received the one-shot mount snapshot.
+        private readonly HashSet<int> m_hostMountJoinSnapshotClients = new HashSet<int>();
         private readonly Dictionary<ushort, Entity> m_remoteMounts =
             new Dictionary<ushort, Entity>();
         private readonly Dictionary<ushort, string> m_remoteMountTemplates =

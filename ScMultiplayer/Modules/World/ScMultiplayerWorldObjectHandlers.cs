@@ -351,6 +351,7 @@ namespace ScMultiplayer
 		m_authoritativePlayerStateSequences.Remove(clientId);
 		m_lastReceivedAuthoritativePlayerStateSequences.Remove(clientId);
 		m_hostWorldControlRequestStates.Remove(clientId);
+		m_hostMountJoinSnapshotClients.Remove(clientId);
 		m_pendingPlayerEquipmentMessages.Remove(clientId);
 		m_equipmentAuthorityRevisions.Remove(clientId);
 		m_lastClientEquipmentRevisions.Remove(clientId);

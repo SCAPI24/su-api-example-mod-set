@@ -52,6 +52,18 @@ namespace ScMultiplayer
                         m_owner.QueueEndOfFrameAction(command, () =>
                             m_owner.HandleGamePlayerInputMessage(playerInput, sourceClientId));
                         break;
+                    // Source: Survivalcraft/Game/ComponentGui.cs:ComponentGui.Update
+                    // Mount edges are reliable gameplay actions and must use the priority queue;
+                    // keeping them in the active router prevents them from being reduced to a
+                    // body-rotation-only latest input snapshot.
+                    case MountActionMessage mountAction:
+                        m_owner.QueuePriorityInputAction(command, () =>
+                            m_owner.HandleMountActionMessage(mountAction, sourceClientId));
+                        break;
+                    case MountStateMessage mountState:
+                        m_owner.QueuePriorityInputAction(command, () =>
+                            m_owner.HandleMountStateMessage(mountState, sourceClientId));
+                        break;
                     case PlayerAimMessage playerAim:
                         m_owner.QueueEndOfFrameAction(command, () =>
                             m_owner.HandlePlayerAimMessage(playerAim, sourceClientId));

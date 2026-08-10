@@ -6,13 +6,12 @@ namespace ScMultiplayer
     internal static class PlayerInputStatePolicy
     {
         // Source: Survivalcraft/Game/ComponentInput.cs:ComponentInput.Update
-        // Network input may carry only continuous movement/look state here. One-shot UI,
-        // inventory and world-control actions are handled by their explicit request messages.
+        // Network input carries continuous movement/look state and the one-shot mount action.
+        // Other UI, inventory and world-control actions are handled by their explicit request messages.
         public static PlayerInput Sanitize(PlayerInput input)
         {
             input.ToggleCreativeFly = false;
             input.ToggleCrouch = false;
-            input.ToggleMount = false;
             input.EditItem = false;
             input.ScrollInventory = 0;
             input.SelectInventorySlot = null;
