@@ -200,6 +200,21 @@ namespace ScMultiplayer
             m_openContainer = null;
             m_baselineRequestedContainerKey = null;
             IInventory playerInventory = player.ComponentMiner?.Inventory;
+            // Source: Survivalcraft/Game/FullInventoryWidget.cs:FullInventoryWidget
+            // The native handcrafting panel receives the player's ComponentCraftingTable
+            // directly in its constructor. Resolve that same component directly instead of
+            // depending on reflective InventorySlotWidget traversal for the player panel.
+            if (panel is FullInventoryWidget)
+            {
+                ComponentCraftingTable handcrafting = player.Entity?
+                    .FindComponent<ComponentCraftingTable>();
+                if (handcrafting != null && client != null)
+                {
+                    m_openContainer = CreateContainerReference(handcrafting, default,
+                        client.ClientID);
+                    return m_openContainer;
+                }
+            }
             foreach (InventorySlotWidget slotWidget in panel.AllChildren.OfType<InventorySlotWidget>())
             {
                 IInventory inventory = ModManager.ModParentField.GetParentField(
@@ -323,8 +338,15 @@ namespace ScMultiplayer
 
                 if (message.IsBaselineRequest)
                 {
+                    // Source: Survivalcraft/Game/ComponentMiner.cs:ComponentMiner.Inventory
+                    // A reconnect clears the client's local authority flag. Include the
+                    // requester's current authoritative inventory in the baseline so the
+                    // client can submit the next handcraft/container transaction.
+                    IInventory baselinePlayerInventory = player.ComponentPlayer?.ComponentMiner?.Inventory;
+                    int baselinePlayerRevision = m_equipmentAuthorityRevisions
+                        .GetValueOrDefault(sourceClientId);
                     ContainerSyncMessage baseline = CreateContainerResponse(message, state,
-                        sourceClientId, 0, null);
+                        sourceClientId, baselinePlayerRevision, baselinePlayerInventory);
                     SendContainerResponse(baseline, sourceClientId);
                     return;
                 }
@@ -364,6 +386,18 @@ namespace ScMultiplayer
                         out playerBaseCounts, out playerDesiredValues,
                         out playerDesiredCounts);
                 }
+                else
+                {
+                    // Source: Survivalcraft/Game/FullInventoryWidget.cs:FullInventoryWidget
+                    // Crafting requests still carry the player's inventory as a delta. Expand
+                    // it before the crafting-specific full-snapshot and conservation checks.
+                    TryExpandInventoryTransaction(playerInventory,
+                        message.HasPlayerSlotDelta, message.PlayerSlotIndices,
+                        message.PlayerBaseSlotValues, message.PlayerBaseSlotCounts,
+                        message.PlayerSlotValues, message.PlayerSlotCounts,
+                        out playerBaseValues, out playerBaseCounts,
+                        out playerDesiredValues, out playerDesiredCounts);
+                }
                 int craftedResultCount = 0;
                 int craftedResultValue = craftingTable != null
                     ? NormalizeCrossbowValue(craftingTable.GetSlotValue(
@@ -397,7 +431,13 @@ namespace ScMultiplayer
                         InventoryMatches(playerInventory, playerDesiredValues,
                             playerDesiredCounts)) &&
                         (isCraftingResultTransfer || isCraftingResultDrop ||
-                            IsCraftingRemainsRemoval(craftingTable, message));
+                            IsCraftingRemainsRemoval(craftingTable, message) ||
+                            !message.IsDrop && HaveSameCombinedItems(inventory,
+                                containerBaseValues, containerBaseCounts,
+                                playerBaseValues, playerBaseCounts,
+                                containerDesiredValues, containerDesiredCounts,
+                                playerDesiredValues, playerDesiredCounts) ||
+                            message.IsDrop && isContainerDrop);
                     if (validRequest)
                     {
                         if (isCraftingResultTransfer || isCraftingResultDrop)
@@ -423,8 +463,11 @@ namespace ScMultiplayer
                                     Vector3 velocity = message.DropVelocity;
                                     if (velocity.LengthSquared() > 20f * 20f)
                                         velocity = Vector3.Normalize(velocity) * 20f;
+                                    int distributedCount = Math.Min(craftedDropCount,
+                                        ActionRequestValidationPolicy.NormalizeDropCountForWire(
+                                            message.DropCount));
                                     GameManager.Project.FindSubsystem<SubsystemPickables>(true)
-                                        .AddPickable(craftedResultValue, craftedDropCount,
+                                        .AddPickable(craftedResultValue, distributedCount,
                                             position, velocity, null);
                                 }
                                 else if (craftingTargetSlot >= 0)
@@ -457,9 +500,11 @@ namespace ScMultiplayer
                                 Vector3 velocity = message.DropVelocity;
                                 if (velocity.LengthSquared() > 20f * 20f)
                                     velocity = Vector3.Normalize(velocity) * 20f;
+                                int distributedCount = ActionRequestValidationPolicy
+                                    .NormalizeDropCountForWire(message.DropCount);
                                 GameManager.Project.FindSubsystem<SubsystemPickables>(true)
                                     .AddPickable(NormalizeCrossbowValue(message.DropValue),
-                                        message.DropCount, position, velocity, null);
+                                        distributedCount, position, velocity, null);
                             }
                         }
                         if (validRequest)
@@ -511,9 +556,11 @@ namespace ScMultiplayer
                             Vector3 velocity = message.DropVelocity;
                             if (velocity.LengthSquared() > 20f * 20f)
                                 velocity = Vector3.Normalize(velocity) * 20f;
+                            int distributedCount = ActionRequestValidationPolicy
+                                .NormalizeDropCountForWire(message.DropCount);
                             GameManager.Project.FindSubsystem<SubsystemPickables>(true)
                                 .AddPickable(NormalizeCrossbowValue(message.DropValue),
-                                    message.DropCount, position, velocity, null);
+                                    distributedCount, position, velocity, null);
                         }
                         state = AdvanceContainerState(state,
                             CaptureInventoryValues(inventory),

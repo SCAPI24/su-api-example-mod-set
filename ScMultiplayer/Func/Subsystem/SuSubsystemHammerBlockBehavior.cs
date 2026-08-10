@@ -10,8 +10,8 @@ namespace ScMultiplayer
         public override bool OnUse(Ray3 ray, ComponentMiner componentMiner)
         {
             ScMultiplayer multiplayer = ScMultiplayer.currentInstance;
-            if (multiplayer != null && ScMultiplayer.client?.IsConnected == true &&
-                !ScMultiplayer.IsHost)
+            if (multiplayer?.IsNetworkSessionActive(GameManager.Project) == true &&
+                !multiplayer.IsNetworkHost(GameManager.Project))
             {
                 TerrainRaycastResult? result = componentMiner?
                     .Raycast<TerrainRaycastResult>(ray, RaycastMode.Digging);

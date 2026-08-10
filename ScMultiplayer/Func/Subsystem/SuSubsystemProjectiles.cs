@@ -20,13 +20,13 @@ namespace ScMultiplayer
         void IUpdateable.Update(float dt)
         {
             ScMultiplayer multiplayer = ScMultiplayer.currentInstance;
-            if (multiplayer == null || ScMultiplayer.client?.IsConnected != true)
+            if (multiplayer?.IsNetworkSessionActive(Project) != true)
             {
                 base.Update(dt);
                 return;
             }
 
-            if (ScMultiplayer.IsHost)
+            if (multiplayer.IsNetworkHost(Project))
             {
                 List<ProjectileHitCandidate> candidates = CaptureBodyHits(multiplayer, dt);
                 base.Update(dt);

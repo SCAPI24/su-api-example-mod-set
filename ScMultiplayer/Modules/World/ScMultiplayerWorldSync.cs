@@ -401,6 +401,7 @@ namespace ScMultiplayer
                     : MathUtils.Min(sourceCount, 1);
             if (dropCount <= 0)
                 return true;
+			int wireDropCount = ActionRequestValidationPolicy.NormalizeDropCountForWire(dropCount);
 
             int itemValue = NormalizeCrossbowValue(sourceValue);
             int[] preDropValues = CaptureInventoryValues(inventory);
@@ -415,7 +416,7 @@ namespace ScMultiplayer
             if (removed <= 0)
                 return true;
 
-            SendUiDropRequest(player, dragData.SlotIndex, itemValue, sourceCount, removed,
+            SendUiDropRequest(player, dragData.SlotIndex, itemValue, sourceCount, wireDropCount,
                 dropCount,
                 preDropValues, preDropCounts, viewWidget.GameWidget.ActiveCamera.ViewPosition,
                 velocity);
@@ -575,7 +576,8 @@ namespace ScMultiplayer
                 IsRequest = true,
                 IsDrop = true,
                 DropValue = dropValue,
-                DropCount = pickable.Count,
+                DropCount = ActionRequestValidationPolicy.NormalizeDropCountForWire(
+                    pickable.Count),
                 DropPosition = pickable.Position,
                 DropVelocity = pickable.Velocity
             };

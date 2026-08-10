@@ -26,8 +26,13 @@ namespace ScMultiplayer
         public override void OnNeighborBlockChanged(
             int x, int y, int z, int neighborX, int neighborY, int neighborZ)
         {
-            if (HostTerrainAuthority.IsReadyForAuthoritativeMutation(
-                SubsystemTerrain, x, z))
+            // Source: Survivalcraft/Game/SubsystemPlantBlockBehavior.cs:
+            // SubsystemPlantBlockBehavior.OnNeighborBlockChanged
+            // The host must keep the native support check even while a chunk is finishing
+            // behavior notification. Clients remain presentation-only through the readiness gate.
+            if (HostTerrainAuthority.IsAuthoritative ||
+                HostTerrainAuthority.IsReadyForAuthoritativeMutation(
+                    SubsystemTerrain, x, z))
                 base.OnNeighborBlockChanged(x, y, z, neighborX, neighborY, neighborZ);
         }
     }

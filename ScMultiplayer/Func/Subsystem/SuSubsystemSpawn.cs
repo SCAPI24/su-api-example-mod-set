@@ -14,8 +14,8 @@ namespace ScMultiplayer
             // Source: Survivalcraft/Game/SubsystemSpawn.cs:SubsystemSpawn.SpawnChunks
             // A connected client displays host replicas only. Running the native chunk spawner here
             // creates a second, locally-random animal population until reconciliation removes it.
-            if (instance != null && ScMultiplayer.client?.IsConnected == true &&
-                !ScMultiplayer.IsHost)
+            if (instance?.IsNetworkSessionActive(base.Project) == true &&
+                !instance.IsNetworkHost(base.Project))
                 return;
             instance?.SanitizeRunawayCreatureState(base.Project);
             IDisposable despawnScope = instance?

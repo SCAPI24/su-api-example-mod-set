@@ -8,6 +8,16 @@ namespace ScMultiplayer
     // Request envelope validation is separated from action execution and queue ownership.
     internal static class ActionRequestValidationPolicy
     {
+        // Source: Survivalcraft/Game/ComponentCreativeInventory.cs:ComponentCreativeInventory.GetSlotCount
+        // Creative inventory uses 9999 as an infinite-count sentinel, not as a physical
+        // quantity that may be distributed to the world.
+        private const int CreativeInventoryCountSentinel = 9999;
+
+        public static int NormalizeDropCountForWire(int count)
+        {
+            return count >= CreativeInventoryCountSentinel ? 1 : count;
+        }
+
         public static bool IsSupportedHostRequest(PlayerActionMessage message,
             int sourceClientId, bool hasNetworkPlayer)
         {

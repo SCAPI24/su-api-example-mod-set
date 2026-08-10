@@ -36,6 +36,7 @@ namespace ScMultiplayer
         // Source: Mod/ScMultiplayer/Plug/ScMultiplayer.cs:ScMultiplayer.UpdateFrame
         internal void RunSessionPhaseCore(in ModuleTickContext tickContext)
         {
+            UpdatePendingMultiplayerFontWarmup();
             m_remoteServerDirectory?.Update();
             EnsureNetworkComponentPlayers();
             EnsureLocalPlayerRecordApplied();

@@ -2114,7 +2114,6 @@ namespace ScMultiplayer
                 worldInfo.WorldSettings.GameMode, worldInfo.WorldSettings.EnvironmentBehaviorMode,
                 worldInfo.SerializationVersion, server.Address, GetLocalPlayerName(),
                 GetLocalPlayerIdentity());
-            IsHost = true;
             LastGameDescription = Message.WriteWithSender(worldMessage, client.Address);
             // Source: Mod/Comms/Comms.Drt/Func/Server/Server.cs:Server.Server
             // Every terminal owns a server bound to all interfaces. Connect the local client over
@@ -2315,6 +2314,21 @@ namespace ScMultiplayer
             m_reconnectAttempts = 0;
             m_reconnectAttemptDeadline = 0.0;
             SubmitPendingJoin(null, PlayerClass.Male, null, hasPlayerProfile: false);
+            // Source: Mod/ScMultiplayer/Func/Ui/MultiplayerChineseFont.cs:
+            // MultiplayerChineseFont.Load
+            // Defer one frame so the Joining Room dialog is rendered before synchronous
+            // graphics resources are initialized while world transfer is already active.
+            m_pendingMultiplayerFontWarmupFrame = Time.FrameIndex + 1;
+        }
+
+        private void UpdatePendingMultiplayerFontWarmup()
+        {
+            if (m_pendingMultiplayerFontWarmupFrame < 0 ||
+                Time.FrameIndex < m_pendingMultiplayerFontWarmupFrame)
+                return;
+            m_pendingMultiplayerFontWarmupFrame = -1;
+            if (m_joinRoomBusyDialog != null && !IsHost && client?.IsConnected == true)
+                MultiplayerChineseFont.Load();
         }
 
         public void CancelPendingJoin()
@@ -2540,7 +2554,6 @@ namespace ScMultiplayer
                 m_activeJoinSkinName = skinName;
                 m_activeJoinHasPlayerProfile = true;
             }
-            IsHost = false;
             if (client.IsConnected) client.LeaveGame();
             GameWorldInfoMessage info = pending.WorldInfo;
             byte[] skinSha256 = hasPlayerProfile

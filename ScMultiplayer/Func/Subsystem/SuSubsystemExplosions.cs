@@ -28,7 +28,9 @@ namespace ScMultiplayer
 
         void IUpdateable.Update(float dt)
         {
-            if (!ScMultiplayer.IsHost && ScMultiplayer.client?.IsConnected == true)
+            bool networkActive = ScMultiplayer.currentInstance?.IsNetworkSessionActive(Project) == true;
+            bool networkHost = ScMultiplayer.currentInstance?.IsNetworkHost(Project) == true;
+            if (networkActive && !networkHost)
                 RecordQueuedPredictions();
             else
             {
@@ -36,7 +38,7 @@ namespace ScMultiplayer
                 m_skipQueuedExplosionPredictions.Clear();
             }
             // Source: Survivalcraft/Game/SubsystemExplosions.cs:SubsystemExplosions.Update
-            if (ScMultiplayer.IsHost && ScMultiplayer.client?.IsConnected == true)
+            if (networkHost)
             {
                 IList queued = ScMultiplayer.ModManager.ModParentField.GetParentField<IList>(
                     this, "m_queuedExplosions", typeof(SubsystemExplosions));

@@ -26,7 +26,14 @@ namespace ScMultiplayer
         // Source: Survivalcraft/Game/SubsystemPickables.cs:SubsystemPickables.Update
         void IUpdateable.Update(float dt)
         {
-            if (ScMultiplayer.IsHost)
+            bool networkActive = ScMultiplayer.currentInstance?.IsNetworkSessionActive(Project) == true;
+            bool networkHost = ScMultiplayer.currentInstance?.IsNetworkHost(Project) == true;
+            if (!networkActive)
+            {
+                base.Update(dt);
+                return;
+            }
+            if (networkHost)
             {
                 bool publishSplash = ScMultiplayer.client?.IsConnected == true;
                 m_waterSplashCandidates.Clear();
@@ -58,8 +65,7 @@ namespace ScMultiplayer
                 return;
             }
 
-            if (ScMultiplayer.client?.IsConnected != true ||
-                m_componentPlayers == null || m_componentPlayers.Count == 0)
+            if (m_componentPlayers == null || m_componentPlayers.Count == 0)
             {
                 base.Update(dt);
                 return;
