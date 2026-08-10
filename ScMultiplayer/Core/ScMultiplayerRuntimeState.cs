@@ -46,6 +46,7 @@ namespace ScMultiplayer
         public static PlayerMappingManager playerMappingManager = new PlayerMappingManager();
         public static PlayerOperationSyncManager playerOperationSyncManager = new PlayerOperationSyncManager();
         public static bool IsHost = false;
+        private MultiplayerSessionMode m_sessionMode = MultiplayerSessionMode.Offline;
         private MultiplayerControlUnit m_controlUnit;
         private NetworkMessageRouter m_messageRouter;
 
@@ -70,6 +71,37 @@ namespace ScMultiplayer
         public bool IsInRoom => m_controlUnit?.Context.Session.IsConnected == true &&
             m_controlUnit.Context.Session.GameId >= 0;
 
+        // Source: Comms/Drt/Client.cs:Client.GameCreated and Client.GameJoined
+        // Injected subsystems must use the native path unless a confirmed room owns the project.
+        internal bool IsNetworkSessionActive(Project project)
+        {
+            return project != null && m_sessionMode != MultiplayerSessionMode.Offline;
+        }
+
+        internal bool IsNetworkHost(Project project)
+        {
+            return IsNetworkSessionActive(project) &&
+                m_sessionMode == MultiplayerSessionMode.Host;
+        }
+
+        internal void EnterNetworkHostSession(Project project)
+        {
+            m_sessionMode = MultiplayerSessionMode.Host;
+            IsHost = true;
+        }
+
+        internal void EnterNetworkClientSession(Project project)
+        {
+            m_sessionMode = MultiplayerSessionMode.Client;
+            IsHost = false;
+        }
+
+        internal void ExitNetworkSession()
+        {
+            m_sessionMode = MultiplayerSessionMode.Offline;
+            IsHost = false;
+        }
+
         internal IMultiplayerUiCommandPort UiCommands => this;
 
         // ---------- 内部状态 ----------
@@ -82,6 +114,7 @@ namespace ScMultiplayer
         private Project m_projectReadySentProject;
         private int m_projectReadySentTransferId;
         private int m_lastWorldUpdateFrameIndex = -1;
+        private int m_pendingMultiplayerFontWarmupFrame = -1;
         // Source: Survivalcraft/Game/ComponentVitalStats.cs:ComponentVitalStats.Update
         // Store only values actually sent by the host. This keeps small natural changes quiet
         // while allowing meaningful heat, stamina, wetness and sleep changes through promptly.

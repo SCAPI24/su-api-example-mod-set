@@ -32,6 +32,8 @@ namespace ScMultiplayer
             new ConcurrentQueue<GameModifiedCellsMessage>();
         private static readonly ConcurrentQueue<GameModifiedCellsMessage>
             m_receivedPriorityRepairs = new ConcurrentQueue<GameModifiedCellsMessage>();
+        private static readonly ConcurrentDictionary<Point3, double> m_iceTraceCells =
+            new ConcurrentDictionary<Point3, double>();
         // Source: ScMultiplayer.cs:ScMultiplayer.HandleTerrainChunkSyncMessage
         // Chunk checkpoints are authoritative snapshots and must not occupy the generic repair
         // queue, whose per-frame work is shared with live terrain changes.
@@ -51,6 +53,12 @@ namespace ScMultiplayer
             new Dictionary<Point3, int>();
         private readonly Dictionary<Point3, int> m_appliedCellTicks = new Dictionary<Point3, int>();
         private readonly Dictionary<Point3, long> m_appliedCellSequences =
+            new Dictionary<Point3, long>();
+        // Source: ScMultiplayerTerrainHandlers.cs:SendHostTerrainChunkSync
+        // Chunk revisions are local to a chunk and must not share the live terrain sequence
+        // domain. Keeping them separate prevents an old checkpoint from resurrecting a manually
+        // dug cell while still allowing newer checkpoints to repair unloaded areas.
+        private readonly Dictionary<Point3, long> m_appliedCellCheckpointRevisions =
             new Dictionary<Point3, long>();
         private sealed class DeferredNetworkCell
         {
@@ -171,6 +179,21 @@ namespace ScMultiplayer
             }
         }
 
+        internal static void BeginIceTrace(Point3 point)
+        {
+            m_iceTraceCells[point] = Time.RealTime + 120.0;
+        }
+
+        internal static bool IsIceTraceCell(Point3 point)
+        {
+            if (!m_iceTraceCells.TryGetValue(point, out double expiresAt))
+                return false;
+            if (Time.RealTime <= expiresAt)
+                return true;
+            m_iceTraceCells.TryRemove(point, out _);
+            return false;
+        }
+
         // Source: Survivalcraft/Game/SubsystemTerrain.cs:SubsystemTerrain.ChangeCell
         // Direct action results must not wait behind a continuous stream of terrain sequences.
         public static void EnqueuePriorityNetworkBatch(GameModifiedCellsMessage message)
@@ -253,6 +276,7 @@ namespace ScMultiplayer
             while (m_receivedChunkCheckpoints.TryDequeue(out _))
             {
             }
+            m_iceTraceCells.Clear();
             LastAppliedTerrainTick = 0;
             LastAppliedTerrainSequence = 0;
             Interlocked.Exchange(ref m_pendingTerrainBlockCount, 0L);
@@ -291,6 +315,11 @@ namespace ScMultiplayer
 
         void IUpdateable.Update(float dt)
         {
+            if (ScMultiplayer.currentInstance?.IsNetworkSessionActive(Project) != true)
+            {
+                base.Update(dt);
+                return;
+            }
             if (!m_isInitialized)
             {
                 if (!EnsureModifiedCellsBound())
@@ -446,6 +475,7 @@ namespace ScMultiplayer
                 ClearActiveChunkCheckpointBatch();
                 m_appliedCellTicks.Clear();
                 m_appliedCellSequences.Clear();
+                m_appliedCellCheckpointRevisions.Clear();
                 m_deferredNetworkCells.Clear();
                 m_deferredNetworkCellRetryQueue.Clear();
                 m_pendingNetworkGeometryCells.Clear();
@@ -558,7 +588,8 @@ namespace ScMultiplayer
                     int networkValue = m_activeChunkCheckpoint.CellValues[valueIndex];
                     if (!TryApplyNetworkCell(item.Key, networkValue,
                         m_activeChunkCheckpoint.Tick, m_activeChunkCheckpoint.Sequence,
-                        isChunkCheckpoint: true))
+                        isChunkCheckpoint: true,
+                        checkpointRevision: m_activeChunkCheckpointBatch?.Revision ?? 0L))
                     {
                         DeferNetworkCell(item.Key, item.Value, networkValue,
                             m_activeChunkCheckpoint.Tick, m_activeChunkCheckpoint.Sequence,
@@ -608,7 +639,8 @@ namespace ScMultiplayer
                     int networkValue = message.CellValues[i];
                     bool isChunkCheckpoint = checkpointBatch != null;
                     if (!TryApplyNetworkCell(point, networkValue, message.Tick,
-                        message.Sequence, isChunkCheckpoint))
+                        message.Sequence, isChunkCheckpoint,
+                        checkpointBatch?.Revision ?? 0L))
                     {
                         DeferNetworkCell(point, cells[i].Value, networkValue,
                             message.Tick, message.Sequence, checkpointBatch);
@@ -667,7 +699,8 @@ namespace ScMultiplayer
                     continue;
                 }
                 if (!TryApplyNetworkCell(point, deferred.CellValue, deferred.Tick,
-                    deferred.Sequence, deferred.CheckpointBatch != null))
+                    deferred.Sequence, deferred.CheckpointBatch != null,
+                    deferred.CheckpointBatch?.Revision ?? 0L))
                 {
                     deferred.NextRetryTime = now + DeferredNetworkCellRetryInterval;
                     QueueDeferredNetworkCellRetry(point, deferred);
@@ -679,7 +712,8 @@ namespace ScMultiplayer
         }
 
         private bool TryApplyNetworkCell(Point3 point, int networkValue, int tick,
-            long sequence, bool isChunkCheckpoint = false)
+            long sequence, bool isChunkCheckpoint = false,
+            long checkpointRevision = 0L)
         {
             // Terrain.SetCellValueFast silently ignores an unloaded chunk. Do not mark the
             // network cell as applied until its chunk exists, otherwise a later chunk load
@@ -692,20 +726,45 @@ namespace ScMultiplayer
             // but it must never overwrite a newer live write that already reached the client.
             // Otherwise a delayed checkpoint can briefly resurrect terrain that the host has
             // already replaced.
-            if (sequence > 0 && m_appliedCellSequences.TryGetValue(point,
-                    out long appliedSequence) && sequence <= appliedSequence)
+            if (isChunkCheckpoint)
+            {
+                // Source: ScMultiplayerTerrainHandlers.cs:SendHostTerrainChunkSync
+                // A checkpoint revision is not a global live sequence. Reject an older or
+                // duplicate checkpoint, and never let one at the same tick overwrite a live
+                // terrain result that is already present for this cell.
+                if (checkpointRevision > 0L &&
+                    m_appliedCellCheckpointRevisions.TryGetValue(point,
+                        out long appliedCheckpointRevision) &&
+                    checkpointRevision <= appliedCheckpointRevision)
+                {
+                    RecordTerrainConsumed();
+                    return true;
+                }
+                if (m_appliedCellSequences.ContainsKey(point) &&
+                    m_appliedCellTicks.TryGetValue(point, out int liveTick) &&
+                    tick <= liveTick)
+                {
+                    RecordTerrainConsumed();
+                    return true;
+                }
+            }
+            else if (sequence > 0 && m_appliedCellSequences.TryGetValue(point,
+                         out long appliedSequence) && sequence <= appliedSequence)
             {
                 RecordTerrainConsumed();
                 return true;
             }
-            if (!isChunkCheckpoint && m_appliedCellTicks.TryGetValue(point, out int appliedTick) &&
+            if ((!isChunkCheckpoint || m_appliedCellSequences.ContainsKey(point)) &&
+                m_appliedCellTicks.TryGetValue(point, out int appliedTick) &&
                 tick < appliedTick)
             {
                 RecordTerrainConsumed();
                 return true;
             }
-            if (sequence > 0)
+            if (!isChunkCheckpoint && sequence > 0)
                 m_appliedCellSequences[point] = sequence;
+            if (isChunkCheckpoint && checkpointRevision > 0L)
+                m_appliedCellCheckpointRevisions[point] = checkpointRevision;
             m_appliedCellTicks[point] = tick;
             m_networkReceivedCellValues[point] = networkValue;
             // Source: Survivalcraft/Game/SubsystemCollapsingBlockBehavior.cs:

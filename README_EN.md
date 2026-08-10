@@ -44,7 +44,7 @@ Do not include `Engine.dll`, `Survivalcraft.dll`, `GameEntitySystem.dll`, or pla
 
 ![ScMultiplayer multiplayer screenshot](images/ScMultiplayer.png)
 
-Current version: `2.0.9`
+Current version: `2.1.0`
 SuAPI compatibility: `0.1.5.0` / `0.1.5.1`
 [Download Beta0.1.5.1](https://gitee.com/SC-SPM/su-api-example-mod-set/releases/tag/Beta0.1.5.1)
 

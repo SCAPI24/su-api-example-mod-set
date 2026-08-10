@@ -44,6 +44,7 @@ namespace ScMultiplayer
 		m_localLeaveInProgress = false;
 		m_shouldCreateHostAvatar = false;
 		ResetTransientNetworkState();
+		EnterNetworkHostSession(GameManager.Project);
 		m_sessionRandomSeed = Guid.NewGuid().GetHashCode();
 		if (m_sessionRandomSeed == 0)
 		{
@@ -96,6 +97,7 @@ namespace ScMultiplayer
 		m_localLeaveInProgress = false;
 		m_isLoadingDownloadedWorld = true;
 		ResetTransientNetworkState();
+		EnterNetworkClientSession(GameManager.Project);
 		m_joinAwaitingWorldProgress = true;
 		RecordClientJoinProgress();
 		m_nextWorldTransferManifestRequestTime = Time.RealTime + 0.75;
@@ -471,6 +473,10 @@ namespace ScMultiplayer
 
 	private void ResetTransientNetworkState()
 	{
+		// Source: GameEntitySystem/Project.cs:Project.Dispose
+		// Do this before clearing queues so injected subsystems cannot observe the old online role
+		// while the next ordinary Project is being constructed.
+		ExitNetworkSession();
 		DetachHostSleepWakeHandlers();
 		m_circuitSynchronizer?.Reset();
 		m_worldObjectSynchronizer?.Reset();
@@ -1912,10 +1918,11 @@ namespace ScMultiplayer
 			int itemCount = inventory.GetSlotCount(activeSlot);
 			if (itemValue != 0 && itemCount > 0)
 			{
+				int dropCount = ActionRequestValidationPolicy.NormalizeDropCountForWire(itemCount);
 					m_localDropSequence = PlayerActionSequencePolicy.Next(m_localDropSequence);
 				PlayerActionMessage message = new PlayerActionMessage(PlayerActionType.DropRequest, client.ClientID, m_localDropSequence, default(Ray3), activeSlot, itemValue, itemCount)
 				{
-					DropCount = itemCount,
+					DropCount = dropCount,
 					RemoveCount = itemCount,
 					RequestId = m_localEquipmentRevision,
 					Position = player.ComponentBody.Position + new Vector3(0f, player.ComponentBody.StanceBoxSize.Y * 0.66f, 0f) + 0.25f * player.ComponentBody.Matrix.Forward,
@@ -1929,7 +1936,7 @@ namespace ScMultiplayer
 				message.InventorySlotCounts = new[] { 0 };
 				NetworkMessageSender.SendPlayerDropRequest(message);
 				m_pendingLocalDropValue = itemValue;
-				m_pendingLocalDropCount = itemCount;
+				m_pendingLocalDropCount = dropCount;
 				m_pendingLocalDropPosition = message.Position;
 				m_pendingLocalDropPredictionUntil = Time.RealTime + 0.5;
 			}
@@ -2160,6 +2167,12 @@ namespace ScMultiplayer
 			SendHostTerrainPlaceResult(execution.ClientId, execution.Request, accepted);
 			if (accepted)
 			{
+				// Source: Survivalcraft/Game/SubsystemTerrain.cs:SubsystemTerrain.Update
+				// Finish the native placement/fluids closure before the next weather scan. This
+				// preserves the original scanner cadence while preventing a transient water cell
+				// from being frozen before a sand or soil placement settles on the host.
+				terrain?.TerrainUpdater?.RequestSynchronousUpdate();
+				(terrain as SuSubsystemTerrain)?.FlushHostModifiedCellClosureForNetworkAction();
 				PublishServerAudit("terrain.place", execution.ClientId, "cell=" + execution.Request.Cell.X.ToString(CultureInfo.InvariantCulture) + "," + execution.Request.Cell.Y.ToString(CultureInfo.InvariantCulture) + "," + execution.Request.Cell.Z.ToString(CultureInfo.InvariantCulture));
 			}
 		}
@@ -2961,7 +2974,14 @@ namespace ScMultiplayer
 		{
 			velocity = Vector3.Normalize(velocity) * 20f;
 		}
-		GameManager.Project.FindSubsystem<SubsystemPickables>(throwOnError: true).AddPickable(slotValue, removed, position, velocity, null);
+			int dropCount = ActionRequestValidationPolicy.NormalizeDropCountForWire(message.DropCount);
+			int distributedCount = Math.Min(removed, dropCount);
+			if (distributedCount <= 0)
+			{
+				return false;
+			}
+			GameManager.Project.FindSubsystem<SubsystemPickables>(throwOnError: true).AddPickable(
+				slotValue, distributedCount, position, velocity, null);
 		MarkHostInventoryAuthoritative(sourceClientId);
 		return true;
 	}

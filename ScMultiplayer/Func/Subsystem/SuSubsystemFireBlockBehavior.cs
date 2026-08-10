@@ -43,7 +43,8 @@ namespace ScMultiplayer
 
         void IUpdateable.Update(float dt)
         {
-            if (ScMultiplayer.client?.IsConnected != true || ScMultiplayer.IsHost)
+            bool networkActive = ScMultiplayer.currentInstance?.IsNetworkSessionActive(Project) == true;
+            if (!networkActive || ScMultiplayer.currentInstance?.IsNetworkHost(Project) == true)
             {
                 if (m_clientPresentationActive)
                 {
@@ -58,7 +59,7 @@ namespace ScMultiplayer
                     m_soundPointIndex = 0;
                     m_soundPointRemainder = 0f;
                 }
-                if (ScMultiplayer.IsHost)
+                if (ScMultiplayer.currentInstance?.IsNetworkHost(Project) == true)
                     RegisterLoadedHostFireCells();
                 base.Update(dt);
                 return;

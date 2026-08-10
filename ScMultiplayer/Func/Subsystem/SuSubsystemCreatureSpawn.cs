@@ -14,8 +14,8 @@ namespace ScMultiplayer
             // Source: Survivalcraft/Game/SubsystemCreatureSpawn.cs:SubsystemCreatureSpawn.Update
             // Creature selection is host-authoritative in multiplayer. Client-side random spawning
             // uses a different RNG timeline and cannot converge to the host population.
-            if (instance != null && ScMultiplayer.client?.IsConnected == true &&
-                !ScMultiplayer.IsHost)
+            if (instance?.IsNetworkSessionActive(base.Project) == true &&
+                !instance.IsNetworkHost(base.Project))
                 return;
             IDisposable scope = instance?
                 .BeginRemoteSimulationViewScope(base.Project);
