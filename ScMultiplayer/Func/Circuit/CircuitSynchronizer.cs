@@ -1726,10 +1726,11 @@ namespace ScMultiplayer
             m_normalFenceRateSamples = 0;
             m_inferredTimeAccelerated = false;
             // A normal fence stream is a stronger circuit-timeline signal than an older
-            // replaceable world-info datagram, so it also clears a stale acceleration flag.
+            // replaceable world-info datagram, so it also clears a stale circuit acceleration
+            // flag. It must not wake the player: only the host's authoritative health/world
+            // state may end the vanilla ComponentSleep session.
             m_remoteTimeAccelerated = false;
             m_owner.ConfirmRemoteTimeAccelerationEndedFromCircuitFence();
-            m_owner.MarkClientSleepWakeBoundaryPending();
             BeginPostAccelerationRebase();
         }
 

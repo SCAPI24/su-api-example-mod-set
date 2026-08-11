@@ -529,6 +529,8 @@ namespace ScMultiplayer
 		m_activeJoinDecisionClientId = -1;
 		m_lastSentAuthoritativePlayerStates.Clear();
 		m_nextSleepHealthSendTimes.Clear();
+		m_nextClientSleepRequestSequence = 0;
+		m_pendingClientSleepRequestSequence = 0;
 		m_authoritativePlayerStateSequences.Clear();
 		m_lastReceivedAuthoritativePlayerStateSequences.Clear();
 		m_lastAuthoritativeLocalWholeLevel = -1;
@@ -738,12 +740,12 @@ namespace ScMultiplayer
 		m_clientWorldObjectsProject = null;
 		m_remoteWeatherState = null;
 		m_lastRemoteWorldInfoTick = -1;
+		m_lastRemoteWorldTimeRevision = 0;
 		m_hostWorldTimeRevision = 0;
 		m_remoteTimeAccelerated = false;
 		m_hostSleepAccelerationSessionActive = false;
-		m_hostSleepAccelerationStartTime = 0.0;
+		m_hostObservedSleepStates.Clear();
 		m_clientSleepWakeBoundaryPending = false;
-		m_clientSleepWakeBoundaryPendingTime = 0.0;
 		m_pendingClientSleepWakeups.Clear();
 		m_remoteTerrainHeadSequence = 0L;
 		m_remoteFogPresentationInitialized = false;

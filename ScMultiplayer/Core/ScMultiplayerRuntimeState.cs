@@ -140,6 +140,8 @@ namespace ScMultiplayer
         private float m_observedClientHealth;
         private float m_observedClientFood;
         private bool m_observedClientSleeping;
+        private int m_nextClientSleepRequestSequence;
+        private int m_pendingClientSleepRequestSequence;
         private bool m_hasAuthoritativeLocalInventory;
         private int[] m_authoritativeLocalSlotValues = Array.Empty<int>();
         private int[] m_authoritativeLocalSlotCounts = Array.Empty<int>();
@@ -629,19 +631,22 @@ namespace ScMultiplayer
         private Project m_randomStateAppliedProject;
         private GameWorldInfoMessage1 m_remoteWeatherState;
         private int m_lastRemoteWorldInfoTick = -1;
+        private int m_lastRemoteWorldTimeRevision;
         private int m_hostWorldTimeRevision;
         private bool m_remoteTimeAccelerated;
         private bool m_hostSleepAccelerationSessionActive;
-        private double m_hostSleepAccelerationStartTime;
         // Source: CircuitSynchronizer.NotifyRemoteTimeAccelerationChanged
-        // Keep the host wake boundary until the post-sleep circuit rebase is ready.
+        // Keep the host wake boundary while the post-sleep circuit rebase runs independently.
         private bool m_clientSleepWakeBoundaryPending;
-        private double m_clientSleepWakeBoundaryPendingTime;
-        private const double ClientSleepWakeBoundaryTimeout = 4.0;
         private readonly HashSet<ComponentSleep> m_pendingClientSleepWakeups =
             new HashSet<ComponentSleep>();
         private readonly Dictionary<int, double> m_nextSleepHealthSendTimes =
             new Dictionary<int, double>();
+        // Source: Survivalcraft/Game/ComponentSleep.cs:ComponentSleep.Update
+        // Tracks the host's native sleep edge per network player so every wake path (automatic,
+        // attack, wetness, or manual) is published immediately to the owning client.
+        private readonly Dictionary<int, bool> m_hostObservedSleepStates =
+            new Dictionary<int, bool>();
         private readonly Dictionary<ComponentHealth, Action<ComponentCreature>>
             m_hostSleepWakeHandlers =
             new Dictionary<ComponentHealth, Action<ComponentCreature>>();

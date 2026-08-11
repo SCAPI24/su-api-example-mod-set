@@ -50,6 +50,11 @@ namespace ScMultiplayer
         // Monotonically increases on the host so delayed reliable snapshots cannot restore
         // an older sleep, temperature or vital-stat state on a client.
         public int AuthoritativeStateSequence;
+        // Source: Survivalcraft/Game/ComponentSleep.cs:ComponentSleep.Sleep
+        // Correlates a client sleep/wake request with the host's immediate authoritative reply.
+        // Periodic host snapshots keep this at zero and therefore cannot acknowledge a newer
+        // local sleep request by accident.
+        public int SleepRequestSequence;
 
         public GamePlayerHealthMessage() { }
 
@@ -125,6 +130,9 @@ namespace ScMultiplayer
             IsCoughing = reader.ReadBoolean();
             DamageSequence = reader.ReadInt32();
             AuthoritativeStateSequence = reader.ReadInt32();
+            SleepRequestSequence = reader.Position + 4 <= reader.Length
+                ? reader.ReadInt32()
+                : 0;
         }
 
         protected override void Write(SuWriter writer)
@@ -161,6 +169,7 @@ namespace ScMultiplayer
             writer.WriteBoolean(IsCoughing);
             writer.WriteInt32(DamageSequence);
             writer.WriteInt32(AuthoritativeStateSequence);
+            writer.WriteInt32(SleepRequestSequence);
         }
     }
 }
