@@ -20,9 +20,9 @@ namespace ScMultiplayer
         }
 
         // Source: Survivalcraft/Game/ComponentSleep.cs:ComponentSleep.Update
-        // The host owns the sleep session boundary. A client must keep the native sleep
-        // presentation, but it must not locally auto-wake or let SubsystemTime infer the
-        // 20x world loop from a replicated player reaching SleepFactor == 1.
+        // The host owns every non-manual wake boundary. A client keeps only the native sleep
+        // presentation and sends manual wake requests; it must not execute the native wake
+        // predicates against locally simulated health, wetness, or time.
         void IUpdateable.Update(float dt)
         {
             ScMultiplayer owner = ScMultiplayer.currentInstance;
@@ -34,10 +34,6 @@ namespace ScMultiplayer
                 return;
             }
 
-            // Source: Survivalcraft/Game/SubsystemTime.cs:SubsystemTime.NextFrame
-            // A connected client never owns the accelerated sleep timeline. Start guarding on
-            // the first sleeping frame, before the host acceleration edge can arrive, so the
-            // local SleepFactor cannot make SubsystemTime enter UpdatesPerFrame=20.
             if (!IsSleeping)
             {
                 ResetClientSleepInputState();
@@ -70,33 +66,42 @@ namespace ScMultiplayer
                     input.Clear();
             }
 
-            object sleepStartValue = ScMultiplayer.ModManager.ModParentField.GetParentField(
-                this, "m_sleepStartTime", typeof(ComponentSleep));
-            if (!(sleepStartValue is double sleepStartTime))
+            // Source: Survivalcraft/Game/ComponentSleep.cs:ComponentSleep.Update
+            // Reproduce only the presentation part of the native sleeping branch. Calling
+            // base.Update here would run local HealthChange, wetness, attack and time predicates
+            // and could wake the client before the host's authoritative edge arrives.
+            UpdateClientSleepPresentation(dt, allowManualWake);
+        }
+
+        // Source: Survivalcraft/Game/ComponentSleep.cs:ComponentSleep.Update
+        private void UpdateClientSleepPresentation(float dt, bool allowManualWake)
+        {
+            float sleepFactor = ScMultiplayer.ModManager.ModParentField.GetParentField<float>(
+                this, "m_sleepFactor", typeof(ComponentSleep));
+            // Keep the local factor below the native all-players-sleep threshold. The host owns
+            // the accelerated timeline; a connected client must never enter UpdatesPerFrame=20.
+            sleepFactor = MathUtils.Min(sleepFactor + 0.33f * Time.FrameDuration, 0.999f);
+            ScMultiplayer.ModManager.ModParentField.ModifyParentField(
+                this, "m_sleepFactor", sleepFactor, typeof(ComponentSleep));
+
+            ComponentScreenOverlays overlays = m_componentPlayer?.ComponentScreenOverlays;
+            if (overlays == null) return;
+            overlays.BlackoutFactor = MathUtils.Max(overlays.BlackoutFactor, sleepFactor);
+            if (sleepFactor > 0.01f)
             {
-                base.Update(dt);
-                return;
+                overlays.FloatingMessage = "Zzz...";
+                overlays.FloatingMessageFactor = MathUtils.Saturate(10f * (sleepFactor - 0.9f));
             }
 
-            // ComponentSleep.Update uses this value only for the automatic wake boundary.
-            // Temporarily move that boundary out of range, then restore the host value so
-            // save data, health snapshots and the next authoritative message remain intact.
-            ScMultiplayer.ModManager.ModParentField.ModifyParentField(
-                this, "m_sleepStartTime", double.MaxValue, typeof(ComponentSleep));
-            try
+            float messageFactor = ScMultiplayer.ModManager.ModParentField.GetParentField<float>(
+                this, "m_messageFactor", typeof(ComponentSleep));
+            if (allowManualWake)
             {
-                base.Update(dt);
-            }
-            finally
-            {
+                messageFactor = MathUtils.Min(messageFactor + 0.5f * Time.FrameDuration, 1f);
                 ScMultiplayer.ModManager.ModParentField.ModifyParentField(
-                    this, "m_sleepStartTime", (double?)sleepStartTime,
-                    typeof(ComponentSleep));
-                float sleepFactor = ScMultiplayer.ModManager.ModParentField.GetParentField<float>(
-                    this, "m_sleepFactor", typeof(ComponentSleep));
-                if (sleepFactor >= 1f)
-                    ScMultiplayer.ModManager.ModParentField.ModifyParentField(
-                        this, "m_sleepFactor", 0.999f, typeof(ComponentSleep));
+                    this, "m_messageFactor", messageFactor, typeof(ComponentSleep));
+                overlays.Message = "Tap to wake up early";
+                overlays.MessageFactor = messageFactor;
             }
         }
 

@@ -54,7 +54,8 @@ namespace ScMultiplayer
             }
         }
 
-        private void SendAuthoritativePlayerHealth(int networkClientId, ComponentPlayer player, bool force)
+        private void SendAuthoritativePlayerHealth(int networkClientId, ComponentPlayer player,
+            bool force, int sleepRequestSequence = 0)
         {
             if (player?.ComponentHealth == null || player.ComponentVitalStats == null) return;
             AuthoritativePlayerStateSnapshot current =
@@ -74,7 +75,8 @@ namespace ScMultiplayer
                 return;
 
             float healthChange = hasPrevious ? current.Health - previous.Health : 0f;
-            NetworkMessageSender.SendPlayerHealthMessage(networkClientId, player, healthChange);
+            NetworkMessageSender.SendPlayerHealthMessage(networkClientId, player, healthChange,
+                sleepRequestSequence: sleepRequestSequence);
             m_lastSentAuthoritativePlayerStates[networkClientId] = current;
             if (sleepAcceleration)
                 m_nextSleepHealthSendTimes[networkClientId] = Time.RealTime + 0.5;
@@ -131,6 +133,50 @@ namespace ScMultiplayer
             }
         }
 
+        // Source: Survivalcraft/Game/ComponentSleep.cs:ComponentSleep.Update
+        // ComponentSleep has several wake paths that do not share an event. Compare the host's
+        // authoritative component state once per world frame and publish both sleep and wake
+        // edges without relying on the client's local simulation.
+        private void PublishHostSleepStateTransitions(Project project)
+        {
+            if (!IsHost || project == null || client?.IsConnected != true) return;
+            SubsystemPlayers players = project.FindSubsystem<SubsystemPlayers>(false);
+            if (players == null) return;
+
+            HashSet<int> activeClientIds = new HashSet<int>();
+            foreach (ComponentPlayer player in players.ComponentPlayers.ToArray())
+            {
+                if (!TryGetHostNetworkClientId(player, out int clientId)) continue;
+                activeClientIds.Add(clientId);
+                bool isSleeping = player.ComponentSleep?.IsSleeping == true;
+                if (m_hostObservedSleepStates.TryGetValue(clientId,
+                        out bool previousSleeping) && previousSleeping != isSleeping)
+                {
+                    PublishHostSleepWakeState(player);
+                }
+                m_hostObservedSleepStates[clientId] = isSleeping;
+            }
+
+            foreach (int clientId in m_hostObservedSleepStates.Keys
+                .Where(id => !activeClientIds.Contains(id)).ToArray())
+                m_hostObservedSleepStates.Remove(clientId);
+        }
+
+        private bool TryGetHostNetworkClientId(ComponentPlayer player, out int clientId)
+        {
+            clientId = client?.ClientID ?? 0;
+            if (player == null) return false;
+            foreach (KeyValuePair<int, PlayerData> item in m_networkPlayerData)
+            {
+                if (ReferenceEquals(item.Value?.ComponentPlayer, player))
+                {
+                    clientId = item.Key;
+                    return true;
+                }
+            }
+            return player.PlayerData != null && clientId == 0;
+        }
+
         // Source: Survivalcraft/Game/SubsystemTime.cs:SubsystemTime.NextFrame
         // Vanilla stores a separate sleep start for every player. Once a multiplayer host
         // enters the shared accelerated-time window, move all sleeping players to one host
@@ -140,16 +186,14 @@ namespace ScMultiplayer
         {
             if (!IsHost || project == null) return;
             SubsystemTime subsystemTime = project.FindSubsystem<SubsystemTime>(false);
-            SubsystemGameInfo gameInfo = project.FindSubsystem<SubsystemGameInfo>(false);
             SubsystemPlayers players = project.FindSubsystem<SubsystemPlayers>(false);
-            if (subsystemTime == null || gameInfo == null || players == null) return;
+            if (subsystemTime == null || players == null) return;
 
             bool accelerated = subsystemTime.FixedTimeStep.HasValue;
             if (!accelerated)
             {
                 bool accelerationEnded = m_hostSleepAccelerationSessionActive;
                 m_hostSleepAccelerationSessionActive = false;
-                m_hostSleepAccelerationStartTime = 0.0;
                 if (accelerationEnded && client?.IsConnected == true)
                 {
                     // Source: Survivalcraft/Game/SubsystemTime.cs:SubsystemTime.NextFrame
@@ -166,7 +210,6 @@ namespace ScMultiplayer
             if (m_hostSleepAccelerationSessionActive) return;
 
             m_hostSleepAccelerationSessionActive = true;
-            m_hostSleepAccelerationStartTime = gameInfo.TotalElapsedGameTime;
             // Source: Mod/ScMultiplayer/Modules/Player/
             // ScMultiplayerHealthWorldControlHandlers.cs:HandleGameWorldInfoMessage
             // Publish the rising edge reliably. Clients freeze at their current one-step timeline
@@ -176,9 +219,9 @@ namespace ScMultiplayer
             foreach (ComponentPlayer player in players.ComponentPlayers.ToArray())
             {
                 if (player?.ComponentSleep?.IsSleeping != true) continue;
-                ModManager.ModParentField.ModifyParentField(
-                    player.ComponentSleep, "m_sleepStartTime",
-                    (double?)m_hostSleepAccelerationStartTime, typeof(ComponentSleep));
+                // ComponentSleep owns the vanilla per-player start time. Do not replace it with
+                // a shared acceleration timestamp; the original 180-second/daylight rule uses
+                // the time at which each player actually entered sleep.
                 PublishHostSleepWakeState(player);
             }
         }
@@ -194,16 +237,9 @@ namespace ScMultiplayer
         private void PublishHostSleepWakeState(ComponentPlayer player)
         {
             if (!IsHost || player == null || client?.IsConnected != true) return;
-            int networkClientId = client.ClientID;
-            foreach (KeyValuePair<int, PlayerData> item in m_networkPlayerData)
-            {
-                if (ReferenceEquals(item.Value?.ComponentPlayer, player))
-                {
-                    networkClientId = item.Key;
-                    break;
-                }
-            }
+            if (!TryGetHostNetworkClientId(player, out int networkClientId)) return;
             SendAuthoritativePlayerHealth(networkClientId, player, force: true);
+            m_hostObservedSleepStates[networkClientId] = player.ComponentSleep?.IsSleeping == true;
         }
 
         // Source: Mod/ScMultiplayer/Message/GamePlayerHealthMessage.cs:Write
@@ -255,10 +291,15 @@ namespace ScMultiplayer
             float change = health.Health - m_observedClientHealth;
             bool foodIncreased = vital.Food > m_observedClientFood + 0.0001f;
             bool isSleeping = localPlayer.ComponentSleep?.IsSleeping == true;
-            if (change < -0.0001f || foodIncreased || isSleeping != m_observedClientSleeping)
+            bool sleepChanged = isSleeping != m_observedClientSleeping;
+            int sleepRequestSequence = 0;
+            if (sleepChanged && isSleeping)
+                sleepRequestSequence = BeginClientSleepRequest();
+            if (change < -0.0001f || foodIncreased || sleepChanged)
                 NetworkMessageSender.SendPlayerHealthMessage(
                     client.ClientID, localPlayer, change,
-                    foodIncreased ? "Client food request" : "Client state request");
+                    foodIncreased ? "Client food request" : "Client state request",
+                    sleepRequestSequence: sleepRequestSequence);
             m_observedClientHealth = health.Health;
             m_observedClientFood = vital.Food;
             m_observedClientSleeping = isSleeping;
@@ -273,9 +314,19 @@ namespace ScMultiplayer
                 !localPlayer.ComponentSleep.IsSleeping ||
                 m_networkPlayerData.Values.Contains(localPlayer.PlayerData))
                 return false;
+            int sleepRequestSequence = BeginClientSleepRequest();
             NetworkMessageSender.SendPlayerHealthMessage(client.ClientID, localPlayer, 0f,
-                "Client wake request", isSleepingOverride: false);
+                "Client wake request", isSleepingOverride: false,
+                sleepRequestSequence: sleepRequestSequence);
             return true;
+        }
+
+        private int BeginClientSleepRequest()
+        {
+            if (m_nextClientSleepRequestSequence == int.MaxValue)
+                m_nextClientSleepRequestSequence = 0;
+            m_pendingClientSleepRequestSequence = ++m_nextClientSleepRequestSequence;
+            return m_pendingClientSleepRequestSequence;
         }
 
         // ====================================================================
