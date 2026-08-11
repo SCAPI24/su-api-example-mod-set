@@ -1109,10 +1109,13 @@ namespace ScMultiplayer
                 DetachHostPickableEvents();
                 m_frameProject = project;
                 m_hasObservedClientHealth = false;
+                m_nextClientSleepRequestSequence = 0;
+                m_pendingClientSleepRequestSequence = 0;
                 m_lastAuthoritativeLocalWholeLevel = -1;
                 m_lastSentAuthoritativePlayerStates.Clear();
                 m_authoritativePlayerStateSequences.Clear();
                 m_lastReceivedAuthoritativePlayerStateSequences.Clear();
+                m_hostObservedSleepStates.Clear();
                 m_hasAuthoritativeLocalInventory = false;
                 m_lastAuthoritativeLocalInventoryTick = 0;
                 m_authoritativeLocalSlotValues = Array.Empty<int>();
@@ -1194,7 +1197,10 @@ namespace ScMultiplayer
             if (IsHost)
                 EnsureHostSleepWakeHandlers(project);
             if (IsHost)
+            {
                 MaintainHostSleepAccelerationSession(project);
+                PublishHostSleepStateTransitions(project);
+            }
             ApplyNetworkWorldTexture(project);
             SanitizeRunawayCreatureState(project);
             ProcessRunawayCreatureCleanup(project);

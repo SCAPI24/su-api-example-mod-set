@@ -611,7 +611,8 @@ namespace ScMultiplayer
         public static void SendPlayerHealthMessage(int playerIndex, ComponentPlayer player,
             float healthChange, string cause = null, bool hasKnockback = false,
             int knockbackSequence = 0, int knockbackServerTick = 0,
-            float knockbackStunTime = 0f, bool? isSleepingOverride = null)
+            float knockbackStunTime = 0f, bool? isSleepingOverride = null,
+            int sleepRequestSequence = 0)
         {
             ComponentHealth health = player?.ComponentHealth;
             ComponentVitalStats vitalStats = player?.ComponentVitalStats;
@@ -650,6 +651,7 @@ namespace ScMultiplayer
             msg.KnockbackSequence = knockbackSequence;
             msg.KnockbackServerTick = knockbackServerTick;
             msg.KnockbackStunTime = knockbackStunTime;
+            msg.SleepRequestSequence = sleepRequestSequence;
             msg.DamageSequence = ScMultiplayer.currentInstance?.GetDamageSequence(
                 playerIndex, healthChange) ?? 0;
             // Source: ScMultiplayer.cs:SendAuthoritativePlayerHealth

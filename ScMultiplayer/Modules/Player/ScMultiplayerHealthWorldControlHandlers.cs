@@ -71,13 +71,30 @@ namespace ScMultiplayer
                 ComponentSleep requestedSleep = requestedPlayer.ComponentPlayer.ComponentSleep;
                 if (requestedSleep != null && requestedSleep.IsSleeping != msg.IsSleeping)
                 {
-                    if (!msg.IsSleeping) requestedSleep.WakeUp();
+                    // Source: Survivalcraft/Game/ComponentSleep.cs:ComponentSleep.WakeUp
+                    // A client health snapshot is an observation, not an authority command.
+                    // Only the explicit sequence-bearing wake request may end the host's native
+                    // sleep session; an unsequenced false value can be stale local presentation
+                    // and must never stop host acceleration.
+                    if (!msg.IsSleeping)
+                    {
+                        if (msg.SleepRequestSequence > 0)
+                            requestedSleep.WakeUp();
+                    }
                     else if (requestedSleep.CanSleep(out _))
                     {
                         requestedSleep.Sleep(true);
                         if (requestedSleep.IsSleeping)
                             UpdateNetworkPlayerRespawnAnchor(clientID, requestedPlayer);
                     }
+                }
+                if (msg.SleepRequestSequence > 0)
+                {
+                    // Source: Survivalcraft/Game/ComponentSleep.cs:ComponentSleep.Sleep
+                    // Return the host's result for this exact request. Periodic snapshots do not
+                    // carry the request sequence and therefore cannot race the local sleep edge.
+                    SendAuthoritativePlayerHealth(clientID, requestedPlayer.ComponentPlayer,
+                        force: true, sleepRequestSequence: msg.SleepRequestSequence);
                 }
                 return;
             }
@@ -306,10 +323,13 @@ namespace ScMultiplayer
             ComponentPlayer player, GamePlayerHealthMessage message)
         {
             if (player == null || message == null) return;
+            bool isLocalPlayer = !m_networkPlayerData.Values.Contains(player.PlayerData);
             if (player.ComponentSleep != null)
             {
                 if (message.IsSleeping)
                 {
+                    if (isLocalPlayer)
+                        m_pendingClientSleepRequestSequence = 0;
                     m_pendingClientSleepWakeups.Remove(player.ComponentSleep);
                     if (!player.ComponentSleep.IsSleeping)
                         player.ComponentSleep.Sleep(true);
@@ -336,16 +356,22 @@ namespace ScMultiplayer
                 }
                 else if (player.ComponentSleep.IsSleeping)
                 {
-                    // Source: Mod/ScMultiplayer/Func/Circuit/CircuitSynchronizer.cs:
-                    // CircuitSynchronizer.BeginPostAccelerationRebase
-                    // A reliable player snapshot can arrive before the host acceleration edge.
-                    // Keep the sleep presentation until the authoritative circuit snapshot and
-                    // its following fence have completed, so the player never wakes onto stale
-                    // counter values.
-                    if (ShouldDeferClientSleepWakeup())
-                        m_pendingClientSleepWakeups.Add(player.ComponentSleep);
-                    else
+                    bool stalePreSleepState = isLocalPlayer &&
+                        m_pendingClientSleepRequestSequence > 0 &&
+                        message.SleepRequestSequence != m_pendingClientSleepRequestSequence;
+                    if (!stalePreSleepState)
+                    {
+                        // Source: Survivalcraft/Game/ComponentSleep.cs:ComponentSleep.WakeUp
+                        // The host's false sleep edge is the authoritative vanilla wake boundary.
+                        // Apply it immediately; circuit recovery remains independent and keeps the
+                        // electricity timeline paused until the host snapshot/fence is rebased.
+                        if (isLocalPlayer)
+                            m_pendingClientSleepRequestSequence = 0;
+                        m_pendingClientSleepWakeups.Remove(player.ComponentSleep);
                         player.ComponentSleep.WakeUp();
+                    }
+                    // When stalePreSleepState is true, the periodic false snapshot was created
+                    // before the host processed the current request and is not a wake boundary.
                 }
             }
             ComponentOnFire onFire = player.Entity.FindComponent<ComponentOnFire>();
@@ -396,21 +422,18 @@ namespace ScMultiplayer
         internal void MarkClientSleepWakeBoundaryPending()
         {
             if (!IsHost)
-            {
-                if (!m_clientSleepWakeBoundaryPending)
-                    m_clientSleepWakeBoundaryPendingTime = Time.RealTime;
                 m_clientSleepWakeBoundaryPending = true;
-            }
         }
 
         // Source: CircuitSynchronizer.IsClientBootstrapReady
         // The host snapshot rebases directly to the final accelerated circuit boundary. Do not
-        // replay the night's missing steps; wake the presentation only after that rebase is ready.
+        // replay the night's missing steps. The player wake edge is applied independently from
+        // this circuit rebase, so a delayed fence cannot keep the player asleep into the next
+        // night.
         private void CompletePendingClientSleepWakeups()
         {
-            bool shouldDeferClientSleepWakeup = ShouldDeferClientSleepWakeup();
-            if (shouldDeferClientSleepWakeup &&
-                !ShouldForceClientSleepWakeupAfterBoundaryTimeout())
+            if (!m_clientSleepWakeBoundaryPending &&
+                m_pendingClientSleepWakeups.Count == 0)
                 return;
 
             if (m_clientSleepWakeBoundaryPending)
@@ -433,7 +456,6 @@ namespace ScMultiplayer
                 if (!foundLocalPlayer)
                     return;
                 m_clientSleepWakeBoundaryPending = false;
-                m_clientSleepWakeBoundaryPendingTime = 0.0;
             }
 
             if (m_pendingClientSleepWakeups.Count == 0)
@@ -444,24 +466,6 @@ namespace ScMultiplayer
                     sleep.WakeUp();
             }
             m_pendingClientSleepWakeups.Clear();
-        }
-
-        private bool ShouldForceClientSleepWakeupAfterBoundaryTimeout()
-        {
-            if (!m_clientSleepWakeBoundaryPending ||
-                m_clientSleepWakeBoundaryPendingTime <= 0.0)
-                return false;
-            if (m_circuitSynchronizer != null)
-            {
-                if (m_circuitSynchronizer.IsHostTimeAccelerationActive)
-                    return false;
-            }
-            else if (m_remoteTimeAccelerated)
-            {
-                return false;
-            }
-            return Time.RealTime - m_clientSleepWakeBoundaryPendingTime >=
-                ClientSleepWakeBoundaryTimeout;
         }
 
         public void HandleGameKickPlayerMessage(GameKickPlayerMessage msg, int sourceClientID)
@@ -486,8 +490,16 @@ namespace ScMultiplayer
             Project project = GameManager.Project;
             if (project == null || IsHost) return;
             // Source: Mod/ScMultiplayer/Plug/ScMultiplayer.cs:ScMultiplayer.TriggerNetworkTick
-            // A delayed latest-state datagram must not rewind fog intensity or restart its ramp.
-            if (msg.ServerTick < m_lastRemoteWorldInfoTick) return;
+            // WorldTimeRevision is incremented by the host for every world snapshot, including
+            // the reliable sleep acceleration edges. It is the ordering source for sleep timing;
+            // ServerTick alone can reject a delayed reliable falling edge after a newer latest
+            // datagram has already arrived.
+            if (msg.WorldTimeRevision <= 0 ||
+                msg.WorldTimeRevision < m_lastRemoteWorldTimeRevision ||
+                (msg.WorldTimeRevision == m_lastRemoteWorldTimeRevision &&
+                 msg.ServerTick < m_lastRemoteWorldInfoTick))
+                return;
+            m_lastRemoteWorldTimeRevision = msg.WorldTimeRevision;
             m_lastRemoteWorldInfoTick = msg.ServerTick;
             SubsystemGameInfo gameInfo = project.FindSubsystem<SubsystemGameInfo>(true);
             var timeOfDay = project.FindSubsystem<SubsystemTimeOfDay>(true);
@@ -846,7 +858,7 @@ namespace ScMultiplayer
             if (feedback.Count == 0) return;
 
             DisplayWorldControlFeedback(pending.ComponentPlayer,
-                string.Join("\r\n", feedback));
+                string.Join("\n", feedback));
         }
 
         // Source: Survivalcraft/Game/ComponentGui.cs:ComponentGui.DisplaySmallMessage
