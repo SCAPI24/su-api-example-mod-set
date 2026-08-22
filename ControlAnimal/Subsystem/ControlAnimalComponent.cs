@@ -13,6 +13,8 @@ public class ControlAnimalComponent : Component, IUpdateable
 {
     private const float ControlHoldTime = 2f;
     private const float SearchRange = 2.5f;
+    private const string ControlButtonName = "ControlAnimal.RButton";
+    private const string EggButtonName = "ControlAnimal.EggButton";
 
     private ComponentPlayer m_player;
     private SubsystemGameWidgets m_gameWidgets;
@@ -20,10 +22,15 @@ public class ControlAnimalComponent : Component, IUpdateable
     private SubsystemUpdate m_subsystemUpdate;
     private SubsystemTerrain m_terrain;
     private SubsystemPickables m_pickables;
+    private SubsystemAudio m_audio;
     private readonly DynamicArray<ComponentBody> m_nearbyBodies = new DynamicArray<ComponentBody>();
     private readonly List<ComponentBehavior> m_suspendedBehaviors = new List<ComponentBehavior>();
+    private readonly List<IUpdateable> m_suspendedUpdateables = new List<IUpdateable>();
     private readonly Dictionary<ComponentModel, float?> m_playerModelOpacities = new Dictionary<ComponentModel, float?>();
     private ControlAnimalButtonWidget m_controlButton;
+    private ControlAnimalButtonWidget m_eggButton;
+    private ButtonWidget m_creativeFlyButton;
+    private ButtonWidget m_crouchButton;
     private ComponentCreature m_nearbyAnimal;
     private ComponentCreature m_controlledAnimal;
     private float m_controlHoldTime;
@@ -39,6 +46,15 @@ public class ControlAnimalComponent : Component, IUpdateable
     private Pickable m_pendingFeedPickable;
     private TerrainRaycastResult? m_pendingFeedTerrain;
     private float m_feedHoldTime;
+    private bool m_birdFlightEnabled;
+    private bool m_birdLanding;
+    private float m_birdTakeoffTime;
+    private float m_birdLiftPulseTime;
+    private float m_birdLandingLiftPulseTime;
+    private EggBlock.EggType m_birdEggType;
+    private float m_layEggTime;
+    private bool m_isLayingEgg;
+    private readonly Game.Random m_random = new Game.Random();
 
     // Source: Survivalcraft/Game/UpdateOrder.cs:UpdateOrder.Input
     // Input is sampled at -10; this component runs immediately afterwards and before ComponentGui.
@@ -53,6 +69,22 @@ public class ControlAnimalComponent : Component, IUpdateable
         m_subsystemUpdate = Project.FindSubsystem<SubsystemUpdate>(throwOnError: true);
         m_terrain = Project.FindSubsystem<SubsystemTerrain>(throwOnError: true);
         m_pickables = Project.FindSubsystem<SubsystemPickables>(throwOnError: true);
+        m_audio = Project.FindSubsystem<SubsystemAudio>(throwOnError: true);
+    }
+
+    public override void Dispose()
+    {
+        // Source: Survivalcraft/Game/PlayerData.cs:PlayerData.OnEntityRemoved
+        // The GameWidget survives player death/respawn, so entity-owned HUD widgets must be detached.
+        if (m_isControlling)
+        {
+            RestoreAnimalBehaviors();
+            RestorePlayerModels();
+            m_controlledAnimal = null;
+            m_isControlling = false;
+        }
+        DetachControlButtons();
+        base.Dispose();
     }
 
     void IUpdateable.Update(float dt)
@@ -114,8 +146,14 @@ public class ControlAnimalComponent : Component, IUpdateable
             return;
         }
 
+        // Source: Survivalcraft/Game/PlayerData.cs:PlayerData.SpawnPlayer
+        // Respawn reuses GameWidget. Remove any stale widgets left by an interrupted entity lifecycle.
+        RemoveNamedControlButton(rightControls, ControlButtonName);
+        RemoveNamedControlButton(rightControls, EggButtonName);
+
         m_controlButton = new ControlAnimalButtonWidget
         {
+            Name = ControlButtonName,
             Size = new Vector2(76f, 64f),
             Margin = new Vector2(0f, 3f),
             HorizontalAlignment = WidgetAlignment.Far,
@@ -126,6 +164,53 @@ public class ControlAnimalComponent : Component, IUpdateable
             IsAutoCheckingEnabled = false
         };
         rightControls.Children.Add(m_controlButton);
+        m_eggButton = new ControlAnimalButtonWidget
+        {
+            Name = EggButtonName,
+            Size = new Vector2(76f, 64f),
+            Margin = new Vector2(0f, 3f),
+            HorizontalAlignment = WidgetAlignment.Far,
+            Text = "EGG",
+            Color = Color.White,
+            CenterColor = new Color(80, 80, 80),
+            BevelColor = new Color(160, 160, 160),
+            IsAutoCheckingEnabled = false,
+            IsVisible = false
+        };
+        rightControls.Children.Add(m_eggButton);
+        m_creativeFlyButton = ModManager.Instance.ModParentField.GetParentField<ButtonWidget>(
+            m_player.ComponentGui,
+            "m_creativeFlyButtonWidget",
+            typeof(ComponentGui));
+        m_crouchButton = ModManager.Instance.ModParentField.GetParentField<ButtonWidget>(
+            m_player.ComponentGui,
+            "m_crouchButtonWidget",
+            typeof(ComponentGui));
+    }
+
+    private void DetachControlButtons()
+    {
+        if (m_controlButton?.ParentWidget != null)
+        {
+            m_controlButton.ParentWidget.Children.Remove(m_controlButton);
+        }
+        if (m_eggButton?.ParentWidget != null)
+        {
+            m_eggButton.ParentWidget.Children.Remove(m_eggButton);
+        }
+        m_controlButton = null;
+        m_eggButton = null;
+        m_creativeFlyButton = null;
+        m_crouchButton = null;
+    }
+
+    private static void RemoveNamedControlButton(ContainerWidget container, string name)
+    {
+        Widget stale = container.Children.Find<Widget>(name, false);
+        if (stale != null)
+        {
+            container.Children.Remove(stale);
+        }
     }
 
     private void UpdateControlEntry(float dt, bool controlInputHeld)
@@ -220,6 +305,18 @@ public class ControlAnimalComponent : Component, IUpdateable
         m_controlButton.Text = "BACK";
         m_controlButton.Color = Color.White;
         m_controlButton.CenterColor = new Color(40, 150, 70);
+        m_birdFlightEnabled = false;
+        m_birdLanding = false;
+        m_birdTakeoffTime = 0f;
+        m_birdLiftPulseTime = 0f;
+        m_birdLandingLiftPulseTime = 0f;
+        m_isLayingEgg = false;
+        m_layEggTime = 0f;
+        EggBlock eggBlock = (EggBlock)BlocksManager.Blocks[EggBlock.Index];
+        m_birdEggType = IsBird(animal)
+            ? eggBlock.GetEggTypeByCreatureTemplateName(
+                animal.Entity.ValuesDictionary.DatabaseObject.Name)
+            : null;
     }
 
     private void LeaveAnimal()
@@ -239,6 +336,17 @@ public class ControlAnimalComponent : Component, IUpdateable
         m_pendingAttackBody = null;
         m_pendingAttackTime = 0f;
         CancelAnimalFeeding();
+        m_birdFlightEnabled = false;
+        m_birdLanding = false;
+        m_birdLiftPulseTime = 0f;
+        m_birdLandingLiftPulseTime = 0f;
+        m_birdEggType = null;
+        m_isLayingEgg = false;
+        m_layEggTime = 0f;
+        if (m_eggButton != null)
+        {
+            m_eggButton.IsVisible = false;
+        }
         m_controlButton.Text = "R";
         m_controlButton.Color = Color.White;
         m_controlButton.CenterColor = new Color(80, 80, 80);
@@ -261,10 +369,21 @@ public class ControlAnimalComponent : Component, IUpdateable
         ComponentLocomotion locomotion = m_controlledAnimal.ComponentLocomotion;
         float sideInput = MathUtils.Abs(input.Move.X) > 0.001f ? input.Move.X : input.CrouchMove.X;
         float forwardInput = MathUtils.Abs(input.Move.Z) > 0.001f ? input.Move.Z : input.CrouchMove.Z;
-        locomotion.WalkOrder = new Vector2(0f, forwardInput);
+        bool isBird = IsBird(m_controlledAnimal);
+        bool canFlyBird = IsControllableBird(m_controlledAnimal);
+        HandleReusedAnimalControls(ref input, canFlyBird);
+        UpdateBirdFlight(locomotion, input, forwardInput, canFlyBird, dt);
+        locomotion.WalkOrder = canFlyBird && (m_birdFlightEnabled || m_birdLanding)
+            ? null
+            : new Vector2(0f, forwardInput);
         locomotion.TurnOrder = new Vector2(sideInput, 0f);
         ApplyAnimalLookOrder(locomotion, input.Look, sideInput);
-        locomotion.JumpOrder = input.Jump ? 1f : 0f;
+        // Source: Survivalcraft/Game/ComponentInput.cs:UpdateInputFromWidgets
+        // Android movement-pad taps produce a one-frame Jump edge. On ground it remains a native
+        // bird jump; in flight UpdateBirdFlight converts each edge into one lift pulse.
+        locomotion.JumpOrder = canFlyBird && (m_birdFlightEnabled || m_birdLanding)
+            ? 0f
+            : (input.Jump ? 1f : 0f);
         m_player.ComponentBody.Velocity = Vector3.Zero;
         m_player.ComponentLocomotion.WalkOrder = Vector2.Zero;
         m_player.ComponentLocomotion.TurnOrder = Vector2.Zero;
@@ -275,23 +394,248 @@ public class ControlAnimalComponent : Component, IUpdateable
         ResolvePendingAttack(dt);
         if (input.Hit.HasValue)
         {
-            TryStartAnimalAttack(input.Hit.Value);
+            TryStartAnimalAttack(CreateAnimalInteractionRay());
         }
         if (input.Dig.HasValue)
         {
-            UpdateAnimalFeeding(input.Dig.Value, dt);
+            UpdateAnimalFeeding(CreateAnimalInteractionRay(), dt);
         }
         else
         {
             CancelAnimalFeeding();
         }
+        // Source: Survivalcraft/Game/ComponentInput.cs:UpdateInputFromMouseAndKeyboard
+        // Use the physical right-mouse edge instead of generic Interact, because Android taps set
+        // both Hit and Interact and must remain normal bird attacks.
+        bool rightMouseClicked = m_player.GameWidget.Input.IsMouseButtonDownOnce(MouseButton.Right);
+        if (isBird && (rightMouseClicked || m_eggButton?.IsClicked == true))
+        {
+            TryStartLayingEgg();
+            if (rightMouseClicked)
+            {
+                input.Interact = null;
+            }
+        }
+        UpdateLayingEgg(dt);
 
         // Source: Survivalcraft/Game/ClothingWidget.cs:ClothingWidget.Update
-        if (m_player.ComponentGui.ModalPanelWidget is ClothingWidget ||
-            m_player.ComponentGui.ModalPanelWidget is VitalStatsWidget)
+        if (m_player.ComponentGui.ModalPanelWidget is not AnimalStatsWidget &&
+            (m_player.ComponentGui.ModalPanelWidget is ClothingWidget ||
+            m_player.ComponentGui.ModalPanelWidget is VitalStatsWidget))
         {
-            m_player.ComponentGui.ModalPanelWidget = new AnimalStatsWidget(m_controlledAnimal);
+            m_player.ComponentGui.ModalPanelWidget =
+                new AnimalStatsWidget(m_player, m_controlledAnimal);
         }
+    }
+
+    public void UpdateReusedControlButtons()
+    {
+        if (!m_isControlling)
+        {
+            return;
+        }
+        bool isBird = IsBird(m_controlledAnimal);
+        bool canFlyBird = IsControllableBird(m_controlledAnimal);
+        if (m_creativeFlyButton != null)
+        {
+            m_creativeFlyButton.IsVisible = canFlyBird;
+            m_creativeFlyButton.IsChecked = canFlyBird && m_birdFlightEnabled;
+        }
+        if (m_crouchButton != null)
+        {
+            m_crouchButton.IsVisible = true;
+            m_crouchButton.IsChecked = false;
+        }
+        if (m_eggButton != null)
+        {
+            m_eggButton.IsVisible = isBird && m_birdEggType != null;
+            m_eggButton.CenterColor = m_isLayingEgg
+                ? new Color(40, 150, 70)
+                : new Color(80, 80, 80);
+            m_eggButton.Text = m_isLayingEgg
+                ? string.Format("EGG {0:F1}", MathUtils.Max(0f, 3f - m_layEggTime))
+                : "EGG";
+        }
+    }
+
+    private void HandleReusedAnimalControls(ref PlayerInput input, bool isBird)
+    {
+        bool flyClicked = m_creativeFlyButton?.IsClicked == true || input.ToggleCreativeFly;
+        if (flyClicked)
+        {
+            if (isBird)
+            {
+                m_birdFlightEnabled = !m_birdFlightEnabled;
+                m_birdLanding = !m_birdFlightEnabled;
+                m_birdTakeoffTime = m_birdFlightEnabled ? 0.45f : 0f;
+                m_birdLiftPulseTime = 0f;
+            }
+            input.ToggleCreativeFly = false;
+            ConsumeButtonClick(m_creativeFlyButton);
+        }
+        bool skillClicked = m_crouchButton?.IsClicked == true || input.ToggleCrouch;
+        if (skillClicked)
+        {
+            m_controlledAnimal.ComponentCreatureSounds.PlayIdleSound(skipIfRecentlyPlayed: false);
+            input.ToggleCrouch = false;
+            ConsumeButtonClick(m_crouchButton);
+        }
+    }
+
+    private void UpdateBirdFlight(ComponentLocomotion locomotion, PlayerInput input,
+        float forwardInput, bool isBird, float dt)
+    {
+        if (!isBird)
+        {
+            m_birdFlightEnabled = false;
+            m_birdLanding = false;
+            return;
+        }
+        if (m_birdFlightEnabled)
+        {
+            if (input.Jump)
+            {
+                // Each desktop/Android jump edge grants one bounded climb impulse. Holding the
+                // movement area is not required and cannot create unlimited continuous ascent.
+                m_birdLiftPulseTime = 0.70f;
+            }
+            m_birdTakeoffTime = MathUtils.Max(m_birdTakeoffTime - dt, 0f);
+            m_birdLiftPulseTime = MathUtils.Max(m_birdLiftPulseTime - dt, 0f);
+            // Source: Survivalcraft/Game/ComponentLocomotion.cs:ComponentLocomotion.NormalMovement
+            // Active flight holds altitude between jump taps. Each tap grants a doubled-duration
+            // climb pulse. Descent is allowed only after flight is switched off.
+            bool liftActive = m_birdTakeoffTime > 0f || m_birdLiftPulseTime > 0f;
+            float vertical = liftActive ? 1f : 0f;
+            Vector3 order = forwardInput * m_controlledAnimal.ComponentBody.Matrix.Forward +
+                vertical * Vector3.UnitY;
+            locomotion.FlyOrder = order;
+            if (!liftActive && m_controlledAnimal.ComponentBody.Velocity.Y < 0f)
+            {
+                Vector3 velocity = m_controlledAnimal.ComponentBody.Velocity;
+                velocity.Y = 0f;
+                m_controlledAnimal.ComponentBody.Velocity = velocity;
+            }
+            m_controlledAnimal.ComponentBody.IsGravityEnabled = false;
+            m_controlledAnimal.ComponentBody.IsGroundDragEnabled = false;
+        }
+        else if (m_birdLanding && !m_controlledAnimal.ComponentBody.StandingOnValue.HasValue)
+        {
+            // Source: Survivalcraft/Game/ComponentInput.cs:UpdateInputFromWidgets
+            // During descent, a tap creates a short upward FlyOrder pulse. JumpOrder only works
+            // while standing on terrain, so it cannot be used to slow an airborne slide.
+            if (input.Jump)
+            {
+                m_birdLandingLiftPulseTime = 0.35f;
+            }
+            m_birdLandingLiftPulseTime = MathUtils.Max(m_birdLandingLiftPulseTime - dt, 0f);
+            float vertical = m_birdLandingLiftPulseTime > 0f ? 1f : -0.30f;
+            // Source: Survivalcraft/Game/ComponentPilot.cs:ComponentPilot.Update
+            // Keep steering during controlled descent instead of forcing a vertical-only landing.
+            // A/D continues to rotate the body through TurnOrder; W/S supplies forward/back motion.
+            locomotion.FlyOrder =
+                forwardInput * m_controlledAnimal.ComponentBody.Matrix.Forward +
+                new Vector3(0f, vertical, 0f);
+            m_controlledAnimal.ComponentBody.IsGravityEnabled = false;
+            m_controlledAnimal.ComponentBody.IsGroundDragEnabled = false;
+        }
+        else if (!m_birdLanding)
+        {
+            m_birdLandingLiftPulseTime = 0f;
+        }
+        else
+        {
+            m_birdLanding = false;
+        }
+    }
+
+    private static bool IsBird(ComponentCreature animal)
+    {
+        return animal?.ComponentCreatureModel is ComponentBirdModel ||
+            animal?.ComponentCreatureModel is ComponentFlightlessBirdModel;
+    }
+
+    private static bool IsControllableBird(ComponentCreature animal)
+    {
+        return animal?.ComponentCreatureModel is ComponentBirdModel &&
+            animal.ComponentLocomotion.FlySpeed > 0f;
+    }
+
+    private void TryStartLayingEgg()
+    {
+        if (m_isLayingEgg || m_birdEggType == null ||
+            !m_controlledAnimal.ComponentBody.StandingOnValue.HasValue)
+        {
+            return;
+        }
+        m_isLayingEgg = true;
+        m_layEggTime = 0f;
+    }
+
+    private void UpdateLayingEgg(float dt)
+    {
+        if (!m_isLayingEgg)
+        {
+            return;
+        }
+        if (m_birdEggType == null ||
+            !m_controlledAnimal.ComponentBody.StandingOnValue.HasValue)
+        {
+            m_isLayingEgg = false;
+            m_layEggTime = 0f;
+            return;
+        }
+        m_layEggTime += dt;
+        m_controlledAnimal.ComponentCreatureModel.HeadShakeOrder = 0.2f;
+        if (m_layEggTime < 3f)
+        {
+            return;
+        }
+        int value = Terrain.MakeBlockValue(
+            EggBlock.Index,
+            0,
+            EggBlock.SetIsLaid(
+                EggBlock.SetEggType(0, m_birdEggType.EggTypeIndex),
+                isLaid: true));
+        Matrix matrix = m_controlledAnimal.ComponentBody.Matrix;
+        Vector3 position = m_controlledAnimal.ComponentBody.BoundingBox.Center();
+        Vector3 velocity = 3f * Vector3.Normalize(
+            -matrix.Forward + 0.1f * matrix.Up +
+            0.2f * m_random.Float(-1f, 1f) * matrix.Right);
+        m_pickables.AddPickable(value, 1, position, velocity, null);
+        m_audio.PlaySound("Audio/EggLaid", 1f, m_random.Float(-0.1f, 0.1f),
+            position, 2f, autoDelay: true);
+        m_isLayingEgg = false;
+        m_layEggTime = 0f;
+    }
+
+    private static void ConsumeButtonClick(ButtonWidget button)
+    {
+        if (button is not BitmapButtonWidget)
+        {
+            return;
+        }
+        ClickableWidget clickable = ModManager.Instance.ModParentField.GetParentField<ClickableWidget>(
+            button,
+            "m_clickableWidget",
+            typeof(BitmapButtonWidget));
+        if (clickable != null)
+        {
+            ModManager.Instance.ModParentField.ModifyParentField(
+                clickable,
+                "<IsClicked>k__BackingField",
+                false,
+                typeof(ClickableWidget));
+        }
+    }
+
+    private Ray3 CreateAnimalInteractionRay()
+    {
+        // Source: Survivalcraft/Game/TppCamera.cs:TppCamera.Update
+        // Third-person input rays start behind the target and fail ComponentMiner's eye-distance
+        // filter. Always originate creature interactions at the controlled animal's own eyes.
+        ComponentCreatureModel model = m_controlledAnimal.ComponentCreatureModel;
+        Matrix eyeMatrix = Matrix.CreateFromQuaternion(model.EyeRotation);
+        return new Ray3(model.EyePosition, Vector3.Normalize(eyeMatrix.Forward));
     }
 
     private void TryStartAnimalAttack(Ray3 ray)
@@ -321,7 +665,14 @@ public class ControlAnimalComponent : Component, IUpdateable
         m_pendingAttackPoint = hit.Value.HitPoint();
         m_pendingAttackDirection = ray.Direction;
         m_pendingAttackTime = 0f;
-        m_controlledAnimal.ComponentCreatureModel.AttackOrder = true;
+        if (m_controlledAnimal.ComponentCreatureModel is ComponentBirdModel)
+        {
+            m_controlledAnimal.ComponentCreatureModel.FeedOrder = true;
+        }
+        else
+        {
+            m_controlledAnimal.ComponentCreatureModel.AttackOrder = true;
+        }
     }
 
     private void ResolvePendingAttack(float dt)
@@ -331,8 +682,14 @@ public class ControlAnimalComponent : Component, IUpdateable
             return;
         }
         m_pendingAttackTime += dt;
+        bool isBird = m_controlledAnimal.ComponentCreatureModel is ComponentBirdModel;
+        if (isBird)
+        {
+            m_controlledAnimal.ComponentCreatureModel.FeedOrder = true;
+        }
         bool attackFrameReached = m_controlledAnimal.ComponentCreatureModel.IsAttackHitMoment;
-        if (!attackFrameReached && m_pendingAttackTime < 0.75f)
+        float fallbackAttackTime = isBird ? 0.35f : 0.75f;
+        if (!attackFrameReached && m_pendingAttackTime < fallbackAttackTime)
         {
             return;
         }
@@ -529,10 +886,18 @@ public class ControlAnimalComponent : Component, IUpdateable
             }
             behavior.IsActive = false;
         }
+        m_suspendedUpdateables.Clear();
         foreach (IUpdateable updateable in animal.Entity.FindComponents<IUpdateable>())
         {
-            if (updateable is ComponentBehavior || updateable is ComponentBehaviorSelector)
+            // Source: Survivalcraft/Game/ComponentPilot.cs:ComponentPilot.Update
+            // Pilot keeps writing FlyOrder even after behavior AI is disabled. Suspend both the
+            // path planner and pilot so only ControlAnimal owns movement while transformed.
+            if (updateable is ComponentBehavior ||
+                updateable is ComponentBehaviorSelector ||
+                updateable is ComponentPathfinding ||
+                updateable is ComponentPilot)
             {
+                m_suspendedUpdateables.Add(updateable);
                 m_subsystemUpdate.RemoveUpdateable(updateable);
             }
         }
@@ -544,15 +909,14 @@ public class ControlAnimalComponent : Component, IUpdateable
         if (m_controlledAnimal == null)
         {
             m_suspendedBehaviors.Clear();
+            m_suspendedUpdateables.Clear();
             return;
         }
-        foreach (IUpdateable updateable in m_controlledAnimal.Entity.FindComponents<IUpdateable>())
+        foreach (IUpdateable updateable in m_suspendedUpdateables)
         {
-            if (updateable is ComponentBehavior || updateable is ComponentBehaviorSelector)
-            {
-                m_subsystemUpdate.AddUpdateable(updateable);
-            }
+            m_subsystemUpdate.AddUpdateable(updateable);
         }
+        m_suspendedUpdateables.Clear();
         foreach (ComponentBehavior behavior in m_suspendedBehaviors)
         {
             behavior.IsActive = true;
@@ -605,6 +969,7 @@ public class ControlAnimalComponent : Component, IUpdateable
         input.Interact = null;
         input.ToggleCrouch = false;
         input.ToggleMount = false;
+        input.ToggleCreativeFly = false;
         SetPlayerInput(input);
     }
 

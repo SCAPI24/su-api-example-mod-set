@@ -1,19 +1,25 @@
+using System.Globalization;
 using Engine;
 using Engine.Graphics;
 using Game;
 
 namespace ControlAnimal;
 
-public class AnimalStatsWidget : CanvasWidget
+public class AnimalStatsWidget : ClothingWidget
 {
     private readonly ComponentCreature m_animal;
     private readonly LabelWidget m_title;
-    private readonly LabelWidget m_stats;
+    private readonly LabelWidget m_leftStats;
+    private readonly LabelWidget m_rightStats;
 
-    public AnimalStatsWidget(ComponentCreature animal)
+    public AnimalStatsWidget(ComponentPlayer player, ComponentCreature animal)
+        : base(player)
     {
         m_animal = animal;
-        Size = new Vector2(520f, 360f);
+        // Source: Survivalcraft/Game/ComponentGui.cs:ComponentGui.IsClothingVisible
+        // Keep ClothingWidget identity for native C/button toggling, but replace its visual contents.
+        Children.Clear();
+        Size = new Vector2(640f, 360f);
         HorizontalAlignment = WidgetAlignment.Center;
         VerticalAlignment = WidgetAlignment.Center;
 
@@ -39,18 +45,34 @@ public class AnimalStatsWidget : CanvasWidget
             FontScale = 1.2f,
             HorizontalAlignment = WidgetAlignment.Center
         };
-        m_stats = new LabelWidget
+        StackPanelWidget statsColumns = new StackPanelWidget
         {
+            Direction = LayoutDirection.Horizontal,
+            HorizontalAlignment = WidgetAlignment.Center,
+            Margin = new Vector2(12f, 6f)
+        };
+        m_leftStats = new LabelWidget
+        {
+            Size = new Vector2(250f, float.PositiveInfinity),
             Color = Color.White,
             FontScale = 0.8f,
-            HorizontalAlignment = WidgetAlignment.Center
+            TextAnchor = TextAnchor.HorizontalCenter | TextAnchor.Top
         };
+        m_rightStats = new LabelWidget
+        {
+            Size = new Vector2(310f, float.PositiveInfinity),
+            Color = Color.White,
+            FontScale = 0.8f,
+            TextAnchor = TextAnchor.HorizontalCenter | TextAnchor.Top
+        };
+        statsColumns.Children.Add(m_leftStats);
+        statsColumns.Children.Add(m_rightStats);
         if (modelWidget != null)
         {
             stack.Children.Add(modelWidget);
         }
         stack.Children.Add(m_title);
-        stack.Children.Add(m_stats);
+        stack.Children.Add(statsColumns);
         Children.Add(background);
         Children.Add(stack);
         UpdateText();
@@ -90,16 +112,27 @@ public class AnimalStatsWidget : CanvasWidget
         ComponentVitalStats vital = m_animal.Entity.FindComponent<ComponentVitalStats>();
         ComponentMiner miner = m_animal.Entity.FindComponent<ComponentMiner>();
         Vector3 position = m_animal.ComponentBody.Position;
-        m_title.Text = m_animal.DisplayName ?? "动物";
-        m_stats.Text = string.Format(
-            "位置: {0:F1}, {1:F1}, {2:F1}\n生命: {3:F2}\n食物: {4}\n耐力: {5}\n速度: {6:F2}\n攻击: {7:F2}",
+        m_title.Text = string.Format(
+            CultureInfo.InvariantCulture,
+            "{0} - Animal Stats",
+            m_animal.DisplayName ?? "Animal");
+        float speed = MathUtils.Max(
+            m_animal.ComponentLocomotion.WalkSpeed,
+            m_animal.ComponentLocomotion.FlySpeed,
+            m_animal.ComponentLocomotion.SwimSpeed);
+        m_leftStats.Text = string.Format(
+            CultureInfo.InvariantCulture,
+            "Health: {0:F2}\nFood: {1}\nStamina: {2}",
+            m_animal.ComponentHealth.Health,
+            vital == null ? "N/A" : vital.Food.ToString("F2", CultureInfo.InvariantCulture),
+            vital == null ? "N/A" : vital.Stamina.ToString("F2", CultureInfo.InvariantCulture));
+        m_rightStats.Text = string.Format(
+            CultureInfo.InvariantCulture,
+            "Speed: {0:F2}\nAttack: {1:F2}\nPosition: {2:F1}, {3:F1}, {4:F1}",
+            speed,
+            miner == null ? 0f : miner.AttackPower,
             position.X,
             position.Y,
-            position.Z,
-            m_animal.ComponentHealth.Health,
-            vital == null ? "-" : vital.Food.ToString("F2"),
-            vital == null ? "-" : vital.Stamina.ToString("F2"),
-            m_animal.ComponentLocomotion.WalkSpeed,
-            miner == null ? 0f : miner.AttackPower);
+            position.Z);
     }
 }

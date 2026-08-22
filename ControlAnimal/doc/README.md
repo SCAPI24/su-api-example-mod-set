@@ -1,37 +1,64 @@
-# 控制动物 Mod
+# Control Animal Mod
 
-## 操作
+## Enter and Exit Control
 
-1. 按 `Shift` 切换到蹲下状态。
-2. 靠近 2.5 格内的存活动物。
-3. 持续按住 `R` 两秒，或持续按住右侧固定的 `R` 按钮两秒，进入动物控制。
-4. 控制时再次按 `R` 或点击右侧按钮退出动物控制。
+1. Press `Shift` to crouch.
+2. Move within 2.5 blocks of a living animal.
+3. Hold `R` or the fixed `R` HUD button for two seconds.
+4. Press `R` or the HUD button again to return to the player.
 
-## 动物控制输入
+## Movement and Camera
 
-- `W/S`：沿动物身体前后移动。
-- `A/D`：旋转动物身体，Android 使用移动控制区域的左/右滑动。
-- 鼠标移动或 Android 视角滑动：只转动物头部，不直接转身体。
-- 头部相对身体的水平角度限制为约 ±140 度；达到边界后，继续按左右键旋转身体，头部会逐渐回正，之后才能继续向该方向转头。
-- 攻击使用动物实体自己的 `ComponentMiner` 近战逻辑。
+- `W/S`: move along the animal body direction.
+- `A/D`: turn the animal body. Android uses horizontal movement input.
+- Mouse or Android look input turns only the animal head.
+- Head yaw is limited to approximately ±140 degrees relative to the body.
+- Turning the body recenters the head.
 
-## 动物攻击
+## Bird Flight
 
-- 鼠标左键或 Android 点击攻击输入会先检测动物视角正前方的目标。
-- 目标必须是玩家或动物，并且攻击距离约不超过 1.75 格。
-- 先播放动物自身的攻击动作，在动物模型的 `IsAttackHitMoment` 攻击帧才实际造成伤害。
-- 攻击目标不是玩家或动物、距离过远、或者不在攻击方向时，不会造成伤害。
+- A bird must use `ComponentBirdModel` and have `FlySpeed > 0` to fly.
+- While controlling such a bird, the native fly button is visible in every game mode.
+- Press the fly button or `F` to enable bird flight.
+- With flight disabled, tapping jump performs the bird's native upward jump.
+- With flight enabled, every desktop or Android jump tap grants a `0.70` second upward lift pulse; holding jump is not required.
+- Between jump taps, enabled flight uses zero vertical order and clears residual downward velocity to hold altitude as closely as possible.
+- `W/S` controls forward/back flight.
+- Descent begins only after flight is disabled, using `-0.30` vertical order until the bird lands.
+- During descent, tapping jump starts a `0.35` second upward pulse to slow the slide; holding is not required.
+- During descent, `W/S` still moves along the bird body direction and `A/D` still turns the body, so landing is not vertical-only.
+- Bird flight uses the bird's native `FlyOrder` and does not enable player creative flight.
+- Native `ComponentPilot` and `ComponentPathfinding` updates are suspended while controlled, preventing them from applying hidden automatic flight when bird flight is disabled.
 
-## 动物进食
+## Animal Skill
 
-- 长按鼠标左键的攻击/挖掘输入，或 Android 长按视角输入，会尝试进食。
-- 可进食目标必须在动物视角正前方且约 1.75 格内。
-- 支持 `FoodType.Meat`、`FoodType.Grass` 的掉落物。
-- 支持地面草方块和高草方块。
-- 长按约 1 秒后播放动物自身 `FeedOrder` 动作并消耗一个掉落物或一个地面食物方块。
-- 若动物存在原生 `ComponentEatPickableBehavior`，会同步增加其饱食状态。
-- 非草、非肉目标不会被消耗。
+- While controlling an animal, the native crouch button and `Shift` become the animal skill.
+- The current skill plays the animal's native idle call.
+- The hidden player is not crouched by this input.
 
-## 实现边界
+## Attack and Feeding
 
-这是 Mod-only 的控制目标切换。原生 `ComponentPlayer` 仍作为输入、UI、存档和玩家生命周期宿主保留，没有把动物实体注册成第二个原生玩家。
+- Click the left mouse button or tap on Android to attack a player or animal within about 1.75 blocks.
+- First-person and third-person attacks both originate at the controlled animal's eye position and follow its current head direction.
+- Damage occurs at the native attack animation hit moment, with a short fallback for bird pecking.
+- Hold the left mouse button or Android view input near grass or meat to feed.
+- Birds retain their native `FeedOrder` pecking animation while feeding.
+
+## Egg Laying
+
+- Birds with a valid native `EggType` show an independent `EGG` button.
+- Right click or press `EGG` while the bird is standing on the ground.
+- The laying action takes three seconds and creates one native laid egg.
+- The egg type, spawn position, velocity, and `Audio/EggLaid` sound reuse the native game behavior.
+- Egg laying does not replace left-button feeding.
+
+## Animal Stats Panel
+
+- Press `C` or the native clothing/character button to open the animal panel.
+- Press the same input again to close it.
+- The clothing/character button is highlighted; the inventory button remains off.
+- Labels use the native English terminology and a two-column vertical layout: left `Health`, `Food`, `Stamina`; right `Speed`, `Attack`, `Position`.
+
+## Implementation Boundary
+
+This is a Mod-only control-target switch. The native `ComponentPlayer` remains the input, UI, save, and lifecycle host; the controlled animal is not registered as a second native player.
