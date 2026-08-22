@@ -383,7 +383,10 @@ namespace ScMultiplayer
             foreach (var item in obj.Joins)
             {
                 Log.Information($"[ScMP] Client joining: {item.ClientID}");
-                PublishServerAudit("connection.request", item.ClientID, null);
+                // Source: Comms/Comms.Drt/Func/Server/Set/ServerGame.cs:CreateTickMessage
+                PublishServerAudit("join.host_received", item.ClientID,
+                    "endpoint=" + item.Address + " bytes=" +
+                    (item.JoinRequestBytes?.Length ?? 0).ToString(CultureInfo.InvariantCulture));
                 m_departedRemoteClientIds.Remove(item.ClientID);
                 // Source: Comms/Comms.Drt/Func/Server/Set/ServerGame.cs:ServerGame.Handle
                 // A single existing peer accepts or refuses a join. Only the room owner is allowed
@@ -658,6 +661,11 @@ namespace ScMultiplayer
             if (!IsHost || m_hostJoinRequests.ContainsKey(joiningClientId))
                 return;
 
+            // Source: Mod/ScMultiplayer/Modules/Player/ScMultiplayerPlayerHealthAndIngress.cs:HandleHostJoinRequest
+            PublishServerAudit("join.host_processing", joiningClientId,
+                "endpoint=" + joiningAddress + " bytes=" +
+                (joinRequestBytes?.Length ?? 0).ToString(CultureInfo.InvariantCulture));
+
             // Source: Mod/ScMultiplayer/Message/GameWorldInfoMessage.cs:
             // GameWorldInfoMessage.Read
             // Reject an incompatible multiplayer Mod before it can reserve a player slot.
@@ -668,6 +676,8 @@ namespace ScMultiplayer
             }
             catch (Exception ex)
             {
+                PublishServerAudit("join.refused", joiningClientId,
+                    "reason=invalid_request error=" + ex.GetType().Name);
                 client.RefuseJoinGame(joiningClientId,
                     "Invalid join request: " + ex.Message);
                 Log.Error($"[ScMP] Failed to parse ClientID {joiningClientId} join: " +
@@ -676,6 +686,8 @@ namespace ScMultiplayer
             }
             if (worldInfo == null)
             {
+                PublishServerAudit("join.refused", joiningClientId,
+                    "reason=invalid_request_type");
                 client.RefuseJoinGame(joiningClientId, "Invalid join request type");
                 return;
             }
@@ -696,6 +708,8 @@ namespace ScMultiplayer
                     $"host={hostProtocol}, client={remoteProtocol}";
                 Log.Warning($"[ScMP] Refused incompatible ClientID {joiningClientId}: " +
                     $"host={hostProtocol}, client={remoteProtocol}");
+                PublishServerAudit("join.refused", joiningClientId,
+                    "reason=protocol_mismatch remote=" + remoteProtocol);
                 client.RefuseJoinGame(joiningClientId, reason);
                 return;
             }
@@ -704,6 +718,7 @@ namespace ScMultiplayer
                 out int assignedPlayerIndex))
             {
                 Log.Information($"[ScMP] Game full, refusing ClientID {joiningClientId}");
+                PublishServerAudit("join.refused", joiningClientId, "reason=game_full");
                 client.RefuseJoinGame(joiningClientId, "Game is full");
                 return;
             }
@@ -711,6 +726,7 @@ namespace ScMultiplayer
             {
                 m_reservedNetworkPlayerIndices.Remove(joiningClientId);
                 Log.Information($"[ScMP] Game full, refusing ClientID {joiningClientId}");
+                PublishServerAudit("join.refused", joiningClientId, "reason=game_full");
                 client.RefuseJoinGame(joiningClientId, "Game is full");
                 return;
             }
@@ -731,6 +747,8 @@ namespace ScMultiplayer
                     m_controlUnit?.Context.Connections.MarkDisconnected(joiningClientId, Time.RealTime);
                     m_reservedNetworkPlayerIndices.Remove(joiningClientId);
                     playerMappingManager.ReleasePlayerIndex(joiningClientId);
+                    PublishServerAudit("join.refused", joiningClientId,
+                        "reason=host_snapshot_unavailable");
                     client.RefuseJoinGame(joiningClientId, "Host world snapshot is unavailable");
                     return;
                 }
@@ -749,6 +767,8 @@ namespace ScMultiplayer
                         m_controlUnit?.Context.Connections.MarkDisconnected(joiningClientId, Time.RealTime);
                         m_reservedNetworkPlayerIndices.Remove(joiningClientId);
                         playerMappingManager.ReleasePlayerIndex(joiningClientId);
+                        PublishServerAudit("join.refused", joiningClientId,
+                            "reason=player_profile_required");
                         client.RefuseJoinGame(joiningClientId, PlayerProfileRequiredReason);
                         return;
                     }
@@ -766,6 +786,9 @@ namespace ScMultiplayer
                 };
                 Log.Information($"[ScMP] Reserved PlayerIndex {assignedPlayerIndex} for " +
                     $"ClientID {joiningClientId} ({joiningRecord.Name})");
+                PublishServerAudit("join.host_reserved", joiningClientId,
+                    "playerIndex=" + assignedPlayerIndex.ToString(CultureInfo.InvariantCulture) +
+                    " autoApprove=" + ScMultiplayerSettings.AutoApproveJoinRequests);
 
                 if (ScMultiplayerSettings.AutoApproveJoinRequests)
                 {
@@ -781,6 +804,8 @@ namespace ScMultiplayer
                 m_controlUnit?.Context.Connections.MarkDisconnected(joiningClientId, Time.RealTime);
                 m_reservedNetworkPlayerIndices.Remove(joiningClientId);
                 playerMappingManager.ReleasePlayerIndex(joiningClientId);
+                PublishServerAudit("join.refused", joiningClientId,
+                    "reason=processing_error error=" + ex.GetType().Name);
                 try
                 {
                     client.RefuseJoinGame(joiningClientId, "Invalid join request: " + ex.Message);
@@ -952,7 +977,7 @@ namespace ScMultiplayer
             m_reservedNetworkPlayerIndices.Remove(request.ClientId);
             m_controlUnit?.Context.Connections.MarkDisconnected(request.ClientId, Time.RealTime);
             playerMappingManager.ReleasePlayerIndex(request.ClientId);
-            PublishServerAudit("join.rejected", request.ClientId, null);
+            PublishServerAudit("join.rejected", request.ClientId, "reason=" + reason);
             try
             {
                 client.RefuseJoinGame(request.ClientId, reason);
@@ -1015,6 +1040,9 @@ namespace ScMultiplayer
                 // Keep large direct broadcasts off this endpoint until its world is loaded.
                 // Ordered ticks continue so the joining client's expected step stays current.
                 SetServerClientGameTrafficEnabled(joiningClientId, enabled: false);
+                PublishServerAudit("join.host_accept_send", joiningClientId,
+                    "step=" + snapshot.Tick.ToString(CultureInfo.InvariantCulture) +
+                    " worldBytes=" + snapshot.WorldData.Length.ToString(CultureInfo.InvariantCulture));
                 client.AcceptJoinGame(joiningClientId);
                 BeginWorldTransfer(
                     snapshot.Name, snapshot.WorldData, snapshot.LastSaveTime, joiningClientId,

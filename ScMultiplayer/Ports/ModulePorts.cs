@@ -14,6 +14,8 @@ namespace ScMultiplayer.Ports
 
         void RunWorldControlPhase(in ModuleTickContext tickContext);
 
+        void RunDataModificationPhase(in ModuleTickContext tickContext);
+
         void RunCircuitPhase(in ModuleTickContext tickContext);
 
         void RunWorldPhase(in ModuleTickContext tickContext);

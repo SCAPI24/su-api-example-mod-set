@@ -303,7 +303,10 @@ namespace ScMultiplayer
                 localPlayer.ComponentMiner?.PokingPhase ?? 0f,
                 localPlayer.ComponentInput.IsControlledByTouch,
                 localPlayer.ComponentBody.TargetCrouchFactor > 0f,
-                localPlayer.ComponentLocomotion.IsCreativeFlyEnabled,
+                localPlayer.ComponentLocomotion.IsCreativeFlyEnabled &&
+                    (HasLocalPlayerCapability(PlayerCapabilityFlags.CreativeFly) ||
+                    GameManager.Project.FindSubsystem<SubsystemGameInfo>(false)?.WorldSettings.GameMode ==
+                        GameMode.Creative),
                 (localPlayer.ComponentBody.StandingOnValue.HasValue ||
                     localPlayer.ComponentBody.StandingOnBody != null) &&
                     MathUtils.Abs(localPlayer.ComponentBody.Velocity.Y) < 0.1f,

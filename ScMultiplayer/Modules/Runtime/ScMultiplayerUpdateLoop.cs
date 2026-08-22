@@ -38,6 +38,8 @@ namespace ScMultiplayer
         private void UpdateFrame(float dt)
         {
             m_controlUnit?.Tick(dt, Time.RealTime, IsHost, client?.IsConnected == true);
+            MaintainPlayerCapabilities();
+            ApplyPlayerCapabilityUi();
         }
 
         // Source: Mod/ScMultiplayer/Networking/RemoteServerDirectory.cs:RemoteServerDirectory.SetDiscoveryEnabled
@@ -710,6 +712,54 @@ namespace ScMultiplayer
                 packetsReceived - m_serverTrafficSampleStartPacketsReceived);
             m_serverTrafficSampleActive = false;
             m_nextServerTrafficSampleStartTime = now + 4.0;
+            PublishServerNetworkSummary();
+        }
+
+        // Source: Comms/Comms/Comm.cs:Comm.GetUnackedPacketsCount
+        // Reuse the existing five-second traffic sample. Diagnostics add no independent timer and
+        // inspect peer pressure only when a host explicitly enables recording.
+        private void PublishServerNetworkSummary()
+        {
+            if (!IsHost || !ScMultiplayerSettings.ServerDiagnosticsEnabled || server?.Peer == null)
+                return;
+
+            int unacked = 0;
+            double maximumAckMilliseconds = 0.0;
+            double maximumLossPercent = 0.0;
+            long retryLimit = 0L;
+            int connectedClients = 0;
+            foreach (ServerClient remote in GetConnectedRemoteClients())
+            {
+                PeerData peer = server.Peer.FindPeer(remote.Address);
+                if (peer == null)
+                    continue;
+                connectedClients++;
+                unacked = Math.Max(unacked,
+                    server.Peer.Comm.GetUnackedPacketsCount(peer.Address));
+                maximumAckMilliseconds = Math.Max(maximumAckMilliseconds,
+                    1000.0 * server.Peer.Comm.GetSmoothedRoundTripTime(peer.Address));
+                maximumLossPercent = Math.Max(maximumLossPercent,
+                    100.0 * server.Peer.Comm.GetPacketLossRate(peer.Address));
+                retryLimit += server.Peer.Comm.GetReliableRetryLimitCount(peer.Address);
+            }
+
+            int applyQueue = m_endOfFrameActions.Count + m_terrainChunkSyncActions.Count +
+                SuSubsystemTerrain.PendingChunkCheckpointCount;
+            int activeJoins = m_worldTransferRegistry.OutgoingTransfers.Count +
+                m_joinCatchUpRegistry.Pending.Count;
+            PublishServerSystemAudit("network.summary",
+                "clients=" + connectedClients.ToString(CultureInfo.InvariantCulture) +
+                " outBytes=" + m_lastServerTrafficSampleBytesSent.ToString(CultureInfo.InvariantCulture) +
+                " inBytes=" + m_lastServerTrafficSampleBytesReceived.ToString(CultureInfo.InvariantCulture) +
+                " outPackets=" + m_lastServerTrafficSamplePacketsSent.ToString(CultureInfo.InvariantCulture) +
+                " inPackets=" + m_lastServerTrafficSamplePacketsReceived.ToString(CultureInfo.InvariantCulture) +
+                " unacked=" + unacked.ToString(CultureInfo.InvariantCulture) +
+                " ackMs=" + maximumAckMilliseconds.ToString("0.###", CultureInfo.InvariantCulture) +
+                " lossPct=" + maximumLossPercent.ToString("0.###", CultureInfo.InvariantCulture) +
+                " retryLimit=" + retryLimit.ToString(CultureInfo.InvariantCulture) +
+                " syncQueue=" + NetworkMessageSender.PendingSyncBatchCount.ToString(CultureInfo.InvariantCulture) +
+                " applyQueue=" + applyQueue.ToString(CultureInfo.InvariantCulture) +
+                " activeJoins=" + activeJoins.ToString(CultureInfo.InvariantCulture));
         }
 
         private double GetEffectiveJoinTransferBurstBytes()
@@ -1006,6 +1056,7 @@ namespace ScMultiplayer
                 bool autoApprove = ScMultiplayerSettings.AutoApproveJoinRequests;
                 bool autoHost = ScMultiplayerSettings.AutoCreateRoomFromCurrentWorld;
                 ScMultiplayerSettings.UpdateJoinTransferSettings(request);
+                ApplyServerDiagnosticsSetting();
                 if (!autoApprove && ScMultiplayerSettings.AutoApproveJoinRequests && IsHost)
                 {
                     Dialog activeDialog = m_activeJoinDecisionDialog;
@@ -1024,6 +1075,8 @@ namespace ScMultiplayer
             }
 
             Dictionary<string, object> result = ScMultiplayerSettings.GetJoinTransferSettings();
+            result["pendingDataModificationApprovals"] =
+                m_dataModification?.PendingApprovalCount ?? 0;
             result["activeJoins"] = m_worldTransferRegistry.OutgoingTransfers.Count + m_joinCatchUpRegistry.Pending.Count;
             result["connectedClients"] = GetConnectedRemoteClients().Count;
             result["gameplayTxKbps"] = m_joinTransferGameplayBytesPerSecond * 8.0 / 1000.0;
@@ -1033,6 +1086,8 @@ namespace ScMultiplayer
             result["lastUdpInBytes"] = m_lastServerTrafficSampleBytesReceived;
             result["lastUdpOutPackets"] = m_lastServerTrafficSamplePacketsSent;
             result["lastUdpInPackets"] = m_lastServerTrafficSamplePacketsReceived;
+            result["dataModificationFastQueue"] = m_dataModification?.PendingFastCount ?? 0;
+            result["dataModificationBulkChannels"] = m_dataModification?.ActiveBulkCount ?? 0;
             result["joinState"] = result["activeJoins"] is int active && active > 0
                 ? (m_joinTransferPausedByGameplay ? "Paused" : "Ready")
                 : "idle";
@@ -1503,6 +1558,15 @@ namespace ScMultiplayer
                 actions.Add(Tuple.Create(
                     "Auto Host Current World: " + autoHost,
                     (Action)ToggleAutoHostCurrentWorld));
+                string diagnostics = ScMultiplayerSettings.ServerDiagnosticsEnabled
+                    ? "On"
+                    : "Off";
+                actions.Add(Tuple.Create(
+                    "Server Diagnostics: " + diagnostics,
+                    (Action)ToggleServerDiagnostics));
+                actions.Add(Tuple.Create(
+                    "Data Modification: " + FormatDataModificationMode(),
+                    (Action)ShowDataModificationSettingsDialog));
                 actions.Add(Tuple.Create(
                     "Join Bandwidth: " + FormatJoinBandwidthLimit(),
                     (Action)ShowJoinTransferSettingsDialog));
@@ -1632,7 +1696,10 @@ namespace ScMultiplayer
                     $"Connected players: {GetConnectedRemoteClients().Count}\r\n" +
                     $"Pending requests: {m_hostJoinRequests.Count}\r\n" +
                     "Auto approve: " +
-                    (ScMultiplayerSettings.AutoApproveJoinRequests ? "On" : "Off");
+                    (ScMultiplayerSettings.AutoApproveJoinRequests ? "On" : "Off") +
+                    "\r\nServer diagnostics: " +
+                    (ScMultiplayerSettings.ServerDiagnosticsEnabled ? "On" : "Off") +
+                    "\r\nData modification: " + FormatDataModificationMode();
             }
             else if (client?.IsConnected == true)
             {
@@ -1680,6 +1747,182 @@ namespace ScMultiplayer
                     ? "A room will be created whenever a world finishes loading."
                     : "Loaded worlds will no longer be hosted automatically.",
                 "OK", null, null));
+        }
+
+        // Source: Mod/ScMultiplayer/Func/Server/ScMultiplayerSettings.cs:
+        // ScMultiplayerSettings.SetServerDiagnosticsEnabled
+        private void ToggleServerDiagnostics()
+        {
+            bool previous = ScMultiplayerSettings.ServerDiagnosticsEnabled;
+            ScMultiplayerSettings.SetServerDiagnosticsEnabled(!previous);
+            ApplyServerDiagnosticsSetting();
+            DialogsManager.ShowDialog(null, new MessageDialog(
+                "Server Diagnostics",
+                ScMultiplayerSettings.ServerDiagnosticsEnabled
+                    ? "Server diagnostics are being recorded."
+                    : "Server diagnostics are disabled.",
+                "OK", null, null));
+        }
+
+        private void ShowDataModificationSettingsDialog()
+        {
+            var actions = new List<Tuple<string, Action>>
+            {
+                Tuple.Create("Mode: " + FormatDataModificationMode(),
+                    (Action)SelectDataModificationMode),
+                Tuple.Create("Fast channels [" + ScMultiplayerSettings
+                    .DataModificationFastMaxConcurrent + "]",
+                    (Action)(() => PromptDataModificationInteger(
+                        "Fast DM channels", "dataModificationFastMaxConcurrent",
+                        ScMultiplayerSettings.DataModificationFastMaxConcurrent))),
+                Tuple.Create("Bulk channels [" + ScMultiplayerSettings
+                    .DataModificationBulkMaxConcurrent + "]",
+                    (Action)(() => PromptDataModificationInteger(
+                        "Bulk DM channels", "dataModificationBulkMaxConcurrent",
+                        ScMultiplayerSettings.DataModificationBulkMaxConcurrent))),
+                Tuple.Create("Bulk frame budget: " + FormatDataModificationFrameBudget(),
+                    (Action)SelectDataModificationFrameBudget),
+                Tuple.Create("Professional settings", (Action)ShowDataModificationAdvancedDialog)
+            };
+            DialogsManager.ShowDialog(null, new ListSelectionDialog(
+                "Data Modification", actions, 60f,
+                item => ((Tuple<string, Action>)item).Item1,
+                item => ((Tuple<string, Action>)item).Item2()));
+        }
+
+        private void SelectDataModificationMode()
+        {
+            string[] choices = { "Reject", "Default (ask host)", "Allow" };
+            DialogsManager.ShowDialog(null, new ListSelectionDialog(
+                "Data Modification mode", choices, 60f,
+                item => (string)item,
+                item =>
+                {
+                    string choice = (string)item;
+                    string value = choice.StartsWith("Reject", StringComparison.Ordinal)
+                        ? "reject" : choice.StartsWith("Allow", StringComparison.Ordinal)
+                            ? "allow" : "default";
+                    ScMultiplayerSettings.UpdateJoinTransferSettings(
+                        new Dictionary<string, object>(StringComparer.Ordinal)
+                        {
+                            ["dataModificationMode"] = value
+                        });
+                    ShowDataModificationSettingsDialog();
+                }));
+        }
+
+        private void SelectDataModificationFrameBudget()
+        {
+            string[] choices =
+            {
+                "Low (4 chunks / 8 KiB)",
+                "Balanced (8 chunks / 32 KiB)",
+                "High (32 chunks / 128 KiB)",
+                "Professional"
+            };
+            DialogsManager.ShowDialog(null, new ListSelectionDialog(
+                "Bulk DM frame budget", choices, 60f,
+                item => (string)item,
+                item =>
+                {
+                    string choice = (string)item;
+                    if (choice.StartsWith("Professional", StringComparison.Ordinal))
+                    {
+                        ShowDataModificationAdvancedDialog();
+                        return;
+                    }
+                    int chunks = choice.StartsWith("Low", StringComparison.Ordinal) ? 4 :
+                        choice.StartsWith("High", StringComparison.Ordinal) ? 32 : 8;
+                    int bytes = choice.StartsWith("Low", StringComparison.Ordinal) ? 8 * 1024 :
+                        choice.StartsWith("High", StringComparison.Ordinal) ? 128 * 1024 :
+                        32 * 1024;
+                    ScMultiplayerSettings.UpdateJoinTransferSettings(
+                        new Dictionary<string, object>(StringComparer.Ordinal)
+                        {
+                            ["dataModificationBulkApplyChunksPerFrame"] = chunks,
+                            ["dataModificationBulkApplyBytesPerFrame"] = bytes
+                        });
+                    ShowDataModificationSettingsDialog();
+                }));
+        }
+
+        private void ShowDataModificationAdvancedDialog()
+        {
+            var actions = new List<Tuple<string, Action>>
+            {
+                Tuple.Create("Fast channels [" + ScMultiplayerSettings
+                    .DataModificationFastMaxConcurrent + "]",
+                    (Action)(() => PromptDataModificationInteger(
+                        "Fast DM channels", "dataModificationFastMaxConcurrent",
+                        ScMultiplayerSettings.DataModificationFastMaxConcurrent))),
+                Tuple.Create("Bulk channels [" + ScMultiplayerSettings
+                    .DataModificationBulkMaxConcurrent + "]",
+                    (Action)(() => PromptDataModificationInteger(
+                        "Bulk DM channels", "dataModificationBulkMaxConcurrent",
+                        ScMultiplayerSettings.DataModificationBulkMaxConcurrent))),
+                Tuple.Create("Bulk chunks per frame [" + ScMultiplayerSettings
+                    .DataModificationBulkApplyChunksPerFrame + "]",
+                    (Action)(() => PromptDataModificationInteger(
+                        "Bulk chunks per frame", "dataModificationBulkApplyChunksPerFrame",
+                        ScMultiplayerSettings.DataModificationBulkApplyChunksPerFrame))),
+                Tuple.Create("Bulk bytes per frame [" + ScMultiplayerSettings
+                    .DataModificationBulkApplyBytesPerFrame + "]",
+                    (Action)(() => PromptDataModificationInteger(
+                        "Bulk bytes per frame", "dataModificationBulkApplyBytesPerFrame",
+                        ScMultiplayerSettings.DataModificationBulkApplyBytesPerFrame))),
+                Tuple.Create("Back to simple", (Action)ShowDataModificationSettingsDialog)
+            };
+            DialogsManager.ShowDialog(null, new ListSelectionDialog(
+                "Professional Data Modification", actions, 60f,
+                item => ((Tuple<string, Action>)item).Item1,
+                item => ((Tuple<string, Action>)item).Item2()));
+        }
+
+        private void PromptDataModificationInteger(string title, string setting, int value)
+        {
+            DialogsManager.ShowDialog(null, new TextBoxDialog(title,
+                value.ToString(CultureInfo.InvariantCulture), 8, text =>
+            {
+                if (text == null)
+                    return;
+                int minimum = setting == "dataModificationBulkApplyBytesPerFrame" ? 1024 : 1;
+                int maximum = setting == "dataModificationFastMaxConcurrent" ? 128 :
+                    setting == "dataModificationBulkMaxConcurrent" ? 32 :
+                    setting == "dataModificationBulkApplyChunksPerFrame" ? 128 :
+                    1024 * 1024;
+                if (!int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture,
+                    out int parsed) || parsed < minimum || parsed > maximum)
+                {
+                    DialogsManager.ShowDialog(null, new MessageDialog(title,
+                        "Enter a positive whole number within the server limit.",
+                        "OK", null, null));
+                    return;
+                }
+                ScMultiplayerSettings.UpdateJoinTransferSettings(
+                    new Dictionary<string, object>(StringComparer.Ordinal)
+                    {
+                        [setting] = parsed
+                    });
+                ShowDataModificationAdvancedDialog();
+            }));
+        }
+
+        private static string FormatDataModificationMode() =>
+            ScMultiplayerSettings.DataModificationMode switch
+            {
+                DataModificationPolicy.Reject => "Reject",
+                DataModificationPolicy.Allow => "Allow",
+                _ => "Default"
+            };
+
+        private static string FormatDataModificationFrameBudget()
+        {
+            int chunks = ScMultiplayerSettings.DataModificationBulkApplyChunksPerFrame;
+            int bytes = ScMultiplayerSettings.DataModificationBulkApplyBytesPerFrame;
+            if (chunks == 4 && bytes == 8 * 1024) return "Low";
+            if (chunks == 8 && bytes == 32 * 1024) return "Balanced";
+            if (chunks == 32 && bytes == 128 * 1024) return "High";
+            return "Custom";
         }
 
         // Source: ScMultiplayer.ShowMultiplayerManagementDialog
@@ -2007,7 +2250,22 @@ namespace ScMultiplayer
         // Only host-authoritative, low-frequency events are published for server audit storage.
         private void PublishServerAudit(string eventName, int clientId, string details)
         {
-            if (!IsHost || clientId <= 0) return;
+            if (!ScMultiplayerSettings.ServerDiagnosticsEnabled || clientId <= 0)
+                return;
+            EnqueueServerAudit(eventName, clientId, details);
+        }
+
+        private void PublishServerSystemAudit(string eventName, string details)
+        {
+            if (!ScMultiplayerSettings.ServerDiagnosticsEnabled)
+                return;
+            EnqueueServerAudit(eventName, 0, details);
+        }
+
+        private void EnqueueServerAudit(string eventName, int clientId, string details)
+        {
+            if (!IsHost)
+                return;
             string playerName = m_networkPlayerData.TryGetValue(clientId, out PlayerData data)
                 ? data?.Name
                 : null;
@@ -2018,6 +2276,8 @@ namespace ScMultiplayer
         // Source: Comms/Comms/Comm.cs:Comm.ProcessConnections
         private void HandleReliableRetransmit(ReliableRetransmitInfo info)
         {
+            if (!IsHost || !ScMultiplayerSettings.ServerDiagnosticsEnabled)
+                return;
             m_controlUnit?.Diagnostics.TryRecord(
                 Diagnostics.DiagnosticRecord.Retransmission(info));
         }

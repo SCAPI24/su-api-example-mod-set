@@ -111,6 +111,8 @@ namespace ScMultiplayer
                 Sum_playerInput.Fog = false;
                 Sum_playerInput.Lighting = false;
             }
+            ScMultiplayer.currentInstance?.ApplyPlayerCapabilityInput(
+                Sum_componentPlayer, ref Sum_playerInput);
             if (Sum_playerInput.Jump)
             {
                 if (Time.RealTime - Sum_lastJumpTime < 0.3)

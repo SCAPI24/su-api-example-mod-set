@@ -335,9 +335,10 @@ namespace ScMultiplayer
 		}
 	}
 
-    private void RemoveNetworkPlayer(int clientId)
-    {
-        RemotePlayers.Remove(clientId);
+	private void RemoveNetworkPlayer(int clientId)
+	{
+		ForgetPlayerCapability(clientId);
+		RemotePlayers.Remove(clientId);
         RemoveReliableRelayReservations(clientId);
         m_worldTransferRegistry.RemoveClient(clientId);
 		m_joinCatchUpRegistry.RemoveClient(clientId);

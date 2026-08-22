@@ -13,7 +13,7 @@ namespace ScMultiplayer
     [Serializable]
     public abstract class Message
     {
-        public const string ModVersion = "2.1.1";
+        public const string ModVersion = "2.1.3";
         public const int ProtocolVersion = 1;
 
         private static readonly Dictionary<int, Type> MessageTypesById = new();
@@ -80,6 +80,9 @@ namespace ScMultiplayer
                 nameof(FurnitureBuildRequestMessage), 1);
             Register<MountActionMessage>(41, nameof(MountActionMessage), 1);
             Register<MountStateMessage>(42, nameof(MountStateMessage), 1);
+            Register<DataModificationMessage>(43, nameof(DataModificationMessage), 1);
+            Register<PlayerAuthorityMessage>(44, nameof(PlayerAuthorityMessage), 1);
+            Register<PlayerCapabilityMessage>(45, nameof(PlayerCapabilityMessage), 1);
 
             foreach (TypeInfo typeInfo in typeof(Message).Assembly.DefinedTypes)
             {
@@ -306,6 +309,17 @@ namespace ScMultiplayer
                     case SyncBatchMessage batch:
                         details.Append(" payloads=").Append(batch.Payloads?.Count ?? 0)
                             .Append(" bytes=").Append(batch.Payloads?.Sum(item => item?.Length ?? 0) ?? 0);
+                        break;
+                    case DataModificationMessage dataModification:
+                        details.Append(" stage=").Append(dataModification.Stage)
+                            .Append(" channel=").Append(dataModification.Channel)
+                            .Append(" requestId=").Append(dataModification.RequestId)
+                            .Append(" transferId=").Append(dataModification.TransferId)
+                            .Append(" chunk=").Append(dataModification.ChunkIndex)
+                            .Append('/').Append(dataModification.ChunkCount)
+                            .Append(" bytes=").Append(dataModification.Payload?.Length ?? 0)
+                            .Append(" mod=").Append(SanitizeDiagnosticValue(
+                                dataModification.ModId));
                         break;
                 }
 

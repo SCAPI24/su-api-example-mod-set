@@ -3,6 +3,7 @@ using Game;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using SuAPI;
 using TemplatesDatabase;
 
 namespace HeadlessRenderingMod
@@ -10,10 +11,12 @@ namespace HeadlessRenderingMod
     internal sealed class GameControlCommands
     {
         private readonly string m_instanceRoot;
+        private readonly IModEventBus m_eventBus;
 
-        public GameControlCommands(string instanceRoot)
+        public GameControlCommands(string instanceRoot, IModEventBus eventBus)
         {
             m_instanceRoot = instanceRoot ?? throw new ArgumentNullException(nameof(instanceRoot));
+            m_eventBus = eventBus ?? throw new ArgumentNullException(nameof(eventBus));
         }
 
         public bool TryExecute(ControlRequest request, out object result)
@@ -281,7 +284,30 @@ namespace HeadlessRenderingMod
             List<Dictionary<string, object>> result = new List<Dictionary<string, object>>();
             foreach (PlayerData playerData in players.PlayersData)
                 result.Add(BuildPlayerInfo(playerData));
+            result.AddRange(ListNetworkPlayers());
             return result;
+        }
+
+        // Source: Mod/ScMultiplayer/Modules/Player/ScMultiplayerNetworkPlayerAdministration.cs:
+        // ScMultiplayer.HandleNetworkPlayersEvent
+        private List<Dictionary<string, object>> ListNetworkPlayers()
+        {
+            object[][] responses = m_eventBus.TriggerEvent(
+                "ScMultiplayer.NetworkPlayers",
+                new object[]
+                {
+                    new Dictionary<string, object>(StringComparer.Ordinal)
+                    {
+                        ["operation"] = "list"
+                    }
+                });
+            foreach (object[] response in responses)
+            {
+                if (response != null && response.Length > 0 &&
+                    response[0] is List<Dictionary<string, object>> players)
+                    return players;
+            }
+            return new List<Dictionary<string, object>>();
         }
 
         // Source: Survivalcraft/Game/CharacterSkinsManager.cs:CharacterSkinsManager.UpdateCharacterSkinsList
@@ -358,6 +384,8 @@ namespace HeadlessRenderingMod
         // Source: Survivalcraft/Game/PlayerScreen.cs:PlayerScreen.Update
         private Dictionary<string, object> UpdatePlayer(ControlRequest request)
         {
+            if (request.TryGetString("networkKey", out string networkKey))
+                return UpdateNetworkPlayer(request, networkKey);
             PlayerData playerData = FindPlayer(request);
             bool changed = false;
             if (request.TryGetString("name", out string name))
@@ -384,6 +412,8 @@ namespace HeadlessRenderingMod
         // Source: Survivalcraft/Game/SubsystemPlayers.cs:SubsystemPlayers.RemovePlayerData
         private Dictionary<string, object> DeletePlayer(ControlRequest request)
         {
+            if (request.TryGetString("networkKey", out string networkKey))
+                return DeleteNetworkPlayer(networkKey);
             SubsystemPlayers players = GetPlayers();
             PlayerData playerData = FindPlayer(request);
             Dictionary<string, object> deleted = BuildPlayerInfo(playerData);
@@ -547,6 +577,110 @@ namespace HeadlessRenderingMod
                 ["spawned"] = playerData.ComponentPlayer != null,
                 ["readyForPlaying"] = playerData.IsReadyForPlaying
             };
+        }
+
+        private Dictionary<string, object> UpdateNetworkPlayer(
+            ControlRequest request, string networkKey)
+        {
+            Dictionary<string, object> values = BuildNetworkRequest(request, "update");
+            values["networkKey"] = networkKey;
+            return ReadNetworkResponse(m_eventBus.TriggerEvent(
+                "ScMultiplayer.NetworkPlayers", new object[] { values }));
+        }
+
+        private Dictionary<string, object> DeleteNetworkPlayer(string networkKey)
+        {
+            return ReadNetworkResponse(m_eventBus.TriggerEvent(
+                "ScMultiplayer.NetworkPlayers",
+                new object[]
+                {
+                    new Dictionary<string, object>(StringComparer.Ordinal)
+                    {
+                        ["operation"] = "delete",
+                        ["networkKey"] = networkKey
+                    }
+                }));
+        }
+
+        private static Dictionary<string, object> ReadNetworkResponse(object[][] responses)
+        {
+            foreach (object[] response in responses)
+            {
+                if (response != null && response.Length > 0 &&
+                    response[0] is Dictionary<string, object> result)
+                {
+                    if (result.TryGetValue("error", out object error))
+                        throw new ControlCommandException(
+                            "network_player_failed", error?.ToString());
+                    return result;
+                }
+            }
+            throw new ControlCommandException(
+                "multiplayer_unavailable",
+                "ScMultiplayer did not return a network-player response.");
+        }
+
+        private static Dictionary<string, object> BuildNetworkRequest(
+            ControlRequest request, string operation)
+        {
+            Dictionary<string, object> values = new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["operation"] = operation
+            };
+            CopyOptionalString(request, values, "name");
+            CopyOptionalString(request, values, "skin");
+            CopyOptionalString(request, values, "clothingValues");
+            CopyOptionalFloat(request, values, "level");
+            CopyOptionalFloat(request, values, "health");
+            CopyOptionalFloat(request, values, "air");
+            CopyOptionalFloat(request, values, "food");
+            CopyOptionalFloat(request, values, "stamina");
+            CopyOptionalFloat(request, values, "sleep");
+            CopyOptionalFloat(request, values, "temperature");
+            CopyOptionalFloat(request, values, "wetness");
+            CopyOptionalFloat(request, values, "fluDuration");
+            CopyOptionalFloat(request, values, "fluOnset");
+            CopyOptionalFloat(request, values, "sicknessDuration");
+            CopyOptionalFloat(request, values, "fireDuration");
+            CopyOptionalFloat(request, values, "x");
+            CopyOptionalFloat(request, values, "y");
+            CopyOptionalFloat(request, values, "z");
+            CopyOptionalFloat(request, values, "spawnX");
+            CopyOptionalFloat(request, values, "spawnY");
+            CopyOptionalFloat(request, values, "spawnZ");
+            CopyOptionalInteger(request, values, "inventorySlot");
+            CopyOptionalInteger(request, values, "inventoryValue");
+            CopyOptionalInteger(request, values, "inventoryCount");
+            CopyOptionalInteger(request, values, "handcraftSlot");
+            CopyOptionalInteger(request, values, "handcraftValue");
+            CopyOptionalInteger(request, values, "handcraftCount");
+            CopyOptionalInteger(request, values, "clothingSlot");
+            CopyOptionalInteger(request, values, "activeSlot");
+            return values;
+        }
+
+        private static bool CopyOptionalString(ControlRequest request,
+            Dictionary<string, object> values, string name)
+        {
+            if (!request.TryGetString(name, out string value)) return false;
+            values[name] = value;
+            return true;
+        }
+
+        private static bool CopyOptionalFloat(ControlRequest request,
+            Dictionary<string, object> values, string name)
+        {
+            if (!request.TryGetFloat(name, out float value)) return false;
+            values[name] = value;
+            return true;
+        }
+
+        private static bool CopyOptionalInteger(ControlRequest request,
+            Dictionary<string, object> values, string name)
+        {
+            if (!request.TryGetInteger(name, out int value)) return false;
+            values[name] = value;
+            return true;
         }
 
         private static PlayerClass ReadPlayerClass(string value)

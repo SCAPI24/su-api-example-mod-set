@@ -187,6 +187,7 @@ namespace ScMultiplayer
         private readonly HashSet<Guid> m_recentChatMessageIds = new HashSet<Guid>();
         private IModInjector m_modInjector;
         private EventSubscriptionToken m_serverSettingsToken;
+        private EventSubscriptionToken m_networkPlayersToken;
         private LabelWidget m_networkStatsLabel;
         // Source: Comms/Comms/DiagnosticTransmitter.cs:DiagnosticStats
         private DiagnosticStats m_serverNetworkStats;

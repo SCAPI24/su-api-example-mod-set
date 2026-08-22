@@ -210,6 +210,19 @@ namespace ScMultiplayer
                         m_owner.QueueEndOfFrameAction(command, () =>
                             m_owner.HandleContainerSyncMessage(containerSync, sourceClientId));
                         break;
+                    case PlayerAuthorityMessage playerAuthority:
+                        m_owner.QueuePriorityInputAction(command, () =>
+                            m_owner.HandlePlayerAuthorityMessage(playerAuthority, sourceClientId));
+                        break;
+                    case PlayerCapabilityMessage playerCapability:
+                        m_owner.QueueEndOfFrameAction(command, () =>
+                            m_owner.HandlePlayerCapabilityMessage(playerCapability, sourceClientId));
+                        break;
+                    case DataModificationMessage dataModification:
+                        m_owner.QueueEndOfFrameAction(command, () =>
+                            m_owner.ReceiveDataModificationMessage(dataModification,
+                                sourceClientId));
+                        break;
                     case FurnitureBuildRequestMessage furnitureBuild:
                         m_owner.QueueEndOfFrameAction(command, () =>
                             m_owner.HandleFurnitureBuildRequest(furnitureBuild,

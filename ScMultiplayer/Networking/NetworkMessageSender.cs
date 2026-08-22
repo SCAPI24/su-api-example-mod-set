@@ -82,6 +82,22 @@ namespace ScMultiplayer
                 Message.WriteWithSender(message, s_transport.Address), sequenced, latest);
         }
 
+        // Source: Mod/ScMultiplayer/DataModification/DataModificationCoordinator.cs:
+        // DataModificationCoordinator.Update
+        // Bulk chunks use reliable unordered delivery; their own transfer/index fields prevent
+        // global reliable-sequenced head-of-line blocking while Begin/Complete/Result stay ordered.
+        public static void SendDataModificationMessage(int targetClientId,
+            DataModificationMessage message)
+        {
+            if (message == null || ScMultiplayer.client == null)
+                return;
+            bool sequenced = message.Stage != DataModificationMessageStage.BulkChunk;
+            byte[] payload = Message.WriteWithSender(message, s_transport.Address);
+            ReserveHostRelay(targetClientId, payload.Length, reliable: true,
+                relayReservationAlreadyHeld: false);
+            s_transport.SendDirectInput(targetClientId, payload, sequenced: sequenced);
+        }
+
         public static void BeginSyncBatch()
         {
             FlushSyncBatch();
@@ -453,6 +469,30 @@ namespace ScMultiplayer
         public static void BroadcastPlayerRespawn(PlayerActionMessage message)
         {
             SendScheduledMessage(-1, message);
+        }
+
+        // Source: Mod/ScMultiplayer/Message/PlayerAuthorityMessage.cs:PlayerAuthorityMessage
+        // A teleport or respawn-anchor change is an authoritative edge. It must reach the owner
+        // even when replaceable position snapshots are delayed.
+        public static void SendPlayerAuthorityMessage(int targetClientId,
+            PlayerAuthorityMessage message)
+        {
+            if (targetClientId <= 0 || message == null)
+                return;
+            s_transport.SendDirectInput(targetClientId,
+                Message.WriteWithSender(message, s_transport.Address), sequenced: true);
+        }
+
+        // Source: Mod/ScMultiplayer/Message/PlayerCapabilityMessage.cs:
+        // PlayerCapabilityMessage
+        // Capability changes are reliable state edges. They are directed to the owner and
+        // never broadcast as gameplay data to other clients.
+        public static void SendPlayerCapabilityMessage(int targetClientId,
+            PlayerCapabilityMessage message)
+        {
+            if (targetClientId <= 0 || message == null)
+                return;
+            SendRawMessage(targetClientId, message, sequenced: true, latest: false);
         }
 
         // Source: Survivalcraft/Game/ComponentMiner.cs:ComponentMiner.Poke

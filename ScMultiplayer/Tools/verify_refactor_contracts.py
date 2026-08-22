@@ -6,7 +6,7 @@ import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[3]
 MOD = ROOT / "Mod" / "ScMultiplayer"
-PACKAGE = ROOT / "publish" / "Windows" / "Mods" / "[SuAPI]ScMultiplayer-2.0.8.scmod"
+PACKAGE_DIR = ROOT / "publish" / "Windows" / "Mods"
 
 
 def read(path):
@@ -16,6 +16,33 @@ def read(path):
 def require(text, pattern, label):
     if not re.search(pattern, text, re.MULTILINE | re.DOTALL):
         raise AssertionError(f"missing contract: {label}")
+
+
+def find_current_package():
+    mod_info = ET.parse(MOD / "ModInfo.xml").getroot()
+    identifier = mod_info.findtext("./ModInfo/Identifier")
+    version = mod_info.findtext("./ModInfo/Version")
+    if not identifier or not version:
+        raise AssertionError("ModInfo.xml must contain Identifier and Version")
+
+    matches = []
+    for package in sorted(PACKAGE_DIR.glob("*.scmod")):
+        try:
+            with zipfile.ZipFile(package) as archive:
+                if "ModInfo.xml" not in archive.namelist():
+                    continue
+                packaged_info = ET.fromstring(archive.read("ModInfo.xml"))
+        except (OSError, zipfile.BadZipFile, ET.ParseError):
+            continue
+
+        if (packaged_info.findtext("./ModInfo/Identifier") == identifier
+                and packaged_info.findtext("./ModInfo/Version") == version):
+            matches.append(package)
+
+    if len(matches) != 1:
+        raise AssertionError(
+            f"expected exactly one package for {identifier} {version}, found: {matches}")
+    return matches[0]
 
 
 def main():
@@ -195,9 +222,10 @@ def main():
             if forbidden in text:
                 raise AssertionError(f"forbidden Core dependency {forbidden}: {path}")
 
-    if not PACKAGE.exists():
-        raise AssertionError(f"missing package: {PACKAGE}")
-    with zipfile.ZipFile(PACKAGE) as archive:
+    package = find_current_package()
+    if not package.exists():
+        raise AssertionError(f"missing package: {package}")
+    with zipfile.ZipFile(package) as archive:
         expected = ["ModInfo.xml", "Lib/ScMultiplayer.dll", "Lib/Comms.dll"]
         if archive.namelist() != expected:
             raise AssertionError(f"unexpected package entries: {archive.namelist()}")

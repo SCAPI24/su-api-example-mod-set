@@ -1,4 +1,5 @@
 using Comms;
+using Comms.Drt;
 using Engine;
 using System.Globalization;
 using ScMultiplayer.Ports;
@@ -10,6 +11,8 @@ namespace ScMultiplayer
         internal void RecordRouterFailure(int clientId, string details)
         {
             Log.Error("[ScMP] " + details);
+            if (!IsHost || !ScMultiplayerSettings.ServerDiagnosticsEnabled)
+                return;
             m_controlUnit?.Diagnostics.TryRecord(
                 Diagnostics.DiagnosticRecord.RouterFailure(details, clientId));
         }
@@ -34,8 +37,8 @@ namespace ScMultiplayer
                     " bytes=" + info.Bytes.ToString(CultureInfo.InvariantCulture) +
                     " source=" + NormalizeServerAuditValue(info.Source, 96) +
                     " " + content;
-                m_eventBus.TriggerEvent(ServerRetransmitAuditEventName,
-                    new object[] { value });
+                EmitServerAudit(ServerRetransmitAuditEventName, value,
+                    allowGameLogFallback: false);
                 return;
             }
 
@@ -58,7 +61,29 @@ namespace ScMultiplayer
                         .ToString("0.###", CultureInfo.InvariantCulture) +
                     " top=" + metrics.TopKind +
                     " topCount=" + metrics.TopCount.ToString(CultureInfo.InvariantCulture);
-                m_eventBus.TriggerEvent(ServerAuditEventName, new object[] { value });
+                EmitServerAudit(ServerAuditEventName, value,
+                    allowGameLogFallback: true);
+                return;
+            }
+
+            if (record.Kind == Diagnostics.DiagnosticRecordKind.JoinTrace)
+            {
+                JoinDiagnosticData data = record.JoinDiagnostic;
+                string value = "event=join.transport stage=" +
+                    NormalizeServerAuditValue(data.StageName, 32) +
+                    " game=" + data.GameID.ToString(CultureInfo.InvariantCulture) +
+                    " client=" + data.ClientID.ToString(CultureInfo.InvariantCulture) +
+                    " endpoint=\"" + NormalizeServerAuditValue(
+                        data.Address?.ToString(), 96) + "\"" +
+                    " player=\"" + NormalizeServerAuditValue(data.ClientName, 64) + "\"" +
+                    " bytes=" + data.PayloadBytes.ToString(CultureInfo.InvariantCulture) +
+                    " queue=" + data.QueueCount.ToString(CultureInfo.InvariantCulture) +
+                    " tick=" + data.Tick.ToString(CultureInfo.InvariantCulture) +
+                    " step=" + data.Step.ToString(CultureInfo.InvariantCulture) +
+                    " stateBytes=" + data.StateBytes.ToString(CultureInfo.InvariantCulture) +
+                    " tickMessages=" + data.TickMessages.ToString(CultureInfo.InvariantCulture);
+                EmitServerAudit(ServerAuditEventName, value,
+                    allowGameLogFallback: true);
                 return;
             }
 
@@ -67,7 +92,28 @@ namespace ScMultiplayer
                 " player=\"" + NormalizeServerAuditValue(record.PlayerName, 64) + "\"";
             if (!string.IsNullOrWhiteSpace(record.Details))
                 audit += " " + NormalizeServerAuditValue(record.Details, 256);
-            m_eventBus.TriggerEvent(ServerAuditEventName, new object[] { audit });
+            EmitServerAudit(ServerAuditEventName, audit,
+                allowGameLogFallback: true);
+        }
+
+        // Source: Mod/Comms/Comms.Drt/Func/Server/Server.cs:Server.JoinDiagnostic
+        // The Comms alarm thread performs only a bounded non-blocking enqueue.
+        private void HandleServerJoinDiagnostic(JoinDiagnosticData data)
+        {
+            if (!IsHost || !ScMultiplayerSettings.ServerDiagnosticsEnabled)
+                return;
+            m_controlUnit?.Diagnostics.TryRecord(Diagnostics.DiagnosticRecord.Join(data));
+        }
+
+        // Source: EntitySystem/SuAPI/ModEventBus.cs:ModEventBus.TriggerEvent
+        // Headless owns packet-level file I/O. A normal host falls back to Game.log only for
+        // low-frequency records; retransmit detail remains summarized by network.summary.
+        private void EmitServerAudit(string eventName, string value,
+            bool allowGameLogFallback)
+        {
+            object[][] results = m_eventBus.TriggerEvent(eventName, new object[] { value });
+            if (allowGameLogFallback && results.Length == 0)
+                Log.Information("[ScMP][ServerAudit] " + value);
         }
 
         void IDiagnosticSink.ConsumeDrop(Diagnostics.DiagnosticRecordKind kind, long count)
@@ -80,10 +126,43 @@ namespace ScMultiplayer
             string prefix = kind == Diagnostics.DiagnosticRecordKind.Retransmit
                 ? "event=retransmit.queue_drop count="
                 : "event=diagnostic.queue_drop kind=" + kind + " count=";
-            m_eventBus.TriggerEvent(name, new object[]
+            EmitServerAudit(name,
+                prefix + count.ToString(CultureInfo.InvariantCulture),
+                allowGameLogFallback: true);
+        }
+
+        // Source: Mod/ScMultiplayer/Func/Server/ScMultiplayerSettings.cs:
+        // ScMultiplayerSettings.ServerDiagnosticsEnabled
+        private void ApplyServerDiagnosticsSetting()
+        {
+            bool previousEnabled = m_controlUnit?.Diagnostics.Enabled == true;
+            bool enabled = ScMultiplayerSettings.ServerDiagnosticsEnabled && IsHost;
+            if (previousEnabled && !enabled && IsHost)
+                EnqueueServerAudit("diagnostic.disabled", 0, FormatDiagnosticIdentity());
+
+            if (m_controlUnit != null)
             {
-                prefix + count.ToString(CultureInfo.InvariantCulture)
-            });
+                m_controlUnit.Diagnostics.Enabled = enabled;
+                m_controlUnit.Context.IngressDiagnostics.Enabled = enabled;
+            }
+            if (server != null)
+                server.JoinDiagnosticsEnabled = enabled;
+
+            if (!previousEnabled && enabled && IsHost)
+                PublishServerSystemAudit("diagnostic.enabled", FormatDiagnosticIdentity());
+        }
+
+        private static string FormatDiagnosticIdentity()
+        {
+            string protocol = Message.ProtocolHash.Length > 12
+                ? Message.ProtocolHash.Substring(0, 12)
+                : Message.ProtocolHash;
+            string build = Message.BuildFingerprint.Length > 12
+                ? Message.BuildFingerprint.Substring(0, 12)
+                : Message.BuildFingerprint;
+            return "mod=" + Message.ModVersion +
+                " protocol=" + Message.ProtocolVersion.ToString(CultureInfo.InvariantCulture) +
+                "/" + protocol + " build=" + build;
         }
     }
 }

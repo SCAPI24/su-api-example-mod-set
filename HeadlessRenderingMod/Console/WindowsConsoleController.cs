@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
@@ -917,6 +918,11 @@ namespace HeadlessRenderingMod
                 Dictionary<string, object> player = SelectPlayer("Manage Players");
                 if (player == null)
                     return;
+                if (player.ContainsKey("networkKey"))
+                {
+                    ManageNetworkPlayer(player);
+                    continue;
+                }
                 string[] actions = { "Rename", "Change Skin", "Delete Player", "Back" };
                 int? action = SelectMenu(player["name"] + " (#" + player["playerIndex"] + ")", actions, 0);
                 if (!action.HasValue || action.Value == 3)
@@ -961,6 +967,107 @@ namespace HeadlessRenderingMod
                     Pause();
                 }
             }
+        }
+
+        private void ManageNetworkPlayer(Dictionary<string, object> player)
+        {
+            string networkKey = player["networkKey"].ToString();
+            string[] actions =
+            {
+                "Rename", "Change Skin", "Level", "Health", "Air", "Food",
+                "Stamina", "Sleep", "Temperature", "Wetness", "Position",
+                "Spawn Point", "Inventory Slot", "Handcraft Slot", "Clothing Slot",
+                "Delete Player", "Back"
+            };
+            while (m_running)
+            {
+                int? action = SelectMenu(
+                    player["name"] + " (network " + player["clientId"] + ")",
+                    actions, actions.Length - 1);
+                if (!action.HasValue || action.Value == actions.Length - 1)
+                    return;
+                Dictionary<string, object> values = new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    ["networkKey"] = networkKey
+                };
+                if (action.Value == 0)
+                {
+                    string name = PromptText("New player name", player["name"].ToString());
+                    if (!IsValidPlayerName(name))
+                        throw new InvalidOperationException("Invalid player name.");
+                    values["name"] = name;
+                }
+                else if (action.Value == 1)
+                {
+                    Dictionary<string, object> skin = SelectSkin(
+                        player["playerClass"].ToString(), "Change Network Skin");
+                    if (skin == null) continue;
+                    values["skin"] = skin["name"];
+                }
+                else if (action.Value >= 2 && action.Value <= 9)
+                {
+                    string field = new[]
+                    {
+                        "level", "health", "air", "food", "stamina", "sleep",
+                        "temperature", "wetness"
+                    }[action.Value - 2];
+                    float current = Convert.ToSingle(player[field], CultureInfo.InvariantCulture);
+                    float minimum = field == "level" ? 1f : 0f;
+                    float maximum = field == "level" ? 1000000f :
+                        field == "temperature" ? 24f : 1f;
+                    values[field] = PromptFloat(field, current, minimum, maximum);
+                }
+                else if (action.Value == 10 || action.Value == 11)
+                {
+                    bool spawn = action.Value == 11;
+                    string[] names = spawn
+                        ? new[] { "spawnX", "spawnY", "spawnZ" }
+                        : new[] { "x", "y", "z" };
+                    string position = player[spawn ? "spawnPosition" : "position"].ToString();
+                    string[] current = position.Split(',');
+                    values[names[0]] = PromptFloat(names[0], ParsePosition(current, 0), -1000000f, 1000000f);
+                    values[names[1]] = PromptFloat(names[1], ParsePosition(current, 1), 0f, 253f);
+                    values[names[2]] = PromptFloat(names[2], ParsePosition(current, 2), -1000000f, 1000000f);
+                }
+                else if (action.Value == 12 || action.Value == 13)
+                {
+                    bool handcraft = action.Value == 13;
+                    int slot = PromptInteger(handcraft ? "Handcraft slot" : "Inventory slot",
+                        0, 0, 127);
+                    values[handcraft ? "handcraftSlot" : "inventorySlot"] = slot;
+                    values[handcraft ? "handcraftValue" : "inventoryValue"] =
+                        PromptInteger("Item value", 0, 0, int.MaxValue);
+                    values[handcraft ? "handcraftCount" : "inventoryCount"] =
+                        PromptInteger("Item count", 0, 0, 9999);
+                }
+                else if (action.Value == 14)
+                {
+                    int slot = PromptInteger("Clothing slot", 0, 0, 3);
+                    values["clothingSlot"] = slot;
+                    values["clothingValues"] = PromptText(
+                        "Clothing values", string.Empty, "comma-separated values");
+                }
+                else if (action.Value == 15)
+                {
+                    if (!PromptBoolean("Permanently delete '" + player["name"] + "'", false))
+                        continue;
+                    PrintResponse(RequireSuccess(m_server.SubmitLocal(
+                        "player.delete", Args("networkKey", networkKey))));
+                    Pause();
+                    return;
+                }
+                PrintResponse(RequireSuccess(m_server.SubmitLocal("player.update", values)));
+                Pause();
+                player = FindNetworkPlayer(networkKey) ?? player;
+            }
+        }
+
+        private Dictionary<string, object> FindNetworkPlayer(string networkKey)
+        {
+            List<Dictionary<string, object>> players = GetResult<List<Dictionary<string, object>>>(
+                m_server.SubmitLocal("player.list"));
+            return players.Find(item => item.TryGetValue("networkKey", out object value) &&
+                string.Equals(value?.ToString(), networkKey, StringComparison.Ordinal));
         }
 
         private Dictionary<string, object> SelectWorld(string title)
@@ -1165,6 +1272,31 @@ namespace HeadlessRenderingMod
             for (int i = 0; i < result.Length; i++)
                 result[i] = minimum + i;
             return result;
+        }
+
+        private static float PromptFloat(string label, float defaultValue,
+            float minimum, float maximum)
+        {
+            while (true)
+            {
+                string text = PromptText(label,
+                    defaultValue.ToString(CultureInfo.InvariantCulture));
+                if (float.TryParse(text, NumberStyles.Float,
+                    CultureInfo.InvariantCulture, out float value) &&
+                    float.IsFinite(value) && value >= minimum && value <= maximum)
+                {
+                    return value;
+                }
+                Console.WriteLine("Enter a number from " + minimum + " to " + maximum + ".");
+            }
+        }
+
+        private static float ParsePosition(string[] values, int index)
+        {
+            return values != null && index >= 0 && index < values.Length &&
+                float.TryParse(values[index], NumberStyles.Float,
+                    CultureInfo.InvariantCulture, out float value)
+                ? value : 0f;
         }
 
         private static float[] FloatRange(int minimum, int maximum)
@@ -1392,26 +1524,193 @@ namespace HeadlessRenderingMod
                 Dictionary<string, object> settings = GetMultiplayerSettings();
                 bool autoHost = ReadBoolean(settings, "autoCreateRoomFromCurrentWorld", false);
                 bool autoApprove = ReadBoolean(settings, "autoApproveJoinRequests", false);
+                bool diagnostics = ReadBoolean(settings, "serverDiagnosticsEnabled", false);
+                string dataMode = ReadString(settings, "dataModificationMode", "default");
                 int? choice = SelectMenu("Multiplayer Hosting",
                     new[]
                     {
                         "Auto host loaded world [" + (autoHost ? "On" : "Off") + "]",
                         "Auto approve joins [" + (autoApprove ? "On" : "Off") + "]",
+                        "Server diagnostics [" + (diagnostics ? "On" : "Off") + "]",
+                        "Data modification [" + FormatDataModificationMode(dataMode) + "]",
                         "Back"
                     }, selected);
-                if (!choice.HasValue || choice.Value == 2)
+                if (!choice.HasValue || choice.Value == 4)
                     return;
                 selected = choice.Value;
-                string name = selected == 0
-                    ? "autoCreateRoomFromCurrentWorld"
-                    : "autoApproveJoinRequests";
-                bool value = selected == 0 ? !autoHost : !autoApprove;
+                if (selected == 3)
+                {
+                    ConfigureDataModification();
+                    selected = 0;
+                    continue;
+                }
+                string name = selected == 0 ? "autoCreateRoomFromCurrentWorld" :
+                    selected == 1 ? "autoApproveJoinRequests" :
+                    "serverDiagnosticsEnabled";
+                bool value = selected == 0 ? !autoHost :
+                    selected == 1 ? !autoApprove : !diagnostics;
                 RequireSuccess(m_server.SubmitLocal("multiplayer.settings",
                     new Dictionary<string, object>(StringComparer.Ordinal)
                     {
                         [name] = value
                     }));
             }
+        }
+
+        private void ConfigureDataModification()
+        {
+            Dictionary<string, object> settings = GetMultiplayerSettings();
+            int pendingApprovals = ReadInteger(settings,
+                "pendingDataModificationApprovals");
+            int? setup = SelectMenu("Data Modification",
+                new[]
+                {
+                    "View current configuration",
+                    "Simple setup (recommended)",
+                    "Professional settings",
+                    "Pending approvals [" + pendingApprovals + "]",
+                    "Back"
+                }, 0);
+            if (!setup.HasValue || setup.Value == 4)
+                return;
+            if (setup.Value == 0)
+            {
+                Console.Clear();
+                Console.WriteLine(GetCurrentScreen() + "> Data Modification");
+                Console.WriteLine("Mode: " + FormatDataModificationMode(
+                    ReadString(settings, "dataModificationMode", "default")));
+                Console.WriteLine("Fast channels: " + ReadInteger(settings,
+                    "dataModificationFastMaxConcurrent"));
+                Console.WriteLine("Bulk channels: " + ReadInteger(settings,
+                    "dataModificationBulkMaxConcurrent"));
+                Console.WriteLine("Bulk chunks/frame: " + ReadInteger(settings,
+                    "dataModificationBulkApplyChunksPerFrame"));
+                Console.WriteLine("Bulk bytes/frame: " + ReadInteger(settings,
+                    "dataModificationBulkApplyBytesPerFrame"));
+            }
+            else if (setup.Value == 1)
+            {
+                string mode = PromptChoice("Data modification mode",
+                    new[] { "Reject", "Default (ask host)", "Allow" },
+                    FormatDataModificationMode(ReadString(settings,
+                        "dataModificationMode", "default")));
+                var values = new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    ["dataModificationMode"] = mode.StartsWith("Reject",
+                        StringComparison.OrdinalIgnoreCase) ? "reject" :
+                        mode.StartsWith("Allow", StringComparison.OrdinalIgnoreCase)
+                            ? "allow" : "default",
+                    ["dataModificationFastMaxConcurrent"] = PromptInteger(
+                        "Fast DM channels", ReadInteger(settings,
+                            "dataModificationFastMaxConcurrent"), 1, 128),
+                    ["dataModificationBulkMaxConcurrent"] = PromptInteger(
+                        "Bulk DM channels", ReadInteger(settings,
+                            "dataModificationBulkMaxConcurrent"), 1, 32)
+                };
+                string budget = PromptChoice("Bulk DM frame budget",
+                    new[] { "Low (4 chunks / 8 KiB)", "Balanced (8 chunks / 32 KiB)",
+                        "High (32 chunks / 128 KiB)" }, "Balanced");
+                values["dataModificationBulkApplyChunksPerFrame"] = budget.StartsWith("Low",
+                    StringComparison.OrdinalIgnoreCase) ? 4 : budget.StartsWith("High",
+                        StringComparison.OrdinalIgnoreCase) ? 32 : 8;
+                values["dataModificationBulkApplyBytesPerFrame"] = budget.StartsWith("Low",
+                    StringComparison.OrdinalIgnoreCase) ? 8 * 1024 : budget.StartsWith("High",
+                        StringComparison.OrdinalIgnoreCase) ? 128 * 1024 : 32 * 1024;
+                PrintResponse(RequireSuccess(m_server.SubmitLocal(
+                    "multiplayer.settings", values)));
+            }
+            else if (setup.Value == 2)
+            {
+                ConfigureAdvancedDataModification(settings);
+            }
+            else
+            {
+                ManageDataModificationApprovals();
+                return;
+            }
+            Pause();
+        }
+
+        private void ManageDataModificationApprovals()
+        {
+            while (m_running)
+            {
+                List<Dictionary<string, object>> approvals =
+                    GetDataModificationApprovals();
+                if (approvals.Count == 0)
+                {
+                    Console.Clear();
+                    Console.WriteLine(GetCurrentScreen() + "> Data Modification Approvals");
+                    Console.WriteLine("No pending data modification requests.");
+                    Pause();
+                    return;
+                }
+                string[] entries = approvals.Select(item =>
+                    ReadString(item, "modId", "Mod") + " / " +
+                    ReadString(item, "operation", "operation") + " / client " +
+                    ReadInteger(item, "sourceClientId") + " / " +
+                    ReadString(item, "channel", "fast")).Concat(new[] { "Back" }).ToArray();
+                int? selected = SelectMenu("Data Modification Approvals", entries, 0);
+                if (!selected.HasValue || selected.Value >= approvals.Count)
+                    return;
+                Dictionary<string, object> approval = approvals[selected.Value];
+                string decision = PromptChoice("Decision",
+                    new[] { "Allow", "Reject", "Back" }, "Reject");
+                if (decision.StartsWith("Back", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                var values = new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    ["operation"] = "resolve",
+                    ["sourceClientId"] = ReadInteger(approval, "sourceClientId"),
+                    ["requestId"] = ReadInteger(approval, "requestId"),
+                    ["transferId"] = ReadInteger(approval, "transferId"),
+                    ["allow"] = decision.StartsWith("Allow",
+                        StringComparison.OrdinalIgnoreCase)
+                };
+                PrintResponse(RequireSuccess(m_server.SubmitLocal("multiplayer.dm", values)));
+            }
+        }
+
+        private List<Dictionary<string, object>> GetDataModificationApprovals()
+        {
+            Dictionary<string, object> response = RequireSuccess(
+                m_server.SubmitLocal("multiplayer.dm"));
+            if (response.TryGetValue("result", out object result) &&
+                result is Dictionary<string, object> data &&
+                data.TryGetValue("pending", out object pending) &&
+                pending is List<Dictionary<string, object>> approvals)
+                return approvals;
+            return new List<Dictionary<string, object>>();
+        }
+
+        private void ConfigureAdvancedDataModification(Dictionary<string, object> settings)
+        {
+            Console.Clear();
+            Console.WriteLine(GetCurrentScreen() + "> Professional Data Modification");
+            string mode = PromptChoice("Data modification mode",
+                new[] { "Reject", "Default (ask host)", "Allow" },
+                FormatDataModificationMode(ReadString(settings,
+                    "dataModificationMode", "default")));
+            var values = new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["dataModificationMode"] = mode.StartsWith("Reject",
+                    StringComparison.OrdinalIgnoreCase) ? "reject" :
+                    mode.StartsWith("Allow", StringComparison.OrdinalIgnoreCase)
+                        ? "allow" : "default",
+                ["dataModificationFastMaxConcurrent"] = PromptInteger(
+                    "Fast DM channels", ReadInteger(settings,
+                        "dataModificationFastMaxConcurrent"), 1, 128),
+                ["dataModificationBulkMaxConcurrent"] = PromptInteger(
+                    "Bulk DM channels", ReadInteger(settings,
+                        "dataModificationBulkMaxConcurrent"), 1, 32),
+                ["dataModificationBulkApplyChunksPerFrame"] = PromptInteger(
+                    "Bulk chunks per frame", ReadInteger(settings,
+                        "dataModificationBulkApplyChunksPerFrame"), 1, 128),
+                ["dataModificationBulkApplyBytesPerFrame"] = PromptInteger(
+                    "Bulk bytes per frame", ReadInteger(settings,
+                        "dataModificationBulkApplyBytesPerFrame"), 1024, 1048576)
+            };
+            PrintResponse(RequireSuccess(m_server.SubmitLocal("multiplayer.settings", values)));
         }
 
         private Dictionary<string, object> GetMultiplayerSettings()
@@ -1615,6 +1914,22 @@ namespace HeadlessRenderingMod
             return values.TryGetValue(name, out object value) && value != null
                 ? Convert.ToBoolean(value, CultureInfo.InvariantCulture)
                 : defaultValue;
+        }
+
+        private static string ReadString(Dictionary<string, object> values, string name,
+            string defaultValue)
+        {
+            return values.TryGetValue(name, out object value) && value != null
+                ? value.ToString() : defaultValue;
+        }
+
+        private static string FormatDataModificationMode(string value)
+        {
+            if (string.Equals(value, "reject", StringComparison.OrdinalIgnoreCase))
+                return "Reject";
+            if (string.Equals(value, "allow", StringComparison.OrdinalIgnoreCase))
+                return "Allow";
+            return "Default";
         }
 
         private void ShowResponse(string command)
