@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Mod>
+  <ModInfo>
+    <Identifier>ControlAnimal</Identifier>
+    <LocalizedName>
+      <Text lang="en_US">Control Animal</Text>
+      <Text lang="zh_CN">控制动物</Text>
+    </LocalizedName>
+    <ModVersion>
+      <Version>1.0.0</Version>
+      <APIVersion>2.1.0</APIVersion>
+    </ModVersion>
+    <IsMergeLib>true</IsMergeLib>
+  </ModInfo>
+  <Dependencies>
+  </Dependencies>
+</Mod>
