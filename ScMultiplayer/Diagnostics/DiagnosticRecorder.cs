@@ -16,7 +16,7 @@ namespace ScMultiplayer.Diagnostics
         private readonly long[] m_droppedByKind =
             new long[Enum.GetValues<DiagnosticRecordKind>().Length];
         private int m_queuedRecords;
-        private bool m_enabled = true;
+        private bool m_enabled;
 
         public bool Enabled
         {

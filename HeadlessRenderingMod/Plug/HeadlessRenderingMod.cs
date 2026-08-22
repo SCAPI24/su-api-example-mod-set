@@ -16,6 +16,7 @@ namespace HeadlessRenderingMod
         private EventSubscriptionToken m_frameToken;
         private EventSubscriptionToken m_serverAuditToken;
         private EventSubscriptionToken m_serverRetransmitToken;
+        private EventSubscriptionToken m_dataModificationApprovalToken;
         private HeadlessServerConfig m_config;
         private HeadlessControlServer m_server;
         private GameControlCommands m_gameCommands;
@@ -41,7 +42,7 @@ namespace HeadlessRenderingMod
 
         public string Name => "无画面服务器";
 
-        public string Version => "1.3.3";
+        public string Version => "1.3.4";
 
         public IEnumerable<string> Dependencies => Array.Empty<string>();
 
@@ -72,7 +73,7 @@ namespace HeadlessRenderingMod
             HeadlessDisplayDeviceFallback.Ensure();
 
             m_server = new HeadlessControlServer(m_config);
-            m_gameCommands = new GameControlCommands(instanceRoot);
+            m_gameCommands = new GameControlCommands(instanceRoot, eventBus);
             m_sequences = new CommandSequenceManager();
             try
             {
@@ -100,8 +101,10 @@ namespace HeadlessRenderingMod
                 m_serverRetransmitToken = eventBus.SubscribeEvent(
                     "ScMultiplayer.ServerRetransmitAudit",
                     HandleServerRetransmitEvent, EventPriority.LOWEST);
-                m_serverAuditLog.Enqueue("event=server.start instance=" + m_config.InstanceId);
-
+                m_dataModificationApprovalToken = eventBus.SubscribeEvent(
+                    "ScMultiplayer.DataModification.ApprovalRequested",
+                    HandleDataModificationApprovalEvent,
+                    EventPriority.LOWEST);
                 if (m_config.EnableConsole && OperatingSystem.IsWindows())
                 {
                     m_consoleController = new WindowsConsoleController(
@@ -137,12 +140,14 @@ namespace HeadlessRenderingMod
                 m_eventBus.UnsubscribeEvent(m_serverAuditToken);
             if (m_eventBus != null && m_serverRetransmitToken != null)
                 m_eventBus.UnsubscribeEvent(m_serverRetransmitToken);
+            if (m_eventBus != null && m_dataModificationApprovalToken != null)
+                m_eventBus.UnsubscribeEvent(m_dataModificationApprovalToken);
 
             m_frameToken = null;
             m_serverAuditToken = null;
             m_serverRetransmitToken = null;
+            m_dataModificationApprovalToken = null;
             m_eventBus = null;
-            m_serverAuditLog?.Enqueue("event=server.stop");
             m_serverAuditLog?.Dispose();
             m_serverAuditLog = null;
             m_serverRetransmitLog?.Dispose();
@@ -201,6 +206,25 @@ namespace HeadlessRenderingMod
         {
             if (args != null && args.Length > 0 && args[0] is string record)
                 m_serverRetransmitLog?.Enqueue(record);
+            return null;
+        }
+
+        // Source: Mod/ScMultiplayer/DataModification/ScMultiplayerDataModificationRuntime.cs:
+        // PublishDataModificationApprovalRequest
+        private object[] HandleDataModificationApprovalEvent(object[] args)
+        {
+            if (args != null && args.Length > 0 &&
+                args[0] is IDictionary<string, object> request)
+            {
+                string modId = request.TryGetValue("modId", out object modValue)
+                    ? modValue?.ToString() ?? "Mod" : "Mod";
+                string operation = request.TryGetValue("operation", out object operationValue)
+                    ? operationValue?.ToString() ?? "operation" : "operation";
+                string source = request.TryGetValue("sourceClientId", out object sourceValue)
+                    ? sourceValue?.ToString() ?? "?" : "?";
+                Console.WriteLine("[DM] Approval required: " + modId + " / " + operation +
+                    " from client " + source + ". Open Multiplayer Hosting > Data modification.");
+            }
             return null;
         }
 
@@ -363,6 +387,8 @@ namespace HeadlessRenderingMod
                     return BuildStatus();
                 case "multiplayer.settings":
                     return UpdateMultiplayerSettings(request);
+                case "multiplayer.dm":
+                    return ControlDataModificationApprovals(request);
                 case "screen.list":
                     return ListScreens();
                 case "screen.switch":
@@ -455,6 +481,12 @@ namespace HeadlessRenderingMod
             var values = new Dictionary<string, object>(StringComparer.Ordinal);
             bool changed = CopyOptionalBoolean(request, values, "autoCreateRoomFromCurrentWorld") |
                 CopyOptionalBoolean(request, values, "autoApproveJoinRequests") |
+                CopyOptionalBoolean(request, values, "serverDiagnosticsEnabled") |
+                CopyOptionalString(request, values, "dataModificationMode") |
+                CopyOptionalInteger(request, values, "dataModificationFastMaxConcurrent") |
+                CopyOptionalInteger(request, values, "dataModificationBulkMaxConcurrent") |
+                CopyOptionalInteger(request, values, "dataModificationBulkApplyChunksPerFrame") |
+                CopyOptionalInteger(request, values, "dataModificationBulkApplyBytesPerFrame") |
                 CopyOptionalBoolean(request, values, "bandwidthConfigurationEnabled") |
                 CopyOptionalString(request, values, "bandwidthMode") |
                 CopyOptionalInteger(request, values, "sharedTotalSafeCapKbps") |
@@ -478,6 +510,37 @@ namespace HeadlessRenderingMod
             }
             throw new ControlCommandException("multiplayer_unavailable",
                 "ScMultiplayer is not loaded on this server.");
+        }
+
+        private Dictionary<string, object> ControlDataModificationApprovals(
+            ControlRequest request)
+        {
+            var values = new Dictionary<string, object>(StringComparer.Ordinal);
+            string operation = request.TryGetString("operation", out string requestedOperation)
+                ? requestedOperation : "list";
+            values["operation"] = operation;
+            if (string.Equals(operation, "resolve", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!(CopyOptionalInteger(request, values, "sourceClientId") &
+                    CopyOptionalInteger(request, values, "requestId") &
+                    CopyOptionalInteger(request, values, "transferId") &
+                    CopyOptionalBoolean(request, values, "allow")))
+                {
+                    throw new ControlCommandException("invalid_request",
+                        "resolve requires sourceClientId, requestId, transferId and allow.");
+                }
+            }
+            object[][] results = m_eventBus?.TriggerEvent(
+                "ScMultiplayer.DataModification.ApprovalControl",
+                new object[] { values }) ?? Array.Empty<object[]>();
+            foreach (object[] result in results)
+            {
+                if (result != null && result.Length > 0 &&
+                    result[0] is Dictionary<string, object> response)
+                    return response;
+            }
+            throw new ControlCommandException("multiplayer_unavailable",
+                "ScMultiplayer DM approval control is unavailable.");
         }
 
         private static bool CopyOptionalInteger(ControlRequest request,

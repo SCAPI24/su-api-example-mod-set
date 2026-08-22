@@ -40,7 +40,7 @@ namespace ScMultiplayer.Modules.Diagnostics
                 m_recorder.TryRecord(DiagnosticRecord.IngressSummary(ingressSnapshot));
             int processed = m_recorder.Drain(record => m_sink.Consume(in record),
                 maximumRecords);
-            for (int i = 0; i <= (int)DiagnosticRecordKind.IngressSummary; i++)
+            for (int i = 0; i <= (int)DiagnosticRecordKind.JoinTrace; i++)
             {
                 DiagnosticRecordKind kind = (DiagnosticRecordKind)i;
                 long dropped = m_recorder.TakeDropped(kind);

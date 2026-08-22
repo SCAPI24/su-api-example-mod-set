@@ -45,6 +45,7 @@ namespace ScMultiplayer
 		m_shouldCreateHostAvatar = false;
 		ResetTransientNetworkState();
 		EnterNetworkHostSession(GameManager.Project);
+		ApplyServerDiagnosticsSetting();
 		m_sessionRandomSeed = Guid.NewGuid().GetHashCode();
 		if (m_sessionRandomSeed == 0)
 		{
@@ -53,6 +54,11 @@ namespace ScMultiplayer
 		playerMappingManager.AssignPlayerIndex(client.ClientID);
 		m_controlUnit?.Context.Connections.Register(client.ClientID, playerMappingManager.GetPlayerIndex(client.ClientID), client.Address?.ToString(), isHost: true, PlayerConnectionPhase.Ready, Time.RealTime);
 		connectionSM.TransitionTo(NetworkConnectionStateMachine.ConnectionState.Playing);
+		// Source: Comms.Drt/Func/Client/Client.cs:Client.GameCreated
+		PublishServerSystemAudit("room.started",
+			"game=" + client.GameID.ToString(CultureInfo.InvariantCulture) +
+			" endpoint=" + client.Address +
+			" world=" + SuPlayScreen.WorldDataName + " " + FormatDiagnosticIdentity());
 		Dispatcher.Dispatch(delegate
 		{
 			FinishCreateRoomFeedback(success: true, $"Room created (ID {client.GameID}).");
@@ -86,6 +92,7 @@ namespace ScMultiplayer
 		bool reconnectPending = m_reconnectPending;
 		Log.Information($"[ScMP] GameJoined, Step={obj.Step}, ClientID={client.ClientID}");
 		IsHost = false;
+		ApplyServerDiagnosticsSetting();
 		m_controlUnit?.Context.Connections.Reset();
 		m_controlUnit?.Context.Session.EnterRoom(client.ClientID, client.GameID, isHost: false, client.Peer?.ConnectedTo?.Address?.ToString(), m_activeJoinRequest?.WorldInfo?.Name);
 		if (GameManager.Project != null)
@@ -477,6 +484,11 @@ namespace ScMultiplayer
 		// Do this before clearing queues so injected subsystems cannot observe the old online role
 		// while the next ordinary Project is being constructed.
 		ExitNetworkSession();
+		// Source: Mod/ScMultiplayer/Diagnostics/ScMultiplayerDiagnosticSink.cs:
+		// ApplyServerDiagnosticsSetting
+		// Leaving a hosted room must stop collection before discovery or offline traffic resumes.
+		ApplyServerDiagnosticsSetting();
+		ResetDataModification();
 		DetachHostSleepWakeHandlers();
 		m_circuitSynchronizer?.Reset();
 		m_worldObjectSynchronizer?.Reset();
@@ -3117,7 +3129,11 @@ namespace ScMultiplayer
 				ModManager.ModParentField.ModifyParentField(remotePlayer.ComponentMiner, "<PokingPhase>k__BackingField", msg.PokingPhase, typeof(ComponentMiner));
 			}
 			remotePlayer.ComponentBody.TargetCrouchFactor = (msg.IsCrouching ? 1f : 0f);
-			remotePlayer.ComponentLocomotion.IsCreativeFlyEnabled = msg.IsFlying;
+			bool globalCreative = GameManager.Project?.FindSubsystem<SubsystemGameInfo>(false)?
+				.WorldSettings.GameMode == GameMode.Creative;
+			remotePlayer.ComponentLocomotion.IsCreativeFlyEnabled =
+				msg.IsFlying && (globalCreative || HasPlayerCapability(sourceClientId,
+					PlayerCapabilityFlags.CreativeFly));
 			IInventory inventory = remotePlayer.ComponentMiner?.Inventory;
 			if (!state.HeldAim.HasValue && state.AimEvents.Count <= 0 && state.QueuedAimCompletions.Count <= 0 && inventory != null && msg.ActiveSlotIndex >= 0 && msg.ActiveSlotIndex < inventory.VisibleSlotsCount)
 			{

@@ -553,6 +553,10 @@ namespace ScMultiplayer
             if (actions == WorldControlAction.None || IsHost || client?.IsConnected != true ||
                 componentPlayer == null || m_networkPlayerData.Values.Contains(componentPlayer.PlayerData))
                 return false;
+            SubsystemGameInfo localGameInfo = GameManager.Project?.FindSubsystem<SubsystemGameInfo>(false);
+            if (!HasLocalPlayerCapability(PlayerCapabilityFlags.WorldControl) &&
+                localGameInfo?.WorldSettings.GameMode != GameMode.Creative)
+                return false;
 
             // Source: Mod/ScMultiplayer/Func/Circuit/CircuitSynchronizer.cs:
             // CircuitSynchronizer.ShouldSuppressClientInput
@@ -706,7 +710,10 @@ namespace ScMultiplayer
             var result = new WorldControlResultMessage(message.RequestId, validActions);
             if (project == null) return result;
             SubsystemGameInfo gameInfo = project.FindSubsystem<SubsystemGameInfo>(true);
-            if (gameInfo.WorldSettings.GameMode != GameMode.Creative)
+            bool authorized = gameInfo.WorldSettings.GameMode == GameMode.Creative ||
+                sourceClientId > 0 &&
+                HasPlayerCapability(sourceClientId, PlayerCapabilityFlags.WorldControl);
+            if (!authorized)
             {
                 result.Actions = WorldControlAction.None;
                 return result;

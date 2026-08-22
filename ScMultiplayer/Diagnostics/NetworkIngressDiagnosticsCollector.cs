@@ -67,10 +67,26 @@ namespace ScMultiplayer.Diagnostics
         private long m_applied;
         private long m_succeeded;
         private long m_failed;
+        private bool m_enabled;
+
+        // Source: Mod/ScMultiplayer/Func/Server/ScMultiplayerSettings.cs:
+        // ScMultiplayerSettings.ServerDiagnosticsEnabled
+        public bool Enabled
+        {
+            get => Volatile.Read(ref m_enabled);
+            set
+            {
+                if (Enabled == value)
+                    return;
+                if (value)
+                    Reset();
+                Volatile.Write(ref m_enabled, value);
+            }
+        }
 
         public void RecordReceive(in NetworkIngressCommand command)
         {
-            if (!command.IsValid)
+            if (!Enabled || !command.IsValid)
                 return;
             Interlocked.CompareExchange(ref m_windowStartTimestamp,
                 command.ReceivedTimestamp, 0L);
@@ -81,7 +97,7 @@ namespace ScMultiplayer.Diagnostics
 
         public void RecordEnqueue(in NetworkIngressCommand command)
         {
-            if (!command.IsValid || command.EnqueuedTimestamp <= 0L)
+            if (!Enabled || !command.IsValid || command.EnqueuedTimestamp <= 0L)
                 return;
             Interlocked.Increment(ref m_enqueued);
             RecordLatency(m_receiveToEnqueueLatency,
@@ -90,7 +106,7 @@ namespace ScMultiplayer.Diagnostics
 
         public void RecordApply(in NetworkIngressCommand command, long applyTimestamp)
         {
-            if (!command.IsValid || applyTimestamp <= 0L)
+            if (!Enabled || !command.IsValid || applyTimestamp <= 0L)
                 return;
             Interlocked.Increment(ref m_applied);
             if (command.EnqueuedTimestamp > 0L)
@@ -100,7 +116,7 @@ namespace ScMultiplayer.Diagnostics
         public void RecordResult(in NetworkIngressCommand command, long applyTimestamp,
             long resultTimestamp, bool succeeded)
         {
-            if (!command.IsValid || resultTimestamp <= 0L)
+            if (!Enabled || !command.IsValid || resultTimestamp <= 0L)
                 return;
             if (succeeded)
                 Interlocked.Increment(ref m_succeeded);
@@ -114,6 +130,8 @@ namespace ScMultiplayer.Diagnostics
             out NetworkIngressMetricsSnapshot snapshot)
         {
             snapshot = default;
+            if (!Enabled)
+                return false;
             long start = Volatile.Read(ref m_windowStartTimestamp);
             if (start <= 0L || nowTimestamp <= start ||
                 ToMilliseconds(nowTimestamp - start) < SampleWindowMilliseconds)

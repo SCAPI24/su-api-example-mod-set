@@ -1,5 +1,10 @@
 # SurvivalcraftNet 参考项目对比分析
 
+> **历史对比资料，不是当前状态清单。** 本文保留早期分析记录，其中多项
+> “未同步/缺失”结论已经被后续代码实现取代。当前缺口以
+> [`CURRENT-SYNC-GAPS.md`](CURRENT-SYNC-GAPS.md) 为准；组队管理和领地权限
+> 按当前项目范围明确不处理。
+
 > 参考项目: SurvivalcraftApi-SCAPI1.9_MP (本地路径)
 > 目标项目: ScMultiplayer (Comms + SuAPI Mod)
 > 最后更新: 2026-05-17

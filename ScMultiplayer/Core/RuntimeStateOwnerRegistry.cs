@@ -13,6 +13,7 @@ namespace ScMultiplayer.Core
         Circuit,
         World,
         WorldControl,
+        DataModification,
         Ui,
         Diagnostics
     }

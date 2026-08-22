@@ -18,6 +18,9 @@ namespace ScMultiplayer
         void IMultiplayerRuntimeHost.RunWorldControlPhase(in ModuleTickContext tickContext) =>
             RunWorldControlPhaseCore(in tickContext);
 
+        void IMultiplayerRuntimeHost.RunDataModificationPhase(in ModuleTickContext tickContext) =>
+            RunDataModificationPhaseCore(in tickContext);
+
         void IMultiplayerRuntimeHost.RunCircuitPhase(in ModuleTickContext tickContext) =>
             RunCircuitPhaseCore(in tickContext);
 
@@ -78,6 +81,14 @@ namespace ScMultiplayer
         internal void RunWorldControlPhaseCore(in ModuleTickContext tickContext)
         {
             UpdatePendingWorldControlRequests();
+        }
+
+        // Source: Mod/ScMultiplayer/DataModification/DataModificationCoordinator.cs:
+        // DataModificationCoordinator.Update
+        internal void RunDataModificationPhaseCore(in ModuleTickContext tickContext)
+        {
+            m_dataModification?.Update(tickContext.Now);
+            UpdateDataModificationApprovalPrompt();
         }
 
         // Source: Mod/ScMultiplayer/Func/Circuit/CircuitSynchronizer.cs:CircuitSynchronizer.Update

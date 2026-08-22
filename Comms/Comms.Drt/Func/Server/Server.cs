@@ -12,6 +12,8 @@ public class Server : IDisposable
 {
     private volatile bool IsDisposed;
 
+    private bool JoinDiagnosticsEnabledValue;
+
     private Alarm Alarm;
 
     private int NextGameId;
@@ -36,6 +38,14 @@ public class Server : IDisposable
 
     public IReadOnlyList<ServerGame> Games => ServerGames;
 
+    // Source: Comms.Drt/Data/JoinDiagnosticData.cs:JoinDiagnosticData
+    // Disabled servers do not construct or publish join diagnostic records.
+    public bool JoinDiagnosticsEnabled
+    {
+        get => Volatile.Read(ref JoinDiagnosticsEnabledValue);
+        set => Volatile.Write(ref JoinDiagnosticsEnabledValue, value);
+    }
+
     public ServerSettings Settings { get; } = new ServerSettings();
 
     public event Action<ResourceRequestData> ResourceRequest;
@@ -47,6 +57,8 @@ public class Server : IDisposable
     public event Action<string> Warning;
 
     public event Action<string> Information;
+
+    public event Action<JoinDiagnosticData> JoinDiagnostic;
 
     public event Action<string> Debug;
 
@@ -109,6 +121,24 @@ public class Server : IDisposable
             if (!IsDisposed)
             {
                 Message message = MessageSerializer.Read(p.Bytes, p.PeerData.Address);
+                // Source: Comms.Drt/Func/Server/Server.cs:Peer.ConnectRequest
+                // Join diagnostics belong to an active room. A client may start a local Comms
+                // server for discovery without hosting a game, so do not treat that listener as
+                // a server diagnostic source.
+                if (JoinDiagnosticsEnabled &&
+                    message is ClientJoinGameRequestMessage joinRequest &&
+                    ServerGames.Any(game => game.GameID == joinRequest.GameID))
+                {
+                    InvokeJoinDiagnostic(new JoinDiagnosticData
+                    {
+                        Stage = JoinDiagnosticStage.ConnectReceived,
+                        GameID = joinRequest.GameID,
+                        ClientID = -1,
+                        Address = p.PeerData.Address,
+                        ClientName = joinRequest.ClientName,
+                        PayloadBytes = p.Bytes?.Length ?? 0
+                    });
+                }
                 if (!(message is ClientCreateGameRequestMessage message2))
                 {
                     if (!(message is ClientJoinGameRequestMessage message3))
@@ -488,6 +518,29 @@ public class Server : IDisposable
     internal void InvokeInformation(string information)
     {
         this.Information?.Invoke(information);
+    }
+
+    // Source: Comms.Drt/Data/JoinDiagnosticData.cs:JoinDiagnosticData
+    // Structured subscribers receive the process-local event. The information line preserves
+    // compatibility with older ScMultiplayer builds that do not subscribe to JoinDiagnostic.
+    internal void InvokeJoinDiagnostic(JoinDiagnosticData data)
+    {
+        if (!JoinDiagnosticsEnabled)
+        {
+            return;
+        }
+        try
+        {
+            this.JoinDiagnostic?.Invoke(data);
+        }
+        catch (Exception error)
+        {
+            InvokeWarning($"Join diagnostic handler failed: {error.Message}");
+        }
+        InvokeInformation($"[ScMP][JoinTrace] {data.StageName} game={data.GameID} " +
+            $"client={data.ClientID} endpoint={data.Address} name={data.ClientName} " +
+            $"bytes={data.PayloadBytes} queue={data.QueueCount} tick={data.Tick} " +
+            $"step={data.Step} stateBytes={data.StateBytes} tickMessages={data.TickMessages}");
     }
 
     [Conditional("DEBUG")]

@@ -109,6 +109,21 @@ public class ServerGame
     {
         JoinRequest joinRequest = new(peerData, NextClientID++, message.ClientName, message.JoinRequestBytes);
         JoinRequests.Add(joinRequest);
+        // Source: Comms.Drt/Func/Server/Set/ServerGame.cs:Handle(ClientJoinGameRequestMessage)
+        // Join diagnostics: record admission into the game queue without changing ordering.
+        if (Server.JoinDiagnosticsEnabled)
+        {
+            Server.InvokeJoinDiagnostic(new JoinDiagnosticData
+            {
+                Stage = JoinDiagnosticStage.Queued,
+                GameID = GameID,
+                ClientID = joinRequest.ClientID,
+                Address = peerData.Address,
+                ClientName = joinRequest.ClientName,
+                PayloadBytes = joinRequest.JoinRequestBytes?.Length ?? 0,
+                QueueCount = JoinRequests.Count
+            });
+        }
     }
 
     internal void Handle(ClientJoinGameAcceptedMessage message, ServerClient serverClient)
@@ -214,6 +229,22 @@ public class ServerGame
                 }
                 ServerClient serverClient2 = new(this, joinRequest.PeerData, joinRequest.ClientID, joinRequest.ClientName);
                 ServerClients.Add(serverClient2);
+                // Source: Comms.Drt/Func/Server/Set/ServerGame.cs:Handle(ClientStateMessage, ServerClient)
+                // Join diagnostics: the host state reached final transport acceptance.
+                if (Server.JoinDiagnosticsEnabled)
+                {
+                    Server.InvokeJoinDiagnostic(new JoinDiagnosticData
+                    {
+                        Stage = JoinDiagnosticStage.GameJoinedSend,
+                        GameID = GameID,
+                        ClientID = joinRequest.ClientID,
+                        Address = joinRequest.PeerData.Address,
+                        ClientName = joinRequest.ClientName,
+                        Step = acceptedStep,
+                        StateBytes = message.StateBytes?.Length ?? 0,
+                        TickMessages = array.Length
+                    });
+                }
                 Server.Peer.AcceptConnect(serverClient2.PeerData, Server.MessageSerializer.Write(new ServerJoinGameAcceptedMessage
                 {
                     GameID = GameID,
@@ -377,6 +408,21 @@ public class ServerGame
                     JoinBytes = joinRequest.JoinRequestBytes
                 });
                 joinRequest.Forwarded = true;
+                // Source: Comms.Drt/Func/Server/Set/ServerGame.cs:CreateTickMessage
+                // Join diagnostics: mark the one-time handoff to the host client.
+                if (Server.JoinDiagnosticsEnabled)
+                {
+                    Server.InvokeJoinDiagnostic(new JoinDiagnosticData
+                    {
+                        Stage = JoinDiagnosticStage.ForwardedToHost,
+                        GameID = GameID,
+                        ClientID = joinRequest.ClientID,
+                        Address = joinRequest.PeerData.Address,
+                        ClientName = joinRequest.ClientName,
+                        PayloadBytes = joinRequest.JoinRequestBytes?.Length ?? 0,
+                        Tick = Tick
+                    });
+                }
             }
         }
         foreach (int leaf in Leaves)

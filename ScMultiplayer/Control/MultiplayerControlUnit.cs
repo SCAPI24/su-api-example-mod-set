@@ -3,6 +3,7 @@ using ScMultiplayer.Diagnostics;
 using ScMultiplayer.Modules.Runtime;
 using ScMultiplayer.Modules.Session;
 using ScMultiplayer.Modules.Diagnostics;
+using ScMultiplayer.Modules.World;
 using ScMultiplayer.Ports;
 
 namespace ScMultiplayer.Control
@@ -20,6 +21,8 @@ namespace ScMultiplayer.Control
         private readonly SessionRuntimeModule m_sessionRuntimeModule = new SessionRuntimeModule();
         private readonly JoinTransferModule m_joinTransferModule = new JoinTransferModule();
         private readonly WorldControlModule m_worldControlModule = new WorldControlModule();
+        private readonly DataModificationModule m_dataModificationModule =
+            new DataModificationModule();
         private readonly CircuitRuntimeModule m_circuitRuntimeModule = new CircuitRuntimeModule();
         private readonly WorldRuntimeModule m_worldRuntimeModule = new WorldRuntimeModule();
         private readonly PlayerRuntimeModule m_playerRuntimeModule = new PlayerRuntimeModule();
@@ -47,6 +50,7 @@ namespace ScMultiplayer.Control
             m_scheduler.Register(m_sessionRuntimeModule);
             m_scheduler.Register(m_joinTransferModule);
             m_scheduler.Register(m_worldControlModule);
+            m_scheduler.Register(m_dataModificationModule);
             m_scheduler.Register(m_circuitRuntimeModule);
             m_scheduler.Register(m_worldRuntimeModule);
             m_scheduler.Register(m_playerRuntimeModule);

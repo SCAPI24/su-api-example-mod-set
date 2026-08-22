@@ -40,6 +40,7 @@ namespace ScMultiplayer
         ProjectileSync,
         ExplosionSync,
         ContainerSync,
+        PlayerAuthority,
         Unknown
     }
 
@@ -138,6 +139,7 @@ namespace ScMultiplayer
                 ProjectileSyncMessage => NetworkIngressCommandKind.ProjectileSync,
                 ExplosionSyncMessage => NetworkIngressCommandKind.ExplosionSync,
                 ContainerSyncMessage => NetworkIngressCommandKind.ContainerSync,
+                PlayerAuthorityMessage => NetworkIngressCommandKind.PlayerAuthority,
                 _ => NetworkIngressCommandKind.Unknown
             };
         }

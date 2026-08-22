@@ -294,6 +294,8 @@ namespace ScMultiplayer
 				}
 				m_pendingAcceptedJoinKeys.Remove(sourceClientId);
 				SynchronizePlayerProfiles();
+				PublishServerAudit("join.loading_project", sourceClientId,
+					"transfer=" + transferId.ToString(CultureInfo.InvariantCulture));
 				Log.Information($"[ScMP] Client entered Loading Project: ClientID={sourceClientId}, Transfer={transferId}");
 				break;
 			}
@@ -317,6 +319,8 @@ namespace ScMultiplayer
                 // local-relay reservations are only for the finished archive; actual Comms packets
                 // remain visible through GetUnackedPacketsCount for the catch-up phase.
                 RemoveReliableRelayReservations(sourceClientId);
+                PublishServerAudit("join.project_ready", sourceClientId,
+                    "transfer=" + transferId.ToString(CultureInfo.InvariantCulture));
                 SealAndSendJoinCatchUp(sourceClientId, transferId);
 				break;
 			}
@@ -329,6 +333,8 @@ namespace ScMultiplayer
 				}
 				else if (m_joinCatchUpRegistry.Journals.TryGetValue(sourceClientId, out journal))
 				{
+					PublishServerAudit("join.catchup_applied", sourceClientId,
+						"transfer=" + transferId.ToString(CultureInfo.InvariantCulture));
 					CompleteJoiningClient(sourceClientId, transferId, journal);
 				}
 				break;
@@ -381,6 +387,7 @@ namespace ScMultiplayer
 			DisconnectNetworkClient(remoteClient);
 		}
 		Log.Error($"[ScMP] Aborted joining ClientID {sourceClientId}: {reason}");
+		PublishServerAudit("join.aborted", sourceClientId, "reason=" + reason);
 	}
 
 	private void SealAndSendJoinCatchUp(int targetClientId, int transferId)
@@ -418,6 +425,12 @@ namespace ScMultiplayer
 		m_pendingHostPickableSnapshots.Add(sourceClientId);
 		m_fullWorldObjectsSyncTime = 5f;
 		m_fullAnimalSyncTime = 5f;
+		PublishServerAudit("join.ready", sourceClientId,
+			"transfer=" + transferId.ToString(CultureInfo.InvariantCulture) +
+			" rounds=" + journal.ReplayRound.ToString(CultureInfo.InvariantCulture) +
+			" messages=" + journal.TotalMessagesSent.ToString(CultureInfo.InvariantCulture) +
+			" bytes=" + journal.TotalBytesSent.ToString(CultureInfo.InvariantCulture) +
+			" dropped=" + journal.DroppedMessages.ToString(CultureInfo.InvariantCulture));
 		Log.Information($"[ScMP] World transfer ready: ClientID={sourceClientId}, Transfer={transferId}, CatchUpRounds={journal.ReplayRound}, CatchUpMessages={journal.TotalMessagesSent}, CatchUpBytes={journal.TotalBytesSent}, Dropped={journal.DroppedMessages}");
 	}
 

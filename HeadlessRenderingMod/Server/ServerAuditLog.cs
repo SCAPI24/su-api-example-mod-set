@@ -101,6 +101,10 @@ namespace HeadlessRenderingMod
 
         private void WritePendingRecords(ref StreamWriter writer, ref DateTime writerDate)
         {
+            long dropped = Interlocked.Exchange(ref m_droppedRecords, 0);
+            if (m_records.IsEmpty && dropped == 0)
+                return;
+
             DateTime now = DateTime.Now;
             if (writer == null || writerDate != now.Date)
             {
@@ -112,7 +116,6 @@ namespace HeadlessRenderingMod
                 RescanAndTrim(path);
             }
 
-            long dropped = Interlocked.Exchange(ref m_droppedRecords, 0);
             if (dropped > 0)
                 WriteLine(writer, now, "event=audit.queue_drop count=" + dropped.ToString(CultureInfo.InvariantCulture));
 

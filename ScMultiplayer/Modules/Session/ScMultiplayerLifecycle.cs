@@ -38,6 +38,7 @@ namespace ScMultiplayer
             m_controlUnit ??= new MultiplayerControlUnit(this, this);
             m_messageRouter ??= new NetworkMessageRouter(this);
             m_controlUnit.Initialize();
+            InitializeDataModification(eventBus);
             ReliableRetransmitDiagnostics.PacketRetransmitted += HandleReliableRetransmit;
             // Source: Mod/ScMultiplayer/Message/Message.cs:Message.ProtocolHash
             string protocolLabel = Message.GetProtocolLabel(
@@ -66,9 +67,14 @@ namespace ScMultiplayer
             modInjector.RegisterBlock(Game.PistonBlock.Index,
                 typeof(global::ScMultiplayer.PistonBlock), Name);
             ScMultiplayerSettings.Load();
+            ApplyServerDiagnosticsSetting();
             m_serverSettingsToken = eventBus.SubscribeEvent(
                 "ScMultiplayer.ServerSettings",
                 HandleServerSettingsEvent,
+                EventPriority.HIGHEST);
+            m_networkPlayersToken = eventBus.SubscribeEvent(
+                "ScMultiplayer.NetworkPlayers",
+                HandleNetworkPlayersEvent,
                 EventPriority.HIGHEST);
             PersonalServerDirectory.Load();
             m_fromLinkToken = SuFromLinkProviders.Subscribe(eventBus,
@@ -160,11 +166,13 @@ namespace ScMultiplayer
             {
                 server = new Server(0x53634d70, tickDuration, stepsPerTick,
                     serverDiagnosticTransmitter);
+                server.JoinDiagnosticsEnabled = false;
                 ConfigurePeerTimeout(server.Peer, RemoteConnectionLostPeriod);
                 // Source: Mod/Comms/Comms.Drt/Func/Server/Set/ServerSettings.cs:ServerSettings.JoinRequestTimeout
                 // Manual approval can remain pending while the host finishes another action.
                 server.Settings.JoinRequestTimeout = 300f;
                 server.Information += Server_Information;
+                server.JoinDiagnostic += HandleServerJoinDiagnostic;
                 server.Start();
                 Log.Information($"[ScMP] Server started OK, address={server.Address}");
             }
@@ -820,6 +828,9 @@ namespace ScMultiplayer
 
         public void OnUnload()
         {
+            DisposeDataModification();
+            if (server != null)
+                server.JoinDiagnostic -= HandleServerJoinDiagnostic;
             m_controlUnit?.Dispose();
             m_controlUnit = null;
             m_messageRouter = null;
@@ -827,6 +838,9 @@ namespace ScMultiplayer
             if (m_eventBus != null && m_serverSettingsToken != null)
                 m_eventBus.UnsubscribeEvent(m_serverSettingsToken);
             m_serverSettingsToken = null;
+            if (m_eventBus != null && m_networkPlayersToken != null)
+                m_eventBus.UnsubscribeEvent(m_networkPlayersToken);
+            m_networkPlayersToken = null;
             if (m_eventBus != null && m_fromLinkToken != null)
                 m_eventBus.UnsubscribeEvent(m_fromLinkToken);
             m_fromLinkToken = null;

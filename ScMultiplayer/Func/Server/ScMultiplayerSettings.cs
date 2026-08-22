@@ -22,10 +22,30 @@ namespace ScMultiplayer
         private const int MaximumMaxPlayers = 32;
         private const int MaximumBandwidthKbps = 1024 * 1024;
         private const int MaximumBurstKiB = 1024;
+        private const int DefaultDataModificationFastMaxConcurrent = 8;
+        private const int DefaultDataModificationBulkMaxConcurrent = 2;
+        private const int DefaultDataModificationBulkApplyChunksPerFrame = 8;
+        private const int DefaultDataModificationBulkApplyBytesPerFrame = 32 * 1024;
+        private const int MaximumDataModificationFastMaxConcurrent = 128;
+        private const int MaximumDataModificationBulkMaxConcurrent = 32;
+        private const int MaximumDataModificationBulkApplyChunksPerFrame = 128;
+        private const int MaximumDataModificationBulkApplyBytesPerFrame = 1024 * 1024;
 
         public static bool AutoApproveJoinRequests { get; private set; }
 
         public static bool AutoCreateRoomFromCurrentWorld { get; private set; }
+
+        public static bool ServerDiagnosticsEnabled { get; private set; }
+
+        public static DataModificationPolicy DataModificationMode { get; private set; }
+
+        public static int DataModificationFastMaxConcurrent { get; private set; }
+
+        public static int DataModificationBulkMaxConcurrent { get; private set; }
+
+        public static int DataModificationBulkApplyChunksPerFrame { get; private set; }
+
+        public static int DataModificationBulkApplyBytesPerFrame { get; private set; }
 
         public static int ServerBasePort { get; private set; }
 
@@ -79,6 +99,14 @@ namespace ScMultiplayer
         {
             AutoApproveJoinRequests = false;
             AutoCreateRoomFromCurrentWorld = false;
+            ServerDiagnosticsEnabled = false;
+            DataModificationMode = DataModificationPolicy.Default;
+            DataModificationFastMaxConcurrent = DefaultDataModificationFastMaxConcurrent;
+            DataModificationBulkMaxConcurrent = DefaultDataModificationBulkMaxConcurrent;
+            DataModificationBulkApplyChunksPerFrame =
+                DefaultDataModificationBulkApplyChunksPerFrame;
+            DataModificationBulkApplyBytesPerFrame =
+                DefaultDataModificationBulkApplyBytesPerFrame;
             ServerBasePort = DefaultServerBasePort;
             ServerPortCount = DefaultServerPortCount;
             ServerPreferredPort = DefaultServerBasePort;
@@ -118,6 +146,30 @@ namespace ScMultiplayer
                 {
                     AutoCreateRoomFromCurrentWorld = autoCreateValue.GetBoolean();
                 }
+                if (document.RootElement.TryGetProperty(
+                    "serverDiagnosticsEnabled",
+                    out JsonElement diagnosticsValue) &&
+                    (diagnosticsValue.ValueKind == JsonValueKind.True ||
+                    diagnosticsValue.ValueKind == JsonValueKind.False))
+                {
+                    ServerDiagnosticsEnabled = diagnosticsValue.GetBoolean();
+                }
+                if (document.RootElement.TryGetProperty(
+                    "dataModificationMode", out JsonElement dataModeValue) &&
+                    dataModeValue.ValueKind == JsonValueKind.String)
+                {
+                    DataModificationMode = ParseDataModificationMode(dataModeValue.GetString());
+                }
+                DataModificationFastMaxConcurrent = ReadNonNegativeInteger(document.RootElement,
+                    "dataModificationFastMaxConcurrent", DataModificationFastMaxConcurrent);
+                DataModificationBulkMaxConcurrent = ReadNonNegativeInteger(document.RootElement,
+                    "dataModificationBulkMaxConcurrent", DataModificationBulkMaxConcurrent);
+                DataModificationBulkApplyChunksPerFrame = ReadNonNegativeInteger(
+                    document.RootElement, "dataModificationBulkApplyChunksPerFrame",
+                    DataModificationBulkApplyChunksPerFrame);
+                DataModificationBulkApplyBytesPerFrame = ReadNonNegativeInteger(
+                    document.RootElement, "dataModificationBulkApplyBytesPerFrame",
+                    DataModificationBulkApplyBytesPerFrame);
                 if (document.RootElement.TryGetProperty(
                     "serverBasePort",
                     out JsonElement basePortValue) &&
@@ -210,6 +262,13 @@ namespace ScMultiplayer
             Save();
         }
 
+        // Source: Mod/ScMultiplayer/Diagnostics/DiagnosticRecorder.cs:DiagnosticRecorder.Enabled
+        public static void SetServerDiagnosticsEnabled(bool value)
+        {
+            ServerDiagnosticsEnabled = value;
+            Save();
+        }
+
         public static void SetBandwidthConfigurationEnabled(bool value)
         {
             BandwidthConfigurationEnabled = value;
@@ -222,6 +281,14 @@ namespace ScMultiplayer
             {
                 ["autoApproveJoinRequests"] = AutoApproveJoinRequests,
                 ["autoCreateRoomFromCurrentWorld"] = AutoCreateRoomFromCurrentWorld,
+                ["serverDiagnosticsEnabled"] = ServerDiagnosticsEnabled,
+                ["dataModificationMode"] = GetDataModificationModeName(DataModificationMode),
+                ["dataModificationFastMaxConcurrent"] = DataModificationFastMaxConcurrent,
+                ["dataModificationBulkMaxConcurrent"] = DataModificationBulkMaxConcurrent,
+                ["dataModificationBulkApplyChunksPerFrame"] =
+                    DataModificationBulkApplyChunksPerFrame,
+                ["dataModificationBulkApplyBytesPerFrame"] =
+                    DataModificationBulkApplyBytesPerFrame,
                 ["bandwidthConfigurationEnabled"] = BandwidthConfigurationEnabled,
                 ["bandwidthMode"] = BandwidthMode == BandwidthLimitMode.SharedTotal
                     ? "shared" : "separate",
@@ -244,6 +311,25 @@ namespace ScMultiplayer
                 "autoApproveJoinRequests", AutoApproveJoinRequests);
             AutoCreateRoomFromCurrentWorld = UpdateBoolean(values,
                 "autoCreateRoomFromCurrentWorld", AutoCreateRoomFromCurrentWorld);
+            ServerDiagnosticsEnabled = UpdateBoolean(values,
+                "serverDiagnosticsEnabled", ServerDiagnosticsEnabled);
+            if (values.TryGetValue("dataModificationMode", out object dataMode) &&
+                dataMode is string dataModeText)
+                DataModificationMode = ParseDataModificationMode(dataModeText);
+            DataModificationFastMaxConcurrent = UpdateBoundedInteger(values,
+                "dataModificationFastMaxConcurrent", DataModificationFastMaxConcurrent,
+                1, MaximumDataModificationFastMaxConcurrent);
+            DataModificationBulkMaxConcurrent = UpdateBoundedInteger(values,
+                "dataModificationBulkMaxConcurrent", DataModificationBulkMaxConcurrent,
+                1, MaximumDataModificationBulkMaxConcurrent);
+            DataModificationBulkApplyChunksPerFrame = UpdateBoundedInteger(values,
+                "dataModificationBulkApplyChunksPerFrame",
+                DataModificationBulkApplyChunksPerFrame,
+                1, MaximumDataModificationBulkApplyChunksPerFrame);
+            DataModificationBulkApplyBytesPerFrame = UpdateBoundedInteger(values,
+                "dataModificationBulkApplyBytesPerFrame",
+                DataModificationBulkApplyBytesPerFrame,
+                1024, MaximumDataModificationBulkApplyBytesPerFrame);
             if (values.TryGetValue("bandwidthConfigurationEnabled", out object enabled) &&
                 enabled != null)
             {
@@ -314,6 +400,17 @@ namespace ScMultiplayer
             writer.WriteBoolean(
                 "autoCreateRoomFromCurrentWorld",
                 AutoCreateRoomFromCurrentWorld);
+            writer.WriteBoolean("serverDiagnosticsEnabled", ServerDiagnosticsEnabled);
+            writer.WriteString("dataModificationMode",
+                GetDataModificationModeName(DataModificationMode));
+            writer.WriteNumber("dataModificationFastMaxConcurrent",
+                DataModificationFastMaxConcurrent);
+            writer.WriteNumber("dataModificationBulkMaxConcurrent",
+                DataModificationBulkMaxConcurrent);
+            writer.WriteNumber("dataModificationBulkApplyChunksPerFrame",
+                DataModificationBulkApplyChunksPerFrame);
+            writer.WriteNumber("dataModificationBulkApplyBytesPerFrame",
+                DataModificationBulkApplyBytesPerFrame);
             writer.WriteNumber("serverBasePort", ServerBasePort);
             writer.WriteNumber("serverPortCount", ServerPortCount);
             writer.WriteNumber("serverPreferredPort", ServerPreferredPort);
@@ -360,6 +457,26 @@ namespace ScMultiplayer
             return parsed;
         }
 
+        private static int UpdateBoundedInteger(IDictionary<string, object> values,
+            string name, int target, int minimum, int maximum)
+        {
+            if (!values.TryGetValue(name, out object item) || item == null)
+                return target;
+            int parsed;
+            try
+            {
+                parsed = Convert.ToInt32(item, System.Globalization.CultureInfo.InvariantCulture);
+            }
+            catch (Exception)
+            {
+                throw new ArgumentException(name + " must be an integer.", name);
+            }
+            if (parsed < minimum || parsed > maximum)
+                throw new ArgumentOutOfRangeException(name,
+                    name + " must be between " + minimum + " and " + maximum + ".");
+            return parsed;
+        }
+
         // Source: Mod/Comms/Comms/UdpTransmitter.cs:UdpTransmitter.UdpTransmitter
         private static void ValidateServerPorts()
         {
@@ -402,6 +519,35 @@ namespace ScMultiplayer
                 MaximumBurstKiB);
             JoinTransferPerJoinMaxKbps = MathUtils.Clamp(
                 JoinTransferPerJoinMaxKbps, 0, MaximumBandwidthKbps);
+            DataModificationFastMaxConcurrent = MathUtils.Clamp(
+                DataModificationFastMaxConcurrent, 1,
+                MaximumDataModificationFastMaxConcurrent);
+            DataModificationBulkMaxConcurrent = MathUtils.Clamp(
+                DataModificationBulkMaxConcurrent, 1,
+                MaximumDataModificationBulkMaxConcurrent);
+            DataModificationBulkApplyChunksPerFrame = MathUtils.Clamp(
+                DataModificationBulkApplyChunksPerFrame, 1,
+                MaximumDataModificationBulkApplyChunksPerFrame);
+            DataModificationBulkApplyBytesPerFrame = MathUtils.Clamp(
+                DataModificationBulkApplyBytesPerFrame, 1024,
+                MaximumDataModificationBulkApplyBytesPerFrame);
+        }
+
+        public static string GetDataModificationModeName(DataModificationPolicy mode) =>
+            mode switch
+            {
+                DataModificationPolicy.Reject => "reject",
+                DataModificationPolicy.Allow => "allow",
+                _ => "default"
+            };
+
+        private static DataModificationPolicy ParseDataModificationMode(string value)
+        {
+            if (string.Equals(value, "reject", StringComparison.OrdinalIgnoreCase))
+                return DataModificationPolicy.Reject;
+            if (string.Equals(value, "allow", StringComparison.OrdinalIgnoreCase))
+                return DataModificationPolicy.Allow;
+            return DataModificationPolicy.Default;
         }
 
         // Source: Mod/ScMultiplayer/Plug/ScMultiplayer.cs:BindFirstAvailableServerPort

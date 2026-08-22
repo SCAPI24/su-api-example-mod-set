@@ -1,4 +1,5 @@
 using Comms;
+using Comms.Drt;
 using System;
 
 namespace ScMultiplayer.Diagnostics
@@ -9,7 +10,8 @@ namespace ScMultiplayer.Diagnostics
         Retransmit = 1,
         RouterError = 2,
         QueueDrop = 3,
-        IngressSummary = 4
+        IngressSummary = 4,
+        JoinTrace = 5
     }
 
     // Source: Mod/ScMultiplayer/doc/MODULAR-REFACTOR-PLAN.md:104 异常隔离与可观测性
@@ -19,7 +21,7 @@ namespace ScMultiplayer.Diagnostics
     {
         private DiagnosticRecord(DiagnosticRecordKind kind, string eventName, int clientId,
             string playerName, string details, ReliableRetransmitInfo retransmit,
-            NetworkIngressMetricsSnapshot ingressMetrics)
+            NetworkIngressMetricsSnapshot ingressMetrics, JoinDiagnosticData joinDiagnostic)
         {
             Kind = kind;
             EventName = eventName ?? string.Empty;
@@ -28,6 +30,7 @@ namespace ScMultiplayer.Diagnostics
             Details = details ?? string.Empty;
             Retransmit = retransmit;
             IngressMetrics = ingressMetrics;
+            JoinDiagnostic = joinDiagnostic;
         }
 
         public DiagnosticRecordKind Kind { get; }
@@ -44,22 +47,29 @@ namespace ScMultiplayer.Diagnostics
 
         public NetworkIngressMetricsSnapshot IngressMetrics { get; }
 
+        public JoinDiagnosticData JoinDiagnostic { get; }
+
         public static DiagnosticRecord Audit(string eventName, int clientId,
             string playerName, string details) =>
             new DiagnosticRecord(DiagnosticRecordKind.Audit, eventName, clientId,
-                playerName, details, default, default);
+                playerName, details, default, default, default);
 
         public static DiagnosticRecord Retransmission(ReliableRetransmitInfo info) =>
             new DiagnosticRecord(DiagnosticRecordKind.Retransmit, string.Empty, 0,
-                string.Empty, string.Empty, info, default);
+                string.Empty, string.Empty, info, default, default);
 
         public static DiagnosticRecord RouterFailure(string details, int clientId) =>
             new DiagnosticRecord(DiagnosticRecordKind.RouterError, "router.error", clientId,
-                string.Empty, details, default, default);
+                string.Empty, details, default, default, default);
 
         public static DiagnosticRecord IngressSummary(
             NetworkIngressMetricsSnapshot snapshot) =>
             new DiagnosticRecord(DiagnosticRecordKind.IngressSummary, "ingress.summary", 0,
-                string.Empty, string.Empty, default, snapshot);
+                string.Empty, string.Empty, default, snapshot, default);
+
+        // Source: Mod/Comms/Comms.Drt/Data/JoinDiagnosticData.cs:JoinDiagnosticData
+        public static DiagnosticRecord Join(JoinDiagnosticData data) =>
+            new DiagnosticRecord(DiagnosticRecordKind.JoinTrace, "join.transport",
+                data.ClientID, data.ClientName, string.Empty, default, default, data);
     }
 }

@@ -368,7 +368,7 @@ namespace ScMultiplayer
 
         // Source: Survivalcraft/Game/PlayerData.cs:PlayerData.Save
         // Source: Survivalcraft/Game/ComponentClothing.cs:ComponentClothing.Save
-        private static NetworkPlayerRecord CapturePlayerRecord(PlayerData playerData)
+        private NetworkPlayerRecord CapturePlayerRecord(PlayerData playerData)
         {
             ComponentPlayer player = playerData?.ComponentPlayer;
             ComponentVitalStats vitalStats = player?.ComponentVitalStats;
@@ -376,6 +376,9 @@ namespace ScMultiplayer
             ComponentSickness sickness = player?.Entity.FindComponent<ComponentSickness>();
             ComponentOnFire onFire = player?.Entity.FindComponent<ComponentOnFire>();
             ComponentCraftingTable handcrafting = player?.Entity.FindComponent<ComponentCraftingTable>();
+            SubsystemGameInfo gameInfo = GameManager.Project?.FindSubsystem<SubsystemGameInfo>(false);
+            bool globalCreative = gameInfo?.WorldSettings.GameMode == GameMode.Creative;
+            int capabilityClientId = ResolveCapabilityClientId(playerData);
             var record = new NetworkPlayerRecord
             {
                 Name = playerData?.Name ?? "Player",
@@ -415,12 +418,18 @@ namespace ScMultiplayer
                         onFire, "m_fireDuration", typeof(ComponentOnFire))
                     : 0f,
                 Satiation = CapturePlayerSatiation(vitalStats),
-                IsCreativeFlying = player?.ComponentLocomotion?.IsCreativeFlyEnabled == true,
+                IsCreativeFlying = globalCreative &&
+                    player?.ComponentLocomotion?.IsCreativeFlyEnabled == true,
                 HasReceivedInitialItems = true,
                 Clothes = CaptureClothes(player)
             };
             IInventory inventory = player?.ComponentMiner?.Inventory;
-            record.InventoryWasCreative = inventory is ComponentCreativeInventory;
+            if (!globalCreative && capabilityClientId >= 0 &&
+                m_capabilityNormalInventories.TryGetValue(capabilityClientId,
+                    out IInventory normalInventory) && normalInventory != null)
+                inventory = normalInventory;
+            record.InventoryWasCreative = globalCreative &&
+                inventory is ComponentCreativeInventory;
             record.ActiveSlotIndex = inventory?.ActiveSlotIndex ?? 0;
             if (inventory is ComponentCreativeInventory creativeInventory)
             {
@@ -449,6 +458,14 @@ namespace ScMultiplayer
             CapturePersistentCraftingSlots(handcrafting, out record.HandcraftSlotValues,
                 out record.HandcraftSlotCounts);
             return record;
+        }
+
+        private int ResolveCapabilityClientId(PlayerData playerData)
+        {
+            if (playerData == null) return -1;
+            foreach (KeyValuePair<int, PlayerData> item in m_networkPlayerData)
+                if (ReferenceEquals(item.Value, playerData)) return item.Key;
+            return GetLocalPlayer()?.PlayerData == playerData ? (IsHost ? 0 : client?.ClientID ?? -1) : -1;
         }
 
         // Source: Survivalcraft/Game/ComponentVitalStats.cs:ComponentVitalStats.Save
