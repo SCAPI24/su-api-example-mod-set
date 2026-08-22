@@ -104,7 +104,6 @@ namespace MemoryBankDrawMod
             m_memoryBankData = memoryBankData;
             m_tmpMemoryBankData = (MemoryBankData)memoryBankData.Copy();
 
-            // Initialize TextBoxes with data
             // Initialize TextBoxes with data (no TextChanged event since we inherit Dialog, not EditMemoryBankDialog)
             string text = m_tmpMemoryBankData.SaveString(saveLastOutput: false);
             if (text.Length < 256)
@@ -120,10 +119,6 @@ namespace MemoryBankDrawMod
             // Source: EditMemoryBankDialog constructor — default view is Grid
             m_linearPanel.IsVisible = false;
             m_gridPanel.IsVisible = true;
-
-            // Cache widgets to toggle in Draw mode
-            m_descLabelContainer = FindDescLabelContainer();
-            m_titleLabel = FindTitleLabel();
 
             // Cache widgets to toggle in Draw mode
             m_descLabelContainer = FindDescLabelContainer();
@@ -403,7 +398,6 @@ namespace MemoryBankDrawMod
             if (m_okButton.IsClicked)
             {
                 m_memoryBankData.Data = m_tmpMemoryBankData.Data;
-                Engine.Log.Information($"[MemoryBankDraw] OK: SaveString={m_memoryBankData.SaveString()}, Data.Count={m_memoryBankData.Data.Count}");
                 Dismiss(result: true);
             }
             if (base.Input.Cancel || m_cancelButton.IsClicked)

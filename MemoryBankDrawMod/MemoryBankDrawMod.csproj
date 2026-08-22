@@ -1,6 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>MemoryBankDrawMod</AssemblyName>
+    <RootNamespace>MemoryBankDrawMod</RootNamespace>
     <ImplicitUsings>disable</ImplicitUsings>
     <Nullable>disable</Nullable>
   </PropertyGroup>
@@ -18,7 +20,18 @@
     </PackageReference>
   </ItemGroup>
 
-  <Target Name="PostBuild" AfterTargets="PostBuildEvent">
-    <Exec Command="&quot;$(Obfuscar)&quot; Obfuscar.xml" />
+  <Target Name="PostBuild" AfterTargets="PostBuildEvent" Condition="'$(Configuration)' == 'Release'">
+    <PropertyGroup>
+      <_ObfuscarConfig>$(MSBuildProjectDirectory)\$(IntermediateOutputPath)Obfuscar.xml</_ObfuscarConfig>
+      <_ObfuscarOutput>$(TargetDir)Obfuscar</_ObfuscarOutput>
+    </PropertyGroup>
+    <Copy SourceFiles="Obfuscar.xml" DestinationFiles="$(_ObfuscarConfig)" />
+    <XmlPoke XmlInputPath="$(_ObfuscarConfig)"
+             Query="/Obfuscator/Var[@name='InPath']/@value"
+             Value="$(TargetDir)" />
+    <XmlPoke XmlInputPath="$(_ObfuscarConfig)"
+             Query="/Obfuscator/Var[@name='OutPath']/@value"
+             Value="$(_ObfuscarOutput)" />
+    <Exec Command="&quot;$(Obfuscar)&quot; &quot;$(_ObfuscarConfig)&quot;" />
   </Target>
 </Project>

@@ -1,8 +1,11 @@
-<?xml version='1.0'?>
+<?xml version="1.0"?>
 <Obfuscator>
-    <Var name="InPath" value=".\bin\Debug\net8.0" />
-    <Var name="OutPath" value=".\bin\Debug\net8.0\Obfuscar" />
+    <Var name="InPath" value=".\bin\Release\net8.0" />
+    <Var name="OutPath" value=".\bin\Release\net8.0\Obfuscar" />
     <Var name="SkipExtraDependencies" value="true" />
     <Module file="$(InPath)\EntitySystem.dll"/>
-    <Module file="$(InPath)\MemoryBankDrawMod.dll"/>
+    <Module file="$(InPath)\MemoryBankDrawMod.dll">
+        <SkipType name="MemoryBankDrawMod.MemoryBankDrawMod" />
+        <SkipType name="MemoryBankDrawMod.SuSubsystemMemoryBankBlockBehavior" />
+    </Module>
 </Obfuscator>

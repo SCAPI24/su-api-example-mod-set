@@ -6,10 +6,8 @@
             <Text lang="en_US">Memory Bank Draw</Text>
             <Text lang="zh_CN">Memory Bank 绘图</Text>
         </LocalizedName>
-        <ModVersion>
-            <Version>1.0.0</Version>
-            <APIVersion>2.1.0</APIVersion>
-        </ModVersion>
+        <Version>1.1.0</Version>
+        <APIVersion>0.1.5.1</APIVersion>
         <Asset>
             <ContentRoot>Content</ContentRoot>
         </Asset>
