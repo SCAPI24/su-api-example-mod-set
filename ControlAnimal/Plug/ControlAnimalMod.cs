@@ -61,6 +61,41 @@ public class ControlAnimalMod : IMod
             database.FindDatabaseObjectType("EntityTemplate", true),
             true);
 
+        // Source: Survivalcraft/Game/ComponentGui.cs:ComponentGui.UpdateWidgets
+        DatabaseObject uiComponentTemplate = new DatabaseObject(
+            database.FindDatabaseObjectType("ComponentTemplate", true),
+            new Guid("AF114376-D091-4E7A-971B-C49D57A88E32"),
+            "ControlAnimalUi",
+            null);
+        uiComponentTemplate.Description = "";
+        uiComponentTemplate.ExplicitInheritanceParent = database.FindDatabaseObject(
+            new Guid("b05700ed-7e4e-4679-98f5-b597f421496b"),
+            database.FindDatabaseObjectType("ComponentTemplate", true),
+            true);
+        uiComponentTemplate.NestingParent = database.FindDatabaseObject(
+            "Gameplay",
+            database.FindDatabaseObjectType("Folder", true),
+            true);
+
+        DatabaseObject uiParameterClass = new DatabaseObject(
+            database.FindDatabaseObjectType("Parameter", true),
+            new Guid("3E72A839-C564-4AC8-B9C8-6730D6A0B65E"),
+            "Class",
+            "ControlAnimal.ControlAnimalUiComponent");
+        uiParameterClass.NestingParent = uiComponentTemplate;
+
+        DatabaseObject uiMemberComponent = new DatabaseObject(
+            database.FindDatabaseObjectType("MemberComponentTemplate", true),
+            new Guid("96C34B02-78E6-4D65-B44D-BDF91BA5F978"),
+            "ControlAnimalUi",
+            null);
+        uiMemberComponent.Description = "";
+        uiMemberComponent.ExplicitInheritanceParent = uiComponentTemplate;
+        uiMemberComponent.NestingParent = database.FindDatabaseObject(
+            "Player",
+            database.FindDatabaseObjectType("EntityTemplate", true),
+            true);
+
         return new object[] { true, database };
     }
 

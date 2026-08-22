@@ -4,5 +4,8 @@
   <Var name="OutPath" value=".\bin\Release\net8.0\Obfuscar" />
   <Var name="SkipExtraDependencies" value="true" />
   <Module file="$(InPath)\EntitySystem.dll" />
-  <Module file="$(InPath)\ControlAnimal.dll" />
+  <Module file="$(InPath)\ControlAnimal.dll">
+    <SkipType name="ControlAnimal.ControlAnimalComponent" />
+    <SkipType name="ControlAnimal.ControlAnimalUiComponent" />
+  </Module>
 </Obfuscator>
