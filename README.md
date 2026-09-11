@@ -185,12 +185,25 @@ Memory Bank 绘图编辑器，替换 `SubsystemMemoryBankBlockBehavior`，增加
 
 Windows 无画面服务器 Mod。直接运行实例目录中的 `Survivalcraft.exe`，关闭世界和 UI 实际绘制，并通过本机 TCP JSON 接口提供命令行和 AI 控制。
 
+### CmdBridgeMod
+
+玩家机器人桥：**允许无限查看游戏内数据，但一切交互都必须通过玩家控制器**（视角 / 键盘 / 鼠标 / UI 点击）。
+
+- **只读观察**：界面元素（含坐标、`hittable`、遮挡者、虚拟列表项）、玩家状态与当前按键意图、准星指向的方块/实体、背包、世界（方块/实体/时间季节天气）、事件环。
+- **玩家控制器注入**：瞬时转视角 / `lookat` 看向坐标 / 长短按键 / 组合键 / 鼠标按下松开 / 滚轮 / 引擎内 UI 点击（注入前二次校验，**不可跳级**）。
+- **优势 ≠ 特权**：允许超人输入速度与全知读取；禁止任何直接改游戏状态的写入（源码级审计脚本 `Mod/Packages/check_cmd_bridge_readonly.py`）。
+- **输入通道与 UI 可见性解耦**：UI 隐藏时按键照常有效；打开背包等面板后其元素变为可点，两路都可用。
+- 配套 C# 命令行客户端 `sccmd.exe`（`Mod/CmdBridgeClient/`），支持一次性命令与交互式 REPL。
+
+详见 `doc/cmd-bridge-plan.md`。
+
 ### 其他 Mod
 
 | Mod | 类型 | 说明 |
 |-----|------|------|
 | TemperatureImmunity | Component 替换 | 替换体温组件，保持恒温 |
 | Comms | 联机通信库 | SuAPI 联机 Mod 通信基础库，ScMultiplayer 依赖 |
+| CmdBridgeMod | 玩家机器人桥 | 只读观察 + 玩家控制器注入，供 AI/脚本操控玩家；配套 sccmd.exe |
 
 ## 资源加载
 

@@ -20,3 +20,6 @@ HeadlessRenderingMod
 SuAPIModDownload
 SuAPIShadows
 SuAPIFontSource
+CmdBridgeMod
+CmdBridgeClient
+doc
