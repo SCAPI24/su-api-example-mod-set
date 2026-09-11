@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>CmdBridgeMod</AssemblyName>
+    <RootNamespace>CmdBridgeMod</RootNamespace>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\Engine\Engine\Engine.csproj" />
+    <ProjectReference Include="..\..\EntitySystem\EntitySystem.csproj" />
+    <ProjectReference Include="..\..\Survivalcraft\Survivalcraft.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Obfuscar" Version="2.2.49">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime;build;native;contentfiles;analyzers;buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <Target Name="PostBuild" AfterTargets="PostBuildEvent">
+    <PropertyGroup>
+      <_ObfuscarConfig>$(MSBuildProjectDirectory)\$(IntermediateOutputPath)Obfuscar.xml</_ObfuscarConfig>
+      <_ObfuscarOutput>$(TargetDir)Obfuscar</_ObfuscarOutput>
+    </PropertyGroup>
+    <Copy SourceFiles="Obfuscar.xml" DestinationFiles="$(_ObfuscarConfig)" />
+    <XmlPoke XmlInputPath="$(_ObfuscarConfig)"
+             Query="/Obfuscator/Var[@name='InPath']/@value"
+             Value="$(TargetDir)" />
+    <XmlPoke XmlInputPath="$(_ObfuscarConfig)"
+             Query="/Obfuscator/Var[@name='OutPath']/@value"
+             Value="$(_ObfuscarOutput)" />
+    <Exec Command="&quot;$(Obfuscar)&quot; &quot;$(_ObfuscarConfig)&quot;" />
+  </Target>
+</Project>

@@ -131,6 +131,24 @@ SuAPIFontSource/bin/
 SuAPIFontSource/obj/
 SuAPIFontSource/.vs/
 SuAPIFontSource/__pycache__/
+## sync:CmdBridgeMod
+!CmdBridgeMod/
+!CmdBridgeMod/**
+CmdBridgeMod/bin/
+CmdBridgeMod/obj/
+CmdBridgeMod/.vs/
+## sync:CmdBridgeClient
+!CmdBridgeClient/
+!CmdBridgeClient/**
+CmdBridgeClient/bin/
+CmdBridgeClient/obj/
+CmdBridgeClient/.vs/
+## sync:doc
+!doc/
+!doc/**
+doc/bin/
+doc/obj/
+doc/.vs/
 
 # 全局忽略 .vs 目录
 *.vs/

@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>sccmd</AssemblyName>
+    <RootNamespace>CmdBridgeClient</RootNamespace>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <RollForward>LatestMajor</RollForward>
+  </PropertyGroup>
+</Project>
