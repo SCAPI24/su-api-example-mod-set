@@ -7,6 +7,30 @@ using System.Text;
 namespace PlayerAiMod.Editor
 {
     /// <summary>
+    /// 游戏**拒绝**了一条命令（`{"ok":false,"error":{code,message}}`）。
+    ///
+    /// 为什么要单独一个异常类型：拒绝的原因差别很大 —— `not_ready`（游戏在跑，但还没进世界 /
+    /// AI 没接管）和"这条命令游戏里根本没有"（Mod 太旧）完全是两件事，混成一句
+    /// "多半是 Mod 没有这个命令"会把用户指到错的方向（实测就踩到了：实时监视第一次点开时
+    /// 世界还没加载，界面却让人去重新部署 Mod）。
+    /// </summary>
+    internal sealed class GameCommandException : Exception
+    {
+        public GameCommandException(string code, string message)
+            : base("game refused the command: " + code + ": " + message)
+        {
+            Code = code ?? "unknown";
+            GameMessage = message ?? string.Empty;
+        }
+
+        /// <summary>游戏给的稳定错误码（`not_ready` / `file_missing` / `unknown_command` …）。</summary>
+        public string Code { get; }
+
+        /// <summary>游戏给的原始说明（英文，通常已经写清缺什么）。</summary>
+        public string GameMessage { get; }
+    }
+
+    /// <summary>
     /// 与**正在运行的游戏**通信（CmdBridge 控制通道）。
     ///
     /// 用途：编辑器保存包之后通知游戏热重载（`ai.tree.notify {path, hash}`）——
@@ -117,6 +141,18 @@ namespace PlayerAiMod.Editor
             return Send(ReadRuntime(), paused ? "ai.pause" : "ai.resume", null);
         }
 
+        /// <summary>切到某个包并开始跑（`ai.tree.switch`；参数含绝对路径与 start）。</summary>
+        public Dictionary<string, object> SwitchTree(Dictionary<string, object> arguments)
+        {
+            return Send(ReadRuntime(), "ai.tree.switch", arguments);
+        }
+
+        /// <summary>停止并卸下当前树（`ai.tree.stop`）—— 之后重新 switch 就是从根开始。</summary>
+        public Dictionary<string, object> StopTree()
+        {
+            return Send(ReadRuntime(), "ai.tree.stop", null);
+        }
+
         /// <summary>让游戏校验一次包（与游戏内用的是同一份校验器）。</summary>
         public Dictionary<string, object> ValidateInGame(string nameOrPath)
         {
@@ -138,6 +174,50 @@ namespace PlayerAiMod.Editor
         public Dictionary<string, object> StopAction()
         {
             return Send(ReadRuntime(), "ai.action.stop", null);
+        }
+
+        // ---------------------------------------------------------------- UI 定位 / 点击服务
+
+        /// <summary>
+        /// 当前屏幕上可交互的 UI 元素（`obs.ui`）：带**真实坐标**（客户区像素）与可点性判定。
+        /// 编辑器的"UI 拾取"面板用它 —— 用户要的就是"别硬编码坐标"。
+        /// </summary>
+        public Dictionary<string, object> QueryUiElements(bool includeAll, int maxElements)
+        {
+            return Send(ReadRuntime(), "obs.ui", new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["includeAll"] = includeAll,
+                ["maxElements"] = maxElements
+            });
+        }
+
+        /// <summary>
+        /// 解析一个**语义目标**（`Play` / 路径 / `list:WorldsList@世界名`）并给出当前坐标。
+        /// 走 CmdBridge 的 UI 服务（`ui.locate`），与行为树/回放用的是同一份实现。
+        /// `mark` 打开时游戏里会在那个像素上亮一个红点（默认 2 秒 / 5 像素）—— 人眼定位用。
+        /// </summary>
+        public Dictionary<string, object> LocateUi(string target, bool mark)
+        {
+            return Send(ReadRuntime(), "ui.locate", new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["target"] = target,
+                ["mark"] = mark
+            });
+        }
+
+        /// <summary>
+        /// 真的点一下（`ui.clickelement`）：`mode` = `direct`（默认，单帧合成按下）/
+        /// `input`（多帧软光标会话）/ `invoke`（直接触发控件事件）/ `auto`（能发事件就发事件）。
+        /// `mark` 打开时在点的那个像素上亮红点。
+        /// </summary>
+        public Dictionary<string, object> ClickUi(string target, string mode, bool mark)
+        {
+            return Send(ReadRuntime(), "ui.clickelement", new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["target"] = target,
+                ["mode"] = string.IsNullOrEmpty(mode) ? "direct" : mode,
+                ["mark"] = mark
+            });
         }
 
         private PackageValue ReadRuntime()
@@ -192,9 +272,8 @@ namespace PlayerAiMod.Editor
                     if (!response.Get("ok").AsBool(false))
                     {
                         PackageValue error = response.Get("error");
-                        throw new InvalidOperationException("game refused the command: "
-                            + error.Get("code").AsString("unknown") + ": "
-                            + error.Get("message").AsString(string.Empty));
+                        throw new GameCommandException(error.Get("code").AsString("unknown"),
+                            error.Get("message").AsString(string.Empty));
                     }
 
                     var result = new Dictionary<string, object>(StringComparer.Ordinal);

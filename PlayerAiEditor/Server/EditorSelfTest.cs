@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Net;
 using System.Net.Http;
+using System.Net.Sockets;
 using System.Text;
 using System.Threading;
 
@@ -36,11 +38,9 @@ namespace PlayerAiMod.Editor
             }
             Directory.CreateDirectory(instanceRoot);
 
-            // 出厂内容：示例树 + 示例动作包（编辑器要能列出它们）
+            // 出厂内容：示例树 + 示例动作包（编辑器要能列出它们）—— 全部装在**唯一的包目录**里
             string instanceDirectory = Path.Combine(instanceRoot, "PlayerAi", "BehaviorTrees");
-            string modDirectory = Path.Combine(instanceRoot, "Mods", "PlayerAiMod", "PlayerAi",
-                "BehaviorTrees");
-            var roots = new PackageRoots(instanceDirectory, modDirectory);
+            var roots = new PackageRoots(instanceDirectory);
             List<string> installed;
             string installError;
             int installedCount = PackageTemplates.Install(roots, out installed, out installError);
@@ -70,6 +70,7 @@ namespace PlayerAiMod.Editor
                     BlankTree(client, instanceDirectory);
                     Subtree(client, instanceRoot);
                     LiveMonitor(client);
+                    GameProcess(client, instanceRoot);
                 }
             }
 
@@ -279,8 +280,7 @@ namespace PlayerAiMod.Editor
                 list != null && list.Get("packages").Count >= 3,
                 "count=" + (list != null ? list.Get("packages").Count : -1));
 
-            string demoPath = Path.Combine(instanceRoot, "Mods", "PlayerAiMod", "PlayerAi",
-                "BehaviorTrees", PackageTemplates.DemoFile);
+            string demoPath = Path.Combine(instanceDirectory, PackageTemplates.DemoFile);
             Check("demo package exists on disk", File.Exists(demoPath), demoPath);
 
             PackageValue read = Parse(Get(client, "/api/package?path="
@@ -289,7 +289,7 @@ namespace PlayerAiMod.Editor
                 read != null && read.Get("ok").AsBool() && read.Get("manifest").IsObject
                 && read.Get("tree").IsObject,
                 read != null ? read.Get("issues").Preview(120) : "<null>");
-            Check("a package in the mod folder is writable too (the editor may modify what the game loads)",
+            Check("the package in the (single) package folder is writable",
                 read != null && read.Get("writable").AsBool(false),
                 read != null ? "writable=" + read.Get("writable").AsBool(false)
                     + " root=" + read.Get("root").AsString(null) : "<null>");
@@ -319,21 +319,21 @@ namespace PlayerAiMod.Editor
                 && invalid.Get("errors").AsInt() > 0,
                 invalid != null ? invalid.Get("issues").Preview(160) : "<null>");
 
-            // ---- 保存回 Mod 分发目录 → 允许（编辑器要能改游戏正在用的那份），并提醒会被 Mod 更新覆盖
-            PackageValue intoMod = Parse(PostJson(client, "/api/package?path="
+            // ---- 直接保存回原包（包目录里那份游戏正在用的）→ 允许
+            PackageValue intoSource = Parse(PostJson(client, "/api/package?path="
                 + Uri.EscapeDataString(demoPath) + "&overwrite=true",
                 "{\"manifest\":" + manifestJson + ",\"tree\":" + treeJson + "}"));
-            Check("saving back into the mod folder is allowed (with an overwrite warning)",
-                intoMod != null && intoMod.Get("ok").AsBool(false)
-                && intoMod.Get("warnsModFolder").AsBool(false),
-                intoMod != null ? intoMod.Preview(160) : "<null>");
+            Check("saving back over the package the game loads is allowed",
+                intoSource != null && intoSource.Get("ok").AsBool(false)
+                && intoSource.Get("root").AsString(null) == "instance",
+                intoSource != null ? intoSource.Preview(160) : "<null>");
 
-            // ---- 另存到实例目录 → 成功，且能重新装载
+            // ---- 另存到同一个包目录 → 成功，且能重新装载
             string copyPath = Path.Combine(instanceDirectory, "editor_copy.scbtpak");
             PackageValue saved = Parse(PostJson(client, "/api/package?path="
                 + Uri.EscapeDataString(copyPath),
                 "{\"manifest\":" + manifestJson + ",\"tree\":" + treeJson + "}"));
-            Check("saving into the instance folder succeeds",
+            Check("saving a new package into the package folder succeeds",
                 saved != null && saved.Get("ok").AsBool(false) && File.Exists(copyPath),
                 saved != null ? saved.Preview(160) : "<null>");
             Check("the saved package reloads and compiles",
@@ -401,8 +401,8 @@ namespace PlayerAiMod.Editor
                 && Math.Abs(sample.Get("duration").AsNumber() - PlayerAiPackages.SampleDurationSeconds) < 0.01
                 && sample.Get("frames").AsInt() > 0,
                 sample != null ? sample.Preview(200) : "<missing>");
-            Check("the factory sample reports the mod folder as its root (and is writable)",
-                sample != null && sample.Get("source").AsString(null) == "mod"
+            Check("the factory sample comes from the package folder (and is writable)",
+                sample != null && sample.Get("source").AsString(null) == "instance"
                 && sample.Get("writable").AsBool(false),
                 sample != null ? sample.Preview(160) : "<missing>");
 
@@ -412,8 +412,8 @@ namespace PlayerAiMod.Editor
                 valid != null && valid.Get("ok").AsBool(false) && valid.Get("replayable").AsBool(false)
                 && valid.Get("frames").AsInt() > 0,
                 valid != null ? valid.Preview(200) : "<null>");
-            Check("action validate resolves a name that only exists in the mod folder",
-                valid != null && valid.Get("source").AsString(null) == "mod",
+            Check("action validate reports the single package folder as the source",
+                valid != null && valid.Get("source").AsString(null) == "instance",
                 valid != null ? valid.Preview(160) : "<null>");
 
             PackageValue missing = Parse(PostJson(client, "/api/action/validate?name=ghost_action",
@@ -538,20 +538,312 @@ namespace PlayerAiMod.Editor
         }
 
         /// <summary>
+        /// 启动 / 结束游戏，以及"三态"判断（没启动 / 启动了但通道还没开 / 已连上）。
+        ///
+        /// 自检用的实例根是临时目录、里面**没有 Survivalcraft.exe** —— 所以这里既证明了
+        /// "找不到 exe 时如实拒绝、绝不乱起进程"，也顺手把"旧 runtime 文件"的谎话堵住：
+        /// 文件在、进程不在时必须是 `runtimeStale`，而不是让人以为是"游戏在跑但通道坏了"。
+        /// </summary>
+        private static void GameProcess(HttpClient client, string instanceRoot)
+        {
+            string runtimePath = System.IO.Path.Combine(instanceRoot,
+                GameBridgeClient.RuntimeFileName);
+
+            PackageValue before = Parse(Get(client, "/api/game/process"));
+            Check("game process status reports the executable path and existence",
+                before != null && before.Get("exePath").AsString(null) != null
+                && before.Get("exeExists").AsBool(true) == false
+                && before.Get("running").AsBool(true) == false,
+                before != null ? before.Preview(200) : "<null>");
+            Check("with no running game the channel is honestly reported as not connected",
+                before != null && before.Get("channelConnected").AsBool(true) == false
+                && before.Get("channelError").AsString(null) != null,
+                before != null ? before.Get("channelError").AsString("<none>") : "<null>");
+            Check("no runtime file yet -> not flagged as stale (there is nothing stale)",
+                before != null && before.Get("runtimeExists").AsBool(true) == false
+                && before.Get("runtimeStale").AsBool(true) == false,
+                before != null ? before.Preview(200) : "<null>");
+
+            // 找不到 exe → 拒绝启动。自检环境里实例根是临时目录、本来就没有 Survivalcraft.exe，
+            // 所以这条既证明"如实拒绝"，也保证**自检不会真的把游戏拉起来**。
+            PackageValue launch = Parse(PostJson(client, "/api/game/launch", "{}"));
+            Check("launching without a game executable fails honestly (and starts nothing)",
+                launch != null && launch.Get("ok").AsBool(true) == false
+                && launch.Get("code").AsString(null) == "game_exe_missing",
+                launch != null ? launch.Preview(200) : "<null>");
+
+            PackageValue quit = Parse(PostJson(client, "/api/game/quit", "{}"));
+            Check("quitting when nothing is running says so instead of pretending",
+                quit != null && quit.Get("ok").AsBool(true) && quit.Get("closed").AsInt(-1) == 0
+                && quit.Get("killed").AsInt(-1) == 0,
+                quit != null ? quit.Preview(200) : "<null>");
+
+            // ---- 旧 runtime 文件（游戏上次退出时留下的）：真实现场就是这样，端口连不上
+            int deadPort = FreePort();
+            File.WriteAllText(runtimePath,
+                "{\"port\":" + deadPort + ",\"token\":\"selftest-stale\"}", new UTF8Encoding(false));
+
+            PackageValue stale = Parse(Get(client, "/api/game/process"));
+            Check("a runtime file left over by a dead game is flagged as stale",
+                stale != null && stale.Get("runtimeExists").AsBool(false)
+                && stale.Get("runtimeStale").AsBool(false)
+                && stale.Get("channelConnected").AsBool(true) == false,
+                stale != null ? stale.Preview(220) : "<null>");
+
+            PackageValue live = Parse(Get(client, "/api/game/live"));
+            Check("a stale runtime file does not masquerade as a live channel",
+                live != null && live.Get("ok").AsBool(true) == false
+                && live.Get("reason").AsString(string.Empty).Contains("旧文件"),
+                live != null ? live.Get("reason").AsString("<none>") : "<null>");
+            Check("the stale runtime file is left alone (the editor never rewrites it)",
+                File.Exists(runtimePath), runtimePath);
+
+            // ---- 假游戏通道：把"游戏开在跑、但明确拒绝"的两种情况钉死
+            // 用户实测的 bug：世界还没加载时点实时监视，报的是"多半是 Mod 没有这个命令"——
+            // 把 `not_ready` 说成了 Mod 太旧。这里用一个只会说 not_ready 的假通道来守它。
+            using (var fake = new FakeGameChannel(
+                "{\"ok\":false,\"error\":{\"code\":\"not_ready\",\"message\":"
+                + "\"ai.tree.snapshot needs a controllable local player (load a world and make sure "
+                + "AI is enabled).\"}}"))
+            {
+                File.WriteAllText(runtimePath,
+                    "{\"port\":" + fake.Port + ",\"token\":\"selftest\"}", new UTF8Encoding(false));
+
+                PackageValue refused = Parse(Get(client, "/api/game/live"));
+                Check("a not_ready refusal is reported as 还没准备好（不是「Mod 太旧」）",
+                    refused != null && refused.Get("code").AsString(null) == "game_not_ready"
+                    && refused.Get("reason").AsString(string.Empty).Contains("还没准备好")
+                    && refused.Get("reason").AsString(string.Empty).Contains("ai enable"),
+                    refused != null ? refused.Get("reason").AsString("<none>") : "<null>");
+                Check("the game's own words are kept in the message",
+                    refused != null && refused.Get("reason").AsString(string.Empty)
+                        .Contains("controllable local player"),
+                    refused != null ? refused.Get("reason").AsString("<none>") : "<null>");
+
+                PackageValue unknown = Parse(Get(client, "/api/game/status"));
+                Check("the same refusal from another endpoint is classified the same way",
+                    unknown != null && unknown.Get("code").AsString(null) == "game_not_ready",
+                    unknown != null ? unknown.Preview(160) : "<null>");
+
+                // 切树也要走同一套分类（播放按钮点下去时最可能撞上它）
+                string demoFile = Path.Combine(instanceRoot, "PlayerAi", "BehaviorTrees",
+                    PackageTemplates.DemoFile);
+                PackageValue switchRefused = Parse(PostJson(client,
+                    "/api/game/tree/switch?path=" + Uri.EscapeDataString(demoFile), "{}"));
+                Check("switching the tree reports 还没准备好 instead of a Mod-version story",
+                    switchRefused != null && switchRefused.Get("ok").AsBool(true) == false
+                    && switchRefused.Get("code").AsString(null) == "game_not_ready",
+                    switchRefused != null ? switchRefused.Preview(200) : "<null>");
+            }
+
+            // ---- 假游戏通道：通道正常时，切树要如实把游戏的回应带回来
+            using (var fake = new FakeGameChannel(
+                "{\"ok\":true,\"result\":{\"switched\":true,\"usedPrepared\":false,\"recompiled\":true,"
+                + "\"path\":\"demo.greet.scbtpak\",\"hash\":\"abc123\",\"nodes\":8,\"switchMs\":1.25,"
+                + "\"totalMs\":3.5,\"compileMs\":2.25,\"mode\":\"tree\",\"issues\":[]}}"))
+            {
+                File.WriteAllText(runtimePath,
+                    "{\"port\":" + fake.Port + ",\"token\":\"selftest\"}", new UTF8Encoding(false));
+                string demoFile = Path.Combine(instanceRoot, "PlayerAi", "BehaviorTrees",
+                    PackageTemplates.DemoFile);
+                PackageValue switched = Parse(PostJson(client,
+                    "/api/game/tree/switch?path=" + Uri.EscapeDataString(demoFile), "{}"));
+                Check("a successful switch reports the game's own numbers",
+                    switched != null && switched.Get("ok").AsBool(false)
+                    && switched.Get("switched").AsBool(false)
+                    && switched.Get("nodes").AsInt() == 8
+                    && switched.Get("file").AsString(null) == PackageTemplates.DemoFile,
+                    switched != null ? switched.Preview(200) : "<null>");
+                Check("the editor sends ai.tree.switch with an absolute path",
+                    fake.LastCommand == "ai.tree.switch"
+                    && fake.LastRequest.Contains(demoFile.Replace("\\", "\\\\")),
+                    fake.LastCommand + " / " + Short(fake.LastRequest));
+            }
+
+            // ---- UI 定位/点击服务（UI-1）：编辑器把语义目标转发给游戏的 `ui.locate`
+            //      / `ui.clickelement`，"拾取界面元素"面板靠这两条活。
+            using (var fake = new FakeGameChannel(
+                "{\"ok\":true,\"result\":{\"target\":\"list:WorldsList@Rebritish\",\"kind\":\"ListRow\","
+                + "\"name\":\"WorldsList\",\"path\":\"[SuPlayScreen#0]/…/WorldsList\",\"text\":\"Rebritish\","
+                + "\"clickable\":true,\"hittable\":true,\"list\":{\"index\":0,\"text\":\"Rebritish\",\"count\":4},"
+                + "\"clientPoint\":{\"x\":351.75,\"y\":36.6}}}"))
+            {
+                File.WriteAllText(runtimePath,
+                    "{\"port\":" + fake.Port + ",\"token\":\"selftest\"}", new UTF8Encoding(false));
+                string wanted = "list:WorldsList@Rebritish";
+                PackageValue located = Parse(Get(client,
+                    "/api/game/ui/locate?target=" + Uri.EscapeDataString(wanted)));
+                Check("locating a UI target relays the game's live coordinates",
+                    located != null && located.Get("ok").AsBool(false)
+                    && located.Get("clientPoint").Get("x").AsNumber() > 0
+                    && located.Get("list").Get("index").AsInt() == 0,
+                    located != null ? located.Preview(200) : "<null>");
+                Check("the editor sends ui.locate with the semantic target",
+                    fake.LastCommand == "ui.locate" && fake.LastRequest.Contains("WorldsList"),
+                    fake.LastCommand + " / " + Short(fake.LastRequest));
+                // 落点标记（用户要求："点定位…渲染 2s 直接 5 像素的红色圆点，方便定位"）：
+                // 编辑器必须把 mark 一起发出去，否则游戏里什么都不会亮。
+                Check("the editor asks for the landing marker when locating",
+                    fake.LastRequest.Contains("\"mark\":true"),
+                    Short(fake.LastRequest));
+            }
+
+            using (var fake = new FakeGameChannel(
+                "{\"ok\":true,\"result\":{\"target\":\"Play\",\"mode\":\"direct\","
+                + "\"name\":\"Play\",\"clickPoint\":{\"x\":394.7,\"y\":459.7}}}"))
+            {
+                File.WriteAllText(runtimePath,
+                    "{\"port\":" + fake.Port + ",\"token\":\"selftest\"}", new UTF8Encoding(false));
+                PackageValue clicked = Parse(PostJson(client, "/api/game/ui/click",
+                    "{\"target\":\"Play\",\"mode\":\"direct\"}"));
+                Check("clicking a UI target relays the game's verdict and mode",
+                    clicked != null && clicked.Get("ok").AsBool(false)
+                    && clicked.Get("mode").AsString(null) == "direct"
+                    && clicked.Get("clickPoint").Get("x").AsNumber() > 0,
+                    clicked != null ? clicked.Preview(200) : "<null>");
+                Check("the editor sends ui.clickelement with target and mode",
+                    fake.LastCommand == "ui.clickelement"
+                    && fake.LastRequest.Contains("\"target\":\"Play\"")
+                    && fake.LastRequest.Contains("\"mode\":\"direct\""),
+                    fake.LastCommand + " / " + Short(fake.LastRequest));
+                Check("clicking also asks for the landing marker (so you can see where it clicked)",
+                    fake.LastRequest.Contains("\"mark\":true"),
+                    Short(fake.LastRequest));
+            }
+
+            // ---- 停止：编辑器把游戏的回应原样带回来（用户要的"重置"入口）
+            using (var fake = new FakeGameChannel(
+                "{\"ok\":true,\"result\":{\"stopped\":true,\"reason\":null,\"host\":\"menu\","
+                + "\"mode\":\"idle\",\"hasTree\":false}}"))
+            {
+                File.WriteAllText(runtimePath,
+                    "{\"port\":" + fake.Port + ",\"token\":\"selftest\"}", new UTF8Encoding(false));
+                PackageValue stopped = Parse(PostJson(client, "/api/game/tree/stop", "{}"));
+                Check("stopping the tree relays the game's answer (stopped/mode/hasTree)",
+                    stopped != null && stopped.Get("ok").AsBool(false)
+                    && stopped.Get("stopped").AsBool(false)
+                    && stopped.Get("mode").AsString(null) == "idle"
+                    && stopped.Get("hasTree").AsBool(true) == false,
+                    stopped != null ? stopped.Preview(200) : "<null>");
+                Check("the editor sends ai.tree.stop",
+                    fake.LastCommand == "ai.tree.stop", fake.LastCommand);
+            }
+
+            try
+            {
+                File.Delete(runtimePath);
+            }
+            catch (Exception)
+            {
+            }
+        }
+
+        /// <summary>
+        /// 一个"只说一句话"的假游戏通道：监听回环端口，收到请求就回一段固定 JSON。
+        /// 用来测那些**只有真游戏才会给出的错误码**（`not_ready` / `unknown_command` …）——
+        /// 这些分支恰恰是"报错文案把用户指错方向"的重灾区（实测踩过）。
+        /// </summary>
+        private sealed class FakeGameChannel : IDisposable
+        {
+            private readonly TcpListener m_listener;
+            private readonly string m_response;
+            private readonly Thread m_thread;
+            private volatile bool m_stop;
+
+            public FakeGameChannel(string responseJson)
+            {
+                m_response = responseJson;
+                m_listener = new TcpListener(IPAddress.Loopback, 0);
+                m_listener.Start();
+                Port = ((IPEndPoint)m_listener.LocalEndpoint).Port;
+                m_thread = new Thread(Loop) { IsBackground = true };
+                m_thread.Start();
+            }
+
+            public int Port { get; }
+
+            public string LastRequest { get; private set; } = string.Empty;
+
+            public string LastCommand { get; private set; } = string.Empty;
+
+            private void Loop()
+            {
+                while (!m_stop)
+                {
+                    try
+                    {
+                        using (TcpClient client = m_listener.AcceptTcpClient())
+                        using (NetworkStream stream = client.GetStream())
+                        {
+                            var buffer = new List<byte>(256);
+                            var one = new byte[1];
+                            while (stream.Read(one, 0, 1) > 0 && one[0] != (byte)'\n')
+                                buffer.Add(one[0]);
+                            LastRequest = Encoding.UTF8.GetString(buffer.ToArray());
+                            LastCommand = ExtractCommand(LastRequest);
+                            byte[] payload = Encoding.UTF8.GetBytes(m_response + "\n");
+                            stream.Write(payload, 0, payload.Length);
+                            stream.Flush();
+                        }
+                    }
+                    catch (Exception)
+                    {
+                        if (m_stop)
+                            return;
+                    }
+                }
+            }
+
+            private static string ExtractCommand(string request)
+            {
+                int at = request.IndexOf("\"command\"", StringComparison.Ordinal);
+                if (at < 0)
+                    return string.Empty;
+                int first = request.IndexOf('"', request.IndexOf(':', at) + 1);
+                int second = first < 0 ? -1 : request.IndexOf('"', first + 1);
+                return first < 0 || second < 0 ? string.Empty
+                    : request.Substring(first + 1, second - first - 1);
+            }
+
+            public void Dispose()
+            {
+                m_stop = true;
+                try
+                {
+                    m_listener.Stop();
+                }
+                catch (Exception)
+                {
+                }
+            }
+        }
+
+        /// <summary>拿一个"刚刚还开着、现在已经关掉"的端口：连它必然被拒绝，又不会撞上别人。</summary>
+        private static int FreePort()
+        {
+            var listener = new TcpListener(IPAddress.Loopback, 0);
+            listener.Start();
+            int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            listener.Stop();
+            return port;
+        }
+
+        /// <summary>
         /// `GET /api/subtree`：把 `Task.Subtree` 引用的包**按游戏内同一套规则**解析出来。
         /// 出厂示例 `demo.greet` 里有 `Task.Subtree(sub_look)` 引用 `common.scbtpak#greet.look`，
         /// 正好当靶子：解析出来的必须就是那个包的入口节点，而不是"随便读了个包"。
         /// </summary>
         private static void Subtree(HttpClient client, string instanceRoot)
         {
-            string demoPath = Path.Combine(instanceRoot, "Mods", "PlayerAiMod", "PlayerAi",
-                "BehaviorTrees", PackageTemplates.DemoFile);
+            string demoPath = Path.Combine(instanceRoot, "PlayerAi", "BehaviorTrees",
+                PackageTemplates.DemoFile);
 
             PackageValue read = Parse(Get(client, "/api/package?path="
                 + Uri.EscapeDataString(demoPath)));
             string subtreeId = FindSubtreeNodeId(read != null ? read.Get("tree") : null);
             Check("the factory demo tree contains a Task.Subtree node", subtreeId != null,
-                subtreeId ?? "<none>");
+                subtreeId ?? ("demoPath=" + demoPath + " read="
+                    + (read != null ? read.Preview(120) : "<null>")));
 
             if (subtreeId == null)
                 return;

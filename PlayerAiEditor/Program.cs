@@ -113,12 +113,15 @@ namespace PlayerAiMod.Editor
 
         private static string DefaultInstanceRoot()        {
             // 实例根 = "有 Mods/ 的那个目录"。找不到就让编辑器读不到任何包，
-            // 所以这里多试几个起点，并且**最后一招是看兄弟目录**。
+            // 所以这里多试几个起点，且**允许往上走若干级**，最后还有"兄弟目录"这一招。
             //
             // 起点为什么有三个：单文件发布下 `AppContext.BaseDirectory` 有可能是解包临时目录
             // （`%TEMP%\.net\PlayerAiEditor\...`），光信它会一路找错 —— 实测就是这样：
             // 从 publish/editor 启动，实例根被判成 publish/editor（没有 Mods/），包列表是空的。
             // `Environment.ProcessPath` 才是那个真正的 exe。
+            //
+            // 为什么要往上走：编辑器现在装在**实例根里面**（`<实例根>/PlayerAi/editor/`），
+            // 于是 exe 目录、父目录都没有 Mods/，得走到祖父目录（`<实例根>`）才是游戏实例。
             var starts = new List<string>();
             string current = Directory.GetCurrentDirectory();
             try
@@ -134,26 +137,30 @@ namespace PlayerAiMod.Editor
             starts.Add(AppContext.BaseDirectory);
             starts.Add(current);
 
-            // ① 起点自己就带 Mods/（exe 直接放在游戏目录里）
-            foreach (string start in starts)
+            // ① 沿"起点 → 父 → 祖父 …"往上找游戏实例，按"离起点近"优先：
+            //    第 0 轮只认**同时有 Mods/ 与 PlayerAi/** 的目录（最像游戏实例）；
+            //    第 1 轮放宽成"有 Mods/ 就行"（全新实例可能还没跑过 Mod、没有 PlayerAi/）。
+            for (int pass = 0; pass < 2; pass++)
             {
-                if (string.IsNullOrEmpty(start)) continue;
-                if (Directory.Exists(Path.Combine(start, "Mods")))
-                    return start;
+                bool needPlayerAi = pass == 0;
+                for (int level = 0; level < 6; level++)
+                {
+                    foreach (string start in starts)
+                    {
+                        string dir = AncestorDirectory(start, level);
+                        if (dir == null) continue;
+                        if (!Directory.Exists(Path.Combine(dir, "Mods"))) continue;
+                        if (needPlayerAi && !Directory.Exists(Path.Combine(dir, "PlayerAi")))
+                            continue;
+                        return dir;
+                    }
+                }
             }
 
-            // ② 起点的父目录带 Mods/（exe 放在游戏目录的子目录里）
-            foreach (string start in starts)
-            {
-                if (string.IsNullOrEmpty(start)) continue;
-                DirectoryInfo parent = Directory.GetParent(start);
-                if (parent != null && Directory.Exists(Path.Combine(parent.FullName, "Mods")))
-                    return parent.FullName;
-            }
-
-            // ③ 兄弟目录带 Mods/：本项目标准布局 publish/editor/PlayerAiEditor.exe
-            //    + publish/Windows/<游戏实例> 就是这种。只在"恰好一个兄弟目录带 Mods/"
-            //    时才采用，免得瞎猜（有歧义就退回当前目录，并在启动时吼一声警告）。
+            // ② 兄弟目录带 Mods/：编辑器与游戏实例并排放在 publish/ 下时就是这种
+            //    （publish/editor/PlayerAiEditor.exe + publish/Windows/<游戏实例>）。
+            //    只在"恰好一个兄弟目录带 Mods/"时才采用，免得瞎猜
+            //    （有歧义就退回当前目录，并在启动时吼一声警告）。
             foreach (string start in starts)
             {
                 if (string.IsNullOrEmpty(start)) continue;
@@ -172,6 +179,28 @@ namespace PlayerAiMod.Editor
             }
 
             return current;
+        }
+
+        /// <summary>往上走 <paramref name="levels"/> 级的祖先目录（0 = 自己；走不到返回 null）。</summary>
+        private static string AncestorDirectory(string start, int levels)
+        {
+            if (string.IsNullOrEmpty(start))
+                return null;
+            try
+            {
+                DirectoryInfo dir = new DirectoryInfo(start);
+                for (int i = 0; i < levels; i++)
+                {
+                    if (dir.Parent == null)
+                        return null;
+                    dir = dir.Parent;
+                }
+                return dir.FullName;
+            }
+            catch (Exception)
+            {
+                return null;
+            }
         }
 
         private static void TryOpenBrowser(string url)

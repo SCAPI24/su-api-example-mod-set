@@ -94,6 +94,7 @@ namespace PlayerAiMod
             try { CaseRegistry(result); } catch (Exception e) { result.Check("case:Registry", false, e.Message); }
             try { CaseSnapshot(result); } catch (Exception e) { result.Check("case:Snapshot", false, e.Message); }
             try { CaseRootMigration(result); } catch (Exception e) { result.Check("case:Root migration", false, e.Message); }
+            try { LoopOnce(result); } catch (Exception e) { result.Check("case:Root loop flag", false, e.Message); }
 
             return result;
         }
@@ -673,6 +674,55 @@ namespace PlayerAiMod
 
             result.Check("runtime counts migrations", runtime.MigrationCount >= 4
                 && runtime.LastMigration != null, "count=" + runtime.MigrationCount);
+        }
+
+        /// <summary>
+        /// `Root.loop=false` = 一次性树：跑完整棵树就把自己停掉，**不再从头再来**。
+        ///
+        /// 为什么必须有：UE 的语义是"完成 → 重开"，但"进游戏"这种菜单宏会因此每隔几秒
+        /// 再点一次 Play（实测：树在菜单里循环点了十几轮）。
+        /// </summary>
+        private static void LoopOnce(BtSelfTest.TestResult result)
+        {
+            // ① 默认（loop=true）：完成之后继续跑下一轮
+            {
+                var actuator = new BtTestActuator();
+                var runtime = new BtRuntime(new AiBlackboard(), new BtTestSensor(), actuator);
+                var root = new BtRootNode { Id = "root" };
+                root.AddChild(new BtLogTask { Id = "say", Message = "loop" });
+                runtime.SetRoot(root, "loop.once.default");
+                runtime.Start();
+
+                for (int i = 0; i < 6; i++)
+                    runtime.Tick(Dt);
+
+                result.Check("a looping tree keeps running after it completes (UE semantics)",
+                    runtime.IsRunning && runtime.CompletedLoops >= 1,
+                    "running=" + runtime.IsRunning + " loops=" + runtime.CompletedLoops);
+            }
+
+            // ② loop=false：完成即停
+            {
+                var actuator = new BtTestActuator();
+                var runtime = new BtRuntime(new AiBlackboard(), new BtTestSensor(), actuator);
+                var root = new BtRootNode { Id = "root", Loop = false };
+                root.AddChild(new BtLogTask { Id = "say", Message = "once" });
+                runtime.SetRoot(root, "loop.once.disabled");
+                runtime.Start();
+
+                runtime.Tick(Dt);
+                result.Check("a one-shot tree stops itself the moment it completes",
+                    !runtime.IsRunning && runtime.CompletedLoops == 1
+                    && runtime.LastResult == BtResult.Succeeded,
+                    "running=" + runtime.IsRunning + " loops=" + runtime.CompletedLoops
+                    + " last=" + runtime.LastResult);
+
+                for (int i = 0; i < 4; i++)
+                    runtime.Tick(Dt);
+                result.Check("a stopped one-shot tree does not run another round",
+                    runtime.CompletedLoops == 1 && runtime.TickCount == 1,
+                    "loops=" + runtime.CompletedLoops + " ticks=" + runtime.TickCount);
+            }
         }
 
     }

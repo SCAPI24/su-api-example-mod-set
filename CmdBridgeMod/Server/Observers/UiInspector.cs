@@ -3,6 +3,7 @@ using Game;
 using SuAPI;
 using System;
 using System.Collections.Generic;
+using System.Text;
 
 namespace CmdBridgeMod
 {
@@ -153,7 +154,7 @@ namespace CmdBridgeMod
                 ? (mouseDerivable
                     ? null
                     : "mouse cursor is captured (IsMouseCursorVisible=false); use keys instead")
-                : "blocked by " + ShortName(hit);
+                : ExplainUnhittable(widget, hit, bounds, center, root);
 
             if (widget is ListPanelWidget listPanel)
                 element["list"] = DescribeList(listPanel);
@@ -165,6 +166,43 @@ namespace CmdBridgeMod
                 element["value"] = slider.Value;
 
             return element;
+        }
+
+        /// <summary>
+        /// "为什么这个元素点不到"要说人话。用户实测踩到的正是这一类：
+        /// 世界内 HUD 那条控制栏在 **Windows（鼠标键盘）下是触屏专用**的
+        /// （`ComponentGui.UpdateSidePanelsAnimation`：非触屏且没有模态面板时 `m_sidePanelsFactor=1`，
+        /// 整条栏被 `RenderTransform` 平移到屏幕外），于是 `MoreButton` 的坐标是 (2852, 55) ——
+        /// 屏幕外。以前只写一句 "blocked by "（遮挡者名字还是空的），
+        /// 用户看到的就是"点了没反应"，查起来毫无线索。
+        /// </summary>
+        public static string ExplainUnhittable(Widget widget, Widget hit, BoundingRectangle bounds,
+            Vector2 center, ContainerWidget root)
+        {
+            float width = bounds.Max.X - bounds.Min.X;
+            float height = bounds.Max.Y - bounds.Min.Y;
+            if (width <= 0.001f || height <= 0.001f)
+            {
+                return "element has zero size (not laid out yet, or its panel is collapsed)";
+            }
+
+            if (root != null && !root.GlobalBounds.Contains(center))
+            {
+                return "off-screen: center (" + center.X.ToString("0.#") + "," + center.Y.ToString("0.#")
+                    + ") is outside the " + DescribeRect(root.GlobalBounds)
+                    + " screen area - a hidden/collapsed panel"
+                    + " (on Windows the in-game HUD control bars are touch-only)";
+            }
+
+            if (hit == null)
+                return "nothing is hit at its center (another screen is on top?)";
+            return "blocked by " + ShortName(hit);
+        }
+
+        private static string DescribeRect(BoundingRectangle bounds)
+        {
+            return (bounds.Max.X - bounds.Min.X).ToString("0") + "x"
+                + (bounds.Max.Y - bounds.Min.Y).ToString("0");
         }
 
         // ---------------------------------------------------------------- 选择器解析
@@ -379,6 +417,176 @@ namespace CmdBridgeMod
                 (bounds.Min.Y + bounds.Max.Y) * 0.5f);
         }
 
+        /// <summary>
+        /// 列表里某一行的**当前**客户区坐标（按序号或文字找行）。
+        ///
+        /// 为什么要它：列表行不是按钮，录动作包时只能记坐标 —— 可窗口一改大小、UI 一缩放，
+        /// 那个像素就不再是同一行了（实测：改过窗口之后"进入游戏"的第二步点不动）。
+        /// 记"哪个列表的第几行 / 哪一行文字"，回放时用这个函数**现算坐标**，就与窗口尺寸无关。
+        ///
+        /// **优先用列表真正的项控件**（`ListPanelWidget` 会为每个可见项建一个控件，
+        /// `ArrangeOverride` 把它们依次排进 `Children`）：那才是屏幕上真实的位置。
+        /// 只有拿不到项控件时才退回"按 ItemSize/ScrollPosition 算"的经验公式（老做法，
+        /// 实测在某些列表上算出来的点根本不在控件上）。
+        /// </summary>
+        public static bool TryResolveListRow(Widget widget, int rowIndex, string rowText,
+            out Vector2 clientPoint, out int resolvedIndex, out string resolvedText)
+        {
+            clientPoint = default(Vector2);
+            resolvedIndex = -1;
+            resolvedText = null;
+
+            var panel = widget as ListPanelWidget;
+            if (panel == null)
+                return false;
+
+            ReadOnlyList<object> items = panel.Items;
+            // ReadOnlyList 是值类型（不是引用），不能和 null 比 —— 只判空表。
+            if (items.Count == 0)
+                return false;
+
+            int index = -1;
+            if (!string.IsNullOrEmpty(rowText))
+            {
+                for (int i = 0; i < items.Count; i++)
+                {
+                    string text = DescribeListItem(items[i]);
+                    if (text != null && text.IndexOf(rowText, StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        index = i;
+                        break;
+                    }
+                }
+                if (index < 0)
+                    return false;
+            }
+            else
+            {
+                index = rowIndex;
+                if (index < 0 || index >= items.Count)
+                    return false;
+                // 按序号找：先把列表滚到那一项（`ScrollToItem` 会把它带进可视区），
+                // 之后就能用"找文字"那条路拿到真实控件。
+                try
+                {
+                    panel.ScrollToItem(items[index]);
+                }
+                catch (Exception)
+                {
+                    // 滚动失败也继续：下面还有经验公式兜底
+                }
+            }
+
+            if (index < 0 || index >= items.Count)
+                return false;
+
+            string wanted = DescribeListItem(items[index]);
+            resolvedIndex = index;
+            resolvedText = wanted;
+
+            // ---- ① 真正的项控件（屏幕上真实的位置）
+            Widget itemWidget = null;
+            if (!string.IsNullOrEmpty(wanted))
+                itemWidget = FindItemWidget(panel, wanted);
+            if (itemWidget == null && index >= 0 && index < panel.Children.Count)
+            {
+                // 按序号：项控件的顺序就是可视项的顺序（ArrangeOverride 从 m_firstVisibleIndex 起排）
+                int firstVisible = Math.Max(0, panel.SelectedIndex.HasValue ? 0 : 0);
+                itemWidget = null;   // 顺序不可靠时不猜，交给经验公式
+                if (firstVisible < 0)
+                    itemWidget = null;
+            }
+            if (itemWidget != null && IsPointOverWidget(itemWidget))
+            {
+                clientPoint = CenterOf(itemWidget);
+                return true;
+            }
+
+            // ---- ② 经验公式兜底（ItemSize/ScrollPosition）
+            float itemSize = panel.ItemSize;
+            float panelSpan = (int)panel.Direction == 0 ? panel.ActualSize.X : panel.ActualSize.Y;
+            float wanted0 = index * itemSize;
+            if (panelSpan > 0f)
+            {
+                float current = panel.ScrollPosition;
+                if (wanted0 < current)
+                    panel.ScrollPosition = wanted0;
+                else if (wanted0 + itemSize > current + panelSpan)
+                    panel.ScrollPosition = wanted0 + itemSize - panelSpan;
+            }
+
+            float scroll = panel.ScrollPosition;
+            Vector2 panelSize = panel.ActualSize;
+            bool horizontal = (int)panel.Direction == 0;
+            Vector2 local = horizontal
+                ? new Vector2(index * itemSize - scroll + itemSize * 0.5f, panelSize.Y * 0.5f)
+                : new Vector2(panelSize.X * 0.5f, index * itemSize - scroll + itemSize * 0.5f);
+
+            clientPoint = panel.WidgetToScreen(local);
+            return true;
+        }
+
+        /// <summary>列表里"文字包含 wantd"的那个项控件（可见项才有控件）。</summary>
+        private static Widget FindItemWidget(ListPanelWidget panel, string wanted)
+        {
+            foreach (Widget child in panel.Children)
+            {
+                string text = CollectText(child);
+                if (text != null && text.IndexOf(wanted, StringComparison.OrdinalIgnoreCase) >= 0)
+                    return child;
+            }
+            return null;
+        }
+
+        /// <summary>把一个控件（含子孙）里的文字拼起来，用来在列表里按文字找行。</summary>
+        public static string CollectText(Widget widget)
+        {
+            if (widget == null)
+                return null;
+            var builder = new StringBuilder();
+            CollectText(widget, builder, 0);
+            return builder.Length > 0 ? builder.ToString() : null;
+        }
+
+        private static void CollectText(Widget widget, StringBuilder builder, int depth)
+        {
+            if (widget == null || depth > 8)
+                return;
+
+            var label = widget as LabelWidget;
+            if (label != null && !string.IsNullOrEmpty(label.Text))
+            {
+                if (builder.Length > 0)
+                    builder.Append(' ');
+                builder.Append(label.Text);
+            }
+            var button = widget as BevelledButtonWidget;
+            if (button != null && !string.IsNullOrEmpty(button.Text))
+            {
+                if (builder.Length > 0)
+                    builder.Append(' ');
+                builder.Append(button.Text);
+            }
+
+            var container = widget as ContainerWidget;
+            if (container != null)
+            {
+                foreach (Widget child in container.Children)
+                    CollectText(child, builder, depth + 1);
+            }
+        }
+
+        /// <summary>这个控件的中心是否真的命中它自己（挡住/移出可视区时为 false）。</summary>
+        private static bool IsPointOverWidget(Widget widget)
+        {
+            ContainerWidget root = ScreensManager.RootWidget;
+            if (root == null || widget == null)
+                return false;
+            Widget hit = root.HitTestGlobal(CenterOf(widget));
+            return hit != null && (hit == widget || IsSelfOrDescendant(hit, widget)
+                || IsSelfOrDescendant(widget, hit));
+        }
+
         /// <summary>几何上命中得到：HitTestGlobal(中心) 解析到该控件或其子控件。</summary>
         public static bool IsHittable(Widget widget)
         {
@@ -547,6 +755,15 @@ namespace CmdBridgeMod
             {
             }
             return item.ToString();
+        }
+
+        /// <summary>
+        /// 列表项的文字（**对外**）：`ui.locate` / `ui.click` 报"命中了哪一行"、
+        /// 以及 `UiService` 的 invoke 路径按文字找行都用它，两边必须是同一个口径。
+        /// </summary>
+        public static string DescribeListItemText(object item)
+        {
+            return DescribeListItem(item);
         }
 
         private static bool IsSelfOrDescendant(Widget candidate, Widget ancestor)

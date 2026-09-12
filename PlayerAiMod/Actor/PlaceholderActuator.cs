@@ -90,7 +90,12 @@ namespace PlayerAiMod
 
         public bool UiClick(string selectorOrPoint)
         {
-            Record("UiClick(" + selectorOrPoint + ")");
+            return UiClick(selectorOrPoint, "direct");
+        }
+
+        public bool UiClick(string selectorOrPoint, string mode)
+        {
+            Record("UiClick(" + selectorOrPoint + ", " + mode + ")");
             return true;
         }
 

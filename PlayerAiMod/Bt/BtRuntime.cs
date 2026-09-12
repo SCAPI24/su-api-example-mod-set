@@ -190,6 +190,13 @@ namespace PlayerAiMod
             // 不清的话，一次 tick 异常会让角色永远停在"故障"模式，连热重载都救不回来。
             LastError = null;
 
+            // **没有迁移** = 这是一次"从头开始"（`ai.tree.stop` 之后再 switch、或装载新树）：
+            // 运行计数（tick / 时间 / 循环）也要归零，否则编辑器上显示的还是上一轮的数字，
+            // 用户会以为"没重置"（实测就是这么发现的：停止后重播，ticks 还是 6）。
+            // 热重载走的是 migrate=true 那条路，进度照旧保留。
+            if (!report.Migrated)
+                ResetRunState();
+
             LastMigration = report;
             MigrationCount++;
             return report;
@@ -310,11 +317,20 @@ namespace PlayerAiMod
                 LastResult = result;
                 LastNodesVisited = m_context.NodesVisited;
 
-                // 3) 跑完整棵树 → 重新开始（UE 行为：行为树循环执行）
+                // 3) 跑完整棵树 → 重新开始（UE 行为：行为树循环执行）。
+                //    例外：Root 的 `loop=false`（一次性树，例如"进游戏"这种菜单宏）——
+                //    完成后直接把树停掉，而不是每隔几秒再做一遍同样的事。
                 if (result != BtResult.InProgress)
                 {
-                    Root.ResetSubtreeState();
                     CompletedLoops++;
+                    BtRootNode root = Root as BtRootNode;
+                    if (root != null && !root.Loop)
+                    {
+                        Root.ResetSubtreeState();
+                        IsRunning = false;
+                        return;
+                    }
+                    Root.ResetSubtreeState();
                 }
             }
             catch (Exception exception)

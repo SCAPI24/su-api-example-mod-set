@@ -405,6 +405,13 @@ namespace PlayerAiMod
         {
             switch (node.NodeType)
             {
+                case "Root":
+                    // `loop`（默认 true）：跑完整棵树之后要不要从头再来。
+                    // UE 的语义是循环执行（BtRuntime.Tick 里就是"完成 → 重开"），
+                    // 但"进游戏"这种菜单宏必须能**只做一次** —— 否则它会每隔几秒再点一次 Play。
+                    ((BtRootNode)node).Loop = reader.Bool("loop", true);
+                    break;
+
                 case "Task.Wait":
                     ((BtWaitTask)node).Seconds = NonNegative(reader, "seconds", 1f, where);
                     break;
@@ -481,6 +488,27 @@ namespace PlayerAiMod
                         task.Repeat = 0;
                     }
                     task.AbortOnFail = reader.Bool("abortOnFail", true);
+                    break;
+                }
+
+                case "Task.UiClick":
+                {
+                    var task = (BtUiClickTask)node;
+                    task.Target = reader.Str("target", null);
+                    if (string.IsNullOrEmpty(task.Target))
+                    {
+                        reader.Report.Error(PackageCodes.PropertyValue, where + ".properties.target",
+                            "Task.UiClick needs a target (control name/path, or list:<list>@<text>)");
+                    }
+                    task.Mode = reader.Enum("mode", "direct", BtSchema.UiClickModes);
+                    task.WaitSeconds = NonNegative(reader, "waitSeconds", 3f, where);
+                    task.Repeat = reader.Int("repeat", 1);
+                    if (task.Repeat < 1)
+                    {
+                        reader.Report.Error(PackageCodes.PropertyValue, where + ".properties.repeat",
+                            "repeat must be >= 1, found " + task.Repeat);
+                        task.Repeat = 1;
+                    }
                     break;
                 }
             }

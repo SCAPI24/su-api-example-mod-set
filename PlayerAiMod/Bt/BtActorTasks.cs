@@ -475,4 +475,108 @@ namespace PlayerAiMod
             return base.ToString() + " [" + list + " mode=" + Mode + " repeat=" + Repeat + "]";
         }
     }
+
+    /// <summary>
+    /// `Task.UiClick`：按**语义目标**点一个 UI 元素。
+    ///
+    /// 用户要求（原话）："把相应的方法做成 CmdBridgeMod 能提供的服务，在行为树编辑器中，
+    /// 要能够使用来获取坐标或点击对象。避免硬编码由于分辨率变化或窗口尺寸变化导致无法使用"。
+    /// 所以这里**不存坐标**：只写目标，点在哪个像素由 CmdBridge 的 UI 服务在**点击那一刻**现算。
+    ///
+    /// 目标写法（`target`）：
+    ///   · `Play` / `Content` —— 控件名或文本（当前屏幕里唯一匹配才行，歧义会如实报错）
+    ///   · `[MainMenuScreen#0]/…/Play` —— 完整路径（最精确）
+    ///   · `list:WorldsList@Rebritish` —— 列表里文字含 `Rebritish` 的那一行
+    ///   · `list:WorldsList#0` —— 列表第 0 行
+    ///
+    /// 点法（`mode`）：
+    ///   · `direct`（默认）：单帧合成"按下→抬起"，引擎自己派生 `Tap`+`Click`，
+    ///     控件自己的逻辑（`IsClicked`、列表选中、点击音）照常跑；
+    ///   · `input`：多帧软光标会话；
+    ///   · `invoke`：直接触发控件自己的"按下事件"（能触发才有效；**绕过输入层**，明确要这么用时才选）。
+    ///
+    /// `waitSeconds`（默认 3）：目标现在还不存在时（屏幕切场动画中间、列表还在填）**等它就绪再点**，
+    /// 等不到就 Failed —— 这正是"回放里选世界那一步悄悄丢掉"的根因对策。
+    /// </summary>
+    public sealed class BtUiClickTask : BtTaskNode
+    {
+        /// <summary>语义目标（必填）。</summary>
+        public string Target { get; set; }
+
+        /// <summary>`direct` / `input` / `invoke`。</summary>
+        public string Mode { get; set; } = "direct";
+
+        /// <summary>目标还没出现时最多等多久（秒）；0 = 不等待，立刻按"点不到"处理。</summary>
+        public float WaitSeconds { get; set; } = 3f;
+
+        /// <summary>连点几次（同一个目标）。</summary>
+        public int Repeat { get; set; } = 1;
+
+        private int m_done;
+        private float m_nextWarnTime;
+
+        public override string NodeType
+        {
+            get { return "Task.UiClick"; }
+        }
+
+        public override bool IsLatent
+        {
+            get { return true; }
+        }
+
+        protected override BtResult OnExecute(BtContext context)
+        {
+            m_done = 0;
+            m_nextWarnTime = 0f;
+            if (string.IsNullOrEmpty(Target))
+            {
+                context.Warn("UiClick: no target is configured -> Failed");
+                return BtResult.Failed;
+            }
+            return Step(context);
+        }
+
+        protected override BtResult OnTick(BtContext context)
+        {
+            return Step(context);
+        }
+
+        private BtResult Step(BtContext context)
+        {
+            if (context.Actuators == null)
+            {
+                context.Warn("UiClick: no actuator (CmdBridgeMod is not loaded?) -> Failed");
+                return BtResult.Failed;
+            }
+
+            if (context.Actuators.UiClick(Target, string.IsNullOrEmpty(Mode) ? "direct" : Mode))
+            {
+                m_done++;
+                context.Log("UiClick: clicked '" + Target + "' (" + m_done + "/"
+                    + Math.Max(1, Repeat) + ")");
+                return m_done >= Math.Max(1, Repeat) ? BtResult.Succeeded : BtResult.InProgress;
+            }
+
+            if (ActiveTime >= WaitSeconds)
+            {
+                context.Warn("UiClick: '" + Target + "' never became clickable within "
+                    + WaitSeconds.ToString("0.0") + "s -> Failed (没有被假装成点过)");
+                return BtResult.Failed;
+            }
+
+            if (ActiveTime >= m_nextWarnTime)
+            {
+                m_nextWarnTime = ActiveTime + 1f;
+                context.Log("UiClick: '" + Target + "' not clickable yet, waiting…");
+            }
+            return BtResult.InProgress;
+        }
+
+        public override string ToString()
+        {
+            return base.ToString() + " [" + (Target ?? "<none>") + " mode=" + Mode
+                + " wait=" + WaitSeconds.ToString("0.0") + "s repeat=" + Repeat + "]";
+        }
+    }
 }

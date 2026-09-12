@@ -41,6 +41,8 @@
   --live-bg: #1c3f2a;
   --live-strong-bg: #1f5133;
   --live-strong-fg: #b9f0cd;
+  --live-accent: #35d07f;
+  --live-glow: rgba(53, 208, 127, .35);
   --issue-error-bg: #3a2020;
   --issue-warn-bg: #38301b;
   --issue-info-bg: #1f2c3a;
@@ -104,6 +106,16 @@ body {
 .brand span { color: var(--dim); font-weight: 400; }
 .group { display: flex; align-items: center; gap: 6px; }
 .group label { color: var(--dim); }
+/* 运行状态徽标可能很长（"跑的是 X（编辑器打开的是 Y）"）：**掐掉多余的字**，
+   否则它会把工具条挤成两行、把画布高度吃掉（实测窄窗口下画布从 141px 掉到 139px）。 */
+#treeRunBadge {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-block;
+  vertical-align: middle;
+}
 button {
   background: var(--pane2);
   color: var(--fg);
@@ -259,9 +271,11 @@ main {
 .issue-flag.error { background: var(--err-bg); color: var(--err-fg); }
 .issue-flag.warning { background: var(--warn-bg); color: var(--warn-fg); }
 
-/* 实时监视：活动路径高亮 + 当前节点 */
-.node-row.live-path { box-shadow: inset 3px 0 0 var(--path); }
-.node-row.live-active { background: var(--live-bg); box-shadow: inset 3px 0 0 var(--ok); }
+/* 实时监视：只标**正在执行**的那一行（绿色左边条 + 淡绿底）；已执行的、路径上的不标 */
+.node-row.live-active {
+  background: var(--live-bg);
+  box-shadow: inset 3px 0 0 var(--live-accent);
+}
 .live-flag {
   font-size: 11px;
   padding: 1px 6px;
@@ -380,8 +394,22 @@ button.mini { padding: 1px 6px; font-size: 11px; border-radius: 4px; }
 .gnode.multi-selected { border-color: var(--accent-line); box-shadow: 0 0 0 1px var(--accent-line); }
 .gnode.has-error { border-color: var(--err); }
 .gnode.has-warning { border-color: var(--warn); }
-.gnode.live-path { border-color: var(--path); }
-.gnode.live-active { border-color: var(--ok); box-shadow: 0 0 0 2px rgba(74, 208, 122, .35); }
+/* **正在执行**的那个节点：亮绿色粗边框 + 外发光（唯一会亮的一种状态）。
+   已执行完的、只是"路径上"的祖先一律不亮 —— 用户明确要求过"不需要亮起已执行的"，
+   所以这里没有 .live-path 那一档（以前有一层暗色路径高亮，看着像"好几个都在跑"）。 */
+.gnode.live-active {
+  border: 2px solid var(--live-accent);
+  box-shadow: 0 0 0 3px var(--live-glow), 0 0 14px 2px var(--live-glow);
+  animation: live-pulse 1.1s ease-in-out infinite;
+}
+@keyframes live-pulse {
+  0%, 100% { box-shadow: 0 0 0 3px var(--live-glow), 0 0 10px 1px var(--live-glow); }
+  50% { box-shadow: 0 0 0 3px var(--live-glow), 0 0 18px 4px var(--live-glow); }
+}
+/* 不喜欢动效的系统设置里就别闪（无障碍） */
+@media (prefers-reduced-motion: reduce) {
+  .gnode.live-active { animation: none; }
+}
 .gnode.search-hit { outline: 1px solid var(--warn); }
 .gnode.drop-child { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(78, 161, 255, .35); }
 .gnode.drop-sibling { border-color: var(--ok); box-shadow: 0 0 0 2px rgba(74, 208, 122, .35); }
@@ -664,6 +692,15 @@ button.mini { padding: 1px 6px; font-size: 11px; border-radius: 4px; }
 .prop-row input, .prop-row select { flex: 1; min-width: 0; }
 .prop-row .req { color: var(--err); }
 .actions { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+/* UI 拾取列表：一行一个元素，点它就填进目标框（UI-1 服务） */
+.ui-pick-row { cursor: pointer; border-radius: 4px; padding: 1px 4px; }
+.ui-pick-row:hover { background: var(--panel-2, rgba(127, 127, 127, 0.12)); }
+.ui-pick-row label { flex: 0 0 auto; max-width: 62%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ui-pick-row .live-value { margin-left: auto; font-variant-numeric: tabular-nums; }
+/* 点不到的元素压暗一点：一眼看出"这个现在别选"（原因在 title 与行尾） */
+.ui-pick-blocked { opacity: 0.55; }
+#uiTargetInput { flex: 1; min-width: 160px; }
+#uiPickBox { max-height: 260px; overflow: auto; }
 .issues { margin-top: 10px; }
 .issue { padding: 3px 6px; border-radius: 4px; margin-bottom: 3px; font-size: 12px; }
 .issue.error { background: var(--issue-error-bg); color: var(--err-fg); }
@@ -711,6 +748,15 @@ pre { white-space: pre-wrap; word-break: break-all; font-size: 11.5px; }
   #topbar { gap: 6px; padding: 4px 8px; }
   #topbar button, #topbar select { padding: 2px 6px; font-size: 12px; }
   #topbar .badge { padding: 2px 6px; }
+}
+/* 再窄一档（820px 左右是三行按钮）：把行距和组内间距再压一压。
+   为什么值得为几像素专门开一条规则：画布高度是硬需求，820×560 那种窗口里
+   顶栏每多一行就是 20px，画布从 141 掉到 139 就已经"抠不出能干活的地方"了。 */
+@media (max-width: 980px) {
+  #topbar { gap: 4px; padding: 3px 6px; }
+  #topbar .group { gap: 4px; }
+  #topbar button, #topbar select { padding: 2px 5px; }
+  #treeRunBadge { max-width: 150px; }
 }
 /* 更窄：属性栏挪到画布下面整行铺开，画布拿满宽度（横向三栏已经不合理了）。
    高度按 2:1 分：画布是主工作区，属性栏有滚动条，不能让它把画布挤成一条缝
@@ -780,6 +826,8 @@ pre { white-space: pre-wrap; word-break: break-all; font-size: 11.5px; }
   --live-bg: #d9f2e3;
   --live-strong-bg: #cdeedb;
   --live-strong-fg: #17603a;
+  --live-accent: #14a35c;
+  --live-glow: rgba(20, 163, 92, .28);
   --issue-error-bg: #f7dede;
   --issue-warn-bg: #f7ecd3;
   --issue-info-bg: #dfeaf7;

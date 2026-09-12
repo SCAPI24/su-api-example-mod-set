@@ -32,7 +32,7 @@
       mousedown → mousemove → mouseup，命中判定交给真实的 elementFromPoint。
   用法：Mod/Packages/check_editor_browser.py（无头 Chrome/Edge 打开本页，读回 #report）。
 -->
-<div id="stage" style="width: 1400px; height: 900px"><iframe id="app" src="/"></iframe></div>
+<div id="stage" style="width: 1400px; height: 900px"><iframe id="app" src="/?test=1"></iframe></div>
 <pre id="report">running…</pre>
 <script>
 (function () {
@@ -1366,7 +1366,7 @@
     }
 
     // ------------------------------------------------ ⑫ 负坐标连线 + 包可写
-    note('⑫ 拖到左上角外之后连线不能被截断；Mod 分发目录里的包要能直接保存');
+    note('⑫ 拖到左上角外之后连线不能被截断；唯一包目录里的包要能直接改并保存');
     click(doc.getElementById('btnFit'));
     await settle(win, 3);
 
@@ -1451,26 +1451,27 @@
         })());
     }
 
-    // ---- Mod 分发目录里的包：能直接保存（不再只读）
+    // ---- 单一包目录：只有 PlayerAi\BehaviorTrees，列表里不该再出现"Mod 分发"这种东西
     var selectEl = doc.getElementById('packageSelect');
-    var modOption = Array.prototype.slice.call(selectEl.querySelectorAll('option'))
-      .filter(function (option) { return option.textContent.indexOf('Mod 分发') >= 0; })[0];
-    check('包列表里 Mod 分发目录的包被标出来（不再写"只读"）', !!modOption,
-      modOption ? modOption.textContent : Array.prototype.slice.call(
-        selectEl.querySelectorAll('option')).map(function (o) { return o.textContent; }).join(' | '));
-    if (modOption) {
-      selectEl.value = modOption.value;
+    var optionTexts = Array.prototype.slice.call(selectEl.querySelectorAll('option'))
+      .map(function (option) { return option.textContent; });
+    check('包列表里不再有"Mod 分发"这种第二来源的标记',
+      optionTexts.join(' | ').indexOf('Mod 分发') < 0, optionTexts.join(' | '));
+    check('包列表里的包全部来自唯一包目录 PlayerAi\\BehaviorTrees',
+      optionTexts.length > 0, optionTexts.join(' | '));
+    if (optionTexts.length > 0) {
+      selectEl.value = selectEl.querySelectorAll('option')[0].value;
       selectEl.dispatchEvent(new win.Event('change', { bubbles: true }));
       await settle(win, 5);
-      check('打开 Mod 分发目录的包时说明"可以直接改并保存"',
-        statusText(doc).indexOf('Mod 分发目录') >= 0, statusText(doc));
-      check('「保存」按钮是**可用**的（以前这种包是只读的）',
+      check('打开包时说明这是包目录（可以直接改并保存）',
+        statusText(doc).indexOf('包目录') >= 0, statusText(doc));
+      check('「保存」按钮是**可用**的（编辑器要能直接改游戏正在用的包）',
         !doc.getElementById('btnSave').disabled,
         'disabled=' + doc.getElementById('btnSave').disabled);
       click(doc.getElementById('btnSave'));
       await settle(win, 8);
-      check('直接保存回 Mod 分发目录成功，并提醒 Mod 更新会覆盖',
-        statusText(doc).indexOf('已保存') >= 0 && statusText(doc).indexOf('Mod 更新') >= 0,
+      check('直接保存回包目录成功（不再有"Mod 更新会覆盖"这类提醒）',
+        statusText(doc).indexOf('已保存') >= 0 && statusText(doc).indexOf('Mod 更新') < 0,
         statusText(doc));
     }
 
@@ -1641,6 +1642,327 @@
         doc.querySelector('.graph-content').style.left + ' / '
         + doc.querySelector('.graph-content').style.top);
     }
+
+    // ------------------------------------------------ ⑭ 启动 / 结束游戏（只读检查）
+    // 注意：这一段**绝不点「启动游戏」** —— 自检不该把游戏真拉起来。
+    // 三态徽标用"临时替换 iframe 里的 fetch"来驱动，验的是真 DOM 的文案与 disabled。
+    note('⑭ 启动游戏 / 结束游戏：按钮接线 + 三态徽标（不真的启动游戏）');
+    var launchBtn = doc.getElementById('btnLaunchGame');
+    var quitBtn = doc.getElementById('btnQuitGame');
+    check('工具条上有「启动游戏」「结束游戏」两个按钮，且带说明',
+      !!launchBtn && !!quitBtn && (launchBtn.getAttribute('title') || '').length > 0
+      && (quitBtn.getAttribute('title') || '').length > 0,
+      (launchBtn ? launchBtn.textContent : '<missing>') + ' / '
+      + (quitBtn ? quitBtn.textContent : '<missing>'));
+    var gameApi = win.PlayerAiEditorTest || {};
+    check('三态判断与启动/结束函数都挂出来了（自检能驱动）',
+      typeof gameApi.refreshGameProcess === 'function' && typeof gameApi.launchGame === 'function'
+      && typeof gameApi.quitGame === 'function' && typeof gameApi.waitForGameChannel === 'function',
+      Object.keys(gameApi).filter(function (name) {
+        return /game|Game|launch|quit/i.test(name);
+      }).join(', '));
+
+    // 真接口（只读，无副作用）：证明 /api/game/process 端到端通着
+    var processInfo = await (await win.fetch('/api/game/process')).json();
+    check('/api/game/process 真的答得出进程/通道状态（只读，不会启动游戏）',
+      processInfo && typeof processInfo.exeExists === 'boolean'
+      && typeof processInfo.running === 'boolean'
+      && typeof processInfo.channelConnected === 'boolean'
+      && typeof processInfo.exePath === 'string',
+      JSON.stringify(processInfo).slice(0, 220));
+    note('  实测：exeExists=' + processInfo.exeExists + ' running=' + processInfo.running
+      + ' channelConnected=' + processInfo.channelConnected
+      + ' runtimeStale=' + processInfo.runtimeStale);
+
+    // 三态徽标：临时替换 fetch 驱动三种状态（真 DOM、真 disabled、真文案）
+    // 先把**后台哨兵**停掉：它每 3s 会自己刷一次进程/游戏状态，和这里"换掉 fetch 再断言"的
+    // 手法会打架（实测：真游戏在跑时，哨兵用真 fetch 拿到"已连上"覆盖掉了桩数据）。
+    gameApi.stopStatusWatch();
+    var realFetch = win.fetch;
+    var badgeEl = doc.getElementById('gameBadge');
+    async function driveBadge(payload) {
+      win.fetch = function () {
+        return Promise.resolve({ ok: true, json: function () { return Promise.resolve(payload); } });
+      };
+      await gameApi.refreshGameProcess();
+      await delay(30);
+      return { text: badgeEl.textContent, cls: badgeEl.className,
+        launchDisabled: launchBtn.disabled, quitDisabled: quitBtn.disabled };
+    }
+    var notRunning = await driveBadge({ exeExists: true, running: false, pid: 0,
+      channelConnected: false, runtimeStale: true, channelError: '游戏没在跑' });
+    check('没启动：徽标写"未启动"，只有「启动游戏」可点',
+      notRunning.text.indexOf('未启动') >= 0 && !notRunning.launchDisabled
+      && notRunning.quitDisabled, notRunning.text + ' / launch.disabled=' + notRunning.launchDisabled
+      + ' quit.disabled=' + notRunning.quitDisabled);
+
+    var starting = await driveBadge({ exeExists: true, running: true, pid: 4242,
+      channelConnected: false, channelError: '连不上' });
+    check('进程起来了但通道没开：徽标写"启动中"，两个按钮都不让人乱点',
+      starting.text.indexOf('启动中') >= 0 && starting.launchDisabled
+      && !starting.quitDisabled, starting.text + ' / ' + starting.launchDisabled
+      + ' ' + starting.quitDisabled);
+
+    var connected = await driveBadge({ exeExists: true, running: true, pid: 4242,
+      channelConnected: true });
+    check('通道连上：徽标写"已连上"并且亮起来',
+      connected.text.indexOf('已连上') >= 0 && connected.cls.indexOf('live') >= 0,
+      connected.text + ' / ' + connected.cls);
+
+    var missing = await driveBadge({ exeExists: false, running: false, pid: 0,
+      channelConnected: false });
+    check('找不到游戏 exe：徽标如实说，且不给点「启动游戏」',
+      missing.text.indexOf('找不到') >= 0 && missing.launchDisabled, missing.text);
+
+    win.fetch = realFetch;
+    check('自检结束后把真 fetch 还回去了（后面别的检查还得用）',
+      win.fetch === realFetch);
+    // 恢复成真状态，免得留在"假的 bomissing 状态"上
+    await gameApi.refreshGameProcess();
+    await delay(30);
+    check('徽标回到真实状态（以「游戏：」开头）',
+      badgeEl.textContent.indexOf('游戏：') === 0, badgeEl.textContent);
+
+    // ------------------------------------------------ ⑮ 行为树播放按钮（只读检查）
+    // 同样**只驱动状态、不真发命令**：切换树会动到正在跑的游戏，自检不碰。
+    note('⑮ 播放这棵树：按钮四种语义 + 运行状态徽标（真 DOM，不发游戏命令）');
+    var runButton = doc.getElementById('btnTreeRun');
+    var runBadge = doc.getElementById('treeRunBadge');
+    check('工具条上有播放按钮与"树：…"运行状态徽标',
+      !!runButton && !!runBadge && runButton.textContent.indexOf('播放') >= 0,
+      (runButton ? runButton.textContent : '<missing>') + ' / '
+      + (runBadge ? runBadge.textContent : '<missing>'));
+    check('真接口 /api/game/status 答得出"跑的哪棵树"（只读）', await (async function () {
+      var probe = await (await win.fetch('/api/game/status')).json();
+      return probe && (probe.ok === true || typeof probe.code === 'string');
+    })(), JSON.stringify(await (await win.fetch('/api/game/status')).json()).slice(0, 200));
+
+    var realFetch2 = win.fetch;
+    async function driveTreeRun(payload) {
+      win.fetch = function () {
+        return Promise.resolve({ ok: true, json: function () { return Promise.resolve(payload); } });
+      };
+      await gameApi.refreshGameStatusQuiet();
+      await delay(30);
+      return { button: runButton.textContent, disabled: runButton.disabled,
+        badge: runBadge.textContent, badgeClass: runBadge.className, title: runButton.title };
+    }
+    var statusOf = function (options) {
+      var opts = options || {};
+      var status = { paused: !!opts.paused, mode: opts.mode || 'tree',
+        host: opts.host === null ? { name: null } : { name: 'local', enabled: true } };
+      if (opts.file) {
+        status.tree = { source: opts.file, running: opts.running !== false, ticks: opts.ticks || 42 };
+      }
+      return { ok: true, status: status };
+    };
+    // 打开一个"有文件名的包"，好让按钮能判断"跑的是不是这棵树"
+    gameApi.setTree({ id: 'demo.greet', entry: 'root', format: 'scbt', version: 1 },
+      { id: 'root', type: 'Root', children: [] }, 'X:/pkgs/demo.greet.scbtpak');
+    gameApi.state.file = 'demo.greet.scbtpak';
+
+    var sOffline = await driveTreeRun({ ok: false, code: 'game_unreachable', reason: '游戏没在跑' });
+    // 徽标要如实说"没在跑"，但按钮**不能灰**：这份状态可能是页面刚打开时（游戏还没起）留下的，
+    // 灰掉就等于"用户点不动、也没人告诉他为什么"。点它会先重新确认一次（见后面的用例）。
+    check('游戏没在跑：徽标说实话，播放按钮仍可点（点它先重新确认）',
+      sOffline.badge.indexOf('游戏没在跑') >= 0 && sOffline.disabled === false
+      && sOffline.title.indexOf('重新确认') >= 0,
+      sOffline.badge + ' / disabled=' + sOffline.disabled + ' / ' + sOffline.title);
+
+    var sNotReady = await driveTreeRun({ ok: false, code: 'game_not_ready',
+      reason: 'ai.tree.snapshot needs a controllable local player' });
+    check('通道在但没接管：徽标写「未接管」，并说明 ai enable 之后才能播',
+      sNotReady.badge.indexOf('未接管') >= 0 && sNotReady.title.indexOf('ai enable') >= 0,
+      sNotReady.badge + ' / ' + sNotReady.title);
+
+    var sRunning = await driveTreeRun(statusOf({ file: 'demo.greet.scbtpak' }));
+    check('跑的就是这棵树：按钮变「暂停」，徽标亮起并报 tick',
+      sRunning.button.indexOf('暂停') >= 0 && sRunning.badge.indexOf('运行中') >= 0
+      && sRunning.badgeClass.indexOf('live') >= 0,
+      sRunning.button + ' / ' + sRunning.badge + ' / ' + sRunning.badgeClass);
+
+    var sPaused = await driveTreeRun(statusOf({ file: 'demo.greet.scbtpak', paused: true }));
+    check('树已暂停：按钮变「继续」',
+      sPaused.button.indexOf('继续') >= 0 && sPaused.badge.indexOf('已暂停') >= 0,
+      sPaused.button + ' / ' + sPaused.badge);
+
+    var sOther = await driveTreeRun(statusOf({ file: 'common.scbtpak' }));
+    check('跑的是别的包：徽标把"跑的是谁 / 打开的是谁"都写出来',
+      sOther.badge.indexOf('common.scbtpak') >= 0 && sOther.badge.indexOf('demo.greet.scbtpak') >= 0,
+      sOther.badge);
+
+    win.fetch = realFetch2;
+    await gameApi.refreshGameStatusQuiet();
+    await delay(30);
+    check('自检结束后按钮回到真实状态（不是假的"运行中"）',
+      runBadge.textContent.indexOf('树：') === 0, runBadge.textContent);
+
+    // ---- "游戏明明开着，播放按钮却是灰的、提示游戏没在跑"（用户实测报的）
+    //
+    // 根因：树徽标/播放按钮看的是 `state.gameStatus`，而它以前只在页面加载、换包、
+    // 点播放/暂停/停止之后才刷新 —— 游戏是在**页面之外**起来的（手动双击 exe、或先开页面
+    // 再开游戏）时，缓存永远停在 `game_unreachable`。现在：① 缓存说没在跑时按钮**不灰**，
+    // 点它先重新确认；② 有低频哨兵（3s）+ 切回标签页/窗口获焦时补一次。
+    var jsonOf = function (payload) {
+      return Promise.resolve({ ok: true, json: function () { return Promise.resolve(payload); } });
+    };
+    win.fetch = function () {
+      return jsonOf({ ok: false, code: 'game_unreachable', reason: '游戏没在跑（或控制通道没开）' });
+    };
+    await gameApi.refreshGameStatusQuiet();
+    await delay(20);
+    var playBtn2 = doc.getElementById('btnTreeRun');
+    check('缓存里写着"游戏没在跑"时，播放按钮**仍然可点**（以前是灰的 → 用户点不动）',
+      playBtn2.disabled === false,
+      'disabled=' + playBtn2.disabled + ' / title=' + playBtn2.title);
+
+    var watched = [];
+    win.fetch = function (url) {
+      watched.push(String(url));
+      var path = String(url).split('?')[0];
+      if (path === '/api/game/status') {
+        return jsonOf({ ok: true, status: statusOf({ file: 'demo.greet.scbtpak' }) });
+      }
+      return jsonOf({ ok: true, file: 'demo.greet.scbtpak', nodes: 8 });
+    };
+    playBtn2.click();
+    await delay(80);
+    check('点播放会先重新确认游戏状态（不是拿旧缓存直接拒绝）',
+      watched.some(function (u) { return u.indexOf('/api/game/status') >= 0; }),
+      watched.join(' | ').slice(0, 120));
+
+    check('有一个低频"游戏状态哨兵"（游戏在页面之外起停也能跟上）',
+      typeof gameApi.statusWatchMs() === 'number' && gameApi.statusWatchMs() <= 5000,
+      'interval=' + gameApi.statusWatchMs() + 'ms');
+
+    // 切回标签页/窗口获焦时补一次（用户最典型的动作：在游戏那边点完切回来点播放）
+    watched = [];
+    win.fetch = function (url) {
+      watched.push(String(url));
+      return jsonOf({ ok: true, running: true, channelConnected: true });
+    };
+    await gameApi.pollStatusQuiet();
+    await delay(20);
+    check('哨兵一次会把"进程 + 游戏状态"都刷新（两个端点都打）',
+      watched.some(function (u) { return u.indexOf('/api/game/process') >= 0; })
+      && watched.some(function (u) { return u.indexOf('/api/game/status') >= 0; }),
+      watched.join(' | ').slice(0, 120));
+
+    win.fetch = realFetch2;
+    await gameApi.refreshGameStatusQuiet();
+
+    // ---- UI 拾取（UI-1 服务）：取真实位置 / 直接点它 / 把语义目标写进树
+    // 这一段不需要游戏：用假 fetch 驱动，验的是"前端拿到了什么、写进树的又是什么"。
+    var targetInput = doc.getElementById('uiTargetInput');
+    var modeSelect = doc.getElementById('uiClickMode');
+    var pickBox = doc.getElementById('uiPickBox');
+    check('检查器里有「UI 拾取」面板（目标框 + 点法选择）',
+      !!targetInput && !!modeSelect && !!pickBox && modeSelect.value === 'direct',
+      'mode=' + (modeSelect && modeSelect.value));
+
+    // ① 拾取：游戏没在跑时如实说，而不是空白/假装有元素
+    win.fetch = function () {
+      return Promise.resolve({ ok: true, json: function () {
+        return Promise.resolve({ ok: false, code: 'game_unreachable', reason: '游戏没在跑' });
+      } });
+    };
+    await gameApi.pickUiElements();
+    await delay(30);
+    check('游戏没在跑时拾取如实报错（不是空列表）',
+      pickBox.textContent.indexOf('游戏没在跑') >= 0, pickBox.textContent.slice(0, 60));
+
+    // ② 有元素时：每行都带**语义目标**（路径），点它就填进目标框
+    win.fetch = function (url) {
+      var body = { ok: true, screen: 'MainMenu', elements: [
+        { name: 'Play', type: 'BevelledButtonWidget', text: 'Play',
+          path: '[MainMenuScreen#0]/[StackPanelWidget#1]/[StackPanelWidget#5]/Play',
+          target: '[MainMenuScreen#0]/[StackPanelWidget#1]/[StackPanelWidget#5]/Play',
+          clientPoint: { x: 394.7, y: 459.7 }, clickable: true },
+        { name: 'MoreButton', type: 'BitmapButtonWidget',
+          path: '[GameScreen#0]/GamesWidget/[GameWidget#0]/Gui/ControlsContainer/MoreButton',
+          target: '[GameScreen#0]/GamesWidget/[GameWidget#0]/Gui/ControlsContainer/MoreButton',
+          clientPoint: { x: 2852.9, y: 55.3 }, hittable: false, clickable: false,
+          clickReason: 'off-screen: center (2852.9,55.3) is outside the 1920x1080 screen area - a hidden/collapsed panel' }
+      ] };
+      return Promise.resolve({ ok: true, json: function () { return Promise.resolve(body); } });
+    };
+    await gameApi.pickUiElements();
+    await delay(30);
+    var rows = pickBox.querySelectorAll('.ui-pick-row');
+    check('拾取结果一行一个元素（含真实坐标）',
+      rows.length === 2 && pickBox.textContent.indexOf('395,460') >= 0,
+      rows.length + ' 行 / ' + pickBox.textContent.replace(/\s+/g, ' ').slice(0, 80));
+    // 点不到的必须**说清为什么**（用户实测踩过：世界内 HUD 那条是触屏专用控件、
+    // 在 Windows 上被平移到屏幕外，点了当然没反应，而界面只给了个 ⛔）
+    check('点不到的元素在列表里写明原因（屏幕外/还没布局…）',
+      pickBox.textContent.indexOf('屏幕外') >= 0
+      && rows[1].className.indexOf('ui-pick-blocked') >= 0,
+      pickBox.textContent.replace(/\s+/g, ' ').slice(-70));
+
+    rows[0].click();
+    await delay(20);
+    check('点一个元素 → 目标框填的是**路径**（不是像素）',
+      targetInput.value.indexOf('[MainMenuScreen#0]') === 0 && targetInput.value.indexOf(',') < 0,
+      targetInput.value);
+
+    // ③ 填进树：没有 Task.UiClick 就新建一个，并把 target 写进去
+    gameApi.setTree({ id: 'demo.greet', entry: 'root', format: 'scbt', version: 1 },
+      { id: 'root', type: 'Root', children: [
+        { id: 'seq', type: 'Sequence', children: [] } ] }, 'X:/pkgs/demo.greet.scbtpak');
+    gameApi.state.selectedId = 'seq';   // 测试钩子没有暴露 selectNode，直接摆 selectedId 等价
+    await delay(20);
+    gameApi.fillUiTargetIntoTree();
+    await delay(30);
+    var madeNode = null;
+    (function walkUi(node) {
+      if (!node) return;
+      if (node.type === 'Task.UiClick') { madeNode = node; return; }
+      (node.children || []).forEach(walkUi);
+    })(gameApi.state.tree);
+    check('「填进树」新建了 Task.UiClick 并把语义目标写进属性',
+      !!madeNode && madeNode.properties && madeNode.properties.target === targetInput.value
+      && madeNode.properties.mode === 'direct',
+      madeNode ? JSON.stringify(madeNode.properties) : '<no node>');
+
+    win.fetch = realFetch2;
+
+    // ---- 停止按钮 + "只亮正在执行的那一个节点"
+    var stopBtn = doc.getElementById('btnTreeStop');
+    check('工具条上有「⏹ 停止」按钮（停止 = 卸下树，再播放就是从头开始）',
+      !!stopBtn && stopBtn.textContent.indexOf('停止') >= 0
+      && (stopBtn.getAttribute('title') || '').length > 0,
+      stopBtn ? stopBtn.textContent : '<missing>');
+    // 「停止」的可用性必须跟**真实状态**一致（自检跑的时候游戏里可能正跑着树，
+    // 也可能什么都没有 —— 断言要按实际状态推，不能假设"一定没在跑"）
+    var stopState = gameApi.treeRunState();
+    check('「停止」的可用性跟真实状态一致（没有树在跑时才是灰的）',
+      stopBtn.disabled === !(stopState.connected && (stopState.running || stopState.paused)),
+      'disabled=' + stopBtn.disabled + ' running=' + stopState.running
+      + ' paused=' + stopState.paused + ' connected=' + stopState.connected);
+
+    var chainSamples = [
+      { in: [{ id: 'root', active: true }, { id: 'seq', active: true }, { id: 'wait', active: true }],
+        want: 'wait' },
+      { in: [{ id: 'log', active: false }, { id: 'play', active: false }, { id: 'seq', active: true },
+        { id: 'wait', active: true }], want: 'wait' }
+    ];
+    check('只点亮"最深且正在执行"的那一个节点（父组合节点、已执行完的都不亮）',
+      chainSamples.every(function (sample) {
+        var got = gameApi.liveActiveChain(sample.in,
+          sample.in.map(function (entry) { return entry.id; }));
+        return got.length === 1 && got[0] === sample.want;
+      }), chainSamples.map(function (sample) {
+        return gameApi.liveActiveChain(sample.in,
+          sample.in.map(function (entry) { return entry.id; })).join('+');
+      }).join(' / '));
+
+    // 真实 DOM 上的高亮：切到节点图视图，确认画布上**最多一个** .live-active、且没有 .live-path
+    var liveActiveCount = doc.querySelectorAll('.gnode.live-active').length;
+    check('画布上同时最多只有一个"正在执行"的高亮（.live-active）',
+      liveActiveCount <= 1, liveActiveCount + ' 个');
+    check('已经不再有"路径上"那一层高亮（用户要求只亮正在执行的）',
+      doc.querySelectorAll('.gnode.live-path, .node-row.live-path').length === 0,
+      doc.querySelectorAll('.gnode.live-path, .node-row.live-path').length + ' 个');
 
     // ------------------------------------------------ ④ 缩小窗口 → 重新自适应
     note('④ 窗口/容器变小：布局与缩放要跟着重算');

@@ -378,6 +378,15 @@ namespace PlayerAiMod
     /// </summary>
     public sealed class BtRootNode : BtCompositeNode
     {
+        /// <summary>
+        /// 跑完整棵树之后要不要从头再来（默认 true = UE 的循环语义）。
+        ///
+        /// 设成 false 就是"一次性"：完成后 <see cref="BtRuntime"/> 会把树停掉
+        /// （`IsRunning=false`）。菜单宏（「进入游戏」这类"做一次就完事"的树）必须这么写 ——
+        /// 否则它会每隔几秒再点一次 Play（实测就是这么发现的一直在点菜单）。
+        /// </summary>
+        public bool Loop { get; set; } = true;
+
         public override string NodeType
         {
             get { return "Root"; }

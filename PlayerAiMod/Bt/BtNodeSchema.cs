@@ -258,5 +258,13 @@ namespace PlayerAiMod
         /// <summary>动作包播放模式（P1 实现；此处先固化拼写）。</summary>
         public static readonly string[] ActionPackageModes =
             { "Sequence", "Parallel", "RandomOne", "RaceFirstSuccess" };
+
+        /// <summary>
+        /// UI 点击点法（UI-1 服务）：
+        ///   · `direct`：单帧合成"按下→抬起"，引擎自己派生 `Tap`+`Click`（默认，最稳）；
+        ///   · `input`：多帧软光标会话（移动 → 按下 → 抬起）；
+        ///   · `invoke`：直接触发控件自己的"按下事件"（能触发才有效，绕过输入层）。
+        /// </summary>
+        public static readonly string[] UiClickModes = { "direct", "input", "invoke" };
     }
 }

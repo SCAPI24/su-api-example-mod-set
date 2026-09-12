@@ -74,15 +74,18 @@ namespace PlayerAiMod
             if (PlayerAiConfig.AutoEnableLocalPlayer && actor.IsLocalPlayer && !m_enabledOnce)
             {
                 m_enabledOnce = true;
-                actor.Enable("component:auto");
+                // 接管的是**控制器**（用户明确要求：树绑控制器不绑角色），角色只是它的输入来源。
+                PlayerAiRuntime runtime = PlayerAiRuntime.Instance;
+                if (runtime != null)
+                    runtime.EnableController("component:auto player=" + (actor.Name ?? "?"));
             }
         }
 
-        /// <summary>停用 AI：释放输入、停止状态机，但保留组件（下次 Update 还能再接管）。</summary>
+        /// <summary>停用 AI：释放输入（**不卸组件**，下次 Update 还能再接管）。</summary>
         public void Disable()
         {
             if (Actor != null)
-                Actor.Disable();
+                Actor.ReleaseInput();
         }
 
         /// <summary>彻底移除角色（从运行时注销）。</summary>
@@ -106,8 +109,8 @@ namespace PlayerAiMod
             if (PlayerAiConfig.OnlyLocalPlayer && !PlayerAiRuntime.IsLocalPlayerOf(Player))
                 return null;
 
-            var actor = new AiActor(Player, null, null,
-                owner => PlayerAiBehaviour.Create("player:" + (owner.Name ?? "?")));
+            // 角色只是"世界里的输入来源"，不再持有行为树/模式层（那些在控制器宿主上）。
+            var actor = new AiActor(Player);
             Actor = actor;
 
             PlayerAiRuntime runtime = PlayerAiRuntime.Instance;

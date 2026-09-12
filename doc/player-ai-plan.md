@@ -476,6 +476,10 @@ Mods/PlayerAiMod/PlayerAi/BehaviorTrees/   # Mod 级：只读，随 Mod 分发
 
 ### 6.2.2 本轮实测发现（都已修）
 
+> **后续（2026-09-12）**：这一段描述的"实例目录 → Mod 分发目录"两级查找链已经被取消 ——
+> 用户要求只保留 `<实例根>/PlayerAi/BehaviorTrees` 这一个包目录（见 README §9.5.20）。
+> 下面保留的是当时发现与修复的过程。
+
 **① 动作包查找链漏了 Mod 只读目录**（`ai.action.list/validate/play` 只认实例目录）。
 症状：出厂示例 `sample_walk.scatpak` 装在 `Mods/PlayerAiMod/PlayerAi/BehaviorTrees/`，
 `ai.action.play sample_walk` 一定报 `file_missing` —— "开箱可跑"是假的。

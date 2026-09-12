@@ -184,9 +184,36 @@ namespace PlayerAiMod
 
         public bool UiClick(string selectorOrPoint)
         {
+            return UiClick(selectorOrPoint, "direct");
+        }
+
+        public bool UiClick(string selectorOrPoint, string mode)
+        {
             UiClicks.Add(selectorOrPoint);
+            UiClickModes.Add(mode);
+            // 自检用：模拟引擎"如实拒绝"（元素不在/被挡住）——调用方必须重试，而不是丢掉这一步。
+            if (UiClicksToReject > 0)
+            {
+                UiClicksToReject--;
+                return false;
+            }
+            if (UiClickAlwaysFails.Contains(selectorOrPoint))
+                return false;
+            UiClickSucceeded.Add(selectorOrPoint);
             return true;
         }
+
+        /// <summary>每次点击用的是什么点法（与 <see cref="UiClicks"/> 一一对应）。</summary>
+        public readonly List<string> UiClickModes = new List<string>();
+
+        /// <summary>接下来多少次 UI 点击返回"点不到"（0 = 都成功）。</summary>
+        public int UiClicksToReject;
+
+        /// <summary>这些目标**永远**点不到（模拟"那一刻界面里就是没有它"）。</summary>
+        public readonly List<string> UiClickAlwaysFails = new List<string>();
+
+        /// <summary>真的被点的目标（按成功顺序）。</summary>
+        public readonly List<string> UiClickSucceeded = new List<string>();
 
         public void ReleaseAll()
         {
@@ -202,7 +229,7 @@ namespace PlayerAiMod
     /// <see cref="AiStateMachine"/> 绑上来验证模式推导。带上一个可选的模式机，
     /// 于是 <see cref="Mode"/> 和 <see cref="AiActor"/> 用的是同一套映射（<see cref="AiModeMap"/>）。
     /// </summary>
-    internal sealed class AiTestHost : IAiTreeHost
+    internal sealed class AiTestHost : IAiTreeHost, IPlayerInputProvider
     {
         private readonly AiBlackboard m_blackboard = new AiBlackboard();
         private readonly BtRuntime m_tree;
@@ -228,6 +255,9 @@ namespace PlayerAiMod
 
         public string HostName { get; }
 
+        /// <summary>宿主种类（假件默认当"玩家"；测无角色宿主时改成 "menu"）。</summary>
+        public string HostKind { get; set; } = "player";
+
         public bool Enabled { get; set; } = true;
 
         public bool Ready { get; set; } = true;
@@ -237,6 +267,17 @@ namespace PlayerAiMod
 
         /// <summary>是否处于全局暂停（真实实现里来自 PlayerAiRuntime）。</summary>
         public bool Paused { get; set; }
+
+        // ---------------------------------------------------------------- IPlayerInputProvider
+        //
+        // 假件顺便当"世界输入来源"用：`ControllerTreeHost.Bind(...)` 的自检要靠它验证
+        // "绑上/摘下玩家时不重跑树、输入真的换了通道"。
+
+        /// <summary>玩家名（IPlayerInputProvider）。</summary>
+        public string Name
+        {
+            get { return HostName; }
+        }
 
         public bool IsReady
         {

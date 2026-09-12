@@ -29,6 +29,7 @@ namespace CmdBridgeMod
             "obs.waitfor", "ui.elements", "ui.reachability",
             "act.look", "act.lookdelta", "act.lookat", "act.key", "act.hold", "act.chord",
             "act.mouse", "act.wheel", "act.uiclick", "act.text", "act.releaseall",
+            "ui.locate", "ui.clickelement", "ui.marker",
             "ui.session.begin", "ui.session.end", "ui.session.status",
             "ui.cursor", "ui.press", "ui.release", "ui.move", "ui.click",
             "ui.rightclick", "ui.shiftclick", "ui.drag", "ui.split",
@@ -147,16 +148,49 @@ namespace CmdBridgeMod
                     float clickY = 0f;
                     bool hasPoint = request.TryGetFloat("x", out clickX) &&
                         request.TryGetFloat("y", out clickY);
-                    return m_injector.UiClick(
+                    // 列表行：`row=3` 或 `text=世界名` —— 坐标在点击这一刻现算，
+                    // 录制端因此能记下"哪一行"而不是"哪个像素"（用户要求：改了窗口大小也别点空）。
+                    int rowIndex = request.GetInteger("row", -1);
+                    string rowText = request.GetString("text", null);
+                    // 走 CM-1 会话（一步一帧）：直注入的"按下+抬起"会落在同一帧，界面纹丝不动。
+                    return m_injector.UiClickSession(
                         request.GetString("selector", null),
-                        request.GetInteger("holdMs", 0),
-                        hasPoint, clickX, clickY);
+                        hasPoint, clickX, clickY, rowIndex, rowText,
+                        request.GetInteger("holdMs", 0));
                 }
                 case "act.text":
                     return m_injector.TypeText(request.GetString("text", string.Empty));
                 case "act.releaseall":
                 case "act.releaseAll":
                     return m_injector.ReleaseAll();
+
+                // ------------------------------------------------ UI 定位 / 点击**服务**（UI-1）
+                // 用户要求："把相应的方法做成 CmdBridgeMod 能提供的服务，在行为树编辑器中，
+                // 要能够使用来获取坐标或点击对象"——编辑器的 `/api/game/ui/*` 与行为树
+                // `Task.UiClick` 都转发到这两条命令，于是"编辑器里试一下"和"树里跑一下"
+                // 是同一份实现（不会出现"编辑器能点、回放点空"）。
+                //
+                // 目标写法（语义优先，坐标只是兜底）：
+                //   `Play` / `[MainMenuScreen#0]/…/Play` / `list:WorldsList@Rebritish` / `list:WorldsList#0`
+                //   `1010.6,64.83`（不推荐：窗口尺寸一变就点到别处）
+                case "ui.locate":
+                    return m_injector.Ui.Locate(
+                        request.GetString("target", request.GetString("selector", null)),
+                        request.GetBoolean("mark", false),
+                        request.GetFloat("markMs", UiMarker.DefaultSeconds * 1000f) / 1000f,
+                        request.GetFloat("markPx", UiMarker.DefaultDiameterPixels));
+                case "ui.clickelement":
+                    return m_injector.Ui.Click(
+                        request.GetString("target", request.GetString("selector", null)),
+                        request.GetString("mode", "direct"),
+                        request.GetInteger("holdMs", 0),
+                        request.GetBoolean("mark", false),
+                        request.GetFloat("markMs", UiMarker.DefaultSeconds * 1000f) / 1000f,
+                        request.GetFloat("markPx", UiMarker.DefaultDiameterPixels));
+                // 落点标记的自查（只读）：`drawFrames > 0` 证明引擎真的调用过它的 Draw，
+                // 而不是"命令返回了、屏幕上什么都没有"。
+                case "ui.marker":
+                    return UiMarker.Describe();
 
                 // ------------------------------------------------------ 虚拟 UI 鼠标会话（CM-1）
                 // 用引擎内的软光标做点击/拖拽：物理鼠标完全不动，也不需要窗口在前台。

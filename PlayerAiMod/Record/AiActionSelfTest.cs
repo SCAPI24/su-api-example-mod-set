@@ -540,6 +540,119 @@ namespace PlayerAiMod
             result.Check("UI events do not disturb the per-frame input channel",
                 actuator.HeldKeysSeen.Contains("W") && actuator.HeldKeys.Count == 0,
                 "held=" + actuator.HeldKeys.Count + " seen=" + actuator.HeldKeysSeen.Count);
+
+            UiClickRetry(result, root);
+        }
+
+        /// <summary>
+        /// UI 点击被引擎拒绝时必须**重试**，而且**顺序不能乱**。
+        ///
+        /// 实测来源（2026-09-12）：进游戏包里的"点世界列表"落在 Play 屏的切场动画中间，
+        /// 引擎如实回 `rejected (missing/occluded)`；上一版直接把这步丢掉 ——
+        /// 于是"选世界"没了，后面的 `Play!` 点在一个没有选中世界的界面上，
+        /// 整条链看起来就是"跑完了但什么也没发生"。这里用假执行器把那两种情况钉住：
+        ///   · 拒绝几次后会成功 → 必须重试到成功，并且**后面的点击要等它**；
+        ///   · 一直点不到 → 如实记错误、**不能假装点过**，回放本身不崩。
+        /// </summary>
+        private static void UiClickRetry(BtSelfTest.TestResult result, string root)
+        {
+            // ---- ① 拒绝 3 次后成功：后面的点击必须等它（顺序铁律）
+            ScatActionPackage package = BuildUiFixture(root, "ui_retry",
+                new[] { 0.05, 0.10 }, new[] { "Play", "list:WorldsList@Rebritish" });
+            if (package == null)
+            {
+                result.Check("ui retry fixture builds", false, "fixture missing");
+                return;
+            }
+
+            var actuator = new BtTestActuator { UiClicksToReject = 3 };
+            var player = new ScatPlayer(package, actuator);
+            player.Start();
+            int steps = 0;
+            while (player.State == ScatPlayState.Playing && steps++ < 400)
+                player.Tick(Dt);
+
+            int firstSucceeded = actuator.UiClickSucceeded.IndexOf("Play");
+            int secondAttempt = actuator.UiClicks.IndexOf("list:WorldsList@Rebritish");
+            result.Check("a rejected UI click is retried until it lands",
+                firstSucceeded == 0 && actuator.UiClicks.Count >= 4,
+                "attempts=" + actuator.UiClicks.Count + " ok=" + actuator.UiClickSucceeded.Count);
+            result.Check("a later UI click waits for the pending one (order kept)",
+                secondAttempt > firstSucceeded && secondAttempt >= 0
+                && actuator.UiClickSucceeded.Count == 2
+                && actuator.UiClickSucceeded[1] == "list:WorldsList@Rebritish",
+                "succeeded=" + string.Join(" | ", actuator.UiClickSucceeded.ToArray()));
+            result.Check("retried clicks are reported as performed (not as attempts)",
+                player.PerformedUiClicks.Count == 2, player.Describe());
+
+            // ---- ② 一直点不到：如实记错误，但绝不假装点过
+            ScatActionPackage ghost = BuildUiFixture(root, "ui_ghost",
+                new[] { 0.05 }, new[] { "Ghost" });
+            if (ghost == null)
+            {
+                result.Check("ui ghost fixture builds", false, "fixture missing");
+                return;
+            }
+
+            var ghostActuator = new BtTestActuator();
+            ghostActuator.UiClickAlwaysFails.Add("Ghost");
+            var ghostPlayer = new ScatPlayer(ghost, ghostActuator) { UiClickRetrySeconds = 0.2 };
+            ghostPlayer.Start();
+            steps = 0;
+            while (ghostPlayer.State == ScatPlayState.Playing && steps++ < 400)
+                ghostPlayer.Tick(Dt);
+
+            result.Check("a never-ready UI click is retried, then reported honestly",
+                ghostActuator.UiClicks.Count > 1 && ghostPlayer.PerformedUiClicks.Count == 0
+                && ghostPlayer.LastError != null && ghostPlayer.LastError.Contains("Ghost"),
+                "attempts=" + ghostActuator.UiClicks.Count
+                + " performed=" + ghostPlayer.PerformedUiClicks.Count
+                + " error=" + (ghostPlayer.LastError ?? "<null>"));
+        }
+
+        /// <summary>造一个只带 UI 事件的短包（回放用，不关心输入轨道）。</summary>
+        private static ScatActionPackage BuildUiFixture(string root, string id, double[] times,
+            string[] targets)
+        {
+            var manifest = new ScatManifest
+            {
+                Id = id,
+                Name = id,
+                Duration = 0.5,
+                SampleRate = 60,
+                Frames = 30,
+                Start = new RecordingStartState { WorldName = "menu", PlayerName = "none" }
+            };
+
+            var track = new ScatTrack.Track();
+            for (int i = 0; i < 30; i++)
+                track.Frames.Add(new RecordingFrame { DeltaMs = 17 });
+
+            PackageValue events = PackageValue.Object();
+            events.Set("format", PackageValue.Str("scat-events"));
+            events.Set("version", PackageValue.Number(1));
+            PackageValue list = PackageValue.Array();
+            for (int i = 0; i < targets.Length && i < times.Length; i++)
+            {
+                PackageValue entry = PackageValue.Object();
+                entry.Set("t", PackageValue.Number(times[i]));
+                entry.Set("kind", PackageValue.Str("ui.click"));
+                entry.Set("detail", PackageValue.Str(targets[i]));
+                list.Add(entry);
+            }
+            events.Set("events", list);
+
+            string path = Path.Combine(root, id + ScatManifest.Extension);
+            if (!PackageWriter.TryWriteFile(path, ScatPackage.ToBytes(manifest, track, events,
+                    ScatPackage.StartKeyframe(manifest)), out string error))
+            {
+                return null;
+            }
+
+            ScatActionPackage package;
+            PackageReport report;
+            ScatValidator.TryLoad(path, out package, out report);
+            return package;
         }
 
         // ---------------------------------------------------------------- 5) 行为树集成
@@ -557,7 +670,7 @@ namespace PlayerAiMod
             string actionPath = Path.Combine(directory, PlayerAiPackages.SampleActionName + ScatManifest.Extension);
             PackageWriter.TryWriteFile(actionPath, PlayerAiPackages.BuildSampleActionPackage(), out error);
 
-            var roots = new PackageRoots(directory, null);
+            var roots = new PackageRoots(directory);
             var options = new PackageLoadOptions { Roots = roots };
             ScbtPackageSet set = PackageLoader.Load(treePath, options);
             result.Check("the test tree package loads and validates",
@@ -617,8 +730,7 @@ namespace PlayerAiMod
         {
             string directory = Path.Combine(root, "installed");
             Directory.CreateDirectory(directory);
-            var roots = new PackageRoots(Path.Combine(directory, "instance"),
-                Path.Combine(directory, "mods"));
+            var roots = new PackageRoots(Path.Combine(directory, "instance"));
 
             List<string> installed;
             string error;
@@ -626,7 +738,7 @@ namespace PlayerAiMod
             result.Check("factory install now also ships the sample action package",
                 count >= 3 && error == null, "written=" + count + " " + (error ?? string.Empty));
 
-            string actionPath = Path.Combine(roots.ModRoot.Path, PackageTemplates.SampleActionFile);
+            string actionPath = Path.Combine(roots.InstanceRoot.Path, PackageTemplates.SampleActionFile);
             result.Check("sample action package exists next to the trees",
                 File.Exists(actionPath), actionPath);
 
@@ -644,7 +756,7 @@ namespace PlayerAiMod
             result.Check("the shipped sample asserts no mid-run positions (playable anywhere)",
                 keyframeCount == 1, "keyframes=" + keyframeCount);
 
-            string treePath = Path.Combine(roots.ModRoot.Path, PackageTemplates.TestTreeFile);
+            string treePath = Path.Combine(roots.InstanceRoot.Path, PackageTemplates.TestTreeFile);
             result.Check("shipped test tree exists",
                 File.Exists(treePath), treePath);
 

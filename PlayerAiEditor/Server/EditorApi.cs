@@ -8,7 +8,7 @@ namespace PlayerAiMod.Editor
     /// 编辑器的数据接口：**它调用的是游戏内那份校验器/编译器**（同一个 C# 源码），
     /// 于是"编辑器说能存"和"游戏说能跑"永远是同一个判断（计划 §5.2）。
     ///
-    /// 所有写操作都限制在两个白名单目录内（实例可写 / Mod 只读），且**原子写**。
+    /// 所有写操作都限制在包目录（<c>&lt;实例根&gt;/PlayerAi/BehaviorTrees</c>）内，且**原子写**。
     /// </summary>
     internal sealed class EditorApi
     {
@@ -19,10 +19,10 @@ namespace PlayerAiMod.Editor
         public EditorApi(string instanceRoot)
         {
             InstanceRoot = instanceRoot;
-            string instanceDirectory = System.IO.Path.Combine(instanceRoot, "PlayerAi", "BehaviorTrees");
-            string modDirectory = System.IO.Path.Combine(instanceRoot, "Mods", "PlayerAiMod",
-                "PlayerAi", "BehaviorTrees");
-            m_roots = new PackageRoots(instanceDirectory, modDirectory);
+            // 唯一的包目录：<实例根>/PlayerAi/BehaviorTrees
+            // （以前还有 Mods/PlayerAiMod/PlayerAi/BehaviorTrees 作为第二来源，2026-09-12 按用户要求去掉）
+            string packageDirectory = PackageRoots.DirectoryFor(instanceRoot);
+            m_roots = new PackageRoots(packageDirectory);
             m_options = new PackageLoadOptions { Roots = m_roots };
 
             // 游戏不在跑也能用编辑器（只是"推送热重载"会失败并如实说明）
@@ -51,7 +51,6 @@ namespace PlayerAiMod.Editor
                 ["instanceRoot"] = InstanceRoot,
                 ["folders"] = m_roots.Describe(),
                 ["writableFolder"] = m_roots.InstanceRoot != null ? m_roots.InstanceRoot.Path : null,
-                ["modFolder"] = m_roots.ModRoot != null ? m_roots.ModRoot.Path : null,
                 ["format"] = new Dictionary<string, object>(StringComparer.Ordinal)
                 {
                     ["scbt"] = ScbtManifest.FormatVersion,
@@ -158,7 +157,7 @@ namespace PlayerAiMod.Editor
 
         // ---------------------------------------------------------------- 包
 
-        /// <summary>`GET /api/packages`：列出两个目录里的树包（实例目录优先）。</summary>
+        /// <summary>`GET /api/packages`：列出包目录里的树包。</summary>
         public Dictionary<string, object> ListPackages()
         {
             var items = new List<Dictionary<string, object>>();
@@ -275,7 +274,10 @@ namespace PlayerAiMod.Editor
 
         /// <summary>
         /// `POST /api/package?path=…`：校验并保存（原子写）。
-        /// **只允许写实例目录**（Mod 分发目录只读），且保存前先跑一遍与游戏同源的校验器。
+        /// 包目录 <c>&lt;实例根&gt;/PlayerAi/BehaviorTrees/</c> 对编辑器**可写**：
+        /// 用户要能直接改游戏正在用的那份包，而不是只能"另存为"。
+        /// 保存前先跑一遍与游戏同源的校验器；覆盖已有文件需要显式 overwrite。
+        /// 游戏侧的写盘另有约束：只允许新建，覆盖必须显式 `overwrite=true`（见 `ai.tree.export`）。
         /// </summary>
         public Dictionary<string, object> SavePackage(string nameOrPath, string manifestJson,
             string treeJson, bool overwrite)
@@ -290,8 +292,7 @@ namespace PlayerAiMod.Editor
             if (owner == null || !owner.Writable)
             {
                 return Error("outside_roots",
-                    "这个路径不在允许的包目录里（只允许写：实例目录 <实例根>/PlayerAi/BehaviorTrees/ "
-                    + "与 Mod 分发目录 <实例根>/Mods/PlayerAiMod/PlayerAi/BehaviorTrees/）。");
+                    "这个路径不在包目录里（只允许写 <实例根>/PlayerAi/BehaviorTrees/）。");
             }
 
             if (File.Exists(path) && !overwrite)
@@ -346,9 +347,6 @@ namespace PlayerAiMod.Editor
                 ["bytes"] = bytes.Length,
                 ["hash"] = hash,
                 ["writable"] = true,
-                // 写回 Mod 分发目录是允许的（编辑器要能改游戏正在用的那份包），
-                // 但那也是最容易被 Mod 更新覆盖的地方 —— 把事实交给前端去提醒用户。
-                ["warnsModFolder"] = string.Equals(owner.Kind, "mod", StringComparison.Ordinal),
                 ["root"] = owner.Kind,
                 ["validation"] = new Dictionary<string, object>(StringComparer.Ordinal)
                 {
@@ -631,30 +629,26 @@ namespace PlayerAiMod.Editor
 
         // ---------------------------------------------------------------- 动作包（P1）
 
-        /// <summary>动作包的查找链：实例包目录在前，Mod 只读分发目录在后（与游戏内同一套约定）。</summary>
+        /// <summary>动作包目录：与树包同一个目录（只有一个包目录）。</summary>
         public List<PackageRoot> ActionRoots()
         {
             var roots = new List<PackageRoot>();
             if (m_roots.InstanceRoot != null)
                 roots.Add(m_roots.InstanceRoot);
-            if (m_roots.ModRoot != null)
-                roots.Add(m_roots.ModRoot);
             return roots;
         }
 
         /// <summary>
-        /// `GET /api/actions`：列出两个目录里的 `.scatpak`（时长/帧数/**能否回放**）。
+        /// `GET /api/actions`：列出包目录里的 `.scatpak`（时长/帧数/**能否回放**）。
         /// 编辑器把它们当**物料**：拖到画布上就是 `Task.PlayActionPackage` 节点。
         /// </summary>
         public Dictionary<string, object> ListActions()
         {
             var items = new List<Dictionary<string, object>>();
             var folders = new List<Dictionary<string, object>>();
-            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             List<PackageRoot> roots = ActionRoots();
             int replayable = 0;
-            int shadowed = 0;
             for (int i = 0; i < roots.Count; i++)
             {
                 PackageRoot root = roots[i];
@@ -673,14 +667,6 @@ namespace PlayerAiMod.Editor
                     entry["writable"] = root.Writable;
                     entry["folder"] = root.Path;
 
-                    string file = entry["file"] as string;
-                    if (file != null && !seen.Add(file))
-                    {
-                        entry["shadowed"] = true; // 被实例目录里的同名包遮住
-                        shadowed++;
-                        items.Add(entry);
-                        continue;
-                    }
                     if (Equals(entry["replayable"], true))
                         replayable++;
                     items.Add(entry);
@@ -692,7 +678,6 @@ namespace PlayerAiMod.Editor
                 ["folders"] = folders,
                 ["count"] = items.Count,
                 ["replayable"] = replayable,
-                ["shadowed"] = shadowed,
                 ["actions"] = items
             };
         }
@@ -707,9 +692,7 @@ namespace PlayerAiMod.Editor
 
             Dictionary<string, object> result = ScatLibrary.Validate(folder, path);
             result["folder"] = folder;
-            result["source"] = folder != null && m_roots.InstanceRoot != null
-                && string.Equals(folder, m_roots.InstanceRoot.Path, StringComparison.OrdinalIgnoreCase)
-                ? "instance" : "mod";
+            result["source"] = "instance";
             return result;
         }
 
@@ -740,6 +723,200 @@ namespace PlayerAiMod.Editor
             }
         }
 
+        // ---------------------------------------------------------------- UI 定位 / 点击服务
+
+        /// <summary>
+        /// `GET /api/game/ui/elements`：当前屏幕上可交互的 UI 元素（**真实坐标** + 可点性）。
+        ///
+        /// 用户要求（原话）："把相应的方法做成 CmdBridgeMod 能提供的服务，在行为树编辑器中，
+        /// 要能够使用来获取坐标或点击对象。避免硬编码由于分辨率变化或窗口尺寸变化导致无法使用"。
+        /// 拾取面板点一个元素 → 拿到它的**语义目标**（控件名/路径，列表行给 `list:列表@文字`）
+        /// → 直接写进行为树或动作包，而不是把此刻的像素写进去。
+        /// </summary>
+        public Dictionary<string, object> UiElements(bool includeAll, int maxElements)
+        {
+            try
+            {
+                Dictionary<string, object> elements = m_game.QueryUiElements(includeAll, maxElements);
+                var response = new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    ["ok"] = true
+                };
+                foreach (KeyValuePair<string, object> pair in elements)
+                    response[pair.Key] = pair.Value;
+                response["elements"] = SuggestTargets(elements);
+                return response;
+            }
+            catch (Exception exception)
+            {
+                return GameError("读取界面元素", exception);
+            }
+        }
+
+        /// <summary>
+        /// 给每个元素补一个**推荐的语义目标**（编辑器用它写进树/包）：
+        /// 列表行优先给 `list:<列表>@<文字>`（跟着列表内容走），其余给控件路径（最精确）。
+        ///
+        /// 注意：游戏那边 `obs.ui` 返回的 `elements` 是**一段 JSON 文本**
+        /// （`GameBridgeClient.Collect` 把数组按 `ToJson` 收成字符串），这里必须先解析回数组 ——
+        /// 否则前端拿到的是字符串，`elements.forEach` 直接炸（实测：元素个数变成 9593 = 字符串长度）。
+        /// </summary>
+        private static object SuggestTargets(Dictionary<string, object> elements)
+        {
+            object raw;
+            if (elements == null || !elements.TryGetValue("elements", out raw))
+                return null;
+
+            List<Dictionary<string, object>> list = ParseElementArray(raw);
+            if (list == null)
+                return raw;
+
+            foreach (Dictionary<string, object> element in list)
+            {
+                string name = Value(element, "name");
+                string path = Value(element, "path");
+                object listInfo;
+                if (element.TryGetValue("list", out listInfo))
+                {
+                    var info = listInfo as Dictionary<string, object>;
+                    object selected;
+                    if (info != null && info.TryGetValue("selectedIndex", out selected) && selected != null)
+                    {
+                        element["rowTarget"] = "list:" + (name ?? "?") + "#" + selected;
+                    }
+                }
+                element["target"] = !string.IsNullOrEmpty(path) ? path : name;
+                element["shortTarget"] = name;
+            }
+
+            elements["elements"] = list;   // 把解析结果放回去：前端拿到的是真数组，不是一段文本
+            return list;
+        }
+
+        /// <summary>把"可能是一段 JSON 文本、也可能是数组"的 elements 统一成数组。</summary>
+        private static List<Dictionary<string, object>> ParseElementArray(object raw)
+        {
+            var already = raw as List<Dictionary<string, object>>;
+            if (already != null)
+                return already;
+
+            string text = raw as string;
+            if (string.IsNullOrEmpty(text))
+                return null;
+
+            var report = new PackageReport();
+            PackageValue value;
+            if (!PackageJson.TryParse(text, "elements", report, out value) || !value.IsArray)
+                return null;
+
+            var list = new List<Dictionary<string, object>>();
+            for (int i = 0; i < value.Count; i++)
+            {
+                PackageValue item = value.Item(i);
+                if (!item.IsObject)
+                    continue;
+                var row = new Dictionary<string, object>(StringComparer.Ordinal);
+                foreach (string member in item.MemberNames)
+                {
+                    PackageValue child = item.Get(member);
+                    if (child.IsObject)
+                    {
+                        var nested = new Dictionary<string, object>(StringComparer.Ordinal);
+                        foreach (string inner in child.MemberNames)
+                            nested[inner] = PlainValue(child.Get(inner));
+                        row[member] = nested;
+                    }
+                    else
+                    {
+                        row[member] = PlainValue(child);
+                    }
+                }
+                list.Add(row);
+            }
+            return list;
+        }
+
+        private static object PlainValue(PackageValue value)
+        {
+            if (value == null)
+                return null;
+            if (value.IsBool)
+                return value.AsBool();
+            if (value.IsNumber)
+                return value.AsNumber();
+            if (value.IsString)
+                return value.AsString();
+            if (value.IsArray || value.IsObject)
+                return value.ToJson(false);
+            return null;
+        }
+
+        private static string Value(Dictionary<string, object> source, string key)
+        {
+            object raw;
+            if (source == null || !source.TryGetValue(key, out raw))
+                return null;
+            return raw as string;
+        }
+
+        /// <summary>
+        /// `GET /api/game/ui/locate`：解析一个语义目标并返回**当前**坐标与可点性
+        /// （走 CmdBridge 的 `ui.locate`，与行为树/回放同一份实现）。
+        /// `mark` 打开时游戏里会在那个像素上亮一个红点（默认 2 秒 / 5 像素）——
+        /// 用户要求："点定位，在游戏中看不到明显的标记，可以渲染 2s 直接 5 像素的红色圆点，方便定位。"
+        /// </summary>
+        public Dictionary<string, object> LocateUi(string target, bool mark)
+        {
+            if (string.IsNullOrWhiteSpace(target))
+                return Error("invalid_argument", "缺少目标（target）：例如 Play、list:WorldsList@世界名。");
+            try
+            {
+                Dictionary<string, object> located = m_game.LocateUi(target.Trim(), mark);
+                var response = new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    ["ok"] = true,
+                    ["target"] = target.Trim(),
+                    ["mark"] = mark
+                };
+                foreach (KeyValuePair<string, object> pair in located)
+                    response[pair.Key] = pair.Value;
+                return response;
+            }
+            catch (Exception exception)
+            {
+                return GameError("定位界面元素", exception);
+            }
+        }
+
+        /// <summary>
+        /// `POST /api/game/ui/click`：在游戏里**真的点一下**这个目标（编辑器"试一下"按钮）。
+        /// `mode`：`direct`（默认，单帧合成按下）/ `input`（多帧软光标会话）/
+        /// `invoke`（直接触发控件自己的按下事件，能触发才有效）。`mark` 打开时亮一下落点。
+        /// </summary>
+        public Dictionary<string, object> ClickUi(string target, string mode, bool mark)
+        {
+            if (string.IsNullOrWhiteSpace(target))
+                return Error("invalid_argument", "缺少目标（target）：例如 Play、list:WorldsList@世界名。");
+            try
+            {
+                Dictionary<string, object> clicked = m_game.ClickUi(target.Trim(), mode, mark);
+                var response = new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    ["ok"] = true,
+                    ["target"] = target.Trim(),
+                    ["mode"] = string.IsNullOrEmpty(mode) ? "direct" : mode,
+                    ["mark"] = mark
+                };
+                foreach (KeyValuePair<string, object> pair in clicked)
+                    response[pair.Key] = pair.Value;
+                return response;
+            }
+            catch (Exception exception)
+            {
+                return GameError("点击界面元素", exception);
+            }
+        }
+
         /// <summary>`POST /api/action/stop`：停止回放并释放输入。</summary>
         public Dictionary<string, object> StopAction()
         {
@@ -759,19 +936,181 @@ namespace PlayerAiMod.Editor
         }
 
         /// <summary>
-        /// 控制通道出错时如实分类：**没连上**（游戏没跑/通道没开）和
-        /// **连上了但被拒绝**（例如游戏里那份 Mod 还没有这个命令 —— 需要重新部署并重启）
-        /// 是两件事，别混成一句"游戏没在跑"。
+        /// 控制通道出错时如实分类：**没连上**（游戏没跑/通道没开）、
+        /// **连上了但还没准备好**（`not_ready`：没进世界 / AI 没接管）、
+        /// **连上了但被拒绝**（例如游戏里那份 Mod 还没有这个命令）—— 是三件不同的事。
+        /// 以前后两种都归到"多半是 Mod 太旧"，实测把用户指错了方向。
         /// </summary>
         private static Dictionary<string, object> GameError(string what, Exception exception)
         {
-            string message = exception.Message ?? string.Empty;
-            if (message.StartsWith("game refused the command", StringComparison.OrdinalIgnoreCase))
+            if (exception is GameCommandException refusal)
             {
-                return Error("game_refused", "游戏在跑，但拒绝了「" + what + "」：" + message
-                    + " —— 多半是游戏里那份 Mod 还没有这个命令（重新部署 Mod 并重启游戏后可解）。");
+                switch (refusal.Code)
+                {
+                    case "not_ready":
+                        return Error("game_not_ready", "游戏在跑，但还没准备好「" + what + "」："
+                            + refusal.GameMessage
+                            + "　需要：①进入世界 ②游戏里让 AI 接管（sccmd ai enable）。"
+                            + "准备好之前这里会一直等，好了会自动开始刷新。");
+                    case "unknown_command":
+                    case "unknown":
+                        // 两种可能，别只说一种：**刚启动那一两秒**通道已经在监听、
+                        // 但 PlayerAiMod 的 `ai.*` 还没注册完 —— 这时候报"Mod 太旧"是误导
+                        // （实测：游戏刚起来就点实时监视，报的就是这个，等一秒就好了）。
+                        return Error("game_refused", "游戏在跑，但拒绝了「" + what + "」："
+                            + refusal.GameMessage
+                            + " —— 两种可能：①游戏刚启动、Mod 还没注册完命令（等一两秒再试）；"
+                            + "②游戏里那份 Mod 确实没有这个命令（重新部署 Mod 并重启游戏）。");
+                    default:
+                        return Error("game_refused", "游戏在跑，但拒绝了「" + what + "」（"
+                            + refusal.Code + "）：" + refusal.GameMessage);
+                }
+            }
+
+            string message = exception.Message ?? string.Empty;
+            // 旧 runtime 文件（游戏上次退出时留下的）会给出裸露的 socket 报错，
+            // 很容易被读成"游戏在跑但通道坏了"。这里加一句人话。
+            if (message.Contains("refused") || message.Contains("拒绝"))
+            {
+                return Error("game_unreachable", "游戏没在跑（或控制通道还没开）：" + message
+                    + "　提示：如果游戏确实没开，点「启动游戏」；"
+                    + GameBridgeClient.RuntimeFileName + " 可能是上次运行留下的旧文件。");
             }
             return Error("game_unreachable", "游戏没在跑（或控制通道没开）：" + message);
+        }
+
+        // ---------------------------------------------------------------- 启动 / 结束游戏
+
+        /// <summary>
+        /// `GET /api/game/process`：**只看不动**地把"游戏进程 + 控制通道"的状态说清楚 ——
+        /// 没启动 / 启动了但通道还没开 / 已连上。前端据此决定按钮可用性与轮询。
+        /// </summary>
+        public Dictionary<string, object> GameProcessStatus()
+        {
+            Dictionary<string, object> info = GameLauncher.Describe(InstanceRoot);
+            bool connected = false;
+            string channelError = null;
+            if (info["running"] is bool running && running)
+            {
+                Dictionary<string, object> ping;
+                if (m_game.TryDescribe(out ping, out channelError))
+                {
+                    connected = true;
+                    info["channel"] = ping;
+                }
+            }
+            else
+            {
+                channelError = info["runtimeStale"] is bool stale && stale
+                    ? "游戏没在跑（" + GameBridgeClient.RuntimeFileName + " 是上次运行留下的旧文件）"
+                    : "游戏没在跑";
+            }
+            info["channelConnected"] = connected;
+            info["channelError"] = channelError;
+            return info;
+        }
+
+        /// <summary>
+        /// `POST /api/game/launch`：启动游戏（等价于双击 `<实例根>/Survivalcraft.exe`）。
+        /// 这是**人用的编辑器**在起进程，不是 AI 在改游戏状态；启动后仍然只走控制通道下命令。
+        /// </summary>
+        public Dictionary<string, object> LaunchGame()
+        {
+            return GameLauncher.Launch(InstanceRoot);
+        }
+
+        /// <summary>`POST /api/game/quit`：结束游戏（先请它正常退出，超时才强杀）。</summary>
+        public Dictionary<string, object> QuitGame()
+        {
+            return GameLauncher.Quit(InstanceRoot);
+        }
+
+        /// <summary>
+        /// `GET /api/game/status`：问游戏要 `ai.status`。
+        /// 走 <see cref="GameError"/> 分类 —— 以前这个端点在路由里自己 catch，
+        /// 报错文案跟别的端点不一致（`not_ready` 被说成裸的"游戏拒绝了命令"）。
+        /// </summary>
+        public Dictionary<string, object> GameStatus()
+        {
+            try
+            {
+                return new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    ["ok"] = true,
+                    ["status"] = m_game.QueryStatus()
+                };
+            }
+            catch (Exception exception)
+            {
+                return GameError("读取游戏状态", exception);
+            }
+        }
+
+        /// <summary>
+        /// `POST /api/game/tree/stop`：停止并卸下当前树（`ai.tree.stop`）。
+        /// 与"暂停"的区别就是用户要的那个：暂停保留运行态（继续 = 从原处接着跑），
+        /// 停止回到"什么都没跑"——之后再播放就是干净地从根开始。
+        /// </summary>
+        public Dictionary<string, object> StopGameTree()
+        {
+            try
+            {
+                Dictionary<string, object> result = m_game.StopTree();
+                var response = new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    ["ok"] = true,
+                    ["game"] = result
+                };
+                foreach (string key in result.Keys)
+                    response[key] = result[key];
+                return response;
+            }
+            catch (Exception exception)
+            {
+                return GameError("停止这棵树", exception);
+            }
+        }
+
+        /// <summary>
+        /// `POST /api/game/tree/switch`：让游戏**切到这个包并开始跑**（`ai.tree.switch`）。
+        ///
+        /// 这是"播放"这个动作的核心：光保存文件游戏不会换树（活动树还是原来那棵），
+        /// 所以编辑器里必须有一个明确的"跑它"入口。切换是毫秒级的（常驻副本优先），
+        /// 不会重载世界。
+        /// </summary>
+        public Dictionary<string, object> SwitchGameTree(string nameOrPath, string entry, bool start)
+        {
+            string path = Resolve(nameOrPath, out string resolveError);
+            if (path == null)
+                return Error("not_found", resolveError);
+
+            var arguments = new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                // 传绝对路径：游戏与编辑器可能不是同一个实例根，名字解析交给编辑器这边
+                ["path"] = path,
+                ["start"] = start
+            };
+            if (!string.IsNullOrEmpty(entry))
+                arguments["entry"] = entry;
+
+            try
+            {
+                Dictionary<string, object> result = m_game.SwitchTree(arguments);
+                var response = new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    ["ok"] = true,
+                    ["path"] = path,
+                    ["file"] = System.IO.Path.GetFileName(path),
+                    ["game"] = result
+                };
+                foreach (string key in result.Keys)
+                    response[key] = result[key];
+                return response;
+            }
+            catch (Exception exception)
+            {
+                return GameError("切换到这棵树", exception);
+            }
         }
 
         /// <summary>

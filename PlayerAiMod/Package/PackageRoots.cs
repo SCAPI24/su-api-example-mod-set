@@ -19,14 +19,13 @@ namespace PlayerAiMod
         public string Path { get; }
 
         /// <summary>
-        /// 是否可写。两个目录都允许写：编辑器要能直接改"游戏正在用的那份包"
-        /// （Mod 分发目录里的），否则用户只能"另存为"。
-        /// 注意边界：**AI 侧**仍然不允许写磁盘包（那是游戏内状态铁律），
-        /// 这里的可写只服务于人用的编辑器。
+        /// 是否可写。包目录对**编辑器**是可写的（人要能改游戏正在用的那份包）；
+        /// 游戏侧的写盘有另外的约束：只允许新建，覆盖必须显式给 `overwrite=true`
+        /// （见 `ai.tree.export` / `ai.record.save`）。
         /// </summary>
         public bool Writable { get; }
 
-        /// <summary>"instance" | "mod"。</summary>
+        /// <summary>来源标记。只有一个包目录了，所以恒为 "instance"。</summary>
         public string Kind { get; }
 
         public bool Exists
@@ -51,31 +50,30 @@ namespace PlayerAiMod
     }
 
     /// <summary>
-    /// 包目录约定（计划 §4.4）：
-    ///   1（高）<c>&lt;实例根&gt;/PlayerAi/BehaviorTrees/</c> —— 跟随游戏实例走，**可写**
-    ///   2（低）<c>&lt;实例根&gt;/Mods/PlayerAiMod/BehaviorTrees/</c> —— 随 Mod 分发，**同样可写**
-    ///      （用户要求编辑器能直接改游戏正在用的包；代价是 Mod 更新时会覆盖这些改动，
-    ///        界面会就此给出提醒）
+    /// 包目录约定（计划 §4.4，2026-09-12 简化为**单一目录**）：
+    /// <c>&lt;实例根&gt;/PlayerAi/BehaviorTrees/</c> —— 树包 `.scbtpak` 与动作包 `.scatpak` 同路径。
     ///
-    /// 同名优先：实例目录覆盖 Mod 目录。两个目录并存是为了"既能改、又能分发"。
-    /// 白名单同时是**路径穿越防线**：任何解析结果落在白名单之外一律拒绝。
+    /// 以前还有一个"随 Mod 分发"的第二目录 <c>Mods/PlayerAiMod/PlayerAi/BehaviorTrees/</c>
+    /// （出厂示例装在那里、实例目录优先）。用户明确不要了：**只认这一个目录**，理由很实际 ——
+    /// 两个目录带来的"同名谁赢/改哪一份/Mod 更新会不会覆盖"全是不必要的复杂度。
+    /// 现在：导出、新建、另存为、修改**默认都落在这个目录**；游戏侧只允许新建
+    /// （覆盖要显式 `overwrite=true`）；编辑器怎么改都行。
+    ///
+    /// 这个白名单同时是**路径穿越防线**：任何解析结果落在目录之外一律拒绝。
     /// </summary>
     public sealed class PackageRoots
     {
         public const string BehaviorTreesFolder = "BehaviorTrees";
         public const string PlayerAiFolder = "PlayerAi";
-        public const string ModFolder = "PlayerAiMod";
         public const string Extension = ".scbtpak";
         public const string ActionExtension = ".scatpak";
 
         private readonly List<PackageRoot> m_roots = new List<PackageRoot>();
 
-        public PackageRoots(string instanceDirectory, string modDirectory)
+        public PackageRoots(string packageDirectory)
         {
-            if (!string.IsNullOrEmpty(instanceDirectory))
-                m_roots.Add(new PackageRoot(Normalize(instanceDirectory), true, "instance"));
-            if (!string.IsNullOrEmpty(modDirectory))
-                m_roots.Add(new PackageRoot(Normalize(modDirectory), true, "mod"));
+            if (!string.IsNullOrEmpty(packageDirectory))
+                m_roots.Add(new PackageRoot(Normalize(packageDirectory), true, "instance"));
         }
 
         public IReadOnlyList<PackageRoot> Roots
@@ -83,47 +81,29 @@ namespace PlayerAiMod
             get { return m_roots; }
         }
 
+        /// <summary>唯一的包目录（没配就是 null）。</summary>
         public PackageRoot InstanceRoot
         {
-            get { return Find("instance"); }
+            get { return m_roots.Count > 0 ? m_roots[0] : null; }
         }
 
-        public PackageRoot ModRoot
+        /// <summary>由实例根拼出包目录：<c>&lt;实例根&gt;/PlayerAi/BehaviorTrees</c>。</summary>
+        public static string DirectoryFor(string instanceRoot)
         {
-            get { return Find("mod"); }
-        }
-
-        private PackageRoot Find(string kind)
-        {
-            for (int i = 0; i < m_roots.Count; i++)
-            {
-                if (string.Equals(m_roots[i].Kind, kind, StringComparison.Ordinal))
-                    return m_roots[i];
-            }
-            return null;
+            if (string.IsNullOrEmpty(instanceRoot))
+                return null;
+            return System.IO.Path.Combine(instanceRoot, PlayerAiFolder, BehaviorTreesFolder);
         }
 
         /// <summary>
-        /// 按约定发现两个目录。可以在测试里显式传目录（不依赖游戏运行时）。
+        /// 按约定发现包目录。可以在测试里显式传目录（不依赖游戏运行时）。
         /// 游戏内默认：<c>&lt;data:&gt;</c> 即 exe 所在目录。
         /// </summary>
-        public static PackageRoots Discover(string instanceDirectory = null, string modDirectory = null)
+        public static PackageRoots Discover(string packageDirectory = null)
         {
-            if (string.IsNullOrEmpty(instanceDirectory))
-            {
-                string root = GetGameRootDirectory();
-                instanceDirectory = root != null
-                    ? System.IO.Path.Combine(root, PlayerAiFolder, BehaviorTreesFolder)
-                    : null;
-            }
-            if (string.IsNullOrEmpty(modDirectory))
-            {
-                string root = GetGameRootDirectory();
-                modDirectory = root != null
-                    ? System.IO.Path.Combine(root, "Mods", ModFolder, PlayerAiFolder, BehaviorTreesFolder)
-                    : null;
-            }
-            return new PackageRoots(instanceDirectory, modDirectory);
+            if (string.IsNullOrEmpty(packageDirectory))
+                packageDirectory = DirectoryFor(GetGameRootDirectory());
+            return new PackageRoots(packageDirectory);
         }
 
         private static string GetGameRootDirectory()
@@ -207,7 +187,8 @@ namespace PlayerAiMod
         ///   · 文件名（`demo.greet.scbtpak`）
         ///   · 不带扩展名的包名（`demo.greet`）
         ///   · 相对路径（`sub/x.scbtpak`）
-        /// 实例目录优先于 Mod 目录（同名优先）。找不到或越界返回 null。
+        ///   · 绝对路径，但必须落在包目录里
+        /// 找不到或越界返回 null。
         ///
         /// <paramref name="exists"/> 允许调用方换一套"存在"的判断（内存数据源的自检就靠它）。
         /// </summary>
@@ -252,7 +233,7 @@ namespace PlayerAiMod
             return null;
         }
 
-        /// <summary>列出两个目录里的包（实例优先；同名只出现一次）。</summary>
+        /// <summary>列出包目录里的包（按文件名排序；只扫顶层，不递归）。</summary>
         public List<string> ListFiles(string extension = Extension)
         {
             var result = new List<string>();
@@ -283,14 +264,14 @@ namespace PlayerAiMod
             return result;
         }
 
-        /// <summary>确保实例目录存在（录制、导出、编辑器保存前调用）。</summary>
+        /// <summary>确保包目录存在（录制、导出、编辑器保存前调用）。</summary>
         public bool EnsureInstanceDirectory(out string error)
         {
             error = null;
             PackageRoot instance = InstanceRoot;
             if (instance == null)
             {
-                error = "没有可写的实例包目录（PackageRoots 未配置 instance 目录）";
+                error = "没有包目录（PackageRoots 未配置）";
                 return false;
             }
             try

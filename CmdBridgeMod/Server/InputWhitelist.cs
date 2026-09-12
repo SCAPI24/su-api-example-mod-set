@@ -46,6 +46,12 @@ namespace CmdBridgeMod
         // 派生字段 Click 会在后续每一帧继续生成，导致一次点击被消费多次。
         internal const string WidgetInputMouseDownPoint = "m_mouseDownPoint";
 
+        // 同一个"按下起点"记录的是哪个键（`m_mouseDownButton`）。
+        // 单帧合成点击（`ui.click mode=direct`）必须把它摆成 Left，否则引擎的
+        // `m_mouseDownButton == MouseButton.Left` 分支不成立，Click 派生不出来
+        // （Source: Game/WidgetInput.cs:755-769）。
+        internal const string WidgetInputMouseDownButton = "m_mouseDownButton";
+
         // 焦点/共控（CM-2）：让引擎"以为"窗口活跃、保持系统光标可见、切断真实鼠标。
         // Source: Engine/Engine/Window.cs:218（IsActive => m_state == State.Active；枚举值 Uncreated/Inactive/Active）
         internal const string WindowState = "m_state";
@@ -73,6 +79,7 @@ namespace CmdBridgeMod
             MouseLastWheelValue,
             LocomotionLookAngles,
             WidgetInputMouseDownPoint,
+            WidgetInputMouseDownButton,
             WindowState,
             WindowGameWindow,
             MouseLastPosition,
