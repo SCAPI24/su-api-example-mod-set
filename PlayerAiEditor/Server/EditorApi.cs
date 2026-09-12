@@ -25,11 +25,35 @@ namespace PlayerAiMod.Editor
             m_roots = new PackageRoots(packageDirectory);
             m_options = new PackageLoadOptions { Roots = m_roots };
 
+            // 出厂示例：编辑器**自己也要补一遍**（缺什么补什么、绝不覆盖已有文件）。
+            //
+            // 为什么游戏侧补过还不够：用户完全可能"先开编辑器、后开游戏"（甚至没开过游戏），
+            // 那时包目录是空的 —— 界面上就是"一个包都没有"，看着像编辑器坏了；
+            // 而出厂示例（demo.greet / su.watch / 公共子树 …）正是他要照着改的样板。
+            // 写入失败只记一句，绝不让编辑器起不来（比如目录只读）。
+            try
+            {
+                List<string> installed;
+                string error;
+                int count = PackageTemplates.Install(m_roots, out installed, out error);
+                TemplateInstallCount = count;
+                TemplateInstallError = error;
+            }
+            catch (Exception exception)
+            {
+                TemplateInstallError = exception.Message;
+            }
+
             // 游戏不在跑也能用编辑器（只是"推送热重载"会失败并如实说明）
             m_game = new GameBridgeClient(instanceRoot);
         }
 
         public string InstanceRoot { get; }
+
+        /// <summary>启动时补装了几个出厂文件（0 = 都已经在；失败时见 <see cref="TemplateInstallError"/>）。</summary>
+        public int TemplateInstallCount { get; private set; }
+
+        public string TemplateInstallError { get; private set; }
 
         public PackageRoots Roots
         {
@@ -55,6 +79,12 @@ namespace PlayerAiMod.Editor
                 {
                     ["scbt"] = ScbtManifest.FormatVersion,
                     ["scat"] = ScatManifest.FormatVersion
+                },
+                // 启动时补装出厂示例的结果（0 = 都在；>0 = 这次补了几个；错误见 error）
+                ["templateInstall"] = new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    ["installed"] = TemplateInstallCount,
+                    ["error"] = TemplateInstallError
                 }
             };
 

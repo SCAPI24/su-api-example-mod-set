@@ -1,4 +1,5 @@
 using Engine;
+using System.Collections.Generic;
 
 namespace PlayerAiMod
 {
@@ -161,7 +162,7 @@ namespace PlayerAiMod
     /// 会因此直接跳过（`ScatPlayer.CheckDrift` 本来就在 `Sensors == null || !IsReady` 时跳过），
     /// 而不是报出一堆假的"漂移失败"。
     /// </summary>
-    internal sealed class ControllerSensor : IAiSensor
+    internal sealed class ControllerSensor : IAiSensor, IAiWorldSensor
     {
         private IPlayerInputProvider m_world;
 
@@ -268,6 +269,132 @@ namespace PlayerAiMod
                 return world.TryFindNearestPlayer(out view);
             view = default(AiActorView);
             return false;
+        }
+
+        // ---------------------------------------------------------------- 扩展观察层
+        //
+        // 必须在这里转发：运行时真正拿到的传感器是**控制器传感器**，不是 PlayerSensor。
+        // 少了这段，`Service.UpdateSelf` 这类服务会以为"这台机器没有扩展观察能力"而静默跳过
+        // —— 那种"功能都在、就是不生效"的问题最难查。
+
+        private IAiWorldSensor WorldExtras
+        {
+            get { return World as IAiWorldSensor; }
+        }
+
+        public bool TryGetSelfState(out AiSelfState state)
+        {
+            IAiWorldSensor world = WorldExtras;
+            if (world != null)
+                return world.TryGetSelfState(out state);
+            state = default(AiSelfState);
+            return false;
+        }
+
+        public bool TryFindNearestCreature(int categoryMask, float maxDistance, out AiActorView view)
+        {
+            IAiWorldSensor world = WorldExtras;
+            if (world != null)
+                return world.TryFindNearestCreature(categoryMask, maxDistance, out view);
+            view = default(AiActorView);
+            return false;
+        }
+
+        public bool TryFindNearestPickable(float maxDistance, out AiActorView view)
+        {
+            IAiWorldSensor world = WorldExtras;
+            if (world != null)
+                return world.TryFindNearestPickable(maxDistance, out view);
+            view = default(AiActorView);
+            return false;
+        }
+
+        public bool TryRaycastBlock(Vector3 direction, float maxDistance, out AiBlockHit hit)
+        {
+            IAiWorldSensor world = WorldExtras;
+            if (world != null)
+                return world.TryRaycastBlock(direction, maxDistance, out hit);
+            hit = default(AiBlockHit);
+            return false;
+        }
+
+        public bool TryRaycastBlockFrom(Vector3 origin, Vector3 direction, float maxDistance,
+            out AiBlockHit hit)
+        {
+            IAiWorldSensor world = WorldExtras;
+            if (world != null)
+                return world.TryRaycastBlockFrom(origin, direction, maxDistance, out hit);
+            hit = default(AiBlockHit);
+            return false;
+        }
+
+        public bool TryPeekBlock(int x, int y, int z, out int contents, out string name)
+        {
+            IAiWorldSensor world = WorldExtras;
+            if (world != null)
+                return world.TryPeekBlock(x, y, z, out contents, out name);
+            contents = 0;
+            name = null;
+            return false;
+        }
+
+        public bool HasLineOfSight(Vector3 target, out float distance)
+        {
+            IAiWorldSensor world = WorldExtras;
+            if (world != null)
+                return world.HasLineOfSight(target, out distance);
+            distance = 0f;
+            return false;
+        }
+
+        // 模型节点（骨骼）：**必须转发**，否则"服务静默跳过"（这套接口漏转发的坑踩过不止一次）
+        public bool TryGetBoneWorldPosition(AiActorView actor, string boneName, out Vector3 world)
+        {
+            IAiWorldSensor extras = WorldExtras;
+            if (extras != null)
+                return extras.TryGetBoneWorldPosition(actor, boneName, out world);
+            world = Vector3.Zero;
+            return false;
+        }
+
+        public bool TryListBones(AiActorView actor, out List<string> names,
+            out List<Vector3> worldPositions)
+        {
+            IAiWorldSensor extras = WorldExtras;
+            if (extras != null)
+                return extras.TryListBones(actor, out names, out worldPositions);
+            names = new List<string>();
+            worldPositions = new List<Vector3>();
+            return false;
+        }
+
+        public bool TryRequestPath(Vector3 destination, float arriveRadius, int maxPositionsToCheck,
+            out string error)
+        {
+            IAiWorldSensor world = WorldExtras;
+            if (world != null)
+                return world.TryRequestPath(destination, arriveRadius, maxPositionsToCheck, out error);
+            error = "no world sensor attached";
+            return false;
+        }
+
+        public AiPathStatus GetPathStatus()
+        {
+            IAiWorldSensor world = WorldExtras;
+            return world != null ? world.GetPathStatus() : AiPathStatus.Failed;
+        }
+
+        public int CopyPath(Vector3[] buffer)
+        {
+            IAiWorldSensor world = WorldExtras;
+            return world != null ? world.CopyPath(buffer) : 0;
+        }
+
+        public void ClearPath()
+        {
+            IAiWorldSensor world = WorldExtras;
+            if (world != null)
+                world.ClearPath();
         }
     }
 }

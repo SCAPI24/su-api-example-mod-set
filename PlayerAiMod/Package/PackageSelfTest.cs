@@ -722,8 +722,12 @@ namespace PlayerAiMod
             List<string> installed;
             string error;
             int count = PackageTemplates.Install(roots, out installed, out error);
+            // 期望值**从模板清单算**，不写死数字：加一个出厂示例就不该让内核自检红一次
+            // （2026-09-13 加 su.watch 时就因为写死的 4 红了）。
+            int expected = PackageTemplates.All().Count + PackageTemplates.ExtraFiles().Count;
             result.Check("factory templates install into the package folder",
-                count == 4 && error == null, error ?? ("count=" + count));
+                count == expected && error == null,
+                error ?? ("count=" + count + " expected=" + expected));
             result.Check("template install is idempotent (never overwrites)",
                 PackageTemplates.Install(roots, out installed, out error) == 0,
                 error ?? ("second call wrote " + installed.Count));
@@ -1046,12 +1050,17 @@ namespace PlayerAiMod
                 "prepared=" + library.Prepared.Count + " capacity=" + library.Capacity);
 
             // ---- 预编译目录里的全部包（prepare all）
-            var all = new TreeLibrary(reloader, 4);
+            // 容量必须**够装下所有出厂包**，否则数出来的是"容量"而不是"目录里的包数"
+            // （生产环境的容量是 8，见 ai.status 的 library.capacity）
+            var all = new TreeLibrary(reloader, PackageTemplates.All().Count + 4);
             var allReport = new PackageReport();
             List<PreparedTree> preparedAll = all.PrepareAll(0, allReport);
+            // 这里数的是**目录里的行为树包**（.scbtpak）：出厂模板里的动作包是另一种扩展名，不算
+            int expectedTrees = PackageTemplates.All().Count;
             result.Check("prepare all compiles every package in the folders",
-                preparedAll.Count == 3 && allReport.ErrorCount == 0,
-                "count=" + preparedAll.Count + " :: " + allReport.Summary());
+                preparedAll.Count == expectedTrees && allReport.ErrorCount == 0,
+                "count=" + preparedAll.Count + " expected=" + expectedTrees + " :: "
+                + allReport.Summary());
 
             // ---- 状态描述（控制面读它）
             List<Dictionary<string, object>> described = library.DescribePrepared();

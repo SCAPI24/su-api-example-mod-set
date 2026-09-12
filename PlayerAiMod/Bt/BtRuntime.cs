@@ -57,6 +57,15 @@ namespace PlayerAiMod
         /// <summary>来源包的哈希（重载比对用）。</summary>
         public string SourceHash { get; private set; }
 
+        /// <summary>
+        /// 事件日志（可选）：`Task.Emit` 往这里写"控制面事件"，人可以在
+        /// `ai.logs` / `<实例根>/PlayerAi/Logs/PlayerAi.log` 里看到。
+        ///
+        /// 用可写属性而不是构造函数参数：纯逻辑自检里大量 `new BtRuntime(黑板, 桩, 桩)`，
+        /// 为了一个可选日志去改所有调用点不值得；没接日志时 `Emit` 退化成 `Engine.Log.Information`。
+        /// </summary>
+        public AiEventLog EventLog { get; set; }
+
         /// <summary>内存里是否被改写过（AI 运行时改写；原包不影响）。</summary>
         public bool IsDirty { get; set; }
 

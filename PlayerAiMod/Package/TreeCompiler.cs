@@ -401,6 +401,19 @@ namespace PlayerAiMod
         // 属性名与注册表里的 BtPropertySpec 一致；越界/负数一类语义检查也在这里做
         // （只有读取点知道每个属性的含义，校验器只做类型与必填）。
 
+        /// <summary>鼠标键候选（`Task.Mine` / `Task.Attack` / `Task.Interact` / `Task.PlaceBlock`）。</summary>
+        private static readonly string[] ButtonNames = { "left", "right" };
+        /// <summary>`Task.Interact` 的目标来源。</summary>
+        private static readonly string[] SourceNames = { "cell", "actor" };
+
+        /// <summary>`Service.Probe` 的起点 / 终点候选。</summary>
+        private static readonly string[] FromNames = { "eye", "body", "point" };
+        private static readonly string[] ProbeToNames = { "target", "point", "ahead", "down" };
+        private static readonly string[] ProbeModeNames = { "blocked", "clear" };
+
+        /// <summary>`Task.FollowEntity` 的跟随方式。</summary>
+        private static readonly string[] FollowModeNames = { "auto", "trail", "path" };
+
         private static void ApplyProperties(BtNode node, PackageReader reader, string where)
         {
             switch (node.NodeType)
@@ -444,6 +457,171 @@ namespace PlayerAiMod
                     task.TargetKey = reader.Str("targetKey", "target");
                     task.EyeHeight = reader.Float("eyeHeight", 1.35f);
                     task.Seconds = NonNegative(reader, "seconds", 0.25f, where);
+                    break;
+                }
+
+                case "Task.FollowEntity":
+                {
+                    var task = (BtFollowEntityTask)node;
+                    task.TargetKey = reader.Str("targetKey", "target");
+                    task.Mode = reader.Enum("mode", "auto", FollowModeNames);
+                    task.KeepDistance = NonNegative(reader, "keepDistance", 2f, where);
+                    task.StandHysteresis = NonNegative(reader, "standHysteresis", 0.75f, where);
+                    task.TrailLength = reader.Int("trailLength", 64);
+                    task.TrailMaxAge = NonNegative(reader, "trailMaxAge", 3f, where);
+                    task.TrailCellRadius = NonNegative(reader, "trailCellRadius", 0.9f, where);
+                    task.TrailStuckSeconds = NonNegative(reader, "trailStuckSeconds", 1.5f, where);
+                    task.ForwardKey = reader.Str("forwardKey", "w");
+                    task.BackKey = reader.Str("backKey", "s");
+                    task.LeftKey = reader.Str("leftKey", "a");
+                    task.RightKey = reader.Str("rightKey", "d");
+                    task.JumpKey = reader.Str("jumpKey", "space");
+                    task.JumpHeight = reader.Float("jumpHeight", 0.6f);
+                    task.EyeHeight = reader.Float("eyeHeight", 1.35f);
+                    task.RepathSeconds = NonNegative(reader, "repathSeconds", 0.75f, where);
+                    task.RepathMoveThreshold = NonNegative(reader, "repathMoveThreshold", 1.5f, where);
+                    task.MaxPositionsToCheck = reader.Int("maxPositionsToCheck", 500);
+                    task.TimeoutSeconds = NonNegative(reader, "timeout", 0f, where);
+                    break;
+                }
+
+                case "Task.LookAtPoint":
+                {
+                    var task = (BtLookAtPointTask)node;
+                    task.XKey = reader.Str("xKey", "point.X");
+                    task.YKey = reader.Str("yKey", "point.Y");
+                    task.ZKey = reader.Str("zKey", "point.Z");
+                    task.Seconds = NonNegative(reader, "seconds", 0.1f, where);
+                    break;
+                }
+
+                case "Task.FaceEntity":
+                {
+                    var task = (BtFaceEntityTask)node;
+                    task.TargetKey = reader.Str("targetKey", "target");
+                    task.ToleranceDegrees = NonNegative(reader, "toleranceDegrees", 12f, where);
+                    task.Timeout = NonNegative(reader, "timeout", 3f, where);
+                    task.MaxTurnPerSecond = NonNegative(reader, "maxTurnPerSecond", 0f, where);
+                    break;
+                }
+
+                case "Task.NavigateTo":
+                {
+                    var task = (BtNavigateToTask)node;
+                    task.Source = reader.Enum("source", "actor", SourceNames);
+                    task.TargetKey = reader.Str("targetKey", "target");
+                    task.XKey = reader.Str("xKey", "goalX");
+                    task.YKey = reader.Str("yKey", "goalY");
+                    task.ZKey = reader.Str("zKey", "goalZ");
+                    task.AcceptableRadius = NonNegative(reader, "acceptableRadius", 2.5f, where);
+                    task.TimeoutSeconds = NonNegative(reader, "timeout", 60f, where);
+                    task.ForwardKey = reader.Str("forwardKey", "w");
+                    task.JumpKey = reader.Str("jumpKey", "space");
+                    task.JumpHeight = reader.Float("jumpHeight", 0.6f);
+                    task.WaypointRadius = NonNegative(reader, "waypointRadius", 0.7f, where);
+                    task.RepathSeconds = NonNegative(reader, "repathSeconds", 2f, where);
+                    task.RepathMoveThreshold = NonNegative(reader, "repathMoveThreshold", 1.5f, where);
+                    task.MaxPositionsToCheck = reader.Int("maxPositionsToCheck", 500);
+                    if (task.MaxPositionsToCheck < 0)
+                    {
+                        reader.Report.Error(PackageCodes.PropertyValue,
+                            where + ".properties.maxPositionsToCheck", "maxPositionsToCheck must be >= 0");
+                        task.MaxPositionsToCheck = 500;
+                    }
+                    task.EyeHeight = reader.Float("eyeHeight", 1.35f);
+                    task.StuckSeconds = NonNegative(reader, "stuckSeconds", 2f, where);
+                    task.StuckDistance = NonNegative(reader, "stuckDistance", 0.35f, where);
+                    break;
+                }
+
+                case "Task.UseItem":
+                {
+                    var task = (BtUseItemTask)node;
+                    task.Button = reader.Enum("button", "right", ButtonNames);
+                    task.HoldSeconds = NonNegative(reader, "holdSeconds", 1.2f, where);
+                    task.Repeat = reader.Int("repeat", 1);
+                    task.Interval = NonNegative(reader, "interval", 0.35f, where);
+                    break;
+                }
+
+                case "Task.Jump":
+                {
+                    var task = (BtJumpTask)node;
+                    task.Key = reader.Str("key", "space");
+                    task.Times = reader.Int("times", 1);
+                    task.Interval = NonNegative(reader, "interval", 0.45f, where);
+                    task.AlsoForward = reader.Bool("alsoForward", false);
+                    task.ForwardKey = reader.Str("forwardKey", "w");
+                    break;
+                }
+
+                case "Task.Emit":
+                {
+                    var task = (BtEmitTask)node;
+                    task.Category = reader.Str("category", "emit");
+                    task.Message = reader.Str("message", null);
+                    task.Key = reader.Str("key", null);
+                    task.AlsoEngineLog = reader.Bool("alsoEngineLog", false);
+                    break;
+                }
+
+                case "Task.Mine":
+                {
+                    var task = (BtMineBlockTask)node;
+                    task.XKey = reader.Str("xKey", "mineX");
+                    task.YKey = reader.Str("yKey", "mineY");
+                    task.ZKey = reader.Str("zKey", "mineZ");
+                    task.Button = reader.Enum("button", "left", ButtonNames);
+                    task.TimeoutSeconds = NonNegative(reader, "timeout", 20f, where);
+                    task.RequireBlockPresent = reader.Bool("requireBlockPresent", true);
+                    break;
+                }
+
+                case "Task.Attack":
+                {
+                    var task = (BtAttackTask)node;
+                    task.TargetKey = reader.Str("targetKey", "target");
+                    task.Range = NonNegative(reader, "range", 3.5f, where);
+                    task.EyeHeight = reader.Float("eyeHeight", 1.2f);
+                    task.TimeoutSeconds = NonNegative(reader, "timeout", 20f, where);
+                    task.ClickInterval = NonNegative(reader, "clickInterval", 0.6f, where);
+                    task.Button = reader.Enum("button", "left", ButtonNames);
+                    break;
+                }
+
+                case "Task.Interact":
+                {
+                    var task = (BtInteractTask)node;
+                    task.Source = reader.Enum("source", "cell", SourceNames);
+                    task.TargetKey = reader.Str("targetKey", "target");
+                    task.XKey = reader.Str("xKey", "interactX");
+                    task.YKey = reader.Str("yKey", "interactY");
+                    task.ZKey = reader.Str("zKey", "interactZ");
+                    task.Repeat = reader.Int("repeat", 1);
+                    task.Interval = NonNegative(reader, "interval", 0.35f, where);
+                    task.Button = reader.Enum("button", "right", ButtonNames);
+                    break;
+                }
+
+                case "Task.PlaceBlock":
+                {
+                    var task = (BtPlaceBlockTask)node;
+                    task.XKey = reader.Str("xKey", "placeX");
+                    task.YKey = reader.Str("yKey", "placeY");
+                    task.ZKey = reader.Str("zKey", "placeZ");
+                    task.Repeat = reader.Int("repeat", 1);
+                    // 0.4s：游戏侧的"动作冷却"是 0.33s（ComponentPlayer.cs:151/230/243 的
+                    // m_lastActionTime），比它小的间隔会被直接丢掉 —— 真机验收实测（§9.5.43）
+                    task.Interval = NonNegative(reader, "interval", 0.4f, where);
+                    task.Button = reader.Enum("button", "right", ButtonNames);
+                    break;
+                }
+
+                case "Task.SelectSlot":
+                {
+                    var task = (BtSelectSlotTask)node;
+                    task.Slot = reader.Int("slot", 1);
+                    task.Scroll = reader.Int("scroll", 0);
                     break;
                 }
 
@@ -540,6 +718,14 @@ namespace PlayerAiMod
                         NonNegative(reader, "cooldownSeconds", 5f, where);
                     break;
 
+                case "CompareBBEntries":
+                {
+                    var target = (BtCompareBlackboardDecorator)decorator;
+                    target.KeyA = reader.Str("keyA", null);
+                    target.KeyB = reader.Str("keyB", null);
+                    target.Operator = reader.Enum("operator", "==", BtSchema.CompareOperators);
+                    break;
+                }
                 case "TimeLimit":
                 {
                     var target = (BtTimeLimitDecorator)decorator;
@@ -578,6 +764,91 @@ namespace PlayerAiMod
                 target.TargetKey = reader.Str("targetKey", "target");
                 target.NameFilter = reader.Str("nameFilter", null);
                 target.ClearWhenMissing = reader.Bool("clearWhenMissing", false);
+                return;
+            }
+
+            // ---- 传感器服务族（BtSensorServices.cs）
+            switch (service.NodeType)
+            {
+                case "Service.UpdateSelf":
+                {
+                    var target = (BtUpdateSelfService)service;
+                    target.Prefix = reader.Str("prefix", "self.");
+                    target.WritePosition = reader.Bool("writePosition", true);
+                    break;
+                }
+
+                case "Service.UpdateNearestCreature":
+                {
+                    var target = (BtUpdateNearestCreatureService)service;
+                    target.TargetKey = reader.Str("targetKey", "creature");
+                    target.CategoryMask = reader.Int("categoryMask", 0);
+                    target.MaxDistance = NonNegative(reader, "maxDistance", 32f, where);
+                    target.ClearWhenMissing = reader.Bool("clearWhenMissing", true);
+                    break;
+                }
+
+                case "Service.UpdateNearestPickable":
+                {
+                    var target = (BtUpdateNearestPickableService)service;
+                    target.TargetKey = reader.Str("targetKey", "pickable");
+                    target.MaxDistance = NonNegative(reader, "maxDistance", 24f, where);
+                    target.ClearWhenMissing = reader.Bool("clearWhenMissing", true);
+                    break;
+                }
+
+                case "Service.UpdateBlockAhead":
+                {
+                    var target = (BtUpdateBlockAheadService)service;
+                    target.Key = reader.Str("key", "mine");
+                    target.MaxDistance = NonNegative(reader, "maxDistance", 3f, where);
+                    target.PitchOffset = reader.Float("pitchOffset", -0.35f);
+                    target.NameKey = reader.Str("nameKey", "mineName");
+                    break;
+                }
+
+                case "Service.UpdateLineOfSight":
+                {
+                    var target = (BtUpdateLineOfSightService)service;
+                    target.TargetKey = reader.Str("targetKey", "target");
+                    target.Key = reader.Str("key", "canSee");
+                    target.MaxDistance = NonNegative(reader, "maxDistance", 48f, where);
+                    target.TargetEyeHeight =
+                        NonNegative(reader, "targetEyeHeight", 1.55f, where);
+                    target.AlsoCheckBody = reader.Bool("alsoCheckBody", true);
+                    target.BodyHeight = NonNegative(reader, "bodyHeight", 0.9f, where);
+                    break;
+                }
+
+                case "Service.Probe":
+                {
+                    var target = (BtProbeService)service;
+                    target.From = reader.Enum("from", "eye", FromNames);
+                    target.To = reader.Enum("to", "target", ProbeToNames);
+                    target.Mode = reader.Enum("mode", "blocked", ProbeModeNames);
+                    target.Key = reader.Str("key", "probe");
+                    target.TargetKey = reader.Str("targetKey", "target");
+                    target.TargetHeight = reader.Float("targetHeight", 1.55f);
+                    target.PitchOffset = reader.Float("pitchOffset", 0f);
+                    target.FromXKey = reader.Str("fromXKey", "point.X");
+                    target.FromYKey = reader.Str("fromYKey", "point.Y");
+                    target.FromZKey = reader.Str("fromZKey", "point.Z");
+                    target.ToXKey = reader.Str("toXKey", "point.X");
+                    target.ToYKey = reader.Str("toYKey", "point.Y");
+                    target.ToZKey = reader.Str("toZKey", "point.Z");
+                    target.MaxDistance = NonNegative(reader, "maxDistance", 16f, where);
+                    break;
+                }
+
+                case "Service.UpdateModelNode":
+                {
+                    var target = (BtUpdateModelNodeService)service;
+                    target.TargetKey = reader.Str("targetKey", "target");
+                    target.NodeName = reader.Str("nodeName", "Head");
+                    target.Prefix = reader.Str("prefix", "node.");
+                    target.ClearWhenMissing = reader.Bool("clearWhenMissing", true);
+                    break;
+                }
             }
         }
 

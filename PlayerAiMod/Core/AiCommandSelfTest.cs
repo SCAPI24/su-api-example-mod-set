@@ -256,7 +256,8 @@ namespace PlayerAiMod
                 as IDictionary<string, object>;
             var packages = map != null ? map["packages"] as List<Dictionary<string, object>> : null;
             result.Check("ai.tree.list enumerates both folders",
-                packages != null && packages.Count == 3 && Equals(map["active"], null),
+                packages != null && packages.Count == PackageTemplates.All().Count
+                && Equals(map["active"], null),
                 Describe(map));
             if (packages != null && packages.Count > 0)
             {
@@ -287,7 +288,8 @@ namespace PlayerAiMod
                 map != null && Equals(map["ok"], true), Describe(map));
 
             // ---- 树库：预编译 + 毫秒级切换（P0-11）
-            context.Library = new TreeLibrary(reloader, 4);
+            // 容量给够：`ai.tree.prepare all=true` 要能装下**每一棵出厂包**（生产容量是 8）
+            context.Library = new TreeLibrary(reloader, PackageTemplates.All().Count + 4);
 
             map = AiCommandSet.Execute(AiCommandRequest.FromArgs("ai.tree.prepare", "name", "demo.greet"),
                 context) as IDictionary<string, object>;
@@ -325,7 +327,7 @@ namespace PlayerAiMod
             map = AiCommandSet.Execute(AiCommandRequest.FromArgs("ai.tree.prepare", "all", true),
                 context) as IDictionary<string, object>;
             result.Check("ai.tree.prepare all=true prepares every package",
-                map != null && Convert.ToInt32(map["count"]) == 3
+                map != null && Convert.ToInt32(map["count"]) == PackageTemplates.All().Count
                 && Convert.ToInt32(map["errors"]) == 0,
                 Describe(map));
 

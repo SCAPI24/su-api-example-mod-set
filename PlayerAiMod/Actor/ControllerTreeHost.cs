@@ -35,7 +35,11 @@ namespace PlayerAiMod
         /// 世界外的输入兜底（生产上是 `UiOnlyActuator`；自检传假执行器，
         /// 这样"控制器宿主"能在没有游戏、没有 CmdBridge 的纯逻辑自检里被验证）。
         /// </param>
-        public ControllerTreeHost(IAiActuator uiActuator)
+        /// <param name="eventLog">
+        /// 事件日志（可选）：接上之后 `Task.Emit` 写的事件能在 `ai.logs` 里看到。
+        /// 自检不传（纯逻辑环境没有日志目录）。
+        /// </param>
+        public ControllerTreeHost(IAiActuator uiActuator, AiEventLog eventLog = null)
         {
             Blackboard = new AiBlackboard();
             m_actuator = new ControllerActuator(uiActuator);
@@ -43,6 +47,7 @@ namespace PlayerAiMod
             Actuators = m_actuator;
             Sensors = m_sensor;
             m_tree = new BtRuntime(Blackboard, Sensors, Actuators);
+            m_tree.EventLog = eventLog;
 
             // 模式层（未接管 / 待机 / 运行树 / 录制中）跟着控制器走，而不是跟着角色走：
             // 角色没了不等于"AI 该停"，只是"现在只能点 UI 了"。

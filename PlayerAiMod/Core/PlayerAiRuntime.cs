@@ -402,7 +402,7 @@ namespace PlayerAiMod
             get
             {
                 if (m_controller == null)
-                    m_controller = new ControllerTreeHost(new UiOnlyActuator());
+                    m_controller = new ControllerTreeHost(new UiOnlyActuator(), m_eventLog);
                 return m_controller;
             }
         }
