@@ -144,8 +144,14 @@
 
   function paletteItem(doc, type) {
     var items = Array.prototype.slice.call(doc.querySelectorAll('.palette-item'));
+    // 物料上的显示名是**翻译**（会随语言变，如"任务·日志 Task.Log"），
+    // 所以先按 data-type（原始类型标识）找，再退回文本匹配（兼容旧行为）。
+    for (var j = 0; j < items.length; j++) {
+      if (items[j].getAttribute('data-type') === type) return items[j];
+    }
     for (var i = 0; i < items.length; i++) {
-      if ((items[i].textContent || '').trim() === type) return items[i];
+      var text = (items[i].textContent || '').trim();
+      if (text === type || text.indexOf(type) >= 0) return items[i];
     }
     return null;
   }
@@ -988,7 +994,8 @@
     });
     var paletteWaitItem = null;
     Array.prototype.slice.call(doc.querySelectorAll('.palette-item')).forEach(function (item) {
-      if (!paletteWaitItem && String(item.textContent).trim() === 'Task.Wait') paletteWaitItem = item;
+      // 物料上的显示名现在是**翻译**（中文下是「任务·等待 Task.Wait」），按 data-type 取才稳
+      if (!paletteWaitItem && item.getAttribute('data-type') === 'Task.Wait') paletteWaitItem = item;
     });
     check('左侧物料区找得到 Task.Wait 物料', !!paletteWaitItem);
     if (paletteWaitItem) {
@@ -1172,7 +1179,7 @@
     // ---- 拖动影像：拖物料时必须有个跟随鼠标的小标签
     var ghostItem = null;
     Array.prototype.slice.call(doc.querySelectorAll('.palette-item')).forEach(function (item) {
-      if (!ghostItem && String(item.textContent).trim() === 'Task.Wait') ghostItem = item;
+      if (!ghostItem && item.getAttribute('data-type') === 'Task.Wait') ghostItem = item;
     });
     check('物料区有 Task.Wait 可拖', !!ghostItem);
     if (ghostItem) {
@@ -1871,6 +1878,46 @@
     check('游戏没在跑时拾取如实报错（不是空列表）',
       pickBox.textContent.indexOf('游戏没在跑') >= 0, pickBox.textContent.slice(0, 60));
 
+    // ②-b 列表容器：每一行都要展开成可点子行（用户要点的往往不是容器，而是里面那张地图）；
+    //      并且 `list.items` 无论是**真数组**还是**被压成 JSON 文本**都不能把面板打崩 ——
+    //      用户实测：地图选择界面点拾取，整个面板报
+    //      `Request failed: listInfo.items.forEach is not a function`。
+    var listRows = [
+      { index: 0, text: 'Rebritish', clientPoint: { x: 1010.5, y: 64.8 }, visibleInPanel: true },
+      { index: 1, text: 'Other', clientPoint: { x: 1010.5, y: 116.8 }, visibleInPanel: true }
+    ];
+    async function pickWithItems(itemsValue) {
+      win.fetch = function () {
+        var body = { ok: true, screen: 'SuPlayScreen#0', elements: [
+          { name: 'WorldsList', type: 'ListPanelWidget', path: '[SuPlayScreen#0]/WorldsList',
+            target: '[SuPlayScreen#0]/WorldsList', clickable: true, clientPoint: { x: 1010.5, y: 64.8 },
+            list: { itemsCount: listRows.length, itemSize: 52, selectedIndex: 1, items: itemsValue } },
+          { name: 'Play', type: 'BevelledButtonWidget', path: '[SuPlayScreen#0]/Play',
+            target: '[SuPlayScreen#0]/Play', clickable: true, clientPoint: { x: 394.7, y: 459.7 } }
+        ] };
+        return Promise.resolve({ ok: true, json: function () { return Promise.resolve(body); } });
+      };
+      await gameApi.pickUiElements();
+      await delay(30);
+      return Array.prototype.slice.call(pickBox.querySelectorAll('.ui-pick-row'))
+        .map(function (row) { return String(row.title || ''); });
+    }
+    var arrayTitles = await pickWithItems(listRows);
+    check('列表容器的每一行都展开成子行，并给出 list:列表@文字 目标',
+      arrayTitles.length === 4
+      && arrayTitles.filter(function (t) { return t.indexOf('list:WorldsList@') === 0; }).length === 2,
+      arrayTitles.length + ' 行：' + arrayTitles.join(' | ').slice(0, 120));
+    check('每一行也带真实坐标（可直接定位/点击）',
+      pickBox.textContent.indexOf('1011,65') >= 0 || pickBox.textContent.indexOf('1010,65') >= 0,
+      pickBox.textContent.replace(/\s+/g, ' ').slice(0, 80));
+
+    var stringTitles = await pickWithItems(JSON.stringify(listRows));
+    check('list.items 被压成 JSON 文本时也不崩，照样展开（旧版 Mod 的返回形态）',
+      stringTitles.length === 4
+      && pickBox.textContent.indexOf('is not a function') < 0
+      && pickBox.textContent.indexOf('请求失败') < 0,
+      stringTitles.length + ' 行：' + stringTitles.join(' | ').slice(0, 120));
+
     // ② 有元素时：每行都带**语义目标**（路径），点它就填进目标框
     win.fetch = function (url) {
       var body = { ok: true, screen: 'MainMenu', elements: [
@@ -2051,6 +2098,314 @@
         return scale !== null && Math.abs(scale - wideScale) <= 2
           && again.canvasClientWidth === wide.canvasClientWidth;
       })(), scaleFromDiag(diagLine(doc)) + '%（原 ' + wideScale + '%）');
+    // ------------------------------------------------ ⑪ i18n：语言切换 + 节点显示名翻译 + 新面板
+    note('⑪ 语言切换（中文/English）、节点显示名翻译、UI 目标选择器、动作包右键菜单');
+
+    var langButton = doc.getElementById('btnLang');
+    check('工具栏上有 中文/English 切换按钮（就在主题旁边）', !!langButton,
+      langButton ? langButton.textContent : '<missing>');
+
+    var waitItem = doc.querySelector('.palette-item[data-type="Task.Wait"]');
+    check('物料上带着**原始类型** data-type（翻译不影响它）',
+      !!waitItem && waitItem.getAttribute('data-type') === 'Task.Wait',
+      waitItem ? String(waitItem.outerHTML).slice(0, 90) : '<missing>');
+
+    var zhText = waitItem ? String(waitItem.textContent).replace(/\s+/g, ' ').trim() : '';
+    check('中文下物料显示翻译名，并保留原始类型',
+      zhText.indexOf('任务·等待') >= 0 && zhText.indexOf('Task.Wait') >= 0, zhText);
+
+    gameApi.toggleLanguage();
+    await delay(40);
+    // 切换语言会重画物料区：**必须重新取一次元素**（旧引用已经游离，读它还停在中文）
+    waitItem = doc.querySelector('.palette-item[data-type="Task.Wait"]');
+    var enText = waitItem ? String(waitItem.textContent).replace(/\s+/g, ' ').trim() : '';
+    var enGroup = (doc.querySelectorAll('.palette-group h3')[0] || {}).textContent || '';
+    check('切到 English：物料显示名变英文，类型标识仍是 Task.Wait',
+      enText.indexOf('Task · Wait') >= 0 && enText.indexOf('Task.Wait') >= 0
+      && waitItem.getAttribute('data-type') === 'Task.Wait', enText);
+    check('切到 English：物料分组标题也变英文', /Root|Composites|Tasks/.test(enGroup), enGroup);
+
+    // 状态提示也要跟着语言走：点一下"撤销"（没东西可撤）看状态栏是不是英文
+    click(doc.getElementById('btnUndo'));
+    await delay(30);
+    var enStatus = statusText(doc);
+    check('切到 English：状态栏提示也是英文（不是夹着中文）',
+      !/[\u4e00-\u9fff]/.test(enStatus) && enStatus.length > 0, enStatus);
+
+    // ---- 用户原话：「切换到英文后，很多按钮还是中文的，需要调整。」----
+    // 所以这里不抽查一两个标签，而是把**工具栏 + 徽标整排**连同悬停提示、占位文字、
+    // 画布提示一起扫：任何一处还剩中文都算失败。
+    var cjkRe = /[\u4e00-\u9fff]/;
+    var CHROME = [
+      ['btnUndo', '撤销'], ['btnRedo', '重做'], ['btnSave', '保存'], ['btnSaveAs', '另存为'],
+      ['btnValidate', '校验'], ['btnTreeRun', '播放'], ['btnTreeStop', '停止'],
+      ['btnTheme', '主题'], ['btnLive', '监视'],
+      ['dirtyBadge', '改动徽标'], ['historyBadge', '撤销/重做徽标'], ['treeRunBadge', '树徽标'],
+      ['actionBadge', '动作包徽标'], ['gameBadge', '游戏徽标'], ['buildBadge', '构建徽标']
+    ];
+    function cjkChrome() {
+      return CHROME.filter(function (pair) {
+        var el = doc.getElementById(pair[0]);
+        return el && cjkRe.test(String(el.textContent || ''));
+      }).map(function (pair) {
+        return pair[1] + '=' + String(doc.getElementById(pair[0]).textContent).trim();
+      });
+    }
+    var chromeZh = cjkChrome();
+    check('切到 English：工具栏与徽标整排都是英文（用户报的"很多按钮还是中文"就是这里）',
+      chromeZh.length === 0, chromeZh.join(' / ') || (CHROME.length + ' 个标签都已是英文'));
+
+    // btnLang 故意显示「中文」（按钮写的是"切过去之后会变成哪种语言"），所以不在扫描范围里
+    var TIPS = ['btnUndo', 'btnRedo', 'btnSave', 'btnSaveAs', 'btnValidate', 'btnTreeRun',
+      'btnTreeStop', 'btnTheme', 'btnView', 'btnLaunchGame', 'btnQuitGame', 'btnUiPick',
+      'treeRunBadge', 'buildBadge', 'uiClickMode'];
+    var tipZh = TIPS.filter(function (id) {
+      var el = doc.getElementById(id);
+      return el && cjkRe.test(String(el.getAttribute('title') || ''));
+    });
+    check('切到 English：悬停提示也都是英文（属性里的中文同样要跟着语言走）',
+      tipZh.length === 0, tipZh.join(',') || (TIPS.length + ' 个提示都已是英文'));
+
+    var searchBox = doc.getElementById('nodeSearch');
+    check('切到 English：搜索框占位文字是英文',
+      searchBox && /Search node id/.test(searchBox.getAttribute('placeholder') || ''),
+      searchBox ? searchBox.getAttribute('placeholder') : '<missing>');
+
+    var mouseHint = doc.querySelector('[data-i18n-html="canvas.mouse"]');
+    check('切到 English：画布上的操作提示（鼠标/快捷键两段）是英文',
+      mouseHint && /Mouse:/.test(mouseHint.textContent) && !cjkRe.test(mouseHint.textContent),
+      mouseHint ? String(mouseHint.textContent).slice(0, 70) : '<missing>');
+
+    // ---- 刷新一次游戏状态，再扫一遍 ----
+    // 这一步才真正复现用户的现象：applyLanguage() 填好的英文，被"每次刷新界面都写一遍
+    // 中文字面量"的动态代码覆盖回去。桩掉 fetch（真状态会随游戏在不在跑而变），
+    // 走的是真 DOM、真刷新链路。
+    gameApi.stopStatusWatch();
+    win.fetch = function (url) {
+      var target = String(url);
+      if (target.indexOf('/api/game/status') === 0) {
+        return Promise.resolve({ ok: true, json: function () {
+          return Promise.resolve({ ok: true, status: {
+            paused: false, mode: 'tree',
+            host: { name: 'controller', situation: 'inworld', kind: 'controller', ready: true },
+            tree: { source: 'selftest.scbtpak', running: true, paused: false, ticks: 12,
+              activePath: 'root/seq/wait', dirty: true, lastResult: 'success' },
+            action: { available: false }
+          } });
+        } });
+      }
+      if (target.indexOf('/api/game/process') === 0) {
+        return Promise.resolve({ ok: true, json: function () {
+          return Promise.resolve({ exeExists: true, running: true, pid: 4242,
+            channelConnected: true, runtimeStale: false });
+        } });
+      }
+      return realFetch.apply(win, arguments);
+    };
+    await gameApi.refreshGameStatusQuiet();
+    await delay(60);
+
+    var chromeAfter = cjkChrome();
+    check('切到 English 后再刷新一次游戏状态，工具栏依然是英文（动态文案没覆盖回去）',
+      chromeAfter.length === 0, chromeAfter.join(' / ') || '刷新后仍是英文');
+    var badgeText = String(doc.getElementById('treeRunBadge').textContent).trim();
+    check('切到 English：树徽标用的是英文模板（跑起来的树名照旧显示）',
+      badgeText.indexOf('selftest.scbtpak') >= 0 && badgeText.indexOf('Tree') >= 0, badgeText);
+    var liveBox = doc.getElementById('liveBox');
+    check('切到 English：实时监视面板的标签（模式/活动树/活动节点…）也是英文',
+      !liveBox || !cjkRe.test(String(liveBox.textContent || '')),
+      liveBox ? String(liveBox.textContent).replace(/\s+/g, ' ').slice(0, 90) : '<missing>');
+
+    // ---- 整页扫描：切到英文后，**任何**元素都不该再留着中文界面文字 ----
+    // 为什么必须扫整页而不是列清单：用户三次反馈（底部"实例根/包目录"、顶部节点数"5节点"、
+    // 动作包下拉的"（仅结构：不能回放）/1043 帧"）都是**同一类**问题 ——
+    // 那些文字由"只在启动/加载时跑一次"的函数写上去，语言切换时没人重画它们。
+    // 列清单永远会漏，所以改成把整个文档扫一遍。
+    // 两个例外：语言按钮自己（故意写"切换到中文"）、以及**数据**里的中文
+    // （动作包/行为树文件名可以是中文，例如用户自己的「进入游戏.scatpak」）。
+    // 注意要"把文件名整段剥掉再判中文"，不能"看到文件名就跳过整段" ——
+    // 动作包那条下拉是 `进入游戏.scatpak（仅结构：不能回放）2.231s/723帧` 这种混合文本，
+    // 跳过整段就把模板里的中文一起放过了（用户报的就是这一段）。
+    var DATA_NAME = /[^\s()（）]*\.(scbtpak|scatpak)/g;
+    function stripDataNames(text) {
+      return String(text).replace(DATA_NAME, '<file>');
+    }
+    function cjkLeaks(root) {
+      var leaks = [];
+      var all = root.querySelectorAll('*');
+      for (var i = 0; i < all.length; i++) {
+        var el = all[i];
+        if (el.id === 'btnLang') continue;
+        for (var k = 0; k < el.childNodes.length; k++) {
+          var node = el.childNodes[k];
+          if (node.nodeType !== 3) continue;
+          var text = String(node.nodeValue || '').trim();
+          if (!text || !cjkRe.test(stripDataNames(text))) continue;
+          leaks.push((el.id || el.className || el.tagName) + ' = ' + text.slice(0, 34));
+        }
+        ['title', 'placeholder'].forEach(function (name) {
+          var value = el.getAttribute ? el.getAttribute(name) : null;
+          if (value && cjkRe.test(stripDataNames(value))) {
+            leaks.push((el.id || el.tagName) + '[' + name + '] = ' + String(value).slice(0, 34));
+          }
+        });
+      }
+      return leaks;
+    }
+    // 先重新加载一次元信息/动作包（它们平时只在启动时跑一次）——
+    // 这一步是"用户切完语言之后又用了一会儿"的等价物。故意**不**在切换语言之后调用，
+    // 因为要测的正是"切换语言本身够不够把界面全部翻成英文"。
+    var leaks = cjkLeaks(doc.body);
+    if (leaks.length) note('   残留中文元素（全部）：' + leaks.length + ' 处\n     '
+      + leaks.slice(0, 24).join('\n     '));
+    check('切到 English：整页扫一遍，没有残留的中文界面文字（含悬停提示/占位文字）',
+      leaks.length === 0, leaks.slice(0, 24).join(' | ') || '整页都已是英文');
+    win.fetch = realFetch;
+
+    var schemaTypes = ((gameApi.state.schema || {}).nodes || []).map(function (n) { return n.type; });
+    var missingLabels = schemaTypes.filter(function (type) {
+      return !gameApi.i18n.hasNodeLabel(type);
+    });
+    check('schema 里每个节点类型都有中英显示名', missingLabels.length === 0,
+      missingLabels.join(',') || (schemaTypes.length + ' 个类型都有'));
+
+    gameApi.toggleLanguage();
+    await delay(40);
+    waitItem = doc.querySelector('.palette-item[data-type="Task.Wait"]');
+    check('切回中文（语言记在这个浏览器里，可来回切）',
+      String(waitItem.textContent).indexOf('任务·等待') >= 0,
+      String(waitItem.textContent).replace(/\s+/g, ' ').trim());
+
+    var uiItem = doc.querySelector('.palette-item[data-kind="ui-target"]');
+    check('物料区多了一个「拾取界面目标」的物料（解析 list / 多种结构）',
+      !!uiItem && String(uiItem.textContent).indexOf('拾取界面目标') >= 0,
+      uiItem ? String(uiItem.textContent) : '<missing>');
+
+    // ---- 界面目标选择器：列表容器必须展开到每一行（WorldsList 里的某一张地图）
+    var pickedTarget = null;
+    var realFetch3 = win.fetch;
+    win.fetch = function (url) {
+      if (String(url).indexOf('/api/game/ui/elements') >= 0) {
+        return Promise.resolve({ ok: true, json: function () {
+          return Promise.resolve({ ok: true, screen: 'Play', elements: [
+            { name: 'WorldsList', type: 'ListPanelWidget',
+              path: '[SuPlayScreen#0]/[CanvasWidget#0]/WorldsList',
+              target: '[SuPlayScreen#0]/[CanvasWidget#0]/WorldsList',
+              clientPoint: { x: 351.8, y: 36.6 }, clickable: true,
+              list: { selectedIndex: null, items: [
+                { index: 0, text: 'Rebritish', clientPoint: { x: 351.8, y: 36.6 } },
+                { index: 1, text: 'CmdBridgeTest', clientPoint: { x: 351.8, y: 86.6 } }
+              ] } }
+          ] });
+        } });
+      }
+      return realFetch3.apply(win, arguments);
+    };
+    gameApi.openUiTargetPicker(function (element) { pickedTarget = element; });
+    await delay(80);
+    var rowTitles = Array.prototype.slice.call(
+      doc.querySelectorAll('#modalHost .ui-pick-rows .ui-pick-row')).map(function (row) {
+      return row.title || '';
+    });
+    check('选择器把列表容器展开到每一行（能直接选某一张地图）',
+      rowTitles.length === 2 && rowTitles[0].indexOf('list:WorldsList@Rebritish') >= 0,
+      rowTitles.join(' | ').slice(0, 120));
+
+    var useButton = null;
+    Array.prototype.slice.call(doc.querySelectorAll('#modalHost .ui-pick-rows button'))
+      .forEach(function (button) {
+        if (!useButton && /用作节点目标/.test(button.textContent)) useButton = button;
+      });
+    if (useButton) {
+      click(useButton);
+      await delay(30);
+    }
+    check('点「用作节点目标」会把那一行交给调用方（生成节点 / 填属性）',
+      !!pickedTarget && String(pickedTarget.target).indexOf('list:WorldsList@') === 0,
+      pickedTarget ? String(pickedTarget.target) : '<null>');
+
+    var closeButton = null;
+    Array.prototype.slice.call(doc.querySelectorAll('#modalHost .modal-actions button'))
+      .forEach(function (button) {
+        if (!closeButton && /关闭/.test(button.textContent)) closeButton = button;
+      });
+    if (closeButton) { click(closeButton); await delay(20); }
+    check('模态框能关掉（不留遮罩挡住画布）',
+      doc.getElementById('modalHost').hidden === true,
+      'hidden=' + doc.getElementById('modalHost').hidden);
+
+    // ---- 动作包右键菜单：编辑 / 删除 / 重命名（顺序就是用户要求的顺序）
+    var fakeEvent = { clientX: 120, clientY: 120,
+      preventDefault: function () {}, stopPropagation: function () {} };
+    gameApi.showActionMenu(fakeEvent, 'demo_action.scatpak');
+    await delay(20);
+    var menuLabels = Array.prototype.slice.call(doc.querySelectorAll('.context-menu button'))
+      .map(function (button) { return button.textContent; });
+    check('右键菜单第一项「编辑」、第二项「删除」、第三项「重命名」',
+      menuLabels.length === 3 && menuLabels[0] === '编辑' && menuLabels[1] === '删除'
+      && menuLabels[2] === '重命名', menuLabels.join(' / '));
+    gameApi.closeActionMenu();
+    await delay(20);
+    check('右键菜单能关掉', doc.querySelectorAll('.context-menu').length === 0,
+      String(doc.querySelectorAll('.context-menu').length));
+
+    // ---- 动作包编辑器：读事件 / 改事件 / 存回去
+    var savedBody = null;
+    win.fetch = function (url, options) {
+      var path = String(url).split('?')[0];
+      if (path === '/api/action/events' && (!options || !options.method || options.method === 'GET')) {
+        return Promise.resolve({ ok: true, json: function () {
+          return Promise.resolve({ ok: true, file: 'demo_action.scatpak', writable: true,
+            replayable: true, duration: 2.2, frames: 723, eventCount: 2, issues: [],
+            events: [
+              { index: 0, t: 0.006, kind: 'ui.click', detail: 'click:Play' },
+              { index: 1, t: 0.453, kind: 'ui.click', detail: 'click:1010.6,64.83' }
+            ] });
+        } });
+      }
+      if (path === '/api/action/events' && options && options.method === 'POST') {
+        savedBody = JSON.parse(options.body);
+        return Promise.resolve({ ok: true, json: function () {
+          return Promise.resolve({ ok: true, saved: true, file: 'demo_action.scatpak',
+            eventCount: (savedBody.events || []).length, issues: [] });
+        } });
+      }
+      return Promise.resolve({ ok: true, json: function () {
+        return Promise.resolve({ ok: true, actions: [] });
+      } });
+    };
+    gameApi.openActionEditor('demo_action.scatpak');
+    await delay(100);
+    var eventRows = doc.querySelectorAll('#modalHost .event-row');
+    check('动作包编辑器列出了语义事件（时间 / 类型 / 目标）',
+      eventRows.length >= 3, eventRows.length + ' 行（含表头）');
+
+    var detailInputs = Array.prototype.slice.call(doc.querySelectorAll('#modalHost .event-row .detail'));
+    if (detailInputs.length >= 2) {
+      detailInputs[1].value = 'click:list:WorldsList@Rebritish';
+      detailInputs[1].dispatchEvent(new win.Event('change', { bubbles: true }));
+      await delay(20);
+    }
+    var saveButton = null;
+    Array.prototype.slice.call(doc.querySelectorAll('#modalHost .modal-actions button'))
+      .forEach(function (button) {
+        if (!saveButton && /保存事件/.test(button.textContent)) saveButton = button;
+      });
+    if (saveButton) { click(saveButton); await delay(100); }
+    check('保存把改过的事件 POST 回去（像素目标 → list: 语义目标）',
+      !!savedBody && (savedBody.events || []).some(function (entry) {
+        return entry.detail === 'click:list:WorldsList@Rebritish';
+      }),
+      savedBody ? JSON.stringify(savedBody.events).slice(0, 140) : '<null>');
+
+    var closeEditor = null;
+    Array.prototype.slice.call(doc.querySelectorAll('#modalHost .modal-actions button'))
+      .forEach(function (button) {
+        if (!closeEditor && /关闭/.test(button.textContent)) closeEditor = button;
+      });
+    if (closeEditor) { click(closeEditor); await delay(20); }
+    win.fetch = realFetch3;
+
   }
 
   /** 中键拖动平移画布（真鼠标事件）。 */

@@ -1437,6 +1437,318 @@ FAILURES: 0
 自检：纯逻辑 **474/474**、编辑器 **108/108**（+2：定位/点击都要把 `mark` 发出去）、
 真浏览器 **164/164**（+1：点不到的元素在列表里写明原因）。
 
+### 9.5.32 物料区翻译 + 中文/English 切换 + 列表行拾取 + 动作包右键（编辑/删除/重命名）
+
+用户这一轮提了四件事，逐条对应：
+
+**① 物料区加一层"只影响显示"的翻译**（`PlayerAiEditor/Web/i18n.js` 的 `NODE_LABELS`）
+
+`Task.Log` 在中文界面里显示成「任务·日志」，英文界面是「Task · Log」；
+**写进包的永远是 `node.type` 原文**。物料按钮、画布节点标题栏、缩进树的行标签、属性区的"类型"行
+四处统一用 `setNodeLabel()`：显示名一个 `<span class="node-label">`、原始类型一个小字
+`<span class="node-raw">`，一眼能分清"哪个是显示名、哪个是包里真正写的东西"。
+自检里加了一条"schema 里每个节点类型都有中英显示名"，漏一个就会红。
+
+**② 整个界面在主题旁边切中文 / English**（`#btnLang`）
+
+`i18n.js` 里 `STRINGS.zh` / `STRINGS.en` 两张表 + `t(key)`（缺 key → 中文兜底 → key 本身）。
+静态文案在 `index.html` 上挂 `data-i18n` / `data-i18n-html` / `data-i18n-placeholder`，
+`applyLanguage()` 一次性回填并重画物料/画布/属性/拾取列表；语言记在 localStorage，也能用 `?lang=en`。
+
+**状态提示全部翻了**（这一轮补完）：
+- 80 条"整句" → `L('st.NNN', '中文原文')`（`extract_status_keys.py` + `apply_status_i18n.py`）；
+- 109 条"拼接句" → **整句模板 + 占位符**：`setStatus('已保存 ' + f + '（' + n + ' 节点）')`
+  → `setStatus(I18n.format('st.c001', '已保存 {0}（{1} 节点）', f, n))`
+  （`extract_status_all.py` + `apply_status_all.py`）。**中文原文一字不改**，只是把"拼字符串"
+  换成"模板 + 值"——因为碎片单独翻译是错的（`' 个节点'` 离开原句没有意义），
+  而且中英文语序不同；
+- 40 条"三元分支"（`ok ? '校验通过' : ('校验失败：' + n + ' 个错误')`）→ 两个分支各一个模板；
+  其中 6 处是"拼接里嵌三元"（`(code === 'not_ready' ? '还不能播放：' : '播放失败：') + reason`），
+  由 `apply_status_nested_ternary.py` 改写成"三元选模板"；
+- 收尾 `finish_status_i18n*.py` 处理两处分支里的裸中文，并**严格复查**：
+  把 `L(...)` / `I18n.format(...)` 的实参先抠掉再看还有没有裸中文 → 现在 **0 处**。
+
+覆盖度有独立检查：`check_i18n_coverage.py` 用 node 把 `i18n.js` 装进沙箱、导出两张表，
+再把 `app.js` + `index.html` 里用到的**每个 key** 对一遍（`st.*` 只要求英文，中文原文是代码里的兜底）。
+现在 **305 个 key，缺中文 0、缺英文 0 → RESULT: OK**。缺一个 key 不会报错，只会安静地退回中文，
+所以这条检查是"英文界面里夹中文"的唯一保险。
+
+> 踩过的坑（都写进了脚本注释）：① 用非贪婪正则找 `setStatus(...)` 会在嵌套调用处截断，
+> 把半截表达式当整句改写 → 直接语法错误（已用 `status_i18n.py` 的**括号深度感知**扫描替换掉）；
+> ② 补 key 的脚本把行尾写死成 CRLF，而 Web 资源是 LF，`replace` 一次没命中却还打印"新增 N 条"
+> → 静默失败（现在插完立刻回读断言，并且按文件真实行尾插）；
+> ③ 翻译是"按中文原文"做的，旧版 key 与新抽取对不上 → 按**文本**重新对齐（`realign_status_translations.py`）。
+
+### 9.5.33 进过世界、Quit 回主菜单后「真实鼠标点不动按钮」（每帧释放把按下沿清掉了）
+
+用户报的现象：播放行为树进入地图 → Esc → Quit 回主菜单 → 之后鼠标点那四个按钮
+**只有"按下的一瞬间"效果、不会真的触发**，多次点击也没用。
+
+**诊断链**（已实测复现：主菜单里连发 3 次真实鼠标点击，`screen` 一直是 `MainMenu`）：
+
+1. `PlayerAiRuntime.TickFrameStart` 在 `GameManager.Project == null`（主菜单）时**每帧**调 `ReleaseAll()`；
+2. `ReleaseAll()` → 角色 `ReleaseInput()` → `CmdBridgeActuator.ReleaseAll()` → `facade.ReleaseAll()`
+   → `InputInjector.ReleaseAll()` → `ReleaseAllCore()`，它会把引擎的
+   `m_keysDownArray/m_keysDownOnceArray/m_mouseButtonsDownArray/m_mouseButtonsDownOnceArray`
+   **整体清零**；
+3. 而**真实鼠标的"按下沿"就写在同一个 `downOnce` 数组里**（OS 的 mouse-down 事件写进去）。
+   每帧被清一次之后，`WidgetInput.UpdateInputFromMouse` 永远留不下 `m_mouseDownPoint`
+   （`WidgetInput.cs:748-765`：`downOnce` 那一帧才写起点），松手那一帧
+   `!IsMouseButtonDown(Left) && m_mouseDownPoint.HasValue` 不成立 → **派生不出 `Click`**；
+4. 只剩 `Press` 成立（`Press` 只看 down 数组，那个由真实事件在按住期间保持为真）——
+   于是表现就是"按钮有按下视觉、但点不动"。**完全对得上用户的描述。**
+
+为什么"进过世界才有"：`m_actors` 只在世界加载时被填（`PlayerAiComponent`），
+退出世界时 `Disable()` 只调 `Actor.ReleaseInput()`、**不把 actor 从列表里摘掉**，
+所以回到主菜单后那个"每帧释放"才开始真的有东西可放（空列表时释放什么也不做）。
+
+**两处一起改，缺一个都还会犯**：
+
+- **① 窄释放**（根因）：`InputInjector.ReleaseInjectedOnly()` —— 例行释放**只放掉"本 Mod 注入并按住"
+  的键与鼠标**（遍历 `m_heldKeys`/`m_heldButtons` 逐个清），不再整体清空设备数组；
+  `CmdBridgeInput.ReleaseInjectedInput()` 把它做成门面；
+  `CmdBridgeActuator.ReleaseAll()` 改走窄释放。**宽释放 `ReleaseAll()` 保留**，只给
+  "彻底停手"（`StopEverything()` / `ReleaseAllImmediate()` / Mod 卸载）用。
+- **② 边沿触发**（防御）：`TickFrameStart` 的世界外分支改成**只在刚回到世界外的那一帧释放一次**
+  （`m_releasedForNoProject`），和之前 `ControllerTreeHost.Tick` 的 `!Enabled` 分支同一个道理 ——
+  那个分支在主菜单是"每帧都会走到的常态"，任何"每次都要清一遍"的动作都会踩到真实输入。
+
+**验收**（`Mod/Packages/out/` 里两个脚本，一前一后）：
+
+```
+py Mod/Packages/out/reach_menu_after_world.py     # 进世界 → Esc → Quit 回主菜单（复现用户状态）
+py Mod/Packages/out/verify_menu_real_click.py     # 用**真的 OS 鼠标事件**（SendInput）点 Play
+```
+
+修复前：连点 3 次 → `screen = MainMenu`（FAIL，复现成功）；
+修复后：第 1 次 → `MainMenu -> Play`（PASS）。脚本还会检查窗口是否真在前台
+（否则真实鼠标进不了游戏，那是测试环境问题而不是产品问题）。
+
+**③ 物料区多一个"用于解析 list 或多种结构"的物料 + 能点容器里的具体地图**
+
+- 新物料组「UI 操作（界面/列表）」，里面是「🎯 拾取界面目标…」：点它会把**当前屏幕上**的
+  可交互元素列出来 —— 关键在于**列表容器会展开到每一行**：
+  `WorldsList` 只是一个容器，真正要选的是里面那张地图，所以每一行都给
+  `list:WorldsList@世界名`（按文字）与 `list:WorldsList#0`（按序号）两个语义目标。
+- 选中的目标 → 直接生成/更新一个 `Task.UiClick` 节点（`target`/`mode`/`waitSeconds`）；
+  属性区里选中 `Task.UiClick` 也有同一个「🎯 拾取界面目标…」按钮。
+- UI 拾取面板里的列表元素同样展开了每一行（点一行就填进目标框并顺手定位）。
+- 选择器每一行都有「用作节点目标」与「在游戏里点一下」，后者直接走 `ui.clickelement`，
+  点完自动刷新列表 —— "这个目标到底对应界面上哪一行"当场就能确认。
+
+**④ 动作包右键：编辑 / 删除 / 重命名**（顺序就是用户要的顺序）
+
+动作包下拉与物料区的动作包项都支持右键，弹出菜单：**编辑 / 删除 / 重命名**。
+
+- **编辑**：`openActionEditor(file)` —— 打开动作包编辑器，编辑**语义事件轨**
+  （时间 / 类型 / 目标），可加一条、上下移、删除；每一行还有「🎯」按钮可以直接把某个点击
+  改成从游戏里现取的语义目标。保存走 `POST /api/action/events`，**逐帧输入轨与关键帧一字不动**，
+  写完立刻重新校验并把报告显示出来。这正是"把 `click:1010.6,64.83` 改成
+  `click:list:WorldsList@世界名`"的入口 —— 改完再也不会因为窗口尺寸失效。
+- **重命名**：`POST /api/action/rename` —— 改文件名，**manifest 里的 name 跟着改**；
+  还会回报"哪些树还在引用旧名字"。
+- **删除**：`POST /api/action/delete` —— 先确认再删，同样回报引用它的树；
+  只允许删可写包目录里的文件（只读目录/游戏安装目录一律拒绝）。
+
+服务端新增四个端点：`GET/POST /api/action/events`、`POST /api/action/rename`、
+`POST /api/action/delete`；编辑器自检 **116/116**（+8：读事件、写事件且仍可回放、
+缺 detail 拒收、重命名（含同名 no-op）、删除、删不存在的如实报 not_found）。
+
+**顺手补的一个诚实性修复**：窗口不活跃时引擎整段忽略输入
+（`WidgetInput.Update()` 里 `if (Window.IsActive)`），以前合成点击会**无声无息地丢掉**。
+现在 `ui.clickelement` 直接拒绝并说明怎么办（`window_not_active`）——
+实测：刚启动游戏、窗口还没拿到焦点时点 Play，以前"看着像没反应"，现在一句话说清。
+
+验收：真浏览器 **179/179**（+15：语言切换后物料显示名变英文而 `data-type` 不变、
+每个类型都有翻译、切回中文、`data-type` 仍在、UI 操作物料存在、选择器把列表展开到行、
+「用作节点目标」回调正确、模态框能关、右键菜单三项且顺序正确、动作包编辑器列出事件、
+保存把像素目标改成 `list:` 语义目标）；UI 服务链 `verify_ui_service.py` **11/11**
+（共控模式要么真的点动、要么如实报 `window_not_active`；脱离模式下整条链进世界）。
+
+### 9.5.34 「切换到英文后很多按钮还是中文」：三类漏翻 + 一个被语言切换掩盖的真 bug
+
+用户报的现象（附截图，界面已经是英文模式）：**工具栏、徽标、状态行、悬停提示里还有一大堆中文**。
+
+先做了一把"照妖镜"再动手 —— 两个脚本把"切英文后仍然是中文"的地方全部列出来：
+
+```
+py Mod/Packages/out/check_ui_english.py    # 静态（index.html 没挂 data-i18n）+ 动态（app.js 直接写中文）
+py Mod/Packages/out/check_i18n_keys.py     # 中英两段键集合是否一致、英文值里是否还有中文、占位符是否对齐
+```
+
+首轮跑出来 **127 处**。逐类处理之后是 0，两个脚本现在都进了总闸门（`check_player_ai_build.py i18n`）。
+
+**① 动态文案（88 处，主因）**：`badge.textContent = '树：未运行…'`、`parts.push('视图=' + …)`、
+`rows.push(['模式', …])` 这类**每次刷新界面都会重写一遍**的赋值 —— `applyLanguage()` 明明已经
+把静态文案换成英文了，下一次刷新又被这些中文字面量覆盖回去。处理方式是**按整条语句**包成
+`I18n.format("ui.NNN", '模板 {0}', 值)` / `L("ui.NNN", '原文')`（`apply_ui_texts.py`，74 处）。
+
+**② 三元与拼接里的碎片（179 条去重、209 处）**：上一轮的正则只能认"整条赋值"，
+`'已连接：' + childId + ' 的第 ' + n + ' 个子节点'` 这种套不进去。改成**按字面量**包
+（`apply_remaining_i18n.py`），拼接结构原样保留；只有四处**语序会坏**的（连接/断开/升降级/
+子节点计数）整体改成模板，例如 `'已连接：{0} → {1} 的第 {2} 个子节点'` → `Connected: {0} → child #{2} of {1}`。
+
+**③ 藏在 `L()/I18n.format()` 参数里的中文（46 条去重、64 处）** —— 这是最隐蔽的一类：
+扫描器把整个"已翻译调用"当白名单跳过了，但**只有第 2 个参数**（调用点的中文兜底）该跳过，
+第 3 个参数起是真正要显示的值：
+
+```js
+I18n.format("ui.085", '树：{0}{1} {2}（tick {3}）',
+  (st.paused ? '已暂停' : '运行中'),              // ← 漏的就是这两句
+  (st.menu ? '（控制器·主菜单）' : '（控制器）'), …)
+```
+
+症状正是用户看到的"半中半英"：`Tree: 运行中（控制器） enter.game.scbtpak (tick 7)`。
+`wrap_arg_i18n.py` 按"第 3 个参数起"重扫重包，并且**优先复用已有键**（同一句中文不会出现两种英文）。
+顺带修了语序：`setPaused(paused, what)` 原来从调用点把中文词传进来，
+英文下会变成 `Now Pause the tree…`，现在按 `paused` 取词（`ui.w01` pausing / `ui.w02` resuming）。
+
+**④ 静态漏挂（8 处）**：撤销/重做/视图/构建时间的悬停提示、搜索框占位文字、"标记落点"那行的提示、
+`#diagLine` 的首屏占位。第一轮是按 id 清单批量挂的，清单外的就漏了 —— 根源是 `title="…"`
+里带 `>`（`<实例根>` 那种）会把"标签到哪结束"的正则带偏；这次逐个精确锚点补
+（`patch_static_i18n2.py`），并让 `applyLanguage()` 支持 `data-i18n-title`。
+
+**⑤ 顺手抓到的真 bug：`saveAs` 从界面文字里抠实例根**。
+`$('rootInfo').textContent.match(/实例根：([^\s　]+)/)` —— 切英文之后这行文字变成
+`Instance root: …`，正则抠不到 → `folder` 是 `undefined` → **另存为会写到相对目录去**。
+现在实例根同时放在 `data-instance-root` 上，正则只当兜底。这类"拿界面文字当数据源"的写法，
+是这次翻译工作最大的附加收获。
+
+**⑥ 语言切换后徽标不跟着变**：`applyLanguage()` 只回填 `data-i18n` 的静态文案，
+而徽标是 `markDirty()` / `updateTreeRunUi()` 动态写的 —— 切回中文后改动徽标还停在 `Modified`。
+现在这两处也一起重画。
+
+**⑦ 工具自身的两个坑（都已修，并写进注释）**：
+
+- 表格写入时把"源码转义写法"当逻辑文本又转义了一遍 → `\n` 变成 `\\n`，界面上真的显示一个反斜杠。
+  现在**存进表里的一律是逻辑文本**，写进 `.js` 时统一转义（`i18n_text.py`）；
+- 英文表里有 10 个键顶着**上一条**的译文（中文从调用点补回来后，占位符个数一对就露馅，
+  如 `st.c053` 需要 `{0}{1}` 却只有 `{0}`）→ `fix_misaligned_en.py` 逐条修正，
+  `check_i18n_keys.py` 会把这类问题当成硬失败。
+
+**顺带把中英两段补成自洽**：原先 319 个键只有英文（中文靠 `t()` 的兜底链回退到调用点原文），
+能跑但很脆 —— 任何一处忘了传兜底就会把键名显示出来。`fill_zh_from_callsites.py` 从
+调用点与 `index.html` 里把中文原文捞回来写进中文段，现在 **673 / 673 完全对称**。
+
+**验收**：
+
+```
+py -3 Mod/Packages/check_player_ai_build.py all
+# RESULT: all -> [0, 0, 0, 0, 0, 0, 0, 0]
+#   编辑器自检 116/116；真浏览器 187/187（+7 英文模式断言）；web 自检 376/376（+7）
+#   i18n 闸门 0 problem(s)
+```
+
+新增的断言正是用户关心的那条线：切到 English 后**工具栏与徽标整排**（含悬停提示、占位文字、
+画布提示）都不含中文，**并且刷新一次真实游戏状态之后仍然是英文**（动态写入不许覆盖回去）；
+`#btnLang` 自己显示"切换到中文"属于故意（按钮写的是切过去之后的语言），已在闸门里白名单说明。
+
+### 9.5.35 「地图选择界面里 UI 拾取器拾不到东西」：嵌套数组被压成字符串（+ 前端加兜底）
+
+用户报的现象（附截图）：进到**选择世界**那个界面，点「拾取界面元素」，
+面板红框写着
+
+```
+Request failed: listInfo.items.forEach is not a function
+```
+
+**根因链**（一路查下来，只有最后一段是新的）：
+
+1. 游戏侧 `ui.elements` 的 `result.elements` 是**一段 JSON 文本**，不是数组 ——
+   这是 `GameBridgeClient.Collect` 的既定行为（`member.IsArray → member.ToJson(false)`），当初是为了
+   让整份清单能塞进一行控制通道消息。编辑器早就知道这件事，`SuggestTargets` 会先
+   `ParseElementArray` 把它解析回数组（注释里就写着"否则前端拿到的是字符串，`elements.forEach` 直接炸"）。
+2. 但**嵌套的那一层没管**：解析每个元素时，`PlainValue` 只处理标量，
+   遇到数组/对象又 `ToJson(false)` 回去了 ——
+   于是列表控件 `list.items`（**每一行世界**）到前端变成了字符串：
+   `items` 的类型是 `string`，内容是 `[{"index":0,"text":"Rebritish",...}]`。
+3. 前端那句守卫 `if (listInfo && listInfo.items && listInfo.items.length)` 拦不住：
+   **非空字符串也有 `.length`**。接着 `.forEach` 不是函数 → 整个面板走 `catch`，
+   显示成"请求失败"，一个元素都拾不到。
+4. 只在有列表控件的界面暴露（主菜单没有列表；选择世界/物品栏这类界面才有），
+   所以前几轮自检没碰到 —— 而且自检里的拾取测试用的是**桩数据**（`items` 是数组），
+   正好绕开了这条真实链路的形态差异。
+
+**四处一起改**：
+
+- **① 递归转换**（根因）：`EditorApi.PlainValue` 现在把数组转成 `List<object>`、对象转成
+  `Dictionary<string,object>`，不再 `ToJson`；`ParseElementArray` 每层都走它。
+  实测：`/api/game/ui/elements` 里 `list.items` 从 string 变回数组（4 个世界，每行带坐标）。
+- **② 前端兜底**：新增 `asArray(value)` —— 真数组直接用；长得像 JSON 文本就解析回来
+  （兼容旧版 Mod/旧版编辑器）；其余一律空数组。`elements`、`list.items`、状态行计数
+  全部改走它。**列表行少展开几行可以忍，整个面板崩掉不能忍。**
+- **③ 顺手修掉 `screen=?`**：游戏侧的 `ui.elements` 根本没带 `screen` 字段
+  （实测字段只有 `elements/ready/shown/totalCount/truncated`），面板标题写着 `screen=?` 等于没说。
+  现在用元素的路径根当界面名（`[SuPlayScreen#0]/…` → `SuPlayScreen`），
+  并且 `truncated` 时补一句"这里只列了前 N 个，界面上共 M 个"。
+- **④ 补测试，把这条真实形态钉死**：
+  - 编辑器自检 **121/121**（+5）：用**和游戏侧一模一样**的回包（`elements` 是 JSON 文本、
+    里面嵌着数组）断言 `elements` 是真数组、`list.items` 是**真数组**、
+    行里有坐标、`selectedIndex → rowTarget`、每个元素都有语义目标；
+  - web 自检 **384/384**（+8）：`items` 是真数组 / 是 JSON 文本 / `elements` 是 JSON 文本 /
+    彻底无效的值，四种形态都不能崩；外加 `screen` 推导与截断提示；
+  - 真浏览器 **190/190**（+3）：真 DOM 下容器行展开成子行、行带 `list:列表@文字` 与坐标、
+    `items` 是 JSON 文本时照样展开。
+
+**验收**（真机，游戏停在"选择世界"界面）：
+
+```
+py -3 Mod/Packages/out/goto_world_select.py      # 主菜单点一次 Play，只进选择界面
+py -3 Mod/Packages/out/verify_ui_picker_list.py  # 复核 list.items 与逐行定位/点击
+```
+
+实测输出：`list.items` 是真数组（4 行：Rebritish / CmdBridgeTest / Rosnia Mear / ceshi260810）、
+每行有坐标、`list:WorldsList@Rebritish` 定位得到 `(619.5, 64.8)` 且点击被游戏接受
+（`ok=true`，不点世界名以外的东西，不会真的进世界）。
+
+**教训（写给下次改这条链路的人）**：`GameBridgeClient.Collect` 会把**顶层**数组收成 JSON 文本，
+这是通道的既定约定；凡是**嵌套**的数组/对象，转成 CLR 结构时必须逐层递归，
+否则前端拿到的是"看着像数组、其实是字符串"的东西 —— 而 `typeof` 与 `.length` 都骗得过守卫。
+
+### 9.5.36 「切英文后还剩几处中文」：文案由"只在启动时跑一次"的函数写出来，没人重画
+
+用户第三次反馈（附截图）：切到英文之后，**底部**「实例根：…　包目录：…」、
+**顶部**打开包下拉里的「common.scbtpak [common] 5节点」、
+**动作包下拉**里的「（仅结构：不能回放）…1043帧」还是中文。
+
+**这一次没有再去逐个猜** —— 前面已经为同类问题（徽标、状态行）列过两轮清单，列清单必定漏。
+改成让真浏览器**把整个页面扫一遍**：切到英文之后，文档里任何元素的文字节点与
+`title` / `placeholder` 属性里都不许再有中文，只放行两件事 ——
+
+- 语言按钮自己（它写的是"切换到中文"，那是设计）；
+- **数据**里的中文（动作包/行为树文件名可以是中文，例如用户自己的「进入游戏.scatpak」）。
+  这里有个坑：不能"看到文件名就跳过整段"，得**把文件名整段剥掉再判中文** ——
+  下拉里是 `进入游戏.scatpak（仅结构：不能回放）2.231s/723帧` 这种混合文本，
+  跳过整段就把模板里的中文一起放过了（用户报的正是这一段）。
+
+第一次跑就抓出 5 类残留，全是**同一种病**：文案写它的那个函数只在启动/加载时跑一次，
+`applyLanguage()` 没有重画它。
+
+| 残留 | 谁写的 | 什么时候写 | 修法 |
+|------|--------|-----------|------|
+| 底部「实例根/包目录」+ 游戏徽标 | `loadMeta()` | 启动时拉一次 `/api/meta` | 缓存 `state.meta`，拆出 `renderMeta()`，语言切换时重画 |
+| 打开包下拉「5节点」 | `loadPackages()` | 启动/保存后 | 拆出 `renderPackageOptions()`（纯渲染） |
+| 动作包下拉「（仅结构…）/帧」+ 动作包徽标 | `loadActions()` | 启动时拉一次 `/api/actions` | 拆出 `renderActionSelect()`（纯渲染） |
+| 小地图悬停提示 | `ensureMinimap()` | 元素创建时 | 已存在时也按当前语言刷一次 title |
+| 「落点 x,y」那一行 | `showLocatedLine(text)` 的调用点 | 每次定位/点击 | 改成缓存**原始回包**（`uiPick.located`）+ `renderLocatedLine()` —— 只缓存拼好的字符串是翻不了的 |
+| 组头「注释 1」 | `createGroupFromSelection()` | 建组时算好的默认名，还会**存进 localStorage** | 默认名不再落盘：`title` 存 null，显示时用 `groupTitle(group)` 按当前语言现算；用户改过名才写 title |
+
+**顺带**：`ui.040` 的英文模板原来是 `{2}nodes`（"5nodes"），补成 `{2} nodes`。
+
+**验收**：
+
+```
+py -3 Mod/Packages/check_player_ai_build.py all
+# RESULT: all -> [0, 0, 0, 0, 0, 0, 0, 0, 0]
+#   真浏览器 191/191（新增"整页扫描"这条，跑第一次时是 FAIL，把上面 5 类全抓了出来）
+#   web 自检 389/389（+5：底部实例根、包下拉的节点数、动作包下拉的"帧"、游戏徽标、
+#                       以及切回中文之后这三处又能跟着回来）
+```
+
+**教训**：i18n 的完整性不能靠"人工列清单 + 静态扫源码"。文字是怎么写上去的（静态属性、
+启动时写一次、每次刷新重写）决定了它会不会跟着语言走，而**只有真浏览器里"切换一次语言再整页扫一遍"
+能一次抓全**。这条断言现在是常驻的，以后新增任何一处文案，只要它不跟语言走就会被抓住。
+
 ## 10. 从 CmdBridgeMod 迁移的试错结论（改本 Mod 前先看这里）
 1. **窗口失焦 = 全部输入被丢弃**：`ComponentInput.cs:91-94` 在 `!Window.IsActive || !PlayerData.IsReadyForPlaying`
    时把 `m_playerInput` 置空。行动前用 `IAiSensor.IsInputAccepted` 自查。

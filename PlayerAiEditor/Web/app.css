@@ -701,6 +701,85 @@ button.mini { padding: 1px 6px; font-size: 11px; border-radius: 4px; }
 .ui-pick-blocked { opacity: 0.55; }
 #uiTargetInput { flex: 1; min-width: 160px; }
 #uiPickBox { max-height: 260px; overflow: auto; }
+
+/* ---------------------------------------------------------------- i18n / 语言开关 */
+/* 语言按钮与主题按钮并排；英文比中文长，给一点最小宽度免得工具栏跳动 */
+#btnLang { min-width: 88px; }
+
+/* 物料/画布上的"显示名 + 原始类型"：显示名是翻译，小字保留真正的类型标识 */
+.node-raw, .palette-sub {
+  color: var(--dim);
+  font-size: 11px;
+  margin-left: 6px;
+  font-family: ui-monospace, Consolas, monospace;
+}
+.palette-item .palette-sub { opacity: 0.75; }
+.node-label { /* 显示名自己一个 span：翻译可换、原始类型不丢 */ }
+
+/* ---------------------------------------------------------------- 模态框（UI 目标选择器 / 动作包编辑器） */
+#modalHost { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; }
+#modalHost[hidden] { display: none; }
+.modal-backdrop { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.45); }
+.modal {
+  position: relative;
+  background: var(--panel);
+  color: var(--fg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.35);
+  width: min(880px, 92vw);
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
+}
+.modal h2 { margin: 0; padding: 10px 14px; border-bottom: 1px solid var(--line); font-size: 15px; }
+.modal-body { padding: 12px 14px; overflow: auto; }
+.modal-actions { padding: 10px 14px; border-top: 1px solid var(--line); display: flex; gap: 6px; justify-content: flex-end; }
+.modal .hint { display: block; margin-bottom: 8px; }
+
+/* 列表行（世界列表那种）：缩进 + 可点 */
+.ui-pick-rows { margin: 2px 0 8px 16px; padding-left: 8px; border-left: 2px solid var(--line); }
+.ui-pick-rows .ui-pick-row label { max-width: 70%; }
+.ui-pick-rows .live-value { color: var(--ok); }
+
+/* 动作包右键菜单 */
+.context-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 164px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+  padding: 4px;
+}
+.context-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 0;
+  color: var(--fg);
+  padding: 6px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.context-menu button:hover { background: var(--accent-soft, rgba(127, 127, 127, 0.18)); }
+.context-menu button.danger { color: var(--err); }
+.context-menu .sep { height: 1px; background: var(--line); margin: 4px 2px; }
+
+/* 动作包编辑器的行 */
+.event-row { display: flex; gap: 6px; align-items: center; margin-bottom: 4px; }
+.event-row input { min-width: 0; }
+.event-row .t { flex: 0 0 84px; }
+.event-row .kind { flex: 0 0 132px; }
+.event-row .detail { flex: 1; }
+.event-row .tools { flex: 0 0 auto; display: flex; gap: 3px; }
+.event-row .tools button { padding: 2px 6px; font-size: 11px; }
+.event-head { color: var(--dim); font-size: 11px; }
+.event-head .t { flex: 0 0 84px; }
+.event-head .kind { flex: 0 0 132px; }
+.event-head .detail { flex: 1; }
 .issues { margin-top: 10px; }
 .issue { padding: 3px 6px; border-radius: 4px; margin-bottom: 3px; font-size: 12px; }
 .issue.error { background: var(--issue-error-bg); color: var(--err-fg); }

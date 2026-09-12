@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>PlayerAi 行为树编辑器</title>
+<title data-i18n="app.title">PlayerAi 行为树编辑器</title>
 <link rel="stylesheet" href="app.css" />
 <script>
   /* 主题必须在**第一帧之前**定下来：等 app.js 启动再切，用户会先看到一闪的另一种颜色。
@@ -25,125 +25,126 @@
 </head>
 <body>
 <header id="topbar">
-  <div class="brand">PlayerAi <span>行为树编辑器</span></div>
+  <div class="brand">PlayerAi <span data-i18n="brand.sub">行为树编辑器</span></div>
   <div class="group">
-    <label>包</label>
+    <label data-i18n="group.package">包</label>
     <select id="packageSelect"></select>
-    <button id="btnNew" title="在包目录 PlayerAi\\\\BehaviorTrees 里新建一棵空白树（Root → Sequence → Task.Wait）">新建</button>
-    <button id="btnOpen" title="打开选中的包">打开</button>
-    <button id="btnReload" title="从磁盘重新读取">重读</button>
+    <button id="btnNew" data-i18n="btn.new" title="在包目录 PlayerAi\\BehaviorTrees 里新建一棵空白树（Root → Sequence → Task.Wait）" data-i18n-title="btn.new.title">新建</button>
+    <button id="btnOpen" data-i18n="btn.open" title="打开选中的包" data-i18n-title="btn.open.title">打开</button>
+    <button id="btnReload" data-i18n="btn.reload" title="从磁盘重新读取" data-i18n-title="btn.reload.title">重读</button>
   </div>
   <div class="group">
-    <button id="btnUndo" title="撤销（Ctrl+Z）">↶ 撤销</button>
-    <button id="btnRedo" title="重做（Ctrl+Y / Ctrl+Shift+Z）">↷ 重做</button>
+    <button id="btnUndo" data-i18n="btn.undo" data-i18n-title="btn.undo.title" title="撤销（Ctrl+Z）">↶ 撤销</button>
+    <button id="btnRedo" data-i18n="btn.redo" data-i18n-title="btn.redo.title" title="重做（Ctrl+Y / Ctrl+Shift+Z）">↷ 重做</button>
   </div>
   <div class="group">
-    <button id="btnValidate" title="用游戏内同一份校验器检查（不写盘）">校验</button>
-    <button id="btnSave" class="primary" title="校验通过后原子写回包">保存</button>
-    <button id="btnSaveAs" title="另存到包目录（新建一个文件，不改原包）">另存为</button>
-    <button id="btnTreeRun" class="primary" title="播放：保存改动后让游戏切到这棵树并开始跑">▶ 播放这棵树</button>
-    <button id="btnTreeStop" title="停止并卸下当前树（释放输入）——之后再点播放就是从头开始">⏹ 停止</button>
-    <span id="treeRunBadge" class="badge" title="游戏里现在跑的是哪棵树、跑没跑、暂停没暂停">树：未知</span>
+    <button id="btnValidate" data-i18n="btn.validate" title="用游戏内同一份校验器检查（不写盘）" data-i18n-title="btn.validate.title">校验</button>
+    <button id="btnSave" class="primary" data-i18n="btn.save" title="校验通过后原子写回包" data-i18n-title="btn.save.title">保存</button>
+    <button id="btnSaveAs" data-i18n="btn.saveAs" title="另存到包目录（新建一个文件，不改原包）" data-i18n-title="btn.saveAs.title">另存为</button>
+    <button id="btnTreeRun" class="primary" data-i18n="btn.treeRun" title="播放：保存改动后让游戏切到这棵树并开始跑" data-i18n-title="btn.treeRun.title">▶ 播放这棵树</button>
+    <button id="btnTreeStop" data-i18n="btn.treeStop" title="停止并卸下当前树（释放输入）——之后再点播放就是从头开始" data-i18n-title="btn.treeStop.title">⏹ 停止</button>
+    <span id="treeRunBadge" class="badge" data-i18n="badge.tree.unknown" data-i18n-title="badge.tree.title" title="游戏里现在跑的是哪棵树、跑没跑、暂停没暂停">树：未知</span>
   </div>
   <div class="group">
-    <label>动作包</label>
-    <select id="actionSelect" title="包目录 PlayerAi\\\\BehaviorTrees 里的 .scatpak"></select>
-    <button id="btnActionValidate" title="校验结构，并告诉你这个包能不能回放">校验</button>
-    <button id="btnActionPlay" title="让游戏直接回放它（不经行为树）">试跑</button>
-    <button id="btnActionStop" title="停止回放并释放输入">停止</button>
-    <button id="btnActionCreate" title="在包目录造一个新的示例动作包（不依赖真机录制）">自造</button>
-    <span id="actionBadge" class="badge">动作包：未知</span>
+    <label data-i18n="action.label">动作包</label>
+    <select id="actionSelect" title="包目录 PlayerAi\\\\BehaviorTrees 里的 .scatpak" data-i18n-title="action.select.title"></select>
+    <button id="btnActionValidate" data-i18n="btn.actionValidate" title="校验结构，并告诉你这个包能不能回放" data-i18n-title="btn.actionValidate.title">校验</button>
+    <button id="btnActionPlay" data-i18n="btn.actionPlay" title="让游戏直接回放它（不经行为树）" data-i18n-title="btn.actionPlay.title">试跑</button>
+    <button id="btnActionStop" data-i18n="btn.actionStop" title="停止回放并释放输入" data-i18n-title="btn.actionStop.title">停止</button>
+    <button id="btnActionCreate" data-i18n="btn.actionCreate" title="在包目录造一个新的示例动作包（不依赖真机录制）" data-i18n-title="btn.actionCreate.title">自造</button>
+    <span id="actionBadge" class="badge" data-i18n="badge.action.unknown">动作包：未知</span>
   </div>
   <div class="group">
-    <button id="btnLaunchGame" title="启动游戏（等价于双击 <实例根>\Survivalcraft.exe），起来后编辑器自动等控制通道">启动游戏</button>
-    <button id="btnQuitGame" title="结束游戏（先请它正常退出，超时才强杀）">结束游戏</button>
-    <button id="btnGame" title="问游戏要 ai.status">游戏状态</button>
-    <span id="gameBadge" class="badge">游戏：未知</span>
-    <button id="btnTheme" title="在深色 / 浅色之间切换（记在这个浏览器里）">主题：深色</button>
-    <span id="historyBadge" class="badge">撤销 0 / 重做 0</span>
-    <span id="buildBadge" class="badge" title="编辑器构建时间（确认你跑的是哪一版）">构建 <!--BUILDSTAMP--></span>
-    <span id="dirtyBadge" class="badge">未修改</span>
+    <button id="btnLaunchGame" data-i18n="btn.launch" data-i18n-title="btn.launch.title" title="启动游戏（等价于双击 [实例根]\Survivalcraft.exe），起来后编辑器自动等控制通道">启动游戏</button>
+    <button id="btnQuitGame" data-i18n="btn.quit" title="结束游戏（先请它正常退出，超时才强杀）" data-i18n-title="btn.quit.title">结束游戏</button>
+    <button id="btnGame" data-i18n="btn.game" title="问游戏要 ai.status" data-i18n-title="btn.game.title">游戏状态</button>
+    <span id="gameBadge" class="badge" data-i18n="badge.game.unknown">游戏：未知</span>
+    <button id="btnTheme" data-i18n="theme.dark" title="在深色 / 浅色之间切换（记在这个浏览器里）" data-i18n-title="theme.switch">主题：深色</button>
+    <button id="btnLang" data-i18n="lang.switchTo" title="Switch the whole editor between 中文 and English" data-i18n-title="lang.switchTo">English</button>
+    <span id="historyBadge" class="badge" data-i18n="badge.history" data-i18n-args="0|0">撤销 0 / 重做 0</span>
+    <span id="buildBadge" class="badge" data-i18n-title="build.title" title="编辑器构建时间（确认你跑的是哪一版）"><span data-i18n="badge.build">构建</span> <!--BUILDSTAMP--></span>
+    <span id="dirtyBadge" class="badge" data-i18n="badge.dirty.off">未修改</span>
   </div>
 </header>
 
 <main>
   <section id="palette" class="pane">
-    <h2>物料区</h2>
-    <p class="hint">节点类型来自游戏内的注册表（工厂 + 形状 + 属性表）：<b>点</b>它加在选中节点下，
+    <h2 data-i18n="palette.title">物料区</h2>
+    <p class="hint" data-i18n-html="palette.hint">节点类型来自游戏内的注册表（工厂 + 形状 + 属性表）：<b>点</b>它加在选中节点下，
       <b>拖</b>到画布上任意一行则加在那一行（上/下边缘=插成兄弟，中间=挂成子节点）。
-      最下面的「动作包」是录好的输入轨道：点/拖它会在目标节点下挂一个
-      <code>Task.PlayActionPackage</code>，或把它加进已选中播放节点的播放列表。</p>
-    <input id="paletteFilter" placeholder="过滤类型…" />
+      显示名只是翻译，写进包的仍是原始类型。</p>
+    <input id="paletteFilter" data-i18n-placeholder="palette.filter" placeholder="过滤类型…" />
     <div id="paletteList"></div>
   </section>
 
   <section id="canvas" class="pane">
-    <h2>画布 <span id="canvasHint" class="hint"></span></h2>
+    <h2><span data-i18n="canvas.title">画布</span> <span id="canvasHint" class="hint"></span></h2>
     <div class="group" style="margin-bottom:6px">
-      <input id="nodeSearch" placeholder="搜索节点 id / 类型 / 显示名…（回车跳到第一个）" />
-      <button id="btnView" title="在节点图与缩进树之间切换（同一条布局数据，两种画法；默认节点图）">视图：节点图</button>
-      <button id="btnZoomOut" title="缩小节点图">－</button>
-      <button id="btnZoomIn" title="放大节点图">＋</button>
-      <button id="btnFit" title="把整棵树缩放到一屏装下（切到节点图）">适应窗口</button>
-      <button id="btnAutoLayout" title="丢掉手动摆放的位置和节点组，回到自动排布">自动布局</button>
-      <button id="btnGroup" title="把选中的节点圈成一个注释框（可命名、可整体拖动、可解散）">建组</button>
+      <input id="nodeSearch" data-i18n-placeholder="search.placeholder" placeholder="搜索节点 id / 类型 / 显示名…（回车跳到第一个）" />
+      <button id="btnView" data-i18n="canvas.view" data-i18n-title="canvas.view.title" title="在节点图与缩进树之间切换（同一条布局数据，两种画法；默认节点图）">视图：节点图</button>
+      <button id="btnZoomOut" title="缩小节点图" data-i18n-title="btn.zoomOut.title">－</button>
+      <button id="btnZoomIn" title="放大节点图" data-i18n-title="btn.zoomIn.title">＋</button>
+      <button id="btnFit" data-i18n="btn.fit" title="把整棵树缩放到一屏装下（切到节点图）" data-i18n-title="btn.fit.title">适应窗口</button>
+      <button id="btnAutoLayout" data-i18n="btn.autoLayout" title="丢掉手动摆放的位置和节点组，回到自动排布" data-i18n-title="btn.autoLayout.title">自动布局</button>
+      <button id="btnGroup" data-i18n="btn.group" title="把选中的节点圈成一个注释框（可命名、可整体拖动、可解散）" data-i18n-title="btn.group.title">建组</button>
     </div>
     <div class="group" style="margin-bottom:6px">
-      <span id="diagLine" class="hint">尺寸诊断…</span>
+      <span id="diagLine" class="hint" data-i18n="ui.diag">尺寸诊断…</span>
     </div>
     <div class="group" style="margin-bottom:6px">
-      <span class="hint" title="拖动节点＝任意摆放（位置记在这个浏览器里）；Shift+拖到节点上＝挂父子；左侧物料拖进画布＝在落点新建节点；空白左键拖＝框选；按住滚轮（中键）拖＝平移画布；滚轮＝缩放（缩到光标位置）；Shift+滚轮＝左右滚；从引脚拖出＝连线；点线+Delete 或 Shift+点线＝断开">鼠标：<b>拖动节点</b>＝任意摆放　<b>Shift+拖到节点</b>＝挂父子　<b>物料拖进画布</b>＝新建　空白<b>左键拖</b>＝框选　<b>中键拖</b>＝平移　<b>滚轮</b>＝缩放　Shift+滚轮＝左右滚　<b>Shift+点线</b>＝断开连线</span>
+      <span class="hint" data-i18n-html="canvas.mouse" data-i18n-title="canvas.mouse.title" title="拖动节点＝任意摆放（位置记在这个浏览器里）；Shift+拖到节点上＝挂父子；左侧物料拖进画布＝在落点新建节点；空白左键拖＝框选；按住滚轮（中键）拖＝平移画布；滚轮＝缩放（缩到光标位置）；Shift+滚轮＝左右滚；从引脚拖出＝连线；点线+Delete 或 Shift+点线＝断开">鼠标：<b>拖动节点</b>＝任意摆放　<b>Shift+拖到节点</b>＝挂父子　<b>物料拖进画布</b>＝新建　空白<b>左键拖</b>＝框选　<b>中键拖</b>＝平移　<b>滚轮</b>＝缩放　Shift+滚轮＝左右滚　<b>Shift+点线</b>＝断开连线</span>
     </div>
     <div class="group" style="margin-bottom:6px">
-      <span class="hint" title="Ctrl+C/X/V 复制剪切粘贴子树；Ctrl+D 重复；Delete 删除；Ctrl+Z/Y 撤销重做；F2 改 id；Alt+↑/↓ 上下挪；Alt+→ 降级；Alt+← 升级">Ctrl+C/X/V 复制剪切粘贴子树　Ctrl+D 重复　Delete 删除　Ctrl+Z/Y 撤销重做　F2 改 id　<b>Alt+↑/↓ 上下挪　Alt+→ 降级　Alt+← 升级</b></span>
+      <span class="hint" data-i18n-html="canvas.keys" data-i18n-title="canvas.keys.title" title="Ctrl+C/X/V 复制剪切粘贴子树；Ctrl+D 重复；Delete 删除；Ctrl+Z/Y 撤销重做；F2 改 id；Alt+↑/↓ 上下挪；Alt+→ 降级；Alt+← 升级">Ctrl+C/X/V 复制剪切粘贴子树　Ctrl+D 重复　Delete 删除　Ctrl+Z/Y 撤销重做　F2 改 id　<b>Alt+↑/↓ 上下挪　Alt+→ 降级　Alt+← 升级</b></span>
     </div>
     <div id="treeRoot" class="tree"></div>
     <div id="issues" class="issues"></div>
   </section>
 
   <section id="inspector" class="pane">
-    <h2>属性区</h2>
-    <div id="inspectorBody"><p class="hint">左侧选中一个节点。</p></div>
-    <h2 style="margin-top:14px">实时监视 <span class="hint">（游戏里正在跑什么）</span></h2>
+    <h2 data-i18n="inspector.title">属性区</h2>
+    <div id="inspectorBody"><p class="hint" data-i18n="inspector.empty">左侧选中一个节点。</p></div>
+    <h2 style="margin-top:14px"><span data-i18n="live.title">实时监视</span> <span class="hint" data-i18n="live.sub">（游戏里正在跑什么）</span></h2>
     <div class="group" style="margin-bottom:6px">
-      <button id="btnLive" title="每 700ms 拉一次 ai.status / ai.tree.snapshot / ai.blackboard">▶ 实时监视</button>
-      <button id="btnPauseTree" title="让游戏暂停行为树（保留运行态、释放 AI 输入）">暂停树</button>
-      <button id="btnResumeTree" title="让游戏继续行为树">继续树</button>
+      <button id="btnLive" data-i18n="btn.live" title="每 700ms 拉一次 ai.status / ai.tree.snapshot / ai.blackboard" data-i18n-title="btn.live.title">▶ 实时监视</button>
+      <button id="btnPauseTree" data-i18n="btn.pauseTree" title="让游戏暂停行为树（保留运行态、释放 AI 输入）" data-i18n-title="btn.pauseTree.title">暂停树</button>
+      <button id="btnResumeTree" data-i18n="btn.resumeTree" title="让游戏继续行为树" data-i18n-title="btn.resumeTree.title">继续树</button>
     </div>
-    <div id="liveBox"><p class="hint">打开"实时监视"就能看到游戏里正在跑哪个节点。</p></div>
+    <div id="liveBox"><p class="hint" data-i18n="live.hint">打开"实时监视"就能看到游戏里正在跑哪个节点。</p></div>
 
-    <h2 style="margin-top:14px">UI 拾取 <span class="hint">（取界面真实位置 / 直接点它）</span></h2>
-    <p class="hint">这些目标是**语义目标**，不是像素：<code>Play</code>、<code>[MainMenuScreen#0]/…/Play</code>、
-      <code>list:WorldsList@世界名</code>、<code>list:WorldsList#0</code>。
-      游戏在点击那一刻自己算坐标 —— 改窗口大小、改 UI 缩放都不会点空。</p>
+    <h2 style="margin-top:14px"><span data-i18n="ui.title">UI 拾取</span> <span class="hint" data-i18n="ui.sub">（取界面真实位置 / 直接点它）</span></h2>
+    <p class="hint" data-i18n-html="ui.hint">这些目标是**语义目标**，不是像素。</p>
     <div class="group" style="margin-bottom:6px">
-      <button id="btnUiPick" title="问游戏当前屏幕上可交互的元素（带真实坐标与可点性判定）">⟳ 拾取界面元素</button>
-      <select id="uiClickMode" title="用什么方式点：direct=单帧合成按下（默认，最稳）；input=多帧软光标会话；invoke=直接发控件事件；auto=能发事件就发">
-        <option value="direct">direct 单帧按下</option>
-        <option value="auto">auto 优先发事件</option>
-        <option value="input">input 多帧软光标</option>
-        <option value="invoke">invoke 直接发事件</option>
+      <button id="btnUiPick" data-i18n="ui.pick" title="问游戏当前屏幕上可交互的元素（带真实坐标与可点性判定）" data-i18n-title="ui.pick.title">⟳ 拾取界面元素</button>
+      <select id="uiClickMode" title="用什么方式点：direct=单帧合成按下（默认，最稳）；input=多帧软光标会话；invoke=直接发控件事件；auto=能发事件就发" data-i18n-title="ui.mode.title">
+        <option value="direct" data-i18n="ui.mode.direct">direct 单帧按下</option>
+        <option value="auto" data-i18n="ui.mode.auto">auto 优先发事件</option>
+        <option value="input" data-i18n="ui.mode.input">input 多帧软光标</option>
+        <option value="invoke" data-i18n="ui.mode.invoke">invoke 直接发事件</option>
       </select>
     </div>
     <div class="group" style="margin-bottom:6px">
-      <input id="uiTargetInput" placeholder="目标：Play / [MainMenuScreen#0]/…/Play / list:WorldsList@世界名" />
-      <button id="btnUiLocate" title="解析这个目标：现在在哪、能不能点（坐标现算；默认在游戏里那个像素上亮 2 秒红点）">定位</button>
-      <button id="btnUiClick" title="在游戏里真的点一下（只动玩家输入层，不写游戏状态）">点一下</button>
-      <button id="btnUiFill" title="把这个目标写进选中的 Task.UiClick 节点；没选中就新建一个挂到选中节点下">填进树</button>
+      <input id="uiTargetInput" data-i18n-placeholder="ui.target.placeholder" placeholder="目标：Play / [MainMenuScreen#0]/…/Play / list:WorldsList@世界名" />
+      <button id="btnUiLocate" data-i18n="ui.locate" title="解析这个目标：现在在哪、能不能点（坐标现算；默认在游戏里那个像素上亮 2 秒红点）" data-i18n-title="ui.locate.title">定位</button>
+      <button id="btnUiClick" data-i18n="ui.click" title="在游戏里真的点一下（只动玩家输入层，不写游戏状态）" data-i18n-title="ui.click.title">点一下</button>
+      <button id="btnUiFill" data-i18n="ui.fill" title="把这个目标写进选中的 Task.UiClick 节点；没选中就新建一个挂到选中节点下" data-i18n-title="ui.fill.title">填进树</button>
     </div>
     <div class="group" style="margin-bottom:6px">
-      <label class="hint" title="定位/点击时在游戏里那个像素上亮一个红点（2 秒、5 像素），一眼看出它认为目标在哪">
-        <input id="uiMarkToggle" type="checkbox" checked="checked" /> 标记落点（2s / 5px 红点）
+      <label class="hint" data-i18n-title="ui.mark.title" title="定位/点击时在游戏里那个像素上亮一个红点（2 秒、5 像素），一眼看出它认为目标在哪">
+        <input id="uiMarkToggle" type="checkbox" checked="checked" data-i18n-title="ui.mark.title" /> <span data-i18n="ui.mark">标记落点（2s / 5px 红点）</span>
       </label>
       <span id="uiLocatedLine" class="hint"></span>
     </div>
-    <div id="uiPickBox"><p class="hint">点「拾取界面元素」看看现在屏幕上有什么可点的。</p></div>
+    <div id="uiPickBox"><p class="hint" data-i18n="ui.pick.empty">点「拾取界面元素」看看现在屏幕上有什么可点的。</p></div>
   </section>
 </main>
 
-<footer id="statusbar"><span id="statusText">就绪</span><span id="rootInfo"></span></footer>
+<div id="modalHost" hidden></div>
+
+<footer id="statusbar"><span id="statusText" data-i18n="status.ready">就绪</span><span id="rootInfo"></span></footer>
 
 <script src="engine-adapter.js"></script>
+<script src="i18n.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

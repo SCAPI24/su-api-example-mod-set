@@ -128,12 +128,20 @@ namespace PlayerAiMod
             return facade.UiClickTarget(selectorOrPoint, string.IsNullOrEmpty(mode) ? "direct" : mode);
         }
 
+        /// <summary>
+        /// 释放这个角色占住的输入。
+        ///
+        /// ⚠️ 走**窄释放**（只放掉注入并按住的那些）：这个方法会被"任务收尾 / 世界卸载 /
+        /// 回放结束 / 世界外每帧兜底"频繁调用，而宽版本（`ReleaseAll`）会连
+        /// **真实鼠标的按下沿**一起清掉 —— 主菜单里就变成"按钮有按下效果、点不动"
+        /// （用户实测报的正是这个）。要彻底停手走 <see cref="ReleaseAllImmediate"/>。
+        /// </summary>
         public void ReleaseAll()
         {
             CmdBridgeInput facade = Facade;
             if (facade == null)
                 return;
-            facade.ReleaseAll();
+            facade.ReleaseInjectedInput();
         }
 
         /// <summary>立即释放（不等帧首）：Mod 卸载/世界卸载时用，避免残留"按住 W"。</summary>

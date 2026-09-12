@@ -32,6 +32,9 @@ namespace PlayerAiMod.Editor
                         return Asset("app.css", "text/css; charset=utf-8");
                     case "/engine-adapter.js":
                         return Asset("engine-adapter.js", "application/javascript; charset=utf-8");
+                    // 显示层翻译（节点显示名 + UI 文案）：只影响显示，不改包里的类型标识。
+                    case "/i18n.js":
+                        return Asset("i18n.js", "application/javascript; charset=utf-8");
                     // 真浏览器自检页（用同源 iframe 加载真正的 "/"，用真实鼠标事件驱动）。
                     // 只给 Mod/Packages/check_editor_browser.py 用，正常使用编辑器不需要它。
                     case "/selftest.html":
@@ -161,6 +164,60 @@ namespace PlayerAiMod.Editor
                     }
                     case "/api/action/stop":
                         return HttpResponse.Json(m_api.StopAction());
+
+                    // ------------------------------------------ 动作包编辑（右键菜单：编辑/重命名/删除）
+                    case "/api/action/events":
+                    {
+                        string target = request.GetQuery("file", request.GetQuery("path",
+                            request.GetQuery("name")));
+                        if (string.Equals(request.Method, "POST", StringComparison.Ordinal))
+                        {
+                            var body = ReadBody(request);
+                            if (body == null)
+                            {
+                                return HttpResponse.Json(new Dictionary<string, object>(
+                                    StringComparer.Ordinal)
+                                {
+                                    ["ok"] = false,
+                                    ["code"] = "invalid_argument",
+                                    ["reason"] = "改动作包要用 JSON 正文：{file, events:[…]}"
+                                });
+                            }
+                            if (body.Has("file"))
+                                target = body.Get("file").AsString(target);
+                            else if (body.Has("path"))
+                                target = body.Get("path").AsString(target);
+                            return HttpResponse.Json(m_api.SaveActionEvents(target,
+                                body.Get("events")));
+                        }
+                        return HttpResponse.Json(m_api.ReadActionEvents(target));
+                    }
+                    case "/api/action/rename":
+                    {
+                        var body = ReadBody(request);
+                        string target = request.GetQuery("file", request.GetQuery("path",
+                            request.GetQuery("name")));
+                        string wanted = request.GetQuery("to", request.GetQuery("newName"));
+                        if (body != null)
+                        {
+                            if (body.Has("file"))
+                                target = body.Get("file").AsString(target);
+                            if (body.Has("to"))
+                                wanted = body.Get("to").AsString(wanted);
+                            else if (body.Has("name"))
+                                wanted = body.Get("name").AsString(wanted);
+                        }
+                        return HttpResponse.Json(m_api.RenameAction(target, wanted));
+                    }
+                    case "/api/action/delete":
+                    {
+                        var body = ReadBody(request);
+                        string target = request.GetQuery("file", request.GetQuery("path",
+                            request.GetQuery("name")));
+                        if (body != null && body.Has("file"))
+                            target = body.Get("file").AsString(target);
+                        return HttpResponse.Json(m_api.DeleteAction(target));
+                    }
                     case "/api/action/create":
                     {
                         var body = ReadBody(request);

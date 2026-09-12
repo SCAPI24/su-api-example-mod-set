@@ -210,9 +210,13 @@ namespace PlayerAiMod.Editor
                 html != null && html.Contains("btnNew") && html.Contains("btnUndo")
                 && html.Contains("btnRedo"),
                 Short(html));
+            // 「构建」这四个字现在包在一个 data-i18n 的 <span> 里（切英文时它是 "Build"），
+            // 所以时间戳和它之间隔着 `</span>` —— 断言要认这个结构，不能只找 "构建 "。
             Check("index.html carries a real build stamp (not the placeholder)",
                 html != null && html.Contains("buildBadge") && !html.Contains("<!--BUILDSTAMP-->")
-                && html.Contains("构建 "),
+                && html.Contains("badge.build")
+                && System.Text.RegularExpressions.Regex.IsMatch(
+                    html, @"构建\s*(?:</span>)?\s*[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9:]"),
                 Short(html));
             Check("the page shows a size diagnostic line",
                 html != null && html.Contains("diagLine") && js != null
@@ -442,6 +446,64 @@ namespace PlayerAiMod.Editor
                 again != null && !again.Get("ok").AsBool(true)
                 && again.Get("code").AsString(null) == "exists",
                 again != null ? again.Preview(140) : "<null>");
+
+            // ---- 动作包编辑（右键菜单：编辑 / 重命名 / 删除）
+            // 这三件事用户明确要求过，而且都会**写文件**，必须有自检钉住。
+            PackageValue events = Parse(Get(client, "/api/action/events?file="
+                + Uri.EscapeDataString("selftest_made.scatpak")));
+            Check("the editor can read an action package's semantic events",
+                events != null && events.Get("ok").AsBool(false)
+                && events.Get("file").AsString(null) == "selftest_made.scatpak"
+                && events.Get("writable").AsBool(false),
+                events != null ? events.Preview(200) : "<null>");
+
+            PackageValue saved = Parse(PostJson(client, "/api/action/events",
+                "{\"file\":\"selftest_made.scatpak\",\"events\":["
+                + "{\"t\":0.1,\"kind\":\"ui.click\",\"detail\":\"click:Play\"},"
+                + "{\"t\":0.6,\"kind\":\"ui.click\",\"detail\":\"click:list:WorldsList@Rebritish\"}]}"));
+            Check("saving events writes them back and re-validates",
+                saved != null && saved.Get("ok").AsBool(false) && saved.Get("saved").AsBool(false)
+                && saved.Get("eventCount").AsInt() == 2,
+                saved != null ? saved.Preview(200) : "<null>");
+            Check("the saved package still replays (the per-frame track was kept)",
+                saved != null && saved.Get("replayable").AsBool(false),
+                saved != null ? saved.Preview(160) : "<null>");
+
+            PackageValue badEvents = Parse(PostJson(client, "/api/action/events",
+                "{\"file\":\"selftest_made.scatpak\",\"events\":[{\"t\":0.1,\"kind\":\"ui.click\"}]}"));
+            Check("an event without a detail is refused (no silent empty click)",
+                badEvents != null && !badEvents.Get("ok").AsBool(true),
+                badEvents != null ? badEvents.Preview(160) : "<null>");
+
+            PackageValue renamed = Parse(PostJson(client, "/api/action/rename",
+                "{\"file\":\"selftest_made.scatpak\",\"to\":\"selftest_renamed\"}"));
+            Check("renaming an action package moves the file (manifest name follows)",
+                renamed != null && renamed.Get("ok").AsBool(false) && renamed.Get("renamed").AsBool(false)
+                && renamed.Get("file").AsString(null) == "selftest_renamed.scatpak"
+                && File.Exists(Path.Combine(instanceRoot, "PlayerAi", "BehaviorTrees",
+                    "selftest_renamed.scatpak")),
+                renamed != null ? renamed.Preview(200) : "<null>");
+
+            PackageValue sameName = Parse(PostJson(client, "/api/action/rename",
+                "{\"file\":\"selftest_renamed.scatpak\",\"to\":\"selftest_renamed\"}"));
+            Check("renaming onto the same name is a no-op (not an error)",
+                sameName != null && sameName.Get("ok").AsBool(false)
+                && sameName.Get("renamed").AsBool(true) == false,
+                sameName != null ? sameName.Preview(140) : "<null>");
+
+            PackageValue removed = Parse(PostJson(client, "/api/action/delete",
+                "{\"file\":\"selftest_renamed.scatpak\"}"));
+            Check("deleting an action package removes the file",
+                removed != null && removed.Get("ok").AsBool(false) && removed.Get("deleted").AsBool(false)
+                && !File.Exists(Path.Combine(instanceRoot, "PlayerAi", "BehaviorTrees",
+                    "selftest_renamed.scatpak")),
+                removed != null ? removed.Preview(160) : "<null>");
+
+            PackageValue removedAgain = Parse(PostJson(client, "/api/action/delete",
+                "{\"file\":\"selftest_renamed.scatpak\"}"));
+            Check("deleting a missing package reports not_found honestly",
+                removedAgain != null && !removedAgain.Get("ok").AsBool(true),
+                removedAgain != null ? removedAgain.Preview(140) : "<null>");
 
             // 游戏没在跑：回放/停止都要如实报错（不能假装成功）
             PackageValue play = Parse(PostJson(client, "/api/action/play",
@@ -709,6 +771,42 @@ namespace PlayerAiMod.Editor
                 Check("clicking also asks for the landing marker (so you can see where it clicked)",
                     fake.LastRequest.Contains("\"mark\":true"),
                     Short(fake.LastRequest));
+            }
+
+            // ---- UI 拾取面板：**列表行**那一块（用户实测在地图选择界面整个面板报错）
+            //      关键在"嵌套数组不能被压成字符串"：游戏侧 `elements` 本身是**一段 JSON 文本**
+            //      （`GameBridgeClient.Collect` 把数组 ToJson 成字符串），编辑器解析回数组之后，
+            //      `list.items`（每一行）也必须**仍然是数组** —— 以前它在 PlainValue 里被
+            //      `ToJson()` 成了字符串，前端 `list.items.forEach` 直接抛
+            //      `is not a function`（字符串也有 .length，所以长度守卫拦不住）。
+            using (var fake = new FakeGameChannel(BuildUiElementsAnswer()))
+            {
+                File.WriteAllText(runtimePath,
+                    "{\"port\":" + fake.Port + ",\"token\":\"selftest\"}", new UTF8Encoding(false));
+                PackageValue picked = Parse(Get(client, "/api/game/ui/elements"));
+                PackageValue elements = picked != null ? picked.Get("elements") : null;
+                Check("UI 拾取：elements 是真数组（游戏侧给的是一段 JSON 文本）",
+                    elements != null && elements.IsArray && elements.Count == 2,
+                    elements != null ? elements.Preview(160) : "<null>");
+                PackageValue listElement = elements != null ? elements.Item(0) : null;
+                PackageValue items = listElement != null ? listElement.Get("list").Get("items") : null;
+                Check("UI 拾取：列表行 list.items 必须是**真数组**，不能是一段 JSON 文本",
+                    items != null && items.IsArray && items.Count == 2
+                    && items.Item(0).Get("text").AsString(null) == "Rebritish",
+                    items != null ? items.Preview(160) : "<null>");
+                Check("UI 拾取：行里带每一行的点击坐标（前端拿它显示/定位）",
+                    items != null && items.IsArray
+                    && items.Item(0).Get("clientPoint").Get("x").AsNumber() > 0,
+                    items != null ? items.Preview(160) : "<null>");
+                Check("UI 拾取：列表元素的 selectedIndex 会变成 rowTarget（list:列表#索引）",
+                    listElement != null
+                    && listElement.Get("rowTarget").AsString(null) == "list:WorldsList#1",
+                    listElement != null ? listElement.Preview(160) : "<null>");
+                Check("UI 拾取：每个元素都带上语义目标（路径优先）",
+                    listElement != null
+                    && listElement.Get("target").AsString(null) == "[SuPlayScreen#0]/WorldsList"
+                    && listElement.Get("shortTarget").AsString(null) == "WorldsList",
+                    listElement != null ? listElement.Preview(160) : "<null>");
             }
 
             // ---- 停止：编辑器把游戏的回应原样带回来（用户要的"重置"入口）
@@ -982,6 +1080,27 @@ namespace PlayerAiMod.Editor
             {
                 return "<error: " + exception.Message + ">";
             }
+        }
+
+        /// <summary>
+        /// 造一份"和游戏侧一模一样"的 `ui.elements` 回包：`elements` 是**一段 JSON 文本**
+        /// （`GameBridgeClient.Collect` 对数组就是这个行为）。用来钉住
+        /// "嵌套数组不能被压成字符串"这条 —— 列表行 `list.items` 一旦变文本，
+        /// 前端就报 `items.forEach is not a function`，整个拾取面板用不了。
+        /// </summary>
+        private static string BuildUiElementsAnswer()
+        {
+            string elements =
+                "[{\"name\":\"WorldsList\",\"type\":\"ListPanelWidget\","
+                + "\"path\":\"[SuPlayScreen#0]/WorldsList\",\"text\":\"\",\"clickable\":true,"
+                + "\"list\":{\"itemsCount\":2,\"itemSize\":52,\"selectedIndex\":1,"
+                + "\"items\":[{\"index\":0,\"text\":\"Rebritish\","
+                + "\"clientPoint\":{\"x\":1010.5,\"y\":64.8}},"
+                + "{\"index\":1,\"text\":\"Other\",\"clientPoint\":{\"x\":1010.5,\"y\":116.8}}]}},"
+                + "{\"name\":\"Play\",\"type\":\"BevelledButtonWidget\","
+                + "\"path\":\"[SuPlayScreen#0]/Play\",\"text\":\"Play\",\"clickable\":true}]";
+            return "{\"ok\":true,\"result\":{\"screen\":\"SuPlayScreen#0\",\"elements\":\""
+                + elements.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"}}";
         }
 
         private static PackageValue Parse(string json)
