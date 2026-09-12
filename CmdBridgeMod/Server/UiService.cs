@@ -391,6 +391,16 @@ namespace CmdBridgeMod
             bool adjusted = (clickPoint - point).Length() > 0.01f;
             Widget hitAtClick = root != null ? (root.HitTestGlobal(clickPoint) ?? widget) : widget;
 
+            // 引擎在"窗口不活跃"时整段输入都不算（`WidgetInput.Update()` 里 `if (Window.IsActive)`）——
+            // 这时合成点击会被**无声无息地丢掉**。共控模式（focus.attach）不强制活跃，
+            // 所以真实焦点不在游戏里时必然是这个状态（实测：刚启动游戏、窗口还没拿到焦点时点 Play 点不动）。
+            // 与其让用户以为"功能坏了"，不如如实拒绝并说清怎么让它能点。
+            if (!Window.IsActive)
+            {
+                throw new BridgeCommandException("window_not_active",
+                    "游戏窗口现在不是活跃窗口（引擎认为它不在前台），输入会被整段忽略："
+                    + "让游戏窗口拿到焦点，或用 focus.detach / focus.auto 让本 Mod 接管输入，再点一次。");
+            }
             m_injector.ApplyDirectClick(clickPoint, hitAtClick);
             located["mode"] = "direct";
             located["modeReason"] = "单帧合成 Tap+Click（引擎自己的控件逻辑照常跑）";

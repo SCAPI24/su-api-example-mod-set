@@ -1062,6 +1062,59 @@ namespace CmdBridgeMod
                 m_heldButtons.Remove(index);
         }
 
+        /// <summary>
+        /// **只释放"本 Mod 注入并按住"的键与鼠标**（不动设备数组里的其它内容）。
+        ///
+        /// 为什么要单独一个窄版本：`ReleaseAll()` 会把引擎的按键/鼠标数组**整体清零**，
+        /// 而真实鼠标的"按下沿"（`m_mouseButtonsDownOnceArray`）就写在同一个数组里 ——
+        /// 被清一次，`WidgetInput.UpdateInputFromMouse` 就留不下 `m_mouseDownPoint`，
+        /// 松手时派生不出 `Click`，玩家看到的是"按钮有按下效果但点不动"。
+        ///
+        /// 例行释放（任务收尾、世界卸载、回放结束、主菜单兜底）要的只是"别再按着 W 了"，
+        /// 放掉我们自己按住的那些就够；`ReleaseAll()` 留给"彻底停手"（Mod 卸载等）。
+        /// </summary>
+        internal object ReleaseInjectedOnly()
+        {
+            EnsureKeyboardArrays();
+            EnsureMouseArrays();
+
+            int keys = 0;
+            if (m_keysDown != null)
+            {
+                foreach (int index in m_heldKeys)
+                {
+                    if (index < 0 || index >= m_keysDown.Length)
+                        continue;
+                    m_keysDown[index] = false;
+                    m_keysDownOnce[index] = false;
+                    m_keysRepeat[index] = 0.0;
+                    keys++;
+                }
+            }
+
+            int buttons = 0;
+            if (m_mouseDown != null)
+            {
+                foreach (int index in m_heldButtons)
+                {
+                    if (index < 0 || index >= m_mouseDown.Length)
+                        continue;
+                    m_mouseDown[index] = false;
+                    m_mouseDownOnce[index] = false;
+                    buttons++;
+                }
+            }
+
+            m_heldKeys.Clear();
+            m_heldButtons.Clear();
+            return new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["releasedKeys"] = keys,
+                ["releasedButtons"] = buttons,
+                ["scope"] = "injected-only"
+            };
+        }
+
         private void ReleaseAllCore()
         {
             if (m_keysDown != null)

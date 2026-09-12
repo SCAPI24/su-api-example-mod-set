@@ -603,6 +603,16 @@ namespace CmdBridgeMod
             return UiDrag(fromSelector, toSelector, 8, Math.Max(holdMs, 500));
         }
 
+        /// <summary>
+        /// 例行释放：**只放掉本 Mod 注入并按住**的键/鼠标。
+        /// 与 <see cref="ReleaseAll"/> 的区别见注入器里的注释 —— 后者会把真实鼠标的按下沿一起清掉，
+        /// 用在"每帧都会走到的例行释放"上会让玩家点不动按钮（实测踩过）。
+        /// </summary>
+        public bool ReleaseInjectedInput()
+        {
+            return Execute("ReleaseInjectedInput", () => m_injector.ReleaseInjectedOnly());
+        }
+
         /// <summary>释放全部按键与鼠标（走帧首队列）。</summary>
         public bool ReleaseAll()
         {

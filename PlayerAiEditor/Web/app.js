@@ -125,17 +125,17 @@
   }
 
   function undo() {
-    if (!history.past.length) { setStatus('没有可撤销的操作'); return; }
+    if (!history.past.length) { setStatus(L('st.059', '没有可撤销的操作')); return; }
     history.future.push(snapshot());
     restoreSnapshot(history.past.pop());
-    setStatus('已撤销（还可撤销 ' + history.past.length + ' 步，可重做 ' + history.future.length + ' 步）');
+    setStatus(I18n.format("st.c001", '已撤销（还可撤销 {0} 步，可重做 {1} 步）', history.past.length, history.future.length));
   }
 
   function redo() {
-    if (!history.future.length) { setStatus('没有可重做的操作'); return; }
+    if (!history.future.length) { setStatus(L('st.060', '没有可重做的操作')); return; }
     history.past.push(snapshot());
     restoreSnapshot(history.future.pop());
-    setStatus('已重做（还可重做 ' + history.future.length + ' 步）');
+    setStatus(I18n.format("st.c002", '已重做（还可重做 {0} 步）', history.future.length));
   }
 
   function resetHistory() {
@@ -150,17 +150,136 @@
     var redoButton = $('btnRedo');
     if (undoButton) {
       undoButton.disabled = !history.past.length;
-      undoButton.title = '撤销（Ctrl+Z）　可撤销 ' + history.past.length + ' 步';
+      undoButton.title = I18n.format("ui.059", '撤销（Ctrl+Z）　可撤销 {0} 步', history.past.length);
     }
     if (redoButton) {
       redoButton.disabled = !history.future.length;
-      redoButton.title = '重做（Ctrl+Y / Ctrl+Shift+Z）　可重做 ' + history.future.length + ' 步';
+      redoButton.title = I18n.format("ui.060", '重做（Ctrl+Y / Ctrl+Shift+Z）　可重做 {0} 步', history.future.length);
     }
     var badge = $('historyBadge');
-    if (badge) badge.textContent = '撤销 ' + history.past.length + ' / 重做 ' + history.future.length;
+    if (badge) badge.textContent = I18n.format("ui.001", '撤销 {0} / 重做 {1}', history.past.length, history.future.length);
   }
 
   // ---------------------------------------------------------------- 工具
+
+  // ---------------------------------------------------------------- 语言 / 显示翻译（i18n.js）
+  //
+  // 用户要求：① 物料区加一层**只影响显示**的翻译（`Task.Log` 显示成"任务·日志"，包里仍是 Task.Log）；
+  //          ② 界面在主题旁边能切中文 / English。
+  // 文案与节点显示名都在 i18n.js；这里只做"取词 + 回填 + 重画"。
+  // 缺 i18n.js（旧 exe / 直接打开文件）时退化成"原样返回"，界面照样能用。
+
+  var I18n = window.PlayerAiI18n || {
+    t: function (key, fallback) { return fallback !== undefined ? fallback : key; },
+    nodeLabel: function (type) { return type; },
+    nodeRawHint: function () { return ''; },
+    getLanguage: function () { return 'zh'; },
+    setLanguage: function () { return 'zh'; },
+    detect: function () { return 'zh'; },
+    normalize: function (lang) { return String(lang || '') === 'en' ? 'en' : 'zh'; }
+  };
+
+  /** 取一条界面文案。 */
+  function L(key, fallback) {
+    return I18n.t(key, fallback);
+  }
+
+  /** 节点显示名（**只用于显示**；写进包的永远是 node.type 原文）。 */
+  function nodeLabel(type) {
+    return I18n.nodeLabel(type);
+  }
+
+  /** 在容器里放"显示名 + 原始类型小字"：翻译看得懂，真类型也不丢。 */
+  function setNodeLabel(element, type) {
+    var text = type || '?';
+    element.textContent = '';
+    // 用 <span> 而不是裸文本节点：DOM 自检（editor_web_selftest.js）与真浏览器自检都是
+    // 按"元素子节点"遍历画布的，塞文本节点会让它们把文本当成控件读（实测踩过）。
+    var label = document.createElement('span');
+    label.className = 'node-label';
+    label.textContent = nodeLabel(text);
+    element.appendChild(label);
+    var raw = I18n.nodeRawHint(text);
+    if (raw) {
+      var span = document.createElement('span');
+      span.className = 'node-raw';
+      span.textContent = raw;
+      element.appendChild(span);
+    }
+    return element;
+  }
+
+  /** 把 index.html 里带 data-i18n* 的静态文案按当前语言回填。 */
+  function applyLanguage() {
+    var nodes = document.querySelectorAll('[data-i18n]');
+    for (var i = 0; i < nodes.length; i++) {
+      var key = nodes[i].getAttribute('data-i18n');
+      var text = L(key, nodes[i].textContent);
+      if (text !== undefined && text !== null) nodes[i].textContent = text;
+    }
+    var htmlNodes = document.querySelectorAll('[data-i18n-html]');
+    for (var j = 0; j < htmlNodes.length; j++) {
+      var htmlKey = htmlNodes[j].getAttribute('data-i18n-html');
+      var html = L(htmlKey, htmlNodes[j].innerHTML);
+      if (html !== undefined && html !== null) htmlNodes[j].innerHTML = html;
+    }
+    var placeholders = document.querySelectorAll('[data-i18n-placeholder]');
+    for (var k = 0; k < placeholders.length; k++) {
+      var phKey = placeholders[k].getAttribute('data-i18n-placeholder');
+      placeholders[k].setAttribute('placeholder', L(phKey, placeholders[k].getAttribute('placeholder')));
+    }
+
+    var titled = document.querySelectorAll('[data-i18n-title]');
+    for (var t = 0; t < titled.length; t++) {
+      var titleKey = titled[t].getAttribute('data-i18n-title');
+      var titleText = L(titleKey, titled[t].getAttribute('title'));
+      if (titleText !== undefined && titleText !== null) titled[t].setAttribute('title', titleText);
+    }
+
+    var langButton = $('btnLang');
+    if (langButton) {
+      langButton.textContent = L('lang.switchTo');
+      langButton.title = L('lang.switchTo');
+    }
+    applyTheme(themePreference());   // 主题按钮的文案也跟着语言走
+    // 徽标是**动态写的**（markDirty / updateTreeRunUi 每次刷新都会重写），
+    // 只回填 data-i18n 的静态文案不够 —— 自检实测：切回中文后改动徽标还停在 "Modified"。
+    if ($('dirtyBadge')) markDirty(state.dirty);
+    updateTreeRunUi();
+    var liveButton = $('btnLive');
+    if (liveButton) liveButton.textContent = live.timer ? L('btn.live.stop') : L('btn.live');
+    document.documentElement.setAttribute('lang',
+      I18n.getLanguage() === 'en' ? 'en' : 'zh-CN');
+
+    // 重画依赖语言的部分。
+    //
+    // 这条清单是被用户**三次实测反馈**逼出来的（底部"实例根/包目录"、顶部"5节点"、
+    // 动作包下拉的"（仅结构：不能回放）/1043 帧"）：那些文字各自由"只在启动或加载时
+    // 跑一次"的函数写上去，语言切换时没人重画它们。所以凡是**带文字的渲染**都要在这里
+    // 重跑一遍 —— 只回填 data-i18n 的静态文案远远不够。
+    renderMeta();                 // 游戏徽标 + 底部"实例根/包目录"（缓存了 meta，不发请求）
+    renderPackageOptions();       // 打开包下拉（选项里带"5节点"）
+    renderActionSelect();         // 动作包下拉 + 徽标（选项里带"（仅结构：不能回放）1043帧"）
+    if (state.materials) renderPalette($('paletteFilter') ? $('paletteFilter').value : '');
+    renderTree();
+    renderInspector();
+    renderLivePanel();
+    renderLocatedLine();          // 「落点 x,y」那一行是按上一次回包拼的
+    if (uiPick.data) renderUiPick();
+  }
+
+  function languagePreference() {
+    return I18n.detect();
+  }
+
+  function toggleLanguage() {
+    var next = I18n.getLanguage() === 'en' ? 'zh' : 'en';
+    I18n.setLanguage(next);
+    applyLanguage();
+    setStatus(next === 'en'
+    ? L('lang.switchedEn', 'Language: English')
+    : L('lang.switchedZh', '界面语言：中文（节点类型写进包时仍是原文）'));
+  }
 
   function $(id) { return document.getElementById(id); }
 
@@ -178,7 +297,9 @@
   function markDirty(dirty) {
     state.dirty = dirty;
     var badge = $('dirtyBadge');
-    badge.textContent = dirty ? '已修改' : '未修改';
+    badge.textContent = dirty
+              ? L("ui.002", '已修改')
+              : L("ui.003", '未修改');
     badge.className = 'badge' + (dirty ? ' dirty' : '');
     // 脏了之后播放按钮的含义会变（"暂停" → "推送改动"），所以要跟着刷新
     updateTreeRunUi();
@@ -214,10 +335,10 @@
 
   /** 把一个已经在树里的节点摘下来变成游离节点（属性区的「摘下来」用）。 */
   function detachNode(node) {
-    if (!node || node === state.tree) { setStatus('根节点不能摘下来'); return false; }
-    if (isDetached(node.id)) { setStatus('它已经是游离节点了'); return false; }
+    if (!node || node === state.tree) { setStatus(L('st.049', '根节点不能摘下来')); return false; }
+    if (isDetached(node.id)) { setStatus(L('st.017', '它已经是游离节点了')); return false; }
     var parent = findParent(node.id);
-    if (!parent) { setStatus('找不到它的父节点'); return false; }
+    if (!parent) { setStatus(L('st.038', '找不到它的父节点')); return false; }
     pushHistory();
     parent.children = parent.children.filter(function (item) { return item !== node; });
     state.detached.push(node);
@@ -226,14 +347,14 @@
     markDirty(true);
     renderTree();
     renderInspector();
-    setStatus('已把 ' + node.id + ' 摘成游离节点（它还在画布上，保存时不会写进包）');
+    setStatus(I18n.format("st.c003", '已把 {0} 摘成游离节点（它还在画布上，保存时不会写进包）', node.id));
     return true;
   }
 
   /** 建一个游离节点（物料拖到空白画布时用）。 */
   function createDetachedNode(type, properties) {
     var material = materialFor(type);
-    if (!material) { setStatus('未知类型：' + type + '（物料区里没有）'); return null; }
+    if (!material) { setStatus(I18n.format("st.c004", '未知类型：{0}（物料区里没有）', type)); return null; }
     var node = { id: nextId(shortId(type)), type: type };
     var props = properties || {};
     var names = Object.keys(props);
@@ -278,10 +399,37 @@
   /** 物料分组 = schema 派生出来的那些 + 动态的「动作包」组（不改动 state.materials）。 */
   function paletteGroups() {
     var groups = (state.materials ? state.materials.groups : []).slice();
+    // 「UI 操作」组：**语义目标**是「控件名 / 路径 / 列表里的某一行」三合一的东西，
+    // 光一个 Task.UiClick 类型说不清 target 该怎么填 —— 所以给一个「从游戏里现取」的入口：
+    // 点它就把当前屏幕上的控件（含列表的每一行，例如 WorldsList 里的某一张地图）列出来，
+    // 选一个直接生成节点。用户原话：「用于解析 list 或多种结构的」。
+    groups.push({
+      key: 'ui',
+      label: L('palette.group.ui', 'UI 操作（界面/列表）'),
+      items: [{ kind: 'ui-target', type: 'Task.UiClick' }]
+    });
     if (state.actions.length) {
       groups.push(PlayerAiLowcode.actionsToMaterials(state.actions));
     }
     return groups;
+  }
+
+  /** 物料分组标题（走翻译，缺 key 就用适配层给的中文标签）。 */
+  function paletteGroupLabel(group) {
+    return L('palette.group.' + group.key, group.label);
+  }
+
+  /** 物料按钮：节点/装饰器/服务显示**翻译名 + 原始类型**，动作包显示文件名。 */
+  function paletteMaterialButton(item, handler) {
+    if (item.kind === 'action') return button(actionPaletteLabel(item), handler);
+    var element = document.createElement('button');
+    element.addEventListener('click', handler);
+    if (item.kind === 'ui-target') {
+      element.textContent = L('palette.uiPick', '🎯 拾取界面目标…');
+      return element;
+    }
+    setNodeLabel(element, item.type);
+    return element;
   }
 
   /**
@@ -316,7 +464,7 @@
       if (id) {
         // 点了就跳到那个节点：选中 + 滚到可见（不然长树里根本找不到）
         div.classList.add('jumpable');
-        div.title = '点一下跳到节点 ' + id;
+        div.title = I18n.format("ui.061", '点一下跳到节点 {0}', id);
         div.addEventListener('click', function () { selectNode(id, true); });
         if (state.issueIds[id] !== 'error') state.issueIds[id] = kind;
       }
@@ -328,7 +476,7 @@
 
   /** 选中一个节点（可选滚到可见）。 */
   function selectNode(id, scroll) {
-    if (!findNode(id)) { setStatus('节点不在了：' + id); return; }
+    if (!findNode(id)) { setStatus(I18n.format("st.c005", '节点不在了：{0}', id)); return; }
     state.selectedId = id;
     state.selection = [id];
     state.anchorId = id;
@@ -374,7 +522,7 @@
     renderTree();
     renderInspector();
     if (state.selection.length > 1)
-      setStatus('已选中 ' + state.selection.length + ' 个节点（属性区有批量操作）');
+      setStatus(I18n.format("st.c006", '已选中 {0} 个节点（属性区有批量操作）', state.selection.length));
   }
 
   /** 选中集合对应的节点（按画布顺序，跳过已经不存在的）。 */
@@ -393,7 +541,7 @@
    */
   function deleteSelection() {
     var nodes = selectedNodes();
-    if (!nodes.length) { setStatus('没有选中的节点'); return; }
+    if (!nodes.length) { setStatus(L('st.063', '没有选中的节点')); return; }
     var doomed = {};
     nodes.forEach(function (node) { doomed[node.id] = true; });
 
@@ -410,14 +558,14 @@
       removed++;
     });
 
-    if (!removed) { setStatus('选中的节点不能删除（根节点/已被祖先覆盖）'); return; }
+    if (!removed) { setStatus(L('st.079', '选中的节点不能删除（根节点/已被祖先覆盖）')); return; }
     state.selection = [state.tree.id];
     state.selectedId = state.tree.id;
     state.anchorId = state.tree.id;
     markDirty(true);
     renderTree();
     renderInspector();
-    setStatus('批量删除 ' + removed + ' 个节点（Ctrl+Z 一次撤回）');
+    setStatus(I18n.format("st.c007", '批量删除 {0} 个节点（Ctrl+Z 一次撤回）', removed));
   }
 
   /**
@@ -426,15 +574,15 @@
    */
   function wrapSelection(parentType) {
     var nodes = selectedNodes();
-    if (nodes.length < 2) { setStatus('至少选两个节点才能包起来'); return; }
+    if (nodes.length < 2) { setStatus(L('st.068', '至少选两个节点才能包起来')); return; }
     var type = parentType || 'Sequence';
     var parent = findParent(nodes[0].id);
-    if (!parent) { setStatus('不能把根节点包起来'); return; }
+    if (!parent) { setStatus(L('st.002', '不能把根节点包起来')); return; }
     var sameParent = nodes.every(function (node) { return findParent(node.id) === parent; });
-    if (!sameParent) { setStatus('这些节点不在同一个父节点下，包不成一个 ' + type); return; }
+    if (!sameParent) { setStatus(I18n.format("st.c008", '这些节点不在同一个父节点下，包不成一个 {0}', type)); return; }
 
     var material = materialFor(type);
-    if (!material || !material.allowsChildren) { setStatus(type + ' 不是组合节点'); return; }
+    if (!material || !material.allowsChildren) { setStatus(I18n.format("st.c009", '{0} 不是组合节点', type)); return; }
 
     pushHistory();
     var index = parent.children.indexOf(nodes[0]);
@@ -458,7 +606,7 @@
     markDirty(true);
     renderTree();
     renderInspector();
-    setStatus('已把 ' + nodes.length + ' 个节点包进 ' + type + '（Ctrl+Z 可撤回）');
+    setStatus(I18n.format("st.c010", '已把 {0} 个节点包进 {1}（Ctrl+Z 可撤回）', nodes.length, type));
   }
 
   // ---------------------------------------------------------------- 画布
@@ -536,7 +684,7 @@
     var reference = node.properties ? node.properties.package : null;
     var parsed = parseSubtreeRef(reference);
     if (!parsed) {
-      setStatus('这个 Subtree 节点还没填 properties.package（引用哪个包）');
+      setStatus(L('st.074', '这个 Subtree 节点还没填 properties.package（引用哪个包）'));
       return;
     }
 
@@ -544,18 +692,18 @@
     if (state.folded[node.id] && !state.folded[node.id].loading) {
       delete state.folded[node.id];
       renderTree();
-      setStatus('已折叠 ' + node.id);
+      setStatus(I18n.format("st.c011", '已折叠 {0}', node.id));
       return;
     }
 
     state.folded[node.id] = { loading: true, reference: reference };
     renderTree();
-    setStatus('展开引用 ' + parsed.package + ' …');
+    setStatus(I18n.format("st.c012", '展开引用 {0} …', parsed.package));
 
     api('/api/subtree?path=' + encodeURIComponent(state.path)
       + '&node=' + encodeURIComponent(node.id)).then(function (data) {
       if (!data.ok) {
-        state.folded[node.id] = { error: data.reason || '展开失败', reference: reference };
+        state.folded[node.id] = { error: data.reason || L('ui.89', '展开失败'), reference: reference };
       } else {
         var entryId = data.entry || (data.tree ? data.tree.id : null);
         var entry = data.tree ? (findNodeIn(data.tree, entryId) || data.tree) : null;
@@ -571,8 +719,9 @@
       }
       renderTree();
       var info = state.folded[node.id];
-      setStatus(info.error ? ('展开失败：' + info.error)
-        : ('已展开 ' + info.resolvedId + '#' + (info.entry || '?') + '（' + info.nodes + ' 节点，只读）'));
+      setStatus(info.error
+            ? I18n.format("st.t002", '展开失败：{0}', info.error)
+            : I18n.format("st.t003", '已展开 {0}#{1}（{2} 节点，只读）', info.resolvedId, (info.entry || '?'), info.nodes));
     });
   }
 
@@ -580,15 +729,15 @@
   function openSubtreePackage(node) {
     if (!state.tree || !node) return;
     var parsed = parseSubtreeRef(node.properties ? node.properties.package : null);
-    if (!parsed) { setStatus('这个 Subtree 节点还没填 properties.package'); return; }
+    if (!parsed) { setStatus(L('st.073', '这个 Subtree 节点还没填 properties.package')); return; }
 
     api('/api/subtree?path=' + encodeURIComponent(state.path)
       + '&node=' + encodeURIComponent(node.id)).then(function (data) {
       if (!data.ok || !data.resolvedFile) {
-        setStatus('打开不了引用：' + (data.reason || '解析失败'));
+        setStatus(I18n.format("st.c013", '打开不了引用：{0}', (data.reason || L('ui.288', '解析失败'))));
         return;
       }
-      setStatus('打开被引用的包：' + data.resolvedFile);
+      setStatus(I18n.format("st.c014", '打开被引用的包：{0}', data.resolvedFile));
       return loadPackages().then(function () { return openPackage(data.resolvedFile); });
     });
   }
@@ -654,20 +803,20 @@
    * 直接摆在界面上，一眼就能判断到底是没重算、还是重算了但容器本身就没变。
    */
   function diagText(info) {
-    if (!info) return '尺寸诊断…';
+    if (!info) return L('ui.90', '尺寸诊断…');
     var parts = [];
-    parts.push('视图=' + (info.view === 'graph' ? '节点图' : '缩进树'));
-    parts.push('画布栏=' + Math.round(info.paneWidth || 0) + '×' + Math.round(info.paneHeight || 0));
+    parts.push(L('ui.91', '视图=') + (info.view === 'graph' ? L('ui.92', '节点图') : L('ui.93', '缩进树')));
+    parts.push(L('ui.94', '画布栏=') + Math.round(info.paneWidth || 0) + '×' + Math.round(info.paneHeight || 0));
     if (info.view === 'graph') {
-      parts.push('内容=' + Math.round(info.contentWidth || 0) + '×'
+      parts.push(L('ui.95', '内容=') + Math.round(info.contentWidth || 0) + '×'
         + Math.round(info.contentHeight || 0));
-      parts.push('缩放=' + Math.round((info.scale || 1) * 100) + '%'
-        + (info.autoFit ? '（自动）' : '（手动）'));
+      parts.push(L('ui.96', '缩放=') + Math.round((info.scale || 1) * 100) + '%'
+        + (info.autoFit ? L('ui.97', '（自动）') : L('ui.98', '（手动）')));
     }
-    parts.push('节点=' + (info.nodes || 0));
+    parts.push(L('ui.99', '节点=') + (info.nodes || 0));
     if (info.scrollWidth && info.scrollWidth > (info.paneWidth || 0))
-      parts.push('横向需滚动 ' + Math.round(info.scrollWidth - info.paneWidth) + 'px');
-    return parts.join('　');
+      parts.push(L('ui.100', '横向需滚动 ') + Math.round(info.scrollWidth - info.paneWidth) + 'px');
+    return parts.join(L('ui.101', '　'));
   }
 
   function updateDiag() {
@@ -709,13 +858,13 @@
     var keepScroll = state.view === 'graph' ? currentGraphScroll() : null;
     root.innerHTML = '';
     if (!state.tree) {
-      root.innerHTML = '<p class="hint">打开一个包开始编辑。</p>';
+      root.innerHTML = L("ui.052", '<p class="hint">打开一个包开始编辑。</p>');
       updateDiag();
       return;
     }
     if (state.view === 'graph') {
       renderGraph(root, keepScroll);
-      $('canvasHint').textContent = (state.path ? state.path : '') + '　[节点图]';
+      $('canvasHint').textContent = I18n.format("ui.004", '{0}　[节点图]', (state.path ? state.path : ''));
       updateDiag();
       return;
     }
@@ -729,11 +878,10 @@
     if (state.detached && state.detached.length) {
       var note = document.createElement('p');
       note.className = 'hint detached-note';
-      note.textContent = '以上 ' + state.detached.length + ' 个是**游离节点**（还没接进行为树）：'
-        + '拖到某个节点上、或用引脚连线就会挂上；保存时不会写进包。';
+      note.textContent = I18n.format("ui.005", '以上 {0} 个是**游离节点**（还没接进行为树）：拖到某个节点上、或用引脚连线就会挂上；保存时不会写进包。', state.detached.length);
       root.appendChild(note);
     }
-    $('canvasHint').textContent = (state.path ? state.path : '') + '　[缩进树]';
+    $('canvasHint').textContent = I18n.format("ui.006", '{0}　[缩进树]', (state.path ? state.path : ''));
     updateDiag();
   }
 
@@ -860,16 +1008,16 @@
       // 类型名已经在标题栏里了，这里再写一遍就是重复）
       var caption = document.createElement('div');
       caption.className = 'gnode-caption';
-      caption.textContent = (isDetached(box.id) ? '游离 · ' : '') + (box.id || '(no id)');
-      caption.title = (box.id || '') + '　' + (node.type || '?');
+      caption.textContent = (isDetached(box.id) ? L('ui.102', '游离 · ') : '') + (box.id || '(no id)');
+      caption.title = (box.id || '') + L('ui.101', '　') + (node.type || '?');
       element.appendChild(caption);
 
       // 彩色标题栏
       var head = document.createElement('div');
       head.className = 'gnode-head';
-      head.textContent = node.type || '?';
-      head.title = (node.type || '?') + '　id=' + box.id
-        + (material && material.allowsChildren ? '（可以挂子节点）' : '（任务节点，没有子节点）');
+      setNodeLabel(head, node.type || '?');
+      head.title = (node.type || '?') + L('ui.103', '　id=') + box.id
+        + (material && material.allowsChildren ? L('ui.104', '（可以挂子节点）') : L('ui.105', '（任务节点，没有子节点）'));
       element.appendChild(head);
 
       var body = document.createElement('div');
@@ -890,7 +1038,7 @@
         row.className = 'gnode-row out-row';
         row.style.top = (box.bodyPadding + (index + 1.5) * box.rowHeight - 8) + 'px';
         row.textContent = (index + 1) + ' · ' + childId;
-        row.title = '第 ' + (index + 1) + ' 个子节点：' + childId;
+        row.title = I18n.format("ui.062", '第 {0} 个子节点：{1}', (index + 1), childId);
         body.appendChild(row);
       });
 
@@ -924,7 +1072,7 @@
       inPin.setAttribute('data-pin-role', 'in');
       inPin.style.left = (-6) + 'px';
       inPin.style.top = (box.inPin.y - box.y - 6) + 'px';
-      inPin.title = '输入：父节点接到这里（拖这个圈到别的节点上＝本节点改挂到它下面）';
+      inPin.title = L("ui.063", '输入：父节点接到这里（拖这个圈到别的节点上＝本节点改挂到它下面）');
       inPin.addEventListener('mousedown', function (event) {
         event.stopPropagation();     // 别让方框拖动/画布平移接手
         if (event.preventDefault) event.preventDefault();
@@ -942,8 +1090,7 @@
         outPin.setAttribute('data-child-id', pin.id);
         outPin.style.left = (box.w - 6) + 'px';
         outPin.style.top = (pin.y - box.y - 6) + 'px';
-        outPin.title = '输出 ' + (index + 1) + '（' + pin.id
-          + '）：拖到别的节点上＝把它挂成第 ' + (index + 1) + ' 个子节点';
+        outPin.title = I18n.format("ui.064", '输出 {0}（{1}）：拖到别的节点上＝把它挂成第 {2} 个子节点', (index + 1), pin.id, (index + 1));
         outPin.addEventListener('mousedown', function (event) {
           event.stopPropagation();
           if (event.preventDefault) event.preventDefault();
@@ -964,8 +1111,8 @@
       if ((node.decorators || []).length || (node.services || []).length) {
         var extra = document.createElement('span');
         extra.className = 'hint gnode-extra';
-        extra.textContent = ((node.decorators || []).length ? '装饰器×' + node.decorators.length + ' ' : '')
-          + ((node.services || []).length ? '服务×' + node.services.length : '');
+        extra.textContent = ((node.decorators || []).length ? L('ui.106', '装饰器×') + node.decorators.length + ' ' : '')
+          + ((node.services || []).length ? L('ui.107', '服务×') + node.services.length : '');
         element.appendChild(extra);
       }
 
@@ -983,7 +1130,7 @@
         event.stopPropagation();
         if (node.type === 'Task.Subtree') openSubtreePackage(node);
         else if (material && material.allowsChildren) {
-          var type = prompt('子节点类型（形如 Task.Wait / Sequence）', 'Task.Wait');
+          var type = prompt(L('ui.108', '子节点类型（形如 Task.Wait / Sequence）'), 'Task.Wait');
           if (type) addChild(node, type);
         }
       });
@@ -1011,7 +1158,7 @@
       if (!state.selectedWire && !state.selectedGroupId) return;
       state.selectedWire = null;
       state.selectedGroupId = null;
-      setStatus('已取消选中');
+      setStatus(L('st.033', '已取消选中'));
       renderTree();
       renderInspector();
     });
@@ -1047,8 +1194,8 @@
 
     var head = document.createElement('div');
     head.className = 'graph-group-head';
-    head.textContent = group.title;
-    head.title = '拖动这里＝整体移动组内节点；双击＝改名；Delete＝解散';
+    head.textContent = groupTitle(group);
+    head.title = L("ui.065", '拖动这里＝整体移动组内节点；双击＝改名；Delete＝解散');
     head.addEventListener('mousedown', function (event) {
       if (event.stopPropagation) event.stopPropagation();
       if (event.preventDefault) event.preventDefault();
@@ -1056,14 +1203,14 @@
     });
     head.addEventListener('dblclick', function (event) {
       if (event.stopPropagation) event.stopPropagation();
-      var name = prompt('注释框标题', group.title);
+      var name = prompt(L('ui.109', '注释框标题'), groupTitle(group));
       if (name !== null) renameGroup(group, name);
     });
     element.appendChild(head);
 
     var resize = document.createElement('div');
     resize.className = 'graph-group-resize';
-    resize.title = '拖动右下角＝调整注释框大小';
+    resize.title = L("ui.066", '拖动右下角＝调整注释框大小');
     resize.addEventListener('mousedown', function (event) {
       if (event.stopPropagation) event.stopPropagation();
       if (event.preventDefault) event.preventDefault();
@@ -1327,7 +1474,7 @@
   function previewSummary(node, material) {
     if (node.type === 'Task.Subtree') {
       var ref = node.properties && node.properties.package;
-      return ref ? ('引用 ' + ref) : '未填引用';
+      return ref ? (L('ui.110', '引用 ') + ref) : L('ui.111', '未填引用');
     }
     var properties = node.properties || {};
     var parts = [];
@@ -1338,19 +1485,20 @@
       if (typeof value === 'object') value = JSON.stringify(value);
       parts.push(name + '=' + value);
     });
-    if (parts.length) return parts.join('　');
+    if (parts.length) return parts.join(L('ui.101', '　'));
     if (material && material.allowsChildren) {
       var count = (node.children || []).length;
-      return count ? (count + ' 个子节点') : '空组合（还没有子节点）';
+      return count ? I18n.format("ui.t01", '{0} 个子节点', count)
+        : L("ui.t02", '空组合（还没有子节点）');
     }
     return node.type || '';
   }
 
   /** 预览区右端的状态标记：实时执行中 / 有问题（"路径上"不再标记 —— 用户只要正在执行的那个）。 */
   function previewChip(node) {
-    if (state.liveTipId === node.id) return { kind: 'live', text: '▶ 执行中' };
-    if (state.issueIds[node.id] === 'error') return { kind: 'error', text: '! 错误' };
-    if (state.issueIds[node.id] === 'warning') return { kind: 'warn', text: '! 警告' };
+    if (state.liveTipId === node.id) return { kind: 'live', text: L('ui.112', '▶ 执行中') };
+    if (state.issueIds[node.id] === 'error') return { kind: 'error', text: L('ui.113', '! 错误') };
+    if (state.issueIds[node.id] === 'warning') return { kind: 'warn', text: L('ui.114', '! 警告') };
     return null;
   }
 
@@ -1516,17 +1664,17 @@
    * 或者容器上有别的手势处理）。这是**不依赖拖拽**的等价路径 —— 拖不动也能重构树。
    */
   function beginMove(node) {
-    if (!node) { setStatus('先选中一个节点'); return; }
-    if (node === state.tree) { setStatus('根节点不能移动'); return; }
+    if (!node) { setStatus(L('st.011', '先选中一个节点')); return; }
+    if (node === state.tree) { setStatus(L('st.050', '根节点不能移动')); return; }
     state.pendingMove = node.id;
-    setStatus('正在移动 ' + node.id + '：点目标节点把它挂/插过去（Esc 取消）');
+    setStatus(I18n.format("st.c015", '正在移动 {0}：点目标节点把它挂/插过去（Esc 取消）', node.id));
     renderInspector();
   }
 
   function cancelMove() {
     if (!state.pendingMove) return false;
     state.pendingMove = null;
-    setStatus('已取消移动');
+    setStatus(L('st.030', '已取消移动'));
     renderInspector();
     return true;
   }
@@ -1536,11 +1684,11 @@
     if (!state.pendingMove) return false;
     var sourceId = state.pendingMove;
     state.pendingMove = null;
-    if (sourceId === targetNode.id) { setStatus('没有移动（点的是同一个节点）'); renderInspector(); return true; }
+    if (sourceId === targetNode.id) { setStatus(L('st.062', '没有移动（点的是同一个节点）')); renderInspector(); return true; }
     var material = materialFor(targetNode.type);
     applyDrop(targetNode, material && material.allowsChildren ? 'child' : 'sibling',
       { kind: 'node', id: sourceId });
-    setStatus('已把 ' + sourceId + ' 移到 ' + targetNode.id + ' 下（Ctrl+Z 可撤回）');
+    setStatus(I18n.format("st.c016", '已把 {0} 移到 {1} 下（Ctrl+Z 可撤回）', sourceId, targetNode.id));
     renderInspector();
     return true;
   }
@@ -1548,7 +1696,9 @@
   function setView(mode) {
     state.view = mode === 'graph' ? 'graph' : 'tree';
     var button = $('btnView');
-    if (button) button.textContent = state.view === 'graph' ? '视图：节点图' : '视图：缩进树';
+    if (button) button.textContent = state.view === 'graph'
+              ? L("ui.007", '视图：节点图')
+              : L("ui.008", '视图：缩进树');
     if (!state.tree) return;
 
     // 切到节点图就**自动适应一次**：不然一进去看到的是一棵被裁掉一半的树，
@@ -1589,7 +1739,7 @@
     state.graphScale = Math.max(0.35, Math.min(1.6, (state.graphScale || 1) + delta));
     state.graphAutoFit = false; // 手动缩放过：窗口再变也不自动覆盖用户的选择
     if (state.view === 'graph') renderTree();
-    setStatus('节点图缩放 ' + Math.round(state.graphScale * 100) + '%（手动）');
+    setStatus(I18n.format("st.c017", '节点图缩放 {0}%（手动）', Math.round(state.graphScale * 100)));
   }
 
   /** 当前渲染出来的几何（含平移留白）——给"居中"这类操作复用。 */
@@ -1663,7 +1813,7 @@
    *  force=true 时无论如何都重画一次（切到节点图视图时必须这样：跟"缩放变没变"无关）；
    *  quiet=true 时不动状态栏（自动适应不该把用户动作的提示顶掉）。 */
   function fitGraphToWindow(force, quiet) {
-    if (!state.tree) { setStatus('先打开一个包'); return; }
+    if (!state.tree) { setStatus(L('st.008', '先打开一个包')); return; }
     if (state.view !== 'graph') setView('graph');
 
     var scroller = document.querySelector('.graph-scroller');
@@ -1690,9 +1840,7 @@
       // 状态栏留给用户动作（"已移动节点…""已连接…"），否则刚点完就被"已适应窗口"顶掉。
       // "当前缩放是多少、是不是自动"在画布上方的诊断行里一直能看到。
       if (!quiet) {
-        setStatus('已适应窗口：' + Math.round(state.graphScale * 100) + '%（可视 '
-          + Math.round(availableWidth) + '×' + Math.round(availableHeight) + '，内容 '
-          + Math.round(geometry.width) + '×' + Math.round(geometry.height) + '）');
+        setStatus(I18n.format("st.c018", '已适应窗口：{0}%（可视 {1}×{2}，内容 {3}×{4}）', Math.round(state.graphScale * 100), Math.round(availableWidth), Math.round(availableHeight), Math.round(geometry.width), Math.round(geometry.height)));
       }
     } else {
       updateDiag();
@@ -1760,7 +1908,7 @@
     var tag = document.createElement('span');
     tag.className = 'tag ' + (material && material.allowsChildren ? 'composite'
       : (node.type === 'Root' ? 'root' : 'task'));
-    tag.textContent = node.type || '?';
+    setNodeLabel(tag, node.type || '?');
     row.appendChild(tag);
 
     var idSpan = document.createElement('span');
@@ -1776,8 +1924,8 @@
     }
 
     var counts = [];
-    if ((node.decorators || []).length) counts.push('装饰器×' + node.decorators.length);
-    if ((node.services || []).length) counts.push('服务×' + node.services.length);
+    if ((node.decorators || []).length) counts.push(L('ui.106', '装饰器×') + node.decorators.length);
+    if ((node.services || []).length) counts.push(L('ui.107', '服务×') + node.services.length);
     if (counts.length) {
       var extra = document.createElement('span');
       extra.className = 'hint';
@@ -1789,7 +1937,9 @@
     if (state.issueIds[node.id]) {
       var flag = document.createElement('span');
       flag.className = 'issue-flag ' + state.issueIds[node.id];
-      flag.textContent = state.issueIds[node.id] === 'error' ? '! 有问题' : '! 警告';
+      flag.textContent = state.issueIds[node.id] === 'error'
+              ? L("ui.009", '! 有问题')
+              : L("ui.010", '! 警告');
       row.appendChild(flag);
     }
 
@@ -1804,7 +1954,7 @@
       row.classList.add('live-active');
       var liveFlag = document.createElement('span');
       liveFlag.className = 'live-flag tip';
-      liveFlag.textContent = '▶ 正在执行';
+      liveFlag.textContent = L("ui.011", '▶ 正在执行');
       row.appendChild(liveFlag);
     }
 
@@ -1817,14 +1967,16 @@
       var reference = node.properties ? node.properties.package : null;
       var refSpan = document.createElement('span');
       refSpan.className = 'node-ref';
-      refSpan.textContent = reference ? ('↳ ' + reference) : '↳ (未填引用)';
+      refSpan.textContent = reference ? ('↳ ' + reference) : L('ui.115', '↳ (未填引用)');
       row.appendChild(refSpan);
 
       var toggle = document.createElement('button');
       var folded = (state.folded || {})[node.id];
-      toggle.textContent = folded && !folded.error && !folded.loading ? '▾ 收起' : '▸ 展开引用';
+      toggle.textContent = folded && !folded.error && !folded.loading
+              ? L("ui.013", '▾ 收起')
+              : L("ui.014", '▸ 展开引用');
       toggle.className = 'mini';
-      toggle.title = '就地展开被引用的包（只读；要改就双击这个节点打开那个包）';
+      toggle.title = L("ui.067", '就地展开被引用的包（只读；要改就双击这个节点打开那个包）');
       toggle.addEventListener('click', function (event) {
         event.stopPropagation();
         toggleSubtree(node);
@@ -1860,12 +2012,11 @@
       var head = document.createElement('div');
       head.className = 'folded-head';
       if (folded.loading) {
-        head.textContent = '正在读引用…';
+        head.textContent = L("ui.015", '正在读引用…');
       } else if (folded.error) {
-        head.textContent = '读不了引用：' + folded.error;
+        head.textContent = I18n.format("ui.016", '读不了引用：{0}', folded.error);
       } else {
-        head.textContent = '引用 ' + folded.resolvedId + '#' + (folded.entry || '?')
-          + '（' + folded.nodes + ' 节点，只读；双击原节点可打开该包）';
+        head.textContent = I18n.format("ui.017", '引用 {0}#{1}（{2} 节点，只读；双击原节点可打开该包）', folded.resolvedId, (folded.entry || '?'), folded.nodes);
       }
       box.appendChild(head);
       if (folded.tree) renderFoldedTree(box, folded.tree, 0);
@@ -1880,10 +2031,10 @@
   function renderGroupInspector(body, group) {
     var head = document.createElement('div');
     head.className = 'prop-row';
-    head.innerHTML = '<label>注释框</label><span class="tag">' + group.id + '</span>';
+    head.innerHTML = I18n.format("ui.053", '<label>注释框</label><span class="tag">{0}</span>', group.id);
     body.appendChild(head);
 
-    body.appendChild(textField('标题', group.title, function (value) {
+    body.appendChild(textField(L('ui.116', '标题'), groupTitle(group), function (value) {
       if (value === group.title) return;
       renameGroup(group, value);
     }, 'groupTitleInput'));
@@ -1891,13 +2042,13 @@
     var colorRow = document.createElement('div');
     colorRow.className = 'prop-row';
     var colorLabel = document.createElement('label');
-    colorLabel.textContent = '颜色';
+    colorLabel.textContent = L("ui.018", '颜色');
     colorRow.appendChild(colorLabel);
     var colorSelect = document.createElement('select');
     GROUP_COLORS.forEach(function (color) {
       var option = document.createElement('option');
       option.value = color;
-      option.textContent = { blue: '蓝', purple: '紫', green: '绿', orange: '橙', gray: '灰' }[color] || color;
+      option.textContent = { blue: L('ui.117', '蓝'), purple: L('ui.118', '紫'), green: L('ui.119', '绿'), orange: L('ui.120', '橙'), gray: L('ui.121', '灰') }[color] || color;
       if ((group.color || 'blue') === color) option.selected = true;
       colorSelect.appendChild(option);
     });
@@ -1908,20 +2059,19 @@
     var members = groupMembers(group);
     var info = document.createElement('p');
     info.className = 'hint';
-    info.textContent = '组内 ' + members.length + ' 个节点：' + (members.join('、') || '(空)')
-      + '　—— 拖动组头整体移动，右下角可缩放。';
+    info.textContent = I18n.format("ui.019", '组内 {0} 个节点：{1}　—— 拖动组头整体移动，右下角可缩放。', members.length, (members.join(L('ui.253', '、')) || L('ui.287', '(空)')));
     body.appendChild(info);
 
     var actions = document.createElement('div');
     actions.className = 'actions';
     var fitButton = document.createElement('button');
-    fitButton.textContent = '贴回内容';
-    fitButton.title = '把框重新贴合到组内节点（加过节点或挪过位置之后用）';
+    fitButton.textContent = L("ui.020", '贴回内容');
+    fitButton.title = L("ui.068", '把框重新贴合到组内节点（加过节点或挪过位置之后用）');
     fitButton.addEventListener('click', function () { fitGroupToMembers(group); });
     actions.appendChild(fitButton);
     var disbandButton = document.createElement('button');
-    disbandButton.textContent = '解散';
-    disbandButton.title = '解散注释框（里面的节点原地不动）';
+    disbandButton.textContent = L("ui.021", '解散');
+    disbandButton.title = L("ui.069", '解散注释框（里面的节点原地不动）');
     disbandButton.addEventListener('click', function () { disbandGroup(group); });
     actions.appendChild(disbandButton);
     body.appendChild(actions);
@@ -1929,9 +2079,8 @@
     var membership = document.createElement('p');
     membership.className = 'hint';
     membership.textContent = state.selectedId && groupsForNode(state.selectedId).length
-      ? ('当前节点 ' + state.selectedId + ' 属于：'
-        + groupsForNode(state.selectedId).map(function (item) { return item.title; }).join('、'))
-      : '提示：先在画布上框选几个节点，再点画布上方的「建组」。';
+              ? I18n.format("ui.022", '当前节点 {0} 属于：{1}', state.selectedId, groupsForNode(state.selectedId).map(function (item) { return item.title; }).join(L('ui.253', '、')))
+              : L("ui.023", '提示：先在画布上框选几个节点，再点画布上方的「建组」。');
     body.appendChild(membership);
   }
 
@@ -1946,19 +2095,27 @@
     }
     var node = state.selectedId ? findNode(state.selectedId) : null;
     if (!node) {
-      body.innerHTML = '<p class="hint">左侧选中一个节点。</p>';
+      body.innerHTML = L("ui.054", '<p class="hint">左侧选中一个节点。</p>');
       return;
     }
 
     var head = document.createElement('div');
     head.className = 'prop-row';
-    head.innerHTML = '<label>类型</label><span class="tag">' + (node.type || '?') + '</span>';
+    // 用 createElement 拼而不是 innerHTML + querySelector：DOM 自检桩不解析 innerHTML 里的子元素，
+    // 那样会在自检里拿到 null（实测踩过）。
+    var typeLabel = document.createElement('label');
+    typeLabel.textContent = L('inspector.type', '类型');
+    head.appendChild(typeLabel);
+    var typeTag = document.createElement('span');
+    typeTag.className = 'tag';
+    setNodeLabel(typeTag, node.type || '?');
+    head.appendChild(typeTag);
     body.appendChild(head);
 
     body.appendChild(textField('id', node.id, function (value) {
       if (!value) return;
       var duplicate = value !== node.id && !!findNode(value);
-      if (duplicate) { setStatus('id 已被占用：' + value); return; }
+      if (duplicate) { setStatus(I18n.format("st.c019", 'id 已被占用：{0}', value)); return; }
       pushHistory('node.id');
       node.id = value;
       state.selectedId = value;
@@ -1966,7 +2123,7 @@
       renderTree();
     }, 'nodeIdInput'));
 
-    body.appendChild(textField('name（显示名）', node.name || '', function (value) {
+    body.appendChild(textField(L('ui.122', 'name（显示名）'), node.name || '', function (value) {
       pushHistory('node.name');
       if (value) node.name = value; else delete node.name;
       markDirty(true);
@@ -1975,9 +2132,34 @@
 
     var material = materialFor(node.type);
     var specs = material ? material.properties : [];
+    if (node.type === 'Task.UiClick') {
+      // 点击类节点最麻烦的是「target 怎么填」：给一个从游戏里现取的入口，
+      // 选中的东西（控件或列表里的某一行）直接写进 target 属性。
+      var pickRow = document.createElement('div');
+      pickRow.className = 'prop-row';
+      var pickLabel = document.createElement('label');
+      pickLabel.textContent = L('palette.uiPick', '🎯 拾取界面目标…');
+      pickRow.appendChild(pickLabel);
+      pickRow.appendChild(button(L('palette.uiPick', '🎯 拾取界面目标…'), function () {
+        openUiTargetPicker(function (element) {
+          var picked = uiElementTarget(element);
+          if (!picked) return;
+          pushHistory('node.target');
+          node.properties = node.properties || {};
+          node.properties.target = picked;
+          if (!node.properties.mode) node.properties.mode = 'direct';
+          if (node.properties.waitSeconds === undefined) node.properties.waitSeconds = 3;
+          markDirty(true);
+          renderTree();
+          renderInspector();
+          setStatus(node.id + '.target = ' + picked);
+        });
+      }));
+      body.appendChild(pickRow);
+    }
     if (specs.length) {
       var title = document.createElement('h2');
-      title.textContent = '参数';
+      title.textContent = L("ui.024", '参数');
       title.style.marginTop = '10px';
       body.appendChild(title);
       specs.forEach(function (spec) {
@@ -1994,12 +2176,12 @@
       multi.className = 'actions multi';
       var multiTitle = document.createElement('span');
       multiTitle.className = 'hint';
-      multiTitle.textContent = '已选 ' + state.selection.length + ' 个：';
+      multiTitle.textContent = I18n.format("ui.025", '已选 {0} 个：', state.selection.length);
       multi.appendChild(multiTitle);
-      multi.appendChild(button('批量删除', function () { deleteSelection(); }));
-      multi.appendChild(button('包进 Sequence', function () { wrapSelection('Sequence'); }));
-      multi.appendChild(button('包进 Selector', function () { wrapSelection('Selector'); }));
-      multi.appendChild(button('清空选择', function () {
+      multi.appendChild(button(L('ui.123', '批量删除'), function () { deleteSelection(); }));
+      multi.appendChild(button(L('ui.124', '包进 Sequence'), function () { wrapSelection('Sequence'); }));
+      multi.appendChild(button(L('ui.125', '包进 Selector'), function () { wrapSelection('Selector'); }));
+      multi.appendChild(button(L('ui.126', '清空选择'), function () {
         state.selection = [state.selectedId];
         renderTree();
         renderInspector();
@@ -2008,15 +2190,15 @@
     }
 
     if (material && material.allowsChildren) {
-      actions.appendChild(button('＋ 子节点（选中物料后点这里）', function () {
-        var type = prompt('子节点类型（形如 Task.Wait / Sequence）', 'Task.Wait');
+      actions.appendChild(button(L('ui.127', '＋ 子节点（选中物料后点这里）'), function () {
+        var type = prompt(L('ui.108', '子节点类型（形如 Task.Wait / Sequence）'), 'Task.Wait');
         if (!type) return;
         addChild(node, type);
       }));
     }
     if (material && material.allowsServices) {
-      actions.appendChild(button('＋ 服务', function () {
-        var type = prompt('服务类型', 'Service.UpdateNearestPlayer');
+      actions.appendChild(button(L('ui.128', '＋ 服务'), function () {
+        var type = prompt(L('ui.129', '服务类型'), 'Service.UpdateNearestPlayer');
         if (!type) return;
         pushHistory();
         node.services = node.services || [];
@@ -2026,8 +2208,8 @@
         renderInspector();
       }));
     }
-    actions.appendChild(button('＋ 装饰器', function () {
-      var type = prompt('装饰器类型（Blackboard/Cooldown/TimeLimit/Loop/ForceSuccess/Inverter）',
+    actions.appendChild(button(L('ui.130', '＋ 装饰器'), function () {
+      var type = prompt(L('ui.131', '装饰器类型（Blackboard/Cooldown/TimeLimit/Loop/ForceSuccess/Inverter）'),
         'Blackboard');
       if (!type) return;
       pushHistory();
@@ -2045,25 +2227,25 @@
 
     var parent = findParent(node.id);
     if (parent) {
-      actions.appendChild(button(state.pendingMove === node.id ? '▶ 移动中（点目标节点）' : '移动…',
+      actions.appendChild(button(state.pendingMove === node.id ? L('ui.132', '▶ 移动中（点目标节点）') : L('ui.133', '移动…'),
         function () {
           if (state.pendingMove === node.id) { cancelMove(); return; }
           beginMove(node);
         }));
-      actions.appendChild(button('移动到这里', function () {
-        if (!state.pendingMove) { setStatus('先点「移动…」选一个要搬的节点'); return; }
+      actions.appendChild(button(L('ui.134', '移动到这里'), function () {
+        if (!state.pendingMove) { setStatus(L('st.010', '先点「移动…」选一个要搬的节点')); return; }
         completeMove(node);
       }));
-      actions.appendChild(button('复制', function () { copyNode(node, false); }));
-      actions.appendChild(button('剪切', function () { copyNode(node, true); }));
-      actions.appendChild(button('重复', function () { duplicateNode(node); }));
-      actions.appendChild(button('粘贴到此处', function () {
+      actions.appendChild(button(L('ui.135', '复制'), function () { copyNode(node, false); }));
+      actions.appendChild(button(L('ui.136', '剪切'), function () { copyNode(node, true); }));
+      actions.appendChild(button(L('ui.137', '重复'), function () { duplicateNode(node); }));
+      actions.appendChild(button(L('ui.138', '粘贴到此处'), function () {
         pasteSubtree(node, material && material.allowsChildren ? 'child' : 'sibling');
       }));
-      actions.appendChild(button('上移', function () { move(parent, node, -1); }));
-      actions.appendChild(button('下移', function () { move(parent, node, +1); }));
-      actions.appendChild(button('删除', function () {
-        if (!confirm('删除节点 ' + node.id + ' 及其子树？')) return;
+      actions.appendChild(button(L('ui.139', '上移'), function () { move(parent, node, -1); }));
+      actions.appendChild(button(L('ui.140', '下移'), function () { move(parent, node, +1); }));
+      actions.appendChild(button(L('ui.141', '删除'), function () {
+        if (!confirm(L('ui.142', '删除节点 ') + node.id + L('ui.143', ' 及其子树？'))) return;
         pushHistory();
         parent.children = parent.children.filter(function (child) { return child !== node; });
         state.selectedId = parent.id;
@@ -2077,7 +2259,7 @@
 
     if ((node.decorators || []).length) {
       var dTitle = document.createElement('h2');
-      dTitle.textContent = '装饰器';
+      dTitle.textContent = L("ui.026", '装饰器');
       dTitle.style.marginTop = '10px';
       body.appendChild(dTitle);
       node.decorators.forEach(function (decorator, index) {
@@ -2092,7 +2274,7 @@
         (spec ? spec.properties : []).forEach(function (p) {
           body.appendChild(propertyField(decorator, p, 'properties'));
         });
-        body.appendChild(enumField('观察者中断', decorator.observerAborts || 'None',
+        body.appendChild(enumField(L('ui.144', '观察者中断'), decorator.observerAborts || 'None',
           state.schema ? state.schema.abortModes : [], function (value) {
             if (value === 'None') delete decorator.observerAborts;
             else decorator.observerAborts = value;
@@ -2103,7 +2285,7 @@
 
     if ((node.services || []).length) {
       var sTitle = document.createElement('h2');
-      sTitle.textContent = '服务';
+      sTitle.textContent = L("ui.027", '服务');
       sTitle.style.marginTop = '10px';
       body.appendChild(sTitle);
       node.services.forEach(function (service, index) {
@@ -2114,7 +2296,7 @@
           renderTree();
           renderInspector();
         }));
-        body.appendChild(numberField('interval（秒）', service.interval, function (value) {
+        body.appendChild(numberField(L('ui.145', 'interval（秒）'), service.interval, function (value) {
           pushHistory('service.interval');
           service.interval = Number(value);
           markDirty(true);
@@ -2129,7 +2311,7 @@
 
   function addChild(parent, type) {
     var material = materialFor(type);
-    if (!material) { setStatus('未知类型：' + type + '（物料区里没有）'); return; }
+    if (!material) { setStatus(I18n.format("st.c004", '未知类型：{0}（物料区里没有）', type)); return; }
     pushHistory();
     var node = { id: nextId(shortId(type)), type: type };
     if (material.properties.length) {
@@ -2218,17 +2400,16 @@
   }
 
   function copyNode(node, cut) {
-    if (!node) { setStatus('先选中一个节点'); return; }
-    if (cut && node === state.tree) { setStatus('根节点不能剪切'); return; }
+    if (!node) { setStatus(L('st.011', '先选中一个节点')); return; }
+    if (cut && node === state.tree) { setStatus(L('st.048', '根节点不能剪切')); return; }
     state.clipboard = { node: clone(node), cut: !!cut, sourceId: node.id };
-    setStatus((cut ? '已剪切 ' : '已复制 ') + node.id + ' 及其子树（'
-      + subtreeInfo(node).count + ' 个节点）—— 选中目标节点后 Ctrl+V');
+    setStatus(I18n.format("st.c020", '{0}{1} 及其子树（{2} 个节点）—— 选中目标节点后 Ctrl+V', (cut ? L('ui.286', '已剪切 ') : L('ui.285', '已复制 ')), node.id, subtreeInfo(node).count));
   }
 
   /** 粘贴：`mode` = 'child'（贴进目标节点）或 'sibling'（贴在目标后面）。 */
   function pasteSubtree(targetNode, mode) {
-    if (!state.clipboard) { setStatus('剪贴板是空的（先 Ctrl+C 复制一个节点）'); return; }
-    if (!state.tree) { setStatus('先打开一个包'); return; }
+    if (!state.clipboard) { setStatus(I18n.format("st.c021", '剪贴板是空的（先 Ctrl+C 复制一个节点）')); return; }
+    if (!state.tree) { setStatus(L('st.008', '先打开一个包')); return; }
 
     var target = targetNode || (state.selectedId ? findNode(state.selectedId) : state.tree);
     var material = materialFor(target.type);
@@ -2269,14 +2450,13 @@
       return reference && reference.id;
     });
     var missing = info.references.filter(function (id) { return declared.indexOf(id) < 0; });
-    setStatus('已粘贴 ' + info.count + ' 个节点（新 id ' + pasted.id + '）'
-      + (missing.length ? '　注意：本包没声明引用 ' + missing.join('、') + '，游戏会解析不到'
-        : ''));
+    setStatus(I18n.format("st.c022", '已粘贴 {0} 个节点（新 id {1}）{2}', info.count, pasted.id, (missing.length ? L('ui.284', '　注意：本包没声明引用 ') + missing.join(L('ui.253', '、')) + L('ui.283', '，游戏会解析不到')
+        : '')));
   }
 
   function duplicateNode(node) {
-    if (!node) { setStatus('先选中一个节点'); return; }
-    if (node === state.tree) { setStatus('根节点不能重复'); return; }
+    if (!node) { setStatus(L('st.011', '先选中一个节点')); return; }
+    if (node === state.tree) { setStatus(L('st.051', '根节点不能重复')); return; }
     state.clipboard = { node: clone(node), cut: false, sourceId: node.id };
     // 注意：落点是**这个节点本身**（'sibling' = 插在它后面）。
     // 曾经写成"落点=它的父节点"，结果复制品跑到了父节点的后面（跑到外面去了）——测试抓到的。
@@ -2284,7 +2464,7 @@
   }
 
   function deleteNode(node) {
-    if (!node) { setStatus('先选中一个节点'); return; }
+    if (!node) { setStatus(L('st.011', '先选中一个节点')); return; }
     if (isDetached(node.id)) {
       state.detached = state.detached.filter(function (item) { return item.id !== node.id; });
       delete state.nodePos[node.id];
@@ -2292,18 +2472,18 @@
       persistLayout();
       renderTree();
       renderInspector();
-      setStatus('已删掉游离节点 ' + node.id);
+      setStatus(I18n.format("st.c023", '已删掉游离节点 {0}', node.id));
       return;
     }
     var parent = findParent(node.id);
-    if (!parent) { setStatus('根节点删不了'); return; }
+    if (!parent) { setStatus(L('st.052', '根节点删不了')); return; }
     pushHistory();
     parent.children = parent.children.filter(function (child) { return child !== node; });
     state.selectedId = parent.id;
     markDirty(true);
     renderTree();
     renderInspector();
-    setStatus('已删除 ' + node.id + ' 及其子树（Ctrl+Z 可以撤回）');
+    setStatus(I18n.format("st.c024", '已删除 {0} 及其子树（Ctrl+Z 可以撤回）', node.id));
   }
 
   // ------------------------------------------------ 键盘搬节点（整条路径不碰鼠标）
@@ -2320,62 +2500,62 @@
     markDirty(true);
     renderTree();
     renderInspector();
-    setStatus(label + '：' + node.id + '（Ctrl+Z 可以撤回）');
+    setStatus(I18n.format("st.c025", '{0}：{1}（Ctrl+Z 可以撤回）', label, node.id));
   }
 
   /** 在兄弟之间挪一位（delta=-1 上移 / +1 下移）。到边界就明说，别默默什么都不做。 */
   function moveSibling(node, delta) {
-    if (!node) { setStatus('先选中一个节点'); return false; }
-    if (node === state.tree) { setStatus('根节点不能移动'); return false; }
+    if (!node) { setStatus(L('st.011', '先选中一个节点')); return false; }
+    if (node === state.tree) { setStatus(L('st.050', '根节点不能移动')); return false; }
     var parent = findParent(node.id);
     var list = parent ? parent.children : [state.tree];
     var at = list.indexOf(node);
     var to = at + delta;
     if (at < 0) return false;
-    if (to < 0) { setStatus('已经是第一个了'); return false; }
-    if (to >= list.length) { setStatus('已经是最后一个了'); return false; }
+    if (to < 0) { setStatus(L('st.037', '已经是第一个了')); return false; }
+    if (to >= list.length) { setStatus(L('st.035', '已经是最后一个了')); return false; }
     pushHistory();
     list.splice(at, 1);
     list.splice(to, 0, node);
-    afterNodeMove(node, delta < 0 ? '已上移' : '已下移');
+    afterNodeMove(node, delta < 0 ? L('ui.146', '已上移') : L('ui.147', '已下移'));
     return true;
   }
 
   /** 降一级：变成**前一个兄弟**的子节点（前一个必须是组合节点）。 */
   function indentNode(node) {
-    if (!node) { setStatus('先选中一个节点'); return false; }
-    if (node === state.tree) { setStatus('根节点不能移动'); return false; }
+    if (!node) { setStatus(L('st.011', '先选中一个节点')); return false; }
+    if (node === state.tree) { setStatus(L('st.050', '根节点不能移动')); return false; }
     var parent = findParent(node.id);
     var list = parent ? parent.children : [state.tree];
     var at = list.indexOf(node);
-    if (at <= 0) { setStatus('前面没有兄弟，降不了级（先把它拖到别的组合节点下）'); return false; }
+    if (at <= 0) { setStatus(L('st.016', '前面没有兄弟，降不了级（先把它拖到别的组合节点下）')); return false; }
     var previous = list[at - 1];
     var material = materialFor(previous.type);
     if (!material || !material.allowsChildren) {
-      setStatus('前一个节点是任务（' + previous.type + '），挂不下子节点');
+      setStatus(I18n.format("st.c026", '前一个节点是任务（{0}），挂不下子节点', previous.type));
       return false;
     }
     pushHistory();
     list.splice(at, 1);
     previous.children = previous.children || [];
     previous.children.push(node);
-    afterNodeMove(node, '已降级到 ' + previous.id + ' 下');
+    afterNodeMove(node, I18n.format("ui.t03", '已降级到 {0} 下', previous.id));
     return true;
   }
 
   /** 升一级：挪到父节点的后面，成为父节点的兄弟。 */
   function outdentNode(node) {
-    if (!node) { setStatus('先选中一个节点'); return false; }
-    if (node === state.tree) { setStatus('根节点不能移动'); return false; }
+    if (!node) { setStatus(L('st.011', '先选中一个节点')); return false; }
+    if (node === state.tree) { setStatus(L('st.050', '根节点不能移动')); return false; }
     var parent = findParent(node.id);
-    if (!parent) { setStatus('根节点不能移动'); return false; }
-    if (parent === state.tree) { setStatus('已经是根节点的直接子节点，升不了了'); return false; }
+    if (!parent) { setStatus(L('st.050', '根节点不能移动')); return false; }
+    if (parent === state.tree) { setStatus(L('st.036', '已经是根节点的直接子节点，升不了了')); return false; }
     var grand = findParent(parent.id);
     var list = grand ? grand.children : [state.tree];
     pushHistory();
     parent.children = parent.children.filter(function (child) { return child !== node; });
     list.splice(list.indexOf(parent) + 1, 0, node);
-    afterNodeMove(node, '已升级成 ' + parent.id + ' 的兄弟');
+    afterNodeMove(node, I18n.format("ui.t04", '已升级成 {0} 的兄弟', parent.id));
     return true;
   }
 
@@ -2392,7 +2572,7 @@
 
   /** 按 Alt 语义搬节点（键位处理只管"按了哪个键"，动作都在这里）。 */
   function applyAltMove(node, intent) {
-    if (!node) { setStatus('先选中一个节点，再用 Alt+方向键搬它'); return false; }
+    if (!node) { setStatus(I18n.format("st.c027", '先选中一个节点，再用 Alt+方向键搬它')); return false; }
     if (intent === 'up') return moveSibling(node, -1);
     if (intent === 'down') return moveSibling(node, 1);
     if (intent === 'indent') return indentNode(node);
@@ -2664,16 +2844,16 @@
 
   /** 导出选中子树为单独包（写到包目录，然后把它打开）。 */
   function exportSubtree(node) {
-    if (!state.tree || !node) { setStatus('先选中一个节点'); return; }
-    if (!state.instanceRoot) { setStatus('还不知道包目录，稍后再试'); return; }
-    var name = prompt('新包的名字（会写进包目录）', node.id + '_pack');
+    if (!state.tree || !node) { setStatus(L('st.011', '先选中一个节点')); return; }
+    if (!state.instanceRoot) { setStatus(L('st.070', '还不知道包目录，稍后再试')); return; }
+    var name = prompt(L('ui.148', '新包的名字（会写进包目录）'), node.id + '_pack');
     if (!name) return;
 
     var payload = subtreeExportPayload(node, name);
     var target = state.instanceRoot + '/PlayerAi/BehaviorTrees/'
       + String(name).replace(/[\\/:*?"<>|]/g, '_') + '.scbtpak';
 
-    setStatus('导出中…');
+    setStatus(L('st.021', '导出中…'));
     fetch('/api/package?path=' + encodeURIComponent(target), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -2681,11 +2861,10 @@
     }).then(function (response) { return response.json(); }).then(function (data) {
       if (!data.ok) {
         setIssues((data.issues || []).concat(data.reason ? ['ERROR ' + data.reason] : []));
-        setStatus('导出失败：' + (data.reason || '见下方问题'));
+        setStatus(I18n.format("st.c028", '导出失败：{0}', (data.reason || L('ui.279', '见下方问题'))));
         return;
       }
-      setStatus('已导出 ' + payload.nodes + ' 个节点到 ' + data.path
-        + (payload.references.length ? ('（引用 ' + payload.references.join('、') + ' 一并带上）') : ''));
+      setStatus(I18n.format("st.c029", '已导出 {0} 个节点到 {1}{2}', payload.nodes, data.path, (payload.references.length ? (L('ui.282', '（引用 ') + payload.references.join(L('ui.253', '、')) + L('ui.281', ' 一并带上）')) : '')));
       return loadPackages().then(function () { return openPackage(data.path); });
     });
   }
@@ -2728,12 +2907,14 @@
   function searchNodes(term) {
     state.search = String(term || '').trim().toLowerCase();
     renderTree();
-    if (!state.search) { setStatus('搜索已清空'); return; }
+    if (!state.search) { setStatus(L('st.044', '搜索已清空')); return; }
     var hits = 0;
     walk(state.tree, function (node) {
       if (nodeMatches(node, state.search)) hits++;
     });
-    setStatus(hits ? ('找到 ' + hits + ' 个匹配（回车跳到第一个）') : ('没有匹配：' + term));
+    setStatus(hits
+            ? I18n.format("st.t004", '找到 {0} 个匹配（回车跳到第一个）', hits)
+            : I18n.format("st.t005", '没有匹配：{0}', term));
   }
 
   function nodeMatches(node, term) {
@@ -2748,9 +2929,9 @@
     walk(state.tree, function (node) {
       if (!found && nodeMatches(node, state.search)) found = node;
     });
-    if (!found) { setStatus('没有匹配：' + (state.search || '')); return; }
+    if (!found) { setStatus(I18n.format("st.c030", '没有匹配：{0}', (state.search || ''))); return; }
     selectNode(found.id, true);
-    setStatus('跳到 ' + found.id + '（' + found.type + '）');
+    setStatus(I18n.format("st.c031", '跳到 {0}（{1}）', found.id, found.type));
   }
 
   function move(parent, node, delta) {
@@ -2820,11 +3001,11 @@
     if (payload.kind === 'node') {
       if (payload.id === targetNode.id) return;
       var dragged = findNode(payload.id);
-      if (!dragged) { setStatus('拖动的节点已不在树里'); return; }
+      if (!dragged) { setStatus(L('st.043', '拖动的节点已不在树里')); return; }
       // 不许把节点拖进自己的子树（那会把树断开/成环）
       var inside = false;
       walk(dragged, function (candidate) { if (candidate.id === targetNode.id) inside = true; });
-      if (inside) { setStatus('不能把节点拖进它自己的子树'); return; }
+      if (inside) { setStatus(L('st.003', '不能把节点拖进它自己的子树')); return; }
 
       pushHistory();
       var from = findParent(dragged.id);
@@ -2844,7 +3025,7 @@
       markDirty(true);
       renderTree();
       renderInspector();
-      setStatus('已移动节点 ' + dragged.id);
+      setStatus(I18n.format("st.c032", '已移动节点 {0}', dragged.id));
       return;
     }
 
@@ -2857,7 +3038,7 @@
 
     if (payload.kind === 'node-material') {
       var material = materialFor(payload.type);
-      if (!material) { setStatus('未知类型：' + payload.type); return; }
+      if (!material) { setStatus(I18n.format("st.c033", '未知类型：{0}', payload.type)); return; }
       if (mode === 'child') {
         addChild(targetNode, payload.type);
         return;
@@ -2872,7 +3053,7 @@
       state.selectedId = inserted.id;
       renderTree();
       renderInspector();
-      setStatus('已插入 ' + payload.type);
+      setStatus(I18n.format("st.c034", '已插入 {0}', payload.type));
       return;
     }
 
@@ -2901,7 +3082,7 @@
       markDirty(true);
       renderTree();
       renderInspector();
-      setStatus('已挂到 ' + targetNode.id + '：' + payload.type);
+      setStatus(I18n.format("st.c035", '已挂到 {0}：{1}', targetNode.id, payload.type));
     }
   }
 
@@ -2960,7 +3141,7 @@
     persistLayout();
     renderTree();
     renderInspector();
-    setStatus(had ? '已恢复自动布局（手动摆放和节点组都清掉了）' : '本来就是自动布局');
+    setStatus(had ? L('st.034', '已恢复自动布局（手动摆放和节点组都清掉了）') : L('st.t006', '本来就是自动布局'));
     return had;
   }
 
@@ -3039,8 +3220,8 @@
         showDragGhost(mouseDrag.payload, event);
       }
       setStatus(mouseDrag.payload && mouseDrag.payload.kind === 'node' && state.view === 'graph'
-        ? '拖动中：松手即摆到这里（按住 Shift 落到节点上＝挂成父子关系）'
-        : '拖动中：放到目标节点上松手（能挂子节点的挂进去，任务节点则插到它后面）');
+            ? I18n.format("st.t007", '拖动中：松手即摆到这里（按住 Shift 落到节点上＝挂成父子关系）')
+            : I18n.format("st.t008", '拖动中：放到目标节点上松手（能挂子节点的挂进去，任务节点则插到它后面）'));
     }
     if (event.preventDefault) event.preventDefault();
 
@@ -3062,9 +3243,8 @@
           if (shiftHit) highlightDropTarget(shiftHit, mouseDrag.payload);
         }
         setStatus(shiftHit
-          ? 'Shift 松手：' + mouseDrag.payload.id + ' 会挂到 ' + shiftHit + '（'
-            + dropHintFor(shiftHit, mouseDrag.payload) + '）'
-          : 'Shift：落到某个节点上就改父子关系（松开 Shift 则是自由摆放）');
+            ? I18n.format("st.t009", 'Shift 松手：{0} 会挂到 {1}（{2}）', mouseDrag.payload.id, shiftHit, dropHintFor(shiftHit, mouseDrag.payload))
+            : I18n.format("st.t010", 'Shift：落到某个节点上就改父子关系（松开 Shift 则是自由摆放）'));
       } else {
         if (mouseDrag.mode === 'reparent') mouseDrag.mode = null;
         freeMoveNodes(event);
@@ -3086,12 +3266,11 @@
       if (hit) {
         highlightNewDropZone(false);
         highlightDropTarget(hit, mouseDrag.payload);
-        setStatus('拖动中：松手后落到 ' + hit + '（' + dropHintFor(hit, mouseDrag.payload) + '）');
+        setStatus(I18n.format("st.c036", '拖动中：松手后落到 {0}（{1}）', hit, dropHintFor(hit, mouseDrag.payload)));
       } else if (state.view === 'graph' && isMaterialPayload(mouseDrag.payload)) {
         // 空白画布也是合法落点：松手就在这里新建（见 dropMaterialOnCanvas）
         highlightNewDropZone(true);
-        setStatus('拖动中：松手就在画布这里新建 ' + (mouseDrag.payload.type || '节点')
-          + '（挂到当前选中的节点下）');
+        setStatus(I18n.format("st.c037", '拖动中：松手就在画布这里新建 {0}（挂到当前选中的节点下）', (mouseDrag.payload.type || L('ui.149', '节点'))));
       } else {
         highlightNewDropZone(false);
       }
@@ -3115,7 +3294,7 @@
     mouseDrag = null;
     clearDropHighlight();
     markDragging(drag.source, false);
-    setStatus('已取消拖动');
+    setStatus(L('st.028', '已取消拖动'));
     return true;
   }
 
@@ -3129,9 +3308,9 @@
 
   function payloadLabel(payload) {
     if (!payload) return '?';
-    if (payload.kind === 'node') return payload.id || '节点';
-    if (payload.kind === 'action') return payload.file || '动作包';
-    return payload.type || payload.kind || '节点';
+    if (payload.kind === 'node') return payload.id || L('ui.149', '节点');
+    if (payload.kind === 'action') return payload.file || L('ui.150', '动作包');
+    return payload.type || payload.kind || L('ui.149', '节点');
   }
 
   function showDragGhost(payload, event) {
@@ -3167,9 +3346,9 @@
     var node = findNode(nodeId);
     var material = node ? materialFor(node.type) : null;
     if (payload && payload.kind !== 'node') {
-      return material && material.allowsChildren ? '作为它的子节点' : '插到它后面';
+      return material && material.allowsChildren ? L('ui.151', '作为它的子节点') : L('ui.152', '插到它后面');
     }
-    return material && material.allowsChildren ? '挂进去当子节点' : '插到它后面当兄弟';
+    return material && material.allowsChildren ? L('ui.153', '挂进去当子节点') : L('ui.154', '插到它后面当兄弟');
   }
 
   function handleMouseDragEnd(event) {
@@ -3199,12 +3378,11 @@
           persistLayout();
           return true;
         }
-        setStatus('Shift 拖动没落到别的节点上 —— 位置也没改');
+        setStatus(L('st.001', 'Shift 拖动没落到别的节点上 —— 位置也没改'));
         return true;
       }
       persistLayout();
-      setStatus('已摆放 ' + (moved.length > 1 ? moved.length + ' 个节点' : moved[0])
-        + '（位置存在这个浏览器里；点「自动布局」可复位）');
+      setStatus(I18n.format("st.c038", '已摆放 {0}（位置存在这个浏览器里；点「自动布局」可复位）', (moved.length > 1 ? moved.length + L('ui.280', ' 个节点') : moved[0])));
       return true;
     }
 
@@ -3218,7 +3396,7 @@
       return true;
     }
 
-    if (!target) { setStatus('拖动取消：没放到任何节点上'); return true; }
+    if (!target) { setStatus(L('st.042', '拖动取消：没放到任何节点上')); return true; }
 
     var material = materialFor(target.type);
     applyDrop(target, material && material.allowsChildren ? 'child' : 'sibling', drag.payload);
@@ -3237,7 +3415,7 @@
    * 并把它的位置钉在鼠标松开的那一点上。
    */
   function dropMaterialOnCanvas(payload, event) {
-    if (!state.tree) { setStatus('先打开一个包'); return false; }
+    if (!state.tree) { setStatus(L('st.008', '先打开一个包')); return false; }
     if (payload.kind !== 'node-material') {
       // 装饰器/服务：没有"游离"可言，挂到当前选中的节点上
       var host = state.selectedId ? findNode(state.selectedId) : state.tree;
@@ -3264,8 +3442,7 @@
     persistLayout();
     renderTree();
     renderInspector();
-    setStatus('已在画布上新建**游离节点** ' + node.id + '（还没接进行为树：拖到别的节点上或用引脚连线才挂上；'
-      + '保存时不会写进包）');
+    setStatus(I18n.format("st.c039", '已在画布上新建**游离节点** {0}（还没接进行为树：拖到别的节点上或用引脚连线才挂上；保存时不会写进包）', node.id));
     return true;
   }
 
@@ -3359,7 +3536,7 @@
     var hit = nodesInMarquee(drag.box, geometry);
     if (!hit.length) {
       if (!drag.additive) { state.selection = []; renderTree(); renderInspector(); }
-      setStatus('框选里没有节点（' + Math.round(drag.box.w) + '×' + Math.round(drag.box.h) + '）');
+      setStatus(I18n.format("st.c040", '框选里没有节点（{0}×{1}）', Math.round(drag.box.w), Math.round(drag.box.h)));
       return true;
     }
     var next = drag.additive ? state.selection.slice() : [];
@@ -3369,7 +3546,7 @@
     state.anchorId = hit[0];
     renderTree();
     renderInspector();
-    setStatus('框选了 ' + hit.length + ' 个节点：' + hit.join('、'));
+    setStatus(I18n.format("st.c041", '框选了 {0} 个节点：{1}', hit.length, hit.join(L('ui.253', '、'))));
     return true;
   }
 
@@ -3412,10 +3589,15 @@
   function ensureMinimap() {
     var pane = document.getElementById('canvas');
     if (!pane || !document.createElementNS) return null;
-    if (minimapElement && minimapElement.parentNode === pane) return minimapElement;
+    if (minimapElement && minimapElement.parentNode === pane) {
+      // 每次进节点图都顺手把提示文案按当前语言刷新一遍：
+      // 这个 title 只在**创建时**写过一次，语言切换时没人重画它（用户实测残留中文）。
+      minimapElement.title = L("ui.070", '小地图：点/拖这里可以跳到图上任意位置（缩到看不清时尤其有用）');
+      return minimapElement;
+    }
     var element = document.createElement('div');
     element.id = 'minimap';
-    element.title = '小地图：点/拖这里可以跳到图上任意位置（缩到看不清时尤其有用）';
+    element.title = L("ui.070", '小地图：点/拖这里可以跳到图上任意位置（缩到看不清时尤其有用）');
     element.addEventListener('mousedown', function (event) {
       if (event.stopPropagation) event.stopPropagation();
       if (event.preventDefault) event.preventDefault();
@@ -3556,10 +3738,12 @@
     }
     var button = document.getElementById('btnTheme');
     if (button) {
-      button.textContent = state.theme === 'light' ? '主题：浅色' : '主题：深色';
+      button.textContent = state.theme === 'light'
+              ? L("ui.028", '主题：浅色')
+              : L("ui.029", '主题：深色');
       button.title = state.theme === 'light'
-        ? '当前是浅色模式，点一下切回深色（记在这个浏览器里）'
-        : '当前是深色模式，点一下切到浅色（记在这个浏览器里）';
+              ? L("ui.071", '当前是浅色模式，点一下切回深色（记在这个浏览器里）')
+              : L("ui.072", '当前是深色模式，点一下切到浅色（记在这个浏览器里）');
     }
     return state.theme;
   }
@@ -3578,7 +3762,9 @@
   function toggleTheme() {
     applyTheme(state.theme === 'light' ? 'dark' : 'light');
     persistTheme();
-    setStatus(state.theme === 'light' ? '已切到浅色模式' : '已切到深色模式');
+    setStatus(state.theme === 'light'
+            ? I18n.format("st.t011", '已切到浅色模式')
+            : I18n.format("st.t012", '已切到深色模式'));
     return state.theme;
   }
 
@@ -3638,19 +3824,35 @@
     };
   }
 
+  /**
+   * 组的显示名：用户改过名就用名字，没改过就按**当前语言**现算「注释 N」。
+   *
+   * 为什么要现算：默认名以前在建组时就算好并**存进 localStorage**，
+   * 于是中文下建的组切到英文之后，组头上一直挂着中文（整页扫描实测抓到的就是它）。
+   */
+  function groupTitle(group) {
+    if (!group) return '';
+    if (group.title) return group.title;
+    var index = state.groups.indexOf(group);
+    return L('ui.155', '注释 ') + (index >= 0 ? index + 1 : 1);
+  }
+
   /** 用当前选中（或指定的）节点建一个组。 */
   function createGroupFromSelection(memberIds, title) {
-    if (!state.tree) { setStatus('先打开一个包'); return null; }
+    if (!state.tree) { setStatus(L('st.008', '先打开一个包')); return null; }
     var ids = (memberIds || state.selection || []).slice();
     if (!ids.length && state.selectedId) ids = [state.selectedId];
     ids = ids.filter(function (id) { return !!findNode(id); });
-    if (!ids.length) { setStatus('先选中节点（空白处拖框选，或 Shift 点选），再建组'); return null; }
+    if (!ids.length) { setStatus(L('st.015', '先选中节点（空白处拖框选，或 Shift 点选），再建组')); return null; }
     var geometry = graphGeometry(layoutTree(state.tree), 1, state.nodePos);
     var rect = groupRectFor(ids, geometry);
-    if (!rect) { setStatus('这些节点算不出范围，建组失败'); return null; }
+    if (!rect) { setStatus(L('st.076', '这些节点算不出范围，建组失败')); return null; }
     var group = {
       id: nextGroupId(),
-      title: title || ('注释 ' + (state.groups.length + 1)),
+      // 不给默认标题：默认名按当前语言**现算**（`groupTitle`），否则中文下建好、
+      // 切到英文之后组头上会一直挂着「注释 1」—— 而且这个默认名会被存进 localStorage，
+      // 存下来之后就再也翻不过去了。用户自己改过名才写进 title。
+      title: title || null,
       color: GROUP_COLORS[state.groups.length % GROUP_COLORS.length],
       x: rect.x, y: rect.y, w: rect.w, h: rect.h,
       members: ids
@@ -3660,8 +3862,7 @@
     persistLayout();
     renderTree();
     renderInspector();
-    setStatus('已建组「' + group.title + '」包住 ' + ids.length + ' 个节点'
-      + '（拖组头整体移动、双击标题改名、Delete 解散）');
+    setStatus(I18n.format("st.c042", '已建组「{0}」包住 {1} 个节点（拖组头整体移动、双击标题改名、Delete 解散）', groupTitle(group), ids.length));
     return group;
   }
 
@@ -3670,7 +3871,7 @@
     if (!group) return false;
     var geometry = graphGeometry(layoutTree(state.tree), 1, state.nodePos);
     var rect = groupRectFor(groupMembers(group), geometry);
-    if (!rect) { setStatus('组里没有节点了，可以直接解散'); return false; }
+    if (!rect) { setStatus(L('st.067', '组里没有节点了，可以直接解散')); return false; }
     group.x = rect.x;
     group.y = rect.y;
     group.w = rect.w;
@@ -3678,19 +3879,19 @@
     persistLayout();
     renderTree();
     renderInspector();
-    setStatus('已把「' + group.title + '」的框贴回组内节点');
+    setStatus(I18n.format("st.c043", '已把「{0}」的框贴回组内节点', groupTitle(group)));
     return true;
   }
 
   function renameGroup(group, title) {
     if (!group) return false;
     var name = String(title === undefined || title === null ? '' : title).trim();
-    if (!name) { setStatus('组名不能是空的'); return false; }
+    if (!name) { setStatus(L('st.066', '组名不能是空的')); return false; }
     group.title = name;
     persistLayout();
     renderTree();
     renderInspector();
-    setStatus('组名改成「' + name + '」');
+    setStatus(I18n.format("st.c044", '组名改成「{0}」', name));
     return true;
   }
 
@@ -3729,7 +3930,7 @@
     persistLayout();
     renderTree();
     renderInspector();
-    setStatus('已解散「' + group.title + '」（里面的节点保持原位，只是不再成组）');
+    setStatus(I18n.format("st.c045", '已解散「{0}」（里面的节点保持原位，只是不再成组）', groupTitle(group)));
     return true;
   }
 
@@ -3737,8 +3938,7 @@
     state.selectedGroupId = group ? group.id : null;
     if (group) {
       state.selectedWire = null;
-      setStatus('已选中注释框「' + group.title + '」：' + groupMembers(group).length
-        + ' 个节点（拖组头移动、双击标题改名、Delete 解散）');
+      setStatus(I18n.format("st.c046", '已选中注释框「{0}」：{1} 个节点（拖组头移动、双击标题改名、Delete 解散）', groupTitle(group), groupMembers(group).length));
       markGroupSelection();
       renderInspector();
       return true;
@@ -3830,8 +4030,8 @@
     if (drag.moved) {
       persistLayout();
       setStatus(drag.mode === 'resize'
-        ? '注释框已调整大小'
-        : '已整体移动「' + drag.group.title + '」（' + groupMembers(drag.group).length + ' 个节点）');
+            ? I18n.format("st.t013", '注释框已调整大小')
+            : I18n.format("st.t014", '已整体移动「{0}」（{1} 个节点）', groupTitle(drag.group), groupMembers(drag.group).length));
     }
     return true;
   }
@@ -3839,7 +4039,7 @@
   function cancelGroupDrag() {
     if (!groupDrag) return false;
     groupDrag = null;
-    setStatus('已取消组的拖动');
+    setStatus(L('st.031', '已取消组的拖动'));
     return true;
   }
 
@@ -3865,29 +4065,29 @@
    */
   function connectBlocker(parentId, childId, tree) {
     var root = tree || state.tree;
-    if (!root) return '还没有打开任何包';
-    if (!parentId || !childId) return '连线的两端都没认出来';
-    if (parentId === childId) return '不能连到自己';
-    if (childId === root.id) return '根节点不能当别人的子节点';
+    if (!root) return L('ui.156', '还没有打开任何包');
+    if (!parentId || !childId) return L('ui.157', '连线的两端都没认出来');
+    if (parentId === childId) return L('ui.158', '不能连到自己');
+    if (childId === root.id) return L('ui.159', '根节点不能当别人的子节点');
     var parent = findNode(parentId);
     var child = findNode(childId);
-    if (!parent || !child) return '有一端已经不在树里了';
+    if (!parent || !child) return L('ui.160', '有一端已经不在树里了');
     var material = materialFor(parent.type);
     if (!material || !material.allowsChildren)
-      return '「' + parent.type + '」是任务节点，挂不下子节点（先包一层 Sequence）';
+      return L('ui.161', '「') + parent.type + L('ui.162', '」是任务节点，挂不下子节点（先包一层 Sequence）');
     // 我是不是它的祖先？（把它挂到自己后代下面会成环，游戏会拒绝加载）
     var inside = false;
     walk(child, function (candidate) { if (candidate.id === parentId) inside = true; });
-    if (inside) return '不能把它挂到它自己的后代下面（会成环）';
+    if (inside) return L('ui.163', '不能把它挂到它自己的后代下面（会成环）');
     var currentParent = findParent(childId);
-    if (currentParent && currentParent.id === parentId) return '它已经是你的子节点了';
+    if (currentParent && currentParent.id === parentId) return L('ui.164', '它已经是你的子节点了');
     return null;
   }
 
   /** 真正接线（父 ← 子）：从原父节点摘下来，追加到新父节点末尾，一步撤销。 */
   function connectNodes(parentId, childId) {
     var reason = connectBlocker(parentId, childId, state.tree);
-    if (reason) { setStatus('接不上：' + reason); return false; }
+    if (reason) { setStatus(I18n.format("st.c047", '接不上：{0}', reason)); return false; }
     var parent = findNode(parentId);
     var child = findNode(childId);
     pushHistory();
@@ -3903,8 +4103,8 @@
     parent.children = parent.children || [];
     parent.children.push(child);
     state.selectedWire = null;
-    afterNodeMove(child, '已连接：' + childId + ' → ' + parentId + ' 的第 '
-      + parent.children.length + ' 个子节点');
+    afterNodeMove(child, I18n.format("ui.t05", '已连接：{0} → {1} 的第 {2} 个子节点',
+      childId, parentId, parent.children.length));
     return true;
   }
 
@@ -3912,8 +4112,7 @@
   function selectWire(wire) {
     if (!wire) return false;
     state.selectedWire = { from: wire.from, to: wire.to };
-    setStatus('已选中连线 ' + wire.from + ' → ' + wire.to
-      + '（Delete 断开连线：子节点提升为父节点的兄弟；Esc 取消选中）');
+    setStatus(I18n.format("st.c048", '已选中连线 {0} → {1}（Delete 断开连线：子节点提升为父节点的兄弟；Esc 取消选中）', wire.from, wire.to));
     renderTree();
     return true;
   }
@@ -3925,9 +4124,9 @@
   function disconnectWire(fromId, toId) {
     var parent = findNode(fromId);
     var child = findNode(toId);
-    if (!parent || !child) { setStatus('这条连线已经不在树里了'); return false; }
+    if (!parent || !child) { setStatus(L('st.078', '这条连线已经不在树里了')); return false; }
     if (parent === state.tree) {
-      setStatus('「' + fromId + '」是根节点，断线后子节点无处可去；要删节点请选中它按 Delete');
+      setStatus(I18n.format("st.c049", '「{0}」是根节点，断线后子节点无处可去；要删节点请选中它按 Delete', fromId));
       return false;
     }
     var grand = findParent(parent.id);
@@ -3936,7 +4135,7 @@
     parent.children = parent.children.filter(function (item) { return item !== child; });
     list.splice(list.indexOf(parent) + 1, 0, child);
     state.selectedWire = null;
-    afterNodeMove(child, '已断开连线：' + toId + ' 提升为 ' + parent.id + ' 的兄弟');
+    afterNodeMove(child, I18n.format("ui.t06", '已断开连线：{0} 提升为 {1} 的兄弟', toId, parent.id));
     return true;
   }
 
@@ -3963,8 +4162,8 @@
       startY: event && event.clientY !== undefined ? event.clientY : 0
     };
     setStatus(role === 'out'
-      ? '拉线中：松手落在哪个节点上，它就成为「' + box.id + '」的子节点'
-      : '拉线中：松手落在哪个节点上，「' + box.id + '」就挂到它下面');
+            ? I18n.format("st.t015", '拉线中：松手落在哪个节点上，它就成为「{0}」的子节点', box.id)
+            : I18n.format("st.t016", '拉线中：松手落在哪个节点上，「{0}」就挂到它下面', box.id));
   }
 
   /** 拉线过程中的实时反馈：临时线跟着鼠标走，目标节点标成"可接/不可接"。 */
@@ -4011,8 +4210,8 @@
     for (var i = 0; i < elements.length; i++) {
       elements[i].classList.add(reason ? 'wire-invalid' : 'wire-target');
     }
-    if (reason) setStatus('落在「' + nodeId + '」上接不了：' + reason);
-    else setStatus('松手即可连接：' + parentId + ' → ' + childId);
+    if (reason) setStatus(I18n.format("st.c050", '落在「{0}」上接不了：{1}', nodeId, reason));
+    else setStatus(I18n.format("st.c051", '松手即可连接：{0} → {1}', parentId, childId));
   }
 
   function clearWireTargetHighlight() {
@@ -4033,7 +4232,7 @@
       drag.path.parentNode.removeChild(drag.path);
     }
     var hitId = nodeIdFromPoint(event.clientX, event.clientY) || drag.targetId;
-    if (!hitId) { setStatus('拉线取消：没落到任何节点上'); renderTree(); return true; }
+    if (!hitId) { setStatus(L('st.039', '拉线取消：没落到任何节点上')); renderTree(); return true; }
     var parentId = drag.role === 'out' ? drag.anchorId : hitId;
     var childId = drag.role === 'out' ? hitId : drag.anchorId;
     connectNodes(parentId, childId);
@@ -4049,7 +4248,7 @@
     if (drag.path && drag.path.parentNode && drag.path.parentNode.removeChild) {
       drag.path.parentNode.removeChild(drag.path);
     }
-    setStatus('已取消拉线');
+    setStatus(L('st.027', '已取消拉线'));
     return true;
   }
 
@@ -4068,7 +4267,7 @@
     var text = document.createElement('label');
     text.textContent = label;
     row.appendChild(text);
-    row.appendChild(button('移除', onRemove));
+    row.appendChild(button(L('ui.165', '移除'), onRemove));
     return row;
   }
 
@@ -4164,7 +4363,7 @@
       if (spec.name === 'packages' && state.actions.length) {
         return packagesField(owner, container, spec, current, commit);
       }
-      row = textField(label + '（逗号分隔）', (current || []).join(','), function (value) {
+      row = textField(label + L('ui.166', '（逗号分隔）'), (current || []).join(','), function (value) {
         commit(value);
       });
       if (spec.description) row.title = spec.description;
@@ -4208,7 +4407,7 @@
     if (declared.length === 0 && !selected) {
       var none = document.createElement('option');
       none.value = '';
-      none.textContent = '(本包没声明任何引用)';
+      none.textContent = L("ui.030", '(本包没声明任何引用)');
       select.appendChild(none);
     }
     declared.forEach(function (id) {
@@ -4221,7 +4420,7 @@
     if (selected && declared.indexOf(selected.package) < 0) {
       var undeclared = document.createElement('option');
       undeclared.value = selected.package;
-      undeclared.textContent = selected.package + '（未声明！游戏解析不到）';
+      undeclared.textContent = I18n.format("ui.031", '{0}（未声明！游戏解析不到）', selected.package);
       undeclared.selected = true;
       select.appendChild(undeclared);
     }
@@ -4239,13 +4438,13 @@
       var freeOption = document.createElement('option');
       freeOption.value = '';
       freeOption.textContent = entries && entries.length
-        ? '（入口：' + (entries.entry || '?') + '）'
-        : (entries === undefined ? '（正在读入口…）' : '（读不到入口，可手填 #节点id）');
+        ? L('ui.167', '（入口：') + (entries.entry || '?') + L('ui.168', '）')
+        : (entries === undefined ? L('ui.169', '（正在读入口…）') : L('ui.170', '（读不到入口，可手填 #节点id）'));
       entrySelect.appendChild(freeOption);
       (entries && entries.list ? entries.list : []).forEach(function (item) {
         var option = document.createElement('option');
         option.value = item.id;
-        option.textContent = item.id + '（' + item.type + '）';
+        option.textContent = item.id + L('ui.171', '（') + item.type + L('ui.168', '）');
         if (selected.node === item.id) option.selected = true;
         entrySelect.appendChild(option);
       });
@@ -4261,8 +4460,8 @@
     var hint = document.createElement('span');
     hint.className = 'hint';
     hint.textContent = declared.length
-      ? ('本包引用：' + declared.join('、') + '（要加引用得改 manifest.references）')
-      : '本包没声明任何引用 —— 在 manifest.references 里加一条，游戏才解析得到';
+              ? I18n.format("ui.033", '本包引用：{0}（要加引用得改 manifest.references）', declared.join(L('ui.253', '、')))
+              : L("ui.034", '本包没声明任何引用 —— 在 manifest.references 里加一条，游戏才解析得到');
     box.appendChild(hint);
 
     wrap.appendChild(box);
@@ -4277,7 +4476,7 @@
     var wrap = document.createElement('div');
     wrap.className = 'prop-row packages';
     var text = document.createElement('label');
-    text.textContent = spec.name + (spec.required ? ' *' : '') + '（可多选）';
+    text.textContent = I18n.format("ui.035", '{0}{1}（可多选）', spec.name, (spec.required ? ' *' : ''));
     if (spec.description) wrap.title = spec.description;
 
     var box = document.createElement('div');
@@ -4300,8 +4499,8 @@
       item.appendChild(input);
       var span = document.createElement('span');
       span.textContent = action.file + (action.replayable
-        ? '（' + (action.duration || 0) + 's/' + (action.frames || 0) + '帧）'
-        : '（仅结构：不能回放）');
+        ? L('ui.171', '（') + (action.duration || 0) + 's/' + (action.frames || 0) + L('ui.172', '帧）')
+        : L('ui.173', '（仅结构：不能回放）'));
       item.appendChild(span);
       box.appendChild(item);
     });
@@ -4311,9 +4510,9 @@
       var item = document.createElement('label');
       item.className = 'package-item manual';
       var span = document.createElement('span');
-      span.textContent = name + '（不在动作包目录里）';
+      span.textContent = I18n.format("ui.036", '{0}（不在动作包目录里）', name);
       item.appendChild(span);
-      item.appendChild(button('移除', function () {
+      item.appendChild(button(L('ui.165', '移除'), function () {
         var at = selected.indexOf(name);
         if (at >= 0) selected.splice(at, 1);
         commit(selected.slice());
@@ -4367,17 +4566,15 @@
       var wrap = document.createElement('div');
       wrap.className = 'palette-group';
       var title = document.createElement('h3');
-      title.textContent = group.label + '（' + items.length + '）';
+      title.textContent = paletteGroupLabel(group) + L('ui.171', '（') + items.length + L('ui.168', '）');
       wrap.appendChild(title);
 
       items.forEach(function (item) {
-        var element = button(item.kind === 'action'
-          ? actionPaletteLabel(item)
-          : item.type, function () {
+        var element = paletteMaterialButton(item, function () {
           if (item.kind === 'action') { useAction(item); return; }
           var selected = state.selectedId ? findNode(state.selectedId) : null;
           if (item.kind === 'decorator') {
-            if (!selected) { setStatus('先选中一个节点，再挂装饰器'); return; }
+            if (!selected) { setStatus(L('st.014', '先选中一个节点，再挂装饰器')); return; }
             pushHistory();
             selected.decorators = selected.decorators || [];
             selected.decorators.push({ id: nextId('d'), type: item.type, properties: {} });
@@ -4387,7 +4584,7 @@
             return;
           }
           if (item.kind === 'service') {
-            if (!selected) { setStatus('先选中一个节点，再挂服务'); return; }
+            if (!selected) { setStatus(L('st.013', '先选中一个节点，再挂服务')); return; }
             pushHistory();
             selected.services = selected.services || [];
             selected.services.push({ id: nextId('svc'), type: item.type, interval: 0.25, properties: {} });
@@ -4396,25 +4593,44 @@
             renderInspector();
             return;
           }
-          if (!state.tree) { setStatus('先打开一个包'); return; }
+          if (item.kind === 'ui-target') {
+            pickUiTargetIntoTree();
+            return;
+          }
+          if (!state.tree) { setStatus(L('st.008', '先打开一个包')); return; }
           var target = selected;
           if (!target) target = state.tree;
           var material = materialFor(target.type);
           if (!material || !material.allowsChildren) {
-            setStatus('「' + target.type + '」不能有子节点；先选一个组合节点');
+            setStatus(I18n.format("st.c052", '「{0}」不能有子节点；先选一个组合节点', target.type));
             return;
           }
           addChild(target, item.type);
         });
         element.className = 'palette-item' + (item.kind === 'action' ? ' action'
-          : (item.kind === 'node' ? '' : ' helper'));
-        element.title = (item.kind === 'action'
-          ? ('动作包：' + item.file + (item.replayable ? '' : '（仅结构，不能回放）'))
-          : (item.kind + '：' + item.type)) + '　—— 也可以直接拖到画布上';
+          : (item.kind === 'node' ? '' : ' helper'))
+          + (item.kind === 'ui-target' ? ' ui-target' : '');
+        // 显示名是翻译、会随语言变；**原始类型**单独放在 data-type 上：
+        // 自检与脚本按它取物料，就不会被翻译/语言切换影响。
+        if (item.type) element.setAttribute('data-type', item.type);
+        element.setAttribute('data-kind', item.kind);
+        if (item.file) element.setAttribute('data-file', item.file);
+        element.title = item.kind === 'action'
+          ? (L('ui.174', '动作包：') + item.file + (item.replayable ? '' : L('ui.175', '（仅结构，不能回放）'))
+            + '\n' + L('palette.clickAction', '右键：编辑 / 删除 / 重命名'))
+          : (item.kind === 'ui-target'
+            ? L('palette.uiPick.title', '从游戏里现取一个界面目标')
+            : (item.type + L('ui.171', '（') + nodeLabel(item.type) + L('ui.168', '）') + L('ui.176', '　—— 也可以直接拖到画布上')));
         // 物料也能拖：拖到哪个节点就用哪个节点（比"先选中再点"少一次点击）
         makeDraggable(element, item.kind === 'action'
           ? { kind: 'action', file: item.file }
-          : { kind: item.kind === 'node' ? 'node-material' : item.kind, type: item.type });
+          : { kind: item.kind === 'node' || item.kind === 'ui-target' ? 'node-material' : item.kind,
+              type: item.type });
+        if (item.kind === 'action' && item.file) {
+          element.addEventListener('contextmenu', function (event) {
+            showActionMenu(event, item.file);
+          });
+        }
         wrap.appendChild(element);
       });
       box.appendChild(wrap);
@@ -4422,7 +4638,7 @@
   }
 
   function actionPaletteLabel(item) {
-    return item.file + (item.replayable ? '' : '  ⚠不可回放');
+    return item.file + (item.replayable ? '' : L('ui.177', '  ⚠不可回放'));
   }
 
   /**
@@ -4432,8 +4648,8 @@
    *   · 什么都没给 → 挂到根节点下。
    */
   function useAction(item, dropTarget) {
-    if (!state.tree) { setStatus('先打开一个包'); return; }
-    if (!item) { setStatus('这个动作包已经不在目录里了'); return; }
+    if (!state.tree) { setStatus(L('st.008', '先打开一个包')); return; }
+    if (!item) { setStatus(L('st.075', '这个动作包已经不在目录里了')); return; }
     var selected = dropTarget || (state.selectedId ? findNode(state.selectedId) : null);
 
     if (selected && selected.type === 'Task.PlayActionPackage') {
@@ -4448,14 +4664,16 @@
       markDirty(true);
       renderTree();
       renderInspector();
-      setStatus((at >= 0 ? '从播放列表移除 ' : '加入播放列表 ') + item.file);
+      setStatus(at >= 0
+            ? I18n.format("st.t030", '从播放列表移除 {0}', item.file)
+            : I18n.format("st.t031", '加入播放列表 {0}', item.file));
       return;
     }
 
     var target = selected || state.tree;
     var material = materialFor(target.type);
     if (!material || !material.allowsChildren) {
-      setStatus('「' + target.type + '」不能有子节点；先选一个组合节点，或选中一个 Task.PlayActionPackage');
+      setStatus(I18n.format("st.c053", '「{0}」不能有子节点；先选一个组合节点，或选中一个 Task.PlayActionPackage', target.type));
       return;
     }
     var created = addChild(target, 'Task.PlayActionPackage');
@@ -4465,23 +4683,45 @@
       markDirty(true);
       renderInspector();
     }
-    setStatus('已挂上播放节点：' + item.file);
+    setStatus(I18n.format("st.c054", '已挂上播放节点：{0}', item.file));
   }
 
   // ---------------------------------------------------------------- 动作
 
   function loadMeta() {
     return api('/api/meta').then(function (meta) {
+      state.meta = meta;                    // 缓存：语言切换时要照着重画下面两处文字
       state.gameRunning = !!meta.gameRunning;
       state.instanceRoot = meta.writableFolder || meta.instanceRoot || null;
       state.format = meta.format || {};
-      var badge = $('gameBadge');
-      badge.textContent = state.gameRunning
-        ? '游戏：在线' + (meta.gameInfo && meta.gameInfo.instanceId ? '（' + meta.gameInfo.instanceId + '）' : '')
-        : '游戏：未运行';
-      badge.className = 'badge' + (state.gameRunning ? ' live' : '');
-      $('rootInfo').textContent = '实例根：' + meta.instanceRoot + '　包目录：' + meta.folders;
+      renderMeta();
     });
+  }
+
+  /**
+   * 画"游戏徽标 + 实例根/包目录"这两处（纯渲染，不发请求）。
+   *
+   * 为什么要拆出来：它们原先只在 `loadMeta()` 里写一次，而 `loadMeta()` 只在启动时跑 ——
+   * 用户在界面里切到英文之后，底部那行仍然是「实例根：…　包目录：…」（实测反馈）。
+   * 现在 `applyLanguage()` 会调它一次，用缓存的 meta 重画。
+   */
+  function renderMeta() {
+    var meta = state.meta;
+    if (!meta) return;
+    var badge = $('gameBadge');
+    if (badge) {
+      badge.textContent = state.gameRunning
+        ? I18n.format("ui.037", '游戏：在线{0}', (meta.gameInfo && meta.gameInfo.instanceId ? L('ui.171', '（') + meta.gameInfo.instanceId + L('ui.168', '）') : ''))
+        : L("ui.038", '游戏：未运行');
+      badge.className = 'badge' + (state.gameRunning ? ' live' : '');
+    }
+    var info = $('rootInfo');
+    if (info) {
+      info.textContent = I18n.format("ui.039", '实例根：{0}　包目录：{1}', meta.instanceRoot, meta.folders);
+      // 机器可读的实例根单独放 data-* 上：saveAs 以前是对着上面这行**界面文字**
+      // 正则抠 `实例根：`，切到英文就抠不到了（会存到相对目录里去）。
+      info.setAttribute('data-instance-root', meta.instanceRoot || '');
+    }
   }
 
   /**
@@ -4493,8 +4733,8 @@
    * 开箱即合法，用户在上面直接加东西就行。
    */
   function newTree() {
-    if (!state.instanceRoot) { setStatus('还不知道包目录，稍后再试'); return; }
-    var name = prompt('新行为树的名字（字母/数字/中文都可以，会写进包目录）', 'my_tree');
+    if (!state.instanceRoot) { setStatus(L('st.070', '还不知道包目录，稍后再试')); return; }
+    var name = prompt(L('ui.178', '新行为树的名字（字母/数字/中文都可以，会写进包目录）'), 'my_tree');
     if (!name) return;
 
     var id = String(name).replace(/[^A-Za-z0-9._-]/g, '_').replace(/^[._]+|[._]+$/g, '');
@@ -4521,7 +4761,7 @@
     var target = state.instanceRoot + '/PlayerAi/BehaviorTrees/' + name.replace(/[\\/:*?"<>|]/g, '_')
       + '.scbtpak';
 
-    setStatus('新建中…');
+    setStatus(L('st.045', '新建中…'));
     fetch('/api/package?path=' + encodeURIComponent(target), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -4529,10 +4769,10 @@
     }).then(function (r) { return r.json(); }).then(function (data) {
       if (!data.ok) {
         setIssues((data.issues || []).concat(data.reason ? ['ERROR ' + data.reason] : []));
-        setStatus('新建失败：' + (data.reason || '见下方问题'));
+        setStatus(I18n.format("st.c055", '新建失败：{0}', (data.reason || L('ui.279', '见下方问题'))));
         return;
       }
-      setStatus('已新建 ' + data.path + '（' + (data.nodes || 0) + ' 节点），可以直接开始编');
+      setStatus(I18n.format("st.c056", '已新建 {0}（{1} 节点），可以直接开始编', data.path, (data.nodes || 0)));
       return loadPackages().then(function () { return openPackage(data.path); });
     });
   }
@@ -4549,25 +4789,35 @@
   function loadPackages(quiet) {
     return api('/api/packages').then(function (data) {
       state.packages = data.packages || [];
-      var select = $('packageSelect');
-      select.innerHTML = '';
-      state.packages.forEach(function (item) {
-        var option = document.createElement('option');
-        option.value = item.path;
-        option.textContent = item.file + (item.id ? '  [' + item.id + ']' : '')
-          + '  ' + (item.nodes || 0) + '节点';
-        select.appendChild(option);
-      });
-      if (state.path) select.value = state.path;
-      if (!quiet) setStatus('包 ' + state.packages.length + ' 个');
+      renderPackageOptions();
+      if (!quiet) setStatus(I18n.format("st.c057", '包 {0} 个', state.packages.length));
     });
+  }
+
+  /**
+   * 画"打开包"下拉的每一行（纯渲染）。
+   *
+   * 为什么要拆出来：选项文字里带节点数（`{2}节点`），而它原先只在 `loadPackages()`
+   * 里拼一次 —— 切到英文之后那一行仍然写着「common.scbtpak [common] 5节点」（用户实测反馈）。
+   */
+  function renderPackageOptions() {
+    var select = $('packageSelect');
+    if (!select) return;
+    select.innerHTML = '';
+    (state.packages || []).forEach(function (item) {
+      var option = document.createElement('option');
+      option.value = item.path;
+      option.textContent = I18n.format("ui.040", '{0}{1}  {2}节点', item.file, (item.id ? '  [' + item.id + ']' : ''), (item.nodes || 0));
+      select.appendChild(option);
+    });
+    if (state.path) select.value = state.path;
   }
 
   function openPackage(path) {
     if (!path) return Promise.resolve();
     return api('/api/package?path=' + encodeURIComponent(path)).then(function (data) {
       if (!data || data.ok === false && !data.manifest) {
-        setIssues([data && data.reason ? 'ERROR ' + data.reason : 'ERROR 打不开']);
+        setIssues([data && data.reason ? 'ERROR ' + data.reason : L('ui.179', 'ERROR 打不开')]);
         return;
       }
       state.path = data.path;
@@ -4583,7 +4833,7 @@
       setIssues((data.issues || []).filter(function (line) { return /^ERROR|^WARN/.test(line); }));
       renderTree();
       renderInspector();
-      setStatus('已打开 ' + data.file + '（包目录：PlayerAi\\BehaviorTrees，可以直接改并保存）');
+      setStatus(I18n.format("st.c058", '已打开 {0}（包目录：PlayerAi\BehaviorTrees，可以直接改并保存）', data.file));
       $('btnSave').disabled = !data.writable;
       refreshGameStatusQuiet();   // 换了包 → "跑的是不是这棵树"要重新算
     });
@@ -4591,14 +4841,16 @@
 
   function validateNow() {
     if (!state.tree) return;
-    setStatus('校验中…');
+    setStatus(L('st.047', '校验中…'));
     fetch('/api/validate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ manifest: state.manifest, tree: state.tree })
     }).then(function (r) { return r.json(); }).then(function (data) {
       setIssues((data.issues || []).filter(function (line) { return /^ERROR|^WARN/.test(line); }));
-      setStatus(data.ok ? '校验通过' : ('校验失败：' + data.errors + ' 个错误'));
+      setStatus(data.ok
+            ? I18n.format("st.t017", '校验通过')
+            : I18n.format("st.t018", '校验失败：{0} 个错误', data.errors));
     });
   }
 
@@ -4610,7 +4862,7 @@
     if (!state.tree) return Promise.resolve(false);
     var path = forcePath || state.path;
     if (!path) { saveAs(); return Promise.resolve(false); }
-    setStatus('保存中…');
+    setStatus(L('st.004', '保存中…'));
     return fetch('/api/package?path=' + encodeURIComponent(path) + '&overwrite=true', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -4618,31 +4870,31 @@
     }).then(function (r) { return r.json(); }).then(function (data) {
       if (!data.ok) {
         setIssues((data.issues || []).concat(data.reason ? ['ERROR ' + data.reason] : []));
-        setStatus('保存失败：' + (data.reason || '见下方问题'));
+        setStatus(I18n.format("st.c059", '保存失败：{0}', (data.reason || L('ui.279', '见下方问题'))));
         return false;
       }
       markDirty(false);
       state.path = data.path;
       state.file = data.file || state.file;
-      setStatus('已保存 ' + data.path + '（' + data.bytes + ' 字节，' + (data.nodes || 0)
-        + ' 节点）');
+      setStatus(I18n.format("st.c060", '已保存 {0}（{1} 字节，{2} 节点）', data.path, data.bytes, (data.nodes || 0)));
       loadPackages(true);   // 安静刷新列表，别把上面的保存结果顶掉
       updateTreeRunUi();    // 脏标记没了 → 按钮从"推送改动"变回"暂停"
       return true;
     }).catch(function (error) {
-      setStatus('保存失败：' + error.message);
+      setStatus(I18n.format("st.c059", '保存失败：{0}', error.message));
       return false;
     });
   }
 
   function saveAs() {
     var suggestion = (state.manifest && state.manifest.id ? state.manifest.id : 'my_tree') + '_copy';
-    var name = prompt('另存为（写进包目录的新文件，不动原包）', suggestion);
+    var name = prompt(L('ui.180', '另存为（写进包目录的新文件，不动原包）'), suggestion);
     if (!name) return;
     var clean = name.replace(/[^A-Za-z0-9._-]/g, '_');
     if (!/\.scbtpak$/.test(clean)) clean += '.scbtpak';
     state.manifest.id = clean.replace(/\.scbtpak$/, '');
-    var folder = ($('rootInfo').textContent.match(/实例根：([^\s　]+)/) || [])[1];
+    var folder = $('rootInfo').getAttribute('data-instance-root')
+      || ($('rootInfo').textContent.match(/实例根：([^\s　]+)/) || [])[1];
     var target = (folder || '.') + '/PlayerAi/BehaviorTrees/' + clean;
     saveNow(target);
   }
@@ -4655,23 +4907,21 @@
   function notifyGame(path) {
     var target = path || state.path;
     if (!target) return;
-    setStatus('通知游戏热重载…');
+    setStatus(L('st.080', '通知游戏热重载…'));
     return api('/api/notify?path=' + encodeURIComponent(target), { method: 'POST' })
       .then(function (data) {
-        if (data.ok) setStatus('已通知游戏：' + JSON.stringify(data.game));
-        else setStatus('通知失败：' + (data.reason || '?'));
+        if (data.ok) setStatus(I18n.format("st.c061", '已通知游戏：{0}', JSON.stringify(data.game)));
+        else setStatus(I18n.format("st.c062", '通知失败：{0}', (data.reason || '?')));
         return data;
       });
   }
 
   function showGameStatus() {
     api('/api/game/status').then(function (data) {
-      if (!data.ok) { setStatus('游戏没在跑：' + data.reason); return; }
+      if (!data.ok) { setStatus(I18n.format("st.c063", '游戏没在跑：{0}', data.reason)); return; }
       var status = data.status || {};
       var tree = status.tree || {};
-      setStatus('游戏内：mode=' + status.mode + ' 树=' + (tree.id || '-')
-        + ' 节点=' + (tree.liveNodes || 0) + ' 脏=' + (tree.dirty ? '是' : '否')
-        + ' 活动路径=' + (tree.activePath || '-'));
+      setStatus(I18n.format("st.c064", '游戏内：mode={0} 树={1} 节点={2} 脏={3} 活动路径={4}', status.mode, (tree.id || '-'), (tree.liveNodes || 0), (tree.dirty ? L('ui.242', '是') : L('ui.243', '否')), (tree.activePath || '-')));
     });
   }
 
@@ -4692,13 +4942,15 @@
       state.gameProcess = data;
       var label;
       if (data.channelConnected) {
-        label = '游戏：已连上';
+        label = L("ui.077", '游戏：已连上');
         badge.className = 'badge live';
       } else if (data.running) {
-        label = '游戏：启动中（等控制通道）';
+        label = L("ui.078", '游戏：启动中（等控制通道）');
         badge.className = 'badge warn';
       } else {
-        label = data.exeExists ? '游戏：未启动' : '游戏：找不到 Survivalcraft.exe';
+        label = data.exeExists
+              ? L("ui.079", '游戏：未启动')
+              : L("ui.080", '游戏：找不到 Survivalcraft.exe');
         badge.className = 'badge' + (data.exeExists ? '' : ' warn');
       }
       badge.textContent = label + (data.pid ? '#' + data.pid : '');
@@ -4724,7 +4976,7 @@
       refreshGameProcess().then(function (data) {
         if (data.channelConnected) {
           stopGameWait();
-          setStatus('游戏已连上控制通道（等了 ' + waited + 's）—— 现在可以用「游戏状态 / 实时监视 / 试跑 / 推送热重载」');
+          setStatus(I18n.format("st.c065", '游戏已连上控制通道（等了 {0}s）—— 现在可以用「游戏状态 / 实时监视 / 试跑 / 推送热重载」', waited));
           loadMeta();
           // ⚠️ 必须**同时**刷新树状态：`state.gameStatus` 才是"▶ 播放"按钮和树徽标的依据，
           //    `loadMeta()` 只更新游戏徽标/实例根。少了这一句就会出现用户报的那个现象：
@@ -4735,40 +4987,40 @@
         }
         if (!data.running) {
           stopGameWait();
-          setStatus('游戏进程没了（启动失败或提前退出）；看看 ' + (data.exePath || 'Survivalcraft.exe'));
+          setStatus(I18n.format("st.c066", '游戏进程没了（启动失败或提前退出）；看看 {0}', (data.exePath || 'Survivalcraft.exe')));
           return;
         }
         if (Date.now() - gameWait.startedAt > gameWait.limitMs) {
           stopGameWait();
-          setStatus('等了 ' + waited + 's 还没连上控制通道：' + (data.channelError || '通道未就绪'));
+          setStatus(I18n.format("st.c067", '等了 {0}s 还没连上控制通道：{1}', waited, (data.channelError || L('ui.278', '通道未就绪'))));
           return;
         }
-        setStatus('游戏在启动，等控制通道…（已等 ' + waited + 's，加载世界期间通道是关着的）');
+        setStatus(I18n.format("st.c068", '游戏在启动，等控制通道…（已等 {0}s，加载世界期间通道是关着的）', waited));
       });
     }, 1000);
   }
 
   function launchGame() {
-    setStatus('正在启动游戏…');
+    setStatus(L('st.054', '正在启动游戏…'));
     api('/api/game/launch', { method: 'POST' }).then(function (data) {
       if (!data.ok) {
-        setStatus('启动失败：' + (data.reason || data.code || '?'));
+        setStatus(I18n.format("st.c069", '启动失败：{0}', (data.reason || data.code || '?')));
         refreshGameProcess();
         return;
       }
-      setStatus('游戏已启动（pid ' + (data.pid || '?') + '）：' + (data.hint || ''));
+      setStatus(I18n.format("st.c070", '游戏已启动（pid {0}）：{1}', (data.pid || '?'), (data.hint || '')));
       waitForGameChannel();
     });
   }
 
   function quitGame() {
-    if (!window.confirm('结束游戏？会先请它正常退出（释放 AI 输入、flush 日志），超时才强杀。')) return;
-    setStatus('正在结束游戏…');
+    if (!window.confirm(L('ui.181', '结束游戏？会先请它正常退出（释放 AI 输入、flush 日志），超时才强杀。'))) return;
+    setStatus(L('st.055', '正在结束游戏…'));
     stopGameWait();
     api('/api/game/quit', { method: 'POST' }).then(function (data) {
       setStatus(data.ok
-        ? ('游戏已结束（正常退出 ' + (data.closed || 0) + ' 个，强杀 ' + (data.killed || 0) + ' 个）')
-        : ('结束游戏失败：' + (data.reason || '?')));
+            ? I18n.format("st.t019", '游戏已结束（正常退出 {0} 个，强杀 {1} 个）', (data.closed || 0), (data.killed || 0))
+            : I18n.format("st.t020", '结束游戏失败：{0}', (data.reason || '?')));
       refreshGameProcess();
     });
   }
@@ -4900,7 +5152,7 @@
       state.pausedForTrial = false;
       state.trialResumeSent = false;
       if (!data.ok) return;
-      setStatus('试跑结束，已自动恢复行为树（之前是为了试跑把它暂停的）');
+      setStatus(L('st.069', '试跑结束，已自动恢复行为树（之前是为了试跑把它暂停的）'));
       refreshGameStatusQuiet();
     });
   }
@@ -4916,26 +5168,26 @@
 
     if (treeRun.busy) {
       label = '…';
-      title = '正在和游戏通信';
+      title = L('ui.182', '正在和游戏通信');
     } else if (!st.connected) {
-      label = '▶ 播放这棵树';
-      title = '缓存里游戏没在跑（点它会先重新确认一次）。真没跑就点「启动游戏」';
+      label = L("ui.081", '▶ 播放这棵树');
+      title = L('ui.183', '缓存里游戏没在跑（点它会先重新确认一次）。真没跑就点「启动游戏」');
     } else if (!st.ready) {
-      label = '▶ 播放这棵树';
-      title = '游戏在跑但还没进世界 / AI 没接管：进世界并在游戏里 ai enable 之后就能播';
+      label = L("ui.081", '▶ 播放这棵树');
+      title = L('ui.184', '游戏在跑但还没进世界 / AI 没接管：进世界并在游戏里 ai enable 之后就能播');
     } else if (st.mine && st.running && !st.paused) {
-      label = (state.dirty ? '⟳ 推送改动' : '⏸ 暂停');
+      label = (state.dirty ? L('ui.185', '⟳ 推送改动') : L('ui.186', '⏸ 暂停'));
       title = state.dirty
-        ? '把编辑器里的改动保存并热重载到游戏（不重启世界、保留运行态）'
-        : '暂停行为树（保留运行态、立刻释放 AI 注入的输入）';
+        ? L('ui.187', '把编辑器里的改动保存并热重载到游戏（不重启世界、保留运行态）')
+        : L('ui.188', '暂停行为树（保留运行态、立刻释放 AI 注入的输入）');
     } else if (st.mine && st.running && st.paused) {
-      label = '▶ 继续';
-      title = '从暂停处继续跑（不清空运行态）';
+      label = L("ui.082", '▶ 继续');
+      title = L('ui.189', '从暂停处继续跑（不清空运行态）');
     } else {
-      label = '▶ 播放这棵树';
+      label = L("ui.081", '▶ 播放这棵树');
       title = st.file
-        ? ('游戏现在跑的是 ' + st.file + '；点它切到编辑器打开的这棵树并开始跑')
-        : '让游戏切到编辑器打开的这棵树并开始跑（毫秒级切换，不重载世界）';
+        ? (L('ui.190', '游戏现在跑的是 ') + st.file + L('ui.191', '；点它切到编辑器打开的这棵树并开始跑'))
+        : L('ui.192', '让游戏切到编辑器打开的这棵树并开始跑（毫秒级切换，不重载世界）');
     }
     button.textContent = label;
     button.title = title;
@@ -4952,32 +5204,27 @@
     if (stopButton) {
       stopButton.disabled = treeRun.busy || !st.connected || !(st.running || st.paused);
       stopButton.title = st.running || st.paused
-        ? ('停止并卸下 ' + (st.file || '当前树') + '（释放输入）——之后再点播放从头开始')
-        : '现在没有正在跑的树';
+              ? I18n.format("ui.074", '停止并卸下 {0}（释放输入）——之后再点播放从头开始', (st.file || L('ui.277', '当前树')))
+              : L("ui.075", '现在没有正在跑的树');
     }
 
     var text;
     var css = 'badge';
     if (!st.connected) {
-      text = '树：游戏没在跑';
+      text = L("ui.083", '树：游戏没在跑');
     } else if (!st.ready) {
-      text = '树：未接管（进世界 + ai enable 后可播）';
+      text = L("ui.084", '树：未接管（进世界 + ai enable 后可播）');
       css += ' warn';
     } else if (st.mine && st.running) {
       // 控制器可以在主菜单跑树（「进入游戏」这种包就发生在这儿），也要能进世界接着跑 ——
       // 所以把"现在在哪一层操作"写出来，免得看到"运行中"却以为角色已经被接管了。
-      text = '树：' + (st.paused ? '已暂停' : '运行中')
-        + (st.menu ? '（控制器·主菜单）' : (st.player ? '（控制器·' + st.player + '）' : '（控制器）'))
-        + ' ' + shortFile(st.file) + '（tick ' + st.ticks + '）';
+      text = I18n.format("ui.085", '树：{0}{1} {2}（tick {3}）', (st.paused ? L('ui.276', '已暂停') : L('ui.202', '运行中')), (st.menu ? L('ui.272', '（控制器·主菜单）') : (st.player ? L('ui.271', '（控制器·') + st.player + L('ui.168', '）') : L('ui.275', '（控制器）'))), shortFile(st.file), st.ticks);
       css += st.paused ? ' warn' : ' live';
     } else if (st.running && st.file) {
-      text = '树：跑的是 ' + shortFile(st.file) + '（编辑器打开的是 '
-        + (state.file || '未打开') + '）';
+      text = I18n.format("ui.086", '树：跑的是 {0}（编辑器打开的是 {1}）', shortFile(st.file), (state.file || L('ui.274', '未打开')));
       css += ' warn';
     } else {
-      text = '树：未运行' + (st.paused ? '（AI 已暂停，播放时会自动取消）' : '')
-        + (st.menu ? '（控制器·主菜单）' : (st.player ? '（控制器·' + st.player + '）' : ''))
-        + (state.file ? '（打开的是 ' + shortFile(state.file) + '）' : '');
+      text = I18n.format("ui.087", '树：未运行{0}{1}{2}', (st.paused ? L('ui.273', '（AI 已暂停，播放时会自动取消）') : ''), (st.menu ? L('ui.272', '（控制器·主菜单）') : (st.player ? L('ui.271', '（控制器·') + st.player + L('ui.168', '）') : '')), (state.file ? L('ui.270', '（打开的是 ') + shortFile(state.file) + L('ui.168', '）') : ''));
     }
     badge.textContent = text;
     badge.className = css;
@@ -4985,11 +5232,11 @@
 
   /** 保存（脏的话）+ 让游戏切到这棵树 → 抽出来给"播放"和自检共用。 */
   function playThisTree() {
-    if (!state.path) { setStatus('先打开一个包，或「另存为」一个有名字的包再播放'); return; }
+    if (!state.path) { setStatus(L('st.009', '先打开一个包，或「另存为」一个有名字的包再播放')); return; }
     var file = state.file || state.path;
     treeRun.busy = true;
     updateTreeRunUi();
-    setStatus('让游戏切到 ' + file + ' …');
+    setStatus(I18n.format("st.c071", '让游戏切到 {0} …', file));
 
     var save = state.dirty ? saveNow(null) : Promise.resolve(true);
     save.then(function (saved) {
@@ -5004,13 +5251,13 @@
       if (!data) return;
       treeRun.busy = false;
       if (!data.ok) {
-        setStatus((data.code === 'game_not_ready' ? '还不能播放：' : '播放失败：')
-          + (data.reason || '?'));
+        setStatus(data.code === 'game_not_ready'
+            ? I18n.format("st.t032", '还不能播放：{0}', (data.reason || '?'))
+            : I18n.format("st.t033", '播放失败：{0}', (data.reason || '?')));
         refreshGameStatusQuiet();
         return;
       }
-      setStatus('游戏开始跑这棵树：' + data.file + '（切换 ' + (data.switchMs || 0) + 'ms，'
-        + (data.nodes || 0) + ' 节点' + (data.recompiled ? '，重新编译过' : '，用的常驻副本') + '）');
+      setStatus(I18n.format("st.c072", '游戏开始跑这棵树：{0}（切换 {1}ms，{2} 节点{3}）', data.file, (data.switchMs || 0), (data.nodes || 0), (data.recompiled ? L('ui.269', '，重新编译过') : L('ui.268', '，用的常驻副本'))));
       // 暂停是**全局**的（帧首先看它）：留着它，树装进去了也不会被 tick。
       // 用户实测踩过这个坑（播放→暂停→停止→再播放，界面还写着"已暂停"），所以"播放"
       // 的语义就是"让它跑起来" —— 发现暂停就顺手取消，并把这件事说出来。
@@ -5019,8 +5266,8 @@
         if (!st.paused) return;
         api('/api/game/resume', { method: 'POST' }).then(function (done) {
           setStatus(done.ok
-            ? ('游戏开始跑这棵树：' + data.file + '（顺手取消了 AI 暂停 —— 暂停是全局的，留着它树不会跑）')
-            : ('树已切过去，但取消暂停失败：' + (done.reason || '?')));
+            ? I18n.format("st.t021", '游戏开始跑这棵树：{0}（顺手取消了 AI 暂停 —— 暂停是全局的，留着它树不会跑）', data.file)
+            : I18n.format("st.t022", '树已切过去，但取消暂停失败：{0}', (done.reason || '?')));
           refreshGameStatusQuiet();
           if (live.timer) pollLive();
         });
@@ -5033,17 +5280,18 @@
   function stopThisTree() {
     treeRun.busy = true;
     updateTreeRunUi();
-    setStatus('正在停止行为树…');
+    setStatus(L('st.053', '正在停止行为树…'));
     api('/api/game/tree/stop', { method: 'POST' }).then(function (data) {
       treeRun.busy = false;
       state.pausedForTrial = false;
       if (!data.ok) {
-        setStatus((data.code === 'game_not_ready' ? '还不能停止：' : '停止失败：')
-          + (data.reason || '?'));
+        setStatus(data.code === 'game_not_ready'
+            ? I18n.format("st.t034", '还不能停止：{0}', (data.reason || '?'))
+            : I18n.format("st.t028", '停止失败：{0}', (data.reason || '?')));
       } else if (data.stopped) {
-        setStatus('已停止：树已卸下、输入已释放 —— 再点「▶ 播放这棵树」就是从头开始跑');
+        setStatus(L('st.023', '已停止：树已卸下、输入已释放 —— 再点「▶ 播放这棵树」就是从头开始跑'));
       } else {
-        setStatus('当前没有正在跑的树（' + (data.reason || '') + '）');
+        setStatus(I18n.format("st.c073", '当前没有正在跑的树（{0}）', (data.reason || '')));
       }
       refreshGameStatusQuiet();
       if (live.timer) pollLive();
@@ -5054,7 +5302,7 @@
   function pushChangesToRunningTree() {
     treeRun.busy = true;
     updateTreeRunUi();
-    setStatus('保存并推送热重载…');
+    setStatus(L('st.005', '保存并推送热重载…'));
     saveNow(null).then(function (saved) {
       if (!saved) { treeRun.busy = false; updateTreeRunUi(); return null; }
       return api('/api/notify?path=' + encodeURIComponent(state.path), { method: 'POST' });
@@ -5062,10 +5310,11 @@
       if (!data) return;
       treeRun.busy = false;
       if (!data.ok) {
-        setStatus((data.code === 'game_not_ready' ? '还不能热重载：' : '热重载失败：')
-          + (data.reason || '?'));
+        setStatus(data.code === 'game_not_ready'
+            ? I18n.format("st.t035", '还不能热重载：{0}', (data.reason || '?'))
+            : I18n.format("st.t036", '热重载失败：{0}', (data.reason || '?')));
       } else {
-        setStatus('已推送热重载：' + JSON.stringify(data.game || {}));
+        setStatus(I18n.format("st.c074", '已推送热重载：{0}', JSON.stringify(data.game || {})));
         if (live.timer) pollLive();
       }
       refreshGameStatusQuiet();
@@ -5085,7 +5334,7 @@
     // （手动双击 exe / 从别处启动），这时缓存永远没人更新 —— 用户看到的就是
     // "游戏明明开着，播放按钮却是灰的、还提示游戏没在跑"。
     if (!st.connected) {
-      setStatus('正在重新确认游戏是否在跑…');
+      setStatus(L('st.056', '正在重新确认游戏是否在跑…'));
       refreshGameStatusQuiet().then(function () {
         treeRunPrimaryAfterRefresh();
       });
@@ -5099,31 +5348,33 @@
     if (treeRun.busy) return;
     var st = treeRunState();
     if (!st.connected) {
-      setStatus('游戏没在跑：' + (st.reason || '控制通道没开')
-        + '　—— 点「启动游戏」，或确认游戏是本实例根里的那个 Survivalcraft.exe');
+      setStatus(I18n.format("st.c075", '游戏没在跑：{0}　—— 点「启动游戏」，或确认游戏是本实例根里的那个 Survivalcraft.exe', (st.reason || L('ui.267', '控制通道没开'))));
       return;
     }
     if (st.mine && st.running && st.paused) {
-      setPaused(false, '继续');
+      setPaused(false);
       return;
     }
     if (st.mine && st.running && !st.paused) {
       if (state.dirty) pushChangesToRunningTree();
-      else setPaused(true, '暂停');
+      else setPaused(true);
       return;
     }
     playThisTree();
   }
 
   /** 暂停 / 继续行为树（工具栏按钮与实时监视面板共用）。 */
-  function setPaused(paused, what) {
-    setStatus('正在' + (what || (paused ? '暂停' : '继续')) + '行为树…');
+  function setPaused(paused) {
+    // 动作词按 paused 取（英文里 "Now pausing the tree…" 才顺；之前是把中文词从调用点传进来，切英文就成了 "Now Pause the tree…"）
+    setStatus(I18n.format("st.c076", '正在{0}行为树…', L(paused ? 'ui.w01' : 'ui.w02')));
     api('/api/game/' + (paused ? 'pause' : 'resume'), { method: 'POST' }).then(function (data) {
       if (!data.ok) {
-        setStatus((data.code === 'game_not_ready' ? '还不能操作：' : '操作失败：')
-          + (data.reason || '?'));
+        setStatus(data.code === 'game_not_ready'
+            ? I18n.format("st.t037", '还不能操作：{0}', (data.reason || '?'))
+            : I18n.format("st.t038", '操作失败：{0}', (data.reason || '?')));
       } else {
-        setStatus('行为树已' + (paused ? '暂停' : '继续') + '（运行态' + (paused ? '保留' : '恢复') + '）');
+        setStatus(I18n.format("st.c077", '行为树已{0}（运行态{1}）',
+          L(paused ? 'ui.w03' : 'ui.w04'), L(paused ? 'ui.w05' : 'ui.w06')));
         if (paused) state.pausedForTrial = false;
       }
       refreshGameStatusQuiet();
@@ -5140,7 +5391,7 @@
       live.timer = window.setInterval(pollLive, live.intervalMs);
       stopStatusWatch();     // 700ms 那条已经在刷状态，哨兵先停，别重复打
       pollLive();
-      setStatus('实时监视已打开（每 ' + live.intervalMs + 'ms 拉一次 ai.status / snapshot / blackboard）');
+      setStatus(I18n.format("st.c078", '实时监视已打开（每 {0}ms 拉一次 ai.status / snapshot / blackboard）', live.intervalMs));
     } else if (!on && live.timer) {
       window.clearInterval(live.timer);
       live.timer = null;
@@ -5151,9 +5402,11 @@
       renderTree();
       renderLivePanel();
       startStatusWatch();    // 关掉监视 → 低频哨兵接手
-      setStatus('实时监视已关闭');
+      setStatus(L('st.020', '实时监视已关闭'));
     }
-    $('btnLive').textContent = live.timer ? '■ 停止监视' : '▶ 实时监视';
+    $('btnLive').textContent = live.timer
+              ? L("ui.041", '■ 停止监视')
+              : L("ui.042", '▶ 实时监视');
   }
 
   function pollLive() {
@@ -5168,13 +5421,13 @@
         state.gameStatusError = data;
         updateTreeRunUi();
         renderTree();
-        renderLivePanel(data.reason || '读不到游戏状态', data.code);
+        renderLivePanel(data.reason || L('ui.195', '读不到游戏状态'), data.code);
         // 只报一次，而且别把"还没准备好"说成故障 —— 世界加载完/ai enable 之后
         // 这里会自动开始刷新（用户实测就是这么恢复的，界面得说清楚）。
         if (live.failures === 1) {
           setStatus(data.code === 'game_not_ready' || data.code === 'game_unreachable'
-            ? '实时监视：等游戏准备好（' + (data.reason || '') + '）'
-            : '实时监视：' + (data.reason || '读不到游戏状态'));
+            ? I18n.format("st.t023", '实时监视：等游戏准备好（{0}）', (data.reason || ''))
+            : I18n.format("st.t024", '实时监视：{0}', (data.reason || L('ui.195', '读不到游戏状态'))));
         }
         return;
       }
@@ -5198,7 +5451,7 @@
       renderTree();
       renderLivePanel();
     }).catch(function (error) {
-      renderLivePanel('请求失败：' + error.message);
+      renderLivePanel(L('ui.196', '请求失败：') + error.message);
     });
   }
 
@@ -5214,29 +5467,29 @@
       var info = document.createElement('div');
       info.className = 'issue' + (waiting ? '' : ' error');
       info.textContent = waiting
-        ? ('正在等游戏准备好：' + problem
-          + '　—— 进世界 + 游戏里 ai enable 之后，这里会自动开始刷新（不用重新点监视）。')
+        ? (L('ui.197', '正在等游戏准备好：') + problem
+          + L('ui.198', '　—— 进世界 + 游戏里 ai enable 之后，这里会自动开始刷新（不用重新点监视）。'))
         : problem;
       box.appendChild(info);
       return;
     }
     var data = state.live;
     if (!data) {
-      box.innerHTML = '<p class="hint">打开"实时监视"就能看到游戏里正在跑哪个节点。</p>';
+      box.innerHTML = L("ui.055", '<p class="hint">打开"实时监视"就能看到游戏里正在跑哪个节点。</p>');
       return;
     }
 
     var status = data.status || {};
     var tree = data.tree || {};
     var lines = [
-      ['模式', String(status.mode || '-') + (status.paused ? '（已暂停）' : '')],
-      ['活动树', (tree.treeId || '-') + '　' + (tree.running ? '运行中' : '未运行')
-        + '　上次=' + (tree.lastResult || '-')],
-      ['活动节点', tree.activePath || '-'],
-      ['tick / 时间', (tree.ticks || 0) + ' / ' + Number(tree.time || 0).toFixed(1) + 's'],
-      ['内存改动', tree.dirty ? '有（原包字节未变）' : '无']
+      [L('ui.199', '模式'), String(status.mode || '-') + (status.paused ? L('ui.200', '（已暂停）') : '')],
+      [L('ui.201', '活动树'), (tree.treeId || '-') + L('ui.101', '　') + (tree.running ? L('ui.202', '运行中') : L('ui.203', '未运行'))
+        + L('ui.204', '　上次=') + (tree.lastResult || '-')],
+      [L('ui.205', '活动节点'), tree.activePath || '-'],
+      [L('ui.206', 'tick / 时间'), (tree.ticks || 0) + ' / ' + Number(tree.time || 0).toFixed(1) + 's'],
+      [L('ui.207', '内存改动'), tree.dirty ? L('ui.208', '有（原包字节未变）') : L('ui.209', '无')]
     ];
-    if (tree.lastError) lines.push(['上次错误', tree.lastError]);
+    if (tree.lastError) lines.push([L('ui.210', '上次错误'), tree.lastError]);
 
     lines.forEach(function (pair) {
       var row = document.createElement('div');
@@ -5253,12 +5506,12 @@
 
     var blackboard = blackboardLines(data.blackboard);
     var title = document.createElement('h3');
-    title.textContent = '黑板（' + blackboard.length + '）';
+    title.textContent = I18n.format("ui.044", '黑板（{0}）', blackboard.length);
     box.appendChild(title);
     if (!blackboard.length) {
       var empty = document.createElement('p');
       empty.className = 'hint';
-      empty.textContent = '（空）';
+      empty.textContent = L("ui.045", '（空）');
       box.appendChild(empty);
     }
     blackboard.forEach(function (line) {
@@ -5273,15 +5526,14 @@
     if (pathIds.length && !pathIds.some(function (id) { return !!findNode(id); })) {
       var mismatch = document.createElement('p');
       mismatch.className = 'hint';
-      mismatch.textContent = '游戏里跑的是 ' + (tree.treeId || '?')
-        + '，编辑器打开的这棵树里没有对应节点 —— 打开同名包就能看到高亮。';
+      mismatch.textContent = I18n.format("ui.046", '游戏里跑的是 {0}，编辑器打开的这棵树里没有对应节点 —— 打开同名包就能看到高亮。', (tree.treeId || '?'));
       box.appendChild(mismatch);
     }
   }
 
   /** 实时监视面板里的暂停/继续按钮（与工具栏那个播放按钮共用 setPaused）。 */
   function pauseTree(paused) {
-    setPaused(paused, paused ? '暂停' : '继续');
+    setPaused(paused);
   }
 
   // ---------------------------------------------------------------- UI 拾取（UI-1 服务）
@@ -5322,15 +5574,59 @@
     if (line) line.textContent = text || '';
   }
 
+  /** 客户区坐标 → `x,y`（拿不到就是 `-`）。 */
+  function coordText(point) {
+    point = point || {};
+    return (typeof point.x === 'number')
+      ? (Math.round(point.x) + ',' + Math.round(point.y)) : '-';
+  }
+
+  /**
+   * 记下"上一次定位/点击"，并按**当前语言**重画那一行。
+   *
+   * 为什么不能只缓存拼好的字符串：那一行是 `落点 x,y（游戏里已亮红点）` 这种拼出来的句子，
+   * 缓存字符串就翻不成英文了 —— 用户实测：切到英文后这行还留着「落点 -」。
+   * 所以缓存**原始回包**，语言切换时照着重拼（`applyLanguage()` 会调它）。
+   */
+  function rememberLocated(kind, data, mode) {
+    uiPick.located = { kind: kind, data: data || {}, mode: mode || '' };
+    renderLocatedLine();
+  }
+
+  function renderLocatedLine() {
+    var last = uiPick.located;
+    if (!last) { showLocatedLine(''); return; }
+    var data = last.data || {};
+    if (last.kind === 'locate') {
+      if (data.ok === false) { showLocatedLine(''); return; }
+      var note = data.clickable === false
+        ? L('ui.228', '（现在点不到：') + (data.blockedBy || data.clickReason || L('ui.229', '被挡住')) + L('ui.168', '）')
+        : '';
+      showLocatedLine(L('ui.230', '落点 ') + coordText(data.clientPoint)
+        + (data.marked ? L('ui.231', '（游戏里已亮红点）') : '') + note);
+      return;
+    }
+    if (data.ok === false) {
+      showLocatedLine(L('ui.232', '点不动：') + describeUiError(data, L('ui.233', '点击')));
+      return;
+    }
+    var hit = data.clickTarget ? (L('ui.234', '　命中 ') + data.clickTarget) : '';
+    var missed = data.clickTarget && data.name && data.clickTarget !== data.name
+      ? L('ui.235', '（注意：命中的是 ') + data.clickTarget + L('ui.236', '，不是你选中的 ') + data.name + L('ui.168', '）') : '';
+    showLocatedLine(L('ui.237', '点过了：') + (data.mode || last.mode || '') + ' @ '
+      + coordText(data.clickPoint || data.clientPoint) + hit + missed
+      + (data.marked ? L('ui.238', '（已亮红点）') : ''));
+  }
+
   function uiTargetValue() {
     return ($('uiTargetInput') && $('uiTargetInput').value || '').trim();
   }
 
   function describeUiError(data, what) {
-    if (!data) return what + '失败';
-    if (data.code === 'game_unreachable') return '游戏没在跑（或控制通道没开）';
-    if (data.code === 'game_not_ready') return '游戏还没准备好：' + (data.reason || '');
-    return (data.reason || data.message || what + '失败');
+    if (!data) return what + L('ui.211', '失败');
+    if (data.code === 'game_unreachable') return L('ui.212', '游戏没在跑（或控制通道没开）');
+    if (data.code === 'game_not_ready') return L('ui.213', '游戏还没准备好：') + (data.reason || '');
+    return (data.reason || data.message || what + L('ui.211', '失败'));
   }
 
   function uiClickDescription(action) {
@@ -5341,26 +5637,45 @@
   function pickUiElements() {
     if (uiPick.busy) return;
     uiPick.busy = true;
-    $('btnUiPick').textContent = '⟳ 拾取中…';
+    $('btnUiPick').textContent = L("ui.047", '⟳ 拾取中…');
     api('/api/game/ui/elements?max=200').then(function (data) {
       uiPick.busy = false;
-      $('btnUiPick').textContent = '⟳ 拾取界面元素';
+      $('btnUiPick').textContent = L("ui.048", '⟳ 拾取界面元素');
       if (!data.ok) {
         uiPick.data = null;
         state.uiElements = null;
-        renderUiPick(describeUiError(data, '拾取界面元素'), data.code);
+        renderUiPick(describeUiError(data, L('ui.214', '拾取界面元素')), data.code);
         return;
       }
       uiPick.data = data;
       state.uiElements = data;
       renderUiPick();
-      var count = (data.elements || []).length;
-      setStatus('拾取到 ' + count + ' 个可交互元素（screen=' + (data.screen || '?') + '）');
+      var count = asArray(data.elements).length;
+      setStatus(I18n.format("st.c079", '拾取到 {0} 个可交互元素（screen={1}）', count, (data.screen || '?')));
     }).catch(function (error) {
       uiPick.busy = false;
-      $('btnUiPick').textContent = '⟳ 拾取界面元素';
-      renderUiPick('请求失败：' + error.message);
+      $('btnUiPick').textContent = L("ui.048", '⟳ 拾取界面元素');
+      renderUiPick(L('ui.196', '请求失败：') + error.message);
     });
+  }
+
+  /**
+   * 面板标题里的"当前是哪个界面"。
+   *
+   * 游戏侧的 `ui.elements` **没有** screen 字段（实测字段只有 elements / ready /
+   * shown / totalCount / truncated），所以照着写会显示 `screen=?` —— 等于什么都没说。
+   * 这里退一步用元素的路径根当界面名（`[SuPlayScreen#0]/…` → `SuPlayScreen`），
+   * 一眼就能确认"我拾的是哪个界面"。
+   */
+  function screenLabel(data, elements) {
+    if (data && data.screen) return data.screen;
+    for (var i = 0; i < elements.length; i++) {
+      var path = elements[i] && elements[i].path;
+      if (!path) continue;
+      var head = String(path).split('/')[0].replace(/^\[/, '').replace(/#.*$/, '');
+      if (head) return head;
+    }
+    return '?';
   }
 
   function renderUiPick(problem, problemCode) {
@@ -5378,29 +5693,35 @@
     }
     var data = uiPick.data;
     if (!data) {
-      box.innerHTML = '<p class="hint">点「拾取界面元素」看看现在屏幕上有什么可点的。</p>';
+      box.innerHTML = L("ui.056", '<p class="hint">点「拾取界面元素」看看现在屏幕上有什么可点的。</p>');
       return;
     }
 
-    var elements = data.elements || [];
+    // 同 `renderPickerRows`：`elements` 万一不是数组也得能降级（`asArray` 注释里有实测经过）
+    var elements = asArray(data.elements);
     if (!elements.length) {
-      box.innerHTML = '<p class="hint">现在屏幕上没有可交互的元素（screen=' + (data.screen || '?')
-        + '）。游戏里换个界面再拾取一次。</p>';
+      box.innerHTML = I18n.format("ui.057", '<p class="hint">现在屏幕上没有可交互的元素（screen={0}）。游戏里换个界面再拾取一次。</p>', screenLabel(data, elements));
       return;
     }
 
     var head = document.createElement('p');
     head.className = 'hint';
-    head.textContent = 'screen=' + (data.screen || '?') + '　共 ' + elements.length
-      + ' 个 —— 点一个填进目标框；「点一下」会在游戏里真的点它。';
+    head.textContent = I18n.format("ui.049", 'screen={0}　共 {1} 个 —— 点一个填进目标框；「点一下」会在游戏里真的点它。', screenLabel(data, elements), elements.length);
     box.appendChild(head);
+    if (data.truncated) {
+      // 游戏侧只给前 N 个（默认 200）；截断了就说出来，免得以为"界面上就这么点东西"
+      var more = document.createElement('p');
+      more.className = 'hint';
+      more.textContent = I18n.format('picker.truncated', '（这里只列了前 {0} 个，界面上共 {1} 个）', elements.length, (data.totalCount || '?'));
+      box.appendChild(more);
+    }
 
     elements.forEach(function (element) {
       var row = document.createElement('div');
       row.className = 'prop-row ui-pick-row';
       var label = document.createElement('label');
       label.title = element.path || '';
-      label.textContent = (element.name || element.type || '?') + (element.text ? '  「' + element.text + '」' : '');
+      label.textContent = (element.name || element.type || '?') + (element.text ? L('ui.215', '  「') + element.text + L('ui.216', '」') : '');
       var value = document.createElement('span');
       value.className = 'live-value';
       var point = element.clientPoint || {};
@@ -5408,101 +5729,128 @@
         ? (Math.round(point.x) + ',' + Math.round(point.y)) : '-';
       // 点不到的要说清**为什么**（用户实测踩过：世界内 HUD 那条是触屏专用控件，
       // 在 Windows 上被平移到屏幕外，点了当然没反应；以前只给一个 ⛔，看不出原因）。
-      var why = element.clickable ? '' : ('　⛔ ' + shortReason(element));
+      var why = element.clickable ? '' : (L('ui.217', '　⛔ ') + shortReason(element));
       value.textContent = coords + why;
-      row.title = (element.path || '') + '\n真实坐标（客户区像素，窗口一变就变）: ' + coords
-        + '\n语义目标（写进树的是这个）: ' + (element.target || element.name || '')
-        + (element.clickable ? '' : ('\n点不到的原因: ' + (element.clickReason || '未知')));
+      row.title = I18n.format("ui.076", '{0}\n真实坐标（客户区像素，窗口一变就变）: {1}\n语义目标（写进树的是这个）: {2}{3}', (element.path || ''), coords, (element.target || element.name || ''), (element.clickable ? '' : (L('ui.266', '\n点不到的原因: ') + (element.clickReason || L('ui.265', '未知')))));
       row.className += element.clickable ? '' : ' ui-pick-blocked';
       row.addEventListener('click', function () {
         $('uiTargetInput').value = element.target || element.name || '';
-        setStatus('已选中目标：' + $('uiTargetInput').value
-          + (element.clickable ? '' : ('　—— 注意：现在点不到（' + shortReason(element) + '）')));
+        setStatus(I18n.format("st.c080", '已选中目标：{0}{1}', $('uiTargetInput').value, (element.clickable ? '' : (L('ui.264', '　—— 注意：现在点不到（') + shortReason(element) + L('ui.168', '）')))));
         locateUiTarget($('uiTargetInput').value, true);
       });
       row.appendChild(label);
       row.appendChild(value);
       box.appendChild(row);
+
+      // 列表容器：把每一行也列出来 —— 用户要点的往往不是容器，而是里面那张地图。
+      // `asArray`：`items` 万一不是数组（旧版 Mod 会把它压成 JSON 文本），
+      // 这里也必须能优雅降级，而不是抛 `forEach is not a function` 把面板弄崩。
+      var listInfo = element.list;
+      var listItems = listInfo ? asArray(listInfo.items) : [];
+      if (listItems.length) {
+        var rowsBox = document.createElement('div');
+        rowsBox.className = 'ui-pick-rows';
+        listItems.forEach(function (item, index) {
+          var rowLine = document.createElement('div');
+          rowLine.className = 'prop-row ui-pick-row';
+          var rowLabel = document.createElement('label');
+          rowLabel.textContent = L('ui.218', '　#') + index + L('ui.101', '　') + (item.text || L('ui.219', '(空行)'));
+          var rowTarget = 'list:' + element.name + '@' + (item.text || '');
+          rowLabel.title = rowTarget;
+          var rowValue = document.createElement('span');
+          rowValue.className = 'live-value';
+          var rowPoint = item.clientPoint || {};
+          rowValue.textContent = (typeof rowPoint.x === 'number')
+            ? (Math.round(rowPoint.x) + ',' + Math.round(rowPoint.y)) : '-';
+          rowLine.title = rowTarget + L('ui.171', '（') + L('picker.rows', '列表里的行') + L('ui.168', '）');
+          rowLine.addEventListener('click', function (event) {
+            if (event && event.stopPropagation) event.stopPropagation();
+            $('uiTargetInput').value = rowTarget;
+            setStatus(I18n.format("st.c081", '已选中列表行目标：{0}', rowTarget));
+            locateUiTarget(rowTarget, true);
+          });
+          rowLine.appendChild(rowLabel);
+          rowLine.appendChild(rowValue);
+          rowsBox.appendChild(rowLine);
+        });
+        box.appendChild(rowsBox);
+      }
     });
   }
 
   /** 把"点不到的原因"压成一小段，够在列表里显示。 */
   function shortReason(element) {
     var reason = String(element.clickReason || '');
-    if (!reason) return element.hittable === false ? '屏幕外/被遮挡' : '不可点';
-    if (reason.indexOf('off-screen') >= 0) return '屏幕外（面板被折叠）';
-    if (reason.indexOf('zero size') >= 0) return '还没被布局';
-    if (reason.indexOf('mouse cursor is captured') >= 0) return '这个世界界面不吃鼠标（用按键）';
-    if (reason.indexOf('blocked by') === 0) return reason.replace('blocked by ', '被 ') + ' 挡住';
-    if (reason.indexOf('nothing is hit') >= 0) return '中心没有控件';
+    if (!reason) return element.hittable === false ? L('ui.220', '屏幕外/被遮挡') : L('ui.221', '不可点');
+    if (reason.indexOf('off-screen') >= 0) return L('ui.222', '屏幕外（面板被折叠）');
+    if (reason.indexOf('zero size') >= 0) return L('ui.223', '还没被布局');
+    if (reason.indexOf('mouse cursor is captured') >= 0) return L('ui.224', '这个世界界面不吃鼠标（用按键）');
+    if (reason.indexOf('blocked by') === 0) return reason.replace('blocked by ', L('ui.225', '被 ')) + L('ui.226', ' 挡住');
+    if (reason.indexOf('nothing is hit') >= 0) return L('ui.227', '中心没有控件');
     return reason.length > 18 ? reason.slice(0, 18) + '…' : reason;
   }
 
   /** ② 定位：解析目标 + 显示"现在在哪、能不能点"，并在游戏里亮一个红点（可关）。 */
   function locateUiTarget(target, quiet) {
     var want = target || uiTargetValue();
-    if (!want) { if (!quiet) setStatus('先填一个目标（或从拾取列表里点一个）'); return; }
+    if (!want) { if (!quiet) setStatus(L('st.007', '先填一个目标（或从拾取列表里点一个）')); return; }
     var mark = uiMarkEnabled();
     api('/api/game/ui/locate?mark=' + (mark ? '1' : '0') + '&target=' + encodeURIComponent(want))
       .then(function (data) {
         if (!data.ok) {
-          showLocatedLine('');
-          if (!quiet) setStatus(describeUiError(data, '定位'));
+          rememberLocated('locate', data);
+          if (!quiet) setStatus(describeUiError(data, L('st.018', '定位')));
           return;
         }
         var point = data.clientPoint || {};
-        var where = (typeof point.x === 'number')
-          ? (Math.round(point.x) + ',' + Math.round(point.y)) : '-';
+        var where = coordText(point);
         var kind = data.kind || '?';
-        var note = data.clickable === false ? '（现在点不到：' + (data.blockedBy || data.clickReason || '被挡住') + '）' : '';
-        showLocatedLine('落点 ' + where + (data.marked ? '（游戏里已亮红点）' : '') + note);
-        setStatus('目标 ' + data.target + '　' + kind + '　真实坐标 ' + where
-          + (data.path ? '　path=' + data.path : '') + note);
+        var note = data.clickable === false ? L('ui.228', '（现在点不到：') + (data.blockedBy || data.clickReason || L('ui.229', '被挡住')) + L('ui.168', '）') : '';
+        rememberLocated('locate', data);
+        setStatus(I18n.format("st.c082", '目标 {0}　{1}　真实坐标 {2}{3}{4}', data.target, kind, where, (data.path ? L('ui.263', '　path=') + data.path : ''), note));
       }).catch(function (error) {
-        if (!quiet) setStatus('定位请求失败：' + error.message);
+        if (!quiet) setStatus(I18n.format("st.c083", '定位请求失败：{0}', error.message));
       });
   }
 
   /** ③ 真的点一下（走游戏侧 UI 服务；只用输入层，不写游戏状态）。 */
   function clickUiTarget() {
     var want = uiTargetValue();
-    if (!want) { setStatus('先填一个目标（或从拾取列表里点一个）'); return; }
+    if (!want) { setStatus(L('st.007', '先填一个目标（或从拾取列表里点一个）')); return; }
     var mode = uiClickMode();
     var mark = uiMarkEnabled();
     $('btnUiClick').disabled = true;
-    setStatus('正在点 ' + want + '（' + mode + '）…');
+    setStatus(I18n.format("st.c084", '正在点 {0}（{1}）…', want, mode));
     api('/api/game/ui/click', {
       method: 'POST',
       body: JSON.stringify({ target: want, mode: mode, mark: mark })
     }).then(function (data) {
         $('btnUiClick').disabled = false;
         if (!data.ok) {
-          showLocatedLine('点不动：' + describeUiError(data, '点击'));
-          setStatus('点不动：' + describeUiError(data, '点击'));
+          rememberLocated('click', data, mode);
+          setStatus(I18n.format("st.c085", '点不动：{0}', describeUiError(data, L('ui.233', '点击'))));
           return;
         }
         var point = data.clickPoint || data.clientPoint || {};
-        var where = (typeof point.x === 'number')
-          ? (Math.round(point.x) + ',' + Math.round(point.y)) : '-';
+        var where = coordText(point);
         // 如实报"点到了哪个控件、用哪一层输入面"：世界内 HUD 按钮以前点不动，
         // 就是因为按下状态被写到了根输入面（`clickTarget` 是命中的控件名）。
-        var hit = data.clickTarget ? ('　命中 ' + data.clickTarget) : '';
+        var hit = data.clickTarget ? (L('ui.234', '　命中 ') + data.clickTarget) : '';
         var missed = data.clickTarget && data.name && data.clickTarget !== data.name
-          ? '（注意：命中的是 ' + data.clickTarget + '，不是你选中的 ' + data.name + '）' : '';
-        showLocatedLine('点过了：' + (data.mode || mode) + ' @ ' + where + hit + missed
-          + (data.marked ? '（已亮红点）' : ''));
-        setStatus('点过了：' + want + '（' + (data.mode || mode) + '，坐标 ' + where + '）' + hit + missed);
+          ? L('ui.235', '（注意：命中的是 ') + data.clickTarget + L('ui.236', '，不是你选中的 ') + data.name + L('ui.168', '）') : '';
+        rememberLocated('click', data, mode);
+        setStatus(I18n.format("st.c086", '点过了：{0}（{1}，坐标 {2}）{3}{4}', want, (data.mode || mode), where, hit, missed));
         pickUiElements();   // 界面多半已经变了，顺手刷新拾取列表
       }).catch(function (error) {
         $('btnUiClick').disabled = false;
-        setStatus('点击请求失败：' + error.message);
+        setStatus(I18n.format("st.c087", '点击请求失败：{0}', error.message));
       });
   }
 
   /** ④ 填进树：写进选中的 Task.UiClick；没有就新建一个挂上去（不写像素！）。 */
   function fillUiTargetIntoTree() {
     var target = uiTargetValue();
-    if (!target) { setStatus('先在拾取列表里点一个元素，或手填目标'); return; }
+    if (!target) { setStatus(L('st.006', '先在拾取列表里点一个元素，或手填目标')); return; }
     var node = state.selectedId ? findNode(state.selectedId) : null;
 
     if (node && node.type === 'Task.UiClick') {
@@ -5514,12 +5862,12 @@
       markDirty(true);
       renderTree();
       renderInspector();
-      setStatus('已写进 ' + node.id + '.target = ' + target);
+      setStatus(I18n.format("st.c088", '已写进 {0}.target = {1}', node.id, target));
       return;
     }
 
     var parent = node || state.tree || state.root;
-    if (!parent) { setStatus('画布里还没有树；先新建一棵'); return; }
+    if (!parent) { setStatus(L('st.064', '画布里还没有树；先新建一棵')); return; }
     var created = addChild(parent, 'Task.UiClick');
     if (!created) return;
     created.properties = created.properties || {};
@@ -5529,41 +5877,53 @@
     markDirty(true);
     renderTree();
     renderInspector();
-    setStatus('已新建 ' + created.id + '（Task.UiClick, target=' + target + '）并挂到 '
-      + (parent.id || '根') + ' 下');
+    setStatus(I18n.format("st.c089", '已新建 {0}（Task.UiClick, target={1}）并挂到 {2} 下', created.id, target, (parent.id || L('palette.group.root', '根'))));
   }
 
   // ---------------------------------------------------------------- 动作包
 
   function actionLabel(item) {
     return item.file
-      + (item.replayable ? '' : '（仅结构：不能回放）')
+      + (item.replayable ? '' : L('ui.173', '（仅结构：不能回放）'))
       + (item.id && item.id !== item.file.replace(/\.scatpak$/, '') ? '  [' + item.id + ']' : '')
-      + '  ' + (item.duration || 0) + 's/' + (item.frames || 0) + '帧';
+      + '  ' + (item.duration || 0) + 's/' + (item.frames || 0) + L('ui.239', '帧');
   }
 
   function loadActions() {
     return api('/api/actions').then(function (data) {
       state.actions = data.actions || [];
-      var select = $('actionSelect');
+      renderActionSelect();
+      var replayable = (state.actions || []).filter(function (a) { return a.replayable; }).length;
+      setStatus(I18n.format("st.c090", '动作包 {0} 个（可回放 {1}）', state.actions.length, replayable));
+      renderPalette($('paletteFilter').value.toLowerCase());
+      renderInspector();
+    });
+  }
+
+  /**
+   * 画动作包下拉与徽标（纯渲染，不发请求）。
+   *
+   * 为什么要拆出来：选项文字是 `文件名（仅结构：不能回放）2.231s/723帧` 这种拼出来的句子，
+   * 原先只在 `loadActions()` 里写一次 —— 切英文之后整条下拉还是中文（用户实测反馈：
+   * "actions 的（仅结构：不能回放）和 1043 帧也需要调整"）。
+   */
+  function renderActionSelect() {
+    var select = $('actionSelect');
+    if (select) {
       select.innerHTML = '';
-      state.actions.forEach(function (item) {
+      (state.actions || []).forEach(function (item) {
         var option = document.createElement('option');
         option.value = item.file;
         option.textContent = actionLabel(item);
         select.appendChild(option);
       });
-
-      var replayable = state.actions.filter(function (a) { return a.replayable; }).length;
-      setStatus('动作包 ' + state.actions.length + ' 个（可回放 ' + replayable + '）');
-      var badge = $('actionBadge');
-      if (badge) {
-        badge.textContent = '动作包 ' + state.actions.length + '/可回放 ' + replayable;
-        badge.className = 'badge' + (state.actions.length ? ' live' : '');
-      }
-      renderPalette($('paletteFilter').value.toLowerCase());
-      renderInspector();
-    });
+    }
+    var replayable = (state.actions || []).filter(function (a) { return a.replayable; }).length;
+    var badge = $('actionBadge');
+    if (badge) {
+      badge.textContent = I18n.format("ui.050", '动作包 {0}/可回放 {1}', (state.actions || []).length, replayable);
+      badge.className = 'badge' + ((state.actions || []).length ? ' live' : '');
+    }
   }
 
   function selectedActionFile() {
@@ -5573,22 +5933,22 @@
 
   function validateAction() {
     var file = selectedActionFile();
-    if (!file) { setStatus('没有动作包可选（先录一个，或点"自造"）'); return; }
-    setStatus('校验动作包 ' + file + '…');
+    if (!file) { setStatus(L('st.058', '没有动作包可选（先录一个，或点"自造"）')); return; }
+    setStatus(I18n.format("st.c091", '校验动作包 {0}…', file));
     api('/api/action/validate?name=' + encodeURIComponent(file)).then(function (data) {
       var issues = (data.issues || []).map(function (line) { return String(line); });
       if (data.ok) {
-        issues.unshift('INFO 动作包 ' + data.file + '：可回放=' + (data.replayable ? '是' : '否')
-          + '  时长=' + data.duration + 's  帧=' + data.frames
-          + '  目录=' + (data.folder || 'PlayerAi\\BehaviorTrees')
-          + '  按键=' + ((data.keys || []).join('/') || '无'));
+        issues.unshift(L('ui.240', 'INFO 动作包 ') + data.file + L('ui.241', '：可回放=') + (data.replayable ? L('ui.242', '是') : L('ui.243', '否'))
+          + L('ui.244', '  时长=') + data.duration + L('ui.245', 's  帧=') + data.frames
+          + L('ui.246', '  目录=') + (data.folder || 'PlayerAi\\BehaviorTrees')
+          + L('ui.247', '  按键=') + ((data.keys || []).join('/') || L('ui.209', '无')));
       } else if (data.reason) {
         issues.unshift('ERROR ' + data.reason);
       }
       setIssues(issues.filter(function (line) { return /^ERROR|^WARN|^INFO/.test(line); }));
       setStatus(data.ok
-        ? ('动作包可用：' + data.file + '（' + (data.replayable ? '可回放' : '不能回放') + '）')
-        : ('动作包有问题：' + (data.reason || (data.errors + ' 个错误'))));
+            ? I18n.format("st.t025", '动作包可用：{0}（{1}）', data.file, (data.replayable ? L('editor.replayable', '可回放') : L('ui.262', '不能回放')))
+            : I18n.format("st.t026", '动作包有问题：{0}', (data.reason || (data.errors + L('ui.261', ' 个错误')))));
     });
   }
 
@@ -5602,8 +5962,8 @@
    */
   function playAction() {
     var file = selectedActionFile();
-    if (!file) { setStatus('没有动作包可选'); return; }
-    setStatus('让游戏回放 ' + file + ' …');
+    if (!file) { setStatus(L('st.057', '没有动作包可选')); return; }
+    setStatus(I18n.format("st.c092", '让游戏回放 {0} …', file));
 
     refreshGameStatusQuiet().then(function () {
       var st = treeRunState();
@@ -5622,15 +5982,15 @@
           body: JSON.stringify({ path: file, repeat: 1 })
         }).then(function (data) {
           if (!data.ok) {
-            setStatus((data.code === 'game_not_ready' ? '游戏还没准备好：' : '回放失败：')
-              + (data.reason || '?'));
+            setStatus(data.code === 'game_not_ready'
+            ? I18n.format("st.t039", '游戏还没准备好：{0}', (data.reason || '?'))
+            : I18n.format("st.t040", '回放失败：{0}', (data.reason || '?')));
             refreshGameStatusQuiet();
             return;
           }
-          setStatus('游戏在回放选中的这 1 个包：' + file
-            + (pausedResult && pausedResult.ok
-              ? '　（已先把行为树暂停，免得两边抢输入；试跑完点「▶ 继续」恢复树）'
-              : ''));
+          setStatus(I18n.format("st.c093", '游戏在回放选中的这 1 个包：{0}{1}', file, (pausedResult && pausedResult.ok
+              ? L('ui.260', '　（已先把行为树暂停，免得两边抢输入；试跑完点「▶ 继续」恢复树）')
+              : '')));
           if (live.timer) pollLive();
           refreshGameStatusQuiet();
         });
@@ -5644,11 +6004,12 @@
       headers: { 'Content-Type': 'application/json' },
       body: '{}'
     }).then(function (r) { return r.json(); }).then(function (data) {
-      setStatus(data.ok ? ('已停止回放：' + JSON.stringify(data.game || {}))
-        : ('停止失败：' + (data.reason || '?')));
+      setStatus(data.ok
+            ? I18n.format("st.t027", '已停止回放：{0}', JSON.stringify(data.game || {}))
+            : I18n.format("st.t028", '停止失败：{0}', (data.reason || '?')));
       // 试跑时是我们把树暂停的：停完提醒一句，别让人以为树自己坏了
       if (data.ok && state.pausedForTrial) {
-        setStatus('已停止回放 —— 行为树还是暂停状态，点「▶ 继续」恢复它');
+        setStatus(L('st.022', '已停止回放 —— 行为树还是暂停状态，点「▶ 继续」恢复它'));
         state.pausedForTrial = false;
       }
       refreshGameStatusQuiet();
@@ -5657,25 +6018,541 @@
 
   /** 自造动作包：写一个确定内容的示例轨道进包目录（不依赖真机录制）。 */
   function createAction() {
-    var name = prompt('新动作包名字（写进包目录的 .scatpak）', 'my_action');
+    var name = prompt(L('ui.248', '新动作包名字（写进包目录的 .scatpak）'), 'my_action');
     if (!name) return;
     fetch('/api/action/create', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: name })
     }).then(function (r) { return r.json(); }).then(function (data) {
-      if (!data.ok) { setStatus('自造失败：' + (data.reason || '?')); return; }
-      setStatus('已造出 ' + data.file + '（' + data.frames + ' 帧 / ' + data.duration
-        + 's，可回放=' + (data.replayable ? '是' : '否') + '）');
+      if (!data.ok) { setStatus(I18n.format("st.c094", '自造失败：{0}', (data.reason || '?'))); return; }
+      setStatus(I18n.format("st.c095", '已造出 {0}（{1} 帧 / {2}s，可回放={3}）', data.file, data.frames, data.duration, (data.replayable ? L('ui.242', '是') : L('ui.243', '否'))));
       loadActions();
     });
+  }
+
+  // ---------------------------------------------------------------- 模态框
+
+  /**
+   * 极简模态框：标题 + 内容 + 底部按钮。返回 {close, body}。
+   *
+   * 为什么自己写而不是用 window.confirm/prompt：动作包编辑器与"界面目标选择器"都要放表格与
+   * 实时数据，prompt 完全做不了；而这个文件一直是零依赖的，引一个组件库不划算。
+   */
+  function openModal(titleText, actions) {
+    var host = $('modalHost');
+    host.innerHTML = '';
+    document.removeEventListener('keydown', handleModalKey, true);
+
+    var backdrop = document.createElement('div');
+    backdrop.className = 'modal-backdrop';
+    var box = document.createElement('div');
+    box.className = 'modal';
+    var title = document.createElement('h2');
+    title.textContent = titleText;
+    var body = document.createElement('div');
+    body.className = 'modal-body';
+    var footer = document.createElement('div');
+    footer.className = 'modal-actions';
+
+    function close() {
+      host.hidden = true;
+      host.innerHTML = '';
+      document.removeEventListener('keydown', handleModalKey, true);
+    }
+    function handleModalKey(event) {
+      if (event.key === 'Escape') {
+        event.stopPropagation();
+        close();
+      }
+    }
+    backdrop.addEventListener('click', close);
+    document.addEventListener('keydown', handleModalKey, true);
+    (actions || []).forEach(function (action) {
+      var element = document.createElement('button');
+      element.textContent = action.label;
+      if (action.primary) element.className = 'primary';
+      if (action.danger) element.className = 'danger';
+      element.addEventListener('click', function () { action.run(close); });
+      footer.appendChild(element);
+    });
+
+    box.appendChild(title);
+    box.appendChild(body);
+    box.appendChild(footer);
+    host.appendChild(backdrop);
+    host.appendChild(box);
+    host.hidden = false;
+    return { close: close, body: body, title: title, footer: footer };
+  }
+
+  // ---------------------------------------------------------------- 界面目标选择器
+  //
+  // 用户要求（原话）："左侧的物料区我希望增加一个，用于解析 list 或多种结构的，
+  // 现在 worldslist 能够识别，但是我无法点击这个容器内的具体的地图。"
+  //
+  // 关键就是**把列表容器展开到每一行**：`WorldsList` 只是一个容器，真正要选的是里面那张地图。
+  // 选出来的东西写进节点的是**语义目标**（`list:WorldsList@世界名`），不是此刻的像素。
+
+  var uiPicker = { data: null, onPick: null, busy: false };
+
+  function uiElementTarget(element) {
+    if (element && element.rowTarget) return element.rowTarget;
+    return (element && (element.target || element.name)) || '';
+  }
+
+  /**
+   * 把"可能不是数组"的字段安全地变成数组。
+   *
+   * 为什么需要它：编辑器与游戏之间是 JSON 文本往返，**嵌套数组曾经被压成字符串**
+   * （`list.items` 的值是 `[{"index":0,...}]` 这段文字）。而字符串也有 `.length`，
+   * 所以 `if (list.items && list.items.length)` 这种守卫拦不住 —— 用户实测：
+   * 在地图选择界面点「拾取界面元素」，整个面板报
+   * `Request failed: listInfo.items.forEach is not a function`，一个元素都拾不到。
+   * 现在：真数组直接用；长得像 JSON 文本就解析回来（兼容旧版 Mod 的返回）；
+   * 其余一律当空数组 —— 宁可不展开列表行，也不能把整个面板弄崩。
+   */
+  function asArray(value) {
+    if (Object.prototype.toString.call(value) === '[object Array]') return value;
+    if (typeof value === 'string' && value.charAt(0) === '[') {
+      try {
+        var parsed = JSON.parse(value);
+        if (Object.prototype.toString.call(parsed) === '[object Array]') return parsed;
+      } catch (error) { /* 解析不了就落回空数组 */ }
+    }
+    return [];
+  }
+
+  /** 把一行元素渲染成列表行（`list` 元素会把每一行展开成子行）。 */
+  function renderPickerRows(box, elements) {
+    elements = asArray(elements);
+    if (!elements.length) {
+      var empty = document.createElement('p');
+      empty.className = 'hint';
+      empty.textContent = L('picker.none', '现在屏幕上没有可交互元素（换个界面再刷新）');
+      box.appendChild(empty);
+      return;
+    }
+    elements.forEach(function (element) {
+      box.appendChild(pickerRow(element));
+      var list = element.list;
+      var listItems = list ? asArray(list.items) : [];
+      if (!listItems.length) return;
+      var rows = document.createElement('div');
+      rows.className = 'ui-pick-rows';
+      listItems.forEach(function (item, index) {
+        rows.appendChild(pickerRow({
+          name: L('ui.218', '　#') + index + ' ' + (item.text || L('ui.219', '(空行)')),
+          type: element.name + L('ui.249', ' 行'),
+          text: item.text,
+          clientPoint: item.clientPoint,
+          clickable: item.clickable !== false,
+          clickReason: item.clickReason,
+          target: 'list:' + element.name + '@' + (item.text || ''),
+          rowTarget: 'list:' + element.name + '#' + index,
+          parent: element.name,
+          rowText: item.text
+        }, true));
+      });
+      box.appendChild(rows);
+    });
+  }
+
+  /** 选择器里的一行：左名、右坐标，两个动作按钮。 */
+  function pickerRow(element, isRow) {
+    var row = document.createElement('div');
+    row.className = 'prop-row ui-pick-row' + (element.clickable === false ? ' ui-pick-blocked' : '');
+    // 整行的 title = 语义目标：鼠标停在哪都能看到"这一行会被写成什么"
+    // （列表行也靠它把 `list:列表@文字` 暴露出来，自检与脚本都读这个）。
+    row.title = element.target || element.name || '';
+
+    var label = document.createElement('label');
+    label.title = (element.type ? element.type + L('ui.101', '　') : '') + (element.target || '');
+    label.textContent = (element.name || element.type || '?') + (element.text ? L('ui.215', '  「') + element.text + L('ui.216', '」') : '');
+    row.appendChild(label);
+
+    var value = document.createElement('span');
+    value.className = 'live-value';
+    var point = element.clientPoint || {};
+    value.textContent = (typeof point.x === 'number')
+      ? (Math.round(point.x) + ',' + Math.round(point.y)) : '-';
+    if (element.clickable === false) {
+      value.textContent += L('ui.217', '　⛔ ') + shortReason(element);
+    }
+    row.appendChild(value);
+
+    var tools = document.createElement('span');
+    tools.className = 'tools';
+    var useButton = document.createElement('button');
+    useButton.textContent = L('picker.use', '用作节点目标');
+    useButton.title = element.target || '';
+    useButton.addEventListener('click', function () {
+      if (uiPicker.onPick) uiPicker.onPick(element);
+    });
+    tools.appendChild(useButton);
+
+    var tryButton = document.createElement('button');
+    tryButton.textContent = L('picker.try', '在游戏里点一下');
+    tryButton.addEventListener('click', function () {
+      var target = element.rowTarget || element.target || element.name;
+      if (!target) { setStatus(L('st.071', '这一行没有可用目标')); return; }
+      $('uiTargetInput').value = target;
+      setStatus(I18n.format("st.c096", '正在点 {0} …', target));
+      api('/api/game/ui/click', {
+        method: 'POST',
+        body: JSON.stringify({ target: target, mode: uiClickMode(), mark: uiMarkEnabled() })
+      }).then(function (data) {
+        if (!data.ok) { setStatus(I18n.format("st.c085", '点不动：{0}', describeUiError(data, L('ui.233', '点击')))); return; }
+        var at = data.clickPoint || {};
+        setStatus(I18n.format("st.c097", '点过了：{0}（{1} @ {2},{3}）{4}', target, (data.mode || ''), Math.round(at.x), Math.round(at.y), (data.clickTargetOnTarget === false ? L('ui.259', '　注意：命中的不是目标本身') : '')));
+        loadPickerElements();
+      }).catch(function (error) { setStatus(I18n.format("st.c087", '点击请求失败：{0}', error.message)); });
+    });
+    tools.appendChild(tryButton);
+    row.appendChild(tools);
+    return row;
+  }
+
+  function loadPickerElements() {
+    if (uiPicker.busy) return;
+    uiPicker.busy = true;
+    var box = uiPicker.box;
+    if (box) box.innerHTML = '<p class="hint">' + L('ui.pick.busy', '⟳ 拾取中…') + '</p>';
+    api('/api/game/ui/elements?max=200').then(function (data) {
+      uiPicker.busy = false;
+      if (!box) return;
+      box.innerHTML = '';
+      if (!data.ok) {
+        var problem = document.createElement('div');
+        problem.className = 'issue';
+        problem.textContent = describeUiError(data, L('ui.214', '拾取界面元素'));
+        box.appendChild(problem);
+        return;
+      }
+      uiPicker.data = data;
+      var head = document.createElement('p');
+      head.className = 'hint';
+      var picked = asArray(data.elements);
+      head.textContent = I18n.format("ui.051", 'screen={0}　{1} 个可交互元素　{2}', screenLabel(data, picked), picked.length, L('picker.hint', L('ui.258', '点一行 → 填进目标的 target')));
+      box.appendChild(head);
+      if (data.truncated) {
+        // 游戏侧只会给前 N 个（默认 200）；截断了就说出来，免得以为"界面上就这么点东西"
+        var more = document.createElement('p');
+        more.className = 'hint';
+        more.textContent = I18n.format('picker.truncated', '（这里只列了前 {0} 个，界面上共 {1} 个）', picked.length, (data.totalCount || '?'));
+        box.appendChild(more);
+      }
+      renderPickerRows(box, picked);
+    }).catch(function (error) {
+      uiPicker.busy = false;
+      if (box) box.innerHTML = I18n.format("ui.058", '<div class="issue error">请求失败：{0}</div>', error.message);
+    });
+  }
+
+  /** 打开"拾取界面目标"：选中的目标交给 onPick。 */
+  function openUiTargetPicker(onPick) {
+    uiPicker.onPick = onPick;
+    var modal = openModal(L('picker.title', '拾取界面目标'), [
+      { label: L('picker.refresh', '⟳ 刷新'), run: function () { loadPickerElements(); } },
+      { label: L('picker.close', '关闭'), run: function (close) { close(); } }
+    ]);
+    uiPicker.box = modal.body;
+    loadPickerElements();
+    return modal;
+  }
+
+  /** 物料区的「🎯 拾取界面目标…」：选中的目标直接变成/更新一个 Task.UiClick 节点。 */
+  function pickUiTargetIntoTree() {
+    openUiTargetPicker(function (element) {
+      var target = uiElementTarget(element);
+      if (!target) { setStatus(L('st.072', '这一项没有可用的语义目标')); return; }
+      $('uiTargetInput').value = target;
+      fillUiTargetIntoTree();
+    });
+  }
+
+  // ---------------------------------------------------------------- 动作包：右键菜单 / 编辑 / 重命名 / 删除
+
+  var actionMenu = null;
+
+  function closeActionMenu() {
+    if (!actionMenu) return;
+    if (actionMenu.parentNode) actionMenu.parentNode.removeChild(actionMenu);
+    actionMenu = null;
+    document.removeEventListener('mousedown', closeActionMenu, true);
+    document.removeEventListener('keydown', closeActionMenuOnKey, true);
+  }
+
+  function closeActionMenuOnKey(event) {
+    if (event.key === 'Escape') closeActionMenu();
+  }
+
+  /** 在鼠标位置弹出动作包菜单：编辑 / 删除 / 重命名（顺序按用户要求）。 */
+  function showActionMenu(event, file) {
+    if (event && event.preventDefault) event.preventDefault();
+    if (event && event.stopPropagation) event.stopPropagation();
+    closeActionMenu();
+
+    var menu = document.createElement('div');
+    menu.className = 'context-menu';
+    var item = findAction(file);
+    [['menu.edit', function () { openActionEditor(file); }, false],
+     ['menu.delete', function () { deleteActionFile(file); }, true],
+     ['menu.rename', function () { renameActionFile(file); }, false]
+    ].forEach(function (entry) {
+      var element = document.createElement('button');
+      element.textContent = L(entry[0], entry[0]);
+      element.title = L(entry[0] + '.title', '');
+      if (entry[2]) element.className = 'danger';
+      element.addEventListener('click', function () {
+        closeActionMenu();
+        entry[1]();
+      });
+      menu.appendChild(element);
+    });
+
+    var info = document.createElement('div');
+    info.className = 'hint';
+    info.style.padding = '4px 10px';
+    info.textContent = (item && item.file ? item.file : file)
+      + (item && item.replayable ? '' : L('ui.250', '　（仅结构，不能回放）'));
+    menu.insertBefore(info, menu.firstChild);
+
+    document.body.appendChild(menu);
+    var left = (event ? event.clientX : 40) + 2;
+    var top = (event ? event.clientY : 40) + 2;
+    if (left + menu.offsetWidth > window.innerWidth - 8) left = window.innerWidth - menu.offsetWidth - 8;
+    if (top + menu.offsetHeight > window.innerHeight - 8) top = window.innerHeight - menu.offsetHeight - 8;
+    menu.style.left = Math.max(4, left) + 'px';
+    menu.style.top = Math.max(4, top) + 'px';
+    actionMenu = menu;
+    document.addEventListener('mousedown', closeActionMenu, true);
+    document.addEventListener('keydown', closeActionMenuOnKey, true);
+  }
+
+  /** 重命名动作包（manifest 里的名字跟着改；引用它的树会被点名提醒）。 */
+  function renameActionFile(file) {
+    var bare = String(file || '').replace(/\.scatpak$/i, '');
+    var wanted = window.prompt(L('menu.rename', '重命名') + L('ui.251', '：') + file, bare);
+    if (wanted === null || wanted === bare) return;
+    api('/api/action/rename', {
+      method: 'POST',
+      body: JSON.stringify({ file: file, to: wanted })
+    }).then(function (data) {
+      if (!data.ok) { setStatus(I18n.format("st.c098", '重命名失败：{0}', (data.reason || data.code))); return; }
+      var extra = (data.referencedByTrees || []).length
+        ? L('ui.252', '　注意：这些树还在引用旧名字 —— ') + data.referencedByTrees.join(L('ui.253', '、')) : '';
+      setStatus(I18n.format("st.c099", '已重命名为 {0}{1}', data.file, extra));
+      loadActions();
+    }).catch(function (error) { setStatus(I18n.format("st.c100", '重命名请求失败：{0}', error.message)); });
+  }
+
+  /** 删除动作包（不可撤销，先确认；还会列出引用它的树）。 */
+  function deleteActionFile(file) {
+    if (!window.confirm(L('menu.delete', '删除') + L('ui.251', '：') + file + L('ui.254', '？此操作不可撤销。'))) return;
+    api('/api/action/delete', {
+      method: 'POST',
+      body: JSON.stringify({ file: file })
+    }).then(function (data) {
+      if (!data.ok) { setStatus(I18n.format("st.c101", '删除失败：{0}', (data.reason || data.code))); return; }
+      var extra = (data.referencedByTrees || []).length
+        ? L('ui.255', '　注意：这些树还在引用它 —— ') + data.referencedByTrees.join(L('ui.253', '、')) : '';
+      setStatus(I18n.format("st.c102", '已删除 {0}{1}', data.file, extra));
+      loadActions();
+    }).catch(function (error) { setStatus(I18n.format("st.c103", '删除请求失败：{0}', error.message)); });
+  }
+
+  /**
+   * 动作包编辑器：改**语义事件轨**（时间 / 类型 / 目标），其它轨道一字不动。
+   *
+   * 这是最该能手工改的地方 —— 录下来的是 `click:1010.6,64.83` 这种死像素，
+   * 改成 `click:list:WorldsList@世界名` 之后再也不会因为窗口尺寸失效。
+   */
+  function openActionEditor(file) {
+    api('/api/action/events?file=' + encodeURIComponent(file)).then(function (data) {
+      if (!data.ok) { setStatus(I18n.format("st.c104", '打不开动作包：{0}', (data.reason || data.code))); return; }
+      var events = (data.events || []).map(function (entry) {
+        return { t: entry.t, kind: entry.kind, detail: entry.detail };
+      });
+
+      var modal = openModal(L('editor.title', '动作包编辑') + L('ui.101', '　') + data.file, [
+        { label: L('editor.addEvent', '＋ 加一条'), run: function () {
+          var last = events.length ? events[events.length - 1].t + 0.4 : 0;
+          events.push({ t: Math.round(last * 1000) / 1000, kind: 'ui.click', detail: '' });
+          renderRows();
+        } },
+        { label: L('editor.save', '保存事件'), primary: true, run: function () { save(); } },
+        { label: L('editor.close', '关闭'), run: function (close) { close(); } }
+      ]);
+
+      var meta = document.createElement('p');
+      meta.className = 'hint';
+      meta.textContent = L('editor.file', '文件') + L('ui.251', '：') + data.file
+        + L('ui.101', '　') + L('editor.meta', '时长 / 帧数') + L('ui.251', '：') + (data.duration || 0) + 's / ' + (data.frames || 0)
+        + L('ui.101', '　') + L('editor.replayable', '可回放') + L('ui.251', '：') + (data.replayable ? '✔' : '✘')
+        + (data.writable ? '' : L('ui.256', '　（只读目录，不能保存）'));
+      modal.body.appendChild(meta);
+
+      var hint = document.createElement('p');
+      hint.className = 'hint';
+      hint.innerHTML = L('editor.hint', '');
+      modal.body.appendChild(hint);
+
+      var head = document.createElement('div');
+      head.className = 'event-row event-head';
+      head.innerHTML = '<span class="t">' + L('editor.t', '时间(s)') + '</span>'
+        + '<span class="kind">' + L('editor.kind', '类型') + '</span>'
+        + '<span class="detail">' + L('editor.detail', '目标 / 说明') + '</span>'
+        + '<span class="tools"></span>';
+      modal.body.appendChild(head);
+
+      var rows = document.createElement('div');
+      modal.body.appendChild(rows);
+
+      var issues = document.createElement('div');
+      issues.className = 'issues';
+      modal.body.appendChild(issues);
+
+      function renderRows() {
+        rows.innerHTML = '';
+        events.forEach(function (entry, index) {
+          rows.appendChild(eventRow(entry, index));
+        });
+      }
+
+      function eventRow(entry, index) {
+        var row = document.createElement('div');
+        row.className = 'event-row';
+
+        var time = document.createElement('input');
+        time.className = 't';
+        time.type = 'number';
+        time.step = '0.001';
+        time.min = '0';
+        time.value = entry.t;
+        time.addEventListener('change', function () {
+          var value = parseFloat(time.value);
+          entry.t = isNaN(value) || value < 0 ? 0 : value;
+        });
+        row.appendChild(time);
+
+        var kind = document.createElement('input');
+        kind.className = 'kind';
+        kind.type = 'text';
+        kind.value = entry.kind;
+        kind.addEventListener('change', function () { entry.kind = kind.value.trim() || 'ui.click'; });
+        row.appendChild(kind);
+
+        var detail = document.createElement('input');
+        detail.className = 'detail';
+        detail.type = 'text';
+        detail.value = entry.detail;
+        detail.placeholder = L('ui.257', 'Play / [路径]/Play / list:WorldsList@世界名');
+        detail.addEventListener('change', function () { entry.detail = detail.value; });
+        row.appendChild(detail);
+
+        var tools = document.createElement('span');
+        tools.className = 'tools';
+        // 拾取按钮：直接把这个动作包的某个点击改成"语义目标"
+        var pick = document.createElement('button');
+        pick.textContent = '🎯';
+        pick.title = L('ui.pick', '拾取界面元素');
+        pick.addEventListener('click', function () {
+          openUiTargetPicker(function (element) {
+            var target = uiElementTarget(element);
+            if (!target) return;
+            entry.detail = 'click:' + target;
+            entry.kind = 'ui.click';
+            renderRows();
+            setStatus(I18n.format("st.c105", '这条事件改成：click:{0}', target));
+          });
+        });
+        tools.appendChild(pick);
+
+        var up = document.createElement('button');
+        up.textContent = L('editor.up', '↑');
+        up.disabled = index === 0;
+        up.addEventListener('click', function () {
+          if (index === 0) return;
+          var swap = events[index - 1];
+          events[index - 1] = events[index];
+          events[index] = swap;
+          renderRows();
+        });
+        tools.appendChild(up);
+
+        var down = document.createElement('button');
+        down.textContent = L('editor.down', '↓');
+        down.disabled = index === events.length - 1;
+        down.addEventListener('click', function () {
+          if (index >= events.length - 1) return;
+          var swap = events[index + 1];
+          events[index + 1] = events[index];
+          events[index] = swap;
+          renderRows();
+        });
+        tools.appendChild(down);
+
+        var remove = document.createElement('button');
+        remove.textContent = L('editor.remove', '删');
+        remove.className = 'danger';
+        remove.addEventListener('click', function () {
+          events.splice(index, 1);
+          renderRows();
+        });
+        tools.appendChild(remove);
+
+        row.appendChild(tools);
+        return row;
+      }
+
+      function showIssues(list) {
+        issues.innerHTML = '';
+        (list || []).forEach(function (line) {
+          var div = document.createElement('div');
+          var text = String(line);
+          div.className = 'issue ' + (/^ERROR/.test(text) ? 'error'
+            : (/^WARN/.test(text) ? 'warning' : 'info'));
+          div.textContent = text;
+          issues.appendChild(div);
+        });
+      }
+
+      function save() {
+        if (!data.writable) { setStatus(L('st.077', '这是只读目录里的包，不能保存')); return; }
+        api('/api/action/events', {
+          method: 'POST',
+          body: JSON.stringify({ file: data.file, events: events })
+        }).then(function (saved) {
+          if (!saved.ok) { setStatus(I18n.format("st.c059", '保存失败：{0}', (saved.reason || saved.code))); return; }
+          setStatus(I18n.format('st.t041', '已保存并重新校验：{0}（{1} 条事件）',
+            saved.file, saved.eventCount));
+          showIssues(saved.issues);
+          loadActions();
+        }).catch(function (error) { setStatus(I18n.format("st.c106", '保存请求失败：{0}', error.message)); });
+      }
+
+      renderRows();
+      showIssues(data.issues);
+    }).catch(function (error) { setStatus(I18n.format("st.c107", '读取动作包失败：{0}', error.message)); });
   }
 
   // ---------------------------------------------------------------- 启动
 
   function boot() {
     applyTheme(themePreference());     // 先定主题，再画任何东西
+    I18n.setLanguage(languagePreference());   // 语言也先定下来，免得先闪一下中文
+    applyLanguage();
     $('btnTheme').addEventListener('click', toggleTheme);
+    $('btnLang').addEventListener('click', toggleLanguage);
+    // 动作包下拉的右键菜单（用户要求：编辑 / 删除 / 重命名）
+    $('actionSelect').addEventListener('contextmenu', function (event) {
+      var file = selectedActionFile();
+      if (!file) return;
+      showActionMenu(event, file);
+    });
+    $('actionSelect').title = L('action.select.title',
+      '包目录 PlayerAi\\BehaviorTrees 里的 .scatpak（右键：编辑 / 删除 / 重命名）');
     $('btnNew').addEventListener('click', newTree);
     $('btnUndo').addEventListener('click', undo);
     $('btnRedo').addEventListener('click', redo);
@@ -5707,7 +6584,9 @@
       markToggle.addEventListener('change', function () {
         try { window.localStorage.setItem('playerAiEditor.uiMark', markToggle.checked ? '1' : '0'); }
         catch (error) { /* 隐私模式存不了：无所谓，只影响下次默认值 */ }
-        setStatus(markToggle.checked ? '定位/点击时会在游戏里亮 2 秒红点' : '已关掉落点标记');
+        setStatus(markToggle.checked
+          ? L('st.019', '定位/点击时会在游戏里亮 2 秒红点')
+          : L('st.t029', '已关掉落点标记'));
       });
     }
     $('uiTargetInput').addEventListener('keydown', function (event) {
@@ -5719,7 +6598,7 @@
     $('btnActionCreate').addEventListener('click', createAction);
     $('actionSelect').addEventListener('change', function () {
       var action = findAction(selectedActionFile());
-      if (action) setStatus('动作包 ' + actionLabel(action));
+      if (action) setStatus(I18n.format("st.c108", '动作包 {0}', actionLabel(action)));
     });
     $('paletteFilter').addEventListener('input', function () {
       renderPalette($('paletteFilter').value.toLowerCase());
@@ -5758,7 +6637,7 @@
       .then(loadActions)
       .then(function () {
         if (state.packages.length) openPackage(state.packages[0].path);
-        else setStatus('没有找到任何 .scbtpak —— 先点"新建"造一棵，或启动游戏让它安装出厂示例。');
+        else setStatus(L('st.061', '没有找到任何 .scbtpak —— 先点"新建"造一棵，或启动游戏让它安装出厂示例。'));
         // 顺带把"游戏进程 / 控制通道"状态摸一遍：徽标要显示三态，
         // 而且如果游戏本来就在跑，能立刻反映成"已连上"
         return refreshGameProcess();
@@ -5769,7 +6648,7 @@
         refreshGameStatusQuiet();
         startStatusWatch();    // 之后低频盯着（游戏在页面之外起停也能跟上）
       })
-      .catch(function (error) { setStatus('初始化失败：' + error.message); });
+      .catch(function (error) { setStatus(I18n.format("st.c109", '初始化失败：{0}', error.message)); });
   }
 
   /**
@@ -5839,7 +6718,7 @@
     if (key === 'escape' && state.selectedGroupId) {
       event.preventDefault();
       state.selectedGroupId = null;
-      setStatus('已取消注释框选中');
+      setStatus(L('st.029', '已取消注释框选中'));
       renderTree();
       renderInspector();
       return;
@@ -5853,7 +6732,7 @@
     if (key === 'escape' && state.selectedWire) {
       event.preventDefault();
       state.selectedWire = null;
-      setStatus('已取消连线选中');
+      setStatus(L('st.032', '已取消连线选中'));
       renderTree();
       return;
     }
@@ -5873,7 +6752,7 @@
       event.preventDefault();
       var input = document.getElementById('nodeIdInput');
       if (input && input.focus) { input.focus(); if (input.select) input.select(); }
-      else setStatus('先选中一个节点再按 F2');
+      else setStatus(L('st.012', '先选中一个节点再按 F2'));
     }
     if (key === 'f3' || (key === 'f' && event.ctrlKey)) {
       event.preventDefault();
@@ -6068,6 +6947,21 @@
       uiMarkEnabled: uiMarkEnabled,
       showLocatedLine: showLocatedLine,
       shortReason: shortReason,
+      openUiTargetPicker: openUiTargetPicker,
+      pickUiTargetIntoTree: pickUiTargetIntoTree,
+      showActionMenu: showActionMenu,
+      openActionEditor: openActionEditor,
+      renameActionFile: renameActionFile,
+      deleteActionFile: deleteActionFile,
+      closeActionMenu: closeActionMenu,
+      i18n: I18n,
+      L: L,
+      nodeLabel: nodeLabel,
+      applyLanguage: applyLanguage,
+      toggleLanguage: toggleLanguage,
+      languagePreference: languagePreference,
+      paletteGroups: paletteGroups,
+      paletteGroupLabel: paletteGroupLabel,
       treeRunPrimary: treeRunPrimary,
       playThisTree: playThisTree,
       pushChangesToRunningTree: pushChangesToRunningTree,

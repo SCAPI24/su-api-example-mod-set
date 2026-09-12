@@ -682,6 +682,379 @@ namespace PlayerAiMod.Editor
             };
         }
 
+        // ------------------------------------------------ 动作包编辑（右键菜单：编辑/重命名/删除）
+
+        /// <summary>
+        /// `GET /api/action/events`：读出一个动作包的**语义事件轨**（`tracks/events.json`）。
+        ///
+        /// 用户要求（原话）："动作包我希望可以右键，里面第一个为编辑，可以进入动作包的编辑"。
+        /// 事件轨就是最该能编辑的那部分 —— 录下来的是 `click:1010.6,64.83` 这种死像素，
+        /// 手工改成 `click:list:WorldsList@世界名` 就再也不会因为窗口尺寸失效
+        /// （这一条正是之前"改了窗口就点空"的根治手段）。
+        ///
+        /// 逐帧输入轨（`tracks/input.bin`）与关键帧**原样保留**：只动事件，不动录制轨道。
+        /// </summary>
+        public Dictionary<string, object> ReadActionEvents(string nameOrPath)
+        {
+            string folder;
+            string path = ResolveAction(nameOrPath, out folder, out string resolveError);
+            if (path == null)
+                return Error("not_found", resolveError);
+
+            ScatActionPackage package;
+            PackageReport report;
+            if (!ScatValidator.TryLoad(path, out package, out report) || package == null)
+            {
+                return Error("invalid_package",
+                    "动作包读不出来：" + report.Summary());
+            }
+
+            var events = new List<Dictionary<string, object>>();
+            PackageValue list = package.Events != null ? package.Events.Get("events") : null;
+            if (list != null && list.IsArray)
+            {
+                for (int i = 0; i < list.Count; i++)
+                {
+                    PackageValue entry = list.Item(i);
+                    if (entry == null || !entry.IsObject)
+                        continue;
+                    events.Add(new Dictionary<string, object>(StringComparer.Ordinal)
+                    {
+                        ["index"] = i,
+                        ["t"] = entry.Get("t").AsNumber(0.0),
+                        ["kind"] = entry.Get("kind").AsString("ui.click"),
+                        ["detail"] = entry.Get("detail").AsString(string.Empty)
+                    });
+                }
+            }
+
+            var response = new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["ok"] = true,
+                ["file"] = System.IO.Path.GetFileName(path),
+                ["path"] = path,
+                ["folder"] = folder,
+                ["writable"] = IsWritableFolder(folder),
+                ["replayable"] = package.CanReplay,
+                ["frames"] = package.Frames,
+                ["duration"] = package.Duration,
+                ["sampleRate"] = package.Manifest != null ? package.Manifest.SampleRate : 60,
+                ["events"] = events,
+                ["eventCount"] = events.Count,
+                ["issues"] = ActionIssuesOf(folder, path)
+            };
+            if (package.Manifest != null)
+            {
+                response["id"] = package.Manifest.Id;
+                response["name"] = package.Manifest.Name;
+                response["recordedUtc"] = package.Manifest.RecordedUtc;
+            }
+            return response;
+        }
+
+        /// <summary>
+        /// `POST /api/action/events`：把编辑过的事件轨写回同一个包（**其它轨道一字不动**）。
+        ///
+        /// 写盘策略与树的保存一致：先写临时文件再替换，中途失败不会留下半个包。
+        /// 写完立刻重新校验并把报告带回去（编辑器就能直接显示"这条改成 list: 之后还能不能回放"）。
+        /// </summary>
+        public Dictionary<string, object> SaveActionEvents(string nameOrPath, PackageValue eventsJson)
+        {
+            string folder;
+            string path = ResolveAction(nameOrPath, out folder, out string resolveError);
+            if (path == null)
+                return Error("not_found", resolveError);
+            if (!IsWritableFolder(folder))
+                return Error("read_only", "这个目录不可写（只读包目录）：" + folder);
+            if (eventsJson == null)
+                return Error("invalid_argument", "缺少 events 正文");
+
+            ScatActionPackage package;
+            PackageReport report;
+            if (!ScatValidator.TryLoad(path, out package, out report) || package == null)
+                return Error("invalid_package", "动作包读不出来：" + report.Summary());
+
+            PackageValue normalized = NormalizeEvents(eventsJson, out string normalizeError);
+            if (normalized == null)
+                return Error("invalid_argument", normalizeError);
+
+            byte[] bytes = ScatPackage.ToBytes(package.Manifest, package.Track, normalized,
+                package.Keyframes);
+            string temp = path + ".tmp";
+            try
+            {
+                File.WriteAllBytes(temp, bytes);
+                if (File.Exists(path))
+                    File.Delete(path);
+                File.Move(temp, path);
+            }
+            catch (Exception exception)
+            {
+                TryDelete(temp);
+                return Error("write_failed", "写回动作包失败：" + exception.Message);
+            }
+
+            Dictionary<string, object> result = ReadActionEvents(path);
+            if (Equals(result["ok"], true))
+            {
+                result["saved"] = true;
+                result["bytes"] = bytes.Length;
+            }
+            return result;
+        }
+
+        /// <summary>`POST /api/action/rename`：重命名动作包文件（同时把 manifest 的 name 跟着改）。</summary>
+        public Dictionary<string, object> RenameAction(string nameOrPath, string newName)
+        {
+            string folder;
+            string path = ResolveAction(nameOrPath, out folder, out string resolveError);
+            if (path == null)
+                return Error("not_found", resolveError);
+            if (!IsWritableFolder(folder))
+                return Error("read_only", "这个目录不可写（只读包目录）：" + folder);
+            if (string.IsNullOrWhiteSpace(newName))
+                return Error("invalid_argument", "新名字不能为空");
+
+            string target = Sanitize(newName);
+            if (!string.IsNullOrEmpty(target))
+                target += PackageRoots.ActionExtension;
+            if (string.IsNullOrEmpty(target))
+                return Error("invalid_argument", "新名字里没有可用字符：" + newName);
+
+            string destination = System.IO.Path.Combine(folder, target);
+            string oldFile = System.IO.Path.GetFileName(path);
+            if (string.Equals(oldFile, target, StringComparison.OrdinalIgnoreCase))
+            {
+                return new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    ["ok"] = true,
+                    ["file"] = oldFile,
+                    ["renamed"] = false,
+                    ["reason"] = "名字没变"
+                };
+            }
+            if (File.Exists(destination))
+                return Error("exists", "同名动作包已经存在：" + target);
+
+            // manifest 里的 name 跟着改：编辑器列表与树里的引用都按这个名字看。
+            ScatActionPackage package;
+            PackageReport report;
+            if (ScatValidator.TryLoad(path, out package, out report) && package != null
+                && package.Manifest != null)
+            {
+                package.Manifest.Name = System.IO.Path.GetFileNameWithoutExtension(target);
+                try
+                {
+                    File.WriteAllBytes(path, ScatPackage.ToBytes(package.Manifest, package.Track,
+                        package.Events, package.Keyframes));
+                }
+                catch (Exception exception)
+                {
+                    return Error("write_failed", "改名时写回 manifest 失败：" + exception.Message);
+                }
+            }
+
+            try
+            {
+                File.Move(path, destination);
+            }
+            catch (Exception exception)
+            {
+                return Error("write_failed", "重命名失败：" + exception.Message);
+            }
+
+            return new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["ok"] = true,
+                ["renamed"] = true,
+                ["from"] = oldFile,
+                ["file"] = target,
+                ["path"] = destination,
+                ["referencedByTrees"] = FindTreesReferencing(folder, oldFile)
+            };
+        }
+
+        /// <summary>
+        /// `POST /api/action/delete`：删除动作包文件。
+        /// 只允许删**可写包目录**里的文件（绝不碰只读目录/游戏安装目录）。
+        /// </summary>
+        public Dictionary<string, object> DeleteAction(string nameOrPath)
+        {
+            string folder;
+            string path = ResolveAction(nameOrPath, out folder, out string resolveError);
+            if (path == null)
+                return Error("not_found", resolveError);
+            if (!IsWritableFolder(folder))
+                return Error("read_only", "这个目录不可写（只读包目录）：" + folder);
+
+            string file = System.IO.Path.GetFileName(path);
+            List<string> referenced = FindTreesReferencing(folder, file);
+            try
+            {
+                File.Delete(path);
+            }
+            catch (Exception exception)
+            {
+                return Error("write_failed", "删除失败：" + exception.Message);
+            }
+
+            return new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["ok"] = true,
+                ["deleted"] = true,
+                ["file"] = file,
+                ["referencedByTrees"] = referenced
+            };
+        }
+
+        /// <summary>把前端发来的事件数组归一成合法的事件轨（时间取非负、按时间排好、字段补全）。</summary>
+        private static PackageValue NormalizeEvents(PackageValue eventsJson, out string error)
+        {
+            error = null;
+            PackageValue list = eventsJson;
+            if (eventsJson.IsObject)
+                list = eventsJson.Get("events");
+            if (list == null || !list.IsArray)
+            {
+                error = "events 必须是数组，或 {\"events\":[...]} 这种对象";
+                return null;
+            }
+
+            var rows = new List<KeyValuePair<double, PackageValue>>();
+            for (int i = 0; i < list.Count; i++)
+            {
+                PackageValue entry = list.Item(i);
+                if (entry == null || !entry.IsObject)
+                    continue;
+                string kind = entry.Get("kind").AsString("ui.click");
+                string detail = entry.Get("detail").AsString(null);
+                if (string.IsNullOrEmpty(kind) || string.IsNullOrEmpty(detail))
+                {
+                    error = "第 " + (i + 1) + " 条事件缺 kind 或 detail";
+                    return null;
+                }
+                double time = entry.Get("t").AsNumber(0.0);
+                if (time < 0.0)
+                    time = 0.0;
+
+                PackageValue normalized = PackageValue.Object();
+                normalized.Set("t", PackageValue.Number(time));
+                normalized.Set("kind", PackageValue.Str(kind));
+                normalized.Set("detail", PackageValue.Str(detail));
+                rows.Add(new KeyValuePair<double, PackageValue>(time, normalized));
+            }
+
+            // 时间顺序即执行顺序：回放器是"到点就发"，乱序会让同帧的两条事件顺序不确定。
+            rows.Sort(delegate (KeyValuePair<double, PackageValue> a,
+                KeyValuePair<double, PackageValue> b)
+            {
+                return a.Key.CompareTo(b.Key);
+            });
+
+            PackageValue root = PackageValue.Object();
+            root.Set("format", PackageValue.Str("scat-events"));
+            root.Set("version", PackageValue.Number(1));
+            PackageValue output = PackageValue.Array();
+            for (int i = 0; i < rows.Count; i++)
+                output.Add(rows[i].Value);
+            root.Set("events", output);
+            return root;
+        }
+
+        /// <summary>校验报告里的 issues（编辑器直接显示给用户）。</summary>
+        private static object ActionIssuesOf(string folder, string path)
+        {
+            try
+            {
+                Dictionary<string, object> report = ScatLibrary.Validate(folder, path);
+                object issues;
+                return report.TryGetValue("issues", out issues) ? issues : new List<string>();
+            }
+            catch (Exception)
+            {
+                return new List<string>();
+            }
+        }
+
+        /// <summary>这个目录能不能被编辑器改（包目录 = 实例根，可写）。</summary>
+        private bool IsWritableFolder(string folder)
+        {
+            if (string.IsNullOrEmpty(folder))
+                return false;
+            List<PackageRoot> roots = ActionRoots();
+            for (int i = 0; i < roots.Count; i++)
+            {
+                if (string.Equals(roots[i].Path, folder, StringComparison.OrdinalIgnoreCase))
+                    return roots[i].Writable;
+            }
+            return false;
+        }
+
+        /// <summary>哪些树还在引用这个动作包（重命名/删除时给用户一句实话）。</summary>
+        private List<string> FindTreesReferencing(string folder, string actionFile)
+        {
+            var found = new List<string>();
+            string bare = System.IO.Path.GetFileNameWithoutExtension(actionFile);
+            string[] trees;
+            try
+            {
+                trees = Directory.GetFiles(folder, "*" + PackageRoots.Extension);
+            }
+            catch (Exception)
+            {
+                return found;
+            }
+
+            for (int i = 0; i < trees.Length; i++)
+            {
+                string text;
+                try
+                {
+                    text = ReadTreeText(trees[i]);
+                }
+                catch (Exception)
+                {
+                    continue;
+                }
+                if (string.IsNullOrEmpty(text))
+                    continue;
+                if (text.IndexOf(""" + bare + """, StringComparison.OrdinalIgnoreCase) >= 0
+                    || text.IndexOf(""" + actionFile + """, StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    found.Add(System.IO.Path.GetFileName(trees[i]));
+                }
+            }
+            return found;
+        }
+
+        /// <summary>取树包的 tree.json 文本（用同一个加载器读，读不出来就返回 null）。</summary>
+        private string ReadTreeText(string treePath)
+        {
+            try
+            {
+                ScbtPackageSet set = PackageLoader.Load(treePath, m_options);
+                if (set == null || set.Root == null || set.Root.Tree == null)
+                    return null;
+                return set.Root.Tree.ToValue().ToJson(false);
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
+        private static void TryDelete(string path)
+        {
+            try
+            {
+                if (File.Exists(path))
+                    File.Delete(path);
+            }
+            catch (Exception)
+            {
+            }
+        }
+
         /// <summary>`POST /api/action/validate`：校验一个动作包（结构 + 能不能回放）。</summary>
         public Dictionary<string, object> ValidateAction(string nameOrPath)
         {
@@ -817,25 +1190,22 @@ namespace PlayerAiMod.Editor
                     continue;
                 var row = new Dictionary<string, object>(StringComparer.Ordinal);
                 foreach (string member in item.MemberNames)
-                {
-                    PackageValue child = item.Get(member);
-                    if (child.IsObject)
-                    {
-                        var nested = new Dictionary<string, object>(StringComparer.Ordinal);
-                        foreach (string inner in child.MemberNames)
-                            nested[inner] = PlainValue(child.Get(inner));
-                        row[member] = nested;
-                    }
-                    else
-                    {
-                        row[member] = PlainValue(child);
-                    }
-                }
+                    row[member] = PlainValue(item.Get(member));
                 list.Add(row);
             }
             return list;
         }
 
+        /// <summary>
+        /// JSON 值 → 前端能**直接用**的 CLR 结构（数组给 List、对象给 Dictionary）。
+        ///
+        /// 为什么不能像以前那样把数组/对象 `ToJson()` 成字符串：列表控件的每一行
+        /// 就在 `list.items` 里，一旦它变成文本，前端 `list.items.forEach(...)` 立刻抛
+        /// `is not a function` —— 用户实测：**在地图选择界面点「拾取界面元素」整个面板报错**
+        /// （字符串也有 `.length`，所以前端那个 `items.length` 守卫拦不住，只会更隐蔽）。
+        /// 实测证据：`/api/game/ui/elements` 里 `list.items` 的类型是 string，
+        /// 内容是 `[{"index":0,"text":"Rebritish",...}]`；而游戏侧原始回包里它是真数组。
+        /// </summary>
         private static object PlainValue(PackageValue value)
         {
             if (value == null)
@@ -846,8 +1216,20 @@ namespace PlayerAiMod.Editor
                 return value.AsNumber();
             if (value.IsString)
                 return value.AsString();
-            if (value.IsArray || value.IsObject)
-                return value.ToJson(false);
+            if (value.IsArray)
+            {
+                var items = new List<object>();
+                for (int i = 0; i < value.Count; i++)
+                    items.Add(PlainValue(value.Item(i)));
+                return items;
+            }
+            if (value.IsObject)
+            {
+                var members = new Dictionary<string, object>(StringComparer.Ordinal);
+                foreach (string member in value.MemberNames)
+                    members[member] = PlainValue(value.Get(member));
+                return members;
+            }
             return null;
         }
 

@@ -35,6 +35,9 @@ namespace PlayerAiMod
         private PackageRoots m_packageRoots;
         private PackageReloader m_reloader;
         private bool m_autoLoadPending;
+
+        /// <summary>世界外那一帧释放过一次没有（见 TickFrameStart 里的注释）。</summary>
+        private bool m_releasedForNoProject;
         private AiRecordingSession m_recording;
         private TreeLibrary m_library;
         private ScatPlayer m_actionPlayer;
@@ -894,9 +897,20 @@ namespace PlayerAiMod
             {
                 // 没有世界：把角色输入都释放掉（避免残留"按住 W"）。
                 // 控制器本身刚刚已经 tick 过了 —— 它现在的路由是"只点 UI"。
-                ReleaseAll();
+                //
+                // ⚠️ **只在刚回到世界外的那一帧释放一次**：这个分支在主菜单是**每帧**都会走到的常态，
+                //    而"释放"会清掉引擎输入数组里的按下沿；真实鼠标的按下沿写在同一个数组里，
+                //    每帧清一次 → 玩家在主菜单点按钮只有按下视觉、永远派生不出 Click
+                //    （用户实测：进过世界、Quit 回主菜单后，四个按钮几乎点不动）。
+                if (!m_releasedForNoProject)
+                {
+                    ReleaseAll();
+                    m_releasedForNoProject = true;
+                }
                 return;
             }
+
+            m_releasedForNoProject = false;
 
             TryAutoLoadTree();
         }
