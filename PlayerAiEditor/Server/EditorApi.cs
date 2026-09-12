@@ -238,6 +238,8 @@ namespace PlayerAiMod.Editor
             {
                 PackageRoot owner = m_roots.OwnerOf(path);
                 result["writable"] = owner != null && owner.Writable;
+                // 前端用它区分"实例目录"和"Mod 分发目录"，后者保存后会提示可能被 Mod 更新覆盖
+                result["root"] = owner != null ? owner.Kind : null;
                 result["manifest"] = set.Root.Manifest != null
                     ? set.Root.Manifest.ToValue()
                     : PackageValue.Object();
@@ -287,9 +289,9 @@ namespace PlayerAiMod.Editor
             PackageRoot owner = m_roots.OwnerOf(path);
             if (owner == null || !owner.Writable)
             {
-                return Error("readonly", "该包在只读目录（Mods/PlayerAiMod/…）。"
-                    + "想改就把它复制到实例目录：" + (m_roots.InstanceRoot != null
-                        ? m_roots.InstanceRoot.Path : "<no instance folder>"));
+                return Error("outside_roots",
+                    "这个路径不在允许的包目录里（只允许写：实例目录 <实例根>/PlayerAi/BehaviorTrees/ "
+                    + "与 Mod 分发目录 <实例根>/Mods/PlayerAiMod/PlayerAi/BehaviorTrees/）。");
             }
 
             if (File.Exists(path) && !overwrite)
@@ -344,6 +346,10 @@ namespace PlayerAiMod.Editor
                 ["bytes"] = bytes.Length,
                 ["hash"] = hash,
                 ["writable"] = true,
+                // 写回 Mod 分发目录是允许的（编辑器要能改游戏正在用的那份包），
+                // 但那也是最容易被 Mod 更新覆盖的地方 —— 把事实交给前端去提醒用户。
+                ["warnsModFolder"] = string.Equals(owner.Kind, "mod", StringComparison.Ordinal),
+                ["root"] = owner.Kind,
                 ["validation"] = new Dictionary<string, object>(StringComparer.Ordinal)
                 {
                     ["errors"] = report.ErrorCount,
@@ -437,6 +443,189 @@ namespace PlayerAiMod.Editor
             catch (Exception exception)
             {
                 return GameError("推送热重载", exception);
+            }
+        }
+
+        // ---------------------------------------------------------------- 嵌套包（Task.Subtree）
+
+        /// <summary>
+        /// `GET /api/subtree?path=&lt;包&gt;&amp;node=&lt;节点 id&gt;`：把 `Task.Subtree` 引用的那个包
+        /// **按游戏内同一套解析规则**找出来，并返回它里面那个入口节点的原文。
+        ///
+        /// 解析规则与 `TreeCompiler.ResolveSubtree` 完全一致（不自己另写一套）：
+        ///   · `properties.package` 写的是**归属包的 `manifest.references` 里的引用 id**，可带 `#节点id`；
+        ///   · 引用目标由 `LoadedPackage.FindReference` 给出（包加载时就已经把引用闭包读进来了）。
+        /// 所以"编辑器里展开出来的东西"和"游戏里真的会跑的东西"是同一个东西。
+        /// </summary>
+        public Dictionary<string, object> ReadSubtree(string nameOrPath, string nodeId)
+        {
+            string path = Resolve(nameOrPath, out string resolveError);
+            if (path == null)
+                return Error("resolve", resolveError);
+            if (string.IsNullOrEmpty(nodeId))
+                return Error("invalid_argument", "缺少 node 参数");
+
+            ScbtPackageSet set = PackageLoader.Load(path, m_options);
+            if (set.Root == null)
+                return Error("unreadable", "包读不出来：" + set.Summarize(8)[0]);
+
+            // 在**所有已加载的包**里找这个节点（节点可能在某个被引用的包里）
+            for (int i = 0; i < set.Packages.Count; i++)
+            {
+                LoadedPackage owner = set.Packages[i];
+                ScbtNodeDoc doc = owner.Tree != null ? owner.Tree.Find(nodeId) : null;
+                if (doc == null)
+                    continue;
+
+                var result = new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    ["ok"] = true,
+                    ["ownerFile"] = owner.FileName,
+                    ["ownerId"] = owner.PackageId,
+                    ["nodeId"] = nodeId,
+                    ["nodeType"] = doc.Type
+                };
+
+                string reference = ReadProperty(doc, "package");
+                result["reference"] = reference;
+                if (string.IsNullOrEmpty(reference))
+                {
+                    result["ok"] = false;
+                    result["reason"] = "这个节点没有 properties.package（不是嵌套引用，或者属性还没填）";
+                    return result;
+                }
+
+                string referenceId = reference;
+                string entryId = null;
+                int separator = reference.IndexOf('#');
+                if (separator >= 0)
+                {
+                    if (separator + 1 < reference.Length)
+                        entryId = reference.Substring(separator + 1);
+                    referenceId = reference.Substring(0, separator);
+                }
+
+                LoadedPackage referenced = owner.FindReference(referenceId);
+                if (referenced == null)
+                {
+                    result["ok"] = false;
+                    result["reason"] = "引用 '" + referenceId + "' 没解析出包（"
+                        + owner.FileName + " 的 manifest.references 里可能没写它）";
+                    result["references"] = DescribeReferences(owner);
+                    return result;
+                }
+
+                if (string.IsNullOrEmpty(entryId) && referenced.Manifest != null)
+                    entryId = referenced.Manifest.Entry;
+
+                result["resolvedFile"] = referenced.Path;
+                result["resolvedId"] = referenced.PackageId;
+                result["entry"] = entryId;
+                result["references"] = DescribeReferences(owner);
+                result["availableEntries"] = DescribeNodeIds(referenced);
+
+                ScbtNodeDoc entry = referenced.Tree != null ? referenced.Tree.ResolveEntry(entryId) : null;
+                if (entry == null)
+                {
+                    result["ok"] = false;
+                    result["reason"] = "被引用的包 " + referenced.FileName + " 里没有节点 '" + entryId + "'";
+                    return result;
+                }
+
+                // 返回**被引用包的整棵树**（前端按 entry 找到那棵子树即可）：节点对象本身没有
+                // 序列化入口，而整棵树正是 game 侧编译时用的同一份数据。
+                result["tree"] = referenced.Tree.ToValue();
+                result["nodes"] = referenced.Tree.NodeCount;
+                return result;
+            }
+
+            return Error("not_found", "在本包及其被引用的包里都没找到节点：" + nodeId);
+        }
+
+        private static string ReadProperty(ScbtNodeDoc doc, string name)
+        {
+            if (doc == null || doc.Properties == null || !doc.Properties.IsObject)
+                return null;
+            return doc.Properties.Get(name).AsString(null);
+        }
+
+        private static List<string> DescribeReferences(LoadedPackage owner)
+        {
+            var list = new List<string>();
+            if (owner == null || owner.Manifest == null)
+                return list;
+            for (int i = 0; i < owner.Manifest.References.Count; i++)
+            {
+                ScbtReference reference = owner.Manifest.References[i];
+                bool resolved = i < owner.ReferenceTargets.Count && owner.ReferenceTargets[i] != null;
+                list.Add(reference.Id + (resolved ? " → " + owner.ReferenceTargets[i].FileName : " (没解析出来)"));
+            }
+            return list;
+        }
+
+        private static List<string> DescribeNodeIds(LoadedPackage package)
+        {
+            var list = new List<string>();
+            if (package == null || package.Tree == null || package.Tree.Root == null)
+                return list;
+            CollectNodeIds(package.Tree.Root, list, 32);
+            return list;
+        }
+
+        private static void CollectNodeIds(ScbtNodeDoc node, List<string> into, int limit)
+        {
+            if (node == null || into.Count >= limit)
+                return;
+            into.Add(node.Id + " (" + node.Type + ")");
+            for (int i = 0; i < node.Children.Count && into.Count < limit; i++)
+                CollectNodeIds(node.Children[i], into, limit);
+        }
+
+        // ---------------------------------------------------------------- 实时监视（P3）
+
+        /// <summary>
+        /// `GET /api/game/live`：一次把"编辑器要看的活的东西"问全 ——
+        /// `ai.status`（模式/活动树/暂停）+ `ai.tree.snapshot`（活动节点路径、tick、上次结果）
+        /// + `ai.blackboard`（键值）。
+        ///
+        /// 为什么合成一个端点：监视面板 600ms 轮询一次，三个命令各开一次 TCP 会让
+        /// 游戏侧的命令线程白忙；合起来一次往返就够，而且三份数据是**同一时刻**的。
+        /// </summary>
+        public Dictionary<string, object> LiveStatus()
+        {
+            try
+            {
+                var result = new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    ["ok"] = true,
+                    ["status"] = m_game.QueryStatus(),
+                    ["tree"] = m_game.QueryTreeSnapshot(),
+                    ["blackboard"] = m_game.QueryBlackboard()
+                };
+                return result;
+            }
+            catch (Exception exception)
+            {
+                return GameError("读取实时状态", exception);
+            }
+        }
+
+        /// <summary>`POST /api/game/pause|resume`：从编辑器里暂停/继续行为树。</summary>
+        public Dictionary<string, object> SetPaused(bool paused)
+        {
+            try
+            {
+                Dictionary<string, object> result = m_game.SetPaused(paused);
+                return new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    ["ok"] = true,
+                    ["paused"] = paused,
+                    ["game"] = result
+                };
+            }
+            catch (Exception exception)
+            {
+                return GameError(paused ? "暂停行为树" : "继续行为树", exception);
             }
         }
 

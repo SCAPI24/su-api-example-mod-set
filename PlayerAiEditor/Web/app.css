@@ -1,15 +1,85 @@
-/* PlayerAi 行为树编辑器样式（零依赖，随 exe 内嵌） */
 :root {
+  /* 深色（默认）—— 这一组是唯一事实来源，浅色块由同一张表生成 */
+  --node-shadow: rgba(0, 0, 0, .35);
+  --group-blue-head: #2f6fae; --group-blue-line: #3d80c4; --group-blue-bg: rgba(47, 111, 174, .12);
+  --group-purple-head: #6a4f9c; --group-purple-line: #7d60b3; --group-purple-bg: rgba(106, 79, 156, .12);
+  --group-green-head: #2f7350; --group-green-line: #3d8a62; --group-green-bg: rgba(47, 115, 80, .12);
+  --group-orange-head: #a06a24; --group-orange-line: #b87e2f; --group-orange-bg: rgba(160, 106, 36, .12);
+  --group-gray-head: #4a5666; --group-gray-line: #5c6a7d; --group-gray-bg: rgba(74, 86, 102, .12);
   --bg: #14171c;
   --pane: #1b1f26;
   --pane2: #222833;
   --line: #2c3442;
   --fg: #dfe6f0;
+  --fg-soft: #cbd6e6;
   --dim: #93a1b5;
   --accent: #4ea1ff;
+  --accent-bg: #1d4f86;
+  --accent-line: #2a6cb5;
+  --accent-fg: #cfe4ff;
   --ok: #4ad07a;
+  --ok-line: #276b45;
   --warn: #e8b34a;
+  --warn-line: #6b5620;
   --err: #ef6b6b;
+  --row-hover: #232b36;
+  --row-drop-child: #1c3550;
+  --row-drop-sibling: #20303f;
+  --row-multi: #24405c;
+  --multi-bar-bg: #1b2733;
+  --folded-bg: #171b21;
+  --dash: #3a4756;
+  --path: #3f7fbf;
+  --err-bg: #4a2222;
+  --err-strong-bg: #4a2020;
+  --err-fg: #ffc9c9;
+  --warn-bg: #463a1c;
+  --warn-strong-bg: #3d3418;
+  --warn-fg: #ffe3a8;
+  --info-bg: #22364a;
+  --info-fg: #bcd8f5;
+  --live-bg: #1c3f2a;
+  --live-strong-bg: #1f5133;
+  --live-strong-fg: #b9f0cd;
+  --issue-error-bg: #3a2020;
+  --issue-warn-bg: #38301b;
+  --issue-info-bg: #1f2c3a;
+  --action-bg: #1e2a22;
+  --action-line: #3d5a3f;
+  --canvas-bg: #101318;
+  --grid-minor: rgba(255, 255, 255, .035);
+  --grid-major: rgba(255, 255, 255, .06);
+  --wire: #55708e;
+  --order: #8fa3ba;
+  --node-bg: #1b2028;
+  --node-fg: #cfd9e6;
+  --node-fg-strong: #f0f5fb;
+  --node-fg-dim: #b9c6d6;
+  --node-ref: #9fb6d4;
+  --caption-bg: #232a34;
+  --head-fg: #eef3fa;
+  --head-root: #6b5220;
+  --head-composite: #24557f;
+  --head-task: #2c5340;
+  --preview-bg: #171c23;
+  --preview-fg: #aebbcb;
+  --glyph-fg: #eaf1f9;
+  --chip: #2b3441;
+  --pin-bg: #0e1218;
+  --pin-line: #7b8ea6;
+  --pin-out: #79b8ff;
+  --pin-in: #9aa7b8;
+  --tag-composite: #2c4a6b;
+  --tag-task: #29452f;
+  --tag-root: #4a3b22;
+  --marquee-bg: rgba(78, 161, 255, .12);
+  --minimap-bg: rgba(12, 15, 19, .82);
+  --mm-view-bg: rgba(78, 161, 255, .16);
+  --mm-box: #4a5a70;
+  --mm-root: #8a6a2a;
+  --mm-composite: #2f6fa8;
+  --mm-task: #3a7355;
+  --mm-member: #5a7ea8;
 }
 * { box-sizing: border-box; }
 body {
@@ -43,7 +113,7 @@ button {
   cursor: pointer;
 }
 button:hover { border-color: var(--accent); }
-button.primary { background: #1d4f86; border-color: #2a6cb5; }
+button.primary { background: var(--accent-bg); border-color: var(--accent-line); }
 button:disabled { opacity: .45; cursor: not-allowed; }
 select, input[type=text], input[type=number] {
   background: var(--pane2);
@@ -60,12 +130,18 @@ select, input[type=text], input[type=number] {
   border: 1px solid var(--line);
   color: var(--dim);
 }
-.badge.dirty { color: var(--warn); border-color: #6b5620; }
-.badge.live { color: var(--ok); border-color: #276b45; }
+.badge.dirty { color: var(--warn); border-color: var(--warn-line); }
+.badge.live { color: var(--ok); border-color: var(--ok-line); }
 main {
   flex: 1;
   display: grid;
-  grid-template-columns: 260px 1fr 320px;
+  /* 列宽既能伸也能缩，窄窗口时侧栏跟着缩，别把中间的画布挤没 */
+  grid-template-columns: minmax(170px, 260px) minmax(0, 1fr) minmax(220px, 320px);
+  /* 行高必须**钉死**在可用高度上：grid 的 auto 行是按内容撑高的，窗口一矮
+     （或者树一长）行就顶破容器底部，多出来的部分直接被视口切掉 —— 侧栏和画布
+     都不会滚动，看着就是"缩小窗口后没有重新自适应，只有全屏才是对的"。
+     minmax(0,1fr) 让行永远等于 main 的高度，内部的 overflow:auto 才真的生效。 */
+  grid-template-rows: minmax(0, 1fr);
   min-height: 0;
 }
 .pane {
@@ -73,7 +149,36 @@ main {
   overflow: auto;
   border-right: 1px solid var(--line);
   min-height: 0;
+  /* 允许被压到比内容更窄（否则长 id / 长路径会把列撑开） */
+  min-width: 0;
 }
+/* 画布这一栏自己撑满高度，节点图的滚动区跟着可用高度走（而不是写死 60vh）。
+   position:relative 是给小地图铺在右下角用的。 */
+#canvas { display: flex; flex-direction: column; min-height: 0; position: relative; }
+#treeRoot { flex: 1; min-height: 0; overflow: auto; }
+
+/* 画布栏的表头（搜索行、诊断行、两行操作提示）必须**高度稳定**。
+   这是实测出来的：提示文字一换行，下面画布区的高度就跟着变（真浏览器里量到
+   900px 高的窗口里画布只剩 260px），而高度一变 ResizeObserver 就触发
+   "自动适应 → 重画"，重画又会改诊断行的数字 → 再触发……而且它还会在**拖拽过程中**
+   把鼠标下面的元素换掉。所以这些提示统一压成一行，窄了用省略号，完整文字放 title。 */
+#canvas .group { margin-bottom: 4px; }
+#canvas .group .hint {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+#canvas h2 { margin: 0 0 4px; }
+/* 画布栏的标题里带着**整条包路径**，宽度一窄就换行 —— 同样会改变画布区高度、
+   同样会触发上面说的"自动适应 → 重画"。压成一行 + 省略号，完整路径放 title。 */
+#canvas h2 {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#canvas h2 #canvasHint { font-weight: 400; }
 #inspector { border-right: none; border-left: 1px solid var(--line); }
 .pane h2 {
   margin: 0 0 8px;
@@ -99,7 +204,7 @@ main {
   font-size: 12px;
 }
 /* 动作包（物料区里的一类"材料"，不是节点类型） */
-.palette-item.action { border-color: #3d5a3f; background: #1e2a22; }
+.palette-item.action { border-color: var(--action-line); background: var(--action-bg); }
 .palette-item.action:hover { border-color: var(--ok); }
 .palette-item.helper { border-style: dashed; }
 .packages-box {
@@ -114,7 +219,7 @@ main {
   align-items: center;
   gap: 5px;
   font-size: 12px;
-  color: #cbd6e6;
+  color: var(--fg-soft);
 }
 .package-item.dead { color: var(--warn); }
 .package-item.readonly { opacity: .85; }
@@ -133,21 +238,427 @@ main {
   border-radius: 5px;
   cursor: pointer;
 }
-.node-row:hover { background: #232b36; }
-.node.selected > .node-row { background: #1d4f86; }
+.node-row:hover { background: var(--row-hover); }
+.node.selected > .node-row { background: var(--accent-bg); }
+
+/* 拖拽：拖动源半透明，落点分"挂成子节点"（实线框）与"插成兄弟"（上下边高亮） */
+.node-row.dragging { opacity: .45; }
+.node-row.drop-child { outline: 2px solid var(--accent); outline-offset: -2px; background: var(--row-drop-child); }
+.node-row.drop-sibling { box-shadow: inset 0 -2px 0 var(--accent); background: var(--row-drop-sibling); }
+.palette-item.dragging { opacity: .45; }
+
+/* 校验问题：可点的行 + 画布上的标记 */
+.issue.jumpable { cursor: pointer; text-decoration: underline dotted; }
+.issue.jumpable:hover { filter: brightness(1.25); }
+.issue-flag {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  margin-left: auto;
+}
+.issue-flag.error { background: var(--err-bg); color: var(--err-fg); }
+.issue-flag.warning { background: var(--warn-bg); color: var(--warn-fg); }
+
+/* 实时监视：活动路径高亮 + 当前节点 */
+.node-row.live-path { box-shadow: inset 3px 0 0 var(--path); }
+.node-row.live-active { background: var(--live-bg); box-shadow: inset 3px 0 0 var(--ok); }
+.live-flag {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  margin-left: auto;
+  background: var(--info-bg);
+  color: var(--info-fg);
+}
+.live-flag.tip { background: var(--live-strong-bg); color: var(--live-strong-fg); }
+.live-value { color: var(--fg-soft); font-size: 12px; }
+.bb-row {
+  font-size: 12px;
+  color: var(--fg-soft);
+  padding: 2px 4px;
+  border-bottom: 1px dashed var(--line);
+}
+#liveBox h3 { margin: 8px 0 4px; font-size: 12px; color: var(--dim); font-weight: 500; }
+
+/* 嵌套包：引用标记 + 就地展开（只读视图） */
+.node-ref { color: var(--node-ref); font-size: 12px; }
+button.mini { padding: 1px 6px; font-size: 11px; border-radius: 4px; }
+.node-children.folded {
+  border-left: 2px dashed var(--dash);
+  background: var(--folded-bg);
+  padding: 4px 6px;
+  border-radius: 5px;
+}
+.folded-head { color: var(--dim); font-size: 11.5px; margin-bottom: 3px; }
+.node-row.folded-node { opacity: .85; cursor: default; }
+
+/* 搜索命中 */
+.node-row.search-hit { outline: 1px solid var(--warn); outline-offset: -1px; }
+#nodeSearch { flex: 1; min-width: 120px; }
+
+/* 节点图视图：一张 SVG 画连线，方框绝对定位；两个视图共用同一份布局数据。
+   高度必须**铺满**画布栏（height:100%），不能按内容撑高：
+   实测发现它原来是按内容撑的 —— 于是"适应窗口"读到的"可用高度"其实就是它自己上一次
+   算出来的高度（自反馈），缩放数会在 104% / 108% 之间乱跳；而且图比画布小时，
+   下面那片空白区连滚动条都不在，看着就像画布只有一小条。
+   （原来写死 60vh 也是同类问题：窗口一小就露出画布外面。） */
+.graph-scroller {
+  overflow: auto;
+  flex: 1;
+  height: 100%;
+  min-height: 120px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  cursor: grab;
+}
+.graph-scroller.panning { cursor: grabbing; }
+/* 关掉浏览器的"滚动锚定"：拖动节点会让内容尺寸变化，浏览器会自作主张调 scrollTop
+   去"保持锚点可见"，结果拖到一半画布自己在垂直方向平移（实测：canvasTop 119 → 72）。
+   画布的滚动由我们自己的平移/缩放逻辑全权管理，不需要它插手。 */
+.graph-scroller, .graph-canvas, .graph-grid, .graph-content { overflow-anchor: none; }
+.graph-order { fill: var(--order); font-size: 11px; pointer-events: none; text-anchor: middle; }
+/* 网格层：**铺满整块画布**（left/top 恒为 0，尺寸 = 画布尺寸）。
+   内容坐标的原点在画布里的偏移是 layerLeft/layerTop，网格层把它写进
+   background-position —— 于是格子既锚在内容坐标系上（拖节点时不会漂），
+   又画到了内容原点左上角那圈留白里（留白也是画布，也得有背景）。
+
+   以前网格画在内容层上（层只从内容原点开始，往左上那一圈是空的），
+   所以内容坐标为负、拖过 0,0 之后左上角就是一片没有格子的空白。 */
+.graph-grid {
+  position: absolute; left: 0; top: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(var(--grid-minor) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-minor) 1px, transparent 1px),
+    linear-gradient(var(--grid-major) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-major) 1px, transparent 1px);
+  background-size: 20px 20px, 20px 20px, 100px 100px, 100px 100px;
+  background-position: 0 0;
+}
+
+/* 内容层：内容坐标系的原点在这里（画布留白就是这一层的 left/top）。
+   绝对定位子元素的包含块是 padding box，所以留白不能用父元素的 padding 做。
+   节点方框、连线、注释框都挂在这一层上（网格已经挪到 .graph-grid 去了）。 */
+.graph-content { position: absolute; left: 0; top: 0; }
+
+.graph-canvas {
+  position: relative;
+  /* 画布只画底色，网格在内容层上；overflow:hidden 保证"滚动区 == 画布"，
+     子元素不会把滚动区撑大（撑大 → 出现滚动条 → 容器尺寸变化 → 触发自动适应 → 视野乱跳） */
+  overflow: hidden;
+  background-color: var(--canvas-bg);
+}
+.graph-wires {
+  position: absolute; left: 0; top: 0; pointer-events: none;
+  /* 内容坐标可以为负（无限画布）：SVG 默认会把自己视口外的内容裁掉，
+     于是拖到左上角之外的节点连线会被截断 —— 必须显式允许溢出。 */
+  overflow: visible;
+}
+.graph-wire { fill: none; stroke: var(--wire); stroke-width: 2; }
+.graph-wire.to-selected { stroke: var(--accent); }
+.graph-wire.selected { stroke: var(--warn); stroke-width: 3; }
+.graph-wire.temp { stroke: var(--accent); stroke-width: 2; stroke-dasharray: 6 4; }
+/* 细线不好点中：底下压一条透明粗线专职接鼠标 */
+.graph-wire-hit { fill: none; stroke: transparent; stroke-width: 12; pointer-events: stroke; cursor: pointer; }
+.graph-wire-hit:hover + .graph-wire { stroke: var(--accent); }
+
+/* ---- 节点方框：UE 风格（彩色标题栏 + 引脚行 + 上方类型标签）---- */
+.gnode {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid #2c3442;
+  border-radius: 8px;
+  background: var(--node-bg);
+  font-size: 12px;
+  cursor: grab;
+  overflow: visible;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, .35);
+}
+.gnode.selected { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(78, 161, 255, .35); }
+/* 多选里的其他节点也给一圈（缩进树有 .multi-selected，节点图以前只有"最后点中的"那个亮） */
+.gnode.multi-selected { border-color: var(--accent-line); box-shadow: 0 0 0 1px var(--accent-line); }
+.gnode.has-error { border-color: var(--err); }
+.gnode.has-warning { border-color: var(--warn); }
+.gnode.live-path { border-color: var(--path); }
+.gnode.live-active { border-color: var(--ok); box-shadow: 0 0 0 2px rgba(74, 208, 122, .35); }
+.gnode.search-hit { outline: 1px solid var(--warn); }
+.gnode.drop-child { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(78, 161, 255, .35); }
+.gnode.drop-sibling { border-color: var(--ok); box-shadow: 0 0 0 2px rgba(74, 208, 122, .35); }
+.gnode.dragging { opacity: .45; }
+/* 拉线时的落点：能接的亮绿、接不了的亮红（别让人猜为什么接不上） */
+.gnode.wire-target { border-color: var(--ok); box-shadow: 0 0 0 2px rgba(74, 208, 122, .45); }
+.gnode.wire-invalid { border-color: var(--err); box-shadow: 0 0 0 2px rgba(239, 107, 107, .45); }
+
+.gnode-caption {
+  position: absolute;
+  top: -18px;
+  left: 0;
+  max-width: 100%;
+  padding: 0 7px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--caption-bg);
+  color: var(--dim);
+  font-size: 10.5px;
+  line-height: 16px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+.gnode-head {
+  height: 26px;
+  flex: none;
+  padding: 0 9px;
+  display: flex;
+  align-items: center;
+  border-radius: 7px 7px 0 0;
+  border-bottom: 1px solid rgba(0, 0, 0, .35);
+  font-weight: 600;
+  font-size: 11.5px;
+  color: var(--head-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: grab;
+}
+.gnode.root .gnode-head { background: var(--head-root); }
+.gnode.composite .gnode-head { background: var(--head-composite); }
+.gnode.task .gnode-head { background: var(--head-task); }
+.gnode-body { position: relative; flex: 1; min-height: 0; }
+.gnode-row {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  height: 16px;
+  line-height: 16px;
+  color: var(--node-fg);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gnode-row.first { color: var(--node-fg-strong); font-weight: 600; }
+.gnode-row.out-row { color: var(--node-fg-dim); text-align: right; }
+.gnode-extra { position: absolute; right: 10px; top: 5px; font-size: 10px; }
+.gnode .node-ref { color: var(--node-ref); font-size: 10px; }
+
+/* 引脚：UE 里那种小圆圈。输出在右、输入在左，与连线共用同一份几何坐标 */
+.pin {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--pin-bg);
+  border: 2px solid var(--pin-line);
+  cursor: crosshair;
+  z-index: 3;
+  box-sizing: border-box;
+}
+.pin.out { border-color: var(--pin-out); }
+.pin.in { border-color: var(--pin-in); }
+.pin:hover { background: var(--accent); border-color: var(--accent-fg); transform: scale(1.25); }
+.gnode.selected .pin { border-color: var(--accent); }
+
+/* 节点内预览区：行为树没有纹理可缩略，缩略的是"这是什么、关键参数、当前状态" */
+.gnode-preview {
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 5px;
+  border: 1px solid var(--chip);
+  border-radius: 5px;
+  background: var(--preview-bg);
+  overflow: hidden;
+}
+.gnode-glyph {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  color: var(--glyph-fg);
+  background: var(--chip);
+}
+.gnode-glyph.root { background: var(--head-root); }
+.gnode-glyph.composite { background: var(--head-composite); }
+.gnode-glyph.task { background: var(--head-task); }
+.gnode-preview-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 10.5px;
+  color: var(--preview-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gnode-chip {
+  flex: none;
+  font-size: 10px;
+  padding: 0 5px;
+  line-height: 15px;
+  border-radius: 8px;
+  background: var(--info-bg);
+  color: var(--info-fg);
+}
+.gnode-chip.live { background: var(--live-strong-bg); color: var(--live-strong-fg); }
+.gnode-chip.path { background: var(--info-bg); color: var(--info-fg); }
+.gnode-chip.error { background: var(--err-strong-bg); color: var(--err-fg); }
+.gnode-chip.warn { background: var(--warn-strong-bg); color: var(--warn-fg); }
+
+/* 注释框（节点组）：画在连线和节点下面，只有标题栏和右下角能抓 */
+.graph-groups { position: absolute; left: 0; top: 0; }
+.graph-group {
+  position: absolute;
+  --group-fg: #eef3fa;
+  --group-ring: rgba(78, 161, 255, .35);
+  border: 1px solid var(--group-line);
+  border-radius: 8px;
+  background: var(--group-bg);
+  /* 注释框只是"底色衬垫"：**不许吃掉指针事件**，否则从它上面经过的连线点不中、
+     它盖住的空白处也没法框选（实测踩到过：连线全部点不中）。
+     只有标题栏和右下角把手需要接鼠标。 */
+  pointer-events: none;
+}
+.graph-group-head, .graph-group-resize { pointer-events: auto; }
+.graph-group.selected { border-color: var(--accent); box-shadow: 0 0 0 2px var(--group-ring); }
+.graph-group-head {
+  height: 22px;
+  margin: -1px -1px 0 -1px;
+  padding: 1px 8px 0;
+  border-radius: 7px 7px 0 0;
+  background: var(--group-head);
+  color: var(--group-fg);
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 20px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: move;
+}
+.graph-group-resize {
+  position: absolute;
+  right: -5px;
+  bottom: -5px;
+  width: 12px;
+  height: 12px;
+  border: 1px solid var(--group-line);
+  border-radius: 3px;
+  background: var(--group-head);
+  cursor: nwse-resize;
+}
+/* 五种注释颜色（UE 里也是这么给注释框配色的） */
+.graph-group.blue { --group-head: var(--group-blue-head); --group-line: var(--group-blue-line);
+  --group-bg: var(--group-blue-bg); }
+.graph-group.purple { --group-head: var(--group-purple-head); --group-line: var(--group-purple-line);
+  --group-bg: var(--group-purple-bg); }
+.graph-group.green { --group-head: var(--group-green-head); --group-line: var(--group-green-line);
+  --group-bg: var(--group-green-bg); }
+.graph-group.orange { --group-head: var(--group-orange-head); --group-line: var(--group-orange-line);
+  --group-bg: var(--group-orange-bg); }
+.graph-group.gray { --group-head: var(--group-gray-head); --group-line: var(--group-gray-line);
+  --group-bg: var(--group-gray-bg); }
+
+/* 游离节点（还没接进行为树）：虚线边框 + 淡一点的标题栏 */
+.gnode.detached { border-style: dashed; border-color: var(--warn); }
+.gnode.detached .gnode-head { opacity: .75; }
+.node.detached-node > .node-row { border-left: 2px dashed var(--warn); }
+.detached-note { margin-top: 6px; }
+
+/* 拖动影像：从物料区往画布拖时跟着鼠标的小标签 */
+.drag-ghost {
+  position: fixed;
+  z-index: 9999;
+  padding: 2px 8px;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  background: var(--pane);
+  color: var(--fg);
+  font-size: 12px;
+  pointer-events: none;
+  box-shadow: 0 2px 8px var(--node-shadow);
+  opacity: .92;
+}
+
+/* 可拖动/可点击的界面元素一律不参与文字选择：
+   否则"按住往画布拖"会变成"选中一段文字"，看起来就是拖不动 */
+.palette-item, .palette-group, .node-row, .gnode, .graph-group-head, #topbar button,
+#topbar select, .badge, #minimap, .graph-scroller, .graph-canvas, .live-flag, .gnode-chip {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* 框选（橡皮筋）矩形 */
+.graph-marquee {
+  position: absolute;
+  border: 1px solid var(--accent);
+  background: var(--marquee-bg);
+  pointer-events: none;
+  z-index: 5;
+}
+
+/* 小地图：铺在画布右下角，显示所有节点（按类别配色）+ 当前视口框 */
+#minimap {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  width: 190px;
+  height: 120px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--minimap-bg);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, .4);
+  cursor: pointer;
+  z-index: 6;
+}
+#minimap svg { display: block; width: 100%; height: 100%; }
+#minimap .mm-box { fill: var(--mm-box); }
+#minimap .mm-box.root { fill: var(--mm-root); }
+#minimap .mm-box.composite { fill: var(--mm-composite); }
+#minimap .mm-box.task { fill: var(--mm-task); }
+#minimap .mm-box.selected { fill: var(--accent); }
+#minimap .mm-box.member { fill: var(--mm-member); }
+#minimap .mm-view { fill: var(--mm-view-bg); stroke: var(--accent); stroke-width: 1; }
+#minimap.hidden { display: none; }
+
+/* 拖动中的拖动源（缩进树的行同样给个半透明标记，不然看不出拖没拖起来） */
+.node-row.dragging { opacity: .45; }
+
+/* 拖拽体验：节点行/方框里不选中文字 —— 拖起来不会变成"选一段文字"，
+   这在触控板和某些浏览器上就是"感觉拖不动"的来源 */
+.node-row, .gnode { user-select: none; -webkit-user-select: none; }
+#diagLine { font-size: 11.5px; }
+
+/* 顶栏在窄窗口下别占掉太多高度（按钮多，换行会吃掉画布空间） */
+#topbar { gap: 8px; padding: 6px 10px; }
+#topbar .group { flex-wrap: wrap; }
+#topbar button { padding: 3px 8px; }
+
+/* 多选 */
+.node-row.multi-selected { background: var(--row-multi); }
+.actions.multi { background: var(--multi-bar-bg); border: 1px solid var(--line); border-radius: 6px; padding: 5px 6px; }
 .node-children { margin-left: 16px; border-left: 1px dashed var(--line); padding-left: 6px; }
 .tag {
   font-size: 11px;
   padding: 1px 6px;
   border-radius: 4px;
-  background: #2b3441;
-  color: #cbd6e6;
+  background: var(--chip);
+  color: var(--fg-soft);
 }
-.tag.composite { background: #2c4a6b; }
-.tag.task { background: #29452f; }
-.tag.root { background: #4a3b22; }
+.tag.composite { background: var(--tag-composite); }
+.tag.task { background: var(--tag-task); }
+.tag.root { background: var(--tag-root); }
 .node-id { color: var(--dim); }
-.node-name { color: #9fb6d4; }
+.node-name { color: var(--node-ref); }
 .prop-row { display: flex; align-items: center; gap: 6px; margin-bottom: 5px; }
 .prop-row label { flex: 0 0 108px; color: var(--dim); font-size: 12px; }
 .prop-row input, .prop-row select { flex: 1; min-width: 0; }
@@ -155,18 +666,30 @@ main {
 .actions { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
 .issues { margin-top: 10px; }
 .issue { padding: 3px 6px; border-radius: 4px; margin-bottom: 3px; font-size: 12px; }
-.issue.error { background: #3a2020; color: #ffc9c9; }
-.issue.warning { background: #38301b; color: #ffe3a8; }
-.issue.info { background: #1f2c3a; color: #cfe4ff; }
+.issue.error { background: var(--issue-error-bg); color: var(--err-fg); }
+.issue.warning { background: var(--issue-warn-bg); color: var(--warn-fg); }
+.issue.info { background: var(--issue-info-bg); color: var(--accent-fg); }
 #statusbar {
   display: flex;
   justify-content: space-between;
+  gap: 12px;
   padding: 5px 12px;
   border-top: 1px solid var(--line);
   background: var(--pane);
   color: var(--dim);
   font-size: 12px;
 }
+/* 状态栏必须**只占一行**：里面两条信息（状态 + 实例/包目录）都很长，
+   窄窗口下它们会各自换行成三四行，把画布高度吃掉一大块（截图里量到过）。
+   完整内容挂在 title 上，鼠标停上去还能看。 */
+#statusbar > span {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#statusbar > span:first-child { flex: 0 1 auto; }
+#statusbar > span:last-child { flex: 1 1 auto; text-align: right; }
 pre { white-space: pre-wrap; word-break: break-all; font-size: 11.5px; }
 .dialog-backdrop {
   position: fixed; inset: 0; background: rgba(0,0,0,.5);
@@ -176,3 +699,128 @@ pre { white-space: pre-wrap; word-break: break-all; font-size: 11.5px; }
   background: var(--pane); border: 1px solid var(--line); border-radius: 8px;
   padding: 14px; min-width: 320px;
 }
+
+/* 窗口变窄：侧栏按比例收窄，保证中间的画布始终有可用宽度。
+   三栏的固定最小宽度加起来是 390px，不处理的话窄窗口里画布会被压成一条缝。 */
+@media (max-width: 1200px) {
+  main { grid-template-columns: minmax(150px, 200px) minmax(0, 1fr) minmax(190px, 240px); }
+}
+/* 顶栏按钮多，窄窗口下换行会吃掉不少高度：这里整体压紧一点，
+   把省下来的高度留给画布（实测 880px 宽时顶栏要 130px）。 */
+@media (max-width: 1100px) {
+  #topbar { gap: 6px; padding: 4px 8px; }
+  #topbar button, #topbar select { padding: 2px 6px; font-size: 12px; }
+  #topbar .badge { padding: 2px 6px; }
+}
+/* 更窄：属性栏挪到画布下面整行铺开，画布拿满宽度（横向三栏已经不合理了）。
+   高度按 2:1 分：画布是主工作区，属性栏有滚动条，不能让它把画布挤成一条缝
+   （原来给它 38vh，实测 640px 高的窗口里画布只剩 168px —— 那就是"只有全屏才完整"）。 */
+@media (max-width: 940px) {
+  main {
+    grid-template-columns: minmax(140px, 170px) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 2fr) minmax(0, 1fr);
+  }
+  #inspector {
+    grid-column: 1 / -1;
+    border-left: none;
+    border-top: 1px solid var(--line);
+    max-height: none;
+  }
+}
+/* 又窄又矮：画布再让一让属性栏就没法干活了，这里把比例改成 3:1。
+   必须和宽度条件一起用 —— 三栏布局下写两行会在底部留一条空带。 */
+@media (max-width: 940px) and (max-height: 620px) {
+  main { grid-template-rows: minmax(0, 3fr) minmax(0, 1fr); }
+}
+
+/* 浅色模式：只换 token，所有组件自动跟着变。
+   用 html.light（不是 body）是为了让 index.html 里那段内联脚本能在**第一帧之前**
+   就把主题定下来，浅色用户不会先看到一闪的深色。 */
+:root.light {
+  --node-shadow: rgba(20, 40, 70, .18);
+  /* 浅色下注释框：底色更淡、标题栏保持中等饱和，白字仍然清楚 */
+  --group-blue-head: #3f7fbe; --group-blue-line: #9dc0e2; --group-blue-bg: rgba(63, 127, 190, .10);
+  --group-purple-head: #7a5fae; --group-purple-line: #c2b1df; --group-purple-bg: rgba(122, 95, 174, .10);
+  --group-green-head: #3f8460; --group-green-line: #a9cfba; --group-green-bg: rgba(63, 132, 96, .10);
+  --group-orange-head: #b07a2c; --group-orange-line: #e0c192; --group-orange-bg: rgba(176, 122, 44, .10);
+  --group-gray-head: #5c6a7d; --group-gray-line: #bcc6d3; --group-gray-bg: rgba(92, 106, 125, .10);
+  --group-ring: rgba(29, 111, 208, .28);
+  --bg: #f2f4f8;
+  --pane: #ffffff;
+  --pane2: #eef1f6;
+  --line: #ccd4e0;
+  --fg: #1d2733;
+  --fg-soft: #33404f;
+  --dim: #5d6b7d;
+  --accent: #1d6fd0;
+  --accent-bg: #d7e7fb;
+  --accent-line: #7fb2e8;
+  --accent-fg: #0f3763;
+  --ok: #1f9d55;
+  --ok-line: #7cc59b;
+  --warn: #a9781a;
+  --warn-line: #d8b45c;
+  --err: #c8352f;
+  --row-hover: #eaeff6;
+  --row-drop-child: #dbe8fb;
+  --row-drop-sibling: #e4edf8;
+  --row-multi: #dbe8fb;
+  --multi-bar-bg: #eef2f7;
+  --folded-bg: #f4f6fa;
+  --dash: #b9c4d2;
+  --path: #2f6fb5;
+  --err-bg: #f7dede;
+  --err-strong-bg: #f3d5d5;
+  --err-fg: #7a1f1f;
+  --warn-bg: #f7ecd3;
+  --warn-strong-bg: #f2e5c6;
+  --warn-fg: #6b4a12;
+  --info-bg: #dbe9f7;
+  --info-fg: #1d4b7a;
+  --live-bg: #d9f2e3;
+  --live-strong-bg: #cdeedb;
+  --live-strong-fg: #17603a;
+  --issue-error-bg: #f7dede;
+  --issue-warn-bg: #f7ecd3;
+  --issue-info-bg: #dfeaf7;
+  --action-bg: #eaf4ec;
+  --action-line: #a8c9ac;
+  --canvas-bg: #eef1f6;
+  --grid-minor: rgba(15, 30, 60, .055);
+  --grid-major: rgba(15, 30, 60, .10);
+  --wire: #8ba0b8;
+  --order: #6b7a90;
+  --node-bg: #ffffff;
+  --node-fg: #2b3441;
+  --node-fg-strong: #16202c;
+  --node-fg-dim: #55637a;
+  --node-ref: #2f5d8f;
+  --caption-bg: #e7ecf3;
+  --head-fg: #ffffff;
+  --head-root: #a9791f;
+  --head-composite: #2f6fae;
+  --head-task: #2f7350;
+  --preview-bg: #f4f7fb;
+  --preview-fg: #4a586b;
+  --glyph-fg: #ffffff;
+  --chip: #e3e8ef;
+  --pin-bg: #ffffff;
+  --pin-line: #90a2b6;
+  --pin-out: #3f86d8;
+  --pin-in: #7c8797;
+  --tag-composite: #cfe0f5;
+  --tag-task: #d3e8d9;
+  --tag-root: #f0e2c6;
+  --marquee-bg: rgba(31, 110, 190, .14);
+  --minimap-bg: rgba(255, 255, 255, .92);
+  --mm-view-bg: rgba(31, 110, 190, .18);
+  --mm-box: #9fb0c4;
+  --mm-root: #a9791f;
+  --mm-composite: #4a86c4;
+  --mm-task: #4a9770;
+  --mm-member: #8fa9c9;
+}
+/* 小地图/框选这类浮层在浅色下也得看得清 */
+#minimap { color: var(--fg); }
+.graph-marquee { border-color: var(--accent); }
+

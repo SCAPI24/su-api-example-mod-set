@@ -5,6 +5,17 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>PlayerAi 行为树编辑器</title>
 <link rel="stylesheet" href="app.css" />
+<script>
+  /* 主题必须在**第一帧之前**定下来：等 app.js 启动再切，用户会先看到一闪的另一种颜色。
+     整个主题就是 <html> 上有没有 light 这个类（调色板在 app.css 里按 token 切换）。
+     默认**浅色**：只有明确选过深色（或 ?theme=dark）才不加 light 类。 */
+  try {
+    var wanted = /[?&]theme=(light|dark)\b/.exec(location.search);
+    var dark = wanted ? wanted[1] === 'dark'
+      : localStorage.getItem('playerAiEditor.theme') === 'dark';
+    if (!dark) document.documentElement.className = 'light';
+  } catch (error) { /* 隐私模式取不到 localStorage：用默认浅色即可 */ }
+</script>
 </head>
 <body>
 <header id="topbar">
@@ -12,8 +23,13 @@
   <div class="group">
     <label>包</label>
     <select id="packageSelect"></select>
+    <button id="btnNew" title="在实例目录新建一棵空白树（Root → Sequence → Task.Wait）">新建</button>
     <button id="btnOpen" title="打开选中的包">打开</button>
     <button id="btnReload" title="从磁盘重新读取">重读</button>
+  </div>
+  <div class="group">
+    <button id="btnUndo" title="撤销（Ctrl+Z）">↶ 撤销</button>
+    <button id="btnRedo" title="重做（Ctrl+Y / Ctrl+Shift+Z）">↷ 重做</button>
   </div>
   <div class="group">
     <button id="btnValidate" title="用游戏内同一份校验器检查（不写盘）">校验</button>
@@ -33,6 +49,9 @@
   <div class="group">
     <button id="btnGame" title="问游戏要 ai.status">游戏状态</button>
     <span id="gameBadge" class="badge">游戏：未知</span>
+    <button id="btnTheme" title="在深色 / 浅色之间切换（记在这个浏览器里）">主题：深色</button>
+    <span id="historyBadge" class="badge">撤销 0 / 重做 0</span>
+    <span id="buildBadge" class="badge" title="编辑器构建时间（确认你跑的是哪一版）">构建 <!--BUILDSTAMP--></span>
     <span id="dirtyBadge" class="badge">未修改</span>
   </div>
 </header>
@@ -40,15 +59,34 @@
 <main>
   <section id="palette" class="pane">
     <h2>物料区</h2>
-    <p class="hint">节点类型来自游戏内的注册表（工厂 + 形状 + 属性表），想加就点它。
-      最下面的「动作包」是录好的输入轨道：点它会在选中的节点下挂一个
-      <code>Task.PlayActionPackage</code>，或把它加进已选中节点的播放列表。</p>
+    <p class="hint">节点类型来自游戏内的注册表（工厂 + 形状 + 属性表）：<b>点</b>它加在选中节点下，
+      <b>拖</b>到画布上任意一行则加在那一行（上/下边缘=插成兄弟，中间=挂成子节点）。
+      最下面的「动作包」是录好的输入轨道：点/拖它会在目标节点下挂一个
+      <code>Task.PlayActionPackage</code>，或把它加进已选中播放节点的播放列表。</p>
     <input id="paletteFilter" placeholder="过滤类型…" />
     <div id="paletteList"></div>
   </section>
 
   <section id="canvas" class="pane">
     <h2>画布 <span id="canvasHint" class="hint"></span></h2>
+    <div class="group" style="margin-bottom:6px">
+      <input id="nodeSearch" placeholder="搜索节点 id / 类型 / 显示名…（回车跳到第一个）" />
+      <button id="btnView" title="在节点图与缩进树之间切换（同一条布局数据，两种画法；默认节点图）">视图：节点图</button>
+      <button id="btnZoomOut" title="缩小节点图">－</button>
+      <button id="btnZoomIn" title="放大节点图">＋</button>
+      <button id="btnFit" title="把整棵树缩放到一屏装下（切到节点图）">适应窗口</button>
+      <button id="btnAutoLayout" title="丢掉手动摆放的位置和节点组，回到自动排布">自动布局</button>
+      <button id="btnGroup" title="把选中的节点圈成一个注释框（可命名、可整体拖动、可解散）">建组</button>
+    </div>
+    <div class="group" style="margin-bottom:6px">
+      <span id="diagLine" class="hint">尺寸诊断…</span>
+    </div>
+    <div class="group" style="margin-bottom:6px">
+      <span class="hint" title="拖动节点＝任意摆放（位置记在这个浏览器里）；Shift+拖到节点上＝挂父子；左侧物料拖进画布＝在落点新建节点；空白左键拖＝框选；按住滚轮（中键）拖＝平移画布；滚轮＝缩放（缩到光标位置）；Shift+滚轮＝左右滚；从引脚拖出＝连线；点线+Delete 或 Shift+点线＝断开">鼠标：<b>拖动节点</b>＝任意摆放　<b>Shift+拖到节点</b>＝挂父子　<b>物料拖进画布</b>＝新建　空白<b>左键拖</b>＝框选　<b>中键拖</b>＝平移　<b>滚轮</b>＝缩放　Shift+滚轮＝左右滚　<b>Shift+点线</b>＝断开连线</span>
+    </div>
+    <div class="group" style="margin-bottom:6px">
+      <span class="hint" title="Ctrl+C/X/V 复制剪切粘贴子树；Ctrl+D 重复；Delete 删除；Ctrl+Z/Y 撤销重做；F2 改 id；Alt+↑/↓ 上下挪；Alt+→ 降级；Alt+← 升级">Ctrl+C/X/V 复制剪切粘贴子树　Ctrl+D 重复　Delete 删除　Ctrl+Z/Y 撤销重做　F2 改 id　<b>Alt+↑/↓ 上下挪　Alt+→ 降级　Alt+← 升级</b></span>
+    </div>
     <div id="treeRoot" class="tree"></div>
     <div id="issues" class="issues"></div>
   </section>
@@ -56,6 +94,13 @@
   <section id="inspector" class="pane">
     <h2>属性区</h2>
     <div id="inspectorBody"><p class="hint">左侧选中一个节点。</p></div>
+    <h2 style="margin-top:14px">实时监视 <span class="hint">（游戏里正在跑什么）</span></h2>
+    <div class="group" style="margin-bottom:6px">
+      <button id="btnLive" title="每 700ms 拉一次 ai.status / ai.tree.snapshot / ai.blackboard">▶ 实时监视</button>
+      <button id="btnPauseTree" title="让游戏暂停行为树（保留运行态、释放 AI 输入）">暂停树</button>
+      <button id="btnResumeTree" title="让游戏继续行为树">继续树</button>
+    </div>
+    <div id="liveBox"><p class="hint">打开"实时监视"就能看到游戏里正在跑哪个节点。</p></div>
   </section>
 </main>
 

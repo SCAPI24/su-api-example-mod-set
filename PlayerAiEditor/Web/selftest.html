@@ -1,0 +1,1810 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>PlayerAi 编辑器 · 真浏览器自检</title>
+<link rel="stylesheet" href="app.css">
+<style>
+  /* 注意：这一页也链接了 app.css，而它把 body 设成了 height:100vh 的 flex 容器 ——
+     于是 #stage 会被当成会被压缩的 flex 项，随下面的报告越写越长而**越变越矮**，
+     iframe 视口跟着变小，节点图里的方框被裁掉、elementFromPoint 命中不到，
+     各种尺寸数字也全乱。这里必须把这一页自己的排布改成普通块级流。 */
+  html, body { height: auto; display: block; }
+  #stage { flex: none; }
+  body { margin: 0; background: #14171c; color: #dfe6f0;
+         font: 13px/1.5 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif; }
+  h1 { font-size: 14px; margin: 8px 10px 4px; font-weight: 600; }
+  #stage { margin: 0 10px; border: 1px solid #2c3442; }
+  #stage iframe { display: block; width: 100%; height: 100%; border: 0; }
+  #report { white-space: pre-wrap; margin: 8px 10px 20px;
+            font: 12px/1.45 Consolas, "Courier New", monospace; color: #cbd6e6; }
+  .pass { color: #7fe0a3; }
+  .fail { color: #ff9b9b; }
+</style>
+</head>
+<body>
+<h1>真浏览器自检：用真实 DOM / 真实命中测试 / 真实布局驱动编辑器页面</h1>
+<!--
+  为什么要有这个页面（而不是只靠 node + DOM 桩）：
+    · 桩能证明逻辑，证明不了**真实浏览器的布局与命中测试**；
+    · 用户反馈的"拖不动""缩小窗口不适应"全都发生在真 DOM + 真 CSS 里；
+    · 这里用同源 iframe 加载真正的 `/`，再用真实 MouseEvent 走一遍
+      mousedown → mousemove → mouseup，命中判定交给真实的 elementFromPoint。
+  用法：Mod/Packages/check_editor_browser.py（无头 Chrome/Edge 打开本页，读回 #report）。
+-->
+<div id="stage" style="width: 1400px; height: 900px"><iframe id="app" src="/"></iframe></div>
+<pre id="report">running…</pre>
+<script>
+(function () {
+  'use strict';
+
+  var lines = [];
+  var passed = 0;
+  var failed = 0;
+
+  function flush() {
+    var head = 'SELFTEST-RESULT: ' + passed + '/' + (passed + failed) + '\n';
+    document.getElementById('report').textContent = head + lines.join('\n');
+    document.title = 'selftest ' + passed + '/' + (passed + failed);
+  }
+
+  function check(name, ok, detail) {
+    if (ok) passed++; else failed++;
+    lines.push((ok ? 'PASS ' : 'FAIL ') + name + (detail === undefined ? '' : '   [' + detail + ']'));
+    flush();
+  }
+
+  function note(text) { lines.push('---- ' + text); flush(); }
+
+  function delay(ms) { return new Promise(function (resolve) { setTimeout(resolve, ms); }); }
+
+  function nextFrame(win) {
+    // 无头浏览器里 requestAnimationFrame 可能**一直不触发**（没有合成帧），
+    // 所以必须用定时器兜底 —— 否则自检会静静地卡在这里（已经踩过一次）。
+    return new Promise(function (resolve) {
+      var done = false;
+      var finish = function () { if (!done) { done = true; resolve(); } };
+      try { win.requestAnimationFrame(finish); } catch (error) { /* 忽略 */ }
+      setTimeout(finish, 32);
+    });
+  }
+
+  async function settle(win, frames) {
+    for (var i = 0; i < (frames || 2); i++) await nextFrame(win);
+  }
+
+  async function waitFor(fn, timeout, label) {
+    var start = Date.now();
+    for (;;) {
+      var value;
+      try { value = fn(); } catch (error) { value = null; }
+      if (value) return value;
+      if (Date.now() - start > timeout) throw new Error('等待超时：' + label);
+      await delay(30);
+    }
+  }
+
+  // ---- 真事件（用 iframe 自己的构造函数，事件对象才和页面同源）----
+
+  function mouse(win, element, type, x, y, buttons, shiftKey) {
+    element.dispatchEvent(new win.MouseEvent(type, {
+      bubbles: true, cancelable: true, view: win, detail: 1,
+      clientX: x, clientY: y, button: 0, buttons: buttons === undefined ? 1 : buttons,
+      shiftKey: !!shiftKey
+    }));
+  }
+
+  /** 父子关系的"指纹"：所有连线的 data-wire 排序后拼起来（不用切视图就能比对结构） */
+  function wireSignature(doc) {
+    return Array.prototype.slice.call(doc.querySelectorAll('.graph-wire[data-wire]'))
+      .map(function (path) { return path.getAttribute('data-wire'); }).sort().join(' ');
+  }
+
+  function keyboard(win, element, key, init) {
+    var options = { bubbles: true, cancelable: true, view: win, key: key };
+    for (var name in (init || {})) options[name] = init[name];
+    element.dispatchEvent(new win.KeyboardEvent('keydown', options));
+  }
+
+  function click(element) {
+    element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+  }
+
+  // ---- 读页面状态（只读 DOM，不碰内部变量 —— 用户看到的就是这些）----
+
+  function statusText(doc) { return (doc.getElementById('statusText') || {}).textContent || ''; }
+  function diagLine(doc) { return (doc.getElementById('diagLine') || {}).textContent || ''; }
+
+  function rowInfo(doc) {
+    return Array.prototype.slice.call(doc.querySelectorAll('.node-row')).map(function (row) {
+      var box = row.getBoundingClientRect();
+      return {
+        el: row,
+        id: row.getAttribute('data-node-id'),
+        type: (row.querySelector('.tag') || {}).textContent || '',
+        tagClass: (row.querySelector('.tag') || {}).className || '',
+        left: Math.round(box.left * 10) / 10,
+        top: Math.round(box.top * 10) / 10
+      };
+    });
+  }
+
+  /** 缩进单位（每深一级右移多少像素），从真实布局里量出来，别写死 */
+  function indentUnit(rows) {
+    var lefts = rows.map(function (row) { return row.left; })
+      .filter(function (left, index, all) { return all.indexOf(left) === index; })
+      .sort(function (a, b) { return a - b; });
+    var unit = null;
+    for (var i = 1; i < lefts.length; i++) {
+      var diff = lefts[i] - lefts[i - 1];
+      if (diff > 2 && (unit === null || diff < unit)) unit = diff;
+    }
+    return unit;
+  }
+
+  function paletteItem(doc, type) {
+    var items = Array.prototype.slice.call(doc.querySelectorAll('.palette-item'));
+    for (var i = 0; i < items.length; i++) {
+      if ((items[i].textContent || '').trim() === type) return items[i];
+    }
+    return null;
+  }
+
+  function metrics(doc, frame) {
+    var canvas = doc.getElementById('canvas');
+    var canvasBox = canvas.getBoundingClientRect();
+    var inspectorBox = doc.getElementById('inspector').getBoundingClientRect();
+    var scroller = doc.querySelector('.graph-scroller');
+    var treeRoot = doc.getElementById('treeRoot');
+    var root = doc.documentElement;
+    return {
+      innerWidth: frame.clientWidth,
+      innerHeight: frame.clientHeight,
+      // clientWidth 不含边框，getBoundingClientRect 含边框 —— 诊断行报的是前者
+      canvasClientWidth: canvas.clientWidth,
+      canvasClientHeight: canvas.clientHeight,
+      canvasWidth: Math.round(canvasBox.width),
+      canvasTop: Math.round(canvasBox.top),
+      inspectorTop: Math.round(inspectorBox.top),
+      scrollerClientWidth: scroller ? scroller.clientWidth : -1,
+      scrollerClientHeight: scroller ? scroller.clientHeight : -1,
+      treeRootClientWidth: treeRoot ? treeRoot.clientWidth : -1,
+      treeRootClientHeight: treeRoot ? treeRoot.clientHeight : -1,
+      statusbarHeight: Math.round(doc.getElementById('statusbar').getBoundingClientRect().height),
+      topbarHeight: Math.round((doc.getElementById('topbar') || canvas).getBoundingClientRect().height),
+      budget: canvasBudget(doc),
+      scrollWidth: root.scrollWidth,
+      scrollHeight: root.scrollHeight,
+      diag: diagLine(doc),
+      status: statusText(doc)
+    };
+  }
+
+  function scaleFromDiag(text) {
+    var match = /缩放=(\d+)%/.exec(text || '');
+    return match ? Number(match[1]) : null;
+  }
+
+  var stage = document.getElementById('stage');
+  var frame = document.getElementById('app');
+
+  async function setStageSize(width, height, win) {
+    stage.style.width = width + 'px';
+    stage.style.height = height + 'px';
+    await settle(win, 3);
+    await delay(300);            // 编辑器的 resize 防抖是 150ms
+    await settle(win, 3);
+    // iframe 自身被改尺寸时，里面的 window 未必收到 resize 事件（无头环境尤其如此）。
+    // 补发一发：真实用户拖窗口一定会触发它，这里只是让"有没有重算"变得可判定。
+    var before = diagLine(win.document);
+    win.dispatchEvent(new win.Event('resize'));
+    await delay(300);
+    await settle(win, 3);
+    return { before: before, after: diagLine(win.document) };
+  }
+
+  async function run() {
+    var win = frame.contentWindow;
+    var doc = frame.contentDocument;
+
+    note('页面：' + (doc.title || '(无标题)'));
+    await waitFor(function () {
+      return diagLine(doc) && diagLine(doc).indexOf('尺寸诊断') < 0;
+    }, 20000, '编辑器初始化');
+    check('编辑器页面在真实浏览器里加载完成（画布诊断行已就绪）', true, diagLine(doc));
+    var optionCount = await waitFor(function () {
+      return doc.querySelectorAll('#packageSelect option').length;
+    }, 20000, '包列表');
+    check('包列表已从 /api/packages 填充', optionCount > 0, optionCount + ' 个包');
+
+    // 默认视图必须是**节点图**（用户要求：画布默认就是可连线的节点图，不用手点切换）
+    var graphReady = await waitFor(function () {
+      return doc.querySelector('.graph-canvas') && doc.querySelectorAll('.gnode').length > 0;
+    }, 20000, '节点图渲染');
+    check('默认视图就是节点图（打开就是可连线的画布）',
+      graphReady > 0 && String(doc.getElementById('canvasHint').textContent).indexOf('节点图') >= 0,
+      String(doc.getElementById('canvasHint').textContent) + ' 方框='
+      + doc.querySelectorAll('.gnode').length);
+    check('节点自带预览区（参数摘要 / 子节点数 / 引用）',
+      doc.querySelectorAll('.gnode .gnode-preview').length === doc.querySelectorAll('.gnode').length
+      && String(doc.querySelector('.gnode .gnode-preview-text').textContent).length > 0,
+      doc.querySelectorAll('.gnode .gnode-preview').length + ' 个预览区');
+    check('小地图就在画布上（每个节点一个小方块 + 视口框）',
+      !!doc.querySelector('#minimap svg')
+      && doc.querySelectorAll('#minimap .mm-box').length === doc.querySelectorAll('.gnode').length
+      && !!doc.querySelector('#minimap .mm-view'),
+      doc.querySelectorAll('#minimap .mm-box').length + ' 个方块');
+
+    // 后面的缩进树用例需要树视图；先点一次切换按钮
+    click(doc.getElementById('btnView'));
+    await settle(win, 3);
+    var rowCount = 0;
+    try {
+      rowCount = await waitFor(function () { return rowInfo(doc).length; }, 8000, '切到缩进树');
+    } catch (error) {
+      rowCount = 0;
+    }
+    check('切到缩进树仍然正常（两个视图并存）', rowCount > 0,
+      rowCount + ' 行；状态栏：' + statusText(doc));
+
+    // ------------------------------------------------ 造一个确定的结构
+    // 不管打开的是哪个包，都用物料面板造出 根 → Sequence → Task.Wait，
+    // 这样"拖动会改变缩进"这件事一定成立（不依赖出厂包长什么样）。
+    var rows = rowInfo(doc);
+    var rootRow = null;
+    for (var i = 0; i < rows.length; i++) {
+      if (rows[i].tagClass.indexOf('root') >= 0) rootRow = rows[i];
+    }
+    if (!rootRow) rootRow = rows[0];
+    check('找得到根节点行', !!rootRow, rootRow && rootRow.id + '/' + rootRow.type);
+
+    var seqMaterial = paletteItem(doc, 'Sequence');
+    var waitMaterial = paletteItem(doc, 'Task.Wait');
+    check('物料面板里有 Sequence / Task.Wait 物料', !!seqMaterial && !!waitMaterial,
+      'Sequence=' + !!seqMaterial + ' Task.Wait=' + !!waitMaterial);
+
+    /** 选中某一行 → 点一个物料（等于"把它加到选中节点下面"） */
+    async function addMaterial(belowRowId, type) {
+      var list = rowInfo(doc);
+      var row = null;
+      for (var k = 0; k < list.length; k++) if (list[k].id === belowRowId) row = list[k];
+      if (!row) row = list[list.length - 1];
+      click(row.el);
+      await settle(win);
+      var item = paletteItem(doc, type);
+      if (item) { click(item); await settle(win); }
+      return item;
+    }
+
+    /** 当前最深的一行（缩进最大；同缩进取最靠下的） */
+    function deepestRow() {
+      var list = rowInfo(doc);
+      var best = list[0];
+      for (var q = 1; q < list.length; q++) {
+        if (list[q].left > best.left || (list[q].left === best.left && list[q].top > best.top)) {
+          best = list[q];
+        }
+      }
+      return best;
+    }
+
+    if (seqMaterial && waitMaterial) {
+      await addMaterial(rootRow.id, 'Sequence');
+      var deep = deepestRow();
+      await addMaterial(deep.id, 'Task.Wait');
+      // 再确认一次：还不够深就再套一层（出厂包只有 2 个节点时会出现这种情况）
+      if (deepestRow().left - rootRow.left < 20) {
+        var deeper = deepestRow();
+        await addMaterial(deeper.id, 'Sequence');
+        await addMaterial(deepestRow().id, 'Task.Wait');
+      }
+    }
+
+    rows = rowInfo(doc);
+    note('  结构：' + rows.map(function (row) {
+      return row.id + '(' + row.type + '@' + row.left + ')';
+    }).join(' '));
+    var unit = indentUnit(rows);
+    var deepest = deepestRow();
+    var target = rootRow.id === deepest.id ? rows[0] : rootRow;
+    target = (function () {
+      var list = rowInfo(doc);
+      for (var k = 0; k < list.length; k++) if (list[k].id === rootRow.id) return list[k];
+      return list[0];
+    })();
+    check('缩进单位可以从真实布局量出来（每深一级的像素）', unit !== null, 'unit=' + unit);
+    check('源节点比目标节点至少深一级（拖动才会有可见变化）',
+      unit !== null && (deepest.left - target.left) >= unit - 1,
+      deepest.id + '@' + deepest.left + ' vs ' + target.id + '@' + target.left);
+    var sourceId = deepest.id;
+    var targetId = target.id;
+    var sourceLeftBefore = deepest.left;
+
+    // ------------------------------------------------ ① 缩进树：真鼠标拖拽
+    note('① 缩进树拖拽：' + sourceId + ' → ' + targetId);
+    var sourceCenter = centerOf(deepest.el);
+    var targetCenter = centerOf(target.el);
+    mouse(win, deepest.el, 'mousedown', sourceCenter.x, sourceCenter.y, 1);
+    await settle(win, 1);
+    var hit = doc.elementFromPoint(targetCenter.x, targetCenter.y);
+    check('目标坐标的真实命中元素属于目标行（真实 elementFromPoint）',
+      !!hit && (hit === target.el || target.el.contains(hit)),
+      hit ? (hit.className || hit.tagName) : 'null');
+    mouse(win, hit || target.el, 'mousemove', targetCenter.x, targetCenter.y, 1);
+    await settle(win, 1);
+    check('拖动中目标行出现落点高亮（用户看得见的反馈）',
+      target.el.classList.contains('drop-child') || target.el.classList.contains('drop-sibling'),
+      target.el.className);
+    check('拖动中状态栏说明了松手会发生什么',
+      statusText(doc).indexOf('拖动中') >= 0, statusText(doc));
+    mouse(win, hit || target.el, 'mouseup', targetCenter.x, targetCenter.y, 0);
+    await settle(win, 3);
+    check('松手后应用报告"已移动节点"', statusText(doc).indexOf('已移动') >= 0, statusText(doc));
+
+    var afterRows = rowInfo(doc);
+    var movedRow = null;
+    var targetRowAfter = null;
+    for (var m = 0; m < afterRows.length; m++) {
+      if (afterRows[m].id === sourceId) movedRow = afterRows[m];
+      if (afterRows[m].id === targetId) targetRowAfter = afterRows[m];
+    }
+    check('被拖的节点还在树里（没被拖丢）', !!movedRow, sourceId);
+    check('被拖的节点真的变成了目标的子节点（缩进变浅一级）',
+      !!movedRow && !!targetRowAfter && unit !== null
+      && Math.abs(movedRow.left - (targetRowAfter.left + unit)) < 2,
+      movedRow ? (sourceLeftBefore + ' -> ' + movedRow.left + '，目标 ' + targetRowAfter.left
+        + '，每级 ' + unit) : 'null');
+
+    // ------------------------------------------------ ② 键盘路径：Alt+方向键
+    note('② 键盘搬节点：Alt+ArrowDown / Alt+ArrowLeft');
+    var rowsBeforeKey = rowInfo(doc);
+    var subject = null;
+    for (var n = 0; n < rowsBeforeKey.length; n++) {
+      var sameLevel = rowsBeforeKey.filter(function (row) {
+        return Math.abs(row.left - rowsBeforeKey[n].left) < 2;
+      });
+      if (sameLevel.length >= 2) { subject = sameLevel[0]; break; }
+    }
+    if (subject) {
+      click(subject.el);
+      await settle(win);
+      var topBeforeKey = subject.top;
+      keyboard(win, doc, 'ArrowDown', { altKey: true });
+      await settle(win, 2);
+      var keyStatus = statusText(doc);
+      check('Alt+↓ 触发了"下移"（不依赖任何鼠标事件）',
+        keyStatus.indexOf('已下移') >= 0 || keyStatus.indexOf('已经是最后一个') >= 0, keyStatus);
+      var afterKey = rowInfo(doc);
+      var sameId = afterKey.filter(function (row) { return row.id === subject.id; })[0];
+      check('Alt+↓ 之后这一行真的往下走了',
+        keyStatus.indexOf('已经是最后一个') >= 0
+        || (!!sameId && sameId.top > topBeforeKey),
+        sameId ? (topBeforeKey + ' -> ' + sameId.top) : 'null');
+      keyboard(win, doc, 'ArrowLeft', { altKey: true });
+      await settle(win, 2);
+      check('Alt+← 触发了"升级"或给出拒绝原因',
+        statusText(doc).indexOf('已升级') >= 0 || statusText(doc).indexOf('升不了') >= 0,
+        statusText(doc));
+    } else {
+      check('找到同一层里有两个节点（Alt+↓ 才有意义）', false, '当前树里没有同层兄弟');
+    }
+
+    // ------------------------------------------------ ③ 节点图：左键拖动 = 自由摆放（UE 式）
+    note('③ 节点图：左键拖动节点自由摆放，Shift+落到节点上才挂父子');
+    click(doc.getElementById('btnView'));
+    await settle(win, 3);
+    check('切换到节点图（点真实按钮）', !!doc.querySelector('.graph-scroller'),
+      doc.getElementById('canvasHint').textContent);
+    note('  视图诊断：scroll=' + doc.querySelector('.graph-scroller').scrollLeft + ','
+      + doc.querySelector('.graph-scroller').scrollTop
+      + ' 视口=' + doc.querySelector('.graph-scroller').clientWidth + 'x'
+      + doc.querySelector('.graph-scroller').clientHeight
+      + ' 留白=' + (doc.querySelector('.graph-canvas').style.padding || '0')
+      + ' 画布=' + doc.querySelector('.graph-canvas').getBoundingClientRect().width + 'x'
+      + doc.querySelector('.graph-canvas').getBoundingClientRect().height
+      + ' 位置=' + Math.round(doc.querySelector('.graph-canvas').getBoundingClientRect().left)
+      + ',' + Math.round(doc.querySelector('.graph-canvas').getBoundingClientRect().top)
+      + ' ' + diagLine(doc));
+    note('  内容层：left=' + (doc.querySelector('.graph-content').style.left || '0')
+      + ' top=' + (doc.querySelector('.graph-content').style.top || '0')
+      + ' 内容层 rect=' + Math.round(doc.querySelector('.graph-content')
+        .getBoundingClientRect().left) + ',' + Math.round(doc.querySelector('.graph-content')
+        .getBoundingClientRect().top));
+    note('  前两个方框：' + Array.prototype.slice.call(doc.querySelectorAll('.gnode')).slice(0, 2)
+      .map(function (el) {
+        var r = el.getBoundingClientRect();
+        return el.getAttribute('data-node-id') + '@' + Math.round(r.left) + ',' + Math.round(r.top);
+      }).join(' '));
+    var boxes = Array.prototype.slice.call(doc.querySelectorAll('.gnode'));
+    check('节点图渲染出了方框', boxes.length > 0, boxes.length + ' 个方框');
+    var boxSource = null;
+    var boxTarget = null;
+    var boxInfo = boxes.map(function (box) {
+      var rect = box.getBoundingClientRect();
+      return { el: box, id: box.getAttribute('data-node-id'),
+        left: rect.left, top: rect.top, width: rect.width, height: rect.height };
+    });
+    for (var b = 0; b < boxInfo.length; b++) {
+      if (!boxSource || boxInfo[b].left > boxSource.left) boxSource = boxInfo[b];
+      if (!boxTarget || boxInfo[b].left < boxTarget.left) boxTarget = boxInfo[b];
+    }
+    check('找到源方框与目标方框（目标是最浅的那个）',
+      !!boxSource && !!boxTarget && boxSource.id !== boxTarget.id,
+      (boxSource && boxSource.id) + ' -> ' + (boxTarget && boxTarget.id));
+    if (boxSource && boxTarget && boxSource.id !== boxTarget.id) {
+      var sourceIdBox = boxSource.id;
+      var graphRowsBefore = wireSignature(doc);
+
+      // ---- 普通左键拖动 = 自由摆放（不挂父）
+      var boxSourceCenter = { x: boxSource.left + 20, y: boxSource.top + 8 };
+      var dropPoint = { x: boxSourceCenter.x + 140, y: boxSourceCenter.y + 90 };
+      var dragDiagBefore = (function () {
+        var s = doc.querySelector('.graph-scroller');
+        var l = doc.querySelector('.graph-content');
+        var c = doc.querySelector('.graph-canvas');
+        return { scrollTop: s.scrollTop, layerTop: parseFloat(l.style.top) || 0,
+          canvasTop: Math.round(c.getBoundingClientRect().top),
+          scale: diagLine(doc).match(/缩放=(\d+)%/) };
+      })();
+      mouse(win, boxSource.el, 'mousedown', boxSourceCenter.x, boxSourceCenter.y, 1);
+      await settle(win, 1);
+      mouse(win, doc.elementFromPoint(dropPoint.x, dropPoint.y) || boxSource.el,
+        'mousemove', dropPoint.x, dropPoint.y, 1);
+      await settle(win, 2);
+      var dragDiagAfter = (function () {
+        var s = doc.querySelector('.graph-scroller');
+        var l = doc.querySelector('.graph-content');
+        var c = doc.querySelector('.graph-canvas');
+        return { scrollTop: s.scrollTop, layerTop: parseFloat(l.style.top) || 0,
+          canvasTop: Math.round(c.getBoundingClientRect().top),
+          scale: diagLine(doc).match(/缩放=(\d+)%/) };
+      })();
+      note('  拖动前后：scrollTop ' + dragDiagBefore.scrollTop + ' → ' + dragDiagAfter.scrollTop
+        + '；layerTop ' + dragDiagBefore.layerTop + ' → ' + dragDiagAfter.layerTop
+        + '；canvasTop ' + dragDiagBefore.canvasTop + ' → ' + dragDiagAfter.canvasTop
+        + '；缩放 ' + dragDiagBefore.scale + ' → ' + dragDiagAfter.scale);
+      var movedBoxEl = doc.querySelector('.gnode[data-node-id="' + sourceIdBox + '"]');
+      var movedRect = movedBoxEl.getBoundingClientRect();
+      check('拖动中节点跟着鼠标走（UE 式自由摆放）',
+        Math.abs(movedRect.left - (boxSource.left + 140)) < 12
+        && Math.abs(movedRect.top - (boxSource.top + 90)) < 12,
+        (boxSource.left + ',' + boxSource.top) + ' -> '
+        + Math.round(movedRect.left) + ',' + Math.round(movedRect.top));
+      mouse(win, movedBoxEl, 'mouseup', dropPoint.x, dropPoint.y, 0);
+      await settle(win, 2);
+      check('松手后应用报告"已摆放"（不是改结构）',
+        statusText(doc).indexOf('已摆放') >= 0, statusText(doc));
+      check('自由摆放没有改父子关系（树还是原来的样子）',
+        wireSignature(doc) === graphRowsBefore,
+        wireSignature(doc) + ' vs ' + graphRowsBefore);
+
+      // ---- 位置要"记得住"：重画之后还在新位置
+      var keptRect = doc.querySelector('.gnode[data-node-id="' + sourceIdBox + '"]')
+        .getBoundingClientRect();
+      check('手动摆的位置在重画后仍然保留（不会被自动布局抢回去）',
+        Math.abs(keptRect.left - movedRect.left) < 2 && Math.abs(keptRect.top - movedRect.top) < 2,
+        Math.round(keptRect.left) + ',' + Math.round(keptRect.top));
+
+      // ---- 框选：空白处左键拖出矩形
+      var scrollerRect = doc.querySelector('.graph-scroller').getBoundingClientRect();
+      var emptyStart = { x: scrollerRect.right - 30, y: scrollerRect.top + 12 };
+      var emptyEnd = { x: scrollerRect.left + 20, y: scrollerRect.bottom - 30 };
+      mouse(win, doc.elementFromPoint(emptyStart.x, emptyStart.y) || doc.body,
+        'mousedown', emptyStart.x, emptyStart.y, 1);
+      await settle(win, 1);
+      mouse(win, doc.body, 'mousemove', (emptyStart.x + emptyEnd.x) / 2,
+        (emptyStart.y + emptyEnd.y) / 2, 1);
+      await settle(win, 1);
+      check('框选时画布上出现选框', !!doc.querySelector('.graph-marquee'));
+      mouse(win, doc.body, 'mousemove', emptyEnd.x, emptyEnd.y, 1);
+      await settle(win, 1);
+      mouse(win, doc.body, 'mouseup', emptyEnd.x, emptyEnd.y, 0);
+      await settle(win, 2);
+      check('框选结束后选框消失、并报告选中了几个节点',
+        !doc.querySelector('.graph-marquee') && statusText(doc).indexOf('框选') >= 0,
+        statusText(doc));
+      var selectedCount = doc.querySelectorAll('.gnode.selected').length;
+      check('被框到的节点在画布上处于选中态', selectedCount >= 1, selectedCount + ' 个选中');
+
+      // ---- 小地图点击跳转：先放大到图超出视口（否则没什么可滚），再点小地图另一角
+      var minimap = doc.getElementById('minimap');
+      var mmRect = minimap.getBoundingClientRect();
+      click(doc.getElementById('btnZoomIn'));
+      click(doc.getElementById('btnZoomIn'));
+      await settle(win, 3);
+      // 注意：缩放会重画画布 → 滚动区是**新元素**，必须重新取（取旧的会一直读到 0）
+      var scrollerEl = doc.querySelector('.graph-scroller');
+      scrollerEl.scrollLeft = 0;
+      scrollerEl.scrollTop = 0;
+      var scrollerBefore = { left: scrollerEl.scrollLeft, top: scrollerEl.scrollTop };
+      var scrollable = { w: scrollerEl.scrollWidth - scrollerEl.clientWidth,
+        h: scrollerEl.scrollHeight - scrollerEl.clientHeight };
+      mouse(win, minimap, 'mousedown', mmRect.left + mmRect.width - 12,
+        mmRect.top + mmRect.height - 12, 1);
+      await settle(win, 1);
+      mouse(win, doc.body, 'mouseup', mmRect.left + mmRect.width - 12,
+        mmRect.top + mmRect.height - 12, 0);
+      await settle(win, 2);
+      check('在小地图上点一下能把视口带过去（滚动位置变了）',
+        scrollerEl.scrollLeft !== scrollerBefore.left
+        || scrollerEl.scrollTop !== scrollerBefore.top,
+        JSON.stringify(scrollerBefore) + ' -> ' + scrollerEl.scrollLeft + ','
+        + scrollerEl.scrollTop + ' 可滚=' + JSON.stringify(scrollable));
+      click(doc.getElementById('btnFit'));
+      await settle(win, 3);
+
+      // ---- Shift + 拖到另一个节点上 = 挂父子关系（UE 里靠连线，这里额外给个拖放捷径）
+      click(doc.getElementById('btnAutoLayout'));    // 先把自由位置清掉，回到可预期的布局
+      await settle(win, 3);
+      check('「自动布局」把自由摆放的位置清掉了',
+        statusText(doc).indexOf('自动布局') >= 0, statusText(doc));
+      var freshBoxes = Array.prototype.slice.call(doc.querySelectorAll('.gnode')).map(function (el) {
+        var rect = el.getBoundingClientRect();
+        return { el: el, id: el.getAttribute('data-node-id'), left: rect.left, top: rect.top,
+          width: rect.width, height: rect.height };
+      });
+      var shiftSource = null;
+      var shiftTarget = null;
+      freshBoxes.forEach(function (item) {
+        if (!shiftSource || item.left > shiftSource.left) shiftSource = item;
+        if (!shiftTarget || item.left < shiftTarget.left) shiftTarget = item;
+      });
+      if (shiftSource && shiftTarget && shiftSource.id !== shiftTarget.id) {
+        var shiftFrom = { x: shiftSource.left + 20, y: shiftSource.top + 8 };
+        var shiftTo = { x: shiftTarget.left + shiftTarget.width / 2,
+          y: shiftTarget.top + 12 };
+        mouse(win, shiftSource.el, 'mousedown', shiftFrom.x, shiftFrom.y, 1);
+        await settle(win, 1);
+        mouse(win, doc.elementFromPoint(shiftTo.x, shiftTo.y) || shiftTarget.el,
+          'mousemove', shiftTo.x, shiftTo.y, 1, true);
+        await settle(win, 1);
+        check('按住 Shift 时目标方框被标成落点',
+          shiftTarget.el.classList.contains('drop-child')
+          || shiftTarget.el.classList.contains('drop-sibling')
+          || statusText(doc).indexOf('按住 Shift') >= 0, statusText(doc));
+        mouse(win, doc.elementFromPoint(shiftTo.x, shiftTo.y) || shiftTarget.el,
+          'mouseup', shiftTo.x, shiftTo.y, 0, true);
+        await settle(win, 3);
+        check('Shift+松手后真的挂成了父子关系',
+          statusText(doc).indexOf('已移动') >= 0, statusText(doc));
+      }
+    }
+
+    // ------------------------------------------------ ⑤ 引脚连线（真鼠标从引脚拖到节点上）
+    note('⑤ 引脚连线：从输入脚拖到可接的节点上，结构必须真的变');
+    click(doc.getElementById('btnView'));           // 回到缩进树：用缩进读出父子关系
+    await settle(win, 3);
+    var treeRows = rowInfo(doc);
+    var unit2 = indentUnit(treeRows);
+    // 从缩进反推父子关系：每一行的父 = 它前面最近的、缩进更浅的那一行（DOM 顺序就是视觉顺序）
+    var parentOf = {};
+    var indentStack = [];
+    treeRows.forEach(function (row) {
+      while (indentStack.length && indentStack[indentStack.length - 1].left >= row.left - 1) indentStack.pop();
+      parentOf[row.id] = indentStack.length ? indentStack[indentStack.length - 1].id : null;
+      indentStack.push(row);
+    });
+    var ancestorsOf = function (id) {
+      var chain = [];
+      var current = parentOf[id];
+      while (current) { chain.push(current); current = parentOf[current]; }
+      return chain;
+    };
+    var compositeIds = treeRows.filter(function (row) {
+      return row.tagClass.indexOf('composite') >= 0 || row.tagClass.indexOf('root') >= 0;
+    }).map(function (row) { return row.id; });
+    // 树的根 = 缩进最浅的第一行（不能用 .tag.root 判断：入口节点常常本身就是 Sequence）
+    var rootId = (treeRows[0] || {}).id;
+    var wirePair = null;
+    treeRows.forEach(function (source) {
+      if (source.id === rootId || wirePair) return;
+      compositeIds.forEach(function (targetId) {
+        if (wirePair || targetId === source.id) return;
+        if (parentOf[source.id] === targetId) return;                 // 已经是它的子节点
+        if (ancestorsOf(targetId).indexOf(source.id) >= 0) return;    // 会成环
+        wirePair = { source: source.id, target: targetId };
+      });
+    });
+    check('缩进树里能读出父子关系，并找到一个"可以连"的节点对',
+      !!wirePair && unit2 !== null, JSON.stringify(wirePair) + ' unit=' + unit2);
+    if (wirePair) {
+      click(doc.getElementById('btnView'));          // 切到节点图
+      await settle(win, 3);
+      var pinSource = doc.querySelector('.gnode[data-node-id="' + wirePair.source + '"] .pin.in');
+      var pinTargetBox = doc.querySelector('.gnode[data-node-id="' + wirePair.target + '"]');
+      check('节点图里每个方框都有输入脚，有子节点的方框有输出脚',
+        doc.querySelectorAll('.gnode .pin.in').length === doc.querySelectorAll('.gnode').length
+        && doc.querySelectorAll('.gnode .pin.out').length > 0,
+        'in=' + doc.querySelectorAll('.gnode .pin.in').length
+        + ' out=' + doc.querySelectorAll('.gnode .pin.out').length);
+      check('连线数量 = 父子关系数量',
+        doc.querySelectorAll('.graph-wire:not(.temp)').length === treeRows.length - 1,
+        doc.querySelectorAll('.graph-wire:not(.temp)').length + ' vs ' + (treeRows.length - 1));
+      check('找到源节点的输入脚和目标方框', !!pinSource && !!pinTargetBox,
+        wirePair.source + ' → ' + wirePair.target);
+      if (pinSource && pinTargetBox) {
+        var pinBox = pinSource.getBoundingClientRect();
+        var targetBox2 = pinTargetBox.getBoundingClientRect();
+        var fromPin = { x: pinBox.left + pinBox.width / 2, y: pinBox.top + pinBox.height / 2 };
+        var toNode = { x: targetBox2.left + targetBox2.width / 2,
+          y: targetBox2.top + Math.min(targetBox2.height / 2, 12) };
+        mouse(win, pinSource, 'mousedown', fromPin.x, fromPin.y, 1);
+        await settle(win, 1);
+        var pinHit = doc.elementFromPoint(toNode.x, toNode.y);
+        check('从引脚拉线时，目标坐标命中的是那个方框',
+          !!pinHit && (pinHit === pinTargetBox || pinTargetBox.contains(pinHit)),
+          pinHit ? (pinHit.className || pinHit.tagName) : 'null');
+        mouse(win, pinHit || pinTargetBox, 'mousemove', toNode.x, toNode.y, 1);
+        await settle(win, 1);
+        check('拉线中目标方框被标成"可接"', pinTargetBox.classList.contains('wire-target'),
+          pinTargetBox.className);
+        check('拉线中画布上出现一条跟随鼠标的临时线',
+          !!doc.querySelector('.graph-wire.temp'));
+        mouse(win, pinHit || pinTargetBox, 'mouseup', toNode.x, toNode.y, 0);
+        await settle(win, 3);
+        check('松手后应用报告"已连接"', statusText(doc).indexOf('已连接') >= 0, statusText(doc));
+        check('临时线在松手后消失（没留在画布上）', !doc.querySelector('.graph-wire.temp'));
+
+        click(doc.getElementById('btnView'));        // 回缩进树确认结构真的变了
+        await settle(win, 3);
+        var afterPinRows = rowInfo(doc);
+        var movedRow2 = afterPinRows.filter(function (row) { return row.id === wirePair.source; })[0];
+        var parentRow2 = afterPinRows.filter(function (row) { return row.id === wirePair.target; })[0];
+        check('被连的节点真的挂到了目标下面（缩进深一级）',
+          !!movedRow2 && !!parentRow2 && unit2 !== null
+          && Math.abs(movedRow2.left - (parentRow2.left + unit2)) < 2,
+          movedRow2 ? (movedRow2.left + ' vs 目标 ' + parentRow2.left + ' + ' + unit2) : 'null');
+      }
+    }
+
+    // ------------------------------------------------ ⑥ 断线：点连线 → Delete
+    note('⑥ 断线：点中连线，Delete 把子节点提升为父节点的兄弟');
+    // 注意：父子关系要从**缩进树**读（节点图里没有 .node-row）；先把关系读出来再切视图。
+    var rowsNow = rowInfo(doc);
+    var parentNow = {};
+    var stack2 = [];
+    rowsNow.forEach(function (row) {
+      while (stack2.length && stack2[stack2.length - 1].left >= row.left - 1) stack2.pop();
+      parentNow[row.id] = stack2.length ? stack2[stack2.length - 1].id : null;
+      stack2.push(row);
+    });
+    var deletable = null;
+    rowsNow.forEach(function (row) {
+      if (!deletable && parentNow[row.id] && parentNow[row.id] !== rootId) {
+        deletable = { parent: parentNow[row.id], child: row.id };
+      }
+    });
+    check('找得到一条"父节点不是根"的连线（只有这种线能断开）', !!deletable,
+      JSON.stringify(deletable) + ' 根=' + rootId);
+    if (deletable) {
+      click(doc.getElementById('btnView'));
+      await settle(win, 3);
+      var wireEl = doc.querySelector('.graph-wire[data-wire="' + deletable.parent + '>'
+        + deletable.child + '"]');
+      check('连线在画布上带着父子信息（data-wire）', !!wireEl,
+        deletable.parent + '>' + deletable.child);
+      if (wireEl) {
+        // 连线是弯的，包围盒中心很可能落在别的元素上 —— 沿着路径采样，
+        // 找一个"底下那条透明粗线真的命中"的点（真实 SVG 的 getPointAtLength）
+        var svgRoot = doc.querySelector('.graph-wires');
+        var svgOrigin = svgRoot.getBoundingClientRect();
+        var wirePoint = null;
+        var wireHitEl = null;
+        var total = wireEl.getTotalLength ? wireEl.getTotalLength() : 0;
+        for (var t = 0.5; t > 0.05 && !wireHitEl; t -= 0.05) {
+          var local = wireEl.getPointAtLength(total * t);
+          var px = svgOrigin.left + local.x;
+          var py = svgOrigin.top + local.y;
+          var hit0 = doc.elementFromPoint(px, py);
+          if (hit0 && String(hit0.getAttribute('class')).indexOf('graph-wire-hit') >= 0) {
+            wireHitEl = hit0;
+            wirePoint = { x: px, y: py };
+          }
+        }
+        check('连线底下那条透明粗线能接到鼠标（否则细线根本点不中）',
+          !!wireHitEl, wireHitEl ? wireHitEl.getAttribute('class') : '没找到可点中的位置');
+        if (wireHitEl) {
+          mouse(win, wireHitEl, 'click', wirePoint.x, wirePoint.y, 0);
+          await settle(win, 2);
+          check('点中连线后它进入选中态', !!doc.querySelector('.graph-wire.selected'),
+            statusText(doc));
+          keyboard(win, doc, 'Delete', {});
+          await settle(win, 3);
+          check('Delete 断开连线（不是删节点）',
+            statusText(doc).indexOf('已断开连线') >= 0
+            && !!doc.querySelector('.gnode[data-node-id="' + deletable.child + '"]'),
+            statusText(doc));
+        }
+      }
+    }
+
+    // ------------------------------------------------ ⑦ 主题（默认浅色；比较浏览器算出来的颜色）
+    note('⑦ 主题：默认浅色，点按钮切深色，比较浏览器**算出来的**颜色');
+    var lum = function (value) {
+      var m = /rgb\((\d+),\s*(\d+),\s*(\d+)/.exec(value) || [];
+      return m.length ? (Number(m[1]) + Number(m[2]) + Number(m[3])) / 3 : -1;
+    };
+    var themeBtn = doc.getElementById('btnTheme');
+    var bodyLight = win.getComputedStyle(doc.body).backgroundColor;
+    var canvasLight = win.getComputedStyle(doc.querySelector('.graph-canvas')).backgroundColor;
+    var nodeLight = win.getComputedStyle(doc.querySelector('.gnode')).backgroundColor;
+    var textLight = win.getComputedStyle(doc.body).color;
+    check('默认就是浅色（<html> 上有 light 类 —— 用户要求）',
+      doc.documentElement.classList.contains('light'), doc.documentElement.className);
+    check('默认浅色下是"浅底深字"', lum(bodyLight) > 200 && lum(textLight) < lum(bodyLight),
+      textLight + ' on ' + bodyLight);
+    check('按钮文案说的是当前主题', String(themeBtn.textContent).indexOf('浅色') >= 0,
+      themeBtn.textContent);
+    click(themeBtn);
+    await settle(win, 2);
+    var bodyDark = win.getComputedStyle(doc.body).backgroundColor;
+    var canvasDark = win.getComputedStyle(doc.querySelector('.graph-canvas')).backgroundColor;
+    var nodeDark = win.getComputedStyle(doc.querySelector('.gnode')).backgroundColor;
+    var textDark = win.getComputedStyle(doc.body).color;
+    note('  页面底色 ' + bodyLight + ' → ' + bodyDark);
+    note('  画布底色 ' + canvasLight + ' → ' + canvasDark);
+    note('  节点底色 ' + nodeLight + ' → ' + nodeDark);
+    check('点一下按钮就切到深色（light 类被去掉）',
+      !doc.documentElement.classList.contains('light'), doc.documentElement.className);
+    check('浏览器算出来的颜色真的变了（不是只改了个类名）',
+      bodyDark !== bodyLight && canvasDark !== canvasLight && nodeDark !== nodeLight
+      && textDark !== textLight, bodyDark + ' / ' + canvasDark + ' / ' + nodeDark);
+    check('深色下底色确实变暗、文字变亮（对比反过来了）',
+      lum(bodyDark) < lum(bodyLight) - 150 && lum(textDark) > lum(bodyDark),
+      bodyLight + ' → ' + bodyDark);
+    check('切主题不会破坏布局（画布仍然铺满、没有溢出）',
+      (function () {
+        var m = metrics(doc, frame);
+        return m.scrollHeight <= m.innerHeight + 2 && m.treeRootClientHeight >= 140;
+      })(), JSON.stringify(metrics(doc, frame)));
+    click(themeBtn);
+    await settle(win, 2);
+    check('再点一下切回浅色（颜色也回来了）',
+      doc.documentElement.classList.contains('light')
+      && win.getComputedStyle(doc.body).backgroundColor === bodyLight,
+      win.getComputedStyle(doc.body).backgroundColor);
+
+    // ------------------------------------------------ ⑧ 注释框（节点组）
+    note('⑧ 注释框：框选节点 → 建组 → 拖组头整体移动 → 改名 → 解散');
+    click(doc.getElementById('btnFit'));
+    await settle(win, 3);
+    // 先框选**整块画布**（前几节拖过节点，位置是散的；这里要的就是"尽量都选上"）。
+    // 起点必须落在空白处 —— 落在节点上就变成拖节点了（"空白处左键拖=框选"的判定就是这个）。
+    var scRect = doc.querySelector('.graph-scroller').getBoundingClientRect();
+    var candidates = [
+      { x: scRect.left + 8, y: scRect.top + 8 },
+      { x: scRect.right - 8, y: scRect.top + 8 },
+      { x: scRect.left + 8, y: scRect.bottom - 8 },
+      { x: scRect.right - 8, y: scRect.bottom - 8 },
+      { x: scRect.left + 8, y: (scRect.top + scRect.bottom) / 2 }
+    ];
+    var start = null;
+    candidates.forEach(function (point) {
+      if (start) return;
+      var hit = doc.elementFromPoint(point.x, point.y);
+      if (hit && !hit.closest('.gnode') && !hit.closest('.graph-group')) start = point;
+    });
+    if (!start) start = candidates[0];
+    var end = { x: start.x < (scRect.left + scRect.right) / 2 ? scRect.right - 8 : scRect.left + 8,
+      y: start.y < (scRect.top + scRect.bottom) / 2 ? scRect.bottom - 8 : scRect.top + 8 };
+    mouse(win, doc.elementFromPoint(start.x, start.y) || doc.body,
+      'mousedown', start.x, start.y, 1);
+    await settle(win, 1);
+    mouse(win, doc.body, 'mousemove', end.x, end.y, 1);
+    await settle(win, 1);
+    mouse(win, doc.body, 'mouseup', end.x, end.y, 0);
+    await settle(win, 2);
+    var selectedForGroup = doc.querySelectorAll('.gnode.selected, .gnode.multi-selected');
+    check('先框选出若干节点（建组的输入）', selectedForGroup.length >= 2,
+      selectedForGroup.length + ' 个；起点 ' + Math.round(start.x) + ','
+      + Math.round(start.y) + ' → ' + Math.round(end.x) + ',' + Math.round(end.y));
+    click(doc.getElementById('btnGroup'));
+    await settle(win, 3);
+    var groupEl = doc.querySelector('.graph-group');
+    check('点「建组」后画布上出现注释框，并且带着标题',
+      !!groupEl && !!doc.querySelector('.graph-group-head')
+      && String(doc.querySelector('.graph-group-head').textContent).length > 0,
+      groupEl ? String(doc.querySelector('.graph-group-head').textContent) : 'no group');
+    check('注释框画在节点下面（不挡节点操作）',
+      (function () {
+        var groups = doc.querySelector('.graph-groups');
+        var box = doc.querySelector('.gnode');
+        if (!groups || !box) return false;
+        // 同一父节点下，注释框层先出现 → 节点层后出现 → 节点在上
+        var children = Array.prototype.slice.call(box.parentNode.children);
+        return children.indexOf(groups) < children.indexOf(box);
+      })());
+    check('建组后属性区换成了组的编辑面板',
+      !!doc.getElementById('groupTitleInput'), !!doc.getElementById('groupTitleInput'));
+
+    // 拖组头 → 组和组内节点一起移动
+    var nodesBefore = {};
+    Array.prototype.slice.call(doc.querySelectorAll('.gnode')).forEach(function (el) {
+      var rect = el.getBoundingClientRect();
+      nodesBefore[el.getAttribute('data-node-id')] = { left: rect.left, top: rect.top };
+    });
+    var groupRectBefore = groupEl.getBoundingClientRect();
+    var headEl = doc.querySelector('.graph-group-head');
+    var headRect = headEl.getBoundingClientRect();
+    var grab = { x: headRect.left + 20, y: headRect.top + headRect.height / 2 };
+    var drop = { x: grab.x + 90, y: grab.y + 70 };
+    mouse(win, headEl, 'mousedown', grab.x, grab.y, 1);
+    await settle(win, 1);
+    // 按下会把它标成选中：即使实现里重画了画布，这里也重新查一次元素（别量已脱离文档的旧元素）
+    groupEl = doc.querySelector('.graph-group');
+    mouse(win, doc.body, 'mousemove', drop.x, drop.y, 1);
+    await settle(win, 2);
+    var groupRectAfter = groupEl.getBoundingClientRect();
+    check('拖动组头时注释框跟着鼠标走',
+      Math.abs(groupRectAfter.left - (groupRectBefore.left + 90)) < 12
+      && Math.abs(groupRectAfter.top - (groupRectBefore.top + 70)) < 12,
+      Math.round(groupRectBefore.left) + ',' + Math.round(groupRectBefore.top) + ' -> '
+      + Math.round(groupRectAfter.left) + ',' + Math.round(groupRectAfter.top));
+    mouse(win, doc.body, 'mouseup', drop.x, drop.y, 0);
+    await settle(win, 2);
+    check('松手后报告整体移动了注释框',
+      statusText(doc).indexOf('已整体移动') >= 0, statusText(doc));
+    check('组内节点跟着组一起移动了（位移一致）',
+      (function () {
+        var moved = 0;
+        Array.prototype.slice.call(doc.querySelectorAll('.gnode')).forEach(function (el) {
+          var id = el.getAttribute('data-node-id');
+          var before = nodesBefore[id];
+          if (!before) return;
+          var rect = el.getBoundingClientRect();
+          if (Math.abs(rect.left - (before.left + 90)) < 12
+            && Math.abs(rect.top - (before.top + 70)) < 12) moved++;
+        });
+        return moved >= 2;
+      })(), '跟着移动的方框数见上一条');
+
+    // 改名（双击标题 → prompt）
+    win.prompt = function () { return '第二段行为'; };
+    var headEl2 = doc.querySelector('.graph-group-head');
+    headEl2.dispatchEvent(new win.MouseEvent('dblclick', { bubbles: true, cancelable: true }));
+    await settle(win, 2);
+    check('双击标题能改名（新标题同时出现在画布和属性区）',
+      String(doc.querySelector('.graph-group-head').textContent).indexOf('第二段行为') >= 0
+      && String(statusText(doc)).indexOf('组名改成') >= 0,
+      String(doc.querySelector('.graph-group-head').textContent));
+
+    // 解散
+    click(doc.getElementById('btnFit'));
+    await settle(win, 2);
+    var nodesBeforeDisband = doc.querySelectorAll('.gnode').length;
+    keyboard(win, doc, 'Delete', {});
+    await settle(win, 3);
+    check('选中注释框时 Delete 解散它（不是删节点）',
+      !doc.querySelector('.graph-group') && statusText(doc).indexOf('已解散') >= 0
+      && doc.querySelectorAll('.gnode').length === nodesBeforeDisband,
+      statusText(doc));
+
+    // 最后再建一个组留着：截图里能直接看到注释框长什么样
+    var scRect2 = doc.querySelector('.graph-scroller').getBoundingClientRect();
+    var start2 = { x: scRect2.left + 8, y: scRect2.top + 8 };
+    var end2 = { x: scRect2.right - 8, y: scRect2.bottom - 8 };
+    if (doc.elementFromPoint(start2.x, start2.y)
+      && doc.elementFromPoint(start2.x, start2.y).closest('.gnode')) {
+      start2 = { x: scRect2.left + 8, y: scRect2.bottom - 8 };
+      end2 = { x: scRect2.right - 8, y: scRect2.top + 8 };
+    }
+    mouse(win, doc.elementFromPoint(start2.x, start2.y) || doc.body, 'mousedown',
+      start2.x, start2.y, 1);
+    await settle(win, 1);
+    mouse(win, doc.body, 'mousemove', end2.x, end2.y, 1);
+    await settle(win, 1);
+    mouse(win, doc.body, 'mouseup', end2.x, end2.y, 0);
+    await settle(win, 2);
+    click(doc.getElementById('btnGroup'));
+    await settle(win, 3);
+    check('（留一个注释框给截图看）', !!doc.querySelector('.graph-group'),
+      doc.querySelector('.graph-group')
+        ? String(doc.querySelector('.graph-group-head').textContent) : 'none');
+
+    // ------------------------------------------------ ⑨ 中键平移 / 滚轮缩放 / 网格铺满 / 物料拖入
+    note('⑨ 中键拖动平移、滚轮缩放（缩到光标）、网格铺满、物料拖进画布、Shift 点线断开');
+    click(doc.getElementById('btnZoomIn'));
+    click(doc.getElementById('btnZoomIn'));
+    await settle(win, 3);
+    var panScroller = doc.querySelector('.graph-scroller');
+    var panBox = panScroller.getBoundingClientRect();
+
+    // 网格铺满：画布不小于滚动区
+    check('格子背景铺满绘图区（画布高度 >= 可视区高度）',
+      (function () {
+        var canvas = doc.querySelector('.graph-canvas');
+        return canvas.getBoundingClientRect().height >= panScroller.clientHeight - 2
+          && canvas.getBoundingClientRect().width >= panScroller.clientWidth - 2;
+      })(), doc.querySelector('.graph-canvas').getBoundingClientRect().height + ' vs '
+      + panScroller.clientHeight);
+
+    // 中键拖动平移
+    panScroller.scrollLeft = 0;
+    panScroller.scrollTop = 0;
+    var panStart = { x: panBox.left + panBox.width / 2, y: panBox.top + panBox.height / 2 };
+    var panEnd = { x: panStart.x - 70, y: panStart.y - 45 };
+    panScroller.dispatchEvent(new win.MouseEvent('mousedown', {
+      bubbles: true, cancelable: true, view: win, button: 1, buttons: 4,
+      clientX: panStart.x, clientY: panStart.y
+    }));
+    await settle(win, 1);
+    doc.body.dispatchEvent(new win.MouseEvent('mousemove', {
+      bubbles: true, cancelable: true, view: win, buttons: 4,
+      clientX: panEnd.x, clientY: panEnd.y
+    }));
+    await settle(win, 1);
+    doc.body.dispatchEvent(new win.MouseEvent('mouseup', {
+      bubbles: true, cancelable: true, view: win, button: 1, buttons: 0,
+      clientX: panEnd.x, clientY: panEnd.y
+    }));
+    await settle(win, 2);
+    check('按住滚轮（中键）拖动可以平移画布',
+      panScroller.scrollLeft !== 0 || panScroller.scrollTop !== 0,
+      'scroll=' + panScroller.scrollLeft + ',' + panScroller.scrollTop);
+
+    // 滚轮 = 缩放，且缩放到光标位置
+    var scaleBeforeWheel = Number((/缩放=(\d+)%/.exec(diagLine(doc)) || [])[1]);
+    var wheelPoint = { x: panBox.left + panBox.width * 0.35, y: panBox.top + panBox.height * 0.5 };
+    var anchorNode = doc.elementFromPoint(wheelPoint.x, wheelPoint.y);
+    var anchorId = anchorNode && anchorNode.closest('.gnode')
+      ? anchorNode.closest('.gnode').getAttribute('data-node-id') : null;
+    var anchorBefore = anchorNode && anchorNode.closest('.gnode')
+      ? anchorNode.closest('.gnode').getBoundingClientRect() : null;
+    var pointUnderCursorBefore = (function () {
+      var canvas = doc.querySelector('.graph-canvas');
+      var rect = canvas.getBoundingClientRect();
+      var scale = scaleBeforeWheel / 100;
+      return { x: (wheelPoint.x - rect.left) / scale, y: (wheelPoint.y - rect.top) / scale };
+    })();
+    panScroller.dispatchEvent(new win.WheelEvent('wheel', {
+      bubbles: true, cancelable: true, view: win, deltaY: -120,
+      clientX: wheelPoint.x, clientY: wheelPoint.y
+    }));
+    await settle(win, 3);
+    var scaleAfterWheel = Number((/缩放=(\d+)%/.exec(diagLine(doc)) || [])[1]);
+    check('滚轮上下滚动就是缩放（不按任何修饰键）',
+      scaleAfterWheel > scaleBeforeWheel, scaleBeforeWheel + '% -> ' + scaleAfterWheel + '%');
+    // 缩放前后"光标下那个内容点"应当基本不变 —— 这正是以光标为锚缩放的承诺。
+    // 用真实几何量：clientX - 画布左边缘，再除以缩放比例。
+    var pointAfterZoom = (function () {
+      var canvas = doc.querySelector('.graph-canvas');
+      var rect = canvas.getBoundingClientRect();
+      var scale = scaleAfterWheel / 100;
+      return { x: (wheelPoint.x - rect.left) / scale, y: (wheelPoint.y - rect.top) / scale };
+    })();
+    var pointBeforeZoom = { x: pointUnderCursorBefore.x, y: pointUnderCursorBefore.y };
+    note('  光标下的内容点 ' + Math.round(pointBeforeZoom.x) + ',' + Math.round(pointBeforeZoom.y)
+      + ' → ' + Math.round(pointAfterZoom.x) + ',' + Math.round(pointAfterZoom.y));
+    check('缩放锚在光标位置（光标下的内容点没跑）',
+      Math.abs(pointAfterZoom.x - pointBeforeZoom.x) <= 24
+      && Math.abs(pointAfterZoom.y - pointBeforeZoom.y) <= 24,
+      JSON.stringify(pointBeforeZoom) + ' -> ' + JSON.stringify(pointAfterZoom));
+
+    // 物料拖进画布：落点在空白处 → 新建节点
+    var nodesBeforeDrop = doc.querySelectorAll('.gnode').length;
+    var idsBeforeDrop = {};
+    Array.prototype.slice.call(doc.querySelectorAll('.gnode')).forEach(function (el) {
+      idsBeforeDrop[el.getAttribute('data-node-id')] = true;
+    });
+    var paletteWaitItem = null;
+    Array.prototype.slice.call(doc.querySelectorAll('.palette-item')).forEach(function (item) {
+      if (!paletteWaitItem && String(item.textContent).trim() === 'Task.Wait') paletteWaitItem = item;
+    });
+    check('左侧物料区找得到 Task.Wait 物料', !!paletteWaitItem);
+    if (paletteWaitItem) {
+      var itemRect = paletteWaitItem.getBoundingClientRect();
+      var itemPoint = { x: itemRect.left + itemRect.width / 2, y: itemRect.top + itemRect.height / 2 };
+      // 找一个空白落点（不能用节点占着的地方，否则会被识别成"挂到这个节点下"）
+      // 只避开节点：物料落点的判定是"命中的元素里有没有 data-node-id"，
+      // 注释框铺得再大也不算障碍（落在它上面一样是新建节点）
+      var dropPoint = null;
+      for (var dy = 0.15; dy <= 0.9 && !dropPoint; dy += 0.08) {
+        for (var dx = 0.08; dx <= 0.95 && !dropPoint; dx += 0.08) {
+          var candidate = { x: panBox.left + panBox.width * dx, y: panBox.top + panBox.height * dy };
+          var hit = doc.elementFromPoint(candidate.x, candidate.y);
+          if (hit && !hit.closest('.gnode')) dropPoint = candidate;
+        }
+      }
+      check('画布上找得到一块空白落点', !!dropPoint);
+      if (dropPoint) {
+        mouse(win, paletteWaitItem, 'mousedown', itemPoint.x, itemPoint.y, 1);
+        await settle(win, 1);
+        var overHit = doc.elementFromPoint(dropPoint.x, dropPoint.y);
+        mouse(win, overHit || doc.body, 'mousemove', dropPoint.x, dropPoint.y, 1);
+        await settle(win, 1);
+        check('拖动物料时提示"松手就在这里新建"',
+          statusText(doc).indexOf('新建') >= 0, statusText(doc));
+        mouse(win, overHit || doc.body, 'mouseup', dropPoint.x, dropPoint.y, 0);
+        await settle(win, 3);
+        check('物料拖进画布 → 真的多出一个节点',
+          doc.querySelectorAll('.gnode').length === nodesBeforeDrop + 1,
+          nodesBeforeDrop + ' -> ' + doc.querySelectorAll('.gnode').length);
+        var newNodeId = null;
+        Array.prototype.slice.call(doc.querySelectorAll('.gnode')).forEach(function (el) {
+          var id = el.getAttribute('data-node-id');
+          if (!idsBeforeDrop[id]) newNodeId = id;
+        });
+        check('新建的节点就是刚拖进来的那个（画布上多出来的方框）', !!newNodeId, newNodeId || 'none');
+        check('新建的节点落在松手的位置附近（不是跑到别处）',
+          (function () {
+            if (!newNodeId) return false;
+            var el = doc.querySelector('.gnode[data-node-id="' + newNodeId + '"]');
+            if (!el) return false;
+            var rect = el.getBoundingClientRect();
+            // 位置是按"画布坐标 = 落点 - 抓取偏移"存的，缩放后屏幕上会按比例放大这个偏移
+            var scale = Number((/缩放=(\d+)%/.exec(diagLine(doc)) || [])[1] || 100) / 100;
+            var expectX = dropPoint.x - 40 * scale;
+            var expectY = dropPoint.y - 14 * scale;
+            return Math.abs(rect.left - expectX) < 8 && Math.abs(rect.top - expectY) < 8;
+          })(), newNodeId ? (newNodeId + ' @ ' + JSON.stringify(
+            doc.querySelector('.gnode[data-node-id="' + newNodeId + '"]').getBoundingClientRect())
+            + ' 期望 ' + Math.round(dropPoint.x) + ',' + Math.round(dropPoint.y)
+            + ' ｜ ' + statusText(doc)) : 'none');
+      }
+    }
+
+    // Shift + 点连线 = 断开。
+    // 先确保有一条"父节点不是根"的连线：根节点下面的线断不了（子节点无处提升），
+    // 而前面的用例可能已经把唯一的嵌套连线断掉了 —— 这里用真实引脚拖拽再连一条。
+    // 先适应窗口：保证下面的引脚拖拽/点击都在可视区里（内容比视口大时，方框可能不在视野内）
+    click(doc.getElementById('btnFit'));
+    await settle(win, 3);
+    var boxesNow = Array.prototype.slice.call(doc.querySelectorAll('.gnode'));
+    // 根节点 = **没有任何连线指向它**的那个（按结构判断：节点可能被拖到比根更左边，
+    // 按位置判断会认错；入口节点本身是 Sequence，按 class 也会认错）
+    var hasParent = {};
+    Array.prototype.slice.call(doc.querySelectorAll('.graph-wire[data-wire]')).forEach(function (path) {
+      var child = String(path.getAttribute('data-wire') || '').split('>')[1];
+      if (child) hasParent[child] = true;
+    });
+    var rootNodeId = null;
+    boxesNow.forEach(function (el) {
+      // 游离节点（没接进行为树）也没有连线指向它，但它不是根
+      if (el.classList.contains('detached')) return;
+      var id = el.getAttribute('data-node-id');
+      if (!hasParent[id] && rootNodeId === null) rootNodeId = id;
+    });
+    var compositeBox = null;
+    boxesNow.forEach(function (el) {
+      if (compositeBox) return;
+      if (!el.classList.contains('composite')) return;
+      if (el.getAttribute('data-node-id') === rootNodeId) return;
+      compositeBox = el;
+    });
+    var taskBox = null;
+    boxesNow.forEach(function (el) {
+      if (taskBox || el === compositeBox) return;
+      if (el.classList.contains('detached')) return;      // 游离节点不参与连线用例
+      if (el.classList.contains('task')) taskBox = el;
+    });
+    note('  根节点判定为 ' + rootNodeId + '，非根组合节点 '
+      + (compositeBox ? compositeBox.getAttribute('data-node-id') : '(没有)'));
+    if (compositeBox && taskBox) {
+      var sourceId = taskBox.getAttribute('data-node-id');
+      var targetId = compositeBox.getAttribute('data-node-id');
+      // 用**引脚拖拽**造一条嵌套线：从源节点的输入脚拖到目标方框上（= 源挂到目标下）
+      await connectByPin(win, doc, sourceId, targetId);
+      var nested = statusText(doc);
+      if (nested.indexOf('已连接') < 0) {
+        note('  引脚拖拽没连上（' + nested + '），改用 Shift 拖放再试一次');
+        var fromRect = taskBox.getBoundingClientRect();
+        var toRect = compositeBox.getBoundingClientRect();
+        mouse(win, taskBox, 'mousedown', fromRect.left + 20, fromRect.top + 8, 1);
+        await delay(40);
+        var onto = { x: toRect.left + toRect.width / 2, y: toRect.top + 12 };
+        mouse(win, doc.elementFromPoint(onto.x, onto.y) || compositeBox,
+          'mousemove', onto.x, onto.y, 1, true);
+        await delay(40);
+        mouse(win, doc.elementFromPoint(onto.x, onto.y) || compositeBox,
+          'mouseup', onto.x, onto.y, 0, true);
+        await delay(120);
+      }
+      note('  造一条嵌套线：' + sourceId + ' → ' + targetId + '（' + statusText(doc) + '）');
+    } else {
+      note('  找不到可用的"非根组合节点 + 任务节点"组合，跳过断线用例');
+    }
+
+    var cutCandidates = [];
+    Array.prototype.slice.call(doc.querySelectorAll('.graph-wire-hit[data-wire]'))
+      .forEach(function (path) {
+        var key = path.getAttribute('data-wire') || '';
+        var parts = key.split('>');
+        var svgRoot = doc.querySelector('.graph-wires');
+        var point = null;
+        if (svgRoot && path.getTotalLength) {
+          var origin = svgRoot.getBoundingClientRect();
+          var total = path.getTotalLength();
+          for (var t = 0.45; t > 0.05 && !point; t -= 0.05) {
+            var local = path.getPointAtLength(total * t);
+            var px = origin.left + local.x;
+            var py = origin.top + local.y;
+            if (doc.elementFromPoint(px, py) === path) point = { x: px, y: py };
+          }
+        }
+        if (!point && cutCandidates.length < 1) {
+          var probe = [];
+          for (var ti = 0.5; ti >= 0.1; ti -= 0.2) {
+            var lp = path.getPointAtLength(path.getTotalLength() * ti);
+            var probeX = (svgRoot ? svgRoot.getBoundingClientRect().left : 0) + lp.x;
+            var probeY = (svgRoot ? svgRoot.getBoundingClientRect().top : 0) + lp.y;
+            var probeHit = doc.elementFromPoint(probeX, probeY);
+            probe.push('(' + Math.round(probeX) + ',' + Math.round(probeY) + ')->'
+              + (probeHit ? (probeHit.getAttribute('class') || probeHit.tagName) : 'null'));
+          }
+          note('  ' + key + ' 采样：' + probe.join(' '));
+        }
+        cutCandidates.push({ key: key, parentId: parts[0], childId: parts[1], path: path,
+          point: point, prefersCut: parts[0] !== rootNodeId });
+      });
+    // 先试"父节点不是根"的线（根下面的线本来就断不了）
+    cutCandidates.sort(function (a, b) { return (b.prefersCut ? 1 : 0) - (a.prefersCut ? 1 : 0); });
+    check('画布上找得到连线（含可命中点）',
+      cutCandidates.length > 0 && cutCandidates.filter(function (item) { return item.point; }).length > 0,
+      cutCandidates.length + ' 条，其中 ' + cutCandidates.filter(function (item) {
+        return item.point; }).length + ' 条有命中点');
+    var cut = null;
+    for (var c = 0; c < cutCandidates.length && !cut; c++) {
+      var candidateWire = cutCandidates[c];
+      if (candidateWire.point) {
+        mouse(win, candidateWire.path, 'click', candidateWire.point.x, candidateWire.point.y, 0, true);
+      } else {
+        // 这条线被方框压住了，找不到能命中的像素：直接把点击派发到命中路径上
+        // （"连线能不能点中"由前面那条检查负责，这里只验证 Shift 的语义）
+        note('  ' + candidateWire.key + ' 被节点挡住，直接把点击派发到命中路径');
+        mouse(win, candidateWire.path, 'click', 0, 0, 0, true);
+      }
+      await settle(win, 3);
+      if (statusText(doc).indexOf('已断开连线') >= 0) cut = candidateWire;
+      else note('  这条线断不了（' + statusText(doc) + '），换下一条');
+    }
+    check('Shift + 点连线 → 直接断开（不用按 Delete）', !!cut,
+      cut ? cut.key : (cutCandidates.length ? '每条都被拒绝' : '没有可点的线'));
+    if (cut) {
+      check('断线后子节点还在（断线不是删节点）',
+        !!doc.querySelector('.gnode[data-node-id="' + cut.childId + '"]'), cut.key);
+    }
+
+    // ------------------------------------------------ ⑩ 游离节点 / 拖动影像 / 换包
+    note('⑩ 物料落在空白处＝游离节点、拖动影像、顶部换包立即生效');
+    click(doc.getElementById('btnFit'));
+    await settle(win, 3);
+
+    // ---- 拖动影像：拖物料时必须有个跟随鼠标的小标签
+    var ghostItem = null;
+    Array.prototype.slice.call(doc.querySelectorAll('.palette-item')).forEach(function (item) {
+      if (!ghostItem && String(item.textContent).trim() === 'Task.Wait') ghostItem = item;
+    });
+    check('物料区有 Task.Wait 可拖', !!ghostItem);
+    if (ghostItem) {
+      var ghostRect = ghostItem.getBoundingClientRect();
+      mouse(win, ghostItem, 'mousedown', ghostRect.left + 10, ghostRect.top + 8, 1);
+      await settle(win, 1);
+      var canvasBox = doc.querySelector('.graph-canvas').getBoundingClientRect();
+      var ghostTarget = { x: canvasBox.left + canvasBox.width - 60,
+        y: canvasBox.top + canvasBox.height - 60 };
+      var ghostHit = doc.elementFromPoint(ghostTarget.x, ghostTarget.y);
+      mouse(win, ghostHit || doc.body, 'mousemove', ghostTarget.x, ghostTarget.y, 1);
+      await settle(win, 1);
+      var ghostEl = doc.querySelector('.drag-ghost');
+      check('拖物料时有个跟随鼠标的影像（不再是"看不见拖的是什么"）',
+        !!ghostEl && String(ghostEl.textContent).indexOf('Task.Wait') >= 0,
+        ghostEl ? String(ghostEl.textContent) : 'none');
+      var ghostMoved = ghostEl
+        ? Math.abs(ghostEl.getBoundingClientRect().left - ghostTarget.x) < 40 : false;
+      check('影像跟着鼠标走', ghostMoved,
+        ghostEl ? Math.round(ghostEl.getBoundingClientRect().left) + ' vs '
+          + Math.round(ghostTarget.x) : 'none');
+      var beforeDetached = doc.querySelectorAll('.gnode.detached').length;
+      mouse(win, ghostHit || doc.body, 'mouseup', ghostTarget.x, ghostTarget.y, 0);
+      await settle(win, 3);
+      check('松手后影像消失', !doc.querySelector('.drag-ghost'));
+      check('落在空白处＝新建**游离节点**（不自动挂到别的节点上）',
+        doc.querySelectorAll('.gnode.detached').length === beforeDetached + 1
+        && statusText(doc).indexOf('游离节点') >= 0,
+        statusText(doc));
+      // 缩进树里它应当是单独的一条（不是挂在别的节点下面）
+      click(doc.getElementById('btnView'));
+      await settle(win, 3);
+      check('缩进树里游离节点单独列出（有"游离"说明）',
+        doc.querySelectorAll('.node.detached-node').length >= 1
+        && !!doc.querySelector('.detached-note'),
+        doc.querySelectorAll('.node.detached-node').length + ' 条');
+      var detachedRow = doc.querySelector('.node.detached-node .node-row');
+      check('游离节点那一行的缩进是最浅的一档（和根节点同级，不是子节点）',
+        (function () {
+          if (!detachedRow) return false;
+          var rows = rowInfo(doc);
+          var unit = indentUnit(rows);
+          var row = rows.filter(function (item) {
+            return item.id === detachedRow.getAttribute('data-node-id');
+          })[0];
+          var minLeft = rows.reduce(function (min, item) { return Math.min(min, item.left); }, Infinity);
+          return !!row && unit !== null && Math.abs(row.left - minLeft) < 2;
+        })());
+      click(doc.getElementById('btnView'));
+      await settle(win, 3);
+    }
+
+    // ---- 物料区不能"按住变成选文字"
+    check('物料项禁止文字选择（否则按住拖动会变成框选文字）',
+      (function () {
+        var item = doc.querySelector('.palette-item');
+        if (!item) return false;
+        var style = win.getComputedStyle(item);
+        return style.userSelect === 'none' || style.webkitUserSelect === 'none';
+      })());
+
+    // ---- 顶部换包：选中即加载
+    var select = doc.getElementById('packageSelect');
+    var options = Array.prototype.slice.call(select.querySelectorAll('option'));
+    check('包下拉里至少两个包可以切换', options.length >= 2, options.length + ' 个');
+    if (options.length >= 2) {
+      var current = select.value;
+      var other = options.filter(function (option) { return option.value !== current; })[0];
+      var boxesBeforeSwitch = doc.querySelectorAll('.gnode').length;
+      select.value = other.value;
+      select.dispatchEvent(new win.Event('change', { bubbles: true }));
+      await settle(win, 5);
+      var hint = String(doc.getElementById('canvasHint').textContent);
+      check('在顶部下拉里选另一个包 → 画布立刻跟着换（不用再点「打开」）',
+        hint.indexOf(other.textContent.split(' ')[0]) >= 0
+        || doc.querySelectorAll('.gnode').length !== boxesBeforeSwitch,
+        'hint=' + hint + ' 方框 ' + boxesBeforeSwitch + '→'
+        + doc.querySelectorAll('.gnode').length);
+    }
+
+    // ------------------------------------------------ ⑪ 无限画布 + 拖动中的连线
+    note('⑪ 无限画布：拖到左上角外会扩边；拖动中有连线的节点，连线实时跟着走');
+    click(doc.getElementById('btnFit'));
+    await settle(win, 3);
+
+    // ---- 拖动中连线必须实时跟着（不能等松手才出现）
+    // 挑一个有父节点的方框（有连线），把它拖到画布右下方很远的地方
+    var wiredBox = null;
+    var wiredKeys = {};
+    Array.prototype.slice.call(doc.querySelectorAll('.graph-wire[data-wire]')).forEach(function (path) {
+      wiredKeys[String(path.getAttribute('data-wire')).split('>')[1]] = true;
+    });
+    Array.prototype.slice.call(doc.querySelectorAll('.gnode')).forEach(function (el) {
+      if (wiredBox) return;
+      if (!wiredKeys[el.getAttribute('data-node-id')]) return;
+      if (el.classList.contains('root') || el.classList.contains('detached')) return;
+      wiredBox = el;
+    });
+    check('找得到一个"有连线"的节点用来拖', !!wiredBox,
+      wiredBox ? wiredBox.getAttribute('data-node-id') : 'none');
+    if (wiredBox) {
+      var wiredId = wiredBox.getAttribute('data-node-id');
+      var wiredRect = wiredBox.getBoundingClientRect();
+      var grabAt = { x: wiredRect.left + 20, y: wiredRect.top + 8 };
+      var scrollerEl = doc.querySelector('.graph-scroller');
+      var scrollerBox = scrollerEl.getBoundingClientRect();
+      // 拖到可视区内的右下角（够远，足以超出原来的画布边界）
+      var dragTo = { x: scrollerBox.right - 40, y: scrollerBox.bottom - 40 };
+      var svgBefore = doc.querySelector('.graph-wires');
+      var svgSizeBefore = { w: Number(svgBefore.getAttribute('width')),
+        h: Number(svgBefore.getAttribute('height')) };
+      mouse(win, wiredBox, 'mousedown', grabAt.x, grabAt.y, 1);
+      await settle(win, 1);
+      mouse(win, doc.body, 'mousemove', dragTo.x, dragTo.y, 1);
+      await settle(win, 2);
+      var duringBox = doc.querySelector('.gnode[data-node-id="' + wiredId + '"]');
+      var duringRect = duringBox.getBoundingClientRect();
+      // 拖动**还没松手**时：连线路径的终点应当已经落在节点新位置上
+      var wirePath = doc.querySelector('.graph-wire[data-wire$=">' + wiredId + '"]');
+      var endPoint = null;
+      if (wirePath) {
+        var match = /([-\d.]+) ([-\d.]+)$/.exec(wirePath.getAttribute('d') || '');
+        if (match) endPoint = { x: Number(match[1]), y: Number(match[2]) };
+      }
+      note('  拖动中：节点 ' + Math.round(duringRect.left) + ',' + Math.round(duringRect.top)
+        + ' 连线终点 ' + (endPoint ? Math.round(endPoint.x) + ',' + Math.round(endPoint.y) : 'n/a')
+        + ' SVG ' + svgSizeBefore.w + 'x' + svgSizeBefore.h);
+      check('拖动中连线终点已经跟到节点的新位置（不是等松手才画）',
+        (function () {
+          if (!wirePath || !endPoint) return false;
+          // 线画在内容层里：终点相对内容层的坐标 + 内容层偏移 = 画布内坐标，再换算到屏幕
+          var layer = doc.querySelector('.graph-content');
+          var layerRect = layer.getBoundingClientRect();
+          var wireEndScreen = { x: layerRect.left + endPoint.x, y: layerRect.top + endPoint.y };
+          // 节点新位置附近的输入脚（左边缘、第一行）应当与线的终点基本重合
+          return Math.abs(wireEndScreen.x - duringRect.left) < 30
+            && Math.abs(wireEndScreen.y - duringRect.top) < 60;
+        })(), endPoint ? JSON.stringify(endPoint) : 'no path');
+      check('拖动中画布/SVG 跟着内容一起长大（超出的部分不会被裁掉）',
+        (function () {
+          var svgNow = doc.querySelector('.graph-wires');
+          return Number(svgNow.getAttribute('width')) >= svgSizeBefore.w
+            && Number(svgNow.getAttribute('height')) >= svgSizeBefore.h;
+        })());
+      mouse(win, duringBox, 'mouseup', dragTo.x, dragTo.y, 0);
+      await settle(win, 2);
+      check('松手后节点留在拖到的位置', Math.abs(
+        doc.querySelector('.gnode[data-node-id="' + wiredId + '"]').getBoundingClientRect().left
+        - duringRect.left) < 4);
+    }
+
+    // ---- 拖到左上角之外：画布要往左上扩边（内容层右移，视野不跳）
+    var extBox = doc.querySelector('.gnode td') ? null : doc.querySelector('.gnode');
+    var extBoxes = Array.prototype.slice.call(doc.querySelectorAll('.gnode'));
+    var topLeftBox = extBoxes.reduce(function (best, el) {
+      var rect = el.getBoundingClientRect();
+      if (!best) return { el: el, rect: rect };
+      return (rect.left + rect.top < best.rect.left + best.rect.top)
+        ? { el: el, rect: rect } : best;
+    }, null);
+    check('找得到最左上的那个节点用来往外拖', !!topLeftBox,
+      topLeftBox ? topLeftBox.el.getAttribute('data-node-id') : 'none');
+    if (topLeftBox) {
+      var layerBefore = doc.querySelector('.graph-content');
+      var layerLeftBefore = parseFloat(layerBefore.style.left) || 0;
+      var grab2 = { x: topLeftBox.rect.left + 20, y: topLeftBox.rect.top + 8 };
+      // 往左上拖 200px（还在可视区内，但已经超出原来的内容包围盒）
+      var outTo = { x: grab2.x - 200, y: grab2.y - 160 };
+      mouse(win, topLeftBox.el, 'mousedown', grab2.x, grab2.y, 1);
+      await settle(win, 1);
+      mouse(win, doc.body, 'mousemove', outTo.x, outTo.y, 1);
+      await settle(win, 2);
+      var movedExt = doc.querySelector('.gnode[data-node-id="'
+        + topLeftBox.el.getAttribute('data-node-id') + '"]');
+      var movedExtRect = movedExt.getBoundingClientRect();
+      check('往左上拖时节点跟着鼠标走（没有"拖不动/被夹住"的感觉）',
+        Math.abs(movedExtRect.left - (topLeftBox.rect.left - 200)) < 30
+        && Math.abs(movedExtRect.top - (topLeftBox.rect.top - 160)) < 30,
+        Math.round(topLeftBox.rect.left) + ',' + Math.round(topLeftBox.rect.top) + ' → '
+        + Math.round(movedExtRect.left) + ',' + Math.round(movedExtRect.top));
+      var layerNow = doc.querySelector('.graph-content');
+      var layerLeftNow = parseFloat(layerNow.style.left) || 0;
+      check('画布往左上扩边了（内容层偏移变大 = 左上方腾出了新空间）',
+        layerLeftNow >= layerLeftBefore, layerLeftBefore + ' → ' + layerLeftNow);
+      check('扩边时视野不跳（节点仍停在鼠标处）',
+        Math.abs(movedExtRect.left - outTo.x) < 40 && Math.abs(movedExtRect.top - outTo.y) < 40,
+        Math.round(movedExtRect.left) + ',' + Math.round(movedExtRect.top)
+        + ' vs ' + Math.round(outTo.x) + ',' + Math.round(outTo.y));
+      mouse(win, movedExt, 'mouseup', outTo.x, outTo.y, 0);
+      await settle(win, 2);
+    }
+
+    // ------------------------------------------------ ⑫ 负坐标连线 + 包可写
+    note('⑫ 拖到左上角外之后连线不能被截断；Mod 分发目录里的包要能直接保存');
+    click(doc.getElementById('btnFit'));
+    await settle(win, 3);
+
+    // ---- 把一个**有连线**的节点拖到左上角之外（负坐标），松手后再看连线是否还在
+    var parented = {};
+    Array.prototype.slice.call(doc.querySelectorAll('.graph-wire[data-wire]')).forEach(function (path) {
+      parented[String(path.getAttribute('data-wire')).split('>')[1]] = true;
+    });
+    // 挑**最左上有连线**的节点：把它继续往左上拖，必定超出当前内容包围盒 → 必定触发扩边
+    var negativeTarget = null;
+    var bestScore = Infinity;
+    Array.prototype.slice.call(doc.querySelectorAll('.gnode')).forEach(function (el) {
+      var id = el.getAttribute('data-node-id');
+      if (!parented[id] || el.classList.contains('root') || el.classList.contains('detached')) return;
+      var rect = el.getBoundingClientRect();
+      var score = rect.left + rect.top;
+      if (score < bestScore) { bestScore = score; negativeTarget = el; }
+    });
+    check('找得到一个"有连线"的节点做负坐标测试', !!negativeTarget,
+      negativeTarget ? negativeTarget.getAttribute('data-node-id') : 'none');
+    if (negativeTarget) {
+      var negId = negativeTarget.getAttribute('data-node-id');
+      var negRect = negativeTarget.getBoundingClientRect();
+      var grab3 = { x: negRect.left + 20, y: negRect.top + 8 };
+      // 往左上拖到"内容原点之外"：先记下当前内容层偏移，再拖 300×220
+      var layer0 = doc.querySelector('.graph-content');
+      var layer0Left = parseFloat(layer0.style.left) || 0;
+      // 先把画布往右下平移 220×180：左上角露出空白，鼠标才有地方把节点拖出去
+      // （用户实际操作也是"先平移出空地、再把节点拖过去"）
+      // 平移量要够大：只有把内容拖到比**当前最外圈**更外面，画布才会扩边
+      await panCanvasBy(win, doc, 420, 340);
+      var negRect2 = doc.querySelector('.gnode[data-node-id="' + negId + '"]').getBoundingClientRect();
+      grab3 = { x: negRect2.left + 20, y: negRect2.top + 8 };
+      var outPoint = { x: Math.max(20, grab3.x - 400), y: Math.max(20, grab3.y - 320) };
+      mouse(win, negativeTarget, 'mousedown', grab3.x, grab3.y, 1);
+      await settle(win, 1);
+      mouse(win, doc.body, 'mousemove', outPoint.x, outPoint.y, 1);
+      await settle(win, 2);
+      mouse(win, doc.body, 'mouseup', outPoint.x, outPoint.y, 0);
+      await settle(win, 3);   // 松手后是**整屏重画**，这一条正是用户报的场景
+      var layer1 = doc.querySelector('.graph-content');
+      var layer1Left = parseFloat(layer1.style.left) || 0;
+      note('  内容层偏移 ' + layer0Left + ' → ' + layer1Left + '（变大＝左上角之外腾出了空间）');
+      // 扩边本身由 ⑪ 验证（那次拖的是最外圈的节点）；这里的关键是"松手后连线还在"，
+      // 所以只要求画布不缩小。
+      check('这次拖动没有让画布缩水（扩边是单向的）', layer1Left >= layer0Left,
+        layer0Left + ' → ' + layer1Left);
+
+      // 松手之后：这条连线必须还在（SVG 不能把负坐标的部分裁掉）
+      var afterPath = doc.querySelector('.graph-wire[data-wire$=">' + negId + '"]');
+      var afterHit = doc.querySelector('.graph-wire-hit[data-wire$=">' + negId + '"]');
+      check('松手后那条连线还在画布上（没被裁掉）', !!afterPath && !!afterHit,
+        afterPath ? String(afterPath.getAttribute('d')).slice(0, 40) : 'no path');
+      check('连线的终点落在节点新位置上（线没断在半路）',
+        (function () {
+          if (!afterPath) return false;
+          var match = /([-\d.]+) ([-\d.]+)$/.exec(afterPath.getAttribute('d') || '');
+          if (!match) return false;
+          var layer = doc.querySelector('.graph-content');
+          var layerRect = layer.getBoundingClientRect();
+          var moved = doc.querySelector('.gnode[data-node-id="' + negId + '"]');
+          if (!moved) return false;
+          var movedRect = moved.getBoundingClientRect();
+          var endScreen = { x: layerRect.left + Number(match[1]), y: layerRect.top + Number(match[2]) };
+          return Math.abs(endScreen.x - movedRect.left) < 30
+            && Math.abs(endScreen.y - movedRect.top) < 60;
+        })());
+      // 线上找个点，看它是否真的能被命中（＝真的渲染出来了，而不是被裁在视口外）
+      check('连线上有一段真的能被点中（没有被 SVG 视口裁掉）',
+        (function () {
+          if (!afterHit || !afterHit.getTotalLength) return false;
+          var svgRoot = doc.querySelector('.graph-wires');
+          var origin = svgRoot.getBoundingClientRect();
+          var total = afterHit.getTotalLength();
+          for (var t = 0.1; t <= 0.9; t += 0.1) {
+            var local = afterHit.getPointAtLength(total * t);
+            var px = origin.left + local.x;
+            var py = origin.top + local.y;
+            if (doc.elementFromPoint(px, py) === afterHit) return true;
+          }
+          return false;
+        })());
+    }
+
+    // ---- Mod 分发目录里的包：能直接保存（不再只读）
+    var selectEl = doc.getElementById('packageSelect');
+    var modOption = Array.prototype.slice.call(selectEl.querySelectorAll('option'))
+      .filter(function (option) { return option.textContent.indexOf('Mod 分发') >= 0; })[0];
+    check('包列表里 Mod 分发目录的包被标出来（不再写"只读"）', !!modOption,
+      modOption ? modOption.textContent : Array.prototype.slice.call(
+        selectEl.querySelectorAll('option')).map(function (o) { return o.textContent; }).join(' | '));
+    if (modOption) {
+      selectEl.value = modOption.value;
+      selectEl.dispatchEvent(new win.Event('change', { bubbles: true }));
+      await settle(win, 5);
+      check('打开 Mod 分发目录的包时说明"可以直接改并保存"',
+        statusText(doc).indexOf('Mod 分发目录') >= 0, statusText(doc));
+      check('「保存」按钮是**可用**的（以前这种包是只读的）',
+        !doc.getElementById('btnSave').disabled,
+        'disabled=' + doc.getElementById('btnSave').disabled);
+      click(doc.getElementById('btnSave'));
+      await settle(win, 8);
+      check('直接保存回 Mod 分发目录成功，并提醒 Mod 更新会覆盖',
+        statusText(doc).indexOf('已保存') >= 0 && statusText(doc).indexOf('Mod 更新') >= 0,
+        statusText(doc));
+    }
+
+    // ------------------------------------------------ ⑬ 网格与其余节点必须锁在一起
+    note('⑬ 往左上角拖出界时：网格跟着内容走，其余节点在屏幕上不许动');
+    click(doc.getElementById('btnFit'));
+    await settle(win, 3);
+
+    check('内容层是有尺寸的，并且盖住整个可视区（否则挂在它下面的节点会画不出来）',
+      (function () {
+        var layer = doc.querySelector('.graph-content');
+        var scroller = doc.querySelector('.graph-scroller');
+        var rect = layer.getBoundingClientRect();
+        return rect.width >= scroller.clientWidth - 2 && rect.height >= scroller.clientHeight - 2
+          && (parseFloat(layer.style.width) > 0);
+      })(), (function () {
+        var layer = doc.querySelector('.graph-content');
+        return layer.style.width + ' x ' + layer.style.height + ' rect='
+          + Math.round(layer.getBoundingClientRect().width) + 'x'
+          + Math.round(layer.getBoundingClientRect().height);
+      })());
+    check('网格画在**独立的整画布层**上（.graph-grid），内容层只剩节点/连线',
+      (function () {
+        var grid = doc.querySelector('.graph-grid');
+        var layer = doc.querySelector('.graph-content');
+        if (!grid) return false;
+        var gridStyle = win.getComputedStyle(grid);
+        var layerStyle = win.getComputedStyle(layer);
+        return gridStyle.backgroundImage.indexOf('linear-gradient') >= 0
+          && (layerStyle.backgroundImage === 'none'
+            || layerStyle.backgroundImage.indexOf('linear-gradient') < 0);
+      })(), (function () {
+        var grid = doc.querySelector('.graph-grid');
+        var layer = doc.querySelector('.graph-content');
+        return 'grid=' + (grid ? win.getComputedStyle(grid).backgroundImage.slice(0, 40) : 'null')
+          + ' content=' + win.getComputedStyle(layer).backgroundImage.slice(0, 20);
+      })());
+    /** 网格层必须**铺满整块画布**：留白（内容原点左上角那一圈）也得有格子。 */
+    function gridCoversCanvas13() {
+      var grid = doc.querySelector('.graph-grid');
+      var canvas = doc.querySelector('.graph-canvas');
+      if (!grid || !canvas) return { ok: false, detail: 'no .graph-grid' };
+      var g = grid.getBoundingClientRect();
+      var c = canvas.getBoundingClientRect();
+      var ok = Math.abs(g.left - c.left) <= 1.5 && Math.abs(g.top - c.top) <= 1.5
+        && Math.abs(g.right - c.right) <= 1.5 && Math.abs(g.bottom - c.bottom) <= 1.5;
+      return { ok: ok, detail: 'grid=' + Math.round(g.left) + ',' + Math.round(g.top) + ' '
+        + Math.round(g.width) + 'x' + Math.round(g.height)
+        + ' canvas=' + Math.round(c.left) + ',' + Math.round(c.top) + ' '
+        + Math.round(c.width) + 'x' + Math.round(c.height) };
+    }
+    var gridCover0 = gridCoversCanvas13();
+    check('网格层与画布完全重合（不是从内容原点才开始画）', gridCover0.ok, gridCover0.detail);
+    check('网格相位锚在内容原点：background-position = 内容层偏移',
+      (function () {
+        var grid = doc.querySelector('.graph-grid');
+        var layer = doc.querySelector('.graph-content');
+        var pos = win.getComputedStyle(grid).backgroundPosition;
+        var left = parseFloat(layer.style.left) || 0;
+        var top = parseFloat(layer.style.top) || 0;
+        var nums = String(pos).match(/-?\d+(\.\d+)?/g) || [];
+        return nums.length >= 2
+          && Math.abs(parseFloat(nums[0]) - left) <= 1
+          && Math.abs(parseFloat(nums[1]) - top) <= 1;
+      })(), (function () {
+        var grid = doc.querySelector('.graph-grid');
+        var layer = doc.querySelector('.graph-content');
+        return win.getComputedStyle(grid).backgroundPosition
+          + ' vs layer ' + layer.style.left + ' ' + layer.style.top;
+      })());
+
+    // 选一个"有连线的节点"当拖动源，另找一个节点当参照
+    var parented = {};
+    Array.prototype.slice.call(doc.querySelectorAll('.graph-wire[data-wire]')).forEach(function (path) {
+      parented[String(path.getAttribute('data-wire')).split('>')[1]] = true;
+    });
+    var dragSource = null;
+    var bystander = null;
+    Array.prototype.slice.call(doc.querySelectorAll('.gnode')).forEach(function (el) {
+      var id = el.getAttribute('data-node-id');
+      if (el.classList.contains('root') || el.classList.contains('detached')) return;
+      if (!dragSource && parented[id]) { dragSource = el; return; }
+      if (!bystander) bystander = el;
+    });
+    check('找到拖动源与"旁观"节点', !!dragSource && !!bystander,
+      (dragSource && dragSource.getAttribute('data-node-id')) + ' / '
+      + (bystander && bystander.getAttribute('data-node-id')));
+    if (dragSource && bystander) {
+      var sourceId13 = dragSource.getAttribute('data-node-id');
+      var bystanderId = bystander.getAttribute('data-node-id');
+      var sourceRect = dragSource.getBoundingClientRect();
+      var grab = { x: sourceRect.left + 20, y: sourceRect.top + 8 };
+      // 先平移出左上方的空地，再把源节点拖进去（坐标会变负 → 触发扩边）
+      await panCanvasBy(win, doc, 420, 340);
+      var sourceAfterPan = doc.querySelector('.gnode[data-node-id="' + sourceId13 + '"]')
+        .getBoundingClientRect();
+      grab = { x: sourceAfterPan.left + 20, y: sourceAfterPan.top + 8 };
+      var outTo = { x: Math.max(20, grab.x - 400), y: Math.max(20, grab.y - 320) };
+      var bystanderBefore = doc.querySelector('.gnode[data-node-id="' + bystanderId + '"]')
+        .getBoundingClientRect();
+      var canvasBefore = doc.querySelector('.graph-canvas').getBoundingClientRect();
+      var layerBefore = doc.querySelector('.graph-grid').getBoundingClientRect();
+      var anchorBefore = win.getComputedStyle(doc.querySelector('.graph-grid')).backgroundPosition;
+      mouse(win, doc.querySelector('.gnode[data-node-id="' + sourceId13 + '"]'),
+        'mousedown', grab.x, grab.y, 1);
+      await settle(win, 1);
+      mouse(win, doc.body, 'mousemove', outTo.x, outTo.y, 1);
+      await settle(win, 2);
+      var bystanderDuring = doc.querySelector('.gnode[data-node-id="' + bystanderId + '"]')
+        .getBoundingClientRect();
+      var canvasDuring = doc.querySelector('.graph-canvas').getBoundingClientRect();
+      var layerDuring = doc.querySelector('.graph-grid').getBoundingClientRect();
+      var gridCoverDuring = gridCoversCanvas13();
+      note('  旁观节点 ' + Math.round(bystanderBefore.left) + ','
+        + Math.round(bystanderBefore.top) + ' → ' + Math.round(bystanderDuring.left) + ','
+        + Math.round(bystanderDuring.top)
+        + '；画布 ' + Math.round(canvasBefore.left) + ' → ' + Math.round(canvasDuring.left)
+        + '；网格层 ' + Math.round(layerBefore.left) + ' → ' + Math.round(layerDuring.left)
+        + '；' + gridCoverDuring.detail);
+      check('拖动过程中"旁观"节点在屏幕上没有移动（它锁在背景上）',
+        Math.abs(bystanderDuring.left - bystanderBefore.left) < 2
+        && Math.abs(bystanderDuring.top - bystanderBefore.top) < 2,
+        Math.round(bystanderDuring.left - bystanderBefore.left) + ','
+        + Math.round(bystanderDuring.top - bystanderBefore.top));
+      check('网格层的格子与旁观节点相对位置恒定（不会"背景动、节点不动"）',
+        (function () {
+          var gridDuring = win.getComputedStyle(doc.querySelector('.graph-grid'));
+          var gridBeforePos = anchorBefore;
+          var gridDuringPos = gridDuring.backgroundPosition;
+          var b1 = gridBeforePos.match(/-?\d+(\.\d+)?/g) || [];
+          var b2 = gridDuringPos.match(/-?\d+(\.\d+)?/g) || [];
+          if (b1.length < 2 || b2.length < 2) return false;
+          // 网格锚点(background-position)在层内偏移 - 层在屏幕上的偏移 = 格线的屏幕相位
+          var phaseBeforeX = parseFloat(b1[0]) + layerBefore.left;
+          var phaseDuringX = parseFloat(b2[0]) + layerDuring.left;
+          var phaseBeforeY = parseFloat(b1[1]) + layerBefore.top;
+          var phaseDuringY = parseFloat(b2[1]) + layerDuring.top;
+          return Math.abs((phaseDuringX - bystanderDuring.left) - (phaseBeforeX - bystanderBefore.left)) < 2
+            && Math.abs((phaseDuringY - bystanderDuring.top) - (phaseBeforeY - bystanderBefore.top)) < 2;
+        })(),
+        'phase-bystander delta='
+        + Math.round((layerDuring.left - bystanderDuring.left) - (layerBefore.left - bystanderBefore.left))
+        + ',' + Math.round((layerDuring.top - bystanderDuring.top) - (layerBefore.top - bystanderBefore.top)));
+      check('拖出界的**过程中**网格层依然铺满画布（左上角留白也有格子）',
+        gridCoverDuring.ok, gridCoverDuring.detail);
+      mouse(win, doc.querySelector('.gnode[data-node-id="' + sourceId13 + '"]'),
+        'mouseup', outTo.x, outTo.y, 0);
+      await settle(win, 3);
+      var bystanderAfter = doc.querySelector('.gnode[data-node-id="' + bystanderId + '"]')
+        .getBoundingClientRect();
+      check('松手（整屏重画）之后旁观节点也没跳',
+        Math.abs(bystanderAfter.left - bystanderBefore.left) < 2
+        && Math.abs(bystanderAfter.top - bystanderBefore.top) < 2,
+        Math.round(bystanderAfter.left - bystanderBefore.left) + ','
+        + Math.round(bystanderAfter.top - bystanderBefore.top));
+      // 用户报的正是这一段：节点拖到 0,0 之外以后，左上角那圈留白没有背景。
+      var gridCoverAfter = gridCoversCanvas13();
+      var gridLeftAfter = parseFloat(doc.querySelector('.graph-grid').style.left);
+      check('拖出界并松手后，网格层依然铺满整块画布（含内容原点左上的留白）',
+        gridCoverAfter.ok, gridCoverAfter.detail);
+      check('网格层自己固定在画布左上角（left/top = 0），不跟着内容走',
+        gridLeftAfter === 0 && parseFloat(doc.querySelector('.graph-grid').style.top) === 0,
+        doc.querySelector('.graph-grid').style.left + ' / '
+        + doc.querySelector('.graph-grid').style.top);
+      check('内容原点已经跑到画布留白里（layerLeft/layerTop > 0 才说明真的拖出界了）',
+        (parseFloat(doc.querySelector('.graph-content').style.left) || 0) > 0
+        && (parseFloat(doc.querySelector('.graph-content').style.top) || 0) > 0,
+        doc.querySelector('.graph-content').style.left + ' / '
+        + doc.querySelector('.graph-content').style.top);
+    }
+
+    // ------------------------------------------------ ④ 缩小窗口 → 重新自适应
+    note('④ 窗口/容器变小：布局与缩放要跟着重算');
+    click(doc.getElementById('btnFit'));
+    await settle(win, 3);
+    await setStageSize(1400, 900, win);
+    var wide = metrics(doc, frame);
+    var wideSteps = { before: '', after: '' };
+    var midSteps = { before: '', after: '' };
+    var narrowSteps = { before: '', after: '' };
+    wideSteps = await setStageSize(1400, 900, win);
+    wide = metrics(doc, frame);
+    midSteps = await setStageSize(1000, 700, win);
+    var mid = metrics(doc, frame);
+    narrowSteps = await setStageSize(820, 560, win);
+    var narrow = metrics(doc, frame);
+
+    note('  1400×900 → iframe ' + wide.innerWidth + '×' + wide.innerHeight
+      + '，画布 ' + wide.canvasWidth + 'px，' + wide.diag);
+    note('  1000×700 → iframe ' + mid.innerWidth + '×' + mid.innerHeight
+      + '，画布 ' + mid.canvasWidth + 'px，' + mid.diag);
+    note('   820×560 → iframe ' + narrow.innerWidth + '×' + narrow.innerHeight
+      + '，画布 ' + narrow.canvasWidth + 'px，' + narrow.diag);
+    note('  变尺寸时诊断行：' + wideSteps.before + '  →  ' + wideSteps.after);
+    note('                   ' + midSteps.before + '  →  ' + midSteps.after);
+    note('                   ' + narrowSteps.before + '  →  ' + narrowSteps.after);
+    note('  容器实测：宽窗口 画布=' + wide.canvasClientWidth + ' 滚动区=' + wide.scrollerClientWidth
+      + ' 树容器=' + wide.treeRootClientWidth + ' 顶栏高=' + wide.topbarHeight);
+    note('             中窗口 画布=' + mid.canvasClientWidth + ' 滚动区=' + mid.scrollerClientWidth
+      + ' 树容器=' + mid.treeRootClientWidth + ' 顶栏高=' + mid.topbarHeight);
+    note('             窄窗口 画布=' + narrow.canvasClientWidth + ' 滚动区=' + narrow.scrollerClientWidth
+      + ' 树容器=' + narrow.treeRootClientWidth + ' 顶栏高=' + narrow.topbarHeight);
+    note('  「适应窗口」自报：' + wide.status);
+    note('                    ' + mid.status);
+    note('                    ' + narrow.status);
+    note('  画布栏的高度预算：' + canvasBudget(doc));
+    note('  宽窗口时的高度预算：' + wide.budget);
+
+    check('iframe 视口就是我们要求的尺寸（布局数字才可信）',
+      wide.innerWidth === 1398 && wide.innerHeight === 898
+      && narrow.innerWidth === 818 && narrow.innerHeight === 558,
+      wide.innerWidth + '×' + wide.innerHeight + ' / ' + narrow.innerWidth + '×' + narrow.innerHeight);
+    check('三栏都放得下时，画布宽度跟着窗口收窄',
+      wide.canvasWidth > mid.canvasWidth, wide.canvasWidth + ' > ' + mid.canvasWidth);
+    check('收窄到两栏布局后画布仍然有可用宽度（>=400px）',
+      narrow.canvasWidth >= 400, narrow.canvasWidth + 'px');
+    check('窗口变矮时页面没有被切掉（行高被钉住，内部自己滚动）',
+      mid.scrollHeight <= mid.innerHeight + 2 && narrow.scrollHeight <= narrow.innerHeight + 2,
+      'scrollH=' + mid.scrollHeight + '/' + mid.innerHeight
+      + '，' + narrow.scrollHeight + '/' + narrow.innerHeight);
+    check('窄窗口下横向也没有溢出',
+      narrow.scrollWidth <= narrow.innerWidth + 2,
+      narrow.scrollWidth + ' vs ' + narrow.innerWidth);
+    check('窄到 940px 以下时属性栏挪到画布下面（不再横向挤三栏）',
+      narrow.inspectorTop > narrow.canvasTop,
+      'inspector.top=' + narrow.inspectorTop + ' canvas.top=' + narrow.canvasTop);
+    var wideScale = scaleFromDiag(wide.diag);
+    var narrowScale = scaleFromDiag(narrow.diag);
+    check('诊断行报出了缩放百分比', wideScale !== null && narrowScale !== null,
+      wideScale + '% / ' + narrowScale + '%');
+    check('窗口变小后缩放真的被重算（这就是"缩小窗口要重新适应"）',
+      wideScale !== null && narrowScale !== null && wideScale !== narrowScale,
+      wideScale + '% -> ' + narrowScale + '%');
+    check('诊断行报的画布尺寸和真实布局一致',
+      wide.diag.indexOf('画布栏=' + wide.canvasClientWidth + '×' + wide.canvasClientHeight) >= 0
+      && mid.diag.indexOf('画布栏=' + mid.canvasClientWidth + '×' + mid.canvasClientHeight) >= 0,
+      wide.diag + ' / 实测 ' + wide.canvasClientWidth + '×' + wide.canvasClientHeight);
+    check('节点图的滚动区铺满画布栏（不是按内容撑高自己）',
+      Math.abs(wide.scrollerClientHeight - wide.treeRootClientHeight) <= 4
+      && Math.abs(mid.scrollerClientHeight - mid.treeRootClientHeight) <= 4,
+      '滚动区 ' + wide.scrollerClientHeight + ' vs 树容器 ' + wide.treeRootClientHeight
+      + '；中窗口 ' + mid.scrollerClientHeight + ' vs ' + mid.treeRootClientHeight);
+    check('窄/矮窗口下画布区仍然有一块能干活的地方（>=140px 高）',
+      wide.treeRootClientHeight >= 140 && mid.treeRootClientHeight >= 140
+      && narrow.treeRootClientHeight >= 140,
+      '树容器高 ' + wide.treeRootClientHeight + ' / ' + mid.treeRootClientHeight
+      + ' / ' + narrow.treeRootClientHeight);
+    check('状态栏只占一行（长路径不能换行吃掉画布高度）',
+      narrow.statusbarHeight <= 30, '状态栏高 ' + narrow.statusbarHeight);
+    check('放大回大窗口后缩放又变回来（不是单向的）',
+      await (async function () {
+        await setStageSize(1400, 900, win);
+        var again = metrics(doc, frame);
+        var scale = scaleFromDiag(again.diag);
+        // 容差 2 个百分点：内容几何没变，但窗口宽度会影响画布宽度的小数取整
+        return scale !== null && Math.abs(scale - wideScale) <= 2
+          && again.canvasClientWidth === wide.canvasClientWidth;
+      })(), scaleFromDiag(diagLine(doc)) + '%（原 ' + wideScale + '%）');
+  }
+
+  /** 中键拖动平移画布（真鼠标事件）。 */
+  async function panCanvasBy(win, doc, dx, dy) {
+    var scroller = doc.querySelector('.graph-scroller');
+    var box = scroller.getBoundingClientRect();
+    var start = { x: box.left + box.width / 2, y: box.top + box.height / 2 };
+    scroller.dispatchEvent(new win.MouseEvent('mousedown', {
+      bubbles: true, cancelable: true, view: win, button: 1, buttons: 4,
+      clientX: start.x, clientY: start.y
+    }));
+    await delay(30);
+    doc.body.dispatchEvent(new win.MouseEvent('mousemove', {
+      bubbles: true, cancelable: true, view: win, buttons: 4,
+      clientX: start.x + dx, clientY: start.y + dy
+    }));
+    await delay(30);
+    doc.body.dispatchEvent(new win.MouseEvent('mouseup', {
+      bubbles: true, cancelable: true, view: win, button: 1, buttons: 0,
+      clientX: start.x + dx, clientY: start.y + dy
+    }));
+    await delay(60);
+    return true;
+  }
+
+  /** 真鼠标从 source 的输入脚拖到 target 方框上（= 让 source 挂到 target 下）。 */
+  async function connectByPin(win, doc, sourceId, targetId) {
+    var sourcePin = doc.querySelector('.gnode[data-node-id="' + sourceId + '"] .pin.in');
+    var targetBox = doc.querySelector('.gnode[data-node-id="' + targetId + '"]');
+    if (!sourcePin || !targetBox) return false;
+    var pinBox = sourcePin.getBoundingClientRect();
+    var targetRect = targetBox.getBoundingClientRect();
+    var from = { x: pinBox.left + pinBox.width / 2, y: pinBox.top + pinBox.height / 2 };
+    var to = { x: targetRect.left + targetRect.width / 2,
+      y: targetRect.top + Math.min(targetRect.height / 2, 12) };
+    mouse(win, sourcePin, 'mousedown', from.x, from.y, 1);
+    await delay(30);
+    var hit = doc.elementFromPoint(to.x, to.y);
+    mouse(win, hit || targetBox, 'mousemove', to.x, to.y, 1);
+    await delay(30);
+    mouse(win, hit || targetBox, 'mouseup', to.x, to.y, 0);
+    await delay(60);
+    return true;
+  }
+
+  /** 缩放锚定允许的偏差：缩放比例变了以后，同样的内容点会差几个像素，给点余量 */
+  function panScrollTolerance(before, after) {
+    var ratio = Math.abs((after || 1) - (before || 1)) / Math.max(0.2, before || 1);
+    return 20 + ratio * 60;
+  }
+
+  function centerOf(element) {
+    var box = element.getBoundingClientRect();
+    return { x: box.left + box.width / 2, y: box.top + Math.min(box.height / 2, 8) };
+  }
+
+  /** 画布栏里每一块各占多少高度 —— "只有全屏才完整"往往就是这里被吃光了 */
+  function canvasBudget(doc) {
+    var canvas = doc.getElementById('canvas');
+    var parts = [];
+    Array.prototype.slice.call(canvas.children).forEach(function (child) {
+      var box = child.getBoundingClientRect();
+      var label = child.id || child.className || child.tagName.toLowerCase();
+      parts.push(label + '=' + Math.round(box.height));
+    });
+    return '总高 ' + canvas.clientHeight + ' —— ' + parts.join('，');
+  }
+
+  frame.addEventListener('load', function () {
+    run().then(function () {
+      note('完成');
+    }).catch(function (error) {
+      check('自检过程没有抛异常', false, String(error && error.message || error));
+    }).then(flush);
+  });
+})();
+</script>
+</body>
+</html>

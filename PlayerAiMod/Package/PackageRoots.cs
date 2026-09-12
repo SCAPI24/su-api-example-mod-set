@@ -18,7 +18,12 @@ namespace PlayerAiMod
         /// <summary>绝对路径（无尾分隔符）。</summary>
         public string Path { get; }
 
-        /// <summary>是否可写：只有实例目录可写（录制、导出、编辑器保存都写这里）。</summary>
+        /// <summary>
+        /// 是否可写。两个目录都允许写：编辑器要能直接改"游戏正在用的那份包"
+        /// （Mod 分发目录里的），否则用户只能"另存为"。
+        /// 注意边界：**AI 侧**仍然不允许写磁盘包（那是游戏内状态铁律），
+        /// 这里的可写只服务于人用的编辑器。
+        /// </summary>
         public bool Writable { get; }
 
         /// <summary>"instance" | "mod"。</summary>
@@ -48,7 +53,9 @@ namespace PlayerAiMod
     /// <summary>
     /// 包目录约定（计划 §4.4）：
     ///   1（高）<c>&lt;实例根&gt;/PlayerAi/BehaviorTrees/</c> —— 跟随游戏实例走，**可写**
-    ///   2（低）<c>&lt;实例根&gt;/Mods/PlayerAiMod/BehaviorTrees/</c> —— 随 Mod 分发，**只读**
+    ///   2（低）<c>&lt;实例根&gt;/Mods/PlayerAiMod/BehaviorTrees/</c> —— 随 Mod 分发，**同样可写**
+    ///      （用户要求编辑器能直接改游戏正在用的包；代价是 Mod 更新时会覆盖这些改动，
+    ///        界面会就此给出提醒）
     ///
     /// 同名优先：实例目录覆盖 Mod 目录。两个目录并存是为了"既能改、又能分发"。
     /// 白名单同时是**路径穿越防线**：任何解析结果落在白名单之外一律拒绝。
@@ -68,7 +75,7 @@ namespace PlayerAiMod
             if (!string.IsNullOrEmpty(instanceDirectory))
                 m_roots.Add(new PackageRoot(Normalize(instanceDirectory), true, "instance"));
             if (!string.IsNullOrEmpty(modDirectory))
-                m_roots.Add(new PackageRoot(Normalize(modDirectory), false, "mod"));
+                m_roots.Add(new PackageRoot(Normalize(modDirectory), true, "mod"));
         }
 
         public IReadOnlyList<PackageRoot> Roots
