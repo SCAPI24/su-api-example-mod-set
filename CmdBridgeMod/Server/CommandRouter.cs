@@ -17,6 +17,25 @@ namespace CmdBridgeMod
     {
         internal const string ModVersion = "1.0.0";
 
+        /// <summary>
+        /// 内建命令名（`cmd.list` 用）。加命令时**必须同步这里**：
+        /// 它是 CLI 帮助与"这个实例支持哪些命令"的唯一清单（扩展命令从注册表读）。
+        /// </summary>
+        internal static readonly string[] BuiltInCommands =
+        {
+            "ping", "status", "cmd.list", "obs.selftest",
+            "obs.snapshot", "obs.ui", "obs.player", "obs.input", "obs.aim", "obs.events",
+            "obs.world.blocks", "obs.world.entities", "obs.world.time", "obs.messages", "obs.dialogs",
+            "obs.waitfor", "ui.elements", "ui.reachability",
+            "act.look", "act.lookdelta", "act.lookat", "act.key", "act.hold", "act.chord",
+            "act.mouse", "act.wheel", "act.uiclick", "act.text", "act.releaseall",
+            "ui.session.begin", "ui.session.end", "ui.session.status",
+            "ui.cursor", "ui.press", "ui.release", "ui.move", "ui.click",
+            "ui.rightclick", "ui.shiftclick", "ui.drag", "ui.split",
+            "focus.status", "focus.auto", "focus.follow", "focus.attach", "focus.detach", "focus.recover",
+            "focus.merge", "focus.lookhold", "look.owner", "hotkey.status"
+        };
+
         // 条件等待：40ms 轮询一次（远快于人类的反应，也远慢于每帧，避免给游戏线程添压力）。
         private const int WaitPollIntervalMs = 40;
         private const int WaitMaxTimeoutMs = 120000;
@@ -139,10 +158,232 @@ namespace CmdBridgeMod
                 case "act.releaseAll":
                     return m_injector.ReleaseAll();
 
+                // ------------------------------------------------------ 虚拟 UI 鼠标会话（CM-1）
+                // 用引擎内的软光标做点击/拖拽：物理鼠标完全不动，也不需要窗口在前台。
+                case "ui.session.begin":
+                    return UiSessionCommand(request,
+                        () => m_injector.Session.Begin(request.GetBoolean("mask", false)));
+                case "ui.session.end":
+                    return UiSessionCommand(request, () => m_injector.Session.End());
+                case "ui.session.status":
+                    return m_injector.Session.Describe();
+                case "ui.cursor":
+                {
+                    float cx = 0f;
+                    float cy = 0f;
+                    bool hasPoint = request.TryGetFloat("x", out cx) && request.TryGetFloat("y", out cy);
+                    string selector = request.GetString("selector", null);
+                    int steps = request.GetInteger("steps", 1);
+                    if (!hasPoint && string.IsNullOrEmpty(selector))
+                        throw new BridgeCommandException("invalid_argument", "ui.cursor needs x/y or selector.");
+                    return UiSessionCommand(request, () => hasPoint
+                        ? m_injector.Session.MoveTo(new Vector2(cx, cy), steps)
+                        : m_injector.Session.MoveToElement(selector, steps));
+                }
+                case "ui.press":
+                    return UiSessionCommand(request, () => m_injector.Session.Press(
+                        UiMouseSession.ToMouseButton(request.GetString("button", "left"), MouseButton.Left)));
+                case "ui.release":
+                    return UiSessionCommand(request, () => m_injector.Session.Release(
+                        UiMouseSession.ToMouseButton(request.GetString("button", "left"), MouseButton.Left)));
+                case "ui.move":
+                {
+                    float mx = 0f;
+                    float my = 0f;
+                    if (!request.TryGetFloat("x", out mx) || !request.TryGetFloat("y", out my))
+                        throw new BridgeCommandException("invalid_argument", "ui.move needs x and y.");
+                    int steps = request.GetInteger("steps", 8);
+                    return UiSessionCommand(request, () => m_injector.Session.MoveTo(new Vector2(mx, my), steps));
+                }
+                case "ui.click":
+                {
+                    string selector = request.GetString("selector", null);
+                    if (string.IsNullOrEmpty(selector))
+                        throw new BridgeCommandException("invalid_argument", "ui.click needs a selector.");
+                    return UiSessionCommand(request, () => m_injector.Session.Click(selector));
+                }
+                case "ui.rightclick":
+                {
+                    string selector = request.GetString("selector", null);
+                    if (string.IsNullOrEmpty(selector))
+                        throw new BridgeCommandException("invalid_argument", "ui.rightclick needs a selector.");
+                    return UiSessionCommand(request, () => m_injector.Session.RightClick(selector));
+                }
+                case "ui.shiftclick":
+                {
+                    string selector = request.GetString("selector", null);
+                    if (string.IsNullOrEmpty(selector))
+                        throw new BridgeCommandException("invalid_argument", "ui.shiftclick needs a selector.");
+                    return UiSessionCommand(request, () => m_injector.Session.ShiftClick(selector));
+                }
+                case "ui.drag":
+                case "ui.split":
+                {
+                    int steps = request.GetInteger("steps", 8);
+                    int holdMs = request.GetInteger("holdMs", request.Command == "ui.split" ? 600 : 0);
+                    float x1 = 0f;
+                    float y1 = 0f;
+                    float x2 = 0f;
+                    float y2 = 0f;
+                    bool hasPoints = request.TryGetFloat("x1", out x1) && request.TryGetFloat("y1", out y1)
+                        && request.TryGetFloat("x2", out x2) && request.TryGetFloat("y2", out y2);
+                    string from = request.GetString("from", null);
+                    string to = request.GetString("to", null);
+                    if (!hasPoints && (string.IsNullOrEmpty(from) || string.IsNullOrEmpty(to)))
+                    {
+                        throw new BridgeCommandException(
+                            "invalid_argument", "ui.drag needs x1/y1/x2/y2 or from/to selectors.");
+                    }
+
+                    UiMouseSession.Endpoint start = hasPoints
+                        ? UiMouseSession.Endpoint.At(new Vector2(x1, y1))
+                        : UiMouseSession.Endpoint.At(from);
+                    UiMouseSession.Endpoint end = hasPoints
+                        ? UiMouseSession.Endpoint.At(new Vector2(x2, y2))
+                        : UiMouseSession.Endpoint.At(to);
+                    return UiSessionCommand(request,
+                        () => m_injector.Session.Drag(start, end, steps, holdMs));
+                }
+
+                // ------------------------------------------------------ 焦点策略与共控（CM-2）
+                case "focus.status":
+                    return m_injector.Focus.Describe();
+                case "focus.auto":
+                case "focus.follow":
+                case "focus.attach":
+                case "focus.detach":
+                {
+                    string requested = request.Command.Substring("focus.".Length);
+                    FocusMode mode;
+                    if (!FocusPolicy.TryParseMode(requested, out mode))
+                        throw new BridgeCommandException("invalid_argument", "Unknown focus mode: " + requested);
+                    m_injector.Focus.Mode = mode;
+                    Log.Information("[CmdBridge] focus mode -> " + m_injector.Focus.ModeName);
+                    return m_injector.Focus.Describe();
+                }
+                case "focus.recover":
+                {
+                    // 一键自救：万一焦点策略把鼠标卡住了（视角转不动 / 光标跑到程序外），
+                    // 这条命令立刻回到"跟随引擎"并把窗口状态恢复成真实值。
+                    m_injector.Focus.Mode = FocusMode.Follow;
+                    m_injector.Focus.RestoreNaturalFocus();
+                    Log.Information("[CmdBridge] focus recovered to follow mode");
+                    return m_injector.Focus.Describe();
+                }
+                case "focus.merge":
+                    m_injector.Focus.MergeEnabled = request.GetBoolean("enabled", true);
+                    return m_injector.Focus.Describe();
+                case "focus.lookhold":
+                    m_injector.Focus.LookHoldSeconds = request.GetFloat("seconds", 0.4f);
+                    return m_injector.Focus.Describe();
+                case "hotkey.status":
+                    return m_injector.Hotkeys.Describe();
+                case "cmd.list":
+                    return ListCommands();
+                case "look.owner":
+                {
+                    LookOwnerMode owner;
+                    if (!FocusPolicy.TryParseLookOwner(request.GetString("owner", null), out owner))
+                        throw new BridgeCommandException(
+                            "invalid_argument", "look.owner must be auto|user|ai|shared.");
+                    m_injector.Focus.LookOwner = owner;
+                    return m_injector.Focus.Describe();
+                }
+
                 default:
+                {
+                    // 扩展命令（别的 Mod 注册的，例如 PlayerAiMod 的 ai.*）：
+                    // 内建命令优先，扩展命令不能覆盖内建行为。
+                    CommandExtension extension;
+                    if (m_injector.Commands.TryGet(request.Command, out extension))
+                        return ExecuteExtension(extension, request);
+
                     throw new BridgeCommandException(
                         "unknown_command", "Unknown command '" + request.Command + "'.");
+                }
             }
+        }
+
+        /// <summary>
+        /// 执行扩展命令。默认在**游戏线程**执行（触碰游戏对象/输入的命令必须如此）；
+        /// 扩展命令抛出的 <see cref="CmdBridgeCommandException"/> 直接映射成错误码返回给客户端。
+        /// </summary>
+        private object ExecuteExtension(CommandExtension extension, BridgeRequest request)
+        {
+            var view = new CmdBridgeCommandRequest(request);
+            Func<object> action = () =>
+            {
+                try
+                {
+                    object result = extension.Handler(view);
+                    return result ?? new Dictionary<string, object>(StringComparer.Ordinal)
+                    {
+                        ["ok"] = true,
+                        ["command"] = extension.Name
+                    };
+                }
+                catch (CmdBridgeCommandException exception)
+                {
+                    throw new BridgeCommandException(exception.Code, exception.Message);
+                }
+            };
+
+            return extension.RunOnGameThread ? OnGameThread(action) : action();
+        }
+
+        /// <summary>列出内建命令与扩展命令（谁注册的一目了然，便于排查"命令没生效"）。</summary>
+        private object ListCommands()
+        {
+            List<CommandExtension> extensions = m_injector.Commands.List();
+            var builtIn = new List<string>(BuiltInCommands);
+            var external = new List<Dictionary<string, object>>();
+            for (int i = 0; i < extensions.Count; i++)
+            {
+                external.Add(new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    ["name"] = extensions[i].Name,
+                    ["owner"] = extensions[i].Owner,
+                    ["description"] = extensions[i].Description,
+                    ["gameThread"] = extensions[i].RunOnGameThread
+                });
+            }
+
+            return new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["builtIn"] = builtIn,
+                ["extensions"] = external,
+                ["counts"] = new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    ["builtIn"] = builtIn.Count,
+                    ["extensions"] = external.Count
+                }
+            };
+        }
+
+        /// <summary>
+        /// 执行一条"虚拟 UI 鼠标会话"命令：默认等手势在帧首逐帧跑完再返回，
+        /// 于是脚本/AI 拿到返回值时动作已经落地（等价于真人松手那一刻）。
+        /// </summary>
+        private object UiSessionCommand(BridgeRequest request, Func<Dictionary<string, object>> action)
+        {
+            action();
+
+            bool wait = request.GetBoolean("wait", true);
+            bool completed = true;
+            if (wait)
+            {
+                int timeout = request.GetInteger("timeoutMs", 5000);
+                completed = m_injector.Session.WaitUntilIdle(Math.Max(200, timeout));
+            }
+
+            var result = new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["completed"] = completed,
+                ["session"] = m_injector.Session.Describe()
+            };
+            if (!completed)
+                result["hint"] = "The gesture is still running; poll ui.session.status or retry with a larger timeoutMs.";
+            return result;
         }
 
         private object OnGameThread(Func<object> action)
@@ -612,10 +853,49 @@ namespace CmdBridgeMod
                 return true;
             });
 
+            // 扩展命令注册表：上层 Mod（如 PlayerAiMod 的 ai.*）靠它挂命令，不该出现"注册不上/摘不掉"。
+            AddCheck(checks, "commands.register", () =>
+            {
+                string error;
+                bool ok = m_injector.Commands.Register("selftest.probe", delegate { return null; },
+                    "CmdBridgeMod", "selftest probe", false, out error);
+                CommandExtension probe;
+                return ok && m_injector.Commands.TryGet("selftest.probe", out probe);
+            });
+            AddCheck(checks, "commands.duplicateRejected", () =>
+            {
+                string error;
+                bool again = m_injector.Commands.Register("selftest.probe", delegate { return null; },
+                    "someone.else", null, false, out error);
+                return !again && !string.IsNullOrEmpty(error);
+            });
+            AddCheck(checks, "commands.ownerGuard", () =>
+            {
+                string error;
+                CommandExtension probe;
+                bool stolen = m_injector.Commands.Unregister("selftest.probe", "someone.else", out error);
+                return !stolen && !string.IsNullOrEmpty(error)
+                    && m_injector.Commands.TryGet("selftest.probe", out probe);
+            });
+            AddCheck(checks, "commands.unregisterAll", () =>
+            {
+                int removed = m_injector.Commands.UnregisterAll("CmdBridgeMod");
+                CommandExtension probe;
+                return removed >= 1 && !m_injector.Commands.TryGet("selftest.probe", out probe);
+            });
+            AddCheck(checks, "commands.builtInListed", () =>
+            {
+                for (int i = 0; i < BuiltInCommands.Length; i++)
+                {
+                    if (string.Equals(BuiltInCommands[i], "cmd.list", StringComparison.Ordinal))
+                        return true;
+                }
+                return false;
+            });
+
             bool injectionPointOk = true;
             if (GameManager.Project != null)
-            {
-                try
+            {                try
                 {
                     SubsystemPlayers players =
                         GameManager.Project.FindSubsystem<SubsystemPlayers>(false);

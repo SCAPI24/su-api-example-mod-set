@@ -1,0 +1,178 @@
+/* PlayerAi 行为树编辑器样式（零依赖，随 exe 内嵌） */
+:root {
+  --bg: #14171c;
+  --pane: #1b1f26;
+  --pane2: #222833;
+  --line: #2c3442;
+  --fg: #dfe6f0;
+  --dim: #93a1b5;
+  --accent: #4ea1ff;
+  --ok: #4ad07a;
+  --warn: #e8b34a;
+  --err: #ef6b6b;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--fg);
+  font: 13px/1.5 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+}
+#topbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  background: var(--pane);
+  border-bottom: 1px solid var(--line);
+}
+.brand { font-weight: 600; letter-spacing: .3px; }
+.brand span { color: var(--dim); font-weight: 400; }
+.group { display: flex; align-items: center; gap: 6px; }
+.group label { color: var(--dim); }
+button {
+  background: var(--pane2);
+  color: var(--fg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+button:hover { border-color: var(--accent); }
+button.primary { background: #1d4f86; border-color: #2a6cb5; }
+button:disabled { opacity: .45; cursor: not-allowed; }
+select, input[type=text], input[type=number] {
+  background: var(--pane2);
+  color: var(--fg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 4px 6px;
+  min-width: 90px;
+}
+.badge {
+  padding: 3px 8px;
+  border-radius: 10px;
+  background: var(--pane2);
+  border: 1px solid var(--line);
+  color: var(--dim);
+}
+.badge.dirty { color: var(--warn); border-color: #6b5620; }
+.badge.live { color: var(--ok); border-color: #276b45; }
+main {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 260px 1fr 320px;
+  min-height: 0;
+}
+.pane {
+  padding: 10px 12px;
+  overflow: auto;
+  border-right: 1px solid var(--line);
+  min-height: 0;
+}
+#inspector { border-right: none; border-left: 1px solid var(--line); }
+.pane h2 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: .6px;
+  color: var(--dim);
+}
+.hint { color: var(--dim); font-size: 12px; }
+#paletteList { margin-top: 8px; }
+.palette-group { margin-bottom: 10px; }
+.palette-group h3 {
+  margin: 0 0 4px;
+  font-size: 12px;
+  color: var(--dim);
+  font-weight: 500;
+}
+.palette-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  margin-bottom: 3px;
+  font-size: 12px;
+}
+/* 动作包（物料区里的一类"材料"，不是节点类型） */
+.palette-item.action { border-color: #3d5a3f; background: #1e2a22; }
+.palette-item.action:hover { border-color: var(--ok); }
+.palette-item.helper { border-style: dashed; }
+.packages-box {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+.package-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: #cbd6e6;
+}
+.package-item.dead { color: var(--warn); }
+.package-item.readonly { opacity: .85; }
+.package-item.manual { color: var(--dim); }
+.package-item input { flex: 0 0 auto; }
+.tree { font-size: 12.5px; }
+.node {
+  margin: 2px 0 2px 0;
+  border-left: 2px solid transparent;
+}
+.node-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.node-row:hover { background: #232b36; }
+.node.selected > .node-row { background: #1d4f86; }
+.node-children { margin-left: 16px; border-left: 1px dashed var(--line); padding-left: 6px; }
+.tag {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #2b3441;
+  color: #cbd6e6;
+}
+.tag.composite { background: #2c4a6b; }
+.tag.task { background: #29452f; }
+.tag.root { background: #4a3b22; }
+.node-id { color: var(--dim); }
+.node-name { color: #9fb6d4; }
+.prop-row { display: flex; align-items: center; gap: 6px; margin-bottom: 5px; }
+.prop-row label { flex: 0 0 108px; color: var(--dim); font-size: 12px; }
+.prop-row input, .prop-row select { flex: 1; min-width: 0; }
+.prop-row .req { color: var(--err); }
+.actions { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+.issues { margin-top: 10px; }
+.issue { padding: 3px 6px; border-radius: 4px; margin-bottom: 3px; font-size: 12px; }
+.issue.error { background: #3a2020; color: #ffc9c9; }
+.issue.warning { background: #38301b; color: #ffe3a8; }
+.issue.info { background: #1f2c3a; color: #cfe4ff; }
+#statusbar {
+  display: flex;
+  justify-content: space-between;
+  padding: 5px 12px;
+  border-top: 1px solid var(--line);
+  background: var(--pane);
+  color: var(--dim);
+  font-size: 12px;
+}
+pre { white-space: pre-wrap; word-break: break-all; font-size: 11.5px; }
+.dialog-backdrop {
+  position: fixed; inset: 0; background: rgba(0,0,0,.5);
+  display: flex; align-items: center; justify-content: center;
+}
+.dialog {
+  background: var(--pane); border: 1px solid var(--line); border-radius: 8px;
+  padding: 14px; min-width: 320px;
+}

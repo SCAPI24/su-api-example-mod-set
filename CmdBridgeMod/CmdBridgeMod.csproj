@@ -8,6 +8,15 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!--
+      CM-2：共控合并需要读**真实**设备状态（OpenTK 的全局键盘/鼠标快照）。
+      Engine 用的是预编译 OpenTK.dll（Engine/Engine/Engine.csproj:24-26），这里同样引用它；
+      Private=false：运行期由引擎自带，不打进 scmod 的 Lib。
+    -->
+    <Reference Include="OpenTK">
+      <HintPath>..\..\Engine\Engine\OpenTK.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <ProjectReference Include="..\..\Engine\Engine\Engine.csproj" />
     <ProjectReference Include="..\..\EntitySystem\EntitySystem.csproj" />
     <ProjectReference Include="..\..\Survivalcraft\Survivalcraft.csproj" />

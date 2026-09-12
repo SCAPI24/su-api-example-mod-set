@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<Obfuscator>
+  <Var name="InPath" value=".\bin\Debug\net8.0" />
+  <Var name="OutPath" value=".\bin\Debug\net8.0\Obfuscar" />
+  <Var name="SkipExtraDependencies" value="true" />
+  <!-- Component 等基类在 EntitySystem.dll 里，必须与本体一起混淆，否则继承关系会被改名破坏 -->
+  <Module file="$(InPath)\EntitySystem.dll" />
+  <Module file="$(InPath)\PlayerAiMod.dll" />
+</Obfuscator>

@@ -7,6 +7,7 @@ using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
+using Engine;
 
 namespace CmdBridgeMod
 {
@@ -161,7 +162,8 @@ namespace CmdBridgeMod
                             break;
                         if (line.Length == 0)
                             continue;
-                        WriteResponse(stream, HandleLine(line));
+                        Dictionary<string, object> response = HandleLine(line, out string requestId);
+                        WriteResponse(stream, response, requestId);
                     }
                 }
             }
@@ -182,8 +184,9 @@ namespace CmdBridgeMod
             }
         }
 
-        private Dictionary<string, object> HandleLine(string line)
+        private Dictionary<string, object> HandleLine(string line, out string requestId)
         {
+            requestId = null;
             BridgeRequest request;
             try
             {
@@ -194,6 +197,8 @@ namespace CmdBridgeMod
             {
                 return WireResponse.Error(null, "invalid_request", exception.Message);
             }
+
+            requestId = request.Id;
 
             if (!FixedTimeEquals(request.Token, m_config.Token))
                 return WireResponse.Error(request.Id, "unauthorized", "Invalid token.");
@@ -244,12 +249,48 @@ namespace CmdBridgeMod
         }
 
         private static void WriteResponse(
-            NetworkStream stream, Dictionary<string, object> response)
+            NetworkStream stream, Dictionary<string, object> response, string requestId = null)
         {
-            string json = JsonSerializer.Serialize(response) + "\n";
-            byte[] bytes = Encoding.UTF8.GetBytes(json);
+            string json;
+            try
+            {
+                json = JsonSerializer.Serialize(response);
+            }
+            catch (Exception exception)
+            {
+                // 回包序列化失败**绝不能**把游戏带走：这里是后台网络线程，异常一旦冒出去
+                // 就是进程级未处理异常（实测被一条命令干过一次：payload 里塞了裸的
+                // Engine.Vector2，它的 `YX` 属性让序列化器无限递归）。
+                // 退化成一条"小到不可能失败"的 JSON 错误回包。
+                Log.Warning("[CmdBridge] response could not be serialized ("
+                    + exception.GetType().Name + ": " + exception.Message + "); sending an error instead.");
+                json = "{\"id\":\"" + Escape(requestId) + "\",\"ok\":false,\"error\":{\"code\":"
+                    + "\"response_not_serializable\",\"message\":\"The command produced a payload the "
+                    + "server could not serialize (" + exception.GetType().Name + "). Nothing was "
+                    + "changed; the game is fine.\"}}";            }
+
+            byte[] bytes = Encoding.UTF8.GetBytes(json + "\n");
             stream.Write(bytes, 0, bytes.Length);
             stream.Flush();
+        }
+
+        /// <summary>回包序列化失败时用的最小 JSON 转义（只处理引号/反斜杠/控制字符）。</summary>
+        private static string Escape(string text)
+        {
+            if (string.IsNullOrEmpty(text))
+                return string.Empty;
+            var builder = new StringBuilder(text.Length + 8);
+            for (int i = 0; i < text.Length; i++)
+            {
+                char c = text[i];
+                if (c == '"' || c == '\\')
+                    builder.Append('\\').Append(c);
+                else if (c < ' ')
+                    builder.Append('?');
+                else
+                    builder.Append(c);
+            }
+            return builder.ToString();
         }
 
         private static bool FixedTimeEquals(string left, string right)
@@ -416,6 +457,21 @@ namespace CmdBridgeMod
                 result.Add(item.GetString());
             }
             return result;
+        }
+
+        /// <summary>
+        /// 枚举 args 对象里的全部参数（原始 JsonElement；document 已 Clone，可安全长期持有）。
+        /// 扩展命令要"自己解释参数"时用它，例如把整包参数转成字典交给上层 Mod。
+        /// </summary>
+        internal IEnumerable<KeyValuePair<string, JsonElement>> EnumerateArguments()
+        {
+            if (!Payload.TryGetProperty("args", out JsonElement args)
+                || args.ValueKind != JsonValueKind.Object)
+            {
+                return System.Linq.Enumerable.Empty<KeyValuePair<string, JsonElement>>();
+            }
+            return System.Linq.Enumerable.Select(args.EnumerateObject(),
+                property => new KeyValuePair<string, JsonElement>(property.Name, property.Value));
         }
 
         private bool TryGetArgument(string name, out JsonElement value)

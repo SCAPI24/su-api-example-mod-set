@@ -1,0 +1,57 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>PlayerAiEditor</AssemblyName>
+    <RootNamespace>PlayerAiMod.Editor</RootNamespace>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- 单文件发布：静态资源全部内嵌，运行期零依赖、零 node -->
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+
+  <!--
+    编辑器复用 PlayerAiMod 的**纯逻辑层**（包格式 / 校验器 / 编译器 / 节点 schema），
+    不复制一份实现：校验规则与游戏内完全同源（计划 §5.2「校验器只有一份」）。
+    排除掉自检文件与游戏侧胶水（它们依赖引擎运行时或 CmdBridgeMod）。
+  -->
+  <ItemGroup>
+    <Compile Include="..\PlayerAiMod\Bt\**\*.cs"
+             Exclude="..\PlayerAiMod\Bt\BtSelfTest.cs;..\PlayerAiMod\Bt\BtTestDoubles.cs" />
+    <Compile Include="..\PlayerAiMod\Package\**\*.cs"
+             Exclude="..\PlayerAiMod\Package\*SelfTest.cs" />
+    <Compile Include="..\PlayerAiMod\Record\**\*.cs"
+             Exclude="..\PlayerAiMod\Record\AiRecordingUi.cs;..\PlayerAiMod\Record\PlayerInputSampler.cs;..\PlayerAiMod\Record\*SelfTest.cs" />
+    <Compile Include="..\PlayerAiMod\Core\AiBlackboard.cs" />
+    <Compile Include="..\PlayerAiMod\Core\AiCommandRequest.cs" />
+    <Compile Include="..\PlayerAiMod\Core\AiEventLog.cs" />
+    <Compile Include="..\PlayerAiMod\Core\IAiTreeHost.cs" />
+    <Compile Include="..\PlayerAiMod\Core\AiMode.cs" />
+    <Compile Include="..\PlayerAiMod\Core\PlayerAiConfig.cs" />
+    <Compile Include="..\PlayerAiMod\Fsm\AiStateIds.cs" />
+    <Compile Include="..\PlayerAiMod\Actor\IAiSensor.cs" />
+    <Compile Include="..\PlayerAiMod\Actor\IAiActuator.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="Server\**\*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 静态资源：内嵌进 exe（运行期不需要任何外部文件） -->
+    <EmbeddedResource Include="Web\**\*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="Engine">
+      <HintPath>..\..\Engine\Engine\bin\Debug\net8.0\Engine.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="EntitySystem">
+      <HintPath>..\..\EntitySystem\bin\Debug\net8.0\EntitySystem.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+</Project>
