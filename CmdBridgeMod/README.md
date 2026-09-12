@@ -1,4 +1,4 @@
-# CmdBridgeMod
+# CmdBridgeMod 
 
 A player-robot bridge for Survivalcraft 2 (SuAPI). It exposes the game to a local
 command-line client / AI so the game can be *played* through the **player controller**
