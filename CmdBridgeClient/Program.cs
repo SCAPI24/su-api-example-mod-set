@@ -190,8 +190,19 @@ namespace CmdBridgeClient
                         return Print(client, "obs.messages", null);
                     case "dialogs":
                         return Print(client, "obs.dialogs", null);
+                    case "focusrecover":
+                        return Print(client, "focus.recover", null);
+                    case "focusstatus":
+                        return Print(client, "focus.status", null);
                     case "selftest":
                         return Print(client, "obs.selftest", null);
+                    case "aiselftest":
+                        // 三套自检（行为树内核 + 包/热重载 + 命令层）
+                        return Print(client, "bt.selftest", null);
+                    case "ai":
+                        return AiCommand(client, args);
+                    case "commands":
+                        return Print(client, "cmd.list", null);
 
                     case "look":
                         Require(args.Count >= 3, "look <yawDeg> <pitchDeg>");
@@ -247,6 +258,136 @@ namespace CmdBridgeClient
                         return 1;
                 }
             }
+        }
+
+        /// <summary>
+        /// AI 控制面：`sccmd ai <子命令>`。全部落到 PlayerAiMod 注册的 `ai.*` 命令上
+        /// （命令由 CmdBridgeMod 的扩展注册表分发，客户端不需要知道是谁实现的）。
+        /// </summary>
+        private static int AiCommand(BridgeClient client, List<string> args)
+        {
+            Require(args.Count >= 2, "ai status|pause|resume|enable|disable|trees|load|reload|notify|validate|bb|release");
+
+            string sub = args[1].ToLowerInvariant();
+            switch (sub)
+            {
+                case "status":
+                    return Print(client, "ai.status", null);
+                case "pause":
+                    return Print(client, "ai.pause", null);
+                case "resume":
+                    return Print(client, "ai.resume", null);
+                case "enable":
+                    return Print(client, "ai.enable", null);
+                case "disable":
+                    return Print(client, "ai.disable", null);
+                case "release":
+                    return Print(client, "ai.input.release", null);
+                case "trees":
+                    return Print(client, "ai.tree.list", null);
+                case "load":
+                    Require(args.Count >= 3, "ai load <包名>");
+                    return Print(client, "ai.tree.load", Args(
+                        ("name", args[2]),
+                        ("start", true)));
+                case "reload":
+                    return Print(client, "ai.tree.reload",
+                        args.Count >= 3 ? Args(("name", args[2])) : null);
+                case "validate":
+                    return Print(client, "ai.tree.validate",
+                        args.Count >= 3 ? Args(("name", args[2])) : null);
+                case "prepare":
+                    if (args.Count >= 3 && args[2] == "--all")
+                        return Print(client, "ai.tree.prepare", Args(("all", true)));
+                    Require(args.Count >= 3, "ai prepare <包名> | ai prepare --all");
+                    return Print(client, "ai.tree.prepare", Args(("name", args[2])));
+                case "switch":
+                    Require(args.Count >= 3, "ai switch <包名>");
+                    return Print(client, "ai.tree.switch", Args(("name", args[2])));
+                case "notify":
+                    Require(args.Count >= 3, "ai notify <路径> [hash]");
+                    return Print(client, "ai.tree.notify", Args(
+                        ("path", args[2]),
+                        ("hash", args.Count >= 4 ? args[3] : null)));
+                case "set":
+                    Require(args.Count >= 5, "ai set <节点id> <参数名> <值> [类型]");
+                    return Print(client, "ai.edit.set", Args(
+                        ("id", args[2]),
+                        ("name", args[3]),
+                        ("value", args[4]),
+                        ("type", args.Count >= 6 ? args[5] : "float")));
+                case "insert":
+                    Require(args.Count >= 4, "ai insert <父节点id> <节点定义JSON>");
+                    return Print(client, "ai.edit.insert", Args(
+                        ("parent", args[2]),
+                        ("json", args[3])));
+                case "remove":
+                    Require(args.Count >= 3, "ai remove <节点id>");
+                    return Print(client, "ai.edit.remove", Args(("id", args[2])));
+                case "move":
+                    Require(args.Count >= 4, "ai move <节点id> <新父节点id> [下标]");
+                    return Print(client, "ai.edit.move", Args(
+                        ("id", args[2]),
+                        ("parent", args[3]),
+                        ("index", args.Count >= 5 ? ParseInt(args[4]) : -1)));
+                case "snapshot":
+                    return Print(client, "ai.tree.snapshot", null);
+                case "logs":
+                    return Print(client, "ai.logs", Args(
+                        ("count", args.Count >= 3 ? ParseInt(args[2]) : 20)));
+                case "export":
+                    Require(args.Count >= 3, "ai export <新包名>");
+                    return Print(client, "ai.tree.export", Args(("name", args[2])));
+                case "record":
+                    return Print(client, RecordSubcommand(args), RecordArgs(args));
+                case "bb":
+                    if (args.Count == 2)
+                        return Print(client, "ai.blackboard", Args(("all", true)));
+                    if (args.Count == 3)
+                        return Print(client, "ai.blackboard", Args(("key", args[2])));
+                    return Print(client, "ai.blackboard", Args(
+                        ("key", args[2]),
+                        ("value", args[3]),
+                        ("type", args.Count >= 5 ? args[4] : "string")));
+                default:
+                    Console.Error.WriteLine("Unknown ai subcommand '" + sub + "'.");
+                    return 1;
+            }
+        }
+
+        /// <summary>`ai record <start|pause|stop|save|discard> [名字]` → 对应的 ai.record.* 命令。</summary>
+        private static string RecordSubcommand(List<string> args)
+        {
+            Require(args.Count >= 3,
+                "ai record start|pause|stop|save|discard [名字]");
+            switch (args[2].ToLowerInvariant())
+            {
+                case "start": return "ai.record.start";
+                case "pause":
+                case "resume": return "ai.record.pause";
+                case "stop": return "ai.record.stop";
+                case "save": return "ai.record.save";
+                case "discard": return "ai.record.discard";
+                default:
+                    throw new InvalidOperationException(
+                        "Unknown ai record subcommand '" + args[2] + "'.");
+            }
+        }
+
+        private static Dictionary<string, object> RecordArgs(List<string> args)
+        {
+            string sub = args[2].ToLowerInvariant();
+            string name = args.Count >= 4 ? args[3] : null;
+
+            if (sub == "save" && string.IsNullOrEmpty(name))
+                Require(false, "ai record save <名字> [--overwrite]");
+
+            var arguments = new Dictionary<string, object>(StringComparer.Ordinal);
+            if (!string.IsNullOrEmpty(name) && (sub == "start" || sub == "stop" || sub == "save"))
+                arguments["name"] = name;
+            if (sub == "save" && args.Contains("--overwrite"))
+                arguments["overwrite"] = true;
+            return arguments;
         }
 
         private static int RunRaw(BridgeClient client, List<string> args)
@@ -465,6 +606,8 @@ namespace CmdBridgeClient
   dialogs                     当前对话框
   snapshot                    一次性拿全
   selftest                    注入点与可达性自检
+  focusstatus                 焦点策略状态（mode/realFocus/detached/真实焦点来源）
+  focusrecover                焦点/鼠标卡住时自救：回到跟随引擎并恢复窗口状态
   waitfor <condition> [--timeout ms]  条件等待（服务端逐帧求值，超时退出码 7）
       screen.animating.false | screen.is:<name> | element.present:<sel>
       element.hittable:<sel> | element.clickable:<sel> | modal.none | modal.is:<Type>
@@ -486,6 +629,36 @@ namespace CmdBridgeClient
                               --at 用于 ListPanelWidget 的虚拟列表项）
   text <string>               逐字符输入
   raw <command> k=v ...       直接下发任意命令
+  commands                    列出内建命令与各 Mod 注册的扩展命令
+
+AI 控制面（需要装 PlayerAiMod，命令经 CmdBridgeMod 通道分发）
+  ai status                   模式/暂停/行为树来源与哈希/活动节点路径/黑板/重载统计
+  ai pause | resume           暂停/继续行为树（保留运行态；暂停即释放 AI 输入）
+  ai enable | disable         接管/放弃本端角色（disable 会释放全部 AI 输入）
+  ai release                  只释放 AI 注入的输入，不动接管状态
+  ai trees                    列出两个包目录里的行为树包（实例目录优先）
+  ai load <包名>              装载/切换活动树（立即生效）
+  ai reload [包名]            强制重载（排队，tick 边界生效）
+  ai validate [包名]          只校验不装载（编辑器保存前预检）
+  ai prepare <包名>|--all     预编译进常驻树库（把编译成本挪到切换之前）
+  ai switch <包名>            毫秒级切换活动树（优先用常驻副本，报告 switchMs）
+  ai notify <路径> [hash]     模拟编辑器推送重载通知
+  ai bb [键] [值] [类型]      读/写黑板（类型 bool|int|float|string；无参列全部）
+  ai record start [名字]      开始录制（= PgUp；录制中行为树停手、人类操作被记录）
+  ai record pause             暂停/继续录制（= PgUp 切换）
+  ai record stop [名字]       结束录制（= PgDn；带名字则直接落盘，不带则等命名）
+  ai record save <名字> [--overwrite]   把录好的动作包写成 <名字>.scatpak
+  ai record discard           丢弃待保存的录制
+
+AI 内存态改写与导出（只改内存；原 .scbtpak 字节永远不变）
+  ai set <节点id> <参数名> <值> [类型]   改活树里一个参数（类型 float|int|bool|string）
+  ai insert <父节点id> <JSON>   按包格式插入节点（json 里写 type/id/properties）
+  ai remove <节点id>            摘掉节点（先给子树收尾；删空组合要 force）
+  ai move <节点id> <新父节点id> [下标]
+  ai export <新包名>           把含改动的活树导出成新包（原包不动）
+  ai snapshot                  活动节点快照（活动路径 + 每个节点状态；编辑器监视复用）
+  ai logs [条数]               事件日志最近若干条（文件在 PlayerAi/Logs/PlayerAi.log）
+  aiselftest                  跑行为树内核 + 包/热重载 + 命令层三套自检
 
 全局选项：--json  --root <游戏目录>  --port <端口>  --token <令牌>  --timeout <ms>");
         }

@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PlayerAi 行为树编辑器</title>
+<link rel="stylesheet" href="app.css" />
+</head>
+<body>
+<header id="topbar">
+  <div class="brand">PlayerAi <span>行为树编辑器</span></div>
+  <div class="group">
+    <label>包</label>
+    <select id="packageSelect"></select>
+    <button id="btnOpen" title="打开选中的包">打开</button>
+    <button id="btnReload" title="从磁盘重新读取">重读</button>
+  </div>
+  <div class="group">
+    <button id="btnValidate" title="用游戏内同一份校验器检查（不写盘）">校验</button>
+    <button id="btnSave" class="primary" title="校验通过后原子写回包">保存</button>
+    <button id="btnSaveAs" title="另存到实例目录（不改原包）">另存为</button>
+    <button id="btnNotify" title="通知正在运行的游戏热重载">推送热重载</button>
+  </div>
+  <div class="group">
+    <label>动作包</label>
+    <select id="actionSelect" title="实例目录 + Mod 分发目录里的 .scatpak"></select>
+    <button id="btnActionValidate" title="校验结构，并告诉你这个包能不能回放">校验</button>
+    <button id="btnActionPlay" title="让游戏直接回放它（不经行为树）">试跑</button>
+    <button id="btnActionStop" title="停止回放并释放输入">停止</button>
+    <button id="btnActionCreate" title="在实例目录造一个新的示例动作包（不依赖真机录制）">自造</button>
+    <span id="actionBadge" class="badge">动作包：未知</span>
+  </div>
+  <div class="group">
+    <button id="btnGame" title="问游戏要 ai.status">游戏状态</button>
+    <span id="gameBadge" class="badge">游戏：未知</span>
+    <span id="dirtyBadge" class="badge">未修改</span>
+  </div>
+</header>
+
+<main>
+  <section id="palette" class="pane">
+    <h2>物料区</h2>
+    <p class="hint">节点类型来自游戏内的注册表（工厂 + 形状 + 属性表），想加就点它。
+      最下面的「动作包」是录好的输入轨道：点它会在选中的节点下挂一个
+      <code>Task.PlayActionPackage</code>，或把它加进已选中节点的播放列表。</p>
+    <input id="paletteFilter" placeholder="过滤类型…" />
+    <div id="paletteList"></div>
+  </section>
+
+  <section id="canvas" class="pane">
+    <h2>画布 <span id="canvasHint" class="hint"></span></h2>
+    <div id="treeRoot" class="tree"></div>
+    <div id="issues" class="issues"></div>
+  </section>
+
+  <section id="inspector" class="pane">
+    <h2>属性区</h2>
+    <div id="inspectorBody"><p class="hint">左侧选中一个节点。</p></div>
+  </section>
+</main>
+
+<footer id="statusbar"><span id="statusText">就绪</span><span id="rootInfo"></span></footer>
+
+<script src="engine-adapter.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

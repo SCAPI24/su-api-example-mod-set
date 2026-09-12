@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Mod>
+  <ModInfo>
+    <Identifier>PlayerAiMod</Identifier>
+    <LocalizedName>
+      <Text lang="en_US">Player AI</Text>
+      <Text lang="zh_CN">玩家 AI</Text>
+    </LocalizedName>
+    <ModVersion>
+      <Version>0.2.0</Version>
+      <APIVersion>2.1.0</APIVersion>
+    </ModVersion>
+    <Asset>
+      <ContentRoot>Content</ContentRoot>
+    </Asset>
+    <IsMergeLib>true</IsMergeLib>
+  </ModInfo>
+  <Dependencies>
+    <!--
+      mod 依赖：复用 CmdBridgeMod 的玩家控制器注入器（C# 公开门面 CmdBridgeMod.CmdBridgeInput）。
+      两个 Mod 各自打包成独立 scmod 放进 Mods/，由加载器各自加载，不做库合并；
+      这里只声明依赖标识，不涉及 IsMergeLib。
+    -->
+    <Dependency>
+      <ModInfo>
+        <Identifier>CmdBridgeMod</Identifier>
+      </ModInfo>
+    </Dependency>
+  </Dependencies>
+</Mod>

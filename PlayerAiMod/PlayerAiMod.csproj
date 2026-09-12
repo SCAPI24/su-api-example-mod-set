@@ -1,0 +1,46 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>PlayerAiMod</AssemblyName>
+    <RootNamespace>PlayerAiMod</RootNamespace>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\Engine\Engine\Engine.csproj" />
+    <ProjectReference Include="..\..\EntitySystem\EntitySystem.csproj" />
+    <ProjectReference Include="..\..\Survivalcraft\Survivalcraft.csproj" />
+    <!--
+      mod 依赖：复用 CmdBridgeMod 的玩家控制器注入器（公开门面 CmdBridgeMod.CmdBridgeInput）。
+      两个 Mod 各自打包成独立 scmod 放进 Mods/，由加载器各自加载 —— 不做库合并，
+      所以这里 Private=false：本 Mod 的输出与包里不带 CmdBridgeMod.dll；
+      运行期由 ModLoader 依据 ModInfo 的依赖声明做拓扑排序，保证 CmdBridgeMod 先加载。
+    -->
+    <ProjectReference Include="..\CmdBridgeMod\CmdBridgeMod.csproj">
+      <Private>false</Private>
+    </ProjectReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Obfuscar" Version="2.2.49">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime;build;native;contentfiles;analyzers;buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <Target Name="PostBuild" AfterTargets="PostBuildEvent">
+    <PropertyGroup>
+      <_ObfuscarConfig>$(MSBuildProjectDirectory)\$(IntermediateOutputPath)Obfuscar.xml</_ObfuscarConfig>
+      <_ObfuscarOutput>$(TargetDir)Obfuscar</_ObfuscarOutput>
+    </PropertyGroup>
+    <Copy SourceFiles="Obfuscar.xml" DestinationFiles="$(_ObfuscarConfig)" />
+    <XmlPoke XmlInputPath="$(_ObfuscarConfig)"
+             Query="/Obfuscator/Var[@name='InPath']/@value"
+             Value="$(TargetDir)" />
+    <XmlPoke XmlInputPath="$(_ObfuscarConfig)"
+             Query="/Obfuscator/Var[@name='OutPath']/@value"
+             Value="$(_ObfuscarOutput)" />
+    <Exec Command="&quot;$(Obfuscar)&quot; &quot;$(_ObfuscarConfig)&quot;" />
+  </Target>
+</Project>

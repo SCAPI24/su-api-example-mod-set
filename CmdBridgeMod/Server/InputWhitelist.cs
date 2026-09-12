@@ -46,6 +46,20 @@ namespace CmdBridgeMod
         // 派生字段 Click 会在后续每一帧继续生成，导致一次点击被消费多次。
         internal const string WidgetInputMouseDownPoint = "m_mouseDownPoint";
 
+        // 焦点/共控（CM-2）：让引擎"以为"窗口活跃、保持系统光标可见、切断真实鼠标。
+        // Source: Engine/Engine/Window.cs:218（IsActive => m_state == State.Active；枚举值 Uncreated/Inactive/Active）
+        internal const string WindowState = "m_state";
+
+        /// <summary>
+        /// OpenTK 的 GameWindow：**真实焦点**的权威来源（`Window.m_gameWindow.Focused`）。
+        /// 必须用它而不是 `Window.IsActive`/Activated 事件 —— 后者的状态位正是本 Mod 会改写的那个，
+        /// 于是「我们强制活跃」会让焦点恢复事件永不触发（只读，不写）。
+        /// </summary>
+        public const string WindowGameWindow = "m_gameWindow";
+        // Source: Engine/Engine/Input/Mouse.cs:9-21（私有后端字段与派生量）、:48-70（增量计算位置）
+        internal const string MouseLastPosition = "m_lastMousePosition";
+        internal const string MouseMovement = "MouseMovement";
+
         internal static readonly string[] All =
         {
             KeyboardDownArray,
@@ -58,7 +72,11 @@ namespace CmdBridgeMod
             MouseWheelMovement,
             MouseLastWheelValue,
             LocomotionLookAngles,
-            WidgetInputMouseDownPoint
+            WidgetInputMouseDownPoint,
+            WindowState,
+            WindowGameWindow,
+            MouseLastPosition,
+            MouseMovement
         };
 
         internal static bool Contains(string memberName)

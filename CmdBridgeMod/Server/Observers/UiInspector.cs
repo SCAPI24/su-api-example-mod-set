@@ -317,7 +317,10 @@ namespace CmdBridgeMod
                         ["type"] = widget.GetType().Name,
                         ["text"] = GetText(widget),
                         ["blockedBy"] = ShortName(hit),
-                        ["screenPoint"] = ToScreenPoint(center)
+                        // 不要在这里塞裸的 Vector2：Engine.Vector2 有个 `YX` 属性（返回新的 Vector2），
+                        // System.Text.Json 会顺着 YX.YX.YX… 一路递归到"检测到循环"并抛异常。
+                        // （实测：这条命令因未处理异常直接把游戏进程干掉了。）只放 {x,y} 两个数字。
+                        ["screenPoint"] = PointToValue(ToScreenPoint(center))
                     });
                 }
             }
@@ -445,6 +448,22 @@ namespace CmdBridgeMod
             {
                 return null;
             }
+        }
+
+        /// <summary>
+        /// `Vector2?` → `{x, y}` 或 null。**任何要放进 JSON 回包的坐标都必须走这里**：
+        /// 裸的 `Engine.Vector2` 带一个返回 Vector2 的 `YX` 属性，序列化器会无限递归
+        /// （`$.YX.YX.YX…`）直到抛 "possible object cycle" —— 而那条异常会把游戏进程带走。
+        /// </summary>
+        public static Dictionary<string, object> PointToValue(Vector2? point)
+        {
+            if (!point.HasValue)
+                return null;
+            return new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["x"] = point.Value.X,
+                ["y"] = point.Value.Y
+            };
         }
 
         /// <summary>

@@ -39,13 +39,100 @@ namespace CmdBridgeMod
         private MouseButton m_clickButton = MouseButton.Left;
         private Vector2 m_clickPoint;
 
+        /// <summary>
+        /// 本帧做过的 UI 动作（`click:选择器` / `rightclick:…` / `drag:a→b`）。
+        /// 菜单、背包这类操作在**原始输入层里没有痕迹**（走的是引擎软光标），所以另外记一份，
+        /// 让动作包能把它录成语义事件、回放时按时间点重放同一套点击。
+        /// 由 <see cref="DrainUiActions"/> 每帧取走一次（录制端读输入快照时）。
+        /// </summary>
+        private readonly List<string> m_uiActions = new List<string>();
+
+        private static InputInjector s_current;
+
+        /// <summary>当前注入器实例（进程里只有一个；工厂方法挂命令时用得上）。</summary>
+        internal static InputInjector Current
+        {
+            get { return s_current; }
+        }
+
+        /// <summary>记一条 UI 动作（供本类与 <see cref="UiMouseSession"/> 用）。</summary>
+        internal void NoteUiAction(string action)
+        {
+            if (string.IsNullOrEmpty(action))
+                return;
+            lock (m_uiActions)
+            {
+                if (m_uiActions.Count < 32)
+                    m_uiActions.Add(action);
+            }
+        }
+
+        /// <summary>取走本帧累积的 UI 动作（每帧读输入快照时调一次；读不到就返回空表）。</summary>
+        internal static List<string> DrainUiActions()
+        {
+            InputInjector injector = s_current;
+            if (injector == null)
+                return new List<string>();
+
+            lock (injector.m_uiActions)
+            {
+                if (injector.m_uiActions.Count == 0)
+                    return new List<string>();
+                var copy = new List<string>(injector.m_uiActions);
+                injector.m_uiActions.Clear();
+                return copy;
+            }
+        }
+
         public InputInjector(CmdBridgeConfig config, GameThreadInvoker invoker)
         {
             m_config = config;
             m_invoker = invoker ?? new GameThreadInvoker(config.RequestTimeoutSeconds);
+            s_current = this;
+            Pump = new FrameStartPump();
+            Session = new UiMouseSession(this);
+            Focus = new FocusPolicy(this);
+            Hotkeys = new HotkeyRegistry();
+            Commands = new CommandExtensionRegistry();
         }
 
         public bool Enabled => m_config.EnableInputInjection;
+
+        /// <summary>当前是否有按键/鼠标处于"按住"状态（供依赖 Mod 检查是否还有残留输入）。</summary>
+        public bool IsHoldingAnything => m_heldKeys.Count > 0 || m_heldButtons.Count > 0;
+
+        /// <summary>
+        /// 帧首泵：任何 Mod 都可以把一个动作排到"下一帧帧首"执行。
+        /// 需要它是因为 Dispatcher.Dispatch 在主线程调用会立即执行，只有后台线程调用才会入队到帧首。
+        /// </summary>
+        internal FrameStartPump Pump { get; }
+
+        /// <summary>虚拟 UI 鼠标会话（软光标点击/拖拽，不动用户物理鼠标）。</summary>
+        internal UiMouseSession Session { get; }
+
+        /// <summary>焦点策略与共控合并（前台合并真实输入、失焦脱离真实鼠标）。</summary>
+        internal FocusPolicy Focus { get; }
+
+        /// <summary>热键注册表（帧首判定，可复用：PlayerAiMod 用它绑 Home / PgUp / PgDn）。</summary>
+        internal HotkeyRegistry Hotkeys { get; }
+
+        /// <summary>
+        /// 扩展命令注册表：其它 Mod 往同一个控制通道里挂自己的命令前缀（例如 PlayerAiMod 的 `ai.*`），
+        /// 不必改本 Mod 的路由代码。
+        /// </summary>
+        internal CommandExtensionRegistry Commands { get; }
+
+        /// <summary>某个键当前是否由注入按住（供共控合并判断）。</summary>
+        internal bool IsKeyHeldByInjection(int index)
+        {
+            return m_heldKeys.Contains(index);
+        }
+
+        /// <summary>某个鼠标键当前是否由注入按住。</summary>
+        internal bool IsMouseButtonHeldByInjection(int index)
+        {
+            return m_heldButtons.Contains(index);
+        }
 
         private IModParentField Fields
         {
@@ -62,6 +149,9 @@ namespace CmdBridgeMod
         public object Look(float yawDegrees, float pitchDegrees)
         {
             EnsureEnabled();
+            object skipped = SkipLookIfUserOwnsIt();
+            if (skipped != null)
+                return skipped;
             return OnGameThread(() =>
             {
                 ComponentPlayer player = RequirePlayer();
@@ -74,6 +164,9 @@ namespace CmdBridgeMod
         public object LookDelta(float yawDeltaDegrees, float pitchDeltaDegrees)
         {
             EnsureEnabled();
+            object skipped = SkipLookIfUserOwnsIt();
+            if (skipped != null)
+                return skipped;
             return OnGameThread(() =>
             {
                 ComponentPlayer player = RequirePlayer();
@@ -87,6 +180,9 @@ namespace CmdBridgeMod
         public object LookAt(float x, float y, float z)
         {
             EnsureEnabled();
+            object skipped = SkipLookIfUserOwnsIt();
+            if (skipped != null)
+                return skipped;
             return OnGameThread(() =>
             {
                 ComponentPlayer player = RequirePlayer();
@@ -277,6 +373,12 @@ namespace CmdBridgeMod
             string selector, int holdMilliseconds, bool hasPoint, float pointX, float pointY)
         {
             EnsureEnabled();
+            // 记进"本帧 UI 动作"：动作包录制靠它把菜单点击录成语义事件。
+            // 带坐标的点击（列表行这类"不是控件"的目标）记坐标，否则记选择器 ——
+            // 回放时按同样的语义还原（选择器点击 / 坐标点击）。
+            NoteUiAction(hasPoint
+                ? "click:" + pointX.ToString("0.##") + "," + pointY.ToString("0.##")
+                : "click:" + selector);
             object info = OnGameThread(() => ResolveAndPress(selector, hasPoint, pointX, pointY));
 
             if (holdMilliseconds > 0)
@@ -309,21 +411,7 @@ namespace CmdBridgeMod
                 {
                     input.UseSoftMouseCursor = false;
                     if (m_heldButtons.Count == 0)
-                    {
-                        try
-                        {
-                            Fields.ModifyParentField(
-                                input,
-                                InputWhitelist.WidgetInputMouseDownPoint,
-                                null,
-                                typeof(WidgetInput));
-                        }
-                        catch (Exception exception)
-                        {
-                            Log.Warning("[CmdBridge] Failed to clear WidgetInput.m_mouseDownPoint: "
-                                + exception.Message);
-                        }
-                    }
+                        ClearWidgetMouseDownPoint(input);
                     m_clickInput = null;
                 }
                 return null;
@@ -349,6 +437,7 @@ namespace CmdBridgeMod
         {
             try
             {
+                Session?.EndImmediate();
                 ReleaseAllCore();
             }
             catch (Exception exception)
@@ -362,6 +451,76 @@ namespace CmdBridgeMod
         private object OnGameThread(Func<object> action)
         {
             return m_invoker.Invoke(action);
+        }
+
+        /// <summary>在游戏线程执行并等待结果（供会话解析元素等同步用途）。</summary>
+        internal object RunOnFrame(Func<object> action)
+        {
+            return OnGameThread(action);
+        }
+
+        /// <summary>根控件树的 WidgetInput：软光标、光标可见性等会话级状态写在它上面。</summary>
+        internal WidgetInput GetRootWidgetInput()
+        {
+            try
+            {
+                ContainerWidget root = ScreensManager.RootWidget;
+                return root != null ? root.WidgetsHierarchyInput : null;
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// 清掉 WidgetInput 里残留的"按下起点"。
+        /// 不清的后果：Click = Segment(m_mouseDownPoint, MousePosition) 会在后续每一帧继续派生，
+        /// 一次合成就被消费多次（Source: Game/WidgetInput.cs:755-802）。
+        /// </summary>
+        internal void ClearWidgetMouseDownPoint(WidgetInput input)
+        {
+            if (input == null)
+                return;
+            try
+            {
+                Fields.ModifyParentField(
+                    input,
+                    InputWhitelist.WidgetInputMouseDownPoint,
+                    null,
+                    typeof(WidgetInput));
+            }
+            catch (Exception exception)
+            {
+                Log.Warning("[CmdBridge] Failed to clear WidgetInput.m_mouseDownPoint: "
+                    + exception.Message);
+            }
+        }
+
+        /// <summary>由 Mod 的 Frame.Update 钩子每帧调用一次，驱动帧首泵。</summary>
+        internal void SignalFrameEnd()
+        {
+            Pump.SignalFrameEnd();
+        }
+
+        /// <summary>
+        /// 视角仲裁（CM-2）：真实焦点在游戏、且最近有真实鼠标活动时，视角归用户。
+        /// 放在注入器里是为了让命令面与门面（其他 Mod）都自动遵守，绕不过去。
+        /// 返回非 null 表示"本次跳过"（契约：`skipped` 字段）。
+        /// </summary>
+        private object SkipLookIfUserOwnsIt()
+        {
+            FocusPolicy focus = Focus;
+            if (focus == null || !focus.LookOwnedByUser)
+                return null;
+
+            return new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["skipped"] = "look_owned_by_user",
+                ["lookOwner"] = focus.LookOwnerName,
+                ["hint"] = "The player is moving a real mouse, so look ownership is with the user. "
+                    + "Use look.owner=ai to force or look.owner=shared to combine."
+            };
         }
 
         private void EnsureEnabled()
@@ -388,7 +547,17 @@ namespace CmdBridgeMod
 
             Vector2 requestedPoint = new Vector2(pointX, pointY);
             // 指定坐标有两个用途：虚拟列表项定位，以及同名兄弟元素消歧。
-            Widget target = UiInspector.Resolve(root, selector, hasPoint, requestedPoint);
+            // 只给坐标不给选择器（`ui.click x=… y=…` / 动作包里的坐标点击）时，
+            // 目标就是"这一点下面的控件" —— 等价于真人用软光标点这个像素，不跳级、不猜。
+            Widget target = string.IsNullOrEmpty(selector) && hasPoint
+                ? root.HitTestGlobal(requestedPoint)
+                : UiInspector.Resolve(root, selector, hasPoint, requestedPoint);
+            if (target == null)
+            {
+                throw new BridgeCommandException(
+                    "element_missing", "Nothing is under (" + pointX.ToString("0.##") + ","
+                    + pointY.ToString("0.##") + ").");
+            }
             BoundingRectangle bounds = target.GlobalBounds;
             Vector2 point = hasPoint
                 ? requestedPoint
@@ -461,7 +630,7 @@ namespace CmdBridgeMod
             });
         }
 
-        private void SetKeyHeld(Key key, bool down)
+        internal void SetKeyHeld(Key key, bool down)
         {
             EnsureKeyboardArrays();
             int index = (int)key;
@@ -491,7 +660,7 @@ namespace CmdBridgeMod
             }
         }
 
-        private void SetMouseHeld(MouseButton button, bool down)
+        internal void SetMouseHeld(MouseButton button, bool down)
         {
             EnsureMouseArrays();
             int index = (int)button;
@@ -698,6 +867,24 @@ namespace CmdBridgeMod
         private static float DegreesToRadians(float degrees)
         {
             return degrees * (MathUtils.PI / 180f);
+        }
+
+        /// <summary>取第一个玩家；没有世界/没有玩家时返回 null（不抛异常，供只读观察用）。</summary>
+        internal static ComponentPlayer TryGetPlayer()
+        {
+            try
+            {
+                if (GameManager.Project == null)
+                    return null;
+                SubsystemPlayers players = GameManager.Project.FindSubsystem<SubsystemPlayers>(false);
+                if (players == null || players.ComponentPlayers.Count == 0)
+                    return null;
+                return players.ComponentPlayers[0];
+            }
+            catch (Exception)
+            {
+                return null;
+            }
         }
 
         private static ComponentPlayer RequirePlayer()
