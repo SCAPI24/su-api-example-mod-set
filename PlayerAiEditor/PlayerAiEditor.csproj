@@ -9,6 +9,36 @@
     <InvariantGlobalization>true</InvariantGlobalization>
     <!-- 单文件发布：静态资源全部内嵌，运行期零依赖、零 node -->
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+
+    <!--
+      发布形态 = **自包含单文件**（发给别人用的独立小程序，不能要求对方先装 .NET）。
+
+      为什么要写进 csproj 而不是只写在构建脚本里：框架依赖版（5.5MB）的内嵌 runtimeconfig
+      写着 `"framework": "Microsoft.NETCore.App 8.0.0"`，**没装 .NET 8 的机器直接起不来**
+      （双击无反应）。脚本 `Mod/Packages/check_player_ai_build.py` 不在版本库里（.gitignore
+      排除了 Packages/），只写在那里等于"只有本机能构建对"。所以发布形态必须随源码走。
+
+      · RuntimeIdentifier + SelfContained：把运行时打进产物（win-x64，与游戏本体一致）；
+      · PublishSingleFile：仍是**一个 exe**，拷贝过去双击即用；
+      · IncludeNativeLibrariesForSelfExtract：coreclr/hostfxr 这类原生库也进包，
+        否则 exe 旁边会散落一堆 dll，"单文件"就名不副实；
+      · EnableCompressionInSingleFile：约 65MB → 约 35MB（启动时在内存里解压，
+        编辑器是一次性启动的程序，这点开销很划算）。
+    -->
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <!--
+      发布目录里只留那个 exe：
+      · DebugType=embedded —— 调试符号写进程序集内部，**行号不丢**（异常信息里还有行号），
+        但不会再在 exe 旁边生成 PlayerAiEditor.pdb；
+      · AllowedReferenceRelatedFileExtensions=none —— 不再把 Engine.pdb / EntitySystem.pdb /
+        EntitySystem.xml 这些**引用程序集**的附属文件拷过来（它们不是运行期依赖）。
+    -->
+    <DebugType>embedded</DebugType>
+    <AllowedReferenceRelatedFileExtensions>none</AllowedReferenceRelatedFileExtensions>
   </PropertyGroup>
 
   <!--

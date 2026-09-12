@@ -1749,6 +1749,62 @@ py -3 Mod/Packages/check_player_ai_build.py all
 启动时写一次、每次刷新重写）决定了它会不会跟着语言走，而**只有真浏览器里"切换一次语言再整页扫一遍"
 能一次抓全**。这条断言现在是常驻的，以后新增任何一处文案，只要它不跟语言走就会被抓住。
 
+### 9.5.37 编辑器改成**自包含**单文件发布（对方机器不用装 .NET）
+
+起因：上一轮查明 `PlayerAiEditor.exe` 是**框架依赖**发布（5.5MB 单文件，内嵌 runtimeconfig 写着
+`"framework": { "name": "Microsoft.NETCore.App", "version": "8.0.0" }`，且没有 `includedFrameworks`）。
+也就是说：**没装 .NET 8 运行时的机器上，双击编辑器没反应**（连窗口都出不来）。
+游戏本体不受影响 —— 实例根是自包含发布，自带 `coreclr.dll` / `hostfxr.dll` / `System.Private.CoreLib.dll`。
+
+**改动**（发布形态写进 `PlayerAiEditor.csproj`，随源码走）：
+
+```xml
+<RuntimeIdentifier>win-x64</RuntimeIdentifier>
+<SelfContained>true</SelfContained>
+<PublishSingleFile>true</PublishSingleFile>
+<IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+<EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+<DebugType>embedded</DebugType>
+<AllowedReferenceRelatedFileExtensions>none</AllowedReferenceRelatedFileExtensions>
+```
+
+为什么必须写进 csproj 而不是只写在构建脚本里：`Mod/Packages/` 被 `.gitignore` 排除，
+只改脚本等于"只有本机能构建对"，克隆仓库的人还是发框架依赖版。
+
+顺带把发布目录清成"只有一个 exe"：`DebugType=embedded` 把调试符号塞进程序集内部
+（**行号不丢**，但不再生成 `.pdb`），`AllowedReferenceRelatedFileExtensions=none` 不再把
+`Engine.pdb` / `EntitySystem.pdb` / `EntitySystem.xml` 这些引用程序集的附属文件拷过来。
+
+**结果对照**：
+
+| | 框架依赖（旧） | 自包含（新） |
+|---|---|---|
+| 产物 | `PlayerAiEditor.exe` 5.5MB + 4 个符号文件 | **`PlayerAiEditor.exe` 35MB（仅此一个文件）** |
+| 内嵌运行时 | 无（`framework`） | 有（`includedFrameworks`） |
+| 目标机器要求 | **必须装 .NET 8 运行时** | **无** |
+| 启动开销 | 立即 | 首次启动在内存里解压（几十毫秒，一次性程序可忽略） |
+
+**验证**（把 `DOTNET_ROOT` 指到空目录 = 等价于"这台机器没装 .NET"，两个 exe 都跑 `--print-root`）：
+
+```
+A. 旧的框架依赖 exe：You must install .NET to run this application.  exit=-2147450749（框架未找到）
+B. 新的自包含 exe  ：正常打印实例根检测结果                        exit=0
+```
+
+外加自包含 exe 上的 C# 自检 **121/121 ALL PASS**（同一套 `--selftest`）。
+
+**顺带确认的一件事（回答"用户不装 Python 能不能用"）**：整个运行链路与 Python 无关 ——
+
+- 实例根 `publish/Windows` 里递归找不到任何 `.py`，连 `.js` / `.html` 也没有
+  （编辑器前端是**内嵌**在 exe 里的，运行期不读磁盘上的 `Web/`）；
+- 三个运行时工程（`CmdBridgeMod` / `PlayerAiMod` / `PlayerAiEditor`）的 C# 里没有任何
+  Python 调用（C 里只出现注释与 README 文档；`Process.Start` 只用于启动游戏、打开浏览器）；
+- `.scmod` 里只有 `ModInfo.xml + Lib/*.dll`；编辑器与游戏之间是 socket 协议，不是脚本桥。
+
+所以 `Mod/Packages/**` 那一百多个 `.py` 全是**开发/验证工具**（含总闸门 `check_player_ai_build.py`
+与打包部署脚本 `pack_player_ai.py`），删掉不影响用户玩、也不影响 AI 操作游戏；只影响"从源码改 mod
+再重新打包/跑验收"。它们本来也不在版本库里。
+
 ## 10. 从 CmdBridgeMod 迁移的试错结论（改本 Mod 前先看这里）
 1. **窗口失焦 = 全部输入被丢弃**：`ComponentInput.cs:91-94` 在 `!Window.IsActive || !PlayerData.IsReadyForPlaying`
    时把 `m_playerInput` 置空。行动前用 `IAiSensor.IsInputAccepted` 自查。
