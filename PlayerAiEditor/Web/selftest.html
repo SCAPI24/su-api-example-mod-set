@@ -222,6 +222,16 @@
       return doc.querySelectorAll('#packageSelect option').length;
     }, 20000, '包列表');
     check('包列表已从 /api/packages 填充', optionCount > 0, optionCount + ' 个包');
+    // 出厂示例 su.watch：**盯住最近的玩家**（反应式树的标准写法）。
+    // 这条同时证明"编辑器启动时把出厂模板装进了实例目录，并且前端真的列出来了"。
+    var watchOption = Array.prototype.slice
+      .call(doc.querySelectorAll('#packageSelect option'))
+      .filter(function (option) {
+        return (option.textContent || '').indexOf('su.watch') >= 0
+          || (option.getAttribute('value') || '').indexOf('su.watch') >= 0;
+      });
+    check('包列表里有出厂示例 su.watch.scbtpak（盯住最近的玩家）',
+      watchOption.length > 0, watchOption.length ? watchOption[0].textContent : '<没列出>');
 
     // 默认视图必须是**节点图**（用户要求：画布默认就是可连线的节点图，不用手点切换）
     var graphReady = await waitFor(function () {
@@ -2261,6 +2271,132 @@
     check('切到 English：整页扫一遍，没有残留的中文界面文字（含悬停提示/占位文字）',
       leaks.length === 0, leaks.slice(0, 24).join(' | ') || '整页都已是英文');
     win.fetch = realFetch;
+
+    // ---- 物料区：中英文搜索 + 装饰器默认值 + 包信息面板（真 DOM、真 schema）----
+    // 这几条都走**真注册表**（`/api/schema` 交给游戏侧的 BtNodeRegistry），
+    // 所以顺带证明了"补上的两个装饰器"在真实 schema 里确实存在。
+    var decoratorTypes = (gameApi.state.materials.groups
+      .filter(function (group) { return group.key === 'decorator'; })[0] || { items: [] })
+      .items.map(function (item) { return item.type; });
+    check('真 schema 里有 ForceFailure / CompareBBEntries 两个装饰器',
+      decoratorTypes.indexOf('ForceFailure') >= 0 && decoratorTypes.indexOf('CompareBBEntries') >= 0,
+      decoratorTypes.join(','));
+
+    // 传感器服务族 + 两个新任务（用户要求"服务缺失也要补"）
+    function materialTypes(groupKey) {
+      return (gameApi.state.materials.groups
+        .filter(function (group) { return group.key === groupKey; })[0] || { items: [] })
+        .items.map(function (item) { return item.type; });
+    }
+    var serviceTypes = materialTypes('service');
+    check('真 schema 里有传感器服务族（自身状态 / 最近生物 / 前方方块 / 视线）',
+      serviceTypes.indexOf('Service.UpdateSelf') >= 0
+      && serviceTypes.indexOf('Service.UpdateNearestCreature') >= 0
+      && serviceTypes.indexOf('Service.UpdateNearestPickable') >= 0
+      && serviceTypes.indexOf('Service.UpdateBlockAhead') >= 0
+      && serviceTypes.indexOf('Service.UpdateLineOfSight') >= 0,
+      serviceTypes.join(','));
+    var taskTypes = materialTypes('task');
+    check('真 schema 里有 Task.FaceEntity / Task.Emit',
+      taskTypes.indexOf('Task.FaceEntity') >= 0 && taskTypes.indexOf('Task.Emit') >= 0,
+      taskTypes.join(','));
+    check('真 schema 里有寻路与世界交互任务族（寻路 / 挖 / 放 / 攻击 / 交互 / 选快捷栏）',
+      taskTypes.indexOf('Task.NavigateTo') >= 0 && taskTypes.indexOf('Task.Mine') >= 0
+      && taskTypes.indexOf('Task.PlaceBlock') >= 0 && taskTypes.indexOf('Task.Attack') >= 0
+      && taskTypes.indexOf('Task.Interact') >= 0 && taskTypes.indexOf('Task.SelectSlot') >= 0,
+      taskTypes.join(','));
+    check('真 schema 里有"没有目标格"的身体动作（用手上的物品 / 跳）',
+      taskTypes.indexOf('Task.UseItem') >= 0 && taskTypes.indexOf('Task.Jump') >= 0,
+      taskTypes.join(','));
+
+    var filterBox = doc.getElementById('paletteFilter');
+    function searchPalette(word) {
+      filterBox.value = word;
+      filterBox.dispatchEvent(new win.Event('input', { bubbles: true }));
+      return Array.prototype.slice.call(doc.querySelectorAll('#paletteList .palette-item'))
+        .map(function (item) { return item.getAttribute('data-type'); });
+    }
+    var zhSearch = searchPalette('冷却');
+    check('物料区搜索：中文显示名能搜到（搜「冷却」命中 Cooldown）',
+      zhSearch.length === 1 && zhSearch[0] === 'Cooldown', zhSearch.join(','));
+    var groupSearch = searchPalette('装饰');
+    check('物料区搜索：分组名命中就列出整组装饰器',
+      groupSearch.indexOf('Cooldown') >= 0 && groupSearch.indexOf('CompareBBEntries') >= 0,
+      groupSearch.join(','));
+    var emitSearch = searchPalette('发事件');
+    check('物料区搜索：新任务的**中文显示名**也能搜到（搜「发事件」命中 Task.Emit）',
+      emitSearch.length === 1 && emitSearch[0] === 'Task.Emit', emitSearch.join(','));
+    var mineSearch = searchPalette('挖方块');
+    check('物料区搜索：搜「挖方块」命中 Task.Mine',
+      mineSearch.length === 1 && mineSearch[0] === 'Task.Mine', mineSearch.join(','));
+    var navSearch = searchPalette('寻路');
+    check('物料区搜索：搜「寻路」命中 Task.NavigateTo',
+      navSearch.length === 1 && navSearch[0] === 'Task.NavigateTo', navSearch.join(','));
+    var useItemSearch = searchPalette('用手上的物品');
+    check('物料区搜索：搜「用手上的物品」命中 Task.UseItem',
+      useItemSearch.length === 1 && useItemSearch[0] === 'Task.UseItem', useItemSearch.join(','));
+    var jumpSearch = searchPalette('任务·跳');
+    check('物料区搜索：用英文/中文片段都能搜到（搜「任务·跳」命中 Task.Jump）',
+      jumpSearch.length === 1 && jumpSearch[0] === 'Task.Jump', jumpSearch.join(','));
+    searchPalette('');
+
+    // 点击添加装饰器要套用 schema 默认值（以前只有拖拽套）
+    var treeInfo = gameApi.state.tree;
+    var compositeId = null;
+    (function walk(node) {
+      if (!node || compositeId) return;
+      if (node.id === 'seq' || (node.children && node.children.length
+        && !(node.decorators || []).length)) compositeId = node.id;
+      (node.children || []).forEach(walk);
+    })(treeInfo);
+    if (compositeId) {
+      gameApi.selectNode(compositeId);
+      var cooldownButton = doc.querySelector('#paletteList .palette-item[data-type="Cooldown"]');
+      var target = gameApi.findNode(compositeId);
+      var decoratorsBefore = (target.decorators || []).length;
+      if (cooldownButton) click(cooldownButton);
+      await delay(30);
+      var added = (gameApi.findNode(compositeId).decorators || [])[decoratorsBefore];
+      check('点击添加装饰器：套用了 schema 默认值（cooldownSeconds=5，而不是空 properties）',
+        !!added && added.type === 'Cooldown' && added.properties
+        && added.properties.cooldownSeconds === 5,
+        JSON.stringify(added));
+    } else {
+      check('点击添加装饰器：找不到可挂的组合节点（跳过）', true, 'skipped');
+    }
+
+    // 包信息面板：真 DOM 里能打开、能加一条黑板键
+    // 注意：本块前面刚把界面切成英文，所以按钮文字是英文 —— **按键名过滤会漏**
+    // （实测踩过：诊断输出里是 `＋ Blackboard key|＋ Reference|Done`，中文过滤一个都没匹配上）。
+    // 这里按**位置**取：footer 三个按钮的顺序是固定的（加键 / 加引用 / 完成）。
+    var packageButton = doc.getElementById('btnPackage');
+    check('工具条上有「包信息…」按钮（黑板声明 / 引用表以前只能手改 JSON）', !!packageButton,
+      packageButton ? packageButton.textContent : '<missing>');
+    if (packageButton) {
+      var manifestBefore = (gameApi.state.manifest.blackboard || []).length;
+      click(packageButton);
+      await delay(30);
+      var modalButtons = Array.prototype.slice.call(
+        doc.querySelectorAll('#modalHost .modal-actions button'));
+      note('   包信息面板按钮：' + modalButtons.map(function (b) {
+        return String(b.textContent);
+      }).join(' | '));
+      var addKey = modalButtons[0];
+      if (addKey) {
+        click(addKey);
+        await delay(30);
+      }
+      check('包信息面板：能打开并且「＋ 黑板键」真的往 manifest 里加了一条',
+        !!addKey && (gameApi.state.manifest.blackboard || []).length === manifestBefore + 1,
+        'blackboard ' + manifestBefore + ' -> '
+        + (gameApi.state.manifest.blackboard || []).length);
+      var done = modalButtons[2];
+      if (done) click(done);
+      await delay(30);
+      check('包信息面板：点「完成」能关掉（modalHost 已隐藏）',
+        !!done && doc.getElementById('modalHost').hidden === true,
+        'hidden=' + doc.getElementById('modalHost').hidden);
+    }
 
     var schemaTypes = ((gameApi.state.schema || {}).nodes || []).map(function (n) { return n.type; });
     var missingLabels = schemaTypes.filter(function (type) {

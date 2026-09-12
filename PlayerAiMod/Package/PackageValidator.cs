@@ -65,6 +65,98 @@ namespace PlayerAiMod
                 report.Error(PackageCodes.TreeEntryNotFound, where,
                     "manifest.entry '" + manifest.Entry + "' does not exist in " + ScbtTree.FileName);
             }
+
+            // 黑板键：schema 标成 BlackboardKey 的属性，值应当在 manifest.blackboard 里声明过（计划 §3.4）
+            ValidateDeclaredBlackboardKeys(tree, manifest, report);
+        }
+
+        /// <summary>
+        /// 黑板键引用检查：注册表里标成 <see cref="BtPropertyKind.BlackboardKey"/> 的属性，
+        /// 其值应当在 `manifest.blackboard` 里声明过。
+        ///
+        /// 为什么是**警告**而不是错误：键完全可能来自**被引用的父包**（子树用的是根包的黑板 ——
+        /// 例如 `common.scbtpak` 的 `target` 是由 `demo.greet` 的服务写进去的），
+        /// 也可能是有意"先写后读"的键。硬判错会把本来能跑的包拦下来，那就成了校验器挡路。
+        /// 但警告必须给：键名打错（`targt`）在运行期表现为"条件永远不成立"，极难查。
+        /// </summary>
+        private static void ValidateDeclaredBlackboardKeys(ScbtTree tree, ScbtManifest manifest,
+            PackageReport report)
+        {
+            if (tree == null || manifest == null)
+                return;
+
+            var declared = new HashSet<string>(StringComparer.Ordinal);
+            for (int i = 0; i < manifest.Blackboard.Count; i++)
+                declared.Add(manifest.Blackboard[i].Name);
+
+            foreach (ScbtNodeDoc node in tree.Walk())
+            {
+                CheckBlackboardKeys(node.Properties, NodeSpecs(node.Type), node.Where,
+                    declared, report);
+                for (int i = 0; i < node.Decorators.Count; i++)
+                {
+                    ScbtDecoratorDoc decorator = node.Decorators[i];
+                    CheckBlackboardKeys(decorator.Properties, DecoratorSpecs(decorator.Type),
+                        decorator.Where, declared, report);
+                }
+                for (int i = 0; i < node.Services.Count; i++)
+                {
+                    ScbtServiceDoc service = node.Services[i];
+                    CheckBlackboardKeys(service.Properties, ServiceSpecs(service.Type),
+                        service.Where, declared, report);
+                }
+            }
+        }
+
+        private static void CheckBlackboardKeys(PackageValue properties,
+            IReadOnlyList<BtPropertySpec> specs, string where, HashSet<string> declared,
+            PackageReport report)
+        {
+            if (properties == null || !properties.IsObject || specs == null)
+                return;
+
+            for (int i = 0; i < specs.Count; i++)
+            {
+                BtPropertySpec spec = specs[i];
+                if (spec.Kind != BtPropertyKind.BlackboardKey || !properties.Has(spec.Name))
+                    continue;
+                PackageValue value = properties.Get(spec.Name);
+                if (!value.IsString)
+                    continue;                     // 类型错已经在 ValidateProperties 里报过了
+                string key = value.AsString(null);
+                if (string.IsNullOrEmpty(key) || declared.Contains(key))
+                    continue;
+                report.Warn(PackageCodes.PropertyUnknown, where + ".properties." + spec.Name,
+                    "blackboard key '" + key + "' is not declared in manifest.blackboard"
+                    + " (ok if the root package declares it; otherwise the key is never set)");
+            }
+        }
+
+        private static IReadOnlyList<BtPropertySpec> NodeSpecs(string type)
+        {
+            string canonical;
+            BtNodeInfo info;
+            return !string.IsNullOrEmpty(type)
+                && BtNodeRegistry.TryResolveNodeTypeId(type, out canonical)
+                && BtNodeRegistry.TryGetNodeInfo(canonical, out info) ? info.Properties : null;
+        }
+
+        private static IReadOnlyList<BtPropertySpec> DecoratorSpecs(string type)
+        {
+            string canonical;
+            BtDecoratorInfo info;
+            return !string.IsNullOrEmpty(type)
+                && BtNodeRegistry.TryResolveDecoratorTypeId(type, out canonical)
+                && BtNodeRegistry.TryGetDecoratorInfo(canonical, out info) ? info.Properties : null;
+        }
+
+        private static IReadOnlyList<BtPropertySpec> ServiceSpecs(string type)
+        {
+            string canonical;
+            BtServiceInfo info;
+            return !string.IsNullOrEmpty(type)
+                && BtNodeRegistry.TryResolveServiceTypeId(type, out canonical)
+                && BtNodeRegistry.TryGetServiceInfo(canonical, out info) ? info.Properties : null;
         }
 
         private static void ValidateNode(ScbtNodeDoc node, ScbtManifest manifest,
@@ -332,6 +424,9 @@ namespace PlayerAiMod
                             report.Error(PackageCodes.PropertyKind, fieldWhere, DescribeMismatch("number", value));
                         break;
                     case BtPropertyKind.String:
+                    case BtPropertyKind.BlackboardKey:
+                        // 黑板键本质就是字符串，类型检查一样；"有没有声明"的检查在下面单独做
+                        // （需要 manifest.blackboard，这里拿不到）
                         if (!value.IsString)
                             report.Error(PackageCodes.PropertyKind, fieldWhere, DescribeMismatch("string", value));
                         break;

@@ -33,6 +33,13 @@ namespace PlayerAiMod
         StringList,
         Enum,
 
+        /// <summary>
+        /// **黑板键名**：本质是字符串，但编辑器要给出"声明过的键"下拉、校验器要检查
+        /// 它是否在 `manifest.blackboard` 里声明过 —— 所以单独一个类型，
+        /// 不靠"属性名恰好叫 key/targetKey"这种约定去猜。
+        /// </summary>
+        BlackboardKey,
+
         /// <summary>任意 JSON 值（例如 SetBlackboard 的 value），不做类型校验。</summary>
         Any
     }
@@ -219,6 +226,23 @@ namespace PlayerAiMod
         public static BtPropertySpec RequiredStr(string name, string description = null)
         {
             return new BtPropertySpec(name, BtPropertyKind.String, true, null, null, description);
+        }
+
+        /// <summary>
+        /// 黑板键名（必填）——编辑器给下拉、校验器查"有没有在 manifest.blackboard 里声明"。
+        /// 见 <see cref="BtPropertyKind.BlackboardKey"/>。
+        /// </summary>
+        public static BtPropertySpec BlackboardKey(string name, string description = null)
+        {
+            return new BtPropertySpec(name, BtPropertyKind.BlackboardKey, true, null, null, description);
+        }
+
+        /// <summary>黑板键名（可选，空 = 用节点自己的默认值）。</summary>
+        public static BtPropertySpec OptionalBlackboardKey(string name, string defaultValue,
+            string description = null)
+        {
+            return new BtPropertySpec(name, BtPropertyKind.BlackboardKey, false, defaultValue, null,
+                description);
         }
 
         public static BtPropertySpec List(string name, string description = null)

@@ -69,6 +69,153 @@ namespace PlayerAiMod
                     properties.Set("seconds", PackageValue.Number(task.Seconds));
                     break;
                 }
+                case "Task.FollowEntity":
+                {
+                    var task = (BtFollowEntityTask)node;
+                    properties.Set("targetKey", PackageValue.Str(task.TargetKey));
+                    properties.Set("mode", PackageValue.Str(task.Mode));
+                    properties.Set("keepDistance", PackageValue.Number(task.KeepDistance));
+                    properties.Set("standHysteresis", PackageValue.Number(task.StandHysteresis));
+                    properties.Set("trailLength", PackageValue.Number(task.TrailLength));
+                    properties.Set("trailMaxAge", PackageValue.Number(task.TrailMaxAge));
+                    properties.Set("trailCellRadius", PackageValue.Number(task.TrailCellRadius));
+                    properties.Set("trailStuckSeconds", PackageValue.Number(task.TrailStuckSeconds));
+                    properties.Set("forwardKey", PackageValue.Str(task.ForwardKey));
+                    properties.Set("backKey", PackageValue.Str(task.BackKey));
+                    properties.Set("leftKey", PackageValue.Str(task.LeftKey));
+                    properties.Set("rightKey", PackageValue.Str(task.RightKey));
+                    properties.Set("jumpKey", PackageValue.Str(task.JumpKey));
+                    properties.Set("jumpHeight", PackageValue.Number(task.JumpHeight));
+                    properties.Set("eyeHeight", PackageValue.Number(task.EyeHeight));
+                    properties.Set("repathSeconds", PackageValue.Number(task.RepathSeconds));
+                    properties.Set("repathMoveThreshold", PackageValue.Number(task.RepathMoveThreshold));
+                    properties.Set("maxPositionsToCheck", PackageValue.Number(task.MaxPositionsToCheck));
+                    properties.Set("timeout", PackageValue.Number(task.TimeoutSeconds));
+                    break;
+                }
+                case "Task.LookAtPoint":
+                {
+                    var task = (BtLookAtPointTask)node;
+                    properties.Set("xKey", PackageValue.Str(task.XKey));
+                    properties.Set("yKey", PackageValue.Str(task.YKey));
+                    properties.Set("zKey", PackageValue.Str(task.ZKey));
+                    properties.Set("seconds", PackageValue.Number(task.Seconds));
+                    break;
+                }
+                case "Task.FaceEntity":
+                {
+                    var task = (BtFaceEntityTask)node;
+                    properties.Set("targetKey", PackageValue.Str(task.TargetKey));
+                    properties.Set("toleranceDegrees", PackageValue.Number(task.ToleranceDegrees));
+                    properties.Set("timeout", PackageValue.Number(task.Timeout));
+                    properties.Set("maxTurnPerSecond", PackageValue.Number(task.MaxTurnPerSecond));
+                    break;
+                }
+                case "Task.NavigateTo":
+                {
+                    var task = (BtNavigateToTask)node;
+                    properties.Set("source", PackageValue.Str(task.Source));
+                    properties.Set("targetKey", PackageValue.Str(task.TargetKey));
+                    properties.Set("xKey", PackageValue.Str(task.XKey));
+                    properties.Set("yKey", PackageValue.Str(task.YKey));
+                    properties.Set("zKey", PackageValue.Str(task.ZKey));
+                    properties.Set("acceptableRadius", PackageValue.Number(task.AcceptableRadius));
+                    properties.Set("timeout", PackageValue.Number(task.TimeoutSeconds));
+                    properties.Set("forwardKey", PackageValue.Str(task.ForwardKey));
+                    properties.Set("jumpKey", PackageValue.Str(task.JumpKey));
+                    properties.Set("jumpHeight", PackageValue.Number(task.JumpHeight));
+                    properties.Set("waypointRadius", PackageValue.Number(task.WaypointRadius));
+                    properties.Set("repathSeconds", PackageValue.Number(task.RepathSeconds));
+                    properties.Set("repathMoveThreshold", PackageValue.Number(task.RepathMoveThreshold));
+                    properties.Set("maxPositionsToCheck", PackageValue.Number(task.MaxPositionsToCheck));
+                    properties.Set("eyeHeight", PackageValue.Number(task.EyeHeight));
+                    properties.Set("stuckSeconds", PackageValue.Number(task.StuckSeconds));
+                    properties.Set("stuckDistance", PackageValue.Number(task.StuckDistance));
+                    break;
+                }
+                case "Task.UseItem":
+                {
+                    var task = (BtUseItemTask)node;
+                    properties.Set("button", PackageValue.Str(task.Button));
+                    properties.Set("holdSeconds", PackageValue.Number(task.HoldSeconds));
+                    properties.Set("repeat", PackageValue.Number(task.Repeat));
+                    properties.Set("interval", PackageValue.Number(task.Interval));
+                    break;
+                }
+                case "Task.Jump":
+                {
+                    var task = (BtJumpTask)node;
+                    properties.Set("key", PackageValue.Str(task.Key));
+                    properties.Set("times", PackageValue.Number(task.Times));
+                    properties.Set("interval", PackageValue.Number(task.Interval));
+                    properties.Set("alsoForward", PackageValue.Bool(task.AlsoForward));
+                    properties.Set("forwardKey", PackageValue.Str(task.ForwardKey));
+                    break;
+                }
+                case "Task.Emit":
+                {
+                    var task = (BtEmitTask)node;
+                    properties.Set("category", PackageValue.Str(task.Category ?? "emit"));
+                    if (!string.IsNullOrEmpty(task.Message))
+                        properties.Set("message", PackageValue.Str(task.Message));
+                    if (!string.IsNullOrEmpty(task.Key))
+                        properties.Set("key", PackageValue.Str(task.Key));
+                    properties.Set("alsoEngineLog", PackageValue.Bool(task.AlsoEngineLog));
+                    break;
+                }
+                case "Task.Mine":
+                {
+                    var task = (BtMineBlockTask)node;
+                    properties.Set("xKey", PackageValue.Str(task.XKey));
+                    properties.Set("yKey", PackageValue.Str(task.YKey));
+                    properties.Set("zKey", PackageValue.Str(task.ZKey));
+                    properties.Set("button", PackageValue.Str(task.Button ?? "left"));
+                    properties.Set("timeout", PackageValue.Number(task.TimeoutSeconds));
+                    properties.Set("requireBlockPresent", PackageValue.Bool(task.RequireBlockPresent));
+                    break;
+                }
+                case "Task.Attack":
+                {
+                    var task = (BtAttackTask)node;
+                    properties.Set("targetKey", PackageValue.Str(task.TargetKey));
+                    properties.Set("range", PackageValue.Number(task.Range));
+                    properties.Set("eyeHeight", PackageValue.Number(task.EyeHeight));
+                    properties.Set("timeout", PackageValue.Number(task.TimeoutSeconds));
+                    properties.Set("clickInterval", PackageValue.Number(task.ClickInterval));
+                    properties.Set("button", PackageValue.Str(task.Button ?? "left"));
+                    break;
+                }
+                case "Task.Interact":
+                {
+                    var task = (BtInteractTask)node;
+                    properties.Set("source", PackageValue.Str(task.Source ?? "cell"));
+                    properties.Set("targetKey", PackageValue.Str(task.TargetKey));
+                    properties.Set("xKey", PackageValue.Str(task.XKey));
+                    properties.Set("yKey", PackageValue.Str(task.YKey));
+                    properties.Set("zKey", PackageValue.Str(task.ZKey));
+                    properties.Set("repeat", PackageValue.Number(task.Repeat));
+                    properties.Set("interval", PackageValue.Number(task.Interval));
+                    properties.Set("button", PackageValue.Str(task.Button ?? "right"));
+                    break;
+                }
+                case "Task.PlaceBlock":
+                {
+                    var task = (BtPlaceBlockTask)node;
+                    properties.Set("xKey", PackageValue.Str(task.XKey));
+                    properties.Set("yKey", PackageValue.Str(task.YKey));
+                    properties.Set("zKey", PackageValue.Str(task.ZKey));
+                    properties.Set("repeat", PackageValue.Number(task.Repeat));
+                    properties.Set("interval", PackageValue.Number(task.Interval));
+                    properties.Set("button", PackageValue.Str(task.Button ?? "right"));
+                    break;
+                }
+                case "Task.SelectSlot":
+                {
+                    var task = (BtSelectSlotTask)node;
+                    properties.Set("slot", PackageValue.Number(task.Slot));
+                    properties.Set("scroll", PackageValue.Number(task.Scroll));
+                    break;
+                }
                 case "Task.MoveTo":
                 {
                     var task = (BtMoveToTargetTask)node;
@@ -135,6 +282,14 @@ namespace PlayerAiMod
                     properties.Set("cooldownSeconds",
                         PackageValue.Number(((BtCooldownDecorator)decorator).CooldownSeconds));
                     break;
+                case "CompareBBEntries":
+                {
+                    var target = (BtCompareBlackboardDecorator)decorator;
+                    properties.Set("keyA", PackageValue.Str(target.KeyA));
+                    properties.Set("keyB", PackageValue.Str(target.KeyB));
+                    properties.Set("operator", PackageValue.Str(target.Operator ?? "=="));
+                    break;
+                }
                 case "TimeLimit":
                     properties.Set("limitSeconds",
                         PackageValue.Number(((BtTimeLimitDecorator)decorator).LimitSeconds));
@@ -164,7 +319,90 @@ namespace PlayerAiMod
                 if (!string.IsNullOrEmpty(target.NameFilter))
                     properties.Set("nameFilter", PackageValue.Str(target.NameFilter));
                 properties.Set("clearWhenMissing", PackageValue.Bool(target.ClearWhenMissing));
+                return properties;
             }
+
+            // ---- 传感器服务族（BtSensorServices.cs）
+            var self = service as BtUpdateSelfService;
+            if (self != null)
+            {
+                properties.Set("prefix", PackageValue.Str(self.Prefix));
+                properties.Set("writePosition", PackageValue.Bool(self.WritePosition));
+                return properties;
+            }
+
+            var creature = service as BtUpdateNearestCreatureService;
+            if (creature != null)
+            {
+                properties.Set("targetKey", PackageValue.Str(creature.TargetKey));
+                properties.Set("categoryMask", PackageValue.Number(creature.CategoryMask));
+                properties.Set("maxDistance", PackageValue.Number(creature.MaxDistance));
+                properties.Set("clearWhenMissing", PackageValue.Bool(creature.ClearWhenMissing));
+                return properties;
+            }
+
+            var pickable = service as BtUpdateNearestPickableService;
+            if (pickable != null)
+            {
+                properties.Set("targetKey", PackageValue.Str(pickable.TargetKey));
+                properties.Set("maxDistance", PackageValue.Number(pickable.MaxDistance));
+                properties.Set("clearWhenMissing", PackageValue.Bool(pickable.ClearWhenMissing));
+                return properties;
+            }
+
+            var blockAhead = service as BtUpdateBlockAheadService;
+            if (blockAhead != null)
+            {
+                properties.Set("key", PackageValue.Str(blockAhead.Key));
+                properties.Set("maxDistance", PackageValue.Number(blockAhead.MaxDistance));
+                properties.Set("pitchOffset", PackageValue.Number(blockAhead.PitchOffset));
+                if (!string.IsNullOrEmpty(blockAhead.NameKey))
+                    properties.Set("nameKey", PackageValue.Str(blockAhead.NameKey));
+                return properties;
+            }
+
+            var lineOfSight = service as BtUpdateLineOfSightService;
+            if (lineOfSight != null)
+            {
+                properties.Set("targetKey", PackageValue.Str(lineOfSight.TargetKey));
+                properties.Set("key", PackageValue.Str(lineOfSight.Key));
+                properties.Set("maxDistance", PackageValue.Number(lineOfSight.MaxDistance));
+                properties.Set("targetEyeHeight", PackageValue.Number(lineOfSight.TargetEyeHeight));
+                properties.Set("alsoCheckBody", PackageValue.Bool(lineOfSight.AlsoCheckBody));
+                properties.Set("bodyHeight", PackageValue.Number(lineOfSight.BodyHeight));
+                return properties;
+            }
+
+            var probe = service as BtProbeService;
+            if (probe != null)
+            {
+                properties.Set("from", PackageValue.Str(probe.From));
+                properties.Set("to", PackageValue.Str(probe.To));
+                properties.Set("mode", PackageValue.Str(probe.Mode));
+                properties.Set("key", PackageValue.Str(probe.Key));
+                properties.Set("targetKey", PackageValue.Str(probe.TargetKey));
+                properties.Set("targetHeight", PackageValue.Number(probe.TargetHeight));
+                properties.Set("pitchOffset", PackageValue.Number(probe.PitchOffset));
+                properties.Set("fromXKey", PackageValue.Str(probe.FromXKey));
+                properties.Set("fromYKey", PackageValue.Str(probe.FromYKey));
+                properties.Set("fromZKey", PackageValue.Str(probe.FromZKey));
+                properties.Set("toXKey", PackageValue.Str(probe.ToXKey));
+                properties.Set("toYKey", PackageValue.Str(probe.ToYKey));
+                properties.Set("toZKey", PackageValue.Str(probe.ToZKey));
+                properties.Set("maxDistance", PackageValue.Number(probe.MaxDistance));
+                return properties;
+            }
+
+            var modelNode = service as BtUpdateModelNodeService;
+            if (modelNode != null)
+            {
+                properties.Set("targetKey", PackageValue.Str(modelNode.TargetKey));
+                properties.Set("nodeName", PackageValue.Str(modelNode.NodeName));
+                properties.Set("prefix", PackageValue.Str(modelNode.Prefix));
+                properties.Set("clearWhenMissing", PackageValue.Bool(modelNode.ClearWhenMissing));
+                return properties;
+            }
+
             return properties;
         }
 

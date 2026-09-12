@@ -94,6 +94,132 @@ namespace PlayerAiMod
     }
 
     /// <summary>
+    /// 两个黑板键比较（对齐 UE 的 `BTDecorator_CompareBBEntries`）：
+    /// 两边都有值、且类型能比时才成立；缺一个键、或类型两边对不上，都判**条件不成立**。
+    ///
+    /// 为什么需要它：`Blackboard` 装饰器只能拿键和**常量**比，
+    /// "目标距离比上次更近了""两个键指向的是不是同一个目标"这类**相对判断**表达不出来。
+    ///
+    /// 类型不必手填：按黑板里实际存的 CLR 类型自动选比较方式（数值优先，然后 bool / 字符串 /
+    /// actor 比名字），数值之间 int 与 float 混用也能比（`targetDistance` 是 float、
+    /// `alertDistance` 常写成 int）。
+    /// </summary>
+    public sealed class BtCompareBlackboardDecorator : BtDecorator
+    {
+        /// <summary>左键。</summary>
+        public string KeyA { get; set; }
+
+        /// <summary>右键。</summary>
+        public string KeyB { get; set; }
+
+        /// <summary>比较运算符：== != &lt; &lt;= &gt; &gt;=</summary>
+        public string Operator { get; set; } = "==";
+
+        public override string NodeType
+        {
+            get { return "CompareBBEntries"; }
+        }
+
+        protected override bool EvaluateCondition(BtContext context)
+        {
+            AiBlackboard blackboard = context.Blackboard;
+            if (blackboard == null || string.IsNullOrEmpty(KeyA) || string.IsNullOrEmpty(KeyB))
+                return false;
+            // 两边都得有值：UE 里缺一边就是条件不成立（不是"拿默认值瞎比"）
+            if (!blackboard.Has(KeyA) || !blackboard.Has(KeyB))
+                return false;
+
+            int comparison;
+            if (!TryCompare(blackboard, KeyA, KeyB, out comparison))
+            {
+                context.Log("CompareBBEntries: '" + KeyA + "' 与 '" + KeyB
+                    + "' 类型没法比较（数值/bool/字符串/actor 才能比）-> 条件不成立");
+                return false;
+            }
+            return CompareSign(comparison, Operator);
+        }
+
+        private static bool TryCompare(AiBlackboard blackboard, string keyA, string keyB,
+            out int comparison)
+        {
+            comparison = 0;
+
+            double numberA;
+            double numberB;
+            if (TryNumber(blackboard, keyA, out numberA) && TryNumber(blackboard, keyB, out numberB))
+            {
+                double delta = numberA - numberB;
+                comparison = Math.Abs(delta) < 1e-6 ? 0 : Math.Sign(delta);
+                return true;
+            }
+
+            bool boolA;
+            bool boolB;
+            if (blackboard.TryGet(keyA, out boolA) && blackboard.TryGet(keyB, out boolB))
+            {
+                comparison = boolA == boolB ? 0 : (boolA ? 1 : -1);
+                return true;
+            }
+
+            string textA;
+            string textB;
+            if (blackboard.TryGet(new AiBlackboardKey<string>(keyA), out textA)
+                && blackboard.TryGet(new AiBlackboardKey<string>(keyB), out textB))
+            {
+                comparison = string.CompareOrdinal(textA ?? string.Empty, textB ?? string.Empty);
+                return true;
+            }
+
+            AiActorView actorA;
+            AiActorView actorB;
+            if (blackboard.TryGet(new AiBlackboardKey<AiActorView>(keyA), out actorA)
+                && blackboard.TryGet(new AiBlackboardKey<AiActorView>(keyB), out actorB))
+            {
+                // actor 按名字比：用来判"两个键指向的是不是同一个玩家/生物"
+                comparison = string.CompareOrdinal(actorA.Name ?? string.Empty, actorB.Name ?? string.Empty);
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>数值：float 与 int 都算（同一格只可能是其中一种）。</summary>
+        private static bool TryNumber(AiBlackboard blackboard, string key, out double value)
+        {
+            float asFloat;
+            if (blackboard.TryGet(key, out asFloat))
+            {
+                value = asFloat;
+                return true;
+            }
+
+            int asInt;
+            if (blackboard.TryGet(new AiBlackboardKey<int>(key), out asInt))
+            {
+                value = asInt;
+                return true;
+            }
+
+            value = 0.0;
+            return false;
+        }
+
+        private static bool CompareSign(int comparison, string op)
+        {
+            switch ((op ?? "==").Trim())
+            {
+                case "==": return comparison == 0;
+                case "!=": return comparison != 0;
+                case "<": return comparison < 0;
+                case "<=": return comparison <= 0;
+                case ">": return comparison > 0;
+                case ">=": return comparison >= 0;
+                default: return false;
+            }
+        }
+    }
+
+    /// <summary>
     /// 冷却装饰器（对齐 UE 的 `BTDecorator_Cooldown`）：节点成功执行后锁定一段时间。
     /// </summary>
     public sealed class BtCooldownDecorator : BtDecorator
@@ -237,6 +363,30 @@ namespace PlayerAiMod
         public override BtResult ModifyResult(BtContext context, BtResult result)
         {
             return result == BtResult.Failed ? BtResult.Succeeded : result;
+        }
+    }
+
+    /// <summary>
+    /// 强制失败（`ForceSuccess` 的反面）：把 Succeeded 改成 Failed，Aborted / InProgress 不动。
+    ///
+    /// 以前只能拿 `Inverter + ForceSuccess` 拼（还要注意两者顺序），物料区少这一块时
+    /// 用户很难猜到该怎么拼；现在直接给一个。
+    /// </summary>
+    public sealed class BtForceFailureDecorator : BtDecorator
+    {
+        public override string NodeType
+        {
+            get { return "ForceFailure"; }
+        }
+
+        protected override bool EvaluateCondition(BtContext context)
+        {
+            return true;
+        }
+
+        public override BtResult ModifyResult(BtContext context, BtResult result)
+        {
+            return result == BtResult.Succeeded ? BtResult.Failed : result;
         }
     }
 

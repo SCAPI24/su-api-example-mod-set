@@ -306,7 +306,7 @@ namespace PlayerAiMod
             s_nodes["Task.SetBlackboard"] = new BtNodeInfo("Task.SetBlackboard",
                 () => new BtSetBlackboardTask(), BtNodeShape.Task, true, new[]
                 {
-                    BtProps.RequiredStr("key", "要写入的黑板键名"),
+                    BtProps.BlackboardKey("key", "要写入的黑板键名"),
                     BtProps.Enum("valueKind", "float", BtSchema.ValueKinds),
                     BtProps.Any("value", "写入的值（按 valueKind 解释）")
                 });
@@ -321,15 +321,51 @@ namespace PlayerAiMod
             s_nodes["Task.LookAt"] = new BtNodeInfo("Task.LookAt", () => new BtLookAtTargetTask(),
                 BtNodeShape.Task, true, new[]
                 {
-                    BtProps.Str("targetKey", "target", "黑板里存放目标角色的键"),
+                    BtProps.OptionalBlackboardKey("targetKey", "target", "黑板里存放目标角色的键"),
                     BtProps.Float("eyeHeight", 1.35f, "目标眼睛高度（看向点 = 位置 + 该高度）"),
                     BtProps.Float("seconds", 0.25f, "保持朝向的时长（秒）")
+                });
+
+            // 跟随某个角色：先靠近 → 尽量踩他走过的格子 → 走不通就借 A* 绕过去 → 全程保持水平间隔
+            s_nodes["Task.FollowEntity"] = new BtNodeInfo("Task.FollowEntity",
+                () => new BtFollowEntityTask(), BtNodeShape.Task, true, new[]
+                {
+                    BtProps.OptionalBlackboardKey("targetKey", "target", "跟谁（黑板 actor 键）"),
+                    BtProps.Enum("mode", "auto", "auto", "trail", "path"),
+                    BtProps.Float("keepDistance", 2f, "保持的水平间隔（米/格）：到了就站住，不往人身上挤"),
+                    BtProps.Float("standHysteresis", 0.75f,
+                        "站↔走的迟滞（米）：防「距离抖一下就每帧起停」（那会让步伐反复重启）"),
+                    BtProps.Int("trailLength", 64, "足迹链最多记多少格"),
+                    BtProps.Float("trailMaxAge", 3f, "脚印有效期（秒）：太旧就不用，改走 A*"),
+                    BtProps.Float("trailCellRadius", 0.9f, "走到多近算踩上了这一格（米）"),
+                    BtProps.Float("trailStuckSeconds", 1.5f, "追脚印时多久没挪窝算卡住（秒）→ 改走 A*"),
+                    BtProps.Str("forwardKey", "w", "前进键（Keyboard 名字）"),
+                    BtProps.Str("backKey", "s", "后退键（走路方向在身体后方时用；SC 里按 S 速度 6 折）"),
+                    BtProps.Str("leftKey", "a", "左平移键（镜头锁着人，脚下横着走）"),
+                    BtProps.Str("rightKey", "d", "右平移键"),
+                    BtProps.Str("jumpKey", "space", "跳跃键（上台阶用）"),
+                    BtProps.Float("jumpHeight", 0.6f, "下一步比脚下高多少才跳（米）"),
+                    BtProps.Float("eyeHeight", 1.35f, "看目标/脚印时的眼睛高度"),
+                    BtProps.Float("repathSeconds", 0.75f, "A* 重算间隔（秒）"),
+                    BtProps.Float("repathMoveThreshold", 1.5f, "目标移动超过这个距离立刻重算（米）"),
+                    BtProps.Int("maxPositionsToCheck", 500, "A* 搜索上限"),
+                    BtProps.Float("timeout", 0f, "跟随超时（秒）；0 = 一直跟")
+                });
+
+            // 看向**黑板里的一个点**（三 float 键）：盯模型节点用（Service.UpdateModelNode → node.X/Y/Z）
+            s_nodes["Task.LookAtPoint"] = new BtNodeInfo("Task.LookAtPoint",
+                () => new BtLookAtPointTask(), BtNodeShape.Task, true, new[]
+                {
+                    BtProps.OptionalBlackboardKey("xKey", "point.X", "看向点的 X（float 键）"),
+                    BtProps.OptionalBlackboardKey("yKey", "point.Y", "看向点的 Y（float 键）"),
+                    BtProps.OptionalBlackboardKey("zKey", "point.Z", "看向点的 Z（float 键）"),
+                    BtProps.Float("seconds", 0.1f, "保持朝向的时长（秒；期间每个 tick 重新对准）")
                 });
 
             s_nodes["Task.MoveTo"] = new BtNodeInfo("Task.MoveTo", () => new BtMoveToTargetTask(),
                 BtNodeShape.Task, true, new[]
                 {
-                    BtProps.Str("targetKey", "target", "黑板里存放目标角色的键"),
+                    BtProps.OptionalBlackboardKey("targetKey", "target", "黑板里存放目标角色的键"),
                     BtProps.Float("acceptableRadius", 3f, "进入该半径即算到达（米）"),
                     BtProps.Float("timeout", 25f, "超时判失败（秒）"),
                     BtProps.Str("forwardKey", "w", "前进键（Keyboard 名字）"),
@@ -339,8 +375,127 @@ namespace PlayerAiMod
             s_nodes["Task.WaitForTarget"] = new BtNodeInfo("Task.WaitForTarget",
                 () => new BtWaitForTargetTask(), BtNodeShape.Task, true, new[]
                 {
-                    BtProps.Str("targetKey", "target", "等待出现的黑板键"),
+                    BtProps.OptionalBlackboardKey("targetKey", "target", "等待出现的黑板键"),
                     BtProps.Float("timeout", 10f, "超时判失败（秒）")
+                });
+
+            // 面向目标（与 LookAt 分工：这个的 KPI 是"转到位了"，攻击/交互的前置）
+            s_nodes["Task.FaceEntity"] = new BtNodeInfo("Task.FaceEntity",
+                () => new BtFaceEntityTask(), BtNodeShape.Task, true, new[]
+                {
+                    BtProps.OptionalBlackboardKey("targetKey", "target", "黑板里存放目标 actor 的键"),
+                    BtProps.Float("toleranceDegrees", 12f, "允许的角度误差（度）"),
+                    BtProps.Float("timeout", 3f, "超时判失败（秒）"),
+                    BtProps.Float("maxTurnPerSecond", 0f, "每秒最多转多少弧度；0 = 用 AI 的瞬时转向")
+                });
+
+            // 寻路移动：借游戏自己的 A*（SubsystemPathfinding）算路，再用注入输入跟着走
+            s_nodes["Task.NavigateTo"] = new BtNodeInfo("Task.NavigateTo",
+                () => new BtNavigateToTask(), BtNodeShape.Task, true, new[]
+                {
+                    BtProps.Enum("source", "actor", "actor", "cell"),
+                    BtProps.OptionalBlackboardKey("targetKey", "target", "source=actor 时的目标 actor 键"),
+                    BtProps.OptionalBlackboardKey("xKey", "goalX", "source=cell 时的 X（int 键）"),
+                    BtProps.OptionalBlackboardKey("yKey", "goalY", "source=cell 时的 Y（int 键）"),
+                    BtProps.OptionalBlackboardKey("zKey", "goalZ", "source=cell 时的 Z（int 键）"),
+                    BtProps.Float("acceptableRadius", 2.5f, "到这个距离内算到达（米）"),
+                    BtProps.Float("timeout", 60f, "超时判失败（秒）"),
+                    BtProps.Str("forwardKey", "w", "前进键（Keyboard 名字）"),
+                    BtProps.Str("jumpKey", "space", "跳跃键（跳上半格台阶用）"),
+                    BtProps.Float("jumpHeight", 0.6f, "航点比脚下高多少才跳（米）"),
+                    BtProps.Float("waypointRadius", 0.7f, "判定走到航点的半径（米）"),
+                    BtProps.Float("repathSeconds", 2f, "重新请求路径的间隔（秒）"),
+                    BtProps.Float("repathMoveThreshold", 1.5f, "目标移动超过这个距离立刻重算（米）"),
+                    BtProps.Int("maxPositionsToCheck", 500, "A* 搜索上限（越大越能找到远路、越费 CPU）"),
+                    BtProps.Float("eyeHeight", 1.35f, "看航点时的眼睛高度（米）"),
+                    BtProps.Float("stuckSeconds", 2f, "卡住判定窗口（秒）"),
+                    BtProps.Float("stuckDistance", 0.35f, "卡住的位移阈值（米）")
+                });
+
+            // 触发控制面事件（写进 AI 事件日志，编辑器实时监视 / ai.logs 能看到）
+            s_nodes["Task.Emit"] = new BtNodeInfo("Task.Emit", () => new BtEmitTask(),
+                BtNodeShape.Task, true, new[]
+                {
+                    BtProps.Str("category", "emit", "事件分类（写进日志中括号里）"),
+                    BtProps.Str("message", null, "事件内容"),
+                    BtProps.OptionalBlackboardKey("key", null, "顺手置位的布尔键（留空只写日志）"),
+                    BtProps.Bool("alsoEngineLog", false, "没有事件日志时是否也写游戏日志")
+                });
+
+            // ---- 世界交互任务族（BtInteractionTasks.cs）：全部只走"转视角 + 鼠标键 + 数字键/滚轮"
+            s_nodes["Task.Mine"] = new BtNodeInfo("Task.Mine", () => new BtMineBlockTask(),
+                BtNodeShape.Task, true, new[]
+                {
+                    BtProps.OptionalBlackboardKey("xKey", "mineX", "目标格子的 X（int 键）"),
+                    BtProps.OptionalBlackboardKey("yKey", "mineY", "目标格子的 Y（int 键）"),
+                    BtProps.OptionalBlackboardKey("zKey", "mineZ", "目标格子的 Z（int 键）"),
+                    BtProps.Str("button", "left", "鼠标键（left/right）"),
+                    BtProps.Float("timeout", 20f, "超时判失败（秒）"),
+                    BtProps.Bool("requireBlockPresent", true, "读不到目标格时是否直接判失败")
+                });
+
+            s_nodes["Task.Attack"] = new BtNodeInfo("Task.Attack", () => new BtAttackTask(),
+                BtNodeShape.Task, true, new[]
+                {
+                    BtProps.OptionalBlackboardKey("targetKey", "target", "要打的 actor（黑板键）"),
+                    BtProps.Float("range", 3.5f, "超出这个距离就先靠近（0 = 原地打）"),
+                    BtProps.Float("eyeHeight", 1.2f, "看目标哪个高度（米）"),
+                    BtProps.Float("timeout", 20f, "超时判失败（秒）"),
+                    BtProps.Float("clickInterval", 0.6f, "连点间隔（秒；0 = 一直按住）"),
+                    BtProps.Str("button", "left", "鼠标键")
+                });
+
+            s_nodes["Task.Interact"] = new BtNodeInfo("Task.Interact", () => new BtInteractTask(),
+                BtNodeShape.Task, true, new[]
+                {
+                    BtProps.Enum("source", "cell", "cell", "actor"),
+                    BtProps.OptionalBlackboardKey("targetKey", "target", "source=actor 时的目标键"),
+                    BtProps.OptionalBlackboardKey("xKey", "interactX", "source=cell 时的 X（int 键）"),
+                    BtProps.OptionalBlackboardKey("yKey", "interactY", "source=cell 时的 Y（int 键）"),
+                    BtProps.OptionalBlackboardKey("zKey", "interactZ", "source=cell 时的 Z（int 键）"),
+                    BtProps.Int("repeat", 1, "点几次（有些交互要双击，例如上马）"),
+                    BtProps.Float("interval", 0.35f, "两次点击的间隔（秒）"),
+                    BtProps.Str("button", "right", "鼠标键")
+                });
+
+            s_nodes["Task.PlaceBlock"] = new BtNodeInfo("Task.PlaceBlock", () => new BtPlaceBlockTask(),
+                BtNodeShape.Task, true, new[]
+                {
+                    BtProps.OptionalBlackboardKey("xKey", "placeX", "目标格子的 X（int 键）"),
+                    BtProps.OptionalBlackboardKey("yKey", "placeY", "目标格子的 Y（int 键）"),
+                    BtProps.OptionalBlackboardKey("zKey", "placeZ", "目标格子的 Z（int 键）"),
+                    BtProps.Int("repeat", 1, "放几次（连放同一格没意义，一般 1）"),
+                    BtProps.Float("interval", 0.4f, "两次点击的间隔（秒；游戏的动作冷却是 0.33s，别调更小）"),
+                    BtProps.Str("button", "right", "鼠标键")
+                });
+
+            s_nodes["Task.SelectSlot"] = new BtNodeInfo("Task.SelectSlot", () => new BtSelectSlotTask(),
+                BtNodeShape.Task, true, new[]
+                {
+                    BtProps.Int("slot", 1, "快捷栏槽位（1..9）；0 = 不改槽位、只用滚轮"),
+                    BtProps.Int("scroll", 0, "滚轮格数（>0 向前/向左，<0 向后/向右）")
+                });
+
+            // 用手上的物品（吃/喝/使用）：没有目标格也要能表达 —— Task.Interact 必须有目标，
+            // Task.PlaceBlock 必须有"看得见的面"，而吃东西两者都没有
+            s_nodes["Task.UseItem"] = new BtNodeInfo("Task.UseItem", () => new BtUseItemTask(),
+                BtNodeShape.Task, true, new[]
+                {
+                    BtProps.Str("button", "right", "鼠标键（SC 用右键使用手上物品）"),
+                    BtProps.Float("holdSeconds", 1.2f, "按住多久（秒；吃东西要按住一小会儿）"),
+                    BtProps.Int("repeat", 1, "重复几次"),
+                    BtProps.Float("interval", 0.35f, "两次之间的间隔（秒）")
+                });
+
+            // 跳：NavigateTo 里那一下跳是跟航点自动补的，这一条是"手动跳一次"（跳台阶/跳沟）
+            s_nodes["Task.Jump"] = new BtNodeInfo("Task.Jump", () => new BtJumpTask(),
+                BtNodeShape.Task, true, new[]
+                {
+                    BtProps.Str("key", "space", "跳跃键（Keyboard 名字）"),
+                    BtProps.Int("times", 1, "跳几次"),
+                    BtProps.Float("interval", 0.45f, "两次之间的间隔（秒；跳跃有落地判定）"),
+                    BtProps.Bool("alsoForward", false, "边跳边按住前进键（跳台阶/跳沟）"),
+                    BtProps.Str("forwardKey", "w", "alsoForward 时按住的前进键")
                 });
 
             s_nodes["Task.Subtree"] = new BtNodeInfo("Task.Subtree", () => new BtSubtreeTask(),
@@ -380,7 +535,7 @@ namespace PlayerAiMod
             s_decorators["Blackboard"] = new BtDecoratorInfo("Blackboard",
                 () => new BtBlackboardDecorator(), true, new[]
                 {
-                    BtProps.RequiredStr("key", "要检查的黑板键"),
+                    BtProps.BlackboardKey("key", "要检查的黑板键"),
                     BtProps.Enum("query", "IsSet", BtSchema.BlackboardQueries),
                     BtProps.Enum("operator", "==", BtSchema.CompareOperators),
                     BtProps.Enum("valueKind", "bool", BtSchema.ValueKinds),
@@ -409,6 +564,19 @@ namespace PlayerAiMod
             s_decorators["ForceSuccess"] = new BtDecoratorInfo("ForceSuccess",
                 () => new BtForceSuccessDecorator(), true, new BtPropertySpec[0]);
 
+            s_decorators["ForceFailure"] = new BtDecoratorInfo("ForceFailure",
+                () => new BtForceFailureDecorator(), true, new BtPropertySpec[0]);
+
+            // 两个黑板键比较（UE 的 CompareBBEntries）：Blackboard 只能与常量比，
+            // "目标比上次更近""两个键是不是同一个目标"这类相对判断需要它。
+            s_decorators["CompareBBEntries"] = new BtDecoratorInfo("CompareBBEntries",
+                () => new BtCompareBlackboardDecorator(), true, new[]
+                {
+                    BtProps.BlackboardKey("keyA", "左边那个黑板键（两边都要有值才算条件成立）"),
+                    BtProps.BlackboardKey("keyB", "右边那个黑板键"),
+                    BtProps.Enum("operator", "==", BtSchema.CompareOperators)
+                });
+
             s_decorators["Inverter"] = new BtDecoratorInfo("Inverter",
                 () => new BtInverterDecorator(), true, new BtPropertySpec[0]);
 
@@ -422,9 +590,89 @@ namespace PlayerAiMod
             s_services["Service.UpdateNearestPlayer"] = new BtServiceInfo(
                 "Service.UpdateNearestPlayer", () => new BtUpdateNearestPlayerService(), true, new[]
                 {
-                    BtProps.Str("targetKey", "target", "找到的目标写进哪个黑板键"),
+                    BtProps.OptionalBlackboardKey("targetKey", "target", "找到的目标写进哪个黑板键"),
                     BtProps.Str("nameFilter", null, "限定玩家名（大小写不敏感）；为空 = 最近的其它玩家"),
                     BtProps.Bool("clearWhenMissing", false, "找不到时是否清掉黑板键")
+                });
+
+            // ---- 传感器服务族（2026-09-12 补）：把"世界里的事实"周期写进黑板，供装饰器判断。
+            // 共同约定：找不到就清掉上次的值（否则"狼已经走了"而黑板里还留着旧坐标）。
+            s_services["Service.UpdateSelf"] = new BtServiceInfo(
+                "Service.UpdateSelf", () => new BtUpdateSelfService(), true, new[]
+                {
+                    BtProps.Str("prefix", "self.", "键名前缀（默认 self.，写成 self.Food / self.Health …）"),
+                    BtProps.Bool("writePosition", true, "是否连坐标与朝向一起写（self.X/Y/Z/Yaw）")
+                });
+
+            s_services["Service.UpdateNearestCreature"] = new BtServiceInfo(
+                "Service.UpdateNearestCreature", () => new BtUpdateNearestCreatureService(), true, new[]
+                {
+                    BtProps.OptionalBlackboardKey("targetKey", "creature", "找到的生物写进哪个黑板键"),
+                    BtProps.Int("categoryMask", 0,
+                        "类别掩码：1=陆地掠食者 2=陆地其它 4=水中掠食者 8=水中其它 16=鸟；0=不限"),
+                    BtProps.Float("maxDistance", 32f, "搜索半径（米）"),
+                    BtProps.Bool("clearWhenMissing", true, "找不到时是否清掉黑板键")
+                });
+
+            s_services["Service.UpdateNearestPickable"] = new BtServiceInfo(
+                "Service.UpdateNearestPickable", () => new BtUpdateNearestPickableService(), true, new[]
+                {
+                    BtProps.OptionalBlackboardKey("targetKey", "pickable", "找到的掉落物写进哪个黑板键"),
+                    BtProps.Float("maxDistance", 24f, "搜索半径（米）"),
+                    BtProps.Bool("clearWhenMissing", true, "找不到时是否清掉黑板键")
+                });
+
+            s_services["Service.UpdateBlockAhead"] = new BtServiceInfo(
+                "Service.UpdateBlockAhead", () => new BtUpdateBlockAheadService(), true, new[]
+                {
+                    BtProps.OptionalBlackboardKey("key", "mine", "命中了前方方块就写 true 的布尔键（默认与 Task.Mine 的坐标键配对）"),
+                    BtProps.Float("maxDistance", 3f, "射线长度（米）"),
+                    BtProps.Float("pitchOffset", -0.35f, "俯仰偏移（弧度，负=朝下；默认看脚前那格）"),
+                    BtProps.Str("nameKey", "mineName", "命中的方块名写进哪个键（留空则不写）")
+                });
+
+            s_services["Service.UpdateLineOfSight"] = new BtServiceInfo(
+                "Service.UpdateLineOfSight", () => new BtUpdateLineOfSightService(), true, new[]
+                {
+                    BtProps.OptionalBlackboardKey("targetKey", "target", "要看的目标（actor 键）"),
+                    BtProps.OptionalBlackboardKey("key", "canSee", "视线是否通畅写进哪个布尔键"),
+                    BtProps.Float("maxDistance", 48f, "超过这个距离就不再射线（直接判不可见）"),
+                    BtProps.Float("targetEyeHeight", 1.55f,
+                        "射线瞄目标多高（米；默认眼睛高度 —— 只露出头也算看得见）"),
+                    BtProps.Bool("alsoCheckBody", true, "是否再加打一条胸口射线（任一通畅即算看得见）"),
+                    BtProps.Float("bodyHeight", 0.9f, "胸口射线的高度（米，相对目标脚底）")
+                });
+
+            // ---- 通用件（2026-09-13 用户要求："射线检测能不能加""模型节点跟踪"）：
+            //      把"每换一个问法就改一次 C#"变成"改属性"，从此少一次部署 + 少一次重启。
+            s_services["Service.Probe"] = new BtServiceInfo(
+                "Service.Probe", () => new BtProbeService(), true, new[]
+                {
+                    BtProps.Enum("from", "eye", "eye", "body", "point"),
+                    BtProps.Enum("to", "target", "target", "point", "ahead", "down"),
+                    BtProps.Enum("mode", "blocked", "blocked", "clear"),
+                    BtProps.OptionalBlackboardKey("key", "probe",
+                        "主键（另带 Blocked / Reached / Distance / X / Y / Z / Contents / Block）"),
+                    BtProps.OptionalBlackboardKey("targetKey", "target", "to=target 时的 actor 键"),
+                    BtProps.Float("targetHeight", 1.55f, "to=target 时在目标脚底之上多少米打"),
+                    BtProps.Float("pitchOffset", 0f, "to=ahead 时的俯仰偏移（弧度，负=朝下）"),
+                    BtProps.OptionalBlackboardKey("fromXKey", "point.X", "from=point 时的起点 X（float 键）"),
+                    BtProps.OptionalBlackboardKey("fromYKey", "point.Y", "from=point 时的起点 Y（float 键）"),
+                    BtProps.OptionalBlackboardKey("fromZKey", "point.Z", "from=point 时的起点 Z（float 键）"),
+                    BtProps.OptionalBlackboardKey("toXKey", "point.X", "to=point 时的终点 X（float 键）"),
+                    BtProps.OptionalBlackboardKey("toYKey", "point.Y", "to=point 时的终点 Y（float 键）"),
+                    BtProps.OptionalBlackboardKey("toZKey", "point.Z", "to=point 时的终点 Z（float 键）"),
+                    BtProps.Float("maxDistance", 16f, "射线长度（米）")
+                });
+
+            s_services["Service.UpdateModelNode"] = new BtServiceInfo(
+                "Service.UpdateModelNode", () => new BtUpdateModelNodeService(), true, new[]
+                {
+                    BtProps.OptionalBlackboardKey("targetKey", "target", "看哪个 actor（黑板 actor 键）"),
+                    BtProps.Str("nodeName", "Head",
+                        "模型节点名：人形 Body/Head/Hand1/Hand2/Leg1/Leg2；四足另有 Neck/Leg3/Leg4 等"),
+                    BtProps.Str("prefix", "node.", "写出去的键前缀（node.X/Y/Z、node.Exists、node.Distance）"),
+                    BtProps.Bool("clearWhenMissing", true, "取不到节点时是否清掉坐标键")
                 });
         }
     }

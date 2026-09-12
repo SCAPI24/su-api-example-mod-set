@@ -5,6 +5,65 @@ using System.Collections.Generic;
 namespace PlayerAiMod
 {
     /// <summary>
+    /// **看向黑板里的一个点**（三个 float 键）—— `Task.LookAt` 盯的是"actor 位置 + 固定高度"，
+    /// 而这条盯的是**任意点**，于是可以盯模型节点：`Service.UpdateModelNode` 把 `Head` 的世界坐标
+    /// 写进 `node.X/Y/Z`，这里就用它当视线目标。
+    ///
+    /// 语义与 `Task.LookAt` 完全一致：潜在任务，在 `seconds` 期间**每个 tick 都重新对准**
+    /// （所以目标是动的也没关系），点取不到即失败。
+    /// </summary>
+    public sealed class BtLookAtPointTask : BtTaskNode
+    {
+        public string XKey { get; set; } = "point.X";
+        public string YKey { get; set; } = "point.Y";
+        public string ZKey { get; set; } = "point.Z";
+
+        /// <summary>保持时长的下限（朝向本身是瞬时完成的，这里用来"停一下"）。</summary>
+        public float Seconds { get; set; } = 0.1f;
+
+        public override string NodeType
+        {
+            get { return "Task.LookAtPoint"; }
+        }
+
+        public override bool IsLatent
+        {
+            get { return true; }
+        }
+
+        protected override BtResult OnExecute(BtContext context)
+        {
+            if (context.Actuators == null || !context.Actuators.IsReady)
+                return BtResult.Failed;
+            return Look(context) ? BtResult.InProgress : BtResult.Failed;
+        }
+
+        protected override BtResult OnTick(BtContext context)
+        {
+            if (!Look(context))
+                return BtResult.Failed;
+            return ActiveTime >= Seconds ? BtResult.Succeeded : BtResult.InProgress;
+        }
+
+        private bool Look(BtContext context)
+        {
+            AiBlackboard board = context.Blackboard;
+            float x;
+            float y;
+            float z;
+            if (board == null
+                || !board.TryGet(XKey, out x) || !board.TryGet(YKey, out y)
+                || !board.TryGet(ZKey, out z))
+            {
+                return false;
+            }
+
+            context.Actuators.LookAt(new Vector3(x, y, z));
+            return true;
+        }
+    }
+
+    /// <summary>
     /// 看向黑板里的目标（示例树与后续交互行为的公共前置）。
     /// 跨帧任务：保持 <see cref="Seconds"/> 秒后成功；目标丢失即失败。
     /// </summary>

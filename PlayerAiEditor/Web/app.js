@@ -2945,6 +2945,24 @@
     renderTree();
   }
 
+  /**
+   * 物料（节点/装饰器/服务）的**默认属性**：按 schema 里的 `default` 填一遍。
+   *
+   * 为什么必须只有这一处：以前**拖拽**会填默认值、**点击添加却给空 `properties`** ——
+   * 同一个物料两种结果；而且 `Blackboard` 的必填 `key` 为空会立刻进校验错误
+   * （用户看到的是"刚拖进来的东西就报错，莫名其妙"）。
+   */
+  function materialDefaults(kind, type) {
+    var key = (kind === 'decorator' || kind === 'service') ? kind + ':' + type : type;
+    var spec = state.materials && state.materials.byType ? state.materials.byType[key] : null;
+    var properties = {};
+    ((spec && spec.properties) || []).forEach(function (p) {
+      if (p.default !== null && p.default !== undefined)
+        properties[p.name] = coerce(p, p.default);
+    });
+    return properties;
+  }
+
   function coerce(spec, value) {
     var kind = (spec.kind || '').toLowerCase();
     if (kind === 'bool') return value === true || value === 'true';
@@ -3061,22 +3079,16 @@
       pushHistory();
       if (payload.kind === 'decorator') {
         targetNode.decorators = targetNode.decorators || [];
-        var decorator = { id: nextId('d'), type: payload.type, properties: {} };
-        var spec = state.materials.byType['decorator:' + payload.type];
-        (spec ? spec.properties : []).forEach(function (p) {
-          if (p.default !== null && p.default !== undefined)
-            decorator.properties[p.name] = coerce(p, p.default);
+        targetNode.decorators.push({
+          id: nextId('d'), type: payload.type,
+          properties: materialDefaults('decorator', payload.type)
         });
-        targetNode.decorators.push(decorator);
       } else {
         targetNode.services = targetNode.services || [];
-        var service = { id: nextId('svc'), type: payload.type, interval: 0.25, properties: {} };
-        var serviceSpec = state.materials.byType['service:' + payload.type];
-        (serviceSpec ? serviceSpec.properties : []).forEach(function (p) {
-          if (p.default !== null && p.default !== undefined)
-            service.properties[p.name] = coerce(p, p.default);
+        targetNode.services.push({
+          id: nextId('svc'), type: payload.type, interval: 0.25,
+          properties: materialDefaults('service', payload.type)
         });
-        targetNode.services.push(service);
       }
       state.selectedId = targetNode.id;
       markDirty(true);
@@ -4370,6 +4382,12 @@
       return row;
     }
 
+    // 黑板键：必须给下拉（计划 §7.2 的"黑板键下拉"）。
+    // 手打键名（`target` 打成 `targt`）在运行期只表现为"条件永远不成立"，极难查。
+    if (kind === 'blackboardkey') {
+      return blackboardKeyField(label, current, spec, commit);
+    }
+
     // 嵌套包引用：给下拉，别让人手打一个不存在的 id
     if (spec.name === 'package' && owner.type === 'Task.Subtree') {
       return packageRefField(label, owner, container, spec, current, commit);
@@ -4388,6 +4406,126 @@
    * 额外显示一行"(未声明)"，让人一眼看出这棵树装不上。
    * `#节点id` 那段仍然手填（它是被引用包内部的节点名，编辑器这里不猜）。
    */
+  /**
+   * 当前**候选黑板键**（去重、按名字排序）：
+   *
+   *   ① `manifest.blackboard` 里声明过的（权威来源）；
+   *   ② 本棵树里别处已经用过的键（哪怕没声明 —— 先在别处写进去、这里读，是常见写法）；
+   *   ③ 实时监视里游戏真的报过值的键（运行期事实，最容易对上"游戏里现在有什么"）。
+   *
+   * 三处都要：只给①会让用户的既有树（历史上没声明）完全没法选；只给③则离线编树时什么都没有。
+   */
+  function blackboardKeyCandidates() {
+    var keys = [];
+    function add(name) {
+      if (name && keys.indexOf(name) < 0) keys.push(name);
+    }
+
+    var declared = (state.manifest && state.manifest.blackboard) || [];
+    declared.forEach(function (entry) {
+      if (entry && typeof entry === 'object') add(entry.name);
+      else add(entry);
+    });
+
+    // ② 树里已用过的键：节点的黑板书属性 + 装饰器 + 服务
+    function collectFrom(owner) {
+      var properties = owner && owner.properties;
+      if (!properties) return;
+      Object.keys(properties).forEach(function (name) {
+        // 只认"名字像黑板键"的那几个：schema 里它们是 key/keyA/keyB/targetKey
+        if (name === 'key' || name === 'keyA' || name === 'keyB' || name === 'targetKey')
+          add(properties[name]);
+      });
+    }
+    if (state.tree) {
+      (function walk(node) {
+        if (!node) return;
+        collectFrom(node);
+        (node.decorators || []).forEach(collectFrom);
+        (node.services || []).forEach(collectFrom);
+        (node.children || []).forEach(walk);
+      })(state.tree);
+    }
+
+    // ③ 实时监视里的黑板（`state.live.blackboard.keys`）
+    var live = state.live && state.live.blackboard;
+    if (live && live.keys && typeof live.keys === 'object')
+      Object.keys(live.keys).forEach(add);
+    else if (live && typeof live === 'object')
+      Object.keys(live).forEach(function (name) { if (name !== 'keys') add(name); });
+
+    keys.sort();
+    return keys;
+  }
+
+  /**
+   * 黑板键输入控件：下拉选已有键，也能"自定义"手填。
+   *
+   * 手填必须留着：键完全可以是运行期才第一次写入的新键（`Task.SetBlackboard`），
+   * 这时候清单里当然没有它 —— 强制只能选已有键反而挡住了正常用法。
+   */
+  function blackboardKeyField(label, current, spec, commit) {
+    var wrap = document.createElement('div');
+    wrap.className = 'prop-row packages';
+    var text = document.createElement('label');
+    text.textContent = label;
+    if (spec && spec.required) text.textContent += ' *';
+    if (spec && spec.description) wrap.title = spec.description;
+    wrap.appendChild(text);
+
+    var box = document.createElement('div');
+    box.className = 'packages-box';
+
+    var candidates = blackboardKeyCandidates();
+    var select = document.createElement('select');
+    var custom = L('ui.292', '（自定义…）');
+    var missing = L('ui.291', '（未声明）');
+    var value = current === undefined || current === null ? '' : String(current);
+
+    candidates.forEach(function (name) {
+      var option = document.createElement('option');
+      option.value = name;
+      option.textContent = name;
+      if (name === value) option.selected = true;
+      select.appendChild(option);
+    });
+    if (value && candidates.indexOf(value) < 0) {
+      var undeclared = document.createElement('option');
+      undeclared.value = value;
+      undeclared.textContent = value + ' ' + missing;
+      undeclared.selected = true;
+      select.appendChild(undeclared);
+    }
+    var customOption = document.createElement('option');
+    customOption.value = '__custom__';
+    customOption.textContent = custom;
+    select.appendChild(customOption);
+    box.appendChild(select);
+
+    var input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'bb-key-input';
+    input.placeholder = L('ui.293', '键名');
+    input.value = value;
+    // 默认隐藏：只有选"自定义"（或当前值是空的）才显示出来，免得多一格看着乱
+    input.style.display = (!value || candidates.indexOf(value) < 0) ? '' : 'none';
+    input.addEventListener('change', function () { commit(input.value.trim()); });
+    select.addEventListener('change', function () {
+      if (select.value === '__custom__') {
+        input.style.display = '';
+        input.focus();
+        return;
+      }
+      input.style.display = 'none';
+      input.value = select.value;
+      commit(select.value);
+    });
+    box.appendChild(input);
+
+    wrap.appendChild(box);
+    return wrap;
+  }
+
   function packageRefField(label, owner, container, spec, current, commit) {
     var wrap = document.createElement('div');
     wrap.className = 'prop-row packages';
@@ -4556,9 +4694,14 @@
     if (!state.materials) return;
 
     paletteGroups().forEach(function (group) {
+      // 搜索：物料名/类型标识/**中英文显示名**都要能搜到（用户记不住 `Cooldown` 这种标识，
+      // 中文界面里搜「冷却」以前是空结果）；另外**分组名**命中就把整组都列出来
+      // —— 搜「装饰」/「服务」/「任务」是很自然的用法。
+      var groupHit = !!filter && paletteGroupLabel(group).toLowerCase().indexOf(filter) >= 0;
       var items = group.items.filter(function (item) {
-        if (!filter) return true;
-        var haystack = (item.type + ' ' + (item.file || '') + ' ' + (item.id || '')).toLowerCase();
+        if (!filter || groupHit) return true;
+        var haystack = (item.type + ' ' + (item.file || '') + ' ' + (item.id || '') + ' '
+          + I18n.nodeLabelSearch(item.type)).toLowerCase();
         return haystack.indexOf(filter) >= 0;
       });
       if (!items.length) return;
@@ -4577,7 +4720,10 @@
             if (!selected) { setStatus(L('st.014', '先选中一个节点，再挂装饰器')); return; }
             pushHistory();
             selected.decorators = selected.decorators || [];
-            selected.decorators.push({ id: nextId('d'), type: item.type, properties: {} });
+            selected.decorators.push({
+              id: nextId('d'), type: item.type,
+              properties: materialDefaults('decorator', item.type)
+            });
             markDirty(true);
             renderTree();
             renderInspector();
@@ -4587,7 +4733,10 @@
             if (!selected) { setStatus(L('st.013', '先选中一个节点，再挂服务')); return; }
             pushHistory();
             selected.services = selected.services || [];
-            selected.services.push({ id: nextId('svc'), type: item.type, interval: 0.25, properties: {} });
+            selected.services.push({
+              id: nextId('svc'), type: item.type, interval: 0.25,
+              properties: materialDefaults('service', item.type)
+            });
             markDirty(true);
             renderTree();
             renderInspector();
@@ -6368,6 +6517,231 @@
    * 这是最该能手工改的地方 —— 录下来的是 `click:1010.6,64.83` 这种死像素，
    * 改成 `click:list:WorldsList@世界名` 之后再也不会因为窗口尺寸失效。
    */
+  /**
+   * 「包信息」面板：**包的身份 / 黑板键声明 / 引用表**。
+   *
+   * 为什么需要它：这三样都在 `manifest.json` 里，而编辑器以前**只能读、不能写** ——
+   * 用户要加一个引用、要声明一个黑板键，只能手改 JSON（界面上还写着"要加引用得改
+   * manifest.references"）。计划 §3.4 要求"包内声明黑板键（名字 + 类型 + 是否只读），
+   * 加载时校验引用的键都存在"：现在运行时与校验器都支持了，缺的就是这个入口。
+   *
+   * 面板里改的就是 `state.manifest`，点「保存」照常走既有链路（校验 → 原子写回），
+   * 所以这里只负责把 JSON 编辑对人友好（下拉、一键增删），不去碰保存逻辑。
+   */
+  function openPackageInfo() {
+    if (!state.manifest) { setStatus(L('st.008', '先打开一个包')); return; }
+    var manifest = state.manifest;
+    if (Object.prototype.toString.call(manifest.blackboard) !== '[object Array]')
+      manifest.blackboard = [];
+    if (Object.prototype.toString.call(manifest.references) !== '[object Array]')
+      manifest.references = [];
+
+    function touched() {
+      markDirty(true);
+      // 属性区/物料区的"黑板键下拉"要立刻反映刚声明/改名的键
+      renderInspector();
+      renderPalette($('paletteFilter') ? $('paletteFilter').value.toLowerCase() : '');
+    }
+
+    var modal = openModal(L('pkg.title', '包信息') + L('ui.101', '　') + (manifest.id || '?'), [
+      { label: L('pkg.addKey', '＋ 黑板键'), run: function () {
+        manifest.blackboard.push({ name: '', type: 'bool', readonly: false });
+        touched();
+        renderBlackboard();
+      } },
+      { label: L('pkg.addRef', '＋ 引用'), run: function () {
+        manifest.references.push({ id: '', path: '' });
+        touched();
+        renderReferences();
+      } },
+      { label: L('pkg.done', '完成'), primary: true, run: function (close) { close(); } }
+    ]);
+
+    var head = document.createElement('p');
+    head.className = 'hint';
+    head.textContent = L('pkg.identity', '包标识') + L('ui.251', '：') + (manifest.id || '?')
+      + L('ui.101', '　') + L('pkg.file', '文件') + L('ui.251', '：') + (state.file || '?')
+      + L('ui.101', '　') + L('pkg.entry', '入口') + L('ui.251', '：')
+      + (manifest.entry || L('pkg.entryRoot', '（文档根）'));
+    modal.body.appendChild(head);
+
+    var idHint = document.createElement('p');
+    idHint.className = 'hint';
+    idHint.textContent = L('pkg.idHint',
+      '包 id 与文件名绑定（改 id 请用「另存为」，否则包目录里会出现对不上的名字）。');
+    modal.body.appendChild(idHint);
+
+    // ---------------------------------------------------------------- 黑板键
+    var bbTitle = document.createElement('h3');
+    bbTitle.textContent = L('pkg.blackboard', '黑板键');
+    modal.body.appendChild(bbTitle);
+    var bbHint = document.createElement('p');
+    bbHint.className = 'hint';
+    bbHint.textContent = L('pkg.blackboardHint',
+      '声明之后：节点/装饰器里的"黑板键"属性会给下拉，校验器也会检查"引用的键有没有声明过"。');
+    modal.body.appendChild(bbHint);
+    var bbBox = document.createElement('div');
+    modal.body.appendChild(bbBox);
+
+    function renderBlackboard() {
+      bbBox.innerHTML = '';
+      if (!manifest.blackboard.length) {
+        var empty = document.createElement('p');
+        empty.className = 'hint';
+        empty.textContent = L('pkg.noKeys', '还没有声明任何键（服务写入的键、节点读取的键都可以在这里声明）。');
+        bbBox.appendChild(empty);
+        return;
+      }
+      var types = (state.schema && state.schema.blackboardTypes)
+        || ['bool', 'int', 'float', 'string', 'actor'];
+      manifest.blackboard.forEach(function (entry, index) {
+        var row = document.createElement('div');
+        row.className = 'event-row';
+
+        var name = document.createElement('input');
+        name.type = 'text';
+        name.value = entry.name || '';
+        name.placeholder = L('pkg.name', '键名');
+        name.addEventListener('change', function () {
+          entry.name = name.value.trim();
+          touched();
+        });
+
+        var type = document.createElement('select');
+        types.forEach(function (candidate) {
+          var option = document.createElement('option');
+          option.value = candidate;
+          option.textContent = candidate;
+          if ((entry.type || 'bool') === candidate) option.selected = true;
+          type.appendChild(option);
+        });
+        type.addEventListener('change', function () {
+          entry.type = type.value;
+          touched();
+        });
+
+        var readonly = document.createElement('label');
+        readonly.className = 'hint';
+        var readonlyBox = document.createElement('input');
+        readonlyBox.type = 'checkbox';
+        readonlyBox.checked = entry.readonly === true;
+        readonlyBox.addEventListener('change', function () {
+          if (readonlyBox.checked) entry.readonly = true;
+          else delete entry.readonly;
+          touched();
+        });
+        readonly.appendChild(readonlyBox);
+        // 用 <span> 而不是文本节点：DOM 桩（editor_web_selftest.js）没有 createTextNode，
+        // 而且它的选择器会把子节点当控件读 —— 项目里统一都这么写（见 setNodeLabel 的注释）。
+        var readonlyText = document.createElement('span');
+        readonlyText.textContent = L('pkg.readonly', '只读');
+        readonly.appendChild(readonlyText);
+
+        var remove = document.createElement('button');
+        remove.textContent = L('pkg.remove', '删除');
+        remove.addEventListener('click', function () {
+          manifest.blackboard.splice(index, 1);
+          touched();
+          renderBlackboard();
+        });
+
+        row.appendChild(name);
+        row.appendChild(type);
+        row.appendChild(readonly);
+        row.appendChild(remove);
+        bbBox.appendChild(row);
+      });
+    }
+
+    // ---------------------------------------------------------------- 引用表
+    var refTitle = document.createElement('h3');
+    refTitle.textContent = L('pkg.references', '引用（Task.Subtree 能用的包）');
+    modal.body.appendChild(refTitle);
+    var refHint = document.createElement('p');
+    refHint.className = 'hint';
+    refHint.textContent = L('pkg.referencesHint',
+      '这里声明的才是游戏认的引用清单；路径相对本包所在目录，必须以 .scbtpak 结尾。');
+    modal.body.appendChild(refHint);
+    var refBox = document.createElement('div');
+    modal.body.appendChild(refBox);
+
+    function renderReferences() {
+      refBox.innerHTML = '';
+      if (!manifest.references.length) {
+        var empty = document.createElement('p');
+        empty.className = 'hint';
+        empty.textContent = L('pkg.noRefs', '没有引用（本包不引用其它包）。');
+        refBox.appendChild(empty);
+        return;
+      }
+      var known = (state.packages || []).map(function (item) { return item.file; });
+      manifest.references.forEach(function (reference, index) {
+        var row = document.createElement('div');
+        row.className = 'event-row';
+
+        var id = document.createElement('input');
+        id.type = 'text';
+        id.value = reference.id || '';
+        id.placeholder = L('pkg.refId', '引用 id（Subtree 节点里写它）');
+        id.addEventListener('change', function () {
+          reference.id = id.value.trim();
+          touched();
+        });
+
+        // 路径：能选现成的包就别手打（手打最容易漏掉 .scbtpak 后缀或写错目录）
+        var path = document.createElement('select');
+        var custom = document.createElement('option');
+        custom.value = '';
+        custom.textContent = L('pkg.refCustom', '（手填路径…）');
+        path.appendChild(custom);
+        known.forEach(function (file) {
+          var option = document.createElement('option');
+          option.value = file;
+          option.textContent = file;
+          if (reference.path === file) option.selected = true;
+          path.appendChild(option);
+        });
+        var pathInput = document.createElement('input');
+        pathInput.type = 'text';
+        pathInput.value = reference.path || '';
+        pathInput.placeholder = 'common.scbtpak';
+        pathInput.style.display = (reference.path && known.indexOf(reference.path) >= 0) ? 'none' : '';
+        pathInput.addEventListener('change', function () {
+          reference.path = pathInput.value.trim();
+          touched();
+        });
+        path.addEventListener('change', function () {
+          if (!path.value) {
+            pathInput.style.display = '';
+            pathInput.focus();
+            return;
+          }
+          reference.path = path.value;
+          pathInput.value = path.value;
+          pathInput.style.display = 'none';
+          touched();
+        });
+
+        var remove = document.createElement('button');
+        remove.textContent = L('pkg.remove', '删除');
+        remove.addEventListener('click', function () {
+          manifest.references.splice(index, 1);
+          touched();
+          renderReferences();
+        });
+
+        row.appendChild(id);
+        row.appendChild(path);
+        row.appendChild(pathInput);
+        row.appendChild(remove);
+        refBox.appendChild(row);
+      });
+    }
+
+    renderBlackboard();
+    renderReferences();
+  }
+
   function openActionEditor(file) {
     api('/api/action/events?file=' + encodeURIComponent(file)).then(function (data) {
       if (!data.ok) { setStatus(I18n.format("st.c104", '打不开动作包：{0}', (data.reason || data.code))); return; }
@@ -6562,6 +6936,7 @@
       openPackage($('packageSelect').value);
     });
     $('btnReload').addEventListener('click', function () { openPackage(state.path); });
+    $('btnPackage').addEventListener('click', openPackageInfo);
     $('btnValidate').addEventListener('click', validateNow);
     $('btnSave').addEventListener('click', function () { saveNow(null); });
     $('btnSaveAs').addEventListener('click', saveAs);
@@ -6799,6 +7174,7 @@
       jumpToFirstMatch: jumpToFirstMatch,
       layoutTree: layoutTree,
       handleSelectClick: handleSelectClick,
+      selectNode: selectNode,
       selectedNodes: selectedNodes,
       deleteSelection: deleteSelection,
       wrapSelection: wrapSelection,
@@ -6951,6 +7327,9 @@
       pickUiTargetIntoTree: pickUiTargetIntoTree,
       showActionMenu: showActionMenu,
       openActionEditor: openActionEditor,
+      openPackageInfo: openPackageInfo,
+      blackboardKeyCandidates: blackboardKeyCandidates,
+      materialDefaults: materialDefaults,
       renameActionFile: renameActionFile,
       deleteActionFile: deleteActionFile,
       closeActionMenu: closeActionMenu,
