@@ -62,13 +62,12 @@ namespace PlayerAiMod
             }
             Directory.CreateDirectory(fixture.Directory);
 
-            fixture.Roots = new PackageRoots(Path.Combine(fixture.Directory, "instance"),
-                Path.Combine(fixture.Directory, "mods"));
+            fixture.Roots = new PackageRoots(Path.Combine(fixture.Directory, "instance"));
             List<string> installed;
             string installError;
             PackageTemplates.Install(fixture.Roots, out installed, out installError);
 
-            fixture.DemoPath = Path.Combine(fixture.Roots.ModRoot.Path, PackageTemplates.DemoFile);
+            fixture.DemoPath = Path.Combine(fixture.Roots.InstanceRoot.Path, PackageTemplates.DemoFile);
             fixture.OriginalHash = PackageLoader.ComputeHash(File.ReadAllBytes(fixture.DemoPath));
 
             var options = new PackageLoadOptions { Roots = fixture.Roots };

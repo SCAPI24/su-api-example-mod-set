@@ -45,7 +45,8 @@ namespace PlayerAiMod
                 get { return m_actionPlayer; }
             }
 
-            public AiTestHost Host { get; set; }
+            /// <summary>宿主（假件是通用宿主；测控制器宿主时换成 <see cref="ControllerTreeHost"/>）。</summary>
+            public IAiTreeHost Host { get; set; }
 
             public PackageReloader Reloader { get; set; }
 
@@ -99,6 +100,7 @@ namespace PlayerAiMod
                 TreeCommands(result);
                 RecordingCommands(result);
                 ObservabilityCommands(result);
+            try { UiClickTargets(result); } catch (Exception e) { result.Check("case:UI click targets", false, e.Message); }
                 ErrorCodes(result);
                 SelfTestCommand(result);
             }
@@ -241,8 +243,7 @@ namespace PlayerAiMod
             }
             Directory.CreateDirectory(directory);
 
-            var roots = new PackageRoots(Path.Combine(directory, "instance"),
-                Path.Combine(directory, "mods"));
+            var roots = new PackageRoots(Path.Combine(directory, "instance"));
             List<string> installed;
             string installError;
             PackageTemplates.Install(roots, out installed, out installError);
@@ -328,8 +329,219 @@ namespace PlayerAiMod
                 && Convert.ToInt32(map["errors"]) == 0,
                 Describe(map));
 
+            // ---- 无角色宿主（主菜单）：世界没加载也能跑树、也能被监视
+            // 用户的原话："进入游戏这个动作包，就是游戏启动后、不进入世界就要跑的，
+            // 实时监视也需要一开始就能监听。" 这一段就是钉这两件事。
+            {
+                var menuActuator = new BtTestActuator();
+                var menuHost = new ControllerTreeHost(menuActuator);
+                // **自己一份重载器 + 树库**：树库切换会把活动树 Adopt 进重载器，
+                // 共用上面那个会把后面几条"活动树是 demo.greet"的断言弄坏（踩过）。
+                var menuReloader = new PackageReloader(roots, new PackageLoadOptions { Roots = roots });
+                var menuContext = new FakeContext { Host = menuHost, Reloader = menuReloader };
+                menuContext.Library = new TreeLibrary(menuReloader, 4);
+
+                result.Check("the host is the controller (not a character), and says where it operates",
+                    menuHost.HostKind == "controller" && menuHost.Situation == "menu",
+                    menuHost.ToString());
+
+                // 「进入游戏」那种包整段在主菜单里跑：这里用出厂示例 test.action（它里面就有
+                // PlayActionPackage(sample_walk)）当靶子，走的是同一条链。
+                map = AiCommandSet.Execute(
+                    AiCommandRequest.FromArgs("ai.tree.switch", "name", "test.action"),
+                    menuContext) as IDictionary<string, object>;
+                result.Check("a tree can be switched in with no world and no player",
+                    map != null && Equals(map["switched"], true) && menuHost.HasTree,
+                    Describe(map));
+
+                for (int i = 0; i < 12; i++)
+                    menuHost.Tick(1f / 60f);
+
+                result.Check("ticking the controller host really advances the tree",
+                    menuHost.Tree.TickCount > 0 && menuHost.Mode == AiMode.Tree,
+                    "ticks=" + menuHost.Tree.TickCount + " mode=" + menuHost.Mode.Describe());
+
+                // 世界外**只允许点 UI**：动作包里的按键/视角是空实现（不假装成功）。
+                // 这条以前写反了（断言"按键到了注入器"）—— 那正是"世界外假装在走"的坏味道。
+                result.Check("at the menu the world-only input from the action package is dropped",
+                    menuActuator.HeldKeysSeen.Count == 0 && menuActuator.LookDeltaCalls == 0
+                    && menuActuator.PulsedKeys.Count == 0,
+                    "lookDelta=" + menuActuator.LookDeltaCalls + " keys="
+                    + string.Join("/", menuActuator.HeldKeysSeen.ToArray()));
+
+                map = AiCommandSet.Execute(new AiCommandRequest("ai.tree.snapshot"), menuContext)
+                    as IDictionary<string, object>;
+                result.Check("live monitoring answers at the menu (snapshot works with no player)",
+                    map != null && Equals(map["running"], true)
+                    && Convert.ToString(map["source"]).EndsWith("test.action.scbtpak",
+                        StringComparison.OrdinalIgnoreCase)
+                    && Convert.ToInt32(map["ticks"]) > 0,
+                    Describe(map));
+
+                map = AiCommandSet.Execute(new AiCommandRequest("ai.status"), menuContext)
+                    as IDictionary<string, object>;
+                var menuHostInfo = map != null ? map["host"] as IDictionary<string, object> : null;
+                result.Check("ai.status reports host kind=controller + situation=menu",
+                    menuHostInfo != null && Equals(menuHostInfo["kind"], "controller")
+                    && Equals(menuHostInfo["situation"], "menu")
+                    && Equals(menuHostInfo["ready"], true),
+                    Describe(map));
+
+                menuHost.StopTree("selftest done");
+                result.Check("stopping the controller tree releases the injector and clears it",
+                    !menuHost.HasTree && menuActuator.ReleaseAllCalls > 0,
+                    "release=" + menuActuator.ReleaseAllCalls);
+            }
+
+                // ---- 控制器宿主的核心承诺：绑定/解绑世界输入来源时，**树不重跑、运行态保留**
+                // （用户原话："行为树不应该绑定到角色上，而是角色的控制器……退出世界了，
+                // 也是要执行其他操作的"。所以世界来了只换输入路由，不换宿主、不重装树。）
+                {
+                    var routeActuator = new BtTestActuator();
+                    var routeHost = new ControllerTreeHost(routeActuator);
+                    var routeReloader = new PackageReloader(roots,
+                        new PackageLoadOptions { Roots = roots });
+                    var routeContext = new FakeContext { Host = routeHost, Reloader = routeReloader };
+                    routeContext.Library = new TreeLibrary(routeReloader, 4);
+
+                    map = AiCommandSet.Execute(
+                        AiCommandRequest.FromArgs("ai.tree.switch", "name", "test.action"),
+                        routeContext) as IDictionary<string, object>;
+                    for (int i = 0; i < 8; i++)
+                        routeHost.Tick(1f / 60f);
+                    long ticksBeforeBind = routeHost.Tree.TickCount;
+
+                    result.Check("setup: the tree runs with no world attached",
+                        map != null && Equals(map["switched"], true) && ticksBeforeBind > 0,
+                        "ticks=" + ticksBeforeBind);
+
+                    // 世界来了：接上玩家输入来源
+                    var worldProvider = new AiTestHost("selftest-player");
+                    routeHost.Bind(worldProvider);
+                    for (int i = 0; i < 8; i++)
+                        routeHost.Tick(1f / 60f);
+
+                    result.Check("binding a player keeps the same tree running (no restart)",
+                        routeHost.HasTree && routeHost.Tree.TickCount > ticksBeforeBind,
+                        "before=" + ticksBeforeBind + " after=" + routeHost.Tree.TickCount);
+                    result.Check("the controller now reports situation=world with the player name",
+                        routeHost.Situation == "world"
+                        && Equals(routeHost.PlayerName, "selftest-player"),
+                        routeHost.ToString() + " player=" + routeHost.PlayerName);
+
+                    // 世界里：输入走玩家的执行器（而不是 UI 兜底）
+                    routeHost.Actuators.HoldKey("W", true);
+                    result.Check("in-world input goes to the player's actuator (not the UI fallback)",
+                        worldProvider.TestActuator.HeldKeys.Contains("W")
+                        && routeActuator.HeldKeysSeen.Count == 0,
+                        "world=" + string.Join("/", worldProvider.TestActuator.HeldKeys.ToArray())
+                        + " ui=" + routeActuator.HeldKeysSeen.Count);
+                    result.Check("in-world sensors are forwarded (drift checks work again)",
+                        routeHost.Sensors.IsReady
+                        && routeHost.Sensors.PlayerName == worldProvider.TestSensor.PlayerName,
+                        "sensor=" + routeHost.Sensors.PlayerName);
+                    routeHost.Actuators.ReleaseAll();
+
+                    // 退出世界：摘掉输入来源，树**继续跑**（用户要的"退出世界还能干别的"）
+                    long ticksBeforeUnbind = routeHost.Tree.TickCount;
+                    routeHost.Bind(null);
+                    for (int i = 0; i < 8; i++)
+                        routeHost.Tick(1f / 60f);
+
+                    result.Check("unbinding the player keeps the tree running too (ticks keep rising)",
+                        routeHost.HasTree && routeHost.Tree.TickCount > ticksBeforeUnbind,
+                        "before=" + ticksBeforeUnbind + " after=" + routeHost.Tree.TickCount);
+                    result.Check("back to menu: situation=menu and the world sensors report not ready",
+                        routeHost.Situation == "menu" && !routeHost.Sensors.IsReady,
+                        routeHost.ToString());
+
+                    // ---- 任务级释放**不许**取消 UI 注入（用户实测的 bug：光标移过去、界面纹丝不动）
+                    // 一次软光标点击要跨好几帧（移动 → 按下 → 抬起），中途被 ReleaseAll 清一次
+                    // 就永远派生不出 Click。所以只有显式的"停止/禁用/释放输入"才许撤 UI 注入。
+                    {
+                        int uiReleases = routeActuator.ReleaseAllCalls;
+                        routeHost.Actuators.ReleaseAll();
+                        result.Check("a task-level ReleaseAll does not cancel the UI injection",
+                            routeActuator.ReleaseAllCalls == uiReleases,
+                            "ui releases " + uiReleases + " -> " + routeActuator.ReleaseAllCalls);
+
+                        routeHost.ReleaseInput();
+                        result.Check("an explicit ReleaseInput does cancel it (stop/disable paths)",
+                            routeActuator.ReleaseAllCalls > uiReleases,
+                            "ui releases " + uiReleases + " -> " + routeActuator.ReleaseAllCalls);
+                    }
+
+                    routeHost.Actuators.HoldKey("W", true);
+                    result.Check("at the menu the key injection is a no-op (no world, no pretending)",
+                        worldProvider.TestActuator.HeldKeys.Count == 0,
+                        "world keys=" + worldProvider.TestActuator.HeldKeys.Count);
+                    routeHost.StopTree("selftest done");
+                }
+
+            // ---- `ai.tree.stop`：停止 = 卸下树（用户要的"重置"入口）
+            // 与"暂停"的区别就是这条命令存在的理由：暂停保留运行态，停止回到"什么都没跑"，
+            // 之后再 switch 才是干净地从根开始。
+            {
+                var stopActuator = new BtTestActuator();
+                var stopHost = new ControllerTreeHost(stopActuator);
+                var stopReloader = new PackageReloader(roots, new PackageLoadOptions { Roots = roots });
+                var stopContext = new FakeContext { Host = stopHost, Reloader = stopReloader };
+                stopContext.Library = new TreeLibrary(stopReloader, 4);
+
+                map = AiCommandSet.Execute(
+                    AiCommandRequest.FromArgs("ai.tree.switch", "name", "test.action"),
+                    stopContext) as IDictionary<string, object>;
+                result.Check("ai.tree.stop setup: a tree is running in the controller host",
+                    map != null && Equals(map["switched"], true) && stopHost.HasTree,
+                    Describe(map));
+
+                for (int i = 0; i < 6; i++)
+                    stopHost.Tick(1f / 60f);
+                int ticksBeforeStop = (int)stopHost.Tree.TickCount;
+
+                map = AiCommandSet.Execute(new AiCommandRequest("ai.tree.stop"), stopContext)
+                    as IDictionary<string, object>;
+                result.Check("ai.tree.stop unloads the tree and releases input",
+                    map != null && Equals(map["stopped"], true) && !stopHost.HasTree
+                    && Equals(map["mode"], "idle") && stopActuator.ReleaseAllCalls > 0,
+                    Describe(map));
+
+                map = AiCommandSet.Execute(new AiCommandRequest("ai.tree.stop"), stopContext)
+                    as IDictionary<string, object>;
+                result.Check("stopping twice is honest (nothing to stop)",
+                    map != null && Equals(map["stopped"], false)
+                    && Convert.ToString(map["reason"]).Contains("no tree"),
+                    Describe(map));
+
+                // 暂停 → 停止：**暂停也要一起清掉**。用户实测："播放→暂停→停止→再播放，
+                // 显示的还是已暂停"（暂停是全局的，帧首先看它；留着它树装进去也不会跑）。
+                map = AiCommandSet.Execute(new AiCommandRequest("ai.pause"), stopContext)
+                    as IDictionary<string, object>;
+                result.Check("ai.tree.stop setup: the runtime is paused",
+                    map != null && Equals(map["paused"], true), Describe(map));
+
+                map = AiCommandSet.Execute(new AiCommandRequest("ai.tree.stop"), stopContext)
+                    as IDictionary<string, object>;
+                result.Check("ai.tree.stop also clears the global pause (stop = full reset)",
+                    map != null && Equals(map["resumed"], true) && Equals(map["paused"], false)
+                    && !stopHost.HasTree,
+                    Describe(map));
+                result.Check("the pause flag really went away (a following switch will tick)",
+                    !stopContext.Paused, "paused=" + stopContext.Paused);
+
+                // 再切一次 = 从根开始：tick 计数归零（用户要的"重置"）
+                map = AiCommandSet.Execute(
+                    AiCommandRequest.FromArgs("ai.tree.switch", "name", "test.action"),
+                    stopContext) as IDictionary<string, object>;
+                result.Check("switching after a stop starts a fresh run (ticks reset)",
+                    map != null && Equals(map["switched"], true) && stopHost.HasTree
+                    && stopHost.Tree.TickCount == 0 && ticksBeforeStop > 0,
+                    "before=" + ticksBeforeStop + " after=" + stopHost.Tree.TickCount);
+                stopHost.StopTree("selftest done");
+            }
+
             // ---- 内存态改写 + 导出（P0-12 / P0-13）
-            string demoFile = Path.Combine(roots.ModRoot.Path, PackageTemplates.DemoFile);
+            string demoFile = Path.Combine(roots.InstanceRoot.Path, PackageTemplates.DemoFile);
             string sourceHashBefore = PackageLoader.ComputeHash(File.ReadAllBytes(demoFile));
 
             map = AiCommandSet.Execute(AiCommandRequest.FromArgs("ai.edit.set", "id", "move",
@@ -397,14 +609,6 @@ namespace PlayerAiMod
 
             // ---- 动作包（P1）：列表 / 校验 / 回放 / 停止
             System.IO.Directory.CreateDirectory(context.Actions.Directory);
-            try
-            {
-                if (System.IO.Directory.Exists(context.Actions.ModDirectory))
-                    System.IO.Directory.Delete(context.Actions.ModDirectory, true);
-            }
-            catch (Exception)
-            {
-            }
             string actionPath = Path.Combine(context.Actions.Directory, "cmd_action.scatpak");
             PackageWriter.TryWriteFile(actionPath, PlayerAiPackages.BuildSampleActionPackage(), out string actionError);
 
@@ -437,50 +641,35 @@ namespace PlayerAiMod
             result.Check("ai.action.validate reports a missing package",
                 map != null && Equals(map["ok"], false), Describe(map));
 
-            // ---- 查找链：Mod 只读分发目录里的出厂示例也必须看得见（否则"开箱可跑"是假的）
-            System.IO.Directory.CreateDirectory(context.Actions.ModDirectory);
-            PackageWriter.TryWriteFile(Path.Combine(context.Actions.ModDirectory,
+            // 出厂示例（`sample_walk.scatpak`）必须看得见 —— 它是"开箱可跑"的那一份，
+            // 现在装在**唯一的包目录**里（以前在 Mod 分发目录，2026-09-12 合并掉了）。
+            PackageWriter.TryWriteFile(Path.Combine(context.Actions.Directory,
                 "sample_walk.scatpak"), PlayerAiPackages.BuildSampleActionPackage(), out actionError);
 
             map = AiCommandSet.Execute(new AiCommandRequest("ai.action.list"), context)
                 as IDictionary<string, object>;
             actions = map != null ? map["actions"] as List<Dictionary<string, object>> : null;
-            Dictionary<string, object> modEntry = null;
+            Dictionary<string, object> sampleEntry = null;
             if (actions != null)
             {
                 for (int i = 0; i < actions.Count; i++)
                 {
                     if (Equals(actions[i]["file"], "sample_walk.scatpak"))
-                        modEntry = actions[i];
+                        sampleEntry = actions[i];
                 }
             }
-            result.Check("ai.action.list also finds packages in the mod distribution folder",
-                map != null && Convert.ToInt32(map["count"]) == 2 && modEntry != null
-                && Equals(modEntry["source"], "mod") && Equals(modEntry["writable"], false),
+            result.Check("ai.action.list finds the factory sample in the package folder",
+                map != null && Convert.ToInt32(map["count"]) == 2 && sampleEntry != null
+                && Equals(sampleEntry["source"], "instance") && Equals(sampleEntry["writable"], true),
                 Describe(map));
 
             map = AiCommandSet.Execute(AiCommandRequest.FromArgs("ai.action.validate", "name",
                 "sample_walk"), context) as IDictionary<string, object>;
-            result.Check("ai.action.validate resolves a package that only exists in the mod folder",
-                map != null && Equals(map["ok"], true) && Equals(map["source"], "mod")
+            result.Check("ai.action.validate resolves the factory sample",
+                map != null && Equals(map["ok"], true) && Equals(map["source"], "instance")
                 && Equals(map["replayable"], true),
                 Describe(map));
 
-            // 同名时实例目录优先（用户自己录的包覆盖分发目录里的那一份）
-            PackageWriter.TryWriteFile(Path.Combine(context.Actions.Directory,
-                "sample_walk.scatpak"), PlayerAiPackages.BuildSampleActionPackage(), out actionError);
-            map = AiCommandSet.Execute(AiCommandRequest.FromArgs("ai.action.validate", "name",
-                "sample_walk"), context) as IDictionary<string, object>;
-            result.Check("an instance package shadows the mod one with the same name",
-                map != null && Equals(map["ok"], true) && Equals(map["source"], "instance"),
-                Describe(map));
-
-            map = AiCommandSet.Execute(new AiCommandRequest("ai.action.list"), context)
-                as IDictionary<string, object>;
-            result.Check("the shadowed mod package is listed but flagged",
-                map != null && Convert.ToInt32(map["shadowed"]) == 1
-                && Convert.ToInt32(map["replayable"]) == 2,
-                Describe(map));
             try
             {
                 System.IO.File.Delete(Path.Combine(context.Actions.Directory, "sample_walk.scatpak"));
@@ -499,7 +688,7 @@ namespace PlayerAiMod
                 afterReload == null ? "<missing>" : afterReload.AcceptableRadius.ToString());
 
             // 通知排队 → 在"tick 边界"应用（这里手动调用，等价于 PlayerAiRuntime 的帧首钩子）
-            string demoPath = Path.Combine(roots.ModRoot.Path, PackageTemplates.DemoFile);
+            string demoPath = Path.Combine(roots.InstanceRoot.Path, PackageTemplates.DemoFile);
             string hash = PackageLoader.ComputeHash(File.ReadAllBytes(demoPath));
             map = AiCommandSet.Execute(AiCommandRequest.FromArgs("ai.tree.notify", "path", demoPath,
                 "hash", "sha256:" + hash), context) as IDictionary<string, object>;
@@ -527,7 +716,7 @@ namespace PlayerAiMod
             bool corrupted = false;
             try
             {
-                File.WriteAllBytes(Path.Combine(roots.ModRoot.Path, PackageTemplates.CommonFile),
+                File.WriteAllBytes(Path.Combine(roots.InstanceRoot.Path, PackageTemplates.CommonFile),
                     new UTF8Encoding(false).GetBytes("not a zip"));
                 map = AiCommandSet.Execute(
                     AiCommandRequest.FromArgs("ai.tree.validate", "name", "common.scbtpak"), context)
@@ -547,10 +736,6 @@ namespace PlayerAiMod
             public string Directory = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
                 "pai-cmd-actions");
 
-            /// <summary>只读分发目录（模拟 Mods/PlayerAiMod/PlayerAi/BehaviorTrees）。</summary>
-            public string ModDirectory = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
-                "pai-cmd-actions-mod");
-
             public string Played;
 
             public int PlayCount;
@@ -564,7 +749,7 @@ namespace PlayerAiMod
 
             public List<string> ActionSearchDirectories
             {
-                get { return new List<string> { Directory, ModDirectory }; }
+                get { return new List<string> { Directory }; }
             }
 
             public string Play(string nameOrPath, int repeat)
@@ -772,7 +957,7 @@ namespace PlayerAiMod
 
             // 要让"缺参"这条路径可达，重载器必须先就绪 —— 否则先撞上的是 not_ready（那本身也是对的）。
             // 参数校验发生在读文件之前，所以这里给一个指向临时目录的空重载器就够了。
-            var roots = new PackageRoots(Path.Combine(Path.GetTempPath(), "pai-cmd-selftest-args"), null);
+            var roots = new PackageRoots(Path.Combine(Path.GetTempPath(), "pai-cmd-selftest-args"));
             context.Reloader = new PackageReloader(roots, new PackageLoadOptions { Roots = roots });
 
             code = null;
@@ -847,5 +1032,62 @@ namespace PlayerAiMod
             }
             return builder.ToString();
         }
+        /// <summary>
+        /// 动作包里的 UI 点击目标怎么解析（用户要求："能获取 UI 的时候就尽可能用 UI 的真实位置，
+        /// 别因为窗口尺寸变了就点空"）。这里钉住解析规则本身：
+        /// 列表行（按行号 / 按文字）、控件路径（路径里本来就有 `[Type#id]` 的 `#`）、坐标兜底。
+        ///
+        /// 解析实现只有一份：`CmdBridgeMod/Server/UiTarget.cs`（运行时就是它；它是纯 System 代码，
+        /// 所以能编进这个离线自检里）。早先 PlayerAiMod 也有一份自己的解析，两边漂移过一次 —— 已删。
+        /// </summary>
+        private static void UiClickTargets(BtSelfTest.TestResult result)
+        {
+            CmdBridgeMod.UiTarget.Parsed parsed;
+
+            result.Check("a list row by index is recognised",
+                CmdBridgeMod.UiTarget.TryParse("list:WorldsList#3", out parsed)
+                && parsed.Kind == CmdBridgeMod.UiTarget.TargetKind.ListRow
+                && parsed.Selector == "WorldsList" && parsed.RowIndex == 3 && parsed.RowText == null,
+                parsed.Selector + " / " + parsed.RowIndex + " / " + parsed.RowText);
+
+            result.Check("a list row by text is recognised",
+                CmdBridgeMod.UiTarget.TryParse("list:WorldsList@Rebritish", out parsed)
+                && parsed.Selector == "WorldsList" && parsed.RowIndex == -1
+                && parsed.RowText == "Rebritish",
+                parsed.Selector + " / " + parsed.RowIndex + " / " + parsed.RowText);
+
+            result.Check("a widget path stays a selector (paths contain '#' and '/')",
+                CmdBridgeMod.UiTarget.TryParse(
+                    "[MainMenuScreen#0]/[StackPanelWidget#1]/[StackPanelWidget#5]/Play", out parsed)
+                && parsed.Kind == CmdBridgeMod.UiTarget.TargetKind.Selector
+                && parsed.Selector.StartsWith("[MainMenuScreen#0]", StringComparison.Ordinal),
+                parsed.Kind + " / " + parsed.Selector);
+
+            result.Check("a widget name is a selector, not a list row",
+                CmdBridgeMod.UiTarget.TryParse("Play", out parsed)
+                && parsed.Kind == CmdBridgeMod.UiTarget.TargetKind.Selector
+                && parsed.Selector == "Play", parsed.Kind + " / " + parsed.Selector);
+
+            result.Check("a recorded client point still parses as a point (last-resort fallback)",
+                CmdBridgeMod.UiTarget.TryParse("1010.6,64.83", out parsed)
+                && parsed.Kind == CmdBridgeMod.UiTarget.TargetKind.Point
+                && Math.Abs(parsed.X - 1010.6f) < 0.01f && Math.Abs(parsed.Y - 64.83f) < 0.01f,
+                parsed.Kind + " / " + parsed.X + "," + parsed.Y);
+
+            result.Check("formatting a list row round-trips (the recorder writes this form)",
+                CmdBridgeMod.UiTarget.TryParse(
+                    CmdBridgeMod.UiTarget.FormatListRow("WorldsList", -1, "Rebritish"), out parsed)
+                && parsed.RowText == "Rebritish"
+                && CmdBridgeMod.UiTarget.TryParse(
+                    CmdBridgeMod.UiTarget.FormatListRow("WorldsList", 2, null), out parsed)
+                && parsed.RowIndex == 2,
+                CmdBridgeMod.UiTarget.FormatListRow("WorldsList", -1, "Rebritish"));
+
+            result.Check("a malformed list target is refused (no guessing)",
+                !CmdBridgeMod.UiTarget.TryParse("list:WorldsList@", out parsed)
+                && !CmdBridgeMod.UiTarget.TryParse("list:#2", out parsed),
+                "list:WorldsList@ / list:#2");
+        }
+
     }
 }

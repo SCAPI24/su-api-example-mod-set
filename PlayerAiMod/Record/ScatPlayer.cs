@@ -96,6 +96,28 @@ namespace PlayerAiMod
 
         private readonly List<string> m_performedUiClicks = new List<string>();
 
+        /// <summary>
+        /// 被引擎如实拒绝、还在重试的 UI 点击（`目标` + 放弃时刻）。
+        ///
+        /// 为什么要重试而不是"到点打一枪"：UI 事件的时间轴是**录制时**的，
+        /// 而回放时"目标存不存在"取决于**屏幕切场动画/列表加载**这些实时过程——
+        /// 两者不可能永远对齐（实测：进游戏包第二次点击落在 Play 屏切场动画中间，
+        /// 引擎如实回一句 `rejected (missing/occluded)`，于是"选世界"这一步整条丢掉了）。
+        /// 语义目标（`Play` / `list:WorldsList@世界名`）本来就能随时现解析，
+        /// 所以"没到点"就该等一等，而不是判失败。
+        /// </summary>
+        private sealed class PendingUiClick
+        {
+            public string Target;
+            public double DueTime;
+            public double Deadline;
+        }
+
+        private readonly List<PendingUiClick> m_pendingUiClicks = new List<PendingUiClick>();
+
+        /// <summary>UI 点击被拒绝后最多重试多久（秒）。切场动画 ~0.5s，列表加载偶尔更久。</summary>
+        public double UiClickRetrySeconds { get; set; } = 5.0;
+
         public ScatActionPackage Package { get; }
 
         public IAiActuator Actuator { get; }
@@ -161,6 +183,7 @@ namespace PlayerAiMod
             CompletedLoops = 0;
             m_nextKeyframe = 0;
             m_nextUiEvent = 0;
+            m_pendingUiClicks.Clear();
             m_performedUiClicks.Clear();
             LastDrift = new ScatDriftReport();
 
@@ -365,6 +388,18 @@ namespace PlayerAiMod
         {
             m_appliedHeld.Clear();
             m_mouseDown.Clear();
+            if (m_pendingUiClicks.Count > 0)
+            {
+                // 回放结束了还有没点成的点击：如实说，不能装作"这步做过了"。
+                var names = new List<string>();
+                for (int i = 0; i < m_pendingUiClicks.Count; i++)
+                    names.Add(m_pendingUiClicks[i].Target);
+                m_pendingUiClicks.Clear();
+                string message = "ui click(s) never became clickable: " + string.Join(", ", names.ToArray());
+                if (LastError == null)
+                    LastError = message;
+                Engine.Log.Warning("[PlayerAi][act] " + message);
+            }
             try
             {
                 if (Actuator != null)
@@ -466,41 +501,110 @@ namespace PlayerAiMod
         /// <summary>到点就重放 UI 点击（与帧切换无关：菜单操作有自己的时间点）。</summary>
         private void FireUiEvents(double elapsedSeconds)
         {
+            // ① 先把上一帧（或前几帧）被拒绝的点击重试掉。
+            //    顺序铁律：**只要还有没完成的点击，就不许放行后面的点击** ——
+            //    `选世界` 必须发生在 `Play!` 之前，否则 Play! 点到的是"没有选中世界"的状态。
+            for (int i = 0; i < m_pendingUiClicks.Count; i++)
+            {
+                PendingUiClick pending = m_pendingUiClicks[i];
+                if (TryUiClick(pending.Target))
+                {
+                    m_performedUiClicks.Add(pending.Target);
+                    Engine.Log.Information("[PlayerAi][act] ui click " + pending.Target
+                        + " succeeded after a retry (due t=" + pending.DueTime.ToString("0.00") + "s)");
+                    m_pendingUiClicks.RemoveAt(i);
+                    i--;
+                    continue;
+                }
+                if (elapsedSeconds >= pending.Deadline)
+                {
+                    m_pendingUiClicks.RemoveAt(i);
+                    i--;
+                    LastError = "ui click '" + pending.Target + "' was rejected for "
+                        + (pending.Deadline - pending.DueTime).ToString("0.0") + "s (missing/occluded)";
+                    Engine.Log.Warning("[PlayerAi][act] " + LastError);
+                }
+            }
+
+            if (m_pendingUiClicks.Count > 0)
+                return;   // 前面的还没成，后面的排队等（见上面顺序铁律）
+
             while (m_nextUiEvent < m_uiEvents.Count && m_uiEvents[m_nextUiEvent].Time <= elapsedSeconds)
             {
                 ScatUiEvent uiEvent = m_uiEvents[m_nextUiEvent];
                 m_nextUiEvent++;
 
-                // 事件里存的是 `<动词>:<目标>`（`click:Play` / `click:1010.6,64.8`）——
+                // 事件里存的是 `<动词>:<目标>`（`click:Play` / `click:list:WorldsList@世界名`）——
                 // 动词是给读包的人看的，注入时要把它剥掉，否则选择器变成 "click:Play" 谁也点不到。
-                string target = uiEvent.Target;
-                int colon = target.IndexOf(':');
-                if (colon > 0)
-                    target = target.Substring(colon + 1);
+                //
+                // 但**只剥认识的动词**：`list:` 这类语义前缀自己也带冒号，
+                // 早先"无条件剥到第一个冒号"会把手写的 `list:WorldsList@世界名` 削成
+                // `WorldsList@世界名` —— 于是它既不是 `list:` 目标、也不是控件选择器，静默点空。
+                string target = StripVerb(uiEvent.Target);
 
-                try
+                if (TryUiClick(target))
                 {
-                    bool clicked = Actuator != null && Actuator.UiClick(target);
                     m_performedUiClicks.Add(target);
-                    if (!clicked)
-                    {
-                        // 注入器如实拒绝（元素不在/被挡住）——记下来，但不判整个回放失败：
-                        // 菜单结构略有差异时，后面的点击还有机会。
-                        LastError = "ui click '" + target + "' was rejected (missing/occluded)";
-                        Engine.Log.Warning("[PlayerAi][act] " + LastError);
-                    }
-                    else if (PlayerAiConfig.VerboseLogging)
+                    if (PlayerAiConfig.VerboseLogging)
                     {
                         Engine.Log.Information("[PlayerAi][act] ui click " + target
                             + " at t=" + uiEvent.Time.ToString("0.00") + "s");
                     }
+                    continue;
                 }
-                catch (Exception exception)
+
+                // 引擎如实拒绝（元素不在/被挡住）：多半是"还没轮到它"（切场动画、列表还在填）。
+                // 记成待重试，时间轴继续走，后面的点击等它（见 ①）。
+                m_pendingUiClicks.Add(new PendingUiClick
                 {
-                    LastError = "ui click '" + target + "' failed: " + exception.Message;
-                    Engine.Log.Warning("[PlayerAi][act] " + LastError);
-                }
+                    Target = target,
+                    DueTime = elapsedSeconds,
+                    Deadline = elapsedSeconds + Math.Max(0.5, UiClickRetrySeconds)
+                });
+                Engine.Log.Information("[PlayerAi][act] ui click " + target
+                    + " not ready at t=" + uiEvent.Time.ToString("0.00") + "s; retrying for "
+                    + Math.Max(0.5, UiClickRetrySeconds).ToString("0.0") + "s");
             }
+        }
+
+        /// <summary>点一次（吞异常）：返回 false 表示"这次点不到"，调用方决定重试还是放弃。</summary>
+        private bool TryUiClick(string target)
+        {
+            try
+            {
+                return Actuator != null && Actuator.UiClick(target);
+            }
+            catch (Exception exception)
+            {
+                LastError = "ui click '" + target + "' failed: " + exception.Message;
+                Engine.Log.Warning("[PlayerAi][act] " + LastError);
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// 去掉事件里的动词前缀（`click:Play` → `Play`）。
+        /// **只认已知动词**：否则 `list:WorldsList@世界名` 会被削成 `WorldsList@世界名`，
+        /// 那既不是 `list:` 语义目标也不是控件选择器 —— 回放看着"点了"，其实点了个空。
+        /// 想加新动词就往这张表里加。
+        /// </summary>
+        private static string StripVerb(string detail)
+        {
+            if (string.IsNullOrEmpty(detail))
+                return detail;
+            int colon = detail.IndexOf(':');
+            if (colon <= 0)
+                return detail;
+
+            string verb = detail.Substring(0, colon);
+            if (string.Equals(verb, "click", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(verb, "tap", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(verb, "uiclick", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(verb, "ui.click", StringComparison.OrdinalIgnoreCase))
+            {
+                return detail.Substring(colon + 1);
+            }
+            return detail;
         }
 
         private void LoadKeyframes(ScatActionPackage package)

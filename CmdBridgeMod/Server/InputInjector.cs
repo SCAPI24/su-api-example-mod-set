@@ -94,6 +94,196 @@ namespace CmdBridgeMod
             Focus = new FocusPolicy(this);
             Hotkeys = new HotkeyRegistry();
             Commands = new CommandExtensionRegistry();
+            Ui = new UiService(this);
+        }
+
+        /// <summary>UI 定位 / 点击服务（`ui.locate` / `ui.click`，编辑器与行为树共用）。</summary>
+        internal UiService Ui { get; }
+
+        /// <summary>单帧合成点击用的输入面（下一帧帧首收尾时把它交回去）。</summary>
+        private WidgetInput m_directClickInput;
+
+        /// <summary>在游戏线程执行并返回结果（UI 服务的同步入口）。</summary>
+        internal object OnGameThreadForUi(Func<object> action)
+        {
+            return OnGameThread(action);
+        }
+
+        /// <summary>
+        /// 排一次"单帧合成点击"（**只有坐标、不知道控件**时的入口）：把"按过一下 + 按下起点"
+        /// 写进输入层，让引擎自己的 `UpdateInputFromMouse` 在同一帧派生 `Tap`+`Click`。
+        ///
+        /// 必须是**帧首**写：`WidgetInput.Update()` 一开头就 `ClearInput()`，
+        /// 帧末写等于白写（早期"直注入没反应"就是这个原因）。
+        /// 一帧之后再把软光标关掉，避免长驻改动影响后续真实鼠标。
+        ///
+        /// 优先用 <see cref="ApplyDirectClick"/>（带控件）：**输入面必须取自目标所在的层**
+        /// （世界内 HUD 读的是 `GameWidget` 那层），只给坐标的话只能退回根输入面，HUD 点不动。
+        /// </summary>
+        internal void QueueDirectUiClick(Vector2 point)
+        {
+            EnsureEnabled();
+            NoteUiAction(point.X.ToString("0.##") + "," + point.Y.ToString("0.##") + " (direct)");
+
+            Pump.Enqueue(delegate
+            {
+                ContainerWidget root = ScreensManager.RootWidget;
+                ApplyDirectUiClick(point, root != null ? root.HitTestGlobal(point) : null);
+                // 下一帧收尾：关掉软光标（`Tap/Click` 与 `m_mouseDownPoint` 引擎自己会清）
+                Pump.Enqueue(delegate { RestoreAfterDirectUiClick(); });
+            });
+        }
+
+        /// <summary>在游戏线程上立即合成一次点击（调用方已知道要点哪个控件）。</summary>
+        internal void ApplyDirectClick(Vector2 point, Widget target)
+        {
+            EnsureEnabled();
+            ApplyDirectUiClick(point, target);
+            // 下一帧收尾：关掉软光标（`Tap/Click` 与 `m_mouseDownPoint` 引擎自己会清）
+            Pump.Enqueue(delegate { RestoreAfterDirectUiClick(); });
+        }
+
+        /// <summary>
+        /// 语义点击（给行为树/门面用）：解析目标 + 单帧合成点击。
+        ///
+        /// 两条路，取决于**调用者在哪个线程**：
+        ///   · 已经在游戏线程（行为树 tick、帧首批次）→ **就地**解析 + 就地写输入层，
+        ///     当帧引擎就能读到，返回值是"真的点到了"；
+        ///   · 其它线程（命令面）→ 整件事排到帧首，返回值是"已受理"。
+        /// 坐标一律**点击那一刻**现算（用户要求"用 UI 的真实位置"）。
+        /// </summary>
+        internal bool UiClickTargetCore(string target, string mode, out string error)
+        {
+            error = null;
+            EnsureEnabled();
+            if (string.IsNullOrEmpty(target))
+            {
+                error = "a UI target is required";
+                return false;
+            }
+
+            // 录进"本帧 UI 动作"：动作包靠它把菜单点击录成语义事件（`click:Play` / `click:list:…@…`）。
+            NoteUiAction("click:" + target);
+
+            bool viaSession = string.Equals(mode, "input", StringComparison.OrdinalIgnoreCase);
+            if (GameThreadInvoker.IsGameThread())
+            {
+                return ApplyUiClickNow(target, viaSession, out error);
+            }
+
+            Pump.Enqueue(delegate
+            {
+                string ignored;
+                ApplyUiClickNow(target, viaSession, out ignored);
+            });
+            return true;
+        }
+
+        /// <summary>在游戏线程上执行一次语义点击（解析失败如实返回 false + 原因）。</summary>
+        private bool ApplyUiClickNow(string target, bool viaSession, out string error)
+        {
+            error = null;
+            UiTarget.Parsed parsed;
+            if (!UiTarget.TryParse(target, out parsed))
+            {
+                error = "cannot parse the UI target '" + target + "'";
+                return false;
+            }
+
+            try
+            {
+                if (viaSession)
+                {
+                    switch (parsed.Kind)
+                    {
+                        case UiTarget.TargetKind.ListRow:
+                            UiClickSession(parsed.Selector, false, 0f, 0f, parsed.RowIndex,
+                                parsed.RowText, 0);
+                            break;
+                        case UiTarget.TargetKind.Point:
+                            UiClickSession(null, true, parsed.X, parsed.Y, -1, null, 0);
+                            break;
+                        default:
+                            UiClickSession(parsed.Selector, false, 0f, 0f, -1, null, 0);
+                            break;
+                    }
+                    return true;
+                }
+
+                ApplyDirectUiClick(Ui.ResolvePointCore(target), Ui.ResolveTargetCore(target));
+                // 下一帧收尾：关掉软光标（`Tap/Click` 与 `m_mouseDownPoint` 引擎自己会清）
+                Pump.Enqueue(delegate { RestoreAfterDirectUiClick(); });
+                return true;
+            }
+            catch (BridgeCommandException exception)
+            {
+                // 目标现在还不在（切场动画中间、列表还没填）—— 如实回报，让调用方决定重试。
+                error = exception.Code + ": " + exception.Message;
+                return false;
+            }
+            catch (Exception exception)
+            {
+                error = exception.GetType().Name + ": " + exception.Message;
+                return false;
+            }
+        }
+
+        /// <summary>帧首：写输入层的"按过一下"。</summary>
+        private void ApplyDirectUiClick(Vector2 point, Widget target)
+        {
+            // ⚠️ **必须写在"目标控件自己的输入面"上，不能写在根控件的输入面上**。
+            //
+            // 引擎里每个 `WidgetsHierarchyInput` 是一个独立的 `WidgetInput`：
+            //   · 主菜单那些屏挂在 `ScreensManager.RootWidget` 上 → 用根输入面；
+            //   · **世界内 HUD** 挂在 `GameWidget` 下，而 `GameWidget` 自己在
+            //     `GameWidget.cs:104-106` 设了 `WidgetsHierarchyInput` → HUD 按钮读的是**它那一层**的输入面。
+            // 软光标位置、`IsMouseCursorVisible`、`m_mouseDownPoint` 这三样都是**每个输入面各自一份**，
+            // 写到根输入面上，HUD 按钮那一层什么都没变 → 派生不出 Click。
+            // （实测症状：Editor 里点「点一下」，世界内 MoreButton 毫无反应；`obs.ui` 还如实写着
+            //   `clickable=false, clickReason="mouse cursor is captured"`。）
+            WidgetInput input = target != null ? target.Input : GetRootWidgetInput();
+            if (input == null)
+                throw new BridgeCommandException("not_ready", "The UI input surface is not ready.");
+
+            // 先开软光标，再写位置：MousePosition 的 setter 在软光标关闭时会去挪**真实光标**。
+            input.UseSoftMouseCursor = true;
+            // 世界内 `ComponentInput.Update` 每帧把这一层的可见性置 false（`ComponentInput.cs:155`），
+            // 不重申的话 `UpdateInputFromMouse` 整个被门控掉（`WidgetInput.cs:741`）→ 派生不出 Click。
+            input.IsMouseCursorVisible = true;
+            m_directClickInput = input;
+            input.MousePosition = point;
+
+            // down 数组保持"没按"、只把 downOnce 置位：
+            // 于是这一帧 `Tap`（来自 downOnce）与 `Click`（来自"没按 + 有按下起点"）同时成立 ——
+            // 与真人"快速点一下"在引擎眼里完全等价（Source: Game/WidgetInput.cs:735-769）。
+            SetMouseHeld(MouseButton.Left, false);
+            SetMouseDownOnce(MouseButton.Left, true);
+
+            // 按下起点与"按下的是左键"：Click 派生的两个必要条件
+            Fields.ModifyParentField(input, InputWhitelist.WidgetInputMouseDownPoint,
+                (Vector2?)point, typeof(WidgetInput));
+            Fields.ModifyParentField(input, InputWhitelist.WidgetInputMouseDownButton,
+                MouseButton.Left, typeof(WidgetInput));
+        }
+
+        /// <summary>下一帧帧首：把软光标交回去（一次性动作不该留下长驻状态）。</summary>
+        private void RestoreAfterDirectUiClick()
+        {
+            WidgetInput input = m_directClickInput ?? GetRootWidgetInput();
+            m_directClickInput = null;
+            if (input == null)
+                return;
+
+            try
+            {
+                SetMouseDownOnce(MouseButton.Left, false);
+                ClearWidgetMouseDownPoint(input);
+                input.UseSoftMouseCursor = false;
+            }
+            catch (Exception exception)
+            {
+                Log.Warning("[CmdBridge] direct ui click cleanup failed: " + exception.Message);
+            }
         }
 
         public bool Enabled => m_config.EnableInputInjection;
@@ -369,16 +559,184 @@ namespace CmdBridgeMod
         /// 逐级不可跳的三重保证：目标必须存在（否则 element_missing）、必须当前可命中
         /// （否则 element_occluded 并回报遮挡者）、不提供任何切屏捷径。
         /// </summary>
-        public object UiClick(
-            string selector, int holdMilliseconds, bool hasPoint, float pointX, float pointY)
+        /// <summary>
+        /// 列表行的**当前**客户区坐标（按序号或文字找行）。给"记行不记像素"的回放用：
+        /// 窗口改过大小、UI 缩放过之后，坐标现算才不会点到别的地方。
+        /// </summary>
+        public Vector2? ResolveListRowPoint(string selector, int rowIndex, string rowText)
+        {
+            object result = OnGameThread(() =>
+            {
+                ContainerWidget root = ScreensManager.RootWidget;
+                if (root == null || string.IsNullOrEmpty(selector))
+                    return null;
+                Widget list = UiInspector.Resolve(root, selector, false, default(Vector2));
+                if (list == null)
+                    return null;
+                Vector2 clientPoint;
+                int index;
+                string text;
+                if (!UiInspector.TryResolveListRow(list, rowIndex, rowText, out clientPoint,
+                    out index, out text))
+                {
+                    return null;
+                }
+                return new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    ["selector"] = selector,
+                    ["index"] = index,
+                    ["text"] = text,
+                    ["clientPoint"] = new Dictionary<string, object>(StringComparer.Ordinal)
+                    {
+                        ["x"] = clientPoint.X,
+                        ["y"] = clientPoint.Y
+                    },
+                    ["value"] = clientPoint
+                };
+            });
+            var info = result as Dictionary<string, object>;
+            if (info == null)
+                return null;
+            object value;
+            return info.TryGetValue("value", out value) ? (Vector2?)value : null;
+        }
+
+        /// <summary>
+        /// `act.uiclick` 的实现：**走 CM-1 会话**（一步一帧），按下与抬起天然落在不同帧 ——
+        /// 引擎的 `WidgetInput` 才派生得出 Click。
+        ///
+        /// 为什么不再用"按下 → 释放"的三段式直注入：那三段在同一帧里跑完（命令若在游戏线程
+        /// 派发更是立即执行），实测就是"命令返回成功、界面纹丝不动"。会话路径是动作包回放
+        /// 一直在用的那条，稳定。
+        ///
+        /// 目标定位优先级（用户要求：能用 UI 的真实位置就别用录下来的像素）：
+        /// 列表行（`row`/`text`）→ 控件选择器/路径 → 坐标兜底。
+        /// </summary>
+        public object UiClickSession(string selector, bool hasPoint, float pointX, float pointY,
+            int rowIndex, string rowText, int holdMilliseconds)
         {
             EnsureEnabled();
-            // 记进"本帧 UI 动作"：动作包录制靠它把菜单点击录成语义事件。
-            // 带坐标的点击（列表行这类"不是控件"的目标）记坐标，否则记选择器 ——
-            // 回放时按同样的语义还原（选择器点击 / 坐标点击）。
-            NoteUiAction(hasPoint
-                ? "click:" + pointX.ToString("0.##") + "," + pointY.ToString("0.##")
-                : "click:" + selector);
+
+            // 记进"本帧 UI 动作"，供动作包录制：列表行记语义目标，其余记选择器/坐标。
+            if (rowIndex >= 0 || !string.IsNullOrEmpty(rowText))
+            {
+                NoteUiAction("click:list:" + selector
+                    + (string.IsNullOrEmpty(rowText) ? "#" + rowIndex : "@" + rowText));
+            }
+            else
+            {
+                NoteUiAction(hasPoint
+                    ? "click:" + pointX.ToString("0.##") + "," + pointY.ToString("0.##")
+                    : "click:" + selector);
+            }
+
+            // 目标信息（给调用方看"点到了什么"）+ 现算的落点
+            object resolved = OnGameThread(() =>
+            {
+                ContainerWidget root = ScreensManager.RootWidget;
+                if (root == null)
+                    throw new BridgeCommandException("not_ready", "The UI is not ready yet.");
+
+                Widget target;
+                Vector2 point;
+                if (rowIndex >= 0 || !string.IsNullOrEmpty(rowText))
+                {
+                    Widget list = UiInspector.Resolve(root, selector, false, default(Vector2));
+                    if (list == null)
+                        throw new BridgeCommandException("element_missing",
+                            "no list matches '" + (selector ?? "?") + "'.");
+                    Vector2 rowPoint;
+                    int index;
+                    string text;
+                    if (!UiInspector.TryResolveListRow(list, rowIndex, rowText, out rowPoint,
+                        out index, out text))
+                    {
+                        throw new BridgeCommandException("element_missing",
+                            "no such row in '" + selector + "' (row=" + rowIndex
+                            + " text=" + (rowText ?? "<none>") + ").");
+                    }
+                    target = list;
+                    point = rowPoint;
+                }
+                else if (hasPoint)
+                {
+                    target = root.HitTestGlobal(new Vector2(pointX, pointY));
+                    point = new Vector2(pointX, pointY);
+                    if (target == null)
+                        throw new BridgeCommandException("element_missing",
+                            "Nothing is under (" + pointX.ToString("0.##") + ","
+                            + pointY.ToString("0.##") + ").");
+                }
+                else
+                {
+                    target = UiInspector.Resolve(root, selector, false, default(Vector2));
+                    if (target == null)
+                        throw new BridgeCommandException("element_missing",
+                            "no element matches '" + (selector ?? "?") + "'.");
+                    point = UiInspector.CenterOf(target);
+                }
+
+                Dictionary<string, object> info = UiInspector.DescribeElement(target, 0);
+                info["clickPoint"] = new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    ["x"] = point.X,
+                    ["y"] = point.Y
+                };
+                info["value"] = point;
+                return info;
+            });
+
+            var described = resolved as Dictionary<string, object>;
+            if (described == null)
+                throw new BridgeCommandException("failed", "could not resolve the click target.");
+            var clickPoint = (Vector2)described["value"];
+            described.Remove("value");
+
+            Session.Begin(false);
+            Session.MoveTo(clickPoint, 1);
+            Session.Press(MouseButton.Left);
+            Session.Release(MouseButton.Left);
+            Session.End();
+            Session.WaitUntilIdle(Math.Max(4000, holdMilliseconds + 4000));
+            return described;
+        }
+
+        public object UiClick(
+            string selector, int holdMilliseconds, bool hasPoint, float pointX, float pointY,
+            int rowIndex = -1, string rowText = null)
+        {
+            EnsureEnabled();
+
+            // 列表行：先把"哪一行"的**当前**坐标算出来，再当成坐标点击走同一条路。
+            // 记进录制事件时仍然记语义目标（`list:列表@文字`），回放时才与窗口尺寸无关。
+            if (rowIndex >= 0 || !string.IsNullOrEmpty(rowText))
+            {
+                Vector2? rowPoint = ResolveListRowPoint(selector, rowIndex, rowText);
+                if (!rowPoint.HasValue)
+                {
+                    throw new BridgeCommandException("element_missing",
+                        "no such row in list '" + (selector ?? "?") + "' (row=" + rowIndex
+                        + " text=" + (rowText ?? "<none>") + ")");
+                }
+                hasPoint = true;
+                pointX = rowPoint.Value.X;
+                pointY = rowPoint.Value.Y;
+                // 事件语法：`list:<选择器>#<行号>` 或 `list:<选择器>@<文字>`。
+                // 回放端（PlayerAiMod 的 `UiClickTarget`）按同一套语法解析再现算坐标 ——
+                // 两边是同一份约定，改一处要改另一处。
+                NoteUiAction("click:list:" + selector
+                    + (string.IsNullOrEmpty(rowText) ? "#" + rowIndex : "@" + rowText));
+            }
+            else
+            {
+                // 记进"本帧 UI 动作"：动作包录制靠它把菜单点击录成语义事件。
+                // 带坐标的点击（列表行这类"不是控件"的目标）记坐标，否则记选择器 ——
+                // 回放时按同样的语义还原（选择器点击 / 坐标点击）。
+                NoteUiAction(hasPoint
+                    ? "click:" + pointX.ToString("0.##") + "," + pointY.ToString("0.##")
+                    : "click:" + selector);
+            }
+
             object info = OnGameThread(() => ResolveAndPress(selector, hasPoint, pointX, pointY));
 
             if (holdMilliseconds > 0)
@@ -677,6 +1035,31 @@ namespace CmdBridgeMod
             {
                 m_heldButtons.Remove(index);
             }
+        }
+
+        /// <summary>
+        /// 只写 `downOnce` 数组（**不动** down 数组，也**不登记**为"注入按住"）。
+        ///
+        /// 给"单帧合成点击"用：引擎的 `Click` 派生要求"这一帧没按着 + 上一帧留了按下起点"，
+        /// 而同帧按下再抬起是看不到先后的 —— 所以只在 downOnce 上留"按过一下"，
+        /// `Tap` 与 `Click` 才会在同一帧成立（Source: Game/WidgetInput.cs:735-769）。
+        ///
+        /// ⚠️ **绝不能**把这次按下登记进 `m_heldButtons`：共控合并（`focus.attach` / `auto` 且真实焦点在游戏时）
+        /// 每帧都会把 down 数组重算成 `IsMouseButtonHeldByInjection(i) || 真实按下`
+        /// （`FocusPolicy.MergeInjectedWithReal`），登记成 held 就等于告诉它"这个键还按着"，
+        /// down 数组被抬成 true → `Click` 分支的"没按着"不成立 → 界面纹丝不动。
+        /// （实测：`auto` 模式下真实焦点恰好在游戏里时第一次点击无效，`focus.detach` 之后同样的调用就好了。）
+        /// </summary>
+        internal void SetMouseDownOnce(MouseButton button, bool once)
+        {
+            EnsureMouseArrays();
+            int index = (int)button;
+            if (index < 0 || index >= m_mouseDownOnce.Length)
+                throw new BridgeCommandException("invalid_argument", "Unknown mouse button.");
+
+            m_mouseDownOnce[index] = once;
+            if (!once)
+                m_heldButtons.Remove(index);
         }
 
         private void ReleaseAllCore()

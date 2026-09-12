@@ -78,6 +78,66 @@ namespace PlayerAiMod.Editor
                     case "/api/game/resume":
                         return HttpResponse.Json(m_api.SetPaused(false));
 
+                    // ------------------------------------------------ UI 定位 / 点击服务（UI-1）
+                    // 用户要求："把相应的方法做成 CmdBridgeMod 能提供的服务，在行为树编辑器中，
+                    // 要能够使用来获取坐标或点击对象" —— 拾取面板就是这三条端点的前端。
+                    case "/api/game/ui/elements":
+                    {
+                        bool includeAll = string.Equals(request.GetQuery("all", "false"), "true",
+                            StringComparison.OrdinalIgnoreCase);
+                        int max = 200;
+                        int.TryParse(request.GetQuery("max", "200"), out max);
+                        return HttpResponse.Json(m_api.UiElements(includeAll, max));
+                    }
+                    case "/api/game/ui/locate":
+                        return HttpResponse.Json(m_api.LocateUi(
+                            request.GetQuery("target", request.GetQuery("selector")),
+                            !string.Equals(request.GetQuery("mark", "true"), "false",
+                                StringComparison.OrdinalIgnoreCase)));
+                    case "/api/game/ui/click":
+                    {
+                        var body = ReadBody(request);
+                        string target = request.GetQuery("target", request.GetQuery("selector"));
+                        string mode = request.GetQuery("mode", "direct");
+                        bool mark = !string.Equals(request.GetQuery("mark", "true"), "false",
+                            StringComparison.OrdinalIgnoreCase);
+                        if (body != null && body.Has("target"))
+                            target = body.Get("target").AsString(target);
+                        if (body != null && body.Has("mode"))
+                            mode = body.Get("mode").AsString(mode);
+                        if (body != null && body.Has("mark"))
+                            mark = body.Get("mark").AsBool(mark);
+                        return HttpResponse.Json(m_api.ClickUi(target, mode, mark));
+                    }
+
+                    // ------------------------------------------------ 启动 / 结束游戏
+                    // 只判断"进程在不在 + 通道通不通"，不碰游戏状态
+                    case "/api/game/process":
+                        return HttpResponse.Json(m_api.GameProcessStatus());
+                    case "/api/game/launch":
+                        return HttpResponse.Json(m_api.LaunchGame());
+                    case "/api/game/quit":
+                        return HttpResponse.Json(m_api.QuitGame());
+                    case "/api/game/tree/stop":
+                        return HttpResponse.Json(m_api.StopGameTree());
+                    case "/api/game/tree/switch":
+                    {
+                        var body = ReadBody(request);
+                        string target = request.GetQuery("path", request.GetQuery("name"));
+                        string entry = request.GetQuery("entry", null);
+                        bool start = !string.Equals(request.GetQuery("start", "true"), "false",
+                            StringComparison.OrdinalIgnoreCase);
+                        if (body != null && body.Has("path"))
+                            target = body.Get("path").AsString(target);
+                        else if (body != null && body.Has("name"))
+                            target = body.Get("name").AsString(target);
+                        if (body != null && body.Has("entry"))
+                            entry = body.Get("entry").AsString(entry);
+                        if (body != null && body.Has("start"))
+                            start = body.Get("start").AsBool(start);
+                        return HttpResponse.Json(m_api.SwitchGameTree(target, entry, start));
+                    }
+
                     // ------------------------------------------------ 动作包（P1）：当物料用
                     case "/api/actions":
                         return HttpResponse.Json(m_api.ListActions());
@@ -114,24 +174,7 @@ namespace PlayerAiMod.Editor
                         return HttpResponse.Json(m_api.CreateSampleAction(name, overwrite));
                     }
                     case "/api/game/status":
-                    {
-                        try
-                        {
-                            return HttpResponse.Json(new Dictionary<string, object>(StringComparer.Ordinal)
-                            {
-                                ["ok"] = true,
-                                ["status"] = m_api.Game.QueryStatus()
-                            });
-                        }
-                        catch (Exception exception)
-                        {
-                            return HttpResponse.Json(new Dictionary<string, object>(StringComparer.Ordinal)
-                            {
-                                ["ok"] = false,
-                                ["reason"] = exception.Message
-                            });
-                        }
-                    }
+                        return HttpResponse.Json(m_api.GameStatus());
                     default:
                         return HttpResponse.Text(404, "not found: " + path);
                 }

@@ -108,32 +108,24 @@ namespace PlayerAiMod
             facade.Wheel(delta);
         }
 
-        /// <summary>UI 点击（走 CM-1 软光标：不碰物理鼠标、不可点就如实失败）。</summary>
+        /// <summary>
+        /// UI 点击。**交给 CmdBridge 的 UI 服务**：目标解析（控件名/路径/文本、`list:列表@文字`、
+        /// `list:列表#行号`）与"点在哪个像素"都在那边**点击那一刻**现算 —— 与编辑器/行为树用的是
+        /// 同一份实现，不会出现"编辑器能点、回放点空"。
+        /// </summary>
         public bool UiClick(string selectorOrPoint)
+        {
+            return UiClick(selectorOrPoint, "direct");
+        }
+
+        /// <summary>同上，指定点法（`direct` / `input` / `invoke`）。</summary>
+        public bool UiClick(string selectorOrPoint, string mode)
         {
             CmdBridgeInput facade = Facade;
             if (facade == null || string.IsNullOrEmpty(selectorOrPoint))
                 return false;
 
-            int comma = selectorOrPoint.IndexOf(',');
-            bool looksLikePoint = comma > 0 && selectorOrPoint.IndexOf('/') < 0
-                && selectorOrPoint.IndexOf('[') < 0;
-            if (looksLikePoint)
-            {
-                float x;
-                float y;
-                if (float.TryParse(selectorOrPoint.Substring(0, comma),
-                        System.Globalization.NumberStyles.Float,
-                        System.Globalization.CultureInfo.InvariantCulture, out x)
-                    && float.TryParse(selectorOrPoint.Substring(comma + 1),
-                        System.Globalization.NumberStyles.Float,
-                        System.Globalization.CultureInfo.InvariantCulture, out y))
-                {
-                    return facade.UiQueueClickAt(x, y);
-                }
-            }
-
-            return facade.UiQueueClick(selectorOrPoint);
+            return facade.UiClickTarget(selectorOrPoint, string.IsNullOrEmpty(mode) ? "direct" : mode);
         }
 
         public void ReleaseAll()

@@ -95,7 +95,12 @@ namespace CmdBridgeMod
             }
         }
 
-        private static bool IsGameThread()
+        /// <summary>
+        /// 当前线程是不是游戏主线程。UI 服务用它决定"就地解析+就地注入"还是"排到帧首"：
+        /// 行为树 tick 本来就在帧首批次里跑，就地写输入层当帧就能被引擎读到
+        /// （于是能如实回答"点到了没有"，而不是只回"已受理"）。
+        /// </summary>
+        public static bool IsGameThread()
         {
             try
             {

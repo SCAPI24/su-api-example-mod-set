@@ -10,7 +10,7 @@ namespace PlayerAiMod
     /// <summary>
     /// 包格式与加载器自检（P0-3 / P0-4）：**纯逻辑、不落盘、不依赖游戏**。
     ///
-    /// 覆盖：manifest/tree 解析、结构校验的每一条错误路径、双目录白名单与路径穿越、
+    /// 覆盖：manifest/tree 解析、结构校验的每一条错误路径、包目录白名单与路径穿越、
     /// 嵌套引用（含 `#节点id`）、环检测、深度/数量上限、编译结果（类型/属性/装饰器/服务/
     /// 每处引用独立实例）、以及"编译出来的树真的能跑"（接 <see cref="BtRuntime"/> 跑几帧看黑板）。
     ///
@@ -539,30 +539,31 @@ namespace PlayerAiMod
                     FirstIssue(set));
             }
 
-            // 跨包根目录的引用：只把主包放到实例目录，被引用的包留在 Mod 目录
-            // （用户"复制出厂包到实例目录来改"就是这种形态，计划 §4.4 的推荐流程）
+            // 引用落在**包目录的另一个文件**上（不是引用者旁边）：导出/另存出来的包引用的
+            // `common.scbtpak` 还在同一个包目录里，必须找得到（单一目录，不再有第二来源）。
             {
                 var source = new MemoryPackageSource();
                 PackageTemplate demo = PackageTemplates.Demo();
                 PackageTemplate common = PackageTemplates.Common();
-                source.Add(Path.Combine(InstanceDir, PackageTemplates.DemoFile),
+                source.Add(Path.Combine(InstanceDir, "sub", PackageTemplates.DemoFile),
                     demo.ToBytes());
-                source.Add(Path.Combine("C:/pai-selftest-mods", PackageTemplates.CommonFile),
+                source.Add(Path.Combine(InstanceDir, PackageTemplates.CommonFile),
                     common.ToBytes());
 
-                var roots = new PackageRoots(InstanceDir, "C:/pai-selftest-mods");
+                var roots = new PackageRoots(InstanceDir);
                 var options = new PackageLoadOptions { Source = source, Roots = roots };
-                ScbtPackageSet set = PackageLoader.Load(PackageTemplates.DemoFile, options);
+                ScbtPackageSet set = PackageLoader.Load(
+                    Path.Combine(InstanceDir, "sub", PackageTemplates.DemoFile), options);
 
-                result.Check("a package copied to the instance folder still finds its reference in the Mod folder",
+                result.Check("a package in a subfolder still finds its reference in the package folder",
                     !set.HasErrors && set.Root != null && set.Root.ReferenceTargets.Count == 1
                     && set.Root.ReferenceTargets[0] != null,
                     FirstIssue(set));
-                result.Check("the cross-root reference resolved to the Mod copy",
+                result.Check("that reference resolved inside the package folder",
                     set.Root != null && set.Root.ReferenceTargets.Count == 1
                     && set.Root.ReferenceTargets[0] != null
-                    && set.Root.ReferenceTargets[0].Path.StartsWith("C:", StringComparison.OrdinalIgnoreCase)
-                    && set.Root.ReferenceTargets[0].Path.Contains("mods"),
+                    && set.Root.ReferenceTargets[0].Path.Replace('\\', '/')
+                        .StartsWith(InstanceDir + "/", StringComparison.OrdinalIgnoreCase),
                     set.Root != null && set.Root.ReferenceTargets.Count > 0
                     && set.Root.ReferenceTargets[0] != null
                         ? set.Root.ReferenceTargets[0].Path : "<unresolved>");
@@ -592,9 +593,9 @@ namespace PlayerAiMod
 
         private static void RootWhitelist(BtSelfTest.TestResult result)
         {
-            var roots = new PackageRoots(InstanceDir, "C:/pai-selftest-mod/BehaviorTrees");
+            var roots = new PackageRoots(InstanceDir);
 
-            result.Check("whitelist accepts the instance folder",
+            result.Check("whitelist accepts the package folder",
                 roots.IsAllowed(InstanceDir + "/x.scbtpak"), roots.Describe());
             result.Check("whitelist rejects a sibling folder",
                 !roots.IsAllowed("C:/pai-selftest-evil/x.scbtpak"), roots.Describe());
@@ -678,7 +679,7 @@ namespace PlayerAiMod
             var options = new PackageLoadOptions
             {
                 Source = source,
-                Roots = new PackageRoots(InstanceDir, null)
+                Roots = new PackageRoots(InstanceDir)
             };
 
             ScbtPackageSet set;
@@ -691,7 +692,7 @@ namespace PlayerAiMod
             var goodOptions = new PackageLoadOptions
             {
                 Source = good,
-                Roots = new PackageRoots(InstanceDir, null)
+                Roots = new PackageRoots(InstanceDir)
             };
             CompiledTree ok = PackageLoader.LoadAndCompile("demo.greet", out set, goodOptions);
             result.Check("LoadAndCompile returns a runnable tree for a good package",
@@ -716,20 +717,19 @@ namespace PlayerAiMod
             }
             Directory.CreateDirectory(directory);
 
-            var roots = new PackageRoots(Path.Combine(directory, "instance"),
-                Path.Combine(directory, "mods"));
+            var roots = new PackageRoots(Path.Combine(directory, "instance"));
 
             List<string> installed;
             string error;
             int count = PackageTemplates.Install(roots, out installed, out error);
-            result.Check("factory templates install into the Mod folder",
+            result.Check("factory templates install into the package folder",
                 count == 4 && error == null, error ?? ("count=" + count));
             result.Check("template install is idempotent (never overwrites)",
                 PackageTemplates.Install(roots, out installed, out error) == 0,
                 error ?? ("second call wrote " + installed.Count));
 
-            string demoPath = Path.Combine(roots.ModRoot.Path, PackageTemplates.DemoFile);
-            string commonPath = Path.Combine(roots.ModRoot.Path, PackageTemplates.CommonFile);
+            string demoPath = Path.Combine(roots.InstanceRoot.Path, PackageTemplates.DemoFile);
+            string commonPath = Path.Combine(roots.InstanceRoot.Path, PackageTemplates.CommonFile);
             result.Check("installed template files exist",
                 File.Exists(demoPath) && File.Exists(commonPath), roots.Describe());
 
@@ -953,8 +953,7 @@ namespace PlayerAiMod
             }
             Directory.CreateDirectory(directory);
 
-            var roots = new PackageRoots(Path.Combine(directory, "instance"),
-                Path.Combine(directory, "mods"));
+            var roots = new PackageRoots(Path.Combine(directory, "instance"));
             List<string> installed;
             string installError;
             PackageTemplates.Install(roots, out installed, out installError);
@@ -996,7 +995,7 @@ namespace PlayerAiMod
                 reloader.Describe());
 
             // ---- 切换后热重载仍然认得这棵活动树（Adopt 的意义）
-            string demoPath = Path.Combine(roots.ModRoot.Path, PackageTemplates.DemoFile);
+            string demoPath = Path.Combine(roots.InstanceRoot.Path, PackageTemplates.DemoFile);
             reloader.RequestReload("demo.greet");
             bool reloaded = reloader.ApplyPending(runtime);
             result.Check("hot reload still applies to the switched tree",
@@ -1110,7 +1109,7 @@ namespace PlayerAiMod
             var options = new PackageLoadOptions
             {
                 Source = source,
-                Roots = new PackageRoots(InstanceDir, null)
+                Roots = new PackageRoots(InstanceDir)
             };
             return PackageLoader.Load(name, options);
         }

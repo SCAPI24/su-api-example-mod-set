@@ -164,8 +164,7 @@ namespace PlayerAiMod
         private static void ReloadWiring(BtSelfTest.TestResult result)
         {
             string directory = FreshDirectory("pai-log-wiring");
-            var roots = new PackageRoots(Path.Combine(directory, "instance"),
-                Path.Combine(directory, "mods"));
+            var roots = new PackageRoots(Path.Combine(directory, "instance"));
             List<string> installed;
             string installError;
             PackageTemplates.Install(roots, out installed, out installError);
@@ -183,7 +182,7 @@ namespace PlayerAiMod
                 DescribeRecent(log));
 
             // 无变化的通知 → ignore 记录
-            string demoPath = Path.Combine(roots.ModRoot.Path, PackageTemplates.DemoFile);
+            string demoPath = Path.Combine(roots.InstanceRoot.Path, PackageTemplates.DemoFile);
             reloader.Notify(demoPath, PackageLoader.ComputeHash(File.ReadAllBytes(demoPath)));
             reloader.ApplyPending(host.Tree);
             result.Check("an ignored notification is recorded", HasEntry(log, "[ignore"),

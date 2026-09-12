@@ -15,6 +15,12 @@
       : localStorage.getItem('playerAiEditor.theme') === 'dark';
     if (!dark) document.documentElement.className = 'light';
   } catch (error) { /* 隐私模式取不到 localStorage：用默认浅色即可 */ }
+
+  /* `?test=1` 时挂出内部测试钩子（window.PlayerAiEditorTest）。
+     必须在这里、**app.js 之前**定下来：app.js 是在加载时决定要不要挂钩子的。
+     真浏览器自检（/selftest.html）用同源 iframe 加载 `/?test=1`，
+     才能驱动那些"光看源码验不了"的内部状态（例如启动游戏的三态徽标）。 */
+  if (/[?&]test=1\b/.test(location.search)) window.__PLAYER_AI_EDITOR_TEST__ = true;
 </script>
 </head>
 <body>
@@ -23,7 +29,7 @@
   <div class="group">
     <label>包</label>
     <select id="packageSelect"></select>
-    <button id="btnNew" title="在实例目录新建一棵空白树（Root → Sequence → Task.Wait）">新建</button>
+    <button id="btnNew" title="在包目录 PlayerAi\\\\BehaviorTrees 里新建一棵空白树（Root → Sequence → Task.Wait）">新建</button>
     <button id="btnOpen" title="打开选中的包">打开</button>
     <button id="btnReload" title="从磁盘重新读取">重读</button>
   </div>
@@ -34,19 +40,23 @@
   <div class="group">
     <button id="btnValidate" title="用游戏内同一份校验器检查（不写盘）">校验</button>
     <button id="btnSave" class="primary" title="校验通过后原子写回包">保存</button>
-    <button id="btnSaveAs" title="另存到实例目录（不改原包）">另存为</button>
-    <button id="btnNotify" title="通知正在运行的游戏热重载">推送热重载</button>
+    <button id="btnSaveAs" title="另存到包目录（新建一个文件，不改原包）">另存为</button>
+    <button id="btnTreeRun" class="primary" title="播放：保存改动后让游戏切到这棵树并开始跑">▶ 播放这棵树</button>
+    <button id="btnTreeStop" title="停止并卸下当前树（释放输入）——之后再点播放就是从头开始">⏹ 停止</button>
+    <span id="treeRunBadge" class="badge" title="游戏里现在跑的是哪棵树、跑没跑、暂停没暂停">树：未知</span>
   </div>
   <div class="group">
     <label>动作包</label>
-    <select id="actionSelect" title="实例目录 + Mod 分发目录里的 .scatpak"></select>
+    <select id="actionSelect" title="包目录 PlayerAi\\\\BehaviorTrees 里的 .scatpak"></select>
     <button id="btnActionValidate" title="校验结构，并告诉你这个包能不能回放">校验</button>
     <button id="btnActionPlay" title="让游戏直接回放它（不经行为树）">试跑</button>
     <button id="btnActionStop" title="停止回放并释放输入">停止</button>
-    <button id="btnActionCreate" title="在实例目录造一个新的示例动作包（不依赖真机录制）">自造</button>
+    <button id="btnActionCreate" title="在包目录造一个新的示例动作包（不依赖真机录制）">自造</button>
     <span id="actionBadge" class="badge">动作包：未知</span>
   </div>
   <div class="group">
+    <button id="btnLaunchGame" title="启动游戏（等价于双击 <实例根>\Survivalcraft.exe），起来后编辑器自动等控制通道">启动游戏</button>
+    <button id="btnQuitGame" title="结束游戏（先请它正常退出，超时才强杀）">结束游戏</button>
     <button id="btnGame" title="问游戏要 ai.status">游戏状态</button>
     <span id="gameBadge" class="badge">游戏：未知</span>
     <button id="btnTheme" title="在深色 / 浅色之间切换（记在这个浏览器里）">主题：深色</button>
@@ -101,6 +111,33 @@
       <button id="btnResumeTree" title="让游戏继续行为树">继续树</button>
     </div>
     <div id="liveBox"><p class="hint">打开"实时监视"就能看到游戏里正在跑哪个节点。</p></div>
+
+    <h2 style="margin-top:14px">UI 拾取 <span class="hint">（取界面真实位置 / 直接点它）</span></h2>
+    <p class="hint">这些目标是**语义目标**，不是像素：<code>Play</code>、<code>[MainMenuScreen#0]/…/Play</code>、
+      <code>list:WorldsList@世界名</code>、<code>list:WorldsList#0</code>。
+      游戏在点击那一刻自己算坐标 —— 改窗口大小、改 UI 缩放都不会点空。</p>
+    <div class="group" style="margin-bottom:6px">
+      <button id="btnUiPick" title="问游戏当前屏幕上可交互的元素（带真实坐标与可点性判定）">⟳ 拾取界面元素</button>
+      <select id="uiClickMode" title="用什么方式点：direct=单帧合成按下（默认，最稳）；input=多帧软光标会话；invoke=直接发控件事件；auto=能发事件就发">
+        <option value="direct">direct 单帧按下</option>
+        <option value="auto">auto 优先发事件</option>
+        <option value="input">input 多帧软光标</option>
+        <option value="invoke">invoke 直接发事件</option>
+      </select>
+    </div>
+    <div class="group" style="margin-bottom:6px">
+      <input id="uiTargetInput" placeholder="目标：Play / [MainMenuScreen#0]/…/Play / list:WorldsList@世界名" />
+      <button id="btnUiLocate" title="解析这个目标：现在在哪、能不能点（坐标现算；默认在游戏里那个像素上亮 2 秒红点）">定位</button>
+      <button id="btnUiClick" title="在游戏里真的点一下（只动玩家输入层，不写游戏状态）">点一下</button>
+      <button id="btnUiFill" title="把这个目标写进选中的 Task.UiClick 节点；没选中就新建一个挂到选中节点下">填进树</button>
+    </div>
+    <div class="group" style="margin-bottom:6px">
+      <label class="hint" title="定位/点击时在游戏里那个像素上亮一个红点（2 秒、5 像素），一眼看出它认为目标在哪">
+        <input id="uiMarkToggle" type="checkbox" checked="checked" /> 标记落点（2s / 5px 红点）
+      </label>
+      <span id="uiLocatedLine" class="hint"></span>
+    </div>
+    <div id="uiPickBox"><p class="hint">点「拾取界面元素」看看现在屏幕上有什么可点的。</p></div>
   </section>
 </main>
 

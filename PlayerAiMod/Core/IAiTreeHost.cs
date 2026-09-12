@@ -12,6 +12,13 @@ namespace PlayerAiMod
         /// <summary>宿主名（真实实现里就是玩家名）。</summary>
         string HostName { get; }
 
+        /// <summary>
+        /// 宿主种类（稳定的英文名，控制面 JSON 用它）：
+        /// `"player"` = 接管了一个真实角色（世界里）；`"menu"` = 无角色宿主（主菜单，
+        /// 只能注入 UI 点击）。编辑器靠它显示"（主菜单，无角色）"这种诚实的状态。
+        /// </summary>
+        string HostKind { get; }
+
         /// <summary>是否由 AI 接管（false = 不产生任何动作）。</summary>
         bool Enabled { get; set; }
 

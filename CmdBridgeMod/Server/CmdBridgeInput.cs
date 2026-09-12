@@ -478,6 +478,93 @@ namespace CmdBridgeMod
             }
         }
 
+        /// <summary>
+        /// **非阻塞**的语义点击（UI 服务版，行为树/回放用）：
+        /// 目标是"控件名 / 路径 / `list:列表@文字` / `list:列表#行号`"，坐标在点击那一刻现算。
+        ///
+        /// `mode`：`direct`（默认，单帧合成 Tap+Click，引擎自己的控件逻辑照常跑）/
+        /// `input`（老的软光标多帧会话）。返回 true = 已受理（不是"已经点到了"）。
+        /// </summary>
+        public bool UiClickTarget(string target, string mode = "direct")
+        {
+            string ignored;
+            return UiClickTarget(target, mode, out ignored);
+        }
+
+        /// <summary>
+        /// 同上，但**如实回报"这次到底点到没有"**：在游戏线程上调用（行为树 tick）时，
+        /// 解析就地进行 —— 目标不在（切场动画中间、列表还没填）时返回 false 并把原因写进
+        /// <paramref name="error"/>，调用方可以据此重试（这正是回放里"没点成就重试"的依据）。
+        /// </summary>
+        public bool UiClickTarget(string target, string mode, out string error)
+        {
+            error = null;
+            if (!IsAvailable || string.IsNullOrEmpty(target))
+            {
+                error = IsAvailable ? "a UI target is required" : "CmdBridgeMod is not available";
+                return false;
+            }
+            try
+            {
+                return m_injector.UiClickTargetCore(target, mode, out error);
+            }
+            catch (Exception exception)
+            {
+                error = exception.GetType().Name + ": " + exception.Message;
+                LogFailure("UiClickTarget", exception);
+                return false;
+            }
+        }
+
+        /// <summary>同步定位一个语义目标（编辑器/命令面用）：现算坐标 + 可点性。</summary>
+        public Dictionary<string, object> UiLocate(string target, bool mark = false)
+        {
+            if (!IsAvailable || string.IsNullOrEmpty(target))
+                return null;
+            try
+            {
+                return m_injector.Ui.Locate(target, mark, UiMarker.DefaultSeconds,
+                    UiMarker.DefaultDiameterPixels);
+            }
+            catch (Exception exception)
+            {
+                LogFailure("UiLocate", exception);
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// **非阻塞**的软光标点击：点列表里的某一行（按序号 `row` 或文字 `text` 找行）。
+        /// 保留给"必须走多帧会话"的场合；新代码优先用 <see cref="UiClickTarget"/>。
+        ///
+        /// 为什么要它（用户明确要求）：列表行在录制时只能记坐标，而**坐标会随窗口尺寸/UI 缩放失效**
+        /// —— 改过窗口再回放就点不动。这里记的是"哪个列表的第几行 / 哪一行文字"，
+        /// 坐标在**点击这一刻**由 `UiInspector.TryResolveListRow` 现算，与窗口尺寸无关。
+        /// </summary>
+        public bool UiQueueClickListRow(string selector, int rowIndex, string rowText)
+        {
+            if (!IsAvailable || string.IsNullOrEmpty(selector))
+                return false;
+            try
+            {
+                Vector2? point = m_injector.ResolveListRowPoint(selector, rowIndex, rowText);
+                if (!point.HasValue)
+                    return false;
+
+                m_injector.Session.Begin(false);
+                m_injector.Session.MoveTo(point.Value, 1);
+                m_injector.Session.Press(MouseButton.Left);
+                m_injector.Session.Release(MouseButton.Left);
+                m_injector.Session.End();
+                return true;
+            }
+            catch (Exception exception)
+            {
+                LogFailure("UiQueueClickListRow", exception);
+                return false;
+            }
+        }
+
         public bool UiRightClickElement(string selector)
         {
             return RunSession(() => m_injector.Session.RightClick(selector), 3000);

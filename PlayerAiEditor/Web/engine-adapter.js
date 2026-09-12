@@ -97,7 +97,6 @@
         frames: action.frames,
         source: action.source,
         writable: !!action.writable,
-        shadowed: !!action.shadowed,
         properties: []
       };
     });

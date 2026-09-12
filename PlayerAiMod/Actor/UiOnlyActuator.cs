@@ -20,31 +20,24 @@ namespace PlayerAiMod
             get { return CmdBridgeActuator.IsAvailable; }
         }
 
+        /// <summary>
+        /// 点击一个 UI 目标。**交给 CmdBridge 的 UI 服务**（`ui.clickElement` 那条服务）：
+        /// 目标解析（控件名/路径/文本、`list:列表@文字`、`list:列表#行号`）与坐标现算都在那边做，
+        /// 这里不再自己判断目标类型 —— 两边各解析一次曾经就是"编辑器能点、回放点空"的来源。
+        /// </summary>
         public bool UiClick(string selectorOrPoint)
+        {
+            return UiClick(selectorOrPoint, "direct");
+        }
+
+        /// <summary>同上，指定点法（`direct` / `input` / `invoke`）。</summary>
+        public bool UiClick(string selectorOrPoint, string mode)
         {
             CmdBridgeInput facade = CmdBridgeActuator.FacadeOrNull;
             if (facade == null || string.IsNullOrEmpty(selectorOrPoint))
                 return false;
 
-            int comma = selectorOrPoint.IndexOf(',');
-            bool looksLikePoint = comma > 0 && selectorOrPoint.IndexOf('/') < 0
-                && selectorOrPoint.IndexOf('[') < 0;
-            if (looksLikePoint)
-            {
-                float x;
-                float y;
-                if (float.TryParse(selectorOrPoint.Substring(0, comma),
-                        System.Globalization.NumberStyles.Float,
-                        System.Globalization.CultureInfo.InvariantCulture, out x)
-                    && float.TryParse(selectorOrPoint.Substring(comma + 1),
-                        System.Globalization.NumberStyles.Float,
-                        System.Globalization.CultureInfo.InvariantCulture, out y))
-                {
-                    return facade.UiQueueClickAt(x, y);
-                }
-            }
-
-            return facade.UiQueueClick(selectorOrPoint);
+            return facade.UiClickTarget(selectorOrPoint, string.IsNullOrEmpty(mode) ? "direct" : mode);
         }
 
         // ---- 以下是"世界外没有意义"的动作：空实现（不假装成功） ----

@@ -46,12 +46,24 @@ namespace PlayerAiMod
         void Wheel(int delta);
 
         /// <summary>
-        /// 引擎内 UI 点击（按控件路径；`selectorOrPoint` 形如 `[Screen]/…/Play` 或 `x,y`）。
-        /// 菜单/背包这类操作在原始输入层里没有痕迹，只能这样重放 —— 走的仍是 CM-1 的软光标路径，
-        /// 不碰物理鼠标，也不跳级（不可点就如实失败）。
-        /// 返回 false = 注入器拒绝了这次点击（元素不在/被挡住/未启用），调用方应如实记录，不能当成功。
+        /// 引擎内 UI 点击（**语义目标**；`selectorOrPoint` 形如 `Play`、`[Screen]/…/Play`、
+        /// `list:WorldsList@世界名`、`list:WorldsList#0`，坐标只是最后兜底）。
+        /// 坐标由 CmdBridge 的 UI 服务在**点击那一刻**现解析 —— 所以改窗口大小/UI 缩放都点不空
+        /// （用户要求：能用 UI 的真实位置就别用录下来的像素）。
+        /// 菜单/背包这类操作在原始输入层里没有痕迹，只能这样重放。
+        /// 返回 false = 这次没点到（元素不在/被挡住/未启用），调用方应如实记录，不能当成功。
         /// </summary>
         bool UiClick(string selectorOrPoint);
+
+        /// <summary>
+        /// 同上，但指定点法（`mode`）：
+        ///   · `direct`（默认）：单帧合成"按下→抬起"，引擎自己派生 `Tap`+`Click`，
+        ///     控件自己的逻辑（`IsClicked`、列表选中、点击音）照常跑；
+        ///   · `input`：多帧软光标会话（移动 → 按下 → 抬起，一步一帧）；
+        ///   · `invoke`：直接触发控件自己的"按下事件"（能触发才有效，**绕过输入层**，
+        ///     只给明确要这么做的场合用）。
+        /// </summary>
+        bool UiClick(string target, string mode);
 
         /// <summary>释放全部按键与鼠标状态。禁用、失焦、卸载、进入安全状态时必须调用。</summary>
         void ReleaseAll();

@@ -284,7 +284,11 @@ namespace PlayerAiMod
         {
             // 组合 / 根
             s_nodes["Root"] = new BtNodeInfo("Root", () => new BtRootNode(),
-                BtNodeShape.Root, true, new BtPropertySpec[0]);
+                BtNodeShape.Root, true, new[]
+                {
+                    new BtPropertySpec("loop", BtPropertyKind.Bool, false, "true", null,
+                        "跑完整棵树之后要不要从头再来（false = 一次性，例如「进入游戏」这种菜单宏）"),
+                });
             s_nodes["Selector"] = new BtNodeInfo("Selector", () => new BtSelectorNode(),
                 BtNodeShape.Composite, true, new BtPropertySpec[0]);
             s_nodes["Sequence"] = new BtNodeInfo("Sequence", () => new BtSequenceNode(),
@@ -358,6 +362,19 @@ namespace PlayerAiMod
             // 只存在于代码里的委托节点：包格式里出现即报错（校验器据此提示）
             s_nodes["Task.Lambda"] = new BtNodeInfo("Task.Lambda", () => new BtLambdaTask(),
                 BtNodeShape.Task, false, new BtPropertySpec[0]);
+
+            // UI 点击（UI-1 服务，2026-09-12）：目标是**语义目标**，坐标由 CmdBridge 在点击那一刻现算
+            // —— 改窗口大小/UI 缩放都不会点空（用户明确要求），编辑器里也能"拾取"出这个目标串。
+            s_nodes["Task.UiClick"] = new BtNodeInfo("Task.UiClick", () => new BtUiClickTask(),
+                BtNodeShape.Task, true, new[]
+                {
+                    BtProps.RequiredStr("target",
+                        "UI 目标：控件名/文本（Play）、路径（[MainMenuScreen#0]/…/Play）、"
+                        + "列表行（list:WorldsList@世界名 或 list:WorldsList#0）"),
+                    BtProps.Enum("mode", "direct", BtSchema.UiClickModes),
+                    BtProps.Float("waitSeconds", 3f, "目标还没出现时最多等多久（秒）"),
+                    BtProps.Int("repeat", 1, "连点几次")
+                });
 
             // 装饰器
             s_decorators["Blackboard"] = new BtDecoratorInfo("Blackboard",

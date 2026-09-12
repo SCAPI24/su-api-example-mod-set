@@ -41,12 +41,13 @@ namespace PlayerAiMod
         private string m_actionName;
         private CmdBridgeMod.CmdBridgeInputFrame m_lastInputFrame;
         private AiEventLog m_eventLog;
+        private ControllerTreeHost m_controller;
 
         // ---------------------------------------------------------------- 录制（P0-9）
 
         /// <summary>
-        /// 录制会话（全局一个）。落盘目录是**实例包目录** `<实例根>/PlayerAi/BehaviorTrees/` ——
-        /// 与树包同路径（计划 §4.4），且只写用户可写的那一份，Mod 分发目录永不写入。
+        /// 录制会话（全局一个）。落盘目录是**唯一的包目录** `<实例根>/PlayerAi/BehaviorTrees/` ——
+        /// 与树包同路径（计划 §4.4）。
         /// </summary>
         public AiRecordingSession Recording
         {
@@ -82,9 +83,8 @@ namespace PlayerAiMod
         }
 
         /// <summary>
-        /// 动作包的查找链：**实例包目录在前，Mod 只读分发目录在后**（前面的优先）。
-        /// 与树包的引用解析同源：出厂示例装在 Mod 目录里，直接播放也要找得到；
-        /// 用户自己录的包落在实例目录，同名时覆盖分发目录里的那一份。
+        /// 动作包目录：与树包**同一个**目录（`&lt;实例根&gt;/PlayerAi/BehaviorTrees`）。
+        /// 以前还有第二级"Mod 分发目录兜底"，2026-09-12 按用户要求简化成单一目录。
         /// </summary>
         public List<string> ResolveActionDirectories()
         {
@@ -93,20 +93,6 @@ namespace PlayerAiMod
             string primary = ResolveActionDirectory();
             if (!string.IsNullOrEmpty(primary))
                 directories.Add(primary);
-
-            PackageRoots roots = m_packageRoots;
-            string mod = roots != null && roots.ModRoot != null ? roots.ModRoot.Path : null;
-            if (!string.IsNullOrEmpty(mod))
-            {
-                bool duplicate = false;
-                for (int i = 0; i < directories.Count; i++)
-                {
-                    if (string.Equals(directories[i], mod, StringComparison.OrdinalIgnoreCase))
-                        duplicate = true;
-                }
-                if (!duplicate)
-                    directories.Add(mod);
-            }
 
             return directories;
         }
@@ -396,33 +382,69 @@ namespace PlayerAiMod
             }
         }
 
-        /// <summary>当前的行为树宿主（哪个角色在跑树）。控制面装载树时确定。</summary>
-        public IAiTreeHost TreeHost { get; private set; }
+        /// <summary>
+        /// **控制器宿主**：行为树绑定的对象。它不是角色（用户明确要求），所以它一直存在 ——
+        /// 主菜单、世界里、退出世界后都是同一个宿主，树的运行态因此能跨世界切换保留。
+        /// 惰性创建；命令层与帧首 tick 共用同一个实例。
+        /// </summary>
+        public IAiTreeHost ControllerHost
+        {
+            get { return ControllerHostInternal; }
+        }
+
+        /// <summary>`ControllerTreeHost` 是内部类型（外部只该通过 <see cref="IAiTreeHost"/> 用它），
+        /// 但帧首推进 / 绑定世界输入需要具体类型上的成员。</summary>
+        internal ControllerTreeHost ControllerHostInternal
+        {
+            get
+            {
+                if (m_controller == null)
+                    m_controller = new ControllerTreeHost(new UiOnlyActuator());
+                return m_controller;
+            }
+        }
 
         /// <summary>
-        /// 找一个可以接管的宿主：优先已绑定的 <see cref="TreeHost"/>，
-        /// 否则取第一个"已接管且就绪"的角色。
+        /// 行为树宿主 = **控制器**。顺带把"现在能不能驱动某个角色"同步进去：
+        /// 世界里接上第一个就绪的角色，世界没了（或没有可驱动角色）就摘掉 ——
+        /// **只换输入路由，不卸载树、不重置运行态**（这正是"进游戏前点按钮、退出世界后接着干"
+        /// 能成立的原因；换宿主就意味着树被卸下重装，运行态丢失）。
         /// </summary>
         public IAiTreeHost ResolveTreeHost()
         {
-            if (TreeHost != null && TreeHost.Enabled)
-                return TreeHost;
-
-            for (int i = 0; i < m_actors.Count; i++)
-            {
-                AiActor actor = m_actors[i];
-                if (actor == null || !actor.Enabled || !actor.IsReady)
-                    continue;
-                TreeHost = actor;
-                return actor;
-            }
-            return TreeHost;
+            SyncWorldInput();
+            return ControllerHostInternal;
         }
 
-        /// <summary>绑定行为树宿主（控制面装载成功后调用）。</summary>
-        public void BindTreeHost(IAiTreeHost host)
+        /// <summary>把当前世界里"就绪的本端角色"接给控制器（没有就摘掉）。</summary>
+        private void SyncWorldInput()
         {
-            TreeHost = host;
+            ControllerTreeHost controller = ControllerHostInternal;
+            IPlayerInputProvider best = null;
+
+            if (GameManager.Project != null)
+            {
+                for (int i = 0; i < m_actors.Count; i++)
+                {
+                    AiActor actor = m_actors[i];
+                    if (actor == null || !actor.IsReady)
+                        continue;
+                    // 优先本端玩家：远端角色必须在远端执行，本端驱动它会两边不同步。
+                    if (best == null || (actor.IsLocalPlayer && !((AiActor)best).IsLocalPlayer))
+                        best = actor;
+                }
+            }
+
+            controller.Bind(best);
+        }
+
+        /// <summary>控制面/插件"接管控制器"（`ai.enable` 也走这里）。</summary>
+        public void EnableController(string reason)
+        {
+            ControllerTreeHost controller = ControllerHostInternal;
+            controller.Enabled = true;
+            EventLog.Write("enable", (reason ?? "?") + " -> " + controller.Situation
+                + (controller.PlayerName != null ? " player=" + controller.PlayerName : string.Empty));
         }
 
         /// <summary>包目录（实例可写 / Mod 只读），未初始化时为 null。</summary>
@@ -481,7 +503,7 @@ namespace PlayerAiMod
         }
 
         /// <summary>
-        /// 惰性建立包目录 + 重载器，并把出厂示例包装进 Mod 只读目录（已有文件不动）。
+        /// 惰性建立包目录 + 重载器，并把出厂示例包装进包目录（已有文件不动）。
         /// 失败只记日志：包不可用不应该影响 FSM 那条已经能跑的链路。
         /// </summary>
         public PackageReloader EnsurePackages()
@@ -681,7 +703,10 @@ namespace PlayerAiMod
                 return false;
             if (!m_actors.Remove(actor))
                 return false;
-            actor.Disable();
+            actor.ReleaseInput();
+            // 摘掉的正是当前接给控制器的那个 → 立刻断开，免得"角色没了还有人在按键"。
+            if (ReferenceEquals(ControllerHostInternal.World, actor))
+                ControllerHostInternal.Bind(null);
             return true;
         }
 
@@ -713,9 +738,8 @@ namespace PlayerAiMod
                 return;
 
             m_tickScheduled = true;
-            float deltaTime = frameDuration;
 
-            if (TryScheduleOnBridgePump(deltaTime))
+            if (TryScheduleOnBridgePump(frameDuration))
                 return;
 
             // 退化路径：没有 CmdBridgeMod（或帧首泵不可用）时，仍按原来的方式排一次。
@@ -729,12 +753,51 @@ namespace PlayerAiMod
             Dispatcher.Dispatch(delegate
             {
                 m_tickScheduled = false;
-                TickFrameStart(deltaTime);
+                TickFrameStart(ConsumeRealDelta(frameDuration));
             });
         }
 
+        /// <summary>
+        /// 帧首 tick 的 `deltaTime` = **距上一次 tick 的真实时间**，不是"排这一帧的帧时长"。
+        ///
+        /// 为什么必须这样（实测踩过，用户报的现象是"同一个包以前能进游戏，现在选世界那步没了"）：
+        /// 帧首泵是靠 AutoResetEvent 逐帧举手、后台线程收信号再派发的，**信号会合并**——
+        /// 泵慢一拍就少跑一帧的 tick，可是每次 tick 拿到的 `Time.FrameDuration` 仍然只有
+        /// "它自己那一帧"的时长。于是 AI 的时间轴比真实时间慢：上一版进游戏包的
+        /// manifest 是 `frames=723 / duration=2.231s`，而 723 帧在当时的帧率（~180 FPS）
+        /// 下是 4.0s —— 时间轴只走了 56%。回放时泵不漏帧，时间轴≈真实时间，
+        /// 于是包里"隔 0.45s 的点世界列表"实际发生在 Play 屏切场动画正中间，被引擎如实拒绝。
+        ///
+        /// 这里改成单调时钟测量（并且 clamp 到 0.25s，避免长时间卡顿后一次性跳一大步），
+        /// 录制与回放就用同一条"真实时间"轴，包里的 `t` 才真的是秒。
+        /// </summary>
+        private float ConsumeRealDelta(float fallbackSeconds)
+        {
+            double now = m_tickClock.Elapsed.TotalSeconds;
+            if (m_lastTickSeconds < 0.0)
+            {
+                m_lastTickSeconds = now;
+                return fallbackSeconds;
+            }
+
+            double elapsed = now - m_lastTickSeconds;
+            m_lastTickSeconds = now;
+            if (elapsed <= 0.0)
+                return 0f;
+            return (float)Math.Min(elapsed, MaxTickDeltaSeconds);
+        }
+
+        /// <summary>单调时钟（只用来量"两次 tick 之间过了多久"）。</summary>
+        private readonly System.Diagnostics.Stopwatch m_tickClock =
+            System.Diagnostics.Stopwatch.StartNew();
+
+        private double m_lastTickSeconds = -1.0;
+
+        /// <summary>单次 tick 最多认多少秒（游戏卡住/最小化时不要把时间轴一次拉爆）。</summary>
+        private const double MaxTickDeltaSeconds = 0.25;
+
         /// <summary>用 CmdBridgeMod 的帧首泵排一次 tick（拿到真正的帧首语义）。</summary>
-        private bool TryScheduleOnBridgePump(float deltaTime)
+        private bool TryScheduleOnBridgePump(float frameDuration)
         {
             try
             {
@@ -746,7 +809,7 @@ namespace PlayerAiMod
                 bool posted = input.PostToFrameStart(delegate
                 {
                     m_tickScheduled = false;
-                    TickFrameStart(deltaTime);
+                    TickFrameStart(ConsumeRealDelta(frameDuration));
                 });
 
                 if (!posted)
@@ -808,35 +871,33 @@ namespace PlayerAiMod
             if (m_reloader != null)
                 m_reloader.Tick(deltaTime);
 
+            // 世界有没有加载，只影响**输入路由**，不影响树跑不跑：
+            SyncWorldInput();                 // 世界里接上就绪角色，世界外摘掉（只换路由，不卸载树）
+            ApplyPendingReloadsNow();         // 热重载在 tick 边界应用（世界内外都一样）
+
+            try
+            {
+                ControllerTreeHost controller = ControllerHostInternal;
+                controller.Paused = Paused;       // 全局暂停对世界外同样有效
+                controller.IsRecording = m_recording != null && m_recording.IsActive;
+                controller.Tick(deltaTime);       // 唯一的行为树 tick
+            }
+            catch (Exception exception)
+            {
+                LastFailureCount++;
+                Engine.Log.Warning("[PlayerAi] controller tick failed ("
+                    + exception.GetType().Name + ": " + exception.Message + ")");
+                ControllerHostInternal.ReleaseInput();
+            }
+
             if (GameManager.Project == null)
             {
-                // 没有世界：释放所有输入，避免残留"按住 W"。
+                // 没有世界：把角色输入都释放掉（避免残留"按住 W"）。
+                // 控制器本身刚刚已经 tick 过了 —— 它现在的路由是"只点 UI"。
                 ReleaseAll();
                 return;
             }
 
-            // 拷贝一份再遍历：tick 期间允许注册/注销角色。
-            m_scratch.Clear();
-            m_scratch.AddRange(m_actors);
-
-            for (int i = 0; i < m_scratch.Count; i++)
-            {
-                AiActor actor = m_scratch[i];
-                try
-                {
-                    actor.Tick(deltaTime);
-                }
-                catch (Exception exception)
-                {
-                    LastFailureCount++;
-                    Engine.Log.Warning("[PlayerAi] Actor tick failed ("
-                        + exception.GetType().Name + ": " + exception.Message
-                        + ") -> releasing its inputs and unregistering.");
-                    Unregister(actor);
-                }
-            }
-
-            ApplyPendingReloadsNow();
             TryAutoLoadTree();
         }
 
@@ -871,6 +932,10 @@ namespace PlayerAiMod
         /// <summary>
         /// 世界就绪后自动装载启动包（`PlayerAiConfig.AutoLoadTreeOnStart`）。
         /// 只试一次：装不上就记日志并保持"待机"，不反复重试刷屏。
+        ///
+        /// **宿主已经在跑树时不顶掉它**：用户"播放这棵树 → 进游戏"的时候，世界一加载
+        /// 启动包就会把人家那棵树换掉（日志里能看到 `[startup-tree] demo.greet … replaced`），
+        /// 于是"我播放的树进世界后不见了"。启动包只负责"什么都没跑时给个默认的"。
         /// </summary>
         private void TryAutoLoadTree()
         {
@@ -881,6 +946,16 @@ namespace PlayerAiMod
             if (host == null)
                 return;
 
+            if (host.HasTree)
+            {
+                m_autoLoadPending = false;
+                string running = host.Tree.SourcePackage;
+                Engine.Log.Information("[PlayerAi][pkg] startup tree skipped: host already runs "
+                    + (running ?? "?"));
+                EventLog.Write("startup-tree-skip", "host already runs " + (running ?? "?"));
+                return;
+            }
+
             m_autoLoadPending = false;
             try
             {
@@ -890,7 +965,6 @@ namespace PlayerAiMod
                     if (!host.Tree.IsRunning)
                         host.Tree.Start();
                     host.Enabled = true;
-                    TreeHost = host;
                     Engine.Log.Information("[PlayerAi][pkg] startup tree ready: " + result.Describe());
                     EventLog.Write("startup-tree", result.Describe());
                 }
@@ -907,17 +981,34 @@ namespace PlayerAiMod
             }
         }
 
-        /// <summary>释放全部输入并清空角色（世界卸载、Mod 卸载、手动急停）。</summary>
+        /// <summary>
+        /// 释放**角色**输入（世界卸载、世界外每帧、手动急停）。
+        ///
+        /// ⚠️ **不要顺手 `m_controller.ReleaseInput()`**：这个函数在世界外**每帧**都会调用，
+        /// 而控制器的释放会把在飞的软光标点击一起取消（UI 点击要跨好几帧才能被引擎识别成 Click）——
+        /// 于是"菜单里点按钮"就变成"光标移过去、界面纹丝不动"（实测踩过）。
+        /// 要全停用 <see cref="StopEverything"/>。
+        /// </summary>
         public void ReleaseAll()
         {
             for (int i = 0; i < m_actors.Count; i++)
-                m_actors[i].Disable();
+                m_actors[i].ReleaseInput();
+        }
+
+        /// <summary>彻底停手（Mod 卸载 / 手动急停）：角色输入 + 控制器（含 UI 注入）一起释放。</summary>
+        public void StopEverything()
+        {
+            ReleaseAll();
+            if (m_controller != null)
+                m_controller.ReleaseInput();
         }
 
         public void Clear()
         {
-            ReleaseAll();
+            StopEverything();
             m_actors.Clear();
+            if (m_controller != null)
+                m_controller.Bind(null);
         }
 
         /// <summary>Dispatcher 是否已初始化（游戏启动瞬间它还不存在）。</summary>

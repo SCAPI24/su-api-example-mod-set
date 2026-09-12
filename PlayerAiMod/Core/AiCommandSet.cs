@@ -29,6 +29,7 @@ namespace PlayerAiMod
             "ai.blackboard",
             "ai.tree.list",
             "ai.tree.load",
+            "ai.tree.stop",
             "ai.tree.reload",
             "ai.tree.notify",
             "ai.tree.validate",
@@ -64,8 +65,9 @@ namespace PlayerAiMod
                 ["ai.enable"] = "接管本端角色（允许 AI 产生动作）",
                 ["ai.disable"] = "放弃接管（释放全部 AI 输入）",
                 ["ai.blackboard"] = "读/写黑板：key=... [value=... type=bool|int|float|string]；all=true 列全部",
-                ["ai.tree.list"] = "列出两个包目录里的行为树包（实例目录优先）",
+                ["ai.tree.list"] = "列出包目录里的行为树包（<实例根>/PlayerAi/BehaviorTrees）",
                 ["ai.tree.load"] = "装载/切换活动树的包（name=...或 path=...）",
+                ["ai.tree.stop"] = "停止并卸下当前行为树（释放输入；再 switch 就是从头开始）",
                 ["ai.tree.reload"] = "强制重载（排队，tick 边界生效；可带 name=...）",
                 ["ai.tree.notify"] = "编辑器推送重载通知（path=... hash=...）",
                 ["ai.tree.validate"] = "只校验不装载（编辑器保存前预检）",
@@ -105,6 +107,7 @@ namespace PlayerAiMod
                 ["ai.blackboard"] = Blackboard,
                 ["ai.tree.list"] = TreeList,
                 ["ai.tree.load"] = TreeLoad,
+                ["ai.tree.stop"] = TreeStop,
                 ["ai.tree.reload"] = TreeReload,
                 ["ai.tree.notify"] = TreeNotify,
                 ["ai.tree.validate"] = TreeValidate,
@@ -174,9 +177,16 @@ namespace PlayerAiMod
             else
             {
                 hostInfo["name"] = host.HostName;
+                hostInfo["kind"] = host.HostKind;
                 hostInfo["enabled"] = host.Enabled;
                 hostInfo["ready"] = host.IsReady;
                 hostInfo["hasTree"] = host.HasTree;
+                // 控制器宿主额外说明"现在在哪一层操作"：世界里 = 玩家输入，主菜单 = 只点 UI
+                if (host is ControllerTreeHost controller)
+                {
+                    hostInfo["situation"] = controller.Situation;
+                    hostInfo["player"] = controller.PlayerName;
+                }
                 result["host"] = hostInfo;
                 result["mode"] = host.Mode.ToWireName();
 
@@ -672,6 +682,9 @@ namespace PlayerAiMod
 
             TreeSwitchResult result = library.Switch(name, host, request.GetString("entry", null),
                 request.GetBoolean("start", true));
+            // 切换成功 = 接管（与 `ai.tree.load` 一致）：编辑器点"播放"的语义就是"跑起来"。
+            if (result.Switched)
+                host.Enabled = true;
 
             var response = new Dictionary<string, object>(StringComparer.Ordinal)
             {
@@ -1034,37 +1047,24 @@ namespace PlayerAiMod
 
         // ---------------------------------------------------------------- 动作包（P1）
 
-        /// <summary>列出动作包（实例目录在前、Mod 分发目录在后；同名时前面的优先）。</summary>
+        /// <summary>列出动作包（只有一个包目录：<c>&lt;实例根&gt;/PlayerAi/BehaviorTrees</c>）。</summary>
         private static object ActionList(AiCommandRequest request, IAiCommandContext context)
         {
             IAiActionPlayer player = RequireActionPlayer(context, request.Command);
             List<string> directories = ActionDirectories(player);
             var entries = new List<Dictionary<string, object>>();
-            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             int replayable = 0;
-            int shadowed = 0;
             for (int i = 0; i < directories.Count; i++)
             {
-                bool primary = string.Equals(directories[i], player.ActionDirectory,
-                    StringComparison.OrdinalIgnoreCase);
                 List<Dictionary<string, object>> found = ScatLibrary.Describe(directories[i]);
                 for (int j = 0; j < found.Count; j++)
                 {
                     Dictionary<string, object> entry = found[j];
                     entry["folder"] = directories[i];
-                    entry["source"] = primary ? "instance" : "mod";
-                    entry["writable"] = primary;
-                    entry["primary"] = primary;
+                    entry["source"] = "instance";
+                    entry["writable"] = true;
 
-                    string file = entry["file"] as string;
-                    if (file != null && !seen.Add(file))
-                    {
-                        entry["shadowed"] = true;
-                        shadowed++;
-                        entries.Add(entry);
-                        continue; // 被实例目录里的同名包遮住：只列出来，不进统计
-                    }
                     if (Equals(entry["replayable"], true))
                         replayable++;
                     entries.Add(entry);
@@ -1077,7 +1077,6 @@ namespace PlayerAiMod
                 ["directories"] = directories,
                 ["count"] = entries.Count,
                 ["replayable"] = replayable,
-                ["shadowed"] = shadowed,
                 ["actions"] = entries
             };
         }
@@ -1101,8 +1100,7 @@ namespace PlayerAiMod
 
             Dictionary<string, object> result = ScatLibrary.Validate(folder, path);
             result["folder"] = folder;
-            result["source"] = string.Equals(folder, player.ActionDirectory,
-                StringComparison.OrdinalIgnoreCase) ? "instance" : "mod";
+            result["source"] = "instance";
             return result;
         }
 
@@ -1211,6 +1209,41 @@ namespace PlayerAiMod
                 ["count"] = files.Count,
                 ["packages"] = files,
                 ["prepared"] = context.Library != null ? context.Library.DescribePrepared() : null
+            };
+        }
+
+        /// <summary>
+        /// 停止并**卸下**当前行为树（`ai.tree.stop`）：释放输入、清空树标识，**并取消全局暂停**。
+        ///
+        /// 与"暂停"的区别就是用户要的那个区别：暂停保留运行态（继续 = 从原处接着跑），
+        /// 停止是**回到什么都没有**的状态 —— 之后再 `ai.tree.switch` 就是干净地从根开始
+        /// （树库切换前本来就会 `ResetSubtreeState`）。
+        ///
+        /// 为什么要顺手取消暂停：暂停是**全局**的（`PlayerAiRuntime.Paused`，帧首先看它），
+        /// 停了树却留着暂停，下一次"播放"就只是把树装回去、却永远不会被 tick ——
+        /// 用户实测就是"播放→暂停→停止→再播放，显示的还是已暂停、树不执行"。
+        /// </summary>
+        private static object TreeStop(AiCommandRequest request, IAiCommandContext context)
+        {
+            IAiTreeHost host = RequireHost(context, request.Command);
+            bool hadTree = host.HasTree;
+            string reason = request.GetString("reason", null);
+            if (hadTree)
+                host.StopTree(string.IsNullOrEmpty(reason) ? "stopped by user (ai.tree.stop)" : reason);
+
+            bool wasPaused = context.Paused;
+            if (wasPaused)
+                context.Resume("command:" + request.Command + " (stop resets everything)");
+
+            return new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["stopped"] = hadTree,
+                ["resumed"] = wasPaused,
+                ["reason"] = hadTree ? null : "there was no tree to stop",
+                ["host"] = host.HostKind,
+                ["mode"] = host.Mode.ToWireName(),
+                ["hasTree"] = host.HasTree,
+                ["paused"] = context.Paused
             };
         }
 

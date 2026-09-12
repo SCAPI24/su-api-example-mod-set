@@ -592,11 +592,11 @@ namespace PlayerAiMod
         /// <summary>
         /// 解析 `references.path`：
         ///   1. 先按**本包所在目录**找；
-        ///   2. 找不到就依次在各**包根目录**里找（实例目录 → Mod 分发目录）。
+        ///   2. 找不到就在**包目录**里找（`&lt;实例根&gt;/PlayerAi/BehaviorTrees`）。
         ///
-        /// 第 2 条是必须的：用户把出厂包从 Mod 目录复制到实例目录来改（计划 §4.4 的推荐流程），
-        /// 它引用的 `common.scbtpak` 仍留在 Mod 目录 —— 只按本包目录找就会"复制过去就坏掉"；
-        /// 导出到实例目录的新包同理。白名单校验在装载时仍然生效，安全性不变。
+        /// 第 2 条是必须的：包可以被导出到包目录里的另一个名字下，它引用的
+        /// `common.scbtpak` 仍在同一个目录 —— 只按本包所在目录找就会"复制一份就坏掉"。
+        /// 白名单校验在装载时仍然生效，安全性不变。
         /// </summary>
         private static string ResolveReferencePath(LoadedPackage package, ScbtReference reference,
             PackageLoadOptions options, PackageReport report)

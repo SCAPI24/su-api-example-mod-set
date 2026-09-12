@@ -96,7 +96,7 @@ PlayerAiMod/
     ├── PackageIssue.cs                        问题/严重级/报告 + 稳定错误码表
     ├── ScbtManifest.cs / ScbtTree.cs          manifest.json / tree.json 文档模型
     ├── PackageValidator.cs                    结构/语义校验（规则只有一份，读 BtNodeRegistry）
-    ├── PackageRoots.cs                        双目录白名单：<实例根>/PlayerAi/BehaviorTrees（可写）+ Mods/PlayerAiMod/...（只读）
+    ├── PackageRoots.cs                        包目录白名单：<实例根>/PlayerAi/BehaviorTrees（唯一目录）
     ├── PackageLoader.cs                       装载与嵌套引用解析（IPackageSource：磁盘/内存）
     ├── TreeCompiler.cs                        文档 → 可执行节点对象图（属性名→字段的唯一映射点）
     ├── TreeMutation.cs                        内存态改写：改参数/插删搬节点（只改内存，P0-12）
@@ -110,13 +110,18 @@ PlayerAiMod/
 
 ## 3.1 包目录约定（行为树包放哪）
 
-| 优先级 | 位置 | 用途 | 可写 |
-|---|---|---|---|
-| 1 | `<实例根>/PlayerAi/BehaviorTrees/` | 用户 / AI / 编辑器日常改的包（**实例根 = 游戏 exe 所在目录**） | ✅ |
-| 2 | `<实例根>/Mods/PlayerAiMod/PlayerAi/BehaviorTrees/` | 出厂示例包，**随 Mod 分发**（Mod 加载时自动补齐，缺什么补什么、绝不覆盖） | ❌ 只读 |
+**只有一个目录**（2026-09-12 按用户要求把"随 Mod 分发"的第二目录并掉了）：
 
-同名以实例目录优先：想改出厂示例就把它复制到实例目录再改，原文件不会被冲掉。
-`references` 里的路径必须是相对路径且解析后仍落在上面两个目录内（防路径穿越）。
+| 位置 | 用途 | 谁可以写 |
+|---|---|---|
+| `<实例根>/PlayerAi/BehaviorTrees/` | 树包 `.scbtpak` + 动作包 `.scatpak` 都在这里（**实例根 = 游戏 exe 所在目录**） | **编辑器**随便改；游戏侧只允许**新建**（重名要显式 `overwrite=true`），出厂模板补齐只创建不覆盖 |
+
+- 导出 / 新建 / 另存为 / 修改**默认都落在这个目录**；以前那个
+  `<实例根>/Mods/PlayerAiMod/PlayerAi/BehaviorTrees/` 不再被读取，也不再被写入。
+- `references` 里的路径必须是相对路径，且解析后仍落在这个目录内（防路径穿越）。
+- 目录里只扫**顶层**：子目录（例如 `Logs/`）不参与索引。
+- 边界：**AI 不允许覆盖磁盘上的包**（游戏内状态铁律）；`ai.tree.export` / `ai.record.save`
+  默认拒绝重名，只有显式传 `overwrite=true` 才允许覆盖。
 
 ## 4. 状态机能力（"复杂状态切换"）
 
@@ -217,7 +222,7 @@ PlayerAiMod 在 `OnLoad` 注册 13 条 `ai.*`/`bt.selftest`，卸载时按 owner
 
 ```bash
 sccmd ai status          # 模式/暂停/树来源与哈希/活动节点路径/黑板/重载统计
-sccmd ai trees           # 两个包目录里的树（实例目录优先，标出 active）
+sccmd ai trees           # 包目录里的树（标出 active）
 sccmd ai load demo.greet # 装载/切换活动树（立即生效）
 sccmd ai pause / resume  # 暂停/继续（保留运行态；暂停即释放 AI 输入）
 sccmd ai bb              # 列全部黑板值；ai bb target / ai bb mood happy string
@@ -316,8 +321,8 @@ sccmd ai action status                  # 回放进度/漂移
                   "repeat": 1, "abortOnFail": true } }
 ```
 
-- **包名按"与树包同路径"解析**（计划 §4.4）：把 `.scatpak` 和 `.scbtpak` 放同一个目录即可。
-  查找链是**实例目录 → Mod 只读分发目录**（同名时实例优先），所以出厂示例装在 Mod 目录里也能直接播放。
+- **包名按"与树包同路径"解析**（计划 §4.4）：把 `.scatpak` 和 `.scbtpak` 放**同一个目录**
+  （`<实例根>/PlayerAi/BehaviorTrees/`）即可，出厂示例也装在这里。
 - **回放 = 同一条原始输入通道**：按住类保持、按下类只按一次、鼠标/滚轮/视角增量按录制还原；
   录 60 FPS 放 144 FPS 也不会快放（每帧带自己的时长）。
 - **漂移即失败**：位置偏离关键帧超过 `ReplayDriftToleranceMeters`（默认 3 m）或朝向超过 45°
@@ -360,27 +365,36 @@ py -3 Mod/Packages/record_enter_game.py replay 进入游戏
 ```bash
 # 开发期直接跑
 dotnet run --project Mod/PlayerAiEditor -c Release -- --root publish/Windows
-# 或者发布成单文件 exe（4.93 MB）
+# 或者发布成单文件 exe（5.3 MB）——**装进游戏实例根里面**：<实例根>/PlayerAi/editor/
 dotnet publish Mod/PlayerAiEditor/PlayerAiEditor.csproj -c Release -r win-x64 \
-  --self-contained false -p:PublishSingleFile=true -o publish/editor
-publish/editor/PlayerAiEditor.exe --root publish/Windows      # 浏览器会自动打开 127.0.0.1:8760
-publish/editor/PlayerAiEditor.exe --selftest --root publish/Windows   # 无头自检 41 项
+  --self-contained false -p:PublishSingleFile=true -o publish/Windows/PlayerAi/editor
+publish/Windows/PlayerAi/editor/PlayerAiEditor.exe            # 不用 --root，自己就在游戏目录里
+publish/Windows/PlayerAi/editor/PlayerAiEditor.exe --print-root        # 只看它判定的实例根
+publish/Windows/PlayerAi/editor/PlayerAiEditor.exe --selftest          # 无头自检 86 项
 ```
 
 - **物料区**读游戏的节点注册表（`GET /api/schema`）：类型、形状（组合/任务）、属性表（类型/默认值/枚举）
   全部来自 `BtNodeRegistry`，所以**编辑器里能选的，游戏里一定能跑**；代码专用节点（lambda）不在物料里。
-- **动作包也是物料**（`GET /api/actions`）：物料区最后一组列出两个目录里的 `.scatpak`
-  （时长/帧数/**能不能回放**/来源/只读/被同名包遮住）；点一下就挂一个 `Task.PlayActionPackage`，
+- **动作包也是物料**（`GET /api/actions`）：物料区最后一组列出包目录里的 `.scatpak`
+  （时长/帧数/**能不能回放**）；点一下就挂一个 `Task.PlayActionPackage`，
   或加进已选中播放节点的 `packages`（属性区里是**勾选列表**，不是让人手打文件名）。
 - **画布**改的就是包格式本身（`tree.json` 的 children/decorators/services/properties）。
-- **保存**先跑**游戏内同一份校验器**，通过才原子写；只允许写实例目录（Mod 分发目录只读），
-  覆盖需要显式确认，写后还会自己重新装载一遍确认游戏读得动。
+- **保存**先跑**游戏内同一份校验器**，通过才原子写；包目录可写，覆盖需要显式确认，
+  写后还会自己重新装载一遍确认游戏读得动。
 - **推送热重载**：保存后点一下，编辑器直接通过 CmdBridge 通道给**正在运行的游戏**发
   `ai.tree.notify`（带哈希）—— 不重启、不重载世界。
-- **动作包那一组按钮**：`校验`（结构 + 能否回放）/ `试跑`（`ai.action.play`，游戏里真放一遍）/
-  `停止`（`ai.action.stop`，释放输入）/ `自造`（写一个新的示例包进实例目录）。
-  控制通道的报错分两类：`game_unreachable`（没连上）与 `game_refused`（连上了但游戏拒绝了，
-  例如游戏里那份 Mod 还没有这个命令 → 重新部署并重启）。
+- **启动 / 结束游戏**（§9.5.21）：人不用去文件管理器双击游戏了 —— 编辑器知道实例根在哪，
+  点「启动游戏」就行；起来之后它会自动等控制通道，连上再干活。
+- **播放 / 暂停 / 停止一棵树**（§9.5.22 / §9.5.24）：工具条上一个按钮 + 一个「树：…」状态徽标 ——
+  点「▶ 播放这棵树」= 保存改动 → 让游戏切到这棵树并开始跑；正在跑这棵树时它变成
+  「⏸ 暂停」/「▶ 继续」/「⟳ 推送改动」；旁边的「⏹ 停止」= 卸下树（**重置**，再播放就从根重跑）。
+  再也不用猜"游戏里到底跑没跑、跑的是哪棵"；画布上**只有正在执行的那一个节点**亮绿框。
+- **动作包那一组按钮**：`校验`（结构 + 能否回放）/ `试跑`（`ai.action.play`，**只回放下拉框里选中
+  的那一个包**；试跑前会自动暂停行为树，免得两边抢输入）/ `停止`（`ai.action.stop`，释放输入）/
+  `自造`（写一个新的示例包进包目录）。
+  控制通道的报错分三类：`game_unreachable`（没连上）、`game_not_ready`（连上了但还没进世界 /
+  AI 没接管 —— 这是**过渡状态**，好了会自动恢复）、`game_refused`（游戏明确拒绝，例如这份 Mod
+  里还没有这个命令）。
 
 ### 9.5.1 编辑器这一轮的体验补齐（撤销/拖拽/跳转/新建）
 
@@ -471,7 +485,7 @@ py -3 Mod/Packages/check_player_ai_build.py browser   # 等价入口（all 里�
 
 | 原因 | 现象 | 处理 |
 |------|------|------|
-| 前端资源没进新构建 | 改的是磁盘上的 `app.js`，`publish/editor/PlayerAiEditor.exe` 里嵌的还是旧前端（`dotnet` 增量编译不跟踪 `Web/**` 这类内嵌资源） | 新增 `check_player_ai_build.py assets`：把内嵌资源与 `Web/` 源码**逐字节**比对，并确认 `index.html` 的构建时间戳已替换；改了前端必须先 `build` 再 `assets` |
+| 前端资源没进新构建 | 改的是磁盘上的 `app.js`，`<实例根>/PlayerAi/editor/PlayerAiEditor.exe` 里嵌的还是旧前端（`dotnet` 增量编译不跟踪 `Web/**` 这类内嵌资源） | 新增 `check_player_ai_build.py assets`：把内嵌资源与 `Web/` 源码**逐字节**比对，并确认 `index.html` 的构建时间戳已替换；改了前端必须先 `build` 再 `assets` |
 | 网格行高按内容撑 | `main` 是 grid 而行是 `auto`，窗口一矮/树一长，行就顶破容器底部，侧栏与画布都不滚动，多出来的部分被视口切掉 | `grid-template-rows: minmax(0, 1fr)` 把行钉在可用高度上；≤1200px / ≤940px 两档断点重排三栏 |
 | 拖拽依赖 HTML5 DnD | 在嵌入式 webview 里 `dragstart` 常常根本不派发 | 改成 `mousedown/mousemove/mouseup` + `elementFromPoint` + `[data-node-id]`，落点效果只有一处 `applyDrop` |
 
@@ -671,6 +685,9 @@ UE 材质编辑器 / Unity Shader Graph / Blender Node Editor 这一类（跨软
 真浏览器自检 ⑫（把有连线的节点拖到左上角外之后：连线还在、终点跟着节点、线上有一段能被点中；
 包列表标出「Mod 分发」、打开时说明可改、"保存"按钮可用、直接保存回 Mod 目录成功并提醒覆盖）。
 
+> 这一节的"两个目录 + Mod 分发提醒"后来被 §9.5.20 推翻了：第二目录整个删掉，只剩
+> `<实例根>/PlayerAi/BehaviorTrees`，`warnsModFolder`/「Mod 分发」标记也随之删除。
+
 ### 9.5.14 网格背景与节点锁在同一坐标系
 
 反馈：往左上角拖到坐标变负时，**背景在动、其余节点不动**，看着像"其它节点都在移动"。
@@ -745,12 +762,682 @@ UE 材质编辑器 / Unity Shader Graph / Blender Node Editor 这一类（跨软
 1. 起点改成三个：`Environment.ProcessPath` 所在目录、`AppContext.BaseDirectory`、当前目录；
 2. 判定顺序：① 起点自己带 `Mods/` → ② 起点的父目录带 `Mods/` → ③ **兄弟目录**里恰好只有一个带 `Mods/` 的（`publish/editor` + `publish/Windows` 就是这种；有歧义就不猜）；
 3. 实例根下既没有 `Mods/` 也没有 `PlayerAi/` 时**在控制台吼一声警告**并提示用 `--root` 指定 —— 以前是静默退回，界面只显示空列表，看不出是路径问题；
-4. 新增 `--print-root`：只打印判定出来的实例根与两个包目录就退出，专门用来排查这类问题。
+4. 新增 `--print-root`：只打印判定出来的实例根与包目录就退出，专门用来排查这类问题。
 
-验证：`assets` 门新增两条 —— ①从 `publish/editor` 当工作目录、不带 `--root` 跑 `--print-root`，断言它自己找到 `publish/Windows`；②起服务后查 `/api/packages`，断言 `count >= 1`（空列表就是用户看到的那个现象，必须能被测出来）。
+验证：`assets` 门新增两条 —— ①从编辑器自己所在的目录当工作目录、不带 `--root` 跑 `--print-root`，断言它自己找到游戏实例根；②起服务后查 `/api/packages`，断言 `count >= 1`（空列表就是用户看到的那个现象，必须能被测出来）。
+
+> 布局后来改过（见 §9.5.19）：编辑器从 `publish/editor` 搬到了**实例根里面**的
+> `<实例根>/PlayerAi/editor/`，判定顺序也随之加了"沿父链往上找"。上面这一节保留的是当时的过程。
+
+### 9.5.18 编辑器到底"索引了哪些文件"（一张表说清）
+
+编辑器（现在是 `<实例根>/PlayerAi/editor/`，见 §9.5.19）**自己不含任何数据文件**，只有单文件 exe（+ pdb）：
+
+```
+publish/Windows/PlayerAi/editor/
+  PlayerAiEditor.exe      5.3 MB   ← 纯逻辑层 + 前端资源全都嵌在里面
+  PlayerAiEditor.pdb / Engine.pdb / EntitySystem.pdb / EntitySystem.xml
+```
+
+所以"编辑器索引文件"其实是两步：**先在实例根定位包目录，再在目录里按扩展名扫顶层**。
+
+| 找什么 | 从哪里找 | 规则 |
+|--------|----------|------|
+| 实例根（一切的起点） | `Environment.ProcessPath` 目录 → `AppContext.BaseDirectory` → 当前目录，再沿父链往上（最多 6 级）找带 `Mods/` 的 | 同时有 `Mods/` + `PlayerAi/` 的优先；`--root` 显式指定时最高优先。见 §9.5.17 |
+| 树包 `.scbtpak` | `<实例根>/PlayerAi/BehaviorTrees/` | `Directory.GetFiles(dir, "*.scbtpak", TopDirectoryOnly)`：**不递归**、按文件名排序（只有这一个目录，见 §9.5.20） |
+| 动作包 `.scatpak` | 同一个目录 | 同样只扫顶层 |
+| 前端页面 | **exe 内嵌资源**（`PlayerAiMod.Editor.Web.*`），不看磁盘 | `/`、`/app.js`、`/app.css`、`/engine-adapter.js`、`/selftest.html` 直接读嵌入资源 |
+| 游戏控制通道 | `<实例根>/CmdBridge.runtime.json`（游戏启动时写：port + token） | 读不到就如实报"游戏没在跑"，编辑器照常可用 |
+| 某个包的解析 | `PackageRoots.Resolve(name)` | 接受 `demo.greet` / `demo.greet.scbtpak` / `sub/x.scbtpak` / **白名单内的绝对路径**；`..` 穿越、白名单外路径、前导 `/` 一律拒绝（白名单同时是路径穿越防线） |
+
+实测（`http://127.0.0.1:8760`，实例根 `publish\Windows`；这是**单一目录**之后的结果）：
+
+```
+/api/packages  count=3   common.scbtpak / demo.greet.scbtpak / test.action.scbtpak（source=instance）
+/api/actions   count=3   action_20260911_185631 / sample_walk / 生存游戏（都在同一个包目录里）
+demo.greet                        → ok=true   root=instance
+绝对路径 …\common.scbtpak          → ok=true   root=instance
+绝对路径 …\sample_walk.scatpak     → 能定位，但按树包读会失败（树包/动作包不混用）
+…\Scworld\no_such.scbtpak          → 拒绝（同实例根但不在包目录里）
+C:\Windows\win.ini                 → 拒绝
+..\..\MachineCache.scbtpak         → 拒绝
+/etc/passwd                        → 拒绝
+```
+
+前端拿到 `/api/packages` + `/api/actions` 后建下拉框与左侧物料区；节点位置/注释框/游离节点另存在浏览器 `localStorage`（键按包路径分），**不写进包**。
+
+### 9.5.19 编辑器搬进实例根：`<实例根>/PlayerAi/editor/`
+
+原来的布局是 `publish/editor/PlayerAiEditor.exe`（**和游戏实例并排**）。这有两个毛病：
+① 编辑器不在游戏目录里，得记着 `--root`；② 它的上级目录也不像游戏实例，
+一旦自动判定出错就退化成"自己的目录 = 实例根"→ 一个包都读不到（§9.5.17）。
+
+现在改成**装在实例根里面**：
+
+```
+publish/Windows/                       ← 实例根（游戏 exe、Mods/、PlayerAi/ 都在这）
+├── PlayerAi/BehaviorTrees/                    ← **唯一的包目录**（树包 + 动作包都在这）
+└── PlayerAi/editor/PlayerAiEditor.exe         ← 编辑器（就是这里）
+```
+
+改动：
+
+| 位置 | 改动 |
+|------|------|
+| `check_player_ai_build.py` | `publish` 的 `-o` 指到 `publish/Windows/PlayerAi/editor`；新增 `INSTANCE/EDITOR_DIR/EDITOR_EXE` 三个常量；`editor`/`assets` 门都用它们 |
+| `check_editor_browser.py` | `EDITOR_EXE` 跟着搬 |
+| `Program.cs` | 实例根判定新增"**沿父链往上找**"（最多 6 级，优先同时有 `Mods/` 与 `PlayerAi/` 的目录，其次只要 `Mods/`）—— 因为现在 exe 目录和它的父目录都没有 `Mods/`，要走到祖父 `<实例根>` 才对 |
+| `assets` 门 | 新增布局不变量检查：编辑器必须在实例根**里面**（`commonpath` 判定 + 从编辑器目录跑 `--print-root` 必须得到实例根） |
+
+好处：双击 exe 就在游戏目录里，自己就能找到实例根；`publish/editor` 那个"看着像实例根"的目录不再存在。
+
+### 9.5.20 砍掉第二包目录：只认 `<实例根>/PlayerAi/BehaviorTrees`
+
+用户要求：`Mods\PlayerAiMod\PlayerAi` 不需要了，只要 `PlayerAi\BehaviorTrees`；
+**导出与修改默认都落在这个目录**；**游戏内 AI 不允许覆盖**（只能新建，重名要显式 `overwrite=true`）；
+这个目录由**编辑器**负责改。
+
+改动（单一目录，端到端）：
+
+| 位置 | 改动 |
+|------|------|
+| `PackageRoots.cs` | 构造只收一个目录；`ModRoot`/`ModFolder` 删除；新增 `DirectoryFor(instanceRoot)`；`Discover()` 只发现这一个 |
+| `PackageTemplates.Install` | 出厂模板改为装进**包目录**（仍然"缺什么补什么、绝不覆盖"） |
+| `PlayerAiRuntime` | 动作包查找链从"实例 → Mod"简化成单目录；注释同步 |
+| `EditorApi` | 单根；`/api/meta` 去掉 `modFolder`；保存结果去掉 `warnsModFolder`；动作包列表去掉 `shadowed`/`source: mod` |
+| `app.js` / `index.html` / `engine-adapter.js` | 去掉「Mod 分发（只读）」标记、`shadowed` 徽标与相关提示；按钮/提示文案统一成"包目录" |
+| `AiCommandSet` | `ai.tree.list` / `ai.action.list` 文案与回包字段（去掉 `shadowed`）同步 |
+| 自检 | 双目录相关断言按"单目录"重写：跨根引用 → 包目录内引用、`shadowed` → 工厂示例就在包目录里；`editor 86/86`、前端无头自检、真浏览器自检全部保持绿 |
+
+判定边界（按用户确认的口径）：
+
+| 谁 | 能读 | 能新建 | 能覆盖已有包 |
+|----|------|--------|--------------|
+| 编辑器 | ✅ | ✅ | ✅（显式确认后） |
+| 游戏侧（AI / 插件） | ✅ | ✅（`ai.record.save`、`ai.tree.export`、出厂模板补齐） | ⚠️ 只有显式传 `overwrite=true` 才允许，默认拒绝重名 |
+
+顺带做的数据迁移（部署实例）：把 `Mods\PlayerAiMod\PlayerAi\BehaviorTrees\` 里的
+`common.scbtpak`、`demo.greet.scbtpak`、`test.action.scbtpak` **缺什么补什么**地复制进
+`PlayerAi\BehaviorTrees\`（`sample_walk.scatpak` 那边已有，保留实例那份），然后删掉整个
+`Mods\PlayerAiMod\PlayerAi\` 目录（连空的 `Mods\PlayerAiMod\` 也删了 —— 它只是老约定的残留）。
+
+### 9.5.21 编辑器可以直接"启动游戏 / 结束游戏"了
+
+之前的编辑器只是**控制通道客户端**：连得上就干活，连不上就报 `game_unreachable`。
+调一条行为树要在"编辑器 ↔ 游戏"之间来回，每次还得去文件管理器双击游戏 —— 纯摩擦。
+
+现在工具条上有 **「启动游戏」/「结束游戏」**，以及一个**三态**徽标：
+
+| 状态 | 徽标 | 按钮 |
+|------|------|------|
+| 没启动 | `游戏：未启动` | 「启动游戏」可点，「结束游戏」灰掉 |
+| 进程起来了、控制通道还没开（游戏正在加载世界，这中间几十秒本来就连不上） | `游戏：启动中（等控制通道）#pid` | 两个都灰掉（别乱点） |
+| 通道能连上 | `游戏：已连上#pid` | 「结束游戏」可点 |
+| 实例根里没有 `Survivalcraft.exe` | `游戏：找不到 Survivalcraft.exe` | 「启动游戏」灰掉 |
+
+- `POST /api/game/launch`：`Process.Start(<实例根>/Survivalcraft.exe)`，工作目录 = 实例根
+  （这样 `<data:>`、Mods、`PlayerAi/` 全都对得上），**不传任何命令行参数** ——
+  就是"手动双击"的等价物。已经在跑就拒绝（`already_running`），没 exe 就拒绝（`game_exe_missing`）。
+- `POST /api/game/quit`：先 `CloseMainWindow()` 请它**正常退出**（走正常关闭流程：释放 AI 输入、
+  flush 日志），等 6 s 不退再 `Kill(entireProcessTree)`，回包里报"正常退出几个 / 强杀几个"。
+- `GET /api/game/process`：只读地把上面四态说清楚（`exeExists/running/pid/runtimeStale/channelConnected`）。
+- 启动后前端**每秒轮询**这个端点等控制通道，最长 3 分钟；连上就自动刷新游戏状态并提示
+  "现在可以用游戏状态 / 实时监视 / 试跑 / 推送热重载"。
+
+顺手修的一个老毛病：**旧 `CmdBridge.runtime.json` 会撒谎**。游戏上次退出时留下的 runtime 文件
+还在，编辑器连它只会得到裸露的 `由于目标计算机积极拒绝…` —— 看着像"游戏在跑但通道坏了"。
+现在这种情况下 `/api/game/process` 报 `runtimeStale=true`，命令层也会补一句
+"如果游戏确实没开，点「启动游戏」；`CmdBridge.runtime.json` 可能是上次运行留下的旧文件"。
+
+边界没动：这是**人用的编辑器在起进程**，不是 AI 在改游戏状态；启动之后所有命令仍然只走
+CmdBridge 控制通道，AI 那条"只能通过玩家控制器行动"的铁律原样成立。
+
+验证：编辑器无头自检 86 → **94 项**（新 exe 时如实拒绝启动、没在跑时结束命令如实回 `not_running`、
+写一个死端口的 runtime 文件 → `runtimeStale` 且报错点明"旧文件"、编辑器从不改写那个文件）；
+前端无头自检 331 → **343**（三态徽标的文案与 `disabled`、`launchGame` 真发 POST、
+启动后确实开起轮询、通道连上后停轮询、结束游戏也停轮询）；真浏览器自检 132 → **141**
+（真按钮 + 真 `disabled` + 三态文案，用临时替换 iframe 的 `fetch` 驱动，**绝不真的启动游戏**）。
+
+### 9.5.22 播放 / 暂停一棵树：一个按钮 + 一个「树：…」徽标；顺便把"not_ready"的谎话堵掉
+
+用户反馈三件事：①点实时监视报"游戏拒绝了…多半是 Mod 没有这个命令"，过一会儿自己又好了；
+②想要一个播放按钮（播放 = 推送热重载到游戏里），并且能一眼看出树在不在跑；③试跑应当只跑
+选中的那一个动作包。
+
+**① 报错分类错了（真 bug）**：游戏拒绝时给的是稳定错误码，但编辑器把**所有**拒绝都当成
+"多半是 Mod 太旧"。实测那次是 `not_ready`（世界还没加载完 / AI 没接管）—— 这是**过渡状态**，
+世界起来 + `ai enable` 之后自己就好了（用户看到"过一会儿又能监视了"就是这个）。改法：
+
+| 情况 | 现在怎么报 |
+|------|-----------|
+| 没连上（游戏没跑 / 通道没开） | `game_unreachable` + 旧 runtime 文件的提示 |
+| 连上了但**还没准备好**（`not_ready`） | `game_not_ready`：附上游戏原话 + "需要①进世界②`ai enable`；准备好之前这里会一直等，好了会自动开始刷新" |
+| 连上了但 Mod 里根本没这条命令（`unknown_command`） | `game_refused` + "多半是这份 Mod 还没有这个命令" |
+| 其它拒绝 | `game_refused` + 原错误码 + 游戏原话（不再猜原因） |
+
+实现上给 `GameBridgeClient` 加了一个 `GameCommandException`（带 `code`/`gameMessage`），
+`EditorApi.GameError` 按码分流；`/api/game/status` 也改成走同一套（以前它在路由里自己 catch，
+报错文案跟别的端点不一致）。实时监视面板里"还没准备好"用**中性样式**显示，并写明会自动恢复 ——
+以前是个红框，第一眼像坏了。
+
+**② 播放按钮 + 运行状态徽标**：工具条上一个按钮，语义由"游戏里现在跑的是什么"决定：
+
+| 游戏状态 | 按钮 | 点了做什么 |
+|----------|------|-----------|
+| 没接管 / 跑的是别的包 | `▶ 播放这棵树` | 有改动先保存（校验+原子写），再 `ai.tree.switch` 切过去开始跑 |
+| 跑的就是这棵树、无改动 | `⏸ 暂停` | `ai.pause`（保留运行态、立刻释放 AI 注入的输入） |
+| 跑的就是这棵树、已暂停 | `▶ 继续` | `ai.resume` |
+| 跑的就是这棵树、有改动 | `⟳ 推送改动` | 保存 + `ai.tree.notify` 热重载（不重启世界、保留运行态） |
+
+旁边的 `树：…` 徽标常显：`树：运行中 demo.greet.scbtpak（tick 25967）` / `树：已暂停 …` /
+`树：跑的是 common.scbtpak（编辑器打开的是 demo.greet.scbtpak）` / `树：未接管（进世界 + ai enable
+后可播）` / `树：游戏没在跑`。原来的「推送热重载」独立按钮**删掉了** —— 它的语义已经被
+"⟳ 推送改动"这个状态覆盖，留两个入口只会让人不知道该点哪个。
+
+⚠️ 一个前提必须说清：`ai.tree.switch` 需要**可接管的宿主**（进世界 + AI 接管）。在主菜单里没有
+角色，所以"播放"会如实回 `game_not_ready`；而「进入游戏」这种整段在菜单里的动作包，走的是
+**试跑**那条路（游戏侧为 UI 类动作包留了 `UiOnlyActuator` 兜底，不需要角色）。
+
+**③ 试跑只跑选中的那一个包**：本来就只发一条 `ai.action.play`（body 里就是下拉框那个文件名，
+自检用"请求体里不能出现别的包名"钉住）；这次补的是**先把行为树暂停**再试跑 —— 树和动作包会往
+同一套输入通道写（帧首先推进动作包，没暂停才 tick 树），两边同时写就是互相打架。试跑时顺手
+暂停会记下来，停止回放时提示"树还是暂停状态，点继续恢复"。
+
+**④ 顺带的数据**：`Mod/Packages/out/make_enter_game_tree.py` 用编辑器 API 生成了
+`enter.game.scbtpak`（`Root → Sequence [Log, PlayActionPackage(packages=["进入游戏"]), Wait 2]`，
+`/api/package` 回包 `reloaded=true / nodes=5 / 0 errors`），就是"用节点连线调用进入游戏动作包"。
+
+**⑤ 自检踩到的一课（必须记住）**：新加的自检里有"没在跑时结束命令要回 `not_running`"这一条，
+而它跑在临时实例根上 —— 当时机器上开着**用户正在玩的那个游戏**，`/api/game/quit` 按进程**名字**
+把它关掉了。改法（两层）：
+- `GameLauncher.Running(instanceRoot)` **按 exe 路径认领**进程（`MainModule.FileName` 的目录
+  必须等于实例根），认不出的（权限不足）一律不动 —— 宁可不动，也不误杀别人的游戏；
+- 判据写进注释与自检：进程状态只在**属于这个实例根**时才算数。
+
+**验证**：编辑器无头自检 94 → **100/100**（新增一个假游戏通道：监听回环端口、按剧本回
+`{"ok":false,"error":{code:"not_ready"…}}`，断言 `/api/game/live`、`/api/game/status`、
+`/api/game/tree/switch` 三处都把它报成 `game_not_ready` 且保留游戏原话；另一个剧本回成功切换，
+断言 `switchMs/nodes` 原样带回、请求里发的是绝对路径）；前端无头自检 343 → **355**
+（按钮四种语义 + 徽标四种文案 + "点播放先保存再 switch" / "跑的就是它且有改动发 notify" /
+"试跑只发选中的那一个包、且先 pause"）；真浏览器自检 141 → **149**（真 DOM 驱动上述状态）；
+窄窗口顶栏顺手压紧了一档（新增 ≤980px 断点 + 徽标省略号）：820×560 下画布 139 → **145px**。
+
+### 9.5.23 无角色宿主：**主菜单里也能跑树、也能一开始就监视**
+
+用户的原话："不是有进入游戏这个动作包吗，这个就是游戏启动后、不进入世界就要跑的，
+实时监视也需要一开始就能监听。" —— 这两件事以前都做不到：
+
+- `ResolveTreeHost()` 只认"已接管且就绪的**角色**"。主菜单里没有角色 → 返回 null；
+- 于是 `ai.tree.switch` / `ai.tree.snapshot` / `ai.blackboard` 全部 `not_ready`
+  （编辑器上就是"点实时监视被拒绝"，而且报的是误导人的"Mod 太旧"）；
+- 帧首 tick 在 `GameManager.Project == null` 时直接 `ReleaseAll(); return;` —— 树根本没机会推进。
+
+改法：新增 **`UiTreeHost`（无角色宿主）**，实现同一套 `IAiTreeHost`：
+
+| 项 | 值 | 为什么 |
+|----|----|--------|
+| `HostKind` / `HostName` | `"menu"` | 编辑器据此显示"（主菜单，无角色）"，而不是让人以为角色已被接管 |
+| 执行器 | `UiOnlyActuator` | 引擎软光标那套**只点 UI**；世界外的"按住 W / 转视角"一律空实现，不假装成功 |
+| 传感器 | `null` | 没有角色就没有位置/朝向可比，动作包的漂移检查自动跳过（`ScatPlayer` 本来就这么判） |
+| `IsReady` | 有注入通道且 `PlayerAiConfig.Enabled` | 通道不在就如实报 not ready |
+| `Paused` | 由运行时每帧同步 | 不直接读运行时单例 → 这个类能进"纯逻辑自检"那份编译清单 |
+
+接线（`PlayerAiRuntime`）：
+
+1. `ResolveTreeHost()` 三级：绑定的宿主 → 首个就绪角色 → **无角色宿主**。
+   注意无角色宿主**不写进 `TreeHost`**：一旦缓存下来，等真角色出现时就永远轮不到它接管；
+2. 没有世界时的帧首：`ReleaseAll()` 之后**照样 tick 无角色宿主**，并在它前面补一次
+   `ApplyPendingReloadsNow()` —— 主菜单里"推送改动"也该生效；
+3. 角色就绪的那一刻：`StopUiTree("player ready: …")` 并写一条事件日志。
+   菜单树不"搬"到角色上（运行态属于旧运行时，搬过去只会让状态机各说各话）——
+   进世界之后要跑什么，用「播放」重新切一次，语义清楚。
+
+`ai.status` 的 `host` 里多了 `kind`（`player` / `menu`），前端徽标据此写
+`树：运行中（主菜单，无角色）enter.game.scbtpak（tick 12）`；另外顺手修了前端一个真 bug：
+游戏侧的 `tree.source` 是**绝对路径**，而编辑器手上是文件名 —— 直接比会永远不相等
+（"暂停"永远变不成，"切过去"反而每次都发）。现在按文件名比。
+
+**实测（真游戏、主菜单、没进世界）**：
+
+```
+/api/game/status → ok=true mode=idle
+                   host={"name":"menu","kind":"menu","enabled":true,"ready":true,"hasTree":false}
+POST /api/game/tree/switch?path=…\test.action.scbtpak → {"ok":true,"switched":true,"reason":"prepared on demand"}
+/api/game/live   → ok=true 活动树=test.action running=true ticks=219 → 1.5s 后 489（树真的在主菜单里跑）
+```
+
+**验证**：游戏侧纯逻辑自检 436 → **443/443**（新增 8 条：菜单宿主自报 kind/name、没有世界也能
+`switch` 进树、`Tick` 真的推进、树里的 `PlayActionPackage` 在**没有任何角色**的情况下把输入
+交给注入层、`ai.tree.snapshot` 在菜单里答得出、`ai.stop` 后释放并清空、`ai.status` 报 kind=menu）；
+编辑器自检 100/100、前端无头自检 355 → **358**（新增"主菜单跑树"徽标 + 绝对路径也能认出是同一棵树 +
+徽标只写文件名）、真浏览器自检保持全绿。
+
+**顺手做的一件工程清理**：纯逻辑自检的 harness 生成脚本原来只存在于
+`%TEMP%\pa_build_test.py` —— TEMP 一清自检就跑不了，而且改源码时很容易忘了同步它的编译清单
+（新增的 `UiTreeHost.cs` 就是这么被漏掉的）。现在它是仓库里的
+`Mod/Packages/pa_build_test.py`，`check_player_ai_build.py selftest` 直接跑它。
+
+### 9.5.24 停止按钮（= 重置，从头跑）+ 画布只亮"正在执行"的那一个节点
+
+用户反馈两点：①"可以暂停、暂停后还保持到执行的位置，但需要一个停止按钮，这样我才能重置行为树
+从头开始跑"；②"执行到对应位置时画布中对应节点亮起（边框加高亮、亮绿色），**只亮正在执行的**，
+不需要亮已执行的"。
+
+**① 停止**：新增命令 `ai.tree.stop`（`TreeStop`）——`host.StopTree()`：卸下树、释放输入、
+写事件日志。与"暂停"的分工就是用户要的那个：
+
+| 动作 | 运行态 | 再播放时 |
+|------|--------|----------|
+| 暂停 | **保留**（继续 = 从原处接着跑） | —— |
+| 停止 | **丢掉**（回到"什么都没跑"） | 从根开始 |
+
+编辑器侧加了 `POST /api/game/tree/stop` 与工具条上的「⏹ 停止」按钮（有树在跑/暂停时才可点），
+点完提示"再点「▶ 播放这棵树」就是从头开始跑"。
+
+顺手修了一个真 bug：`BtRuntime.ReplaceRoot(..., migrate:false)` **只重置节点状态、不重置运行计数**
+（tick / 时间 / 循环数）—— 于是"停止后重播"看起来像是没重置（实测：停止再 switch，`ticks` 还是 6）。
+现在没有迁移（= 从头开始）时也 `ResetRunState()`；热重载走 `migrate:true` 那条路，进度照旧保留。
+
+**② 只亮正在执行的节点**：`ai.tree.snapshot` 的 `path` 数组本来就是"当前 `IsActive` 的节点"
+（前序遍历），于是**最后一个**就是最深、真正在跑的那个。前端改成：
+
+- 只给这一个节点加 `.live-active`：亮绿色（`--live-accent`，深色主题 #35d07f / 浅色 #14a35c）
+  2px 边框 + 外发光 + 轻微呼吸动画（`prefers-reduced-motion` 下不动画）；
+- **删掉 `live-path` 那一层**（以前路径上的祖先会挂一层暗色高亮，看着像"好几个都在跑"）；
+  预览区/缩进树里"路径上"的标记也一并去掉，"活动节点路径"仍留在实时监视面板的文字里；
+- 拿不到 `path` 明细（老版本 Mod）时退回路径字符串的末位 —— 只亮一个，不亮一片。
+
+**实测（真游戏、主菜单）**：
+
+```
+① switch  test.action → switched=true，ticks=220 running=true
+② stop               → {"stopped":true,"host":"menu","mode":"idle","hasTree":false}，ticks=0 running=false
+③ 再 switch          → ticks 立刻 = 2（**归零**），1 秒后 180   ← "重置、从头开始"就是这条
+④ 再 stop            → mode=idle paused=false（干净收工）
+```
+
+**验证**：游戏侧纯逻辑自检 443 → **447/447**（新增：`ai.tree.stop` 卸下树 + 释放输入 + 报 idle、
+重复停止如实说"没有树可停"、停止后再切 tick 归零）；编辑器自检 100 → **102/102**（`/api/game/tree/stop`
+把游戏的 `stopped/mode/hasTree` 原样带回、请求发的就是 `ai.tree.stop`）；前端无头自检 358 → **365**
+（停止按钮的可点状态与请求、`liveActiveChain` 三条：只取最深 active / 已执行的不亮 / 无明细时退回末位）；
+真浏览器自检 149 → **154**（按钮文案与真实可点状态、画布上 `.live-active` ≤ 1 且 `.live-path` = 0）。
+
+### 9.5.25 "第二次播放不执行"：三个真原因（都是状态没清干净）
+
+用户报了两条：①播放→暂停→停止→再播放，界面显示"已暂停"；②进世界后停止、回主菜单再播放，
+**没有被执行**。查下来是三个独立的原因，都能用日志与实测钉住：
+
+**① 暂停是全局的，停止没有清它**（就是①的直接原因）。`PlayerAiRuntime.Paused` 在帧首最先判断，
+暂停中 `TickFrameStart` 直接 return —— 于是"停止后再播放"只是把树**装**回去，永远不会被 tick，
+`ai.status` 的 `paused` 还是 true，界面自然写"已暂停"。改法：
+- `ai.tree.stop` 顺手 `context.Resume(...)`（回包里多一个 `resumed` 字段）——**停止 = 完全归零**；
+- 编辑器的「▶ 播放」在切换成功后，若发现游戏仍处于暂停就自动 `ai.resume` 并说明原因；
+- 「试跑」为了不跟树抢输入会自动暂停，现在**回放一结束就自动恢复**（原先只在状态栏提醒一句，
+  用户没点恢复的话，之后所有"播放"都不执行 —— 这正是②的常见触发路径之一）。
+
+**② `TreeHost` 绑在角色上，回到主菜单后那个宿主永远不会被 tick**（②的另一个原因）。
+`ResolveTreeHost()` 原来第一句就是"绑定且 Enabled 的宿主直接返回"。进过世界之后它绑在 `AiActor` 上；
+回主菜单时角色随世界消失、不会再被 tick，但函数还是把它返回出去 → `ai.tree.switch` 把树装进一个
+**死宿主**：事件日志里 `[switch] … prepared=True` 一条条成功，游戏里什么都不发生（实测就是这么报的）。
+改法：宿主解析**跟着"现在有没有世界"走** ——
+- 有世界：优先就绪角色；没有就绪角色时保留绑定（命令层要能如实报 not_ready）；都没有 → 无角色宿主；
+- 没有世界：只能用无角色宿主，并**清掉指向角色的陈旧绑定**，同时写一条
+  `[host-unbind] world unloaded: dropping the stale player host`（排查时一眼能看到）。
+
+**③ 启动包会顶掉用户正在跑的树**：`AutoLoadTreeOnStart` 在世界就绪时无条件装载
+`PlayerAiConfig.StartupTreePackage`，日志里就是进入世界后紧跟一行
+`[load] Initial demo.greet.scbtpak -> replaced` —— 用户"播放 enter.game 进游戏"，一进世界
+那棵树就被 demo.greet 换掉了。现在**宿主已经在跑树就跳过**（写 `[startup-tree-skip]`），
+启动包只负责"什么都没跑时给个默认的"。
+
+**实测（真游戏、主菜单，用户报的那串操作）**：
+
+```
+① 播放 test.action → switched=true          ticks 7 → 195（在跑）
+② 暂停             → paused=true            ticks 冻在 197（运行态保留）
+③ 停止             → {stopped:true, **resumed:true**, paused:false, hasTree:false, mode:idle}
+④ 再播放           → switched=true          ticks 从 7 开始 → 1.2s 后 226   ← 真的从头跑起来了
+```
+
+**验证**：游戏侧纯逻辑自检 447 → **450/450**（新增：暂停后 `ai.tree.stop` 把暂停一起清掉、
+`resumed=true`、暂停标志真的没了）；前端无头自检 365 → **368**（播放时发现暂停会发 `ai.resume`
+并说明、徽标写"（AI 已暂停，播放时会自动取消）"、试跑回放结束自动恢复）。
+②③ 属于"要看世界切换"的行为，自检覆盖不到运行时（那份工程不含 `PlayerAiRuntime`），
+所以靠**事件日志 + 实测**兜：回主菜单时日志里应出现 `[host-unbind] world unloaded…`，
+进世界时应出现 `[startup-tree-skip] host already runs enter.game.scbtpak`。
+
+### 9.5.26 行为树绑"控制器"，不绑角色（架构调整）
+
+用户的原话："行为树不应该绑定到角色上，而是角色的控制器 —— 例如还没进入游戏的时候，也是要操作
+按钮的，退出世界了，也是要执行其他操作的。"
+
+这一条把之前两轮"打补丁"的做法（菜单宿主 / 角色宿主来回切）彻底换掉了：
+
+| | 以前 | 现在 |
+|---|---|---|
+| 树 / 黑板 / 模式层在哪 | `AiActor`（世界里才存在），没世界时临时给个 `UiTreeHost` | **`ControllerTreeHost`**（一直存在） |
+| 世界切换时 | 换宿主：菜单树被停掉、进世界重装、回菜单再摘 | **只换输入路由**（`Bind`/`Unbind`），树不卸载、运行态保留 |
+| 输入从哪出去 | 角色执行器，或 UI 兜底（两套宿主各一份） | `ControllerActuator`：有世界转发玩家执行器，没世界只点 UI（同一个对象） |
+| 传感器 | 角色的 | `ControllerSensor`：有世界转发，没世界 `IsReady=false`（漂移检查自动跳过） |
+| `ai.enable/disable` | 翻角色的开关 | 翻**控制器**的开关（世界外也有意义：允许点 UI） |
+| `ai.status.host` | `kind=player` / `kind=menu` | `kind=controller` + **`situation`**（`world`/`menu`）+ `player` |
+
+代码落点：新增 `Actor/ControllerTreeHost.cs`（宿主 + 模式层 + 帧首 tick）、
+`Actor/ControllerInput.cs`（转发式执行器/传感器）、`Actor/IPlayerInputProvider.cs`（"世界输入来源"接口）；
+`Actor/AiActor.cs` 缩成**世界输入来源**（玩家绑定 + 传感器/执行器 + `ReleaseInput`，不再持有树/黑板/状态机）；
+`PlayerAiRuntime.TickFrameStart` 现在**每帧只 tick 控制器一次**（世界内外都一样），并在帧首
+`SyncWorldInput()` 按"有没有世界 + 有没有就绪角色"接上/摘下输入来源；`PlayerAiComponent` 的自动接管
+改成 `runtime.EnableController(...)`。
+
+**顺带发现并修掉的一件事**：行为树默认是**循环**的（UE 语义，`BtRuntime.Tick` 里"跑完 → 重开"），
+所以"进游戏"这种菜单宏会**每隔几秒再点一次 Play**（实测：树在菜单里循环点了十几轮）。
+新增包级属性 **`Root.loop`**（bool，默认 `true`）：
+`loop:false` = 一次性，跑完由运行时把树停掉（`IsRunning=false`）。`enter.game.scbtpak` 已按
+`loop:false` 重新生成 —— 实测 `t=5s` 时 `running=false / lastResult=Succeeded / ticks 冻住`，不再循环。
+
+**验证**：
+- 纯逻辑自检 458 → **461/461**：新增"根 loop=false 一次性停 / 默认循环树照旧 / 停了的树不再跑第二轮"，
+  以及上一节的绑定断言（绑上/摘下玩家时**同一棵树继续跑、tick 继续涨**、世界里输入走玩家执行器、
+  世界外按键注入是空操作、`situation` 与 `player` 如实上报）共 7 条；
+- 真游戏（主菜单实测）：`host={"name":"controller","kind":"controller","situation":"menu","ready":true}`，
+  播放 `enter.game` → 树在菜单里跑起来（ticks 180→725）→ 到 `Wait(2)` 结束**自己停下**（`running=false`）；
+- `check_player_ai_build.py all` 全绿：461/461、editor 102/102×2、ASSETS 0、BROWSER 154/154、
+  web 368/368、WIRING 0。
+
+**没能当场验证的一环（如实记下）**：菜单 → 世界里那一步我这边跑不通 ——
+`act.uiclick` 点 `WorldsList` 之后 `selectedIndex=None`（连既有的 `Mod/Packages/enter_world.py`
+也卡在同一处），所以录制的 `进入游戏.scatpak` 第二步（选世界）点不动。这属于 **CmdBridge 的 UI 自动化**
+问题，跟这次架构调整无关；人工进世界之后，编辑器徽标应从"（控制器·主菜单）"变成"（控制器·<玩家名>）"
+而**树继续跑**（ticks 不归零）—— 那正是这次改动的验收点。
+
+### 9.5.27 "光标乱跳、菜单没反应"：控制器重构时引入的一处回归（已修）
+
+用户反馈："点击播放进入世界的树，看不到操作菜单，只看到原本的控制器的手指样式的光标乱跳了几下。"
+
+**原因（我这次重构引入的）**：`PlayerAiRuntime.ReleaseAll()` 里顺手加了
+`m_controller.ReleaseInput()`，而这个函数在**世界外每一帧**都会被调用（"没有世界 → 释放角色输入"那条分支）。
+控制器的释放又会一路传到 `UiOnlyActuator.ReleaseAll()` → `CmdBridgeInput.ReleaseAll()` ——
+UI 那套"释放"的语义是**取消整个软光标注入会话**，而一次点击要走"移动 → 按下 → 抬起"好几个帧：
+**每帧被清一次 ⇒ 永远派生不出 Click**。表现就是光标移过去了（位置确实被设过）、界面纹丝不动。
+
+**改法**（把两种"释放"分开，语义写进注释）：
+
+| 调用方 | 现在释放什么 |
+|--------|--------------|
+| `IAiActuator.ReleaseAll()`（任务收尾、动作包回放结束、运行时世界外每帧） | **只放世界输入**（玩家按住的键/鼠标） |
+| `ControllerTreeHost.ReleaseInput()`（停止树 / 未就绪 / `ai.input.release` / `StopEverything`） | 世界输入 **+ 显式取消 UI 注入** |
+
+即：`ControllerActuator.ReleaseAll()` 不再动 UI，新增 `CancelUiInjection()` 只给上面那几条显式路径用；
+`PlayerAiRuntime.ReleaseAll()` 回到"只释放角色"，全停用新增的 `StopEverything()`。
+
+**验证（真游戏，端到端）**：
+
+```
+播放 enter.game（主菜单）→ t=0.6s screen=Play → t=1.2s screen=Game worldLoaded=True   ← 真的进世界了
+ai.status：host={"kind":"controller","situation":"world","player":"host","ready":true}   ← 同一次运行里
+           tree=enter.game running=False ticks=275                                    ← 还是同一棵树
+日志：      [startup-tree-skip] host already runs enter.game.scbtpak   ← 启动包不再顶掉用户的树
+            actor attached: AiActor(host idx=1 local=True)                ← 进世界后控制器接上玩家
+```
+自检补了回归：`a task-level ReleaseAll does not cancel the UI injection` +
+`an explicit ReleaseInput does cancel it`（纯逻辑层就能钉住，不必靠真机）。
+
+**顺带记下两件事**（都不是这次改动的锅，但要用户知道）：
+1. 进世界之后这棵树最后是 `lastResult=Failed`，日志写明
+   `replay drift: position drifted 37.24m from the keyframe (tolerance 3.0m)` ——
+   `进入游戏` 这类**录下来的**动作包带的是**绝对世界坐标**关键帧，换个位置回放必然判漂移失败
+   （设计如此："漂移即失败，不做瞬移修正"）。菜单宏要么录成"只带起点一条关键帧"（像
+   `sample_walk` 那样），要么把节点的 `abortOnFail` 关掉。
+2. `sccmd act.uiclick`（那条"一步到位"的注入路径）在当前环境里**点了不生效**（光标到位置、界面无反应），
+   而动作包/行为树走的是 `UiQueueClick` 会话路径（一步一帧）——**后者是好的**，前者待查。
+
+**顺手的一个实验事故**：我用 `act.key Escape` 探测键盘注入时，主菜单里的 Escape 直接把游戏退出了
+（日志 `Saved settings`）——记一笔，别在菜单里随手发 Escape。
+
+### 9.5.28 "改过窗口大小就播放失败"：三处一起治（UI 真实位置 + 时钟 + 点击重试）
+
+用户原话：「之前不是让获取按钮所在位置的坐标吗，例如 `Button("Play").getLocation()` 这样来获取。
+能获取 ui 的时候，尽可能使用 UI 的真实位置。避免我把窗口长宽调整了导致播放失败。」
+
+这条做完了，但过程中挖出**三个叠在一起的真原因**，缺一个都还是"光标动了一下、界面纹丝不动"：
+
+**① 控制器未接管时每帧 `ReleaseInput()`（真凶）**
+`ControllerTreeHost.Tick` 的 `!Enabled` 分支每帧都跑（启动后还没进世界、`ai.disable` 之后都是这个常态），
+而 `ReleaseInput()` 会 `CancelUiInjection()` —— UI 那套"释放"的语义是**取消整个软光标注入会话**。
+一次软光标点击要跨好几帧（`UiMouseSession` 一步一帧：移动 → 按下 → 抬起），每帧被清一次，
+引擎永远派生不出 `Click`。现在只在"刚变成未接管"的那一帧释放一次（`m_releasedForDisabled`）。
+判据很好认：`ai.status.host.enabled=false` + `situation=menu` 时，注入的按下状态活不过一帧。
+
+**② 回放/录制的时间轴不是真实时间（`frames=723 / duration=2.231s` 露的馅）**
+帧首泵靠 `AutoResetEvent` 逐帧举手、后台线程收信号再派发，**信号会合并**：泵慢一拍就少跑一帧 tick，
+可每次 tick 拿到的 `Time.FrameDuration` 仍然只有"它自己那一帧"的时长。于是 AI 的时间轴比真实时间慢
+——上一版进游戏包 `frames=723, duration=2.231s`，而 723 帧在当时的 ~180 FPS 下是 4.0s，**只走了 56%**。
+回放时泵不漏帧、时间轴≈真实时间，包里"隔 0.45s 点世界列表"就撞进 Play 屏的切场动画里。
+现在 `ScheduleFrameStartTick` 用单调时钟量"距上次 tick 的真实时间"（`ConsumeRealDelta`，clamp 0.25s）。
+
+**③ 被拒绝的 UI 点击直接丢掉（顺序还会乱）**
+`ScatPlayer.FireUiEvents` 原来"到点打一枪"，引擎如实回 `rejected (missing/occluded)` 就记一句警告算了。
+而语义目标（`Play` / `list:WorldsList@世界名`）本来就能随时现解析 —— 现在改成**重试**：
+没点成的点击挂在 `m_pendingUiClicks` 里逐帧重试（默认 5s），并且**只要还有没完成的点击就不放行后面的点击**
+（顺序铁律：`选世界` 必须发生在 `Play!` 之前）。成功/放弃都会各记一条日志。
+
+**顺手补上的**：`list:WorldsList@<文字>` 的行文字**从游戏里查**再写进包，不手打 ——
+第一版把 `Rebritish` 打成了 `Rebristish`，回放时引擎如实回一句 `rejected (missing/occluded)`，
+看起来像"点击机制坏了"，其实是名字对不上（`Mod/Packages/out/convert_enter_game_events.py` 现在会先
+`obs.ui` 拉一遍列表、逐字核对，改名/改列表都能立刻发现）。
+
+验收（`Mod/Packages/out/verify_enter_game_tree_resized.py`，把窗口缩到 1084x661 之后再跑整棵树）：
+
+```
+screen        : MainMenu worldLoaded = False
+resize        : client = (1084, 661)
+switch        : {"mode": "tree"}
+   t=  1.0s screen=GameLoading worldLoaded=False ticks=181 active=… Task.PlayActionPackage#enter
+   t=  2.0s screen=Game      worldLoaded=True  ticks=273 active=<none>
+host          : {"name":"controller","kind":"controller","enabled":true,"ready":true,
+                 "hasTree":true,"situation":"world","player":"host"}
+```
+
+配套的两条：
+· 录制的世界行不再记像素（`record_enter_game.py` / `enter_world.py` 都改成
+  `act.uiclick selector=WorldsList text=<世界名>`），录出来的事件是 `click:list:WorldsList@<世界名>`；
+· 已经录好的 `进入游戏.scatpak` 用 `convert_enter_game_events.py` 原地换掉那条死像素
+  （原包另存 `.bak-像素`），其它轨道一个字节没动。
+
+回放能点中的几何前提（也顺便回答了用户那句"用 UI 的真实位置"）：`obs.ui`/点击解析用的是
+`Widget.GlobalBounds`，它是**已经乘过 `ScreensManager` 布局缩放**的客户区像素
+（`ScreensManager.cs:420-430`：`num = 850/Clamp(UIScale,0.5,1)`，`RootWidget.LayoutTransform = Scale(num2)`），
+所以窗口一变大小，同一个控件解析出来的点自然跟着变 —— 实测同一行：旧 1920 宽窗口 `570.6`
+vs 现在 1084 宽 `351.8`。
+
+### 9.5.29 UI 定位 / 点击**服务**（`ui.locate` / `ui.clickelement`）+ 编辑器拾取面板 + `Task.UiClick`
+
+用户原话：「把相应的方法做成 CmdBridgeMod 能提供的服务，在行为树编辑器中，要能够使用来获取坐标
+或点击对象。避免硬编码由于分辨率变化或窗口尺寸变化导致无法使用，最好可以通过参考按钮按下的事件，
+在可行的情况下，直接调用发出按钮已按下。」
+
+**服务端（CmdBridgeMod，谁都能用）**
+
+| 命令 | 作用 |
+|------|------|
+| `ui.locate target=<语义目标>` | 解析目标 → **当前**客户区坐标 + 路径/类型/文字 + `hittable`/`clickable`/`blockedBy`；列表行另给 `list:{index,text,count}` |
+| `ui.clickelement target=<语义目标> mode=direct\|input\|invoke` | 真的点它（`auto` = 能发事件就发事件，否则 `direct`） |
+| `obs.ui` / `ui.elements` | 当前屏幕上可交互元素的清单（编辑器拾取面板的数据源） |
+
+目标写法（**语义优先，坐标只是兜底**）——解析实现在 `CmdBridgeMod/Server/UiTarget.cs`，
+它是**唯一**一份（PlayerAiMod 里那份重复实现已删除），并且被编进离线自检：
+
+| 写法 | 含义 |
+|------|------|
+| `Play` | 控件名或文本（当前屏幕里必须唯一，歧义如实报错，不猜） |
+| `[MainMenuScreen#0]/…/Play` | 完整路径（最精确；编辑器拾取出来写进树的就是这个） |
+| `list:WorldsList@Rebritish` | 列表里文字含 `Rebritish` 的那一行（跟着列表内容走） |
+| `list:WorldsList#0` | 列表第 0 行（跟着滚动位置走） |
+| `1010.6,64.83` | 客户区坐标 —— **不推荐**，窗口一变就点到别处 |
+
+命令名全小写是**协议要求**：控制通道在解析请求时会把命令名 `ToLowerInvariant()`
+（`ControlServer.cs:341`），驼峰写法只会在 `cmd.list` 里好看，调用一律 `unknown_command`（实测踩过）。
+
+**三种点法（`mode`）**
+
+| mode | 怎么点 | 说明 |
+|------|--------|------|
+| `direct`（默认） | **单帧合成"按下→抬起"** | 只往输入层写一次：`m_mouseDownOnce[Left]=true`、down 数组保持**没按**、`m_mouseDownPoint/m_mouseDownButton` 摆好、软光标定位到目标 → 引擎自己的 `UpdateInputFromMouse` 在同一帧派生 `Tap`+`Click`。控件自己的逻辑（`IsClicked`、列表选中+`ItemClicked`、点击音）照常跑 |
+| `invoke` | **直接触发控件自己的按下事件** | 目前引擎里唯一带点击事件的是 `ListPanelWidget.ItemClicked`。⚠️ 两个坑：① `PlayScreen` 的处理器写着 `if (selectedItem == item) Play(item)`，而 `SelectedItem` 是 `ListPanelWidget.Update` 在**发事件之后**才更新的 —— 所以必须先摆 `SelectedIndex` 再发事件，否则点不动；② 这实质替界面做了"选中"这个决定（等价于点已选中的那一行 = 直接进世界），**绕过输入层**，不给 AI 当默认 |
+| `input` | 多帧软光标会话（移动→按下→抬起，一步一帧） | 保留对照/兼容 |
+
+**为什么 `direct` 是"单帧"而不是"同帧按下再抬起"**：引擎的 `Click` 派生条件是
+"这一帧**没按着** + 上一帧留了按下起点"（`WidgetInput.cs:755-769`）。同帧把 down 数组按了又松，
+两件事在同一帧里看不到先后，于是什么也派生不出来（早期"直注入点击没反应"就是这个原因）。
+把"按过一下"只写进 **downOnce** 数组，`Tap` 与 `Click` 就在同一帧同时成立，和真人快速点一下等价。
+
+**踩到的坑（值得记）**：这次按下**绝不能**登记进 `m_heldButtons`。共控合并
+（`focus.attach`，或 `auto` 且真实焦点恰好在游戏里）每帧会把 down 数组重算成
+`IsMouseButtonHeldByInjection(i) || 真实按下`（`FocusPolicy.MergeInjectedWithReal`）——
+登记成 held 就等于告诉它"这个键还按着"，down 数组被抬成 true → `Click` 分支不成立 → 界面纹丝不动。
+症状很有迷惑性：`auto` 模式下**第一次点击时好时坏**（取决于真实焦点在谁那儿），`focus.detach` 之后
+同样的调用立刻就好。现在验收脚本**两种模式都跑**（见下）。
+
+**编辑器侧**
+
+- `GET /api/game/ui/elements` —— 元素清单；每个元素带上 `target`（语义目标，写进树用）
+  与 `rowTarget`（列表行）。注意游戏返回的 `elements` 是**一段 JSON 文本**
+  （`GameBridgeClient.Collect` 把数组按 `ToJson` 收成字符串），编辑器必须先解析回数组，
+  否则前端 `forEach` 直接炸（实测元素个数变成 9593 = 字符串长度）。
+- `GET /api/game/ui/locate?target=…`、`POST /api/game/ui/click {target, mode}`。
+- 检查器里多了「**UI 拾取**」面板：`⟳ 拾取界面元素` 列出当前屏幕可点的东西（**真实坐标** + 可点性），
+  点一行 → 目标框填**语义目标**；`定位` 看它现在在哪；`点一下` 在游戏里真的点它（可选点法）；
+  `填进树` 把它写进选中的 `Task.UiClick`（没有就新建一个挂上去）。**写进树的永远是语义目标，不是像素。**
+
+**行为树节点 `Task.UiClick`**（属性：`target` 必填、`mode`（默认 `direct`）、
+`waitSeconds`（默认 3，目标还没出现就等它就绪再点，等不到才 Failed）、`repeat`）：
+
+```json
+{ "id": "clickWorld", "type": "Task.UiClick",
+  "properties": { "target": "list:WorldsList@Rebritish", "mode": "direct", "waitSeconds": 3 } }
+```
+
+`PlayerAiMod` 里两条执行器（世界内 / 世界外）现在都把目标**原样转发**给这个服务，
+自己不再解析目标类型 —— 两边各解析一次曾经就是"编辑器能点、回放点空"的来源。
+
+**验收**（`Mod/Packages/out/verify_ui_service.py`，先把窗口缩到 1084x661）：
+
+```
+ui.locate Play 给出真实坐标                 PASS {'x': 394.7, 'y': 459.7}
+ui.locate 说得出它能不能点                   PASS clickable=True blockedBy=None
+focus : attach（共控合并模式，最容易被合并逻辑吃掉）
+ui.clickElement Play (direct) 在共控合并模式下也能点动  PASS MainMenu -> Play
+focus : detach（脱离模式，真实鼠标切断）
+世界列表出现                               PASS ['Rebritish', 'CmdBridgeTest', …]
+ui.locate 列表行给出真实坐标                  PASS list:WorldsList@Rebritish -> {'x': 351.75, 'y': 36.6}
+ui.clickElement 列表行 (direct) 选中了那一行     PASS selectedIndex=0
+ui.clickElement Play! (direct) 真的进了世界    PASS screen=Game
+编辑器 /api/game/ui/elements 列出元素（真数组）  PASS 18 个元素
+拾取到的元素带语义目标（能直接写进树，不是像素）      PASS [GameScreen#0]/…/Back
+编辑器 /api/game/ui/locate 能解析这个目标        PASS {'x': 0, 'y': 0}
+FAILURES: 0
+```
+
+自检也跟着长：纯逻辑 **474/474**（`UiTarget` 的解析现在钉在 CmdBridge 那份实现上）、
+编辑器 **106/106**（新增"编辑器把 `ui.locate` / `ui.clickelement` 连目标带点法发出去"两组）、
+真浏览器 **159/159**（新增 5 条：面板存在 / 游戏没在跑时如实报错 / 拾取结果带真实坐标 /
+点一行填的是路径不是像素 / 「填进树」新建 `Task.UiClick` 并写对属性）。
+
+### 9.5.30 "游戏已经启动了，但树无法点击播放，提示游戏没在跑"
+
+用户实测报的现象。查下来是**编辑器前端的状态缓存没人刷新**（编辑器与游戏本身都是好的：
+`/api/game/process` 说 `running=true channelConnected=true`，`/api/game/status` 也能拿到 `ai.status`）。
+
+根因链条：
+1. 树徽标与「▶ 播放」的判断全看 `state.gameStatus`（`treeRunState()`），而它**只在**
+   页面加载、换包、点播放/暂停/停止之后才刷新；
+2. 游戏是**在页面之外**起来的（手动双击 exe、或先开编辑器再开游戏）时，那份缓存永远停在
+   `game_unreachable` → 徽标一直写「树：游戏没在跑」；
+3. 而 `updateTreeRunUi()` 里 `button.disabled = … || !st.connected` 把播放按钮**灰掉** ——
+   于是用户的感受就是"点不动"，而且没有任何入口能自己恢复（只有手动点一次「游戏状态」才会刷新）；
+4. `waitForGameChannel()`（启动游戏后的轮询）连上通道时只调了 `loadMeta()`，
+   而 `loadMeta()` 只更新游戏徽标/实例根，**不碰** `state.gameStatus` —— 走「启动游戏」这条路也会中招。
+
+四处一起改（`PlayerAiEditor/Web/app.js`）：
+- **播放按钮不再因为"缓存说没在跑"而灰掉**：只有"正在通信"或"没有打开的包"才禁用；
+- `treeRunPrimary()` 在 `!connected` 时**先重新确认一次**再决定（`treeRunPrimaryAfterRefresh()`），
+  确认后仍没在跑才如实报"游戏没在跑 + 该怎么办"；
+- 新增**低频游戏状态哨兵** `pollStatusQuiet()`（3s，进程 + 游戏状态两个端点一起刷），
+  页面加载后自动开跑；打开「实时监视」时停掉（那条 700ms 已经在刷），关掉监视再接手；
+  标签页隐藏时不打，`visibilitychange` / `window.focus` 时立刻补一次
+  —— 正好对应"在游戏那边点完、切回编辑器点播放"这个动作；
+- `waitForGameChannel()` 连上通道时补一句 `refreshGameStatusQuiet()`。
+
+真浏览器自检 +3 条（**163/163**）：缓存写着"游戏没在跑"时播放按钮仍可点、
+点它会先打 `/api/game/status` 再决定、哨兵一次会同时刷进程与游戏状态。
+另外把原来那条"游戏没在跑 → 播放按钮禁用"的用例**改成"仍可点、标题说明会重新确认"**
+（旧断言正是这次要修的行为）。
+
+### 9.5.31 落点标记（2s / 5px 红点）+ 三个"点一下没反应"的真原因
+
+用户原话：「我在UI拾取的里面拾取界面元素后，点击选择morebutton后，点定位，在游戏中看不到明显的标记，
+可以在点击定位处渲染2s直接5像素的红色圆点，方便定位。现在点击点一下，并没有点击效果。」
+
+**① 落点标记**（`ui.locate mark=true` / `ui.clickelement mark=true`，编辑器默认开，可关）
+
+`UiMarker`（新文件）往 `ScreensManager.RootWidget` **末尾**塞一个自己的小控件
+（子控件顺序＝绘制顺序，最后一个画在最上面），只在 `Draw` 里往 2D 批次塞一个红方块 + 1px 深红外框：
+· `IsHitTestVisible = false` —— 覆盖层绝不吃点击；
+· `DesiredSize` 必须非零（`Widget.CollateDrawItems` 会用 `GlobalBounds` 与屏幕求交，空尺寸会被直接跳过）；
+· 坐标换算：RootWidget 的子控件在设计坐标里，`GlobalScale` 才是"设计 → 客户区像素"的比例；
+· 2 秒后自己在帧首摘掉（`ui.marker` 命令可查 `shown/drawFrames/expiresIn` —— `drawFrames>0`
+  才算"真的画出来了"，而不是"命令返回了、屏幕上什么都没有"）。
+屏幕外的点**不画**，并如实回 `marked=false, markSkipped=…`。
+
+**② 世界内按钮的输入面写错了层**（真凶之一）
+`WidgetsHierarchyInput` 是**一层一份**：主菜单的屏用根输入面，世界内 HUD 用
+`GameWidget` 自己的那层（`GameWidget.cs:104-106`）。软光标位置 / `IsMouseCursorVisible` /
+`m_mouseDownPoint` 都是每层一份 —— 以前 `direct` 写的是**根**输入面，所以 HUD 按钮那一层
+什么都没变，派生不出 `Click`。现在按"命中控件所在的层"写（`target.Input`）。
+
+**③ 落点落在按钮中心盖着的图标上**（真凶之二）
+`ClickableWidget.Update` 判点击的条件是 `HitTestGlobal(Click.Start) == this`；
+而复合按钮（`BitmapButtonWidget`）内部**包着一个** `ClickableWidget`
+（`BitmapButtonWidget.cs:12,18`：`IsClicked => m_clickableWidget.IsClicked`）。
+所以规则是"落点要命中**目标自己或它子孙里的 ClickableWidget**"：中心不行就在矩形里按
+5×5 网格扫一圈（内缩 15%）；回包给出 `clickTarget` / `clickTargetOnTarget` / `clickPointAdjusted`，
+一眼能看出"到底点在谁身上"。
+
+**④ 点不到就说点不到**（真凶之三，也是"看不到标记"的原因）
+`MoreButton` 这类世界内 HUD 控件在 **Windows 上是触屏专用**的：
+`ComponentGui.UpdateSidePanelsAnimation` 在非触屏且无模态面板时把 `m_sidePanelsFactor` 拉到 1，
+整条控制栏被 `RenderTransform` **平移到屏幕外**（实测坐标 x=2852、屏幕只有 1920 宽）。
+以前"中心点"会照点，于是点到左上角某个控件 —— 用户看到"点了没反应"，回包却写着命中了别的控件。
+现在：
+· `obs.ui` 的 `clickReason` 说人话（`off-screen: center (2852.9,55.3) is outside the 1920x1080 screen area - …`
+  / `zero size (not laid out yet…)` / `blocked by X` / `mouse cursor is captured…`）；
+· 编辑器拾取列表把点不到的行**压暗 + 行尾写明原因**，鼠标悬停有完整原因；
+· `ui.clickelement` 在"落点上什么都没有"时**拒绝**（`element_off_screen`）并告诉你去按「定位」看原因，
+  绝不再点屏幕角落糊过去。
+
+验收（`Mod/Packages/out/verify_ui_marker_and_hud_click.py`，世界里跑）：
+
+```
+世界内 HUD 里有 MoreButton                       PASS [GameScreen#0]/…/RightControlsContainer/…
+ui.locate 命中 MoreButton 并给出屏幕坐标            PASS {'x': 1869.4, 'y': 55.3}
+ui.locate 报告已经亮起标记                        PASS marked=True skipped=None
+标记控件真的被引擎画出来了（drawFrames>0）              PASS drawFrames=73 shown=True expiresIn=1.60s
+标记就是 3 项要求：5 像素 / 落点一致                  PASS diameterPx=5 point={'x': 1869.4, 'y': 55.3}
+2 秒后标记自己消失（不留常驻控件）                     PASS shown=False
+-- 世界内模态面板（Esc 菜单）--
+Esc 菜单里有可点的 Resume 按钮                     PASS [None, 'Resume', 'Quit', 'More']
+ui.clickelement 点的是这个按钮（命中它自己或内部可点件）   PASS clickTarget=BevelledButton.Clickable onTarget=True
+点下去真的生效了：菜单关了（Resume 消失）               PASS Resume 还在 = False
+FAILURES: 0
+```
+
+`MoreButton` 本身也验过是"点得动"的：它是自动勾选按钮，点一下 `checked` 从 `False` 翻到 `True`
+（`obs.ui` 直接读得到）—— 它在 Windows 上"看着没反应"是因为那条控制栏本来就是触屏 UI。
+
+自检：纯逻辑 **474/474**、编辑器 **108/108**（+2：定位/点击都要把 `mark` 发出去）、
+真浏览器 **164/164**（+1：点不到的元素在列表里写明原因）。
 
 ## 10. 从 CmdBridgeMod 迁移的试错结论（改本 Mod 前先看这里）
-
 1. **窗口失焦 = 全部输入被丢弃**：`ComponentInput.cs:91-94` 在 `!Window.IsActive || !PlayerData.IsReadyForPlaying`
    时把 `m_playerInput` 置空。行动前用 `IAiSensor.IsInputAccepted` 自查。
 2. **交互射线包含身体**：`ComponentMiner.cs:384` 的身体射线带 0.35 m 膨胀，最近命中是身体时

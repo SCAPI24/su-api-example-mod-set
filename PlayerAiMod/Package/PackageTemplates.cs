@@ -40,10 +40,11 @@ namespace PlayerAiMod
     }
 
     /// <summary>
-    /// 出厂示例包（P0-6）：**随 Mod 分发**的只读模板。
+    /// 出厂示例包（P0-6）：**随 Mod 分发**的模板。
     ///
-    /// 约定（计划 §4.4）：模板装到 `<实例根>/Mods/PlayerAiMod/PlayerAi/BehaviorTrees/`；
-    /// 用户想改就把它复制到 `<实例根>/PlayerAi/BehaviorTrees/`（实例目录优先）。
+    /// 约定（计划 §4.4，2026-09-12 简化为单一目录）：模板装到
+    /// `<实例根>/PlayerAi/BehaviorTrees/` —— 就是唯一的那个包目录，
+    /// 用户要改也改在同一份上（编辑器直接改，不再有"复制到实例目录"这一步）。
     /// 安装**从不覆盖已有文件** —— 用户改过的包不会被 Mod 更新冲掉。
     ///
     /// 示例内容（等价原来的手写 FSM 示例）：
@@ -95,8 +96,11 @@ namespace PlayerAiMod
         }
 
         /// <summary>
-        /// 把出厂模板装进 Mod 只读分发目录（缺什么补什么，绝不覆盖已有文件）。
-        /// 返回新写入的文件数；<paramref name="installed"/> 里是实际写入的路径。
+        /// 把出厂模板装进**包目录**（`&lt;实例根&gt;/PlayerAi/BehaviorTrees`；缺什么补什么，
+        /// **绝不覆盖已有文件**）。返回新写入的文件数；<paramref name="installed"/> 里是实际写入的路径。
+        ///
+        /// 这是游戏侧唯一的"写新包"动作之一，边界与 `ai.tree.export` 一致：
+        /// 只创建不存在的文件；想改已有包只能由编辑器改（或游戏侧显式 overwrite=true 的那两条命令）。
         /// </summary>
         public static int Install(PackageRoots roots, out List<string> installed, out string error)
         {
@@ -109,10 +113,10 @@ namespace PlayerAiMod
                 return 0;
             }
 
-            PackageRoot target = roots.ModRoot;
+            PackageRoot target = roots.InstanceRoot;
             if (target == null)
             {
-                error = "no Mod distribution folder is configured";
+                error = "no package folder is configured";
                 return 0;
             }
 
