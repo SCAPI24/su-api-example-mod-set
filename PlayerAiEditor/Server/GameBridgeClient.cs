@@ -98,6 +98,25 @@ namespace PlayerAiMod.Editor
             return Send(ReadRuntime(), "ai.status", null);
         }
 
+        /// <summary>活动树的运行快照（`ai.tree.snapshot`）：活动节点路径、tick、上次结果。</summary>
+        public Dictionary<string, object> QueryTreeSnapshot()
+        {
+            return Send(ReadRuntime(), "ai.tree.snapshot", null);
+        }
+
+        /// <summary>黑板全部键值（`ai.blackboard all=true`）——实时监视面板用。</summary>
+        public Dictionary<string, object> QueryBlackboard()
+        {
+            return Send(ReadRuntime(), "ai.blackboard",
+                new Dictionary<string, object>(StringComparer.Ordinal) { ["all"] = true });
+        }
+
+        /// <summary>暂停/继续行为树（`ai.pause` / `ai.resume`）。</summary>
+        public Dictionary<string, object> SetPaused(bool paused)
+        {
+            return Send(ReadRuntime(), paused ? "ai.pause" : "ai.resume", null);
+        }
+
         /// <summary>让游戏校验一次包（与游戏内用的是同一份校验器）。</summary>
         public Dictionary<string, object> ValidateInGame(string nameOrPath)
         {

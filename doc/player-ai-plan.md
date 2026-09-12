@@ -596,6 +596,9 @@ PlayerAiEditor/
 | `POST /api/validate` | 只校验不写盘（正文 `{manifest, tree}`） |
 | `POST /api/notify?path=` | 让**正在运行的游戏**热重载（`ai.tree.notify`，带哈希） |
 | `GET /api/game/status` | 直接拿游戏的 `ai.status`（模式/树/活动路径/动作包播放态） |
+| `GET /api/subtree?path=&node=` | 把 `Task.Subtree` 引用的包**按游戏内同一套规则**解析出来（复用包加载器的引用闭包 + `LoadedPackage.FindReference`），供画布就地只读展开、双击进入那个包 |
+| `GET /api/game/live` | **实时监视**：一次往返拿 `ai.status` + `ai.tree.snapshot`（活动节点路径/tick/上次结果）+ `ai.blackboard`（同一时刻的三份数据） |
+| `POST /api/game/pause` / `resume` | 从编辑器遥控游戏侧暂停/继续行为树 |
 | `GET /api/actions` | 列出两个目录里的 `.scatpak`（时长/帧数/**能否回放**/来源/只读/被遮住） |
 | `POST /api/action/validate?name=` | 校验动作包（结构 + 能不能回放；含人类可读 summary） |
 | `POST /api/action/play` | 让游戏**直接回放**（`ai.action.play`，传绝对路径）；`{path, repeat}` |

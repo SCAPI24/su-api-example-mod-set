@@ -32,6 +32,10 @@ namespace PlayerAiMod.Editor
                         return Asset("app.css", "text/css; charset=utf-8");
                     case "/engine-adapter.js":
                         return Asset("engine-adapter.js", "application/javascript; charset=utf-8");
+                    // 真浏览器自检页（用同源 iframe 加载真正的 "/"，用真实鼠标事件驱动）。
+                    // 只给 Mod/Packages/check_editor_browser.py 用，正常使用编辑器不需要它。
+                    case "/selftest.html":
+                        return Asset("selftest.html", "text/html; charset=utf-8");
 
                     case "/api/meta":
                         return HttpResponse.Json(m_api.Meta());
@@ -59,6 +63,20 @@ namespace PlayerAiMod.Editor
                     case "/api/notify":
                         return HttpResponse.Json(m_api.NotifyGame(
                             request.GetQuery("path", request.GetQuery("name"))));
+
+                    // ------------------------------------------------ 嵌套包（Task.Subtree）
+                    case "/api/subtree":
+                        return HttpResponse.Json(m_api.ReadSubtree(
+                            request.GetQuery("path", request.GetQuery("name")),
+                            request.GetQuery("node", request.GetQuery("id"))));
+
+                    // ------------------------------------------------ 实时监视（P3）
+                    case "/api/game/live":
+                        return HttpResponse.Json(m_api.LiveStatus());
+                    case "/api/game/pause":
+                        return HttpResponse.Json(m_api.SetPaused(true));
+                    case "/api/game/resume":
+                        return HttpResponse.Json(m_api.SetPaused(false));
 
                     // ------------------------------------------------ 动作包（P1）：当物料用
                     case "/api/actions":
@@ -242,6 +260,11 @@ namespace PlayerAiMod.Editor
             if (content == null)
                 return HttpResponse.Text(500, "embedded asset missing: " + name);
 
+            // 页面里带一个**构建时间戳**：用户能一眼看出自己跑的是哪一版，
+            // 我们也就不会再陷在"改了但你看的还是旧的"这种扯不清的循环里。
+            if (content.IndexOf(BuildStampPlaceholder, StringComparison.Ordinal) >= 0)
+                content = content.Replace(BuildStampPlaceholder, Program.BuildStamp);
+
             return new HttpResponse
             {
                 Status = 200,
@@ -249,5 +272,7 @@ namespace PlayerAiMod.Editor
                 Body = Encoding.UTF8.GetBytes(content)
             };
         }
+
+        private const string BuildStampPlaceholder = "<!--BUILDSTAMP-->";
     }
 }
