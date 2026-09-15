@@ -8,8 +8,10 @@ Survivalcraft 2 SuAPI Mod 示例集合，演示 SuAPI 接口的各种用法。
 
 - **net8.0** — 所有 Mod 基于 .NET 8.0，SDK 样式 csproj
 - **SuAPI 接口** — 通过 IModEventBus / IModInjector / IModParentField / IModParentMethod / IModResource 调整游戏行为，不修改原始代码
-- **IsMergeLib** — 默认并优先使用 `IsMergeLib=true`（DLL 放 `Lib/`，双端共用）；只有明确要求平台专用程序集时才使用 `false`（按平台放 `Lib/X64` + `Lib/Arm64`）
+- **IsMergeLib 合并库模式（唯一允许）** — 所有 Mod 一律 `IsMergeLib=true`，程序集扁平放 `Lib/`，双端共用同一份平台无关 DLL；**禁止** `false` 与 `Lib/X64` / `Lib/Arm64` 等平台分目录
+- **ModInfo.xml 扁平写法（唯一允许）** — `<Version>` 与 `<APIVersion>` 直接挂在 `<ModInfo>` 下；**禁止** `<ModVersion><Version>` 嵌套写法（读取端只认扁平，下载/导入会直接拒掉嵌套包）
 - **Python zipfile 打包** — .scmod 必须用 Python zipfile 打包，确保正斜杠路径
+- **中文输入框** — 需要中文 IME 连打的输入框用内置 `SuAPITextInput.Attach(textBox)`，不要自己写输入接管（世界里带角色的自绘编辑器传 `holdImeContext: true`）
 
 ## 使用方法
 
