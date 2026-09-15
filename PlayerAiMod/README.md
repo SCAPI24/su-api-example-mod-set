@@ -2517,7 +2517,7 @@ follow: w/a/s/d pressed in the body frame reproduce the wanted walk direction   
 20:59:40 [Server] Client "60877" at 127.0.0.1:60877 created game 0.
 20:59:40 [ScMP] GameCreated, ClientID=0, Creator=127.0.0.1:60877
 20:59:52 [ScMP] Reserved PlayerIndex 0 for ClientID 1 (Basil)
-20:59:52 [Server] Client "46454" at <tablet-ip>:46454 joined game 0 at step 1006
+20:59:52 [Server] Client "46454" at <平板地址见 AGENTS.local.md>:46454 joined game 0 at step 1006
 20:59:53 [ScMP] Created transient network player for ClientID 1, PlayerIndex=0
 ```
 

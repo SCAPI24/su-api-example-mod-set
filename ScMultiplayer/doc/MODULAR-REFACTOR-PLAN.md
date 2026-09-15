@@ -834,7 +834,7 @@ Comms 输入 -> Client_GameStep/Client_DirectInput
 - `verify_refactor_contracts.py` 返回 `refactor contracts: OK`，`git diff --check` 通过。
 - 正式包仍为 `2.0.8`，只包含根 `ModInfo.xml`、扁平 `Lib/ScMultiplayer.dll` 和 `Lib/Comms.dll`；ZIP CRC 校验通过，SHA-256 为 `e9694e7c7874b1594a24d9cd81bb2fd2dcd7b07adc275ae9eb299f05efaac9ed`。
 - 发布目录启动检查保持进程运行超过 8 秒，日志确认 `Wire protocol mod 2.0.8`、`Server started OK`、数据库钩子和两个服务 DNS 正常，未出现新的 Mod/Comms 加载错误。
-- 同一正式包已部署到本机 `publish/Windows/Mods` 和华为平板 `<tablet-ip>:5555`；两端 SHA-256 均为 `e9694e7c7874b1594a24d9cd81bb2fd2dcd7b07adc275ae9eb299f05efaac9ed`。
+- 同一正式包已部署到本机 `publish/Windows/Mods` 和华为平板（ADB 地址见 `AGENTS.local.md`）；两端 SHA-256 均为 `e9694e7c7874b1594a24d9cd81bb2fd2dcd7b07adc275ae9eb299f05efaac9ed`。
 
 ### 2026-08-07：VR 运行时冒烟基线
 
