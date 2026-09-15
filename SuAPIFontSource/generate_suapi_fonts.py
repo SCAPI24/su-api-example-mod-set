@@ -17,6 +17,9 @@ SOURCE_ATLAS_HEIGHT = 4096
 CROP_ALIGNMENT = 16
 PERICLES_SCALE = 0.632
 RAW_CHINESE_HEIGHT = 43.0
+# 重采样后裁掉最外圈几个像素（去掉面积平均摊出来的淡边），offset 会补回同样多。
+# 0 = 关闭。见 resample_glyph 里的说明。
+RESAMPLE_EDGE_TRIM = 0
 PROFILE_SOURCES = (
     (0, "Pericles12", 24.0),
     (1, "Pericles12u", 24.0),
@@ -254,6 +257,86 @@ def parse_pericles_data(path: Path) -> tuple[list[Glyph], float]:
     return glyphs, float(lines[1 + glyph_count + 2])
 
 
+def resample_glyph(image: Image.Image, glyph: Glyph, raster_scale: float) -> Image.Image:
+    """把源矩形按浮点边界做面积平均，直接重采样到目标尺寸。
+
+    与"先 round 边界裁图、再 resize"的区别：边界保持小数（例如 74.5 / 90.5），
+    每个目标像素按它覆盖到的源像素**面积**加权平均，只在最后一步取整目标尺寸。
+    这样 Pericles12 的 'A' 拿到的是完整 16px 的内容（而不是被裁成 15px），
+    与原版"浮点矩形 × 系数"的渲染对齐。
+
+    颜色按 alpha 预乘后平均、再除回来，避免缩小后边缘发暗。
+    Source: Engine/Engine/Graphics/FontBatch2D.cs:FontBatch2D.QueueLine —— 原版用浮点矩形
+    """
+    width, height = image.size
+    x0 = glyph.left * width
+    y0 = glyph.top * height
+    x1 = glyph.right * width
+    y1 = glyph.bottom * height
+    if x1 <= x0 or y1 <= y0:
+        return Image.new("RGBA", (1, 1), (0, 0, 0, 0))
+
+    target_w = max(1, round((x1 - x0) * raster_scale))
+    target_h = max(1, round((y1 - y0) * raster_scale))
+    out = Image.new("RGBA", (target_w, target_h), (0, 0, 0, 0))
+    source_pixels = image.load()
+    out_pixels = out.load()
+
+    for ty in range(target_h):
+        sy0 = y0 + (y1 - y0) * ty / target_h
+        sy1 = y0 + (y1 - y0) * (ty + 1) / target_h
+        iy0 = max(0, int(sy0))
+        iy1 = min(height, int(sy1) + 1)
+        for tx in range(target_w):
+            sx0 = x0 + (x1 - x0) * tx / target_w
+            sx1 = x0 + (x1 - x0) * (tx + 1) / target_w
+            ix0 = max(0, int(sx0))
+            ix1 = min(width, int(sx1) + 1)
+
+            sum_w = sum_wa = sum_wra = sum_wga = sum_wba = 0.0
+            for sy in range(iy0, iy1):
+                # 纵向覆盖比例
+                wy = min(sy1, sy + 1.0) - max(sy0, float(sy))
+                if wy <= 0.0:
+                    continue
+                for sx in range(ix0, ix1):
+                    wx = min(sx1, sx + 1.0) - max(sx0, float(sx))
+                    if wx <= 0.0:
+                        continue
+                    weight = wx * wy
+                    r, g, b, a = source_pixels[sx, sy]
+                    sum_w += weight
+                    sum_wa += a * weight
+                    sum_wra += r * a * weight
+                    sum_wga += g * a * weight
+                    sum_wba += b * a * weight
+
+            if sum_w <= 0.0:
+                continue
+            alpha = sum_wa / sum_w
+            if sum_wa > 0.0:
+                red = sum_wra / sum_wa
+                green = sum_wga / sum_wa
+                blue = sum_wba / sum_wa
+            else:
+                red = green = blue = 0.0
+            out_pixels[tx, ty] = (
+                int(red + 0.5), int(green + 0.5), int(blue + 0.5), int(alpha + 0.5)
+            )
+
+    # 裁掉重采样凭空摊出来的最外圈。
+    # 面积平均时，目标像素的首/末列会覆盖到源矩形边缘的一部分像素，拿到"非零但很淡"的
+    # alpha；再经绘制时的线性缩小，这圈淡边就留下可见的一列/一行 —— 实测墨迹框比原版
+    # 宽 +1 列（Pericles24 还多 +1 行），而总墨量反而少 8%，即"墨被摊开了"。
+    # 裁掉后 offset 要补同样多，笔画位置不变。
+    if (RESAMPLE_EDGE_TRIM > 0 and
+            out.width > RESAMPLE_EDGE_TRIM * 2 and
+            out.height > RESAMPLE_EDGE_TRIM * 2):
+        trim = RESAMPLE_EDGE_TRIM
+        out = out.crop((trim, trim, out.width - trim, out.height - trim))
+    return out
+
+
 def crop_glyph(image: Image.Image, glyph: Glyph) -> Image.Image:
     left = round(glyph.left * image.width)
     top = round(glyph.top * image.height)
@@ -368,16 +451,11 @@ def build() -> None:
                 )
                 continue
 
-            sprite = crop_glyph(source_image, source_glyph)
-            scaled_size = (
-                max(1, round(sprite.width * raster_scale)),
-                max(1, round(sprite.height * raster_scale)),
-            )
-            # Source: Pak/Fonts/!Pericles12.png through !Pericles32.png
-            # Bicubic avoids the light/dark ringing that Lanczos creates once the
-            # game applies its own linear texture filter to the scaled font atlas.
-            if sprite.size != scaled_size:
-                sprite = sprite.resize(scaled_size, Image.Resampling.BICUBIC)
+            # 按**浮点边界**做面积平均，直接把源矩形重采样到目标尺寸，只取整一次。
+            # 不能先 round 边界再裁：Pericles12 的 'A' 上下边界正好是 74.5 / 90.5，
+            # 各自取整后高度从 16px 缩成 15px（−6.25%），再乘回 profile scale 就差了 5.8%。
+            # 原版渲染全程用浮点，所以这里也必须按浮点边界加权，精度不能丢。
+            sprite = resample_glyph(source_image, source_glyph, raster_scale)
             x, y = packer.add(sprite)
             overrides.append(
                 Glyph(
@@ -386,8 +464,8 @@ def build() -> None:
                     y / SOURCE_ATLAS_HEIGHT,
                     (x + sprite.width) / ATLAS_WIDTH,
                     (y + sprite.height) / SOURCE_ATLAS_HEIGHT,
-                    source_glyph.offset_x * raster_scale,
-                    source_glyph.offset_y * raster_scale,
+                    source_glyph.offset_x * raster_scale + RESAMPLE_EDGE_TRIM,
+                    source_glyph.offset_y * raster_scale + RESAMPLE_EDGE_TRIM,
                     source_glyph.width * raster_scale,
                 )
             )
