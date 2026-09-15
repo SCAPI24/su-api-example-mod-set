@@ -394,7 +394,7 @@ SuPlayScreen.Enter() 反序列化为 `GameWorldInfoMessage` 失败 → 跳过 �
 ## 2026-05-18 03:14 ModInfo.xml 扁平格式复发 + 远程部署验证
 
 ### 现象
-远程 192.168.31.25 启动 SC 后日志无 `[ScMP]` 输出，Mod 静默未加载。
+远程机启动 SC 后日志无 `[ScMP]` 输出，Mod 静默未加载。
 
 ### 根因
 **ModInfo.xml 格式错误复发**。02:29 打包时"从内存重建" ModInfo.xml 实际产出了扁平格式：
@@ -436,19 +436,19 @@ ModLoader 解析 `doc.Root.Element("ModInfo")` 在扁平格式下返回 null →
 > **教训**: 文件名含 `[]` 的所有 PowerShell 文件操作（Get-Item/Copy-Item/Move-Item/Remove-Item/Rename-Item）必须用 `-LiteralPath`。
 
 ### 远程部署障碍
-- 远程 .25 仅开放 TCP 3389 (RDP)，SMB/TCP 445 被防火墙拦截
+- 远程机仅开放 TCP 3389 (RDP)，SMB/TCP 445 被防火墙拦截
 - 无法从本机直接复制文件到远程
 - 需通过 RDP 会话手动拖拽文件
 
 ### 网络验证
 - 本地防火墙 UDP 51459 + 49152-65535 规则已添加并生效
-- ARP 表确认 .25 在线 (MAC b4-69-21)
+- ARP 表确认远程机在线（MAC 见 `AGENTS.local.md`）
 - 远程需同样执行防火墙规则（待用户在远程桌面内操作）
 
 ### 新规则
 7. **.scmod 打包后必须验证加载** — 不能打包完就部署，需启动 SC 确认 Console 输出 `Loaded mod: xxx (from scmod)`
 8. **ModInfo.xml 必须逐字对照模板** — 不从记忆重建，从已验证的 .scmod 提取或直接复制模板
-9. **远程调试端口速查** — 192.168.31.25:8514 (调试HTTP) / :51459 (游戏UDP) / :3389 (RDP)，别忘了
+9. **远程调试端口速查** — 远程机 8514 (调试HTTP) / 51459 (游戏UDP) / 3389 (RDP)，别忘了
 10. **远程防火墙按需开放** — 只开 RDP(3389) 不够，游戏需要 UDP 51459+49152-65535，调试需要 TCP 8514
 
 ### 防火墙开放端口汇总
@@ -464,7 +464,7 @@ ModLoader 解析 `doc.Root.Element("ModInfo")` 在扁平格式下返回 null →
 | 49152-65535 | UDP | ScMultiplayer **Explorer + Client** (动态，OS分配) | ✅ 联机 |
 
 ```powershell
-# 远程 .25 需要执行的完整防火墙开放（管理员 PowerShell）
+# 远程机需要执行的完整防火墙开放（管理员 PowerShell）
 netsh advfirewall firewall add rule name="SC Remote Debug" dir=in action=allow protocol=TCP localport=8514
 netsh advfirewall firewall add rule name="ScMultiplayer Server" dir=in action=allow protocol=UDP localport=51459
 netsh advfirewall firewall add rule name="ScMultiplayer Dynamic" dir=in action=allow protocol=UDP localport=49152-65535

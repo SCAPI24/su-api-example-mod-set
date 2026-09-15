@@ -79,11 +79,13 @@ GUID 必须从参考代码复制，禁止自己编。
 
 | 项目 | 值 |
 |------|-----|
-| 远程 IP | **192.168.31.25** |
+| 远程 IP | **见 `AGENTS.local.md`**（文档里简称"远程机"） |
 | 远程调试 | **8514** (TCP) |
 | 游戏 Server | **51459** (UDP) |
 | 游戏动态端口 | **49152-65535** (UDP) |
 | 远程桌面 | **3389** (TCP) |
+
+> 完整地址、凭据等私有信息只在 `AGENTS.local.md` 维护（该文件被 `.gitignore` 忽略），**禁止写回本文档**。
 
 ### ScMultiplayer 端口（每个设备 3 个 UDP Socket）
 
@@ -100,10 +102,10 @@ GUID 必须从参考代码复制，禁止自己编。
 
 ### 防火墙开放
 
-远程 .25 只开了 RDP (3389)，每次重装/重置后需重新开放以下端口：
+远程机只开了 RDP (3389)，每次重装/重置后需重新开放以下端口：
 
 ```powershell
-# 远程 .25 管理员 PowerShell 执行全部三条：
+# 远程机管理员 PowerShell 执行全部三条：
 netsh advfirewall firewall add rule name="SC Remote Debug" dir=in action=allow protocol=TCP localport=8514
 netsh advfirewall firewall add rule name="ScMultiplayer Server" dir=in action=allow protocol=UDP localport=51459
 netsh advfirewall firewall add rule name="ScMultiplayer Dynamic" dir=in action=allow protocol=UDP localport=49152-65535
@@ -117,7 +119,7 @@ netsh advfirewall firewall show rule name="SC Remote Debug"
 
 ### 网络要求
 
-- 两台设备必须在同一局域网子网（如 192.168.31.0/24）
+- 两台设备必须在同一局域网子网（子网段见 `AGENTS.local.md`）
 - UDP 广播不能被路由器过滤
 - ZeroTier/VPN 虚拟网卡可能导致选错 IP（已修复：多网卡探测改为绑定指定 IP）
 - 远程仅开放 TCP 3389 是常态，每次调试前确认 8514 和 51459 已开放
