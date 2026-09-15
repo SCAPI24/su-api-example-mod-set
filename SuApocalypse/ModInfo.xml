@@ -6,10 +6,8 @@
             <Text lang="en_US">Apocalypse</Text>
             <Text lang="zh_CN">Apocalypse</Text>
         </LocalizedName>
-        <ModVersion>
-            <Version>0.1.0</Version>
-            <APIVersion>2.1.0</APIVersion>
-        </ModVersion>
+        <Version>0.1.0</Version>
+        <APIVersion>2.1.0</APIVersion>
         <Asset>
             <ContentRoot>Content</ContentRoot>
         </Asset>

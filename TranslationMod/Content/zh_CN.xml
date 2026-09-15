@@ -32,7 +32,7 @@
     <Entry Original="In Creative mode you have an infinite supply of all items and all blocks can be mined infinitely fast. You are also immortal and can fly. This mode is ideal for pure building." Translation="在创造模式下，你拥有所有物品的无限供应，所有方块都可以无限快速挖掘。你也是不死的，并且可以飞行。此模式非常适合纯建造。" />
     <Entry Original="In Flat mode the terrain is completely flat, giving you the total freedom of creation. You can also change terrain level and type of block that fills it." Translation="在平坦模式下，地形完全平坦，给予你完全自由的创作空间。你还可以改变地形高度以及填充方块的类型。" />
     <Entry Original="In Island mode, the terrain is limited to a small island, but otherwise looks like the Continent mode. You can also adjust the island size." Translation="在岛屿模式下，地形被限制在一个小岛上，但其他方面看起来像大陆模式。你还可以调整岛屿大小。" />
-    <Entry Original="In Living mode the world is a living place full of animals. Plants and grass grow, blocks made of loose material collapse and detached leaves decay. Snow accumulates on the ground and bodies of water freeze over." Translation="在生机模式下，世界是一个充满动物的生机之地。植物和草生长，松散材料制成的方块会坍塌，脱落的叶子会腐烂。积雪会在地面堆积，水体结冰。" />
+    <Entry Original="In Living mode the world is a living place full of animals. Plants and grass grow, blocks made of loose material collapse and detached leaves decay. Snow accumulates on the ground and bodies of water freeze over." Translation="在动态模式下，世界是一个充满动物、不断变化的地方。植物和草生长，松散材料制成的方块会坍塌，脱落的叶子会腐烂。积雪会在地面堆积，水体结冰。" />
     <Entry Original="In Static mode the world has no animals. Plants growth, block collapsing and plant decay are disabled. Snow does not accumulate on the ground and bodies of water do not freeze over. Useful if you want to shape your world the way you want it." Translation="在静态模式下，世界没有动物。植物生长、方块坍塌和植物腐烂被禁用。积雪不会在地面堆积，水体不会结冰。如果你希望按照自己的意愿塑造世界，这很有用。" />
     <Entry Original="Island" Translation="岛屿" />
     <Entry Original="Opposite, for sharing touch devices" Translation="对向分屏，适用于共享触控设备" />
@@ -71,7 +71,7 @@
     <Entry Original="World will be locked to the selected season. Weather conditions will not be changing." Translation="世界将锁定到所选季节。天气状况不会改变。" />
   </Screen>
   <Screen Name="MainMenuScreen">
-    <Entry Original=" 2.4!" Translation=" 2.4！" />
+    <Entry Original=" 2.4!" Translation=" 2.4!" />
     <Entry Original=" Check " Translation=" 查看 " />
     <Entry Original=" for more information." Translation=" 获取更多信息。" />
     <Entry Original="...and dozens of other improvements" Translation="……以及数十项其他改进" />
@@ -128,8 +128,8 @@
     <Entry Original="Object Shadows:" Translation="物体阴影：" />
     <Entry Original="Screen Resolution:" Translation="屏幕分辨率：" />
     <Entry Original="Sky Rendering Mode:" Translation="天空渲染模式：" />
-    <Entry Original="Terrain Mipmaps:" Translation="地形 Mipmap：" />
-    <Entry Original="Unlimited" Translation="无限" />
+    <Entry Original="Terrain Mipmaps:" Translation="地形多级纹理：" />
+    <Entry Original="Unlimited" Translation="无限制" />
     <Entry Original="Visibility Range:" Translation="可见范围：" />
     <Entry Original="Yes" Translation="是" />
   </Screen>
@@ -198,10 +198,10 @@
   <Screen Name="HelpScreen">
     <Entry Original="2xA" Translation="2xA" />
     <Entry Original="A" Translation="A" />
-    <Entry Original="A/Right Shoulder" Translation="A/Right Shoulder" />
+    <Entry Original="A/Right Shoulder" Translation="A/右肩键" />
     <Entry Original="Armor" Translation="护甲" />
     <Entry Original="B" Translation="B" />
-    <Entry Original="Back/Select/Pause" Translation="Back/Select/Pause" />
+    <Entry Original="Back/Select/Pause" Translation="返回/选择/暂停" />
     <Entry Original="Bestiary" Translation="生物图鉴" />
     <Entry Original="Boats" Translation="船" />
     <Entry Original="Body Temperature" Translation="体温" />
@@ -210,10 +210,10 @@
     <Entry Original="Clothing" Translation="衣物" />
     <Entry Original="Community Content" Translation="社区内容" />
     <Entry Original="Crafting" Translation="合成" />
-    <Entry Original="D-Pad Down" Translation="D-Pad Down" />
-    <Entry Original="D-Pad Left/Right" Translation="D-Pad Left/Right" />
-    <Entry Original="D-Pad Up" Translation="D-Pad Up" />
-    <Entry Original="D-Pad Up/Down" Translation="D-Pad Up/Down" />
+    <Entry Original="D-Pad Down" Translation="方向键下" />
+    <Entry Original="D-Pad Left/Right" Translation="方向键左/右" />
+    <Entry Original="D-Pad Up" Translation="方向键上" />
+    <Entry Original="D-Pad Up/Down" Translation="方向键上/下" />
     <Entry Original="Digging Blocks" Translation="挖掘方块" />
     <Entry Original="Dropbox" Translation="Dropbox" />
     <Entry Original="Dropping Items" Translation="丢弃物品" />
@@ -232,21 +232,22 @@
     <Entry Original="Hunger" Translation="饥饿" />
     <Entry Original="Interacting With Blocks" Translation="与方块互动" />
     <Entry Original="Keyboard Controls" Translation="键盘控制" />
-    <Entry Original="Left Shoulder" Translation="Left Shoulder" />
-    <Entry Original="Left Stick" Translation="Left Stick" />
-    <Entry Original="Left Thumb Click" Translation="Left Thumb Click" />
-    <Entry Original="Left Trigger" Translation="Left Trigger" />
-    <Entry Original="Left Trigger + A" Translation="Left Trigger + A" />
+    <Entry Original="Left Shoulder" Translation="左肩键" />
+    <Entry Original="Left Stick" Translation="左摇杆" />
+    <Entry Original="Left Thumb Click" Translation="左摇杆按下" />
+    <Entry Original="Left Trigger" Translation="左扳机" />
+    <Entry Original="Left Trigger + A" Translation="左扳机 + A" />
     <Entry Original="Levels and Experience" Translation="等级与经验" />
     <Entry Original="Mining" Translation="采矿" />
+    <Entry Original="OK" Translation="确定" />
     <Entry Original="Pistons" Translation="活塞" />
     <Entry Original="Placing Blocks" Translation="放置方块" />
     <Entry Original="Recipaedia" Translation="合成百科" />
     <Entry Original="Riding Animals" Translation="骑乘动物" />
-    <Entry Original="Right Shoulder" Translation="Right Shoulder" />
-    <Entry Original="Right Stick" Translation="Right Stick" />
-    <Entry Original="Right Thumb Click" Translation="Right Thumb Click" />
-    <Entry Original="Right Trigger" Translation="Right Trigger" />
+    <Entry Original="Right Shoulder" Translation="右肩键" />
+    <Entry Original="Right Stick" Translation="右摇杆" />
+    <Entry Original="Right Thumb Click" Translation="右摇杆按下" />
+    <Entry Original="Right Trigger" Translation="右扳机" />
     <Entry Original="SD Card" Translation="SD卡" />
     <Entry Original="Sickness" Translation="疾病" />
     <Entry Original="Sleeping" Translation="睡觉" />
@@ -259,10 +260,24 @@
     <Entry Original="Wetness" Translation="湿度" />
     <Entry Original="X" Translation="X" />
     <Entry Original="Y" Translation="Y" />
-    <Entry Original="change active slot" Translation="change active slot" />
-    <Entry Original="drop active item, cancel" Translation="drop active item, cancel" />
-    <Entry Original="jump, drag items" Translation="jump, drag items" />
-    <Entry Original="scroll, prev/next page" Translation="scroll, prev/next page" />
+    <Entry Original="auto move inventory item" Translation="自动移动物品栏物品" />
+    <Entry Original="change active slot" Translation="切换当前快捷栏" />
+    <Entry Original="change camera mode" Translation="切换相机模式" />
+    <Entry Original="dig, attack, aim" Translation="挖掘、攻击、瞄准" />
+    <Entry Original="drop active item, cancel" Translation="丢弃当前物品，取消" />
+    <Entry Original="edit block or item" Translation="编辑方块或物品" />
+    <Entry Original="fly up/down (creative)" Translation="上升/下降（创造模式）" />
+    <Entry Original="jump, drag items" Translation="跳跃、拖动物品" />
+    <Entry Original="looking" Translation="视角" />
+    <Entry Original="mount creature or vehicle" Translation="骑乘生物或载具" />
+    <Entry Original="movement" Translation="移动" />
+    <Entry Original="open body panel" Translation="打开身体/食物面板" />
+    <Entry Original="open inventory panel" Translation="打开物品栏" />
+    <Entry Original="place block, use, interact" Translation="放置方块、使用、交互" />
+    <Entry Original="scroll, prev/next page" Translation="滚动、上一页/下一页" />
+    <Entry Original="show game menu" Translation="显示游戏菜单" />
+    <Entry Original="toggle fly mode (creative)" Translation="切换飞行模式（创造模式）" />
+    <Entry Original="toggle sneaking" Translation="切换潜行" />
     <Entry Original="合成百科" Translation="合成百科" />
     <Entry Original="生物图鉴" Translation="生物图鉴" />
     <Entry Original="确定" Translation="确定" />
@@ -276,17 +291,17 @@
     <Entry Original="A large cat. Powerful and fast, likes to hunt at night. Larger than Leopard or Jaguar, but not as dangerous as Tiger." Translation="一种大型猫科动物。强壮且快速，喜欢夜间捕猎。比豹或美洲豹大，但不如老虎危险。" />
     <Entry Original="A large flightless bird. Not aggressive, but runs very fast. Sometimes lays large, edible eggs." Translation="一种大型不会飞的鸟。不具攻击性，但跑得非常快。有时会产下大型可食用的蛋。" />
     <Entry Original="A large flightless bird. Quite aggressive and has very sharp claws that may inflict catastrophic injuries to an unwary attacker. Sometimes lays large, edible eggs." Translation="一种大型不会飞的鸟。相当有攻击性，爪子非常锋利，可能对不小心的攻击者造成灾难性伤害。有时会产下大型可食用的蛋。" />
-    <Entry Original="A large grass-eating mammal with formidable antlers. Not normally aggressive, but will often defend itself when attacked. Strong and resilient, it often manages to scare away packs of small predators. Lives in cold areas. Delicious to eat and provides valuable fur when hunted." Translation="一种大型食草哺乳动物，长有 formidable 的鹿角。通常不具有攻击性，但受到攻击时常会自卫。强壮且有韧性，常常能吓跑成群的 small 捕食者。生活在寒冷地区。味道鲜美，狩猎后可提供 valuable 的皮毛。" />
+    <Entry Original="A large grass-eating mammal with formidable antlers. Not normally aggressive, but will often defend itself when attacked. Strong and resilient, it often manages to scare away packs of small predators. Lives in cold areas. Delicious to eat and provides valuable fur when hunted." Translation="一种大型食草哺乳动物，长着令人生畏的鹿角。通常不具攻击性，但受到攻击时常会自卫。强壮而坚韧，常能吓跑成群的弱小捕食者。生活在寒冷地区。肉味鲜美，猎杀后可获得珍贵的皮毛。" />
     <Entry Original="A large grass-eating mammal. Can be milked with a bucket. Milk is regenerated after some time, faster than by a brown cow. Docile, but sometimes decides to stand its ground when attacked. Often protected by nearby bulls. Delicious to eat." Translation="一种大型食草哺乳动物。可以用桶挤奶。牛奶会在一段时间后恢复，比棕色奶牛恢复得更快。温顺，但受到攻击时有时会坚守阵地。常受到附近公牛的保护。味道鲜美。" />
     <Entry Original="A large grass-eating mammal. Can be milked with a bucket. Milk is regenerated after some time, slower than by a black cow. Docile, but sometimes decides to stand its ground when attacked. Often protected by nearby bulls. Delicious to eat." Translation="一种大型食草哺乳动物。可以用桶挤奶。牛奶会在一段时间后恢复，比黑色奶牛恢复得慢。温顺，但受到攻击时有时会坚守阵地。常受到附近公牛的保护。味道鲜美。" />
-    <Entry Original="A large grass-eating mammal. Lives in herds for protection. Not normally aggressive but does not like anyone who approaches too close. Powerful and dangerous when enraged. Delicious to eat and provides valuable fur when hunted." Translation="一种大型食草哺乳动物。成群结队以寻求保护。通常不具有攻击性，但不喜欢任何人靠得太近。强壮，愤怒时危险。味道鲜美，狩猎后可提供 valuable 的皮毛。" />
+    <Entry Original="A large grass-eating mammal. Lives in herds for protection. Not normally aggressive but does not like anyone who approaches too close. Powerful and dangerous when enraged. Delicious to eat and provides valuable fur when hunted." Translation="一种大型食草哺乳动物，成群生活以求保护。通常不具攻击性，但不喜欢任何人靠得太近。强壮，被激怒时很危险。肉味鲜美，猎杀后可获得珍贵的皮毛。" />
     <Entry Original="A large grass-eating mammal. Not normally aggressive but does not like anyone who approaches too close. Very protective towards the cows. Dangerous when enraged. Delicious to eat." Translation="一种大型食草哺乳动物。通常不具有攻击性，但不喜欢任何人靠得太近。对奶牛非常保护。愤怒时危险。味道鲜美。" />
     <Entry Original="A large, aggressive saltwater shark. Will chase anything that comes close in the water. Is very strong and will kill almost all land animals easily. Only whales can withstand its ferocious attack." Translation="一种大型、具有攻击性的咸水鲨鱼。会追逐水中靠近的任何东西。非常强壮，能轻易杀死几乎所有陆地动物。只有鲸鱼能抵挡其凶猛的攻击。" />
     <Entry Original="A large, dangerous mammal omnivore. Will chase anything that approaches it. Fairly slow, but powerful. Unlike black bear, likes warm areas. Not edible, but provides fur when hunted." Translation="一种大型、危险的杂食哺乳动物。会追逐靠近它的任何东西。相当慢，但强大。与黑熊不同，喜欢温暖地区。不可食用，但狩猎后可提供皮毛。" />
     <Entry Original="A large, dangerous mammal omnivore. Will chase anything that approaches it. Fairly slow, but powerful. Unlike brown bear, likes colder areas. Not edible, but provides fur when hunted." Translation="一种大型、危险的杂食哺乳动物。会追逐靠近它的任何东西。相当慢，但强大。与棕熊不同，喜欢较冷地区。不可食用，但狩猎后可提供皮毛。" />
     <Entry Original="A large, dangerous mammal omnivore. Will chase anything that approaches it. Faster, larger and more powerful than other bears. Lives only in very cold areas. Not edible, but provides fur when hunted. Very dangerous on ice because special foot padding makes it slip much less than other creatures." Translation="一种大型、危险的杂食哺乳动物。会追逐靠近它的任何东西。比其他熊更快、更大、更强壮。只生活在极冷地区。不可食用，但狩猎后可提供皮毛。在冰上非常危险，因为特殊的脚垫使其比其它生物滑倒得少得多。" />
     <Entry Original="A man is strong, can hit hard and withstand many injuries, but he is slower moving than a woman and needs more food to survive." Translation="男性强壮，能重击并承受更多伤害，但移动速度比女性慢，且需要更多食物才能生存。" />
-    <Entry Original="A medium size plant eating mammal. Docile despite the pair of formidable antlers. Lives in herds in cold areas. Delicious to eat." Translation="一种中型食草哺乳动物。尽管长有 formidable 的鹿角，但很温顺。成群生活在寒冷地区。味道鲜美。" />
+    <Entry Original="A medium size plant eating mammal. Docile despite the pair of formidable antlers. Lives in herds in cold areas. Delicious to eat." Translation="一种中型食草哺乳动物。虽然长着一对令人生畏的鹿角，性情却很温顺。成群生活在寒冷地区。肉味鲜美。" />
     <Entry Original="A medium sized plant eating mammal. Very shy and not aggressive. Delicious to eat." Translation="一种中型食草哺乳动物。非常害羞，不具攻击性。味道鲜美。" />
     <Entry Original="A medium sized plant-eating mammal. Quite aggressive for its size, but not as fast moving as other animals. Solitary. Delicious to eat." Translation="一种中型食草哺乳动物。就其体型而言相当有攻击性，但移动速度不如其他动物快。独居。味道鲜美。" />
     <Entry Original="A medium sized predatory mammal which lives in cold and temperate areas. Moves fast and hunts in packs at night. Will sometimes stop and howl raising its head high to the moon. During the day is shy and will move away from trouble. Extremely dangerous at night when encountered in large numbers. Will smell prey from large distances and congregate to hunt it. At full moon will change into Werewolf." Translation="一种中型食肉哺乳动物，生活在寒冷和温带地区。移动速度快，夜间成群狩猎。有时会停下来，抬头向月亮嚎叫。白天害羞，会远离麻烦。夜间遇到大群时极其危险。能从远处嗅到猎物并聚集狩猎。满月时会变成狼人。" />
@@ -319,8 +334,8 @@
     <Entry Original="Black Bull" Translation="黑公牛" />
     <Entry Original="Black Cow" Translation="黑奶牛" />
     <Entry Original="Black Horse" Translation="黑马" />
-    <Entry Original="Bottom-dwelling fish, lives both in salt and freshwater. Will often bury itself in the mud at the bottom with only the head sticking out. Not aggressive, but has a poisonous sting that will severely injure anyone who steps on it. Delicious to eat." Translation="底栖鱼类，生活在咸水和淡水中。常将自己埋在底部泥中，只露出头部。不具攻击性，但有 poisonous 的 sting，会对踩到它的人造成严重伤害。味道鲜美。" />
-    <Entry Original="Bottom-dwelling fish, lives both in salt and freshwater. Will often bury itself in the mud at the bottom with only the head sticking out. Not aggressive, does not have poisonous sting, unlike the Yellow Stingray. Delicious to eat." Translation="底栖鱼类，生活在咸水和淡水中。常将自己埋在底部泥中，只露出头部。不具攻击性，与黄 stingray 不同，没有 poisonous 的 sting。味道鲜美。" />
+    <Entry Original="Bottom-dwelling fish, lives both in salt and freshwater. Will often bury itself in the mud at the bottom with only the head sticking out. Not aggressive, but has a poisonous sting that will severely injure anyone who steps on it. Delicious to eat." Translation="底栖鱼类，咸水和淡水中都能生活。常把身体埋在底部淤泥里，只露出头部。不具攻击性，但有毒刺，踩到它的人会受重伤。肉味鲜美。" />
+    <Entry Original="Bottom-dwelling fish, lives both in salt and freshwater. Will often bury itself in the mud at the bottom with only the head sticking out. Not aggressive, does not have poisonous sting, unlike the Yellow Stingray. Delicious to eat." Translation="底栖鱼类，咸水和淡水中都能生活。常把身体埋在底部淤泥里，只露出头部。不具攻击性；与黄貂鱼不同，它没有毒刺。肉味鲜美。" />
     <Entry Original="Brown Bear" Translation="棕熊" />
     <Entry Original="Brown Bull" Translation="棕公牛" />
     <Entry Original="Brown Cow" Translation="棕奶牛" />
@@ -374,10 +389,16 @@
     <Entry Original="240&#xA;6.0&#xA;Yes&#xA;No" Translation="240&#xA;6.0&#xA;是&#xA;否" />
     <Entry Original="4 to 5" Translation="4 到 5" />
     <Entry Original="8 to 10" Translation="8 到 10" />
+    <Entry Original="Attack Power" Translation="攻击力" />
+    <Entry Original="Can Be Ridden" Translation="可骑乘" />
     <Entry Original="Creature Description" Translation="生物描述" />
     <Entry Original="Drops:" Translation="掉落物：" />
+    <Entry Original="Herding Behavior" Translation="群居行为" />
+    <Entry Original="Jump Height" Translation="跳跃高度" />
     <Entry Original="Resilience:&#xA;Attack Power:&#xA;Herding Behavior:&#xA;Can Be Ridden:" Translation="韧性：&#xA;攻击力：&#xA;群居行为：&#xA;可骑乘：" />
+    <Entry Original="Spawner Egg" Translation="生成蛋" />
     <Entry Original="Speed:&#xA;Jump Height:&#xA;Weight:&#xA;Spawner Egg:" Translation="速度：&#xA;跳跃高度：&#xA;重量：&#xA;生成蛋：" />
+    <Entry Original="Weight" Translation="重量" />
   </Screen>
   <Screen Name="RecipaediaScreen">
     <Entry Original="1-LED" Translation="1-LED" />
@@ -435,21 +456,21 @@
     <Entry Original="A planks block with a wire running across a hole drilled through the middle. This block behaves exactly the same as planks, but can conduct electricity when both ends of the embedded wire are a connected to something. This block can be placed with ends pointing north/south, east/west or up/down. It is very useful when there is a need to run electricity through solid walls, or to insulate the wire from unwanted connections with other wires." Translation="木板块，中间钻有一个孔，穿过一根导线。此方块的行为与木板完全相同，但当嵌入式导线的两端都连接到某物时可以导电。此方块可以放置为端部指向北/南、东/西或上/下。当需要穿过实心墙布线或使导线与其他导线避免不必要的连接时，它非常有用。" />
     <Entry Original="A programmable circuit that uses a user-entered truth table to determine value of the output for all possible combination of the inputs. There are 4 inputs on all sides and one output at the back (to access the output element must be placed on a wire-through-block). The truth table must be entered manually by tapping edit button while holding the item in hand. Truth table contains output values for all possible input value combinations. Can be placed on any surface and rotated to desired orientation." Translation="一种可编程电路，使用用户输入的真值表来确定所有可能输入组合下的输出值。四面有4个输入，背面有一个输出（要访问输出，必须将元件放在导线穿过的方块上）。必须手持物品时点击编辑按钮手动输入真值表。真值表包含所有可能输入值组合的输出值。可放置在任何表面上并旋转到所需方向。" />
     <Entry Original="A real time clock that provides an accurate and always up to date readout of time. The clock value changes even if it's far away from the player. Zero value of the clock is at the point when the game started. You cannot reset the clock, it always tells the time since the game started. The clock outputs time via 5 outputs, each of them 4-bit analog signal. Sixteen least significant bits are on the four sides, and the 5th output (containing the most significant 4 bits) is on the back (you must place the clock on a wire-through-block to access the 5th output). The clock is set up so that it advances by exactly 4096 ticks each day. That means each tick is about 0.3 seconds long and that 4th output contains number of days since the game started. Combined value of outputs 1, 2 and 3 contains time of day, to about 0.3 second accuracy. 4th output alone will overflow after 16 days. Use 5th output to extend the overflow period to 256 days. " Translation="一种实时时钟，提供准确且始终最新的时间读数。即使远离玩家，时钟值也会变化。时钟的零值是在游戏开始的时刻。你无法重置时钟，它总是显示游戏开始以来的时间。时钟通过5个输出输出时间，每个输出都是4位模拟信号。16个最低有效位在四个侧面，第5个输出（包含最高4位）在背面（你必须将时钟放在导线穿过的方块上才能访问第5个输出）。时钟设置为每天正好前进4096个滴答。这意味着每个滴答大约0.3秒长，第4个输出包含游戏开始以来的天数。输出1、2和3的组合值包含一天中的时间，精度约为0.3秒。仅第4个输出会在16天后溢出。使用第5个输出可将溢出周期延长到256天。" />
-    <Entry Original="A rock can be a formidable weapon in the hands of a skilled thrower. They are plentiful and easy to obtain. The best rocks are found by digging in gravel blocks." Translation="在熟练的投掷者手中，石头可以成为 formidable 的武器。它们数量众多且容易获得。最好的石头是通过挖掘沙砾块找到的。" />
+    <Entry Original="A rock can be a formidable weapon in the hands of a skilled thrower. They are plentiful and easy to obtain. The best rocks are found by digging in gravel blocks." Translation="在熟练的投掷者手中，石头可以成为令人生畏的武器。石头数量众多、容易获得，挖沙砾块能找到最好的石头。" />
     <Entry Original="A semiconductor block with a wire running across a hole drilled through the middle. This block can conduct electricity when both ends of the embedded wire are a connected to something. It can be placed with ends pointing north/south, east/west or up/down. It is very useful when there is a need to run electricity through solid walls, or to insulate the wire from unwanted connections with other wires." Translation="半导体块，中间钻有一个孔，穿过一根导线。当嵌入式导线的两端都连接到某物时，此方块可以导电。可以放置为端部指向北/南、东/西或上/下。当需要穿过实心墙布线或使导线与其他导线避免不必要的连接时，它非常有用。" />
     <Entry Original="A set of 4 square light emitting diodes. When connected to a power source, leds emit weak colored light. The element splits the analog signal into 4 bits to determine which of the 4 diodes should be lit. The light is too weak to light up the surroundings, but it's easily visible. Useful for creating high resolution screens. It has inputs on all sides for easy connection and can be placed on any surface." Translation="一组4个方形发光二极管。连接到电源时，LED会发出微弱的彩色光。该元件将模拟信号拆分为4位，以确定应点亮4个二极管中的哪一个。光线太弱，无法照亮周围环境，但很容易看见。可用于制作高分辨率屏幕。其四面都有输入，便于连接，可放置在任何表面上。" />
     <Entry Original="A spear is a versatile weapon that can be both thrown and used for melee attacks. When used, it will eventually lose its sharpness and fail. Spears made with better materials will last longer and cause more damage. Thrown spears will stick in soft materials. It may be hard to remove a spear which embedded itself too hard." Translation="矛是一种多用途武器，既可以投掷也可以用于近战攻击。使用时，它会逐渐失去锋利度并最终损坏。更好材料制成的矛更耐用并造成更多伤害。投掷的矛会插在软材料中。插得太紧的矛可能难以拔出。" />
-    <Entry Original="A stone club is a primitive melee weapon, although significantly better than bare hands or a stick. When used frequently, it will quickly get damaged and fail. You should progress to specialized weapons made of metals." Translation="石棒是一种原始近战武器，尽管比赤手空拳或棍棒好得多。频繁使用会迅速损坏。你应该进步到金属制成的 specialized 武器。" />
-    <Entry Original="A substance capable of burning in an oxygenless environment because it contains its own source of oxygen, saltpeter. When burning, gunpowder emits large amounts of hot gases. Will explode with devastating force if confined in a small volume, such as a keg, and ignited." Translation="一种能够在无氧环境中燃烧的物质，因为它含有自身的氧源——硝石。燃烧时，火药会释放大量热气体。如果被限制在小体积内（如桶中）并被点燃，会以 devastating 的力量爆炸。" />
+    <Entry Original="A stone club is a primitive melee weapon, although significantly better than bare hands or a stick. When used frequently, it will quickly get damaged and fail. You should progress to specialized weapons made of metals." Translation="石棒是一种原始近战武器，虽然比赤手空拳或木棍好得多，但频繁使用会很快损坏。你该进一步换用金属制成的专用武器。" />
+    <Entry Original="A substance capable of burning in an oxygenless environment because it contains its own source of oxygen, saltpeter. When burning, gunpowder emits large amounts of hot gases. Will explode with devastating force if confined in a small volume, such as a keg, and ignited." Translation="一种能在无氧环境中燃烧的物质，因为它自带氧源——硝石。燃烧时火药会释放大量高温气体。如果被限制在小体积内（例如桶中）并点燃，会以毁灭性的力量爆炸。" />
     <Entry Original="A target can be used for shooting practice. It will signal a hit with an analog electric signal. The voltage of the signal determines how close to the center the hit occurred, from 0.8V at the outside of the target to 1.5V at the center. Voltages below 0.8V indicate no hit has been registered." Translation="靶子可用于射击练习。它会通过模拟电信号指示命中。信号的电压决定命中点离中心的距离，从靶子外侧的0.8V到中心的1.5V。低于0.8V的电压表示未记录到命中。" />
     <Entry Original="A thin wire made of copper, it conducts electricity very well. Used for making electric circuits. Wire can be placed on any surface and connections with all nearby wires will be created automatically. A wire will connect between edges of diagonally adjacent blocks, allowing you to make hidden connections." Translation="细铜线，导电性非常好。用于制作电路。电线可以放置在任何表面上，并会自动与附近所有电线建立连接。电线可以连接对角线相邻方块的边缘，允许你进行隐藏连接。" />
-    <Entry Original="A wooden club is a primitive melee weapon, although significantly better than bare hands or a stick. When used frequently, it will quickly get damaged and fail. You should progress to specialized weapons made of metals." Translation="木棒是一种原始近战武器，尽管比赤手空拳或棍棒好得多。频繁使用会迅速损坏。你应该进步到金属制成的 specialized 武器。" />
+    <Entry Original="A wooden club is a primitive melee weapon, although significantly better than bare hands or a stick. When used frequently, it will quickly get damaged and fail. You should progress to specialized weapons made of metals." Translation="木棒是一种原始近战武器，虽然比赤手空拳或木棍好得多，但频繁使用会很快损坏。你该进一步换用金属制成的专用武器。" />
     <Entry Original="Adjustable Delay Gate" Translation="可调延迟门" />
     <Entry Original="All Blocks (1596)" Translation="所有方块（1596个）" />
     <Entry Original="An adjustable delay gate with one input and one output. The delay of the gate can be adjusted in 0.01s increments by editing it. Can be placed on any surface and rotated to desired orientation." Translation="一种可调延迟门，有一个输入和一个输出。通过编辑，门的延迟可以以0.01秒为增量调整。可放置在任何表面上并旋转到所需方向。" />
     <Entry Original="An electric 4 bit counter with increment, decrement, reset and overflow detection capabilities (useful for chaining counters). Outputs its current value at the top via an analog signal. You can use analog-to-digital converter to extract the actual 4 bits, if needed. Signal on the right input increments the counter. Signal on the left input decrements it. Both increment and decrement wrap around when reach above 15 or below 0, in which case an overflow signal is generated at the bottom output. The back input (use wire-though-block element to access it) resets the counter to 0. Plus, minus and reset inputs are activated by rising edge of the signal. The counter can be mounted on any surface and rotated to desired orientation." Translation="一种电动4位计数器，具有递增、递减、复位和溢出检测功能（可用于级联计数器）。通过顶部的模拟信号输出当前值。如果需要，可以使用模数转换器提取实际的4位。右侧输入信号使计数器递增。左侧输入信号使计数器递减。递增和递减在达到15以上或0以下时都会回绕，此时底部输出会产生溢出信号。背面输入（使用导线穿过方块元件访问）将计数器复位为0。加、减和复位输入由信号的上升沿激活。计数器可安装在任何表面上并旋转到所需方向。" />
     <Entry Original="An electric battery used to power electric circuits. Will connect to any wire placed next to it and power it to a constant voltage, which is 1.5V by default. The voltage can be adjusted by editing the battery." Translation="用于为电路供电的电池。会连接到放置在其旁边的任何导线，并为其提供恒定电压，默认为1.5V。可以通过编辑电池来调整电压。" />
-    <Entry Original="An electric button. Used to momentarily set the state of an electric circuit to 1.5V. The duration of the pulse generated by a single button click is about 1/10 of a second, after which time the outputs return to 0V state. A button can be triggered by a projectile striking it. It has outputs on all sides for easy connection and can be placed on any surface." Translation="电按钮。用于 momentarily 将电路状态设置为1.5V。单次按钮点击产生的脉冲持续时间约为1/10秒，之后输出返回到0V状态。按钮可以通过投射物击中触发。其四面都有输出，便于连接，可放置在任何表面上。" />
+    <Entry Original="An electric button. Used to momentarily set the state of an electric circuit to 1.5V. The duration of the pulse generated by a single button click is about 1/10 of a second, after which time the outputs return to 0V state. A button can be triggered by a projectile striking it. It has outputs on all sides for easy connection and can be placed on any surface." Translation="电按钮。用于把电路状态暂时设为 1.5V。按一次按钮产生的脉冲约持续 1/10 秒，之后输出回到 0V 状态。按钮可以被投射物击中触发。四面都有输出，便于连接，可放置在任何表面上。" />
     <Entry Original="An electric motion detector. The detector will produce signal whenever it detects motion in front of its face, up to about 8 blocks away. When motion is detected, the output of the motion detector is between 0.8 and 1.5V, indicating how close to the detector the object is moving. It has outputs on all sides for easy connection and can be placed on any surface." Translation="电动运动探测器。每当探测器在其正面检测到运动时（最远约8个方块），就会产生信号。当检测到运动时，运动探测器的输出在0.8V到1.5V之间，表示物体移动距离探测器的远近。其四面都有输出，便于连接，可放置在任何表面上。" />
     <Entry Original="An electric photodiode. Used to detect light. The diode will generate a signal when light is hitting its surface. The voltage depends on intensity of the light and is between 0.8V (dimmest) to 1.5V (brightest). 0V means no light. The diode has outputs on all sides for easy connection and can be placed on any surface." Translation="电动光电二极管。用于检测光线。当光线照射到其表面时，二极管会产生信号。电压取决于光线强度，在0.8V（最暗）到1.5V（最亮）之间。0V表示无光。二极管的四面都有输出，便于连接，可放置在任何表面上。" />
     <Entry Original="An electric switch. It is used to set the state of an electric circuit to 1.5V (lever up) or 0V (lever down). The voltage remains in the selected state until the lever is moved again. A switch has outputs on all sides for easy connection, and can be placed on any surface." Translation="电开关。用于将电路状态设置为1.5V（拨杆向上）或0V（拨杆向下）。电压保持在所选状态，直到拨杆再次移动。开关的四面都有输出，便于连接，可放置在任何表面上。" />
@@ -462,15 +483,16 @@
     <Entry Original="Autumn Mimosa Leaves" Translation="秋季合欢树叶" />
     <Entry Original="Autumn Oak Leaves" Translation="秋季橡树叶" />
     <Entry Original="Autumn Poplar Leaves" Translation="秋季杨树叶" />
-    <Entry Original="Axes are tools for cutting soft blocks, such as wood, furniture or leaves. They greatly speed up the cutting process, but eventually they will get damaged and fail. Axes made of better materials last longer and cut faster. Axe is also a powerful weapon, although it is very difficult to hit a moving target." Translation="斧头是用于切割软方块（如木头、家具或树叶）的工具。它们大大加快了切割过程，但最终会损坏失效。更好材料制成的斧头更耐用，切割更快。斧头也是一种 powerful 的武器，尽管很难击中移动的目标。" />
+    <Entry Original="Axes are tools for cutting soft blocks, such as wood, furniture or leaves. They greatly speed up the cutting process, but eventually they will get damaged and fail. Axes made of better materials last longer and cut faster. Axe is also a powerful weapon, although it is very difficult to hit a moving target." Translation="斧头是用于砍切软方块（如木头、家具或树叶）的工具。它们大大加快砍切速度，但最终会损坏失效。材料更好的斧头更耐用、砍得更快。斧头也是一种强力的武器，尽管很难击中移动的目标。" />
     <Entry Original="Barracuda Spawner" Translation="梭鱼生成蛋" />
     <Entry Original="Basalt" Translation="玄武岩" />
     <Entry Original="Basalt Fence" Translation="玄武岩栅栏" />
     <Entry Original="Basalt Slab" Translation="玄武岩台阶" />
     <Entry Original="Basalt Stairs" Translation="玄武岩楼梯" />
-    <Entry Original="Basalt is a very tough dark stone of volcanic origin. To mine it effectively it's best to use a strong pickaxe. Basalt is tougher than granite, and forms the majority of deep underground world. Occasionally has pools of magma embedded in it, so be careful when tunnelling. Veins of sulphur and iron ore might sometimes be found when you are deep enough. Even more rarely, you will find the elusive diamond shining brightly from between the rocks. Can be painted." Translation="玄武岩是一种非常坚硬的深色火山岩。要有效开采，最好使用坚固的镐。玄武岩比花岗岩坚硬，构成地下深处世界的大部分。偶尔会有岩浆池嵌入其中，所以挖掘隧道时要小心。当挖得足够深时，有时可能会发现硫磺和铁矿矿脉。更罕见的是，你会发现 elusive 的钻石在岩石间闪闪发光。可染色。" />
+    <Entry Original="Basalt is a very tough dark stone of volcanic origin. To mine it effectively it's best to use a strong pickaxe. Basalt is tougher than granite, and forms the majority of deep underground world. Occasionally has pools of magma embedded in it, so be careful when tunnelling. Veins of sulphur and iron ore might sometimes be found when you are deep enough. Even more rarely, you will find the elusive diamond shining brightly from between the rocks. Can be painted." Translation="玄武岩是一种非常坚硬的深色火山岩。要有效开采，最好使用坚固的镐。玄武岩比花岗岩坚硬，构成地下深处世界的大部分。其中偶尔嵌有岩浆池，所以挖隧道时要小心。挖得足够深时，有时能发现硫磺和铁矿矿脉。更罕见的是，你会发现难以寻觅的钻石在岩石间闪闪发光。可染色。" />
     <Entry Original="Battery" Translation="电池" />
     <Entry Original="Bay Horse Spawner" Translation="海湾马生成蛋" />
+    <Entry Original="Birch Leaves" Translation="白桦树叶" />
     <Entry Original="Birch Sapling" Translation="白桦树苗" />
     <Entry Original="Birch Wood" Translation="白桦木" />
     <Entry Original="Birch leaves grow on birch trees and can used to obtain birch saplings. They will burn and can be used as a cheap fuel. When placed away from the trunk, they will decay. " Translation="白桦树叶长在白桦树上，可用于获得白桦树苗。它们会燃烧，可用作廉价燃料。当放置在远离树干的地方时，会腐烂。" />
@@ -615,7 +637,7 @@
     <Entry Original="Brick Stairs" Translation="砖楼梯" />
     <Entry Original="Brick Wall" Translation="砖墙" />
     <Entry Original="Brick wall can be made by combining several bricks together and binding them with mortar. It is a versatile, strong and good looking building material. Brick walls which are no longer needed can be recycled back into constituent bricks. Can be painted." Translation="砖墙可以通过将几块砖组合并用砂浆粘合制成。它是一种多用途、坚固且美观的建筑材料。不再需要的砖墙可以回收成组成砖块。可染色。" />
-    <Entry Original="Bricks are obtained by firing clay blocks in the furnace. They are the most versatile building material available, because objects constructed from bricks can be broken down into the constituent bricks if no longer needed." Translation="砖块通过在熔炉中烧制粘土块获得。它们是 available 的最多功能的建筑材料，因为用砖块建造的物体在不再需要时可以分解成组成砖块。" />
+    <Entry Original="Bricks are obtained by firing clay blocks in the furnace. They are the most versatile building material available, because objects constructed from bricks can be broken down into the constituent bricks if no longer needed." Translation="砖块通过在熔炉中烧制黏土块获得。它们是最多用途的建筑材料，因为用砖块建造的物体在不再需要时可以分解回组成它的砖块。" />
     <Entry Original="Brown Basalt" Translation="棕色玄武岩" />
     <Entry Original="Brown Basalt Fence" Translation="棕色玄武岩栅栏" />
     <Entry Original="Brown Basalt Slab" Translation="棕色玄武岩台阶" />
@@ -687,7 +709,7 @@
     <Entry Original="Bull Shark Spawner" Translation="牛鲨生成蛋" />
     <Entry Original="Bullets are fired from firearms." Translation="子弹由火器发射。" />
     <Entry Original="Button" Translation="按钮" />
-    <Entry Original="Cacti are large plants very tolerant to dry conditions, and will often be found growing to large sizes in the desert. They are prickly and cause injuries on touch, so be careful. They will regrow to up to 3 blocks high when only the top part is harvested. A cruel hunter may line their trap pit with these for a more effective kill." Translation="仙人掌是一种非常耐旱的大型植物，常在沙漠中生长到很大。它们有刺，触碰会造成伤害，所以要小心。如果只收获顶部，它们会重新长到最多3个方块高。残酷的猎人可能会用它们来 lining 陷阱坑，以实现更有效的击杀。" />
+    <Entry Original="Cacti are large plants very tolerant to dry conditions, and will often be found growing to large sizes in the desert. They are prickly and cause injuries on touch, so be careful. They will regrow to up to 3 blocks high when only the top part is harvested. A cruel hunter may line their trap pit with these for a more effective kill." Translation="仙人掌是耐旱的大型植物，常在沙漠中长得很大。它们有刺，碰到会造成伤害，所以要小心。只收获顶部时，它们会重新长到最多 3 个方块高。残酷的猎人会用它们铺在陷阱坑底，以求更有效的击杀。" />
     <Entry Original="Cactus" Translation="仙人掌" />
     <Entry Original="Cairn" Translation="石冢" />
     <Entry Original="Cairns are usually found at tops of mountains and contain huge amounts of experience" Translation="石冢通常位于山顶，含有大量经验" />
@@ -707,15 +729,16 @@
     <Entry Original="Christmas Tree" Translation="圣诞树" />
     <Entry Original="Clay" Translation="粘土" />
     <Entry Original="Clay is a heavy, densely packed soil made of very small grains. From time immemorial it was known that by firing it in a furnace one can obtain bricks, which are the most versatile building material. Clay is often found on the bottoms of shallow lakes. Can be painted." Translation="粘土是一种由非常小的颗粒组成的沉重、致密的土壤。自古以来人们就知道，通过在熔炉中烧制它可以获得砖块，这是最多功能的建筑材料。粘土常见于浅湖底部。可染色。" />
+    <Entry Original="Clothing and armor are used to protect the wearer from environment conditions and attacks. Various types of clothes are available and can be put on or removed through clothes interface. Can be dyed by bathing in a paint bucket in a heated furnace." Translation="衣物和护甲用于保护穿戴者免受环境状况和攻击的伤害。有多种衣物可供选择，可以通过衣物界面穿上或脱下。在加热的熔炉中浸泡油漆桶即可染色。" />
     <Entry Original="Coal Chunk" Translation="煤炭块" />
     <Entry Original="Coal Ore" Translation="煤矿石" />
     <Entry Original="Coal ore is a vein of coal embedded in granite rock. Gains coal chunks when mined." Translation="煤矿石是嵌入花岗岩中的煤脉。开采时获得煤炭块。" />
     <Entry Original="Cobblestone" Translation="圆石" />
     <Entry Original="Cobblestone Slab" Translation="圆石台阶" />
     <Entry Original="Cobblestone Stairs" Translation="圆石楼梯" />
-    <Entry Original="Cobblestone is a tough stone obtained by mining granite. It is a strong, rugged material that works well when used in construction of walls and floors. By smelting it in a furnace you can obtain pure granite of which it is made. Can be painted." Translation="圆石是通过开采花岗岩获得的坚硬石头。它是一种坚固、 rugged 的材料，适用于墙壁和地板的建造。通过在熔炉中熔炼，你可以获得制作它的纯花岗岩。可染色。" />
+    <Entry Original="Cobblestone is a tough stone obtained by mining granite. It is a strong, rugged material that works well when used in construction of walls and floors. By smelting it in a furnace you can obtain pure granite of which it is made. Can be painted." Translation="圆石是开采花岗岩得到的坚硬石头。它坚固耐用，很适合用来砌墙和铺地板。在熔炉中熔炼它，可以得到构成它的纯花岗岩。可染色。" />
     <Entry Original="Compass" Translation="指南针" />
-    <Entry Original="Compass points to the location of the place of last sleep or to the nearest magnet, if present. It is indispensable when finding your way home on far away journeys." Translation="指南针指向 last sleep 的位置或最近的磁铁（如果有的话）。在远途旅行中找到回家的路时，它是 indispensable 的。" />
+    <Entry Original="Compass points to the location of the place of last sleep or to the nearest magnet, if present. It is indispensable when finding your way home on far away journeys." Translation="指南针指向最后一次睡觉的位置，或最近的磁铁（如果有）。在远途旅行中找路回家时，它是必不可少的工具。" />
     <Entry Original="Cooked Bird" Translation="熟鸟肉" />
     <Entry Original="Cooked Cassowary Egg" Translation="熟食火鸡蛋" />
     <Entry Original="Cooked Duck Egg" Translation="熟鸭蛋" />
@@ -747,7 +770,7 @@
     <Entry Original="Cotton Seeds" Translation="棉花种子" />
     <Entry Original="Cotton Wad" Translation="棉团" />
     <Entry Original="Cotton is a plant that grows in warm areas. When harvested, provides a number of cotton wads which can be further processed into cotton products." Translation="棉花是一种生长在温暖地区的植物。收获时提供多个棉团，可进一步加工成棉制品。" />
-    <Entry Original="Cotton wads are small chunks of packed cotton fibers. They can be processed further into cotton products." Translation="棉团是 packed 棉纤维的小块。它们可以进一步加工成棉制品。" />
+    <Entry Original="Cotton wads are small chunks of packed cotton fibers. They can be processed further into cotton products." Translation="棉团是压实的棉纤维小块，可以进一步加工成棉制品。" />
     <Entry Original="Cowboy Hat" Translation="牛仔帽" />
     <Entry Original="Coyote Spawner" Translation="郊狼生成蛋" />
     <Entry Original="Crossbow" Translation="弩" />
@@ -829,7 +852,7 @@
     <Entry Original="Diamond Tip Iron Bolt" Translation="钻石尖铁弩箭" />
     <Entry Original="Diamond Tip Pickaxe" Translation="钻石尖镐" />
     <Entry Original="Diamond Tip Spear" Translation="钻石尖矛" />
-    <Entry Original="Diamond is a crystal of pure carbon. Very rare and beautiful, it is found deep underground. It can be used for making extremely hard and durable tools. Being carbon, can also be burned as fuel in the furnace, but only fools waste this precious substance for such a mundane purpose." Translation="钻石是纯碳的晶体。非常罕见且美丽，在地下深处发现。可用于制造 extremely 坚硬耐用的工具。作为碳，也可以在熔炉中作为燃料燃烧，但只有傻子才会把这种 precious 物质浪费在这种 mundane 的目的上。" />
+    <Entry Original="Diamond is a crystal of pure carbon. Very rare and beautiful, it is found deep underground. It can be used for making extremely hard and durable tools. Being carbon, can also be burned as fuel in the furnace, but only fools waste this precious substance for such a mundane purpose." Translation="钻石是纯碳晶体。极其稀有而美丽，发现于地下深处。可用于制造极其坚硬耐用的工具。作为碳，它也能在熔炉里当燃料烧，但只有傻子才会把这种珍贵的东西浪费在这么无聊的用途上。" />
     <Entry Original="Diamond ore are diamond crystals embedded in basalt rock. Gains diamonds when mined." Translation="钻石矿石是嵌入玄武岩中的钻石晶体。开采时获得钻石。" />
     <Entry Original="Digital To Analog Converter" Translation="数模转换器" />
     <Entry Original="Dirt" Translation="泥土" />
@@ -844,14 +867,14 @@
     <Entry Original="Dry Bush" Translation="干灌木" />
     <Entry Original="Dry bushes are commonly found on the edges of deserts or in cold places. Whenever a plant does not have enough humidity or sunlight to sustain itself, it will turn into a dry bush. " Translation="干灌木常见于沙漠边缘或寒冷地区。每当植物没有足够的湿度或阳光来维持自身时，它会变成干灌木。" />
     <Entry Original="Duck Spawner" Translation="鸭生成蛋" />
-    <Entry Original="Electric ADC. Converts one analog signal fed to its back to 4 digital signals output through its sides. You need to place DAC on a WireThroughBlock element to be able provide the input signal. Can be placed on any surface and rotated to desired orientation." Translation="电动ADC。将输入到其背面的一个模拟信号转换为通过其侧面输出的4个数字信号。你需要将DAC放置在 WireThroughBlock 元件上才能提供输入信号。可放置在任何表面上并旋转到所需方向。" />
-    <Entry Original="Electric DAC. Converts 4 digital signals fed to its sides to one analog signal at the back. You need to place DAC on a WireThroughBlock element to be able to access the output signal. Can be placed on any surface and rotated to desired orientation." Translation="电动DAC。将输入到其侧面的4个数字信号转换为背面的一个模拟信号。你需要将DAC放置在 WireThroughBlock 元件上才能访问输出信号。可放置在任何表面上并旋转到所需方向。" />
+    <Entry Original="Electric ADC. Converts one analog signal fed to its back to 4 digital signals output through its sides. You need to place DAC on a WireThroughBlock element to be able provide the input signal. Can be placed on any surface and rotated to desired orientation." Translation="电动 ADC。把输入到背面的一个模拟信号转换成从侧面输出的 4 个数字信号。你需要把它放在导线穿孔块上才能提供输入信号。可放置在任何表面上并旋转到所需方向。" />
+    <Entry Original="Electric DAC. Converts 4 digital signals fed to its sides to one analog signal at the back. You need to place DAC on a WireThroughBlock element to be able to access the output signal. Can be placed on any surface and rotated to desired orientation." Translation="电动 DAC。把输入到侧面的 4 个数字信号转换成背面的一个模拟信号。你需要把它放在导线穿孔块上才能访问输出信号。可放置在任何表面上并旋转到所需方向。" />
     <Entry Original="Electric Detonator" Translation="电雷管" />
     <Entry Original="Electric Wire" Translation="电线" />
     <Entry Original="Electric lightbulb, emits a lot of light when connected to a source of electricity. Can be placed on any surface." Translation="电灯泡，连接到电源时发出大量光。可放置在任何表面上。" />
     <Entry Original="Electric pressure plate. The pressure plate generates a signal when it is pressed, for example by something heavy resting on it, or by a projectile striking it. The voltage generated depends on the weight of item and is between 0.8V (lightest) and 1.5V (heaviest), therefore the pressure plate can be used as a weight. As soon as the pressure is removed, the output signal returns to 0V. The plate has outputs on all sides for easy connection. It can be placed on any surface." Translation="电动压力板。当压力板被按下时（例如被重物压住或被投射物击中）会产生信号。产生的电压取决于物品重量，在0.8V（最轻）到1.5V（最重）之间，因此压力板可以用作测重器。一旦压力解除，输出信号返回0V。压力板的四面都有输出，便于连接。可放置在任何表面上。" />
     <Entry Original="Electric random generator. Can be used to generate random electric signals. Has a single clock input and one random output. Output is an analog signal and always indicates the latest result of the random generator. Can work in synchronous or asynchronous mode, depending on whether clock input is connected. In synchronous mode the random value is generated only during a rising edge on the clock input, otherwise it is generated continuously with average frequency of about 2 Hz. Can be placed on any surface and rotated to desired orientation." Translation="电动随机发生器。可用于生成随机电信号。有一个时钟输入和一个随机输出。输出是模拟信号，始终指示随机发生器的最新结果。可以工作在同步或异步模式，取决于时钟输入是否连接。在同步模式下，随机值仅在时钟输入的上升沿生成，否则以约2Hz的平均频率连续生成。可放置在任何表面上并旋转到所需方向。" />
-    <Entry Original="Electric sound generator. Takes 4 inputs: pitch (left), octave (right), volume (top) and tone (bottom). All of these inputs are analog. The pitch ranges from C note (value of 0V) to D note in the next octave (value of 1.4V). 1.5V at pitch input means pause, no sound is played. The octave input can be used to shift the pitch by up to two octaves. The volume input sets the volume of played sound, with 0V being muted and 1.5V being the loudest. The actual sound is played whenever tone input goes from zero to non-zero. The value supplied to the tone input when it goes from zero to non-zero determines which instrument should be played: 0.1=Bell, 0.2=Organ, 0.3=Ping, 0.4=String, 0.5=Trumpet, 0.6=Voice, 0.7=Piano, 0.8=PianoSustain, 0.9=Drums, 1.0=Bass. With drums, pitch input determines one of 10 drums: 0.0=Snare, 0.1=BassDrum, 0.2=ClosedHiHat, 0.3=PedalHiHat, 0.4=OpenHiHat, 0.5=LowTom, 0.6=HighTom, 0.7=Crash, 0.8=Ride, 0.9=HandClap. Some animals, especially birds, are afraid of the loud sounds. This element can be placed on any surface and rotated to desired orientation." Translation="电动声音发生器。有4个输入：音高（左）、八度（右）、音量（上）和音色（下）。所有这些输入都是模拟的。音高范围从C音符（0V）到下一个八度的D音符（1.4V）。音高输入1.5V表示暂停，不播放声音。八度输入可用于将音高最多移动两个八度。音量输入设置播放声音的音量，0V静音，1.5V最响。实际声音在音色输入从零变为非零时播放。当音色输入从零变为非零时提供的值决定播放哪种乐器：0.1=铃铛，0.2=风琴，0.3=乒乓，0.4=弦乐，0.5=小号，0.6=人声，0.7=钢琴，0.8=延音钢琴，0.9=鼓，1.0=贝斯。对于鼓，音高输入决定10种鼓之一：0.0=小军鼓，0.1=低音鼓，0.2=闭镲，0.3=踏板镲，0.4=开镲，0.5=低音 tom，0.6=高音 tom，0.7=吊镲，0.8=节奏镲，0.9=拍手。一些动物，尤其是鸟类，害怕 loud 的声音。此元件可放置在任何表面上并旋转到所需方向。" />
+    <Entry Original="Electric sound generator. Takes 4 inputs: pitch (left), octave (right), volume (top) and tone (bottom). All of these inputs are analog. The pitch ranges from C note (value of 0V) to D note in the next octave (value of 1.4V). 1.5V at pitch input means pause, no sound is played. The octave input can be used to shift the pitch by up to two octaves. The volume input sets the volume of played sound, with 0V being muted and 1.5V being the loudest. The actual sound is played whenever tone input goes from zero to non-zero. The value supplied to the tone input when it goes from zero to non-zero determines which instrument should be played: 0.1=Bell, 0.2=Organ, 0.3=Ping, 0.4=String, 0.5=Trumpet, 0.6=Voice, 0.7=Piano, 0.8=PianoSustain, 0.9=Drums, 1.0=Bass. With drums, pitch input determines one of 10 drums: 0.0=Snare, 0.1=BassDrum, 0.2=ClosedHiHat, 0.3=PedalHiHat, 0.4=OpenHiHat, 0.5=LowTom, 0.6=HighTom, 0.7=Crash, 0.8=Ride, 0.9=HandClap. Some animals, especially birds, are afraid of the loud sounds. This element can be placed on any surface and rotated to desired orientation." Translation="电动声音发生器。有 4 个输入：音高（左）、八度（右）、音量（上）和音色（下），全部是模拟输入。音高范围从 C 音符（0V）到下一个八度的 D 音符（1.4V）；音高输入为 1.5V 时表示暂停，不播放声音。八度输入最多可把音高移动两个八度。音量输入设置播放音量，0V 静音，1.5V 最响。音色输入由零变为非零时就会播放声音，而变成非零时的取值决定演奏哪种乐器：0.1=钟，0.2=风琴，0.3=乒，0.4=弦乐，0.5=小号，0.6=人声，0.7=钢琴，0.8=延音钢琴，0.9=鼓，1.0=贝斯。演奏鼓时，音高输入决定 10 种鼓中的哪一种：0.0=小军鼓，0.1=低音鼓，0.2=闭镲，0.3=踏板镲，0.4=开镲，0.5=低音通鼓，0.6=高音通鼓，0.7=吊镲，0.8=节奏镲，0.9=拍手。有些动物（尤其是鸟类）害怕响亮的声音。此元件可放置在任何表面上并旋转到所需方向。" />
     <Entry Original="Experience Orb" Translation="经验球" />
     <Entry Original="Explosive Bolt" Translation="爆炸弩箭" />
     <Entry Original="Exquisite, strong chest armor made of diamond. Excellent protection. No insulation." Translation="精致的钻石胸甲，坚固。极佳保护。无隔热。" />
@@ -1277,7 +1300,7 @@
     <Entry Original="Green dyed T-shirt" Translation="绿色染色T恤" />
     <Entry Original="Green dyed Tank Top" Translation="绿色染色背心" />
     <Entry Original="Gunpowder" Translation="火药" />
-    <Entry Original="Gunpowder keg is a sealed, wooden container filled with gunpowder, with a short fuse attached on the top. The fuse can be lit with a match or initiated electrically. The keg will explode after several seconds with devastating force, destroying blocks and killing any creatures within the blast range. Certain blocks, such as stone, iron and diamond are more resilient to explosions than others. Use detonators to cause an instantaneous explosion without fuse delay." Translation="火药桶是一个密封的木制容器，内装火药，顶部附有短引信。可以用火柴点燃或用电触发。桶会在几秒钟后以 devastating 的力量爆炸，摧毁爆炸范围内的方块并杀死所有生物。某些方块，如石头、铁和钻石，比其他方块更能抵抗爆炸。使用雷管可引发瞬间爆炸，无需引信延迟。" />
+    <Entry Original="Gunpowder keg is a sealed, wooden container filled with gunpowder, with a short fuse attached on the top. The fuse can be lit with a match or initiated electrically. The keg will explode after several seconds with devastating force, destroying blocks and killing any creatures within the blast range. Certain blocks, such as stone, iron and diamond are more resilient to explosions than others. Use detonators to cause an instantaneous explosion without fuse delay." Translation="火药桶是一个密封的木制容器，内装火药，顶部附有短引信。可以用火柴点燃或用电触发。桶会在几秒钟后以毁灭性的力量爆炸，摧毁爆炸范围内的方块并杀死所有生物。某些方块（如石头、铁和钻石）比其他方块更能抵抗爆炸。使用雷管可以引发瞬间爆炸，没有引信延迟。" />
     <Entry Original="Hammer is used to create furniture from blocks placed in the world." Translation="锤子用于从世界中的方块创建家具。" />
     <Entry Original="Heavy chest armor made of copper. Average protection. Weak insulation. Slows you down." Translation="铜制重型胸甲。平均保护。隔热差。降低速度。" />
     <Entry Original="Heavy chest armor made of iron. Good protection. Weak insulation. Slows you down." Translation="铁制重型胸甲。良好保护。隔热差。降低速度。" />
@@ -1433,6 +1456,7 @@
     <Entry Original="Medium Incendiary Keg" Translation="中燃烧桶" />
     <Entry Original="Memory Bank" Translation="存储库" />
     <Entry Original="Milk" Translation="牛奶" />
+    <Entry Original="Mimosa Leaves" Translation="合欢树叶" />
     <Entry Original="Mimosa Sapling" Translation="合欢树苗" />
     <Entry Original="Mimosa Wood" Translation="合欢木" />
     <Entry Original="Mimosa leaves grow on mimosa trees and can be used to obtain mimosa saplings. They will burn and can be used as a cheap fuel. When placed away from the trunk, they will decay." Translation="合欢树叶长在合欢树上，可用于获得合欢树苗。它们会燃烧，可用作廉价燃料。当放置在远离树干的地方时，会腐烂。" />
@@ -1448,6 +1472,7 @@
     <Entry Original="Musket Ball" Translation="火枪弹丸" />
     <Entry Original="No recipes" Translation="无配方" />
     <Entry Original="No sleeves cotton shirt. Can be dyed. Almost no protection. Weak insulation." Translation="无袖棉衬衫。可染色。几乎没有保护。隔热差。" />
+    <Entry Original="Oak Leaves" Translation="橡树叶" />
     <Entry Original="Oak Sapling" Translation="橡树苗" />
     <Entry Original="Oak Wood" Translation="橡木" />
     <Entry Original="Oak leaves grow on oak trees and can be used to obtain oak saplings. They will burn and can be used as a cheap fuel. When placed away from the trunk, they will decay. Grass traps that can deceive both man and a beast can be crafted from these leaves." Translation="橡树叶长在橡树上，可用于获得橡树苗。它们会燃烧，可用作廉价燃料。当放置在远离树干的地方时，会腐烂。用这些叶子可以制作能欺骗人和野兽的草陷阱。" />
@@ -1714,6 +1739,7 @@
     <Entry Original="Planks are a versatile construction material that can be obtained by cutting wood blocks into pieces. A multitude of useful objects, such as a workbench or a chest can be made from planks. Planks are flammable and can be used as a fuel in the furnace. Can be painted." Translation="木板是一种多功能的建筑材料，可以通过将木头块切割成碎片获得。许多有用的物品，如工作台或箱子，都可以用木板制作。木板易燃，可用作熔炉的燃料。可染色。" />
     <Entry Original="Plant rye on tilled, moist and fertilized soil to obtain full grown plants. Harvesting the plants will yield large number of rye seeds. Rye also grows naturally in form or wild rye. You can obtain wild seeds by harvesting it." Translation="在耕地、湿润且施肥的土壤上种植黑麦，可获得完全生长的植物。收获植物将产生大量黑麦种子。黑麦也以野生黑麦的形式自然生长。你可以通过收获它获得野生种子。" />
     <Entry Original="Polar Bear Spawner" Translation="北极熊生成蛋" />
+    <Entry Original="Poplar Leaves" Translation="杨树叶" />
     <Entry Original="Poplar Sapling" Translation="杨树苗" />
     <Entry Original="Poplar Wood" Translation="杨木" />
     <Entry Original="Poplar leaves grow on poplar trees and can be used to obtain poplar saplings. They will burn and can be used as a cheap fuel. When placed away from the trunk, they will decay." Translation="杨树叶长在杨树上，可用于获得杨树苗。它们会燃烧，可用作廉价燃料。当放置在远离树干的地方时，会腐烂。" />
@@ -1796,6 +1822,7 @@
     <Entry Original="Raw Fish" Translation="生鱼" />
     <Entry Original="Raw Meat" Translation="生肉" />
     <Entry Original="Real Time Clock" Translation="实时时钟" />
+    <Entry Original="Recipes" Translation="配方" />
     <Entry Original="Red 4-LED" Translation="红色4-LED" />
     <Entry Original="Red 7-Segment Display" Translation="红色七段数码管" />
     <Entry Original="Red Basalt" Translation="红色玄武岩" />
@@ -1953,7 +1980,7 @@
     <Entry Original="Sandstone" Translation="砂岩" />
     <Entry Original="Sandstone Slab" Translation="砂岩台阶" />
     <Entry Original="Sandstone Stairs" Translation="砂岩楼梯" />
-    <Entry Original="Saplings are used to plant trees. You can obtain them by crafting from the leaves of trees. When planting, be careful to place the saplings in a well lit place, full of moisture and of correct temperature. Use hygrometer and thermometer to measure these quantities. Oaks like it warm, birches moderately cool and spruces cold. All trees need a lot of humidity. If you plant a sapling in a wrong spot, it will wilt into a dry bush." Translation="树苗用于种植树木。你可以通过用树叶合成获得它们。种植时，注意将树苗放置在光线充足、湿度高且温度适宜的地方。使用湿度计和温度计测量这些量。橡树喜欢温暖，白桦树 moderately cool，云杉寒冷。所有树木都需要大量湿度。如果树苗种植在错误的地点，它会枯萎变成干灌木。" />
+    <Entry Original="Saplings are used to plant trees. You can obtain them by crafting from the leaves of trees. When planting, be careful to place the saplings in a well lit place, full of moisture and of correct temperature. Use hygrometer and thermometer to measure these quantities. Oaks like it warm, birches moderately cool and spruces cold. All trees need a lot of humidity. If you plant a sapling in a wrong spot, it will wilt into a dry bush." Translation="树苗用于种植树木。你可以用树叶合成得到它们。种植时要注意把树苗放在光照充足、湿度高、温度合适的地方，用湿度计和温度计测量这些数值。橡树喜欢温暖，白桦树喜欢偏凉，云杉喜欢寒冷。所有树木都需要大量湿度。如果把树苗种在错误的地点，它会枯萎成干灌木。" />
     <Entry Original="Sea Urchin" Translation="海胆" />
     <Entry Original="Sea urchins are small, spiny animals that attach themselves to the sea floor and make a living by filtering nutrients from seawater. They are edible but not very tasty or nutritious." Translation="海胆是小型的带刺动物，附着在海床上，通过过滤海水中的营养物质为生。它们可食用，但不太美味或营养。" />
     <Entry Original="Seabass Spawner" Translation="海鲈鱼生成蛋" />
@@ -1984,7 +2011,7 @@
     <Entry Original="Solid Iron Block" Translation="固体铁块" />
     <Entry Original="Sound Generator" Translation="声音发生器" />
     <Entry Original="Sparrow Spawner" Translation="麻雀生成蛋" />
-    <Entry Original="Spawner egg. Bird eggs are occasionally laid by adult birds. If you look carefully, you may find and eat them. Cooking an egg will increase its nutritional value. Non-bird eggs are available in creative mode only and can be used to spawn all other animals. To spawn an animal in creative mode, throw the egg against a hard surface to smash it. Spawner eggs of some exotic animals are unavailable even in creative mode." Translation="生成蛋。鸟蛋偶尔由成年鸟产下。如果仔细寻找，可能会发现并食用它们。烹饪蛋会增加其营养价值。非鸟蛋仅在创造模式中可用，可用于生成所有其他动物。要在创造模式下生成动物，将蛋扔向坚硬表面以打碎它。即使是在创造模式下，某些 exotic 动物的生成蛋也是不可用的。" />
+    <Entry Original="Spawner egg. Bird eggs are occasionally laid by adult birds. If you look carefully, you may find and eat them. Cooking an egg will increase its nutritional value. Non-bird eggs are available in creative mode only and can be used to spawn all other animals. To spawn an animal in creative mode, throw the egg against a hard surface to smash it. Spawner eggs of some exotic animals are unavailable even in creative mode." Translation="生成蛋。鸟蛋偶尔由成年鸟产下，仔细寻找就可能发现并吃掉它们。烹饪蛋会增加它的营养价值。非鸟蛋只在创造模式中可用，可用于生成所有其他动物。要在创造模式下生成动物，把蛋扔向坚硬表面打碎它。即使是在创造模式下，某些异域动物的生成蛋也不可用。" />
     <Entry Original="Spiked Plank" Translation="尖刺木板" />
     <Entry Original="Spoiled Milk" Translation="变质牛奶" />
     <Entry Original="Spring Birch Leaves" Translation="春季白桦树叶" />
@@ -2012,7 +2039,7 @@
     <Entry Original="Stone Spear" Translation="石矛" />
     <Entry Original="Stone Stairs" Translation="石楼梯" />
     <Entry Original="Stone Tip Arrow" Translation="石箭头" />
-    <Entry Original="Stone axe is a primitive tool that can equally be used for digging, cutting wood and quarrying rocks. It greatly speeds up the process, but it will quickly get damaged and fail. Stone axe is a poor melee weapon, make a club if you want to fight. You should progress to specialized tools made of metals." Translation="石斧是一种原始工具，同样可用于挖掘、砍伐木材和开采岩石。它大大加快了过程，但会迅速损坏失效。石斧是一种 poor 的近战武器，如果你想战斗，请制作一个棍棒。你应该进步到金属制成的 specialized 工具。" />
+    <Entry Original="Stone axe is a primitive tool that can equally be used for digging, cutting wood and quarrying rocks. It greatly speeds up the process, but it will quickly get damaged and fail. Stone axe is a poor melee weapon, make a club if you want to fight. You should progress to specialized tools made of metals." Translation="石斧是一种原始工具，挖掘、砍木头和开采岩石都能用。它大大加快速度，但会迅速损坏失效。石斧作为近战武器很差，想战斗请做一根棍棒。你该进一步换用金属制成的专用工具。" />
     <Entry Original="Stone bricks can be made by binding together several stones of regular shape. They are a strong building material, very resilient to explosions and digging." Translation="石砖可以通过将几块规则形状的石头绑定在一起制成。它们是一种坚固的建筑材料，对爆炸和挖掘非常有韧性。" />
     <Entry Original="Strict Pulling Piston" Translation="严格拉式活塞" />
     <Entry Original="String" Translation="绳子" />
@@ -2037,7 +2064,7 @@
     <Entry Original="Tank Top" Translation="背心" />
     <Entry Original="Target" Translation="靶子" />
     <Entry Original="Thermometer" Translation="温度计" />
-    <Entry Original="Thermometer displays ambient temperature. It is an important tool when planting trees. Oaks like it warm, birches moderately cool and spruces cold. Planting a tree in a wrong ambient temperature will cause the sapling to wilt. It is also an electric element that outputs analog signal corresponding to the surrounding temperature." Translation="温度计显示环境温度。它是种植树木时的重要工具。橡树喜欢温暖，白桦树 moderately cool，云杉寒冷。在错误的环境温度下种植树木会导致树苗枯萎。它也是一个电动元件，输出与周围温度相对应的模拟信号。" />
+    <Entry Original="Thermometer displays ambient temperature. It is an important tool when planting trees. Oaks like it warm, birches moderately cool and spruces cold. Planting a tree in a wrong ambient temperature will cause the sapling to wilt. It is also an electric element that outputs analog signal corresponding to the surrounding temperature." Translation="温度计显示环境温度，是种树时的重要工具。橡树喜欢温暖，白桦树喜欢偏凉，云杉喜欢寒冷；在错误的环境温度下种树会让树苗枯萎。它也是一个电动元件，输出与周围温度相对应的模拟信号。" />
     <Entry Original="Thick, warm coat made of fur. Weak protection. Good insulation. Slows you down." Translation="毛皮制成的厚实保暖大衣。弱保护。良好隔热。降低速度。" />
     <Entry Original="Thick, warm hat made of fur. Weak protection. Good insulation." Translation="毛皮制成的厚实保暖帽子。弱保护。良好隔热。" />
     <Entry Original="Thick, warm leggings made of fur. Weak protection. Good insulation. Slows you down." Translation="毛皮制成的厚实保暖护腿。弱保护。良好隔热。降低速度。" />
@@ -2046,7 +2073,7 @@
     <Entry Original="Torch" Translation="火把" />
     <Entry Original="Torch is a piece of flammable coal affixed to a wooden stick. When attached to a wall or placed on the floor, it emits light. It is the easiest and cheapest way to light interiors of buildings or underground corridors." Translation="火把是一块易燃的煤附着在木棍上。当附着在墙上或放在地板上时，它会发出光。这是照亮建筑物内部或地下走廊最简单最便宜的方法。" />
     <Entry Original="Transparent block made by smelting sand in the furnace. Very useful for making windows and brightening up dark rooms. It is a very brittle material that will irrecoverably shatter when hit by something hard." Translation="通过在熔炉中熔炼沙子制成的透明方块。非常适合制作窗户和照亮暗室。它是一种非常易碎的材料，被硬物击中时会不可恢复地破碎。" />
-    <Entry Original="Trapdoors are used to make vertical entrances to buildings. They can be opened and closed by clicking on them. When connected to a copper wire, trapdoors will open or close on the rising edge of electric signal. Iron trapdoors cannot be operated manually when electrically connected. They can be placed normally or upside-down, depending whether they are attached to top or bottom side of the block. Upside-down trapdoors will stop falling blocks." Translation="活板门用于制作建筑物的垂直入口。可以通过点击打开和关闭。当连接到铜线时，活板门会在电信号上升沿打开或关闭。铁活板门在电气连接时无法手动操作。它们可以正常放置或倒置放置，取决于附着在方块的顶部还是底部。倒置的活板门会阻挡 falling 的方块。" />
+    <Entry Original="Trapdoors are used to make vertical entrances to buildings. They can be opened and closed by clicking on them. When connected to a copper wire, trapdoors will open or close on the rising edge of electric signal. Iron trapdoors cannot be operated manually when electrically connected. They can be placed normally or upside-down, depending whether they are attached to top or bottom side of the block. Upside-down trapdoors will stop falling blocks." Translation="活板门用于给建筑物做垂直入口，点击即可开关。接到铜线上时，活板门会在电信号的上升沿打开或关闭。铁活板门在电气连接时无法手动操作。它们可以正放或倒放，取决于贴在方块的顶面还是底面。倒放的活板门会挡住下落的方块。" />
     <Entry Original="Truth Table Circuit" Translation="真值表电路" />
     <Entry Original="Unripe Pumpkin" Translation="未熟的南瓜" />
     <Entry Original="Water Bucket" Translation="水桶" />
@@ -2130,9 +2157,9 @@
     <Entry Original="Wooden Stairs" Translation="木楼梯" />
     <Entry Original="Wooden Tip Arrow" Translation="木箭头" />
     <Entry Original="Wooden Trapdoor" Translation="木活板门" />
-    <Entry Original="Wooden spikes penetrate flesh. The spiked planks can be placed on the floor, on the walls and on the ceiling. Touching them will cause injury. Trap pits are often lined with them. Spikes can be electrically controlled and will extend/retract on a rising edge of an electric signal." Translation="木刺刺入 flesh。尖刺木板可以放置在地板、墙壁和天花板上。触碰它们会造成伤害。陷阱坑常用它们衬里。尖刺可以电动控制，并在电信号上升沿伸出/缩回。" />
+    <Entry Original="Wooden spikes penetrate flesh. The spiked planks can be placed on the floor, on the walls and on the ceiling. Touching them will cause injury. Trap pits are often lined with them. Spikes can be electrically controlled and will extend/retract on a rising edge of an electric signal." Translation="木刺能刺穿血肉。尖刺木板可以放在地板、墙壁和天花板上，碰到会造成伤害。陷阱坑常用它们铺底。尖刺可以电动控制，在电信号上升沿伸出或缩回。" />
     <Entry Original="Workbench" Translation="工作台" />
-    <Entry Original="Workbench is a piece of workshop furniture made of wood. It is a very important item, because it allows you to craft items that require more than 2x2 crafting slots. All craftable items can be made on it, provided that you have the required materials." Translation="工作台是一件木制 workshop 家具。它是一个非常重要的物品，因为它允许你合成需要超过2x2合成槽的物品。所有可合成的物品都可以在上面制作，只要你有所需的材料。" />
+    <Entry Original="Workbench is a piece of workshop furniture made of wood. It is a very important item, because it allows you to craft items that require more than 2x2 crafting slots. All craftable items can be made on it, provided that you have the required materials." Translation="工作台是一件木制的工坊家具，是非常重要的物品，因为可以合成需要超过 2x2 合成格的物品。只要材料齐全，所有可合成的物品都能在它上面制作。" />
     <Entry Original="Writeable memory bank containing 256 4-bit words. The memory can be addressed using two 4-bit address lines placed on the left and right. If an address line is not connected, it's assumed to be zero. Value stored in the memory bank under the specified address can be read at the top output. Bottom input is used as a clock in a similar fashion to SR Latch. If the clock line is not connected, reads are immediate. To write to the memory bank, supply the value to be written on the back input (you must use wire-through-block). The write is triggered by setting clock input to a low voltage between 0.1 and 0.7 volts (a value of 0.8 and larger will trigger a read). The contents of memory block can be manually edited by tapping edit button when block is held in hand or looked at. Can be placed on any surface and rotated to desired orientation." Translation="可写存储库，包含256个4位字。可以使用左右两侧的两条4位地址线对存储器进行寻址。如果地址线未连接，则假定为零。存储在指定地址下的存储库中的值可以在顶部输出读取。底部输入用作时钟，类似于SR锁存器。如果时钟线未连接，则立即读取。要写入存储库，请在背面输入提供要写入的值（必须使用导线穿过方块）。通过将时钟输入设置为0.1至0.7伏的低电压来触发写入（0.8及更高值将触发读取）。当手持或看着存储块时，可以通过点击编辑按钮手动编辑其内容。可放置在任何表面上并旋转到所需方向。" />
     <Entry Original="Yellow 4-LED" Translation="黄色4-LED" />
     <Entry Original="Yellow 7-Segment Display" Translation="黄色七段数码管" />
@@ -2202,20 +2229,248 @@
     <Entry Original="无配方" Translation="无配方" />
   </Screen>
   <Screen Name="RecipaediaRecipesScreen">
+    <Entry Original="Add copper hooks to piston to make a strict pulling piston" Translation="给活塞加上铜钩，做成严格拉式活塞" />
+    <Entry Original="Add diamonds to the cutting edge of the weapon" Translation="在武器的刃口加上钻石" />
+    <Entry Original="Add diamonds to the working edge of the tool" Translation="在工具的刃口加上钻石" />
+    <Entry Original="Add iron hooks to piston to make a pulling piston" Translation="给活塞加上铁钩，做成拉式活塞" />
+    <Entry Original="Add sulphur to a gunpowder keg to make it incendiary" Translation="在火药桶中加入硫磺，制成燃烧桶" />
+    <Entry Original="Affix a burning coal to a stick to make a torch" Translation="把燃烧的煤固定在木棍上，做成火把" />
+    <Entry Original="Bake dough to make bread" Translation="烘烤面团，做成面包" />
     <Entry Original="Block Recipes" Translation="方块配方" />
+    <Entry Original="Combine coal, sulphur and saltpeter to make gunpowder" Translation="把煤、硫磺和硝石混合，制成火药" />
+    <Entry Original="Combine furniture into interactive design" Translation="将家具组合为可交互设计" />
+    <Entry Original="Combine many coal chunks into a large block" Translation="把多个煤块组合成一大块" />
+    <Entry Original="Combine many copper ingots into a large block" Translation="把多个铜锭组合成一大块" />
+    <Entry Original="Combine many diamonds into a large block" Translation="把多个钻石组合成一大块" />
+    <Entry Original="Combine many germanium crystals into a semiconductor block" Translation="把多个锗晶体组合成半导体块" />
+    <Entry Original="Combine many iron ingots into a large block" Translation="把多个铁锭组合成一大块" />
+    <Entry Original="Combine many malachite chunks into a large block" Translation="把多个孔雀石块组合成一大块" />
+    <Entry Original="Cook an egg to increase its nutritional value" Translation="烹饪鸡蛋以提高其营养价值" />
+    <Entry Original="Cook pumpkin soup" Translation="烹饪南瓜汤" />
+    <Entry Original="Cook raw bird to increase its nutritional value and make it preserve better" Translation="烹饪生鸟肉，提高营养价值并延长保存时间" />
+    <Entry Original="Cook raw fish to increase its nutritional value and make it preserve better" Translation="烹饪生鱼，提高营养价值并延长保存时间" />
+    <Entry Original="Cook raw meat to increase its nutritional value and make it preserve better" Translation="烹饪生肉，提高营养价值并延长保存时间" />
+    <Entry Original="Craft 4-bit Counters from copper and germanium" Translation="用铜和锗合成4位计数器" />
+    <Entry Original="Craft Analog To Digital Converters from copper and germanium" Translation="用铜和锗合成模数转换器" />
+    <Entry Original="Craft Digital To Analog Converters from copper and germanium" Translation="用铜和锗合成数模转换器" />
+    <Entry Original="Craft Logic AND gates from copper and germanium" Translation="用铜和锗合成逻辑与门" />
+    <Entry Original="Craft Logic Adjustable Delay gates from copper, germanium and iron" Translation="用铜、锗和铁合成可调延迟门" />
+    <Entry Original="Craft Logic Delay gates from copper and germanium" Translation="用铜和锗合成逻辑延迟门" />
+    <Entry Original="Craft Logic NAND gates from copper and germanium" Translation="用铜和锗合成逻辑与非门" />
+    <Entry Original="Craft Logic NOR gates from copper and germanium" Translation="用铜和锗合成逻辑或非门" />
+    <Entry Original="Craft Logic NOT gates from copper and germanium" Translation="用铜和锗合成逻辑非门" />
+    <Entry Original="Craft Logic OR gates from copper and germanium" Translation="用铜和锗合成逻辑或门" />
+    <Entry Original="Craft Logic SR Latches from copper and germanium" Translation="用铜和锗合成逻辑SR锁存器" />
+    <Entry Original="Craft Logic XOR gates from copper and germanium" Translation="用铜和锗合成逻辑异或门" />
+    <Entry Original="Craft Memory Bank from copper and germanium" Translation="用铜和锗合成存储库" />
+    <Entry Original="Craft Random Generators from copper and germanium" Translation="用铜和锗合成随机发生器" />
+    <Entry Original="Craft Real Time Clocks from copper, germanium and glass" Translation="用铜、锗和玻璃合成实时时钟" />
+    <Entry Original="Craft Sound Generators from copper, germanium and iron" Translation="用铜、锗和铁合成声音发生器" />
+    <Entry Original="Craft Truth Table Circuit from copper and germanium" Translation="用铜和锗合成真值表电路" />
+    <Entry Original="Craft batteries from copper and coal" Translation="用铜和煤合成电池" />
+    <Entry Original="Craft boat from planks" Translation="用木板合成船" />
+    <Entry Original="Craft campfire from sticks" Translation="用木棍合成营火" />
+    <Entry Original="Craft electric buttons from copper and planks" Translation="用铜和木板合成电按钮" />
+    <Entry Original="Craft electric detonators from copper and gunpowder" Translation="用铜和火药合成电雷管" />
+    <Entry Original="Craft electric pressure plates from copper and planks" Translation="用铜和木板合成电压力板" />
+    <Entry Original="Craft electric pressure plates from copper and stone" Translation="用铜和石头合成电压力板" />
+    <Entry Original="Craft electric switches from copper and sticks" Translation="用铜和木棍合成电开关" />
+    <Entry Original="Craft gravestone from granite" Translation="用花岗岩合成墓碑" />
+    <Entry Original="Craft lightbulbs from copper and glass" Translation="用铜和玻璃合成灯泡" />
+    <Entry Original="Craft motion detectors from copper, glass and marble" Translation="用铜、玻璃和大理石合成运动探测器" />
+    <Entry Original="Craft photodiodes from copper and glass" Translation="用铜和玻璃合成光电二极管" />
+    <Entry Original="Craft saddle from leather to be able to ride on other animals" Translation="用皮革合成马鞍，才能骑乘动物" />
+    <Entry Original="Craft whistle from iron" Translation="用铁合成口哨" />
+    <Entry Original="Crush rye grains to make flour" Translation="把黑麦粒磨成面粉" />
+    <Entry Original="Cut a block of wood into planks" Translation="把木头块切成木板" />
+    <Entry Original="Cut a wooden plank into sticks" Translation="把木板切成木棍" />
+    <Entry Original="Cut saplings from birch leaves" Translation="从白桦树叶中获取树苗" />
+    <Entry Original="Cut saplings from mimosa leaves" Translation="从合欢树叶中获取树苗" />
+    <Entry Original="Cut saplings from oak leaves" Translation="从橡树叶中获取树苗" />
+    <Entry Original="Cut saplings from poplar leaves" Translation="从杨树叶中获取树苗" />
+    <Entry Original="Cut saplings from spruce leaves" Translation="从云杉树叶中获取树苗" />
+    <Entry Original="Cut saplings from tall spruce leaves" Translation="从高大云杉树叶中获取树苗" />
+    <Entry Original="Dismantle coal block into chunks" Translation="把煤块拆成碎块" />
+    <Entry Original="Dismantle copper block into ingots" Translation="把铜块拆成铜锭" />
+    <Entry Original="Dismantle diamond block into diamonds" Translation="把钻石块拆成钻石" />
+    <Entry Original="Dismantle iron block into ingots" Translation="把铁块拆成铁锭" />
+    <Entry Original="Dismantle malachite block into chunks" Translation="把孔雀石块拆成碎块" />
+    <Entry Original="Dismantle wicker lamp" Translation="拆解柳条灯" />
+    <Entry Original="Dissolve saltpeter in water to make paint stripper" Translation="把硝石溶于水，制成脱漆剂" />
+    <Entry Original="Dissolve white pigment in water to make white paint" Translation="把白色颜料溶于水，制成白色油漆" />
+    <Entry Original="Drill a hole in cobblestone block and put an electric wire through it" Translation="在圆石块上钻孔并穿入电线" />
+    <Entry Original="Drill a hole in semiconductor block and put an electric wire through it" Translation="在半导体块上钻孔并穿入电线" />
+    <Entry Original="Drill a hole in the bricks block and put an electric wire through it" Translation="在砖块上钻孔并穿入电线" />
+    <Entry Original="Drill a hole in the planks block and put an electric wire through it" Translation="在木板上钻孔并穿入电线" />
+    <Entry Original="Drill a hole in the stone block and put an electric wire through it" Translation="在石块上钻孔并穿入电线" />
+    <Entry Original="Empty the bucket" Translation="倒空桶" />
+    <Entry Original="Extract buckshot balls from buckshot" Translation="从霰弹中取出弹丸" />
+    <Entry Original="Extract seeds from a fully grown pumpkin" Translation="从长成的南瓜中取出种子" />
+    <Entry Original="Extract seeds from purple flower" Translation="从紫色花中取出种子" />
+    <Entry Original="Extract seeds from red flower" Translation="从红花中取出种子" />
+    <Entry Original="Extract seeds from tall grass" Translation="从高草中取出种子" />
+    <Entry Original="Extract seeds from white flower" Translation="从白花中取出种子" />
+    <Entry Original="Fire clay to make bricks" Translation="烧制黏土，制成砖块" />
+    <Entry Original="Fire limestone to make white pigment" Translation="烧制石灰石，制成白色颜料" />
+    <Entry Original="Forge an iron ingot into rods" Translation="把铁锭锻造成杆" />
+    <Entry Original="Frame glass with wood" Translation="用木头给玻璃装框" />
+    <Entry Original="Make 7-segment displays from copper, glass and paint" Translation="用铜、玻璃和油漆制作七段数码管" />
+    <Entry Original="Make a Christmas Tree from spruce cuttings" Translation="用云杉枝条做一棵圣诞树" />
+    <Entry Original="Make a bow from sticks and a string" Translation="用木棍和绳子做一把弓" />
+    <Entry Original="Make a compass to always know the way home" Translation="制作指南针，永远知道回家的路" />
+    <Entry Original="Make a copper tool" Translation="制作铜制工具" />
+    <Entry Original="Make a copper weapon" Translation="制作铜制武器" />
+    <Entry Original="Make a crafting table from planks" Translation="用木板制作工作台" />
+    <Entry Original="Make a crossbow from rods, string and planks" Translation="用杆、绳子和木板制作弩" />
+    <Entry Original="Make a dispenser from planks, bow and germanium" Translation="用木板、弓和锗制作发射器" />
+    <Entry Original="Make a fence from basalt to enclose areas" Translation="用玄武岩做栅栏圈出区域" />
+    <Entry Original="Make a fence from bricks to enclose areas" Translation="用砖块做栅栏圈出区域" />
+    <Entry Original="Make a fence from rods to enclose areas" Translation="用杆做栅栏圈出区域" />
+    <Entry Original="Make a fence from stone to enclose areas" Translation="用石头做栅栏圈出区域" />
+    <Entry Original="Make a fence from wooden sticks to enclose areas" Translation="用木棍做栅栏圈出区域" />
+    <Entry Original="Make a fence gate from rods and ingots" Translation="用杆和锭做栅栏门" />
+    <Entry Original="Make a fence gate from wooden sticks and planks" Translation="用木棍和木板做栅栏门" />
+    <Entry Original="Make a furnace from stone" Translation="用石头制作熔炉" />
+    <Entry Original="Make a hydrometer to measure ambient humidity" Translation="制作湿度计，测量周围湿度" />
+    <Entry Original="Make a magnet to set attraction point for the compass" Translation="制作磁铁，为指南针设定吸引点" />
+    <Entry Original="Make a match to be able to start fires" Translation="制作火柴，用来生火" />
+    <Entry Original="Make a musket from iron and planks" Translation="用铁和木板制作火枪" />
+    <Entry Original="Make a stone tool" Translation="制作石制工具" />
+    <Entry Original="Make a stone weapon" Translation="制作石制武器" />
+    <Entry Original="Make a storage chest from planks" Translation="用木板制作储物箱" />
+    <Entry Original="Make a string from ivy" Translation="用常春藤制作绳子" />
+    <Entry Original="Make a thermometer to measure ambient temperature" Translation="制作温度计，测量周围温度" />
+    <Entry Original="Make a wooden tool" Translation="制作木制工具" />
+    <Entry Original="Make a wooden weapon" Translation="制作木制武器" />
+    <Entry Original="Make an iron tool" Translation="制作铁制工具" />
+    <Entry Original="Make an iron weapon" Translation="制作铁制武器" />
+    <Entry Original="Make armored boots from copper and leather boots" Translation="用铜和皮靴制作铜护靴" />
+    <Entry Original="Make armored boots from iron and leather boots" Translation="用铁和皮靴制作铁护靴" />
+    <Entry Original="Make armored chest plate from copper and leather jerkin" Translation="用铜和皮背心制作铜胸甲" />
+    <Entry Original="Make armored chest plate from iron and leather jerkin" Translation="用铁和皮背心制作铁胸甲" />
+    <Entry Original="Make armored helmet from copper and leather cap" Translation="用铜和皮帽制作铜头盔" />
+    <Entry Original="Make armored helmet from iron and leather cap" Translation="用铁和皮帽制作铁头盔" />
+    <Entry Original="Make armored leggings from copper and fur leggings" Translation="用铜和毛皮护腿制作铜护腿" />
+    <Entry Original="Make armored leggings from iron and fur leggings" Translation="用铁和毛皮护腿制作铁护腿" />
+    <Entry Original="Make brick wall out of bricks" Translation="用砖块砌成砖墙" />
+    <Entry Original="Make buckshot from buckshot balls" Translation="用弹丸制作霰弹" />
+    <Entry Original="Make buckshot from musket balls" Translation="用火枪弹丸制作霰弹" />
+    <Entry Original="Make carpet from canvas" Translation="用帆布制作地毯" />
+    <Entry Original="Make cavalry boots from leather and planks" Translation="用皮革和木板制作骑兵靴" />
+    <Entry Original="Make cell doors from rods" Translation="用杆制作牢房门" />
+    <Entry Original="Make chain mail from iron" Translation="用铁制作锁子甲" />
+    <Entry Original="Make charcoal by burning wood in oxygenless atmosphere" Translation="在无氧环境中烧木头，制成木炭" />
+    <Entry Original="Make colored 1-LEDs from copper, glass and paint" Translation="用铜、玻璃和油漆制作彩色1-LED" />
+    <Entry Original="Make colored 4-LEDs from copper, glass and paint" Translation="用铜、玻璃和油漆制作彩色4-LED" />
+    <Entry Original="Make colored LEDs from copper, glass and paint" Translation="用铜、玻璃和油漆制作彩色LED" />
+    <Entry Original="Make copper-tipped arrow from stick, feathers and copper" Translation="用木棍、羽毛和铜制作铜头箭" />
+    <Entry Original="Make diamond boots from iron boots and diamonds" Translation="用铁靴和钻石制作钻石靴" />
+    <Entry Original="Make diamond chest plate from iron chest plate and diamonds" Translation="用铁胸甲和钻石制作钻石胸甲" />
+    <Entry Original="Make diamond helmet from iron helmet and diamonds" Translation="用铁头盔和钻石制作钻石头盔" />
+    <Entry Original="Make diamond leggings from iron leggings and diamonds" Translation="用铁护腿和钻石制作钻石护腿" />
+    <Entry Original="Make diamond-tipped arrow from iron arrow and a diamond" Translation="用铁箭和钻石制作钻石箭" />
+    <Entry Original="Make diamond-tipped bolt from iron bolt and a diamond" Translation="用铁弩箭和钻石制作钻石弩箭" />
+    <Entry Original="Make doors from wood" Translation="用木头制作门" />
+    <Entry Original="Make explosive bolt from iron bolt and gunpowder" Translation="用铁弩箭和火药制作爆炸弩箭" />
+    <Entry Original="Make fire arrow from wooden arrow and sulphur" Translation="用木箭和硫磺制作火箭" />
+    <Entry Original="Make fireworks" Translation="制作烟花" />
+    <Entry Original="Make grass trap from oak leaves to conceal deep pits" Translation="用橡树叶做草陷阱，掩盖深坑" />
+    <Entry Original="Make iron bolt from rod and feather" Translation="用杆和羽毛制作铁弩箭" />
+    <Entry Original="Make iron ladders to be able to climb vertical surfaces" Translation="制作铁梯子，用来攀爬垂直面" />
+    <Entry Original="Make iron-tipped arrow from stick, feathers and iron" Translation="用木棍、羽毛和铁制作铁头箭" />
+    <Entry Original="Make leather boots from leather and planks" Translation="用皮革和木板制作皮靴" />
+    <Entry Original="Make leather sandals from leather and planks" Translation="用皮革和木板制作皮凉鞋" />
+    <Entry Original="Make multicolored LEDs from copper, glass and wire" Translation="用铜、玻璃和电线制作多彩LED" />
+    <Entry Original="Make musket balls from iron rods" Translation="用铁杆制作火枪弹丸" />
+    <Entry Original="Make printable metal signs from iron" Translation="用铁制作可书写金属告示牌" />
+    <Entry Original="Make printable wooden signs from wood" Translation="用木头制作可书写木告示牌" />
+    <Entry Original="Make sharp spiked planks from wood and sticks" Translation="用木头和木棍制作锋利尖刺木板" />
+    <Entry Original="Make sheets of canvas from cotton" Translation="用棉花制作帆布" />
+    <Entry Original="Make slabs for decoration purposes" Translation="制作台阶，用于装饰" />
+    <Entry Original="Make stairs to be able to climb heights quicker" Translation="制作楼梯，更快地攀高" />
+    <Entry Original="Make stone bricks out of stones" Translation="用石头制成石砖" />
+    <Entry Original="Make stone-tipped arrow from stick, feathers and stone" Translation="用木棍、羽毛和石头制作石头箭" />
+    <Entry Original="Make strings from cotton" Translation="用棉花制作绳子" />
+    <Entry Original="Make strong doors from iron" Translation="用铁制作坚固的门" />
+    <Entry Original="Make strong trapdoors from iron" Translation="用铁制作坚固的活板门" />
+    <Entry Original="Make throwable bomb by encasing gunpowder in an iron sphere" Translation="把火药装入铁球，制成可投掷炸弹" />
+    <Entry Original="Make throwable incendiary bomb by adding sulphur to a bomb" Translation="在炸弹中加入硫磺，制成可投掷燃烧弹" />
+    <Entry Original="Make trapdoors from wood" Translation="用木头制作活板门" />
+    <Entry Original="Make wooden ladders to be able to climb vertical surfaces" Translation="制作木梯子，用来攀爬垂直面" />
+    <Entry Original="Make wooden-tipped arrow from stick and feathers" Translation="用木棍和羽毛制作木头箭" />
+    <Entry Original="Melt sand to obtain glass" Translation="熔化沙子获得玻璃" />
+    <Entry Original="Melt sand with limestone to obtain marble" Translation="把沙子和石灰石一起熔化，获得大理石" />
+    <Entry Original="Mix flour and water to make bread dough" Translation="把面粉和水混合，做成面团" />
+    <Entry Original="Put a torch inside of a shade to make a lamp" Translation="把火把放进灯罩，做成灯" />
+    <Entry Original="Put gunpowder in a sealed keg to make it explode" Translation="把火药装进密封桶，使其爆炸" />
     <Entry Original="Put together white and black planks to make a shooting target." Translation="将白色和黑色木板组合在一起制作射击靶子。" />
+    <Entry Original="Recycle bricks from a brick slab" Translation="从砖台阶回收砖块" />
+    <Entry Original="Recycle bricks from a brick wall" Translation="从砖墙回收砖块" />
+    <Entry Original="Recycle bricks from brick stairs" Translation="从砖楼梯回收砖块" />
+    <Entry Original="Smelt copper ore to obtain copper" Translation="熔炼铜矿石获得铜" />
+    <Entry Original="Smelt germanium ore to obtain germanium crystals" Translation="熔炼锗矿石获得锗晶体" />
+    <Entry Original="Smelt iron ore to obtain iron" Translation="熔炼铁矿石获得铁" />
+    <Entry Original="Tailor a coat from fur" Translation="用毛皮缝制大衣" />
+    <Entry Original="Tailor a cotton fedora from canvas" Translation="用帆布缝制棉质软呢帽" />
+    <Entry Original="Tailor a cotton shirt from canvas" Translation="用帆布缝制棉衬衫" />
+    <Entry Original="Tailor a cotton t-shirt from canvas" Translation="用帆布缝制棉T恤" />
+    <Entry Original="Tailor a cotton tank top from canvas" Translation="用帆布缝制棉背心" />
+    <Entry Original="Tailor a cowboy hat from leather" Translation="用皮革缝制牛仔帽" />
+    <Entry Original="Tailor a hat from fur" Translation="用毛皮缝制帽子" />
+    <Entry Original="Tailor a hat from leather" Translation="用皮革缝制帽子" />
+    <Entry Original="Tailor a jerkin from leather" Translation="用皮革缝制背心" />
+    <Entry Original="Tailor a sweater from canvas" Translation="用帆布缝制毛衣" />
+    <Entry Original="Tailor cotton pants from canvas and string" Translation="用帆布和绳子缝制棉裤" />
+    <Entry Original="Tailor cotton shorts from canvas and string" Translation="用帆布和绳子缝制棉短裤" />
+    <Entry Original="Tailor leggings from fur" Translation="用毛皮缝制护腿" />
+    <Entry Original="Tailor long johns from canvas" Translation="用帆布缝制长内衣" />
+    <Entry Original="Tailor pants from leather" Translation="用皮革缝制裤子" />
+    <Entry Original="Tailor socks from canvas" Translation="用帆布缝制袜子" />
     <Entry Original="Target (recipe #1)" Translation="靶子（配方#1）" />
+    <Entry Original="Tie sticks together to make wooden chest armor" Translation="把木棍绑在一起，制作木质胸甲" />
+    <Entry Original="Tie sticks together to make wooden legs armor" Translation="把木棍绑在一起，制作木质护腿" />
+    <Entry Original="Turn cobblestone into granite by smelting" Translation="通过熔炼把圆石变成花岗岩" />
+    <Entry Original="Undye carpet" Translation="去除地毯染色" />
+    <Entry Original="Undye clothing" Translation="去除衣物染色" />
+    <Entry Original="Use planks, semiconductor and copper to make a piston" Translation="用木板、半导体和铜制作活塞" />
+    <Entry Original="When Halloween comes, carve Jack O'Lanterns from pumpkins and torches" Translation="万圣节来临时，用南瓜和火把雕出南瓜灯" />
+    <Entry Original="Work copper ingots into a length of electric wire" Translation="把铜锭加工成一段电线" />
+    <Entry Original="{0} (recipe #{1})" Translation="{0}（配方#{1}）" />
+    <Entry Original="{0} recipe" Translation="{0} 个配方" />
+    <Entry Original="{0} recipes" Translation="{0} 个配方" />
   </Screen>
   <Screen Name="RecipaediaDescriptionScreen">
-    <Entry Original="1&#xA;5&#xA;" Translation="1&#xA;5&#xA;" />
-    <Entry Original="20&#xA;Yes (up to 40)&#xA;Yes&#xA;Hack&#xA;" Translation="20&#xA;Yes (up to 40)&#xA;Yes&#xA;Hack&#xA;" />
-    <Entry Original="5&#xA;20&#xA;2&#xA;0.01&#xA;" Translation="5&#xA;20&#xA;2&#xA;0.01&#xA;" />
+    <Entry Original="Armor Durability" Translation="护甲耐久" />
+    <Entry Original="Armor Protection" Translation="护甲保护" />
     <Entry Original="Block Description" Translation="方块描述" />
+    <Entry Original="Can Be Dyed" Translation="可染色" />
+    <Entry Original="Digging Method" Translation="挖掘方法" />
+    <Entry Original="Digging Resilience" Translation="挖掘韧性" />
     <Entry Original="Digging Resilience:&#xA;Explosion Resilience:&#xA;" Translation="挖掘韧性：&#xA;爆炸韧性：&#xA;" />
-    <Entry Original="Digging Resilience:&#xA;Explosion Resilience:&#xA;Projectile Power:&#xA;Experience Orbs:&#xA;" Translation="Digging Resilience:&#xA;Explosion Resilience:&#xA;Projectile Power:&#xA;Experience Orbs:&#xA;" />
-    <Entry Original="Fuel Value:&#xA;Is Stackable:&#xA;Is Flammable:&#xA;Digging Method:&#xA;" Translation="Fuel Value:&#xA;Is Stackable:&#xA;Is Flammable:&#xA;Digging Method:&#xA;" />
+    <Entry Original="Durability" Translation="耐久度" />
+    <Entry Original="Experience Orbs" Translation="经验球" />
+    <Entry Original="Explosion Resilience" Translation="爆炸韧性" />
+    <Entry Original="Explosive Power" Translation="爆炸威力" />
+    <Entry Original="Fuel Value" Translation="燃料值" />
+    <Entry Original="Hack" Translation="砍伐" />
+    <Entry Original="Hacking" Translation="砍伐力" />
+    <Entry Original="Is Flammable" Translation="可燃" />
+    <Entry Original="Is Stackable" Translation="可堆叠" />
     <Entry Original="Is Stackable:&#xA;Is Flammable:&#xA;Digging Method:&#xA;" Translation="可堆叠：&#xA;可燃：&#xA;挖掘方法：&#xA;" />
+    <Entry Original="Luminosity" Translation="亮度" />
+    <Entry Original="Max Storage Time" Translation="最长储存时间" />
+    <Entry Original="Melee Hit Ratio" Translation="近战命中率" />
+    <Entry Original="Melee Power" Translation="近战威力" />
+    <Entry Original="Movement Speed" Translation="移动速度" />
+    <Entry Original="Nutrition" Translation="营养" />
+    <Entry Original="Projectile Power" Translation="投射威力" />
+    <Entry Original="Quarry" Translation="开采" />
+    <Entry Original="Quarrying" Translation="开采力" />
+    <Entry Original="Shovel" Translation="铲挖" />
+    <Entry Original="Shoveling" Translation="铲挖力" />
     <Entry Original="Yes (up to 40)&#xA;Yes&#xA;Hack&#xA;" Translation="是（最多40）&#xA;是&#xA;砍伐&#xA;" />
+    <Entry Original="Yes (up to {0})" Translation="是（最多{0}）" />
+    <Entry Original="{0} days" Translation="{0} 天" />
   </Screen>
   <Screen Name="GameLoadingScreen">
     <Entry Original="Starting World" Translation="启动世界" />
@@ -2229,6 +2484,7 @@
     <Entry Original="Options..." Translation="选项..." />
     <Entry Original="Rename World:" Translation="重命名世界：" />
     <Entry Original="Upload" Translation="上传" />
+    <Entry Original="World Seed:" Translation="世界种子：" />
   </Screen>
   <Screen Name="WorldOptionsScreen">
     <Entry Original="400" Translation="400" />
@@ -2238,6 +2494,7 @@
     <Entry Original="Adventure Respawn:" Translation="冒险重生：" />
     <Entry Original="Adventure Survival Mechanics:" Translation="冒险生存机制：" />
     <Entry Original="Allowed" Translation="允许" />
+    <Entry Original="Biome Size:" Translation="生物群系大小：" />
     <Entry Original="Blocks Texture:" Translation="方块纹理：" />
     <Entry Original="Change World Options" Translation="更改世界选项" />
     <Entry Original="Changing" Translation="变化" />
@@ -2247,12 +2504,18 @@
     <Entry Original="Flat Terrain Block:" Translation="平坦地形方块：" />
     <Entry Original="Flat Terrain Level:" Translation="平坦地形高度：" />
     <Entry Original="Flat Terrain Shore Roughness:" Translation="平坦地形海岸粗糙度：" />
+    <Entry Original="Humidity:" Translation="湿度：" />
     <Entry Original="Island Size East/West:" Translation="岛屿东西大小：" />
     <Entry Original="Island Size North/South:" Translation="岛屿南北大小：" />
-    <Entry Original="Living" Translation="生机" />
+    <Entry Original="Length Of Year:" Translation="一年长度：" />
+    <Entry Original="Living" Translation="动态" />
     <Entry Original="Magma Ocean:" Translation="岩浆海洋：" />
     <Entry Original="Player-on-Player Attacks:" Translation="玩家间攻击：" />
+    <Entry Original="Sea Level:" Translation="海平面：" />
+    <Entry Original="Season:" Translation="季节：" />
     <Entry Original="Supernatural Creatures:" Translation="超自然生物：" />
+    <Entry Original="Temperature:" Translation="温度：" />
+    <Entry Original="Terrain Type:" Translation="地形类型：" />
     <Entry Original="Time Of Day:" Translation="时间：" />
     <Entry Original="Weather Effects:" Translation="天气效果：" />
   </Screen>
@@ -2263,6 +2526,7 @@
     <Entry Original="Enter Seed:" Translation="输入种子：" />
     <Entry Original="Enter World Name:" Translation="输入世界名称：" />
     <Entry Original="Error: invalid world name!" Translation="错误：无效的世界名称！" />
+    <Entry Original="Game Mode:" Translation="游戏模式：" />
     <Entry Original="Harmless" Translation="无害" />
     <Entry Original="Leave blank for a random seed" Translation="留空以使用随机种子" />
     <Entry Original="Select Game Mode" Translation="选择游戏模式" />
@@ -2272,6 +2536,682 @@
     <Entry Original="Survival" Translation="生存" />
   </Screen>
   <Screen Name="HelpTopicScreen">
-    <Entry Original=" Use the touchpad at the bottom left side of the screen to move. Tap it once to jump. This can also be configured to use directional buttons instead of the pad. &#xA;&#xA; Use the touchpad at the bottom right side of the screen to look around. Tap it once to jump. You can also drag your finger across any area of the screen to look. &#xA;&#xA; You can tweak control scheme of the game in the Controls and Sensitivity settings. Experiment with various options, for example you may find you prefer buttons to touchpads, or split touch with crosshair to regular controls. Controlling a first person game on a small touchscreen may look difficult, but once you get the hang of it, it is no different than using a gamepad or a mouse. Because you can touch any part of the screen at any time, some actions like block digging or placement may even be easier. &#xA;&#xA; Some cheap or old devices have low quality touch screens or buggy touch drivers. They might intermittently drop active touch points, or mix them up if touched in more than one point at once. These are best avoided as playing on them is extremely frustrating.  " Translation=" Use the touchpad at the bottom left side of the screen to move. Tap it once to jump. This can also be configured to use directional buttons instead of the pad. &#xA;&#xA; Use the touchpad at the bottom right side of the screen to look around. Tap it once to jump. You can also drag your finger across any area of the screen to look. &#xA;&#xA; You can tweak control scheme of the game in the Controls and Sensitivity settings. Experiment with various options, for example you may find you prefer buttons to touchpads, or split touch with crosshair to regular controls. Controlling a first person game on a small touchscreen may look difficult, but once you get the hang of it, it is no different than using a gamepad or a mouse. Because you can touch any part of the screen at any time, some actions like block digging or placement may even be easier. &#xA;&#xA; Some cheap or old devices have low quality touch screens or buggy touch drivers. They might intermittently drop active touch points, or mix them up if touched in more than one point at once. These are best avoided as playing on them is extremely frustrating.  " />
+    <Entry Original=" All food items will turn rotten after some time. The little white fish icon next to the item will turn brown to indicate that the rot process is starting. Some time after that, the food item will rot. &#xA;&#xA; Raw food will rot very quickly. Cooking food will prolong its life. &#xA;&#xA; Rotten food is still attractive to animals and can even be eaten by the player, but has a high chance of causing sickness. &#xA;&#xA; When the player is sick, he is very slow, weak and will stop to vomit periodically. It's best to go to sleep and wait for the sickness to pass. &#xA;&#xA; Most rotten food will eventually turn into compost, a valuable farming resource which can be used instead of soil to grow plants more quickly. This will let you utilize valuable saltpeter for making explosives, instead of sprinkling it as fertilizer.  " Translation="所有食物经过一段时间都会腐烂。物品旁的小白鱼图标会变成棕色，表示腐烂过程已经开始。再过一段时间，食物就会腐烂。&#xA;&#xA;生食腐坏得非常快。烹饪食物可以延长保存时间。&#xA;&#xA;腐烂的食物对动物仍然有吸引力，玩家也能吃，但很可能导致生病。&#xA;&#xA;玩家生病时会非常迟缓、虚弱，并会周期性停下来呕吐。最好是去睡一觉，等疾病过去。&#xA;&#xA;大多数腐烂食物最终会变成堆肥——一种宝贵的农耕资源，可以替代土壤让植物长得更快。这样你就能把宝贵的硝石用来制造炸药，而不是撒作肥料。" />
+    <Entry Original=" All items and blocks can be dropped if you no longer need them. &#xA;&#xA; To drop an item or block, drag it from the inventory slot and drop it on the screen. The item will fly a short distance away and fall to the ground. &#xA;&#xA; Watch out, if you're standing too close you will immediately pick up the dropped item again. &#xA;&#xA; Dropping items into fire or magma will destroy them.  " Translation="所有物品和方块在不再需要时都可以丢弃。&#xA;&#xA;要丢弃物品或方块，把它从物品栏格子中拖出并放到屏幕上。物品会飞出很短一段距离后落到地上。&#xA;&#xA;注意，如果你站得太近，会立刻把丢出的物品又捡回来。&#xA;&#xA;把物品丢进火里或岩浆中会将其销毁。" />
+    <Entry Original=" Boats can be used to travel across large bodies of water quickly and safely. &#xA;&#xA; If you don't have a boat, you risk drowning from exhaustion or being attacked by dangerous underwater creatures. &#xA;&#xA; To craft a boat you need lots of wood and a workbench. Once the boat is crafted, it can be placed on the shore and mounted in the same way as a horse. &#xA;&#xA; You can only control a boat when it is in the water.  " Translation="船可以用来快速、安全地横渡大片水域。&#xA;&#xA;如果没有船，你就有因力竭而溺水、或被危险的水下生物攻击的风险。&#xA;&#xA;制作一艘船需要大量木材和一个工作台。船做好后可以放在岸边，像骑马一样登乘。&#xA;&#xA;只有船在水中时你才能操控它。" />
+    <Entry Original=" Buckets are used for transporting fluids, such as water or magma. To fill empty bucket with a fluid, you need to find a source block of the fluid. For example, all ocean blocks are source blocks of water. &#xA;&#xA; Holding the empty bucket in your hand, tap the source block to collect it. The block will be removed from the world and placed inside the bucket. &#xA;&#xA; To pour the fluid from the bucket, tap on terrain. A new source block of fluid will be created, and the fluid will spread out from there. You can collect the placed source block again with the empty bucket.  " Translation="桶用于运输液体，例如水或岩浆。要用液体装满空桶，你需要找到该液体的源方块。例如，所有海洋方块都是水的源方块。&#xA;&#xA;把空桶拿在手上，点源方块即可收集。该方块会从世界中移除并装进桶里。&#xA;&#xA;要把桶里的液体倒出来，点地形即可。那里会生成一个新的液体源方块，液体从其周围扩散。放下的源方块还能用空桶再次收集。" />
+    <Entry Original=" Certain blocks are interactive. Some examples of interactive blocks: doors, chests, workbenches, furnaces, buttons. &#xA;&#xA; To interact with a block, tap on it. This will invoke the action associated with the block. &#xA;&#xA; For example, if you tap on a closed door, it will open.  " Translation="某些方块是可以互动的，例如门、箱子、工作台、熔炉、按钮。&#xA;&#xA;要与方块互动，点它一下即可，这会触发该方块对应的动作。&#xA;&#xA;例如，点一扇关着的门，它就会打开。" />
+    <Entry Original=" Certain items can be thrown. Some examples of throwable items: stone chunks, spears, bricks, snowballs. &#xA;&#xA; To throw an item, select it in your inventory, so that you are holding it in your hand. Press and hold a point on the screen where you want to throw. A throwing sights will appear. &#xA;&#xA; You can move the sights to refine your aim. Once you release your finger, the item will be thrown. To cancel a throw, move the sights to the edge of the screen. &#xA;&#xA; Spears are powerful thrown weapons that do a lot of damage when they hit the target.  " Translation="某些物品可以投掷，例如石块、长矛、砖块、雪球。&#xA;&#xA;要投掷物品，先在物品栏中选中它拿在手上。按住屏幕上你想投掷的位置，会出现一个投掷准星。&#xA;&#xA;你可以移动准星来修正瞄准。松开手指，物品就会被投出。要取消投掷，把准星移到屏幕边缘。&#xA;&#xA;长矛是强力的投掷武器，命中目标时能造成大量伤害。" />
+    <Entry Original=" Crafting is a process of making more complicated items out of simpler ones, using a workbench or the crafting area. &#xA;&#xA; To craft, you need to place ingredients in the crafting slots in a pattern specific to the item being crafted. All crafting recipes are available in RECIPAEDIA. &#xA;&#xA; There are two sizes of crafting areas: 2x2 and 3x3. The smaller area is always available and can be accessed by pressing the crafting button. To craft more complicated items on a 3x3 area you need to make a workbench, place it somewhere in the world and click on it.  " Translation="合成是把较简单的物品做成更复杂物品的过程，需要用到工作台或合成区。&#xA;&#xA;要合成，你需要按照该物品特定的图案把材料放进合成格。所有合成配方都可以在合成百科中查到。&#xA;&#xA;合成区有两种尺寸：2x2 和 3x3。较小的那个始终可用，按合成按钮即可打开。要在 3x3 区域合成更复杂的物品，你需要制作一个工作台，把它放在世界中的某处并点它。" />
+    <Entry Original=" Electricity is a powerful mechanism in the game that can be used to control behavior of certain blocks. For example, a lightbulb will produce light when connected to a source of electricity, doors will open or close if activated with an electric signal, and many more. &#xA;&#xA; If you know a bit about real-world electronics, you should feel at home in Survivalcraft. All the familiar devices, such as logic gates (AND, OR, NOT etc.) are present and signals are characterized by voltage. You can combine gates to build complex circuits, even computers or video games (check Community Content for some great builds by master electricians). There are also sensors, such as pressure plates, photodiodes etc. that produce varying signals depending on conditions around them. &#xA;&#xA; For descriptions of all available electric devices, see RECIPAEDIA. &#xA;&#xA; Electric signals in the game are conducted through copper wires and have a voltage that is between 0V and 1.5V, in increments of 0.1V. This gives 16 distinct voltage values. &#xA;&#xA; Digital devices, such as buttons, switches or doors work only with digital signals that have two possible values: low (0, false, off, no) and high (1, true, on, yes). In this case, a voltage below 0.8V indicates low, 0.8V and greater indicates high. Most commonly digital signals have voltages of 0V for low and 1.5V for high, but any value below 0.8V will be read as low. &#xA;&#xA; Analog devices, such as pressure plates, motion detectors or lightbulbs work with analog signals. They will react to each different value of voltage between 0 and 1.5V, not just low and high states. For example, sound generator volume and pitch inputs are controlled by analog voltages. The volume and pitch will increase smoothly as the voltages get higher. &#xA;&#xA; It's good to remember that both analog and digital signals are really the same thing when conducted through the wire, a voltage between 0V and 1.5V. Only the way a device interprets the signals voltage determines whether it is digital or analog. &#xA;&#xA; Voltage can also be interpreted as a number, with 0V representing 0 and 1.5V representing 15. Some devices, such as displays, DAC/ADC converters or counters use this interpretation. &#xA;&#xA; All electric devices have connections (inputs and outputs) on their sides, and sometimes also on their back (the face attached to the wall). On complex devices these are indicated by blue and red dots on edges of the elements. Blue means input, red means output. Number of dots means number of the connection. Simple devices, such as buttons, switches or lightbulbs do not have these dots, because they use one input/output only and can be connected from any side. &#xA;&#xA; Electric devices can be placed on the walls and on the floor/ceiling (with some exceptions). Once placed, they can be rotated so that it's easy to connect appropriate inputs and outputs together with the wires. &#xA;&#xA; There is a special type of block in the game, called wire-though-block, which is a normal block with a hole drilled and an electric wire threaded though it. It is very useful when trying to hide wires from sight, run them though the wall, or prevent them from connecting with other wires. It is also the only way to access the &quot;back&quot; connection of devices which have it. &#xA;&#xA; Electricity in Survivalcraft is processed at a frequency of 100Hz. It means that voltage goes from one element to another in 0.01s, irrespective of the length of the wire. If you need to delay the signal, you may place some neutral elements in its path (for example an OR gate or a pair of NOT gates). Each additional element in the way of the signal will delay it by 0.01s. For longer delays use Adjustable Delay Gate, which can produce delays of up to 2.55s. &#xA;&#xA; Electricity is a complex topic and making large working machines requires some learning, but is very satisfying. Simple devices however can be constructed by anyone. For example, try placing a button next to the hinges of a door. You will notice a wire appeared, clicking the button will now operate the door! All this scary talk about voltages, signals, digital and analog, but in reality it's that simple. &#xA;&#xA; Another easy thing to build might be a light switch. Place a lightbulb on the ceiling and a switch (not button) on the wall. Then connect them with a wire. The switch now operates the light, like in a real room! &#xA;&#xA; Survivalcraft is more about realism than other games of this type, and electricity is no exception. What you learn here, might become invaluable when you get to learn this at school, or have to use it for living. &#xA;&#xA; Explore and have fun!  " Translation="电力是游戏中一种强大的机制，可以用来控制某些方块的行为。例如，灯泡接上电源就会发光，门收到电信号就会开合，还有很多其他用途。&#xA;&#xA;如果你对现实世界的电子学略有了解，在《生存战争》里会感到很熟悉。所有常见的元件——比如逻辑门（与、或、非等）——都存在，信号以电压来表征。你可以把门组合起来搭建复杂电路，甚至计算机或电子游戏（去社区内容看看大师级电工的作品）。此外还有传感器，例如压力板、光电二极管等，它们会根据周围条件产生变化的信号。&#xA;&#xA;所有可用电气设备的说明请见合成百科。&#xA;&#xA;游戏中的电信号通过铜线传导，电压在 0V 到 1.5V 之间，以 0.1V 为步进，因此共有 16 个不同的电压值。&#xA;&#xA;数字设备（如按钮、开关或门）只处理数字信号，即只有两种取值：低（0、假、关、否）和高（1、真、开、是）。此时低于 0.8V 表示低，0.8V 及以上表示高。数字信号最常见的取值是低为 0V、高为 1.5V，但任何低于 0.8V 的值都会被读作低。&#xA;&#xA;模拟设备（如压力板、运动探测器或灯泡）处理模拟信号。它们会对 0 到 1.5V 之间每一个不同的电压值作出反应，而不只是低和高两种状态。例如，声音发生器的音量和音高输入就由模拟电压控制，电压升高时音量和音高会平滑增大。&#xA;&#xA;值得记住的是，模拟信号和数字信号在导线中传导时其实是同一种东西——0V 到 1.5V 之间的一个电压。决定它是数字还是模拟的，只是设备解读该电压的方式。&#xA;&#xA;电压也可以被解读为一个数字，0V 表示 0，1.5V 表示 15。某些设备（例如显示屏、DAC/ADC 转换器或计数器）就使用这种解读方式。&#xA;&#xA;所有电气设备的侧面都有接口（输入和输出），有时背面（贴墙的那一面）也有。在复杂设备上，这些接口用元件边缘上的蓝点和红点标示：蓝点表示输入，红点表示输出，点数表示接口的编号。简单设备（如按钮、开关或灯泡）没有这些点，因为它们只用一个输入/输出，且可以从任意一侧连接。&#xA;&#xA;电气设备可以放在墙上和地板/天花板上（有少数例外）。放置之后可以旋转，以便用导线把相应的输入和输出方便地连接起来。&#xA;&#xA;游戏中还有一种特殊方块叫做导线穿孔块，它就是普通方块上钻一个孔、穿一根电线。想把电线藏起来、穿墙而过，或者避免它与别的电线相连时，它非常有用。它也是访问设备背面接口的唯一途径。&#xA;&#xA;《生存战争》中的电以 100Hz 的频率处理，也就是说电压从一个元件传到另一个元件只需 0.01 秒，与导线长度无关。如果需要延迟信号，可以在路径中放置一些中性的元件（例如一个或门或一对非门），路径上每多一个元件就会让信号延迟 0.01 秒。需要更长延迟时请使用可调延迟门，它可以产生最长 2.55 秒的延迟。&#xA;&#xA;电力是个复杂的主题，制作大型可运转的机械需要一些学习，但非常有成就感。不过简单装置谁都能搭。例如，试着在门的铰链旁放一个按钮，你会看到出现了一根导线，现在点按钮就能开关这扇门！听起来电压、信号、数字、模拟很吓人，实际上就是这么简单。&#xA;&#xA;另一件容易做的东西是电灯开关。把灯泡装在天花板上，把开关（不是按钮）装在墙上，然后用导线连起来。现在开关就能控制灯了，就像真实的房间一样！&#xA;&#xA;与其他同类游戏相比，《生存战争》更注重真实感，电力也不例外。你在这里学到的东西，也许等你将来在学校学到它、或者靠它谋生时会变得极其宝贵。&#xA;&#xA;去探索，玩得开心！" />
+    <Entry Original=" Farming allows you to grow a variety of plants for decorative or consumption purposes. To grow a plant, you need to obtain its seeds, usually from a fully grown plant specimen. &#xA;&#xA; Some plants will drop seeds immediately when they are harvested, some will require crafting to extract seeds. Some seeds will tolerate poor soil, like dirt or grass. Others, like rye or pumpkins, require high quality tilled and moist soil, which has been fertilized with saltpeter. To make sure the soil is moist, use bucket to create water channels no further than several blocks away. Moist soil is darker than a dry one. To further enhance soil quality, sprinkle it with saltpeter (which is a source of nitrogen). &#xA;&#xA; You can also allow some food to rot, which will create compost. Compost already contains nitrogen and can be used in place of soil to grow plants. &#xA;&#xA; Plants may take a long time to grow, be patient.  " Translation="农耕让你种植各种植物，用于装饰或食用。要种植物，你需要先获得它的种子，通常来自一株完全长成的植物。&#xA;&#xA;有些植物收获时会直接掉落种子，有些则需要合成才能提取种子。有些种子能忍受贫瘠的土壤，例如泥土或草方块；另一些（如黑麦或南瓜）则需要经过硝石施肥的优质耕地与湿润土壤。为确保土壤湿润，用桶开凿水渠，距离不要超过几个方块。湿润的土壤比干燥的更深。要进一步提升土质，可以撒上硝石（氮的来源）。&#xA;&#xA;你也可以让一些食物腐烂来产生堆肥。堆肥本身含氮，可以替代土壤用来种植植物。&#xA;&#xA;植物可能需要很长时间才能长成，请耐心等待。" />
+    <Entry Original=" Flight is only available in Creative Mode. To toggle fly mode, tap the flight button on the right side of the screen. Jumping twice in quick succession will also toggle fly mode. &#xA;&#xA; Flying is much faster than walking and allows you to quickly get to otherwise inaccessible areas.  " Translation="飞行仅在创造模式中可用。要切换飞行模式，点屏幕右侧的飞行按钮；快速连跳两次也可以切换。&#xA;&#xA;飞行比步行快得多，能让你迅速到达原本无法抵达的地方。" />
+    <Entry Original=" Health bar is displayed in the game screen as little hearts. It is the amount of life left in the player. When it drops to zero, the player dies. &#xA;&#xA; It slowly replenishes when player is not hungry, it replenishes faster when sleeping. Be careful when your health is low, even a slight injury may kill you. &#xA;&#xA; When the player is sick, the hearts become dirty green. Do not eat dodgy food to avoid sickness. When the player has flu, the hearts become blue. Do not get cold for prolonged periods to avoid getting flu.  " Translation="生命值在游戏画面中以小爱心显示，代表玩家剩余的生命。降到零时玩家死亡。&#xA;&#xA;玩家不饿时生命值会缓慢回复，睡觉时回复更快。生命值低时要小心，哪怕轻微的伤害也可能致命。&#xA;&#xA;玩家生病时，爱心会变成脏绿色。不要吃来路不明的食物以免生病。玩家患流感时，爱心会变成蓝色。不要长时间受冻，以免患上流感。" />
+    <Entry Original=" Hunger bar is displayed in the game screen as little fishes. If you don't eat for a long time, your character will start complaining about it and eventually losing health, until you die. In addition to that, if you're hungry, you don't regenerate health. &#xA;&#xA; To eat, drag an edible item onto the player in the body panel. Your character will inform you whether you are still hungry. &#xA;&#xA; Food can be obtained from many sources in the game. The obvious one is hunting edible animals, such as cows, birds and wildboars. Keep in mind that hunting may be dangerous, and the supply of animals will quickly dry up in nearby areas, forcing you to search further. &#xA;&#xA; An alternative to hunting is farming. Farming lets you create a sustainable source of food, although it may require lots of preparatory work and further maintenance.  " Translation="饥饿值在游戏画面中以小鱼显示。如果长时间不进食，你的角色会开始抱怨，最终损失生命值直到死亡。此外，饥饿时你不会回复生命值。&#xA;&#xA;进食的方法是：在身体面板中把可食用物品拖到玩家身上。你的角色会告诉你是否还饿。&#xA;&#xA;游戏中食物来源很多。最直接的是猎取可食用的动物，例如牛、鸟和野猪。要记住狩猎可能很危险，而且附近区域的动物供给会很快枯竭，迫使你去更远的地方寻找。&#xA;&#xA;狩猎之外的另一种选择是农耕。农耕能让你获得可持续的食物来源，尽管它可能需要大量前期准备和后续维护。" />
+    <Entry Original=" In Survivalcraft you can design and use custom furniture blocks. &#xA;&#xA; Furniture blocks are sculpted from up to 16x16x16 smaller sub-blocks. Sub-blocks within a single furniture block can be made of different materials and painted to different colors. Through crafting, furniture blocks can be combined, made interactive or made to work with electricity. Furniture designs can be combined into packs, shared between worlds and uploaded to Community Content. &#xA;&#xA; To design and create furniture use the hammer tool. You need to build the design from regular blocks in the world and then use the hammer on the resulting structure to shrink it down. Furniture design window will appear where you can tweak the design by moving it, rotating it and changing resolution (between 2x2x2 and 16x16x16). Once you are happy with the design, you can commit it. &#xA;&#xA; In creative mode, the design will be turned into a single furniture block, and the source blocks from which the design was created will remain in the world. In survival modes, the design will be turned into several copies of the furniture block (with number depending on resolution) and the source blocks will be consumed. Furniture blocks can be placed in the world in 4 orientations, similar to e.g. a furnace or a ladder. &#xA;&#xA; Not every block can be used for furniture design. For example, dirt or grass are ignored by the hammer tool. Allowed materials include: planks, granite, basalt, sand, clay, cobblestone, stone bricks, sandstone, marble, bricks, coal, malachite, diamond, copper, iron, glass, carpet, torches, wicker lamps, water, magma. Source blocks of the design can be painted or dyed to make the design more colorful. Finished furniture can also be painted, this will cover any colors of the source blocks. &#xA;&#xA; Certain source blocks have special functions. For example a torch/lamp block will cause the furniture to have a fire attached to it in the place of the block. The design will also emit light. &#xA;&#xA; You have to be careful when constructing furniture to avoid placing the design on a base made of allowed material (for example sand). The hammer tool will not be able to distinguish between the blocks you placed and the base, and will try to incorporate base into the design. This will likely cause &quot;design too large&quot; error, because the maximum size of a design in any dimension is 16 blocks. &#xA;&#xA; Once the furniture block has been created, you can use workbench to combine it with other blocks in various ways. The following combinations are possible: &#xA;&#xA; * Combine multiple pieces of furniture into one to create interactive furniture. Interactive furniture toggles between its constituing designs on click or on electric signal. You can create opening doors, switchable lights, raising platforms etc. Up to 9 pieces of furniture can be combined (max capacity of workbench). &#xA;&#xA; * Combine exactly one furniture design with an electric button to create a custom button. The resulting furniture will act as a button. &#xA;&#xA; * Combine exactly two furniture designs with an electric switch to create a custom switch. The resulting furniture will act as a switch, with two furniture pieces acting as two states of the switch. &#xA;&#xA; * Combine multiple pieces of furniture with an electric wire to create connected interactive furniture. The furniture will work in the same way as interactive furniture, but toggling it will also toggle all neighboring pieces of connected interactive furniture. You can create multi-block toggleable structures, for example large doors. &#xA;&#xA; In the furniture panel in creative inventory you can view and organize your furniture designs. Create named furniture sets to categorize the designs. The newly created designs are placed in &quot;Uncategorized&quot; set, which has a special function. Any design in this set, which does not otherwise exist in the world (no items or placed blocks) will be automatically recycled. Be careful and move valuable designs to named furniture sets to avoid accidentally losing them. Each named furniture set can be turned into a furniture pack and exported from the world. You can later import it to other worlds or upload to Dropbox/SDcard and share with others. Furniture packs can also be uploaded to community content. &#xA;&#xA; There are certain limitations to the furniture system: &#xA;&#xA; * A furniture block can be made from up to 16x16x16 sub-blocks. &#xA;&#xA; * The amount of geometry used for a single design cannot exceed 300 triangles (too complex designs with many nooks and crannies are not possible). The game uses an intelligent tesselation algorithm that optimizes the geometry, so 300 triangles is plenty for even fairly complex designs, unless you really go over the top. To reduce number of triangles, you can reduce number of small details, reduce number of painted blocks and fill up any internal holes in the design. &#xA;&#xA; * You can only have up to 1024 unique furniture designs in the world. Every time you paint a furniture or combine it with others, you are creating new designs that count towards the total. Unused designs (that do not exist in the world either as items or blocks, and are in the &quot;uncategorized&quot; set in the inventory) are automatically recycled.  " Translation="在《生存战争》中，你可以设计并使用自定义的家具方块。&#xA;&#xA;家具方块由最多 16x16x16 个更小的子方块雕琢而成。同一个家具方块内的子方块可以用不同材料制成，并涂成不同颜色。通过合成，家具方块可以互相组合、变成可交互的，或者与电力配合工作。家具设计可以组合成包，在世界之间共享，也可以上传到社区内容。&#xA;&#xA;要设计和制作家具，请使用锤子工具。你需要先在世界中用普通方块搭出设计，然后用锤子敲击搭好的结构把它缩小。此时会出现家具设计窗口，你可以在其中移动、旋转设计，并改变分辨率（在 2x2x2 和 16x16x16 之间）。设计满意后即可确认。&#xA;&#xA;在创造模式下，设计会变成一个家具方块，而用来搭设计的源方块会留在世界中。在生存模式下，设计会变成若干份家具方块副本（数量取决于分辨率），源方块则会被消耗。家具方块可以以 4 种朝向放置，类似熔炉或梯子。&#xA;&#xA;并非所有方块都能用于家具设计。例如泥土和草会被锤子工具忽略。允许的材料包括：木板、花岗岩、玄武岩、沙子、黏土、圆石、石砖、砂岩、大理石、砖块、煤、孔雀石、钻石、铜、铁、玻璃、地毯、火把、柳条灯、水、岩浆。设计的源方块可以上漆或染色，让设计更绚丽。成品家具也可以上漆，这会覆盖源方块的所有颜色。&#xA;&#xA;某些源方块有特殊功能。例如火把/灯方块会让家具在对应位置带上一团火，设计也会发光。&#xA;&#xA;搭家具时要小心，不要把关卡搭在用允许材料（例如沙子）做成的底座上。锤子工具无法区分你放上去的方块和底座，会试图把底座也并入设计。这很可能导致「设计过大」的错误，因为设计在任一维度上的最大尺寸是 16 个方块。&#xA;&#xA;家具方块做出来之后，你可以用工作台把它与其他方块以多种方式组合。可用的组合如下：&#xA;&#xA;* 把多件家具组合成一件，做出可交互家具。可交互家具在点击或收到电信号时会在构成它的各个设计之间切换。你可以做出会开的门、可切换的灯、可升降的平台等等。最多可以组合 9 件家具（工作台的最大容量）。&#xA;&#xA;* 把恰好一个家具设计与一个电按钮组合，做出自定义按钮。得到的家具会像按钮一样工作。&#xA;&#xA;* 把恰好两个家具设计与一个电开关组合，做出自定义开关。得到的家具会像开关一样工作，两个家具分别作为开关的两种状态。&#xA;&#xA;* 把多件家具与一根电线组合，做出连通的交互式家具。它的工作方式与可交互家具相同，但切换它时也会切换所有相邻的连通交互式家具。你可以做出跨方块的可切换结构，例如大型门。&#xA;&#xA;在创造模式物品栏的家具面板中，你可以查看和整理自己的家具设计。创建具名的家具套装来给设计分类。新创建的设计会放进「未分类」套装，这个套装有特殊作用：其中任何在世界里并不存在（既没有物品也没有已放置方块）的设计都会被自动回收。请小心，把有价值的设计移到具名家具套装里，以免不小心丢失。每个具名家具套装都可以做成家具包并从世界中导出，之后可以导入其他世界，或上传到 Dropbox/SD 卡与他人分享。家具包也可以上传到社区内容。&#xA;&#xA;家具系统有一些限制：&#xA;&#xA;* 一个家具方块最多由 16x16x16 个子方块构成。&#xA;&#xA;* 单个设计使用的几何体不能超过 300 个三角形（太复杂、满是凹凸缝隙的设计做不出来）。游戏使用智能网格化算法优化几何体，所以 300 个三角形对于相当复杂的设计也够用，除非你真的做得太过火。要减少三角形数量，可以减少小细节、减少上漆方块，并填满设计内部的孔洞。&#xA;&#xA;* 世界中最多只能有 1024 个不同的家具设计。每当你给家具上漆或把它与其他东西组合，就会产生计入总数的新设计。未被使用的设计（既不以物品也不以方块形式存在于世界中，且位于物品栏的「未分类」套装里）会被自动回收。" />
+    <Entry Original=" In Survivalcraft, the entire world is destructible. &#xA;&#xA; To dig a block, press it and hold your finger. Digging cracks will appear as the block is being dug. &#xA;&#xA; Some blocks take a very long time to dig without proper tools. Digging some blocks, such as glass, will destroy them.  " Translation="在《生存战争》中，整个世界都是可破坏的。&#xA;&#xA;要挖掘方块，按住它并保持手指不动。挖掘过程中方块上会出现裂纹。&#xA;&#xA;没有合适工具时，有些方块需要极长时间才能挖开。挖掘某些方块（例如玻璃）会直接将其摧毁。" />
+    <Entry Original=" Ladders can be crafted from wooden sticks. Once placed on a vertical wall, they allow you to climb the wall easily. &#xA;&#xA; It's safest to climb the ladder when facing it. This is true both for climbing upwards and downwards. &#xA;&#xA; Consequently, the best way to climb down a ladder is to approach it backwards, as you would do in real life. &#xA;&#xA; You can jump off the ladder at any time  " Translation="梯子可以用木棍合成。把它放在垂直墙面上，你就能轻松攀爬这面墙。&#xA;&#xA;面朝梯子攀爬最安全，向上和向下都是如此。&#xA;&#xA;因此，下梯子最好的办法是像现实中那样倒退着接近它。&#xA;&#xA;你可以随时从梯子上跳下来。" />
+    <Entry Original=" Pistons are blocks which can push or pull other blocks. Pistons will extend or retract based on voltage applied to them. They can be placed facing any direction. &#xA;&#xA; There are 3 types of pistons: push pistons, pull pistons and strict pull pistons. Push pistons push up to 8 blocks as they extend, but they do not pull them back when they retract. Pull pistons act like push pistons, but additionally they pull up to 8 blocks back when they retract. Strict pull pistons act like normal pull pistons, but they will not retract unless they are pulling enough blocks. &#xA;&#xA; Voltage applied to a piston determines the extension length. Anthing below 0.8V is retracted. 0.8V is one block extension, 0.9V is two blocks etc. 1.5V equals full extension of 8 blocks. The piston will only react to voltage changes when it is not moving. It will always complete the current move before starting another. &#xA;&#xA; Pistons can be edited. You can adjust maximum extension, number of pulled blocks and speed of movement. &#xA;&#xA; Certain blocks cannot be moved by pistons. These include any block that contains inventory (chest, workbench, furnace etc.), diamond block and any piston that is extended. Retracted pistons however can be moved by other pistons. This opens up a world of possibilities, with complicated machines where pistons move other pistons. Pistons will also block fluids when extended, so you can use them to make valves. &#xA;&#xA; Use pistons to make doors, elevators, moving platforms and all kinds of ingenious machines.  " Translation="活塞是能推动或拉动其他方块的方块。活塞会根据施加的电压伸出或缩回，可以朝任意方向放置。&#xA;&#xA;活塞有 3 种：推式活塞、拉式活塞和严格拉式活塞。推式活塞在伸出时最多推动 8 个方块，但缩回时不会把它们拉回来。拉式活塞的行为与推式活塞相同，但缩回时额外能把最多 8 个方块拉回来。严格拉式活塞的行为与普通拉式活塞相同，但除非拉到了足够数量的方块，否则不会缩回。&#xA;&#xA;施加在活塞上的电压决定伸出长度。低于 0.8V 为完全缩回；0.8V 伸出一个方块，0.9V 两个，依此类推；1.5V 等于完全伸出 8 个方块。活塞只在没有运动时才会响应电压变化，它总会先完成当前动作再开始下一个。&#xA;&#xA;活塞可以被编辑。你可以调整最大伸出距离、拉回方块的数量和移动速度。&#xA;&#xA;某些方块无法被活塞移动，包括任何带储物功能的方块（箱子、工作台、熔炉等）、钻石块，以及任何已伸出的活塞。但缩回的活塞可以被其他活塞推动，这开启了一整个可能性世界——用活塞去推动活塞的复杂机械。活塞在伸出时还会阻挡液体，所以你可以用它做阀门。&#xA;&#xA;用活塞来制作门、电梯、移动平台以及各种巧妙机械吧。" />
+    <Entry Original=" Press and hold the slot containing the stack you want to split for about 1 second. A red border will appear around it. The slot is now in splitting mode. Tap any other empty slot, and one item will be taken from the highlighted slot and placed into the tapped slot. &#xA;&#xA; This technique can also be used to quickly spread items from one stack to multiple slots, e.g. in a workbench.  " Translation="按住装有你想拆分的那堆物品的格子约 1 秒，它周围会出现红框，此时该格子进入拆分模式。再点任意其他空格子，就会从高亮格子取出一个物品放进你点的格子里。&#xA;&#xA;这个技巧也可以用来把一堆物品快速分散到多个格子，例如在工作台上。" />
+    <Entry Original=" Sleeping will help restore your health and pass the boring night hours when it's too dark or dangerous to work. &#xA;&#xA; Even if you are not hurt, you still need to sleep from time to time. If you neglect it, your character will start to have short blackouts. If you keep active despite this warning, the blackouts will get longer and eventually you will lose consciousness. Losing consciousness is very dangerous, because predatory animals will quickly smell you and feast on your unguarded flesh. &#xA;&#xA; Although you don't need a bed, you can only sleep in a cosy and comfortable place. The ground cannot be too hard and the area cannot be too exposed to the elements, or wet. &#xA;&#xA; Your respawn point is set to a place where you last slept. To sleep, open the body screen and press a little sleeping button. &#xA;&#xA; Note: Sleeping is disabled in the demo.  " Translation="睡觉有助于恢复生命值，也能打发那些太黑或太危险、不适合干活的漫漫长夜。&#xA;&#xA;即使你没有受伤，也需要时不时睡觉。如果忽视它，你的角色会开始短暂昏厥。若在警告之后仍继续活动，昏厥会越来越长，最终你会失去意识。失去意识非常危险，因为掠食动物会很快嗅到你，把你毫无防备的血肉当作美餐。&#xA;&#xA;虽然不需要床，但你只能在舒适惬意的地方睡觉。地面不能太硬，场所不能太暴露于风雨，也不能潮湿。&#xA;&#xA;你的重生点会设在最后一次睡觉的地方。要睡觉，打开身体界面并按下小小的睡觉按钮。&#xA;&#xA;注意：试用版中禁用了睡觉。" />
+    <Entry Original=" Smelting is thermal processing of substances in a furnace. Up to 2 substances can be placed in the furnace at the same time. &#xA;&#xA; Furnace requires fuel to work. You can use anything that is combustible as a fuel, but some fuels are better (longer lasting) than others. The best fuel is coal. &#xA;&#xA; You can leave the furnace while it is smelting. The smelting process will continue while you are away. All smelting recipes are available in RECIPAEDIA.  " Translation="熔炼是在熔炉中对物质进行热处理。最多可以同时放入两种物质。&#xA;&#xA;熔炉需要燃料才能工作。任何可燃物都可以当燃料，但有些燃料更好（更耐久），最好的燃料是煤。&#xA;&#xA;熔炼期间你可以离开熔炉，熔炼过程会在你离开后继续。所有熔炼配方都可以在合成百科中查到。" />
+    <Entry Original=" Sneaking is useful if you want to move slowly and carefully, for example to avoid falling near the edge of a tall crevice. &#xA;&#xA; To toggle sneak mode, press the sneak button on the right side of the screen. When sneak mode is enabled, your movement will be restricted at edges to prevent you from falling. &#xA;&#xA; Sneaking also makes your movements much quieter, allowing you to come closer to certain animals without scaring them away. For example, you can use sneak to get close to a bird without scaring it away. Just make sure you don't approach it from the front, because it will see you and fly away.  " Translation="潜行用于缓慢而谨慎地移动，例如避免在深裂隙边缘失足坠落。&#xA;&#xA;要切换潜行模式，按屏幕右侧的潜行按钮。潜行模式开启后，你在边缘处的移动会受到限制，不会掉下去。&#xA;&#xA;潜行还能让你的动作安静得多，使你能够靠近某些动物而不把它们吓跑。例如，你可以用潜行靠近一只鸟而不惊动它。只要注意别从正面接近，否则它看到你就会飞走。" />
+    <Entry Original=" Some blocks and items can be dyed or painted. &#xA;&#xA; To paint bricks, stone, wood or other blocks, make a paint bucket of appropriate color and use it on the item you want to paint. One bucket is good for painting several dozen blocks, after that it runs out. &#xA;&#xA; Paint stripper can be used to remove paint and restore blocks to their original appearance. &#xA;&#xA; To dye clothing, place a piece of clothing with a bucket full of paint in a furnace. You can dye clothing multiple times, combining colors. &#xA;&#xA; You can also dye carpets in a similar way. &#xA;&#xA; Available colors of the paint (palette) can be customized in the world options screen. You can also customize the names of colors. The total number of colors is always 16, so to make a new color you need to sacrifice one of the existing ones. Customized colors also affect clothing, dyeing and furniture.  " Translation="有些方块和物品可以染色或上漆。&#xA;&#xA;要给砖块、石头、木头或其他方块上漆，制作一个相应颜色的油漆桶，并把它用在你想上漆的物品上。一个桶可以漆几十个方块，之后就会用尽。&#xA;&#xA;脱漆剂可以用来去除油漆，让方块恢复原貌。&#xA;&#xA;要给衣物染色，把一件衣物连同装满油漆的桶一起放进熔炉。衣物可以反复染色，混合出各种颜色。&#xA;&#xA;地毯也可以用类似的方式染色。&#xA;&#xA;油漆的可用颜色（调色板）可以在世界选项界面中自定义，你也可以自定义颜色名称。颜色总数始终是 16 种，所以要做一种新颜色就得牺牲一种现有的。自定义颜色也会影响衣物、染色和家具。" />
+    <Entry Original=" Some blocks are editable. Examples of editable blocks: crossbow, memory bank, musket, truth table. &#xA;&#xA; Editable blocks are marked with an edit icon in your inventory. &#xA;&#xA; To edit a block in the inventory, select it so that you hold it in your hand. If the selected block is editable, sneak button will turn into edit button. &#xA;&#xA; To edit a block which is placed on the ground, stand close to it and point center of the screen at the block. If the block in front of you is editable, it will be highlighted and sneak button will turn into edit button. &#xA;&#xA; Editing lets you change advanced properties of blocks. For example editing a crossbow will let you draw it and load a bolt. Editing a truth table lets you see and set the binary values. To discover which items are editable, watch out for the edit icon on inventory items. &#xA;&#xA; If you both hold an editable item in your hand and look at an editable block in the terrain, the item in the terrain will take precedence.  " Translation="有些方块是可编辑的，例如弩、存储库、火枪、真值表。&#xA;&#xA;可编辑方块在物品栏中带有编辑图标。&#xA;&#xA;要编辑物品栏中的方块，先选中它拿在手上。如果选中的方块可编辑，潜行按钮会变成编辑按钮。&#xA;&#xA;要编辑已经放在地上的方块，站到它旁边并把屏幕中心对准它。如果面前的方块可编辑，它会高亮，潜行按钮会变成编辑按钮。&#xA;&#xA;编辑让你修改方块的高级属性。例如编辑弩可以让你拉弦并装填弩箭；编辑真值表可以看到并设置二进制值。想知道哪些物品可编辑，留意物品栏物品上的编辑图标。&#xA;&#xA;如果你手上拿着可编辑物品、同时又看着地形中的可编辑方块，地形中的方块优先。" />
+    <Entry Original=" Sometimes when you are stuck, the only option is to force respawn at your last sleeping place. &#xA;&#xA; To do it, open the body screen and repeatedly press the skull and bones button.  " Translation="有时当你卡住时，唯一的选择就是在最后一次睡觉的地方强制重生。&#xA;&#xA;做法是：打开身体界面，连续按骷髅头按钮。" />
+    <Entry Original=" Stamina is the measure of tiredness of your character. When you perform a tiring action for a long time without break, you will tire and start panting. &#xA;&#xA; When you are panting, your performance is lower than when you are rested. You will move and dig slower, and you will not be able to perform jumps. &#xA;&#xA; Some of the actions that are tiring: running, jumping, swimming, digging, fighting. &#xA;&#xA; It is very dangerous to get tired when you are in water, because you can't rest while swimming. Watch for early signs of panting, and get out of water immediately. When you get exhausted while in water, you will start drowning and die unless the shore is very near. &#xA;&#xA; Be careful, it's easy to get tired when running away from dangerous animals.  " Translation="体力衡量你角色的疲劳程度。当你长时间不间断地做消耗体力的动作时，你会疲劳并开始喘气。&#xA;&#xA;喘气时你的表现不如休息充分时。你会移动和挖掘得更慢，也无法跳跃。&#xA;&#xA;一些消耗体力的动作：奔跑、跳跃、游泳、挖掘、战斗。&#xA;&#xA;在水里疲劳非常危险，因为游泳时你无法休息。留意喘气的早期迹象，立刻离开水域。当你在水中精疲力竭时，会开始溺水身亡——除非离岸边非常近。&#xA;&#xA;小心，逃离危险动物时很容易疲劳。" />
+    <Entry Original=" The game allows you to browse a list of worlds, block textures and other items published by other Survivalcraft community members, and download them. &#xA;&#xA; Once you make something interesting, you can also publish it through this service, and it will appear on the list for anyone to download. &#xA;&#xA; To publish something, first you need to put it on the internet, so that it's accessible to everyone. The easiest place to use is Dropbox, although you can use any other provider. Once it's done, you can publish the link to it through &quot;Publish Link&quot; dialog in the game. &#xA;&#xA; Note: the server does not store your content, only the link. Just like a search engine. You are responsible for keeping the data accessible through the published link. Watch out for exceeding bandwidth limits of your provider, having a link near top of the list will make your content receive many thousands of downloads in a short time.  " Translation="游戏允许你浏览其他《生存战争》社区成员发布的世界、方块纹理和其他物品的列表，并下载它们。&#xA;&#xA;当你做出有趣的东西后，也可以通过这项服务发布，它会出现在列表中供任何人下载。&#xA;&#xA;要发布内容，首先你得把它放到互联网上，让所有人都能访问。最方便的地方是 Dropbox，当然你也可以用任何其他服务商。完成后，你就可以通过游戏中的「发布链接」对话框发布它的链接。&#xA;&#xA;注意：服务器不存储你的内容，只存链接，就像搜索引擎一样。你有责任保证数据能通过已发布的链接访问。小心超出服务商的带宽限制——链接排到列表靠前位置会让你的内容在短时间内被下载成千上万次。" />
+    <Entry Original=" The game allows you to import and export worlds to SD Card for sharing and backup purposes. &#xA;&#xA; If your device does not have an SD Card, generic external storage folder will be used. The location of the data on the device is normally /sdcard/Survivalcraft  " Translation="游戏允许你把世界导入和导出到 SD 卡，用于分享和备份。&#xA;&#xA;如果你的设备没有 SD 卡，会使用通用的外部存储文件夹。数据在设备上的位置通常是 /sdcard/Survivalcraft" />
+    <Entry Original=" The game uses Dropbox service to allow you to download and upload data to/from your device. &#xA;&#xA; Through Dropbox, you can backup and share worlds with others. You can also download custom blocks textures, character skins, furniture packs. &#xA;&#xA; To login to Dropbox, click on the login button on the Dropbox screen. If you don't have a Dropbox account yet, you will be able to setup one during the login. &#xA;&#xA; Once you log in, the Dropbox screen will show you the contents of your online Dropbox folders, and allow you to download the files to your device. &#xA;&#xA; See https://dropbox.com website for more details.  " Translation="游戏使用 Dropbox 服务，让你能从设备下载和上传数据。&#xA;&#xA;通过 Dropbox，你可以备份世界并与他人分享，也可以下载自定义方块纹理、角色皮肤和家具包。&#xA;&#xA;要登录 Dropbox，点 Dropbox 界面上的登录按钮。如果你还没有 Dropbox 账号，可以在登录过程中创建一个。&#xA;&#xA;登录后，Dropbox 界面会显示你在线 Dropbox 文件夹的内容，并允许你把文件下载到设备上。&#xA;&#xA;更多细节请见 https://dropbox.com 网站。" />
+    <Entry Original=" To place a block, select it from your inventory so that you are holding it in your hand. Then tap the face of an existing block, where you want the new block to be attached. The block will be placed there immediately, unless it is impossible for some reason. &#xA;&#xA; Certain items behave differently if attached to different parts of an existing block. For example, trapdoors can be attached to the top or bottom parts with different results.  " Translation="要放置方块，先从物品栏中选中它，让它拿在手上。然后点现有方块的某个面，也就是你希望新方块附着的位置。只要没有特殊原因不允许，方块会立即放置在那里。&#xA;&#xA;某些物品附着在现有方块的不同部位时表现不同。例如活板门装在顶部或底部，结果就不一样。" />
+    <Entry Original=" Use the touchpad at the bottom left side of the screen to move. Tap it once to jump. This can also be configured to use directional buttons instead of the pad. &#xA;&#xA; Use the touchpad at the bottom right side of the screen to look around. Tap it once to jump. You can also drag your finger across any area of the screen to look. &#xA;&#xA; You can tweak control scheme of the game in the Controls and Sensitivity settings. Experiment with various options, for example you may find you prefer buttons to touchpads, or split touch with crosshair to regular controls. Controlling a first person game on a small touchscreen may look difficult, but once you get the hang of it, it is no different than using a gamepad or a mouse. Because you can touch any part of the screen at any time, some actions like block digging or placement may even be easier. &#xA;&#xA; Some cheap or old devices have low quality touch screens or buggy touch drivers. They might intermittently drop active touch points, or mix them up if touched in more than one point at once. These are best avoided as playing on them is extremely frustrating.  " Translation=" 使用屏幕左下方的触控板移动。轻点一次可跳跃。也可以将其配置为使用方向按钮代替触控板。 &#xA;&#xA; 使用屏幕右下方的触控板环顾四周。轻点一次可跳跃。也可以在屏幕任意区域拖动手指来观察。 &#xA;&#xA; 你可以在“控制”和“灵敏度”设置中调整游戏的操作方案。多尝试各种选项，例如你可能会发现自己更喜欢按钮而不是触控板，或是喜欢带准星的分离触控而不是常规控制。在小触摸屏上操作第一人称游戏看起来可能很难，但一旦上手，它与使用手柄或鼠标并无区别。由于你可以随时触摸屏幕的任何部分，挖掘或放置方块之类的操作甚至可能更容易。 &#xA;&#xA; 一些廉价或老旧设备的触摸屏质量低劣，或者触摸驱动存在缺陷。它们可能会间歇性地丢失活动触摸点，或者在同时触摸多个点时将它们混淆。最好避开这类设备，因为在上面游玩会非常令人沮丧。  " />
+    <Entry Original=" Wearing armor or thick clothing will reduce or even completely eliminate combat injuries. Armor will absorb the hits, so that they damage the armor instead of injuring your body. Once the armor receives too much damage, it will disintegrate. &#xA;&#xA; When you are attacked, you will randomly receive a hit into one of your four body areas: head, torso, legs or feet. If there is no armor at that slot, you will receive full injury, irrespective of how much armor you wear elsewhere. By far the most likely area to receive hits is torso, followed by legs. Wearing torso armor will stop 60% of hits, torso and legs together will stop 80%. Head and feet armor is of less importance, unless you want to be 100% safe. &#xA;&#xA; The strongest armor is made of iron and diamonds. Early in the game, you can craft wooden torso armor from sticks and strings. It's not very sturdy but will stand a few hits potentially saving your life. &#xA;&#xA; Even plain clothes have certain armor value, especially thick ones made of leather and fur. They do not stop all hits, but only partially reduce the damage. &#xA;&#xA; Wearing heavy armor will make you sink to the bottom and drown, be careful around deep water.  " Translation="穿戴护甲或厚衣物可以减轻甚至完全消除战斗伤害。护甲会吸收打击，让伤害落在护甲上而不伤及你的身体。护甲承受过多伤害后会碎裂。&#xA;&#xA;当你受到攻击时，会随机命中你四个身体部位之一：头部、躯干、腿部或脚部。如果那个槽位没有护甲，你就会受到全额伤害，无论其他地方穿了多少护甲。最容易被命中的部位是躯干，其次是腿部。穿躯干护甲可以挡下 60% 的攻击，躯干加腿部一起可以挡下 80%。头部和脚部护甲没那么重要，除非你想做到 100% 安全。&#xA;&#xA;最强的护甲由铁和钻石制成。游戏早期，你可以用木棍和绳子合成木制躯干护甲。它不太结实，但能挡几下，可能救你一命。&#xA;&#xA;即使是普通衣物也有一定的护甲值，尤其是皮革和毛皮制成的厚衣物。它们不能挡下所有攻击，只能部分减轻伤害。&#xA;&#xA;穿着重甲会让你沉到水底溺水，在深水附近要小心。" />
+    <Entry Original=" Wearing clothing provides warmth in cold climates and armor protection during combat. You need heavy clothing to survive for any period of time in cold areas of the world. &#xA;&#xA; The level of thermal insulation is measured in CLO units. For example, 0.0 CLO is naked body, 1.0 CLO is light clothing, 3.0 CLO is heavy insulation. &#xA;&#xA; You can access clothing interface by using Clothing button. There are 4 clothing slots on your body: head, torso, legs and feet. Each slot can have multiple clothing items, layered one on top of each other. The effects of multiple clothing items combine. &#xA;&#xA; Not everything can be worn on top of everything else, for example you will not be able to wear a t-shirt on top of a fur coat. &#xA;&#xA; Wearing thick clothes in one slot while leaving another slot bare will not afford much insulation. It's imperative to cover entire body to really benefit from clothing. It's the thinnest piece of clothing that determines how much heat the character loses.  " Translation="穿着衣物可以在寒冷气候中保暖，并在战斗中提供护甲保护。要在世界上的寒冷地区待上一段时间，你需要厚重的衣物才能生存。&#xA;&#xA;隔热水平以 CLO 为单位衡量。例如，0.0 CLO 是裸体，1.0 CLO 是轻薄衣物，3.0 CLO 是厚重保暖。&#xA;&#xA;按衣物按钮可以打开衣物界面。你的身体有 4 个衣物槽位：头部、躯干、腿部和脚部。每个槽位可以穿多件衣物，一层叠一层，多件衣物的效果会叠加。&#xA;&#xA;并非什么都能穿在什么上面，例如你无法把 T 恤穿在毛皮大衣外面。&#xA;&#xA;只把一个槽位穿厚、另一个槽位裸露，保暖效果很有限。要真正从衣物中获益，必须覆盖全身。决定角色散失多少热量的是身上最薄的那一件。" />
+    <Entry Original=" When you are out in the cold without proper clothes, your body temperature will drop. Your view will start to freeze over and you will start losing health. Find a warmer place or get near fire to warm and dry yourself. If you stay cold for a long time, you will start sneezing and may get flu. &#xA;&#xA; Too much warmth will do you no good either, standing too close to a large fire will cause you to overheat. &#xA;&#xA; Sheltered areas are warmer than outside. Plugging all the holes and locking doors will make a shelter warmer still. Even a small hole open to the elements will admit draughts and make a large difference to temperature. Make a fire inside your shelter to make it homely warm and allow you to take your clothes off. &#xA;&#xA; Being wet dramatically increases your susceptibility to cold, find a warm place to dry yourself faster. &#xA;&#xA; The best way to deal with cold is to wear multiple layers of thick, dry clothes. You need to cover your entire body, leaving feet or head unclothed will defeat most of the warming effect other clothes have. Clothes made of animal fur are best for keeping cold out.  " Translation="当你衣着不足地在寒冷环境中活动时，体温会下降。视野开始结霜，你也会开始损失生命值。找个更暖和的地方，或者靠近火源取暖并烘干自己。如果长时间受冻，你会开始打喷嚏，并可能患上流感。&#xA;&#xA;过热对你同样没有好处，站得离大火太近会导致你过热。&#xA;&#xA;有遮蔽的地方比室外暖和。堵上所有孔洞、锁好门会让庇护所更暖。哪怕只是一个小孔通向室外，也会灌入穿堂风，对温度造成很大影响。在你的庇护所里生一堆火，让它温暖如家，还能让你脱下衣服。&#xA;&#xA;潮湿会大幅提高你对寒冷的敏感度，找个暖和的地方让自己快点干。&#xA;&#xA;应对寒冷最好的办法是穿多层厚实干燥的衣物。你需要覆盖全身，脚或头露在外面会让其他衣物的保暖效果大部分白费。动物毛皮制成的衣物防寒效果最好。" />
+    <Entry Original=" When you eat raw meat, uncooked eggs or any food that has been allowed to rot, the player may become sick. &#xA;&#xA; Sickness is an unpleasant condition. You health will slowly drop down to a single heart, making you very vulnerable. Your activities will be constantly interrupted by vomiting and nausea attacks. You will move slowly, be weak and tire easily. You will not be able to eat certain food types. &#xA;&#xA; It is best to sleep it off, maybe in the morning your stomach will get better.  " Translation="当你吃生肉、未煮熟的蛋，或任何已经腐烂的食物时，玩家可能会生病。&#xA;&#xA;疾病是一种很难受的状态。你的生命值会缓慢下降到只剩一颗心，使你非常脆弱。你的行动会不断被呕吐和恶心打断。你会移动缓慢、虚弱且容易疲劳，还会无法食用某些种类的食物。&#xA;&#xA;最好是睡一觉把它熬过去，也许第二天早上你的胃就会好一些。" />
+    <Entry Original=" When your body temperature stays low for a long period, the player will start to sneeze. This is a warning sign that you may get flu soon. Warm yourself up quickly. &#xA;&#xA; Flu is a dangerous condition. You health will slowly drop down to two hearts, making you very vulnerable. Your activities will be frequently interrupted by coughing attacks. You will move slowly, be weak and tire easily. You will also become very sleepy. &#xA;&#xA; It is best to get to a warm place and sleep the flu off, maybe in the morning you will get better. Flu is very difficult to cure when you are cold.  " Translation="当你的体温长时间偏低时，玩家会开始打喷嚏。这是你即将患流感的警告信号，赶快让自己暖和起来。&#xA;&#xA;流感是一种危险的状态。你的生命值会缓慢下降到只剩两颗心，使你非常脆弱。你的行动会频繁被咳嗽打断。你会移动缓慢、虚弱且容易疲劳，还会非常困倦。&#xA;&#xA;最好是找个暖和的地方睡一觉把流感睡过去，也许第二天早上你就会好转。受冻时流感极难治愈。" />
+    <Entry Original=" You can ride certain animals, such as horses or camels. Riding an animal lets you move more quickly and view the world from a higher vantage point. &#xA;&#xA; To mount an animal, get close to it and wait for it to stop. The sneak button will turn into mount button. Press it to mount/dismount. You can also mount boats in the same way as animals. &#xA;&#xA; To successfully ride an animal, you need a saddle, which can be crafted from leather and wooden sticks. When the animal is saddled, its behavior changes and it becomes more friendly towards you. Do not mount an unsaddled animal, it will not like it, and may even hurt you. &#xA;&#xA; A whistle will summon any saddled animals that are nearby. It is a good idea to carry a whistle with you when you are riding.  " Translation="你可以骑乘某些动物，例如马或骆驼。骑乘动物能让你移动得更快，并从更高的视角观察世界。&#xA;&#xA;要骑上动物，先靠近它并等它停下来。潜行按钮会变成骑乘按钮，按它即可上、下坐骑。船也可以用同样的方式登乘。&#xA;&#xA;要成功骑乘动物，你需要马鞍，它可以用皮革和木棍合成。动物装上马鞍后行为会改变，对你更友善。不要骑没有马鞍的动物，它不喜欢这样，甚至可能伤到你。&#xA;&#xA;口哨能召唤附近所有装好马鞍的动物。骑乘时随身带个口哨是个好主意。" />
+    <Entry Original=" You need to mine to obtain resources needed for crafting and smelting. Mining can be as simple as digging in a random place with your bare hands. You will however soon discover that it is not an effective way to mine, because digging hard rock by hand takes a very long time. &#xA;&#xA; You need to craft mining tools, such as a shovel and pickaxe first. You also need to dig in different places to find specific resources. Caves are a good starting point, because they show you a large cross section through the terrain for free. &#xA;&#xA; Be aware that some resources, such as diamonds or malachite, require tools made of strong materials to be mined.  " Translation="你需要采矿来获得合成与熔炼所需的资源。采矿可以简单到赤手空拳随便找个地方挖。但你很快会发现这并不高效，因为徒手挖坚硬的岩石要花很长时间。&#xA;&#xA;你需要先制作采矿工具，例如锹和镐。你也需要在不同地方挖掘才能找到特定资源。洞穴是个不错的起点，因为它们免费为你展示了地形的大剖面。&#xA;&#xA;要注意，某些资源（例如钻石或孔雀石）需要由坚固材料制成的工具才能开采。" />
+    <Entry Original=" Your character becomes more experienced over time. Experience is represented by little golden orbs that can be picked up. They appear when you mine minerals, harvest crops or hunt animals. Collect them. &#xA;&#xA; If you gather enough experience, your character will advance to the next level. Your strength, speed and resilience will increase and your food needs will decrease. You will also be able to use more advanced tools, weapons and armor. &#xA;&#xA; When you die and respawn, your level is reduced to a much lower value. It will take a lot of time to regain the lost experience.  " Translation="你的角色会随着时间变得更有经验。经验以小金球的形式表示，可以被拾取。开采矿物、收获作物或猎杀动物时它们就会出现，记得收集。&#xA;&#xA;如果积累的经验足够多，你的角色就会升到下一级。你的力量、速度和韧性会提升，食物需求会下降，还能使用更高级的工具、武器和护甲。&#xA;&#xA;当你死亡并重生后，等级会大幅降低，重新夺回失去的经验需要很长时间。" />
+    <Entry Original=" Your character can get wet by being outside in the rain or by falling into water. Wetness heavily reduces insulation provided by clothing, so it's very easy to freeze in colder climates. Your character will dry faster in a warm place.  " Translation="你的角色可能因为待在雨中或掉进水里而变湿。潮湿会大幅降低衣物提供的隔热效果，所以在寒冷气候中很容易冻僵。在暖和的地方你的角色会干得更快。" />
+  </Screen>
+  <Screen Name="SuContentScreen">
+    <Entry Original="Access content created by other community members and registered for public access" Translation="访问其他社区成员创建并登记为公开访问的内容" />
+    <Entry Original="Access content previously uploaded to one of your private storage spaces" Translation="访问此前上传到你某个私有存储空间的内容" />
+    <Entry Original="Choose Content Type" Translation="选择内容类型" />
+    <Entry Original="Community" Translation="社区" />
+    <Entry Original="Download a file directly from a web link, if you know it (it's best to use copy/paste to enter links)" Translation="直接从网页链接下载文件（如果你知道链接；最好用复制/粘贴输入）" />
+    <Entry Original="From Link" Translation="从链接" />
+    <Entry Original="Manage" Translation="管理" />
+    <Entry Original="Manage downloaded content" Translation="管理已下载的内容" />
+    <Entry Original="Private" Translation="私有" />
+  </Screen>
+  <Screen Name="SuManageContentScreen">
+    <Entry Original="&quot;{0}&quot; will be irrecoverably deleted." Translation="“{0}” 将被永久删除。" />
+    <Entry Original="(Download more using Community Content)" Translation="（使用社区内容下载更多）" />
+    <Entry Original="(downloaded)" Translation="（已下载）" />
+    <Entry Original="Installed" Translation="已安装" />
+    <Entry Original="Manage Content" Translation="管理内容" />
+    <Entry Original="Not Installed" Translation="未安装" />
+  </Screen>
+  <Screen Name="Dialogs">
+    <Entry Original="(16GB RAM and an extremely fast&#xA;device recommended)" Translation="（建议 16GB 内存和极快的设备）" />
+    <Entry Original="(1GB RAM recommended)" Translation="（建议 1GB 内存）" />
+    <Entry Original="(2GB RAM and a fast&#xA;device recommended)" Translation="（建议 2GB 内存和较快的设备）" />
+    <Entry Original="(8GB RAM and a very fast&#xA;device recommended)" Translation="（建议 8GB 内存和非常快的设备）" />
+    <Entry Original="(good for slower devices)" Translation="（适合较慢的设备）" />
+    <Entry Original="0 to 9" Translation="0 到 9" />
+    <Entry Original="1 to 6" Translation="1 到 6" />
+    <Entry Original="2xSpace or F" Translation="2×空格 或 F" />
+    <Entry Original="Abandon changes?" Translation="放弃更改？" />
+    <Entry Original="Active User" Translation="当前用户" />
+    <Entry Original="Add Furniture Set" Translation="添加家具套装" />
+    <Entry Original="Adjust Delay" Translation="调整延迟" />
+    <Entry Original="Adjust Voltage" Translation="调整电压" />
+    <Entry Original="All" Translation="全部" />
+    <Entry Original="All furniture in the set will become uncategorized and will be deleted if not used in the world." Translation="套装中的所有家具都会变为未分类，若未在世界中使用则会被删除。" />
+    <Entry Original="Blue:" Translation="蓝：" />
+    <Entry Original="Body Statistics" Translation="身体统计" />
+    <Entry Original="Build" Translation="建造" />
+    <Entry Original="Cancel" Translation="取消" />
+    <Entry Original="Cannot add players in adventure mode." Translation="冒险模式下无法添加玩家。" />
+    <Entry Original="Cannot add players in cruel mode." Translation="残酷模式下无法添加玩家。" />
+    <Entry Original="Close" Translation="关闭" />
+    <Entry Original="Combat Statistics" Translation="战斗统计" />
+    <Entry Original="Consider decreasing visibility range or resolution. To do so, go to performance settings." Translation="建议降低视距或分辨率。前往性能设置即可调整。" />
+    <Entry Original="Consider increasing visibility range or resolution for better graphics. To do so, go to performance settings." Translation="可以提高视距或分辨率以获得更好的画面。前往性能设置即可调整。" />
+    <Entry Original="Content Type" Translation="内容类型" />
+    <Entry Original="Copy" Translation="复制" />
+    <Entry Original="Copy Link" Translation="复制链接" />
+    <Entry Original="Death Record" Translation="死亡记录" />
+    <Entry Original="Define custom colors for the world" Translation="为世界定义自定义颜色" />
+    <Entry Original="Delete some furniture sets before adding a new one." Translation="请先删除一些家具套装，再添加新的。" />
+    <Entry Original="Download" Translation="下载" />
+    <Entry Original="Edit " Translation="编辑 " />
+    <Entry Original="Edit Color" Translation="编辑颜色" />
+    <Entry Original="Edit Memory Bank" Translation="编辑存储库" />
+    <Entry Original="Edit Palette" Translation="编辑调色板" />
+    <Entry Original="Edit Truth Table" Translation="编辑真值表" />
+    <Entry Original="Enter" Translation="进入" />
+    <Entry Original="Enter Sign Text Lines" Translation="输入告示牌文字行" />
+    <Entry Original="Enter Sign URL" Translation="输入告示牌 URL" />
+    <Entry Original="Enter up to 16 binary characters (0 and 1)" Translation="最多输入 16 个二进制字符（0 和 1）" />
+    <Entry Original="Enter up to 256 hexadecimal characters" Translation="最多输入 256 个十六进制字符" />
+    <Entry Original="Errors" Translation="错误" />
+    <Entry Original="Flat terrain is only available in Creative Mode" Translation="平坦地形仅在创造模式下可用" />
+    <Entry Original="Front View" Translation="正视图" />
+    <Entry Original="Furniture Naming" Translation="家具命名" />
+    <Entry Original="Furniture Set Action" Translation="家具套装操作" />
+    <Entry Original="Game Statistics" Translation="游戏统计" />
+    <Entry Original="Green:" Translation="绿：" />
+    <Entry Original="Grid" Translation="网格" />
+    <Entry Original="Happy New Year!" Translation="新年快乐！" />
+    <Entry Original="In4 In3 In2 In1   Out" Translation="入4 入3 入2 入1   输出" />
+    <Entry Original="Invalid Color" Translation="颜色无效" />
+    <Entry Original="Invalid player name. Only letters, digits and spaces allowed. Not too short, not too long either." Translation="玩家名无效。只允许字母、数字和空格，且不能太短或太长。" />
+    <Entry Original="It should start appearing in the listings after it is moderated. Please keep the file accessible through this link, so that other community members can download it." Translation="审核通过后它就会出现在列表中。请保持文件能通过这个链接访问，以便其他社区成员下载。" />
+    <Entry Original="It will stop appearing in the listings in a few minutes." Translation="几分钟后它就会从列表中消失。" />
+    <Entry Original="Large Visibility Range" Translation="较大视距" />
+    <Entry Original="Left Mouse Click" Translation="鼠标左键单击" />
+    <Entry Original="Left Mouse Drag" Translation="鼠标左键拖动" />
+    <Entry Original="Left Mouse Hold" Translation="鼠标左键长按" />
+    <Entry Original="Level " Translation="等级 " />
+    <Entry Original="Line 1" Translation="第 1 行" />
+    <Entry Original="Line 2" Translation="第 2 行" />
+    <Entry Original="Line 3" Translation="第 3 行" />
+    <Entry Original="Line 4" Translation="第 4 行" />
+    <Entry Original="Linear" Translation="线性" />
+    <Entry Original="Lines" Translation="文字行" />
+    <Entry Original="Link" Translation="链接" />
+    <Entry Original="Load arrow" Translation="装填箭" />
+    <Entry Original="Load bolt" Translation="装填弩箭" />
+    <Entry Original="Load bullet" Translation="装填子弹" />
+    <Entry Original="Load cotton wad" Translation="装填棉团" />
+    <Entry Original="Load gunpowder" Translation="装填火药" />
+    <Entry Original="Logging in" Translation="正在登录" />
+    <Entry Original="Max Extension" Translation="最大伸出距离" />
+    <Entry Original="Memory bank contains 256 4-bit words. Enter data using hexadecimal characters (0 to 9, A, B, C, D, E, F)." Translation="存储库包含 256 个 4 位字。请用十六进制字符（0 到 9、A、B、C、D、E、F）输入数据。" />
+    <Entry Original="More Actions" Translation="更多操作" />
+    <Entry Original="Mouse Move" Translation="鼠标移动" />
+    <Entry Original="Mouse Wheel" Translation="鼠标滚轮" />
+    <Entry Original="Movement Statistics" Translation="移动统计" />
+    <Entry Original="No Furniture Packs" Translation="没有家具包" />
+    <Entry Original="No furniture packs found in your content. Download some from Community Content." Translation="你的内容中没有家具包。可以从社区内容下载一些。" />
+    <Entry Original="No player statistics available because world was started in an old version of the game." Translation="该世界由旧版本游戏创建，无法提供玩家统计数据。" />
+    <Entry Original="Nothing" Translation="无" />
+    <Entry Original="Offensive content?" Translation="内容令人反感？" />
+    <Entry Original="Other Statistics" Translation="其他统计" />
+    <Entry Original="Player Statistics" Translation="玩家统计" />
+    <Entry Original="Please tick one that applies most:" Translation="请勾选最符合的一项：" />
+    <Entry Original="Please wait" Translation="请稍候" />
+    <Entry Original="Publish" Translation="发布" />
+    <Entry Original="Publish Link" Translation="发布链接" />
+    <Entry Original="Publish Link To A File" Translation="发布文件链接" />
+    <Entry Original="Publishing a link does not upload the linked file to the server. Only links are stored on the server. You are responsible for keeping your file accessible through the published link." Translation="发布链接不会把链接指向的文件上传到服务器，服务器只保存链接。你需要自行保证别人能通过已发布的链接访问到文件。" />
+    <Entry Original="Pull" Translation="拉弦" />
+    <Entry Original="Pull Count" Translation="拉动次数" />
+    <Entry Original="Quit" Translation="退出" />
+    <Entry Original="Rate" Translation="评价" />
+    <Entry Original="Rate Community Content" Translation="评价社区内容" />
+    <Entry Original="Ready to fire" Translation="可以发射" />
+    <Entry Original="Red:" Translation="红：" />
+    <Entry Original="Report" Translation="举报" />
+    <Entry Original="Report Community Content" Translation="举报社区内容" />
+    <Entry Original="Reporting offensive content is a serious matter. Please make sure you checked the right box. Do not report content which is not offensive." Translation="举报不良内容是一件严肃的事。请确认你勾选的是正确的选项，不要举报并无可指摘的内容。" />
+    <Entry Original="Reset Adventure?" Translation="重置冒险？" />
+    <Entry Original="Restart recommended after changing this setting" Translation="更改此设置后建议重启" />
+    <Entry Original="Resume" Translation="继续游戏" />
+    <Entry Original="Right Mouse Click" Translation="鼠标右键单击" />
+    <Entry Original="Right Mouse Drag" Translation="鼠标右键拖动" />
+    <Entry Original="Search" Translation="搜索" />
+    <Entry Original="Select Block" Translation="选择方块" />
+    <Entry Original="Select Blocks Texture" Translation="选择方块纹理" />
+    <Entry Original="Select Character Skin" Translation="选择角色皮肤" />
+    <Entry Original="Select Content To Rate" Translation="选择要评价的内容" />
+    <Entry Original="Select Furniture Pack" Translation="选择家具包" />
+    <Entry Original="Select Input Device" Translation="选择输入设备" />
+    <Entry Original="Select Screen Layout" Translation="选择屏幕布局" />
+    <Entry Original="Select World Type" Translation="选择世界类型" />
+    <Entry Original="Shift + Left Mouse Click" Translation="Shift + 鼠标左键单击" />
+    <Entry Original="Side View" Translation="侧视图" />
+    <Entry Original="Space" Translation="空格" />
+    <Entry Original="Space/Shift" Translation="空格/Shift" />
+    <Entry Original="Speed Setting" Translation="速度设置" />
+    <Entry Original="Table" Translation="表格" />
+    <Entry Original="The adventure will start from the beginning." Translation="冒险将从开头重新开始。" />
+    <Entry Original="The game may crash randomly if your device does not have enough memory to handle the visibility range you selected." Translation="如果设备内存不足以支撑你选择的视距，游戏可能会随机崩溃。" />
+    <Entry Original="The name and type will be autofilled from link if possible, otherwise you must specify them manually." Translation="如果可能，名称和类型会根据链接自动填写；否则需要你手动指定。" />
+    <Entry Original="The player will be irrecoverably removed from the world. All items in inventory and stats will be lost." Translation="该玩家将被永久移出这个世界，物品栏和统计数据都会丢失。" />
+    <Entry Original="The world will be irrecoverably deleted." Translation="这个世界将被永久删除。" />
+    <Entry Original="Too many furniture sets" Translation="家具套装过多" />
+    <Entry Original="Top View" Translation="俯视图" />
+    <Entry Original="Truth table defines output values for all possible combinations of inputs." Translation="真值表为输入的所有可能组合定义输出值。" />
+    <Entry Original="Try" Translation="试一下" />
+    <Entry Original="Use R,G,B or #HEX notation, e.g. 255,92,13 or #FF5C0D" Translation="用 R,G,B 或 #HEX 记法，例如 255,92,13 或 #FF5C0D" />
+    <Entry Original="Use your " Translation="用你的 " />
+    <Entry Original="User ID" Translation="用户 ID" />
+    <Entry Original="User name is used to identify users when publishing and rating community content" Translation="用户名用于在发布和评价社区内容时标识用户" />
+    <Entry Original="Warning" Translation="警告" />
+    <Entry Original="Warnings" Translation="警告" />
+    <Entry Original="When playing in adventure mode only, tapping" Translation="仅在冒险模式中，点击" />
+    <Entry Original="Work Statistics" Translation="工作统计" />
+    <Entry Original="YOU HAVE DIED" Translation="你死了" />
+    <Entry Original="You changed some of the world properties, but they were not applied yet." Translation="你修改了一些世界属性，但还没有应用。" />
+    <Entry Original="Your device is fast" Translation="你的设备性能很好" />
+    <Entry Original="Your device is not fast enough" Translation="你的设备性能不足" />
+    <Entry Original="change time of day (creative)" Translation="改变一天中的时间（创造模式）" />
+    <Entry Original="drop active item" Translation="丢弃手上的物品" />
+    <Entry Original="jump" Translation="跳跃" />
+    <Entry Original="mark stack for splitting" Translation="标记整堆以便拆分" />
+    <Entry Original="move a single item" Translation="移动单个物品" />
+    <Entry Original="move all items" Translation="移动全部物品" />
+    <Entry Original="scroll, change inventory slot" Translation="滚动，切换物品栏槽位" />
+    <Entry Original="select inventory slot" Translation="选择物品栏槽位" />
+    <Entry Original="summon lightning (creative)" Translation="召唤闪电（创造模式）" />
+    <Entry Original="take screenshot" Translation="截图" />
+    <Entry Original="the sign will open this URL in the browser" Translation="告示牌会在浏览器中打开此 URL" />
+    <Entry Original="toggle fog (creative)" Translation="开关雾气（创造模式）" />
+    <Entry Original="toggle rain/snow (creative)" Translation="开关雨雪（创造模式）" />
+    <Entry Original="{0} blocks" Translation="{0} 个方块" />
+    <Entry Original="{0} design(s)" Translation="{0} 个设计" />
+    <Entry Original="{0} pix" Translation="{0} 像素" />
+    <Entry Original="{0} seconds" Translation="{0} 秒" />
+    <Entry Original="{0} vsync" Translation="{0} 垂直同步" />
+    <Entry Original="{0}ms" Translation="{0} 毫秒" />
+  </Screen>
+  <Screen Name="SuCommunityContentScreen">
+    <Entry Original="A task was canceled." Translation="任务已取消。" />
+    <Entry Original="Access to the path is denied." Translation="访问该路径被拒绝。" />
+    <Entry Original="An error occurred while sending the request." Translation="发送请求时出错。" />
+    <Entry Original="MOD" Translation="模组" />
+    <Entry Original="No such host is known" Translation="找不到该主机" />
+    <Entry Original="Original Community" Translation="原始社区" />
+    <Entry Original="The operation has timed out." Translation="操作超时。" />
+    <Entry Original="The operation was canceled." Translation="操作已取消。" />
+    <Entry Original="The remote name could not be resolved" Translation="无法解析远程名称" />
+    <Entry Original="The request was canceled." Translation="请求已取消。" />
+    <Entry Original="The underlying connection was closed: An unexpected error occurred on a send." Translation="底层连接已关闭：发送时发生意外错误。" />
+    <Entry Original="The underlying connection was closed: The connection was closed unexpectedly." Translation="底层连接已关闭：连接被意外关闭。" />
+    <Entry Original="There is not enough space on the disk." Translation="磁盘空间不足。" />
+    <Entry Original="Unable to connect to the remote server" Translation="无法连接到远程服务器" />
+  </Screen>
+  <Screen Name="GameScreen">
+    <Entry Original="(none)" Translation="（无）" />
+    <Entry Original="(unavailable in {0})" Translation="（{0}中不可用）" />
+    <Entry Original="({0}%)" Translation="（{0}%）" />
+    <Entry Original="Accepts Drops" Translation="接受投掷物" />
+    <Entry Original="Add" Translation="添加" />
+    <Entry Original="Adventure" Translation="冒险" />
+    <Entry Original="Adventure, Living" Translation="冒险，动态" />
+    <Entry Original="Adventure, Static" Translation="冒险，静态" />
+    <Entry Original="Affects damage received from attacks, falls, fire, and asphyxiation." Translation="影响受到攻击、坠落、火焰和窒息时的伤害。" />
+    <Entry Original="Affects how quickly eaten food is depleted." Translation="影响吃下的食物消耗得多快。" />
+    <Entry Original="Affects melee attack power, digging speed, throwing range, and bow range." Translation="影响近战攻击力、挖掘速度、投掷距离和弓箭射程。" />
+    <Entry Original="Affects movement speed on foot, swimming speed, jump height and stamina regeneration." Translation="影响步行速度、游泳速度、跳跃高度和体力恢复速度。" />
+    <Entry Original="Air Creatures Killed" Translation="击杀空中生物数" />
+    <Entry Original="Autumn" Translation="秋季" />
+    <Entry Original="Batch" Translation="批次" />
+    <Entry Original="Became Sick" Translation="患病次数" />
+    <Entry Original="Beluga" Translation="白鲸" />
+    <Entry Original="Biome Size" Translation="生物群系大小" />
+    <Entry Original="Blasted by explosion" Translation="被爆炸炸死" />
+    <Entry Original="Blocks Dug" Translation="挖掘方块数" />
+    <Entry Original="Blocks Interacted With" Translation="互动方块次数" />
+    <Entry Original="Blocks Placed" Translation="放置方块数" />
+    <Entry Original="Body Heat" Translation="体温" />
+    <Entry Original="Body/Food" Translation="身体/食物" />
+    <Entry Original="Brown Ray" Translation="棕魟" />
+    <Entry Original="Brrr, wet!" Translation="好冷，湿透了！" />
+    <Entry Original="Burned by magma" Translation="被岩浆烧死" />
+    <Entry Original="Burned to death" Translation="被烧死" />
+    <Entry Original="Can't go no more" Translation="走不动了" />
+    <Entry Original="Challenging, Living" Translation="挑战，动态" />
+    <Entry Original="Challenging, Static" Translation="挑战，静态" />
+    <Entry Original="Choked" Translation="被噎住" />
+    <Entry Original="Clothes" Translation="衣物" />
+    <Entry Original="Come back!" Translation="快回来！" />
+    <Entry Original="Construction" Translation="建筑" />
+    <Entry Original="Contracted Flu" Translation="患流感次数" />
+    <Entry Original="Coughing" Translation="咳嗽中" />
+    <Entry Original="Creative" Translation="创造" />
+    <Entry Original="Creative, Living" Translation="创造，动态" />
+    <Entry Original="Creative, Static" Translation="创造，静态" />
+    <Entry Original="Crouch to improve your aim" Translation="蹲下可以提高命中率" />
+    <Entry Original="Crouching" Translation="蹲下" />
+    <Entry Original="Cruel, Living" Translation="残酷，动态" />
+    <Entry Original="Cruel, Static" Translation="残酷，静态" />
+    <Entry Original="Crushed" Translation="被压死" />
+    <Entry Original="Current multipliers:" Translation="当前倍率：" />
+    <Entry Original="Dawn" Translation="黎明" />
+    <Entry Original="Day {0}" Translation="第 {0} 天" />
+    <Entry Original="Deepest Dive" Translation="最深下潜" />
+    <Entry Original="Digging with bare hands is slow, use a stick" Translation="徒手挖掘很慢，用根木棍吧" />
+    <Entry Original="Dismounted" Translation="已下坐骑" />
+    <Entry Original="Dispense" Translation="发射" />
+    <Entry Original="Distance Climbed" Translation="攀爬距离" />
+    <Entry Original="Distance Fallen" Translation="坠落距离" />
+    <Entry Original="Distance Flown" Translation="飞行距离" />
+    <Entry Original="Distance Ridden" Translation="骑乘距离" />
+    <Entry Original="Distance Swum" Translation="游泳距离" />
+    <Entry Original="Distance Walked" Translation="步行距离" />
+    <Entry Original="Draw the crossbow first" Translation="先给弩上弦" />
+    <Entry Original="Drowned" Translation="溺死" />
+    <Entry Original="Dusk" Translation="黄昏" />
+    <Entry Original="Dyed" Translation="染色" />
+    <Entry Original="Early Autumn" Translation="初秋" />
+    <Entry Original="Early Spring" Translation="早春" />
+    <Entry Original="Early Summer" Translation="初夏" />
+    <Entry Original="Early Winter" Translation="初冬" />
+    <Entry Original="Easiest Game Mode Used" Translation="使用过的最简单模式" />
+    <Entry Original="Eat something else, you will get sick!" Translation="换点别的吃，你会生病的！" />
+    <Entry Original="Ehh... what time is it?" Translation="呃……现在几点了？" />
+    <Entry Original="Electrics" Translation="电气" />
+    <Entry Original="Error capturing photo, check game log" Translation="拍摄照片失败，请查看游戏日志" />
+    <Entry Original="Experience" Translation="经验" />
+    <Entry Original="Female" Translation="女性" />
+    <Entry Original="Fireworks" Translation="烟花" />
+    <Entry Original="First Spawned" Translation="首次出生" />
+    <Entry Original="First person camera" Translation="第一人称视角" />
+    <Entry Original="Fixed camera" Translation="固定视角" />
+    <Entry Original="Fly mode off" Translation="飞行模式关闭" />
+    <Entry Original="Fly mode on" Translation="飞行模式开启" />
+    <Entry Original="Fog Off" Translation="雾关闭" />
+    <Entry Original="Fog On" Translation="雾开启" />
+    <Entry Original="Food" Translation="食物" />
+    <Entry Original="Food Eaten" Translation="进食次数" />
+    <Entry Original="Froze to death" Translation="冻死" />
+    <Entry Original="Fuel" Translation="燃料" />
+    <Entry Original="Furniture Designs In Use" Translation="使用中的家具设计数" />
+    <Entry Original="Furniture Made" Translation="制作家具数" />
+    <Entry Original="Furniture design is too large" Translation="家具设计过大" />
+    <Entry Original="Game Mode" Translation="游戏模式" />
+    <Entry Original="Get to warmth, you have flu!" Translation="快去取暖，你得了流感！" />
+    <Entry Original="Get warm, you will get flu!" Translation="快去取暖，不然会得流感！" />
+    <Entry Original="Gnu" Translation="角马" />
+    <Entry Original="Good, but you want more" Translation="不错，但你还想吃" />
+    <Entry Original="Great White" Translation="大白鲨" />
+    <Entry Original="Handcrafting" Translation="手工制作" />
+    <Entry Original="Harmless, Living" Translation="无害，动态" />
+    <Entry Original="Harmless, Static" Translation="无害，静态" />
+    <Entry Original="Highest Altitude" Translation="最高海拔" />
+    <Entry Original="Highest Level Attained" Translation="达到的最高等级" />
+    <Entry Original="Hits Received" Translation="受到攻击次数" />
+    <Entry Original="Humidity" Translation="湿度" />
+    <Entry Original="Hypothermia" Translation="失温" />
+    <Entry Original="Impact with the ground" Translation="坠地身亡" />
+    <Entry Original="Infinity" Translation="无限" />
+    <Entry Original="Insulation" Translation="隔热" />
+    <Entry Original="Inventory" Translation="物品栏" />
+    <Entry Original="It tastes horrible, no more!" Translation="太难吃了，别再吃了！" />
+    <Entry Original="It tastes odd, no more" Translation="味道怪怪的，别再吃了" />
+    <Entry Original="It's too hot, run away!" Translation="太热了，快跑开！" />
+    <Entry Original="Items" Translation="物品" />
+    <Entry Original="Items Crafted/Smelted" Translation="合成/熔炼物品数" />
+    <Entry Original="Jumps" Translation="跳跃次数" />
+    <Entry Original="Land Creatures Killed" Translation="击杀陆地生物数" />
+    <Entry Original="Late Autumn" Translation="深秋" />
+    <Entry Original="Late Spring" Translation="晚春" />
+    <Entry Original="Late Summer" Translation="夏末" />
+    <Entry Original="Late Winter" Translation="深冬" />
+    <Entry Original="Left the world" Translation="离开了这个世界" />
+    <Entry Original="Length Of Year" Translation="一年长度" />
+    <Entry Original="Level {0}" Translation="等级 {0}" />
+    <Entry Original="Load a bolt first" Translation="先装填弩箭" />
+    <Entry Original="Load an arrow first" Translation="先装填箭" />
+    <Entry Original="Load gunpowder first" Translation="先装填火药" />
+    <Entry Original="Location" Translation="位置" />
+    <Entry Original="Look" Translation="视角" />
+    <Entry Original="Lowest Altitude" Translation="最低海拔" />
+    <Entry Original="Male" Translation="男性" />
+    <Entry Original="Melee Attacks" Translation="近战攻击次数" />
+    <Entry Original="Melee Hits" Translation="近战命中次数" />
+    <Entry Original="Midnight" Translation="午夜" />
+    <Entry Original="Minerals" Translation="矿物" />
+    <Entry Original="More Items..." Translation="更多物品..." />
+    <Entry Original="Mounted" Translation="已骑乘" />
+    <Entry Original="Move" Translation="移动" />
+    <Entry Original="Name" Translation="名称" />
+    <Entry Original="Never spawned yet" Translation="从未出生过" />
+    <Entry Original="You must be on dry land" Translation="你必须在干燥的陆地上" />
+    <Entry Original="Too uncomfortable to sleep" Translation="这里太不舒服，睡不着" />
+    <Entry Original="You are not tired enough" Translation="你还不够困" />
+    <Entry Original="You are too wet" Translation="你身上太湿了" />
+    <Entry Original="You need a better shelter" Translation="你需要一个更好的庇护所" />
+    <Entry Original="Tap to wake up early" Translation="点击以提前醒来" />
+    <Entry Original="You fell unconscious from lack of sleep" Translation="你因睡眠不足而失去意识" />
+    <Entry Original="Controlled by {0}" Translation="由 {0} 控制" />
+    <Entry Original="In game for {0} days" Translation="已游玩 {0} 天" />
+    <Entry Original="{0} (not found)" Translation="{0}（未连接）" />
+    <Entry Original="Mouse &amp; Keyboard" Translation="鼠标和键盘" />
+    <Entry Original="Mouse &amp; Keyboard 1" Translation="鼠标和键盘 1" />
+    <Entry Original="Mouse &amp; Keyboard 2" Translation="鼠标和键盘 2" />
+    <Entry Original="Mouse &amp; Keyboard 3" Translation="鼠标和键盘 3" />
+    <Entry Original="Mouse &amp; Keyboard 4" Translation="鼠标和键盘 4" />
+    <Entry Original="Gamepad 1" Translation="手柄 1" />
+    <Entry Original="Gamepad 2" Translation="手柄 2" />
+    <Entry Original="Gamepad 3" Translation="手柄 3" />
+    <Entry Original="Gamepad 4" Translation="手柄 4" />
+    <Entry Original="Virtual Reality" Translation="虚拟现实" />
+    <Entry Original="Touchscreen" Translation="触屏" />
+    <Entry Original="No Flu" Translation="无流感" />
+    <Entry Original="No Sickness" Translation="无疾病" />
+    <Entry Original="No bullet, blind shot fired" Translation="没有弹丸，盲射了一发" />
+    <Entry Original="No suitable blocks found" Translation="没有找到合适的方块" />
+    <Entry Original="Noon" Translation="正午" />
+    <Entry Original="Not Coughing" Translation="未咳嗽" />
+    <Entry Original="Not Vomiting" Translation="未呕吐" />
+    <Entry Original="Orbit camera" Translation="环绕视角" />
+    <Entry Original="Overheated" Translation="中暑" />
+    <Entry Original="Painted" Translation="涂装" />
+    <Entry Original="Photo saved in pictures library" Translation="照片已保存到图片库" />
+    <Entry Original="Plants" Translation="植物" />
+    <Entry Original="Player-on-player attacks are disabled" Translation="玩家间的攻击已禁用" />
+    <Entry Original="Players Killed" Translation="击杀玩家数" />
+    <Entry Original="Precipitation Off" Translation="降水关闭" />
+    <Entry Original="Precipitation On" Translation="降水开启" />
+    <Entry Original="Press H for keyboard controls&#xA;(or see HELP)" Translation="按 H 查看键盘操作&#xA;（或见「帮助」）" />
+    <Entry Original="Press START/PAUSE for gamepad controls&#xA;(or see HELP)" Translation="按 START/PAUSE 查看手柄操作&#xA;（或见「帮助」）" />
+    <Entry Original="Ranged Attacks" Translation="远程攻击次数" />
+    <Entry Original="Ranged Hits" Translation="远程命中次数" />
+    <Entry Original="Resilience" Translation="韧性" />
+    <Entry Original="Respawned" Translation="重生次数" />
+    <Entry Original="Rest a while!" Translation="休息一会儿！" />
+    <Entry Original="Rhino" Translation="犀牛" />
+    <Entry Original="Running barefoot is slow, wear shoes" Translation="光脚跑得慢，穿上鞋" />
+    <Entry Original="Sea Level" Translation="海平面" />
+    <Entry Original="Season" Translation="季节" />
+    <Entry Original="Sex" Translation="性别" />
+    <Entry Original="Shoot" Translation="射击" />
+    <Entry Original="Sleep" Translation="睡眠" />
+    <Entry Original="Spawner Eggs" Translation="生成蛋" />
+    <Entry Original="Speed" Translation="速度" />
+    <Entry Original="Spiked by a sea creature" Translation="被海洋生物刺伤" />
+    <Entry Original="Spiked by a trap" Translation="被陷阱刺伤" />
+    <Entry Original="Spiked by cactus" Translation="被仙人掌刺伤" />
+    <Entry Original="Split" Translation="拆分" />
+    <Entry Original="Spring" Translation="春季" />
+    <Entry Original="Standing up" Translation="站起" />
+    <Entry Original="Starved to death" Translation="饿死" />
+    <Entry Original="Static" Translation="静态" />
+    <Entry Original="Stayed Alive" Translation="存活时长" />
+    <Entry Original="Stranded on land" Translation="搁浅在岸上" />
+    <Entry Original="Strength" Translation="力量" />
+    <Entry Original="Struck By Lightning" Translation="被雷击次数" />
+    <Entry Original="Suffocated" Translation="窒息而死" />
+    <Entry Original="Summer" Translation="夏季" />
+    <Entry Original="Survival, Living" Translation="生存，动态" />
+    <Entry Original="Survival, Static" Translation="生存，静态" />
+    <Entry Original="TOTAL" Translation="合计" />
+    <Entry Original="Tap on labels for more information" Translation="点击标签查看更多信息" />
+    <Entry Original="Temperature" Translation="温度" />
+    <Entry Original="Terrain" Translation="地形" />
+    <Entry Original="Terrain Type" Translation="地形类型" />
+    <Entry Original="Third person camera" Translation="第三人称视角" />
+    <Entry Original="Thrown from a mount" Translation="从坐骑上摔下" />
+    <Entry Original="Time Slept" Translation="睡眠时长" />
+    <Entry Original="Time to eat something" Translation="该吃点东西了" />
+    <Entry Original="Too many boats" Translation="船太多了" />
+    <Entry Original="Too many creatures" Translation="生物太多了" />
+    <Entry Original="Too many different furniture designs" Translation="不同的家具设计太多了" />
+    <Entry Original="Too many magnets" Translation="磁铁太多了" />
+    <Entry Original="Tools" Translation="工具" />
+    <Entry Original="Total Distance Travelled" Translation="总移动距离" />
+    <Entry Original="Total Health Lost" Translation="累计损失生命值" />
+    <Entry Original="Unsuitable block found" Translation="发现不合适的方块" />
+    <Entry Original="Use your {0} to dig this faster" Translation="用你的{0}挖掘更快" />
+    <Entry Original="Vomited" Translation="呕吐次数" />
+    <Entry Original="Vomiting" Translation="呕吐中" />
+    <Entry Original="Water Creatures Killed" Translation="击杀水生生物数" />
+    <Entry Original="Weapons" Translation="武器" />
+    <Entry Original="Went To Sleep" Translation="睡觉次数" />
+    <Entry Original="White Alpaca" Translation="白色羊驼" />
+    <Entry Original="Winter" Translation="冬季" />
+    <Entry Original="World Created In Version" Translation="世界创建版本" />
+    <Entry Original="World Seed" Translation="世界种子" />
+    <Entry Original="Yellow Ray" Translation="黄魟" />
+    <Entry Original="You are close to starvation" Translation="你快要饿死了" />
+    <Entry Original="You are completely wet" Translation="你全身湿透了" />
+    <Entry Original="You are drowning!" Translation="你正在溺水！" />
+    <Entry Original="You are falling over, sleep" Translation="你站不住了，去睡觉" />
+    <Entry Original="You are full, no more food!" Translation="你已经吃饱了，别再吃了！" />
+    <Entry Original="You are getting wet" Translation="你正在变湿" />
+    <Entry Original="You are no longer wet" Translation="你不再湿了" />
+    <Entry Original="You are panting, get out of the water" Translation="你在喘气，快离开水域" />
+    <Entry Original="You are panting, slow down" Translation="你在喘气，慢一点" />
+    <Entry Original="You are slightly hungry" Translation="你有点饿了" />
+    <Entry Original="You are starving, find food!" Translation="你饿坏了，快去找吃的！" />
+    <Entry Original="You are tired, take a nap" Translation="你累了，去小睡一会儿" />
+    <Entry Original="You are very tired, sleep" Translation="你非常疲惫，去睡觉" />
+    <Entry Original="You eat this too often" Translation="你吃这个太频繁了" />
+    <Entry Original="You feel a bit chilly" Translation="你感觉有点冷" />
+    <Entry Original="You feel hot" Translation="你感觉热" />
+    <Entry Original="You feel nauseous" Translation="你感到恶心" />
+    <Entry Original="You feel too sick to eat this" Translation="你难受得吃不下这个" />
+    <Entry Original="You have eaten well" Translation="你吃得很饱" />
+    <Entry Original="You have flu, warmth is healing" Translation="你得了流感，暖和起来正在康复" />
+    <Entry Original="You will faint, go to sleep!" Translation="你快要昏倒了，去睡觉！" />
+    <Entry Original="You've gained a level!" Translation="你升级了！" />
+    <Entry Original="Your clothing has worn out" Translation="你的衣物已经磨损了" />
+    <Entry Original="accident" Translation="意外" />
+    <Entry Original="bad luck" Translation="运气不好" />
+    <Entry Original="before 1.22" Translation="1.22 之前" />
+    <Entry Original="bitten" Translation="咬死" />
+    <Entry Original="bitten by a {0}" Translation="被{0}咬死" />
+    <Entry Original="bitten by an {0}" Translation="被{0}咬死" />
+    <Entry Original="crushed" Translation="压死" />
+    <Entry Original="crushed by a {0}" Translation="被{0}压死" />
+    <Entry Original="crushed by an {0}" Translation="被{0}压死" />
+    <Entry Original="dismembered" Translation="肢解" />
+    <Entry Original="dismembered by a {0}" Translation="被{0}肢解" />
+    <Entry Original="dismembered by an {0}" Translation="被{0}肢解" />
+    <Entry Original="eaten" Translation="吃掉" />
+    <Entry Original="eaten by a {0}" Translation="被{0}吃掉" />
+    <Entry Original="eaten by an {0}" Translation="被{0}吃掉" />
+    <Entry Original="force majeure" Translation="不可抗力" />
+    <Entry Original="hunted" Translation="猎杀" />
+    <Entry Original="hunted by a {0}" Translation="被{0}猎杀" />
+    <Entry Original="hunted by an {0}" Translation="被{0}猎杀" />
+    <Entry Original="kicked" Translation="踢死" />
+    <Entry Original="kicked by a {0}" Translation="被{0}踢死" />
+    <Entry Original="kicked by an {0}" Translation="被{0}踢死" />
+    <Entry Original="killed" Translation="杀死" />
+    <Entry Original="killed by a {0}" Translation="被{0}杀死" />
+    <Entry Original="killed by an {0}" Translation="被{0}杀死" />
+    <Entry Original="massacred" Translation="屠杀" />
+    <Entry Original="massacred by a {0}" Translation="被{0}屠杀" />
+    <Entry Original="massacred by an {0}" Translation="被{0}屠杀" />
+    <Entry Original="mauled" Translation="撕咬" />
+    <Entry Original="mauled by a {0}" Translation="被{0}撕咬" />
+    <Entry Original="mauled by an {0}" Translation="被{0}撕咬" />
+    <Entry Original="murdered" Translation="谋杀" />
+    <Entry Original="murdered by a {0}" Translation="被{0}谋杀" />
+    <Entry Original="murdered by an {0}" Translation="被{0}谋杀" />
+    <Entry Original="ripped open" Translation="撕开" />
+    <Entry Original="ripped open by a {0}" Translation="被{0}撕开" />
+    <Entry Original="ripped open by an {0}" Translation="被{0}撕开" />
+    <Entry Original="stung" Translation="蜇死" />
+    <Entry Original="stung by a {0}" Translation="被{0}蜇死" />
+    <Entry Original="stung by an {0}" Translation="被{0}蜇死" />
+    <Entry Original="trampled" Translation="践踏" />
+    <Entry Original="trampled by a {0}" Translation="被{0}践踏" />
+    <Entry Original="trampled by an {0}" Translation="被{0}践踏" />
+    <Entry Original="unknown attacker" Translation="不明袭击者" />
+    <Entry Original="unlucky" Translation="时运不济" />
+    <Entry Original="wrong place wrong time" Translation="在错误的时间出现在错误的地点" />
+    <Entry Original="x {0}" Translation="x {0}" />
+    <Entry Original="{0} ({1})" Translation="{0}（{1}）" />
+    <Entry Original="{0} Mode" Translation="{0}模式" />
+    <Entry Original="{0} at altitude {1}" Translation="{0}，海拔 {1}" />
+    <Entry Original="{0} clo" Translation="{0} 克洛" />
+    <Entry Original="{0} days ago" Translation="{0} 天前" />
+    <Entry Original="{0} items" Translation="{0} 个" />
+    <Entry Original="{0} times" Translation="{0} 次" />
+    <Entry Original="{0}% Stamina" Translation="{0}% 体力" />
+    <Entry Original="{0}, Level {1} {2}" Translation="{0}，等级 {1} {2}" />
+  </Screen>
+  <Screen Name="SuPlayScreen">
+    <Entry Original="(unknown)" Translation="（未知）" />
+    <Entry Original="1 player" Translation="1 名玩家" />
+    <Entry Original="A maximum of {0} worlds is allowed on a device. Delete some to make space for new ones." Translation="一台设备上最多允许 {0} 个世界。删除一些，为新的世界腾出空间。" />
+    <Entry Original="Existing Worlds" Translation="已有世界" />
+    <Entry Original="Net World | Offline (Ping -)" Translation="联机世界 | 离线（延迟 -）" />
+    <Entry Original="New World" Translation="新建世界" />
+    <Entry Original="No worlds" Translation="没有世界" />
+    <Entry Original="Offline" Translation="离线" />
+    <Entry Original="Online" Translation="在线" />
+    <Entry Original="Play!" Translation="开始游戏！" />
+    <Entry Original="Scanning Worlds" Translation="正在扫描世界" />
+    <Entry Original="Service" Translation="服务" />
+    <Entry Original="Too many worlds" Translation="世界数量过多" />
+    <Entry Original="world" Translation="世界" />
+    <Entry Original="worlds" Translation="个世界" />
+    <Entry Original="{0} (Ping {1})" Translation="{0}（延迟 {1}）" />
+    <Entry Original="{0} players" Translation="{0} 名玩家" />
+    <Entry Original="{0} world, {1}" Translation="{0} 个世界，{1}" />
+    <Entry Original="{0} worlds, {1}" Translation="{0} 个世界，{1}" />
+  </Screen>
+  <Screen Name="CommunityContentScreen">
+    <Entry Original="({0} download, {1}, {2})" Translation="（{0} 次下载，{1}，{2}）" />
+    <Entry Original="({0} downloads, {1}, {2})" Translation="（{0} 次下载，{1}，{2}）" />
+    <Entry Original="All Items" Translation="全部物品" />
+    <Entry Original="Are you sure?" Translation="确定吗？" />
+    <Entry Original="Blocks Texture" Translation="方块纹理" />
+    <Entry Original="Cannot upload this item." Translation="无法上传此物品。" />
+    <Entry Original="Character Skin" Translation="角色皮肤" />
+    <Entry Original="Complete" Translation="完成" />
+    <Entry Original="Compressing world" Translation="正在压缩世界" />
+    <Entry Original="Could not retrieve Dropbox access token." Translation="无法获取 Dropbox 访问令牌。" />
+    <Entry Original="Creating Link" Translation="正在创建链接" />
+    <Entry Original="Cruelty" Translation="虐待" />
+    <Entry Original="Dating" Translation="约会交友" />
+    <Entry Original="Dependencies" Translation="依赖" />
+    <Entry Original="Dependency" Translation="依赖项" />
+    <Entry Original="Directory" Translation="目录" />
+    <Entry Original="Do you want to login to {0}?" Translation="要登录 {0} 吗？" />
+    <Entry Original="Download Failed" Translation="下载失败" />
+    <Entry Original="Downloading" Translation="正在下载" />
+    <Entry Original="Drugs / Alcohol" Translation="毒品 / 酒精" />
+    <Entry Original="Enter Dropbox authorization code" Translation="输入 Dropbox 授权码" />
+    <Entry Original="Enter Link To A File" Translation="输入文件链接" />
+    <Entry Original="Error" Translation="错误" />
+    <Entry Original="Excessive Swearing" Translation="过度粗俗用语" />
+    <Entry Original="Filter" Translation="筛选" />
+    <Entry Original="Furniture Pack" Translation="家具包" />
+    <Entry Original="Hate Speech" Translation="仇恨言论" />
+    <Entry Original="Identifier" Translation="标识符" />
+    <Entry Original="Importing" Translation="正在导入" />
+    <Entry Original="Install" Translation="安装" />
+    <Entry Original="Internet connection is unavailable." Translation="网络连接不可用。" />
+    <Entry Original="Largest" Translation="体积最大" />
+    <Entry Original="Link Copied To Clipboard" Translation="链接已复制到剪贴板" />
+    <Entry Original="Link Deleted" Translation="链接已删除" />
+    <Entry Original="Link Published Successfully" Translation="链接发布成功" />
+    <Entry Original="Login Required" Translation="需要登录" />
+    <Entry Original="Mod Change Failed" Translation="模组更改失败" />
+    <Entry Original="Mod Delete Failed" Translation="模组删除失败" />
+    <Entry Original="Mod changes take effect after restarting the game." Translation="模组改动将在重启游戏后生效。" />
+    <Entry Original="Most Downloaded" Translation="下载最多" />
+    <Entry Original="Most Recent" Translation="最新" />
+    <Entry Original="Newest Version" Translation="版本最新" />
+    <Entry Original="Oldest Version" Translation="版本最旧" />
+    <Entry Original="Other" Translation="其他" />
+    <Entry Original="Plagiarism" Translation="抄袭" />
+    <Entry Original="Publishing" Translation="正在发布" />
+    <Entry Original="Racism" Translation="种族歧视" />
+    <Entry Original="Restart Required" Translation="需要重启" />
+    <Entry Original="Retrieving Content" Translation="正在获取内容" />
+    <Entry Original="Retrieving Directory" Translation="正在获取目录" />
+    <Entry Original="Retrieving MOD" Translation="正在获取模组" />
+    <Entry Original="Select Active User" Translation="选择当前用户" />
+    <Entry Original="Select Content Source" Translation="选择内容来源" />
+    <Entry Original="Select Content Type" Translation="选择内容类型" />
+    <Entry Original="Select Download Link" Translation="选择下载链接" />
+    <Entry Original="Select Items Filter" Translation="选择筛选条件" />
+    <Entry Original="Select Sort Order" Translation="选择排序方式" />
+    <Entry Original="Select Upload Destination" Translation="选择上传目标" />
+    <Entry Original="Selected User's Items" Translation="所选用户的物品" />
+    <Entry Original="Sending Rating" Translation="正在发送评价" />
+    <Entry Original="Sending Report" Translation="正在发送举报" />
+    <Entry Original="Sex / Nudity" Translation="色情 / 裸露" />
+    <Entry Original="SuAPI Mod" Translation="SuAPI 模组" />
+    <Entry Original="Success" Translation="成功" />
+    <Entry Original="The link will be deleted from the server." Translation="该链接将从服务器上删除。" />
+    <Entry Original="Top Ranked" Translation="评分最高" />
+    <Entry Original="Unavailable" Translation="不可用" />
+    <Entry Original="Uninstall" Translation="卸载" />
+    <Entry Original="Unknown version" Translation="未知版本" />
+    <Entry Original="Unsupported content type." Translation="不支持的内容类型。" />
+    <Entry Original="Unsupported external content type." Translation="不支持的外部内容类型。" />
+    <Entry Original="Uploading" Translation="正在上传" />
+    <Entry Original="Version" Translation="版本" />
+    <Entry Original="World" Translation="世界" />
+    <Entry Original="Your Items" Translation="你的物品" />
+  </Screen>
+  <Screen Name="RespawningScreen">
+    <Entry Original="Respawning..." Translation="重生中……" />
+    <Entry Original="Your items will stay for a short time at the place of death." Translation="你的物品会在死亡地点短暂停留。" />
+  </Screen>
+  <Screen Name="PlayersScreen">
+    <Entry Original="Add Another" Translation="再添加一个" />
+    <Entry Original="Add Player" Translation="添加玩家" />
+    <Entry Original="Delete Player" Translation="删除玩家" />
+    <Entry Original="Edit Players" Translation="编辑玩家" />
+    <Entry Original="New Player" Translation="新玩家" />
+    <Entry Original="Screen Layout" Translation="屏幕布局" />
+    <Entry Original="Setup Player" Translation="玩家设置" />
+  </Screen>
+  <Screen Name="NagScreen">
+    <Entry Original="Buy" Translation="购买" />
+    <Entry Original="Do you want to buy the game?" Translation="你想购买这个游戏吗？" />
+    <Entry Original="Please purchase Survivalcraft or start a new world to play again." Translation="请购买《生存战争》，或开始一个新世界继续游玩。" />
+    <Entry Original="Please purchase the game to continue playing." Translation="请购买游戏以继续游玩。" />
+    <Entry Original="Press Back button again to quit." Translation="再按一次返回键退出。" />
+    <Entry Original="Press Start or Esc to quit." Translation="按 Start 或 Esc 退出。" />
+    <Entry Original="Purchase" Translation="购买" />
+    <Entry Original="Survivalcraft 2" Translation="生存战争 2" />
+    <Entry Original="Thank you for trying " Translation="感谢试玩 " />
+    <Entry Original="The day has ended" Translation="这一天结束了" />
+    <Entry Original="You managed to survive a day\nin this world" Translation="你在这个世界里\n活过了一天" />
+    <Entry Original="You will be able to keep all the worlds you started." Translation="你创建过的所有世界都会保留。" />
   </Screen>
 </Translations>
