@@ -722,9 +722,9 @@ dotnet publish "Survivalcraft\SurvivalcraftAndroid.csproj" -c Release -f net8.0-
 
 # APK 签名
 $buildTools = "C:\Users\Suceru\AppData\Local\Android\Sdk\build-tools\34.0.0"
-$keystore = "publish\Suceru.jks"
+$keystore = "publish\Suceru.jks"   # 口令见 AGENTS.local.md，禁止写进本文件
 & "$buildTools\zipalign.exe" -f 4 "publish\android\com.candyrufusgames.survivalcraft2su.apk" "publish\android\aligned.apk"
-& cmd /c "$buildTools\apksigner.bat sign --ks `"$keystore`" --ks-pass pass:REDACTED --ks-key-alias suceru --key-pass pass:REDACTED --out `"publish\android\signed.apk`" `"publish\android\aligned.apk`""
+& cmd /c "$buildTools\apksigner.bat sign --ks `"$keystore`" --ks-pass pass:<见 AGENTS.local.md> --ks-key-alias suceru --key-pass pass:<见 AGENTS.local.md> --out `"publish\android\signed.apk`" `"publish\android\aligned.apk`""
 Move-Item -LiteralPath "publish\android\signed.apk" -Destination "publish\android\[SuAPI]Survivalcraft-0.1.2.1.Apk" -Force
 & cmd /c "$buildTools\apksigner.bat verify -v --print-certs `"publish\android\[SuAPI]Survivalcraft-0.1.2.1.Apk`""
 ```
