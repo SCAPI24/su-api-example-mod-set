@@ -7,7 +7,7 @@
       <Text lang="zh_CN">玩家 AI</Text>
     </LocalizedName>
     <Version>0.2.0</Version>
-    <APIVersion>2.1.0</APIVersion>
+    <APIVersion>0.1.6.0</APIVersion>
     <Asset>
       <ContentRoot>Content</ContentRoot>
     </Asset>
