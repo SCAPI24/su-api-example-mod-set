@@ -1,11 +1,20 @@
-# SuAPI Mod DNS v2
-# Fields: ModId | ShortCode | JSON array of supported SuAPI versions | ModVersion | JSON array of download URLs
-# Supported SuAPI versions include the package ModInfo APIVersion; duplicate values are ignored by the client.
-HeadlessRenderingMod | Su-HRM | ["0.1.4.0","0.1.4.1"] | 1.3.2 | ["https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/Beta0.1.4.1/%5BSuAPI%5DHeadlessRenderingMod-1.3.2.scmod","https://github.com/SCAPI24/su-api-example-mod-set/releases/download/Beta0.1.4.1/SuAPI.HeadlessRenderingMod-1.3.2.scmod"]
-HeadlessRenderingMod | Su-HRM | ["0.1.5.0","0.1.5.1"] | 1.3.3 | ["https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/Beta0.1.5.0/%5BSuAPI%5DHeadlessRenderingMod-1.3.3.scmod","https://github.com/SCAPI24/su-api-example-mod-set/releases/download/Beta0.1.5.0/SuAPI.HeadlessRenderingMod-1.3.3.scmod"]
-MemoryBankDrawMod | Su-MBD | ["0.1.5.1"] | 1.1.0 | ["https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/Beta0.1.5.1/%5BSuAPI%5DMemoryBankDrawMod-1.1.0.scmod","https://github.com/SCAPI24/su-api-example-mod-set/releases/download/Beta0.1.5.1/SuAPI.MemoryBankDrawMod-1.1.0.scmod"]
-ScMultiplayer | Su-ScMP | ["0.1.4.0","0.1.4.1"] | 1.9.4 | ["https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/Beta0.1.4.1/%5BSuAPI%5DScMultiplayer-1.9.4.scmod","https://github.com/SCAPI24/su-api-example-mod-set/releases/download/Beta0.1.4.1/SuAPI.ScMultiplayer-1.9.4.scmod"]
-ScMultiplayer | Su-ScMP | ["0.1.5.0","0.1.5.1"] | 2.1.1 | ["https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/Beta0.1.5.1/%5BSuAPI%5DScMultiplayer-2.1.1.scmod","https://github.com/SCAPI24/su-api-example-mod-set/releases/download/Beta0.1.5.1/SuAPI.ScMultiplayer-2.1.1.scmod"]
-SuAPIShadows | Su-Shdw | ["0.1.4.1"] | 1.0.0 | ["https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/Beta0.1.4.0/%5BSuAPI%5DSuAPIShadows-1.0.0.scmod","https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.4.0/SuAPI.SuAPIShadows-1.0.0.scmod"]
-SuAPIShadows | Su-Shdw | ["0.1.5.0","0.1.5.1"] | 1.0.1 | ["https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/Beta0.1.5.0/%5BSuAPI%5DSuAPIShadows-1.0.1.scmod","https://github.com/SCAPI24/su-api-example-mod-set/releases/download/Beta0.1.5.0/SuAPI.SuAPIShadows-1.0.1.scmod"]
-TranslationMod | su-zh | ["0.1.5.0","0.1.5.1"] | 1.6.4 | ["https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/Beta0.1.5.0/%5BSuAPI%5DTranslationMod-1.6.4.scmod","https://github.com/SCAPI24/su-api-example-mod-set/releases/download/Beta0.1.5.0/SuAPI.TranslationMod-1.6.4.scmod"]
+# SuAPI Mod DNS v2 —— Mod 仓库（二级索引）
+#
+# 本文件被根仓库 SuAPIModDownload/ModDnsSources.txt 的 ExampleSet 行授权合并，
+# 作为三个根仓库之外的备用索引源（合并深度固定为 1，本仓库自带的授权表一律被忽略）。
+#
+# 格式：ModId | ShortCode | JSON array of supported SuAPI versions | ModVersion | sources | names
+#
+# ⚠️ 短码必须与根仓库 SuAPIModDownload/ModDns.txt 完全一致：
+#    合并时 ValidateShortCodeMappings 遇到「同一 identifier 对应多个短码」会抛
+#    InvalidDataException("One Mod Identifier maps to multiple short codes.")，
+#    导致整个索引失效。
+#
+# ⚠️ 本文件只用完整地址写法（<平台>:"<url>"），不依赖授权表的下载基地址。
+#
+# 只保留 SuAPI 0.1.6.0 条目；0.1.4.x / 0.1.5.x 的旧条目已全部移除（旧版本不再索引）。
+# 与根仓库同 identifier+version 的条目在合并时按「根优先」去重，本文件内容仅作备用源。
+#
+TranslationMod | su-zh | ["0.1.6.0"] | 1.6.49 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.6.0/%5BSuAPI%5DChinesePak-1.6.49.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.6.0/SuAPI.ChinesePak-1.6.49.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.6.0/[SuAPI]ChinesePak-1.6.49.scmod" | *zh_CN=中文翻译;en_US=Chinese Translation
+CmdBridgeMod | Su-Cmd | ["0.1.6.0"] | 1.0.0 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.6.0/%5BSuAPI%5DCmdBridgeMod-1.0.0.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.6.0/SuAPI.CmdBridgeMod-1.0.0.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.6.0/[SuAPI]CmdBridgeMod-1.0.0.scmod" | zh_CN=命令行桥;en_US=Command Bridge
+PlayerAiMod | Su-PAI | ["0.1.6.0"] | 0.2.0 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.6.0/%5BSuAPI%5DPlayerAiMod-0.2.0.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.6.0/SuAPI.PlayerAiMod-0.2.0.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.6.0/[SuAPI]PlayerAiMod-0.2.0.scmod" | zh_CN=玩家 AI;en_US=Player AI
