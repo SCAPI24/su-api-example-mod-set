@@ -125,6 +125,13 @@ namespace TranslationMod
 
         private static readonly object _lock = new object();
         private static bool _hasCollectedChanges;
+
+        /// <summary>
+        /// 「重新记录」总开关。关闭后译文**只**从 .scmod 包内的 `Content/zh_CN.xml` 读取，
+        /// 不再采集新字符串、也不再往 `Logs/zh_CN.xml` 播种或落盘。
+        /// 对外接口（TranslationApi / Translate / Register / RegisterWidget…）与全部调用点保持不变。
+        /// </summary>
+        private const bool RecordingEnabled = false;
         /// <summary>
         /// 从 Content/zh_CN.xml 加载翻译（ContentCache key: Mod/zh_CN，.xml 自动加载为 string）
         /// </summary>
@@ -173,6 +180,7 @@ namespace TranslationMod
         /// </summary>
         public static void SeedExportFileAsync()
         {
+            if (!RecordingEnabled) return;
             string path = Storage.CombinePaths(GetLogsDir(), "zh_CN.xml");
             if (Storage.FileExists(path))
                 return;
@@ -210,6 +218,7 @@ namespace TranslationMod
         /// </summary>
         public static void SaveCollected()
         {
+            if (!RecordingEnabled) return;
             lock (_lock)
             {
                 if (!_hasCollectedChanges || _collected.Count == 0)
@@ -636,6 +645,7 @@ namespace TranslationMod
 
         private static void CollectForExport(string original, string translated = null)
         {
+            if (!RecordingEnabled) return;
             if (string.IsNullOrEmpty(original)) return;
             if (original.Length < 2 && original[0] >= '0' && original[0] <= '9') return;
 
