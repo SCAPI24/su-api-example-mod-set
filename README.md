@@ -10,14 +10,15 @@ Survivalcraft 2 SuAPI Mod 示例集合，演示 SuAPI 接口的各种用法。
 - **SuAPI 接口** — 通过 IModEventBus / IModInjector / IModParentField / IModParentMethod / IModResource 调整游戏行为，不修改原始代码
 - **IsMergeLib 合并库模式（唯一允许）** — 所有 Mod 一律 `IsMergeLib=true`，程序集扁平放 `Lib/`，双端共用同一份平台无关 DLL；**禁止** `false` 与 `Lib/X64` / `Lib/Arm64` 等平台分目录
 - **ModInfo.xml 扁平写法（唯一允许）** — `<Version>` 与 `<APIVersion>` 直接挂在 `<ModInfo>` 下；**禁止** `<ModVersion><Version>` 嵌套写法（读取端只认扁平，下载/导入会直接拒掉嵌套包）
-- **Python zipfile 打包** — .scmod 必须用 Python zipfile 打包，确保正斜杠路径
+- **打包工具不限，条目必须正斜杠** — .scmod 的 ZIP 条目名必须显式写成 `/` 分隔，禁止任何会写反斜杠的方式
 - **中文输入框** — 需要中文 IME 连打的输入框用内置 `SuAPITextInput.Attach(textBox)`，不要自己写输入接管（世界里带角色的自绘编辑器传 `holdImeContext: true`）
 
 ## 使用方法
 
 ### 编译 Mod
 
-从项目根目录运行（global.json 锁定 SDK 8.0.402）：
+从项目根目录运行。**Mod 制作用 .NET SDK 8 或 10 都可以** —— TFM 是 `net8.0`，SDK 版本只决定编译器，
+不决定输出框架（用 10 编出来仍是 .NET 8 程序集）。这与"**编译主程序必须 .NET 8 SDK**"是两件事。
 
 ```bash
 # Windows
@@ -31,21 +32,28 @@ dotnet build Mod/<ModName>/<ModName>.csproj -c Debug --framework net8.0-android
 
 ### 打包 .scmod
 
-```python
-import zipfile, os
+```powershell
+# 用 .NET ZipArchive 打包；条目名必须显式写成正斜杠
+Add-Type -AssemblyName System.IO.Compression.FileSystem
 
-MOD_NAME = "YourMod"
-MOD_DIR = r"D:\...\Mod\YourMod"
-MODS_DIR = r"D:\...\publish\win-x64\Mods"
+$MOD_NAME = "YourMod"
+$MOD_DIR  = "P:\...\Mod\$MOD_NAME"
+$MODS_DIR = "P:\...\publish\win-x64\Mods"
+$win_dll  = Join-Path $MOD_DIR "bin\Debug\net8.0\Obfuscar\$MOD_NAME.dll"
+$out      = Join-Path $MODS_DIR "[SuAPI]你的Mod名.scmod"
 
-modinfo = os.path.join(MOD_DIR, "ModInfo.xml")
-win_dll = os.path.join(MOD_DIR, "bin", "Debug", "net8.0", "Obfuscar", f"{MOD_NAME}.dll")
-
-with zipfile.ZipFile(os.path.join(MODS_DIR, f"[SuAPI]你的Mod名.scmod"), 'w', zipfile.ZIP_DEFLATED) as zf:
-    zf.write(modinfo, "ModInfo.xml")
-    zf.write(win_dll, f"Lib/{MOD_NAME}.dll")          # IsMergeLib=true
-    # zf.write(win_dll, f"Lib/X64/{MOD_NAME}.dll")     # IsMergeLib=false
-    # zf.write(android_dll, f"Lib/Arm64/{MOD_NAME}.dll") # IsMergeLib=false
+$zip = [System.IO.Compression.ZipFile]::Open($out, 'Create')
+try {
+    $pairs = @(
+        @{ Src = (Join-Path $MOD_DIR 'ModInfo.xml'); Name = 'ModInfo.xml' },
+        @{ Src = $win_dll;                           Name = "Lib/$MOD_NAME.dll" }   # IsMergeLib=true
+    )
+    foreach ($p in $pairs) {
+        $e = $zip.CreateEntry($p.Name, 'Optimal')
+        $i = [System.IO.File]::OpenRead($p.Src); $o = $e.Open()
+        try { $i.CopyTo($o) } finally { $o.Dispose(); $i.Dispose() }
+    }
+} finally { $zip.Dispose() }
 ```
 
 ### 部署
@@ -230,8 +238,9 @@ var tex = ContentCache.Get<Texture2D>("Mod/SuConsoleButton");
 ```
 
 **打包**：
-```python
-zf.write("Content/SuConsoleButton.png", "Content/SuConsoleButton.png")
+```powershell
+# 条目名同样用正斜杠
+$zip.CreateEntry('Content/SuConsoleButton.png', 'Optimal')
 ```
 
 **适用**：纹理、字体、翻译 XML、模型等需要运行时替换的资源。优点是无需重新编译 DLL 即可替换资源。
@@ -286,7 +295,7 @@ m_buttonPressedTex = LoadEmbeddedTexture("ConsoleMod.Content.SuConsoleButton_Pre
 5. **SC 坐标系 Y 向上** — 定位参数不能耦合大小参数，必须拆分为 visualRadiusPx + marginX/Y
 6. **禁止提交诊断 Log** — 临时调试日志验证后必须移除
 7. **Storage.ProcessPath** — 只识别 `app:` 和 `data:` 协议，绝对路径抛异常
-8. **.scmod ZIP 正斜杠** — 必须用 Python zipfile 打包，Compress-Archive 反斜杠路径→ModLoader 匹配失败
+8. **.scmod ZIP 正斜杠** — 打包工具不限，但条目名必须显式写成正斜杠；Compress-Archive 反斜杠路径→ModLoader 匹配失败
 9. **ModInfo.xml 根目录** — 打包时 ModInfo.xml 必须在 ZIP 根目录
 10. **PowerShell `[]` 通配符** — 操作含 `[SuAPI]` 路径时必须用 `-LiteralPath`
 

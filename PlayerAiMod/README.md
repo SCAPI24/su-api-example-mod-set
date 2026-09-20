@@ -210,7 +210,7 @@ dotnet build Mod/PlayerAiMod/PlayerAiMod.csproj -c Debug
 ```
 
 - 打包遵循仓库 `.scmod` 规范：`IsMergeLib=true`、ZIP 根目录放 `ModInfo.xml`、程序集放扁平 `Lib/`、
-  文件名加 `[SuAPI]` 前缀，用 Python `zipfile`（不能用 `Compress-Archive`，反斜杠路径会导致加载失败）。
+  文件名加 `[SuAPI]` 前缀；打包工具不限，但不能用 `Compress-Archive`（反斜杠路径会导致加载失败）。
 - 两个 scmod 各自独立放进 `Mods/`，加载器按依赖排序后各自加载。
 - `PlayerAiMod` 的包里**不要**放 `CmdBridgeMod.dll`（依赖声明已经表达了这个关系）。
 

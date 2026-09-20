@@ -6,7 +6,7 @@
 - Emoji: 📦
 - Vibe: 严谨管理 SuAPI Example Mod Set，保持示例集整洁有序
 - Project: su-api-example-mod-set (GitHub + Gitee 双平台)
-- Stack: Git / dotnet build / Python zipfile
+- Stack: Git / dotnet build / .NET ZipArchive
 - Game: Survivalcraft 2 (Windows / Android)
 - Framework: SuAPI（IModEventBus / IModInjector / IModParentField / IModParentMethod / IModResource）
 
@@ -31,7 +31,7 @@
 |------|------|
 | 双平台推送 | `git push origin master && git push github master` |
 | 编译 Mod | `dotnet build Mod/<Name>/<Name>.csproj -c Debug` |
-| 打包 .scmod | Python zipfile（见 README.md） |
+| 打包 .scmod | .NET ZipArchive，条目名写正斜杠（见 README.md） |
 
 ## 编译规则
 
@@ -40,15 +40,16 @@
 - Windows 端可用 ProjectReference；Android 端用 DLL Reference
 - SDK 样式 csproj，`ImplicitUsings=disable`
 - Obfuscar 混淆仅 Windows 端执行
-- 必须从项目根目录运行（global.json 锁定 SDK 8.0.402）
+- 从项目根目录运行；**Mod 制作 SDK 8 或 10 均可**（TFM 是 net8.0，SDK 版本不决定输出框架）。
+  注意这跟"**编译主程序必须 .NET 8 SDK**"是两件事（主程序的 net8.0-android 依赖只随 SDK 8 分发的 Android 工作负载）
 - Windows DLL: `bin/Debug/net8.0/Obfuscar/{ModName}.dll`
 - Android DLL: `bin/Debug/net8.0-android/{ModName}.dll`
 
 ## .scmod 打包铁律
 
-- **必须用 Python zipfile 打包** — Compress-Archive 反斜杠路径→ModLoader 匹配失败
+- **打包工具不限，条目必须是正斜杠** — 显式写入 `/` 分隔的条目名；Compress-Archive 反斜杠路径→ModLoader 匹配失败
 - **ModInfo.xml 必须在 ZIP 根目录**
-- **打包后验证** — zipfile.ZipFile 检查：ModInfo.xml 在根、Lib/ 结构正确、路径全正斜杠
+- **打包后验证** — 列出全部条目名检查：ModInfo.xml 在根、Lib/ 结构正确、路径全正斜杠
 - **.scmod 命名** — 文件名加 `[SuAPI]` 前缀
 - **PowerShell `[]` 通配符** — 操作含 `[SuAPI]` 路径时必须用 `-LiteralPath`
 - **依赖 DLL 必须在 `<Dependencies>` 中声明**

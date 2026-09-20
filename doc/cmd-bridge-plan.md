@@ -836,7 +836,7 @@ Mod/CmdBridgeClient/                       # 命令行驱动（sccmd.exe）
 └── README.md
 
 Mod/doc/cmd-bridge-plan.md                 # 本文档
-Mod/Packages/pack_cmd_bridge.py            # Python zipfile 打包（仓库铁律）
+Mod/Packages/pack_cmd_bridge.py            # .scmod 打包脚本（条目名用正斜杠）
 Mod/Packages/[SuAPI]CmdBridgeMod-1.0.0.scmod
 ```
 
@@ -846,10 +846,10 @@ Mod/Packages/[SuAPI]CmdBridgeMod-1.0.0.scmod
 
 ## 9. 打包与部署（按仓库铁律）
 
-- **必须用 Python `zipfile`**（`Compress-Archive` 会写反斜杠路径 → ModLoader 匹配失败）。
+- **打包工具不限，但条目名必须是正斜杠**（`Compress-Archive` 会写反斜杠路径 → ModLoader 匹配失败）。
 - 结构：`ModInfo.xml` 在 ZIP 根 + `Lib/CmdBridgeMod.dll`（**扁平 `Lib/`，禁止 `Lib/X64/`、`Lib/Arm64/`**）。
 - DLL 来源：Obfuscar 输出的 `bin/Debug/net8.0/Obfuscar/CmdBridgeMod.dll`。
-- 打包后校验：`namelist()` 检查根结构、`testzip()` 校验完整性。
+- 打包后校验：列出全部条目名检查根结构、逐个解压校验完整性。
 - 部署：`publish/win-x64/Mods/[SuAPI]CmdBridgeMod-1.0.0.scmod`。
 - 客户端：`dotnet build` 直接用，或 `dotnet publish -c Release -r win-x64` 出单文件。
 - 执行规范：构建/打包/部署统一走 `py -3 <脚本>`；打包脚本 `Mod/Packages/pack_cmd_bridge.py`。
@@ -870,7 +870,7 @@ Mod/Packages/[SuAPI]CmdBridgeMod-1.0.0.scmod
 **每阶段通用验证项**：
 
 1. `taskkill /F /IM Survivalcraft.exe` → touch 源文件 → 构建（`SOUL.md` 铁律 24）。
-2. 打包 → `namelist()` + `testzip()` 校验。
+2. 打包 → 条目名 + 完整性校验。
 3. 部署 → 启动游戏 → `Logs/Game.log` 无 `[CmdBridge]` 诊断残留、无异常。
 4. **配置矩阵**：`UIScale` 0.7/0.85/1.0、窗口移动/缩放、`UpsideDownLayout` 开、系统 DPI 100%/125%/150%（OS 通道相关）。
 5. **遮挡验证**：弹出模态对话框后，底层按钮 `hittable=false` 且 `blockedBy` 正确。
@@ -972,7 +972,7 @@ Mod/Packages/[SuAPI]CmdBridgeMod-1.0.0.scmod
 |---|---|
 | `Mod/CmdBridgeMod/` | scmod 服务端：只读观察 + 白名单输入注入 |
 | `Mod/CmdBridgeClient/` | `sccmd.exe` 命令行客户端（纯 BCL，零游戏引用） |
-| `Mod/Packages/pack_cmd_bridge.py` | Python zipfile 打包 + 校验 + 部署 |
+| `Mod/Packages/pack_cmd_bridge.py` | .scmod 打包 + 校验 + 部署 |
 | `Mod/Packages/check_cmd_bridge_readonly.py` | 只读/白名单审计（0 黑名单命中） |
 | `Mod/Packages/[SuAPI]CmdBridgeMod-1.0.0.scmod` | 33,933 字节，`ModInfo.xml` + 扁平 `Lib/CmdBridgeMod.dll` |
 | 部署 | `publish/Windows/Mods/[SuAPI]CmdBridgeMod-1.0.0.scmod` |

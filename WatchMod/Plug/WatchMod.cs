@@ -10,7 +10,7 @@ namespace WatchMod
     public class WatchMod : IMod
     {
         public string Name => "手表";
-        public string Version => "1.0.0";
+        public string Version => "1.0.1";
         public IEnumerable<string> Dependencies => Array.Empty<string>();
         public bool IsEnabled { get; set; } = true;
         public bool IsMergeLib => true;

@@ -165,7 +165,7 @@ Hotbar
 | Tool | Purpose |
 |---|---|
 | `Mod/Packages/check_cmd_bridge_readonly.py` | static audit: no state writes, every write goes through `InputWhitelist` |
-| `Mod/Packages/pack_cmd_bridge.py` | Python-zipfile `.scmod` packaging + structure validation + deploy |
+| `Mod/Packages/pack_cmd_bridge.py` | `.scmod` packaging + structure validation + deploy |
 | `Mod/Packages/smoke_test_cmd_bridge.py` | end-to-end regression against a running game (protocol-level, no client needed) |
 
 ## 中文速览

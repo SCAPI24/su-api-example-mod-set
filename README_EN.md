@@ -9,7 +9,7 @@ An example collection of Survivalcraft 2 SuAPI mods. The projects demonstrate ho
 - **.NET 8** - All mods use SDK-style projects targeting .NET 8.
 - **SuAPI interfaces** - Uses `IModEventBus`, `IModInjector`, `IModParentField`, `IModParentMethod`, and `IModResource`.
 - **Merge-library packages** - Normal mods use `IsMergeLib=true` and place assemblies directly under `Lib/`.
-- **Python ZIP packaging** - `.scmod` packages are created with Python `zipfile` and use forward-slash paths.
+- **ZIP packaging** - `.scmod` packages must use forward-slash archive paths; the tool is up to you (`.NET ZipArchive`, `zipfile`, 7-Zip, ...).
 
 ## Build And Package
 
@@ -21,19 +21,25 @@ dotnet build Mod/<ModName>/<ModName>.csproj -c Debug --framework net8.0
 
 For a merge-library package, the archive must contain `ModInfo.xml` at the root and the mod assembly under `Lib/`:
 
-```python
-import os
-import zipfile
+```powershell
+# .NET ZipArchive; entry names must be written with forward slashes
+Add-Type -AssemblyName System.IO.Compression.FileSystem
 
-mod_dir = r"D:\path\to\Mod\YourMod"
-output = r"D:\path\to\Mods\[SuAPI]YourMod.scmod"
+$modDir = "P:\path\to\Mod\YourMod"
+$output = "P:\path\to\Mods\[SuAPI]YourMod.scmod"
 
-with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as package:
-    package.write(os.path.join(mod_dir, "ModInfo.xml"), "ModInfo.xml")
-    package.write(
-        os.path.join(mod_dir, "bin", "Debug", "net8.0", "YourMod.dll"),
-        "Lib/YourMod.dll",
+$zip = [System.IO.Compression.ZipFile]::Open($output, 'Create')
+try {
+    $pairs = @(
+        @{ Src = (Join-Path $modDir 'ModInfo.xml'); Name = 'ModInfo.xml' },
+        @{ Src = (Join-Path $modDir 'bin\Debug\net8.0\YourMod.dll'); Name = 'Lib/YourMod.dll' }
     )
+    foreach ($p in $pairs) {
+        $e = $zip.CreateEntry($p.Name, 'Optimal')
+        $i = [System.IO.File]::OpenRead($p.Src); $o = $e.Open()
+        try { $i.CopyTo($o) } finally { $o.Dispose(); $i.Dispose() }
+    }
+} finally { $zip.Dispose() }
 ```
 
 Do not include `Engine.dll`, `Survivalcraft.dll`, `GameEntitySystem.dll`, or platform-specific `Lib/X64` and `Lib/Arm64` directories in a normal merge-library package. Windows and Android use the same platform-independent mod DLL.
@@ -174,8 +180,9 @@ Texture2D texture = ContentCache.Get<Texture2D>("Mod/SuConsoleButton");
 
 Package the resource with the same archive path:
 
-```python
-package.write("Content/SuConsoleButton.png", "Content/SuConsoleButton.png")
+```powershell
+# entry names use forward slashes as well
+$zip.CreateEntry('Content/SuConsoleButton.png', 'Optimal')
 ```
 
 This method is suitable for textures, fonts, translation XML files, and models that users may replace without rebuilding the DLL.
@@ -210,7 +217,7 @@ Embedded resources are appropriate for small assets that should always remain co
 5. **Coordinate system** - Survivalcraft screen Y coordinates increase upward. Keep visual radius, scale, and margins as separate layout parameters.
 6. **Diagnostic logging** - Remove temporary diagnostic logs after verification and before committing.
 7. **Storage paths** - `Storage.ProcessPath` accepts supported virtual path schemes such as `app:` and `data:` rather than arbitrary absolute paths.
-8. **ZIP paths** - Create `.scmod` packages with Python `zipfile` and forward-slash archive paths.
+8. **ZIP paths** - Entry names must be written with forward slashes; `Compress-Archive` emits backslash paths and breaks `ModLoader` matching.
 9. **Root metadata** - `ModInfo.xml` must be at the archive root.
 10. **Merge libraries** - Keep assemblies in flat `Lib/` and use `IsMergeLib=true`; do not create platform subdirectories.
 

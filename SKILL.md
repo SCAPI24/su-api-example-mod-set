@@ -243,22 +243,30 @@ MyMod.scmod
 
 ### 打包脚本
 
-```python
-import zipfile, os
+```powershell
+# .NET ZipArchive；条目名必须显式写成正斜杠
+Add-Type -AssemblyName System.IO.Compression.FileSystem
 
-MOD_NAME = "YourMod"
-MOD_DIR = r"<项目根目录>\Mod\YourMod"
-MODS_DIR = r"<项目根目录>\publish\win-x64\Mods"
+$MOD_NAME = "YourMod"
+$MOD_DIR  = "<项目根目录>\Mod\$MOD_NAME"
+$MODS_DIR = "<项目根目录>\publish\win-x64\Mods"
+$out      = Join-Path $MODS_DIR "[SuAPI]你的Mod名.scmod"
 
-modinfo = os.path.join(MOD_DIR, "ModInfo.xml")
-win_dll = os.path.join(MOD_DIR, "bin", "Debug", "net8.0", "Obfuscar", f"{MOD_NAME}.dll")
-
-with zipfile.ZipFile(os.path.join(MODS_DIR, f"[SuAPI]你的Mod名.scmod"), 'w', zipfile.ZIP_DEFLATED) as zf:
-    zf.write(modinfo, "ModInfo.xml")
-    zf.write(win_dll, f"Lib/{MOD_NAME}.dll")          # IsMergeLib=true
+$zip = [System.IO.Compression.ZipFile]::Open($out, 'Create')
+try {
+    $pairs = @(
+        @{ Src = (Join-Path $MOD_DIR 'ModInfo.xml'); Name = 'ModInfo.xml' },
+        @{ Src = (Join-Path $MOD_DIR "bin\Debug\net8.0\Obfuscar\$MOD_NAME.dll"); Name = "Lib/$MOD_NAME.dll" }  # IsMergeLib=true
+    )
+    foreach ($p in $pairs) {
+        $e = $zip.CreateEntry($p.Name, 'Optimal')
+        $i = [System.IO.File]::OpenRead($p.Src); $o = $e.Open()
+        try { $i.CopyTo($o) } finally { $o.Dispose(); $i.Dispose() }
+    }
+} finally { $zip.Dispose() }
 ```
 
-⚠ 必须用 Python zipfile，Compress-Archive 反斜杠路径→ModLoader 匹配失败。
+⚠ 打包工具不限，但条目名必须是正斜杠；Compress-Archive 反斜杠路径→ModLoader 匹配失败。
 
 ## 项目配置（.csproj）
 
