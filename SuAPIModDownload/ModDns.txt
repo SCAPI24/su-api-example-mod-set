@@ -1,20 +1,22 @@
-# SuAPI Mod DNS v2 —— Mod 仓库（二级索引）
+# SuAPI Mod DNS —— Mod 仓库（Mod 条目索引来源）
 #
-# 本文件被根仓库 SuAPIModDownload/ModDnsSources.txt 的 ExampleSet 行授权合并，
-# 作为三个根仓库之外的备用索引源（合并深度固定为 1，本仓库自带的授权表一律被忽略）。
+# 本文件由根仓库 SuAPIModDownload/ModDnsSources.txt 的 ExampleSet 行授权合并。
+# 根仓库已不再提供 ModDns.txt，所以 Mod 条目全部来自本文件
+# （合并深度固定为 1，本仓库自带的授权表一律被忽略）。
 #
 # 格式：ModId | ShortCode | JSON array of supported SuAPI versions | ModVersion | sources | names
-#
-# ⚠️ 短码必须与根仓库 SuAPIModDownload/ModDns.txt 完全一致：
-#    合并时 ValidateShortCodeMappings 遇到「同一 identifier 对应多个短码」会抛
-#    InvalidDataException("One Mod Identifier maps to multiple short codes.")，
-#    导致整个索引失效。
 #
 # ⚠️ 本文件只用完整地址写法（<平台>:"<url>"），不依赖授权表的下载基地址。
 #
 # 只保留 SuAPI 0.1.6.0 条目；0.1.4.x / 0.1.5.x 的旧条目已全部移除（旧版本不再索引）。
-# 与根仓库同 identifier+version 的条目在合并时按「根优先」去重，本文件内容仅作备用源。
+#
+# 📌 短码在本文件内定义，是这套索引的唯一来源（根仓库不再提供 ModDns.txt）。
+#    短码全局唯一：同一个短码不能给两个 identifier 用。
 #
 TranslationMod | su-zh | ["0.1.6.0"] | 1.6.49 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.6.0/%5BSuAPI%5DChinesePak-1.6.49.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.6.0/SuAPI.ChinesePak-1.6.49.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.6.0/[SuAPI]ChinesePak-1.6.49.scmod" | *zh_CN=中文翻译;en_US=Chinese Translation
 CmdBridgeMod | Su-Cmd | ["0.1.6.0"] | 1.0.0 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.6.0/%5BSuAPI%5DCmdBridgeMod-1.0.0.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.6.0/SuAPI.CmdBridgeMod-1.0.0.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.6.0/[SuAPI]CmdBridgeMod-1.0.0.scmod" | zh_CN=命令行桥;en_US=Command Bridge
 PlayerAiMod | Su-PAI | ["0.1.6.0"] | 0.2.0 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.6.0/%5BSuAPI%5DPlayerAiMod-0.2.0.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.6.0/SuAPI.PlayerAiMod-0.2.0.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.6.0/[SuAPI]PlayerAiMod-0.2.0.scmod" | zh_CN=玩家 AI;en_US=Player AI
+WatchMod | su-watch | ["0.1.6.0"] | 1.0.1 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.6.0/%5BSuAPI%5DWatchMod-1.0.1.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.6.0/SuAPI.WatchMod-1.0.1.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.6.0/[SuAPI]WatchMod-1.0.1.scmod" | zh_CN=手表;en_US=Watch
+# ScMultiplayer 仍发布在 Beta0.1.5.1（包内 APIVersion 声明 0.1.5.0；该字段全仓没有代码读取，
+# 真正生效的门槛是本行第 3 段），这里按 0.1.6.0 开放下载。依赖 Comms 已并入 Lib/，无需单独条目。
+ScMultiplayer | Su-ScMP | ["0.1.6.0"] | 2.1.1 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/Beta0.1.5.1/%5BSuAPI%5DScMultiplayer-2.1.1.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/Beta0.1.5.1/SuAPI.ScMultiplayer-2.1.1.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/Beta0.1.5.1/[SuAPI]ScMultiplayer-2.1.1.scmod" | zh_CN=联机模组;en_US=ScMultiplayer
