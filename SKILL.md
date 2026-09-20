@@ -347,7 +347,7 @@ using TemplatesDatabase;
 8. SubsystemGameWidgets 只能被一个 Mod 替换（ConsoleMod 已占）
 9. Component.Load 跨assembly 用 `protected override`
 10. 禁止自主 git push
-11. 禁止 CRLF 改 LF — .gitattributes `* text eol=crlf`
+11. 禁止 CRLF 改 LF — 仓库根 `.gitattributes` 用 `* -text`（**不要**写成 `* text eol=crlf`：那会把仓库里的 blob 规范化成 LF，与本策略相反）
 
 ## ScreensManager 注册名称对照表
 
