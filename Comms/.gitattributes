@@ -1,7 +1,11 @@
 ###############################################################################
-# Set default behavior to automatically normalize line endings.
+# Line ending policy: CRLF in repository AND working directory.
+# `* -text` disables all end-of-line conversion so blobs keep working-tree bytes
+# as-is. Do NOT use `* text=auto` / `* text eol=crlf` here: those normalise blobs
+# to LF in the repository and would also mangle binary files that are not listed
+# as `binary` below.
 ###############################################################################
-* text=auto
+* -text
 
 ###############################################################################
 # Set default behavior for command prompt diff.

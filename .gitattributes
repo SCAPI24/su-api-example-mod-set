@@ -1,5 +1,13 @@
-# Line ending policy: CRLF in working directory, LF in repository
-* text eol=crlf
+# Line ending policy: CRLF in repository AND working directory
+#
+# `-text` disables all end-of-line conversion → blobs keep working-tree bytes as-is
+# (this repo standardises on CRLF), and the behaviour no longer depends on each
+# machine's core.autocrlf, which cannot be distributed with the repository.
+#
+# ⚠️ Do NOT use `* text eol=crlf` here: that normalises blobs to LF in the repository,
+#    which is the opposite of this policy.
+
+* -text
 
 # Binary files - no normalization
 *.dll binary
