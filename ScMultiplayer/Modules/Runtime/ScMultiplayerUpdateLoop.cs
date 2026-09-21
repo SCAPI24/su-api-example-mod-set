@@ -43,9 +43,9 @@ namespace ScMultiplayer
         }
 
         // Source: Mod/ScMultiplayer/Networking/RemoteServerDirectory.cs:RemoteServerDirectory.SetDiscoveryEnabled
-        public void SetServerDiscoveryEnabled(bool enabled)
+        public void SetServerDiscoveryEnabled(bool enabled, string pauseReason = null)
         {
-            m_remoteServerDirectory?.SetDiscoveryEnabled(enabled);
+            m_remoteServerDirectory?.SetDiscoveryEnabled(enabled, pauseReason);
         }
 
         public bool ShouldSuppressClientInput =>
@@ -1163,6 +1163,12 @@ namespace ScMultiplayer
                 DetachHostSleepWakeHandlers();
                 DetachHostPickableEvents();
                 m_frameProject = project;
+                // Heal a world whose saved NextPlayerIndex was left at or below an existing
+                // player index by an older build: the engine would otherwise hand that index
+                // out twice and the duplicate entity would bind to a PlayerData that already
+                // owns a ComponentPlayer.
+                RepairEnginePlayerIndexCounter(
+                    project.FindSubsystem<SubsystemPlayers>(throwOnError: false));
                 m_hasObservedClientHealth = false;
                 m_nextClientSleepRequestSequence = 0;
                 m_pendingClientSleepRequestSequence = 0;

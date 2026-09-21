@@ -395,7 +395,9 @@ namespace ScMultiplayer
         public override void Leave()
         {
             // Source: Mod/ScMultiplayer/Networking/RemoteServerDirectory.cs:RemoteServerDirectory.SetDiscoveryEnabled
-            ScMultiplayer.currentInstance?.SetServerDiscoveryEnabled(false);
+            // Entering a world hides the world list, so LAN discovery is paused here even when no
+            // room exists; the reason is logged to keep this distinct from a real room.
+            ScMultiplayer.currentInstance?.SetServerDiscoveryEnabled(false, "left the world list");
             Interlocked.Increment(ref m_enterGeneration);
             m_worldScanPending = false;
             HideScanningWorldsDialog();

@@ -209,7 +209,11 @@ namespace ScMultiplayer
 				PlayerClass = (record?.PlayerClass ?? PlayerClass.Male),
 				Level = (record?.Level ?? 1f),
 				InputDevice = WidgetInputDevice.None,
-				SpawnPosition = (record?.SpawnPosition != Vector3.Zero
+				// record?.SpawnPosition != Vector3.Zero lifts to a nullable comparison, and
+				// null != Vector3.Zero is TRUE: with no record yet (the first frames after a
+				// client joins) that picked record.SpawnPosition and threw NullReferenceException
+				// until the record appeared. Check the record itself instead.
+				SpawnPosition = ((record != null && record.SpawnPosition != Vector3.Zero)
 					? record.SpawnPosition
 					: (players.GlobalSpawnPosition != Vector3.Zero
 						? players.GlobalSpawnPosition
@@ -227,6 +231,7 @@ namespace ScMultiplayer
 			}
 			ModManager.ModParentField.ModifyParentField(players, "m_nextPlayerIndex", freePlayerIndex, typeof(SubsystemPlayers));
 			players.AddPlayerData(playerData);
+			RepairEnginePlayerIndexCounter(players);
 			ValuesDictionary overrides = new ValuesDictionary
 			{
 				{

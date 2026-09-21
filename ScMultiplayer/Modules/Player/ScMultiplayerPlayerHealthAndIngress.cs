@@ -855,6 +855,33 @@ namespace ScMultiplayer
             return playerIndex;
         }
 
+        // Source: Survivalcraft/Game/SubsystemPlayers.cs:SubsystemPlayers.Save
+        // The engine hands PlayerIndex out from m_nextPlayerIndex (AddPlayerData) and persists
+        // that counter into Project.xml (SubsystemPlayers.Save). Network avatars and the
+        // client-side local player replacement reuse a specific index by temporarily lowering
+        // the counter; if it is left at or below an existing player index, the next entity gets
+        // a duplicate index and binds to a PlayerData that already owns a ComponentPlayer
+        // (PlayerData.OnEntityAdded throws "More than 1 player with PlayerIndex N added to
+        // world."). Repair an inconsistent counter, upward only, so healthy worlds are never
+        // touched and no world loses its NextPlayerIndex.
+        private static void RepairEnginePlayerIndexCounter(SubsystemPlayers players)
+        {
+            if (players == null) return;
+            int maxPlayerIndex = -1;
+            foreach (PlayerData playerData in players.PlayersData)
+            {
+                if (playerData != null && playerData.PlayerIndex > maxPlayerIndex)
+                    maxPlayerIndex = playerData.PlayerIndex;
+            }
+            int nextPlayerIndex = ModManager.ModParentField.GetParentField<int>(
+                players, "m_nextPlayerIndex", typeof(SubsystemPlayers));
+            if (nextPlayerIndex <= maxPlayerIndex)
+            {
+                ModManager.ModParentField.ModifyParentField(
+                    players, "m_nextPlayerIndex", maxPlayerIndex + 1, typeof(SubsystemPlayers));
+            }
+        }
+
         // Source: Survivalcraft/Game/DialogsManager.cs:DialogsManager.Dialogs
         private void UpdateHostJoinRequests()
         {

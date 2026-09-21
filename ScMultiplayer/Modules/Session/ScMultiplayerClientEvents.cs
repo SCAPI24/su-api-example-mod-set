@@ -419,8 +419,7 @@ namespace ScMultiplayer
 			}
 			if (!string.IsNullOrEmpty(downloadedWorldDirectory))
 			{
-				WorldsManager.DeleteWorld(downloadedWorldDirectory);
-				WorldsManager.UpdateWorldsList();
+				DeleteDownloadedWorldAndUnregister(downloadedWorldDirectory);
 				m_downloadedWorldDirectory = null;
 			}
 			m_networkPlayerData.Clear();
@@ -475,6 +474,57 @@ namespace ScMultiplayer
 		catch (Exception ex)
 		{
 			Log.Error("[ScMP] Failed to leave game: " + ex.Message);
+		}
+		// Source: Survivalcraft/Game/WorldsManager.cs:WorldsManager.DeleteWorld
+		// Leaving the map must not keep the local copy of a multiplayer world.
+		QueueDownloadedWorldDeletion(m_downloadedWorldDirectory);
+	}
+
+	// A downloaded multiplayer world is a throwaway local copy: it must not survive the session
+	// it was downloaded for, on any leave path (local leave, host disconnect, return to list).
+	// Deletion is deferred until the engine has disposed the project so it cannot race with the
+	// engine's own save/close of that world directory.
+	private void QueueDownloadedWorldDeletion(string directoryName, int framesWaited = 0)
+	{
+		if (string.IsNullOrEmpty(directoryName)) return;
+		QueueEndOfFrameAction(delegate
+		{
+			if (framesWaited >= 900 || m_activeJoinRequest != null || client?.IsConnected == true)
+			{
+				// A new session took over; leave the stale copy to the world-list cleanup.
+				return;
+			}
+			if (GameManager.Project != null)
+			{
+				QueueDownloadedWorldDeletion(directoryName, framesWaited + 1);
+				return;
+			}
+			DeleteDownloadedWorldAndUnregister(directoryName);
+			if (string.Equals(m_downloadedWorldDirectory, directoryName,
+				StringComparison.OrdinalIgnoreCase))
+			{
+				m_downloadedWorldDirectory = null;
+			}
+		});
+	}
+
+	private static void DeleteDownloadedWorldAndUnregister(string directoryName)
+	{
+		if (string.IsNullOrEmpty(directoryName)) return;
+		try
+		{
+			WorldsManager.DeleteWorld(directoryName);
+			WorldsManager.UpdateWorldsList();
+		}
+		catch (Exception ex)
+		{
+			Log.Error("[ScMP] Failed to delete downloaded world " + directoryName + ": " + ex.Message);
+			return;
+		}
+		HashSet<string> directories = ReadDownloadedWorldRegistry();
+		if (directories.Remove(directoryName))
+		{
+			WriteDownloadedWorldRegistry(directories);
 		}
 	}
 
@@ -2853,7 +2903,7 @@ namespace ScMultiplayer
 		Vector3 spawnPosition = playerData.SpawnPosition;
 		if (spawnPosition == Vector3.Zero && m_clientRecordKeys.TryGetValue(playerClientId,
 			out string anchorRecordKey) && m_playerRecords.TryGetValue(anchorRecordKey,
-			out NetworkPlayerRecord record) && record?.SpawnPosition != Vector3.Zero)
+			out NetworkPlayerRecord record) && record.SpawnPosition != Vector3.Zero)
 		{
 			spawnPosition = record.SpawnPosition;
 		}

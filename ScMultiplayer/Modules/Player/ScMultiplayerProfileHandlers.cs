@@ -1345,9 +1345,18 @@ namespace ScMultiplayer
                             ? players.GlobalSpawnPosition
                             : record.Position)
                 };
+                // Source: Survivalcraft/Game/SubsystemPlayers.cs:SubsystemPlayers.AddPlayerData
+                // A downloaded world may arrive with a counter that already handed this index out
+                // twice (older builds wrote m_nextPlayerIndex), so reusing a duplicated index
+                // would make the replacement entity bind to a PlayerData that already owns a
+                // ComponentPlayer. Repair the counter and take a fresh slot in that case only.
+                RepairEnginePlayerIndexCounter(players);
+                if (players.PlayersData.Any(player => player.PlayerIndex == playerIndex))
+                    playerIndex = FindAvailableNetworkPlayerIndex(players);
                 ModManager.ModParentField.ModifyParentField(
                     players, "m_nextPlayerIndex", playerIndex, typeof(SubsystemPlayers));
                 players.AddPlayerData(replacement);
+                RepairEnginePlayerIndexCounter(players);
                 // Source: Survivalcraft/Game/PlayerData.cs:PlayerData.SpawnPlayer
                 // Spawn an immediate client-only placeholder without executing InitialNoIntro.
                 InvokeClientPlaceholderPlayerSpawn(replacement, record.Position);

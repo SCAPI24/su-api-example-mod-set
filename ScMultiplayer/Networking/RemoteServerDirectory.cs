@@ -108,7 +108,7 @@ namespace ScMultiplayer
 
         // Source: Mod/Comms/Comms.Drt/Func/Explorer/Explorer.cs:Explorer.StartDiscovery
         // Source: Mod/Comms/Comms.Drt/Func/Explorer/Explorer.cs:Explorer.StopDiscovery
-        public void SetDiscoveryEnabled(bool enabled)
+        public void SetDiscoveryEnabled(bool enabled, string pauseReason = null)
         {
             if (m_discoveryEnabled == enabled) return;
             m_discoveryEnabled = enabled;
@@ -129,7 +129,7 @@ namespace ScMultiplayer
             m_rawRefreshInProgress = false;
             m_pendingRemoteHosts = null;
             m_explorer.StopDiscovery();
-            Log.Information("[ScMP] Explorer discovery paused while a room is active");
+            Log.Information("[ScMP] Explorer discovery paused (" + (pauseReason ?? "room is active") + ")");
         }
 
         public string GetHostName(IPEndPoint endpoint)
