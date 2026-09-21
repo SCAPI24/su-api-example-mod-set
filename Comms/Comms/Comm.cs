@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -40,6 +40,11 @@ public class Comm
         public uint? NextReliableReceiveSequenceIndex;
 
         public uint NextReliableSendSequenceIndex;
+
+        // Source: Comms/Comms/Comm.cs:Comm.ProcessConnections
+        // Non-zero while a reliable sequenced stream is parked behind a gap that has not been
+        // filled yet. A gap that never fills would otherwise block that stream forever.
+        public double ReliableSequencedStallStartTime;
 
         public double LastInitAckSendTime = double.MinValue;
 
@@ -85,6 +90,7 @@ public class Comm
             ReceivedPacketIdsCurrent.Clear();
             NextUnreliableReceiveSequenceIndex = 0u;
             NextReliableReceiveSequenceIndex = 0u;
+            ReliableSequencedStallStartTime = 0.0;
             LastInitAckSendTime = double.MinValue;
         }
     }
@@ -430,11 +436,15 @@ public class Comm
         lock (Lock)
         {
             CheckNotDisposedAndStarted();
+            // Source: Comms/Comms/Comm.cs:Comm.GetUnackedPacketsCount
+            // A reliable stream has no unacknowledged packets of its own; what the callers call
+            // "in flight" is then the bytes queued inside the transport, so report that too.
+            int transportPending = Transmitter.GetPendingSendCount(address);
             if (!Connections.TryGetValue(address, out var value))
             {
-                return 0;
+                return transportPending;
             }
-            return value.UnackedPackets.Count;
+            return value.UnackedPackets.Count + transportPending;
         }
     }
 
@@ -569,7 +579,10 @@ public class Comm
                 value.InitAckConfirmed = true;
             }
             bool flag = packetHeader.PacketType == PacketType.ReliableData;
-            if (flag)
+            // Source: Comms/Comms/ITransmitter.cs:ITransmitter.IsReliableStream
+            // A reliable stream never loses a packet, so answering with ACKs would only add
+            // traffic on the datagram path.
+            if (flag && !Transmitter.IsReliableStream)
             {
                 value.PacketIdsToAck.Add(packetHeader.PacketId);
             }
@@ -685,6 +698,10 @@ public class Comm
         {
             if (isReliable)
             {
+                // Source: Comms/Comms/Comm.cs:Comm.RecoverStalledReliableSequence
+                // A gap that never fills would park this stream forever, so skip it once it
+                // outlives the stall timeout and resume from the oldest buffered message.
+                RecoverStalledReliableSequence(connection, address);
                 if (!connection.NextReliableReceiveSequenceIndex.HasValue || messagePartHeader.SequenceIndex.Value == connection.NextReliableReceiveSequenceIndex)
                 {
                     connection.NextReliableReceiveSequenceIndex = messagePartHeader.SequenceIndex.Value + 1;
@@ -696,9 +713,17 @@ public class Comm
                         connection.NextReliableReceiveSequenceIndex++;
                         ReceivedPacketsToDispatch.Value.Pending.Enqueue(new Packet(address, value));
                     }
+                    if (connection.SequencedBytes.Count == 0)
+                    {
+                        connection.ReliableSequencedStallStartTime = 0.0;
+                    }
                 }
                 else
                 {
+                    if (connection.ReliableSequencedStallStartTime <= 0.0)
+                    {
+                        connection.ReliableSequencedStallStartTime = GetTime();
+                    }
                     connection.SequencedBytes.Add(messagePartHeader.SequenceIndex.Value, bytes);
                 }
             }
@@ -712,6 +737,64 @@ public class Comm
         {
             ReceivedPacketsToDispatch.Value.Pending.Enqueue(new Packet(address, bytes));
         }
+    }
+
+    // Source: Comms/Comms/Comm.cs:Comm.ProcessReceivedMessage
+    // A reliable sequenced stream parks behind a missing index. If the gap never fills, the stream
+    // would stay blocked forever and only an application-level watchdog reconnect could clear it.
+    // Skip the gap once it outlives ReliableSequencedStallTimeout and resume from the oldest
+    // buffered message. Runs on the receive thread, so the recovered packets are drained by the
+    // same PacketReceived dispatch that is already in progress.
+    private void RecoverStalledReliableSequence(Connection connection, IPEndPoint address)
+    {
+        if (connection.SequencedBytes.Count == 0 ||
+            connection.ReliableSequencedStallStartTime <= 0.0)
+        {
+            return;
+        }
+        double time = GetTime();
+        if (time - connection.ReliableSequencedStallStartTime <
+            (double)Settings.ReliableSequencedStallTimeout)
+        {
+            return;
+        }
+        uint resumeIndex = 0u;
+        bool hasResumeIndex = false;
+        foreach (KeyValuePair<uint, byte[]> buffered in connection.SequencedBytes)
+        {
+            if (!hasResumeIndex || CompareSequenceNumbers(buffered.Key, resumeIndex) < 0)
+            {
+                resumeIndex = buffered.Key;
+                hasResumeIndex = true;
+            }
+        }
+        if (!hasResumeIndex)
+        {
+            connection.ReliableSequencedStallStartTime = 0.0;
+            return;
+        }
+        int skipped = 0;
+        if (connection.NextReliableReceiveSequenceIndex.HasValue &&
+            CompareSequenceNumbers(resumeIndex, connection.NextReliableReceiveSequenceIndex.Value) > 0)
+        {
+            skipped = (int)Math.Min(
+                (long)(resumeIndex - connection.NextReliableReceiveSequenceIndex.Value),
+                int.MaxValue);
+        }
+        connection.NextReliableReceiveSequenceIndex = resumeIndex;
+        byte[] bufferedBytes;
+        while (connection.SequencedBytes.TryGetValue(
+            connection.NextReliableReceiveSequenceIndex.Value, out bufferedBytes))
+        {
+            connection.SequencedBytes.Remove(connection.NextReliableReceiveSequenceIndex.Value);
+            connection.NextReliableReceiveSequenceIndex =
+                connection.NextReliableReceiveSequenceIndex.Value + 1u;
+            ReceivedPacketsToDispatch.Value.Pending.Enqueue(new Packet(address, bufferedBytes));
+        }
+        connection.ReliableSequencedStallStartTime = connection.SequencedBytes.Count > 0 ? time : 0.0;
+        InvokeError(new ProtocolViolationException(
+            $"Reliable sequenced stream from {address.ToString()} stalled for " +
+            $"{Settings.ReliableSequencedStallTimeout:0.0}s, skipped {skipped} message(s) to resume"));
     }
 
     private void ProcessConnections()
@@ -765,7 +848,7 @@ public class Comm
             ToRemoveUInt.Clear();
             foreach (KeyValuePair<uint, MessageParts> messagePart in value.MessageParts)
             {
-                if (time - messagePart.Value.LastReceiveTime > (double)((float)Settings.MaxResends * Settings.ResendPeriods[Settings.ResendPeriods.Length - 1]))
+                if (time - messagePart.Value.LastReceiveTime > (double)Settings.MessagePartsTimeout)
                 {
                     ToRemoveUInt.Add(messagePart.Key);
                 }
@@ -798,13 +881,16 @@ public class Comm
     private float GetResendPeriod(Connection connection, int sendCount)
     {
         // Source: Comms/Comms/Comm.cs:ProcessConnections
-        // RTT is sampled from reliable ACKs and keep-alives. A small bounded backoff avoids both
-        // the old 500ms recovery pause and overly aggressive retransmission on remote LAN links.
-        double basePeriod = Math.Clamp(connection.SmoothedRoundTripTime * 1.5,
-            Settings.MinimumResendPeriod, Settings.MaximumResendPeriod);
-        double backoff = Math.Pow(1.25, Math.Min(Math.Max(sendCount - 1, 0), 3));
+        // RTT is sampled from reliable ACKs and keep-alives. The base period follows the RTT and
+        // the exponential backoff is bounded by MaximumBackoffPeriod. Clamping the product by
+        // MaximumResendPeriod (0.15 s) used to flatten the backoff after three attempts, which
+        // turned one lost ACK into a constant ~150 ms resend storm for up to MaxResends packets.
+        double basePeriod = Math.Max(connection.SmoothedRoundTripTime * 1.5,
+            Settings.MinimumResendPeriod);
+        double backoff = Math.Pow(Settings.ResendBackoffFactor,
+            Math.Min(Math.Max(sendCount - 1, 0), Settings.MaximumResendBackoffSteps));
         return (float)Math.Clamp(basePeriod * backoff,
-            Settings.MinimumResendPeriod, Settings.MaximumResendPeriod);
+            Settings.MinimumResendPeriod, Settings.MaximumBackoffPeriod);
     }
 
     private void SendMessages(IPEndPoint address, byte[][] bytes, DeliveryMode deliveryMode,
@@ -858,6 +944,11 @@ public class Comm
                 writer2 = new Writer();
                 packetId = NextPacketId;
                 NextPacketId++;
+                // Source: Comms/Comms/Comm.cs:Comm.SendMessages
+                // The packet type keeps recording whether this is reliable traffic: the hybrid
+                // transport routes reliable packets onto the stream and everything else onto the
+                // datagram path. Suppressing ACK bookkeeping happens in SendDataPacket and
+                // ProcessReceivedPacket, so the header keeps its original meaning.
                 Guid? initGuid = (value.InitAckReceived ? null : new Guid?(value.OurGuid));
                 PacketHeader.WriteData(writer2, initGuid, packetId, deliveryMode == DeliveryMode.Reliable || deliveryMode == DeliveryMode.ReliableSequenced);
             }
@@ -907,7 +998,8 @@ public class Comm
         byte[] diagnosticPayload)
     {
         Packet packet = new(address, bytes);
-        if (deliveryMode == DeliveryMode.Reliable || deliveryMode == DeliveryMode.ReliableSequenced)
+        if (!Transmitter.IsReliableStream &&
+            (deliveryMode == DeliveryMode.Reliable || deliveryMode == DeliveryMode.ReliableSequenced))
         {
             connection.UnackedPackets.Add(packetId, new UnackedPacket
             {

@@ -217,7 +217,11 @@ namespace ScMultiplayer
         }
 
         // Source: Mod/Comms/Comms/UdpTransmitter.cs:UdpTransmitter.UdpTransmitter
-        private static UdpTransmitter BindFirstAvailableServerPort(
+        // Source: Mod/Comms/Comms/HybridTransmitter.cs:HybridTransmitter
+        // The gameplay channel keeps its UDP socket (identity, discovery answers, unreliable state)
+        // and adds a TCP stream on the same port number for reliable traffic. Both binds must
+        // succeed, otherwise the next candidate port is tried.
+        private static ITransmitter BindFirstAvailableServerPort(
             IReadOnlyList<int> serverPorts,
             out int selectedPort)
         {
@@ -226,9 +230,10 @@ namespace ScMultiplayer
             {
                 try
                 {
-                    UdpTransmitter transmitter = new UdpTransmitter(port);
+                    ITransmitter transmitter = CreateChannelTransmitter(port, allowOutgoing: false);
                     selectedPort = port;
-                    Log.Information($"[ScMP] Selected local server port {port}");
+                    Log.Information($"[ScMP] Selected local server port {port}" +
+                        (ScMultiplayerSettings.UseTcpTransport ? " (UDP+TCP)" : " (UDP only)"));
                     return transmitter;
                 }
                 catch (SocketException error) when (
@@ -238,9 +243,38 @@ namespace ScMultiplayer
                 }
             }
             throw new InvalidOperationException(
-                $"No free UDP server port exists in {serverPorts[0]}-" +
+                $"No free server port exists in {serverPorts[0]}-" +
                 $"{serverPorts[serverPorts.Count - 1]}.",
                 lastError);
+        }
+
+        // Source: Mod/Comms/Comms/TcpTransmitter.cs:TcpTransmitter
+        // allowOutgoing marks the client role: it dials the server's TCP port on demand instead of
+        // listening for streams, and it keeps the UDP socket it already owns as its identity.
+        private static ITransmitter CreateChannelTransmitter(int localPort, bool allowOutgoing)
+        {
+            UdpTransmitter datagram = new UdpTransmitter(localPort);
+            if (!ScMultiplayerSettings.UseTcpTransport)
+            {
+                return datagram;
+            }
+            try
+            {
+                TcpTransmitter stream = new TcpTransmitter(
+                    allowOutgoing ? 0 : localPort, datagram.Address, allowOutgoing);
+                return new HybridTransmitter(datagram, stream);
+            }
+            catch (SocketException)
+            {
+                datagram.Dispose();
+                throw;
+            }
+            catch (Exception error)
+            {
+                datagram.Dispose();
+                throw new InvalidOperationException(
+                    $"TCP transport unavailable on port {localPort}: {error.Message}", error);
+            }
         }
 
         // Source: Comms.Drt/Func/Server/Server.cs:Server.PeerDiscoveryRequest
@@ -290,7 +324,8 @@ namespace ScMultiplayer
         // Source: Mod/Comms/Comms.Drt/Func/Client/Client.cs:Client.Client
         private Client CreateStartedClient(float connectionLostPeriod)
         {
-            var clientDiagnosticTransmitter = new DiagnosticTransmitter(new UdpTransmitter(0));
+            var clientDiagnosticTransmitter = new DiagnosticTransmitter(
+                CreateChannelTransmitter(0, allowOutgoing: true));
             m_clientNetworkStats = clientDiagnosticTransmitter.Stats;
             m_networkMetricsCollector.Reset();
             m_reliableRetryLimitBaseline = 0L;

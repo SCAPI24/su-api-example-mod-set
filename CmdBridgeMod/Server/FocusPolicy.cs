@@ -3,12 +3,8 @@ using Engine.Input;
 using SuAPI;
 using System;
 using System.Collections.Generic;
-using TkKeyboard = OpenTK.Input.Keyboard;
-using TkKeyboardState = OpenTK.Input.KeyboardState;
-using TkKey = OpenTK.Input.Key;
-using TkMouse = OpenTK.Input.Mouse;
-using TkMouseButton = OpenTK.Input.MouseButton;
-using TkMouseState = OpenTK.Input.MouseState;
+// OpenTK 只能经 OpenTkInput 反射访问：Android 端不部署 OpenTK，任何以它的类型声明的
+// 字段或参数都会让 Mod 在加载时抛 "Could not load file or assembly 'OpenTK'"（实测）。
 
 namespace CmdBridgeMod
 {
@@ -86,7 +82,11 @@ namespace CmdBridgeMod
         private bool m_windowStateUnavailable;
         private string m_windowStateError;
 
-        private OpenTK.GameWindow m_gameWindow;
+        // OpenTK 的 GameWindow 用 object 存放（Android 无 OpenTK；访问经 OpenTkInput 反射）。
+        private object m_gameWindow;
+        // Android 的 Window 没有桌面专属的 m_gameWindow 字段：查一次失败就不再重试、不再刷日志。
+        private bool m_gameWindowLookupFailed;
+        private bool m_realFocusWarningLogged;
         private bool m_realFocusSourceUnavailable;
         private string m_realFocusError;
         private bool m_detachedLastFrame;
@@ -381,16 +381,45 @@ namespace CmdBridgeMod
         {
             try
             {
-                if (m_gameWindow == null)
+                if (m_gameWindow == null && !m_gameWindowLookupFailed)
                 {
-                    object value = Fields.GetStaticField(typeof(Window), InputWhitelist.WindowGameWindow);
-                    m_gameWindow = value as OpenTK.GameWindow;
+                    object value = null;
+                    try
+                    {
+                        value = Fields.GetStaticField(typeof(Window), InputWhitelist.WindowGameWindow);
+                    }
+                    catch (Exception)
+                    {
+                        // Source: Engine/Engine/Window*.cs —— 该字段只存在于桌面实现；
+                        // Android 上查不到属于正常情况，视为"没有 OpenTK 窗口"。
+                        m_gameWindowLookupFailed = true;
+                    }
+                    m_gameWindow = OpenTkInput.IsGameWindow(value) ? value : null;
                     if (m_gameWindow == null)
                     {
+                        // Source: Mod/CmdBridgeMod/Server/ForegroundWindowProbe.cs
+                        // 本引擎分支已不再使用 OpenTK.GameWindow（Window.m_gameWindow 为 null，
+                        // 日志里那句 "virtual focus disabled" 就是这么来的），但 OS 前台窗口探测
+                        // 本来就是更权威的判据、且与 gameWindow 无关，所以先用它；
+                        // 只有连它也不可用时才停用脱离策略 —— 宁可不做，也不猜。
+                        bool? foregroundOnly = RefreshForegroundWindow();
+                        if (foregroundOnly.HasValue)
+                        {
+                            m_realFocusSourceUnavailable = false;
+                            m_realFocusError = null;
+                            WatchForFocusSteal(foregroundOnly.Value);
+                            return foregroundOnly.Value;
+                        }
+
                         m_realFocusSourceUnavailable = true;
                         m_realFocusError = "Window.m_gameWindow is not an OpenTK.GameWindow"
-                            + (value == null ? " (null)" : " (" + value.GetType().Name + ")");
-                        Log.Warning("[CmdBridge] virtual focus disabled: " + m_realFocusError);
+                            + (value == null ? " (null)" : " (" + value.GetType().Name + ")")
+                            + " and the OS foreground probe is unavailable";
+                        if (!m_realFocusWarningLogged)
+                        {
+                            m_realFocusWarningLogged = true;
+                            Log.Warning("[CmdBridge] virtual focus disabled: " + m_realFocusError);
+                        }
                         return SafeWindowActive();
                     }
                 }
@@ -408,7 +437,9 @@ namespace CmdBridgeMod
                     return foregroundIsGame.Value;
                 }
 
-                return m_gameWindow.Focused;
+                return OpenTkInput.TryGetWindowFocused(m_gameWindow, out bool focused)
+                    ? focused
+                    : SafeWindowActive();
             }
             catch (Exception exception)
             {
@@ -619,15 +650,19 @@ namespace CmdBridgeMod
         {
             try
             {
+                // Android（无 OpenTK）没有"全局真实输入"可合并：注入即输入。
+                if (!OpenTkInput.Available)
+                    return;
+
                 bool[] keysDown = Fields.GetStaticField<bool[]>(
                     typeof(Keyboard), InputWhitelist.KeyboardDownArray);
                 if (keysDown != null)
                 {
-                    TkKeyboardState keyboard = TkKeyboard.GetState();
-                    EnsureKeyMap(keysDown.Length);
+                    object keyboard = OpenTkInput.GetKeyboardState();
                     for (int i = 0; i < keysDown.Length; i++)
                     {
-                        bool expected = m_injector.IsKeyHeldByInjection(i) || IsRealKeyDown(keyboard, i);
+                        bool expected = m_injector.IsKeyHeldByInjection(i) ||
+                            OpenTkInput.IsKeyDown(keyboard, (Key)i);
                         if (keysDown[i] != expected)
                         {
                             keysDown[i] = expected;
@@ -640,11 +675,11 @@ namespace CmdBridgeMod
                     typeof(Mouse), InputWhitelist.MouseDownArray);
                 if (buttonsDown != null)
                 {
-                    TkMouseState mouse = TkMouse.GetState();
-                    EnsureButtonMap(buttonsDown.Length);
+                    object mouse = OpenTkInput.GetMouseState();
                     for (int i = 0; i < buttonsDown.Length; i++)
                     {
-                        bool expected = m_injector.IsMouseButtonHeldByInjection(i) || IsRealButtonDown(mouse, i);
+                        bool expected = m_injector.IsMouseButtonHeldByInjection(i) ||
+                            OpenTkInput.IsMouseButtonDown(mouse, (MouseButton)i);
                         if (buttonsDown[i] != expected)
                         {
                             buttonsDown[i] = expected;
@@ -664,16 +699,18 @@ namespace CmdBridgeMod
         {
             try
             {
-                TkMouseState mouse = TkMouse.GetState();
+                object mouse = OpenTkInput.GetMouseState();
+                if (!OpenTkInput.TryGetMousePosition(mouse, out int x, out int y))
+                    return;
                 if (m_lastRealMouseX.HasValue && m_lastRealMouseY.HasValue)
                 {
-                    int dx = Math.Abs(mouse.X - m_lastRealMouseX.Value);
-                    int dy = Math.Abs(mouse.Y - m_lastRealMouseY.Value);
+                    int dx = Math.Abs(x - m_lastRealMouseX.Value);
+                    int dy = Math.Abs(y - m_lastRealMouseY.Value);
                     if (dx + dy >= 2)
                         m_userLookUntil = Time.RealTime + m_lookHoldSeconds;
                 }
-                m_lastRealMouseX = mouse.X;
-                m_lastRealMouseY = mouse.Y;
+                m_lastRealMouseX = x;
+                m_lastRealMouseY = y;
             }
             catch (Exception exception)
             {
@@ -681,66 +718,6 @@ namespace CmdBridgeMod
             }
         }
 
-        // ---------------------------------------------------------------- Engine.Key ↔ OpenTK.Input.Key 名称映射
-
-        private TkKey[] m_tkKeyMap;
-        private bool[] m_tkKeyValid;
-        private TkMouseButton[] m_tkButtonMap;
-        private bool[] m_tkButtonValid;
-
-        /// <summary>
-        /// 不维护手写映射表：`Engine/Engine/Input/Keyboard.cs` 本身就是按**同名**把
-        /// `OpenTK.Input.Key` 转成 `Engine.Key` 的（如 `OpenTK.Input.Key.W => Key.W`），
-        /// 所以按枚举名反查即可；对不上名字的键一律当作"真实未按下"（安全）。
-        /// </summary>
-        private void EnsureKeyMap(int count)
-        {
-            if (m_tkKeyMap != null && m_tkKeyMap.Length >= count)
-                return;
-
-            m_tkKeyMap = new TkKey[count];
-            m_tkKeyValid = new bool[count];
-            for (int i = 0; i < count; i++)
-            {
-                TkKey parsed;
-                if (Enum.TryParse(((Key)i).ToString(), out parsed))
-                {
-                    m_tkKeyMap[i] = parsed;
-                    m_tkKeyValid[i] = true;
-                }
-            }
-        }
-
-        private void EnsureButtonMap(int count)
-        {
-            if (m_tkButtonMap != null && m_tkButtonMap.Length >= count)
-                return;
-
-            m_tkButtonMap = new TkMouseButton[count];
-            m_tkButtonValid = new bool[count];
-            for (int i = 0; i < count; i++)
-            {
-                TkMouseButton parsed;
-                if (Enum.TryParse(((MouseButton)i).ToString(), out parsed))
-                {
-                    m_tkButtonMap[i] = parsed;
-                    m_tkButtonValid[i] = true;
-                }
-            }
-        }
-
-        private bool IsRealKeyDown(TkKeyboardState state, int index)
-        {
-            if (m_tkKeyValid == null || index >= m_tkKeyValid.Length || !m_tkKeyValid[index])
-                return false;
-            return state[m_tkKeyMap[index]];
-        }
-
-        private bool IsRealButtonDown(TkMouseState state, int index)
-        {
-            if (m_tkButtonValid == null || index >= m_tkButtonValid.Length || !m_tkButtonValid[index])
-                return false;
-            return state[m_tkButtonMap[index]];
-        }
+        // ---------------------------------------------------------------- 真实输入（经 OpenTkInput 反射）
     }
 }

@@ -15,6 +15,10 @@ Mod/CmdBridgeClient/bin/Debug/net8.0/sccmd.exe status
 the game directory, and uses the port/token from there — no configuration needed. Override
 with `--root <game dir>`, `--port <n>`, `--token <t>`.
 
+With **several instances running at once**, `--root` is required: without it `sccmd` reports
+`instance_ambiguous` (exit code 4) and lists every candidate (root, pid, instanceId, port) instead
+of silently picking one. A `runtime.json` whose `pid` is not the live process is ignored as stale.
+
 ## Commands
 
 ```text
@@ -61,7 +65,7 @@ works offline.
 | 1 | generic failure / unknown command |
 | 2 | `element_missing` — the selector does not exist on the current screen |
 | 3 | `element_occluded` / `ambiguous_selector` — exists but not clickable right now, or ambiguous |
-| 4 | discovery / connection problem |
+| 4 | discovery / connection problem (`instance_ambiguous` when several instances run and `--root` is missing) |
 | 5 | `screen_busy` (transition in progress) or `layout_invalid` or timeout |
 | 6 | `world_not_loaded` / `player_not_found` |
 | 7 | `waitfor` timed out - the condition is reported in `pendingCondition` |

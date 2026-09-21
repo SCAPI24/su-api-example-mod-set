@@ -31,6 +31,14 @@ namespace ScMultiplayer
             new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, double> m_remoteLastSeen = new Dictionary<string, double>();
         private readonly Dictionary<string, double> m_remoteRouteLastSeen = new Dictionary<string, double>();
+        // Source: Mod/Comms/Comms/UdpTransmitter.cs:UdpTransmitter
+        // The route a room is currently reached through. A dual-stack host answers on IPv4 and on
+        // IPv6 (the directory probes both families every few seconds), so the entry would otherwise
+        // flip between families on every probe. Keep the working route until it goes quiet.
+        private readonly Dictionary<string, IPEndPoint> m_remoteChosenRoute =
+            new Dictionary<string, IPEndPoint>();
+        private readonly Dictionary<string, double> m_remoteChosenRouteLastSeen =
+            new Dictionary<string, double>();
         private readonly Dictionary<string, WorldInfo> m_localWorlds =
             new Dictionary<string, WorldInfo>(StringComparer.OrdinalIgnoreCase);
         private readonly ConcurrentQueue<ServerDescription> m_pendingRemoteServers =
@@ -43,6 +51,9 @@ namespace ScMultiplayer
         private int m_personalDirectoryRevision = -1;
         private const double RemoteWorldRetentionSeconds = 15.0;
         private const double PreferredServiceRouteSeconds = 7.0;
+        // Longer than the explicit-endpoint probe period (3 s) so a live route cannot be replaced
+        // by the other address family between probes, yet short enough to fall back once it dies.
+        private const double RemoteRouteHoldSeconds = 15.0;
         private const double RemotePingProbePeriodSeconds = 1.0;
         private static readonly SemaphoreSlim s_worldScanLock = new SemaphoreSlim(1, 1);
         private int m_enterGeneration;
@@ -587,6 +598,10 @@ namespace ScMultiplayer
                             !m_personalWorlds.TryGetValue(personalRecord.Id,
                                 out WorldInfo personalWorld))
                             continue;
+                        m_personalLastSeen[personalRecord.Id] = Time.RealTime;
+                        if (!TryKeepChosenRoute("personal:" + personalRecord.Id, server.Address,
+                                Time.RealTime))
+                            continue;
                         RemoveDynamicRemoteWorld(GetRemoteRoomKey(info, game,
                             server.Address));
                         UpdateRemoteWorldInfo(personalWorld, info, game,
@@ -606,6 +621,8 @@ namespace ScMultiplayer
                     string key = GetRemoteRoomKey(info, game, server.Address);
                     double now = Time.RealTime;
                     m_remoteLastSeen[key] = now;
+                    if (!TryKeepChosenRoute(key, server.Address, now))
+                        continue;
                     string serviceHost = ScMultiplayer.GetServiceDiscoveryHost(server.Address);
                     bool isService = !string.IsNullOrEmpty(serviceHost);
                     if (m_remoteWorlds.TryGetValue(key, out WorldInfo existingWorld) &&
@@ -651,6 +668,30 @@ namespace ScMultiplayer
                 RefreshVisibleWorldItems();
         }
 
+        // Source: Mod/Comms/Comms/UdpTransmitter.cs:UdpTransmitter
+        // Keep the route that is already working for this room. A one-way fallback to the other
+        // address family is allowed once the current route has been silent for the hold window;
+        // switching back and forth between IPv4 and IPv6 every probe is not.
+        private bool TryKeepChosenRoute(string routeKey, IPEndPoint candidate, double now)
+        {
+            if (m_remoteChosenRoute.TryGetValue(routeKey, out IPEndPoint chosen))
+            {
+                if (Equals(chosen, candidate))
+                {
+                    m_remoteChosenRouteLastSeen[routeKey] = now;
+                    return true;
+                }
+                if (m_remoteChosenRouteLastSeen.TryGetValue(routeKey, out double chosenLastSeen) &&
+                    now - chosenLastSeen <= RemoteRouteHoldSeconds)
+                {
+                    return false;
+                }
+            }
+            m_remoteChosenRoute[routeKey] = candidate;
+            m_remoteChosenRouteLastSeen[routeKey] = now;
+            return true;
+        }
+
         // Source: Mod/ScMultiplayer/Func/Screen/SuPlayScreen.cs:SuPlayScreen.RemoveStaleRemoteWorlds
         private void RemoveDynamicRemoteWorld(string key)
         {
@@ -661,6 +702,8 @@ namespace ScMultiplayer
             m_serviceWorlds.Remove(world);
             m_remoteLastSeen.Remove(key);
             m_remoteRouteLastSeen.Remove(key);
+            m_remoteChosenRoute.Remove(key);
+            m_remoteChosenRouteLastSeen.Remove(key);
             m_remoteWorlds.Remove(key);
         }
 
@@ -711,6 +754,8 @@ namespace ScMultiplayer
                 m_serviceWorlds.Remove(remoteWorld);
                 m_remoteLastSeen.Remove(key);
                 m_remoteRouteLastSeen.Remove(key);
+                m_remoteChosenRoute.Remove(key);
+                m_remoteChosenRouteLastSeen.Remove(key);
                 m_remoteWorlds.Remove(key);
             }
             bool personalChanged = false;

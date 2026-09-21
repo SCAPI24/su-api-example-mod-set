@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Net;
@@ -178,7 +178,18 @@ public class UdpTransmitter : ITransmitter, IDisposable
         return mask;
     }
 
-    public int MaxPacketSize { get; set; } = 1024;
+    // Source: Comms/Comms/UdpTransmitter.cs:UdpTransmitter.MaxPacketSize
+    // 1200 keeps the whole datagram inside the IPv6 minimum MTU (1280) minus the IPv6 (40) and
+    // UDP (8) headers, so it survives tunnels (ZeroTier/PPP) without IP fragmentation.
+    // The old 1024 split every large message into ~1 KB fragments, each with its own ACK and
+    // resend timer. Fragmentation is a sender-side decision and the receiver reassembles by
+    // part index, so raising it does not change the wire contract.
+    public const int DefaultMaxPacketSize = 1200;
+
+    public int MaxPacketSize { get; set; } = DefaultMaxPacketSize;
+
+    // UDP is a datagram transport: Comm keeps its own ACK/resend bookkeeping.
+    public bool IsReliableStream => false;
 
     public IPEndPoint Address { get; private set; }
 
@@ -188,19 +199,30 @@ public class UdpTransmitter : ITransmitter, IDisposable
 
     public event Action<Packet> PacketReceived;
 
-    public UdpTransmitter(int localPort = 0)
+    public UdpTransmitter(int localPort = 0, int maxPacketSize = DefaultMaxPacketSize)
     {
+        if (maxPacketSize > 0)
+        {
+            MaxPacketSize = maxPacketSize;
+        }
+        // Source: Comms/Comms/UdpTransmitter.cs:UdpTransmitter.UdpTransmitter
+        // Both families must end up on the SAME local port when the caller lets the OS pick one.
+        // The port is the peer identity that messages carry, so an ephemeral-port client whose
+        // IPv4 and IPv6 sockets sat on different ports would look like two endpoints: the room
+        // could be found over one family while the reliable stream bound the other one.
+        int bindPort = localPort;
         try
         {
             Socket4 = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
             Socket4.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.Broadcast, true);
             Socket4.Bind(new IPEndPoint(IPAddress.Any, localPort));
             Socket4.ReceiveTimeout = 1000;
+            bindPort = ((IPEndPoint)Socket4.LocalEndPoint).Port;
             if (Address == null)
             {
                 try
                 {
-                    Address = new IPEndPoint(GetPreferredIPv4Address(), ((IPEndPoint)Socket4.LocalEndPoint).Port);
+                    Address = new IPEndPoint(GetPreferredIPv4Address(), bindPort);
                 }
                 catch (Exception)
                 {
@@ -223,7 +245,19 @@ public class UdpTransmitter : ITransmitter, IDisposable
             Socket6.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.Broadcast, true);
             Socket6.SetSocketOption(SocketOptionLevel.IPv6, SocketOptionName.IPv6Only, true);
             Socket6.SetSocketOption(SocketOptionLevel.IPv6, SocketOptionName.AddMembership, new IPv6MulticastOption(IPV6BroadcastAddress));
-            Socket6.Bind(new IPEndPoint(IPAddress.IPv6Any, localPort));
+            try
+            {
+                Socket6.Bind(new IPEndPoint(IPAddress.IPv6Any, bindPort));
+            }
+            catch (SocketException bindError) when (bindPort != localPort &&
+                bindError.SocketErrorCode == SocketError.AddressAlreadyInUse)
+            {
+                // Source: Comms/Comms/UdpTransmitter.cs:UdpTransmitter.UdpTransmitter
+                // The IPv4-assigned ephemeral port is already taken in the IPv6 space. Keep the
+                // family reachable on its own port rather than losing IPv6 entirely; the callers
+                // then see the IPv4 port as the identity, which stays the documented behaviour.
+                Socket6.Bind(new IPEndPoint(IPAddress.IPv6Any, 0));
+            }
             Socket6.ReceiveTimeout = 1000;
             if (Address == null)
             {
@@ -363,6 +397,12 @@ public class UdpTransmitter : ITransmitter, IDisposable
         {
             Socket6.SendTo(packet.Bytes, packet.Address);
         }
+    }
+
+    // Datagrams go straight to the socket, so nothing is queued inside this transport.
+    public int GetPendingSendCount(IPEndPoint address)
+    {
+        return 0;
     }
 
     private void TaskFunction()

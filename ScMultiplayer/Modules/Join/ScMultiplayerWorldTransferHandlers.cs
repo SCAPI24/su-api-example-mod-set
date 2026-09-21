@@ -192,7 +192,11 @@ namespace ScMultiplayer
 			return;
 		}
 		double elapsed = Math.Max(Time.RealTime - transfer.StartTime, 0.0);
-		Log.Information($"[ScMP] World download complete: Transfer={transfer.TransferId}, Transport=UDP, Bytes={transfer.TotalLength}, Seconds={elapsed:0.00}, RepairRounds={transfer.RepairRequestCount}");
+		// Source: Mod/Comms/Comms/HybridTransmitter.cs:HybridTransmitter.IsReliableStream
+		// The world chunks are reliable traffic, so they ride the TCP stream when that transport
+		// is enabled instead of the datagram path. Report what actually carried them.
+		string transferTransport = ScMultiplayerSettings.UseTcpTransport ? "TCP" : "UDP";
+		Log.Information($"[ScMP] World download complete: Transfer={transfer.TransferId}, Transport={transferTransport}, Bytes={transfer.TotalLength}, Seconds={elapsed:0.00}, RepairRounds={transfer.RepairRequestCount}");
 		if (m_joinRoomBusyDialog != null)
 		{
 			m_joinRoomBusyDialog.SmallMessage = "Connected.\r\nWorld download complete.\r\nImporting world...";

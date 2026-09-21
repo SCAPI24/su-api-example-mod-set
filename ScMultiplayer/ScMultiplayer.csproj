@@ -10,6 +10,10 @@
     <CheckEolTargetFrameworks>false</CheckEolTargetFrameworks>
     <Nullable>disable</Nullable>
     <DefineConstants>$(DefineConstants);WINDOWS</DefineConstants>
+    <!-- NuGet 编译：Engine/EntitySystem/Survivalcraft/SuAPICore 全部取自制品库源 cnb-nuget，
+         不再引用也不再编译引擎工程。Obfuscar 需要能解析引用程序集，故把包程序集与 Comms 复制到输出目录。
+         打 .scmod 时只取 ScMultiplayer.dll + Comms.dll，禁止把引擎 DLL / SuAPICore.dll 打进包。 -->
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
   </PropertyGroup>
 
   <ItemGroup>
@@ -18,12 +22,20 @@
     <EmbeddedResource Include="ServerDns.txt" LogicalName="ScMultiplayer.ServerDns.txt" />
   </ItemGroup>
 
+  <!-- 引擎核心三件套：改为 NuGet 包（原为 Engine/EntitySystem/Survivalcraft 工程引用） -->
   <ItemGroup>
-    <ProjectReference Include="..\..\Engine\Engine\Engine.csproj" />
-    <ProjectReference Include="..\..\EntitySystem\EntitySystem.csproj" />
-    <ProjectReference Include="..\..\EntitySystem\SuAPICore\SuAPICore.csproj" />
-    <ProjectReference Include="..\..\Survivalcraft\Survivalcraft.csproj" />
+    <PackageReference Include="Engine" Version="0.1.6" />
+    <PackageReference Include="EntitySystem" Version="0.1.6" />
+    <PackageReference Include="Survivalcraft" Version="0.1.6" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Comms 是本 mod 集内的独立 Mod 工程，不引用引擎，仍按工程引用构建 -->
     <ProjectReference Include="..\Comms\Comms.csproj" />
+    <!-- SuAPICore 是游戏内置 Mod：从制品库源 cnb-nuget（nuget.cnb.cool/suceru.cb/SuAPICore）取包，
+         构建时复制到 bin 以便 Obfuscar 解析其接口/基类成员；
+         打 .scmod 时只取 ScMultiplayer.dll + Comms.dll，绝不把 SuAPICore.dll 放进 Lib/ -->
+    <PackageReference Include="SuAPICore" Version="0.1.6" />
   </ItemGroup>
 
   <ItemGroup>

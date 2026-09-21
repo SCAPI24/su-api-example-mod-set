@@ -40,7 +40,7 @@ namespace CmdBridgeClient
         {
             string root = explicitRoot;
             if (string.IsNullOrEmpty(root))
-                root = FindGameDirectory();
+                root = ResolveSingleInstanceRoot();
 
             int port = explicitPort ?? 0;
             string token = explicitToken;
@@ -91,32 +91,114 @@ namespace CmdBridgeClient
             return new BridgeClient("127.0.0.1", port, token, root);
         }
 
-        private static string FindGameDirectory()
+        /// <summary>一个正在运行的游戏实例（进程 + 它的发现文件）。</summary>
+        private sealed class RunningInstance
         {
+            public int ProcessId;
+
+            public string Root;
+
+            public int Port;
+
+            public string InstanceId;
+
+            public bool RuntimeIsFresh;
+        }
+
+        /// <summary>
+        /// 同一台机器可以同时运行多个游戏实例（每个实例有自己的目录与发现文件）。
+        /// 没有 --root 时**不能猜**：0 个 → 交给调用方报"未运行"；
+        /// 1 个 → 用它；多个 → 报歧义并列出候选，让调用方用 --root 指定。
+        /// Source: Mod/CmdBridgeMod/Server/CmdBridgeConfig.cs:CmdBridgeRuntime（pid/port 写入发现文件）
+        /// </summary>
+        private static string ResolveSingleInstanceRoot()
+        {
+            List<RunningInstance> instances = EnumerateInstances();
+            if (instances.Count == 0)
+                return null;
+            if (instances.Count == 1)
+                return instances[0].Root;
+
+            var builder = new StringBuilder();
+            for (int i = 0; i < instances.Count; i++)
+            {
+                if (i > 0)
+                    builder.Append("; ");
+                builder.Append(instances[i].Root).Append(" (pid=").Append(instances[i].ProcessId);
+                if (!string.IsNullOrEmpty(instances[i].InstanceId))
+                    builder.Append(", id=").Append(instances[i].InstanceId);
+                builder.Append(instances[i].RuntimeIsFresh
+                    ? ", port=" + instances[i].Port
+                    : ", no fresh runtime file");
+                builder.Append(')');
+            }
+            throw new BridgeException("instance_ambiguous",
+                "Multiple Survivalcraft instances are running: " + builder +
+                ". Pass --root <game dir> to choose one.");
+        }
+
+        /// <summary>枚举运行中的实例；发现文件里的 pid 必须与进程一致，陈旧文件会被忽略。</summary>
+        private static List<RunningInstance> EnumerateInstances()
+        {
+            var instances = new List<RunningInstance>();
+            var seenRoots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            Process[] processes;
             try
             {
-                Process[] processes = Process.GetProcessesByName("Survivalcraft");
-                for (int i = 0; i < processes.Length; i++)
-                {
-                    try
-                    {
-                        string fileName = processes[i].MainModule.FileName;
-                        if (!string.IsNullOrEmpty(fileName))
-                            return Path.GetDirectoryName(fileName);
-                    }
-                    catch
-                    {
-                    }
-                    finally
-                    {
-                        processes[i].Dispose();
-                    }
-                }
+                processes = Process.GetProcessesByName("Survivalcraft");
             }
             catch
             {
+                return instances;
             }
-            return null;
+            for (int i = 0; i < processes.Length; i++)
+            {
+                try
+                {
+                    string fileName = processes[i].MainModule.FileName;
+                    if (string.IsNullOrEmpty(fileName))
+                        continue;
+                    string root = Path.GetDirectoryName(fileName);
+                    if (string.IsNullOrEmpty(root) || !seenRoots.Add(root))
+                        continue;
+
+                    var instance = new RunningInstance
+                    {
+                        ProcessId = processes[i].Id,
+                        Root = root
+                    };
+                    string path = Path.Combine(root, RuntimeFileName);
+                    if (File.Exists(path))
+                    {
+                        using (JsonDocument document = JsonDocument.Parse(
+                            File.ReadAllText(path, Encoding.UTF8)))
+                        {
+                            JsonElement json = document.RootElement;
+                            int runtimePid = json.TryGetProperty("pid", out JsonElement pidElement)
+                                ? pidElement.GetInt32()
+                                : 0;
+                            // 陈旧（上一次被杀掉留下的）发现文件不算数：pid 必须就是本进程。
+                            instance.RuntimeIsFresh = runtimePid == processes[i].Id;
+                            if (instance.RuntimeIsFresh)
+                            {
+                                if (json.TryGetProperty("port", out JsonElement portElement))
+                                    instance.Port = portElement.GetInt32();
+                                if (json.TryGetProperty("instanceId", out JsonElement idElement))
+                                    instance.InstanceId = idElement.GetString();
+                            }
+                        }
+                    }
+                    instances.Add(instance);
+                }
+                catch
+                {
+                }
+                finally
+                {
+                    processes[i].Dispose();
+                }
+            }
+            return instances;
         }
 
         public JsonElement Send(string command, Dictionary<string, object> arguments, int timeoutMs)

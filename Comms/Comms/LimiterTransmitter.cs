@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Net;
@@ -32,6 +32,8 @@ public class LimiterTransmitter : IWrapperTransmitter, ITransmitter, IDisposable
     public ITransmitter BaseTransmitter { get; }
 
     public int MaxPacketSize => BaseTransmitter.MaxPacketSize;
+
+    public bool IsReliableStream => BaseTransmitter.IsReliableStream;
 
     public IPEndPoint Address => BaseTransmitter.Address;
 
@@ -89,6 +91,16 @@ public class LimiterTransmitter : IWrapperTransmitter, ITransmitter, IDisposable
                 QueuedPackets.Enqueue(packet);
                 Alarm.Set(Period);
             }
+        }
+    }
+
+    // The limiter holds packets back until its token bucket refills, so its queue is the real
+    // in-flight backlog for the peer.
+    public int GetPendingSendCount(IPEndPoint address)
+    {
+        lock (Lock)
+        {
+            return QueuedPackets.Count;
         }
     }
 

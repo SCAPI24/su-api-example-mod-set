@@ -24,12 +24,16 @@ playing normally while the bridge drives the same character.
 Build and pack with the repository tooling, then drop the `.scmod` into the game's `Mods/`:
 
 ```bash
-dotnet build Mod/CmdBridgeMod/CmdBridgeMod.csproj -c Debug --framework net8.0
-py -3 Mod/Packages/pack_cmd_bridge.py                     # also deploys to publish/Windows/Mods
+dotnet build Mod/CmdBridgeMod/CmdBridgeMod.csproj -c Release --framework net8.0
+# assembly: bin/Release/net8.0/Obfuscar/CmdBridgeMod.dll  (Release runs Obfuscar via PostBuild)
+# package : root ModInfo.xml + flat Lib/CmdBridgeMod.dll, ZIP entries written with forward slashes
 ```
 
 `IsMergeLib=true`, single `net8.0` assembly at `Lib/CmdBridgeMod.dll` (Windows and Android
 share the same DLL). The optional C# client lives in `../CmdBridgeClient/`.
+
+> The former `Mod/Packages/pack_cmd_bridge.py` helper is not part of this checkout; pack the two
+> entries above directly and keep the flat `Lib/` layout rule in mind (no `Lib/X64`, `Lib/Arm64`).
 
 ## Files created at runtime
 
@@ -39,6 +43,23 @@ share the same DLL). The optional C# client lives in `../CmdBridgeClient/`.
 | `<game>/CmdBridge.runtime.json` | discovery file: port + token + pid (deleted on unload) |
 
 Loopback-only listener with token authentication; there is no remote attack surface.
+
+## Several game instances on one machine
+
+`CmdBridge.json`'s `port` is a **preference**, not a hard requirement: when it is already taken
+(typically by a second instance of the game started from another directory), the mod moves to the
+next free port for that run and logs
+
+```text
+[CmdBridge] port 26751 is already in use (another game instance?); instance "win-x64" uses port 26752 for this run.
+```
+
+Before this fallback existed the whole mod failed to load (`Failed to load mod CmdBridgeMod: …`).
+The effective port always lands in `<game>/CmdBridge.runtime.json`, so every instance stays
+discoverable; the config file itself is never rewritten.
+
+`CmdBridge.runtime.json` is written with an atomic replace, and a hard kill can still leave a stale
+file behind — clients must validate its `pid` against the live process (the bundled `sccmd` does).
 
 ## How the injection works
 

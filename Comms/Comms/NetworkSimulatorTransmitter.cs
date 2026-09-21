@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
@@ -51,7 +51,17 @@ public class NetworkSimulatorTransmitter : IWrapperTransmitter, ITransmitter, ID
         }
     }
 
+    // Source: Comms/Comms/ITransmitter.cs:ITransmitter.IsReliableStream
+    // The simulator deliberately drops, duplicates and corrupts packets, so it must never
+    // advertise a reliable stream: Comm has to keep its own ACK/resend bookkeeping.
+    public bool IsReliableStream => false;
+
     public IPEndPoint Address => BaseTransmitter.Address;
+
+    public int GetPendingSendCount(IPEndPoint address)
+    {
+        return BaseTransmitter.GetPendingSendCount(address);
+    }
 
     public event Action<Exception> Error;
 

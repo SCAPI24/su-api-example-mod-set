@@ -18,6 +18,7 @@ namespace ScMultiplayer
         private const int DefaultServerBasePort = 51459;
         private const int DefaultServerPortCount = 64;
         private const int MaximumServerPortCount = 256;
+        private const bool DefaultUseTcpTransport = true;
         private const int DefaultMaxPlayers = 4;
         private const int MaximumMaxPlayers = 32;
         private const int MaximumBandwidthKbps = 1024 * 1024;
@@ -36,6 +37,11 @@ namespace ScMultiplayer
         public static bool AutoCreateRoomFromCurrentWorld { get; private set; }
 
         public static bool ServerDiagnosticsEnabled { get; private set; }
+
+        // Source: Mod/Comms/Comms/HybridTransmitter.cs:HybridTransmitter
+        // Reliable traffic rides a TCP stream bound to the same port number as the UDP socket.
+        // Turn this off to fall back to the datagram-only transport for comparison runs.
+        public static bool UseTcpTransport { get; private set; }
 
         public static DataModificationPolicy DataModificationMode { get; private set; }
 
@@ -100,6 +106,7 @@ namespace ScMultiplayer
             AutoApproveJoinRequests = false;
             AutoCreateRoomFromCurrentWorld = false;
             ServerDiagnosticsEnabled = false;
+            UseTcpTransport = DefaultUseTcpTransport;
             DataModificationMode = DataModificationPolicy.Default;
             DataModificationFastMaxConcurrent = DefaultDataModificationFastMaxConcurrent;
             DataModificationBulkMaxConcurrent = DefaultDataModificationBulkMaxConcurrent;
@@ -153,6 +160,14 @@ namespace ScMultiplayer
                     diagnosticsValue.ValueKind == JsonValueKind.False))
                 {
                     ServerDiagnosticsEnabled = diagnosticsValue.GetBoolean();
+                }
+                if (document.RootElement.TryGetProperty(
+                    "useTcpTransport",
+                    out JsonElement tcpTransportValue) &&
+                    (tcpTransportValue.ValueKind == JsonValueKind.True ||
+                    tcpTransportValue.ValueKind == JsonValueKind.False))
+                {
+                    UseTcpTransport = tcpTransportValue.GetBoolean();
                 }
                 if (document.RootElement.TryGetProperty(
                     "dataModificationMode", out JsonElement dataModeValue) &&
@@ -401,6 +416,7 @@ namespace ScMultiplayer
                 "autoCreateRoomFromCurrentWorld",
                 AutoCreateRoomFromCurrentWorld);
             writer.WriteBoolean("serverDiagnosticsEnabled", ServerDiagnosticsEnabled);
+            writer.WriteBoolean("useTcpTransport", UseTcpTransport);
             writer.WriteString("dataModificationMode",
                 GetDataModificationModeName(DataModificationMode));
             writer.WriteNumber("dataModificationFastMaxConcurrent",

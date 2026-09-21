@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
@@ -22,6 +22,10 @@ public class InProcessTransmitter : ITransmitter, IDisposable
 
 
     public int MaxPacketSize { get; set; } = 1024;
+
+    // In-process delivery is lossless, but it is still a datagram transport: Comm keeps its
+    // own sequencing/ACK bookkeeping so simulations match the UDP path.
+    public bool IsReliableStream => false;
 
     public IPEndPoint Address { get; private set; }
 
@@ -82,6 +86,12 @@ public class InProcessTransmitter : ITransmitter, IDisposable
     {
         CheckNotDisposed();
         SendQueue.Add(packet);
+    }
+
+    // In-process delivery never blocks on a socket, so there is no backlog to report.
+    public int GetPendingSendCount(IPEndPoint address)
+    {
+        return 0;
     }
 
     public static IPEndPoint GetAddress(int port)

@@ -702,6 +702,7 @@ AI 内存态改写与导出（只改内存；原 .scbtpak 字节永远不变）
                 case "discovery_failed":
                 case "runtime_file_missing":
                 case "connection_closed":
+                case "instance_ambiguous":
                     return 4;
                 case "screen_busy":
                 case "layout_invalid":

@@ -171,6 +171,39 @@ namespace CmdBridgeMod
             throw new IOException("No free CmdBridge port was found.");
         }
 
+        /// <summary>
+        /// 同一台机器可以同时运行多个游戏实例：配置里的端口是**首选值**而不是硬性要求。
+        /// 端口被别的实例占用时顺延到下一个空闲端口，本次运行采用它；
+        /// 实际端口以 CmdBridge.runtime.json 为准（客户端据此发现），配置文件不改写。
+        /// </summary>
+        public bool TryAdoptAvailablePort(int attempts, out int adoptedPort)
+        {
+            IPAddress address;
+            if (!IPAddress.TryParse(BindAddress, out address))
+                address = IPAddress.Loopback;
+            for (int port = Port + 1; port <= ushort.MaxValue && port < Port + attempts; port++)
+            {
+                TcpListener listener = null;
+                try
+                {
+                    listener = new TcpListener(address, port);
+                    listener.Start();
+                    Port = port;
+                    adoptedPort = port;
+                    return true;
+                }
+                catch (SocketException)
+                {
+                }
+                finally
+                {
+                    listener?.Stop();
+                }
+            }
+            adoptedPort = Port;
+            return false;
+        }
+
         private static string ReadString(JsonElement root, string name, string fallback)
         {
             if (!root.TryGetProperty(name, out JsonElement value))
@@ -223,9 +256,8 @@ namespace CmdBridgeMod
 
             string temp = path + ".tmp";
             File.WriteAllText(temp, builder.ToString(), new UTF8Encoding(false));
-            if (File.Exists(path))
-                File.Delete(path);
-            File.Move(temp, path);
+            // 覆盖式 Move 是原子替换：中途被杀不会留下"半个 runtime 文件"。
+            File.Move(temp, path, true);
         }
 
         public static void Delete(string instanceRoot)

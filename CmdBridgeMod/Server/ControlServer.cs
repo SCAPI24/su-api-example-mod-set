@@ -20,6 +20,9 @@ namespace CmdBridgeMod
     {
         private const int MaxConnections = 8;
 
+        // 端口被占用时向后探测多少个数（多实例场景：第一个实例占 26751，第二个顺延到 26752）。
+        private const int PortFallbackAttempts = 64;
+
         private readonly CmdBridgeConfig m_config;
         private readonly CommandRouter m_router;
         private readonly SemaphoreSlim m_connectionSlots =
@@ -48,8 +51,7 @@ namespace CmdBridgeMod
                 throw new InvalidOperationException("Control server is already running.");
 
             IPAddress address = IPAddress.Parse(m_config.BindAddress);
-            m_listener = new TcpListener(address, m_config.Port);
-            m_listener.Start(MaxConnections);
+            m_listener = CreateListener(address);
             m_running = true;
             m_acceptThread = new Thread(AcceptLoop)
             {
@@ -57,6 +59,36 @@ namespace CmdBridgeMod
                 Name = "CmdBridgeMod.Accept"
             };
             m_acceptThread.Start();
+        }
+
+        // Source: Mod/CmdBridgeMod/Server/CmdBridgeConfig.cs:CmdBridgeConfig.FindAvailablePort
+        // 同一台机器可以同时跑多个游戏实例：配置端口被另一个实例占用时，顺延到下一个空闲端口，
+        // 而不是让整个 Mod 加载失败（旧行为会在日志里留下
+        // "Failed to load mod CmdBridgeMod: 通常每个套接字地址只允许使用一次"）。
+        // 实际端口写进 CmdBridge.runtime.json，客户端按 --root 精确发现，因此无需改配置文件。
+        private TcpListener CreateListener(IPAddress address)
+        {
+            int configuredPort = m_config.Port;
+            try
+            {
+                TcpListener listener = new TcpListener(address, configuredPort);
+                listener.Start(MaxConnections);
+                return listener;
+            }
+            catch (SocketException error) when (
+                error.SocketErrorCode == SocketError.AddressAlreadyInUse)
+            {
+                if (!m_config.TryAdoptAvailablePort(PortFallbackAttempts, out int adoptedPort))
+                {
+                    throw;
+                }
+                Log.Warning("[CmdBridge] port " + configuredPort + " is already in use " +
+                    "(another game instance?); instance \"" + m_config.InstanceId +
+                    "\" uses port " + adoptedPort + " for this run.");
+                TcpListener listener = new TcpListener(address, adoptedPort);
+                listener.Start(MaxConnections);
+                return listener;
+            }
         }
 
         public void Stop()

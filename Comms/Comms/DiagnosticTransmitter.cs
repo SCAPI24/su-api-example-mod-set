@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Net;
 using System.Runtime.CompilerServices;
 using System.Threading;
@@ -13,6 +13,8 @@ public class DiagnosticTransmitter : IWrapperTransmitter, ITransmitter, IDisposa
     public DiagnosticStats Stats { get; }
 
     public int MaxPacketSize => BaseTransmitter.MaxPacketSize;
+
+    public bool IsReliableStream => BaseTransmitter.IsReliableStream;
 
     public IPEndPoint Address => BaseTransmitter.Address;
 
@@ -62,5 +64,10 @@ public class DiagnosticTransmitter : IWrapperTransmitter, ITransmitter, IDisposa
         }
         BaseTransmitter.SendPacket(packet);
         this.PacketSent?.Invoke(packet);
+    }
+
+    public int GetPendingSendCount(IPEndPoint address)
+    {
+        return BaseTransmitter.GetPendingSendCount(address);
     }
 }

@@ -81,8 +81,8 @@ namespace CmdBridgeMod
             return GetForegroundWindow();
         }
 
-        /// <summary>游戏窗口的 OS 句柄（OpenTK 的 `WindowInfo.Handle`）；取不到返回 Zero。</summary>
-        public IntPtr HandleOf(OpenTK.GameWindow window)
+        /// <summary>游戏窗口的 OS 句柄（OpenTK 的 `WindowInfo.Handle`，经反射）；取不到返回 Zero。</summary>
+        public IntPtr HandleOf(object window)
         {
             if (m_gameHandleResolved)
                 return m_gameHandle;
@@ -90,8 +90,7 @@ namespace CmdBridgeMod
             m_gameHandleResolved = true;
             try
             {
-                if (window != null && window.WindowInfo != null)
-                    m_gameHandle = window.WindowInfo.Handle;
+                m_gameHandle = OpenTkInput.GetWindowHandle(window);
             }
             catch (Exception)
             {
