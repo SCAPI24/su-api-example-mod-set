@@ -479,6 +479,8 @@ namespace ScMultiplayer
 			m_pendingLocalPlayerRecord = new NetworkPlayerRecord
 			{
 				Name = msg.PlayerName,
+				// 游戏统计：角色记录里的权威副本，加入后回填到客户端角色自己的统计槽
+				Stats = msg.PlayerStats,
 				PlayerClass = msg.PlayerClass,
 				SkinName = msg.SkinName,
 				SkinSha256 = SkinHashCodec.CloneBytes(msg.SkinSha256),
@@ -515,6 +517,8 @@ namespace ScMultiplayer
 			m_localReplacementPlayerData = null;
 			m_localPlayerRecordQueued = false;
 			m_localPlayerRecordApplied = false;
+			m_downloadedHostPlayerStats = null;
+			m_downloadedHostPlayerStatsIndex = -1;
 			try
 			{
 				Log.Information($"[ScMP] Importing world: {msg.Name} ({msg.WorldData.Length} bytes)");

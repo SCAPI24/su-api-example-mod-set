@@ -832,6 +832,8 @@ namespace ScMultiplayer
 		m_localReplacementPlayerData = null;
 		m_localPlayerRecordQueued = false;
 		m_localPlayerRecordApplied = false;
+		m_downloadedHostPlayerStats = null;
+		m_downloadedHostPlayerStatsIndex = -1;
 		m_pendingPlayerEquipmentMessages.Clear();
 		if (!IsHost)
 		{

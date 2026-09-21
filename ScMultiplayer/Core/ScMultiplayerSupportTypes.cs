@@ -195,6 +195,10 @@ namespace ScMultiplayer
         public int[] HandcraftSlotValues;
         public int[] HandcraftSlotCounts;
         public int[][] Clothes;
+        // 联机角色的**游戏统计**：由客户端周期性上报（统计只有客户端算得准），
+        // 存进本记录（ScMultiplayerPlayers.xml）而不是 Project.xml，退出重进保留。
+        // Source: Survivalcraft/Game/SubsystemPlayerStats.cs:SubsystemPlayerStats
+        public PlayerStatsSnapshot Stats;
     }
 
     internal sealed class EquipmentSnapshot

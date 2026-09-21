@@ -324,6 +324,15 @@ namespace ScMultiplayer
         private bool m_localPlayerRecordQueued;
         private bool m_localPlayerRecordApplied;
         private bool m_replacingLocalPlayerData;
+        // 客户端：下载世界（Project.xml 的 Players/Stats）里带下来的那份游戏统计是**主机角色**的
+        // —— 它的键是主机本地 PlayerIndex。客户端自己的角色必须另起一份，见
+        // ScMultiplayerProfileHandlers.SeparateDownloadedPlayerStats。
+        private PlayerStats m_downloadedHostPlayerStats;
+        private int m_downloadedHostPlayerStatsIndex = -1;
+        // 客户端周期性上报游戏统计（见 ScMultiplayerProfileHandlers.SendClientPlayerStats）。
+        private const double ClientPlayerStatsInterval = 2.0;
+        private double m_nextClientPlayerStatsSendTime;
+        private PlayerStatsSnapshot m_lastSentClientPlayerStats;
         private const float HealthSyncInterval = 1.0f; // 每秒同步一次生命
         private string m_downloadedWorldDirectory;
         private Project m_clientWorldRefreshProject;

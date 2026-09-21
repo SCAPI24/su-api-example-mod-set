@@ -14,6 +14,7 @@ using System.Collections;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -252,6 +253,7 @@ namespace ScMultiplayer
                         if (index >= 0 && index < record.Clothes.Length)
                             record.Clothes[index] = PlayerProfileValueCodec.ParseIntArray((string)slot.Attribute("Values"));
                     }
+                    record.Stats = PlayerStatsSnapshot.FromXml(element.Element("Stats"));
                     if (element.Attribute("InitialItems") == null)
                     {
                         bool hasClothes = record.Clothes.Any(slot => slot != null && slot.Length > 0);
@@ -273,7 +275,7 @@ namespace ScMultiplayer
             if (!IsHost || !m_playerRecordsDirty || string.IsNullOrEmpty(m_playerRecordsWorldDirectory)) return;
             try
             {
-                var root = new XElement("ScMultiplayerPlayers", new XAttribute("Version", 5));
+                var root = new XElement("ScMultiplayerPlayers", new XAttribute("Version", 6));
                 foreach (KeyValuePair<string, NetworkPlayerRecord> item in m_playerRecords.OrderBy(pair => pair.Key))
                 {
                     NetworkPlayerRecord record = item.Value;
@@ -353,6 +355,9 @@ namespace ScMultiplayer
                             new XAttribute("Values", PlayerProfileValueCodec.FormatIntArray(
                                 i < clothesValues.Length ? clothesValues[i] : null))));
                     player.Add(clothes);
+                    // 游戏统计：由客户端上报、存在角色记录里（不写 Project.xml）
+                    if (record.Stats != null && !record.Stats.IsEmpty)
+                        player.Add(record.Stats.ToXml());
                     root.Add(player);
                 }
                 string path = Storage.CombinePaths(m_playerRecordsWorldDirectory, PlayerRecordsFileName);
@@ -457,7 +462,58 @@ namespace ScMultiplayer
             }
             CapturePersistentCraftingSlots(handcrafting, out record.HandcraftSlotValues,
                 out record.HandcraftSlotCounts);
+            PreserveRecordedPlayerStats(playerData, record);
             return record;
+        }
+
+        /// <summary>
+        /// 保留角色记录里已有的**游戏统计**。
+        ///
+        /// 关键点：统计只有**客户端**算得准，主机侧的 `SubsystemPlayerStats` 里那个网络索引下的
+        /// 数据是残缺的（主机的远端化身不跑客户端的挖掘/移动逻辑）。所以每次
+        /// `CapturePlayerRecord`（周期刷新、退出保存…）都只覆盖生命/背包/位置这些主机权威字段，
+        /// **统计一律沿用记录里的旧值**，等客户端下一次上报再更新。
+        /// </summary>
+        private void PreserveRecordedPlayerStats(PlayerData playerData, NetworkPlayerRecord record)
+        {
+            if (!IsHost || playerData == null || record == null)
+                return;
+            foreach (KeyValuePair<int, PlayerData> item in m_networkPlayerData)
+            {
+                if (!ReferenceEquals(item.Value, playerData))
+                    continue;
+                if (m_clientRecordKeys.TryGetValue(item.Key, out string recordKey) &&
+                    m_playerRecords.TryGetValue(recordKey, out NetworkPlayerRecord existing) &&
+                    existing?.Stats != null)
+                {
+                    record.Stats = existing.Stats;
+                }
+                return;
+            }
+        }
+
+        /// <summary>
+        /// 主机侧收到客户端上报的游戏统计：写进该客户端的角色记录（`ScMultiplayerPlayers.xml`），
+        /// 由既有的周期 `SavePlayerRecords()` 落盘。Project.xml 永远不写这些内容
+        /// （见 `SuSubsystemPlayerStats.Save` 的剔除逻辑）。
+        /// </summary>
+        private void HandlePlayerStatsMessage(PlayerStatsMessage message, int sourceClientId)
+        {
+            if (!IsHost || message?.Stats == null)
+                return;
+            int clientId = sourceClientId >= 0 ? sourceClientId
+                : (message.PlayerIndex >= 0 ? message.PlayerIndex : -1);
+            if (clientId < 0)
+                return;
+            if (!m_clientRecordKeys.TryGetValue(clientId, out string recordKey))
+                return; // 还没登记记录键：下个周期会补
+            if (!m_playerRecords.TryGetValue(recordKey, out NetworkPlayerRecord record) || record == null)
+            {
+                record = new NetworkPlayerRecord();
+                m_playerRecords[recordKey] = record;
+            }
+            record.Stats = message.Stats;
+            m_playerRecordsDirty = true;
         }
 
         private int ResolveCapabilityClientId(PlayerData playerData)
@@ -1306,6 +1362,9 @@ namespace ScMultiplayer
             ApplyAuthoritativePlayerStats(player, record.Health, record.Air, record.Food,
                 record.Stamina, record.Sleep, record.Temperature, record.Wetness, record.Level);
             ApplyPlayerRecordState(player, record);
+            // 游戏统计：记录里的权威副本回填到客户端角色自己的统计槽（退出重进保留）。
+            // 没有记录（首次联机）时保持"全新"——即上一步刚换上的空 PlayerStats。
+            ApplyRecordedPlayerStats(player, record.Stats);
             m_localPlayerRecordApplied = true;
             TryApplyPendingPlayerEquipment(client.ClientID);
         }
@@ -1322,6 +1381,7 @@ namespace ScMultiplayer
                 !m_networkPlayerData.Values.Contains(player));
             if (current == null) return;
 
+            int downloadedIndex = current.PlayerIndex;
             int playerIndex = current.PlayerIndex;
             WidgetInputDevice inputDevice = current.InputDevice;
             NetworkPlayerRecord record = m_pendingLocalPlayerRecord;
@@ -1372,6 +1432,161 @@ namespace ScMultiplayer
             m_localReplacementPlayerData = replacement;
             m_localPlayerRecordApplied = false;
             m_frameProject = null;
+            SeparateDownloadedPlayerStats(downloadedIndex, playerIndex);
+        }
+
+        /// <summary>
+        /// 把"从下载世界带下来的游戏统计"和客户端自己的角色分开。
+        ///
+        /// 为什么必须分：客户端的 Project.xml 是从主机整包下载的，其中的
+        /// `Players/Stats/&lt;index&gt;` 是**主机角色**的统计（键 = 主机本地 PlayerIndex）。
+        /// 客户端替换本地角色时沿用了同一个本地索引，于是客户端一进世界，
+        /// 游戏统计面板显示的就是主机角色的数据（实测：客户端 World1\Project.xml 的
+        /// `Stats[1]` 与主机 Worlds\World\Project.xml 的 `Stats[1]` 逐字段完全相同 ——
+        /// DistanceTravelled=178.6627276659674、BlocksDug=3、BlocksPlaced=33、HitsReceived=15 …），
+        /// 之后客户端自己的行为还继续往这份"主机角色的数据"里累加。
+        ///
+        /// 修法（只动 mod 侧，宿主索引语义不变）：
+        ///   · 客户端自己的角色 → 换上一份**全新的** PlayerStats，只记它自己的行为；
+        ///   · 下载来的那份（主机角色的）→ 就地留在它自己的索引上；只有当它正好压在
+        ///     客户端角色的索引上时才需要搬走，此时交给 <see cref="TryAttachDownloadedHostStats"/>
+        ///     挂回主机角色（客户端本地 clientId=0 的那个角色）。
+        /// </summary>
+        private void SeparateDownloadedPlayerStats(int downloadedIndex, int localIndex)
+        {
+            if (IsHost) return;
+            Dictionary<int, PlayerStats> slots = GetPlayerStatsSlots();
+            if (slots == null) return;
+            slots.TryGetValue(downloadedIndex, out PlayerStats downloaded);
+            slots[localIndex] = new PlayerStats();
+            if (downloaded == null)
+                return;
+            if (downloadedIndex != localIndex)
+                return; // 那份统计本来就待在自己的索引上（主机角色稍后会占这个索引）
+            m_downloadedHostPlayerStats = downloaded;
+            m_downloadedHostPlayerStatsIndex = downloadedIndex;
+            TryAttachDownloadedHostStats();
+        }
+
+        /// <summary>把暂存的"主机角色的统计"挂回主机角色（客户端本地的 clientId=0 角色）。</summary>
+        private void TryAttachDownloadedHostStats()
+        {
+            if (IsHost || m_downloadedHostPlayerStats == null)
+                return;
+            if (!m_networkPlayerData.TryGetValue(0, out PlayerData hostData) || hostData == null)
+                return; // 主机角色还没建出来：留着，等它出现再挂
+            int localIndex = m_localReplacementPlayerData?.PlayerIndex ?? -1;
+            if (hostData.PlayerIndex < 0 || hostData.PlayerIndex == localIndex ||
+                hostData.PlayerIndex == m_downloadedHostPlayerStatsIndex)
+                return;
+            Dictionary<int, PlayerStats> slots = GetPlayerStatsSlots();
+            if (slots == null)
+                return;
+            slots[hostData.PlayerIndex] = m_downloadedHostPlayerStats;
+            m_downloadedHostPlayerStats = null;
+            m_downloadedHostPlayerStatsIndex = -1;
+        }
+
+        /// <summary>
+        /// Project.xml 卫生：把**联机角色**的统计从保存数据里剔掉（由 <see cref="SuSubsystemPlayerStats"/>
+        /// 在 `SubsystemPlayerStats.Save` 之后调用）。
+        ///
+        /// 判定标准：索引属于主机侧的某个客户端化身（`m_networkPlayerData`），或者在客户端上属于
+        /// 客户端自己那个"网络角色"（`m_localReplacementPlayerData`）。主机自己的角色不是网络角色，
+        /// 它的统计照常留在 Project.xml 里（它就是这个世界自己的玩家）。
+        /// </summary>
+        internal static void PruneNetworkPlayerStatsFromProject(ValuesDictionary valuesDictionary)
+        {
+            ScMultiplayer instance = currentInstance;
+            if (instance == null || valuesDictionary == null)
+                return;
+            ValuesDictionary stats = valuesDictionary.GetValue<ValuesDictionary>("Stats", null);
+            if (stats == null || stats.Count == 0)
+                return;
+            var keepKeys = new List<string>(stats.Count);
+            bool removedAny = false;
+            foreach (string key in stats.Keys)
+            {
+                if (int.TryParse(key, NumberStyles.Integer, CultureInfo.InvariantCulture,
+                    out int playerIndex) && instance.IsNetworkPlayerStatsIndex(playerIndex))
+                {
+                    removedAny = true;
+                    continue;
+                }
+                keepKeys.Add(key);
+            }
+            if (!removedAny)
+                return;
+            // ValuesDictionary 没有 Remove，只能整体替换成只含保留项的新节点。
+            var kept = new ValuesDictionary();
+            foreach (string key in keepKeys)
+                kept.SetValue(key, stats.GetValue<object>(key));
+            valuesDictionary.SetValue("Stats", kept);
+        }
+
+        /// <summary>该统计槽位是否属于"联机角色"（网络角色），见 <see cref="PruneNetworkPlayerStatsFromProject"/>。</summary>
+        private bool IsNetworkPlayerStatsIndex(int playerIndex)
+        {
+            foreach (KeyValuePair<int, PlayerData> item in m_networkPlayerData)
+            {
+                if (item.Value != null && item.Value.PlayerIndex == playerIndex)
+                    return true;
+            }
+            return !IsHost && m_localReplacementPlayerData != null &&
+                m_localReplacementPlayerData.PlayerIndex == playerIndex;
+        }
+
+        // Source: Survivalcraft/Game/SubsystemPlayerStats.cs:SubsystemPlayerStats.GetPlayerStats
+        private static Dictionary<int, PlayerStats> GetPlayerStatsSlots()
+        {
+            SubsystemPlayerStats stats =
+                GameManager.Project?.FindSubsystem<SubsystemPlayerStats>(false);
+            if (stats == null)
+                return null;
+            return ModManager.ModParentField.GetParentField<Dictionary<int, PlayerStats>>(
+                stats, "m_playerStats", typeof(SubsystemPlayerStats));
+        }
+
+        /// <summary>
+        /// 把角色记录里的统计写回**客户端自己的角色**（统计面板读的就是这个槽）。
+        /// 没有记录时什么都不做，保留 <see cref="SeparateDownloadedPlayerStats"/> 刚换上的空槽。
+        /// </summary>
+        private static void ApplyRecordedPlayerStats(ComponentPlayer player, PlayerStatsSnapshot snapshot)
+        {
+            if (player == null || snapshot == null || snapshot.IsEmpty)
+                return;
+            PlayerStats stats = player.PlayerStats;
+            if (stats == null)
+                return;
+            snapshot.ApplyTo(stats);
+        }
+
+        /// <summary>
+        /// 客户端周期性把自己的游戏统计上报给主机（主机写进角色记录）。
+        /// 统计变化或到达 <see cref="ClientPlayerStatsInterval"/> 时发送；离开房间时强制发一次。
+        /// </summary>
+        private void SendClientPlayerStats(bool force)
+        {
+            if (IsHost || client?.IsConnected != true)
+                return;
+            if (!force && Time.RealTime < m_nextClientPlayerStatsSendTime)
+                return;
+            ComponentPlayer player = m_localReplacementPlayerData?.ComponentPlayer;
+            if (player?.PlayerData == null)
+                return;
+            PlayerStats stats = player.PlayerStats;
+            if (stats == null)
+                return;
+            PlayerStatsSnapshot snapshot = PlayerStatsSnapshot.Capture(stats);
+            if (!force && m_lastSentClientPlayerStats != null &&
+                snapshot.HasSameContent(m_lastSentClientPlayerStats))
+            {
+                m_nextClientPlayerStatsSendTime = Time.RealTime + ClientPlayerStatsInterval;
+                return;
+            }
+            m_nextClientPlayerStatsSendTime = Time.RealTime + ClientPlayerStatsInterval;
+            m_lastSentClientPlayerStats = snapshot;
+            NetworkMessageSender.SendPlayerStatsMessage(client.ClientID, snapshot);
         }
 
         // Source: Survivalcraft/Game/ShortInventoryWidget.cs:ShortInventoryWidget.MeasureOverride

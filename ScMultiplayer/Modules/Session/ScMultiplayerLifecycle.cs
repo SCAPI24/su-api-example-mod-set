@@ -54,6 +54,9 @@ namespace ScMultiplayer
                 "ScMultiplayer.SuComponentHumanModel");
             modInjector.Register("Game.SubsystemElectricity",
                 "ScMultiplayer.SuSubsystemElectricity");
+            // 联机角色的统计不写进 Project.xml（见 SuSubsystemPlayerStats）
+            modInjector.Register("Game.SubsystemPlayerStats",
+                "ScMultiplayer.SuSubsystemPlayerStats");
             modInjector.RegisterBlock(Game.ButtonBlock.Index,
                 typeof(global::ScMultiplayer.ButtonBlock), Name);
             modInjector.RegisterBlock(Game.PressurePlateBlock.Index,

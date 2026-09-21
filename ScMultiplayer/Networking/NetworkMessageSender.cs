@@ -394,6 +394,14 @@ namespace ScMultiplayer
                 Message.WriteWithSender(message, s_transport.Address), sequenced: true);
         }
 
+        // 客户端 → 主机：游戏统计上报（低频；主机存进角色记录）
+        public static void SendPlayerStatsMessage(int playerIndex, PlayerStatsSnapshot stats)
+        {
+            var message = new PlayerStatsMessage(playerIndex, stats);
+            s_transport.SendDirectInput(0,
+                Message.WriteWithSender(message, s_transport.Address));
+        }
+
         // Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update
         public static void SendPlayerHitRequest(PlayerActionMessage message)
         {

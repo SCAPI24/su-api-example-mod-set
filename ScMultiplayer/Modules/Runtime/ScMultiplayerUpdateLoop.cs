@@ -1234,6 +1234,9 @@ namespace ScMultiplayer
                 }
                 if (!IsHost && m_shouldCreateHostAvatar && !m_networkPlayerData.ContainsKey(0))
                     CreateNetworkPlayer(0, "Host", PlayerRecordKeyResolver.GetNetworkRecordKey(0));
+                // 主机角色就位后，把"下载世界里主机角色的那份游戏统计"挂回它自己身上
+                // （客户端角色的统计已另起一份，见 SeparateDownloadedPlayerStats）。
+                TryAttachDownloadedHostStats();
                 if (!IsHost && m_worldTransferRegistry.PendingWorldReadyTransferId > 0 &&
                     (!ReferenceEquals(m_projectReadySentProject, project) ||
                     m_projectReadySentTransferId != m_worldTransferRegistry.PendingWorldReadyTransferId))
@@ -2966,7 +2969,11 @@ namespace ScMultiplayer
             if (IsHost)
                 SendGamePlayerHealthMessage(false);
             else
+            {
                 SendClientDamageRequest();
+                // 联机角色的游戏统计：只有客户端算得准，周期性上报给主机写进角色记录
+                SendClientPlayerStats(false);
+            }
 
             // Source: Survivalcraft/Game/SubsystemTime.cs:SubsystemTime.NextFrame
             // Sleeping clients stay at one logical update per rendered frame and do not follow

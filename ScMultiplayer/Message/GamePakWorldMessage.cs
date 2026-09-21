@@ -56,6 +56,8 @@ namespace ScMultiplayer
         public int[] HandcraftSlotCounts = Array.Empty<int>();
         // Source: Survivalcraft/Game/PlayerData.cs:PlayerData.SpawnPosition
         public Vector3 PlayerSpawnPosition;
+        // 联机角色的游戏统计（记录里存的权威副本，加入时回填给客户端；不落 Project.xml）
+        public PlayerStatsSnapshot PlayerStats;
 
         public GamePakWorldMessage()
         {
@@ -112,6 +114,7 @@ namespace ScMultiplayer
             HandcraftSlotCounts = playerRecord?.HandcraftSlotCounts != null
                 ? (int[])playerRecord.HandcraftSlotCounts.Clone() : Array.Empty<int>();
             PlayerSpawnPosition = playerRecord?.SpawnPosition ?? Vector3.Zero;
+            PlayerStats = playerRecord?.Stats;
         }
 
         protected override void Read(SuReader reader)
@@ -188,6 +191,8 @@ namespace ScMultiplayer
                 ReadSlots(reader, out HandcraftSlotValues, out HandcraftSlotCounts);
             if (reader.Position < reader.Length)
                 PlayerSpawnPosition = reader.ReadVector3(reader);
+            if (reader.Position < reader.Length)
+                PlayerStats = PlayerStatsSnapshot.Read(reader);
         }
 
         protected override void Write(SuWriter writer)
@@ -263,6 +268,7 @@ namespace ScMultiplayer
             }
             WriteSlots(writer, HandcraftSlotValues, HandcraftSlotCounts);
             writer.WriteVector3(writer, PlayerSpawnPosition);
+            PlayerStatsSnapshot.Write(writer, PlayerStats);
         }
 
         private static int[][] CreateEmptyClothes() =>

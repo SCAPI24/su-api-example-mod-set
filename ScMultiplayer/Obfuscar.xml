@@ -24,6 +24,10 @@
     <SkipType name="ScMultiplayer.SuSubsystemTerrain" />
     <SkipType name="ScMultiplayer.SuSubsystemWeather" />
     <SkipType name="ScMultiplayer.SuSubsystemElectricity" />
+    <!-- 注：注入器按**类名字符串**映射（modInjector.Register("Game.SubsystemPlayerStats",
+         "ScMultiplayer.SuSubsystemPlayerStats")），被混淆改名后引擎就找不到这个类型，
+         实测表现是"Error loading world"——所有 Su* 注入类型都必须在这里保留原名。 -->
+    <SkipType name="ScMultiplayer.SuSubsystemPlayerStats" />
     <SkipType name="ScMultiplayer.SuSubsystemSpawn" />
     <SkipType name="ScMultiplayer.SuSubsystemCreatureSpawn" />
     <SkipType name="ScMultiplayer.SuSubsystemGrassBlockBehavior" />
@@ -59,6 +63,7 @@
     <SkipType name="ScMultiplayer.GamePlayerPositionsMessage" />
     <SkipType name="ScMultiplayer.SyncBatchMessage" />
     <SkipType name="ScMultiplayer.PlayerAimMessage" />
+    <SkipType name="ScMultiplayer.PlayerStatsMessage" />
     <SkipType name="ScMultiplayer.EditableDataRequestMessage" />
     <SkipType name="ScMultiplayer.EditableDataStateMessage" />
     <SkipType name="ScMultiplayer.CircuitSyncMessage" />

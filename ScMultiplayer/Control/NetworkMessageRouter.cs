@@ -68,6 +68,10 @@ namespace ScMultiplayer
                         m_owner.QueueEndOfFrameAction(command, () =>
                             m_owner.HandlePlayerAimMessage(playerAim, sourceClientId));
                         break;
+                    case PlayerStatsMessage playerStats:
+                        m_owner.QueueEndOfFrameAction(command, () =>
+                            m_owner.HandlePlayerStatsMessage(playerStats, sourceClientId));
+                        break;
                     case PlayerActionMessage playerAction:
                         if (playerAction.Action == PlayerActionType.JumpRequest)
                             m_owner.QueuePriorityInputAction(command, () =>
