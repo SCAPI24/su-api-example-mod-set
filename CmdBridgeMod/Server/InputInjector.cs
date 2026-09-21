@@ -39,6 +39,10 @@ namespace CmdBridgeMod
         private MouseButton m_clickButton = MouseButton.Left;
         private Vector2 m_clickPoint;
 
+        // Android 触摸点击：本帧按下、下一帧帧首抬起（见 AndroidTouch）。
+        private bool m_androidTouchPressed;
+        private Vector2 m_androidTouchPoint;
+
         /// <summary>
         /// 本帧做过的 UI 动作（`click:选择器` / `rightclick:…` / `drag:a→b`）。
         /// 菜单、背包这类操作在**原始输入层里没有痕迹**（走的是引擎软光标），所以另外记一份，
@@ -231,6 +235,19 @@ namespace CmdBridgeMod
         /// <summary>帧首：写输入层的"按过一下"。</summary>
         private void ApplyDirectUiClick(Vector2 point, Widget target)
         {
+            // Source: Mod/CmdBridgeMod/Server/AndroidTouch.cs
+            // Android：界面只认触摸（WidgetInput 的 Tap/Click 来自 TouchLocations），
+            // 桌面那套"软光标 + downOnce"在 Android 上派生不出 Click。
+            // 因此这里注入真实触摸事件：本帧按下，下一帧帧首抬起（RestoreAfterDirectUiClick），
+            // 与真人"快速点一下"在引擎眼里等价。
+            if (AndroidTouch.Available)
+            {
+                m_androidTouchPressed = true;
+                m_androidTouchPoint = point;
+                AndroidTouch.Press(point);
+                return;
+            }
+
             // ⚠️ **必须写在"目标控件自己的输入面"上，不能写在根控件的输入面上**。
             //
             // 引擎里每个 `WidgetsHierarchyInput` 是一个独立的 `WidgetInput`：
@@ -269,6 +286,13 @@ namespace CmdBridgeMod
         /// <summary>下一帧帧首：把软光标交回去（一次性动作不该留下长驻状态）。</summary>
         private void RestoreAfterDirectUiClick()
         {
+            if (m_androidTouchPressed)
+            {
+                m_androidTouchPressed = false;
+                AndroidTouch.Release(m_androidTouchPoint);
+                return;
+            }
+
             WidgetInput input = m_directClickInput ?? GetRootWidgetInput();
             m_directClickInput = null;
             if (input == null)

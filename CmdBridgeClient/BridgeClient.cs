@@ -39,11 +39,12 @@ namespace CmdBridgeClient
         public static BridgeClient Connect(string explicitRoot, int? explicitPort, string explicitToken)
         {
             string root = explicitRoot;
-            if (string.IsNullOrEmpty(root))
-                root = ResolveSingleInstanceRoot();
-
             int port = explicitPort ?? 0;
             string token = explicitToken;
+            // 只在"缺端口或 token"时才需要定位实例目录：显式给了 --port/--token（例如经 adb forward
+            // 连 Android 上的游戏）就不该因为本机跑着别的实例而报 instance_ambiguous。
+            if (string.IsNullOrEmpty(root) && (port <= 0 || string.IsNullOrEmpty(token)))
+                root = ResolveSingleInstanceRoot();
 
             if (string.IsNullOrEmpty(root))
             {

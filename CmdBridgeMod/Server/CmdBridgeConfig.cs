@@ -6,6 +6,7 @@ using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Engine;
 
 namespace CmdBridgeMod
 {
@@ -39,20 +40,23 @@ namespace CmdBridgeMod
 
         public int EventRingCapacity { get; private set; } = 256;
 
-        private const string FileName = "CmdBridge.json";
+        // Source: Engine/Engine/Storage.cs:Storage.ProcessPath
+        // 用引擎的 Storage + `data:` 虚拟路径，而不是 AppContext.BaseDirectory：
+        //   Windows → exe 目录（与旧行为完全一致）
+        //   Android → /sdcard/Download/Survivalcraft（adb 可预置/读取，PC 端才能拿到端口与 token）
+        private const string FileName = "data:/CmdBridge.json";
 
         public static CmdBridgeConfig LoadOrCreate(string instanceRoot)
         {
-            string path = Path.Combine(instanceRoot, FileName);
             CmdBridgeConfig config = CreateDefault(instanceRoot);
-            if (!File.Exists(path))
+            if (!Storage.FileExists(FileName))
             {
                 config.Validate();
-                config.Save(path);
+                config.Save(FileName);
                 return config;
             }
 
-            string json = File.ReadAllText(path, Encoding.UTF8);
+            string json = Storage.ReadAllText(FileName, Encoding.UTF8);
             using JsonDocument document = JsonDocument.Parse(json, new JsonDocumentOptions
             {
                 AllowTrailingCommas = false,
@@ -91,7 +95,8 @@ namespace CmdBridgeMod
             string trimmed = Path.TrimEndingDirectorySeparator(instanceRoot);
             return new CmdBridgeConfig
             {
-                InstanceId = Path.GetFileName(trimmed),
+                // Android 的实例目录是应用私有路径（…/files），固定名更好读写。
+                InstanceId = OperatingSystem.IsAndroid() ? "android" : Path.GetFileName(trimmed),
                 Port = FindAvailablePort(26751, 64),
                 Token = Convert.ToHexString(RandomNumberGenerator.GetBytes(24))
             };
@@ -141,7 +146,7 @@ namespace CmdBridgeMod
             builder.Append("  \"maxElements\": ").Append(MaxElements).Append(",\n");
             builder.Append("  \"eventRingCapacity\": ").Append(EventRingCapacity).Append("\n");
             builder.Append("}\n");
-            File.WriteAllText(path, builder.ToString(), new UTF8Encoding(false));
+            Storage.WriteAllText(path, builder.ToString(), new UTF8Encoding(false));
         }
 
         private static string Quote(string value)
@@ -237,11 +242,11 @@ namespace CmdBridgeMod
     /// </summary>
     internal static class CmdBridgeRuntime
     {
-        private const string FileName = "CmdBridge.runtime.json";
+        // 与配置同样走 `data:`：Windows = exe 目录，Android = /sdcard/Download/Survivalcraft。
+        private const string FileName = "data:/CmdBridge.runtime.json";
 
         public static void Write(string instanceRoot, CmdBridgeConfig config, string screen)
         {
-            string path = Path.Combine(instanceRoot, FileName);
             var builder = new StringBuilder();
             builder.Append("{\n");
             builder.Append("  \"modVersion\": \"1.0.0\",\n");
@@ -254,19 +259,21 @@ namespace CmdBridgeMod
             builder.Append("  \"screen\": \"").Append(screen ?? string.Empty).Append("\"\n");
             builder.Append("}\n");
 
-            string temp = path + ".tmp";
-            File.WriteAllText(temp, builder.ToString(), new UTF8Encoding(false));
-            // 覆盖式 Move 是原子替换：中途被杀不会留下"半个 runtime 文件"。
-            File.Move(temp, path, true);
+            string temp = FileName + ".tmp";
+            Storage.WriteAllText(temp, builder.ToString(), new UTF8Encoding(false));
+            // 覆盖式替换：先删再移（Storage.MoveFile 遇到已存在的目标会失败），
+            // 中途被杀也不会留下"半个 runtime 文件"。
+            if (Storage.FileExists(FileName))
+                Storage.DeleteFile(FileName);
+            Storage.MoveFile(temp, FileName);
         }
 
         public static void Delete(string instanceRoot)
         {
             try
             {
-                string path = Path.Combine(instanceRoot, FileName);
-                if (File.Exists(path))
-                    File.Delete(path);
+                if (Storage.FileExists(FileName))
+                    Storage.DeleteFile(FileName);
             }
             catch
             {
