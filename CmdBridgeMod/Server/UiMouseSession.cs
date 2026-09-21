@@ -229,6 +229,19 @@ namespace CmdBridgeMod
             m_injector.Pump.Enqueue(TickOnce);
         }
 
+        /// <summary>
+        /// 只**设置落点**、不排队任何 `Move` 步：供"按下前定位"使用。
+        /// 为什么不能用 `MoveTo`：在 Android 上那是一次真实的 look 拖拽（触点从旧位置跳到新位置），
+        /// 实测会把视角从低头瞬间拽成平视/看天；而挖掘又必须走"会话+触摸"这条引擎认识的路径
+        /// （直接 `AndroidTouch.Press` 绕过去挖不动）。这里只写内部落点，随后 `Press` 直接用，
+        /// 引擎看到一个"凭空按在目标点"的触点 —— 既不拖视角，又能正常挖。
+        /// </summary>
+        public void PreparePoint(Vector2 point)
+        {
+            m_position = point;
+            m_hasPosition = true;
+        }
+
         public void EndImmediate()
         {
             lock (m_gate)
