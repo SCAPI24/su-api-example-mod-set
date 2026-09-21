@@ -339,7 +339,7 @@ namespace CmdBridgeMod
                     ContainerWidget root = ScreensManager.RootWidget;
                     float px = request.GetFloat("x", root != null ? root.ActualSize.X * 0.5f : 1000f);
                     float py = request.GetFloat("y", root != null ? root.ActualSize.Y * 0.5f : 600f);
-                    int holdMs = request.GetInteger("holdMs", 400);
+                    int holdMs = request.GetInteger("holdMs", 600);
                     float maxDistance = request.GetFloat("maxDistance", 8f);
                     var beforeAim = AimObserver.Describe(maxDistance) as Dictionary<string, object>;
                     int cellX = 0;
