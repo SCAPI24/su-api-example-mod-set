@@ -369,6 +369,43 @@ namespace CmdBridgeMod
                     SubsystemTerrain terrain = GameManager.Project?.FindSubsystem<SubsystemTerrain>(false);
                     int beforeValue = hasCell
                         ? terrain.Terrain.GetCellValue(cellX, cellY, cellZ) : 0;
+                    if (AndroidTouch.Available)
+                    {
+                        // Android：**直接落触点**（不经过会话的 MoveTo）。会话路径会先发一次
+                        // `MoveTo(落点)`，那在 Android 上等于一次大幅 look 拖拽 —— 实测表现为
+                        // "低头对着目标挖 → 挖掘瞬间跳成平视 → 下一瞬看天"。直接新建触点没有移动增量，
+                        // 视角就不会被拖走；按住时长用帧数表达（保持期只是等帧，不写任何位置）。
+                        AndroidTouch.Press(new Vector2(px, py));
+                        int releaseFrames = Math.Max(1, holdMs / 16);
+                        for (int i = 0; i < releaseFrames; i++)
+                            m_injector.Pump.Enqueue(delegate { });
+                        m_injector.Pump.Enqueue(delegate
+                        {
+                            AndroidTouch.Release(new Vector2(px, py));
+                        });
+                        m_injector.NoteUiAction("touch:dig@" + (int)px + "," + (int)py);
+                        int afterValueDirect = hasCell && terrain != null
+                            ? terrain.Terrain.GetCellValue(cellX, cellY, cellZ) : 0;
+                        return new Dictionary<string, object>(StringComparer.Ordinal)
+                        {
+                            ["completed"] = true,
+                            ["action"] = "act.dig",
+                            ["mode"] = "android-touch-direct",
+                            ["point"] = new Dictionary<string, object>
+                            {
+                                ["x"] = px, ["y"] = py
+                            },
+                            ["holdMs"] = holdMs,
+                            ["pendingFrames"] = releaseFrames + 1,
+                            ["cell"] = hasCell ? cellX + "," + cellY + "," + cellZ : null,
+                            ["beforeValue"] = beforeValue,
+                            ["afterValue"] = afterValueDirect,
+                            ["removed"] = hasCell && afterValueDirect != beforeValue,
+                            ["nowAir"] = hasCell && terrain != null &&
+                                Terrain.ExtractContents(afterValueDirect) == 0,
+                            ["beforeAim"] = beforeAim
+                        };
+                    }
                     int usedHold = holdMs;
                     int attempts = 0;
                     int afterValue = 0;
