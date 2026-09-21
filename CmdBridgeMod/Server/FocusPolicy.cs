@@ -273,6 +273,7 @@ namespace CmdBridgeMod
                 ["foregroundStealNote"] = m_lastStealNote,
                 ["foregroundError"] = m_foregroundError,
                 ["cursorGuarded"] = IsDetached || !m_realFocus,
+                ["softCursorForced"] = m_softCursorInputs.Count,
                 ["windowStateError"] = m_windowStateError,
                 ["lastNote"] = m_lastNote,
                 ["lastError"] = m_lastError
@@ -295,6 +296,106 @@ namespace CmdBridgeMod
 
         // ---------------------------------------------------------------- 每帧
 
+        // ---------------------------------------------------------------- 失焦软光标
+
+        private readonly List<Game.WidgetInput> m_softCursorInputs = new List<Game.WidgetInput>();
+
+        private CursorSoftGuard m_cursorGuard;
+        private GameEntitySystem.Project m_cursorGuardProject;
+
+        /// <summary>
+        /// 把 <see cref="CursorSoftGuard"/> 挂到当前项目的 `SubsystemUpdate` 上（UpdateOrder 紧邻
+        /// `ComponentInput` 之前）。帧首那些断言会被 `GameWidget.Update()` 覆盖，只有跑到
+        /// ComponentInput 前面才能保证引擎写 `MousePosition` 时软光标是开着的。
+        /// </summary>
+        private void EnsureCursorGuardInstalled()
+        {
+            try
+            {
+                GameEntitySystem.Project project = Game.GameManager.Project;
+                if (ReferenceEquals(project, m_cursorGuardProject))
+                    return;
+                if (m_cursorGuardProject != null && m_cursorGuard != null)
+                {
+                    m_cursorGuardProject.FindSubsystem<Game.SubsystemUpdate>(false)
+                        ?.RemoveUpdateable(m_cursorGuard);
+                }
+                m_cursorGuardProject = project;
+                if (project == null)
+                    return;
+                if (m_cursorGuard == null)
+                    m_cursorGuard = new CursorSoftGuard(m_injector);
+                project.FindSubsystem<Game.SubsystemUpdate>(false)?.AddUpdateable(m_cursorGuard);
+            }
+            catch (Exception exception)
+            {
+                m_lastError = exception.GetType().Name + ": " + exception.Message;
+            }
+        }
+
+        /// <summary>
+        /// 真失焦时把"世界内/界面"输入面切到**软光标**，绝不碰真实鼠标。
+        ///
+        /// 为什么需要：引擎在"3D 视角 → 鼠标光标"切换时会写 `input.MousePosition`
+        /// （`ComponentInput.UpdateInputFromMouseAndKeyboard` 把光标摆到视角中心：
+        /// `ComponentInput.cs:145-151`），而 `WidgetInput.MousePosition` 的 setter 在
+        /// **软光标关闭**时会把**真实鼠标**挪过去 —— 表现就是"游戏没焦点、弹出游戏统计时
+        /// 我的鼠标被快速吸走"。软光标打开后，引擎怎么写都只动虚拟光标。
+        /// 恢复焦点时切回，真实鼠标行为完全不变。
+        /// </summary>
+        internal void ApplyUnfocusedSoftCursor()
+        {
+            try
+            {
+                if (m_realFocus)
+                {
+                    if (m_softCursorInputs.Count == 0)
+                        return;
+                    foreach (Game.WidgetInput input in m_softCursorInputs)
+                    {
+                        if (input != null)
+                            input.UseSoftMouseCursor = false;
+                    }
+                    m_softCursorInputs.Clear();
+                    return;
+                }
+
+                m_softCursorInputs.Clear();
+                Game.ContainerWidget root = Game.ScreensManager.RootWidget;
+                if (root != null)
+                {
+                    // 整棵树都收：世界加载/转屏那一瞬 GameWidget 的输入面可能还没进
+                    // SubsystemGameWidgets（实测：只在加载瞬间漏过一次，真实光标被挪了 1218px），
+                    // 只按"根 + SubsystemGameWidgets"收集会漏掉那一帧。
+                    foreach (Game.Widget widget in root.AllChildren)
+                    {
+                        Game.WidgetInput input = widget?.Input;
+                        if (input != null && !m_softCursorInputs.Contains(input))
+                            m_softCursorInputs.Add(input);
+                    }
+                }
+                Game.SubsystemGameWidgets gameWidgets =
+                    Game.GameManager.Project?.FindSubsystem<Game.SubsystemGameWidgets>(false);
+                if (gameWidgets != null)
+                {
+                    foreach (Game.GameWidget gameWidget in gameWidgets.GameWidgets)
+                    {
+                        if (gameWidget != null && gameWidget.Input != null &&
+                            !m_softCursorInputs.Contains(gameWidget.Input))
+                        {
+                            m_softCursorInputs.Add(gameWidget.Input);
+                        }
+                    }
+                }
+                foreach (Game.WidgetInput input in m_softCursorInputs)
+                    input.UseSoftMouseCursor = true;
+            }
+            catch (Exception exception)
+            {
+                m_lastError = exception.GetType().Name + ": " + exception.Message;
+            }
+        }
+
         /// <summary>帧首（游戏线程，早于 Keyboard/Mouse.BeforeFrame 与整个帧体）。</summary>
         public void ApplyFrameStart()
         {
@@ -306,6 +407,11 @@ namespace CmdBridgeMod
                 m_realFocus = RefreshRealFocusFromWindow();
 
                 UpdateRealMouseActivity();
+
+                // 真失焦：先把输入面切到软光标，之后引擎本帧内写 MousePosition 只动虚拟光标。
+                ApplyUnfocusedSoftCursor();
+                // 并挂上"紧贴 ComponentInput 之前再断言一次"的守卫（GameWidget.Update 每帧会覆盖）。
+                EnsureCursorGuardInstalled();
 
                 bool detached = IsDetached;
                 if (detached)
@@ -341,6 +447,8 @@ namespace CmdBridgeMod
         /// </summary>
         public void ApplyFrameEnd()
         {
+            // 真失焦时保持软光标（也负责恢复焦点后切回真实鼠标）。
+            ApplyUnfocusedSoftCursor();
             // 失焦（含"被别的应用盖住"）时**绝不隐藏/抓取系统光标**：
             // 否则用户在别的应用里干活，鼠标会被游戏吃掉 —— 表现就是
             // "游戏在后台却还能控制我的键鼠"，而他只能按 Win 才能把焦点抢回来。
@@ -351,6 +459,14 @@ namespace CmdBridgeMod
             try
             {
                 Mouse.IsMouseVisible = true;
+                // 真失焦时**绝不抓取系统光标**：脱离模式把 `Window` 伪造成 active，引擎于是会写
+                // `CursorVisible = Mouse.IsMouseVisible`（`Mouse.cs:50-52`），开着游戏统计界面时尤其明显
+                // —— 用户在别的应用里干活，鼠标却被游戏吃掉。这里把 OS 光标恢复成可见且不抓取；
+                // 虚拟焦点/注入照旧工作（软光标不受影响）。
+                if (!m_realFocus)
+                {
+                    OpenTkInput.ReleaseCursorCapture(m_gameWindow);
+                }
             }
             catch (Exception exception)
             {

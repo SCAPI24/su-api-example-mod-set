@@ -152,6 +152,21 @@ namespace CmdBridgeMod
                     // 录制端因此能记下"哪一行"而不是"哪个像素"（用户要求：改了窗口大小也别点空）。
                     int rowIndex = request.GetInteger("row", -1);
                     string rowText = request.GetString("text", null);
+                    // 纯选择器点击优先 direct（单帧合成 Tap+Click，写在目标控件自己的输入面）：
+                    // 世界内 GameWidget 层级下 CM-1 会话派生不出 Click ——
+                    // `ComponentInput.UpdateInputFromMouseAndKeyboard` 每帧重写该层输入状态，
+                    // GameMenuDialog 的按钮用会话点毫无反应、用 direct 立刻回到主菜单（实测）。
+                    // 带坐标、列表行、或显式 `mode=input` 时仍走会话，行为不变。
+                    string directSelector = request.GetString("selector", null);
+                    string clickMode = request.GetString("mode", null);
+                    if (!hasPoint && rowIndex < 0 && string.IsNullOrEmpty(rowText)
+                        && !string.IsNullOrEmpty(directSelector)
+                        && !string.Equals(clickMode, "input", StringComparison.OrdinalIgnoreCase))
+                    {
+                        return m_injector.Ui.Click(directSelector, "direct",
+                            request.GetInteger("holdMs", 0), false,
+                            UiMarker.DefaultSeconds, UiMarker.DefaultDiameterPixels);
+                    }
                     // 走 CM-1 会话（一步一帧）：直注入的"按下+抬起"会落在同一帧，界面纹丝不动。
                     return m_injector.UiClickSession(
                         request.GetString("selector", null),
@@ -215,11 +230,35 @@ namespace CmdBridgeMod
                         : m_injector.Session.MoveToElement(selector, steps));
                 }
                 case "ui.press":
-                    return UiSessionCommand(request, () => m_injector.Session.Press(
-                        UiMouseSession.ToMouseButton(request.GetString("button", "left"), MouseButton.Left)));
+                {
+                    // 接口自洽：给了 x/y 就先挪到该点再按下。会话的 `Press` 本身不带坐标，
+                    // 不先定位的话按下会落在"上一次操作结束的位置"（实测：移动/视角会互换）。
+                    float px = 0f;
+                    float py = 0f;
+                    bool hasPoint = request.TryGetFloat("x", out px) && request.TryGetFloat("y", out py);
+                    int steps = request.GetInteger("steps", 1);
+                    return UiSessionCommand(request, () =>
+                    {
+                        if (hasPoint)
+                            m_injector.Session.MoveTo(new Vector2(px, py), steps);
+                        return m_injector.Session.Press(UiMouseSession.ToMouseButton(
+                            request.GetString("button", "left"), MouseButton.Left));
+                    });
+                }
                 case "ui.release":
-                    return UiSessionCommand(request, () => m_injector.Session.Release(
-                        UiMouseSession.ToMouseButton(request.GetString("button", "left"), MouseButton.Left)));
+                {
+                    float rx = 0f;
+                    float ry = 0f;
+                    bool hasPoint = request.TryGetFloat("x", out rx) && request.TryGetFloat("y", out ry);
+                    int steps = request.GetInteger("steps", 1);
+                    return UiSessionCommand(request, () =>
+                    {
+                        if (hasPoint)
+                            m_injector.Session.MoveTo(new Vector2(rx, ry), steps);
+                        return m_injector.Session.Release(UiMouseSession.ToMouseButton(
+                            request.GetString("button", "left"), MouseButton.Left));
+                    });
+                }
                 case "ui.move":
                 {
                     float mx = 0f;
@@ -229,11 +268,100 @@ namespace CmdBridgeMod
                     int steps = request.GetInteger("steps", 8);
                     return UiSessionCommand(request, () => m_injector.Session.MoveTo(new Vector2(mx, my), steps));
                 }
+
+                // ------------------------------------------------ Android 语义动作（手指语义）
+                // 陌生 AI 只要知道"往前走 / 转头 / 跳"，不需要知道坐标与矩形；规则见 `guide.android`。
+                // 引擎侧实测语义：左下 `Move` 区按住再拖 = 移动；无按钮区按住拖 = 视角；
+                // 无按钮区按住不动 ≈0.2~0.5s = 挖掘；在 `Move` / `Look` 上轻点一下 = 跳跃。
+                case "act.move":
+                {
+                    ContainerWidget root = ScreensManager.RootWidget;
+                    Widget pad = root == null ? null : UiInspector.Resolve(root, "Move", false, default(Vector2));
+                    if (pad == null)
+                        throw new BridgeCommandException("element_missing",
+                            "The Android move pad ('Move') was not found on the current screen.");
+                    Vector2 from = UiInspector.CenterOf(pad);
+                    float distance = request.GetFloat("distance", 90f);
+                    string dir = (request.GetString("dir", "forward") ?? "forward").ToLowerInvariant();
+                    float dx = dir == "left" ? -distance : (dir == "right" ? distance : 0f);
+                    float dy = dir == "back" ? distance : (dir == "forward" ? -distance : 0f);
+                    Vector2 to = new Vector2(from.X + dx, from.Y + dy);
+                    int holdMs = request.GetInteger("holdMs", 1200);
+                    m_injector.Session.Begin(false);
+                    m_injector.Session.MoveTo(from, 1);
+                    m_injector.Session.Press(MouseButton.Left);
+                    int frames = Math.Max(2, holdMs / 16);
+                    for (int i = 0; i < frames; i++)
+                        m_injector.Session.MoveTo(to, 1); // 每帧重申位置 = 保持按住
+                    m_injector.Session.Release(MouseButton.Left);
+                    m_injector.Session.End();
+                    m_injector.Session.WaitUntilIdle(4000 + holdMs);
+                    m_injector.NoteUiAction("touch:move." + dir);
+                    return new Dictionary<string, object>(StringComparer.Ordinal)
+                    {
+                        ["completed"] = true, ["action"] = "act.move", ["dir"] = dir,
+                        ["from"] = from.ToString(), ["to"] = to.ToString(), ["holdMs"] = holdMs
+                    };
+                }
+                case "act.jump":
+                {
+                    string padName = request.GetString("pad", "Move");
+                    ContainerWidget root = ScreensManager.RootWidget;
+                    Widget pad = root == null ? null : UiInspector.Resolve(root, padName, false, default(Vector2));
+                    if (pad == null)
+                        throw new BridgeCommandException("element_missing",
+                            "The Android touch pad '" + padName + "' was not found on the current screen.");
+                    Vector2 at = UiInspector.CenterOf(pad);
+                    int holdMs = request.GetInteger("holdMs", 140); // 轻点一下 = 跳跃
+                    m_injector.Session.Begin(false);
+                    m_injector.Session.MoveTo(at, 1);
+                    m_injector.Session.Press(MouseButton.Left);
+                    int frames = Math.Max(2, holdMs / 16);
+                    for (int i = 0; i < frames; i++)
+                        m_injector.Session.MoveTo(at, 1);
+                    m_injector.Session.Release(MouseButton.Left);
+                    m_injector.Session.End();
+                    m_injector.Session.WaitUntilIdle(4000 + holdMs);
+                    m_injector.NoteUiAction("touch:jump." + padName);
+                    return new Dictionary<string, object>(StringComparer.Ordinal)
+                    {
+                        ["completed"] = true, ["action"] = "act.jump", ["pad"] = padName,
+                        ["at"] = at.ToString(), ["holdMs"] = holdMs
+                    };
+                }
+                case "guide.android":
+                    return "Android touch control (CmdBridge semantic actions)\r\n"
+                        + "  act.move  dir=forward|back|left|right holdMs=1200  -> hold the bottom-left Move pad and drag that way\r\n"
+                        + "  act.jump  pad=Move|Look holdMs=140                 -> quick tap on Move (or Look) = jump\r\n"
+                        + "  act.look  yawDeg=.. pitchDeg=..  / lookdelta dYaw dPitch -> turn the camera (engine level, precise)\r\n"
+                        + "  touch-drag look: ui.session.begin; ui.move x y (center, button-free); ui.press; ui.move ...; ui.release; ui.session.end\r\n"
+                        + "  dig                                                -> hold still (~0.2-0.5s) in a button-free area\r\n"
+                        + "  low level: ui.session.begin; ui.move x y (LOCATE FIRST); ui.press; ui.move ...; ui.release; ui.session.end\r\n"
+                        + "  ui.press/ui.release also accept x/y now (they locate before pressing/releasing).\r\n"
+                        + "  preconditions: game in foreground, soft keyboard hidden; Android draws no cursor.";
+
                 case "ui.click":
                 {
-                    string selector = request.GetString("selector", null);
+                    string selector = request.GetString("selector", request.GetString("target", null));
                     if (string.IsNullOrEmpty(selector))
                         throw new BridgeCommandException("invalid_argument", "ui.click needs a selector.");
+                    string clickMode = request.GetString("mode", "direct");
+                    float clickX;
+                    float clickY;
+                    bool hasPoint = request.TryGetFloat("x", out clickX)
+                        && request.TryGetFloat("y", out clickY);
+                    // 纯选择器点击优先走 direct（单帧合成 Tap+Click，写在目标控件自己的输入面）：
+                    // 世界内 GameWidget 层级下老的软光标多帧会话派生不出 Click ——
+                    // `ComponentInput.UpdateInputFromMouseAndKeyboard` 每帧重写该层输入状态，
+                    // GameMenuDialog 的按钮用会话点完全没反应、用 direct 立刻回到主菜单（实测）。
+                    // 带坐标的点击（虚拟列表行/坐标点击）与显式 `mode=input` 仍走会话，行为不变。
+                    if (!hasPoint && !string.Equals(clickMode, "input", StringComparison.OrdinalIgnoreCase))
+                    {
+                        return m_injector.Ui.Click(selector, "direct",
+                            request.GetInteger("holdMs", 0), request.GetBoolean("mark", false),
+                            request.GetFloat("markMs", UiMarker.DefaultSeconds * 1000f) / 1000f,
+                            request.GetFloat("markPx", UiMarker.DefaultDiameterPixels));
+                    }
                     return UiSessionCommand(request, () => m_injector.Session.Click(selector));
                 }
                 case "ui.rightclick":

@@ -527,11 +527,16 @@ namespace CmdBridgeMod
                 throw new BridgeCommandException("not_ready", "The UI input surface is not ready.");
             m_input = input;
 
-            input.UseSoftMouseCursor = true;
-            // 世界视图里 ComponentInput 每帧会把可见性置 false；不重申就派生不出 Click/Drag。
-            input.IsMouseCursorVisible = true;
-            if (m_hasPosition)
-                input.MousePosition = m_position;
+            // Android 上没有鼠标：写这三样只会让引擎把软光标（PadCursor）画出来 ——
+            // 表现就是"一个光标快速移动到目标点上"，而真正的输入是下面的触摸注入。
+            if (!AndroidTouch.Available)
+            {
+                input.UseSoftMouseCursor = true;
+                // 世界视图里 ComponentInput 每帧会把可见性置 false；不重申就派生不出 Click/Drag。
+                input.IsMouseCursorVisible = true;
+                if (m_hasPosition)
+                    input.MousePosition = m_position;
+            }
 
             if (m_mask)
             {

@@ -98,9 +98,30 @@ namespace CmdBridgeMod
         }
 
         /// <summary>引擎内 UI 点击（按控件路径；注入前会二次校验元素是否可点，不可跳级）。</summary>
+        /// <remarks>
+        /// 优先走 direct（单帧合成 Tap+Click，写在目标控件自己的输入面上）：世界内 GameWidget
+        /// 层级下老的软光标多帧会话派生不出 Click —— `ComponentInput.UpdateInputFromMouseAndKeyboard`
+        /// 每帧重写该层输入状态，GameMenuDialog 的按钮只有 direct 才响应（实测：同一目标用会话点击
+        /// 界面纹丝不动，用 direct 立刻回到主菜单）。direct 无法受理时才退回会话。
+        /// </remarks>
         public bool UiClick(string selector, int holdMilliseconds = 0)
         {
-            return Execute("UiClick", () => m_injector.UiClick(selector, holdMilliseconds, false, 0f, 0f));
+            return Execute("UiClick", () =>
+            {
+                string directError;
+                try
+                {
+                    if (m_injector.UiClickTargetCore(selector, "direct", out directError))
+                    {
+                        return true;
+                    }
+                }
+                catch (Exception)
+                {
+                    // direct 这条注入路走不通（例如输入面未就绪），退回多帧会话再试一次。
+                }
+                return m_injector.UiClick(selector, holdMilliseconds, false, 0f, 0f);
+            });
         }
 
         /// <summary>引擎内 UI 点击（按坐标点）。</summary>

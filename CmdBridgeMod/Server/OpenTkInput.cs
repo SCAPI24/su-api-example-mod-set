@@ -185,6 +185,39 @@ namespace CmdBridgeMod
             return false;
         }
 
+        private static PropertyInfo m_cursorVisibleProperty;
+        private static PropertyInfo m_cursorGrabbedProperty;
+        private static Type m_cursorPropertyType;
+
+        /// <summary>
+        /// 只为"失焦时别把系统光标抢走"用：把 OpenTK 窗口的光标恢复成可见且不抓取。
+        /// 引擎只在 `Window.IsActive` 时同步 `CursorVisible = Mouse.IsMouseVisible`（`Mouse.cs:50-52`），
+        /// 而虚拟焦点会把 `Window` 伪造成 active —— 于是游戏在后台/失焦时仍可能抓住系统光标。
+        /// </summary>
+        public static void ReleaseCursorCapture(object gameWindow)
+        {
+            EnsureResolved();
+            if (gameWindow == null)
+                return;
+            try
+            {
+                Type type = gameWindow.GetType();
+                if (m_cursorPropertyType != type)
+                {
+                    m_cursorPropertyType = type;
+                    m_cursorVisibleProperty = type.GetProperty("CursorVisible");
+                    m_cursorGrabbedProperty = type.GetProperty("CursorGrabbed");
+                }
+                if (m_cursorVisibleProperty != null && m_cursorVisibleProperty.CanWrite)
+                    m_cursorVisibleProperty.SetValue(gameWindow, true);
+                if (m_cursorGrabbedProperty != null && m_cursorGrabbedProperty.CanWrite)
+                    m_cursorGrabbedProperty.SetValue(gameWindow, false);
+            }
+            catch (Exception)
+            {
+            }
+        }
+
         /// <summary>游戏窗口的 OS 句柄（`GameWindow.WindowInfo.Handle`）；取不到返回 Zero。</summary>
         public static IntPtr GetWindowHandle(object gameWindow)
         {

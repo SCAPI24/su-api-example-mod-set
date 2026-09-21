@@ -45,13 +45,161 @@ namespace CmdBridgeMod
         /// <summary>按下（等价于手指落点）。</summary>
         public static void Press(Vector2 point)
         {
+            // 先清掉可能残留的合成点：引擎的 `ProcessTouchPressed → ProcessTouchMoved` 命中旧点后
+            // **不会新建点**，旧点位置就会被这一次按下沿用（实测：落点错位到上一次拖动结束的位置）。
+            // 只在 Press 前清：Release 之后要让引擎在本帧看到 `Released`，否则 UI 的 Tap/Click 派生会坏。
+            RemoveSynthetic();
             Invoke(m_pressed, point);
         }
 
         /// <summary>移动（拖拽/滑条）。</summary>
         public static void Move(Vector2 point)
         {
+            // 引擎的 `ProcessTouchMoved` 只在"该点状态已是 Moved"时才更新位置，而 `Pressed` 点会被
+            // 丢弃位置（`Touch.Android.cs:122-130`）。真机流程是引擎自己在 AfterFrame 里把 Pressed
+            // 提升为 Moved，摇杆则在 Pressed 阶段捕获触摸并持续算偏移 —— 所以这里**只强写位置、
+            // 不改状态**（等价于铁律"ProcessTouchMoved 必须无条件更新位置"的 mod 侧实现）；
+            // 之前把状态改成 Moved 会让摇杆不再认这次触摸（实测只走一步就不动了）。
+            ForcePosition(point);
             Invoke(m_moved, point);
+        }
+
+        /// <summary>只把合成点的 Position 写成新值，其余字段与状态一律不动。</summary>
+        private static void ForcePosition(Vector2 point)
+        {
+            try
+            {
+                if (m_locationsField == null && !ResolveLocations())
+                    return;
+                var list = m_locationsField.GetValue(null) as System.Collections.IList;
+                if (list == null)
+                    return;
+                for (int i = 0; i < list.Count; i++)
+                {
+                    object location = list[i];
+                    if (location == null ||
+                        !Equals(m_idField.GetValue(location), SyntheticPointerId))
+                        continue;
+                    m_positionField.SetValue(location, point);
+                    list[i] = location; // 结构体：装箱副本必须写回列表
+                    return;
+                }
+            }
+            catch (Exception error)
+            {
+                Log.Warning("[CmdBridge] android touch position write failed: " + error.Message);
+            }
+        }
+
+        private static FieldInfo m_locationsField;
+        private static Type m_locationType;
+        private static FieldInfo m_idField;
+        private static FieldInfo m_positionField;
+        private static FieldInfo m_stateField;
+        private static object m_stateMoved;
+        private static bool m_promoteUnavailable;
+
+        /// <summary>
+        /// 把合成触摸点从 `Pressed` 提升为 `Moved`。
+        ///
+        /// 引擎的 `Touch.ProcessTouchMoved`（`Engine/Engine/Input/Touch.Android.cs:113-135`）**只在
+        /// 已存在点的状态是 `Moved` 时才更新位置**，而 `ProcessTouchPressed` 新建的点状态是
+        /// `Pressed`（`:138-143`）——于是后续每一次 Move 的位置都被丢弃，触摸点永远停在按下处：
+        /// 移动摇杆/滑条因此纹丝不动，而"按下与抬起同一点"的 UI 点击不受影响（它不需要位置更新）。
+        /// 这与项目铁律"`ProcessTouchMoved` 必须无条件更新位置"是同一个坑。
+        ///
+        /// 只改我们自己那个合成点（id=1001）；纯点击不经过这里，因此 Tap/Click 依赖的
+        /// `Pressed` + `ReleaseQueued` 派生路径完全不受影响。释放时该点为 `Moved` →
+        /// `ProcessTouchReleased` 走 `Released` 分支（`:170-178`），不会留下卡住的触摸。
+        /// </summary>
+        public static void PromoteToMoved(Vector2 point)
+        {
+            EnsureResolved();
+            if (!m_available || m_promoteUnavailable)
+                return;
+            try
+            {
+                if (m_locationsField == null && !ResolveLocations())
+                    return;
+                var list = m_locationsField.GetValue(null) as System.Collections.IList;
+                if (list == null)
+                    return;
+                for (int i = 0; i < list.Count; i++)
+                {
+                    object location = list[i];
+                    if (location == null ||
+                        !Equals(m_idField.GetValue(location), SyntheticPointerId))
+                        continue;
+                    // 原地改字段：只动 Position/State，其余字段（触摸起点等）必须原样保留。
+                    // 之前用 Activator 新建实例替换，会把没写的字段清零 —— 移动摇杆据此算出的
+                    // 偏移量就是错的，实测表现为"触摸被当成视角/挖掘，角色不动"。
+                    m_positionField.SetValue(location, point);
+                    m_stateField.SetValue(location, m_stateMoved);
+                    list[i] = location; // 结构体：装箱副本必须写回列表
+                    return;
+                }
+            }
+            catch (Exception error)
+            {
+                m_promoteUnavailable = true;
+                Log.Warning("[CmdBridge] android touch promote failed: " + error.Message);
+            }
+        }
+
+        private static void RemoveSynthetic()
+        {
+            try
+            {
+                if (m_locationsField == null && !ResolveLocations())
+                    return;
+                var list = m_locationsField.GetValue(null) as System.Collections.IList;
+                if (list == null)
+                    return;
+                for (int i = list.Count - 1; i >= 0; i--)
+                {
+                    object location = list[i];
+                    if (location != null &&
+                        Equals(m_idField.GetValue(location), SyntheticPointerId))
+                    {
+                        list.RemoveAt(i);
+                    }
+                }
+            }
+            catch (Exception error)
+            {
+                Log.Warning("[CmdBridge] android touch cleanup failed: " + error.Message);
+            }
+        }
+
+        private static bool ResolveLocations()
+        {
+            m_locationsField = typeof(Touch).GetField("m_touchLocations",
+                BindingFlags.NonPublic | BindingFlags.Static);
+            if (m_locationsField == null)
+            {
+                m_promoteUnavailable = true;
+                return false;
+            }
+            Type listType = m_locationsField.FieldType;
+            Type[] arguments = listType.IsGenericType
+                ? listType.GetGenericArguments()
+                : Type.EmptyTypes;
+            if (arguments.Length != 1)
+            {
+                m_promoteUnavailable = true;
+                return false;
+            }
+            m_locationType = arguments[0];
+            m_idField = m_locationType.GetField("Id");
+            m_positionField = m_locationType.GetField("Position");
+            m_stateField = m_locationType.GetField("State");
+            if (m_idField == null || m_positionField == null || m_stateField == null)
+            {
+                m_promoteUnavailable = true;
+                return false;
+            }
+            m_stateMoved = Enum.Parse(m_stateField.FieldType, "Moved");
+            return true;
         }
 
         /// <summary>抬起（等价于手指离屏，引擎据此派生 Tap/Click）。</summary>
