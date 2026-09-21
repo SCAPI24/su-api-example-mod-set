@@ -216,6 +216,19 @@ namespace CmdBridgeMod
         }
 
         /// <summary>立即结束（不等帧首队列）：Mod 卸载、异常兜底时用。</summary>
+        /// <summary>
+        /// 保持按住且**不产生位移**（挖掘/长按用）：重申当前状态一帧。
+        /// 为什么需要：Android 上无按钮区的触摸同时是视角摇杆，挖掘保持期若反复写"新位置"会被当成
+        /// 拖拽把镜头转走（实测：按下瞬间还对着目标导线，实际挖到了别处）。写回当前位置即为零位移。
+        /// </summary>
+        public void HoldNoMove()
+        {
+            // 只推进一帧（保持触摸按下、重申状态），**绝不再写位置**：
+            // 之前这里写的是 MoveTo(m_position,1)，每帧都会产生一点微小位移，累计成"保持期里
+            // 镜头持续抬头"，挖掘就看不到目标了。触摸保持必须是零位移。
+            m_injector.Pump.Enqueue(TickOnce);
+        }
+
         public void EndImmediate()
         {
             lock (m_gate)

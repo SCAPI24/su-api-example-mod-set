@@ -369,17 +369,29 @@ namespace CmdBridgeMod
                     SubsystemTerrain terrain = GameManager.Project?.FindSubsystem<SubsystemTerrain>(false);
                     int beforeValue = hasCell
                         ? terrain.Terrain.GetCellValue(cellX, cellY, cellZ) : 0;
-                    m_injector.Session.Begin(false);
-                    m_injector.Session.MoveTo(new Vector2(px, py), 1);
-                    m_injector.Session.Press(MouseButton.Left);
-                    int digFrames = Math.Max(1, holdMs / 16);
-                    for (int i = 0; i < digFrames; i++)
+                    int usedHold = holdMs;
+                    int attempts = 0;
+                    int afterValue = 0;
+                    for (attempts = 1; attempts <= 3; attempts++)
+                    {
+                        // 去耦：开始前只定位一次（设置触摸落点），保持期**不再写位置**——
+                        // Android 上无按钮区的触摸同时是视角摇杆，反复写位置/拖拽会把镜头转走，
+                        // 导致"按下瞬间对着的是下一根导线，实际挖到别处"。
+                        m_injector.Session.Begin(false);
                         m_injector.Session.MoveTo(new Vector2(px, py), 1);
-                    m_injector.Session.Release(MouseButton.Left);
-                    m_injector.Session.End();
-                    m_injector.Session.WaitUntilIdle(3000 + holdMs);
-                    int afterValue = hasCell && terrain != null
-                        ? terrain.Terrain.GetCellValue(cellX, cellY, cellZ) : 0;
+                        m_injector.Session.Press(MouseButton.Left);
+                        int digFrames = Math.Max(1, usedHold / 16);
+                        for (int i = 0; i < digFrames; i++)
+                            m_injector.Session.HoldNoMove();
+                        m_injector.Session.Release(MouseButton.Left);
+                        m_injector.Session.End();
+                        m_injector.Session.WaitUntilIdle(3000 + usedHold);
+                        afterValue = hasCell && terrain != null
+                            ? terrain.Terrain.GetCellValue(cellX, cellY, cellZ) : 0;
+                        if (hasCell && afterValue != beforeValue)
+                            break;
+                        usedHold = (int)(usedHold * 1.5f); // 时长不够就自动加长重试
+                    }
                     var afterAim = AimObserver.Describe(maxDistance) as Dictionary<string, object>;
                     m_injector.NoteUiAction("touch:dig@" + (int)px + "," + (int)py);
                     return new Dictionary<string, object>(StringComparer.Ordinal)
