@@ -329,9 +329,75 @@ namespace CmdBridgeMod
                         ["at"] = at.ToString(), ["holdMs"] = holdMs
                     };
                 }
+                case "act.dig":
+                {
+                    // 创造模式挖掘时间 = 0（`ComponentMiner.CalculateDigTime`：Creative 且可挖 → 0f），
+                    // 所以只按"最小帧数"；按久会顺着射线连挖一串（实测：0.36s 挖了 4~7 格）。
+                    // 成败判定：挖前/挖后各取一次"命中观测"与该格**真实地形值**，
+                    // removed=true 表示这一处确实变了；nowAir=true 表示整格清空
+                    // （导线按面存储：只掉一面时 removed=true 而 nowAir=false）。
+                    ContainerWidget root = ScreensManager.RootWidget;
+                    float px = request.GetFloat("x", root != null ? root.ActualSize.X * 0.5f : 1000f);
+                    float py = request.GetFloat("y", root != null ? root.ActualSize.Y * 0.5f : 600f);
+                    int holdMs = request.GetInteger("holdMs", 34);
+                    float maxDistance = request.GetFloat("maxDistance", 8f);
+                    var beforeAim = AimObserver.Describe(maxDistance) as Dictionary<string, object>;
+                    int cellX = 0;
+                    int cellY = 0;
+                    int cellZ = 0;
+                    bool hasCell = false;
+                    var beforeCell = beforeAim != null && beforeAim.TryGetValue("cell", out object bc)
+                        ? bc as Dictionary<string, object> : null;
+                    if (beforeCell != null)
+                    {
+                        cellX = Convert.ToInt32(beforeCell["x"]);
+                        cellY = Convert.ToInt32(beforeCell["y"]);
+                        cellZ = Convert.ToInt32(beforeCell["z"]);
+                        hasCell = true;
+                    }
+                    SubsystemTerrain terrain = GameManager.Project?.FindSubsystem<SubsystemTerrain>(false);
+                    int beforeValue = hasCell
+                        ? terrain.Terrain.GetCellValue(cellX, cellY, cellZ) : 0;
+                    m_injector.Session.Begin(false);
+                    m_injector.Session.MoveTo(new Vector2(px, py), 1);
+                    m_injector.Session.Press(MouseButton.Left);
+                    int digFrames = Math.Max(1, holdMs / 16);
+                    for (int i = 0; i < digFrames; i++)
+                        m_injector.Session.MoveTo(new Vector2(px, py), 1);
+                    m_injector.Session.Release(MouseButton.Left);
+                    m_injector.Session.End();
+                    m_injector.Session.WaitUntilIdle(3000 + holdMs);
+                    int afterValue = hasCell && terrain != null
+                        ? terrain.Terrain.GetCellValue(cellX, cellY, cellZ) : 0;
+                    var afterAim = AimObserver.Describe(maxDistance) as Dictionary<string, object>;
+                    m_injector.NoteUiAction("touch:dig@" + (int)px + "," + (int)py);
+                    return new Dictionary<string, object>(StringComparer.Ordinal)
+                    {
+                        ["completed"] = true,
+                        ["action"] = "act.dig",
+                        ["point"] = new Dictionary<string, object>
+                        {
+                            ["x"] = px, ["y"] = py
+                        },
+                        ["holdMs"] = holdMs,
+                        ["cell"] = hasCell
+                            ? cellX + "," + cellY + "," + cellZ : null,
+                        ["beforeValue"] = beforeValue,
+                        ["afterValue"] = afterValue,
+                        ["removed"] = hasCell && afterValue != beforeValue,
+                        ["nowAir"] = hasCell && terrain != null &&
+                            Terrain.ExtractContents(afterValue) == 0,
+                        ["afterBlockType"] = afterAim != null &&
+                            afterAim.TryGetValue("blockType", out object abt) ? abt : null,
+                        ["beforeAim"] = beforeAim,
+                        ["afterAim"] = afterAim
+                    };
+                }
                 case "guide.android":
                     return "Android touch control (CmdBridge semantic actions)\r\n"
                         + "  act.move  dir=forward|back|left|right holdMs=1200  -> hold the bottom-left Move pad and drag that way\r\n"
+                        + "  act.dig   [x= y=] [holdMs=34] [maxDistance=8]      -> dig ONE block at the crosshair (Windows) / touch point (Android);"
+                        + " returns cell/beforeValue/afterValue/removed/nowAir. Creative dig time is 0, so holding longer digs a CHAIN.\r\n"
                         + "  act.jump  pad=Move|Look holdMs=140                 -> quick tap on Move (or Look) = jump\r\n"
                         + "  act.look  yawDeg=.. pitchDeg=..  / lookdelta dYaw dPitch -> turn the camera (engine level, precise)\r\n"
                         + "  touch-drag look: ui.session.begin; ui.move x y (center, button-free); ui.press; ui.move ...; ui.release; ui.session.end\r\n"

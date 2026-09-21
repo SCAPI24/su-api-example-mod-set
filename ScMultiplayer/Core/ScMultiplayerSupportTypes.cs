@@ -435,6 +435,8 @@ namespace ScMultiplayer
         public int ToolValue;
         public int ToolCount;
         public Vector3 BodyPosition;
+        // 命中盒索引：导线/电路这类按面存储的方块必须带过去（否则主机重算用错面 → 还原）
+        public int CollisionBoxIndex;
         public double LastSeenTime;
     }
 

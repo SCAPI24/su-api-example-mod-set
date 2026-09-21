@@ -46,3 +46,13 @@ ui.session.end
 - **拖动完全没反应**：① 起点不在 `Move` 区；② `ui.press` 没有先定位；③ 游戏不在前台或软键盘弹出。
 - **跳跃没生效**：轻点必须是"按下+松开"；`holdMs` 太大会变成移动（默认 140ms 可用）。
 - **短距离位移看不出效果**：先看 `player` 的 `position`；角色可能被地形挡住。
+
+## act.dig：只挖一格 + 成败判定（实测）
+
+- 用法：`act.dig [x= y=] [holdMs=34] [maxDistance=8]`
+- **创造模式挖掘时间 = 0**（`ComponentMiner.CalculateDigTime`：Creative 且可挖 → `0f`），所以按住越久越会**顺着射线连挖一串**（实测 0.36s 挖掉 4~7 格）。本接口用最小帧数按下即松。
+- 返回字段：`cell`、`beforeValue`、`afterValue`、`removed`（该处是否真的变化）、`nowAir`（整格是否清空）、`afterBlockType`、`beforeAim`/`afterAim`。
+- **导线按面存储**：`WireBlock.GetDigValue` 只清 `raycastResult.CollisionBoxIndex` 那一面的导线 → 只掉一面时 `removed=true` 而 `nowAir=false`、`afterBlockType` 仍是 `WireBlock`；要把整格清空必须**对着每一面各挖一次**。
+- 安卓用**触摸点**决定目标（全屏无按钮区都可挖），Windows 用**准星**；`x/y` 默认屏幕正中。
+- `world blocks [半径]`：半径是**位置参数**，且结果**截断在 256 条**（半径调大反而可能看不到导线，用默认 4 或小半径）。
+- 主机侧修复要点（联机时"挖掉又被还原"的根因）：挖掘判定只比 contents（掩掉 data 位）；请求里必须带客户端真实命中的 `CollisionBoxIndex`（否则主机按错面重算＝什么都没挖，再把权威值广播回来就是还原）；内容匹配即接受，以主机结果为准。

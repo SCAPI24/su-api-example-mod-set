@@ -1516,6 +1516,15 @@ namespace ScMultiplayer
 		TerrainRaycastResult? hit = player.ComponentMiner.Raycast<TerrainRaycastResult>(digRay.Value, RaycastMode.Digging, raycastTerrain: true, raycastBodies: false, raycastMovingBlocks: false);
 		if (!hit.HasValue)
 		{
+			// 方案 1（导线/电路方块"挖掉又回来"的修复）：导线这类薄碰撞盒方块用
+			// `RaycastMode.Digging` 可能命中不到 → 原逻辑不记录挖掘意图 → 本地改动被差分扫描
+			// 判成"无法解释"→ 请求主机权威修复 → 挖掉的方块被写回。玩家确实在挖时
+			// （`ComponentMiner` 已记录 `DigCellFace`）就按挖掘目标补一个意图，让它走正常的
+			// 挖掘请求/主机裁决/广播这条权威路径。
+			if (TryRecordDigIntentFromMiner(player, digRay.Value))
+			{
+				return;
+			}
 			m_localDigTarget = null;
 			return;
 		}
@@ -1546,11 +1555,78 @@ namespace ScMultiplayer
 		intent.PredictedValue = predictedValue;
 		intent.DigRay = digRay.Value;
 		intent.HitFace = hit.Value.CellFace.Face;
+		intent.CollisionBoxIndex = hit.Value.CollisionBoxIndex;
 		intent.ActiveSlotIndex = activeSlot;
 		intent.ToolValue = toolValue;
 		intent.ToolCount = toolCount;
 		intent.BodyPosition = player.ComponentBody.Position;
 		intent.LastSeenTime = Time.RealTime;
+	}
+
+	/// <summary>
+	/// 方案 1 的兜底：准星 `RaycastMode.Digging` 射不中（导线等薄碰撞盒）但玩家确实在挖时，
+	/// 用 `ComponentMiner.DigCellFace` 的目标补记一条挖掘意图，避免本地改动被当成"无法解释"
+	/// 而触发主机的权威修复（那会把挖掉的方块写回来）。
+	/// </summary>
+	private bool TryRecordDigIntentFromMiner(ComponentPlayer player, Ray3 digRay)
+	{
+		try
+		{
+			ComponentMiner miner = player?.ComponentMiner;
+			CellFace? digging = miner?.DigCellFace;
+			if (miner == null || !digging.HasValue || miner.DigProgress <= 0f)
+				return false;
+			SubsystemTerrain terrain = GameManager.Project?.FindSubsystem<SubsystemTerrain>(false);
+			if (terrain == null)
+				return false;
+			Point3 point = new Point3(digging.Value.X, digging.Value.Y, digging.Value.Z);
+			int cellValue = terrain.Terrain.GetCellValue(point.X, point.Y, point.Z);
+			int expectedValue = Terrain.ReplaceLight(cellValue, 0);
+			IInventory inventory = miner.Inventory;
+			int activeSlot = inventory?.ActiveSlotIndex ?? (-1);
+			int toolValue = (inventory != null && activeSlot >= 0 && activeSlot < inventory.SlotsCount)
+				? inventory.GetSlotValue(activeSlot) : 0;
+			int toolCount = (inventory != null && activeSlot >= 0 && activeSlot < inventory.SlotsCount)
+				? inventory.GetSlotCount(activeSlot) : 0;
+			var hit = new TerrainRaycastResult
+			{
+				Ray = digRay,
+				Value = cellValue,
+				CellFace = new CellFace(point.X, point.Y, point.Z, digging.Value.Face),
+				CollisionBoxIndex = 0,
+				Distance = 0f
+			};
+			BlockPlacementData predictedDig =
+				BlocksManager.Blocks[Terrain.ExtractContents(expectedValue)].GetDigValue(
+					terrain, miner, cellValue, toolValue, hit);
+			int predictedValue = Terrain.ReplaceLight(predictedDig.Value, 0);
+			if (!m_localTerrainDigIntents.TryGetValue(point, out var intent) ||
+				intent.ExpectedValue != expectedValue)
+			{
+				intent = new LocalTerrainDigIntent
+				{
+					ExpectedValue = expectedValue,
+					PredictedValue = predictedValue,
+					StartClientTick = client.Step
+				};
+				m_localTerrainDigIntents[point] = intent;
+			}
+			intent.PredictedValue = predictedValue;
+			intent.DigRay = digRay;
+			intent.HitFace = digging.Value.Face;
+			intent.CollisionBoxIndex = hit.CollisionBoxIndex;
+			intent.ActiveSlotIndex = activeSlot;
+			intent.ToolValue = toolValue;
+			intent.ToolCount = toolCount;
+			intent.BodyPosition = player.ComponentBody.Position;
+			intent.LastSeenTime = Time.RealTime;
+			m_localDigTarget = point;
+			return true;
+		}
+		catch (Exception)
+		{
+			return false;
+		}
 	}
 
 	private void UpdateLocalDigPresentation(ComponentPlayer player)

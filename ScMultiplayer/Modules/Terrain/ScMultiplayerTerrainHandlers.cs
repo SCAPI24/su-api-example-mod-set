@@ -870,9 +870,13 @@ namespace ScMultiplayer
                 }
 				if (hasIntent && intentAge <= 2.0 && predictedValue != intent.ExpectedValue &&
 					predictedValue == intent.PredictedValue)
+				{
 					QueueTerrainDigRequest(cell, intent, predictedValue);
+				}
                 else if (!hasIntent || intentAge > 2.0)
+                {
                     repairCells[cell] = modifiedCells[cell];
+                }
             }
             RequestAuthoritativeTerrainRepair(repairCells);
         }
@@ -908,7 +912,8 @@ namespace ScMultiplayer
                 intent.ToolValue)
             {
                 ToolCount = intent.ToolCount,
-                BodyPosition = intent.BodyPosition
+                BodyPosition = intent.BodyPosition,
+                CollisionBoxIndex = intent.CollisionBoxIndex
             };
             if (Terrain.ExtractContents(intent.ExpectedValue) == 62)
                 SuSubsystemTerrain.BeginIceTrace(cell);
@@ -1328,7 +1333,7 @@ namespace ScMultiplayer
                                 Value = currentCellValue,
                                 CellFace = new CellFace(message.Cell.X, message.Cell.Y,
                                     message.Cell.Z, message.HitFace),
-                                CollisionBoxIndex = 0,
+                                CollisionBoxIndex = message.CollisionBoxIndex,
                                 Distance = 0f
                             };
                         }
@@ -1355,7 +1360,8 @@ namespace ScMultiplayer
                                     Value = currentCellValue,
                                     CellFace = new CellFace(message.Cell.X, message.Cell.Y,
                                         message.Cell.Z, message.HitFace),
-                                    CollisionBoxIndex = collisionBoxIndex,
+                                    CollisionBoxIndex = message.CollisionBoxIndex >= 0
+                                        ? message.CollisionBoxIndex : collisionBoxIndex,
                                     Distance = distance.Value
                                 };
                             }
@@ -1383,8 +1389,13 @@ namespace ScMultiplayer
 			// the request is evaluated. The host remains authoritative for the final
 			// value, so only the stable ice target must match in this special case.
 			bool dynamicIceDig = authoritativeContents == 62 && expectedContents == 62;
-			bool predictedValueMatches = dynamicIceDig || predictedDigValue ==
-				Terrain.ReplaceLight(message.PredictedValue, 0);
+			// 只比 contents（掩掉 data 位）：导线/电路这类方块的 data 是"主机权威的连接状态"，
+			// 客户端预测出的 data 位不可能与主机完全一致；按位比对会让挖掘被拒（实测：导线格
+			// contents 都是 133、只有 data 位不同 → accepted=False → 客户端回滚 → 导线回弹）。
+			// 最终值仍由主机的 GetDigValue 决定并广播，因此这里放宽不会削弱主机权威。
+			bool predictedValueMatches = dynamicIceDig || contentsMatch ||
+				Terrain.ExtractContents(predictedDigValue) ==
+				Terrain.ExtractContents(Terrain.ReplaceLight(message.PredictedValue, 0));
 						Point3 digPoint = new Point3(digValue.CellFace.X,
                             digValue.CellFace.Y, digValue.CellFace.Z);
                         bool matchingDigProgress = miner.DigCellFace.HasValue &&

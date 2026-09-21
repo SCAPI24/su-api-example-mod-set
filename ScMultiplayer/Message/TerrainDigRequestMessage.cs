@@ -20,6 +20,9 @@ namespace ScMultiplayer
         public int ToolValue;
         public int ToolCount;
         public Vector3 BodyPosition;
+        // 客户端真实命中的"碰撞盒索引"（导线按面存储，必须带过来，否则主机会用错面重算：
+        // 结果与挖前相同 → 权威值广播回去就把客户端挖掉的导线还原）。
+        public int CollisionBoxIndex;
 
         public TerrainDigRequestMessage()
         {
@@ -70,6 +73,7 @@ namespace ScMultiplayer
             ToolValue = reader.ReadInt32();
             ToolCount = reader.ReadInt32();
             BodyPosition = reader.ReadVector3(reader);
+            CollisionBoxIndex = reader.ReadInt32();
         }
 
         protected override void Write(SuWriter writer)
@@ -86,6 +90,7 @@ namespace ScMultiplayer
             writer.WriteInt32(ToolValue);
             writer.WriteInt32(ToolCount);
             writer.WriteVector3(writer, BodyPosition);
+            writer.WriteInt32(CollisionBoxIndex);
         }
     }
 }
