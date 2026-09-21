@@ -339,16 +339,20 @@ namespace CmdBridgeMod
                     ContainerWidget root = ScreensManager.RootWidget;
                     float px = request.GetFloat("x", root != null ? root.ActualSize.X * 0.5f : 1000f);
                     float py = request.GetFloat("y", root != null ? root.ActualSize.Y * 0.5f : 600f);
-                    int holdMs = request.GetInteger("holdMs", 34);
+                    int holdMs = request.GetInteger("holdMs", 200);
                     float maxDistance = request.GetFloat("maxDistance", 8f);
                     var beforeAim = AimObserver.Describe(maxDistance) as Dictionary<string, object>;
                     int cellX = 0;
                     int cellY = 0;
                     int cellZ = 0;
                     bool hasCell = false;
-                    var beforeCell = beforeAim != null && beforeAim.TryGetValue("cell", out object bc)
-                        ? bc as Dictionary<string, object> : null;
-                    if (beforeCell != null)
+                    // 防御式解析：`Describe` 返回的 `cell` 未必是 `Dictionary<string, object>`
+                    // （实测直接 as 转型失败 → 之前 hasCell 一直是 false），这里按 IDictionary 取。
+                    var aimMap = beforeAim as System.Collections.IDictionary;
+                    var beforeCell = aimMap != null && aimMap.Contains("cell")
+                        ? aimMap["cell"] as System.Collections.IDictionary : null;
+                    if (beforeCell != null && beforeCell.Contains("x") &&
+                        beforeCell.Contains("y") && beforeCell.Contains("z"))
                     {
                         cellX = Convert.ToInt32(beforeCell["x"]);
                         cellY = Convert.ToInt32(beforeCell["y"]);

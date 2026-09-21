@@ -49,10 +49,17 @@ ui.session.end
 
 ## act.dig：只挖一格 + 成败判定（实测）
 
-- 用法：`act.dig [x= y=] [holdMs=34] [maxDistance=8]`
+- 用法：`act.dig [x= y=] [holdMs=200] [maxDistance=8]`
 - **创造模式挖掘时间 = 0**（`ComponentMiner.CalculateDigTime`：Creative 且可挖 → `0f`），所以按住越久越会**顺着射线连挖一串**（实测 0.36s 挖掉 4~7 格）。本接口用最小帧数按下即松。
 - 返回字段：`cell`、`beforeValue`、`afterValue`、`removed`（该处是否真的变化）、`nowAir`（整格是否清空）、`afterBlockType`、`beforeAim`/`afterAim`。
 - **导线按面存储**：`WireBlock.GetDigValue` 只清 `raycastResult.CollisionBoxIndex` 那一面的导线 → 只掉一面时 `removed=true` 而 `nowAir=false`、`afterBlockType` 仍是 `WireBlock`；要把整格清空必须**对着每一面各挖一次**。
 - 安卓用**触摸点**决定目标（全屏无按钮区都可挖），Windows 用**准星**；`x/y` 默认屏幕正中。
 - `world blocks [半径]`：半径是**位置参数**，且结果**截断在 256 条**（半径调大反而可能看不到导线，用默认 4 或小半径）。
 - 主机侧修复要点（联机时"挖掉又被还原"的根因）：挖掘判定只比 contents（掩掉 data 位）；请求里必须带客户端真实命中的 `CollisionBoxIndex`（否则主机按错面重算＝什么都没挖，再把权威值广播回来就是还原）；内容匹配即接受，以主机结果为准。
+
+## 面挖掘的标准流程（实测）
+
+1. 用 `world blocks` 找到目标方块/导线格与它的依附面；
+2. `lookat <该面中心>`（= 格中心 + 0.5 × 面法线），把该面转到准星/屏幕中心；
+3. `act.dig`（默认 holdMs=200ms；创造模式挖时=0，但按住时长必须够引擎进入挖掘状态——实测 34ms 挖不到任何东西，200ms 可稳定挖掉一格）；
+4. 读返回的 `removed`/`nowAir` 判断是否挖掉（`removed=true` 即该处确实变化；导线可能被邻近算法一次带走整格，无需按面区分计数）。
