@@ -96,7 +96,7 @@ namespace CmdBridgeMod
             return new CmdBridgeConfig
             {
                 // Android 的实例目录是应用私有路径（…/files），固定名更好读写。
-                InstanceId = OperatingSystem.IsAndroid() ? "android" : Path.GetFileName(trimmed),
+                InstanceId = PlatformInfo.IsAndroid ? "android" : Path.GetFileName(trimmed),
                 Port = FindAvailablePort(26751, 64),
                 Token = Convert.ToHexString(RandomNumberGenerator.GetBytes(24))
             };

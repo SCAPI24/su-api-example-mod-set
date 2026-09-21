@@ -83,7 +83,11 @@ namespace CmdBridgeMod
                 m_resolved = true;
                 try
                 {
-                    if (!OperatingSystem.IsAndroid())
+                    // Source: Mod/CmdBridgeMod/Server/PlatformInfo.cs
+                    // 平台判定跟 SuAPI 一致（SuAPI.ModLoader.GetCurrentPlatform() == "Android"）；
+                    // 另外还要**探测能力**：引擎里真的存在这三个触摸入口才启用
+                    // （桌面 Touch.cs 同名但语义不同，且桌面本来就走鼠标路径）。
+                    if (!PlatformInfo.IsAndroid)
                         return;
 
                     Type touch = typeof(Touch);

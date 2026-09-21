@@ -87,6 +87,9 @@ namespace CmdBridgeMod
         private bool m_mask;
         private bool m_hasPosition;
         private Vector2 m_position;
+
+        // Android 触摸拖拽：会话里"是否已经按下"的触摸侧状态（见 AndroidTouch）。
+        private bool m_touchDown;
         private bool m_leftDown;
         private bool m_rightDown;
         private readonly HashSet<int> m_heldKeys = new HashSet<int>();
@@ -487,6 +490,7 @@ namespace CmdBridgeMod
                     else if (step.Button == MouseButton.Right)
                         m_rightDown = true;
                     m_injector.SetMouseHeld(step.Button, true);
+                    ApplyAndroidTouch();
                     break;
 
                 case StepKind.Release:
@@ -496,6 +500,7 @@ namespace CmdBridgeMod
                     else if (step.Button == MouseButton.Right)
                         m_rightDown = false;
                     m_injector.SetMouseHeld(step.Button, false);
+                    ApplyAndroidTouch();
                     break;
 
                 case StepKind.KeyDown:
@@ -533,10 +538,45 @@ namespace CmdBridgeMod
                 m_injector.SetMouseHeld(MouseButton.Left, m_leftDown);
                 m_injector.SetMouseHeld(MouseButton.Right, m_rightDown);
             }
+
+            ApplyAndroidTouch();
+        }
+
+        /// <summary>
+        /// Android：拖拽/滑动只能靠触摸 —— 摇杆、滑条、HUD 都从 `TouchLocations` 派生 Drag，
+        /// 桌面那套"软光标 + 按住"在 Android 上派生不出任何东西。
+        /// 会话的按下/移动/抬起在这里统一翻译成触摸的 Press/Move/Release（同一个合成指针 id）。
+        /// Windows 上 <see cref="AndroidTouch.Available"/> 恒为 false，这条路径完全不参与。
+        /// </summary>
+        private void ApplyAndroidTouch()
+        {
+            if (!AndroidTouch.Available || !m_hasPosition)
+                return;
+
+            bool down = m_leftDown || m_rightDown;
+            if (down && !m_touchDown)
+            {
+                m_touchDown = true;
+                AndroidTouch.Press(m_position);
+            }
+            else if (down)
+            {
+                AndroidTouch.Move(m_position);
+            }
+            else if (m_touchDown)
+            {
+                m_touchDown = false;
+                AndroidTouch.Release(m_position);
+            }
         }
 
         private void FinishSession()
         {
+            if (m_touchDown)
+            {
+                m_touchDown = false;
+                AndroidTouch.Release(m_position);
+            }
             m_injector.SetMouseHeld(MouseButton.Left, false);
             m_injector.SetMouseHeld(MouseButton.Right, false);
             foreach (int key in m_heldKeys)
