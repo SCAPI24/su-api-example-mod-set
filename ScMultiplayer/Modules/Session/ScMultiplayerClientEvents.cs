@@ -1411,7 +1411,10 @@ namespace ScMultiplayer
 			KeyValuePair<int, RemoteDigPresentation> entry = array[i];
 			if (now - entry.Value.LastUpdateTime > 0.35 || !m_networkPlayerData.TryGetValue(entry.Key, out var playerData) || playerData?.ComponentPlayer?.ComponentMiner == null)
 			{
+				// 活跃更新停了 0.35 秒（对方中断挖掘、掉线、或那条"取消"消息在路上丢了）
+				// → 连远端角色矿工的挖掘字段一起清掉，碎裂纹理随之归零。
 				m_remoteDigPresentations.Remove(entry.Key);
+				ClearRemoteDigPresentation(entry.Key);
 				continue;
 			}
 			ComponentMiner miner = playerData.ComponentPlayer.ComponentMiner;
@@ -1422,6 +1425,28 @@ namespace ScMultiplayer
 			ModManager.ModParentField.ModifyParentField(miner, "m_digStartTime", subsystemTime.GameTime - 0.25, typeof(ComponentMiner));
 			ModManager.ModParentField.ModifyParentField(miner, "m_lastDigFrameIndex", Time.FrameIndex, typeof(ComponentMiner));
 		}
+	}
+
+	// Source: Survivalcraft/Game/ComponentDiggingCracks.cs:ComponentDiggingCracks.Draw
+	// 碎裂纹理的可见性只看远端角色 `ComponentMiner` 的三个字段：
+	//   `DigCellFace.HasValue` && `DigProgress > 0` && `DigTime > 0.2`
+	// （`DigTime` = `SubsystemTime.GameTime - m_digStartTime`，见 ComponentMiner.DigTime）。
+	// 只把 `m_remoteDigPresentations` 里的条目删掉是不够的 —— 字段还停在最后一次写入上，
+	// 三个条件继续成立，碎裂就一直留在对方屏幕上。这里把三个字段一并清掉：面置空、进度 0、
+	// `m_digStartTime` 设为当前游戏时间（DigTime 归零），碎裂当即消失。
+	internal void ClearRemoteDigPresentation(int playerIndex)
+	{
+		if (!m_networkPlayerData.TryGetValue(playerIndex, out PlayerData playerData) ||
+			playerData?.ComponentPlayer?.ComponentMiner == null)
+			return;
+		ComponentMiner miner = playerData.ComponentPlayer.ComponentMiner;
+		SubsystemTime subsystemTime = GameManager.Project?.FindSubsystem<SubsystemTime>(false);
+		ModManager.ModParentField.ModifyParentField(miner, "<DigCellFace>k__BackingField",
+			(CellFace?)null, typeof(ComponentMiner));
+		ModManager.ModParentField.ModifyParentField(miner, "m_digProgress", 0f,
+			typeof(ComponentMiner));
+		ModManager.ModParentField.ModifyParentField(miner, "m_digStartTime",
+			subsystemTime?.GameTime ?? 0.0, typeof(ComponentMiner));
 	}
 
 	public void CaptureLocalPlayerInput(ComponentPlayer player, PlayerInput playerInput)

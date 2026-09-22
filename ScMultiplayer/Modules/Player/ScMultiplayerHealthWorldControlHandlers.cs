@@ -68,6 +68,24 @@ namespace ScMultiplayer
                     ModManager.ModParentField.ModifyParentField(requestedVital, "m_lastFood",
                         requestedFood, typeof(ComponentVitalStats));
                 }
+                // Source: Survivalcraft/Game/ComponentSickness.cs:ComponentSickness.StartSickness
+                // 客户端进食是本地预测（`ComponentVitalStats` 虽然被替换，但 `Eat` 不是虚方法、
+                // 就地跑的是引擎原实现），"吃坏肚子"的判定因此发生在客户端。这里按"只接受向上
+                // 边沿"接过来，此后病程由主机掌握并向下递减广播 —— 否则主机那份 0 会立刻把客户端
+                // 的恶心/呕吐表现抹掉（实测"吃东西呕吐那些也没有看见"）。
+                ComponentSickness requestedSickness =
+                    requestedPlayer.ComponentPlayer.Entity.FindComponent<ComponentSickness>();
+                if (requestedSickness != null && msg.SicknessDuration > 0.0001f)
+                {
+                    float currentSickness = ModManager.ModParentField.GetParentField<float>(
+                        requestedSickness, "m_sicknessDuration", typeof(ComponentSickness));
+                    if (msg.SicknessDuration > currentSickness + 0.0001f)
+                    {
+                        ModManager.ModParentField.ModifyParentField(requestedSickness,
+                            "m_sicknessDuration", msg.SicknessDuration,
+                            typeof(ComponentSickness));
+                    }
+                }
                 ComponentSleep requestedSleep = requestedPlayer.ComponentPlayer.ComponentSleep;
                 if (requestedSleep != null && requestedSleep.IsSleeping != msg.IsSleeping)
                 {
@@ -172,6 +190,8 @@ namespace ScMultiplayer
                 (targetPlayer?.ComponentVitalStats as SuComponentVitalStats)?
                     .ApplyAuthoritativeTargetTemperature(msg.TargetTemperature);
                 ApplyAuthoritativePlayerEffects(targetPlayer, msg);
+                if (remoteClientId == client.ClientID)
+                    ApplyLocalConditionCues(targetPlayer, msg);
                 if (!clampLocalHealthPrediction &&
                     targetPlayer?.ComponentHealth != null && msg.HealthChange < -0.0001f &&
                     msg.Health < previousHealth - 0.0001f)
@@ -416,12 +436,30 @@ namespace ScMultiplayer
             {
                 ModManager.ModParentField.ModifyParentField(
                     flu, "m_fluDuration", MathUtils.Max(message.FluDuration, 0f), typeof(ComponentFlu));
-                (flu as SuComponentFlu)?.ApplyAuthoritativeCough(
-                    message.CoughSequence, message.IsCoughing);
+                ModManager.ModParentField.ModifyParentField(
+                    flu, "m_fluOnset", MathUtils.Max(message.FluOnset, 0f), typeof(ComponentFlu));
             }
             if (sickness != null)
                 ModManager.ModParentField.ModifyParentField(
                 sickness, "m_sicknessDuration", MathUtils.Max(message.SicknessDuration, 0f), typeof(ComponentSickness));
+        }
+
+        // Source: Survivalcraft/Game/ComponentFlu.cs:ComponentFlu.Sneeze / Cough
+        // Source: Survivalcraft/Game/ComponentSickness.cs:ComponentSickness.NauseaEffect
+        // Source: Survivalcraft/Game/ComponentGui.cs:ComponentGui.DisplaySmallMessage
+        // 玩家自身能感知的"条件表现"（喷嚏/咳嗽、恶心呕吐、各类提示）全部由主机产生、客户端只播。
+        // 只对本机角色播 —— 别人的状态事件不该在本地响起或显示。
+        private void ApplyLocalConditionCues(ComponentPlayer player, GamePlayerHealthMessage message)
+        {
+            if (player == null || message == null) return;
+            (player.Entity.FindComponent<ComponentFlu>() as SuComponentFlu)?.ApplyAuthoritativeCues(
+                message.SneezeSequence, message.IsSneezing, message.CoughSequence,
+                message.IsCoughing, message.BlackoutSeconds);
+            (player.Entity.FindComponent<ComponentSickness>() as SuComponentSickness)?
+                .ApplyAuthoritativeNausea(message.NauseaSequence, message.NauseaPuked,
+                    message.GreenoutSeconds);
+            (player.ComponentVitalStats as SuComponentVitalStats)?.ApplyAuthoritativeHint(
+                message.HintSequence, message.HintText);
         }
 
         private bool ShouldDeferClientSleepWakeup()

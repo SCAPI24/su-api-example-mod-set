@@ -1089,14 +1089,37 @@ namespace ScMultiplayer
                 {
                     SubsystemTerrain terrain = GameManager.Project?.FindSubsystem<SubsystemTerrain>(false);
                     if (terrain == null || !terrain.Terrain.IsCellValid(message.X, message.Y, message.Z) ||
-                        message.Face < 0 || message.Face > 5 ||
-                        Vector3.DistanceSquared(playerData.ComponentPlayer.ComponentCreatureModel.EyePosition,
-                            new Vector3(message.X + 0.5f, message.Y + 0.5f, message.Z + 0.5f)) >
-                            2.25f * 2.25f)
+                        message.Face < 0 || message.Face > 5)
                         return;
+                    // Source: Survivalcraft/Game/ComponentMiner.cs:ComponentMiner.Raycast
+                    // 距离只做"别拿远处方块来刷碎裂表现"的粗筛，必须与引擎自己的挖掘距离一致：
+                    // reach = Creative 时 SettingsManager.CreativeReach(7.5)，其余 5，从眼睛量到命中点。
+                    // 这里原来写死 2.25 格 —— 比真实挖掘距离小得多，正常距离（3~5 格）的挖掘请求
+                    // 全被静默丢掉，表现就是"客户端 A 挖掘时，客户端 B 看不到碎裂进度"。
+                    // 容差 +1.5 与挖掘权威门（inReach）保持同一个口径。
+                    SubsystemGameInfo gameInfo =
+                        GameManager.Project?.FindSubsystem<SubsystemGameInfo>(false);
+                    float reach = gameInfo?.WorldSettings.GameMode == GameMode.Creative
+                        ? SettingsManager.CreativeReach
+                        : 5f;
+                    float distanceSquared = Vector3.DistanceSquared(
+                        playerData.ComponentPlayer.ComponentCreatureModel.EyePosition,
+                        new Vector3(message.X + 0.5f, message.Y + 0.5f, message.Z + 0.5f));
+                    if (distanceSquared > MathUtils.Sqr(reach + 1.5f))
+                    {
+                        RecordHostSyncFailure("event=dig.presentation.drop client=" +
+                            sourceClientId.ToString(CultureInfo.InvariantCulture) +
+                            " cell=" + message.X.ToString(CultureInfo.InvariantCulture) + "," +
+                            message.Y.ToString(CultureInfo.InvariantCulture) + "," +
+                            message.Z.ToString(CultureInfo.InvariantCulture) +
+                            " dist=" + MathUtils.Sqrt(distanceSquared).ToString("0.###", CultureInfo.InvariantCulture) +
+                            " limit=" + (reach + 1.5f).ToString("0.###", CultureInfo.InvariantCulture));
+                        return;
+                    }
                     message.Progress = MathUtils.Saturate(message.Progress);
                 }
-                NetworkMessageSender.SendDigPresentation(-1, message, latest: !message.IsActive);
+                NetworkMessageSender.SendDigPresentation(-1, message,
+                    latest: message.IsActive);
                 return;
             }
             if (sourceClientId != 0 || message.PlayerIndex == client?.ClientID ||
@@ -1113,7 +1136,10 @@ namespace ScMultiplayer
             state.LastUpdateTime = Time.RealTime;
             if (!message.IsActive)
             {
+                // 中断挖掘：条目和远端矿工字段一起清，碎裂纹理立刻归零
+                // （只删条目是不够的，详见 ClearRemoteDigPresentation 的注释）。
                 m_remoteDigPresentations.Remove(message.PlayerIndex);
+                ClearRemoteDigPresentation(message.PlayerIndex);
                 return;
             }
             state.CellFace = new CellFace(message.X, message.Y, message.Z, message.Face);
@@ -1488,6 +1514,21 @@ namespace ScMultiplayer
 			bool predictedValueMatches = dynamicIceDig || contentsMatch ||
 				Terrain.ExtractContents(predictedDigValue) ==
 				Terrain.ExtractContents(Terrain.ReplaceLight(message.PredictedValue, 0));
+			// Source: Survivalcraft/Game/SubsystemGrassBlockBehavior.cs:OnNeighborBlockChanged
+			// 客户端声称"这格还是原来的方块、只有 data 位变了"，而该方块被挖掉一定会换成别的
+			// contents（草方块挖掉就是空气）——这种本地改动不可能来自挖掘，只可能是引擎的邻居
+			// 回调改写。实测：挖掉压着草的积雪后，邻居回调把草方块的"积雪"data 位 1→0
+			// （GrassBlock.cs:10-25 侧面贴图 3→68，就是那条白边），客户端把它报成挖掘请求，
+			// 主机放行后按挖掘整格删除 → 积雪连下面的草方块一起被挖掉。
+			// 只拦这一种形态：真正的挖掘结果会让 contents 变化；导线（保面后仍是 133）与树叶
+			// （保留叶子 + 摇落位）这类"挖掉后 contents 不变"的方块，主机 GetDigValue 的结果
+			// 同样不变，因此不受影响。
+			bool dataOnlyClaim = Terrain.ExtractContents(Terrain.ReplaceLight(
+				message.PredictedValue, 0)) == authoritativeContents;
+			bool hostDigChangesContents = Terrain.ExtractContents(predictedDigValue) !=
+				authoritativeContents;
+			if (dataOnlyClaim && hostDigChangesContents)
+				predictedValueMatches = false;
 						Point3 digPoint = new Point3(digValue.CellFace.X,
                             digValue.CellFace.Y, digValue.CellFace.Z);
                         bool matchingDigProgress = miner.DigCellFace.HasValue &&

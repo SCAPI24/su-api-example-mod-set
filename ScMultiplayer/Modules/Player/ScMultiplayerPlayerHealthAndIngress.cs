@@ -253,22 +253,6 @@ namespace ScMultiplayer
             return sequence;
         }
 
-        // Source: Survivalcraft/Game/ComponentFlu.cs:ComponentFlu.Update
-        internal void PublishAuthoritativeCough(ComponentPlayer player)
-        {
-            if (!IsHost || client?.IsConnected != true || player == null) return;
-            int playerClientId = 0;
-            foreach (KeyValuePair<int, PlayerData> item in m_networkPlayerData)
-            {
-                if (ReferenceEquals(item.Value?.ComponentPlayer, player))
-                {
-                    playerClientId = item.Key;
-                    break;
-                }
-            }
-            NetworkMessageSender.SendPlayerHealthMessage(playerClientId, player, 0f);
-        }
-
         // Source: Survivalcraft/Game/VitalStatsWidget.cs:VitalStatsWidget.Update
         // Client-side UI damage is a request. The host accepts only a lower health value and
         // remains authoritative for the resulting health, events and death state.

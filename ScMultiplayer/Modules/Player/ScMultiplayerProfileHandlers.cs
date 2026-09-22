@@ -1713,6 +1713,9 @@ namespace ScMultiplayer
                 ModManager.ModParentField.ModifyParentField(vital, "m_sleep", safeSleep, typeof(ComponentVitalStats));
                 ModManager.ModParentField.ModifyParentField(vital, "m_temperature", safeTemperature, typeof(ComponentVitalStats));
                 ModManager.ModParentField.ModifyParentField(vital, "m_wetness", safeWetness, typeof(ComponentVitalStats));
+                // 这些"上一次值"是引擎"跨越阈值才提示一次"的边沿判据
+                // （ComponentVitalStats.cs:312/374/445/546/651）。客户端不再跑这套模拟，
+                // 提示完全由主机的 SuComponentVitalStats 产生后转发，这里与主机保持一致即可。
                 ModManager.ModParentField.ModifyParentField(vital, "m_lastFood", safeFood, typeof(ComponentVitalStats));
                 ModManager.ModParentField.ModifyParentField(vital, "m_lastStamina", safeStamina, typeof(ComponentVitalStats));
                 ModManager.ModParentField.ModifyParentField(vital, "m_lastSleep", safeSleep, typeof(ComponentVitalStats));

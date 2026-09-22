@@ -40,9 +40,36 @@ namespace ScMultiplayer
         public float SleepFactor;
         public float FireDuration;
         public float FluDuration;
+        // Source: Survivalcraft/Game/ComponentFlu.cs:ComponentFlu.Update
+        // 「受冻积累」计时（`m_fluOnset`）：客户端不跑流感模拟，这里只是把主机的病程状态带全，
+        // 供 HUD/调试使用（会不会得流感完全由主机判定）。
+        public float FluOnset;
         public float SicknessDuration;
+        // ====================================================================
+        // 表现事件（主机产生 → 客户端播放）。
+        // 分工：本地**不做任何预测/模拟**，只按这些边沿把效果播出来；主机那边这些组件照常跑
+        // 原生逻辑，跑完把事件编成单调递增的序号发出去。序号是幂等标记 —— 漏收不会重复播，
+        // 收到新序号才播一次。
+        // ====================================================================
+        // Source: Survivalcraft/Game/ComponentFlu.cs:ComponentFlu.Sneeze / Cough
+        public int SneezeSequence;
+        public bool IsSneezing;
         public int CoughSequence;
         public bool IsCoughing;
+        // Source: Survivalcraft/Game/ComponentSickness.cs:ComponentSickness.NauseaEffect
+        public int NauseaSequence;
+        public bool NauseaPuked;
+        public bool IsPuking;
+        public float GreenoutSeconds;
+        // Source: Survivalcraft/Game/ComponentFlu.cs:ComponentFlu.FluEffect
+        // Source: Survivalcraft/Game/ComponentVitalStats.cs:ComponentVitalStats.UpdateTemperature
+        // 黑屏（流感发作 / 过热）剩余秒数：取主机两份计时里的较大者，客户端按引擎同样的
+        // 上升 0.5/s、衰减 0.5/s 规则驱动 ScreenOverlays.BlackoutFactor。
+        public float BlackoutSeconds;
+        // Source: Survivalcraft/Game/ComponentGui.cs:ComponentGui.DisplaySmallMessage
+        // 主机显示过的提示（流感/寒冷过热/饥饿疲劳/溺水/潮湿/进食…）：连文本一起转给客户端播。
+        public int HintSequence;
+        public string HintText;
         public string CauseOrSource;   // 伤害/治疗来源
         // Source: Survivalcraft/Game/ComponentHealth.cs:ComponentHealth.Update
         public int DamageSequence;
@@ -62,8 +89,8 @@ namespace ScMultiplayer
             float healthChange, bool isDead, float air, float food, float stamina,
             float sleep, float temperature, float targetTemperature, float wetness, float level,
             Vector3 bodyVelocity, bool hasKnockback, bool isSleeping, float fireDuration,
-            float fluDuration, float sicknessDuration, int coughSequence,
-            bool isCoughing, string cause = null, double sleepStartTime = 0.0,
+            float fluDuration, float fluOnset, float sicknessDuration,
+            string cause = null, double sleepStartTime = 0.0,
             float sleepFactor = 0f)
         {
             PlayerIndex = playerIndex;
@@ -87,9 +114,8 @@ namespace ScMultiplayer
             SleepFactor = sleepFactor;
             FireDuration = fireDuration;
             FluDuration = fluDuration;
+            FluOnset = fluOnset;
             SicknessDuration = sicknessDuration;
-            CoughSequence = coughSequence;
-            IsCoughing = isCoughing;
         }
 
         protected override void Read(SuReader reader)
@@ -125,9 +151,20 @@ namespace ScMultiplayer
                 : 0f;
             FireDuration = reader.ReadSingle();
             FluDuration = reader.ReadSingle();
+            FluOnset = reader.ReadSingle();
             SicknessDuration = reader.ReadSingle();
-            CoughSequence = reader.ReadInt32();
+            // 表现事件边沿
+            SneezeSequence = reader.ReadPackedInt32();
+            IsSneezing = reader.ReadBoolean();
+            CoughSequence = reader.ReadPackedInt32();
             IsCoughing = reader.ReadBoolean();
+            NauseaSequence = reader.ReadPackedInt32();
+            NauseaPuked = reader.ReadBoolean();
+            IsPuking = reader.ReadBoolean();
+            GreenoutSeconds = reader.ReadSingle();
+            BlackoutSeconds = reader.ReadSingle();
+            HintSequence = reader.ReadPackedInt32();
+            HintText = reader.ReadString();
             DamageSequence = reader.ReadInt32();
             AuthoritativeStateSequence = reader.ReadInt32();
             SleepRequestSequence = reader.Position + 4 <= reader.Length
@@ -164,9 +201,20 @@ namespace ScMultiplayer
             writer.WriteSingle(SleepFactor);
             writer.WriteSingle(FireDuration);
             writer.WriteSingle(FluDuration);
+            writer.WriteSingle(FluOnset);
             writer.WriteSingle(SicknessDuration);
-            writer.WriteInt32(CoughSequence);
+            // 表现事件边沿
+            writer.WritePackedInt32(SneezeSequence);
+            writer.WriteBoolean(IsSneezing);
+            writer.WritePackedInt32(CoughSequence);
             writer.WriteBoolean(IsCoughing);
+            writer.WritePackedInt32(NauseaSequence);
+            writer.WriteBoolean(NauseaPuked);
+            writer.WriteBoolean(IsPuking);
+            writer.WriteSingle(GreenoutSeconds);
+            writer.WriteSingle(BlackoutSeconds);
+            writer.WritePackedInt32(HintSequence);
+            writer.WriteString(HintText ?? string.Empty);
             writer.WriteInt32(DamageSequence);
             writer.WriteInt32(AuthoritativeStateSequence);
             writer.WriteInt32(SleepRequestSequence);

@@ -645,6 +645,14 @@ namespace ScMultiplayer
                 database.FindDatabaseObjectType("Parameter", true), true);
             componentFlu.Value = "ScMultiplayer.SuComponentFlu";
 
+            // Source: Pak/Database.xml:ComponentSickness.Class
+            // 病情（恶心/呕吐）同样改成"主机算、客户端播"：客户端不再自己跑疾病模拟，
+            // 只按主机发来的 NauseaSequence 复现呕吐粒子/音效/提示与绿屏。
+            var componentSickness = database.FindDatabaseObject(
+                new Guid("2ecdc324-1a9e-444f-941d-f313447c00a5"),
+                database.FindDatabaseObjectType("Parameter", true), true);
+            componentSickness.Value = "ScMultiplayer.SuComponentSickness";
+
             // Source: Pak/Database.xml:ComponentFurnace.Class
             var componentFurnace = database.FindDatabaseObject(
                 new Guid("f04c23fe-1d3c-467e-81bc-1796f686be51"),

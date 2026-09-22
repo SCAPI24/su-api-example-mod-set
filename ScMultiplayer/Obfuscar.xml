@@ -19,6 +19,7 @@
     <SkipType name="ScMultiplayer.SuComponentVitalStats" />
     <SkipType name="ScMultiplayer.SuComponentSleep" />
     <SkipType name="ScMultiplayer.SuComponentFlu" />
+    <SkipType name="ScMultiplayer.SuComponentSickness" />
     <SkipType name="ScMultiplayer.SuComponentFurnace" />
     <SkipType name="ScMultiplayer.MultiplayerUiComponent" />
     <SkipType name="ScMultiplayer.SuSubsystemTerrain" />

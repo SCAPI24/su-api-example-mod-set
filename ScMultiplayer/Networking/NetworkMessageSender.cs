@@ -695,14 +695,54 @@ namespace ScMultiplayer
                 isSleepingOverride ?? player.ComponentSleep?.IsSleeping == true,
                 onFire != null ? ScMultiplayer.ModManager.ModParentField.GetParentField<float>(onFire, "m_fireDuration", typeof(ComponentOnFire)) : 0f,
                 flu != null ? ScMultiplayer.ModManager.ModParentField.GetParentField<float>(flu, "m_fluDuration", typeof(ComponentFlu)) : 0f,
+                // Source: Survivalcraft/Game/ComponentFlu.cs:ComponentFlu.Update
+                // 客户端要跑原生流感更新（提示/喷嚏/咳嗽/黑屏），受冻积累必须由主机给，
+                // 否则客户端会自己攒出一次主机没有的流感。
+                flu != null ? ScMultiplayer.ModManager.ModParentField.GetParentField<float>(flu, "m_fluOnset", typeof(ComponentFlu)) : 0f,
                 sickness != null ? ScMultiplayer.ModManager.ModParentField.GetParentField<float>(sickness, "m_sicknessDuration", typeof(ComponentSickness)) : 0f,
-                (flu as SuComponentFlu)?.CoughSequence ?? 0,
-                flu?.IsCoughing == true,
                 cause, sleepStartTime, sleepFactor);
             msg.KnockbackSequence = knockbackSequence;
             msg.KnockbackServerTick = knockbackServerTick;
             msg.KnockbackStunTime = knockbackStunTime;
             msg.SleepRequestSequence = sleepRequestSequence;
+            // ================================================================
+            // 表现事件（主机产生 → 客户端播放）。客户端不跑这些组件的模拟，
+            // 只按这些单调递增的序号把效果播一次。
+            // ================================================================
+            SuComponentFlu suFlu = flu as SuComponentFlu;
+            if (suFlu != null)
+            {
+                msg.SneezeSequence = suFlu.SneezeSequence;
+                msg.IsSneezing = ScMultiplayer.ModManager.ModParentField.GetParentField<float>(
+                    flu, "m_sneezeDuration", typeof(ComponentFlu)) > 0f;
+                msg.CoughSequence = suFlu.CoughSequence;
+                msg.IsCoughing = ScMultiplayer.ModManager.ModParentField.GetParentField<float>(
+                    flu, "m_coughDuration", typeof(ComponentFlu)) > 0f;
+            }
+            SuComponentSickness suSickness = sickness as SuComponentSickness;
+            if (suSickness != null)
+            {
+                msg.NauseaSequence = suSickness.NauseaSequence;
+                msg.NauseaPuked = suSickness.NauseaPuked;
+                msg.IsPuking = suSickness.IsPuking;
+                msg.GreenoutSeconds = suSickness.GreenoutSeconds;
+            }
+            SuComponentVitalStats suVitals = vitalStats as SuComponentVitalStats;
+            if (suVitals != null)
+            {
+                msg.HintSequence = suVitals.HintSequence;
+                msg.HintText = suVitals.HintText;
+            }
+            // Source: Survivalcraft/Game/ComponentFlu.cs:ComponentFlu.FluEffect
+            // Source: Survivalcraft/Game/ComponentVitalStats.cs:ComponentVitalStats.UpdateTemperature
+            // 黑屏取两份计时里较大的那份（流感发作 / 过热），客户端按引擎同样规则驱动叠加层。
+            float fluBlackout = flu == null ? 0f
+                : ScMultiplayer.ModManager.ModParentField.GetParentField<float>(
+                    flu, "m_blackoutDuration", typeof(ComponentFlu));
+            float temperatureBlackout = vitalStats == null ? 0f
+                : ScMultiplayer.ModManager.ModParentField.GetParentField<float>(
+                    vitalStats, "m_temperatureBlackoutDuration", typeof(ComponentVitalStats));
+            msg.BlackoutSeconds = MathUtils.Max(fluBlackout, temperatureBlackout);
             msg.DamageSequence = ScMultiplayer.currentInstance?.GetDamageSequence(
                 playerIndex, healthChange) ?? 0;
             // Source: ScMultiplayer.cs:SendAuthoritativePlayerHealth

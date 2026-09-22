@@ -162,3 +162,56 @@
 - 客户端上马或上船后不会出现角色浮空、模型与载具分离、碰撞后被错误拆除，也不会在同一匹马被占用时同时维持两名骑乘者。
 - 客户端乘骑状态下马头和骑乘动作连续可见；网络纠偏只修正实体状态，不产生明显的重复上马、重复下马或视觉回弹。
 - 服务器仍保持主机权威，客户端预测只限视觉表现；断线、重连和远端快照延迟不能造成错误的永久乘骑状态。
+
+## 双客户端同时加入时的加入屏障卡死（等待电路引导快照）
+
+状态：待复现定位（2026-09-23 已埋客户端探针；同日 03:20 重启后连续两次加入均正常，暂无法复现）
+
+现象：两个客户端（本机 PC 与平板）同时加入同一房间时，双方都停在加入弹窗，客户端界面显示
+`Ckt Recovery`，fence 年龄在 0～700ms 之间反复重置；服务器侧没有报错，网络汇总始终保持
+`clients=2 unacked=0 lossPct=0`，直到玩家主动退出。
+
+已确认的证据（服务器 `Logs/Game.log`，2026-09-23 03:15:45–03:19:57，刚切换的新世界）：
+
+- 两个客户端都完成了世界下载，并先后进入 `Client entered Loading Project`；
+- 主机为两个客户端执行了 `Join catch-up batch queued` 与 `Sent terrain catch-up`（9786 格 / 13478 格）；
+- 此后约 4 分钟内没有 `join.catchup_applied`、`join.ready`、`World transfer ready`；
+- 同一时段两个客户端处在同一个 NAT 之后，主机记录过两次 `Datagram address repaired`；
+- 其中一个客户端第一次加入因 `player_profile_required` 被拒，随后用同一端点重试成功，同一端点先后
+  对应了两个 ClientID。
+
+代码路径与结论：
+
+- 主机的 `SealAndSendJoinCatchUp` 只挂在客户端 `ProjectReady` 分支上（`ScMultiplayerWorldTransferHandlers.cs`），
+  而该函数内的 `Join catch-up batch queued` / `Sent terrain catch-up` 都已打印，所以两端的 `ProjectReady`
+  确实到达了主机；主机之后一直停在等待客户端 `CatchUpBatchApplied`。
+- 加入完成链路是 `CompleteJoiningClient` → `FinishJoiningClient`（收到 `CatchUpBatchApplied` 才会
+  打印 `World transfer ready`）。
+- 客户端发送 `CatchUpBatchApplied` 的唯一入口是
+  `ScMultiplayerUpdateLoop.cs:TryAcknowledgeClientCatchUpApplied`，它要求
+  `CircuitSynchronizer.IsClientBootstrapReady` 为真，即 `m_initialSnapshotApplied`、
+  `!m_snapshotBlocksJoin`、`!m_recoveryHold`、fence 未过期同时成立。
+- 于是初始电路快照没有应用时就会形成"主机等 `CatchUpBatchApplied`、客户端等初始快照"的互相等待。
+  界面显示 `Recovery` 对应 `ClientStateText` 中"recoveryHold 为真且当前没有待处理快照请求"的分支，
+  也就是引导状态已经丢失、且客户端不会自行重新申请初始快照。
+- 健康对照：同日 03:20 之后同样两端的加入，初始追赶只有 883 格 / 0 格，屏障分别在 0.77s 与 2.35s
+  内变为 `Ready`。两次差异集中在"初始追赶量很大 + NAT 地址修复 / 被拒后同端点重试"这条路径上。
+
+后续定位步骤：
+
+1. 用已部署的 2.1.31 复现（两个客户端同时加入一个新的大世界）；
+2. 读客户端 `Logs/Client/<日期>.log` 的 `event=join.barrier`，该行逐项列出
+   `subsystem / clock / fence / fenceStale / snapshotApplied / snapshotBlocksJoin / snapshotRequested /
+   recoveryHold / recoveryAttempts / rebaseAwaitingFence / fenceSerial …`，可直接定位为假的条件；
+3. 同时读服务器 `Logs/Game.log` 的 `join.*` 序列，确认主机是否仍在重发 `CatchUpBatchComplete`。
+
+候选修复方向（尚未实施，需先复现确认）：
+
+- 客户端自愈：加入屏障挂起、尚未 bootstrap-ready、且当前没有待处理快照请求时，重新触发
+  `BeginJoinBootstrap()` 并记录 `join.bootstrap.rearm`（不改加入语义）；
+- 或者让 `CatchUpBatchApplied` 与电路引导解耦：地形追赶应用完成即可确认，电路引导只作为客户端
+  模拟与表现的门控（影响面更大，需要先评估电路权威性）。
+
+注意：`ScMultiplayerUpdateLoop.ObserveClientJoinBarrier` 与
+`CircuitSynchronizer.BuildJoinBarrierDiagnostics` 是本次定位用的临时诊断（`[SuAPI]` 前缀，只写
+`Logs/Client`），定位完成后必须删除。
