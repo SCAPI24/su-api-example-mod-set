@@ -156,11 +156,16 @@ namespace ScMultiplayer
             var lanAddress = DetectLanAddress();
             Log.Information($"[ScMP] Detected LAN address: {lanAddress}");
 
+            // Source: Mod/ScMultiplayer/Networking/ScMultiplayerProxySettings.cs
+            // 客户端 SOCKS5 代理（默认 127.0.0.1:7890，auto）：开着就用、关掉就直连。
+            ScMultiplayerProxySettings.EnsureLoaded();
+
             // UdpTransmitter(now) 只接受 localPort 参数，自动检测 LAN 地址
             var serverTransmitter = BindFirstAvailableServerPort(
                 ScMultiplayerSettings.ServerBindPorts,
                 out int port);
-            var explorerTransmitter = new UdpTransmitter(0);
+            ITransmitter explorerTransmitter =
+                ScMultiplayerProxySettings.Wrap(new UdpTransmitter(0));
             var serverDiagnosticTransmitter = new DiagnosticTransmitter(serverTransmitter);
             m_serverNetworkStats = serverDiagnosticTransmitter.Stats;
             m_networkMetricsCollector.Reset();
@@ -257,24 +262,30 @@ namespace ScMultiplayer
         private static ITransmitter CreateChannelTransmitter(int localPort, bool allowOutgoing)
         {
             UdpTransmitter datagram = new UdpTransmitter(localPort);
+            // Source: Mod/ScMultiplayer/Networking/ScMultiplayerProxySettings.cs:Wrap
+            // 只有**客户端**（会拨号的一侧）走代理：主机侧要监听，SOCKS5 也没有"入站"这一说。
+            ITransmitter datagramPath = allowOutgoing
+                ? ScMultiplayerProxySettings.Wrap(datagram)
+                : datagram;
             if (!ScMultiplayerSettings.UseTcpTransport)
             {
-                return datagram;
+                return datagramPath;
             }
             try
             {
                 TcpTransmitter stream = new TcpTransmitter(
-                    allowOutgoing ? 0 : localPort, datagram.Address, allowOutgoing);
-                return new HybridTransmitter(datagram, stream);
+                    allowOutgoing ? 0 : localPort, datagram.Address, allowOutgoing,
+                    allowOutgoing ? ScMultiplayerProxySettings.Current : null);
+                return new HybridTransmitter(datagramPath, stream);
             }
             catch (SocketException)
             {
-                datagram.Dispose();
+                datagramPath.Dispose();
                 throw;
             }
             catch (Exception error)
             {
-                datagram.Dispose();
+                datagramPath.Dispose();
                 throw new InvalidOperationException(
                     $"TCP transport unavailable on port {localPort}: {error.Message}", error);
             }

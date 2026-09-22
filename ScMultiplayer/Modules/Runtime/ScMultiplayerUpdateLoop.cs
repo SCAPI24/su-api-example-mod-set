@@ -2571,6 +2571,10 @@ namespace ScMultiplayer
                     "OK", null, null));
                 return;
             }
+            // Source: Mod/ScMultiplayer/Networking/DohResolver.cs
+            // 房间地址可能来自被 fake-ip 抢答的解析（198.18.x）：直连假 IP 必然失败。
+            // 加入前换成 DoH 解析出的真实地址（拿不到就保持原样）。
+            serverAddress = ResolveRealJoinAddress(serverAddress);
             PrepareClientForRemoteJoin();
             ShowJoinRoomBusyDialog();
             m_activeJoinRequest = new PendingJoinRequest
@@ -2595,6 +2599,44 @@ namespace ScMultiplayer
             // first Joining Room phase has completed.
             m_deferredInitialJoinSubmit = true;
             m_pendingMultiplayerFontWarmupFrame = Time.FrameIndex + 1;
+        }
+
+        // Source: Mod/ScMultiplayer/Networking/DohResolver.cs
+        // 本机 DNS 被代理 fake-ip 抢答时，房间地址会是 198.18.x。用已登记的「地址 ↔ 域名」
+        // 反查域名，再用 DoH（走代理链路的 HTTPS）换成真实 IP；任何一步拿不到就原样返回。
+        private System.Net.IPEndPoint ResolveRealJoinAddress(System.Net.IPEndPoint address)
+        {
+            bool fakeIp = address != null &&
+                Comms.Socks5ProxyState.IsFakeIpAddress(address.Address);
+            Log.Information("[ScMP] Join address check: " + address + " fakeIp=" + fakeIp);
+            if (!fakeIp)
+                return address;
+            string host = m_remoteServerDirectory?.GetHostName(address);
+            if (string.IsNullOrEmpty(host))
+                Comms.Socks5RouteTable.TryGetHost(address, out host);
+            if (string.IsNullOrEmpty(host))
+            {
+                // 兜底：房间地址是 Explorer 自己解析出来的 fake-ip，和目录解析那次可能不是同一个地址，
+                // 反查不到域名时，用目录里登记的域名（通常只有一个服务器）。
+                string[] known = m_remoteServerDirectory?.GetKnownDirectoryHosts();
+                if (known != null && known.Length == 1)
+                    host = known[0];
+            }
+            if (string.IsNullOrEmpty(host))
+            {
+                Log.Information("[ScMP] Join target " + address + " is a fake-ip and no host name is known; keeping it");
+                return address;
+            }
+            System.Net.IPAddress[] real = DohResolver.ResolveHost(host);
+            if (real == null || real.Length == 0)
+            {
+                Log.Information("[ScMP] Join target " + address + " is a fake-ip; DoH gave no" +
+                    " address for " + host + ", keeping it");
+                return address;
+            }
+            Log.Information("[ScMP] Join target " + address + " is a fake-ip; using " +
+                real[0] + " resolved from " + host);
+            return new System.Net.IPEndPoint(real[0], address.Port);
         }
 
         private void UpdatePendingMultiplayerFontWarmup()

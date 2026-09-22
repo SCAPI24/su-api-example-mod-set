@@ -295,7 +295,8 @@ namespace ScMultiplayer
             }
             if (changed.Count == 0)
                 return false;
-            Log.Information("[ScMP] Applied host world settings: " + FormatSummary(changed));
+            // 主机 2Hz 世界信息广播里季节（TimeOfYear）之类的常规变化不再写日志：
+            // 它每两秒就会变一次，会把 Game.log 刷满（用户要求）。
             return true;
         }
 

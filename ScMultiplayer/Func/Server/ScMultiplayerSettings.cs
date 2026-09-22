@@ -31,6 +31,8 @@ namespace ScMultiplayer
         private const int MaximumDataModificationBulkMaxConcurrent = 32;
         private const int MaximumDataModificationBulkApplyChunksPerFrame = 128;
         private const int MaximumDataModificationBulkApplyBytesPerFrame = 1024 * 1024;
+        private const int DefaultRejoinGracePeriodSeconds = 60;
+        private const int MaximumRejoinGracePeriodSeconds = 600;
 
         public static bool AutoApproveJoinRequests { get; private set; }
 
@@ -57,6 +59,10 @@ namespace ScMultiplayer
         public static int DataModificationBulkApplyChunksPerFrame { get; private set; }
 
         public static int DataModificationBulkApplyBytesPerFrame { get; private set; }
+
+        // Source: Mod/ScMultiplayer/Modules/Player/ScMultiplayerAwayPlayers.cs
+        // 客户端断线后主机保留化身的秒数（0 = 关闭，断线即按老路径离开）。
+        public static int RejoinGracePeriodSeconds { get; private set; }
 
         public static int ServerBasePort { get; private set; }
 
@@ -133,6 +139,7 @@ namespace ScMultiplayer
             JoinTransferGameplayHeadroomKbps = 96;
             JoinTransferBurstKiB = 16;
             JoinTransferPerJoinMaxKbps = 0;
+            RejoinGracePeriodSeconds = DefaultRejoinGracePeriodSeconds;
             if (!Storage.FileExists(SettingsPath))
             {
                 BuildServerPorts();
@@ -199,6 +206,8 @@ namespace ScMultiplayer
                 DataModificationBulkApplyBytesPerFrame = ReadNonNegativeInteger(
                     document.RootElement, "dataModificationBulkApplyBytesPerFrame",
                     DataModificationBulkApplyBytesPerFrame);
+                RejoinGracePeriodSeconds = ReadNonNegativeInteger(document.RootElement,
+                    "rejoinGracePeriodSeconds", RejoinGracePeriodSeconds);
                 if (document.RootElement.TryGetProperty(
                     "serverBasePort",
                     out JsonElement basePortValue) &&
@@ -327,7 +336,8 @@ namespace ScMultiplayer
                 ["joinTransferMaxKbps"] = JoinTransferMaxKbps,
                 ["joinTransferGameplayHeadroomKbps"] = JoinTransferGameplayHeadroomKbps,
                 ["joinTransferBurstKiB"] = JoinTransferBurstKiB,
-                ["joinTransferPerJoinMaxKbps"] = JoinTransferPerJoinMaxKbps
+                ["joinTransferPerJoinMaxKbps"] = JoinTransferPerJoinMaxKbps,
+                ["rejoinGracePeriodSeconds"] = RejoinGracePeriodSeconds
             };
         }
 
@@ -359,6 +369,9 @@ namespace ScMultiplayer
                 "dataModificationBulkApplyBytesPerFrame",
                 DataModificationBulkApplyBytesPerFrame,
                 1024, MaximumDataModificationBulkApplyBytesPerFrame);
+            RejoinGracePeriodSeconds = UpdateBoundedInteger(values,
+                "rejoinGracePeriodSeconds", RejoinGracePeriodSeconds,
+                0, MaximumRejoinGracePeriodSeconds);
             if (values.TryGetValue("bandwidthConfigurationEnabled", out object enabled) &&
                 enabled != null)
             {
@@ -443,6 +456,7 @@ namespace ScMultiplayer
                 DataModificationBulkApplyChunksPerFrame);
             writer.WriteNumber("dataModificationBulkApplyBytesPerFrame",
                 DataModificationBulkApplyBytesPerFrame);
+            writer.WriteNumber("rejoinGracePeriodSeconds", RejoinGracePeriodSeconds);
             writer.WriteNumber("serverBasePort", ServerBasePort);
             writer.WriteNumber("serverPortCount", ServerPortCount);
             writer.WriteNumber("serverPreferredPort", ServerPreferredPort);
@@ -563,6 +577,8 @@ namespace ScMultiplayer
             DataModificationBulkApplyBytesPerFrame = MathUtils.Clamp(
                 DataModificationBulkApplyBytesPerFrame, 1024,
                 MaximumDataModificationBulkApplyBytesPerFrame);
+            RejoinGracePeriodSeconds = MathUtils.Clamp(RejoinGracePeriodSeconds, 0,
+                MaximumRejoinGracePeriodSeconds);
         }
 
         public static string GetDataModificationModeName(DataModificationPolicy mode) =>

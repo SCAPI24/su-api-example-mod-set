@@ -623,6 +623,10 @@ namespace ScMultiplayer
                 int departedClientId = item.ClientID;
                 m_controlUnit?.Context.Connections.MarkDisconnected(
                     departedClientId, Time.RealTime);
+                // Source: Mod/ScMultiplayer/Modules/Player/ScMultiplayerAwayPlayers.cs
+                // 主机侧先把"断线"当成可能的重连：挂起化身等客户端自动重连，宽限期满才真正离开。
+                if (TryBeginAway(departedClientId))
+                    continue;
                 QueueEndOfFrameAction(() =>
                 {
                     m_circuitSynchronizer?.NotifyClientDeparted(departedClientId);

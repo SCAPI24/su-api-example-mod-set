@@ -77,6 +77,12 @@ public class TcpTransmitter : ITransmitter, IDisposable
         public bool IsOutgoing;
 
         public bool IsHandshakeComplete;
+
+        // Source: Comms/Comms/TcpTransmitter.cs:TcpTransmitter.CheckProxySilence
+        // 这条流是经 SOCKS5 建立的，以及最后一次收到对端字节的时刻（看门狗用）。
+        public bool IsProxied;
+
+        public long LastReceiveTicks;
     }
 
     private readonly object Lock = new();
@@ -84,6 +90,15 @@ public class TcpTransmitter : ITransmitter, IDisposable
     private readonly Dictionary<IPEndPoint, Connection> Connections = new();
 
     private readonly bool AllowOutgoing;
+
+    private readonly Socks5ProxySettings? Proxy;
+
+    // Source: Comms/Comms/Socks5Proxy.cs:Socks5ProxyState
+    // 代理「接受但静默」看门狗：本机代理（例如 Clash 规则没放行该目的地）会先回 SOCKS 成功、
+    // 却一个字节都不转发。N 秒没收到任何对端数据就判定它不转发，冷却期内改直连重拨。
+    private const int ProxySilenceTimeoutMilliseconds = 15000;
+    private const int ProxyFallbackCooldownMilliseconds = 5 * 60 * 1000;
+    private long m_proxyFallbackUntilTicks;
 
     private Socket? Listener;
 
@@ -110,10 +125,14 @@ public class TcpTransmitter : ITransmitter, IDisposable
     // Source: Comms/Comms/ITransmitter.cs:ITransmitter.Address
     // datagramAddress is the UDP endpoint of the same channel; listenPort is the TCP port to
     // listen on (the same number the datagram socket uses), or 0 for a client that only dials.
-    public TcpTransmitter(int listenPort, IPEndPoint datagramAddress, bool allowOutgoing)
+    // proxy (optional) dials every outgoing stream through a local SOCKS5 proxy instead of the
+    // peer directly (see Comms/Comms/Socks5Proxy.cs).
+    public TcpTransmitter(int listenPort, IPEndPoint datagramAddress, bool allowOutgoing,
+        Socks5ProxySettings? proxy = null)
     {
         Address = datagramAddress ?? throw new ArgumentNullException(nameof(datagramAddress));
         AllowOutgoing = allowOutgoing;
+        Proxy = proxy;
         if (listenPort > 0)
         {
             Listener = CreateListener(listenPort);
@@ -291,6 +310,7 @@ public class TcpTransmitter : ITransmitter, IDisposable
             }
             if (Connections.TryGetValue(address, out Connection existing))
             {
+                CheckProxySilence(existing);
                 return existing;
             }
             if (!AllowOutgoing)
@@ -314,6 +334,23 @@ public class TcpTransmitter : ITransmitter, IDisposable
         }
     }
 
+    // Source: Comms/Comms/Socks5Proxy.cs:Socks5ProxyState
+    // 代理流「接受但静默」时关掉它并在一段时间内改直连：避免一直卡在假成功上，
+    // 也让只开代理不开虚拟网卡、或代理规则没放行时能自愈。
+    private void CheckProxySilence(Connection connection)
+    {
+        if (connection == null || !connection.IsProxied || connection.IsHandshakeComplete)
+            return;
+        long now = Environment.TickCount64;
+        if (now - connection.LastReceiveTicks < ProxySilenceTimeoutMilliseconds)
+            return;
+        m_proxyFallbackUntilTicks = now + ProxyFallbackCooldownMilliseconds;
+        Socks5ProxyState.Report("[Comms] SOCKS5 stream was accepted but silent for " +
+            (ProxySilenceTimeoutMilliseconds / 1000) + "s; falling back to a direct dial for " +
+            (ProxyFallbackCooldownMilliseconds / 60000) + " minutes");
+        CloseConnection(connection);
+    }
+
     private void ConnectOutgoing(Connection connection)
     {
         IPEndPoint? peer = connection.PeerAddress;
@@ -325,13 +362,48 @@ public class TcpTransmitter : ITransmitter, IDisposable
                 CloseConnection(connection);
                 return;
             }
-            socket = new Socket(peer.AddressFamily, SocketType.Stream, ProtocolType.Tcp)
+            // Source: Comms/Comms/Socks5Proxy.cs:Socks5ProxyState.ShouldRouteThroughProxyFor
+            // 走代理时拨号目标是代理本身，真正的目的地写在 SOCKS5 CONNECT 请求里。
+            Socks5ProxySettings? proxy = Proxy;
+            bool useProxy = proxy != null && proxy.IsEnabled &&
+                Socks5ProxyState.ShouldRouteThroughProxyFor(peer) &&
+                Environment.TickCount64 >= m_proxyFallbackUntilTicks;
+            IPEndPoint dialTarget = useProxy ? proxy!.ToEndPoint() : peer;
+            socket = new Socket(dialTarget.AddressFamily, SocketType.Stream, ProtocolType.Tcp)
             {
                 NoDelay = true,
                 ReceiveTimeout = HandshakeTimeoutMilliseconds
             };
-            socket.Connect(peer);
+            if (useProxy)
+            {
+                if (!Socks5.ConnectSocket(socket, dialTarget,
+                    Socks5.HandshakeTimeoutMilliseconds, out string proxyError))
+                {
+                    throw new InvalidOperationException("SOCKS5 proxy " + dialTarget +
+                        " unreachable: " + proxyError);
+                }
+                Socks5RouteTable.TryGetHost(peer, out string host);
+                if (!Socks5.TryConnect(socket, host, peer, out string socksError))
+                {
+                    throw new InvalidOperationException("SOCKS5 CONNECT " + peer + " via " +
+                        dialTarget + " failed: " + socksError);
+                }
+                InvokeDebug("SOCKS5 CONNECT " +
+                    (string.IsNullOrEmpty(host) ? peer.ToString() : host + " (" + peer + ")") +
+                    " via " + dialTarget);
+                Socks5ProxyState.Report("[Comms] TCP stream via SOCKS5: " +
+                    (string.IsNullOrEmpty(host) ? peer.ToString() : host) + " via " + dialTarget);
+            }
+            else
+            {
+                socket.Connect(peer);
+            }
             connection.Socket = socket;
+            if (useProxy)
+            {
+                connection.IsProxied = true;
+                connection.LastReceiveTicks = Environment.TickCount64;
+            }
             WriteHandshake(socket, Address);
             InvokeDebug($"TCP connected to {peer}");
             connection.ReaderThread = new Thread(() => ReadLoop(connection))
@@ -430,6 +502,7 @@ public class TcpTransmitter : ITransmitter, IDisposable
                 {
                     break;
                 }
+                connection.LastReceiveTicks = Environment.TickCount64;
                 if (expectHandshake)
                 {
                     expectHandshake = false;
@@ -612,6 +685,16 @@ public class TcpTransmitter : ITransmitter, IDisposable
         if (connection.CloseHandled)
         {
             return;
+        }
+        // Source: Comms/Comms/Socks5Proxy.cs:Socks5ProxyState
+        // 代理流在握手完成前就断了（本机代理先回 SOCKS 成功、却不转发时就是这样，
+        // 表现是 5 秒接收超时）：判定代理不转发，冷却期内改直连重拨。
+        if (connection.IsProxied && !connection.IsHandshakeComplete && !IsDisposed)
+        {
+            m_proxyFallbackUntilTicks = Environment.TickCount64 + ProxyFallbackCooldownMilliseconds;
+            Socks5ProxyState.Report("[Comms] SOCKS5 stream to " + connection.PeerAddress +
+                " closed before the handshake completed; direct dials for the next " +
+                (ProxyFallbackCooldownMilliseconds / 60000) + " minutes");
         }
         lock (Lock)
         {

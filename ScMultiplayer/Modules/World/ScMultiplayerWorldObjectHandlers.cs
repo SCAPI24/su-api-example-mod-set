@@ -172,6 +172,11 @@ namespace ScMultiplayer
 		{
 			return;
 		}
+		// Source: Mod/ScMultiplayer/Modules/Player/ScMultiplayerAwayPlayers.cs
+		// 自动重连回到同一个记录键：先把断线时挂起的那个化身按老路径拆掉，再正常创建，
+		// 否则世界里会同时存在两个同身份的角色。
+		if (IsHost && clientId != 0 && TryCancelAway(playerIdentity, out int heldClientId))
+			CompleteAwayRemoval(heldClientId);
 		if (GameManager.Project == null)
 		{
 			m_pendingNetworkPlayers[clientId] = requestedName;

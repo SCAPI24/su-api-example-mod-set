@@ -48,6 +48,7 @@ namespace ScMultiplayer
             downloadSM?.Update();
             UpdatePendingLocalGameCreation();
             UpdateHostReconnect();
+            UpdateAwayPlayers();
             UpdateReliableTransportHealth();
             UpdateHostJoinRequests();
         }

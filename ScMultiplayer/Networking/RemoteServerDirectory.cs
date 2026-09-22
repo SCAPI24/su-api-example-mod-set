@@ -1,3 +1,4 @@
+using Comms;
 using Comms.Drt;
 using Engine;
 using Engine.Content;
@@ -60,6 +61,10 @@ namespace ScMultiplayer
         private double m_nextRawRefreshTime = double.MinValue;
         private double m_nextExplicitDiscoveryTime = double.MinValue;
 
+        // Source: Mod/ScMultiplayer/Networking/DohResolver.cs
+        // 解析（含 DoH 校正）完成后需要重启一次发现，见 Update()。
+        private bool m_discoveryRestartPending;
+
         private sealed class ResolvedPersonalRoute
         {
             public IPAddress Address;
@@ -104,6 +109,14 @@ namespace ScMultiplayer
             if (!m_rawRefreshInProgress && Time.RealTime >= m_nextRawRefreshTime)
                 BeginRawRefresh();
             UpdateExplicitEndpointDiscovery();
+            // Source: Mod/ScMultiplayer/Networking/DohResolver.cs
+            // 解析完成后重启发现：探测目标从「会被 fake-ip 抢答的域名」换成真实 IP，
+            // 否则房间会记在假地址上，加入必然失败。
+            if (m_discoveryRestartPending)
+            {
+                m_discoveryRestartPending = false;
+                StartExplorerDiscovery();
+            }
         }
 
         // Source: Mod/Comms/Comms.Drt/Func/Explorer/Explorer.cs:Explorer.StartDiscovery
@@ -130,6 +143,17 @@ namespace ScMultiplayer
             m_pendingRemoteHosts = null;
             m_explorer.StopDiscovery();
             Log.Information("[ScMP] Explorer discovery paused (" + (pauseReason ?? "room is active") + ")");
+        }
+
+        /// <summary>当前目录里登记的"无端口"主机名（加入时若 fake-ip 反查不到域名，用它们兜底）。</summary>
+        public string[] GetKnownDirectoryHosts()
+        {
+            return m_activeHosts.Select(entry =>
+                    TryParseDirectoryEntry(entry, out string host, out int port) && port == 0
+                        ? host : null)
+                .Where(host => !string.IsNullOrEmpty(host))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
         }
 
         public string GetHostName(IPEndPoint endpoint)
@@ -318,6 +342,10 @@ namespace ScMultiplayer
                 .ToArray();
             int explicitCount = m_activeHosts.Count(entry =>
                 TryParseDirectoryEntry(entry, out _, out int port) && port > 0);
+            // Source: Mod/ScMultiplayer/doc/PROXY-AND-RESTRICTED-NETWORKS.md
+            // 实测：探测目标用**域名**（由 SOCKS UDP ASSOCIATE + ATYP=3 交给代理解析）时房间能被发现；
+            // 换成本机 DoH 出来的真实 IP 反而探不到（本机代理不放行该 IP 的直连 UDP）。
+            // 所以这里保持域名，真实 IP 只用于"加入地址规范化"。
             m_explorer.StartDiscovery(localBroadcast: true, internetHosts: standardHosts);
             ResolveDirectoryEntries(m_activeHosts);
             Log.Information($"[ScMP] Service discovery enabled for {standardHosts.Length} DNS " +
@@ -348,15 +376,37 @@ namespace ScMultiplayer
                         out PersonalServerRecord personalRecord);
                     try
                     {
-                        IPAddress[] addresses = IPAddress.TryParse(host, out IPAddress literal)
+                        // localAddresses 保留本机解析结果（可能是 fake-ip），addresses 是 DoH 校正后的真实地址。
+                        IPAddress[] localAddresses = IPAddress.TryParse(host, out IPAddress literal)
                             ? new[] { literal }
                             : Dns.GetHostEntry(host).AddressList;
+                        IPAddress[] addresses = localAddresses;
+                        // Source: Mod/ScMultiplayer/Networking/DohResolver.cs
+                        // 本机 DNS 被 fake-ip 抢答时（域名 → 198.18.x），用 IP 直连的 DoH 换回真实地址：
+                        // 直连/TUN/ZeroTier 因此也能用，SOCKS 侧照旧优先用域名（ATYP=3）。
+                        addresses = DohResolver.ReplaceFakeIpAddresses(host, addresses);
+                        // Source: 修复「开着代理进不去」：本机解析出的 fake-ip 也必须登记「地址 ↔ 域名」，
+                        // 否则加入时拿到 198.18.x 反查不到域名，也就换不回真实地址（此前就是这样卡住的）。
+                        if (!IPAddress.TryParse(host, out _))
+                        {
+                            foreach (IPAddress localAddress in localAddresses)
+                            {
+                                if (!resolved.ContainsKey(localAddress))
+                                    resolved.Add(localAddress, host);
+                                Socks5RouteTable.Register(localAddress, host);
+                            }
+                        }
                         foreach (IPAddress address in addresses)
                         {
                             if ((address.AddressFamily == AddressFamily.InterNetwork ||
                                 address.AddressFamily == AddressFamily.InterNetworkV6) &&
                                 !resolved.ContainsKey(address))
                                 resolved.Add(address, host);
+                            // Source: Mod/Comms/Comms/Socks5Proxy.cs:Socks5RouteTable
+                            // 本机 DNS 可能被代理 fake-ip 抢答（域名 → 198.18.x）。把"域名 ↔ 解析地址"
+                            // 登记给 Comms，SOCKS5 请求就能改用 ATYP=3 把域名交给代理自己解析。
+                            if (!IPAddress.TryParse(host, out _))
+                                Socks5RouteTable.Register(address, host);
                             if (port > 0)
                                 explicitEndpoints.Add(new IPEndPoint(address, port));
                             if (personalRecord != null)
@@ -379,7 +429,12 @@ namespace ScMultiplayer
                 {
                     if (generation == m_resolveGeneration)
                     {
+                        // 只有解析结果真的变了才重启发现，否则会「重启→再解析→再重启」死循环。
+                        bool discoveryTargetsChanged = m_resolvedHosts.Count != resolved.Count ||
+                            resolved.Any(pair => !m_resolvedHosts.ContainsKey(pair.Key));
                         m_resolvedHosts = resolved;
+                        if (discoveryTargetsChanged)
+                            m_discoveryRestartPending = true;
                         m_resolvedExplicitEndpoints = explicitEndpoints.ToArray();
                         m_resolvedPersonalRoutes = personalRoutes.ToArray();
                         m_nextExplicitDiscoveryTime = double.MinValue;

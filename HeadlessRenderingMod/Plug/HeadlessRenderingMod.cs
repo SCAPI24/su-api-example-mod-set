@@ -832,6 +832,9 @@ namespace HeadlessRenderingMod
                 CopyOptionalBoolean(request, values, "autoApproveJoinRequests") |
                 CopyOptionalBoolean(request, values, "serverDiagnosticsEnabled") |
                 CopyOptionalString(request, values, "dataModificationMode") |
+                // Source: Mod/ScMultiplayer/Modules/Player/ScMultiplayerAwayPlayers.cs
+                // 掉线重连宽限期（秒，0 = 关闭）：控制台/控制命令可远程调。
+                CopyOptionalInteger(request, values, "rejoinGracePeriodSeconds") |
                 CopyOptionalInteger(request, values, "dataModificationFastMaxConcurrent") |
                 CopyOptionalInteger(request, values, "dataModificationBulkMaxConcurrent") |
                 CopyOptionalInteger(request, values, "dataModificationBulkApplyChunksPerFrame") |
