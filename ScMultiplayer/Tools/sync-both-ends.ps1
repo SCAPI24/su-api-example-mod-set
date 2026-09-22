@@ -14,13 +14,18 @@ param(
     [switch]$SkipBuild,
     [switch]$SkipClient,
     [switch]$SkipHost,
-    [string]$RemoteHost = '<server-ip>',
+    [string]$RemoteHost = $env:SCMP_REMOTE_HOST,
     [string]$RemoteUser = 'Administrator',
     [string]$RemoteRoot = 'C:\SurvivalcraftServer',
     [string]$AskPass = $env:SCMP_ASKPASS
 )
 
 $ErrorActionPreference = 'Stop'
+
+# 服务器地址是私有信息，**不写进本文件**（本仓库公开）：从环境变量传入，或见 AGENTS.local.md。
+if ([string]::IsNullOrWhiteSpace($RemoteHost)) {
+    throw "Set the server host first: `$env:SCMP_REMOTE_HOST = '<server ip>'  (see AGENTS.local.md)"
+}
 
 $scmpDir = Split-Path -Parent $PSScriptRoot
 $modRepo = Split-Path -Parent $scmpDir

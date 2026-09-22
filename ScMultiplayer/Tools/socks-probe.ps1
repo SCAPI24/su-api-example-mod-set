@@ -10,10 +10,10 @@
 #               relaying this destination (this is what "accepted but silent" means)
 #
 # Usage:
-#   pwsh -File Tools\socks-probe.ps1 -Targets <server-ip>:51459,suceru.site:51459,gitee.com:22
+#   pwsh -File Tools\socks-probe.ps1 -Targets suceru.site:51459,gitee.com:22
 param(
     [string]$Proxy = '127.0.0.1:7890',
-    [string]$Targets = '<server-ip>:51459,suceru.site:51459',
+    [string]$Targets = 'suceru.site:51459',
     [int]$TimeoutMs = 8000
 )
 

@@ -75,17 +75,19 @@ GUID 必须从参考代码复制，禁止自己编。
 
 ## 七、网络与防火墙
 
-### 远程设备速查
+### 设备与端口速查
 
 | 项目 | 值 |
 |------|-----|
-| 远程 IP | **见 `AGENTS.local.md`**（文档里简称"远程机"） |
-| 远程调试 | **8514** (TCP) |
+| 本机 IP | **见 `AGENTS.local.md`**（文档里简称"本机"） |
+| 平板 IP | **见 `AGENTS.local.md`**（文档里简称"平板"） |
+| 服务器 IP / 端口 | **见 `AGENTS.local.md`**（文档里简称"服务器"） |
 | 游戏 Server | **51459** (UDP) |
 | 游戏动态端口 | **49152-65535** (UDP) |
-| 远程桌面 | **3389** (TCP) |
 
-> 完整地址、凭据等私有信息只在 `AGENTS.local.md` 维护（该文件被 `.gitignore` 忽略），**禁止写回本文档**。
+> 设备的具体 IP、账号、凭据等私有信息只在 `AGENTS.local.md` 维护（该文件被 `.gitignore` 忽略），
+> **禁止写回本文档**——本仓库是公开仓库，写进来的地址会随 git 历史一起分发出去。
+> 现已**没有**独立的"远程机"：局域网只有本机 + 平板，公网那台就是服务器。
 
 ### ScMultiplayer 端口（每个设备 3 个 UDP Socket）
 
@@ -98,31 +100,32 @@ GUID 必须从参考代码复制，禁止自己编。
 > 三个独立 `UdpTransmitter` → 三个独立 `Socket` → 三个不同端口。
 > 实际日志示例：Server=**:51459**, Explorer=**:56367**, Client=**:56369**。
 > Server 端口固定 51459，Explorer/Client 端口每次启动随机。
-| Remote Debug | **8514** | TCP | HTTP 文件服务器，日志/Mods/进程管理 |
 
 ### 防火墙开放
 
-远程机只开了 RDP (3389)，每次重装/重置后需重新开放以下端口：
+**只有"当主机的那一端"需要入站规则**；客户端（本机 / 平板）只发出流量，不需要放行。
+
+- 局域网对局（本机当主机）：放行**本机**
+- 公网对局（服务器当主机）：放行**服务器**（云主机还要在控制台安全组里一并放行）
 
 ```powershell
-# 远程机管理员 PowerShell 执行全部三条：
-netsh advfirewall firewall add rule name="SC Remote Debug" dir=in action=allow protocol=TCP localport=8514
+# 主机端管理员 PowerShell 执行两条：
 netsh advfirewall firewall add rule name="ScMultiplayer Server" dir=in action=allow protocol=UDP localport=51459
 netsh advfirewall firewall add rule name="ScMultiplayer Dynamic" dir=in action=allow protocol=UDP localport=49152-65535
 
 # 验证
 netsh advfirewall firewall show rule name="ScMultiplayer Server"
-netsh advfirewall firewall show rule name="SC Remote Debug"
+netsh advfirewall firewall show rule name="ScMultiplayer Dynamic"
 ```
 
-> **⚠️ 仅开放端口 255 或仅 RDP(3389) 不够** — ScMultiplayer 需要 UDP 51459 + 49152-65535，远程调试需要 TCP 8514。
+> **⚠️ 只开 51459 不够** —— Explorer 的广播应答与客户端数据连接还会落在 49152-65535 的动态 UDP 端口上。
 
 ### 网络要求
 
-- 两台设备必须在同一局域网子网（子网段见 `AGENTS.local.md`）
-- UDP 广播不能被路由器过滤
+- 局域网对局：两端必须同一子网（子网段见 `AGENTS.local.md`）
+- 公网对局：连服务器地址，主机端放行 UDP 51459 + 49152-65535
+- UDP 广播不能被路由器过滤（AP 隔离会让房间发现直接失败）
 - ZeroTier/VPN 虚拟网卡可能导致选错 IP（已修复：多网卡探测改为绑定指定 IP）
-- 远程仅开放 TCP 3389 是常态，每次调试前确认 8514 和 51459 已开放
 
 ## 八、ModEventBus 调试注意
 
