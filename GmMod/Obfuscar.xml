@@ -1,0 +1,20 @@
+<?xml version='1.0'?>
+<Obfuscator>
+  <Var name="InPath" value="bin\Release\net8.0" />
+  <Var name="OutPath" value="bin\Release\net8.0\Obfuscated" />
+  <Var name="KeepPublicApi" value="false" />
+  <Var name="HidePrivateApi" value="true" />
+  <Var name="HideStrings" value="false" />
+  <Var name="RenameProperties" value="true" />
+  <Var name="RenameEvents" value="true" />
+  <Var name="RenameFields" value="true" />
+  <Var name="UseUnicodeNames" value="true" />
+  <Var name="MarkedOnly" value="false" />
+  <Module file="$(InPath)\GmMod.dll">
+    <!-- 入口类由 SuAPI 按 ModInfo/程序集加载，名字要稳定 -->
+    <SkipType name="GmMod.GmMod" />
+    <!-- 玩家组件由**数据库钩子按类名字符串**注册（"GmMod.GmUiComponent"），
+         混淆改名后引擎就找不到这个类型（实测同类问题表现为 "Error loading world"）。 -->
+    <SkipType name="GmMod.GmUiComponent" />
+  </Module>
+</Obfuscator>

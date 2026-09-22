@@ -1,4 +1,5 @@
-﻿using System;
+using System;
+using System.Collections.Generic;
 using Comms;
 using Game;
 using Engine;
@@ -23,6 +24,10 @@ namespace ScMultiplayer
         public long TerrainSequence;
         public int WorldTimeRevision;
         public bool IsTimeAccelerated;
+
+        /// <summary>主机权威的 WorldSettings 快照（字段名→值），客户端据此自行应用。</summary>
+        public Dictionary<string, string> WorldSettings =
+            new Dictionary<string, string>(StringComparer.Ordinal);
 
         public GameWorldInfoMessage1()
         {
@@ -66,6 +71,14 @@ namespace ScMultiplayer
                 : 0L;
             WorldTimeRevision = reader.ReadPackedInt32(1, int.MaxValue);
             IsTimeAccelerated = reader.Position < reader.Length && reader.ReadBoolean();
+            if (reader.Position < reader.Length)
+            {
+                int settingsCount = reader.ReadPackedInt32();
+                WorldSettings = new Dictionary<string, string>(settingsCount,
+                    StringComparer.Ordinal);
+                for (int i = 0; i < settingsCount; i++)
+                    WorldSettings[reader.ReadString()] = reader.ReadString();
+            }
         }
 
         protected override void Write(SuWriter writer)
@@ -88,6 +101,15 @@ namespace ScMultiplayer
             writer.WriteInt64(TerrainSequence);
             writer.WritePackedInt32(WorldTimeRevision);
             writer.WriteBoolean(IsTimeAccelerated);
+            writer.WritePackedInt32(WorldSettings?.Count ?? 0);
+            if (WorldSettings != null)
+            {
+                foreach (KeyValuePair<string, string> item in WorldSettings)
+                {
+                    writer.WriteString(item.Key);
+                    writer.WriteString(item.Value ?? string.Empty);
+                }
+            }
         }
     }
 }

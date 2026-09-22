@@ -937,6 +937,9 @@ namespace ScMultiplayer
                 SuppressClientJoinWeatherPresentation(project);
                 return;
             }
+            // 主机权威世界设置快照 → 本地应用（季节/选项等；只写有差异的字段）
+            WorldSettingsFields.TryApplySnapshot(
+                project.FindSubsystem<SubsystemGameInfo>(false)?.WorldSettings, msg.WorldSettings);
             // Source: Survivalcraft/Game/SubsystemWeather.cs:SubsystemWeather.UpdatePrecipitation
             SubsystemWeather weather = project.FindSubsystem<SubsystemWeather>(true);
             if (weather.IsPrecipitationStarted != msg.IsPrecipitationStarted)

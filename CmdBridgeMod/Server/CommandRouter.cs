@@ -16,7 +16,7 @@ namespace CmdBridgeMod
     /// </summary>
     internal sealed class CommandRouter
     {
-        internal const string ModVersion = "1.0.0";
+        internal const string ModVersion = "1.1.1";
 
         /// <summary>
         /// 内建命令名（`cmd.list` 用）。加命令时**必须同步这里**：

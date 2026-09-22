@@ -149,23 +149,28 @@ namespace ScMultiplayer
             string size = request.Channel == DataModificationChannel.Fast
                 ? request.TotalBytes + " bytes"
                 : request.ChunkCount + " chunks / " + request.TotalBytes + " bytes";
-            var dialog = new MessageDialog(
-                "Data Modification Request",
-                request.ModId + " requests " + request.Operation + " from " + source +
-                    " (" + size + ").",
-                "Allow",
-                "Reject",
-                button =>
+            // 三个选项：允许 / 拒绝 / 总是同意该玩家（把该客户端身份加入受信任名单 → 以后自动同意）
+            string[] decisions = { "Allow", "Reject", "Always allow this player" };
+            string title = request.ModId + " requests " + request.Operation +
+                " from " + source + " (" + size + ")" +
+                (string.IsNullOrEmpty(request.Summary) ? string.Empty : "\r\n" + request.Summary);
+            var dialog = new ListSelectionDialog(
+                title,
+                decisions,
+                60f,
+                item => item.ToString(),
+                item =>
                 {
                     DataModificationApprovalRequest active =
                         m_activeDataModificationApproval;
                     m_activeDataModificationApprovalDialog = null;
                     m_activeDataModificationApproval = null;
-                    if (active != null)
-                    {
-                        m_dataModification?.ResolveApproval(active,
-                            button == MessageDialogButton.Button1);
-                    }
+                    if (active == null)
+                        return;
+                    string decision = item?.ToString();
+                    if (decisions.Length > 2 && decision == decisions[2])
+                        TrustDataModificationClient(active.SourceClientId);
+                    m_dataModification?.ResolveApproval(active, decision != decisions[1]);
                 });
             m_activeDataModificationApproval = request;
             m_activeDataModificationApprovalDialog = dialog;

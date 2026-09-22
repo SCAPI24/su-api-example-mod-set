@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Mod>
   <ModInfo>
-    <Identifier>ScMultiplayer</Identifier>
+    <Identifier>GmMod</Identifier>
     <LocalizedName>
-      <Text lang="en_US">ScMultiplayer</Text>
-      <Text lang="zh_CN">联机模组</Text>
+      <Text lang="en_US">Game Master Tools</Text>
+      <Text lang="zh_CN">GM 工具</Text>
     </LocalizedName>
-    <Version>2.1.5</Version>
+    <Version>1.0.0</Version>
     <APIVersion>0.1.6.0</APIVersion>
     <IsMergeLib>true</IsMergeLib>
     <Asset>
@@ -16,7 +16,7 @@
   <Dependencies>
     <Dependency>
       <ModInfo>
-        <Identifier>Comms</Identifier>
+        <Identifier>ScMultiplayer</Identifier>
         <IsMergeLib>true</IsMergeLib>
       </ModInfo>
     </Dependency>

@@ -20,7 +20,7 @@ namespace CmdBridgeMod
     {
         public string Name => "命令行桥";
 
-        public string Version => "1.0.0";
+        public string Version => CommandRouter.ModVersion;
 
         public IEnumerable<string> Dependencies => Array.Empty<string>();
 

@@ -298,7 +298,10 @@ namespace ScMultiplayer
                 TerrainSequence = ScMultiplayer.currentInstance?.CircuitTerrainSequence ?? 0L,
                 WorldTimeRevision = worldTimeRevision,
                 IsTimeAccelerated = GameManager.Project?.FindSubsystem<SubsystemTime>(false)?
-                    .FixedTimeStep.HasValue == true
+                    .FixedTimeStep.HasValue == true,
+                // 主机权威世界设置快照：客户端自行应用（分发完全在主机侧，第三方 mod 不参与）
+                WorldSettings = WorldSettingsFields.Capture(
+                    GameManager.Project?.FindSubsystem<SubsystemGameInfo>(false)?.WorldSettings)
             };
             SendScheduledMessage(-1, msg, latest: !reliable, batchable: !reliable);
         }

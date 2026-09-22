@@ -99,23 +99,61 @@ namespace CmdBridgeMod
         }
 
         /// <summary>`KeyboardState[Engine.Key]`；名字对不上或不可用一律当作未按下（安全）。</summary>
-        public static bool IsKeyDown(object keyboardState, Key key)
+        // Source: Engine/Engine/Input/Keyboard.cs:TranslateKey
+        // 引擎把 ShiftLeft/ShiftRight 都映射成 Key.Shift，而 OpenTK 里没有 "Shift" 这个名字，
+        // 只有 ShiftLeft/ShiftRight —— 按名字硬查会查不到（真实 Shift 被每帧抹掉的根因）。
+        private static readonly Dictionary<string, string[]> s_keyNameAliases =
+            new Dictionary<string, string[]>(StringComparer.Ordinal)
+            {
+                ["Shift"] = new[] { "ShiftLeft", "ShiftRight" },
+                ["Control"] = new[] { "ControlLeft", "ControlRight" },
+                ["Alt"] = new[] { "AltLeft", "AltRight" },
+                ["UpArrow"] = new[] { "Up" },
+                ["DownArrow"] = new[] { "Down" },
+                ["LeftArrow"] = new[] { "Left" },
+                ["RightArrow"] = new[] { "Right" },
+                ["Enter"] = new[] { "Enter", "KeypadEnter" }
+            };
+
+        /// <summary>
+        /// 真实键盘是否按下该引擎键。
+        ///
+        /// 返回 null = "名字对不上/不可用 → 判断不了"。调用方必须把 null 当成"不要动引擎里原有
+        /// 的状态"，绝不能当成"没按下"；否则会每帧把真实按键抹掉（实测：Key.Shift 在 OpenTK 里
+        /// 没有同名项 → 合并逻辑每帧写 m_keysDown[Shift]=false → 创造飞行按 Shift 无法下沉，
+        /// 而蹲下的按下沿仍生效，因为它在被清零之前那一帧就触发了）。
+        /// </summary>
+        public static bool? QueryKeyDown(object keyboardState, Key key)
         {
             if (keyboardState == null || m_keyboardIndexer == null || m_keyType == null)
-                return false;
-            object parsed = ParseEnum(KeyCache, m_keyType, key.ToString());
-            if (parsed == null)
-                return false;
-            try
+                return null;
+            string name = key.ToString();
+            string[] candidates = s_keyNameAliases.TryGetValue(name, out string[] aliases)
+                ? aliases
+                : new[] { name };
+            bool resolvedAny = false;
+            foreach (string candidate in candidates)
             {
-                object value = m_keyboardIndexer.GetValue(keyboardState, new[] { parsed });
-                return value is bool down && down;
+                object parsed = ParseEnum(KeyCache, m_keyType, candidate);
+                if (parsed == null)
+                    continue;
+                resolvedAny = true;
+                try
+                {
+                    object value = m_keyboardIndexer.GetValue(keyboardState, new[] { parsed });
+                    if (value is bool down && down)
+                        return true;
+                }
+                catch (Exception)
+                {
+                }
             }
-            catch (Exception)
-            {
-                return false;
-            }
+            return resolvedAny ? (bool?)false : null;
         }
+
+        /// <summary>KeyboardState[Engine.Key]；判断不了时返回 false（仅供无"保持原值"语义的调用方）。</summary>
+        public static bool IsKeyDown(object keyboardState, Key key) =>
+            QueryKeyDown(keyboardState, key) == true;
 
         /// <summary>`MouseState[Engine.MouseButton]`。</summary>
         public static bool IsMouseButtonDown(object mouseState, MouseButton button)

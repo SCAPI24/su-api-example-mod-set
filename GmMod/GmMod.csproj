@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>GmMod</RootNamespace>
+    <AssemblyName>GmMod</AssemblyName>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <CheckEolTargetFrameworks>false</CheckEolTargetFrameworks>
+    <Nullable>disable</Nullable>
+    <DefineConstants>$(DefineConstants);WINDOWS</DefineConstants>
+    <!-- 与 ScMultiplayer 一致：引擎三件套 + SuAPICore 走 NuGet 制品库；
+         Obfuscar 需要能解析引用程序集，所以把包程序集复制到输出目录。
+         打 .scmod 时**只取 GmMod.dll**：禁止把 ScMultiplayer/Comms/引擎 DLL 打进包。 -->
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Engine" Version="0.1.6" />
+    <PackageReference Include="EntitySystem" Version="0.1.6" />
+    <PackageReference Include="Survivalcraft" Version="0.1.6" />
+    <PackageReference Include="SuAPICore" Version="0.1.6" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 只借用 ScMultiplayer 的**数据修改（GM）公开门面**类型做编译期校验；
+         Private=false 表示**不把 ScMultiplayer.dll 复制到输出**（它是另一个独立 mod，
+         运行时由游戏加载的那份提供）。这条依赖要求 ScMultiplayer 侧把该门面的类型/成员
+         保留原名（见 ScMultiplayer/Obfuscar.xml 里的 SkipType + skip* 属性）。 -->
+    <ProjectReference Include="..\ScMultiplayer\ScMultiplayer.csproj"
+                      ReferenceOutputAssembly="true" Private="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Obfuscar" Version="2.2.49">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime;build;native;contentfiles;analyzers;buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <Target Name="PostBuild" AfterTargets="PostBuildEvent" Condition="'$(Configuration)' == 'Release'">
+    <Exec Command="&quot;$(NuGetPackageRoot)obfuscar\2.2.49\tools\Obfuscar.Console.exe&quot; Obfuscar.xml" />
+  </Target>
+</Project>

@@ -249,7 +249,7 @@ namespace CmdBridgeMod
         {
             var builder = new StringBuilder();
             builder.Append("{\n");
-            builder.Append("  \"modVersion\": \"1.0.0\",\n");
+            builder.Append("  \"modVersion\": \"" + CommandRouter.ModVersion + "\",\n");
             builder.Append("  \"pid\": ").Append(Environment.ProcessId).Append(",\n");
             builder.Append("  \"port\": ").Append(config.Port).Append(",\n");
             builder.Append("  \"token\": \"").Append(config.Token).Append("\",\n");

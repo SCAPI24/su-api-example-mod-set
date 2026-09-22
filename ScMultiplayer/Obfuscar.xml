@@ -84,5 +84,25 @@
     <SkipType name="ScMultiplayer.PlayerMappingManager" />
     <SkipType name="ScMultiplayer.PlayerOperationSyncManager" />
     <SkipType name="ScMultiplayer.StringExtensions" />
+    <!-- 数据修改（GM）门面：给**独立 mod** 用的公开 API，必须保留名字，否则第三方 mod
+         编译期引用到运行时会找不到类型/成员（实测：混淆后 DataModificationTool /
+         SubmitFast / DataModificationEvents 等全部消失）。
+         见 Mod/GmMod：它用 DataModificationTool.SubmitFast 提交自定义 operation，
+         并订阅 ScMultiplayer.DataModification.Apply 在主机侧执行。 -->
+    <SkipType name="ScMultiplayer.DataModificationTool" skipMethods="true" skipFields="true" skipProperties="true" skipEvents="true" />
+    <SkipType name="ScMultiplayer.DataModificationEvents" skipMethods="true" skipFields="true" skipProperties="true" skipEvents="true" />
+    <SkipType name="ScMultiplayer.DataModificationOperationNames" skipMethods="true" skipFields="true" skipProperties="true" skipEvents="true" />
+    <SkipType name="ScMultiplayer.DataModificationSubmitRequest" skipMethods="true" skipFields="true" skipProperties="true" skipEvents="true" />
+    <SkipType name="ScMultiplayer.DataModificationSubmitResult" skipMethods="true" skipFields="true" skipProperties="true" skipEvents="true" />
+    <SkipType name="ScMultiplayer.DataModificationResult" skipMethods="true" skipFields="true" skipProperties="true" skipEvents="true" />
+    <SkipType name="ScMultiplayer.DataModificationResultCode" skipMethods="true" skipFields="true" skipProperties="true" skipEvents="true" />
+    <SkipType name="ScMultiplayer.DataModificationChannel" skipMethods="true" skipFields="true" skipProperties="true" skipEvents="true" />
+    <SkipType name="ScMultiplayer.DataModificationPolicy" skipMethods="true" skipFields="true" skipProperties="true" skipEvents="true" />
+    <SkipType name="ScMultiplayer.DataModificationApprovalRequest" skipMethods="true" skipFields="true" skipProperties="true" skipEvents="true" />
+    <SkipType name="ScMultiplayer.DataModificationApplyContext" skipMethods="true" skipFields="true" skipProperties="true" skipEvents="true" />
+    <SkipType name="ScMultiplayer.DataModificationApplyResult" skipMethods="true" skipFields="true" skipProperties="true" skipEvents="true" />
+    <SkipType name="ScMultiplayer.PlayerDataModificationRequest" skipMethods="true" skipFields="true" skipProperties="true" skipEvents="true" />
+    <SkipType name="ScMultiplayer.PlayerDataModificationCodec" skipMethods="true" skipFields="true" skipProperties="true" skipEvents="true" />
+    <SkipType name="ScMultiplayer.PlayerCapabilityFlags" skipMethods="true" skipFields="true" skipProperties="true" skipEvents="true" />
   </Module>
 </Obfuscator>

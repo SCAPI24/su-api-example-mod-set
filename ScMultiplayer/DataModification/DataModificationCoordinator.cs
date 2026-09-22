@@ -406,7 +406,8 @@ namespace ScMultiplayer
                 SendResult(sourceClientId, rejected);
                 return;
             }
-            if (policy == DataModificationPolicy.Default)
+            if (policy == DataModificationPolicy.Default &&
+                !m_owner.IsTrustedDataModificationClient(sourceClientId))
             {
                 if (!TryQueueApproval(message, sourceClientId, 1,
                     message.Payload?.Length ?? 0))
@@ -449,7 +450,8 @@ namespace ScMultiplayer
                     DataModificationResultCode.Rejected, "The host rejected DM requests."));
                 return;
             }
-            if (policy == DataModificationPolicy.Default)
+            if (policy == DataModificationPolicy.Default &&
+                !m_owner.IsTrustedDataModificationClient(sourceClientId))
             {
                 if (!TryQueueApproval(message, sourceClientId, message.ChunkCount,
                     message.TotalBytes))
@@ -700,7 +702,13 @@ namespace ScMultiplayer
                     TransferId = message.TransferId,
                     ChunkCount = chunkCount,
                     TotalBytes = totalBytes,
-                    ReceivedTime = Time.RealTime
+                    ReceivedTime = Time.RealTime,
+                    Summary = ScMultiplayer.DescribeDataModificationRequestSummary(
+                        message.Operation, message.Payload),
+                    Payload = message.Channel == DataModificationChannel.Fast &&
+                        (message.Payload?.Length ?? 0) <= 16 * 1024
+                            ? message.Payload ?? Array.Empty<byte>()
+                            : Array.Empty<byte>()
                 }
             };
             m_pendingApprovals.Add(key, pending);
@@ -790,6 +798,16 @@ namespace ScMultiplayer
                 if (builtInResult?.Applied == true)
                     return true;
                 error = NormalizeDetails(builtInResult?.Details);
+                return false;
+            }
+            // 联机 mod 自己就能落地的通用数据修改（世界设置…）：主机端不需要安装任何第三方 mod。
+            DataModificationApplyResult internalResult =
+                m_owner.ApplyHostInternalDataModification(context);
+            if (internalResult != null)
+            {
+                if (internalResult.Applied)
+                    return true;
+                error = NormalizeDetails(internalResult.Details);
                 return false;
             }
             object[][] responses = m_owner.TriggerDataModificationEvent(

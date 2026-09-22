@@ -777,8 +777,13 @@ namespace CmdBridgeMod
                     object keyboard = OpenTkInput.GetKeyboardState();
                     for (int i = 0; i < keysDown.Length; i++)
                     {
-                        bool expected = m_injector.IsKeyHeldByInjection(i) ||
-                            OpenTkInput.IsKeyDown(keyboard, (Key)i);
+                        bool heldByInjection = m_injector.IsKeyHeldByInjection(i);
+                        bool? realDown = OpenTkInput.QueryKeyDown(keyboard, (Key)i);
+                        // 判断不了真实状态（枚举名对不上，例如 Shift/方向键）且非注入按住时：
+                        // 保持引擎原值，绝不写 false —— 否则每帧抹掉真实按键。
+                        if (!heldByInjection && !realDown.HasValue)
+                            continue;
+                        bool expected = heldByInjection || realDown == true;
                         if (keysDown[i] != expected)
                         {
                             keysDown[i] = expected;

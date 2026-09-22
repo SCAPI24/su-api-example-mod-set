@@ -64,8 +64,11 @@ namespace ScMultiplayer
                 return DataModificationApplyResult.Reject("The player target is invalid.");
             if (context.SourceClientId > 0 && targetClientId != context.SourceClientId)
             {
-                return DataModificationApplyResult.Reject(
-                    "A remote client can request changes only for its own player.");
+                // GM 工具（第三方 mod）需要能操作**所有玩家**的数据，因此跨玩家目标不再被无条件拒绝：
+                // 授权由主机的 DM 策略决定（`default` 会弹窗并把目标与内容写进摘要，`allow`/受信身份自动同意），
+                // 执行方始终是主机。这里只留一条审计日志。
+                Log.Information("[ScMP] Cross-player DM request: operation=" + context.Operation +
+                    " from client " + context.SourceClientId + " target client " + targetClientId);
             }
             if (string.Equals(context.Operation, DataModificationOperationNames.SealPlayer,
                 StringComparison.Ordinal) && context.SourceClientId != 0)

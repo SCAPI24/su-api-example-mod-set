@@ -169,6 +169,12 @@ namespace ScMultiplayer
         public int TotalBytes { get; set; }
 
         public double ReceivedTime { get; set; }
+
+        /// <summary>请求摘要（主机审批弹窗显示“改了什么”）。</summary>
+        public string Summary { get; set; } = string.Empty;
+
+        /// <summary>请求载荷（仅快速通道且体积受限时保留，供摘要解析；不长期持有大载荷）。</summary>
+        public byte[] Payload { get; set; } = Array.Empty<byte>();
     }
 
     public sealed class DataModificationApplyContext
@@ -309,6 +315,18 @@ namespace ScMultiplayer
             PlayerCapabilityFlags capabilities) => RequestPlayerModification(modId,
                 DataModificationOperationNames.RevokeCapabilities,
                 new PlayerDataModificationRequest { Capabilities = capabilities });
+
+        /// <summary>
+        /// 在线玩家列表，供第三方 GM 工具做"目标选择"（跨玩家操作需要目标 clientId）。
+        /// 每项：`clientId` / `name` / `playerIndex` / `isSelf` / `isHost`。
+        /// 用普通字典返回，第三方 mod 不需要引用 ScMultiplayer 的内部类型。
+        /// </summary>
+        public static List<Dictionary<string, object>> DescribeOnlinePlayers()
+        {
+            var result = new List<Dictionary<string, object>>();
+            ScMultiplayer.currentInstance?.DescribeOnlinePlayersInto(result);
+            return result;
+        }
 
         internal static void RaiseResult(DataModificationResult result)
         {

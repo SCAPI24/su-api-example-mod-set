@@ -33,6 +33,29 @@ DataModificationTool.RequestPlayerModification(
 
 结果通过 `ScMultiplayer.DataModification.Result` 和 `DataModificationTool.ResultReceived` 返回请求方。ScMultiplayer 不把 payload 转发给其它客户端；主机 Mod 修改权威对象后，由既有角色、地形、实体同步链将结果发送给可见客户端。
 
+## 通用世界设置操作（联机 mod 自己落地，主机无需装第三方 mod）
+
+`ScMP.Data.WorldSettings` 是**自定义 operation**（不属于内置 `ScMP.Player.*`），但**由 ScMultiplayer 自己
+在主机侧落地**，因此主机端不需要安装任何第三方 mod（例如第三方 GM 工具）——主机只负责审批、落地与分发。
+
+- 载荷：**纯文本，每行 `字段名<TAB>值`**（UTF-8），例：`TimeOfYear	0.525`。
+  ⚠ 不要用 JSON：联机 mod 会被 Obfuscar 改名，JSON 依赖属性名会静默解析成默认值（实测把季节写成了夏至）。
+- 可改字段：`WorldSettings` 的**任意简单字段**（float / int / bool / string / Vector2 / enum），
+  与引擎读 Project.xml 的口径一致；联机 mod **不认识业务语义**（例如它不知道"季节"是什么，
+  季节只是客户端通过 `TimeOfYear` 字段表达的一个值）。
+- 落地：主机在游戏线程写 `SubsystemGameInfo.WorldSettings`，立刻生效。
+- 分发：主机在既有的 2Hz 世界信息广播（`GameWorldInfoMessage1.WorldSettings`）里带上
+  **整份世界设置快照**，所有客户端在 `ApplyRemoteWeatherState` 中自行应用 ——
+  **分发完全在主机侧**，任何 mod 都不做同步。
+- 载荷转发：仍然不转发 payload；审批弹窗会显示解析出的摘要（`DataModificationApprovalRequest.Summary`）。
+
+## 受信任客户端（自动同意）
+
+审批弹窗有三个选项：`Allow` / `Reject` / **`Always allow this player`**。第三项会把该客户端的
+**身份**（`UserManager.ActiveUser.UniqueId`，也就是角色记录键）写进世界目录下的
+`ScMultiplayerTrustedClients.xml`；此后该身份的 DM 请求**自动同意**（不再弹窗，`default` 模式下同样生效）。
+`reject` 档位仍然一律拒绝。
+
 ## 内置角色操作
 
 七个内置操作只允许走 Fast 通道，payload 使用 `PlayerDataModificationCodec`。`ScMP.Player.*` 命名空间由 ScMultiplayer 保留，不进入第三方 `Apply` 事件，因此其它 Mod 不能在主机校验失败后用同名处理器绕过拒绝结果。
