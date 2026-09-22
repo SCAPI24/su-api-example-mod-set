@@ -331,6 +331,11 @@ namespace ScMultiplayer
         public Vector3? FlyToPosition;
         public double LastUpdateTime;
         public bool PresentationInitialized;
+        // 上一帧快照的位置：主机报的"静止"拾取物速度并不为 0（重力/落地反弹的残余），
+        // 所以除了速度阈值，还要看位置是否真的没动。详见
+        // ScMultiplayerPickableProjectileHandlers.cs:UpdateRemotePickablePresentations。
+        public Vector3 PreviousPosition;
+        public bool HasPreviousPosition;
     }
 
     public class PendingPickablePickupPresentation
@@ -430,8 +435,21 @@ namespace ScMultiplayer
 
     public class LocalTerrainDigIntent
     {
+        // 记录"本地挖掘结果"时用的哨兵：还没有观测到引擎的挖掘结果时的取值。
+        public const int UnknownPredictedValue = int.MinValue;
+
         public int ExpectedValue;
-        public int PredictedValue;
+
+        // 本地挖掘结果的**观测值**，不是预测值：引擎自己算完并落地后（ComponentMiner.Dig →
+        // Block.GetDigValue → DestroyCell），由 `SubmitClientTerrainPredictions` 采信当前格子
+        // 的值填入。未观测到之前是 UnknownPredictedValue。
+        //
+        // 为什么不自己预测：`DeciduousLeavesBlock.GetDigValue` 在秋季分支里有副作用
+        // （DeciduousLeavesBlock.cs:146 会 AddParticleSystem(new LeavesParticleSystem(..., 8,
+        // fadeIn: false, createFallenLeaves: true, value))）。mod 为了"预测"每帧调它一次，
+        // 按住挖掘树叶时就会每帧多撒一把落叶，落叶数量爆炸。引擎自己的那一次调用才是应有的表现。
+        public int PredictedValue = UnknownPredictedValue;
+
         public Ray3 DigRay;
         public int HitFace;
         public int StartClientTick;

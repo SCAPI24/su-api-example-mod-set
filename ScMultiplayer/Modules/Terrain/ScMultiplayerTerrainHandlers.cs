@@ -868,9 +868,19 @@ namespace ScMultiplayer
                 {
                     continue;
                 }
+                // 叶子季节轮询改写的判定：contents 不变、只有 data 变，且没有"被摇落"位。
+                // `DeciduousLeavesBlock.GetDigValue` 的秋季挖掘结果一定会 `SetIsShaken(true)`
+                // （DeciduousLeavesBlock.cs:148），而季节轮询只改 season/timeOfSeason
+                // （UpdateTimeOfYear → SetTimeOfYear），所以用 IsShaken 位就能把"玩家挖出来的"
+                // 和"季节自己改的"分开：后者不是玩家的挖掘，不能报成挖掘请求。
+                bool leafSeasonRewrite = IsLeafSeasonRewrite(
+                    intent != null ? intent.ExpectedValue : 0, predictedValue);
 				if (hasIntent && intentAge <= 2.0 && predictedValue != intent.ExpectedValue &&
-					predictedValue == intent.PredictedValue)
+                    !leafSeasonRewrite)
 				{
+					// 采信引擎自己的挖掘结果作为"预测值"（不再由 mod 调 GetDigValue 预测：
+					// 那次调用在叶子上有副作用 —— 每帧多撒一把落叶）。
+					intent.PredictedValue = predictedValue;
 					QueueTerrainDigRequest(cell, intent, predictedValue);
 				}
                 else if (!hasIntent || intentAge > 2.0)
@@ -879,6 +889,18 @@ namespace ScMultiplayer
                 }
             }
             RequestAuthoritativeTerrainRepair(repairCells);
+        }
+
+        // Source: Survivalcraft/Game/SubsystemDeciduousLeavesBlockBehavior.cs:UpdateTimeOfYear
+        // 叶子季节轮询改写：contents 不变、只有 data（season/timeOfSeason）变，且没有"被摇落"位。
+        // 玩家的挖掘（秋季分支）一定会把 IsShaken 置位，所以这不是玩家的挖掘。
+        private static bool IsLeafSeasonRewrite(int expectedValue, int currentValue)
+        {
+            return Terrain.ExtractContents(currentValue) ==
+                    Terrain.ExtractContents(expectedValue) &&
+                BlocksManager.Blocks[Terrain.ExtractContents(currentValue)]
+                    is DeciduousLeavesBlock &&
+                !DeciduousLeavesBlock.GetIsShaken(Terrain.ExtractData(currentValue));
         }
 
         private void RequestAuthoritativeTerrainRepair(Dictionary<Point3, bool> cells)
@@ -903,6 +925,10 @@ namespace ScMultiplayer
             int predictedValue)
         {
             if (intent == null || m_pendingTerrainPredictionCells.ContainsKey(cell)) return;
+            // [SuAPI] 临时诊断（挖树叶被回退定位用）：客户端确实发出了"挖掘请求"。
+            // 属客户端决策记录 → Logs/Client（不进 Game.log）。
+            ScMultiplayerOperationLog.Write("event=dig.send cell=" + cell.X.ToString(CultureInfo.InvariantCulture) + "," + cell.Y.ToString(CultureInfo.InvariantCulture) + "," + cell.Z.ToString(CultureInfo.InvariantCulture) +
+                " expected=" + intent.ExpectedValue.ToString(CultureInfo.InvariantCulture) + " predicted=" + predictedValue.ToString(CultureInfo.InvariantCulture));
             m_nextTerrainDigRequestId = m_nextTerrainDigRequestId == int.MaxValue
                 ? 1
                 : m_nextTerrainDigRequestId + 1;
@@ -976,8 +1002,25 @@ namespace ScMultiplayer
                     if (m_pendingTerrainPredictionCells.ContainsKey(item.Key)) continue;
                     int currentValue = Terrain.ReplaceLight(terrain.Terrain.GetCellValue(
                         item.Key.X, item.Key.Y, item.Key.Z), 0);
-                    if (currentValue != item.Value.ExpectedValue)
-                        QueueTerrainDigRequest(item.Key, item.Value, currentValue);
+                    if (currentValue == item.Value.ExpectedValue)
+                        continue;
+                    if (IsLeafSeasonRewrite(item.Value.ExpectedValue, currentValue))
+                        continue;
+                    if (item.Value.PredictedValue != LocalTerrainDigIntent.UnknownPredictedValue &&
+                        currentValue != item.Value.PredictedValue)
+                    {
+                        // 本地格子既不是挖掘前的值、也不是这次挖掘已经观测到的结果：这一格被别的东西
+                        // 改写过了（典型：上一个请求被主机拒绝后的回滚）。此时意图已经不能描述它，
+                        // 硬发请求会送出一份 expected/predicted 对不上的挖掘请求 ——
+                        // 实测 cell=-56,72,-7：expected=851980（data 52 = 冬季+摇落）predicted=196620
+                        // （data 12 = 秋季叶），等于声称"把摇落过的叶子挖回了秋季叶"。
+                        // 直接作废该意图（快照迭代，删除安全）。
+                        m_localTerrainDigIntents.Remove(item.Key);
+                        continue;
+                    }
+                    // 本地停在"这一格被挖掘之后"的值上（或还没观测过）：采信为挖掘结果并补发请求。
+                    item.Value.PredictedValue = currentValue;
+                    QueueTerrainDigRequest(item.Key, item.Value, currentValue);
                 }
             }
             foreach (Point3 cell in m_localTerrainDigIntents.Where(
@@ -1081,6 +1124,16 @@ namespace ScMultiplayer
         private void ApplyTerrainDigResult(TerrainDigResultMessage message)
         {
             var cells = new Dictionary<Point3, bool> { [message.Cell] = true };
+            // [SuAPI] 临时诊断（挖树叶被回退定位用）：主机把权威值回灌（被拒/未被确认时就是回退点）。
+            if (m_pendingTerrainPredictions.TryGetValue(message.RequestId,
+                out PendingTerrainPrediction dbgPending))
+            {
+                ScMultiplayerOperationLog.Write("event=dig.result cell=" + message.Cell.X.ToString(CultureInfo.InvariantCulture) + "," + message.Cell.Y.ToString(CultureInfo.InvariantCulture) + "," + message.Cell.Z.ToString(CultureInfo.InvariantCulture) +
+                    " accepted=" + message.Accepted +
+                    " authoritative=" + message.AuthoritativeValue.ToString(CultureInfo.InvariantCulture) +
+                    " predicted=" + dbgPending.Request.PredictedValue.ToString(CultureInfo.InvariantCulture) +
+                    " sends=" + dbgPending.SendCount.ToString(CultureInfo.InvariantCulture));
+            }
             var values = new List<int> { message.AuthoritativeValue };
             SuSubsystemTerrain.EnqueuePriorityNetworkBatch(new GameModifiedCellsMessage(
                 cells, values, message.ServerTick, false, client.ClientID));
@@ -1271,6 +1324,14 @@ namespace ScMultiplayer
         {
             if (!IsHost || message == null || sourceClientId <= 0) return;
             long requestKey = ((long)sourceClientId << 32) | (uint)message.RequestId;
+            // [SuAPI] 临时诊断（挖树叶被回退定位用）：请求确实到了主机。
+            // 属"玩家操作记录" → ScMP 自己写 Logs/Server/ScMP-op-<日期>.log（不进 Game.log）。
+            ScMultiplayerOperationLog.Write("event=dig.req client=" + sourceClientId.ToString(CultureInfo.InvariantCulture) +
+                " cell=" + message.Cell.X.ToString(CultureInfo.InvariantCulture) + "," + message.Cell.Y.ToString(CultureInfo.InvariantCulture) + "," + message.Cell.Z.ToString(CultureInfo.InvariantCulture) +
+                " expected=" + message.ExpectedValue.ToString(CultureInfo.InvariantCulture) + " predicted=" + message.PredictedValue.ToString(CultureInfo.InvariantCulture) +
+                " ticks=" + message.StartClientTick.ToString(CultureInfo.InvariantCulture) + "-" + message.CompletedClientTick.ToString(CultureInfo.InvariantCulture) +
+                " slot=" + message.ActiveSlotIndex.ToString(CultureInfo.InvariantCulture) + " tool=" + message.ToolValue.ToString(CultureInfo.InvariantCulture) +
+                " toolCount=" + message.ToolCount.ToString(CultureInfo.InvariantCulture) + " face=" + message.HitFace.ToString(CultureInfo.InvariantCulture));
             if (m_processedTerrainDigRequests.TryGetValue(requestKey,
                 out TerrainDigResultMessage previousResult))
             {
@@ -1315,8 +1376,20 @@ namespace ScMultiplayer
                     {
                         authoritativePlayerPosition = inputState.BodyPosition;
                     }
+                    // Source: Survivalcraft/Game/ComponentMiner.cs:ComponentMiner.Raycast
+                    // 引擎自己判定挖掘距离用的是 ComponentCreatureModel.EyePosition
+                    // （= ComponentBody.Position + Up*0.95*BoxSize.Y，玩家实测在脚上方 1.549 格），
+                    // 且量到"命中点"。这里原来拿 ComponentBody.Position（脚下）量到"方块中心"，
+                    // 1.5 的容差被眼高 + 半个格子中心吃光 —— 实测头顶方向的树叶
+                    // bodyDist=6.575/6.825 超了 limit=6.5，而 eyeDist 只有 5.05/5.371：
+                    // 客户端引擎放行了、主机却拒 → accepted=False → 客户端回滚（"挖了又被回退"）。
+                    // 基准点改成眼睛（偏移从主机副本现算，不写死数字）：凡客户端能挖到的，主机都接受；
+                    // 最终方块值仍由主机 GetDigValue 决定并广播，权威性不变。
+                    Vector3 eyeOffset = player.ComponentCreatureModel != null
+                        ? player.ComponentCreatureModel.EyePosition - player.ComponentBody.Position
+                        : Vector3.Zero;
                     bool inReach = Vector3.DistanceSquared(
-                        authoritativePlayerPosition, center) <=
+                        authoritativePlayerPosition + eyeOffset, center) <=
                         MathUtils.Sqr(reach + 1.5f);
                     Vector3 rayDirection = message.DigRay.Direction;
                     if (inReach && message.HitFace >= 0 && message.HitFace <= 5)
@@ -1367,6 +1440,25 @@ namespace ScMultiplayer
                             }
                         }
                     }
+                    if (!targetRaycast.HasValue)
+                    {
+                        // [SuAPI] 临时诊断：请求到了，但在"取出目标射线"这一步就失败。
+                        // 属同步失败 → 交给无头端记录（HRM 写 Logs/Server/<日期>.log）。
+                        // 同时把两个基准距离打出来：主机判定现在用眼睛位置，脚下距离只作对照。
+                        RecordHostSyncFailure("event=dig.req.fail cell=" + message.Cell.X.ToString(CultureInfo.InvariantCulture) + "," + message.Cell.Y.ToString(CultureInfo.InvariantCulture) + "," + message.Cell.Z.ToString(CultureInfo.InvariantCulture) +
+                            " contentsMatch=" + contentsMatch + " isLeaf=" + isLeafBlock +
+                            " inReach=" + inReach + " hitFace=" + message.HitFace.ToString(CultureInfo.InvariantCulture) +
+                            " hostValue=" + authoritativeValue.ToString(CultureInfo.InvariantCulture) +
+                            " expectedContents=" + expectedContents.ToString(CultureInfo.InvariantCulture) +
+                            " reach=" + reach.ToString("0.###", CultureInfo.InvariantCulture) +
+                            " limit=" + (reach + 1.5f).ToString("0.###", CultureInfo.InvariantCulture) +
+                            " bodyDist=" + MathUtils.Sqrt(Vector3.DistanceSquared(
+                                authoritativePlayerPosition, center)).ToString("0.###", CultureInfo.InvariantCulture) +
+                            " eyeDist=" + MathUtils.Sqrt(Vector3.DistanceSquared(
+                                authoritativePlayerPosition + eyeOffset, center)).ToString("0.###", CultureInfo.InvariantCulture) +
+                            " eyeOffsetY=" + eyeOffset.Y.ToString("0.###", CultureInfo.InvariantCulture) +
+                            " bodyPos=" + authoritativePlayerPosition.X.ToString("0.##", CultureInfo.InvariantCulture) + "," + authoritativePlayerPosition.Y.ToString("0.##", CultureInfo.InvariantCulture) + "," + authoritativePlayerPosition.Z.ToString("0.##", CultureInfo.InvariantCulture));
+                    }
                     if (targetRaycast.HasValue)
                     {
                         IInventory inventory = miner.Inventory;
@@ -1403,9 +1495,24 @@ namespace ScMultiplayer
                             miner.DigCellFace.Value.Y == message.Cell.Y &&
                             miner.DigCellFace.Value.Z == message.Cell.Z &&
                             miner.DigProgress >= 0.85f;
-                        if (validToolSlot && levelSufficient && predictedValueMatches && digPoint == message.Cell &&
+                        bool gateOk = validToolSlot && levelSufficient && predictedValueMatches && digPoint == message.Cell &&
                             (creative || matchingDigProgress ||
-                                elapsedTime + 0.4f >= requiredTime))
+                                elapsedTime + 0.4f >= requiredTime);
+                        if (!gateOk)
+                        {
+                            // [SuAPI] 临时诊断（挖树叶被回退定位用）：记录是哪一道门拒了这次挖掘。
+                            // 只记日志、不改判定；定位后必须整块移除（连同注释）。
+                            RecordHostSyncFailure("event=dig.reject client=" + sourceClientId.ToString(CultureInfo.InvariantCulture) +
+                                " cell=" + message.Cell.X.ToString(CultureInfo.InvariantCulture) + "," + message.Cell.Y.ToString(CultureInfo.InvariantCulture) + "," + message.Cell.Z.ToString(CultureInfo.InvariantCulture) +
+                                " contents=" + authoritativeContents.ToString(CultureInfo.InvariantCulture) + "/" + expectedContents.ToString(CultureInfo.InvariantCulture) +
+                                " validToolSlot=" + validToolSlot + " levelSufficient=" + levelSufficient +
+                                " predictedValueMatches=" + predictedValueMatches + " digPointSame=" + (digPoint == message.Cell) +
+                                " matchingDigProgress=" + matchingDigProgress +
+                                " elapsed=" + elapsedTime.ToString("0.###", CultureInfo.InvariantCulture) +
+                                " required=" + requiredTime.ToString("0.###", CultureInfo.InvariantCulture) +
+                                " creative=" + creative + " hitFace=" + message.HitFace.ToString(CultureInfo.InvariantCulture));
+                        }
+                        if (gateOk)
                         {
                             bool dugIce = authoritativeContents == 62;
                             if (dugIce)

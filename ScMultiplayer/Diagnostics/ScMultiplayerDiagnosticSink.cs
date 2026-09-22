@@ -116,6 +116,21 @@ namespace ScMultiplayer
                 Log.Information("[ScMP][ServerAudit] " + value);
         }
 
+        // [SuAPI] 临时诊断（挖树叶被回退定位用）。
+        // 分工约定：主机端的**同步失败**记录由无头端落盘（HeadlessRenderingMod 的
+        // ServerAuditLog 写 Logs/Server/<日期>.log），ScMP 只上抛事件、不自己写文件；
+        // 没有无头端时沿用既有回落，进 Game.log 的 [ScMP][ServerAudit]。
+        // 主机端的**操作记录**是另一条：走 ScMultiplayerOperationLog → Logs/Server/ScMP-op-<日期>.log。
+        private void RecordHostSyncFailure(string value)
+        {
+            if (m_eventBus == null)
+            {
+                Log.Information("[ScMP][ServerAudit] " + value);
+                return;
+            }
+            EmitServerAudit(ServerAuditEventName, value, allowGameLogFallback: true);
+        }
+
         void IDiagnosticSink.ConsumeDrop(Diagnostics.DiagnosticRecordKind kind, long count)
         {
             if (!IsHost || m_eventBus == null || count <= 0)

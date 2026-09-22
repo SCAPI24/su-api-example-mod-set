@@ -51,8 +51,19 @@ namespace ScMultiplayer
                     Terrain.ToCell(pickable.Position.X),
                     Terrain.ToCell(pickable.Position.Y + 0.1f),
                     Terrain.ToCell(pickable.Position.Z)) != null;
+                // Source: Survivalcraft/Game/SubsystemPickables.cs:SubsystemPickables.Update
+                // 静止判定不能只看速度：引擎里落地静止的拾取物位置一动不动（落地那一步丢弃本
+                // tick 位移 vector = position），但 velocity 每 tick 都被重力 - 反弹（取反 * 0.25）
+                // 折腾出 ±0.1~0.5 m/s 的残余。只看速度阈值会把这类"原地不动"判成在运动，于是按
+                // `state.Position + state.Velocity * age` 外推 → 掉落物往地下沉，下一帧再被主机
+                // 位置拉回（玩家看到的就是"原地时往地下掉，然后又被拉回"）。
+                // 主机侧现在会把这种残余速度清成 0（ScMultiplayerWorldSync.cs 发布处），这里再用
+                // "两帧快照位置没动"兜一层，两头都不依赖单一判据。
+                bool hostPositionStable = state.HasPreviousPosition &&
+                    Vector3.DistanceSquared(state.Position, state.PreviousPosition) <
+                        RestingPickablePositionEpsilonSquared;
                 bool isResting = !state.FlyToPosition.HasValue &&
-                    state.Velocity.LengthSquared() < 0.04f;
+                    (state.Velocity.LengthSquared() < 0.04f || hostPositionStable);
                 if (isResting && !isInFluid)
                 {
                     pickable.Position = state.Position;
@@ -368,6 +379,8 @@ namespace ScMultiplayer
                             };
                             m_remotePickableStates[state.Id] = networkState;
                         }
+                        networkState.PreviousPosition = networkState.Position;
+                        networkState.HasPreviousPosition = true;
                         networkState.Position = state.Position;
                         networkState.Velocity = state.Velocity;
                         networkState.FlyToPosition = state.FlyToPosition;
@@ -382,7 +395,13 @@ namespace ScMultiplayer
                     break;
                 case PickableSyncMessage.PickAction.Delete:
                     if (m_remotePickables.TryGetValue(message.Id, out Pickable removed) && removed != null)
+                    {
+                        // 自己还没烧掉过（本地那份还没轮到它的 1Hz 检查相位）就补放音效，
+                        // 见 PlayAuthoritativePickableBurnEffects。
+                        if (!removed.ToRemove)
+                            PlayAuthoritativePickableBurnEffects(removed);
                         removed.ToRemove = true;
+                    }
                     m_remotePickables.Remove(message.Id);
                     m_remotePickableRecords.Remove(message.Id);
                     m_remotePickableStates.Remove(message.Id);
@@ -409,6 +428,34 @@ namespace ScMultiplayer
                         message.Position, 6f, autoDelay: true);
                     break;
             }
+        }
+
+        // Source: Survivalcraft/Game/SubsystemPickables.cs:SubsystemPickables.Update
+        // 被火/热方块烧掉的拾取物，引擎是在**本地**播 `Audio/Sizzles`（SubsystemPickables.cs:343-348）
+        // 才让玩家听到"烧掉"的声音。客户端虽然也在跑同一个分支，但它受
+        // `PeriodicGameTimeEvent(1.0, pickable.GetHashCode() % 100 / 100)` 节流、最快也要 1 秒才轮到
+        // 一次，而主机一烧掉就把 Delete 发过来（8Hz 快照，约 125ms）——本地那份常常还没走到那个
+        // 分支就被删掉了，于是客户端听不到声音。
+        // 这里在收到权威 Delete 时按**同一条件**补放一次（只放音效：爆炸/地形改动是主机权威，
+        // 由主机执行并经正常地形同步到达，客户端不能自己跑 TryExplodeBlock）。
+        private void PlayAuthoritativePickableBurnEffects(Pickable pickable)
+        {
+            if (IsHost || pickable == null) return;
+            Project project = GameManager.Project;
+            SubsystemTerrain terrain = project?.FindSubsystem<SubsystemTerrain>(false);
+            SubsystemFireBlockBehavior fireBehavior =
+                project?.FindSubsystem<SubsystemFireBlockBehavior>(false);
+            if (terrain == null || fireBehavior == null) return;
+            int x = Terrain.ToCell(pickable.Position.X);
+            int y = Terrain.ToCell(pickable.Position.Y + 0.1f);
+            int z = Terrain.ToCell(pickable.Position.Z);
+            // 104 = `SubsystemFireBlockBehavior.HandledBlocks`（火焰方块）—— 与引擎那段判断一致。
+            bool onFire = terrain.Terrain.GetCellContents(x, y, z) == 104 ||
+                fireBehavior.IsCellOnFire(x, y, z);
+            if (!onFire) return;
+            project.FindSubsystem<SubsystemAudio>(false)?.PlayRandomSound(
+                "Audio/Sizzles", 1f, m_audioEventRandom.Float(-0.2f, 0.2f),
+                pickable.Position, 3f, autoDelay: true);
         }
 
         // Source: Survivalcraft/Game/SubsystemPickables.cs:SubsystemPickables.Update

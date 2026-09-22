@@ -296,10 +296,21 @@ namespace ScMultiplayer
             if (sleepChanged && isSleeping)
                 sleepRequestSequence = BeginClientSleepRequest();
             if (change < -0.0001f || foodIncreased || sleepChanged)
+            {
                 NetworkMessageSender.SendPlayerHealthMessage(
                     client.ClientID, localPlayer, change,
                     foodIncreased ? "Client food request" : "Client state request",
                     sleepRequestSequence: sleepRequestSequence);
+                if (change < -0.0001f)
+                {
+                    // 本地自伤（骷髅头按钮扣血）已经落在本地生命值上，但请求要一个往返才到主机。
+                    // 主机每 1 秒强制全量广播一次生命，这段时间里带的还是扣血前的值；不记下这次
+                    // 预测，客户端就会先被拉回原值、再被扣血后的快照打回来（玩家看到的"新值和
+                    // 原值反复变换"）。记录预测值与窗口，由 HandleGamePlayerHealthMessage 钳制。
+                    m_localHealthPrediction = health.Health;
+                    m_localHealthPredictionDeadline = Time.RealTime + LocalHealthPredictionTimeout;
+                }
+            }
             m_observedClientHealth = health.Health;
             m_observedClientFood = vital.Food;
             m_observedClientSleeping = isSleeping;

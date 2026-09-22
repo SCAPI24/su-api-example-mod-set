@@ -127,6 +127,34 @@ namespace ScMultiplayer
                     ? remoteData.ComponentPlayer
                     : null);
             float previousHealth = targetPlayer?.ComponentHealth?.Health ?? msg.Health;
+            // 本地自伤预测在途时的钳制（见 SendClientDamageRequest 里的记录）：
+            // 主机 1Hz 强制全量广播（ScMultiplayerUpdateLoop.cs:3030-3031）可能还带着扣血前的值，
+            // 直接套用会把生命条拉回原值、下一帧再被扣血后的快照打回来 —— 就是"点击骷髅头扣血
+            // 时新值和原值反复变换"。预测窗口内**只拒绝抬高**；主机追上（或窗口超时）立即恢复
+            // 完全权威。窗口内的其它字段（饱食/体温等）照常套用。
+            bool clampLocalHealthPrediction = false;
+            float appliedHealth = msg.Health;
+            if (applyAuthoritativeState && remoteClientId == client.ClientID)
+            {
+                if (Time.RealTime < m_localHealthPredictionDeadline &&
+                    msg.Health > m_localHealthPrediction + 0.0001f)
+                {
+                    // 取本地当前值与主机值的较小者：主机更低的值（真实伤害）照常套用，
+                    // 本地自动回血也不会被这份过期快照拉回去（ComponentHealth.cs:151-174 每帧
+                    // Heal，Harmless 模式 1/60 每秒），只是不接受它把生命值抬回扣血前的水位。
+                    appliedHealth = MathUtils.Min(previousHealth, msg.Health);
+                    clampLocalHealthPrediction = true;
+                    // 收口：这份快照本身带着"扣血"边沿（主机算的 current - previous < 0），说明它
+                    // 已经消化了本地自伤请求 —— 立刻结束预测窗口，让治疗/回血马上恢复完全权威，
+                    // 不必干等 2 秒超时。
+                    if (msg.HealthChange < -0.0001f)
+                        m_localHealthPredictionDeadline = 0.0;
+                }
+                else
+                {
+                    m_localHealthPredictionDeadline = 0.0;
+                }
+            }
             if (applyAuthoritativeState && remoteClientId == client.ClientID &&
                 Time.RealTime < m_localRespawnPendingUntil && msg.Health <= 0f)
                 return;
@@ -137,14 +165,15 @@ namespace ScMultiplayer
                 : -1;
             if (applyAuthoritativeState)
             {
-                ApplyAuthoritativePlayerStats(targetPlayer, msg.Health, msg.Air, msg.Food,
+                ApplyAuthoritativePlayerStats(targetPlayer, appliedHealth, msg.Air, msg.Food,
                     msg.Stamina, msg.Sleep, msg.Temperature, msg.Wetness, msg.Level);
                 if (remoteClientId == client.ClientID)
                     UpdateLocalLevelPresentation(targetPlayer, previousWholeLevel, msg.Level);
                 (targetPlayer?.ComponentVitalStats as SuComponentVitalStats)?
                     .ApplyAuthoritativeTargetTemperature(msg.TargetTemperature);
                 ApplyAuthoritativePlayerEffects(targetPlayer, msg);
-                if (targetPlayer?.ComponentHealth != null && msg.HealthChange < -0.0001f &&
+                if (!clampLocalHealthPrediction &&
+                    targetPlayer?.ComponentHealth != null && msg.HealthChange < -0.0001f &&
                     msg.Health < previousHealth - 0.0001f)
                 {
                     ModManager.ModParentField.ModifyParentField(
@@ -171,7 +200,10 @@ namespace ScMultiplayer
                 if (applyAuthoritativeState)
                 {
                     m_hasObservedClientHealth = true;
-                    m_observedClientHealth = msg.Health;
+                    // 被钳制的那一帧不要刷新生命基准：否则刚发生的本地扣血会被 SendClientDamageRequest
+                    // 看成"没有变化"而漏发请求（扣血被静默吞掉）。饱食/睡觉照常刷新。
+                    if (!clampLocalHealthPrediction)
+                        m_observedClientHealth = msg.Health;
                     m_observedClientFood = msg.Food;
                     m_observedClientSleeping = msg.IsSleeping;
                 }
@@ -512,7 +544,12 @@ namespace ScMultiplayer
             // TimeOfDay depends on both values. Synchronizing only the offset allows the imported
             // client clock to remain minutes away from the host clock.
             if (applyAuthoritativeTime &&
-                Math.Abs(gameInfo.TotalElapsedGameTime - msg.TotalElapsedGameTime) > 0.25)
+                Math.Abs(gameInfo.TotalElapsedGameTime - msg.TotalElapsedGameTime) > 0.25 &&
+                // 世界时钟只允许前进：小幅回退夹掉，避免掉落物的渲染旋转/浮动反复回退
+                // （`SubsystemPickables.Draw` 直接用 TotalElapsedGameTime 现算角度）。
+                (msg.TotalElapsedGameTime >= gameInfo.TotalElapsedGameTime ||
+                 gameInfo.TotalElapsedGameTime - msg.TotalElapsedGameTime >=
+                    CircuitSynchronizer.MaximumClockRewindWithoutCorrection))
             {
                 ModManager.ModParentField.ModifyParentField(
                     gameInfo, "<TotalElapsedGameTime>k__BackingField",
@@ -540,6 +577,7 @@ namespace ScMultiplayer
             m_circuitSynchronizer?.NotifyRemoteTimeAccelerationChanged(
                 msg.IsTimeAccelerated);
             m_remoteWeatherState = msg;
+            RecordRemoteFogSample(msg);
             m_remoteTerrainHeadSequence = Math.Max(
                 m_remoteTerrainHeadSequence, msg.TerrainSequence);
             if (m_worldTransferRegistry.PendingWorldReadyTransferId > 0)
@@ -1023,8 +1061,39 @@ namespace ScMultiplayer
         }
 
         // Source: Survivalcraft/Game/SubsystemWeather.cs:SubsystemWeather.UpdateFog
-        // World info arrives at 2Hz. Interpolate its authority every rendered frame instead of
-        // alternating between the local weather ramp and a hard network correction.
+        // 记录主机 2Hz 雾样本：保留"上一份 / 最新一份"和它们的到达时间，供每帧插值使用。
+        private void RecordRemoteFogSample(GameWorldInfoMessage1 msg)
+        {
+            if (msg == null || IsHost) return;
+            double now = Time.RealTime;
+            if (m_remoteFogSampleTime <= 0.0)
+            {
+                // 第一份样本（刚进房间）：两份都设成它，插值从当前位置开始，避免第一帧跳变。
+                m_remoteFogPreviousProgress = msg.FogProgress;
+                m_remoteFogPreviousIntensity = msg.FogIntensity;
+                m_remoteFogSampleProgress = msg.FogProgress;
+                m_remoteFogSampleIntensity = msg.FogIntensity;
+                m_remoteFogSampleTime = now;
+                m_remoteFogPreviousSampleTime = now;
+                m_remoteFogSampleInterval = RemoteFogDefaultSampleInterval;
+                return;
+            }
+            m_remoteFogPreviousProgress = m_remoteFogSampleProgress;
+            m_remoteFogPreviousIntensity = m_remoteFogSampleIntensity;
+            m_remoteFogSampleProgress = msg.FogProgress;
+            m_remoteFogSampleIntensity = msg.FogIntensity;
+            m_remoteFogPreviousSampleTime = m_remoteFogSampleTime;
+            m_remoteFogSampleTime = now;
+            double interval = now - m_remoteFogPreviousSampleTime;
+            // 2Hz 正常是 0.5 秒；网络抖动/长时间停顿都夹到这个范围内，避免插值速率失真。
+            m_remoteFogSampleInterval = MathUtils.Clamp(interval, 0.05, 1.5);
+        }
+
+        // Source: Survivalcraft/Game/SubsystemWeather.cs:SubsystemWeather.UpdateFog
+        // 世界信息是 2Hz：旧写法每帧朝"最新样本"做指数追赶（8/s），结果雾的浓淡/层高会跟着
+        // 样本台阶走 —— 玩家看到的就是"数字跳跃"，出现与消失都不连续。
+        // 现在改成在两份相邻样本之间按到达间隔线性插值，再叠一层很轻的指数平滑把样本边界的
+        // 折角磨圆；样本断流时插值系数夹在 1 以内，停在最后一份样本上，不会外推跑飞。
         private void UpdateRemoteFogPresentation(float dt)
         {
             GameWorldInfoMessage1 msg = m_remoteWeatherState;
@@ -1035,9 +1104,16 @@ namespace ScMultiplayer
             if (weather.IsFogStarted != msg.IsFogStarted)
                 ConfigureRemoteFogSchedule(weather, msg.IsFogStarted);
             float step = MathUtils.Clamp(dt, 0f, 0.05f);
-            float blend = 1f - (float)Math.Exp(-8f * step);
-            float fogProgress = MathUtils.Lerp(weather.FogProgress, msg.FogProgress, blend);
-            float fogIntensity = MathUtils.Lerp(weather.FogIntensity, msg.FogIntensity, blend);
+            double interval = MathUtils.Max(m_remoteFogSampleInterval, 0.05);
+            float alpha = (float)MathUtils.Clamp(
+                (Time.RealTime - m_remoteFogSampleTime) / interval, 0.0, 1.0);
+            float targetProgress = MathUtils.Lerp(
+                m_remoteFogPreviousProgress, m_remoteFogSampleProgress, alpha);
+            float targetIntensity = MathUtils.Lerp(
+                m_remoteFogPreviousIntensity, m_remoteFogSampleIntensity, alpha);
+            float blend = 1f - (float)Math.Exp(-10f * step);
+            float fogProgress = MathUtils.Lerp(weather.FogProgress, targetProgress, blend);
+            float fogIntensity = MathUtils.Lerp(weather.FogIntensity, targetIntensity, blend);
             ModManager.ModParentField.ModifyParentField(
                 weather, "<FogProgress>k__BackingField", fogProgress, typeof(SubsystemWeather));
             ModManager.ModParentField.ModifyParentField(

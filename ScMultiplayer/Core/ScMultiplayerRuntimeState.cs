@@ -140,6 +140,17 @@ namespace ScMultiplayer
         private float m_observedClientHealth;
         private float m_observedClientFood;
         private bool m_observedClientSleeping;
+        // 客户端自伤预测（见 ScMultiplayerPickableProjectileHandlers 之外的
+        // ScMultiplayerPlayerHealthAndIngress.SendClientDamageRequest 与
+        // ScMultiplayerHealthWorldControlHandlers 的钳制）：
+        // 本地点击骷髅头扣血后，请求要一个往返才到主机；而主机每 1 秒强制全量广播一次生命
+        // （ScMultiplayerUpdateLoop.cs:3030-3031），这段时间里它带的还是扣血前的值 ——
+        // 直接套用就会把生命条拉回原值，下一帧再被扣血后的快照打回来。
+        private float m_localHealthPrediction;
+        private double m_localHealthPredictionDeadline;
+        // Source: Survivalcraft/Game/VitalStatsWidget.cs:VitalStatsWidget.Update
+        // 本地自伤预测的有效窗口：超过它就恢复完全权威（请求丢失/被拒时不至于卡住）。
+        private const double LocalHealthPredictionTimeout = 2.0;
         private int m_nextClientSleepRequestSequence;
         private int m_pendingClientSleepRequestSequence;
         private bool m_hasAuthoritativeLocalInventory;
@@ -399,6 +410,10 @@ namespace ScMultiplayer
         private readonly HashSet<ushort> m_loggedRemoteAnimalFailures = new HashSet<ushort>();
         private int m_lastFullAnimalSnapshotTick;
         private readonly Dictionary<Pickable, ushort> m_hostPickableIds = new Dictionary<Pickable, ushort>();
+        // 上一帧快照发布过的位置：用来识别"引擎里判定为静止"的拾取物（其速度并不为 0），
+        // 详见 ScMultiplayerWorldSync.cs 发布处的说明。
+        private readonly Dictionary<Pickable, Vector3> m_hostPickablePublishedPositions =
+            new Dictionary<Pickable, Vector3>();
         private readonly HashSet<int> m_pendingHostPickableSnapshots = new HashSet<int>();
         private SubsystemPickables m_hostPickablesSubsystem;
         private GameWidget m_clientDropDragHostGameWidget;
@@ -640,6 +655,19 @@ namespace ScMultiplayer
         private Dictionary<string, long> m_pendingRandomStates = new Dictionary<string, long>();
         private Project m_randomStateAppliedProject;
         private GameWorldInfoMessage1 m_remoteWeatherState;
+        // 雾的 2Hz 采样插值（见 ScMultiplayerHealthWorldControlHandlers.UpdateRemoteFogPresentation）：
+        // 主机每 2Hz 才发一次雾的进度/浓度，若每帧只朝"最新样本"追，雾的出现与消失就是按 2Hz
+        // 台阶变化的（玩家看到的"数字跳跃"）。这里保留相邻两次样本，在两样本之间线性插值，
+        // 让雾的浓淡与层高是连续曲线。
+        private float m_remoteFogPreviousProgress;
+        private float m_remoteFogPreviousIntensity;
+        private float m_remoteFogSampleProgress;
+        private float m_remoteFogSampleIntensity;
+        private double m_remoteFogSampleTime;
+        private double m_remoteFogPreviousSampleTime;
+        private double m_remoteFogSampleInterval = RemoteFogDefaultSampleInterval;
+        // 主机世界信息是 2Hz（ScMultiplayerUpdateLoop 的 pulse2Hz），首帧给 0.5 秒是安全的默认值。
+        private const double RemoteFogDefaultSampleInterval = 0.5;
         private int m_lastRemoteWorldInfoTick = -1;
         private int m_lastRemoteWorldTimeRevision;
         private int m_hostWorldTimeRevision;
@@ -716,6 +744,11 @@ namespace ScMultiplayer
         private const float RemoteAnimalSnapDistance = 3f;
         private const float ClientProjectilePredictionGrace = 3f;
         private const float ClientProjectileDuplicateDistance = 1.25f;
+        // Source: Survivalcraft/Game/SubsystemPickables.cs:SubsystemPickables.Update
+        // 引擎判定"静止"的拾取物位置一动不动（落地那一步丢弃本 tick 位移），但速度不为 0
+        // （重力与落地反弹的残余）。位置变化小于 1mm 就当作静止，用来把这类残余速度清成 0，
+        // 避免客户端按它外推而往下沉。取这么小是因为静止时位移是精确的 0。
+        private const float RestingPickablePositionEpsilonSquared = 1e-6f;
         private const int MaximumProjectileReleaseCompensationSteps = 25;
         private const float MaximumProjectileReleaseVelocity = 64f;
         private const float PlayerHitRequestInterval = 0.36f;

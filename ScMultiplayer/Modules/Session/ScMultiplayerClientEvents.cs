@@ -65,9 +65,23 @@ namespace ScMultiplayer
 		});
 	}
 
+	/// <summary>失败时弹出的模态框；成功进入房间后必须关掉，否则人已在游戏里、弹窗还挂着。</summary>
+	private Dialog m_createRoomFeedbackDialog;
+
+	private void HideCreateRoomFeedbackDialog()
+	{
+		Dialog dialog = m_createRoomFeedbackDialog;
+		m_createRoomFeedbackDialog = null;
+		if (dialog != null && DialogsManager.Dialogs.Contains(dialog))
+			DialogsManager.HideDialog(dialog);
+	}
+
 	private void FinishCreateRoomFeedback(bool success, string message)
 	{
 		bool wasPending = m_createRoomPending;
+		// 任何一次反馈处理都先把上一次失败留下的对话框收掉：成功时不再残留，
+		// 失败时下面会重新弹一个新的（不会叠加）。
+		HideCreateRoomFeedbackDialog();
 		m_createRoomPending = false;
 		if (success)
 		{
@@ -77,7 +91,8 @@ namespace ScMultiplayer
 		{
 			if (wasPending)
 			{
-				DialogsManager.ShowDialog(null, new MessageDialog("Create Room", message ?? "Room creation failed.", "OK", null, null));
+				m_createRoomFeedbackDialog = new MessageDialog("Create Room", message ?? "Room creation failed.", "OK", null, null);
+				DialogsManager.ShowDialog(null, m_createRoomFeedbackDialog);
 			}
 		}
 		else if (GameManager.Project != null)
@@ -91,6 +106,8 @@ namespace ScMultiplayer
 	{
 		bool reconnectPending = m_reconnectPending;
 		Log.Information($"[ScMP] GameJoined, Step={obj.Step}, ClientID={client.ClientID}");
+		// 重连/手动加入成功时，收掉之前失败留下的对话框（例如 "Create Room: Game does not exist."）。
+		HideCreateRoomFeedbackDialog();
 		IsHost = false;
 		ApplyServerDiagnosticsSetting();
 		m_controlUnit?.Context.Connections.Reset();
@@ -214,7 +231,16 @@ namespace ScMultiplayer
 			});
 			return;
 		}
-		if (m_reconnectPending && obj.Reason != "SCMP_PROFILE_REQUIRED")
+		// "Game does not exist." 是**暂时性**拒绝：主机刚重启时进程已在监听，但房间要等世界加载完
+		// 才创建（实测约 8 秒）。若把它当成最终拒绝，重连循环会被直接停掉，玩家只能手动重进；
+		// 保留重连状态即可让既有的 5 次 / 1-2-4-5-5 秒退避预算跨过这段窗口。
+		bool transientRefusal = string.Equals(obj.Reason, "Game does not exist.",
+			StringComparison.Ordinal);
+		if (m_reconnectPending && transientRefusal)
+		{
+			Engine.Log.Information("[ScMP] Reconnect refusal is transient (room not created yet); keeping retry loop");
+		}
+		else if (m_reconnectPending && obj.Reason != "SCMP_PROFILE_REQUIRED")
 		{
 			m_reconnectRequested = false;
 			m_reconnectPending = false;
@@ -631,6 +657,7 @@ namespace ScMultiplayer
 		m_loggedRemoteAnimalFailures.Clear();
 		m_lastFullAnimalSnapshotTick = 0;
 		m_hostPickableIds.Clear();
+		m_hostPickablePublishedPositions.Clear();
 		m_pendingHostPickableSnapshots.Clear();
 		m_remotePickables.Clear();
 		m_remotePickableRecords.Clear();
@@ -1540,21 +1567,22 @@ namespace ScMultiplayer
 		int activeSlot = inventory?.ActiveSlotIndex ?? (-1);
 		int toolValue = ((inventory != null && activeSlot >= 0 && activeSlot < inventory.SlotsCount) ? inventory.GetSlotValue(activeSlot) : 0);
 		int toolCount = ((inventory != null && activeSlot >= 0 && activeSlot < inventory.SlotsCount) ? inventory.GetSlotCount(activeSlot) : 0);
-		BlockPlacementData predictedDig = BlocksManager.Blocks[Terrain.ExtractContents(expectedValue)].GetDigValue(
-			GameManager.Project.FindSubsystem<SubsystemTerrain>(true), player.ComponentMiner,
-			hit.Value.Value, toolValue, hit.Value);
-		int predictedValue = Terrain.ReplaceLight(predictedDig.Value, 0);
+		// 这里曾经调用 `Block.GetDigValue(...)` 来"预测"挖掘结果。**不能这么做**：
+		// `DeciduousLeavesBlock.GetDigValue` 在秋季分支里有副作用（DeciduousLeavesBlock.cs:146
+		// 会 AddParticleSystem(new LeavesParticleSystem(..., 8, ..., createFallenLeaves: true))），
+		// 而本方法每帧都被调用（按住挖掘时一直走）→ 每帧多撒一把落叶，落叶数量爆炸。
+		// 挖掘结果不需要预测：引擎自己会算并落地（ComponentMiner.Dig → GetDigValue → DestroyCell），
+		// 本地格子的值就是结果，由 `SubmitClientTerrainPredictions` 观测后填进意图
+		// （`LocalTerrainDigIntent.PredictedValue` 默认是 UnknownPredictedValue）。
 		if (!m_localTerrainDigIntents.TryGetValue(point, out var intent) || intent.ExpectedValue != expectedValue)
 		{
 			intent = new LocalTerrainDigIntent
 			{
 				ExpectedValue = expectedValue,
-				PredictedValue = predictedValue,
 				StartClientTick = client.Step
 			};
 			m_localTerrainDigIntents[point] = intent;
 		}
-		intent.PredictedValue = predictedValue;
 		intent.DigRay = digRay.Value;
 		intent.HitFace = hit.Value.CellFace.Face;
 		intent.CollisionBoxIndex = hit.Value.CollisionBoxIndex;
@@ -1598,22 +1626,18 @@ namespace ScMultiplayer
 				CollisionBoxIndex = 0,
 				Distance = 0f
 			};
-			BlockPlacementData predictedDig =
-				BlocksManager.Blocks[Terrain.ExtractContents(expectedValue)].GetDigValue(
-					terrain, miner, cellValue, toolValue, hit);
-			int predictedValue = Terrain.ReplaceLight(predictedDig.Value, 0);
+			// 同 `UpdateLocalDigTarget`：不调用 `Block.GetDigValue` 预测（叶子那个重写有副作用，
+			// 每帧调一次会多撒落叶）。本地挖掘结果由引擎落地、由提交阶段观测填入。
 			if (!m_localTerrainDigIntents.TryGetValue(point, out var intent) ||
 				intent.ExpectedValue != expectedValue)
 			{
 				intent = new LocalTerrainDigIntent
 				{
 					ExpectedValue = expectedValue,
-					PredictedValue = predictedValue,
 					StartClientTick = client.Step
 				};
 				m_localTerrainDigIntents[point] = intent;
 			}
-			intent.PredictedValue = predictedValue;
 			intent.DigRay = digRay;
 			intent.HitFace = digging.Value.Face;
 			intent.CollisionBoxIndex = hit.CollisionBoxIndex;
@@ -1945,7 +1969,14 @@ namespace ScMultiplayer
 		}
 		cell = new Point3(hit.Value.CellFace.X, hit.Value.CellFace.Y, hit.Value.CellFace.Z);
 		expectedValue = Terrain.ReplaceLight(hit.Value.Value, 0);
-		if (BlocksManager.Blocks[Terrain.ExtractContents(hit.Value.Value)] is TrapdoorBlock)
+		// 交互即“翻转该格自身 data”的方块：本地这一次翻转**不能**当成需要主机修复的地形预测上报，
+		// 否则会与主机的“交互重放”互相打架 —— 主机把旧值当权威修复发回来 → 开-关-开-关闪烁，
+		// 偶数次翻转时表现为“操作后被回退”。
+		//   Source: Survivalcraft/Game/SubsystemFenceGateBlockBehavior.cs:OnInteract（栅栏门，!open 翻转）
+		//   Source: Survivalcraft/Game/SubsystemDoorBlockBehavior.cs:OnInteract（木门，同一模式）
+		//   Source: Survivalcraft/Game/SubsystemTrapdoorBlockBehavior.cs:OnInteract（活板门，本来就在列）
+		Block hitBlock = BlocksManager.Blocks[Terrain.ExtractContents(hit.Value.Value)];
+		if (hitBlock is TrapdoorBlock || hitBlock is FenceGateBlock || hitBlock is DoorBlock)
 		{
 			return true;
 		}

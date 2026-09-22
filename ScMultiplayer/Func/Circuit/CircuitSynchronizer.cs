@@ -107,6 +107,12 @@ namespace ScMultiplayer
         private const double SnapshotRequestRetryTime = 1.5;
         private const double RecoveryRequestRetryTime = 1.5;
         private const double MaximumRequestRetryTime = 5.0;
+
+        /// <summary>
+        /// 客户端世界时钟只允许前进时的放行阈值：回退小于它的一律夹掉（把时钟钉在当前值），
+        /// 只有更大的回退才当成真重同步执行。用途见 <see cref="ApplyAuthoritativeWorldTime"/>。
+        /// </summary>
+        internal const double MaximumClockRewindWithoutCorrection = 1.0;
         private const double SnapshotBatchRetention = 20.0;
         private const double SnapshotScopeRequestInterval = 1.0;
         private const double RepairSnapshotProgressTimeout = 4.0;
@@ -3281,6 +3287,18 @@ namespace ScMultiplayer
                 StepDelta(nextHostStep, m_worldTimeAnchorHostCircuitStep) *
                 SubsystemElectricity.CircuitStepDuration;
             if (double.IsNaN(elapsed) || double.IsInfinity(elapsed)) return;
+            // 世界时钟**只允许前进**：这个 pin 每个电路步都会写一次（10ms 量化），锚点/插值一旦
+            // 落后于本地时钟，就会把时钟往回拨 —— 掉落物的渲染旋转/浮动直接由
+            // `SubsystemPickables.Draw` 用 `TotalElapsedGameTime` 现算
+            // （Survivalcraft/Game/SubsystemPickables.cs:92,108,111,138），于是表现为
+            // “位移不动、旋转反复小幅回退”。只有**大幅**回退（真重同步，例如重置/换世界）
+            // 才放行，避免本地时钟无限领先。
+            double current = m_gameInfo.TotalElapsedGameTime;
+            if (elapsed < current)
+            {
+                if (current - elapsed < MaximumClockRewindWithoutCorrection)
+                    elapsed = current;
+            }
             ScMultiplayer.ModManager.ModParentField.ModifyParentField(m_gameInfo,
                 "<TotalElapsedGameTime>k__BackingField", elapsed,
                 typeof(SubsystemGameInfo));

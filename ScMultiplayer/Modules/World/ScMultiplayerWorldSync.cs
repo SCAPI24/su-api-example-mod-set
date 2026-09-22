@@ -162,6 +162,7 @@ namespace ScMultiplayer
                         Vector3.Zero, Vector3.Zero));
                 }
                 m_hostPickableIds.Remove(removed);
+                m_hostPickablePublishedPositions.Remove(removed);
             }
 
             var pickableUpdate = new PickableSyncMessage { Action = PickableSyncMessage.PickAction.UpdatePosition };
@@ -188,11 +189,29 @@ namespace ScMultiplayer
                             pickable.Position, pickable.Velocity, pickable.FlyToPosition,
                             stuckMatrix: pickable.StuckMatrix), targetClientId);
                 }
+                // Source: Survivalcraft/Game/SubsystemPickables.cs:SubsystemPickables.Update
+                // 引擎里"静止"的拾取物速度并不为 0：每个 tick 先受重力，落地那一步把 velocity.Y
+                // 取反并乘 0.25（SubsystemPickables.cs:294-305），同时丢弃本 tick 的位移
+                // （vector = position）—— 位置真的一动不动，速度却长期在 ±0.1~0.5 m/s 之间抖。
+                // 8Hz 采样把这个残余速度发出去后，客户端会拿它外推
+                // （ScMultiplayerPickableProjectileHandlers.cs:49 `state.Position + state.Velocity * age`），
+                // 于是原地不动的掉落物会往地下沉，下一帧再被主机位置拉回。
+                // 位置与上一帧快照完全一致（引擎静止时位移被丢弃，误差只在浮点精度内）→ 按 0 速度发布。
+                Vector3 publishedVelocity = pickable.Velocity;
+                if (!pickable.FlyToPosition.HasValue &&
+                    m_hostPickablePublishedPositions.TryGetValue(
+                        pickable, out Vector3 previousPublishedPosition) &&
+                    Vector3.DistanceSquared(previousPublishedPosition, pickable.Position) <
+                        RestingPickablePositionEpsilonSquared)
+                {
+                    publishedVelocity = Vector3.Zero;
+                }
+                m_hostPickablePublishedPositions[pickable] = pickable.Position;
                 pickableUpdate.Positions.Add(new PickableSyncMessage.PickablePos
                 {
                     Id = id,
                     Position = pickable.Position,
-                    Velocity = pickable.Velocity,
+                    Velocity = publishedVelocity,
                     FlyToPosition = pickable.FlyToPosition
                 });
             }
@@ -646,6 +665,7 @@ namespace ScMultiplayer
                 !m_hostPickableIds.TryGetValue(pickable, out ushort id))
                 return;
             m_hostPickableIds.Remove(pickable);
+            m_hostPickablePublishedPositions.Remove(pickable);
             // Source: ScMultiplayer.HandlePickableAcquireRequest
             // The request transaction already broadcast the authoritative result. Do not emit a
             // second acquisition with RequestId zero when native removal runs on the next frame.

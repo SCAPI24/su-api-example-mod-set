@@ -1336,6 +1336,7 @@ namespace ScMultiplayer
             else NetworkMessageSender.SendPlayerRespawnRequest(message);
             if (!IsHost) m_localRespawnPendingUntil = Time.RealTime + 5.0;
             m_hasObservedClientHealth = false;
+            m_localHealthPredictionDeadline = 0.0;
             m_pendingClientSleepRequestSequence = 0;
         }
 

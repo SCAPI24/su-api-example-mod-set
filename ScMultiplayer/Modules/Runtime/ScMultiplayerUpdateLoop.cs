@@ -1170,6 +1170,7 @@ namespace ScMultiplayer
                 RepairEnginePlayerIndexCounter(
                     project.FindSubsystem<SubsystemPlayers>(throwOnError: false));
                 m_hasObservedClientHealth = false;
+                m_localHealthPredictionDeadline = 0.0;
                 m_nextClientSleepRequestSequence = 0;
                 m_pendingClientSleepRequestSequence = 0;
                 m_lastAuthoritativeLocalWholeLevel = -1;
