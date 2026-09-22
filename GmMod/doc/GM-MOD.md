@@ -119,6 +119,7 @@
 - 需要 **ScMultiplayer 2.1.7+**（`ModInfo.xml` 里声明了依赖）：
   第三节里的 `ScMP.Player.SetVitals` / `ScMP.Player.SetCondition` / `ScMP.Data.WorldControl`
   都是 2.1.7 才有的操作，更旧的联机 mod 主机没有这些处理器，请求会失败。
+  （当前索引发布的是 **2.1.8**；它相对 2.1.7 只改了客户端取服务目录的方式，操作接口不变。）
 - 联机 mod 的 `Obfuscar.xml` 必须保留 GM 门面类型/成员名字
   （`SkipType` + `skipMethods/skipFields/skipProperties/skipEvents="true"`），
   否则混淆后 GmMod 在运行时找不到 `DataModificationTool` 等类型。

@@ -8,6 +8,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Net.Http;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading;
@@ -23,14 +24,21 @@ namespace ScMultiplayer
         private const double SuccessfulRefreshPeriod = 300.0;
         private const double FailedRefreshPeriod = 30.0;
         private const int RawRequestTimeoutMilliseconds = 8000;
+        private const int RawProbeTimeoutMilliseconds = 3000;
         private const int MaximumDirectoryBytes = 64 * 1024;
         private const int MaximumHosts = 256;
 
         // Source: Game/WebManager.cs:WebManager.Get
-        // Gitee is the primary directory. GitHub is read afterwards and merged as a mirror.
+        // 三端（gitee → cnb → github）**依次尝试、三端都要加载、结果合并**；某端不通只跳过它。
+        //   · 不能用引擎的 `WebManager.Get`：它对**任何**失败一律 `Log.Error`（`WebManager.cs:155-159`），
+        //     调用方没有"降级成提示"的机会 —— 于是本机这种 `raw.githubusercontent.com` DNS 被污染的
+        //     环境，每轮刷新都会多出一条 ERROR（实测：紧跟 "[ScMP] Loaded … from gitee" 之后 6 毫秒，
+        //     周期精确 300 秒 = SuccessfulRefreshPeriod）。
+        //   · 顺序按本机可达性排，github 留给墙外用户兜底；三端内容相同，谁通用谁，能通的都合并。
         internal static readonly string[] RawDirectoryUrls =
         {
             "https://gitee.com/SC-SPM/su-api-example-mod-set/raw/master/ScMultiplayer/ServerDns.txt",
+            "https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/git/raw/master/ScMultiplayer/ServerDns.txt",
             "https://raw.githubusercontent.com/SCAPI24/su-api-example-mod-set/master/ScMultiplayer/ServerDns.txt"
         };
 
@@ -52,6 +60,7 @@ namespace ScMultiplayer
         private bool m_contentRootChecked;
         private bool m_rawRefreshInProgress;
         private bool m_rawRefreshSucceeded;
+        private int m_failedRefreshStreak;
         private int m_rawSourceIndex;
         private int m_rawRequestId;
         private int m_resolveGeneration;
@@ -256,6 +265,28 @@ namespace ScMultiplayer
 
             string url = RawDirectoryUrls[m_rawSourceIndex++];
             int requestId = ++m_rawRequestId;
+            // 先做一次廉价的 TCP 探测（3 秒）：不可达就**跳过这一端、根本不发 HTTP 请求**。
+            // 这样"某个平台连不上"不会产生任何 Error 级日志（引擎 WebManager 是拿到失败才 Log.Error，
+            // 调用方没法降级；只能在请求之前判断）。
+            Task.Run(delegate
+            {
+                bool reachable = IsEndpointReachable(url);
+                Dispatcher.Dispatch(delegate
+                {
+                    if (!m_rawRefreshInProgress || requestId != m_rawRequestId) return;
+                    if (!reachable)
+                    {
+                        Log.Information($"[ScMP] Service DNS source unreachable, skipped: {url}");
+                        FetchNextRawSource();
+                        return;
+                    }
+                    StartRawRequest(requestId, url);
+                });
+            });
+        }
+
+        private void StartRawRequest(int requestId, string url)
+        {
             var progress = new CancellableProgress();
             m_rawRefreshProgress = progress;
             Task.Run(async delegate
@@ -268,9 +299,55 @@ namespace ScMultiplayer
                 });
             });
 
-            WebManager.Get(url, null, null, progress,
-                data => CompleteRawSource(requestId, url, data, null),
-                error => CompleteRawSource(requestId, url, null, error));
+            // 自己抓（不用 `WebManager.Get`）：失败只记 Warning/Information，绝不进 ERROR 级。
+            Task.Run(async delegate
+            {
+                byte[] data = null;
+                Exception error = null;
+                try
+                {
+                    using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(10.0) };
+                    using HttpResponseMessage response = await client.GetAsync(url,
+                        HttpCompletionOption.ResponseHeadersRead, progress.CancellationToken);
+                    if (!response.IsSuccessStatusCode)
+                    {
+                        error = new InvalidOperationException(
+                            $"{(int)response.StatusCode} ({response.StatusCode})");
+                    }
+                    else
+                    {
+                        data = await response.Content.ReadAsByteArrayAsync(progress.CancellationToken);
+                    }
+                }
+                catch (Exception exception)
+                {
+                    error = exception;
+                }
+                Dispatcher.Dispatch(delegate { CompleteRawSource(requestId, url, data, error); });
+            });
+        }
+
+        /// <summary>
+        /// TCP 可达性探测：只判断"这个平台此刻能不能连上"，不发 HTTP 请求、不产生任何 Error 级日志。
+        /// DNS 被污染（解析失败）与断网都会在这里返回 false，于是这一端被静默跳过。
+        /// </summary>
+        private static bool IsEndpointReachable(string url)
+        {
+            try
+            {
+                var uri = new Uri(url);
+                using var client = new TcpClient();
+                IAsyncResult result = client.BeginConnect(uri.Host,
+                    uri.Port <= 0 ? 443 : uri.Port, null, null);
+                if (!result.AsyncWaitHandle.WaitOne(RawProbeTimeoutMilliseconds))
+                    return false;
+                client.EndConnect(result);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private void CompleteRawSource(int requestId, string url, byte[] data, Exception error)
@@ -292,6 +369,17 @@ namespace ScMultiplayer
             {
                 Log.Warning($"[ScMP] Ignored oversized service DNS directory from {url}");
             }
+            else if (error is OperationCanceledException)
+            {
+                Log.Information($"[ScMP] Service DNS source timed out, skipped: {url}");
+            }
+            else
+            {
+                // 只记 Warning：三端任意一端不通都不该被当成"错误"。
+                Log.Warning($"[ScMP] Service DNS source unavailable ({url}): " +
+                    (error?.Message ?? "unexpected response"));
+            }
+            // 三端都要加载：继续下一端，能通的都会被合并进目录。
             FetchNextRawSource();
         }
 
@@ -305,8 +393,16 @@ namespace ScMultiplayer
             }
             m_pendingRemoteHosts = null;
             m_rawRefreshInProgress = false;
-            m_nextRawRefreshTime = Time.RealTime +
-                (m_rawRefreshSucceeded ? SuccessfulRefreshPeriod : FailedRefreshPeriod);
+            if (m_rawRefreshSucceeded)
+            {
+                m_failedRefreshStreak = 0;
+                m_nextRawRefreshTime = Time.RealTime + SuccessfulRefreshPeriod;
+                return;
+            }
+            // 三端全失败（离线）时退避：30 / 60 / 120 / 300 秒封顶，避免每 30 秒重试一轮。
+            m_failedRefreshStreak = Math.Min(m_failedRefreshStreak + 1, 4);
+            double period = FailedRefreshPeriod * (1 << (m_failedRefreshStreak - 1));
+            m_nextRawRefreshTime = Time.RealTime + Math.Min(period, SuccessfulRefreshPeriod);
         }
 
         // Source: Mod/Comms/Comms.Drt/Func/Explorer/Explorer.cs:Explorer.StartDiscovery
