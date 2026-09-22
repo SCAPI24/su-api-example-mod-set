@@ -488,6 +488,11 @@ namespace Comms
 
         public event Action<PeerPacket> DataMessageReceived;
 
+        // Source: Comms/Comms/Peer.cs:Peer.TryRepairDatagramAddress
+        // Raised after a peer's datagram address was moved to the source address its packets
+        // really arrive from. Applications log it; Comms itself cannot use Engine logging.
+        public event Action<IPEndPoint, IPEndPoint> DatagramAddressRepaired;
+
         public Peer(int localPort = 0)
             : this(new UdpTransmitter(localPort))
         {
@@ -496,6 +501,10 @@ namespace Comms
         public Peer(ITransmitter transmitter)
         {
             Comm = new Comm(transmitter);
+            // Source: Comms/Comms/Comm.cs:Comm.DatagramAddressRepairHandler
+            // The peer map is the authority for a peer's address, so the datagram address repair
+            // is decided here, where both the peer table and the datagram token are available.
+            Comm.DatagramAddressRepairHandler = TryRepairDatagramAddress;
             Comm.Error += delegate (Exception e)
             {
                 InvokeError(e);
@@ -557,6 +566,54 @@ namespace Comms
                 PeerData peerData;
                 return PeersByAddress.TryGetValue(address, out peerData) ? peerData : null;
             }
+        }
+
+        // Source: Comms/Comms/Comm.cs:Comm.DatagramAddressRepairHandler
+        // Runs with Lock held (Comm.Lock and Peer.Lock are the same object) and before any state is
+        // created for the unknown source address. Returning false keeps the datagram on the
+        // existing unmatched-address path, so legal traffic that simply cannot be attributed yet
+        // (a discovery answer, for example) is never dropped by this repair.
+        private bool TryRepairDatagramAddress(IPEndPoint observed, uint token)
+        {
+            if (IsDisposed || observed == null)
+            {
+                return false;
+            }
+            if (!Comm.TryFindDatagramAddressByToken(token, observed, out IPEndPoint known))
+            {
+                return false;
+            }
+            // The answering side keeps its single server in ConnectedTo, which is not always part of
+            // PeersByAddress; both locations are valid owners of one peer address.
+            PeerData peerData;
+            if (ConnectedTo != null && ConnectedTo.Address.Equals(known))
+            {
+                peerData = ConnectedTo;
+            }
+            else if (!PeersByAddress.TryGetValue(known, out peerData) || peerData == null)
+            {
+                return false;
+            }
+            bool mappedByAddress = PeersByAddress.TryGetValue(known, out PeerData mapped) &&
+                ReferenceEquals(mapped, peerData);
+            if (mappedByAddress && PeersByAddress.ContainsKey(observed))
+            {
+                // 目标地址已经被另一个 peer 占用：绝不合并两个 peer。
+                return false;
+            }
+            if (!Comm.MoveConnection(known, observed))
+            {
+                return false;
+            }
+            // 同一把锁内完成 peer 映射搬迁：此后该 peer 的收发、保活与超时都用新的数据报地址。
+            if (mappedByAddress)
+            {
+                PeersByAddress.Remove(known);
+                PeersByAddress.Add(observed, peerData);
+            }
+            peerData.Address = observed;
+            DatagramAddressRepaired?.Invoke(known, observed);
+            return true;
         }
 
         public void DiscoverLocalPeers(int peerPort, byte[] discoveryQueryData = null)

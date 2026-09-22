@@ -200,6 +200,60 @@ namespace ScMultiplayer
                 ["isHost"] = clientId == 0
             };
 
+        /// <summary>
+        /// 该客户端的记录键（= `UserManager.ActiveUser.UniqueId` = 账号 userid；无身份时为 `name:名字`）。
+        /// 名字可以随便改、这个键不能改，所以主机侧授权一律按它判断（审批事件也携带它）。
+        /// </summary>
+        internal string GetDataModificationClientKey(int clientId)
+        {
+            if (clientId < 0)
+                return string.Empty;
+            return m_clientRecordKeys.TryGetValue(clientId, out string key) && key != null
+                ? key
+                : string.Empty;
+        }
+
+        /// <summary>
+        /// 当前世界的受信任身份（`ScMultiplayerTrustedClients.xml` 的内容）。
+        /// 这些身份的 DM 请求**连审批请求都不会产生**，主机直接落地；无头服务器控制台用它显示"谁被授权了"。
+        /// </summary>
+        internal List<string> GetTrustedDataModificationIdentities()
+        {
+            var result = new List<string>();
+            if (!IsHost)
+                return result;
+            EnsureTrustedDataModificationIdentitiesLoaded();
+            result.AddRange(m_trustedDataModificationIdentities);
+            result.Sort(StringComparer.Ordinal);
+            return result;
+        }
+
+        /// <summary>
+        /// 在线客户端的记录键 + 是否已授权（无头服务器控制台用它显示"谁被授权了、谁还要问"）。
+        /// 主机自己（clientId 0）不在此列。
+        /// </summary>
+        internal List<Dictionary<string, object>> DescribeDataModificationClientIdentities()
+        {
+            var result = new List<Dictionary<string, object>>();
+            if (!IsHost)
+                return result;
+            EnsureTrustedDataModificationIdentitiesLoaded();
+            foreach (KeyValuePair<int, string> item in m_clientRecordKeys.OrderBy(pair => pair.Key))
+            {
+                if (item.Key <= 0 || string.IsNullOrWhiteSpace(item.Value))
+                    continue;
+                result.Add(new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    ["clientId"] = item.Key,
+                    ["key"] = item.Value,
+                    ["name"] = m_networkPlayerData.TryGetValue(item.Key, out PlayerData data) &&
+                        data != null ? data.Name ?? string.Empty : string.Empty,
+                    ["trusted"] = m_trustedDataModificationIdentities.Contains(item.Value)
+                });
+            }
+            return result;
+        }
+
         /// <summary>该客户端身份是否已被主机授权（授权后其数据修改请求自动同意，不弹窗）。</summary>
         internal bool IsTrustedDataModificationClient(int clientId)
         {

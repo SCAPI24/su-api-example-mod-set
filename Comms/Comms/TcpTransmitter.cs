@@ -33,7 +33,10 @@ public class TcpTransmitter : ITransmitter, IDisposable
 
     private const uint HandshakeMagic = 0x50435453u;
 
-    private const byte ProtocolVersion = 1;
+    // Source: Comms/Comms/Comm.cs:Comm.PacketHeader.DatagramTokenFlag
+    // 2 adds the datagram-token peer identity (Comm packet header 0x40 flag), so a peer that still
+    // speaks 1 must be rejected during the handshake instead of having its packets mis-parsed.
+    private const byte ProtocolVersion = 2;
 
     private const int HandshakeRecordSize = 8;
 
@@ -187,6 +190,43 @@ public class TcpTransmitter : ITransmitter, IDisposable
             return Connections.TryGetValue(address, out Connection connection) &&
                 connection.IsHandshakeComplete;
         }
+    }
+
+    // Source: Comms/Comms/Comm.cs:Comm.MoveConnection
+    // Moves the key of an established connection without touching its socket, reader/writer
+    // threads, send queue or handshake state: the peer's datagram address changed, the stream did
+    // not. Outgoing streams are re-keyed as well, so the dialing side does not open a second
+    // stream to the same peer after the address repair.
+    public bool TryRebindDatagramAddress(IPEndPoint known, IPEndPoint observed)
+    {
+        if (known == null || observed == null || known.Equals(observed))
+        {
+            return false;
+        }
+        lock (Lock)
+        {
+            if (IsDisposed)
+            {
+                return false;
+            }
+            if (!Connections.TryGetValue(known, out Connection connection) || connection == null)
+            {
+                return false;
+            }
+            if (connection.Closed || !connection.IsHandshakeComplete)
+            {
+                return false;
+            }
+            if (Connections.ContainsKey(observed))
+            {
+                return false;
+            }
+            Connections.Remove(known);
+            connection.PeerAddress = observed;
+            Connections.Add(observed, connection);
+        }
+        InvokeDebug($"TCP peer address moved from {known} to {observed}");
+        return true;
     }
 
     public void SendPacket(Packet packet)
@@ -402,7 +442,10 @@ public class TcpTransmitter : ITransmitter, IDisposable
                 Action<Packet>? handler = PacketReceived;
                 if (handler != null)
                 {
-                    handler(new Packet(connection.PeerAddress!, payload));
+                    // Source: Comms/Comms/Packet.cs:Packet.FromStream
+                    // Mark the delivery channel: only stream-delivered packets may establish the
+                    // session identity (datagram token) that a datagram address repair relies on.
+                    handler(new Packet(connection.PeerAddress!, payload) { FromStream = true });
                 }
             }
         }

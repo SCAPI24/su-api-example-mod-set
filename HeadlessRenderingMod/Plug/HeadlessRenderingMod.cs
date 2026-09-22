@@ -4,6 +4,7 @@ using Game;
 using SuAPI;
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Reflection;
 using TemplatesDatabase;
@@ -17,6 +18,7 @@ namespace HeadlessRenderingMod
         private EventSubscriptionToken m_serverAuditToken;
         private EventSubscriptionToken m_serverRetransmitToken;
         private EventSubscriptionToken m_dataModificationApprovalToken;
+        private EventSubscriptionToken m_dataModificationResultToken;
         private HeadlessServerConfig m_config;
         private HeadlessControlServer m_server;
         private GameControlCommands m_gameCommands;
@@ -39,6 +41,27 @@ namespace HeadlessRenderingMod
         private double m_nextMultiplayerTelemetryTime;
         private ServerAuditLog m_serverAuditLog;
         private ServerAuditLog m_serverRetransmitLog;
+
+        // Source: Mod/ScMultiplayer/DataModification/DataModificationContracts.cs:
+        // DataModificationEvents.ApprovalRequested / ApprovalControl
+        // 名单命中的 DM 请求不在这里直接 resolve：先入队，等这一帧的审批事件派发结束后再提交，
+        // 避免在 ScMP 的事件回调里重入它自己的数据修改运行时。
+        private readonly Queue<PendingAutoApproval> m_pendingAutoApprovals =
+            new Queue<PendingAutoApproval>();
+
+        // Source: HeadlessRenderingMod/Server/DataModificationFeed.cs
+        // 主机侧 DM 决策记录（请求 / 自动同意 / 手动裁决 / 回执）：控制台菜单里直接可见。
+        private readonly DataModificationFeed m_dataModificationFeed = new DataModificationFeed();
+
+        private sealed class PendingAutoApproval
+        {
+            public int SourceClientId;
+            public int RequestId;
+            public int TransferId;
+            public string ModId = string.Empty;
+            public string Operation = string.Empty;
+            public string SourceKey = string.Empty;
+        }
 
         public string Name => "无画面服务器";
 
@@ -105,11 +128,21 @@ namespace HeadlessRenderingMod
                     "ScMultiplayer.DataModification.ApprovalRequested",
                     HandleDataModificationApprovalEvent,
                     EventPriority.LOWEST);
+                // Source: Mod/ScMultiplayer/DataModification/DataModificationContracts.cs:
+                // DataModificationEvents.Result
+                // DM 回执（主机批准并落地后的 Applied / Failed / Rejected…）。本 mod 不引用
+                // ScMultiplayer 程序集（两边都能独立部署），只按成员名读这条载荷；详情同时进
+                // Logs/Game.log 和控制台菜单里的决策记录。
+                m_dataModificationResultToken = eventBus.SubscribeEvent(
+                    "ScMultiplayer.DataModification.Result",
+                    HandleDataModificationResultEvent,
+                    EventPriority.LOWEST);
                 if (m_config.EnableConsole && OperatingSystem.IsWindows())
                 {
                     m_consoleController = new WindowsConsoleController(
                         m_server,
                         m_config);
+                    m_consoleController.SetDataModificationFeed(m_dataModificationFeed);
                     if (!m_consoleController.Start())
                     {
                         Log.Warning(
@@ -142,11 +175,14 @@ namespace HeadlessRenderingMod
                 m_eventBus.UnsubscribeEvent(m_serverRetransmitToken);
             if (m_eventBus != null && m_dataModificationApprovalToken != null)
                 m_eventBus.UnsubscribeEvent(m_dataModificationApprovalToken);
+            if (m_eventBus != null && m_dataModificationResultToken != null)
+                m_eventBus.UnsubscribeEvent(m_dataModificationResultToken);
 
             m_frameToken = null;
             m_serverAuditToken = null;
             m_serverRetransmitToken = null;
             m_dataModificationApprovalToken = null;
+            m_dataModificationResultToken = null;
             m_eventBus = null;
             m_serverAuditLog?.Dispose();
             m_serverAuditLog = null;
@@ -177,6 +213,7 @@ namespace HeadlessRenderingMod
                 ApplyHeadlessState();
                 m_server.ProcessQueuedCommands(ExecuteCommand, m_config.MaxCommandsPerFrame);
                 m_sequences.Update(ExecuteCommand, EvaluateSequenceCondition);
+                ProcessPendingAutoApprovals();
                 UpdateMultiplayerTelemetry();
                 m_frameRateLimiter.WaitForNextFrame();
                 m_lastFrameError = null;
@@ -222,10 +259,322 @@ namespace HeadlessRenderingMod
                     ? operationValue?.ToString() ?? "operation" : "operation";
                 string source = request.TryGetValue("sourceClientId", out object sourceValue)
                     ? sourceValue?.ToString() ?? "?" : "?";
-                Console.WriteLine("[DM] Approval required: " + modId + " / " + operation +
-                    " from client " + source + ". Open Multiplayer Hosting > Data modification.");
+                string sourceKey = request.TryGetValue("sourceKey", out object keyValue)
+                    ? keyValue?.ToString() ?? string.Empty : string.Empty;
+                var entry = new DataModificationFeed.Entry
+                {
+                    Kind = "request",
+                    Code = "Request",
+                    ModId = modId,
+                    Operation = operation,
+                    SourceKey = sourceKey,
+                    Details = "from client " + source +
+                        (string.IsNullOrEmpty(sourceKey) ? string.Empty : " key=" + sourceKey)
+                };
+                if (TryReadRequestInteger(request, "sourceClientId", out int requestSourceClientId))
+                    entry.SourceClientId = requestSourceClientId;
+                if (TryReadRequestInteger(request, "requestId", out int requestRequestId))
+                    entry.RequestId = requestRequestId;
+                RecordDataModificationDecision(entry, "Approval required: " + modId + " / " +
+                    operation + " from client " + source +
+                    (string.IsNullOrEmpty(sourceKey) ? string.Empty : " key=" + sourceKey) +
+                    ". Open Multiplayer Hosting > Data modification.");
+                QueueAutoApproval(request, modId, operation, sourceKey);
             }
             return null;
+        }
+
+        // Source: Mod/ScMultiplayer/DataModification/DataModificationContracts.cs:
+        // DataModificationEvents.Result -> DataModificationResult
+        // 主机批准并落地后的回执。本 mod 与 ScMultiplayer 之间没有程序集引用（两边都能独立部署），
+        // 所以只按成员名读那条载荷：对象按公开属性读，字典按同名/camelCase 键读。
+        private object[] HandleDataModificationResultEvent(object[] args)
+        {
+            if (args == null || args.Length == 0 || args[0] == null)
+                return null;
+            object payload = args[0];
+            string code = DescribeDataModificationResultCode(ReadPayloadMember(payload, "Code"));
+            if (string.IsNullOrEmpty(code))
+                return null;
+            string modId = ReadPayloadText(payload, "ModId", "Mod");
+            string operation = ReadPayloadText(payload, "Operation", "operation");
+            string details = ReadPayloadText(payload, "Details", string.Empty);
+            int sourceClientId = ReadPayloadInteger(payload, "SourceClientId", -1);
+            int requestId = ReadPayloadInteger(payload, "RequestId", -1);
+            var entry = new DataModificationFeed.Entry
+            {
+                Kind = "result",
+                Code = code,
+                ModId = modId,
+                Operation = operation,
+                SourceClientId = sourceClientId,
+                RequestId = requestId,
+                Details = details
+            };
+            RecordDataModificationDecision(entry, "Result " + code + "  " + modId + " / " +
+                operation +
+                (sourceClientId >= 0 ? "  client " + sourceClientId : string.Empty) +
+                (requestId >= 0 ? "  request " + requestId : string.Empty) +
+                (string.IsNullOrEmpty(details) ? string.Empty : "  -  " + details));
+            return null;
+        }
+
+        /// <summary>
+        /// 同一条 DM 决策落三处：控制台菜单里的决策记录、Logs/Game.log、控制台输出
+        /// （菜单开着时由控制台控制器排队，菜单关掉再打印）。
+        /// </summary>
+        private void RecordDataModificationDecision(DataModificationFeed.Entry entry,
+            string text)
+        {
+            m_dataModificationFeed.Add(entry);
+            Log.Information("[HeadlessRenderingMod] [DM] " + text);
+            WriteConsoleLine("[DM] " + text);
+        }
+
+        /// <summary>
+        /// 控制台输出：菜单 / 输入提示 / 分页开着时交给控制台控制器排队，等交互结束再打印，
+        /// 免得把远端唯一可用的交互菜单冲掉；没有控制台时退回标准输出。
+        /// </summary>
+        private void WriteConsoleLine(string text)
+        {
+            WindowsConsoleController controller = m_consoleController;
+            if (controller != null && controller.IsRunning)
+            {
+                controller.Notify(text);
+                return;
+            }
+            Console.WriteLine(text);
+        }
+
+        // Source: Mod/ScMultiplayer/DataModification/DataModificationContracts.cs:
+        // DataModificationEvents.ApprovalControl
+        // 无头服务器没人点审批弹窗：server.json 里 autoApproveDataModificationUserIds 命中的请求
+        // （"*" = 任意客户端）自动 allow。匹配用的是**记录键**（账号 userid；无身份时 "name:名字"），
+        // 玩家名可以随便改、这个键不能改。这里**不区分 mod**：任何 mod 的数据修改走同一套审批。
+        private void QueueAutoApproval(IDictionary<string, object> request, string modId,
+            string operation, string sourceKey)
+        {
+            string[] userIds = m_config?.AutoApproveDataModificationUserIds;
+            if (userIds == null || userIds.Length == 0)
+                return;
+            if (!TryReadRequestInteger(request, "sourceClientId", out int sourceClientId) ||
+                !TryReadRequestInteger(request, "requestId", out int requestId) ||
+                !TryReadRequestInteger(request, "transferId", out int transferId))
+            {
+                return;
+            }
+            if (!MatchesUserId(userIds, sourceKey))
+                return;
+            m_pendingAutoApprovals.Enqueue(new PendingAutoApproval
+            {
+                SourceClientId = sourceClientId,
+                RequestId = requestId,
+                TransferId = transferId,
+                ModId = modId,
+                Operation = operation,
+                SourceKey = sourceKey
+            });
+            RecordDataModificationDecision(new DataModificationFeed.Entry
+            {
+                Kind = "auto-approve",
+                Code = "AutoApproveQueued",
+                ModId = modId,
+                Operation = operation,
+                SourceClientId = sourceClientId,
+                RequestId = requestId,
+                SourceKey = sourceKey,
+                Details = string.IsNullOrEmpty(sourceKey)
+                    ? "server.json allowlist" : "server.json allowlist " + sourceKey
+            }, "Auto approve queued: " + modId + " / " + operation +
+                " from client " + sourceClientId +
+                (string.IsNullOrEmpty(sourceKey) ? " (no identity)" : " key=" + sourceKey));
+        }
+
+        private void ProcessPendingAutoApprovals()
+        {
+            while (m_pendingAutoApprovals.Count > 0)
+            {
+                PendingAutoApproval pending = m_pendingAutoApprovals.Dequeue();
+                var values = new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    ["operation"] = "resolve",
+                    ["sourceClientId"] = pending.SourceClientId,
+                    ["requestId"] = pending.RequestId,
+                    ["transferId"] = pending.TransferId,
+                    ["allow"] = true
+                };
+                bool resolved = false;
+                string outcome = "no response";
+                try
+                {
+                    object[][] responses = m_eventBus?.TriggerEvent(
+                        "ScMultiplayer.DataModification.ApprovalControl",
+                        new object[] { values });
+                    if (responses != null)
+                    {
+                        foreach (object[] response in responses)
+                        {
+                            if (response != null && response.Length > 0 &&
+                                response[0] is Dictionary<string, object> state)
+                            {
+                                if (state.TryGetValue("resolved", out object resolvedValue) &&
+                                    resolvedValue is bool resolvedFlag)
+                                {
+                                    resolved = resolvedFlag;
+                                    outcome = "resolved=" + resolvedFlag;
+                                }
+                                else
+                                {
+                                    outcome = "handled";
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    outcome = "error: " + ex.Message;
+                    Log.Warning("[HeadlessRenderingMod] Auto approval failed: " + ex.Message);
+                }
+                RecordDataModificationDecision(new DataModificationFeed.Entry
+                {
+                    Kind = "auto-approve",
+                    Code = resolved ? "AutoApproved" : "AutoApproveFailed",
+                    ModId = pending.ModId,
+                    Operation = pending.Operation,
+                    SourceClientId = pending.SourceClientId,
+                    RequestId = pending.RequestId,
+                    Details = outcome
+                }, "Auto approve submitted: client " + pending.SourceClientId + " request " +
+                    pending.RequestId + " -> " + outcome);
+            }
+        }
+
+        private static bool TryReadRequestInteger(IDictionary<string, object> values,
+            string name, out int result)
+        {
+            result = 0;
+            if (values == null || !values.TryGetValue(name, out object value) || value == null)
+                return false;
+            try
+            {
+                result = Convert.ToInt32(value, CultureInfo.InvariantCulture);
+                return true;
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
+
+        private static bool MatchesUserId(string[] userIds, string sourceKey)
+        {
+            foreach (string userId in userIds)
+            {
+                if (userId == "*")
+                    return true;
+                if (!string.IsNullOrEmpty(sourceKey) &&
+                    string.Equals(userId, sourceKey, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>按成员名读一条 ScMultiplayer 载荷（不引用它的程序集）。</summary>
+        private static object ReadPayloadMember(object payload, string name)
+        {
+            if (payload is IDictionary<string, object> map)
+            {
+                if (map.TryGetValue(name, out object mapped))
+                    return mapped;
+                string camelCase = char.ToLowerInvariant(name[0]) + name.Substring(1);
+                return map.TryGetValue(camelCase, out mapped) ? mapped : null;
+            }
+            Type type = payload.GetType();
+            PropertyInfo property = type.GetProperty(name,
+                BindingFlags.Instance | BindingFlags.Public);
+            if (property != null && property.CanRead)
+            {
+                try
+                {
+                    return property.GetValue(payload);
+                }
+                catch (Exception)
+                {
+                }
+            }
+            FieldInfo field = type.GetField(name, BindingFlags.Instance | BindingFlags.Public);
+            if (field != null)
+            {
+                try
+                {
+                    return field.GetValue(payload);
+                }
+                catch (Exception)
+                {
+                }
+            }
+            return null;
+        }
+
+        private static string ReadPayloadText(object payload, string name, string fallback)
+        {
+            object value = ReadPayloadMember(payload, name);
+            return value == null
+                ? fallback
+                : Convert.ToString(value, CultureInfo.InvariantCulture);
+        }
+
+        private static int ReadPayloadInteger(object payload, string name, int fallback)
+        {
+            object value = ReadPayloadMember(payload, name);
+            if (value == null)
+                return fallback;
+            try
+            {
+                return Convert.ToInt32(value, CultureInfo.InvariantCulture);
+            }
+            catch (Exception)
+            {
+                return fallback;
+            }
+        }
+
+        // Source: Mod/ScMultiplayer/DataModification/DataModificationContracts.cs:
+        // DataModificationResultCode
+        // 枚举名在 ScMultiplayer/Obfuscar.xml 里是保名的（SkipType），所以优先用枚举名；
+        // 万一只拿到数字（字典载荷），就按契约里的序号翻译。
+        private static string DescribeDataModificationResultCode(object value)
+        {
+            if (value == null)
+                return string.Empty;
+            if (value is string text)
+                return text;
+            if (value.GetType().IsEnum)
+                return value.ToString();
+            try
+            {
+                int numeric = Convert.ToInt32(value, CultureInfo.InvariantCulture);
+                switch (numeric)
+                {
+                    case 0: return "Accepted";
+                    case 1: return "Applied";
+                    case 2: return "Rejected";
+                    case 3: return "Busy";
+                    case 4: return "Invalid";
+                    case 5: return "NotSupported";
+                    case 6: return "Failed";
+                    case 7: return "Cancelled";
+                    default: return "Code" + numeric.ToString(CultureInfo.InvariantCulture);
+                }
+            }
+            catch (Exception)
+            {
+                return value.ToString();
+            }
         }
 
         private void ApplyHeadlessState()

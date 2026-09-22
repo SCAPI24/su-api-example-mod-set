@@ -322,6 +322,20 @@ namespace ScMultiplayer
             peer.Settings.KeepAliveResendPeriod = 1f;
             peer.Settings.ConnectTimeOut = 300f;
             peer.Settings.ConnectionLostPeriod = connectionLostPeriod;
+            // Source: Mod/Comms/Comms/CommSettings.cs:CommSettings.AllowDatagramAddressIpChange
+            // 默认允许跨 IP：对端公网 IP 或端口变化时按数据报 token 重新绑定地址。
+            peer.Comm.Settings.AllowDatagramAddressIpChange =
+                ScMultiplayerSettings.AllowDatagramAddressIpChange;
+            // Source: Mod/Comms/Comms/Peer.cs:Peer.DatagramAddressRepaired
+            peer.DatagramAddressRepaired += HandleDatagramAddressRepaired;
+        }
+
+        // Source: Mod/Comms/Comms/Peer.cs:Peer.DatagramAddressRepaired
+        // 常驻运维日志：NAT 改写了对端端口时，这里记录被修正的数据报地址。每个 peer 每次修正
+        // 最多一条，Comms 侧不会重复触发（同一 peer 有最小改址间隔）。
+        private static void HandleDatagramAddressRepaired(IPEndPoint known, IPEndPoint observed)
+        {
+            Log.Information($"[ScMP] Datagram address repaired: known={known}, observed={observed}");
         }
 
         // Source: Mod/Comms/Comms.Drt/Func/Client/Client.cs:Client.Client

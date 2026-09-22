@@ -10,7 +10,9 @@
 - 进入世界后，屏幕**右上角三个点（`MoreButton`）那一排**会多出一个 `GM` 按钮；
 - 点击打开菜单：
   1. **季节 / 时段切换**：四季 × 初/仲/晚 = **12 档**（例：初冬 = `TimeOfYear 0.525`）；
-  2. **立刻回到复活点**：把角色安全传送到**睡觉点**（`PlayerData.SpawnPosition`）。
+  2. **昼夜**：白天 / 日出 / 日落 / 夜晚 / 循环（**加入后一片漆黑时用它定格到白天**）；
+  3. **天气**：天气效果 开 / 关（关掉后**立刻**停雨、停雪、散雾）；
+  4. **立刻回到复活点**：把角色安全传送到**睡觉点**（`PlayerData.SpawnPosition`）。
 
 **它不做落地、不做同步、不做分发**，因此：
 
@@ -45,6 +47,12 @@
 - 取值：`WorldSettings` 的**任意简单字段**都能改（float / int / bool / string / Vector2 / enum），
   与引擎读 Project.xml 的口径一致；写进去后主机立刻生效（`SubsystemSeasons.Update` 每帧读 `TimeOfYear`）。
 - 季节/日期就是 `TimeOfYear`：夏 `0.00`、秋 `0.25`、冬 `0.50`、春 `0.75`（每季跨度 `0.25`）。
+- **昼夜**就是 `TimeOfDayMode`（枚举名：`Changing` / `Day` / `Night` / `Sunrise` / `Sunset`）。
+  `SubsystemTimeOfDay.Update` **每帧**读它，所以改成非 `Changing` 会**立刻**定格亮度：
+  - 加入后看不到东西、只听见下雨 → 先设 `Day`（白天），再按需关天气；
+  - `Changing` 恢复正常昼夜流逝。
+- **天气**就是 `AreWeatherEffectsEnabled`（bool）：关掉后主机侧 `SubsystemWeather.Update`
+  把降水强度**直接清零**（立即停雨，雾同理），并持久写进世界设置；开回来则恢复模拟。
 
 ### 2) `ScMP.Player.SafeRespawnRelocate`（联机 mod 内置，本 mod 直接调用）
 

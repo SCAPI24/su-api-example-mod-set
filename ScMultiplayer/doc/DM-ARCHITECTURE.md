@@ -56,6 +56,23 @@ DataModificationTool.RequestPlayerModification(
 `ScMultiplayerTrustedClients.xml`；此后该身份的 DM 请求**自动同意**（不再弹窗，`default` 模式下同样生效）。
 `reject` 档位仍然一律拒绝。
 
+主机侧由此有三种"会被同意"的来源，无头服务器控制台可以在
+`Multiplayer Hosting > Data modification > Authorised players` 里直接看到前两种和在线身份：
+
+| 来源 | 行为 |
+|------|------|
+| 世界受信任名单 `ScMultiplayerTrustedClients.xml` | **连审批请求都不产生**，主机直接落地 |
+| 无头服务器 `server.json` 的 `autoApproveDataModificationUserIds` | 请求照常产生，只是由无头 mod 立刻 `allow`（日志里能看到 `[DM] Auto approve ...`） |
+| `dataModificationMode = allow` | 所有请求一律同意 |
+
+主机控制面（`ScMultiplayer.DataModification.ApprovalControl`，`operation=list`）除 `pending` 外还返回
+`trusted`（世界受信任名单）与 `clients`（在线客户端的 `clientId` / `key` / `name` / `trusted`），
+供无头 mod 显示"谁被授权了"，不含第三方 mod 需要的协议变更。
+
+主机对**远端客户端**的裁决（`Applied` / `Failed` / `Rejected` / `Busy` / `Invalid` / `NotSupported` /
+`Cancelled`）过去只发给该客户端；现在 `SendResult` 在主机侧同时本地发布一次
+（`PublishDataModificationResult`），使主机上的观察者（无头控制台、诊断）能看到结果与原因，消息内容不变。
+
 ## 内置角色操作
 
 七个内置操作只允许走 Fast 通道，payload 使用 `PlayerDataModificationCodec`。`ScMP.Player.*` 命名空间由 ScMultiplayer 保留，不进入第三方 `Apply` 事件，因此其它 Mod 不能在主机校验失败后用同名处理器绕过拒绝结果。

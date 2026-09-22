@@ -37,7 +37,7 @@ namespace GmMod
 
         public string Name => "GmMod";
 
-        public string Version => "1.0.0";
+        public string Version => "1.1.0";
 
         public IEnumerable<string> Dependencies => new[] { "ScMultiplayer" };
 
@@ -66,8 +66,9 @@ namespace GmMod
                     return Array.Empty<object>();
                 },
                 EventPriority.HIGHEST));
-            Log.Information("[GmMod] Loaded (client-side UI only). GM operation: " +
-                GmOperations.SetWorldSettings + " [" + GmOperations.TimeOfYearField + "]");
+            Log.Information("[GmMod] Loaded (client-side UI only). GM operations: " +
+                GmOperations.SetWorldSettings + " [" + GmOperations.TimeOfYearField + ", " +
+                GmOperations.TimeOfDayModeField + ", " + GmOperations.WeatherEffectsField + "]");
         }
 
         public void OnUnload()
@@ -96,7 +97,12 @@ namespace GmMod
                 return;
             LastResultText = result.Operation + " -> " + result.Code +
                 (string.IsNullOrEmpty(result.Details) ? string.Empty : " (" + result.Details + ")");
-            Log.Information("[GmMod] Result: " + LastResultText);
+            // 客户端**只记录**，不把具体原因放进冒泡（冒泡保持一句话，见 BuildResultToast）：
+            // 排查时看 Logs/Game.log 这条带 code / mod / channel / requestId / details 的记录。
+            Log.Information("[GmMod] Result: " + LastResultText + " | code=" + (int)result.Code +
+                " mod=" + result.ModId + " channel=" + result.Channel +
+                " request=" + result.RequestId + " transfer=" + result.TransferId +
+                " details=" + (string.IsNullOrEmpty(result.Details) ? "<none>" : result.Details));
             // 季节值本身不需要在这里同步：主机广播会把整份 WorldSettings 发给所有客户端，
             // 客户端由联机 mod 自行应用（见 ScMultiplayer.ApplyRemoteWeatherState）。
             GmUiComponent.ShowToast(BuildResultToast(result), ResultToastColor);
@@ -109,7 +115,7 @@ namespace GmMod
         {
             string what = string.Equals(result.Operation, GmOperations.SetWorldSettings,
                 StringComparison.Ordinal)
-                ? "季节/时段"
+                ? "世界设置"
                 : string.Equals(result.Operation, DataModificationOperationNames.SafeRespawnRelocate,
                     StringComparison.Ordinal)
                     ? "回到复活点"
@@ -123,6 +129,8 @@ namespace GmMod
                 DataModificationResultCode.Invalid => "请求无效",
                 DataModificationResultCode.NotSupported => "主机不支持该操作",
                 DataModificationResultCode.Cancelled => "请求已取消",
+                // 主机侧落地失败：冒泡只说这一句（具体原因已经写进 Game.log，不在这里展开）。
+                DataModificationResultCode.Failed => "主机处理失败",
                 _ => "主机处理失败"
             };
             return what + "：" + outcome;
@@ -133,6 +141,20 @@ namespace GmMod
         {
             SubsystemGameInfo gameInfo = GameManager.Project?.FindSubsystem<SubsystemGameInfo>(false);
             return gameInfo?.WorldSettings.TimeOfYear;
+        }
+
+        /// <summary>当前世界的昼夜模式（菜单里用来标注"当前"）。</summary>
+        public static TimeOfDayMode? CurrentTimeOfDayMode()
+        {
+            SubsystemGameInfo gameInfo = GameManager.Project?.FindSubsystem<SubsystemGameInfo>(false);
+            return gameInfo?.WorldSettings.TimeOfDayMode;
+        }
+
+        /// <summary>当前世界是否开启天气效果（菜单里用来标注"当前"）。</summary>
+        public static bool? CurrentWeatherEffectsEnabled()
+        {
+            SubsystemGameInfo gameInfo = GameManager.Project?.FindSubsystem<SubsystemGameInfo>(false);
+            return gameInfo?.WorldSettings.AreWeatherEffectsEnabled;
         }
 
         // ---------------------------------------------------------------- 玩家实体上挂 UI 组件

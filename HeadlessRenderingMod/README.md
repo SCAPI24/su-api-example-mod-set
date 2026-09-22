@@ -217,11 +217,68 @@ Arguments can be placed in `args` or at the request root. The listener accepts n
   "maxQueuedCommands": 256,
   "maxCommandsPerFrame": 64,
   "requestTimeoutSeconds": 10,
-  "maxRequestBytes": 65536
+  "maxRequestBytes": 65536,
+  "autoApproveDataModificationUserIds": []
 }
 ```
 
+### Auto approving data modification requests
+
+A headless server has nobody to click ScMultiplayer's host approval dialog, so a client mod that
+asks the host to modify data stays pending forever. One optional, **mod agnostic** list closes that
+gap - it only names user ids, never specific Mods:
+
+| Key | Meaning |
+|---|---|
+| `autoApproveDataModificationUserIds` | Client **record keys** whose data modification requests are approved automatically, whatever Mod submits them. `"*"` matches every client. An empty list (default) disables auto approval entirely. |
+
+The record key is the account **user id** (`UserManager.ActiveUser.UniqueId`, the GUID stored in the
+game's `UserId.dat`); a player cannot change it, unlike the player name. A client without an account
+identity is keyed as `name:<player name>` by ScMultiplayer, and such a literal entry is accepted too.
+
+Example - auto approve one account:
+
+```json
+"autoApproveDataModificationUserIds": ["42858348-64a8-4ce5-b157-05daf2922fe2"]
+```
+
+Behaviour notes:
+
+- Matching is by **case-insensitive record key**. ScMultiplayer's own trusted list
+  (`ScMultiplayerTrustedClients.xml`, written by "Always allow this player") stays the in-game way to
+  grant the same trust; this setting is the headless convenience layer.
+- ScMultiplayer publishes the key with every approval request (`sourceKey`), so the key of an unknown
+  client is visible in the log line `[DM] Approval required: ... key=<user id>`.
+- The approval is submitted on the next frame through
+  `ScMultiplayer.DataModification.ApprovalControl` (`operation=resolve`, `allow=true`), so it never
+  re-enters ScMultiplayer's data modification runtime from inside its own event callback.
+- Every decision is recorded in three places: `Logs/Game.log` (`[DM] ...`), the console (when no menu
+  is open) and the console menu itself. Requests log `[DM] Approval required: ...`; auto approved
+  ones additionally log `[DM] Auto approve queued: ...` and `[DM] Auto approve submitted: ...`;
+  `ScMultiplayer.DataModification.Result` receipts log `[DM] Result: ...`.
+- The console keeps that history under **Multiplayer Hosting > Data modification > Recent decisions
+  [N]** (newest first): `AutoApproveQueued` / `AutoApproved` = matched the server.json allowlist,
+  `ManualAllowed` / `ManualRejected` = decided in the console menu, `Result` = verdict published by
+  ScMultiplayer (host-side verdicts for remote clients are published locally too, so the console shows
+  `Applied` / `Failed` / `Rejected` / `Busy` / `Invalid` / `NotSupported` / `Cancelled` with the reason).
+- **Multiplayer Hosting > Data modification > Authorised players [N]** answers "who may modify data":
+  the `server.json` allowlist, the world trusted list (`ScMultiplayerTrustedClients.xml`, whose requests
+  create **no approval at all**), and every online client with its record key plus the verdict
+  (`authorised (world trusted list)` / `authorised (server.json allowlist)` / `asks for approval`).
+  The screen also explains the active `dataModificationMode`, so `Default` no longer looks like
+  "everything is allowed".
+- Console output produced while a menu or a text prompt is open is queued and reprinted after the
+  interactive screen closes, so the menu can no longer disappear under a background `[DM]` line.
+- Manual approval through the console (Multiplayer Hosting > Data modification > Pending approvals)
+  and the control command `multiplayer.dm` keep working unchanged.
+- Warning: `"*"` approves any joining client. Use it only on a private room.
+
 Each server instance needs its own executable directory, `server.json`, `Settings.xml`, `Worlds/`, `Logs/` and `Scworld/`.
+
+> **Keep `server.json` UTF-8 without a BOM.** The Mod tolerates a BOM, but the Python tooling
+> (`tools/remote_server_ops.py`, `tools/serverctl.py`) parses it with a strict `json.load` and fails
+> with `Unexpected UTF-8 BOM`. Windows PowerShell 5.1 `Set-Content -Encoding UTF8` adds one - write
+> the file with an editor that saves plain UTF-8, or with Python `io.open(path, 'w', encoding='utf-8')`.
 
 When `disableAudio=true`, the Mod creates `alsoft-headless.ini` beside the executable and points OpenAL Soft at its null backend. No desktop audio device is required.
 

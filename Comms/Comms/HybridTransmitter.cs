@@ -66,6 +66,22 @@ public class HybridTransmitter : IWrapperTransmitter, IDisposable
         return StreamTransmitter.HasConnection(address) || StreamTransmitter.CanDialOut;
     }
 
+    // Source: Comms/Comms/TcpTransmitter.cs:TcpTransmitter.HasConnection
+    // True while this peer still owns an established stream. Comm uses it to restrict datagram
+    // address repairs to peers whose authoritative reliable channel is alive.
+    public bool HasStream(IPEndPoint address)
+    {
+        return StreamTransmitter.HasConnection(address);
+    }
+
+    // Source: Comms/Comms/TcpTransmitter.cs:TcpTransmitter.TryRebindDatagramAddress
+    // The datagram identity of a peer can change (NAT port change). The stream keeps the same
+    // socket; only the key that both sides use for that peer follows the new address.
+    public bool TryRebindDatagramAddress(IPEndPoint known, IPEndPoint observed)
+    {
+        return StreamTransmitter.TryRebindDatagramAddress(known, observed);
+    }
+
     public int GetPendingSendCount(IPEndPoint address)
     {
         return DatagramTransmitter.GetPendingSendCount(address) +

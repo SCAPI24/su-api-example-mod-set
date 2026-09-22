@@ -17,6 +17,7 @@ namespace HeadlessRenderingMod
     {
         private const uint AttachParentProcess = 0xFFFFFFFF;
         private const int MenuPageSize = 10;
+        private const int MaxPendingNotifications = 64;
         private static readonly JsonSerializerOptions s_jsonOptions =
             new JsonSerializerOptions { WriteIndented = true };
         private static readonly float[] IslandSizes =
@@ -47,12 +48,76 @@ namespace HeadlessRenderingMod
 
         private readonly HeadlessControlServer m_server;
         private readonly HeadlessServerConfig m_config;
+        private readonly Queue<string> m_pendingNotifications = new Queue<string>();
+        private readonly object m_notificationLock = new object();
         private Thread m_thread;
         private volatile bool m_running;
+        private volatile bool m_interactive;
         private bool m_ownsConsole;
         private string m_multiplayerTelemetry;
+        private DataModificationFeed m_dataModificationFeed;
 
         public bool IsRunning => m_running;
+
+        /// <summary>主机侧 DM 决策记录（请求 / 自动同意 / 手动裁决 / 回执），菜单里可查。</summary>
+        public void SetDataModificationFeed(DataModificationFeed feed)
+        {
+            m_dataModificationFeed = feed;
+        }
+
+        // Source: HeadlessRenderingMod.cs:WriteConsoleLine
+        // 游戏线程的非菜单输出（DM 审批 / 回执）：交互（菜单、输入提示、分页）开着时先排队，
+        // 等交互结束再打印。远端服务器只有这一套控制台菜单，被外部输出冲掉就没法点审批了。
+        public void Notify(string text)
+        {
+            if (string.IsNullOrEmpty(text))
+                return;
+            if (!m_interactive)
+            {
+                Console.WriteLine(text);
+                return;
+            }
+            lock (m_notificationLock)
+            {
+                m_pendingNotifications.Enqueue(text);
+                while (m_pendingNotifications.Count > MaxPendingNotifications)
+                    m_pendingNotifications.Dequeue();
+            }
+        }
+
+        private void FlushNotifications()
+        {
+            List<string> pending = new List<string>();
+            lock (m_notificationLock)
+            {
+                if (m_pendingNotifications.Count == 0)
+                    return;
+                pending.AddRange(m_pendingNotifications);
+                m_pendingNotifications.Clear();
+            }
+            Console.WriteLine();
+            Console.WriteLine("-- " + pending.Count +
+                " notification(s) while the menu was open --");
+            foreach (string text in pending)
+                Console.WriteLine(text);
+        }
+
+        /// <summary>交互期间（菜单 / 输入提示 / 分页）挡住外部输出，结束后统一补印。</summary>
+        private T Interactive<T>(Func<T> body)
+        {
+            bool previous = m_interactive;
+            m_interactive = true;
+            try
+            {
+                return body();
+            }
+            finally
+            {
+                m_interactive = previous;
+                if (!m_interactive)
+                    FlushNotifications();
+            }
+        }
 
         public void SetMultiplayerTelemetry(string value)
         {
@@ -271,6 +336,15 @@ namespace HeadlessRenderingMod
         {
             Console.Clear();
             Console.WriteLine("Command mode. Type Help for commands or Menu to return.");
+            Interactive(() =>
+            {
+                RunCommandLineCore();
+                return true;
+            });
+        }
+
+        private void RunCommandLineCore()
+        {
             while (m_running)
             {
                 Console.Write(GetCurrentScreen() + "> ");
@@ -429,7 +503,10 @@ namespace HeadlessRenderingMod
         }
 
         // Source: Survivalcraft/Game/NewWorldScreen.cs:NewWorldScreen.Update
-        private WorldEditorResult EditWorldPage(WorldCreationDraft draft, int page)
+        private WorldEditorResult EditWorldPage(WorldCreationDraft draft, int page) =>
+            Interactive(() => EditWorldPageCore(draft, page));
+
+        private WorldEditorResult EditWorldPageCore(WorldCreationDraft draft, int page)
         {
             int selected = 0;
             while (m_running)
@@ -1137,7 +1214,10 @@ namespace HeadlessRenderingMod
             return selected.HasValue ? skins[selected.Value] : null;
         }
 
-        private int? SelectMenu(string title, string[] items, int selected)
+        private int? SelectMenu(string title, string[] items, int selected) =>
+            Interactive(() => SelectMenuCore(title, items, selected));
+
+        private int? SelectMenuCore(string title, string[] items, int selected)
         {
             if (items == null || items.Length == 0)
                 return null;
@@ -1248,7 +1328,7 @@ namespace HeadlessRenderingMod
             return selected.HasValue ? choices[selected.Value] : defaultValue;
         }
 
-        private static int PromptInteger(
+        private int PromptInteger(
             string label,
             int defaultValue,
             int minimum,
@@ -1274,7 +1354,7 @@ namespace HeadlessRenderingMod
             return result;
         }
 
-        private static float PromptFloat(string label, float defaultValue,
+        private float PromptFloat(string label, float defaultValue,
             float minimum, float maximum)
         {
             while (true)
@@ -1562,6 +1642,8 @@ namespace HeadlessRenderingMod
             Dictionary<string, object> settings = GetMultiplayerSettings();
             int pendingApprovals = ReadInteger(settings,
                 "pendingDataModificationApprovals");
+            int decisionCount = m_dataModificationFeed?.Snapshot().Count ?? 0;
+            DataModificationFeed.Entry latestDecision = m_dataModificationFeed?.Latest();
             int? setup = SelectMenu("Data Modification",
                 new[]
                 {
@@ -1569,9 +1651,13 @@ namespace HeadlessRenderingMod
                     "Simple setup (recommended)",
                     "Professional settings",
                     "Pending approvals [" + pendingApprovals + "]",
+                    "Recent decisions [" + decisionCount + "]" + (latestDecision == null
+                        ? "  |  none yet"
+                        : "  |  last: " + latestDecision.Describe()),
+                    "Authorised players [" + CountAuthorisedPlayers() + "]",
                     "Back"
                 }, 0);
-            if (!setup.HasValue || setup.Value == 4)
+            if (!setup.HasValue || setup.Value == 6)
                 return;
             if (setup.Value == 0)
             {
@@ -1587,6 +1673,7 @@ namespace HeadlessRenderingMod
                     "dataModificationBulkApplyChunksPerFrame"));
                 Console.WriteLine("Bulk bytes/frame: " + ReadInteger(settings,
                     "dataModificationBulkApplyBytesPerFrame"));
+                Console.WriteLine("Auto approve allowlist: " + DescribeAutoApproveAllowlist());
             }
             else if (setup.Value == 1)
             {
@@ -1623,12 +1710,239 @@ namespace HeadlessRenderingMod
             {
                 ConfigureAdvancedDataModification(settings);
             }
-            else
+            else if (setup.Value == 3)
             {
                 ManageDataModificationApprovals();
                 return;
             }
+            else if (setup.Value == 4)
+            {
+                ShowDataModificationDecisions();
+                return;
+            }
+            else
+            {
+                ShowDataModificationAuthorisation();
+                return;
+            }
             Pause();
+        }
+
+        /// <summary>
+        /// 主机侧 DM 决策记录：审批请求、server.json 白名单自动同意（AutoApproved）、
+        /// 控制台里手动允许/拒绝、以及收到的 Result 回执。远端只有控制台，这是唯一能直接
+        /// 看到"请求是不是被自动同意了、后来怎么了"的地方。
+        /// </summary>
+        private void ShowDataModificationDecisions()
+        {
+            List<DataModificationFeed.Entry> decisions =
+                m_dataModificationFeed?.Snapshot() ?? new List<DataModificationFeed.Entry>();
+            Console.Clear();
+            Console.WriteLine(GetCurrentScreen() + "> Data Modification Decisions");
+            Console.WriteLine("Auto approve allowlist: " + DescribeAutoApproveAllowlist());
+            Console.WriteLine();
+            if (decisions.Count == 0)
+            {
+                Console.WriteLine("Nothing recorded on this server yet.");
+                Pause();
+                return;
+            }
+            Console.WriteLine("Newest first (" + decisions.Count + " of the last " +
+                DataModificationFeed.Capacity + "):");
+            Console.WriteLine();
+            foreach (DataModificationFeed.Entry decision in decisions)
+                Console.WriteLine("  " + decision.Describe());
+            Console.WriteLine();
+            Console.WriteLine("AutoApproveQueued/AutoApproved = server.json allowlist,");
+            Console.WriteLine("ManualAllowed/ManualRejected = decided in this menu,");
+            Console.WriteLine("Result = receipt published by ScMultiplayer.");
+            Console.WriteLine("Authorised identities are listed under Authorised players.");
+            Pause();
+        }
+
+        private string DescribeAutoApproveAllowlist()
+        {
+            string[] userIds = m_config?.AutoApproveDataModificationUserIds;
+            if (userIds == null || userIds.Length == 0)
+                return "not configured (server.json autoApproveDataModificationUserIds)";
+            return userIds.Length + (userIds.Length == 1 ? " entry: " : " entries: ") +
+                string.Join(", ", userIds);
+        }
+
+        /// <summary>已授权身份个数（server.json 白名单 + 世界受信任名单，按身份去重）。</summary>
+        private int CountAuthorisedPlayers()
+        {
+            var identities = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string identity in m_config?.AutoApproveDataModificationUserIds ??
+                Array.Empty<string>())
+            {
+                if (!string.IsNullOrWhiteSpace(identity))
+                    identities.Add(identity);
+            }
+            foreach (string identity in ReadTrustedIdentities(TryGetDataModificationStatus()))
+            {
+                if (!string.IsNullOrWhiteSpace(identity))
+                    identities.Add(identity);
+            }
+            return identities.Count;
+        }
+
+        /// <summary>
+        /// "谁被授权了"：server.json 白名单 + 世界受信任名单 + 在线客户端身份。
+        /// 两者的区别：白名单的请求**仍然会到主机**，由无头服务器自动同意（Recent decisions 里看得到）；
+        /// 世界受信任名单（"总是同意该玩家"）的请求**连审批请求都不产生**，主机直接落地。
+        /// </summary>
+        private void ShowDataModificationAuthorisation()
+        {
+            Dictionary<string, object> settings = GetMultiplayerSettings();
+            Dictionary<string, object> status = TryGetDataModificationStatus();
+            List<string> trustedIdentities = ReadTrustedIdentities(status);
+            List<Dictionary<string, object>> clients = ReadClientIdentities(status);
+            string[] allowlist = m_config?.AutoApproveDataModificationUserIds ?? Array.Empty<string>();
+            string mode = ReadString(settings, "dataModificationMode", "default");
+
+            Console.Clear();
+            Console.WriteLine(GetCurrentScreen() + "> Data Modification - Authorised Players");
+            Console.WriteLine("Mode: " + FormatDataModificationMode(mode) +
+                DescribeDataModificationMode(mode));
+            Console.WriteLine("Pending approvals: " + ReadInteger(settings,
+                "pendingDataModificationApprovals"));
+            Console.WriteLine();
+            Console.WriteLine("server.json allowlist (autoApproveDataModificationUserIds) [" +
+                allowlist.Length + "]");
+            Console.WriteLine("  requests still reach the host, then are approved automatically");
+            if (allowlist.Length == 0)
+                Console.WriteLine("  (empty - nobody is auto approved)");
+            foreach (string identity in allowlist)
+                Console.WriteLine("  - " + DescribeIdentity(identity, clients));
+            Console.WriteLine();
+            Console.WriteLine("World trusted players (ScMultiplayerTrustedClients.xml) [" +
+                trustedIdentities.Count + "]");
+            Console.WriteLine("  no approval request is created at all; the host applies them directly");
+            if (trustedIdentities.Count == 0)
+                Console.WriteLine("  (nobody is trusted in this world)");
+            foreach (string identity in trustedIdentities)
+                Console.WriteLine("  - " + DescribeIdentity(identity, clients));
+            Console.WriteLine();
+            Console.WriteLine("Online clients [" + clients.Count + "]");
+            if (clients.Count == 0)
+                Console.WriteLine("  (no remote client is connected)");
+            foreach (Dictionary<string, object> client in clients)
+            {
+                string key = ReadString(client, "key", string.Empty);
+                bool trusted = client.TryGetValue("trusted", out object trustedValue) &&
+                    trustedValue is bool trustedFlag && trustedFlag;
+                string verdict = trusted ? "authorised (world trusted list)"
+                    : IsAllowlisted(allowlist, key) ? "authorised (server.json allowlist)"
+                    : "asks for approval";
+                Console.WriteLine("  client " + ReadInteger(client, "clientId") + "  " +
+                    ReadString(client, "name", "Player") + "  " +
+                    (string.IsNullOrEmpty(key) ? "<no identity>" : key) + "  -> " + verdict);
+            }
+            Pause();
+        }
+
+        private string DescribeIdentity(string identity,
+            List<Dictionary<string, object>> clients)
+        {
+            foreach (Dictionary<string, object> client in clients)
+            {
+                if (!string.IsNullOrEmpty(identity) &&
+                    string.Equals(ReadString(client, "key", string.Empty), identity,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    return identity + "   [online: client " + ReadInteger(client, "clientId") +
+                        " " + ReadString(client, "name", "Player") + "]";
+                }
+            }
+            DataModificationFeed.Entry seen = FindLastSeenIdentity(identity);
+            return identity + (seen == null
+                ? "   [not seen online since this server started]"
+                : "   [last request " + seen.Time + " from client " + seen.SourceClientId + "]");
+        }
+
+        private DataModificationFeed.Entry FindLastSeenIdentity(string identity)
+        {
+            if (m_dataModificationFeed == null || string.IsNullOrEmpty(identity))
+                return null;
+            foreach (DataModificationFeed.Entry entry in m_dataModificationFeed.Snapshot())
+            {
+                if (entry.SourceKey.Length > 0 &&
+                    string.Equals(entry.SourceKey, identity, StringComparison.OrdinalIgnoreCase))
+                {
+                    return entry;
+                }
+            }
+            return null;
+        }
+
+        private static bool IsAllowlisted(string[] allowlist, string identity)
+        {
+            if (string.IsNullOrEmpty(identity))
+                return false;
+            foreach (string entry in allowlist)
+            {
+                if (entry == "*" ||
+                    string.Equals(entry, identity, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private static string DescribeDataModificationMode(string mode)
+        {
+            if (string.Equals(mode, "allow", StringComparison.OrdinalIgnoreCase))
+                return " - every request is approved automatically";
+            if (string.Equals(mode, "reject", StringComparison.OrdinalIgnoreCase))
+                return " - every request is refused";
+            return " - authorised identities are approved automatically; everyone else waits " +
+                "in Pending approvals";
+        }
+
+        // Source: HeadlessRenderingMod.cs:ControlDataModificationApprovals
+        // 主机侧 DM 状态（pending / trusted / clients）。ScMultiplayer 没装或没世界时返回空表，
+        // 让这个界面仍然能显示 server.json 白名单。
+        private Dictionary<string, object> TryGetDataModificationStatus()
+        {
+            try
+            {
+                Dictionary<string, object> response = RequireSuccess(
+                    m_server.SubmitLocal("multiplayer.dm"));
+                if (response.TryGetValue("result", out object result) &&
+                    result is Dictionary<string, object> data)
+                {
+                    return data;
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Warning("[HeadlessRenderingMod] Data modification status unavailable: " +
+                    ex.Message);
+            }
+            return new Dictionary<string, object>(StringComparer.Ordinal);
+        }
+
+        private static List<string> ReadTrustedIdentities(Dictionary<string, object> status)
+        {
+            if (status.TryGetValue("trusted", out object value) &&
+                value is List<string> trusted)
+            {
+                return trusted;
+            }
+            return new List<string>();
+        }
+
+        private static List<Dictionary<string, object>> ReadClientIdentities(
+            Dictionary<string, object> status)
+        {
+            if (status.TryGetValue("clients", out object value) &&
+                value is List<Dictionary<string, object>> clients)
+            {
+                return clients;
+            }
+            return new List<Dictionary<string, object>>();
         }
 
         private void ManageDataModificationApprovals()
@@ -1642,6 +1956,8 @@ namespace HeadlessRenderingMod
                     Console.Clear();
                     Console.WriteLine(GetCurrentScreen() + "> Data Modification Approvals");
                     Console.WriteLine("No pending data modification requests.");
+                    Console.WriteLine("Decisions already made are listed under Recent decisions.");
+                    Console.WriteLine("Who is authorised is listed under Authorised players.");
                     Pause();
                     return;
                 }
@@ -1667,7 +1983,27 @@ namespace HeadlessRenderingMod
                     ["allow"] = decision.StartsWith("Allow",
                         StringComparison.OrdinalIgnoreCase)
                 };
-                PrintResponse(RequireSuccess(m_server.SubmitLocal("multiplayer.dm", values)));
+                Dictionary<string, object> resolution = RequireSuccess(
+                    m_server.SubmitLocal("multiplayer.dm", values));
+                PrintResponse(resolution);
+                bool allowed = Convert.ToBoolean(values["allow"], CultureInfo.InvariantCulture);
+                bool resolved = resolution.TryGetValue("result", out object resolutionValue) &&
+                    resolutionValue is Dictionary<string, object> resolutionData &&
+                    resolutionData.TryGetValue("resolved", out object resolvedValue) &&
+                    resolvedValue is bool resolvedFlag && resolvedFlag;
+                m_dataModificationFeed?.Add(new DataModificationFeed.Entry
+                {
+                    Kind = "manual",
+                    Code = !resolved ? "ManualFailed"
+                        : allowed ? "ManualAllowed" : "ManualRejected",
+                    ModId = ReadString(approval, "modId", "Mod"),
+                    Operation = ReadString(approval, "operation", "operation"),
+                    SourceClientId = ReadInteger(approval, "sourceClientId"),
+                    RequestId = ReadInteger(approval, "requestId"),
+                    SourceKey = ReadString(approval, "sourceKey", string.Empty),
+                    Details = resolved ? "decided in the console menu"
+                        : "the host did not resolve this approval"
+                });
             }
         }
 
@@ -1940,12 +2276,13 @@ namespace HeadlessRenderingMod
             Pause();
         }
 
-        private static string PromptText(string label, string defaultValue, string defaultDisplay = null)
-        {
-            Console.Write(label + " [" + (defaultDisplay ?? defaultValue) + "]: ");
-            string value = Console.ReadLine();
-            return string.IsNullOrEmpty(value) ? defaultValue : value.Trim();
-        }
+        private string PromptText(string label, string defaultValue,
+            string defaultDisplay = null) => Interactive(() =>
+            {
+                Console.Write(label + " [" + (defaultDisplay ?? defaultValue) + "]: ");
+                string value = Console.ReadLine();
+                return string.IsNullOrEmpty(value) ? defaultValue : value.Trim();
+            });
 
         private static Dictionary<string, object> Args(string name, object value)
         {
@@ -1987,12 +2324,13 @@ namespace HeadlessRenderingMod
             Console.WriteLine(JsonSerializer.Serialize(response, s_jsonOptions));
         }
 
-        private static void Pause()
+        private void Pause() => Interactive(() =>
         {
             Console.WriteLine();
             Console.WriteLine("Press any key to continue.");
             Console.ReadKey(true);
-        }
+            return true;
+        });
 
         private static bool IsValidWorldName(string name)
         {

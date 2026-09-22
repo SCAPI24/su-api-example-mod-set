@@ -13,7 +13,31 @@ public class Comm
     {
         public Guid OurGuid = Guid.NewGuid();
 
+        // Source: Comms/Comms/Comm.cs:Comm.PacketHeader
+        // 数据报路径的轻量身份标记（OurGuid 的 32 位派生值）。可靠流上的 16 字节 GUID 只在
+        // 握手期出现，而数据报必须在任意时刻都能被归属到唯一一条连接上，所以单独带 4 字节 token。
+        public uint OurDatagramToken;
+
+        // Source: Comms/Comms/Comm.cs:Comm.ProcessReceivedPacket
+        // 对端数据报带来的 token。由握手期的 GUID 前缀或对端数据报学习到，每个会话只学一次。
+        public uint? TheirDatagramToken;
+
+        // Source: Comms/Comms/Comm.cs:Comm.MoveConnection
+        // 上一次成功把本连接搬到新地址的时间，用于阻止地址抖动被反复搬迁。
+        public double LastDatagramAddressChangeTime = double.MinValue;
+
         public Guid TheirGuid;
+
+        public Connection()
+        {
+            RefreshDatagramToken();
+        }
+
+        // Source: Comms/Comms/Comm.cs:Comm.DeriveDatagramToken
+        public void RefreshDatagramToken()
+        {
+            OurDatagramToken = DeriveDatagramToken(OurGuid);
+        }
 
         public bool InitAckReceived;
 
@@ -74,6 +98,11 @@ public class Comm
             if (isReplacementSession)
             {
                 OurGuid = Guid.NewGuid();
+                // Source: Comms/Comms/Comm.cs:Comm.Connection.OurDatagramToken
+                // 新会话意味着双方都换了会话身份，旧的对端 token 必须重新学习。
+                RefreshDatagramToken();
+                TheirDatagramToken = null;
+                LastDatagramAddressChangeTime = double.MinValue;
                 InitAckReceived = false;
                 InitAckConfirmed = false;
                 UnackedPackets.Clear();
@@ -121,6 +150,15 @@ public class Comm
 
         public bool IsConnectionInit;
 
+        // Source: Comms/Comms/Comm.cs:Comm.PacketHeader.WriteData
+        // 0x40 位：本包携带 4 字节数据报 token。它只出现在走数据报的（不可靠）包上，TCP 可靠流
+        // 上的包头保持原样，所以这个身份标记不会给世界传输等可靠流量增加任何字节。
+        public const byte DatagramTokenFlag = 0x40;
+
+        public bool HasDatagramToken;
+
+        public uint DatagramToken;
+
         public uint PacketId;
 
         public Guid InitGuid;
@@ -139,12 +177,18 @@ public class Comm
                 if (result.PacketType == PacketType.UnreliableData || result.PacketType == PacketType.ReliableData)
                 {
                     result.IsConnectionInit = (b & 0x80) != 0;
-                    int num = (result.IsConnectionInit ? 20 : 4);
+                    result.HasDatagramToken = (b & DatagramTokenFlag) != 0;
+                    int num = (result.IsConnectionInit ? 20 : 4) +
+                        (result.HasDatagramToken ? 4 : 0);
                     if (reader.Length - reader.Position >= num)
                     {
                         if (result.IsConnectionInit)
                         {
                             result.InitGuid = new Guid(reader.ReadFixedBytes(16));
+                        }
+                        if (result.HasDatagramToken)
+                        {
+                            result.DatagramToken = reader.ReadUInt32();
                         }
                         result.PacketId = reader.ReadUInt32();
                         return result;
@@ -172,17 +216,26 @@ public class Comm
             writer.WriteByte(1);
         }
 
-        public static void WriteData(Writer writer, Guid? initGuid, uint packetId, bool requiresAck)
+        public static void WriteData(Writer writer, Guid? initGuid, uint? datagramToken,
+            uint packetId, bool requiresAck)
         {
             byte b = (byte)(requiresAck ? 3 : 2);
             if (initGuid.HasValue)
             {
                 b = (byte)(b | 0x80u);
             }
+            if (datagramToken.HasValue)
+            {
+                b = (byte)(b | DatagramTokenFlag);
+            }
             writer.WriteByte(b);
             if (initGuid.HasValue)
             {
                 writer.WriteFixedBytes(initGuid.Value.ToByteArray());
+            }
+            if (datagramToken.HasValue)
+            {
+                writer.WriteUInt32(datagramToken.Value);
             }
             writer.WriteUInt32(packetId);
         }
@@ -306,6 +359,12 @@ public class Comm
     private uint NextMessageId;
 
     private Dictionary<IPEndPoint, Connection> Connections = new();
+
+    // Source: Comms/Comms/Comm.cs:Comm.ProcessReceivedPacket
+    // 数据报 token 归属修复的回调，由 Peer 设置。返回 true 表示该 peer 的通信地址已经搬到
+    // 这个数据报的实际源地址；返回 false 时保持原有的「未知来源临时连接」行为，绝不丢弃合法
+    // 但暂时无法归属的数据报（例如发现应答）。
+    internal Func<IPEndPoint, uint, bool> DatagramAddressRepairHandler;
 
     private List<uint> ToRemoveUInt = new();
 
@@ -555,10 +614,24 @@ public class Comm
             ReceivedPacketsToDispatch.Value.Pending.Enqueue(new Packet(packet.Address, bytes));
             return;
         }
-        if (!Connections.TryGetValue(packet.Address, out var value))
+        bool isNewConnection = !Connections.TryGetValue(packet.Address, out Connection value);
+        if (isNewConnection)
         {
             value = new Connection();
             Connections.Add(packet.Address, value);
+        }
+        // Source: Comms/Comms/Comm.cs:Comm.DatagramAddressRepairHandler
+        // 带 token 的数据报落在「不是该 token 主人」的地址上时，按 token 把 peer 的通信地址修正到
+        // 实际源地址：NAT 改写端口后，可靠流握手里自报的端口是回不来的，只有数据报的源地址可达。
+        // token 只由可靠流学到（见下方 FromStream 判断），所以匹配唯一；不是主人的地址（例如只有
+        // InitAck 到过的新地址）允许被整体覆盖，覆盖规则见 MoveConnection。
+        if (packetHeader.HasDatagramToken &&
+            !IsDatagramTokenOwner(packet.Address, packetHeader.DatagramToken) &&
+            DatagramAddressRepairHandler != null &&
+            DatagramAddressRepairHandler(packet.Address, packetHeader.DatagramToken) &&
+            Connections.TryGetValue(packet.Address, out Connection repaired))
+        {
+            value = repaired;
         }
         value.LastReceiveTime = time;
         if (packetHeader.PacketType == PacketType.UnreliableData || packetHeader.PacketType == PacketType.ReliableData)
@@ -568,6 +641,14 @@ public class Comm
                 if (value.TheirGuid == Guid.Empty || packetHeader.InitGuid != value.TheirGuid)
                 {
                     value.NewTheirGuid(packetHeader.InitGuid);
+                }
+                // Source: Comms/Comms/Comm.cs:Comm.DeriveDatagramToken
+                // 数据报 token 与握手 GUID 是同一个会话身份（32 位派生值）。只有可靠流上收到的
+                // 握手包才算可信来源：数据报既可能来自被 NAT 改写的地址，也可能被伪造；若允许它
+                // 学习 token，错误地址上的临时连接会抢走 token，使地址修复永久失效（已实测复现）。
+                if (packet.FromStream)
+                {
+                    value.TheirDatagramToken ??= DeriveDatagramToken(packetHeader.InitGuid);
                 }
                 if (!value.InitAckConfirmed && time - value.LastInitAckSendTime >= (double)Settings.ResendPeriods[0])
                 {
@@ -949,8 +1030,20 @@ public class Comm
                 // transport routes reliable packets onto the stream and everything else onto the
                 // datagram path. Suppressing ACK bookkeeping happens in SendDataPacket and
                 // ProcessReceivedPacket, so the header keeps its original meaning.
-                Guid? initGuid = (value.InitAckReceived ? null : new Guid?(value.OurGuid));
-                PacketHeader.WriteData(writer2, initGuid, packetId, deliveryMode == DeliveryMode.Reliable || deliveryMode == DeliveryMode.ReliableSequenced);
+                bool datagramDelivery = deliveryMode == DeliveryMode.Unreliable ||
+                    deliveryMode == DeliveryMode.UnreliableSequenced;
+                // Source: Comms/Comms/Comm.cs:Comm.PacketHeader.DatagramTokenFlag
+                // 只有走数据报的包带 token：TCP 可靠流的包头不增加任何字节，而可靠流上的包也
+                // 永远不需要按源地址重新归属。数据报上用 4 字节 token 取代 16 字节握手 GUID，
+                // 所以跨度 NAT 首次加入时（握手期）不可靠包反而比原来少 12 字节。
+                uint? datagramToken = datagramDelivery
+                    ? new uint?(value.OurDatagramToken)
+                    : null;
+                Guid? initGuid = (!value.InitAckReceived && !datagramDelivery)
+                    ? new Guid?(value.OurGuid)
+                    : null;
+                PacketHeader.WriteData(writer2, initGuid, datagramToken, packetId,
+                    deliveryMode == DeliveryMode.Reliable || deliveryMode == DeliveryMode.ReliableSequenced);
             }
             int position = writer2.Position;
             int num4 = array.Length - num;
@@ -1042,6 +1135,134 @@ public class Comm
     {
         connection.LastSendTime = GetTime();
         Transmitter.SendPacket(packet);
+    }
+
+    // Source: Comms/Comms/Comm.cs:Comm.Connection.OurDatagramToken
+    // 数据报 token 是会话 GUID 的 32 位派生值：随 OurGuid 在换会话时自动变化，不需要新增
+    // 协商字段，也不需要额外握手。
+    internal static uint DeriveDatagramToken(Guid guid)
+    {
+        byte[] bytes = guid.ToByteArray();
+        return (uint)(bytes[0] | (bytes[1] << 8) | (bytes[2] << 16) | (bytes[3] << 24));
+    }
+
+    // Source: Comms/Comms/Comm.cs:Comm.DatagramAddressRepairHandler
+    // 按 token 在现有连接里找唯一归属。0 个或多个命中一律拒绝：绝不猜，也不合并两个会话。
+    internal bool TryFindDatagramAddressByToken(uint token, IPEndPoint observed,
+        out IPEndPoint known)
+    {
+        known = null;
+        foreach (KeyValuePair<IPEndPoint, Connection> item in Connections)
+        {
+            if (item.Value.TheirDatagramToken != token)
+            {
+                continue;
+            }
+            if (known != null)
+            {
+                // 同一 token 命中多条连接：安全地放弃这次修复。
+                known = null;
+                return false;
+            }
+            known = item.Key;
+        }
+        if (known == null || known.Equals(observed))
+        {
+            known = null;
+            return false;
+        }
+        return true;
+    }
+
+    // Source: Comms/Comms/Comm.cs:Comm.ProcessReceivedPacket
+    // 该地址是否已经是这个 token 的主人（即它就是这个 peer 当前的数据报地址）。是主人就不再
+    // 触发修复；不是主人（含只有 InitAck/发现应答到过的新地址）才允许按 token 搬迁过来。
+    private bool IsDatagramTokenOwner(IPEndPoint address, uint token)
+    {
+        return Connections.TryGetValue(address, out Connection existing) && existing != null &&
+            existing.TheirDatagramToken == token;
+    }
+
+    // Source: Comms/Comms/Comm.cs:Comm.ProcessReceivedPacket
+    // 把一条连接整体搬到对端数据报的实际源地址：连接对象连同 ACK/序号/分片状态一起换键，
+    // 并把 TCP 流的键改到同一地址，于是可靠流量继续走原来那条已建立的流（不重拨、不断开），
+    // 数据报则发往真正可达的地址。
+    internal bool MoveConnection(IPEndPoint known, IPEndPoint observed)
+    {
+        if (known == null || observed == null || known.Equals(observed))
+        {
+            return false;
+        }
+        if (!Connections.TryGetValue(known, out Connection connection) || connection == null)
+        {
+            return false;
+        }
+        if (!IsDatagramAddressChangeAllowed(known, observed, connection))
+        {
+            return false;
+        }
+        if (Connections.TryGetValue(observed, out Connection existing) && existing != null)
+        {
+            // Source: Comms/Comms/Comm.cs:Comm.Connection.TheirDatagramToken
+            // 只允许覆盖「不是任何 token 主人」的地址：可能是只有 InitAck/发现应答到过的临时连接。
+            // 真正的 peer 地址（已持有一个 token）绝不被抢走。
+            if (existing.TheirDatagramToken != null)
+            {
+                return false;
+            }
+            Connections.Remove(observed);
+        }
+        Connections.Remove(known);
+        Connections.Add(observed, connection);
+        connection.LastDatagramAddressChangeTime = GetTime();
+        // Source: Comms/Comms/TcpTransmitter.cs:TcpTransmitter.TryRebindDatagramAddress
+        // 流改键失败不回滚数据报地址：下一次可靠发送会重新对键，最坏情况退化为一次单发。
+        FindStreamTransmitter(Transmitter)?.TryRebindDatagramAddress(known, observed);
+        InvokeDebug("Datagram address {0} moved to {1}", known, observed);
+        return true;
+    }
+
+    private bool IsDatagramAddressChangeAllowed(IPEndPoint known, IPEndPoint observed,
+        Connection connection)
+    {        // 默认允许跨 IP（含公网 IP 变化）；把 Setting 关掉后只认「同 IP 的 NAT 端口漂移」。
+        // Source: Comms/Comms/CommSettings.cs:CommSettings.AllowDatagramAddressIpChange
+        if (!Settings.AllowDatagramAddressIpChange && !known.Address.Equals(observed.Address))
+        {
+            return false;
+        }
+        // 防抖：同一 peer 在最小间隔内只搬迁一次。
+        if (GetTime() - connection.LastDatagramAddressChangeTime <
+            (double)Settings.MinimumDatagramAddressChangeInterval)
+        {
+            return false;
+        }
+        // TCP+UDP 部署下可靠流是权威控制面：只为仍然持有活跃流的 peer 修数据报地址。
+        TcpTransmitter stream = FindStreamTransmitter(Transmitter);
+        if (stream != null && !stream.HasConnection(known))
+        {
+            return false;
+        }
+        return true;
+    }
+
+    // Source: Comms/Comms/IWrapperTransmitter.cs:IWrapperTransmitter.BaseTransmitter
+    // 找到包装链里的流传输（DiagnosticTransmitter/LimiterTransmitter 等包装不影响判断）。
+    private static TcpTransmitter FindStreamTransmitter(ITransmitter transmitter)
+    {
+        ITransmitter current = transmitter;
+        while (current != null)
+        {
+            if (current is HybridTransmitter hybrid)
+            {
+                return hybrid.StreamTransmitter;
+            }
+            if (current is TcpTransmitter tcp)
+            {
+                return tcp;
+            }
+            current = (current as IWrapperTransmitter)?.BaseTransmitter;
+        }
+        return null;
     }
 
     private void CheckNotDisposed()

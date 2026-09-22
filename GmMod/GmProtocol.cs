@@ -28,6 +28,12 @@ namespace GmMod
 
         /// <summary>季节/日期字段名（引擎 `WorldSettings.TimeOfYear`，0..1）。</summary>
         public const string TimeOfYearField = "TimeOfYear";
+
+        /// <summary>昼夜字段名（引擎 `WorldSettings.TimeOfDayMode`，`TimeOfDayMode` 枚举）。</summary>
+        public const string TimeOfDayModeField = "TimeOfDayMode";
+
+        /// <summary>天气效果开关字段名（引擎 `WorldSettings.AreWeatherEffectsEnabled`，bool）。</summary>
+        public const string WeatherEffectsField = "AreWeatherEffectsEnabled";
     }
 
     /// <summary>
@@ -57,6 +63,13 @@ namespace GmMod
         public static byte[] EncodeTimeOfYear(float timeOfYear) =>
             Encode(new KeyValuePair<string, string>(GmOperations.TimeOfYearField,
                 timeOfYear.ToString("R", CultureInfo.InvariantCulture)));
+
+        /// <summary>
+        /// 通用世界设置载荷：任意 `WorldSettings` **简单字段**（float / int / bool / string / Vector2 / enum）。
+        /// 昼夜用 `TimeOfDayMode`（枚举名），天气开关用 `AreWeatherEffectsEnabled`（true/false）。
+        /// </summary>
+        public static byte[] EncodeWorldSetting(string name, string value) =>
+            Encode(new KeyValuePair<string, string>(name, value));
 
         /// <summary>`ScMP.Data.Cells` 的载荷：每行 `x,y,z,contents,data`（主机按原地形保留光照位）。</summary>
         public static byte[] EncodeCell(int x, int y, int z, int contents, int data) =>
@@ -153,5 +166,39 @@ namespace GmMod
 
         public static string FormatValue(float timeOfYear) =>
             timeOfYear.ToString("0.####", CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>
+    /// 昼夜档位：直接对应引擎 `TimeOfDayMode`。
+    ///
+    /// `SubsystemTimeOfDay.Update` **每帧**读 `WorldSettings.TimeOfDayMode`，所以改成
+    /// Day/Night/Sunrise/Sunset 后立即生效；主机再随世界信息广播把整份设置同步给所有客户端
+    /// （客户端由联机 mod 应用）。`Changing` = 正常昼夜流逝（引擎默认）。
+    /// </summary>
+    internal static class GmTimeOfDay
+    {
+        internal sealed class Slot
+        {
+            public TimeOfDayMode Mode;
+            public string Label;
+        }
+
+        public static string ModeName(TimeOfDayMode mode) => mode switch
+        {
+            TimeOfDayMode.Day => "白天",
+            TimeOfDayMode.Night => "夜晚",
+            TimeOfDayMode.Sunrise => "日出",
+            TimeOfDayMode.Sunset => "日落",
+            _ => "循环（正常流逝）"
+        };
+
+        public static List<Slot> BuildSlots() => new List<Slot>
+        {
+            new Slot { Mode = TimeOfDayMode.Day, Label = "白天（Day，永远正午亮度）" },
+            new Slot { Mode = TimeOfDayMode.Sunrise, Label = "日出（Sunrise）" },
+            new Slot { Mode = TimeOfDayMode.Sunset, Label = "日落（Sunset）" },
+            new Slot { Mode = TimeOfDayMode.Night, Label = "夜晚（Night）" },
+            new Slot { Mode = TimeOfDayMode.Changing, Label = "循环（Changing，恢复正常流逝）" }
+        };
     }
 }

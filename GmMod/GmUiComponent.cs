@@ -15,6 +15,8 @@ namespace GmMod
     /// 点击打开 GM 菜单：
     ///   · 玩家操作（**所有玩家**）：等级 / 满血 / 送回睡觉点，目标由主机提供的在线玩家列表选择；
     ///   · 世界设置：季节/时段 12 档；
+    ///   · 世界设置：昼夜（白天 / 日出 / 日落 / 夜晚 / 循环）——加入后全黑时用它定格到白天；
+    ///   · 世界设置：天气总开关（关掉后立刻停雨/停雪/散雾）；
     ///   · 地图方块：破坏准星方块 / 贴着准星面放置手持方块；
     ///   · 回到复活点（自己）。
     ///
@@ -151,6 +153,16 @@ namespace GmMod
                 },
                 new MenuEntry
                 {
+                    Text = "◆ 世界设置：昼夜（当前：" + DescribeCurrentTimeOfDay() + "）…",
+                    Action = ShowTimeOfDayMenu
+                },
+                new MenuEntry
+                {
+                    Text = "◆ 世界设置：天气（当前：" + DescribeCurrentWeather() + "）…",
+                    Action = ShowWeatherMenu
+                },
+                new MenuEntry
+                {
                     Text = "◆ 地图方块：破坏 / 放置（准星处，主机执行）…",
                     Action = ShowBlockMenu
                 }
@@ -284,6 +296,87 @@ namespace GmMod
                 GmOperations.TimeOfYearField + "=" + GmSeasons.FormatValue(timeOfYear) + " -> " +
                 result.Code + " (" + result.Details + ")");
             ShowToast("已发送主机：" + GmSeasons.Describe(timeOfYear) + "（等待主机同意）", ToastColor);
+        }
+
+        // ---- 世界设置：昼夜 + 天气（同样走联机 mod 的通用世界设置通道）
+
+        private static string DescribeCurrentTimeOfDay()
+        {
+            TimeOfDayMode? mode = GmMod.CurrentTimeOfDayMode();
+            return mode.HasValue ? GmTimeOfDay.ModeName(mode.Value) : "未知";
+        }
+
+        private static string DescribeCurrentWeather()
+        {
+            bool? enabled = GmMod.CurrentWeatherEffectsEnabled();
+            return !enabled.HasValue ? "未知" : enabled.Value ? "开（会下雨/下雪/起雾）" : "关（无天气）";
+        }
+
+        private void ShowTimeOfDayMenu()
+        {
+            TimeOfDayMode? current = GmMod.CurrentTimeOfDayMode();
+            var entries = new List<MenuEntry>();
+            foreach (GmTimeOfDay.Slot slot in GmTimeOfDay.BuildSlots())
+            {
+                bool isCurrent = current.HasValue && current.Value == slot.Mode;
+                entries.Add(new MenuEntry
+                {
+                    Text = (isCurrent ? "● " : "   ") + slot.Label,
+                    Action = () => SubmitTimeOfDay(slot.Mode)
+                });
+            }
+            ShowMenu("世界设置：昼夜（当前：" + DescribeCurrentTimeOfDay() + "）", entries);
+        }
+
+        /// <summary>
+        /// 昼夜：提交 `ScMP.Data.WorldSettings` 的 `TimeOfDayMode`（枚举名）。
+        /// 引擎 `SubsystemTimeOfDay.Update` 每帧读该字段，所以改成 Day/Night/… 会**立刻**定格亮度
+        /// （加入后一片漆黑时设为「白天」即可看清），主机再随世界信息广播同步给所有客户端。
+        /// </summary>
+        private void SubmitTimeOfDay(TimeOfDayMode mode)
+        {
+            DataModificationSubmitResult result = DataModificationTool.SubmitFast(
+                GmOperations.ModId, GmOperations.SetWorldSettings,
+                GmPayloadCodec.EncodeWorldSetting(GmOperations.TimeOfDayModeField, mode.ToString()));
+            Log.Information("[GmMod] Submitted " + GmOperations.SetWorldSettings + " " +
+                GmOperations.TimeOfDayModeField + "=" + mode + " -> " + result.Code + " (" +
+                result.Details + ")");
+            ShowToast("已发送主机：昼夜 " + GmTimeOfDay.ModeName(mode) + "（等待主机同意）", ToastColor);
+        }
+
+        private void ShowWeatherMenu()
+        {
+            var entries = new List<MenuEntry>
+            {
+                new MenuEntry
+                {
+                    Text = "天气效果：关（立刻停雨/停雪/散雾；写进世界设置并持久保存）",
+                    Action = () => SubmitWeatherEffects(false)
+                },
+                new MenuEntry
+                {
+                    Text = "天气效果：开（恢复正常降雨 / 降雪 / 雾）",
+                    Action = () => SubmitWeatherEffects(true)
+                }
+            };
+            ShowMenu("世界设置：天气（当前：" + DescribeCurrentWeather() + "）", entries);
+        }
+
+        /// <summary>
+        /// 天气总开关：提交 `ScMP.Data.WorldSettings` 的 `AreWeatherEffectsEnabled`。
+        /// 主机侧 `SubsystemWeather.Update` 在关闭时把降水强度**直接清零**（立即停雨，雾同理），
+        /// 随后随世界信息广播同步给所有客户端；关掉后整个世界的天气效果都不再模拟。
+        /// </summary>
+        private void SubmitWeatherEffects(bool enabled)
+        {
+            DataModificationSubmitResult result = DataModificationTool.SubmitFast(
+                GmOperations.ModId, GmOperations.SetWorldSettings,
+                GmPayloadCodec.EncodeWorldSetting(GmOperations.WeatherEffectsField,
+                    enabled ? "true" : "false"));
+            Log.Information("[GmMod] Submitted " + GmOperations.SetWorldSettings + " " +
+                GmOperations.WeatherEffectsField + "=" + enabled + " -> " + result.Code + " (" +
+                result.Details + ")");
+            ShowToast("已发送主机：天气 " + (enabled ? "开" : "关") + "（等待主机同意）", ToastColor);
         }
 
         // ---- 地图方块：破坏 / 放置（主机执行 + 地形广播）

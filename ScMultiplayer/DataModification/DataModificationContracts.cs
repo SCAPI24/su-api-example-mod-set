@@ -154,6 +154,12 @@ namespace ScMultiplayer
 
         public int SourcePlayerIndex { get; set; } = -1;
 
+        /// <summary>
+        /// 发起方的**记录键**（= `UserManager.ActiveUser.UniqueId`，即账号 userid；
+        /// 无身份时为 `name:名字`）。名字可改，这个键不可改，主机侧授权一律按它判断。
+        /// </summary>
+        public string SourceKey { get; set; } = string.Empty;
+
         public DataModificationChannel Channel { get; set; }
 
         public string ModId { get; set; } = string.Empty;

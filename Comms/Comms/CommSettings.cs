@@ -34,4 +34,16 @@ public class CommSettings
     // Source: Comms/Comms/Comm.cs:Comm.RecoverStalledReliableSequence
     // How long a reliable sequenced stream may wait behind a gap before the receiver skips it.
     public float ReliableSequencedStallTimeout { get; set; } = 2f;
+
+    // Source: Comms/Comms/Comm.cs:Comm.IsDatagramAddressChangeAllowed
+    // The datagram token lets the receiver repair a peer's datagram address to the source address
+    // the packets really arrive from. Allowed by default, including a public IP change, so a peer
+    // that moves to a new address keeps its datagram path. Set this to false to accept only a
+    // same-IP NAT port change. The repair still requires an exact 32-bit session token match.
+    public bool AllowDatagramAddressIpChange { get; set; } = true;
+
+    // Source: Comms/Comms/Comm.cs:Comm.MoveConnection
+    // Minimum interval between two accepted address repairs of the same peer. It only rate-limits
+    // successful moves, so the first repair of a real NAT change always applies immediately.
+    public float MinimumDatagramAddressChangeInterval { get; set; } = 1f;
 }

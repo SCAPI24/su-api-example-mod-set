@@ -89,13 +89,19 @@ namespace ScMultiplayer
                     pending.Add(CreateDataModificationApprovalRecord(item));
                 }
             }
-            return new object[]
+            var response = new Dictionary<string, object>(StringComparer.Ordinal)
             {
-                new Dictionary<string, object>(StringComparer.Ordinal)
-                {
-                    ["pending"] = pending
-                }
+                ["pending"] = pending
             };
+            if (IsHost)
+            {
+                // 主机侧授权信息（供无头服务器控制台回答"谁被授权了"）：
+                // `trusted` = 世界受信任名单（ScMultiplayerTrustedClients.xml，请求不产生审批）；
+                // `clients` = 在线客户端的记录键与是否已授权。
+                response["trusted"] = GetTrustedDataModificationIdentities();
+                response["clients"] = DescribeDataModificationClientIdentities();
+            }
+            return new object[] { response };
         }
 
         internal DataModificationSubmitResult SubmitDataModification(
@@ -218,6 +224,10 @@ namespace ScMultiplayer
             {
                 ["sourceClientId"] = request.SourceClientId,
                 ["sourcePlayerIndex"] = request.SourcePlayerIndex,
+                // Source: Mod/ScMultiplayer/DataModification/DataModificationContracts.cs:
+                // DataModificationApprovalRequest.SourceKey
+                // 记录键（账号 userid，或 name:名字）——无头服务器等自动化审批按它判断身份，玩家名不可靠。
+                ["sourceKey"] = request.SourceKey ?? string.Empty,
                 ["channel"] = request.Channel == DataModificationChannel.Bulk
                     ? "bulk" : "fast",
                 ["modId"] = request.ModId,

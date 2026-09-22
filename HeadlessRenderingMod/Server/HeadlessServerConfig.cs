@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
@@ -36,6 +37,17 @@ namespace HeadlessRenderingMod
         public int RequestTimeoutSeconds { get; private set; } = 10;
 
         public int MaxRequestBytes { get; private set; } = 65536;
+
+        // Source: Mod/ScMultiplayer/DataModification/DataModificationContracts.cs:
+        // DataModificationEvents.ApprovalRequested ("sourceKey")
+        // A headless server has nobody to click the host approval dialog. This list is mod agnostic:
+        // a data modification request of ANY mod is approved automatically when the requesting
+        // client's record key matches an entry. That key is the account **user id**
+        // (UserManager.ActiveUser.UniqueId, the value stored in UserId.dat) and cannot be changed by
+        // the player; for a client without an account identity ScMultiplayer uses "name:<player name>".
+        // "*" matches every client. An empty list (default) disables auto approval entirely.
+        public string[] AutoApproveDataModificationUserIds { get; private set; } =
+            Array.Empty<string>();
 
         // Source: Engine/Engine/Storage.cs:Storage.ProcessPath
         public static HeadlessServerConfig LoadOrCreate(string instanceRoot)
@@ -101,6 +113,10 @@ namespace HeadlessRenderingMod
                 root,
                 "maxRequestBytes",
                 config.MaxRequestBytes);
+            config.AutoApproveDataModificationUserIds = ReadStringArray(
+                root,
+                "autoApproveDataModificationUserIds",
+                config.AutoApproveDataModificationUserIds);
             config.Validate();
             return config;
         }
@@ -172,7 +188,53 @@ namespace HeadlessRenderingMod
             writer.WriteNumber("maxCommandsPerFrame", MaxCommandsPerFrame);
             writer.WriteNumber("requestTimeoutSeconds", RequestTimeoutSeconds);
             writer.WriteNumber("maxRequestBytes", MaxRequestBytes);
+            WriteStringArray(writer, "autoApproveDataModificationUserIds",
+                AutoApproveDataModificationUserIds);
             writer.WriteEndObject();
+        }
+
+        private const int MaximumAutoApproveEntries = 64;
+
+        private const int MaximumAutoApproveEntryLength = 128;
+
+        private static string[] ReadStringArray(JsonElement root, string name,
+            string[] defaultValue)
+        {
+            if (!root.TryGetProperty(name, out JsonElement value))
+                return defaultValue;
+            if (value.ValueKind != JsonValueKind.Array)
+                throw new InvalidDataException($"{name} must be an array of strings.");
+            var entries = new List<string>();
+            foreach (JsonElement item in value.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.String)
+                    throw new InvalidDataException($"{name} must contain only strings.");
+                string text = item.GetString();
+                if (string.IsNullOrWhiteSpace(text) ||
+                    text.Length > MaximumAutoApproveEntryLength)
+                {
+                    throw new InvalidDataException(
+                        $"{name} entries must contain 1-{MaximumAutoApproveEntryLength} characters.");
+                }
+                entries.Add(text.Trim());
+                if (entries.Count > MaximumAutoApproveEntries)
+                {
+                    throw new InvalidDataException(
+                        $"{name} must contain at most {MaximumAutoApproveEntries} entries.");
+                }
+            }
+            return entries.ToArray();
+        }
+
+        private static void WriteStringArray(Utf8JsonWriter writer, string name, string[] values)
+        {
+            writer.WriteStartArray(name);
+            if (values != null)
+            {
+                foreach (string value in values)
+                    writer.WriteStringValue(value);
+            }
+            writer.WriteEndArray();
         }
 
         private static int FindAvailablePort(int firstPort, int attempts)

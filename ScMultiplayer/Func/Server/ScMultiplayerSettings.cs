@@ -43,6 +43,11 @@ namespace ScMultiplayer
         // Turn this off to fall back to the datagram-only transport for comparison runs.
         public static bool UseTcpTransport { get; private set; }
 
+        // Source: Mod/Comms/Comms/CommSettings.cs:CommSettings.AllowDatagramAddressIpChange
+        // 默认允许：对端公网 IP 或端口变化时，按数据报 token 重新绑定它的通信地址（跨 IP 也可）。
+        // 改为 false 则只接受「同 IP 的 NAT 端口漂移」。修复始终要求 32 位会话 token 精确匹配。
+        public static bool AllowDatagramAddressIpChange { get; private set; }
+
         public static DataModificationPolicy DataModificationMode { get; private set; }
 
         public static int DataModificationFastMaxConcurrent { get; private set; }
@@ -107,6 +112,7 @@ namespace ScMultiplayer
             AutoCreateRoomFromCurrentWorld = false;
             ServerDiagnosticsEnabled = false;
             UseTcpTransport = DefaultUseTcpTransport;
+            AllowDatagramAddressIpChange = true;
             DataModificationMode = DataModificationPolicy.Default;
             DataModificationFastMaxConcurrent = DefaultDataModificationFastMaxConcurrent;
             DataModificationBulkMaxConcurrent = DefaultDataModificationBulkMaxConcurrent;
@@ -168,6 +174,14 @@ namespace ScMultiplayer
                     tcpTransportValue.ValueKind == JsonValueKind.False))
                 {
                     UseTcpTransport = tcpTransportValue.GetBoolean();
+                }
+                if (document.RootElement.TryGetProperty(
+                    "allowDatagramAddressIpChange",
+                    out JsonElement datagramAddressValue) &&
+                    (datagramAddressValue.ValueKind == JsonValueKind.True ||
+                    datagramAddressValue.ValueKind == JsonValueKind.False))
+                {
+                    AllowDatagramAddressIpChange = datagramAddressValue.GetBoolean();
                 }
                 if (document.RootElement.TryGetProperty(
                     "dataModificationMode", out JsonElement dataModeValue) &&
@@ -417,6 +431,8 @@ namespace ScMultiplayer
                 AutoCreateRoomFromCurrentWorld);
             writer.WriteBoolean("serverDiagnosticsEnabled", ServerDiagnosticsEnabled);
             writer.WriteBoolean("useTcpTransport", UseTcpTransport);
+            writer.WriteBoolean("allowDatagramAddressIpChange",
+                AllowDatagramAddressIpChange);
             writer.WriteString("dataModificationMode",
                 GetDataModificationModeName(DataModificationMode));
             writer.WriteNumber("dataModificationFastMaxConcurrent",

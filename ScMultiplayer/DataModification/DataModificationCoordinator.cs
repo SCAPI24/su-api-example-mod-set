@@ -695,6 +695,7 @@ namespace ScMultiplayer
                 {
                     SourceClientId = sourceClientId,
                     SourcePlayerIndex = m_owner.ResolveDataModificationPlayerIndex(sourceClientId),
+                    SourceKey = m_owner.GetDataModificationClientKey(sourceClientId),
                     Channel = message.Channel,
                     ModId = message.ModId,
                     Operation = message.Operation,
@@ -852,9 +853,17 @@ namespace ScMultiplayer
             };
             if (targetClientId == 0 && ScMultiplayer.IsHost)
             {
+                // Host-local submission: the loopback publishes the result locally already.
                 ReceiveOnClient(message);
                 return;
             }
+            // Source: Mod/ScMultiplayer/DataModification/ScMultiplayerDataModificationRuntime.cs:
+            // PublishDataModificationResult
+            // A remote client's verdict used to be sent only to that client, so host-side observers
+            // (the headless server console) never saw Applied/Failed. Publish it on the host too;
+            // the message the client receives is unchanged.
+            if (ScMultiplayer.IsHost)
+                m_owner.PublishDataModificationResult(result);
             NetworkMessageSender.SendDataModificationMessage(targetClientId, message);
         }
 
