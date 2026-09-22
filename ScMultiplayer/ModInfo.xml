@@ -6,7 +6,7 @@
       <Text lang="en_US">ScMultiplayer</Text>
       <Text lang="zh_CN">联机模组</Text>
     </LocalizedName>
-    <Version>2.1.32</Version>
+    <Version>2.1.38</Version>
     <APIVersion>0.1.6.0</APIVersion>
     <IsMergeLib>true</IsMergeLib>
     <Asset>

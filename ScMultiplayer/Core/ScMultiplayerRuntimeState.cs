@@ -655,14 +655,16 @@ namespace ScMultiplayer
         private Dictionary<string, long> m_pendingRandomStates = new Dictionary<string, long>();
         private Project m_randomStateAppliedProject;
         private GameWorldInfoMessage1 m_remoteWeatherState;
-        // 雾的 2Hz 采样插值（见 ScMultiplayerHealthWorldControlHandlers.UpdateRemoteFogPresentation）：
-        // 主机每 2Hz 才发一次雾的进度/浓度，若每帧只朝"最新样本"追，雾的出现与消失就是按 2Hz
-        // 台阶变化的（玩家看到的"数字跳跃"）。这里保留相邻两次样本，在两样本之间线性插值，
-        // 让雾的浓淡与层高是连续曲线。
+        // 雾 / 降雨的 2Hz 采样插值（见 ScMultiplayerHealthWorldControlHandlers.UpdateRemoteWeatherPresentation）：
+        // 主机每 2Hz 才发一次雾的进度/浓度与降雨强度，若每帧只朝"最新样本"追，雾和雨的出现与消失
+        // 就是按 2Hz 台阶变化的（玩家看到的"数字跳跃"、"反复回退"）。这里保留相邻两次样本，
+        // 在两样本之间线性插值，让雾的浓淡与雨的大小都是连续曲线。
         private float m_remoteFogPreviousProgress;
         private float m_remoteFogPreviousIntensity;
         private float m_remoteFogSampleProgress;
         private float m_remoteFogSampleIntensity;
+        private float m_remotePrecipitationPreviousIntensity;
+        private float m_remotePrecipitationSampleIntensity;
         private double m_remoteFogSampleTime;
         private double m_remoteFogPreviousSampleTime;
         private double m_remoteFogSampleInterval = RemoteFogDefaultSampleInterval;

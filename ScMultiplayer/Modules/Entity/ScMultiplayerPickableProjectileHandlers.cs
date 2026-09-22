@@ -224,6 +224,11 @@ namespace ScMultiplayer
                 }
                 if (now - pending.LastSendTime < 0.75) continue;
                 pending.LastSendTime = now;
+                // 客户端决策记录（同 dig.send）：确实向主机发出了拾取请求。只写 Logs/Client。
+                ScMultiplayerOperationLog.Write("event=pick.send id=" +
+                    item.Key.ToString(CultureInfo.InvariantCulture) +
+                    " request=" + pending.RequestId.ToString(CultureInfo.InvariantCulture) +
+                    " dist=" + MathUtils.Sqrt(distanceSquared).ToString("0.###", CultureInfo.InvariantCulture));
                 NetworkMessageSender.SendPickableMessage(new PickableSyncMessage
                 {
                     Action = PickableSyncMessage.PickAction.RequestAcquire,
@@ -294,9 +299,31 @@ namespace ScMultiplayer
                         accepted = pickable.Count < previousCount;
                         if (accepted)
                         {
+                            // 基准必须在 MarkHostInventoryAuthoritative 之前取：它会清掉
+                            // “上次已发给该客户端的背包”缓存，而那份缓存正是本次增量的比较基准。
+                            m_lastSentInventoryValues.TryGetValue(sourceClientId, out int[] baseValues);
+                            m_lastSentInventoryCounts.TryGetValue(sourceClientId, out int[] baseCounts);
+                            int[] currentValues = CaptureInventoryValues(inventory);
+                            int[] currentCounts = CaptureInventoryCounts(inventory);
                             MarkHostInventoryAuthoritative(sourceClientId);
-                            response.SlotValues = CaptureInventoryValues(inventory);
-                            response.SlotCounts = CaptureInventoryCounts(inventory);
+                            // Source: Survivalcraft/Game/ComponentInventoryBase.cs:ComponentInventoryBase.AcquireItems
+                            // 拾取通常只改一格（少数情况两格）。只把变化的格子作为稀疏增量发给拾取者：
+                            // 创造模式背包 1622 格，整包一份 ≈12.7 KB，以前每次拾取都广播给所有人，
+                            // 是“捡东西时带宽 30KB/s→280KB/s”的根因。
+                            if (baseValues != null && baseCounts != null &&
+                                TryBuildInventoryDelta(baseValues, baseCounts,
+                                    currentValues, currentCounts, out int[] changedIndices,
+                                    out _, out _, out int[] changedValues, out int[] changedCounts))
+                            {
+                                response.HasInventoryDelta = true;
+                                response.SlotIndices = changedIndices;
+                                response.SlotValues = changedValues;
+                                response.SlotCounts = changedCounts;
+                                // 增量已让客户端在这几格上与主机对齐，把缓存推进到当前值，
+                                // 免得 1 Hz 那条路再补发一份整包（5 秒关键帧仍照旧）。
+                                m_lastSentInventoryValues[sourceClientId] = currentValues;
+                                m_lastSentInventoryCounts[sourceClientId] = currentCounts;
+                            }
                         }
                     }
                 }
@@ -323,8 +350,29 @@ namespace ScMultiplayer
             foreach (long stale in m_processedPickableAcquireRequests.Where(item =>
                 Time.RealTime - item.Value.ProcessedTime > 30.0).Select(item => item.Key).ToArray())
                 m_processedPickableAcquireRequests.Remove(stale);
-            NetworkMessageSender.SendPickableMessage(response,
-                accepted ? -1 : sourceClientId);
+            if (!accepted)
+            {
+                // 拒绝只回给请求者：客户端据此把这次请求标成被拒，稍后重试。
+                NetworkMessageSender.SendPickableMessage(response, sourceClientId);
+            }
+            else
+            {
+                // Source: Survivalcraft/Game/SubsystemPickables.cs:SubsystemPickables.Update
+                // 其他客户端只需要知道“哪个掉落物被谁捡走了”：广播一条不带背包的边界消息。
+                NetworkMessageSender.SendPickableMessage(new PickableSyncMessage
+                {
+                    Action = PickableSyncMessage.PickAction.Acquire,
+                    Id = response.Id,
+                    RequestId = response.RequestId,
+                    CollectorClientId = response.CollectorClientId,
+                    ServerTick = response.ServerTick,
+                    Count = response.Count,
+                    PlaySound = response.PlaySound
+                }, -1);
+                // 拾取者自己再收一条只属于自己的“被拾取物品进入的格子”增量。
+                if (response.HasInventoryDelta)
+                    NetworkMessageSender.SendPickableMessage(response, sourceClientId);
+            }
         }
 
         private void HandlePickableSyncMessage(PickableSyncMessage message, int sourceClientId)
@@ -477,9 +525,22 @@ namespace ScMultiplayer
             {
                 m_pendingPickableAcquireRequests.Remove(message.Id);
             }
+            bool hasFullInventory = message.SlotValues != null && message.SlotCounts != null &&
+                message.SlotValues.Length > 0 && message.SlotCounts.Length > 0;
+            // 客户端决策记录（同 dig.result）：这次拾取由谁完成、还剩多少、随包带回几格背包增量。
+            // 拾取在创造模式下经常被"无限仓库"吸收（快捷栏看不出变化），这条日志是唯一可靠的核对点。
+            // 只写 Logs/Client，不进 Game.log。
+            ScMultiplayerOperationLog.Write("event=pick.result id=" +
+                message.Id.ToString(CultureInfo.InvariantCulture) +
+                " collector=" + message.CollectorClientId.ToString(CultureInfo.InvariantCulture) +
+                " self=" + client.ClientID.ToString(CultureInfo.InvariantCulture) +
+                " remaining=" + message.Count.ToString(CultureInfo.InvariantCulture) +
+                " delta=" + (message.HasInventoryDelta ? message.SlotIndices.Length : 0).ToString(CultureInfo.InvariantCulture) +
+                " full=" + (message.SlotValues?.Length ?? 0).ToString(CultureInfo.InvariantCulture) +
+                " sound=" + message.PlaySound.ToString(CultureInfo.InvariantCulture));
             if (message.CollectorClientId == client.ClientID &&
                 message.ServerTick >= m_lastAuthoritativeLocalInventoryTick &&
-                message.SlotValues != null && message.SlotCounts != null)
+                (message.HasInventoryDelta || hasFullInventory))
             {
                 SubsystemPlayers players = GameManager.Project?.FindSubsystem<SubsystemPlayers>(false);
                 ComponentPlayer localPlayer = players?.ComponentPlayers.FirstOrDefault(player =>
@@ -487,11 +548,22 @@ namespace ScMultiplayer
                 IInventory inventory = localPlayer?.ComponentMiner?.Inventory;
                 if (inventory != null)
                 {
-                    ApplyInventory(inventory, message.SlotValues, message.SlotCounts);
-                    int slotsCount = Math.Min(inventory.SlotsCount,
-                        Math.Min(message.SlotValues.Length, message.SlotCounts.Length));
-                    m_authoritativeLocalSlotValues = message.SlotValues.Take(slotsCount).ToArray();
-                    m_authoritativeLocalSlotCounts = message.SlotCounts.Take(slotsCount).ToArray();
+                    if (message.HasInventoryDelta)
+                    {
+                        // 拾取增量：只写“被拾取物品进入的格子”，本地权威镜像同步推进这几格。
+                        ApplyInventoryDelta(inventory, message.SlotIndices,
+                            message.SlotValues, message.SlotCounts);
+                        AdvanceAuthoritativeLocalInventoryMirror(inventory,
+                            message.SlotIndices, message.SlotValues, message.SlotCounts);
+                    }
+                    else
+                    {
+                        ApplyInventory(inventory, message.SlotValues, message.SlotCounts);
+                        int slotsCount = Math.Min(inventory.SlotsCount,
+                            Math.Min(message.SlotValues.Length, message.SlotCounts.Length));
+                        m_authoritativeLocalSlotValues = message.SlotValues.Take(slotsCount).ToArray();
+                        m_authoritativeLocalSlotCounts = message.SlotCounts.Take(slotsCount).ToArray();
+                    }
                     m_lastAuthoritativeLocalInventoryTick = message.ServerTick;
                     m_hasAuthoritativeLocalInventory = true;
                     m_lastLocalInventoryValues = CaptureInventoryValues(inventory);
@@ -548,6 +620,35 @@ namespace ScMultiplayer
                 RemainingCount = message.Count,
                 CompleteTime = Time.RealTime + duration
             };
+        }
+
+        // Source: Mod/ScMultiplayer/Modules/World/ScMultiplayerContainerHandlers.cs:ApplyInventoryDelta
+        // 稀疏增量之后，本地那份“主机权威背包镜像”也要按同一批格子推进，否则容器事务的漂移比较
+        // （ArraysEqual(currentPlayerValues, m_authoritativeLocalSlotValues)）会把这几格误判成漂移。
+        private void AdvanceAuthoritativeLocalInventoryMirror(IInventory inventory,
+            int[] indices, int[] values, int[] counts)
+        {
+            int slotsCount = inventory?.SlotsCount ?? 0;
+            if (slotsCount <= 0) return;
+            if (!m_hasAuthoritativeLocalInventory ||
+                m_authoritativeLocalSlotValues.Length != slotsCount ||
+                m_authoritativeLocalSlotCounts.Length != slotsCount)
+            {
+                // 镜像缺失或长度不符：本地背包刚按增量对齐过，直接以它作为主机权威基准。
+                m_authoritativeLocalSlotValues = CaptureInventoryValues(inventory);
+                m_authoritativeLocalSlotCounts = CaptureInventoryCounts(inventory);
+                m_hasAuthoritativeLocalInventory = true;
+                return;
+            }
+            int length = Math.Min(indices?.Length ?? 0,
+                Math.Min(values?.Length ?? 0, counts?.Length ?? 0));
+            for (int i = 0; i < length; i++)
+            {
+                int index = indices[i];
+                if (index < 0 || index >= slotsCount) continue;
+                m_authoritativeLocalSlotValues[index] = NormalizeCrossbowValue(values[i]);
+                m_authoritativeLocalSlotCounts[index] = counts[i];
+            }
         }
 
         private Vector3 ResolvePickupPresentationTarget(int collectorClientId, Vector3 fallback)

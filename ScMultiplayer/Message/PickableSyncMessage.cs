@@ -31,6 +31,12 @@ namespace ScMultiplayer
         public int RequestId;
         public int CollectorClientId = -1;
         public int ServerTick;
+        // 拾取只同步"被拾取的那件物品进入的格子"：HasInventoryDelta 为真时，下面三个数组是
+        // 稀疏增量（长度相同，SlotIndices[i] 格应写成 SlotValues[i]/SlotCounts[i]），
+        // 而不是整包背包。整包背包（创造模式 1622 格 ≈ 12.7 KB）以前每次拾取都广播给所有人，
+        // 是"捡东西时带宽 30KB/s→280KB/s"的根因。
+        public bool HasInventoryDelta;
+        public int[] SlotIndices = Array.Empty<int>();
         public int[] SlotValues = Array.Empty<int>();
         public int[] SlotCounts = Array.Empty<int>();
 
@@ -97,6 +103,14 @@ namespace ScMultiplayer
                     ServerTick = reader.ReadInt32();
                     Count = reader.ReadPackedInt32();
                     PlaySound = reader.ReadBoolean();
+                    HasInventoryDelta = reader.ReadBoolean();
+                    if (HasInventoryDelta)
+                    {
+                        int indicesCount = reader.ReadPackedInt32();
+                        SlotIndices = new int[indicesCount];
+                        for (int i = 0; i < indicesCount; i++)
+                            SlotIndices[i] = reader.ReadPackedInt32();
+                    }
                     int slotsCount = reader.ReadPackedInt32();
                     SlotValues = new int[slotsCount];
                     SlotCounts = new int[slotsCount];
@@ -160,6 +174,15 @@ namespace ScMultiplayer
                     writer.WriteInt32(ServerTick);
                     writer.WritePackedInt32(Count);
                     writer.WriteBoolean(PlaySound);
+                    writer.WriteBoolean(HasInventoryDelta);
+                    if (HasInventoryDelta)
+                    {
+                        int indicesCount = Math.Min(SlotIndices?.Length ?? 0,
+                            Math.Min(SlotValues?.Length ?? 0, SlotCounts?.Length ?? 0));
+                        writer.WritePackedInt32(indicesCount);
+                        for (int i = 0; i < indicesCount; i++)
+                            writer.WritePackedInt32(SlotIndices[i]);
+                    }
                     int slotsCount = Math.Min(SlotValues?.Length ?? 0,
                         SlotCounts?.Length ?? 0);
                     writer.WritePackedInt32(slotsCount);

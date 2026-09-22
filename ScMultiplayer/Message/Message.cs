@@ -13,7 +13,7 @@ namespace ScMultiplayer
     [Serializable]
     public abstract class Message
     {
-        public const string ModVersion = "2.1.32";
+        public const string ModVersion = "2.1.38";
         public const int ProtocolVersion = 1;
 
         private static readonly Dictionary<int, Type> MessageTypesById = new();
@@ -62,7 +62,7 @@ namespace ScMultiplayer
             Register<GamePakWorldReadyMessage>(24, nameof(GamePakWorldReadyMessage), 1);
             Register<GamePakWorldRepairRequestMessage>(25,
                 nameof(GamePakWorldRepairRequestMessage), 1);
-            Register<PickableSyncMessage>(26, nameof(PickableSyncMessage), 2);
+            Register<PickableSyncMessage>(26, nameof(PickableSyncMessage), 3);
             Register<PlayerActionMessage>(27, nameof(PlayerActionMessage), 4);
             Register<PlayerDataSyncMessage>(28, nameof(PlayerDataSyncMessage), 1);
             Register<PlayerEquipmentMessage>(29, nameof(PlayerEquipmentMessage), 1);

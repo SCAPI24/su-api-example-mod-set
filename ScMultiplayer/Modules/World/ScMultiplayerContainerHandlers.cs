@@ -734,6 +734,12 @@ namespace ScMultiplayer
             return null;
         }
 
+        // 注意（2026-09-23，踩过的坑）：这里**必须**返回整包长度（inventory.SlotsCount）。
+        // IsInventorySnapshotValid（:1007）与 TryExpandInventoryTransaction（:825）都按
+        // `values.Length == inventory.SlotsCount` 校验；曾经为了"不同步创造仓库"把它截成
+        // OpenSlotsCount 长度，结果掉落请求和容器事务在第一步校验就全军覆没（实测：创造模式
+        // 里一件物品都丢不出去）。要省这份流量只能改那两处校验的口径，或另开一条精简同步消息，
+        // 不能只截这里。
         private static int[] CaptureInventoryValues(IInventory inventory) =>
             Enumerable.Range(0, inventory.SlotsCount)
                 .Select(index => NormalizeCrossbowValue(inventory.GetSlotValue(index)))

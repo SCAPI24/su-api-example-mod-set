@@ -677,20 +677,58 @@ namespace ScMultiplayer
                     TryGetHostPickableCollector(pickable,
                         out int collectorClientId, out IInventory inventory))
                 {
-                    var message = new PickableSyncMessage
+                    // Source: Survivalcraft/Game/SubsystemPickables.cs:SubsystemPickables.Update
+                    // 引擎自己把掉落物收走时（玩家走进 1.0 格内，主机替该角色执行 AcquireItems）也会走
+                    // 到这里。以前这条消息把拾取者的**整包背包**（创造模式 1622 格 ≈12.7 KB）广播给
+                    // 所有人，是"捡东西时带宽飙升"的第二条、也是更常触发的一条路径。
+                    // 现在：广播只带"谁捡走了什么"；只给拾取者本人补一条"变化的那几格"稀疏增量。
+                    var edge = new PickableSyncMessage
                     {
                         Action = PickableSyncMessage.PickAction.Acquire,
                         Id = id,
                         CollectorClientId = collectorClientId,
                         ServerTick = client.Step,
                         Count = 0,
-                        PlaySound = true,
-                        SlotValues = CaptureInventoryValues(inventory),
-                        SlotCounts = CaptureInventoryCounts(inventory)
+                        PlaySound = true
                     };
                     if (collectorClientId > 0)
+                    {
+                        // 基准要在 MarkHostInventoryAuthoritative 之前取：它会清掉"上次已发给该
+                        // 客户端的背包"缓存。
+                        m_lastSentInventoryValues.TryGetValue(collectorClientId, out int[] baseValues);
+                        m_lastSentInventoryCounts.TryGetValue(collectorClientId, out int[] baseCounts);
+                        int[] currentValues = inventory != null
+                            ? CaptureInventoryValues(inventory) : null;
+                        int[] currentCounts = currentValues != null
+                            ? CaptureInventoryCounts(inventory) : null;
                         MarkHostInventoryAuthoritative(collectorClientId);
-                    NetworkMessageSender.SendPickableMessage(message);
+                        if (currentValues != null && baseValues != null && baseCounts != null &&
+                            TryBuildInventoryDelta(baseValues, baseCounts, currentValues,
+                                currentCounts, out int[] changedIndices, out _, out _,
+                                out int[] changedValues, out int[] changedCounts))
+                        {
+                            // PlaySound=false：这次拾取的音效已经由广播那条负责，避免拾取者听到两次。
+                            var delta = new PickableSyncMessage
+                            {
+                                Action = PickableSyncMessage.PickAction.Acquire,
+                                Id = id,
+                                CollectorClientId = collectorClientId,
+                                ServerTick = client.Step,
+                                Count = 0,
+                                PlaySound = false,
+                                HasInventoryDelta = true,
+                                SlotIndices = changedIndices,
+                                SlotValues = changedValues,
+                                SlotCounts = changedCounts
+                            };
+                            m_lastSentInventoryValues[collectorClientId] = currentValues;
+                            m_lastSentInventoryCounts[collectorClientId] = currentCounts;
+                            NetworkMessageSender.SendPickableMessage(edge);
+                            NetworkMessageSender.SendPickableMessage(delta, collectorClientId);
+                            return;
+                        }
+                    }
+                    NetworkMessageSender.SendPickableMessage(edge);
                 }
                 else
                 {

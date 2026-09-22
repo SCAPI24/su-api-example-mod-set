@@ -1285,7 +1285,7 @@ namespace ScMultiplayer
                 else
                 {
                     SuppressClientRandomLightning(project);
-                    UpdateRemoteFogPresentation(dt);
+                    UpdateRemoteWeatherPresentation(dt);
                 }
                 UpdateRemoteAnimalPresentations(dt);
                 UpdateRemoteMountPresentations(dt);

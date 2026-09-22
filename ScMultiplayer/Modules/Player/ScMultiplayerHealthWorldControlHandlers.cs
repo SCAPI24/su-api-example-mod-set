@@ -615,7 +615,7 @@ namespace ScMultiplayer
             m_circuitSynchronizer?.NotifyRemoteTimeAccelerationChanged(
                 msg.IsTimeAccelerated);
             m_remoteWeatherState = msg;
-            RecordRemoteFogSample(msg);
+            RecordRemoteWeatherSample(msg);
             m_remoteTerrainHeadSequence = Math.Max(
                 m_remoteTerrainHeadSequence, msg.TerrainSequence);
             if (m_worldTransferRegistry.PendingWorldReadyTransferId > 0)
@@ -1019,20 +1019,21 @@ namespace ScMultiplayer
             // Source: Survivalcraft/Game/SubsystemWeather.cs:SubsystemWeather.UpdatePrecipitation
             SubsystemWeather weather = project.FindSubsystem<SubsystemWeather>(true);
             if (weather.IsPrecipitationStarted != msg.IsPrecipitationStarted)
-            {
-                if (msg.IsPrecipitationStarted) weather.ManualPrecipitationStart();
-                else weather.ManualPrecipitationEnd();
-            }
+                ConfigureRemotePrecipitationSchedule(weather, msg.IsPrecipitationStarted);
             if (weather.IsFogStarted != msg.IsFogStarted)
                 ConfigureRemoteFogSchedule(weather, msg.IsFogStarted);
-            ModManager.ModParentField.ModifyParentField(
-                weather, "<PrecipitationIntensity>k__BackingField", msg.PrecipitationIntensity, typeof(SubsystemWeather));
             if (!m_remoteFogPresentationInitialized)
             {
                 ModManager.ModParentField.ModifyParentField(
                     weather, "<FogProgress>k__BackingField", msg.FogProgress, typeof(SubsystemWeather));
                 ModManager.ModParentField.ModifyParentField(
                     weather, "<FogIntensity>k__BackingField", msg.FogIntensity, typeof(SubsystemWeather));
+                // 降雨强度同样只在第一份样本时对齐一次：之后一律由
+                // UpdateRemoteWeatherPresentation 在 2Hz 样本之间插值推进，
+                // 不能在这里按样本直接覆写，否则客户端会跟着 2Hz 台阶反复回退。
+                ModManager.ModParentField.ModifyParentField(
+                    weather, "<PrecipitationIntensity>k__BackingField",
+                    msg.PrecipitationIntensity, typeof(SubsystemWeather));
                 m_remoteFogPresentationInitialized = true;
             }
             ModManager.ModParentField.ModifyParentField(
@@ -1098,9 +1099,35 @@ namespace ScMultiplayer
                 weather, "m_fogRampTime", float.MaxValue, typeof(SubsystemWeather));
         }
 
+        // Source: Survivalcraft/Game/SubsystemWeather.cs:SubsystemWeather.ManualPrecipitationStart
+        // Source: Survivalcraft/Game/SubsystemWeather.cs:SubsystemWeather.UpdatePrecipitation
+        // 客户端不自己决定下雨：只跟着主机的 IsPrecipitationStarted 翻转标志位，并把引擎那条
+        // "自己加/减强度"的 ramp 关掉（rampTime = MaxValue → 每帧增量≈0）。
+        // 为什么必须关：`ManualPrecipitationStart/End` 会把 rampTime 设成 1 秒，客户端就会以 1 秒
+        // 的速度冲到 1、再被 2Hz 样本拉回旧值 —— 这正是"反复回退"的来源。
+        // 关掉之后，雨的大小完全由 UpdateRemoteWeatherPresentation 在主机 2Hz 样本之间插值给出，
+        // 同时随机天气计划（m_precipitationEndTime == 0 那条分支）也不会在客户端自行触发。
+        private static void ConfigureRemotePrecipitationSchedule(SubsystemWeather weather,
+            bool isStarted)
+        {
+            SubsystemGameInfo gameInfo = GameManager.Project?.FindSubsystem<SubsystemGameInfo>(false);
+            if (weather == null || gameInfo == null) return;
+            double startTime = isStarted
+                ? gameInfo.TotalElapsedGameTime
+                : double.MaxValue;
+            ModManager.ModParentField.ModifyParentField(
+                weather, "m_precipitationStartTime", startTime, typeof(SubsystemWeather));
+            ModManager.ModParentField.ModifyParentField(
+                weather, "m_precipitationEndTime", double.MaxValue, typeof(SubsystemWeather));
+            ModManager.ModParentField.ModifyParentField(
+                weather, "m_precipitationRampTime", float.MaxValue, typeof(SubsystemWeather));
+        }
+
         // Source: Survivalcraft/Game/SubsystemWeather.cs:SubsystemWeather.UpdateFog
-        // 记录主机 2Hz 雾样本：保留"上一份 / 最新一份"和它们的到达时间，供每帧插值使用。
-        private void RecordRemoteFogSample(GameWorldInfoMessage1 msg)
+        // Source: Survivalcraft/Game/SubsystemWeather.cs:SubsystemWeather.UpdatePrecipitation
+        // 记录主机 2Hz 天气样本：雾（进度/浓度）与降雨强度各留"上一份 / 最新一份"，和它们的到达
+        // 时间，供每帧插值使用。
+        private void RecordRemoteWeatherSample(GameWorldInfoMessage1 msg)
         {
             if (msg == null || IsHost) return;
             double now = Time.RealTime;
@@ -1111,6 +1138,8 @@ namespace ScMultiplayer
                 m_remoteFogPreviousIntensity = msg.FogIntensity;
                 m_remoteFogSampleProgress = msg.FogProgress;
                 m_remoteFogSampleIntensity = msg.FogIntensity;
+                m_remotePrecipitationPreviousIntensity = msg.PrecipitationIntensity;
+                m_remotePrecipitationSampleIntensity = msg.PrecipitationIntensity;
                 m_remoteFogSampleTime = now;
                 m_remoteFogPreviousSampleTime = now;
                 m_remoteFogSampleInterval = RemoteFogDefaultSampleInterval;
@@ -1120,6 +1149,8 @@ namespace ScMultiplayer
             m_remoteFogPreviousIntensity = m_remoteFogSampleIntensity;
             m_remoteFogSampleProgress = msg.FogProgress;
             m_remoteFogSampleIntensity = msg.FogIntensity;
+            m_remotePrecipitationPreviousIntensity = m_remotePrecipitationSampleIntensity;
+            m_remotePrecipitationSampleIntensity = msg.PrecipitationIntensity;
             m_remoteFogPreviousSampleTime = m_remoteFogSampleTime;
             m_remoteFogSampleTime = now;
             double interval = now - m_remoteFogPreviousSampleTime;
@@ -1128,11 +1159,15 @@ namespace ScMultiplayer
         }
 
         // Source: Survivalcraft/Game/SubsystemWeather.cs:SubsystemWeather.UpdateFog
-        // 世界信息是 2Hz：旧写法每帧朝"最新样本"做指数追赶（8/s），结果雾的浓淡/层高会跟着
-        // 样本台阶走 —— 玩家看到的就是"数字跳跃"，出现与消失都不连续。
-        // 现在改成在两份相邻样本之间按到达间隔线性插值，再叠一层很轻的指数平滑把样本边界的
-        // 折角磨圆；样本断流时插值系数夹在 1 以内，停在最后一份样本上，不会外推跑飞。
-        private void UpdateRemoteFogPresentation(float dt)
+        // Source: Survivalcraft/Game/SubsystemWeather.cs:SubsystemWeather.UpdatePrecipitation
+        // 世界信息是 2Hz：旧写法每帧朝"最新样本"做指数追赶（8/s），结果雾的浓淡/层高会跟着样本台阶
+        // 走 —— 玩家看到的就是"数字跳跃"，出现与消失都不连续。降雨以前更糟：每次样本到达都直接
+        // 覆写 PrecipitationIntensity，客户端自己那条连续 ramp 被 2Hz 的旧值反复拉回去（"反复回退"）。
+        // 现在雾和雨共用同一套：在两份相邻样本之间按到达间隔线性插值，再叠一层很轻的指数平滑把
+        // 样本边界的折角磨圆；样本断流时插值系数夹在 1 以内，停在最后一份样本上，不会外推跑飞。
+        // 主机侧引擎本来就是按 m_precipitationRampTime 连续加减出这个强度，插值只是把中间值补出来，
+        // 权威值仍然完全由主机决定。
+        private void UpdateRemoteWeatherPresentation(float dt)
         {
             GameWorldInfoMessage1 msg = m_remoteWeatherState;
             Project project = GameManager.Project;
@@ -1141,6 +1176,8 @@ namespace ScMultiplayer
             if (weather == null) return;
             if (weather.IsFogStarted != msg.IsFogStarted)
                 ConfigureRemoteFogSchedule(weather, msg.IsFogStarted);
+            if (weather.IsPrecipitationStarted != msg.IsPrecipitationStarted)
+                ConfigureRemotePrecipitationSchedule(weather, msg.IsPrecipitationStarted);
             float step = MathUtils.Clamp(dt, 0f, 0.05f);
             double interval = MathUtils.Max(m_remoteFogSampleInterval, 0.05);
             float alpha = (float)MathUtils.Clamp(
@@ -1149,13 +1186,21 @@ namespace ScMultiplayer
                 m_remoteFogPreviousProgress, m_remoteFogSampleProgress, alpha);
             float targetIntensity = MathUtils.Lerp(
                 m_remoteFogPreviousIntensity, m_remoteFogSampleIntensity, alpha);
+            float targetPrecipitation = MathUtils.Lerp(
+                m_remotePrecipitationPreviousIntensity,
+                m_remotePrecipitationSampleIntensity, alpha);
             float blend = 1f - (float)Math.Exp(-10f * step);
             float fogProgress = MathUtils.Lerp(weather.FogProgress, targetProgress, blend);
             float fogIntensity = MathUtils.Lerp(weather.FogIntensity, targetIntensity, blend);
+            float precipitationIntensity = MathUtils.Lerp(
+                weather.PrecipitationIntensity, targetPrecipitation, blend);
             ModManager.ModParentField.ModifyParentField(
                 weather, "<FogProgress>k__BackingField", fogProgress, typeof(SubsystemWeather));
             ModManager.ModParentField.ModifyParentField(
                 weather, "<FogIntensity>k__BackingField", fogIntensity, typeof(SubsystemWeather));
+            ModManager.ModParentField.ModifyParentField(
+                weather, "<PrecipitationIntensity>k__BackingField",
+                precipitationIntensity, typeof(SubsystemWeather));
             ModManager.ModParentField.ModifyParentField(
                 weather, "<FogSeed>k__BackingField", msg.FogSeed, typeof(SubsystemWeather));
         }
