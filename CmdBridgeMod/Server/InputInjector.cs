@@ -23,10 +23,35 @@ namespace CmdBridgeMod
         private const float MaxPitchRadians = 82f * (MathUtils.PI / 180f);
         private const float MaxHeadYawRadians = 140f * (MathUtils.PI / 180f);
 
+        /// <summary>
+        /// 按键脉冲的默认按下时长：**一帧量级**（60fps 一帧 ≈ 16.7ms），固定值、不随手感抖动。
+        /// `act.key` 未显式给 `holdMs` 时用它（`CommandRouter.cs`），CLI 默认值也与之对齐
+        /// （`CmdBridgeClient/Program.cs`）。取 0 会让按下与抬起挤在同一帧里，帧体看不到按下。
+        /// </summary>
+        internal const int DefaultPulseHoldMs = 40;
+
         private readonly CmdBridgeConfig m_config;
         private readonly GameThreadInvoker m_invoker;
+
+        /// <summary>
+        /// "我们自己注入过按下"的键的簿记（**不是**引擎是否真的按着）。
+        ///
+        /// 它只用于两件事：共控合并把引擎数组抬成 `真实 || 注入`，以及脉冲收尾时要松开哪些键。
+        /// **绝不能**再拿它当"是否要补写按下沿"的判据 —— 引擎会在窗口失焦时整体清空
+        /// `Keyboard.m_keysDownArray`（`Engine/Engine/Window.cs:362-364` → `Keyboard.Clear()`，
+        /// `Engine/Engine/Input/Keyboard.cs:116-126`），此时镜像说"按着"、引擎说"松开了"，
+        /// 于是那次脉冲既补不出 `downOnce` 也不重置连发，整帧看不到按下
+        /// （症状：同一个键第一次无效、第二次才生效）。按下沿的判据改用引擎数组，
+        /// 残留由 <see cref="RepairHeldKeyMirror"/> 每帧收掉。
+        /// </summary>
         private readonly HashSet<int> m_heldKeys = new HashSet<int>();
         private readonly HashSet<int> m_heldButtons = new HashSet<int>();
+
+        /// <summary>镜像与引擎数组不一致、被本类修掉的次数（复核用读数，热路径不刷日志）。</summary>
+        private int m_heldKeyRepairs;
+
+        /// <summary>第一次收掉残留时打一条日志，之后只累计计数（AGENTS.md：热路径禁止频繁日志）。</summary>
+        private bool m_heldKeyRepairLogged;
 
         private IModParentField m_fields;
         private bool[] m_keysDown;
@@ -315,6 +340,9 @@ namespace CmdBridgeMod
         /// <summary>当前是否有按键/鼠标处于"按住"状态（供依赖 Mod 检查是否还有残留输入）。</summary>
         public bool IsHoldingAnything => m_heldKeys.Count > 0 || m_heldButtons.Count > 0;
 
+        /// <summary>镜像与引擎键盘数组不一致、被每帧自检修掉的次数（只读，供排查）。</summary>
+        internal int HeldKeyRepairs => m_heldKeyRepairs;
+
         /// <summary>
         /// 帧首泵：任何 Mod 都可以把一个动作排到"下一帧帧首"执行。
         /// 需要它是因为 Dispatcher.Dispatch 在主线程调用会立即执行，只有后台线程调用才会入队到帧首。
@@ -329,6 +357,12 @@ namespace CmdBridgeMod
 
         /// <summary>热键注册表（帧首判定，可复用：PlayerAiMod 用它绑 Home / PgUp / PgDn）。</summary>
         internal HotkeyRegistry Hotkeys { get; }
+
+        /// <summary>
+        /// 跳跃审计/输入阶段注入：由 order -11 的 `CursorSoftGuard` 在 `ComponentInput`(-10) 之前调用。
+        /// 由插件在创建后回填（`Plug/CmdBridgeMod.cs`），未接上时为 null、注入静默跳过。
+        /// </summary>
+        internal JumpAssist JumpAssist { get; set; }
 
         /// <summary>
         /// 扩展命令注册表：其它 Mod 往同一个控制通道里挂自己的命令前缀（例如 PlayerAiMod 的 `ai.*`），
@@ -422,26 +456,16 @@ namespace CmdBridgeMod
 
         // ---------------------------------------------------------------- 键盘
 
-        /// <summary>脉冲式按键：按下 1 帧（或 holdMs 毫秒）后松开，等价于真人按一下。</summary>
+        /// <summary>
+        /// 脉冲式按键：按下后松开，等价于真人按一下。
+        /// 命令面的默认按下时长是一帧量级（<see cref="DefaultPulseHoldMs"/> = 40ms，
+        /// `CommandRouter.cs` 的 `act.key`）；显式传 0 仍按 0 处理。
+        /// </summary>
         public object KeyPulse(string keyName, int holdMilliseconds)
         {
             EnsureEnabled();
             Key key = ParseKey(keyName);
-            OnGameThread(() =>
-            {
-                SetKeyHeld(key, true);
-                return null;
-            });
-
-            if (holdMilliseconds > 0)
-                Thread.Sleep(Math.Min(holdMilliseconds, 10000));
-
-            OnGameThread(() =>
-            {
-                SetKeyHeld(key, false);
-                return null;
-            });
-
+            PulseKeyCore(key, holdMilliseconds);
             return DescribeHeldKeys();
         }
 
@@ -457,7 +481,11 @@ namespace CmdBridgeMod
             });
         }
 
-        /// <summary>组合键：先按住修饰键，再脉冲目标键，最后松开修饰键。</summary>
+        /// <summary>
+        /// 组合键：先按住修饰键，再脉冲目标键，最后松开修饰键。
+        /// 目标键的按下时长与 <see cref="KeyPulse"/> 同源（`act.chord` 默认也是
+        /// <see cref="DefaultPulseHoldMs"/> = 40ms），显式传 0 仍按 0 处理。
+        /// </summary>
         public object KeyChord(string[] modifierNames, string keyName, int holdMilliseconds)
         {
             EnsureEnabled();
@@ -473,7 +501,21 @@ namespace CmdBridgeMod
                 return null;
             });
 
-            KeyPulseCore(key, holdMilliseconds);
+            bool pulsesOnGameThread = GameThreadInvoker.IsGameThread();
+            PulseKeyCore(key, holdMilliseconds);
+
+            if (pulsesOnGameThread)
+            {
+                // 游戏线程上脉冲的松开已经排到下一帧帧首了（见 PulseKeyCore），
+                // 修饰键必须等在同一批之后才松 —— 否则"下一帧才抬起的 v"会在 ctrl 已经松掉的帧生效，
+                // 组合键退化成单键（Pump.Enqueue 是 FIFO，同一批次里按入队顺序执行）。
+                Pump.Enqueue(delegate
+                {
+                    for (int i = 0; i < modifiers.Count; i++)
+                        SetKeyHeld(modifiers[i], false);
+                });
+                return DescribeHeldKeys();
+            }
 
             OnGameThread(() =>
             {
@@ -883,6 +925,71 @@ namespace CmdBridgeMod
         internal void SignalFrameEnd()
         {
             Pump.SignalFrameEnd();
+
+            // 每帧一次自检修复（这里在游戏线程、帧末，离下一次写入输入层最近）。
+            // 排进帧首泵而不是就地做：帧首才是"引擎数组已经由 BeforeFrame/窗口事件写定"的时刻。
+            Pump.Enqueue(delegate { RepairHeldKeyMirror(); });
+        }
+
+        /// <summary>
+        /// 每帧自检：把"镜像说按着、引擎数组说松开了"的键从 <see cref="m_heldKeys"/> 里收掉。
+        ///
+        /// 为什么会失同步：窗口每次失焦，引擎都会 `Keyboard.Clear()` 把
+        /// `m_keysDownArray`/`m_keysDownOnceArray`/`m_keysDownRepeatArray` 整体清零
+        /// （Source: Engine/Engine/Window.cs:362-364 → Engine/Engine/Input/Keyboard.cs:116-126），
+        /// 软键盘弹出走的是同一个 Clear（`Keyboard.cs:81-83`）；镜像没人通知，就一直留着。
+        /// 收掉之后下一次下按就能按"引擎真实状态"补出按下沿（见 <see cref="SetKeyHeld"/>），
+        /// 这才是"第一次按下无效"能自愈的关键。
+        ///
+        /// 方向刻意选得**安全**：只动本类自己的簿记，绝不写引擎数组。
+        /// 反方向（拿镜像去把引擎数组抬回 true）会造出幽灵按键 —— 用户根本没按，
+        /// 角色却在走。读不到数组（游戏还没加载完）时直接返回，什么都不改。
+        ///
+        /// 热路径不刷日志：只有第一次修复打一条，之后只累计 <see cref="HeldKeyRepairs"/>（AGENTS.md）。
+        /// </summary>
+        private void RepairHeldKeyMirror()
+        {
+            if (m_heldKeys.Count == 0)
+                return;
+            if (m_keysDown == null)
+                return;
+
+            int repaired = 0;
+            try
+            {
+                var stale = new List<int>();
+                foreach (int index in m_heldKeys)
+                {
+                    if (index < 0 || index >= m_keysDown.Length)
+                        continue;
+                    if (!m_keysDown[index])
+                        stale.Add(index);
+                }
+
+                for (int i = 0; i < stale.Count; i++)
+                {
+                    m_heldKeys.Remove(stale[i]);
+                    repaired++;
+                }
+            }
+            catch (Exception exception)
+            {
+                Log.Warning("[CmdBridge] held key self-check failed: "
+                    + exception.GetType().Name + ": " + exception.Message);
+                return;
+            }
+
+            if (repaired <= 0)
+                return;
+
+            m_heldKeyRepairs += repaired;
+            if (m_heldKeyRepairLogged)
+                return;
+
+            m_heldKeyRepairLogged = true;
+            Log.Information("[CmdBridge] held key mirror went stale (the engine cleared its "
+                + "keyboard arrays, e.g. on window deactivation); removed " + repaired
+                + " key(s). Press edges are now decided by the engine state, so this self-heals.");
         }
 
         /// <summary>
@@ -994,22 +1101,88 @@ namespace CmdBridgeMod
             });
         }
 
-        private void KeyPulseCore(Key key, int holdMilliseconds)
+        /// <summary>
+        /// 一次按键脉冲的**唯一**实现：先按下，再保证松开。
+        ///
+        /// 两条路径的区别只在"怎么等"：
+        ///   · **后台线程**（TCP 客户端）：保持原语义 —— 立刻按下，`Thread.Sleep(holdMs)` 后松开。
+        ///     这里睡的是后台线程，不影响游戏帧。
+        ///   · **游戏线程**（行为树 tick、`GameThreadInvoker.Invoke` 内联的那条路径）：**绝不 sleep**。
+        ///     原来 sleep 会把整个游戏帧阻塞住（`holdMs` 越大卡得越久，嵌套调用还会互相叠加）；
+        ///     改成把松开排到**下一帧帧首**，于是 press 与 release 之间**至少跨一个帧边界**，
+        ///     帧体一定能看到 `IsKeyDown`/`IsKeyDownOnce`。`holdMs=0` 也照样跨帧
+        ///     （原来是同一次 `Dispatcher.BeforeFrame` 批次里按下又抬起，帧体只能看到 downOnce，
+        ///     移动类消费者读的 `IsKeyDown` 恒为 false —— `Survivalcraft/Game/ComponentInput.cs:172-177`）。
+        ///
+        /// `try/finally` 保证**无论松开是否超时/抛异常**（`GameThreadInvoker.cs:78-79` 的
+        /// `TimeoutException`、游戏卡顿停止出帧），镜像 `m_heldKeys` 一定被清掉 ——
+        /// 否则这个键会永久留在"注入按住"里，之后每次合并都会把它抬回按下。
+        /// 异常照原样向上抛（调用方要能拿到超时错误），只有"主异常已经在飞"时才把松开失败记进日志。
+        /// </summary>
+        private void PulseKeyCore(Key key, int holdMilliseconds)
         {
-            OnGameThread(() =>
+            bool onGameThread = GameThreadInvoker.IsGameThread();
+            bool released = false;
+            try
             {
-                SetKeyHeld(key, true);
-                return null;
-            });
+                OnGameThread(() =>
+                {
+                    SetKeyHeld(key, true);
+                    return null;
+                });
 
-            if (holdMilliseconds > 0)
-                Thread.Sleep(Math.Min(holdMilliseconds, 10000));
+                if (onGameThread)
+                {
+                    // 已在游戏线程：松开排到下一帧帧首（Pump 的动作本来就在 Dispatcher.BeforeFrame 里跑）。
+                    Pump.Enqueue(delegate { ReleasePulseKey(key); });
+                }
+                else
+                {
+                    if (holdMilliseconds > 0)
+                        Thread.Sleep(Math.Min(holdMilliseconds, 10000));
 
-            OnGameThread(() =>
+                    OnGameThread(() =>
+                    {
+                        SetKeyHeld(key, false);
+                        return null;
+                    });
+                }
+
+                released = true;
+            }
+            finally
+            {
+                if (!released)
+                {
+                    try
+                    {
+                        OnGameThread(() =>
+                        {
+                            SetKeyHeld(key, false);
+                            return null;
+                        });
+                    }
+                    catch (Exception exception)
+                    {
+                        Log.Warning("[CmdBridge] failed to release pulsed key " + key + ": "
+                            + exception.GetType().Name + ": " + exception.Message);
+                    }
+                }
+            }
+        }
+
+        /// <summary>松开一个脉冲键；给帧首泵用，异常绝不能从泵里漏出去。</summary>
+        private void ReleasePulseKey(Key key)
+        {
+            try
             {
                 SetKeyHeld(key, false);
-                return null;
-            });
+            }
+            catch (Exception exception)
+            {
+                Log.Warning("[CmdBridge] failed to release pulsed key " + key + ": "
+                    + exception.GetType().Name + ": " + exception.Message);
+            }
         }
 
         internal void SetKeyHeld(Key key, bool down)
@@ -1019,20 +1192,30 @@ namespace CmdBridgeMod
             if (index < 0 || index >= m_keysDown.Length)
                 throw new BridgeCommandException("invalid_argument", "Unknown key: " + key + ".");
 
-            bool wasHeld = m_heldKeys.Contains(index);
+            // 按下沿的判据取自**引擎真实数组**，不是镜像 m_heldKeys：
+            //   · m_keysDown[index]  —— 引擎此刻是否认为这个键按着（窗口失焦时会被 Keyboard.Clear() 清零，
+            //     `Keyboard.cs:116-126`；镜像还留着，只信镜像就会认为"已经按着"）。
+            //   · m_keysDownOnce[index] —— 这一帧的按下沿是否已经存在（幂等护栏：同一帧重复下按
+            //     不能再重置连发计时，否则永远不连发，`Keyboard.cs:144-161`）。
+            // 两者都指向"引擎说没按过"时才补写 downOnce + 重置连发；这样失焦后第一次按下就能生效，
+            // 而不必等第二次（"第一次无效、第二次才生效"的根因）。
+            bool engineSaysDown = m_keysDown[index];
+            bool downOncePending = m_keysDownOnce[index];
             m_keysDown[index] = down;
 
             if (down)
             {
-                if (!wasHeld)
+                if (!engineSaysDown && !downOncePending)
                 {
                     // 只在下按的那一帧写 -1：Keyboard.AfterFrame 会把它转换成真实的连发计时，
                     // 每帧重写会不断重置计时导致永远不连发。
                     // Source: Engine/Engine/Input/Keyboard.cs:154-160
                     m_keysRepeat[index] = -1.0;
                     m_keysDownOnce[index] = true;
-                    m_heldKeys.Add(index);
                 }
+                // 镜像只表示"我们自己注入过按下"（共控合并与收尾要用），
+                // 不再作为"是否要补按下沿"的判据；残留由 RepairHeldKeyMirror 每帧收掉。
+                m_heldKeys.Add(index);
                 Fields.ModifyStaticField(typeof(Keyboard), InputWhitelist.KeyboardLastKey, (Key?)key);
             }
             else

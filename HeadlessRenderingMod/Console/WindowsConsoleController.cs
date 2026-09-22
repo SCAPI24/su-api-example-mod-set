@@ -1217,7 +1217,16 @@ namespace HeadlessRenderingMod
         private int? SelectMenu(string title, string[] items, int selected) =>
             Interactive(() => SelectMenuCore(title, items, selected));
 
-        private int? SelectMenuCore(string title, string[] items, int selected)
+        // SelectMenuCore 每次都清屏，所以"这一页的固定说明"必须由菜单自己印：notes 就是菜单
+        // 标题下面那几行说明（GM 授权页用它写清"与能否加入房间无关"）。
+        private int? SelectMenuWithNotes(string title, string[] notes, string[] items,
+            int selected) =>
+            Interactive(() => SelectMenuCore(title, items, selected, notes));
+
+        private int? SelectMenuCore(string title, string[] items, int selected) =>
+            SelectMenuCore(title, items, selected, null);
+
+        private int? SelectMenuCore(string title, string[] items, int selected, string[] notes)
         {
             if (items == null || items.Length == 0)
                 return null;
@@ -1229,6 +1238,11 @@ namespace HeadlessRenderingMod
                 int first = page * MenuPageSize;
                 int last = Math.Min(first + MenuPageSize, items.Length);
                 Console.WriteLine(GetCurrentScreen() + "> " + title);
+                if (notes != null)
+                {
+                    foreach (string note in notes)
+                        Console.WriteLine(note);
+                }
                 Console.WriteLine("Up/Down select  Left back  Right/Enter next  PageUp/PageDown page");
                 Console.WriteLine();
                 for (int i = first; i < last; i++)
@@ -1651,10 +1665,9 @@ namespace HeadlessRenderingMod
                     "Simple setup (recommended)",
                     "Professional settings",
                     "Pending approvals [" + pendingApprovals + "]",
-                    "Recent decisions [" + decisionCount + "]" + (latestDecision == null
-                        ? "  |  none yet"
-                        : "  |  last: " + latestDecision.Describe()),
-                    "Authorised players [" + CountAuthorisedPlayers() + "]",
+                    // 父节点只显示计数；"last: …" 摘要挪进 Recent decisions 子页顶部。
+                    "Recent decisions [" + decisionCount + "]",
+                    "GM / data-modification authorisations [" + CountAuthorisedPlayers() + "]",
                     "Back"
                 }, 0);
             if (!setup.HasValue || setup.Value == 6)
@@ -1717,7 +1730,7 @@ namespace HeadlessRenderingMod
             }
             else if (setup.Value == 4)
             {
-                ShowDataModificationDecisions();
+                ShowDataModificationDecisions(latestDecision);
                 return;
             }
             else
@@ -1733,13 +1746,20 @@ namespace HeadlessRenderingMod
         /// 控制台里手动允许/拒绝、以及收到的 Result 回执。远端只有控制台，这是唯一能直接
         /// 看到"请求是不是被自动同意了、后来怎么了"的地方。
         /// </summary>
-        private void ShowDataModificationDecisions()
+        /// <param name="lastDecision">
+        /// 父菜单里只显示计数的"最新一条"，摘要在这里作为子页顶部高亮印出来。
+        /// </param>
+        private void ShowDataModificationDecisions(DataModificationFeed.Entry lastDecision)
         {
             List<DataModificationFeed.Entry> decisions =
                 m_dataModificationFeed?.Snapshot() ?? new List<DataModificationFeed.Entry>();
             Console.Clear();
             Console.WriteLine(GetCurrentScreen() + "> Data Modification Decisions");
             Console.WriteLine("Auto approve allowlist: " + DescribeAutoApproveAllowlist());
+            // 最近一条的高亮行（父节点现在只显示计数）。
+            Console.WriteLine("Last: " + (lastDecision == null
+                ? "none yet"
+                : lastDecision.Describe()));
             Console.WriteLine();
             if (decisions.Count == 0)
             {
@@ -1755,8 +1775,10 @@ namespace HeadlessRenderingMod
             Console.WriteLine();
             Console.WriteLine("AutoApproveQueued/AutoApproved = server.json allowlist,");
             Console.WriteLine("ManualAllowed/ManualRejected = decided in this menu,");
+            Console.WriteLine("ManualTrusted = \"always allow\" in this menu (world trusted list),");
             Console.WriteLine("Result = receipt published by ScMultiplayer.");
-            Console.WriteLine("Authorised identities are listed under Authorised players.");
+            Console.WriteLine("Who holds GM / data-modification permission is on the");
+            Console.WriteLine("\"GM / data-modification authorisations\" page (joining a room is separate).");
             Pause();
         }
 
@@ -1788,58 +1810,256 @@ namespace HeadlessRenderingMod
         }
 
         /// <summary>
-        /// "谁被授权了"：server.json 白名单 + 世界受信任名单 + 在线客户端身份。
+        /// "谁拿到 GM / 数据修改权限了"：server.json 白名单 + 世界受信任名单 + 在线客户端身份，
+        /// 并且可以直接在这里**撤销 / 授予**（不再是纯打印）。
         /// 两者的区别：白名单的请求**仍然会到主机**，由无头服务器自动同意（Recent decisions 里看得到）；
         /// 世界受信任名单（"总是同意该玩家"）的请求**连审批请求都不产生**，主机直接落地。
+        ///
+        /// ⚠️ 这一页**只**管数据修改（GM）权限，与"能不能进房间"完全无关：
+        /// 加入房间由上游 ScMultiplayerSettings.autoApproveJoinRequests
+        /// （Multiplayer Hosting → "Auto approve joins"）控制。
         /// </summary>
         private void ShowDataModificationAuthorisation()
         {
-            Dictionary<string, object> settings = GetMultiplayerSettings();
-            Dictionary<string, object> status = TryGetDataModificationStatus();
-            List<string> trustedIdentities = ReadTrustedIdentities(status);
-            List<Dictionary<string, object>> clients = ReadClientIdentities(status);
-            string[] allowlist = m_config?.AutoApproveDataModificationUserIds ?? Array.Empty<string>();
-            string mode = ReadString(settings, "dataModificationMode", "default");
-
-            Console.Clear();
-            Console.WriteLine(GetCurrentScreen() + "> Data Modification - Authorised Players");
-            Console.WriteLine("Mode: " + FormatDataModificationMode(mode) +
-                DescribeDataModificationMode(mode));
-            Console.WriteLine("Pending approvals: " + ReadInteger(settings,
-                "pendingDataModificationApprovals"));
-            Console.WriteLine();
-            Console.WriteLine("server.json allowlist (autoApproveDataModificationUserIds) [" +
-                allowlist.Length + "]");
-            Console.WriteLine("  requests still reach the host, then are approved automatically");
-            if (allowlist.Length == 0)
-                Console.WriteLine("  (empty - nobody is auto approved)");
-            foreach (string identity in allowlist)
-                Console.WriteLine("  - " + DescribeIdentity(identity, clients));
-            Console.WriteLine();
-            Console.WriteLine("World trusted players (ScMultiplayerTrustedClients.xml) [" +
-                trustedIdentities.Count + "]");
-            Console.WriteLine("  no approval request is created at all; the host applies them directly");
-            if (trustedIdentities.Count == 0)
-                Console.WriteLine("  (nobody is trusted in this world)");
-            foreach (string identity in trustedIdentities)
-                Console.WriteLine("  - " + DescribeIdentity(identity, clients));
-            Console.WriteLine();
-            Console.WriteLine("Online clients [" + clients.Count + "]");
-            if (clients.Count == 0)
-                Console.WriteLine("  (no remote client is connected)");
-            foreach (Dictionary<string, object> client in clients)
+            int selected = 0;
+            while (m_running)
             {
-                string key = ReadString(client, "key", string.Empty);
-                bool trusted = client.TryGetValue("trusted", out object trustedValue) &&
-                    trustedValue is bool trustedFlag && trustedFlag;
-                string verdict = trusted ? "authorised (world trusted list)"
-                    : IsAllowlisted(allowlist, key) ? "authorised (server.json allowlist)"
-                    : "asks for approval";
-                Console.WriteLine("  client " + ReadInteger(client, "clientId") + "  " +
-                    ReadString(client, "name", "Player") + "  " +
-                    (string.IsNullOrEmpty(key) ? "<no identity>" : key) + "  -> " + verdict);
+                Dictionary<string, object> settings = GetMultiplayerSettings();
+                Dictionary<string, object> status = TryGetDataModificationStatus();
+                List<string> trustedIdentities = ReadTrustedIdentities(status);
+                List<Dictionary<string, object>> clients = ReadClientIdentities(status);
+                string[] allowlist = m_config?.AutoApproveDataModificationUserIds ??
+                    Array.Empty<string>();
+                string mode = ReadString(settings, "dataModificationMode", "default");
+
+                // 菜单条目和"选中后干什么"分开存：labels 给菜单显示，kinds/keys 决定动作。
+                var labels = new List<string>();
+                var kinds = new List<string>();
+                var keys = new List<string>();
+
+                labels.Add("server.json allowlist (autoApproveDataModificationUserIds) [" +
+                    allowlist.Length + "]");
+                kinds.Add("header");
+                keys.Add(string.Empty);
+                if (allowlist.Length == 0)
+                {
+                    labels.Add("  (empty - nobody is auto approved)");
+                    kinds.Add("header");
+                    keys.Add(string.Empty);
+                }
+                foreach (string identity in allowlist)
+                {
+                    labels.Add("  - " + (identity == "*"
+                        ? "*   [every client]"
+                        : DescribeIdentity(identity, clients)) + "   (select to remove)");
+                    kinds.Add("allowlist");
+                    keys.Add(identity);
+                }
+
+                labels.Add("world trusted list (ScMultiplayerTrustedClients.xml) [" +
+                    trustedIdentities.Count + "]");
+                kinds.Add("header");
+                keys.Add(string.Empty);
+                if (trustedIdentities.Count == 0)
+                {
+                    labels.Add("  (nobody is trusted in this world)");
+                    kinds.Add("header");
+                    keys.Add(string.Empty);
+                }
+                foreach (string identity in trustedIdentities)
+                {
+                    labels.Add("  - " + DescribeIdentity(identity, clients) +
+                        "   (select to revoke GM permission)");
+                    kinds.Add("trusted");
+                    keys.Add(identity);
+                }
+
+                labels.Add("online clients [" + clients.Count + "]");
+                kinds.Add("header");
+                keys.Add(string.Empty);
+                if (clients.Count == 0)
+                {
+                    labels.Add("  (no remote client is connected)");
+                    kinds.Add("header");
+                    keys.Add(string.Empty);
+                }
+                foreach (Dictionary<string, object> client in clients)
+                {
+                    string clientKey = ReadString(client, "key", string.Empty);
+                    bool trusted = client.TryGetValue("trusted", out object trustedValue) &&
+                        trustedValue is bool trustedFlag && trustedFlag;
+                    string verdict = trusted ? "GM granted (world trusted list)"
+                        : IsAllowlisted(allowlist, clientKey)
+                            ? "GM granted (server.json allowlist)"
+                            : "not granted - asks for approval";
+                    labels.Add("  client " + ReadInteger(client, "clientId") + "  " +
+                        ReadString(client, "name", "Player") + "  " +
+                        (string.IsNullOrEmpty(clientKey) ? "<no identity>" : clientKey) +
+                        "  -> " + verdict + "   (select to grant GM)");
+                    kinds.Add("client");
+                    keys.Add(clientKey);
+                }
+
+                labels.Add("Back");
+                kinds.Add("back");
+                keys.Add(string.Empty);
+
+                int? choice = SelectMenuWithNotes(
+                    "Data Modification - GM / data-modification authorisations",
+                    new[]
+                    {
+                        "Mode: " + FormatDataModificationMode(mode) +
+                            DescribeDataModificationMode(mode),
+                        "Pending approvals: " + ReadInteger(settings,
+                            "pendingDataModificationApprovals"),
+                        "This page only controls GM (data modification) permission.",
+                        "It does NOT control who may join the room - joining is controlled",
+                        "upstream by Multiplayer Hosting > \"Auto approve joins\".",
+                        "allowlist: requests still reach the host, then are approved automatically.",
+                        "world trusted: no approval request is created at all; applied directly."
+                    },
+                    labels.ToArray(), selected);
+                if (!choice.HasValue)
+                    return;
+                selected = choice.Value;
+                string kind = kinds[selected];
+                string key = keys[selected];
+                if (kind == "back")
+                    return;
+                if (kind == "header")
+                {
+                    Console.WriteLine();
+                    Console.WriteLine("That line is a section heading, not an entry.");
+                    Pause();
+                    continue;
+                }
+                if (kind == "allowlist")
+                {
+                    RemoveAllowlistIdentity(key, allowlist);
+                    continue;
+                }
+                if (kind == "trusted")
+                {
+                    RevokeWorldTrust(key);
+                    continue;
+                }
+                GrantAllowlistIdentity(key);
+            }
+        }
+
+        /// <summary>
+        /// 从 server.json 白名单移除一个身份（TryRemoveAutoApproveUserId 会立即覆盖写盘）。
+        /// </summary>
+        private void RemoveAllowlistIdentity(string identity, string[] allowlist)
+        {
+            Console.WriteLine();
+            string error;
+            if (m_config.TryRemoveAutoApproveUserId(identity, out error))
+            {
+                Console.WriteLine("Removed from the GM allowlist: " + identity);
+                RecordAuthorisationChange("ManualAllowlistRemoved", identity,
+                    "removed from server.json autoApproveDataModificationUserIds");
+                if (identity == "*")
+                {
+                    Console.WriteLine("The \"*\" entry itself is gone - every client falls back to");
+                    Console.WriteLine("asking for approval (the individual entries above still apply).");
+                }
+                else if (Array.IndexOf(allowlist, "*") >= 0)
+                {
+                    // 注意别用 IsAllowlisted 判：传进来的 allowlist 是"删之前"的快照，
+                    // 里面还带着刚删掉的那条，会永远命中。
+                    Console.WriteLine("Note: the \"*\" entry is still in the list, so this identity");
+                    Console.WriteLine("keeps being approved automatically.");
+                }
+            }
+            else
+            {
+                Console.WriteLine("Could not remove \"" + identity + "\" from the GM allowlist: " +
+                    error);
+                RecordAuthorisationChange("ManualAllowlistRemoveFailed", identity, error);
             }
             Pause();
+        }
+
+        /// <summary>
+        /// 在线客户端 → 授予 GM / 数据修改权限：写进 server.json 白名单并立即写盘。
+        /// 它的请求之后仍会到主机，由无头服务器自动同意（Recent decisions 里看得到）。
+        /// 只动数据修改权限，不碰任何"能否加入房间"的开关。
+        /// </summary>
+        private void GrantAllowlistIdentity(string identity)
+        {
+            Console.WriteLine();
+            if (string.IsNullOrEmpty(identity))
+            {
+                Console.WriteLine("This client has no identity key yet, so it cannot go on the GM");
+                Console.WriteLine("allowlist. Let it connect with an account identity first.");
+                RecordAuthorisationChange("ManualAllowlistGrantFailed", identity,
+                    "client has no identity key yet");
+                Pause();
+                return;
+            }
+            string error;
+            if (m_config.TryAddAutoApproveUserId(identity, out error))
+            {
+                Console.WriteLine("Granted GM / data-modification permission to \"" + identity + "\".");
+                Console.WriteLine("Written to server.json autoApproveDataModificationUserIds.");
+                RecordAuthorisationChange("ManualAllowlistGranted", identity,
+                    "added to server.json autoApproveDataModificationUserIds");
+            }
+            else
+            {
+                Console.WriteLine("Could not grant GM permission to \"" + identity + "\": " + error);
+                RecordAuthorisationChange("ManualAllowlistGrantFailed", identity, error);
+            }
+            Pause();
+        }
+
+        /// <summary>
+        /// 取消世界受信任名单里的 GM 授权：operation=untrust（按身份键）。
+        /// Source: HeadlessRenderingMod.cs:ControlDataModificationApprovals
+        /// </summary>
+        private void RevokeWorldTrust(string identity)
+        {
+            Console.WriteLine();
+            try
+            {
+                Dictionary<string, object> response = RequireSuccess(m_server.SubmitLocal(
+                    "multiplayer.dm",
+                    new Dictionary<string, object>(StringComparer.Ordinal)
+                    {
+                        ["operation"] = "untrust",
+                        ["identity"] = identity
+                    }));
+                PrintResponse(response);
+                Console.WriteLine("Revoked GM / data-modification permission for \"" + identity +
+                    "\" (removed from the world trusted list).");
+                RecordAuthorisationChange("ManualUntrusted", identity,
+                    "removed from the world trusted list");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Could not revoke GM permission for \"" + identity + "\": " +
+                    ex.Message);
+                RecordAuthorisationChange("ManualUntrustFailed", identity, ex.Message);
+            }
+            Pause();
+        }
+
+        // Source: Mod/HeadlessRenderingMod/Server/DataModificationFeed.cs:DataModificationFeed.Entry
+        // 授权页的"授予 GM / 移除白名单 / 取消世界受信"也要进 Recent decisions：与「Always allow」
+        // 那条同口径。否则 Recent decisions 里只看得到待审批的处置记录，
+        // 审计上会缺"谁被授权过、谁被撤销过"这一块。
+        private void RecordAuthorisationChange(string code, string identity, string details)
+        {
+            m_dataModificationFeed?.Add(new DataModificationFeed.Entry
+            {
+                Kind = "manual",
+                Code = code,
+                ModId = "HeadlessRenderingMod",
+                Operation = "authorisation",
+                SourceKey = identity ?? string.Empty,
+                Details = details ?? string.Empty
+            });
         }
 
         private string DescribeIdentity(string identity,
@@ -1897,7 +2117,7 @@ namespace HeadlessRenderingMod
                 return " - every request is approved automatically";
             if (string.Equals(mode, "reject", StringComparison.OrdinalIgnoreCase))
                 return " - every request is refused";
-            return " - authorised identities are approved automatically; everyone else waits " +
+            return " - GM-authorised identities are approved automatically; everyone else waits " +
                 "in Pending approvals";
         }
 
@@ -1957,7 +2177,8 @@ namespace HeadlessRenderingMod
                     Console.WriteLine(GetCurrentScreen() + "> Data Modification Approvals");
                     Console.WriteLine("No pending data modification requests.");
                     Console.WriteLine("Decisions already made are listed under Recent decisions.");
-                    Console.WriteLine("Who is authorised is listed under Authorised players.");
+                    Console.WriteLine("GM / data-modification authorisations are on the");
+                    Console.WriteLine("\"GM / data-modification authorisations\" page.");
                     Pause();
                     return;
                 }
@@ -1971,16 +2192,34 @@ namespace HeadlessRenderingMod
                     return;
                 Dictionary<string, object> approval = approvals[selected.Value];
                 string decision = PromptChoice("Decision",
-                    new[] { "Allow", "Reject", "Back" }, "Reject");
+                    new[]
+                    {
+                        "Allow",
+                        "Reject",
+                        // 第 4 项：把该玩家写进世界受信任名单（GM / 数据修改权限），之后不再产生审批请求。
+                        "Always allow this player (grant GM / data-modification permission)",
+                        "Back"
+                    }, "Reject");
                 if (decision.StartsWith("Back", StringComparison.OrdinalIgnoreCase))
                     continue;
+                // 注意 "Always allow…" 并不是以 "Allow" 开头的，放行判定要把这一项显式算进去。
+                bool alwaysAllow = decision.StartsWith("Always allow",
+                    StringComparison.OrdinalIgnoreCase);
+                if (alwaysAllow)
+                {
+                    // 先 trust 再 resolve：resolve 之后这条 pending 就消失了，trust 要按 pending
+                    // 记录里的 sourceClientId / sourceKey 发。授权失败就不做本次 resolve，
+                    // 让这条请求留在 Pending approvals 里，操作员能看出"权限没给成"并重试。
+                    if (!GrantWorldTrust(approval))
+                        continue;
+                }
                 var values = new Dictionary<string, object>(StringComparer.Ordinal)
                 {
                     ["operation"] = "resolve",
                     ["sourceClientId"] = ReadInteger(approval, "sourceClientId"),
                     ["requestId"] = ReadInteger(approval, "requestId"),
                     ["transferId"] = ReadInteger(approval, "transferId"),
-                    ["allow"] = decision.StartsWith("Allow",
+                    ["allow"] = alwaysAllow || decision.StartsWith("Allow",
                         StringComparison.OrdinalIgnoreCase)
                 };
                 Dictionary<string, object> resolution = RequireSuccess(
@@ -2005,6 +2244,58 @@ namespace HeadlessRenderingMod
                         : "the host did not resolve this approval"
                 });
             }
+        }
+
+        /// <summary>
+        /// "总是允许该玩家"：把发起这条 DM 请求的客户端写进世界受信任名单（GM / 数据修改权限），
+        /// 之后它的请求**连审批请求都不产生**。必须先 trust 再 resolve —— resolve 之后这条 pending
+        /// 就没了，两个参数都取自 pending 记录。
+        ///
+        /// ⚠️ 这里**只**动数据修改（GM）权限，不碰任何"能否加入房间"的开关。
+        /// 返回 false 表示授权没成功（本次请求也不该 resolve），成功/失败都会写一条决策记录。
+        /// </summary>
+        private bool GrantWorldTrust(Dictionary<string, object> approval)
+        {
+            var trustValues = new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["operation"] = "trust",
+                ["sourceClientId"] = ReadInteger(approval, "sourceClientId"),
+                ["sourceKey"] = ReadString(approval, "sourceKey", string.Empty)
+            };
+            string identity = ReadString(approval, "sourceKey", string.Empty);
+            string who = string.IsNullOrEmpty(identity)
+                ? "client " + ReadInteger(approval, "sourceClientId")
+                : identity;
+            Console.WriteLine();
+            bool trusted = false;
+            string details;
+            try
+            {
+                Dictionary<string, object> trustResponse = RequireSuccess(
+                    m_server.SubmitLocal("multiplayer.dm", trustValues));
+                PrintResponse(trustResponse);
+                trusted = true;
+                details = "granted GM / data-modification permission (world trusted list)";
+            }
+            catch (Exception ex)
+            {
+                details = "could not grant GM / data-modification permission: " + ex.Message;
+            }
+            Console.WriteLine(trusted
+                ? "Granted \"always allow\" (world trusted list) to " + who + "."
+                : "Failed to grant \"always allow\" to " + who + ": " + details);
+            m_dataModificationFeed?.Add(new DataModificationFeed.Entry
+            {
+                Kind = "manual",
+                Code = trusted ? "ManualTrusted" : "ManualTrustFailed",
+                ModId = ReadString(approval, "modId", "Mod"),
+                Operation = ReadString(approval, "operation", "operation"),
+                SourceClientId = ReadInteger(approval, "sourceClientId"),
+                RequestId = ReadInteger(approval, "requestId"),
+                SourceKey = ReadString(approval, "sourceKey", string.Empty),
+                Details = details
+            });
+            return trusted;
         }
 
         private List<Dictionary<string, object>> GetDataModificationApprovals()

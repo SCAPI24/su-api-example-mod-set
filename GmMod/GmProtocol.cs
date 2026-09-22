@@ -24,6 +24,11 @@ namespace GmMod
         /// <summary>联机 mod 的通用地图方块 operation（主机直接改权威地形并广播给全端）。</summary>
         public const string SetCells = "ScMP.Data.Cells";
 
+        // Source: Mod/ScMultiplayer/DataModification/ScMultiplayerWorldControlModification.cs:
+        // WorldControlDataOperation.Name
+        // 运行时天气（降雨 / 雾气 / 闪电）与"推到某个时间点"不在 WorldSettings 里，单独一条通用 op。
+        public const string SetWorldControl = "ScMP.Data.WorldControl";
+
         public const string ModId = "GmMod";
 
         /// <summary>季节/日期字段名（引擎 `WorldSettings.TimeOfYear`，0..1）。</summary>
@@ -34,6 +39,22 @@ namespace GmMod
 
         /// <summary>天气效果开关字段名（引擎 `WorldSettings.AreWeatherEffectsEnabled`，bool）。</summary>
         public const string WeatherEffectsField = "AreWeatherEffectsEnabled";
+
+        // ---- `ScMP.Data.WorldControl` 的字段名（与联机 mod 的 WorldControlDataOperation 一字不差）
+        /// <summary>降雨：on / off / toggle。</summary>
+        public const string PrecipitationField = "Precipitation";
+
+        /// <summary>雾气：on / off / toggle。</summary>
+        public const string FogField = "Fog";
+
+        /// <summary>闪电：strike（在请求者眼睛前方立即劈一次）。</summary>
+        public const string LightningField = "Lightning";
+
+        /// <summary>时间点：dawn / noon / dusk / midnight。</summary>
+        public const string TimePointField = "TimePoint";
+
+        /// <summary>精确时间：0..1（与引擎 `SubsystemTimeOfDay.TimeOfDay` 同口径）。</summary>
+        public const string TimeExactField = "TimeExact";
     }
 
     /// <summary>
@@ -70,6 +91,13 @@ namespace GmMod
         /// </summary>
         public static byte[] EncodeWorldSetting(string name, string value) =>
             Encode(new KeyValuePair<string, string>(name, value));
+
+        // Source: Mod/ScMultiplayer/DataModification/ScMultiplayerWorldControlModification.cs:
+        // WorldControlDataOperation
+        // `ScMP.Data.WorldControl` 与 `ScMP.Data.WorldSettings` 共用同一套 `字段名\t值` 纯文本载荷，
+        // 所以这里只是给调用点一个语义更清楚的名字（不复制格式，避免两处漂移）。
+        public static byte[] EncodeWorldControl(string name, string value) =>
+            EncodeWorldSetting(name, value);
 
         /// <summary>`ScMP.Data.Cells` 的载荷：每行 `x,y,z,contents,data`（主机按原地形保留光照位）。</summary>
         public static byte[] EncodeCell(int x, int y, int z, int contents, int data) =>

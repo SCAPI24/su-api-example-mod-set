@@ -49,6 +49,35 @@ DataModificationTool.RequestPlayerModification(
   **分发完全在主机侧**，任何 mod 都不做同步。
 - 载荷转发：仍然不转发 payload；审批弹窗会显示解析出的摘要（`DataModificationApprovalRequest.Summary`）。
 
+## 通用世界控制操作（运行时天气 + 时间点）
+
+`ScMP.Data.WorldControl` 与 `ScMP.Data.WorldSettings` / `ScMP.Data.Cells` 同级，同样是**联机 mod 自己
+在主机侧落地**的自定义 operation（主机端不需要安装任何第三方 mod，例如 GM 工具）。它补的缺口是：
+`WorldSettings` 里只有天气**总开关** `AreWeatherEffectsEnabled`，没有"开始降雨 / 起雾 / 闪电"这类运行时
+状态；而引擎原生那几个按钮（`ComponentGui.Update` 里的 Precipitation / Fog / Lightning / TimeOfDay）
+要求 `GameMode.Creative` 或 `WorldControl` 能力，并且完全绕过 DM 审批。
+
+- 载荷：与 `ScMP.Data.WorldSettings` **同一套纯文本 `字段名<TAB>值`**（UTF-8，复用
+  `WorldSettingsDataCodec`），同样不用 JSON。
+- 字段与主机语义（`ScMultiplayerWorldControlModification.ApplyHostWorldControlModification`）：
+
+  | 字段 | 取值 | 主机执行 |
+  |------|------|----------|
+  | `Precipitation` | `on` / `off` / `toggle` | `SubsystemWeather.ManualPrecipitationStart` / `ManualPrecipitationEnd` |
+  | `Fog` | `on` / `off` / `toggle` | `SubsystemWeather.ManualFogStart` / `ManualFogEnd` |
+  | `Lightning` | `strike` | `SubsystemWeather.ManualLightingStrike`，方向取**发起请求的客户端**的眼睛朝向，主机本地玩家兜底 |
+  | `TimePoint` | `dawn` / `noon` / `dusk` / `midnight` | `TimeOfDayOffset += IntervalUtils.Interval(TimeOfDay, 目标)`，定点跳到该时间点 |
+  | `TimeExact` | `0..1` | 同上，口径与 `SubsystemTimeOfDay.TimeOfDay` 一致 |
+
+- 落地与分发：主机在游戏线程执行后调用 `SendGameWorldInfoMessage()`，复用**既有**的 2Hz 世界信息广播
+  把降水 / 雾 / 时间偏移发给所有客户端 —— **没有新协议**，客户端仍不参与落地。
+- 两个必须记住的行为（否则看起来"点了没反应"）：
+  1. **"打开降雨 / 雾气"会顺带把 `WorldSettings.AreWeatherEffectsEnabled` 总开关打开**：客户端
+     `SubsystemWeather.Update` 受总开关约束，总开关关着时降水与雾根本不渲染；摘要里会多一条
+     `weatherEffects=on`。
+  2. **跳时间点前会先把 `TimeOfDayMode` 切回 `Changing`**：引擎在非 `Changing` 档位把时间**固定**住，
+     不切的话改 `TimeOfDayOffset` 看不到任何变化；这一步会体现在回执摘要里（`timeOfDayMode=Changing`）。
+
 ## 受信任客户端（自动同意）
 
 审批弹窗有三个选项：`Allow` / `Reject` / **`Always allow this player`**。第三项会把该客户端的
@@ -57,7 +86,7 @@ DataModificationTool.RequestPlayerModification(
 `reject` 档位仍然一律拒绝。
 
 主机侧由此有三种"会被同意"的来源，无头服务器控制台可以在
-`Multiplayer Hosting > Data modification > Authorised players` 里直接看到前两种和在线身份：
+`Multiplayer Hosting > Data modification > GM / data-modification authorisations [N]` 里直接看到前两种和在线身份：
 
 | 来源 | 行为 |
 |------|------|
@@ -65,9 +94,33 @@ DataModificationTool.RequestPlayerModification(
 | 无头服务器 `server.json` 的 `autoApproveDataModificationUserIds` | 请求照常产生，只是由无头 mod 立刻 `allow`（日志里能看到 `[DM] Auto approve ...`） |
 | `dataModificationMode = allow` | 所有请求一律同意 |
 
-主机控制面（`ScMultiplayer.DataModification.ApprovalControl`，`operation=list`）除 `pending` 外还返回
-`trusted`（世界受信任名单）与 `clients`（在线客户端的 `clientId` / `key` / `name` / `trusted`），
-供无头 mod 显示"谁被授权了"，不含第三方 mod 需要的协议变更。
+主机控制面事件 `ScMultiplayer.DataModification.ApprovalControl` 支持四个 operation：
+
+| operation | 参数 | 返回 |
+|-----------|------|------|
+| `list`（缺省） | 无 | `pending`；主机侧另有 `trusted`（世界受信任名单）与 `clients`（在线客户端的 `clientId` / `key` / `name` / `trusted`） |
+| `resolve` | `sourceClientId` / `requestId` / `transferId` / `allow` | `resolved` |
+| `trust` | `identity`（优先）或 `sourceKey`，可选 `sourceClientId` | `resolved` / `trusted` / `identity` |
+| `untrust` | 同上 | `resolved` / `trusted` / `identity` |
+
+`trust` / `untrust` 分别走 `TrustDataModificationIdentity(string identity, int clientId = -1)` 与
+`UntrustDataModificationIdentity(string identity)`，改的就是世界目录下的 `ScMultiplayerTrustedClients.xml`；
+原来的 `TrustDataModificationClient(int clientId)` 保留，内部委托给身份版。身份优先取显式传入的
+`identity`，其次取无头控制台待审批条目里的记录键 `sourceKey`（玩家可能已经离线），最后才回落到在线
+客户端表。**内存集合才是真相源**（`IsTrustedDataModificationClient` 每次请求都查它），写盘只是持久化，
+所以取消授权**立即生效**。
+
+> **GM / 数据修改授权与"允许加入房间"是两套完全独立的开关。** 能不能进房间由
+> `ScMultiplayerSettings.autoApproveJoinRequests`（无头控制台 `Multiplayer Hosting > Auto approve joins`）
+> 决定；`trust` / `untrust` **只改数据修改（GM）权限**，绝不触碰任何加入相关设置。注意无头控制台授权页里
+> 的 `server.json allowlist (autoApproveDataModificationUserIds)` 也是**数据修改**白名单，与加入白名单无关。
+
+无头服务器控制台在这条链路上的行为（细节见 `Mod/HeadlessRenderingMod/README.md`）：授权页改名为
+`GM / data-modification authorisations [N]`，可以逐条移除 `server.json` 白名单条目、也可以取消世界受信
+（`operation=untrust`，按身份）；`Pending approvals` 的决策菜单新增
+**「Always allow this player（授予 GM 权限）」**，动作是**先 `trust` 再 `resolve allow`**，
+授权失败时该请求留在待审批里；`Recent decisions` 的父节点只显示计数，`last: …` 摘要移到子页顶部，
+`ManualTrusted` / `ManualTrustFailed` 等授权记录一并进 `Recent decisions`。
 
 主机对**远端客户端**的裁决（`Applied` / `Failed` / `Rejected` / `Busy` / `Invalid` / `NotSupported` /
 `Cancelled`）过去只发给该客户端；现在 `SendResult` 在主机侧同时本地发布一次
@@ -75,7 +128,7 @@ DataModificationTool.RequestPlayerModification(
 
 ## 内置角色操作
 
-七个内置操作只允许走 Fast 通道，payload 使用 `PlayerDataModificationCodec`。`ScMP.Player.*` 命名空间由 ScMultiplayer 保留，不进入第三方 `Apply` 事件，因此其它 Mod 不能在主机校验失败后用同名处理器绕过拒绝结果。
+九个内置操作只允许走 Fast 通道，payload 使用 `PlayerDataModificationCodec`。`ScMP.Player.*` 命名空间由 ScMultiplayer 保留，不进入第三方 `Apply` 事件，因此其它 Mod 不能在主机校验失败后用同名处理器绕过拒绝结果。
 
 | 操作 | 请求字段 | 主机执行结果 |
 |------|----------|--------------|
@@ -86,8 +139,10 @@ DataModificationTool.RequestPlayerModification(
 | `ScMP.Player.Heal` | `Amount`，范围 `(0, 1]` | 只对存活角色调用原版 `ComponentHealth.Heal`，随后发送权威健康状态 |
 | `ScMP.Player.SafeRespawnRelocate` | 可选 `OffsetX/Y/Z` | 主机从现有复活点附近查找安全位置，同时修改复活点和当前角色位置 |
 | `ScMP.Player.Seal` | `TargetClientId`、可选 `Radius/Height` | 仅主机本地申请；主机在已加载地形用基岩生成有界外壳并执行邻近更新 |
+| `ScMP.Player.SetVitals` | `Vitals` 位掩码（`Food=1` / `Stamina=2` / `Sleep=4` / `Temperature=8` / `Wetness=16`，**未置位 = 保持主机当前值**）+ `VitalsFood` / `VitalsStamina` / `VitalsSleep` / `VitalsTemperature` / `VitalsWetness` | 目标须存活；`food` / `stamina` / `sleep` / `wetness` 限 `0..1`，`temperature` 限 `0..24`（**12 = 舒适**，引擎口径）。主机复用 `ApplyAuthoritativePlayerStats` 写 `m_food` / `m_stamina` / `m_sleep` / `m_temperature` / `m_wetness` 与对应的 `m_last*`，随后 `SendAuthoritativePlayerHealth(force: true)` 权威下发 |
+| `ScMP.Player.SetCondition` | `Condition` 位掩码（`Flu=1` / `Sickness=2`；`None` = 全部）、`ConditionMode`（`ConditionAction.Clear=0` / `Apply=1`）、`ConditionDuration`（秒，`0` = 引擎默认时长，上限 `3600`） | 施加走原版 `ComponentFlu.StartFlu()` / `ComponentSickness.StartSickness()`（给了秒数就写 `m_fluDuration` / `m_sicknessDuration`）；解除与 `ResetNetworkPlayerVitals` 同口径（流感 6 个字段清零；中毒含 `m_pukeParticleSystem` 置 `null` + 3 个字段清零），随后同样 `SendAuthoritativePlayerHealth(force: true)` |
 
-复活点、位置、背包、等级和生命修改成功后，远程角色会立即更新 `ScMultiplayerPlayers.xml`；主机本地角色走原版项目保存。传送结果使用独立可靠权威消息送达拥有角色的客户端，并清理主机上该角色尚未执行的旧移动、瞄准、攻击、交互、丢弃和跳跃队列，避免旧输入把角色拉回。基岩封印通过 `SubsystemTerrain.ChangeCell` 写主机地形，并复用现有地形闭包和可见范围同步，不由客户端自行放置或转发。
+复活点、位置、背包、等级、生命、生命体征和异常状态修改成功后，远程角色会立即更新 `ScMultiplayerPlayers.xml`；主机本地角色走原版项目保存。传送结果使用独立可靠权威消息送达拥有角色的客户端，并清理主机上该角色尚未执行的旧移动、瞄准、攻击、交互、丢弃和跳跃队列，避免旧输入把角色拉回。基岩封印通过 `SubsystemTerrain.ChangeCell` 写主机地形，并复用现有地形闭包和可见范围同步，不由客户端自行放置或转发。
 
 ## 两条通道
 
@@ -108,7 +163,7 @@ DataModificationTool.RequestPlayerModification(
 
 GUI 主机从 MP 菜单进入 `Data Modification`；无头服务器从 `Multiplayer Hosting -> Data modification` 或 `multiplayer.settings` 控制。配置写入现有 `data:/ScMultiplayerSettings.json`，缺失字段按默认值迁移。
 
-无头服务器收到 `default` 模式请求时会在控制台输出一行审批提示。管理员从 `Multiplayer Hosting -> Data modification -> Pending approvals` 处理，或通过控制接口 `multiplayer.dm` 列出并提交决定；ScMultiplayer 保留审批队列和最终决定权，HeadlessRenderingMod 只负责显示和转发控制命令。
+无头服务器收到 `default` 模式请求时会在控制台输出一行审批提示。管理员从 `Multiplayer Hosting -> Data modification -> Pending approvals` 处理（决策菜单里除 `Allow` / `Reject` 外还有 **「Always allow this player（授予 GM 权限）」**，动作是先 `trust` 再 `resolve allow`），或通过控制接口 `multiplayer.dm` 列出并提交决定；ScMultiplayer 保留审批队列和最终决定权，HeadlessRenderingMod 只负责显示和转发控制命令。
 
 ## 线程和性能边界
 

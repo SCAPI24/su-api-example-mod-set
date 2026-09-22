@@ -257,16 +257,28 @@ Behaviour notes:
   ones additionally log `[DM] Auto approve queued: ...` and `[DM] Auto approve submitted: ...`;
   `ScMultiplayer.DataModification.Result` receipts log `[DM] Result: ...`.
 - The console keeps that history under **Multiplayer Hosting > Data modification > Recent decisions
-  [N]** (newest first): `AutoApproveQueued` / `AutoApproved` = matched the server.json allowlist,
-  `ManualAllowed` / `ManualRejected` = decided in the console menu, `Result` = verdict published by
+  [N]** (newest first; the parent menu shows only the count, the sub-page starts with a `Last:` line):
+  `AutoApproveQueued` / `AutoApproved` = matched the server.json allowlist,
+  `ManualAllowed` / `ManualRejected` = decided in the console menu, `ManualTrusted` / `ManualTrustFailed`
+  = "always allow this player" in the console menu, `Result` = verdict published by
   ScMultiplayer (host-side verdicts for remote clients are published locally too, so the console shows
   `Applied` / `Failed` / `Rejected` / `Busy` / `Invalid` / `NotSupported` / `Cancelled` with the reason).
-- **Multiplayer Hosting > Data modification > Authorised players [N]** answers "who may modify data":
+- **Multiplayer Hosting > Data modification > GM / data-modification authorisations [N]** answers
+  "who may modify data" and **only** controls data modification (GM) permission - it has nothing to do
+  with who may join the room, which is controlled upstream by Multiplayer Hosting > *Auto approve joins*:
   the `server.json` allowlist, the world trusted list (`ScMultiplayerTrustedClients.xml`, whose requests
   create **no approval at all**), and every online client with its record key plus the verdict
-  (`authorised (world trusted list)` / `authorised (server.json allowlist)` / `asks for approval`).
-  The screen also explains the active `dataModificationMode`, so `Default` no longer looks like
-  "everything is allowed".
+  (`GM granted (world trusted list)` / `GM granted (server.json allowlist)` / `not granted - asks for
+  approval`). The page is a menu now: pick an allowlist entry to remove it from `server.json` (written
+  back immediately, UTF-8 without BOM), pick a world-trusted entry to revoke it (`operation=untrust`,
+  by identity), pick an online client to grant GM permission by adding its key to the `server.json`
+  allowlist. The screen also explains the active `dataModificationMode`, so `Default` no longer looks
+  like "everything is allowed".
+- **Pending approvals** has a fourth choice, *Always allow this player (grant GM / data-modification
+  permission)*: it first submits `operation=trust` (`sourceClientId` + `sourceKey`) to put the player on
+  the world trusted list and then resolves the request with `allow=true`. If the grant fails the request
+  is left pending, so the operator sees that no permission was handed out.
+
 - Console output produced while a menu or a text prompt is open is queued and reprinted after the
   interactive screen closes, so the menu can no longer disappear under a background `[DM]` line.
 - Manual approval through the console (Multiplayer Hosting > Data modification > Pending approvals)

@@ -49,6 +49,11 @@ namespace HeadlessRenderingMod
         public string[] AutoApproveDataModificationUserIds { get; private set; } =
             Array.Empty<string>();
 
+        // server.json 的落点。控制台菜单改了白名单要**立即覆盖写回同一份文件**，
+        // 所以配置对象必须记住自己是从哪个路径读出来的（由 CreateDefault 赋值，
+        // LoadOrCreate 的两个分支都经由它构造）。
+        private string m_configPath;
+
         // Source: Engine/Engine/Storage.cs:Storage.ProcessPath
         public static HeadlessServerConfig LoadOrCreate(string instanceRoot)
         {
@@ -130,6 +135,10 @@ namespace HeadlessRenderingMod
                 Port = FindAvailablePort(26741, 100),
                 Token = Convert.ToHexString(RandomNumberGenerator.GetBytes(32))
             };
+            // 记住落点：白名单的增删要覆盖写回这份 server.json。
+            // LoadOrCreate 的两个分支（首次创建 / 已存在）都经由这里构造，
+            // 路径与它自己拼的 configPath 完全一致。
+            config.m_configPath = Path.Combine(instanceRoot, "server.json");
             config.Validate();
             return config;
         }
@@ -162,11 +171,133 @@ namespace HeadlessRenderingMod
                 throw new InvalidDataException("maxRequestBytes must be between 1024 and 1048576.");
         }
 
+        /// <summary>
+        /// 覆盖式写回 server.json（文件已存在也能写）。失败**不抛异常**：调用方是控制台菜单，
+        /// 写盘出错只该打印一行错误，不能把菜单打崩。
+        /// </summary>
+        public bool TrySave(out string error)
+        {
+            error = null;
+            if (string.IsNullOrEmpty(m_configPath))
+            {
+                error = "the server.json path is unknown.";
+                return false;
+            }
+            try
+            {
+                WriteTo(m_configPath, FileMode.Create);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// 把一个身份加进 server.json 的 DM 自动同意白名单并立即写盘。
+        /// 不变式与 <see cref="ReadStringArray"/> 一致：去空白、每条 1-128 字符、最多 64 条。
+        /// 已经在名单里（大小写不敏感，与 IsAllowlisted 同口径）视为成功，且不重复写盘。
+        /// </summary>
+        public bool TryAddAutoApproveUserId(string identity, out string error)
+        {
+            error = null;
+            string trimmed = identity?.Trim();
+            if (string.IsNullOrEmpty(trimmed))
+            {
+                error = "the identity cannot be empty.";
+                return false;
+            }
+            if (trimmed.Length > MaximumAutoApproveEntryLength)
+            {
+                error = "the identity must contain 1-" +
+                    MaximumAutoApproveEntryLength + " characters.";
+                return false;
+            }
+
+            string[] current = AutoApproveDataModificationUserIds ?? Array.Empty<string>();
+            foreach (string entry in current)
+            {
+                if (string.Equals(entry, trimmed, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+            if (current.Length >= MaximumAutoApproveEntries)
+            {
+                error = "the allowlist already holds " + MaximumAutoApproveEntries + " entries.";
+                return false;
+            }
+
+            var updated = new List<string>(current) { trimmed };
+            string[] previous = AutoApproveDataModificationUserIds;
+            AutoApproveDataModificationUserIds = updated.ToArray();
+            if (!TrySave(out error))
+            {
+                // 写盘失败就回滚内存状态：控制台显示的和 server.json 必须一致。
+                AutoApproveDataModificationUserIds = previous;
+                return false;
+            }
+            return true;
+        }
+
+        /// <summary>从白名单移除一个身份（大小写不敏感）并立即写盘。</summary>
+        public bool TryRemoveAutoApproveUserId(string identity)
+        {
+            return TryRemoveAutoApproveUserId(identity, out _);
+        }
+
+        /// <summary>同上，额外给出失败原因（不在名单里 / 写盘失败）。</summary>
+        public bool TryRemoveAutoApproveUserId(string identity, out string error)
+        {
+            error = null;
+            string trimmed = identity?.Trim();
+            if (string.IsNullOrEmpty(trimmed))
+            {
+                error = "the identity cannot be empty.";
+                return false;
+            }
+
+            string[] current = AutoApproveDataModificationUserIds ?? Array.Empty<string>();
+            var updated = new List<string>(current.Length);
+            bool found = false;
+            foreach (string entry in current)
+            {
+                if (string.Equals(entry, trimmed, StringComparison.OrdinalIgnoreCase))
+                {
+                    found = true;
+                    continue;
+                }
+                updated.Add(entry);
+            }
+            if (!found)
+            {
+                error = "the identity is not in the allowlist.";
+                return false;
+            }
+
+            string[] previous = AutoApproveDataModificationUserIds;
+            AutoApproveDataModificationUserIds = updated.ToArray();
+            if (!TrySave(out error))
+            {
+                AutoApproveDataModificationUserIds = previous;
+                return false;
+            }
+            return true;
+        }
+
+        // 首次创建仍然只走这里：FileMode.CreateNew，文件已存在会抛 IOException，与原实现语义一致。
         private void Save(string configPath)
+        {
+            WriteTo(configPath, FileMode.CreateNew);
+        }
+
+        // 字段顺序与缩进跟原 Save 完全一致。用 Utf8JsonWriter 直写 FileStream，
+        // **绝不会写出 UTF-8 BOM** —— 远端工具用 python json.load 读这份文件，BOM 会让它解析失败。
+        private void WriteTo(string configPath, FileMode mode)
         {
             using FileStream stream = new FileStream(
                 configPath,
-                FileMode.CreateNew,
+                mode,
                 FileAccess.Write,
                 FileShare.Read);
             using Utf8JsonWriter writer = new Utf8JsonWriter(

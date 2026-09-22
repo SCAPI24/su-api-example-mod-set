@@ -41,9 +41,9 @@ sccmd waitfor <condition> [--timeout ms]   server-side condition wait (exit code
 sccmd look <yawDeg> <pitchDeg>        instant absolute view
 sccmd lookdelta <dYaw> <dPitch>       relative view
 sccmd lookat <x> <y> <z>              look at a world position (solved against engine math)
-sccmd key <name> [holdMs]             key pulse
+sccmd key <name> [holdMs]             key pulse (default holdMs = 40 ms ≈ one frame; explicit 0 = press+release in the same frame)
 sccmd hold <name> / release <name>|--all
-sccmd chord ctrl v                    modifier chord
+sccmd chord ctrl v                    modifier chord (same 40 ms default for the target key)
 sccmd mouse left click|down|up        world dig / place / interact
 sccmd wheel <notches>                 hotbar / list scrolling (negative = forward)
 sccmd click <selector|id> [--at x y]  engine-internal UI click (re-validated before injecting)

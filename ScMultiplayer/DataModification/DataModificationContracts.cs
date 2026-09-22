@@ -26,6 +26,39 @@ namespace ScMultiplayer
         CreativeInventory = 4
     }
 
+    /// <summary>
+    /// `ScMP.Player.SetVitals` 要改哪几项生命体征（位掩码）。缺席的位表示"保持主机当前值"，
+    /// 这样同一份 `PlayerDataModificationRequest` 可以只改饱食度、也可以一次改多项。
+    /// </summary>
+    [Flags]
+    public enum VitalsField : byte
+    {
+        None = 0,
+        Food = 1,
+        Stamina = 2,
+        Sleep = 4,
+        Temperature = 8,
+        Wetness = 16,
+        All = Food | Stamina | Sleep | Temperature | Wetness
+    }
+
+    /// <summary>`ScMP.Player.SetCondition` 作用于哪些异常状态（位掩码）。</summary>
+    [Flags]
+    public enum ConditionKind : byte
+    {
+        None = 0,
+        Flu = 1,
+        Sickness = 2,
+        All = Flu | Sickness
+    }
+
+    public enum ConditionAction : byte
+    {
+        /// <summary>解除（0 是默认值，所以"没写"等价于解除；应用方还会用 <see cref="ConditionKind.None"/> 表示"全部解除"）。</summary>
+        Clear = 0,
+        Apply = 1
+    }
+
     public static class DataModificationOperationNames
     {
         public const string SetRespawnAnchor = "ScMP.Player.SetRespawnAnchor";
@@ -37,6 +70,11 @@ namespace ScMultiplayer
         public const string SealPlayer = "ScMP.Player.Seal";
         public const string RequestCapabilities = "ScMP.Player.RequestCapabilities";
         public const string RevokeCapabilities = "ScMP.Player.RevokeCapabilities";
+        // Source: Mod/ScMultiplayer/DataModification/ScMultiplayerPlayerAdministration.cs:
+        // ScMultiplayer.ApplySetVitalsRequest / ApplySetConditionRequest
+        // GM 工具（第三方 mod）需要改指定角色的生命体征与异常状态；落地仍由主机完成。
+        public const string SetVitals = "ScMP.Player.SetVitals";
+        public const string SetCondition = "ScMP.Player.SetCondition";
 
         public static bool IsBuiltIn(string operation) =>
             string.Equals(operation, SetRespawnAnchor, StringComparison.Ordinal) ||
@@ -47,7 +85,9 @@ namespace ScMultiplayer
             string.Equals(operation, SafeRespawnRelocate, StringComparison.Ordinal) ||
             string.Equals(operation, SealPlayer, StringComparison.Ordinal) ||
             string.Equals(operation, RequestCapabilities, StringComparison.Ordinal) ||
-            string.Equals(operation, RevokeCapabilities, StringComparison.Ordinal);
+            string.Equals(operation, RevokeCapabilities, StringComparison.Ordinal) ||
+            string.Equals(operation, SetVitals, StringComparison.Ordinal) ||
+            string.Equals(operation, SetCondition, StringComparison.Ordinal);
     }
 
     // Source: Mod/ScMultiplayer/DataModification/DataModificationTool.cs:
@@ -71,6 +111,22 @@ namespace ScMultiplayer
         public int Radius { get; set; } = 1;
         public int Height { get; set; } = 3;
         public PlayerCapabilityFlags Capabilities { get; set; }
+        // Source: Mod/ScMultiplayer/DataModification/ScMultiplayerPlayerAdministration.cs:
+        // ScMultiplayer.ApplySetVitalsRequest
+        // `ScMP.Player.SetVitals`：`Vitals` 指定位掩码，只有被选中的项会写，其余保持主机当前值。
+        public VitalsField Vitals { get; set; }
+        public float VitalsFood { get; set; }
+        public float VitalsStamina { get; set; }
+        public float VitalsSleep { get; set; }
+        public float VitalsTemperature { get; set; }
+        public float VitalsWetness { get; set; }
+        // Source: Mod/ScMultiplayer/DataModification/ScMultiplayerPlayerAdministration.cs:
+        // ScMultiplayer.ApplySetConditionRequest
+        // `ScMP.Player.SetCondition`：`Condition` 指定位掩码（None = 全部），`ConditionDuration` 秒
+        // （0 = 用引擎默认时长）。
+        public ConditionKind Condition { get; set; }
+        public ConditionAction ConditionMode { get; set; }
+        public float ConditionDuration { get; set; }
     }
 
     public static class PlayerDataModificationCodec

@@ -104,5 +104,11 @@
     <SkipType name="ScMultiplayer.PlayerDataModificationRequest" skipMethods="true" skipFields="true" skipProperties="true" skipEvents="true" />
     <SkipType name="ScMultiplayer.PlayerDataModificationCodec" skipMethods="true" skipFields="true" skipProperties="true" skipEvents="true" />
     <SkipType name="ScMultiplayer.PlayerCapabilityFlags" skipMethods="true" skipFields="true" skipProperties="true" skipEvents="true" />
+    <!-- ScMP.Player.SetVitals / SetCondition 的载荷枚举：GmMod 在**另一个程序集**里引用它们，
+         被改名后运行时会抛 "Could not load type 'ScMultiplayer.VitalsField'"（实测：GM 菜单
+         一开"饱食度"就报错、操作根本提交不出去）。与 PlayerCapabilityFlags 同理必须跳过。 -->
+    <SkipType name="ScMultiplayer.VitalsField" skipMethods="true" skipFields="true" skipProperties="true" skipEvents="true" />
+    <SkipType name="ScMultiplayer.ConditionKind" skipMethods="true" skipFields="true" skipProperties="true" skipEvents="true" />
+    <SkipType name="ScMultiplayer.ConditionAction" skipMethods="true" skipFields="true" skipProperties="true" skipEvents="true" />
   </Module>
 </Obfuscator>

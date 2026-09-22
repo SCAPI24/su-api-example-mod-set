@@ -14,6 +14,10 @@ namespace ScMultiplayer
         private const int MaximumGrantedItemCount = 4096;
         private const float MaximumRestoredLevel = 1000000f;
         private const float MaximumRequestedCoordinate = 1000000f;
+        // Source: Survivalcraft/Game/ComponentVitalStats.cs:ComponentVitalStats.UpdateTemperature
+        // 引擎把体温夹在 0..24（12 = 舒适），所以 GM 也只能在这个区间里设值。
+        private const float MaximumRequestedTemperature = 24f;
+        private const float MaximumRequestedConditionDuration = 3600f;
         private int m_hostPlayerAuthoritySequence;
 
         // Source: Mod/ScMultiplayer/DataModification/DataModificationCoordinator.cs:
@@ -95,6 +99,10 @@ namespace ScMultiplayer
                     ApplyRestoreLevelRequest(targetClientId, playerData, player, request),
                 DataModificationOperationNames.HealPlayer =>
                     ApplyHealPlayerRequest(targetClientId, playerData, player, request),
+                DataModificationOperationNames.SetVitals =>
+                    ApplySetVitalsRequest(targetClientId, playerData, player, request),
+                DataModificationOperationNames.SetCondition =>
+                    ApplySetConditionRequest(targetClientId, playerData, player, request),
                 DataModificationOperationNames.SafeRespawnRelocate =>
                     ApplySafeRespawnRelocateRequest(targetClientId, playerData, player, request),
                 DataModificationOperationNames.SealPlayer =>
@@ -249,6 +257,184 @@ namespace ScMultiplayer
             PersistPlayerAdministrationTarget(targetClientId, playerData);
             return DataModificationApplyResult.Success("Health restored by the host.");
         }
+
+        // Source: Survivalcraft/Game/ComponentVitalStats.cs:ComponentVitalStats.Update
+        // Source: Mod/ScMultiplayer/Modules/Player/ScMultiplayerProfileHandlers.cs:
+        // ScMultiplayer.ApplyAuthoritativePlayerStats
+        // 「改生命体征 / 饱食度 / 体温」：`ComponentVitalStats.Food` 等属性是 `private set`，只能按名写
+        // 底层字段（GodMode 同法）；写完必须走权威生命值下发，否则客户端表现不会刷新。
+        private DataModificationApplyResult ApplySetVitalsRequest(int targetClientId,
+            PlayerData playerData, ComponentPlayer player, PlayerDataModificationRequest request)
+        {
+            ComponentVitalStats vital = player.ComponentVitalStats;
+            ComponentHealth health = player.ComponentHealth;
+            if (vital == null || health == null || health.Health <= 0f)
+                return DataModificationApplyResult.Reject("Vitals require a living target player.");
+            VitalsField fields = request.Vitals &
+                (VitalsField.Food | VitalsField.Stamina | VitalsField.Sleep |
+                    VitalsField.Temperature | VitalsField.Wetness);
+            if (fields == VitalsField.None)
+                return DataModificationApplyResult.Reject("No vital field was requested.");
+            if (!TryResolveRequestedVital(fields, VitalsField.Food, request.VitalsFood, vital.Food,
+                    0f, 1f, "food", out float food, out string error) ||
+                !TryResolveRequestedVital(fields, VitalsField.Stamina, request.VitalsStamina,
+                    vital.Stamina, 0f, 1f, "stamina", out float stamina, out error) ||
+                !TryResolveRequestedVital(fields, VitalsField.Sleep, request.VitalsSleep,
+                    vital.Sleep, 0f, 1f, "sleep", out float sleep, out error) ||
+                !TryResolveRequestedVital(fields, VitalsField.Temperature, request.VitalsTemperature,
+                    vital.Temperature, 0f, MaximumRequestedTemperature, "temperature",
+                    out float temperature, out error) ||
+                !TryResolveRequestedVital(fields, VitalsField.Wetness, request.VitalsWetness,
+                    vital.Wetness, 0f, 1f, "wetness", out float wetness, out error))
+            {
+                return DataModificationApplyResult.Reject(error);
+            }
+
+            ApplyAuthoritativePlayerStats(player, health.Health, health.Air, food, stamina, sleep,
+                temperature, wetness, playerData.Level);
+            SendAuthoritativePlayerHealth(targetClientId, player, force: true);
+            PersistPlayerAdministrationTarget(targetClientId, playerData);
+            var applied = new List<string>();
+            if ((fields & VitalsField.Food) != 0)
+                applied.Add("food=" + FormatVitalValue(food));
+            if ((fields & VitalsField.Stamina) != 0)
+                applied.Add("stamina=" + FormatVitalValue(stamina));
+            if ((fields & VitalsField.Sleep) != 0)
+                applied.Add("sleep=" + FormatVitalValue(sleep));
+            if ((fields & VitalsField.Temperature) != 0)
+                applied.Add("temperature=" + FormatVitalValue(temperature));
+            if ((fields & VitalsField.Wetness) != 0)
+                applied.Add("wetness=" + FormatVitalValue(wetness));
+            return DataModificationApplyResult.Success(
+                "vitals updated by the host: " + string.Join(", ", applied));
+        }
+
+        // Source: Survivalcraft/Game/ComponentFlu.cs:ComponentFlu.StartFlu
+        // Source: Survivalcraft/Game/ComponentSickness.cs:ComponentSickness.StartSickness
+        // Source: Mod/ScMultiplayer/Modules/Session/ScMultiplayerClientEvents.cs:
+        // ScMultiplayer.ResetNetworkPlayerVitals
+        // 「添加 / 解除异常状态」：异常状态只能由主机施加（客户端的 SuComponentFlu / SuComponentSickness
+        // 只做表现）。字段名与清零口径与 ResetNetworkPlayerVitals 一致，避免两处语义漂移。
+        private DataModificationApplyResult ApplySetConditionRequest(int targetClientId,
+            PlayerData playerData, ComponentPlayer player, PlayerDataModificationRequest request)
+        {
+            if (player.ComponentHealth == null || player.ComponentHealth.Health <= 0f)
+                return DataModificationApplyResult.Reject(
+                    "Status effects require a living target player.");
+            float duration = request.ConditionDuration;
+            if (!float.IsFinite(duration) || duration < 0f ||
+                duration > MaximumRequestedConditionDuration)
+            {
+                return DataModificationApplyResult.Reject(
+                    "The requested condition duration is out of range.");
+            }
+            ConditionKind kinds = request.Condition & ConditionKind.All;
+            bool apply = request.ConditionMode == ConditionAction.Apply;
+            if (kinds == ConditionKind.None)
+            {
+                // 不指定病种 = 全部解除（GM 菜单里的"解除全部异常状态"）。
+                kinds = ConditionKind.All;
+                apply = false;
+            }
+
+            var applied = new List<string>();
+            if ((kinds & ConditionKind.Flu) != 0)
+            {
+                ComponentFlu flu = player.Entity.FindComponent<ComponentFlu>();
+                if (flu == null)
+                    return DataModificationApplyResult.Reject("The target has no flu component.");
+                if (apply)
+                {
+                    if (duration > 0f)
+                        ModManager.ModParentField.ModifyParentField(flu, "m_fluDuration", duration,
+                            typeof(ComponentFlu));
+                    else
+                        flu.StartFlu();
+                }
+                else
+                {
+                    ClearFluState(flu);
+                }
+                applied.Add("flu=" + (apply ? "on" : "cleared"));
+            }
+            if ((kinds & ConditionKind.Sickness) != 0)
+            {
+                ComponentSickness sickness = player.Entity.FindComponent<ComponentSickness>();
+                if (sickness == null)
+                    return DataModificationApplyResult.Reject(
+                        "The target has no sickness component.");
+                if (apply)
+                {
+                    if (duration > 0f)
+                        ModManager.ModParentField.ModifyParentField(sickness, "m_sicknessDuration",
+                            duration, typeof(ComponentSickness));
+                    else
+                        sickness.StartSickness();
+                }
+                else
+                {
+                    ClearSicknessState(sickness);
+                }
+                applied.Add("sickness=" + (apply ? "on" : "cleared"));
+            }
+            SendAuthoritativePlayerHealth(targetClientId, player, force: true);
+            PersistPlayerAdministrationTarget(targetClientId, playerData);
+            return DataModificationApplyResult.Success(
+                "conditions updated by the host: " + string.Join(", ", applied));
+        }
+
+        private static void ClearFluState(ComponentFlu flu)
+        {
+            string[] fields =
+            {
+                "m_fluOnset", "m_fluDuration", "m_coughDuration", "m_sneezeDuration",
+                "m_blackoutDuration", "m_blackoutFactor"
+            };
+            foreach (string field in fields)
+                ModManager.ModParentField.ModifyParentField(flu, field, 0f, typeof(ComponentFlu));
+        }
+
+        private static void ClearSicknessState(ComponentSickness sickness)
+        {
+            // 注意：**不要**用泛型 `GetParentField<PukeParticleSystem>` —— 它内部只做 `value is T`，
+            // 字段为 null（玩家当前没在呕吐，这是常态）时会抛 "Member ... is not of type ..."。
+            // 用返回 object 的非泛型重载 + `is` 模式才是 null 安全的。
+            if (ModManager.ModParentField.GetParentField(sickness,
+                "m_pukeParticleSystem", typeof(ComponentSickness)) is PukeParticleSystem puke)
+            {
+                puke.IsStopped = true;
+            }
+            ModManager.ModParentField.ModifyParentField(sickness, "m_pukeParticleSystem", null,
+                typeof(ComponentSickness));
+            ModManager.ModParentField.ModifyParentField(sickness, "m_sicknessDuration", 0f,
+                typeof(ComponentSickness));
+            ModManager.ModParentField.ModifyParentField(sickness, "m_greenoutDuration", 0f,
+                typeof(ComponentSickness));
+            ModManager.ModParentField.ModifyParentField(sickness, "m_greenoutFactor", 0f,
+                typeof(ComponentSickness));
+        }
+
+        private static bool TryResolveRequestedVital(VitalsField requested, VitalsField field,
+            float requestedValue, float currentValue, float minimum, float maximum, string name,
+            out float value, out string error)
+        {
+            value = currentValue;
+            error = null;
+            if ((requested & field) == 0)
+                return true;
+            if (!float.IsFinite(requestedValue) || requestedValue < minimum ||
+                requestedValue > maximum)
+            {
+                error = "The requested " + name + " must be between " +
+                    FormatVitalValue(minimum) + " and " + FormatVitalValue(maximum) + ".";
+                return false;
+            }
+            value = requestedValue;
+            return true;
+        }
+
+        private static string FormatVitalValue(float value) =>
+            value.ToString("0.###", CultureInfo.InvariantCulture);
 
         // Source: Survivalcraft/Game/PlayerData.cs:PlayerData.FindNoIntroSpawnPosition
         private DataModificationApplyResult ApplySafeRespawnRelocateRequest(int targetClientId,

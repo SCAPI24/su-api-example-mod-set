@@ -513,9 +513,11 @@ IMod.OnUnload() → 释放全部按键/鼠标（防止残留按住） + 退订 +
 | `act.look` | 写输入 | `yaw`,`pitch`（绝对角度，瞬时） |
 | `act.lookat` | 写输入 | 目标方块/实体 → 自动反算角度 |
 | `act.lookdelta` | 写输入 | `dx`,`dy`（相对，可超人速度） |
-| `act.key` | 写输入 | `key`,`holdMs`（脉冲；`holdMs` 大则视为持续） |
+| `act.key` | 写输入 | `key`,`holdMs`（脉冲；**不传时默认 40ms ≈ 一帧**，显式 `0` = 同帧按下并抬起；`holdMs` 大则视为持续） |
 | `act.hold` | 写输入 | `key`,`down`（显式按下/释放，用于移动） |
-| `act.chord` | 写输入 | `modifiers[]`,`key` |
+| `act.chord` | 写输入 | `modifiers[]`,`key`,`holdMs`（目标键脉冲时长，**不传时默认 40ms ≈ 一帧**，与 `act.key` 同源；显式 `0` = 同帧按下并抬起） |
+| `jump.status` | 只读观察 | 空格/跳跃审计（帧首逐帧计数，**单调递增**）：`spaceEdges` 引擎看到几次空格边沿、`jumpOrders` 游戏产生几次跳跃指令、`rises` 几次真的离地、`rejected` 几次**没跳成**、`inputStageCalls` 输入阶段钩子跑了几次（order -11）、`edgesRestored` 其中恢复了几次引擎边沿（`buffered` 同值，向后兼容）、`edgesRestoredSpace` / `edgesRestoredOther` / `lastRestoredKey` 分别看空格与其他键、`expiredPresses` 窗口内没救回来的次数、`restoreSkippedByGate` 被组件前提挡住的次数；另附最近一次边沿当帧的 `lastEdgeStanding / Active / CameraOk / Sleeping / Ready / VelocityY`。因为计数单调递增，**轮询取增量即可**，不受"边沿只活一帧"影响 |
+| `jump.buffer` | 行为开关（**代码里默认开**） | `state=on/off/toggle`：**在输入阶段恢复引擎边沿，覆盖所有边沿型按键**（空格跳跃、Shift 蹲 `ComponentInput.cs:187`、E/C/V/Q/G/T/L/K/J/P/H/R/F/数字键 `:187-241`），不只是跳跃。注入点由 order **-11** 的 `IUpdateable`（`CursorSoftGuard`，紧贴 `ComponentInput`(-10) 之前，同一个排序 pass）调用 —— 与原版输入同一时刻（原版是"消息到达时记录 → 输入帧一次性写进 `PlayerInput`"）。条件：事件记录到一次空格、而 `Keyboard.IsKeyDownOnce(Space)` 仍为 false（`Keyboard.cs:171-176` 因"引擎认为还按着"不置边沿，或 `Keyboard.Clear()` 把边沿抹掉）、且玩家满足游戏自己的起跳前提（接地 + 活着 + 未睡 + 相机 `IsEntityControlEnabled && !UsesMovementControls` + 窗口活跃 + 世界就绪）时，写 `m_keysDownOnceArray[Space] = true`。随后 `ComponentInput`(-10) 把它当**真实按下**读走，0.3 秒双按规则（`ComponentInput.cs:76-87`）与所有门槛（`:91-117`）全部走原版；**不写 `JumpOrder`、不伪造第二次按键**。开关**恒久写在代码里**（`JumpAssist` 构造函数默认 true，不落 `CmdBridge.json`），`state=off` 只在本次运行内关闭。返回当前 `jump.status` |
 | `act.mouse` | 写输入 | `button`,`action`（`down`/`up`/`click`/`doubleclick`）、`holdMs` |
 | `act.wheel` | 写输入 | `delta` |
 | `act.releaseAll` | 写输入 | 释放全部按键/鼠标（紧急停止） |

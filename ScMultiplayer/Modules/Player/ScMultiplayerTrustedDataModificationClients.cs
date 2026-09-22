@@ -30,6 +30,11 @@ namespace ScMultiplayer
                 return null;
             if (CellDataOperation.IsCellOperation(context.Operation))
                 return ApplyHostCellModification(context);
+            // Source: Mod/ScMultiplayer/DataModification/ScMultiplayerWorldControlModification.cs:
+            // WorldControlDataOperation.Name
+            // 运行时天气（降雨 / 雾气 / 闪电）与时间点不在 `WorldSettings` 里，所以单独一条通用 op。
+            if (WorldControlDataOperation.IsWorldControlOperation(context.Operation))
+                return ApplyHostWorldControlModification(context);
             if (!WorldSettingsDataOperation.IsWorldSettingsOperation(context.Operation))
                 return null;
             if (!IsHost || GameManager.Project == null)
@@ -137,7 +142,19 @@ namespace ScMultiplayer
                     (request.SetAbsoluteLevel ? string.Empty
                         : request.Amount != 0f ? " amount=" + request.Amount : string.Empty) +
                     (request.ItemValue != 0 ? " item=" + request.ItemValue + " x" +
-                        request.ItemCount : string.Empty);
+                        request.ItemCount : string.Empty) +
+                    DescribeVitalsAndConditionRequest(operation, request);
+            }
+            // Source: Mod/ScMultiplayer/DataModification/ScMultiplayerWorldControlModification.cs:
+            // WorldControlDataOperation.Name
+            if (WorldControlDataOperation.IsWorldControlOperation(operation))
+            {
+                if (payload == null || payload.Length == 0)
+                    return null;
+                if (!WorldSettingsDataCodec.TryDecode(payload, out var actions, out _))
+                    return "(unreadable payload)";
+                return string.Join(", ",
+                    actions.Select(entry => entry.Key + "=" + entry.Value));
             }
             if (!WorldSettingsDataOperation.IsWorldSettingsOperation(operation))
                 return null;
@@ -147,6 +164,38 @@ namespace ScMultiplayer
                 return "(unreadable payload)";
             return string.Join(", ", entries.Take(4).Select(entry => entry.Key + "=" + entry.Value)) +
                 (entries.Count > 4 ? " (+" + (entries.Count - 4) + " more)" : string.Empty);
+        }
+
+        // Source: Mod/ScMultiplayer/DataModification/DataModificationContracts.cs:VitalsField
+        // Source: Mod/ScMultiplayer/DataModification/DataModificationContracts.cs:ConditionKind
+        // 新 op（SetVitals / SetCondition）在审批弹窗里的"改了什么"：不写出来的话主机只看到 op 名。
+        private static string DescribeVitalsAndConditionRequest(string operation,
+            PlayerDataModificationRequest request)
+        {
+            if (request == null)
+                return string.Empty;
+            var parts = new List<string>();
+            if ((request.Vitals & VitalsField.Food) != 0)
+                parts.Add("food=" + request.VitalsFood);
+            if ((request.Vitals & VitalsField.Stamina) != 0)
+                parts.Add("stamina=" + request.VitalsStamina);
+            if ((request.Vitals & VitalsField.Sleep) != 0)
+                parts.Add("sleep=" + request.VitalsSleep);
+            if ((request.Vitals & VitalsField.Temperature) != 0)
+                parts.Add("temperature=" + request.VitalsTemperature);
+            if ((request.Vitals & VitalsField.Wetness) != 0)
+                parts.Add("wetness=" + request.VitalsWetness);
+            if (string.Equals(operation, DataModificationOperationNames.SetCondition,
+                StringComparison.Ordinal))
+            {
+                parts.Add("condition=" +
+                    (request.Condition == ConditionKind.None ? "all" : request.Condition.ToString()) +
+                    (request.ConditionMode == ConditionAction.Apply ? "/apply" : "/clear") +
+                    (request.ConditionDuration > 0f
+                        ? " duration=" + request.ConditionDuration
+                        : string.Empty));
+            }
+            return parts.Count == 0 ? string.Empty : " " + string.Join(" ", parts);
         }
 
         // ================================================================
@@ -271,12 +320,49 @@ namespace ScMultiplayer
                 !m_clientRecordKeys.TryGetValue(clientId, out string identity) ||
                 string.IsNullOrWhiteSpace(identity))
                 return false;
+            return TrustDataModificationIdentity(identity, clientId);
+        }
+
+        // Source: Mod/ScMultiplayer/DataModification/ScMultiplayerDataModificationRuntime.cs:
+        // ScMultiplayer.HandleDataModificationApprovalControl（operation = "trust"）
+        // 无头服务器控制台在审批时拿到的可能只有记录键（`sourceKey`）：玩家已经离线时
+        // `m_clientRecordKeys` 里已经没有该 clientId，所以必须支持按身份直接授权。
+        internal bool TrustDataModificationIdentity(string identity, int clientId = -1)
+        {
+            if (!IsHost || string.IsNullOrWhiteSpace(identity))
+                return false;
+            string normalized = identity.Trim();
             EnsureTrustedDataModificationIdentitiesLoaded();
-            if (!m_trustedDataModificationIdentities.Add(identity))
+            string existing = m_trustedDataModificationIdentities.FirstOrDefault(value =>
+                string.Equals(value, normalized, StringComparison.OrdinalIgnoreCase));
+            if (existing != null)
                 return true;
+            m_trustedDataModificationIdentities.Add(normalized);
             SaveTrustedDataModificationIdentities();
-            Log.Information("[ScMP] Client " + clientId + " (" + identity +
-                ") is now a trusted data modification client");
+            Log.Information("[ScMP] " + normalized +
+                (clientId >= 0 ? " (client " + clientId + ")" : string.Empty) +
+                " is now a trusted data modification client");
+            return true;
+        }
+
+        /// <summary>
+        /// 取消该身份的受信任授权（无头服务器控制台 `Authorised players` 的"取消授权"）。
+        /// 内存集合就是真相源（`IsTrustedDataModificationClient` 每次请求都查它），写盘只是持久化，
+        /// 所以取消**立即生效**。
+        /// </summary>
+        internal bool UntrustDataModificationIdentity(string identity)
+        {
+            if (!IsHost || string.IsNullOrWhiteSpace(identity))
+                return false;
+            string normalized = identity.Trim();
+            EnsureTrustedDataModificationIdentitiesLoaded();
+            string existing = m_trustedDataModificationIdentities.FirstOrDefault(value =>
+                string.Equals(value, normalized, StringComparison.OrdinalIgnoreCase));
+            if (existing == null || !m_trustedDataModificationIdentities.Remove(existing))
+                return false;
+            SaveTrustedDataModificationIdentities();
+            Log.Information("[ScMP] " + existing +
+                " is no longer a trusted data modification client");
             return true;
         }
 

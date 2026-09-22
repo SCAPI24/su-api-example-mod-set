@@ -41,6 +41,7 @@ namespace CmdBridgeMod
         private CmdBridgeConfig m_config;
         private GameThreadInvoker m_invoker;
         private InputInjector m_injector;
+        private JumpAssist m_jumpAssist;
         private EventRecorder m_eventRecorder;
         private CommandRouter m_router;
         private ControlServer m_server;
@@ -60,6 +61,12 @@ namespace CmdBridgeMod
             // 不应被本 Mod 自己的 TCP 服务开关连坐。
             m_invoker = new GameThreadInvoker(m_config.RequestTimeoutSeconds);
             m_injector = new InputInjector(m_config, m_invoker);
+            // 空格/跳跃审计与可选缓冲：纯观察 + 只写 ComponentLocomotion.JumpOrder，不碰注入路径。
+            // 恒久打开（写死在代码里，不再落 CmdBridge.json）：运行时用 `jump.buffer state=off` 只关本次。
+            m_jumpAssist = new JumpAssist();
+            // 输入阶段注入的落点：order -11 的 CursorSoftGuard 会转调 JumpAssist.PumpInputStage()，
+            // 位置紧贴 ComponentInput(-10) 之前（与原生输入同一阶段）。
+            m_injector.JumpAssist = m_jumpAssist;
             Input = new CmdBridgeInput(m_injector);
             Instance = this;
 
@@ -77,7 +84,7 @@ namespace CmdBridgeMod
             }
 
             m_eventRecorder = new EventRecorder(m_config.EventRingCapacity);
-            m_router = new CommandRouter(m_config, m_invoker, m_injector, m_eventRecorder);
+            m_router = new CommandRouter(m_config, m_invoker, m_injector, m_eventRecorder, m_jumpAssist);
             m_server = new ControlServer(m_config, m_router);
 
             try
@@ -117,6 +124,9 @@ namespace CmdBridgeMod
                 {
                     m_injector.Focus.ApplyFrameStart();
                     m_injector.Hotkeys.Tick();
+                    // 跳跃审计/缓冲放在热键之后：它会读本帧的空格边沿，并可能写 JumpOrder，
+                    // 所以既要早于 ComponentInput.Update（本批次就是帧首），也不要干扰热键判定。
+                    m_jumpAssist?.Tick();
                 });
                 m_injector.SignalFrameEnd();
             }
@@ -145,6 +155,8 @@ namespace CmdBridgeMod
 
             // 清掉本 Mod 注册的热键，避免卸载后还有回调指向已卸载的 Mod。
             m_injector?.Hotkeys?.Clear();
+            // 跳跃审计订阅了引擎的 Keyboard.KeyDown，卸载时必须退订。
+            m_jumpAssist?.Shutdown();
 
             // 把引擎焦点恢复成真实值，避免卸载后引擎"以为"窗口还活跃。
             m_injector?.Focus?.RestoreNaturalFocus();
@@ -170,6 +182,7 @@ namespace CmdBridgeMod
 
             m_router = null;
             m_invoker = null;
+            m_jumpAssist = null;
             m_config = null;
             Log.Information("[CmdBridge] stopped.");
         }

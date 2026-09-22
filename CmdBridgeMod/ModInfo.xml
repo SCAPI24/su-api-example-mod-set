@@ -4,9 +4,9 @@
     <Identifier>CmdBridgeMod</Identifier>
     <LocalizedName>
       <Text lang="en_US">Command Bridge</Text>
-      <Text lang="zh_CN">命令行桥</Text>
+      <Text lang="zh_CN">鍛戒护琛屾ˉ</Text>
     </LocalizedName>
-    <Version>1.1.1</Version>
+    <Version>1.1.10</Version>
     <APIVersion>0.1.6.0</APIVersion>
     <Asset>
       <ContentRoot>Content</ContentRoot>
@@ -16,3 +16,5 @@
   <Dependencies>
   </Dependencies>
 </Mod>
+
+

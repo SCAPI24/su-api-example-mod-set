@@ -37,7 +37,7 @@ namespace GmMod
 
         public string Name => "GmMod";
 
-        public string Version => "1.1.0";
+        public string Version => "1.1.1";
 
         public IEnumerable<string> Dependencies => new[] { "ScMultiplayer" };
 
@@ -68,7 +68,13 @@ namespace GmMod
                 EventPriority.HIGHEST));
             Log.Information("[GmMod] Loaded (client-side UI only). GM operations: " +
                 GmOperations.SetWorldSettings + " [" + GmOperations.TimeOfYearField + ", " +
-                GmOperations.TimeOfDayModeField + ", " + GmOperations.WeatherEffectsField + "]");
+                GmOperations.TimeOfDayModeField + ", " + GmOperations.WeatherEffectsField + "], " +
+                GmOperations.SetWorldControl + " [" + GmOperations.PrecipitationField + ", " +
+                GmOperations.FogField + ", " + GmOperations.LightningField + ", " +
+                GmOperations.TimePointField + ", " + GmOperations.TimeExactField + "], " +
+                DataModificationOperationNames.SetRespawnAnchor + ", " +
+                DataModificationOperationNames.SetVitals + ", " +
+                DataModificationOperationNames.SetCondition);
         }
 
         public void OnUnload()

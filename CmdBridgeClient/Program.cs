@@ -21,6 +21,14 @@ namespace CmdBridgeClient
         private static string s_token;
         private static int s_timeoutMs = 20000;
 
+        /// <summary>
+        /// `key` 子命令不传 holdMs 时下发的按下时长。
+        /// 必须与服务端 `CmdBridgeMod/Server/CommandRouter.cs` 的 `DefaultKeyPulseHoldMs` 一致：
+        /// 0ms 会让"按下"与"抬起"落在同一次 `Dispatcher.BeforeFrame` 批次里，帧体看不到按下
+        /// （`Engine/Engine/Dispatcher.cs:79-105`）—— 这是"按键第一次无效、第二次才生效"的第二个根因。
+        /// </summary>
+        private const int DefaultKeyPulseHoldMs = 40;
+
         private static int Main(string[] args)
         {
             try
@@ -220,9 +228,11 @@ namespace CmdBridgeClient
                             ("z", ParseFloat(args[3]))));
                     case "key":
                         Require(args.Count >= 2, "key <name> [holdMs]");
+                        // 不传 holdMs 时用服务端同一个"一帧量级"默认值（40ms），而不是 0：
+                        // 0 会让按下与抬起落在同一次 Dispatcher.BeforeFrame 批次里，帧体看不到按下。
                         return Print(client, "act.key", Args(
                             ("key", args[1]),
-                            ("holdMs", args.Count >= 3 ? ParseInt(args[2]) : 0)));
+                            ("holdMs", args.Count >= 3 ? ParseInt(args[2]) : DefaultKeyPulseHoldMs)));
                     case "hold":
                         Require(args.Count >= 2, "hold <name>");
                         return Print(client, "act.hold", Args(("key", args[1]), ("down", true)));
@@ -620,7 +630,7 @@ namespace CmdBridgeClient
   look <yawDeg> <pitchDeg>    瞬时转视角（绝对角度）
   lookdelta <dYaw> <dPitch>   相对转视角
   lookat <x> <y> <z>          看向世界坐标（自动求解，瞬时）
-  key <name> [holdMs]         按键（脉冲）
+  key <name> [holdMs]         按键（脉冲，默认 40ms≈一帧；显式 0 = 同帧按下并抬起）
   hold <name> / release <name>|--all   按住/释放
   chord ctrl v                组合键
   mouse left click|down|up    世界内挖/放/交互

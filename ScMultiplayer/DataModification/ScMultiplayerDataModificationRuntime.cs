@@ -80,6 +80,46 @@ namespace ScMultiplayer
                 };
             }
 
+            // Source: Mod/HeadlessRenderingMod/Console/WindowsConsoleController.cs
+            // 无头服务器控制台的「总是允许 / 取消授权」走这里：只改 **DM（GM）授权**，
+            // 与"允许加入房间"（ScMultiplayerSettings.autoApproveJoinRequests）完全无关。
+            if (string.Equals(operation, "trust", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(operation, "untrust", StringComparison.OrdinalIgnoreCase))
+            {
+                bool grant = string.Equals(operation, "trust", StringComparison.OrdinalIgnoreCase);
+                string identity = null;
+                if (request != null && request.TryGetValue("identity", out object identityValue))
+                    identity = identityValue?.ToString();
+                int targetClientId = -1;
+                if (request != null &&
+                    TryReadApprovalInteger(request, "sourceClientId", out int sourceClientId))
+                {
+                    targetClientId = sourceClientId;
+                }
+                // 无头控制台的待审批条目带的是记录键（sourceKey）；玩家可能已经离线，
+                // 所以身份优先用显式传入的，其次用 sourceKey，最后才回落到在线客户端表。
+                if (string.IsNullOrWhiteSpace(identity) && request != null &&
+                    request.TryGetValue("sourceKey", out object keyValue))
+                {
+                    identity = keyValue?.ToString();
+                }
+                if (string.IsNullOrWhiteSpace(identity) && targetClientId >= 0)
+                    identity = GetDataModificationClientKey(targetClientId);
+                bool changed = IsHost && !string.IsNullOrWhiteSpace(identity) &&
+                    (grant
+                        ? TrustDataModificationIdentity(identity, targetClientId)
+                        : UntrustDataModificationIdentity(identity));
+                return new object[]
+                {
+                    new Dictionary<string, object>(StringComparer.Ordinal)
+                    {
+                        ["resolved"] = changed,
+                        ["trusted"] = grant && changed,
+                        ["identity"] = identity ?? string.Empty
+                    }
+                };
+            }
+
             var pending = new List<Dictionary<string, object>>();
             if (IsHost && m_dataModification != null)
             {

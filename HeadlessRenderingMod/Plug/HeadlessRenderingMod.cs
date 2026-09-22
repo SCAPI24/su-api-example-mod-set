@@ -65,7 +65,7 @@ namespace HeadlessRenderingMod
 
         public string Name => "无画面服务器";
 
-        public string Version => "1.3.4";
+        public string Version => "1.3.5";
 
         public IEnumerable<string> Dependencies => Array.Empty<string>();
 
@@ -880,6 +880,29 @@ namespace HeadlessRenderingMod
                 {
                     throw new ControlCommandException("invalid_request",
                         "resolve requires sourceClientId, requestId, transferId and allow.");
+                }
+            }
+            else if (string.Equals(operation, "trust", StringComparison.OrdinalIgnoreCase))
+            {
+                // Source: Mod/ScMultiplayer/DataModification/DataModificationContracts.cs
+                // 控制台 Pending approvals 里的"Always allow this player"：把发起该请求的客户端
+                // 写进世界受信任名单（GM / 数据修改权限）。sourceClientId（精确匹配）与
+                // sourceKey（账号 userid，或 name:<玩家名>）都来自 pending 记录。
+                // 用非短路的 | 保证两个参数都会被拷进去。
+                if (!(CopyOptionalInteger(request, values, "sourceClientId") |
+                    CopyOptionalString(request, values, "sourceKey")))
+                {
+                    throw new ControlCommandException("invalid_request",
+                        "trust requires sourceClientId or sourceKey.");
+                }
+            }
+            else if (string.Equals(operation, "untrust", StringComparison.OrdinalIgnoreCase))
+            {
+                // 取消世界受信任名单里的 GM 授权：按身份键（identity）移除。
+                if (!CopyOptionalString(request, values, "identity"))
+                {
+                    throw new ControlCommandException("invalid_request",
+                        "untrust requires identity.");
                 }
             }
             object[][] results = m_eventBus?.TriggerEvent(
