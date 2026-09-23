@@ -627,6 +627,17 @@ namespace ScMultiplayer
 
             m_modInjector?.Apply(database, "ScMultiplayer");
 
+            // Source: Pak/Database.xml:ComponentHealth.Class
+            // 方案 B：客户端不该自己死 —— 客户端本地也跑原生伤害（窒息/摔落/岩浆/饥饿），
+            // 能在主机不知情时把本地血量打到 0（死亡界面锁存、身体要倒地），而主机那份还活着、
+            // 1Hz 权威血量又把本地血量顶回 >0 → "复活界面还在、还在扣血、人却站着"。
+            // 替换成 SuComponentHealth 后：本地伤害照跑（表现保留），只把血量钉在正值地板上，
+            // 死亡一律以主机广播的 0 为准。
+            var componentHealth = database.FindDatabaseObject(
+                new Guid("4e14ce27-fdef-46ca-8ea0-26af43c215e5"),
+                database.FindDatabaseObjectType("Parameter", true), true);
+            componentHealth.Value = "ScMultiplayer.SuComponentHealth";
+
             // Source: Pak/Database.xml:ComponentVitalStats.Class
             var componentVitalStats = database.FindDatabaseObject(
                 new Guid("aa7f845d-165e-4fff-95f0-453cd4e14cea"),

@@ -41,7 +41,12 @@ namespace ScMultiplayer
                     requestedPlayer?.ComponentPlayer?.ComponentHealth == null)
                     return;
                 ComponentHealth requestedHealth = requestedPlayer.ComponentPlayer.ComponentHealth;
-                float requestedValue = MathUtils.Saturate(msg.Health);
+                // 客户端上报的是"这次真实掉了多少"（msg.HealthChange）。客户端本地血量可能被
+                // 方案 B 的正值地板钉在 0.02（SuComponentHealth），绝对血量会失真 ——
+                // 所以这里按**变化量**在主机自己这份上扣：伤害致命时主机必须真的到 0，
+                // 否则客户端怎么点都打不死（实测）。
+                float requestedValue = MathUtils.Saturate(
+                    requestedHealth.Health + MathUtils.Min(msg.HealthChange, 0f));
                 if (msg.HealthChange < -0.0001f && requestedValue < requestedHealth.Health)
                 {
                     float requestedPreviousHealth = requestedHealth.Health;
@@ -145,39 +150,23 @@ namespace ScMultiplayer
                     ? remoteData.ComponentPlayer
                     : null);
             float previousHealth = targetPlayer?.ComponentHealth?.Health ?? msg.Health;
-            // 本地自伤预测在途时的钳制（见 SendClientDamageRequest 里的记录）：
-            // 主机 1Hz 强制全量广播（ScMultiplayerUpdateLoop.cs:3030-3031）可能还带着扣血前的值，
-            // 直接套用会把生命条拉回原值、下一帧再被扣血后的快照打回来 —— 就是"点击骷髅头扣血
-            // 时新值和原值反复变换"。预测窗口内**只拒绝抬高**；主机追上（或窗口超时）立即恢复
-            // 完全权威。窗口内的其它字段（饱食/体温等）照常套用。
-            bool clampLocalHealthPrediction = false;
+            // 方案 B（血量由主机通知、本地只跟随）：本地不再保留任何自己算出来的血量，
+            // 所以这里**不再**做旧那套"预测窗口内只许降不许升"的钳制 —— 它会与"每帧跟随主机"
+            // 打架：本地血量卡在低位下不来也上不去（实测"最后半格血始终不死"：
+            // 本地停在 0.05，每次点击只能上报 0.05，慢点就顶不过主机那边的自然回血）。
+            // 现在始终照抄主机权威值，由 SyncClientLocalHealthFromAuthority 每帧写回本地。
             float appliedHealth = msg.Health;
             if (applyAuthoritativeState && remoteClientId == client.ClientID)
-            {
-                if (Time.RealTime < m_localHealthPredictionDeadline &&
-                    msg.Health > m_localHealthPrediction + 0.0001f)
-                {
-                    // 取本地当前值与主机值的较小者：主机更低的值（真实伤害）照常套用，
-                    // 本地自动回血也不会被这份过期快照拉回去（ComponentHealth.cs:151-174 每帧
-                    // Heal，Harmless 模式 1/60 每秒），只是不接受它把生命值抬回扣血前的水位。
-                    appliedHealth = MathUtils.Min(previousHealth, msg.Health);
-                    clampLocalHealthPrediction = true;
-                    // 收口：这份快照本身带着"扣血"边沿（主机算的 current - previous < 0），说明它
-                    // 已经消化了本地自伤请求 —— 立刻结束预测窗口，让治疗/回血马上恢复完全权威，
-                    // 不必干等 2 秒超时。
-                    if (msg.HealthChange < -0.0001f)
-                        m_localHealthPredictionDeadline = 0.0;
-                }
-                else
-                {
-                    m_localHealthPredictionDeadline = 0.0;
-                }
-            }
-            if (applyAuthoritativeState && remoteClientId == client.ClientID &&
-                Time.RealTime < m_localRespawnPendingUntil && msg.Health <= 0f)
-                return;
+                m_localHealthPredictionDeadline = 0.0;
             if (applyAuthoritativeState && remoteClientId == client.ClientID && msg.Health > 0f)
                 m_localRespawnPendingUntil = 0.0;
+            // 刚复活后的短窗口里，只丢弃**过期的** 0（序号不晚于复活那一刻的旧快照）；
+            // 窗口内新发生的死亡序号更大，必须放行 —— 否则会出现
+            // "角色界面被关、主机判死被吞掉、人没死"（实测）。
+            if (applyAuthoritativeState && remoteClientId == client.ClientID &&
+                msg.Health <= 0f && msg.AuthoritativeStateSequence > 0 &&
+                msg.AuthoritativeStateSequence <= m_localRespawnStateSequence)
+                return;
             int previousWholeLevel = targetPlayer?.PlayerData != null
                 ? (int)MathUtils.Floor(MathUtils.Max(targetPlayer.PlayerData.Level, 1f))
                 : -1;
@@ -192,8 +181,7 @@ namespace ScMultiplayer
                 ApplyAuthoritativePlayerEffects(targetPlayer, msg);
                 if (remoteClientId == client.ClientID)
                     ApplyLocalConditionCues(targetPlayer, msg);
-                if (!clampLocalHealthPrediction &&
-                    targetPlayer?.ComponentHealth != null && msg.HealthChange < -0.0001f &&
+                if (targetPlayer?.ComponentHealth != null && msg.HealthChange < -0.0001f &&
                     msg.Health < previousHealth - 0.0001f)
                 {
                     ModManager.ModParentField.ModifyParentField(
@@ -220,12 +208,14 @@ namespace ScMultiplayer
                 if (applyAuthoritativeState)
                 {
                     m_hasObservedClientHealth = true;
-                    // 被钳制的那一帧不要刷新生命基准：否则刚发生的本地扣血会被 SendClientDamageRequest
-                    // 看成"没有变化"而漏发请求（扣血被静默吞掉）。饱食/睡觉照常刷新。
-                    if (!clampLocalHealthPrediction)
-                        m_observedClientHealth = msg.Health;
+                    m_observedClientHealth = msg.Health;
                     m_observedClientFood = msg.Food;
                     m_observedClientSleeping = msg.IsSleeping;
+                    // 方案 B：只有主机广播的 0 才算"本端死亡"；在那之前客户端不该自己死
+                    // （见 SuComponentHealth / SyncClientLocalHealthFromAuthority）。
+                    m_localAuthoritativeDeath = msg.Health <= 0f;
+                    // 主机最近一次的权威血量：客户端每帧把本地血量写回这个值（本地只跟随主机）。
+                    m_lastAuthoritativeLocalHealth = msg.Health;
                 }
                 if (msg.HasKnockback &&
                     msg.KnockbackSequence > m_lastLocalKnockbackSequence &&

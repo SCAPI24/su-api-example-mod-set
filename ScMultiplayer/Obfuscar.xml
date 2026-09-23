@@ -15,6 +15,7 @@
     <SkipType name="ScMultiplayer.NetWorldFromLinkProvider" />
     <SkipType name="ScMultiplayer.Message" />
     <SkipType name="ScMultiplayer.SuComponentInput" />
+    <SkipType name="ScMultiplayer.SuComponentHealth" />
     <SkipType name="ScMultiplayer.SuComponentHumanModel" />
     <SkipType name="ScMultiplayer.SuComponentVitalStats" />
     <SkipType name="ScMultiplayer.SuComponentSleep" />

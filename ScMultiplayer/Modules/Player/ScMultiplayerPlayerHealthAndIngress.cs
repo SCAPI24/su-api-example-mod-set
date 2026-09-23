@@ -256,6 +256,114 @@ namespace ScMultiplayer
         // Source: Survivalcraft/Game/VitalStatsWidget.cs:VitalStatsWidget.Update
         // Client-side UI damage is a request. The host accepts only a lower health value and
         // remains authoritative for the resulting health, events and death state.
+        /// <summary>
+        /// 方案 B：**血量由主机通知，本地只跟随**。由 <see cref="SuComponentHealth"/> 在原生更新前后各调用一次。
+        ///
+        /// 为什么必须这样做：死亡判定（ComponentHealth.cs:251/267）、倒地
+        /// （ComponentHumanModel.Update:86）都只看 `Health`，而 `PlayerData` 的死亡状态机
+        /// （PlayerData.cs:266-273）看到一次 `Health <= 0f` 就锁存并停在复活界面。
+        /// 客户端本地也跑原生伤害（窒息/摔落/岩浆/饥饿/尖刺，以及身体界面那个"骷髅头强制重生"
+        /// 按钮一次 -0.1，VitalStatsWidget.cs:178），能在主机不知情时把本地血量打到 0
+        /// → "本地已死、主机还活"，随后主机 1Hz 权威血量（正值）把本地血量顶回 >0
+        /// → 复活界面还在、还在扣血、人却站着。
+        ///
+        /// 现在的分工：本地**不保留**任何自己算出来的血量变化 —— 每帧把它写回主机最近一次给的
+        /// 权威值；本地被原生伤害打掉的那部分**当场直接上报**给主机
+        /// （`m_localDamageReportAccumulator` 只做小额合并，且只由"发出去了"清零）。
+        /// 由 `SendClientDamageRequest` 如实报给主机，**由主机施加**。于是本地血条只会跟着主机走，
+        /// 既不会停在地板值、也不会因为本地伤害而抖动；本地永远不会自己跨 0，
+        /// 真死只认主机广播的 0（`m_localAuthoritativeDeath`）—— 那时故意不写 `m_lastHealth`，
+        /// 让原生看到 0 的跨越，死亡处理才会正常发生。
+        /// </summary>
+        internal void SyncClientLocalHealthFromAuthority(ComponentPlayer player, ComponentHealth health)
+        {
+            if (player == null || health == null) return;
+            if (IsHost || client?.IsConnected != true) return;
+            if (player.PlayerData == null ||
+                m_networkPlayerData.Values.Contains(player.PlayerData)) return;
+            // 刚复活、主机还没确认的这段窗口里**什么都不做**：否则会跟随"仍然为 0"的旧权威值，
+            // 刚站起来就被写回 0 → 又一次死亡锁存（实测："点复活就屏幕全红、又死了"）。
+            // 主机确认复活（广播 > 0）后窗口自然结束，跟随恢复。
+            if (Time.RealTime < m_localRespawnPendingUntil) return;
+            // 还没收到过主机的权威血量：什么都不做（否则会把刚进世界的满血误写成一格）。
+            if (!m_hasObservedClientHealth) return;
+            bool authoritativeDead = m_localAuthoritativeDeath;
+            // 目标值就是主机的权威血量本身（**不设显示地板**）。
+            // 曾经加过一条 0.11 的地板来避免"点击把本地打到 0 → 关面板"，但那会让血条说谎：
+            // 主机只剩 0.077 时血条仍显示 1 格，玩家以为还能再挨一下，一点就死
+            //（实测："还有2格半或者2格的时候，点击扣血，血变为1格，然后角色就死了"）。
+            // 现在如实跟随：血条显示多少就是主机有多少；致命那一下（主机 <= 0.1）本来就该致命。
+            float baseline = authoritativeDead ? 0f : m_lastAuthoritativeLocalHealth;
+            float current = health.Health;
+            if (current < baseline - 0.0001f)
+            {
+                // ⚠️ 上报的是**本地这次真实掉的血**（相对上一次钉住的值），不是"相对主机的差额"：
+                // 本地贴在地板上时，相对差额只有零点几，而上报真实掉落（一次 0.1）才能让主机被扣到 0。
+                float lost = baseline - current;
+                // ⚠️ 命中（单帧掉落 >= 0.05，饥饿/窒息那种是每帧 0.006）按**标称伤害 0.1** 上报：
+                // 本地只剩 0.058 时，一次 -0.1 实际只掉 0.058，只报 0.058 的话会被主机的自然回血
+                //（每 0.4 秒 +0.0068）正好抵消 —— 实测主机永远停在 0.006 上下，怎么点都到不了 0，
+                // 于是"本地那帧到了 0（界面被关）、主机却不判死"。
+                if (lost >= LocalHitDamageThreshold) lost = MathUtils.Max(lost, LocalHitDamage);
+                // 我们马上会把血量写回目标值，原生那套受伤反馈（红屏累积 / 生命条闪烁）不会发生，
+                // 这里照引擎算法补上 —— 否则扣血没有任何反馈（实测："角色自己扣血的时候没有红色界面"）。
+                TriggerLocalDamageFeedback(player, lost);
+                // 立刻把这次本地伤害**直接上报**给主机，不再攒账等 SendClientDamageRequest：
+                // 攒账会被主机 1Hz 广播和本方法每帧两次调用搅乱（实测"有时只闪红、不掉血"）。
+                // 饥饿/窒息那种每帧 0.006 的小额先攒到阈值再发，免得每帧一条消息。
+                m_localDamageReportAccumulator += lost;
+                if (m_localDamageReportAccumulator >= LocalDamageReportThreshold)
+                {
+                    NetworkMessageSender.SendPlayerHealthMessage(client.ClientID, player,
+                        -m_localDamageReportAccumulator, "Client damage request");
+                    m_localDamageReportAccumulator = 0f;
+                }
+            }
+            else if (current > baseline + 0.0001f)
+            {
+                // 本地自己涨到了目标值之上（原生 Harmless 回血）：这点差额已经作废。
+                // ⚠️ 只有"高于"才清账；相等时不能清 —— 本方法每帧调用两次，
+                // 相等也清会把前一次刚攒下、还没发出的差额抹掉。
+                m_localDamageReportAccumulator = 0f;
+            }
+            ModManager.ModParentField.ModifyParentField(health, "<Health>k__BackingField",
+                baseline, typeof(ComponentHealth));
+            // 目标值 > 0 时同步基准；为 0（主机判死）时**故意不写** `m_lastHealth`，
+            // 让下一帧原生 Update 看到 0 的跨越，死亡处理 / 状态机锁存才会正常发生。
+            if (baseline > 0f)
+                ModManager.ModParentField.ModifyParentField(health, "m_lastHealth",
+                    baseline, typeof(ComponentHealth));
+            if (authoritativeDead) return;
+            // 兜底：万一原生的死亡锁存先于主机判定发生，撤销它（主机判死那条路不会走到这里）。
+            PlayerData data = player.PlayerData;
+            object deathTime = ModManager.ModParentField.GetParentField(
+                data, "m_playerDeathTime", typeof(PlayerData));
+            if (deathTime == null) return;
+            ModManager.ModParentField.ModifyParentField(data, "m_playerDeathTime", null,
+                typeof(PlayerData));
+            StateMachine stateMachine = ModManager.ModParentField.GetParentField<StateMachine>(
+                data, "m_stateMachine", typeof(PlayerData));
+            if (stateMachine != null && stateMachine.CurrentState != "Playing")
+                stateMachine.TransitionTo("Playing");
+        }
+
+        // Source: Survivalcraft/Game/ComponentHealth.cs:ComponentHealth.Update
+        // 原生在扣血那一帧做两件反馈：红屏累积 `m_redScreenFactor += -4f * HealthChange`（:256）、
+        // 生命条闪烁 `HealthBarWidget.Flash(...)`（:257）。客户端改成"本地只跟随主机"之后，
+        // 本地血量在同一帧就被写回权威值，原生那两行看不到这次扣血，所以在这里补上。
+        private void TriggerLocalDamageFeedback(ComponentPlayer player, float lost)
+        {
+            if (lost <= 0.0001f) return;
+            player.ComponentGui?.HealthBarWidget?.Flash(
+                MathUtils.Clamp((int)(lost * 30f), 0, 10));
+            ComponentHealth health = player.ComponentHealth;
+            if (health == null) return;
+            float red = ModManager.ModParentField.GetParentField<float>(
+                health, "m_redScreenFactor", typeof(ComponentHealth));
+            ModManager.ModParentField.ModifyParentField(health, "m_redScreenFactor",
+                MathUtils.Min(red + 4f * lost, 1f), typeof(ComponentHealth));
+        }
+
         private void SendClientDamageRequest()
         {
             SubsystemPlayers players = GameManager.Project?.FindSubsystem<SubsystemPlayers>(false);
@@ -272,28 +380,21 @@ namespace ScMultiplayer
                 m_observedClientSleeping = localPlayer.ComponentSleep?.IsSleeping == true;
                 return;
             }
-            float change = health.Health - m_observedClientHealth;
+            // ⚠️ 血量变化**不再**走这条路：本地只跟随主机，扣血已经在
+            // SyncClientLocalHealthFromAuthority 里**当场直接上报**（这条路会被主机 1Hz 广播
+            // 和每帧两次调用搅乱，实测"有时只闪红、不掉血"）。这里只保留饱食 / 睡觉的请求。
             bool foodIncreased = vital.Food > m_observedClientFood + 0.0001f;
             bool isSleeping = localPlayer.ComponentSleep?.IsSleeping == true;
             bool sleepChanged = isSleeping != m_observedClientSleeping;
             int sleepRequestSequence = 0;
             if (sleepChanged && isSleeping)
                 sleepRequestSequence = BeginClientSleepRequest();
-            if (change < -0.0001f || foodIncreased || sleepChanged)
+            if (foodIncreased || sleepChanged)
             {
                 NetworkMessageSender.SendPlayerHealthMessage(
-                    client.ClientID, localPlayer, change,
+                    client.ClientID, localPlayer, 0f,
                     foodIncreased ? "Client food request" : "Client state request",
                     sleepRequestSequence: sleepRequestSequence);
-                if (change < -0.0001f)
-                {
-                    // 本地自伤（骷髅头按钮扣血）已经落在本地生命值上，但请求要一个往返才到主机。
-                    // 主机每 1 秒强制全量广播一次生命，这段时间里带的还是扣血前的值；不记下这次
-                    // 预测，客户端就会先被拉回原值、再被扣血后的快照打回来（玩家看到的"新值和
-                    // 原值反复变换"）。记录预测值与窗口，由 HandleGamePlayerHealthMessage 钳制。
-                    m_localHealthPrediction = health.Health;
-                    m_localHealthPredictionDeadline = Time.RealTime + LocalHealthPredictionTimeout;
-                }
             }
             m_observedClientHealth = health.Health;
             m_observedClientFood = vital.Food;

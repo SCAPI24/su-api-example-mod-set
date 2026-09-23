@@ -653,6 +653,27 @@ namespace ScMultiplayer
         private bool m_observedLocalPlayerWasDead;
         private int m_localRespawnSequence;
         private double m_localRespawnPendingUntil;
+        // 复活那一刻的权威状态序号：复活窗口内只丢弃"不晚于它"的旧 0（过期快照）；
+        // 窗口内新发生的死亡序号更大，必须放行 —— 否则会出现
+        // "角色界面被关、主机判死被吞掉、人没死"（实测）。
+        private int m_localRespawnStateSequence;
+        // 客户端不该自己死（方案 B）：主机已经明确判定本地玩家死亡（权威血量 <= 0）时才放行真死；
+        // 在此之前客户端上的原生伤害只当表现，本地血量每帧被钉在这条正值地板上。
+        private bool m_localAuthoritativeDeath;
+        // 本地伤害上报的攒账：饥饿/窒息那种每帧 0.006 的小额先攒到阈值再发一条，
+        // 骷髅头点击那种一次 0.1 立刻发。⚠️ 只能由"发出去了"清零 ——
+        // 绝不能被主机广播或每帧第二次调用清掉，否则会出现"只闪红、不掉血"。
+        private float m_localDamageReportAccumulator;
+        private const float LocalDamageReportThreshold = 0.02f;
+        // 骷髅头"强制重生"按钮一次扣 0.1（Survivalcraft/Game/VitalStatsWidget.cs:178）。
+        // 单帧掉落 >= 0.02 视为"命中"（饥饿/窒息是每帧 ~0.006，不会误判），上报时按标称 0.1 计。
+        // 阈值必须低于"本地只剩半格"时的那点掉落（约 0.045）：曾经取 0.05，半格点击掉落 0.045
+        // 不算命中 → 只上报 0.045 → 被主机自然回血（0.0167/s）抵消 → 半格怎么点都不死，
+        // 只有血回到 1 格（掉落 0.1）才判命中才死（实测）。
+        private const float LocalHitDamageThreshold = 0.02f;
+        private const float LocalHitDamage = 0.1f;
+        // 主机最近一次给本端的权威血量：客户端每帧把本地血量写回这个值（方案 B：本地只跟随主机）。
+        private float m_lastAuthoritativeLocalHealth;
         private int m_nextWorldTransferId;
         private int m_worldTransferCursor;
         private double m_nextWorldTransferManifestRequestTime;

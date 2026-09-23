@@ -1334,7 +1334,15 @@ namespace ScMultiplayer
             };
             if (IsHost) NetworkMessageSender.BroadcastPlayerRespawn(message);
             else NetworkMessageSender.SendPlayerRespawnRequest(message);
-            if (!IsHost) m_localRespawnPendingUntil = Time.RealTime + 5.0;
+            if (!IsHost)
+            {
+                m_localRespawnPendingUntil = Time.RealTime + 5.0;
+                // 记下"复活这一刻"的权威状态序号：这个窗口内只丢弃不晚于它的旧 0
+                // （见 HandleGamePlayerHealthMessage 的守卫）；窗口内新发生的死亡序号更大，照常放行。
+                m_localRespawnStateSequence =
+                    m_lastReceivedAuthoritativePlayerStateSequences.TryGetValue(
+                        client.ClientID, out int respawnSequence) ? respawnSequence : 0;
+            }
             m_hasObservedClientHealth = false;
             m_localHealthPredictionDeadline = 0.0;
             m_pendingClientSleepRequestSequence = 0;
@@ -1690,15 +1698,27 @@ namespace ScMultiplayer
             if (player == null) return;
             if (player.ComponentHealth != null)
             {
+                float safeHealth = MathUtils.Saturate(health);
                 ModManager.ModParentField.ModifyParentField(
                     player.ComponentHealth, "<Health>k__BackingField",
-                    MathUtils.Saturate(health), typeof(ComponentHealth));
+                    safeHealth, typeof(ComponentHealth));
                 ModManager.ModParentField.ModifyParentField(
                     player.ComponentHealth, "<Air>k__BackingField",
                     MathUtils.Saturate(air), typeof(ComponentHealth));
-                ModManager.ModParentField.ModifyParentField(
-                    player.ComponentHealth, "m_lastHealth",
-                    MathUtils.Saturate(health), typeof(ComponentHealth));
+                // ⚠️ 健康为 0 时**不要**写 m_lastHealth：引擎的死亡分支只在
+                // Health == 0 && HealthChange < 0 时执行（ComponentHealth.cs:267；
+                // HealthChange = Health - m_lastHealth，见 :251）。同步时把 m_lastHealth
+                // 一起写成 0 会把这次"跨 0"抹掉 → 死亡分支永不执行 → 角色血量为 0 却站在原地
+                // （不掉物品、无击杀粒子、尸体也不会消失）。1Hz 全量广播的 HealthChange 是 0，
+                // 正好会抹掉刚发生的死亡跨越，所以现象是"有时"。
+                // 留着 m_lastHealth 的正值，交给下一帧原生 Update 自己跨 0；它跑完死亡分支后
+                // 会把 m_lastHealth 归 0（:252），因此不会重复触发。
+                if (safeHealth > 0f)
+                {
+                    ModManager.ModParentField.ModifyParentField(
+                        player.ComponentHealth, "m_lastHealth",
+                        safeHealth, typeof(ComponentHealth));
+                }
             }
             ComponentVitalStats vital = player.ComponentVitalStats;
             if (vital != null)
