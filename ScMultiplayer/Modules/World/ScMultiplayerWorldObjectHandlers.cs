@@ -539,7 +539,7 @@ namespace ScMultiplayer
 		{
 			Stage = TerrainChunkSyncStage.Interest,
 			InterestRadius = radius
-		}, sequenced: true);
+		}, sequenced: false);
 	}
 
 	private void RefreshClientTerrainInterestChunks(Project project, Vector2 center,
@@ -621,6 +621,12 @@ namespace ScMultiplayer
 			return;
 		}
 		double now = Time.RealTime;
+		// 漏格补救：不走区块 revision 过滤，直接按格向主机要权威值（主机用
+		// SendAuthoritativeTerrainRepair 回一份当前值）。
+		FlushClientTerrainMissingRepairs();
+		// 自愈网：按节奏轮询玩家周围区块的权威 revision。凡是没真正落到本端的格子，其区块
+		// revision 都停在漏格的 sequence 之前，所以下一次校验必然把它重新拉回来。
+		VerifyNextClientTerrainChunk(project, now);
 		Point2[] array = (from item in m_clientTerrainChunkSyncPending
 			where now - item.Value >= 5.0
 			select item.Key).ToArray();
@@ -638,7 +644,8 @@ namespace ScMultiplayer
 		for (int i = 0; i < array2.Length; i++)
 		{
 			KeyValuePair<Point2, PendingTerrainChunkVerification> item2 = array2[i];
-			if (GetClientTerrainChunkRevision(item2.Key) >= item2.Value.RequiredRevision)
+			if (GetClientTerrainChunkRevision(item2.Key) >= item2.Value.RequiredRevision &&
+				GetClientTerrainMissingRevisionBound(item2.Key) <= 0)
 			{
 				m_clientTerrainChunkVerifications.Remove(item2.Key);
 			}
@@ -664,6 +671,20 @@ namespace ScMultiplayer
 			if (chunk != null && chunk.State >= TerrainChunkState.Valid && !m_clientTerrainChunkSyncPending.ContainsKey(coordinates))
 			{
 				long knownRevision = GetClientTerrainChunkRevision(coordinates);
+				// 该区块还有漏格时，把上报的 knownRevision 压回漏格之前：主机只发
+				// `Sequence > knownRevision` 的格子，不压回去的话漏掉那格会被永远过滤掉
+				// （这正是"主机认同了但 B 端漏格又不自愈"的关键一环）。
+				long missingBound = GetClientTerrainMissingRevisionBound(coordinates);
+				if (missingBound > 0 && (knownRevision == 0L || missingBound <= knownRevision))
+				{
+					knownRevision = Math.Max(0L, missingBound - 1);
+					// [SuAPI] 临时探针（跨客户端漏格定位用，验证后删除）
+					Diagnostics.ScMultiplayerOperationLog.Write("event=terrain.chunk.revcap chunk=" +
+						coordinates.X.ToString(System.Globalization.CultureInfo.InvariantCulture) + "," +
+						coordinates.Y.ToString(System.Globalization.CultureInfo.InvariantCulture) +
+						" known=" + knownRevision.ToString(System.Globalization.CultureInfo.InvariantCulture) +
+						" bound=" + missingBound.ToString(System.Globalization.CultureInfo.InvariantCulture));
+				}
 				m_clientTerrainChunkProbeTimes[coordinates] = now;
                 NetworkMessageSender.SendRawMessage(0, new TerrainChunkSyncMessage
                 {
@@ -671,7 +692,7 @@ namespace ScMultiplayer
                     ChunkX = coordinates.X,
                     ChunkZ = coordinates.Y,
                     KnownRevision = knownRevision
-                }, sequenced: true);
+                }, sequenced: false);
 				m_clientTerrainChunkSyncPending[coordinates] = now;
 				sent++;
 			}
@@ -679,6 +700,52 @@ namespace ScMultiplayer
 		if (sent > 0)
 		{
 			m_nextTerrainChunkSyncRequestTime = now + 0.1;
+		}
+	}
+
+	// 玩家周围 (2*ClientTerrainChunkVerifyRadius+1)^2 个区块轮流校验，每
+	// ClientTerrainChunkVerifyInterval 秒挑一个。请求复用既有的区块校验队列（有 pending/queued
+	// 去重与 4 个/0.1s 的发送节流），主机只回 `Sequence > knownRevision` 的格子，所以稳定状态下
+	// 一次校验只有两个小包；而任何"没真正落到本端"的格子都会让该区块 revision 落后，从而被重发。
+	private void VerifyNextClientTerrainChunk(Project project, double now)
+	{
+		if (IsHost || project == null) return;
+		if (now < m_nextClientTerrainChunkVerifyTime) return;
+		m_nextClientTerrainChunkVerifyTime = now + ClientTerrainChunkVerifyInterval;
+		SubsystemTerrain terrain = project.FindSubsystem<SubsystemTerrain>(throwOnError: false);
+		ComponentPlayer localPlayer = GetLocalPlayer();
+		if (terrain?.Terrain == null || localPlayer?.ComponentBody == null) return;
+		Point2 center = Terrain.ToChunk(localPlayer.ComponentBody.Position.XZ);
+		if (!m_clientTerrainVerifyInitialized || center != m_clientTerrainVerifyCenter ||
+			m_clientTerrainVerifyChunks.Count == 0)
+		{
+			m_clientTerrainVerifyInitialized = true;
+			m_clientTerrainVerifyCenter = center;
+			m_clientTerrainVerifyCursor = 0;
+			m_clientTerrainVerifyChunks.Clear();
+			for (int x = center.X - ClientTerrainChunkVerifyRadius;
+				x <= center.X + ClientTerrainChunkVerifyRadius; x++)
+			{
+				for (int z = center.Y - ClientTerrainChunkVerifyRadius;
+					z <= center.Y + ClientTerrainChunkVerifyRadius; z++)
+				{
+					m_clientTerrainVerifyChunks.Add(new Point2(x, z));
+				}
+			}
+		}
+		for (int attempt = 0; attempt < m_clientTerrainVerifyChunks.Count; attempt++)
+		{
+			if (m_clientTerrainVerifyCursor >= m_clientTerrainVerifyChunks.Count)
+				m_clientTerrainVerifyCursor = 0;
+			Point2 coordinates = m_clientTerrainVerifyChunks[m_clientTerrainVerifyCursor++];
+			if (!ShouldProbeClientTerrainChunk(coordinates)) continue;
+			if (m_clientTerrainChunkSyncPending.ContainsKey(coordinates) ||
+				m_clientTerrainChunkSyncQueued.Contains(coordinates))
+				continue;
+			TerrainChunk chunk = terrain.Terrain.GetChunkAtCoords(coordinates.X, coordinates.Y);
+			if (chunk == null || chunk.State < TerrainChunkState.Valid) continue;
+			QueueClientTerrainChunkSync(coordinates);
+			return;
 		}
 	}
 
@@ -752,6 +819,16 @@ namespace ScMultiplayer
 		m_clientTerrainChunkCheckpoints.Clear();
 		m_clientTerrainChunkFailedRevisions.Clear();
 		m_nextTerrainChunkSyncRequestTime = 0.0;
+		// 漏格台账随会话一起清空（新下载的世界快照就是新基准，旧漏格不再有意义）。
+		m_clientTerrainMissingCells.Clear();
+		m_clientTerrainMissingRepairAttempts.Clear();
+		m_nextClientTerrainMissingRepairTime = 0.0;
+		// 自愈网的轮询游标同样随会话重置（新基准下重新按玩家位置铺开）。
+		m_clientTerrainVerifyChunks.Clear();
+		m_clientTerrainVerifyInitialized = false;
+		m_clientTerrainVerifyCenter = default;
+		m_clientTerrainVerifyCursor = 0;
+		m_nextClientTerrainChunkVerifyTime = 0.0;
 	}
 
 	internal IDisposable BeginRemoteSimulationViewScope(Project project)

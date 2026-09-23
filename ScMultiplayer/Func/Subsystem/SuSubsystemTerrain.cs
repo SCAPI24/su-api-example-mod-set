@@ -168,8 +168,21 @@ namespace ScMultiplayer
                     // remain contiguous without replaying obsolete intermediate terrain states.
                     if (message.ModifiedCells == null || message.ModifiedCells.Count == 0)
                         message.ModifiedCells = new Dictionary<Point3, bool>();
-                    if (m_receivedSequencedBatches.TryAdd(message.Sequence, message))
+                    if (!m_receivedSequencedBatches.TryAdd(message.Sequence, message))
+                    {
+                        // [SuAPI] 临时探针（跨客户端漏格定位用，验证后删除）
+                        ScMultiplayer.ProbeClientTerrainDrop("duplicate", message);
+                    }
+                    else
+                    {
                         RecordTerrainReceived(message.ModifiedCells?.Count ?? 0);
+                    }
+                }
+                else
+                {
+                    // [SuAPI] 临时探针（跨客户端漏格定位用，验证后删除）：整批被水位丢掉时，
+                    // 这一批里的格子就永久不会落地（玩家附近的才有记录价值）。
+                    ScMultiplayer.ProbeClientTerrainDrop("watermark", message);
                 }
             }
             else
@@ -192,6 +205,14 @@ namespace ScMultiplayer
                 return true;
             m_iceTraceCells.TryRemove(point, out _);
             return false;
+        }
+
+        // Source: ScMultiplayerTerrainHandlers.cs:HandleGameModifiedCellsMessage
+        // 读某格已应用过的权威 tick：给"我们替主机预演的清除"用同一个 tick，这样它不会被
+        // 更旧的判定挡住，而主机随后到达的更新（tick 更大）仍然能正常覆盖它。
+        internal int GetAppliedCellTick(Point3 point)
+        {
+            return m_appliedCellTicks.TryGetValue(point, out int tick) ? tick : 0;
         }
 
         // Source: Survivalcraft/Game/SubsystemTerrain.cs:SubsystemTerrain.ChangeCell
@@ -506,6 +527,10 @@ namespace ScMultiplayer
                     if (m_activeNetworkBatch.CellValues == null ||
                         valueIndex >= m_activeNetworkBatch.CellValues.Count)
                     {
+                        // [SuAPI] 临时探针（跨客户端漏格定位用，验证后删除）
+                        ScMultiplayer.ProbeClientTerrainNoValue(item.Key,
+                            m_activeNetworkBatch.Sequence, valueIndex,
+                            m_activeNetworkBatch.CellValues?.Count ?? -1);
                         continue;
                     }
                     int networkValue = m_activeNetworkBatch.CellValues[valueIndex];
@@ -515,8 +540,7 @@ namespace ScMultiplayer
                         DeferNetworkCell(item.Key, item.Value,
                             networkValue, m_activeNetworkBatch.Tick,
                             m_activeNetworkBatch.Sequence);
-                    }
-                }
+                    }                }
 
                 if (m_activeNetworkCellIndex >= m_activeNetworkCells.Length)
                     CompleteActiveNetworkBatch();
@@ -720,7 +744,12 @@ namespace ScMultiplayer
             // restores the stale snapshot permanently.
             TerrainChunk chunk = Terrain.GetChunkAtCell(point.X, point.Z);
             if (chunk == null || chunk.State < TerrainChunkState.InvalidLight)
+            {
+                // [SuAPI] 临时探针（跨客户端漏格定位用，验证后删除）
+                ScMultiplayer.ProbeClientTerrainApply(point, "defer.nochunk", sequence, tick,
+                    networkValue);
                 return false;
+            }
             // Source: ScMultiplayer.HandleTerrainChunkSyncMessage
             // A directed chunk checkpoint may refresh bookkeeping from an older live sequence,
             // but it must never overwrite a newer live write that already reached the client.
@@ -737,6 +766,9 @@ namespace ScMultiplayer
                         out long appliedCheckpointRevision) &&
                     checkpointRevision <= appliedCheckpointRevision)
                 {
+                    // [SuAPI] 临时探针（跨客户端漏格定位用，验证后删除）
+                    ScMultiplayer.ProbeClientTerrainApply(point, "drop.cp_revision", sequence,
+                        tick, networkValue);
                     RecordTerrainConsumed();
                     return true;
                 }
@@ -744,6 +776,9 @@ namespace ScMultiplayer
                     m_appliedCellTicks.TryGetValue(point, out int liveTick) &&
                     tick <= liveTick)
                 {
+                    // [SuAPI] 临时探针（跨客户端漏格定位用，验证后删除）
+                    ScMultiplayer.ProbeClientTerrainApply(point, "drop.cp_tick", sequence, tick,
+                        networkValue);
                     RecordTerrainConsumed();
                     return true;
                 }
@@ -751,14 +786,22 @@ namespace ScMultiplayer
             else if (sequence > 0 && m_appliedCellSequences.TryGetValue(point,
                          out long appliedSequence) && sequence <= appliedSequence)
             {
+                // [SuAPI] 临时探针（跨客户端漏格定位用，验证后删除）
+                ScMultiplayer.ProbeClientTerrainApply(point, "drop.stale_seq", sequence, tick,
+                    networkValue);
                 RecordTerrainConsumed();
+                NoteStaleNetworkCellDivergence(point, networkValue, sequence);
                 return true;
             }
             if ((!isChunkCheckpoint || m_appliedCellSequences.ContainsKey(point)) &&
                 m_appliedCellTicks.TryGetValue(point, out int appliedTick) &&
                 tick < appliedTick)
             {
+                // [SuAPI] 临时探针（跨客户端漏格定位用，验证后删除）
+                ScMultiplayer.ProbeClientTerrainApply(point, "drop.stale_tick", sequence, tick,
+                    networkValue);
                 RecordTerrainConsumed();
+                NoteStaleNetworkCellDivergence(point, networkValue, sequence);
                 return true;
             }
             if (!isChunkCheckpoint && sequence > 0)
@@ -779,10 +822,27 @@ namespace ScMultiplayer
             if (appliedValue != Terrain.ReplaceLight(networkValue, 0))
                 ScMultiplayer.currentInstance?.OnClientTerrainCellApplicationFailed(
                     point, sequence);
+            // [SuAPI] 临时探针（跨客户端漏格定位用，验证后删除）
+            ScMultiplayer.ProbeClientTerrainApply(point,
+                appliedValue == Terrain.ReplaceLight(networkValue, 0) ? "applied" : "mismatch",
+                sequence, tick, networkValue);
             m_pendingNetworkGeometryCells.Add(point);
             LastAppliedTerrainTick = Math.Max(LastAppliedTerrainTick, tick);
+            ScMultiplayer.currentInstance?.ClearClientTerrainCellMissing(point);
             RecordTerrainConsumed();
             return true;
+        }
+
+        // 守卫按"更旧"丢弃这一格时，如果当前格子的值和这份权威值并不一致，说明记账
+        // （tick/sequence）是被一次更晚的区块校验推进过、而这格真正的写入被丢掉了 —— 记进
+        // 漏格台账并按格修复，不要静默放过（"主机认同了但 B 端漏格又不自愈"的来源之一）。
+        private void NoteStaleNetworkCellDivergence(Point3 point, int networkValue, long sequence)
+        {
+            if (sequence <= 0) return;
+            int currentValue = Terrain.ReplaceLight(
+                Terrain.GetCellValue(point.X, point.Y, point.Z), 0);
+            if (currentValue == Terrain.ReplaceLight(networkValue, 0)) return;
+            ScMultiplayer.currentInstance?.RecordClientTerrainCellMissing(point, sequence, "stale");
         }
 
         private void DeferNetworkCell(Point3 point, bool isModified, int cellValue,
@@ -819,8 +879,13 @@ namespace ScMultiplayer
             m_deferredNetworkCells.Remove(oldest);
             CompleteCheckpointBatchCell(removed.CheckpointBatch, applied: false);
             if (removed.CheckpointBatch == null)
+            {
+                // 延迟积压溢出被挤出的格子：既记进漏格台账（按格修复），也保留原来的区块校验兜底。
+                ScMultiplayer.currentInstance?.RecordClientTerrainCellMissing(oldest,
+                    removed.Sequence, "backlog");
                 ScMultiplayer.currentInstance?.OnClientTerrainCellApplicationFailed(
                     oldest, removed.Sequence);
+            }
         }
 
         // Source: Survivalcraft/Game/TerrainUpdater.cs:TerrainUpdater.Update

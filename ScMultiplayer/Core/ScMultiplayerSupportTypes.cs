@@ -407,6 +407,8 @@ namespace ScMultiplayer
         public long Revision;
         public int ReceivedBatches;
         public int AppliedBatches;
+        // 主机这次校验一共发了几个 Data 批（见 TerrainChunkSyncMessage.TotalBatches）。
+        public int TotalBatches;
         public bool CompleteReceived;
     }
 
@@ -509,6 +511,22 @@ namespace ScMultiplayer
         public int ExpectedValue;
         public int CheckAfterFrameIndex;
         public double ExpiresAt;
+    }
+
+    // Source: Survivalcraft/Game/SubsystemMovingBlocks.cs:SubsystemMovingBlocks.TerrainCollision
+    // 主机驱动的移动方块组（活塞 / 塌落）在客户端每帧都会做碰撞检查，一旦判定撞地形就会
+    // Stop → 引擎把方块按 origin+offset 写回原格并移除组。而"源格→空气"的地形消息和移动组
+    // 包走两条通道，组先到时源格还是旧方块 → 组在原点就被判停（表现为"板子瞬间回到原点、
+    // 杆子翻回背面"）。所以组要等本端这些格子已经空了再创建，这里保存等待中的记录。
+    internal sealed class PendingHostMotionSet
+    {
+        public string Id;
+        public PistonMotionRecord Record;
+        public double Deadline;
+        // 这条记录是什么时候收到的：超过 HostMotionSetMaxStaleAge 还没能满足建组条件就直接
+        // 放弃，绝不"凭过期记录建组"——那会在主机那条组早已消失后建出一个孤儿组（一建起来就
+        // 撞地形停住、又没人收尾，表现为看得见踩得住但挖不动、活塞穿过去的幽灵方块）。
+        public double RecordedTime;
     }
 
     public class OutgoingWorldTransfer

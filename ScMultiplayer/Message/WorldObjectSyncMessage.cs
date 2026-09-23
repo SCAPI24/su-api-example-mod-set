@@ -11,7 +11,12 @@ namespace ScMultiplayer
         SnapshotChunk = 1,
         FurnaceBatch = 2,
         PistonBatch = 3,
-        SnapshotRequest = 4
+        SnapshotRequest = 4,
+        // Source: Survivalcraft/Game/SubsystemCollapsingBlockBehavior.cs:TryCollapseColumn
+        // 塌落（沙子/砂砾）与活塞是同一类移动方块组，但过去从来没同步过：客户端只收到
+        // "源格→空气"和落地后的地形，中间的下落过程两端都没有数据。复用 PistonMotionRecord
+        // 的字段（Position/TargetPosition/Speed/Acceleration/Drag/Smoothness/Blocks）即可。
+        CollapsingBatch = 5
     }
 
     public enum WorldObjectSnapshotKind : byte
@@ -116,7 +121,8 @@ namespace ScMultiplayer
                 }
                 return;
             }
-            if (Stage == WorldObjectSyncStage.PistonBatch)
+            if (Stage == WorldObjectSyncStage.PistonBatch ||
+                Stage == WorldObjectSyncStage.CollapsingBatch)
             {
                 MotionSequence = reader.ReadPackedInt32(1, int.MaxValue);
                 IsComplete = reader.ReadBoolean();
@@ -193,7 +199,8 @@ namespace ScMultiplayer
                 }
                 return;
             }
-            if (Stage == WorldObjectSyncStage.PistonBatch)
+            if (Stage == WorldObjectSyncStage.PistonBatch ||
+                Stage == WorldObjectSyncStage.CollapsingBatch)
             {
                 if (MotionSequence <= 0)
                     throw new InvalidOperationException("Invalid piston motion sequence.");

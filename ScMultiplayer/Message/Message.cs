@@ -13,7 +13,7 @@ namespace ScMultiplayer
     [Serializable]
     public abstract class Message
     {
-        public const string ModVersion = "2.1.38";
+        public const string ModVersion = "2.1.66";
         public const int ProtocolVersion = 1;
 
         private static readonly Dictionary<int, Type> MessageTypesById = new();
@@ -69,10 +69,10 @@ namespace ScMultiplayer
             Register<PlayerProfileMessage>(30, nameof(PlayerProfileMessage), 2);
             Register<ProjectileSyncMessage>(31, nameof(ProjectileSyncMessage), 1);
             Register<TerrainRecoveryMessage>(32, nameof(TerrainRecoveryMessage), 1);
-            Register<WorldObjectSyncMessage>(33, nameof(WorldObjectSyncMessage), 1);
+            Register<WorldObjectSyncMessage>(33, nameof(WorldObjectSyncMessage), 2);
             Register<WorldControlResultMessage>(34, nameof(WorldControlResultMessage), 1);
             Register<PlayerSkinAssetMessage>(35, nameof(PlayerSkinAssetMessage), 2);
-            Register<TerrainChunkSyncMessage>(36, nameof(TerrainChunkSyncMessage), 1);
+            Register<TerrainChunkSyncMessage>(36, nameof(TerrainChunkSyncMessage), 2);
             Register<DigPresentationMessage>(37, nameof(DigPresentationMessage), 1);
             Register<MeleeHitResultMessage>(38, nameof(MeleeHitResultMessage), 1);
             Register<AnimalSoundMessage>(39, nameof(AnimalSoundMessage), 1);

@@ -23,6 +23,16 @@ namespace ScMultiplayer
             public int LastSequence;
         }
 
+        // Source: Survivalcraft/Game/RotateableElectricElement.cs:RotateableElectricElement.Rotation
+        // 旋转元件的 Rotation setter 本身就是"写格子 + 播音效"。客户端应用这条事件时如果做相对
+        // ++，而主机又把同一格的绝对新值发给客户端，客户端就会多转一档（先转到别的角度、随后
+        // 才被绝对写回纠正）。和开关一样，这里序列化**主机选定的最终角度**。
+        private sealed class PendingRotationState
+        {
+            public int Rotation;
+            public int LastSequence;
+        }
+
         private sealed class OutgoingSnapshotBatch
         {
             public int HostCircuitStep;
@@ -129,7 +139,6 @@ namespace ScMultiplayer
         private const int TrackedCircuitRetentionSteps = 3000;
         private const int RepairBarrierMinimumLeadSteps = 20;
         private const int MaximumDeferredSnapshotStates = 16384;
-        private const double LocalButtonSoundCredentialLifetime = 2.0;
         private const byte RuntimeStateFlag = 128;
 
         private readonly ScMultiplayer m_owner;
@@ -156,10 +165,10 @@ namespace ScMultiplayer
             new SortedDictionary<int, List<CircuitStateRecord>>();
         private readonly Dictionary<CellFace, ButtonPulseState> m_buttonPulses =
             new Dictionary<CellFace, ButtonPulseState>();
-        private readonly Dictionary<CellFace, double> m_localButtonSoundCredentials =
-            new Dictionary<CellFace, double>();
         private readonly Dictionary<Point3, PendingSwitchState> m_pendingSwitchStates =
             new Dictionary<Point3, PendingSwitchState>();
+        private readonly Dictionary<Point3, PendingRotationState> m_pendingRotations =
+            new Dictionary<Point3, PendingRotationState>();
         private readonly Dictionary<int, uint> m_hostCheckpointHashes =
             new Dictionary<int, uint>();
         private readonly Dictionary<int, int> m_hostCheckpointEventSequences =
@@ -646,13 +655,6 @@ namespace ScMultiplayer
             else
             {
                 m_nextRequestId = m_nextRequestId == int.MaxValue ? 1 : m_nextRequestId + 1;
-                if (operation == CircuitOperationType.Interact &&
-                    TryPrepareLocalButtonSound(target))
-                {
-                    // The host event remains authoritative for voltage and timing. This local
-                    // prediction only removes input-to-audio latency and sends no packet.
-                    PlayCircuitClick(target);
-                }
                 NetworkMessageSender.SendCircuitSync(0, new CircuitSyncMessage
                 {
                     Stage = CircuitSyncStage.Request,
@@ -865,8 +867,8 @@ namespace ScMultiplayer
             m_snapshotParts.Clear();
             m_deferredSnapshotStates.Clear();
             m_buttonPulses.Clear();
-            m_localButtonSoundCredentials.Clear();
             m_pendingSwitchStates.Clear();
+            m_pendingRotations.Clear();
             m_hostCheckpointHashes.Clear();
             m_hostCheckpointEventSequences.Clear();
             m_hostCheckpointTerrainSequences.Clear();
@@ -1270,6 +1272,29 @@ namespace ScMultiplayer
                 pending.LastSequence = sequence;
                 value = pending.State ? (byte)1 : (byte)0;
             }
+            else if (operation == CircuitOperationType.Rotate)
+            {
+                // Source: Survivalcraft/Game/RotateableElectricElement.cs:
+                // RotateableElectricElement.Rotation
+                // 序列化主机选定的**绝对**角度。客户端那边这条事件会走 Rotation setter（写格子 +
+                // 播音效），而主机的绝对格子值也会同时发给客户端：如果客户端再做一次相对 ++，
+                // 就会多转一档 —— 表现是"操作后过一会儿元件突然转到别的角度，然后又回到正常"。
+                if (!m_pendingRotations.TryGetValue(target.Point,
+                    out PendingRotationState rotation))
+                {
+                    int cellValue = m_subsystem.SubsystemTerrain.Terrain.GetCellValue(
+                        target.X, target.Y, target.Z);
+                    rotation = new PendingRotationState
+                    {
+                        Rotation = RotateableMountedElectricElementBlock.GetRotation(
+                            Terrain.ExtractData(cellValue))
+                    };
+                    m_pendingRotations[target.Point] = rotation;
+                }
+                rotation.Rotation = (rotation.Rotation + 1) % 4;
+                rotation.LastSequence = sequence;
+                value = (byte)rotation.Rotation;
+            }
             var item = new CircuitEventRecord
             {
                 Sequence = sequence,
@@ -1452,6 +1477,13 @@ namespace ScMultiplayer
             {
                 m_pendingSwitchStates.Remove(item.Point);
             }
+            if (ScMultiplayer.IsHost && item.Operation == CircuitOperationType.Rotate &&
+                m_pendingRotations.TryGetValue(item.Point,
+                    out PendingRotationState pendingRotation) &&
+                pendingRotation.LastSequence <= item.Sequence)
+            {
+                m_pendingRotations.Remove(item.Point);
+            }
             ElectricElement element = m_subsystem.GetElectricElement(item.Point.X,
                 item.Point.Y, item.Point.Z, item.MountingFace);
             if (element == null) return;
@@ -1497,8 +1529,14 @@ namespace ScMultiplayer
                     element is RotateableElectricElement rotateable)
                 {
                     // Source: Survivalcraft/Game/RotateableElectricElement.cs:
-                    // RotateableElectricElement.OnInteract
-                    rotateable.Rotation++;
+                    // RotateableElectricElement.Rotation
+                    // 按主机序列化的**绝对**角度设置（幂等）：主机那条同格的绝对写入已到也不会
+                    // 再多转一档。setter 自己会写格子并播音效，所以这里不需要另外播一次。
+                    rotateable.Rotation = item.Value;
+                    // 客户端这一次写入走的是 setter 的 ChangeCell，不经过网络格子的几何刷新路径，
+                    // 补一次刷新，避免模型停在上一个角度。
+                    (m_subsystem.SubsystemTerrain as SuSubsystemTerrain)?
+                        .ForceNetworkCellGeometry(item.Point);
                 }
                 else if (item.Operation == CircuitOperationType.FurnitureSwitch &&
                     element is SwitchFurnitureElectricElement furnitureSwitch)
@@ -1529,9 +1567,7 @@ namespace ScMultiplayer
                 element, "m_voltage", declaringType);
             if (wasPressed || ElectricElement.IsSignalHigh(voltage)) return;
 
-            if (element is SuButtonElectricElement networkButton)
-                networkButton.ApplyNetworkPress();
-            else if (element is ButtonElectricElement button)
+            if (element is ButtonElectricElement button)
                 button.Press();
             else if (element is ButtonFurnitureElectricElement furnitureButton)
                 furnitureButton.Press();
@@ -1548,16 +1584,7 @@ namespace ScMultiplayer
                 PressSequence = item.Sequence,
                 ReleaseHostStep = releaseHostStep
             };
-            bool suppressDuplicateSound = false;
-            if (!ScMultiplayer.IsHost && m_localButtonSoundCredentials.TryGetValue(
-                face, out double createdTime))
-            {
-                suppressDuplicateSound = Time.RealTime - createdTime <=
-                    LocalButtonSoundCredentialLifetime;
-                m_localButtonSoundCredentials.Remove(face);
-            }
-            if (!suppressDuplicateSound)
-                PlayCircuitClick(face);
+            PlayCircuitClick(face);
             if (ScMultiplayer.IsHost)
             {
                 int confirmHostStep = releaseHostStep + 1;
@@ -1820,6 +1847,30 @@ namespace ScMultiplayer
         {
             if (!ScMultiplayer.IsHost || message.Epoch != m_epoch ||
                 message.HashStep <= 0 || sourceClientId <= 0) return;
+            // [SuAPI] 临时探针（电路校验闭环定位用，验证后删除）
+            {
+                int probeVerified = 0;
+                m_clientRepairVerifiedThrough.TryGetValue(sourceClientId, out probeVerified);
+                int probeHostSeq = 0;
+                long probeHostTerrain = 0L;
+                int probeHostGen = 0;
+                m_hostCheckpointEventSequences.TryGetValue(message.HashStep, out probeHostSeq);
+                m_hostCheckpointTerrainSequences.TryGetValue(message.HashStep, out probeHostTerrain);
+                m_hostCheckpointTimelineGenerations.TryGetValue(message.HashStep, out probeHostGen);
+                Diagnostics.ScMultiplayerOperationLog.Write("event=circuit.hashreport client=" +
+                    sourceClientId.ToString(CultureInfo.InvariantCulture) +
+                    " step=" + message.HashStep.ToString(CultureInfo.InvariantCulture) +
+                    " known=" + m_hostCheckpointHashes.ContainsKey(message.HashStep)
+                        .ToString(CultureInfo.InvariantCulture) +
+                    " avail=" + message.HashAvailable.ToString(CultureInfo.InvariantCulture) +
+                    " verified=" + probeVerified.ToString(CultureInfo.InvariantCulture) +
+                    " sent=seq" + message.LastSequence.ToString(CultureInfo.InvariantCulture) +
+                    ",terrain" + message.RequiredTerrainSequence.ToString(CultureInfo.InvariantCulture) +
+                    ",gen" + message.TimelineGeneration.ToString(CultureInfo.InvariantCulture) +
+                    " host=seq" + probeHostSeq.ToString(CultureInfo.InvariantCulture) +
+                    ",terrain" + probeHostTerrain.ToString(CultureInfo.InvariantCulture) +
+                    ",gen" + probeHostGen.ToString(CultureInfo.InvariantCulture));
+            }
             if (m_clientRepairVerifiedThrough.TryGetValue(sourceClientId,
                 out int verifiedThrough) && message.HashStep <= verifiedThrough)
                 return;
@@ -1891,6 +1942,11 @@ namespace ScMultiplayer
         {
             int count = m_clientHashMismatchCounts.TryGetValue(sourceClientId,
                 out int previous) ? previous + 1 : 1;
+            // [SuAPI] 临时探针（电路校验闭环定位用，验证后删除）
+            Diagnostics.ScMultiplayerOperationLog.Write("event=circuit.hashmismatch client=" +
+                sourceClientId.ToString(CultureInfo.InvariantCulture) +
+                " step=" + checkpointStep.ToString(CultureInfo.InvariantCulture) +
+                " count=" + count.ToString(CultureInfo.InvariantCulture));
             if (count < 2)
             {
                 m_clientHashMismatchCounts[sourceClientId] = count;
@@ -1911,6 +1967,10 @@ namespace ScMultiplayer
         private void PlanClientRepair(int targetClientId, int checkpointStep)
         {
             if (m_hostRepairBarriers.ContainsKey(targetClientId)) return;
+            // [SuAPI] 临时探针（电路校验闭环定位用，验证后删除）
+            Diagnostics.ScMultiplayerOperationLog.Write("event=circuit.repairplan client=" +
+                targetClientId.ToString(CultureInfo.InvariantCulture) +
+                " step=" + checkpointStep.ToString(CultureInfo.InvariantCulture));
             int barrier = m_subsystem.CircuitStep + Math.Max(
                 RepairBarrierMinimumLeadSteps, GetCircuitLeadSteps() + 5);
             m_hostRepairBarriers[targetClientId] = barrier;
@@ -1943,6 +2003,10 @@ namespace ScMultiplayer
             m_hostRepairBarriers.Remove(sourceClientId);
             m_clientHashMismatchCounts.Remove(sourceClientId);
             m_outgoingSnapshots.Remove(sourceClientId);
+            // [SuAPI] 临时探针（电路校验闭环定位用，验证后删除）
+            Diagnostics.ScMultiplayerOperationLog.Write("event=circuit.repairapplied client=" +
+                sourceClientId.ToString(CultureInfo.InvariantCulture) +
+                " step=" + message.HostCircuitStep.ToString(CultureInfo.InvariantCulture));
             if (!m_clientRepairVerifiedThrough.TryGetValue(sourceClientId,
                 out int verifiedThrough) || message.HostCircuitStep > verifiedThrough)
                 m_clientRepairVerifiedThrough[sourceClientId] = message.HostCircuitStep;
@@ -2492,6 +2556,11 @@ namespace ScMultiplayer
             }
             if (appliedRepairCheckpoint > 0)
             {
+                // [SuAPI] 临时探针（电路校验闭环定位用，验证后删除）
+                Diagnostics.ScMultiplayerOperationLog.Write("event=circuit.snapshotapply step=" +
+                    appliedRepairCheckpoint.ToString(CultureInfo.InvariantCulture) +
+                    " hostStep=" + appliedRepairHostStep.ToString(CultureInfo.InvariantCulture) +
+                    " seq=" + m_snapshotLastSequence.ToString(CultureInfo.InvariantCulture));
                 // Source: CircuitSynchronizer.HandleRepairApplied
                 NetworkMessageSender.SendCircuitSync(0, new CircuitSyncMessage
                 {
@@ -3078,28 +3147,6 @@ namespace ScMultiplayer
         {
             m_subsystem.SubsystemAudio.PlaySound("Audio/Click", 1f, 0f,
                 new Vector3(face.X, face.Y, face.Z), 2f, autoDelay: true);
-        }
-
-        // Source: Survivalcraft/Game/ButtonElectricElement.cs:ButtonElectricElement.Press
-        private bool TryPrepareLocalButtonSound(CellFace face)
-        {
-            ElectricElement element = m_subsystem.GetElectricElement(
-                face.X, face.Y, face.Z, face.Face);
-            if (!TryGetButtonDeclaringType(element, out Type declaringType))
-                return false;
-            bool wasPressed = ScMultiplayer.ModManager.ModParentField.GetParentField<bool>(
-                element, "m_wasPressed", declaringType);
-            float voltage = ScMultiplayer.ModManager.ModParentField.GetParentField<float>(
-                element, "m_voltage", declaringType);
-            if (wasPressed || ElectricElement.IsSignalHigh(voltage))
-                return false;
-            // Resolve the same stable face the host event uses. Interaction raycasts choose the
-            // first player-operable face; an element can expose multiple CellFaces in a different
-            // order, which previously left the local prediction credential unmatched.
-            double now = Time.RealTime;
-            m_localButtonSoundCredentials[face] = now;
-            m_localButtonSoundCredentials[GetStableCellFace(element)] = now;
-            return true;
         }
 
         // Source: ScMultiplayer.HandleGameWorldInfoMessage

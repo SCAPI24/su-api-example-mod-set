@@ -691,6 +691,34 @@ namespace ScMultiplayer
             m_hostSleepWakeHandlers =
             new Dictionary<ComponentHealth, Action<ComponentCreature>>();
         private bool m_remoteFogPresentationInitialized;
+        // 客户端"漏格台账"：某格收到过权威写入却没能落地（区块未就绪被延迟后挤出积压、
+        // 或"更旧"守卫丢弃但当前值其实和权威值不一致）。值 = 该格最小的权威 sequence。
+        // 用途：(a) 直接按格向主机请求权威值（不依赖区块 revision）；(b) 把区块校验上报的
+        // knownRevision 压回它之前 —— 主机的区块快照只发 `Sequence > knownRevision` 的格子，
+        // 不压回去的话漏掉的那格会被永远过滤掉。
+        private readonly Dictionary<Point3, long> m_clientTerrainMissingCells =
+            new Dictionary<Point3, long>();
+        private readonly Dictionary<Point3, int> m_clientTerrainMissingRepairAttempts =
+            new Dictionary<Point3, int>();
+        private double m_nextClientTerrainMissingRepairTime;
+        private const double ClientTerrainMissingRepairInterval = 0.5;
+        private const int MaximumClientTerrainMissingRepairCells = 64;
+        private const int MaximumClientTerrainMissingRepairAttempts = 20;
+        // 自愈网（客户端）：按固定节奏轮询玩家周围区块的权威 revision。漏格无论是因为可靠
+        // 有序流停顿被丢（Comms/Comm.cs:RecoverStalledReliableSequence）、还是别的路径没投递，
+        // 只要客户端这一格的写入没落地，它的区块 revision 就会停在漏格 sequence 之前，下一次
+        // 校验就能让主机按 `Sequence > knownRevision` 把这格重新发回来。
+        private readonly List<Point2> m_clientTerrainVerifyChunks = new List<Point2>();
+        private Point2 m_clientTerrainVerifyCenter;
+        private bool m_clientTerrainVerifyInitialized;
+        private int m_clientTerrainVerifyCursor;
+        private double m_nextClientTerrainChunkVerifyTime;
+        private const double ClientTerrainChunkVerifyInterval = 0.5;
+        private const int ClientTerrainChunkVerifyRadius = 2;
+        // [SuAPI] 临时探针（跨客户端漏格定位用，验证后连同 event=terrain.* 记录一起删除）
+        private readonly Dictionary<Point3, int> m_clientTerrainProbeCounts =
+            new Dictionary<Point3, int>();
+        private double m_nextClientTerrainProbeTime;
         private bool m_remoteLightningActive;
         private bool m_hostLightningActive;
         private readonly SessionAssetRegistry m_sessionAssetRegistry =
@@ -836,6 +864,9 @@ namespace ScMultiplayer
         private const double TerrainChunkVerificationDelay = 0.35;
         private const double HostTerrainPlaceFallbackLifetime = 0.5;
         private const double LocalCollapsingPredictionLifetime = 8.0;
+        // 挂起的放置预测最多重试这么多次（0.5 秒一次 ≈ 8 秒）后作废：主机结果丢失或对不上时，
+        // 它会让 FilterPendingTerrainPlacePredictions 永久屏蔽这一格的权威回写。
+        private const int MaximumTerrainPlacePredictionRetries = 16;
         private const double WaterSettlementDelay = 0.35;
         private const double SlowFluidSettlementDelay = 2.1;
         private const int AnimalSyncBatchSize = 12;

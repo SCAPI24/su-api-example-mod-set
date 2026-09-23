@@ -2435,6 +2435,16 @@ namespace ScMultiplayer
 				// from being frozen before a sand or soil placement settles on the host.
 				terrain?.TerrainUpdater?.RequestSynchronousUpdate();
 				(terrain as SuSubsystemTerrain)?.FlushHostModifiedCellClosureForNetworkAction();
+				// Source: ScMultiplayerTerrainHandlers.cs:PublishTerrainChanges
+				// 原生的 modified-cells closure 不保证包含这一格：实测（2.1.41 定位）远程放置被主机
+				// 接受、放置者通过 place result 拿到权威值，但这一格既没进广播、也没进区块记账，
+				// 于是其他客户端的区块 revision 停在它之前（等于主机 revision），区块校验/漏格自愈
+				// 都取不回来 —— 表现就是"一端放了导线，另一端一直是空气，且日志里什么都没有"。
+				// 接受之后无条件按权威值重发这一格：所有客户端都能拿到，区块记账也随之前进。
+				PublishTerrainChanges(new Dictionary<Point3, bool>
+				{
+					[execution.Request.Cell] = true
+				}, immediate: true);
 				PublishServerAudit("terrain.place", execution.ClientId, "cell=" + execution.Request.Cell.X.ToString(CultureInfo.InvariantCulture) + "," + execution.Request.Cell.Y.ToString(CultureInfo.InvariantCulture) + "," + execution.Request.Cell.Z.ToString(CultureInfo.InvariantCulture));
 			}
 		}

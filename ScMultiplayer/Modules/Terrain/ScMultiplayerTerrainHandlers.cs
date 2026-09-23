@@ -162,6 +162,8 @@ namespace ScMultiplayer
                 m_pendingHostTerrainBroadcastCells.Clear();
             }
             KeyValuePair<Point3, bool>[] items = pending.ToArray();
+            // [SuAPI] 临时探针（跨客户端漏格定位用，验证后删除）：每次广播最多写 3 条。
+            int probePushLines = 0;
             for (int offset = 0; offset < items.Length; offset += TerrainReliableBatchSize)
             {
                 var batch = new Dictionary<Point3, bool>();
@@ -183,18 +185,68 @@ namespace ScMultiplayer
                 {
                     if (remote == null || remote.ClientID <= 0) continue;
                     var projected = new Dictionary<Point3, bool>();
+                    // [SuAPI] 临时探针（跨客户端漏格定位用，验证后删除）：记录"明明在该客户端
+                    // 玩家附近、却没被投递"的格子。
+                    int probeLogged = 0;
+                    Vector3? probePlayerPosition =
+                        m_networkPlayerData.TryGetValue(remote.ClientID, out PlayerData probePlayer) &&
+                        probePlayer?.ComponentPlayer?.ComponentBody != null
+                            ? probePlayer.ComponentPlayer.ComponentBody.Position
+                            : (Vector3?)null;
                     foreach (KeyValuePair<Point3, bool> item in message.ModifiedCells)
                     {
                         Point2 chunk = Terrain.ToChunk(item.Key.X, item.Key.Z);
                         if (m_hostTerrainChunkSubscribers.TryGetValue(chunk,
                                 out HashSet<int> subscribers) && subscribers.Contains(remote.ClientID))
+                        {
                             projected[item.Key] = item.Value;
+                            continue;
+                        }
+                        if (probeLogged < 16 && probePlayerPosition.HasValue &&
+                            Vector3.DistanceSquared(probePlayerPosition.Value,
+                                new Vector3(item.Key.X + 0.5f, item.Key.Y + 0.5f,
+                                    item.Key.Z + 0.5f)) <= 64f * 64f)
+                        {
+                            probeLogged++;
+                            ScMultiplayerOperationLog.Write(
+                                "event=terrain.push.out client=" +
+                                remote.ClientID.ToString(CultureInfo.InvariantCulture) +
+                                " cell=" + item.Key.X.ToString(CultureInfo.InvariantCulture) + "," +
+                                item.Key.Y.ToString(CultureInfo.InvariantCulture) + "," +
+                                item.Key.Z.ToString(CultureInfo.InvariantCulture) +
+                                " chunk=" + chunk.X.ToString(CultureInfo.InvariantCulture) + "," +
+                                chunk.Y.ToString(CultureInfo.InvariantCulture) +
+                                " seq=" + message.Sequence.ToString(CultureInfo.InvariantCulture));
+                        }
                     }
                     var projectedMessage = new GameModifiedCellsMessage(projected, client.Step)
                     {
                         Sequence = message.Sequence,
                         TargetClientId = remote.ClientID
                     };
+                    // [SuAPI] 临时探针（跨客户端漏格定位用，验证后删除）：这次真正投递给该
+                    // 客户端、且离它角色 16 格以内的格子，和客户端的 event=terrain.recv 配对。
+                    if (probePushLines < 3 && probePlayerPosition.HasValue && projected.Count > 0)
+                    {
+                        var samples = new List<string>();
+                        int near = 0;
+                        foreach (Point3 cell in projected.Keys)
+                        {
+                            if (!IsProbeNearPlayer(probePlayerPosition, cell, 16f)) continue;
+                            near++;
+                            if (samples.Count < 4) samples.Add(FormatProbeCell(cell));
+                        }
+                        if (near > 0)
+                        {
+                            probePushLines++;
+                            ScMultiplayerOperationLog.Write("event=terrain.push client=" +
+                                remote.ClientID.ToString(CultureInfo.InvariantCulture) +
+                                " seq=" + message.Sequence.ToString(CultureInfo.InvariantCulture) +
+                                " sent=" + projected.Count.ToString(CultureInfo.InvariantCulture) +
+                                " near=" + near.ToString(CultureInfo.InvariantCulture) +
+                                " sample=" + string.Join(";", samples));
+                        }
+                    }
                     NetworkMessageSender.SendScheduledMessage(remote.ClientID, projectedMessage,
                         sequenced: false, latest: false, batchable: false);
                 }
@@ -401,7 +453,8 @@ namespace ScMultiplayer
                 }
                 if (cells.Count > 0)
                 {
-                    RegisterClientTerrainChunkCheckpointBatch(coordinates, message.Revision);
+                    RegisterClientTerrainChunkCheckpointBatch(coordinates, message.Revision,
+                        message.TotalBatches);
                     // Source: ScMultiplayer.Func.Subsystem.SuSubsystemTerrain:
                     // SuSubsystemTerrain.EnqueuePriorityNetworkBatch
                     // Chunk checkpoint data carries its chunk revision for per-cell stale-write
@@ -457,13 +510,32 @@ namespace ScMultiplayer
                 m_clientTerrainChunkCheckpoints[coordinates] = checkpoint;
             }
             checkpoint.CompleteReceived = true;
+            // 主机承诺的批数没到齐（数据批在可靠有序流停顿时被丢，见
+            // TerrainChunkSyncMessage.TotalBatches）：绝不能 finalize，否则区块 revision 会
+            // 被推过这些没落地的格子，主机之后按 `Sequence > knownRevision` 过滤就再也发不出来。
+            if (checkpoint.TotalBatches > 0 &&
+                checkpoint.ReceivedBatches < checkpoint.TotalBatches)
+            {
+                // [SuAPI] 临时探针（跨客户端漏格定位用，验证后删除）
+                ScMultiplayerOperationLog.Write("event=terrain.chunk.incomplete chunk=" +
+                    coordinates.X.ToString(CultureInfo.InvariantCulture) + "," +
+                    coordinates.Y.ToString(CultureInfo.InvariantCulture) +
+                    " rev=" + message.Revision.ToString(CultureInfo.InvariantCulture) +
+                    " received=" + checkpoint.ReceivedBatches.ToString(CultureInfo.InvariantCulture) +
+                    " total=" + checkpoint.TotalBatches.ToString(CultureInfo.InvariantCulture));
+                m_clientTerrainChunkCheckpoints.Remove(coordinates);
+                m_clientTerrainChunkSyncPending.Remove(coordinates);
+                m_clientTerrainChunkFailedRevisions[coordinates] = message.Revision;
+                QueueClientTerrainChunkSync(coordinates);
+                return;
+            }
             TryFinalizeClientTerrainChunkCheckpoint(coordinates, checkpoint);
         }
 
         // Source: ScMultiplayer.Func.Subsystem.SuSubsystemTerrain:
         // SuSubsystemTerrain.ApplyPriorityNetworkBatches
         private void RegisterClientTerrainChunkCheckpointBatch(Point2 coordinates,
-            long revision)
+            long revision, int totalBatches = 0)
         {
             if (revision <= 0) return;
             if (!m_clientTerrainChunkCheckpoints.TryGetValue(coordinates,
@@ -472,6 +544,9 @@ namespace ScMultiplayer
                 checkpoint = new PendingTerrainChunkCheckpoint { Revision = revision };
                 m_clientTerrainChunkCheckpoints[coordinates] = checkpoint;
             }
+            // 批数取本次校验上报的最大值：重复/迟到的批不会把它压小，只增不减。
+            if (totalBatches > checkpoint.TotalBatches)
+                checkpoint.TotalBatches = totalBatches;
             m_clientTerrainChunkFailedRevisions.Remove(coordinates);
             checkpoint.ReceivedBatches++;
         }
@@ -523,12 +598,29 @@ namespace ScMultiplayer
                 return;
             }
             long knownRevision = GetClientTerrainChunkRevision(coordinates);
-            m_clientTerrainChunkRevisions[coordinates] = Math.Max(knownRevision, checkpoint.Revision);
+            long recordedRevision = Math.Max(knownRevision, checkpoint.Revision);
+            // 该区块仍有漏格时不要把 revision 推过它们：否则后续区块校验会带着一个"已经包含
+            // 这格"的 revision 上报，主机的 `Sequence > knownRevision` 过滤会永远跳过漏格。
+            long missingBound = GetClientTerrainMissingRevisionBound(coordinates);
+            if (missingBound > 0)
+                recordedRevision = Math.Min(recordedRevision, missingBound - 1);
+            m_clientTerrainChunkRevisions[coordinates] = Math.Max(0L, recordedRevision);
             m_clientTerrainChunkCheckpoints.Remove(coordinates);
             m_clientTerrainChunkSyncPending.Remove(coordinates);
+            // [SuAPI] 临时探针（跨客户端漏格定位用，验证后删除）
+            ScMultiplayerOperationLog.Write("event=terrain.chunk.done chunk=" +
+                coordinates.X.ToString(CultureInfo.InvariantCulture) + "," +
+                coordinates.Y.ToString(CultureInfo.InvariantCulture) +
+                " known=" + knownRevision.ToString(CultureInfo.InvariantCulture) +
+                " recorded=" + m_clientTerrainChunkRevisions[coordinates].ToString(CultureInfo.InvariantCulture) +
+                " missingBound=" + missingBound.ToString(CultureInfo.InvariantCulture) +
+                " recv=" + checkpoint.ReceivedBatches.ToString(CultureInfo.InvariantCulture) +
+                " applied=" + checkpoint.AppliedBatches.ToString(CultureInfo.InvariantCulture) +
+                " total=" + checkpoint.TotalBatches.ToString(CultureInfo.InvariantCulture));
             if (m_clientTerrainChunkVerifications.TryGetValue(coordinates,
                     out verification) &&
-                m_clientTerrainChunkRevisions[coordinates] >= verification.RequiredRevision)
+                m_clientTerrainChunkRevisions[coordinates] >= verification.RequiredRevision &&
+                GetClientTerrainMissingRevisionBound(coordinates) <= 0)
                 m_clientTerrainChunkVerifications.Remove(coordinates);
         }
 
@@ -554,6 +646,31 @@ namespace ScMultiplayer
                 serverTick = client.Step;
             }
 
+            // 上报给客户端的 revision 只能是"这次真正发出去的内容"里最大的 sequence：
+            // 用主机自己的区块 revision 会把客户端记账推过它没拿到的格子，之后所有校验都带着
+            // 一个"早就包含这格"的 knownRevision，主机的 `Sequence > knownRevision` 过滤会
+            // 永久跳过它（漏格不自愈的根因之一）。
+            long deliveredRevision = knownRevision;
+            foreach (KeyValuePair<Point3, TerrainCellState> item in snapshot)
+            {
+                if (item.Value.Sequence > deliveredRevision)
+                    deliveredRevision = item.Value.Sequence;
+            }
+            if (deliveredRevision < knownRevision)
+                deliveredRevision = knownRevision;
+            int batchCount = snapshot.Count > 0
+                ? (snapshot.Count + TerrainChunkSyncBatchSize - 1) / TerrainChunkSyncBatchSize
+                : 0;
+            // [SuAPI] 临时探针（跨客户端漏格定位用，验证后删除）
+            ScMultiplayerOperationLog.Write("event=terrain.chunk.serve client=" +
+                targetClientId.ToString(CultureInfo.InvariantCulture) +
+                " chunk=" + coordinates.X.ToString(CultureInfo.InvariantCulture) + "," +
+                coordinates.Y.ToString(CultureInfo.InvariantCulture) +
+                " known=" + knownRevision.ToString(CultureInfo.InvariantCulture) +
+                " rev=" + deliveredRevision.ToString(CultureInfo.InvariantCulture) +
+                " batches=" + batchCount.ToString(CultureInfo.InvariantCulture) +
+                " cells=" + snapshot.Count.ToString(CultureInfo.InvariantCulture));
+
             for (int offset = 0; offset < snapshot.Count;
                 offset += TerrainChunkSyncBatchSize)
             {
@@ -563,7 +680,9 @@ namespace ScMultiplayer
                     Stage = TerrainChunkSyncStage.Data,
                     ChunkX = coordinates.X,
                     ChunkZ = coordinates.Y,
-                    Revision = revision,
+                    KnownRevision = knownRevision,
+                    Revision = deliveredRevision,
+                    TotalBatches = batchCount,
                     ServerTick = serverTick
                 };
                 for (int i = 0; i < count; i++)
@@ -572,7 +691,10 @@ namespace ScMultiplayer
                     message.Cells.Add(item.Key);
                     message.CellValues.Add(item.Value.CellValue);
                 }
-                NetworkMessageSender.SendRawMessage(targetClientId, message, sequenced: true);
+                // Source: Comms/Comms/Comm.cs:RecoverStalledReliableSequence
+                // 区块数据不能走 ReliableSequenced：那条流在停顿时会丢弃消息，而每格的应用
+                // 顺序已经由 revision/tick 守卫保证，可靠无序即可（不会被丢，也不会乱序生效）。
+                NetworkMessageSender.SendRawMessage(targetClientId, message, sequenced: false);
             }
 
             NetworkMessageSender.SendRawMessage(targetClientId, new TerrainChunkSyncMessage
@@ -581,9 +703,10 @@ namespace ScMultiplayer
                     ChunkX = coordinates.X,
                     ChunkZ = coordinates.Y,
                     KnownRevision = knownRevision,
-                    Revision = revision,
+                    Revision = deliveredRevision,
+                    TotalBatches = batchCount,
                     ServerTick = serverTick
-                }, sequenced: true);
+                }, sequenced: false);
         }
 
         private void SendHostTerrainRecoveryRound(int targetClientId, long lastApplied,
@@ -989,6 +1112,24 @@ namespace ScMultiplayer
             foreach (PendingTerrainPlacePrediction prediction in
                 m_pendingTerrainPlacePredictions.Values.ToArray())
             {
+                // 主机结果丢了/对不上时，挂起的放置预测会永远屏蔽这一格的权威回写
+                // （FilterPendingTerrainPlacePredictions 会把"改回旧值"的批次丢掉），
+                // 于是这一格被永久钉在旧值上。超过重试上限就作废它并登记漏格，让按格修复拉回权威值。
+                if (prediction.SendCount >= MaximumTerrainPlacePredictionRetries)
+                {
+                    Point3 expiredCell = prediction.Request.Cell;
+                    RemovePendingTerrainPlacePrediction(prediction.Request.RequestId);
+                    m_localCollapsingPlacePredictions.Remove(expiredCell);
+                    RecordClientTerrainCellMissing(expiredCell,
+                        Math.Max(0L, prediction.Request.Sequence), "place.expire");
+                    // [SuAPI] 临时探针（验证后删除）
+                    ScMultiplayerOperationLog.Write("event=terrain.place.expire cell=" +
+                        expiredCell.X.ToString(CultureInfo.InvariantCulture) + "," +
+                        expiredCell.Y.ToString(CultureInfo.InvariantCulture) + "," +
+                        expiredCell.Z.ToString(CultureInfo.InvariantCulture) +
+                        " sends=" + prediction.SendCount.ToString(CultureInfo.InvariantCulture));
+                    continue;
+                }
                 if (now - prediction.LastSendTime < 0.5) continue;
                 prediction.LastSendTime = now;
                 prediction.SendCount++;
@@ -1194,6 +1335,9 @@ namespace ScMultiplayer
                 msg = FilterStaleTerrainRepairs(msg);
                 if (msg == null || (msg.ModifiedCells.Count == 0 && msg.Sequence <= 0)) return;
                 ConfirmTerrainPredictions(msg);
+                // [SuAPI] 临时探针（跨客户端漏格定位用，验证后删除）：本端真正收到的、
+                // 落在玩家附近的权威格子，和主机侧 event=terrain.push 配对看丢在哪一段。
+                ProbeClientTerrainReceived(msg);
                 // Source: ScMultiplayer.SendTerrainCatchUp
                 // Only an accepted authoritative catch-up batch advances the join countdown.
                 // Ordinary position, keepalive and steady-state packets are not join progress.
@@ -1211,6 +1355,10 @@ namespace ScMultiplayer
         {
             if (IsHost || sequence <= 0 || GameManager.Project == null)
                 return;
+            // 除了区块校验，再单独记一条"这一格漏了"：区块校验的上报 revision 若已被同区块
+            // 其它格推高，主机的 `Sequence > knownRevision` 过滤会永远跳过这一格（见
+            // RecordClientTerrainCellMissing 的说明）。
+            RecordClientTerrainCellMissing(cell, sequence, "applyfail");
             Point2 coordinates = Terrain.ToChunk(cell.X, cell.Z);
             if (!m_clientTerrainChunkVerifications.TryGetValue(coordinates,
                     out PendingTerrainChunkVerification pending))
@@ -1220,6 +1368,207 @@ namespace ScMultiplayer
             }
             pending.RequiredRevision = Math.Max(pending.RequiredRevision, sequence);
             pending.DueTime = Time.RealTime + TerrainChunkVerificationDelay;
+        }
+
+        // [SuAPI] 临时探针（跨客户端漏格定位用，验证后随调用点一起删除）。
+        // 只为把记录限制在"玩家附近"的格子上，避免热路径刷日志：本端角色位置按帧缓存一次。
+        private static Vector3? s_probeLocalPosition;
+        private static int s_probeLocalPositionFrame = -1;
+
+        internal static Vector3? GetProbeLocalPosition()
+        {
+            if (Time.FrameIndex == s_probeLocalPositionFrame)
+                return s_probeLocalPosition;
+            s_probeLocalPositionFrame = Time.FrameIndex;
+            s_probeLocalPosition = null;
+            Project project = GameManager.Project;
+            SubsystemPlayers players = project?.FindSubsystem<SubsystemPlayers>(false);
+            ScMultiplayer instance = currentInstance;
+            if (players == null || instance == null) return null;
+            foreach (ComponentPlayer player in players.ComponentPlayers)
+            {
+                if (player?.ComponentBody == null) continue;
+                if (instance.m_networkPlayerData.Values.Contains(player.PlayerData)) continue;
+                s_probeLocalPosition = player.ComponentBody.Position;
+                break;
+            }
+            return s_probeLocalPosition;
+        }
+
+        internal static bool IsProbeNearPlayer(Vector3? position, Point3 cell, float radius)
+        {
+            if (!position.HasValue) return false;
+            float dx = position.Value.X - (cell.X + 0.5f);
+            float dy = position.Value.Y - (cell.Y + 0.5f);
+            float dz = position.Value.Z - (cell.Z + 0.5f);
+            return dx * dx + dy * dy + dz * dz <= radius * radius;
+        }
+
+        internal static string FormatProbeCell(Point3 cell)
+        {
+            return cell.X.ToString(CultureInfo.InvariantCulture) + "," +
+                cell.Y.ToString(CultureInfo.InvariantCulture) + "," +
+                cell.Z.ToString(CultureInfo.InvariantCulture);
+        }
+
+        internal static string FormatProbeCell(Point3 cell, int value)
+        {
+            return FormatProbeCell(cell) + "=" + value.ToString(CultureInfo.InvariantCulture);
+        }
+
+        private static void ProbeClientTerrainReceived(GameModifiedCellsMessage msg)
+        {
+            if (msg?.ModifiedCells == null || msg.ModifiedCells.Count == 0) return;
+            Vector3? position = GetProbeLocalPosition();
+            if (!position.HasValue) return;
+            var samples = new List<string>();
+            int near = 0;
+            int index = 0;
+            foreach (KeyValuePair<Point3, bool> item in msg.ModifiedCells)
+            {
+                int value = msg.CellValues != null && index < msg.CellValues.Count
+                    ? msg.CellValues[index]
+                    : 0;
+                index++;
+                if (!IsProbeNearPlayer(position, item.Key, 16f)) continue;
+                near++;
+                if (samples.Count < 4) samples.Add(FormatProbeCell(item.Key, value));
+            }
+            if (near == 0) return;
+            ScMultiplayerOperationLog.Write("event=terrain.recv seq=" +
+                msg.Sequence.ToString(CultureInfo.InvariantCulture) +
+                " catchup=" + msg.IsCatchUp.ToString(CultureInfo.InvariantCulture) +
+                " cells=" + msg.ModifiedCells.Count.ToString(CultureInfo.InvariantCulture) +
+                " near=" + near.ToString(CultureInfo.InvariantCulture) +
+                " sample=" + string.Join(";", samples));
+        }
+
+        internal static void ProbeClientTerrainDrop(string reason, GameModifiedCellsMessage msg)
+        {
+            if (msg?.ModifiedCells == null || msg.ModifiedCells.Count == 0) return;
+            Vector3? position = GetProbeLocalPosition();
+            if (!position.HasValue) return;
+            foreach (Point3 cell in msg.ModifiedCells.Keys)
+            {
+                if (!IsProbeNearPlayer(position, cell, 16f)) continue;
+                ScMultiplayerOperationLog.Write("event=terrain.recv.drop reason=" + reason +
+                    " seq=" + msg.Sequence.ToString(CultureInfo.InvariantCulture) +
+                    " cells=" + msg.ModifiedCells.Count.ToString(CultureInfo.InvariantCulture) +
+                    " cell=" + FormatProbeCell(cell));
+                return;
+            }
+        }
+
+        internal static void ProbeClientTerrainApply(Point3 cell, string result, long sequence,
+            int tick, int incoming)
+        {
+            if (!IsProbeNearPlayer(GetProbeLocalPosition(), cell, 16f)) return;
+            SubsystemTerrain terrain = GameManager.Project?.FindSubsystem<SubsystemTerrain>(false);
+            int current = terrain?.Terrain != null
+                ? Terrain.ReplaceLight(terrain.Terrain.GetCellValue(cell.X, cell.Y, cell.Z), 0)
+                : 0;
+            ScMultiplayerOperationLog.Write("event=terrain.apply cell=" + FormatProbeCell(cell) +
+                " seq=" + sequence.ToString(CultureInfo.InvariantCulture) +
+                " tick=" + tick.ToString(CultureInfo.InvariantCulture) +
+                " result=" + result +
+                " current=" + current.ToString(CultureInfo.InvariantCulture) +
+                " incoming=" + incoming.ToString(CultureInfo.InvariantCulture));
+        }
+
+        internal static void ProbeClientTerrainNoValue(Point3 cell, long sequence, int index,
+            int values)
+        {
+            if (!IsProbeNearPlayer(GetProbeLocalPosition(), cell, 16f)) return;
+            ScMultiplayerOperationLog.Write("event=terrain.apply.novalue cell=" +
+                FormatProbeCell(cell) +
+                " seq=" + sequence.ToString(CultureInfo.InvariantCulture) +
+                " index=" + index.ToString(CultureInfo.InvariantCulture) +
+                " values=" + values.ToString(CultureInfo.InvariantCulture));
+        }
+
+        // 客户端漏格台账（见 ScMultiplayerRuntimeState.m_clientTerrainMissingCells 的说明）。
+        // 记录该格最小的权威 sequence：区块校验上报的 knownRevision 要被压到它之前，
+        // 直接按格请求权威修复也用它做去重键。
+        internal void RecordClientTerrainCellMissing(Point3 cell, long sequence, string reason)
+        {
+            if (IsHost || client?.IsConnected != true) return;
+            long recorded = Math.Max(0L, sequence);
+            if (m_clientTerrainMissingCells.TryGetValue(cell, out long known))
+            {
+                // 0 表示"只知道漏了、不知道对应哪个序列"，任何正值都比它更具体。
+                if (recorded > 0 && (known == 0 || recorded < known))
+                    m_clientTerrainMissingCells[cell] = recorded;
+            }
+            else
+            {
+                m_clientTerrainMissingCells[cell] = recorded;
+            }
+            // [SuAPI] 临时探针（跨客户端漏格定位用，验证后删除）
+            ScMultiplayerOperationLog.Write("event=terrain.cell.miss reason=" + reason +
+                " cell=" + cell.X.ToString(CultureInfo.InvariantCulture) + "," +
+                cell.Y.ToString(CultureInfo.InvariantCulture) + "," +
+                cell.Z.ToString(CultureInfo.InvariantCulture) +
+                " seq=" + sequence.ToString(CultureInfo.InvariantCulture) +
+                " pending=" + m_clientTerrainMissingCells.Count.ToString(CultureInfo.InvariantCulture));
+        }
+
+        internal void ClearClientTerrainCellMissing(Point3 cell)
+        {
+            if (!m_clientTerrainMissingCells.Remove(cell)) return;
+            m_clientTerrainMissingRepairAttempts.Remove(cell);
+            // [SuAPI] 临时探针（验证后删除）
+            ScMultiplayerOperationLog.Write("event=terrain.cell.landed cell=" +
+                cell.X.ToString(CultureInfo.InvariantCulture) + "," +
+                cell.Y.ToString(CultureInfo.InvariantCulture) + "," +
+                cell.Z.ToString(CultureInfo.InvariantCulture) +
+                " pending=" + m_clientTerrainMissingCells.Count.ToString(CultureInfo.InvariantCulture));
+        }
+
+        // 该区块里最小的漏格 sequence；没有漏格返回 0。区块校验请求/记账都要用它把
+        // knownRevision 压回去，否则主机会认为"这格早就同步过了"。
+        internal long GetClientTerrainMissingRevisionBound(Point2 coordinates)
+        {
+            long bound = 0;
+            foreach (KeyValuePair<Point3, long> item in m_clientTerrainMissingCells)
+            {
+                if (item.Value <= 0) continue;
+                if (Terrain.ToChunk(item.Key.X, item.Key.Z) != coordinates) continue;
+                if (bound == 0 || item.Value < bound) bound = item.Value;
+            }
+            return bound;
+        }
+
+        // 按格向主机要权威值：主机 HandleGameModifiedCellsMessage 会用 SendAuthoritativeTerrainRepair
+        // 回一份当前值，客户端按普通网络格应用（sequence=0，不走 revision 过滤）。
+        private void FlushClientTerrainMissingRepairs()
+        {
+            if (IsHost || client?.IsConnected != true || m_clientTerrainMissingCells.Count == 0)
+                return;
+            double now = Time.RealTime;
+            if (now < m_nextClientTerrainMissingRepairTime) return;
+            m_nextClientTerrainMissingRepairTime = now + ClientTerrainMissingRepairInterval;
+            var cells = new Dictionary<Point3, bool>();
+            foreach (Point3 cell in m_clientTerrainMissingCells.Keys
+                .Take(MaximumClientTerrainMissingRepairCells).ToArray())
+            {
+                m_clientTerrainMissingRepairAttempts.TryGetValue(cell, out int attempts);
+                if (attempts >= MaximumClientTerrainMissingRepairAttempts)
+                {
+                    // 反复要不到（例如区块一直没就绪）：撤掉这一条，交给区块校验兜底，
+                    // 避免永久每 0.5 秒重发。
+                    m_clientTerrainMissingCells.Remove(cell);
+                    m_clientTerrainMissingRepairAttempts.Remove(cell);
+                    continue;
+                }
+                m_clientTerrainMissingRepairAttempts[cell] = attempts + 1;
+                cells[cell] = true;
+            }
+            if (cells.Count == 0) return;
+            // [SuAPI] 临时探针（验证后删除）
+            ScMultiplayerOperationLog.Write("event=terrain.cell.repair request=" +
+                cells.Count.ToString(CultureInfo.InvariantCulture) +
+                " pending=" + m_clientTerrainMissingCells.Count.ToString(CultureInfo.InvariantCulture));
+            RequestAuthoritativeTerrainRepair(cells);
         }
 
         private void TrackHostTerrainPlaceIntent(ComponentPlayer player, Ray3? interactRay)
@@ -1261,17 +1610,42 @@ namespace ScMultiplayer
                     m_pendingTerrainPlacePredictions.TryGetValue(requestId,
                         out PendingTerrainPlacePrediction prediction) &&
                     prediction.HasLocalPrediction && value != prediction.LocalPredictedValue &&
-                    value == prediction.Request.ExpectedValue;
+                    value == prediction.Request.ExpectedValue &&
+                    // 只有当这一格**仍然停在本地预测值**上时，才允许屏蔽主机的"回写旧值"；
+                    // 预测已经被回滚、或从未真正落地时，继续屏蔽会把这一格永久钉在旧值上
+                    // （实测症状：主机有导线，另一个客户端一直是空气/原草，且日志里什么都没有）。
+                    IsLocalCellAtPredictedValue(item.Key, prediction.LocalPredictedValue);
                 if (!collapsingPrediction && !conflictsWithPrediction)
                 {
                     cells[item.Key] = item.Value;
                     values.Add(value);
+                }
+                else
+                {
+                    // [SuAPI] 临时探针（跨客户端漏格定位用，验证后删除）
+                    ScMultiplayerOperationLog.Write("event=terrain.place.filter cell=" +
+                        item.Key.X.ToString(CultureInfo.InvariantCulture) + "," +
+                        item.Key.Y.ToString(CultureInfo.InvariantCulture) + "," +
+                        item.Key.Z.ToString(CultureInfo.InvariantCulture) +
+                        " incoming=" + value.ToString(CultureInfo.InvariantCulture) +
+                        " collapsing=" + collapsingPrediction.ToString(CultureInfo.InvariantCulture) +
+                        " conflict=" + conflictsWithPrediction.ToString(CultureInfo.InvariantCulture));
                 }
                 index++;
             }
             if (cells.Count == message.ModifiedCells.Count) return message;
             return new GameModifiedCellsMessage(cells, values, message.Tick,
                 message.IsCatchUp, message.TargetClientId, message.Sequence);
+        }
+
+        private static bool IsLocalCellAtPredictedValue(Point3 cell, int predictedValue)
+        {
+            SubsystemTerrain terrain = GameManager.Project?
+                .FindSubsystem<SubsystemTerrain>(false);
+            if (terrain?.Terrain == null) return false;
+            int current = Terrain.ReplaceLight(
+                terrain.Terrain.GetCellValue(cell.X, cell.Y, cell.Z), 0);
+            return current == Terrain.ReplaceLight(predictedValue, 0);
         }
 
         private void SendAuthoritativeTerrainRepair(int targetClientId,

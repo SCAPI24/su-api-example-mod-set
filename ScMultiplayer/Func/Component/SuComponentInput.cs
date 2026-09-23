@@ -196,7 +196,11 @@ namespace ScMultiplayer
             // ray request, while preserving Sum_playerInput for the client's native prediction.
             if (sentAnimalAttack) networkPlayerInput.Hit = null;
             // Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update
-            // Circuit buttons execute on the host-assigned 10ms step, so suppress native prediction.
+            // 电路元件的交互完全由主机在它分配的那个电路步上执行并回传结果（请求走
+            // TryScheduleLocalCircuitInteraction 单独发给主机）。本地**不做预测**：发给主机的
+            // 输入与本端自己的输入都要摘掉这次 Interact，否则本端原生行为会先自己执行一次
+            // （按钮按下/开关翻转/旋转 +1），主机那条迟到数秒的动作到达后再执行一次 ——
+            // 表现就是"点一次、过一会儿又被点一次"、旋转元件两个角度来回摆。
             bool scheduledCircuitInteraction = ScMultiplayer.currentInstance?
                 .TryScheduleLocalCircuitInteraction(Sum_componentPlayer,
                     networkPlayerInput.Interact) == true;

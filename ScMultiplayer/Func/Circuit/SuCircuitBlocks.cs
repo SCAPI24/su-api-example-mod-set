@@ -44,11 +44,6 @@ namespace ScMultiplayer
                 return;
             base.OnHitByProjectile(cellFace, worldItem);
         }
-
-        internal void ApplyNetworkPress()
-        {
-            base.Press();
-        }
     }
 
     public sealed class PressurePlateBlock : Game.PressurePlateBlock
