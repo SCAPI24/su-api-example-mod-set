@@ -1191,7 +1191,12 @@ namespace ScMultiplayer
 				knockbackSequence = PlayerActionSequencePolicy.Next(knockbackSequence);
 				m_hostKnockbackSequences[remote.Key] = knockbackSequence;
 				m_hostRemoteKnockbackUntil[remote.Key] = now + 0.75;
-				NetworkMessageSender.SendPlayerHealthMessage(remote.Key, player, health.Health - lastSentHealth, null, hasKnockback: true, knockbackSequence, client.Step, knockbackStunTime);
+				// 死亡时这一条快照也要带上死因：它是"受击击退"通道（即时双份 + 可靠一份），
+				// 通常比周期快照先到客户端。以前这里传 null，客户端先按"没死因"落地一次，
+				// 之后的周期快照（带真死因）被我那套"一次死亡只落地一次"挡住 ——
+				// 结果死亡界面/统计永远是 Unknown（实测"被狼杀死还是未知原因"）。
+				string knockbackCause = health.Health <= 0f ? health.CauseOfDeath : null;
+				NetworkMessageSender.SendPlayerHealthMessage(remote.Key, player, health.Health - lastSentHealth, knockbackCause, hasKnockback: true, knockbackSequence, client.Step, knockbackStunTime);
 				if (player.ComponentVitalStats != null)
 				{
 					m_lastSentAuthoritativePlayerStates[remote.Key] = CaptureAuthoritativePlayerState(player);
@@ -2860,6 +2865,18 @@ namespace ScMultiplayer
 			{
 				if (sourceClientId > 0 && message.PlayerIndex == sourceClientId && ResetNetworkPlayerAfterRespawn(sourceClientId, message.Position, requireDead: true, message.Sequence))
 				{
+					// 复活落点由主机决定，必须**回传给本人**（Teleport 会连输入基准一起重置）。
+					// 客户端本地重生走的是引擎自己的出生点搜索（PlayerData.FindNoIntroSpawnPosition：
+					// 在锚点附近找"没有遮挡"的位置，带随机与地形判定），和主机给这份角色落下的点
+					// 不一定重合。不纠正的话客户端就停在它自己那个点上，随后输入快照会把主机这份
+					// ——以及其他客户端看到的这个角色——从复活点一路拽过去，
+					// 现象就是"复活时其他客户端看到角色朝客户端的位置闪现过去"（实测）。
+					if (m_networkPlayerData.TryGetValue(sourceClientId, out PlayerData respawnedData) &&
+						respawnedData?.ComponentPlayer?.ComponentBody != null)
+					{
+						SendPlayerAuthorityState(sourceClientId, PlayerAuthorityAction.Teleport,
+							respawnedData, respawnedData.ComponentPlayer.ComponentBody);
+					}
 					NetworkMessageSender.BroadcastPlayerRespawn(message);
 					SendGamePlayerHealthMessage(force: true);
 					PublishServerAudit("player.respawn", sourceClientId, null);

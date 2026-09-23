@@ -75,7 +75,11 @@ namespace ScMultiplayer
                 return;
 
             float healthChange = hasPrevious ? current.Health - previous.Health : 0f;
+            // 死亡时把死因一起发过去：客户端血量是"直接写字段跟随"的，不经过 Injure，
+            // 因此本端 CauseOfDeath 为空（界面显示 Unknown）、死亡统计也不会记
+            //（ComponentHealth.cs:90-102 里 CauseOfDeath 与 AddDeathRecord 都只在 Injure 内）。
             NetworkMessageSender.SendPlayerHealthMessage(networkClientId, player, healthChange,
+                cause: current.Health <= 0f ? player.ComponentHealth.CauseOfDeath : null,
                 sleepRequestSequence: sleepRequestSequence);
             m_lastSentAuthoritativePlayerStates[networkClientId] = current;
             if (sleepAcceleration)
@@ -281,19 +285,46 @@ namespace ScMultiplayer
             if (IsHost || client?.IsConnected != true) return;
             if (player.PlayerData == null ||
                 m_networkPlayerData.Values.Contains(player.PlayerData)) return;
-            // 刚复活、主机还没确认的这段窗口里**什么都不做**：否则会跟随"仍然为 0"的旧权威值，
-            // 刚站起来就被写回 0 → 又一次死亡锁存（实测："点复活就屏幕全红、又死了"）。
-            // 主机确认复活（广播 > 0）后窗口自然结束，跟随恢复。
-            if (Time.RealTime < m_localRespawnPendingUntil) return;
+            // 主机没判死、本端血却是正的 → 这一次"死"已经过去了（本端自己复活过，或那只是幽灵死亡）。
+            // 必须在这里复位死亡落地标记：否则下一次**真正的**死亡会被当成"同一场死亡已经记过"
+            // 而既不写死因也不记统计（实测："后续几次被狮子咬死，游戏统计并没有"）。
+            if (!m_localAuthoritativeDeath && health.Health > 0f)
+            {
+                m_localDeathApplied = false;
+                m_localDeathCauseResolved = false;
+            }
+            // 刚复活、主机还没确认的这段窗口：本地血量要有东西钉住。
+            // 不钉住时，复活传送带来的摔落判定 / 身边的动物能在本地把血打到 0，死亡状态机再次锁存 ——
+            // 现象是"点复活后立刻又出现死亡界面（死因 Unknown、点不动）、统计里也没有这次死亡"（实测）。
+            // 但**只钉血、不吞伤害**：曾经在窗口里把本地扣血整个丢掉（连上报都不发），
+            // 结果那段时间点骷髅头扣血完全无效、"最后半格血点击扣血，不死"，
+            // 要等窗口过期（最多 5 秒）才恢复（实测）。扣血照常上报，死不死由主机决定。
+            // ⚠️ 判别"过期的主机判死"与"复活之后新判的死"必须用**序号**，不能只看死亡标志：
+            // 客户端本地重生是引擎自己完成的（PlayerData 换掉实体、新实体满血），
+            // 而主机那份可能还停在 0（复活请求还没被处理）。只看标志的话，这个"0"会在复活瞬间
+            // 把本地血量写回 0 —— 实测就是"点复活后屏幕全红、又冒出一个死亡界面、站着不能动"。
+            // 序号不晚于复活那一刻的 0 是过期的（不跟随）；序号更大的才是复活之后主机新判的死（必须生效）。
+            bool staleAuthoritativeDeath = m_localAuthoritativeDeath &&
+                m_localDeathSequence <= m_localRespawnStateSequence;
+            bool freshAuthoritativeDeath = m_localAuthoritativeDeath && !staleAuthoritativeDeath;
+            bool inRespawnWindow = !freshAuthoritativeDeath &&
+                (staleAuthoritativeDeath || Time.RealTime < m_localRespawnPendingUntil);
             // 还没收到过主机的权威血量：什么都不做（否则会把刚进世界的满血误写成一格）。
-            if (!m_hasObservedClientHealth) return;
+            // 复活窗口是例外：那时正要紧的就是"主机还没回话"。
+            if (!inRespawnWindow && !m_hasObservedClientHealth) return;
             bool authoritativeDead = m_localAuthoritativeDeath;
             // 目标值就是主机的权威血量本身（**不设显示地板**）。
             // 曾经加过一条 0.11 的地板来避免"点击把本地打到 0 → 关面板"，但那会让血条说谎：
             // 主机只剩 0.077 时血条仍显示 1 格，玩家以为还能再挨一下，一点就死
             //（实测："还有2格半或者2格的时候，点击扣血，血变为1格，然后角色就死了"）。
             // 现在如实跟随：血条显示多少就是主机有多少；致命那一下（主机 <= 0.1）本来就该致命。
-            float baseline = authoritativeDead ? 0f : m_lastAuthoritativeLocalHealth;
+            // 复活窗口里唯一的地板是"主机那份还写着 0（复活还没被处理）"时先用引擎重生的满血 1；
+            // 主机一旦给出正值就照常跟随，避免血条长时间说谎。
+            float baseline;
+            if (inRespawnWindow)
+                baseline = m_lastAuthoritativeLocalHealth > 0f ? m_lastAuthoritativeLocalHealth : 1f;
+            else
+                baseline = authoritativeDead ? 0f : m_lastAuthoritativeLocalHealth;
             float current = health.Health;
             if (current < baseline - 0.0001f)
             {
@@ -314,6 +345,9 @@ namespace ScMultiplayer
                 m_localDamageReportAccumulator += lost;
                 if (m_localDamageReportAccumulator >= LocalDamageReportThreshold)
                 {
+                    // 死因**不从这里上报**：生物攻击（狼咬等）与饥饿/溺水/高温都是主机在实时模拟，
+                    // 主机那份角色身上引擎自己会写 CauseOfDeath（主机端 `Attacked` 事件确实会触发 ——
+                    // 见 EnsureHostSleepWakeHandlers 用它叫醒睡着的玩家）。客户端这里只报"掉了多少血"。
                     NetworkMessageSender.SendPlayerHealthMessage(client.ClientID, player,
                         -m_localDamageReportAccumulator, "Client damage request");
                     m_localDamageReportAccumulator = 0f;
@@ -333,9 +367,20 @@ namespace ScMultiplayer
             if (baseline > 0f)
                 ModManager.ModParentField.ModifyParentField(health, "m_lastHealth",
                     baseline, typeof(ComponentHealth));
-            if (authoritativeDead) return;
+            // 只有"复活之后主机新判的死"才停下不动；主机那份**过期的** 0 不算（那种情况下
+            // 本端其实已经被引擎重生过了，必须继续撤销本地死亡锁存，否则角色站在死亡界面里动不了）。
+            if (freshAuthoritativeDeath) return;
             // 兜底：万一原生的死亡锁存先于主机判定发生，撤销它（主机判死那条路不会走到这里）。
-            PlayerData data = player.PlayerData;
+            UndoLocalDeathLatch(player);
+        }
+
+        // Source: Survivalcraft/Game/PlayerData.cs:PlayerData.PlayerDead
+        // 撤销本端可能已经发生的原生死亡锁存（`m_playerDeathTime` 一旦写下就不会自己退回）。
+        // 主机没判死时用它把"幽灵死亡"退回去，否则角色会卡在死亡界面点不动、也无法复活（实测）。
+        private void UndoLocalDeathLatch(ComponentPlayer player)
+        {
+            PlayerData data = player?.PlayerData;
+            if (data == null) return;
             object deathTime = ModManager.ModParentField.GetParentField(
                 data, "m_playerDeathTime", typeof(PlayerData));
             if (deathTime == null) return;

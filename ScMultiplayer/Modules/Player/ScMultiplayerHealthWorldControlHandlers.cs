@@ -50,6 +50,10 @@ namespace ScMultiplayer
                 if (msg.HealthChange < -0.0001f && requestedValue < requestedHealth.Health)
                 {
                     float requestedPreviousHealth = requestedHealth.Health;
+                    // 这里只填一个内部标签，不用作死因（客户端也不显示它）：
+                    // 生物攻击 / 饥饿 / 溺水这些**主机在实时模拟**，主机那份角色的 CauseOfDeath
+                    // 由引擎自己在 Injure 里写成真死因（ComponentHealth.cs:91-102）；
+                    // 客户端上报的只是"本地掉了多少血"（摔落这类主机没算到的部分）。
                     requestedHealth.Injure(requestedHealth.Health - requestedValue, null,
                         ignoreInvulnerability: true, "Client damage request");
                     if (requestedHealth.Health < requestedPreviousHealth - 0.0001f)
@@ -170,6 +174,12 @@ namespace ScMultiplayer
             int previousWholeLevel = targetPlayer?.PlayerData != null
                 ? (int)MathUtils.Floor(MathUtils.Max(targetPlayer.PlayerData.Level, 1f))
                 : -1;
+            // ⚠️ 死因必须在**写血量之前**落地：下面 ApplyAuthoritativePlayerStats 会把本端血量写成 0，
+            // 而 PlayerData 的死亡状态机同帧就会锁存并把死亡界面渲染出来（PlayerData.cs:280-284
+            // 读的是当时的 CauseOfDeath）—— 写晚了界面就固定成 Unknown（实测"被狼杀死显示未知"）。
+            if (applyAuthoritativeState && remoteClientId == client.ClientID &&
+                msg.Health <= 0f && targetPlayer != null)
+                ApplyLocalAuthoritativeDeath(targetPlayer, msg);
             if (applyAuthoritativeState)
             {
                 ApplyAuthoritativePlayerStats(targetPlayer, appliedHealth, msg.Air, msg.Food,
@@ -214,6 +224,11 @@ namespace ScMultiplayer
                     // 方案 B：只有主机广播的 0 才算"本端死亡"；在那之前客户端不该自己死
                     // （见 SuComponentHealth / SyncClientLocalHealthFromAuthority）。
                     m_localAuthoritativeDeath = msg.Health <= 0f;
+                    // 记下"这个死"的权威序号：复活时客户端本地已经把角色重生成满血，
+                    // 而主机那份可能还停在 0（复活请求还没被处理）。靠序号区分"过期的主机判死"
+                    // 与"复活之后主机新判的死"，见 SyncClientLocalHealthFromAuthority。
+                    if (m_localAuthoritativeDeath)
+                        m_localDeathSequence = msg.AuthoritativeStateSequence;
                     // 主机最近一次的权威血量：客户端每帧把本地血量写回这个值（本地只跟随主机）。
                     m_lastAuthoritativeLocalHealth = msg.Health;
                 }
@@ -269,6 +284,119 @@ namespace ScMultiplayer
                     LocalKnockbackPositionCorrectionDuration;
                 state.KnockbackCorrectionStartTick = msg.KnockbackServerTick;
             }
+        }
+
+        // Source: Survivalcraft/Game/ComponentHealth.cs:ComponentHealth.Injure
+        // 死因（CauseOfDeath）与死亡统计（PlayerStats.AddDeathRecord）在引擎里**只写在 Injure 内**
+        // 那一处（ComponentHealth.cs:90-102）。客户端血量是"直接写字段跟随主机"的，不经过 Injure，
+        // 所以这两样都要在收到主机判死时由这里补上 —— 否则死亡界面回退成 Unknown、统计里也没有这次死亡。
+        // 死因本身**由主机给**：生物攻击（主机端 `Attacked` 会触发，见 EnsureHostSleepWakeHandlers）
+        // 与饥饿/溺水/高温都是主机在实时模拟，主机那份角色的 CauseOfDeath 就是真死因。
+        // 实测 Unknown 的病根是投递顺序 —— 死亡那一帧"击退"快照先到且当时不带死因，
+        // 客户端先落地成 Unknown 并把"一次死亡只落地一次"锁死；现在击退快照也带死因（见
+        // ScMultiplayerClientEvents.CaptureHostRemoteKnockbacks），这里再兜一层"拿到真死因就补写"。
+        private void ApplyLocalAuthoritativeDeath(ComponentPlayer player, GamePlayerHealthMessage msg)
+        {
+            if (player?.ComponentHealth == null) return;
+            bool dead = msg.Health <= 0f;
+            bool wasDead = m_localDeathApplied;
+            m_localDeathApplied = dead;
+            if (!dead)
+            {
+                // 复活：下一次死亡重新落地、重新等真死因。
+                if (wasDead) m_localDeathCauseResolved = false;
+                return;
+            }
+            string incoming = msg.CauseOrSource;
+            bool hasRealIncoming = !string.IsNullOrWhiteSpace(incoming) &&
+                !IsInternalRequestCause(incoming);
+            // 已经落地过、而且真死因也已经拿到 → 不再动（每秒广播会重复到达）。
+            if (wasDead && (m_localDeathCauseResolved || !hasRealIncoming)) return;
+            string cause;
+            if (hasRealIncoming)
+            {
+                cause = incoming;
+            }
+            else
+            {
+                // 主机这条快照没带死因（历史上"受击击退"那条快照就不带，已修）：
+                // 退回本端 CauseOfDeath（本端原生伤害自己跨过 0 时引擎写过一句，例如摔死），
+                // 再不行才 Unknown。本 Mod 自己的上报标签（"Client damage request"）
+                // **不当作死因显示** —— 那是玩家看不懂的内部串；宁可显示 Unknown，
+                // 而且 `resolved` 保持 false，之后拿到真死因还能补上。
+                cause = player.ComponentHealth.CauseOfDeath;
+                if (string.IsNullOrWhiteSpace(cause)) cause = "Unknown";
+            }
+            bool resolved = !string.Equals(cause, "Unknown", StringComparison.Ordinal) &&
+                !IsInternalRequestCause(cause);
+            WriteLocalDeathCause(player, cause, wasDead && !m_localDeathCauseResolved);
+            m_localDeathCauseResolved = resolved;
+        }
+
+        // 本 Mod 自己在客户端↔主机之间用的上报标签，不是"死因"。
+        private static bool IsInternalRequestCause(string cause)
+        {
+            return string.Equals(cause, "Client damage request", StringComparison.Ordinal) ||
+                string.Equals(cause, "Client food request", StringComparison.Ordinal) ||
+                string.Equals(cause, "Client state request", StringComparison.Ordinal) ||
+                string.Equals(cause, "Client wake request", StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// 写死亡界面读的那句 `CauseOfDeath`，并记一条死亡统计。
+        /// <paramref name="updateExistingRecord"/> 为 true 时（这次死亡先前只落到一个占位死因，
+        /// 现在真死因到了）改写**上一条**记录的 Cause，而不是再记一条 —— 否则统计里会多出一条。
+        /// </summary>
+        private void WriteLocalDeathCause(ComponentPlayer player, string cause, bool updateExistingRecord)
+        {
+            // ⚠️ 死因必须写在血量之前（调用方在写血量前调这里）：PlayerData 的死亡状态机同帧就会锁存，
+            // 死亡界面读的就是这一刻的 CauseOfDeath。写不进去也不能连累下面的死亡统计，单独 try 住。
+            try
+            {
+                ModManager.ModParentField.ModifyParentField(player.ComponentHealth,
+                    "<CauseOfDeath>k__BackingField", cause, typeof(ComponentHealth));
+            }
+            catch (Exception)
+            {
+                // 忽略：最坏情况只是死亡界面那句显示不出来。
+            }
+            PlayerStats stats = player.PlayerStats;
+            if (stats == null) return;
+            if (updateExistingRecord)
+            {
+                // PlayerStats.DeathRecords 是只读包装（PlayerStats.cs:179），
+                // 要改上一条只能拿它背后的私有 List（PlayerStats.cs:56）。
+                // 出错也不许把死亡流程带崩：最坏情况只是统计里那条仍是 Unknown。
+                try
+                {
+                    List<PlayerStats.DeathRecord> records =
+                        ModManager.ModParentField.GetParentField<List<PlayerStats.DeathRecord>>(
+                            stats, "m_deathRecords", typeof(PlayerStats));
+                    if (records != null && records.Count > 0 &&
+                        !string.Equals(records[records.Count - 1].Cause, cause,
+                            StringComparison.Ordinal))
+                    {
+                        PlayerStats.DeathRecord last = records[records.Count - 1];
+                        last.Cause = cause;
+                        records[records.Count - 1] = last;
+                        return;
+                    }
+                }
+                catch (Exception)
+                {
+                    // 忽略：退回下面再记一条新记录。
+                }
+            }
+            SubsystemTimeOfDay timeOfDay =
+                GameManager.Project?.FindSubsystem<SubsystemTimeOfDay>(false);
+            // ComponentPlayer 继承自 ComponentCreature，PlayerStats 直接可取
+            //（引擎里 ComponentHealth 用的也是同一个对象）。
+            stats.AddDeathRecord(new PlayerStats.DeathRecord
+            {
+                Day = timeOfDay?.Day ?? 0,
+                Location = player.ComponentBody?.Position ?? Vector3.Zero,
+                Cause = cause
+            });
         }
 
         // Source: Survivalcraft/Game/ComponentLevel.cs:ComponentLevel.AddExperience
