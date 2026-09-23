@@ -33,7 +33,7 @@ WatchMod | su-watch | ["0.1.6.0"] | 1.0.1 | gitee:"https://gitee.com/SC-SPM/su-a
 # 不通的端静默跳过），但 ScMP 的协议校验包含 buildFingerprint（DLL 的 MVID），**重建即与旧构建不互通**，
 # 所以所有联机端必须同时换到同一构建。包内 APIVersion 声明 0.1.6.0；该字段全仓没有代码读取，
 # 真正生效的门槛是本行第 3 段。依赖 Comms 已并入 Lib/，无需单独条目。
-ScMultiplayer | Su-ScMP | ["0.1.6.0"] | 2.1.8 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.6.0/%5BSuAPI%5DScMultiplayer-2.1.8.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.6.0/SuAPI.ScMultiplayer-2.1.8.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.6.0/[SuAPI]ScMultiplayer-2.1.8.scmod" | zh_CN=联机模组;en_US=ScMultiplayer
+ScMultiplayer | Su-ScMP | ["0.1.6.0"] | 2.1.66 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.6.0/%5BSuAPI%5DScMultiplayer-2.1.66.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.6.0/SuAPI.ScMultiplayer-2.1.66.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.6.0/[SuAPI]ScMultiplayer-2.1.66.scmod" | zh_CN=联机模组;en_US=ScMultiplayer
 # 上一版（`Su-ScMP@2.1.6`）。注意：2.1.6 与 2.1.8 构建互不互通，回退必须整端一起回退。
 # ScMultiplayer | Su-ScMP | ["0.1.6.0"] | 2.1.6 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.6.0/%5BSuAPI%5DScMultiplayer-2.1.6.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.6.0/SuAPI.ScMultiplayer-2.1.6.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.6.0/[SuAPI]ScMultiplayer-2.1.6.scmod" | zh_CN=联机模组;en_US=ScMultiplayer
 # HeadlessRenderingMod 是**无画面服务端** mod：只装在主机 / 远端服务器上，客户端不需要它。
