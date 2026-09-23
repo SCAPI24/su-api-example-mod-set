@@ -279,7 +279,8 @@ namespace ScMultiplayer
         /// 真死只认主机广播的 0（`m_localAuthoritativeDeath`）—— 那时故意不写 `m_lastHealth`，
         /// 让原生看到 0 的跨越，死亡处理才会正常发生。
         /// </summary>
-        internal void SyncClientLocalHealthFromAuthority(ComponentPlayer player, ComponentHealth health)
+        internal void SyncClientLocalHealthFromAuthority(ComponentPlayer player, ComponentHealth health,
+            bool insideNativeUpdate)
         {
             if (player == null || health == null) return;
             if (IsHost || client?.IsConnected != true) return;
@@ -331,14 +332,18 @@ namespace ScMultiplayer
                 // ⚠️ 上报的是**本地这次真实掉的血**（相对上一次钉住的值），不是"相对主机的差额"：
                 // 本地贴在地板上时，相对差额只有零点几，而上报真实掉落（一次 0.1）才能让主机被扣到 0。
                 float lost = baseline - current;
-                // ⚠️ 命中（单帧掉落 >= 0.05，饥饿/窒息那种是每帧 0.006）按**标称伤害 0.1** 上报：
-                // 本地只剩 0.058 时，一次 -0.1 实际只掉 0.058，只报 0.058 的话会被主机的自然回血
-                //（每 0.4 秒 +0.0068）正好抵消 —— 实测主机永远停在 0.006 上下，怎么点都到不了 0，
-                // 于是"本地那帧到了 0（界面被关）、主机却不判死"。
-                if (lost >= LocalHitDamageThreshold) lost = MathUtils.Max(lost, LocalHitDamage);
-                // 我们马上会把血量写回目标值，原生那套受伤反馈（红屏累积 / 生命条闪烁）不会发生，
-                // 这里照引擎算法补上 —— 否则扣血没有任何反馈（实测："角色自己扣血的时候没有红色界面"）。
-                TriggerLocalDamageFeedback(player, lost);
+                // ⚠️ "命中"的判据分两种来源（见 SuComponentHealth 传进来的 insideNativeUpdate）：
+                //   · **原生之外**的扣血（UI 骷髅头一次 -0.1、尖刺、爆炸…）本身就是一次性命中：
+                //     哪怕本地只剩 0.005、这一下只掉 0.005，也要按标称 0.1 上报。
+                //     实测：主机那份因为自然回血总比血条显示的高一点点，一次 -0.1 打下去常剩 ~0.005；
+                //     这一下如果按"掉多少报多少"就低于上报阈值(0.02)，被当成小额攒账**永远发不出去**
+                //     —— 血条显示还有半格，怎么点都不死；而血刚好一格时掉落 0.1 过了阈值，所以能死。
+                //   · **原生之内**的扣血（窒息/岩浆/摔落，每帧 ~0.006）保持原判据，继续攒账，
+                //     否则最后一格血里每帧都会按 0.1 上报，主机瞬间被扣光。
+                if (lost >= LocalHitDamageThreshold || (!insideNativeUpdate && lost > 0.0001f)) lost = MathUtils.Max(lost, LocalHitDamage);
+                // ⚠️ 这里**不**自己闪红/闪血条了：本地这段扣血会立刻上报给主机，主机扣完再把快照发回来，
+                // 由 HandleGamePlayerHealthMessage 按"本端这次实际下降的量"统一补受伤表现
+                //（那条路同时覆盖动物咬这种本地根本看不到的扣血）。两处都做，一次伤害会闪两下。
                 // 立刻把这次本地伤害**直接上报**给主机，不再攒账等 SendClientDamageRequest：
                 // 攒账会被主机 1Hz 广播和本方法每帧两次调用搅乱（实测"有时只闪红、不掉血"）。
                 // 饥饿/窒息那种每帧 0.006 的小额先攒到阈值再发，免得每帧一条消息。

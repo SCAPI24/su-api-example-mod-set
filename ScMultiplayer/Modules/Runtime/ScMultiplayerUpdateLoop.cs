@@ -172,9 +172,15 @@ namespace ScMultiplayer
         // Source: ScMultiplayer.cs:ScMultiplayer.ProcessEndOfFrameActions
         private void UpdateClientTerrainRecoveryAfterNetworkActions()
         {
-            if (IsHost || client?.IsConnected != true || GameManager.Project == null ||
-                m_isLoadingDownloadedWorld || m_worldTransferRegistry.PendingWorldReadyTransferId > 0)
+            if (IsHost || client?.IsConnected != true || GameManager.Project == null)
                 return;
+            // 加入期间这套地形恢复以前是整体关掉的（下载/导入世界时 Project 会被换掉）。
+            // 但加入屏障的"恢复保持"恰恰会卡在同一个地形序号门槛上，所以留一个例外：
+            // **世界已经导入完、只剩加入收尾**（PendingWorldReadyTransferId > 0 且不在下载）
+            // 且电路正等地形时，允许按正常流程补推地形。见 UpdateClientJoinBarrier。
+            bool joining = m_worldTransferRegistry.PendingWorldReadyTransferId > 0;
+            if (m_isLoadingDownloadedWorld) return;
+            if (joining && m_circuitSynchronizer?.IsWaitingForTerrain != true) return;
 
             bool gameScreenActive = ScreensManager.CurrentScreen is GameScreen;
             if (gameScreenActive && m_clientTerrainRecoveryActive &&
@@ -2825,6 +2831,21 @@ namespace ScMultiplayer
 
             // [SuAPI] 临时诊断：把加入屏障依赖的每个电路条件按变化/心跳写进 Logs/Client。
             ObserveClientJoinBarrier();
+
+            // 加入阶段的**地形补推**。加入屏障里的"恢复保持"（CircuitSynchronizer.m_recoveryHold）
+            // 会一直等到本地地形追到最后一条 fence 要求的主机地形序号；而 fence 带的是主机**当前**
+            // 值（移动靶），且地形恢复机制以前在加入期间是被整体关掉的
+            //（见 UpdateClientTerrainRecoveryAfterNetworkActions 里 `PendingWorldReadyTransferId > 0`
+            // 那条判据）—— 于是谁都推不动它。实测：平板 03:29 加入后卡在 Recovery 数分钟，
+            // 期间 terrainApplied 一条地形消息都没有，最后被 hold 死锁在加入弹窗里。
+            // 这里一旦发现"地形落后于 fence 要求"，就在加入阶段直接发起地形补推（走既有的
+            // terrain recovery 通道，主机回 catch-up 批次，同时也算加入进度）。
+            if (m_circuitSynchronizer?.IsWaitingForTerrain == true)
+            {
+                m_clientTerrainRecoveryActive = true;
+                if (!m_clientTerrainRecoveryRequestInFlight)
+                    m_clientTerrainRecoveryPending = true;
+            }
 
             double now = Time.RealTime;
             if (client?.IsConnected == true)

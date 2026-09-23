@@ -49,10 +49,15 @@ namespace ScMultiplayer
             // 于是原生伤害（含身体界面"骷髅头强制重生"按钮那种在 UI 里落下的伤害）
             // 不会在本帧跨过 0，死亡处理 / 状态机锁存 / 关身体界面都不会发生；
             // 本地被打掉的那部分记成待上报差额，交给主机去施加。
-            instance?.SyncClientLocalHealthFromAuthority(m_componentPlayer, this);
+            // ⚠️ insideNativeUpdate 用来区分伤害来源：原生伤害（窒息/岩浆/摔落/挤压）都发生在
+            // `base.Update(dt)` **之内**，而 UI 骷髅头、尖刺、爆炸这些发生在原生更新**之外**。
+            // 两者在上报时的判据不同 —— 见 SyncClientLocalHealthFromAuthority 里"命中"的判定。
+            instance?.SyncClientLocalHealthFromAuthority(m_componentPlayer, this,
+                insideNativeUpdate: false);
             base.Update(dt);
             // 原生更新自己造成的伤害（饥饿/窒息/岩浆/摔落…）也在这次调用里落到血量上，再跟随一次。
-            instance?.SyncClientLocalHealthFromAuthority(m_componentPlayer, this);
+            instance?.SyncClientLocalHealthFromAuthority(m_componentPlayer, this,
+                insideNativeUpdate: true);
         }
     }
 }

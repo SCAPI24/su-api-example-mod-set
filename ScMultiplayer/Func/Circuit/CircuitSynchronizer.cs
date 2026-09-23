@@ -112,6 +112,13 @@ namespace ScMultiplayer
         private const int HashLeadSteps = 20;
         private const double JournalRetention = 45.0;
         private const double FenceStaleTime = 0.75;
+        // 距上一条被接受的 fence 到这个年龄就**主动要一次同步**（主机收到 CheckpointRequest 会补
+        // clock/checkpoint + fence），不必等到 FenceStaleTime 才判定 stale。
+        // 实测（平板、公网经本机 SOCKS 代理）：主机 16Hz 发的 fence 只有 ~2Hz 到达，fenceAge 的
+        // p50≈390ms、max≈1850ms，8.8% 的采样超过 stale 阈值 —— 界面上的电路状态因此在
+        // Recovery ⇄ Fence 之间反复跳。提前到 700ms 请求，等于把这条主动刷新提前，
+        // 让空档在变成"stale"之前就被补上。
+        internal const double FenceRefreshRequestAge = 0.7;
         // Source: CircuitSynchronizer.GetCircuitStepTarget
         private const double WindowDisplayDelay = 0.1;
         private const double FenceRequestRetryTime = 1.0;
@@ -280,6 +287,9 @@ namespace ScMultiplayer
         private int m_lastFenceRateServerStep;
         private int m_lastFenceRateHostStep;
         private int m_normalFenceRateSamples;
+        // 主机侧诊断：上一次记进操作日志的 CircuitTerrainSequence（只在变化时记一条），
+        // 用来和客户端 join.barrier 里的 fenceTerrain 对齐 —— fence 带的正是这个数。
+        private long m_lastLoggedHostTerrainSequence = -1L;
 
         private bool IsHostTimeAccelerated =>
             m_remoteTimeAccelerated || m_inferredTimeAccelerated;
@@ -296,6 +306,12 @@ namespace ScMultiplayer
         public bool IsClientBootstrapReady => ScMultiplayer.IsHost ||
             (m_subsystem != null && m_hasClock && m_hasFence && m_initialSnapshotApplied &&
             !m_snapshotBlocksJoin && !m_recoveryHold && !IsFenceStale());
+
+        // 加入屏障的"恢复保持"里唯一会让客户端无限等待的门槛：地形还没应用到最后一条 fence
+        // 要求的主机地形序号。fence 带的 RequiredTerrainSequence 是主机**当前**值（移动靶），
+        // 所以必须有人主动补推地形，否则永远等不到（实测：平板卡死在 Recovery 数分钟不动）。
+        internal bool IsWaitingForTerrain => !ScMultiplayer.IsHost && m_hasFence &&
+            SuSubsystemTerrain.LastAppliedTerrainSequence < m_fenceTerrainSequence;
 
         public float FenceAgeMilliseconds => !m_hasFence || m_lastFenceRealTime <= 0.0
             ? -1f
@@ -330,7 +346,14 @@ namespace ScMultiplayer
                 " rebaseSeq=" + m_rebaseSnapshotLastSequence.ToString(CultureInfo.InvariantCulture) +
                 " rebaseHostStep=" + m_rebaseSnapshotHostStep.ToString(CultureInfo.InvariantCulture) +
                 " hostPaused=" + m_hostPaused +
-                " localSuspended=" + m_localSuspended;
+                " localSuspended=" + m_localSuspended +
+                // 加入屏障那条"地形门槛"的两个数：本地已应用的地形序号 vs 最后一条 fence 要求的
+                // 主机地形序号（= 主机当前 CircuitTerrainSequence 的快照）。两者一比就知道
+                // Recovery hold 是不是卡在这里、还差多少。
+                " terrainApplied=" + SuSubsystemTerrain.LastAppliedTerrainSequence
+                    .ToString(CultureInfo.InvariantCulture) +
+                " fenceTerrain=" + m_fenceTerrainSequence.ToString(CultureInfo.InvariantCulture) +
+                " waitingTerrain=" + IsWaitingForTerrain;
         }
 
         public string ClientStateText
@@ -2049,7 +2072,12 @@ namespace ScMultiplayer
                 return;
 
             double now = Time.RealTime;
-            if ((!m_hasFence || IsFenceStale()) &&
+            // 到 FenceRefreshRequestAge(700ms) 就要一次同步：不再等 IsFenceStale()(750ms) 判 stale。
+            // ⚠️ 这条和"fence 本身可丢"是配套的：fence 走 `latest` 不可靠通道，丢了不补，
+            // 只能靠客户端主动索取（FenceRequestRetryTime 节流，最多 1 次/秒）。
+            bool fenceAged = !m_hasFence ||
+                FenceAgeMilliseconds >= FenceRefreshRequestAge * 1000f;
+            if (fenceAged &&
                 (m_lastFenceRequestRealTime <= 0.0 ||
                 now - m_lastFenceRequestRealTime >= FenceRequestRetryTime))
             {
@@ -3333,6 +3361,18 @@ namespace ScMultiplayer
                 m_lastHostProgressRealTime = now;
             }
             bool simulationPaused = now - m_lastHostProgressRealTime > 0.15;
+            // 主机侧地形序号（诊断）：fence 的 RequiredTerrainSequence 就是这个数。
+            // 只在它变化时记一条，落到主机的 `Logs/Server/ScMP-op-<日期>.log`，用来和客户端
+            // join.barrier 里的 fenceTerrain/terrainApplied 对齐，确认"移动靶"推到了哪。
+            long hostTerrainSequence = m_owner.CircuitTerrainSequence;
+            if (hostTerrainSequence != m_lastLoggedHostTerrainSequence)
+            {
+                m_lastLoggedHostTerrainSequence = hostTerrainSequence;
+                Diagnostics.ScMultiplayerOperationLog.Write(
+                    "event=circuit.terrain hostCircuitTerrain=" +
+                    hostTerrainSequence.ToString(CultureInfo.InvariantCulture) +
+                    " hostStep=" + hostStep.ToString(CultureInfo.InvariantCulture));
+            }
             double totalElapsedGameTime = m_gameInfo?.TotalElapsedGameTime ?? 0.0;
             double timeOfDayOffset = m_timeOfDay?.TimeOfDayOffset ?? 0.0;
             int safeThrough = simulationPaused

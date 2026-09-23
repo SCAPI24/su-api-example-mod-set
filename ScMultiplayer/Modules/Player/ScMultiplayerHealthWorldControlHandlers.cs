@@ -198,6 +198,19 @@ namespace ScMultiplayer
                         targetPlayer.ComponentHealth, "m_lastHealth", previousHealth,
                         typeof(ComponentHealth));
                 }
+                // Source: Survivalcraft/Game/ComponentHealth.cs:ComponentHealth.Update:256-257
+                // 主机报来的扣血也要有"受伤表现"。单机里红屏累积（`m_redScreenFactor += -4f * HealthChange`）
+                // 与血条闪烁都在 `ComponentHealth.Update` 里由 HealthChange 触发，而联机下本地血量是
+                // "直接写字段跟随主机"的（见 SyncClientLocalHealthFromAuthority），原生那段永远看不到
+                // 扣血 —— 于是被动物咬时只有血条在动、屏幕不红（实测："单机下受伤是有闪红的"）。
+                // 这里按本端这一次实际下降的量补上同样的反馈。
+                // ⚠️ 本地自己造成的扣血（骷髅头/饥饿/摔落）走的是"上报 → 主机扣 → 快照回来"同一条路，
+                // 所以本地那条路径不再自己闪红，避免同一个伤害闪两下。
+                if (remoteClientId == client.ClientID && targetPlayer != null &&
+                    msg.Health < previousHealth - 0.0001f)
+                {
+                    TriggerLocalDamageFeedback(targetPlayer, previousHealth - msg.Health);
+                }
                 if (msg.DamageSequence >= 0 && targetPlayer?.ComponentCreatureSounds != null)
                 {
                     bool hasDamageBaseline = m_receivedDamageSequences.TryGetValue(
