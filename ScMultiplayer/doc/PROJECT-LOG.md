@@ -810,3 +810,177 @@ Move-Item -LiteralPath "publish\android\signed.apk" -Destination "publish\androi
    - `msg.InventoryVersion == local + 1 && msg.BaseInventoryVersion == local` → 应用增量并 `local = msg.InventoryVersion`；
    - 其它情况（跳号或基准不符）→ **不发散应用**，改为请求一次**全量背包**，收到全量（`Base=0`）后 `local = InventoryVersion`。
 5. **验证**：先用上面两个复现场景（挖 1 掉 2 捡 2；平板边扔边捡 14 个不掉），再做一次"快速连续丢弃 5 个"的压力用例。
+
+---
+
+# 2026-09-24 联机死亡/复活/血量 + "加入房间卡死"一批问题的根因与修复（2.2.0）
+
+> 前提：ScMP 是 build 锁定的（`Message.IsProtocolCompatible` 要求 ModVersion/ProtocolVersion/
+> ProtocolHash/BuildFingerprint 全等），所以每个修复都是**三端同包部署**后由用户在 PC + 平板上实测；
+> 版本号保持 2.2.0。以下按"现象 → 真因 → 修法 → 验证"记录本次会话的 7 个问题。
+
+## 1. 死亡原因显示 Unknown、游戏统计里没有这次死亡
+
+**现象**：被狼/狮子咬死后面板写着 `Cause of death: Unknown`，统计里也没有这条死亡记录；
+"骷髅头"自杀那次却显示 `Choked`。
+
+**真因**（三处叠加）
+1. `CauseOfDeath` 与 `PlayerStats.AddDeathRecord()` 在引擎里**只写在 `ComponentHealth.Injure()` 内**
+   （`ComponentHealth.cs:91-102`）。联机下客户端血量是"直接写字段跟随主机"的，不经过 `Injure`
+   → 客户端这两样天生为空。
+2. 死亡那一帧通常带击退，而 **`CaptureHostRemoteKnockbacks` 发的"击退快照"不带死因**
+   （原代码传 `null`），它走即时双份 + 可靠一份，**比周期快照先到**：客户端先按"没死因"落地一次
+   （`m_localDeathApplied` 锁死），随后带真死因的周期快照被"一次死亡只落地一次"挡掉 → 永远 Unknown。
+3. 主机施加"客户端上报的伤害"时死因**写死** `"Client damage request"`，真死因当场丢失。
+
+**修法**
+- 击退快照在死亡时带 `health.CauseOfDeath`；周期快照死亡时也带（`SendAuthoritativePlayerHealth`）。
+- 客户端 `ApplyLocalAuthoritativeDeath`：按主机给的死因写 `CauseOfDeath` **并**记一条死亡统计；
+  拿到真死因时**补写上一条**记录（改写而不是多记一条）；本 Mod 自己的上报标签
+  （`Client damage request` 等）**不当作死因显示**，宁可 Unknown 且保留"以后再补"的机会。
+- **死因由主机给**：生物攻击（主机端 `Attacked` 确实会触发 —— 既有代码 `EnsureHostSleepWakeHandlers`
+  就是靠它叫醒睡着的玩家）、饥饿/溺水/高温都是主机在实时模拟，主机那份角色的 `CauseOfDeath` 就是真死因。
+
+**走过弯路（勿重蹈）**：一开始在客户端用 `Attacked` 自己拼死因（`bitten by a wolf`）再随伤害上报。
+这既**多余**（主机本来就有），又会**误判** —— 客户端只记得"最近一次被谁咬"，
+于是"刚被咬过一两秒后饿死/摔死"会被标成被动物咬死。该实现已撤回，`SuComponentHealth.cs` 恢复原样。
+
+## 2. 复活链路的三个子问题（同一段代码，先后三次修复）
+
+**2a. "点复活后屏幕全红、又弹一个死亡界面、站着不能动"**
+- 真因：客户端本地重生是引擎自己完成的（`PlayerData` 换实体、新实体满血），而**主机那份此时还停在 0**
+  （复活请求还没被处理）。若复活窗口的判据里带上"主机没判死"，这个过期的 0 会让窗口失效 →
+  本地血量被写回 0 → 屏幕全红 + 再次死亡锁存。
+- 修法：**用权威序号区分"过期的死"与"复活后新判的死"** —— 新增 `m_localDeathSequence`（主机广播判死时
+  记下该快照序号），与复活那一刻记下的 `m_localRespawnStateSequence` 比较：序号不晚于它的 0 是**过期的**
+  （不跟随、继续钉正值、继续撤销本地死亡锁存），序号更大的才是真死。
+
+**2b. "最后半格血点击扣血不死，要等一会再点才死"**
+- 真因：上一版为防幽灵死亡，在复活窗口里**把本地扣血整个吞掉**（既不闪红也不上报），窗口最长 5 秒，
+  而且只有"有意义变化"的快照才结束窗口（站着不动不产生变化）→ 那段时间点骷髅头完全无效。
+- 修法：窗口**只钉血、不吞伤害** —— 照常上报扣血（死不死由主机定）；窗口内唯一地板是
+  "主机那份还写着 0"时用引擎重生的满血 1，主机一给正值就照常跟随。
+
+**2c. "复活后立刻又出现死亡界面，且后续几次死亡统计里没有"**
+- 真因：窗口不钉血时，复活传送带来的摔落判定/身边动物能在本地把血打到 0 → 本地死亡锁存再次发生
+  （幽灵死亡，主机从未判死，所以没有统计）；更糟的是它把"已落地 + 死因已确定"的标记留在 true，
+  中间若没有收到主机的**正值**快照，**下一次真死**会被当成"同一场死亡已经记过"而**既不改死因也不记统计**。
+- 修法：新增 `UndoLocalDeathLatch()`（复用原兜底逻辑）在窗口内持续撤销本地锁存；
+  并在每帧同步里加"**本端观测到血量为正、而主机没判死 ⇒ 复位死亡落地标记**"。
+
+## 3. 复活位置与主机不一致、其他客户端看到角色"朝客户端的位置闪现过去"
+
+- 真因：复活落点**只由主机决定**（`ResetNetworkPlayerAfterRespawn` 用主机锚点，忽略请求里的位置），
+  广播 `BroadcastPlayerRespawn` 让**其他客户端**把该角色摆到同一锚点，但**当事人自己被排除在外**
+  （`message.PlayerIndex != client.ClientID`）。于是当事人停在自己本地重生搜索出的点
+  （引擎 `PlayerData.FindNoIntroSpawnPosition`：锚点附近找"没被挡住"的落点，带随机与地形判定），
+  随后它的输入快照（本 Mod 里角色位置以客户端输入为准）就把主机那份、以及其他客户端看到的这个角色
+  从复活点一路拽过去。
+- 修法：主机接受复活请求、把角色落到锚点之后，立刻用
+  `SendPlayerAuthorityState(..., PlayerAuthorityAction.Teleport, ...)` 把最终落点**回传给本人**；
+  客户端既有的 `HandlePlayerAuthorityMessage` 会移动本地身体、清输入基准并重置输入序号，
+  位置当场从新点重新上报。时序安全：客户端是在本地重生**完成之后**（`ObserveLocalPlayerRespawn`
+  观测到新实体）才发 `RespawnRequest` 的，所以回传一定落在本地重生之后。
+
+## 4. 被动物咬时只有血条在动、屏幕不闪红（单机是闪的）
+
+- 真因：单机的红屏累积（`m_redScreenFactor += -4f * HealthChange`）与血条闪烁都在
+  `ComponentHealth.Update`（`:256-257`）里由 `HealthChange` 触发；联机下本地血量是被**直接写字段**
+  改成主机值的，原生那段永远看不到扣血。
+- 修法：在主机快照落地处（`HandleGamePlayerHealthMessage`）按**本端这次实际下降的量**补
+  `TriggerLocalDamageFeedback`（红屏 + 血条闪烁）；同时把本地那条路径的闪红**去掉** ——
+  本地扣血走的是"上报 → 主机扣 → 快照回来"同一条路，两处都做会一次伤害闪两下。
+
+## 5. "最后一小格血点击扣血不死"（有实测轨迹）
+
+**现象**：血条还剩半格（实际只剩零点几）时点骷髅头不死，有时只是把面板关了；而**刚好一格**时能死。
+
+**实测轨迹**（CmdBridge 每 150ms 采样本地血量，同一位置连点骷髅头）
+```
+03:47:39.328 hp=0.10450      ← 一格
+03:47:39.853 hp=0.00505      ← 掉到余量 0.005
+   …43 秒内一直是 0.00505…   ← 再怎么点都不动
+03:48:32.007 hp=0            ← 靠攒账磨了 52 秒才判死
+```
+
+**真因**：主机那份因自然回血总比血条显示的高一点点，一次 −0.1 打下去**每次都剩 ~0.005 的余量**；
+而本地这一下只掉了 `0.005 <` 上报阈值 `0.02`（`LocalDamageReportThreshold`）⇒ 被当成"饥饿/窒息那种
+小额"攒账，**永远发不出去**。剩一格时掉落 0.1 ≥ 0.02 过阈值，所以能死。
+
+**修法**：按**伤害来源**区分"命中"（引擎结构天然可分）——
+`SuComponentHealth.IUpdateable.Update` 给两次同步传入 `insideNativeUpdate`：
+原生伤害（窒息/岩浆/摔落/挤压）都在 `base.Update(dt)` **之内**，UI 骷髅头/尖刺/爆炸在**之外**。判据改为
+```csharp
+if (lost >= LocalHitDamageThreshold || (!insideNativeUpdate && lost > 0.0001f))
+    lost = MathUtils.Max(lost, LocalHitDamage);      // 原生之外的一次性命中：余量再小也按标称 0.1 上报
+```
+原生之内的小额仍走攒账 —— 否则最后一格血里每帧的窒息伤害都会被按 0.1 上报，主机瞬间被扣光。
+
+## 6. 平板卡在"加入房间"的模态 BusyDialog，只能重启（电路 Recovery 保持态死锁）
+
+**现象**：平板停在 `Joining Room / Connection: Connected`，HUD 在后面照常渲染但完全不能操作，几分钟不动。
+**主机侧却认为一切正常**（`connectedClients=2`），但 `playersCount=1`、`activeJoins=0`
+—— 主机早已结束/放弃这次加入，客户端毫不知情（半个加入）。
+
+**诊断证据**
+- 客户端 `Game.log`：`GameJoined, ClientID=2` → 世界下载完成 → 进入游戏 → `Client project ready`
+  → 之后**再无一行**，特别是没有 `Client circuit bootstrap complete` / `Client catch-up complete`。
+- `Logs/Client/<日期>.log` 的 `event=join.barrier`（仓库里为这个问题预埋的探针）连续数分钟不变：
+  ```
+  state=Recovery bootstrap=False recoveryHold=True recoveryRequested=False recoveryAttempts=0
+  snapshotApplied=True snapshotBlocksJoin=False snapshotRequested=False rebaseAwaitingFence=False
+  fence=True fenceStale=False fenceSerial=453/452
+  ```
+- 把这些代进 `CircuitSynchronizer.TryCompleteRecoveryHold()`，**所有门槛都过**，只剩
+  `SuSubsystemTerrain.LastAppliedTerrainSequence < m_fenceTerrainSequence`。
+- 本次加入之后**一条地形消息都没有**（`terrain.recv`/`terrain.apply` 最后一次是一小时前）。
+
+**真因**
+1. 加入屏障的"恢复保持"要等地形追到最后一条 fence 要求的主机地形序号，而 fence 带的
+   `RequiredTerrainSequence = m_owner.CircuitTerrainSequence` 是主机**当前**值 —— **移动靶**，
+   每来一条新 fence 就可能往前推。
+2. 地形恢复机制在加入期间被**整体关掉**（`UpdateClientTerrainRecoveryAfterNetworkActions` 里
+   `PendingWorldReadyTransferId > 0` 直接 return），所以没人去补这段地形。
+3. hold 里也**不会主动请求** snapshot/recovery（那条分支只在 `m_expectedSequence <= m_knownHostSequence`
+   时走），更没有超时兜底 ⇒ 死锁，且模态框没有退路。
+
+**修法（用户指定）**
+- **fence 到 700ms 就主动要同步**：新增 `FenceRefreshRequestAge = 0.7`（早于 `FenceStaleTime=0.75`），
+  `MaintainRecoveryRequests()` 用它触发 `CheckpointRequest`（仍按 1 次/秒节流）。
+- **加入阶段就触发地形补推**：新增 `CircuitSynchronizer.IsWaitingForTerrain`；
+  `UpdateClientJoinBarrier` 一旦发现"地形落后于 fence 要求"就置 `m_clientTerrainRecoveryActive/Pending`；
+  并把上面那条"加入期间整体关掉"的判据改成"世界已导入、且电路正等地形时放行"。
+- **补诊断**：客户端 `join.barrier` 增加 `terrainApplied / fenceTerrain / waitingTerrain`；
+  主机在 `CircuitTerrainSequence` 变化时记 `event=circuit.terrain hostCircuitTerrain=… hostStep=…`
+  → 落 `Logs/Server/ScMP-op-<日期>.log`。
+
+**验证**：新包三端重启后平板正常加入（`state=Ready bootstrap=True`），且
+平板 `terrainApplied=176976 fenceTerrain=176976` 与主机 `hostCircuitTerrain=176976` **完全一致**
+—— 顺带证实地形门槛比较的确实是同一套编号（此前只能推断）。
+
+## 7. "fence 延迟一直变"（不是故障，但平板通道确实差）
+
+- `fenceAge` = "距上一条**被接受的** fence 的毫秒数"，**天生是锯齿**（0 → 间隔 → 归零），必然一直在变。
+- 主机 **16Hz** 发 fence（`TriggerNetworkTick` → `PublishNetworkState(pulse1Hz, pulse16Hz)` → `SendFence(-1)`），
+  走的是 **`latest: true` 不可靠通道**（可丢、可被更新的顶掉）。
+- 平板实测（卡住那 2 分钟）：fenceAge p50=388ms、max=1850ms，**8.8% 的采样 > 750ms**（= `FenceStaleTime`），
+  界面电路状态因此在 `Recovery` ⇄ `Fence` 之间反复跳（5488 : 531 帧）；被接受的 fence 速率只有 ~2Hz
+  （主机发 16Hz），到达间隔 p50=803ms。
+- PC 对照（同主机、不过代理）：p50=218ms、max=405ms、**超阈值 0%**。
+- 平板端是**经本机代理**转发公网流量的（代理类型/端口/设备细节只在 `AGENTS.local.md` 维护），
+  这最可能解释"不可靠通道丢得多、延迟忽大忽小"（可靠通道没问题：世界 3.3MB 下载正常）。
+- 处置：见问题 6 的"700ms 主动请求同步"。
+
+## 8. 本次会话可复用的观测手段（不加日志也能量化）
+
+- **客户端决策日志**：`Logs/Client/<日期>.log`（平板在 `/sdcard/Download/Survivalcraft/Logs/Client/`）；
+  主机的**操作记录**在 `Logs/Server/ScMP-op-<日期>.log`；两者由 `ScMultiplayerOperationLog.Write`
+  按角色自动分流。
+- **CmdBridge**：`player`（本端血量/Air/位置/背包）、`events`（事件环：`player.damaged/healed/died`，
+  掉血量在 `damaged.delta`；还有 `world.loaded`、`screen.changed` 等）、`ui --all`、`dialogs`、`status`、`messages`。
+  平板经 `adb forward tcp:<本地> tcp:26751` + `--token`（token 只存在于设备上的 `CmdBridge.json`，不要写进仓库）。
+- **实测优于推断**：问题 5 的结论（余量 0.005 卡在 0.02 阈值）与问题 6 的结论（地形移动靶）
+  都是靠"连续采样 + 事件环 + 既有诊断"定下来的；只读代码只能得到"应该会死/应该会推进"。
+- **PowerShell 坑**：`Start-Process -FilePath` 同样吃 `[ ]` 通配符（本仓库路径含 `[SuAPI]`）→ 用
+  `cmd /c start "" /d <目录> <exe>`；远端 PowerShell 的引号容易被 cmd 吃掉 → 优先用
+  `cmd /c findstr ...` 这类无引号简单命令，或先 scp 脚本再 `-File` 执行。

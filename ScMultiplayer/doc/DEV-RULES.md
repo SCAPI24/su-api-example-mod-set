@@ -214,3 +214,31 @@ Rename-Item "Mod.scmod.unint" "Mod.scmod"
 **格式差异（别照错模板）**：DB 里的子系统类名在 `Pak\Database.xml`，形如
 `<Parameter Name="Class" Guid="…" Value="Game.X" Type="string" />`；
 而**存档 `Project.xml` 只落子系统字段值、不写类名** —— 拿 DB 的形式去存档里搜会 0 命中，属正常，不要据此下结论。
+## 十四、联机调试纪律（2026-09-23/24 会话教训）
+
+> 这些规则来自一次长会话（问题清单见 `doc/SESSION-ISSUES-2026-09-23.md`），都是"再犯一次就要重新踩坑"的类型。
+
+1. **三端 build 锁定 ⇒ 每次改动都要三端同包**：`Message.IsProtocolCompatible` 要求 ModVersion/ProtocolVersion/ProtocolHash/BuildFingerprint 全等，
+   只重编一端会让加入在协议闸门静默失败。改完 → 打包 → PC/平板/服务器三端同哈希 → 重启 → 实测。
+2. **身份识别只用角色名字/坐标，绝不用 index**：两端 index 语义相反（本端自己的角色为 0，对端那份是 1），
+   用 index 判断身份必然把"主机角色"和"自己的角色"搞混。命令行桥的"玩家"列表本身也可能指向别的 `ComponentPlayer`。
+3. **实测优于推断**：能取样就不要猜。可用的只读手段：
+   - 命令行桥：`player`（本端血量/Air/位置/背包）、`events`（事件环，含 `player.damaged/healed/died` 与掉血量）、
+     `ui --all`、`dialogs`、`status`、`messages`、`world entities`；
+   - 客户端决策日志 `Logs/Client/<日期>.log`（含 `join.barrier` 等状态机诊断）与主机操作记录
+     `Logs/Server/ScMP-op-<日期>.log`；
+   - 引擎日志 `Game.log`（PC 在运行根 `Logs/`，Android 在 `Downloads/Survivalcraft/Logs/`）。
+4. **不允许加日志时**：先找既有诊断（`ObserveClientJoinBarrier`、`ScMP-op` 审计、探针）再用桥取样；
+   临时探针用完必须删，绝不留进提交。
+5. **先分清"锯齿"与"故障"**：`fenceAge` 这类"距上条被接受心跳的毫秒数"天生一直在变；
+   要判断健康与否看**峰值/到达间隔分布**，不要看瞬时值。同理血条闪烁、恢复态抖动都要先量化再定性。
+6. **凡是绕过 `ComponentHealth.Injure()` 直接写血量的路径，都要自己补死因与死亡统计**：
+   引擎把 `CauseOfDeath` 与 `PlayerStats.AddDeathRecord()` 只写在 `Injure()` 内（`ComponentHealth.cs:91-102`）；
+   联机客户端血量是"直接写字段跟随主机"的，不补就会出现"死亡原因 Unknown、统计没有这次死亡"。
+7. **客户端不要自己判死**：客户端跑的原生伤害（窒息/摔落/岩浆/饥饿）只当表现，本地血量不允许到 0，
+   死亡一律以主机广播为准；但要**照常上报扣血**，否则会出现"最后一小格怎么点都不死"。
+8. **上报"命中"要区分来源**：原生更新（`base.Update`）内的伤害（窒息/岩浆/摔落，每帧 ~0.006）走攒账；
+   原生更新之外的一次性伤害（UI 骷髅头、尖刺、爆炸）即使余量只剩 0.005 也要按标称伤害上报，
+   否则会低于上报阈值被当成小额攒账，永远发不出去。
+9. **加入房间的地形门槛是"移动靶"**：fence 带的 `RequiredTerrainSequence` 是主机**当前**值，
+   客户端等待期间必须有人主动补推地形（或主动请求同步），否则会永久卡在恢复态、只能重启。
