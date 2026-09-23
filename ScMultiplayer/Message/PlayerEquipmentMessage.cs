@@ -13,6 +13,9 @@ namespace ScMultiplayer
         public int ActiveSlotIndex;
         public int[] SlotValues = Array.Empty<int>();
         public int[] SlotCounts = Array.Empty<int>();
+        // 方案 1：该背包结果的宿主单调版本号（主机 MarkHostInventoryAuthoritative 每次自增；
+        // 客户端只应用版本更大的那份，避免乱序旧快照覆盖新背包）。
+        public int InventoryVersion;
         public int[][] Clothes = CreateEmptyClothes();
 
         public PlayerEquipmentMessage()
@@ -64,6 +67,7 @@ namespace ScMultiplayer
                 SlotValues[i] = reader.ReadInt32();
                 SlotCounts[i] = reader.ReadInt32();
             }
+            InventoryVersion = reader.ReadInt32();
 
             Clothes = new int[4][];
             for (int slot = 0; slot < Clothes.Length; slot++)
@@ -95,6 +99,7 @@ namespace ScMultiplayer
                 writer.WriteInt32(SlotValues[i]);
                 writer.WriteInt32(SlotCounts[i]);
             }
+            writer.WriteInt32(InventoryVersion);
 
             int[][] clothes = CloneClothes(Clothes);
             for (int slot = 0; slot < clothes.Length; slot++)

@@ -33,6 +33,8 @@ namespace ScMultiplayer
         public float AimHandAngle;
         public int[] SlotValues;
         public int[] SlotCounts;
+        // 方案 1：该背包快照的宿主版本号（主机 MarkHostInventoryAuthoritative 每次自增）。
+        public int InventoryVersion;
 
         public GamePlayerPositionMessage() { }
 
@@ -111,6 +113,8 @@ namespace ScMultiplayer
                 SlotValues[i] = reader.ReadInt32();
                 SlotCounts[i] = reader.ReadInt32();
             }
+            // 方案 1：背包同步版本号（主机单调递增；客户端只应用更新的一份）
+            InventoryVersion = reader.ReadInt32();
         }
 
         protected override void Write(SuWriter writer)
@@ -151,6 +155,8 @@ namespace ScMultiplayer
                 writer.WriteInt32(SlotValues[i]);
                 writer.WriteInt32(SlotCounts[i]);
             }
+            // 方案 1：背包同步版本号
+            writer.WriteInt32(InventoryVersion);
         }
 
 

@@ -13,7 +13,7 @@ namespace ScMultiplayer
     [Serializable]
     public abstract class Message
     {
-        public const string ModVersion = "2.1.66";
+        public const string ModVersion = "2.2.0";
         public const int ProtocolVersion = 1;
 
         private static readonly Dictionary<int, Type> MessageTypesById = new();
@@ -26,7 +26,7 @@ namespace ScMultiplayer
         public static string BuildFingerprint { get; }
 
         /// <summary>
-        /// 消息发送者的终端地址
+        /// 娑堟伅鍙戦€佽€呯殑缁堢鍦板潃
         /// </summary>
         public IPEndPoint SenderEndPoint { get; set; }
 
@@ -158,7 +158,7 @@ namespace ScMultiplayer
 
             Message message = (Message)Activator.CreateInstance(messageType);
 
-            // 从数据流中读取发送者信息
+            // 浠庢暟鎹祦涓鍙栧彂閫佽€呬俊鎭?
             bool hasSender = reader.ReadBoolean();
             if (hasSender)
             {
@@ -166,7 +166,7 @@ namespace ScMultiplayer
             }
             else
             {
-                // 如果数据流中没有发送者信息，使用传入的发送者信息
+                // 濡傛灉鏁版嵁娴佷腑娌℃湁鍙戦€佽€呬俊鎭紝浣跨敤浼犲叆鐨勫彂閫佽€呬俊鎭?
                 message.SenderEndPoint = senderEndPoint;
             }
 
@@ -185,13 +185,13 @@ namespace ScMultiplayer
 
             writer.WritePackedInt32(messageTypeId);
 
-            // 序列化发送者信息
+            // 搴忓垪鍖栧彂閫佽€呬俊鎭?
             bool hasSenderToSerialize = message.SenderEndPoint != null || senderEndPoint != null;
             writer.WriteBoolean(hasSenderToSerialize);
 
             if (hasSenderToSerialize)
             {
-                // 优先使用消息中已有的发送者信息，否则使用传入的发送者信息
+                // 浼樺厛浣跨敤娑堟伅涓凡鏈夌殑鍙戦€佽€呬俊鎭紝鍚﹀垯浣跨敤浼犲叆鐨勫彂閫佽€呬俊鎭?
                 IPEndPoint endPointToSerialize = message.SenderEndPoint ?? senderEndPoint;
                 writer.WriteIPEndPoint(endPointToSerialize);
             }
@@ -201,13 +201,13 @@ namespace ScMultiplayer
         }
 
         /// <summary>
-        /// 便捷方法：写入消息并记录发送者
+        /// 渚挎嵎鏂规硶锛氬啓鍏ユ秷鎭苟璁板綍鍙戦€佽€?
         /// </summary>
         public static byte[] WriteWithSender(Message message, IPEndPoint senderEndPoint)
         {
-            // 设置发送者信息后序列化
+            // 璁剧疆鍙戦€佽€呬俊鎭悗搴忓垪鍖?
             message.SenderEndPoint = senderEndPoint;
-            return Write(message, null); // 传入null，因为发送者信息已经在message中
+            return Write(message, null); // 浼犲叆null锛屽洜涓哄彂閫佽€呬俊鎭凡缁忓湪message涓?
         }
 
         // Source: Mod/ScMultiplayer/Message/Message.cs:Message.Read
@@ -341,7 +341,7 @@ namespace ScMultiplayer
         }
 
         /// <summary>
-        /// 便捷方法：读取消息并记录发送者
+        /// 渚挎嵎鏂规硶锛氳鍙栨秷鎭苟璁板綍鍙戦€佽€?
         /// </summary>
         public static Message ReadWithSender(byte[] bytes, IPEndPoint senderEndPoint)
         {
@@ -352,7 +352,7 @@ namespace ScMultiplayer
         protected abstract void Write(SuWriter writer);
 
         /// <summary>
-        /// 获取发送者的IP地址（如果存在）
+        /// 鑾峰彇鍙戦€佽€呯殑IP鍦板潃锛堝鏋滃瓨鍦級
         /// </summary>
         public IPAddress GetSenderAddress()
         {
@@ -360,7 +360,7 @@ namespace ScMultiplayer
         }
 
         /// <summary>
-        /// 获取发送者的端口号（如果存在）
+        /// 鑾峰彇鍙戦€佽€呯殑绔彛鍙凤紙濡傛灉瀛樺湪锛?
         /// </summary>
         public int? GetSenderPort()
         {
@@ -368,7 +368,7 @@ namespace ScMultiplayer
         }
 
         /// <summary>
-        /// 检查消息是否有发送者信息
+        /// 妫€鏌ユ秷鎭槸鍚︽湁鍙戦€佽€呬俊鎭?
         /// </summary>
         public bool HasSender()
         {
@@ -376,7 +376,7 @@ namespace ScMultiplayer
         }
 
         /// <summary>
-        /// 获取发送者的字符串表示
+        /// 鑾峰彇鍙戦€佽€呯殑瀛楃涓茶〃绀?
         /// </summary>
         public string GetSenderString()
         {
@@ -384,7 +384,7 @@ namespace ScMultiplayer
         }
 
         /// <summary>
-        /// 设置发送者信息（链式调用）
+        /// 璁剧疆鍙戦€佽€呬俊鎭紙閾惧紡璋冪敤锛?
         /// </summary>
         public Message SetSender(IPEndPoint senderEndPoint)
         {
@@ -393,7 +393,7 @@ namespace ScMultiplayer
         }
 
         /// <summary>
-        /// 设置发送者信息（链式调用）
+        /// 璁剧疆鍙戦€佽€呬俊鎭紙閾惧紡璋冪敤锛?
         /// </summary>
         public Message SetSender(IPAddress address, int port)
         {
@@ -402,3 +402,4 @@ namespace ScMultiplayer
         }
     }
 }
+

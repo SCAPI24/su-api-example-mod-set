@@ -3243,14 +3243,38 @@ namespace ScMultiplayer
 				message.InventorySlotCounts);
 		}
 		int slotValue = inventory.GetSlotValue(message.ActiveSlotIndex);
-		int count = Math.Min(message.RemoveCount, inventory.GetSlotCount(message.ActiveSlotIndex));
+		// ⚠️ 从槽里扣多少，必须由**校验里声明的目标数量**（ItemCount - RemoveCount）反推，
+		// 不能用 DropCount：创造模式 GetSlotCount 是 9999 哨兵、DropCount 已被
+		// NormalizeDropCountForWire 压成 1，而 ComponentCreativeInventory.RemoveSlotItems
+		// 只有 count >= 9999 才真正清格（count=1 时直接 return 1、格子纹丝不动）
+		// → 主机其实没扣掉这一格，紧接着又把权威数据发回本地，表现为
+		// “丢出去后快捷栏东西还在、地上也掉了物品”。
+		// 历史教训：更早用 RemoveCount 扣、却用 NormalizeDropCountForWire(DropCount) 掉，
+		// 两者不等时差额被凭空销毁（实测：丢 13 个只掉 10 个 → 走过去捡回只剩 10 个）。
+		int dropCount = ActionRequestValidationPolicy.NormalizeDropCountForWire(message.DropCount);
+		int slotCount = inventory.GetSlotCount(message.ActiveSlotIndex);
+		int desiredCount = Math.Max(0, message.ItemCount - message.RemoveCount);
+		int count = Math.Max(0, slotCount - desiredCount);
 		if (slotValue != message.ItemValue || count <= 0)
 		{
 			return false;
 		}
+		int[] preRemoveValues = CaptureInventoryValues(inventory);
+		int[] preRemoveCounts = CaptureInventoryCounts(inventory);
 		int removed = inventory.RemoveSlotItems(message.ActiveSlotIndex, count);
 		if (removed <= 0)
 		{
+			return false;
+		}
+		// 兜底：声明"目标数量为 0"（整叠丢出）时，格子必须真的空了。创造模式的
+		// RemoveSlotItems 在 count<9999 时直接 return 1 且不动格子，返回值不可信 ——
+		// 判断依据是**格子当前状态**。没清掉就整体回滚，绝不放行
+		// "格子没扣、掉落物却生成了"这种凭空多出来的物品（本次线上 bug）。
+		// ⚠️ 只在 desiredCount==0 时校验：创造模式"单件拖出丢弃"（RemoveCount<ItemCount）
+		// 本来就取不出有限数量，让它照样掉 1 个、格子保持无限供应，才是原生语义。
+		if (desiredCount == 0 && inventory.GetSlotValue(message.ActiveSlotIndex) != 0)
+		{
+			ApplyInventory(inventory, preRemoveValues, preRemoveCounts);
 			return false;
 		}
 		Vector3 defaultPosition = body.Position + new Vector3(0f, body.StanceBoxSize.Y * 0.66f, 0f) + 0.25f * body.Matrix.Forward;
@@ -3260,14 +3284,15 @@ namespace ScMultiplayer
 		{
 			velocity = Vector3.Normalize(velocity) * 20f;
 		}
-			int dropCount = ActionRequestValidationPolicy.NormalizeDropCountForWire(message.DropCount);
-			int distributedCount = Math.Min(removed, dropCount);
-			if (distributedCount <= 0)
-			{
-				return false;
-			}
-			GameManager.Project.FindSubsystem<SubsystemPickables>(throwOnError: true).AddPickable(
-				slotValue, distributedCount, position, velocity, null);
+		// 投放数量用 wire 口径的 dropCount（创造模式 = 1，与原生 DropSlotItems 一致）：
+		// 创造模式的 removed 恒为 1，与"清掉一格无限库存"不是同一口径。
+		int distributedCount = Math.Min(dropCount, removed);
+		if (distributedCount <= 0)
+		{
+			return false;
+		}
+		GameManager.Project.FindSubsystem<SubsystemPickables>(throwOnError: true).AddPickable(
+			slotValue, distributedCount, position, velocity, null);
 		MarkHostInventoryAuthoritative(sourceClientId);
 		return true;
 	}
@@ -3282,6 +3307,9 @@ namespace ScMultiplayer
 
 	private void MarkHostInventoryAuthoritative(int sourceClientId)
 	{
+		// 方案 1：任何"主机权威背包变化"都在这里推进版本号；承载背包的消息带上它，
+		// 客户端只应用更新的那份（防乱序覆盖）。必须无条件自增，不能只在 sourceClientId>0 时自增。
+		m_hostPlayerInventoryVersion++;
 		if (sourceClientId > 0 && m_networkPlayerInputs.TryGetValue(sourceClientId, out var state))
 		{
 			state.LastAuthoritativeInventoryTick = Math.Max(state.LastAuthoritativeInventoryTick, client?.Step ?? 0);

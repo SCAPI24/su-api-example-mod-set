@@ -733,3 +733,80 @@ Move-Item -LiteralPath "publish\android\signed.apk" -Destination "publish\androi
 - **global.json SDK 锁定**: 多 SDK 环境下，必须从含 global.json 的项目根目录运行 dotnet 命令
 - **APK 文件名避坑**: 先签名到临时文件再重命名，不要试图让 apksigner 直接输出含[]的文件名
 - **PowerShell -LiteralPath**: 操作含 `[]` 的路径时必须用 -LiteralPath，不能用 -Path
+
+### 2026-09-23 待查：联机睡觉醒来后饱食度不减
+
+现象：联机（三端同一 build）中睡一觉醒来后，玩家的饱食度不下降。
+
+已定位的结构（未改代码时先记录）：
+- 联机版生命体征是**主机算、客户端播**：`Func/Component/SuComponentVitalStats.cs` 把 `ComponentVitalStats` 替换成
+  "主机计算 → 周期下发 → 客户端 `ApplyAuthoritativePlayerStats` 只播放"，本地不做任何预测/模拟。
+  因此客户端显示不动，只可能来自主机侧。
+- 候选原因 1（主机自己也没扣）：睡眠走"睡眠加速"会话 —— `Modules/Runtime/ScMultiplayerUpdateLoop.cs`
+  （`MaintainHostSleepAccelerationSession` / `IsSleepAccelerationActive`）、`Modules/World/ScMultiplayerWorldSync.cs`、
+  `Modules/Runtime/ScMultiplayerRuntimePhases.cs`（`CompletePendingClientSleepWakeups`）。加速期间对睡眠玩家
+  是零 `GameTimeDelta`（`m_sleepBlackoutFactor/Duration`）。若醒来时该会话没有干净收尾，主机后续仍按"睡眠中"
+  处理，`UpdateFood` 不再消耗。
+- 候选原因 2（主机在扣但没下发）：`Core/AuthoritativePlayerStateSnapshot.cs` 的发布判据（`|Food - previous.Food|`），
+  配合 `Core/ScMultiplayerRuntimeState.cs:ShouldHoldClientSleepTimeline` 与
+  `MarkClientSleepWakeBoundaryPending` 的醒来边界；若边界完成早于本次统计值下发，客户端会停在睡前那份。
+
+下一步（用户要求**先不检测**，故暂不加探针、不改代码）：
+1. 睡醒后保持不动 60 秒，看主机 `Logs/Server/ScMP-op-*.log` 是否仍有该玩家的生命体征下发；
+   无下发 → 候选 1（修睡眠加速会话收尾，醒来强制清 `m_sleepBlackout*`）；
+   有下发但数值恒定 → 候选 2（`UpdateFood` 的 `GameTimeDelta` 被压成 0，修加速期间的 delta 门控）。
+2. 确认成因后再动代码，按老规矩：先报改动点 → 改 → 三端部署 → 验证。
+### 2026-09-23 2.2.x 回退到 2.1.66（两处回归记录）
+
+**1) 主机侧世界加载卡死（已确诊；2.2.1 已注释掉该改动）**
+- 现象：服务器进程正常、mod 正常加载（`[ScMP] Wire protocol mod 2.2.0 …`、`Server started OK`、`Database hooks applied`），
+  但日志到此为止，无异常、无 `serverError`；`world.join 201ser` 被接受但 `worldLoaded` 永不成立 →
+  `world.list` 里 201ser 恒为 `loaded:false`，发现列表里也就没有这台服务器。
+- 成因：新增的 7 个 `modInjector.Register("Game.SubsystemXBlockBehavior", "ScMultiplayer.SuSubsystemXBlockBehavior")`
+  （仙人掌/腐坏/地毯/落叶/耕地/常春藤/树苗）让**主机初始化在 `Database hooks applied` 之后挂住**。
+  去掉这 7 行后立刻恢复（`join 201ser` → `worldLoaded:true`、`currentScreen:Game`），已实验确诊。
+- 待办：按 mod 里既有的 `Pak/Database.xml` GUID 补丁机制（植物/草/落叶就是这么做的）重做这 7 个替换，
+  再验证：主机不卡死 + 客户端不再凭空长出仙人掌 + 挖掉有正常掉落物。
+
+**2) 点 Play 后 Play 界面自动退回主菜单（2.1.66 无此问题，待查）**
+- 现象：主菜单点"游玩"后，CmdBridge 事件环显示 `screen.changed MainMenu→Play`、`ui.click Play`，
+  **23 帧（≈0.4 秒）后 `screen.changed Play→MainMenu`**；客户端日志无任何异常；与窗口焦点无关
+  （已用 `focusrecover` + `AppActivate` 验证 `realFocus:true / foregroundIsGame:true` 后仍复现）。
+- 线索：`Func/Screen/SuPlayScreen.cs`（自 2.1.66 起一行未改）里能离开该界面的只有反钮 `SwitchScreen("MainMenu")`(169)、
+  选中世界开玩 `SwitchScreen("GameLoading",…)`(961)，以及 `Enter()`(366-393) → `StartWorldScan`(412-426，
+  先弹模态 `BusyDialog("Scanning Worlds")` 再后台扫世界) 这一段抛异常被屏幕管理器兜回主菜单。
+  0.4 秒即退出、远早于扫描完成 → 更像 `Enter` 阶段异常，而不是扫描结果触发。
+
+**结论**：2.2.x 相对 2.1.66 的**运行时差异只有版本号**（其余为注释 + 一个未被任何代码引用的新文件），
+但为保服务与可比性，**整体回退到 2.1.66**（代码 + 三端部署，并与索引/发行版资产的 2.1.66 口径一致）。
+### 2026-09-23 待实现（已选定方案 1）：背包同步加"单调版本号"
+
+**两个可复现场景（同一根因）**
+1. 挖 1 个仙人掌 → 底部 + 顶部失去支撑共掉 2 个掉落物 → 两个都捡起，**背包只 +1**（另一个被吞）。
+2. 平板站在方块角"边扔边捡"（14 个沙子）→ 一段时间后**净少 1 个**。
+共同点：**背包在极短时间内的连续"入包/出包"被这套增量同步合并/覆盖**。mod 的背包是"主机权威 + 稀疏增量"
+（`TryBuildInventoryDelta` / `ApplyInventoryDelta`），而"上次已发送的基准"是**一份随操作被重置的共享状态**
+（重置点 `MarkHostInventoryAuthoritative`，见 `Modules/Session/ScMultiplayerClientEvents.cs:3283`，注释即写明它会清掉该客户端上次已发送状态）。
+
+**涉及通路（已定位）**
+- 入包：`Modules/Entity/ScMultiplayerPickableProjectileHandlers.cs` —— 主机 `HandlePickableAcquireRequest`(243) →
+  入包 → `MarkHostInventoryAuthoritative`(308) → 回"变化格"增量(320)；客户端应用 528-565。
+- 出包（丢弃/扔出）：`Modules/World/ScMultiplayerWorldSync.cs` —— `TryFindUiDropSource`(约 351) →
+  `InventorySlotValues = new[] { itemValue }`(471) / `CaptureInventoryValues`(529)。
+- 周期同步：`Modules/Player/ScMultiplayerPlayerSync.cs`(408-430) + `m_forceHostInventorySync`
+  （`Core/ScMultiplayerRuntimeState.cs:420`、`Modules/Runtime/ScMultiplayerUpdateLoop.cs:3023`）。
+
+**实现清单（方案 1）**
+1. **版本源**：主机侧为每个客户端维护 `m_playerInventoryVersion`（单调递增，仅主机自增；也可用全局计数器）。
+   每次**入包/出包**（拾取、UI 丢弃、容器/合成结果、GM 改背包、周期同步的强制全量）后 `++`。
+2. **线格式**（build 锁定，三端必须同时升级）：在这些消息里各加 `InventoryVersion`（本次结果对应的版本）与
+   `BaseInventoryVersion`（增量相对哪个版本；全量时为 0）：
+   `Message/PickableSyncMessage.cs`、`Message/PlayerActionMessage.cs`、`Message/ContainerSyncMessage.cs`、
+   `Message/GamePlayerPositionMessage.cs`（周期快照）。
+3. **主机**：发增量时填 `BaseInventoryVersion` = 生成该增量所用的基准版本，`InventoryVersion` = 自增后的版本；
+   发全量时 `BaseInventoryVersion = 0`。
+4. **客户端**：保存 `m_localInventoryVersion`；应用规则：
+   - `msg.InventoryVersion <= local` → 丢弃（旧结果，防覆盖）；
+   - `msg.InventoryVersion == local + 1 && msg.BaseInventoryVersion == local` → 应用增量并 `local = msg.InventoryVersion`；
+   - 其它情况（跳号或基准不符）→ **不发散应用**，改为请求一次**全量背包**，收到全量（`Base=0`）后 `local = InventoryVersion`。
+5. **验证**：先用上面两个复现场景（挖 1 掉 2 捡 2；平板边扔边捡 14 个不掉），再做一次"快速连续丢弃 5 个"的压力用例。

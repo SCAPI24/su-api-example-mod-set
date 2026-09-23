@@ -418,6 +418,20 @@ namespace ScMultiplayer
         private SubsystemPickables m_hostPickablesSubsystem;
         private GameWidget m_clientDropDragHostGameWidget;
         private bool m_forceHostInventorySync;
+        // 背包同步版本号（方案 1，2026-09-23）：
+        // 主机侧每次"权威背包变化"后自增（唯一自增点在 MarkHostInventoryAuthoritative）。
+        // 承载背包的消息都带上它；客户端只应用**版本更大**的那一份，避免两次紧邻变化的全量快照
+        // 乱序到达时"旧覆盖新"（实测：挖 1 个仙人掌掉 2 个只进 1 个 / 平板边扔边捡净少 1 个）。
+        private int m_hostPlayerInventoryVersion;
+        private int m_clientPlayerInventoryVersion;
+        // 静态访问器：NetworkMessageSender 是静态类，盖章时需要读到主机的版本号。
+        internal static int HostPlayerInventoryVersion =>
+            currentInstance?.m_hostPlayerInventoryVersion ?? 0;
+        internal static int ClientPlayerInventoryVersion
+        {
+            get => currentInstance?.m_clientPlayerInventoryVersion ?? 0;
+            set { if (currentInstance != null) currentInstance.m_clientPlayerInventoryVersion = value; }
+        }
         private readonly Dictionary<ushort, Pickable> m_remotePickables = new Dictionary<ushort, Pickable>();
         private bool m_applyingNetworkPickable;
         private int m_lastAuthoritativeLocalInventoryTick;

@@ -210,6 +210,8 @@ namespace ScMultiplayer
                 isCrouching, isFlying, isRiding, mountEntityId, isGrounded,
                 activeSlotIndex, handItemValue, handItemCount,
                 itemOffset, itemRotation, aimHandAngle, slotValues, slotCounts);
+            // 方案 1：背包快照带宿主版本号，客户端只应用更新的那份（防乱序旧覆盖新）。
+            msg.InventoryVersion = ScMultiplayer.HostPlayerInventoryVersion;
             if (batch != null)
             {
                 batch.Add(msg);

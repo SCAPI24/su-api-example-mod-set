@@ -719,6 +719,47 @@ namespace ScMultiplayer
                 database.FindDatabaseObjectType("Parameter", true), true);
             subsystemProjectiles.Value = "ScMultiplayer.SuSubsystemProjectiles";
 
+            // Disabled 2026-09-23: replacing these 7 world-evolution behaviors (cactus/rot/carpet/
+            // fallen leaves/soil/ivy/sapling) hangs the HOST after `[ScMP] Database hooks applied`
+            // and the world never loads. Verified with BOTH modInjector.Register(...) AND this
+            // Pak/Database.xml GUID patch form -> the fault is in the replacement classes
+            // themselves, not in the registration mechanism. See doc/PROJECT-LOG.md.
+            // Source: Pak/Database.xml:SubsystemCactusBlockBehavior.Class
+            var subsystemCactus = database.FindDatabaseObject(
+                new Guid("765c87c0-ea8a-4513-9cbd-5cf89c72e2a9"),
+                database.FindDatabaseObjectType("Parameter", true), true);
+            subsystemCactus.Value = "ScMultiplayer.SuSubsystemCactusBlockBehavior";
+            // Source: Pak/Database.xml:SubsystemRotBlockBehavior.Class
+            var subsystemRot = database.FindDatabaseObject(
+                new Guid("794afcc5-7af7-43ee-92c9-a6ba54084068"),
+                database.FindDatabaseObjectType("Parameter", true), true);
+            subsystemRot.Value = "ScMultiplayer.SuSubsystemRotBlockBehavior";
+            // Source: Pak/Database.xml:SubsystemCarpetBlockBehavior.Class
+            var subsystemCarpet = database.FindDatabaseObject(
+                new Guid("34a43ef6-f96b-4b4e-a8f1-18ea5907b3c7"),
+                database.FindDatabaseObjectType("Parameter", true), true);
+            subsystemCarpet.Value = "ScMultiplayer.SuSubsystemCarpetBlockBehavior";
+            // Source: Pak/Database.xml:SubsystemFallenLeavesBlockBehavior.Class
+            var subsystemFallenLeaves = database.FindDatabaseObject(
+                new Guid("acb9643b-ea94-490e-b69c-2d3d376987a9"),
+                database.FindDatabaseObjectType("Parameter", true), true);
+            subsystemFallenLeaves.Value = "ScMultiplayer.SuSubsystemFallenLeavesBlockBehavior";
+            // Source: Pak/Database.xml:SubsystemSoilBlockBehavior.Class
+            var subsystemSoil = database.FindDatabaseObject(
+                new Guid("9ef8d250-edd0-4fe5-8979-49f7dd023cdb"),
+                database.FindDatabaseObjectType("Parameter", true), true);
+            subsystemSoil.Value = "ScMultiplayer.SuSubsystemSoilBlockBehavior";
+            // Source: Pak/Database.xml:SubsystemIvyBlockBehavior.Class
+            var subsystemIvy = database.FindDatabaseObject(
+                new Guid("b48add77-ab7d-4073-b22a-03a6fe73f584"),
+                database.FindDatabaseObjectType("Parameter", true), true);
+            subsystemIvy.Value = "ScMultiplayer.SuSubsystemIvyBlockBehavior";
+            // Source: Pak/Database.xml:SubsystemSaplingBlockBehavior.Class
+            var subsystemSapling = database.FindDatabaseObject(
+                new Guid("6dfdc7f1-530b-4f6d-a7f3-1691f021533d"),
+                database.FindDatabaseObjectType("Parameter", true), true);
+            subsystemSapling.Value = "ScMultiplayer.SuSubsystemSaplingBlockBehavior";
+
             // Source: Pak/Database.xml:SubsystemPickables.Class
             var subsystemPickables = database.FindDatabaseObject(
                 new Guid("32d392de-69c1-4d04-9e0b-5c7463201892"),

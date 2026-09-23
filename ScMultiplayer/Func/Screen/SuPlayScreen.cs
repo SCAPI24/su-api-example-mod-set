@@ -368,7 +368,11 @@ namespace ScMultiplayer
             // Source: Mod/ScMultiplayer/Networking/RemoteServerDirectory.cs:RemoteServerDirectory.SetDiscoveryEnabled
             ScMultiplayer.currentInstance?.SetServerDiscoveryEnabled(true);
             // Disconnect previous connection
-            if (ScMultiplayer.client.IsConnected)
+            // Source: Mod/ScMultiplayer/Plug/ScMultiplayer.cs:ScMultiplayer.client
+            // client 在"配置了代理"的启动路径上可能尚未创建（初始化顺序不同），此处必须判空：
+            // 之前直接 ScMultiplayer.client.IsConnected 会在这里抛 NullReferenceException，
+            // 屏幕管理器随即把 Play 界面兜回主菜单（表现为"点游玩进不去 / 闪退到桌面"）。
+            if (ScMultiplayer.client?.IsConnected == true)
             {
                 try { ScMultiplayer.client.LeaveGame(); } catch { }
             }

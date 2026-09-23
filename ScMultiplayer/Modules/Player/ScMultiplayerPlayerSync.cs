@@ -396,8 +396,24 @@ namespace ScMultiplayer
                 CreatePlayerEquipmentMessage(clientId, revision, previous, snapshot));
         }
 
-        // Source: Mod/ScMultiplayer/Message/PlayerEquipmentMessage.cs:PlayerEquipmentMessage
+        // 方案 1：背包同步版本号——统一的盖章点（所有变体都在这里加宿主版本号）。
         private static PlayerEquipmentMessage CreatePlayerEquipmentMessage(int clientId,
+            int revision, EquipmentSnapshot previous, EquipmentSnapshot snapshot)
+        {
+            PlayerEquipmentMessage message =
+                CreatePlayerEquipmentMessageCore(clientId, revision, previous, snapshot);
+            message.InventoryVersion = ScMultiplayer.HostPlayerInventoryVersion;
+            return message;
+        }
+
+        // 玩家背包同步模式：**增量**（2026-09-23 实测结论，已回退全量尝试）。
+        // 曾改成"一律全量快照"，结果：创造模式背包（1622 格）每次同步造成巨大网络尖峰，
+        // 且创造模式往快捷栏拖物品直接失效 —— 不要再用全量来解增量问题。
+        // 增量始终带 InventoryVersion（见上方统一盖章点），客户端只应用更新的那份。
+        private const bool UsePlayerInventoryDelta = true;
+
+        // Source: Mod/ScMultiplayer/Message/PlayerEquipmentMessage.cs:PlayerEquipmentMessage
+        private static PlayerEquipmentMessage CreatePlayerEquipmentMessageCore(int clientId,
             int revision, EquipmentSnapshot previous, EquipmentSnapshot snapshot)
         {
             if (snapshot == null)
@@ -405,7 +421,7 @@ namespace ScMultiplayer
                     Array.Empty<int>(), Array.Empty<int>(), Array.Empty<int[]>());
             bool clothesChanged = previous == null ||
                 !ClothesSnapshotsEqual(previous.Clothes, snapshot.Clothes);
-            if (!clothesChanged && previous?.SlotValues != null &&
+            if (UsePlayerInventoryDelta && !clothesChanged && previous?.SlotValues != null &&
                 previous.SlotCounts != null &&
                 TryBuildInventoryDelta(previous.SlotValues, previous.SlotCounts,
                     snapshot.SlotValues, snapshot.SlotCounts, out int[] indices,
@@ -565,7 +581,14 @@ namespace ScMultiplayer
         {
             if (player == null || message == null) return;
             IInventory inventory = player.ComponentMiner?.Inventory;
-            if (inventory != null)
+            // 方案 1：只丢弃**严格更旧**的背包快照（>= 才应用）；InventoryVersion==0 表示"未盖章"
+            // （mod 里还有若干构造点没盖版本号，例如引擎自动收走掉落物的稀疏增量），必须照旧应用，
+            // 否则那条消息会被丢弃 → 拾取/丢弃看不到，要等下一次周期快照(1-2 秒)才回滚补齐。
+            bool inventoryFresh = message.InventoryVersion == 0 ||
+                message.InventoryVersion >= ScMultiplayer.ClientPlayerInventoryVersion;
+            if (message.InventoryVersion > ScMultiplayer.ClientPlayerInventoryVersion)
+                ScMultiplayer.ClientPlayerInventoryVersion = message.InventoryVersion;
+            if (inventory != null && inventoryFresh)
             {
                 if (message.ActiveSlotIndex >= 0 && message.ActiveSlotIndex < inventory.SlotsCount)
                     inventory.ActiveSlotIndex = message.ActiveSlotIndex;

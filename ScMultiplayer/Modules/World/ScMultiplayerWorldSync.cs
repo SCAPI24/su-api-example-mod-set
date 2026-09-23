@@ -310,7 +310,11 @@ namespace ScMultiplayer
 
             // Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update
             // Q/gamepad drop already sent a request before native prediction creates its pickable.
-            if (Time.RealTime <= m_pendingLocalDropPredictionUntil &&
+            // ⚠️ 只抑制**本端原生预测**的那一个：m_applyingNetworkPickable 为真表示这是主机权威掉落物，
+            // 它的值/数量/位置与本地预测**完全一致**（位置就是客户端上报的），若一并删掉，
+            // 就会出现"丢出后立刻去捡：既没有拾取音效、数量也不恢复"（实测：丢 1 个后一直停在 10）。
+            if (!m_applyingNetworkPickable &&
+                Time.RealTime <= m_pendingLocalDropPredictionUntil &&
                 pickable.Value == m_pendingLocalDropValue &&
                 pickable.Count == m_pendingLocalDropCount &&
                 Vector3.DistanceSquared(pickable.Position, m_pendingLocalDropPosition) <= 0.01f)
@@ -370,10 +374,25 @@ namespace ScMultiplayer
                 return;
 
             // Source: Survivalcraft/Game/ViewWidget.cs:ViewWidget.DragDrop
-            // Native UI code has already removed the item. Reconstruct the exact pre-drop player
-            // inventory so a delayed pre-split equipment message cannot restore the old layout.
-            int[] preDropValues = CaptureInventoryValues(inventory);
-            int[] preDropCounts = CaptureInventoryCounts(inventory);
+            // 事务基准必须用**主机已确认的背包镜像**（m_authoritativeLocalSlotValues/Counts），
+            // 不能用本地当前背包：主机在 ExecuteHostDropRequest 里用 IsInventorySnapshotValid
+            // **逐格**校验"基准 == 主机自己的背包"，而本地背包可能含未确认的预测
+            // （前一次被拒的丢弃、物品分裂、装备消息滞后）→ 校验失败 → 该次丢弃被拒、
+            // 物品留在主机背包 → 表现为"丢着丢着反而多 1 个"（13 → 14）。
+            int[] preDropValues;
+            int[] preDropCounts;
+            if (m_authoritativeLocalSlotValues != null && m_authoritativeLocalSlotValues.Length > sourceSlot &&
+                m_authoritativeLocalSlotCounts != null && m_authoritativeLocalSlotCounts.Length > sourceSlot)
+            {
+                preDropValues = (int[])m_authoritativeLocalSlotValues.Clone();
+                preDropCounts = (int[])m_authoritativeLocalSlotCounts.Clone();
+            }
+            else
+            {
+                // 还没有权威镜像（刚进世界）：退回本地重建，行为与之前一致。
+                preDropValues = CaptureInventoryValues(inventory);
+                preDropCounts = CaptureInventoryCounts(inventory);
+            }
             preDropValues[sourceSlot] = itemValue;
             preDropCounts[sourceSlot] = sourceCount;
             SendUiDropRequest(player, sourceSlot, itemValue, sourceCount, pickable.Count,
@@ -702,12 +721,26 @@ namespace ScMultiplayer
                         int[] currentCounts = currentValues != null
                             ? CaptureInventoryCounts(inventory) : null;
                         MarkHostInventoryAuthoritative(collectorClientId);
-                        if (currentValues != null && baseValues != null && baseCounts != null &&
-                            TryBuildInventoryDelta(baseValues, baseCounts, currentValues,
-                                currentCounts, out int[] changedIndices, out _, out _,
-                                out int[] changedValues, out int[] changedCounts))
+                        if (currentValues != null)
                         {
-                            // PlaySound=false：这次拾取的音效已经由广播那条负责，避免拾取者听到两次。
+                            // 有基准 → 稀疏增量（省带宽；创造模式背包 1622 格不能全量）。
+                            int[] changedIndices = Array.Empty<int>();
+                            int[] changedValues = Array.Empty<int>();
+                            int[] changedCounts = Array.Empty<int>();
+                            bool hasBase = baseValues != null && baseCounts != null;
+                            bool hasDelta = hasBase &&
+                                TryBuildInventoryDelta(baseValues, baseCounts, currentValues,
+                                    currentCounts, out changedIndices, out _, out _,
+                                    out changedValues, out changedCounts);
+                            // hasDelta=false 有两种含义，必须分开处理：
+                            //   ① 没有基准（hasBase=false）→ 兜底全量，否则拾取者拿不到任何数据；
+                            //   ② 有基准但没格子变化（创造模式拿到物品时数量是 ∞ 哨兵，数组根本不变）
+                            //      → 绝不能发全量，否则每捡一个东西就推 1622 格 ≈12.7 KB。
+                            bool needsFullFallback = !hasBase;
+                            // ⚠️ 基准缺失时必须**兜底发全量**：MarkHostInventoryAuthoritative 会清掉
+                            // "上次已发给该客户端"的基准，此时以前会一条带背包数据的消息都不发 →
+                            // 拾取者只听到音效、物品进不了背包（实测：丢 12 个沙子走过去只捡回 9 个，
+                            // 日志里这些回执是 `delta=0 full=0`）。全量只发给本人、且只在基准缺失时兜底。
                             var delta = new PickableSyncMessage
                             {
                                 Action = PickableSyncMessage.PickAction.Acquire,
@@ -716,10 +749,13 @@ namespace ScMultiplayer
                                 ServerTick = client.Step,
                                 Count = 0,
                                 PlaySound = false,
-                                HasInventoryDelta = true,
-                                SlotIndices = changedIndices,
-                                SlotValues = changedValues,
-                                SlotCounts = changedCounts
+                                InventoryVersion = ScMultiplayer.HostPlayerInventoryVersion,
+                                HasInventoryDelta = hasDelta,
+                                SlotIndices = hasDelta ? changedIndices : Array.Empty<int>(),
+                                SlotValues = hasDelta ? changedValues
+                                    : (needsFullFallback ? currentValues : Array.Empty<int>()),
+                                SlotCounts = hasDelta ? changedCounts
+                                    : (needsFullFallback ? currentCounts : Array.Empty<int>())
                             };
                             m_lastSentInventoryValues[collectorClientId] = currentValues;
                             m_lastSentInventoryCounts[collectorClientId] = currentCounts;

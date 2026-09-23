@@ -182,6 +182,26 @@ namespace ScMultiplayer
             Vector3 target = player.ComponentBody.Position + new Vector3(0f, 0.75f, 0f);
             double now = Time.RealTime;
 
+            // 未确认的本地丢弃预测**到期即回滚**（否则主机没确认就一直保持错误数量，
+            // 表现为"全丢出去后沙子不回来，等很久才突然回退"）。
+            // 回滚源是 m_authoritativeLocalSlotValues/Counts —— 它们**就是主机确认值**，
+            // 所以：丢弃已被接受时这里是无操作（安全）；被拒/未处理时立刻撤销本地预测。
+            if (m_pendingLocalDropPredictionUntil > 0.0 &&
+                now > m_pendingLocalDropPredictionUntil)
+            {
+                m_pendingLocalDropPredictionUntil = 0.0;
+                IInventory localInventory = player?.ComponentMiner?.Inventory;
+                if (localInventory != null &&
+                    m_authoritativeLocalSlotValues.Length == localInventory.SlotsCount &&
+                    m_authoritativeLocalSlotCounts.Length == localInventory.SlotsCount)
+                {
+                    ApplyInventory(localInventory, m_authoritativeLocalSlotValues,
+                        m_authoritativeLocalSlotCounts);
+                    m_lastLocalInventoryValues = CaptureInventoryValues(localInventory);
+                    m_lastLocalInventoryCounts = CaptureInventoryCounts(localInventory);
+                }
+            }
+
             foreach (ushort stale in m_pendingPickableAcquireRequests.Keys.Where(id =>
                 !m_remotePickables.ContainsKey(id) || !m_remotePickableRecords.ContainsKey(id))
                 .ToArray())
@@ -293,16 +313,18 @@ namespace ScMultiplayer
                         ComponentInventoryBase.FindAcquireSlotForItem(inventory,
                             pickable.Value) >= 0)
                     {
+                        int[] baseValues = CaptureInventoryValues(inventory);
+                        int[] baseCounts = CaptureInventoryCounts(inventory);
                         int previousCount = pickable.Count;
                         pickable.Count = ComponentInventoryBase.AcquireItems(
                             inventory, pickable.Value, pickable.Count);
                         accepted = pickable.Count < previousCount;
                         if (accepted)
                         {
-                            // 基准必须在 MarkHostInventoryAuthoritative 之前取：它会清掉
-                            // “上次已发给该客户端的背包”缓存，而那份缓存正是本次增量的比较基准。
-                            m_lastSentInventoryValues.TryGetValue(sourceClientId, out int[] baseValues);
-                            m_lastSentInventoryCounts.TryGetValue(sourceClientId, out int[] baseCounts);
+                            // ⚠️ 增量基准用"调用 AcquireItems 之前"的本地快照（上方 baseValues/baseCounts），
+                            // 不能用 m_lastSentInventoryValues：它会被 MarkHostInventoryAuthoritative
+                            // 清空，基准为 null 时整条回执不带任何背包数据 → 客户端只听到音效、物品不入账，
+                            // 1 秒后被权威快照纠正 → 实测"捡起 10 个只回 8 个"。
                             int[] currentValues = CaptureInventoryValues(inventory);
                             int[] currentCounts = CaptureInventoryCounts(inventory);
                             MarkHostInventoryAuthoritative(sourceClientId);
@@ -310,24 +332,45 @@ namespace ScMultiplayer
                             // 拾取通常只改一格（少数情况两格）。只把变化的格子作为稀疏增量发给拾取者：
                             // 创造模式背包 1622 格，整包一份 ≈12.7 KB，以前每次拾取都广播给所有人，
                             // 是“捡东西时带宽 30KB/s→280KB/s”的根因。
-                            if (baseValues != null && baseCounts != null &&
-                                TryBuildInventoryDelta(baseValues, baseCounts,
+                            if (TryBuildInventoryDelta(baseValues, baseCounts,
                                     currentValues, currentCounts, out int[] changedIndices,
                                     out _, out _, out int[] changedValues, out int[] changedCounts))
                             {
                                 response.HasInventoryDelta = true;
                                 response.SlotIndices = changedIndices;
                                 response.SlotValues = changedValues;
+                                // 方案 1：拾取回执带宿主版本号（配合客户端版本闸门，防旧结果覆盖新背包）。
+                                response.InventoryVersion = ScMultiplayer.HostPlayerInventoryVersion;
                                 response.SlotCounts = changedCounts;
-                                // 增量已让客户端在这几格上与主机对齐，把缓存推进到当前值，
-                                // 免得 1 Hz 那条路再补发一份整包（5 秒关键帧仍照旧）。
-                                m_lastSentInventoryValues[sourceClientId] = currentValues;
-                                m_lastSentInventoryCounts[sourceClientId] = currentCounts;
+                            }
+                            else
+                            {
+                                // 增量算不出来（只可能是"同值格被设成同值"，即创造模式的无限格）
+                                // 也必须回数据：否则客户端若做过乐观预测就会一直多显示，
+                                // 直到 1 Hz 权威快照把它纠回去。只补"该物品所在格"的权威值，
+                                // 代价 ≈12 字节，不是整包。
+                                int slot = ComponentInventoryBase.FindAcquireSlotForItem(
+                                    inventory, pickable.Value);
+                                if (slot >= 0 && slot < inventory.SlotsCount)
+                                {
+                                    response.HasInventoryDelta = true;
+                                    response.InventoryVersion = ScMultiplayer.HostPlayerInventoryVersion;
+                                    response.SlotIndices = new[] { slot };
+                                    response.SlotValues = new[]
+                                    {
+                                        NormalizeCrossbowValue(inventory.GetSlotValue(slot))
+                                    };
+                                    response.SlotCounts = new[] { inventory.GetSlotCount(slot) };
+                                }
+                            }
+                            // 两条分支都已让客户端在这几格上与主机对齐，缓存无条件推进到当前值，
+                            // 免得 1 Hz 那条路再补发一份整包（5 秒关键帧仍照旧）。
+                            m_lastSentInventoryValues[sourceClientId] = currentValues;
+                            m_lastSentInventoryCounts[sourceClientId] = currentCounts;
                             }
                         }
                     }
                 }
-            }
 
             response.Count = pickable?.Count ?? 0;
             if (accepted)
@@ -546,7 +589,13 @@ namespace ScMultiplayer
                 ComponentPlayer localPlayer = players?.ComponentPlayers.FirstOrDefault(player =>
                     !m_networkPlayerData.Values.Contains(player.PlayerData));
                 IInventory inventory = localPlayer?.ComponentMiner?.Inventory;
-                if (inventory != null)
+                // 方案 1：只丢弃**严格更旧**的拾取结果；版本 0 = "未盖章"，照旧应用
+                // （mod 里部分构造点还没盖版本号，误丢会导致"拾取看不到、1-2 秒后才补齐"）。
+                bool inventoryFresh = message.InventoryVersion == 0 ||
+                    message.InventoryVersion >= ScMultiplayer.ClientPlayerInventoryVersion;
+                if (message.InventoryVersion > ScMultiplayer.ClientPlayerInventoryVersion)
+                    ScMultiplayer.ClientPlayerInventoryVersion = message.InventoryVersion;
+                if (inventory != null && inventoryFresh)
                 {
                     if (message.HasInventoryDelta)
                     {
@@ -568,6 +617,12 @@ namespace ScMultiplayer
                     m_hasAuthoritativeLocalInventory = true;
                     m_lastLocalInventoryValues = CaptureInventoryValues(inventory);
                     m_lastLocalInventoryCounts = CaptureInventoryCounts(inventory);
+                    // ⚠️ 必须同时刷新"本地装备快照"缓存。主机这几条拾取增量已经把本地背包
+                    // 改成了权威值；不刷新的话 SynchronizeLocalEquipment 会以为"本地变了"，
+                    // 把这份**可能还落后几条增量的绝对数量**回推给主机，主机照单全收并覆盖
+                    // 自己更新的值，再同步回来就变成"快速捡起 8 个只剩 5 个"（丢更新）。
+                    // 丢弃路径（SendUiDropRequest）本来就有同样的刷新，这里原来漏了。
+                    m_lastEquipmentSnapshots[client.ClientID] = CaptureEquipmentSnapshot(localPlayer);
                 }
             }
 

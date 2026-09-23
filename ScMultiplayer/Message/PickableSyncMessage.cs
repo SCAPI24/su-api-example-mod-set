@@ -38,6 +38,8 @@ namespace ScMultiplayer
         public bool HasInventoryDelta;
         public int[] SlotIndices = Array.Empty<int>();
         public int[] SlotValues = Array.Empty<int>();
+        // 方案 1：该背包结果的宿主版本号（主机 MarkHostInventoryAuthoritative 每次自增）。
+        public int InventoryVersion;
         public int[] SlotCounts = Array.Empty<int>();
 
         // For batch update
@@ -119,6 +121,8 @@ namespace ScMultiplayer
                         SlotValues[i] = reader.ReadInt32();
                         SlotCounts[i] = reader.ReadInt32();
                     }
+                    // 方案 1：背包同步版本号（主机单调递增；客户端只应用更新的一份）
+                    InventoryVersion = reader.ReadInt32();
                     break;
                 case PickAction.WaterSplash:
                     Id = (ushort)reader.ReadPackedInt32();
@@ -191,6 +195,8 @@ namespace ScMultiplayer
                         writer.WriteInt32(SlotValues[i]);
                         writer.WriteInt32(SlotCounts[i]);
                     }
+                    // 方案 1：背包同步版本号
+                    writer.WriteInt32(InventoryVersion);
                     break;
                 case PickAction.WaterSplash:
                     writer.WritePackedInt32(Id);
