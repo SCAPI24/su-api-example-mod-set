@@ -1739,6 +1739,27 @@ namespace ScMultiplayer
                 return;
             }
 
+            // 《玩家领地》P5：他人领地内不允许挖 —— 直接回"被拒"，客户端走既有回滚路径把预测改回去，
+            // 并把权威值一起回给客户端（与其它被拒原因同一形态，不引入新的抖动）。
+            if (!CanRegionModifyCell(sourceClientId, message.Cell, out RegionClaim digClaim,
+                    out string digDenyReason))
+            {
+                int deniedValue = 0;
+                SubsystemTerrain deniedTerrain = GameManager.Project?
+                    .FindSubsystem<SubsystemTerrain>(false);
+                if (deniedTerrain?.Terrain != null)
+                {
+                    deniedValue = Terrain.ReplaceLight(deniedTerrain.Terrain.GetCellValue(
+                        message.Cell.X, message.Cell.Y, message.Cell.Z), 0);
+                }
+                NetworkMessageSender.SendTerrainDigResult(sourceClientId,
+                    new TerrainDigResultMessage(message.RequestId, message.Cell, false,
+                        deniedValue, client.Step));
+                NotifyRegionModificationDenied(sourceClientId, message.Cell, digClaim, "dig",
+                    digDenyReason);
+                return;
+            }
+
             Project project = GameManager.Project;
             bool accepted = false;
             int authoritativeValue = 0;

@@ -149,6 +149,8 @@ namespace ScMultiplayer
 		if (reconnectPending)
 		{
 			Log.Information("[ScMP] Host reconnect succeeded; refreshing authoritative world state");
+			// 《玩家领地》P2：断线期间主机可能改过领地（增量包会丢），重连后补要一次整表
+			RequestRegionClaimResync(true);
 		}
 	}
 
@@ -698,6 +700,8 @@ namespace ScMultiplayer
 			m_hostTerrainSequence = 0L;
 		}
 		ResetHostTerrainSyncStateStorage();
+		// 《玩家领地》P2：会话/世界重置时清掉领地副本与落盘挂点
+		ResetRegionClaimStorage();
 		m_hostTerrainRecoveryTargets.Clear();
 		m_pendingTerrainSequenceBaseline = 0L;
 		DetachClientTerrainChunkSyncUpdater();
@@ -2261,6 +2265,16 @@ namespace ScMultiplayer
 				if (!TryGetTerrainPlacePrediction(player, interact.HitRay, out var cell, out var expectedValue, out var _) || !(cell == interact.Cell) || expectedValue != interact.ExpectedValue)
 				{
 					SendHostTerrainPlaceResult(sourceClientId, interact, accepted: false);
+					state.HeldInput = PlayerInputStatePolicy.CreateHeld(playerInput);
+					return true;
+				}
+				// 《玩家领地》P5：他人领地内不允许放 —— 与"预测对不上"同一形态回绝（客户端自带回滚）
+				if (!CanRegionModifyCell(sourceClientId, interact.Cell, out RegionClaim placeClaim,
+						out string placeDenyReason))
+				{
+					SendHostTerrainPlaceResult(sourceClientId, interact, accepted: false);
+					NotifyRegionModificationDenied(sourceClientId, interact.Cell, placeClaim,
+						"place", placeDenyReason);
 					state.HeldInput = PlayerInputStatePolicy.CreateHeld(playerInput);
 					return true;
 				}

@@ -984,3 +984,53 @@ if (lost >= LocalHitDamageThreshold || (!insideNativeUpdate && lost > 0.0001f))
 - **PowerShell 坑**：`Start-Process -FilePath` 同样吃 `[ ]` 通配符（本仓库路径含 `[SuAPI]`）→ 用
   `cmd /c start "" /d <目录> <exe>`；远端 PowerShell 的引号容易被 cmd 吃掉 → 优先用
   `cmd /c findstr ...` 这类无引号简单命令，或先 scp 脚本再 `-File` 执行。
+
+---
+
+# 玩家领地（区域认领 + 归属执法）P1 / P2（2026-09-24）
+
+设计稿：`doc/REGION-CLAIM-DESIGN.md`（§7 分阶段，§11 实测记录）；
+本阶段问题清单：`doc/SESSION-ISSUES-2026-09-24.md`。
+测试拓扑：**只用平板（主机）+ Windows（客户端）**，不经过远程服务器；平板上所有地图都是测试图。
+
+## 交付
+
+**P1 选区（已完成）**
+- ScMP：`Modules/Player/ScMultiplayerRegionSelection.cs`（选区状态 + 配色）、
+  `Func/Component/SuComponentRegionOverlay.cs`（挂 Player 实体的 `Component, IDrawable` 画全高线框
+  + 地面/顶部矩形；`SubsystemDrawing` 会收集实体组件里的 `IDrawable`，不必新增子系统）。
+- GmMod：`玩家领地 → 选区（点1/点2/设置/填写/取消）+ 范围文本`。
+- 跨程序集 API 走**静态门面** `RegionSelectionApi`（Obfuscar 整类跳过）。
+
+**P2 数据结构 / 落盘 / 同步（已完成）**
+- 模型：`RegionClaim`（闭区间、Y 固定 0–255、Owner = **userId 列表**）、上限 64×64 / 世界 128 块、
+  重叠允许、编号只增不复用。
+- 落盘：`ScMultiplayerRegions.xml`（世界目录，与 `ScMultiplayerPlayers.xml` 同款），5s 节拍保存、
+  导出加入快照前先写盘、会话重置清理。
+- 同步：`RegionClaimMessage`（wire id 47；Full / Delta / RequestSync + 单调序号 + NextId）——
+  加入完成主机整表下发、客户端加入结束与重连后主动补要、运行期增量广播、客户端**按序号应用**
+  （跳号 → 请求补发整表）。
+- GmMod：`建立领地（二次确认）/ 领地列表（主机权威 or 本端副本）/ 领地详情 / 放弃领地`，
+  每个子菜单都有「← 返回」。
+
+## 实测（07:06–07:28，日志 + 面板 + 落盘三处交叉）
+
+| 项 | 证据 |
+|---|---|
+| 落盘 | `<Regions NextId="4" Sequence="5">` + Region #1（Owner userId/name 齐全） |
+| 重进世界仍在 | 平板重启后 `Loaded 1 region claims (nextId=2, sequence=1)` |
+| 加入下发 | 主机 `Region claims sent to ClientID=1: count=1, sequence=3` → PC `Region claims synced from host: count=1, sequence=3` |
+| 增量·增 | 主机 `add: #3, sequence=4` → PC `replica updated from host: add #3, sequence=4` |
+| 增量·删 | 主机 `remove: #3, sequence=5` → PC `remove #3, sequence=5`，两端面板只剩 #1 |
+| 仅主机可增删 | PC 面板 `✗ 本端不是主机…`，确认建立后两端数量不变 |
+
+## 本轮修掉的问题（详见 SESSION-ISSUES-2026-09-24.md）
+
+1. 跨程序集引用被混淆成员 → `MissingFieldException` 并把游戏踢回主菜单；
+   主类补 `skipMethods` 会撞内部接口（`Inconsistent virtual method obfuscation state`）
+   ⇒ **独立 mod 一律走静态门面**。
+2. 混淆后枚举 `ToString()` 变空串 ⇒ 审计/日志用显式分支取名字。
+3. 子菜单没有返回项 = 死路 ⇒ 全补「← 返回」。
+4. 可靠有序流也会跳包/断线 ⇒ 序号缺口与重连后补要整表。
+5. CmdBridge 工具链：Windows 上点列表行要用 `click list:<列表>#<行号>`（`--at` 落点不可预测），
+   已写进根仓库 `doc/cmdbridge-ui-automation.md` 第八节。

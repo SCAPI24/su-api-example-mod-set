@@ -2998,6 +2998,8 @@ namespace ScMultiplayer
             if (IsHost)
             {
                 EnsureHostTerrainSyncStateLoaded();
+                // 《玩家领地》P2：领地数据（ScMultiplayerRegions.xml）与地形同步元数据同一处载入
+                EnsureHostRegionClaimsLoaded();
                 UpdateJoinTransferBandwidthBudget();
                 UpdateServerTrafficDisplaySample();
                 ConfirmPendingFluidSettlements();
@@ -3024,6 +3026,7 @@ namespace ScMultiplayer
                     RefreshHostPlayerRecords();
                     SavePlayerRecords();
                     SaveHostTerrainSyncState();
+                    SaveHostRegionClaims();
                 }
                 m_terrainMergeTime += tickDuration;
                 if (m_terrainMergeTime >= TerrainMergeInterval)
@@ -3086,6 +3089,7 @@ namespace ScMultiplayer
                     RefreshHostPlayerRecords();
                     SavePlayerRecords();
                     SaveHostTerrainSyncState();
+                    SaveHostRegionClaims();
                 }
                 m_terrainMergeTime += tickDuration;
                 if (m_terrainMergeTime >= TerrainMergeInterval)

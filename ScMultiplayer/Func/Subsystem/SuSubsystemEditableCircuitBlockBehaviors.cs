@@ -2,6 +2,7 @@ using Engine;
 using Game;
 using GameEntitySystem;
 using System.Collections;
+using System.Collections.Generic;
 using System.Globalization;
 
 namespace ScMultiplayer
@@ -283,12 +284,133 @@ namespace ScMultiplayer
     {
         public new UpdateOrder UpdateOrder => base.UpdateOrder;
 
+        // 《玩家领地》P7d：**活塞推入他人领地 ⇒ 拒绝**（设计稿 §34.2）。
+        //
+        // 为什么用"改回式"（源码依据）：
+        //   · 活塞的落地写入全在 `SubsystemPistonBlockBehavior` 内部（`ChangeCell` / `DestroyCell`：
+        //     366/374/419 行推进、458/467 行 `StopPiston` 提交），这些方法都**不是虚方法**；
+        //   · 真正驱动推进的队列是私有 `m_actions`（`QueuedAction`），`StopPiston` 也是私有的，
+        //     所以没有"在行为层短路"的虚钩子可用。
+        // ⇒ 与火焰（§32）、流体（§37/§39）同一范式：`base.Update(dt)` 之前快照"活塞前方路径"上
+        //   落在领地内的格，跑完引擎更新后把这些格改回旧值并走统一否决通知（动作标签 `piston`）。
+        //   只快照**前方路径**、不快照活塞自身那一格：活塞自身的数据位（是否伸出）变化不应被判成越权，
+        //   否则拥有者自己领地里的活塞会被反复"回滚"而失效。
+        private const int MaximumPistonPathCells = 8;
+
+        private readonly Dictionary<Point3, int> m_claimSnapshot = new Dictionary<Point3, int>();
+        private readonly List<Point3> m_revertCells = new List<Point3>();
+        private readonly List<int> m_revertValues = new List<int>();
+        private readonly List<RegionClaim> m_revertClaims = new List<RegionClaim>();
+
+        // Source: Survivalcraft/Game/CellFace.cs —— 面序号到方向的换算（与 GmUiComponent 放置用的
+        // switch 一致）：0=z+ / 1=x+ / 2=z- / 3=x- / 4=y+ / 5=y-
+        private static Point3 FaceDirection(int face)
+        {
+            switch (face)
+            {
+                case 0: return new Point3(0, 0, 1);
+                case 1: return new Point3(1, 0, 0);
+                case 2: return new Point3(0, 0, -1);
+                case 3: return new Point3(-1, 0, 0);
+                case 4: return new Point3(0, 1, 0);
+                case 5: return new Point3(0, -1, 0);
+                default: return new Point3(0, 0, 0);
+            }
+        }
+
+        private void CapturePistonPath(ScMultiplayer mod)
+        {
+            m_claimSnapshot.Clear();
+            if (mod == null)
+                return;
+            SubsystemTerrain terrain = Project?.FindSubsystem<SubsystemTerrain>(false);
+            if (terrain?.Terrain == null)
+                return;
+            // Source: Survivalcraft/Game/SubsystemPistonBlockBehavior.cs:
+            // SubsystemPistonBlockBehavior.m_actions
+            IDictionary actions = ScMultiplayer.ModManager.ModParentField.GetParentField<IDictionary>(
+                this, "m_actions", typeof(SubsystemPistonBlockBehavior));
+            if (actions == null || actions.Count == 0)
+                return;
+            foreach (object key in actions.Keys)
+            {
+                if (!(key is Point3 position))
+                    continue;
+                // 口径与 P7c 流体一致：**只挡"从领地外推入领地内"**。活塞自身若已在某块领地内，
+                // 它的推进属于"领地内自己的机械"⇒ 整台跳过；否则拥有者自己领地里的活塞会被
+                // 逐帧回滚而失效（`CanRegionModifyCell(0, …)` 按主机身份判定，必然不是拥有者）。
+                if (mod.OwnerClaimAt(position) != null)
+                    continue;
+                int value = terrain.Terrain.GetCellValue(position.X, position.Y, position.Z);
+                Point3 direction = FaceDirection(PistonBlock.GetFace(Terrain.ExtractData(value)));
+                if (direction.X == 0 && direction.Y == 0 && direction.Z == 0)
+                    continue;
+                for (int step = 1; step <= MaximumPistonPathCells; step++)
+                {
+                    var cell = new Point3(position.X + direction.X * step,
+                        position.Y + direction.Y * step, position.Z + direction.Z * step);
+                    if (cell.Y < 0 || cell.Y > 255)
+                        break;
+                    if (m_claimSnapshot.ContainsKey(cell))
+                        continue;
+                    if (mod.OwnerClaimAt(cell) == null)
+                        continue;
+                    m_claimSnapshot[cell] = terrain.Terrain.GetCellValue(cell.X, cell.Y, cell.Z);
+                }
+            }
+        }
+
+        private void RevertPistonClaimWrites(ScMultiplayer mod)
+        {
+            if (m_claimSnapshot.Count == 0)
+                return;
+            SubsystemTerrain terrain = Project?.FindSubsystem<SubsystemTerrain>(false);
+            if (mod == null || terrain?.Terrain == null)
+            {
+                m_claimSnapshot.Clear();
+                return;
+            }
+            m_revertCells.Clear();
+            m_revertValues.Clear();
+            m_revertClaims.Clear();
+            // 先收集再落地：ChangeCell 会触发邻居通知，可能重入（本类 Update 由子系统循环驱动，
+            // 不在同一调用栈内，但仍按同一安全顺序处理）。
+            foreach (KeyValuePair<Point3, int> item in m_claimSnapshot)
+            {
+                Point3 cell = item.Key;
+                if (terrain.Terrain.GetCellValue(cell.X, cell.Y, cell.Z) == item.Value)
+                    continue;
+                if (mod.CanRegionModifyCell(0, cell, out RegionClaim claim, out string _))
+                    continue;
+                m_revertCells.Add(cell);
+                m_revertValues.Add(item.Value);
+                m_revertClaims.Add(claim);
+            }
+            m_claimSnapshot.Clear();
+            Point3[] cells = m_revertCells.ToArray();
+            int[] values = m_revertValues.ToArray();
+            RegionClaim[] claims = m_revertClaims.ToArray();
+            for (int i = 0; i < cells.Length; i++)
+            {
+                terrain.ChangeCell(cells[i].X, cells[i].Y, cells[i].Z, values[i]);
+                mod.NotifyRegionModificationDenied(0, cells[i], claims[i], "piston", null);
+            }
+        }
+
         // Source: Survivalcraft/Game/SubsystemPistonBlockBehavior.cs:
         // SubsystemPistonBlockBehavior.Update
         void IUpdateable.Update(float dt)
         {
-            if (ScMultiplayer.currentInstance?.IsNetworkSessionActive(Project) != true ||
-                ScMultiplayer.currentInstance?.IsNetworkHost(Project) == true)
+            ScMultiplayer mod = ScMultiplayer.currentInstance;
+            bool sessionActive = mod?.IsNetworkSessionActive(Project) == true;
+            if (sessionActive && mod.IsNetworkHost(Project))
+            {
+                CapturePistonPath(mod);
+                base.Update(dt);
+                RevertPistonClaimWrites(mod);
+                return;
+            }
+            if (!sessionActive || mod.IsNetworkHost(Project))
             {
                 base.Update(dt);
                 return;

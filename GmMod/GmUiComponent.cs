@@ -240,9 +240,367 @@ namespace GmMod
                 {
                     Text = "◆ 地图方块：破坏 / 放置（准星处，主机执行）…",
                     Action = ShowBlockMenu
+                },
+                new MenuEntry
+                {
+                    Text = "◆ 玩家领地：选区（点1 / 点2 / 取消）…",
+                    Action = ShowRegionMenu
                 }
             };
             ShowMenu("GM 工具（所有操作由主机授信并执行）", entries);
+        }
+
+        // ====================================================================
+        // 玩家领地（《玩家领地》P1：选区；建立/赋予/剥夺/领地设置/放弃见后续阶段）
+        // 状态与 3D 线框在联机 Mod（ScMP），本面板只负责交互。
+        // ====================================================================
+
+        private void ShowRegionMenu()
+        {
+            if (!RegionSelectionApi.IsAvailable)
+            {
+                ShowToast("联机 Mod 未加载，无法使用玩家领地", ToastColor);
+                return;
+            }
+            var entries = new List<MenuEntry>
+            {
+                new MenuEntry { Text = "● 选区 · 点1 …", Action = () => ShowRegionPointMenu(1) },
+                new MenuEntry { Text = "● 选区 · 点2 …", Action = () => ShowRegionPointMenu(2) },
+                new MenuEntry { Text = "● 取消全部点", Action = ClearRegionSelection },
+                new MenuEntry { Text = DescribeRegionSelection() },
+                new MenuEntry { Text = "◆ 建立领地（当前选区）…", Action = ShowRegionCreateMenu },
+                new MenuEntry
+                {
+                    Text = "◆ 领地列表（" + ClaimSourceLabel() + " " + RegionClaimApi.Count + " 块）…",
+                    Action = ShowRegionListMenu
+                },
+                new MenuEntry
+                {
+                    Text = "◆ 区域展示：" + (RegionClaimApi.IsDisplayEnabled ? "开" : "关") +
+                        "（点按切换，含 5 面编号）",
+                    Action = ToggleRegionDisplay
+                },
+                new MenuEntry
+                {
+                    Text = "◆ 选区预览线框：" +
+                        (RegionClaimApi.IsSelectionPreviewEnabled ? "开" : "关") + "（点按切换）",
+                    Action = ToggleRegionSelectionPreview
+                },
+                new MenuEntry { Text = DescribeLocalCellOwnership() }
+            };
+            ShowMenu("玩家领地（P1 选区 / P2 领地 / P4 展示）", entries);
+        }
+
+        // ---- P4：区域展示开关 + 当前所在地块归属（重叠格归编号最小者）
+
+        private void ToggleRegionDisplay()
+        {
+            bool enabled = RegionClaimApi.ToggleDisplay();
+            ShowToast("区域展示：" + (enabled ? "开" : "关"), ToastColor);
+        }
+
+        private void ToggleRegionSelectionPreview()
+        {
+            bool enabled = RegionClaimApi.ToggleSelectionPreview();
+            ShowToast("选区预览线框：" + (enabled ? "开" : "关"), ToastColor);
+        }
+
+        private string DescribeLocalCellOwnership()
+        {
+            Vector3 position = m_componentPlayer?.ComponentBody?.Position ?? Vector3.Zero;
+            Point3 cell = ToCell(position);
+            return "○ 所在 (" + cell.X + "," + cell.Y + "," + cell.Z + ") 归属：" +
+                RegionClaimApi.DescribeOwnerAt(cell.X, cell.Y, cell.Z);
+        }
+
+        // ---- P2：领地数据结构（主机权威）的建立 / 列表 / 放弃；赋予·剥夺·设置见 P3
+
+        private static string ClaimSourceLabel() =>
+            RegionClaimApi.IsHostAuthority ? "主机权威" : "本端副本";
+
+        private void ShowRegionCreateMenu()
+        {
+            var entries = new List<MenuEntry>
+            {
+                new MenuEntry
+                {
+                    Text = "确认建立：" + DescribeRegionSelection(),
+                    Action = CreateRegionClaim
+                },
+                new MenuEntry
+                {
+                    Text = RegionClaimApi.IsHostAuthority
+                        ? "本端是主机：可以直接建立（重叠允许，重叠格归编号最小者）"
+                        : "本端是客户端：确认后提交给主机，主机审批通过才建立"
+                },
+                new MenuEntry { Text = "← 返回领地菜单", Action = ShowRegionMenu }
+            };
+            ShowMenu("建立领地（P2）", entries);
+        }
+
+        private void CreateRegionClaim()
+        {
+            if (RegionClaimApi.IsHostAuthority)
+            {
+                if (RegionClaimApi.TryCreateFromSelection(string.Empty, out int id, out string error))
+                    ShowToast("已建立领地 #" + id + "（" + DescribeRegionSelection() + "）", ToastColor);
+                else
+                    ShowToast("建立失败：" + error, ToastColor);
+                return;
+            }
+            if (RegionClaimApi.RequestCreateFromSelection(string.Empty, out string submitError))
+                ShowToast("已提交建立请求：" + DescribeRegionSelection() + "（等主机审批）", ToastColor);
+            else
+                ShowToast("提交失败：" + submitError, ToastColor);
+        }
+
+        private void ShowRegionListMenu()
+        {
+            var entries = new List<MenuEntry>();
+            int count = RegionClaimApi.Count;
+            if (count == 0)
+            {
+                entries.Add(new MenuEntry { Text = "（" + ClaimSourceLabel() + "还没有领地）" });
+            }
+            else
+            {
+                for (int i = 0; i < count; i++)
+                {
+                    if (!RegionClaimApi.TryDescribe(i, out int id, out string text))
+                        continue;
+                    int captured = id;
+                    entries.Add(new MenuEntry
+                    {
+                        Text = text + " …",
+                        Action = () => ShowRegionClaimMenu(captured)
+                    });
+                }
+            }
+            entries.Add(new MenuEntry { Text = "← 返回领地菜单", Action = ShowRegionMenu });
+            ShowMenu("领地列表（" + ClaimSourceLabel() + " " + count + " 块）", entries);
+        }
+
+        private void ShowRegionClaimMenu(int id)
+        {
+            string text = DescribeRegionClaimById(id);
+            var entries = new List<MenuEntry> { new MenuEntry { Text = text } };
+            int owners = RegionClaimApi.OwnerCount(id);
+            entries.Add(new MenuEntry { Text = "──── 拥有者（" + owners + "）／领地设置 ────" });
+            if (owners == 0)
+            {
+                entries.Add(new MenuEntry { Text = "（还没有拥有者：用下面「赋予领地」加人）" });
+            }
+            else
+            {
+                for (int i = 0; i < owners; i++)
+                {
+                    if (!RegionClaimApi.TryDescribeOwner(id, i, out string userId,
+                            out string display))
+                        continue;
+                    string capturedUser = userId;
+                    string capturedDisplay = display;
+                    entries.Add(new MenuEntry
+                    {
+                        Text = "👤 " + display + "（点开可剥夺）…",
+                        Action = () => ShowRegionOwnerMenu(id, capturedUser, capturedDisplay)
+                    });
+                }
+            }
+            entries.Add(new MenuEntry
+            {
+                Text = "赋予领地给玩家…",
+                Action = () => ShowRegionGrantMenu(id)
+            });
+            entries.Add(new MenuEntry
+            {
+                Text = "放弃这块领地（主机）…",
+                Action = () => ConfirmDropRegionClaim(id)
+            });
+            entries.Add(new MenuEntry { Text = "← 返回领地列表", Action = ShowRegionListMenu });
+            ShowMenu("领地 #" + id + "（领地设置）", entries);
+        }
+
+        private static string DescribeRegionClaimById(int id)
+        {
+            int count = RegionClaimApi.Count;
+            for (int i = 0; i < count; i++)
+            {
+                if (RegionClaimApi.TryDescribe(i, out int candidate, out string candidateText) &&
+                    candidate == id)
+                    return candidateText;
+            }
+            return "（读不到描述）";
+        }
+
+        private void ShowRegionOwnerMenu(int id, string userId, string display)
+        {
+            var entries = new List<MenuEntry>
+            {
+                new MenuEntry { Text = "拥有者：" + display },
+                new MenuEntry
+                {
+                    Text = "剥夺该玩家的领地许可（主机）",
+                    Action = () => RevokeRegionOwner(id, userId, display)
+                },
+                new MenuEntry { Text = "← 返回领地 #" + id, Action = () => ShowRegionClaimMenu(id) }
+            };
+            ShowMenu("领地 #" + id + " · 剥夺", entries);
+        }
+
+        private void RevokeRegionOwner(int id, string userId, string display)
+        {
+            if (RegionClaimApi.IsHostAuthority)
+            {
+                if (RegionClaimApi.TryRevokeOwner(id, userId, out string error))
+                    ShowToast("已剥夺 " + display + " 对领地 #" + id + " 的许可", ToastColor);
+                else
+                    ShowToast("剥夺失败：" + error, ToastColor);
+                return;
+            }
+            if (RegionClaimApi.RequestRevoke(id, userId, out string submitError))
+                ShowToast("已提交剥夺请求：" + display + " / 领地 #" + id + "（等主机审批）", ToastColor);
+            else
+                ShowToast("提交失败：" + submitError, ToastColor);
+        }
+
+        private void ShowRegionGrantMenu(int id)
+        {
+            List<Dictionary<string, object>> online = DescribeOnlinePlayers();
+            var entries = new List<MenuEntry>();
+            if (online.Count == 0)
+                entries.Add(new MenuEntry { Text = "拿不到在线玩家列表（未联机？）" });
+            foreach (Dictionary<string, object> player in online)
+            {
+                int clientId = ReadInt(player, "clientId", -1);
+                string name = ReadString(player, "name", "Player");
+                bool isSelf = ReadBool(player, "isSelf");
+                entries.Add(new MenuEntry
+                {
+                    Text = (isSelf ? "● " : "   ") + name + "   [client " + clientId + "]",
+                    Action = () => GrantRegionClaim(id, clientId, name)
+                });
+            }
+            entries.Add(new MenuEntry { Text = "← 返回领地 #" + id, Action = () => ShowRegionClaimMenu(id) });
+            ShowMenu("赋予领地 #" + id + "（可多人）", entries);
+        }
+
+        private void GrantRegionClaim(int id, int targetClientId, string targetName)
+        {
+            if (RegionClaimApi.IsHostAuthority)
+            {
+                if (RegionClaimApi.TryGrant(id, targetClientId, out string error))
+                    ShowToast("已把领地 #" + id + " 赋予 " + targetName, ToastColor);
+                else
+                    ShowToast("赋予失败：" + error, ToastColor);
+                return;
+            }
+            if (RegionClaimApi.RequestGrant(id, targetClientId, out string submitError))
+                ShowToast("已提交赋予请求：#" + id + " → " + targetName + "（等主机审批）", ToastColor);
+            else
+                ShowToast("提交失败：" + submitError, ToastColor);
+        }
+
+        private void ConfirmDropRegionClaim(int id)
+        {
+            var entries = new List<MenuEntry>
+            {
+                new MenuEntry
+                {
+                    Text = "确认放弃 #" + id + "（该领地的拥有者许可一并失效）",
+                    Action = () => DropRegionClaim(id)
+                },
+                new MenuEntry { Text = "← 返回领地 #" + id, Action = () => ShowRegionClaimMenu(id) }
+            };
+            ShowMenu("放弃领地 #" + id + "？", entries);
+        }
+
+        private void DropRegionClaim(int id)
+        {
+            if (RegionClaimApi.IsHostAuthority)
+            {
+                if (RegionClaimApi.TryRemove(id, out string error))
+                    ShowToast("已放弃领地 #" + id, ToastColor);
+                else
+                    ShowToast("放弃失败：" + error, ToastColor);
+                return;
+            }
+            if (RegionClaimApi.RequestRemove(id, out string submitError))
+                ShowToast("已提交放弃请求：#" + id + "（等主机审批）", ToastColor);
+            else
+                ShowToast("提交失败：" + submitError, ToastColor);
+        }
+
+        private void ShowRegionPointMenu(int index)
+        {
+            var entries = new List<MenuEntry>
+            {
+                new MenuEntry
+                {
+                    Text = "设置点" + index + "（我脚下的方块）",
+                    Action = () => SetRegionPointFromSelf(index)
+                },
+                new MenuEntry
+                {
+                    Text = "填写点" + index + "（x,y,z）…",
+                    Action = () => ShowRegionPointInput(index)
+                },
+                new MenuEntry { Text = "当前点" + index + "：" + DescribeRegionPoint(index) },
+                new MenuEntry { Text = "← 返回领地菜单", Action = ShowRegionMenu }
+            };
+            ShowMenu("玩家领地 · 点" + index, entries);
+        }
+
+        private void SetRegionPointFromSelf(int index)
+        {
+            Vector3 position = m_componentPlayer?.ComponentBody?.Position ?? Vector3.Zero;
+            Point3 cell = ToCell(position);
+            if (!RegionSelectionApi.SetPoint(index, cell))
+            {
+                ShowToast("联机 Mod 未加载，无法设置领地选区", ToastColor);
+                return;
+            }
+            ShowToast("点" + index + " = (" + cell.X + "," + cell.Y + "," + cell.Z + ")", ToastColor);
+        }
+
+        private void ShowRegionPointInput(int index) =>
+            ShowTextInput("点" + index + " 坐标（x,y,z）", "0,64,0", delegate (string text)
+            {
+                if (!TryParseVector3(text, out Vector3 position))
+                {
+                    ShowToast("坐标格式：x,y,z（例：120,64,-30）", ToastColor);
+                    return;
+                }
+                Point3 cell = ToCell(position);
+                RegionSelectionApi.SetPoint(index, cell);
+                ShowToast("点" + index + " = (" + cell.X + "," + cell.Y + "," + cell.Z + ")", ToastColor);
+            });
+
+        private void ClearRegionSelection()
+        {
+            RegionSelectionApi.Clear();
+            ShowToast("领地选区：已取消全部点", ToastColor);
+        }
+
+        private static Point3 ToCell(Vector3 position) => new Point3(
+            (int)MathUtils.Floor(position.X),
+            (int)MathUtils.Floor(position.Y),
+            (int)MathUtils.Floor(position.Z));
+
+        private static string DescribeRegionPoint(int index) =>
+            RegionSelectionApi.TryGetPoint(index, out Point3 point)
+                ? "(" + point.X + "," + point.Y + "," + point.Z + ")"
+                : "未设置";
+
+        private static string DescribeRegionSelection()
+        {
+            if (RegionSelectionApi.TryGetBox(out Point3 min, out Point3 max))
+            {
+                int width = max.X - min.X + 1;
+                int depth = max.Z - min.Z + 1;
+                return "○ 选区范围：" + width + " × " + depth + "（高度 " +
+                    RegionSelectionApi.MinY + "–" + RegionSelectionApi.MaxY + "）";
+            }
+            return "○ 选区范围：点1/点2 未齐备";
         }
 
         // ---- 玩家操作：先选目标，再选动作
@@ -287,8 +645,43 @@ namespace GmMod
                     Action = () => SubmitLevel(targetClientId, targetName, 25f, 0f) },
                 new MenuEntry { Text = "回满血",
                     Action = () => SubmitHeal(targetClientId, targetName) },
+                // 给予物品：复用联机 Mod 既有的 ScMP.Player.GrantInventory（主机落地到目标背包）。
+                // 用途：给测试对象发方块/火柴/炸药——没有它就没法做"越权放方块被拒"和"领地内点火被熄灭"的实测。
+                new MenuEntry { Text = "给予 泥土块 ×64",
+                    Action = () => SubmitGrantItem(targetClientId, targetName, "DirtBlock", 64) },
+                // 可燃方块：领地"火"执法实测需要它（泥土/砂砾不可燃）；点着后应被同帧熄灭或不允许蔓延进领地。
+                // 名字必须用引擎里**真实存在的具体类型**：`WoodBlock`/`LeavesBlock` 是抽象基类，按名字找不到
+                // （2026-09-25 实测：写 "WoodBlock" 只弹"找不到方块类型"、op 根本没提交）。
+                new MenuEntry { Text = "给予 橡木 ×64（可燃）",
+                    Action = () => SubmitGrantItem(targetClientId, targetName, "OakWoodBlock", 64) },
+                new MenuEntry { Text = "给予 橡树叶 ×64（易燃）",
+                    Action = () => SubmitGrantItem(targetClientId, targetName, "OakLeavesBlock", 64) },
+                new MenuEntry { Text = "给予 火柴 ×8（点火用）",
+                    Action = () => SubmitGrantItem(targetClientId, targetName, "MatchBlock", 8) },
+                new MenuEntry { Text = "给予 炸药 ×8（爆炸用）",
+                    Action = () => SubmitGrantItem(targetClientId, targetName, "TntBlock", 8) },
+                // 流体执法（P7c）实测用：水是流体方块，**无法通过挖掘获得**（引擎里水不给掉落物），
+                // 只能由 GM 给予后再用「贴着准星面放置手持方块」精确落格。
+                // `WaterBlock` 是引擎真实类型名（BlockIndex=18，检查过 `Game.SubSystemMagmaBlockBehavior`
+                // 里就是 `is WaterBlock` 判断），按名字解析得到的水方块 value=18、data=0（源头水）。
+                new MenuEntry { Text = "给予 水 ×8（流体测试用）",
+                    Action = () => SubmitGrantItem(targetClientId, targetName, "WaterBlock", 8) },
+                // 机械执法（P7d）实测用：活塞 / 发射器 + 触发它们的开关。
+                // 引擎真实类型名与 BlockIndex：`PistonBlock`=237、`DispenserBlock`=216、
+                // `SwitchBlock`=141（墙面安装的常开开关，通电后持续给相邻元件供电 ⇒ 不必拉导线）。
+                new MenuEntry { Text = "给予 活塞 ×4（P7d 测试）",
+                    Action = () => SubmitGrantItem(targetClientId, targetName, "PistonBlock", 4) },
+                new MenuEntry { Text = "给予 发射器 ×4（P7d 测试）",
+                    Action = () => SubmitGrantItem(targetClientId, targetName, "DispenserBlock", 4) },
+                new MenuEntry { Text = "给予 开关 ×4（供能）",
+                    Action = () => SubmitGrantItem(targetClientId, targetName, "SwitchBlock", 4) },
                 new MenuEntry { Text = "送回睡觉点",
                     Action = () => SubmitRelocate(targetClientId, targetName) },
+                // 跨端救援：直接送到**主机所在位置**（复用联机 Mod 的 ScMP.Player.ReturnToPlayer）。
+                // 为什么需要它：客户端面板的「我的当前位置」指的是客户端自己，客户端没法把自己送到主机那边；
+                // 有了这一项，"把客户端搬到无主区/主机身边"就不用再靠人肉跑图或改存档。
+                new MenuEntry { Text = "传送到主机身边（主机当前位置）",
+                    Action = () => SubmitReturnToHost(targetClientId, targetName) },
                 new MenuEntry { Text = "──── 复活点（主机找安全落点）────", Action = null },
                 new MenuEntry { Text = "把复活点设为：该角色当前位置",
                     Action = () => SubmitRespawnAnchorHere(targetClientId, targetName) },
@@ -332,10 +725,79 @@ namespace GmMod
                 new PlayerDataModificationRequest { TargetClientId = targetClientId, Amount = 1f },
                 "回满血 → " + targetName);
 
+        /// <summary>
+        /// 给予物品（复用联机 Mod 既有的 `ScMP.Player.GrantInventory`）。
+        /// 方块按**类型名**查找（`BlocksManager.Blocks`），避免把内容编号写死。
+        /// </summary>
+        private void SubmitGrantItem(int targetClientId, string targetName, string blockTypeName,
+            int count)
+        {
+            Block block = FindBlockByTypeName(blockTypeName);
+            if (block == null)
+            {
+                ShowToast("找不到方块类型：" + blockTypeName, ToastColor);
+                return;
+            }
+            var request = new PlayerDataModificationRequest
+            {
+                TargetClientId = targetClientId,
+                ItemValue = Terrain.MakeBlockValue(block.BlockIndex),
+                ItemCount = count
+            };
+            SubmitPlayerOperation(DataModificationOperationNames.GrantInventory, request,
+                "给予 " + blockTypeName + " ×" + count + " → " + targetName);
+        }
+
+        private static Block FindBlockByTypeName(string name)
+        {
+            foreach (Block block in BlocksManager.Blocks)
+            {
+                if (block != null && string.Equals(block.GetType().Name, name, StringComparison.Ordinal))
+                    return block;
+            }
+            return null;
+        }
+
         private void SubmitRelocate(int targetClientId, string targetName) =>
             SubmitPlayerOperation(DataModificationOperationNames.SafeRespawnRelocate,
                 new PlayerDataModificationRequest { TargetClientId = targetClientId },
                 "送回睡觉点 → " + targetName);
+
+        /// <summary>
+        /// 把目标玩家送到**主机**身边（跨端救援）。目的地 = 在线玩家列表里 `isHost` 的那一位，
+        /// 由主机自己解析并找安全落点，客户端不需要坐标输入。
+        /// </summary>
+        private void SubmitReturnToHost(int targetClientId, string targetName)
+        {
+            int hostClientId = FindHostClientId(targetClientId);
+            if (hostClientId < 0)
+            {
+                ShowToast("拿不到主机 clientId（未联机，或目标就是主机）", ToastColor);
+                return;
+            }
+            var request = new PlayerDataModificationRequest
+            {
+                TargetClientId = targetClientId,
+                DestinationClientId = hostClientId,
+                OffsetX = 2f,
+                OffsetZ = 0f
+            };
+            SubmitPlayerOperation(DataModificationOperationNames.ReturnToPlayer, request,
+                "传送到主机身边 → " + targetName);
+        }
+
+        private int FindHostClientId(int excludeClientId)
+        {
+            foreach (Dictionary<string, object> player in DescribeOnlinePlayers())
+            {
+                if (!ReadBool(player, "isHost"))
+                    continue;
+                int clientId = ReadInt(player, "clientId", -1);
+                if (clientId >= 0 && clientId != excludeClientId)
+                    return clientId;
+            }
+            return -1;
+        }
 
         private void SubmitReturnToRespawn() =>
             SubmitPlayerOperation(DataModificationOperationNames.SafeRespawnRelocate,
@@ -778,9 +1240,61 @@ namespace GmMod
                 {
                     Text = "贴着准星面放置手持方块",
                     Action = () => SubmitBlockEdit(place: true)
+                },
+                // P7d 实测用：在准星面相邻格放一个"**已合闸、满压**"的开关（141），
+                // 直接给活塞/发射器通电，不必先持有开关物品（创造/生存都可用）。
+                // 数据位（Source: Survivalcraft/Game/SwitchBlock.cs）：
+                //   bit0 = 合闸；bits1-3 = 安装面；bits4-7 = 15-电压等级（0 = 满压 15 ⇒ 输出 1.0）。
+                new MenuEntry
+                {
+                    Text = "放置：开关（准星面·已合闸 满压）",
+                    Action = SubmitSwitchPlace
                 }
             };
             ShowMenu("地图方块（主机执行并广播）", entries);
+        }
+
+        /// <summary>
+        /// P7d 实测用：把"已合闸、满压"的开关放到准星命中面的相邻格。
+        /// 安装面取命中面的**反向**（开关挂在被命中方块的那一面上）。
+        /// </summary>
+        private void SubmitSwitchPlace()
+        {
+            ComponentPlayer player = m_componentPlayer;
+            SubsystemTerrain terrain = GameManager.Project?.FindSubsystem<SubsystemTerrain>(false);
+            if (player?.GameWidget?.ActiveCamera == null || terrain == null)
+                return;
+            Vector3 eye = player.ComponentCreatureModel?.EyePosition ??
+                player.ComponentBody.Position;
+            Vector3 direction = player.GameWidget.ActiveCamera.ViewDirection;
+            TerrainRaycastResult? hit = terrain.Raycast(eye, eye + direction * 64f, false, false,
+                null);
+            if (!hit.HasValue)
+            {
+                ShowToast("准星没有指向方块", ToastColor);
+                return;
+            }
+            CellFace cellFace = hit.Value.CellFace;
+            int x = cellFace.X;
+            int y = cellFace.Y;
+            int z = cellFace.Z;
+            int mount;
+            switch (cellFace.Face)
+            {
+                case 0: z++; mount = 2; break;
+                case 1: x++; mount = 3; break;
+                case 2: z--; mount = 0; break;
+                case 3: x--; mount = 1; break;
+                case 4: y++; mount = 5; break;
+                default: y--; mount = 4; break;
+            }
+            int data = 1 | ((mount & 7) << 1);
+            byte[] payload = GmPayloadCodec.EncodeCell(x, y, z, Game.SwitchBlock.Index, data);
+            DataModificationSubmitResult result = DataModificationTool.SubmitFast(
+                GmOperations.ModId, GmOperations.SetCells, payload);
+            Log.Information("[GmMod] Submitted switch cell=" + x + "," + y + "," + z +
+                " data=" + data + " -> " + result.Code);
+            ShowToast("已发送主机：放置开关（已合闸满压）" + x + "," + y + "," + z, ToastColor);
         }
 
         private void SubmitBlockEdit(bool place)

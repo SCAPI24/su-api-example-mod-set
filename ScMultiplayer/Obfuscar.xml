@@ -12,10 +12,22 @@
   <Var name="MarkedOnly" value="false" />
   <Module file="$(InPath)\ScMultiplayer.dll">
     <SkipType name="ScMultiplayer.ScMultiplayer" />
+    <!-- 《玩家领地》选区门面：给**独立 mod**（GmMod）跨程序集调用，必须整类跳过。
+         ⚠️ 主类 ScMultiplayer 只保类型名（成员会被改名），第三方 mod 直接引用它会抛
+         "Field not found: ScMultiplayer.ScMultiplayer ScMultiplayer.ScMultiplayer.currentInstance"
+         （实测 2026-09-25：GM 面板一点"玩家领地"就报错并把游戏踢回主菜单）。
+         想给主类补 skipMethods 也不行：它实现内部接口 Ports.IMultiplayerUiCommandPort，
+         Obfuscar 会报 "Inconsistent virtual method obfuscation state"。
+         所以跨程序集一律走这种静态门面类（同 DataModificationTool）。 -->
+    <SkipType name="ScMultiplayer.RegionSelectionApi" skipMethods="true" skipFields="true" skipProperties="true" skipEvents="true" />
+    <!-- 《玩家领地》P2：领地数据门面（建立 / 放弃 / 列表），同样被独立 mod 跨程序集调用，整类跳过。 -->
+    <SkipType name="ScMultiplayer.RegionClaimApi" skipMethods="true" skipFields="true" skipProperties="true" skipEvents="true" />
     <SkipType name="ScMultiplayer.NetWorldFromLinkProvider" />
     <SkipType name="ScMultiplayer.Message" />
     <SkipType name="ScMultiplayer.SuComponentInput" />
     <SkipType name="ScMultiplayer.SuComponentHealth" />
+    <SkipType name="ScMultiplayer.SuComponentMiner" />
+    <SkipType name="ScMultiplayer.SuComponentRegionOverlay" />
     <SkipType name="ScMultiplayer.SuComponentHumanModel" />
     <SkipType name="ScMultiplayer.SuComponentVitalStats" />
     <SkipType name="ScMultiplayer.SuComponentSleep" />
@@ -37,6 +49,8 @@
     <SkipType name="ScMultiplayer.SuSubsystemPlantBlockBehavior" />
     <SkipType name="ScMultiplayer.SuSubsystemExplosions" />
     <SkipType name="ScMultiplayer.SuSubsystemFireBlockBehavior" />
+    <SkipType name="ScMultiplayer.SuSubsystemWaterBlockBehavior" />
+    <SkipType name="ScMultiplayer.SuSubsystemMagmaBlockBehavior" />
     <SkipType name="ScMultiplayer.SuSubsystemProjectiles" />
     <SkipType name="ScMultiplayer.SuSubsystemPickables" />
     <SkipType name="ScMultiplayer.SuSubsystemWhistleBlockBehavior" />
@@ -105,6 +119,13 @@
     <SkipType name="ScMultiplayer.DataModificationApplyResult" skipMethods="true" skipFields="true" skipProperties="true" skipEvents="true" />
     <SkipType name="ScMultiplayer.PlayerDataModificationRequest" skipMethods="true" skipFields="true" skipProperties="true" skipEvents="true" />
     <SkipType name="ScMultiplayer.PlayerDataModificationCodec" skipMethods="true" skipFields="true" skipProperties="true" skipEvents="true" />
+    <!-- 《玩家领地》P3b：`ScMP.Region.*` 的载荷类型同理必须跳过属性名。
+         实测（2026-09-24 第 12 轮）：不跳过时客户端 `System.Text.Json` 序列化出来是 **`{}`**
+         （属性名被混淆后序列化器反射不到），主机解码成全 0 ⇒ 领地建到了 (0,0)。
+         日志证据：客户端 `region submit ScMP.Region.Claim payload={}`，
+         主机 `host apply region.claim payload={}`。 -->
+    <SkipType name="ScMultiplayer.RegionDataModificationRequest" skipMethods="true" skipFields="true" skipProperties="true" skipEvents="true" />
+    <SkipType name="ScMultiplayer.RegionDataModificationCodec" skipMethods="true" skipFields="true" skipProperties="true" skipEvents="true" />
     <SkipType name="ScMultiplayer.PlayerCapabilityFlags" skipMethods="true" skipFields="true" skipProperties="true" skipEvents="true" />
     <!-- ScMP.Player.SetVitals / SetCondition 的载荷枚举：GmMod 在**另一个程序集**里引用它们，
          被改名后运行时会抛 "Could not load type 'ScMultiplayer.VitalsField'"（实测：GM 菜单

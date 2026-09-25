@@ -232,6 +232,10 @@ namespace ScMultiplayer
                             m_owner.HandleFurnitureBuildRequest(furnitureBuild,
                                 sourceClientId));
                         break;
+                    case RegionClaimMessage regionClaim:
+                        m_owner.QueueEndOfFrameAction(command, () =>
+                            m_owner.HandleRegionClaimMessage(regionClaim, sourceClientId));
+                        break;
                     default:
                         ReportFailure(sourceClientId,
                             "Unknown message type: " + message.GetType().Name);

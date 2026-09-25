@@ -1260,6 +1260,9 @@ namespace ScMultiplayer
             FlushPendingTerrainBroadcasts();
             MergePendingTerrainChanges();
             SaveHostTerrainSyncState();
+            // 《玩家领地》P2：领地数据也在世界目录里，导出加入快照前必须先写盘
+            EnsureHostRegionClaimsLoaded();
+            SaveHostRegionClaims();
             GameManager.SaveProject(waitForCompletion: true, showErrorDialog: false);
 
             string snapshotDirectory = Storage.CombinePaths(

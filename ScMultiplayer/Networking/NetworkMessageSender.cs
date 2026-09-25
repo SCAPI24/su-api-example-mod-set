@@ -526,6 +526,18 @@ namespace ScMultiplayer
                 Message.WriteWithSender(message, s_transport.Address));
         }
 
+        /// <summary>
+        /// 《玩家领地》P2：客户端 → 主机请求补发领地整表（序号缺口 / 加入流程结束时）。
+        /// 与 `SendTerrainDigRequest` 同路：目标 0（主机）、可靠有序。
+        /// </summary>
+        public static void SendRegionClaimRequestSync()
+        {
+            if (ScMultiplayer.client == null) return;
+            s_transport.SendDirectInput(0,
+                Message.WriteWithSender(RegionClaimMessage.CreateRequestSync(),
+                    s_transport.Address));
+        }
+
         public static void SendTerrainDigResult(int targetClientId,
             TerrainDigResultMessage message)
         {

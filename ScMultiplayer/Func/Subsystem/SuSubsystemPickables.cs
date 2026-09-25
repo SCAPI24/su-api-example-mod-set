@@ -1,3 +1,4 @@
+using Engine;
 using Game;
 using System.Collections.Generic;
 using TemplatesDatabase;
@@ -11,6 +12,10 @@ namespace ScMultiplayer
             new List<ComponentPlayer>();
         private readonly List<Pickable> m_waterSplashCandidates = new List<Pickable>();
         private SubsystemFluidBlockBehavior m_subsystemFluidBlockBehavior;
+        // P7b: host-local pickup enforcement (temporarily move denied pickables out of reach).
+        private readonly List<Pickable> m_deniedPickables = new List<Pickable>();
+        private readonly List<Vector3> m_deniedPickablePositions = new List<Vector3>();
+        private double m_nextPickupDeniedNoticeTime;
 
         protected override void Load(ValuesDictionary valuesDictionary)
         {
@@ -45,7 +50,51 @@ namespace ScMultiplayer
                             m_waterSplashCandidates.Add(pickable);
                     }
                 }
-                base.Update(dt);
+                // Source: Mod/ScMultiplayer/Modules/Region/ScMultiplayerRegionEnforcement.cs
+                // ScMultiplayer.CanRegionModifyCell / NotifyRegionModificationDenied
+                // P7b: the HOST player's own pickup bypasses the acquire-request chain, so gate it here:
+                // any pickable the host could collect inside someone else's claim is moved out of reach
+                // for this tick and restored right after base.Update (nothing is ever collected).
+                m_deniedPickables.Clear();
+                m_deniedPickablePositions.Clear();
+                ScMultiplayer pickupMod = ScMultiplayer.currentInstance;
+                ComponentPlayer hostPlayer = null;
+                if (pickupMod != null && m_componentPlayers != null)
+                {
+                    for (int i = 0; i < m_componentPlayers.Count; i++)
+                    {
+                        ComponentPlayer candidate = m_componentPlayers[i];
+                        if (candidate?.PlayerData != null && pickupMod.IsLocalPlayerData(candidate.PlayerData))
+                        {
+                            hostPlayer = candidate;
+                            break;
+                        }
+                    }
+                }
+                if (hostPlayer?.ComponentBody != null)
+                {
+                    Vector3 hostPosition = hostPlayer.ComponentBody.Position;
+                    foreach (Pickable pickable in Pickables)
+                    {
+                        if (pickable == null || pickable.ToRemove)
+                            continue;
+                        Vector3 delta = pickable.Position - hostPosition;
+                        if (delta.LengthSquared() > 64f)
+                            continue;
+                        var cell = new Point3(Terrain.ToCell(pickable.Position.X),
+                            Terrain.ToCell(pickable.Position.Y), Terrain.ToCell(pickable.Position.Z));
+                        if (pickupMod.CanRegionModifyCell(0, cell, out RegionClaim claim, out string reason))
+                            continue;
+                        m_deniedPickables.Add(pickable);
+                        m_deniedPickablePositions.Add(pickable.Position);
+                        pickable.Position = pickable.Position + new Vector3(0f, 4096f, 0f);
+                        if (Time.RealTime >= m_nextPickupDeniedNoticeTime)
+                        {
+                            m_nextPickupDeniedNoticeTime = Time.RealTime + 1.0;
+                            pickupMod.NotifyRegionModificationDenied(0, cell, claim, "pickup", reason);
+                        }
+                    }
+                }                base.Update(dt);
                 if (publishSplash)
                 {
                     foreach (Pickable pickable in m_waterSplashCandidates)
@@ -61,7 +110,13 @@ namespace ScMultiplayer
                             ScMultiplayer.currentInstance?.PublishPickableWaterSplash(pickable);
                     }
                 }
-                m_waterSplashCandidates.Clear();
+                for (int i = 0; i < m_deniedPickables.Count; i++)
+                {
+                    if (m_deniedPickables[i] != null)
+                        m_deniedPickables[i].Position = m_deniedPickablePositions[i];
+                }
+                m_deniedPickables.Clear();
+                m_deniedPickablePositions.Clear();                m_waterSplashCandidates.Clear();
                 return;
             }
 

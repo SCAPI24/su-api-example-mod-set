@@ -329,7 +329,47 @@ namespace ScMultiplayer
                 ScMultiplayer.client?.ClientID == 0;
             if (ScMultiplayer.client?.IsConnected == true && !worldEffectAuthority)
                 return false;
+            // 《玩家领地》P7d：发射器不得把物品"**放入**"他人领地（设计稿 §34.2 的"放入"）。
+            // 这里是最干净的行为层短路点：`Simulate` 是虚方法、且引擎发射路径
+            // （`DispenserElectricElement.Simulate` → `ComponentDispenser.Dispense`）**没有任何虚钩子**
+            // （`Dispense` / `DispenseItem` / `AddPickable` / `FireProjectile` 全非虚）⇒
+            // 只有在元件这一层挡住才是"拦在源头"。
+            if (!CanDispenseIntoRegion())
+                return false;
             return base.Simulate();
+        }
+
+        /// <summary>
+        /// 领地口径与 P7c（流体）一致：**只挡"从领地外放入领地内"**。
+        /// 发射器自身若已在某块领地内 ⇒ 属于"领地内自己的机械"，放行；
+        /// 否则拥有者自己领地里的发射器会被判越权（`CanRegionModifyCell(0, …)` 按主机身份判定，
+        /// 必然不是拥有者）而彻底失效。
+        /// 落点算法照抄引擎：`ComponentDispenser.DispenseItem` 用
+        /// `dispenserCenter + 0.6f * CellFace.FaceToVector3(face)`，0.6 的偏移仍落在相邻格里。
+        /// </summary>
+        private bool CanDispenseIntoRegion()
+        {
+            ScMultiplayer mod = ScMultiplayer.currentInstance;
+            if (mod == null)
+                return true;
+            SubsystemTerrain terrain = SubsystemElectricity?.Project?
+                .FindSubsystem<SubsystemTerrain>(false);
+            if (terrain?.Terrain == null)
+                return true;
+            Point3 position = CellFaces[0].Point;
+            if (mod.OwnerClaimAt(position) != null)
+                return true;
+            int data = Terrain.ExtractData(
+                terrain.Terrain.GetCellValue(position.X, position.Y, position.Z));
+            Vector3 vector = CellFace.FaceToVector3(Game.DispenserBlock.GetDirection(data));
+            var target = new Point3(position.X + (int)vector.X,
+                position.Y + (int)vector.Y, position.Z + (int)vector.Z);
+            if (target.Y < 0 || target.Y > 255)
+                return true;
+            if (mod.CanRegionModifyCell(0, target, out RegionClaim claim, out string reason))
+                return true;
+            mod.NotifyRegionModificationDenied(0, target, claim, "dispense", reason);
+            return false;
         }
     }
 
@@ -378,9 +418,51 @@ namespace ScMultiplayer
             // set for animation and the final cells through authoritative world synchronization.
             if (ScMultiplayer.client?.IsConnected == true && !ScMultiplayer.IsHost)
                 return false;
+            // 《玩家领地》P7d：**活塞推入他人领地 ⇒ 不推进**（设计稿 §34.2 的行为层短路）。
+            // 放在这里而不是只靠 `SuSubsystemPistonBlockBehavior` 的"改回式"兜底，是因为
+            // 改回式把"目的地格"复原成空气时，被推方块已经从原格移走 ⇒ 方块会丢。
+            // 在这里直接不 `AdjustPiston`，活塞根本不伸、方块原地不动。
+            // 口径与 P7c 一致：活塞自身已在某块领地内 ⇒ 放行（领地内自己的机械）。
+            if (!CanPistonExtend(length))
+                return false;
             SubsystemElectricity.Project.FindSubsystem<SubsystemPistonBlockBehavior>(true)
                 .AdjustPiston(CellFaces[0].Point, length);
             return false;
+        }
+
+        /// <summary>
+        /// 活塞要伸出的这一段会不会推进他人领地。
+        /// 覆盖 `length + 2` 格：`length` 格是活塞自己的臂（轴+头），再多一格是**被头顶掉、
+        /// 会被推到更前面**的那个方块的目的地（`length=1` 时 1 格臂 + 被推方块共占 2 格）。
+        /// </summary>
+        private bool CanPistonExtend(int length)
+        {
+            ScMultiplayer mod = ScMultiplayer.currentInstance;
+            if (mod == null || length <= 0)
+                return true;
+            SubsystemTerrain terrain = SubsystemElectricity?.Project?
+                .FindSubsystem<SubsystemTerrain>(false);
+            if (terrain?.Terrain == null)
+                return true;
+            Point3 position = CellFaces[0].Point;
+            if (mod.OwnerClaimAt(position) != null)
+                return true;
+            int data = Terrain.ExtractData(
+                terrain.Terrain.GetCellValue(position.X, position.Y, position.Z));
+            Vector3 vector = CellFace.FaceToVector3(Game.PistonBlock.GetFace(data));
+            int reach = MathUtils.Min(length + 2, 10);
+            for (int step = 1; step <= reach; step++)
+            {
+                var cell = new Point3(position.X + (int)vector.X * step,
+                    position.Y + (int)vector.Y * step, position.Z + (int)vector.Z * step);
+                if (cell.Y < 0 || cell.Y > 255)
+                    return true;
+                if (mod.CanRegionModifyCell(0, cell, out RegionClaim claim, out string reason))
+                    continue;
+                mod.NotifyRegionModificationDenied(0, cell, claim, "piston", reason);
+                return false;
+            }
+            return true;
         }
     }
 }

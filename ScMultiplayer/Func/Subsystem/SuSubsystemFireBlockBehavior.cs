@@ -60,8 +60,16 @@ namespace ScMultiplayer
                     m_soundPointRemainder = 0f;
                 }
                 if (ScMultiplayer.currentInstance?.IsNetworkHost(Project) == true)
+                {
                     RegisterLoadedHostFireCells();
+                    ExtinguishClaimFire();
+                }
                 base.Update(dt);
+                // 《玩家领地》P6：领地内不允许有火（设计稿 §5：不得被点燃、火不蔓延进来）。
+                // 引擎的 SetCellOnFire 不是虚方法（无法直接拦），这里用"点燃后同帧熄灭"的
+                // 改回式执行：先清一次（旧火），跑完引擎更新再清一次（本帧新点燃/蔓延进来的）。
+                if (ScMultiplayer.currentInstance?.IsNetworkHost(Project) == true)
+                    ExtinguishClaimFire();
                 return;
             }
 
@@ -132,8 +140,7 @@ namespace ScMultiplayer
         // A transferred world can already contain fire before normal block notifications begin.
         // Scan each loaded host chunk once and register only missing fire cells in the original
         // timer table, so native burn-away and expansion remain host-authoritative.
-        private void RegisterLoadedHostFireCells()
-        {
+        private void RegisterLoadedHostFireCells()        {
             if (m_subsystemTerrain == null || m_fireData == null ||
                 Time.RealTime < m_nextHostFireChunkScan)
                 return;
@@ -159,6 +166,37 @@ namespace ScMultiplayer
                             OnBlockGenerated(value, point.X, point.Y, point.Z, true);
                     }
                 }
+            }
+        }
+
+        /// <summary>
+        /// 《玩家领地》P6：**领地内不允许有火**（设计稿 §5 锁定结论 7：不得被点燃、火不蔓延进来）。
+        ///
+        /// 引擎的 `SetCellOnFire` 不是虚方法、无法直接拦；这里用"点燃后同帧熄灭"的改回式执行：
+        /// 每帧在 `base.Update(dt)` 前后各清一次 —— 已有的火、以及本帧刚被点燃/蔓延进来的火都不会留下，
+        /// 火源被清掉后自然也不会再从领地内往外蔓延。熄灭用 `ChangeCell(...,0)`，会走主机地形广播，
+        /// 客户端看到的也是"没着起来"。
+        /// </summary>
+        private void ExtinguishClaimFire()
+        {
+            ScMultiplayer mod = ScMultiplayer.currentInstance;
+            if (mod == null || m_fireData == null || m_fireData.Count == 0 ||
+                m_subsystemTerrain?.Terrain == null)
+                return;
+            List<Point3> doomed = null;
+            foreach (object key in m_fireData.Keys)
+            {
+                if (!(key is Point3 point) || mod.OwnerClaimAt(point) == null)
+                    continue;
+                (doomed ?? (doomed = new List<Point3>())).Add(point);
+            }
+            if (doomed == null)
+                return;
+            for (int i = 0; i < doomed.Count; i++)
+            {
+                Point3 point = doomed[i];
+                m_fireData.Remove(point);
+                m_subsystemTerrain.ChangeCell(point.X, point.Y, point.Z, 0);
             }
         }
     }

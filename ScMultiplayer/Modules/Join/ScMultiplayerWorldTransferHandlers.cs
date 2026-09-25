@@ -375,6 +375,8 @@ namespace ScMultiplayer
 			m_remoteFogPresentationInitialized = false;
 			ApplyRemoteWeatherState();
 			HideJoinRoomBusyDialog();
+			// 《玩家领地》P2：加入流程结束 → 主动要一次领地整表（幂等；主机回 Full 后清标志）
+			RequestRegionClaimSyncAfterJoin();
 		}
 	}
 
@@ -424,6 +426,8 @@ namespace ScMultiplayer
 		m_joinCatchUpRegistry.HostProjectReadyTransfers.Remove(sourceClientId);
 		m_joinCatchUpRegistry.CompletedReadyTransfers[sourceClientId] = transferId;
 		NetworkMessageSender.SendPakWorldReady(sourceClientId, new GamePakWorldReadyMessage(transferId, GamePakWorldReadyStage.ReadyToPlay));
+		// 《玩家领地》P2：领地数据随世界快照一次性下发（可靠有序，客户端按单调序号应用）
+		SendFullRegionClaimsToClient(sourceClientId);
 		SetServerClientGameTrafficEnabled(sourceClientId, enabled: true);
 		m_controlUnit?.Context.Connections.TryTransition(sourceClientId, PlayerConnectionPhase.Ready, Time.RealTime);
 		m_pendingHostPickableSnapshots.Add(sourceClientId);

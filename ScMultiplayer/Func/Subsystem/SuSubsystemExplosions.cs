@@ -25,6 +25,9 @@ namespace ScMultiplayer
             new HashSet<object>();
         private readonly List<object> m_deferredHostExplosions =
             new List<object>();
+        // 《玩家领地》P6：爆炸前快照"领地内会被波及的格子"，爆炸后写回
+        private readonly List<Point3> m_claimBlastCells = new List<Point3>();
+        private readonly List<int> m_claimBlastValues = new List<int>();
 
         void IUpdateable.Update(float dt)
         {
@@ -38,6 +41,7 @@ namespace ScMultiplayer
                 m_skipQueuedExplosionPredictions.Clear();
             }
             // Source: Survivalcraft/Game/SubsystemExplosions.cs:SubsystemExplosions.Update
+            bool claimSnapshotTaken = false;
             if (networkHost)
             {
                 IList queued = ScMultiplayer.ModManager.ModParentField.GetParentField<IList>(
@@ -53,6 +57,11 @@ namespace ScMultiplayer
                         ScMultiplayer.currentInstance?.BroadcastExplosion(
                             point.X, point.Y, point.Z, pressure, incendiary, noSound);
                     }
+                    // 《玩家领地》P6：爆炸不得破坏他人领地内的方块（设计稿 §5）。
+                    // 引擎的 SimulateExplosion 是私有的、无法逐格拦；这里在原生破坏**之前**把
+                    // 爆炸包络内属于任何领地的格子快照下来，跑完原生破坏后**原样写回**（"否决 + 改回"）。
+                    // 引燃由 SuSubsystemFireBlockBehavior 的同帧熄灭兜住。
+                    claimSnapshotTaken = SnapshotClaimCellsInBlastEnvelope(queued);
                 }
             }
             else
@@ -60,7 +69,71 @@ namespace ScMultiplayer
                 m_deferredHostExplosions.Clear();
             }
             base.Update(dt);
+            if (claimSnapshotTaken)
+                RestoreClaimCellsAfterBlast();
         }
+
+        /// <summary>
+        /// 把爆炸包络内**属于领地**的格子与它们的当前值记下来；返回是否记到了东西。
+        /// 半径口径与 `HostTerrainAuthority.IsExplosionEnvelopeReady` 一致（`ceil(|pressure|)`），再放宽 1 格。
+        /// </summary>
+        private bool SnapshotClaimCellsInBlastEnvelope(IList queued)
+        {
+            ScMultiplayer mod = ScMultiplayer.currentInstance;
+            SubsystemTerrain terrain = GameManager.Project?.FindSubsystem<SubsystemTerrain>(false);
+            m_claimBlastCells.Clear();
+            m_claimBlastValues.Clear();
+            if (mod == null || terrain?.Terrain == null || m_regionClaimsOnHost(mod) == 0 || queued == null)
+                return false;
+            foreach (object explosion in queued)
+            {
+                if (!TryReadExplosion(explosion, out Point3 point, out float pressure,
+                    out bool _, out bool _))
+                    continue;
+                int radius = MathUtils.Clamp((int)MathUtils.Ceiling(MathUtils.Abs(pressure)) + 1, 1, 24);
+                for (int dx = -radius; dx <= radius; dx++)
+                {
+                    for (int dy = -radius; dy <= radius; dy++)
+                    {
+                        for (int dz = -radius; dz <= radius; dz++)
+                        {
+                            var cell = new Point3(point.X + dx, point.Y + dy, point.Z + dz);
+                            if (mod.OwnerClaimAt(cell) == null)
+                                continue;
+                            m_claimBlastCells.Add(cell);
+                            m_claimBlastValues.Add(
+                                terrain.Terrain.GetCellValue(cell.X, cell.Y, cell.Z));
+                        }
+                    }
+                }
+            }
+            return m_claimBlastCells.Count > 0;
+        }
+
+        /// <summary>把爆炸波及到的领地格子写回原值（复用主机地形广播，客户端不会看到被炸掉）。</summary>
+        private void RestoreClaimCellsAfterBlast()
+        {
+            SubsystemTerrain terrain = GameManager.Project?.FindSubsystem<SubsystemTerrain>(false);
+            if (terrain?.Terrain != null)
+            {
+                for (int i = 0; i < m_claimBlastCells.Count; i++)
+                {
+                    Point3 cell = m_claimBlastCells[i];
+                    if (terrain.Terrain.GetCellValue(cell.X, cell.Y, cell.Z) !=
+                        m_claimBlastValues[i])
+                        terrain.ChangeCell(cell.X, cell.Y, cell.Z, m_claimBlastValues[i]);
+                }
+            }
+            if (m_claimBlastCells.Count > 0)
+            {
+                Log.Information("[ScMP] Region claim blocked an explosion from destroying " +
+                    m_claimBlastCells.Count + " cell(s)");
+            }
+            m_claimBlastCells.Clear();
+            m_claimBlastValues.Clear();
+        }
+
+        private static int m_regionClaimsOnHost(ScMultiplayer mod) => mod.RegionClaimCount;
 
         // Source: Survivalcraft/Game/SubsystemExplosions.cs:SubsystemExplosions.Update
         // The native explosion walk reads and writes terrain immediately. Keep a queued host

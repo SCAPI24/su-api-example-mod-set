@@ -35,6 +35,11 @@ namespace ScMultiplayer
             // 运行时天气（降雨 / 雾气 / 闪电）与时间点不在 `WorldSettings` 里，所以单独一条通用 op。
             if (WorldControlDataOperation.IsWorldControlOperation(context.Operation))
                 return ApplyHostWorldControlModification(context);
+            // Source: Mod/ScMultiplayer/DataModification/ScMultiplayerRegionModification.cs:
+            // ScMultiplayer.ApplyHostRegionModification
+            // 《玩家领地》P3b：`ScMP.Region.*` 也由联机 Mod 自己落地，客户端提交走 DM 审批。
+            if (RegionDataOperation.IsRegionOperation(context.Operation))
+                return ApplyHostRegionModification(context);
             if (!WorldSettingsDataOperation.IsWorldSettingsOperation(context.Operation))
                 return null;
             if (!IsHost || GameManager.Project == null)
@@ -125,6 +130,21 @@ namespace ScMultiplayer
                 string head = string.Join("; ", cells.Take(3).Select(edit =>
                     edit.X + "," + edit.Y + "," + edit.Z + "=" + edit.Contents));
                 return head + (cells.Count > 3 ? " (+" + (cells.Count - 3) + " more)" : string.Empty);
+            }
+            // Source: Mod/ScMultiplayer/DataModification/ScMultiplayerRegionModification.cs:
+            // RegionDataOperation / RegionDataModificationCodec
+            // 《玩家领地》P3b：审批弹窗要看清"建在哪 / 形状多大 / 目标是哪块"，否则主机只能看到 op 名。
+            if (RegionDataOperation.IsRegionOperation(operation))
+            {
+                if (payload == null || payload.Length == 0)
+                    return null;
+                if (!RegionDataModificationCodec.TryDecode(payload, out var region, out _))
+                    return "(unreadable payload)";
+                return operation + " " + RegionDataModificationCodec.Describe(region) +
+                    (region.RegionId >= 0 ? " id=#" + region.RegionId : string.Empty) +
+                    (region.TargetClientId >= 0 ? " target=client " + region.TargetClientId : string.Empty) +
+                    (string.IsNullOrWhiteSpace(region.TargetUserId)
+                        ? string.Empty : " target=" + region.TargetUserId);
             }
             if (DataModificationOperationNames.IsBuiltIn(operation))
             {

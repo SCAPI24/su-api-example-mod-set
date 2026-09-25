@@ -670,6 +670,13 @@ namespace ScMultiplayer
                 database.FindDatabaseObjectType("Parameter", true), true);
             componentFurnace.Value = "ScMultiplayer.SuComponentFurnace";
 
+            // Source: Pak/Database.xml:ComponentMiner.Class (GUID 9dc356e5-...)
+            // P7a: the host player's own dig/place must obey the same claim check as clients.
+            var componentMiner = database.FindDatabaseObject(
+                new Guid("9dc356e5-7dc8-45f6-8779-827ddee9966c"),
+                database.FindDatabaseObjectType("Parameter", true), true);
+            componentMiner.Value = "ScMultiplayer.SuComponentMiner";
+
             var subsystemTerrain = database.FindDatabaseObject(
                 new Guid("e2636c38-f179-4aa1-b087-ed6920d66e8e"),
                 database.FindDatabaseObjectType("Parameter", true), true);
@@ -723,6 +730,18 @@ namespace ScMultiplayer
                 new Guid("049e50e8-f0f4-4ae9-990f-965fe77b625c"),
                 database.FindDatabaseObjectType("Parameter", true), true);
             subsystemFire.Value = "ScMultiplayer.SuSubsystemFireBlockBehavior";
+
+            // Source: Pak/Database.xml:SubsystemWaterBlockBehavior.Class
+            var subsystemWater = database.FindDatabaseObject(
+                new Guid("4ecb005a-64f7-4036-b470-cc163fab65c2"),
+                database.FindDatabaseObjectType("Parameter", true), true);
+            subsystemWater.Value = "ScMultiplayer.SuSubsystemWaterBlockBehavior";
+
+            // Source: Pak/Database.xml:SubsystemMagmaBlockBehavior.Class
+            var subsystemMagma = database.FindDatabaseObject(
+                new Guid("828db45d-1460-434d-8879-ccd0d3810518"),
+                database.FindDatabaseObjectType("Parameter", true), true);
+            subsystemMagma.Value = "ScMultiplayer.SuSubsystemMagmaBlockBehavior";
 
             // Source: Pak/Database.xml:Projectiles.Class
             var subsystemProjectiles = database.FindDatabaseObject(
@@ -858,6 +877,32 @@ namespace ScMultiplayer
                 "ScMultiplayerUI", null);
             uiMember.ExplicitInheritanceParent = uiTemplate;
             uiMember.NestingParent = database.FindDatabaseObject(
+                "Player", database.FindDatabaseObjectType("EntityTemplate", true), true);
+
+            // 《玩家领地》P1：选区线框组件（挂在 Player 实体上；引擎的 SubsystemDrawing 会收集
+            // 实体组件里的 IDrawable，所以不需要新增子系统）。类名以字符串被引用 ⇒ 必须进 Obfuscar 保留名单。
+            var regionTemplate = new DatabaseObject(
+                database.FindDatabaseObjectType("ComponentTemplate", true),
+                new Guid("3b7c9d51-4f0a-4c8e-9a26-7d5e1c3f8b44"),
+                "ScMultiplayerRegionOverlay", null);
+            regionTemplate.ExplicitInheritanceParent = database.FindDatabaseObject(
+                new Guid("b05700ed-7e4e-4679-98f5-b597f421496b"),
+                database.FindDatabaseObjectType("ComponentTemplate", true), true);
+            regionTemplate.NestingParent = database.FindDatabaseObject(
+                "Gameplay", database.FindDatabaseObjectType("Folder", true), true);
+
+            var regionClass = new DatabaseObject(
+                database.FindDatabaseObjectType("Parameter", true),
+                new Guid("c4e2a8b7-91d3-4a67-8f05-2b6e4d9c7310"),
+                "Class", "ScMultiplayer.SuComponentRegionOverlay");
+            regionClass.NestingParent = regionTemplate;
+
+            var regionMember = new DatabaseObject(
+                database.FindDatabaseObjectType("MemberComponentTemplate", true),
+                new Guid("8d1f6a24-5c39-4e70-b6a9-0f37c2e5d918"),
+                "ScMultiplayerRegionOverlay", null);
+            regionMember.ExplicitInheritanceParent = regionTemplate;
+            regionMember.NestingParent = database.FindDatabaseObject(
                 "Player", database.FindDatabaseObjectType("EntityTemplate", true), true);
 
             Log.Information("[ScMP] Database hooks applied");

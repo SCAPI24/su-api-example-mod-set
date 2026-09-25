@@ -288,7 +288,20 @@ namespace ScMultiplayer
                 Count = pickable?.Count ?? 0
             };
             bool accepted = false;
-            if (pickable != null && !pickable.ToRemove && gameInfo != null &&
+            // 《玩家领地》P6：他人领地内的掉落物不能拾取（设计稿 §5「拾取掉落物」）。
+            bool regionAllowsPickup = true;
+            RegionClaim pickupClaim = null;
+            Point3 pickupCell = default(Point3);
+            string pickupDenyReason = null;
+            if (pickable != null)
+            {
+                pickupCell = new Point3((int)MathUtils.Floor(pickable.Position.X),
+                    (int)MathUtils.Floor(pickable.Position.Y),
+                    (int)MathUtils.Floor(pickable.Position.Z));
+                regionAllowsPickup = CanRegionModifyCell(sourceClientId, pickupCell,
+                    out pickupClaim, out pickupDenyReason);
+            }
+            if (regionAllowsPickup && pickable != null && !pickable.ToRemove && gameInfo != null &&
                 gameInfo.TotalElapsedGameTime - pickable.CreationTime > 0.5 &&
                 IsFinite(message.Position) &&
                 m_networkPlayerData.TryGetValue(sourceClientId, out PlayerData playerData) &&
@@ -397,6 +410,12 @@ namespace ScMultiplayer
             {
                 // 拒绝只回给请求者：客户端据此把这次请求标成被拒，稍后重试。
                 NetworkMessageSender.SendPickableMessage(response, sourceClientId);
+                // 《玩家领地》P6：如果是因为"他人领地"被拒，通知发起人（按客户端节流）
+                if (pickupClaim != null && !regionAllowsPickup)
+                {
+                    NotifyRegionModificationDenied(sourceClientId, pickupCell, pickupClaim,
+                        "pickup", pickupDenyReason);
+                }
             }
             else
             {

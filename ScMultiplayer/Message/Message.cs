@@ -84,6 +84,7 @@ namespace ScMultiplayer
             Register<PlayerAuthorityMessage>(44, nameof(PlayerAuthorityMessage), 1);
             Register<PlayerCapabilityMessage>(45, nameof(PlayerCapabilityMessage), 1);
             Register<PlayerStatsMessage>(46, nameof(PlayerStatsMessage), 1);
+            Register<RegionClaimMessage>(47, nameof(RegionClaimMessage), 1);
 
             foreach (TypeInfo typeInfo in typeof(Message).Assembly.DefinedTypes)
             {
