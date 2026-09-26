@@ -363,14 +363,12 @@ py -3 Mod/Packages/record_enter_game.py replay 进入游戏
 不需要 node、不需要联网、不需要管理员权限。
 
 ```bash
-# 开发期直接跑
-dotnet run --project Mod/PlayerAiEditor -c Release -- --root publish/Windows
-# 或者发布成单文件 exe（5.3 MB）——**装进游戏实例根里面**：<实例根>/PlayerAi/editor/
-dotnet publish Mod/PlayerAiEditor/PlayerAiEditor.csproj -c Release -r win-x64 \
-  --self-contained false -p:PublishSingleFile=true -o publish/Windows/PlayerAi/editor
-publish/Windows/PlayerAi/editor/PlayerAiEditor.exe            # 不用 --root，自己就在游戏目录里
-publish/Windows/PlayerAi/editor/PlayerAiEditor.exe --print-root        # 只看它判定的实例根
-publish/Windows/PlayerAi/editor/PlayerAiEditor.exe --selftest          # 无头自检 86 项
+# 编译好后**放进游戏目录**：<实例根>/PlayerAi/PlayerAiEditor.exe（只允许在那里运行）
+dotnet publish Mod/PlayerAiEditor/PlayerAiEditor.csproj -c Release -o publish/Windows/PlayerAi
+publish/Windows/PlayerAi/PlayerAiEditor.exe                # 直接运行；实例根 = 本 exe 所在目录的父目录（那层要有 Survivalcraft.exe）
+publish/Windows/PlayerAi/PlayerAiEditor.exe --print-root   # 只看它判定的实例根
+publish/Windows/PlayerAi/PlayerAiEditor.exe --selftest     # 无头自检 86 项
+# csproj 里已写死 win-x64 + SelfContained + PublishSingleFile ⇒ 产物是自包含单文件（约 36 MB）
 ```
 
 - **物料区**读游戏的节点注册表（`GET /api/schema`）：类型、形状（组合/任务）、属性表（类型/默认值/枚举）
@@ -783,7 +781,7 @@ publish/Windows/PlayerAi/editor/
 
 | 找什么 | 从哪里找 | 规则 |
 |--------|----------|------|
-| 实例根（一切的起点） | `Environment.ProcessPath` 目录 → `AppContext.BaseDirectory` → 当前目录，再沿父链往上（最多 6 级）找带 `Mods/` 的 | 同时有 `Mods/` + `PlayerAi/` 的优先；`--root` 显式指定时最高优先。见 §9.5.17 |
+| 实例根（一切的起点） | 本 exe 所在目录的**父目录**（起点三个：`Environment.ProcessPath` 目录 → `AppContext.BaseDirectory` → 当前目录，各**只认这一级**，不沿父链往上找） | 判据只有一条：那一层必须有 `Survivalcraft.exe`；判定不到就**拒绝启动**（退出码 2）。没有 `--root`、也没有任何兜底。见 §9.5.17 |
 | 树包 `.scbtpak` | `<实例根>/PlayerAi/BehaviorTrees/` | `Directory.GetFiles(dir, "*.scbtpak", TopDirectoryOnly)`：**不递归**、按文件名排序（只有这一个目录，见 §9.5.20） |
 | 动作包 `.scatpak` | 同一个目录 | 同样只扫顶层 |
 | 前端页面 | **exe 内嵌资源**（`PlayerAiMod.Editor.Web.*`），不看磁盘 | `/`、`/app.js`、`/app.css`、`/engine-adapter.js`、`/selftest.html` 直接读嵌入资源 |

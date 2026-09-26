@@ -580,7 +580,7 @@ Mods/PlayerAiMod/PlayerAi/BehaviorTrees/   # Mod 级：只读，随 Mod 分发
 
 ```
 PlayerAiEditor/
-├── Program.cs                     入口（--root / --port / --no-browser / --selftest）
+├── Program.cs                     入口（--port / --no-browser / --selftest / --print-root；实例根由本 exe 所在位置判定）
 ├── Server/HttpServer.cs           极简 HTTP/1.1（TcpListener，**不需要 URL ACL/管理员**）
 ├── Server/EditorRouter.cs         路由：静态资源 + JSON API（保存与校验共用同一套参数解析）
 ├── Server/EditorApi.cs            API 实现：**调用游戏内同一份**校验器/编译器/加载器
