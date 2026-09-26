@@ -1,0 +1,11 @@
+{
+  "format": "aea", "version": 1, "id": "sleep_once",
+  "name": "睡觉",
+  "description": "goal=sleep 的落点。sleep 是复合 verb：开衣物面板 → 等按钮 → 点睡觉。",
+  "guards": ["player.alive", "world.loaded", "dialog.none"],
+  "onFail": "abort",
+  "steps": [
+    { "verb": "sleep" },
+    { "verb": "wait", "ms": 300 }
+  ]
+}

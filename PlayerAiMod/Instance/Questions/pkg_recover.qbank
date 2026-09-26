@@ -1,0 +1,15 @@
+{
+  "format": "qbank", "version": 1,
+  "id": "pkg_recover", "name": "异常处理·资源拿不到怎么办",
+  "description": "只在确实有可选路径时问；retry/use_backup 的具体动作由 C# 确定性执行。Laya 不可用时不会问它。",
+  "questions": [
+    { "id": "recover", "type": "choice",
+      "instructions": "A required file for the current plan is unavailable. What now?",
+      "options": [
+        { "key": "retry",      "description": "wait and try the same file again" },
+        { "key": "use_backup", "description": "switch to the backup question bank or action set" },
+        { "key": "skip_step",  "description": "skip this step and continue the plan" },
+        { "key": "abort_plan", "description": "stop the plan and stand by" }
+      ] }
+  ]
+}

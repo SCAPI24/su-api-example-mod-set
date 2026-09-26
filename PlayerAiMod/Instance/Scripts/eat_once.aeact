@@ -1,0 +1,11 @@
+{
+  "format": "aea", "version": 1, "id": "eat_once",
+  "name": "吃一次东西",
+  "description": "goal=eat 的落点。复合 verb：选食物槽位 → 瞄向空地 → 右键一次。",
+  "guards": ["player.alive", "world.loaded", "modal.none"],
+  "onFail": "abort",
+  "steps": [
+    { "verb": "eat" },
+    { "verb": "wait", "ms": 250 }
+  ]
+}

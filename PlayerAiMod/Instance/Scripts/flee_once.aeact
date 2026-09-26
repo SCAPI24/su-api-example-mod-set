@@ -1,0 +1,13 @@
+{
+  "format": "aea", "version": 1, "id": "flee_once",
+  "name": "转身跑开",
+  "description": "goal=flee 的落点。转身 180 度再跑两段：方向由玩家当时的朝向决定，脚本不写死。",
+  "guards": ["player.alive", "world.loaded"],
+  "onFail": "abort",
+  "steps": [
+    { "verb": "turn", "dyaw": 180 },
+    { "verb": "move", "dir": "f", "ms": 1200 },
+    { "verb": "turn", "dyaw": 90 },
+    { "verb": "move", "dir": "f", "ms": 600 }
+  ]
+}

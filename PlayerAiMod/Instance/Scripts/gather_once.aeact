@@ -1,0 +1,14 @@
+{
+  "format": "aea", "version": 1, "id": "gather_once",
+  "name": "捡身前的东西",
+  "description": "goal=gather 的落点。走上前 + 右键交互两次（掉在地上的东西要交互才捡得起来）。",
+  "guards": ["player.alive", "world.loaded", "modal.none"],
+  "onFail": "abort",
+  "steps": [
+    { "verb": "move", "dir": "f", "ms": 400 },
+    { "verb": "interact" },
+    { "verb": "wait", "ms": 200 },
+    { "verb": "interact" },
+    { "verb": "wait", "ms": 200 }
+  ]
+}

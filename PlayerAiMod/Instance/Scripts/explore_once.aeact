@@ -1,0 +1,13 @@
+{
+  "format": "aea", "version": 1, "id": "explore_once",
+  "name": "换个方向走一段",
+  "description": "goal=explore 的落点。转 90 度 + 走 1.5 秒 + 跳一下（翻过一格台阶）。",
+  "guards": ["player.alive", "world.loaded"],
+  "onFail": "abort",
+  "steps": [
+    { "verb": "turn", "dyaw": 90 },
+    { "verb": "move", "dir": "f", "ms": 1500 },
+    { "verb": "jump" },
+    { "verb": "move", "dir": "f", "ms": 600 }
+  ]
+}

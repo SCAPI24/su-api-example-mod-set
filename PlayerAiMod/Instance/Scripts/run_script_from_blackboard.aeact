@@ -1,0 +1,10 @@
+{
+  "format": "aea",
+  "version": 1,
+  "id": "run_script_from_blackboard",
+  "name": "按黑板里的脚本名执行",
+  "description": "演示脚本参数化：这里只放一个占位动作；真正跑哪条脚本由行为树节点 Task.RunActionScript 的 scriptKey 决定。",
+  "steps": [
+    { "verb": "jump" }
+  ]
+}

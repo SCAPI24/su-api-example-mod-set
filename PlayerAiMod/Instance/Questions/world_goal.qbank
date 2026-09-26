@@ -1,0 +1,19 @@
+{
+  "format": "qbank", "version": 1,
+  "id": "world_goal", "name": "世界内·下一步做什么",
+  "description": "选项 key 稳定；描述可改（改描述会改变判准，属正常调参）。",
+  "questions": [
+    { "id": "goal", "type": "choice",
+      "instructions": "What should this character do next?",
+      "options": [
+        { "key": "mine",    "description": "break the block being aimed at" },
+        { "key": "gather",  "description": "pick up nearby items" },
+        { "key": "craft",   "description": "craft from the inventory" },
+        { "key": "eat",     "description": "consume food now" },
+        { "key": "sleep",   "description": "go to sleep" },
+        { "key": "fight",   "description": "attack the hostile" },
+        { "key": "flee",    "description": "run away from danger" },
+        { "key": "explore", "description": "walk to new terrain" }
+      ] }
+  ]
+}

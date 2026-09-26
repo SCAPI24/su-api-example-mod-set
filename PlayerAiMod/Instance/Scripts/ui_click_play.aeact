@@ -1,0 +1,12 @@
+{
+  "format": "aea",
+  "version": 1,
+  "id": "ui_click_play",
+  "name": "点主菜单的 Play",
+  "description": "纯界面脚本：世界外也能跑（走 CmdBridge 的 UI 语义目标，点击那一刻现解析坐标）。",
+  "steps": [
+    { "verb": "wait", "ms": 300 },
+    { "verb": "ui", "click": "Play" },
+    { "verb": "wait", "ms": 400 }
+  ]
+}

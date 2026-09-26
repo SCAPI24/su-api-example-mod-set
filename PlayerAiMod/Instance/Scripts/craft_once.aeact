@@ -1,0 +1,13 @@
+{
+  "format": "aea", "version": 1, "id": "craft_once",
+  "name": "看背包（合成占位）",
+  "description": "goal=craft 的**占位**动作：开背包 → 等一下 → 关掉。真正的配方 UI 交互（选配方 + 点产物格）还没做，在编辑器里把这条换掉即可。",
+  "guards": ["player.alive", "world.loaded", "dialog.none"],
+  "onFail": "abort",
+  "steps": [
+    { "verb": "openInventory" },
+    { "verb": "wait", "ms": 400 },
+    { "verb": "openInventory" },
+    { "verb": "wait", "ms": 200 }
+  ]
+}

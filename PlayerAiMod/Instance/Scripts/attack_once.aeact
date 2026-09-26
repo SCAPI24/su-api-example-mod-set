@@ -1,0 +1,11 @@
+{
+  "format": "aea", "version": 1, "id": "attack_once",
+  "name": "看向目标打一下",
+  "description": "goal=fight 的落点。target=entity 由 C# 解析成最近的目标（模型不给坐标）。",
+  "guards": ["player.alive", "world.loaded", "modal.none", "aim.entity"],
+  "onFail": "abort",
+  "steps": [
+    { "verb": "attack", "target": "entity" },
+    { "verb": "wait", "ms": 200 }
+  ]
+}

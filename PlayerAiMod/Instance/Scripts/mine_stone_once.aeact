@@ -1,0 +1,15 @@
+{
+  "format": "aea",
+  "version": 1,
+  "id": "mine_stone_once",
+  "name": "挖一次石头",
+  "description": "选镐子 → 瞄向准星目标 → 持续挖掘 → 停一下。演示：参数化目标 + 看门狗。",
+  "guards": ["player.alive", "world.loaded", "aim.block"],
+  "onFail": "abort",
+  "steps": [
+    { "verb": "hotbar", "slot": 1 },
+    { "verb": "lookAt", "target": "aim" },
+    { "verb": "dig", "ms": 900, "timeoutMs": 3000 },
+    { "verb": "wait", "ms": 150 }
+  ]
+}

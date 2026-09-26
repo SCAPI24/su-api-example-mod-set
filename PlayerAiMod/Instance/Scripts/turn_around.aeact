@@ -1,0 +1,13 @@
+{
+  "format": "aea",
+  "version": 1,
+  "id": "turn_around",
+  "name": "原地转身",
+  "description": "走两步、转个身、再走回来。演示：基础动作混搭（move/turn 组合）。",
+  "steps": [
+    { "verb": "move", "dir": "f", "ms": 400 },
+    { "verb": "turn", "dyaw": 180, "ms": 150 },
+    { "verb": "wait", "ms": 100 },
+    { "verb": "move", "dir": "f", "ms": 400 }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "format": "qbank", "version": 1,
+  "id": "front_goal", "name": "世界外·界面该做什么",
+  "description": "世界外没有角色与地图，问题只问界面；翻页/滚动由 C# 做，模型只选序号。",
+  "questions": [
+    { "id": "front_goal", "type": "choice",
+      "instructions": "What should be done on this menu screen?",
+      "options": [
+        { "key": "open_ui", "description": "press the main button on this screen" },
+        { "key": "back",    "description": "go back to the previous screen" },
+        { "key": "wait",    "description": "stand by; the screen is still animating" },
+        { "key": "cancel",  "description": "dismiss the dialog or cancel" }
+      ] },
+    { "id": "dialog_action", "type": "choice",
+      "instructions": "A dialog is open. What should be done with it?",
+      "options": [
+        { "key": "confirm", "description": "accept the dialog" },
+        { "key": "cancel",  "description": "dismiss the dialog" }
+      ] }
+  ]
+}
