@@ -28,6 +28,12 @@ namespace PlayerAiMod.Editor
                         return Asset("index.html", "text/html; charset=utf-8");
                     case "/app.js":
                         return Asset("app.js", "application/javascript; charset=utf-8");
+                    // 资源库 / Laya 配置面板（P6）：与 app.js 分开，改这两块不碰主界面状态机。
+                    case "/assets-panel.js":
+                        return Asset("assets-panel.js", "application/javascript; charset=utf-8");
+                    // 判定复盘面板（P4）：与 app.js 分开，改它不碰主界面状态机。
+                    case "/review-panel.js":
+                        return Asset("review-panel.js", "application/javascript; charset=utf-8");
                     case "/app.css":
                         return Asset("app.css", "text/css; charset=utf-8");
                     case "/engine-adapter.js":
@@ -46,6 +52,9 @@ namespace PlayerAiMod.Editor
                         return HttpResponse.Json(m_api.Schema());
                     case "/api/packages":
                         return HttpResponse.Json(m_api.ListPackages());
+                    // 问题库清单（P3 第二步）：`Task.LayaAsk` 的 questions / answerKeys 下拉靠它
+                    case "/api/banks":
+                        return HttpResponse.Json(m_api.ListQuestionBanks());
                     case "/api/package":
                     {
                         string target = request.GetQuery("path", request.GetQuery("name"));
@@ -232,6 +241,47 @@ namespace PlayerAiMod.Editor
                     }
                     case "/api/game/status":
                         return HttpResponse.Json(m_api.GameStatus());
+
+                    // -------------------------------------------- 资源库 / Laya 配置（P6）
+                    //
+                    // 三态视图与所有写操作**都转发给游戏**：编辑器不自己算"哪一版更新"，
+                    // 否则界面说的和游戏实际用的会是两套判据。
+                    case "/api/assets":
+                        return HttpResponse.Json(m_api.Assets());
+                    case "/api/asset":
+                    {
+                        // /api/asset?action=save&name=… 或 POST {action:"save", name:"…"}
+                        var arguments = ReadJsonObject(request);
+                        if (arguments == null)
+                            arguments = new Dictionary<string, object>(StringComparer.Ordinal);
+
+                        string action = request.GetQuery("action", request.GetQuery("cmd"));
+                        if (!string.IsNullOrEmpty(action))
+                            arguments["action"] = action;
+
+                        object rawAction;
+                        arguments.TryGetValue("action", out rawAction);
+                        string resolved = rawAction != null ? Convert.ToString(rawAction) : null;
+                        arguments.Remove("action");
+                        return HttpResponse.Json(m_api.AssetCommand(resolved, arguments));
+                    }
+                    case "/api/laya/config":
+                    {
+                        if (string.Equals(request.Method, "POST", StringComparison.Ordinal))
+                            return HttpResponse.Json(m_api.SaveLayaConfig(ReadJsonObject(request)));
+                        return HttpResponse.Json(m_api.ReadLayaConfig());
+                    }
+                    // 判定复盘（P4）：`ai.laya.review` 的转发。`count` 条明细，`format=md` 拿抽样表，
+                    // `clear=true` 先清空再回答（界面上的"清空记录"按钮）。
+                    case "/api/laya/review":
+                    {
+                        int count = 10;
+                        int.TryParse(request.GetQuery("count", "10"), out count);
+                        bool clear = string.Equals(request.GetQuery("clear", "false"), "true",
+                            StringComparison.OrdinalIgnoreCase);
+                        return HttpResponse.Json(m_api.LayaReview(count, request.GetQuery("format", "json"),
+                            clear));
+                    }
                     default:
                         return HttpResponse.Text(404, "not found: " + path);
                 }
@@ -246,6 +296,71 @@ namespace PlayerAiMod.Editor
                     ["reason"] = exception.GetType().Name + ": " + exception.Message
                 }, 500);
             }
+        }
+
+        /// <summary>
+        /// 把正文 JSON 读成一个**普通字典**（端点参数透传用）。空正文 / 非对象一律给 null。
+        ///
+        /// 为什么不用 `EditorPayload`：那个是给"包数据"（manifest/tree/path/overwrite）用的固定形状；
+        /// 资源库那族命令的参数是**开放**的（`dir` / `mode` / `newName` / `maxAttempts` …），
+        /// 逐个字段解析只会把自己锁死。
+        /// </summary>
+        private static Dictionary<string, object> ReadJsonObject(HttpRequestInfo request)
+        {
+            PackageValue value = ReadBody(request);
+            if (value == null || !value.IsObject)
+                return null;
+            return ToDictionary(value);
+        }
+
+        private static Dictionary<string, object> ToDictionary(PackageValue value)
+        {
+            var result = new Dictionary<string, object>(StringComparer.Ordinal);
+            if (value == null || !value.IsObject)
+                return result;
+
+            foreach (string name in value.MemberNames)
+            {
+                PackageValue item = value.Get(name);
+                if (item == null)
+                {
+                    result[name] = null;
+                }
+                else if (item.IsObject)
+                {
+                    result[name] = ToDictionary(item);
+                }
+                else if (item.IsArray)
+                {
+                    var list = new List<object>();
+                    for (int i = 0; i < item.Count; i++)
+                    {
+                        PackageValue element = item.Item(i);
+                        list.Add(element != null && element.IsObject
+                            ? (object)ToDictionary(element) : ValueOf(element));
+                    }
+                    result[name] = list;
+                }
+                else
+                {
+                    result[name] = ValueOf(item);
+                }
+            }
+            return result;
+        }
+
+        private static object ValueOf(PackageValue value)
+        {
+            if (value == null || value.IsNull)
+                return null;
+            if (value.IsBool)
+                return value.AsBool();
+            if (value.IsNumber)
+            {
+                double number = value.AsNumber();
+                return Math.Abs(number - Math.Round(number)) < 1e-9 ? (object)(int)Math.Round(number) : number;
+            }
+            return value.AsString(string.Empty);
         }
 
         /// <summary>

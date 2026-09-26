@@ -6,7 +6,7 @@
       <Text lang="en_US">Player AI</Text>
       <Text lang="zh_CN">玩家 AI</Text>
     </LocalizedName>
-    <Version>0.2.0</Version>
+    <Version>0.5.45</Version>
     <APIVersion>0.1.6.0</APIVersion>
     <Asset>
       <ContentRoot>Content</ContentRoot>

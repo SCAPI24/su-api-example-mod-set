@@ -137,6 +137,51 @@
       <span id="uiLocatedLine" class="hint"></span>
     </div>
     <div id="uiPickBox"><p class="hint" data-i18n="ui.pick.empty">点「拾取界面元素」看看现在屏幕上有什么可点的。</p></div>
+
+    <h2 style="margin-top:14px"><span data-i18n="assets.title">资源库</span> <span class="hint" data-i18n="assets.sub">（磁盘版 / 内存版 / 缓存版）</span></h2>
+    <p class="hint" data-i18n-html="assets.hint">数据全部来自游戏（<code>ai.asset.*</code>）：哪一版更新由游戏判定，编辑器只显示与转发。
+      内存版是游戏里正在跑的那一份，<b>默认不落盘</b>；保存＝写成正式包，丢弃＝回到磁盘版，写缓存＝立刻存一份影子副本。</p>
+    <div class="group" style="margin-bottom:6px">
+      <button id="btnAssets" data-i18n="assets.refresh" data-i18n-title="assets.refresh.title" title="问游戏要 ai.asset.list + ai.asset.retry + ai.asset.conflict">⟳ 刷新资源库</button>
+      <button id="btnAssetAutoSave" data-i18n="assets.autosave" data-i18n-title="assets.autosave.title" title="把当前内存版立刻写进 .autosave（影子副本）">写缓存</button>
+      <button id="btnAssetRestore" data-i18n="assets.restore" data-i18n-title="assets.restore.title" title="按恢复决议把缓存/磁盘版装回内存库（只填内存，不写盘）">从缓存恢复</button>
+      <span id="assetBadge" class="badge" data-i18n="assets.badge.unknown">资源库：未知</span>
+    </div>
+    <div id="assetBox"><p class="hint" data-i18n="assets.initial">点「刷新资源库」看看现在有几份、哪一份更新。</p></div>
+
+    <h2 style="margin-top:14px"><span data-i18n="laya.title">Laya 决策服务</span> <span class="hint" data-i18n="laya.sub">（一份配置管全部）</span></h2>
+    <p class="hint" data-i18n-html="laya.hint">配置写在 <code>&lt;实例根&gt;/PlayerAi/Laya.local.json</code> —— 与游戏读的是同一个文件。
+      密钥只写不回显：留空＝不改，填 <code>-</code>＝清除。</p>
+    <div class="group" style="margin-bottom:6px">
+      <label class="hint"><span data-i18n="laya.baseUrl">端点</span> <input id="layaBaseUrl" style="width:230px" placeholder="http://127.0.0.1:8770" /></label>
+      <label class="hint"><span data-i18n="laya.model">模型</span> <input id="layaModel" style="width:190px" /></label>
+    </div>
+    <div class="group" style="margin-bottom:6px">
+      <label class="hint"><span data-i18n="laya.timeout">超时(ms)</span> <input id="layaTimeout" type="number" min="100" max="30000" step="100" style="width:80px" /></label>
+      <label class="hint"><span data-i18n="laya.refresh">去重(ms)</span> <input id="layaRefresh" type="number" min="0" max="10000" step="100" style="width:80px" /></label>
+      <label class="hint"><span data-i18n="laya.budget">摘要预算(字)</span> <input id="layaBudget" type="number" min="40" max="400" step="10" style="width:70px" /></label>
+      <label class="hint"><input id="layaEnabled" type="checkbox" /> <span data-i18n="laya.enabled">启用</span></label>
+    </div>
+    <div class="group" style="margin-bottom:6px">
+      <input id="layaApiKey" type="password" style="width:210px" data-i18n-placeholder="laya.keyPlaceholder" placeholder="🔑 粘贴密钥（留空＝不改，-＝清除）" />
+      <button id="btnLayaLoad" data-i18n="laya.load" data-i18n-title="laya.load.title" title="读一遍配置文件（密钥只显示掩码）">⟳ 读取配置</button>
+      <button id="btnLayaSave" class="primary" data-i18n="laya.save" data-i18n-title="laya.save.title" title="原子写回 Laya.local.json">保存配置</button>
+      <button id="btnLayaProbe" data-i18n="laya.probe" data-i18n-title="laya.probe.title" title="发一次 GET /v1/models，回答端点+密钥现在能不能用">测试连通</button>
+      <span id="layaBadge" class="badge" data-i18n="laya.badge.unknown">Laya：未知</span>
+    </div>
+    <div id="layaBox"><p class="hint" data-i18n="laya.initial">点「读取配置」看看当前的端点、模型与密钥来源。</p></div>
+
+    <h2 style="margin-top:14px"><span data-i18n="review.title">判定复盘</span> <span class="hint" data-i18n="review.sub">（刚才那几轮判得怎么样）</span></h2>
+    <p class="hint" data-i18n-html="review.hint">数据全部来自游戏（<code>ai.laya.review</code>）：聚合与明细都在游戏侧算，编辑器只显示。
+      重点不是「答了什么」，而是「<b>当时喂进去的那串状态摘要</b>」——点一行就能看到原文（摘要长度是判准最主要的旋钮）。</p>
+    <div class="group" style="margin-bottom:6px">
+      <label class="hint"><span data-i18n="review.count">条数</span> <input id="reviewCount" type="number" min="0" max="200" step="1" value="10" style="width:64px" /></label>
+      <button id="btnReview" data-i18n="review.refresh" data-i18n-title="review.refresh.title" title="问游戏要最近几次判定（聚合 + 明细）">⟳ 刷新复盘</button>
+      <button id="btnReviewMd" data-i18n="review.md" data-i18n-title="review.md.title" title="拿一份可复算的 markdown 抽样表并复制到剪贴板">复制抽样表</button>
+      <button id="btnReviewClear" data-i18n="review.clear" data-i18n-title="review.clear.title" title="清空游戏内存里的判定记录（不影响正在跑的树）">清空记录</button>
+      <span id="reviewBadge" class="badge" data-i18n="review.badge.unknown">复盘：未知</span>
+    </div>
+    <div id="reviewBox"><p class="hint" data-i18n="review.initial">点「刷新复盘」看看游戏里最近几次判定。</p></div>
   </section>
 </main>
 
@@ -147,5 +192,7 @@
 <script src="engine-adapter.js"></script>
 <script src="i18n.js"></script>
 <script src="app.js"></script>
+<script src="assets-panel.js"></script>
+<script src="review-panel.js"></script>
 </body>
 </html>

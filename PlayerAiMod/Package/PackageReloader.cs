@@ -81,6 +81,64 @@ namespace PlayerAiMod
         }
     }
 
+    /// <summary>
+    /// **热重载要问"内存库现在是什么版本"**（plan §4.11 G25 的三份哈希）。
+    ///
+    /// 为什么做成接口而不是让重载器直接认识内存库：包层（`Package/**`）不该依赖资源层
+    /// （`Assets/**`）—— 重载器在自检与编辑器里都可能被单独构造，没有内存库时它必须照旧工作。
+    /// </summary>
+    public interface IMemoryVersionSource
+    {
+        /// <summary>这个包在内存库里的内存哈希与 dirty 标记（没登记过给 false）。</summary>
+        bool TryGetMemoryVersion(string pathOrName, out string memoryHash, out bool dirty);
+    }
+
+    /// <summary>
+    /// 一次"**推送重载撞上未保存的内存改动**"（G25 的第 4 行）。
+    ///
+    /// 为什么不静默覆盖：内存里那份可能是 AI/人改了半天、还没落盘的成果，
+    /// 而磁盘那份只是编辑器上一次保存的版本。**默认保留内存**（运行态不被打断），
+    /// 把处置权交给人（用磁盘覆盖 / 把内存另存为新包）。
+    /// </summary>
+    public sealed class ReloadConflict
+    {
+        /// <summary>归一化后的包路径。</summary>
+        public string Path;
+
+        /// <summary>通知里带的哈希（`hashN`）。</summary>
+        public string NotifiedHash;
+
+        /// <summary>磁盘当前哈希（`hashD`）。</summary>
+        public string DiskHash;
+
+        /// <summary>内存库哈希（`hashM`）。</summary>
+        public string MemoryHash;
+
+        public string Reason;
+
+        /// <summary>第几次冲突（同一个包反复冲突时能看出来）。</summary>
+        public long Sequence;
+
+        public string Describe()
+        {
+            return System.IO.Path.GetFileName(Path ?? "?")
+                + " disk=" + Short(DiskHash) + " memory=" + Short(MemoryHash)
+                + " notify=" + Short(NotifiedHash) + " : " + Reason;
+        }
+
+        public override string ToString()
+        {
+            return "ReloadConflict(" + Describe() + ")";
+        }
+
+        private static string Short(string hash)
+        {
+            if (string.IsNullOrEmpty(hash))
+                return "-";
+            return hash.Length > 12 ? hash.Substring(0, 12) : hash;
+        }
+    }
+
     /// <summary>待处理的请求（控制面/编辑器线程入队，游戏线程消费）。</summary>
     internal sealed class PackageReloadRequest
     {
@@ -117,8 +175,30 @@ namespace PlayerAiMod
         private readonly List<TreeReloadResult> m_history = new List<TreeReloadResult>();
         private readonly Dictionary<string, DateTime> m_fileTimes =
             new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+        private readonly List<ReloadConflict> m_conflicts = new List<ReloadConflict>();
         private long m_sequence;
         private double m_watchAccumulator;
+
+        /// <summary>
+        /// **内存库版本来源**（G25 三份哈希）。为 null 时行为与以前完全一样
+        /// （只比"通知哈希 vs 磁盘哈希"），于是没有内存库的调用点不受影响。
+        /// </summary>
+        public IMemoryVersionSource MemoryVersion { get; set; }
+
+        /// <summary>待处置的冲突（G25 第 4 行：不静默覆盖，等人选）。</summary>
+        public IReadOnlyList<ReloadConflict> Conflicts
+        {
+            get { return m_conflicts; }
+        }
+
+        public int ConflictCount
+        {
+            get { return m_conflicts.Count; }
+        }
+
+        public ReloadConflict LastConflict { get; private set; }
+
+        public int ConflictTotal { get; private set; }
 
         /// <summary>事件日志（P0-10）：重载的成败与原因都留一份，便于事后排查。可为 null。</summary>
         public AiEventLog Log { get; set; }
@@ -215,6 +295,99 @@ namespace PlayerAiMod
         {
             lock (m_gate)
                 m_pending.Clear();
+        }
+
+        // ---------------------------------------------------------------- 冲突（G25）
+
+        /// <summary>找一个待处置的冲突（按路径或包名；找不到给 false）。</summary>
+        public bool TryFindConflict(string pathOrName, out ReloadConflict conflict)
+        {
+            conflict = null;
+            if (string.IsNullOrEmpty(pathOrName))
+                return false;
+
+            string normalized = PackageRoots.NormalizePath(pathOrName);
+            for (int i = 0; i < m_conflicts.Count; i++)
+            {
+                ReloadConflict candidate = m_conflicts[i];
+                bool samePath = normalized != null && candidate.Path != null
+                    && string.Equals(candidate.Path, normalized, PackageRoots.PathComparison);
+                bool sameName = candidate.Path != null && string.Equals(
+                    System.IO.Path.GetFileNameWithoutExtension(candidate.Path), pathOrName,
+                    StringComparison.OrdinalIgnoreCase);
+                if (samePath || sameName)
+                {
+                    conflict = candidate;
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// **人处置过了** → 把这条冲突从"待选择"里摘掉。
+        /// 注意它只负责记账：真正"用磁盘覆盖"是调用方接着发一次手动重载，
+        /// "把内存另存为新包"是调用方接着走 `ai.asset.save`。
+        /// </summary>
+        public bool ResolveConflict(string pathOrName, out ReloadConflict conflict)
+        {
+            if (!TryFindConflict(pathOrName, out conflict))
+                return false;
+            m_conflicts.Remove(conflict);
+            WriteLog("conflict-resolved", conflict.Describe());
+            return true;
+        }
+
+        /// <summary>清掉全部待处置冲突（例如"全部保留内存"）。返回清掉几条。</summary>
+        public int ClearConflicts()
+        {
+            int count = m_conflicts.Count;
+            m_conflicts.Clear();
+            if (count > 0)
+                WriteLog("conflict-cleared", count + " conflict(s) dismissed");
+            return count;
+        }
+
+        public List<Dictionary<string, object>> DescribeConflicts()
+        {
+            var list = new List<Dictionary<string, object>>();
+            for (int i = 0; i < m_conflicts.Count; i++)
+            {
+                ReloadConflict conflict = m_conflicts[i];
+                list.Add(new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    ["path"] = conflict.Path,
+                    ["file"] = conflict.Path != null
+                        ? System.IO.Path.GetFileName(conflict.Path) : null,
+                    ["diskHash"] = ShortHash(conflict.DiskHash),
+                    ["memoryHash"] = ShortHash(conflict.MemoryHash),
+                    ["notifiedHash"] = ShortHash(conflict.NotifiedHash),
+                    ["reason"] = conflict.Reason,
+                    ["sequence"] = conflict.Sequence,
+                    ["options"] = new List<string> { "disk", "keep", "saveAs" }
+                });
+            }
+            return list;
+        }
+
+        private void AddConflict(ReloadConflict conflict)
+        {
+            // 同一个包只留最新一条（冲突是"当前状态"，不是流水账）
+            for (int i = m_conflicts.Count - 1; i >= 0; i--)
+            {
+                if (string.Equals(m_conflicts[i].Path, conflict.Path, PackageRoots.PathComparison))
+                    m_conflicts.RemoveAt(i);
+            }
+            m_conflicts.Add(conflict);
+            LastConflict = conflict;
+            ConflictTotal++;
+        }
+
+        private static string ShortHash(string hash)
+        {
+            if (string.IsNullOrEmpty(hash))
+                return null;
+            return hash.Length > 12 ? hash.Substring(0, 12) : hash;
         }
 
         // ---------------------------------------------------------------- 游戏线程：装载与应用
@@ -513,6 +686,63 @@ namespace PlayerAiMod
                 return false;
             }
 
+            // ---- G25：三份哈希的冲突规则（只对**推送通知**生效；人手敲的重载是明确同意）
+            //
+            //   hashN = 通知里的哈希，hashD = 磁盘当前哈希，hashM = 内存库哈希
+            //   · hashN != hashD → 上面已经忽略（对方还在写）
+            //   · hashN == hashM → 磁盘上那份就是内存里那份，没什么可重载的
+            //   · hashN == hashD 且内存 clean → 正常重载（现状行为）
+            //   · hashN == hashD 但内存 dirty → **不静默覆盖**：记冲突、进入待选择，保留内存
+            if (request.Trigger == ReloadTrigger.Notify && MemoryVersion != null)
+            {
+                string memoryHash;
+                bool memoryDirty;
+                if (MemoryVersion.TryGetMemoryVersion(resolved, out memoryHash, out memoryDirty))
+                {
+                    if (memoryDirty && !string.IsNullOrEmpty(memoryHash)
+                        && !string.IsNullOrEmpty(result.Hash)
+                        && string.Equals(memoryHash, result.Hash, StringComparison.OrdinalIgnoreCase))
+                    {
+                        stopwatch.Stop();
+                        result.Ignored = true;
+                        result.Milliseconds = stopwatch.Elapsed.TotalMilliseconds;
+                        result.Reason = "the disk file already matches the in-memory version";
+                        IgnoredCount++;
+                        Record(result);
+                        WriteLog("ignore", result);
+                        return false;
+                    }
+
+                    if (memoryDirty)
+                    {
+                        var conflict = new ReloadConflict
+                        {
+                            Path = resolved,
+                            NotifiedHash = request.Hash,
+                            DiskHash = result.Hash,
+                            MemoryHash = memoryHash,
+                            Sequence = ++m_sequence,
+                            Reason = "the in-memory version has changes that were never saved;"
+                                + " keeping memory (resolve with 'use disk' or 'save memory as a new"
+                                + " package')"
+                        };
+                        AddConflict(conflict);
+
+                        stopwatch.Stop();
+                        result.Rejected = true;
+                        result.Milliseconds = stopwatch.Elapsed.TotalMilliseconds;
+                        result.Reason = "conflict: the in-memory version is newer and unsaved"
+                            + " (memory kept)";
+                        RejectedCount++;
+                        Record(result);
+                        Engine.Log.Warning("[PlayerAi][pkg] reload conflict, memory kept: "
+                            + conflict.Describe());
+                        WriteLog("conflict", result);
+                        return false;
+                    }
+                }
+            }
+
             // 重新装载整棵活动树（引用闭包一起刷新），失败就保留旧树
             ScbtPackageSet set = PackageLoader.Load(ActivePath, Options);
             string rootHash = set.Root != null ? set.Root.Hash : null;
@@ -597,6 +827,14 @@ namespace PlayerAiMod
             if (result.Issues.Count > 0)
                 line += " | " + result.Issues[0];
             Log.Write(category, line);
+        }
+
+        /// <summary>冲突这类**不属于某次重载结果**的事件也要能进日志。</summary>
+        private void WriteLog(string category, string message)
+        {
+            if (Log == null || string.IsNullOrEmpty(message))
+                return;
+            Log.Write(category, message);
         }
 
         private static string NormalizeHash(string hash)

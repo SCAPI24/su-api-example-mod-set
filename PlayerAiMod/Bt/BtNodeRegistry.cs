@@ -318,6 +318,18 @@ namespace PlayerAiMod
                     BtProps.Bool("succeed", true, "false 时本节点判失败（用来强制走备用分支）")
                 });
 
+            // 计数器（2026-09-26）：给树一个"连续发生了几次"的记忆。
+            // 用途的典型例子是"连败 3 次就换兜底脚本"（plan G22 禁止把失败标记喂给模型，
+            // 所以只能在这里记，见 BtCounterTask 的注释）。
+            s_nodes["Task.Counter"] = new BtNodeInfo("Task.Counter", () => new BtCounterTask(),
+                BtNodeShape.Task, true, new[]
+                {
+                    BtProps.BlackboardKey("key", "计数器所在的 int 黑板键（缺失按 0 算）"),
+                    BtProps.Int("delta", 1, "每次执行加多少（可为负）"),
+                    BtProps.Bool("clear", false, "true = 直接清零（忽略 delta）"),
+                    BtProps.Bool("removeWhenClear", false, "清零时删掉键而不是写 0（默认写 0，便于继续比较）")
+                });
+
             s_nodes["Task.LookAt"] = new BtNodeInfo("Task.LookAt", () => new BtLookAtTargetTask(),
                 BtNodeShape.Task, true, new[]
                 {
@@ -514,6 +526,52 @@ namespace PlayerAiMod
                     BtProps.Bool("abortOnFail", true, "失败是否打断整条分支")
                 });
 
+            // 动作脚本（P1）：把"基础动作包混搭"的 verb 序列（.aeact）跑一遍。
+            // 与 PlayActionPackage 的区别：那个放的是"人录下来的一条"，这个放的是**可参数化的积木序列**。
+            s_nodes["Task.RunActionScript"] = new BtNodeInfo("Task.RunActionScript",
+                () => new BtRunActionScriptTask(), BtNodeShape.Task, true, new[]
+                {
+                    BtProps.Str("script", null, "脚本名（<实例根>/PlayerAi/BehaviorTrees/*.aeact）；与 scriptKey 二选一"),
+                    BtProps.OptionalBlackboardKey("scriptKey", null,
+                        "可选：运行时从该黑板 string 键取脚本名（Laya 或其它节点决定跑哪条）"),
+                    BtProps.Int("repeat", 1, "整条脚本重复几次"),
+                    BtProps.Int("totalTimeoutMs", 0, "整条脚本总超时（毫秒）；0 = 按每步预算之和"),
+                    BtProps.Bool("writeFailKey", true, "失败时把错误码写进黑板（供异常分支提前规划）"),
+                    BtProps.Str("failKey", "action.fail", "失败错误码写进哪个黑板 string 键"),
+                    BtProps.Str("reasonKey", "action.reason", "失败原因写进哪个黑板 string 键；留空不写")
+                });
+
+            // Laya 判定节点（P3）：问一次 System One 服务，把结构化答案写进黑板。
+            // 这是"让 Laya 参与行为树调度"的主形态（plan §4.6）：入树 = 用连线编排。
+            s_nodes["Task.LayaAsk"] = new BtNodeInfo("Task.LayaAsk",
+                () => new BtLayaAskTask(), BtNodeShape.Task, true, new[]
+                {
+                    BtProps.Str("questions", null, "问题库文件（<实例根>/PlayerAi/Questions/*.qbank）；与 questionsKey 二选一"),
+                    BtProps.OptionalBlackboardKey("questionsKey", null,
+                        "可选：运行时从该黑板 string 键取问题库名"),
+                    BtProps.RequiredStr("answerKeys",
+                        "答案写到哪些黑板键：blackboardKey:questionId:type（str/bool/int/float），逗号分隔"),
+                    BtProps.Str("only", null, "可选：只要这些问题 id（逗号分隔）；空 = 全问"),
+                    BtProps.Int("timeoutMs", 0, "节点级超时（毫秒）；0 = 用配置里的 timeoutMs"),
+                    BtProps.Enum("onUnavailable", "fail", "fail", "default", "keep"),
+                    BtProps.Str("defaultValue", null, "onUnavailable=default 时写什么"),
+                    BtProps.Bool("writeFailKey", true, "失败时写失败标记到黑板（供异常分支）"),
+                    BtProps.Str("failKey", "laya.fail", "失败错误码写进哪个黑板 string 键"),
+                    BtProps.Str("reasonKey", "laya.reason", "失败原因写进哪个黑板 string 键")
+                });
+            // 池调用（P5）：把池里的一个包当"子行为"跑一遍（不换活动树的根，所以父树不被打断）。
+            s_nodes["Task.PoolCall"] = new BtNodeInfo("Task.PoolCall",
+                () => new BtPoolCallTask(), BtNodeShape.Task, true, new[]
+                {
+                    BtProps.List("packages", "池项（包名，可多条）；mode 决定怎么用"),
+                    BtProps.Enum("mode", "SingleOne", "SingleOne", "Sequence", "RandomOne", "FromBlackboard"),
+                    BtProps.OptionalBlackboardKey("packageKey", null,
+                        "mode=FromBlackboard 时从该黑板 string 键取包名（Laya 的决定落点）"),
+                    BtProps.Int("repeat", 1, "整段重复几次"),
+                    BtProps.Bool("writeFailKey", true, "失败时写失败标记到黑板"),
+                    BtProps.Str("failKey", "pool.fail", "失败错误码写进哪个黑板 string 键"),
+                    BtProps.Str("reasonKey", "pool.reason", "失败原因写进哪个黑板 string 键")
+                });
             // 只存在于代码里的委托节点：包格式里出现即报错（校验器据此提示）
             s_nodes["Task.Lambda"] = new BtNodeInfo("Task.Lambda", () => new BtLambdaTask(),
                 BtNodeShape.Task, false, new BtPropertySpec[0]);
@@ -643,10 +701,23 @@ namespace PlayerAiMod
                     BtProps.Float("bodyHeight", 0.9f, "胸口射线的高度（米，相对目标脚底）")
                 });
 
+            // ---- 状态进黑板（2026-09-26，§4.13）：把摘要字段（`phase` / `ui` / `scr` / 各档位…）
+            //      按 `state.<名字>` 写进黑板 —— 树从此能按**枚举**确定性分流
+            //      （"世界外才点 Play""世界里才跑动作"），不必为了一个 if 去问模型。
+            //      字段表与摘要**同一份**（`StateDigestCompiler.Fields()`），不会漂移。
+            s_services["Service.ObserveState"] = new BtServiceInfo(
+                "Service.ObserveState", () => new BtObserveStateService(), true, new[]
+                {
+                    BtProps.Str("prefix", "state.", "黑板键前缀（默认 state.）"),
+                    BtProps.Str("only", null,
+                        "只写这几个字段（逗号分隔，如 phase,ui,scr）；留空 = 全部"),
+                    BtProps.Bool("clearWhenMissing", true,
+                        "这一拍缺的字段是否把它对应的黑板键清掉（false = 保留上一次的值）")
+                });
+
             // ---- 通用件（2026-09-13 用户要求："射线检测能不能加""模型节点跟踪"）：
             //      把"每换一个问法就改一次 C#"变成"改属性"，从此少一次部署 + 少一次重启。
-            s_services["Service.Probe"] = new BtServiceInfo(
-                "Service.Probe", () => new BtProbeService(), true, new[]
+            s_services["Service.Probe"] = new BtServiceInfo("Service.Probe", () => new BtProbeService(), true, new[]
                 {
                     BtProps.Enum("from", "eye", "eye", "body", "point"),
                     BtProps.Enum("to", "target", "target", "point", "ahead", "down"),
@@ -735,6 +806,129 @@ namespace PlayerAiMod
             {
                 blackboard.Remove(new AiBlackboardKey<AiActorView>(TargetKey));
             }
+        }
+    }
+
+    /// <summary>
+    /// 把**状态摘要字段写进黑板**（plan §4.13）：`phase` / `ui` / `scr` / `hp` / `food` / …
+    /// 各写成一个 `<prefix><字段名>` 的 **string** 键（默认前缀 `state.`），于是树里可以写
+    /// `Blackboard(key=state.phase, ==, string, "front")` 这种**确定性**分流。
+    ///
+    /// 为什么值得单开一个服务：
+    ///   · **双状态机的落点**：世界外/世界内两棵树可以同时挂在池里，各自用 `state.phase` 判断
+    ///     "这一拍该不该我动" —— 不需要运行时替它们换树（D9：不新增换树来源）；
+    ///   · **省一次模型往返**：`phase == world` 这种判断是事实查询，问模型既慢又可能答错；
+    ///   · **同一份字段表**：与喂 Laya 的摘要共用 `StateDigestCompiler.Fields()`，
+    ///     模型看到的和树看到的是同一批事实（口径不同步是最难查的一类 bug）。
+    ///
+    /// 值是**字符串**（与摘要里显示的一模一样，含档位标签如 `0.25(hungry)`）：
+    /// 枚举类字段（`phase` / `ui` / `scr` / `sleep` / `aim` / `hold`）直接比较；
+    /// 数值类要比较就先在树里用 `state.hp` 的字面量（要精确阈值判断请用传感器/`Task.*` 节点，
+    /// 不要解析字符串 —— 这条写在这里是为了不鼓励"把黑板当计算器"）。
+    /// </summary>
+    public sealed class BtObserveStateService : BtService
+    {
+        /// <summary>黑板键前缀（默认 `state.`）。</summary>
+        public string Prefix { get; set; } = "state.";
+
+        /// <summary>只写这几个字段（逗号分隔）；空 = 全部。</summary>
+        public string Only { get; set; }
+
+        /// <summary>这一拍缺的字段是否清掉对应键（false = 保留上次的值）。</summary>
+        public bool ClearWhenMissing { get; set; } = true;
+
+        /// <summary>最近一次失败原因（`ai.status`/日志复盘用）。</summary>
+        public string LastError { get; private set; }
+
+        public override string NodeType
+        {
+            get { return "Service.ObserveState"; }
+        }
+
+        protected override void OnTick(BtContext context)
+        {
+            AiBlackboard blackboard = context != null ? context.Blackboard : null;
+            if (blackboard == null)
+                return;
+
+            ILayaRuntime service = ResolveService();
+            if (service == null)
+            {
+                ReportOnce(context, "the observation service is not available in this host");
+                return;
+            }
+
+            List<KeyValuePair<string, string>> fields;
+            string error;
+            if (!service.TryObserveFields(out fields, out error))
+            {
+                ReportOnce(context, error ?? "no observation is available");
+                return;
+            }
+
+            LastError = null;
+            var written = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            string prefix = Prefix ?? string.Empty;
+
+            for (int i = 0; i < fields.Count; i++)
+            {
+                string name = fields[i].Key;
+                if (!Wanted(name))
+                    continue;
+
+                string key = prefix + name;
+                written.Add(key);
+                blackboard.Set(new AiBlackboardKey<string>(key), fields[i].Value ?? string.Empty);
+            }
+
+            if (!ClearWhenMissing)
+                return;
+
+            // 这一拍没出现的字段：把它清掉，别让"上一次的 phase"在下一次读到时还假装是现在
+            // （这正是"世界外相位残留"这类假象的来源）。
+            List<string> existing = blackboard.NamesWithPrefix(prefix);
+            for (int i = 0; i < existing.Count; i++)
+            {
+                if (!written.Contains(existing[i]))
+                    blackboard.Remove(new AiBlackboardKey<string>(existing[i]));
+            }
+        }
+
+        // ---------------------------------------------------------------- 内部
+
+        private bool Wanted(string name)
+        {
+            if (string.IsNullOrEmpty(Only))
+                return true;
+            string[] parts = Only.Split(',');
+            for (int i = 0; i < parts.Length; i++)
+            {
+                if (string.Equals(parts[i].Trim(), name, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// 观察拿不到时**只在状态变化时报一次**：这个服务每个 tick 都会跑，
+        /// 不去重的话（例如服务没起来）事件日志会被同一句话刷满。
+        /// </summary>
+        private void ReportOnce(BtContext context, string error)
+        {
+            if (string.Equals(LastError, error, StringComparison.Ordinal))
+                return;
+            LastError = error;
+            context.Warn("ObserveState: " + error);
+        }
+
+        private static ILayaRuntime ResolveService()
+        {
+            ILayaRuntime service = LayaRuntimeHost.Current;
+            if (service != null)
+                return service;
+
+            Func<ILayaRuntime> provider = LayaRuntimeHost.Provider;
+            return provider != null ? provider() : null;
         }
     }
 }

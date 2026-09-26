@@ -31,6 +31,26 @@ namespace PlayerAiMod
         /// <summary>输入注入是否可用（CmdBridgeMod 已加载且启用注入）。</summary>
         bool InputAvailable { get; }
 
+        /// <summary>
+        /// 当前相位（plan §4.13）：`front`（世界外）/ `loading`（过渡态，树被闸住）/ `world`。
+        /// 命令层用它回答"为什么树不动" —— 世界外与过渡态都是**正常**状态，不是故障。
+        /// </summary>
+        string Phase { get; }
+
+        /// <summary>相位切换过几次（复盘边界事件）。</summary>
+        long PhaseChanges { get; }
+
+        /// <summary>过渡态闸门累计拦下的帧数；<see cref="PhaseGateActive"/> = 现在正被闸住。</summary>
+        long PhaseGatedFrames { get; }
+
+        bool PhaseGateActive { get; }
+
+        /// <summary>
+        /// 判定记录（P4 复盘；`ai.laya.review`）。Laya 服务还没建时为 null。
+        /// 命令层只读它 —— 记录发生在 Laya 客户端内部（每一次问/缓存命中/被拒）。
+        /// </summary>
+        DecisionLog Decisions { get; }
+
         /// <summary>录制会话（`ai.record.*`）。真实实现是 <see cref="AiRecordingSession"/>。</summary>
         IAiRecordingControl Recording { get; }
 

@@ -29,9 +29,12 @@ namespace PlayerAiMod
 
         /// <summary>
         /// 校验 tree.json 的节点图。需要 manifest 来判断 Subtree 引用是否命中 references。
+        ///
+        /// `banks` 非空时额外做**问题库引用校验**（plan G4）；为 null 时对"引用了问题库的节点"
+        /// 报 `bank.unverified` 警告 —— 见 <see cref="QuestionBankReferenceRules.Check"/>。
         /// </summary>
         public static void ValidateTree(ScbtTree tree, ScbtManifest manifest, string where,
-            PackageReport report)
+            PackageReport report, IQuestionBankSource banks = null)
         {
             if (tree == null)
             {
@@ -52,11 +55,16 @@ namespace PlayerAiMod
 
             var nodeIds = new HashSet<string>(StringComparer.Ordinal);
             var helperIds = new HashSet<string>(StringComparer.Ordinal);
+            // 收集"引用了问题库"的事实（LayaAsk 的绑定 + 拿答案做分支的比较），
+            // 等整棵树走完再一次性核对 —— 因为选项 key 闭集校验需要先知道"黑板键对应哪个问题"。
+            var refs = new ReferenceCollector();
 
             foreach (ScbtNodeDoc node in tree.Walk())
             {
-                ValidateNode(node, manifest, nodeIds, helperIds, report);
+                ValidateNode(node, manifest, nodeIds, helperIds, report, refs);
             }
+
+            QuestionBankReferenceRules.Check(refs.Asks, refs.Compares, banks, where, report);
 
             // 入口：manifest.entry 必须能在文档里找到
             if (manifest != null && !string.IsNullOrEmpty(manifest.Entry)
@@ -160,7 +168,8 @@ namespace PlayerAiMod
         }
 
         private static void ValidateNode(ScbtNodeDoc node, ScbtManifest manifest,
-            HashSet<string> nodeIds, HashSet<string> helperIds, PackageReport report)
+            HashSet<string> nodeIds, HashSet<string> helperIds, PackageReport report,
+            ReferenceCollector refs)
         {
             string where = node.Where;
 
@@ -251,7 +260,7 @@ namespace PlayerAiMod
             }
             for (int i = 0; i < node.Decorators.Count; i++)
             {
-                ValidateDecorator(node.Decorators[i], helperIds, report);
+                ValidateDecorator(node.Decorators[i], helperIds, report, refs);
             }
 
             // ---- 服务
@@ -281,10 +290,131 @@ namespace PlayerAiMod
                     }
                 }
             }
+
+            // ---- 动作脚本 / Laya 节点的**语义校验**（P1/P3）
+            //
+            // 为什么放在这里而不是等编译器：`answerKeys` 写错类型、`script` 与 `scriptKey` 都没写
+            // 这类问题**编译期才会报**，而编辑器保存前只跑校验器 —— 于是"编辑器说没问题、
+            // 进游戏装载失败"。实机与编辑器都实测过这两条漏网（plan A13）。
+            if (typeKnown && string.Equals(info.TypeId, "Task.RunActionScript", StringComparison.Ordinal))
+            {
+                string script = node.Properties.Get("script").AsString(null);
+                string scriptKey = node.Properties.Get("scriptKey").AsString(null);
+                if (string.IsNullOrEmpty(script) && string.IsNullOrEmpty(scriptKey))
+                {
+                    report.Error(PackageCodes.PropertyRequired, where + ".properties.script",
+                        "Task.RunActionScript needs 'script' (a .aeact name) or 'scriptKey' (a blackboard string key)");
+                }
+            }
+
+            if (typeKnown && string.Equals(info.TypeId, "Task.LayaAsk", StringComparison.Ordinal))
+            {
+                string questions = node.Properties.Get("questions").AsString(null);
+                string questionsKey = node.Properties.Get("questionsKey").AsString(null);
+                if (string.IsNullOrEmpty(questions) && string.IsNullOrEmpty(questionsKey))
+                {
+                    report.Error(PackageCodes.PropertyRequired, where + ".properties.questions",
+                        "Task.LayaAsk needs 'questions' (a .qbank name) or 'questionsKey' (a blackboard string key)");
+                }
+
+                string answerKeys = node.Properties.Get("answerKeys").AsString(null);
+                if (string.IsNullOrEmpty(answerKeys))
+                {
+                    report.Error(PackageCodes.PropertyRequired, where + ".properties.answerKeys",
+                        "Task.LayaAsk needs 'answerKeys' (blackboardKey:questionId:type, comma separated)");
+                }
+                else
+                {
+                    List<string> bindingIssues = ValidateAnswerKeys(answerKeys, where + ".properties.answerKeys");
+                    for (int i = 0; i < bindingIssues.Count; i++)
+                        report.Error(PackageCodes.PropertyValue, where + ".properties.answerKeys", bindingIssues[i]);
+                }
+
+                // 收集引用事实（G4）。形状错了也照收：`ParseBindings` 会丢掉坏项，
+                // 库引用检查因此只看得到"能解析的那些"，不会因为一条坏绑定就整体静默。
+                if (refs != null)
+                {
+                    var ask = new LayaAskReference
+                    {
+                        Where = where,
+                        BankName = string.IsNullOrEmpty(questions) ? null : questions,
+                        QuestionsKey = string.IsNullOrEmpty(questionsKey) ? null : questionsKey
+                    };
+                    string only = node.Properties.Get("only").AsString(null);
+                    if (!string.IsNullOrEmpty(only))
+                    {
+                        string[] ids = only.Split(',');
+                        for (int i = 0; i < ids.Length; i++)
+                        {
+                            string id = ids[i].Trim();
+                            if (id.Length > 0)
+                                ask.Only.Add(id);
+                        }
+                    }
+
+                    string parseError;
+                    List<BtLayaAskTask.AnswerBinding> bindings = BtLayaAskTask.ParseBindings(answerKeys, out parseError);
+                    if (bindings != null)
+                    {
+                        for (int i = 0; i < bindings.Count; i++)
+                        {
+                            ask.Bindings.Add(new LayaAnswerBindingReference
+                            {
+                                BlackboardKey = bindings[i].BlackboardKey,
+                                QuestionId = bindings[i].QuestionId,
+                                Kind = bindings[i].Kind
+                            });
+                        }
+                    }
+                    refs.Asks.Add(ask);
+                }
+            }
+        }
+
+        /// <summary>
+        /// 校验过程中顺手收集的"问题库引用"事实。做成一个可变对象往后传，
+        /// 而不是给每一层都加一串 out 参数 —— 校验器本来就已经在逐节点递归了。
+        /// </summary>
+        private sealed class ReferenceCollector
+        {
+            public readonly List<LayaAskReference> Asks = new List<LayaAskReference>();
+            public readonly List<AnswerCompareReference> Compares = new List<AnswerCompareReference>();
+        }
+
+        /// <summary>
+        /// `answerKeys` 的形状校验（`黑板键:问题id:类型`）。
+        /// 类型只认 `str|bool|int|float` —— 与 <c>BtLayaAskTask</c> 的折算规则同源：
+        /// 写错类型在运行时是"节点失败"，在这里应当是**装载期就报错**。
+        /// </summary>
+        private static List<string> ValidateAnswerKeys(string spec, string where)
+        {
+            var issues = new List<string>();
+            string[] parts = spec.Split(',');
+            for (int i = 0; i < parts.Length; i++)
+            {
+                string part = parts[i].Trim();
+                if (part.Length == 0)
+                    continue;
+
+                string[] fields = part.Split(':');
+                if (fields.Length < 3)
+                {
+                    issues.Add("'" + part + "' must be written as blackboardKey:questionId:type");
+                    continue;
+                }
+
+                string kind = fields[2].Trim().ToLowerInvariant();
+                if (kind != "str" && kind != "string" && kind != "bool" && kind != "int" && kind != "float")
+                {
+                    issues.Add("'" + part + "' has unknown type '" + fields[2]
+                        + "' (str / bool / int / float)");
+                }
+            }
+            return issues;
         }
 
         private static void ValidateDecorator(ScbtDecoratorDoc doc, HashSet<string> helperIds,
-            PackageReport report)
+            PackageReport report, ReferenceCollector refs)
         {
             string where = doc.Where;
 
@@ -327,6 +457,28 @@ namespace PlayerAiMod
 
             if (doc.Properties.Count > 0)
                 ValidateProperties(doc.Properties, where, info.Properties, ScbtDecoratorDoc.BasePropertyNames, report);
+
+            // 拿答案做分支的写法（出厂树）：`Blackboard` 装饰器 + query=Compare + valueKind=string。
+            // 收集起来交给 G4 校验：字面量必须是那个问题的**选项 key**，
+            // 否则"库里把选项改个名"就会让这条分支永远不成立，而树看上去完好无损。
+            if (refs != null && string.Equals(info.TypeId, "Blackboard", StringComparison.Ordinal))
+            {
+                string query = doc.Properties.Get("query").AsString(null);
+                string kind = doc.Properties.Get("valueKind").AsString(null);
+                string op = doc.Properties.Get("operator").AsString(null);
+                if (string.Equals(query, "Compare", StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(kind, "string", StringComparison.OrdinalIgnoreCase)
+                    && (string.Equals(op, "==", StringComparison.Ordinal) || string.Equals(op, "!=", StringComparison.Ordinal)))
+                {
+                    refs.Compares.Add(new AnswerCompareReference
+                    {
+                        Where = where,
+                        BlackboardKey = doc.Properties.Get("key").AsString(null),
+                        Operator = op,
+                        Value = doc.Properties.Get("value").AsString(null)
+                    });
+                }
+            }
         }
 
         private static void ValidateService(ScbtServiceDoc doc, HashSet<string> helperIds,

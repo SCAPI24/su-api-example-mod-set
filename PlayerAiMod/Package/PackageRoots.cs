@@ -68,6 +68,13 @@ namespace PlayerAiMod
         public const string Extension = ".scbtpak";
         public const string ActionExtension = ".scatpak";
 
+        /// <summary>
+        /// **手动存档**目录（`&lt;实例根&gt;/PlayerAi/Saves/`）—— 计划 §4.11 的第 3 层。
+        /// 与包目录的区别只有一个：包目录是"正在跑的"，这里是"人存档的"（可对账、可分发）。
+        /// **它不是包来源**（不参与发现与自动装载），只有显式 load 才进内存库。
+        /// </summary>
+        public const string SavesFolder = "Saves";
+
         private readonly List<PackageRoot> m_roots = new List<PackageRoot>();
 
         public PackageRoots(string packageDirectory)
@@ -93,6 +100,17 @@ namespace PlayerAiMod
             if (string.IsNullOrEmpty(instanceRoot))
                 return null;
             return System.IO.Path.Combine(instanceRoot, PlayerAiFolder, BehaviorTreesFolder);
+        }
+
+        /// <summary>
+        /// 由实例根拼出**手动存档**目录：<c>&lt;实例根&gt;/PlayerAi/Saves</c>（P6，§4.11 第 3 层）。
+        /// 这是 `ai.asset.save` 的默认落点；它**不在**包白名单里，所以不会被当成"正在跑的包"扫出来。
+        /// </summary>
+        public static string SavesDirectoryFor(string instanceRoot)
+        {
+            if (string.IsNullOrEmpty(instanceRoot))
+                return null;
+            return System.IO.Path.Combine(instanceRoot, PlayerAiFolder, SavesFolder);
         }
 
         /// <summary>
@@ -206,14 +224,21 @@ namespace PlayerAiMod
             Func<string, bool> fileExists = exists ?? File.Exists;
             string value = nameOrRelativePath.Trim().Replace('\\', '/');
 
-            // 绝对路径：只接受白名单内的（控制面/编辑器会传绝对路径来通知重载）
-            if (value.Length > 1 && value[1] == ':')
+            // 绝对路径：只接受白名单内的（控制面/编辑器会传绝对路径来通知重载）。
+            //
+            // ⚠️ **两种根都要认**：Windows 是 `C:/…`，Unix/Android 是 `/…`。
+            // 第一版只认 `C:/` 并把开头的 `/` 一律当**路径穿越**拒掉 —— 于是 Android 上
+            // "把已经解析好的绝对路径再传回来"（`PackageLoader.Load` / `Validate` / 树库切换
+            // 都会这么做）全部报 `file.missing`，等于**整台平板的包装载功能全废**（实机实测）。
+            // 安全边界没有放松：真正的判据是 `IsAllowed`（必须落在白名单目录里），
+            // 所以 `/etc/passwd` 照样被拒。
+            bool windowsRooted = value.Length > 1 && value[1] == ':';
+            bool unixRooted = value.StartsWith("/", StringComparison.Ordinal);
+            if (windowsRooted || unixRooted)
             {
                 string absolute = NormalizePath(value);
                 return absolute != null && IsAllowed(absolute) ? absolute : null;
             }
-            if (value.StartsWith("/", StringComparison.Ordinal))
-                return null;
 
             var candidates = new List<string> { value };
             if (!value.EndsWith(extension, StringComparison.OrdinalIgnoreCase))

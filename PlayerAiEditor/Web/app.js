@@ -15,6 +15,8 @@
     materials: null,
     packages: [],
     actions: [],
+    /** 问题库清单（`/api/banks`）：`Task.LayaAsk` 的 questions / answerKeys 两个属性靠它变成下拉与勾选 */
+    banks: [],
     path: null,
     manifest: null,
     tree: null,
@@ -276,6 +278,12 @@
     var next = I18n.getLanguage() === 'en' ? 'zh' : 'en';
     I18n.setLanguage(next);
     applyLanguage();
+    // 生成出来的那几块面板（资源库 / Laya 配置 / 判定复盘）也要跟着重画：
+    // `applyLanguage` 只回填带 data-i18n 的静态标签，角标与每一行都是 JS 生成的。
+    var panels = [window.PlayerAiEditorAssets, window.PlayerAiEditorReview];
+    for (var p = 0; p < panels.length; p++) {
+      if (panels[p] && panels[p].relabel) panels[p].relabel();
+    }
     setStatus(next === 'en'
     ? L('lang.switchedEn', 'Language: English')
     : L('lang.switchedZh', '界面语言：中文（节点类型写进包时仍是原文）'));
@@ -4388,6 +4396,17 @@
       return blackboardKeyField(label, current, spec, commit);
     }
 
+    // `Task.LayaAsk` 的两个裸字符串属性（P3 第二步）：
+    //   · questions   = 库名        → 下拉（列 <实例根>/PlayerAi/Questions/*.qbank）
+    //   · answerKeys  = 黑板键:问题id:类型 的逗号串 → 勾选 + 手填键名
+    // 这两个属性原本只能背格式：库名打错是 `laya_bank_not_found`，问题 id/类型打错则整节点 fail。
+    if (spec.name === 'questions' && state.banks.length) {
+      return banksField(label, current, spec, commit);
+    }
+    if (spec.name === 'answerKeys' && state.banks.length) {
+      return answerKeysField(owner, container, spec, current, commit);
+    }
+
     // 嵌套包引用：给下拉，别让人手打一个不存在的 id
     if (spec.name === 'package' && owner.type === 'Task.Subtree') {
       return packageRefField(label, owner, container, spec, current, commit);
@@ -4664,8 +4683,200 @@
     return wrap;
   }
 
-  function labelEnum(label, current, allowed, commit, spec) {
-    var row = document.createElement('div');
+  /**
+   * `Task.LayaAsk.questions`：**问题库下拉** + 手填兜底。
+   *
+   * 只列 `<实例根>/PlayerAi/Questions/*.qbank` 里真的能解析出来的库；解析不了的**也列出来**并标红
+   * ——它就在磁盘上，用户需要看到"为什么这个库用不了"，而不是从下拉里凭空消失。
+   * 当前值不在清单里时额外显示一行"（不在问题库目录里）"，一眼看出这棵树装不上。
+   */
+  function banksField(label, current, spec, commit) {
+    var wrap = document.createElement('div');
+    wrap.className = 'prop-row';
+    var text = document.createElement('label');
+    text.textContent = label + (spec && spec.required ? ' *' : '');
+    if (spec && spec.description) wrap.title = spec.description;
+
+    var select = document.createElement('select');
+    var empty = document.createElement('option');
+    empty.value = '';
+    empty.textContent = L('ui.400', '（未选）');
+    select.appendChild(empty);
+
+    var known = false;
+    state.banks.forEach(function (bank) {
+      var value = bank.file || bank.id || '';
+      var option = document.createElement('option');
+      option.value = value;
+      option.textContent = (bank.file || '?')
+        + (bank.name ? '  —  ' + bank.name : '')
+        + (bank.error ? L('ui.401', '（解析不了）') : '');
+      if (bank.error) option.className = 'dead';
+      // `questions` 写 `world_goal` 与写 `world_goal.qbank` **游戏都认**
+      // （`TryResolveBank` 两种都试）。所以"在不在清单里"要按这三种写法都比一遍，
+      // 否则用户手写的无扩展名库名会被当成"不在目录里"，下拉每次都跳到那一行假选项上。
+      if (current && (current === value || current === bank.id || current === stripExtension(value))) {
+        option.selected = true;
+        known = true;
+      }
+      select.appendChild(option);
+    });
+
+    if (current && !known) {
+      var manual = document.createElement('option');
+      manual.value = current;
+      manual.textContent = I18n.format("ui.402", '{0}（不在问题库目录里）', current);
+      manual.selected = true;
+      select.appendChild(manual);
+    }
+
+    select.addEventListener('change', function () { commit(select.value); });
+    wrap.appendChild(text);
+    wrap.appendChild(select);
+    var hint = document.createElement('span');
+    hint.className = 'hint';
+    hint.textContent = L('ui.403', '来自 PlayerAi/Questions/');
+    wrap.appendChild(hint);
+    return wrap;
+  }
+
+  /**
+   * `Task.LayaAsk.answerKeys`：**按库里的问题勾选**，生成 `黑板键:问题id:类型`。
+   *
+   * 三个细节都是"不这么做就会出错"：
+   *   · 类型**预填**成该问题实际需要的（choice→str / noul→bool / score→float）——
+   *     写错类型在运行期是整节点 fail，而错误信息只说"类型不匹配"；
+   *   · 黑板键**预填成问题 id**（可改）—— 常见写法就是同名，省掉一次手打；
+   *   · 库切了之后**保留不在新库里的旧条目**（原样显示、可删）—— 否则换库就静默丢掉绑定。
+   */
+  function answerKeysField(owner, container, spec, current, commit) {
+    var wrap = document.createElement('div');
+    wrap.className = 'prop-row packages';
+    var text = document.createElement('label');
+    text.textContent = spec.name + (spec.required ? ' *' : '');
+    if (spec.description) wrap.title = spec.description;
+
+    var selected = parseBindings(current);
+    var used = {};
+    selected.forEach(function (item) { used[item.key + ':' + item.question + ':' + item.kind] = true; });
+
+    // 用哪个库来列问题：优先节点自己的 questions，其次第一个可解析的库
+    var bankFile = owner.properties && owner.properties.questions;
+    var bank = null;
+    state.banks.forEach(function (item) {
+      if (!bank && !item.error && (item.file === bankFile || item.id === bankFile)) bank = item;
+    });
+    if (!bank) {
+      state.banks.forEach(function (item) { if (!bank && !item.error) bank = item; });
+    }
+
+    var box = document.createElement('div');
+    box.className = 'packages-box';
+
+    function publish() {
+      commit(selected.map(function (item) {
+        return item.key + ':' + item.question + ':' + item.kind;
+      }).join(','));
+    }
+
+    if (bank) {
+      (bank.questions || []).forEach(function (question) {
+        var key = question.id;
+        var kind = question.suggestedKind || 'str';
+        var existing = null;
+        selected.forEach(function (item) { if (item.question === question.id) existing = item; });
+
+        var item = document.createElement('label');
+        item.className = 'package-item';
+        var check = document.createElement('input');
+        check.type = 'checkbox';
+        check.checked = !!existing;
+        check.addEventListener('change', function () {
+          if (check.checked) {
+            selected.push({ key: question.id, question: question.id, kind: kind });
+          } else {
+            selected = selected.filter(function (entry) { return entry.question !== question.id; });
+          }
+          publish();
+          renderInspector();
+        });
+        item.appendChild(check);
+
+        var span = document.createElement('span');
+        span.textContent = question.id + '  [' + question.type + '→' + kind + ']'
+          + (question.options && question.options.length
+            ? '  ' + question.options.join('/') : '');
+        item.appendChild(span);
+
+        var keyInput = document.createElement('input');
+        keyInput.type = 'text';
+        keyInput.className = 'bb-key';
+        keyInput.value = existing ? existing.key : question.id;
+        keyInput.title = L('ui.404', '写到哪个黑板键（默认与问题同名）');
+        keyInput.addEventListener('change', function () {
+          var target = existing;
+          if (!target) {
+            target = { key: question.id, question: question.id, kind: kind };
+            selected.push(target);
+            check.checked = true;
+          }
+          target.key = keyInput.value.trim() || question.id;
+          publish();
+        });
+        item.appendChild(keyInput);
+        box.appendChild(item);
+      });
+    }
+
+    // 手工条目 / 不在当前库里的旧条目：原样留着，可删
+    selected.forEach(function (entry) {
+      if (bank && (bank.questions || []).some(function (q) { return q.id === entry.question; })) return;
+      var item = document.createElement('label');
+      item.className = 'package-item manual';
+      var span = document.createElement('span');
+      span.textContent = entry.key + ':' + entry.question + ':' + entry.kind;
+      item.appendChild(span);
+      item.appendChild(button(L('ui.165', '移除'), function () {
+        selected = selected.filter(function (other) { return other !== entry; });
+        publish();
+        renderInspector();
+      }));
+      box.appendChild(item);
+    });
+
+    wrap.appendChild(text);
+    wrap.appendChild(box);
+
+    // 兜底：裸文本（格式与节点属性完全一致）—— 库还没建好时也能编树
+    var raw = textField(L('ui.405', '原始写法（黑板键:问题id:类型）'),
+      (current || '').toString(), function (value) {
+        commit(value);
+        selected = parseBindings(value);
+      });
+    raw.className = 'prop-row raw-bindings';
+    wrap.appendChild(raw);
+    return wrap;
+  }
+
+  /** `world_goal.qbank` → `world_goal`（游戏解析库名时两种写法都认）。 */
+  function stripExtension(name) {
+    return String(name || '').replace(/\.[^.]+$/, '');
+  }
+
+  /** `goal:goal:str,danger:threat:bool` → `[{key, question, kind}]`（与 `BtLayaAskTask.ParseBindings` 同形）。 */
+  function parseBindings(spec) {
+    var list = [];
+    String(spec === undefined || spec === null ? '' : spec).split(',').forEach(function (part) {
+      var text = part.trim();
+      if (!text) return;
+      var fields = text.split(':');
+      if (fields.length < 3) return;
+      list.push({ key: fields[0].trim(), question: fields[1].trim(), kind: fields[2].trim() });
+    });
+    return list;
+  }
+
+  function labelEnum(label, current, allowed, commit, spec) {    var row = document.createElement('div');
     row.className = 'prop-row';
     var text = document.createElement('label');
     text.textContent = label + (spec && spec.required ? ' *' : '');
@@ -6038,6 +6249,28 @@
       + '  ' + (item.duration || 0) + 's/' + (item.frames || 0) + L('ui.239', '帧');
   }
 
+  /**
+   * 问题库清单（`/api/banks`）：`Task.LayaAsk` 的两个属性靠它变成"照着点"。
+   * 与 `loadActions()` 同一条纪律：**失败了也要把旧清单留着**，并且把原因说出来
+   * （问题库目录里一个库都没有是常见状态 —— 用户刚清过、或者只跑过编辑器）。
+   */
+  function loadBanks() {
+    return api('/api/banks').then(function (data) {
+      state.banks = (data && data.banks) || [];
+      renderInspector();
+      var usable = state.banks.filter(function (bank) { return !bank.error; }).length;
+      var broken = state.banks.length - usable;
+      if (broken > 0 && $('statusText')) {
+        setStatus(I18n.format("st.c120", '问题库 {0} 个可用 / {1} 个解析不了',
+          usable, broken));
+      }
+      return data;
+    }).catch(function () {
+      state.banks = [];
+      return null;
+    });
+  }
+
   function loadActions() {
     return api('/api/actions').then(function (data) {
       state.actions = data.actions || [];
@@ -7010,6 +7243,7 @@
     Promise.all([loadMeta(), loadSchema()])
       .then(loadPackages)
       .then(loadActions)
+      .then(loadBanks)
       .then(function () {
         if (state.packages.length) openPackage(state.packages[0].path);
         else setStatus(L('st.061', '没有找到任何 .scbtpak —— 先点"新建"造一棵，或启动游戏让它安装出厂示例。'));
@@ -7349,6 +7583,9 @@
       treeRunState: treeRunState,
       updateTreeRunUi: updateTreeRunUi,
       refreshGameStatusQuiet: refreshGameStatusQuiet,
+      // 问题库清单：真浏览器自检里要**确定性地**先把它拉回来再断言下拉
+      // （启动链上的那次可能被自检自己的 fetch 桩挡掉，那正是"桩与真实启动时序打架"的经典坑）
+      loadBanks: loadBanks,
       setPaused: setPaused,
       playAction: playAction,
       launchGame: launchGame,

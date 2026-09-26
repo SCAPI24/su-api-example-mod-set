@@ -83,12 +83,84 @@ namespace PlayerAiMod
                     blackboard.Set(new AiBlackboardKey<int>(Key), IntValue);
                     return BtResult.Succeeded;
                 case "string":
-                    blackboard.Set(new AiBlackboardKey<string>(Key), StringValue ?? string.Empty);
+                    // **写空字符串 = 清掉这个键**（不是"写一个空值进去"）。
+                    //
+                    // 为什么这条规则必须有：`Blackboard` 装饰器的 `IsSet`/`IsNotSet` 看的是
+                    // "键在不在"，而"写了空串"的键**仍然在** —— 于是"清失败标记"这个动作
+                    // 闭不上门，异常分支会一直命中、每 tick 重问一次（实机踩过：旗标摆好了没人消费，
+                    // 看着就是"异常处理没反应"）。真正清掉才符合所有人的直觉。
+                    string text = StringValue ?? string.Empty;
+                    if (text.Length == 0)
+                        blackboard.Remove(new AiBlackboardKey<string>(Key));
+                    else
+                        blackboard.Set(new AiBlackboardKey<string>(Key), text);
                     return BtResult.Succeeded;
                 default:
                     blackboard.Set(new AiBlackboardKey<float>(Key), FloatValue);
                     return BtResult.Succeeded;
             }
+        }
+    }
+
+    /// <summary>
+    /// **黑板计数器**（`+= delta` / 清零）：给树一个"连续发生了几次"的记忆。
+    ///
+    /// 为什么必须有它（而不是让模型自己记住）：§5.4 的实测结论之一，也是实机踩到的稳定循环 ——
+    /// 摘要不变时模型会**每次都给同一个答案**（PC 上实测：`aim=none` + `sleep=exhausted` → 连答 7 次
+    /// `goal=sleep`，而该动作在当前局面不可能成功）。**失败标记不许进摘要**（plan G22），
+    /// 所以"连败几次了"这件事只能活在树里：计数器 + `Blackboard(key, >=, N)` 装饰器 = 反射层兜底，
+    /// 由 C# 确定性执行，不经过模型。
+    ///
+    /// 语义（三条都要，否则用起来会咬人）：
+    ///   · 键**缺失 = 0**（第一次 `+= 1` 得到 1，不需要初始化节点）；
+    ///   · `clear = true` 时**直接清零**（不叠加）；
+    ///   · 键里存的不是 int（例如被写成 string）→ 当 0 处理，**不抛异常**（树里的数据是运行时可变的）。
+    /// </summary>
+    public sealed class BtCounterTask : BtTaskNode
+    {
+        /// <summary>计数器所在的黑板键。</summary>
+        public string Key { get; set; }
+
+        /// <summary>每次执行加多少（可为负）。</summary>
+        public int Delta { get; set; } = 1;
+
+        /// <summary>true = 直接清零（忽略 <see cref="Delta"/>）。</summary>
+        public bool Clear { get; set; }
+
+        /// <summary>清零时是否**删掉键**（而不是写 0）。默认写 0，便于 `>= 3` 这类比较继续成立。</summary>
+        public bool RemoveWhenClear { get; set; }
+
+        /// <summary>最近一次的值（`ai.status` / 日志复盘用）。</summary>
+        public int LastValue { get; private set; }
+
+        public override string NodeType
+        {
+            get { return "Task.Counter"; }
+        }
+
+        protected override BtResult OnExecute(BtContext context)
+        {
+            AiBlackboard blackboard = context.Blackboard;
+            if (blackboard == null || string.IsNullOrEmpty(Key))
+                return BtResult.Failed;
+
+            if (Clear && RemoveWhenClear)
+            {
+                blackboard.Remove(new AiBlackboardKey<int>(Key));
+                LastValue = 0;
+                context.Log("Counter: " + Key + " removed");
+                return BtResult.Succeeded;
+            }
+
+            int current;
+            if (!blackboard.TryGet(new AiBlackboardKey<int>(Key), out current))
+                current = 0;
+
+            LastValue = Clear ? 0 : current + Delta;
+            blackboard.Set(new AiBlackboardKey<int>(Key), LastValue);
+            context.Log("Counter: " + Key + " = " + LastValue
+                + (Clear ? " (cleared)" : " (was " + current + ")"));
+            return BtResult.Succeeded;
         }
     }
 

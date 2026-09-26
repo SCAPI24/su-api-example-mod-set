@@ -22,6 +22,7 @@ namespace PlayerAiMod
         public static readonly string[] CommandNames =
         {
             "ai.status",
+            "ai.hud",
             "ai.pause",
             "ai.resume",
             "ai.enable",
@@ -50,6 +51,29 @@ namespace PlayerAiMod
             "ai.action.validate",
             "ai.action.play",
             "ai.action.stop",
+            "ai.action.script.list",
+            "ai.action.script.validate",
+            "ai.action.script.run",
+            "ai.action.script.stop",
+            "ai.action.script.status",
+            "ai.asset.status",
+            "ai.asset.list",
+            "ai.asset.load",
+            "ai.asset.save",
+            "ai.asset.drop",
+            "ai.asset.autosave",
+            "ai.asset.restore",
+            "ai.asset.retry",
+            "ai.asset.conflict",
+            "ai.pool.on",
+            "ai.pool.off",
+            "ai.pool.status",
+            "ai.pool.bind",
+            "ai.laya.status",
+            "ai.laya.review",
+            "ai.laya.ask",
+            "state.digest",
+            "ai.action.script.verbs",
             "ai.tree.snapshot",
             "ai.logs",
             "bt.selftest"
@@ -60,6 +84,7 @@ namespace PlayerAiMod
             new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
                 ["ai.status"] = "AI 总览：模式、暂停、行为树来源与哈希、活动节点路径、黑板、重载统计",
+            ["ai.hud"] = "屏幕左上角那行状态（on=true|false 开关；不传参数只查询）",
                 ["ai.pause"] = "暂停行为树（保留运行态、释放 AI 输入）",
                 ["ai.resume"] = "继续行为树（不重置运行态）",
                 ["ai.enable"] = "接管本端角色（允许 AI 产生动作）",
@@ -88,6 +113,29 @@ namespace PlayerAiMod
                 ["ai.action.validate"] = "校验一个动作包（结构 + 能否回放；name=…）",
                 ["ai.action.play"] = "直接回放动作包（name=… [repeat=]）—— 给人测试包用",
                 ["ai.action.stop"] = "停止回放并释放输入",
+                ["ai.action.script.list"] = "列出动作脚本（.aeact：步骤数、verb 序列、解析状态、哈希）",
+                ["ai.action.script.validate"] = "只校验一条动作脚本（name=…）",
+                ["ai.action.script.run"] = "直接跑一条动作脚本（name=… [repeat=] [totalTimeoutMs=]）",
+                ["ai.action.script.stop"] = "停止脚本播放并释放输入",
+                ["ai.action.script.status"] = "动作脚本服务的现状（宿主/执行器/脚本目录/正在跑的脚本）",
+                ["ai.asset.status"] = "资源库现状（内存库/自动缓存/活动资源）；cacheDrop=true 清掉缓存",
+                ["ai.asset.list"] = "三态视图：磁盘版 / 内存版（dirty）/ 缓存版（哪个更新、为什么）",
+                ["ai.asset.load"] = "把磁盘上的包读进内存库（name=…）——读进来才算加载",
+                ["ai.asset.save"] = "把内存版存成正式包（name=… [dir=… 默认 PlayerAi/Saves] [overwrite=true 会先备份上一代]）",
+                ["ai.asset.drop"] = "丢弃内存改动，回到最近载入的磁盘版（活树一起退回）",
+                ["ai.asset.autosave"] = "立刻把内存版写进自动缓存（.autosave 影子副本）",
+                ["ai.asset.restore"] = "按恢复决议把缓存/磁盘版装回内存库（[name=…] [all=true]）",
+                ["ai.asset.retry"] = "拒包/重取现状（四码分流/退避/熔断）；可 enabled= maxAttempts= reset= resetAll=true",
+                ["ai.asset.conflict"] = "重载冲突（G25：磁盘版撞上未保存的内存版）；处置 mode=disk|keep|saveAs [newName=]",
+                ["ai.pool.on"] = "启用池调度（[pool=a,b,c] [sequence=a,b,c]）——默认关闭",
+                ["ai.pool.off"] = "关闭池调度（保留池配置）",
+                ["ai.pool.status"] = "行为树池现状与下一次调度决策（只读；[pool=a,b,c] 指定池）",
+                ["ai.pool.bind"] = "相位 → 树包绑定（[front=demo.front,world=demo.laya] [clear=true]）：相位一变就让池切过去，两套树包各管一段",
+                ["ai.laya.status"] = "Laya 服务现状（配置/密钥来源掩码/在途/缓存/失败计数）",
+                ["ai.laya.review"] = "判定复盘（P4）：最近几次问 Laya 的聚合 + 明细 + markdown/digest 抽样表（count/clear/format）",
+                ["ai.laya.ask"] = "手动问一次 Laya（questions=库名 [only=id,…] [digest=字面摘要]）——同步，仅调试/调参用",
+                ["state.digest"] = "把当前状态编译成喂给 Laya 的一行摘要（budget= 可选）",
+                ["ai.action.script.verbs"] = "列出 verb 词表与参数（编辑器物料区、LLM 生成脚本读它）",
                 ["ai.tree.snapshot"] = "活动节点快照（路径 + 每个节点状态；P3 编辑器实时监视复用）",
                 ["ai.logs"] = "事件日志：count=… 看最近若干条，clear=true 清空",
                 ["bt.selftest"] = "跑内核 + 包格式 + 命令层的自检，返回逐条结果"
@@ -100,6 +148,7 @@ namespace PlayerAiMod
                 StringComparer.OrdinalIgnoreCase)
             {
                 ["ai.status"] = Status,
+                ["ai.hud"] = Hud,
                 ["ai.pause"] = Pause,
                 ["ai.resume"] = Resume,
                 ["ai.enable"] = Enable,
@@ -128,6 +177,29 @@ namespace PlayerAiMod
                 ["ai.action.validate"] = ActionValidate,
                 ["ai.action.play"] = ActionPlay,
                 ["ai.action.stop"] = ActionStop,
+                ["ai.action.script.list"] = ActionScriptList,
+                ["ai.action.script.validate"] = ActionScriptValidate,
+                ["ai.action.script.run"] = ActionScriptRun,
+                ["ai.action.script.stop"] = ActionScriptStop,
+                ["ai.action.script.status"] = ActionScriptStatus,
+                ["ai.asset.status"] = AssetStatusCommand,
+                ["ai.asset.list"] = AssetListCommand,
+                ["ai.asset.load"] = AssetLoadCommand,
+                ["ai.asset.save"] = AssetSaveCommand,
+                ["ai.asset.drop"] = AssetDropCommand,
+                ["ai.asset.autosave"] = AssetAutoSaveCommand,
+                ["ai.asset.restore"] = AssetRestoreCommand,
+                ["ai.asset.retry"] = AssetRetryCommand,
+                ["ai.asset.conflict"] = AssetConflictCommand,
+                ["ai.pool.on"] = PoolControlCommand,
+                ["ai.pool.off"] = PoolControlCommand,
+                ["ai.pool.status"] = PoolStatusCommand,
+                ["ai.pool.bind"] = PoolBindCommand,
+                ["ai.laya.status"] = LayaStatusCommand,
+                ["ai.laya.review"] = LayaReviewCommand,
+                ["ai.laya.ask"] = LayaAskCommand,
+                ["state.digest"] = StateDigestCommand,
+                ["ai.action.script.verbs"] = ActionScriptVerbs,
                 ["ai.tree.snapshot"] = TreeSnapshot,
                 ["ai.logs"] = Logs,
                 ["bt.selftest"] = SelfTest
@@ -164,6 +236,13 @@ namespace PlayerAiMod
             result["paused"] = context.Paused;
             result["pauseReason"] = context.PauseReason;
             result["inputAvailable"] = context.InputAvailable;
+            // §4.13：相位是"树为什么不动"的第一个该看的字段 —— 世界外/过渡态都是正常状态。
+            result["phase"] = context.Phase;
+            result["phaseChanges"] = context.PhaseChanges;
+            // 闸门：`gateActive=true` 时树**一拍都没走**（过渡态），这是正常状态而不是卡死；
+            // `gatedFrames` 累计值是用来证明"闸门真的拦过帧"的硬证据。
+            result["gateActive"] = context.PhaseGateActive;
+            result["gatedFrames"] = context.PhaseGatedFrames;
 
             IAiTreeHost host = context.Host;
             var hostInfo = new Dictionary<string, object>(StringComparer.Ordinal);
@@ -357,8 +436,30 @@ namespace PlayerAiMod
             };
         }
 
-        private static IAiRecordingControl RequireRecording(IAiCommandContext context, string command)
+        /// <summary>
+        /// `ai.hud [on=true|false]`：屏幕左上角那行 AI 状态（plan G19）。
+        ///
+        /// 为什么要给命令：① 人能关掉它（不想看就别看）；② **它是可验证的** ——
+        /// 自动化能通过 `ui --all` 读到那个控件的文本，于是"AI 现在是什么状态"
+        /// 这件事第一次有了机器可读的出口（以前只能读事件日志倒推）。
+        /// 只改显示，不碰任何决策状态。
+        /// </summary>
+        private static object Hud(AiCommandRequest request, IAiCommandContext context)
         {
+            PlayerAiRuntime runtime = PlayerAiRuntime.Instance;
+            if (runtime == null)
+                throw new AiCommandException("not_ready", "PlayerAi runtime is not available");
+
+            AiHudOverlay hud = runtime.Hud;
+            if (request.Has("on"))
+                hud.Enabled = request.GetBoolean("on", true);
+
+            Dictionary<string, object> result = hud.Describe();
+            result["line"] = hud.LastText;
+            return result;
+        }
+
+        private static IAiRecordingControl RequireRecording(IAiCommandContext context, string command)        {
             if (context.Recording == null)
             {
                 throw new AiCommandException("not_ready",
@@ -686,6 +787,27 @@ namespace PlayerAiMod
             if (result.Switched)
                 host.Enabled = true;
 
+            // 拒包 / 重取（§4.12）：切不过去要分流（缺文件退避重取 / 校验不过停手）
+            AssetFailureDecision decision = null;
+            if (PlayerAiRuntime.Instance != null)
+            {
+                if (result.Switched)
+                {
+                    PlayerAiRuntime.Instance.NoteAssetSuccess(name);
+                }
+                else
+                {
+                    PackageReport report = ValidateQuietly(context.Reloader, name);
+                    decision = PlayerAiRuntime.Instance.NoteAssetFailure(name,
+                        AssetFailureClassifier.TextOf(report)
+                            ?? (result.Issues != null && result.Issues.Count > 0
+                                ? string.Join(" | ", result.Issues.ToArray())
+                                : (result.Reason ?? "switch failed")),
+                        AssetFailureClassifier.DetailOf(report) ?? result.Reason,
+                        AssetFailureClassifier.ClassifyReport(report));
+                }
+            }
+
             var response = new Dictionary<string, object>(StringComparer.Ordinal)
             {
                 ["switched"] = result.Switched,
@@ -700,7 +822,11 @@ namespace PlayerAiMod
                 ["compileMs"] = Math.Round(result.CompileMilliseconds, 3),
                 ["migration"] = result.Migration != null ? result.Migration.Describe() : null,
                 ["mode"] = host.Mode.ToWireName(),
-                ["issues"] = result.Issues
+                ["issues"] = result.Issues,
+                ["failure"] = decision != null ? decision.Code : null,
+                ["retry"] = decision != null ? decision.StateName() : null,
+                ["retryInMs"] = decision != null && decision.Retry
+                    ? (int)Math.Round(decision.DelaySeconds * 1000.0) : 0
             };
             return response;
         }
@@ -808,6 +934,15 @@ namespace PlayerAiMod
             if (context.EventLog != null)
                 context.EventLog.Write(result.Applied ? "edit" : "edit-reject", result.Describe());
 
+            // 资源库（P6）：内存被改了 → 置 dirty 标记（来源 = AI），自动缓存会按节流把它抓进缓存。
+            // 放在这里而不是四个命令各写一遍：四条编辑路径共用同一个出口，漏一条就等于"改了却不缓存"。
+            if (result.Applied)
+            {
+                PlayerAiRuntime runtime = PlayerAiRuntime.Instance;
+                if (runtime != null)
+                    runtime.NoteTreeEdited(AssetOrigin.Ai);
+            }
+
             return new Dictionary<string, object>(StringComparer.Ordinal)
             {
                 ["applied"] = result.Applied,
@@ -820,7 +955,7 @@ namespace PlayerAiMod
                     && context.Host.Tree.IsDirty,
                 ["issues"] = result.Issues,
                 ["note"] = "in-memory change only; the original .scbtpak is untouched "
-                    + "(use ai.tree.reload to discard, ai.tree.export to save as a new package)"
+                    + "(use ai.asset.drop to discard, ai.asset.save to write a package)"
             };
         }
 
@@ -1123,8 +1258,7 @@ namespace PlayerAiMod
             };
         }
 
-        private static object ActionStop(AiCommandRequest request, IAiCommandContext context)
-        {
+        private static object ActionStop(AiCommandRequest request, IAiCommandContext context)        {
             IAiActionPlayer player = RequireActionPlayer(context, request.Command);
             string result = player.Stop();
             return new Dictionary<string, object>(StringComparer.Ordinal)
@@ -1132,6 +1266,1048 @@ namespace PlayerAiMod
                 ["result"] = result,
                 ["status"] = player.Status()
             };
+        }
+
+        // ---------------------------------------------------------------- 动作脚本（P1）
+
+        /// <summary>
+        /// 动作脚本服务（`ai.action.script.*` 的实现）。
+        /// 走 <see cref="GameActionServices.Ensure"/>：静态装配点被清掉时**自愈重建**
+        /// （实机踩过"同一份 DLL，重启后偶尔全报 not_ready"）；运行时也没了才报 not_ready。
+        /// </summary>
+        private static GameActionServices RequireScriptServices(string command)
+        {
+            GameActionServices services = GameActionServices.Ensure();
+            if (services == null)
+            {
+                throw new AiCommandException("not_ready",
+                    command + " needs the action script services (PlayerAiMod runtime not installed)");
+            }
+            return services;
+        }
+
+        /// <summary>列出脚本目录里能找到的动作脚本（带解析状态）。</summary>
+        private static object ActionScriptList(AiCommandRequest request, IAiCommandContext context)
+        {
+            GameActionServices services = RequireScriptServices(request.Command);
+            List<ActionScriptEntry> entries = services.Library.List();
+
+            var items = new List<Dictionary<string, object>>();
+            int valid = 0;
+            for (int i = 0; i < entries.Count; i++)
+            {
+                ActionScriptEntry entry = entries[i];
+                if (entry.Ok)
+                    valid++;
+                var item = new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    ["name"] = entry.Name,
+                    ["path"] = entry.Path,
+                    ["valid"] = entry.Ok,
+                    ["steps"] = entry.StepCount,
+                    ["hash"] = entry.Hash,
+                    ["error"] = entry.Error
+                };
+                if (entry.Script != null)
+                {
+                    item["id"] = entry.Script.Id;
+                    item["guards"] = entry.Script.Guards.Count;
+                    item["onFail"] = entry.Script.OnFail;
+                    var verbs = new List<string>();
+                    for (int s = 0; s < entry.Script.Steps.Count; s++)
+                        verbs.Add(entry.Script.Steps[s].Verb);
+                    item["verbs"] = verbs;
+                }
+                items.Add(item);
+            }
+
+            return new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["directories"] = new List<string>(services.Library.Directories),
+                ["count"] = items.Count,
+                ["valid"] = valid,
+                ["scripts"] = items
+            };
+        }
+
+        /// <summary>只校验不执行（编辑器保存前预检 / 人排查）。</summary>
+        private static object ActionScriptValidate(AiCommandRequest request, IAiCommandContext context)
+        {
+            GameActionServices services = RequireScriptServices(request.Command);
+            string name = request.GetString("name", null);
+            if (string.IsNullOrEmpty(name))
+                name = request.GetString("path", null);
+            if (string.IsNullOrEmpty(name))
+                throw new AiCommandException("invalid_argument", "'name' is required.");
+            return services.Library.Validate(name);
+        }
+
+        /// <summary>直接跑一条脚本（不经行为树），给人/LLM 验证"这串积木能不能跑通"。</summary>
+        private static object ActionScriptRun(AiCommandRequest request, IAiCommandContext context)
+        {
+            RequireScriptServices(request.Command);
+            PlayerAiRuntime runtime = PlayerAiRuntime.Instance;
+            if (runtime == null)
+                throw new AiCommandException("not_ready", "PlayerAi runtime is not available");
+
+            string name = request.GetString("name", null);
+            if (string.IsNullOrEmpty(name))
+                name = request.GetString("path", null);
+            if (string.IsNullOrEmpty(name))
+                throw new AiCommandException("invalid_argument", "'name' is required.");
+
+            int repeat = Math.Max(1, request.GetInteger("repeat", 1));
+            int totalTimeoutMs = Math.Max(0, request.GetInteger("totalTimeoutMs", 0));
+
+            string result = runtime.ScriptRuntime.Play(name, repeat, totalTimeoutMs);
+            return new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["result"] = result,
+                ["status"] = runtime.ScriptRuntime.Status()
+            };
+        }
+
+        private static object ActionScriptStop(AiCommandRequest request, IAiCommandContext context)
+        {
+            PlayerAiRuntime runtime = PlayerAiRuntime.Instance;
+            if (runtime == null)
+                throw new AiCommandException("not_ready", "PlayerAi runtime is not available");
+            bool stopped = runtime.ScriptRuntime.Stop();
+            return new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["result"] = stopped ? "stopped" : "nothing is playing",
+                ["status"] = runtime.ScriptRuntime.Status()
+            };
+        }
+
+        private static object ActionScriptStatus(AiCommandRequest request, IAiCommandContext context)
+        {
+            GameActionServices services = RequireScriptServices(request.Command);
+            PlayerAiRuntime runtime = PlayerAiRuntime.Instance;
+
+            var result = new Dictionary<string, object>(StringComparer.Ordinal);
+            result["services"] = services.Describe();
+            result["verbs"] = new List<string>(ScriptCompiler.VerbNames);
+            if (runtime != null)
+            {
+                result["player"] = runtime.ScriptRuntime.Status();
+                result["root"] = runtime.ResolveActionDirectory();
+            }
+            return result;
+        }
+
+        /// <summary>列出 verb 词表（编辑器物料区与 LLM 生成脚本时读它）。</summary>
+        /// <summary>
+        /// `state.digest`：把当前状态编译成**喂给 Laya 的一行摘要**（plan §4.2）。
+        /// 人/LLM/编辑器都靠它看清"模型实际看到的是什么" —— 调判准的第一步。
+        /// </summary>
+        /// <summary>
+        /// `ai.pool.status`：行为树池的现状与**下一次调度决策**（plan §4.8）。
+        /// 只读：它按"当前活动树状态"算一次决策给人看，**不真的切树**
+        /// （真正的切换要等 S1 的步骤边界，由运行时执行）。
+        /// </summary>
+        private static object PoolStatusCommand(AiCommandRequest request, IAiCommandContext context)
+        {
+            PlayerAiRuntime runtime = PlayerAiRuntime.Instance;
+            if (runtime == null)
+                throw new AiCommandException("not_ready", "PlayerAi runtime is not available");
+
+            var pool = runtime.Pool;
+            var keys = new List<string>();
+
+            string configured = request.GetString("pool", null);
+            if (!string.IsNullOrEmpty(configured))
+            {
+                string[] parts = configured.Split(',');
+                for (int i = 0; i < parts.Length; i++)
+                {
+                    string key = parts[i].Trim();
+                    if (key.Length > 0)
+                        keys.Add(key);
+                }
+            }
+            else
+            {
+                // 默认：包目录里能找到的树包（人/编辑器也可以显式传 pool=）
+                try
+                {
+                    List<string> found = runtime.Roots != null
+                        ? runtime.Roots.ListFiles(PackageRoots.Extension)
+                        : null;
+                    if (found != null)
+                    {
+                        for (int i = 0; i < found.Count; i++)
+                            keys.Add(System.IO.Path.GetFileNameWithoutExtension(found[i]));
+                    }
+                }
+                catch (Exception)
+                {
+                    // 列不出来就当池空（下面会如实报 safeIdle）
+                }
+            }
+            // 显式传了 pool= 才重装池；否则**保持运行时现有的池**（别把 ai.pool.on 装的池冲掉），
+            // 只在"池空"时给一个默认（包目录里的树包）方便查看。
+            if (!string.IsNullOrEmpty(configured))
+                pool.SetPool(keys);
+            else if (pool.Pool.Count == 0)
+                pool.SetPool(keys);
+
+            // 预编译常驻状态（池的"能不能立刻切"看这个）
+            var prepared = new List<string>();
+            if (runtime.Library != null)
+            {
+                IReadOnlyList<PreparedTree> ready = runtime.Library.Prepared;
+                for (int i = 0; i < ready.Count; i++)
+                    prepared.Add(ready[i].Key + (ready[i].Ready ? "" : "(not ready)"));
+            }
+
+            IAiTreeHost host = runtime.ResolveTreeHost();
+            bool hasTree = host != null && host.HasTree;
+            bool running = hasTree && !host.Tree.IsRunning;
+
+            // 只读演示：假设"活动树刚跑完且成功"，看它会怎么调度。
+            // ⚠️ 必须用 `Peek`（不改计数、**不消费 `pool.next`**）—— 以前调 `Decide`，
+            //    于是"看一眼状态"会把别人写的 `pool.next` 吃掉、还把 switch 计数加上去，
+            //    调度器的认知与真实活动树就此分叉（实机踩过）。
+            PoolDecision decision = pool.Peek(host != null ? host.Blackboard : null,
+                hasTree, false, true, false);
+
+            return new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["pool"] = pool.Describe(),
+                ["prepared"] = prepared,
+                ["host"] = host != null ? host.HostName : null,
+                ["hasTree"] = hasTree,
+                ["treeRunning"] = hasTree && host.Tree.IsRunning,
+                ["wouldDo"] = decision.Describe(),
+                ["nextEntry"] = decision.Entry != null ? decision.Entry.ToString() : null,
+                ["blackboardKeys"] = new List<string> { PoolScheduler.KeyNext, PoolScheduler.KeySequence, PoolScheduler.KeyFallback },
+                // 事件日志自身的计数：与 ai.logs 的 entries 对照即可判断"写入到底有没有落到同一个实例上"
+                ["eventLogWriteCount"] = runtime.EventLog.WriteCount,
+                ["eventLogRecent"] = runtime.EventLog.Recent(0).Count,
+                ["eventLogLastError"] = runtime.EventLog.LastError,
+                ["eventLogEnabled"] = runtime.EventLog.Enabled
+            };
+        }
+        /// <summary>
+        /// `ai.pool.on/off [pool=a,b,c] [sequence=a,b,c]`：开关池调度并（可选）装池。
+        /// **默认关闭**：不打开时运行时行为与以前完全一致。
+        /// </summary>
+        private static object PoolControlCommand(AiCommandRequest request, IAiCommandContext context)
+        {
+            PlayerAiRuntime runtime = PlayerAiRuntime.Instance;
+            if (runtime == null)
+                throw new AiCommandException("not_ready", "PlayerAi runtime is not available");
+
+            bool enable = string.Equals(request.Command, "ai.pool.on", StringComparison.OrdinalIgnoreCase);
+            string pool = request.GetString("pool", null);
+            if (!string.IsNullOrEmpty(pool))
+            {
+                var keys = new List<string>();
+                string[] parts = pool.Split(',');
+                for (int i = 0; i < parts.Length; i++)
+                {
+                    string key = parts[i].Trim();
+                    if (key.Length > 0)
+                        keys.Add(key);
+                }
+                runtime.Pool.SetPool(keys);
+            }
+
+            string sequence = request.GetString("sequence", null);
+            if (!string.IsNullOrEmpty(sequence))
+            {
+                var keys = new List<string>();
+                string[] parts = sequence.Split(',');
+                for (int i = 0; i < parts.Length; i++)
+                {
+                    string key = parts[i].Trim();
+                    if (key.Length > 0)
+                        keys.Add(key);
+                }
+                runtime.Pool.SetSequence(keys);
+            }
+
+            // 装池但没给顺序时：预编译常驻（把切换成本提前付掉，切换才是"毫秒级"）
+            if (enable && runtime.Pool.Pool.Count > 0 && runtime.Library != null)
+            {
+                for (int i = 0; i < runtime.Pool.Pool.Count; i++)
+                {
+                    try
+                    {
+                        runtime.Library.Prepare(runtime.Pool.Pool[i].Key);
+                    }
+                    catch (Exception)
+                    {
+                        // 预编译失败不阻塞启用（切换时会再试并如实报错）
+                    }
+                }
+            }
+
+            runtime.PoolEnabled = enable;
+            runtime.EventLog.Write(enable ? "pool-on" : "pool-off", runtime.Pool.DescribePool());
+            return new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["enabled"] = runtime.PoolEnabled,
+                ["pool"] = runtime.Pool.Describe()
+            };
+        }
+        /// <summary>
+        /// `ai.pool.bind [front=demo.front,world=demo.laya] [clear=true]`：**相位 → 树包**绑定（§4.13）。
+        ///
+        /// 语义（三条都要，否则会咬人）：
+        ///   · 只写 `pool.next`，**换树仍由池在步骤边界做**（D9：换树只有一个来源；S1：不打断正在跑的一步）；
+        ///   · **设置时立刻按当前相位应用一次**（否则"开局就在世界外"永远等不到相位边沿）；
+        ///   · 相位名写错、或池里没有那棵树 → **如实报错/记一条跳过原因**，不静默。
+        /// </summary>
+        private static object PoolBindCommand(AiCommandRequest request, IAiCommandContext context)
+        {
+            PlayerAiRuntime runtime = RequireRuntime();
+            bool clear = request.GetBoolean("clear", false);
+            string spec = request.GetString("binding", request.GetString("bind", null));
+
+            if (!clear && string.IsNullOrEmpty(spec))
+            {
+                // 只读：现在绑的是什么、当前相位会选谁
+                PhaseTreeBinding current = runtime.PhaseBinding;
+                string wouldPick = runtime.ApplyPhaseBinding(null);
+                return new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    ["binding"] = current != null ? current.Describe() : null,
+                    ["phase"] = runtime.Phase,
+                    ["wouldSwitchTo"] = wouldPick,
+                    ["pool"] = runtime.Pool.Describe()
+                };
+            }
+
+            PhaseTreeBinding binding;
+            string error;
+            if (!PhaseTreeBinding.TryParse(clear ? string.Empty : spec, out binding, out error))
+                throw new AiCommandException("invalid_argument", error);
+
+            runtime.PhaseBinding = binding.Count > 0 ? binding : null;
+
+            // **绑定在管事时，池不许自己往下轮**：否则池会在每次成功后按自然顺序换树，
+            // 把绑定刚切过去的那棵树又换掉（实机踩过）。关掉"自动前进"之后，
+            // 只有明确来源能动树：pool.next（绑定写的）/ pool.fallback / 显式 sequence。
+            // 可以显式覆盖：`autoAdvance=true` 保持轮换（例如想"世界内轮流跑几棵"）。
+            bool? autoAdvance = request.Has("autoAdvance")
+                ? request.GetBoolean("autoAdvance", true) : (bool?)null;
+            if (autoAdvance.HasValue)
+                runtime.Pool.AutoAdvance = autoAdvance.Value;
+            else
+                runtime.Pool.AutoAdvance = runtime.PhaseBinding == null;
+
+            runtime.EventLog.Write("pool-bind-set", (runtime.PhaseBinding != null
+                ? runtime.PhaseBinding.Describe() : "(cleared)")
+                + " autoAdvance=" + runtime.Pool.AutoAdvance);
+
+            string applied = runtime.ApplyPhaseBinding(null);
+            return new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["binding"] = runtime.PhaseBinding != null ? runtime.PhaseBinding.Describe() : null,
+                ["phase"] = runtime.Phase,
+                ["applied"] = applied,
+                ["pool"] = runtime.Pool.Describe()
+            };
+        }
+
+        // ---------------------------------------------------------------- 资源库（P6：存盘 / 内存 / 临时缓存）
+        /// <summary>
+        /// `ai.asset.status`：**资源库总览** —— 内存库里有几条、活动资源是谁、
+        /// 自动缓存（`&lt;实例根&gt;/PlayerAi/.autosave/`）的版本头与最近一次被拒的原因。
+        /// 只读；`cacheDrop=true` 才清掉缓存（**注意不是 `drop`** —— `ai.asset.drop` 是"丢弃内存改动"）。
+        /// </summary>
+        private static object AssetStatusCommand(AiCommandRequest request, IAiCommandContext context)
+        {
+            PlayerAiRuntime runtime = RequireRuntime();
+            MemoryAssetStore store = runtime.Assets;
+
+            var result = new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["instanceRoot"] = runtime.AssetInstanceRoot,
+                ["packageFolder"] = store != null && store.Roots != null && store.Roots.InstanceRoot != null
+                    ? store.Roots.InstanceRoot.Path : null,
+                ["autoSaveSeconds"] = PlayerAiConfig.AssetAutoSaveSeconds,
+                ["active"] = runtime.AssetActiveName,
+                ["dirtyPending"] = runtime.AssetDirtyPending,
+                ["cache"] = runtime.AssetCache.Describe()
+            };
+
+            if (store != null)
+            {
+                result["kind"] = store.Kind;
+                result["records"] = store.DescribeRecords();
+                result["dirtyCount"] = store.DirtyCount;
+            }
+
+            // G25：待处置的重载冲突（编辑器据此弹"用磁盘覆盖 / 把内存另存为新包"）
+            PackageReloader reloader = runtime.Reloader;
+            result["conflicts"] = reloader != null
+                ? reloader.DescribeConflicts() : new List<Dictionary<string, object>>();
+            result["conflictCount"] = reloader != null ? reloader.ConflictCount : 0;
+
+            if (request.GetBoolean("cacheDrop", false))
+            {
+                string error;
+                bool dropped = runtime.AssetCache.TryDrop(out error);
+                result["cacheDropped"] = dropped;
+                result["cacheDropError"] = error;
+                if (runtime.EventLog != null)
+                    runtime.EventLog.Write("autosave-drop", dropped ? "ok" : (error ?? "failed"));
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// `ai.asset.list`：**三态视图** —— 每条资源同时给出"磁盘版 / 内存版（dirty）/ 缓存版"，
+        /// 以及恢复决议（用哪一份、为什么）。编辑器物料区的角标与"将用缓存（新 X 分钟）"就吃这份数据。
+        /// </summary>
+        private static object AssetListCommand(AiCommandRequest request, IAiCommandContext context)
+        {
+            PlayerAiRuntime runtime = RequireRuntime();
+            MemoryAssetStore store = RequireAssets(runtime);
+
+            List<Dictionary<string, object>> records = runtime.DescribeAssets();
+            var result = new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["kind"] = store.Kind,
+                ["active"] = runtime.AssetActiveName,
+                ["dirtyCount"] = store.DirtyCount,
+                ["manualSaveFolder"] = PackageRoots.SavesDirectoryFor(runtime.AssetInstanceRoot),
+                ["records"] = records
+            };
+            return result;
+        }
+
+        /// <summary>
+        /// `ai.asset.load`：把磁盘上的包**读进内存库**（plan §4.11「读进来才算加载」）。
+        /// 只是"装进库"，**不切换活动树** —— 切树仍然是 `ai.tree.load` 的事。
+        /// </summary>
+        private static object AssetLoadCommand(AiCommandRequest request, IAiCommandContext context)
+        {
+            PlayerAiRuntime runtime = RequireRuntime();
+            MemoryAssetStore store = RequireAssets(runtime);
+
+            string name = AssetNameFrom(request, null);
+            if (string.IsNullOrEmpty(name))
+                throw new AiCommandException("invalid_argument", "'name' is required (the package to load)");
+
+            string error;
+            AssetRecord record = store.Load(name, out error);
+            if (record == null)
+                throw new AiCommandException("pkg_missing", error ?? "load failed");
+
+            runtime.EventLog.Write("asset-load", record.Describe());
+            return new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["loaded"] = true,
+                ["name"] = record.Name,
+                ["path"] = record.SourcePath,
+                ["hash"] = AssetRecord.Short(record.MemoryHash),
+                ["bytes"] = record.MemoryByteCount,
+                ["dirty"] = record.Dirty,
+                ["readIntoMemory"] = true
+            };
+        }
+
+        /// <summary>
+        /// `ai.asset.save`：把**内存版**存成正式包（手动存档）。
+        ///
+        /// 默认落点是 `&lt;实例根&gt;/PlayerAi/Saves/`（第 3 层，"人存档"），
+        /// 想直接覆盖正在跑的那个包得显式 `dir=` 指到包目录，并且目标已存在时还需要
+        /// `overwrite=true`（那时**先备份上一代**成 `name.vN.bak`）。
+        /// </summary>
+        private static object AssetSaveCommand(AiCommandRequest request, IAiCommandContext context)
+        {
+            PlayerAiRuntime runtime = RequireRuntime();
+            MemoryAssetStore store = RequireAssets(runtime);
+
+            string name = AssetNameFrom(request, runtime.AssetActiveName);
+            if (string.IsNullOrEmpty(name))
+                throw new AiCommandException("invalid_argument",
+                    "'name' is required (or run a tree first so there is an active asset)");
+
+            string directory = request.GetString("dir", null);
+            if (string.IsNullOrEmpty(directory))
+                directory = PackageRoots.SavesDirectoryFor(runtime.AssetInstanceRoot);
+            if (string.IsNullOrEmpty(directory))
+                throw new AiCommandException("not_ready", "no instance root to save into");
+
+            bool overwrite = request.GetBoolean("overwrite", false);
+            string path;
+            string error;
+            if (!store.Save(name, directory, overwrite, out path, out error))
+                throw new AiCommandException(AssetErrorCode(error, "io_error"), error ?? "save failed");
+
+            AssetRecord record;
+            store.TryGet(name, out record);
+            runtime.EventLog.Write("asset-save", path + " (" + (record != null ? record.Describe() : name) + ")");
+
+            return new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["saved"] = true,
+                ["path"] = path,
+                ["name"] = record != null ? record.Name : name,
+                ["overwrite"] = overwrite,
+                ["dirty"] = record != null && record.Dirty,
+                ["note"] = overwrite
+                    ? "the previous generation was backed up next to the package"
+                    : "the original package was not modified"
+            };
+        }
+
+        /// <summary>
+        /// `ai.asset.drop`：**丢弃内存改动**，回到最近一次载入的磁盘版。
+        /// 活树会一起退回（否则下一次 IsDirty 扫描又把改动捡回来，等于没丢）。
+        /// </summary>
+        private static object AssetDropCommand(AiCommandRequest request, IAiCommandContext context)
+        {
+            PlayerAiRuntime runtime = RequireRuntime();
+            RequireAssets(runtime);
+
+            string name = AssetNameFrom(request, null);
+            string error;
+            bool dropped = runtime.DropActiveAsset(name, out error);
+            if (!dropped)
+                throw new AiCommandException(AssetErrorCode(error, "not_ready"), error ?? "drop failed");
+
+            string active = runtime.AssetActiveName;
+            MemoryAssetStore store = runtime.Assets;
+            AssetRecord record = null;
+            if (store != null && !string.IsNullOrEmpty(active))
+                store.TryGet(active, out record);
+
+            return new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["dropped"] = true,
+                ["active"] = active,
+                ["dirty"] = record != null && record.Dirty,
+                ["memoryHash"] = record != null ? AssetRecord.Short(record.MemoryHash) : null,
+                ["note"] = "the memory version went back to the last package loaded from disk,"
+                    + " and the live tree was reloaded from it"
+            };
+        }
+
+        /// <summary>
+        /// `ai.asset.autosave`：立刻把内存版写进 `.autosave/`（影子副本）。
+        /// 会把活树的当前内容先抓进内存库 —— 不然缓存的是"上一次抓取"而不是"现在"。
+        /// </summary>
+        private static object AssetAutoSaveCommand(AiCommandRequest request, IAiCommandContext context)
+        {
+            PlayerAiRuntime runtime = RequireRuntime();
+            MemoryAssetStore store = RequireAssets(runtime);
+
+            if (string.IsNullOrEmpty(runtime.AssetActiveName))
+                throw new AiCommandException("not_ready", "no active asset (load a tree first)");
+
+            bool captured = true;
+            if (request.GetBoolean("capture", true) && runtime.AssetDirtyPending)
+                captured = runtime.CaptureLiveTree(AssetOrigin.Ai);
+
+            string error;
+            bool ok = runtime.TryAutoSaveActiveAsset(out error);
+            if (!ok)
+                throw new AiCommandException("io_error", error ?? "autosave failed");
+
+            AssetRecord record;
+            store.TryGet(runtime.AssetActiveName, out record);
+            return new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["cached"] = true,
+                ["captured"] = captured,
+                ["name"] = runtime.AssetActiveName,
+                ["dirty"] = record != null && record.Dirty,
+                ["cacheDirectory"] = runtime.AssetCache.Directory
+            };
+        }
+
+        /// <summary>
+        /// `ai.asset.restore`：按**恢复决议**把缓存/磁盘版装回内存库。
+        /// `all=true` 时对包目录里每个包都做一次决议（等同启动恢复流程，但由人显式触发）。
+        /// </summary>
+        private static object AssetRestoreCommand(AiCommandRequest request, IAiCommandContext context)
+        {
+            PlayerAiRuntime runtime = RequireRuntime();
+            RequireAssets(runtime);
+
+            bool all = request.GetBoolean("all", false);
+            string name = all ? null : AssetNameFrom(request, runtime.AssetActiveName);
+            if (!all && string.IsNullOrEmpty(name))
+                throw new AiCommandException("invalid_argument",
+                    "'name' is required (or pass all=true)");
+
+            string error;
+            List<string> lines = runtime.RestoreAssetsFromCache(name, out error);
+            if (lines == null)
+                throw new AiCommandException(AssetErrorCode(error, "not_ready"), error ?? "restore failed");
+
+            return new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["restored"] = lines.Count,
+                ["all"] = all,
+                ["lines"] = lines,
+                ["active"] = runtime.AssetActiveName,
+                ["note"] = "restoring only fills the memory store; it never writes to disk"
+            };
+        }
+
+        /// <summary>
+        /// `ai.asset.retry`：**拒包 / 重取的现状与总开关**（plan §4.12）。
+        ///
+        /// 只读时回答"哪些资源在等重取、等多久、哪些已经熔断"；带参数时改策略
+        /// （`enabled=` / `maxAttempts=` / `baseDelayMs=` / `windowLimit=` / `layaAsk=`），
+        /// 或用 `reset=name` / `resetAll=true` **解除熔断** —— 这就是"人处置之后恢复"的入口。
+        /// </summary>
+        private static object AssetRetryCommand(AiCommandRequest request, IAiCommandContext context)
+        {
+            PlayerAiRuntime runtime = RequireRuntime();
+            AssetRecoveryTask tracker = runtime.AssetRetry;
+            AssetRetryPolicy policy = tracker.Policy;
+
+            var changed = new List<string>();
+
+            if (request.Arguments.ContainsKey("enabled"))
+            {
+                policy.Enabled = request.GetBoolean("enabled", policy.Enabled);
+                changed.Add("enabled=" + policy.Enabled);
+            }
+            if (request.Arguments.ContainsKey("maxAttempts"))
+            {
+                policy.MaxAttempts = request.GetInteger("maxAttempts", policy.MaxAttempts);
+                changed.Add("maxAttempts=" + policy.MaxAttempts);
+            }
+            if (request.Arguments.ContainsKey("baseDelayMs"))
+            {
+                policy.BaseDelaySeconds = request.GetInteger("baseDelayMs",
+                    (int)Math.Round(policy.BaseDelaySeconds * 1000.0)) / 1000.0;
+                changed.Add("baseDelayMs=" + (int)Math.Round(policy.BaseDelaySeconds * 1000.0));
+            }
+            if (request.Arguments.ContainsKey("windowLimit"))
+            {
+                policy.WindowLimit = request.GetInteger("windowLimit", policy.WindowLimit);
+                changed.Add("windowLimit=" + policy.WindowLimit);
+            }
+            if (request.Arguments.ContainsKey("windowSeconds"))
+            {
+                policy.WindowSeconds = request.GetInteger("windowSeconds",
+                    (int)Math.Round(policy.WindowSeconds));
+                changed.Add("windowSeconds=" + (int)Math.Round(policy.WindowSeconds));
+            }
+            if (request.Arguments.ContainsKey("layaAsk"))
+            {
+                policy.AskLaya = request.GetBoolean("layaAsk", policy.AskLaya);
+                changed.Add("askLaya=" + policy.AskLaya);
+            }
+
+            policy.Validate();
+            if (changed.Count > 0)
+            {
+                tracker.ApplyPolicy(policy.Clone());
+                runtime.EventLog.Write("asset-retry-policy", string.Join(", ", changed.ToArray()));
+            }
+
+            // 复位要**先做**再快照：否则回包里的 `resources` 是复位之前的旧状态，
+            // 人看到"已复位"却仍显示 exhausted（自检/实测都会以为复位没生效）。
+            string resetTarget = null;
+            bool resetAll = request.GetBoolean("resetAll", false);
+            bool wasExhausted = false;
+            if (resetAll)
+            {
+                tracker.ResetAll();
+                runtime.ClearAssetMarks();
+                runtime.EventLog.Write("asset-retry-reset", "all");
+                resetTarget = "all";
+            }
+            else
+            {
+                string reset = request.GetString("reset", null);
+                if (!string.IsNullOrEmpty(reset))
+                {
+                    wasExhausted = runtime.ResetAssetRetry(reset);
+                    resetTarget = reset;
+                }
+            }
+
+            var result = new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["policy"] = tracker.Policy.Describe(),
+                ["pending"] = tracker.PendingCount,
+                ["exhausted"] = tracker.ExhaustedCount,
+                ["nextRetryMs"] = tracker.SecondsToNextRetry() < 0.0
+                    ? -1 : (int)Math.Round(tracker.SecondsToNextRetry() * 1000.0),
+                ["resources"] = tracker.DescribeResources(),
+                ["changed"] = changed
+            };
+
+            if (resetTarget != null)
+            {
+                result["reset"] = resetTarget;
+                result["wasExhausted"] = wasExhausted;
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// `ai.asset.conflict`：**G25 的重载冲突**（磁盘版撞上未保存的内存版）。
+        ///
+        /// 只读时列出待处置的冲突（三份哈希 + 每条冲突的两个选项）；带 `mode=` 时处置一条：
+        ///   · `disk`   —— 用磁盘覆盖内存（= `ai.asset.drop` 回磁盘版 + 摘掉冲突）;
+        ///   · `keep`   —— 保留内存（把那条通知丢掉，内存继续跑）;
+        ///   · `saveAs` —— 把内存版另存为新包（`newName=`，落包目录），然后摘掉冲突。
+        ///
+        /// **默认什么都不做**：冲突就是"等人选"，不选就一直保留内存（运行态不被打断）。
+        /// </summary>
+        private static object AssetConflictCommand(AiCommandRequest request, IAiCommandContext context)
+        {
+            PlayerAiRuntime runtime = RequireRuntime();
+            PackageReloader reloader = runtime.Reloader;
+            if (reloader == null)
+                throw new AiCommandException("not_ready", "the package reloader is not configured");
+
+            string path = request.GetString("path", null);
+            if (string.IsNullOrEmpty(path))
+                path = request.GetString("name", null);
+            string mode = request.GetString("mode", null);
+
+            var result = new Dictionary<string, object>(StringComparer.Ordinal);
+
+            if (!string.IsNullOrEmpty(path) && !string.IsNullOrEmpty(mode))
+            {
+                ReloadConflict conflict;
+                if (!reloader.TryFindConflict(path, out conflict))
+                    throw new AiCommandException("not_found", "no pending conflict for '" + path + "'");
+
+                string action = mode.Trim().ToLowerInvariant();
+                if (action == "disk")
+                {
+                    // 用磁盘覆盖内存：内存库回到磁盘版，活树按磁盘版重装
+                    string dropError;
+                    bool dropped = runtime.DropActiveAsset(conflict.Path, out dropError);
+                    reloader.ResolveConflict(conflict.Path, out conflict);
+                    result["resolved"] = "disk";
+                    result["dropped"] = dropped;
+                    result["dropError"] = dropError;
+                    runtime.EventLog.Write("asset-conflict", "use disk: " + conflict.Path);
+                }
+                else if (action == "keep")
+                {
+                    reloader.ResolveConflict(conflict.Path, out conflict);
+                    result["resolved"] = "keep";
+                    runtime.EventLog.Write("asset-conflict",
+                        "keep memory (the disk version is ignored): " + conflict.Path);
+                }
+                else if (action == "saveas")
+                {
+                    string newName = request.GetString("newName", null);
+                    if (string.IsNullOrEmpty(newName))
+                        throw new AiCommandException("invalid_argument",
+                            "mode=saveAs needs newName= (the new package)");
+
+                    string directory = request.GetString("dir", null);
+                    if (string.IsNullOrEmpty(directory))
+                    {
+                        directory = reloader.Roots != null && reloader.Roots.InstanceRoot != null
+                            ? reloader.Roots.InstanceRoot.Path : null;
+                    }
+                    if (string.IsNullOrEmpty(directory))
+                        throw new AiCommandException("not_ready", "no package folder to save into");
+
+                    string saved;
+                    string saveError;
+                    MemoryAssetStore store = RequireAssets(runtime);
+                    if (!store.SaveAs(conflict.Path, newName, directory,
+                        request.GetBoolean("overwrite", false), out saved, out saveError))
+                    {
+                        throw new AiCommandException(AssetErrorCode(saveError, "io_error"),
+                            saveError ?? "saveAs failed");
+                    }
+                    reloader.ResolveConflict(conflict.Path, out conflict);
+                    result["resolved"] = "saveAs";
+                    result["path"] = saved;
+                    runtime.EventLog.Write("asset-conflict", "saved the memory version as " + saved);
+                }
+                else
+                {
+                    throw new AiCommandException("invalid_argument",
+                        "mode must be disk | keep | saveAs");
+                }
+            }
+
+            result["count"] = reloader.ConflictCount;
+            result["total"] = reloader.ConflictTotal;
+            result["conflicts"] = reloader.DescribeConflicts();
+            result["options"] = new List<string> { "disk", "keep", "saveAs" };
+            return result;
+        }
+
+        /// <summary>资源命令共用的运行时入口。</summary>
+        private static PlayerAiRuntime RequireRuntime()        {
+            PlayerAiRuntime runtime = PlayerAiRuntime.Instance;
+            if (runtime == null)
+                throw new AiCommandException("not_ready", "PlayerAi runtime is not available");
+            return runtime;
+        }
+
+        /// <summary>资源命令共用的库入口（包目录没配好时给稳定的错误码）。</summary>
+        private static MemoryAssetStore RequireAssets(PlayerAiRuntime runtime)
+        {
+            MemoryAssetStore store = runtime.Assets;
+            if (store == null)
+                throw new AiCommandException("not_ready",
+                    "the package folder is not configured (PlayerAi/BehaviorTrees)");
+            return store;
+        }
+
+        /// <summary>`name=` 或 `file=`（与其它命令的参数习惯保持一致）。</summary>
+        private static string AssetNameFrom(AiCommandRequest request, string fallback)
+        {
+            string name = request.GetString("name", null);
+            if (string.IsNullOrEmpty(name))
+                name = request.GetString("file", null);
+            return string.IsNullOrEmpty(name) ? fallback : name;
+        }
+
+        /// <summary>
+        /// 把资源库的失败原因翻成**稳定的错误码**（调用方与脚本只认码，不认英文句子）。
+        /// 判定顺序按"最具体的先说"，兜底给调用方自己指定的码。
+        /// </summary>
+        private static string AssetErrorCode(string error, string fallback)
+        {
+            if (string.IsNullOrEmpty(error))
+                return fallback;
+            if (error.StartsWith("already_exists", StringComparison.Ordinal))
+                return "already_exists";
+            if (error.StartsWith("nothing_to_drop", StringComparison.Ordinal))
+                return "nothing_to_drop";
+            if (error.StartsWith("not in the memory store", StringComparison.Ordinal))
+                return "not_found";
+            if (error.StartsWith("no instance root", StringComparison.Ordinal)
+                || error.StartsWith("a target directory is required", StringComparison.Ordinal))
+            {
+                return "not_ready";
+            }
+            if (error.StartsWith("refusing", StringComparison.Ordinal))
+                return "invalid_argument";
+            return fallback;
+        }
+
+        /// <summary>
+        /// `ai.laya.status`：Laya 服务现状（配置/密钥来源掩码/在途/缓存/失败计数）
+        /// + **版本对账**（plan G18）：当前摘要布局版本 / 各问题库的内容版本与哈希 /
+        /// **复盘表里的样本是不是当前版本产生的**。
+        /// </summary>
+        private static object LayaStatusCommand(AiCommandRequest request, IAiCommandContext context)
+        {
+            PlayerAiRuntime runtime = PlayerAiRuntime.Instance;
+            if (runtime == null)
+                throw new AiCommandException("not_ready", "PlayerAi runtime is not available");
+
+            Dictionary<string, object> info = runtime.Laya.Describe();
+            info["digestVersion"] = StateDigestCompiler.Version;
+
+            // 已缓存的问题库：名字 + 内容版本 + 内容哈希短号（改过哪一本一眼看得出来）
+            var banks = new List<Dictionary<string, object>>();
+            var activeBankHash = new List<string>();
+            IReadOnlyList<QuestionBank> cached = runtime.Laya.CachedBanks();
+            for (int i = 0; i < cached.Count; i++)
+            {
+                QuestionBank bank = cached[i];
+                string hash = bank.SourceHash;
+                if (!string.IsNullOrEmpty(hash) && hash.Length > 12)
+                    hash = hash.Substring(0, 12);
+                banks.Add(new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    ["id"] = bank.Id,
+                    ["version"] = bank.Version,
+                    ["questions"] = bank.Questions.Count,
+                    ["hash"] = hash,
+                    // 磁盘上的比缓存里的新？→ 提示"改了库但游戏还没重读"（下一次判定会自动重读）
+                    ["changedOnDisk"] = runtime.Laya.IsBankStale(bank)
+                });
+                if (!string.IsNullOrEmpty(bank.SourceHash))
+                    activeBankHash.Add(bank.SourceHash);
+            }
+            info["banks"] = banks;
+
+            // 复盘样本 vs 当前版本：不一致就提示"建议重跑抽样表"（版本对账的全部意义就在这一句）
+            DecisionLog log = runtime.Laya.Decisions;
+            if (log != null)
+            {
+                info["samplesMatchCurrent"] = log.SamplesMatchCurrent(StateDigestCompiler.Version,
+                    activeBankHash.Count == 1 ? activeBankHash[0] : null);
+                List<DecisionRecord> recent = log.Recent(1);
+                info["lastSampleVersion"] = recent.Count > 0
+                    ? DecisionLog.DescribeVersion(recent[0]) : null;
+            }
+            return info;
+        }
+
+        /// <summary>
+        /// `ai.laya.ask`：**给人/脚本手动问一次**（同步阻塞，只用于验证与调试；
+        /// 行为树里请用 Task.LayaAsk，它是异步的、不阻塞游戏线程）。
+        /// </summary>
+        private static object LayaAskCommand(AiCommandRequest request, IAiCommandContext context)
+        {
+            PlayerAiRuntime runtime = PlayerAiRuntime.Instance;
+            if (runtime == null)
+                throw new AiCommandException("not_ready", "PlayerAi runtime is not available");
+
+            string bankName = request.GetString("questions", null);
+            if (string.IsNullOrEmpty(bankName))
+                bankName = request.GetString("bank", null);
+            if (string.IsNullOrEmpty(bankName))
+                throw new AiCommandException("invalid_argument", "'questions' (bank name) is required.");
+
+            LayaRuntimeService service = runtime.Laya;
+            QuestionBank bank;
+            string bankError;
+            if (!service.TryResolveBank(bankName, request.GetString("only", null), out bank, out bankError))
+                throw new AiCommandException("file_missing", bankError);
+
+            string digestError;
+            string overrideDigest = request.GetString("digest", null);
+            string digest;
+            if (!string.IsNullOrEmpty(overrideDigest))
+            {
+                // `digest=`：**原样用这一段摘要**，不编译、不校验。
+                //
+                // 为什么需要这个口子：§5.4 的结论是"摘要本身是最主要的调参旋钮"，
+                // 而 P2 还欠一件实测 —— **中文摘要在真实游戏状态题上的分离度**。
+                // 那件事只能靠"同一套问题、只换摘要"来做 A/B，而默认路径永远拿当前游戏状态编译，
+                // 没法构造对照。所以这里允许直接喂字面摘要（调参时人甚至要故意写怪摘要看模型怎么崩）。
+                //
+                // 纪律：**预算照样报出来**（`overBudget`/`budgetChars`）——
+                // 放开的是"谁来写摘要"，不是"假装超长没关系"：超预算的请求在服务端会被静默截断，
+                // 那正是预算守卫当初要防的东西，所以要让实验者一眼看到自己越线了。
+                digest = overrideDigest;
+                digestError = null;
+            }
+            else
+            {
+                digest = service.CompileDigest(null, out digestError);
+            }
+            if (digest == null)
+                throw new AiCommandException("not_ready", digestError);
+
+            LayaAnswer answer = service.Client.AskSync(digest, bank);
+            int budget = service.Config != null ? service.Config.DigestBudgetChars : 0;
+            return new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["ok"] = answer.Ok,
+                ["errorCode"] = answer.ErrorCode,
+                ["error"] = answer.Error,
+                ["digest"] = digest,
+                ["budgetChars"] = budget,
+                ["overBudget"] = budget > 0 && digest.Length > budget,
+                ["fingerprint"] = answer.Fingerprint,
+                ["summary"] = answer.Summarize(),
+                ["answers"] = answer.Answers,
+                ["elapsedMs"] = answer.ElapsedMs,
+                ["inputTokens"] = answer.InputTokens
+            };
+        }
+        /// <summary>
+        /// `ai.laya.review`（P4 复盘）：最近几次判定的**聚合 + 明细 + 可复算的抽样表**。
+        ///
+        /// 参数：`count`（明细条数，默认 10，0 = 只要聚合）、`clear`（清空记录）、
+        /// `format`（`json`（默认）/ `md` / `digest`）。
+        ///
+        /// 为什么要有 `digest` 这一档：§5.4 的结论是**摘要本身是最主要的调参旋钮**，
+        /// 所以"逐条的原文摘要"要能一眼全看到（不夹杂其它列）。
+        /// </summary>
+        private static object LayaReviewCommand(AiCommandRequest request, IAiCommandContext context)
+        {
+            DecisionLog log = context.Decisions;
+            if (log == null)
+                throw new AiCommandException("not_ready", "the Laya decision log is not available");
+
+            if (request.GetBoolean("clear", false))
+                log.Clear();
+
+            int count = request.GetInteger("count", 10);
+            if (count < 0)
+                count = 0;
+
+            string format = (request.GetString("format", "json") ?? "json").Trim().ToLowerInvariant();
+            var result = new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["summary"] = log.Summarize()
+            };
+
+            if (string.Equals(format, "md", StringComparison.Ordinal))
+            {
+                result["markdown"] = log.ToMarkdown(count);
+                return result;
+            }
+            if (string.Equals(format, "digest", StringComparison.Ordinal))
+            {
+                result["digests"] = log.RecentDigests(count);
+                return result;
+            }
+
+            var recent = new List<Dictionary<string, object>>();
+            List<DecisionRecord> records = log.Recent(count);
+            for (int i = 0; i < records.Count; i++)
+                recent.Add(records[i].ToDictionary());
+            result["recent"] = recent;
+            return result;
+        }
+
+        private static object StateDigestCommand(AiCommandRequest request, IAiCommandContext context)
+        {
+            CmdBridgeMod.CmdBridgeInput facade = CmdBridgeActuator.FacadeOrNull;
+            if (facade == null)
+                throw new AiCommandException("not_ready", "CmdBridgeMod facade is not available");
+
+            Dictionary<string, object> raw = facade.DescribeStateInputs();
+            StateInputs inputs = StateInputs.FromObservation(raw);
+            int budget = request.GetInteger("budget", StateDigestCompiler.DefaultBudgetChars);
+            string digest = StateDigestCompiler.Compile(inputs, budget);
+
+            return new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["digest"] = digest,
+                ["chars"] = digest.Length,
+                ["budgetChars"] = budget,
+                ["estimatedTokens"] = QuestionBankParser.EstimateTokens(digest),
+                ["raw"] = raw
+            };
+        }
+        private static object ActionScriptVerbs(AiCommandRequest request, IAiCommandContext context)
+        {
+            var verbs = new List<Dictionary<string, object>>();
+            IReadOnlyList<string> names = ScriptCompiler.VerbNames;
+            for (int i = 0; i < names.Count; i++)
+            {
+                ActionVerbSpec spec;
+                if (!ScriptCompiler.TryGetVerb(names[i], out spec) || spec == null)
+                    continue;
+
+                var parameters = new List<Dictionary<string, object>>();
+                for (int p = 0; p < spec.Parameters.Count; p++)
+                {
+                    ActionParamSpec param = spec.Parameters[p];
+                    parameters.Add(new Dictionary<string, object>(StringComparer.Ordinal)
+                    {
+                        ["name"] = param.Name,
+                        ["kind"] = param.Kind.ToString().ToLowerInvariant(),
+                        ["required"] = param.Required,
+                        ["default"] = param.DefaultValue,
+                        ["allowed"] = param.Allowed != null ? new List<string>(param.Allowed) : null,
+                        ["description"] = param.Description
+                    });
+                }
+
+                verbs.Add(new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    ["name"] = spec.Name,
+                    ["category"] = spec.Category,
+                    ["description"] = spec.Description,
+                    ["parameters"] = parameters
+                });
+            }
+            return new Dictionary<string, object>(StringComparer.Ordinal) { ["verbs"] = verbs };
         }
 
         private static IAiActionPlayer RequireActionPlayer(IAiCommandContext context, string command)
@@ -1268,6 +2444,25 @@ namespace PlayerAiMod
                 host.Enabled = true;
             }
 
+            // 拒包 / 重取（§4.12）：失败要**分流**（缺文件可重取、校验不过绝不重取），
+            // 并把失败标记写进黑板供异常分支使用。成功则清掉历史。
+            AssetFailureDecision decision = null;
+            if (PlayerAiRuntime.Instance != null)
+            {
+                if (result.Replaced)
+                {
+                    PlayerAiRuntime.Instance.NoteAssetSuccess(name);
+                }
+                else
+                {
+                    PackageReport report = ValidateQuietly(reloader, name);
+                    decision = PlayerAiRuntime.Instance.NoteAssetFailure(name,
+                        AssetFailureClassifier.TextOf(report) ?? result.Describe(),
+                        AssetFailureClassifier.DetailOf(report) ?? result.Reason,
+                        AssetFailureClassifier.ClassifyReport(report));
+                }
+            }
+
             return new Dictionary<string, object>(StringComparer.Ordinal)
             {
                 ["replaced"] = result.Replaced,
@@ -1279,8 +2474,32 @@ namespace PlayerAiMod
                 ["packages"] = result.PackageCount,
                 ["milliseconds"] = Math.Round(result.Milliseconds, 2),
                 ["mode"] = host.Mode.ToWireName(),
-                ["issues"] = new List<string>(result.Issues)
+                ["issues"] = new List<string>(result.Issues),
+                ["failure"] = decision != null ? decision.Code : null,
+                ["retry"] = decision != null ? decision.StateName() : null,
+                ["retryInMs"] = decision != null && decision.Retry
+                    ? (int)Math.Round(decision.DelaySeconds * 1000.0) : 0
             };
+        }
+
+        /// <summary>
+        /// 给分流用的**校验报告**（报告的错误码才是权威判据；取不到给 null，调用方退回文本分流）。
+        ///
+        /// ⚠️ 别用 `PackageReport.Summary()` —— 它只有 `"1 error(s)"` 这种计数、**没有码**，
+        /// 拿它分流会把"缺文件"判成"校验不过"（实机踩过，见 A19）。
+        /// </summary>
+        private static PackageReport ValidateQuietly(PackageReloader reloader, string name)
+        {
+            if (reloader == null || string.IsNullOrEmpty(name))
+                return null;
+            try
+            {
+                return reloader.Validate(name);
+            }
+            catch (Exception)
+            {
+                return null;
+            }
         }
 
         private static object TreeReload(AiCommandRequest request, IAiCommandContext context)
@@ -1370,7 +2589,7 @@ namespace PlayerAiMod
             {
                 Dictionary<string, object> selfTest = RunSelfTests(BtSelfTest.Run(),
                     PackageSelfTest.Run(), AiCommandSelfTest.Run(), AiModeSelfTest.Run(),
-                    AiRecordingSelfTest.Run(), TreeEditSelfTest.Run());
+                    AiRecordingSelfTest.Run(), TreeEditSelfTest.Run(), ActionSelfTest.Run(), StateSelfTest.Run(), LayaSelfTest.Run(), PoolSelfTest.Run(), AutoSaveSelfTest.Run(), AssetSelfTest.Run(), AssetRetrySelfTest.Run(), PhaseSelfTest.Run());
                 if (context.EventLog != null)
                 {
                     context.EventLog.Write("selftest", "passed=" + selfTest["passed"]

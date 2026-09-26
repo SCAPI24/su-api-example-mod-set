@@ -1,5 +1,6 @@
 using Engine;
 using Engine.Input;
+using Game;
 using System;
 using System.Collections.Generic;
 
@@ -24,12 +25,20 @@ namespace CmdBridgeMod
     public sealed class CmdBridgeInput
     {
         private readonly InputInjector m_injector;
+
+        /// <summary>
+        /// 事件环的当前序号（`events.since:&lt;序号&gt;` 守卫要用）。
+        /// **返回 null = 现在问不到**（事件环还没建）—— 消费侧必须判成"判不了"，不能当成"成立"。
+        /// </summary>
+        private readonly Func<long?> m_eventSequence;
+
         private string m_lastFailureMessage;
         private double m_lastFailureTime = double.NegativeInfinity;
 
-        internal CmdBridgeInput(InputInjector injector)
+        internal CmdBridgeInput(InputInjector injector, Func<long?> eventSequence = null)
         {
             m_injector = injector;
+            m_eventSequence = eventSequence;
         }
 
         /// <summary>注入是否可用（CmdBridge 已加载且 CmdBridge.json 里 EnableInputInjection 为真）。</summary>
@@ -239,6 +248,396 @@ namespace CmdBridgeMod
                 {
                     Error = exception.GetType().Name + ": " + exception.Message
                 };
+            }
+        }
+
+        // ---------------------------------------------------------------- 只读观察门面（供依赖本 Mod 的 Mod 用）
+
+        /// <summary>
+        /// 准星指向什么（只读）：`target.kind` 为 `block` 时带 `target.cell{x,y,z}`；
+        /// 为实体时带实体信息。上层 Mod（例如 PlayerAiMod 的语义目标 `aim`）靠它把
+        /// "Laya 给枚举、C# 给具体值"落到实处 —— 具体格子由这里现算，模型永远不见坐标。
+        ///
+        /// 为什么放在注入门面里：观察代码只在本 Mod 有一份（`AimObserver`），
+        /// 让别的 Mod 自己去反射 `SubsystemTerrain`/`PlayerInput` 就是第二份实现，
+        /// 迟早与本 Mod 的口径漂移（"编辑器能瞄准、脚本瞄不到"那类 bug）。
+        /// </summary>
+        public Dictionary<string, object> DescribeAim(float maxDistance = 8f)
+        {
+            try
+            {
+                return AimObserver.Describe(maxDistance);
+            }
+            catch (Exception exception)
+            {
+                LogFailure("DescribeAim", exception);
+                return null;
+            }
+        }
+
+        /// <summary>玩家状态（只读）：位置/视角/生命/体征/背包/输入意图/睡眠/HUD/游戏模式。见 <c>PlayerObserver</c>。</summary>
+        public Dictionary<string, object> DescribePlayer()
+        {
+            try
+            {
+                return PlayerObserver.Describe();
+            }
+            catch (Exception exception)
+            {
+                LogFailure("DescribePlayer", exception);
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// 动作脚本/行为树守卫需要的最小只读状态（一次问完，避免上层 Mod 连问好几次）。
+        ///
+        /// 字段与 <c>obs.waitFor</c> 的条件词汇一一对应：
+        /// `worldLoaded` / `hasPlayer` / `modalOpen` / `modalPanel` / `dialogsOpen` /
+        /// `playerAlive` / `health` / `sleeping` / **`screen`**（`screen.is:X` 守卫用）。
+        /// </summary>
+        public Dictionary<string, object> DescribeActionContext()
+        {
+            var result = new Dictionary<string, object>(StringComparer.Ordinal);
+            result["worldLoaded"] = false;
+            result["hasPlayer"] = false;
+            result["playerAlive"] = false;
+            result["health"] = null;
+            result["sleeping"] = null;
+            result["modalOpen"] = false;
+            result["modalPanel"] = null;
+            result["dialogsOpen"] = false;
+            result["screen"] = null;
+            // 事件环序号：`events.since:<序号>` 守卫要用（`obs.waitFor` 用的是同一个来源）。
+            // 先写 null，下面 try 里再取真值 —— 取不到就保持 null = "判不了"。
+            result["eventSeq"] = null;
+            // 准星事实（`aim.block|entity|none` 守卫要用）。与摘要里的 `aim=` 用**同一个** DescribeAim，
+            // 于是"摘要说没瞄东西"和"守卫说没瞄东西"永远一致（两处各判一次必然漂移）。
+            result["aimKind"] = null;
+            result["aimBlock"] = null;
+            result["aimDistance"] = null;
+
+            try
+            {
+                result["worldLoaded"] = GameManager.Project != null;
+                result["dialogsOpen"] = DialogsManager.Dialogs.Count > 0;
+                // 屏幕名与 `screen.is:` 守卫、世界外摘要用的是同一个来源（`UiInspector.ScreenName`）
+                result["screen"] = UiInspector.ScreenName();
+                if (m_eventSequence != null)
+                    result["eventSeq"] = m_eventSequence();
+
+                // ⚠️ `kind`/`blockType`/`distance` 都在 **`target` 子字典**里（不在顶层）——
+                // 与 `DescribeStateInputs` 完全同一处读法。实测踩到：读顶层拿到 null，
+                // 于是"明明瞄着方块"却被判成 `none`，`aim.block` 永远不通过。
+                Dictionary<string, object> aim = DescribeAim(8f);
+                if (aim != null && Truthy(aim, "active"))
+                {
+                    Dictionary<string, object> target = GetDictionary(aim, "target");
+                    string kind = GetString(target, "kind");
+                    result["aimKind"] = string.IsNullOrEmpty(kind) ? "none" : kind;
+                    result["aimBlock"] = GetString(target, "blockType");
+                    result["aimDistance"] = GetFloat(target, "distance");
+                }
+
+                ComponentPlayer player = GetComponentPlayer();
+                if (player == null)
+                    return result;
+
+                result["hasPlayer"] = true;
+                result["health"] = player.ComponentHealth != null ? player.ComponentHealth.Health : (float?)null;
+                result["playerAlive"] = player.ComponentHealth != null && player.ComponentHealth.Health > 0f;
+
+                ComponentSleep sleep = player.Entity.FindComponent<ComponentSleep>(false);
+                result["sleeping"] = sleep != null ? (object)sleep.IsSleeping : null;
+
+                ComponentGui gui = player.ComponentGui;
+                string modal = gui != null && gui.ModalPanelWidget != null
+                    ? gui.ModalPanelWidget.GetType().Name
+                    : null;
+                result["modalPanel"] = modal;
+                result["modalOpen"] = !string.IsNullOrEmpty(modal);
+            }
+            catch (Exception exception)
+            {
+                LogFailure("DescribeActionContext", exception);
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// 供"喂给判定模型的短摘要"用的**原始读数**（一次问完，只读）。
+        ///
+        /// 为什么不让上层 Mod 自己拼：摘要需要的是"档位化之前的原始量"
+        /// （生命/食物/耐力/体温/湿度/一天中的时刻/瞄准目标/交互与模态状态），
+        /// 这些读数的口径与 `obs.player` / `obs.world.time` / `obs.aim` 完全一致，
+        /// 分成两处实现迟早漂移（摘要说"冷"、观察说温度 12 那种）。
+        ///
+        /// 字段（缺的给 null，不上层猜）：
+        /// `worldLoaded` / `hasPlayer` / `screen` / `modalPanel` / `dialogsOpen` /
+        /// `controlsVisible` / `sleeping` / `canSleep` / `canSleepReason` /
+        /// `health` / `air` / `food` / `stamina` / `sleep` / `temperature` / `wetness` /
+        /// `day` / `hour` / `isNight` / `season` / `precipitation` /
+        /// `aimKind` / `aimBlockType` / `aimDistance` / `aimCell` /
+        /// `holdingBlockType` / `inventoryItems` / `position` / `playerName` / `gameMode`。
+        /// </summary>
+        public Dictionary<string, object> DescribeStateInputs()
+        {
+            var result = new Dictionary<string, object>(StringComparer.Ordinal);
+            result["worldLoaded"] = false;
+            result["hasPlayer"] = false;
+
+            try
+            {
+                result["worldLoaded"] = GameManager.Project != null;
+
+                // 世界外也有界面状态（plan §4.13「界面就是界面状态」）：屏幕名 / 对话框
+                // **不依赖玩家**，必须在下面那句"没有玩家就早退"之前写出来。
+                // 不写会怎样：世界外的摘要只剩 phase/ui，树与模型都不知道"现在是主菜单还是选档界面"
+                // —— 前端链的第一步（选世界 / 返回）就没法按事实判断（实测：`state.scr` 直接是空的）。
+                result["screen"] = UiInspector.ScreenName();
+                result["modalPanel"] = null;
+                result["dialogsOpen"] = DialogsManager.Dialogs.Count > 0;
+
+                // G16：屏幕上"当前这个列表"的候选行。放在"没有玩家就早退"**之前**，
+                // 因为世界外（主菜单/选世界）根本没有玩家，而那里恰恰最需要它：
+                // "选哪个世界/要不要翻页"的答案就是"第几行"。
+                // 只读、行数封顶（16 行足够覆盖可视区）、不带像素坐标。
+                result["uiList"] = UiInspector.DescribeActiveList(16);
+
+                Dictionary<string, object> player = DescribePlayer();
+                if (player == null || !Truthy(player, "loaded"))
+                    return result;
+
+                result["hasPlayer"] = true;
+                result["playerName"] = Get(player, "name");
+                result["position"] = Get(player, "position");
+                result["gameMode"] = Get(player, "gameMode");
+
+                Dictionary<string, object> health = GetDictionary(player, "health");
+                result["health"] = GetFloat(health, "health");
+                result["air"] = GetFloat(health, "air");
+
+                Dictionary<string, object> vitals = GetDictionary(player, "vitals");
+                result["food"] = GetFloat(vitals, "food");
+                result["stamina"] = GetFloat(vitals, "stamina");
+                result["sleep"] = GetFloat(vitals, "sleep");
+                result["temperature"] = GetFloat(vitals, "temperature");
+                result["wetness"] = GetFloat(vitals, "wetness");
+
+                Dictionary<string, object> sleep = GetDictionary(player, "sleep");
+                result["sleeping"] = GetBool(sleep, "isSleeping");
+                result["canSleep"] = GetBool(sleep, "canSleep");
+                result["canSleepReason"] = GetString(sleep, "canSleepReason");
+
+                Dictionary<string, object> hud = GetDictionary(player, "hud");
+                result["controlsVisible"] = GetBool(hud, "controlsVisible");
+                result["modalPanel"] = GetString(hud, "modalPanel");
+
+                Dictionary<string, object> inventory = GetDictionary(player, "inventory");
+                if (inventory != null)
+                {
+                    Dictionary<string, object> holding = GetDictionary(inventory, "holding");
+                    result["holdingBlockType"] = GetBlockTypeName(GetInt(holding, "contents"));
+                    result["activeSlot"] = GetInt(inventory, "activeSlot");
+                    List<object> slots = GetList(inventory, "slots");
+                    result["inventoryItems"] = slots != null ? slots.Count : 0;
+                }
+
+                // 世界时间
+                Dictionary<string, object> time = WorldObserver.DescribeTime();
+                result["day"] = GetInt(time, "day");
+                result["hour"] = GetFloat(time, "hour");
+                result["isNight"] = GetBool(time, "isNight");
+                result["season"] = GetString(time, "season");
+                result["precipitation"] = GetFloat(time, "precipitationIntensity");
+                if (result["gameMode"] == null)
+                    result["gameMode"] = GetString(time, "gameMode");
+
+                // 模态/对话框
+                result["dialogsOpen"] = DialogsManager.Dialogs.Count > 0;
+
+                // 准星
+                Dictionary<string, object> aim = DescribeAim(8f);
+                if (aim != null && Truthy(aim, "active"))
+                {
+                    Dictionary<string, object> target = GetDictionary(aim, "target");
+                    result["aimKind"] = GetString(target, "kind");
+                    result["aimBlockType"] = GetString(target, "blockType");
+                    result["aimDistance"] = GetFloat(target, "distance");
+                    result["aimCell"] = GetDictionary(target, "cell");
+                }
+            }
+            catch (Exception exception)
+            {
+                LogFailure("DescribeStateInputs", exception);
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// 一次问清"某个语义目标现在在不在、能不能点"（**只读**，供动作脚本 / 行为树的守卫判定）。
+        ///
+        /// 为什么必须走这里而不是让上层自己找控件：`element.present:` / `element.clickable:` 这两个守卫
+        /// 与 `obs.waitFor` 用的是**同一份**语义目标解析（`UiService.LocateCore` → `UiInspector`）——
+        /// 否则会出现"守卫说能点、点下去回 element_missing"这种自相矛盾（也就没法自动化）。
+        ///
+        /// 返回的字典就是 `ui.locate` 的那一份（`present` / `hittable` / `clickable` / `clickReason` /
+        /// `blockedBy` / `path` …）。**不抛异常**：
+        ///   · 元素不存在 → `present=false` + `reason`（这是"正常答案"，不是查询失败）；
+        ///   · 查询本身失败（不在游戏线程 / UI 没就绪）→ `error` 非空，调用方必须**当成"判不了"**
+        ///     （守卫判不了就绝不能判通过）。
+        /// </summary>
+        public Dictionary<string, object> QueryUiElement(string selector)
+        {
+            if (string.IsNullOrEmpty(selector))
+                return UiQueryFailure(null, "invalid_argument", "a selector is required");
+
+            if (!GameThreadInvoker.IsGameThread())
+            {
+                return UiQueryFailure(selector, "not_on_game_thread",
+                    "UI element queries must run on the game thread");
+            }
+
+            try
+            {
+                // `LocateCore` **只在解析成功时正常返回**（找不到会抛 element_missing），
+                // 所以这里要自己补上"在不在"这两个字段：调用方（守卫）只看这份字典，
+                // 不该被迫知道 LocateCore 的内部形状（实测踩过：以为它会写 present，
+                // 结果每个元素守卫都判成"不存在"）。
+                Dictionary<string, object> located = m_injector.Ui.LocateCore(selector);
+                if (located != null)
+                {
+                    located["present"] = true;
+                    located["absent"] = false;
+                }
+                return located;
+            }
+            catch (BridgeCommandException exception) when (exception.Code == "element_missing")
+            {
+                Dictionary<string, object> absent = UiQueryFailure(selector, null, exception.Message);
+                absent["absent"] = true;   // 明确区分"不存在"与"查询失败"
+                return absent;
+            }
+            catch (Exception exception)
+            {
+                LogFailure("QueryUiElement", exception);
+                return UiQueryFailure(selector, "query_failed",
+                    exception.GetType().Name + ": " + exception.Message);
+            }
+        }
+
+        private static Dictionary<string, object> UiQueryFailure(string selector, string code, string reason)
+        {
+            return new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["target"] = selector,
+                ["present"] = false,
+                ["hittable"] = false,
+                ["clickable"] = false,
+                ["reason"] = reason,
+                ["error"] = code
+            };
+        }
+
+        // ---- 只读字典的小工具（观察输出是 JSON 化的 object 图）----
+
+        private static object Get(Dictionary<string, object> source, string key)
+        {
+            object raw;
+            return source != null && source.TryGetValue(key, out raw) ? raw : null;
+        }
+
+        private static bool Truthy(Dictionary<string, object> source, string key)
+        {
+            object raw = Get(source, key);
+            if (raw == null)
+                return false;
+            if (raw is bool)
+                return (bool)raw;
+            string asText = raw as string;
+            return asText == null || !string.Equals(asText, "false", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static Dictionary<string, object> GetDictionary(Dictionary<string, object> source, string key)
+        {
+            return Get(source, key) as Dictionary<string, object>;
+        }
+
+        private static List<object> GetList(Dictionary<string, object> source, string key)
+        {
+            return Get(source, key) as List<object>;
+        }
+
+        private static string GetString(Dictionary<string, object> source, string key)
+        {
+            return Get(source, key) as string;
+        }
+
+        private static float? GetFloat(Dictionary<string, object> source, string key)
+        {
+            object raw = Get(source, key);
+            if (raw == null)
+                return null;
+            if (raw is float)
+                return (float)raw;
+            if (raw is double)
+                return (float)(double)raw;
+            if (raw is int)
+                return (int)raw;
+            if (raw is long)
+                return (long)raw;
+            string text = raw as string;
+            float parsed;
+            return text != null && float.TryParse(text, out parsed) ? parsed : (float?)null;
+        }
+
+        private static bool? GetBool(Dictionary<string, object> source, string key)
+        {
+            object raw = Get(source, key);
+            if (raw == null)
+                return null;
+            if (raw is bool)
+                return (bool)raw;
+            return null;
+        }
+
+        private static int? GetInt(Dictionary<string, object> source, string key)
+        {
+            float? value = GetFloat(source, key);
+            return value.HasValue ? (int?)Math.Round(value.Value) : null;
+        }
+
+        /// <summary>方块 contents → 可读类型名（拿不到就给 null，不编）。</summary>
+        private static string GetBlockTypeName(int? contents)
+        {
+            if (!contents.HasValue || contents.Value <= 0)
+                return null;
+            try
+            {
+                var block = BlocksManager.Blocks[contents.Value];
+                return block != null ? block.GetType().Name : null;
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
+        /// <summary>第一个玩家（没有世界/没有角色时返回 null）。只读。</summary>
+        public static ComponentPlayer GetComponentPlayer()
+        {
+            try
+            {
+                if (GameManager.Project == null)
+                    return null;
+                SubsystemPlayers players = GameManager.Project.FindSubsystem<SubsystemPlayers>(false);
+                if (players == null || players.ComponentPlayers.Count == 0)
+                    return null;
+                return players.ComponentPlayers[0];
+            }
+            catch (Exception)
+            {
+                return null;
             }
         }
 

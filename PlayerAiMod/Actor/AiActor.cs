@@ -78,12 +78,29 @@ namespace PlayerAiMod
             get { return PlayerAiRuntime.IsLocalPlayerOf(Player); }
         }
 
+        /// <summary>
+        /// 角色实体是否**存在且健全**（活着、组件齐）—— **不看 AI 开没开**。
+        ///
+        /// 为什么必须与 <see cref="IsReady"/> 分开：`IsReady` 里含 `PlayerAiConfig.Enabled`，
+        /// 那是"AI 能不能驱动"的问题；而相位（§4.13 `front`/`loading`/`world`）说的是
+        /// "世界走到哪一步了"。两者混用会出现：**AI 关着时世界内相位被报成 `loading`**，
+        /// 于是 `ai.status` 谎报"还在加载"、过渡态闸门还会把树闸住（树一旦被闸住，
+        /// 人再 `ai.enable` 也看不到它恢复）。
+        /// </summary>
+        public bool Exists
+        {
+            get
+            {
+                return Player != null && Player.ComponentHealth != null && Player.ComponentBody != null;
+            }
+        }
+
         /// <summary>角色是否可以运行：世界就绪、活着、传感器可用、且（按配置）必须是本端玩家。</summary>
         public bool IsReady
         {
             get
             {
-                if (Player == null || Player.ComponentHealth == null || Player.ComponentBody == null)
+                if (!Exists)
                     return false;
                 if (!PlayerAiConfig.Enabled)
                     return false;

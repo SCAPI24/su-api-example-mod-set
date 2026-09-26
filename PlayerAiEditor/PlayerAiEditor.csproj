@@ -62,6 +62,27 @@
     <Compile Include="..\PlayerAiMod\Fsm\AiStateIds.cs" />
     <Compile Include="..\PlayerAiMod\Actor\IAiSensor.cs" />
     <Compile Include="..\PlayerAiMod\Actor\IAiActuator.cs" />
+
+    <!--
+      动作原语层 / 状态层 / Laya 接入层（P1~P3）：编辑器需要它们来做
+        · 节点注册表（Task.RunActionScript / Task.LayaAsk 才会出现在物料区）
+        · 属性映射（校验器与编译器同源）
+        · `ai.action.script.verbs` 那套 verb 词表（物料区展示用）
+      排除的是"游戏侧胶水"（依赖 Engine/Game/CmdBridgeMod 的实现）与自检文件。
+    -->
+    <Compile Include="..\PlayerAiMod\Action\**\*.cs"
+             Exclude="..\PlayerAiMod\Action\*SelfTest.cs;..\PlayerAiMod\Action\GameActionExecutor.cs;..\PlayerAiMod\Action\GameActionServices.cs;..\PlayerAiMod\Action\ActionScriptRuntime.cs;..\PlayerAiMod\Action\ActionScriptTemplates.cs" />
+    <Compile Include="..\PlayerAiMod\State\**\*.cs"
+             Exclude="..\PlayerAiMod\State\*SelfTest.cs;..\PlayerAiMod\State\QuestionBankTemplates.cs" />
+    <Compile Include="..\PlayerAiMod\Laya\**\*.cs"
+             Exclude="..\PlayerAiMod\Laya\*SelfTest.cs;..\PlayerAiMod\Laya\LayaRuntimeService.cs" />
+    <!--
+      资源库（P6）：编辑器要显示"磁盘版 / 内存版（dirty）/ 缓存版（更新 X 分钟）"三态，
+      用的就是与游戏内**同一份** MemoryAssetStore / AssetRecovery（校验与恢复语义只有一份）。
+      排除自检文件。
+    -->
+    <Compile Include="..\PlayerAiMod\Assets\**\*.cs"
+             Exclude="..\PlayerAiMod\Assets\*SelfTest.cs" />
   </ItemGroup>
 
   <ItemGroup>

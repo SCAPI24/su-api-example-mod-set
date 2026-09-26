@@ -289,6 +289,10 @@ namespace PlayerAiMod
         ///   · `input`：多帧软光标会话（移动 → 按下 → 抬起）；
         ///   · `invoke`：直接触发控件自己的"按下事件"（能触发才有效，绕过输入层）。
         /// </summary>
+        /// <summary>池调用模式（P5）：取一条 / 依次 / 随机 / 从黑板读（Laya 的决定落点）。</summary>
+        public static readonly string[] PoolCallModes =
+            { "SingleOne", "Sequence", "RandomOne", "FromBlackboard" };
+
         public static readonly string[] UiClickModes = { "direct", "input", "invoke" };
     }
 }

@@ -54,8 +54,18 @@ namespace PlayerAiMod
             NodesVisited++;
         }
 
+        /// <summary>
+        /// 记一行（`Task.Log`）。
+        ///
+        /// **两路都写、用途不同**：
+        ///   · **事件日志**（`BtLogSink` → `ai.logs`）—— 这是给人和复盘看的"决策痕迹"，
+        ///     与 `VerboseLogging` 无关，默认就记（"Laya 说 craft → 跑 craft_once.aeact"）；
+        ///   · **引擎日志**（`[PlayerAi][BT]`）—— 只在 `VerboseLogging` 打开时写，
+        ///     因为它是每帧级别的高频输出，默认开会把 Game.log 刷满。
+        /// </summary>
         public void Log(string message)
         {
+            BtLogSink.Emit(BtLogSink.TreeKind, message);
             if (PlayerAiConfig.VerboseLogging)
                 Engine.Log.Information("[PlayerAi][BT] " + message);
         }

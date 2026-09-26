@@ -128,6 +128,14 @@ namespace PlayerAiMod
 
         /// <summary>是否在装载时就做结构校验（生产总是 true；关掉只用于"先看看能不能读"）。</summary>
         public bool Validate = true;
+
+        /// <summary>
+        /// 问题库来源（plan G4）：给了才会**校验问题库引用**（库在不在 / 问题 id 在不在 /
+        /// 答案类型配不配 / 分支选项 key 是不是闭集）。
+        /// 为 null 时校验器会报 `bank.unverified` 警告而不是假装通过 ——
+        /// "校验通过"不能被读成"引用都对"。游戏侧与编辑器都必须给。
+        /// </summary>
+        public IQuestionBankSource Banks;
     }
 
     /// <summary>一个已经读进内存的包（zip 句柄已关闭，只剩数据与校验结果）。</summary>
@@ -542,7 +550,7 @@ namespace PlayerAiMod
             if (options.Validate)
             {
                 manifest.Validate(package.FileName, package.Report);
-                PackageValidator.ValidateTree(tree, manifest, package.FileName, package.Report);
+                PackageValidator.ValidateTree(tree, manifest, package.FileName, package.Report, options.Banks);
             }
 
             set.Packages.Add(package);

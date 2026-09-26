@@ -114,6 +114,28 @@ namespace PlayerAiMod
         public const string ReferenceEscape = "reference.escape";
         public const string SubtreeReference = "subtree.reference";
 
+        // ---- 问题库引用（G4 的构建期校验：这几类错误在运行时**全是静默降质**）
+        /// <summary>`Task.LayaAsk` 指的库找不到 / 读不了 / 解析不了。</summary>
+        public const string BankMissing = "bank.missing";
+
+        /// <summary>`answerKeys` / `only` 里的问题 id 在库里不存在（题目改名后的典型症状）。</summary>
+        public const string BankQuestionMissing = "bank.questionMissing";
+
+        /// <summary>答案类型与问题类型不相容（运行时会把这次已经付过钱的答案丢掉）。</summary>
+        public const string BankAnswerType = "bank.answerType";
+
+        /// <summary>绑定了 `only=` 之外的问题（这个节点根本不问它）。</summary>
+        public const string BankBindingNotAsked = "bank.bindingNotAsked";
+
+        /// <summary>问了但没绑定（付了往返却拿不到答案）。</summary>
+        public const string BankAnswerUnused = "bank.answerUnused";
+
+        /// <summary>拿答案做分支的字面量不是该问题的选项 key（改名会让这条分支静默失效）。</summary>
+        public const string BankOptionUnknown = "bank.optionUnknown";
+
+        /// <summary>没给库来源 / 库名是运行时决定的 → **这次没校验**（不是"通过了"）。</summary>
+        public const string BankUnverified = "bank.unverified";
+
         // 编译
         public const string CompileFailed = "compile.failed";
         public const string NotifyRejected = "notify.rejected";

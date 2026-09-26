@@ -679,8 +679,13 @@ namespace CmdBridgeMod
         /// 因此必须按"面板 + 索引"算出每一行可点击坐标。
         /// 行几何来自游戏自身：第 i 行位于 i*ItemSize - ScrollPosition，宽度为面板宽度。
         /// Source: Survivalcraft/Game/ListPanelWidget.cs:226-248, 287-295
+        ///
+        /// `includePoints=false` 时**不算坐标**（省掉每行两次几何换算）——给状态观察用：
+        /// 摘要只要"第几行/什么字/选中没/在不在可视区"，不要像素。
+        /// 几何与滚动算式**仍然只有这一份**（两处各写一份必然漂移）。
         /// </summary>
-        private static Dictionary<string, object> DescribeList(ListPanelWidget panel)
+        private static Dictionary<string, object> DescribeList(ListPanelWidget panel,
+            int maxItems = 64, bool includePoints = true)
         {
             var block = new Dictionary<string, object>(StringComparer.Ordinal);
             try
@@ -691,14 +696,23 @@ namespace CmdBridgeMod
                 Vector2 panelSize = panel.ActualSize;
                 bool horizontal = (int)panel.Direction == 0;
 
+                block["panel"] = panel.Name;
                 block["itemsCount"] = items.Count;
                 block["itemSize"] = itemSize;
                 block["scrollPosition"] = scroll;
                 block["horizontal"] = horizontal;
                 block["selectedIndex"] = panel.SelectedIndex;
 
+                // 还能不能滚：内容长度 vs 面板长度。列表行填不满或已经贴边时是 false，
+                // 这正是"要不要先滚动/翻页"的依据（G16：翻页由 C# 做，模型只选序号）。
+                float content = items.Count * itemSize;
+                float viewport = horizontal ? panelSize.X : panelSize.Y;
+                float tolerance = Math.Max(0.5f, itemSize * 0.05f);
+                block["canScrollUp"] = scroll > tolerance;
+                block["canScrollDown"] = scroll + viewport + tolerance < content;
+
                 var rows = new List<Dictionary<string, object>>();
-                int limit = Math.Min(items.Count, 64);
+                int limit = Math.Min(items.Count, Math.Max(0, maxItems));
                 for (int i = 0; i < limit; i++)
                 {
                     Vector2 local = horizontal
@@ -713,21 +727,25 @@ namespace CmdBridgeMod
                     {
                         ["index"] = i,
                         ["text"] = DescribeListItem(items[i]),
-                        ["clientPoint"] = new Dictionary<string, object>(StringComparer.Ordinal)
+                        ["selected"] = i == panel.SelectedIndex,
+                        ["visibleInPanel"] = inside
+                    };
+                    if (includePoints)
+                    {
+                        row["clientPoint"] = new Dictionary<string, object>(StringComparer.Ordinal)
                         {
                             ["x"] = client.X,
                             ["y"] = client.Y
-                        },
-                        ["visibleInPanel"] = inside
-                    };
-                    Vector2? screenPoint = ToScreenPoint(client);
-                    row["screenPoint"] = screenPoint.HasValue
-                        ? new Dictionary<string, object>(StringComparer.Ordinal)
-                        {
-                            ["x"] = screenPoint.Value.X,
-                            ["y"] = screenPoint.Value.Y
-                        }
-                        : null;
+                        };
+                        Vector2? screenPoint = ToScreenPoint(client);
+                        row["screenPoint"] = screenPoint.HasValue
+                            ? new Dictionary<string, object>(StringComparer.Ordinal)
+                            {
+                                ["x"] = screenPoint.Value.X,
+                                ["y"] = screenPoint.Value.Y
+                            }
+                            : null;
+                    }
                     rows.Add(row);
                 }
                 block["items"] = rows;
@@ -739,6 +757,177 @@ namespace CmdBridgeMod
                 block["error"] = exception.GetType().Name + ": " + exception.Message;
             }
             return block;
+        }
+
+        /// <summary>
+        /// 屏幕上"当前这个列表"的紧凑快照（G16）—— 供**状态观察 / 摘要**用，不是给 `ui.query` 的。
+        ///
+        /// 为什么要有它：世界外选世界、翻页这类决策，答案就是"第几行"，
+        /// 而列表行是自绘的（条目不是控件），不主动列出来模型看不见内容，只能瞎猜。
+        ///
+        /// 三条纪律：
+        ///   · **只读**：不改滚动、不改选中。观察路径一旦有副作用，排查时看到的就不是现场（A44）；
+        ///   · **有歧义要说出来**：屏幕上有多个非空列表时 `visibleCandidates` &gt; 1，
+        ///     摘要会加 `?` 前缀 —— 而不是让调用方以为"就是它，放心点"；
+        ///   · **判不了要说清**：取行时抛异常 → 块里带 `error`（消费侧据此判"看不到"，
+        ///     **绝不能**渲染成"列表是空的" —— "读失败"和"没有世界"是两个完全不同的事实，
+        ///     混起来的后果是模型决定"去创建一个新世界"）。
+        /// </summary>
+        public static Dictionary<string, object> DescribeActiveList(int maxRows)
+        {
+            try
+            {
+                ContainerWidget root = ScreensManager.RootWidget;
+                if (root == null)
+                    return null;
+
+                BoundingRectangle rootBounds = root.GlobalBounds;
+                ListPanelWidget bestFilled = null;
+                ListPanelWidget bestAny = null;
+                string filledPath = null;
+                string anyPath = null;
+                float filledArea = 0f;
+                float anyArea = 0f;
+                int withItems = 0;
+
+                foreach (Widget widget in root.AllChildren)
+                {
+                    var panel = widget as ListPanelWidget;
+                    if (panel == null || !panel.IsVisibleGlobal || !panel.IsEnabledGlobal)
+                        continue;
+
+                    float area = VisibleArea(panel, rootBounds);
+                    if (area <= 0.5f)
+                        continue;
+
+                    string path = BuildPath(panel) ?? string.Empty;
+                    int count = ItemCount(panel);
+
+                    if (count > 0)
+                    {
+                        withItems++;
+                        if (Better(panel, area, path, bestFilled, filledArea, filledPath))
+                        {
+                            bestFilled = panel;
+                            filledArea = area;
+                            filledPath = path;
+                        }
+                    }
+                    if (Better(panel, area, path, bestAny, anyArea, anyPath))
+                    {
+                        bestAny = panel;
+                        anyArea = area;
+                        anyPath = path;
+                    }
+                }
+
+                ListPanelWidget winner = bestFilled ?? bestAny;
+                if (winner == null)
+                    return null;
+
+                Dictionary<string, object> full = DescribeList(winner, maxRows, false);
+                var result = new Dictionary<string, object>(StringComparer.Ordinal);
+
+                object failure;
+                if (full.TryGetValue("error", out failure) && failure != null)
+                {
+                    // 读失败**不是**空列表：原样带出去，让消费侧判"看不到"。
+                    result["error"] = failure;
+                    return result;
+                }
+
+                result["panel"] = PanelName(winner);
+                result["itemsCount"] = full.ContainsKey("itemsCount") ? full["itemsCount"] : 0;
+                result["selectedIndex"] = full.ContainsKey("selectedIndex") ? full["selectedIndex"] : -1;
+                result["canScrollUp"] = full.ContainsKey("canScrollUp") && full["canScrollUp"] is bool
+                    && (bool)full["canScrollUp"];
+                result["canScrollDown"] = full.ContainsKey("canScrollDown") && full["canScrollDown"] is bool
+                    && (bool)full["canScrollDown"];
+                result["visibleCandidates"] = Math.Max(1, withItems);
+
+                var rows = new List<object>();
+                var items = full.ContainsKey("items") ? full["items"] as List<Dictionary<string, object>> : null;
+                if (items != null)
+                {
+                    for (int i = 0; i < items.Count; i++)
+                    {
+                        Dictionary<string, object> row = items[i];
+                        if (row == null)
+                            continue;
+                        rows.Add(new Dictionary<string, object>(StringComparer.Ordinal)
+                        {
+                            ["index"] = row.ContainsKey("index") ? row["index"] : i,
+                            ["text"] = row.ContainsKey("text") ? row["text"] : null,
+                            ["selected"] = row.ContainsKey("selected") && row["selected"] is bool
+                                && (bool)row["selected"],
+                            ["visible"] = row.ContainsKey("visibleInPanel") && row["visibleInPanel"] is bool
+                                && (bool)row["visibleInPanel"]
+                        });
+                    }
+                }
+                result["rows"] = rows;
+                return result;
+            }
+            catch (Exception exception)
+            {
+                // 与这个文件里其它导出方法一致：错误**放进返回值**，不吞也不另开日志通道。
+                // 调用方（状态观察 → 摘要）看到 `error` 就判"看不到列表"。
+                var failed = new Dictionary<string, object>(StringComparer.Ordinal);
+                failed["error"] = exception.GetType().Name + ": " + exception.Message;
+                return failed;
+            }
+        }
+
+        /// <summary>
+        /// 列表行数；取不到就当 0（**单个列表坏掉不该让整屏的列表都扫不出来**）。
+        /// </summary>
+        private static int ItemCount(ListPanelWidget panel)
+        {
+            try
+            {
+                return panel.Items.Count;
+            }
+            catch (Exception)
+            {
+                return 0;
+            }
+        }
+
+        /// <summary>
+        /// 选哪个列表：**面积大的优先**（主列表通常占满屏），面积相同按路径字典序
+        /// —— 必须有确定的平局规则，否则同一屏两帧可能选中不同的列表，
+        /// 模型会看到自相矛盾的摘要（"同一状态两种答案"最难查）。
+        /// </summary>
+        private static bool Better(Widget candidate, float area, string path,
+            Widget current, float currentArea, string currentPath)
+        {
+            if (current == null)
+                return true;
+            if (area > currentArea + 0.5f)
+                return true;
+            if (area < currentArea - 0.5f)
+                return false;
+            return string.CompareOrdinal(path, currentPath) < 0;
+        }
+
+        /// <summary>控件落在屏幕内的可见面积（被裁掉/移到屏幕外的部分不算）。</summary>
+        private static float VisibleArea(Widget widget, BoundingRectangle root)
+        {
+            BoundingRectangle bounds = widget.GlobalBounds;
+            float left = Math.Max(bounds.Min.X, root.Min.X);
+            float right = Math.Min(bounds.Max.X, root.Max.X);
+            float bottom = Math.Max(bounds.Min.Y, root.Min.Y);
+            float top = Math.Min(bounds.Max.Y, root.Max.Y);
+            float width = right - left;
+            float height = top - bottom;
+            return width <= 0f || height <= 0f ? 0f : width * height;
+        }
+
+        private static string PanelName(ListPanelWidget panel)
+        {
+            if (panel == null)
+                return null;
+            return string.IsNullOrEmpty(panel.Name) ? panel.GetType().Name : panel.Name;
         }
 
         private static string DescribeListItem(object item)

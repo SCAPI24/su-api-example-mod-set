@@ -80,6 +80,75 @@ namespace PlayerAiMod
 
             // 建立包目录并装上出厂示例包（缺什么补什么，绝不覆盖用户改过的包）。
             PlayerAiRuntime.Instance.EnsurePackages();
+            PlayerAiRuntime.InstallPoolHost();
+
+            // 资源库（P6 第二步）：启动恢复 —— 先看 `.autosave/` 里的影子副本能不能用
+            // （比"磁盘版 vs 缓存版"的时间戳与内容哈希），**用了哪一份、为什么**都进事件日志。
+            if (PlayerAiConfig.AssetRecoverOnStart)
+            {
+                try
+                {
+                    List<string> recovered = PlayerAiRuntime.Instance.RecoverAssetsOnStart();
+                    for (int i = 0; i < recovered.Count; i++)
+                        Log.Information("[PlayerAi][asset] " + recovered[i]);
+                }
+                catch (Exception exception)
+                {
+                    Log.Warning("[PlayerAi][asset] startup recovery failed: "
+                        + exception.GetType().Name + ": " + exception.Message);
+                }
+            }
+
+            // 装配动作脚本服务（P1）：脚本目录 = `<实例根>/PlayerAi/Scripts/`（可写）
+            // + `<实例根>/PlayerAi/BehaviorTrees/`（兼容：脚本与树包放一起也行）。
+            // 必须在 EnsurePackages 之后 —— 实例根由包目录推出来。
+            try
+            {
+                string instanceRoot = ResolveInstanceRoot(PlayerAiRuntime.Instance);
+                GameActionServices.Install(PlayerAiRuntime.Instance, instanceRoot);
+
+                // 纯逻辑层（`BtRunActionScriptTask`）的"按需取"（A34）：`ActionPlayServices.Current`
+                // 是全局静态缝，**自检/编辑器/别的 Mod 都可能把它清成 null** —— 那之后树里的动作节点
+                // 全部以 `action services are not initialized` 失败，而现象只是"树里动作没反应"。
+                // 挂上这个委托后，节点永远能把服务要回来（运行时的 `ActionServices` 会懒创建）。
+                ActionPlayServices.Provider = delegate
+                {
+                    PlayerAiRuntime runtime = PlayerAiRuntime.Instance;
+                    return runtime != null ? runtime.ActionServices : null;
+                };
+
+                Log.Information("[PlayerAi][act] action services installed, scripts in: "
+                    + string.Join("; ", ActionPlayServices.Current != null
+                        ? new List<string>(ActionPlayServices.Current.ScriptDirectories).ToArray()
+                        : new string[0]));
+            }
+            catch (Exception exception)
+            {
+                Log.Warning("[PlayerAi][act] installing action services failed: "
+                    + exception.GetType().Name + ": " + exception.Message);
+            }
+
+            // Laya 服务（P3）：**开机就建一次**，而不是等第一次有人问。
+            //
+            // 为什么必须提前建：`LayaRuntimeHost.Current` 只在运行时 `Laya` 属性第一次被访问时填上，
+            // 而"开机后第一棵用到 Task.LayaAsk 的树"完全可能比任何命令都早 —— 那时节点读到 null，
+            // 报 `Laya service is not initialized`（实机踩过：出厂异常子树第一次跑就撞上）。
+            // 现在节点侧也有兜底（`ResolveService`），这里是让"正常路径"一开始就是对的。
+            try
+            {
+                LayaRuntimeService laya = PlayerAiRuntime.Instance.Laya;
+                if (laya != null)
+                {
+                    Log.Information("[PlayerAi][laya] service ready: " + laya.Config.ToString()
+                        + " banks=" + laya.BankDirectories.Count
+                        + " key=" + laya.Config.ApiKeySource);
+                }
+            }
+            catch (Exception exception)
+            {
+                Log.Warning("[PlayerAi][laya] creating the Laya service failed: "
+                    + exception.GetType().Name + ": " + exception.Message);
+            }
 
             // 把 ai.* 命令挂到 CmdBridgeMod 的控制通道上（一套通道、一个 token、一个 CLI）。
             AiCommandBridge.RegisterAll(PlayerAiRuntime.Instance);
@@ -95,6 +164,15 @@ namespace PlayerAiMod
                 + (CmdBridgeActuator.IsAvailable
                     ? "CmdBridgeMod facade ready"
                     : "UNAVAILABLE (CmdBridgeMod missing or input injection disabled)"));
+        }
+
+        /// <summary>
+        /// 实例根由 <see cref="GameActionServices.ResolveInstanceRoot"/> 统一负责：
+        /// 脚本目录必须与包目录**同源**，否则会出现"包装得上、脚本找不到"这种分裂。
+        /// </summary>
+        private static string ResolveInstanceRoot(PlayerAiRuntime runtime)
+        {
+            return GameActionServices.ResolveInstanceRoot(runtime);
         }
 
         public void OnUnload()
@@ -140,6 +218,16 @@ namespace PlayerAiMod
             catch (Exception)
             {
                 // 卸载路径不因为摘命令失败而中断。
+            }
+
+            // 再摘掉动作脚本服务（它持有运行时引用，且里面有全局静态装配点）。
+            try
+            {
+                GameActionServices.Uninstall();
+            }
+            catch (Exception)
+            {
+                // 同上：卸载路径不抛。
             }
 
             // 先释放注入状态，避免卸载后游戏里残留"按住 W"。

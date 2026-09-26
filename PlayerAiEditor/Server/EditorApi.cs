@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Net.Http;
+using System.Text;
 
 namespace PlayerAiMod.Editor
 {
@@ -23,7 +25,14 @@ namespace PlayerAiMod.Editor
             // （以前还有 Mods/PlayerAiMod/PlayerAi/BehaviorTrees 作为第二来源，2026-09-12 按用户要求去掉）
             string packageDirectory = PackageRoots.DirectoryFor(instanceRoot);
             m_roots = new PackageRoots(packageDirectory);
-            m_options = new PackageLoadOptions { Roots = m_roots };
+            // G4：保存前/装载时就要能核对问题库引用（库在不在、问题 id、答案类型、分支选项 key）。
+            // 库目录与游戏侧同源（`QuestionBankDirectorySource.DirectoriesFor`），
+            // 且**按文件戳失效** —— 用户刚改完 .qbank 就要看到新结论，不能吃旧缓存。
+            m_options = new PackageLoadOptions
+            {
+                Roots = m_roots,
+                Banks = new QuestionBankDirectorySource(QuestionBankDirectorySource.DirectoriesFor(instanceRoot))
+            };
 
             // 出厂示例：编辑器**自己也要补一遍**（缺什么补什么、绝不覆盖已有文件）。
             //
@@ -1622,7 +1631,10 @@ namespace PlayerAiMod.Editor
                 var options = new PackageLoadOptions
                 {
                     Source = new OverlaySource(memory, m_options.Source),
-                    Roots = m_roots
+                    Roots = m_roots,
+                    // 与正常装载共用同一份库来源（同一份缓存）：保存前的这道闸门
+                    // 必须和游戏侧给出**同一个结论**，否则"编辑器说没事、进游戏报错"。
+                    Banks = m_options.Banks
                 };
                 return PackageLoader.Load(probe, options);
             }
@@ -1669,8 +1681,496 @@ namespace PlayerAiMod.Editor
             }
         }
 
-        private string Resolve(string nameOrPath, out string error)
+        // ---------------------------------------------------------------- 问题库（P3 第二步）
+
+        /// <summary>
+        /// `GET /api/banks`：列出 `<实例根>/PlayerAi/Questions/*.qbank` 及其问题/选项，
+        /// 并给出每个问题**建议的 answerKeys 类型**。
+        ///
+        /// 为什么值得单开一个端点：`Task.LayaAsk` 的两个属性是**裸字符串**——
+        /// `questions` 是库名、`answerKeys` 是 `黑板键:问题id:类型` 的逗号串。
+        /// 手打的代价很实在：库名打错 → `laya_bank_not_found`；问题 id 或类型打错 →
+        /// 校验期报错或运行时整节点 `fail`。把它们变成**下拉 + 勾选**，
+        /// 这两个属性就从"要背格式"变成"照着点"。
+        ///
+        /// 解析用的是**游戏内同一份** `QuestionBankParser`（`State/QuestionBank.cs`），
+        /// 于是"编辑器列得出来的"与"游戏装得上的"永远是同一批。
+        /// </summary>
+        public Dictionary<string, object> ListQuestionBanks()
         {
+            string folder = string.IsNullOrEmpty(InstanceRoot) ? null
+                : System.IO.Path.Combine(InstanceRoot, "PlayerAi", QuestionBank.FolderName);
+            var banks = new List<Dictionary<string, object>>();
+            var errors = new List<string>();
+
+            if (!string.IsNullOrEmpty(folder) && Directory.Exists(folder))
+            {
+                string[] files;
+                try
+                {
+                    files = Directory.GetFiles(folder, "*" + QuestionBank.Extension,
+                        SearchOption.TopDirectoryOnly);
+                }
+                catch (Exception exception)
+                {
+                    files = new string[0];
+                    errors.Add("读不了 " + folder + "：" + exception.Message);
+                }
+                Array.Sort(files, StringComparer.OrdinalIgnoreCase);
+
+                for (int i = 0; i < files.Length; i++)
+                {
+                    string json;
+                    try
+                    {
+                        json = File.ReadAllText(files[i]);
+                    }
+                    catch (Exception exception)
+                    {
+                        errors.Add(System.IO.Path.GetFileName(files[i]) + "：" + exception.Message);
+                        continue;
+                    }
+
+                    string parseError;
+                    QuestionBank bank = QuestionBankParser.Parse(json, files[i], out parseError);
+                    if (bank == null)
+                    {
+                        // 坏库**照样列出来**（只是标 red）：它正在磁盘上，用户需要看到"为什么用不了"
+                        banks.Add(new Dictionary<string, object>(StringComparer.Ordinal)
+                        {
+                            ["file"] = System.IO.Path.GetFileName(files[i]),
+                            ["path"] = files[i],
+                            ["id"] = null,
+                            ["name"] = null,
+                            ["questions"] = new List<object>(),
+                            ["error"] = parseError
+                        });
+                        continue;
+                    }
+
+                    banks.Add(DescribeBank(bank, files[i]));
+                }
+            }
+
+            return new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["ok"] = true,
+                ["folder"] = folder,
+                ["folderExists"] = !string.IsNullOrEmpty(folder) && Directory.Exists(folder),
+                ["banks"] = banks,
+                ["errors"] = errors,
+                ["bindingKinds"] = new List<string> { "str", "bool", "int", "float" }
+            };
+        }
+
+        private static Dictionary<string, object> DescribeBank(QuestionBank bank, string path)
+        {
+            var questions = new List<Dictionary<string, object>>();
+            for (int i = 0; i < bank.Questions.Count; i++)
+            {
+                QuestionTemplate question = bank.Questions[i];
+                var entry = new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    ["id"] = question.Id,
+                    ["type"] = question.Type,
+                    ["suggestedKind"] = SuggestedBindingKind(question),
+                    ["instructions"] = question.Instructions,
+                    ["options"] = new List<string>(question.OptionKeys())
+                };
+                questions.Add(entry);
+            }
+
+            return new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["file"] = System.IO.Path.GetFileName(path),
+                ["path"] = path,
+                ["id"] = bank.Id,
+                ["name"] = bank.Name,
+                ["template"] = bank.Template,
+                ["description"] = bank.Description,
+                ["questions"] = questions,
+                ["error"] = null
+            };
+        }
+
+        /// <summary>
+        /// 某个问题**该绑成什么类型**的黑板键：`choice` → str（选项 key）、
+        /// `noul` → bool、`score` → float。
+        ///
+        /// 这与 `BtLayaAskTask` 写入黑板时的类型要求一一对应（写错类型那一步会 fail），
+        /// 所以编辑器直接照它预填，用户不用去翻源码。
+        /// </summary>
+        private static string SuggestedBindingKind(QuestionTemplate question)
+        {
+            if (question == null)
+                return "str";
+            if (question.IsChoice)
+                return "str";
+            if (question.IsNoul)
+                return "bool";
+            if (question.IsScore)
+                return "float";
+            return "str";
+        }
+
+        // ---------------------------------------------------------------- 资源库 / Laya 配置（P6）
+
+        /// <summary>
+        /// 编辑器允许转发给游戏的命令白名单。
+        ///
+        /// 只放行**资源库那一族**：它们全是"读现状 / 保存 / 丢弃 / 缓存 / 恢复 / 重取 / 冲突处置"，
+        /// 没有一个能绕过游戏自己的闸门（保存默认不覆盖、丢弃要回磁盘版、覆盖要先备份）。
+        /// **不放行 `ai.edit.*` / `ai.tree.load` 之类** —— 那些是游戏内行为，编辑器不该远程代按。
+        /// </summary>
+        private static readonly string[] AssetCommands =
+        {
+            "ai.asset.status",
+            "ai.asset.list",
+            "ai.asset.load",
+            "ai.asset.save",
+            "ai.asset.drop",
+            "ai.asset.autosave",
+            "ai.asset.restore",
+            "ai.asset.retry",
+            "ai.asset.conflict"
+        };
+
+        /// <summary>
+        /// `GET /api/assets`：**三态视图**（磁盘版 / 内存版 dirty / 缓存版）+ 待处置冲突 + 重取现状。
+        ///
+        /// 数据全来自游戏（`ai.asset.list` + `ai.asset.status`）：编辑器**不自己算**——
+        /// "哪一版更新"必须与游戏内的判据同源，否则界面说的和实际用的会不一致。
+        /// </summary>
+        public Dictionary<string, object> Assets()
+        {
+            var result = new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["instanceRoot"] = InstanceRoot,
+                ["packageFolder"] = m_roots.InstanceRoot != null ? m_roots.InstanceRoot.Path : null,
+                ["manualSaveFolder"] = PackageRoots.SavesDirectoryFor(InstanceRoot),
+                ["cacheFolder"] = AutoSaveCache.ResolveDirectory(InstanceRoot)
+            };
+
+            try
+            {
+                Dictionary<string, object> list = m_game.SendRaw("ai.asset.list", null);
+                foreach (KeyValuePair<string, object> pair in list)
+                    result[pair.Key] = pair.Value;
+                result["ok"] = true;
+            }
+            catch (GameCommandException exception)
+            {
+                result["ok"] = false;
+                result["code"] = exception.Code;
+                result["reason"] = exception.GameMessage;
+            }
+            catch (Exception exception)
+            {
+                result["ok"] = false;
+                result["reason"] = "the game is not reachable: " + exception.Message;
+            }
+
+            // 重取现状（与三态视图并列显示：哪条在等退避、哪条已熔断）
+            try
+            {
+                result["retry"] = m_game.SendRaw("ai.asset.retry", null);
+            }
+            catch (Exception exception)
+            {
+                result["retryError"] = exception.Message;
+            }
+
+            // G25 的待处置冲突（编辑器要在界面上给"用磁盘覆盖 / 保留内存 / 另存为新包"三个选项）
+            try
+            {
+                result["conflict"] = m_game.SendRaw("ai.asset.conflict", null);
+            }
+            catch (Exception exception)
+            {
+                result["conflictError"] = exception.Message;
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// `POST /api/asset/{action}`：把动作转发给游戏。`action` 是白名单里的命令后缀
+        /// （`save` / `drop` / `autosave` / `restore` / `conflict` / `retry` / `load`），
+        /// 参数原样透传（`name` / `dir` / `overwrite` / `mode` / `newName` / …）。
+        /// </summary>
+        public Dictionary<string, object> AssetCommand(string action, Dictionary<string, object> arguments)
+        {
+            if (string.IsNullOrEmpty(action))
+                return Error("invalid_argument", "缺少 action");
+
+            string command = "ai.asset." + action.Trim().ToLowerInvariant();
+            bool allowed = false;
+            for (int i = 0; i < AssetCommands.Length; i++)
+            {
+                if (string.Equals(AssetCommands[i], command, StringComparison.OrdinalIgnoreCase))
+                {
+                    allowed = true;
+                    break;
+                }
+            }
+            if (!allowed)
+                return Error("not_allowed", "编辑器不能转发这条命令：" + command);
+
+            try
+            {
+                Dictionary<string, object> response = m_game.SendRaw(command,
+                    arguments ?? new Dictionary<string, object>(StringComparer.Ordinal));
+                response["ok"] = true;
+                response["command"] = command;
+                return response;
+            }
+            catch (GameCommandException exception)
+            {
+                Dictionary<string, object> failed = Error(exception.Code, exception.GameMessage);
+                failed["command"] = command;
+                return failed;
+            }
+            catch (Exception exception)
+            {
+                Dictionary<string, object> failed = Error("game_unreachable", exception.Message);
+                failed["command"] = command;
+                return failed;
+            }
+        }
+
+        /// <summary>
+        /// `GET /api/laya/review`：把游戏侧的 **`ai.laya.review`**（P4 判定复盘）搬进编辑器。
+        ///
+        /// 与资源库三态同一个原则：**判据只在游戏侧算一次**（那边才有 `DecisionLog`），
+        /// 编辑器只转述。游戏没开着时返回 `{ok:false, code:"game_unreachable"}`，
+        /// 界面据此说"先启动游戏"，而不是显示一张空表让人以为"没有判定"。
+        ///
+        /// `format`：`json`（聚合 + 明细，界面用）/ `md`（可复算的抽样表，界面"复制"按钮用）。
+        /// </summary>
+        public Dictionary<string, object> LayaReview(int count, string format, bool clear)
+        {
+            var arguments = new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["count"] = count < 0 ? 0 : count,
+                ["format"] = string.IsNullOrEmpty(format) ? "json" : format
+            };
+            if (clear)
+                arguments["clear"] = true;
+
+            try
+            {
+                Dictionary<string, object> response = m_game.SendRaw("ai.laya.review", arguments);
+                response["ok"] = true;
+                response["command"] = "ai.laya.review";
+                return response;
+            }
+            catch (GameCommandException exception)
+            {
+                Dictionary<string, object> failed = Error(exception.Code, exception.GameMessage);
+                failed["command"] = "ai.laya.review";
+                return failed;
+            }
+            catch (Exception exception)
+            {
+                Dictionary<string, object> failed = Error("game_unreachable", exception.Message);
+                failed["command"] = "ai.laya.review";
+                return failed;
+            }
+        }
+
+        /// <summary>
+        /// `GET /api/laya/config`：读**一份配置**（D16）—— 端点 / 模型 / 超时 / 预算 / 密钥来源。
+        ///
+        /// **密钥只回掩码**：界面要显示"设过没有、是哪一条"，但没有任何理由把明文再送回浏览器。
+        /// </summary>
+        public Dictionary<string, object> ReadLayaConfig()
+        {
+            LayaConfig config = LayaConfig.Load(InstanceRoot);
+            Dictionary<string, object> info = config.Describe();
+            info["ok"] = true;
+            info["configFile"] = LayaConfigPath();
+            info["fileExists"] = File.Exists(LayaConfigPath());
+            info["defaults"] = new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["baseURL"] = LayaConfig.DefaultBaseUrl,
+                ["model"] = LayaConfig.DefaultModel,
+                ["timeoutMs"] = LayaConfig.DefaultTimeoutMs,
+                ["refreshMs"] = LayaConfig.DefaultRefreshMs
+            };
+            // 端点可达性：编辑器顺手替用户探一次（失败不影响读取配置）
+            string probeError;
+            info["reachable"] = ProbeModels(config, out probeError);
+            info["probeError"] = probeError;
+            return info;
+        }
+
+        /// <summary>
+        /// 探一次 `GET /v1/models`：回答"这个端点 + 这把密钥现在能不能用"。
+        ///
+        /// 为什么值得单做：G6 要求"发请求前就把三种分叉判出来"（端点不通 / 没密钥 / 401）——
+        /// 界面上直接显示一句，比让用户去猜"为什么按了没反应"有用得多。
+        /// </summary>
+        private static bool ProbeModels(LayaConfig config, out string error)
+        {
+            error = null;
+            if (config == null)
+            {
+                error = "no configuration";
+                return false;
+            }
+            if (!config.HasKey)
+            {
+                error = "no API key configured";
+                return false;
+            }
+
+            try
+            {
+                using (var client = new HttpClient())
+                {
+                    client.Timeout = TimeSpan.FromMilliseconds(Math.Max(1200, config.TimeoutMs + 1200));
+                    using (var request = new HttpRequestMessage(HttpMethod.Get, config.ModelsUrl))
+                    {
+                        request.Headers.Add("Authorization", "Bearer " + config.ApiKey);
+                        using (HttpResponseMessage response = client.SendAsync(request)
+                            .GetAwaiter().GetResult())
+                        {
+                            if (!response.IsSuccessStatusCode)
+                            {
+                                error = "HTTP " + (int)response.StatusCode;
+                                return false;
+                            }
+                            return true;
+                        }
+                    }
+                }
+            }
+            catch (Exception exception)
+            {
+                error = exception.GetType().Name + ": " + exception.Message;
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// `POST /api/laya/config`：写这份配置（原子写）。
+        ///
+        /// 三条纪律：
+        ///   · **密钥只写不回读**：正文里没给 `apiKey` 就保留文件里原有那把（不会因为"改个超时"把密钥抹掉）；
+        ///     给了空串表示**显式清除**；
+        ///   · 值先**夹紧**（`LayaConfig.Validate` 的同一套规则），不让界面写进超时 0 ms 这种配置；
+        ///   · 文件落在 `<实例根>/PlayerAi/Laya.local.json` —— 与游戏读的是**同一个文件**。
+        /// </summary>
+        public Dictionary<string, object> SaveLayaConfig(Dictionary<string, object> payload)
+        {
+            string path = LayaConfigPath();
+            if (string.IsNullOrEmpty(path))
+                return Error("not_ready", "实例根未知，无法定位 Laya.local.json");
+
+            LayaConfig current = LayaConfig.Load(InstanceRoot);
+            var config = new LayaConfig
+            {
+                BaseUrl = Text(payload, "baseURL", current.BaseUrl),
+                Model = Text(payload, "model", current.Model),
+                ApiKey = current.ApiKey
+            };
+
+            if (payload != null && payload.ContainsKey("timeoutMs"))
+                config.TimeoutMs = Number(payload, "timeoutMs", current.TimeoutMs);
+            else
+                config.TimeoutMs = current.TimeoutMs;
+
+            if (payload != null && payload.ContainsKey("refreshMs"))
+                config.RefreshMs = Number(payload, "refreshMs", current.RefreshMs);
+            else
+                config.RefreshMs = current.RefreshMs;
+
+            if (payload != null && payload.ContainsKey("digestBudgetChars"))
+                config.DigestBudgetChars = Number(payload, "digestBudgetChars", current.DigestBudgetChars);
+            else
+                config.DigestBudgetChars = current.DigestBudgetChars;
+
+            config.HeadMaxLen = current.HeadMaxLen;
+            config.MaxLen = current.MaxLen;
+
+            if (payload != null && payload.ContainsKey("enabled"))
+            {
+                object raw;
+                payload.TryGetValue("enabled", out raw);
+                config.Enabled = raw is bool ? (bool)raw : current.Enabled;
+            }
+            else
+            {
+                config.Enabled = current.Enabled;
+            }
+
+            // 密钥：给了才动（空串 = 显式清除）
+            if (payload != null && payload.ContainsKey("apiKey"))
+            {
+                string key = Text(payload, "apiKey", string.Empty);
+                config.ApiKey = string.IsNullOrEmpty(key) ? null : key.Trim();
+            }
+            config.Validate();
+
+            var value = PackageValue.Object();
+            value.Set("baseURL", PackageValue.Str(config.BaseUrl));
+            value.Set("model", PackageValue.Str(config.Model));
+            value.Set("timeoutMs", PackageValue.Number(config.TimeoutMs));
+            value.Set("refreshMs", PackageValue.Number(config.RefreshMs));
+            value.Set("digestBudgetChars", PackageValue.Number(config.DigestBudgetChars));
+            value.Set("headMaxLen", PackageValue.Number(config.HeadMaxLen));
+            value.Set("maxLen", PackageValue.Number(config.MaxLen));
+            value.Set("enabled", PackageValue.Bool(config.Enabled));
+            if (!string.IsNullOrEmpty(config.ApiKey))
+                value.Set("apiKey", PackageValue.Str(config.ApiKey));
+
+            string error;
+            if (!PackageWriter.TryWriteFile(path,
+                new UTF8Encoding(false).GetBytes(value.ToJson(true)), out error))
+            {
+                return Error("io_error", "写不进 " + path + "：" + error);
+            }
+
+            var result = ReadLayaConfig();
+            result["saved"] = true;
+            result["path"] = path;
+            result["keyKept"] = payload == null || !payload.ContainsKey("apiKey")
+                ? !string.IsNullOrEmpty(config.ApiKey) : !string.IsNullOrEmpty(config.ApiKey);
+            return result;
+        }
+
+        /// <summary>`&lt;实例根&gt;/PlayerAi/Laya.local.json`（与游戏侧 `LayaConfig` 同一路径）。</summary>
+        public string LayaConfigPath()
+        {
+            if (string.IsNullOrEmpty(InstanceRoot))
+                return null;
+            return System.IO.Path.Combine(InstanceRoot, "PlayerAi", LayaConfig.ConfigFileName);
+        }
+
+        private static string Text(Dictionary<string, object> payload, string key, string fallback)
+        {
+            if (payload == null || !payload.ContainsKey(key))
+                return fallback;
+            object raw;
+            payload.TryGetValue(key, out raw);
+            string text = raw == null ? null : Convert.ToString(raw);
+            return string.IsNullOrEmpty(text) && fallback != null ? fallback : text;
+        }
+
+        private static int Number(Dictionary<string, object> payload, string key, int fallback)
+        {
+            if (payload == null || !payload.ContainsKey(key))
+                return fallback;
+            object raw;
+            payload.TryGetValue(key, out raw);
+            if (raw == null)
+                return fallback;
+            if (raw is int)
+                return (int)raw;
+            double parsed;
+            return double.TryParse(Convert.ToString(raw), out parsed) ? (int)parsed : fallback;
+        }
+
+        private string Resolve(string nameOrPath, out string error)        {
             error = null;
             if (string.IsNullOrEmpty(nameOrPath))
             {

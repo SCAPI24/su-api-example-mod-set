@@ -26,7 +26,7 @@ namespace ScMultiplayer
         public static string BuildFingerprint { get; }
 
         /// <summary>
-        /// 娑堟伅鍙戦€佽€呯殑缁堢鍦板潃
+        /// 消息发送者的终端地址
         /// </summary>
         public IPEndPoint SenderEndPoint { get; set; }
 
@@ -159,7 +159,7 @@ namespace ScMultiplayer
 
             Message message = (Message)Activator.CreateInstance(messageType);
 
-            // 浠庢暟鎹祦涓鍙栧彂閫佽€呬俊鎭?
+            // 从数据流中读取发送者信息
             bool hasSender = reader.ReadBoolean();
             if (hasSender)
             {
@@ -167,7 +167,7 @@ namespace ScMultiplayer
             }
             else
             {
-                // 濡傛灉鏁版嵁娴佷腑娌℃湁鍙戦€佽€呬俊鎭紝浣跨敤浼犲叆鐨勫彂閫佽€呬俊鎭?
+                // 如果数据流中没有发送者信息，使用传入的发送者信息
                 message.SenderEndPoint = senderEndPoint;
             }
 
@@ -186,13 +186,13 @@ namespace ScMultiplayer
 
             writer.WritePackedInt32(messageTypeId);
 
-            // 搴忓垪鍖栧彂閫佽€呬俊鎭?
+            // 序列化发送者信息
             bool hasSenderToSerialize = message.SenderEndPoint != null || senderEndPoint != null;
             writer.WriteBoolean(hasSenderToSerialize);
 
             if (hasSenderToSerialize)
             {
-                // 浼樺厛浣跨敤娑堟伅涓凡鏈夌殑鍙戦€佽€呬俊鎭紝鍚﹀垯浣跨敤浼犲叆鐨勫彂閫佽€呬俊鎭?
+                // 优先使用消息中已有的发送者信息，否则使用传入的发送者信息
                 IPEndPoint endPointToSerialize = message.SenderEndPoint ?? senderEndPoint;
                 writer.WriteIPEndPoint(endPointToSerialize);
             }
@@ -202,13 +202,13 @@ namespace ScMultiplayer
         }
 
         /// <summary>
-        /// 渚挎嵎鏂规硶锛氬啓鍏ユ秷鎭苟璁板綍鍙戦€佽€?
+        /// 便捷方法：写入消息并记录发送者
         /// </summary>
         public static byte[] WriteWithSender(Message message, IPEndPoint senderEndPoint)
         {
-            // 璁剧疆鍙戦€佽€呬俊鎭悗搴忓垪鍖?
+            // 设置发送者信息后序列化
             message.SenderEndPoint = senderEndPoint;
-            return Write(message, null); // 浼犲叆null锛屽洜涓哄彂閫佽€呬俊鎭凡缁忓湪message涓?
+            return Write(message, null); // 传入null，因为发送者信息已经在message中
         }
 
         // Source: Mod/ScMultiplayer/Message/Message.cs:Message.Read
@@ -342,7 +342,7 @@ namespace ScMultiplayer
         }
 
         /// <summary>
-        /// 渚挎嵎鏂规硶锛氳鍙栨秷鎭苟璁板綍鍙戦€佽€?
+        /// 便捷方法：读取消息并记录发送者
         /// </summary>
         public static Message ReadWithSender(byte[] bytes, IPEndPoint senderEndPoint)
         {
@@ -353,7 +353,7 @@ namespace ScMultiplayer
         protected abstract void Write(SuWriter writer);
 
         /// <summary>
-        /// 鑾峰彇鍙戦€佽€呯殑IP鍦板潃锛堝鏋滃瓨鍦級
+        /// 获取发送者的IP地址（如果存在）
         /// </summary>
         public IPAddress GetSenderAddress()
         {
@@ -361,7 +361,7 @@ namespace ScMultiplayer
         }
 
         /// <summary>
-        /// 鑾峰彇鍙戦€佽€呯殑绔彛鍙凤紙濡傛灉瀛樺湪锛?
+        /// 获取发送者的端口号（如果存在）
         /// </summary>
         public int? GetSenderPort()
         {
@@ -369,7 +369,7 @@ namespace ScMultiplayer
         }
 
         /// <summary>
-        /// 妫€鏌ユ秷鎭槸鍚︽湁鍙戦€佽€呬俊鎭?
+        /// 检查消息是否有发送者信息
         /// </summary>
         public bool HasSender()
         {
@@ -377,7 +377,7 @@ namespace ScMultiplayer
         }
 
         /// <summary>
-        /// 鑾峰彇鍙戦€佽€呯殑瀛楃涓茶〃绀?
+        /// 获取发送者的字符串表示
         /// </summary>
         public string GetSenderString()
         {
@@ -385,7 +385,7 @@ namespace ScMultiplayer
         }
 
         /// <summary>
-        /// 璁剧疆鍙戦€佽€呬俊鎭紙閾惧紡璋冪敤锛?
+        /// 设置发送者信息（链式调用）
         /// </summary>
         public Message SetSender(IPEndPoint senderEndPoint)
         {
@@ -394,7 +394,7 @@ namespace ScMultiplayer
         }
 
         /// <summary>
-        /// 璁剧疆鍙戦€佽€呬俊鎭紙閾惧紡璋冪敤锛?
+        /// 设置发送者信息（链式调用）
         /// </summary>
         public Message SetSender(IPAddress address, int port)
         {

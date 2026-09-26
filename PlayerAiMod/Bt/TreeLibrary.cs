@@ -280,6 +280,54 @@ namespace PlayerAiMod
             return false;
         }
 
+        /// <summary>
+        /// 取一个池项的**已编译根**（必要时预编译并常驻）。
+        ///
+        /// 用途（plan §4.8）：`Task.PoolCall` 把池里的包当**子行为**跑 ——
+        /// 挂到当前树的一个节点下 tick，**不换活动树的根**。
+        /// 这样就不会触发 `Switch` 的 `ReplaceRoot(migrate:false)`，
+        /// 也就不会把父树正在跑的那一步丢掉（S1 的另一面）。
+        ///
+        /// 注意：返回的是**常驻对象图**（带运行态），调用方必须先 `ResetSubtreeState()`
+        /// 再挂上去 tick（`Task.PoolCall` 已经这么做了）。
+        /// </summary>
+        public bool TryGetPreparedRoot(string nameOrPath, out CompiledTree compiled, out string error)
+        {
+            compiled = null;
+            error = null;
+
+            PreparedTree prepared;
+            if (!TryGetPrepared(nameOrPath, out prepared))
+            {
+                prepared = Prepare(nameOrPath, null);
+                if (prepared == null || !prepared.Ready)
+                {
+                    // 失败原因取校验报告（比"prepared 不 ready"有用得多）
+                    error = "package could not be prepared: '" + (nameOrPath ?? "<null>") + "'";
+                    try
+                    {
+                        PackageReport report = Validate(nameOrPath);
+                        if (report != null && !report.IsEmpty)
+                            error += " - " + report.Summary();
+                    }
+                    catch (Exception)
+                    {
+                        // 报告取不到就只给上面那句
+                    }
+                    return false;
+                }
+            }
+
+            if (prepared.Compiled == null || prepared.Compiled.Root == null)
+            {
+                error = "prepared package has no compiled root: '" + (nameOrPath ?? "<null>") + "'";
+                return false;
+            }
+
+            compiled = prepared.Compiled;
+            return true;
+        }
+
         // ---------------------------------------------------------------- 切换
 
         /// <summary>

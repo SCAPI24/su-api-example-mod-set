@@ -174,6 +174,9 @@
       inspectorTop: Math.round(inspectorBox.top),
       scrollerClientWidth: scroller ? scroller.clientWidth : -1,
       scrollerClientHeight: scroller ? scroller.clientHeight : -1,
+      // 判"铺满"必须用 **offsetHeight**：clientHeight 会把**横向滚动条**（图比视口宽时必然有）
+      // 那 ~15px 扣掉，于是"铺满"的容器永远比它大 15px —— 这不是布局错，是量错了（见下面那条断言）
+      scrollerOffsetHeight: scroller ? scroller.offsetHeight : -1,
       treeRootClientWidth: treeRoot ? treeRoot.clientWidth : -1,
       treeRootClientHeight: treeRoot ? treeRoot.clientHeight : -1,
       statusbarHeight: Math.round(doc.getElementById('statusbar').getBoundingClientRect().height),
@@ -1983,6 +1986,83 @@
 
     win.fetch = realFetch2;
 
+    // ---- Task.LayaAsk：questions 下拉 + answerKeys 勾选（P3 第二步）
+    //
+    // 这两个属性是**裸字符串**：库名写错是 `laya_bank_not_found`，问题 id / 类型写错则整节点 fail。
+    // 所以编辑器把它们换成"下拉 + 勾选"，这里用真 DOM 证明**控件真的出现、真的写得回包**。
+    gameApi.setTree({ id: 'laya', entry: 'root', format: 'scbt', version: 1 },
+      { id: 'root', type: 'Root', children: [
+        { id: 'ask', type: 'Task.LayaAsk',
+          properties: { questions: 'world_goal', answerKeys: 'goal:goal:str' } } ] },
+      'X:/pkgs/laya_probe.scbtpak');
+    // 先把问题库清单**确定性地**拉回来：启动链上的那次可能被本页自己的 fetch 桩挡掉
+    if (gameApi.loadBanks) await gameApi.loadBanks();
+    check('问题库清单已加载（下拉的数据来源）',
+      (gameApi.state.banks || []).length > 0,
+      '(' + ((gameApi.state.banks || []).length) + ' 个库)');
+    // 直接摆 selectedId + 重画属性区（与上面 Task.UiClick 那段同一手法：
+    // 不依赖"画布上有那一行"这种渲染细节，测的是**属性控件**本身）
+    // ⚠️ 还要把"选中的注释框"清掉：上面「建组」那段留下的 selectedGroupId 会让
+    //    属性区显示**组的面板**（注释框/标题/颜色），节点属性根本不渲染（实测踩过）。
+    gameApi.state.selectedGroupId = null;
+    gameApi.state.selectedId = 'ask';
+    gameApi.renderInspector();
+    await delay(60);
+
+    var bankSelect = null;
+    var allSelects = doc.querySelectorAll('#inspectorBody select');
+    for (var s = 0; s < allSelects.length; s++) {
+      var optionValues = Array.prototype.map.call(allSelects[s].options, function (o) { return o.value; });
+      if (optionValues.indexOf('world_goal.qbank') >= 0) bankSelect = allSelects[s];
+    }
+    var propLabels = Array.prototype.map.call(
+      doc.querySelectorAll('#inspectorBody .prop-row label'),
+      function (el) { return String(el.textContent).slice(0, 24); });
+    note('   属性区行数=' + propLabels.length + ' 标签=' + propLabels.join(' / ')
+      + ' ｜ select=' + allSelects.length + ' banks=' + ((gameApi.state.banks || []).length)
+      + ' selectedId=' + gameApi.state.selectedId);
+    check('Task.LayaAsk 的 questions 是**下拉**（列的是磁盘上真有的 .qbank，不是让人手打）',
+      !!bankSelect && bankSelect.value === 'world_goal.qbank',
+      (bankSelect ? bankSelect.value : '没有找到问题库下拉')
+      + ' ｜ 属性区=' + allSelects.length + 'select/' + propLabels.length + 'label:'
+      + propLabels.join(','));
+
+    var bindRows = doc.querySelectorAll('#inspectorBody .prop-row.packages .package-item');
+    check('按库里的问题逐条列出来（world_goal 有 3 个问题）',
+      bindRows.length >= 3, bindRows.length + ' 行');
+    var firstRowText = bindRows.length ? String(bindRows[0].textContent) : '';
+    check('每一行都写清了"类型→绑定类型"和可选项（不用去翻源码）',
+      firstRowText.indexOf('choice') >= 0 && firstRowText.indexOf('mine') >= 0,
+      firstRowText.slice(0, 60));
+
+    // 勾一个还没绑过的问题 → answerKeys 应该多一条 `<qid>:<qid>:<kind>`
+    var boxes = doc.querySelectorAll('#inspectorBody .prop-row.packages input[type=checkbox]');
+    var ticked = null;
+    for (var b = 0; b < boxes.length; b++) {
+      if (!boxes[b].checked) { ticked = boxes[b]; break; }
+    }
+    if (ticked) {
+      ticked.checked = true;
+      ticked.dispatchEvent(new Event('change', { bubbles: true }));
+      await delay(40);
+    }
+    var bindingSpec = String(gameApi.state.tree.children[0].properties.answerKeys || '');
+    check('勾一个问题就写回 answerKeys（格式由控件拼，不再靠人背）',
+      bindingSpec.split(',').length >= 2 && bindingSpec.indexOf(':str') >= 0, bindingSpec);
+
+    // 库名指向一个不存在的库：下拉要**原样留着**并标明（不能静默丢掉手打的值）
+    gameApi.state.tree.children[0].properties.questions = 'no_such_bank';
+    gameApi.renderInspector();
+    await delay(30);
+    var keptManual = false;
+    var againSelects = doc.querySelectorAll('#inspectorBody select');
+    for (var n = 0; n < againSelects.length; n++) {
+      var opts2 = Array.prototype.map.call(againSelects[n].options, function (o) { return o.value; });
+      if (opts2.indexOf('no_such_bank') >= 0) keptManual = true;
+    }
+    check('当前库不在目录里时下拉把它原样列出来（手打的/已删的库不会被静默丢掉）',
+      keptManual, keptManual ? 'ok' : '下拉里找不到 no_such_bank');
+
     // ---- 停止按钮 + "只亮正在执行的那一个节点"
     var stopBtn = doc.getElementById('btnTreeStop');
     check('工具条上有「⏹ 停止」按钮（停止 = 卸下树，再播放就是从头开始）',
@@ -2088,10 +2168,12 @@
       && mid.diag.indexOf('画布栏=' + mid.canvasClientWidth + '×' + mid.canvasClientHeight) >= 0,
       wide.diag + ' / 实测 ' + wide.canvasClientWidth + '×' + wide.canvasClientHeight);
     check('节点图的滚动区铺满画布栏（不是按内容撑高自己）',
-      Math.abs(wide.scrollerClientHeight - wide.treeRootClientHeight) <= 4
-      && Math.abs(mid.scrollerClientHeight - mid.treeRootClientHeight) <= 4,
-      '滚动区 ' + wide.scrollerClientHeight + ' vs 树容器 ' + wide.treeRootClientHeight
-      + '；中窗口 ' + mid.scrollerClientHeight + ' vs ' + mid.treeRootClientHeight);
+      Math.abs(wide.scrollerOffsetHeight - wide.treeRootClientHeight) <= 4
+      && Math.abs(mid.scrollerOffsetHeight - mid.treeRootClientHeight) <= 4,
+      '滚动区(offset) ' + wide.scrollerOffsetHeight + ' vs 树容器 ' + wide.treeRootClientHeight
+      + '；中窗口 ' + mid.scrollerOffsetHeight + ' vs ' + mid.treeRootClientHeight
+      + '（client ' + wide.scrollerClientHeight + '/' + mid.scrollerClientHeight
+      + ' 少的那截是横向滚动条）');
     check('窄/矮窗口下画布区仍然有一块能干活的地方（>=140px 高）',
       wide.treeRootClientHeight >= 140 && mid.treeRootClientHeight >= 140
       && narrow.treeRootClientHeight >= 140,
@@ -2108,6 +2190,101 @@
         return scale !== null && Math.abs(scale - wideScale) <= 2
           && again.canvasClientWidth === wide.canvasClientWidth;
       })(), scaleFromDiag(diagLine(doc)) + '%（原 ' + wideScale + '%）');
+    // ------------------------------------------------ ⑩b 判定复盘面板（P4）
+    // 真 DOM + **桩 fetch**：这一段不真的问游戏要记录（游戏没跑时问也只会拿到"未连上"），
+    // 验的是"拿到数据之后界面画得对不对"。留在这里（**切英文之前**）是有意的：
+    // 生成出来的那些行必须能被语言切换一起翻掉，后面整页扫中文那条检查会验它。
+    note('⑩b 判定复盘：真 DOM + 桩数据（含"看原文摘要"与"清空"）');
+    var reviewApi = win.PlayerAiEditorReview || {};
+    var reviewBoxEl = doc.getElementById('reviewBox');
+    var reviewBadgeEl = doc.getElementById('reviewBadge');
+    check('复盘面板的控件都在（条数 / 刷新 / 复制抽样表 / 清空 / 角标 / 内容区）',
+      !!doc.getElementById('reviewCount') && !!doc.getElementById('btnReview')
+      && !!doc.getElementById('btnReviewMd') && !!doc.getElementById('btnReviewClear')
+      && !!reviewBadgeEl && !!reviewBoxEl
+      && typeof reviewApi.refresh === 'function' && typeof reviewApi.relabel === 'function',
+      reviewApi ? Object.keys(reviewApi).join(',') : '<missing>');
+
+    var realFetchReview = win.fetch;
+    var realConfirmReview = win.confirm;
+    var reviewUrl = '';
+    function stubReview(payload) {
+      win.fetch = function (url) {
+        reviewUrl = String(url);
+        return Promise.resolve({ ok: true, json: function () { return Promise.resolve(payload); } });
+      };
+    }
+
+    var reviewSummary = { records: 2, capacity: 64, total: 2, sent: 2, cached: 0, refused: 0,
+      failed: 0, inputTokens: 646, avgMs: 245, p95Ms: 266, maxMs: 266, minMs: 224 };
+    var reviewRows = [
+      { seq: 1, time: '10:00:01.000', kind: 'sent', bank: 'world_goal',
+        questions: 'goal,threat,can_reach', digestChars: 153,
+        digest: 'phase=world ui=hud scr=Game hp=1(full) food=0.9(full)',
+        ok: true, answer: 'goal=craft threat=yes', errorCode: null,
+        elapsedMs: 224, inputTokens: 320 },
+      { seq: 2, time: '10:00:05.000', kind: 'sent', bank: 'world_goal',
+        questions: 'goal,threat,can_reach', digestChars: 158,
+        digest: 'phase=world ui=Clothing scr=Game hp=1(full)',
+        ok: false, answer: null, errorCode: 'laya_timeout', elapsedMs: 266, inputTokens: 326 }
+    ];
+    stubReview({ ok: true, summary: reviewSummary, recent: reviewRows });
+    await reviewApi.refresh();
+    await delay(30);
+    check('刷新后角标写出「几次 / 失败 / 均值」，正文写出聚合与逐条明细',
+      reviewBadgeEl.textContent.indexOf('2') >= 0 && reviewBadgeEl.textContent.indexOf('245') >= 0
+      && reviewBoxEl.textContent.indexOf('646') >= 0
+      && reviewBoxEl.textContent.indexOf('goal=craft') >= 0
+      && reviewBoxEl.textContent.indexOf('laya_timeout') >= 0,
+      reviewBadgeEl.textContent + ' :: ' + String(reviewBoxEl.textContent).slice(0, 90));
+
+    var digestButton = reviewBoxEl.querySelector('.assetRow .actions button');
+    check('每行都有一个「看原文摘要」按钮',
+      !!digestButton && String(digestButton.textContent).length > 0,
+      digestButton ? String(digestButton.textContent) : '<missing>');
+    if (digestButton) {
+      digestButton.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+      await delay(20);
+      check('点一下就能看到**当时真的发出去的那串摘要**（调摘要长度靠它）',
+        reviewBoxEl.textContent.indexOf('phase=world ui=hud') >= 0,
+        String(reviewBoxEl.textContent).slice(0, 120));
+    }
+
+    stubReview({ ok: true, summary: reviewSummary,
+      markdown: '| # | time | kind | bank | digest(ch) | answer | ms | tokens |\n|---|---|---|---|---|---|---|---|\n'
+        + '| 1 | 10:00:01 | sent | world_goal | 153 | goal=craft | 224 | 320 |\n' });
+    await reviewApi.copyMarkdown();
+    await delay(20);
+    check('「复制抽样表」真的走 format=md，并把表画进正文',
+      reviewUrl.indexOf('format=md') >= 0 && reviewBoxEl.textContent.indexOf('world_goal') >= 0,
+      reviewUrl + ' :: ' + String(reviewBoxEl.textContent).slice(0, 60));
+
+    win.confirm = function () { return true; };
+    stubReview({ ok: true, summary: { records: 0, capacity: 64, total: 0, sent: 0, cached: 0,
+      refused: 0, failed: 0, inputTokens: 0, avgMs: 0, p95Ms: 0, maxMs: 0, minMs: 0 }, recent: [] });
+    await reviewApi.clearAll();
+    await delay(20);
+    check('「清空记录」走 clear=true，并回到"还没有记录"',
+      reviewUrl.indexOf('clear=true') >= 0 && reviewBadgeEl.textContent.indexOf('还没有') >= 0,
+      reviewUrl + ' :: ' + reviewBadgeEl.textContent);
+    win.confirm = realConfirmReview;
+
+    // 离线：**不把 `reason` 写进 DOM**（它常常是操作系统本地化过的 socket 文案，
+    // 切英文之后会变成残留中文 —— 与资源库面板同一条纪律）。
+    stubReview({ ok: false, code: 'game_unreachable', reason: '由于目标计算机积极拒绝，无法连接。' });
+    await reviewApi.refresh();
+    await delay(30);
+    check('游戏没在跑时给一句可翻译的话，且不把系统本地化的原始报错写进界面',
+      reviewBoxEl.textContent.indexOf('游戏没在跑') >= 0
+      && reviewBoxEl.textContent.indexOf('积极拒绝') < 0,
+      String(reviewBoxEl.textContent).slice(0, 90));
+
+    // 留一份数据在界面上：**这是有意的** —— 后面的语言切换要负责把这些生成出来的行翻成英文
+    stubReview({ ok: true, summary: reviewSummary, recent: reviewRows });
+    await reviewApi.refresh();
+    await delay(20);
+    win.fetch = realFetchReview;
+
     // ------------------------------------------------ ⑪ i18n：语言切换 + 节点显示名翻译 + 新面板
     note('⑪ 语言切换（中文/English）、节点显示名翻译、UI 目标选择器、动作包右键菜单');
 
@@ -2164,6 +2341,17 @@
     var chromeZh = cjkChrome();
     check('切到 English：工具栏与徽标整排都是英文（用户报的"很多按钮还是中文"就是这里）',
       chromeZh.length === 0, chromeZh.join(' / ') || (CHROME.length + ' 个标签都已是英文'));
+
+    // 判定复盘面板的行是**生成出来的**：它必须挂在语言切换的重画链上（app.js 的 panel 钩子），
+    // 否则"切完英文这一块还是中文"—— 与资源库三态当初踩的是同一个坑。
+    var reviewBoxAfter = doc.getElementById('reviewBox');
+    var reviewBadgeAfter = doc.getElementById('reviewBadge');
+    check('切到 English：判定复盘的角标与明细行也跟着翻（生成出来的行不能漏）',
+      reviewBoxAfter && reviewBadgeAfter
+      && !cjkRe.test(String(reviewBadgeAfter.textContent))
+      && !cjkRe.test(String(reviewBoxAfter.textContent)),
+      String(reviewBadgeAfter ? reviewBadgeAfter.textContent : '<missing>') + ' :: '
+      + String(reviewBoxAfter ? reviewBoxAfter.textContent : '<missing>').slice(0, 90));
 
     // btnLang 故意显示「中文」（按钮写的是"切过去之后会变成哪种语言"），所以不在扫描范围里
     var TIPS = ['btnUndo', 'btnRedo', 'btnSave', 'btnSaveAs', 'btnValidate', 'btnTreeRun',

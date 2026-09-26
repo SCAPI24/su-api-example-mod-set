@@ -27,6 +27,8 @@ namespace PlayerAiMod
                 EditStructure(result);
                 EditSafety(result);
                 Export(result);
+                ContentHash(result);
+                ReloadConflict(result);
             }
             catch (Exception exception)
             {
@@ -393,6 +395,222 @@ namespace PlayerAiMod
                 "exported_demo", directory, out path, out error, out nodes);
             result.Check("re-exporting to the same name is allowed at the writer level",
                 again && error == null, error ?? "<ok>");
+        }
+
+        /// <summary>
+        /// **语义哈希**（P6 第二步）：`TreeWriter.TrySerializePackage` 必须给出一个
+        /// "同一棵树两次序列化得到同一个值"的哈希。
+        ///
+        /// 为什么单独钉这一条（2026-09-26 实测踩过）：SuAPI 的 `ZipArchive.AddStream` 会给
+        /// 每个 zip 条目写 `DateTime.Now`，于是**同一棵树每次序列化出的字节都不一样**。
+        /// 内存库的自动缓存原本拿字节哈希判"内容变了没有"，结果活树只要还是脏的，
+        /// 每 5 秒就被当成一次新改动 —— `.autosave/` 的序号一路涨到 `.4` 还在涨。
+        /// 判据必须是语义哈希（规范化 JSON），不是 zip 字节。
+        /// </summary>
+        /// <summary>
+        /// **G25 三份哈希的冲突规则**（P6 第三步）：推送重载撞上"未保存的内存版"时
+        /// **不静默覆盖**，记一条冲突、进入待选择、**保留内存**。
+        ///
+        /// | hashN vs hashD | 内存 | 处置 |
+        /// |---|---|---|
+        /// | 不等 | — | 忽略（对方还在写） |
+        /// | 相等 | hashN == hashM | 忽略（盘上那份就是内存那份） |
+        /// | 相等 | clean | 正常重载（现状行为） |
+        /// | 相等 | **dirty** | **冲突：保留内存**，等人处置 |
+        /// </summary>
+        private static void ReloadConflict(BtSelfTest.TestResult result)
+        {
+            Fixture fixture = Create("pai-edit-conflict");
+            var memory = new FakeMemoryVersion();
+
+            // 造一个"内容不同、但确实合法"的新版本写到 demo 路径（模拟编辑器保存）
+            string newHash = WriteNewVersion(fixture, "conflict_v2");
+
+            // ---- 1) hashN == hashD 且内存 dirty → 冲突，保留内存
+            memory.Path = fixture.DemoPath;
+            memory.Hash = "memory-hash-aaaa";
+            memory.Dirty = true;
+            fixture.Reloader.MemoryVersion = memory;
+
+            string activeBefore = fixture.Reloader.ActiveHash;
+            fixture.Reloader.Notify(fixture.DemoPath, newHash);
+            fixture.Reloader.ApplyPending(fixture.Host.Tree);
+
+            result.Check("*** G25: a notify that would drop unsaved memory is refused ***",
+                fixture.Reloader.ConflictCount == 1, "conflicts=" + fixture.Reloader.ConflictCount);
+
+            ReloadConflict conflict;
+            result.Check("G25: the conflict can be looked up by path",
+                fixture.Reloader.TryFindConflict(fixture.DemoPath, out conflict) && conflict != null);
+            result.Check("G25: it records all three hashes",
+                conflict != null && string.Equals(conflict.DiskHash, newHash, StringComparison.Ordinal)
+                && conflict.MemoryHash == "memory-hash-aaaa"
+                && string.Equals(conflict.NotifiedHash, newHash, StringComparison.Ordinal),
+                conflict != null ? conflict.Describe() : "<none>");
+            result.Check("G25: **the running tree is NOT replaced (memory wins by default)**",
+                string.Equals(fixture.Reloader.ActiveHash, activeBefore, StringComparison.Ordinal),
+                "active hash changed to " + fixture.Reloader.ActiveHash);
+            result.Check("G25: the attempt is reported as a conflict, not as a plain rejection",
+                fixture.Reloader.LastResult != null && fixture.Reloader.LastResult.Rejected
+                && fixture.Reloader.LastResult.Reason != null
+                && fixture.Reloader.LastResult.Reason.Contains("conflict"),
+                fixture.Reloader.LastResult != null ? fixture.Reloader.LastResult.Describe() : "<none>");
+            result.Check("G25: it says memory was kept",
+                fixture.Reloader.LastResult != null
+                && fixture.Reloader.LastResult.Reason.Contains("memory kept"),
+                fixture.Reloader.LastResult != null ? fixture.Reloader.LastResult.Reason : "<none>");
+
+            // 同一个包再冲突只留一条（冲突是"当前状态"，不是流水账）
+            fixture.Reloader.Notify(fixture.DemoPath, newHash);
+            fixture.Reloader.ApplyPending(fixture.Host.Tree);
+            result.Check("G25: repeated notifies keep a single conflict entry",
+                fixture.Reloader.ConflictCount == 1 && fixture.Reloader.ConflictTotal == 2,
+                "count=" + fixture.Reloader.ConflictCount + " total=" + fixture.Reloader.ConflictTotal);
+
+            result.Check("G25: a human resolution clears the pending choice",
+                fixture.Reloader.ResolveConflict(fixture.DemoPath, out conflict)
+                && fixture.Reloader.ConflictCount == 0);
+            result.Check("G25: resolving an unknown path is a no-op",
+                !fixture.Reloader.ResolveConflict("no.such.package", out conflict));
+
+            // ---- 2) hashN == hashM → 忽略（盘上那份就是内存里那份）
+            string sameHash = WriteNewVersion(fixture, "conflict_v3");
+            memory.Hash = sameHash;
+            memory.Dirty = true;
+            fixture.Reloader.Notify(fixture.DemoPath, sameHash);
+            fixture.Reloader.ApplyPending(fixture.Host.Tree);
+            result.Check("*** G25: a notify matching the in-memory version is ignored ***",
+                fixture.Reloader.ConflictCount == 0 && fixture.Reloader.LastResult != null
+                && fixture.Reloader.LastResult.Ignored
+                && fixture.Reloader.LastResult.Reason.Contains("in-memory"),
+                fixture.Reloader.LastResult != null ? fixture.Reloader.LastResult.Describe() : "<none>");
+
+            // ---- 3) 内存 clean → 正常重载（现状行为）
+            string cleanHash = WriteNewVersion(fixture, "conflict_v4");
+            memory.Hash = "memory-hash-aaaa";
+            memory.Dirty = false;
+            fixture.Reloader.Notify(fixture.DemoPath, cleanHash);
+            bool replaced = fixture.Reloader.ApplyPending(fixture.Host.Tree);
+            result.Check("G25: with a clean memory the notify reloads exactly as before", replaced,
+                "not replaced");
+            result.Check("G25: no conflict is recorded for a clean memory",
+                fixture.Reloader.ConflictCount == 0, "conflicts=" + fixture.Reloader.ConflictCount);
+            result.Check("G25: the reload adopted the new hash",
+                string.Equals(fixture.Reloader.ActiveHash, cleanHash, StringComparison.Ordinal),
+                fixture.Reloader.ActiveHash);
+
+            // ---- 4) hashN != hashD → 忽略（对方还在写，现状行为不变）
+            memory.Dirty = true;
+            fixture.Reloader.Notify(fixture.DemoPath, "not-the-disk-hash");
+            fixture.Reloader.ApplyPending(fixture.Host.Tree);
+            result.Check("G25: a hash mismatch is still ignored (the writer may still be writing)",
+                fixture.Reloader.ConflictCount == 0 && fixture.Reloader.LastResult != null
+                && fixture.Reloader.LastResult.Ignored,
+                fixture.Reloader.LastResult != null ? fixture.Reloader.LastResult.Describe() : "<none>");
+
+            // ---- 5) 没有内存库来源时行为与以前一样（旧调用点不受影响）
+            fixture.Reloader.MemoryVersion = null;
+            string noMemoryHash = WriteNewVersion(fixture, "conflict_v5");
+            fixture.Reloader.Notify(fixture.DemoPath, noMemoryHash);
+            result.Check("G25: without a memory source the reload behaves as before",
+                fixture.Reloader.ApplyPending(fixture.Host.Tree)
+                && fixture.Reloader.ConflictCount == 0, "conflicts=" + fixture.Reloader.ConflictCount);
+        }
+
+        /// <summary>导出并覆盖 demo 包，返回新内容的哈希（模拟"编辑器保存了一版新的"）。</summary>
+        private static string WriteNewVersion(Fixture fixture, string name)
+        {
+            string path;
+            string error;
+            int nodes;
+            bool ok = TreeWriter.TryExportPackage(fixture.Host.Tree,
+                fixture.Reloader.ActiveSet.Root.Manifest, name, fixture.Roots.InstanceRoot.Path,
+                out path, out error, out nodes);
+            if (!ok || path == null)
+                throw new InvalidOperationException("could not write the conflict fixture: " + error);
+
+            File.Copy(path, fixture.DemoPath, true);
+            return HashOf(fixture.DemoPath);
+        }
+
+        /// <summary>测试用的假内存库版本来源（真实现是 `MemoryAssetStore`）。</summary>
+        private sealed class FakeMemoryVersion : IMemoryVersionSource
+        {
+            public string Path;
+            public string Hash;
+            public bool Dirty;
+
+            public bool TryGetMemoryVersion(string pathOrName, out string memoryHash, out bool dirty)
+            {
+                memoryHash = null;
+                dirty = false;
+                if (string.IsNullOrEmpty(pathOrName) || string.IsNullOrEmpty(Path))
+                    return false;
+                string normalized = PackageRoots.NormalizePath(pathOrName);
+                if (normalized == null || !string.Equals(normalized, Path, PackageRoots.PathComparison))
+                    return false;
+                memoryHash = Hash;
+                dirty = Dirty;
+                return true;
+            }
+        }
+
+        private static void ContentHash(BtSelfTest.TestResult result)
+        {
+            Fixture fixture = Create("pai-edit-contenthash");
+            BtRuntime runtime = fixture.Host.Tree;
+            ScbtManifest source = fixture.Reloader.ActiveSet.Root.Manifest;
+
+            byte[] firstBytes;
+            string firstHash;
+            string error;
+            bool ok = TreeWriter.TrySerializePackage(runtime, source, "hashdemo",
+                out firstBytes, out firstHash, out error);
+            result.Check("content hash: the live tree serializes", ok && firstHash != null, error);
+
+            // 隔开一小段真实时间，确保 zip 的 DOS 时间戳跨过 2 秒粒度（不跨也可能不同，但不跨就测不出差异）
+            System.Threading.Thread.Sleep(5);
+            byte[] secondBytes;
+            string secondHash;
+            ok = TreeWriter.TrySerializePackage(runtime, source, "hashdemo",
+                out secondBytes, out secondHash, out error);
+            result.Check("content hash: it serializes twice", ok && secondHash != null, error);
+
+            result.Check("content hash: **the same tree gets the same semantic hash**",
+                string.Equals(firstHash, secondHash, StringComparison.Ordinal),
+                firstHash + " vs " + secondHash);
+            result.Check("content hash: it is a 64-char hex digest",
+                firstHash != null && firstHash.Length == 64, firstHash);
+            result.Check("content hash: the payload bytes are still produced",
+                firstBytes != null && firstBytes.Length > 0 && secondBytes != null
+                && secondBytes.Length > 0, "no bytes");
+
+            // 真改一个参数 → 语义哈希必须变
+            var move = runtime.Root.Find("move") as BtMoveToTargetTask;
+            result.Check("content hash: the fixture has the move node to edit", move != null);
+            if (move == null)
+                return;
+
+            float original = move.AcceptableRadius;
+            TreeMutation.SetProperty(runtime, "move", "acceptableRadius",
+                PackageValue.Number(original + 1f));
+            string editedHash;
+            ok = TreeWriter.TryGetContentHash(runtime, source, "hashdemo", out editedHash, out error);
+            result.Check("content hash: an edit changes the semantic hash",
+                ok && !string.Equals(editedHash, firstHash, StringComparison.Ordinal),
+                editedHash ?? (error ?? "<null>"));
+
+            // 改回去 → 语义哈希回到原值（"改了又改回来"必须能被识别成没变）
+            TreeMutation.SetProperty(runtime, "move", "acceptableRadius", PackageValue.Number(original));
+            string restoredHash;
+            ok = TreeWriter.TryGetContentHash(runtime, source, "hashdemo", out restoredHash, out error);
+            result.Check("content hash: reverting an edit restores the original hash",
+                ok && string.Equals(restoredHash, firstHash, StringComparison.Ordinal),
+                (restoredHash ?? "<null>") + " vs " + firstHash);
+
+            string ignored;
+            result.Check("content hash: a nameless asset is refused",
+                !TreeWriter.TryGetContentHash(runtime, source, "  ", out ignored, out error), "<none>");
         }
     }
 }

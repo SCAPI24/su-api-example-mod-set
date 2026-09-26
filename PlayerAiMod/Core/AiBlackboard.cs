@@ -125,6 +125,23 @@ namespace PlayerAiMod
             get { return m_values.Keys; }
         }
 
+        /// <summary>
+        /// 现有键里以某个前缀开头的（按名前缀收一批，用于 `Service.ObserveState` 清理"这一拍没有的字段"）。
+        /// 返回的是**快照**：调用方会在遍历中删键，直接给 `m_values.Keys` 会在枚举时炸。
+        /// </summary>
+        public List<string> NamesWithPrefix(string prefix)
+        {
+            var names = new List<string>();
+            if (string.IsNullOrEmpty(prefix))
+                return names;
+            foreach (string name in m_values.Keys)
+            {
+                if (name != null && name.StartsWith(prefix, StringComparison.Ordinal))
+                    names.Add(name);
+            }
+            return names;
+        }
+
         /// <summary>调试输出："key=value" 列表（值一律 ToString，仅供日志）。</summary>
         public override string ToString()
         {

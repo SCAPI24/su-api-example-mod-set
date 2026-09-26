@@ -11,16 +11,16 @@ using System.Threading;
 namespace CmdBridgeMod
 {
     /// <summary>
-    /// 鍛戒护鍒嗗彂銆俹bs.* 鍙锛沘ct.* 璧拌緭鍏ユ敞鍏ョ櫧鍚嶅崟銆?
-    /// 鎵€鏈夎Е纰版父鎴忓璞＄殑鎿嶄綔閮藉湪娓告垙绾跨▼锛堜笅涓€甯у抚棣栵級鎵ц銆?
+    /// 命令分发。obs.* 只读；act.* 走输入注入白名单。
+    /// 所有触碰游戏对象的操作都在游戏线程（下一帧帧首）执行。
     /// </summary>
     internal sealed class CommandRouter
     {
-        internal const string ModVersion = "1.1.10";
+        internal const string ModVersion = "1.1.15";
 
         /// <summary>
-        /// 鍐呭缓鍛戒护鍚嶏紙`cmd.list` 鐢級銆傚姞鍛戒护鏃?*蹇呴』鍚屾杩欓噷**锛?
-        /// 瀹冩槸 CLI 甯姪涓?杩欎釜瀹炰緥鏀寔鍝簺鍛戒护"鐨勫敮涓€娓呭崟锛堟墿灞曞懡浠や粠娉ㄥ唽琛ㄨ锛夈€?
+        /// 内建命令名（`cmd.list` 用）。加命令时**必须同步这里**：
+        /// 它是 CLI 帮助与"这个实例支持哪些命令"的唯一清单（扩展命令从注册表读）。
         /// </summary>
         internal static readonly string[] BuiltInCommands =
         {
@@ -39,22 +39,22 @@ namespace CmdBridgeMod
             "jump.status", "jump.buffer"
         };
 
-        // 鏉′欢绛夊緟锛?0ms 杞涓€娆★紙杩滃揩浜庝汉绫荤殑鍙嶅簲锛屼篃杩滄參浜庢瘡甯э紝閬垮厤缁欐父鎴忕嚎绋嬫坊鍘嬪姏锛夈€?
+        // 条件等待： 0ms 轮询一次（远快于人类的反应，也远慢于每帧，避免给游戏线程添压力）。
         private const int WaitPollIntervalMs = 40;
         private const int WaitMaxTimeoutMs = 120000;
 
         /// <summary>
-        /// 閿洏鑴夊啿鍛戒护锛坄act.key` / `act.chord`锛夌殑 holdMs 榛樿鍊硷細
-        /// **涓€甯ч噺绾?*锛?0fps 涓€甯?鈮?16.7ms锛夛紝鍥哄畾鍊硷紝涓嶉殢鏃堕挓鎶栧姩銆?
+        /// 键盘脉冲命令（`act.key` / `act.chord`）的 holdMs 默认值：
+        /// **一帧量级**（60fps 一帧 ≈ 16.7ms），固定值，不随时钟抖动。
         ///
-        /// 涓轰粈涔堥粯璁や笉鑳芥槸 0锛歱ress / release 鏄袱娆＄嫭绔嬬殑 `Dispatcher.Dispatch`
-        /// 锛坄GameThreadInvoker.cs:56-66`锛夛紝璺ㄤ笉杩囧抚杈圭晫鏃朵細鍦?*鍚屼竴娆?* `Dispatcher.BeforeFrame`
-        /// 鎵规閲岃繛缁墽琛岋紙`Engine/Engine/Dispatcher.cs:79-105`锛夛紝浜庢槸鏁翠釜甯т綋閲?
-        /// `IsKeyDown` 鎭掍负 false 鈥斺€?鍙湁 `IsKeyDownOnce` 娲讳笅鏉?
-        /// 锛堢Щ鍔ㄧ被娑堣垂鑰呰鐨勫氨鏄?`IsKeyDown`锛歚Survivalcraft/Game/ComponentInput.cs:172-177`锛夈€?
-        /// 40ms 瓒冲璁╁抚浣撹嚦灏戠湅鍒颁竴娆℃寜浣忥紝鍙堢煭鍒颁笉鏀瑰彉"杞荤偣涓€涓?鐨勬墜鎰熴€?
-        /// **璋冪敤鏂规樉寮忎紶 holdMs 鏃跺師鏍峰皧閲?*锛堝惈鏄惧紡 0锛夈€?
-        /// `act.mouse` / `act.uiclick` 涓嶈蛋杩欓噷锛屽畠浠殑榛樿鍊间繚鎸?0銆?
+        /// 为什么默认不能是 0：press / release 是两次独立的 `Dispatcher.Dispatch`
+        /// （`GameThreadInvoker.cs:56-66`），跨不过帧边界时会在**同一次** `Dispatcher.BeforeFrame`
+        /// 批次里连续执行（`Engine/Engine/Dispatcher.cs:79-105`），于是整个帧体里
+        /// `IsKeyDown` 恒为 false —— 只有 `IsKeyDownOnce` 活下来
+        /// （移动类消费者读的就是 `IsKeyDown`：`Survivalcraft/Game/ComponentInput.cs:172-177`）。
+        /// 40ms 足够让帧体至少看到一次按住，又短到不改变"轻点一下"的手感。
+        /// **调用方显式传 holdMs 时原样尊重**（含显式 0）。
+        /// `act.mouse` / `act.uiclick` 不走这里，它们的默认值保持 0。
         /// </summary>
         private const int DefaultKeyPulseHoldMs = InputInjector.DefaultPulseHoldMs;
 
@@ -82,9 +82,9 @@ namespace CmdBridgeMod
         {
             switch (request.Command)
             {
-                // ---------------------------------------------------------- 鍙
+                // ---------------------------------------------------------- 只读
                 case "ping":
-                    // ping 瀹屽叏鍦ㄦ湇鍔″櫒绾跨▼鍥炵瓟锛氬惎鍔ㄧ灛闂翠篃鑳界敤锛屾濂戒綔涓?娓告垙鏄惁鍙帴鍙楀懡浠?鐨勬帰閽堛€?
+                    // ping 完全在服务器线程回答：启动瞬间也能用，正好作为"游戏是否可接受命令"的探针。
                     return new Dictionary<string, object>(StringComparer.Ordinal)
                     {
                         ["pong"] = true,
@@ -132,7 +132,7 @@ namespace CmdBridgeMod
                 case "obs.waitfor":
                     return WaitForConditions(request);
 
-                // ---------------------------------------------------------- 鍔ㄤ綔锛堣緭鍏ュ眰锛?
+                // ---------------------------------------------------------- 动作（输入层）
                 case "act.look":
                     return m_injector.Look(
                         request.GetFloat("yaw", 0f), request.GetFloat("pitch", 0f));
@@ -145,8 +145,8 @@ namespace CmdBridgeMod
                         request.GetFloat("y", 0f),
                         request.GetFloat("z", 0f));
                 case "act.key":
-                    // 鏈樉寮忕粰 holdMs 鏃剁敤涓€甯ч噺绾х殑榛樿鍊硷紙40ms锛夛紱
-                    // 鏄惧紡浼?holdMs=0 浠嶇劧灏婇噸锛屼笉浼氬伔鍋锋浛鎹㈡垚 40銆?
+                    // 未显式给 holdMs 时用一帧量级的默认值（40ms）；
+                    // 显式传 holdMs=0 仍然尊重，不会偷偷替换成 40。
                     return m_injector.KeyPulse(
                         request.GetString("key", null),
                         request.GetInteger("holdMs", DefaultKeyPulseHoldMs));
@@ -154,15 +154,15 @@ namespace CmdBridgeMod
                     return m_injector.KeyHold(
                         request.GetString("key", null), request.GetBoolean("down", true));
                 case "act.chord":
-                    // 涓?`act.key` 瀹屽叏鍚屾簮锛圧2锛夛細press/release 鏄袱娆＄嫭绔?Dispatch锛?
-                    // holdMs=0 鏃朵細鍦ㄥ悓涓€娆?Dispatcher.BeforeFrame 閲屾寜涓嬪張鎶捣锛屽抚浣撶湅涓嶅埌鎸変笅銆?
-                    // 鍥犳鍏辩敤鍚屼竴涓竴甯ч噺绾ч粯璁ゅ€硷紱鏄惧紡浼?0 浠嶇劧灏婇噸銆?
+                    // 与 `act.key` 完全同源（R2）：press/release 是两次独立 Dispatch，
+                    // holdMs=0 时会在同一次 Dispatcher.BeforeFrame 里按下又抬起，帧体看不到按下。
+                    // 因此共用同一个一帧量级默认值；显式传 0 仍然尊重。
                     return m_injector.KeyChord(
                         request.GetStringArray("modifiers").ToArray(),
                         request.GetString("key", null),
                         request.GetInteger("holdMs", DefaultKeyPulseHoldMs));
                 case "act.mouse":
-                    // 娉ㄦ剰锛歚act.mouse` 鐨?holdMs 榛樿鍊?*淇濇寔 0 涓嶅彉**锛堟湰娆′笉鍦ㄨ寖鍥村唴锛夈€?
+                    // 注意：`act.mouse` 的 holdMs 默认值**保持 0 不变**（本次不在范围内）。
                     return m_injector.MouseAction(
                         request.GetString("button", "left"),
                         request.GetString("action", "click"),
@@ -175,15 +175,15 @@ namespace CmdBridgeMod
                     float clickY = 0f;
                     bool hasPoint = request.TryGetFloat("x", out clickX) &&
                         request.TryGetFloat("y", out clickY);
-                    // 鍒楄〃琛岋細`row=3` 鎴?`text=涓栫晫鍚峘 鈥斺€?鍧愭爣鍦ㄧ偣鍑昏繖涓€鍒荤幇绠楋紝
-                    // 褰曞埗绔洜姝よ兘璁颁笅"鍝竴琛?鑰屼笉鏄?鍝釜鍍忕礌"锛堢敤鎴疯姹傦細鏀逛簡绐楀彛澶у皬涔熷埆鐐圭┖锛夈€?
+                    // 列表行：`row=3` 或 `text=世界名` —— 坐标在点击这一刻现算，
+                    // 录制端因此能记下"哪一行"而不是"哪个像素"（用户要求：改了窗口大小也别点空）。
                     int rowIndex = request.GetInteger("row", -1);
                     string rowText = request.GetString("text", null);
-                    // 绾€夋嫨鍣ㄧ偣鍑讳紭鍏?direct锛堝崟甯у悎鎴?Tap+Click锛屽啓鍦ㄧ洰鏍囨帶浠惰嚜宸辩殑杈撳叆闈級锛?
-                    // 涓栫晫鍐?GameWidget 灞傜骇涓?CM-1 浼氳瘽娲剧敓涓嶅嚭 Click 鈥斺€?
-                    // `ComponentInput.UpdateInputFromMouseAndKeyboard` 姣忓抚閲嶅啓璇ュ眰杈撳叆鐘舵€侊紝
-                    // GameMenuDialog 鐨勬寜閽敤浼氳瘽鐐规鏃犲弽搴斻€佺敤 direct 绔嬪埢鍥炲埌涓昏彍鍗曪紙瀹炴祴锛夈€?
-                    // 甯﹀潗鏍囥€佸垪琛ㄨ銆佹垨鏄惧紡 `mode=input` 鏃朵粛璧颁細璇濓紝琛屼负涓嶅彉銆?
+                    // 纯选择器点击优先 direct（单帧合成 Tap+Click，写在目标控件自己的输入面），
+                    // 世界内 GameWidget 层级下 CM-1 会话派生不出 Click ——
+                    // `ComponentInput.UpdateInputFromMouseAndKeyboard` 每帧重写该层输入状态，
+                    // GameMenuDialog 的按钮用会话点毫无反应、用 direct 立刻回到主菜单（实测）。
+                    // 带坐标、列表行、或显式 `mode=input` 时仍走会话，行为不变。
                     string directSelector = request.GetString("selector", null);
                     string clickMode = request.GetString("mode", null);
                     if (!hasPoint && rowIndex < 0 && string.IsNullOrEmpty(rowText)
@@ -194,7 +194,7 @@ namespace CmdBridgeMod
                             request.GetInteger("holdMs", 0), false,
                             UiMarker.DefaultSeconds, UiMarker.DefaultDiameterPixels);
                     }
-                    // 璧?CM-1 浼氳瘽锛堜竴姝ヤ竴甯э級锛氱洿娉ㄥ叆鐨?鎸変笅+鎶捣"浼氳惤鍦ㄥ悓涓€甯э紝鐣岄潰绾逛笣涓嶅姩銆?
+                    // 走 CM-1 会话（一步一帧）：直注入的"按下+抬起"会落在同一帧，界面纹丝不动。
                     return m_injector.UiClickSession(
                         request.GetString("selector", null),
                         hasPoint, clickX, clickY, rowIndex, rowText,
@@ -206,15 +206,15 @@ namespace CmdBridgeMod
                 case "act.releaseAll":
                     return m_injector.ReleaseAll();
 
-                // ------------------------------------------------ UI 瀹氫綅 / 鐐瑰嚮**鏈嶅姟**锛圲I-1锛?
-                // 鐢ㄦ埛瑕佹眰锛?鎶婄浉搴旂殑鏂规硶鍋氭垚 CmdBridgeMod 鑳芥彁渚涚殑鏈嶅姟锛屽湪琛屼负鏍戠紪杈戝櫒涓紝
-                // 瑕佽兘澶熶娇鐢ㄦ潵鑾峰彇鍧愭爣鎴栫偣鍑诲璞?鈥斺€旂紪杈戝櫒鐨?`/api/game/ui/*` 涓庤涓烘爲
-                // `Task.UiClick` 閮借浆鍙戝埌杩欎袱鏉″懡浠わ紝浜庢槸"缂栬緫鍣ㄩ噷璇曚竴涓?鍜?鏍戦噷璺戜竴涓?
-                // 鏄悓涓€浠藉疄鐜帮紙涓嶄細鍑虹幇"缂栬緫鍣ㄨ兘鐐广€佸洖鏀剧偣绌?锛夈€?
+                // ------------------------------------------------ UI 定位 / 点击**服务**（UI-1）
+                // 用户要求： 把相应的方法做成 CmdBridgeMod 能提供的服务，在行为树编辑器中，
+                // 要能够使用来获取坐标或点击对象 ——编辑器的 `/api/game/ui/*` 与行为树
+                // `Task.UiClick` 都转发到这两条命令，于是"编辑器里试一下"和"树里跑一下
+                // 是同一份实现（不会出现"编辑器能点、回放点空"）。
                 //
-                // 鐩爣鍐欐硶锛堣涔変紭鍏堬紝鍧愭爣鍙槸鍏滃簳锛夛細
-                //   `Play` / `[MainMenuScreen#0]/鈥?Play` / `list:WorldsList@Rebritish` / `list:WorldsList#0`
-                //   `1010.6,64.83`锛堜笉鎺ㄨ崘锛氱獥鍙ｅ昂瀵镐竴鍙樺氨鐐瑰埌鍒锛?
+                // 目标写法（语义优先，坐标只是兜底）：
+                //   `Play` / `[MainMenuScreen#0]/…/Play` / `list:WorldsList@Rebritish` / `list:WorldsList#0`
+                //   `1010.6,64.83`（不推荐：窗口尺寸一变就点到别处）
                 case "ui.locate":
                     return m_injector.Ui.Locate(
                         request.GetString("target", request.GetString("selector", null)),
@@ -229,13 +229,13 @@ namespace CmdBridgeMod
                         request.GetBoolean("mark", false),
                         request.GetFloat("markMs", UiMarker.DefaultSeconds * 1000f) / 1000f,
                         request.GetFloat("markPx", UiMarker.DefaultDiameterPixels));
-                // 钀界偣鏍囪鐨勮嚜鏌ワ紙鍙锛夛細`drawFrames > 0` 璇佹槑寮曟搸鐪熺殑璋冪敤杩囧畠鐨?Draw锛?
-                // 鑰屼笉鏄?鍛戒护杩斿洖浜嗐€佸睆骞曚笂浠€涔堥兘娌℃湁"銆?
+                // 落点标记的自查（只读）：`drawFrames > 0` 证明引擎真的调用过它的 Draw）
+                // 而不是"命令返回了、屏幕上什么都没有"。
                 case "ui.marker":
                     return UiMarker.Describe();
 
-                // ------------------------------------------------------ 铏氭嫙 UI 榧犳爣浼氳瘽锛圕M-1锛?
-                // 鐢ㄥ紩鎿庡唴鐨勮蒋鍏夋爣鍋氱偣鍑?鎷栨嫿锛氱墿鐞嗛紶鏍囧畬鍏ㄤ笉鍔紝涔熶笉闇€瑕佺獥鍙ｅ湪鍓嶅彴銆?
+                // ------------------------------------------------------ 虚拟 UI 鼠标会话（CM-1）
+                // 用引擎内的软光标做点击/拖拽：物理鼠标完全不动，也不需要窗口在前台。
                 case "ui.session.begin":
                     return UiSessionCommand(request,
                         () => m_injector.Session.Begin(request.GetBoolean("mask", false)));
@@ -258,8 +258,8 @@ namespace CmdBridgeMod
                 }
                 case "ui.press":
                 {
-                    // 鎺ュ彛鑷唇锛氱粰浜?x/y 灏卞厛鎸埌璇ョ偣鍐嶆寜涓嬨€備細璇濈殑 `Press` 鏈韩涓嶅甫鍧愭爣锛?
-                    // 涓嶅厛瀹氫綅鐨勮瘽鎸変笅浼氳惤鍦?涓婁竴娆℃搷浣滅粨鏉熺殑浣嶇疆"锛堝疄娴嬶細绉诲姩/瑙嗚浼氫簰鎹級銆?
+                    // 接口自洽：给了 x/y 就先挪到该点再按下。会话的 `Press` 本身不带坐标，
+                    // 不先定位的话按下会落在"上一次操作结束的位置"（实测：移动/视角会互换）。
                     float px = 0f;
                     float py = 0f;
                     bool hasPoint = request.TryGetFloat("x", out px) && request.TryGetFloat("y", out py);
@@ -296,10 +296,10 @@ namespace CmdBridgeMod
                     return UiSessionCommand(request, () => m_injector.Session.MoveTo(new Vector2(mx, my), steps));
                 }
 
-                // ------------------------------------------------ Android 璇箟鍔ㄤ綔锛堟墜鎸囪涔夛級
-                // 闄岀敓 AI 鍙鐭ラ亾"寰€鍓嶈蛋 / 杞ご / 璺?锛屼笉闇€瑕佺煡閬撳潗鏍囦笌鐭╁舰锛涜鍒欒 `guide.android`銆?
-                // 寮曟搸渚у疄娴嬭涔夛細宸︿笅 `Move` 鍖烘寜浣忓啀鎷?= 绉诲姩锛涙棤鎸夐挳鍖烘寜浣忔嫋 = 瑙嗚锛?
-                // 鏃犳寜閽尯鎸変綇涓嶅姩 鈮?.2~0.5s = 鎸栨帢锛涘湪 `Move` / `Look` 涓婅交鐐逛竴涓?= 璺宠穬銆?
+                // ------------------------------------------------ Android 语义动作（手指语义）
+                // 陌生 AI 只要知道"往前走 / 转头 / 跳"，不需要知道坐标与矩形；规则见 `guide.android`。
+                // 引擎侧实测语义：左下 `Move` 区按住再拖 = 移动；无按钮区按住拖 = 视角，
+                // 无按钮区按住不动 ≈0.2~0.5s = 挖掘；在 `Move` / `Look` 上轻点一下 = 跳跃。
                 case "act.move":
                 {
                     ContainerWidget root = ScreensManager.RootWidget;
@@ -319,7 +319,7 @@ namespace CmdBridgeMod
                     m_injector.Session.Press(MouseButton.Left);
                     int frames = Math.Max(2, holdMs / 16);
                     for (int i = 0; i < frames; i++)
-                        m_injector.Session.MoveTo(to, 1); // 姣忓抚閲嶇敵浣嶇疆 = 淇濇寔鎸変綇
+                        m_injector.Session.MoveTo(to, 1); // 每帧重申位置 = 保持按住
                     m_injector.Session.Release(MouseButton.Left);
                     m_injector.Session.End();
                     m_injector.Session.WaitUntilIdle(4000 + holdMs);
@@ -339,7 +339,7 @@ namespace CmdBridgeMod
                         throw new BridgeCommandException("element_missing",
                             "The Android touch pad '" + padName + "' was not found on the current screen.");
                     Vector2 at = UiInspector.CenterOf(pad);
-                    int holdMs = request.GetInteger("holdMs", 140); // 杞荤偣涓€涓?= 璺宠穬
+                    int holdMs = request.GetInteger("holdMs", 140); // 轻点一下 = 跳跃
                     m_injector.Session.Begin(false);
                     m_injector.Session.MoveTo(at, 1);
                     m_injector.Session.Press(MouseButton.Left);
@@ -358,18 +358,18 @@ namespace CmdBridgeMod
                 }
                 case "act.dig":
                 {
-                    // 鍒涢€犳ā寮忔寲鎺樻椂闂?= 0锛坄ComponentMiner.CalculateDigTime`锛欳reative 涓斿彲鎸?鈫?0f锛夛紝
-                    // 鎵€浠ュ彧鎸?鏈€灏忓抚鏁?锛涙寜涔呬細椤虹潃灏勭嚎杩炴寲涓€涓诧紙瀹炴祴锛?.36s 鎸栦簡 4~7 鏍硷級銆?
-                    // 鎴愯触鍒ゅ畾锛氭寲鍓?鎸栧悗鍚勫彇涓€娆?鍛戒腑瑙傛祴"涓庤鏍?*鐪熷疄鍦板舰鍊?*锛?
-                    // removed=true 琛ㄧず杩欎竴澶勭‘瀹炲彉浜嗭紱nowAir=true 琛ㄧず鏁存牸娓呯┖
-                    // 锛堝绾挎寜闈㈠瓨鍌細鍙帀涓€闈㈡椂 removed=true 鑰?nowAir=false锛夈€?
-                    // 榛樿钀界偣蹇呴』鏄?*灞忓箷涓績**锛岃€屽睆骞曚腑蹇冭鐢?`Window.Size`锛堝儚绱?瑙嗗彛绌洪棿锛?
-                    // 鍘荤畻锛欰ndroid 涓?`Touch.Position` 涓?`Camera.ScreenToWorld` 鍚屽睘**瑙嗗彛鍍忕礌绌洪棿**
-                    // 锛坄Touch.Android.cs:27-53` 鐩存帴鍙?`MotionEvent.GetX/GetY`锛夛紝瑙︽懜鐐瑰喅瀹氭寲鎺樺皠绾?
-                    // 锛坄ComponentInput.cs:446-457`锛歚Dig = ScreenToWorld(瑙︽懜鐐?`锛夈€?
-                    // 鑰?`root.ActualSize` 鏄?*璁捐灏哄**锛堝钩鏉垮疄娴?1000脳600锛岃鍙ｆ槸 2000脳1200锛夛紝
-                    // 鎷垮畠鐨勪竴鍗?(500,300) 褰撹惤鐐癸紳灞忓箷宸︿笂瑙掞紝灏勭嚎灏勫悜澶╃┖ 鈥斺€?瀹炴祴鎸夋弧 6 绉掍竴鏍间笉鎺夛紝
-                    // 鎹㈠埌 (1000,600) 鍚屼竴瑙嗚绔嬪埢鎸栨帀涓ゆ牸銆傝繖鏄?鎸栦笉鍔?鐨勭湡姝ｆ牴鍥犮€?
+                    // 创造模式挖掘时间 = 0（`ComponentMiner.CalculateDigTime`：Creative 且可挖 → 0f），
+                    // 所以只按"最小帧数"；按久会顺着射线连挖一串（实测：0.36s 挖了 4~7 格）。
+                    // 成败判定：挖前/挖后各取一次"命中观测"与该格**真实地形值**：
+                    // removed=true 表示这一处确实变了；nowAir=true 表示整格清空
+                    // （导线按面存储：只掉一面时 removed=true 而 nowAir=false）。
+                    // 默认落点必须是**屏幕中心**，而屏幕中心要用 `Window.Size`（像素/视口空间，
+                    // 去算：Android 与 `Touch.Position` 与 `Camera.ScreenToWorld` 同属**视口像素空间**
+                    // （`Touch.Android.cs:27-53` 直接取 `MotionEvent.GetX/GetY`），触摸点决定挖掘射线
+                    // （`ComponentInput.cs:446-457`：`Dig = ScreenToWorld(触摸点)`）。
+                    // 而 `root.ActualSize` 是**设计尺寸**（平板实测 1000×600，视口是 2000×1200），
+                    // 拿它的一半 (500,300) 当落点＝屏幕左上角，射线射向天空 —— 实测按满 6 秒一格不掉，
+                    // 换到 (1000,600) 同一视角立刻挖掉两格。这是"挖不动"的真正根因。
                     float px = request.GetFloat("x", DefaultDigPointX());
                     float py = request.GetFloat("y", DefaultDigPointY());
                     int holdMs = request.GetInteger("holdMs", 600);
@@ -379,8 +379,8 @@ namespace CmdBridgeMod
                     int cellY = 0;
                     int cellZ = 0;
                     bool hasCell = false;
-                    // `AimObserver.Describe` 鎶婂懡涓俊鎭斁鍦?**`target`** 閿笅锛坄target.cell` 鎵嶆槸鏍煎瓙锛夛紝
-                    // 椤跺眰娌℃湁 `cell` 鈥斺€?涔嬪墠涓€鐩村彇椤跺眰鎵€浠ユ亽涓?null锛堝疄娴嬩袱澶勫潙锛氶敭鍚嶄笌宓屽锛夈€?
+                    // `AimObserver.Describe` 把命中信息放在 **`target`** 键下（`target.cell` 才是格子），
+                    // 顶层没有 `cell` —— 之前一直取顶层所以恒为 null（实测两处坑：键名与嵌套）。
                     var aimMap = beforeAim as System.Collections.IDictionary;
                     object targetObj = aimMap != null && aimMap.Contains("target")
                         ? aimMap["target"] : null;
@@ -399,11 +399,11 @@ namespace CmdBridgeMod
                     }
                     int hitFace = targetMap != null && targetMap.Contains("face")
                         ? Convert.ToInt32(targetMap["face"]) : -1;
-                    // ---- 鏄惧紡鐩爣鏍硷細**鍙寲浣犳寚瀹氱殑閭ｄ竴鏍?*锛屼笖蹇呴』鐪熺殑瀵圭潃瀹?----
-                    // 涓轰粈涔堝繀椤绘湁杩欐潯锛氬绾挎槸"璐村湪鏌愪釜闈笂鐨勮杽鐗?锛屾牸瀛愪腑蹇冨線寰€鏄┖鐨勶紝
-                    // 瀵圭潃鏍煎績鎸栦細**绌胯繃瀹冩墦鍒板悗闈?*鐨勬柟鍧楋紙瀹炴祴锛氱洰鏍囧绾夸竴鏍兼病鎺夛紝鍚庨潰閭ｇ墖鑽夊湴
-                    // 琚繛鎸?5 鏍硷級銆傛墍浠ョ粰浜?`cell=` 鏃跺厛鍋?*闈㈡壂鎻?*锛氶€愪釜闈㈠績杞瑙掞紝
-                    // 鍙湁鍑嗘槦鐪熺殑鍛戒腑璇ユ牸鎵嶅紑鎸栵紱鍏釜闈㈤兘涓嶅懡涓氨鐩存帴澶辫触杩斿洖锛岀粷涓嶈鎸栧悗闈㈢殑鏂瑰潡銆?
+                    // ---- 显式目标格：**只挖你指定的那一格**，且必须真的对着它 ----
+                    // 为什么必须有这条：导线是"贴在某个面上的薄片"，格子中心往往是空的，
+                    // 对着格心挖会**穿过它打到后面**的方块（实测：目标导线一格没掉，后面那片草地
+                    // 被连挖 5 格）。所以给了 `cell=` 时先做**面扫描**：逐个面心转视角，
+                    // 只有准星真的命中该格才开挖；六个面都不命中就直接失败返回，绝不误挖后面的方块。
                     int wantX;
                     int wantY;
                     int wantZ;
@@ -440,20 +440,20 @@ namespace CmdBridgeMod
                     SubsystemTerrain terrain = GameManager.Project?.FindSubsystem<SubsystemTerrain>(false);
                     int beforeValue = hasCell
                         ? terrain.Terrain.GetCellValue(cellX, cellY, cellZ) : 0;
-                    bool useDirectAndroidTouch = false; // 鐩存帴钀借Е鐐规寲涓嶅姩锛堝紩鎿庝笉璁よ繖鏉¤矾寰勶級锛屽浐瀹氳蛋浼氳瘽
+                    bool useDirectAndroidTouch = false; // 直接落触点挖不动（引擎不认这条路径），固定走会话
                     if (useDirectAndroidTouch && AndroidTouch.Available)
                     {
-                        // Android锛?*鐩存帴钀借Е鐐?*锛堜笉缁忚繃浼氳瘽鐨?MoveTo锛夈€備細璇濊矾寰勪細鍏堝彂涓€娆?
-                        // `MoveTo(钀界偣)`锛岄偅鍦?Android 涓婄瓑浜庝竴娆″ぇ骞?look 鎷栨嫿 鈥斺€?瀹炴祴琛ㄧ幇涓?
-                        // "浣庡ご瀵圭潃鐩爣鎸?鈫?鎸栨帢鐬棿璺虫垚骞宠 鈫?涓嬩竴鐬湅澶?銆傜洿鎺ユ柊寤鸿Е鐐规病鏈夌Щ鍔ㄥ閲忥紝
-                        // 瑙嗚灏变笉浼氳鎷栬蛋锛涙寜浣忔椂闀跨敤甯ф暟琛ㄨ揪锛堜繚鎸佹湡鍙槸绛夊抚锛屼笉鍐欎换浣曚綅缃級銆?
+                        // Android（**直接落触点**（不经过会话的 MoveTo）。会话路径会先发一次
+                        // `MoveTo(落点)`，那在 Android 上等于一次大幅 look 拖拽 —— 实测表现为
+                        // "低头对着目标挖 → 挖掘瞬间跳成平视 → 下一瞬看天"。直接新建触点没有移动增量，
+                        // 视角就不会被拖走；按住时长用帧数表达（保持期只是等帧，不写任何位置）。
                         AndroidTouch.Press(new Vector2(px, py));
                         int releaseFrames = Math.Max(1, holdMs / 16);
                         for (int i = 0; i < releaseFrames; i++)
                         {
-                            // 姣忓抚瀵?*鍚屼竴鐐?*鍙戜竴娆?Move锛氬悓鐐?闆朵綅绉伙紙涓嶄細鎷栬瑙掞級锛?
-                            // 浣嗗紩鎿庨渶瑕佽Е鎽哥偣杩涘叆 `Moved` 鎵嶄細鍚姩鎸栨帢鈥斺€斿彧鎸変笉鍔ㄧ殑璇?
-                            // 瑙︽懜鐐规案杩滄槸 `Pressed`锛屾寲鎺樹笉鐢熸晥锛堝疄娴?600/1500ms 閮芥寲涓嶆帀锛夈€?
+                            // 每帧对**同一点**发一次 Move：同点 零位移（不会拖视角），
+                            // 但引擎需要触摸点进入 `Moved` 才会启动挖掘——只按不动的话
+                            // 触摸点永远是 `Pressed`，挖掘不生效（实测 600/1500ms 都挖不掉）。
                             m_injector.Pump.Enqueue(delegate
                             {
                                 AndroidTouch.Move(new Vector2(px, py));
@@ -486,22 +486,22 @@ namespace CmdBridgeMod
                             ["beforeAim"] = beforeAim
                         };
                     }
-                    // 杩涘害椹卞姩锛氫竴鐩存寜浣忥紝鐩村埌**鐩爣鏍肩湡鐨勫彉浜?*鎵嶆澗鎵嬶紙涓婇檺 maxHoldMs锛夈€?
-                    // 涓轰粈涔堜笉鑳藉彧鎸夊浐瀹氭椂闀匡細鎸栨帢鏄惁瀹屾垚鍙栧喅浜?`ComponentMiner.CalculateDigTime`
-                    // 鈥斺€?鍒涢€犳ā寮忔槸 0锛堢灛闂村畬鎴愶級锛岀敓瀛樻ā寮忓垯瑕佹寜浣忔暣娈垫寲鎺樻椂闂达紱鍥哄畾 holdMs 浼氬湪
-                    // "宸茬粡鍑虹幇鎸栨帢鍔ㄤ綔銆佹柟鍧楄繕娌℃帀"鐨勬椂鍊欐澗鎵嬶紝杩涘害褰掗浂銆佽繖涓€涓嬬櫧鎸栵紙瀹炴祴鐥囩姸锛夈€?
+                    // 进度驱动：一直按住，直到**目标格真的变了**才松手（上限 maxHoldMs）。
+                    // 为什么不能只按固定时长：挖掘是否完成取决于 `ComponentMiner.CalculateDigTime`
+                    // —— 创造模式是 0（瞬间完成），生存模式则要按住整段挖掘时间；固定 holdMs 会在
+                    // "已经出现挖掘动作、方块还没掉"的时候松手，进度归零、这一下白挖（实测症状）。
                     int maxHoldMs = request.GetInteger("maxHoldMs", 6000);
                     int attempts = 0;
                     int afterValue = 0;
                     int heldFrames = 0;
                     for (attempts = 1; attempts <= 2; attempts++)
                     {
-                        // 鍘昏€︼細寮€濮嬪墠鍙畾浣嶄竴娆★紙璁剧疆瑙︽懜钀界偣锛夛紝淇濇寔鏈?*涓嶅啀鍐欎綅缃?*鈥斺€?
-                        // Android 涓婃棤鎸夐挳鍖虹殑瑙︽懜鍚屾椂鏄瑙掓憞鏉嗭紝鍙嶅鍐欎綅缃?鎷栨嫿浼氭妸闀滃ご杞蛋锛?
-                        // 瀵艰嚧"鎸変笅鐬棿瀵圭潃鐨勬槸涓嬩竴鏍瑰绾匡紝瀹為檯鎸栧埌鍒"銆?
+                        // 去耦：开始前只定位一次（设置触摸落点），保持期**不再写位置**——
+                        // Android 上无按钮区的触摸同时是视角摇杆，反复写位置 拖拽会把镜头转走，
+                        // 导致"按下瞬间对着的是下一根导线，实际挖到别处"。
                         m_injector.Session.Begin(false);
-                        // 鍙钀界偣銆佷笉鎺掗槦 Move 姝ワ細閬垮厤 Android 涓?瀹氫綅"琚綋鎴愪竴娆?look 鎷栨嫿
-                        // 锛堜綆澶粹啋骞宠鈫掔湅澶╋級锛屽悓鏃惰 Press 钀藉湪姝ｇ‘鐨勪綅缃笂锛堝紩鎿庤杩欐潯璺緞锛夈€?
+                        // 只设落点、不排队 Move 步：避免 Android 上 定位"被当成一次 look 拖拽
+                        // （低头→平视→看天），同时让 Press 落在正确的位置上（引擎认这条路径）。
                         m_injector.Session.PreparePoint(new Vector2(px, py));
                         m_injector.Session.Press(MouseButton.Left);
                         heldFrames = HoldUntilChanged(terrain, hasCell, cellX, cellY, cellZ,
@@ -574,11 +574,11 @@ namespace CmdBridgeMod
                     float clickY;
                     bool hasPoint = request.TryGetFloat("x", out clickX)
                         && request.TryGetFloat("y", out clickY);
-                    // 绾€夋嫨鍣ㄧ偣鍑讳紭鍏堣蛋 direct锛堝崟甯у悎鎴?Tap+Click锛屽啓鍦ㄧ洰鏍囨帶浠惰嚜宸辩殑杈撳叆闈級锛?
-                    // 涓栫晫鍐?GameWidget 灞傜骇涓嬭€佺殑杞厜鏍囧甯т細璇濇淳鐢熶笉鍑?Click 鈥斺€?
-                    // `ComponentInput.UpdateInputFromMouseAndKeyboard` 姣忓抚閲嶅啓璇ュ眰杈撳叆鐘舵€侊紝
-                    // GameMenuDialog 鐨勬寜閽敤浼氳瘽鐐瑰畬鍏ㄦ病鍙嶅簲銆佺敤 direct 绔嬪埢鍥炲埌涓昏彍鍗曪紙瀹炴祴锛夈€?
-                    // 甯﹀潗鏍囩殑鐐瑰嚮锛堣櫄鎷熷垪琛ㄨ/鍧愭爣鐐瑰嚮锛変笌鏄惧紡 `mode=input` 浠嶈蛋浼氳瘽锛岃涓轰笉鍙樸€?
+                    // 纯选择器点击优先走 direct（单帧合成 Tap+Click，写在目标控件自己的输入面），
+                    // 世界内 GameWidget 层级下老的软光标多帧会话派生不出 Click ——
+                    // `ComponentInput.UpdateInputFromMouseAndKeyboard` 每帧重写该层输入状态，
+                    // GameMenuDialog 的按钮用会话点完全没反应、用 direct 立刻回到主菜单（实测）。
+                    // 带坐标的点击（虚拟列表行/坐标点击）与显式 `mode=input` 仍走会话，行为不变。
                     if (!hasPoint && !string.Equals(clickMode, "input", StringComparison.OrdinalIgnoreCase))
                     {
                         return m_injector.Ui.Click(selector, "direct",
@@ -631,7 +631,7 @@ namespace CmdBridgeMod
                         () => m_injector.Session.Drag(start, end, steps, holdMs));
                 }
 
-                // ------------------------------------------------------ 绌烘牸/璺宠穬瀹¤涓庣紦鍐诧紙璺宠穬鎵嬫劅锛?
+                // ------------------------------------------------------ 空格/跳跃审计与缓冲（跳跃手感）
                 case "jump.status":
                     return m_jumpAssist.Describe();
                 case "jump.buffer":
@@ -653,7 +653,7 @@ namespace CmdBridgeMod
                     // 只改本次运行：开关默认写在代码里（恒久打开），不再写盘、不再有配置项。
                     return m_jumpAssist.Describe();
                 }
-                // ------------------------------------------------------ 鐒︾偣绛栫暐涓庡叡鎺э紙CM-2锛?
+                // ------------------------------------------------------ 焦点策略与共控（CM-2）
                 case "focus.status":
                     return m_injector.Focus.Describe();
                 case "focus.auto":
@@ -671,8 +671,8 @@ namespace CmdBridgeMod
                 }
                 case "focus.recover":
                 {
-                    // 涓€閿嚜鏁戯細涓囦竴鐒︾偣绛栫暐鎶婇紶鏍囧崱浣忎簡锛堣瑙掕浆涓嶅姩 / 鍏夋爣璺戝埌绋嬪簭澶栵級锛?
-                    // 杩欐潯鍛戒护绔嬪埢鍥炲埌"璺熼殢寮曟搸"骞舵妸绐楀彛鐘舵€佹仮澶嶆垚鐪熷疄鍊笺€?
+                    // 一键自救：万一焦点策略把鼠标卡住了（视角转不动 / 光标跑到程序外），
+                    // 这条命令立刻回到"跟随引擎"并把窗口状态恢复成真实值。
                     m_injector.Focus.Mode = FocusMode.Follow;
                     m_injector.Focus.RestoreNaturalFocus();
                     Log.Information("[CmdBridge] focus recovered to follow mode");
@@ -700,8 +700,8 @@ namespace CmdBridgeMod
 
                 default:
                 {
-                    // 鎵╁睍鍛戒护锛堝埆鐨?Mod 娉ㄥ唽鐨勶紝渚嬪 PlayerAiMod 鐨?ai.*锛夛細
-                    // 鍐呭缓鍛戒护浼樺厛锛屾墿灞曞懡浠や笉鑳借鐩栧唴寤鸿涓恒€?
+                    // 扩展命令（别的 Mod 注册的，例如 PlayerAiMod 的 ai.*）：
+                    // 内建命令优先，扩展命令不能覆盖内建行为。
                     CommandExtension extension;
                     if (m_injector.Commands.TryGet(request.Command, out extension))
                         return ExecuteExtension(extension, request);
@@ -712,14 +712,14 @@ namespace CmdBridgeMod
             }
         }
 
-        /// <summary>`CellFace` 鐨勫叚涓潰娉曞悜锛坄Game/CellFace.cs`锛?=+Z 1=+X 2=-Z 3=-X 4=+Y 5=-Y锛夈€?/summary>
+        /// <summary>`CellFace` 的六个面法向（`Game/CellFace.cs`） =+Z 1=+X 2=-Z 3=-X 4=+Y 5=-Y）。</summary>
         private static readonly float[] FaceNormalX = { 0f, 1f, 0f, -1f, 0f, 0f };
         private static readonly float[] FaceNormalY = { 0f, 0f, 0f, 0f, 1f, -1f };
         private static readonly float[] FaceNormalZ = { 1f, 0f, -1f, 0f, 0f, 0f };
 
         /// <summary>
-        /// 浠庤姹傞噷鍙?瑕佹寲鍝竴鏍?锛歚cell=x,y,z` 瀛楃涓诧紝鎴?`cellX/cellY/cellZ` 涓変釜鏁存暟銆?
-        /// 涓嶇粰灏辫繑鍥?false锛堟鏃舵寜鍑嗘槦/瑙︽懜鐐瑰懡涓殑閭ｄ竴鏍兼寲锛夈€?
+        /// 从请求里取"要挖哪一格"：`cell=x,y,z` 字符串，或 `cellX/cellY/cellZ` 三个整数、
+        /// 不给就返回 false（此时按准星/触摸点命中的那一格挖）。
         /// </summary>
         private static bool TryGetTargetCell(BridgeRequest request, out int x, out int y, out int z)
         {
@@ -740,7 +740,7 @@ namespace CmdBridgeMod
                 request.TryGetInteger("cellZ", out z);
         }
 
-        /// <summary>鍑嗘槦褰撳墠鍛戒腑鐨勬牸瀛愭槸涓嶆槸鎸囧畾鏍硷紙鍙湅鏍煎瓙锛屼笉鐪嬫柟鍧楃被鍨嬶級銆?/summary>
+        /// <summary>准星当前命中的格子是不是指定格（只看格子，不看方块类型）。</summary>
         private static bool AimHitsCell(int cellX, int cellY, int cellZ, float maxDistance)
         {
             var aim = AimObserver.Describe(maxDistance) as System.Collections.IDictionary;
@@ -756,11 +756,11 @@ namespace CmdBridgeMod
         }
 
         /// <summary>
-        /// 閫愪釜闈㈠績杞瑙掞紝杩斿洖**绗竴涓兘璁╁噯鏄熷懡涓鏍?*鐨勯潰鍙凤紱鍏釜闈㈤兘涓嶅懡涓繑鍥?-1銆?
+        /// 逐个面心转视角，返回**第一个能让准星命中该格**的面号；六个面都不命中返回 -1。
         ///
-        /// 鐢ㄩ€旓細瀵肩嚎/鍛婄ず鐗岃繖绫?璐村湪闈笂鐨勮杽鐗?蹇呴』瀵圭潃瀹冩墍鍦ㄧ殑閭ｄ釜闈㈡寲 鈥斺€?
-        /// 瀵圭潃鏍煎績鎸栦細绌胯繃鍘绘墦鍒板悗闈㈢殑鏂瑰潡锛堝疄娴嬶細鐩爣瀵肩嚎娌℃帀锛屽悗闈㈢殑鑽夊湴琚繛鎸?5 鏍硷級銆?
-        /// 闈㈠績 = 鏍间腑蹇?+ 0.5 脳 闈㈡硶鍚戯紙`CellFace.FaceToVector3` 鐨勫悓涓€绾﹀畾锛夈€?
+        /// 用途：导线/告示牌这类 贴在面上的薄片 必须对着它所在的那个面挖 ——
+        /// 对着格心挖会穿过去打到后面的方块（实测：目标导线没掉，后面的草地被连挖 5 格）。
+        /// 面心 = 格中心 + 0.5 × 面法向（`CellFace.FaceToVector3` 的同一约定）。
         /// </summary>
         private int AimAtCellFace(int cellX, int cellY, int cellZ, float maxDistance)
         {
@@ -770,14 +770,14 @@ namespace CmdBridgeMod
                     cellX + 0.5f + FaceNormalX[face] * 0.5f,
                     cellY + 0.5f + FaceNormalY[face] * 0.5f,
                     cellZ + 0.5f + FaceNormalZ[face] * 0.5f);
-                WaitGameFrames(2); // 瑙嗚鍐欏畬涔嬪悗鐩告満瑕佸嚭甯ф墠浼氭洿鏂?ViewDirection
+                WaitGameFrames(2); // 视角写完之后相机要出帧才会更新 ViewDirection
                 if (AimHitsCell(cellX, cellY, cellZ, maxDistance))
                     return face;
             }
             return -1;
         }
 
-        /// <summary>绛夋父鎴忓嚭 <paramref name="frames"/> 甯э紙娓告垙涓嶅嚭甯ф椂闈犺秴鏃跺厹搴曪紝涓嶄細鍗℃锛夈€?/summary>
+        /// <summary>等游戏出 <paramref name="frames"/> 帧（游戏不出帧时靠超时兜底，不会卡死）。</summary>
         private void WaitGameFrames(int frames)
         {
             for (int i = 0; i < frames; i++)
@@ -790,10 +790,10 @@ namespace CmdBridgeMod
         }
 
         /// <summary>
-        /// 鎸栨帢榛樿钀界偣鐨?X = **瑙嗗彛涓績**锛坄Window.Size` 鐨勪竴鍗婏級銆?
-        /// 涓轰粈涔堜笉鐢?`ScreensManager.RootWidget.ActualSize`锛氶偅鏄璁″昂瀵革紝Android 涓婃槸瑙嗗彛鐨勪竴鍗?
-        /// 锛堝疄娴嬭鍙?2000脳1200銆佹牴鎺т欢 1000脳600锛夛紝鐢ㄥ畠绠楀嚭鏉ョ殑"涓績"(500,300) 鍦ㄥ紩鎿庣溂閲屾槸灞忓箷
-        /// 宸︿笂瑙掞紝鎸栨帢灏勭嚎灏勫悜澶╃┖锛屾€庝箞鎸夐兘鎸栦笉鎺夈€傚彇涓嶅埌灏哄鏃跺洖閫€鍒?1000锛堝父瑙佽鍙ｄ腑蹇冿級銆?
+        /// 挖掘默认落点的 X = **视口中心**（`Window.Size` 的一半）。
+        /// 为什么不用 `ScreensManager.RootWidget.ActualSize`：那是设计尺寸，Android 上是视口的一半
+        /// （实测视口 2000×1200、根控件 1000×600），用它算出来的"中心"(500,300) 在引擎眼里是屏幕
+        /// 左上角，挖掘射线射向天空，怎么按都挖不掉。取不到尺寸时回退到 1000（常见视口中心）。
         /// </summary>
         private static float DefaultDigPointX()
         {
@@ -809,7 +809,7 @@ namespace CmdBridgeMod
             return 1000f;
         }
 
-        /// <summary>鎸栨帢榛樿钀界偣鐨?Y锛岃 <see cref="DefaultDigPointX"/>銆?/summary>
+        /// <summary>挖掘默认落点的 Y，见 <see cref="DefaultDigPointX"/>。</summary>
         private static float DefaultDigPointY()
         {
             try
@@ -825,22 +825,22 @@ namespace CmdBridgeMod
         }
 
         /// <summary>
-        /// 淇濇寔鎸変綇锛堝乏閿?瑙︽懜锛夌洿鍒?*鐩爣鏍煎湴褰㈠€肩湡鐨勫彉鍖?*锛岃繑鍥炴寜浣忕殑鎬诲抚鏁般€?
+        /// 保持按住（左键/触摸）直到**目标格地形值真的变化**，返回按住的总帧数。
         ///
-        /// 涓轰粈涔堣"鎸夊埌鍙樹簡鎵嶆澗鎵?鑰屼笉鏄寜鏃堕暱锛氭寲鎺樿繘搴︾敱 `ComponentMiner` 鐨勬寲鎺樻椂闂村喅瀹?
-        /// 锛坄ComponentMiner.CalculateDigTime`锛氬垱閫犳ā寮?0銆佺敓瀛樻ā寮忎负鏂瑰潡纭害鍐冲畾鐨勬鏁帮級锛?
-        /// 鍥哄畾 holdMs 浼氬嚭鐜?鐢婚潰宸茬粡鍦ㄦ寲銆佹柟鍧楄繕娌℃帀灏辨澗鎵?鈥斺€旇繘搴﹀綊闆讹紝杩欎竴涓嬬櫧鎸栵紙瀹炴祴鐥囩姸锛夈€?
+        /// 为什么要"按到变了才松手"而不是按时长：挖掘进度由 `ComponentMiner` 的挖掘时间决定
+        /// （`ComponentMiner.CalculateDigTime`：创造模式 0、生存模式为方块硬度决定的正数），
+        /// 固定 holdMs 会出现"画面已经在挖、方块还没掉就松手"——进度归零，这一下白挖（实测症状）。
         ///
-        /// 淇濇寔鏈?*鍙帹杩涘抚锛岀粷涓嶅啓浣嶇疆**锛坄HoldNoMove`锛夛細
-        ///   路 寮曟搸锛圓ndroid锛夋妸"鏃犳寜閽尯鎸変綇涓嶅姩"褰撲綔鎸栨帢锛岄潬瑙︾偣**鍋滃湪鍘熷湴**鏉ョ淮鎸侊紱
-        ///   路 涓€鏃︽瘡甯ч兘鍐欎竴娆′綅缃紙鍝€曟槸鍚屼竴涓偣锛夛紝瑙︽懜鐘舵€佹満璁や负鎵嬫寚杩樺湪绉诲姩锛?
-        ///     姘歌繙杩涗笉浜?鎸変綇涓嶅姩"閭ｄ竴妗?鈥斺€?瀹炴祴鎸変綇 12 绉掞紙涓ゆ 6 绉掋€佹瘡甯у悓鐐?MoveTo锛?
-        ///     **涓€鏍奸兘娌℃寲鎺?*锛涙敼鍥炵函甯ф帹杩涘悗鍚屾牸鍚岃瑙掔珛鍒绘寲鎺夛紙05:2x 琚富鏈烘帴鍙楃殑閭ｆ壒鎸栨帢
-        ///     璺戠殑姝ｆ槸绾抚鎺ㄨ繘鐨勭増鏈紝鍚庢潵鐨?姣忓抚鍚岀偣 Move"鏄垜鑷繁寮曞叆鐨勫洖褰掞級銆?
-        ///   路 涓嶅啓浣嶇疆涔熼『甯︿繚璇侀暅澶翠笉浼氳鎷栬蛋锛埼攑itch = 0.000锛夈€?
+        /// 保持期**只推进帧，绝不写位置**（`HoldNoMove`）：
+        ///   · 引擎（Android）把"无按钮区按住不动"当作挖掘，靠触点**停在原地**来维持；
+        ///   · 一旦每帧都写一次位置（哪怕是同一个点），触摸状态机认为手指还在移动，
+        ///     永远进不了"按住不动"那一档 —— 实测按住 12 秒（两次 6 秒、每帧同点 MoveTo）
+        ///     **一格都没挖掉**；改回纯帧推进后同格同视角立刻挖掉（05:2x 被主机接受的那批挖掘
+        ///     跑的正是纯帧推进的版本，后来的"每帧同点 Move"是我自己引入的回归）。
+        ///   · 不写位置也顺带保证镜头不会被拖走（Δpitch = 0.000）。
         ///
-        /// **婊氬姩绐楀彛**锛氶槦鍒楅噷濮嬬粓棰勬帓 <see cref="WindowFrames"/> 涓抚鎺ㄨ繘锛岄伩鍏嶅嚭鐜?绌哄抚"
-        /// 鎵撴柇鎸栨帢锛涘悓鏃舵瘡甯ч兘璇讳竴娆＄洰鏍囨牸 鈥斺€?鍒涢€犳ā寮忔寲鎺樻椂闂?0锛屽垽瀹氭櫄涓€甯у氨澶氭寲涓€鏍笺€?
+        /// **滚动窗口**：队列里始终预排 <see cref="WindowFrames"/> 个帧推进，避免出现"空帧"
+        /// 打断挖掘；同时每帧都读一次目标格 —— 创造模式挖掘时间 0，判定晚一帧就多挖一格。
         /// </summary>
         private int HoldUntilChanged(SubsystemTerrain terrain, bool hasCell, int cellX, int cellY,
             int cellZ, int beforeValue, float px, float py, int minHoldMs, int maxHoldMs)
@@ -854,9 +854,9 @@ namespace CmdBridgeMod
 
             while (frames < maxFrames)
             {
-                // 绛?杩欎竴甯?琚墽琛岋細`ActionsExecuted` 鐢卞抚棣栨车鍦ㄧ湡姝ｆ墽琛屽姩浣滄椂鑷锛?
-                // 姣?`WaitUntilIdle` 鏇磋创杩?杩欎竴甯у凡缁忚惤鍒板紩鎿庝笂浜?銆傛父鎴忎笉鍑哄抚鏃堕潬瓒呮椂鍏滃簳
-                // 锛堟渶灏忓寲/鏆傚仠涓嶄細鎶婂懡浠ょ嚎绋嬫案涔呭崱浣忥級銆?
+                // 等"这一帧"被执行：`ActionsExecuted` 由帧首泵在真正执行动作时自增：
+                // 比 `WaitUntilIdle` 更贴近"这一帧已经落到引擎上了"。游戏不出帧时靠超时兜底
+                // （最小化/暂停不会把命令线程永久卡住）。
                 int executed = m_injector.Pump.ActionsExecuted;
                 var stopwatch = Stopwatch.StartNew();
                 while (m_injector.Pump.ActionsExecuted == executed && stopwatch.ElapsedMilliseconds < 250)
@@ -865,7 +865,7 @@ namespace CmdBridgeMod
                 frames++;
                 if (!hasCell || terrain == null)
                 {
-                    // 娌＄瀯鍒版牸瀛愶紙渚嬪瀵圭潃绌烘皵锛夛細閫€鍖栦负"鑷冲皯鎸夋弧 minHoldMs"銆?
+                    // 没瞄到格子（例如对着空气）：退化为"至少按满 minHoldMs"。
                     if (frames >= minFrames)
                         break;
                 }
@@ -874,15 +874,15 @@ namespace CmdBridgeMod
                     break;
                 }
 
-                // 琛ヤ笂鍒氭秷鑰楁帀鐨勯偅涓€甯э紝淇濇寔绐楀彛涓嶇┖锛堣繖涓€姝ヤ細钀藉湪涓嬩竴甯э級銆?
+                // 补上刚消耗掉的那一帧，保持窗口不空（这一步会落在下一帧）。
                 m_injector.Session.HoldNoMove();
             }
             return frames;
         }
 
         /// <summary>
-        /// 鎵ц鎵╁睍鍛戒护銆傞粯璁ゅ湪**娓告垙绾跨▼**鎵ц锛堣Е纰版父鎴忓璞?杈撳叆鐨勫懡浠ゅ繀椤诲姝わ級锛?
-        /// 鎵╁睍鍛戒护鎶涘嚭鐨?<see cref="CmdBridgeCommandException"/> 鐩存帴鏄犲皠鎴愰敊璇爜杩斿洖缁欏鎴风銆?
+        /// 执行扩展命令。默认在**游戏线程**执行（触碰游戏对象/输入的命令必须如此），
+        /// 扩展命令抛出的 <see cref="CmdBridgeCommandException"/> 直接映射成错误码返回给客户端。
         /// </summary>
         private object ExecuteExtension(CommandExtension extension, BridgeRequest request)
         {
@@ -907,7 +907,7 @@ namespace CmdBridgeMod
             return extension.RunOnGameThread ? OnGameThread(action) : action();
         }
 
-        /// <summary>鍒楀嚭鍐呭缓鍛戒护涓庢墿灞曞懡浠わ紙璋佹敞鍐岀殑涓€鐩簡鐒讹紝渚夸簬鎺掓煡"鍛戒护娌＄敓鏁?锛夈€?/summary>
+        /// <summary>列出内建命令与扩展命令（谁注册的一目了然，便于排查"命令没生效"）。</summary>
         private object ListCommands()
         {
             List<CommandExtension> extensions = m_injector.Commands.List();
@@ -937,8 +937,8 @@ namespace CmdBridgeMod
         }
 
         /// <summary>
-        /// 鎵ц涓€鏉?铏氭嫙 UI 榧犳爣浼氳瘽"鍛戒护锛氶粯璁ょ瓑鎵嬪娍鍦ㄥ抚棣栭€愬抚璺戝畬鍐嶈繑鍥烇紝
-        /// 浜庢槸鑴氭湰/AI 鎷垮埌杩斿洖鍊兼椂鍔ㄤ綔宸茬粡钀藉湴锛堢瓑浠蜂簬鐪熶汉鏉炬墜閭ｄ竴鍒伙級銆?
+        /// 执行一条"虚拟 UI 鼠标会话"命令：默认等手势在帧首逐帧跑完再返回，
+        /// 于是脚本/AI 拿到返回值时动作已经落地（等价于真人松手那一刻）。
         /// </summary>
         private object UiSessionCommand(BridgeRequest request, Func<Dictionary<string, object>> action)
         {
@@ -967,17 +967,17 @@ namespace CmdBridgeMod
             return m_invoker.Invoke(action);
         }
 
-        // ---------------------------------------------------------------- 鍙瀹炵幇
+        // ---------------------------------------------------------------- 只读实现
 
         /// <summary>
-        /// 鏉′欢绛夊緟锛氬湪娓告垙绾跨▼涓婂懆鏈熸€ф眰鍊硷紝鐩村埌鍏ㄩ儴鏉′欢鎴愮珛鎴栬秴鏃躲€?
+        /// 条件等待：在游戏线程上周期性求值，直到全部条件成立或超时。
         ///
-        /// 涓轰粈涔堥渶瑕佸畠锛氬睆骞曞垏鎹€佷笘鐣屽姞杞姐€侀潰鏉垮脊鍑洪兘鏄法甯у畬鎴愮殑鈥斺€擲witchScreen 浼氱珛鍗虫洿鏂?
-        /// CurrentScreen锛屼絾鏂板睆骞曠殑鎺т欢瑕佺瓑杞睆鍔ㄧ敾涓鎵嶈繘鍏?RootWidget.Children
-        /// 锛圫creensManager.cs:85, 302-309锛夛紱瀵硅瘽妗嗕篃鏄紓姝ュ叧闂殑銆傚鎴风闈犲浐瀹?sleep 蹇呯劧瑕佷箞澶參銆?
-        /// 瑕佷箞鍦ㄧ珵鎬侀噷璇诲埌绌虹晫闈€傛湁浜嗗畠锛孉I 鍙互鍐?鎸夐敭寮€鑳屽寘 鈫?绛夋Ы浣嶅彲鐐?锛岃涔夋槑纭€佷笉闈犵寽銆?
+        /// 为什么需要它：屏幕切换、世界加载、面板弹出都是跨帧完成的——SwitchScreen 会立即更新
+        /// CurrentScreen，但新屏幕的控件要等转屏动画中段才进入 RootWidget.Children
+        /// （ScreensManager.cs:85, 302-309）；对话框也是异步关闭的。客户端靠固定 sleep 必然要么太慢、
+        /// 要么在竞态里读到空界面。有了它，AI 可以写"按键开背包 → 等槽位可点"，语义明确、不靠猜。
         ///
-        /// 鏀寔鐨勬潯浠讹紙澶у皬鍐欎笉鏁忔劅锛夛細
+        /// 支持的条件（大小写不敏感）：
         ///   screen.animating.false / screen.animating.true / screen.is:&lt;name&gt;
         ///   element.present:&lt;selector&gt; / element.hittable:&lt;selector&gt; / element.clickable:&lt;selector&gt;
         ///   modal.none / modal.is:&lt;TypeName&gt; / dialog.none / dialog.present
@@ -1005,7 +1005,7 @@ namespace CmdBridgeMod
             {
                 string pending = (string)m_invoker.Invoke(() =>
                 {
-                    // 鏉′欢姹傚€煎繀椤绘暣鎵瑰湪鍚屼竴甯у畬鎴愶紝鍚﹀垯澶氫釜鏉′欢鍙兘钀藉湪涓嶅悓甯т笂浜掔浉鐭涚浘銆?
+                    // 条件求值必须整批在同一帧完成，否则多个条件可能落在不同帧上互相矛盾。
                     for (int i = 0; i < conditions.Count; i++)
                     {
                         string failed = EvaluateCondition(conditions[i]);
@@ -1044,7 +1044,7 @@ namespace CmdBridgeMod
             }
         }
 
-        /// <summary>杩斿洖 null 琛ㄧず鏉′欢鎴愮珛锛涘惁鍒欒繑鍥炶鏉′欢锛堜緵瓒呮椂鎶ュ憡锛夈€?/summary>
+        /// <summary>返回 null 表示条件成立；否则返回该条件（供超时报告）。</summary>
         private string EvaluateCondition(string condition)
         {
             if (string.IsNullOrWhiteSpace(condition))
@@ -1139,7 +1139,7 @@ namespace CmdBridgeMod
 
             ContainerWidget root = ScreensManager.RootWidget;
             if (root == null)
-                return condition;   // 鐣岄潰灏氭湭灏辩华锛岀户缁瓑寰?
+                return condition;   // 界面尚未就绪，继续等待
 
             Widget widget;
             try
@@ -1148,7 +1148,7 @@ namespace CmdBridgeMod
             }
             catch (BridgeCommandException exception) when (exception.Code == "element_missing")
             {
-                return condition;   // 杩樻病鍑虹幇锛岀户缁瓑寰?
+                return condition;   // 还没出现，继续等待
             }
 
             switch (kind)
@@ -1305,7 +1305,7 @@ namespace CmdBridgeMod
         }
 
         /// <summary>
-        /// 鍖哄煙鏂瑰潡鎵弿銆傛湭缁欎腑蹇冩椂浠ョ帺瀹舵墍鍦ㄦ牸涓轰腑蹇冿紝閬垮厤 AI 蹇呴』鑷繁鎹㈢畻鏍煎瓙鍧愭爣銆?
+        /// 区域方块扫描。未给中心时以玩家所在格为中心，避免 AI 必须自己换算格子坐标。
         /// </summary>
         private Dictionary<string, object> DescribeBlocks(BridgeRequest request)
         {
@@ -1367,8 +1367,8 @@ namespace CmdBridgeMod
         }
 
         /// <summary>
-        /// 鑷锛氱‘璁ょ櫧鍚嶅崟娉ㄥ叆鐐瑰叏閮ㄥ彲鐢紙涓嶅啓鍏ヤ换浣曞€硷級锛屽苟澶嶆煡鍙揪鎬х粺璁°€?
-        /// 鐢ㄤ簬 P2 闃舵楠岃瘉"甯ч缂濋殭 + 娉ㄥ叆鐐?鏄惁鎴愮珛銆?
+        /// 自检：确认白名单注入点全部可用（不写入任何值），并复查可达性统计。
+        /// 用于 P2 阶段验证"帧首缝隙 + 注入点"是否成立。
         /// </summary>
         private Dictionary<string, object> SelfTest()
         {
@@ -1429,7 +1429,7 @@ namespace CmdBridgeMod
                 return true;
             });
 
-            // 鎵╁睍鍛戒护娉ㄥ唽琛細涓婂眰 Mod锛堝 PlayerAiMod 鐨?ai.*锛夐潬瀹冩寕鍛戒护锛屼笉璇ュ嚭鐜?娉ㄥ唽涓嶄笂/鎽樹笉鎺?銆?
+            // 扩展命令注册表：上层 Mod（如 PlayerAiMod 的 ai.*）靠它挂命令，不该出现"注册不上/摘不掉"。
             AddCheck(checks, "commands.register", () =>
             {
                 string error;

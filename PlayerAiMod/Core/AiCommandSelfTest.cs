@@ -70,6 +70,18 @@ namespace PlayerAiMod
                 get { return true; }
             }
 
+            /// <summary>相位（§4.13）：命令层自检里可以随便设，测 `ai.status` 有没有如实转述。</summary>
+            public string Phase { get; set; } = PhaseNames.World;
+
+            public long PhaseChanges { get; set; }
+
+            public long PhaseGatedFrames { get; set; }
+
+            public bool PhaseGateActive { get; set; }
+
+            /// <summary>判定记录（P4 复盘）：`ai.laya.review` 的自检往这里塞几条。</summary>
+            public DecisionLog Decisions { get; set; }
+
             public void Pause(string reason)
             {
                 Paused = true;
@@ -101,6 +113,8 @@ namespace PlayerAiMod
                 RecordingCommands(result);
                 ObservabilityCommands(result);
             try { UiClickTargets(result); } catch (Exception e) { result.Check("case:UI click targets", false, e.Message); }
+            try { AssetCommands(result); } catch (Exception e) { result.Check("case:asset commands", false, e.Message); }
+            try { LayaReview(result); } catch (Exception e) { result.Check("case:laya review", false, e.Message); }
                 ErrorCodes(result);
                 SelfTestCommand(result);
             }
@@ -113,6 +127,83 @@ namespace PlayerAiMod
         }
 
         // ---------------------------------------------------------------- 用例
+
+        /// <summary>
+        /// `ai.laya.review`（P4 复盘）：聚合 + 明细 + markdown 抽样表 + clear。
+        /// 命令层只读记录，所以这里塞一个真的 `DecisionLog` 进去，验"转述得对不对"。
+        /// </summary>
+        private static void LayaReview(BtSelfTest.TestResult result)
+        {
+            var context = new FakeContext();
+
+            // 没有 Laya 服务（记录为 null）→ 明确报错，不是空对象
+            context.Decisions = null;
+            result.Check("ai.laya.review without a decision log fails loudly",
+                CodeOf("ai.laya.review", context) == "not_ready", CodeOf("ai.laya.review", context));
+
+            var log = new DecisionLog();
+            var answer = new LayaAnswer { Ok = true, ElapsedMs = 250, InputTokens = 307 };
+            answer.Answers["goal"] = new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["choice"] = "craft"
+            };
+            log.Record(DecisionRecord.KindSent, "world_goal.qbank", "goal,threat,can_reach",
+                "phase=world ui=hud scr=GameScreen hp=1(full)", "fp-1", answer);
+            log.Record(DecisionRecord.KindSent, "front_goal.qbank", "front_goal",
+                "phase=front ui=menu scr=MainMenu", "fp-2",
+                new LayaAnswer
+                {
+                    Ok = true,
+                    ElapsedMs = 60,
+                    InputTokens = 68,
+                    Answers =
+                    {
+                        ["front_goal"] = new Dictionary<string, object>(StringComparer.Ordinal)
+                        {
+                            ["choice"] = "open_ui"
+                        }
+                    }
+                });
+            context.Decisions = log;
+
+            var map = AiCommandSet.Execute(AiCommandRequest.FromArgs("ai.laya.review", "count", 1), context)
+                as Dictionary<string, object>;
+            var summary = map != null ? map["summary"] as Dictionary<string, object> : null;
+            var recent = map != null ? map["recent"] as List<Dictionary<string, object>> : null;
+            result.Check("ai.laya.review returns the aggregate and the requested rows",
+                summary != null && Equals(summary["total"], 2L) && Equals(summary["sent"], 2L)
+                && recent != null && recent.Count == 1,
+                Describe(map));
+            result.Check("the newest row is the last decision and carries its digest",
+                recent != null && recent.Count == 1
+                && Equals(recent[0]["bank"], "front_goal.qbank")
+                && Convert.ToString(recent[0]["answer"]) == "front_goal=open_ui"
+                && Convert.ToString(recent[0]["digest"]).Contains("phase=front")
+                && Equals(recent[0]["inputTokens"], 68),
+                recent != null && recent.Count == 1 ? Describe(recent[0]) : "<none>");
+
+            map = AiCommandSet.Execute(AiCommandRequest.FromArgs("ai.laya.review", "format", "md", "count", 2),
+                context) as Dictionary<string, object>;
+            string markdown = map != null ? map["markdown"] as string : null;
+            result.Check("format=md returns a recomputable markdown table",
+                markdown != null && markdown.Contains("| # | time | kind |")
+                && markdown.Contains("world_goal.qbank") && markdown.Contains("front_goal=open_ui"),
+                markdown != null ? markdown.Replace('\n', ' ') : "<none>");
+
+            map = AiCommandSet.Execute(AiCommandRequest.FromArgs("ai.laya.review", "format", "digest", "count", 2),
+                context) as Dictionary<string, object>;
+            var digests = map != null ? map["digests"] as List<string> : null;
+            result.Check("format=digest lists the literal state strings",
+                digests != null && digests.Count == 2 && digests[0].Contains("phase=world"),
+                digests != null ? string.Join(" | ", digests.ToArray()) : "<none>");
+
+            map = AiCommandSet.Execute(AiCommandRequest.FromArgs("ai.laya.review", "clear", true), context)
+                as Dictionary<string, object>;
+            summary = map != null ? map["summary"] as Dictionary<string, object> : null;
+            result.Check("clear=true empties the log before answering",
+                summary != null && Equals(summary["total"], 0L) && log.Recent(0).Count == 0,
+                Describe(map));
+        }
 
         private static void CommandTable(BtSelfTest.TestResult result)
         {
@@ -133,17 +224,23 @@ namespace PlayerAiMod
             }
             result.Check("every command has a description", !missing, "missing description or handler");
 
+            // 命名空间纪律：`ai.*`（决策/控制）、`bt.*`（内核自检）、
+            // `state.*`（**纯只读观察**，如 state.digest —— 给 Laya 的摘要读它）。
+            // 只读观察单独一个前缀是有意的：它与"控制面"职责不同，混进 ai.* 会让人以为它能改状态。
             bool allPrefixed = true;
+            string offender = null;
             for (int i = 0; i < AiCommandSet.CommandNames.Length; i++)
             {
                 string name = AiCommandSet.CommandNames[i];
                 if (!name.StartsWith("ai.", StringComparison.Ordinal)
-                    && !name.StartsWith("bt.", StringComparison.Ordinal))
+                    && !name.StartsWith("bt.", StringComparison.Ordinal)
+                    && !name.StartsWith("state.", StringComparison.Ordinal))
                 {
                     allPrefixed = false;
+                    offender = name;
                 }
             }
-            result.Check("commands are namespaced (ai.* / bt.*)", allPrefixed, "unexpected command name");
+            result.Check("commands are namespaced (ai.* / bt.* / state.*)", allPrefixed, offender);
         }
 
         private static void StatusAndSwitches(BtSelfTest.TestResult result)
@@ -175,6 +272,22 @@ namespace PlayerAiMod
             result.Check("ai.disable turns the host off and releases input",
                 !host.Enabled && host.ReleaseCount == 1,
                 "enabled=" + host.Enabled + " release=" + host.ReleaseCount);
+
+            // §4.13：相位与过渡态闸门必须如实出现在 ai.status 里
+            // （"树为什么不动"第一个该看的就是这两格；世界外/过渡态是**正常**状态，不是故障）。
+            context.Phase = PhaseNames.Loading;
+            context.PhaseChanges = 3;
+            context.PhaseGatedFrames = 42;
+            context.PhaseGateActive = true;
+            map = AiCommandSet.Execute(new AiCommandRequest("ai.status"), context) as Dictionary<string, object>;
+            result.Check("ai.status reports phase / phaseChanges / gate",
+                map != null && Equals(map["phase"], PhaseNames.Loading)
+                && Equals(map["phaseChanges"], 3L)
+                && Equals(map["gateActive"], true)
+                && Equals(map["gatedFrames"], 42L),
+                Describe(map != null ? map["phase"] : null));
+            context.PhaseGateActive = false;
+            context.Phase = PhaseNames.World;
 
             AiCommandSet.Execute(new AiCommandRequest("ai.enable"), context);
             result.Check("ai.enable turns the host back on", host.Enabled, "enabled=false");
@@ -917,8 +1030,103 @@ namespace PlayerAiMod
                 Describe(map));
         }
 
-        private static void ErrorCodes(BtSelfTest.TestResult result)
+        /// <summary>
+        /// 资源库命令（P6）：**只覆盖只读命令与错误码**。
+        ///
+        /// 为什么不在自检里跑 `save` / `autosave` / `restore`：它们会**真的写**游戏的
+        /// `PlayerAi/Saves/` 与 `PlayerAi/.autosave/` —— 自检不该往用户的实例目录里投垃圾。
+        /// 写入语义由 `AssetSelfTest`（纯逻辑 + 临时目录）钉死，这里只管"命令接得上、错误码稳定"。
+        ///
+        /// 这个用例依赖**真运行时**（`PlayerAiRuntime.Instance`）。纯逻辑跑（没有游戏）时直接返回，
+        /// 不伪造通过 —— 它只在 `bt.selftest` 这条游戏内路径上执行。
+        /// </summary>
+        private static void AssetCommands(BtSelfTest.TestResult result)
         {
+            PlayerAiRuntime runtime = PlayerAiRuntime.Instance;
+            if (runtime == null || runtime.Assets == null)
+                return;
+
+            var context = new FakeContext();
+
+            IDictionary<string, object> map =
+                AiCommandSet.Execute(new AiCommandRequest("ai.asset.status"), context)
+                as IDictionary<string, object>;
+            result.Check("ai.asset.status reports the memory store and the cache",
+                map != null && map.ContainsKey("cache") && map.ContainsKey("active")
+                && map.ContainsKey("records"), Describe(map));
+
+            map = AiCommandSet.Execute(new AiCommandRequest("ai.asset.list"), context)
+                as IDictionary<string, object>;
+            result.Check("ai.asset.list exposes the three-state view",
+                map != null && map.ContainsKey("records") && map.ContainsKey("dirtyCount")
+                && map.ContainsKey("manualSaveFolder"), Describe(map));
+
+            string code = CodeOf("ai.asset.load", context);
+            result.Check("ai.asset.load without a name reports invalid_argument",
+                code == "invalid_argument", code ?? "<none>");
+
+            code = CodeOf("ai.asset.load", context, "name", "no.such.package.zzz");
+            result.Check("ai.asset.load of a missing package reports pkg_missing",
+                code == "pkg_missing", code ?? "<none>");
+
+            code = CodeOf("ai.asset.save", context, "name", "ghost.package.zzz");
+            result.Check("ai.asset.save of a package that was never loaded reports not_found",
+                code == "not_found", code ?? "<none>");
+
+            code = CodeOf("ai.asset.drop", context, "name", "ghost.package.zzz");
+            result.Check("ai.asset.drop of a package that was never loaded reports not_found",
+                code == "not_found", code ?? "<none>");
+
+            code = CodeOf("ai.asset.restore", context, "name", "ghost.package.zzz");
+            result.Check("ai.asset.restore of a package that was never loaded reports not_found",
+                code == "not_found", code ?? "<none>");
+
+            // 拒包 / 重取（§4.12）：命令面 + 运行时接线
+            map = AiCommandSet.Execute(new AiCommandRequest("ai.asset.retry"), context)
+                as IDictionary<string, object>;
+            result.Check("ai.asset.retry reports the policy and the retry queue",
+                map != null && map.ContainsKey("policy") && map.ContainsKey("resources")
+                && map.ContainsKey("pending") && map.ContainsKey("exhausted"), Describe(map));
+
+            AssetFailureDecision missing = runtime.NoteAssetFailure("no.such.package.zzz",
+                "file.missing: package not found: 'no.such.package.zzz'");
+            result.Check("a missing tree package is classified as retryable",
+                missing.Kind == AssetFailureKind.Missing && missing.Retry, missing.Describe());
+            result.Check("the failure mark reaches the blackboard (pkg.fail)",
+                runtime.AssetRetry.IsPending("no.such.package.zzz"),
+                "not pending");
+
+            // 自检不该真的触发重取：立刻按"人处置过了"清掉（这也是真实用法里的恢复入口）
+            runtime.ResetAssetRetry("no.such.package.zzz");
+            result.Check("a human reset clears the pending retry and the failure marks",
+                !runtime.AssetRetry.IsPending("no.such.package.zzz")
+                && !runtime.AssetRetry.IsExhausted("no.such.package.zzz"));
+
+            AssetFailureDecision bad = runtime.NoteAssetFailure("no.such.package.zzz",
+                "json.invalid: unexpected token at line 3");
+            result.Check("*** an invalid tree package is NOT retried ***",
+                bad.Kind == AssetFailureKind.Invalid && !bad.Retry, bad.Describe());
+            runtime.ResetAssetRetry("no.such.package.zzz");
+        }
+
+        /// <summary>跑一条命令，只取错误码（成功返回 null）。</summary>
+        private static string CodeOf(string command, IAiCommandContext context, params object[] pairs)
+        {
+            var arguments = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+            for (int i = 0; i + 1 < pairs.Length; i += 2)
+                arguments[Convert.ToString(pairs[i])] = pairs[i + 1];
+            try
+            {
+                AiCommandSet.Execute(new AiCommandRequest(command, arguments), context);
+                return null;
+            }
+            catch (AiCommandException exception)
+            {
+                return exception.Code;
+            }
+        }
+
+        private static void ErrorCodes(BtSelfTest.TestResult result)        {
             var context = new FakeContext();
 
             string code = null;

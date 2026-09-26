@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text;
 
 namespace PlayerAiMod
 {
@@ -520,18 +521,59 @@ namespace PlayerAiMod
             error = null;
             nodeCount = 0;
 
-            if (runtime == null || runtime.Root == null)
-            {
-                error = "there is no live tree to export";
-                return false;
-            }
             if (string.IsNullOrEmpty(targetDirectory))
             {
                 error = "no writable folder for packages (PlayerAi/BehaviorTrees)";
                 return false;
             }
 
+            byte[] bytes;
+            string contentHash;
+            if (!TrySerializePackage(runtime, sourceManifest, fileNameOrId, out bytes, out contentHash,
+                out error))
+            {
+                return false;
+            }
+
             string safeName = AiRecordingSession.SanitizeName(fileNameOrId);
+            path = System.IO.Path.Combine(targetDirectory, safeName + PackageRoots.Extension);
+            if (!PackageWriter.TryWriteFile(path, bytes, out error))
+            {
+                path = null;
+                return false;
+            }
+
+            nodeCount = runtime.Root.Walk() != null ? CountNodes(runtime.Root) : 0;
+            return true;
+        }
+
+        /// <summary>
+        /// 把**活树序列化成包字节，但不落盘**（P6 内存库 / 自动缓存的落点）。
+        ///
+        /// 与 <see cref="TryExportPackage"/> 共用同一段身份处理（manifest 以来源包为底、
+        /// 只改 id/name/entry），区别只有一个：这里返回字节。这样"导出的包"与"缓存的包"
+        /// **格式永远一致** —— 不存在"缓存能恢复但导出打不开"这种鬼故事。
+        ///
+        /// ⚠️ <paramref name="contentHash"/> 是**语义哈希**（对规范化 JSON 算的），
+        /// **不能**拿 <paramref name="bytes"/> 的哈希当"变了没有"的判据：
+        /// SuAPI 的 `ZipArchive.AddStream` 会给条目打 `DateTime.Now`，
+        /// 于是**同一棵树每次序列化出的字节都不一样**。用它判"有没有改动"会导致
+        /// 每 5 秒都当成新改动重写一次缓存（实测踩过：`.autosave/` 序号一路涨到 .4 还在涨）。
+        /// </summary>
+        public static bool TrySerializePackage(BtRuntime runtime, ScbtManifest sourceManifest,
+            string nameOrId, out byte[] bytes, out string contentHash, out string error)
+        {
+            bytes = null;
+            contentHash = null;
+            error = null;
+
+            if (runtime == null || runtime.Root == null)
+            {
+                error = "there is no live tree to capture";
+                return false;
+            }
+
+            string safeName = AiRecordingSession.SanitizeName(nameOrId);
             if (string.IsNullOrEmpty(safeName))
             {
                 error = "a file name is required (letters/digits/_/-/., max 64)";
@@ -547,16 +589,31 @@ namespace PlayerAiMod
             manifest.Name = safeName;
             manifest.Entry = entryId;
 
-            path = System.IO.Path.Combine(targetDirectory, safeName + PackageRoots.Extension);
-            byte[] bytes = PackageWriter.ToBytes(manifest.ToValue(), tree, null);
-            if (!PackageWriter.TryWriteFile(path, bytes, out error))
+            PackageValue manifestValue = manifest.ToValue();
+            try
             {
-                path = null;
+                // 语义哈希：规范化的 manifest + tree 文本（顺序固定、无时间戳）
+                string canonical = manifestValue.ToJson(true) + "\n" + tree.ToJson(true);
+                contentHash = PackageLoader.ComputeHash(new UTF8Encoding(false).GetBytes(canonical));
+                bytes = PackageWriter.ToBytes(manifestValue, tree, null);
+            }
+            catch (Exception exception)
+            {
+                error = exception.GetType().Name + ": " + exception.Message;
+                bytes = null;
+                contentHash = null;
                 return false;
             }
-
-            nodeCount = runtime.Root.Walk() != null ? CountNodes(runtime.Root) : 0;
             return true;
+        }
+
+        /// <summary>只取语义哈希（不需要字节时用；内部仍然会序列化一次）。</summary>
+        public static bool TryGetContentHash(BtRuntime runtime, ScbtManifest sourceManifest,
+            string nameOrId, out string contentHash, out string error)
+        {
+            byte[] ignored;
+            return TrySerializePackage(runtime, sourceManifest, nameOrId, out ignored, out contentHash,
+                out error);
         }
 
         private static ScbtManifest CloningManifest(ScbtManifest source)

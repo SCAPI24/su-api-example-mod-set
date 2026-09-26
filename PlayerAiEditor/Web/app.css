@@ -951,3 +951,51 @@ pre { white-space: pre-wrap; word-break: break-all; font-size: 11.5px; }
 #minimap { color: var(--fg); }
 .graph-marquee { border-color: var(--accent); }
 
+
+/* ============================================================ 资源库 / Laya 配置（P6）
+   两块面板都放在右栏（属性区）里，样式跟着现有的 .group / .badge / .hint 走，
+   只补"一行一条资源"的排版：左侧名字、中间三态、右侧按钮。 */
+.assetList { display: flex; flex-direction: column; gap: 4px; }
+.assetRow {
+  border: 1px solid var(--line, #cfd8e3);
+  border-radius: 4px;
+  padding: 4px 6px;
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.assetRow.active { border-color: var(--accent, #3f86d8); }
+.assetRow .name { font-weight: 600; }
+.assetRow .state { color: var(--dim, #6b7787); }
+.assetRow .state b { color: inherit; }
+.assetRow.dirty .state { color: var(--warn, #a9791f); }
+.assetRow.conflict { border-color: var(--warn, #a9791f); }
+.assetRow .actions { display: flex; gap: 4px; flex-wrap: wrap; }
+.assetRow .actions button { padding: 1px 6px; font-size: 11px; }
+.assetRow .why { color: var(--dim, #6b7787); font-size: 11px; }
+.layaGrid { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+/* `Task.LayaAsk` 的绑定勾选（P3 第二步）：库里的每个问题一行，
+   左边勾选、中间"问题 [类型→绑定类型] 选项…"、右边可改的黑板键。 */
+.prop-row.packages .package-item .bb-key {
+  width: 110px;
+  margin-left: 6px;
+  font-size: 11px;
+  padding: 1px 4px;
+}
+.prop-row.raw-bindings { opacity: .75; }
+.prop-row.raw-bindings input { font-size: 11px; }
+/* 判定复盘（P4）：一行一次判定，外加可展开的原文摘要与 markdown 抽样表。
+   行复用 .assetRow（同一套排版），这里只补两处专属样式。 */
+.reviewMd {
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre;
+  font-size: 11px;
+  line-height: 1.4;
+  border: 1px solid var(--line, #cfd8e3);
+  border-radius: 4px;
+  padding: 4px 6px;
+  margin: 0;
+}
+.assetRow .why code { font-size: 11px; }

@@ -451,6 +451,16 @@ namespace PlayerAiMod
                     break;
                 }
 
+                case "Task.Counter":
+                {
+                    var task = (BtCounterTask)node;
+                    task.Key = reader.Str("key", null);
+                    task.Delta = reader.Int("delta", 1);
+                    task.Clear = reader.Bool("clear", false);
+                    task.RemoveWhenClear = reader.Bool("removeWhenClear", false);
+                    break;
+                }
+
                 case "Task.LookAt":
                 {
                     var task = (BtLookAtTargetTask)node;
@@ -669,6 +679,88 @@ namespace PlayerAiMod
                     break;
                 }
 
+                case "Task.RunActionScript":
+                {
+                    var task = (BtRunActionScriptTask)node;
+                    task.Script = reader.Str("script", null);
+                    task.ScriptKey = reader.Str("scriptKey", null);
+                    if (string.IsNullOrEmpty(task.Script) && string.IsNullOrEmpty(task.ScriptKey))
+                    {
+                        reader.Report.Error(PackageCodes.PropertyValue, where + ".properties.script",
+                            "Task.RunActionScript needs 'script' (a .aeact name) or 'scriptKey' (a blackboard string key)");
+                    }
+                    task.Repeat = reader.Int("repeat", 1);
+                    if (task.Repeat < 1)
+                    {
+                        reader.Report.Error(PackageCodes.PropertyValue, where + ".properties.repeat",
+                            "repeat must be >= 1, found " + task.Repeat);
+                        task.Repeat = 1;
+                    }
+                    float timeoutMs = NonNegative(reader, "totalTimeoutMs", 0f, where);
+                    task.TotalTimeoutMs = (int)Math.Round(timeoutMs);
+                    task.WriteFailKey = reader.Bool("writeFailKey", true);
+                    task.FailKey = reader.Str("failKey", "action.fail");
+                    task.ReasonKey = reader.Str("reasonKey", "action.reason");
+                    break;
+                }
+
+                case "Task.LayaAsk":
+                {
+                    var task = (BtLayaAskTask)node;
+                    task.Questions = reader.Str("questions", null);
+                    task.QuestionsKey = reader.Str("questionsKey", null);
+                    if (string.IsNullOrEmpty(task.Questions) && string.IsNullOrEmpty(task.QuestionsKey))
+                    {
+                        reader.Report.Error(PackageCodes.PropertyValue, where + ".properties.questions",
+                            "Task.LayaAsk needs 'questions' (a .qbank name) or 'questionsKey' (a blackboard string key)");
+                    }
+                    task.AnswerKeys = reader.Str("answerKeys", null);
+                    if (string.IsNullOrEmpty(task.AnswerKeys))
+                    {
+                        reader.Report.Error(PackageCodes.PropertyValue, where + ".properties.answerKeys",
+                            "Task.LayaAsk needs 'answerKeys' (blackboardKey:questionId:type, comma separated)");
+                    }
+                    task.Only = reader.Str("only", null);
+                    float timeoutMs = NonNegative(reader, "timeoutMs", 0f, where);
+                    task.TimeoutMs = (int)Math.Round(timeoutMs);
+                    task.OnUnavailable = reader.Enum("onUnavailable", "fail", new[] { "fail", "default", "keep" });
+                    task.DefaultValue = reader.Str("defaultValue", null);
+                    task.WriteFailKey = reader.Bool("writeFailKey", true);
+                    task.FailKey = reader.Str("failKey", "laya.fail");
+                    task.ReasonKey = reader.Str("reasonKey", "laya.reason");
+                    break;
+                }
+                case "Task.PoolCall":
+                {
+                    var task = (BtPoolCallTask)node;
+                    task.Packages.Clear();
+                    task.Packages.AddRange(reader.StringList("packages"));
+                    task.Mode = reader.Enum("mode", "SingleOne", BtSchema.PoolCallModes);
+                    task.PackageKey = reader.Str("packageKey", null);
+                    if (string.Equals(task.Mode, "FromBlackboard", StringComparison.OrdinalIgnoreCase)
+                        && string.IsNullOrEmpty(task.PackageKey))
+                    {
+                        reader.Report.Error(PackageCodes.PropertyValue, where + ".properties.packageKey",
+                            "Task.PoolCall with mode=FromBlackboard needs 'packageKey' (a blackboard string key)");
+                    }
+                    if (task.Packages.Count == 0
+                        && !string.Equals(task.Mode, "FromBlackboard", StringComparison.OrdinalIgnoreCase))
+                    {
+                        reader.Report.Error(PackageCodes.PropertyValue, where + ".properties.packages",
+                            "Task.PoolCall needs 'packages' (or use mode=FromBlackboard with packageKey)");
+                    }
+                    task.Repeat = reader.Int("repeat", 1);
+                    if (task.Repeat < 1)
+                    {
+                        reader.Report.Error(PackageCodes.PropertyValue, where + ".properties.repeat",
+                            "repeat must be >= 1, found " + task.Repeat);
+                        task.Repeat = 1;
+                    }
+                    task.WriteFailKey = reader.Bool("writeFailKey", true);
+                    task.FailKey = reader.Str("failKey", "pool.fail");
+                    task.ReasonKey = reader.Str("reasonKey", "pool.reason");
+                    break;
+                }
                 case "Task.UiClick":
                 {
                     var task = (BtUiClickTask)node;
@@ -817,6 +909,15 @@ namespace PlayerAiMod
                         NonNegative(reader, "targetEyeHeight", 1.55f, where);
                     target.AlsoCheckBody = reader.Bool("alsoCheckBody", true);
                     target.BodyHeight = NonNegative(reader, "bodyHeight", 0.9f, where);
+                    break;
+                }
+
+                case "Service.ObserveState":
+                {
+                    var target = (BtObserveStateService)service;
+                    target.Prefix = reader.Str("prefix", "state.");
+                    target.Only = reader.Str("only", null);
+                    target.ClearWhenMissing = reader.Bool("clearWhenMissing", true);
                     break;
                 }
 

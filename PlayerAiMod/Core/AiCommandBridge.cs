@@ -174,6 +174,37 @@ namespace PlayerAiMod
                 get { return CmdBridgeActuator.IsAvailable; }
             }
 
+            public string Phase
+            {
+                get { return m_runtime.Phase; }
+            }
+
+            public long PhaseChanges
+            {
+                get { return m_runtime.PhaseChanges; }
+            }
+
+            public long PhaseGatedFrames
+            {
+                get { return m_runtime.PhaseGatedFrames; }
+            }
+
+            public bool PhaseGateActive
+            {
+                get { return m_runtime.PhaseGateActive; }
+            }
+
+            public DecisionLog Decisions
+            {
+                get
+                {
+                    // 惰性建 Laya 服务：`ai.laya.review` 应该在"还没人问过"时也能回答
+                    // （空表 + 全零聚合本身就是有效信息）。
+                    LayaRuntimeService laya = m_runtime.Laya;
+                    return laya != null ? laya.Decisions : null;
+                }
+            }
+
             public IAiRecordingControl Recording
             {
                 get { return m_runtime.Recording; }

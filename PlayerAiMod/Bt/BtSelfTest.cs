@@ -95,8 +95,265 @@ namespace PlayerAiMod
             try { CaseSnapshot(result); } catch (Exception e) { result.Check("case:Snapshot", false, e.Message); }
             try { CaseRootMigration(result); } catch (Exception e) { result.Check("case:Root migration", false, e.Message); }
             try { LoopOnce(result); } catch (Exception e) { result.Check("case:Root loop flag", false, e.Message); }
+            try { CaseLogSink(result); } catch (Exception e) { result.Check("case:Task.Log sink", false, e.Message); }
+            try { CaseObserveStateService(result); } catch (Exception e) { result.Check("case:ObserveState", false, e.Message); }
+            try { CaseCounter(result); } catch (Exception e) { result.Check("case:Counter", false, e.Message); }
 
             return result;
+        }
+
+        /// <summary>
+        /// `Task.Counter`（黑板计数器）：**给树一个"连续发生了几次"的记忆**。
+        /// 三条语义各对应一个"不这样就会咬人"的场景（缺失=0 / clear / 类型不符不抛）。
+        /// </summary>
+        private static void CaseCounter(TestResult result)
+        {
+            BtTestActuator actuator;
+            BtTestSensor sensor;
+            AiBlackboard blackboard;
+            BtRuntime runtime = NewRuntime(out actuator, out sensor, out blackboard);
+
+            var counter = new BtCounterTask { Id = "count", Key = "fail.count" };
+            var root = new BtSequenceNode { Id = "seq" };
+            root.AddChild(counter);
+            runtime.SetRoot(root, "counter");
+
+            runtime.Tick(Dt);
+            int value;
+            result.Check("a missing key counts as 0 (the first add gives 1)",
+                blackboard.TryGet(new AiBlackboardKey<int>("fail.count"), out value) && value == 1
+                && counter.LastValue == 1,
+                "value=" + counter.LastValue);
+
+            TickN(runtime, 2);
+            result.Check("adding accumulates",
+                blackboard.TryGet(new AiBlackboardKey<int>("fail.count"), out value) && value == 3,
+                "value=" + value);
+
+            counter.Delta = -2;
+            runtime.Tick(Dt);
+            result.Check("a negative delta subtracts (hysteresis is allowed)",
+                blackboard.TryGet(new AiBlackboardKey<int>("fail.count"), out value) && value == 1);
+
+            counter.Clear = true;
+            runtime.Tick(Dt);
+            result.Check("clear=true writes 0 (the key stays, so `>= N` still evaluates)",
+                blackboard.TryGet(new AiBlackboardKey<int>("fail.count"), out value) && value == 0
+                && blackboard.Has("fail.count"),
+                "value=" + value + " present=" + blackboard.Has("fail.count"));
+
+            counter.RemoveWhenClear = true;
+            runtime.Tick(Dt);
+            result.Check("clear + removeWhenClear drops the key entirely",
+                !blackboard.Has("fail.count"));
+
+            // 键里存了别的类型（运行时可变的树可能把它写成 string）→ 当 0 算，不抛
+            blackboard.Set(new AiBlackboardKey<string>("fail.count"), "not a number");
+            counter.Clear = false;
+            counter.RemoveWhenClear = false;
+            counter.Delta = 1;
+            runtime.Tick(Dt);
+            result.Check("a non-int value is treated as 0 instead of throwing",
+                blackboard.TryGet(new AiBlackboardKey<int>("fail.count"), out value) && value == 1
+                && runtime.LastError == null,
+                "value=" + value + " lastError=" + (runtime.LastError ?? "<null>"));
+
+            // 没有键名 = 失败（配置错误要看得见，而不是静默什么都不做）
+            var broken = new BtCounterTask { Id = "broken" };
+            result.Check("a counter without a key fails loudly",
+                broken.Tick(runtime.Context) == BtResult.Failed);
+        }
+
+        /// <summary>
+        /// `Service.ObserveState`：把摘要字段写进黑板（§4.13 的"状态进黑板"）。
+        /// 钉四件事：键名前缀、`only` 过滤、缺字段清理（不许留"上一拍的 phase"）、
+        /// 拿不到观察时**安静**（不抛、不刷屏）。
+        /// </summary>
+        private static void CaseObserveStateService(TestResult result)
+        {
+            BtTestActuator actuator;
+            BtTestSensor sensor;
+            AiBlackboard blackboard;
+            BtRuntime runtime = NewRuntime(out actuator, out sensor, out blackboard);
+
+            ILayaRuntime previous = LayaRuntimeHost.Current;
+            Func<ILayaRuntime> previousProvider = LayaRuntimeHost.Provider;
+            try
+            {
+                var fake = new FakeStateRuntime();
+                fake.Fields.Add(new KeyValuePair<string, string>("phase", "front"));
+                fake.Fields.Add(new KeyValuePair<string, string>("ui", "menu"));
+                fake.Fields.Add(new KeyValuePair<string, string>("food", "0.25(hungry)"));
+                LayaRuntimeHost.Current = fake;
+
+                var service = new BtObserveStateService { Interval = 0f, Prefix = "state." };
+                var root = new BtSequenceNode { Id = "seq" };
+                root.AddService(service);
+                root.AddChild(Instant("noop", c => BtResult.Succeeded));
+                runtime.SetRoot(root, "observe-state");
+
+                runtime.Tick(Dt);
+                string phase;
+                string food;
+                result.Check("ObserveState writes state.<field> keys",
+                    blackboard.TryGet<string>("state.phase", out phase) && phase == "front"
+                    && blackboard.TryGet<string>("state.food", out food) && food == "0.25(hungry)",
+                    blackboard.ToString());
+
+                // 下一拍只有 phase（ui/food 消失）→ 默认把它们清掉：
+                // 否则树会拿着"上一拍的 ui=food"做判断（相位残留类 bug 的根源）
+                fake.Fields.Clear();
+                fake.Fields.Add(new KeyValuePair<string, string>("phase", "world"));
+                TickN(runtime, 2);
+                result.Check("ObserveState clears fields that disappeared this tick",
+                    blackboard.TryGet<string>("state.phase", out phase) && phase == "world"
+                    && !blackboard.Has("state.ui") && !blackboard.Has("state.food"),
+                    blackboard.ToString());
+
+                // clearWhenMissing=false：保留旧值（给"状态偶尔读不到"的场景用）
+                fake.Fields.Clear();
+                fake.Fields.Add(new KeyValuePair<string, string>("phase", "world"));
+                service.ClearWhenMissing = false;
+                fake.Fields.Add(new KeyValuePair<string, string>("ui", "hud"));
+                TickN(runtime, 2);
+                fake.Fields.RemoveAt(1);
+                TickN(runtime, 2);
+                string kept;
+                result.Check("ObserveState keeps the last value when clearWhenMissing=false",
+                    blackboard.TryGet<string>("state.ui", out kept) && kept == "hud",
+                    blackboard.ToString());
+
+                // only 过滤
+                service.Only = "phase";
+                service.Prefix = "obs.";
+                fake.Fields.Clear();
+                fake.Fields.Add(new KeyValuePair<string, string>("phase", "front"));
+                fake.Fields.Add(new KeyValuePair<string, string>("ui", "menu"));
+                TickN(runtime, 2);
+                result.Check("ObserveState honours the only filter and the prefix",
+                    blackboard.Has("obs.phase") && !blackboard.Has("obs.ui"),
+                    blackboard.ToString());
+
+                // 拿不到观察：安静（不抛异常、树照常跑），并记下原因
+                service.Only = null;
+                fake.Ok = false;
+                fake.Error = "no observation in this host";
+                TickN(runtime, 3);
+                result.Check("ObserveState stays quiet when there is no observation",
+                    fake.Refused && service.LastError != null && runtime.LastError == null,
+                    "lastError=" + (service.LastError ?? "<null>"));
+            }
+            finally
+            {
+                LayaRuntimeHost.Current = previous;
+                LayaRuntimeHost.Provider = previousProvider;
+            }
+        }
+
+        /// <summary>假的观察源：字段由测试摆，`Ok=false` 模拟"拿不到观察"。</summary>
+        private sealed class FakeStateRuntime : ILayaRuntime
+        {
+            public readonly List<KeyValuePair<string, string>> Fields =
+                new List<KeyValuePair<string, string>>();
+
+            public bool Ok = true;
+            public string Error;
+            public bool Refused;
+
+            public LayaConfig Config
+            {
+                get { return new LayaConfig { Enabled = false }; }
+            }
+
+            public LayaClient Client
+            {
+                get { return null; }
+            }
+
+            public bool TryResolveBank(string nameOrPath, string only, out QuestionBank bank, out string error)
+            {
+                bank = null;
+                error = "not supported in the fake";
+                return false;
+            }
+
+            public string CompileDigest(BtContext context, out string error)
+            {
+                error = "not supported in the fake";
+                return null;
+            }
+
+            public bool TryObserveFields(out List<KeyValuePair<string, string>> fields, out string error)
+            {
+                if (!Ok)
+                {
+                    Refused = true;
+                    fields = null;
+                    error = Error;
+                    return false;
+                }
+                fields = new List<KeyValuePair<string, string>>(Fields);
+                error = null;
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// `Task.Log` 必须进**事件日志**（默认就记，不受 `VerboseLogging` 影响）：
+        /// 出厂异常示例与 Laya 主循环示例都用它"记账"，看不见就等于没记。
+        /// 同时钉住两条纪律：sink 抛异常不能打断树；**自检绝不许把 sink 留在被改过的状态**
+        /// （这条是实机踩出来的：自检跑完 sink 是 null，之后整局 `Task.Log` 一条都不记了）。
+        /// </summary>
+        private static void CaseLogSink(TestResult result)
+        {
+            BtTestActuator actuator;
+            BtTestSensor sensor;
+            AiBlackboard blackboard;
+            BtRuntime runtime = NewRuntime(out actuator, out sensor, out blackboard);
+
+            var lines = new List<string>();
+            Action<string, string> previous = BtLogSink.Write;
+            try
+            {
+                BtLogSink.Write = (kind, message) => lines.Add(kind + ":" + message);
+
+                var root = new BtSequenceNode { Id = "seq" };
+                root.AddChild(new BtLogTask { Id = "log1", Message = "hello from the tree" });
+                runtime.SetRoot(root, "log-sink");
+                runtime.Tick(Dt);
+
+                result.Check("Task.Log writes to the event-log sink",
+                    lines.Count == 1
+                    && lines[0].StartsWith(BtLogSink.TreeKind + ":hello from the tree", StringComparison.Ordinal)
+                    && lines[0].Contains("@tick"),
+                    "lines=" + string.Join(" | ", lines.ToArray()));
+
+                // sink 抛异常：树照常跑完（记账是旁路）
+                lines.Clear();
+                BtLogSink.Write = (kind, message) => { throw new InvalidOperationException("boom"); };
+                runtime.SetRoot(root, "log-sink-throwing");
+                runtime.Tick(Dt);
+                result.Check("a throwing log sink does not break the tick",
+                    lines.Count == 0 && runtime.LastError == null,
+                    "lastError=" + (runtime.LastError ?? "<null>"));
+
+                // 没有 sink（编辑器/自检）：不抛异常
+                BtLogSink.Write = null;
+                var quiet = new BtSequenceNode { Id = "seq" };
+                quiet.AddChild(new BtLogTask { Id = "log2", Message = "nobody is listening" });
+                runtime.SetRoot(quiet, "log-sink-null");
+                runtime.Tick(Dt);
+                result.Check("Task.Log with no sink is a silent no-op",
+                    runtime.LastError == null, "lastError=" + (runtime.LastError ?? "<null>"));
+            }
+            finally
+            {
+                BtLogSink.Write = previous;
+            }
+
+            result.Check("the self-test restores the log sink it found", ReferenceEquals(BtLogSink.Write, previous),
+                previous == null ? "previous=<null>" : "previous=<set>");
+
         }
 
         private static void CaseSequenceOrder(TestResult result)

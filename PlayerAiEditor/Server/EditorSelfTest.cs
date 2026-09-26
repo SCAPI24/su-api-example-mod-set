@@ -72,6 +72,9 @@ namespace PlayerAiMod.Editor
                     Subtree(client, instanceRoot);
                     LiveMonitor(client);
                     GameProcess(client, instanceRoot);
+                    AssetLibrary(client, instanceRoot);
+                    LayaSettings(client, instanceRoot);
+                    LayaReviewRelay(client, instanceRoot);
                 }
             }
 
@@ -95,6 +98,15 @@ namespace PlayerAiMod.Editor
             Check("app.js is embedded and served",
                 js != null && js.Contains("renderTree") && js.Contains("PlayerAiLowcode"),
                 Short(js));
+            string panel = Get(client, "/assets-panel.js");
+            Check("the asset / Laya panel script is embedded and served",
+                panel != null && panel.Contains("refreshAssets") && panel.Contains("saveLaya")
+                && panel.Contains("PlayerAiEditorAssets"),
+                Short(panel));
+            Check("index.html loads the panel and carries its controls",
+                html != null && html.Contains("assets-panel.js") && html.Contains("btnAssets")
+                && html.Contains("btnLayaSave") && html.Contains("layaApiKey"),
+                Short(html));
             Check("app.js wires action packages into the palette and the toolbar",
                 js != null && js.Contains("/api/action/play") && js.Contains("packagesField")
                 && js.Contains("useAction"),
@@ -2464,7 +2476,229 @@ namespace PlayerAiMod.Editor
         }
 
         /// <summary>
-        /// 启动 / 结束游戏，以及"三态"判断（没启动 / 启动了但通道还没开 / 已连上）。
+        /// **资源库端点**（P6）：编辑器只**转发**，判据全在游戏那边。
+        ///
+        /// 两条必须钉住的：
+        ///   · 游戏没在跑时要**如实说**，不能装作"内存库是空的"（那会让人以为包丢了）；
+        ///   · 白名单只放行 `ai.asset.*` —— 编辑器不该变成"任意命令都能发"的后门。
+        /// </summary>
+        private static void AssetLibrary(HttpClient client, string instanceRoot)
+        {
+            // 没有 runtime 文件（前面的用例已经把它写成"陈旧文件"了）→ 拿不到内存库
+            PackageValue offline = Parse(Get(client, "/api/assets"));
+            Check("assets without a running game reports honestly instead of pretending it is empty",
+                offline != null && offline.Get("ok").AsBool(true) == false
+                && offline.Get("reason").AsString(string.Empty).Length > 0,
+                offline != null ? offline.Preview(200) : "<null>");
+            Check("assets still says where the folders WOULD be (so the user can look himself)",
+                offline != null && offline.Get("packageFolder").AsString(null) != null
+                && offline.Get("manualSaveFolder").AsString(null) != null
+                && offline.Get("cacheFolder").AsString(null) != null,
+                offline != null ? offline.Preview(200) : "<null>");
+
+            // 白名单：非资源命令一律拒绝（不能借编辑器之手按游戏里的任何键）
+            PackageValue forbidden = Parse(PostJson(client, "/api/asset", "{\"action\":\"play\"}"));
+            Check("*** the editor refuses to forward anything outside ai.asset.* ***",
+                forbidden != null && forbidden.Get("ok").AsBool(true) == false
+                && forbidden.Get("code").AsString(null) == "not_allowed",
+                forbidden != null ? forbidden.Preview(160) : "<null>");
+
+            // 参数里的 action 也要能被 POST 正文覆盖（前端就是 POST 的）
+            PackageValue saveOffline = Parse(PostJson(client, "/api/asset",
+                "{\"action\":\"save\",\"name\":\"demo.greet\"}"));
+            Check("a whitelisted action with no game reports game_unreachable",
+                saveOffline != null && saveOffline.Get("ok").AsBool(true) == false
+                && saveOffline.Get("code").AsString(null) == "game_unreachable",
+                saveOffline != null ? saveOffline.Preview(160) : "<null>");
+
+            // ---- 假游戏通道：三态视图必须是**真数组**（不是一段 JSON 文本）
+            string runtimePath = System.IO.Path.Combine(instanceRoot, GameBridgeClient.RuntimeFileName);
+            using (var fake = new FakeGameChannel(
+                "{\"ok\":true,\"result\":{\"kind\":\"tree\",\"active\":\"demo.greet\",\"dirtyCount\":1,"
+                + "\"manualSaveFolder\":\"C:/x/Saves\",\"records\":["
+                + "{\"name\":\"demo.greet\",\"active\":true,\"dirty\":true,\"generation\":3,"
+                + "\"origin\":\"Ai\",\"diskHash\":\"aaaa\",\"memoryHash\":\"bbbb\",\"diskBytes\":10,"
+                + "\"memoryBytes\":11,\"cacheChoice\":\"Cache\",\"cacheFromCache\":true,"
+                + "\"cacheExplanation\":\"newer\",\"cachePayloadBytes\":11,\"sourcePath\":\"C:/x/a.scbtpak\"},"
+                + "{\"name\":\"su.watch\",\"active\":false,\"dirty\":false,\"generation\":0,"
+                + "\"origin\":\"Disk\",\"diskHash\":\"cccc\",\"memoryHash\":\"cccc\",\"diskBytes\":20,"
+                + "\"memoryBytes\":20,\"cacheChoice\":\"Disk\",\"cacheFromCache\":false,"
+                + "\"cacheExplanation\":\"none\",\"cachePayloadBytes\":0,\"sourcePath\":\"C:/x/b.scbtpak\"}]}}"))
+            {
+                File.WriteAllText(runtimePath,
+                    "{\"port\":" + fake.Port + ",\"token\":\"selftest\"}", new UTF8Encoding(false));
+
+                string assetsText = Get(client, "/api/assets");
+                PackageValue assets = Parse(assetsText);
+                Check("assets relays the game's three-state view",
+                    assets != null && assets.Get("ok").AsBool(false)
+                    && assets.Get("dirtyCount").AsInt(-1) == 1,
+                    assets != null ? assets.Preview(200) : "<null>");
+                // 浏览器看到的就是这段 JSON：数组必须**真的**是数组（曾经被转成了一段字符串）
+                PackageValue records = assets != null ? assets.Get("records") : null;
+                Check("*** records must arrive as a REAL array, not as a JSON string ***",
+                    records != null && records.IsArray && records.Count == 2
+                    && records.Item(0).Get("name").AsString(null) == "demo.greet"
+                    && records.Item(0).Get("dirty").AsBool(false)
+                    && records.Item(1).Get("cacheChoice").AsString(null) == "Disk",
+                    records != null ? records.Preview(200) : "<null>");
+                Check("the editor asked the game for exactly the asset commands",
+                    fake.LastCommand == "ai.asset.conflict",
+                    fake.LastCommand);
+            }
+
+            // 清掉假的 runtime 文件：后面的用例（Laya 配置）不该看到一个"活着的游戏"
+            try
+            {
+                File.Delete(runtimePath);
+            }
+            catch (Exception)
+            {
+            }
+        }
+
+        /// <summary>
+        /// **Laya 一份配置**（D16）：编辑器直接读写信 `<实例根>/PlayerAi/Laya.local.json`。
+        ///
+        /// 三条纪律各有一条断言：密钥**不回显**（响应里绝不能出现明文）、
+        /// 不给 `apiKey` 时**保留**原密钥（改个超时不该把密钥抹掉）、值要**夹紧**。
+        /// </summary>
+        private static void LayaSettings(HttpClient client, string instanceRoot)
+        {
+            string configPath = System.IO.Path.Combine(instanceRoot, "PlayerAi",
+                LayaConfig.ConfigFileName);
+
+            PackageValue fresh = Parse(Get(client, "/api/laya/config"));
+            Check("laya config endpoint answers with defaults when there is no file yet",
+                fresh != null && fresh.Get("ok").AsBool(false)
+                && fresh.Get("fileExists").AsBool(true) == false
+                && fresh.Get("keySource").AsString(null) == "none",
+                fresh != null ? fresh.Preview(220) : "<null>");
+            Check("laya config points at the file the GAME reads",
+                fresh != null && string.Equals(fresh.Get("configFile").AsString(null), configPath,
+                    StringComparison.OrdinalIgnoreCase),
+                fresh != null ? fresh.Get("configFile").AsString("<none>") : "<null>");
+
+            const string secret = "sk-selftest-0123456789abcdef";
+            PackageValue saved = Parse(PostJson(client, "/api/laya/config",
+                "{\"baseURL\":\"http://127.0.0.1:9\",\"model\":\"m\",\"timeoutMs\":999999,"
+                + "\"apiKey\":\"" + secret + "\"}"));
+            Check("saving the laya config writes the file",
+                saved != null && saved.Get("saved").AsBool(false) && File.Exists(configPath),
+                saved != null ? saved.Preview(220) : "<null>");
+            Check("*** the raw key is NEVER echoed back to the browser ***",
+                !(saved != null && saved.ToJson(false).Contains(secret)),
+                "the response contains the key");
+            Check("saving reports the key source as local",
+                saved != null && saved.Get("keySource").AsString(null) == "local",
+                saved != null ? saved.Get("keySource").AsString("<none>") : "<null>");
+            Check("*** a silly timeout is clamped instead of written ***",
+                saved != null && saved.Get("timeoutMs").AsInt(-1) == 30000,
+                saved != null ? saved.Get("timeoutMs").AsInt(-1).ToString() : "<none>");
+
+            // 只改超时 → 密钥必须留着（否则"顺手改个数字"就把密钥抹了）
+            PackageValue kept = Parse(PostJson(client, "/api/laya/config", "{\"timeoutMs\":2500}"));
+            Check("*** editing without apiKey keeps the stored key ***",
+                kept != null && kept.Get("keySource").AsString(null) == "local"
+                && kept.Get("timeoutMs").AsInt(-1) == 2500,
+                kept != null ? kept.Preview(220) : "<null>");
+            Check("the key is still not echoed after a second save",
+                !(kept != null && kept.ToJson(false).Contains(secret)),
+                kept != null ? kept.Preview(160) : "<null>");
+
+            // 显式空串 = 清除
+            PackageValue cleared = Parse(PostJson(client, "/api/laya/config", "{\"apiKey\":\"\"}"));
+            Check("an explicit empty apiKey clears the stored key",
+                cleared != null && cleared.Get("keySource").AsString(null) == "none",
+                cleared != null ? cleared.Preview(220) : "<null>");
+
+            string text = File.Exists(configPath) ? File.ReadAllText(configPath) : string.Empty;
+            Check("the config file is a plain JSON object the game can parse",
+                text.TrimStart().StartsWith("{", StringComparison.Ordinal)
+                && !text.Contains(secret) && text.Contains("timeoutMs"),
+                Short(text));
+
+            try
+            {
+                File.Delete(configPath);
+            }
+            catch (Exception)
+            {
+            }
+        }
+
+        /// <summary>
+        /// **判定复盘转发**（P4）：`/api/laya/review` → `ai.laya.review`。
+        ///
+        /// 三条要钉的：① 参数（`count` / `format` / `clear`）真的发给游戏了；
+        /// ② 游戏回的对象**原样带回来**（`summary` / `recent` 必须还是嵌套结构 —— 之前
+        /// `Collect` 把数组塞成字符串，界面上就只剩一条空记录，那是实测踩过的）；
+        /// ③ 游戏没在跑时 `ok:false + game_unreachable`，界面据此说"先启动游戏"。
+        /// </summary>
+        private static void LayaReviewRelay(HttpClient client, string instanceRoot)
+        {
+            string runtimePath = System.IO.Path.Combine(instanceRoot,
+                GameBridgeClient.RuntimeFileName);
+
+            // ① 游戏没跑：通道文件缺失 → 如实报"连不上"，而不是给一张空表
+            if (File.Exists(runtimePath))
+                File.Delete(runtimePath);
+            PackageValue offline = Parse(Get(client, "/api/laya/review?count=5"));
+            Check("*** no game running: the review endpoint says game_unreachable (not an empty table) ***",
+                offline != null && offline.Get("ok").AsBool(true) == false
+                && offline.Get("code").AsString(null) == "game_unreachable",
+                offline != null ? offline.Preview(200) : "<null>");
+            Check("the offline answer says which command could not be relayed",
+                offline != null && offline.Get("command").AsString(null) == "ai.laya.review",
+                offline != null ? offline.Get("command").AsString("<none>") : "<null>");
+
+            // ② 假游戏通道：嵌套结构必须原样回来
+            using (var fake = new FakeGameChannel(
+                "{\"ok\":true,\"result\":{\"summary\":{\"total\":7,\"sent\":7,\"failed\":0,\"avgMs\":255,"
+                + "\"p95Ms\":266,\"inputTokens\":2233},\"recent\":["
+                + "{\"seq\":7,\"kind\":\"sent\",\"bank\":\"world_goal\",\"digestChars\":153,"
+                + "\"digest\":\"phase=world ui=hud\",\"ok\":true,\"answer\":\"goal=craft\","
+                + "\"elapsedMs\":266,\"inputTokens\":319},"
+                + "{\"seq\":6,\"kind\":\"cached\",\"bank\":\"front_goal\",\"digestChars\":37,"
+                + "\"digest\":\"phase=front ui=menu\",\"ok\":true,\"answer\":\"front_goal=open_ui\","
+                + "\"elapsedMs\":0,\"inputTokens\":0}]}}"))
+            {
+                File.WriteAllText(runtimePath,
+                    "{\"port\":" + fake.Port + ",\"token\":\"selftest\"}", new UTF8Encoding(false));
+
+                PackageValue review = Parse(Get(client, "/api/laya/review?count=2"));
+                Check("the review endpoint relays the game's aggregate and rows",
+                    review != null && review.Get("ok").AsBool(false)
+                    && review.Get("summary").Get("total").AsInt(-1) == 7
+                    && review.Get("summary").Get("avgMs").AsInt(-1) == 255,
+                    review != null ? review.Preview(240) : "<null>");
+                Check("*** the rows come back as a real array of objects (not a stringified blob) ***",
+                    review != null && review.Get("recent").IsArray
+                    && review.Get("recent").Count == 2
+                    && review.Get("recent").Item(0).Get("bank").AsString(null) == "world_goal"
+                    && review.Get("recent").Item(1).Get("kind").AsString(null) == "cached",
+                    review != null ? review.Get("recent").Preview(200) : "<null>");
+                Check("the editor asks the game for ai.laya.review with the requested count",
+                    fake.LastCommand == "ai.laya.review"
+                    && fake.LastRequest.Contains("\"count\":2")
+                    && fake.LastRequest.Contains("\"format\":\"json\""),
+                    fake.LastCommand + " / " + Short(fake.LastRequest));
+
+                // ③ clear / format=md 也要真的发出去
+                PackageValue cleared = Parse(Get(client, "/api/laya/review?count=0&clear=true"));
+                Check("clear=true is forwarded to the game",
+                    cleared != null && fake.LastRequest.Contains("\"clear\":true"),
+                    Short(fake.LastRequest));
+                PackageValue markdown = Parse(Get(client, "/api/laya/review?format=md&count=3"));
+                Check("format=md is forwarded to the game",
+                    markdown != null && fake.LastRequest.Contains("\"format\":\"md\""),
+                    Short(fake.LastRequest));
+            }
+
+            if (File.Exists(runtimePath))
+                File.Delete(runtimePath);
+        }
+
         ///
         /// 自检用的实例根是临时目录、里面**没有 Survivalcraft.exe** —— 所以这里既证明了
         /// "找不到 exe 时如实拒绝、绝不乱起进程"，也顺手把"旧 runtime 文件"的谎话堵住：

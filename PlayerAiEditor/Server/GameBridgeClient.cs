@@ -220,6 +220,18 @@ namespace PlayerAiMod.Editor
             });
         }
 
+        /// <summary>
+        /// **通用命令通道**（P6）：把一条命令原样发给游戏并回包。给"资源库 / 重取 / 冲突"这一族用 ——
+        /// 它们参数多、还会长（例如 `ai.asset.retry` 的六个策略参数），一个个包成命名方法只会更难维护。
+        ///
+        /// 调用方要自己保证命令名在**白名单**里（`EditorApi` 只放行 `ai.asset.*` 那几个），
+        /// 不让编辑器变成"任意命令都能发"的后门。
+        /// </summary>
+        public Dictionary<string, object> SendRaw(string command, Dictionary<string, object> arguments)
+        {
+            return Send(ReadRuntime(), command, arguments);
+        }
+
         private PackageValue ReadRuntime()
         {
             string path = System.IO.Path.Combine(m_instanceRoot ?? string.Empty, RuntimeFileName);
@@ -291,34 +303,41 @@ namespace PlayerAiMod.Editor
 
             foreach (string name in value.MemberNames)
             {
-                PackageValue member = value.Get(name);
-                if (member.IsObject)
-                {
-                    var nested = new Dictionary<string, object>(StringComparer.Ordinal);
-                    Collect(member, nested);
-                    into[name] = nested;
-                }
-                else if (member.IsArray)
-                {
-                    into[name] = member.ToJson(false);
-                }
-                else if (member.IsBool)
-                {
-                    into[name] = member.AsBool();
-                }
-                else if (member.IsNumber)
-                {
-                    into[name] = member.AsNumber();
-                }
-                else if (member.IsString)
-                {
-                    into[name] = member.AsString();
-                }
-                else
-                {
-                    into[name] = null;
-                }
+                into[name] = CollectValue(value.Get(name));
             }
+        }
+
+        /// <summary>
+        /// 把一个响应值转成普通的 CLR 值（字典 / 列表 / 标量）。
+        ///
+        /// ⚠️ **数组必须真的变成列表**：第一版把数组塞成 `member.ToJson(false)`（一个 JSON 字符串），
+        /// 于是"资源库三态视图"这种**对象数组**到了浏览器里就成了一坨字符串 ——
+        /// 界面上看到的就是"只有一条、名字还空着"（实测）。
+        /// </summary>
+        private static object CollectValue(PackageValue member)
+        {
+            if (member == null || member.IsNull)
+                return null;
+            if (member.IsObject)
+            {
+                var nested = new Dictionary<string, object>(StringComparer.Ordinal);
+                Collect(member, nested);
+                return nested;
+            }
+            if (member.IsArray)
+            {
+                var list = new List<object>();
+                for (int i = 0; i < member.Count; i++)
+                    list.Add(CollectValue(member.Item(i)));
+                return list;
+            }
+            if (member.IsBool)
+                return member.AsBool();
+            if (member.IsNumber)
+                return member.AsNumber();
+            if (member.IsString)
+                return member.AsString();
+            return null;
         }
 
         private string BuildRequest(string command, string token,

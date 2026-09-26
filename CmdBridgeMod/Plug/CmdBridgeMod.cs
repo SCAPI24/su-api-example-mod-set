@@ -67,7 +67,11 @@ namespace CmdBridgeMod
             // 输入阶段注入的落点：order -11 的 CursorSoftGuard 会转调 JumpAssist.PumpInputStage()，
             // 位置紧贴 ComponentInput(-10) 之前（与原生输入同一阶段）。
             m_injector.JumpAssist = m_jumpAssist;
-            Input = new CmdBridgeInput(m_injector);
+            // 事件环序号用**惰性**取法：`m_eventRecorder` 在本行之后才建（顺序不能动），
+            // 而 `CmdBridgeInput` 现在就要拿到门面。闭包每次调用现读，事件环没建好时给 null
+            // （守卫据此判"判不了"，不会误判成"有新事件"）。
+            Input = new CmdBridgeInput(m_injector,
+                () => m_eventRecorder != null ? m_eventRecorder.LastSeq : (long?)null);
             Instance = this;
 
             // 真实焦点跟踪：Window.Activated/Deactivated 只在**真实**焦点变化时触发，
