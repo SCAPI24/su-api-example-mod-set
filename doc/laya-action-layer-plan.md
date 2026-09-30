@@ -3671,3 +3671,243 @@ PC 与平板均 `1401/1401`，本机 `1319/1319`。
 （97197 / `283D068B…`，487353 / `686DFC8C…`），包内 `ModInfo.xml` 的 `zh_CN` 字节为
 `E5 91 BD E4 BB A4 E8 A1 8C E6 A1 A5`（＝`命令行桥`）。重启后：PC 与平板游戏内
 `bt.selftest` 均 **1401/1401**，本机套件 **1319/1319**，游戏日志 0 处乱码残留。
+
+### 摘要字段表数据化（2026-09-26，`PlayerAiMod 0.5.46 → 0.5.47`）
+
+**起因（用户原话）**："laya 在行为树编辑器里面是一个节点，这不是调整执行逻辑的时候，不应该再重新编译才对啊。
+不然后续我让 laya 执行一个新指令，或者让 llm 同步接入调整行为树或执行逻辑，每次调整都得重新编译？"
+
+用户说得对，而且指出的正是当时唯一的缺口。三层里只有一层还硬编码在 C#：
+
+| 层 | 载体 | 改它要不要重编译 |
+|---|---|---|
+| 喂给 Laya 的**状态摘要**（哪些事实、什么顺序、多长预算、哪些算良性不发） | `PlayerAi/Digest/*.digest.json`（本次搬过去） | ✅ **不用了** |
+| Laya 被**问什么**（选项 / instructions / criteria） | `PlayerAi/Questions/*.qbank` | ✅ 不用（G18 就有） |
+| 答案**落到什么动作**（节点 / 连线 / 分支 / 黑板） | `PlayerAi/BehaviorTrees/*.scbtpak` | ✅ 不用 |
+| 动作怎么做（verb 序列） | `PlayerAi/Scripts/*.aeact` | ✅ 不用 |
+
+**留在代码里的只有"事实"**：`health` / `food` / `sleep` / `aim` / `screen` / `day` … 二十个具名读数。
+它们是"对游戏状态的取值"，每一条都要跟引擎字段对齐 —— 与 verb 词表同一个边界：
+**新增能力要编译，重新编排不用**。
+
+**一、落点**
+
+| 文件 | 作用 |
+|---|---|
+| `State/DigestSpec.cs`（新） | 规格模型 + `.digest.json` 解析/校验/写回 + 内容哈希 + **内置默认规格**（= 搬家前那张表） |
+| `State/DigestFacts.cs`（新） | 具名事实注册表（取数 + 格式化），只认白名单 |
+| `State/DigestCatalog.cs`（新） | 找 `PlayerAi/Digest/*.digest.json`、**文件戳热重载**、`changedOnDisk`、上一份好规格兜底 |
+| `State/DigestSpecTemplates.cs`（新） | 出厂种子（缺什么补什么，**绝不覆盖**） |
+| `State/DigestSelfTest.cs`（新，68 条） | 等价性 / 数据改行为 / 拒坏文件 / 热重载 + 全局还原 |
+| `State/StateDigest.cs` | `Compile`/`Evaluate` 改为**按规格跑**；档位函数变成默认规格的视图（阈值只有一处） |
+| `Laya/LayaClient.cs` | 指纹加入**规格内容哈希**（改档位阈值也必然换指纹，旧答案不复用） |
+| `Laya/LayaRuntimeService.cs` | 三处编译入口前 `EnsureFresh()`；**预算以规格文件为准** |
+| `Core/AiCommandSet.cs` | `state.digest` 加 `wire=`；新增 `ai.digest.status` / `ai.digest.reload` |
+| `Mod/PlayerAiMod/Instance/Digest/world.digest.json` | 出厂种子（由内置规格**生成**，不是手抄） |
+
+**二、schema（节选）**
+
+```json
+{ "format": "digest", "version": 1, "id": "world",
+  "budgets": { "wire": 28, "rich": 200 },
+  "fields": [
+    { "key": "hp", "source": "health", "format": "num(band)",
+      "bands": [ {"lte":0.001,"label":"dead"}, {"lt":0.2,"label":"crit"}, {"lt":0.5,"label":"low"},
+                 {"lt":0.8,"label":"ok"}, {"label":"full"} ],
+      "wire": { "fact": "number", "op": "lt", "value": 0.8 } },
+    { "key": "sleep", "source": "sleep", "format": "band",
+      "bands": [ {"lt":0.2,"label":"rested"}, {"lt":0.6,"label":"sleepy"}, {"label":"exhausted"} ],
+      "wire": "never" },
+    { "key": "aim", "source": "aim", "format": "text",
+      "wire": { "all": [ {"fact":"text","op":"notempty"}, {"fact":"text","op":"ne","value":"none"} ] } },
+    { "key": "scr", "source": "screen", "format": "text",
+      "wire": { "obs": "hasplayer", "op": "is", "value": false } }
+  ] }
+```
+
+条件语言只有一小组、**可校验**：`never` / `always` / `{"fact"|"obs": name, "op": lt|lte|gt|gte|eq|ne|is|in|notempty, "value": …}` / `all` / `any`。
+事实属性只有 `hasvalue` / `number` / `integer` / `text` / `kind` / `flag`；观察只有 `hasplayer` / `worldloaded` / `night` / `sleeping` / `dialog sopen` / `modalpanel` / `screen` / `aimkind` / `cansleep` / `controlsvisible`。
+
+**三、实测**
+
+| 判据 | 结果 |
+|---|---|
+| **等价性**（搬家没搬坏） | wire/rich 两条 golden **逐字符相同**：`aim=Gravel@2.51 hold=OakWood`（28 字符）、rich 173 字符（实机取样同形） |
+| 自检 | 离线 `DigestSelfTest` **68/68**；游戏内 `bt.selftest` **1472/1472**（新增本套 68 条） |
+| **热重载（改 JSON 不重启）** | 运行中把 `budgets.wire` 28→44、并把 `hold` 的 wire 改成 `never`：`state.digest` 立刻变 `aim=Snow@2.45 day=28/10h season=Autumn`（38/44 字符、`hold` 消失），`ai.logs` 出现 `[digest-reload] … hash=d2ccced2388a92ad` |
+| 指纹随规格变 | 哈希进指纹：改档位阈值/字段进出 ⇒ 旧答案缓存不复用（`LayaSelfTest` 新增一条断言） |
+| 拒坏文件 | 未知 source/格式/算子、重复 key、坏版本、无 id、预算过小全部**明确报错**；运行时**保留上一份好规格**，日志一行 `rejected … (keeping the previous spec)` |
+| 退货兜底 | 文件被删 → 退回内置默认（空实例照样跑） |
+| 实际决策 | `sleep=exhausted` 那条修完：判定从"连答 10+ 轮 sleep"变成 `goal=mine`（110~219 ms），动作 `mine_stone_once.aeact` —— **它开始挖自己正对着的方块** |
+
+**四、这一轮挖出来的四个坑（都不是新功能写错，是"数据化"这件事本身会咬人的地方）**
+
+**A60 —— 写回不是"固定点"：解析器归一化 + 写回保留原样 = 哈希漂移。**
+`DigestSpecJson.Parse` 把属性名/算子名归一小写（防大小写各写一份），而 `Write` 原样输出 ——
+于是 `Write(Parse(Write(x))) != Write(x)`：出厂规格里写的是 `"obs": "hasPlayer"`，写回变
+`"hasplayer"`，**内容哈希跟着变**（`dfa812…` vs `9c4e10…`），"改一次大小写 = 换一份规格"会把指纹缓存全打掉。
+修法：**写回也按小写规范形**，并且默认规格里的名字就写小写。
+教训：凡"数据 ↔ 内存"两层都有规范化时，**必须有一个方向是权威的**，否则往返不稳定；
+而只要哈希进指纹，往返不稳定就会变成"莫名奇妙的缓存失效"。
+
+**A61 —— 给字段配默认值，让"缺它要报错"那条校验永远不触发。**
+`id` 原本写成 `AsString(DefaultId)`（缺了补 `world`），于是自检里"没有 id 要拒"这条**永远是绿的**——
+它测的是一个不可能发生的分支。修法：`id` 不给默认值，缺了就报错。
+教训：**校验代码旁边的默认值就是校验的敌人**；凡是"这个字段必须有"的，读的时候就不要兜底。
+
+**A62 —— 诊断命令自己刷新，`changedOnDisk` 就永远看不到 `true`（A44 换个地方复发）。**
+`ai.digest.status` 一开始先调 `EnsureFresh()`，于是"改了文件还没被读"这个状态**被查询动作本身吃掉**，
+编辑器面板永远显示"已生效"。修法：状态命令**只读**（不刷新），刷新只发生在"下一次判定"与显式 `ai.digest.reload`。
+实机复核：改文件后 `status` 仍是旧哈希 + `changedOnDisk=true`，`reload` 之后才换哈希。
+教训：A44 当年说的是"只读命令不许改池状态"，**同一个毛病会以"顺手刷新一下"的形式回来**。
+
+**A63 —— 一个值有两个来源时，"数据里写了却不生效"是最坏的一种坑。**
+`LayaRuntimeService` 原来把 `Config.StateChars`（Laya.local.json）当预算传给编译器，
+于是规格文件里的 `budgets.wire` **写了白写**（改 28→40 毫无反应）。
+修法：**预算以规格为准**；`Laya.local.json` 那两个值只在规格把预算写成 0 时兜底，
+并且 `ai.digest.status` 用 `budgetSource` 把"现在谁说了算"写出来。
+教训：把旋钮搬进数据时，必须同时**拆掉旧旋钮的优先级**，否则用户会以为新旋钮坏了。
+
+### 聊天驱动行为树（2026-09-26，`CmdBridgeMod 1.1.16 → 1.1.20` / `PlayerAiMod 0.5.48 → 0.5.58`）
+
+**需求（用户原话）**："现在我想让行为树能监听聊天。例如我在聊天中发一个『过来』，就能产生判定，
+然后执行动作，走到对话角色的面前。"
+
+**一、落点**
+
+| 文件 | 作用 |
+|---|---|
+| `CmdBridgeMod/Server/Observers/ChatObserver.cs`（新） | 只读聊天观察：切分 / 去重 / `seq` / `isSelf` / `isSystem` / `roster`（两张玩家名单）+ `InjectLine`（调试注入） |
+| `CmdBridgeMod/Server/CmdBridgeInput.DescribeChat()` | 跨 Mod 门面（`sinceSeq` 增量） |
+| `CmdBridgeMod/Server/CommandRouter.cs` | `obs.chat`（只读）、`dev.chat.inject`（调试）+ 9 条 `obs.selftest` 断言 |
+| `PlayerAiMod/State/ChatPhrases.cs`（新） | 短语表模型 + 解析/写回/哈希 + **内置默认表** + `ChatPhraseCatalog`（戳热重载） |
+| `PlayerAiMod/State/ChatPhraseTemplates.cs`（新） | 出厂种子 `PlayerAi/Chat/phrases.json`（缺什么补什么） |
+| `PlayerAiMod/State/ChatPhrasesSelfTest.cs`（新，41 条） | 词边界 / 顺序 / 拒坏文件 / 往返 / 热重载 / 安装 |
+| `PlayerAiMod/Bt/BtChatServices.cs`（新） | `Service.ChatWatch`：增量消费 → 短语表 → 黑板 `chat.*` + 目标解析 |
+| `PlayerAiMod/Laya/BtLayaAskTask.cs` | 新增 `digestKey`：摘要从黑板取（聊天兜底用它把"那句话"当输入） |
+| `PlayerAiMod/Bt/BtFollowTask.cs` | 新增 `arriveThenSucceed`（一次性到达）+ 重取目标时**核对 `PlayerIndex`** |
+| `PlayerAiMod/Package/PackageTemplates.cs` | `demo.laya` 根 Selector 最前面的聊天分支 + `chat_intent.qbank` 模板 |
+| `PlayerAiMod/State/QuestionBankTemplates.cs` | `chat_intent.qbank`（四选项，key 与 `ChatIntents` 闭集一致） |
+
+**二、实测证据**
+
+| 判据 | 结果 |
+|---|---|
+| 真实聊天被读到 | 用户 12:36:33 在平板发的消息进了 PC 日志：`[Chat] Client0 Android User: 过来。` |
+| 短语表命中 | `[tree] demo.laya: chat -> come -> walk to the speaker and stop near them` |
+| **目标解析 + 走过去** | `ChatWatch: sender='Android User' -> target name='Basil' index=0 distance=9.36 selfFlag=False` → `FollowEntity: walking his footsteps` → `FollowEntity: arrived within 2m of 'Basil' -> success (arriveThenSucceed)`；**水平距离 9.3 → 1.83**（2 秒内） |
+| 「停」 | `chat -> stop -> stand still`，随后站住不动 |
+| 兜底（未命中短语） | 写 `chat.digest='chat=<原话>'` + `chat.bank=chat_intent` → `Task.LayaAsk digestKey` 用**那句话**当摘要问一次（与 `world_goal` 的摘要完全隔离） |
+| 自检 | 离线 `ChatPhrasesSelfTest` **41/41**；游戏内 `bt.selftest` **1514/1514**（含 `PackageSelfTest 199/199`、`DigestSelfTest 69/69`）；`obs.selftest` **allOk**（9 条聊天断言） |
+| 出厂种子 | 启动日志 `[PlayerAi][chat] installed …\PlayerAi\Chat\phrases.json`；改文件 → `[chat-phrases-reload]` |
+
+**三、五个坑（每一个都让"看起来对"的实现实际不工作）**
+
+**A64 —— 行为树的"服务"只在活动路径上 tick。**
+我最初把 `ChatWatch` 挂在**聊天分支**上，而该分支的守卫条件（`chat.pending == true`）正是这个服务要写的值
+⇒ **不写 → 分支不激活 → 服务不跑 → 不写**死锁。现象：`dev.chat.inject` 注入成功、`obs.chat` 也拿得到，
+唯独黑板里什么都没有、分支永远不进来。修法：挂**根 Selector**（与 `UpdateNearestPlayer` / `ObserveState` 同位置）。
+教训：**"服务写它自己所在分支的守卫"是一个环**，凡是这种结构都要把服务上提到常驻节点。
+
+**A65 —— 联机时按名字重取目标 = 跟错人（而且错得很隐蔽）。**
+ScMP 下**双方显示名可能完全相同**（本端与远端都叫 `Basil`）。`Task.FollowEntity` 每 tick 会
+`TryFindPlayer(snapshot.Name)` 重取目标以消除"服务间隔导致的阶梯感"，于是它取到的是**列表里第一个**
+——也就是自己 ⇒ `keepDistance` 当场成立 ⇒ `arriveThenSucceed` 立刻成功 ⇒ **"过来"瞬间"到达"、AI 一动不动**。
+日志证据：`FollowEntity: arrived within 2m of 'Basil' -> success`，而真实距离 9.36。
+修法：重取时**核对 `PlayerIndex`**（每个角色唯一）；不一致就保留快照、绝不换人。
+教训：**"按名字找实体"在多人环境里天生有歧义**；身份判据要用索引/句柄，名字只能当提示。
+
+**A66 —— 用名字判"这是不是我"同样不可靠。**
+为了防"把自己当目标"，我先按"`view.Name == localName`"排除 —— 结果**把真目标排除了**（远端也叫 `Basil`），
+表现是"答应了但没有目标"。修法：只认两件确定的事——传感器给的 `IsSelf` 标记（`ReferenceEquals(candidate, Player)`）
+与**位置重合**（距离 ≈ 0）。
+
+**A67 —— 名单语义：客户端上 `PlayersData` 只有本端。**
+排查时一度以为"远端不在 `ComponentPlayers` 里"（因为 `CollectPlayerNames` 只列出了 `Basil`），
+于是按 `cmd-bridge-plan.md:1418` 的注记改用 `PlayersData` —— **把搜索彻底弄空**（客户端上它只有本端一条）。
+真相（`obs.chat.roster` 一次问清）：
+
+```
+ComponentPlayers[0] name='Basil' playerIndex=1 pos=-163,67,64.1    ← 本端
+ComponentPlayers[1] name='Basil' playerIndex=0 pos=-168.8,66,72.9  ← 远端（名字也是 Basil）
+PlayersData[0]      name='Basil' playerIndex=1                     ← 只有本端
+```
+
+修法：回到 `ComponentPlayers`（它才有远端实体与坐标）。教训：**"某个列表更全"这类判断必须实测**，
+而"两张表都打出来"是成本最低的实测手段（`roster` 就是为此加的，现在长期留着）。
+
+**A68 —— 包的"服务"属性必须写在 `properties` 里。**
+服务格式是 `{id, type, interval?, randomDeviation?, tickOnActivation?, properties:{…}}`
+（`ScbtTree.ParseService` 只消费这几个字段、`TreeCompiler` 也拿 `doc.Properties` 逐字段读），
+而 `PackageTemplates.ServiceEntry(id, type, body)` 是把 body 的成员**摊平**到服务对象上的 ——
+按摊平写，属性就落在顶层：**被静默忽略（走默认值）**，同时校验器报
+`unknown field 'prefix' (ignored; check spelling)`。逮住它的是 `PackageSelfTest` 那条
+"出厂包零告警"。教训：**"属性写错只当警告"是最危险的失败模式**——功能看似正常（默认值恰好一样），
+等你改一个非默认值时就完全没反应。
+
+**A69 —— 打猎（聊天驱动）落地：`hunt` 意图 + 物种别名表 + 换刀 + 血量回传。**
+
+需求原话（用户 2026-09-26）："攻击要换上武器，创造模式用钻石刀，**不需要设置打死的时间**，
+只需要**检查动物是否打死，回传**就行了。"于是判据从"钟表"换成"血量"：
+`Task.Attack` 的 `timeout=0`（不限时）+ 边打边采 `ComponentHealth.Health` + `hunt.killed` + `Task.HuntReport`。
+
+四段接线：
+① `ChatPhrases`：`ChatIntents.Hunt` 进闭集，`ChatIntentSpec.TakesArgument` 让"帮我打一下**牛**"里的物种词
+被 `MatchEx` 抠出来（剥语气词、拆并列词，最长触发词优先）；`stop` 里补了"别打/不要杀"，
+保证"别打牛"判 stop 而不是去打牛。
+② `PlayerAi/Chat/animals.json`（`ChatAnimalAliases`）：口语词 → 一组可比的名字，
+**表里没有的词原样保留**，直接和生物显示名比。实测这个世界的显示名是 **英文**（`Black Cow` / `Black Bull`），
+而用户说的是中文 —— 别名表把两边连上了，这是它能工作的关键（只靠中文子串匹配会一头都找不到）。
+③ `Service.UpdateNearestCreature` 加 `nameKey` / `speciesKey` / `stickyRadius`：
+按名找 + 锁定物种（附近还有同种就继续）+ **粘住当前目标**。
+④ `PlayerEquipment` + `Task.EquipWeapon`（创造模式走引擎自带的"取物品"路径拿钻石砍刀）+
+`pickup.scbtpak`（可复用的捡取包，`Task.Subtree package=pickup#root`）。
+
+六个坑（详见 README §9.5.53）：
+1. **近战 0.66 秒冷却把 0.6 秒的连点全吃掉了**（`ComponentMiner.cs:295`）——"打了半天血量不动"
+   的真因，不是没瞄准；诊断靠给 `Task.Attack` 加的限频血量回传。
+2. `FollowEntity` 到点判 Failed ⇒ Sequence 中断 ⇒ 攻击步骤永远轮不到（靠近那步要套 `ForceSuccess`）。
+3. "每 tick 取最近"在牛群里摊薄伤害（血量 0.37 ↔ 1.0 来回跳）⇒ 目标要粘住。
+4. 服务新属性同样要写进 `properties`（A68 的重复踩坑）。
+5. `context.Sensors` 是 `ControllerSensor` 而不是 `PlayerSensor` ⇒ 换刀任务静默空跑；
+   新增 `IAiSensorWrapper` + `PlayerEquipment.FindPlayerSensor()` 剥包装层。
+6. `context.Warn` 不进 `PlayerAi.log`（`Log` 进）——要排查的原因一律用 `Log`。
+
+**仍未闭环的一点（诚实记录）**：血量读数在 0.6 / 0.85 之间翻，像是采样在牛群两头牛之间跳
+（`ResolveCreature` 靠"缓存身体 + 2 米内重扫"，没有稳定身份）。所以**要给生物一个稳定身份**：
+把 `Entity.Id` 记进 `AiActorView`，让"目标"和"血量采样"指向同一只 —— 否则"打死了没有"会报错对象。
+
+**A70 —— 打猎闭环跑通（同日后续）：两条路都实机验收 + 又踩出五个坑。**
+
+已验收（原始日志）：
+
+```
+# ① 打死一只：判定 + 回传 + 计数
+[tree] EquipWeapon: diamond_machete -> slot 2 (creative grab)
+[tree] Attack: 'Black Cow' health reached 0 -> KILLED
+[tree] HuntReport: killed Black Cow (total 1)
+[hunt] killed Black Cow (total 1)            ← 事件日志
+黑板 hunt.killed=true / hunt.kills=1 / hunt.result="killed Black Cow (total 1)"
+
+# ② 附近没有那种动物：不瞎打，立刻回传并回主循环
+[tree] HuntReport: nothing killed
+[tree] demo.laya: hunt finished @tick 404
+黑板 hunt.result="nothing killed"；activePath 立刻回到 decide/do 分支
+```
+
+坑（详见 README §9.5.53 第 7-11 条）：
+
+7. **近战只有 2 米**：`ComponentPlayer.cs:237` 只在 `Distance(命中点, 眼睛) <= 2f` 时才调
+   `ComponentMiner.Hit(...)`（是**命中点**，不是身体中心）。实测 3.0 米能打死、4.4 米一刀不落；
+   攻击半径取 2.5。
+8. **名字子串匹配会误伤**：`牛` 扩展出的 `bull` 命中 "Bull Shark" —— 实测"打牛"去追鲨鱼。
+   物种表加 `category`（land/water/bird），按类别再筛一遍。
+9. **生物没有稳定身份**：引擎不公开 `Entity.Id`，改由传感器发**令牌**（`AiActorView.Token`），
+   令牌查得到=还是它、查不到=死了 —— 修之前"目标和血量采样串到旁边那只"，一头都打不死。
+10. **装饰器数组是"外 → 内"**：`[Loop, ForceSuccess]` 会让"没目标"的 Failed 在里层变成成功，
+    Loop 空转整个上限（10 分钟）且**不发回传**；正确是 `[ForceSuccess(外), Loop(内)]`。
+11. **致命一击那一帧实体已消失**：最后采到的是"死前血量"，按 `==0` 判会误报"跑了"；
+    判定分两级（亲眼归零=确定；在掉血 + 血量很低 + 掉血在 2.5 秒内=推定）。
+
+规矩补一条：**编译失败就不打包**（`dotnet build` 的 `$LASTEXITCODE` 要判，别让打包脚本
+拿着上一次的 DLL 打出"新版本号"——本次踩过，还顺手把唯一一份旧包删掉过一次）。
