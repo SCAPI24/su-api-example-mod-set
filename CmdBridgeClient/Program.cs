@@ -516,12 +516,56 @@ namespace CmdBridgeClient
                         ("radius", args.Count >= 3 ? ParseFloat(args[2]) : 64f),
                         ("max", args.Count >= 4 ? ParseInt(args[3]) : 64)));
                 case "blocks":
-                    return Print(client, "obs.world.blocks", Args(
-                        ("radius", args.Count >= 3 ? ParseInt(args[2]) : 4),
-                        ("max", args.Count >= 4 ? ParseInt(args[3]) : 256)));
+                {
+                    // 2026-10-01：支持 **指定中心** 与命名参数 —— 读特定区域（例如火格）时人不用动。
+                    // usage: world blocks [--at x y z] [--radius N] [--max N]（旧的 `world blocks <r> <max>` 仍可用）
+                    int radius = 4, max = 256;
+                    int? cx = null, cy = null, cz = null;
+                    for (int i = 2; i < args.Count; i++)
+                    {
+                        switch (args[i])
+                        {
+                            case "--at":
+                                if (i + 3 < args.Count)
+                                {
+                                    cx = ParseInt(args[i + 1]);
+                                    cy = ParseInt(args[i + 2]);
+                                    cz = ParseInt(args[i + 3]);
+                                    i += 3;
+                                }
+                                break;
+                            case "--radius":
+                                if (i + 1 < args.Count) radius = ParseInt(args[++i]);
+                                break;
+                            case "--max":
+                                if (i + 1 < args.Count) max = ParseInt(args[++i]);
+                                break;
+                            default:
+                                // 兼容旧的 `world blocks <radius> <max>`
+                                if (i == 2) radius = ParseInt(args[i]);
+                                else if (i == 3) max = ParseInt(args[i]);
+                                break;
+                        }
+                    }
+                    var blockArgs = new System.Collections.Generic.List<(string, object)>
+                    {
+                        ("radius", radius),
+                        ("max", max)
+                    };
+                    if (cx.HasValue && cy.HasValue && cz.HasValue)
+                    {
+                        blockArgs.Add(("x", cx.Value));
+                        blockArgs.Add(("y", cy.Value));
+                        blockArgs.Add(("z", cz.Value));
+                    }
+                    return Print(client, "obs.world.blocks", Args(blockArgs.ToArray()));
+                }
+                case "fire":
+                    // 直接列主机火表（坐标 + 该格 contents/data）——火焰可见性看 data、能否点燃看 fireDuration
+                    return Print(client, "obs.world.fire", null);
                 default:
                     throw new BridgeException(
-                        "invalid_argument", "usage: world <time|entities|blocks> [args]");
+                        "invalid_argument", "usage: world <time|entities|blocks|fire> [args]");
             }
         }
 

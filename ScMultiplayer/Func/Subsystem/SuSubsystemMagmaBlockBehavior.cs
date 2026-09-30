@@ -48,8 +48,10 @@ namespace ScMultiplayer
                 return;
             }
             m_guard.CaptureFluidWorkList(mod, m_subsystemTerrain?.Terrain, m_toUpdate);
+            CaptureFluidDataValues();
             base.Update(dt);
             m_guard.Revert(mod, m_subsystemTerrain, m_fluidBlockIndex);
+            RegisterFluidDataChanges();
         }
 
         public override void OnBlockAdded(int value, int oldValue, int x, int y, int z)
@@ -89,5 +91,55 @@ namespace ScMultiplayer
                 return null;
             return mod;
         }
+        // 2026-10-01（用户口径）：流体 **data-only**（水位 / 顶面标志）变化也要同步给其他端。
+        // 引擎 `SubsystemFluidBlockBehavior.cs:53` 是用 `SetCellValueFast` 直接写 data 的，不进改动表；
+        // 这里在 `base.Update` 前后各取一次快照，把"内容不变、data 变了"的格主动登记进下发批次
+        //（内容变化本来就经 `ChangeCell` 自动下发，不重复登记）。每帧最多登记 64 格。
+        private readonly System.Collections.Generic.List<Point3> m_fluidDataCells =
+            new System.Collections.Generic.List<Point3>();
+        private readonly System.Collections.Generic.List<int> m_fluidDataValues =
+            new System.Collections.Generic.List<int>();
+
+        private void CaptureFluidDataValues()
+        {
+            m_fluidDataCells.Clear();
+            m_fluidDataValues.Clear();
+            if (m_toUpdate == null || m_subsystemTerrain?.Terrain == null)
+                return;
+            foreach (object key in m_toUpdate.Keys)
+            {
+                if (m_fluidDataCells.Count >= 64)
+                    return;
+                if (!(key is Point3 point) || point.Y < 0 || point.Y > 255)
+                    continue;
+                if (m_subsystemTerrain.Terrain.GetCellContents(point.X, point.Y, point.Z) !=
+                    m_fluidBlockIndex)
+                    continue;
+                m_fluidDataCells.Add(point);
+                m_fluidDataValues.Add(
+                    m_subsystemTerrain.Terrain.GetCellValue(point.X, point.Y, point.Z));
+            }
+        }
+
+        private void RegisterFluidDataChanges()
+        {
+            if (m_subsystemTerrain is not SuSubsystemTerrain suTerrain ||
+                m_subsystemTerrain.Terrain == null)
+                return;
+            for (int i = 0; i < m_fluidDataCells.Count; i++)
+            {
+                Point3 point = m_fluidDataCells[i];
+                int now = m_subsystemTerrain.Terrain.GetCellValue(point.X, point.Y, point.Z);
+                int before = m_fluidDataValues[i];
+                if (now == before)
+                    continue;
+                if (Terrain.ExtractContents(now) != Terrain.ExtractContents(before))
+                    continue;                       // 内容变化 → ChangeCell 已下发
+                suTerrain.MarkCellModifiedForBroadcast(point);   // 只改 data ⇒ 主动登记
+            }
+            m_fluidDataCells.Clear();
+            m_fluidDataValues.Clear();
+        }
+
     }
 }

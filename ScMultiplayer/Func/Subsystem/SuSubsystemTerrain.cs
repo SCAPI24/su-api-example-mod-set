@@ -313,6 +313,20 @@ namespace ScMultiplayer
             Interlocked.Increment(ref m_networkStateGeneration);
         }
 
+        /// <summary>
+        /// 把一个**绕过 `ChangeCell` 直接写格**的主机改动登记进"下发批次"（用户 2026-10-01 口径：
+        /// 主机燃烧 / 冲水 / 雷击等造成的方块表变化，必须推送给客户端；一切以主机那份为准）。
+        /// `ChangeCell`/`DestroyCell` 会自己进引擎改动表，无需调用本方法。
+        /// </summary>
+        internal void MarkCellModifiedForBroadcast(Point3 cell)
+        {
+            if (cell.Y < 0 || cell.Y > 255)
+                return;
+            if (!EnsureModifiedCellsBound())
+                return;
+            m_modifiedCells[cell] = true;
+        }
+
         // Source: Survivalcraft/Game/SubsystemElectricity.cs:SubsystemElectricity.Update
         internal void BeginClientCircuitStep()
         {

@@ -1,7 +1,6 @@
 using Engine;
 using Game;
 using GameEntitySystem;
-using SuAPI;
 using System;
 using System.Linq;
 
@@ -26,9 +25,6 @@ namespace ScMultiplayer
     /// </summary>
     public partial class ScMultiplayer
     {
-        private ModFieldRef<ComponentMiner, double> m_digStartTimeRef;
-        private ModFieldRef<ComponentMiner, float> m_digProgressRef;
-
         internal void PinDeniedLocalDigProgress()
         {
             try
@@ -45,11 +41,15 @@ namespace ScMultiplayer
                 ComponentMiner miner = localPlayer?.ComponentMiner;
                 if (miner == null)
                     return;
-                CellFace? face = ModManager.ModParentField.GetParentField<CellFace?>(
+                // ⚠️ 不要用 `GetParentField<CellFace?>`：装箱的 `CellFace` 转 `CellFace?` 会抛
+                // `InvalidCastException`（实测 `event=region.digguard.error InvalidCastException` 每帧刷）。
+                // 取 object 再模式匹配，安全。
+                object rawFace = ModManager.ModParentField.GetParentField(
                     miner, "<DigCellFace>k__BackingField", typeof(ComponentMiner));
-                if (!face.HasValue)
+                if (rawFace is not CellFace faceValue)
                     return;
-                var cell = new Point3(face.Value.X, face.Value.Y, face.Value.Z);
+                var face = faceValue;
+                var cell = new Point3(face.X, face.Y, face.Z);
                 // 主机端本机玩家走 clientId=0 口径；客户端用本机身份直接比对拥有者。
                 bool allowed = IsHost
                     ? CanRegionModifyCell(0, cell, out _, out _)
@@ -58,14 +58,12 @@ namespace ScMultiplayer
                     return;
 
                 // Source: Survivalcraft/Game/ComponentMiner.cs:ComponentMiner.Dig
-                m_digStartTimeRef ??= ModManager.ModParentField
-                    .BindFieldRef<ComponentMiner, double>("m_digStartTime");
-                m_digProgressRef ??= ModManager.ModParentField
-                    .BindFieldRef<ComponentMiner, float>("m_digProgress");
-                if (m_digStartTimeRef != null)
-                    m_digStartTimeRef(miner) = time.GameTime;
-                if (m_digProgressRef != null)
-                    m_digProgressRef(miner) = 0f;
+                // ⚠️ 不用 `BindFieldRef`（ref 返回委托在本环境实测抛 `InvalidCastException`），
+                // 改用 `ModifyParentField` 写这两个 private 字段（之前版本验证可用）。
+                ModManager.ModParentField.ModifyParentField(miner, "m_digStartTime",
+                    time.GameTime, typeof(ComponentMiner));
+                ModManager.ModParentField.ModifyParentField(miner, "m_digProgress",
+                    0f, typeof(ComponentMiner));
             }
             catch (Exception ex)
             {

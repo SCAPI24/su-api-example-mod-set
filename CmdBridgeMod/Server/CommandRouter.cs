@@ -22,7 +22,7 @@ namespace CmdBridgeMod
         /// ⚠️ **必须与 `ModInfo.xml` 的 `&lt;Version&gt;` 同步**：漏同步就会出现
         /// "装的是 1.1.20、状态里报 1.1.15"（本文件实际踩过一次，排查时容易误判成旧包装没生效）。
         /// </summary>
-        internal const string ModVersion = "1.1.21";
+        internal const string ModVersion = "1.1.23";
 
         /// <summary>
         /// 内建命令名（`cmd.list` 用）。加命令时**必须同步这里**：
@@ -130,6 +130,8 @@ namespace CmdBridgeMod
                         request.GetInteger("max", 64)));
                 case "obs.world.time":
                     return OnGameThread(WorldObserver.DescribeTime);
+                case "obs.world.fire":
+                    return OnGameThread(WorldObserver.DescribeFire);
                 case "obs.messages":
                     return OnGameThread(MessageObserver.Describe);
                 case "obs.chat":

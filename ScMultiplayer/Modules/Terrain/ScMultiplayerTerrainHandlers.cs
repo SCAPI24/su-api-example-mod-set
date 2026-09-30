@@ -654,17 +654,26 @@ namespace ScMultiplayer
         {
             List<KeyValuePair<Point3, TerrainCellState>> snapshot =
                 new List<KeyValuePair<Point3, TerrainCellState>>();
+            // 2026-10-01：**回看窗口**（自愈）。校验路径只发 `Sequence > knownRevision` 的格，
+            // 一旦客户端的 known 记账被推过某些"实际没落地"的格（仓库里已注明的永久漏格陷阱：
+            // TerrainChunkSyncMessage.cs:30 / 本文件 :540），那些格就再也不会被补发 —— 实测表现：
+            // 已连接的平板看不到主机新建的**火格**，重进（整块世界传输）才恢复。
+            // 这里把下发下限回看一小段，让"被 known 吞掉但没真正收到"的格在下一次校验里重新发一遍。
+            const long TerrainChunkSyncResendMargin = 64L;
+            long resendFloor = knownRevision - TerrainChunkSyncResendMargin;
+            if (resendFloor < 0L)
+                resendFloor = 0L;
             long revision;
             int serverTick;
             lock (m_terrainJournalLock)
             {
                 MergePendingTerrainChangesLocked();
                 m_hostTerrainChunkRevisions.TryGetValue(coordinates, out revision);
-                if (revision > knownRevision &&
+                if (revision > resendFloor &&
                     m_terrainCheckpointByChunk.TryGetValue(coordinates,
                         out Dictionary<Point3, TerrainCellState> cells))
                 {
-                    snapshot = cells.Where(item => item.Value.Sequence > knownRevision)
+                    snapshot = cells.Where(item => item.Value.Sequence > resendFloor)
                         .OrderBy(item => item.Key.X)
                         .ThenBy(item => item.Key.Y).ThenBy(item => item.Key.Z).ToList();
                 }

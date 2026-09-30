@@ -22,6 +22,10 @@ namespace ScMultiplayer
                 int oldData = Terrain.ExtractData(value);
                 int newData = Terrain.ExtractData(normalizedValue);
                 SubsystemTerrain.Terrain.SetCellValueFast(x, y, z, normalizedValue);
+                // 2026-10-01（用户口径）：直接写格不进引擎改动表 ⇒ 主动登记进下发批次，
+                // 否则这次"规范化"只发生在主机本地，客户端永远看不到。
+                (SubsystemTerrain as SuSubsystemTerrain)?.MarkCellModifiedForBroadcast(
+                    new Point3(x, y, z));
 
                 // Source: Survivalcraft/Game/SubsystemDeciduousLeavesBlockBehavior.cs:
                 // SubsystemDeciduousLeavesBlockBehavior.UpdateTimeOfYear

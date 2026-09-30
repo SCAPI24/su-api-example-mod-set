@@ -55,13 +55,22 @@ namespace CmdBridgeMod
                         if (blocks.Count >= limit)
                             continue;
                         var block = BlocksManager.Blocks[contents];
+                        // 2026-10-01：补 `data`/`light`/`fireDuration`/`isFire`（用户要求：排障优先用桥）。
+                        // 火焰可见性完全取决于火格(data=0 的火格画面上没有任何火面)，
+                        // 而"能不能被点燃"取决于 `Blocks[contents].FireDuration != 0` ——
+                        // 这两条以前必须加探针才能看到，现在一次 `world blocks` 就能读。
+                        int cellValue = terrain.GetCellValue(x, y, z);
                         blocks.Add(new Dictionary<string, object>(StringComparer.Ordinal)
                         {
                             ["x"] = x,
                             ["y"] = y,
                             ["z"] = z,
                             ["contents"] = contents,
-                            ["blockType"] = block != null ? block.GetType().Name : null
+                            ["blockType"] = block != null ? block.GetType().Name : null,
+                            ["data"] = Terrain.ExtractData(cellValue),
+                            ["light"] = Terrain.ExtractLight(cellValue),
+                            ["fireDuration"] = block != null ? block.FireDuration : 0f,
+                            ["isFire"] = contents == 104
                         });
                     }
                 }
@@ -78,6 +87,59 @@ namespace CmdBridgeMod
             result["totalNonAir"] = total;
             result["truncated"] = total > blocks.Count;
             result["skippedOutOfRangeY"] = skippedY;
+            return result;
+        }
+
+        /// <summary>
+        /// 主机火表（只读）：`SubsystemFireBlockBehavior.m_fireData` 的每个格 + 该格的 contents/data。
+        /// 2026-10-01 用户要求（桥优先）：判断"有燃烧声音但看不到火焰"时，看火格 **data** ——
+        /// 引擎在 `SetCellOnFire` 里把可见朝向写进 data（`num3 |= (1 << OppositeFace(i)) & 0xF`），
+        /// data=0 的火格在画面上没有任何火面。
+        /// </summary>
+        public static Dictionary<string, object> DescribeFire()
+        {
+            var result = new Dictionary<string, object>(StringComparer.Ordinal);
+            if (GameManager.Project == null)
+                throw new BridgeCommandException("world_not_loaded", "No world is loaded.");
+            SubsystemFireBlockBehavior fire =
+                GameManager.Project.FindSubsystem<SubsystemFireBlockBehavior>(false);
+            if (fire == null)
+                throw new BridgeCommandException("no_fire_subsystem",
+                    "SubsystemFireBlockBehavior is not present.");
+            var field = typeof(SubsystemFireBlockBehavior).GetField("m_fireData",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+            var table = field != null ? field.GetValue(fire) as System.Collections.IDictionary : null;
+            if (table == null)
+                throw new BridgeCommandException("no_fire_data", "Fire table is not readable.");
+            Terrain terrain = GetTerrain()?.Terrain;
+            var entries = new List<Dictionary<string, object>>();
+            foreach (System.Collections.DictionaryEntry entry in table)
+            {
+                if (!(entry.Key is Point3 point))
+                    continue;
+                int value = terrain != null ? terrain.GetCellValue(point.X, point.Y, point.Z) : 0;
+                int contents = terrain != null
+                    ? terrain.GetCellContents(point.X, point.Y, point.Z) : -1;
+                entries.Add(new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    ["x"] = point.X,
+                    ["y"] = point.Y,
+                    ["z"] = point.Z,
+                    ["contents"] = contents,
+                    ["blockType"] = contents >= 0 && contents < BlocksManager.Blocks.Length &&
+                        BlocksManager.Blocks[contents] != null
+                        ? BlocksManager.Blocks[contents].GetType().Name : null,
+                    ["data"] = terrain != null ? Terrain.ExtractData(value) : -1,
+                    ["light"] = terrain != null ? Terrain.ExtractLight(value) : -1,
+                    ["isFire"] = contents == 104,
+                    ["remaining"] = entry.Value != null ? entry.Value.ToString() : null,
+                    ["remainingType"] = entry.Value != null ? entry.Value.GetType().Name : null
+                });
+            }
+            entries.Sort((left, right) =>
+                ((int)left["x"]).CompareTo((int)right["x"]));
+            result["count"] = entries.Count;
+            result["entries"] = entries;
             return result;
         }
 
