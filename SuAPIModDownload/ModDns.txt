@@ -35,6 +35,12 @@ WatchMod | su-watch | ["0.1.6.0"] | 1.0.1 | gitee:"https://gitee.com/SC-SPM/su-a
 # 真正生效的门槛是本行第 3 段。依赖 Comms 已并入 Lib/，无需单独条目。
 # 2.2.0（2026-09-24）：死因随主机快照下发、复活窗口只钉血不吞伤害、复活点由主机回传、被攻击闪红、
 # "最后一小格点击扣血不死"修复、fence 700ms 提前请求同步、加入阶段触发地形补推。
+# 2.2.0 重建（2026-09-26 构建 / 2026-10-01 替换三端 release 资产，sha256 982f138a…，399491 B）：
+#   修"加入房间满屏红、血却是满的"（加入那一帧主机把本端当 0，原生按 -1.0 攒红屏 +4.0，之后约 3 秒衰减）；
+#   代理默认改为**直连**，且配置文件不存在时**不再自动创建** ScMultiplayer.proxy.txt
+#   （旧的 enabled=auto + 127.0.0.1:7890 会造成"加入卡在连接中、主机侧一行 Client joining 都收不到"）。
+# ⚠️ 同名 2.2.0 的资产已被替换：9-24 那版（sha256 0a0f48fd…，384816 B）与本版**互不互通**；
+#    装过 9-24 版 2.2.0 的端（含服务端遗留的 ScMultiplayer.proxy.txt）必须换到同一份新包。
 # ⚠️ buildFingerprint 又变了：2.2.0 与 2.1.66 及更早构建**互不互通**，三端必须同时换。
 ScMultiplayer | Su-ScMP | ["0.1.6.0"] | 2.2.0 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.6.0/%5BSuAPI%5DScMultiplayer-2.2.0.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.6.0/SuAPI.ScMultiplayer-2.2.0.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.6.0/[SuAPI]ScMultiplayer-2.2.0.scmod" | zh_CN=联机模组;en_US=ScMultiplayer
 # 上一版（`Su-ScMP@2.1.66`）
