@@ -26,8 +26,11 @@ namespace CmdBridgeMod
         {
             "ping", "status", "cmd.list", "obs.selftest",
             "obs.snapshot", "obs.ui", "obs.player", "obs.input", "obs.aim", "obs.events",
-            "obs.world.blocks", "obs.world.entities", "obs.world.time", "obs.messages", "obs.dialogs",
+            "obs.world.blocks", "obs.world.entities", "obs.world.time", "obs.messages", "obs.chat",
+            "obs.dialogs",
             "obs.waitfor", "ui.elements", "ui.reachability",
+            // 调试/验收用的"凭空塞一条聊天"（只进观察层队列，不发网络消息、不碰游戏状态）
+            "dev.chat.inject",
             "act.look", "act.lookdelta", "act.lookat", "act.key", "act.hold", "act.chord",
             "act.mouse", "act.wheel", "act.uiclick", "act.text", "act.releaseall",
             "ui.locate", "ui.clickelement", "ui.marker",
@@ -123,6 +126,37 @@ namespace CmdBridgeMod
                     return OnGameThread(WorldObserver.DescribeTime);
                 case "obs.messages":
                     return OnGameThread(MessageObserver.Describe);
+                case "obs.chat":
+                    // 聊天（只读）：把"玩家可见的小提示"里属于聊天的那些结构化出来。
+                    // ScMP 的聊天本来就是 `ComponentGui.DisplaySmallMessage("名字: 正文")`，
+                    // 所以这里**不需要**碰 ScMultiplayer（见 `ChatObserver` 的注释）。
+                    return OnGameThread(() => ChatObserver.Describe(
+                        request.GetInteger("max", 16)));
+                case "dev.chat.inject":
+                    // ⚠️ **调试/验收专用**（与 `ai.laya.ask` 同类）：凭空塞一条聊天行，
+                    // 好让"监听聊天 → 走过去"这条链能被反复、确定地验证。
+                    // 它只写观察层队列：不发网络消息、不改游戏状态、不产生输入。
+                    // 命令行里 sender 带空格时要加引号。
+                    return OnGameThread(() =>
+                    {
+                        ChatObserver.Line injected = ChatObserver.InjectLine(
+                            request.GetString("sender", "Tester"),
+                            request.GetString("text", null),
+                            request.GetBoolean("self", false),
+                            request.GetBoolean("system", false));
+                        if (injected == null)
+                            throw new BridgeCommandException("invalid_argument",
+                                "text is required (use: dev.chat.inject text=过来 [sender=名字])");
+                        return new Dictionary<string, object>(StringComparer.Ordinal)
+                        {
+                            ["seq"] = injected.Seq,
+                            ["sender"] = injected.Sender,
+                            ["text"] = injected.Text,
+                            ["isSelf"] = injected.IsSelf,
+                            ["isSystem"] = injected.IsSystem,
+                            ["note"] = "injected into the chat observer only; no network message was sent"
+                        };
+                    });
                 case "obs.dialogs":
                     return OnGameThread(DescribeDialogs);
                 case "ui.reachability":
@@ -1467,6 +1501,82 @@ namespace CmdBridgeMod
                         return true;
                 }
                 return false;
+            });
+
+            // ---- 聊天观察（只读）：切分 / 去重 / seq / 自检不污染消费方 ----
+            //
+            // 这几条都是"静默失效最贵"的地方：切错名字 → AI 听不懂；去重错 → 重复触发动作；
+            // seq 归零 → 消费方永远收不到新消息（自检跑完就聋了）。
+            AddCheck(checks, "ChatObserver.split.playerNameWithSpace", () =>
+            {
+                string sender, text;
+                bool isSystem;
+                bool ok = ChatObserver.TrySplitForTest("Android User: 过来",
+                    new[] { "Android User", "Basil", "ScMP" }, out sender, out text, out isSystem);
+                return ok && sender == "Android User" && text == "过来" && !isSystem;
+            });
+            AddCheck(checks, "ChatObserver.split.longestNameWins", () =>
+            {
+                string sender, text;
+                bool isSystem;
+                bool ok = ChatObserver.TrySplitForTest("Basil Two: hi",
+                    new[] { "Basil", "Basil Two" }, out sender, out text, out isSystem);
+                return ok && sender == "Basil Two" && text == "hi";
+            });
+            AddCheck(checks, "ChatObserver.split.systemSenderIsChat", () =>
+            {
+                string sender, text;
+                bool isSystem;
+                bool ok = ChatObserver.TrySplitForTest("ScMP: 这块区域属于 Android User（领地 #11），修改已否决",
+                    new[] { "Basil", "ScMP" }, out sender, out text, out isSystem);
+                return ok && sender == "ScMP" && isSystem && text.StartsWith("这块区域", StringComparison.Ordinal);
+            });
+            AddCheck(checks, "ChatObserver.split.gameHintIsNotChat", () =>
+            {
+                string sender, text;
+                bool isSystem;
+                return !ChatObserver.TrySplitForTest("You will faint, go to sleep!",
+                    new[] { "Basil", "ScMP" }, out sender, out text, out isSystem);
+            });
+            AddCheck(checks, "ChatObserver.split.unknownSenderStillYieldsText", () =>
+            {
+                string sender, text;
+                bool isSystem;
+                bool ok = ChatObserver.TrySplitForTest("Stranger: come here",
+                    new[] { "Basil" }, out sender, out text, out isSystem);
+                return ok && sender == "Stranger" && text == "come here" && !isSystem;
+            });
+            AddCheck(checks, "ChatObserver.seq.oneBubbleSeenManyFramesCountsOnce", () =>
+            {
+                long before = ChatObserver.Sequence;
+                string[] frame = { "Basil: 过来", "ScMP: hello" };
+                string[] names = { "Basil", "ScMP" };
+                ChatObserver.FeedForTest(frame, names);   // 第 1 帧：2 条新
+                long afterFirst = ChatObserver.Sequence;
+                ChatObserver.FeedForTest(frame, names);   // 第 2..4 帧：一条都不该重复
+                ChatObserver.FeedForTest(frame, names);
+                ChatObserver.FeedForTest(frame, names);
+                return afterFirst == before + 2 && ChatObserver.Sequence == afterFirst;
+            });
+            AddCheck(checks, "ChatObserver.seq.sameTextAfterLeavingIsNew", () =>
+            {
+                long before = ChatObserver.Sequence;
+                ChatObserver.FeedForTest(new string[0], new[] { "Basil" });        // 气泡消失
+                ChatObserver.FeedForTest(new[] { "Basil: 过来" }, new[] { "Basil" });
+                return ChatObserver.Sequence == before + 1;
+            });
+            AddCheck(checks, "ChatObserver.self.ownMessageIsFlagged", () =>
+            {
+                ChatObserver.SetLocalNameForTest("Basil");
+                ChatObserver.FeedForTest(new[] { "Basil: 我发的" }, new[] { "Basil" });
+                ChatObserver.Line line = ChatObserver.RecentForTest(0);
+                return line != null && line.IsSelf && line.Text == "我发的";
+            });
+            AddCheck(checks, "*** ChatObserver.reset.keepsSeqMonotonic (consumers must not go deaf) ***", () =>
+            {
+                long before = ChatObserver.Sequence;
+                ChatObserver.Reset();
+                return ChatObserver.Sequence == before && ChatObserver.RecentCountForTest() == 0;
             });
 
             bool injectionPointOk = true;

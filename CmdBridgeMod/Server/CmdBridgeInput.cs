@@ -275,6 +275,41 @@ namespace CmdBridgeMod
             }
         }
 
+        /// <summary>
+        /// **聊天（只读）**：最近的聊天行 + 单调 `seq`，供上层做"有没有新指令"的增量消费。
+        ///
+        /// 为什么放在门面里而不是让上层自己读小提示：ScMP 的聊天**就是**引擎的小提示
+        /// （`DisplaySmallMessage("名字: 正文")`），而"怎么从一堆小提示里认出聊天"
+        /// 需要玩家名字表、去重、seq —— 这些只该有一份实现（`ChatObserver`）。
+        /// 第二份实现必然与本 Mod 的口径漂移（"人看得见、AI 读不到"那类 bug）。
+        ///
+        /// `sinceSeq &gt; 0` 时只回"比它新的"（增量）；给 0 表示"最近这些"。
+        /// </summary>
+        public Dictionary<string, object> DescribeChat(long sinceSeq = 0, int maxLines = 16)
+        {
+            try
+            {
+                if (sinceSeq > 0)
+                {
+                    List<Dictionary<string, object>> lines = ChatObserver.DescribeSince(sinceSeq);
+                    return new Dictionary<string, object>(StringComparer.Ordinal)
+                    {
+                        ["seq"] = ChatObserver.Sequence,
+                        // ⚠️ **增量分支也必须带 `localName`**：调用方要用它判断"这个名字是不是我自己"。
+                        // 漏了它 → 上层拿到 null → 自我保护失效（实测踩到：日志里 `local='?'`）。
+                        ["localName"] = ChatObserver.LocalName,
+                        ["lines"] = lines
+                    };
+                }
+                return ChatObserver.Describe(maxLines);
+            }
+            catch (Exception exception)
+            {
+                LogFailure("DescribeChat", exception);
+                return null;
+            }
+        }
+
         /// <summary>玩家状态（只读）：位置/视角/生命/体征/背包/输入意图/睡眠/HUD/游戏模式。见 <c>PlayerObserver</c>。</summary>
         public Dictionary<string, object> DescribePlayer()
         {
