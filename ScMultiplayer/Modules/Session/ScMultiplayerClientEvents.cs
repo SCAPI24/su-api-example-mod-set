@@ -2287,6 +2287,14 @@ namespace ScMultiplayer
 				});
 			}
 			playerInput.Interact = interact.HitRay;
+			// 交互**确认**（2026-10-01，用户口径）：非放置交互（栅栏门/门/按钮/拉杆…）主机以前一条消息都不回，
+			// 客户端因此没有任何"收到确认"的时机去补播抬手动画（探针实证：interact.send 有 4 条、
+			// interact.result 一条都没有）。这里在执行前回一条 accepted=true 的 `InteractResult`：
+			// 客户端只把它当"主机已接收并会执行"的表现时机；**落地仍由主机这份引擎执行**
+			//（下面把交互喂进 playerInput，由主机的 ComponentMiner 原生跑 OnInteract）。
+			// 去重按 Sequence（客户端侧），同一条确认不会重复播。
+			if (!interact.HasTerrainPrediction)
+				SendHostInteractAcknowledgement(sourceClientId, interact);
 			state.HeldInput = PlayerInputStatePolicy.CreateHeld(playerInput);
 			return true;
 		}
@@ -2521,6 +2529,28 @@ namespace ScMultiplayer
         }
     }
 
+	/// <summary>
+	/// 非放置交互的**接收确认**（2026-10-01）：回一条 `InteractResult`，让客户端有"收到确认"的时机
+	/// 补播抬手动画（客户端从不跑原生 `ComponentMiner.Interact`，只有请求没有表现）。
+	///
+	/// 与 <see cref="SendHostTerrainPlaceResult"/> 的区别：**不进** `m_processedTerrainPlaceRequests`
+	/// —— 那是"放置预测重发"的缓存，键是 `RequestId`，而非放置交互的 `RequestId` 一律为 0，
+	/// 塞进去只会互相覆盖。这里只是表现时机，落地仍由主机引擎执行。
+	/// </summary>
+	private void SendHostInteractAcknowledgement(int targetClientId, PlayerActionMessage request)
+	{
+		if (request == null || targetClientId <= 0 || client == null)
+			return;
+		NetworkMessageSender.SendPlayerInteractResult(targetClientId, new PlayerActionMessage(
+			PlayerActionType.InteractResult, targetClientId, request.Sequence, default(Ray3))
+		{
+			RequestId = request.RequestId,
+			Cell = request.Cell,
+			Accepted = true,
+			ServerTick = client.Step
+		});
+	}
+
 	private void SendHostTerrainPlaceResult(int targetClientId, PlayerActionMessage request, bool accepted)
 	{
 		SubsystemTerrain terrain = GameManager.Project?.FindSubsystem<SubsystemTerrain>(throwOnError: false);
@@ -2547,6 +2577,20 @@ namespace ScMultiplayer
 
 	private void HandleTerrainPlaceResult(PlayerActionMessage result, int sourceClientId)
 	{
+		// 交互表现补播（2026-10-01）：客户端**从不**跑原生 `ComponentMiner.Interact`
+		//（`UpdateLocalInteractRequests` 只发请求），所以主机确认后本端没有任何"挥手/伸手"实例 ——
+		// 木栅栏门这类交互看起来就是"手不出、慢半拍"。这里在**收到确认**时补一次 `Poke`：
+		// `Poke` 只抬 `PokingPhase`（抬手动画），**不碰方块**，所以是"只做表现、不落地"。
+		// 去重按 `Sequence`：确认可能重发，同一动作只播一次（不会重复播）。
+		if (!IsHost && result != null && result.Action == PlayerActionType.InteractResult &&
+			result.Accepted && result.Sequence != m_lastReplayedInteractSequence)
+		{
+			m_lastReplayedInteractSequence = result.Sequence;
+			ComponentPlayer replayedPlayer = GameManager.Project?
+				.FindSubsystem<SubsystemPlayers>(false)?.ComponentPlayers
+				.FirstOrDefault(item => !m_networkPlayerData.Values.Contains(item.PlayerData));
+			replayedPlayer?.ComponentMiner?.Poke(forceRestart: false);
+		}
 		if (!IsHost && sourceClientId == 0 && result != null && m_pendingTerrainPlacePredictions.TryGetValue(result.RequestId, out var prediction) && !(prediction.Request.Cell != result.Cell))
 		{
 			Dictionary<Point3, bool> cells = new Dictionary<Point3, bool> { [result.Cell] = true };
@@ -3377,8 +3421,13 @@ namespace ScMultiplayer
 		if (remotePlayer != null)
 		{
 			ModManager.ModParentField.ModifyParentField(remotePlayer.ComponentInput, "<IsControlledByTouch>k__BackingField", msg.IsControlledByTouch, typeof(ComponentInput));
-			if (remotePlayer.ComponentMiner != null)
+			if (remotePlayer.ComponentMiner != null &&
+				!IsLocalPlayerData(remotePlayer.PlayerData) &&
+				sourceClientId != client.ClientID)
 			{
+				// ⚠️ 2026-10-01：输入快照的相位**绝不能写本端玩家的矿工** —— 否则手臂被钉在主机那份相位上
+				//（探针实测连续三次读到完全相同的 0.5108/0.5123），松开挖掘也不收回，还会把本端补播的抬手抹平。
+				// 判定用**显式 ClientID**（`IsLocalPlayerData` 在本端玩家被登记进 m_networkPlayerData 时不可靠）。
 				ModManager.ModParentField.ModifyParentField(remotePlayer.ComponentMiner, "<PokingPhase>k__BackingField", msg.PokingPhase, typeof(ComponentMiner));
 			}
 			remotePlayer.ComponentBody.TargetCrouchFactor = (msg.IsCrouching ? 1f : 0f);

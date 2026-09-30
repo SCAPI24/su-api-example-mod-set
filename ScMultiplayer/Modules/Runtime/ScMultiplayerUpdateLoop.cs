@@ -2850,6 +2850,7 @@ namespace ScMultiplayer
             double now = Time.RealTime;
             if (client?.IsConnected == true)
                 TryAcknowledgeClientCatchUpApplied();
+
             if (JoinReadyPolicy.HasTimedOut(now,
                 m_lastClientJoinBarrierProgressTime, JoinBarrierNoProgressTimeout))
             {

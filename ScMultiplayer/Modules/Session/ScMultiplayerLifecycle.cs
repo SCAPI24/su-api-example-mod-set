@@ -671,11 +671,18 @@ namespace ScMultiplayer
             componentFurnace.Value = "ScMultiplayer.SuComponentFurnace";
 
             // Source: Pak/Database.xml:ComponentMiner.Class (GUID 9dc356e5-...)
-            // P7a: the host player's own dig/place must obey the same claim check as clients.
+            // ⚠️ 2026-10-01（用户口径）：**退回 2.2.0 行为**。替换 `ComponentMiner` 是 2026-09-26
+            // （`59fc520`）才引入的，它接管了引擎每帧的挖掘/交互更新入口
+            //（`SuComponentMiner` 的 `IUpdateable.Update` → `base.Update`），于是 `PokingPhase`
+            //（抬手/挖掘手臂动画，`ComponentFirstPersonModel.cs:217` 直接读它）会被外部写入或冻结：
+            // 实测"松开挖掘后手臂不收回"，且被上报给主机后"其他客户端看到该角色一直抬手挖掘"。
+            // 2.1 / 2.2.0 没有这个替换、完全正常 ⇒ 这里显式退回引擎原类。
+            // 领地执法仍保留在**消息路径**：客户端挖/放请求照样被 `CanRegionModifyCell` 拒绝并回滚
+            //（见 HandleTerrainDigRequest / InteractRequest），只是不再接管本端矿工。
             var componentMiner = database.FindDatabaseObject(
                 new Guid("9dc356e5-7dc8-45f6-8779-827ddee9966c"),
                 database.FindDatabaseObjectType("Parameter", true), true);
-            componentMiner.Value = "ScMultiplayer.SuComponentMiner";
+            componentMiner.Value = "Game.ComponentMiner";
 
             var subsystemTerrain = database.FindDatabaseObject(
                 new Guid("e2636c38-f179-4aa1-b087-ed6920d66e8e"),
@@ -749,11 +756,13 @@ namespace ScMultiplayer
                 database.FindDatabaseObjectType("Parameter", true), true);
             subsystemProjectiles.Value = "ScMultiplayer.SuSubsystemProjectiles";
 
-            // Disabled 2026-09-23: replacing these 7 world-evolution behaviors (cactus/rot/carpet/
-            // fallen leaves/soil/ivy/sapling) hangs the HOST after `[ScMP] Database hooks applied`
-            // and the world never loads. Verified with BOTH modInjector.Register(...) AND this
-            // Pak/Database.xml GUID patch form -> the fault is in the replacement classes
-            // themselves, not in the registration mechanism. See doc/PROJECT-LOG.md.
+            // 历史（注释于 2026-10-01 修正，原注释"已禁用"与实际不符）：
+            // 这批世界演化行为（仙人掌/腐坏/地毯/落叶/土/常春藤/树苗）的替换，曾在 2026-09-23 因
+            // "主机在 `[SCMP] Database hooks applied` 之后挂死、世界永远加载不出来"被停用过
+            //（modInjector.Register 与 Pak/Database.xml GUID 打补丁两种方式都复现过）。
+            // 根因是**混淆把替换类型裁掉/改名**，已在 2.2.0 的提交 `0fbee1e`
+            //「世界可加载（混淆 SkipType）+ 客户端不预测生长 + 背包同步修丢物品」里修好并**重新启用**。
+            // ⇒ 下面这些注册**当前是生效的**（不要再按"已禁用"读；真要停用请同时改这里与 doc/PROJECT-LOG.md）。
             // Source: Pak/Database.xml:SubsystemCactusBlockBehavior.Class
             var subsystemCactus = database.FindDatabaseObject(
                 new Guid("765c87c0-ea8a-4513-9cbd-5cf89c72e2a9"),

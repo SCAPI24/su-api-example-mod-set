@@ -163,7 +163,20 @@ namespace ScMultiplayer
             if (applyAuthoritativeState && remoteClientId == client.ClientID)
                 m_localHealthPredictionDeadline = 0.0;
             if (applyAuthoritativeState && remoteClientId == client.ClientID && msg.Health > 0f)
+            {
                 m_localRespawnPendingUntil = 0.0;
+                // 2026-10-01（用户口径）：**死亡/复活一律跟随主机角色** —— 主机那份复活（权威血量回到 >0）时，
+                // 本端若还停在死亡态，就走引擎"Tap to respawn"同一条路：移除死亡实体，让 `PlayerData`
+                // 状态机（`PlayerData.cs:275-321` 的 "PlayerDead" → `RemoveEntity` → "PrepareSpawn"）回到
+                // 满血新实体，死亡界面（"YOU HAVE DIED" 大消息 + `DeathCamera`）随之消失。
+                // 不加这一步就会出现"主机已经活了、本端还锁在死亡界面且完全无法操作"（实测 2026-10-01）。
+                if (targetPlayer?.ComponentHealth != null &&
+                    targetPlayer.ComponentHealth.Health <= 0f &&
+                    targetPlayer.Entity != null && GameManager.Project != null)
+                {
+                    GameManager.Project.RemoveEntity(targetPlayer.Entity, disposeEntity: true);
+                }
+            }
             // 刚复活后的短窗口里，只丢弃**过期的** 0（序号不晚于复活那一刻的旧快照）；
             // 窗口内新发生的死亡序号更大，必须放行 —— 否则会出现
             // "角色界面被关、主机判死被吞掉、人没死"（实测）。

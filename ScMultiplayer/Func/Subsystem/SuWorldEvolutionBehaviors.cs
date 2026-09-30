@@ -46,6 +46,24 @@ namespace ScMultiplayer
     // OnNeighborBlockChanged 负责"底下不是沙子就消失"。
     public sealed class SuSubsystemCactusBlockBehavior : SubsystemCactusBlockBehavior
     {
+        // 接触类伤害**只认主机端的原版结算**（2026-10-01 用户口径）：客户端不本地结算，
+        // 由主机那份引擎算完、随权威血量下发 —— 主机端就是原版的扣血效果。
+        //
+        // 引擎事实（依据）：`ComponentBody.cs:751-759` 在碰撞解算里，对"正在被推挤"的格
+        // **每帧**调一次 `OnCollide(cellFace, GetVectorComponent(m_velocity, axis), this)`；
+        // 仙人掌的 `SubsystemCactusBlockBehavior.OnCollide` 里就是
+        // `Injure(0.01f * MathUtils.Abs(velocity))`，**自身没有冷却**。
+        // 所以玩家按住方向持续贴着仙人掌期间，每帧都可能结算一次 —— 客户端本地再算一遍就是两次。
+        // 单机会话与主机端照旧走原版；只有联机客户端跳过。
+        public override void OnCollide(CellFace cellFace, float velocity, ComponentBody componentBody)
+        {
+            ScMultiplayer mod = ScMultiplayer.currentInstance;
+            if (mod != null && mod.IsMultiplayerClientSession)
+                return;
+
+            base.OnCollide(cellFace, velocity, componentBody);
+        }
+
         public override void OnPoll(int value, int x, int y, int z, int pollPass)
         {
             if (ClientGrowthGate.Allows(SubsystemTerrain, x, z))

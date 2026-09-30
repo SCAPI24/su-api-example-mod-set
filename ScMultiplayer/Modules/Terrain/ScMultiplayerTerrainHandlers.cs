@@ -327,9 +327,34 @@ namespace ScMultiplayer
 
         private void TrimHostTerrainJournalLocked(double now)
         {
-            while (m_hostTerrainJournal.Count > 0 &&
-                now - m_hostTerrainJournal.Peek().CreatedTime > TerrainRecoveryRetention)
+            // ⚠️ 2026-10-01 修正：以前只按时间裁，实测会坏事 ——
+            // 加入的"世界下载 + 导入"实测要 22~23 秒（两个客户端并发加入时更久），而窗口原来只有 15 秒：
+            // 客户端刚导入完、主机要重放的那段历史**刚好被裁掉** → 主机回 `ResyncRequired`
+            //（日志 `Terrain recovery history expired for ClientID=N`）→ 客户端退化成
+            // "重新下载整个世界"（弹窗 Terrain history expired...），实测会反复重下、进不去游戏。
+            //
+            // 保护"**还在线**且仍有待恢复的客户端"所需的条目（2026-10-01 用户口径）：
+            // `m_hostTerrainRecoveryTargets[client]` 是该客户端要追到的 head 序号，取其中最小值作下限。
+            // 只对**在线**客户端生效 —— 加入方只要还在线待恢复，它需要的改动就一直留着，
+            // 这样"服务器带宽小、地图传得久"时也能传完地图再把期间所有改动同步过去；
+            // 离线/已放弃的客户端不再占用内存，另有 60 秒超时（TerrainRecoveryRetention）兜底。
+            long protectedSequence = long.MaxValue;
+            foreach (var pair in m_hostTerrainRecoveryTargets)
+            {
+                if (!m_networkPlayerData.ContainsKey(pair.Key))
+                    continue;
+                if (pair.Value < protectedSequence)
+                    protectedSequence = pair.Value;
+            }
+            while (m_hostTerrainJournal.Count > 0)
+            {
+                TerrainJournalEntry oldest = m_hostTerrainJournal.Peek();
+                if (now - oldest.CreatedTime <= TerrainRecoveryRetention)
+                    break;
+                if (oldest.Sequence >= protectedSequence)
+                    break;
                 m_hostTerrainJournal.Dequeue();
+            }
         }
 
         // Source: ScMultiplayer.cs:ScMultiplayer.Client_GameStep

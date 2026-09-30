@@ -706,6 +706,10 @@ namespace ScMultiplayer
         }
         private double m_nextClientJoinReadyRetryTime;
         private double m_lastClientJoinBarrierProgressTime;
+        // 交互表现补播去重（2026-10-01）：主机同一条 InteractResult 只补播一次抬手动画。
+        private int m_lastReplayedInteractSequence;
+        // 主机侧"网络玩家速度"采样节流（2026-10-01，仙人掌伤害排查用）。
+        private double m_nextNetworkPlayerVelocitySampleTime;
         private float m_terrainMergeTime;
         private int m_sessionRandomSeed;
         private Dictionary<string, long> m_pendingRandomStates = new Dictionary<string, long>();
@@ -883,7 +887,11 @@ namespace ScMultiplayer
         private const double WorldTransferRepairRequestInterval = 1.5;
         private const int MaximumWorldTransferSize = 64 * 1024 * 1024;
         private const int MaximumJoinCatchUpBytes = 4 * 1024 * 1024;
-        private const double TerrainRecoveryRetention = 15.0;
+        // 2026-10-01（用户口径）：**60 秒超时**兜底。15 秒太短 —— 加入的"世界下载 + 导入"实测 22~23 秒，
+        // 服务器带宽小时更久，客户端刚导入完就发现要补的历史已被裁掉 → 退化成"重新下载整个世界"。
+        // 真正起作用的是 `TrimHostTerrainJournalLocked` 里那条"**在线**客户端仍需的条目不许裁"：
+        // 只要加入方还在线待恢复，它需要的改动就一直留着（带宽小也能传完地图再同步完），本常量只在无人需要时兜底。
+        private const double TerrainRecoveryRetention = 60.0;
         private const int MaximumTerrainRecoveryRanges = 64;
         private const int MaximumTerrainRecoveryBatchBytes = 1024;
         private const double TerrainGapRecoveryDelay = 0.75;

@@ -107,7 +107,13 @@ namespace ScMultiplayer
                     state.LastPokeEventTime = Time.RealTime;
                 }
                 ComponentMiner remoteMiner = playerData.ComponentPlayer.ComponentMiner;
-                if (remoteMiner != null)
+                // ⚠️ 2026-10-01：**绝不要写本端玩家的矿工**。实测症状：本端 `PokingPhase` 被快照反复写成
+                // 主机那份的值（探针连续三次读到完全相同的 0.5108/0.5123）→ 松开挖掘后手臂不收回，
+                // 且本端补播的抬手（`Poke` 后相位 0.0001）下一帧就被抹平，看起来"栅栏门没有动作"。
+                // ⚠️ 判定必须用**显式 ClientID**：`IsLocalPlayerData` 依赖"本端玩家不在 m_networkPlayerData 里"
+                // 这个前提，一旦本端玩家也被登记进去就会失效（这正是上一轮没修干净的原因）。
+                if (remoteMiner != null && !IsLocalPlayerData(playerData) &&
+                    remoteClientId != client.ClientID)
                 {
                     // Source: Survivalcraft/Game/ComponentMiner.cs:ComponentMiner.Update
                     // Human arm animation reads PokingPhase directly. Applying the authoritative
