@@ -27,7 +27,15 @@ CmdBridgeMod | Su-Cmd | ["0.1.6.0"] | 1.1.10 | gitee:"https://gitee.com/SC-SPM/s
 GmMod | su-gm | ["0.1.6.0"] | 1.1.1 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.6.0/%5BSuAPI%5DGmMod-1.1.1.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.6.0/SuAPI.GmMod-1.1.1.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.6.0/[SuAPI]GmMod-1.1.1.scmod" | zh_CN=GM 工具;en_US=GM Tools
 # 上一版（`su-gm@1.1.0`）
 # GmMod | su-gm | ["0.1.6.0"] | 1.1.0 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.6.0/%5BSuAPI%5DGmMod-1.1.0.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.6.0/SuAPI.GmMod-1.1.0.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.6.0/[SuAPI]GmMod-1.1.0.scmod" | zh_CN=GM 工具;en_US=GM Tools
-PlayerAiMod | Su-PAI | ["0.1.6.0"] | 0.2.0 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.6.0/%5BSuAPI%5DPlayerAiMod-0.2.0.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.6.0/SuAPI.PlayerAiMod-0.2.0.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.6.0/[SuAPI]PlayerAiMod-0.2.0.scmod" | zh_CN=玩家 AI;en_US=Player AI
+# 0.6.0（2026-10-01）：① 代码改成 **SDK 8（C# 12）可编译** —— `ScriptCompiler` 里 10 处
+#   `(args, resolver, out error) => …`（带 out 的隐式参数 lambda，需 C# 14）改为显式参数类型；
+#   ② **动作包默认不再随重启自动装载**（`PlayerAiConfig.AutoLoadTreeOnStart = false`，要用时
+#   `sccmd raw ai.tree.load name=<包名>` 或编辑器点"播放"）；③ 版本号对齐到 ModInfo。
+#   ⚠️ 依赖 **CmdBridgeMod ≥ 1.1.20**：0.6.0 的聊天服务调用 `CmdBridgeInput.DescribeChat`
+#   （1.1.20 才有的门面），配旧版 CmdBridgeMod 会在聊天路径上抛 MissingMethodException。
+PlayerAiMod | Su-PAI | ["0.1.6.0"] | 0.6.0 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.6.0/%5BSuAPI%5DPlayerAiMod-0.6.0.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.6.0/SuAPI.PlayerAiMod-0.6.0.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.6.0/[SuAPI]PlayerAiMod-0.6.0.scmod" | zh_CN=玩家 AI;en_US=Player AI
+# 上一版（`Su-PAI@0.2.0`，与 0.6.0 之间没有对外发布过中间版本）
+# PlayerAiMod | Su-PAI | ["0.1.6.0"] | 0.2.0 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.6.0/%5BSuAPI%5DPlayerAiMod-0.2.0.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.6.0/SuAPI.PlayerAiMod-0.2.0.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.6.0/[SuAPI]PlayerAiMod-0.2.0.scmod" | zh_CN=玩家 AI;en_US=Player AI
 WatchMod | su-watch | ["0.1.6.0"] | 1.0.1 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.6.0/%5BSuAPI%5DWatchMod-1.0.1.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.6.0/SuAPI.WatchMod-1.0.1.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.6.0/[SuAPI]WatchMod-1.0.1.scmod" | zh_CN=手表;en_US=Watch
 # ScMultiplayer 2.1.6 起随 0.1.6.0 发布；2.1.8 只改了"服务目录多端抓取不报错"（gitee/cnb/github 三端都试、
 # 不通的端静默跳过），但 ScMP 的协议校验包含 buildFingerprint（DLL 的 MVID），**重建即与旧构建不互通**，
