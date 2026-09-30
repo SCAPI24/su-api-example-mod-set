@@ -38,6 +38,15 @@ namespace PlayerAiMod
         public float KeepDistance { get; set; } = 2f;
 
         /// <summary>
+        /// **到达即成功**（默认 false = 一直跟着）。
+        ///
+        /// `true` 时：一旦水平距离 ≤ <see cref="KeepDistance"/>（含迟滞判定）就返回 `Success`，
+        /// 这一步就算做完了 —— "过来"这种**一次性指令**要的就是它：走到位、看着你、然后回去干自己的事。
+        /// 默认 `false` 保持原语义（`su.follow` 那类"跟着我"的树不受影响）。
+        /// </summary>
+        public bool ArriveThenSucceed { get; set; }
+
+        /// <summary>
         /// **站↔走的迟滞**（米）：从"站住"转成"走"要求超过 `keepDistance + 这个值`。
         ///
         /// 为什么必须有：没有迟滞时，距离在 `keepDistance` 上下抖一下就会每 tick 在
@@ -247,6 +256,16 @@ namespace PlayerAiMod
                 LastAim = self;                                 // 站住 = 不走（自检据此断言"没在走"）
                 ReleaseMoveKeys(context);
                 context.Actuators.LookAt(targetPosition + new Vector3(0f, EyeHeight, 0f));
+                // **一次性到达**（`arriveThenSucceed`）：走到位就算这一步做完了。
+                // 为什么需要它：默认语义是"一直跟着"（InProgress 到超时），
+                // 而"过来"是**一条指令** —— 到了就该结束这一支、回去干原来的事，
+                // 否则它会一直贴着你（人会觉得"叫一次就赖上了"）。
+                if (ArriveThenSucceed)
+                {
+                    context.Log("FollowEntity: arrived within " + KeepDistance.ToString("0.##")
+                        + "m of '" + (target.Name ?? "?") + "' -> success (arriveThenSucceed)");
+                    return BtResult.Succeeded;
+                }
                 return BtResult.InProgress;
             }
 
@@ -311,7 +330,28 @@ namespace PlayerAiMod
 
             AiActorView live;
             if (snapshot.IsPlayer || string.Equals(snapshot.Kind, "player", StringComparison.Ordinal))
-                return sensors.TryFindPlayer(snapshot.Name, out live) ? live : snapshot;
+            {
+                // ⚠️ **按名字重取在联机时不可靠**（2026-09-26 实测）：ScMP 下双方显示名**可能相同**
+                // （本端与远端都叫 "Basil"），`TryFindPlayer` 会返回**第一个**匹配 —— 也就是自己，
+                // 于是 `keepDistance` 判定当场成立、"过来"瞬间"到达"、AI 一动不动。
+                // 修正：重取必须**核对 `PlayerIndex`**（每个角色唯一），不一致就宁可保留快照，
+                // 绝不换人（跟错人比"跟一个不更新的快照"糟得多）。
+                if (snapshot.PlayerIndex >= 0)
+                {
+                    AiActorView nearest;
+                    if (sensors.TryFindNearestPlayer(out nearest)
+                        && nearest.PlayerIndex == snapshot.PlayerIndex)
+                    {
+                        return nearest;
+                    }
+                }
+                if (sensors.TryFindPlayer(snapshot.Name, out live)
+                    && (snapshot.PlayerIndex < 0 || live.PlayerIndex == snapshot.PlayerIndex))
+                {
+                    return live;
+                }
+                return snapshot;
+            }
 
             // 非玩家（生物）：按"快照位置附近 + 同名"再取一次 —— 拿不到就继续用快照
             IAiWorldSensor world = sensors as IAiWorldSensor;

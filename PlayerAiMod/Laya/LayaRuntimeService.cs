@@ -29,7 +29,7 @@ namespace PlayerAiMod
         private string m_lastBankError;
 
         public LayaRuntimeService(PlayerAiRuntime runtime, LayaConfig config, IEnumerable<string> bankDirectories)
-            : this(runtime, config, bankDirectories, true)
+            : this(runtime, config, bankDirectories, true, null)
         {
         }
 
@@ -44,6 +44,17 @@ namespace PlayerAiMod
         /// </summary>
         public LayaRuntimeService(PlayerAiRuntime runtime, LayaConfig config,
             IEnumerable<string> bankDirectories, bool publish)
+            : this(runtime, config, bankDirectories, publish, null)
+        {
+        }
+
+        /// <summary>
+        /// 带**摘要规格目录**的重载：`digestDirectories` 指向 `<实例根>/PlayerAi/Digest`，
+        /// 由 <see cref="DigestCatalog"/> 按文件戳热重载。只有 `publish=true`（真游戏侧）
+        /// 才会去配置那个全局目录 —— 自检指向临时目录时不许影响正在跑的那一份。
+        /// </summary>
+        public LayaRuntimeService(PlayerAiRuntime runtime, LayaConfig config,
+            IEnumerable<string> bankDirectories, bool publish, IEnumerable<string> digestDirectories)
         {
             m_runtime = runtime;
             Config = config ?? new LayaConfig();
@@ -58,6 +69,8 @@ namespace PlayerAiMod
                         m_bankDirectories.Add(directory);
                 }
             }
+            if (publish && digestDirectories != null)
+                DigestCatalog.Configure(digestDirectories);
         }
 
         /// <summary>当前服务（由运行时在访问时保证指向自己那份）。</summary>
@@ -333,7 +346,19 @@ namespace PlayerAiMod
             //   而 §12.1 已证明"长状态会把答案推向默认值"。所以世界外也走 wire：
             //   候选行只留在人工/复盘那份（`state.digest`、`ai.laya.ask digest=`）。
             // 世界外那条链因此保持**确定性**：树里写死 `list:WorldsList#0`，翻页/滚动由 C# 做。
-            return StateDigestCompiler.Compile(inputs, Config.StateChars, wire: true);
+            // **热重载点**：磁盘上的 `.digest.json` 变过就换规格（按文件戳，没变不读盘）。
+            // 放在"真要编译摘要"这一刻，而不是每帧/后台轮询 —— 改文件不白读盘，
+            // 而"改了没被读"这件事由 `ai.digest.status` 的 `changedOnDisk` 如实报出来。
+            //
+            // **预算以规格文件为准**（2026-09-26）：`budgetChars=0` ⇒ 用规格自己的
+            // `budgets.wire`。以前这里传 `Config.StateChars`（Laya.local.json），于是
+            // "改 JSON 里的预算"会**静默无效**（数据里写了却不生效是最坏的一种坑）。
+            // `Laya.local.json` 那两个值仍然有效，但只在规格把预算写成 0 时兜底
+            // —— 口径写在 `ai.digest.status` 里，看得见。
+            DigestCatalog.EnsureFresh();
+            DigestSpec spec = StateDigestCompiler.Active;
+            int budget = spec.WireBudget > 0 ? 0 : Config.StateChars;
+            return StateDigestCompiler.Compile(inputs, budget, wire: true);
         }
 
         /// <summary>
@@ -345,7 +370,10 @@ namespace PlayerAiMod
             StateInputs inputs;
             if (!TryObserveInputs(out inputs, out error))
                 return null;
-            return StateDigestCompiler.Compile(inputs, Config.DigestBudgetChars);
+            DigestCatalog.EnsureFresh();
+            DigestSpec richSpec = StateDigestCompiler.Active;
+            int richBudget = richSpec.RichBudget > 0 ? 0 : Config.DigestBudgetChars;
+            return StateDigestCompiler.Compile(inputs, richBudget);
         }
 
         /// <summary>
@@ -358,6 +386,7 @@ namespace PlayerAiMod
             if (!TryObserveInputs(out inputs, out error))
                 return false;
 
+            DigestCatalog.EnsureFresh();
             fields = StateDigestCompiler.Evaluate(inputs);
             return true;
         }
@@ -481,6 +510,12 @@ namespace PlayerAiMod
         public static List<string> BankDirectoriesFor(string instanceRoot)
         {
             return QuestionBankDirectorySource.DirectoriesFor(instanceRoot);
+        }
+
+        /// <summary>由实例根算出**摘要规格**目录（`<实例根>/PlayerAi/Digest`）。</summary>
+        public static List<string> DigestDirectoriesFor(string instanceRoot)
+        {
+            return DigestCatalog.DirectoriesFor(instanceRoot);
         }
 
         /// <summary>安装出厂问题库（缺什么补什么，绝不覆盖）。</summary>

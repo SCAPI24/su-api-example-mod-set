@@ -76,6 +76,7 @@ namespace PlayerAiMod
                     properties.Set("targetKey", PackageValue.Str(task.TargetKey));
                     properties.Set("mode", PackageValue.Str(task.Mode));
                     properties.Set("keepDistance", PackageValue.Number(task.KeepDistance));
+                    properties.Set("arriveThenSucceed", PackageValue.Bool(task.ArriveThenSucceed));
                     properties.Set("standHysteresis", PackageValue.Number(task.StandHysteresis));
                     properties.Set("trailLength", PackageValue.Number(task.TrailLength));
                     properties.Set("trailMaxAge", PackageValue.Number(task.TrailMaxAge));
@@ -184,6 +185,29 @@ namespace PlayerAiMod
                     properties.Set("timeout", PackageValue.Number(task.TimeoutSeconds));
                     properties.Set("clickInterval", PackageValue.Number(task.ClickInterval));
                     properties.Set("button", PackageValue.Str(task.Button ?? "left"));
+                    properties.Set("healthProbe", PackageValue.Bool(task.HealthProbe));
+                    if (!string.IsNullOrEmpty(task.KilledKey))
+                        properties.Set("killedKey", PackageValue.Str(task.KilledKey));
+                    break;
+                }
+                case "Task.EquipWeapon":
+                {
+                    var task = (BtEquipWeaponTask)node;
+                    properties.Set("priority", PackageValue.Str(task.Priority));
+                    properties.Set("allowCreativeGrab", PackageValue.Bool(task.AllowCreativeGrab));
+                    properties.Set("required", PackageValue.Bool(task.Required));
+                    if (!string.IsNullOrEmpty(task.WeaponKey))
+                        properties.Set("weaponKey", PackageValue.Str(task.WeaponKey));
+                    break;
+                }
+                case "Task.HuntReport":
+                {
+                    var task = (BtHuntReportTask)node;
+                    properties.Set("killedKey", PackageValue.Str(task.KilledKey));
+                    properties.Set("speciesKey", PackageValue.Str(task.SpeciesKey));
+                    properties.Set("countKey", PackageValue.Str(task.CountKey));
+                    properties.Set("resultKey", PackageValue.Str(task.ResultKey));
+                    properties.Set("summary", PackageValue.Bool(task.Summary));
                     break;
                 }
                 case "Task.Interact":
@@ -323,6 +347,21 @@ namespace PlayerAiMod
                 return properties;
             }
 
+            // ---- 聊天监听（BtChatServices.cs）
+            var chat = service as BtChatWatchService;
+            if (chat != null)
+            {
+                properties.Set("prefix", PackageValue.Str(chat.Prefix));
+                properties.Set("targetKey", PackageValue.Str(chat.TargetKey));
+                properties.Set("useFallback", PackageValue.Bool(chat.UseFallback));
+                if (!string.IsNullOrEmpty(chat.FallbackBank))
+                    properties.Set("fallbackBank", PackageValue.Str(chat.FallbackBank));
+                if (!string.IsNullOrEmpty(chat.VoiceName))
+                    properties.Set("voiceName", PackageValue.Str(chat.VoiceName));
+                properties.Set("clearWhenMissing", PackageValue.Bool(chat.ClearWhenMissing));
+                return properties;
+            }
+
             // ---- 传感器服务族（BtSensorServices.cs）
             var self = service as BtUpdateSelfService;
             if (self != null)
@@ -339,6 +378,11 @@ namespace PlayerAiMod
                 properties.Set("categoryMask", PackageValue.Number(creature.CategoryMask));
                 properties.Set("maxDistance", PackageValue.Number(creature.MaxDistance));
                 properties.Set("clearWhenMissing", PackageValue.Bool(creature.ClearWhenMissing));
+                if (!string.IsNullOrEmpty(creature.NameKey))
+                    properties.Set("nameKey", PackageValue.Str(creature.NameKey));
+                if (!string.IsNullOrEmpty(creature.SpeciesKey))
+                    properties.Set("speciesKey", PackageValue.Str(creature.SpeciesKey));
+                properties.Set("stickyRadius", PackageValue.Number(creature.StickyRadius));
                 return properties;
             }
 

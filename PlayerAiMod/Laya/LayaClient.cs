@@ -636,7 +636,11 @@ namespace PlayerAiMod
         public static string Fingerprint(string digest, QuestionBank bank, string model)
         {
             var text = new StringBuilder();
+            // 指纹 = 模型 | 摘要规格版本 **+ 规格内容哈希** | 摘要 | 问题库 | …
+            // 规格哈希这一项保证"改了档位阈值/字段进出"也必然换指纹 ——
+            // 否则旧答案会被当成本次判定复用（这正是 G18 当初给问题库加哈希的理由）。
             text.Append(model ?? "?").Append('|').Append(StateDigestCompiler.Version).Append('|')
+                .Append(StateDigestCompiler.SpecHash ?? "?").Append('|')
                 .Append(digest ?? string.Empty).Append('|');
             if (bank != null)
             {

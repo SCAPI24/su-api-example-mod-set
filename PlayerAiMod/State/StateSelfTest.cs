@@ -210,8 +210,17 @@ namespace PlayerAiMod
                 Screen = "GameScreen"
             };
             string nightWire = StateDigestCompiler.Compile(sleepy, 28, wire: true);
-            result.Check("*** an exhausted character at night leads with sleep ***",
-                nightWire.StartsWith("sleep=", StringComparison.Ordinal), nightWire);
+            // 2026-09-26：`sleep` 从上线状态**摘掉**了（用户指令）。
+            // 它曾是这个位置的开头，而角色不睡 ⇒ 恒为 `sleep=exhausted` ⇒ 模型连答 10+ 轮 `sleep`。
+            // 现在两条都要守住：**上线里绝不出现 `sleep=`**，且开头让给下一个字段。
+            result.Check("*** the wire state never carries sleep (the model obsesses over it) ***",
+                nightWire.IndexOf("sleep=", StringComparison.Ordinal) < 0, nightWire);
+            result.Check("*** an exhausted character at night leads with night instead ***",
+                nightWire.StartsWith("night=", StringComparison.Ordinal), nightWire);
+            result.Check("...while the human/review digest still reports the exhaustion",
+                StateDigestCompiler.Compile(sleepy, 200)
+                    .IndexOf("sleep=exhausted", StringComparison.Ordinal) >= 0,
+                StateDigestCompiler.Compile(sleepy, 200));
 
             // 反向纪律：**黑板不许跟着变短**（健康时 state.hp / state.night 仍然在）
             List<KeyValuePair<string, string>> pairs = StateDigestCompiler.Evaluate(healthy);

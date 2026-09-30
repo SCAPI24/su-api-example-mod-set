@@ -29,6 +29,17 @@ namespace PlayerAiMod
         /// <summary>掉落物的数量（其它情况为 0）。</summary>
         public int Count;
 
+        /// <summary>
+        /// **稳定身份令牌**（0 = 没有）。由传感器分配，指向"具体这一具身体"。
+        ///
+        /// 为什么需要它：`AiActorView` 是值类型，只带位置和名字，而这两样在**成群的动物**里
+        /// 不足以区分个体 —— `ResolveCreature` 原来靠"缓存身体 + 2 米内重扫"，牛挤在一起时
+        /// 会解析到旁边那一头，表现是"血量在 0.6 / 0.85 之间来回跳、一头也打不死"
+        /// （2026-09-26 实测）。有了令牌，"还是不是同一只"就是一个确定的判断：
+        /// 令牌查得到 = 还是它；查不到 = 它死了/没了，该重新找目标了。
+        /// </summary>
+        public int Token;
+
         public override string ToString()
         {
             return (Name ?? "<unnamed>") + (IsSelf ? "(self)" : string.Empty)
@@ -173,6 +184,38 @@ namespace PlayerAiMod
         /// 否则按 <c>Game.CreatureCategory</c> 位掩码过滤（1=陆地掠食者 2=陆地其它 4=水中掠食者 8=水中其它 16=鸟）。
         /// </summary>
         bool TryFindNearestCreature(int categoryMask, float maxDistance, out AiActorView view);
+
+        /// <summary>
+        /// 最近的、**名字对得上**的生物（打猎用；玩家一律跳过）。
+        ///
+        /// `candidates` 是已扩好的候选名（口语词 + 各语言显示名，见 `ChatAnimalAliases.Expand`），
+        /// 任一命中即算 —— 因为引擎的类别掩码分不出牛和鹿、狼和熊虎，只有生物名能分物种。
+        ///
+        /// `preferred`（`PlayerIndex == -1 &amp;&amp; Name != null` 时有效）是**上一个目标**：
+        /// 只要它还在 `stickyRadius` 米内，就继续用它，**不换**成更近的另一只。
+        /// 为什么必须粘：牛是成群的，"每 tick 取最近"会让伤害摊在几头牛身上 ——
+        /// 2026-09-26 实测血量在 0.37 ↔ 1.0 之间来回跳，一头都打不死。
+        /// </summary>
+        bool TryFindNearestCreatureByName(IReadOnlyList<string> candidates, float maxDistance,
+            int categoryMask, AiActorView preferred, float stickyRadius, out AiActorView view);
+
+        /// <summary>
+        /// 把黑板里的 actor 快照刷成"此刻的它" —— **还是那一只**（靠 <see cref="AiActorView.Token"/>），
+        /// 只是位置/距离更新了。刷不动就是它死了/卸载了，该重新找目标。
+        ///
+        /// 目标锁定靠这个：没有它，"每 tick 取最近"会在成群的动物里来回换目标
+        /// （2026-09-26 实测：血量在两头牛之间跳，一头也打不死）。
+        /// </summary>
+        bool TryRefreshActor(AiActorView view, out AiActorView refreshed);
+
+        /// <summary>
+        /// 读一个 actor 的**血量**（0..1，`ComponentHealth.Health`；生物/玩家都有）。
+        ///
+        /// "打死没有"必须问血量，不能只看"目标键没了" —— 那也可能是它跑出了搜索半径。
+        /// 目标一旦死亡，实体随即消失、这个方法就取不到了，所以要**边打边采样**（见 `Task.Attack`）。
+        /// Source: ComponentHealth.cs:40（Health）、267（Health==0 即死亡）
+        /// </summary>
+        bool TryGetActorHealth(AiActorView view, out float health);
 
         /// <summary>最近的**掉落物**（Pickable）。</summary>
         bool TryFindNearestPickable(float maxDistance, out AiActorView view);

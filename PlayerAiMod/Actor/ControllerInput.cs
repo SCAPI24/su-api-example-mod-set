@@ -162,13 +162,23 @@ namespace PlayerAiMod
     /// 会因此直接跳过（`ScatPlayer.CheckDrift` 本来就在 `Sensors == null || !IsReady` 时跳过），
     /// 而不是报出一堆假的"漂移失败"。
     /// </summary>
-    internal sealed class ControllerSensor : IAiSensor, IAiWorldSensor
+    internal sealed class ControllerSensor : IAiSensor, IAiWorldSensor, IAiSensorWrapper
     {
         private IPlayerInputProvider m_world;
 
         public void Bind(IPlayerInputProvider world)
         {
             m_world = world;
+        }
+
+        /// <summary>
+        /// 剥一层：把真正的观察层（`AiActor.Sensors` = `PlayerSensor`）交出去。
+        /// 需要引擎对象的能力（例如换武器要动背包）必须能穿透这层包装 ——
+        /// 否则任务里 `context.Sensors as PlayerSensor` 恒为 null，表现为"静默什么都不做"。
+        /// </summary>
+        public IAiSensor InnerSensor
+        {
+            get { return World; }
         }
 
         private IAiSensor World
@@ -297,6 +307,35 @@ namespace PlayerAiMod
             if (world != null)
                 return world.TryFindNearestCreature(categoryMask, maxDistance, out view);
             view = default(AiActorView);
+            return false;
+        }
+
+        public bool TryFindNearestCreatureByName(IReadOnlyList<string> candidates, float maxDistance,
+            int categoryMask, AiActorView preferred, float stickyRadius, out AiActorView view)
+        {
+            IAiWorldSensor world = WorldExtras;
+            if (world != null)
+                return world.TryFindNearestCreatureByName(candidates, maxDistance, categoryMask, preferred,
+                    stickyRadius, out view);
+            view = default(AiActorView);
+            return false;
+        }
+
+        public bool TryRefreshActor(AiActorView view, out AiActorView refreshed)
+        {
+            IAiWorldSensor world = WorldExtras;
+            if (world != null)
+                return world.TryRefreshActor(view, out refreshed);
+            refreshed = default(AiActorView);
+            return false;
+        }
+
+        public bool TryGetActorHealth(AiActorView view, out float health)
+        {
+            IAiWorldSensor world = WorldExtras;
+            if (world != null)
+                return world.TryGetActorHealth(view, out health);
+            health = 0f;
             return false;
         }
 

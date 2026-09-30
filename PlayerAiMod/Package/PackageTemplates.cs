@@ -91,6 +91,22 @@ namespace PlayerAiMod
         /// <summary>示例·Laya 驱动的主循环（`demo.laya.scbtpak`）：Laya 出目标 → 出厂动作脚本执行。</summary>
         public const string LayaDemoFile = "demo.laya.scbtpak";
 
+        /// <summary>
+        /// **可复用的捡取包**（`pickup.scbtpak`）：找最近的掉落物 → 走过去（走过去就自动拾取）。
+        ///
+        /// 两种用法都成立，所以它既是"包"也是"树"：
+        ///   · 被别的树调用：`Task.Subtree(package=pickup#root)`（打猎打完捡掉落就用这条）；
+        ///   · 单独跑：`ai switch pickup` 就是一个"见什么捡什么"的巡航模式。
+        /// 契约（黑板的 `pickup.*` 键）写在包自己的清单里。
+        /// </summary>
+        public const string PickupFile = "pickup.scbtpak";
+
+        /// <summary>`pickup` 包的 id（`Task.Subtree package=<id>#root` 用它）。</summary>
+        public const string PickupPackageId = "pickup";
+
+        /// <summary>捡取包的搜索半径（米）：打完猎掉落就在脚边，6 格够用且不会满地图乱跑。</summary>
+        public const float PickupRadius = 6f;
+
         /// <summary>`demo.laya` 的连败计数器键（树里唯一的"记忆"，见 `BtCounterTask`）。</summary>
         public const string FailCountKey = "fail.count";
 
@@ -124,6 +140,7 @@ namespace PlayerAiMod
                 PlayerAiPackages.BuildTestTreeTemplate(),
                 BuildRecover(),
                 BuildRecoverDemo(),
+                BuildPickup(),
                 BuildLayaDemo(),
                 BuildFrontDemo()
             };
@@ -161,6 +178,12 @@ namespace PlayerAiMod
         public static PackageTemplate LayaDemo()
         {
             return BuildLayaDemo();
+        }
+
+        /// <summary>通用·捡掉落物（可被别的树调用，也能单独跑）。</summary>
+        public static PackageTemplate Pickup()
+        {
+            return BuildPickup();
         }
 
         /// <summary>世界外界面链示例。</summary>
@@ -915,9 +938,70 @@ namespace PlayerAiMod
         /// **怎么调**：`goal=craft` 现在落到占位脚本 `craft_once.aeact`（开/关背包），
         /// 换掉那条脚本就是真正的合成；想加目标就在 `world_goal.qbank` 里加选项，再来这里加一支。
         /// </summary>
-        private static PackageTemplate BuildLayaDemo()
+        // ---------------------------------------------------------------- 可复用的捡取包（2026-09-26）
+
+        /// <summary>
+        /// **捡取包**（`pickup.scbtpak`）：最近的掉落物 → 走过去。
+        ///
+        /// 为什么单独成包（用户明确要求）："捡东西"不该只长在打猎分支里 ——
+        /// 打完猎要捡掉落、以后"帮我捡一下"要用、别的主树也可能要，抽成包才能一处写、多处调。
+        /// 它同时可以 `ai switch pickup` 单独跑（根是 `Root(loop=true)`，于是变成"见什么捡什么"）。
+        ///
+        /// 为什么"走过去"就等于"捡起来"：SC 的掉落物是**靠近自动拾取**的，
+        /// 所以这一支的 KPI 是"走到 1 格内"，不需要额外的交互动作。
+        ///
+        /// 服务挂在**根 Selector** 上（不是挂在守卫分支里面）：服务只在活动路径上 tick，
+        /// 挂进"需要它写的键"的分支里就是死锁（这条坑在聊天分支上实测踩过）。
+        /// </summary>
+        private static PackageTemplate BuildPickup()
         {
             PackageValue blackboard = Arr(
+                Obj("name", Str("pickup.target"), "type", Str("actor"), "readonly", Bool(true),
+                    "description", Str("最近的掉落物（服务 UpdateNearestPickable 写入；捡到就清）")),
+                Obj("name", Str("pickup.targetIsSet"), "type", Str("bool"), "readonly", Bool(true),
+                    "description", Str("附近有没有可捡的东西")),
+                Obj("name", Str("pickup.targetDistance"), "type", Str("float"), "readonly", Bool(true)),
+                Obj("name", Str("pickup.targetName"), "type", Str("string"), "readonly", Bool(true)));
+
+            PackageValue manifest = Obj(
+                "format", Str(ScbtManifest.FormatName),
+                "version", Num(ScbtManifest.FormatVersion),
+                "id", Str(PickupPackageId),
+                "name", Str("通用·捡掉落物"),
+                "entry", Str("root"),
+                "blackboard", blackboard,
+                "references", Arr());
+
+            PackageValue tree = Node("root", "Root", Obj("loop", Bool(true)), null, null,
+                Arr(
+                    Node("pickup_root", "Selector", null, null,
+                        Arr(ServiceEntry("svc_pickable", "UpdateNearestPickable", Obj("properties", Obj(
+                            "targetKey", Str("pickup.target"),
+                            "maxDistance", Num(PickupRadius),
+                            "clearWhenMissing", Bool(true))))),
+                        Arr(
+                        Node("pickup_round", "Sequence", null,
+                            Arr(CompareDecorator("d_pickup_has_target", "pickup.targetIsSet",
+                                "bool", "==", Bool(true), "None")),
+                            null,
+                            Arr(Node("pickup_go", "Task.FollowEntity", Obj(
+                                "targetKey", Str("pickup.target"),
+                                "keepDistance", Num(1f),
+                                "arriveThenSucceed", Bool(true),
+                                "timeout", Num(8f))))),
+                        // 附近没东西可捡 → 待机（不空转、也不让根每帧判失败）
+                        Node("pickup_idle", "Task.Wait", Obj("seconds", Num(0.3)))))));
+
+            return new PackageTemplate(PickupFile, "通用·捡掉落物",
+                "找最近的掉落物（半径 " + PickupRadius.ToString("0.#") + " 格）→ 走过去；"
+                + "SC 的掉落物靠近即自动拾取，所以\"走到 1 格内\"就是\"捡起来了\"。"
+                + "既可被别的树用 Task.Subtree(package=pickup#root) 调用（打猎打完捡掉落），"
+                + "也可 ai switch pickup 单独当\"见什么捡什么\"用。",
+                manifest, tree);
+        }
+
+        private static PackageTemplate BuildLayaDemo()
+        {            PackageValue blackboard = Arr(
                 Obj("name", Str("goal"), "type", Str("string"), "readonly", Bool(false),
                     "description", Str("Laya 判定的下一步目标（world_goal 的选项 key）")),
                 Obj("name", Str("work.script"), "type", Str("string"), "readonly", Bool(false),
@@ -930,7 +1014,49 @@ namespace PlayerAiMod
                         + FallbackThreshold + " 换兜底脚本，到 " + StandbyThreshold + " 停手 5 秒")),
                 Obj("name", Str("laya.fail"), "type", Str("string"), "readonly", Bool(false),
                     "description", Str("Laya 拿不到答案时的错误码（onUnavailable=keep 时目标保留）")),
-                Obj("name", Str("laya.reason"), "type", Str("string"), "readonly", Bool(false)));
+                Obj("name", Str("laya.reason"), "type", Str("string"), "readonly", Bool(false)),
+                // ---- 聊天监听（2026-09-26）：`Service.ChatWatch` 写，聊天分支读 ----
+                Obj("name", Str("chat.pending"), "type", Str("bool"), "readonly", Bool(false),
+                    "description", Str("有一条待处理指令（树处理完把它清掉）")),
+                Obj("name", Str("chat.intent"), "type", Str("string"), "readonly", Bool(false),
+                    "description", Str("意图：come / follow / stop / ignore（短语表命中或模型兜底判出）")),
+                Obj("name", Str("chat.bank"), "type", Str("string"), "readonly", Bool(false),
+                    "description", Str("短语表没命中时要问的问题库名；空 = 已命中，不必问模型")),
+                Obj("name", Str("chat.digest"), "type", Str("string"), "readonly", Bool(false),
+                    "description", Str("兜底判定的摘要：chat=<原话>（喂 Task.LayaAsk digestKey）")),
+                Obj("name", Str("chat.text"), "type", Str("string"), "readonly", Bool(false)),
+                Obj("name", Str("chat.sender"), "type", Str("string"), "readonly", Bool(false)),
+                Obj("name", Str("chat.seq"), "type", Str("int"), "readonly", Bool(false)),
+                Obj("name", Str("chat.target"), "type", Str("actor"), "readonly", Bool(false),
+                    "description", Str("发话者（按名字找不到时退回「最近的另一个玩家」）")),
+                Obj("name", Str("chat.targetIsSet"), "type", Str("bool"), "readonly", Bool(false)),
+                Obj("name", Str("chat.targetDistance"), "type", Str("float"), "readonly", Bool(false)),
+                Obj("name", Str("chat.targetName"), "type", Str("string"), "readonly", Bool(false)),
+                Obj("name", Str("chat.arg"), "type", Str("string"), "readonly", Bool(false),
+                    "description", Str("带参意图的参数（打猎的物种词，如 牛 / 牛,狼）")),
+                // ---- 打猎（2026-09-26）：服务 UpdateNearestCreature(nameKey) 写，hunt 分支读 ----
+                Obj("name", Str("hunt.target"), "type", Str("actor"), "readonly", Bool(false),
+                    "description", Str("要打的生物（按名找；死了就清键）")),
+                Obj("name", Str("hunt.targetIsSet"), "type", Str("bool"), "readonly", Bool(false)),
+                Obj("name", Str("hunt.targetDistance"), "type", Str("float"), "readonly", Bool(false)),
+                Obj("name", Str("hunt.targetName"), "type", Str("string"), "readonly", Bool(false)),
+                Obj("name", Str("hunt.species"), "type", Str("string"), "readonly", Bool(false),
+                    "description", Str("锁定物种：打中的那只有名字，之后优先按它找（附近还有同种就继续）")),
+                Obj("name", Str("hunt.speciesArg"), "type", Str("string"), "readonly", Bool(false),
+                    "description", Str("锁定是为哪句指令锁的；换指令就自动解锁")),
+                Obj("name", Str("hunt.weapon"), "type", Str("string"), "readonly", Bool(false),
+                    "description", Str("这一轮拿在手上的武器（Task.EquipWeapon 写）")),
+                Obj("name", Str("hunt.killed"), "type", Str("bool"), "readonly", Bool(false),
+                    "description", Str("上一只打死了没有（Task.Attack 按血量判定后写）")),
+                Obj("name", Str("hunt.kills"), "type", Str("int"), "readonly", Bool(false),
+                    "description", Str("这次指令累计打死几只（Task.HuntReport 维护）")),
+                Obj("name", Str("hunt.result"), "type", Str("string"), "readonly", Bool(false),
+                    "description", Str("回传给人的结果，如 killed Black Bull (total 2)")),
+                // ---- 捡取包（`pickup.scbtpak`）的契约键：引用它就得声明 ----
+                Obj("name", Str("pickup.target"), "type", Str("actor"), "readonly", Bool(false)),
+                Obj("name", Str("pickup.targetIsSet"), "type", Str("bool"), "readonly", Bool(false)),
+                Obj("name", Str("pickup.targetDistance"), "type", Str("float"), "readonly", Bool(false)),
+                Obj("name", Str("pickup.targetName"), "type", Str("string"), "readonly", Bool(false)));
 
             PackageValue manifest = Obj(
                 "format", Str(ScbtManifest.FormatName),
@@ -939,7 +1065,7 @@ namespace PlayerAiMod
                 "name", Str("示例·Laya 驱动的主循环"),
                 "entry", Str("root"),
                 "blackboard", blackboard,
-                "references", Arr());
+                "references", Arr(Obj("id", Str(PickupPackageId), "path", Str(PickupFile))));
 
             // 动作失败的入口：先记一行 → **连败计数 +1** → 再清标记。
             // 计数是"反射层兜底"的输入：摘要不变时模型会一直给同一个答案（实测连答 7 次 `sleep`，
@@ -1079,8 +1205,17 @@ namespace PlayerAiMod
                         "key", Str(FailCountKey), "clear", Bool(true))),
                     Node("standby_wait", "Task.Wait", Obj("seconds", Num(5)))));
 
+            // ---- 聊天优先分支（2026-09-26）：**放在根 Selector 最前面**。
+            //
+            // 为什么在最前面 + `observerAborts=LowerPriority`：有人叫它的时候不该等它挖完这一格
+            // （`decide` 正在 InProgress 时，低优先级被抢占才会立刻停手去回应）。
+            // 处理完（消费掉 `chat.pending`）自然回到原来的挖矿/判定循环 —— 这就是 §4.8 说的
+            // "策略之间的无缝流程由原行为树包承担"。
+            PackageValue chat = ChatBranch();
+
             PackageValue tree = Node("root", "Root", Obj("loop", Bool(true)), null, null, Arr(
-                Node("sel", "Selector", null, null, null, Arr(
+                Node("sel", "Selector", null, null, Arr(ChatWatchService()), Arr(
+                    chat,
                     onActionFail,
                     standby,
                     fallback,
@@ -1092,6 +1227,357 @@ namespace PlayerAiMod
                 + "模型只给枚举，脚本映射与时长/角度都在 C#（§4.9）；Cooldown 2.5 s 是决策节奏；"
                 + "动作失败会写 action.fail 并由 on_action_fail 分支记账 + 清标记。",
                 manifest, tree);
+        }
+
+        // ---------------------------------------------------------------- 聊天优先分支（2026-09-26）
+
+        /// <summary>
+        /// **聊天优先分支**：有人在聊天里说话 → 判定意图 → 执行 → 消费掉，然后回到原来的循环。
+        ///
+        /// 形状（四段，各自只做一件事）：
+        ///
+        ///     Sequence.chat      [decorator: chat.pending == true, observerAborts=LowerPriority]
+        ///       services: ChatWatch(prefix=chat., targetKey=chat.target)
+        ///       ├─ Selector  ask_or_skip
+        ///       │    ├─ Sequence [chat.intent == ""] → Task.LayaAsk(chat_intent, digestKey=chat.digest)
+        ///       │    └─ Task.Wait(0.01)                      ← 短语表已命中，不必问模型
+        ///       ├─ Selector  dispatch                        ← 装饰器 observerAborts=Self
+        ///       │    ├─ do_ignore / do_stop / do_follow / do_come（都要 chat.targetIsSet）
+        ///       │    └─ 兜底：记一行"判不出意图"
+        ///       └─ Sequence  consume：清 intent / bank / digest / pending
+        ///
+        /// 三个"为什么"：
+        ///   · **`chat.pending` 单独立一个键**：兜底路径下 `chat.intent` 是空的（要先去问模型），
+        ///     "空"不能同时表示"没事"和"待问"；
+        ///   · **意图装饰器 `observerAborts=Self`**：这样"跟着我"跑到一半收到"停"能**立刻**
+        ///     中断那一支（`Task.FollowEntity` 的 OnExit 会松开移动键）；
+        ///   · **要不要目标由装饰器把住**：`chat.targetIsSet == true` 才让 come/follow 起跑，
+        ///     否则会掉进"每 tick 起一次必失败的跟随"（日志刷屏、动作全废）。
+        /// </summary>
+        private static PackageValue ChatBranch()
+        {
+            // ① 兜底：短语表没命中 → 拿"那句话"问一次模型。
+            //    `onUnavailable=default` + `ignore`：模型不可用时**宁可不动**，也不要瞎跑。
+            PackageValue ask = Node("chat_ask", "Task.LayaAsk", Obj(
+                "questions", Str(QuestionBank.ChatIntentFileName),
+                "digestKey", Str("chat.digest"),
+                "answerKeys", Str("chat.intent:chat_intent:str"),
+                "only", Str("chat_intent"),
+                "onUnavailable", Str("default"),
+                "defaultValue", Str(ChatIntents.Ignore),
+                "writeFailKey", Bool(false)));
+
+            PackageValue askOrSkip = Node("chat_ask_or_skip", "Selector", null, null, null, Arr(
+                Node("chat_ask_branch", "Sequence", null,
+                    Arr(CompareDecorator("d_chat_needs_ask", "chat.intent", "string", "==",
+                        Str(string.Empty), "None")),
+                    null, Arr(ask)),
+                Node("chat_ask_skip", "Task.Wait", Obj("seconds", Num(0.01)))));
+
+            // ② 意图分派。注意顺序：`ignore` 在最前（它是"别理我"），到不了的分支自然跳过。
+            var dispatchChildren = new List<PackageValue>
+            {
+                ChatIntentBranch(ChatIntents.Ignore, "ignore (not an instruction for it)", false),
+                ChatIntentBranch(ChatIntents.Stop, "stop -> stand still", false),
+                // 打猎排在 stop 之后（"别打" 已被 stop 用否定词吃掉）、follow/come 之前
+                ChatHuntBranch(),
+                ChatIntentBranch(ChatIntents.Follow, "follow -> keep following the speaker", true),
+                ChatIntentBranch(ChatIntents.Come, "come -> walk to the speaker and stop near them", true),
+                // 兜底：模型答了闭集之外的 key（理论上被 answerKeys 的类型校验挡住，
+                // 但那一步失败会走 onUnavailable=default → ignore；这里只是"绝不让整支卡住"）
+                Node("chat_unknown", "Sequence", null, null, null, Arr(
+                    Node("chat_unknown_log", "Task.Log", Obj(
+                        "message", Str("demo.laya: chat -> could not tell what it wants; ignoring")))))
+            };
+            PackageValue dispatch = Node("chat_dispatch", "Selector", null, null, null,
+                Arr(dispatchChildren.ToArray()));
+
+            // ③ 消费掉这一次指令（顺序无所谓，但 `pending` 必须最后清）。
+            PackageValue consume = Node("chat_consume", "Sequence", null, null, null, Arr(
+                Node("chat_clear_intent", "Task.SetBlackboard", Obj(
+                    "key", Str("chat.intent"), "valueKind", Str("string"), "value", Str(string.Empty))),
+                Node("chat_clear_bank", "Task.SetBlackboard", Obj(
+                    "key", Str("chat.bank"), "valueKind", Str("string"), "value", Str(string.Empty))),
+                Node("chat_clear_digest", "Task.SetBlackboard", Obj(
+                    "key", Str("chat.digest"), "valueKind", Str("string"), "value", Str(string.Empty))),
+                // 打猎的参数与"锁定物种"也要清：换一条指令就该换物种，
+                // 否则下一句"打狼"会接着打上一句锁定的牛
+                Node("chat_clear_arg", "Task.SetBlackboard", Obj(
+                    "key", Str("chat.arg"), "valueKind", Str("string"), "value", Str(string.Empty))),
+                Node("chat_clear_species", "Task.SetBlackboard", Obj(
+                    "key", Str("hunt.species"), "valueKind", Str("string"), "value", Str(string.Empty))),
+                Node("chat_clear_species_arg", "Task.SetBlackboard", Obj(
+                    "key", Str("hunt.speciesArg"), "valueKind", Str("string"), "value", Str(string.Empty))),
+                Node("chat_clear_pending", "Task.SetBlackboard", Obj(
+                    "key", Str("chat.pending"), "valueKind", Str("bool"), "value", Bool(false)))));
+
+            return Node("chat", "Sequence",
+                null,
+                Arr(CompareDecorator("d_chat_pending", "chat.pending", "bool", "==", Bool(true),
+                    "LowerPriority")),
+                // ⚠️ **服务不挂在这里**（挂在根本没有激活的分支上就不会 tick —— 这是实测踩到的：
+                //    "服务只在活动路径上跑"，于是 `chat.pending` 永远不被写、这一支永远进不来）。
+                //    它挂在根 Selector 上，与 `UpdateNearestPlayer` / `Service.ObserveState` 同一个位置。
+                null,
+                Arr(askOrSkip, dispatch, consume));
+        }
+
+        /// <summary>
+        /// **聊天监听服务**的节点定义（挂在**根 Selector** 上，不是挂在聊天分支上）。
+        ///
+        /// 为什么位置这么重要：行为树的服务**只在活动路径上 tick**。挂在 `chat` 分支上时，
+        /// 该分支的守卫条件（`chat.pending == true`）恰恰要靠这个服务去写 ——
+        /// 于是"没写 → 分支不激活 → 服务不跑 → 没写"的**死锁**（2026-09-26 实测踩到：
+        /// `dev.chat.inject` 注入成功、黑板里却什么都没有）。
+        /// </summary>
+        private static PackageValue ChatWatchService()
+        {
+            // ⚠️ **必须包在 `properties` 里**：包的**服务**格式是
+            // `{id, type, interval?, randomDeviation?, tickOnActivation?, properties:{…}}`
+            // （`ScbtTree.ParseService` 只消费这几个字段、`TreeCompiler` 也是拿 `doc.Properties`
+            //  再逐字段读）。`ServiceEntry` 是"把 body 的成员摊到服务对象上"，
+            // 所以把参数摊平写会变成**顶层** `prefix`/`targetKey`/… —— 校验器当场报
+            // `unknown field 'prefix' (ignored; check spelling)`，属性也被静默忽略（走默认值）。
+            // 2026-09-26 实测踩到（`PackageSelfTest` 的"出厂包零告警"那条把它逮住了）。
+            return ServiceEntry("svc_chat", "ChatWatch", Obj("properties", Obj(
+                "prefix", Str("chat."),
+                "targetKey", Str("chat.target"),
+                "useFallback", Bool(true),
+                "fallbackBank", Str(QuestionBank.ChatIntentFileName.Replace(".qbank", string.Empty)),
+                "clearWhenMissing", Bool(true))));
+        }
+
+        /// <summary>
+        /// 一支意图分支：`chat.intent == &lt;intent&gt;` →（可选要求有目标）→ 记一行 → 执行。
+        /// 装饰器用 `observerAborts=Self`：意图一变就中断这一支（"停"能打断"跟着我"）。
+        /// </summary>
+        private static PackageValue ChatIntentBranch(string intent, string note, bool requireTarget)
+        {
+            var decorators = new List<PackageValue>
+            {
+                CompareDecorator("d_chat_" + intent, "chat.intent", "string", "==", Str(intent), "Self")
+            };
+            if (requireTarget)
+            {
+                decorators.Add(CompareDecorator("d_chat_" + intent + "_target", "chat.targetIsSet",
+                    "bool", "==", Bool(true), "Self"));
+            }
+
+            var children = new List<PackageValue>
+            {
+                Node("chat_" + intent + "_log", "Task.Log", Obj(
+                    "message", Str("demo.laya: chat -> " + note)))
+            };
+            if (string.Equals(intent, ChatIntents.Come, StringComparison.Ordinal))
+            {
+                // **一次性到达**：走到 2 格内就 Success（这一支做完就回去干原来的事）
+                children.Add(Node("chat_come_go", "Task.FollowEntity", Obj(
+                    "targetKey", Str("chat.target"),
+                    "keepDistance", Num(2f),
+                    "arriveThenSucceed", Bool(true),
+                    "timeout", Num(30f))));
+            }
+            else if (string.Equals(intent, ChatIntents.Follow, StringComparison.Ordinal))
+            {
+                // 持续跟随：没有超时，直到收到"停"（靠装饰器的 Self 中断让位）
+                children.Add(Node("chat_follow_go", "Task.FollowEntity", Obj(
+                    "targetKey", Str("chat.target"),
+                    "keepDistance", Num(2f),
+                    "timeout", Num(0f))));
+            }
+            else if (string.Equals(intent, ChatIntents.Stop, StringComparison.Ordinal))
+            {
+                // "停"不需要额外动作：上一支（跟随/挖矿）被中断时 OnExit 已经松开了输入。
+                // 这里只是**占住一拍**，让人看得出它确实停下来了（日志 + 短暂等待）。
+                children.Add(Node("chat_stop_wait", "Task.Wait", Obj("seconds", Num(1))));
+            }
+            // ignore：只有日志，什么都不做（这一支成功结束 → 消费 → 回到原循环）
+
+            return Node("chat_do_" + intent, "Sequence", null,
+                Arr(decorators.ToArray()), null, Arr(children.ToArray()));
+        }
+
+        // ---------------------------------------------------------------- 打猎分支（2026-09-26）
+
+        /// <summary>打猎时找生物的半径（米）：牛群一般就在视野里，48 格够用且不会跨半张地图。</summary>
+        public const float HuntRadius = 48f;
+
+        /// <summary>
+        /// 靠近目标的超时（秒）。
+        ///
+        /// 攻击步骤只会"闷头按 W"（没有寻路），所以**走远路必须由这一步的 A* 负责**：
+        /// 20 米外只给 8 秒的话，会在半路被地形卡住（2026-09-26 实测停在 16 米不动）。
+        /// 到了 2 格内它就 Success（不白等），所以给足 30 秒不亏。
+        /// </summary>
+        public const float HuntApproachTimeout = 30f;
+
+        /// <summary>
+        /// 攻击时"够得着"的判定距离（米）。
+        ///
+        /// ⚠️ **近战其实只有 2 米**：`ComponentPlayer.cs:237` 只有在
+        /// `Distance(命中点, 眼睛) &lt;= 2f` 时才真的调 `ComponentMiner.Hit(...)` ——
+        /// 这是**命中点**到眼睛的距离，不是两个身体中心的距离，所以站位要比 2 米再近一点点。
+        /// 2026-09-26 实测：站在 3.0 米能打死牛，站在 4.4 米**一刀都不落**（一直空挥、动物掉血为 0）。
+        /// 取 2.5 米：默认的 `KeepDistance=2` 把身体带到 ~2 米，这个值只负责"再往前贴一点"。
+        /// </summary>
+        public const float HuntAttackRange = 2.5f;
+
+        /// <summary>
+        /// 打猎时的连点间隔（秒）。
+        ///
+        /// **必须大于引擎的攻击冷却 0.66 秒**（`ComponentMiner.cs:295`）—— 冷却内的挥击会被
+        /// **整个丢掉**（不是少打一点）。默认值 0.6 正好踩在这个坑里：动物血量恒定不掉，
+        /// 看着像"没打中"，其实是"一次都没生效"（2026-09-26 实测）。
+        /// 0.75 秒留了 0.09 秒余量，按 60 fps 也经得起一帧抖动。
+        /// </summary>
+        public const float HuntClickInterval = 0.75f;
+
+        /// <summary>
+        /// 整场打猎的上限（秒）。**随时可被打断**：新来一条聊天指令会靠
+        /// `d_chat_hunt` 的 `observerAborts=Self` 当场中断这一支（"停"一句话就能收手）。
+        ///
+        /// ⚠️ 注意这里**没有**"单只打多久"的预算了：用户 2026-09-26 明确要求
+        /// "不需要设置打死的时间，只需要检查动物是否打死" —— 于是 `Task.Attack` 用
+        /// `timeout=0`（不限时）+ 血量判定（`healthProbe` + `killedKey`），
+        /// 一只没打死就一直打。这个总上限只是"别把一整局都耗在一件事上"的保险。
+        /// </summary>
+        public const float HuntLoopTimeout = 600f;
+
+        /// <summary>
+        /// **打猎分支**：`chat.intent == hunt` → 按名字找最近的那只 → 靠近 → 打死 → 捡掉落 →
+        /// 附近还有同种就继续，打完回主循环。
+        ///
+        /// 四个"为什么"：
+        ///   · **物种词由 C# 表解析**（`animals.json` → `ChatAnimalAliases.Expand` → 按名找生物），
+        ///     不让模型编物种 —— 模型答一个树里没有的动物就是"答了却什么都不发生"（§4.7）；
+        ///   · **`chat.arg` 为空就不进这一支**（装饰器把门）："帮我打一下"没说打什么时宁可什么都不做，
+        ///     也不能拿"最近的任意生物"顶替 —— 那可能是一只熊；
+        ///   · **服务挂在这一支的 Sequence 上、Loop 之外**：它要在整个打猎期间持续刷新目标；
+        ///   · **`ForceSuccess` 包住 `Loop`**：附近压根没有那种动物时 Loop 会判 `Failed`，
+        ///     而"没得打"不算执行失败 —— 否则分派 Selector 会掉到"判不出意图"那条兜底日志上（误导）。
+        /// </summary>
+        private static PackageValue ChatHuntBranch()
+        {
+            PackageValue update = ServiceEntry("svc_hunt", "UpdateNearestCreature", Obj("properties", Obj(
+                "targetKey", Str("hunt.target"),
+                // 按名找：候选词来自 `Service.ChatWatch` 抠出来的 `chat.arg`
+                "nameKey", Str("chat.arg"),
+                // 打中第一只后把它的名字锁在这里 → 下一轮还是同一种（"附近还有同种就继续"）
+                "speciesKey", Str("hunt.species"),
+                "maxDistance", Num(HuntRadius),
+                "clearWhenMissing", Bool(true))));
+
+            // 一轮 = 有目标才动（没目标就失败 → 结束循环）→ 换武器 → 靠近 → 打死 → 回传
+            PackageValue round = Node("hunt_round", "Sequence", null,
+                Arr(CompareDecorator("d_hunt_has_target", "hunt.targetIsSet", "bool", "==",
+                    Bool(true), "None")),
+                null,
+                Arr(
+                    Node("hunt_kill", "Sequence", null, null, null, Arr(
+                        // **先换武器再打**：空手/拿方块打大牲口几乎打不动（用户 2026-09-26 要求）。
+                        // `required=false`：拿不到刀也照打，只是慢（日志里会写清为什么）
+                        Node("hunt_weapon", "Task.EquipWeapon", Obj(
+                            "priority", Str(PlayerEquipment.DefaultPriority),
+                            "allowCreativeGrab", Bool(true),
+                            "weaponKey", Str("hunt.weapon"),
+                            "required", Bool(false))),
+                        // 靠近：A* 寻路把自己带到 2 格内（**到了就算成功**，别白等超时）。
+                        // ⚠️ 必须套 `ForceSuccess`：`FollowEntity` 到点会判 **Failed**，
+                        //    而 Sequence 里一个 Failed 就会**中断后面所有步骤** ——
+                        //    于是攻击步骤永远轮不到，表现是"每 8 秒重开一轮、一次都没挥"（实测踩到）。
+                        // ⚠️ 超时也要够长：攻击步骤只会"闷头按 W"（没有寻路），
+                        //    20 米外光靠它会被地形卡住（实测停在 16 米不动）—— 走远路由这一步负责。
+                        Node("hunt_approach", "Task.FollowEntity", Obj(
+                            "targetKey", Str("hunt.target"),
+                            "keepDistance", Num(2f),
+                            "arriveThenSucceed", Bool(true),
+                            "timeout", Num(HuntApproachTimeout)),
+                            Arr(ForceSuccessDecorator("d_hunt_approach_soft")), null, null),
+                        // **不限时**（`timeout=0`）：打死与否看血量，不看钟表 —— 用户明确要求。
+                        // `clickInterval=0.75` 必须**大于引擎 0.66 秒的攻击冷却**（`ComponentMiner.cs:295`），
+                        // 否则每次挥击都被冷却丢掉、伤害恒为 0（2026-09-26 实测踩到，见 §9.5.53）
+                        Node("hunt_attack", "Task.Attack", Obj(
+                            "targetKey", Str("hunt.target"),
+                            "range", Num(HuntAttackRange),
+                            "timeout", Num(0f),
+                            "clickInterval", Num(HuntClickInterval),
+                            "healthProbe", Bool(true),
+                            "killedKey", Str("hunt.killed"))))),
+                    // 回传：把"打死没有"落成 hunt.result / hunt.kills + 事件日志
+                    Node("hunt_report", "Task.HuntReport", Obj(
+                        "killedKey", Str("hunt.killed"),
+                        "speciesKey", Str("hunt.species"),
+                        "countKey", Str("hunt.kills"),
+                        "resultKey", Str("hunt.result"),
+                        "summary", Bool(false))),
+                    // 打完捡掉落：调**独立的捡取包**（不在这里重写一遍"走过去"）
+                    Node("hunt_loot", "Task.Subtree", Obj(
+                        "package", Str(PickupPackageId + "#root")))));
+
+            return Node("chat_do_hunt", "Sequence", null,
+                Arr(
+                    CompareDecorator("d_chat_hunt", "chat.intent", "string", "==",
+                        Str(ChatIntents.Hunt), "Self"),
+                    CompareDecorator("d_chat_hunt_arg", "chat.arg", "string", "!=",
+                        Str(string.Empty), "Self")),
+                Arr(update),
+                Arr(
+                    Node("chat_hunt_log", "Task.Log", Obj(
+                        "message", Str("demo.laya: chat -> hunt the named animal (nearest first, "
+                            + "keep going while the same species is around)"))),
+                    Node("chat_hunt_repeat", "Sequence", null,
+                        // ⚠️ **顺序有讲究：`ForceSuccess` 在前、`Loop` 在后** —— 装饰器数组是
+                        //    "外 → 内"，`ModifyResult` 由**内向外**跑。写反了（Loop 在外、ForceSuccess 在内）
+                        //    会让"没目标"的 Failed 先在里层被改成 Succeeded，Loop 便以为这一轮成功了：
+                        //    于是"附近没有那种动物"时它空转整整 10 分钟、**一条回传都不发**
+                        //    （2026-09-26 实测：activePath 停在 chat_do_hunt 不动）。
+                        //    现在：没目标 → 里层 Loop 收到 Failed 就停 → 外层 ForceSuccess 收成 Succeeded
+                        //    → 继续走下面的总结回传。
+                        Arr(ForceSuccessDecorator("d_hunt_soft"),
+                            LoopForeverDecorator("d_hunt_loop", HuntLoopTimeout)),
+                        null,
+                        Arr(round)),
+                    // 收尾回传：打了几只、有没有打空，落成一句话给人和日志看
+                    Node("chat_hunt_summary", "Task.HuntReport", Obj(
+                        "killedKey", Str("hunt.killed"),
+                        "speciesKey", Str("hunt.species"),
+                        "countKey", Str("hunt.kills"),
+                        "resultKey", Str("hunt.result"),
+                        "summary", Bool(true))),
+                    Node("chat_hunt_done", "Task.Log", Obj(
+                        "message", Str("demo.laya: hunt finished (see hunt.result / hunt.kills / hunt.weapon)")))));
+        }
+
+        /// <summary>`Loop` 装饰器：把子树反复跑，直到它失败或到时间上限（防止无限打下去）。</summary>
+        private static PackageValue LoopForeverDecorator(string id, float timeoutSeconds)
+        {
+            return Obj("id", Str(id), "type", Str("Loop"),
+                "observerAborts", Str("None"),
+                "properties", Obj(
+                    "numLoops", Num(1),
+                    "infiniteLoop", Bool(true),
+                    "infiniteLoopTimeoutSeconds", Num(timeoutSeconds)));
+        }
+
+        /// <summary>`ForceSuccess`：把 `Failed` 变 `Succeeded`（"没得打"不是执行失败）。</summary>
+        private static PackageValue ForceSuccessDecorator(string id)
+        {
+            return Obj("id", Str(id), "type", Str("ForceSuccess"),
+                "observerAborts", Str("None"), "properties", Obj());
+        }
+
+        /// <summary>`Blackboard` 比较装饰器（`query=Compare`）——聊天分支里用得最多，抽出来免得抄错。</summary>
+        private static PackageValue CompareDecorator(string id, string key, string valueKind,
+            string op, PackageValue value, string abortMode)
+        {
+            return Obj("id", Str(id), "type", Str("Blackboard"),
+                "observerAborts", Str(abortMode),
+                "properties", Obj(
+                    "key", Str(key),
+                    "query", Str("Compare"),
+                    "valueKind", Str(valueKind),
+                    "operator", Str(op),
+                    "value", value));
         }
 
         /// <summary>

@@ -2697,3 +2697,215 @@ manifest / 语义事件 / 帧轨按键 / 视角累计漂移（纯 UI 包必须�
 4. 配置外置：按 CmdBridgeConfig 的模式改成 JSON。
 5. 其余任务族（还没做的）：合成/配方（可先用 `Task.UiClick` + UI 拾取走界面）、
    容器与背包搬运（拖拽是 `InventorySlotWidget` 的两步操作）、睡觉/坐骑这类长动作。
+
+### 9.5.51 摘要规格是**数据**：改判定输入不用重编译（2026-09-26，`PlayerAiMod 0.5.46 → 0.5.47`）
+
+**一句话**：喂给 Laya 的**状态摘要字段表**（用哪些事实、什么顺序、档位标签与阈值、进不进上线、两份预算）
+从 C# 硬编码搬到了 `<实例根>/PlayerAi/Digest/world.digest.json`，**带文件戳热重载** ——
+改判定输入从此是改文件，不是重编译整个 Mod。
+
+三层数据 + 一处代码（边界要记牢）：
+
+| 层 | 文件 | 能不能在线改 |
+|---|---|---|
+| 看什么（摘要） | `PlayerAi/Digest/*.digest.json` | ✅ 改完下一次判定就生效 |
+| 问什么（选项） | `PlayerAi/Questions/*.qbank` | ✅ 按文件戳热重载（G18） |
+| 落到什么动作 | `PlayerAi/BehaviorTrees/*.scbtpak` + `Scripts/*.aeact` | ✅ 热重载 / `ai.edit.*` / `ai.tree.export` |
+| **事实本身**（`health` / `aim` / `screen` …） | `State/DigestFacts.cs` | ❌ 新增事实要编译（与 verb 词表同一个边界） |
+
+**常用命令**
+
+```bash
+sccmd raw ai.digest.status                     # 现状：来源文件/版本/哈希/changedOnDisk/预算/逐字段的档位与条件（只读）
+sccmd raw ai.digest.reload                     # 改完 JSON 立刻重读（不等下一次判定）
+sccmd raw state.digest wire=true               # 现在会发上线的那一行（budget= 可覆盖；不带 wire 看人工/复盘那份）
+```
+
+**改一个例子的完整动作**（把"手持物品"从上线摘掉，并放宽上线预算）：
+
+```jsonc
+// PlayerAi/Digest/world.digest.json
+"budgets": { "wire": 44, "rich": 200 },
+{ "key": "hold", "source": "holding", "format": "text", "wire": "never" }
+```
+
+→ 不重启：`state.digest wire=true` 立刻从 `aim=Snow@2.45 hold=OakWood` 变成
+`aim=Snow@2.45 day=28/10h season=Autumn`（多出来的预算把 `day`/`season` 放进来了），
+`ai.logs` 里出现 `[digest-reload]` 一行，`ai.laya.status` 的指纹随之变化（旧答案缓存不复用）。
+
+**四条纪律（踩过才知道）**
+
+1. **预算以规格文件为准**：`Laya.local.json` 的 `stateChars` 只在规格把 `budgets.wire` 写成 0 时兜底；
+   `ai.digest.status` 的 `budgetSource` 会写明"现在谁说了算"（一个值两个来源 = 改了不生效，最难查）。
+2. **缺文件不算错**：退回内置默认规格（空实例照样跑）；**解析失败也绝不半生效** ——
+   拒用新文件、继续用上一份好规格，日志一行 `rejected … (keeping the previous spec)`。
+3. **诊断命令只读**：`ai.digest.status` 不刷新，所以"改了还没被读"看得见（`changedOnDisk=true`）；
+   刷新只发生在下一次判定或显式 `ai.digest.reload`（A44 的纪律）。
+4. **改工厂默认要删实例文件**：`Install` 是"缺什么补什么、绝不覆盖"，所以改了内置默认规格后，
+   实例里那份旧文件不会被顶掉（A36 的老坑）；想用新的就删掉 `PlayerAi/Digest/world.digest.json` 再重启。
+
+**schema / 条件语言 / 等价性证据 / 四个坑**：见 `doc/laya-action-layer-plan.md` 的
+「摘要字段表数据化」（含 golden 摘要字符串、`DigestSelfTest` 69 条、以及 A60~A63）。
+
+**编辑器面板：侧栏「摘要规格」**（`PlayerAiEditor`，与"资源库 / Laya 决策服务 / 判定复盘"并列）
+
+| 控件 | 做什么 | 走哪条路 |
+|---|---|---|
+| 刷新 | 看当前生效规格：id / 版本 / 内容哈希 / 来源文件 / **`changedOnDisk`** / 预算与"预算谁说了算" / 逐字段的 `source`、`format`、档位、rich·wire 条件 | `GET /api/digest/status` → 游戏 `ai.digest.status`（**只读，不刷新**） |
+| 重载 | 改完 JSON 立刻重读，不必等下一次判定 | `GET /api/digest/reload` → `ai.digest.reload`（**回包自带 `ok`，编辑器不许把它改成 true**） |
+| 预览 | 看"现在会发出去的那一行"（可填预算、可切 wire/rich 两份） | `GET /api/digest?budget=N&wire=…` → `state.digest` |
+
+- **离线行为**：游戏没在跑时角标写"游戏未连上"，**不把 `reason`（多半是本地化的 socket 文案）写进 DOM**，
+  与资源库/复盘面板同一条纪律；英文界面下所有文案走 `L()` + `data-i18n`，被整页中文扫描覆盖。
+- **为什么面板只读游戏侧**：`changedOnDisk` / `lastError` / "当前生效的是哪一份"只存在于游戏进程里
+  （编辑器虽然也编了 `DigestCatalog`，但那份状态是编辑器自己的，不是游戏正在跑的那一份）。
+
+### 9.5.52 行为树监听聊天：`过来` → 走到发话者面前（2026-09-26）
+
+**一句话**：聊天里说一句「过来」，AI 会把这句话当成一次**判定输入**，走过来在 ~2 格处站住；
+「跟着我」持续跟随、「停」站住不动；短语表没命中时由 Laya 兜底判一次。
+
+**链路（三段各管一件事）**
+
+```
+ScMP 聊天 ──DisplaySmallMessage("名字: 正文")──► CmdBridge 的小提示观察（只读）
+   └► ChatObserver：按"已知名字 + ': '"切分 · 在场/离场去重 · 单调 seq · isSelf/isSystem
+        └► 门面 DescribeChat(sinceSeq) / 命令 obs.chat
+             └► Service.ChatWatch：增量消费 → 短语表匹配 → 黑板 chat.*
+                  └► demo.laya 根 Selector **最前面**的聊天分支：come / follow / stop / ignore
+```
+
+**为什么不用碰 ScMultiplayer**：ScMP 的聊天走的就是引擎自己的显示路径，而"读小提示"本 Mod 早有一份实现
+（`MessageObserver`）—— 于是聊天观察 = 在小提示里**认出哪几条是聊天**，一行 ScMP 都不用改。
+
+**新增面**
+
+| 类型 | 名字 | 作用 |
+|---|---|---|
+| 观察 | `obs.chat` | 最近的聊天行 + `seq` + `localName` + **`roster`**（两张玩家名单：名字/索引/坐标） |
+| 调试 | `dev.chat.inject text=… [sender=…]` | 凭空塞一条聊天（只进观察层队列，不发网络消息）—— 让"监听→动作"可重复验证 |
+| 服务 | `Service.ChatWatch` | 读聊天 → 短语表 → 写 `chat.intent/chat.target/chat.pending/chat.digest` |
+| 节点 | `Task.LayaAsk digestKey=…` | 摘要**从黑板取**（聊天兜底把"那句话"当输入，**不污染** `world_goal` 的摘要） |
+| 节点 | `Task.FollowEntity arriveThenSucceed=true` | 到达 `keepDistance` 内即成功（"过来"是**一次性指令**，不是"赖上你"） |
+| 数据 | `PlayerAi/Chat/phrases.json` | 说法 → 意图；**版本 + 内容哈希 + 文件戳热重载**（加话术不用重编译） |
+| 数据 | `PlayerAi/Questions/chat_intent.qbank` | 兜底四选项：`come / follow / stop / ignore`（与 `ChatIntents` 闭集一一对应） |
+
+**加一句指令**：改 `phrases.json` 就行（改完下一次判定即生效，`ai.logs` 里会出现 `[chat-phrases-reload]`）。
+⚠️ **顺序即优先级**：`stop` 必须排在 `come` **前面** —— "别过来/不要过来"里含 `过来`，先判 stop 才不会被当成 come。
+纯 ASCII 短语按**词边界**匹配（`come` 不会命中 `become`），中文按子串匹配。
+
+**五条纪律（都是实测踩出来的）**
+
+1. **服务必须挂在"活动路径"上**：行为树的服务只在活动路径 tick。把 `ChatWatch` 挂在聊天分支上时，
+   分支的守卫条件恰是它写的 ⇒ "不写→不激活→不跑"死锁。挂在**根 Selector**（与 `UpdateNearestPlayer` 同位置）。
+2. **联机时不要按名字重取目标**：ScMP 下**双方显示名可能相同**（本端与远端都叫 `Basil`），
+   `TryFindPlayer` 返回第一个 ⇒ 目标变成自己、`keepDistance` 当场成立、"过来"瞬间"到达"、AI 一动不动。
+   重取必须**核对 `PlayerIndex`**（每个角色唯一），不一致就保留快照，绝不换人。
+3. **别按名字判"这是不是我"**：同上，名字不足以区分；只能靠 `IsSelf` 标记 + 位置重合。
+4. **名单要用 `ComponentPlayers`**：在**客户端**上 `PlayersData` 只有本端一条，远端角色在
+   `ComponentPlayers` 里（有位置、可跟随）。`obs.chat.roster` 把两张表都打出来，就是为了一次看清这件事。
+5. **包的"服务"属性必须写在 `properties` 里**：服务格式是
+   `{id, type, interval?, properties:{…}}`；`ServiceEntry` 是把 body 成员**摊平**到服务对象上的，
+   摊平写会让属性落在顶层 → **被静默忽略（走默认值）** + 校验器报 `unknown field`。
+   （`PackageSelfTest` 那条"出厂包零告警"逮住的。）
+
+**自检**：`ChatPhrasesSelfTest` 41 条（词边界 / 顺序 / 拒坏文件 / 往返哈希 / 热重载 / 安装不覆盖）
++ `obs.selftest` 里 9 条聊天观察断言（切分 / 去重 / seq 单调 / 自己的消息）。
+实测：离线 41/41，游戏内 `bt.selftest` **1514/1514**。
+
+### 9.5.53 聊天打猎：说一句话，换刀去把动物打死，然后回传
+
+**说人话**：在聊天里发「帮我打一下牛」，AI 会**先换武器**（创造模式下自己拿一把**钻石砍刀**，
+生存模式退到背包里近战威力最大的那件）→ 走到最近符合的动物身边 → **一直打到它死**
+→ 捡掉落 → 附近还有同种就继续。打死没有、打了几只，落在**日志 + 黑板 + 事件日志**里。
+
+四段实现，各自只做一件事：
+
+| 段 | 位置 | 干什么 |
+|---|---|---|
+| 意图 + 参数 | `State/ChatPhrases.cs` | `hunt` 进闭集；意图新增 `TakesArgument`，"帮我打一下**牛**"里的"牛"由 `MatchEx` 抠出来 |
+| 物种解析 | `State/ChatAnimalAliases.cs` + `PlayerAi/Chat/animals.json` | 口语词 → 一组能匹配的**生物名**；表里没有的词原样留着，和显示名直接比 |
+| 找目标 | `Actor/PlayerSensor.TryFindNearestCreatureByName` + `Service.UpdateNearestCreature(nameKey/speciesKey/stickyRadius)` | 按名找、**锁定物种**（附近还有同种就继续）、**粘住当前目标** |
+| 换刀 / 打死 / 回传 | `Actor/PlayerEquipment.cs`、`Task.EquipWeapon`、`Task.Attack`、`Task.HuntReport`、`pickup.scbtpak` | 拿刀 → 靠近 → 连点到死 → 捡掉落 → 写成 `hunt.result` |
+
+**六个坑（全是 2026-09-26 实测踩出来的，按严重程度排）**：
+
+1. **SC 的近战有 0.66 秒冷却，冷却内的挥击是"整个丢掉"**（`ComponentMiner.cs:295`）。
+   `Task.Attack` 原来的默认连点是 **0.6 秒** —— 每一次都正好落在冷却里，
+   于是"打了半天动物血量纹丝不动"。看着像没瞄准，其实是**一次都没生效**。
+   连点间隔必须 > 0.66（现在默认 **0.75**，`PackageSelfTest` 把这条钉住了）。
+   诊断这一条靠的是给 `Task.Attack` 加的**限频血量回传**（每秒一条）：
+   没有它，"伤害太低"和"根本没挥中"根本分不开。
+2. **`hunt_kill` 里一个 `Failed` 会吃掉后面所有步骤**：`FollowEntity` 到点判失败
+   ⇒ Sequence 中断 ⇒ **攻击步骤永远轮不到**（表现：每 8 秒重开一轮、一次都没挥）。
+   靠近那一步必须套 `ForceSuccess`："能走近就用这段时间，走不近也接着打"。
+   同理，挨着的那条"必须走到 2 格内才算到达"也不行 —— 动物会躲，永远不满足。
+3. **"每 tick 取最近的"会摊薄伤害**：牛是成群的，`Service` 每 tick 重挑最近的一只，
+   血量在两头牛之间来回跳（实测 0.37 ↔ 1.0），一头也打不死。
+   按名查找因此新增 `preferred` 参数：**上一个目标还在 6 米内就还是它**，丢了才换。
+4. **服务属性必须写在 `properties` 里**（A68 同款坑，`nameKey`/`speciesKey`/`stickyRadius` 都踩过一遍）。
+5. **`context.Sensors` 不是 `PlayerSensor`，是 `ControllerSensor`**：
+   任务里直接 `as PlayerSensor` 恒为 null ⇒ 换刀任务"跑了、什么都不做、也不报错"。
+   新增 `IAiSensorWrapper` + `PlayerEquipment.FindPlayerSensor()` 一路剥到真实观察层。
+6. **`context.Warn` 不进 `PlayerAi.log`**（`Log` 进）。要能看见的原因一律用 `Log` ——
+   这条是排查"为什么没换上武器"时发现的，`Warn` 写的那行压根不在日志里。
+
+**创造模式拿刀是引擎自带玩法**：原版"中键取方块"（`ComponentPlayer.cs:304-330`）就是
+"快捷栏找同物品槽 → 找空槽 → 都没有就用当前槽 → `RemoveSlotItems` + `AddSlotItems(1)` + 设活动槽"。
+`PlayerEquipment` 走的是同一条路（`IInventory` 公开接口），只是"取什么"由 AI 决定。
+SC 里没有 "Sword"，近战武器是**砍刀 Machete**，钻石那把是 `DiamondMacheteBlock` —— 用户说的"钻石刀"就是它。
+
+**回传**（用户要求"检查动物是否打死，回传就行了"）：
+`Task.Attack` 边打边采 `ComponentHealth.Health`（0..1，到 0 即死亡），目标键消失时判定并写
+`hunt.killed`；`Task.HuntReport` 落成 `hunt.result`（人读的一句话）、`hunt.kills`（本次打了几只）
+和事件日志一行 `hunt`。**不设打死的时间**：`Task.Attack` 的 `timeout=0` = 不限时。
+
+**可复用的捡取包**：`pickup.scbtpak`（`Task.Subtree package=pickup#root`）。
+SC 的掉落物**靠近即自动拾取**，所以这个包的 KPI 就是"走到 1 格内"；
+它同时可以 `ai switch pickup` 单独跑，变成"见什么捡什么"。
+
+**自检**：`ChatAnimalAliasesSelfTest` 41 条（扩展 / 匹配规则 / 拒坏文件 / 往返 / 热重载 / 同目录不串味）
++ `PackageSelfTest` 里打猎分支的结构断言（守卫 / 服务参数 / **不限时** / **连点间隔 > 0.66** /
+换刀在攻击之前 / 回传节点 / 捡取包引用 / 收尾清理）+ 武器表（**这把刀必须真的存在**）。
+实测：游戏内 `bt.selftest` **1615/1615**。
+
+**实机验收（2026-09-26，已跑通两条路）**：
+
+```
+# ① 打死了一只 —— 判定 + 回传 + 计数
+[tree] EquipWeapon: diamond_machete -> slot 2 (creative grab)
+[tree] Attack: 'Black Cow' health reached 0 -> KILLED
+[tree] HuntReport: killed Black Cow (total 1)
+[hunt] killed Black Cow (total 1)          ← 事件日志（sccmd raw ai.logs 可读）
+黑板： hunt.killed=true  hunt.kills=1  hunt.result="killed Black Cow (total 1)"
+
+# ② 附近没有那种动物 —— 不瞎打，立刻回传并回主循环
+[tree] HuntReport: nothing killed
+[hunt] nothing killed
+[tree] demo.laya: hunt finished (see hunt.result / hunt.kills / hunt.weapon)
+黑板： hunt.result="nothing killed"
+```
+
+**又踩出来的五个坑（都已在代码注释里钉住）**：
+
+7. **近战其实只有 2 米**：`ComponentPlayer.cs:237` 只在
+   `Distance(命中点, 眼睛) <= 2f` 时才真的调 `ComponentMiner.Hit(...)` ——
+   是**命中点**到眼睛，不是两个身体中心的距离。实测站在 3.0 米能打死牛、站在 4.4 米**一刀不落**。
+   攻击半径因此取 2.5（原来的 4 / 4.5 都是在空挥）。
+8. **名字是子串匹配，`牛` 会命中 "Bull Shark"**：实测"帮我打一下牛"跑去追鲨鱼。
+   物种表因此加了 `category`（land/water/bird），`CategoryMaskOf` 给出掩码再筛一遍类别 ——
+   `animals.json` 里每个物种现在都带类别。
+9. **生物没有稳定身份 ⇒ 目标和血量采样会串到旁边那只**：引擎不公开 `Entity.Id`，
+   于是传感器自己发**令牌**（`AiActorView.Token` → 那一具身体）：
+   令牌查得到就是"还是它"，查不到才是"死了/没了"。修之前血量在两头牛之间跳、一头都打不死。
+10. **装饰器数组是"外 → 内"，`ModifyResult` 由内向外跑**：`[Loop, ForceSuccess]` 会让
+    "没目标"的 Failed 先在里层变成成功，Loop 以为这一轮成功了 ——
+    表现是"附近没有那种动物"时**空转 10 分钟、一条回传都不发**（activePath 停在 `chat_do_hunt`）。
+    正确写法是 `[ForceSuccess(外), Loop(内)]`，`PackageSelfTest` 把顺序钉住了。
+11. **致命一击那一帧实体就没了**：最后一次采到的是"死前的血量"，按 `== 0` 判会误报"跑了"。
+    判定分两级：亲眼见到归零 = 确定；"确实在掉血 + 最后血量已很低 + 掉血在 2.5 秒内" = 推定。
+
+**已知的边界（不算 bug，但要知道）**：追赶/攻击靠"HoldKey(w)"，没有寻路 ——
+远距离那段由 `hunt_approach` 的 A* 负责（30 秒上限）；目标在树后/水里时可能打不动，
+这时它不会硬耗：`HuntLoopTimeout` 到点就收尾回传。
+

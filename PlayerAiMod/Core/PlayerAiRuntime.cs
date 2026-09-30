@@ -165,7 +165,48 @@ namespace PlayerAiMod
                 {
                     string instanceRoot = GameActionServices.ResolveInstanceRoot(this);
                     LayaConfig config = LayaConfig.Load(instanceRoot);
-                    m_laya = new LayaRuntimeService(this, config, LayaRuntimeService.BankDirectoriesFor(instanceRoot));
+                    m_laya = new LayaRuntimeService(this, config,
+                        LayaRuntimeService.BankDirectoriesFor(instanceRoot), true,
+                        LayaRuntimeService.DigestDirectoriesFor(instanceRoot));
+                    // 摘要规格（`.digest.json`）的日志与"换了"回调：接到引擎日志 + 事件日志，
+                    // 于是"改了文件到底生效没有"在 `ai.logs` 里查得到（与 `laya-bank` 同一套口径）。
+                    DigestCatalog.LogSink = delegate(string message)
+                    {
+                        Engine.Log.Information(message);
+                    };
+                    DigestCatalog.Changed = delegate
+                    {
+                        EventLog.Write("digest-reload",
+                            "digest spec changed on disk -> reloaded (hash="
+                            + StateDigestCompiler.SpecHash + ")");
+                    };
+                    // 聊天短语表（`PlayerAi/Chat/phrases.json`）：同一套"戳热重载 + 事件留痕"。
+                    // 加一句指令话术从此是改文件 —— 与摘要规格同一个理由（用户明确要求过：
+                    // "调整判定不该重编译 Mod"）。这里同时把目录接上，否则它永远只用内置默认表。
+                    ChatPhraseCatalog.LogSink = delegate(string message)
+                    {
+                        Engine.Log.Information(message);
+                    };
+                    ChatPhraseCatalog.Changed = delegate
+                    {
+                        EventLog.Write("chat-phrases-reload",
+                            "chat phrases changed on disk -> reloaded (hash="
+                            + ChatPhraseCatalog.Current.SourceHash + ")");
+                    };
+                    ChatPhraseCatalog.Configure(ChatPhraseCatalog.DirectoriesFor(instanceRoot));
+                    // 物种别名表（`PlayerAi/Chat/animals.json`）：同目录、同纪律。
+                    // "打牛" 打谁由它把口语词扩成一组可比的名字（引擎的 CreatureCategory 分不出物种）。
+                    ChatAnimalCatalog.LogSink = delegate(string message)
+                    {
+                        Engine.Log.Information(message);
+                    };
+                    ChatAnimalCatalog.Changed = delegate
+                    {
+                        EventLog.Write("chat-animals-reload",
+                            "chat animal aliases changed on disk -> reloaded (hash="
+                            + ChatAnimalCatalog.Current.SourceHash + ")");
+                    };
+                    ChatAnimalCatalog.Configure(ChatAnimalCatalog.DirectoriesFor(instanceRoot));
                     // §4.12：问题库取不到时送进"四码分流 + 退避 + 熔断"那条链
                     // （编辑器正在原子替换 .qbank 的那一瞬间撞上"读不到"是常态，
                     //   几十毫秒后重取就好；而"校验不过"会被分流成**不重取**）。
@@ -964,6 +1005,27 @@ namespace PlayerAiMod
                         List<string> questionFiles;
                         string questionError;
                         QuestionBankTemplates.Install(gameRoot, out questionFiles, out questionError);
+                        // 出厂摘要规格：`<实例根>/PlayerAi/Digest/world.digest.json`
+                        // （**故意只是"文件版默认"** —— 缺了就补，改过的不动；
+                        //   改判定输入从此是改文件，不是重编译 Mod）
+                        List<string> digestFiles;
+                        string digestError;
+                        DigestSpecTemplates.Install(gameRoot, out digestFiles, out digestError);
+                        if (!string.IsNullOrEmpty(digestError))
+                            Engine.Log.Warning("[PlayerAi][digest] spec install: " + digestError);
+                        else if (digestFiles.Count > 0)
+                            Engine.Log.Information("[PlayerAi][digest] installed " + digestFiles[0]);
+                        // 出厂聊天短语表：`<实例根>/PlayerAi/Chat/phrases.json`
+                        // 与物种别名表 `animals.json`（同样"缺了就补、改过的不动"；
+                        // 加一句指令话术 / 加一种动物从此是改文件）
+                        List<string> chatFiles;
+                        string chatError;
+                        ChatPhraseTemplates.Install(gameRoot, out chatFiles, out chatError);
+                        if (!string.IsNullOrEmpty(chatError))
+                            Engine.Log.Warning("[PlayerAi][chat] phrases install: " + chatError);
+                        else
+                            for (int i = 0; i < chatFiles.Count; i++)
+                                Engine.Log.Information("[PlayerAi][chat] installed " + chatFiles[i]);
                         if (!string.IsNullOrEmpty(questionError))
                             Engine.Log.Warning("[PlayerAi][state] question bank install: " + questionError);
                         if (!string.IsNullOrEmpty(scriptError))

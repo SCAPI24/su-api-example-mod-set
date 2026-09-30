@@ -63,6 +63,8 @@ namespace PlayerAiMod
                 LayaFailLadder(result);
                 FrontDemoDispatch(result);
                 QuestionBankReferences(result);
+                ChatHuntStructure(result);
+                PickupPackage(result);
             }
             catch (Exception exception)
             {
@@ -1658,15 +1660,323 @@ namespace PlayerAiMod
             result.Check("the fallback clears the counter only after the script ran (success-only reset)",
                 runIndex >= 0 && clearIndex > runIndex, "run=" + runIndex + " clear=" + clearIndex);
 
-            // ⑤ 选中顺序：高优先级的兜底必须排在"问模型"之前，否则模型永远赢
+            // ⑤ 选中顺序：**聊天优先 →（失败记账 →）兜底 → 问模型 → 待机**。
+            // 最前面那支 `chat` 是 2026-09-26 加的（聊天指令要能**插队**到挖矿循环之前，
+            // 见 `ChatBranch` 的注释）；其余顺序不变，且兜底仍在"问模型"之前。
             PackageValue sel = FindNodeInTemplate(demo.Tree, "sel");
             PackageValue selChildren = sel != null ? sel.Get("children") : null;
             var order = new List<string>();
             for (int i = 0; selChildren != null && i < selChildren.Count; i++)
                 order.Add(selChildren.Item(i).Get("id").AsString("?"));
             string joined = string.Join(",", order.ToArray());
-            result.Check("seed order is fail -> standby -> fallback -> decide -> idle",
-                joined == "on_action_fail,do_standby,do_fallback,decide,idle", joined);
+            result.Check("seed order is chat -> fail -> standby -> fallback -> decide -> idle",
+                joined == "chat,on_action_fail,do_standby,do_fallback,decide,idle", joined);
+        }
+
+        // ---------------------------------------------------------------- 打猎 + 捡取包（2026-09-26）
+
+        /// <summary>
+        /// **打猎分支的结构**：说"帮我打一下牛"要能走到"按名找 → 靠近 → 打死 → 捡掉落"，
+        /// 而且**物种词由 C# 解析**（服务读 `chat.arg`，模型不参与）。
+        ///
+        /// 结构错的表现是静默的：包能装载、能跑，只是永远找不到目标（或去打了一只别的动物），
+        /// 所以这里把"守卫条件 + 服务参数 + 环路 + 包引用 + 收尾清理"逐条钉住。
+        /// </summary>
+        private static void ChatHuntStructure(BtSelfTest.TestResult result)
+        {
+            PackageTemplate demo = PackageTemplates.LayaDemo();
+            PackageValue hunt = FindNodeInTemplate(demo.Tree, "chat_do_hunt");
+            result.Check("the chat dispatch has a hunt branch", hunt != null && hunt.IsObject);
+            if (hunt == null)
+                return;
+
+            // ①② 守卫：intent == hunt，且 chat.arg 不能是空的（没说打什么就什么都不做）
+            PackageValue decorators = hunt.Get("decorators");
+            var guardKeys = new List<string>();
+            for (int i = 0; decorators != null && i < decorators.Count; i++)
+            {
+                PackageValue properties = decorators.Item(i).Get("properties");
+                guardKeys.Add(properties != null
+                    ? properties.Get("key").AsString("?") + properties.Get("operator").AsString("?")
+                    : "?");
+            }
+            result.Check("*** the hunt branch is guarded by intent==hunt AND a non-empty argument ***",
+                guardKeys.Contains("chat.intent==") && guardKeys.Contains("chat.arg!="),
+                string.Join(",", guardKeys.ToArray()));
+
+            // ③ 服务：按名找 + 锁定物种
+            PackageValue services = hunt.Get("services");
+            PackageValue svc = services != null && services.Count > 0 ? services.Item(0) : null;
+            result.Check("the hunt branch carries a creature service",
+                svc != null && string.Equals(svc.Get("type").AsString(null),
+                    "UpdateNearestCreature", StringComparison.Ordinal));
+            if (svc == null)
+                return;
+
+            PackageValue svcProps = svc.Get("properties");
+            result.Check("*** the service looks creatures up BY NAME (reads chat.arg) ***",
+                string.Equals(svcProps.Get("nameKey").AsString(null), "chat.arg", StringComparison.Ordinal),
+                svcProps.Get("nameKey").AsString("<missing>"));
+            result.Check("*** the service locks the species (附近还有同种就继续) ***",
+                string.Equals(svcProps.Get("speciesKey").AsString(null), "hunt.species", StringComparison.Ordinal),
+                svcProps.Get("speciesKey").AsString("<missing>"));
+            result.Check("the hunt radius is bounded (not the whole world)",
+                svcProps.Get("maxDistance").AsFloat(0f) > 0f
+                && svcProps.Get("maxDistance").AsFloat(0f) <= 128f,
+                svcProps.Get("maxDistance").AsFloat(0f).ToString());
+
+            // ④ 一轮：有目标 → 靠近（到达即成功）→ 连点攻击
+            PackageValue round = FindNodeInTemplate(demo.Tree, "hunt_round");
+            result.Check("the hunt has a per-animal round", round != null && round.IsObject);
+            if (round == null)
+                return;
+            result.Check("a round only runs while a target is set",
+                DescribeGuard(round).IndexOf("hunt.targetIsSet", StringComparison.Ordinal) >= 0,
+                DescribeGuard(round));
+
+            PackageValue approach = FindNodeInTemplate(demo.Tree, "hunt_approach");
+            PackageValue approachProps = approach != null ? approach.Get("properties") : null;
+            result.Check("*** the approach uses A* to arrive, and the attack does the last stretch ***",
+                approachProps != null
+                && string.Equals(approachProps.Get("targetKey").AsString(null), "hunt.target",
+                    StringComparison.Ordinal)
+                && approachProps.Get("arriveThenSucceed").AsBool(false)
+                && approachProps.Get("timeout").AsFloat(0f) > 0f,
+                approach != null ? approach.Get("type").AsString("?") : "<none>");
+            result.Check("*** the approach's timeout is swallowed (a Failed child would skip the attack) ***",
+                approach != null && HasDecorator(approach, "ForceSuccess"), DescribeGuard(approach));
+
+            PackageValue attack = FindNodeInTemplate(demo.Tree, "hunt_attack");
+            PackageValue attackProps = attack != null ? attack.Get("properties") : null;
+            result.Check("*** the round attacks the same key (target gone = killed) ***",
+                attack != null
+                && string.Equals(attack.Get("type").AsString(null), "Task.Attack", StringComparison.Ordinal)
+                && attackProps != null
+                && string.Equals(attackProps.Get("targetKey").AsString(null), "hunt.target",
+                    StringComparison.Ordinal),
+                attack != null ? attack.Get("type").AsString("?") : "<none>");
+            result.Check("*** the attack has NO time limit (打死与否看血量，不看钟表) ***",
+                attackProps != null && attackProps.Get("timeout").AsFloat(-1f) == 0f,
+                attackProps != null ? attackProps.Get("timeout").AsFloat(-1f).ToString() : "<none>");
+            result.Check("*** the attack probes health and reports whether it was killed ***",
+                attackProps != null
+                && attackProps.Get("healthProbe").AsBool(false)
+                && string.Equals(attackProps.Get("killedKey").AsString(null), "hunt.killed",
+                    StringComparison.Ordinal),
+                attackProps != null ? attackProps.Get("killedKey").AsString("<missing>") : "<none>");
+            result.Check("*** the swing interval beats the engine's 0.66 s cooldown (else every hit is swallowed) ***",
+                attackProps != null && attackProps.Get("clickInterval").AsFloat(0f) > 0.66f,
+                attackProps != null ? attackProps.Get("clickInterval").AsFloat(0f).ToString() : "<none>");
+
+            // ④b 换武器必须在开打**之前**，而且拿不到也别把整支判死
+            PackageValue kill = FindNodeInTemplate(demo.Tree, "hunt_kill");
+            PackageValue killSteps = kill != null ? kill.Get("children") : null;
+            string firstStep = killSteps != null && killSteps.Count > 0
+                ? killSteps.Item(0).Get("type").AsString("?") : "<none>";
+            result.Check("*** the weapon is equipped BEFORE the approach/attack ***",
+                string.Equals(firstStep, "Task.EquipWeapon", StringComparison.Ordinal), firstStep);
+            PackageValue weaponProps = killSteps != null && killSteps.Count > 0
+                ? killSteps.Item(0).Get("properties") : null;
+            result.Check("*** the weapon priority starts with the diamond machete (用户指定的\"钻石刀\") ***",
+                weaponProps != null
+                && weaponProps.Get("priority").AsString("").StartsWith("diamond_machete",
+                    StringComparison.Ordinal)
+                && weaponProps.Get("allowCreativeGrab").AsBool(false),
+                weaponProps != null ? weaponProps.Get("priority").AsString("<missing>") : "<none>");
+            result.Check("a missing weapon does not fail the hunt (required=false)",
+                weaponProps != null && !weaponProps.Get("required").AsBool(true));
+
+            // ④c 回传：每轮报一次，收尾再报一次总结
+            PackageValue report = FindNodeInTemplate(demo.Tree, "hunt_report");
+            result.Check("*** every kill/loss is reported (hunt.result + event log) ***",
+                report != null
+                && string.Equals(report.Get("type").AsString(null), "Task.HuntReport", StringComparison.Ordinal)
+                && !report.Get("properties").Get("summary").AsBool(true)
+                && string.Equals(report.Get("properties").Get("resultKey").AsString(null),
+                    "hunt.result", StringComparison.Ordinal));
+            PackageValue summary = FindNodeInTemplate(demo.Tree, "chat_hunt_summary");
+            result.Check("the hunt ends with a summary report",
+                summary != null
+                && string.Equals(summary.Get("type").AsString(null), "Task.HuntReport", StringComparison.Ordinal)
+                && summary.Get("properties").Get("summary").AsBool(false));
+            result.Check("the hunt result keys are declared in the manifest",
+                HasBlackboardKey(demo, "hunt.result")
+                && HasBlackboardKey(demo, "hunt.kills")
+                && HasBlackboardKey(demo, "hunt.killed")
+                && HasBlackboardKey(demo, "hunt.weapon"));
+
+            // 武器表：优先级解析要稳（顺序即优劣、大小写不敏感、重复不算数）
+            result.Check("*** weapon priority parsing is normalized (order kept, dups dropped) ***",
+                string.Join(",", PlayerEquipment.SplitPriority(
+                    " Diamond_Machete , iron_machete ,, diamond_machete ").ToArray())
+                    == "diamond_machete,iron_machete",
+                string.Join(",", PlayerEquipment.SplitPriority(
+                    " Diamond_Machete , iron_machete ,, diamond_machete ").ToArray()));
+            result.Check("an empty priority falls back to the built-in list",
+                PlayerEquipment.SplitPriority("").Count
+                    == PlayerEquipment.SplitPriority(PlayerEquipment.DefaultPriority).Count);
+            result.Check("an unknown weapon key resolves to nothing",
+                PlayerEquipment.ValueOf("banana") == 0);
+
+            // 引擎侧：这把刀必须真的在这个版本里（否则"换上钻石刀"就是一句空话）
+            try
+            {
+                int value = PlayerEquipment.ValueOf("diamond_machete");
+                result.Check("*** the diamond machete exists in this build (blocks DB is loaded) ***",
+                    value != 0, "value=" + value);
+                result.Check("...and the whole fallback chain resolves too",
+                    PlayerEquipment.ValueOf("iron_machete") != 0
+                    && PlayerEquipment.ValueOf("machete") != 0,
+                    "iron=" + PlayerEquipment.ValueOf("iron_machete")
+                    + " any=" + PlayerEquipment.ValueOf("machete"));
+            }
+            catch (Exception exception)
+            {
+                result.Check("the weapon table lookup ran without throwing", false,
+                    exception.GetType().Name + ": " + exception.Message);
+            }
+
+            // ⑤ 捡掉落：调**独立包**，不是在这里重写一遍"走过去"
+            PackageValue loot = FindNodeInTemplate(demo.Tree, "hunt_loot");
+            result.Check("*** the loot step calls the reusable pickup package ***",
+                loot != null
+                && string.Equals(loot.Get("type").AsString(null), "Task.Subtree", StringComparison.Ordinal)
+                && string.Equals(loot.Get("properties").Get("package").AsString(null),
+                    PackageTemplates.PickupPackageId + "#root", StringComparison.Ordinal),
+                loot != null ? loot.Get("properties").Get("package").AsString("?") : "<none>");
+
+            // ⑥ 兜底：找不到动物时 Loop 的 Failed 必须被吃掉（"没得打"不是"指令执行失败"）
+            PackageValue repeat = FindNodeInTemplate(demo.Tree, "chat_hunt_repeat");
+            PackageValue repeatDecorators = repeat != null ? repeat.Get("decorators") : null;
+            var repeatTypes = new List<string>();
+            for (int i = 0; repeatDecorators != null && i < repeatDecorators.Count; i++)
+                repeatTypes.Add(repeatDecorators.Item(i).Get("type").AsString("?"));
+            result.Check("*** the repeat loop is bounded and its failure is swallowed ***",
+                repeatTypes.Contains("Loop") && repeatTypes.Contains("ForceSuccess"),
+                string.Join(",", repeatTypes.ToArray()));
+            // ⚠️ 顺序：装饰器数组是"外 → 内"。ForceSuccess 必须在**外层**，
+            //    否则"没目标"的 Failed 会先在里层变成功，Loop 空转整个上限、一条回传都不发。
+            result.Check("*** ForceSuccess wraps the Loop (a missing target must END the loop, not spin it) ***",
+                repeatTypes.Count >= 2
+                && string.Equals(repeatTypes[0], "ForceSuccess", StringComparison.Ordinal)
+                && string.Equals(repeatTypes[1], "Loop", StringComparison.Ordinal),
+                string.Join(",", repeatTypes.ToArray()));
+            if (repeatDecorators != null)
+            {
+                for (int i = 0; i < repeatDecorators.Count; i++)
+                {
+                    PackageValue decorator = repeatDecorators.Item(i);
+                    if (!string.Equals(decorator.Get("type").AsString(null), "Loop", StringComparison.Ordinal))
+                        continue;
+                    PackageValue loopProps = decorator.Get("properties");
+                    result.Check("the loop is infinite-but-timed (never runs forever)",
+                        loopProps.Get("infiniteLoop").AsBool(false)
+                        && loopProps.Get("infiniteLoopTimeoutSeconds").AsFloat(0f) > 0f,
+                        loopProps.Get("infiniteLoopTimeoutSeconds").AsFloat(0f).ToString());
+                }
+            }
+
+            // ⑦ 引用：捡取包必须在清单里声明，否则装载期就该报"未解析引用"
+            PackageValue references = demo.Manifest.Get("references");
+            result.Check("*** the demo manifest references the pickup package ***",
+                references != null && references.Count > 0
+                && string.Equals(references.Item(0).Get("id").AsString(null),
+                    PackageTemplates.PickupPackageId, StringComparison.Ordinal),
+                references != null ? references.Count.ToString() : "0");
+
+            // ⑧ 收尾：参数与锁定物种都要清（否则下一句"打狼"会接着打上一句锁定的牛）
+            result.Check("*** consume clears the hunt argument and the species lock ***",
+                SetBlackboardTargets(demo.Tree, "chat.arg") && SetBlackboardTargets(demo.Tree, "hunt.species"),
+                "chat.arg=" + SetBlackboardTargets(demo.Tree, "chat.arg")
+                + " hunt.species=" + SetBlackboardTargets(demo.Tree, "hunt.species"));
+        }
+
+        /// <summary>
+        /// **捡取包**（`pickup.scbtpak`）：它是"能被别人调、也能单独跑"的包，两条用法都要钉住。
+        /// </summary>
+        private static void PickupPackage(BtSelfTest.TestResult result)
+        {
+            PackageTemplate pickup = PackageTemplates.Pickup();
+            result.Check("the pickup package exists with the documented id",
+                pickup != null
+                && string.Equals(pickup.Manifest.Get("id").AsString(null),
+                    PackageTemplates.PickupPackageId, StringComparison.Ordinal));
+
+            PackageValue root = FindNodeInTemplate(pickup.Tree, "root");
+            result.Check("its root loops (so `ai switch pickup` = 见什么捡什么)",
+                root != null && root.Get("properties").Get("loop").AsBool(false));
+
+            PackageValue selector = FindNodeInTemplate(pickup.Tree, "pickup_root");
+            PackageValue services = selector != null ? selector.Get("services") : null;
+            result.Check("*** the pickable service sits on the root selector (services tick only on the active path) ***",
+                services != null && services.Count > 0
+                && string.Equals(services.Item(0).Get("type").AsString(null),
+                    "UpdateNearestPickable", StringComparison.Ordinal),
+                services != null ? services.Count.ToString() : "0");
+
+            PackageValue round = FindNodeInTemplate(pickup.Tree, "pickup_round");
+            result.Check("a round runs only when something is around (otherwise it idles)",
+                round != null
+                && DescribeGuard(round).IndexOf("pickup.targetIsSet", StringComparison.Ordinal) >= 0,
+                DescribeGuard(round));
+
+            PackageValue idle = FindNodeInTemplate(pickup.Tree, "pickup_idle");
+            result.Check("there is an idle branch for \"nothing to pick\" (no tight fail loop)",
+                idle != null
+                && string.Equals(idle.Get("type").AsString(null), "Task.Wait", StringComparison.Ordinal));
+
+            PackageValue go = FindNodeInTemplate(pickup.Tree, "pickup_go");
+            PackageValue goProps = go != null ? go.Get("properties") : null;
+            result.Check("*** walking within 1 block IS the pickup (SC collects on approach) ***",
+                goProps != null
+                && goProps.Get("keepDistance").AsFloat(9f) <= 1.5f
+                && goProps.Get("arriveThenSucceed").AsBool(false),
+                go != null ? go.Get("type").AsString("?") : "<none>");
+
+            PackageValue contract = pickup.Manifest.Get("blackboard");
+            result.Check("the pickup package declares its own blackboard contract",
+                contract != null && contract.Count >= 3,
+                contract != null ? contract.Count.ToString() : "0");
+        }
+
+        /// <summary>节点上挂没挂某个类型的装饰器（例如 `ForceSuccess`）。</summary>
+        private static bool HasDecorator(PackageValue node, string type)
+        {
+            PackageValue decorators = node != null ? node.Get("decorators") : null;
+            for (int i = 0; decorators != null && i < decorators.Count; i++)
+            {
+                if (string.Equals(decorators.Item(i).Get("type").AsString(null), type, StringComparison.Ordinal))
+                    return true;
+            }
+            return false;
+        }
+
+        /// <summary>清单里有没有声明某个黑板键（出厂包的结构检查用）。</summary>
+        private static bool HasBlackboardKey(PackageTemplate template, string name)
+        {
+            PackageValue keys = template.Manifest.Get("blackboard");
+            for (int i = 0; keys != null && i < keys.Count; i++)
+            {
+                if (string.Equals(keys.Item(i).Get("name").AsString(null), name, StringComparison.Ordinal))
+                    return true;
+            }
+            return false;
+        }
+
+        /// <summary>树里有没有一个把 <paramref name="key"/> 写成空串的 `Task.SetBlackboard`（收尾清理）。</summary>
+        private static bool SetBlackboardTargets(PackageValue node, string key)
+        {
+            if (node == null || !node.IsObject)
+                return false;
+            if (string.Equals(node.Get("type").AsString(null), "Task.SetBlackboard", StringComparison.Ordinal)
+                && string.Equals(node.Get("properties").Get("key").AsString(null), key, StringComparison.Ordinal))
+                return true;
+
+            PackageValue children = node.Get("children");
+            for (int i = 0; children != null && i < children.Count; i++)
+                if (SetBlackboardTargets(children.Item(i), key))
+                    return true;
+            return false;
         }
 
         private static bool GuardedByIntCompare(PackageValue node, string key, string op, int value)

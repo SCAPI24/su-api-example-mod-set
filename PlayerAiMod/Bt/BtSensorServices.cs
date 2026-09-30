@@ -79,14 +79,18 @@ namespace PlayerAiMod
 
     /// <summary>
     /// 刷新**最近的生物**（不含玩家）：写 actor 键 + 一个距离键。
-    /// `categoryMask` 用 <c>CreatureCategory</c> 位掩码过滤（1=陆地掠食者 …），0 = 不限。
+    ///
+    /// 两种找法：
+    ///   · 只给 `categoryMask`（老行为）= 按 <c>CreatureCategory</c> 位掩码找最近的；
+    ///   · 给了 `nameKey` = 按**名字**找（打猎用）—— 候选词从黑板读、由 `ChatAnimalAliases` 扩展成
+    ///     一组可比的名字。**这条路径不退回按类别找**：找不到就是找不到，不能随便打一只别的动物。
     /// </summary>
     public sealed class BtUpdateNearestCreatureService : BtService
     {
         /// <summary>把找到的生物写进哪个黑板键。</summary>
         public string TargetKey { get; set; } = "creature";
 
-        /// <summary>类别掩码（0 = 不限）。</summary>
+        /// <summary>类别掩码（0 = 不限）。只在没给 `nameKey` 时起作用。</summary>
         public int CategoryMask { get; set; }
 
         /// <summary>搜索半径（米）。</summary>
@@ -94,6 +98,21 @@ namespace PlayerAiMod
 
         /// <summary>找不到时是否清掉键（默认清，免得上一次的目标一直留着）。</summary>
         public bool ClearWhenMissing { get; set; } = true;
+
+        /// <summary>目标漂移多远之内还认为"还是它"（米）。见 `IAiWorldSensor.TryFindNearestCreatureByName`。</summary>
+        public float StickyRadius { get; set; } = 6f;
+
+        /// <summary>从黑板读"要打的物种候选词"的键（如 `chat.arg`）。空 = 沿用按类别查找。</summary>
+        public string NameKey { get; set; }
+
+        /// <summary>
+        /// "已经锁定的物种"键：找到过目标就把它的**名字**写进去，之后优先按这个名字找。
+        ///
+        /// 这是"附近还有同种就继续"的落点 —— 目标死了 actor 键会被清，但物种名留着，
+        /// 于是下一轮还是打同一种，而不是在候选集合里重新挑一只别的。
+        /// 这个键只由聊天分支的收尾步骤清（换一条指令才换物种）。
+        /// </summary>
+        public string SpeciesKey { get; set; }
 
         public override string NodeType
         {
@@ -108,17 +127,95 @@ namespace PlayerAiMod
                 return;
 
             AiActorView view;
+            if (!string.IsNullOrEmpty(NameKey))
+            {
+                string arg = ReadText(board, NameKey);
+                string frozen = ReadText(board, SpeciesKey);
+                string frozenArg = ReadText(board, SpeciesKey + "Arg");
+                // 锁定要**跟着指令走**：`arg` 变了（用户换了指令）就自动解锁，
+                // 否则"打牛"锁住之后，紧接着的"打狼"会接着打牛
+                string candidates = !string.IsNullOrEmpty(frozen)
+                    && string.Equals(frozenArg ?? string.Empty, arg ?? string.Empty, StringComparison.Ordinal)
+                    ? frozen
+                    : arg;
+
+                List<string> words = ChatAnimalCatalog.Current.Expand(candidates);
+                // 名字是子串匹配，`牛` 会命中 "Bull Shark" —— 拿物种表给的类别掩码再筛一遍
+                // （牛=陆地 3、鲨鱼=水生 12），"打牛"就不会跑去追鲨鱼（2026-09-26 实测踩到）
+                int speciesMask = ChatAnimalCatalog.Current.CategoryMaskOf(candidates);
+
+                // ① **先问"还是不是那一只"**：令牌刷得动就继续打它，绝不换到更近的另一只。
+                //    没有这一步，牛群里每 tick 都会重挑最近的那头，伤害摊薄、一头也打不死
+                //    （2026-09-26 实测血量在 0.6 / 0.85 之间来回跳）。
+                AiActorView current;
+                if (board.TryGet(TargetKey, out current) && current.Token != 0)
+                {
+                    AiActorView refreshed;
+                    float currentHealth;
+                    bool alive = extras.TryRefreshActor(current, out refreshed)
+                        && extras.TryGetActorHealth(refreshed, out currentHealth)
+                        && currentHealth > 0.001f;
+                    if (alive && ChatAnimalAliases.MatchWords(refreshed.Name, words)
+                        && (speciesMask == 0 || (refreshed.CategoryMask & speciesMask) != 0))
+                    {
+                        Publish(board, TargetKey, refreshed);
+                        if (!string.IsNullOrEmpty(SpeciesKey))
+                        {
+                            board.Set(new AiBlackboardKey<string>(SpeciesKey), refreshed.Name);
+                            board.Set(new AiBlackboardKey<string>(SpeciesKey + "Arg"), arg ?? string.Empty);
+                        }
+                        return;
+                    }
+                    // 刷不动、或者血量已经归零（尸体还在世界里）= 打死了：
+                    // 落到下面重新找 —— "附近还有同种就继续"就是靠这一步。
+                }
+
+                // ② 重新找：这里的 `preferred` 只是"没有令牌时的保守粘法"（老快照/玩家快照）
+                AiActorView preferred;
+                bool hasPreferred = board.TryGet(TargetKey, out preferred);
+                if (words.Count > 0 && extras.TryFindNearestCreatureByName(words, MaxDistance,
+                        speciesMask | CategoryMask, hasPreferred ? preferred : default(AiActorView),
+                        StickyRadius, out view))
+                {
+                    Publish(board, TargetKey, view);
+                    if (!string.IsNullOrEmpty(SpeciesKey))
+                    {
+                        board.Set(new AiBlackboardKey<string>(SpeciesKey), view.Name);
+                        board.Set(new AiBlackboardKey<string>(SpeciesKey + "Arg"), arg ?? string.Empty);
+                    }
+                    return;
+                }
+
+                // 按名找：找不到就清键（**不**退回"随便找一只"）
+                if (ClearWhenMissing)
+                    Clear(board, TargetKey);
+                return;
+            }
+
             if (extras.TryFindNearestCreature(CategoryMask, MaxDistance, out view))
             {
-                board.Set(new AiBlackboardKey<AiActorView>(TargetKey), view);
-                board.Set(new AiBlackboardKey<float>(TargetKey + "Distance"), view.Distance);
-                board.Set(new AiBlackboardKey<string>(TargetKey + "Name"), view.Name);
-                board.Set(new AiBlackboardKey<bool>(TargetKey + "IsSet"), true);
+                Publish(board, TargetKey, view);
                 return;
             }
 
             if (ClearWhenMissing)
                 Clear(board, TargetKey);
+        }
+
+        internal static void Publish(AiBlackboard board, string key, AiActorView view)
+        {
+            board.Set(new AiBlackboardKey<AiActorView>(key), view);
+            board.Set(new AiBlackboardKey<float>(key + "Distance"), view.Distance);
+            board.Set(new AiBlackboardKey<string>(key + "Name"), view.Name);
+            board.Set(new AiBlackboardKey<bool>(key + "IsSet"), true);
+        }
+
+        private static string ReadText(AiBlackboard board, string key)
+        {
+            if (string.IsNullOrEmpty(key))
+                return null;
+            string value;
+            return board.TryGet(key, out value) ? value : null;
         }
 
         internal static void Clear(AiBlackboard board, string key)

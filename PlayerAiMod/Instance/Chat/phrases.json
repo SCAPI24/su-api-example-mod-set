@@ -1,0 +1,15 @@
+{
+  "format": "chatphrases",
+  "version": 1,
+  "id": "world",
+  "name": "world",
+  "description": "出厂默认：中文为主的常用指令；顺序即优先级（stop 必须在 come 前面）。",
+  "ignoreSenders": ["ScMP", "Host", "Server"],
+  "intents": [
+    { "key": "stop", "description": "站住 / 别动 / 别过来 / 别打（否定优先于打猎）", "phrases": ["停", "站住", "别动", "不要动", "别过来", "不要过来", "别跟了", "不用跟", "别打", "不要打", "别打了", "别杀", "不要杀", "别攻击", "停手", "住手", "stop", "stay", "wait", "hold", "don't move", "dont move", "stand still", "stop attacking", "cease"] },
+    { "key": "hunt", "description": "帮我打某个生物：触发词 + 物种词（「帮我打一下牛」）", "takesArgument": true, "phrases": ["帮我打一下", "帮我打死", "帮我弄死", "帮我打", "帮我杀", "帮我猎", "去打", "去杀", "打死", "杀掉", "杀死", "猎杀", "打一下", "攻击", "kill", "attack", "hunt", "shoot"] },
+    { "key": "follow", "description": "跟着我走", "phrases": ["跟着我", "跟紧", "跟我走", "跟上来", "follow me", "follow", "come with me"] },
+    { "key": "come", "description": "过来（一次性到达）", "phrases": ["过来", "来我这", "来我这里", "来我这儿", "到我这里", "来一下", "过来一下", "come", "come here", "come to me", "over here"] },
+    { "key": "ignore", "description": "明确说别理我时什么都不做", "phrases": ["别理我", "不用管我", "ignore me", "never mind"] }
+  ]
+}

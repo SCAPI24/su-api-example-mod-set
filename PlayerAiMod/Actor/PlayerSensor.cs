@@ -34,6 +34,17 @@ namespace PlayerAiMod
             get { return m_actor.Player; }
         }
 
+        /// <summary>
+        /// 本端玩家对象（给"要动背包"的辅助类用，例如 <see cref="PlayerEquipment"/>）。
+        ///
+        /// 传感器自己是**只读**的；这里只是把引擎对象递出去，改动留在调用方那一边
+        /// （写操作必须集中在一个有名字、有出处的地方，别散在传感器里）。
+        /// </summary>
+        public ComponentPlayer PlayerOrNull
+        {
+            get { return Player; }
+        }
+
         public bool IsReady
         {
             get
@@ -157,6 +168,12 @@ namespace PlayerAiMod
             if (players == null)
                 return false;
 
+            // ⚠️ 名单用 **`ComponentPlayers`**（本机已生成的角色），**不是 `PlayersData`**。
+            // 2026-09-26 实测（`obs.chat` 的 roster）：在**客户端**上
+            //   · `PlayersData` 只有**本端**一条（远端角色是本机为对端生成的，不在名单里）；
+            //   · `ComponentPlayers` 才有两条（本端 + 远端），位置也对得上。
+            // 另一条实测：联机时**双方显示名可能相同**（本端与远端都叫 "Basil"），
+            // 所以"按名字找"**必然有歧义** —— 调用方要能接受"找到了但是自己"并改走"最近的另一个"。
             for (int i = 0; i < players.ComponentPlayers.Count; i++)
             {
                 ComponentPlayer candidate = players.ComponentPlayers[i];
@@ -191,6 +208,12 @@ namespace PlayerAiMod
             if (players == null)
                 return false;
 
+            // 本端身份：优先 `ComponentPlayer` 引用，其次 `PlayerData` 引用
+            // （actor 有可能持有旧对象，两级比较能挡住"最近的另一个玩家其实是自己"）。
+            PlayerData localData = null;
+            try { localData = Player != null ? Player.PlayerData : null; }
+            catch (Exception) { localData = null; }
+
             bool found = false;
             float bestDistance = float.MaxValue;
 
@@ -198,6 +221,8 @@ namespace PlayerAiMod
             {
                 ComponentPlayer candidate = players.ComponentPlayers[i];
                 if (candidate == null || ReferenceEquals(candidate, Player))
+                    continue;
+                if (localData != null && ReferenceEquals(candidate.PlayerData, localData))
                     continue;
 
                 AiActorView candidateView = Describe(candidate);
@@ -277,6 +302,71 @@ namespace PlayerAiMod
         private ComponentBody m_lastCreatureBody;
 
         /// <summary>
+        /// **生物身份令牌表**：令牌 → 那一具身体。
+        ///
+        /// 引擎没有对外暴露 `Entity.Id`（`Id` 只活在内部的 `EntityData` 里），所以身份的稳定
+        /// 由传感器自己保证：同一个身体永远拿到同一个令牌，令牌查得到就说明"还是它、还活着"。
+        /// 这张表也是"目标死了没有"的判据 —— 见 `AiActorView.Token` 的注释。
+        /// </summary>
+        private readonly Dictionary<int, ComponentBody> m_creatureTokens =
+            new Dictionary<int, ComponentBody>();
+
+        private int m_nextCreatureToken = 1;
+
+        /// <summary>给一具身体发（或复用）令牌；顺手清掉已经死掉的那些。</summary>
+        private int TokenFor(ComponentBody body)
+        {
+            if (body == null)
+                return 0;
+
+            foreach (KeyValuePair<int, ComponentBody> pair in m_creatureTokens)
+            {
+                if (ReferenceEquals(pair.Value, body))
+                    return pair.Key;
+            }
+
+            if (m_creatureTokens.Count >= 64)
+                PruneCreatureTokens();
+
+            int token = m_nextCreatureToken++;
+            m_creatureTokens[token] = body;
+            return token;
+        }
+
+        /// <summary>丢掉已经没了实体的令牌（死亡/卸载）；表满时调用，平时不必。</summary>
+        private void PruneCreatureTokens()
+        {
+            var dead = new List<int>();
+            foreach (KeyValuePair<int, ComponentBody> pair in m_creatureTokens)
+            {
+                if (pair.Value == null || pair.Value.Entity == null)
+                    dead.Add(pair.Key);
+            }
+            for (int i = 0; i < dead.Count; i++)
+                m_creatureTokens.Remove(dead[i]);
+            if (m_creatureTokens.Count >= 64)
+                m_creatureTokens.Clear();       // 极端情况：全清比无限长好
+        }
+
+        /// <summary>令牌 → 身体（查不到或已经没了实体都返回 false）。</summary>
+        private bool TryResolveToken(int token, out ComponentBody body)
+        {
+            body = null;
+            if (token == 0)
+                return false;
+            ComponentBody found;
+            if (!m_creatureTokens.TryGetValue(token, out found))
+                return false;
+            if (found == null || found.Entity == null)
+            {
+                m_creatureTokens.Remove(token);     // 死了/卸载了：当场销号
+                return false;
+            }
+            body = found;
+            return true;
+        }
+
+        /// <summary>
         /// 把 actor 快照解析回引擎对象。
         ///
         /// 玩家用 `PlayerIndex`（在 `SubsystemPlayers.ComponentPlayers` 里唯一且稳定，网络玩家也一样）；
@@ -304,6 +394,19 @@ namespace PlayerAiMod
             }
 
             ComponentBody cached = m_lastCreatureBody;
+
+            // ① **令牌优先**：有令牌就问"还是不是那一只" —— 查不到就是它死了/没了，
+            //    这时候必须返回 null（"目标不在了"），绝不能退化成"找附近最近的一只"
+            //    （那正是"牛群里目标乱跳、血量来回跳"的根因）。
+            if (actor.Token != 0)
+            {
+                ComponentBody tokenBody;
+                if (!TryResolveToken(actor.Token, out tokenBody))
+                    return null;
+                m_lastCreatureBody = tokenBody;
+                return tokenBody.Entity.FindComponent<ComponentCreature>(false);
+            }
+
             if (cached != null && cached.Entity != null
                 && Vector3.Distance(cached.Position, actor.Position) <= 2f)
             {
@@ -446,13 +549,172 @@ namespace PlayerAiMod
                     PlayerIndex = -1,
                     Position = body.Position,
                     Velocity = body.Velocity,
-                    Distance = distance
+                    Distance = distance,
+                    Token = TokenFor(body)
                 };
                 found = true;
                 m_lastCreatureBody = body;                     // 模型节点要用它拿 ComponentCreatureModel
             }
 
             return found;
+        }
+
+        /// <summary>
+        /// 按**名字**找最近的生物（打猎用）。
+        ///
+        /// 为什么不能只按类别：`CreatureCategory` 只有 5 个值（陆地掠食者/陆地其他/水生掠食者/水生其他/鸟），
+        /// 牛和鹿、狼和熊虎全挤在同一类里，"打牛"靠类别根本分不出来 —— 能区分物种的只有生物名。
+        ///
+        /// 候选词由 `ChatAnimalAliases.Expand` 扩过（口语词 → 一组可比的名字），这里只负责"谁最近"。
+        /// **玩家一律跳过**：联机时远端玩家也是 `ComponentCreature`，误伤队友就不是打猎了。
+        /// Source: ComponentCreature.cs:Category / DisplayName；ComponentName.cs:Name
+        /// </summary>
+        public bool TryFindNearestCreatureByName(IReadOnlyList<string> candidates, float maxDistance,
+            int categoryMask, AiActorView preferred, float stickyRadius, out AiActorView view)
+        {
+            view = default(AiActorView);
+            if (candidates == null || candidates.Count == 0)
+                return false;
+
+            Project project = GameManager.Project;
+            SubsystemBodies bodies = project != null
+                ? project.FindSubsystem<SubsystemBodies>(false) : null;
+            if (bodies == null)
+                return false;
+
+            Vector3 origin = Position;
+            float radius = maxDistance > 0f ? maxDistance : 64f;
+            bool sticky = stickyRadius > 0f && !string.IsNullOrEmpty(preferred.Name);
+
+            var result = new DynamicArray<ComponentBody>();
+            bodies.FindBodiesAroundPoint(new Vector2(origin.X, origin.Z), radius, result);
+
+            bool found = false;
+            ComponentBody best = null;
+            float bestDistance = float.MaxValue;
+            ComponentBody stickyBody = null;
+            float stickyDistance = float.MaxValue;
+
+            for (int i = 0; i < result.Count; i++)
+            {
+                ComponentBody body = result.Array[i];
+                if (body == null || body.Entity == null)
+                    continue;
+
+                ComponentCreature creature = body.Entity.FindComponent<ComponentCreature>(false);
+                if (creature == null)
+                    continue;                                  // 不是生物（掉落物/投射物/方块）
+                if (ReferenceEquals(creature, Player))
+                    continue;                                  // 自己不算
+                if (creature is ComponentPlayer)
+                    continue;                                  // 别的玩家也不是猎物
+
+                // 类别粗筛：名字是子串匹配，`牛` 会命中 "Bull Shark" —— 类别把它挡在门外
+                if (categoryMask != 0 && ((int)creature.Category & categoryMask) == 0)
+                    continue;
+
+                string name = CreatureName(creature);
+                if (!ChatAnimalAliases.MatchWords(name, candidates))
+                    continue;
+
+                // 尸体也是 ComponentCreature：血量归零的不算猎物（否则会对着尸体一直挥）
+                ComponentHealth health = body.Entity.FindComponent<ComponentHealth>(false);
+                if (health != null && health.Health <= 0.001f)
+                    continue;
+
+                float distance = Vector3.Distance(body.Position, origin);
+                if (distance > radius)
+                    continue;
+
+                if (distance < bestDistance)
+                {
+                    bestDistance = distance;
+                    best = body;
+                }
+
+                // 粘住上一个目标：它只要还在"上次看到的位置"附近，就还是它
+                if (sticky)
+                {
+                    float drift = Vector3.Distance(body.Position, preferred.Position);
+                    if (drift <= stickyRadius && distance < stickyDistance)
+                    {
+                        stickyDistance = distance;
+                        stickyBody = body;
+                    }
+                }
+            }
+
+            ComponentBody chosen = stickyBody ?? best;
+            if (chosen == null)
+                return false;
+
+            ComponentCreature chosenCreature = chosen.Entity.FindComponent<ComponentCreature>(false);
+            if (chosenCreature == null)
+                return false;
+
+            view = new AiActorView
+            {
+                Name = CreatureName(chosenCreature),
+                CategoryMask = (int)chosenCreature.Category,
+                Kind = "creature",
+                IsPlayer = false,
+                IsSelf = false,
+                PlayerIndex = -1,
+                Position = chosen.Position,
+                Velocity = chosen.Velocity,
+                Distance = Vector3.Distance(chosen.Position, origin),
+                Token = TokenFor(chosen)
+            };
+            found = true;
+            m_lastCreatureBody = chosen;                       // 模型节点要用它拿 ComponentCreatureModel
+            return found;
+        }
+
+        /// <summary>
+        /// 把黑板里的 actor 快照刷成"此刻的它"：**还是那一只**（靠令牌），只是位置/距离更新了。
+        ///
+        /// 服务用它来实现"目标锁定"：刷得动就继续打这一只；刷不动（死了/卸载了）才重新找。
+        /// 没有令牌的老快照退回"附近 2 米内重扫"的老路（保守，但至少不会换到远处的别人身上）。
+        /// </summary>
+        public bool TryRefreshActor(AiActorView view, out AiActorView refreshed)
+        {
+            refreshed = default(AiActorView);
+            ComponentCreature creature = ResolveCreature(view);
+            if (creature == null || creature.Entity == null)
+                return false;
+
+            ComponentBody body = creature.ComponentBody;
+            if (body == null)
+                return false;
+
+            refreshed = view;
+            refreshed.Name = view.Name;
+            refreshed.CategoryMask = view.IsPlayer ? 0 : (int)creature.Category;
+            refreshed.Kind = view.IsPlayer ? "player" : "creature";
+            refreshed.IsPlayer = view.IsPlayer;
+            refreshed.IsSelf = false;
+            refreshed.PlayerIndex = view.IsPlayer ? view.PlayerIndex : -1;
+            refreshed.Position = body.Position;
+            refreshed.Velocity = body.Velocity;
+            refreshed.Distance = Vector3.Distance(body.Position, Position);
+            return true;
+        }
+
+        /// <summary>
+        /// 读一个 actor 的血量（0..1）。找不到实体（已经死了被移除）→ false。
+        /// Source: ComponentHealth.cs:40（Health）、267（Health==0 即死亡）
+        /// </summary>
+        public bool TryGetActorHealth(AiActorView view, out float health)
+        {
+            health = 0f;
+            ComponentCreature creature = ResolveCreature(view);
+            if (creature == null || creature.Entity == null)
+                return false;
+            ComponentHealth component = creature.Entity.FindComponent<ComponentHealth>(false);
+            if (component == null)
+                return false;
+            health = component.Health;
+            return true;
         }
 
         /// <summary>

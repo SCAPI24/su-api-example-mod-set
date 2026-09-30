@@ -35,6 +35,23 @@ namespace PlayerAiMod
         /// </summary>
         public const string PkgRecoverFile = QuestionBank.RecoverBankFileName;
 
+        /// <summary>
+        /// **聊天兜底问题库**（2026-09-26）：短语表没命中时，用"那句话"问一次模型。
+        ///
+        /// 与其它库的区别只有一处、但很关键：**它的摘要不是角色状态，而是那句话**
+        /// （树里写 `Task.LayaAsk digestKey=chat.digest`）—— 往 `world_goal` 的摘要里
+        /// 塞聊天原文会把那个问题的答案带偏（§12.1：摘要多一个 token 就能翻面）。
+        ///
+        /// 选项 key 与 `ChatIntents`（C# 的闭集）一一对应：模型只能在这几个里选，
+        /// 而"选完之后具体怎么走/走多远"全是 C# 的事（§4.9）。
+        ///
+        /// 2026-09-26 加了第五个 `hunt`：**只让模型判"这是不是让我去打猎"，打谁不由它说** ——
+        /// 物种词由 `ChatAnimalAliases`（`animals.json`）在 C# 侧解析。让模型编物种名的后果是
+        /// "答了却什么都不发生"（§4.7），而且它编得出树里没有的动物。
+        /// 5 选项仍在前面的精度区间内（实测 4→9/10；再多就该拆问题了）。
+        /// </summary>
+        public const string ChatIntentFile = QuestionBank.ChatIntentFileName;
+
         public static Dictionary<string, string> All()
         {
             var banks = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -105,6 +122,24 @@ namespace PlayerAiMod
                 + "        { \"key\": \"use_backup\", \"description\": \"switch to the backup question bank or action set\" },\r\n"
                 + "        { \"key\": \"skip_step\",  \"description\": \"skip this step and continue the plan\" },\r\n"
                 + "        { \"key\": \"abort_plan\", \"description\": \"stop the plan and stand by\" }\r\n"
+                + "      ] }\r\n"
+                + "  ]\r\n"
+                + "}\r\n";
+
+            banks[ChatIntentFile] =
+                "{\r\n"
+                + "  \"format\": \"qbank\", \"version\": 1,\r\n"
+                + "  \"id\": \"chat_intent\", \"name\": \"聊天·这句话要我做什么\",\r\n"
+                + "  \"description\": \"只判「这句话是不是给我的指令」；摘要是那句话本身（digestKey=chat.digest），不是角色状态。\",\r\n"
+                + "  \"questions\": [\r\n"
+                + "    { \"id\": \"chat_intent\", \"type\": \"choice\",\r\n"
+                + "      \"instructions\": \"Someone said this in chat. What should this character do?\",\r\n"
+                + "      \"options\": [\r\n"
+                + "        { \"key\": \"come\",   \"description\": \"go to the speaker and stop near them\" },\r\n"
+                + "        { \"key\": \"follow\", \"description\": \"follow the speaker around\" },\r\n"
+                + "        { \"key\": \"stop\",   \"description\": \"stop moving and stay where it is\" },\r\n"
+                + "        { \"key\": \"hunt\",   \"description\": \"kill an animal the speaker named (the animal name is resolved outside the model)\" },\r\n"
+                + "        { \"key\": \"ignore\", \"description\": \"not an instruction; keep doing its own work\" }\r\n"
                 + "      ] }\r\n"
                 + "  ]\r\n"
                 + "}\r\n";

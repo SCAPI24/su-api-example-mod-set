@@ -476,6 +476,7 @@ namespace PlayerAiMod
                     task.TargetKey = reader.Str("targetKey", "target");
                     task.Mode = reader.Enum("mode", "auto", FollowModeNames);
                     task.KeepDistance = NonNegative(reader, "keepDistance", 2f, where);
+                    task.ArriveThenSucceed = reader.Bool("arriveThenSucceed", false);
                     task.StandHysteresis = NonNegative(reader, "standHysteresis", 0.75f, where);
                     task.TrailLength = reader.Int("trailLength", 64);
                     task.TrailMaxAge = NonNegative(reader, "trailMaxAge", 3f, where);
@@ -596,6 +597,29 @@ namespace PlayerAiMod
                     task.TimeoutSeconds = NonNegative(reader, "timeout", 20f, where);
                     task.ClickInterval = NonNegative(reader, "clickInterval", 0.6f, where);
                     task.Button = reader.Enum("button", "left", ButtonNames);
+                    task.HealthProbe = reader.Bool("healthProbe", true);
+                    task.KilledKey = reader.Str("killedKey", null);
+                    break;
+                }
+
+                case "Task.EquipWeapon":
+                {
+                    var task = (BtEquipWeaponTask)node;
+                    task.Priority = reader.Str("priority", PlayerEquipment.DefaultPriority);
+                    task.AllowCreativeGrab = reader.Bool("allowCreativeGrab", true);
+                    task.WeaponKey = reader.Str("weaponKey", null);
+                    task.Required = reader.Bool("required", false);
+                    break;
+                }
+
+                case "Task.HuntReport":
+                {
+                    var task = (BtHuntReportTask)node;
+                    task.KilledKey = reader.Str("killedKey", "hunt.killed");
+                    task.SpeciesKey = reader.Str("speciesKey", "hunt.species");
+                    task.CountKey = reader.Str("countKey", "hunt.kills");
+                    task.ResultKey = reader.Str("resultKey", "hunt.result");
+                    task.Summary = reader.Bool("summary", false);
                     break;
                 }
 
@@ -721,6 +745,8 @@ namespace PlayerAiMod
                             "Task.LayaAsk needs 'answerKeys' (blackboardKey:questionId:type, comma separated)");
                     }
                     task.Only = reader.Str("only", null);
+                    // 摘要可以来自黑板（聊天兜底判定用它把"那句话"当输入，而不是角色状态）
+                    task.DigestKey = reader.Str("digestKey", null);
                     float timeoutMs = NonNegative(reader, "timeoutMs", 0f, where);
                     task.TimeoutMs = (int)Math.Round(timeoutMs);
                     task.OnUnavailable = reader.Enum("onUnavailable", "fail", new[] { "fail", "default", "keep" });
@@ -862,6 +888,18 @@ namespace PlayerAiMod
             // ---- 传感器服务族（BtSensorServices.cs）
             switch (service.NodeType)
             {
+                case "Service.ChatWatch":
+                {
+                    var target = (BtChatWatchService)service;
+                    target.Prefix = reader.Str("prefix", "chat.");
+                    target.TargetKey = reader.Str("targetKey", "chat.target");
+                    target.UseFallback = reader.Bool("useFallback", true);
+                    target.FallbackBank = reader.Str("fallbackBank", "chat_intent");
+                    target.VoiceName = reader.Str("voiceName", null);
+                    target.ClearWhenMissing = reader.Bool("clearWhenMissing", true);
+                    break;
+                }
+
                 case "Service.UpdateSelf":
                 {
                     var target = (BtUpdateSelfService)service;
@@ -877,6 +915,9 @@ namespace PlayerAiMod
                     target.CategoryMask = reader.Int("categoryMask", 0);
                     target.MaxDistance = NonNegative(reader, "maxDistance", 32f, where);
                     target.ClearWhenMissing = reader.Bool("clearWhenMissing", true);
+                    target.NameKey = reader.Str("nameKey", null);            // 按名找（打猎）
+                    target.SpeciesKey = reader.Str("speciesKey", null);      // 锁定物种
+                    target.StickyRadius = NonNegative(reader, "stickyRadius", 6f, where);
                     break;
                 }
 

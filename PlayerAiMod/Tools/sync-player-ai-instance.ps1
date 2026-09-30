@@ -42,7 +42,7 @@ param(
 $ErrorActionPreference = 'Stop'
 
 if ([string]::IsNullOrEmpty($Seed)) { $Seed = Join-Path $PSScriptRoot '..\Instance' }
-$subDirs = @('BehaviorTrees', 'Questions', 'Scripts')
+$subDirs = @('BehaviorTrees', 'Questions', 'Scripts', 'Digest', 'Chat')
 
 if (-not (Test-Path -LiteralPath $Root)) { throw ("Root does not exist: " + $Root + " (pass the instance root, the folder that has Survivalcraft.exe)") }
 $instancePlayerAi = Join-Path $Root 'PlayerAi'

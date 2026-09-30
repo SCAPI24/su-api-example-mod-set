@@ -345,6 +345,8 @@ namespace PlayerAiMod
                     BtProps.OptionalBlackboardKey("targetKey", "target", "跟谁（黑板 actor 键）"),
                     BtProps.Enum("mode", "auto", "auto", "trail", "path"),
                     BtProps.Float("keepDistance", 2f, "保持的水平间隔（米/格）：到了就站住，不往人身上挤"),
+                    BtProps.Bool("arriveThenSucceed", false,
+                        "到达间隔就算成功（true = 「过来」这种一次性指令；false = 一直跟着）"),
                     BtProps.Float("standHysteresis", 0.75f,
                         "站↔走的迟滞（米）：防「距离抖一下就每帧起停」（那会让步伐反复重启）"),
                     BtProps.Int("trailLength", 64, "足迹链最多记多少格"),
@@ -452,9 +454,35 @@ namespace PlayerAiMod
                     BtProps.OptionalBlackboardKey("targetKey", "target", "要打的 actor（黑板键）"),
                     BtProps.Float("range", 3.5f, "超出这个距离就先靠近（0 = 原地打）"),
                     BtProps.Float("eyeHeight", 1.2f, "看目标哪个高度（米）"),
-                    BtProps.Float("timeout", 20f, "超时判失败（秒）"),
-                    BtProps.Float("clickInterval", 0.6f, "连点间隔（秒；0 = 一直按住）"),
-                    BtProps.Str("button", "left", "鼠标键")
+                    BtProps.Float("timeout", 20f, "超时判失败（秒）；**0 = 不限时**（打猎用：打死与否看血量，不看钟表）"),
+                    BtProps.Float("clickInterval", 0.75f,
+                        "连点间隔（秒；0 = 一直按住）。**必须大于引擎的 0.66 秒攻击冷却**，否则挥击全被丢掉"),
+                    BtProps.Str("button", "left", "鼠标键"),
+                    BtProps.Bool("healthProbe", true, "边打边采目标血量（判定\"打死没有\"的唯一可信判据）"),
+                    BtProps.OptionalBlackboardKey("killedKey", "",
+                        "把\"打死了吗\"（bool）写进哪个黑板键；空 = 不写")
+                });
+
+            // 换武器：SC 的近战伤害取决于手上的东西，空手/方块打不动大牲口（用户 2026-09-26 要求）
+            s_nodes["Task.EquipWeapon"] = new BtNodeInfo("Task.EquipWeapon",
+                () => new BtEquipWeaponTask(), BtNodeShape.Task, true, new[]
+                {
+                    BtProps.Str("priority", PlayerEquipment.DefaultPriority,
+                        "武器优先级（逗号分隔，从好到差）；默认 diamond_machete,..."),
+                    BtProps.Bool("allowCreativeGrab", true, "创造模式下直接取一把（引擎自带的取物品路径）"),
+                    BtProps.OptionalBlackboardKey("weaponKey", "", "把拿到的武器名写进哪个黑板键"),
+                    BtProps.Bool("required", false, "拿不到武器时是否判失败（默认否：打得慢也好过不打）")
+                });
+
+            // 打猎回传：把"打死没有"落成日志 + 黑板 + 事件日志（用户 2026-09-26 要求"回传就行了"）
+            s_nodes["Task.HuntReport"] = new BtNodeInfo("Task.HuntReport",
+                () => new BtHuntReportTask(), BtNodeShape.Task, true, new[]
+                {
+                    BtProps.OptionalBlackboardKey("killedKey", "hunt.killed", "Task.Attack 写的\"打死了吗\""),
+                    BtProps.OptionalBlackboardKey("speciesKey", "hunt.species", "目标物种名"),
+                    BtProps.OptionalBlackboardKey("countKey", "hunt.kills", "本次累计打死数量"),
+                    BtProps.OptionalBlackboardKey("resultKey", "hunt.result", "人读的结果字符串"),
+                    BtProps.Bool("summary", false, "总结模式：不计数，只报告累计结果")
                 });
 
             s_nodes["Task.Interact"] = new BtNodeInfo("Task.Interact", () => new BtInteractTask(),
@@ -552,6 +580,8 @@ namespace PlayerAiMod
                     BtProps.RequiredStr("answerKeys",
                         "答案写到哪些黑板键：blackboardKey:questionId:type（str/bool/int/float），逗号分隔"),
                     BtProps.Str("only", null, "可选：只要这些问题 id（逗号分隔）；空 = 全问"),
+                    BtProps.OptionalBlackboardKey("digestKey", null,
+                        "可选：摘要从该黑板 string 键取（聊天兜底判定用它把原话当输入）；空 = 按角色状态编译"),
                     BtProps.Int("timeoutMs", 0, "节点级超时（毫秒）；0 = 用配置里的 timeoutMs"),
                     BtProps.Enum("onUnavailable", "fail", "fail", "default", "keep"),
                     BtProps.Str("defaultValue", null, "onUnavailable=default 时写什么"),
@@ -653,6 +683,20 @@ namespace PlayerAiMod
                     BtProps.Bool("clearWhenMissing", false, "找不到时是否清掉黑板键")
                 });
 
+            // ---- 聊天监听（2026-09-26）：把"有人在聊天里说话"变成树里的确定性格局。
+            // 只读观察（CmdBridge 的 ChatObserver）→ 短语表匹配 → 黑板；
+            // 没命中就留 `chat.bank`，让树拿原话去问模型一次（见 BtChatWatchService 的注释）。
+            s_services["Service.ChatWatch"] = new BtServiceInfo(
+                "Service.ChatWatch", () => new BtChatWatchService(), true, new[]
+                {
+                    BtProps.Str("prefix", "chat.", "键名前缀（chat.text / chat.sender / chat.intent …）"),
+                    BtProps.OptionalBlackboardKey("targetKey", "chat.target", "发话者解析出的目标写进哪个键"),
+                    BtProps.Bool("useFallback", true, "短语表没命中时是否留 chat.bank 让树去问模型"),
+                    BtProps.Str("fallbackBank", "chat_intent", "兜底问题库名（Questions/ 下）"),
+                    BtProps.Str("voiceName", null, "只认这个玩家名说的话（空 = 谁说的都认）"),
+                    BtProps.Bool("clearWhenMissing", true, "解析不到发话者实体时是否清掉目标键")
+                });
+
             // ---- 传感器服务族（2026-09-12 补）：把"世界里的事实"周期写进黑板，供装饰器判断。
             // 共同约定：找不到就清掉上次的值（否则"狼已经走了"而黑板里还留着旧坐标）。
             s_services["Service.UpdateSelf"] = new BtServiceInfo(
@@ -669,7 +713,13 @@ namespace PlayerAiMod
                     BtProps.Int("categoryMask", 0,
                         "类别掩码：1=陆地掠食者 2=陆地其它 4=水中掠食者 8=水中其它 16=鸟；0=不限"),
                     BtProps.Float("maxDistance", 32f, "搜索半径（米）"),
-                    BtProps.Bool("clearWhenMissing", true, "找不到时是否清掉黑板键")
+                    BtProps.Bool("clearWhenMissing", true, "找不到时是否清掉黑板键"),
+                    BtProps.OptionalBlackboardKey("nameKey", "",
+                        "按名找生物：从哪个黑板键读候选词（如 chat.arg）；填了就不按类别找"),
+                    BtProps.OptionalBlackboardKey("speciesKey", "",
+                        "锁定物种的名字写进哪个键（实现\"附近还有同种就继续\"）"),
+                    BtProps.Float("stickyRadius", 6f,
+                        "粘住当前目标：它漂移不超过这个距离就还是它（不换成更近的另一只）")
                 });
 
             s_services["Service.UpdateNearestPickable"] = new BtServiceInfo(

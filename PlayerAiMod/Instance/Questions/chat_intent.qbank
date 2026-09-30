@@ -1,0 +1,16 @@
+{
+  "format": "qbank", "version": 1,
+  "id": "chat_intent", "name": "聊天·这句话要我做什么",
+  "description": "只判「这句话是不是给我的指令」；摘要是那句话本身（digestKey=chat.digest），不是角色状态。",
+  "questions": [
+    { "id": "chat_intent", "type": "choice",
+      "instructions": "Someone said this in chat. What should this character do?",
+      "options": [
+        { "key": "come",   "description": "go to the speaker and stop near them" },
+        { "key": "follow", "description": "follow the speaker around" },
+        { "key": "stop",   "description": "stop moving and stay where it is" },
+        { "key": "hunt",   "description": "kill an animal the speaker named (the animal name is resolved outside the model)" },
+        { "key": "ignore", "description": "not an instruction; keep doing its own work" }
+      ] }
+  ]
+}

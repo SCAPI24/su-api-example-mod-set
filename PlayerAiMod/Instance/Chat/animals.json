@@ -1,0 +1,31 @@
+{
+  "format": "chatanimals",
+  "version": 1,
+  "id": "world",
+  "name": "world",
+  "description": "出厂默认：常见猎物/家畜的口语词 → 生物显示名；加动物改这个文件即可。",
+  "species": [
+    { "key": "cow", "description": "牛 / 家牛", "category": "land", "names": ["牛", "公牛", "奶牛", "小牛", "cow", "bull", "cattle"] },
+    { "key": "wolf", "description": "狼", "category": "land", "names": ["狼", "灰狼", "白狼", "wolf"] },
+    { "key": "bear", "description": "熊", "category": "land", "names": ["熊", "棕熊", "黑熊", "bear"] },
+    { "key": "tiger", "description": "虎", "category": "land", "names": ["虎", "老虎", "tiger"] },
+    { "key": "lion", "description": "狮", "category": "land", "names": ["狮", "狮子", "lion"] },
+    { "key": "hyena", "description": "鬣狗", "category": "land", "names": ["鬣狗", "hyena"] },
+    { "key": "boar", "description": "野猪", "category": "land", "names": ["野猪", "猪", "boar", "pig"] },
+    { "key": "deer", "description": "鹿", "category": "land", "names": ["鹿", "deer"] },
+    { "key": "giraffe", "description": "长颈鹿", "category": "land", "names": ["长颈鹿", "giraffe"] },
+    { "key": "rhino", "description": "犀牛", "category": "land", "names": ["犀牛", "rhino"] },
+    { "key": "zebra", "description": "斑马", "category": "land", "names": ["斑马", "zebra"] },
+    { "key": "camel", "description": "骆驼", "category": "land", "names": ["骆驼", "camel"] },
+    { "key": "ostrich", "description": "鸵鸟", "category": "land", "names": ["鸵鸟", "ostrich"] },
+    { "key": "bird", "description": "鸟", "category": "bird", "names": ["鸟", "小鸟", "bird", "raven", "seagull", "duck"] },
+    { "key": "bass", "description": "鲈鱼", "category": "water", "names": ["鲈鱼", "鱼", "bass", "fish"] },
+    { "key": "ray", "description": "鳐鱼", "category": "water", "names": ["鳐鱼", "ray"] },
+    { "key": "piranha", "description": "食人鱼", "category": "water", "names": ["食人鱼", "piranha"] },
+    { "key": "barracuda", "description": "梭鱼", "category": "water", "names": ["梭鱼", "barracuda"] },
+    { "key": "shark", "description": "鲨鱼", "category": "water", "names": ["鲨鱼", "shark"] },
+    { "key": "orca", "description": "虎鲸", "category": "water", "names": ["虎鲸", "orca", "killer whale"] },
+    { "key": "beluga", "description": "白鲸", "category": "water", "names": ["白鲸", "beluga"] },
+    { "key": "whale", "description": "鲸", "category": "water", "names": ["鲸", "鲸鱼", "whale"] }
+  ]
+}

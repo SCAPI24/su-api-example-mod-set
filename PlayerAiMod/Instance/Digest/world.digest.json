@@ -1,0 +1,29 @@
+{
+  "format": "digest",
+  "version": 1,
+  "id": "world",
+  "name": "world",
+  "description": "出厂默认：顺序按紧迫程度（hp → food → sleep/night → aim → …），良性值不进上线，上线预算 28 字符。",
+  "budgets": { "wire": 28, "rich": 200 },
+  "fields": [
+    { "key": "hp", "source": "health", "format": "num(band)", "description": "生命 + 档位", "bands": [{"lte": 0.001, "label": "dead" }, {"lt": 0.2, "label": "crit" }, {"lt": 0.5, "label": "low" }, {"lt": 0.8, "label": "ok" }, {"label": "full" }], "wire": { "fact": "number", "op": "lt", "value": 0.8 } },
+    { "key": "food", "source": "food", "format": "num(band)", "description": "饥饿 + 档位", "bands": [{"lt": 0.1, "label": "starving" }, {"lt": 0.3, "label": "hungry" }, {"lt": 0.6, "label": "ok" }, {"label": "full" }], "wire": { "fact": "number", "op": "lt", "value": 0.6 } },
+    { "key": "sleep", "source": "sleep", "format": "band", "description": "困倦（睡着时=now）", "bands": [{"lt": 0.2, "label": "rested" }, {"lt": 0.6, "label": "sleepy" }, {"label": "exhausted" }], "wire": "never" },
+    { "key": "night", "source": "isNight", "format": "bool01", "description": "是否夜晚", "wire": { "fact": "flag", "op": "is", "value": true } },
+    { "key": "aim", "source": "aim", "format": "text", "description": "准星目标（方块类型@距离）", "wire": { "all": [{ "fact": "text", "op": "notempty" }, { "fact": "text", "op": "ne", "value": "none" }] } },
+    { "key": "hold", "source": "holding", "format": "text", "description": "手持物品类型" },
+    { "key": "stam", "source": "stamina", "format": "band", "description": "耐力档位", "bands": [{"lt": 0.2, "label": "spent" }, {"lt": 0.5, "label": "tired" }, {"label": "ok" }], "wire": { "fact": "number", "op": "lt", "value": 0.5 } },
+    { "key": "temp", "source": "temperature", "format": "band", "description": "体温档位", "bands": [{"lt": 6, "label": "freezing" }, {"lt": 10, "label": "cold" }, {"lte": 16, "label": "normal" }, {"lte": 20, "label": "hot" }, {"label": "burning" }], "wire": { "any": [{ "fact": "number", "op": "lt", "value": 10 }, { "fact": "number", "op": "gt", "value": 16 }] } },
+    { "key": "wet", "source": "wetness", "format": "band", "description": "潮湿档位", "bands": [{"lt": 0.2, "label": "dry" }, {"lt": 0.6, "label": "damp" }, {"label": "soaked" }], "wire": { "fact": "number", "op": "gte", "value": 0.2 } },
+    { "key": "scr", "source": "screen", "format": "text", "description": "屏幕名", "wire": { "obs": "hasplayer", "op": "is", "value": false } },
+    { "key": "list", "source": "uiList", "format": "text", "description": "可见列表的候选行", "wire": "never" },
+    { "key": "phase", "source": "phase", "format": "text", "description": "世界内/世界外/加载中", "wire": { "obs": "hasplayer", "op": "is", "value": false } },
+    { "key": "ui", "source": "uiState", "format": "text", "description": "界面状态（世界外=menu，模态=面板名）", "wire": { "obs": "hasplayer", "op": "is", "value": false } },
+    { "key": "day", "source": "day", "format": "dayhour", "description": "第几天 / 几点" },
+    { "key": "season", "source": "season", "format": "text", "description": "季节" },
+    { "key": "rain", "source": "precipitation", "format": "bool1", "description": "是否降水（只在有降水时发）" },
+    { "key": "bag", "source": "inventoryItems", "format": "integer", "description": "背包非空格数", "rich": { "fact": "integer", "op": "gt", "value": 0 } },
+    { "key": "mode", "source": "gameMode", "format": "text", "description": "游戏模式" },
+    { "key": "cansleep", "source": "canSleep", "format": "bool1", "description": "现在能不能睡（只在能睡时发）" }
+  ]
+}

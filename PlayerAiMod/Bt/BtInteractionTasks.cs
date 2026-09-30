@@ -164,13 +164,40 @@ namespace PlayerAiMod
         /// <summary>看目标哪个高度（米）。</summary>
         public float EyeHeight { get; set; } = 1.2f;
 
-        /// <summary>超时判失败（秒）。</summary>
+        /// <summary>超时判失败（秒）。**&lt;= 0 = 不限时** —— 见 <see cref="HealthProbe"/>。</summary>
         public float TimeoutSeconds { get; set; } = 20f;
 
-        /// <summary>连点间隔（秒，0 = 一直按住）。SC 里攻击是"按一下就挥一次"，所以默认连点。</summary>
-        public float ClickInterval { get; set; } = 0.6f;
+        /// <summary>
+        /// 连点间隔（秒，0 = 一直按住）。
+        ///
+        /// ⚠️ **必须大于引擎的攻击冷却 0.66 秒**（`ComponentMiner.cs:295`：
+        /// `if (!(GameTime - m_lastHitTime > 0.66f)) return;` —— 冷却内的挥击**整个被丢掉**，
+        /// 不是"少打一点"）。默认原来写 0.6，正好每次都落在冷却里：2026-09-26 实测
+        /// "打了半天动物血量恒为 1"，看着像没命中，其实是**一次都没生效**。
+        /// Source: ComponentMiner.cs:295（冷却）、311（伤害 = 威力 × 攻击力 ÷ 韧性）
+        /// </summary>
+        public float ClickInterval { get; set; } = 0.75f;
+
+        /// <summary>
+        /// **边打边采目标血量**（0..1）：这是"打死没有"的唯一可信判据。
+        ///
+        /// 为什么不能只看"目标键没了"：键没了也可能是它跑出了搜索半径（或换目标）。
+        /// 目标一死实体就被移除、血量就取不到了，所以必须在打的过程中一直采样，
+        /// 收尾时用**最后一次采到的血量**判定（`ComponentHealth.Health` 到 0 即死亡）。
+        /// Source: ComponentHealth.cs:40,267
+        /// </summary>
+        public bool HealthProbe { get; set; } = true;
+
+        /// <summary>把"打死了吗"写进哪个黑板键（bool）。空 = 不写（报告交给 `Task.HuntReport`）。</summary>
+        public string KilledKey { get; set; }
 
         private float m_nextClick;
+        private float m_lastHealth = -1f;
+        private bool m_sawHealth;
+        private bool m_sawDamage;
+        private double m_lastDamageTime;
+        private string m_targetName;
+        private float m_nextHealthLog;
 
         public override string NodeType
         {
@@ -183,6 +210,12 @@ namespace PlayerAiMod
                 return BtResult.Failed;
             Button = string.IsNullOrEmpty(Button) ? "left" : Button;
             m_nextClick = 0f;
+            m_lastHealth = -1f;
+            m_sawHealth = false;
+            m_sawDamage = false;
+            m_lastDamageTime = 0f;
+            m_targetName = null;
+            m_nextHealthLog = 0f;
             return Step(context);
         }
 
@@ -200,15 +233,53 @@ namespace PlayerAiMod
         {
             AiActorView target;
             if (context.Blackboard == null || !context.Blackboard.TryGet(TargetKey, out target))
+                return Finish(context);                       // 目标没了：判"打死"还是"跑了"
+
+            m_targetName = target.Name;
+            if (HealthProbe)
             {
-                context.Log("Attack: target '" + TargetKey + "' is gone -> Succeeded");
-                return BtResult.Succeeded;                    // 目标没了 = 打完（或它跑了）
+                // 目标还活着时每 tick 采一次；死了就再也采不到，所以最后采到的值就是死前的值
+                IAiWorldSensor extras = BtSensorServices.Extras(context);
+                float health;
+                if (extras != null && extras.TryGetActorHealth(target, out health))
+                {
+                    bool dropped = m_sawHealth && health < m_lastHealth - 0.0005f;
+                    if (dropped)
+                    {
+                        m_sawDamage = true;
+                        m_lastDamageTime = context.Time;
+                    }
+                    m_lastHealth = health;
+                    m_sawHealth = true;
+
+                    // **血量归零就当场收工**：实体（尸体）可能还留在世界里好几秒，
+                    // 只等"目标键消失"会一直对着尸体挥（2026-09-26 实测：血量 0 空挥 25 秒）。
+                    if (health <= 0.001f)
+                    {
+                        context.Log("Attack: '" + (target.Name ?? TargetKey) + "' health reached 0 -> KILLED");
+                        if (!string.IsNullOrEmpty(KilledKey) && context.Blackboard != null)
+                            context.Blackboard.Set(new AiBlackboardKey<bool>(KilledKey), true);
+                        return BtResult.Succeeded;
+                    }
+
+                    // 限频血量回传（最多每秒一条）：**看得出"到底打中没有"**。
+                    // 没有这条，"打了半天不死"就分不清是"伤害太低"还是"根本没挥中"（2026-09-26 实测踩到）。
+                    if (ActiveTime >= m_nextHealthLog)
+                    {
+                        m_nextHealthLog = ActiveTime + 1f;
+                        context.Log("Attack: '" + (target.Name ?? TargetKey) + "' health="
+                            + health.ToString("0.###") + (dropped ? " (dropping)" : string.Empty)
+                            + " dist=" + target.Distance.ToString("0.00"));
+                    }
+                }
             }
 
-            if (ActiveTime > TimeoutSeconds)
+            // `<= 0` = 不限时：打猎时"打没打死"由血量判定，不由钟表判定（用户明确要求）
+            if (TimeoutSeconds > 0f && ActiveTime > TimeoutSeconds)
             {
                 context.Warn("Attack: timeout after " + ActiveTime.ToString("0.0") + "s, distance="
-                    + target.Distance.ToString("0.00"));
+                    + target.Distance.ToString("0.00") + ", health="
+                    + (m_sawHealth ? m_lastHealth.ToString("0.00") : "?"));
                 return BtResult.Failed;
             }
 
@@ -236,6 +307,42 @@ namespace PlayerAiMod
                 context.Actuators.MouseClick(Button, 40);
             }
             return BtResult.InProgress;
+        }
+
+        /// <summary>
+        /// 目标从黑板消失时的收尾：**用最后采到的血量判定打死了没有**，写进 `KilledKey`。
+        ///
+        /// ⚠️ 为什么不能只判"血量 == 0"：**致命那一击落地时实体就已经被移除了**，
+        /// 于是我们最后一次采到的值是"死前的血量"（比如 0.15），永远等不到 0。
+        /// 所以分两级：
+        ///   · **确定**：亲眼采到血量归零；
+        ///   · **推定**：确实打掉过它的血（`m_sawDamage`）且最后血量已经很低、掉血还在 2.5 秒内
+        ///     —— 致命一击就在眼前，实体随即消失，这只能是死了。
+        /// 两者都不是（没采到样本 / 血量还很高就消失）才报"没确认打死"（它跑出了搜索半径）。
+        ///
+        /// 三种结局都算 `Succeeded`（"打完了"不是失败），日志把话说清楚。
+        /// </summary>
+        private BtResult Finish(BtContext context)
+        {
+            bool certain = m_sawHealth && m_lastHealth <= 0.02f;
+            bool probable = m_sawHealth && m_sawDamage && m_lastHealth <= 0.35f
+                && (context.Time - m_lastDamageTime) <= 2.5;
+            bool killed = HealthProbe && (certain || probable);
+            if (!string.IsNullOrEmpty(KilledKey) && context.Blackboard != null)
+                context.Blackboard.Set(new AiBlackboardKey<bool>(KilledKey), killed);
+
+            string name = string.IsNullOrEmpty(m_targetName) ? TargetKey : m_targetName;
+            if (killed && certain)
+                context.Log("Attack: '" + name + "' health reached 0 -> KILLED");
+            else if (killed)
+                context.Log("Attack: '" + name + "' went down right after taking damage (last health "
+                    + m_lastHealth.ToString("0.###") + ") -> KILLED");
+            else if (m_sawHealth)
+                context.Log("Attack: '" + name + "' is gone (last health " + m_lastHealth.ToString("0.###")
+                    + ", no recent damage) -> not confirmed dead");
+            else
+                context.Log("Attack: target '" + TargetKey + "' is gone -> Succeeded");
+            return BtResult.Succeeded;
         }
     }
 

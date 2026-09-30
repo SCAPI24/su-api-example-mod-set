@@ -5,12 +5,12 @@
 `PlayerAiMod` / `PlayerAiEditor` 的**实例内容**放在游戏实例根下：
 
 ```
-PC      : <仓库>\publish\[SuAPI]Survivalcraft\PlayerAi\{BehaviorTrees,Questions,Scripts}
-Android : /sdcard/Download/Survivalcraft/PlayerAi\{BehaviorTrees,Questions,Scripts}
+PC      : <仓库>\publish\[SuAPI]Survivalcraft\PlayerAi\{BehaviorTrees,Questions,Scripts,Digest}
+Android : /sdcard/Download/Survivalcraft/PlayerAi\{BehaviorTrees,Questions,Scripts,Digest}
 ```
 
 这两处**都不被任何仓库跟踪**（`publish/` 被根仓库 `.gitignore` 忽略，设备上的更是本地文件）。
-所以一旦删掉 `publish`，实例里那些**在实例中新建/改过**的行为树包、动作包、问题库、动作脚本就没了。
+所以一旦删掉 `publish`，实例里那些**在实例中新建/改过**的行为树包、动作包、问题库、动作脚本、摘要规格就没了。
 
 本目录就是那份"能被 git 跟踪的种子"：
 
@@ -18,7 +18,9 @@ Android : /sdcard/Download/Survivalcraft/PlayerAi\{BehaviorTrees,Questions,Scrip
 PlayerAiMod/Instance/
 ├── BehaviorTrees/   *.scbtpak / *.scatpak
 ├── Questions/       *.qbank
-└── Scripts/         *.aeact
+├── Scripts/         *.aeact
+├── Digest/          *.digest.json   （摘要规格；2026-09-26 加，见 §9.5.51）
+└── Chat/            *.json          （聊天短语表；2026-09-26 加，见 §9.5.52）
 ```
 
 建立时（2026-09-26）与 PC 实例**逐字节一致**：24 个文件（BehaviorTrees 10 + Questions 3 + Scripts 11）。

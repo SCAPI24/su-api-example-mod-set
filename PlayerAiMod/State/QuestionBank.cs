@@ -105,6 +105,13 @@ namespace PlayerAiMod
         /// <summary>世界外界面问题库的文件名（`front_goal` / `dialog_action`）。理由同 <see cref="WorldGoalFileName"/>。</summary>
         public const string FrontGoalFileName = "front_goal.qbank";
 
+        /// <summary>
+        /// **聊天兜底问题库**的文件名（2026-09-26）：短语表没命中时，拿"那句话"问一次模型。
+        /// 摘要由 `Task.LayaAsk digestKey=chat.digest` 提供（**不是**角色状态），
+        /// 所以它跟 `world_goal` 完全隔离。理由同 <see cref="WorldGoalFileName"/>（编辑器也要编到）。
+        /// </summary>
+        public const string ChatIntentFileName = "chat_intent.qbank";
+
         public string Id;
         public string Name;
         public string Description;

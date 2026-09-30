@@ -73,6 +73,8 @@ namespace PlayerAiMod
             "ai.laya.review",
             "ai.laya.ask",
             "state.digest",
+            "ai.digest.status",
+            "ai.digest.reload",
             "ai.action.script.verbs",
             "ai.tree.snapshot",
             "ai.logs",
@@ -134,7 +136,9 @@ namespace PlayerAiMod
                 ["ai.laya.status"] = "Laya 服务现状（配置/密钥来源掩码/在途/缓存/失败计数）",
                 ["ai.laya.review"] = "判定复盘（P4）：最近几次问 Laya 的聚合 + 明细 + markdown/digest 抽样表（count/clear/format）",
                 ["ai.laya.ask"] = "手动问一次 Laya（questions=库名 [only=id,…] [digest=字面摘要]）——同步，仅调试/调参用",
-                ["state.digest"] = "把当前状态编译成喂给 Laya 的一行摘要（budget= 可选）",
+                ["state.digest"] = "把当前状态编译成喂给 Laya 的一行摘要（budget= 可选，wire=true 看上线的短那份）",
+                ["ai.digest.status"] = "摘要规格现状（来源文件/版本/哈希/changedOnDisk/字段表；只读）",
+                ["ai.digest.reload"] = "强制重读摘要规格文件（改完 JSON 不想等下一次判定就调它）",
                 ["ai.action.script.verbs"] = "列出 verb 词表与参数（编辑器物料区、LLM 生成脚本读它）",
                 ["ai.tree.snapshot"] = "活动节点快照（路径 + 每个节点状态；P3 编辑器实时监视复用）",
                 ["ai.logs"] = "事件日志：count=… 看最近若干条，clear=true 清空",
@@ -199,6 +203,8 @@ namespace PlayerAiMod
                 ["ai.laya.review"] = LayaReviewCommand,
                 ["ai.laya.ask"] = LayaAskCommand,
                 ["state.digest"] = StateDigestCommand,
+                ["ai.digest.status"] = DigestStatusCommand,
+                ["ai.digest.reload"] = DigestReloadCommand,
                 ["ai.action.script.verbs"] = ActionScriptVerbs,
                 ["ai.tree.snapshot"] = TreeSnapshot,
                 ["ai.logs"] = Logs,
@@ -2260,18 +2266,105 @@ namespace PlayerAiMod
             if (facade == null)
                 throw new AiCommandException("not_ready", "CmdBridgeMod facade is not available");
 
+            // 读盘热重载：刚改完 `.digest.json` 就调它，看到的就是新规格（不用等下一次判定）。
+            DigestCatalog.EnsureFresh();
+
             Dictionary<string, object> raw = facade.DescribeStateInputs();
             StateInputs inputs = StateInputs.FromObservation(raw);
-            int budget = request.GetInteger("budget", StateDigestCompiler.DefaultBudgetChars);
-            string digest = StateDigestCompiler.Compile(inputs, budget);
+            bool wire = request.GetBoolean("wire", false);
+            DigestSpec spec = StateDigestCompiler.Active;
+            int budget = request.GetInteger("budget", wire ? spec.WireBudget : spec.RichBudget);
+            string digest = StateDigestCompiler.Compile(inputs, budget, wire);
 
             return new Dictionary<string, object>(StringComparer.Ordinal)
             {
                 ["digest"] = digest,
                 ["chars"] = digest.Length,
                 ["budgetChars"] = budget,
+                ["wire"] = wire,
+                ["spec"] = spec.Id,
+                ["specVersion"] = spec.Version,
+                ["specHash"] = spec.SourceHash,
                 ["estimatedTokens"] = QuestionBankParser.EstimateTokens(digest),
                 ["raw"] = raw
+            };
+        }
+
+        /// <summary>
+        /// 摘要规格现状（只读）：来源文件 / 版本 / 内容哈希 / **磁盘是否已经不一致** / 逐字段的
+        /// 来源、格式、档位、rich·wire 条件。编辑器面板与 LLM 都读它 —— 一份结构，两个消费者。
+        /// </summary>
+        private static object DigestStatusCommand(AiCommandRequest request, IAiCommandContext context)
+        {
+            // ⚠️ **只读**（A44 的纪律）：这里**不**调 `EnsureFresh()`。
+            // 一旦它自己刷新，"改了文件还没被读"这个状态就会被查询动作吃掉，
+            // 编辑器面板永远看不到 `changedOnDisk=true` —— 诊断命令有副作用时，
+            // 排查时看到的就不是现场。真正的刷新点是：下一次判定、或显式 `ai.digest.reload`。
+            DigestSpec spec = StateDigestCompiler.Active;
+
+            var fields = new List<Dictionary<string, object>>();
+            for (int i = 0; i < spec.Fields.Count; i++)
+            {
+                DigestFieldSpec field = spec.Fields[i];
+                var bands = new List<string>();
+                for (int b = 0; b < field.Bands.Count; b++)
+                    bands.Add(field.Bands[b].Describe());
+                fields.Add(new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    ["key"] = field.Key,
+                    ["source"] = field.Source,
+                    ["format"] = field.Format,
+                    ["description"] = field.Description,
+                    ["bands"] = bands,
+                    ["rich"] = field.Rich != null ? field.Rich.Describe() : "always",
+                    ["wire"] = field.Wire != null ? field.Wire.Describe() : "same as rich"
+                });
+            }
+
+            return new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["id"] = spec.Id,
+                ["name"] = spec.Name,
+                ["version"] = spec.Version,
+                ["hash"] = spec.SourceHash,
+                ["builtin"] = spec.IsBuiltin,
+                ["path"] = spec.SourcePath,
+                ["changedOnDisk"] = DigestCatalog.ChangedOnDisk,
+                ["lastError"] = DigestCatalog.LastError,
+                ["lastErrorPath"] = DigestCatalog.LastErrorPath,
+                ["budgets"] = new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    ["wire"] = spec.WireBudget,
+                    ["rich"] = spec.RichBudget
+                },
+                // 预算的**权威来源**说清楚：数据里写了却不生效是最坏的一种坑。
+                ["budgetSource"] = spec.WireBudget > 0
+                    ? "this spec file (Laya.local.json stateChars is ignored while the spec sets a budget)"
+                    : "Laya.local.json (this spec sets wire=0)",
+                ["directories"] = new List<string>(DigestCatalog.Directories),
+                ["fieldCount"] = spec.Fields.Count,
+                ["fields"] = fields,
+                ["sources"] = DigestFacts.Sources(),
+                ["formats"] = DigestFacts.Formats(),
+                ["observes"] = DigestFacts.Observes(),
+                ["factAttributes"] = DigestFacts.FactAttributes()
+            };
+        }
+
+        /// <summary>强制重读规格文件（改完 JSON 不想等下一次判定）。失败**不改**正在跑的那一份。</summary>
+        private static object DigestReloadCommand(AiCommandRequest request, IAiCommandContext context)
+        {
+            DigestSpec spec;
+            string error;
+            bool ok = DigestCatalog.Reload(out spec, out error);
+            return new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["ok"] = ok,
+                ["id"] = spec.Id,
+                ["hash"] = spec.SourceHash,
+                ["builtin"] = spec.IsBuiltin,
+                ["path"] = spec.SourcePath,
+                ["error"] = error
             };
         }
         private static object ActionScriptVerbs(AiCommandRequest request, IAiCommandContext context)
@@ -2589,7 +2682,7 @@ namespace PlayerAiMod
             {
                 Dictionary<string, object> selfTest = RunSelfTests(BtSelfTest.Run(),
                     PackageSelfTest.Run(), AiCommandSelfTest.Run(), AiModeSelfTest.Run(),
-                    AiRecordingSelfTest.Run(), TreeEditSelfTest.Run(), ActionSelfTest.Run(), StateSelfTest.Run(), LayaSelfTest.Run(), PoolSelfTest.Run(), AutoSaveSelfTest.Run(), AssetSelfTest.Run(), AssetRetrySelfTest.Run(), PhaseSelfTest.Run());
+                    AiRecordingSelfTest.Run(), TreeEditSelfTest.Run(), ActionSelfTest.Run(), StateSelfTest.Run(), LayaSelfTest.Run(), PoolSelfTest.Run(), AutoSaveSelfTest.Run(), AssetSelfTest.Run(), AssetRetrySelfTest.Run(), PhaseSelfTest.Run(), DigestSelfTest.Run(), ChatPhrasesSelfTest.Run(), ChatAnimalAliasesSelfTest.Run());
                 if (context.EventLog != null)
                 {
                     context.EventLog.Write("selftest", "passed=" + selfTest["passed"]

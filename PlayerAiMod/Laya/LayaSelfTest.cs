@@ -193,21 +193,35 @@ namespace PlayerAiMod
             result.Check("without a content hash the fingerprint still follows the option keys",
                 byKeys != LayaClient.Fingerprint(digest, renamed, "m"));
 
-            // **摘要布局版本**变了 → 指纹必须变（否则改完字段表还在吃旧缓存）
-            int version = StateDigestCompiler.Version;
+            // **摘要规格**变了 → 指纹必须变（否则改完字段表/档位还在吃旧缓存）。
+            //
+            // 2026-09-26：版本与内容哈希都来自生效规格（`DigestSpec`），版本不再是可写静态字段，
+            // 所以这里换成"换一份规格再换回来"—— 与"动过全局缝必须还原"是同一条纪律。
+            DigestSpec original = StateDigestCompiler.Active;
             try
             {
-                StateDigestCompiler.Version = version + 1;
+                DigestSpec bumpedSpec = original.Clone();
+                bumpedSpec.Version = original.Version + 1;
+                StateDigestCompiler.SetActive(bumpedSpec);
                 string bumped = LayaClient.Fingerprint(digest, bank, "m");
                 result.Check("*** bumping the digest layout version changes the fingerprint ***",
                     bumped != byKeys, bumped + " vs " + byKeys);
+
+                // 只改内容（版本不动）也必须换指纹：改了档位阈值却复用旧答案是最坏的一种
+                DigestSpec editedSpec = original.Clone();
+                editedSpec.SourceHash = (original.SourceHash ?? "?") + "x";
+                StateDigestCompiler.SetActive(editedSpec);
+                string edited = LayaClient.Fingerprint(digest, bank, "m");
+                result.Check("*** editing the digest spec (same version, new hash) changes the fingerprint ***",
+                    edited != byKeys, edited + " vs " + byKeys);
             }
             finally
             {
-                StateDigestCompiler.Version = version;   // 自检动过的全局缝必须还原
+                StateDigestCompiler.SetActive(original);
             }
-            result.Check("the digest version is restored after the self-test (global seam discipline)",
-                StateDigestCompiler.Version == version);
+            result.Check("the digest spec is restored after the self-test (global seam discipline)",
+                ReferenceEquals(StateDigestCompiler.Active, original)
+                && StateDigestCompiler.Version == original.Version);
 
             // 记录里带版本：markdown 有 v 列、digest 视图带 v 前缀、样本对账能判"不是当前版本"
             var log = new DecisionLog();

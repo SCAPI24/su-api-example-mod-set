@@ -30,6 +30,15 @@ namespace PlayerAiMod
         public string QuestionsKey { get; set; }
 
         /// <summary>
+        /// 摘要**从黑板取**（键名，值是完整的一行摘要串）。为空 = 照旧从角色状态编译。
+        ///
+        /// 为什么要它：`Task.LayaAsk` 只该负责"问"，而"问什么"必须由**问题**决定 ——
+        /// 角色状态是 `world_goal` 那类问题的输入；"这句话是什么意思"的输入就是那句话。
+        /// 让服务去编译角色状态来判聊天，等于用错了输入（而且会污染另一个问题的摘要）。
+        /// </summary>
+        public string DigestKey { get; set; }
+
+        /// <summary>
         /// 答案写到哪些黑板键。语法 `黑板键:问题id:类型`（类型 `str|bool|int|float`），
         /// 多个用逗号分隔，例如 `goal:goal:str,danger:threat:bool`。
         /// **类型不符 = 本节点失败**（对应 §4.7 的兼容矩阵）。
@@ -114,9 +123,27 @@ namespace PlayerAiMod
             if (!service.TryResolveBank(bankName, Only, out bank, out string bankError))
                 return Fail(context, "laya_no_bank", bankError);
 
-            string digest = service.CompileDigest(context, out string digestError);
-            if (digest == null)
-                return Fail(context, "laya_no_state", digestError);
+            // **摘要可以来自黑板**（`digestKey`）：有些问题问的不是"角色状态"，而是
+            // "刚刚那句话是什么意思"（聊天兜底判定就是这种）。这时线上摘要必须是**那句话本身**，
+            // 而不是角色的生命/饥饿 —— 往 `world_goal` 的摘要里塞一句聊天原文，
+            // 会把那个问题的答案带偏（§12.1：摘要里多一个 token 就能翻面）。
+            string digest;
+            string digestError = null;
+            string digestKey = DigestKey;
+            if (!string.IsNullOrEmpty(digestKey))
+            {
+                digest = null;
+                context.Blackboard.TryGet(new AiBlackboardKey<string>(digestKey), out digest);
+                if (digest == null)
+                    return Unavailable(context, "laya_no_digest",
+                        "blackboard key '" + digestKey + "' has no digest string");
+            }
+            else
+            {
+                digest = service.CompileDigest(context, out digestError);
+                if (digest == null)
+                    return Fail(context, "laya_no_state", digestError);
+            }
 
             // **上线状态是空的就别问**（A56）。
             //
