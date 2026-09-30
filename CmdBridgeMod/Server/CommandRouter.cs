@@ -22,7 +22,7 @@ namespace CmdBridgeMod
         /// ⚠️ **必须与 `ModInfo.xml` 的 `&lt;Version&gt;` 同步**：漏同步就会出现
         /// "装的是 1.1.20、状态里报 1.1.15"（本文件实际踩过一次，排查时容易误判成旧包装没生效）。
         /// </summary>
-        internal const string ModVersion = "1.1.23";
+        internal const string ModVersion = "1.1.24";
 
         /// <summary>
         /// 内建命令名（`cmd.list` 用）。加命令时**必须同步这里**：
@@ -125,9 +125,18 @@ namespace CmdBridgeMod
                 case "obs.world.blocks":
                     return OnGameThread(() => DescribeBlocks(request));
                 case "obs.world.entities":
-                    return OnGameThread(() => WorldObserver.DescribeEntities(
-                        request.GetFloat("radius", 64f),
-                        request.GetInteger("max", 64)));
+                    return OnGameThread(() =>
+                    {
+                        Vector3? center = request.TryGetInteger("x", out int ex) &&
+                            request.TryGetInteger("y", out int ey) &&
+                            request.TryGetInteger("z", out int ez)
+                                ? new Vector3(ex + 0.5f, ey + 0.5f, ez + 0.5f)
+                                : (Vector3?)null;
+                        return WorldObserver.DescribeEntities(
+                            request.GetFloat("radius", 64f),
+                            request.GetInteger("max", 64),
+                            center);
+                    });
                 case "obs.world.time":
                     return OnGameThread(WorldObserver.DescribeTime);
                 case "obs.world.fire":

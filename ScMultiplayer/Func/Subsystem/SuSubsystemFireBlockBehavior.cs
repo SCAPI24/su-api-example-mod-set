@@ -65,12 +65,33 @@ namespace ScMultiplayer
                     m_soundPointIndex = 0;
                     m_soundPointRemainder = 0f;
                 }
+                List<Point3> fireCellsBeforeUpdate = null;
                 if (ScMultiplayer.currentInstance?.IsNetworkHost(Project) == true)
                 {
                     RegisterLoadedHostFireCells();
                     ExtinguishClaimFire(registerPreexisting: true);
+                    // 2026-10-01（用户口径：主机那份为准）：**"烧尽"是 base.Update 里发生的**，而它的
+                    // 格变动不一定进引擎的改动表 ⇒ 主机上被烧掉的方块**不会下发**（实测：仙人掌被烧成空气后，
+                    // 客户端日志里那 3 格**一条记录都没有**，客户端一直显示着已经不存在的那株仙人掌）。
+                    // 记下更新前的火格，跑完后把"已经消失"的格主动登记进下发批次。
+                    fireCellsBeforeUpdate = m_fireData != null && m_fireData.Count > 0
+                        ? new List<Point3>(m_fireData.Keys.Cast<Point3>())
+                        : null;
                 }
                 base.Update(dt);
+                if (fireCellsBeforeUpdate != null && m_subsystemTerrain?.Terrain != null)
+                {
+                    SuSubsystemTerrain hostTerrain = m_subsystemTerrain as SuSubsystemTerrain;
+                    foreach (Point3 burnedCell in fireCellsBeforeUpdate)
+                    {
+                        if (m_fireData != null && m_fireData.Contains(burnedCell))
+                            continue;                       // 火表里还在 → 没烧完
+                        if (m_subsystemTerrain.Terrain.GetCellContents(
+                                burnedCell.X, burnedCell.Y, burnedCell.Z) == FireBlock.Index)
+                            continue;                       // 还是火格 → 不是"烧尽"
+                        hostTerrain?.MarkCellModifiedForBroadcast(burnedCell);
+                    }
+                }
                 // 《玩家领地》P6：领地内不允许有火（设计稿 §5：不得被点燃、火不蔓延进来）。
                 // 引擎的 SetCellOnFire 不是虚方法（无法直接拦），这里用"点燃后同帧熄灭"的
                 // 改回式执行：先清一次（旧火），跑完引擎更新再清一次（本帧新点燃/蔓延进来的）。

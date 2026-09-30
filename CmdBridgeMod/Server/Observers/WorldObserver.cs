@@ -145,7 +145,8 @@ namespace CmdBridgeMod
 
         // ---------------------------------------------------------------- 实体
 
-        public static Dictionary<string, object> DescribeEntities(float radius, int max)
+        public static Dictionary<string, object> DescribeEntities(float radius, int max,
+            Vector3? center = null)
         {
             var result = new Dictionary<string, object>(StringComparer.Ordinal);
             if (GameManager.Project == null)
@@ -159,7 +160,15 @@ namespace CmdBridgeMod
 
             float clampedRadius = MathUtils.Clamp(radius, 1f, 256f);
             int limit = MathUtils.Clamp(max, 1, MaxEntities);
-            Vector3 origin = self != null ? self.ComponentBody.Position : Vector3.Zero;
+            // 2026-10-01（桥优先）：支持**指定坐标**观察实体 —— 主机玩家常在别处，
+            // 只有按坐标才能与客户端对照"某处的掉落物是否一致"。
+            Vector3 origin = center ?? (self != null ? self.ComponentBody.Position : Vector3.Zero);
+            result["origin"] = new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["x"] = origin.X,
+                ["y"] = origin.Y,
+                ["z"] = origin.Z
+            };
 
             var entities = new List<Dictionary<string, object>>();
             int considered = 0;

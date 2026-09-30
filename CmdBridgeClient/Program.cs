@@ -512,9 +512,37 @@ namespace CmdBridgeClient
                 case "time":
                     return Print(client, "obs.world.time", null);
                 case "entities":
-                    return Print(client, "obs.world.entities", Args(
-                        ("radius", args.Count >= 3 ? ParseFloat(args[2]) : 64f),
-                        ("max", args.Count >= 4 ? ParseInt(args[3]) : 64)));
+                {
+                    float er = 64f; int em = 64;
+                    int? ex = null, ey = null, ez = null;
+                    for (int i = 2; i < args.Count; i++)
+                    {
+                        switch (args[i])
+                        {
+                            case "--at":
+                                if (i + 3 < args.Count)
+                                { ex = ParseInt(args[i + 1]); ey = ParseInt(args[i + 2]); ez = ParseInt(args[i + 3]); i += 3; }
+                                break;
+                            case "--radius":
+                                if (i + 1 < args.Count) er = ParseFloat(args[++i]);
+                                break;
+                            case "--max":
+                                if (i + 1 < args.Count) em = ParseInt(args[++i]);
+                                break;
+                            default:
+                                if (i == 2) er = ParseFloat(args[i]);
+                                else if (i == 3) em = ParseInt(args[i]);
+                                break;
+                        }
+                    }
+                    var eargs = new System.Collections.Generic.List<(string, object)>
+                    { ("radius", er), ("max", em) };
+                    if (ex.HasValue && ey.HasValue && ez.HasValue)
+                    {
+                        eargs.Add(("x", ex.Value)); eargs.Add(("y", ey.Value)); eargs.Add(("z", ez.Value));
+                    }
+                    return Print(client, "obs.world.entities", Args(eargs.ToArray()));
+                }
                 case "blocks":
                 {
                     // 2026-10-01：支持 **指定中心** 与命名参数 —— 读特定区域（例如火格）时人不用动。
@@ -565,7 +593,7 @@ namespace CmdBridgeClient
                     return Print(client, "obs.world.fire", null);
                 default:
                     throw new BridgeException(
-                        "invalid_argument", "usage: world <time|entities|blocks|fire> [args]");
+                        "invalid_argument", "usage: world <time|entities|blocks|fire> [--at x y z] [--radius N] [--max N]");
             }
         }
 

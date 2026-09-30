@@ -13,7 +13,7 @@ namespace ScMultiplayer
     [Serializable]
     public abstract class Message
     {
-        public const string ModVersion = "2.2.8";
+        public const string ModVersion = "2.2.9";
         public const int ProtocolVersion = 1;
 
         private static readonly Dictionary<int, Type> MessageTypesById = new();
