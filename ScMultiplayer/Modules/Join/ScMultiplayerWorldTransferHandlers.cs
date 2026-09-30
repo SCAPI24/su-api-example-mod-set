@@ -83,6 +83,12 @@ namespace ScMultiplayer
 			QueueJoinCatchUpPayload(targetClientId, Message.WriteWithSender(marker, client.Address));
 			return;
 		}
+		// 2026-10-01 修复（用户口径：客户端是主机世界的镜像，一切以主机那份为准）：
+		// 追赶快照里存的是**记录当时**的值，可能早已过期 ⇒ 加入时会把主机已经烧掉/挖掉的方块
+		// "复活"给新客户端（实测：重进后客户端仍显示仙人掌+火，而主机那边是空气）。
+		// 发送前一律改读**当下主机地形的真实值**（空气也照发）。
+		Terrain liveCatchUpTerrain = GameManager.Project?
+			.FindSubsystem<SubsystemTerrain>(false)?.Terrain;
 		for (int offset = 0; offset < snapshot.Count; offset += 48)
 		{
 			Dictionary<Point3, bool> cells = new Dictionary<Point3, bool>();
@@ -92,7 +98,10 @@ namespace ScMultiplayer
 			{
 				KeyValuePair<Point3, TerrainCellState> item2 = snapshot[offset + i];
 				cells[item2.Key] = item2.Value.IsModified;
-				values.Add(item2.Value.CellValue);
+				values.Add(liveCatchUpTerrain != null
+					? liveCatchUpTerrain.GetCellValue(
+						item2.Key.X, item2.Key.Y, item2.Key.Z)
+					: item2.Value.CellValue);
 			}
 			GameModifiedCellsMessage message = new GameModifiedCellsMessage(cells, values, targetTick, isCatchUp: true, targetClientId, 0L);
 			message.HeadSequence = headSequence;

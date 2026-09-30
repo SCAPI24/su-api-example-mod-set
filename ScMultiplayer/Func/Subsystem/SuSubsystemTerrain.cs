@@ -771,31 +771,16 @@ namespace ScMultiplayer
             // already replaced.
             if (isChunkCheckpoint)
             {
-                // Source: ScMultiplayerTerrainHandlers.cs:SendHostTerrainChunkSync
-                // A checkpoint revision is not a global live sequence. Reject an older or
-                // duplicate checkpoint, and never let one at the same tick overwrite a live
-                // terrain result that is already present for this cell.
-                if (checkpointRevision > 0L &&
-                    m_appliedCellCheckpointRevisions.TryGetValue(point,
-                        out long appliedCheckpointRevision) &&
-                    checkpointRevision <= appliedCheckpointRevision)
-                {
-                    // [SuAPI] 临时探针（跨客户端漏格定位用，验证后删除）
-                    ScMultiplayer.ProbeClientTerrainApply(point, "drop.cp_revision", sequence,
-                        tick, networkValue);
-                    RecordTerrainConsumed();
-                    return true;
-                }
-                if (m_appliedCellSequences.ContainsKey(point) &&
-                    m_appliedCellTicks.TryGetValue(point, out int liveTick) &&
-                    tick <= liveTick)
-                {
-                    // [SuAPI] 临时探针（跨客户端漏格定位用，验证后删除）
-                    ScMultiplayer.ProbeClientTerrainApply(point, "drop.cp_tick", sequence, tick,
-                        networkValue);
-                    RecordTerrainConsumed();
-                    return true;
-                }
+                // 2026-10-01（用户口径：客户端是主机世界的镜像，一切以主机为准）：
+                // 校验格**一律写入**。理由：
+                //   ① 主机在下发前会把快照值刷新成"当下主机地形的真实值"（SendHostTerrainChunkSync），
+                //      ⇒ 校验快照**不可能再携带旧值**，"过期快照复活旧地形"的前提已经不存在；
+                //   ② 之前两道拦截（`checkpointRevision <= 已记录`、`tick <= liveTick`）会把这**权威新值**
+                //      当成旧数据丢弃 —— 客户端日志实测 `result=drop.cp_revision current=12 incoming=15360`，
+                //      以及"同一批格被拆成两次校验、隔 12.6 秒才落地"（`tick=14697` 一批、`tick=15956` 一批），
+                //      于是出现"中间的树叶先消失、另外两个过一会儿才消失"。
+                // 结论：校验只对**本端已加载的区块**下发（主机加载所有客户端区块、客户端只加载自己的），
+                // 收到即写入。
             }
             else if (sequence > 0 && m_appliedCellSequences.TryGetValue(point,
                          out long appliedSequence) && sequence <= appliedSequence)

@@ -1955,6 +1955,32 @@ namespace ScMultiplayer
 				ExpectedValue = terrainUseExpectedValue,
 				LastSeenTime = Time.RealTime
 			};
+			// 2026-10-01（用户口径：一切以主机那份为准）：
+			// **点燃会在目标格的 5 个面邻格各生成一个火格**（引擎 SubsystemFireBlockBehavior.SetCellOnFire
+			// 的 `for (int i = 0; i < 5; i++)`）。此前只登记"被交互的那一格"⇒ 邻面火格若**未被主机确认**
+			// 就永远不会被回收，客户端会永久显示"幽灵火焰"（实测：主机火表里根本没有那场火，PC 却一直烧）。
+			// 这里把 5 个邻面中**当前是空气**的格按"当前值(空气)"登记进同一套使用预测，
+			// 2 秒内未被主机确认时由既有回收逻辑还原成空气。
+			Terrain usePredictionTerrain = GameManager.Project?
+				.FindSubsystem<SubsystemTerrain>(false)?.Terrain;
+			if (usePredictionTerrain != null)
+			{
+				for (int face = 0; face < 5; face++)
+				{
+					Point3 neighbourCell = terrainUseCell + CellFace.FaceToPoint3(face);
+					if (neighbourCell.Y < 1 || neighbourCell.Y > 254)
+						continue;
+					if (usePredictionTerrain.GetCellContents(
+							neighbourCell.X, neighbourCell.Y, neighbourCell.Z) != 0)
+						continue;                       // 只登记"空气邻格"（点燃会在此生成火格）
+					m_localTerrainUsePredictions[neighbourCell] = new LocalTerrainUsePrediction
+					{
+						ExpectedValue = usePredictionTerrain.GetCellValue(
+							neighbourCell.X, neighbourCell.Y, neighbourCell.Z),
+						LastSeenTime = Time.RealTime
+					};
+				}
+			}
 		}
 		PlayerActionMessage request = new PlayerActionMessage(PlayerActionType.InteractRequest, client.ClientID, m_localInteractSequence, interactRay.Value, activeSlot, itemValue, itemCount);
 		if (TryGetTerrainPlacePrediction(player, interactRay.Value, out var cell, out var expectedValue, out var predictedValue))

@@ -669,15 +669,43 @@ namespace ScMultiplayer
             {
                 MergePendingTerrainChangesLocked();
                 m_hostTerrainChunkRevisions.TryGetValue(coordinates, out revision);
-                if (revision > resendFloor &&
-                    m_terrainCheckpointByChunk.TryGetValue(coordinates,
+                // 2026-10-01 修复（用户口径：一切以主机那份为准）：**不再按 Sequence 下限过滤**。
+                // 只要该校验快照里有记录的格就全部下发（每区块仅十几到几十格，代价可忽略）；
+                // 靠 `Sequence > known-64` 窗口过滤会让"序列已被客户端 known 吞掉、但实际没拿到"的格
+                // **永久漏发**（实测：主机早已烧尽，两个客户端却一直显示树叶在燃烧）。
+                if (m_terrainCheckpointByChunk.TryGetValue(coordinates,
                         out Dictionary<Point3, TerrainCellState> cells))
                 {
-                    snapshot = cells.Where(item => item.Value.Sequence > resendFloor)
-                        .OrderBy(item => item.Key.X)
+                    snapshot = cells.OrderBy(item => item.Key.X)
                         .ThenBy(item => item.Key.Y).ThenBy(item => item.Key.Z).ToList();
                 }
                 serverTick = client.Step;
+            }
+
+            // 2026-10-01 修复（用户口径：一切以主机那份为准）：
+            // `m_terrainCheckpointByChunk` 只在**世界传输那一刻**写入（ScMultiplayerWorldTransferHandlers），
+            // 之后**从不再更新** ⇒ 每轮区块校验都在把"传输时的旧值"重发给客户端（包括已被主机烧成空气的
+            // 方块、已经被挖掉的格），于是主机上早已消失的方块在客户端**复活并一直保留**
+            // （实测：橡木/仙人掌在两端一直燃烧不消失，op 日志每轮恒定 `cells=15`、`known==rev`）。
+            // 下发前一律改读**当下的主机地形值**，保证校验送出去的就是主机权威值（空气也照发）。
+            Terrain liveTerrain = GameManager.Project?
+                .FindSubsystem<SubsystemTerrain>(false)?.Terrain;
+            for (int i = 0; i < snapshot.Count; i++)
+            {
+                KeyValuePair<Point3, TerrainCellState> item = snapshot[i];
+                if (liveTerrain == null || item.Value == null)
+                    continue;
+                int liveValue = liveTerrain.GetCellValue(item.Key.X, item.Key.Y, item.Key.Z);
+                if (liveValue == item.Value.CellValue)
+                    continue;
+                snapshot[i] = new KeyValuePair<Point3, TerrainCellState>(item.Key,
+                    new TerrainCellState
+                    {
+                        IsModified = true,
+                        CellValue = liveValue,
+                        Tick = item.Value.Tick,
+                        Sequence = item.Value.Sequence
+                    });
             }
 
             // 上报给客户端的 revision 只能是"这次真正发出去的内容"里最大的 sequence：
