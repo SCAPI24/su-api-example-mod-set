@@ -74,6 +74,42 @@ namespace ScMultiplayer
             return false;
         }
 
+        /// <summary>
+        /// **本端玩家**能否改该格：claim 为空 → 可以；否则拿本机身份（`UserManager.ActiveUser.UniqueId`）
+        /// 与 `claim.Owners[].UserId` 比对。
+        ///
+        /// 为什么不能直接用 <see cref="CanRegionModifyCell"/>：那条路要 clientId → userId 的映射
+        /// （`m_clientRecordKeys`），只有**主机**有；客户端拿本机身份即可，而且这样
+        /// "被赋予领地 / 被剥夺领地"在客户端**立即生效**（claims 本来就同步到各端）。
+        ///
+        /// 口径与主机侧保持一致：没有拥有者的领地只放行主机；身份拿不到一律否决。
+        /// </summary>
+        internal bool CanLocalPlayerModifyRegionCell(Point3 cell, out RegionClaim claim, out string reason)
+        {
+            claim = OwnerClaimAt(cell);
+            reason = null;
+            if (claim == null)
+                return true;
+            if (claim.Owners.Count == 0)
+            {
+                if (IsHost)
+                    return true;
+                reason = "领地 #" + claim.Id + " 还没有指定拥有者，只有主机可以修改";
+                return false;
+            }
+            string userId = GetLocalPlayerIdentity();
+            if (!string.IsNullOrWhiteSpace(userId))
+            {
+                for (int i = 0; i < claim.Owners.Count; i++)
+                {
+                    if (string.Equals(claim.Owners[i].UserId, userId, StringComparison.OrdinalIgnoreCase))
+                        return true;
+                }
+            }
+            reason = "这块区域属于 " + claim.DescribeOwners() + "（领地 #" + claim.Id + "），修改已否决";
+            return false;
+        }
+
         /// <summary>否决后通知发起人（一行提示，按客户端 1 秒节流）并写主机审计。</summary>
         internal void NotifyRegionModificationDenied(int clientId, Point3 cell, RegionClaim claim,
             string action, string reason)

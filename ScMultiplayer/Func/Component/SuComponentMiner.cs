@@ -18,7 +18,12 @@ namespace ScMultiplayer
     ///   · "挖完再改回"只保留为**最后一道保证**：万一某一帧进度仍然跑满（极软的方块 + 长帧），
     ///     把该格改回"本帧开始时的原值"并再 `Poke` 一次。
     ///
-    /// 纪律不变：只在主机分支、只认本机玩家、只处理非本人拥有的领地格；其余一律原样走 base。
+    /// **主机端与客户端都跑这一套**（2026-10-01 用户口径）：
+    ///   · 主机：`CanRegionModifyCell(0, …)`（本端身份）；
+    ///   · 客户端：`CanLocalPlayerModifyRegionCell(…)`（本机身份比对拥有者）—— 否则"等主机否决再回滚"
+    ///     之前，本地预测的进度/裂纹已经画在屏幕上了；被赋予/被剥夺领地后 claims 一到即生效。
+    ///
+    /// 纪律不变：只认本机玩家、只处理**非本人拥有**的领地格；其余一律原样走 base。
     /// </summary>
     public class SuComponentMiner : ComponentMiner, IUpdateable
     {
@@ -51,7 +56,13 @@ namespace ScMultiplayer
         {
             m_deniedCell = null;
             ScMultiplayer mod = ScMultiplayer.currentInstance;
-            if (mod == null || !ScMultiplayer.IsHost || ScMultiplayer.client?.IsConnected != true)
+            if (mod == null)
+                return false;
+            // 主机：本机玩家的挖由主机自己执法（P7a 起）；
+            // 客户端：本机预测的进度/裂纹也必须挡在 base 之前，别等主机否决再回滚。
+            bool isHost = ScMultiplayer.IsHost;
+            bool isClient = !isHost && ScMultiplayer.client?.IsConnected == true;
+            if (!isHost && !isClient)
                 return false;
             ComponentPlayer player = Entity.FindComponent<ComponentPlayer>(false);
             if (player?.PlayerData == null || !mod.IsLocalPlayerData(player.PlayerData))
@@ -63,7 +74,14 @@ namespace ScMultiplayer
             if (!face.HasValue)
                 return false;
             var cell = new Point3(face.Value.X, face.Value.Y, face.Value.Z);
-            if (mod.CanRegionModifyCell(0, cell, out RegionClaim claim, out string reason))
+            // 主机走原口径（clientId=0 → 本端身份）；客户端用本机身份直接比对拥有者
+            //（客户端没有主机的 `m_clientRecordKeys`；被赋予/剥夺后 claims 一到就生效）。
+            RegionClaim claim;
+            string reason;
+            bool allowed = isHost
+                ? mod.CanRegionModifyCell(0, cell, out claim, out reason)
+                : mod.CanLocalPlayerModifyRegionCell(cell, out claim, out reason);
+            if (allowed)
                 return false;
             SubsystemTerrain terrain = Project.FindSubsystem<SubsystemTerrain>(false);
             if (terrain?.Terrain == null)
@@ -80,7 +98,12 @@ namespace ScMultiplayer
             if (Time.RealTime >= m_nextDeniedNoticeTime)
             {
                 m_nextDeniedNoticeTime = Time.RealTime + 1.0;
-                mod.NotifyRegionModificationDenied(0, cell, claim, "dig", reason);
+                if (isHost)
+                    mod.NotifyRegionModificationDenied(0, cell, claim, "dig", reason);
+                else
+                    // 客户端只写本端日志：不冒充主机审计，也不重复发聊天（通知由主机那条路负责）
+                    Log.Information("[ScMP] " + (string.IsNullOrEmpty(reason)
+                        ? "这里不能挖（领地）" : reason) + "（dig）");
             }
             return true;
         }

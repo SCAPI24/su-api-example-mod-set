@@ -111,8 +111,11 @@ namespace ScMultiplayer
         private int m_regionClaimNextId = 1;
         private long m_regionClaimSequence;
         private string m_lastRegionClaimError = string.Empty;
-        // P4：区域展示开关（默认开——"建立领地后默认显示"）；选区预览线框单独开关（默认开）
-        private bool m_regionDisplayEnabled = true;
+        // P4：区域展示开关（**默认关**，2026-10-01 用户口径：领地填充/编号/框线是管理视角的辅助，
+        // 普通玩家看到只挡视线；装不装 GmMod 都一样 —— 要看的人在自己的 GmMod 面板里开，各端本地）。
+        // 选区预览线框保持默认开：它是**选区工具**的一部分，且"点1/点2"是本端本地状态、不跨端同步
+        //（见 ScMultiplayerRegionSelection），所以普通玩家那边天然没有可画的东西。
+        private bool m_regionDisplayEnabled = false;
         private bool m_regionSelectionPreviewEnabled = true;
 
         /// <summary>本端持有的领地数量（主机=权威，客户端=副本）。</summary>
