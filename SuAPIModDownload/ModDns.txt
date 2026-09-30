@@ -42,7 +42,14 @@ WatchMod | su-watch | ["0.1.6.0"] | 1.0.1 | gitee:"https://gitee.com/SC-SPM/su-a
 # ⚠️ 同名 2.2.0 的资产已被替换：9-24 那版（sha256 0a0f48fd…，384816 B）与本版**互不互通**；
 #    装过 9-24 版 2.2.0 的端（含服务端遗留的 ScMultiplayer.proxy.txt）必须换到同一份新包。
 # ⚠️ buildFingerprint 又变了：2.2.0 与 2.1.66 及更早构建**互不互通**，三端必须同时换。
-ScMultiplayer | Su-ScMP | ["0.1.6.0"] | 2.2.0 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.6.0/%5BSuAPI%5DScMultiplayer-2.2.0.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.6.0/SuAPI.ScMultiplayer-2.2.0.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.6.0/[SuAPI]ScMultiplayer-2.2.0.scmod" | zh_CN=联机模组;en_US=ScMultiplayer
+# 2.2.1（2026-10-01 三端发布，包 sha256 e8a205f9…，399488 B）：修"加入房间满屏红、血却是满的"
+#   （加入那一帧主机把本端当 0，原生按 -1.0 攒红屏 +4.0，之后约 3 秒衰减）；代理默认改为**直连**，
+#   且配置文件不存在时**不再自动创建** ScMultiplayer.proxy.txt（旧的 enabled=auto + 127.0.0.1:7890 会造成
+#   "加入卡在连接中、主机侧一行 Client joining 都收不到"）。
+# ⚠️ buildFingerprint 再次变化：2.2.1 与 2.2.0（含 9-26 重建那版）及更早构建**互不互通**，三端必须同时换。
+ScMultiplayer | Su-ScMP | ["0.1.6.0"] | 2.2.1 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.6.0/%5BSuAPI%5DScMultiplayer-2.2.1.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.6.0/SuAPI.ScMultiplayer-2.2.1.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.6.0/[SuAPI]ScMultiplayer-2.2.1.scmod" | zh_CN=联机模组;en_US=ScMultiplayer
+# 上一版（`Su-ScMP@2.2.0`）。注意：这个名字下的资产在 10-01 曾被 9-26 修复构建替换过，与 2.2.1 互不互通。
+# ScMultiplayer | Su-ScMP | ["0.1.6.0"] | 2.2.0 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.6.0/%5BSuAPI%5DScMultiplayer-2.2.0.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.6.0/SuAPI.ScMultiplayer-2.2.0.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.6.0/[SuAPI]ScMultiplayer-2.2.0.scmod" | zh_CN=联机模组;en_US=ScMultiplayer
 # 上一版（`Su-ScMP@2.1.66`）
 # ScMultiplayer | Su-ScMP | ["0.1.6.0"] | 2.1.66 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.6.0/%5BSuAPI%5DScMultiplayer-2.1.66.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.6.0/SuAPI.ScMultiplayer-2.1.66.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.6.0/[SuAPI]ScMultiplayer-2.1.66.scmod" | zh_CN=联机模组;en_US=ScMultiplayer
 # 上一版（`Su-ScMP@2.1.6`）。注意：2.1.6 与 2.1.8 构建互不互通，回退必须整端一起回退。
