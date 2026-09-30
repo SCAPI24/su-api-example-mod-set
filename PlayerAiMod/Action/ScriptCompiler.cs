@@ -178,7 +178,7 @@ namespace PlayerAiMod
         private static void RegisterBuiltIns()
         {
             Register(new ActionVerbSpec("wait", "基础", "原地等待若干毫秒（不产生任何输入）",
-                (args, resolver, out error) =>
+                (ActionArgs args, IActionTargetResolver resolver, out string error) =>
                 {
                     error = null;
                     int ms = RequireDuration(args, "ms", 500, out error);
@@ -211,7 +211,7 @@ namespace PlayerAiMod
                 new ActionParamSpec("ms", ActionParamKind.DurationMs, false, "100", null, "转向占用时长（毫秒）")));
 
             Register(new ActionVerbSpec("hotbar", "物品", "选择快捷栏槽位（1..10）",
-                (args, resolver, out error) =>
+                (ActionArgs args, IActionTargetResolver resolver, out string error) =>
                 {
                     error = null;
                     if (!args.Has("slot"))
@@ -237,7 +237,7 @@ namespace PlayerAiMod
                 new ActionParamSpec("slot", ActionParamKind.Slot, true, null, null, "快捷栏槽位 1..10")));
 
             Register(new ActionVerbSpec("jump", "移动", "跳一下（按下即跳）",
-                (args, resolver, out error) =>
+                (ActionArgs args, IActionTargetResolver resolver, out string error) =>
                 {
                     error = null;
                     var clip = new ActionClip("jump");
@@ -246,7 +246,7 @@ namespace PlayerAiMod
                 }));
 
             Register(new ActionVerbSpec("sneak", "移动", "切换潜行（开关语义，按一次）",
-                (args, resolver, out error) =>
+                (ActionArgs args, IActionTargetResolver resolver, out string error) =>
                 {
                     error = null;
                     var clip = new ActionClip("sneak");
@@ -255,7 +255,7 @@ namespace PlayerAiMod
                 }));
 
             Register(new ActionVerbSpec("mount", "移动", "上/下坐骑（开关语义）",
-                (args, resolver, out error) =>
+                (ActionArgs args, IActionTargetResolver resolver, out string error) =>
                 {
                     error = null;
                     var clip = new ActionClip("mount");
@@ -264,7 +264,7 @@ namespace PlayerAiMod
                 }));
 
             Register(new ActionVerbSpec("fly", "移动", "切换创造飞行（开关语义）",
-                (args, resolver, out error) =>
+                (ActionArgs args, IActionTargetResolver resolver, out string error) =>
                 {
                     error = null;
                     var clip = new ActionClip("fly");
@@ -288,7 +288,7 @@ namespace PlayerAiMod
                 CompileAttack, DigParams()));
 
             Register(new ActionVerbSpec("aim", "世界交互", "右键按住/松开（瞄准开关）",
-                (args, resolver, out error) =>
+                (ActionArgs args, IActionTargetResolver resolver, out string error) =>
                 {
                     error = null;
                     bool on = args.GetBool("on", true);
@@ -304,7 +304,7 @@ namespace PlayerAiMod
                 new ActionParamSpec("on", ActionParamKind.Bool, false, "true", null, "true = 按住瞄准，false = 松开")));
 
             Register(new ActionVerbSpec("drop", "物品", "丢弃手持物（按一次丢弃键）",
-                (args, resolver, out error) =>
+                (ActionArgs args, IActionTargetResolver resolver, out string error) =>
                 {
                     error = null;
                     var clip = new ActionClip("drop");
@@ -321,7 +321,7 @@ namespace PlayerAiMod
                 new ActionParamSpec("key", ActionParamKind.String, false, null, null, "按一次某个键（例如 E 开背包、C 开衣物）")));
 
             Register(new ActionVerbSpec("sleep", "复合", "睡觉：开衣物面板 → 等按钮 → 点睡觉（复合 verb）",
-                (args, resolver, out error) =>
+                (ActionArgs args, IActionTargetResolver resolver, out string error) =>
                 {
                     error = null;
                     var clip = new ActionClip("sleep");
@@ -332,7 +332,7 @@ namespace PlayerAiMod
                 }));
 
             Register(new ActionVerbSpec("openInventory", "复合", "打开/关闭背包",
-                (args, resolver, out error) =>
+                (ActionArgs args, IActionTargetResolver resolver, out string error) =>
                 {
                     error = null;
                     var clip = new ActionClip("openInventory");
@@ -826,7 +826,14 @@ namespace PlayerAiMod
         }
     }
 
-    /// <summary>verb 的编译委托。</summary>
+    /// <summary>
+    /// verb 的编译委托。
+    ///
+    /// ⚠️ 注册处一律**显式写出参数类型**（`(ActionArgs args, IActionTargetResolver resolver, out string error) => …`），
+    /// 不要写成 `(args, resolver, out error) => …`：带修饰符（`out`）的隐式参数要 C# 14 才认，
+    /// 而本仓库统一用 **.NET SDK 8**（Roslyn = C# 12）构建 → 那种写法会直接
+    /// `CS1001: 应输入标识符`（实测 10 处一起报）。
+    /// </summary>
     public delegate ActionClip ActionFunc(ActionArgs args, IActionTargetResolver resolver, out string error);
 
     /// <summary>

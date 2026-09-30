@@ -11,7 +11,7 @@ namespace PlayerAiMod
     public static class PlayerAiConfig
     {
         /// <summary>与 ModInfo.xml 保持一致。</summary>
-        public const string ModVersion = "0.5.45";
+        public const string ModVersion = "0.6.0";
 
         /// <summary>总开关：关闭时不创建角色、不注入任何输入。</summary>
         public static bool Enabled = true;
@@ -61,10 +61,14 @@ namespace PlayerAiMod
         // ---------------------------------------------------------------- 行为树包
 
         /// <summary>
-        /// 世界就绪后是否自动装载并运行一棵行为树（默认**开**：装上 Mod 就能看到 AI 按包里的树行动）。
+        /// 世界就绪后是否自动装载并运行一棵行为树。
+        ///
+        /// **默认关**（2026-10-01 用户要求）：重启游戏不再自动跑包，免得一进世界 AI 就自己动起来。
+        /// 要用的时候**显式启动**：`sccmd raw ai.tree.load name=&lt;包名&gt;`，或在编辑器里点"播放"
+        /// —— 那条路同样会装载并把活动树切过去，与自动启动等效。
         /// 装载失败只记日志、保持待机，不会反复重试。
         /// </summary>
-        public static bool AutoLoadTreeOnStart = true;
+        public static bool AutoLoadTreeOnStart = false;
 
         /// <summary>启动时装载哪个包（包名或相对路径，见 `PlayerAi/BehaviorTrees/`）。</summary>
         public static string StartupTreePackage = PackageTemplates.DemoFile;
