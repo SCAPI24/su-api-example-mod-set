@@ -61,7 +61,22 @@ WatchMod | su-watch | ["0.1.6.0"] | 1.0.1 | gitee:"https://gitee.com/SC-SPM/su-a
 #   且配置文件不存在时**不再自动创建** ScMultiplayer.proxy.txt（旧的 enabled=auto + 127.0.0.1:7890 会造成
 #   "加入卡在连接中、主机侧一行 Client joining 都收不到"）。
 # ⚠️ buildFingerprint 再次变化：2.2.1 与 2.2.0（含 9-26 重建那版）及更早构建**互不互通**，三端必须同时换。
-ScMultiplayer | Su-ScMP | ["0.1.6.0"] | 2.2.1 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.6.0/%5BSuAPI%5DScMultiplayer-2.2.1.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.6.0/SuAPI.ScMultiplayer-2.2.1.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.6.0/[SuAPI]ScMultiplayer-2.2.1.scmod" | zh_CN=联机模组;en_US=ScMultiplayer
+# 2.2.2（2026-10-01，包 sha256 735fae0f…，399056 B）：**领地**两件事 ——
+#   ① **区域展示默认改为「关」**：领地填充 / 五面编号 / 框线是管理视角的辅助，默认谁都不显示
+#      （装不装 GmMod 都一样）→ 普通玩家加入后视野干净，要看的人在自己的 GmMod 面板里开（各端本地）。
+#      选区预览线框不变（"点1/点2"是本端本地状态、不跨端同步，普通玩家没有点可选，天然为空；
+#      GM 建立领地时照旧看得到框线）。
+#   ② **客户端侧挖掘归零**：`SuComponentMiner` 不再只在主机分支生效 —— 客户端在"不属于自己"的领地
+#      里挖掘时，`DigCellFace` / `m_digProgress` 在引擎结算前就被清掉，**进度与裂纹根本不出现**，
+#      不再依赖"发挖请求 → 主机否决 → 回滚"那个往返。判定用本机身份
+#      （`UserManager.ActiveUser.UniqueId`）比对 `claim.Owners`，所以**被赋予领地立即能挖、
+#      被剥夺立刻恢复零进度**；自己领地 / 无领地（公共）照常挖；主机与 GmMod 端行为不变。
+#      兜底不变：万一真挖掉了，主机侧仍拒绝落地（挖请求被拒 + 权威值回传）且
+#      `RestoreDeniedDigCell` 会把该格改回本帧原值。
+# ⚠️ buildFingerprint 再次变化：2.2.2 与 2.2.1 及更早构建**互不互通**，三端必须同时换。
+ScMultiplayer | Su-ScMP | ["0.1.6.0"] | 2.2.2 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.6.0/%5BSuAPI%5DScMultiplayer-2.2.2.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.6.0/SuAPI.ScMultiplayer-2.2.2.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.6.0/[SuAPI]ScMultiplayer-2.2.2.scmod" | zh_CN=联机模组;en_US=ScMultiplayer
+# 上一版（`Su-ScMP@2.2.1`）
+# ScMultiplayer | Su-ScMP | ["0.1.6.0"] | 2.2.1 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.6.0/%5BSuAPI%5DScMultiplayer-2.2.1.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.6.0/SuAPI.ScMultiplayer-2.2.1.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.6.0/[SuAPI]ScMultiplayer-2.2.1.scmod" | zh_CN=联机模组;en_US=ScMultiplayer
 # 上一版（`Su-ScMP@2.2.0`）。注意：这个名字下的资产在 10-01 曾被 9-26 修复构建替换过，与 2.2.1 互不互通。
 # ScMultiplayer | Su-ScMP | ["0.1.6.0"] | 2.2.0 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.6.0/%5BSuAPI%5DScMultiplayer-2.2.0.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.6.0/SuAPI.ScMultiplayer-2.2.0.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.6.0/[SuAPI]ScMultiplayer-2.2.0.scmod" | zh_CN=联机模组;en_US=ScMultiplayer
 # 上一版（`Su-ScMP@2.1.66`）
