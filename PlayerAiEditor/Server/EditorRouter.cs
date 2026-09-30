@@ -34,6 +34,9 @@ namespace PlayerAiMod.Editor
                     // 判定复盘面板（P4）：与 app.js 分开，改它不碰主界面状态机。
                     case "/review-panel.js":
                         return Asset("review-panel.js", "application/javascript; charset=utf-8");
+                    // 摘要规格面板：同样是独立一块，改它不碰主界面状态机。
+                    case "/digest-panel.js":
+                        return Asset("digest-panel.js", "application/javascript; charset=utf-8");
                     case "/app.css":
                         return Asset("app.css", "text/css; charset=utf-8");
                     case "/engine-adapter.js":
@@ -281,6 +284,22 @@ namespace PlayerAiMod.Editor
                             StringComparison.OrdinalIgnoreCase);
                         return HttpResponse.Json(m_api.LayaReview(count, request.GetQuery("format", "json"),
                             clear));
+                    }
+                    // 摘要规格（`world.digest.json`）：现状 / 重读 / 编译预览。
+                    // 这里显式分三个端点，因为它们是**三个不同的动作**（只读现状、改完重读、编译预览），
+                    // 混成一个"智能"端点会让界面无法表达"我只想看看现在是什么规格"。
+                    case "/api/digest/status":
+                        return HttpResponse.Json(m_api.DigestStatus());
+                    case "/api/digest/reload":
+                        return HttpResponse.Json(m_api.DigestReload());
+                    case "/api/digest":
+                    {
+                        // 预算留空 = -1 = "用规格里自己那份"（编辑器不替用户猜一个数字）
+                        int budget = -1;
+                        int.TryParse(request.GetQuery("budget", ""), out budget);
+                        bool wire = string.Equals(request.GetQuery("wire", "false"), "true",
+                            StringComparison.OrdinalIgnoreCase);
+                        return HttpResponse.Json(m_api.DigestCompile(budget, wire));
                     }
                     default:
                         return HttpResponse.Text(404, "not found: " + path);

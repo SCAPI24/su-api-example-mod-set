@@ -75,6 +75,7 @@ namespace PlayerAiMod.Editor
                     AssetLibrary(client, instanceRoot);
                     LayaSettings(client, instanceRoot);
                     LayaReviewRelay(client, instanceRoot);
+                    DigestRelay(client, instanceRoot);
                 }
             }
 
@@ -2693,6 +2694,171 @@ namespace PlayerAiMod.Editor
                 Check("format=md is forwarded to the game",
                     markdown != null && fake.LastRequest.Contains("\"format\":\"md\""),
                     Short(fake.LastRequest));
+            }
+
+            if (File.Exists(runtimePath))
+                File.Delete(runtimePath);
+        }
+
+        /// <summary>
+        /// **摘要规格转发**：`/api/digest/status` / `/api/digest/reload` / `/api/digest`
+        /// → `ai.digest.status` / `ai.digest.reload` / `state.digest`。
+        ///
+        /// 五条要钉的：
+        /// ① 面板本身在（脚本内嵌 + 首页带控件）；
+        /// ② 游戏没在跑时如实 `ok:false + game_unreachable`，而不是给一张空规格表；
+        /// ③ 三个端点各自把**正确的命令**发出去，参数真的带过去（`budget` / `wire`），
+        ///    而只读的 `ai.digest.status` 不带参数；
+        /// ④ 字段表是**真数组**（不是被 `Collect` 字符串化的一坨 —— 复盘那次实测踩过）；
+        /// ⑤ `ai.digest.reload` 的回包**自带 `ok`**：编辑器绝不能把它覆盖成 `true`，
+        ///    否则"改了 JSON 却没生效"会被界面说成成功，那个按钮唯一的用处就废了。
+        /// </summary>
+        private static void DigestRelay(HttpClient client, string instanceRoot)
+        {
+            // ① 面板确实在网页里（少一个，界面上就是一片空白，而 API 全绿）
+            string html = Get(client, "/");
+            string panel = Get(client, "/digest-panel.js");
+            Check("the digest spec panel script is embedded and served",
+                panel != null && panel.Contains("PlayerAiEditorDigest")
+                && panel.Contains("/api/digest/status") && panel.Contains("/api/digest/reload")
+                && panel.Contains("/api/digest?wire="),
+                Short(panel));
+            Check("index.html loads the digest panel and carries its controls",
+                html != null && html.Contains("digest-panel.js") && html.Contains("btnDigestStatus")
+                && html.Contains("btnDigestReload") && html.Contains("btnDigestCompile")
+                && html.Contains("digestBudget") && html.Contains("digestWire")
+                && html.Contains("digestBadge") && html.Contains("digestBox"),
+                Short(html));
+
+            string runtimePath = System.IO.Path.Combine(instanceRoot,
+                GameBridgeClient.RuntimeFileName);
+
+            // ② 游戏没跑：通道文件缺失 → 如实报"连不上"，而不是给一张空规格表
+            if (File.Exists(runtimePath))
+                File.Delete(runtimePath);
+            PackageValue offline = Parse(Get(client, "/api/digest/status"));
+            Check("*** no game running: the digest status endpoint says game_unreachable ***",
+                offline != null && offline.Get("ok").AsBool(true) == false
+                && offline.Get("code").AsString(null) == "game_unreachable",
+                offline != null ? offline.Preview(200) : "<null>");
+            Check("the offline answer says which command could not be relayed",
+                offline != null && offline.Get("command").AsString(null) == "ai.digest.status",
+                offline != null ? offline.Get("command").AsString("<none>") : "<null>");
+            PackageValue offlineCompile = Parse(Get(client, "/api/digest?budget=40&wire=true"));
+            Check("compiling a digest without a game also fails honestly",
+                offlineCompile != null && offlineCompile.Get("ok").AsBool(true) == false
+                && offlineCompile.Get("command").AsString(null) == "state.digest",
+                offlineCompile != null ? offlineCompile.Preview(200) : "<null>");
+
+            // ③ 假游戏通道：规格现状（字段表必须原样回来）
+            using (var fake = new FakeGameChannel(
+                "{\"ok\":true,\"result\":{\"id\":\"world\",\"name\":\"world\",\"version\":1,"
+                + "\"hash\":\"abc123def456\",\"builtin\":false,\"path\":\"P:/x/world.digest.json\","
+                + "\"changedOnDisk\":true,\"lastError\":null,"
+                + "\"budgets\":{\"wire\":28,\"rich\":200},\"budgetSource\":\"this spec file\","
+                + "\"directories\":[\"P:/x\"],\"fieldCount\":2,\"fields\":["
+                + "{\"key\":\"hp\",\"source\":\"health\",\"format\":\"num(band)\","
+                + "\"description\":\"health + band\","
+                + "\"bands\":[\"<0.2 -> crit\",\"(fallback) -> full\"],"
+                + "\"rich\":\"always\",\"wire\":\"fact.number lt 0.8\"},"
+                + "{\"key\":\"sleep\",\"source\":\"sleep\",\"format\":\"band\","
+                + "\"description\":\"sleepiness\",\"bands\":[],"
+                + "\"rich\":\"always\",\"wire\":\"never\"}],"
+                + "\"sources\":[\"health\"],\"formats\":[\"num(band)\"],\"observes\":[],"
+                + "\"factAttributes\":[]}}"))
+            {
+                File.WriteAllText(runtimePath,
+                    "{\"port\":" + fake.Port + ",\"token\":\"selftest\"}", new UTF8Encoding(false));
+
+                PackageValue status = Parse(Get(client, "/api/digest/status"));
+                Check("the digest status endpoint relays the active spec",
+                    status != null && status.Get("ok").AsBool(false)
+                    && status.Get("id").AsString(null) == "world"
+                    && status.Get("version").AsInt(-1) == 1
+                    && status.Get("changedOnDisk").AsBool(false)
+                    && status.Get("budgets").Get("wire").AsInt(-1) == 28
+                    && status.Get("budgetSource").AsString(null) == "this spec file",
+                    status != null ? status.Preview(240) : "<null>");
+                Check("*** the digest field table comes back as a real array of objects ***",
+                    status != null && status.Get("fields").IsArray
+                    && status.Get("fields").Count == 2
+                    && status.Get("fields").Item(0).Get("key").AsString(null) == "hp"
+                    && status.Get("fields").Item(0).Get("bands").IsArray
+                    && status.Get("fields").Item(0).Get("bands").Count == 2
+                    && status.Get("fields").Item(1).Get("wire").AsString(null) == "never",
+                    status != null ? status.Get("fields").Preview(240) : "<null>");
+                Check("the editor asks the game for ai.digest.status with no arguments",
+                    fake.LastCommand == "ai.digest.status" && !fake.LastRequest.Contains("\"args\""),
+                    fake.LastCommand + " / " + Short(fake.LastRequest));
+            }
+
+            // ④ 重读失败：游戏自己回的 `ok:false` **必须原样露出**（不是被编辑器改写成成功）
+            using (var fake = new FakeGameChannel(
+                "{\"ok\":true,\"result\":{\"ok\":false,\"id\":\"world\","
+                + "\"hash\":\"abc123def456\",\"builtin\":false,"
+                + "\"path\":\"P:/x/world.digest.json\",\"error\":\"invalid JSON at line 3\"}}"))
+            {
+                File.WriteAllText(runtimePath,
+                    "{\"port\":" + fake.Port + ",\"token\":\"selftest\"}", new UTF8Encoding(false));
+
+                PackageValue refused = Parse(Get(client, "/api/digest/reload"));
+                Check("*** a game-side ok:false reload is NOT rewritten into ok:true ***",
+                    refused != null && refused.Get("ok").AsBool(true) == false
+                    && refused.Get("error").AsString(null) == "invalid JSON at line 3",
+                    refused != null ? refused.Preview(200) : "<null>");
+                Check("the reload answer is marked as relayed and names its command",
+                    refused != null && refused.Get("relayed").AsBool(false)
+                    && refused.Get("command").AsString(null) == "ai.digest.reload",
+                    refused != null ? refused.Preview(160) : "<null>");
+                Check("the editor asks the game for ai.digest.reload",
+                    fake.LastCommand == "ai.digest.reload",
+                    fake.LastCommand + " / " + Short(fake.LastRequest));
+            }
+
+            // ⑤ 重读成功 + 编译预览：`state.digest` 的参数与回包都要真的走一趟
+            using (var fake = new FakeGameChannel(
+                "{\"ok\":true,\"result\":{\"ok\":true,\"id\":\"world\",\"hash\":\"fresh789\","
+                + "\"builtin\":false,\"path\":\"P:/x/world.digest.json\",\"error\":null}}"))
+            {
+                File.WriteAllText(runtimePath,
+                    "{\"port\":" + fake.Port + ",\"token\":\"selftest\"}", new UTF8Encoding(false));
+                PackageValue reloaded = Parse(Get(client, "/api/digest/reload"));
+                Check("a successful reload reports the new hash",
+                    reloaded != null && reloaded.Get("ok").AsBool(false)
+                    && reloaded.Get("hash").AsString(null) == "fresh789"
+                    && reloaded.Get("relayed").AsBool(false),
+                    reloaded != null ? reloaded.Preview(160) : "<null>");
+            }
+
+            using (var fake = new FakeGameChannel(
+                "{\"ok\":true,\"result\":{\"digest\":\"hp=1(full) aim=Gravel@2.51\",\"chars\":27,"
+                + "\"budgetChars\":200,\"wire\":false,\"spec\":\"world\",\"specVersion\":1,"
+                + "\"specHash\":\"abc123def456\",\"raw\":{\"phase\":\"world\"}}}"))
+            {
+                File.WriteAllText(runtimePath,
+                    "{\"port\":" + fake.Port + ",\"token\":\"selftest\"}", new UTF8Encoding(false));
+
+                PackageValue compiled = Parse(Get(client, "/api/digest?budget=200&wire=false"));
+                Check("the digest endpoint relays the compiled digest and its sizes",
+                    compiled != null && compiled.Get("ok").AsBool(false)
+                    && compiled.Get("digest").AsString(null) == "hp=1(full) aim=Gravel@2.51"
+                    && compiled.Get("chars").AsInt(-1) == 27
+                    && compiled.Get("budgetChars").AsInt(-1) == 200
+                    && compiled.Get("specHash").AsString(null) == "abc123def456"
+                    && compiled.Get("raw").Get("phase").AsString(null) == "world",
+                    compiled != null ? compiled.Preview(200) : "<null>");
+                Check("the editor forwards state.digest with the requested budget and wire",
+                    fake.LastCommand == "state.digest" && fake.LastRequest.Contains("\"budget\":200")
+                    && fake.LastRequest.Contains("\"wire\":false"),
+                    fake.LastCommand + " / " + Short(fake.LastRequest));
+
+                // 预算留空 = 不发 budget（游戏用它自己那份规格里的），wire=true 照旧真的传
+                PackageValue wireOnly = Parse(Get(client, "/api/digest?wire=true"));
+                Check("wire=true is forwarded, and an empty budget lets the spec decide",
+                    wireOnly != null && fake.LastCommand == "state.digest"
+                    && fake.LastRequest.Contains("\"wire\":true")
+                    && !fake.LastRequest.Contains("\"budget\""),
+                    fake.LastCommand + " / " + Short(fake.LastRequest));
             }
 
             if (File.Exists(runtimePath))

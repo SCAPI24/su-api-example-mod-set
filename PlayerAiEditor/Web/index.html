@@ -182,6 +182,22 @@
       <span id="reviewBadge" class="badge" data-i18n="review.badge.unknown">复盘：未知</span>
     </div>
     <div id="reviewBox"><p class="hint" data-i18n="review.initial">点「刷新复盘」看看游戏里最近几次判定。</p></div>
+
+    <h2 style="margin-top:14px"><span data-i18n="digest.title">摘要规格</span> <span class="hint" data-i18n="digest.sub">（发给 Laya 的那串状态摘要是一份数据文件）</span></h2>
+    <p class="hint" data-i18n-html="digest.hint">数据全部来自游戏（<code>ai.digest.status</code>）：哪些事实、什么顺序、档位阈值、谁进上线谁进人工、两份预算，都写在
+      <code>&lt;实例根&gt;/PlayerAi/Digest/world.digest.json</code> 里。改完点「重读规格」即生效，<b>不用重编译、不用重启游戏</b>；
+      「编译预览」用当前规格把此刻的状态编译一遍，看清模型到底会看到什么。</p>
+    <div class="group" style="margin-bottom:6px">
+      <label class="hint"><span data-i18n="digest.budget">预算(字)</span> <input id="digestBudget" type="number" min="0" max="2000" step="1" style="width:70px" placeholder="留空＝规格自带" data-i18n-placeholder="digest.budget.placeholder" data-i18n-title="digest.budget.title" title="编译预览用的字符预算；留空＝用规格里自己那份（上线/人工各一份）" /></label>
+      <label class="hint"><input id="digestWire" type="checkbox" data-i18n-title="digest.wire.title" title="勾上＝预览真正发给 Laya 的那份（wire），不勾＝预览给人看/复盘的那份（rich）" /> <span data-i18n="digest.wire">上线（wire）那份</span></label>
+    </div>
+    <div class="group" style="margin-bottom:6px">
+      <button id="btnDigestStatus" data-i18n="digest.refresh" data-i18n-title="digest.refresh.title" title="问游戏要当前生效的摘要规格（含盘上是不是已经改了还没被读）">⟳ 刷新规格</button>
+      <button id="btnDigestReload" data-i18n="digest.reload" data-i18n-title="digest.reload.title" title="让游戏重读那份 JSON（改完立刻生效，不等下一次判定）">重读规格</button>
+      <button id="btnDigestCompile" data-i18n="digest.compile" data-i18n-title="digest.compile.title" title="用当前规格把此刻的状态编译成一份摘要（看清模型会看到什么）">编译预览</button>
+      <span id="digestBadge" class="badge" data-i18n="digest.badge.unknown">摘要规格：未知</span>
+    </div>
+    <div id="digestBox"><p class="hint" data-i18n="digest.initial">点「刷新规格」看看现在生效的是哪一份、都有哪些字段。</p></div>
   </section>
 </main>
 
@@ -194,5 +210,6 @@
 <script src="app.js"></script>
 <script src="assets-panel.js"></script>
 <script src="review-panel.js"></script>
+<script src="digest-panel.js"></script>
 </body>
 </html>

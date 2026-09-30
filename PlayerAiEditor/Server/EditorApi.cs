@@ -1978,6 +1978,106 @@ namespace PlayerAiMod.Editor
         }
 
         /// <summary>
+        /// `GET /api/digest/status`：把游戏侧的 **`ai.digest.status`**（摘要规格现状）搬进编辑器。
+        ///
+        /// 状态摘要现在是**数据文件**（`&lt;实例根&gt;/PlayerAi/Digest/world.digest.json`）：发哪些字段、
+        /// 什么顺序、档位标签与阈值、谁进上线（wire）谁进人工（rich）、两份字符预算，全在那一份 JSON 里。
+        /// 这一条是**只读**的：游戏侧刻意**不**在查询时刷新（否则"改了盘还没被读"这个状态会被查询动作
+        /// 吃掉，`changedOnDisk` 永远是 false），所以编辑器也绝不替它刷新 —— 刷新是显式动作。
+        /// </summary>
+        public Dictionary<string, object> DigestStatus()
+        {
+            try
+            {
+                Dictionary<string, object> response = m_game.SendRaw("ai.digest.status", null);
+                response["ok"] = true;
+                response["command"] = "ai.digest.status";
+                return response;
+            }
+            catch (GameCommandException exception)
+            {
+                Dictionary<string, object> failed = Error(exception.Code, exception.GameMessage);
+                failed["command"] = "ai.digest.status";
+                return failed;
+            }
+            catch (Exception exception)
+            {
+                Dictionary<string, object> failed = Error("game_unreachable", exception.Message);
+                failed["command"] = "ai.digest.status";
+                return failed;
+            }
+        }
+
+        /// <summary>
+        /// `GET /api/digest/reload`：转发 **`ai.digest.reload`** —— 改完那份 JSON 立刻重读，
+        /// 不等下一次判定（失败时**不改**正在跑的那一份，游戏侧保证）。
+        ///
+        /// ⚠️ 这一条**不能**写 `response["ok"] = true`：游戏的回包自带 `ok`（重读失败时是 `false`），
+        /// 覆盖它等于把"你改的 JSON 根本没生效"说成成功 —— 那正是这个按钮唯一的用处。
+        /// 所以只加一个 `relayed` 标记表示"编辑器确实问过游戏了"。
+        /// </summary>
+        public Dictionary<string, object> DigestReload()
+        {
+            try
+            {
+                Dictionary<string, object> response = m_game.SendRaw("ai.digest.reload", null);
+                response["relayed"] = true;
+                response["command"] = "ai.digest.reload";
+                return response;
+            }
+            catch (GameCommandException exception)
+            {
+                Dictionary<string, object> failed = Error(exception.Code, exception.GameMessage);
+                failed["command"] = "ai.digest.reload";
+                return failed;
+            }
+            catch (Exception exception)
+            {
+                Dictionary<string, object> failed = Error("game_unreachable", exception.Message);
+                failed["command"] = "ai.digest.reload";
+                return failed;
+            }
+        }
+
+        /// <summary>
+        /// `GET /api/digest?budget=N&amp;wire=true|false`：转发 **`state.digest`** ——
+        /// 按当前规格把**此刻的状态**编译成一份摘要（`wire=true` 就是真正喂给 Laya 的那一份）。
+        ///
+        /// 这是"改了 JSON 到底有什么用"的预览面：同一个状态、同一份规格，预算一变摘要就变。
+        /// `budget &lt;= 0` 表示"用规格里自己那份预算"（界面上预算留空就是这个意思）——
+        /// 传 0 进去会被编译器理解成"预算 0 字符"，摘要直接空掉，那不是用户想要的。
+        /// </summary>
+        public Dictionary<string, object> DigestCompile(int budget, bool wire)
+        {
+            var arguments = new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["wire"] = wire
+            };
+            if (budget > 0)
+                arguments["budget"] = budget;
+
+            try
+            {
+                Dictionary<string, object> response = m_game.SendRaw("state.digest", arguments);
+                response["ok"] = true;
+                response["command"] = "state.digest";
+                return response;
+            }
+            catch (GameCommandException exception)
+            {
+                Dictionary<string, object> failed = Error(exception.Code, exception.GameMessage);
+                failed["command"] = "state.digest";
+                return failed;
+            }
+            catch (Exception exception)
+            {
+                Dictionary<string, object> failed = Error("game_unreachable", exception.Message);
+                failed["command"] = "state.digest";
+                return failed;
+            }
+        }
+
+        /// <summary>
         /// `GET /api/laya/config`：读**一份配置**（D16）—— 端点 / 模型 / 超时 / 预算 / 密钥来源。
         ///
         /// **密钥只回掩码**：界面要显示"设过没有、是哪一条"，但没有任何理由把明文再送回浏览器。

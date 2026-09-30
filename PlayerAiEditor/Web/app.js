@@ -278,9 +278,10 @@
     var next = I18n.getLanguage() === 'en' ? 'zh' : 'en';
     I18n.setLanguage(next);
     applyLanguage();
-    // 生成出来的那几块面板（资源库 / Laya 配置 / 判定复盘）也要跟着重画：
+    // 生成出来的那几块面板（资源库 / Laya 配置 / 判定复盘 / 摘要规格）也要跟着重画：
     // `applyLanguage` 只回填带 data-i18n 的静态标签，角标与每一行都是 JS 生成的。
-    var panels = [window.PlayerAiEditorAssets, window.PlayerAiEditorReview];
+    var panels = [window.PlayerAiEditorAssets, window.PlayerAiEditorReview,
+      window.PlayerAiEditorDigest];
     for (var p = 0; p < panels.length; p++) {
       if (panels[p] && panels[p].relabel) panels[p].relabel();
     }

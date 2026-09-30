@@ -2285,6 +2285,121 @@
     await delay(20);
     win.fetch = realFetchReview;
 
+    // ------------------------------------------------ ⑩c 摘要规格面板
+    // 同一套办法：真 DOM + **桩 fetch**。游戏没跑时问也只会拿到"未连上"，
+    // 所以这里验的是"拿到数据之后界面画得对不对"。同样留在**切英文之前**：
+    // 面板最后会留一份数据在界面上，后面整页扫中文那条检查会验语言切换有没有把它翻掉。
+    note('⑩c 摘要规格：真 DOM + 桩数据（规格现状 / 编译预览 / 重读）');
+    var digestApi = win.PlayerAiEditorDigest || {};
+    var digestBoxEl = doc.getElementById('digestBox');
+    var digestBadgeEl = doc.getElementById('digestBadge');
+    var digestStatusEl = doc.getElementById('statusText');
+    check('摘要规格面板的控件都在（预算 / 上线开关 / 刷新 / 重读 / 编译 / 角标 / 内容区）',
+      !!doc.getElementById('digestBudget') && !!doc.getElementById('digestWire')
+      && !!doc.getElementById('btnDigestStatus') && !!doc.getElementById('btnDigestReload')
+      && !!doc.getElementById('btnDigestCompile') && !!digestBadgeEl && !!digestBoxEl
+      && typeof digestApi.refresh === 'function' && typeof digestApi.render === 'function'
+      && typeof digestApi.relabel === 'function' && typeof digestApi.compile === 'function'
+      && typeof digestApi.reload === 'function',
+      digestApi ? Object.keys(digestApi).join(',') : '<missing>');
+
+    var realFetchDigest = win.fetch;
+    var digestUrl = '';
+    var digestUrls = [];
+    function stubDigest(payload) {
+      win.fetch = function (url) {
+        digestUrl = String(url);
+        digestUrls.push(digestUrl);
+        return Promise.resolve({ ok: true, json: function () { return Promise.resolve(payload); } });
+      };
+    }
+
+    var digestFields = [
+      { key: 'hp', source: 'health', format: 'num(band)', description: 'health + band',
+        bands: ['<0.2 -> crit', '(fallback) -> full'], rich: 'always', wire: 'fact.number lt 0.8' },
+      { key: 'sleep', source: 'sleep', format: 'band', description: 'sleepiness',
+        bands: [], rich: 'always', wire: 'never' }
+    ];
+    var digestSpec = { ok: true, id: 'world', name: 'world', version: 1, hash: 'abc123def456',
+      builtin: false, path: 'P:/x/world.digest.json', changedOnDisk: true, lastError: null,
+      budgets: { wire: 28, rich: 200 }, budgetSource: 'this spec file',
+      directories: ['P:/x'], fieldCount: 2, fields: digestFields,
+      sources: ['health'], formats: ['num(band)'], observes: [], factAttributes: [] };
+
+    stubDigest(digestSpec);
+    await digestApi.refresh();
+    await delay(30);
+    check('刷新规格后角标写出 id/版本/哈希，并把「盘上已改」标成待生效',
+      digestBadgeEl.textContent.indexOf('world') >= 0
+      && digestBadgeEl.textContent.indexOf('v1') >= 0
+      && digestBadgeEl.textContent.indexOf('abc123def456') >= 0
+      && String(digestBadgeEl.className).indexOf('dirty') >= 0,
+      digestBadgeEl.textContent + ' / ' + digestBadgeEl.className);
+    check('正文写出规格路径 / 两份预算 / 预算来源，并逐字段列出 key·来源·格式·档位·上线条件',
+      digestBoxEl.textContent.indexOf('world.digest.json') >= 0
+      && digestBoxEl.textContent.indexOf('28') >= 0
+      && digestBoxEl.textContent.indexOf('200') >= 0
+      && digestBoxEl.textContent.indexOf('this spec file') >= 0
+      && digestBoxEl.querySelectorAll('.assetRow').length >= 2
+      && digestBoxEl.textContent.indexOf('num(band)') >= 0
+      && digestBoxEl.textContent.indexOf('<0.2 -> crit') >= 0
+      && digestBoxEl.textContent.indexOf('never') >= 0,
+      String(digestBoxEl.textContent).replace(/\s+/g, ' ').slice(0, 130));
+
+    stubDigest({ ok: true, digest: 'hp=1(full) aim=Gravel@2.51', chars: 27, budgetChars: 200,
+      wire: false, spec: 'world', specVersion: 1, specHash: 'abc123def456', raw: {} });
+    await digestApi.compile();
+    await delay(20);
+    check('「编译预览」走 state.digest 那个端点，并把摘要原文 + 字数/预算/规格哈希画出来',
+      digestUrl.indexOf('/api/digest?wire=') === 0
+      && digestBoxEl.textContent.indexOf('hp=1(full) aim=Gravel@2.51') >= 0
+      && digestBoxEl.textContent.indexOf('27') >= 0
+      && digestBoxEl.textContent.indexOf('abc123def456') >= 0,
+      digestUrl + ' :: ' + String(digestBoxEl.textContent).slice(-90));
+
+    // 预算填了才带 budget（留空 = 用规格里自己那份）；上线开关真的变成 wire=true
+    doc.getElementById('digestBudget').value = '120';
+    doc.getElementById('digestWire').checked = true;
+    await digestApi.compile();
+    await delay(20);
+    check('预算与 wire 开关真的传给游戏（预算留空时不带 budget）',
+      digestUrl.indexOf('budget=120') >= 0 && digestUrl.indexOf('wire=true') >= 0,
+      digestUrl);
+    doc.getElementById('digestBudget').value = '';
+    doc.getElementById('digestWire').checked = false;
+
+    // 重读：**游戏自己回的 ok:false 必须原样留住**（编辑器把它改写成 true 就等于骗人）
+    digestUrls.length = 0;
+    stubDigest({ ok: false, id: 'world', hash: 'abc123def456', builtin: false,
+      path: 'P:/x/world.digest.json', error: 'invalid JSON at line 3', relayed: true });
+    await digestApi.reload();
+    await delay(30);
+    check('*** 重读失败在界面上就是失败（游戏回的 ok:false 没被改写成成功）***',
+      digestUrls.indexOf('/api/digest/reload') >= 0
+      && digestUrls.indexOf('/api/digest/status') >= 0
+      && digestStatusEl.textContent.indexOf('invalid JSON at line 3') >= 0
+      && digestStatusEl.textContent.indexOf('已重读') < 0,
+      digestUrls.join(' | ') + ' :: ' + digestStatusEl.textContent);
+
+    // 离线：**不把 `reason` 写进 DOM**（与资源库 / 复盘同一条纪律）
+    stubDigest({ ok: false, code: 'game_unreachable', reason: '由于目标计算机积极拒绝，无法连接。' });
+    await digestApi.refresh();
+    await delay(30);
+    check('游戏没在跑时给一句可翻译的话，且不把系统本地化的原始报错写进界面',
+      digestBoxEl.textContent.indexOf('游戏没在跑') >= 0
+      && digestBoxEl.textContent.indexOf('积极拒绝') < 0,
+      String(digestBoxEl.textContent).slice(0, 90));
+
+    // 留一份数据 + 一份编译预览在界面上：**这是有意的** —— 后面的语言切换要负责把它们翻成英文
+    stubDigest(digestSpec);
+    await digestApi.refresh();
+    await delay(20);
+    stubDigest({ ok: true, digest: 'hp=1(full) aim=Gravel@2.51', chars: 27, budgetChars: 200,
+      wire: false, spec: 'world', specVersion: 1, specHash: 'abc123def456', raw: {} });
+    await digestApi.compile();
+    await delay(20);
+    win.fetch = realFetchDigest;
+
     // ------------------------------------------------ ⑪ i18n：语言切换 + 节点显示名翻译 + 新面板
     note('⑪ 语言切换（中文/English）、节点显示名翻译、UI 目标选择器、动作包右键菜单');
 
