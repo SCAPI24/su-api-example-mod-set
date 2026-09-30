@@ -51,6 +51,9 @@ namespace ScMultiplayer
             UpdateAwayPlayers();
             UpdateReliableTransportHealth();
             UpdateHostJoinRequests();
+            // 《玩家领地》P7a：他人领地里的"挖不动"（只钉 m_digStartTime/m_digProgress 两个
+            // private 字段；不替换组件、异常已在方法内全部吃掉）
+            PinDeniedLocalDigProgress();
         }
 
         // Source: Mod/ScMultiplayer/Plug/ScMultiplayer.cs:ScMultiplayer.UpdateFrame

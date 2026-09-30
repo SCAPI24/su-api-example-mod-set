@@ -671,17 +671,20 @@ namespace ScMultiplayer
             componentFurnace.Value = "ScMultiplayer.SuComponentFurnace";
 
             // Source: Pak/Database.xml:ComponentMiner.Class (GUID 9dc356e5-...)
-            // ⚠️ 2026-10-01（用户口径）：**退回 2.2.0 行为**。替换 `ComponentMiner` 是 2026-09-26
-            // （`59fc520`）才引入的，它接管了引擎每帧的挖掘/交互更新入口
-            //（`SuComponentMiner` 的 `IUpdateable.Update` → `base.Update`），于是 `PokingPhase`
-            //（抬手/挖掘手臂动画，`ComponentFirstPersonModel.cs:217` 直接读它）会被外部写入或冻结：
-            // 实测"松开挖掘后手臂不收回"，且被上报给主机后"其他客户端看到该角色一直抬手挖掘"。
-            // 2.1 / 2.2.0 没有这个替换、完全正常 ⇒ 这里显式退回引擎原类。
-            // 领地执法仍保留在**消息路径**：客户端挖/放请求照样被 `CanRegionModifyCell` 拒绝并回滚
-            //（见 HandleTerrainDigRequest / InteractRequest），只是不再接管本端矿工。
+            // P7a：本端玩家在**他人领地**里挖不动 —— 按**冒险模式（"挖不动"）的形态**实现。
+            // 引擎 `ComponentMiner.Dig()` 里"挖不动"只体现为 `m_digProgress = 0f`（工具等级不足那条分支），
+            // `DigCellFace` / `PokingPhase` 一概不动 ⇒ 裂纹不增长、永远挖不完，手臂照常挥舞。
+            // `SuComponentMiner` 现在只在"正在挖 + 该格属于他人领地"时把 `m_digStartTime` 钉到当前时间
+            //（使引擎算出的进度恒≈0），其余情况完全直通、与引擎原版逐字节一致。
+            // ⚠️ 它曾在 2.2.2 里清 `DigCellFace`/`m_digProgress`，导致 `PokingPhase` 被冻结、
+            // 松开挖掘手臂不收回 —— 那个实现已废弃，别退回。
             var componentMiner = database.FindDatabaseObject(
                 new Guid("9dc356e5-7dc8-45f6-8779-827ddee9966c"),
                 database.FindDatabaseObjectType("Parameter", true), true);
+            // ⚠️ 2026-10-01：**不替换** ComponentMiner。替换它会接管引擎的挖掘/手臂更新入口，
+            // 实测两次都导致"松开挖掘后手臂不收回、他人看到一直抬手挖掘"（Windows/平板都复现）。
+            // 领地内"挖不动"改为按冒险模式形态、在 Mod 自己的每帧调度里只钉进度：
+            // 见 Modules/Region/ScMultiplayerRegionDigGuard.cs（PinDeniedLocalDigProgress）。
             componentMiner.Value = "Game.ComponentMiner";
 
             var subsystemTerrain = database.FindDatabaseObject(
