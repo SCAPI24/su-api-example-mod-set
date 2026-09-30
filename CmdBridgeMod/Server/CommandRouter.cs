@@ -16,7 +16,13 @@ namespace CmdBridgeMod
     /// </summary>
     internal sealed class CommandRouter
     {
-        internal const string ModVersion = "1.1.15";
+        /// <summary>
+        /// 自报版本：`cmd.status` 与 `CmdBridge.runtime.json` 的 `modVersion` 都由它来。
+        ///
+        /// ⚠️ **必须与 `ModInfo.xml` 的 `&lt;Version&gt;` 同步**：漏同步就会出现
+        /// "装的是 1.1.20、状态里报 1.1.15"（本文件实际踩过一次，排查时容易误判成旧包装没生效）。
+        /// </summary>
+        internal const string ModVersion = "1.1.21";
 
         /// <summary>
         /// 内建命令名（`cmd.list` 用）。加命令时**必须同步这里**：
