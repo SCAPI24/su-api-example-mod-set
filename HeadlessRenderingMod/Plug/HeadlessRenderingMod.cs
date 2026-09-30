@@ -65,7 +65,7 @@ namespace HeadlessRenderingMod
 
         public string Name => "无画面服务器";
 
-        public string Version => "1.3.5";
+        public string Version => "1.3.6";
 
         public IEnumerable<string> Dependencies => Array.Empty<string>();
 

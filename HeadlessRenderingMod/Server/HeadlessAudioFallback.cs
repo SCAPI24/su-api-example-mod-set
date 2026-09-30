@@ -15,6 +15,12 @@ namespace HeadlessRenderingMod
         private static readonly HashSet<Assembly> s_resolverAssemblies =
             new HashSet<Assembly>();
 
+        // 抽取出来的原生库用**固定文件名**：每次启动覆盖同一份 → 实例根目录长期只有这两个文件。
+        // 早期实现把 Environment.ProcessId 拼进文件名（`*-headless-<pid>.dll`），每次启动都会新增
+        // 两个文件（远端服务器实测累计 300 个 / 7.4 MB）；遗留文件由 CleanupLegacyExtracts 清掉。
+        private const string Gles2LibraryFileName = "libGLESv2-headless.dll";
+        private const string OpenglLibraryFileName = "opengl32-headless.dll";
+
         // Source: Engine/Engine/Audio/Mixer.cs:Mixer.Initialize
         // Source: OpenTK/OpenTK.Graphics.ES20/GL.cs:GL.Core
         public static bool Ensure(string instanceRoot, bool disableAudio, bool disableDrawing)
@@ -22,6 +28,7 @@ namespace HeadlessRenderingMod
             if (!OperatingSystem.IsWindows()) return false;
 
             bool usingNullGles2 = false;
+            CleanupLegacyExtracts(instanceRoot);
 
             if (disableAudio)
             {
@@ -39,29 +46,20 @@ namespace HeadlessRenderingMod
                 s_gles2Handle = TryLoadExistingGles2(instanceRoot);
                 if (s_gles2Handle == IntPtr.Zero)
                 {
-                    string libraryPath = Path.Combine(
+                    string libraryPath = ExtractEmbeddedLibrary(
+                        "HeadlessRenderingMod.Native.libGLESv2.dll",
                         instanceRoot,
-                        $"libGLESv2-headless-{Environment.ProcessId}.dll");
-                    using (Stream resource = typeof(HeadlessAudioFallback).Assembly
-                        .GetManifestResourceStream("HeadlessRenderingMod.Native.libGLESv2.dll")
-                        ?? throw new FileNotFoundException("Headless GLES2 resource is missing."))
-                    using (FileStream output = new FileStream(
-                        libraryPath, FileMode.Create, FileAccess.Write, FileShare.Read))
-                    {
-                        resource.CopyTo(output);
-                    }
+                        Gles2LibraryFileName);
                     s_gles2Handle = NativeLibrary.Load(libraryPath);
                     usingNullGles2 = true;
                 }
             }
             if (disableDrawing && s_openglHandle == IntPtr.Zero)
             {
-                string libraryPath = Path.Combine(
-                    instanceRoot,
-                    $"opengl32-headless-{Environment.ProcessId}.dll");
-                ExtractEmbeddedLibrary(
+                string libraryPath = ExtractEmbeddedLibrary(
                     "HeadlessRenderingMod.Native.opengl32-headless.dll",
-                    libraryPath);
+                    instanceRoot,
+                    OpenglLibraryFileName);
                 s_openglHandle = NativeLibrary.Load(libraryPath);
             }
             InstallResolver(Assembly.Load("OpenTK"));
@@ -87,7 +85,40 @@ namespace HeadlessRenderingMod
             NativeLibrary.SetDllImportResolver(assembly, ResolveOpenTkLibrary);
         }
 
-        private static void ExtractEmbeddedLibrary(string resourceName, string libraryPath)
+        /// <summary>
+        /// 把内置原生库抽到实例根目录并返回最终路径。
+        /// 优先用固定名（同名覆盖 → 长期只留一份）；如果同机已有实例把该文件载入并锁住
+        ///（Windows 不允许覆盖已映射的 DLL），退回本进程专属的文件名，保证多实例也能启动。
+        /// </summary>
+        private static string ExtractEmbeddedLibrary(
+            string resourceName,
+            string instanceRoot,
+            string fileName)
+        {
+            string libraryPath = Path.Combine(instanceRoot, fileName);
+            try
+            {
+                WriteEmbeddedLibrary(resourceName, libraryPath);
+                return libraryPath;
+            }
+            catch (IOException)
+            {
+                // 被别的实例锁住 → 走下面的本进程副本
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // 同上，权限异常也退回副本
+            }
+            string fallbackPath = Path.Combine(
+                instanceRoot,
+                Path.GetFileNameWithoutExtension(fileName) +
+                "-" + Environment.ProcessId +
+                Path.GetExtension(fileName));
+            WriteEmbeddedLibrary(resourceName, fallbackPath);
+            return fallbackPath;
+        }
+
+        private static void WriteEmbeddedLibrary(string resourceName, string libraryPath)
         {
             using (Stream resource = typeof(HeadlessAudioFallback).Assembly
                 .GetManifestResourceStream(resourceName)
@@ -99,6 +130,24 @@ namespace HeadlessRenderingMod
             {
                 resource.CopyTo(output);
             }
+        }
+
+        // 清理早期 `*-headless-<pid>.dll` 命名的遗留文件：固定名的两个文件不含 `-` 尾缀，
+        // 不在匹配范围内。删不掉的（被其它实例锁住）跳过，下次启动再收。
+        private static void CleanupLegacyExtracts(string instanceRoot)
+        {
+            try
+            {
+                foreach (string legacy in Directory.EnumerateFiles(
+                    instanceRoot, "*-headless-*.dll", SearchOption.TopDirectoryOnly))
+                {
+                    try { File.Delete(legacy); }
+                    catch (IOException) { }
+                    catch (UnauthorizedAccessException) { }
+                }
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
         }
 
         private static IntPtr TryLoadExistingGles2(string instanceRoot)
