@@ -21,8 +21,14 @@
 #    （一行一个版本；若同时启用两行，下载列表里该 Mod 会显示两行。）
 #
 TranslationMod | su-zh | ["0.1.6.0"] | 1.6.49 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.6.0/%5BSuAPI%5DChinesePak-1.6.49.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.6.0/SuAPI.ChinesePak-1.6.49.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.6.0/[SuAPI]ChinesePak-1.6.49.scmod" | *zh_CN=中文翻译;en_US=Chinese Translation
-CmdBridgeMod | Su-Cmd | ["0.1.6.0"] | 1.1.10 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.6.0/%5BSuAPI%5DCmdBridgeMod-1.1.10.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.6.0/SuAPI.CmdBridgeMod-1.1.10.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.6.0/[SuAPI]CmdBridgeMod-1.1.10.scmod" | zh_CN=命令行桥;en_US=Command Bridge
-# 上一版（需要时去掉行首 # 即可用 `Su-Cmd@1.1.1` 精确下载）
+# 1.1.21（2026-10-01）：修**自报版本长期停在 1.1.15** —— `CommandRouter.ModVersion` 没跟 `ModInfo.xml`
+#   同步，于是"装的是 1.1.20、`cmd.status` 却报 1.1.15"（排查时容易被误判成旧包装没生效）；本版两者
+#   对齐。随包包含上一批功能：聊天观察（只读、结构化玩家聊天）+ `CmdBridgeInput.DescribeChat` 门面
+#   （**PlayerAiMod 0.6.0 的聊天服务依赖它**）与命令路由更新。
+#   ⚠️ 与 PlayerAiMod 0.6.0 配套时要求 **CmdBridgeMod ≥ 1.1.20**；本版 1.1.21 已满足。
+CmdBridgeMod | Su-Cmd | ["0.1.6.0"] | 1.1.21 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.6.0/%5BSuAPI%5DCmdBridgeMod-1.1.21.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.6.0/SuAPI.CmdBridgeMod-1.1.21.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.6.0/[SuAPI]CmdBridgeMod-1.1.21.scmod" | zh_CN=命令行桥;en_US=Command Bridge
+# 上一版（需要时去掉行首 # 即可用 `Su-Cmd@1.1.10` 精确下载）
+# CmdBridgeMod | Su-Cmd | ["0.1.6.0"] | 1.1.10 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.6.0/%5BSuAPI%5DCmdBridgeMod-1.1.10.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.6.0/SuAPI.CmdBridgeMod-1.1.10.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.6.0/[SuAPI]CmdBridgeMod-1.1.10.scmod" | zh_CN=命令行桥;en_US=Command Bridge
 # CmdBridgeMod | Su-Cmd | ["0.1.6.0"] | 1.1.1 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.6.0/%5BSuAPI%5DCmdBridgeMod-1.1.1.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.6.0/SuAPI.CmdBridgeMod-1.1.1.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.6.0/[SuAPI]CmdBridgeMod-1.1.1.scmod" | zh_CN=命令行桥;en_US=Command Bridge
 GmMod | su-gm | ["0.1.6.0"] | 1.1.1 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.6.0/%5BSuAPI%5DGmMod-1.1.1.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.6.0/SuAPI.GmMod-1.1.1.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.6.0/[SuAPI]GmMod-1.1.1.scmod" | zh_CN=GM 工具;en_US=GM Tools
 # 上一版（`su-gm@1.1.0`）
