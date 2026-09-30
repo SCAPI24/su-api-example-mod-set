@@ -137,6 +137,16 @@ namespace ScMultiplayer
         private readonly Dictionary<int, int> m_hostKnockbackSequences =
             new Dictionary<int, int>();
         private bool m_hasObservedClientHealth;
+        /// <summary>
+        /// 本地是否处于**联机客户端会话**（单人 / 主机端恒为 false）。
+        /// 用来判定"加入房间头几帧不许红屏上涨"：那几帧
+        /// `SyncClientLocalHealthFromAuthority` 整段不生效，本端血量落地没人撤销
+        ///（见 `SuComponentHealth`）。
+        /// </summary>
+        internal bool IsMultiplayerClientSession =>
+            !IsHost && client != null && (client.IsConnected || m_hasObservedClientHealth);
+
+
         private float m_observedClientHealth;
         private float m_observedClientFood;
         private bool m_observedClientSleeping;

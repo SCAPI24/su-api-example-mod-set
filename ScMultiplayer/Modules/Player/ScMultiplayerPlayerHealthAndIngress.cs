@@ -279,13 +279,16 @@ namespace ScMultiplayer
         /// 真死只认主机广播的 0（`m_localAuthoritativeDeath`）—— 那时故意不写 `m_lastHealth`，
         /// 让原生看到 0 的跨越，死亡处理才会正常发生。
         /// </summary>
-        internal void SyncClientLocalHealthFromAuthority(ComponentPlayer player, ComponentHealth health,
+        // 返回值：本次调用**是否真的把本地血量钉到了主机权威值上**（false = 这次没有接管本端，
+        // 例如进世界那一帧本端还是"临时网络角色"、或主机权威血量还没到）。调用方
+        //（`SuComponentHealth`）用它判断"这一帧原生算出来的掉血算不算数"。
+        internal bool SyncClientLocalHealthFromAuthority(ComponentPlayer player, ComponentHealth health,
             bool insideNativeUpdate)
         {
-            if (player == null || health == null) return;
-            if (IsHost || client?.IsConnected != true) return;
+            if (player == null || health == null) return false;
+            if (IsHost || client?.IsConnected != true) return false;
             if (player.PlayerData == null ||
-                m_networkPlayerData.Values.Contains(player.PlayerData)) return;
+                m_networkPlayerData.Values.Contains(player.PlayerData)) return false;
             // 主机没判死、本端血却是正的 → 这一次"死"已经过去了（本端自己复活过，或那只是幽灵死亡）。
             // 必须在这里复位死亡落地标记：否则下一次**真正的**死亡会被当成"同一场死亡已经记过"
             // 而既不写死因也不记统计（实测："后续几次被狮子咬死，游戏统计并没有"）。
@@ -312,7 +315,7 @@ namespace ScMultiplayer
                 (staleAuthoritativeDeath || Time.RealTime < m_localRespawnPendingUntil);
             // 还没收到过主机的权威血量：什么都不做（否则会把刚进世界的满血误写成一格）。
             // 复活窗口是例外：那时正要紧的就是"主机还没回话"。
-            if (!inRespawnWindow && !m_hasObservedClientHealth) return;
+            if (!inRespawnWindow && !m_hasObservedClientHealth) return false;
             bool authoritativeDead = m_localAuthoritativeDeath;
             // 目标值就是主机的权威血量本身（**不设显示地板**）。
             // 曾经加过一条 0.11 的地板来避免"点击把本地打到 0 → 关面板"，但那会让血条说谎：
@@ -332,6 +335,12 @@ namespace ScMultiplayer
                 // ⚠️ 上报的是**本地这次真实掉的血**（相对上一次钉住的值），不是"相对主机的差额"：
                 // 本地贴在地板上时，相对差额只有零点几，而上报真实掉落（一次 0.1）才能让主机被扣到 0。
                 float lost = baseline - current;
+                // ⚠️ 红屏扣减只认**原始**差值：下面上报用的 `lost` 会被抬到 `LocalHitDamage`(0.1)，
+                // 而原生这一帧真正加进 `m_redScreenFactor` 的是 `-4f * HealthChange`。
+                // 预跟随刚把 `m_lastHealth` 写成 `baseline`，于是
+                // `HealthChange = current - baseline = -(原始差值)`，原生加的就是 `4f * 原始差值`；
+                // 拿被抬高过的 `lost` 去扣会多扣（饥饿/窒息那种每帧小额会被抬到 0.1）。
+                float nativeRedGain = insideNativeUpdate ? 4f * lost : 0f;
                 // ⚠️ "命中"的判据分两种来源（见 SuComponentHealth 传进来的 insideNativeUpdate）：
                 //   · **原生之外**的扣血（UI 骷髅头一次 -0.1、尖刺、爆炸…）本身就是一次性命中：
                 //     哪怕本地只剩 0.005、这一下只掉 0.005，也要按标称 0.1 上报。
@@ -357,6 +366,31 @@ namespace ScMultiplayer
                         -m_localDamageReportAccumulator, "Client damage request");
                     m_localDamageReportAccumulator = 0f;
                 }
+                // Source: Survivalcraft/Game/ComponentHealth.cs:ComponentHealth.Update:251-261
+                // 原生在 `base.Update` 里按**净掉血**累积红屏（`m_redScreenFactor += -4f * HealthChange`），
+                // 并在同帧把它抬进 `RedoutFactor`（`:261`）。可这点血本端马上要写回权威值（本端不承认），
+                // 红屏留着就是用户报的"像扣血但血是满的"：
+                // 实测加入房间时落点泡在水里（immersion≈0.61），窒息一次约 -0.6 → 红屏 2.4
+                // → 满屏红约 1.7 秒，而主机那份血量始终是 1（主机消息 `msgChange=0`，压根没扣）。
+                // 受伤表现统一由主机确认那条路给（见 ScMultiplayerHealthWorldControlHandlers
+                // `TriggerLocalDamageFeedback` 的注释：本地这条路径不再自己闪红，避免同一个伤害闪两下），
+                // 所以这里把原生刚加进去的那一份扣掉。
+                // ⚠️ 只扣"这一次掉血"对应的量：岩浆那种直接抬下限的表现（`:198-202`
+                // `m_redScreenFactor = Max(..., 1.1f * 1.5f * ImmersionFactor)`）保持不动。
+                if (nativeRedGain > 0f)
+                {
+                    float red = ModManager.ModParentField.GetParentField<float>(health,
+                        "m_redScreenFactor", typeof(ComponentHealth));
+                    float redReduced = MathUtils.Max(red - nativeRedGain, 0f);
+                    ModManager.ModParentField.ModifyParentField(health, "m_redScreenFactor",
+                        redReduced, typeof(ComponentHealth));
+                    // 同帧的 `RedoutFactor` 已经按扣减**前**的值抬过了（`:261`），不一起压回去
+                    // 这一帧仍会画一次满屏红；下一帧它会从 `m_redScreenFactor` 重算
+                    //（`ComponentScreenOverlays.Update:69` 每帧先把它归零）。
+                    if (player.ComponentScreenOverlays != null)
+                        player.ComponentScreenOverlays.RedoutFactor =
+                            MathUtils.Min(player.ComponentScreenOverlays.RedoutFactor, redReduced);
+                }
             }
             else if (current > baseline + 0.0001f)
             {
@@ -374,9 +408,10 @@ namespace ScMultiplayer
                     baseline, typeof(ComponentHealth));
             // 只有"复活之后主机新判的死"才停下不动；主机那份**过期的** 0 不算（那种情况下
             // 本端其实已经被引擎重生过了，必须继续撤销本地死亡锁存，否则角色站在死亡界面里动不了）。
-            if (freshAuthoritativeDeath) return;
+            if (freshAuthoritativeDeath) return true;
             // 兜底：万一原生的死亡锁存先于主机判定发生，撤销它（主机判死那条路不会走到这里）。
             UndoLocalDeathLatch(player);
+            return true;
         }
 
         // Source: Survivalcraft/Game/PlayerData.cs:PlayerData.PlayerDead

@@ -1348,6 +1348,21 @@ namespace ScMultiplayer
             m_pendingClientSleepRequestSequence = 0;
         }
 
+        // Source: Survivalcraft/Game/ComponentHealth.cs:ComponentHealth.Update
+        // 加入恢复的清屏：`m_redScreenFactor` 是原生"受伤"的屏幕反馈（`:256` 累加、`:144` 衰减），
+        // 而恢复离线状态不是受伤。`m_lastHealth` 一并对齐当前血量，避免下一帧原生 Update
+        // 用旧基准算出一个假的负值（那会立刻又红一次）。
+        private static void ClearJoinDamageFeedback(ComponentPlayer player)
+        {
+            ComponentHealth health = player?.ComponentHealth;
+            if (health == null)
+                return;
+            ModManager.ModParentField.ModifyParentField(health, "m_lastHealth", health.Health,
+                typeof(ComponentHealth));
+            ModManager.ModParentField.ModifyParentField(health, "m_redScreenFactor", 0f,
+                typeof(ComponentHealth));
+        }
+
         private void EnsureLocalPlayerRecordApplied()
         {
             if (IsHost || m_pendingLocalPlayerRecord == null || GameManager.Project == null) return;
@@ -1371,6 +1386,15 @@ namespace ScMultiplayer
             ApplyAuthoritativePlayerStats(player, record.Health, record.Air, record.Food,
                 record.Stamina, record.Sleep, record.Temperature, record.Wetness, record.Level);
             ApplyPlayerRecordState(player, record);
+            // 加入恢复**不是受伤**：把原生在加入瞬间累积的红屏/痛感反馈清掉。
+            //
+            // 实测（2026-09-26，诊断 `red-source`）：落点泡在液体里（`immersion=0.61`）时，
+            // 客户端原生会照常算一次伤害（约 -0.6），`m_redScreenFactor += -4 × HealthChange`
+            // 被拉到 **2.4**，之后约 2.5 秒才衰减干净；而权威血量随即把血拉回 1 ——
+            // 玩家看到的就是"像扣血一样的满屏红，但血是满的"（用户报的正是这个）。
+            // 恢复动作本身不该带这种反馈，所以这里清一次：红屏归零 + 基准血量对齐当前值
+            // （`m_lastHealth` 不写就会让下一帧原生 Update 算出一个假的负 HealthChange）。
+            ClearJoinDamageFeedback(player);
             // 游戏统计：记录里的权威副本回填到客户端角色自己的统计槽（退出重进保留）。
             // 没有记录（首次联机）时保持"全新"——即上一步刚换上的空 PlayerStats。
             ApplyRecordedPlayerStats(player, record.Stats);
