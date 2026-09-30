@@ -2829,9 +2829,6 @@ namespace ScMultiplayer
                 m_reconnectRequested || m_reconnectPending || client?.IsConnected != true)
                 return;
 
-            // [SuAPI] 临时诊断：把加入屏障依赖的每个电路条件按变化/心跳写进 Logs/Client。
-            ObserveClientJoinBarrier();
-
             // 加入阶段的**地形补推**。加入屏障里的"恢复保持"（CircuitSynchronizer.m_recoveryHold）
             // 会一直等到本地地形追到最后一条 fence 要求的主机地形序号；而 fence 带的是主机**当前**
             // 值（移动靶），且地形恢复机制以前在加入期间是被整体关掉的
@@ -2866,29 +2863,6 @@ namespace ScMultiplayer
                 SendClientJoinReadyStage(ClientJoinReadyStage);
         }
 
-        // [SuAPI] 临时诊断（"加入房间被弹窗挂起、Ckt Recovery 反复"定位用）。
-        // 只在客户端跑；状态串有变化就记一条，否则每 2 秒留一条心跳。写 Logs/Client，不进 Game.log。
-        // 定位完成后连同 `CircuitSynchronizer.BuildJoinBarrierDiagnostics` 一起删除。
-        private string m_lastJoinBarrierDiagnostics;
-        private double m_nextJoinBarrierLogTime;
-
-        private void ObserveClientJoinBarrier()
-        {
-            string diagnostics = m_circuitSynchronizer?.BuildJoinBarrierDiagnostics();
-            if (string.IsNullOrEmpty(diagnostics)) return;
-            double now = Time.RealTime;
-            if (string.Equals(diagnostics, m_lastJoinBarrierDiagnostics, StringComparison.Ordinal) &&
-                now < m_nextJoinBarrierLogTime)
-                return;
-            m_lastJoinBarrierDiagnostics = diagnostics;
-            m_nextJoinBarrierLogTime = now + 2.0;
-            Diagnostics.ScMultiplayerOperationLog.Write(
-                "event=join.barrier transfer=" +
-                m_worldTransferRegistry.PendingWorldReadyTransferId.ToString(CultureInfo.InvariantCulture) +
-                " circuitTransfer=" +
-                m_worldTransferRegistry.PendingCircuitReadyTransferId.ToString(CultureInfo.InvariantCulture) +
-                " stage=" + ClientJoinReadyStage + " " + diagnostics);
-        }
 
         // Source: Mod/ScMultiplayer/Func/Circuit/CircuitSynchronizer.cs:
         // CircuitSynchronizer.IsClientBootstrapReady

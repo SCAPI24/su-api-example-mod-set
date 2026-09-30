@@ -317,44 +317,6 @@ namespace ScMultiplayer
             ? -1f
             : (float)Math.Max(0.0, 1000.0 * (Time.RealTime - m_lastFenceRealTime));
 
-        // [SuAPI] 临时诊断（"两个客户端同时加入被弹窗挂起、Ckt Recovery"定位用）。
-        // 客户端加入屏障只认 `IsClientBootstrapReady`，它是一串条件的与门；这里把每个条件原样
-        // 导出成一行，由 `ScMultiplayerUpdateLoop.ObserveClientJoinBarrier` 按变化写进
-        // Logs/Client（客户端决策日志，不进 Game.log）。定位完成后连同调用点一起删除。
-        internal string BuildJoinBarrierDiagnostics()
-        {
-            return "epoch=" + m_epoch.ToString(CultureInfo.InvariantCulture) +
-                " state=" + ClientStateText +
-                " bootstrap=" + IsClientBootstrapReady +
-                " subsystem=" + (m_subsystem != null) +
-                " clock=" + m_hasClock +
-                " fence=" + m_hasFence +
-                " fenceAge=" + FenceAgeMilliseconds.ToString("0", CultureInfo.InvariantCulture) +
-                " fenceStale=" + IsFenceStale() +
-                " snapshotApplied=" + m_initialSnapshotApplied +
-                " snapshotBlocksJoin=" + m_snapshotBlocksJoin +
-                " snapshotRequested=" + m_snapshotRequested +
-                " rebaseOnNextSnapshot=" + m_rebaseOnNextSnapshot +
-                " manualRebaseOnNextSnapshot=" + m_manualRebaseOnNextSnapshot +
-                " recoveryHold=" + m_recoveryHold +
-                " recoveryRequested=" + m_recoveryRequested +
-                " recoveryAttempts=" + m_recoveryRequestAttempts.ToString(CultureInfo.InvariantCulture) +
-                " rebaseAwaitingFence=" + m_rebaseAwaitingFence +
-                " fenceSerial=" + m_receivedFenceSerial.ToString(CultureInfo.InvariantCulture) +
-                "/" + m_requiredFenceSerial.ToString(CultureInfo.InvariantCulture) +
-                " fenceSeq=" + m_lastFenceSequence.ToString(CultureInfo.InvariantCulture) +
-                " rebaseSeq=" + m_rebaseSnapshotLastSequence.ToString(CultureInfo.InvariantCulture) +
-                " rebaseHostStep=" + m_rebaseSnapshotHostStep.ToString(CultureInfo.InvariantCulture) +
-                " hostPaused=" + m_hostPaused +
-                " localSuspended=" + m_localSuspended +
-                // 加入屏障那条"地形门槛"的两个数：本地已应用的地形序号 vs 最后一条 fence 要求的
-                // 主机地形序号（= 主机当前 CircuitTerrainSequence 的快照）。两者一比就知道
-                // Recovery hold 是不是卡在这里、还差多少。
-                " terrainApplied=" + SuSubsystemTerrain.LastAppliedTerrainSequence
-                    .ToString(CultureInfo.InvariantCulture) +
-                " fenceTerrain=" + m_fenceTerrainSequence.ToString(CultureInfo.InvariantCulture) +
-                " waitingTerrain=" + IsWaitingForTerrain;
-        }
 
         public string ClientStateText
         {

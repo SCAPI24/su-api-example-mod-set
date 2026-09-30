@@ -87,7 +87,14 @@ WatchMod | su-watch | ["0.1.6.0"] | 1.0.1 | gitee:"https://gitee.com/SC-SPM/su-a
 #      本端走引擎 Tap to respawn 同一路径并移除死亡界面）；⑥ 地形恢复日志保留窗口 60 秒且
 #      "仍在线且待恢复"客户端所需的条目不裁剪（带宽小时也能传完地图再同步完期间改动）。
 # ⚠️ buildFingerprint 再次变化：2.2.6 与 2.2.5 及更早构建**互不互通**，三端必须同时换。
-ScMultiplayer | Su-ScMP | ["0.1.6.0"] | 2.2.6 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.6.0/%5BSuAPI%5DScMultiplayer-2.2.6.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.6.0/SuAPI.ScMultiplayer-2.2.6.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.6.0/[SuAPI]ScMultiplayer-2.2.6.scmod" | zh_CN=联机模组;en_US=ScMultiplayer
+# 2.2.7（2026-10-01，包 sha256 3f07519a…，398447 B）：清理临时诊断 + 与 2.2.6 功能一致。
+#   删除已完成定位的探针：`event=join.barrier`（客户端每 2 秒一条的加入屏障状态串）及其
+#   `ObserveClientJoinBarrier` / `BuildJoinBarrierDiagnostics` 调用点与字段。功能与 2.2.6 相同，
+#   仅去掉诊断输出（2.2.6 的那几项修复全部保留）。
+# ⚠️ buildFingerprint 再次变化：2.2.7 与 2.2.6 及更早构建**互不互通**，三端必须同时换。
+ScMultiplayer | Su-ScMP | ["0.1.6.0"] | 2.2.7 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.6.0/%5BSuAPI%5DScMultiplayer-2.2.7.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.6.0/SuAPI.ScMultiplayer-2.2.7.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.6.0/[SuAPI]ScMultiplayer-2.2.7.scmod" | zh_CN=联机模组;en_US=ScMultiplayer
+# 上一版（`Su-ScMP@2.2.6`）
+# ScMultiplayer | Su-ScMP | ["0.1.6.0"] | 2.2.6 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.6.0/%5BSuAPI%5DScMultiplayer-2.2.6.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.6.0/SuAPI.ScMultiplayer-2.2.6.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.6.0/[SuAPI]ScMultiplayer-2.2.6.scmod" | zh_CN=联机模组;en_US=ScMultiplayer
 # 上一版（`Su-ScMP@2.2.2`）
 # ScMultiplayer | Su-ScMP | ["0.1.6.0"] | 2.2.2 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.6.0/%5BSuAPI%5DScMultiplayer-2.2.2.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.6.0/SuAPI.ScMultiplayer-2.2.2.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.6.0/[SuAPI]ScMultiplayer-2.2.2.scmod" | zh_CN=联机模组;en_US=ScMultiplayer
 # 上一版（`Su-ScMP@2.2.1`）
