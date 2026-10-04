@@ -26,7 +26,12 @@ TranslationMod | su-zh | ["0.1.6.0"] | 1.6.49 | gitee:"https://gitee.com/SC-SPM/
 #   对齐。随包包含上一批功能：聊天观察（只读、结构化玩家聊天）+ `CmdBridgeInput.DescribeChat` 门面
 #   （**PlayerAiMod 0.6.0 的聊天服务依赖它**）与命令路由更新。
 #   ⚠️ 与 PlayerAiMod 0.6.0 配套时要求 **CmdBridgeMod ≥ 1.1.20**；本版 1.1.21 已满足。
-CmdBridgeMod | Su-Cmd | ["0.1.6.0"] | 1.1.21 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.6.0/%5BSuAPI%5DCmdBridgeMod-1.1.21.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.6.0/SuAPI.CmdBridgeMod-1.1.21.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.6.0/[SuAPI]CmdBridgeMod-1.1.21.scmod" | zh_CN=命令行桥;en_US=Command Bridge
+CmdBridgeMod | Su-Cmd | ["0.1.6.0"] | 1.1.25 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.6.0/%5BSuAPI%5DCmdBridgeMod-1.1.25.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.6.0/SuAPI.CmdBridgeMod-1.1.25.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.6.0/[SuAPI]CmdBridgeMod-1.1.25.scmod" | zh_CN=命令行桥;en_US=Command Bridge
+
+# SuUndergroundWorld 0.1.0 —— 纯 mod 双世界：上界竖井掉下去是另一个真实生成的世界（同 X/Z，正坐标带状 下界[0,255]/地表[256,511]）；
+#   水帘镜像（上界有水→下界对应列出现水帘，相邻湿列合一）、断流（上界没水→用空气清掉顶部水源，引擎自己流干）、
+#   换界后按记录的待更新格接回流体链条、上界只跟踪切换面那一层；玩家位置/复活点/井口/地表读数全部 XML 存盘；实体与掉落物随世界分流。
+SuUndergroundWorld | Su-UGW | ["0.1.6.0"] | 0.1.0 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.6.0/%5BSuAPI%5DSuUndergroundWorld-0.1.0.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.6.0/SuAPI.SuUndergroundWorld-0.1.0.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.6.0/[SuAPI]SuUndergroundWorld-0.1.0.scmod" | zh_CN=地下世界;en_US=Underground World
 # 上一版（需要时去掉行首 # 即可用 `Su-Cmd@1.1.10` 精确下载）
 # CmdBridgeMod | Su-Cmd | ["0.1.6.0"] | 1.1.10 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.6.0/%5BSuAPI%5DCmdBridgeMod-1.1.10.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.6.0/SuAPI.CmdBridgeMod-1.1.10.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.6.0/[SuAPI]CmdBridgeMod-1.1.10.scmod" | zh_CN=命令行桥;en_US=Command Bridge
 # CmdBridgeMod | Su-Cmd | ["0.1.6.0"] | 1.1.1 | gitee:"https://gitee.com/SC-SPM/su-api-example-mod-set/releases/download/0.1.6.0/%5BSuAPI%5DCmdBridgeMod-1.1.1.scmod";github:"https://github.com/SCAPI24/su-api-example-mod-set/releases/download/0.1.6.0/SuAPI.CmdBridgeMod-1.1.1.scmod";cnb:"https://cnb.cool/suceru.cb/SC-SPM/SuAPIMod/-/releases/download/0.1.6.0/[SuAPI]CmdBridgeMod-1.1.1.scmod" | zh_CN=命令行桥;en_US=Command Bridge

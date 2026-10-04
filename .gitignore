@@ -168,6 +168,13 @@ GmMod/bin/
 GmMod/obj/
 GmMod/.vs/
 
+## sync:SuUndergroundWorld
+!SuUndergroundWorld/
+!SuUndergroundWorld/**
+SuUndergroundWorld/bin/
+SuUndergroundWorld/obj/
+SuUndergroundWorld/.vs/
+
 # 全局忽略 .vs 目录
 *.vs/
 

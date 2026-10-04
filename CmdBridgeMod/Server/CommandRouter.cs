@@ -22,7 +22,7 @@ namespace CmdBridgeMod
         /// ⚠️ **必须与 `ModInfo.xml` 的 `&lt;Version&gt;` 同步**：漏同步就会出现
         /// "装的是 1.1.20、状态里报 1.1.15"（本文件实际踩过一次，排查时容易误判成旧包装没生效）。
         /// </summary>
-        internal const string ModVersion = "1.1.24";
+        internal const string ModVersion = "1.1.25";
 
         /// <summary>
         /// 内建命令名（`cmd.list` 用）。加命令时**必须同步这里**：
@@ -39,6 +39,7 @@ namespace CmdBridgeMod
             "dev.chat.inject",
             "act.look", "act.lookdelta", "act.lookat", "act.key", "act.hold", "act.chord",
             "act.mouse", "act.wheel", "act.uiclick", "act.text", "act.releaseall",
+            "act.enter",
             "ui.locate", "ui.clickelement", "ui.marker",
             "ui.session.begin", "ui.session.end", "ui.session.status",
             "ui.cursor", "ui.press", "ui.release", "ui.move", "ui.click",
@@ -256,6 +257,14 @@ namespace CmdBridgeMod
                 case "act.releaseall":
                 case "act.releaseAll":
                     return m_injector.ReleaseAll();
+
+                // ---------------------------------------------------- 进入世界（自动化一步）
+                // 菜单链：主菜单 → 世界列表 →(可选选中某世界)→ 创建/加载 → **角色创建/选择** → 进入游戏。
+                // 每次只点一个控件、只返回一步；请由调用方循环调用（`sccmd enter` 就是那个循环），
+                // 避免在游戏线程里做等待，也避免"同一帧连点"导致界面还没切就点空。
+                // 参数： select（列表行目标，如 `list:WorldsList#0`）/ world（世界名）/ row（行号）
+                case "act.enter":
+                    return EnterWorldStep(request);
 
                 // ------------------------------------------------ UI 定位 / 点击**服务**（UI-1）
                 // 用户要求： 把相应的方法做成 CmdBridgeMod 能提供的服务，在行为树编辑器中，
@@ -1248,6 +1257,89 @@ namespace CmdBridgeMod
             {
                 return false;
             }
+        }
+
+        /// <summary>
+        /// `act.enter` 的一步：把"进世界"这条菜单链往前推一格。
+        ///
+        /// 屏幕 → 动作：
+        ///   MainMenu  → 点 `Play`（进世界列表）
+        ///   Play      → 先选世界（可用 world/row/select 指定）或直接点 `Play`（开始选中世界）
+        ///   NewWorld  → 点 `Play`（用当前默认参数创建并加载）
+        ///   Player    → 点 `PlayButton`（**角色创建/选择界面**，没有角色的世界一定会经过这里）
+        ///   Game      → done
+        ///
+        /// 返回 `screen / clicked / done / reason`；调用方循环调用直到 `done == true`。
+        /// 屏幕在切换动画中时返回 `reason=screen-animating`（这一帧不点，等下一次）。
+        /// </summary>
+        private Dictionary<string, object> EnterWorldStep(BridgeRequest request)
+        {
+            string screen = OnGameThread(() => UiInspector.ScreenName()) as string;
+            bool animating = OnGameThread(() => ScreensManager.IsAnimating) is bool b && b;
+
+            var result = new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["screen"] = screen,
+                ["animating"] = animating,
+                ["done"] = string.Equals(screen, "Game", StringComparison.Ordinal),
+                ["clicked"] = null
+            };
+            if ((bool)result["done"])
+            {
+                return result;
+            }
+            if (animating)
+            {
+                result["reason"] = "screen-animating";
+                return result;
+            }
+
+            string target;
+            if (string.Equals(screen, "MainMenu", StringComparison.Ordinal))
+            {
+                target = "Play";
+            }
+            else if (string.Equals(screen, "Play", StringComparison.Ordinal))
+            {
+                bool createNew = request.GetBoolean("new", false);
+                string select = request.GetString("select", null);
+                string world = request.GetString("world", null);
+                int row = request.GetInteger("row", -1);
+                if (createNew)
+                {
+                    target = "NewWorld";                 // 新建世界（用当前默认参数）
+                }
+                else
+                {
+                    if (!string.IsNullOrEmpty(world))
+                    {
+                        select = "list:WorldsList@" + world;
+                    }
+                    else if (row >= 0 && string.IsNullOrEmpty(select))
+                    {
+                        select = "list:WorldsList#" + row;
+                    }
+                    target = string.IsNullOrEmpty(select) ? "Play" : select;
+                }
+            }
+            else if (string.Equals(screen, "NewWorld", StringComparison.Ordinal))
+            {
+                target = "Play";
+            }
+            else if (string.Equals(screen, "Player", StringComparison.Ordinal))
+            {
+                target = "PlayButton";
+            }
+            else
+            {
+                result["reason"] = "unknown-screen";
+                return result;
+            }
+
+            result["clicked"] = target;
+            result["clickResult"] = m_injector.Ui.Click(
+                target, "auto", 0, false, UiMarker.DefaultSeconds, UiMarker.DefaultDiameterPixels);
+            return result;
         }
 
         private Dictionary<string, object> BuildStatus()

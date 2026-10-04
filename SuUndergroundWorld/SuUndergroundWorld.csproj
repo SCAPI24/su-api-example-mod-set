@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>SuUndergroundWorld</AssemblyName>
+    <RootNamespace>SuUndergroundWorld</RootNamespace>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\Engine\Engine\Engine.csproj" />
+    <ProjectReference Include="..\..\EntitySystem\EntitySystem.csproj" />
+    <ProjectReference Include="..\..\Survivalcraft\Survivalcraft.csproj" />
+  </ItemGroup>
+</Project>

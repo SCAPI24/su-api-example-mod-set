@@ -212,6 +212,11 @@ namespace CmdBridgeClient
                     case "commands":
                         return Print(client, "cmd.list", null);
 
+                    // 进世界：循环驱动服务端 `act.enter`（主菜单 → 世界列表 → 创建/加载 → 角色界面 → 游戏）
+                    case "enter":
+                    case "enterworld":
+                        return EnterWorld(client, args);
+
                     case "look":
                         Require(args.Count >= 3, "look <yawDeg> <pitchDeg>");
                         return Print(client, "act.look", Args(
@@ -504,6 +509,122 @@ namespace CmdBridgeClient
                 satisfied.GetBoolean() ? 0 : 7;
         }
 
+        /// <summary>
+        /// `sccmd enter`：把"进世界"这条链一次走完。
+        ///
+        /// 服务端 `act.enter` 每次只推进一步（主菜单 → 世界列表 → 创建/加载 → **角色界面** → 游戏），
+        /// 这里循环调用并在两步之间留出切屏时间；`--settle` 调间隔、`--steps` 调上限、
+        /// `--row N` / `--world 名字` 指定世界列表里要开的世界。
+        /// </summary>
+        private static int EnterWorld(BridgeClient client, List<string> args)
+        {
+            int maxSteps = 40;
+            int settleMs = 800;
+            int row = -1;
+            string world = null;
+            bool createNew = false;
+            for (int i = 1; i < args.Count; i++)
+            {
+                if (args[i] == "--steps" && i + 1 < args.Count)
+                    maxSteps = ParseInt(args[++i]);
+                else if (args[i] == "--settle" && i + 1 < args.Count)
+                    settleMs = ParseInt(args[++i]);
+                else if (args[i] == "--row" && i + 1 < args.Count)
+                    row = ParseInt(args[++i]);
+                else if (args[i] == "--world" && i + 1 < args.Count)
+                    world = args[++i];
+                else if (args[i] == "--new")
+                    createNew = true;
+            }
+
+            bool listSelected = false;
+            var trail = new List<string>();
+            JsonElement last = default;
+            for (int step = 0; step < maxSteps; step++)
+            {
+                var arguments = new Dictionary<string, object>(StringComparer.Ordinal);
+                if (createNew)
+                {
+                    arguments["new"] = true;
+                }
+                else if (!listSelected)
+                {
+                    if (!string.IsNullOrEmpty(world))
+                        arguments["world"] = world;
+                    else
+                        arguments["row"] = row >= 0 ? row : 0;
+                }
+
+                last = client.Send("act.enter", arguments, s_timeoutMs);
+                string screen = ReadString(last, "screen");
+                string clicked = ReadString(last, "clicked");
+                string reason = ReadString(last, "reason");
+                bool done = ReadBool(last, "done");
+
+                trail.Add(screen + (clicked != null
+                    ? " -> " + clicked
+                    : (reason != null ? " (" + reason + ")" : "")));
+
+                if (done)
+                {
+                    PrintEnterResult(trail, last, ok: true);
+                    return 0;
+                }
+                // 世界列表：只在第一次点列表行做选择，之后点 Play
+                if (string.Equals(screen, "Play", StringComparison.Ordinal) &&
+                    clicked != null && clicked.StartsWith("list:", StringComparison.Ordinal))
+                {
+                    listSelected = true;
+                }
+                else if (!string.Equals(screen, "Play", StringComparison.Ordinal))
+                {
+                    listSelected = false;
+                }
+
+                if (settleMs > 0)
+                    System.Threading.Thread.Sleep(settleMs);
+            }
+
+            PrintEnterResult(trail, last, ok: false);
+            return 7;
+        }
+
+        private static void PrintEnterResult(List<string> trail, JsonElement last, bool ok)
+        {
+            if (s_json)
+            {
+                Console.WriteLine(JsonSerializer.Serialize(new Dictionary<string, object>
+                {
+                    ["ok"] = ok,
+                    ["steps"] = trail,
+                    ["last"] = last.ValueKind == JsonValueKind.Undefined ? null : (object)last
+                }));
+                return;
+            }
+            Console.WriteLine(ok ? "已进入游戏。" : "未能进入游戏（步数用尽）。");
+            for (int i = 0; i < trail.Count; i++)
+            {
+                Console.WriteLine("  " + (i + 1) + ". " + trail[i]);
+            }
+        }
+
+        private static string ReadString(JsonElement element, string name)
+        {
+            if (element.ValueKind != JsonValueKind.Object ||
+                !element.TryGetProperty(name, out JsonElement value))
+            {
+                return null;
+            }
+            return value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+        }
+
+        private static bool ReadBool(JsonElement element, string name)
+        {
+            return element.ValueKind == JsonValueKind.Object &&
+                element.TryGetProperty(name, out JsonElement value) &&
+                value.ValueKind == JsonValueKind.True;
+        }
+
         private static int WorldCommand(BridgeClient client, List<string> args)
         {
             string topic = args.Count >= 2 ? args[1].ToLowerInvariant() : "time";
@@ -712,6 +833,9 @@ namespace CmdBridgeClient
   text <string>               逐字符输入
   raw <command> k=v ...       直接下发任意命令
   commands                    列出内建命令与各 Mod 注册的扩展命令
+  enter [--row N|--world 名字] [--settle ms] [--steps N]
+                              自动进世界：主菜单 → 世界列表 → 创建/加载 →
+                              **角色创建/选择界面** → 进入游戏（服务端 act.enter 的分步驱动）
 
 AI 控制面（需要装 PlayerAiMod，命令经 CmdBridgeMod 通道分发）
   ai status                   模式/暂停/行为树来源与哈希/活动节点路径/黑板/重载统计

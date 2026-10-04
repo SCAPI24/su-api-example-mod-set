@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Mod>
+	<ModInfo>
+		<Identifier>SuUndergroundWorld</Identifier>
+		<LocalizedName>
+			<Text lang="en_US">Su Underground World (dual-world v1)</Text>
+			<Text lang="zh_CN">地下世界（双世界垂直叠层 v1）</Text>
+		</LocalizedName>
+		<Version>0.1.0</Version>
+		<APIVersion>0.1.6.0</APIVersion>
+		<IsMergeLib>true</IsMergeLib>
+	</ModInfo>
+	<Dependencies>
+	</Dependencies>
+</Mod>
