@@ -175,6 +175,20 @@ SuUndergroundWorld/bin/
 SuUndergroundWorld/obj/
 SuUndergroundWorld/.vs/
 
+## sync:Channel
+!Channel/
+!Channel/**
+Channel/bin/
+Channel/obj/
+Channel/.vs/
+
+## sync:SuEventBus
+!SuEventBus/
+!SuEventBus/**
+SuEventBus/bin/
+SuEventBus/obj/
+SuEventBus/.vs/
+
 # 全局忽略 .vs 目录
 *.vs/
 

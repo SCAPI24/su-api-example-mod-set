@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Mod>
+    <ModInfo>
+        <Identifier>Channel</Identifier>
+        <LocalizedName>
+            <Text lang="en_US">Channel</Text>
+            <Text lang="zh_CN">信道</Text>
+        </LocalizedName>
+        <Version>1.0.0</Version>
+        <APIVersion>0.1.6.0</APIVersion>
+        <IsMergeLib>true</IsMergeLib>
+    </ModInfo>
+    <Dependencies>
+        <Dependency>
+            <ModInfo>
+                <Identifier>SuEventBus</Identifier>
+                <IsMergeLib>true</IsMergeLib>
+            </ModInfo>
+        </Dependency>
+    </Dependencies>
+</Mod>

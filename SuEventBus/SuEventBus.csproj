@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <AssemblyName>SuEventBus</AssemblyName>
+    <RootNamespace>SuEventBus</RootNamespace>
+    <!-- 中间件：与 ScMultiplayer/Channel 一样走 cnb-nuget 制品库，避免工程引用与包引用混用 -->
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Engine" Version="0.1.6" />
+    <PackageReference Include="EntitySystem" Version="0.1.6" />
+    <PackageReference Include="Survivalcraft" Version="0.1.6" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Mod>
+    <ModInfo>
+        <Identifier>SuEventBus</Identifier>
+        <LocalizedName>
+            <Text lang="en_US">Su Event Bus</Text>
+            <Text lang="zh_CN">su事件总线</Text>
+        </LocalizedName>
+        <Version>1.0.0</Version>
+        <APIVersion>0.1.6.0</APIVersion>
+        <IsMergeLib>true</IsMergeLib>
+    </ModInfo>
+    <Dependencies>
+    </Dependencies>
+</Mod>

@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <AssemblyName>Channel</AssemblyName>
+    <RootNamespace>Channel</RootNamespace>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <!-- 只取 SuEventBus.dll 自身，不让它的依赖传递进来 -->
+    <DisableTransitiveProjectReferences>true</DisableTransitiveProjectReferences>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Engine" Version="0.1.6" />
+    <PackageReference Include="EntitySystem" Version="0.1.6" />
+    <PackageReference Include="Survivalcraft" Version="0.1.6" />
+    <PackageReference Include="SuAPICore" Version="0.1.6" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 中间件：随包放进 Lib/SuEventBus.dll，与 ScMultiplayer 共用同一份事件契约 -->
+    <ProjectReference Include="..\SuEventBus\SuEventBus.csproj" />
+  </ItemGroup>
+</Project>

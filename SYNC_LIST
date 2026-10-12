@@ -27,3 +27,5 @@ PlayerAiMod
 PlayerAiEditor
 GmMod
 SuUndergroundWorld
+Channel
+SuEventBus
