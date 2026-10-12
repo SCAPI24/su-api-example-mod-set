@@ -16,7 +16,7 @@
 !images/
 !.gitattributes
 
-## ===== 以下由 SYNC_LIST 生成，请勿手动修改 =====
+## ===== 以下由 SYNC_LIST 生成，请勿手动修改（改 SYNC_LIST 后重新运行本脚本）=====
 ## sync:ConsoleMod
 !ConsoleMod/
 !ConsoleMod/**
@@ -65,8 +65,6 @@ TranslationMod/.vs/
 MemoryBankDrawMod/bin/
 MemoryBankDrawMod/obj/
 MemoryBankDrawMod/.vs/
-MemoryBankDrawMod/draw.zip
-MemoryBankDrawMod/pack/
 ## sync:WatchMod
 !WatchMod/
 !WatchMod/**
@@ -91,7 +89,6 @@ CircuitAutoRouter/.vs/
 PakExplorer/bin/
 PakExplorer/obj/
 PakExplorer/.vs/
-PakExplorer/Verify/
 ## sync:RateReminder
 !RateReminder/
 !RateReminder/**
@@ -104,14 +101,12 @@ RateReminder/.vs/
 SuApocalypse/bin/
 SuApocalypse/obj/
 SuApocalypse/.vs/
-SuApocalypse/staging/
 ## sync:HeadlessRenderingMod
 !HeadlessRenderingMod/
 !HeadlessRenderingMod/**
 HeadlessRenderingMod/bin/
 HeadlessRenderingMod/obj/
 HeadlessRenderingMod/.vs/
-HeadlessRenderingMod/**/__pycache__/
 ## sync:SuAPIModDownload
 !SuAPIModDownload/
 !SuAPIModDownload/**
@@ -130,7 +125,6 @@ SuAPIShadows/.vs/
 SuAPIFontSource/bin/
 SuAPIFontSource/obj/
 SuAPIFontSource/.vs/
-SuAPIFontSource/__pycache__/
 ## sync:CmdBridgeMod
 !CmdBridgeMod/
 !CmdBridgeMod/**
@@ -167,27 +161,34 @@ PlayerAiEditor/.vs/
 GmMod/bin/
 GmMod/obj/
 GmMod/.vs/
-
 ## sync:SuUndergroundWorld
 !SuUndergroundWorld/
 !SuUndergroundWorld/**
 SuUndergroundWorld/bin/
 SuUndergroundWorld/obj/
 SuUndergroundWorld/.vs/
-
 ## sync:Channel
 !Channel/
 !Channel/**
 Channel/bin/
 Channel/obj/
 Channel/.vs/
-
 ## sync:SuEventBus
 !SuEventBus/
 !SuEventBus/**
 SuEventBus/bin/
 SuEventBus/obj/
 SuEventBus/.vs/
+## ===== 生成区结束 =====
+
+# ── 手动维护区（在生成区之外，脚本不会改动这里）──
+# 各 Mod 的特殊产物排除（不属于通用的 bin/obj/.vs）
+MemoryBankDrawMod/draw.zip
+MemoryBankDrawMod/pack/
+PakExplorer/Verify/
+SuApocalypse/staging/
+HeadlessRenderingMod/**/__pycache__/
+SuAPIFontSource/__pycache__/
 
 # 全局忽略 .vs 目录
 *.vs/
@@ -197,3 +198,6 @@ SuEventBus/.vs/
 pack-temp/
 pack-temp-release/
 pack_release/
+
+# 全局忽略 Python 工具产物
+__pycache__/
