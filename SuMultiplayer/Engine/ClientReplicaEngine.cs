@@ -27,10 +27,11 @@ namespace SuMultiplayer.Engine
             public bool HasContents(ChunkKey key) => m_bridge.HasContents(key);
             public bool TryReadCell(int x, int y, int z, out int contents, out int data) =>
                 m_bridge.TryReadCell(x, y, z, out contents, out data);
-            public bool TryApplyCell(int x, int y, int z, int contents, int data,
-                out int resultContents, out int resultData, out string reason) =>
-                m_bridge.TryApplyHostChange(x, y, z, contents, data,
-                    out resultContents, out resultData, out reason);
+            public bool TryApplyCell(int clientId, int x, int y, int z, int contents, int data,
+                int toolLevel, bool hasToolLevel,
+                out EditApplyOutcome outcome, out string reason) =>
+                m_bridge.TryApplyHostChange(clientId, x, y, z, contents, data, toolLevel,
+                    hasToolLevel, out outcome, out reason);
         }
 
         private readonly TerrainBridge m_bridge;
@@ -72,6 +73,16 @@ namespace SuMultiplayer.Engine
 
         public void SetRangeResolver(ClientRangeResolver resolver) => m_rangeResolver = resolver;
 
+        /// <summary>
+        /// 组合根注入：clientId → 该客户端手持物的 <c>Block.ToolLevel</c>（读主机侧联机化身的权威背包）。
+        /// 掉落口径与 <c>ComponentMiner.Dig</c> 同源（它把手持方块 ToolLevel 传给 DestroyCell）。
+        /// </summary>
+        public void SetToolLevelResolver(ClientEditAuthority.ClientToolLevelResolver resolver) =>
+            m_authority.ToolLevels = resolver;
+
+        /// <summary>方块销毁掉落账本（状态行 / 自检可读；只读快照）。</summary>
+        public EditDropLedger DropLedger => m_authority.Drops;
+
         // ================================================================= IClientEditPort
 
         public event Action<ClientCellEdit> LocalEditCaptured
@@ -87,10 +98,11 @@ namespace SuMultiplayer.Engine
 
         public bool IsChunkLoaded(int chunkX, int chunkZ) => m_bridge.IsChunkLoaded(chunkX, chunkZ);
 
-        public bool TryApplyHostEdit(int x, int y, int z, int contents, int data,
-            out int resultContents, out int resultData, out string reason) =>
-            m_bridge.TryApplyHostChange(x, y, z, contents, data,
-                out resultContents, out resultData, out reason);
+        public bool TryApplyHostEdit(int clientId, int x, int y, int z, int contents, int data,
+            int toolLevel, bool hasToolLevel,
+            out EditApplyOutcome outcome, out string reason) =>
+            m_bridge.TryApplyHostChange(clientId, x, y, z, contents, data, toolLevel,
+                hasToolLevel, out outcome, out reason);
 
         public bool TryApplyReplicaValue(int x, int y, int z, int contents, int data) =>
             m_bridge.TryApplyReplicaValue(x, y, z, contents, data);
@@ -110,8 +122,10 @@ namespace SuMultiplayer.Engine
             bool hasRange, int centerChunkX, int centerChunkZ, int radiusChunks)
         {
             EnsureBlockCount();
-            return m_authority.Handle(clientId, payload, isPlayerPeer, hasRange,
-                centerChunkX, centerChunkZ, radiusChunks);
+            ClientEditDecision decision = m_authority.Handle(clientId, payload, isPlayerPeer,
+                hasRange, centerChunkX, centerChunkZ, radiusChunks);
+            MaybeLogDropSummary();
+            return decision;
         }
 
         public ClientEditDecision HandleEditRequest(int clientId,
@@ -119,8 +133,20 @@ namespace SuMultiplayer.Engine
             bool hasRange, int centerChunkX, int centerChunkZ, int radiusChunks)
         {
             EnsureBlockCount();
-            return m_authority.Handle(clientId, request, isPlayerPeer, hasRange,
-                centerChunkX, centerChunkZ, radiusChunks);
+            ClientEditDecision decision = m_authority.Handle(clientId, request, isPlayerPeer,
+                hasRange, centerChunkX, centerChunkZ, radiusChunks);
+            MaybeLogDropSummary();
+            return decision;
+        }
+
+        /// <summary>
+        /// 方块销毁掉落的限流汇总（10s 一行，计数没变化就不写）：spawned / skipped[reason] / mismatch。
+        /// 热路径只做一次布尔判断。
+        /// </summary>
+        private void MaybeLogDropSummary()
+        {
+            if (m_authority.Drops.TryTakeSummary(Environment.TickCount64, out string summary))
+                Log.Information(summary);
         }
 
         public string EditStats => m_authority.Describe();

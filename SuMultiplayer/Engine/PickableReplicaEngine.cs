@@ -34,7 +34,8 @@ namespace SuMultiplayer.Engine
     ///
     /// 无静态状态：反射入口 / 化身表 / 计数器都挂在实例上。
     /// </summary>
-    public sealed class PickableReplicaEngine : IEntityReplicaPort, IEntityDropInputSink
+    public sealed class PickableReplicaEngine : IEntityReplicaPort, IEntityDropInputSink,
+        IHostBlockDropSink, IUiDropSink
     {
         private const float RestingPositionEpsilonSquared = 0.0004f;
         private const float PickupAttractDistanceSquared = 3.0625f;   // 1.75m（引擎吸引范围）
@@ -72,12 +73,47 @@ namespace SuMultiplayer.Engine
         private long m_fireRejected;
         private readonly global::Engine.Random m_requestRandom = new global::Engine.Random();
 
+        // ---- 客户端 UI 拖出（inventory drag-to-world）拦截计数 / 安全网
+        /// <summary>客户端：UI 拖出意图交给请求链的次数（uiDropIntercepted 的引擎侧口径）。</summary>
+        private long m_uiDropIntents;
+        /// <summary>客户端：UI 拖出请求没能发出去（模块未就绪 / 发送失败）→ 拖出已撤销，物品留在背包。</summary>
+        private long m_uiDropSubmitFailures;
+        /// <summary>客户端：已创建、又被安全网撤销的 UI 幽灵拾取物数量（uiDropLocalPickableCancelled）。</summary>
+        private long m_uiDropLocalPickableCancelled;
+        /// <summary>客户端：在**创建之前**就被拦截、没有产生本地拾取物的 UI 拖出数量（dropPhantomSuppressed）。</summary>
+        private long m_dropPhantomSuppressed;
+        /// <summary>客户端：落在相机视点、但无法唯一匹配背包增量的本地拾取物数量（明确计数，绝不静默）。</summary>
+        private long m_uiDropPhantomUnmatched;
+        /// <summary>UI 拖出安全网用的"上一帧背包快照"（Pump / 组合根每帧末刷新）。</summary>
+        private int[] m_localInventorySnapshotValues;
+        private int[] m_localInventorySnapshotCounts;
+        private bool m_localInventorySnapshotValid;
+
         // ---- 引擎挂接
         private Project m_project;
         private SubsystemPickables m_pickables;
         private SubsystemProjectiles m_projectiles;
+        private SubsystemTerrain m_terrainSubsystem;
+        private SubsystemBlockBehaviors m_blockBehaviors;
         private SuSubsystemPickables m_pickableShell;
         private bool m_clientReplica;
+
+        // ---- 主机：方块销毁掉落（客户端编辑补生成）
+        /// <summary>GetDropValues 的复用缓冲（与引擎 DestroyCell 的 m_dropValues 同口径）。</summary>
+        private readonly List<BlockDropValue> m_dropScratch = new List<BlockDropValue>();
+        /// <summary>掉落者拾取宽限（按主机分配的拾取物 id；1.5s 内拒绝掉落者本人的拾取请求）。</summary>
+        private readonly PickupGraceTable m_dropGrace = new PickupGraceTable();
+        /// <summary>客户端：本机刚造成的掉落预测（认领主机副本 → 给副本登记拾取宽限）。</summary>
+        private readonly OwnDropPredictionTable m_ownDropPredictions = new OwnDropPredictionTable();
+        /// <summary>为客户端编辑补生成的拾取物个数（blockDropsSpawned）。</summary>
+        private long m_blockDropsSpawned;
+        /// <summary>主机拒绝掉落者本人拾取的次数（pickupGraceBlocked）。</summary>
+        private long m_pickupGraceBlocked;
+        /// <summary>主机生成拾取物时带上了速度的个数（dropSpawnVelocity）：
+        /// 手丢 = 8 m/s × 视线方向（引擎 Drop 分支同形）；方块破坏 = 引擎 AddPickable(velocity: null) 的默认随机上抛。</summary>
+        private long m_dropSpawnVelocity;
+        private long m_dropSpawnFailures;
+        private long m_dropPrepareFailures;
 
         // ---- 主机：对象 → 网络 id
         private struct HostKey
@@ -159,6 +195,22 @@ namespace SuMultiplayer.Engine
         private long m_foreignProjectilesRemoved;
         private long m_foreignPickablesRemoved;
         private long m_remoteAvatarFilterCalls;
+        private long m_fireSpawnAtHost;
+        private long m_fireSpawnCollided;
+        private long m_dropPredictionCulled;
+        private long m_dropPredictionDeferred;
+
+        /// <summary>客户端刚提交的丢弃意图：本地若还残留预测拾取物，等主机副本出现后再清掉。</summary>
+        private sealed class PendingDropPrediction
+        {
+            public int ItemValue;
+            public int Count;
+            public Vector3 Position;
+            public double ExpiryTime;
+        }
+
+        private readonly List<PendingDropPrediction> m_recentDropPredictions =
+            new List<PendingDropPrediction>();
 
         public PickableReplicaEngine(NetworkAvatarSpawner spawner, IModParentField parentField,
             IModuleDiagnostics diagnostics, string ownerId)
@@ -197,8 +249,26 @@ namespace SuMultiplayer.Engine
         }
 
         public long ForeignPickablesRemoved => m_foreignPickablesRemoved;
+        public long FireSpawnAtHost => m_fireSpawnAtHost;
+        public long FireSpawnCollided => m_fireSpawnCollided;
+        public long DropPredictionCulled => m_dropPredictionCulled;
+        public long DropPredictionDeferred => m_dropPredictionDeferred;
 
         public long ForeignProjectilesRemoved => m_foreignProjectilesRemoved;
+
+        /// <summary>UI 拖出拦截器只在客户端副本上接管；主机 / 单机保持引擎原生拖出行为。</summary>
+        public bool IsUiDropInterceptionClient => m_clientReplica;
+
+        /// <summary>客户端：交给请求链的 UI 拖出意图数量。</summary>
+        public long UiDropIntents => m_uiDropIntents;
+        /// <summary>客户端：UI 拖出请求发送失败（拖出已撤销）次数。</summary>
+        public long UiDropSubmitFailures => m_uiDropSubmitFailures;
+        /// <summary>客户端：已生成、又被安全网撤销的 UI 幽灵拾取物数量。</summary>
+        public long UiDropLocalPickableCancelled => m_uiDropLocalPickableCancelled;
+        /// <summary>客户端：在创建之前就被拦截的 UI 拾取物数量（幽灵从源头抑制）。</summary>
+        public long DropPhantomSuppressed => m_dropPhantomSuppressed;
+        /// <summary>客户端：落在相机视点但无法唯一匹配背包增量的本地拾取物数量。</summary>
+        public long UiDropPhantomUnmatched => m_uiDropPhantomUnmatched;
 
         // ================================================================ 挂接
 
@@ -270,6 +340,26 @@ namespace SuMultiplayer.Engine
             }
             if (m_projectiles is SuSubsystemProjectiles shellProjectiles)
                 shellProjectiles.Replica = this;
+            // 主机掉落：GetDropValues / OnItemHarvested 需要真实的 SubsystemTerrain 与方块行为表。
+            // 每帧取一次（FindSubsystem 是字典查找，代价可忽略）；换 Project 时随 ResetEngineState 清空。
+            SubsystemTerrain terrain = project.FindSubsystem<SubsystemTerrain>(false);
+            if (!ReferenceEquals(terrain, m_terrainSubsystem))
+            {
+                m_terrainSubsystem = terrain;
+                m_blockBehaviors = project.FindSubsystem<SubsystemBlockBehaviors>(false);
+                if (!m_clientReplica && (terrain == null || m_blockBehaviors == null))
+                {
+                    LogProblemOnce("host-drop-subsystem-missing",
+                        "主机没有挂接 SubsystemTerrain / SubsystemBlockBehaviors（当前：" +
+                        (terrain == null ? "terrain=null" : "terrain=" + terrain.GetType().Name) +
+                        " / " + (m_blockBehaviors == null
+                            ? "blockBehaviors=null"
+                            : "blockBehaviors=" + m_blockBehaviors.GetType().Name) +
+                        "）→ 客户端编辑销毁方块时无法补生成掉落（会明确计 dropFromEditSkipped）");
+                }
+            }
+            if (m_blockBehaviors == null)
+                m_blockBehaviors = project.FindSubsystem<SubsystemBlockBehaviors>(false);
             // 主机：远端化身不是引擎的“拾取者”。客户端由 SuSubsystemPickables 自己按
             // ReplicaGates.IsClient 清空玩家列表；这里只给主机装远端化身过滤器。
             if (m_pickableShell != null)
@@ -356,6 +446,12 @@ namespace SuMultiplayer.Engine
             m_pickables = null;
             m_projectiles = null;
             m_pickableShell = null;
+            m_terrainSubsystem = null;
+            m_blockBehaviors = null;
+            m_dropScratch.Clear();
+            m_dropGrace.Clear();
+            m_ownDropPredictions.Clear();
+            m_recentDropPredictions.Clear();
         }
 
         /// <summary>
@@ -392,6 +488,8 @@ namespace SuMultiplayer.Engine
             }
             m_hostCaptures++;
             m_pickableGeneration++;
+            // 顺带清掉过期的掉落者宽限条目（32Hz 抓取脉冲；有界、成本与宽限条数成正比）。
+            m_dropGrace.Prune(Time.RealTime);
             ReadOnlyList<Pickable> list = m_pickables.Pickables;
             for (int i = 0; i < list.Count; i++)
             {
@@ -652,6 +750,15 @@ namespace SuMultiplayer.Engine
                 reason = "creation-grace";
                 return false;
             }
+            // 掉落者免疫窗口（**独家**给掉落者本人；其他玩家照常可捡）：
+            // 手丢 / 方块破坏的落点就在脚下，引擎只有 0.5s 创建宽限，20Hz 的客户端扫描会在
+            // 1.0m 内立刻发请求 → 刚丢出去就被自己捡回来。1.5s 内明确回 "pickup-grace"。
+            if (!m_dropGrace.CanAcquire(request.PickableId, clientId, Time.RealTime))
+            {
+                reason = "pickup-grace";
+                m_pickupGraceBlocked++;
+                return false;
+            }
             Vector3 eye = body.Position + new Vector3(0f, 0.75f, 0f);
             // 1.5m：客户端在 1.0m 内才发请求，但两端插值 + 一个 RTT 的移动量可能超过 1.1m；
             // 仍然只按**主机自己的**化身位置判断，客户端请求里的 position 不作数。
@@ -682,8 +789,11 @@ namespace SuMultiplayer.Engine
                 pickable.Count = 0;
                 m_acquireAccepted++;
                 bool removedCoin = RemoveHostPickable(request.PickableId, pickable);
+                // 经验币由引擎 AddExperience 播 Audio/ExperienceCollected，不是 PickableCollected：
+                // 这里明确 PlayPickupSound=false（不冒充另一种声音）。
                 outcome = new PickableAcquireOutcome(0, removedCoin, Array.Empty<int>(),
-                    Array.Empty<int>(), Array.Empty<int>(), CurrentInventoryVersion());
+                    Array.Empty<int>(), Array.Empty<int>(), CurrentInventoryVersion(),
+                    pickable.Value, pickable.Position, playPickupSound: false);
                 reason = null;
                 return true;
             }
@@ -730,8 +840,11 @@ namespace SuMultiplayer.Engine
             bool removed = pickable.Count == 0;
             if (removed) RemoveHostPickable(request.PickableId, pickable);
             m_acquireAccepted++;
+            // 与 SubsystemPickables.Update 同口径：整堆拾完才播 Audio/PickableCollected
+            // （Source: Survivalcraft/Game/SubsystemPickables.cs:210-213）；部分拾取不播。
             outcome = new PickableAcquireOutcome(pickable.Count, removed, indices, values, counts,
-                CurrentInventoryVersion());
+                CurrentInventoryVersion(), pickable.Value, pickable.Position,
+                playPickupSound: removed && contents != 248);
             reason = null;
             return true;
         }
@@ -742,6 +855,8 @@ namespace SuMultiplayer.Engine
             m_pickableById.Remove(id);
             if (pickable != null) m_pickableKeys.Remove(pickable);
             m_publishedPickablePositions.Remove(id);
+            // 对象已经没了：宽限条目也一起清掉（避免 id 之后被复用时误挡新对象）。
+            m_dropGrace.Remove(id);
             return pickable != null;
         }
 
@@ -846,6 +961,7 @@ namespace SuMultiplayer.Engine
             if (accept)
             {
                 m_dropIntentSubmissions++;
+                RememberDropPrediction(in intent);
             }
             else
             {
@@ -857,6 +973,235 @@ namespace SuMultiplayer.Engine
             // 无论发没发出去都吞掉引擎原生掉落：绝不本地扣除。
             m_inputRef(input).Drop = false;
             return accept;
+        }
+
+        private void RememberDropPrediction(in PickableDropIntent intent)
+        {
+            double now = Time.RealTime;
+            if (m_recentDropPredictions.Count >= 16)
+            {
+                // 有界即可：旧条目过期后会在下一次扫描里清掉。
+                m_recentDropPredictions.RemoveAll(item => item.ExpiryTime <= now);
+                if (m_recentDropPredictions.Count >= 16)
+                    m_recentDropPredictions.RemoveAt(0);
+            }
+            m_recentDropPredictions.Add(new PendingDropPrediction
+            {
+                ItemValue = intent.ItemValue,
+                Count = intent.Count,
+                Position = intent.Position,
+                ExpiryTime = now + 3.0
+            });
+        }
+
+        /// <summary>
+        /// 客户端 UI 拖出到世界（<c>ViewWidget.DragDrop</c>）的请求入口。
+        ///
+        /// 由 <see cref="SuDropDragHostWidget"/> 在引擎执行 <c>ViewWidget.DragDrop</c> **之前**调用：
+        /// 那时物品还在背包里，所以这里和键盘 Drop 一样只发请求、不扣物品、不生成拾取物。
+        /// 成功 ⇒ 调用方必须撤销这次拖拽（<c>EndDrag</c>），于是 ViewWidget 的
+        /// <c>RemoveSlotItems + AddPickable</c> 整段不执行（幽灵从源头不存在，
+        /// foreignPickablesRemoved 不会因合法丢弃增长）。
+        /// false + reason ⇒ 调用方仍然撤销拖拽（物品留在背包），并记录明确原因。
+        /// </summary>
+        public bool TrySubmitUiDrop(in PickableDropIntent intent, out string reason)
+        {
+            if (!m_clientReplica)
+            {
+                reason = "not-client-replica";
+                return false;
+            }
+            // 走到这里说明拦截器已经接管了这次拖拽：ViewWidget.DragDrop 不会执行，
+            // 本地拾取物从**创建之前**就被抑制了。
+            m_dropPhantomSuppressed++;
+            return SubmitUiDropRequest(in intent, out reason);
+        }
+
+        /// <summary>
+        /// UI 拖出请求的公共发送段（正常拦截路径与安全网撤销路径共用）：
+        /// 只做来源校验 + 交给模块 + 失败计数/限流日志，不碰本地背包与实体。
+        /// </summary>
+        private bool SubmitUiDropRequest(in PickableDropIntent intent, out string reason)
+        {
+            if (intent.Source != DropSources.Ui)
+            {
+                reason = "not-ui-source";
+                return false;
+            }
+            m_uiDropIntents++;
+            IEntityRequestSink sink = m_requestSink;
+            bool submitted;
+            if (sink == null)
+            {
+                submitted = false;
+                reason = "no-request-sink";
+            }
+            else
+            {
+                try
+                {
+                    submitted = sink.TrySubmitDrop(in intent, out reason);
+                }
+                catch (Exception e)
+                {
+                    submitted = false;
+                    reason = "submit-exception-" + e.GetType().Name;
+                }
+            }
+            if (submitted) return true;
+            m_uiDropSubmitFailures++;
+            LogRateLimited("ui-drop-submit:" + reason,
+                "客户端 UI 拖出没有发出去（" + reason + "）→ 已撤销本次拖拽：" +
+                "物品仍在背包里，本地没有生成拾取物（" + intent.Describe() + "）");
+            return false;
+        }
+
+        /// <summary>
+        /// 客户端 **AddPickable 安全网**：引擎在本地创建了一个拾取物之后调用
+        /// （<c>SuSubsystemPickables.PickableAdded</c>，单漏斗覆盖所有本地创建）。
+        ///
+        /// 只接管同时满足以下条件的对象（其余一律不动，交给既有的外来拾取物清理 / 容器同步）：
+        ///   · 本端是客户端副本；
+        ///   · 落点 == 本机玩家当前相机视点（<c>ViewWidget.DragDrop</c> 的唯一特征）；
+        ///   · 背包快照里**恰好一个**槽正好减少了同样物品/数量（否则明确记 unmatched，不猜）。
+        /// 接管 = 先把物品放回原槽（保证不丢），再从拾取物列表移除这个幽灵，最后走同一条
+        /// UI 丢弃请求链。请求发不出去时物品同样已经在背包里（拖出被撤销）。
+        /// </summary>
+        public bool TryHandleLocalPickableAdded(Pickable pickable)
+        {
+            if (!m_clientReplica || m_pickables == null || pickable == null) return false;
+            if (m_project == null || m_spawner == null) return false;
+            if (!m_spawner.TryGetLocalPlayer(m_project, out PlayerData local, out _) ||
+                local?.ComponentPlayer == null)
+                return false;
+            Camera camera = local.GameWidget?.ActiveCamera;
+            IInventory inventory = local.ComponentPlayer.ComponentMiner?.Inventory;
+            if (camera == null || inventory == null) return false;
+            if (!UiDropPhantomPolicy.IsViewPositionDrop(pickable.Position,
+                    camera.ViewPosition))
+                return false;   // 不是 UI 拖出（方块掉落 / 爆炸 / 拾取物分裂等），不动
+            string reason;
+            if (!m_localInventorySnapshotValid)
+            {
+                m_uiDropPhantomUnmatched++;
+                LogRateLimited("ui-drop-phantom-no-snapshot",
+                    "本地拾取物出现在相机视点，但没有可用的背包快照（Pump 还没跑到本机玩家）→ " +
+                    "不接管本次拖出（值=" + pickable.Value + " 数量=" + pickable.Count +
+                    "）；若这是 UI 拖出，物品会按外来拾取物清理");
+                return false;
+            }
+            int[] currentValues = new int[inventory.SlotsCount];
+            int[] currentCounts = new int[inventory.SlotsCount];
+            for (int i = 0; i < inventory.SlotsCount; i++)
+            {
+                currentValues[i] = inventory.GetSlotValue(i);
+                currentCounts[i] = inventory.GetSlotCount(i);
+            }
+            if (!UiDropPhantomPolicy.TryFindDroppedSlot(m_localInventorySnapshotValues,
+                    m_localInventorySnapshotCounts, currentValues, currentCounts,
+                    pickable.Value, pickable.Count, out int slot, out reason))
+            {
+                m_uiDropPhantomUnmatched++;
+                LogRateLimited("ui-drop-phantom-unmatched:" + reason,
+                    "本地拾取物出现在相机视点，但背包增量无法唯一匹配（" + reason +
+                    "；值=" + pickable.Value + " 数量=" + pickable.Count +
+                    "）→ 不接管（容器 / 其它 UI 路径由各自的同步链负责；" +
+                    "本机玩家背包未改动）");
+                return false;
+            }
+            int restoreValue = m_localInventorySnapshotValues[slot];
+            int restoreCount = pickable.Count;
+            int before = inventory.GetSlotCount(slot);
+            int afterRestore = before + restoreCount;
+            if (before > 0 && inventory.GetSlotValue(slot) != restoreValue)
+            {
+                m_uiDropPhantomUnmatched++;
+                LogRateLimited("ui-drop-phantom-slot-changed",
+                    "准备撤销 UI 幽灵时槽 " + slot + " 的内容已变化（当前 " +
+                    inventory.GetSlotValue(slot) + " x" + before + "，需要放回 " +
+                    restoreValue + " x" + restoreCount + "）→ 不接管（物品仍在背包，未被扣掉）");
+                return false;
+            }
+            if (afterRestore > inventory.GetSlotCapacity(slot, restoreValue))
+            {
+                m_uiDropPhantomUnmatched++;
+                LogRateLimited("ui-drop-phantom-capacity",
+                    "撤销 UI 幽灵时槽 " + slot + " 放不下（" + afterRestore + " > 容量 " +
+                    inventory.GetSlotCapacity(slot, restoreValue) + "）→ 不接管");
+                return false;
+            }
+            try
+            {
+                inventory.AddSlotItems(slot, restoreValue, restoreCount);
+            }
+            catch (Exception e)
+            {
+                m_uiDropPhantomUnmatched++;
+                LogRateLimited("ui-drop-phantom-restore:" + e.GetType().Name,
+                    "撤销 UI 幽灵时把物品放回槽 " + slot + " 失败（" + e.GetType().Name +
+                    " " + e.Message + "）→ 不接管；幽灵会被外来拾取物清理，" +
+                    "请检查该槽状态（值=" + pickable.Value + " 数量=" + pickable.Count + "）");
+                return false;
+            }
+            // 物品已放回背包 → 现在安全地标记本地幽灵。只置 ToRemove、**不**从列表里硬删：
+            // 本次 SubsystemPickables.Update 末尾会统一移除并触发 PickableRemoved
+            // （订阅了 PickableAdded 的引擎行为不会留下悬空引用），且它不会参与渲染 / 拾取。
+            pickable.ToRemove = true;
+            m_uiDropLocalPickableCancelled++;
+            m_dropPhantomSuppressed++;
+            if (!UiDropPolicy.TryBuildIntent(slot, restoreValue, restoreCount,
+                    m_localInventorySnapshotCounts != null &&
+                    slot < m_localInventorySnapshotCounts.Length
+                        ? m_localInventorySnapshotCounts[slot]
+                        : restoreCount,
+                    pickable.Position, pickable.Velocity, out PickableDropIntent intent,
+                    out reason))
+            {
+                // 物品已经放回背包：这次拖出等价于没发生（明确记录，不静默丢物品）。
+                m_uiDropSubmitFailures++;
+                LogRateLimited("ui-drop-phantom-intent:" + reason,
+                    "撤销 UI 幽灵后重建拖出意图失败（" + reason + "）→ 本次拖出作废，" +
+                    "物品已放回背包（值=" + restoreValue + " 数量=" + restoreCount + "）");
+                return true;
+            }
+            TrySubmitUiDrop(in intent, out reason);
+            return true;
+        }
+
+        /// <summary>
+        /// UI 拖出安全网的背包快照：由组合根在每帧**所有模块 tick 之后**调用
+        /// （此时到下一帧控件输入之间背包不会变化，正好是"拖出前"的状态）。
+        /// 只对客户端副本维护；主机 / 单机清空。
+        /// </summary>
+        public void CaptureUiDropInventorySnapshot()
+        {
+            m_localInventorySnapshotValid = false;
+            if (!m_clientReplica || m_project == null || m_spawner == null)
+            {
+                m_localInventorySnapshotValues = null;
+                m_localInventorySnapshotCounts = null;
+                return;
+            }
+            if (!m_spawner.TryGetLocalPlayer(m_project, out PlayerData local, out _) ||
+                local?.ComponentPlayer == null)
+                return;
+            IInventory inventory = local.ComponentPlayer.ComponentMiner?.Inventory;
+            if (inventory == null || inventory.SlotsCount <= 0) return;
+            int slots = Math.Min(inventory.SlotsCount, PlayerInventoryMath.MaxSyncSlots);
+            if (slots <= 0) return;
+            // 每帧复用缓冲（客户端每帧一次；热路径不做数组分配）。
+            if (m_localInventorySnapshotValues == null ||
+                m_localInventorySnapshotValues.Length != slots)
+            {
+                m_localInventorySnapshotValues = new int[slots];
+                m_localInventorySnapshotCounts = new int[slots];
+            }
+            for (int i = 0; i < slots; i++)
+            {
+                m_localInventorySnapshotValues[i] = inventory.GetSlotValue(i);
+                m_localInventorySnapshotCounts[i] = inventory.GetSlotCount(i);
+            }
+            m_localInventorySnapshotValid = true;
         }
 
         /// <summary>
@@ -997,18 +1342,84 @@ namespace SuMultiplayer.Engine
                 reason = "distance";
                 return false;
             }
-            Vector3 direction = Vector3.Normalize(request.Direction);
+            // 来源：键盘 / 手柄（整格、视线方向）与 UI 拖出（指定数量、拖拽方向）走**同一**请求，
+            // 但速度口径不同。未知来源明确拒绝（编解码层已经拦过一次，这里兜住内部调用方）。
+            bool ui = request.Source == DropSources.Ui;
+            if (!DropSources.IsKnown(request.Source))
+            {
+                reason = "drop-source-" + request.Source;
+                return false;
+            }
+            // UI 拖出的数量是**权威移除量**：必须 1 ≤ count ≤ 主机权威槽数量。
+            // 键盘 / 手柄路径沿用引擎语义：丢整格（客户端上报的 count 只作诊断）。
+            int want;
+            if (ui)
+            {
+                if (request.Count <= 0 || request.Count > count)
+                {
+                    reason = "count-unavailable";
+                    return false;
+                }
+                want = request.Count;
+            }
+            else
+            {
+                want = count;
+            }
+            Vector3 direction;
+            Vector3 velocity;
+            if (ui)
+            {
+                // 拖拽方向 = 屏幕上拖到世界的射线方向，与化身视线无关（引擎 ViewWidget.DragDrop
+                // 用同一方向；主机只校验有限 / 非零，速度上限固定 12 m/s）。
+                // Source: Survivalcraft/Game/ViewWidget.cs:ViewWidget.DragDrop
+                if (!HostDropVelocity.IsUsableDirection(request.Direction))
+                {
+                    reason = "direction-invalid";
+                    return false;
+                }
+                direction = Vector3.Normalize(request.Direction);
+                if (!HostDropVelocity.IsUsableDirection(direction))
+                {
+                    reason = "direction-invalid";
+                    return false;
+                }
+                velocity = HostDropVelocity.ForUiDrop(direction);
+            }
+            else
+            {
+                // 方向取主机权威化身的视线（与引擎 Drop 分支同形：EyeRotation 前向），
+                // 客户端上报方向只用于一致性校验，过期 / 伪造请求明确拒绝。
+                if (!TryResolveHostAim(player, request.Direction, out direction, out reason))
+                    return false;
+                velocity = HostDropVelocity.ForManualDrop(direction);
+            }
+            if (!HostDropVelocity.IsUsableDirection(velocity))
+            {
+                reason = "drop-velocity-invalid";
+                return false;
+            }
+            // 权威落点与引擎原生 Drop 分支同形（位置用主机化身，不用客户端上报值）：
+            // Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update
+            //         （position = body + (0, StanceBoxSize.Y*0.66, 0) + 0.25*Forward）
+            Vector3 position = body.Position +
+                new Vector3(0f, body.StanceBoxSize.Y * 0.66f, 0f) + 0.25f * body.Matrix.Forward;
             CaptureInventorySlots(inventory, out int[] beforeValues, out int[] beforeCounts);
-            int removed = inventory.RemoveSlotItems(slot, count);
+            int removed = inventory.RemoveSlotItems(slot, want);
             if (removed <= 0)
             {
                 reason = "remove-refused";
                 return false;
             }
-            // 权威落点 / 速度与引擎原生 Drop 分支同形（位置用主机化身，不用客户端上报值）。
-            Vector3 position = body.Position +
-                new Vector3(0f, body.StanceBoxSize.Y * 0.66f, 0f) + 0.25f * body.Matrix.Forward;
-            Vector3 velocity = 8f * direction;
+            if (removed != want)
+            {
+                // 校验后仍出现短移除 = 主机背包在两步之间被改（并发请求 / 引擎插件）。
+                // 不伪造数量：按实际移除量生成并明确记录（绝不多扣，也不静默）。
+                LogRateLimited("drop-remove-short:" + clientId,
+                    "主机移除数量与请求不符（clientId=" + clientId + " slot=" + slot +
+                    " 请求=" + want + " 实际=" + removed + "）→ 按实际移除量生成拾取物" +
+                    (!ui ? "；键盘丢弃整格，长度差异通常来自引擎插件的槽位规则" : string.Empty));
+            }
             Pickable pickable;
             try
             {
@@ -1037,9 +1448,225 @@ namespace SuMultiplayer.Engine
             CaptureInventorySlots(inventory, out int[] afterValues, out int[] afterCounts);
             BuildInventoryDelta(beforeValues, beforeCounts, afterValues, afterCounts, slot,
                 out int[] indices, out int[] values, out int[] counts);
+            int pickableId = EnsurePickableId(pickable);
+            // 掉落者免疫窗口（1.5s）：主机对**该玩家**的这一个拾取物回 pickup-grace；
+            // 其他玩家不受影响。客户端侧同时按回执里的 id 抑制自己的拾取扫描（模块里同一窗口）。
+            m_dropGrace.Register(pickableId, clientId, Time.RealTime);
+            m_dropSpawnVelocity++;
             outcome = new PickableDropOutcome(value, removed, pickable.Position, pickable.Velocity,
-                indices, values, counts, CurrentInventoryVersion());
+                indices, values, counts, CurrentInventoryVersion(), pickableId);
             return true;
+        }
+
+        // ================================================================ 主机：客户端编辑造成的方块销毁 → 掉落
+
+        /// <summary>
+        /// 改格之前：按引擎 <c>SubsystemTerrain.DestroyCell</c> 的同一顺序算掉落
+        /// （<c>block.GetDropValues</c> → 每条掉落的 <c>OnItemHarvested</c>）。
+        ///
+        /// 为什么必须在改格之前：<c>SubsystemEditableItemBehavior.OnItemHarvested</c> 读该格的
+        /// 方块私有数据（标牌 / 家具设计 id），而 <c>ChangeCell</c> 的 <c>OnBlockRemoved</c> 会把它删掉。
+        /// 同时 <c>OnItemHarvested</c> 可以改写要写入格子的值（水草被挖 → 留下水），这里把它带回去。
+        ///
+        /// Source: Survivalcraft/Game/SubsystemTerrain.cs:SubsystemTerrain.DestroyCell
+        /// Source: Survivalcraft/Game/ComponentMiner.cs:ComponentMiner.Dig
+        ///         （toolLevel = 手持方块的 Block.ToolLevel）
+        /// </summary>
+        public bool TryPrepareBlockDrops(int clientId, int x, int y, int z, int oldValue,
+            int newValue, int toolLevel, out HostBlockDropPlan plan, out string reason)
+        {
+            plan = null;
+            reason = null;
+            if (m_clientReplica)
+            {
+                reason = "not-host";
+                return false;
+            }
+            if (m_pickables == null)
+            {
+                reason = "no-pickables";
+                return false;
+            }
+            if (m_terrainSubsystem == null || m_terrainSubsystem.Terrain == null)
+            {
+                reason = "no-terrain";
+                return false;
+            }
+            if (m_blockBehaviors == null)
+            {
+                reason = "no-block-behaviors";
+                return false;
+            }
+            Block block = ResolveBlock(oldValue);
+            if (block == null)
+            {
+                reason = "no-block";
+                return false;
+            }
+            var result = new HostBlockDropPlan
+            {
+                X = x,
+                Y = y,
+                Z = z,
+                OldValue = oldValue,
+                NewValue = newValue,
+                ClientId = clientId
+            };
+            m_dropScratch.Clear();
+            try
+            {
+                block.GetDropValues(m_terrainSubsystem, oldValue, newValue, toolLevel,
+                    m_dropScratch, out bool showDebris);
+                // 碎屑粒子是主机本机表现（客户端的碎屑由它自己的本地引擎播放），这里不使用。
+                _ = showDebris;
+            }
+            catch (Exception e)
+            {
+                m_dropPrepareFailures++;
+                reason = "get-drop-values-" + e.GetType().Name;
+                LogRateLimited("block-drop-getvalues:" + e.GetType().Name,
+                    "主机计算方块掉落失败（cell=" + x + "," + y + "," + z + " value=" + oldValue +
+                    " toolLevel=" + toolLevel + "）：" + e.GetType().Name + " " + e.Message);
+                return false;
+            }
+            int writtenValue = newValue;
+            for (int i = 0; i < m_dropScratch.Count; i++)
+            {
+                BlockDropValue drop = m_dropScratch[i];
+                if (drop.Count <= 0) continue;
+                int dropContents = global::Game.Terrain.ExtractContents(drop.Value);
+                SubsystemBlockBehavior[] behaviors =
+                    m_blockBehaviors.GetBlockBehaviors(dropContents);
+                for (int j = 0; j < behaviors.Length; j++)
+                {
+                    try
+                    {
+                        behaviors[j].OnItemHarvested(x, y, z, oldValue, ref drop, ref writtenValue);
+                    }
+                    catch (Exception e)
+                    {
+                        m_dropPrepareFailures++;
+                        reason = "on-item-harvested-" + e.GetType().Name;
+                        LogRateLimited("block-drop-harvested:" + e.GetType().Name,
+                            "主机处理方块收获回调失败（cell=" + x + "," + y + "," + z +
+                            " value=" + oldValue + "）：" + e.GetType().Name + " " + e.Message);
+                        return false;
+                    }
+                }
+                if (drop.Count <= 0) continue;
+                if (global::Game.Terrain.ExtractContents(drop.Value) == 0) continue;
+                result.Drops.Add(drop);
+            }
+            // OnItemHarvested 可能改写 newValue（水草 → 水）；引擎 DestroyCell 也把它写回格子。
+            result.NewValue = writtenValue;
+            // 记录进本次落地前的拾取物条数，改格后据此判断引擎自己是否已经在该格生成过掉落。
+            result.PickableCountBefore = m_pickables.Pickables.Count;
+            plan = result;
+            return true;
+        }
+
+        /// <summary>
+        /// 改格之后：按引擎 <c>DestroyCell</c> 的口径生成拾取物（格心 + 引擎默认速度）。
+        /// 若引擎自己的落地路径已经在**同一格**生成过拾取物 → 不重复生成（engineSpawned = true）。
+        /// Source: Survivalcraft/Game/SubsystemTerrain.cs:SubsystemTerrain.DestroyCell
+        /// Source: Survivalcraft/Game/SubsystemPickables.cs:SubsystemPickables.AddPickable
+        /// </summary>
+        public bool TrySpawnPreparedDrops(HostBlockDropPlan plan, out int spawned,
+            out bool engineSpawned, out string reason)
+        {
+            spawned = 0;
+            engineSpawned = false;
+            reason = null;
+            if (plan == null)
+            {
+                reason = "no-plan";
+                return false;
+            }
+            if (m_clientReplica)
+            {
+                reason = "not-host";
+                return false;
+            }
+            if (m_pickables == null)
+            {
+                reason = "no-pickables";
+                return false;
+            }
+            ReadOnlyList<Pickable> list = m_pickables.Pickables;
+            var position = new Vector3(plan.X, plan.Y, plan.Z) + new Vector3(0.5f);
+            if (plan.PickableCountBefore >= 0 && list.Count > plan.PickableCountBefore)
+            {
+                // 只认"同一格附近"的新增：方块行为可能在别的格 DestroyCell（活塞 / 磁铁），
+                // 那些掉落不是本次编辑补生成的职责。
+                for (int i = plan.PickableCountBefore; i < list.Count; i++)
+                {
+                    Pickable created = list[i];
+                    if (created == null) continue;
+                    if (Vector3.DistanceSquared(created.Position, position) > 0.5625f) continue;
+                    engineSpawned = true;
+                    break;
+                }
+            }
+            if (engineSpawned)
+            {
+                reason = "engine-spawned";
+                return false;
+            }
+            if (plan.Drops.Count == 0)
+            {
+                reason = "no-drop-values";
+                return false;
+            }
+            int failures = 0;
+            for (int i = 0; i < plan.Drops.Count; i++)
+            {
+                BlockDropValue drop = plan.Drops[i];
+                try
+                {
+                    // 与 DestroyCell 完全同形：位置 = 格心，velocity = null（引擎随机轻微上抛），
+                    // stuckMatrix = null。
+                    Pickable pickable = m_pickables.AddPickable(drop.Value, drop.Count,
+                        position, null, null);
+                    if (pickable == null)
+                    {
+                        failures++;
+                        continue;
+                    }
+                    spawned++;
+                    m_blockDropsSpawned++;
+                    m_dropSpawnVelocity++;
+                    int pickableId = EnsurePickableId(pickable);
+                    // 生成者是发起编辑的客户端：它 1.5s 内不能把这个掉落捡回去。
+                    m_dropGrace.Register(pickableId, plan.ClientId, Time.RealTime);
+                }
+                catch (Exception e)
+                {
+                    failures++;
+                    m_dropSpawnFailures++;
+                    LogRateLimited("block-drop-add:" + e.GetType().Name,
+                        "主机为方块销毁生成拾取物失败（cell=" + plan.X + "," + plan.Y + "," +
+                        plan.Z + " value=" + drop.Value + " count=" + drop.Count + "）：" +
+                        e.GetType().Name + " " + e.Message);
+                }
+            }
+            if (spawned <= 0)
+            {
+                reason = failures > 0 ? "spawn-failed" : "no-drop-values";
+                return false;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// 客户端：这个刚到的拾取物副本是不是本机刚造成的掉落（本地引擎预测 → 主机权威副本）？
+        /// true ⇒ 模块给它登记拾取宽限；同时消费该预测（一条预测只匹配一个副本）。
+        /// </summary>
+        public bool TryClaimOwnDropGrace(in PickableStateData state)
+        {
+            if (!m_clientReplica) return false;
+            if (state.Action == EntityActions.Remove) return false;
+            return m_ownDropPredictions.TryClaim(
+                global::Game.Terrain.ExtractContents(state.Value), state.Position, Time.RealTime);
         }
 
         // ================================================================ 主机：执行投掷 / 开火请求
@@ -1141,8 +1768,12 @@ namespace SuMultiplayer.Engine
                 reason = "distance";
                 return false;
             }
-            // 编解码已经归一化并校验长度；这里再取一次，避免任何空向量的浮点噪声。
-            Vector3 direction = Vector3.Normalize(request.Direction);
+            // 方向一律取**主机权威化身**的视线朝向（EyeRotation = 机身旋转 + 同步的视线角）。
+            // 客户端上报方向只做一致性校验：差得太远 = 过期 / 伪造请求，明确拒绝。
+            Vector3 hostOrigin = model.EyePosition;
+            if (!TryResolveHostAim(player, request.Direction, out Vector3 direction,
+                    out reason))
+                return false;
             Block block = ResolveBlock(itemValue);
             if (block == null)
             {
@@ -1151,6 +1782,7 @@ namespace SuMultiplayer.Engine
             }
             CaptureInventorySlots(inventory, out int[] beforeValues, out int[] beforeCounts);
             int spawned;
+            bool misfire = false;
             Vector3 firstPosition;
             Vector3 firstVelocity;
             switch (request.Kind)
@@ -1175,7 +1807,7 @@ namespace SuMultiplayer.Engine
                 case ProjectileFireKinds.Musket:
                     if (!TryFireMusket(player, inventory, slot, itemValue, block,
                             direction, out spawned, out firstPosition, out firstVelocity,
-                            out reason))
+                            out misfire, out reason))
                         return false;
                     break;
                 default:
@@ -1186,7 +1818,8 @@ namespace SuMultiplayer.Engine
             BuildInventoryDelta(beforeValues, beforeCounts, afterValues, afterCounts, slot,
                 out int[] indices, out int[] values, out int[] counts);
             outcome = new ProjectileFireOutcome(request.Kind, spawned, itemValue,
-                firstPosition, firstVelocity, indices, values, counts, CurrentInventoryVersion());
+                firstPosition, firstVelocity, indices, values, counts, CurrentInventoryVersion(),
+                hostOrigin, direction, misfire);
             return true;
         }
 
@@ -1220,7 +1853,7 @@ namespace SuMultiplayer.Engine
             if (player.ComponentLevel != null)
                 speed *= 0.5f * (player.ComponentLevel.StrengthFactor - 1f) + 1f;
             Vector3 velocity = body.Velocity + direction * speed;
-            Projectile projectile = m_projectiles.FireProjectile(itemValue, origin, velocity,
+            Projectile projectile = FireHostProjectile(itemValue, origin, velocity,
                 m_requestRandom.Vector3(5f, 10f), player);
             if (projectile == null)
             {
@@ -1285,7 +1918,7 @@ namespace SuMultiplayer.Engine
                 Vector3 velocity = body.Velocity + (direction + noise) * speed;
                 int arrowValue = global::Game.Terrain.MakeBlockValue(ArrowBlock.Index, 0,
                     ArrowBlock.SetArrowType(0, arrowType.Value));
-                spawnedProjectile = m_projectiles.FireProjectile(arrowValue, origin, velocity,
+                spawnedProjectile = FireHostProjectile(arrowValue, origin, velocity,
                     Vector3.Zero, player);
                 if (spawnedProjectile != null)
                 {
@@ -1337,7 +1970,7 @@ namespace SuMultiplayer.Engine
                 Vector3 velocity = body.Velocity + 38f * direction;
                 int boltValue = global::Game.Terrain.MakeBlockValue(ArrowBlock.Index, 0,
                     ArrowBlock.SetArrowType(0, arrowType.Value));
-                spawnedProjectile = m_projectiles.FireProjectile(boltValue, origin, velocity,
+                spawnedProjectile = FireHostProjectile(boltValue, origin, velocity,
                     Vector3.Zero, player);
                 if (spawnedProjectile != null)
                 {
@@ -1365,9 +1998,11 @@ namespace SuMultiplayer.Engine
         /// </summary>
         private bool TryFireMusket(ComponentPlayer player, IInventory inventory, int slot,
             int itemValue, Block block, Vector3 direction, out int spawned,
-            out Vector3 firstPosition, out Vector3 firstVelocity, out string reason)
+            out Vector3 firstPosition, out Vector3 firstVelocity, out bool misfire,
+            out string reason)
         {
             spawned = 0;
+            misfire = false;
             firstPosition = Vector3.Zero;
             firstVelocity = Vector3.Zero;
             reason = null;
@@ -1434,7 +2069,7 @@ namespace SuMultiplayer.Engine
                 Vector3 origin = model.EyePosition + body.Matrix.Right * 0.3f -
                     body.Matrix.Up * 0.2f;
                 // 枪管进水：引擎的哑火分支只有声音/烟，不生成投射物（装填照样消耗）。
-                bool misfire = body.ImmersionFactor > 0.4f;
+                misfire = body.ImmersionFactor > 0.4f;
                 if (!misfire && bulletCount > 0)
                 {
                     Vector3 right = Vector3.Normalize(Vector3.Cross(direction, Vector3.UnitY));
@@ -1445,7 +2080,7 @@ namespace SuMultiplayer.Engine
                             right + m_requestRandom.Float(-bulletSpread.Y, bulletSpread.Y) * up +
                             m_requestRandom.Float(-bulletSpread.Z, bulletSpread.Z) * direction;
                         Vector3 velocity = body.Velocity + bulletSpeed * (direction + noise);
-                        Projectile projectile = m_projectiles.FireProjectile(bulletValue, origin,
+                        Projectile projectile = FireHostProjectile(bulletValue, origin,
                             velocity, Vector3.Zero, player);
                         if (projectile == null) continue;
                         projectile.ProjectileStoppedAction = ProjectileStoppedAction.Disappear;
@@ -1474,6 +2109,70 @@ namespace SuMultiplayer.Engine
         }
 
         // ================================================================ 主机：执行辅助
+
+        /// <summary>
+        /// 主机的权威发射辅助：每次 FireProjectile 都记一次 **host 出生点** 尝试；
+        /// 返回 null = 引擎自己的出生射线被地形 / 自身包围盒挡住（fireSpawnCollided）。
+        /// 所有主机开火路径都必须走这里，客户端上报的 origin 不参与生成。
+        /// </summary>
+        private Projectile FireHostProjectile(int value, Vector3 origin, Vector3 velocity,
+            Vector3 angularVelocity, ComponentCreature owner)
+        {
+            m_fireSpawnAtHost++;
+            Projectile projectile = m_projectiles.FireProjectile(value, origin, velocity,
+                angularVelocity, owner);
+            if (projectile == null) m_fireSpawnCollided++;
+            return projectile;
+        }
+
+        /// <summary>
+        /// 主机权威视线：<c>ComponentCreatureModel.EyeRotation</c>（机身旋转 * 同步的视线角）前向。
+        /// 客户端上报方向只做一致性校验（容忍一个快照插值的滞后），差太远明确拒绝。
+        /// </summary>
+        private static bool TryResolveHostAim(ComponentPlayer player, Vector3 claimedDirection,
+            out Vector3 direction, out string reason)
+        {
+            direction = Vector3.Zero;
+            reason = null;
+            ComponentCreatureModel model = player?.ComponentCreatureModel;
+            if (model == null)
+            {
+                reason = "no-model";
+                return false;
+            }
+            if (player.ComponentLocomotion == null)
+            {
+                reason = "no-locomotion";
+                return false;
+            }
+            Vector3 host = Matrix.CreateFromQuaternion(model.EyeRotation).Forward;
+            if (!IsFinite(host) || host.LengthSquared() < 0.25f)
+            {
+                reason = "host-direction-invalid";
+                return false;
+            }
+            host = Vector3.Normalize(host);
+            if (!IsFinite(claimedDirection) || claimedDirection.LengthSquared() < 1e-6f)
+            {
+                reason = "direction-invalid";
+                return false;
+            }
+            Vector3 claimed = Vector3.Normalize(claimedDirection);
+            // 75°：足够拦住伪造 / 严重过期请求，又不会因为主机化身的插值滞后误杀合法射击。
+            // 真正用于生成的方向始终是 host（客户端方向只做一致性校验）。
+            if (Vector3.Dot(claimed, host) < 0.25f)
+            {
+                reason = "direction-mismatch";
+                return false;
+            }
+            direction = host;
+            return true;
+        }
+
+        private static bool IsFinite(Vector3 value) =>
+            !float.IsNaN(value.X) && !float.IsInfinity(value.X) &&
+            !float.IsNaN(value.Y) && !float.IsInfinity(value.Y) &&
+            !float.IsNaN(value.Z) && !float.IsInfinity(value.Z);
 
         private bool TryResolveHostActor(Project project, int clientId, out ComponentPlayer player,
             out PlayerData playerData, out string reason)
@@ -1546,20 +2245,59 @@ namespace SuMultiplayer.Engine
         /// 把活跃槽里的 1 件物品换成新值（弓 / 弩 / 火枪的重置与耐久损耗都走这条）。
         /// 返回 false + reason = 明确的引擎拒绝（调用方必须回滚它刚生成的投射物）。
         /// </summary>
-        private static bool TryReplaceHeldStack(IInventory inventory, int slot, int newValue,
+        private bool TryReplaceHeldStack(IInventory inventory, int slot, int newValue,
             out string reason)
         {
             reason = null;
+            int beforeValue = inventory.GetSlotValue(slot);
+            int beforeCount = inventory.GetSlotCount(slot);
+            if (beforeCount <= 0 || beforeValue == 0)
+            {
+                reason = "consume-refused";
+                return false;
+            }
             int removed = inventory.RemoveSlotItems(slot, 1);
             if (removed <= 0)
             {
                 reason = "consume-refused";
                 return false;
             }
-            inventory.AddSlotItems(slot, newValue, 1);
-            if (inventory.GetSlotCount(slot) != 1 || inventory.GetSlotValue(slot) != newValue)
+            // 与引擎 Completed 分支完全同形：Remove 1 → Add 新值 1。
+            // **不能要求结果计数 == 1**：创造模式 ComponentCreativeInventory 的
+            // GetSlotCount 恒为 9999，AddSlotItems 只替换槽位值、不改变计数；
+            // 旧实现把这种正常结果误判成 replace-refused，创造模式下的弓 / 弩 / 火枪
+            // 全部被拒绝（15/22 的现场证据）。
+            try
+            {
+                inventory.AddSlotItems(slot, newValue, removed);
+            }
+            catch (Exception e)
+            {
+                // 非可堆叠工具不会走到这里；真走到说明这是不支持的堆叠形状。
+                // 把刚移除的 1 件放回原值，明确拒绝（绝不静默吞物品）。
+                try { inventory.AddSlotItems(slot, beforeValue, removed); }
+                catch (Exception rollback)
+                {
+                    LogRateLimited("replace-rollback:" + slot + ":" + rollback.GetType().Name,
+                        "槽位 " + slot + " 替换失败后回滚也失败（" + rollback.GetType().Name +
+                        " " + rollback.Message + "）→ 该槽可能少 1 件，请人工检查背包");
+                }
+                reason = "replace-refused-stack";
+                LogRateLimited("replace-stack:" + slot + ":" + e.GetType().Name,
+                    "槽位 " + slot + " 仍是旧值堆叠（value=" + beforeValue + " count=" +
+                    beforeCount + "），无法直接换成新值（" + e.GetType().Name + " " +
+                    e.Message + "）→ 明确拒绝并回滚");
+                return false;
+            }
+            int afterValue = inventory.GetSlotValue(slot);
+            int afterCount = inventory.GetSlotCount(slot);
+            if (afterValue != newValue || afterCount <= 0)
             {
                 reason = "replace-refused";
+                LogRateLimited("replace-refused:" + slot,
+                    "槽位 " + slot + " 替换后校验失败（期望 value=" + newValue +
+                    " count>0，实际 value=" + afterValue + " count=" + afterCount +
+                    "，背包类型 " + inventory.GetType().Name + "）→ 明确拒绝");
                 return false;
             }
             return true;
@@ -1732,6 +2470,138 @@ namespace SuMultiplayer.Engine
             replica.Projectile.TrailOffset = state.TrailOffset;
         }
 
+        /// <summary>
+        /// 武器开火表现（声音）：只播放本机音频，不生成实体、不扣物品、不造成伤害。
+        /// 主机执行完客户端请求后本机播一次；其他客户端收到 WeaponFireEvent 后按同一入口播。
+        /// </summary>
+        public bool TryPresentWeaponFire(in WeaponFireEventData fire, out string reason)
+        {
+            reason = null;
+            if (m_project == null)
+            {
+                reason = "no-project";
+                return false;
+            }
+            switch (fire.Kind)
+            {
+                case ProjectileFireKinds.Throwable:
+                    ProjectileFirePresentation.PlayThrow(m_project, null, fire.Position);
+                    return true;
+                case ProjectileFireKinds.Bow:
+                    ProjectileFirePresentation.PlayBow(m_project, fire.Position,
+                        crossbow: false);
+                    return true;
+                case ProjectileFireKinds.Crossbow:
+                    ProjectileFirePresentation.PlayBow(m_project, fire.Position,
+                        crossbow: true);
+                    return true;
+                case ProjectileFireKinds.Musket:
+                    ProjectileFirePresentation.PlayMusketPresentation(m_project, fire.Position,
+                        fire.Direction, fire.Misfire);
+                    return true;
+                default:
+                    reason = "kind-unknown-" + fire.Kind;
+                    return false;
+            }
+        }
+
+        /// <summary>
+        /// 拾取声音：只调引擎音频，参数与 <c>SubsystemPickables.Update</c> 完全一致。
+        /// Source: Survivalcraft/Game/SubsystemPickables.cs:210-213
+        ///   <c>PlaySound("Audio/PickableCollected", 0.7f, -0.4f, pickable.Position, 2f,
+        ///   autoDelay: false)</c>
+        /// </summary>
+        public bool TryPresentPickupSound(in PickupSoundEventData sound, out string reason)
+        {
+            reason = null;
+            if (m_project == null)
+            {
+                reason = "no-project";
+                return false;
+            }
+            if (!PickupSoundPolicy.IsValidPosition(sound.Position))
+            {
+                reason = "pickup-sound-position-invalid";
+                return false;
+            }
+            SubsystemAudio audio = m_project.FindSubsystem<SubsystemAudio>(false);
+            if (audio == null)
+            {
+                reason = "no-subsystem-audio";
+                return false;
+            }
+            audio.PlaySound("Audio/PickableCollected", 0.7f, -0.4f, sound.Position, 2f,
+                autoDelay: false);
+            return true;
+        }
+
+        /// <summary>客户端：本机监听者位置（活动相机 → 本机角色）；读不到明确失败。</summary>
+        public bool TryGetAudioListenerPosition(out Vector3 position, out string reason)
+        {
+            position = Vector3.Zero;
+            reason = null;
+            Project project = m_project;
+            if (project == null)
+            {
+                reason = "no-project";
+                return false;
+            }
+            SubsystemAudio audio = project.FindSubsystem<SubsystemAudio>(false);
+            if (audio != null)
+            {
+                ReadOnlyList<Vector3> listeners = audio.ListenerPositions;
+                if (listeners.Count > 0)
+                {
+                    position = listeners[0];
+                    return true;
+                }
+            }
+            if (m_spawner != null &&
+                m_spawner.TryGetLocalPlayer(project, out PlayerData local, out string playerReason))
+            {
+                ComponentPlayer player = local?.ComponentPlayer;
+                if (player?.ComponentBody != null)
+                {
+                    position = player.ComponentBody.Position;
+                    return true;
+                }
+                reason = "local-player-body-missing";
+                return false;
+            }
+            reason = "no-listener";
+            return false;
+        }
+
+        /// <summary>
+        /// 主机：收集在线玩家端位置（拾取声音的“附近客户端”裁剪）。
+        /// 读不到位置的端仍然返回（HasPosition=false），由收件人策略明确计数。
+        /// </summary>
+        public bool TryCollectPlayerPeers(List<RemoteSoundPeer> target, out string reason)
+        {
+            reason = null;
+            if (target == null)
+            {
+                reason = "target-null";
+                return false;
+            }
+            target.Clear();
+            if (m_spawner == null)
+            {
+                reason = "no-spawner";
+                return false;
+            }
+            int count = 0;
+            foreach (int clientId in m_spawner.ClientIds)
+            {
+                bool hasPosition = m_spawner.TryGetAvatarCell(clientId, out Vector3 position,
+                    out _);
+                target.Add(new RemoteSoundPeer(clientId, hasPosition, position));
+                count++;
+            }
+            if (count == 0) reason = "no-avatars";
+            return count > 0;
+        }
+
         // ================================================================ 客户端：每帧插值 + 扫描
 
         public void TickClient(float deltaTime)
@@ -1739,6 +2609,7 @@ namespace SuMultiplayer.Engine
             if (!m_clientReplica) return;
             float step = MathUtils.Clamp(deltaTime, 0f, 0.05f);
             double now = Time.RealTime;
+            m_ownDropPredictions.Prune(now);
             UpdatePickableReplicas(step, now);
             UpdateProjectileReplicas(step, now);
             ScanPickupCandidates(now);
@@ -1926,24 +2797,89 @@ namespace SuMultiplayer.Engine
             var owned = new HashSet<Pickable>();
             foreach (KeyValuePair<int, ClientPickableReplica> item in m_clientPickables)
                 if (item.Value.Pickable != null) owned.Add(item.Value.Pickable);
+            double now = Time.RealTime;
+            m_recentDropPredictions.RemoveAll(item => item.ExpiryTime <= now);
             List<Pickable> foreign = null;
+            int deferred = 0;
+            int predictionCulled = 0;
             for (int i = 0; i < list.Count; i++)
             {
                 Pickable pickable = list[i];
                 if (pickable == null || owned.Contains(pickable)) continue;
+                int contents = global::Game.Terrain.ExtractContents(pickable.Value);
+                // 主机副本已经出现：本地预测（同物品 / 3m 内）可以安全清掉。
+                bool hostReplicaExists = false;
+                foreach (KeyValuePair<int, ClientPickableReplica> item in m_clientPickables)
+                {
+                    Pickable replica = item.Value.Pickable;
+                    if (replica == null || replica == pickable) continue;
+                    if (global::Game.Terrain.ExtractContents(replica.Value) != contents)
+                        continue;
+                    if (Vector3.DistanceSquared(replica.Position, pickable.Position) > 9f)
+                        continue;
+                    hostReplicaExists = true;
+                    break;
+                }
+                if (hostReplicaExists)
+                {
+                    pickable.ToRemove = true;
+                    if (TryGetPickableList(out List<Pickable> raw)) raw.Remove(pickable);
+                    m_dropPredictionCulled++;
+                    predictionCulled++;
+                    continue;
+                }
+                // 刚提交的丢弃请求还没有对应的主机副本：先保留，等副本出现后再清
+                // （绝不先清掉本地预测、又因为状态流竞态看不到主机副本 → 地上空无一物）。
+                bool pendingDropMatch = false;
+                for (int j = 0; j < m_recentDropPredictions.Count; j++)
+                {
+                    PendingDropPrediction prediction = m_recentDropPredictions[j];
+                    if (global::Game.Terrain.ExtractContents(prediction.ItemValue) != contents)
+                        continue;
+                    if (Vector3.DistanceSquared(prediction.Position, pickable.Position) > 9f)
+                        continue;
+                    pendingDropMatch = true;
+                    break;
+                }
+                if (pendingDropMatch)
+                {
+                    m_dropPredictionDeferred++;
+                    deferred++;
+                    continue;
+                }
                 if (foreign == null) foreign = new List<Pickable>();
                 foreign.Add(pickable);
+                // 这些是**本机引擎**生成的预测掉落（本机挖 / 放触发的 DestroyCell）。
+                // 记下物品 + 落点：主机的权威副本到达时按它认领 → 该副本在拾取宽限内不被本机请求。
+                m_ownDropPredictions.Remember(contents, pickable.Position, now);
             }
-            if (foreign == null) return;
-            for (int i = 0; i < foreign.Count; i++)
+            if (foreign != null)
             {
-                foreign[i].ToRemove = true;
-                if (TryGetPickableList(out List<Pickable> raw)) raw.Remove(foreign[i]);
-                m_foreignPickablesRemoved++;
+                for (int i = 0; i < foreign.Count; i++)
+                {
+                    foreign[i].ToRemove = true;
+                    if (TryGetPickableList(out List<Pickable> raw)) raw.Remove(foreign[i]);
+                    m_foreignPickablesRemoved++;
+                }
             }
-            LogRateLimited("foreign-pickable",
-                "客户端清除了 " + foreign.Count + " 个本地生成的拾取物（累计 " +
-                m_foreignPickablesRemoved + "）：拾取物只能由主机创建并经实体复制下发");
+            if (predictionCulled > 0)
+            {
+                LogRateLimited("drop-prediction-culled",
+                    "主机丢弃副本已出现 → 清掉 " + predictionCulled + " 个本地预测拾取物（累计 " +
+                    m_dropPredictionCulled + "）");
+            }
+            if (deferred > 0)
+            {
+                LogRateLimited("drop-prediction-deferred",
+                    "主机丢弃副本还没到 → 暂缓清理 " + deferred + " 个本地预测拾取物" +
+                    "（累计暂缓 " + m_dropPredictionDeferred + "；副本到达后会清掉）");
+            }
+            if (foreign != null)
+            {
+                LogRateLimited("foreign-pickable",
+                    "客户端清除了 " + foreign.Count + " 个本地生成的拾取物（累计 " +
+                    m_foreignPickablesRemoved + "）：拾取物只能由主机创建并经实体复制下发");
+            }
         }
 
         /// <summary>
@@ -2145,11 +3081,28 @@ namespace SuMultiplayer.Engine
             " foreignCulled=" + (m_foreignPickablesRemoved + m_foreignProjectilesRemoved) +
             " foreignPickablesRemoved=" + m_foreignPickablesRemoved +
             " foreignProjectilesRemoved=" + m_foreignProjectilesRemoved +
+            " fireSpawnAtHost=" + m_fireSpawnAtHost +
+            " fireSpawnCollided=" + m_fireSpawnCollided +
+            " dropPredictionCulled=" + m_dropPredictionCulled +
+            " dropPredictionDeferred=" + m_dropPredictionDeferred +
             " pickableListFailures=" + m_pickableListFailures +
             " dropIntents=" + m_dropIntentSubmissions + "/" + m_dropIntentFailures +
+            " uiDropIntercepted=" + m_uiDropIntents +
+            " uiDropSubmitFailures=" + m_uiDropSubmitFailures +
+            " uiDropLocalPickableCancelled=" + m_uiDropLocalPickableCancelled +
+            " dropPhantomSuppressed=" + m_dropPhantomSuppressed +
+            " uiDropPhantomUnmatched=" + m_uiDropPhantomUnmatched +
+            " uiDropSnapshot=" + (m_localInventorySnapshotValid ? "valid" : "none") +
             " fireIntents=" + m_fireIntentSubmissions + "/" + m_fireIntentFailures +
             " hostDrop=" + m_dropAccepted + "/" + m_dropRejected +
             " hostFire=" + m_fireAccepted + "/" + m_fireRejected +
+            " blockDropsSpawned=" + m_blockDropsSpawned +
+            " dropPrepareFailures=" + m_dropPrepareFailures +
+            " dropSpawnFailures=" + m_dropSpawnFailures +
+            " dropSpawnVelocity=" + m_dropSpawnVelocity +
+            " pickupGraceBlocked=" + m_pickupGraceBlocked +
+            " pickupGrace[" + m_dropGrace.Describe() + "]" +
+            " ownDropPrediction[" + m_ownDropPredictions.Describe() + "]" +
             " remoteAvatarFilterCalls=" + m_remoteAvatarFilterCalls;
 
         private void Log(string message) => m_diagnostics?.Info(m_ownerId, message);

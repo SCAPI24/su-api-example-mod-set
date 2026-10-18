@@ -37,7 +37,7 @@ namespace CmdBridgeMod
         /// ⚠️ **必须与 `ModInfo.xml` 的 `&lt;Version&gt;` 同步**：漏同步就会出现
         /// "装的是 1.1.20、状态里报 1.1.15"（本文件实际踩过一次，排查时容易误判成旧包装没生效）。
         /// </summary>
-        internal const string ModVersion = "1.1.27";
+        internal const string ModVersion = "1.1.31";
 
         /// <summary>
         /// 内建命令名（`cmd.list` 用）。加命令时**必须同步这里**：
@@ -54,6 +54,13 @@ namespace CmdBridgeMod
             "dev.chat.inject",
             "act.look", "act.lookdelta", "act.lookat", "act.key", "act.hold", "act.chord",
             "act.mouse", "act.wheel", "act.uiclick", "act.text", "act.releaseall",
+            // 玩家交互输入（右键 = 引擎的"使用/交互/放置/瞄准"）：act.use / act.interact /
+            // act.place 是同一个 `PlayerInput.Interact` 边沿，act.aim 是按住 `PlayerInput.Aim`。
+            // 详见 `Server/PlayerInteractionInjector.cs` 类头。
+            "act.use", "act.interact", "act.place", "act.aim",
+            // 关掉挡着世界输入的界面（对话框按接受按钮 / 模态面板置 null / MoreContents 收起）。
+            // 它也是所有世界内输入命令注入前的自动检查（见 `Server/UiBlocker.cs`）。
+            "act.closeui",
             "act.enter",
             "ui.locate", "ui.clickelement", "ui.marker",
             "ui.session.begin", "ui.session.end", "ui.session.status",
@@ -88,6 +95,21 @@ namespace CmdBridgeMod
         private readonly EventRecorder m_recorder;
         private readonly JumpAssist m_jumpAssist;
 
+        /// <summary>
+        /// 交互输入注入（`act.use` / `act.interact` / `act.place` / `act.aim`）。
+        /// 与 `InputInjector` 共用同一份鼠标数组与帧首调度（`RunOnFrame`），所以
+        /// `act.releaseall` 的数组清零天然覆盖它 —— 但本类自己的瞄准簿记要另外清
+        /// （见 `act.releaseall` 分支，见 `PlayerInteractionInjector.ResetAimSession`）。
+        /// </summary>
+        private readonly PlayerInteractionInjector m_playerActions;
+
+        // ------------------------------------------------ 阻塞界面自动关闭的累计计数
+        // 只用于 `status` 里的累计读数（"这个实例一共替自动化关过多少界面"）。
+        // 单次命令的计数在 `UiBlocker.Report` 里，随回包返回；这里是**实例**字段，不是静态状态。
+        private int m_uiDismissedDialogs;
+        private int m_uiDismissedModalPanels;
+        private int m_uiDismissedHudPanels;
+
         public CommandRouter(
             CmdBridgeConfig config,
             GameThreadInvoker invoker,
@@ -100,9 +122,28 @@ namespace CmdBridgeMod
             m_injector = injector;
             m_recorder = recorder;
             m_jumpAssist = jumpAssist;
+            m_playerActions = new PlayerInteractionInjector(injector);
         }
 
+        /// <summary>
+        /// 命令总入口：先做**注入前 UI 检查**（世界内输入命令才做），再执行命令，最后把
+        /// "关掉了哪些挡路的界面"合并进回包（`dismissedUi` / `dismissedCount` / `dismissedByKind`）。
+        ///
+        /// 为什么放在这一层：所有会往世界灌输入的命令（`act.move` / `act.lookat` / `act.key` /
+        /// `act.dig` / `act.use` / `act.interact` / `act.place` / `act.aim` …）的注入点都在下面的
+        /// switch 里，但注入点是**逐命令**的、返回值也各不相同。在这一层统一"先关界面 → 再执行 →
+        /// 回包带上结果"，就不会漏掉某条命令，也不需要把每条命令的实现拆开。
+        /// 规则与引擎依据见 `Server/UiBlocker.cs` 类头。
+        /// </summary>
         public object Execute(BridgeRequest request)
+        {
+            UiBlocker.Report uiReport = PrepareForWorldInput(request);
+            object result = ExecuteCore(request);
+            return AttachUiReport(result, uiReport);
+        }
+
+        /// <summary>真正的命令分发（原 `Execute` 的 switch 原样保留）。</summary>
+        private object ExecuteCore(BridgeRequest request)
         {
             switch (request.Command)
             {
@@ -277,7 +318,123 @@ namespace CmdBridgeMod
                     return m_injector.TypeText(request.GetString("text", string.Empty));
                 case "act.releaseall":
                 case "act.releaseAll":
+                    // 输入数组整体清零（含 `act.aim start` 按住的右键），本类自己的瞄准簿记也要失效，
+                    // 否则下一次 `act.aim start` 会误报 `already_aiming`。
+                    m_playerActions.ResetAimSession();
                     return m_injector.ReleaseAll();
+
+                // ------------------------------------- 玩家交互输入（使用 / 交互 / 放置 / 瞄准）
+                // 引擎事实（详见 `Server/PlayerInteractionInjector.cs` 类头）：
+                //   · 使用 / 交互 / 放置共用 `PlayerInput.Interact`（右键**边沿**），
+                //     `ComponentPlayer.Update` 按 Use → Interact → Place 的固定顺序消费（151-181）；
+                //   · 瞄准是 `PlayerInput.Aim`（右键**按住**），松开 → `AimState.Completed`（219-227）。
+                // holdMs 语义：`act.use/interact/place` 的 hold 只是"按住多久"（边沿动作只看按下那一帧；
+                // 按久一点会同时让 `PlayerInput.Aim` 有值，和真人的右键一致）；`act.aim start --hold N`
+                // 是"按住 N 毫秒后自动松开"（= 放箭）。
+                case "act.use":
+                    return m_playerActions.Use(request.GetInteger("holdMs", 0));
+                case "act.interact":
+                    return m_playerActions.Interact(request.GetInteger("holdMs", 0));
+                case "act.place":
+                    return m_playerActions.Place(request.GetInteger("holdMs", 0));
+                case "act.aim":
+                {
+                    // 兼容 `action=` 与 `state=` 两种写法：CLI 用 `act.aim start|release|cancel`。
+                    string aimAction = request.GetString("action", null);
+                    if (string.IsNullOrEmpty(aimAction))
+                        aimAction = request.GetString("state", null);
+                    return m_playerActions.Aim(aimAction, request.GetInteger("holdMs", 0));
+                }
+
+                // ------------------------------------------------------ 关掉挡路的界面（新增 1.1.29）
+                // 语义：**现在就**把挡着世界输入的界面收掉，并回报收掉了什么。
+                //   · MessageDialog → 按它自己的接受按钮（`MessageDialog.Dismiss(Button1)`，
+                //     与引擎的 `Input.Ok` 分支同一条路径；`button=2` 时走 Cancel 分支）；
+                //   · TextBoxDialog → `Dismiss(null)`（引擎的 Cancel 分支，不发送内容）；
+                //   · 其它 Dialog → `DialogsManager.HideDialog`（引擎关 GameMenuDialog 的同一句）；
+                //   · 背包 / 创造背包 / 衣物 / 容器面板 → `ComponentGui.ModalPanelWidget = null`；
+                //   · HUD `MoreContents` → `MoreButton.IsChecked = false`。
+                // 什么都不挡时**明确报错**（`ui_not_blocking`），不返回"成功但什么都没做"。
+                // 细则与引擎依据见 `Server/UiBlocker.cs` 类头。
+                case "act.closeui":
+                {
+                    int messageButton = request.GetInteger("button", 1);
+                    if (messageButton != 1 && messageButton != 2)
+                        throw new BridgeCommandException("invalid_argument",
+                            "act.closeui button must be 1 (accept, the default) or 2 (cancel).");
+
+                    UiBlocker.Report report = (UiBlocker.Report)OnGameThread(
+                        () => UiBlocker.Dismiss(messageButton));
+
+                    if (report.Skipped == "screen_not_game")
+                    {
+                        // 世界还在、但当前不是游戏画面（设置/帮助/玩家列表…）：这确实挡着世界输入，
+                        // 但**切屏是导航、不是关界面**，本命令不替调用方做这个决定 —— 明确报出来。
+                        throw new BridgeCommandException("ui_blocking",
+                            "The current screen is '" + report.SkipDetail + "', not the game screen; "
+                            + "this command only closes in-world UI (dialogs / modal panels / the HUD "
+                            + "MoreContents panel). Go back to the game screen first "
+                            + "(act.key escape / ui.clickelement on the back button), then retry. "
+                            + "Current UI: " + DescribeCurrentUiSafe());
+                    }
+                    if (report.Skipped == "player_not_found")
+                    {
+                        throw new BridgeCommandException("player_not_found",
+                            "The world is loaded but no local player is available, so there is no "
+                            + "player-owned UI to close. Current UI: " + DescribeCurrentUiSafe());
+                    }
+                    if (report.Skipped != null)
+                    {
+                        throw new BridgeCommandException("ui_not_blocking",
+                            "There is no in-world UI to close (" + report.Skipped + "). "
+                            + "Current UI: " + DescribeCurrentUiSafe());
+                    }
+
+                    if (report.WorldUnloaded)
+                    {
+                        // 世界被对话框 handler 卸载/重载了（ScMP 的 `CR` → `Create`）：界面确实关掉了，
+                        // 但这一刻既没有稳定的界面可复查、也没有世界可注入 —— 如实回报，不假装还在原地。
+                        if (report.Items.Count == 0)
+                        {
+                            throw new BridgeCommandException("ui_not_blocking",
+                                "The world changed while checking the UI ("
+                                + (report.SkipDetail ?? "world unloaded") + "), so there was nothing "
+                                + "to close in a stable state. Current UI: " + DescribeCurrentUiSafe());
+                        }
+                        AccumulateUiDismissals(report);
+                        Dictionary<string, object> changed = report.ToDictionary();
+                        changed["completed"] = true;
+                        changed["action"] = "act.closeui";
+                        changed["messageButton"] = messageButton;
+                        return changed;
+                    }
+
+                    if (report.Remaining.Count > 0)
+                    {
+                        throw new BridgeCommandException("ui_blocking",
+                            "Could not dismiss: " + string.Join(", ", report.Remaining.ToArray())
+                            + ". Current UI: " + DescribeCurrentUiSafe());
+                    }
+
+                    if (report.Items.Count == 0)
+                    {
+                        throw new BridgeCommandException("ui_not_blocking",
+                            "There is no blocking UI to close (no dialogs, no modal panel, and the HUD "
+                            + UiInspector.MoreContentsName + " panel is already collapsed). "
+                            + "Current UI: " + DescribeCurrentUiSafe());
+                    }
+
+                    // 模态面板关掉后有一段收起动画（期间 ModalPanelWidget 仍非 null），
+                    // 这里等它真的消失，否则下一条短脉冲命令会正好落在动画里。
+                    WaitForModalPanelHidden(report);
+                    AccumulateUiDismissals(report);
+
+                    Dictionary<string, object> result = report.ToDictionary();
+                    result["completed"] = true;
+                    result["action"] = "act.closeui";
+                    result["messageButton"] = messageButton;
+                    return result;
+                }
 
                 // ---------------------------------------------------- 进入世界（自动化一步）
                 // 菜单链：主菜单 → 世界列表 →(可选选中某世界)→ 创建/加载 → **角色创建/选择** → 进入游戏。
@@ -643,6 +800,12 @@ namespace CmdBridgeMod
                         + "  dig                                                -> hold still (~0.2-0.5s) in a button-free area\r\n"
                         + "  low level: ui.session.begin; ui.move x y (LOCATE FIRST); ui.press; ui.move ...; ui.release; ui.session.end\r\n"
                         + "  ui.press/ui.release also accept x/y now (they locate before pressing/releasing).\r\n"
+                        + "  act.closeui [button=1|2]  -> close blocking UI now: MessageDialog -> its own accept/cancel"
+                        + " path (Dismiss), other Dialog -> DialogsManager.HideDialog, inventory/creative panel ->"
+                        + " ComponentGui.ModalPanelWidget = null, HUD MoreContents -> MoreButton.IsChecked = false."
+                        + " Every world-input command (act.move/lookat/key/dig/use/interact/place/aim) runs this"
+                        + " automatically before injecting and reports dismissedUi/dismissedCount/dismissedByKind;"
+                        + " if a blocker cannot be dismissed it fails with ui_blocking instead of injecting a no-op.\r\n"
                         + "  preconditions: game in foreground, soft keyboard hidden; Android draws no cursor.";
 
                 case "ui.click":
@@ -1034,6 +1197,245 @@ namespace CmdBridgeMod
             return m_invoker.Invoke(action);
         }
 
+        // ---------------------------------------------------------------- 注入前 UI 检查
+
+        /// <summary>
+        /// 哪些命令在注入前必须先关掉挡路的界面。
+        ///
+        /// 判据只有一条：**这条命令是往世界灌玩家输入的**（移动 / 视角 / 键 / 挖掘 / 使用 / 交互 /
+        /// 放置 / 瞄准）。它们被 `ComponentGui.ModalPanelWidget` / `DialogsManager.HasDialogs(GuiWidget)`
+        /// 整段吃掉（`ComponentInput.cs:143-152`），所以必须先收界面。
+        ///
+        /// **故意排除**这些：
+        ///  · `act.uiclick` / `ui.*` / `act.text` —— 它们的**目标就是界面本身**，替它们关界面等于
+        ///    "把要点的东西关掉"；
+        ///  · `act.mouse` / `act.wheel` —— 既能点世界也能拖滑块/滚列表，属于界面点击家族，
+        ///    自动化里用它们点界面时不能被自动关闭打断（要关界面用 `act.closeui`）；
+        ///  · `act.releaseall` —— 安全释放，任何时候都必须原样执行。
+        /// </summary>
+        private static bool IsWorldInputCommand(string command)
+        {
+            switch (command)
+            {
+                case "act.look":
+                case "act.lookdelta":
+                case "act.lookat":
+                case "act.key":
+                case "act.hold":
+                case "act.chord":
+                case "act.move":
+                case "act.jump":
+                case "act.dig":
+                case "act.use":
+                case "act.interact":
+                case "act.place":
+                case "act.aim":
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        /// <summary>
+        /// Escape / Back 是**引擎自己的**取消/返回通道（`WidgetInput.UpdateInputFromKeyboard`：
+        /// `IsKeyDownOnce(Key.Escape)` → `Back = Cancel = true`），`MessageDialog` 用它走 Cancel、
+        /// `ComponentGui.HandleInput` 用它关模态面板、`GameMenuDialog` 用它关菜单。
+        ///
+        /// 所以这两种键**不做**注入前自动关闭：否则"用 esc 取消一个 Are you sure? 对话框"
+        /// 会被我们先替成"确定"，语义完全反了。让引擎自己处理，命令照常注入。
+        /// </summary>
+        private static bool IsEngineCloseKey(string keyName)
+        {
+            if (string.IsNullOrWhiteSpace(keyName))
+                return false;
+            Key key;
+            return Enum.TryParse(keyName.Trim(), true, out key)
+                && (key == Key.Escape || key == Key.Back);
+        }
+
+        /// <summary>这条命令这次要不要做注入前 UI 检查；不要时返回 null。</summary>
+        private UiBlocker.Report PrepareForWorldInput(BridgeRequest request)
+        {
+            string command = request.Command;
+            if (!IsWorldInputCommand(command))
+                return null;
+
+            // 注入被配置关掉时命令自己会报 `injection_disabled`：别在报错前先动界面。
+            if (!m_config.EnableInputInjection)
+                return null;
+
+            // 真实鼠标正在被用户使用、视角归用户时，look 系列会被注入器跳过（`skipped` 回包）：
+            // 命令本来就不注入，别顺手替用户关界面。
+            if ((command == "act.look" || command == "act.lookdelta" || command == "act.lookat")
+                && m_injector.Focus != null && m_injector.Focus.LookOwnedByUser)
+            {
+                return null;
+            }
+
+            // Escape/Back 由引擎自己关界面（见 IsEngineCloseKey）：不替它们"接受"任何对话框。
+            if (command == "act.key" || command == "act.hold")
+            {
+                if (IsEngineCloseKey(request.GetString("key", null)))
+                    return null;
+            }
+            else if (command == "act.chord")
+            {
+                if (IsEngineCloseKey(request.GetString("key", null)))
+                    return null;
+            }
+
+            bool onGameThread = GameThreadInvoker.IsGameThread();
+            UiBlocker.Report report = (UiBlocker.Report)OnGameThread(() => UiBlocker.Dismiss(1));
+            AccumulateUiDismissals(report);
+
+            // 对话框 handler 把世界卸载/重载了（ScMP 的 `CR` → `Create` 就是这样）：
+            // 本帧已经无法再检查/注入。**不能**把这次注入当成功——世界都没了，写进去也读不到
+            // （那正是"命令成功、人不动"）。明确报 `world_not_active` 并给出重试条件。
+            if (report.WorldUnloaded)
+            {
+                throw new BridgeCommandException("world_not_active",
+                    "A dialog was dismissed, but its accept handler unloaded/reloaded the world "
+                    + "(ScMP's CR -> Create does GameManager.DisposeProject + SwitchScreen(\"GameLoading\"); "
+                    + "Source: Mod/ScMultiplayer/Modules/Runtime/ScMultiplayerUpdateLoop.cs:"
+                    + "CreateRoomFromCurrentWorld). The world is gone, so '" + command + "' was NOT "
+                    + "injected (writing input now would be a silent no-op). Run "
+                    + "`waitfor world.loaded`, `waitfor screen.is:Game` and retry. "
+                    + "dismissed: " + report.Summary()
+                    + (report.SkipDetail != null ? " (" + report.SkipDetail + ")" : ""));
+            }
+
+            if (report.Remaining.Count > 0)
+            {
+                // 关不掉就是关不掉：绝不"注入一下看看"，那样只会得到一个静默空操作。
+                throw new BridgeCommandException("ui_blocking",
+                    "A blocking UI could not be dismissed: "
+                    + string.Join(", ", report.Remaining.ToArray())
+                    + ". The engine ignores world input while it is up "
+                    + "(ComponentInput.cs:143-152), so '" + command + "' was NOT injected. "
+                    + "Current UI: " + DescribeCurrentUiSafe());
+            }
+
+            WaitForModalPanelHidden(report, onGameThread, command);
+            return report;
+        }
+
+        /// <summary>
+        /// 错误信息里"当前界面长什么样"的补充读数。这段只是附加信息，本身在游戏线程上求值
+        /// （控件树不是线程安全的）；求值失败也不影响主错误。
+        /// </summary>
+        private string DescribeCurrentUiSafe()
+        {
+            try
+            {
+                return (string)OnGameThread(() => UiBlocker.DescribeCurrentUi());
+            }
+            catch (Exception exception)
+            {
+                return "<unavailable: " + exception.GetType().Name + ">";
+            }
+        }
+
+        /// <summary>
+        /// 模态面板关掉后等它**真的**从 `ComponentGui.ModalPanelWidget` 上消失。
+        ///
+        /// 为什么必须等：`ComponentGui.ModalPanelWidget = null` 只是启动收起动画
+        /// （`ComponentGui.UpdateModalPanelAnimation`，6*dt 一帧，约 10 帧 ≈ 170ms），
+        /// 动画期间 getter 仍返回旧面板，而 `ComponentInput`（UpdateOrder.Input = -10）
+        /// 在 `ComponentGui`（Default = 0）**之前**更新 —— 于是这一帧仍按"模态"处理，
+        /// `act.key` 的 40ms 脉冲会正好落在里面（"关掉了但键没生效"）。
+        ///
+        /// 命令线程上可以等（游戏线程继续出帧）；**游戏线程上不能等**（等就是卡住整帧），
+        /// 那种情况下明确报 `ui_dismiss_pending` 让调用方重发，绝不假装成功。
+        /// </summary>
+        private void WaitForModalPanelHidden(UiBlocker.Report report)
+        {
+            WaitForModalPanelHidden(report, GameThreadInvoker.IsGameThread(), "act.closeui");
+        }
+
+        private void WaitForModalPanelHidden(UiBlocker.Report report, bool onGameThread, string command)
+        {
+            if (report == null || !report.ClosedModalPanel)
+                return;
+
+            if (onGameThread)
+            {
+                throw new BridgeCommandException("ui_dismiss_pending",
+                    "Closed the modal panel, but its close animation keeps "
+                    + "ComponentGui.ModalPanelWidget non-null for a few frames and ComponentInput still "
+                    + "treats that as modal (ComponentInput.cs:143-152). This call is on the game "
+                    + "thread and cannot wait for frames -> '" + command + "' was NOT injected; retry "
+                    + "it on the next frame.");
+            }
+
+            // 800ms 足够 10 帧的动画（60fps ≈ 170ms）；游戏不出帧时（暂停/最小化）超时并明确报错。
+            long start = Environment.TickCount64;
+            while (true)
+            {
+                bool open = (bool)OnGameThread(() =>
+                {
+                    ComponentPlayer player = GetPlayerOrNull();
+                    ComponentGui gui = player != null ? player.ComponentGui : null;
+                    return (object)(gui != null && gui.ModalPanelWidget != null);
+                });
+                if (!open)
+                    return;
+                if (Environment.TickCount64 - start > 800)
+                {
+                    throw new BridgeCommandException("ui_dismiss_pending",
+                        "The modal panel was closed, but ComponentGui.ModalPanelWidget is still non-null "
+                        + "after 800ms (the close animation needs frames to advance; the game may be "
+                        + "paused). '" + command + "' was NOT injected; retry once the game is running.");
+                }
+                Thread.Sleep(10);
+            }
+        }
+
+        /// <summary>把一次关闭累加进 `status` 的累计计数（实例字段；并发命令用 Interlocked）。</summary>
+        private void AccumulateUiDismissals(UiBlocker.Report report)
+        {
+            if (report == null)
+                return;
+            if (report.DialogCount > 0)
+                Interlocked.Add(ref m_uiDismissedDialogs, report.DialogCount);
+            if (report.ModalPanelCount > 0)
+                Interlocked.Add(ref m_uiDismissedModalPanels, report.ModalPanelCount);
+            if (report.HudPanelCount > 0)
+                Interlocked.Add(ref m_uiDismissedHudPanels, report.HudPanelCount);
+        }
+
+        /// <summary>
+        /// 把"关掉了哪些界面"合并进命令回包。
+        ///
+        /// 每条世界内输入命令的成功回包都会带 `dismissedUi` / `dismissedCount` / `dismissedByKind`
+        /// （没关东西时是空表 + 0）—— 自动化据此就能区分"界面本来就干净"和"这次替我把对话框按掉了"。
+        /// 回包不是字典时（理论上不会发生）包一层 `result`，绝不丢信息。
+        /// </summary>
+        private static object AttachUiReport(object result, UiBlocker.Report report)
+        {
+            if (report == null)
+                return result;
+
+            Dictionary<string, object> extra = report.ToDictionary();
+            var dictionary = result as IDictionary<string, object>;
+            if (dictionary != null)
+            {
+                foreach (KeyValuePair<string, object> pair in extra)
+                {
+                    if (!dictionary.ContainsKey(pair.Key))
+                        dictionary[pair.Key] = pair.Value;
+                }
+                return result;
+            }
+
+            var wrapper = new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["result"] = result
+            };
+            foreach (KeyValuePair<string, object> pair in extra)
+                wrapper[pair.Key] = pair.Value;
+            return wrapper;
+        }
+
         // ---------------------------------------------------------------- 只读实现
 
         /// <summary>
@@ -1363,7 +1765,18 @@ namespace CmdBridgeMod
                 ["animating"] = ScreensManager.IsAnimating,
                 ["frameIndex"] = Time.FrameIndex,
                 ["worldLoaded"] = GameManager.Project != null,
-                ["inputInjection"] = m_config.EnableInputInjection
+                ["inputInjection"] = m_config.EnableInputInjection,
+                // 注入前 UI 检查的累计读数（本次运行）：一共替自动化关掉了多少挡路的界面。
+                // 单次命令的明细在回包的 `dismissedUi` 里；这里只给总量，便于"到底有没有生效"的复核。
+                ["uiDismissed"] = new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    ["dialogs"] = Volatile.Read(ref m_uiDismissedDialogs),
+                    ["modalPanels"] = Volatile.Read(ref m_uiDismissedModalPanels),
+                    ["hudPanels"] = Volatile.Read(ref m_uiDismissedHudPanels),
+                    ["total"] = Volatile.Read(ref m_uiDismissedDialogs)
+                        + Volatile.Read(ref m_uiDismissedModalPanels)
+                        + Volatile.Read(ref m_uiDismissedHudPanels)
+                }
             };
 
             ContainerWidget root = ScreensManager.RootWidget;

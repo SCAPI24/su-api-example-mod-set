@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Reflection;
 using System.Text;
 using Engine;
 using SuMultiplayer.Net;
@@ -49,7 +50,30 @@ namespace SuMultiplayer.Terrain
         /// 爆炸物引信（火药桶的倒计时由主机写进格子 data 并下发；客户端只表现、不倒计时）。
         /// 见 <see cref="FuseCellState"/> 与 Engine/ClientReplicaSubsystems.cs 的引信外壳。
         /// </summary>
-        Fuse = 19
+        Fuse = 19,
+        /// <summary>
+        /// 塌落物理：客户端不跑 SubsystemCollapsingBlockBehavior（OnNeighborBlockChanged / MovingBlocks
+        /// 的 Stopped / CollidedWithTerrain 都会 ChangeCell / DestroyCell）；只收主机的最终格。
+        /// 见 Engine/ClientReplicaSubsystems.cs 的 SuSubsystemCollapsingBlockBehavior。
+        /// </summary>
+        Collapsing = 20,
+        /// <summary>营火燃料烧尽（SubsystemCampfireBlockBehavior.Update / OnChunkDiscarding 写 data）。</summary>
+        Campfire = 21,
+        /// <summary>草陷阱受击后破坏周边（SubsystemGrassTrapBlockBehavior.Update → DestroyCell）。</summary>
+        GrassTrap = 22,
+        /// <summary>树叶失去原木后的腐烂（SubsystemWoodBlockBehavior.Update → ChangeCell）。</summary>
+        WoodDecay = 23,
+        /// <summary>宝藏生成器被邻接触发后自毁 + 生成拾取物（SubsystemTreasureGeneratorBlockBehavior）。</summary>
+        Treasure = 24,
+        /// <summary>延迟写格队列（SubsystemCellChangeQueue.Update → ChangeCell）。</summary>
+        CellChangeQueue = 25,
+        /// <summary>方块轮询扫描驱动（SubsystemBlocksScanner.Update → OnPoll，世界演化定时器入口）。</summary>
+        BlocksScanner = 26,
+        /// <summary>
+        /// 活塞运动表现（主机把推 / 拉的中间过程作为 PistonMoveEvent 下发；客户端只建本地
+        /// 只表现集合，不跑活塞逻辑、不写格）。见 Engine/ClientReplicaSubsystems.cs 的活塞外壳。
+        /// </summary>
+        Piston = 27
     }
 
     public static class ReplicaMutationSourceNames
@@ -58,7 +82,9 @@ namespace SuMultiplayer.Terrain
         {
             "fluid", "magma", "fire", "weather", "grass", "plant", "deciduous-leaves",
             "cactus", "rot", "carpet", "fallen-leaves", "soil", "ivy", "sapling",
-            "explosion", "creature-spawn", "spawn", "electricity", "unknown", "fuse"
+            "explosion", "creature-spawn", "spawn", "electricity", "unknown", "fuse",
+            "collapsing", "campfire", "grass-trap", "wood-decay", "treasure",
+            "cell-change-queue", "blocks-scanner", "piston"
         };
 
         public static string Of(ReplicaMutationSource source)
@@ -629,9 +655,19 @@ namespace SuMultiplayer.Terrain
         bool HasContents(ChunkKey key);
         /// <summary>读当前值（contents + data）。</summary>
         bool TryReadCell(int x, int y, int z, out int contents, out int data);
-        /// <summary>按主机的权威路径落地（引擎里就是 SubsystemTerrain.ChangeCell 那条路）。</summary>
-        bool TryApplyCell(int x, int y, int z, int contents, int data,
-            out int resultContents, out int resultData, out string reason);
+        /// <summary>
+        /// 按主机的权威路径落地（引擎里就是 <c>SubsystemTerrain.ChangeCell</c> 那条路）。
+        ///
+        /// 额外参数只服务于"被销毁方块的掉落"（见 <see cref="EditApplyOutcome"/>）：
+        ///   · <paramref name="clientId"/> = 发起编辑的玩家端（主机生成掉落时给它登记拾取宽限）；
+        ///   · <paramref name="toolLevel"/>/<paramref name="hasToolLevel"/> = 该玩家手持物的
+        ///     <c>Block.ToolLevel</c>（与 <c>ComponentMiner.Dig</c> 传给 <c>GetDropValues</c> 的口径一致）。
+        /// 引擎侧实现必须在 **改格之前** 调 <c>GetDropValues + OnItemHarvested</c>（可编辑方块的数据
+        /// 会在 ChangeCell 的 OnBlockRemoved 里被删掉），改格之后再 <c>AddPickable</c>。
+        /// </summary>
+        bool TryApplyCell(int clientId, int x, int y, int z, int contents, int data,
+            int toolLevel, bool hasToolLevel,
+            out EditApplyOutcome outcome, out string reason);
     }
 
     /// <summary>主机对一条编辑请求的裁决。</summary>
@@ -675,6 +711,18 @@ namespace SuMultiplayer.Terrain
 
         private readonly IEditAuthorityWorld m_world;
         private readonly Dictionary<int, ClientState> m_clients = new Dictionary<int, ClientState>();
+
+        /// <summary>方块销毁掉落账本（dropFromEditSpawned / Skipped[reason] / Mismatch）。</summary>
+        public EditDropLedger Drops { get; } = new EditDropLedger();
+
+        /// <summary>
+        /// 主机解析"该客户端手持物的 ToolLevel"（引擎侧由组合根注入：读联机化身权威背包的活跃槽）。
+        /// 返回 false = 化身 / 背包还没就绪 → 掉落明确记 no-tool-level，不猜 0。
+        /// </summary>
+        public delegate bool ClientToolLevelResolver(int clientId, out int toolLevel);
+
+        /// <summary>ToolLevel 解析器（组合根注入；null = 拿不到 → 记 no-tool-level）。</summary>
+        public ClientToolLevelResolver ToolLevels { get; set; }
 
         /// <summary>方块索引上限（= BlocksManager.Blocks.Length；由引擎侧注入）。</summary>
         public int BlockCount { get; set; } = 1024;
@@ -854,27 +902,38 @@ namespace SuMultiplayer.Terrain
                     decision.Data = currentData;
                     decision.Reason = "already";
                 }
-                else if (!m_world.TryApplyCell(x, y, z, contents, data,
-                    out int resultContents, out int resultData, out string applyReason))
-                {
-                    Rejected++;
-                    ApplyFailures++;
-                    decision.Reason = "主机落地失败：" + (applyReason ?? "unknown");
-                    if (m_world.TryReadCell(x, y, z, out int afterContents, out int afterData))
-                    {
-                        decision.HasValue = true;
-                        decision.Contents = afterContents;
-                        decision.Data = afterData;
-                    }
-                }
                 else
                 {
-                    Accepted++;
-                    decision.Accepted = true;
-                    decision.HasValue = true;
-                    decision.Contents = resultContents;
-                    decision.Data = resultData;
-                    decision.Reason = "ok";
+                    // 这次请求要销毁 / 替换一个非空气方块吗？（只有此时才需要 ToolLevel 算掉落）
+                    bool destroying = currentContents != 0 && currentContents != contents;
+                    int toolLevel = 0;
+                    bool hasToolLevel = false;
+                    if (destroying && ToolLevels != null)
+                        hasToolLevel = ToolLevels(clientId, out toolLevel);
+                    if (!m_world.TryApplyCell(clientId, x, y, z, contents, data, toolLevel,
+                            hasToolLevel, out EditApplyOutcome outcome, out string applyReason))
+                    {
+                        Rejected++;
+                        ApplyFailures++;
+                        decision.Reason = "主机落地失败：" + (applyReason ?? "unknown");
+                        if (m_world.TryReadCell(x, y, z, out int afterContents, out int afterData))
+                        {
+                            decision.HasValue = true;
+                            decision.Contents = afterContents;
+                            decision.Data = afterData;
+                        }
+                    }
+                    else
+                    {
+                        Accepted++;
+                        decision.Accepted = true;
+                        decision.HasValue = true;
+                        decision.Contents = outcome.ResultContents;
+                        decision.Data = outcome.ResultData;
+                        decision.Reason = "ok";
+                        // 方块销毁掉落账本：spawned（个数）/ skipped（原因）/ mismatch（两端分歧）。
+                        Drops.Record(in outcome);
+                    }
                 }
             }
             if (!decision.Accepted && !decision.HasValue &&
@@ -905,7 +964,440 @@ namespace SuMultiplayer.Terrain
                 " outOfRange=" + OutOfRange.ToString(CultureInfo.InvariantCulture) +
                 " notPlayer=" + NotPlayer.ToString(CultureInfo.InvariantCulture) +
                 " chunkNotLoaded=" + ChunkNotLoaded.ToString(CultureInfo.InvariantCulture) +
-                " applyFailures=" + ApplyFailures.ToString(CultureInfo.InvariantCulture);
+                " applyFailures=" + ApplyFailures.ToString(CultureInfo.InvariantCulture) +
+                " · " + Drops.Describe();
+        }
+    }
+    /// <summary>
+    /// 客户端"塌落"副本计数器：**实例状态**（挂在 SuSubsystemTerrain 上，没有静态字段）。
+    ///   · Gated            = 客户端拒绝本地塌落行为（OnNeighborBlockChanged / 移动组落地）的次数；
+    ///   · LandingSkipped   = 客户端看到主机复制的 "CollapsingBlock" 移动组落地，但**不写格**的次数
+    ///                        （最终格由主机 CellChange 下发，视觉由移动组复制负责）；
+    ///   · TablesCleared    = 客户端清掉的引擎内部工作表条目（本引擎版本没有 m_toMove；
+    ///                        若未来版本加了表，这里会计数，不静默）。
+    /// collapsingSkipped = TablesCleared（用户口径：清掉的引擎工作表）；LandingSkipped 单独列出
+    /// （客户端看到主机复制的移动组落地但只做表现）。状态行两个数都写，避免混口径。
+    /// </summary>
+    public sealed class CollapsingReplicaState
+    {
+        private long m_gated;
+        private long m_landingSkipped;
+        private long m_tablesCleared;
+
+        public long Gated => m_gated;
+        public long LandingSkipped => m_landingSkipped;
+        public long TablesCleared => m_tablesCleared;
+        /// <summary>清掉的引擎工作表（本版本没有 m_toMove；未来版本加表会计数）。</summary>
+        public long Skipped => m_tablesCleared;
+
+        public void NoteGated() => m_gated++;
+        public void NoteLandingSkipped() => m_landingSkipped++;
+        public void NoteTablesCleared(int count)
+        {
+            if (count > 0) m_tablesCleared += count;
+        }
+
+        public string Describe()
+        {
+            return "collapsingGated=" + m_gated.ToString(CultureInfo.InvariantCulture) +
+                " collapsingSkipped=" + Skipped.ToString(CultureInfo.InvariantCulture) +
+                " (tables=" + m_tablesCleared.ToString(CultureInfo.InvariantCulture) +
+                " landing=" + m_landingSkipped.ToString(CultureInfo.InvariantCulture) + ")";
+        }
+    }
+
+    /// <summary>
+    /// 客户端"活塞副本"计数器：**实例状态**（挂在 SuSubsystemTerrain 上，没有静态字段）。
+    ///   · BaseSubscriptionsDetached = 从 SubsystemMovingBlocks 的 Stopped / CollidedWithTerrain 上
+    ///     摘掉的**引擎基类私有写格委托**数（SubsystemPistonBlockBehavior.Load:172-173 的
+    ///     MovingBlocksStopped / MovingBlocksCollidedWithTerrain）；
+    ///   · ClientShellBaseWriteAttempts = 客户端拦下的、本来会走引擎基类写格路径的次数
+    ///     （base 的停止动作队列 / OnChunkDiscarding / OnBlockRemoved，以及 SuSubsystemMovingBlocks
+    ///     的移动组 base 写格窗口恢复的格）；ClientBasePistonWriteAttempt = 其中活塞来源；
+    ///     ClientShellBaseWriteNotReverted = 拦下但没能恢复原值的次数（明确失败，不静默）；
+    ///   · StraySetsRemoved = 下载世界残留 / 主机已拆活塞的纯表现移动组被移除的条数（只
+    ///     RemoveMovingBlockSet，不写任何格）。
+    /// 全部是"客户端闸门"口径，主机 / 单机恒为 0。
+    /// </summary>
+    public sealed class PistonReplicaState
+    {
+        private long m_baseSubscriptionsDetached;
+        private long m_clientShellBaseWriteAttempts;
+        private long m_clientBasePistonWriteAttempts;
+        private long m_clientShellBaseWriteNotReverted;
+        private long m_straySetsRemoved;
+        private long m_detachFailures;
+
+        public long BaseSubscriptionsDetached => m_baseSubscriptionsDetached;
+        public long ClientShellBaseWriteAttempts => m_clientShellBaseWriteAttempts;
+        /// <summary>其中活塞来源（Id=="Piston"）的次数（item 3 的 clientBasePistonWriteAttempt）。</summary>
+        public long ClientBasePistonWriteAttempts => m_clientBasePistonWriteAttempts;
+        /// <summary>拦下但**没能恢复原值**的次数（明确失败，不静默当作已拦下）。</summary>
+        public long ClientShellBaseWriteNotReverted => m_clientShellBaseWriteNotReverted;
+        public long StraySetsRemoved => m_straySetsRemoved;
+        public long DetachFailures => m_detachFailures;
+
+        public void NoteBaseSubscriptionsDetached(int count)
+        {
+            if (count > 0) m_baseSubscriptionsDetached += count;
+        }
+
+        /// <summary>兼容旧调用点：现有调用点（base 停止队列 / OnBlockRemoved / 区块卸载）全是活塞来源。</summary>
+        public void NoteClientShellBaseWriteAttempts(int count) =>
+            NoteClientShellBaseWriteAttempts(count, piston: true);
+
+        /// <summary>底座的 ChangeCell/DestroyCell 路径在客户端被拦下（piston = 活塞移动组来源）。</summary>
+        public void NoteClientShellBaseWriteAttempts(int count, bool piston)
+        {
+            if (count <= 0) return;
+            m_clientShellBaseWriteAttempts += count;
+            if (piston) m_clientBasePistonWriteAttempts += count;
+        }
+
+        public void NoteClientShellBaseWriteNotReverted() => m_clientShellBaseWriteNotReverted++;
+
+        public void NoteStraySetsRemoved(int count)
+        {
+            if (count > 0) m_straySetsRemoved += count;
+        }
+
+        public void NoteDetachFailure() => m_detachFailures++;
+
+        public string Describe()
+        {
+            return "pistonBaseSubscriptionsDetached=" +
+                m_baseSubscriptionsDetached.ToString(CultureInfo.InvariantCulture) +
+                " clientShellBaseWriteAttempts=" +
+                m_clientShellBaseWriteAttempts.ToString(CultureInfo.InvariantCulture) +
+                " clientBasePistonWriteAttempt=" +
+                m_clientBasePistonWriteAttempts.ToString(CultureInfo.InvariantCulture) +
+                " clientShellBaseWriteNotReverted=" +
+                m_clientShellBaseWriteNotReverted.ToString(CultureInfo.InvariantCulture) +
+                " pistonStraySetsRemoved=" +
+                m_straySetsRemoved.ToString(CultureInfo.InvariantCulture) +
+                " pistonDetachFailures=" +
+                m_detachFailures.ToString(CultureInfo.InvariantCulture);
+        }
+    }
+
+    /// <summary>
+    /// 客户端摘除引擎行为私有事件订阅的结果（纯反射，不依赖 Game）。
+    /// <see cref="Failure"/> == null 表示**后置条件已确认**：declaringType 的委托一个都不剩。
+    /// </summary>
+    public sealed class ClientEventDetachResult
+    {
+        public ClientEventDetachResult(bool eventFound, int removed, int remaining, string failure)
+        {
+            EventFound = eventFound;
+            Removed = removed;
+            Remaining = remaining;
+            Failure = failure;
+        }
+
+        public bool EventFound { get; }
+        public int Removed { get; }
+        public int Remaining { get; }
+        public string Failure { get; }
+        public bool Succeeded => Failure == null;
+    }
+
+    /// <summary>
+    /// 客户端摘事件订阅的反射工具。**只摘 declaringType 声明的方法**：外壳自己的表现回调
+    /// （SuSubsystemPistonBlockBehavior.OnPresentationStopped）声明在派生类，必须保留。
+    /// 为什么按声明类型而不是按方法名/目标实例猜：base.Load 订阅的私有方法名随引擎版本可能变，
+    /// "声明类型 + 后置条件复核（剩余 0 个）"能明确失败（日志里点名事件 / 委托），不静默兜底。
+    /// Source: Survivalcraft/Game/SubsystemPistonBlockBehavior.cs:Load:165-174
+    ///         Survivalcraft/Game/SubsystemCollapsingBlockBehavior.cs:Load:32-38
+    /// </summary>
+    public static class ClientReplicaEventDetach
+    {
+        private const BindingFlags EventFieldFlags =
+            BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public;
+
+        /// <summary>
+        /// 从 <paramref name="eventOwner"/> 的 <paramref name="eventName"/> 事件上摘掉所有
+        /// 由 <paramref name="declaringType"/> 声明的方法（委托）。返回后置条件复核结果：
+        /// 只有"事件存在且剩余该类委托 = 0"才算成功。
+        /// </summary>
+        public static ClientEventDetachResult DetachDeclaredHandlers(object eventOwner,
+            string eventName, Type declaringType)
+        {
+            if (eventOwner == null)
+                return Fail(eventName, "eventOwner=null（找不到事件宿主）");
+            if (string.IsNullOrEmpty(eventName))
+                return Fail(eventName, "eventName 为空");
+            if (declaringType == null)
+                return Fail(eventName, "declaringType=null");
+            FieldInfo field = eventOwner.GetType().GetField(eventName, EventFieldFlags);
+            if (field == null)
+                return Fail(eventName, "事件 backing field 不存在（宿主 " +
+                    eventOwner.GetType().FullName + "）");
+            if (field.IsStatic)
+                return Fail(eventName, "事件 backing field 是静态的（拒绝改动）");
+            Delegate handlers;
+            try
+            {
+                handlers = field.GetValue(eventOwner) as Delegate;
+            }
+            catch (Exception e)
+            {
+                return Fail(eventName, "读取事件委托失败：" + e.GetType().Name + " " + e.Message);
+            }
+            int removed = 0;
+            if (handlers != null)
+            {
+                Delegate remaining = handlers;
+                foreach (Delegate handler in handlers.GetInvocationList())
+                {
+                    if (handler?.Method == null || handler.Method.DeclaringType != declaringType)
+                        continue;
+                    remaining = Delegate.Remove(remaining, handler);
+                    removed++;
+                }
+                if (removed > 0)
+                {
+                    try
+                    {
+                        field.SetValue(eventOwner, remaining);
+                    }
+                    catch (Exception e)
+                    {
+                        return Fail(eventName, "写回事件委托失败：" + e.GetType().Name + " " +
+                            e.Message);
+                    }
+                }
+            }
+            Delegate after;
+            try
+            {
+                after = field.GetValue(eventOwner) as Delegate;
+            }
+            catch (Exception e)
+            {
+                return Fail(eventName, "复核事件委托失败：" + e.GetType().Name + " " + e.Message);
+            }
+            int stillAttached = CountDeclaredHandlers(after, declaringType);
+            if (stillAttached != 0)
+                return new ClientEventDetachResult(true, removed, stillAttached,
+                    "事件 '" + eventName + "' 仍挂着 " + stillAttached + " 个 " +
+                    declaringType.FullName + " 委托");
+            return new ClientEventDetachResult(true, removed, 0, null);
+        }
+
+        /// <summary>复核某事件上是否还挂着 <paramref name="target"/> 的指定方法（方法名可为空）。</summary>
+        public static bool HasHandler(object eventOwner, string eventName, object target,
+            string methodName)
+        {
+            if (eventOwner == null || string.IsNullOrEmpty(eventName) || target == null)
+                return false;
+            FieldInfo field = eventOwner.GetType().GetField(eventName, EventFieldFlags);
+            if (field == null || field.IsStatic) return false;
+            Delegate handlers;
+            try
+            {
+                handlers = field.GetValue(eventOwner) as Delegate;
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+            if (handlers == null) return false;
+            foreach (Delegate handler in handlers.GetInvocationList())
+            {
+                if (!ReferenceEquals(handler?.Target, target)) continue;
+                if (string.IsNullOrEmpty(methodName) ||
+                    string.Equals(handler.Method?.Name, methodName, StringComparison.Ordinal))
+                    return true;
+            }
+            return false;
+        }
+
+        private static int CountDeclaredHandlers(Delegate handlers, Type declaringType)
+        {
+            if (handlers == null) return 0;
+            int count = 0;
+            foreach (Delegate handler in handlers.GetInvocationList())
+                if (handler?.Method != null && handler.Method.DeclaringType == declaringType) count++;
+            return count;
+        }
+
+        private static ClientEventDetachResult Fail(string eventName, string reason) =>
+            new ClientEventDetachResult(false, 0, 0,
+                (string.IsNullOrEmpty(eventName) ? "event" : "event '" + eventName + "'") +
+                "：" + reason);
+    }
+
+    /// <summary>
+    /// 副本覆盖清单（**审计用**，不是运行时判定）：Pak/Database.xml 的 Subsystems 全集 → 分类。
+    /// 目的：任何新增的子系统都必须在这里显式归类；`unprotectedWorldSim` 非空就说明有"会改地形却没闸门"
+    /// 的世界模拟。Engine 侧在进入世界后限流打印一次完整清单（见 SuSubsystemTerrain）。
+    ///
+    /// 分类口径（2026-10-19 逐个读引擎源码得出）：
+    ///   · Gated                    客户端不推进（外壳拒绝并计数），主机照常；
+    ///   · Presentation             不改格（渲染 / 音频 / 注册表 / 实体状态 / 扫描游标）；
+    ///   · DeterministicEdit        只在玩家同一次编辑的 OnBlockAdded/Removed/Neighbor 回调里写格
+    ///                              （含 SubsystemElectricBlockBehavior 把邻居回调转给 ElectricElement，
+    ///                              例如挂载电池失去支撑）；主机对同一条编辑会执行同一回调，
+    ///                              结果同格同值（幂等），不是独立模拟；
+    ///   · InteractionOnly          只在 OnUse/OnInteract/OnEditBlock/OnEditInventoryItem 里写格；
+    ///                              客户端交互走主机请求（BlockUse/Authority），不本地落地；
+    ///   · ElectricityDependent     只在 SubsystemElectricity 求解里写格；客户端电力已闸门；
+    ///   · ProtectedByHandlerDetach 自身不写格；最终落格在别的行为的 Stopped/CollidedWithTerrain 里，
+    ///                              客户端由 Piston/Collapsing 外壳摘掉这些订阅（移动组只做视觉）；
+    ///   · UnprotectedWorldSim      **不应该存在**：会独立改地形却没闸门的子系统（清单非空即缺口）；
+    ///   · MissingSource            引擎源码里没有该类（数据库有模板但源码缺失），无写格实现可闸门。
+    /// </summary>
+    public static class ClientReplicaCoverage
+    {
+
+        public static readonly string[] Gated =
+        {
+            "Game.SubsystemFallenLeavesBlockBehavior", "Game.SubsystemFireBlockBehavior",
+            "Game.SubsystemDeciduousLeavesBlockBehavior", "Game.SubsystemMatchBlockBehavior",
+            "Game.SubsystemPlantBlockBehavior", "Game.SubsystemSaplingBlockBehavior",
+            "Game.SubsystemCactusBlockBehavior", "Game.SubsystemWoodBlockBehavior",
+            "Game.SubsystemRotBlockBehavior", "Game.SubsystemMagmaBlockBehavior",
+            "Game.SubsystemSoilBlockBehavior", "Game.SubsystemCampfireBlockBehavior",
+            "Game.SubsystemMusketBlockBehavior", "Game.SubsystemGrassBlockBehavior",
+            "Game.SubsystemGrassTrapBlockBehavior", "Game.SubsystemIvyBlockBehavior",
+            "Game.SubsystemBottomSuckerBlockBehavior", "Game.SubsystemTreasureGeneratorBlockBehavior",
+            "Game.SubsystemCrossbowBlockBehavior", "Game.SubsystemWaterPlantBlockBehavior",
+            "Game.SubsystemBowBlockBehavior", "Game.SubsystemThrowableBlockBehavior",
+            "Game.SubsystemFireworksBlockBehavior", "Game.SubsystemWaterBlockBehavior",
+            "Game.SubsystemExplosivesBlockBehavior", "Game.SubsystemInWaterBlockBehavior",
+            "Game.SubsystemCarpetBlockBehavior", "Game.SubsystemCollapsingBlockBehavior",
+            "Game.SubsystemCellChangeQueue", "Game.SubsystemPickables",
+            "Game.SubsystemSpawn", "Game.SubsystemWeather",
+            "Game.SubsystemTerrain", "Game.SubsystemBlocksScanner",
+            "Game.SubsystemCreatureSpawn", "Game.SubsystemProjectiles",
+            "Game.SubsystemElectricity", "Game.SubsystemExplosions",
+            // 活塞物理（由 90abe952 的 moving-block 复制工作流加外壳；客户端只做表现，
+            // 最终格收主机 CellChange）。Source: SubsystemPistonBlockBehavior.cs:295-469。
+            "Game.SubsystemPistonBlockBehavior",
+            // 移动组驱动：客户端由 SuSubsystemMovingBlocks 外壳替换（本地只建只表现集合，
+            // 出格写入被 ClientMovingBlockWriteGuard 快照/恢复并计数）。
+            // Source: SubsystemMovingBlocks.cs:Update:277-353 TerrainCollision:508-535
+            "Game.SubsystemMovingBlocks"
+        };
+
+        public static readonly string[] Presentation =
+        {
+            "Game.SubsystemNames", "Game.SubsystemPalette",
+            "Game.SubsystemPlayers", "Game.SubsystemPathfinding",
+            "Game.SubsystemItemsScanner", "Game.SubsystemTime",
+            "Game.SubsystemUpdate", "Game.SubsystemNoise",
+            "Game.SubsystemTimeOfDay", "Game.SubsystemGameInfo",
+            "Game.SubsystemBodies", "Game.SubsystemSky",
+            "Game.SubsystemPlayerStats", "Game.SubsystemBlockEntities",
+            "Game.SubsystemSeasons", "Game.SubsystemBlockBehaviors",
+            "Game.SubsystemAnimatedTextures", "Game.SubsystemGlow",
+            "Game.SubsystemGameWidgets", "Game.SubsystemModelsRenderer",
+            "Game.SubsystemPostprocessor", "Game.SubsystemBlocksTexture",
+            "Game.SubsystemDrawing", "Game.SubsystemParticles",
+            "Game.SubsystemShadows", "Game.SubsystemAudio",
+            "Game.SubsystemAmbientSounds",
+            // 只做撞击音效解析，不写格（SubsystemSoundMaterials.cs 无 ChangeCell/DestroyCell）。
+            "Game.SubsystemSoundMaterials"
+        };
+
+        public static readonly string[] DeterministicEdit =
+        {
+            "Game.SubsystemSignBlockBehavior", "Game.SubsystemTorchBlockBehavior",
+            "Game.SubsystemLadderBlockBehavior", "Game.SubsystemTrapdoorBlockBehavior",
+            "Game.SubsystemGravestoneBlockBehavior", "Game.SubsystemSnowBlockBehavior",
+            "Game.SubsystemMetersBlockBehavior", "Game.SubsystemFenceBlockBehavior",
+            "Game.SubsystemMagnetBlockBehavior", "Game.SubsystemStairsBlockBehavior",
+            "Game.SubsystemDoorBlockBehavior", "Game.SubsystemElectricBlockBehavior"
+        };
+
+        public static readonly string[] InteractionOnly =
+        {
+            "Game.SubsystemButtonBlockBehavior", "Game.SubsystemFertilizerBlockBehavior",
+            "Game.SubsystemTruthTableCircuitBlockBehavior", "Game.SubsystemRakeBlockBehavior",
+            "Game.SubsystemBatteryBlockBehavior", "Game.SubsystemFurnitureBlockBehavior",
+            "Game.SubsystemBucketBlockBehavior", "Game.SubsystemSwitchBlockBehavior",
+            "Game.SubsystemChestBlockBehavior", "Game.SubsystemMemoryBankBlockBehavior",
+            "Game.SubsystemFenceGateBlockBehavior", "Game.SubsystemSaddleBlockBehavior",
+            "Game.SubsystemCraftingTableBlockBehavior", "Game.SubsystemBulletBlockBehavior",
+            "Game.SubsystemWhistleBlockBehavior", "Game.SubsystemFurnaceBlockBehavior",
+            "Game.SubsystemArrowBlockBehavior", "Game.SubsystemAdjustableDelayGateBlockBehavior",
+            "Game.SubsystemImpactExplosivesBlockBehavior", "Game.SubsystemDispenserBlockBehavior",
+            "Game.SubsystemBombBlockBehavior", "Game.SubsystemEggBlockBehavior",
+            "Game.SubsystemHammerBlockBehavior", "Game.SubsystemBoatBlockBehavior"
+        };
+
+        public static readonly string[] ElectricityDependent =
+        {
+            // 只在 SpikedPlankElectricElement.Simulate → RetractExtendSpikes 里写格；
+            // 客户端 SubsystemElectricity 已闸门，求解不会发生。
+            "Game.SubsystemSpikesBlockBehavior"
+        };
+
+        public static readonly string[] ProtectedByHandlerDetach =
+        {
+            // 空：MovingBlocks 现在由 SuSubsystemMovingBlocks 外壳驱动（客户端只做表现 + 写格守卫），
+            // 已归入 Gated；保留该分类以免 TotalCount 口径变化。
+        };
+
+        public static readonly string[] MissingSource =
+        {
+            "Game.SubsystemLedBlockBehavior"
+        };
+
+        // 没有缺口：Database.xml 的 106 个 Subsystems 类全部显式归类。
+        public static readonly string[] UnprotectedWorldSim = Array.Empty<string>();
+
+        public static int TotalCount =>
+            Gated.Length + Presentation.Length + DeterministicEdit.Length +
+            InteractionOnly.Length + ElectricityDependent.Length +
+            ProtectedByHandlerDetach.Length + MissingSource.Length +
+            UnprotectedWorldSim.Length;
+
+        private static string Join(string[] names)
+        {
+            if (names == null || names.Length == 0) return "none";
+            var builder = new StringBuilder(names.Length * 48);
+            for (int i = 0; i < names.Length; i++)
+            {
+                if (i > 0) builder.Append(',');
+                builder.Append(names[i]);
+            }
+            return builder.ToString();
+        }
+
+        /// <summary>完整一份（gated + 每个 un-gated 分类 + unprotected 缺口）——日志里一眼看全。</summary>
+        public static string DescribeAudit()
+        {
+            return "replicaGates total=" + TotalCount.ToString(CultureInfo.InvariantCulture) +
+                " gated=" + Gated.Length.ToString(CultureInfo.InvariantCulture) +
+                " [" + Join(Gated) + "]" +
+                " · ungated presentation=" + Presentation.Length.ToString(CultureInfo.InvariantCulture) +
+                " [" + Join(Presentation) + "]" +
+                " · deterministicEdit=" + DeterministicEdit.Length.ToString(CultureInfo.InvariantCulture) +
+                " [" + Join(DeterministicEdit) + "]" +
+                " · interactionOnly=" + InteractionOnly.Length.ToString(CultureInfo.InvariantCulture) +
+                " [" + Join(InteractionOnly) + "]" +
+                " · electricityDependent=" +
+                ElectricityDependent.Length.ToString(CultureInfo.InvariantCulture) +
+                " [" + Join(ElectricityDependent) + "]" +
+                " · handlerDetached=" +
+                ProtectedByHandlerDetach.Length.ToString(CultureInfo.InvariantCulture) +
+                " [" + Join(ProtectedByHandlerDetach) + "]" +
+                " · missingSource=" + MissingSource.Length.ToString(CultureInfo.InvariantCulture) +
+                " [" + Join(MissingSource) + "]" +
+                " · unprotectedWorldSim=" +
+                UnprotectedWorldSim.Length.ToString(CultureInfo.InvariantCulture) +
+                " [" + Join(UnprotectedWorldSim) + "]";
+        }
+
+        /// <summary>只有缺口（用于 Warning；空字符串 = 没有缺口）。</summary>
+        public static string DescribeGaps()
+        {
+            return UnprotectedWorldSim.Length == 0
+                ? string.Empty
+                : "replicaGatesGap unprotectedWorldSim=" +
+                    UnprotectedWorldSim.Length.ToString(CultureInfo.InvariantCulture) +
+                    " [" + Join(UnprotectedWorldSim) + "]";
         }
     }
 }

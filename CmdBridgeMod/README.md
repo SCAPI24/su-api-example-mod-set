@@ -79,6 +79,14 @@ ComponentLocomotion.m_lookAngles        (view pitch; yaw is written through Comp
 WidgetInput.m_mouseDownPoint            (cleared after a synthetic click, defensively)
 ```
 
+There is exactly one more (UI) write path, added in 1.1.29: the **pre-input UI check** closes the
+UI that makes the engine ignore world input. It only calls the engine's own close/accept paths —
+`MessageDialog.Dismiss(...)` (the code behind OK/Cancel), `TextBoxDialog.Dismiss(...)`,
+`DialogsManager.HideDialog(...)`, `ComponentGui.ModalPanelWidget = null` and
+`ButtonWidget.IsChecked = false` for the HUD `MoreButton`. It never writes world state
+(no teleport, no inventory, no blocks) and never touches the real mouse/keyboard/window.
+See `doc/cmdbridge-ui-automation.md` section 14.
+
 ## Commands
 
 Read-only: `ping` (also reports `dispatcherReady`), `status`, `obs.snapshot`, `obs.ui`,
@@ -88,6 +96,21 @@ Read-only: `ping` (also reports `dispatcherReady`), `status`, `obs.snapshot`, `o
 
 Actions: `act.look`, `act.lookdelta`, `act.lookat`, `act.key`, `act.hold`, `act.chord`,
 `act.mouse`, `act.wheel`, `act.uiclick`, `act.text`, `act.releaseAll`.
+
+Blocking UI: `act.closeui` dismisses the UI that is eating world input (dialog → its own
+accept/cancel path, modal panel → `ModalPanelWidget = null`, HUD `MoreContents` → collapse)
+and reports `dismissedUi` / `dismissedCount` / `dismissedByKind`. Every world-input command
+(`act.move/lookat/key/dig/use/interact/place/aim`) runs the same check before injecting;
+if a blocker cannot be dismissed the command fails with `ui_blocking` instead of injecting a
+silent no-op.
+
+Player interaction (the engine's right mouse button, injected virtually):
+`act.use` (held item `OnUse`), `act.interact` (block `OnInteract`), `act.place` (placement) —
+all three are the same `PlayerInput.Interact` edge, and `ComponentPlayer.Update` runs
+`Use -> Interact -> Place` in that order (`ComponentPlayer.cs:151-181`);
+`act.aim start|release|cancel` holds / releases / cancels `PlayerInput.Aim`
+(`ComponentInput.cs:185`, `ComponentPlayer.cs:183-227`). See
+`doc/cmdbridge-ui-automation.md` section 13 for the full mapping and caveats.
 
 Wire format is one UTF-8 JSON object per line:
 

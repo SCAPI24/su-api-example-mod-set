@@ -39,23 +39,55 @@ namespace SuMultiplayer.Net
     }
 
     /// <summary>
-    /// 客户端在**本地扣除之前**采集到的"整格丢弃"意图（纯值）。
-    /// 只由 Engine/PickableReplicaEngine.cs 的输入钩子产生：它先吞掉引擎原生的 Drop 分支
-    /// （ComponentPlayer.Update 的 RemoveSlotItems + AddPickable），再交给模块发请求。
+    /// 一次客户端丢弃的来源（与 <c>Protocol/entities.proto</c> 的 <c>DropSource</c>
+    /// 数值一一对应）。所有**线上/判定层**都只认这两个值，未知值明确拒绝。
+    /// </summary>
+    public static class DropSources
+    {
+        /// <summary>键盘 / 手柄 Drop：引擎丢弃**整个活跃槽**（8 m/s × 视线）。</summary>
+        public const int Input = 0;
+
+        /// <summary>UI 拖出到世界（ViewWidget.DragDrop）：丢弃指定数量（12 m/s × 拖拽方向）。</summary>
+        public const int Ui = 1;
+
+        public static bool IsKnown(int source) => source == Input || source == Ui;
+
+        public static string Name(int source)
+        {
+            switch (source)
+            {
+                case Input: return "input";
+                case Ui: return "ui";
+                default: return "source-" + source;
+            }
+        }
+    }
+
+    /// <summary>
+    /// 客户端在**本地扣除之前**采集到的丢弃意图（纯值）。
+    ///   · <see cref="DropSources.Input"/>：由 Engine/PickableReplicaEngine.cs 的输入钩子产生，
+    ///     先吞掉引擎原生的 Drop 分支（ComponentPlayer.Update 的 RemoveSlotItems + AddPickable）；
+    ///   · <see cref="DropSources.Ui"/>：由 Engine/UiDropInterception.cs 在
+    ///     <c>ViewWidget.DragDrop</c> 执行之前产生（拖拽仍处于 DragHostWidget 阶段），
+    ///     同样不本地扣除、不本地生成拾取物。
     /// Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update
     ///         （position = body + (0, StanceBoxSize.Y*0.66, 0) + 0.25*Forward；
     ///          velocity = 8 * CreateFromQuaternion(EyeRotation).Forward）
+    /// Source: Survivalcraft/Game/ViewWidget.cs:ViewWidget.DragDrop
+    ///         （position = ActiveCamera.ViewPosition；
+    ///          velocity = Normalize(ScreenToWorld(drag) - ViewPosition) * 12）
     /// </summary>
     public readonly struct PickableDropIntent
     {
         public PickableDropIntent(int activeSlot, int itemValue, int count, Vector3 position,
-            Vector3 direction)
+            Vector3 direction, int source = DropSources.Input)
         {
             ActiveSlot = activeSlot;
             ItemValue = itemValue;
             Count = count;
             Position = position;
             Direction = direction;
+            Source = source;
         }
 
         public int ActiveSlot { get; }
@@ -63,17 +95,20 @@ namespace SuMultiplayer.Net
         public int Count { get; }
         public Vector3 Position { get; }
         public Vector3 Direction { get; }
+        /// <summary><see cref="DropSources"/> 之一。</summary>
+        public int Source { get; }
 
-        public string Describe() => "slot=" + ActiveSlot + " value=" + ItemValue +
-            " count=" + Count + " pos=(" + Position.X.ToString("F2") + "," +
-            Position.Y.ToString("F2") + "," + Position.Z.ToString("F2") + ")";
+        public string Describe() => "src=" + DropSources.Name(Source) + " slot=" + ActiveSlot +
+            " value=" + ItemValue + " count=" + Count + " pos=(" +
+            Position.X.ToString("F2") + "," + Position.Y.ToString("F2") + "," +
+            Position.Z.ToString("F2") + ")";
     }
 
     /// <summary>客户端 → 主机：PickableDropRequest 的纯值形态（模块负责序号）。</summary>
     public readonly struct PickableDropRequestData
     {
         public PickableDropRequestData(long sequence, int activeSlot, int itemValue, int count,
-            Vector3 position, Vector3 direction)
+            Vector3 position, Vector3 direction, int source = DropSources.Input)
         {
             Sequence = sequence;
             ActiveSlot = activeSlot;
@@ -81,6 +116,7 @@ namespace SuMultiplayer.Net
             Count = count;
             Position = position;
             Direction = direction;
+            Source = source;
         }
 
         public long Sequence { get; }
@@ -89,16 +125,19 @@ namespace SuMultiplayer.Net
         public int Count { get; }
         public Vector3 Position { get; }
         public Vector3 Direction { get; }
+        /// <summary><see cref="DropSources"/> 之一。</summary>
+        public int Source { get; }
 
-        public string Describe() => "seq=" + Sequence + " slot=" + ActiveSlot +
-            " value=" + ItemValue + " count=" + Count;
+        public string Describe() => "seq=" + Sequence + " src=" + DropSources.Name(Source) +
+            " slot=" + ActiveSlot + " value=" + ItemValue + " count=" + Count;
     }
 
     /// <summary>主机执行一次客户端丢弃请求的结果（成功时构造）。</summary>
     public readonly struct PickableDropOutcome
     {
         public PickableDropOutcome(int itemValue, int count, Vector3 position, Vector3 velocity,
-            int[] indices, int[] values, int[] counts, int inventoryVersion)
+            int[] indices, int[] values, int[] counts, int inventoryVersion,
+            int pickableId = 0)
         {
             ItemValue = itemValue;
             Count = count;
@@ -108,6 +147,7 @@ namespace SuMultiplayer.Net
             Values = values ?? Array.Empty<int>();
             Counts = counts ?? Array.Empty<int>();
             InventoryVersion = inventoryVersion;
+            PickableId = pickableId;
         }
 
         public int ItemValue { get; }
@@ -118,6 +158,8 @@ namespace SuMultiplayer.Net
         public int[] Values { get; }
         public int[] Counts { get; }
         public int InventoryVersion { get; }
+        /// <summary>主机给这个拾取物分配的实体复制 id（客户端据此立即物化副本）。</summary>
+        public int PickableId { get; }
 
         public bool HasInventory => Indices.Length > 0;
     }
@@ -127,7 +169,7 @@ namespace SuMultiplayer.Net
     {
         public PickableDropResultData(long sequence, bool accepted, string reason, int itemValue,
             int count, Vector3 position, Vector3 velocity, int[] indices, int[] values,
-            int[] counts, int inventoryVersion)
+            int[] counts, int inventoryVersion, int pickableId = 0)
         {
             Sequence = sequence;
             Accepted = accepted;
@@ -140,6 +182,7 @@ namespace SuMultiplayer.Net
             Values = values ?? Array.Empty<int>();
             Counts = counts ?? Array.Empty<int>();
             InventoryVersion = inventoryVersion;
+            PickableId = pickableId;
         }
 
         public long Sequence { get; }
@@ -153,6 +196,8 @@ namespace SuMultiplayer.Net
         public int[] Values { get; }
         public int[] Counts { get; }
         public int InventoryVersion { get; }
+        /// <summary>主机给这个拾取物分配的实体复制 id（0 = 旧主机没有提供）。</summary>
+        public int PickableId { get; }
 
         public bool HasInventory => Indices.Length > 0;
 
@@ -161,8 +206,8 @@ namespace SuMultiplayer.Net
                 Values, Counts);
 
         public string Describe() => "seq=" + Sequence + (Accepted ? " accepted" : " rejected(" +
-            Reason + ")") + " value=" + ItemValue + " count=" + Count + " delta=" +
-            Indices.Length;
+            Reason + ")") + " value=" + ItemValue + " count=" + Count + " pickable=" +
+            PickableId + " delta=" + Indices.Length;
     }
 
     /// <summary>
@@ -226,7 +271,8 @@ namespace SuMultiplayer.Net
     public readonly struct ProjectileFireOutcome
     {
         public ProjectileFireOutcome(int kind, int spawned, int itemValue, Vector3 position,
-            Vector3 velocity, int[] indices, int[] values, int[] counts, int inventoryVersion)
+            Vector3 velocity, int[] indices, int[] values, int[] counts, int inventoryVersion,
+            Vector3 origin = default, Vector3 direction = default, bool misfire = false)
         {
             Kind = kind;
             Spawned = spawned;
@@ -237,6 +283,9 @@ namespace SuMultiplayer.Net
             Values = values ?? Array.Empty<int>();
             Counts = counts ?? Array.Empty<int>();
             InventoryVersion = inventoryVersion;
+            Origin = origin;
+            Direction = direction;
+            Misfire = misfire;
         }
 
         public int Kind { get; }
@@ -248,6 +297,11 @@ namespace SuMultiplayer.Net
         public int[] Values { get; }
         public int[] Counts { get; }
         public int InventoryVersion { get; }
+        /// <summary>主机权威出生点（EyePosition；即使 spawned=0 也有值，供开火表现使用）。</summary>
+        public Vector3 Origin { get; }
+        /// <summary>主机权威视线方向（EyeRotation 前向）。</summary>
+        public Vector3 Direction { get; }
+        public bool Misfire { get; }
 
         public bool HasInventory => Indices.Length > 0;
     }
@@ -316,7 +370,8 @@ namespace SuMultiplayer.Net
                 ItemValue = request.ItemValue,
                 Count = request.Count,
                 Position = EntityCodec.ToVec3(request.Position),
-                Direction = EntityCodec.ToVec3(request.Direction)
+                Direction = EntityCodec.ToVec3(request.Direction),
+                Source = (PE.DropSource)request.Source
             };
 
         public static byte[] EncodeDropBytes(in PickableDropRequestData request) =>
@@ -352,6 +407,12 @@ namespace SuMultiplayer.Net
                 reason = "drop-count-" + message.Count;
                 return false;
             }
+            int source = (int)message.Source;
+            if (!DropSources.IsKnown(source))
+            {
+                reason = "drop-source-" + source;
+                return false;
+            }
             if (!EntityCodec.TryVector(message.Position, "drop-position", out Vector3 position,
                     out reason))
                 return false;
@@ -359,7 +420,7 @@ namespace SuMultiplayer.Net
                     out Vector3 direction, out reason))
                 return false;
             request = new PickableDropRequestData(message.Sequence, message.ActiveSlot,
-                message.ItemValue, message.Count, position, direction);
+                message.ItemValue, message.Count, position, direction, source);
             return true;
         }
 
@@ -372,7 +433,8 @@ namespace SuMultiplayer.Net
                 Reason = result.Reason ?? string.Empty,
                 ItemValue = result.ItemValue,
                 Count = result.Count,
-                InventoryVersion = result.InventoryVersion
+                InventoryVersion = result.InventoryVersion,
+                PickableId = result.PickableId
             };
             if (result.Accepted)
             {
@@ -440,7 +502,7 @@ namespace SuMultiplayer.Net
                     return false;
                 result = new PickableDropResultData(message.Sequence, true, string.Empty,
                     message.ItemValue, message.Count, position, velocity, indices, values,
-                    counts, message.InventoryVersion);
+                    counts, message.InventoryVersion, message.PickableId);
                 return true;
             }
             if (!EntityCodec.TryDecodeInventorySlots(message.Inventory, out int[] rIndices,

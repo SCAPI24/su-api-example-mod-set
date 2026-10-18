@@ -1,0 +1,75 @@
+syntax = "proto3";
+
+package sump.remotesound;
+
+option csharp_namespace = "SuMultiplayer.Protocol.Remotesound";
+option optimize_for = SPEED;
+
+import "google/protobuf/any.proto";
+import "position.proto";
+
+// ---------------------------------------------------------------------------
+// Presentation-only relay for sounds produced on the host while it executes a
+// *remote* player's action (BlockUseRequest / container interaction, ...).
+//
+// Engine fact: the block behaviours always call SubsystemAudio locally.  A
+// switch / button / lever interaction is executed on the host through the
+// remote player's own ComponentMiner (ContainerReplicaEngine.TryExecuteUse),
+// so only the host hears Audio/Click; the client that requested the
+// interaction hears nothing.  The same applies to doors, trapdoors, campfires,
+// dispensers, furniture, ...
+//
+// Source: Survivalcraft/Game/SwitchElectricElement.cs:27 (Audio/Click)
+// Source: Survivalcraft/Game/ButtonElectricElement.cs:26 (Audio/Click)
+// Source: Survivalcraft/Game/SubsystemDoorBlockBehavior.cs:24 (door open/close)
+// Source: Survivalcraft/Game/SubsystemCampfireBlockBehavior.cs:209/213
+// Source: Survivalcraft/Game/SubsystemAudio.cs:98/112/118/124/138/144
+//         (PlaySound / PlayRandomSound: NOT virtual; see Engine/
+//          RemoteActionAudioReplica.cs for the capture mechanism)
+//
+// Wire id lives in protocol.proto (MessageType.REMOTE_ACTION_SOUND = 68).  It
+// is append-only: never renumber.
+//
+// Presentation only: clients play these sounds; they never write cells, spawn
+// entities or deal damage.  Terrain / inventory state still travels through
+// the ordinary CellChange / ContainerState streams.
+// ---------------------------------------------------------------------------
+
+// One captured sound.  The host records the sound while the remote action runs
+// (see RemoteActionAudioReplica) and every receiving client replays it at the
+// recorded world position.
+message RemoteSoundClip {
+  // Audio content name exactly as passed to SubsystemAudio (e.g. "Audio/Click").
+  string sound = 1;
+  // World position the sound is presented at (the interaction anchor; the
+  // engine audio queue does not retain the original position, see the adapter).
+  sump.position.Vec3 position = 2;
+  // Effective emission volume.  The host derives it so that
+  // CalculateVolume(host_listener_distance, min_distance) equals the volume the
+  // engine actually queued (the host listener distance is not replicated).
+  float volume = 3;
+  float pitch = 4;
+  // Effective minimum distance for the client-side falloff.
+  float min_distance = 5;
+  // true = the original call used autoDelay (recomputed per receiving client).
+  bool auto_delay = 6;
+}
+
+// Host -> one client (the requester) and to every other client within
+// RemoteSoundPolicy.MaxRelayDistance.  Coalesced: one event per remote action,
+// carrying every sound that action produced.
+message RemoteActionSound {
+  // Host-side transport id of the client whose action produced these sounds.
+  // 0 is never used for a relayed event (the host's own actions are not relayed).
+  int32 source_client_id = 1;
+  // Host clock in milliseconds (diagnostics / ordering).
+  int64 server_tick_ms = 2;
+  // Host session sequence, starts at 1, strictly increasing.  Clients dedupe by it.
+  uint32 event_id = 3;
+  // 1..RemoteSoundPolicy.MaxSoundsPerEvent entries (host-capped, extra sounds
+  // are counted and logged, never silently dropped).
+  repeated RemoteSoundClip sounds = 4;
+
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}

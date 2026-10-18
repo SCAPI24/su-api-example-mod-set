@@ -186,6 +186,12 @@ namespace CmdBridgeClient
                         return Print(client, "obs.input", null);
                     case "aim":
                         return Print(client, "obs.aim", Args(("maxDistance", 8f)));
+                    // 关掉挡着世界输入的界面（对话框 → 引擎自己的 Dismiss 路径；背包/创造背包等
+                    // 模态面板 → ComponentGui.ModalPanelWidget = null；HUD MoreContents → 收起）。
+                    // 什么都没挡时服务端报 `ui_not_blocking`，不会返回"成功但什么都没做"。
+                    case "closeui":
+                    case "act.closeui":
+                        return CloseUiCommand(client, args);
                     case "events":
                         return Print(client, "obs.events", Args(
                             ("sinceSeq", args.Count >= 2 ? ParseInt(args[1]) : 0),
@@ -260,6 +266,21 @@ namespace CmdBridgeClient
                     case "wheel":
                         Require(args.Count >= 2, "wheel <notches>");
                         return Print(client, "act.wheel", Args(("delta", ParseInt(args[1]))));
+                    // 玩家交互输入：引擎里"使用 / 交互 / 放置"是同一个右键边沿
+                    // （`PlayerInput.Interact`，ComponentPlayer 按 Use → Interact → Place 消费），
+                    // "瞄准"是同一个右键按住（`PlayerInput.Aim`）。命令名保留语义，回包里的
+                    // `predictedBranch` 与 `cells.changed` 才是"引擎实际走了哪一步"的读据。
+                    case "act.use":
+                    case "use":
+                        return InteractionCommand(client, args, "use");
+                    case "act.interact":
+                    case "interact":
+                        return InteractionCommand(client, args, "interact");
+                    case "act.place":
+                    case "place":
+                        return InteractionCommand(client, args, "place");
+                    case "act.aim":
+                        return AimCommand(client, args);
                     case "click":
                         return ClickCommand(client, args);
                     case "text":
@@ -447,6 +468,31 @@ namespace CmdBridgeClient
             return 0;
         }
 
+        /// <summary>
+        /// `sccmd closeui [--cancel|--accept] [--button 1|2]` → 服务端 `act.closeui`。
+        ///
+        /// 关掉挡着世界输入的界面，并打印服务端回报的 `dismissedUi`（关掉了什么）。
+        /// `--cancel` 只对 `MessageDialog` 有意义：走引擎的 Cancel 分支（第二个按钮 / 没有就第一个），
+        /// 用于"Are you sure?"这类确认框的**拒绝**；默认 `--accept` 走引擎的 OK 分支。
+        /// </summary>
+        private static int CloseUiCommand(BridgeClient client, List<string> args)
+        {
+            var arguments = new Dictionary<string, object>(StringComparer.Ordinal);
+            for (int i = 1; i < args.Count; i++)
+            {
+                if (args[i] == "--cancel" || args[i] == "--reject")
+                    arguments["button"] = 2;
+                else if (args[i] == "--accept" || args[i] == "--ok")
+                    arguments["button"] = 1;
+                else if (args[i] == "--button" && i + 1 < args.Count)
+                    arguments["button"] = ParseInt(args[++i]);
+                else
+                    throw new BridgeException("invalid_argument",
+                        "usage: closeui [--cancel|--accept] [--button 1|2]");
+            }
+            return Print(client, "act.closeui", arguments);
+        }
+
         private static int ClickCommand(BridgeClient client, List<string> args)
         {
             Require(args.Count >= 2, "click <selector|id> [--at <x> <y>] [holdMs]");
@@ -470,6 +516,72 @@ namespace CmdBridgeClient
             }
             arguments["holdMs"] = holdMs;
             return Print(client, "act.uiclick", arguments);
+        }
+
+        /// <summary>
+        /// `sccmd act.use|act.interact|act.place [--hold ms]`（也接受短名 `use|interact|place`）。
+        ///
+        /// 三者注入的都是**同一次右键边沿**（`PlayerInput.Interact`）：引擎的
+        /// `ComponentPlayer.Update` 按 `ComponentMiner.Use` → `Interact` → `Place` 的固定顺序消费
+        /// （Survivalcraft/Game/ComponentPlayer.cs:151-181），没有任何输入能跳过前一步。
+        /// 所以命令名只表达"你想做哪件事"，回包里的 `predictedBranch` / `predictedReason` /
+        /// `cells.changed` / `heldItemAfter` 才是"引擎实际走了哪一步"的读据。
+        /// `--hold ms` = 右键按住多久（边沿动作只看按下那一帧；按久一点同时会让
+        /// `PlayerInput.Aim` 有值 —— 和真人按住右键完全一样，手持弓时会开始拉弓）。
+        /// </summary>
+        private static int InteractionCommand(BridgeClient client, List<string> args, string command)
+        {
+            int holdMs = 0;
+            for (int i = 1; i < args.Count; i++)
+            {
+                if (args[i] == "--hold" && i + 1 < args.Count)
+                    holdMs = ParseInt(args[++i]);
+                else if (int.TryParse(args[i], NumberStyles.Integer,
+                    CultureInfo.InvariantCulture, out int positional))
+                    holdMs = positional;
+                else
+                    throw new BridgeException("invalid_argument",
+                        "usage: sccmd " + command + " [--hold <ms>]");
+            }
+            if (holdMs < 0)
+                throw new BridgeException("invalid_argument", "holdMs must be >= 0.");
+            return Print(client, "act." + command, Args(("holdMs", holdMs)));
+        }
+
+        /// <summary>
+        /// `sccmd act.aim start|release|cancel [--hold ms]`：
+        ///   start   —— 按住右键 = `PlayerInput.Aim` 每帧续力（bow/crossbow/musket/spear）。
+        ///              `--hold ms` = 按住这么久后自动松开（= 射出/扔出）；不给就保持按住。
+        ///   release —— 松开右键 → 引擎在下一帧走 `AimState.Completed`（射出/扔出）。
+        ///   cancel  —— 收弓且**不射出**（引擎没有"取消瞄准"输入，服务端做的是引擎自己取消时
+        ///              的 `AimState.Cancelled` + 清 `ComponentPlayer.m_aim`，见 Mod 文档）。
+        /// 回包里 `projectiles.created` 是"真的射出去了吗"的证据（>0 = 射了）。
+        /// </summary>
+        private static int AimCommand(BridgeClient client, List<string> args)
+        {
+            Require(args.Count >= 2, "act.aim start|release|cancel [--hold <ms>]");
+            string action = args[1].ToLowerInvariant();
+            if (action != "start" && action != "release" && action != "cancel")
+            {
+                throw new BridgeException("invalid_argument",
+                    "act.aim action must be start, release or cancel (got '" + args[1] + "').");
+            }
+
+            int holdMs = 0;
+            for (int i = 2; i < args.Count; i++)
+            {
+                if (args[i] == "--hold" && i + 1 < args.Count)
+                    holdMs = ParseInt(args[++i]);
+                else if (int.TryParse(args[i], NumberStyles.Integer,
+                    CultureInfo.InvariantCulture, out int positional))
+                    holdMs = positional;
+                else
+                    throw new BridgeException("invalid_argument",
+                        "usage: sccmd act.aim " + action + " [--hold <ms>]");
+            }
+            if (holdMs < 0)
+                throw new BridgeException("invalid_argument", "holdMs must be >= 0.");
+            return Print(client, "act.aim", Args(("action", action), ("holdMs", holdMs)));
         }
 
         /// <summary>
@@ -826,7 +938,16 @@ namespace CmdBridgeClient
   key <name> [holdMs]         按键（脉冲，默认 40ms≈一帧；显式 0 = 同帧按下并抬起）
   hold <name> / release <name>|--all   按住/释放
   chord ctrl v                组合键
-  mouse left click|down|up    世界内挖/放/交互
+  mouse left click|down|up    世界内挖掘/攻击（左键）；放/交互/瞄准是右键，见下面四条
+  act.use [--hold ms]         右键一次 = 引擎「使用手持物」（水桶/船/口哨/火柴/锤/耙/鞍/肥料）
+  act.interact [--hold ms]    右键一次 = 引擎「与方块交互」（箱子/工作台/门/开关/按钮…）
+  act.place [--hold ms]       右键一次 = 引擎「放置手持方块」
+  act.aim start [--hold ms]   按住右键 = 瞄准/拉弓；给了 --hold 就按住这么久后自动松开（= 射出）
+  act.aim release             松开右键 → AimState.Completed（射出/扔出）
+  act.aim cancel              收弓但不射出（引擎无取消输入；服务端走 AimState.Cancelled + 清瞄准态）
+  closeui [--cancel]          关掉挡着世界输入的界面（对话框按接受/取消 = 引擎自己的 Dismiss 路径；
+                              背包/创造背包等模态面板 → ModalPanelWidget = null；HUD MoreContents → 收起）
+                              世界内输入命令（act.move/lookat/key/dig/use/interact/place/aim）注入前会自动做这一步
   wheel <n>                   滚轮
   click <selector|id> [--at x y]  引擎内 UI 点击（注入前二次校验，不可跳级；
                               --at 用于 ListPanelWidget 的虚拟列表项）
@@ -903,6 +1024,10 @@ AI 内存态改写与导出（只改内存；原 .scbtpak 字节永远不变）
                     return 2;
                 case "element_occluded":
                 case "ambiguous_selector":
+                // 世界内输入被界面吃掉（模态面板/对话框）——和"被挡住"同属"现在做不了这件事"。
+                case "ui_modal_open":
+                // 挡路的界面关不掉 / 当前不是游戏画面：同样属于"现在做不了这件事"。
+                case "ui_blocking":
                     return 3;
                 case "connect_timeout":
                 case "discovery_failed":
@@ -913,10 +1038,16 @@ AI 内存态改写与导出（只改内存；原 .scbtpak 字节永远不变）
                 case "screen_busy":
                 case "layout_invalid":
                 case "not_ready":
+                // 引擎认为窗口不活跃（输入会被整段丢弃）/ 本端输入面不含鼠标通道。
+                case "window_not_active":
+                case "world_not_active":
+                case "input_channel_unavailable":
                 case "timeout":
                     return 5;
                 case "world_not_loaded":
                 case "player_not_found":
+                // 玩家未就绪 / 死亡 / 睡觉：ComponentInput 会丢掉整份 PlayerInput。
+                case "player_not_ready":
                     return 6;
                 default:
                     return 1;

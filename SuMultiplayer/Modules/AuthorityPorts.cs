@@ -31,9 +31,11 @@ namespace SuMultiplayer.Modules
         /// <summary>
         /// 主机侧：按**权威路径**落地（引擎里 = SubsystemTerrain.ChangeCell，会跑方块行为并进改动表，
         /// 因此下一步的既有 CellChange 广播会把结果发给所有客户端）。
+        /// 方块被销毁时同时补生成掉落（口径见 <see cref="EditApplyOutcome"/> / <see cref="EditDropLedger"/>）。
         /// </summary>
-        bool TryApplyHostEdit(int x, int y, int z, int contents, int data,
-            out int resultContents, out int resultData, out string reason);
+        bool TryApplyHostEdit(int clientId, int x, int y, int z, int contents, int data,
+            int toolLevel, bool hasToolLevel,
+            out EditApplyOutcome outcome, out string reason);
 
         /// <summary>客户端侧：把一格恢复成主机权威值（拒绝 / 超时回滚；不触发行为、不进改动表）。</summary>
         bool TryApplyReplicaValue(int x, int y, int z, int contents, int data);

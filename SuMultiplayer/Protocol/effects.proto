@@ -57,3 +57,38 @@ message BurnAwayEffect {
   bytes ext = 100;
   google.protobuf.Any custom = 101;
 }
+
+// ---------------------------------------------------------------------------
+// Campfire extinguish presentation (host-authoritative; clients presentation-only).
+//
+// Wire id lives in protocol.proto (MessageType.CAMPFIRE_EXTINGUISH_EVENT=67).
+// Append-only: never renumber.
+//
+// Engine fact (Survivalcraft/Game/SubsystemCampfireBlockBehavior.cs):
+//   * a campfire is the same block (209) with fuel in its data nibble;
+//   * the host Update ticks fuel down every 5 game seconds and, when data reaches 0,
+//     ChangeCell keeps contents 209 (ashes) and ResizeCampfire plays Audio/Sizzles;
+//   * that sound is local to the host and is NOT part of the CellChange stream.
+//
+// This message carries exactly one already-finished extinguish:
+//   * cell = world coordinates of the campfire that is now data = 0;
+//   * clients only play Audio/Sizzles at that cell (rate limited); they never write
+//     cells, spawn entities or deal damage.
+// ---------------------------------------------------------------------------
+
+// Host -> client: one campfire finished burning.
+message CampfireExtinguishEvent {
+  // Host-side transport id; 0 = the host itself (the only producer today).
+  int32 client_id = 1;
+  // Host simulation clock in milliseconds (SubsystemGameInfo.TotalElapsedGameTime*1000).
+  int64 server_tick = 2;
+  // Host session sequence, starts at 1, strictly increasing.  Clients dedupe by it.
+  uint32 event_id = 3;
+  // World coordinates of the campfire cell (contents 209, data 0).
+  sint32 x = 4;
+  sint32 y = 5;
+  sint32 z = 6;
+
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}

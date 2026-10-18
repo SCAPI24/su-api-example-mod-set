@@ -863,6 +863,57 @@ namespace SuMultiplayer.Modules
             return true;
         }
 
+        /// <summary>
+        /// 主机：开火后从**权威化身背包**回读手持物并立即广播复位（draw=0 / 箭弹已清 / Aiming=false）。
+        /// 这是"释放后远端化身仍满弓"的显式修复：主机执行了引擎 Completed 的复位，
+        /// 但开火者的客户端背包增量可能还没到，其他客户端更不会自动知道；
+        /// 主动重播一条权威 PlayerEquipment 让所有端同时复位。
+        /// </summary>
+        public bool TryBroadcastHeldItem(int clientId, HeldItemAimKind aimKind, out string reason)
+        {
+            reason = null;
+            if (!m_attached)
+            {
+                reason = "not-attached";
+                return false;
+            }
+            if (m_control == null || !m_control.IsHosting)
+            {
+                reason = "not-host";
+                return false;
+            }
+            if (!m_port.HasAvatar(clientId))
+            {
+                reason = "no-avatar";
+                return false;
+            }
+            if (m_broadcast == null)
+            {
+                reason = "no-broadcast";
+                return false;
+            }
+            if (!m_port.TryCaptureInventory(clientId, out int[] values, out int[] counts,
+                    out int activeSlot, out reason))
+                return false;
+            int slot = activeSlot >= 0 && activeSlot < values.Length ? activeSlot : -1;
+            int value = slot >= 0 ? values[slot] : 0;
+            int count = slot >= 0 ? counts[slot] : 0;
+            int revision = NextHostRevision(m_clientHeldRevisions, clientId);
+            int version = NextHostInventoryVersion(clientId);
+            var held = new PlayerHeldItemSnapshot(revision, version, activeSlot, slot, value,
+                count, aimKind, aiming: false);
+            int sent = m_broadcast.BroadcastToPlayers(MessageType.PlayerEquipment,
+                PlayerEquipmentCodec.Encode(clientId, in held));
+            if (sent <= 0)
+            {
+                reason = "no-recipients";
+                return false;
+            }
+            m_equipmentSent += sent;
+            m_clientHeldItems[clientId] = held;
+            return true;
+        }
+
         private PlayerHeldItemSnapshot CaptureAuthoritativeHeldItem(int clientId,
             in PlayerHeldItemSnapshot claimed)
         {

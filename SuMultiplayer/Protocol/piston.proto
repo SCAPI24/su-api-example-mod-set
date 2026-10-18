@@ -1,0 +1,125 @@
+syntax = "proto3";
+
+package sump.piston;
+
+option csharp_namespace = "SuMultiplayer.Protocol.Piston";
+option optimize_for = SPEED;
+
+// ---------------------------------------------------------------------------
+// 移动组（MovingBlockSet）运动表现（主机权威 / 客户端纯表现）：
+//   · kind = PISTON      —— 活塞推 / 拉 / 收回（Id=="Piston"）；
+//   · kind = COLLAPSING  —— 沙子 / 沙砾塌落（Id=="CollapsingBlock"）。
+//
+// 引擎事实（Source: Survivalcraft/Game/SubsystemPistonBlockBehavior.cs）：
+//   · 推 / 拉 / 收回时引擎**不写格**表示中间过程，而是往 SubsystemMovingBlocks 里放一个
+//     Id=="Piston" 的 MovingBlockSet（MovePiston :295-431），由 SubsystemMovingBlocks.Update
+//     每帧插值移动、Draw 直接画；运动结束（Stopped → StopPiston :433-469）才把最终结果写回格子。
+//   · 客户端不跑活塞逻辑（电路已由 SuSubsystemElectricity 挡住），也不会自己产生这些
+//     MovingBlockSet ⇒ 中间过程完全看不到（只在最终 CellChange 到达后突然出现）。
+//
+// 引擎事实（Source: Survivalcraft/Game/SubsystemCollapsingBlockBehavior.cs）：
+//   · TryCollapseColumn:75-109 把整列沙子 / 沙砾登记成 Id=="CollapsingBlock" 的移动组
+//     （AddMovingBlockSet(new Vector3(p), new Vector3(p.X, -list.Count-1, p.Z), 0f, 10f, 0.7f,
+//      new Vector2(0f), list, "CollapsingBlock", null, testCollision:true)，随后 ChangeCell 清源格）；
+//   · 落地（Stopped → MovingBlocksStopped:56-73）才 DestroyCell 写目标格 —— 走既有 CellChange 下发；
+//   · 客户端已经**不跑**塌落（OnNeighborBlockChanged 被闸门拒绝、落地订阅被摘），所以中间过程同样看不到。
+//
+// 因此主机在每次运动**开始时**发一条 PistonMoveEvent（同一 tick 的多个运动合并在一条里，
+// 每条 move 带 kind），结束时发一条 PistonMoveEnd。两条都是**只追加**的新消息 id
+// （protocol.proto 里 65 / 66，绝不改旧 id）；kind 是新字段，旧主机不带 ⇒ 0 = 只有活塞。
+//
+// 客户端收到后用同一份引擎插值在本地 SubsystemMovingBlocks 里建只表现的集合
+// （PISTON → id "PistonReplica"，COLLAPSING → id "CollapsingBlockReplica"，都 testCollision:false），
+// 不写格 / 不生成实体 / 不伤害；运动结束由 PistonMoveEnd 移除本地对象，最终状态一律取主机的 CellChange。
+// ---------------------------------------------------------------------------
+
+// 移动组种类。**只追加**：数值绝不重排，未知值整条拒绝（不猜）。
+// 兼容性：旧主机没有 kind 字段 ⇒ 线上值 0；0 明确等价于 PISTON（那时唯一的复制对象是活塞）。
+enum MovingBlockKind {
+  MOVING_BLOCK_KIND_UNSPECIFIED = 0;
+  MOVING_BLOCK_KIND_PISTON = 1;
+  MOVING_BLOCK_KIND_COLLAPSING = 2;
+}
+
+// 一条运动批次（host -> clients）。event_id 在**一条连接**内单调递增，客户端按它去重；
+// server_tick 只用于排序（同一 tick 内按 event_id 递增），不是任何引擎时钟的权威值。
+message PistonMoveEvent {
+  uint32 event_id = 1;
+  int64 server_tick = 2;
+  repeated PistonMove moves = 3;
+}
+
+// 一次运动的完整引擎参数（= 主机 AddMovingBlockSet 的入参，逐字段照搬）。
+// kind = PISTON 时用 piston_value / mode / face；kind = COLLAPSING 时这三项不使用（填 0）。
+message PistonMove {
+  // 运动起点所在格：
+  //   · PISTON     = 活塞方块所在格（引擎 MovingBlockSet.Tag 的 Point3）；
+  //   · COLLAPSING = 塌落列最上面一格（引擎 AddMovingBlockSet 的起始位置 new Vector3(p)；
+  //                  引擎给该集合的 Tag 是 null，客户端用这里的位置建本地集合的 Tag）。
+  int32 x = 1;
+  int32 y = 2;
+  int32 z = 3;
+  // 运动开始时活塞格的完整 value（contents=237 + light + data；data 里含 isExtended / mode /
+  // face / maxExtension / pullCount / speed）。COLLAPSING 时填 0（源格已被引擎清掉，没有可信的值）。
+  int32 piston_value = 4;
+  // 冗余字段，便于日志与校验：PistonMode（0 推 / 1 拉 / 2 严格拉）与挂载面（0..5）。
+  // 解码时与 piston_value 的 data 位严格比对，不一致整条拒绝。COLLAPSING 时填 0。
+  int32 mode = 5;
+  int32 face = 6;
+  // 引擎 AddMovingBlockSet 的入参：起始 / 目标位置、速度、加速度、阻力、平滑度。
+  Float3 start = 7;
+  Float3 target = 8;
+  float speed = 9;
+  float acceleration = 10;
+  float drag = 11;
+  float smoothness_x = 12;
+  float smoothness_y = 13;
+  // 集合里的方块：Offset 是**相对起点格**的偏移（引擎 MovingBlock.Offset），
+  // Value 是该方块的完整 value（contents + data；光照位客户端会按本地格重算）。
+  repeated PistonBlock blocks = 14;
+  // 移动组种类（MovingBlockKind）。0 = 旧主机（只有活塞）。
+  MovingBlockKind kind = 15;
+}
+
+message PistonBlock {
+  int32 x = 1;
+  int32 y = 2;
+  int32 z = 3;
+  int32 value = 4;
+}
+
+message Float3 {
+  float x = 1;
+  float y = 2;
+  float z = 3;
+}
+
+// 一条运动结束批次（host -> clients）。客户端据此移除本地只表现集合，随后以主机的
+// CellChange 为准（不在客户端写任何格）。
+message PistonMoveEnd {
+  uint32 event_id = 1;
+  int64 server_tick = 2;
+  repeated PistonMoveEndEntry moves = 3;
+}
+
+message PistonMoveEndEntry {
+  int32 x = 1;
+  int32 y = 2;
+  int32 z = 3;
+  // true  = 集合移动到了 TargetPosition。
+  //         PISTON：正常落点（最终格由主机 CellChange 下发）；
+  //         COLLAPSING：掉到目标点（= 整列一直落到世界上方以外，没有撞到任何方块）。
+  // false = 提前结束：
+  //         PISTON：碰撞 / 活塞被拆 / 区块卸载 / StopPiston 中断；
+  //         COLLAPSING：撞到支撑方块正常落地（引擎 MovingBlocksStopped:56-73 写目标格），这是**正常**结束。
+  bool completed = 4;
+  // 主机侧的结束判定原因（PISTON："target" / "early"；COLLAPSING："target" / "landed"），
+  // 只用于客户端限流日志，不参与逻辑。
+  string reason = 5;
+  // 这条结束对应哪一次运动开始（PistonMoveEvent.event_id）。客户端只移除**同一次**开起的
+  // 本地集合：同一格连续两次运动（上一轮结束 / 下一轮开始交错到达）时不会误删新动画。
+  uint32 start_event_id = 6;
+  // 移动组种类（MovingBlockKind）。0 = 旧主机（只有活塞）。
+  // 客户端按 (kind, 格) 定位本地集合：活塞格与塌落列起点格永远不会是同一格。
+  MovingBlockKind kind = 7;
+}

@@ -70,6 +70,11 @@ namespace SuMultiplayer.Modules
         private const double FireTimeoutSeconds = 5.0;
         private const int MaxPendingDropRequests = 16;
         private const int MaxPendingFireRequests = 16;
+        /// <summary>
+        /// 掉落者拾取宽限（秒，模块时钟）：自己刚丢出 / 刚挖出来的掉落，本机扫描在窗口内**不发请求**
+        /// （主机也会用 <c>pickup-grace</c> 拒绝同一个人对同一拾取物的请求）。与主机 1.5s 同口径。
+        /// </summary>
+        private const double DropPickupGraceSeconds = 1.5;
 
         private readonly ModuleDescriptor m_descriptor;
         private readonly IEntityReplicaPort m_port;
@@ -77,6 +82,13 @@ namespace SuMultiplayer.Modules
         private readonly IPlayerInventoryStore m_inventoryStore;
         private readonly EntityReplicationCounters m_counters = new EntityReplicationCounters();
         private readonly EntityStateOrderer m_orderer = new EntityStateOrderer();
+        private readonly PickupSoundOrderer m_pickupSoundOrderer = new PickupSoundOrderer();
+        private readonly RemoteSoundRateLimiter m_pickupSoundSendLimiter =
+            new RemoteSoundRateLimiter(PickupSoundPolicy.MaxEventsPerSecond);
+        private readonly RemoteSoundRateLimiter m_pickupSoundRecvLimiter =
+            new RemoteSoundRateLimiter(PickupSoundPolicy.MaxReceiveEventsPerSecond);
+        private readonly List<RemoteSoundPeer> m_pickupSoundPeers =
+            new List<RemoteSoundPeer>(16);
 
         // ---- 主机：已发布状态 / 待发合并队列
         private readonly Dictionary<int, PickableStateData> m_lastPickables =
@@ -106,6 +118,13 @@ namespace SuMultiplayer.Modules
         private readonly Dictionary<int, PendingPickup> m_pendingPickups =
             new Dictionary<int, PendingPickup>();
         private readonly Dictionary<int, double> m_pickupCooldown = new Dictionary<int, double>();
+        /// <summary>
+        /// 客户端掉落者宽限：pickableId → 宽限截止（模块时钟）。来源：
+        ///   ① 本机丢弃回执带 pickable_id；
+        ///   ② 本机挖 / 放造成的掉落被认领（<see cref="IEntityReplicaPort.TryClaimOwnDropGrace"/>）；
+        ///   ③ 主机以 pickup-grace 拒绝后补登记（回执明确原因，客户端不再连续重试）。
+        /// </summary>
+        private readonly Dictionary<int, double> m_ownPickupGrace = new Dictionary<int, double>();
 
         // ---- 客户端：丢弃 / 投掷 / 开火请求（在途 + 主机回执历史）
         private readonly Dictionary<long, PendingDropRequest> m_pendingDrops =
@@ -141,7 +160,13 @@ namespace SuMultiplayer.Modules
         private long m_nextPickupSequence;
         private long m_nextDropSequence;
         private long m_nextFireSequence;
+        private uint m_fireSoundEventId;
+        private uint m_lastFireSoundEventId;
+        private uint m_pickupSoundEventId;
         private int m_inventoryVersion;
+        /// <summary>客户端：主机回执已物化、等待 EntityState 确认的丢弃副本（id → 超时时刻）。</summary>
+        private readonly Dictionary<int, double> m_pendingDropReplicas =
+            new Dictionary<int, double>();
         private double m_lastEntityMessageMs;
         private double m_lastResyncRequestMs;
         /// <summary>最近一次 tick 的时间（模块内所有超时 / 冷却都用它，不读墙钟）。</summary>
@@ -246,21 +271,53 @@ namespace SuMultiplayer.Modules
             " stateRecv=" + m_counters.StateReceived +
             " snapshotSent=" + m_counters.SnapshotsSent +
             " snapshotRecv=" + m_counters.SnapshotsReceived +
+            " snapshotStale=" + m_counters.SnapshotStale +
             " · pickupReq/acc/rej=" + m_counters.PickupRequestsSent + "/" +
             m_counters.PickupAccepted + "/" + m_counters.PickupRejected +
             " persisted=" + m_counters.PickupPersisted +
             " persistFail=" + m_counters.PickupPersistFailures +
+            " pickupGraceSuppressed=" + m_counters.PickupGraceSuppressed +
+            " pickupGraceBlockedByHost=" + m_counters.PickupGraceBlockedByHost +
+            " ownDropGrace=" + m_counters.OwnDropGraceRegistered +
             " resync=" + m_counters.ResyncRequestsSent +
             " · dropReq/acc/rej/timeout=" + m_counters.DropRequestsSent + "/" +
             m_counters.DropAccepted + "/" + m_counters.DropRejected + "/" +
             m_counters.DropTimeouts +
             " dropRej[" + m_counters.DropRejectReasons.Describe() + "]" +
+            " · uiDropIntercepted=" + m_counters.UiDropIntercepted +
+            " uiDropRequestSent=" + m_counters.UiDropRequestSent +
+            " uiDropAccepted=" + m_counters.UiDropAccepted +
+            " uiDropRejected=" + m_counters.UiDropRejected +
+            " uiDropTimeouts=" + m_counters.UiDropTimeouts +
+            " uiDropSuppressed=" + m_counters.UiDropSuppressed +
+            " uiDropRecv=" + m_counters.UiDropRequestsReceived +
+            " uiDropRej[" + m_counters.UiDropRejectReasons.Describe() + "]" +
             " · fireReq/acc/rej/timeout=" + m_counters.FireRequestsSent + "/" +
             m_counters.FireAccepted + "/" + m_counters.FireRejected + "/" +
             m_counters.FireTimeouts +
             " fireRej[" + m_counters.FireRejectReasons.Describe() + "]" +
             " fireSpawned=" + m_counters.FireProjectilesSpawned +
             " blankShots=" + m_counters.FireBlankShots +
+            " fireSpawnAtHost=" + m_port.FireSpawnAtHost +
+            " fireSpawnCollided=" + m_port.FireSpawnCollided +
+            " fireResetSent=" + m_counters.FireResetSent +
+            " fireResetApplied=" + m_counters.FireResetApplied +
+            " fireResetFail=" + m_counters.FireResetFailures +
+            " fireSoundRelayed=" + m_counters.FireSoundRelayed +
+            " fireSoundRecv=" + m_counters.FireSoundReceived +
+            " fireSoundPresented=" + m_counters.FireSoundPresented +
+            " fireSoundEchoSkipped=" + m_counters.FireSoundOwnEchoSkipped +
+            " fireSoundFail=" + m_counters.FireSoundFailures +
+            " pickupSoundRelayed=" + m_counters.PickupSoundRelayed +
+            " pickupSoundRecv=" + m_counters.PickupSoundReceived +
+            " pickupSoundPresented=" + m_counters.PickupSoundPresented +
+            " pickupSoundEchoSkipped=" + m_counters.PickupSoundEchoSkipped +
+            " pickupSoundSkippedDistance=" + m_counters.PickupSoundSkippedDistance +
+            " pickupSoundMalformed=" + m_counters.PickupSoundMalformed +
+            " dropReplicaMaterialised=" + m_counters.DropReplicaMaterialised +
+            " dropReplicaConfirmed=" + m_counters.DropReplicaConfirmed +
+            " dropReplicaTimeouts=" + m_counters.DropReplicaTimeouts +
+            " dropReplicaFail=" + m_counters.DropReplicaFailures +
             " invDeltaApplied=" + m_counters.InventoryDeltaApplied +
             " invDeltaFail=" + m_counters.InventoryDeltaFailures +
             " foreignCulled=" + (m_port.ForeignPickablesRemoved +
@@ -338,6 +395,12 @@ namespace SuMultiplayer.Modules
                 PE.ProjectileFireResult.Parser,
                 new DelegateMessageHandler<PE.ProjectileFireResult>(OnProjectileFireResult),
                 ModuleId);
+            registry.Register((int)MessageType.WeaponFireEvent,
+                PE.WeaponFireEvent.Parser,
+                new DelegateMessageHandler<PE.WeaponFireEvent>(OnWeaponFireEvent), ModuleId);
+            registry.Register((int)MessageType.PickupSoundEvent,
+                PE.PickupSoundEvent.Parser,
+                new DelegateMessageHandler<PE.PickupSoundEvent>(OnPickupSoundEvent), ModuleId);
         }
 
         public void Detach(ModuleDetachReason reason)
@@ -370,6 +433,14 @@ namespace SuMultiplayer.Modules
             m_clientProjectileIds.Clear();
             m_pendingPickups.Clear();
             m_pickupCooldown.Clear();
+            m_ownPickupGrace.Clear();
+            m_pendingDropReplicas.Clear();
+            m_fireSoundEventId = 0;
+            m_lastFireSoundEventId = 0;
+            m_pickupSoundEventId = 0;
+            m_pickupSoundOrderer.Reset();
+            m_pickupSoundSendLimiter.Reset();
+            m_pickupSoundRecvLimiter.Reset();
             m_orderer.Reset("detach");
             m_attached = false;
             Log("实体复制模块下线（" + reason + "）：" + summary);
@@ -405,13 +476,21 @@ namespace SuMultiplayer.Modules
                 m_clientProjectileIds.Clear();
                 m_pendingPickups.Clear();
                 m_pickupCooldown.Clear();
+                m_ownPickupGrace.Clear();
                 m_pendingSnapshots.Clear();
                 m_pendingDrops.Clear();
                 m_pendingFires.Clear();
+                m_pendingDropReplicas.Clear();
                 m_dropHistory.Clear();
                 m_fireHistory.Clear();
                 m_nextDropSequence = 0;
                 m_nextFireSequence = 0;
+                m_fireSoundEventId = 0;
+                m_lastFireSoundEventId = 0;
+                m_pickupSoundEventId = 0;
+                m_pickupSoundOrderer.Reset();
+                m_pickupSoundSendLimiter.Reset();
+                m_pickupSoundRecvLimiter.Reset();
                 m_lastHostPulse = 0.0;
                 m_serverTickMs = (long)(now * 1000.0);
                 m_stateVersion = 0;
@@ -434,8 +513,10 @@ namespace SuMultiplayer.Modules
                 m_clientProjectileIds.Clear();
                 m_pendingPickups.Clear();
                 m_pickupCooldown.Clear();
+                m_ownPickupGrace.Clear();
                 m_pendingDrops.Clear();
                 m_pendingFires.Clear();
+                m_pendingDropReplicas.Clear();
                 m_dropHistory.Clear();
                 m_fireHistory.Clear();
                 m_clientReady = false;
@@ -464,9 +545,17 @@ namespace SuMultiplayer.Modules
             m_nextFireSequence = 0;
             m_pendingPickups.Clear();
             m_pickupCooldown.Clear();
+            m_ownPickupGrace.Clear();
             m_pendingDrops.Clear();
             m_pendingFires.Clear();
+            m_pendingDropReplicas.Clear();
             m_pendingSnapshots.Clear();
+            m_fireSoundEventId = 0;
+            m_lastFireSoundEventId = 0;
+            m_pickupSoundEventId = 0;
+            m_pickupSoundOrderer.Reset();
+            m_pickupSoundSendLimiter.Reset();
+            m_pickupSoundRecvLimiter.Reset();
             m_lastPickables.Clear();
             m_lastProjectiles.Clear();
             m_pendingPickables.Clear();
@@ -782,7 +871,8 @@ namespace SuMultiplayer.Modules
                 m_captureProjectiles.Count > MaxSnapshotProjectiles;
             int pickableCount = Math.Min(m_capturePickables.Count, MaxSnapshotPickables);
             int projectileCount = Math.Min(m_captureProjectiles.Count, MaxSnapshotProjectiles);
-            var snapshot = new EntitySnapshotData(NextSnapshotId(), m_serverTickMs, !truncated);
+            var snapshot = new EntitySnapshotData(NextSnapshotId(), m_serverTickMs, !truncated,
+                m_stateVersion);
             for (int i = 0; i < pickableCount; i++)
                 snapshot.Pickables.Add(m_capturePickables[i].WithAction(EntityActions.Add)
                     .WithCollector(-1));
@@ -969,7 +1059,9 @@ namespace SuMultiplayer.Modules
                 m_clientReady = false;
             }
             PumpPendingPickups(now);
+            PumpPendingDropReplicas(now);
             PumpPendingRequestTimeouts(now);
+            PruneOwnPickupGrace(now);
             if (m_clientReady && now - m_lastEntityMessageMs >= StaleResyncSeconds &&
                 (m_clientPickableIds.Count > 0 || m_clientProjectileIds.Count > 0))
             {
@@ -977,8 +1069,18 @@ namespace SuMultiplayer.Modules
             }
         }
 
-        private void RequestResync(double now, string reason)
+        /// <summary>清掉已过期的掉落者宽限条目（每拍一次；条目只与"自己刚造成的掉落"成正比）。</summary>
+        private void PruneOwnPickupGrace(double now)
         {
+            if (m_ownPickupGrace.Count == 0) return;
+            m_removalScratch.Clear();
+            foreach (KeyValuePair<int, double> item in m_ownPickupGrace)
+                if (now >= item.Value) m_removalScratch.Add(item.Key);
+            for (int i = 0; i < m_removalScratch.Count; i++)
+                m_ownPickupGrace.Remove(m_removalScratch[i]);
+        }
+
+        private void RequestResync(double now, string reason)        {
             if (m_hosting || m_transport == null || !m_transport.IsConnected) return;
             if (m_lastResyncRequestMs != 0.0 &&
                 now - m_lastResyncRequestMs < ResyncCooldownSeconds) return;
@@ -1046,6 +1148,16 @@ namespace SuMultiplayer.Modules
                 m_counters.PickupSuppressed++;
                 return;
             }
+            // 掉落者宽限：自己刚丢出 / 刚造成的掉落，本机扫描在窗口内不发请求（主机也会拒绝）。
+            if (m_ownPickupGrace.TryGetValue(candidate.PickableId, out double graceUntil))
+            {
+                if (now < graceUntil)
+                {
+                    m_counters.PickupGraceSuppressed++;
+                    return;
+                }
+                m_ownPickupGrace.Remove(candidate.PickableId);
+            }
             if (m_pendingPickups.Count >= MaxPendingPickups)
             {
                 m_counters.PickupSuppressed++;
@@ -1103,6 +1215,15 @@ namespace SuMultiplayer.Modules
                 m_counters.PickupRejected++;
                 m_pickupCooldown[result.PickableId] = NowSeconds() +
                     PickupRetryCooldownSeconds;
+                if (result.Reason == "pickup-grace")
+                {
+                    // 主机明确：这个拾取物还在**掉落者本人**的免疫窗口内。
+                    // 本地补登记同一窗口（正常路径是认领本机预测时登记，这里是竞态兜底）：
+                    // 之后本机扫描不再请求它，窗口结束即可正常拾取。
+                    m_ownPickupGrace[result.PickableId] = NowSeconds() +
+                        DropPickupGraceSeconds;
+                    m_counters.PickupGraceBlockedByHost++;
+                }
                 LogRateLimited("pickup-rejected:" + result.PickableId,
                     "主机拒绝拾取 id=" + result.PickableId + "： " + result.Reason);
                 return;
@@ -1225,6 +1346,18 @@ namespace SuMultiplayer.Modules
                     "EntitySnapshot 被排序器拒绝：" + orderReason);
                 return;
             }
+            // 快照生成时的 state_version 比本端已应用的增量状态旧：它的 complete=true
+            // 删除集合会把更新状态刚加的副本删掉（主机不会再补 ADD）。整条拒绝。
+            if (snapshot.StateVersion != 0 && m_orderer.LastStateVersion != 0 &&
+                snapshot.StateVersion < m_orderer.LastStateVersion)
+            {
+                m_counters.SnapshotStale++;
+                LogRateLimited("snapshot-stale:" + snapshot.SnapshotId,
+                    "实体快照 #" + snapshot.SnapshotId + " 的 state_version=" +
+                    snapshot.StateVersion + " 旧于已应用的增量状态 " +
+                    m_orderer.LastStateVersion + " → 整条拒绝（不删除 / 不回退副本）");
+                return;
+            }
             var seenPickables = new HashSet<int>();
             var seenProjectiles = new HashSet<int>();
             for (int i = 0; i < snapshot.Pickables.Count; i++)
@@ -1296,8 +1429,25 @@ namespace SuMultiplayer.Modules
                 return;
             }
             m_counters.PickableApplied++;
-            if (record.Action == EntityActions.Remove) m_clientPickableIds.Remove(record.Id);
-            else m_clientPickableIds.Add(record.Id);
+            if (record.Action == EntityActions.Remove)
+            {
+                m_clientPickableIds.Remove(record.Id);
+                m_pendingDropReplicas.Remove(record.Id);
+                m_ownPickupGrace.Remove(record.Id);
+            }
+            else
+            {
+                m_clientPickableIds.Add(record.Id);
+                if (m_pendingDropReplicas.Remove(record.Id))
+                    m_counters.DropReplicaConfirmed++;
+                // 本机刚挖 / 放造成的掉落：认领后登记拾取宽限（窗口内本机不发请求）。
+                if (record.Action == EntityActions.Add &&
+                    m_port.TryClaimOwnDropGrace(in record))
+                {
+                    m_ownPickupGrace[record.Id] = NowSeconds() + DropPickupGraceSeconds;
+                    m_counters.OwnDropGraceRegistered++;
+                }
+            }
         }
 
         private void ApplyProjectileRecord(ProjectileStateData record)
@@ -1376,6 +1526,7 @@ namespace SuMultiplayer.Modules
                 m_counters.PickupAccepted++;
                 PersistPickupInventory(clientId);
                 EnqueueAcquireRemoval(request.PickableId, clientId, outcome);
+                RelayPickupSound(clientId, request.PickableId, in outcome);
             }
             else
             {
@@ -1495,46 +1646,72 @@ namespace SuMultiplayer.Modules
         // ================================================================ 客户端：丢弃 / 投掷 / 开火请求
 
         /// <summary>
-        /// 客户端丢弃（Q / 手柄 B）：**本地还没有任何扣除**，这里只发请求并保存在途表。
+        /// 客户端丢弃（Q / 手柄 B / UI 拖出到世界）：**本地还没有任何扣除**，这里只发请求并保存在途表。
         /// 物品的扣除只发生在主机接受后的稀疏背包增量回执上。
+        /// <see cref="PickableDropIntent.Source"/> 原样上线；UI 拖出单独计数
+        /// （uiDropIntercepted / uiDropRequestSent / uiDropSuppressed）。
         /// </summary>
         public bool TrySubmitDrop(in PickableDropIntent intent, out string reason)
         {
             reason = null;
+            bool ui = intent.Source == DropSources.Ui;
+            if (!DropSources.IsKnown(intent.Source))
+            {
+                reason = "invalid-source";
+                if (ui) m_counters.UiDropSuppressed++;
+                LogRateLimited("drop-source:" + intent.Source,
+                    "丢弃意图来源非法（source=" + intent.Source + "）→ 不发送请求、本地不扣物品");
+                return false;
+            }
+            if (ui) m_counters.UiDropIntercepted++;
             if (!m_attached || m_hosting)
             {
                 reason = "not-client";
                 m_counters.DropSuppressed++;
+                if (ui) m_counters.UiDropSuppressed++;
                 return false;
             }
             if (m_transport == null || !m_transport.IsConnected || !m_clientReady)
             {
                 m_counters.DropSuppressed++;
+                if (ui) m_counters.UiDropSuppressed++;
                 reason = "not-ready";
                 LogRateLimited("drop-not-ready",
                     "客户端丢弃被抑制：本端副本/世界尚未就绪（" + (m_transport == null
                         ? "no-transport"
                         : !m_transport.IsConnected ? "disconnected" : "replica-not-ready") +
-                    "）→ 不发送请求、本地不扣物品（物品仍在背包里）");
+                    "）→ 不发送请求、本地不扣物品（" +
+                    (ui ? "物品仍在背包里，UI 拖出已撤销" : "物品仍在背包里") + "）");
                 return false;
             }
             if (m_pendingDrops.Count >= MaxPendingDropRequests)
             {
                 m_counters.DropSuppressed++;
+                if (ui) m_counters.UiDropSuppressed++;
                 reason = "request-table-full";
                 LogRateLimited("drop-table-full",
                     "同时待回执的丢弃请求已达 " + MaxPendingDropRequests + " → 本次不发送" +
-                    "（本地不扣物品；等前面的回执/超时后再按 Q）");
+                    "（本地不扣物品；等前面的回执/超时后再试）");
                 return false;
             }
             long sequence = ++m_nextDropSequence;
             if (sequence <= 0) sequence = ++m_nextDropSequence;
             var request = new PickableDropRequestData(sequence, intent.ActiveSlot,
-                intent.ItemValue, intent.Count, intent.Position, intent.Direction);
+                intent.ItemValue, intent.Count, intent.Position, intent.Direction,
+                intent.Source);
             if (!m_transport.TrySend(MessageType.PickableDropRequest,
                     EntityRequestCodec.EncodeDropBytes(in request)))
             {
                 m_counters.DropRequestFailures++;
+                if (ui)
+                {
+                    m_counters.UiDropSuppressed++;
+                    reason = "send-failed";
+                    LogRateLimited("ui-drop-send",
+                        "UI 拖出丢弃请求发送失败（通道背压/未连接）：" + request.Describe() +
+                        " → 已撤销本地拖出（物品仍在背包里）");
+                    return false;
+                }
                 reason = "send-failed";
                 LogRateLimited("drop-send",
                     "丢弃请求发送失败（通道背压/未连接）：" + request.Describe() +
@@ -1543,6 +1720,7 @@ namespace SuMultiplayer.Modules
             }
             m_pendingDrops[sequence] = new PendingDropRequest(in request, NowSeconds());
             m_counters.DropRequestsSent++;
+            if (ui) m_counters.UiDropRequestSent++;
             return true;
         }
 
@@ -1606,12 +1784,17 @@ namespace SuMultiplayer.Modules
                 for (int i = 0; i < m_removalScratch64.Count; i++)
                 {
                     long sequence = m_removalScratch64[i];
+                    bool ui = m_pendingDrops.TryGetValue(sequence,
+                        out PendingDropRequest pending) &&
+                        pending.Request.Source == DropSources.Ui;
                     m_pendingDrops.Remove(sequence);
                     m_counters.DropTimeouts++;
+                    if (ui) m_counters.UiDropTimeouts++;
                     LogRateLimited("drop-timeout:" + sequence,
                         "丢弃请求 seq=" + sequence + " 超过 " + DropTimeoutSeconds +
                         "s 没有回执 → 视为超时（客户端本地从未扣除，物品不丢；" +
-                        "若主机其实执行了，以随后到达的权威背包同步为准）");
+                        "若主机其实执行了，以随后到达的权威背包同步为准）" +
+                        (ui ? "（UI 拖出：本地从未撤销背包，物品仍在）" : string.Empty));
                 }
             }
             if (m_pendingFires.Count > 0)
@@ -1660,17 +1843,42 @@ namespace SuMultiplayer.Modules
                 return;
             }
             m_pendingDrops.Remove(result.Sequence);
+            bool ui = pending.Request.Source == DropSources.Ui;
             if (!result.Accepted)
             {
                 m_counters.DropRejected++;
                 m_counters.DropRejectReasons.Add(result.Reason);
-                LogRateLimited("drop-rejected:" + result.Reason,
-                    "主机拒绝丢弃请求 seq=" + result.Sequence + "（" +
-                    pending.Request.Describe() + "）：" + result.Reason +
-                    " → 本地没有扣物品（物品仍在背包里）");
+                if (ui)
+                {
+                    m_counters.UiDropRejected++;
+                    m_counters.UiDropRejectReasons.Add(result.Reason);
+                    LogRateLimited("ui-drop-rejected:" + result.Reason,
+                        "主机拒绝 UI 拖出丢弃请求 seq=" + result.Sequence + "（" +
+                        pending.Request.Describe() + "）：" + result.Reason +
+                        " → 本地拖出从未撤销背包（物品仍在背包里，不会消失）");
+                }
+                else
+                {
+                    LogRateLimited("drop-rejected:" + result.Reason,
+                        "主机拒绝丢弃请求 seq=" + result.Sequence + "（" +
+                        pending.Request.Describe() + "）：" + result.Reason +
+                        " → 本地没有扣物品（物品仍在背包里）");
+                }
                 return;
             }
             m_counters.DropAccepted++;
+            if (ui) m_counters.UiDropAccepted++;
+            // 丢弃者免疫窗口：回执带 pickable_id → 本机 1.5s 内不请求拾取这个副本
+            // （主机也用 pickup-grace 拒绝同一个人，两头同一窗口）。
+            if (result.PickableId > 0)
+            {
+                m_ownPickupGrace[result.PickableId] = NowSeconds() + DropPickupGraceSeconds;
+                m_counters.OwnDropGraceRegistered++;
+            }
+            // 主机回执带 pickable_id：立刻按**权威** position/velocity 物化一个副本。
+            // 后续 EntityState(ADD/UPDATE) 会用同一个 id 更新它，不会重复。
+            // 这一步保证"主机已生成、客户端却因为状态流竞态看不到"不会发生。
+            MaterialiseDropReplica(in result);
             if (!result.HasInventory)
             {
                 m_counters.DropInventoryFailures++;
@@ -1695,6 +1903,127 @@ namespace SuMultiplayer.Modules
                 LogRateLimited("drop-inventory-apply:" + applyReason,
                     "把丢弃回执的背包增量写进本机背包失败（" + applyReason +
                     "）→ 物品仍由主机权威持有，下一次背包同步会对账");
+            }
+        }
+
+        /// <summary>
+        /// 客户端：用主机回执里的权威 id / 位置 / 速度立即建一个渲染副本。
+        /// 只调用端口 TryApplyPickable（客户端副本路径），绝不参与拾取结算；
+        /// 不加入 m_clientPickableIds（等 EntityState 确认后再纳入快照替换集合，
+        /// 这样迟到的完整快照不会把刚物化的副本误删）。
+        /// </summary>
+        private void MaterialiseDropReplica(in PickableDropResultData result)
+        {
+            if (result.PickableId <= 0)
+            {
+                LogRateLimited("drop-no-pickable-id:" + result.Sequence,
+                    "丢弃回执没有 pickable_id（旧主机）→ 只能等 EntityState(ADD) 物化副本" +
+                    "（seq=" + result.Sequence + " value=" + result.ItemValue + "）");
+                return;
+            }
+            var state = new PickableStateData(result.PickableId, EntityActions.Add,
+                result.ItemValue, result.Count, result.Position, result.Velocity, false,
+                Vector3.Zero, Quaternion.Identity, false, Vector3.Zero, -1);
+            bool applied;
+            string reason;
+            try
+            {
+                applied = m_port.TryApplyPickable(in state, out reason);
+            }
+            catch (Exception e)
+            {
+                applied = false;
+                reason = "exception-" + e.GetType().Name + ": " + e.Message;
+            }
+            if (applied)
+            {
+                m_counters.DropReplicaMaterialised++;
+                m_pendingDropReplicas[result.PickableId] = NowSeconds() + 3.0;
+                LogRateLimited("drop-replica-materialised:" + result.PickableId,
+                    "丢弃副本已按主机回执物化 id=" + result.PickableId + " value=" +
+                    result.ItemValue + " count=" + result.Count + " pos=(" +
+                    result.Position.X.ToString("F2") + "," +
+                    result.Position.Y.ToString("F2") + "," +
+                    result.Position.Z.ToString("F2") + ")");
+            }
+            else
+            {
+                m_counters.DropReplicaFailures++;
+                LogRateLimited("drop-replica-materialise:" + result.PickableId,
+                    "按主机回执物化丢弃副本失败 id=" + result.PickableId + "（" + reason +
+                    "）→ 仍等待 EntityState(ADD)（主机是权威创建方）");
+            }
+        }
+
+        private void PumpPendingDropReplicas(double now)
+        {
+            if (m_pendingDropReplicas.Count == 0) return;
+            m_removalScratch.Clear();
+            foreach (KeyValuePair<int, double> item in m_pendingDropReplicas)
+                if (now >= item.Value) m_removalScratch.Add(item.Key);
+            for (int i = 0; i < m_removalScratch.Count; i++)
+            {
+                int id = m_removalScratch[i];
+                m_pendingDropReplicas.Remove(id);
+                m_counters.DropReplicaTimeouts++;
+                LogRateLimited("drop-replica-unconfirmed:" + id,
+                    "丢弃副本 id=" + id + " 已按回执物化，但 3s 内没有收到 EntityState 确认" +
+                    "（副本保留；若状态流持续缺失请检查 EntityState 广播）");
+            }
+        }
+
+        private void OnWeaponFireEvent(MessageContext context, PE.WeaponFireEvent message)
+        {
+            if (!m_attached) return;
+            if (m_hosting)
+            {
+                m_counters.FireSoundFailures++;
+                LogRateLimited("weapon-fire-on-host",
+                    "主机收到 WeaponFireEvent（主机不该是接收方）→ 丢弃");
+                return;
+            }
+            if (!WeaponFireCodec.TryDecode(message, out WeaponFireEventData fire,
+                    out string error))
+            {
+                m_counters.FireSoundFailures++;
+                LogRateLimited("weapon-fire-invalid:" + error,
+                    "WeaponFireEvent 载荷非法（" + error + "）→ 整条丢弃");
+                return;
+            }
+            m_counters.FireSoundReceived++;
+            int localClientId = m_transport != null ? m_transport.LocalClientId : -1;
+            if (fire.ClientId == localClientId)
+            {
+                // 开火者本地已经播过；主机这条中继是给其他端的。
+                m_counters.FireSoundOwnEchoSkipped++;
+                return;
+            }
+            if (fire.EventId <= m_lastFireSoundEventId)
+            {
+                m_counters.FireSoundFailures++;
+                return;
+            }
+            m_lastFireSoundEventId = fire.EventId;
+            string reason;
+            bool presented;
+            try
+            {
+                presented = m_port.TryPresentWeaponFire(in fire, out reason);
+            }
+            catch (Exception e)
+            {
+                presented = false;
+                reason = "exception-" + e.GetType().Name + ": " + e.Message;
+            }
+            if (presented)
+            {
+                m_counters.FireSoundPresented++;
+            }
+            else
+            {
+                m_counters.FireSoundFailures++;
+                LogRateLimited("weapon-fire-present:" + reason,
+                    "播放武器开火声音失败 " + fire.Describe() + "：" + reason);
             }
         }
 
@@ -1745,9 +2074,16 @@ namespace SuMultiplayer.Modules
                 if (TryApplyRequestInventoryDelta(delta, "开火", out string applyReason))
                 {
                     m_counters.FireInventoryApplied++;
+                    if (result.Kind == ProjectileFireKinds.Bow ||
+                        result.Kind == ProjectileFireKinds.Crossbow ||
+                        result.Kind == ProjectileFireKinds.Musket)
+                    {
+                        m_counters.FireResetApplied++;
+                    }
                     Log("主机接受了开火请求 seq=" + result.Sequence + " kind=" +
                         ProjectileFireKinds.Name(result.Kind) + " spawned=" + result.Spawned +
-                        " → 背包增量 " + result.Indices.Length + " 槽已应用（本地之前未扣除）");
+                        " → 背包增量 " + result.Indices.Length + " 槽已应用（本地之前未扣除，" +
+                        "弓/弩/火枪 draw 已复位）");
                 }
                 else
                 {
@@ -1820,6 +2156,8 @@ namespace SuMultiplayer.Modules
                 return;
             }
             m_counters.DropRequestsReceived++;
+            bool requestUi = request.Source == DropSources.Ui;
+            if (requestUi) m_counters.UiDropRequestsReceived++;
             if (m_dropHistory.TryGetValue(clientId, out DropHistory history))
             {
                 if (request.Sequence < history.LastSequence)
@@ -1858,7 +2196,8 @@ namespace SuMultiplayer.Modules
                 m_inventoryVersion++;
                 result = new PickableDropResultData(request.Sequence, true, string.Empty,
                     outcome.ItemValue, outcome.Count, outcome.Position, outcome.Velocity,
-                    outcome.Indices, outcome.Values, outcome.Counts, m_inventoryVersion);
+                    outcome.Indices, outcome.Values, outcome.Counts, m_inventoryVersion,
+                    outcome.PickableId);
                 m_counters.DropAccepted++;
                 if (TryPersistAvatarInventory(clientId, "丢弃", out string persistReason))
                 {
@@ -1876,18 +2215,22 @@ namespace SuMultiplayer.Modules
                     " pos=(" + outcome.Position.X.ToString("F2") + "," +
                     outcome.Position.Y.ToString("F2") + "," +
                     outcome.Position.Z.ToString("F2") + ") 背包增量 " +
-                    outcome.Indices.Length + " 槽");
+                    outcome.Indices.Length + " 槽" +
+                    (requestUi ? "（UI 拖出：只移除请求数量）" : string.Empty));
             }
             else
             {
                 m_counters.DropRejected++;
                 m_counters.DropRejectReasons.Add(reason ?? "rejected");
+                if (requestUi) m_counters.UiDropRejectReasons.Add(reason ?? "rejected");
                 result = new PickableDropResultData(request.Sequence, false, reason ?? "rejected",
                     0, 0, Vector3.Zero, Vector3.Zero, Array.Empty<int>(), Array.Empty<int>(),
                     Array.Empty<int>(), 0);
                 LogRateLimited("drop-reject:" + clientId + ":" + reason,
                     "拒绝 clientId=" + clientId + " 的丢弃请求 " + request.Describe() + "：" +
-                    (reason ?? "rejected"));
+                    (reason ?? "rejected") + (requestUi
+                        ? "（UI 拖出被拒：客户端从未撤销背包，物品不会消失）"
+                        : string.Empty));
             }
             RememberDropResult(clientId, request.Sequence, result);
             SendDropResult(clientId, result);
@@ -1982,10 +2325,18 @@ namespace SuMultiplayer.Modules
                         " → 本次不落盘（下一次背包上报/周期抓取仍会落盘）");
                 }
                 Log("主机执行开火 clientId=" + clientId + " " + request.Describe() +
-                    " → 权威投射物 " + outcome.Spawned + " 个，背包增量 " +
+                    " → 权威投射物 " + outcome.Spawned + " 个，出生点 (" +
+                    outcome.Origin.X.ToString("F2") + "," + outcome.Origin.Y.ToString("F2") +
+                    "," + outcome.Origin.Z.ToString("F2") + ")，背包增量 " +
                     outcome.Indices.Length + " 槽" + (outcome.Spawned == 0
                         ? "（引擎口径的合法空结果：空包弹 / 没装箭 / 弩没拉满 / 哑火）"
                         : string.Empty));
+                // 释放后复位：主机已把权威背包里的弓/弩/火枪改成 draw=0，并扣了耐久；
+                // 立即回读并广播一条权威手持物，开火者与其他客户端同时复位
+                // （否则远端化身会一直停在满弓姿势）。
+                BroadcastFireReset(clientId, request.Kind);
+                // 开火声音：主机本机播一次 + 中继给其他客户端（开火者跳过自己的回声）。
+                RelayWeaponFire(clientId, in request, in outcome);
             }
             else
             {
@@ -2000,6 +2351,323 @@ namespace SuMultiplayer.Modules
             }
             RememberFireResult(clientId, request.Sequence, result);
             SendFireResult(clientId, result);
+        }
+
+        private static HeldItemAimKind AimKindFor(int kind)
+        {
+            switch (kind)
+            {
+                case ProjectileFireKinds.Bow: return HeldItemAimKind.Bow;
+                case ProjectileFireKinds.Crossbow: return HeldItemAimKind.Crossbow;
+                case ProjectileFireKinds.Musket: return HeldItemAimKind.Musket;
+                default: return HeldItemAimKind.None;
+            }
+        }
+
+        private void BroadcastFireReset(int clientId, int kind)
+        {
+            if (m_actionPort == null)
+            {
+                m_counters.FireResetFailures++;
+                LogRateLimited("fire-reset-no-port",
+                    "开火后无法广播手持物复位：没有角色动作端口（clientId=" + clientId + "）");
+                return;
+            }
+            string reason;
+            bool sent;
+            try
+            {
+                sent = m_actionPort.TryBroadcastHeldItem(clientId, AimKindFor(kind), out reason);
+            }
+            catch (Exception e)
+            {
+                sent = false;
+                reason = "exception-" + e.GetType().Name + ": " + e.Message;
+            }
+            if (sent)
+            {
+                m_counters.FireResetSent++;
+                return;
+            }
+            m_counters.FireResetFailures++;
+            LogRateLimited("fire-reset-send:" + clientId,
+                "开火后复位手持物广播失败（clientId=" + clientId + " kind=" +
+                ProjectileFireKinds.Name(kind) + "）：" + reason +
+                " → 远端化身可能暂时保持瞄准姿势（开火者的背包增量回执仍会复位本机）");
+        }
+
+        private uint NextFireSoundEventId()
+        {
+            uint id = ++m_fireSoundEventId;
+            if (id == 0) id = ++m_fireSoundEventId;
+            return id;
+        }
+
+        private void RelayWeaponFire(int clientId, in ProjectileFireRequestData request,
+            in ProjectileFireOutcome outcome)
+        {
+            var fire = new WeaponFireEventData(clientId, m_serverTickMs,
+                NextFireSoundEventId(), request.Kind, outcome.Origin, outcome.Direction,
+                outcome.Misfire);
+            string presentReason;
+            bool presented;
+            try
+            {
+                presented = m_port.TryPresentWeaponFire(in fire, out presentReason);
+            }
+            catch (Exception e)
+            {
+                presented = false;
+                presentReason = "exception-" + e.GetType().Name + ": " + e.Message;
+            }
+            if (presented)
+            {
+                m_counters.FireSoundPresented++;
+            }
+            else
+            {
+                m_counters.FireSoundFailures++;
+                LogRateLimited("fire-sound-host:" + presentReason,
+                    "主机播放开火声音失败（clientId=" + clientId + " " + fire.Describe() +
+                    "）：" + presentReason + " → 仍继续中继给其他客户端");
+            }
+            if (m_broadcast == null)
+            {
+                m_counters.FireSoundFailures++;
+                LogRateLimited("fire-sound-no-broadcast",
+                    "没有广播端口 → 开火声音无法中继给其他客户端（clientId=" + clientId + "）");
+                return;
+            }
+            if (!WeaponFireCodec.TryEncode(in fire, out PE.WeaponFireEvent encoded,
+                    out string encodeReason))
+            {
+                m_counters.FireSoundFailures++;
+                LogRateLimited("fire-sound-encode:" + encodeReason,
+                    "开火声音事件编码失败（" + encodeReason + "）：" + fire.Describe() +
+                    " → 本机已播，其他客户端收不到");
+                return;
+            }
+            byte[] payload = encoded.ToByteArray();
+            int sent = m_broadcast.BroadcastToPlayers(MessageType.WeaponFireEvent, payload);
+            if (sent > 0)
+            {
+                m_counters.FireSoundRelayed += sent;
+            }
+            else
+            {
+                m_counters.FireSoundFailures++;
+                LogRateLimited("fire-sound-relay",
+                    "开火声音中继没有入队（玩家端 " + m_broadcast.PlayerPeerCount +
+                    " 个，可能背压）：" + fire.Describe());
+            }
+        }
+
+        // ================================================================ 拾取声音中继
+
+        private uint NextPickupSoundEventId()
+        {
+            uint id = ++m_pickupSoundEventId;
+            if (id == 0) id = ++m_pickupSoundEventId;
+            return id;
+        }
+
+        /// <summary>
+        /// 主机：接受一条客户端拾取请求后，补发那条只存在于主机引擎里的
+        /// <c>Audio/PickableCollected</c>（纯表现）。
+        ///
+        /// 规则：
+        ///   · 请求者恒定收到（收件人策略无条件包含它）；
+        ///   · 其他玩家端只有读得到位置且距拾取点 ≤ <see cref="PickupSoundPolicy.MaxDistance"/>
+        ///     才收到（读不到位置的端明确计数，不发）；
+        ///   · 主机本机拾取（clientId &lt;= 0）**绝不**发事件：引擎原生 Update 已经播过，
+        ///     再发就是回声 → 计 <c>pickupSoundEchoSkipped</c>；
+        ///   · 主机本机也播一次同一参数的声音（附近主机玩家应当听到）；
+        ///   · 发送 / 接收都有限速；所有失败都写限流日志 + 计数，绝不静默。
+        /// </summary>
+        private void RelayPickupSound(int clientId, int pickableId,
+            in PickableAcquireOutcome outcome)
+        {
+            if (!outcome.PlayPickupSound) return;
+            if (clientId <= 0)
+            {
+                m_counters.PickupSoundEchoSkipped++;
+                LogRateLimited("pickup-sound-host-local",
+                    "主机本机拾取（clientId=" + clientId + " pickable=" + pickableId +
+                    "）→ 不中继拾取声音（引擎原生 Update 已经播放，避免回声）");
+                return;
+            }
+            long nowMs = (long)(Time.RealTime * 1000.0);
+            if (!m_pickupSoundSendLimiter.TryAccept(nowMs))
+            {
+                m_counters.PickupSoundRateSkipped++;
+                LogRateLimited("pickup-sound-send-rate",
+                    "拾取声音发送超过限速 " + PickupSoundPolicy.MaxEventsPerSecond +
+                    " 条/秒（clientId=" + clientId + " pickable=" + pickableId +
+                    "）→ 本次不中继（拾取本身已落地，不受影响）");
+                return;
+            }
+            var sound = new PickupSoundEventData(clientId, m_serverTickMs,
+                NextPickupSoundEventId(), outcome.Position);
+            // 主机本机播放：与引擎同一条声音参数（附近主机玩家应当听到这次拾取）。
+            string presentReason;
+            bool presented;
+            try
+            {
+                presented = m_port.TryPresentPickupSound(in sound, out presentReason);
+            }
+            catch (Exception e)
+            {
+                presented = false;
+                presentReason = "exception-" + e.GetType().Name + ": " + e.Message;
+            }
+            if (presented)
+            {
+                m_counters.PickupSoundPresented++;
+            }
+            else
+            {
+                m_counters.PickupSoundPresentFailures++;
+                LogRateLimited("pickup-sound-host-present:" + presentReason,
+                    "主机播放拾取声音失败（" + sound.Describe() + "）：" + presentReason +
+                    " → 仍继续中继给客户端");
+            }
+            m_pickupSoundPeers.Clear();
+            if (!m_port.TryCollectPlayerPeers(m_pickupSoundPeers, out string peerReason))
+            {
+                LogRateLimited("pickup-sound-peers",
+                    "收集玩家端位置失败（" + peerReason + "）→ 本次只有请求者会收到拾取声音");
+            }
+            RemoteSoundRecipientPlan plan = RemoteSoundRelayPolicy.Plan(clientId,
+                m_pickupSoundPeers, outcome.Position, PickupSoundPolicy.MaxDistance);
+            m_counters.PickupSoundSkippedDistance += plan.SkippedDistance;
+            m_counters.PickupSoundSkippedNoPosition += plan.SkippedNoPosition;
+            if (plan.SkippedDistance > 0 || plan.SkippedNoPosition > 0)
+            {
+                LogRateLimited("pickup-sound-recipient-skip",
+                    "拾取声音收件人裁剪（clientId=" + clientId + "）：超出 " +
+                    PickupSoundPolicy.MaxDistance.ToString("F0") + " m 跳过 " +
+                    plan.SkippedDistance + " 端；读不到位置跳过 " + plan.SkippedNoPosition +
+                    " 端（请求者仍恒定收到）");
+            }
+            if (!PickupSoundCodec.TryEncode(in sound, out PE.PickupSoundEvent encoded,
+                    out string encodeReason))
+            {
+                m_counters.PickupSoundSendFailures++;
+                LogRateLimited("pickup-sound-encode:" + encodeReason,
+                    "拾取声音事件编码失败（" + encodeReason + "）：" + sound.Describe() +
+                    " → 本次没有中继（拾取本身已落地）");
+                return;
+            }
+            byte[] payload = encoded.ToByteArray();
+            for (int i = 0; i < plan.Recipients.Length; i++)
+            {
+                int recipient = plan.Recipients[i];
+                if (!m_transport.TrySendTo(recipient, MessageType.PickupSoundEvent, payload))
+                {
+                    m_counters.PickupSoundSendFailures++;
+                    LogRateLimited("pickup-sound-send:" + recipient,
+                        "拾取声音发送失败（clientId=" + recipient + " " + sound.Describe() +
+                        "）→ 该端听不到这次拾取声音");
+                    continue;
+                }
+                m_counters.PickupSoundRelayed++;
+            }
+            if (plan.Recipients.Length == 0)
+            {
+                m_counters.PickupSoundSendFailures++;
+                LogRateLimited("pickup-sound-no-recipients",
+                    "拾取声音没有收件人（" + sound.Describe() + "；请求者 clientId=" +
+                    clientId + "）→ 请求者可能听不到这次拾取");
+            }
+        }
+
+        /// <summary>
+        /// 客户端：主机接受的拾取声音。先严格解码 / 去重 / 限速，再按本机监听者距离裁剪，
+        /// 最后只调 <c>SubsystemAudio.PlaySound</c>（不授予物品 / 不删拾取物 / 不改地形）。
+        /// 请求者恒定播放（即使读不到监听者位置）；其他端按 16 m 半径裁剪。
+        /// </summary>
+        private void OnPickupSoundEvent(MessageContext context, PE.PickupSoundEvent message)
+        {
+            if (!m_attached) return;
+            if (m_hosting)
+            {
+                // 主机不是接收方：事件回到主机只可能是接线错误 —— 明确跳过（回声）。
+                m_counters.PickupSoundEchoSkipped++;
+                LogRateLimited("pickup-sound-on-host",
+                    "主机收到 PickupSoundEvent（方向错误，clientId=" + context.ClientId +
+                    "）→ 丢弃（主机已经在本端播放过）");
+                return;
+            }
+            m_counters.PickupSoundReceived++;
+            if (!PickupSoundCodec.TryDecode(message, out PickupSoundEventData sound,
+                    out string error))
+            {
+                m_counters.PickupSoundMalformed++;
+                LogRateLimited("pickup-sound-invalid:" + error,
+                    "PickupSoundEvent 载荷非法（" + error + "，clientId=" + context.ClientId +
+                    "）→ 整条丢弃");
+                return;
+            }
+            if (!m_pickupSoundOrderer.TryAccept(in sound, out string orderReason))
+            {
+                m_counters.PickupSoundReplay++;
+                LogRateLimited("pickup-sound-order:" + orderReason,
+                    "拾取声音 " + sound.Describe() + " 被拒绝（" + orderReason +
+                    "，last id=" + m_pickupSoundOrderer.LastEventId + "）→ 不重复播放");
+                return;
+            }
+            long nowMs = (long)(Time.RealTime * 1000.0);
+            if (!m_pickupSoundRecvLimiter.TryAccept(nowMs))
+            {
+                m_counters.PickupSoundRateSkipped++;
+                LogRateLimited("pickup-sound-recv-rate",
+                    "拾取声音到达过快（限速 " + PickupSoundPolicy.MaxReceiveEventsPerSecond +
+                    " 条/秒）：" + sound.Describe() + " → 本事件不播放");
+                return;
+            }
+            int localClientId = m_transport != null ? m_transport.LocalClientId : -1;
+            bool hasListener = m_port.TryGetAudioListenerPosition(out Vector3 listener,
+                out string listenerReason);
+            PickupSoundPresentationPlan plan = PickupSoundPresentationPolicy.Plan(in sound,
+                localClientId, listener, hasListener, PickupSoundPolicy.MaxDistance);
+            m_counters.PickupSoundSkippedDistance += plan.SkippedDistance;
+            if (!plan.Present)
+            {
+                if (plan.NeedsListener)
+                {
+                    m_counters.PickupSoundNoListener++;
+                    LogRateLimited("pickup-sound-no-listener",
+                        "读不到本机监听者位置（" + listenerReason + "）→ 拾取声音 " +
+                        sound.Describe() + " 无法按距离判断（计数，不猜原点）");
+                }
+                else
+                {
+                    LogRateLimited("pickup-sound-distance",
+                        "拾取声音 " + sound.Describe() + " 距本机超过 " +
+                        PickupSoundPolicy.MaxDistance.ToString("F0") + " m → 不播放");
+                }
+                return;
+            }
+            string presentReason;
+            bool presented;
+            try
+            {
+                presented = m_port.TryPresentPickupSound(in sound, out presentReason);
+            }
+            catch (Exception e)
+            {
+                presented = false;
+                presentReason = "exception-" + e.GetType().Name + ": " + e.Message;
+            }
+            if (presented)
+            {
+                m_counters.PickupSoundPresented++;
+                return;
+            }
+            m_counters.PickupSoundPresentFailures++;
+            LogRateLimited("pickup-sound-present:" + presentReason,
+                "播放拾取声音失败 " + sound.Describe() + "：" + presentReason +
+                " → 本次没有声音（明确计数）");
         }
 
         private void RememberDropResult(int clientId, long sequence,

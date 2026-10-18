@@ -233,6 +233,84 @@ namespace SuMultiplayer.Net
         }
     }
 
+    /// <summary>
+    /// 一个熔炉（<c>ComponentFurnace</c>）的主机权威运行状态（主机 -> 客户端）。
+    ///
+    /// 与 <see cref="ContainerStateData"/> 互补：槽位说明炉子里有什么，这里说明
+    /// 炉子正在怎么烧 —— 火焰动画（<c>HeatLevel &gt; 0</c>）、进度条（<c>SmeltingProgress</c>）、
+    /// 剩余燃烧时间（<c>m_fireTimeRemaining</c>），以及方块燃烧外观对应的格子值
+    /// （contents 64 = 熄灭的熔炉，65 = 燃烧的熔炉；data = 朝向）。
+    ///
+    /// 客户端只做表现：把这三个字段写进副本 <c>ComponentFurnace</c>，并把格子值经地形应用
+    /// 路径落地（不产生本地编辑）；绝不推进烧炼、不消耗燃料。
+    ///
+    /// Source: Survivalcraft/Game/ComponentFurnace.cs:Update（m_heatLevel / m_smeltingProgress /
+    ///         m_fireTimeRemaining，末尾 64 -> 65 的内容切换）
+    /// Source: Survivalcraft/Game/FurnaceWidget.cs:Update（火焰 = HeatLevel &gt; 0，进度条 = SmeltingProgress）
+    /// Source: Survivalcraft/Game/LitFurnaceBlock.cs（Index = 65）
+    /// </summary>
+    public sealed class FurnaceStateData
+    {
+        /// <summary>熄灭的熔炉方块内容（<c>FurnaceBlock.Index</c>）。</summary>
+        public const int UnlitContents = 64;
+        /// <summary>燃烧的熔炉方块内容（<c>LitFurnaceBlock.Index</c>）。</summary>
+        public const int LitContents = 65;
+        /// <summary>格子的 data 位上界（引擎只用到 0..3 的朝向，这里留出稳健上界）。</summary>
+        public const int MaxCellData = 15;
+        /// <summary>热量上界（防御非法载荷；引擎燃料热量远低于此）。</summary>
+        public const float MaxHeatLevel = 1000000f;
+        /// <summary>剩余燃烧时间上界（秒；防御非法载荷）。</summary>
+        public const float MaxFireTimeRemaining = 1000000f;
+
+        public FurnaceStateData(int x, int y, int z, int revision, float heatLevel,
+            float smeltingProgress, float fireTimeRemaining, int cellValue)
+        {
+            X = x;
+            Y = y;
+            Z = z;
+            Revision = revision;
+            HeatLevel = heatLevel;
+            SmeltingProgress = smeltingProgress;
+            FireTimeRemaining = fireTimeRemaining;
+            CellValue = cellValue;
+        }
+
+        public int X { get; }
+        public int Y { get; }
+        public int Z { get; }
+        public int Revision { get; }
+        public float HeatLevel { get; }
+        public float SmeltingProgress { get; }
+        public float FireTimeRemaining { get; }
+        public int CellValue { get; }
+
+        public int Contents => CellValue & 0x3FF;
+        public int Data => (int)((uint)CellValue >> 14);
+
+        /// <summary>方块外观是否是"燃烧中的熔炉"（contents 65）。</summary>
+        public bool Lit => Contents == LitContents;
+
+        public ContainerKey Key => new ContainerKey(X, Y, Z, ContainerKinds.Furnace);
+
+        /// <summary>数值是否相同（不含 revision）：主机的"变化才下发"判定用。</summary>
+        public bool SameValues(FurnaceStateData other) =>
+            other != null && X == other.X && Y == other.Y && Z == other.Z &&
+            HeatLevel == other.HeatLevel && SmeltingProgress == other.SmeltingProgress &&
+            FireTimeRemaining == other.FireTimeRemaining && CellValue == other.CellValue;
+
+        /// <summary>数值是否相同（不含 revision）：主机抓取时与上次快照比较用。</summary>
+        public bool SameValues(float heatLevel, float smeltingProgress, float fireTimeRemaining,
+            int cellValue) =>
+            HeatLevel == heatLevel && SmeltingProgress == smeltingProgress &&
+            FireTimeRemaining == fireTimeRemaining && CellValue == cellValue;
+
+        public string Describe() => Key.Describe() + " rev=" + Revision + " heat=" +
+            HeatLevel.ToString("0.###", CultureInfo.InvariantCulture) + " progress=" +
+            SmeltingProgress.ToString("0.###", CultureInfo.InvariantCulture) + " fire=" +
+            FireTimeRemaining.ToString("0.###", CultureInfo.InvariantCulture) + " cell=" +
+            CellValue + " (" + (Lit ? "lit" : "unlit") + ",data=" + Data + ")";
+    }
+
     /// <summary>客户端 -> 主机：一次容器编辑（UI 槽位变化 + 玩家背包快照）。</summary>
     public readonly struct ContainerEditRequestData
     {
@@ -533,6 +611,110 @@ namespace SuMultiplayer.Net
                 return false;
             }
             return TryConvertContainerState(message, out state, out error);
+        }
+
+        public static P.FurnaceState EncodeFurnaceState(FurnaceStateData state)
+        {
+            return new P.FurnaceState
+            {
+                X = state.X,
+                Y = state.Y,
+                Z = state.Z,
+                Revision = state.Revision,
+                HeatLevel = state.HeatLevel,
+                SmeltingProgress = state.SmeltingProgress,
+                FireTimeRemaining = state.FireTimeRemaining,
+                CellValue = state.CellValue
+            };
+        }
+
+        public static byte[] EncodeFurnaceStateBytes(FurnaceStateData state) =>
+            EncodeFurnaceState(state).ToByteArray();
+
+        /// <summary>
+        /// 校验并把线上 <c>FurnaceState</c> 转成领域值。任何一项非法都整条拒绝，
+        /// <paramref name="error"/> 是可直接写进日志的原因（不静默丢）。
+        /// </summary>
+        public static bool TryConvertFurnaceState(P.FurnaceState message,
+            out FurnaceStateData state, out string error)
+        {
+            state = null;
+            error = null;
+            if (message == null)
+            {
+                error = "FurnaceState 为空";
+                return false;
+            }
+            if (message.Y < 0 || message.Y > 255)
+            {
+                error = "y 越界：" + message.Y;
+                return false;
+            }
+            if (message.Revision < 1)
+            {
+                error = "revision 非法：" + message.Revision;
+                return false;
+            }
+            int contents = message.CellValue & 0x3FF;
+            if (contents != FurnaceStateData.UnlitContents &&
+                contents != FurnaceStateData.LitContents)
+            {
+                error = "cell contents 不是熔炉：" + contents;
+                return false;
+            }
+            int data = (int)((uint)message.CellValue >> 14);
+            if (data < 0 || data > FurnaceStateData.MaxCellData)
+            {
+                error = "cell data 越界：" + data;
+                return false;
+            }
+            if (!IsFinite(message.HeatLevel) || message.HeatLevel < 0f ||
+                message.HeatLevel > FurnaceStateData.MaxHeatLevel)
+            {
+                error = "heat_level 非法：" + message.HeatLevel.ToString(CultureInfo.InvariantCulture);
+                return false;
+            }
+            if (!IsFinite(message.SmeltingProgress) || message.SmeltingProgress < 0f ||
+                message.SmeltingProgress > 1f)
+            {
+                error = "smelting_progress 非法：" +
+                    message.SmeltingProgress.ToString(CultureInfo.InvariantCulture);
+                return false;
+            }
+            if (!IsFinite(message.FireTimeRemaining) || message.FireTimeRemaining < 0f ||
+                message.FireTimeRemaining > FurnaceStateData.MaxFireTimeRemaining)
+            {
+                error = "fire_time_remaining 非法：" +
+                    message.FireTimeRemaining.ToString(CultureInfo.InvariantCulture);
+                return false;
+            }
+            state = new FurnaceStateData(message.X, message.Y, message.Z, message.Revision,
+                message.HeatLevel, message.SmeltingProgress, message.FireTimeRemaining,
+                message.CellValue);
+            return true;
+        }
+
+        public static bool TryDecodeFurnaceState(byte[] payload,
+            out FurnaceStateData state, out string error)
+        {
+            state = null;
+            error = null;
+            if (payload == null || payload.Length == 0)
+            {
+                error = "载荷为空";
+                return false;
+            }
+            P.FurnaceState message;
+            try
+            {
+                message = P.FurnaceState.Parser.ParseFrom(payload);
+            }
+            catch (Exception e)
+            {
+                error = "解析 FurnaceState 失败：" + e.GetType().Name + " " + e.Message;
+                return false;
+            }
+            return TryConvertFurnaceState(message, out state, out error);
         }
 
         public static P.ContainerEditRequest EncodeContainerEdit(

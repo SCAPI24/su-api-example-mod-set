@@ -2133,6 +2133,11 @@ namespace SuMultiplayer.Modules
                     " · duplicates " + (m_shell != null ? m_shell.CaptureState.FuseCellDuplicates : 0L) +
                     " · 窗口 " + (m_shell != null ? m_shell.CaptureState.FuseCaptureWindows : 0L) +
                     " · 丢弃 " + (m_shell != null ? m_shell.CaptureState.FuseCellsDropped : 0L) + "）" +
+                    // 客户端副本闸门 / 塌落闸门：按来源计数，一句日志可审计（没有静态状态）。
+                    " · 副本闸门 " + (m_shell != null ? m_shell.Gate.Describe() : "gate=none") +
+                    " · 塌落 " + (m_shell != null ? m_shell.CollapsingState.Describe() : "collapsing=none") +
+                    // 活塞闸门：摘掉的 base 写格订阅 / 拦下的 base 写格路径 / 移除的残留表现集合。
+                    " · 活塞 " + (m_shell != null ? m_shell.PistonState.Describe() : "piston=none") +
                     // 按需单块加载（客户端上报的边缘块）：**不改任何角色的兴趣半径 / 内容距离**，
                     // 只给"主机没有内容的那些上报块"挂一条只覆盖该块的临时更新位置。
                     //   容量限制的是**活动的引擎请求**（onDemandActive + onDemandHeld ≤ MaxActive），
@@ -2306,7 +2311,13 @@ namespace SuMultiplayer.Modules
                        " posSent=" + m_positionSnapshotsSent + " posApplied=" + m_positionSnapshotsApplied +
                        " posDropped=" + m_positionSnapshotsDropped +
                        // 客户端角色但连接不在时，本地写入走不到主机（没有接收者）的格数。
-                       " hostCellNoHost=" + m_hostCellNoHost;
+                       " hostCellNoHost=" + m_hostCellNoHost +
+                       // 客户端副本闸门 / 塌落闸门（按来源计数；collapsingGated=本地塌落被拒绝，
+                       // collapsingSkipped=移动组落地/清表被跳过 —— 最终格只收主机 CellChange）。
+                       " · 副本闸门 " + (m_shell != null ? m_shell.Gate.Describe() : "gate=none") +
+                       " · 塌落 " + (m_shell != null ? m_shell.CollapsingState.Describe() : "collapsing=none") +
+                       // 活塞闸门：摘掉的 base 写格订阅 / 拦下的 base 写格路径 / 移除的残留表现集合。
+                       " · 活塞 " + (m_shell != null ? m_shell.PistonState.Describe() : "piston=none");
             }
             if (m_wantClient)
                 return "terrain-sync: client 连接中 " + m_wantHost + ":" + m_wantPort +

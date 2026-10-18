@@ -66,6 +66,26 @@ namespace CmdBridgeMod
         internal const string MouseLastPosition = "m_lastMousePosition";
         internal const string MouseMovement = "MouseMovement";
 
+        // ---------------------------------------------------------------- 瞄准（act.aim）
+        //
+        // ⚠️ 这是白名单里**唯一**不是"输入层"的项，且**只读不写**的另外两个：
+        //
+        // `ComponentPlayer.m_aim`（Survivalcraft/Game/ComponentPlayer.cs:26，`Ray3?`）是"进行中的瞄准"。
+        // 引擎**没有**"取消瞄准"的输入字段：右键松开必然走 `AimState.Completed`（射出去，
+        // ComponentPlayer.cs:219-227）；Cancelled 分支只有"瞄准射线出屏"才会进
+        // （ComponentPlayer.cs:190, 211-216），而鼠标/键盘通道的射线恒在屏幕中心
+        // （ComponentInput.cs:185-186 用相机视线），永远出不了屏。
+        // 所以 `act.aim cancel` 必须做引擎自己取消时做的那两件事：
+        //   `ComponentMiner.Aim(ray, AimState.Cancelled)` + `m_aim = null`（ComponentPlayer.cs:211-214）。
+        // 不写它，松手就一定是"把箭射出去"，`cancel` 这个名字就是假的。
+        internal const string ComponentPlayerAim = "m_aim";
+
+        /// <summary>`m_isAimBlocked`（ComponentPlayer.cs:29）：只读。上一步动作做过之后引擎会挡住重新瞄准。</summary>
+        internal const string ComponentPlayerAimBlocked = "m_isAimBlocked";
+
+        /// <summary>`m_lastActionTime`（ComponentPlayer.cs:23）：只读。瞄准/交互的冷却基准（创造 0.1s / 其他 1.4s）。</summary>
+        internal const string ComponentPlayerLastActionTime = "m_lastActionTime";
+
         internal static readonly string[] All =
         {
             KeyboardDownArray,
@@ -83,7 +103,10 @@ namespace CmdBridgeMod
             WindowState,
             WindowGameWindow,
             MouseLastPosition,
-            MouseMovement
+            MouseMovement,
+            ComponentPlayerAim,
+            ComponentPlayerAimBlocked,
+            ComponentPlayerLastActionTime
         };
 
         internal static bool Contains(string memberName)

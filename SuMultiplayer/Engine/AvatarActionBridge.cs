@@ -55,6 +55,12 @@ namespace SuMultiplayer.Engine
         private long m_presentationsApplied;
         private long m_slotDrops;
 
+        /// <summary>
+        /// 组合根在构造完 <see cref="PlayerActionModule"/> 后注入：开火复位需要模块持有的
+        /// 权威广播 / 手持物缓存，而不是在这里再建一份。
+        /// </summary>
+        public PlayerActionModule ActionModule { get; set; }
+
         public AvatarActionBridge(NetworkAvatarSpawner spawner, IModParentField parentField,
             ITransportPort transport, ITransportControlPort control, IModuleDiagnostics diagnostics,
             string ownerId)
@@ -342,6 +348,21 @@ namespace SuMultiplayer.Engine
             if (!SetSlot(inventory, slot, value, count, clientId, out reason)) return false;
             m_heldItemsApplied++;
             return true;
+        }
+
+        /// <summary>
+        /// 主机：开火后从权威背包回读并广播手持物复位（转发给 PlayerActionModule）。
+        /// 未注入模块 = 明确失败（计数 / 日志由调用方写），绝不假装已广播。
+        /// </summary>
+        public bool TryBroadcastHeldItem(int clientId, HeldItemAimKind aimKind, out string reason)
+        {
+            PlayerActionModule module = ActionModule;
+            if (module == null)
+            {
+                reason = "no-action-module";
+                return false;
+            }
+            return module.TryBroadcastHeldItem(clientId, aimKind, out reason);
         }
 
         public bool TryApplyInventory(int clientId, in PlayerInventoryDelta delta, out string reason)

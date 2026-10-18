@@ -120,6 +120,10 @@ enum MessageType {
   PROJECTILE_FIRE_REQUEST = 52;
   PROJECTILE_FIRE_RESULT = 53;
 
+  // Presentation-only weapon-fire sound relay (entities.proto):
+  // host -> all clients after an accepted shot.  Append-only.
+  WEAPON_FIRE_EVENT = 54;
+
   // Burn-away presentation (effects.proto): host-authoritative, clients only
   // spawn debris particles / play the sizzle sound.  Append-only.
   // Source: Survivalcraft/Game/SubsystemFireBlockBehavior.cs:227-256
@@ -141,6 +145,55 @@ enum MessageType {
   CONTAINER_STATE = 62;
   CONTAINER_EDIT_REQUEST = 63;
   CONTAINER_EDIT_RESULT = 64;
+
+  // MovingBlockSet motion presentation (piston.proto): host-authoritative, clients visual-only.
+  // The engine represents the intermediate motion as MovingBlockSets that are NOT cell data,
+  // so clients never see the moving head/rod (piston) or the falling sand/gravel column
+  // (collapsing) until the final CellChange arrives.
+  // Both kinds share these two messages; PistonMove.kind / PistonMoveEndEntry.kind select
+  // PISTON or COLLAPSING (append-only field, 0 = older host that only knows pistons).
+  // Append-only: 65 / 66 are new ids, no existing id is renumbered.
+  // Source: Survivalcraft/Game/SubsystemPistonBlockBehavior.cs:MovePiston/StopPiston
+  // Source: Survivalcraft/Game/SubsystemCollapsingBlockBehavior.cs:TryCollapseColumn/MovingBlocksStopped
+  // Source: Survivalcraft/Game/SubsystemMovingBlocks.cs:AddMovingBlockSet/Update
+  PISTON_MOVE_EVENT = 65;
+  PISTON_MOVE_END = 66;
+
+  // Campfire extinguish presentation (effects.proto): host -> all clients after a
+  // burning campfire has burned out (cell stays campfire 209, data = 0).
+  // Presentation-only: clients just play Audio/Sizzles at the cell; terrain still
+  // arrives through the ordinary CellChange stream.  Append-only: 67 is a new id,
+  // no existing id is renumbered.
+  // Source: Survivalcraft/Game/SubsystemCampfireBlockBehavior.cs:ResizeCampfire
+  CAMPFIRE_EXTINGUISH_EVENT = 67;
+
+  // Remote action sound relay (remotesound.proto): presentation-only.
+  // Host -> the requesting client and every other client within 48 m, after the
+  // host executed that client's BlockUseRequest / container interaction.  The
+  // block behaviours call SubsystemAudio locally on the host, so the requester
+  // otherwise hears nothing (switch / button / lever / door / campfire / ...).
+  // Append-only: 68 is a new id, no existing id is renumbered.
+  // Source: Survivalcraft/Game/SwitchElectricElement.cs:27
+  // Source: Survivalcraft/Game/SubsystemAudio.cs:98/112/118/124/138/144
+  REMOTE_ACTION_SOUND = 68;
+
+  // Pickup sound relay (entities.proto): presentation-only.
+  // Host -> the requesting client (always) and every other client within a small
+  // radius (16 m), right after the host accepted that client's
+  // PickableAcquireRequest.  The host executes the acquire itself, so the
+  // requesting client otherwise hears nothing at all (the presentation is not in
+  // any state stream).  Append-only: 69 is a new id, no existing id is renumbered.
+  // Source: Survivalcraft/Game/SubsystemPickables.cs:210-213
+  //         (Audio/PickableCollected, volume 0.7, pitch -0.4, min distance 2)
+  PICKUP_SOUND_EVENT = 69;
+
+  // Host-authoritative furnace runtime state (blockuse.proto): the client's replica
+  // ComponentFurnace has no simulation, so heat / smelting progress / fire time and the
+  // lit block cell value arrive as state. Presentation-only on the client.
+  // Append-only: 70 is a new id, no existing id is renumbered.
+  // Source: Survivalcraft/Game/ComponentFurnace.cs:Update
+  // Source: Survivalcraft/Game/FurnaceWidget.cs:Update
+  FURNACE_STATE = 70;
 }
 
 // Logical envelope metadata.  The current single-message transport puts these

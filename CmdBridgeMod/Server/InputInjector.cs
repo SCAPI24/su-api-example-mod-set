@@ -4,6 +4,7 @@ using Game;
 using SuAPI;
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 using System.Threading;
 
 namespace CmdBridgeMod
@@ -635,10 +636,22 @@ namespace CmdBridgeMod
                 // Mouse.BeforeFrame 会用真实滚轮重算 MouseWheelMovement；
                 // 把 m_lastMouseWheelValue 置空可让它跳过本次重算，从而保留我们写入的值。
                 // Source: Engine/Engine/Input/Mouse.cs:Mouse.BeforeFrame
-                Fields.ModifyStaticField(
-                    typeof(Mouse), InputWhitelist.MouseLastWheelValue, null);
-                Fields.ModifyStaticField(
-                    typeof(Mouse), InputWhitelist.MouseWheelMovement, notches * 120);
+                // m_lastMouseWheelValue / MouseWheelMovement 都是引擎私有成员（private static int?
+                // 与 public static 属性 + private setter），必须用 NonPublic 反射写入，
+                // 不能用只看 public 的 Fields 助手（旧实现会抛 "Static member not found"）。
+                FieldInfo lastWheel = typeof(Mouse).GetField(InputWhitelist.MouseLastWheelValue,
+                    BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static);
+                if (lastWheel == null)
+                    throw new BridgeCommandException("engine_mismatch",
+                        "未找到 Mouse." + InputWhitelist.MouseLastWheelValue + "（引擎版本不匹配）");
+                lastWheel.SetValue(null, null);
+                PropertyInfo wheelMovement = typeof(Mouse).GetProperty(
+                    InputWhitelist.MouseWheelMovement, BindingFlags.Public | BindingFlags.Static);
+                MethodInfo setter = wheelMovement?.GetSetMethod(true);
+                if (setter == null)
+                    throw new BridgeCommandException("engine_mismatch",
+                        "未找到 Mouse." + InputWhitelist.MouseWheelMovement + " 的可写 setter（引擎版本不匹配）");
+                setter.Invoke(null, new object[] { notches * 120 });
 
                 return new Dictionary<string, object>(StringComparer.Ordinal)
                 {
@@ -1042,7 +1055,12 @@ namespace CmdBridgeMod
             };
         }
 
-        private void EnsureEnabled()
+        /// <summary>
+        /// 注入被配置关掉时给出同一个错误码。`internal` 是因为同程序集里的
+        /// `PlayerInteractionInjector`（act.use / act.interact / act.place / act.aim）复用它，
+        /// 这样"没开注入"在所有 act.* 命令上是同一个错误码与同一句话。
+        /// </summary>
+        internal void EnsureEnabled()
         {
             if (!m_config.EnableInputInjection)
             {

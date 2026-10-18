@@ -31,11 +31,35 @@ namespace SuMultiplayer.Engine
         private readonly List<int> m_removedIndices = new List<int>();
         private List<ComponentPlayer> m_componentPlayers;
         private bool m_bindFailureLogged;
+        private bool m_phantomFaultLogged;
         private long m_filterFailures;
 
         public SuSubsystemPickables()
         {
             m_suppressAll = delegate { return true; };
+            // 客户端 UI 拖出安全网：AddPickable 是**所有**本地拾取物创建的唯一漏斗
+            // （ViewWidget.DragDrop / 方块行为 / 引擎预测都走它）。正常路径由
+            // Engine/UiDropInterception.cs 在 ViewWidget.DragDrop 之前拦下，本地不会创建；
+            // 若某个路径漏过拦截器，这里按"落点 == 相机视点 + 背包差分唯一匹配"撤销幽灵
+            // （物品放回背包后仍走请求链）。事件挂在实例上，无静态状态。
+            PickableAdded += OnPickableAdded;
+        }
+
+        private void OnPickableAdded(Pickable pickable)
+        {
+            try
+            {
+                Replica?.TryHandleLocalPickableAdded(pickable);
+            }
+            catch (Exception e)
+            {
+                if (!m_phantomFaultLogged)
+                {
+                    m_phantomFaultLogged = true;
+                    Log.Error("[SuMP] UI 拖出安全网异常：" + e.GetType().Name + " " +
+                        e.Message + " → 本帧不接管（该拾取物会按既有外来清理处理；只记录一次）");
+                }
+            }
         }
 
         /// <summary>

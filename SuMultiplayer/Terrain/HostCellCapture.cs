@@ -324,6 +324,73 @@ namespace SuMultiplayer.Terrain
             return count;
         }
 
+        // ------------------------------------------------------------------ 世界演化捕获（主机）
+        //
+        // 为什么需要（实机 2026-10-19：主机水漫过草方后草变泥土，主机显示泥土、客户端仍是草）：
+        //   · 草的转换写在 `SubsystemGrassBlockBehavior.OnNeighborBlockChanged`（:76/:82/:86）/
+        //     `OnExplosion`（:94）/`Update`（:128）；土 / 常春藤 / 树苗 / 植物 / 仙人掌 /
+        //     腐坏 / 地毯 / 落叶 / 季相同样在各自的回调里 ChangeCell；
+        //   · 这些邻居回调**恰恰是在** `SubsystemFluidBlockBehavior.SpreadFluid` 末尾的
+        //     `ProcessModifiedCells()` 通知循环里被调用的（SubsystemTerrain.cs:71 先清表、
+        //     再通知邻居），写入发生在清表**之后**；而 SpreadFluid 一次 Update 跑两遍、
+        //     每遍末尾都清表（:312），第二遍的清表就把这些格抹掉 ⇒ 地形 Update（Terrain=100）
+        //     再读表已没有它：主机本地变了、客户端永远收不到。
+        //   ⇒ 演化外壳在每个会写格的回调 / Update 之后立刻 **rescue**（接进本捕获器的 carry），
+        //     与流体 / 火 / 引信同一个汇合点：<see cref="Collect"/> 与引擎改动表合并去重，
+        //     每格恰好下发一次。
+        //
+        // 计数口径：
+        //   · EvolutionCellCaptured  ：真的并进下发批次（交给桥）的演化格累计数（每格一次）；
+        //   · EvolutionCellDuplicates：同一格被重复报告（多次 rescue / 表里已有）而只下发一次的累计数；
+        //   · EvolutionRescueCalls   ：外壳调用 rescue 的次数（0 = 接线没生效）；
+        //   · EvolutionCellsDropped  ：因无桥 / 会话结束而**明确丢弃**的演化格累计数（不静默）。
+
+        /// <summary>被演化 rescue 接住、还没并进下发批次的格子（与流体 / 火 / 引信共用 m_rescued，
+        /// 这里只记录来源，用于精确计数）。</summary>
+        private readonly HashSet<Point3> m_evolutionRescued = new HashSet<Point3>();
+        private long m_evolutionRescueCalls;
+        private long m_evolutionCellCaptured;
+        private long m_evolutionCellDuplicates;
+        private long m_evolutionDropped;
+
+        /// <summary>外壳调用 evolution rescue 的累计次数。</summary>
+        public long EvolutionRescueCalls => m_evolutionRescueCalls;
+        /// <summary>真的进了下发批次的演化格累计数 = evolutionCellCaptured。</summary>
+        public long EvolutionCellCaptured => m_evolutionCellCaptured;
+        /// <summary>同一格被重复报告、合并为一次下发的累计数 = evolutionCellDuplicates。</summary>
+        public long EvolutionCellDuplicates => m_evolutionCellDuplicates;
+        /// <summary>因无桥 / 会话结束而明确丢弃的演化格累计数（不静默）。</summary>
+        public long EvolutionCellsDropped => m_evolutionDropped;
+        /// <summary>已接住、等下一次 Collect 合并的演化格数。</summary>
+        public int PendingEvolutionCount => m_evolutionRescued.Count;
+
+        /// <summary>
+        /// 在一次演化回调 / Update 之后把引擎改动表里的格子接进 carry（跨清表存活）。
+        /// 传入的必须是引擎 <c>m_modifiedCells.Keys</c>（没有待下发格时传 null 也要调用 ——
+        /// 这样 evolutionRescueCalls 能证明接线确实在跑）；值到 <see cref="Collect"/> 时才读，
+        /// 因此同帧后续改写以最终值为准。返回本次**新接住**的格数。
+        /// </summary>
+        public int RescueEvolution(IEnumerable<Point3> pendingCells)
+        {
+            m_evolutionRescueCalls++;
+            if (pendingCells == null) return 0;
+            int captured = 0;
+            foreach (Point3 cell in pendingCells)
+            {
+                if (cell.Y < 0 || cell.Y > 255) continue;
+                if (!m_rescued.Add(cell))
+                {
+                    // 已经在 carry 里（流体 / 火 / 引信 / 上一个演化回调接住）⇒ 只计数，不重复入队。
+                    m_evolutionCellDuplicates++;
+                    continue;
+                }
+                m_rescuedTotal++;
+                m_evolutionRescued.Add(cell);
+                captured++;
+            }
+            return captured;
+        }
+
         /// <summary>候选键因每帧上限没有参与比较：只记账（这些格仍由行为回调覆盖）。</summary>
         public void NoteFuseCandidateCapHit(int skippedKeys)
         {
@@ -527,13 +594,16 @@ namespace SuMultiplayer.Terrain
         }
 
         /// <summary>
-        /// 合并"引擎改动表 ∪ 接住集合 ∪ 火 carry ∪ 引信 carry"，输出**去重后**的待下发清单
+        /// 合并"引擎改动表 ∪ 接住集合（流体 / 世界演化）∪ 火 carry ∪ 引信 carry"，
+        /// 输出**去重后**的待下发清单
         /// （<paramref name="output"/> 会被清空）。返回本次去重掉的格子数；累计值见 <see cref="Duplicates"/>。
         ///
         /// 火格 / 引信格必须并在这里（而不是只依赖引擎改动表）：引擎的流体子系统每 0.25s 会
         /// <c>ProcessModifiedCells()</c> 两遍（SubsystemTerrain.cs:71 先清表再通知邻居），
         /// 火格被邻居回调改成空气的那一刻正好在通知内部、且在清表之后入表 ⇒ 只靠表必然丢。
-        /// 引信 tick 是主机外壳在火药桶格子上的 data-only 写入，同样会被这次清表抹掉。
+        /// 引信 tick 是主机外壳在火药桶格子上的 data-only 写入，同样会被这次清表抹掉；
+        /// 世界演化的邻居回调（草 → 泥土等）也是从这次通知里打进来、落在清表之后的，
+        /// 所以它们都在回调 / Update 之后立刻进 <see cref="RescueEvolution"/> 的 carry。
         /// </summary>
         public int Collect(IEnumerable<Point3> pendingCells, List<Point3> output)
         {
@@ -554,12 +624,20 @@ namespace SuMultiplayer.Terrain
             {
                 foreach (Point3 cell in m_rescued)
                 {
+                    bool evolution = m_evolutionRescued.Contains(cell);
                     // 引擎表里已经有它 ⇒ 这次合并只需下发一份（表里那份，值是最新的）。
-                    if (m_pending.Contains(cell)) { duplicates++; continue; }
+                    if (m_pending.Contains(cell))
+                    {
+                        duplicates++;
+                        if (evolution) m_evolutionCellDuplicates++;
+                        continue;
+                    }
                     if (!m_pending.Add(cell)) continue;
                     output.Add(cell);
+                    if (evolution) m_evolutionCellCaptured++;
                 }
                 m_rescued.Clear();
+                m_evolutionRescued.Clear();
             }
             if (m_fireCarry.Count > 0)
             {
@@ -594,14 +672,16 @@ namespace SuMultiplayer.Terrain
         /// <summary>
         /// 放弃所有接住的格子（没有桥 / 表绑定失败 / 会话结束）：这些格子不会被下发，
         /// 调用方必须**明确计数**（不能假装它们已经发过）。返回丢弃的格数
-        /// （接住 + 流体窗口 + 火窗口/carry + 引信窗口/carry；火/引信另计入各自 Dropped）。
+        /// （接住 + 流体窗口 + 火窗口/carry + 引信窗口/carry；火/引信/世界演化另计入各自 Dropped）。
         /// </summary>
         public int Clear()
         {
             int droppedFire = m_fireWindow.Count + m_fireCarry.Count;
             int droppedFuse = m_fuseWindow.Count + m_fuseCarry.Count;
+            int droppedEvolution = m_evolutionRescued.Count;
             int dropped = m_rescued.Count + m_fluidWindow.Count + droppedFire + droppedFuse;
             m_rescued.Clear();
+            m_evolutionRescued.Clear();
             m_pending.Clear();
             m_fluidWindow.Clear();
             m_fluidWindowActive = false;
@@ -613,6 +693,7 @@ namespace SuMultiplayer.Terrain
             m_fuseWindowActive = false;
             if (droppedFire > 0) m_fireDropped += droppedFire;
             if (droppedFuse > 0) m_fuseDropped += droppedFuse;
+            if (droppedEvolution > 0) m_evolutionDropped += droppedEvolution;
             if (dropped > 0) m_fluidDropped += dropped;
             return dropped;
         }

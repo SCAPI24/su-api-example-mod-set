@@ -36,21 +36,44 @@ namespace SuMultiplayer.Engine
         internal static bool Allow(SubsystemTerrain terrain, ReplicaMutationSource source) =>
             !(terrain is SuSubsystemTerrain shell) || shell.AllowSimulation(source);
 
-        /// <summary>客户端把某个引擎私有工作表清空，避免"只登记不消费"越积越多。</summary>
-        internal static void ClearTable(SubsystemTerrain terrain, object owner, string fieldName,
+        /// <summary>
+        /// 客户端把某个引擎私有工作表清空，避免"只登记不消费"越积越多。
+        /// 返回 true = 字段存在且已清空（数量不计）；false = 字段不存在 / 本端不是客户端 / 读取失败。
+        /// 调用方把 false 计入各自 skipped 计数（不静默假装清了）。
+        /// </summary>
+        internal static bool ClearTable(SubsystemTerrain terrain, object owner, string fieldName,
             Type declaringType)
         {
-            if (!IsClient(terrain) || owner == null) return;
+            if (!IsClient(terrain) || owner == null) return false;
             try
             {
                 object table = Game.Program.ModManager?.ModParentField?
                     .GetParentField<object>(owner, fieldName, declaringType);
-                if (table is IDictionary dictionary) dictionary.Clear();
-                else if (table is IList list) list.Clear();
+                if (table is IDictionary dictionary)
+                {
+                    dictionary.Clear();
+                    return true;
+                }
+                if (table is IList list)
+                {
+                    list.Clear();
+                    return true;
+                }
+                // HashSet<T> 等只实现 ICollection<T>，不是 IDictionary/IList（例如
+                // SubsystemWoodBlockBehavior.m_leavesToCheck:19）；用公共 Clear() 兜住，
+                // 仍然返回 false = 没有可清的集合（不静默假装清了）。
+                MethodInfo clear = table.GetType().GetMethod("Clear", Type.EmptyTypes);
+                if (clear != null)
+                {
+                    clear.Invoke(table, null);
+                    return true;
+                }
+                return false;
             }
             catch (Exception)
             {
                 // 字段不存在 = 引擎版本差异：Loud 一次由调用方计数器体现；不静默假装清了。
+                return false;
             }
         }
 
@@ -115,6 +138,16 @@ namespace SuMultiplayer.Engine
             if (before == after) return;
             (terrain as SuSubsystemTerrain)?.NoteFluidCandidate(cell, before, after);
         }
+
+        /// <summary>
+        /// 主机：把引擎改动表里待下发的格子**立刻**接进捕获 carry（跨流体清表存活）。
+        /// 世界演化外壳在每个会写格的回调 / Update 之后调用：这些邻居回调恰好是在流体
+        /// <c>ProcessModifiedCells()</c> 的邻居通知循环里被调用的（清表之后才写入），
+        /// 不在这里接住就会被同一 Update 的第二遍清表抹掉。
+        /// 客户端 / 单机 / 无桥由 <see cref="SuSubsystemTerrain.RescueEvolutionCells"/> 自己判断。
+        /// </summary>
+        internal static void RescueEvolutionCells(SubsystemTerrain terrain) =>
+            (terrain as SuSubsystemTerrain)?.RescueEvolutionCells();
 
         internal static int[] ReadCellValues(SubsystemTerrain terrain, Point3[] cells)
         {
@@ -1278,6 +1311,8 @@ namespace SuMultiplayer.Engine
         {
             if (!ReplicaGates.Allow(SubsystemTerrain, ReplicaMutationSource.Grass)) return;
             base.OnPoll(value, x, y, z, pollPass);
+            // Source: Survivalcraft/Game/SubsystemGrassBlockBehavior.cs:OnPoll（把转换排进 m_toUpdate）
+            ReplicaGates.RescueEvolutionCells(SubsystemTerrain);
         }
 
         public override void OnNeighborBlockChanged(int x, int y, int z, int neighborX, int neighborY,
@@ -1285,12 +1320,18 @@ namespace SuMultiplayer.Engine
         {
             if (!ReplicaGates.Allow(SubsystemTerrain, ReplicaMutationSource.Grass)) return;
             base.OnNeighborBlockChanged(x, y, z, neighborX, neighborY, neighborZ);
+            // Source: Survivalcraft/Game/SubsystemGrassBlockBehavior.cs:OnNeighborBlockChanged:76/82/86
+            // （草 → 泥土 / data 改写）—— 这个回调就是从流体 ProcessModifiedCells 的通知里打进来的，
+            // 写入落在清表之后，必须立刻接住，否则第二遍清表就抹掉（实机：主机泥土、客户端草）。
+            ReplicaGates.RescueEvolutionCells(SubsystemTerrain);
         }
 
         public override void OnExplosion(int value, int x, int y, int z, float damage)
         {
             if (!ReplicaGates.Allow(SubsystemTerrain, ReplicaMutationSource.Grass)) return;
             base.OnExplosion(value, x, y, z, damage);
+            // Source: Survivalcraft/Game/SubsystemGrassBlockBehavior.cs:OnExplosion:94（爆炸把草改回泥土）
+            ReplicaGates.RescueEvolutionCells(SubsystemTerrain);
         }
 
         void IUpdateable.Update(float dt)
@@ -1301,7 +1342,9 @@ namespace SuMultiplayer.Engine
                     typeof(SubsystemGrassBlockBehavior));
                 return;
             }
+            // Source: Survivalcraft/Game/SubsystemGrassBlockBehavior.cs:Update:128（草 → 泥土）
             base.Update(dt);
+            ReplicaGates.RescueEvolutionCells(SubsystemTerrain);
         }
     }
 
@@ -1311,12 +1354,16 @@ namespace SuMultiplayer.Engine
         {
             if (!ReplicaGates.Allow(SubsystemTerrain, ReplicaMutationSource.Plant)) return;
             base.OnPoll(value, x, y, z, pollPass);
+            // Source: Survivalcraft/Game/SubsystemPlantBlockBehavior.cs:OnPoll/Grow*（经 CellChangeQueue 写格）
+            ReplicaGates.RescueEvolutionCells(SubsystemTerrain);
         }
 
         public override void OnBlockGenerated(int value, int x, int y, int z, bool isLoaded)
         {
             if (!ReplicaGates.Allow(SubsystemTerrain, ReplicaMutationSource.Plant)) return;
             base.OnBlockGenerated(value, x, y, z, isLoaded);
+            // Source: Survivalcraft/Game/SubsystemPlantBlockBehavior.cs:OnBlockGenerated:56
+            ReplicaGates.RescueEvolutionCells(SubsystemTerrain);
         }
 
         public override void OnNeighborBlockChanged(int x, int y, int z, int neighborX, int neighborY,
@@ -1324,6 +1371,9 @@ namespace SuMultiplayer.Engine
         {
             if (!ReplicaGates.Allow(SubsystemTerrain, ReplicaMutationSource.Plant)) return;
             base.OnNeighborBlockChanged(x, y, z, neighborX, neighborY, neighborZ);
+            // Source: Survivalcraft/Game/SubsystemPlantBlockBehavior.cs:OnNeighborBlockChanged:35/43/50
+            // （DestroyCell：植物失去支撑被拔掉）
+            ReplicaGates.RescueEvolutionCells(SubsystemTerrain);
         }
     }
 
@@ -1332,15 +1382,21 @@ namespace SuMultiplayer.Engine
     {
         public override void OnBlockGenerated(int value, int x, int y, int z, bool isLoaded)
         {
-            // 引擎这一支会 SetCellValueFast 改季相 data（不进改动表，客户端会永久分歧）。
+            // 引擎这一支会改季相 data（applyImmediately:true → ChangeCell；否则排进
+            // SubsystemCellChangeQueue）：客户端不推进 → 不接住就会永久分歧。
             if (!ReplicaGates.Allow(SubsystemTerrain, ReplicaMutationSource.DeciduousLeaves)) return;
             base.OnBlockGenerated(value, x, y, z, isLoaded);
+            // Source: Survivalcraft/Game/SubsystemDeciduousLeavesBlockBehavior.cs:OnBlockGenerated:62
+            // （applyImmediately:true → ChangeCell）与 CreateFallenLeaves（QueueCellChange）
+            ReplicaGates.RescueEvolutionCells(SubsystemTerrain);
         }
 
         public override void OnPoll(int value, int x, int y, int z, int pollPass)
         {
             if (!ReplicaGates.Allow(SubsystemTerrain, ReplicaMutationSource.DeciduousLeaves)) return;
             base.OnPoll(value, x, y, z, pollPass);
+            // Source: Survivalcraft/Game/SubsystemDeciduousLeavesBlockBehavior.cs:OnPoll:68
+            ReplicaGates.RescueEvolutionCells(SubsystemTerrain);
         }
 
         // 引擎的 IUpdateable.Update 只推进落叶粒子（不改地形），客户端照常保留。
@@ -1361,6 +1417,8 @@ namespace SuMultiplayer.Engine
         {
             if (!ReplicaGates.Allow(SubsystemTerrain, ReplicaMutationSource.Cactus)) return;
             base.OnPoll(value, x, y, z, pollPass);
+            // Source: Survivalcraft/Game/SubsystemCactusBlockBehavior.cs:OnPoll:40（QueueCellChange 长高）
+            ReplicaGates.RescueEvolutionCells(SubsystemTerrain);
         }
 
         public override void OnNeighborBlockChanged(int x, int y, int z, int neighborX, int neighborY,
@@ -1368,6 +1426,8 @@ namespace SuMultiplayer.Engine
         {
             if (!ReplicaGates.Allow(SubsystemTerrain, ReplicaMutationSource.Cactus)) return;
             base.OnNeighborBlockChanged(x, y, z, neighborX, neighborY, neighborZ);
+            // Source: Survivalcraft/Game/SubsystemCactusBlockBehavior.cs:OnNeighborBlockChanged:23
+            ReplicaGates.RescueEvolutionCells(SubsystemTerrain);
         }
     }
 
@@ -1377,6 +1437,8 @@ namespace SuMultiplayer.Engine
         {
             if (!ReplicaGates.Allow(SubsystemTerrain, ReplicaMutationSource.Rot)) return;
             base.OnPoll(value, x, y, z, pollPass);
+            // Source: Survivalcraft/Game/SubsystemRotBlockBehavior.cs:OnPoll:53（ChangeCell 腐坏一档）
+            ReplicaGates.RescueEvolutionCells(SubsystemTerrain);
         }
     }
 
@@ -1386,6 +1448,8 @@ namespace SuMultiplayer.Engine
         {
             if (!ReplicaGates.Allow(SubsystemTerrain, ReplicaMutationSource.Carpet)) return;
             base.OnPoll(value, x, y, z, pollPass);
+            // Source: Survivalcraft/Game/SubsystemCarpetBlockBehavior.cs:OnPoll:35（被雨雪冲掉）
+            ReplicaGates.RescueEvolutionCells(SubsystemTerrain);
         }
 
         public override void OnNeighborBlockChanged(int x, int y, int z, int neighborX, int neighborY,
@@ -1393,6 +1457,8 @@ namespace SuMultiplayer.Engine
         {
             if (!ReplicaGates.Allow(SubsystemTerrain, ReplicaMutationSource.Carpet)) return;
             base.OnNeighborBlockChanged(x, y, z, neighborX, neighborY, neighborZ);
+            // Source: Survivalcraft/Game/SubsystemCarpetBlockBehavior.cs:OnNeighborBlockChanged:24
+            ReplicaGates.RescueEvolutionCells(SubsystemTerrain);
         }
     }
 
@@ -1402,6 +1468,9 @@ namespace SuMultiplayer.Engine
         {
             if (!ReplicaGates.Allow(SubsystemTerrain, ReplicaMutationSource.FallenLeaves)) return;
             base.OnPoll(value, x, y, z, pollPass);
+            // Source: Survivalcraft/Game/SubsystemFallenLeavesBlockBehavior.cs:OnPoll:28
+            // / UpdateFallenLeaves:69（DestroyCell）
+            ReplicaGates.RescueEvolutionCells(SubsystemTerrain);
         }
 
         public override void OnNeighborBlockChanged(int x, int y, int z, int neighborX, int neighborY,
@@ -1409,6 +1478,8 @@ namespace SuMultiplayer.Engine
         {
             if (!ReplicaGates.Allow(SubsystemTerrain, ReplicaMutationSource.FallenLeaves)) return;
             base.OnNeighborBlockChanged(x, y, z, neighborX, neighborY, neighborZ);
+            // Source: Survivalcraft/Game/SubsystemFallenLeavesBlockBehavior.cs:OnNeighborBlockChanged:19
+            ReplicaGates.RescueEvolutionCells(SubsystemTerrain);
         }
     }
 
@@ -1418,6 +1489,8 @@ namespace SuMultiplayer.Engine
         {
             if (!ReplicaGates.Allow(SubsystemTerrain, ReplicaMutationSource.Soil)) return;
             base.OnPoll(value, x, y, z, pollPass);
+            // Source: Survivalcraft/Game/SubsystemSoilBlockBehavior.cs:OnPoll（排进 m_toHydrate）
+            ReplicaGates.RescueEvolutionCells(SubsystemTerrain);
         }
 
         public override void OnNeighborBlockChanged(int x, int y, int z, int neighborX, int neighborY,
@@ -1425,6 +1498,9 @@ namespace SuMultiplayer.Engine
         {
             if (!ReplicaGates.Allow(SubsystemTerrain, ReplicaMutationSource.Soil)) return;
             base.OnNeighborBlockChanged(x, y, z, neighborX, neighborY, neighborZ);
+            // Source: Survivalcraft/Game/SubsystemSoilBlockBehavior.cs:OnNeighborBlockChanged:55
+            // （耕地/土被压成泥土）
+            ReplicaGates.RescueEvolutionCells(SubsystemTerrain);
         }
 
         void IUpdateable.Update(float dt)
@@ -1437,7 +1513,9 @@ namespace SuMultiplayer.Engine
                     typeof(SubsystemSoilBlockBehavior));
                 return;
             }
+            // Source: Survivalcraft/Game/SubsystemSoilBlockBehavior.cs:Update:74/92（退化 / 干湿 data）
             base.Update(dt);
+            ReplicaGates.RescueEvolutionCells(SubsystemTerrain);
         }
     }
 
@@ -1447,6 +1525,8 @@ namespace SuMultiplayer.Engine
         {
             if (!ReplicaGates.Allow(SubsystemTerrain, ReplicaMutationSource.Ivy)) return;
             base.OnPoll(value, x, y, z, pollPass);
+            // Source: Survivalcraft/Game/SubsystemIvyBlockBehavior.cs:OnPoll:59（排进 m_toUpdate）
+            ReplicaGates.RescueEvolutionCells(SubsystemTerrain);
         }
 
         public override void OnNeighborBlockChanged(int x, int y, int z, int neighborX, int neighborY,
@@ -1454,6 +1534,9 @@ namespace SuMultiplayer.Engine
         {
             if (!ReplicaGates.Allow(SubsystemTerrain, ReplicaMutationSource.Ivy)) return;
             base.OnNeighborBlockChanged(x, y, z, neighborX, neighborY, neighborZ);
+            // Source: Survivalcraft/Game/SubsystemIvyBlockBehavior.cs:OnNeighborBlockChanged:50
+            // （DestroyCell：常春藤失去附着面）
+            ReplicaGates.RescueEvolutionCells(SubsystemTerrain);
         }
 
         void IUpdateable.Update(float dt)
@@ -1464,7 +1547,9 @@ namespace SuMultiplayer.Engine
                     typeof(SubsystemIvyBlockBehavior));
                 return;
             }
+            // Source: Survivalcraft/Game/SubsystemIvyBlockBehavior.cs:Update:29（常春藤向下生长）
             base.Update(dt);
+            ReplicaGates.RescueEvolutionCells(SubsystemTerrain);
         }
     }
 
@@ -1475,18 +1560,26 @@ namespace SuMultiplayer.Engine
         {
             if (!ReplicaGates.Allow(SubsystemTerrain, ReplicaMutationSource.Sapling)) return;
             base.OnNeighborBlockChanged(x, y, z, neighborX, neighborY, neighborZ);
+            // Source: Survivalcraft/Game/SubsystemSaplingBlockBehavior.cs:OnNeighborBlockChanged:41
+            // （DestroyCell：树苗失去支撑）
+            ReplicaGates.RescueEvolutionCells(SubsystemTerrain);
         }
 
         public override void OnBlockAdded(int value, int oldValue, int x, int y, int z)
         {
             if (!ReplicaGates.Allow(SubsystemTerrain, ReplicaMutationSource.Sapling)) return;
             base.OnBlockAdded(value, oldValue, x, y, z);
+            // 这一支只维护 m_saplings（不改格）；接住的是触发它的那一笔写入
+            // （若来自流体通知循环，同样会被下一遍清表抹掉）。
+            ReplicaGates.RescueEvolutionCells(SubsystemTerrain);
         }
 
         public override void OnBlockRemoved(int value, int newValue, int x, int y, int z)
         {
             if (!ReplicaGates.Allow(SubsystemTerrain, ReplicaMutationSource.Sapling)) return;
             base.OnBlockRemoved(value, newValue, x, y, z);
+            // 同上：只摘表，不改格；接住触发它的那一笔写入。
+            ReplicaGates.RescueEvolutionCells(SubsystemTerrain);
         }
 
         void IUpdateable.Update(float dt)
@@ -1497,7 +1590,10 @@ namespace SuMultiplayer.Engine
                     typeof(SubsystemSaplingBlockBehavior));
                 return;
             }
+            // Source: Survivalcraft/Game/SubsystemSaplingBlockBehavior.cs:Update:173/176/181/186/191
+            // （树苗成熟：ChangeCell + TerrainBrush.Paint 整棵树）
             base.Update(dt);
+            ReplicaGates.RescueEvolutionCells(SubsystemTerrain);
         }
     }
 
@@ -1617,4 +1713,1529 @@ namespace SuMultiplayer.Engine
 
         public bool ClientHandlersDisabled => m_clientPersistentTerrainHandlersDisabled;
     }
+
+    // =====================================================================================
+    // 塌落物理：Game.SubsystemCollapsingBlockBehavior（本文件新增的客户端闸门）
+    //
+    // 引擎事实（Survivalcraft/Game/SubsystemCollapsingBlockBehavior.cs）：
+    //   · OnNeighborBlockChanged:22-28 → TryCollapseColumn；
+    //   · TryCollapseColumn:86-108 把整列沙子/沙砾登记成 "CollapsingBlock" 移动组，
+    //     然后 ChangeCell(source,0)（:107）——源格在**本地**立刻消失；
+    //   · MovingBlocksCollidedWithTerrain:40-54 在撞到非支撑可破坏方块时 DestroyCell（:51）；
+    //   · MovingBlocksStopped:56-73 在落地时 DestroyCell(..., block.Value)（:66）——目标格在**本地**出现；
+    //   · 载入时订阅 SubsystemMovingBlocks.Stopped / CollidedWithTerrain（:36-37）。
+    // 客户端如果照跑：源格删除 + 目标格放置都会进 m_modifiedCells，被 CaptureClientEdits 当成
+    // 玩家编辑提交；主机自己又跑一遍塌落 ⇒ 目标格被两份写入叠加 = 实机"放一格沙子、落地后变两格"。
+    //
+    // 客户端策略：
+    //   · OnNeighborBlockChanged 直接拒绝（并清掉可能存在的引擎工作表）；
+    //   · 摘掉 base.Load 订阅的两个事件（否则主机复制的 "CollapsingBlock" 移动组在客户端落地时
+    //     仍会 DestroyCell）；改为**只判停、绝不写格**的同条件碰撞处理（保住下落动画停在地面）；
+    //   · 主机复制的移动组只做视觉；最终格只收主机 CellChange（90abe952 的 moving-block 复制）。
+    //   · 本引擎版本的 SubsystemCollapsingBlockBehavior **没有 m_toMove / 工作表字段**（逐字段读过：
+    //     m_subsystemGameInfo / m_subsystemSoundMaterials / m_subsystemMovingBlocks）；候选表名
+    //     仍然显式清理，未来版本若加表会自动计数，不静默。
+    // =====================================================================================
+
+    public sealed class SuSubsystemCollapsingBlockBehavior : SubsystemCollapsingBlockBehavior, IUpdateable
+    {
+        // ---- 主机侧：Id=="CollapsingBlock" 移动组检测（与活塞外壳同口径）----------------------
+        // 引擎事实（Source: Survivalcraft/Game/SubsystemCollapsingBlockBehavior.cs）：
+        //   · TryCollapseColumn:86-108 把整列沙子 / 沙砾 AddMovingBlockSet(id:"CollapsingBlock",
+        //     tag:null) 并立刻 ChangeCell 清源格；
+        //   · MovingBlocksStopped:56-73 只在集合落地时 DestroyCell 写目标格（走既有 CellChange 下发）。
+        // 客户端闸门已让客户端不跑这段逻辑 ⇒ 不做复制的话，客户端只看到"源格消失 + 落地格出现"。
+        // 这里在**主机**上按"集合是否已跟踪"检测开始 / 结束（读档时存档里带的集合也补发），
+        // 把引擎 AddMovingBlockSet 的原始参数交给 Engine/PistonReplicaEngine.cs 广播。
+        // 塌落集合的 Tag 是 null：起点格只能由 StartPosition（AddMovingBlockSet 的 position 入参）得到。
+        private sealed class TrackedCollapse
+        {
+            public IMovingBlockSet Set;
+            public Vector3 Target;
+        }
+
+        private const long HostProblemLogMs = 10000;
+        private readonly Dictionary<Point3, TrackedCollapse> m_hostTracked =
+            new Dictionary<Point3, TrackedCollapse>();
+        private readonly List<IMovingBlockSet> m_hostScratch = new List<IMovingBlockSet>();
+        private readonly List<Point3> m_hostEnded = new List<Point3>();
+        private readonly MovingBlockSetMotion m_hostMotion = new MovingBlockSetMotion();
+        private SubsystemMovingBlocks m_hostMovingBlocks;
+        private PistonReplicaEngine m_replica;
+        private long m_hostCellFailures;
+        private long m_hostMotionFailures;
+        private long m_hostStartReadFailures;
+        private long m_hostInvalidMoves;
+        private long m_hostEmitFailures;
+        private long m_lastHostProblemLogMs;
+
+        /// <summary>
+        /// 移动组复制的挂接点（实现 = Engine/PistonReplicaEngine.cs，组合根在 Pump 里写入）。
+        /// **实例字段，无静态状态。** null = 适配器还没挂上：主机照旧跑引擎塌落，只是不广播
+        /// （客户端没有中间过程；最终格仍由 CellChange 同步）。
+        /// </summary>
+        public PistonReplicaEngine Replica
+        {
+            get => m_replica;
+            set => m_replica = value;
+        }
+
+        /// <summary>base.Load 的两个写格订阅已摘 + 只判停替代已挂上（false = 限流 Error，客户端不静默）。</summary>
+        private bool m_clientMotionHandlersDetached;
+        /// <summary>摘除失败时的重试/日志计数（限流 10s 一条，不逐帧刷屏）。</summary>
+        private const long ClientDetachFailureLogMs = 10000;
+        private long m_clientDetachAttempts;
+        private long m_lastClientDetachLogMs;
+        private MethodInfo m_isCollapseSupportBlock;
+        private bool m_clientCollisionReflectionFailed;
+
+        /// <summary>
+        /// **不能只在 Load 里判断**：世界/Project 先加载，角色（ClientReplica）由地形模块在加入房间后
+        /// 每帧写入；Load 时很可能还不是客户端。这个 Update 排在 MovingBlocks（Default）之前，
+        /// 一旦角色变成客户端就立刻摘订阅，避免主机复制的移动组在本帧落地写格。
+        /// </summary>
+        public UpdateOrder UpdateOrder => UpdateOrder.Input;
+
+        protected override void Load(ValuesDictionary valuesDictionary)
+        {
+            base.Load(valuesDictionary);
+            EnsureClientHandlersDetached();
+        }
+
+        void IUpdateable.Update(float dt)
+        {
+            EnsureClientHandlersDetached();
+            UpdateHostDetection();
+        }
+
+        // ------------------------------------------------------------ 主机：检测开始 / 结束
+
+        private SubsystemMovingBlocks MovingBlocks
+        {
+            get
+            {
+                if (m_hostMovingBlocks != null) return m_hostMovingBlocks;
+                m_hostMovingBlocks = base.Project?.FindSubsystem<SubsystemMovingBlocks>(false);
+                return m_hostMovingBlocks;
+            }
+        }
+
+        /// <summary>
+        /// 主机：每帧比对 SubsystemMovingBlocks 里的 "CollapsingBlock" 集合。
+        ///   · 不在跟踪表里的集合 = 一次塌落开始（读档时存档里带的集合也会补发）；
+        ///   · 跟踪中的集合已经不在列表里 = 引擎把它移除了（落地 / 掉到目标点）。
+        /// 客户端绝不走这里（ReplicaGates.Allow 为 false）：客户端不模拟塌落、也绝不广播。
+        /// </summary>
+        private void UpdateHostDetection()
+        {
+            SubsystemTerrain terrain = SubsystemTerrain;
+            if (!ReplicaGates.Allow(terrain, ReplicaMutationSource.Collapsing)) return;
+            PistonReplicaEngine replica = m_replica;
+            SubsystemMovingBlocks moving = MovingBlocks;
+            if (replica == null || moving == null) return;
+            m_hostScratch.Clear();
+            for (int i = 0; i < moving.MovingBlockSets.Count; i++)
+            {
+                IMovingBlockSet set = moving.MovingBlockSets[i];
+                if (set == null) continue;
+                if (!string.Equals(set.Id, PistonReplicaPresentation.EngineCollapsingId,
+                        StringComparison.Ordinal)) continue;
+                if (!TryReadSetCell(set, out Point3 cell, out string reason))
+                {
+                    m_hostCellFailures++;
+                    NoteHostProblem("塌落集合无法确定起点格（" + reason + "）→ 本次不广播" +
+                        "（累计 " + m_hostCellFailures + "）");
+                    continue;
+                }
+                if (m_hostTracked.TryGetValue(cell, out TrackedCollapse tracked) &&
+                    ReferenceEquals(tracked.Set, set)) continue;
+                m_hostScratch.Add(set);
+            }
+            for (int i = 0; i < m_hostScratch.Count; i++)
+                EmitHostStarted(replica, m_hostScratch[i]);
+            m_hostScratch.Clear();
+            if (m_hostTracked.Count > 0) EmitHostEnded(replica, moving);
+        }
+
+        /// <summary>
+        /// 主机：塌落集合的起点格 = 引擎 AddMovingBlockSet 的 position（new Vector3(p)，整数）。
+        /// StartPosition 读不到 / 不是整数格 → 明确失败（计数 + 限流日志），绝不四舍五入猜。
+        /// </summary>
+        private bool TryReadSetCell(IMovingBlockSet set, out Point3 cell, out string reason)
+        {
+            cell = Point3.Zero;
+            if (!m_hostMotion.TryReadStartPosition(set, out Vector3 start, out reason)) return false;
+            cell = new Point3(Game.Terrain.ToCell(start.X), Game.Terrain.ToCell(start.Y),
+                Game.Terrain.ToCell(start.Z));
+            if (Math.Abs(start.X - cell.X) > 1e-3f || Math.Abs(start.Y - cell.Y) > 1e-3f ||
+                Math.Abs(start.Z - cell.Z) > 1e-3f)
+            {
+                reason = "start-not-integer-(" + start.X + "," + start.Y + "," + start.Z + ")";
+                return false;
+            }
+            reason = null;
+            return true;
+        }
+
+        /// <summary>
+        /// 主机：一次塌落刚刚开始。把引擎 AddMovingBlockSet 的全部参数（起始 / 目标 / 速度 /
+        /// 加速度 / 阻力 / 平滑度 / 整列方块）读出来，交给适配器广播；参数不合法时明确计数。
+        /// </summary>
+        private void EmitHostStarted(PistonReplicaEngine replica, IMovingBlockSet set)
+        {
+            if (!TryReadSetCell(set, out Point3 cell, out string cellReason))
+            {
+                m_hostCellFailures++;
+                NoteHostProblem("塌落集合无法确定起点格（" + cellReason + "）→ 本次不广播" +
+                    "（累计 " + m_hostCellFailures + "）");
+                return;
+            }
+            if (!m_hostMotion.TryReadStartPosition(set, out Vector3 start, out string startReason))
+            {
+                m_hostStartReadFailures++;
+                NoteHostProblem("读不到塌落集合的 StartPosition（" + startReason +
+                    "）→ 本次不广播（累计 " + m_hostStartReadFailures + "）");
+                return;
+            }
+            if (!m_hostMotion.TryRead(set, out Vector3 target, out float speed,
+                    out float acceleration, out float drag, out Vector2 smoothness,
+                    out string motionReason))
+            {
+                m_hostMotionFailures++;
+                NoteHostProblem("读不到引擎塌落集合的运动参数（" + motionReason +
+                    "）→ 本次不广播（客户端看不到这一段；累计 " + m_hostMotionFailures + "）");
+                return;
+            }
+            ReadOnlyList<MovingBlock> blocks = set.Blocks;
+            var blockData = new PistonBlockData[blocks.Count];
+            for (int i = 0; i < blocks.Count; i++)
+                blockData[i] = new PistonBlockData(blocks[i].Offset, blocks[i].Value);
+            // 引擎塌落没有"活塞格 value"：源格在 AddMovingBlockSet 之后立刻被 ChangeCell 清掉，
+            // 原始 value 已经读不到 ⇒ piston_value / mode / face 填 0（客户端不依赖它们）。
+            var move = new PistonMoveData(MovingBlockKind.Collapsing, cell.X, cell.Y, cell.Z, 0, 0,
+                0, start, target, speed, acceleration, drag, smoothness, blockData);
+            if (!PistonMoveCodec.TryValidateMove(in move, out string invalid))
+            {
+                m_hostInvalidMoves++;
+                NoteHostProblem("主机塌落运动参数不合法（" + invalid + "）：" + move.Describe() +
+                    " → 本次不广播（累计 " + m_hostInvalidMoves + "）");
+                return;
+            }
+            if (m_hostTracked.TryGetValue(cell, out TrackedCollapse previous) &&
+                !ReferenceEquals(previous.Set, set))
+            {
+                // 同一列上一条集合还没登记结束就被换掉了（引擎不该发生）：先把旧的按结束上报，
+                // 否则客户端会同时持有两条动画。
+                m_hostTracked.Remove(cell);
+                EmitHostEnd(replica, cell,
+                    IsAtTarget(previous.Set.Position, previous.Target), "replaced");
+            }
+            m_hostTracked[cell] = new TrackedCollapse { Set = set, Target = target };
+            try
+            {
+                replica.OnHostMoveStarted(in move);
+            }
+            catch (Exception e)
+            {
+                m_hostEmitFailures++;
+                NoteHostProblem("塌落运动开始上报异常（" + e.GetType().Name + " " + e.Message +
+                    "）；累计 " + m_hostEmitFailures);
+            }
+        }
+
+        /// <summary>
+        /// 主机：跟踪中的集合已经不在 <c>MovingBlockSets</c> 里 —— 引擎的 MovingBlocksStopped
+        /// 已经把它移除并写了落地格（走既有 CellChange 下发）。
+        /// completed = 真的走到了 TargetPosition（没撞到任何方块）；塌落正常情况下是 false（落地）。
+        /// </summary>
+        private void EmitHostEnded(PistonReplicaEngine replica, SubsystemMovingBlocks moving)
+        {
+            m_hostEnded.Clear();
+            foreach (KeyValuePair<Point3, TrackedCollapse> pair in m_hostTracked)
+            {
+                bool present = false;
+                for (int i = 0; i < moving.MovingBlockSets.Count; i++)
+                {
+                    if (!ReferenceEquals(moving.MovingBlockSets[i], pair.Value.Set)) continue;
+                    present = true;
+                    break;
+                }
+                if (!present) m_hostEnded.Add(pair.Key);
+            }
+            for (int i = 0; i < m_hostEnded.Count; i++)
+            {
+                Point3 cell = m_hostEnded[i];
+                TrackedCollapse tracked = m_hostTracked[cell];
+                m_hostTracked.Remove(cell);
+                bool atTarget = IsAtTarget(tracked.Set.Position, tracked.Target);
+                EmitHostEnd(replica, cell, atTarget, atTarget ? "target" : "landed");
+            }
+            m_hostEnded.Clear();
+        }
+
+        /// <summary>
+        /// 主机：上报一次塌落结束。StartEventId 先留 0 —— 真正的 event_id 由模块在发送时按
+        /// "这条运动的开始批次"填（PistonSyncModule.OnHostMoveEnded 用 m_sentStartIds 补）。
+        /// </summary>
+        private void EmitHostEnd(PistonReplicaEngine replica, Point3 cell, bool completed,
+            string reason)
+        {
+            var end = new PistonMoveEndData(MovingBlockKind.Collapsing, cell.X, cell.Y, cell.Z,
+                completed, reason, 0);
+            try
+            {
+                replica.OnHostMoveEnded(in end);
+            }
+            catch (Exception e)
+            {
+                m_hostEmitFailures++;
+                NoteHostProblem("塌落运动结束上报异常（" + e.GetType().Name + " " + e.Message +
+                    "）；累计 " + m_hostEmitFailures);
+            }
+        }
+
+        private static bool IsAtTarget(Vector3 position, Vector3 target) =>
+            Math.Abs(position.X - target.X) <= 1e-4f &&
+            Math.Abs(position.Y - target.Y) <= 1e-4f &&
+            Math.Abs(position.Z - target.Z) <= 1e-4f;
+
+        /// <summary>主机侧塌落检测的限流日志（10s 一条，消息里带累计次数，不静默）。</summary>
+        private void NoteHostProblem(string message)
+        {
+            long nowMs = (long)(Time.RealTime * 1000.0);
+            if (m_lastHostProblemLogMs != 0 &&
+                nowMs - m_lastHostProblemLogMs < HostProblemLogMs) return;
+            m_lastHostProblemLogMs = nowMs;
+            Log.Warning("[SuMP] collapsing(host): " + message);
+        }
+
+        private void EnsureClientHandlersDetached()
+        {
+            if (m_clientMotionHandlersDetached) return;
+            if (!ReplicaGates.IsClient(SubsystemTerrain)) return;
+
+            object moving = ReplicaGates.GetField(this, "m_subsystemMovingBlocks",
+                typeof(SubsystemCollapsingBlockBehavior));
+            m_clientDetachAttempts++;
+            // 按**声明类型**摘：只摘引擎基类自己的两个写格回调
+            //   · Stopped            → MovingBlocksStopped:56-73（DestroyCell 落地格 :66）
+            //   · CollidedWithTerrain → MovingBlocksCollidedWithTerrain:40-54（DestroyCell :51）
+            // 本外壳自己的 OnClient* 委托声明在 SuSubsystemCollapsingBlockBehavior 上，不会被摘，
+            // 所以重试是幂等的（不会像"按 Target 全摘再重挂"那样在失败路径逐帧累积委托）。
+            ClientEventDetachResult stopped = ClientReplicaEventDetach.DetachDeclaredHandlers(
+                moving, "Stopped", typeof(SubsystemCollapsingBlockBehavior));
+            ClientEventDetachResult collision = ClientReplicaEventDetach.DetachDeclaredHandlers(
+                moving, "CollidedWithTerrain", typeof(SubsystemCollapsingBlockBehavior));
+            // 全类保护：SubsystemPistonBlockBehavior 与塌落共享同一个 SubsystemMovingBlocks，
+            // 它的 base.Load 也订阅了同名的私有写格回调（活塞落地时写格）。
+            // 优先让**活塞外壳自己**按 DeclaringType 摘（它知道自己的 OnPresentationStopped 要保留，
+            // 而且本 Update 排在 SubsystemMovingBlocks（Default）之前，角色切换那一帧也不会漏网）；
+            // 只有活塞外壳不存在（注入缺失）时才按引擎方法名兜底。幂等、有日志。
+            SuSubsystemPistonBlockBehavior pistonShell =
+                base.Project.FindSubsystem<SubsystemPistonBlockBehavior>(false)
+                    as SuSubsystemPistonBlockBehavior;
+            bool pistonDetachedByShell =
+                pistonShell != null && pistonShell.EnsureClientBaseHandlersDetached();
+            int pistonBaseHandlersDetached = pistonDetachedByShell
+                ? 0
+                : DetachForeignEngineHandlers(moving, "Stopped", "MovingBlocksStopped") +
+                  DetachForeignEngineHandlers(moving, "CollidedWithTerrain",
+                      "MovingBlocksCollidedWithTerrain");
+            // 只判停的替代处理：保住"沙子落到支撑面上就停"的视觉，但绝不 DestroyCell。
+            // EnsureEventHandler 先按（目标实例 + 方法名）复核，重试时不会重复挂同一个委托。
+            bool collisionStopAdded = EnsureEventHandler(moving, "CollidedWithTerrain",
+                "OnClientCollidingWithTerrain",
+                new Action<IMovingBlockSet, Point3>(OnClientCollidingWithTerrain));
+            // 统计"主机复制的塌落组在客户端落地但被跳过（不写格）"。
+            bool stoppedCountAdded = EnsureEventHandler(moving, "Stopped",
+                "OnClientMovingBlocksStopped",
+                new Action<IMovingBlockSet>(OnClientMovingBlocksStopped));
+            if (!(stopped.Succeeded && collision.Succeeded && collisionStopAdded &&
+                  stoppedCountAdded))
+            {
+                NoteClientDetachFailure(stopped, collision, collisionStopAdded, stoppedCountAdded);
+                return;
+            }
+            m_isCollapseSupportBlock = typeof(SubsystemCollapsingBlockBehavior).GetMethod(
+                "IsCollapseSupportBlock", BindingFlags.Instance | BindingFlags.NonPublic);
+            m_clientMotionHandlersDetached = true;
+            Log.Information("[SuMP] collapsing 客户端闸门：本地塌落 = " +
+                "OnNeighborBlockChanged 拒绝 + 移动组落地订阅已摘" +
+                "（stopped=" + stopped.Removed + " collision=" + collision.Removed +
+                "）；引擎工作表 m_toMove=" +
+                (typeof(SubsystemCollapsingBlockBehavior).GetField("m_toMove",
+                    BindingFlags.Instance | BindingFlags.NonPublic) != null ? "存在" : "本版本不存在") +
+                "；Piston 引擎写格订阅：外壳自摘=" + pistonDetachedByShell +
+                " 兜底摘掉 " + pistonBaseHandlersDetached + " 个；最终格只收主机 CellChange");
+        }
+
+        /// <summary>
+        /// 摘除失败：**限流 Error**（10s 一条，带重试次数与具体哪条事件失败），下一帧继续重试。
+        /// 明确失败而不是静默 —— 客户端本地塌落仍可能写格时，日志里一定看得见。
+        /// </summary>
+        private void NoteClientDetachFailure(ClientEventDetachResult stopped,
+            ClientEventDetachResult collision, bool collisionStopAdded, bool stoppedCountAdded)
+        {
+            long now = Environment.TickCount64;
+            if (m_lastClientDetachLogMs != 0 &&
+                now - m_lastClientDetachLogMs < ClientDetachFailureLogMs) return;
+            m_lastClientDetachLogMs = now;
+            Log.Error("[SuMP] collapsing: 客户端无法摘掉 SubsystemMovingBlocks 的落地/碰撞订阅" +
+                "（Stopped=" + DescribeDetach(stopped) +
+                " CollidedWithTerrain=" + DescribeDetach(collision) +
+                " stopOnly=" + collisionStopAdded + " count=" + stoppedCountAdded +
+                "，第 " + m_clientDetachAttempts + " 次尝试）→ 本地塌落仍可能写格，" +
+                "明确失败而不是静默（下一帧继续重试，失败日志 10s 一条）");
+        }
+
+        private static string DescribeDetach(ClientEventDetachResult result)
+        {
+            if (result == null) return "null";
+            return result.Succeeded
+                ? "ok(removed=" + result.Removed + ")"
+                : "fail(" + result.Failure + ")";
+        }
+
+        /// <summary>幂等挂事件：已经挂着（本实例 + 方法名）就不重复加；返回 false = 挂不上。</summary>
+        private bool EnsureEventHandler(object owner, string eventName, string methodName,
+            Delegate handler)
+        {
+            if (owner == null || handler == null) return false;
+            if (ClientReplicaEventDetach.HasHandler(owner, eventName, this, methodName)) return true;
+            return AddEventHandler(owner, eventName, handler);
+        }
+
+        public override void OnNeighborBlockChanged(int x, int y, int z, int neighborX, int neighborY,
+            int neighborZ)
+        {
+            if (!ReplicaGates.Allow(SubsystemTerrain, ReplicaMutationSource.Collapsing))
+            {
+                NoteCollapsingGated();
+                ClearClientWorkTables();
+                return;
+            }
+            base.OnNeighborBlockChanged(x, y, z, neighborX, neighborY, neighborZ);
+            // Source: Survivalcraft/Game/SubsystemCollapsingBlockBehavior.cs:TryCollapseColumn:100-108
+            // （ChangeCell 清源格）。这个回调也可能从流体 ProcessModifiedCells 的通知里打进来；
+            // 与其它演化外壳一致，在 base 之后立刻把写入接进跨清表 carry。
+            ReplicaGates.RescueEvolutionCells(SubsystemTerrain);
+        }
+
+        private void NoteCollapsingGated()
+        {
+            (SubsystemTerrain as SuSubsystemTerrain)?.CollapsingState.NoteGated();
+        }
+
+        /// <summary>
+        /// 客户端清掉引擎内部工作表。**本引擎版本没有 m_toMove**；这里仍显式检查一组候选字段，
+        /// 未来版本新增表时会被清掉并计入 collapsingSkipped（tables）。
+        /// </summary>
+        private void ClearClientWorkTables()
+        {
+            int tables = 0;
+            if (ReplicaGates.ClearTable(SubsystemTerrain, this, "m_toMove",
+                    typeof(SubsystemCollapsingBlockBehavior))) tables++;
+            if (ReplicaGates.ClearTable(SubsystemTerrain, this, "m_toCollapse",
+                    typeof(SubsystemCollapsingBlockBehavior))) tables++;
+            if (ReplicaGates.ClearTable(SubsystemTerrain, this, "m_toUpdate",
+                    typeof(SubsystemCollapsingBlockBehavior))) tables++;
+            if (ReplicaGates.ClearTable(SubsystemTerrain, this, "m_toRemove",
+                    typeof(SubsystemCollapsingBlockBehavior))) tables++;
+            if (tables > 0)
+                (SubsystemTerrain as SuSubsystemTerrain)?.CollapsingState.NoteTablesCleared(tables);
+        }
+
+        /// <summary>
+        /// 按**引擎私有方法名**摘掉别的行为的写格订阅（Piston 与塌落共享 MovingBlocks）。
+        /// 只动 method.Name 完全匹配的委托；Piston 外壳自己的表现回调（OnPresentationStopped）保留。
+        /// </summary>
+        private int DetachForeignEngineHandlers(object owner, string eventName, string methodName)
+        {
+            if (owner == null) return 0;
+            FieldInfo field = owner.GetType().GetField(eventName,
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            if (field == null) return 0;
+            if (field.GetValue(owner) is not Delegate handlers) return 0;
+            Delegate remaining = handlers;
+            int removed = 0;
+            foreach (Delegate handler in handlers.GetInvocationList())
+            {
+                if (handler.Method == null ||
+                    !string.Equals(handler.Method.Name, methodName, StringComparison.Ordinal))
+                    continue;
+                remaining = Delegate.Remove(remaining, handler);
+                removed++;
+            }
+            if (removed > 0) field.SetValue(owner, remaining);
+            return removed;
+        }
+
+        private bool AddEventHandler(object owner, string eventName, Delegate handler)
+        {
+            if (owner == null || handler == null) return false;
+            EventInfo info = owner.GetType().GetEvent(eventName,
+                BindingFlags.Instance | BindingFlags.Public);
+            if (info == null || info.EventHandlerType != handler.GetType()) return false;
+            info.AddEventHandler(owner, handler);
+            return true;
+        }
+
+        /// <summary>
+        /// 客户端：主机复制的塌落组落地 → 只计数 + 移除**表现集合**；绝不 DestroyCell / ChangeCell。
+        /// 移除是必要的：集合停在目标位置后若不摘掉，会和主机最终格叠画成"两块沙子"的视觉。
+        /// 最终地形格仍由主机 CellChange 下发（本方法不写任何格）。
+        /// </summary>
+        private void OnClientMovingBlocksStopped(IMovingBlockSet movingBlockSet)
+        {
+            // 只处理引擎自己 Id 的残留集合；本 Mod 的 "CollapsingBlockReplica" 由适配器在
+            // PistonMoveEnd / 看门狗到达时移除（停在原地等主机最终格，避免闪烁）。
+            if (movingBlockSet == null) return;
+            if (movingBlockSet.Id != PistonReplicaPresentation.EngineCollapsingId) return;
+            (SubsystemTerrain as SuSubsystemTerrain)?.CollapsingState.NoteLandingSkipped();
+            object moving = ReplicaGates.GetField(this, "m_subsystemMovingBlocks",
+                typeof(SubsystemCollapsingBlockBehavior));
+            if (moving is SubsystemMovingBlocks movingBlocks)
+                movingBlocks.RemoveMovingBlockSet(movingBlockSet);
+        }
+
+        /// <summary>
+        /// 客户端：与引擎 MovingBlocksCollidedWithTerrain 的**判停条件一致**，但绝不写格。
+        /// 引擎在"支撑块"上 Stop；在"可破坏块"上 DestroyCell —— 后者由主机做并下发。
+        /// </summary>
+        private void OnClientCollidingWithTerrain(IMovingBlockSet movingBlockSet, Point3 p)
+        {
+            if (movingBlockSet == null) return;
+            // 引擎残留集合（下载世界存档）与**本 Mod 的只表现集合**用同一份判停条件：
+            // 都只调 set.Stop()（内存集合），绝不 DestroyCell / ChangeCell。
+            if (movingBlockSet.Id != PistonReplicaPresentation.EngineCollapsingId &&
+                movingBlockSet.Id != PistonReplicaPresentation.CollapsingReplicaId) return;
+            if (m_isCollapseSupportBlock == null)
+            {
+                NoteCollisionReflectionFailure("引擎没有 IsCollapseSupportBlock");
+                return;
+            }
+            int value = ReplicaGates.ReadCellValue(SubsystemTerrain, p);
+            try
+            {
+                if (m_isCollapseSupportBlock.Invoke(this, new object[] { value }) is bool support && support)
+                    movingBlockSet.Stop();
+            }
+            catch (Exception e)
+            {
+                NoteCollisionReflectionFailure(e.GetType().Name + " " + e.Message);
+            }
+        }
+
+        private void NoteCollisionReflectionFailure(string reason)
+        {
+            if (m_clientCollisionReflectionFailed) return;
+            m_clientCollisionReflectionFailed = true;
+            Log.Warning("[SuMP] collapsing: 客户端判停条件不可用（" + reason +
+                "）→ 塌落组会一直走到目标点（只影响表现；本地仍然绝不写格）");
+        }
+    }
+
+    // =====================================================================================
+    // 营火：客户端只保留粒子表现，不推进燃料（Game.SubsystemCampfireBlockBehavior）
+    //   · Update:44-67 每 5 game-sec 调 ResizeCampfire(-1) → ChangeCell 写 data（燃料烧尽）；
+    //     每 0.5s 的第二段只更新音量（纯表现）。
+    //   · OnNeighborBlockChanged:69-75 下方透明 → DestroyCell。
+    //   · OnChunkDiscarding:107-124 区块丢弃前 ResizeCampfire(-15) → ChangeCell。
+    // 客户端 base.Update 会本地烧掉燃料并把 data 当客户端编辑提交（与主机重复改写同一格）。
+    // =====================================================================================
+
+    public sealed class SuSubsystemCampfireBlockBehavior : SubsystemCampfireBlockBehavior, IUpdateable
+    {
+        // 客户端表现层（组合根挂在 TerrainBridge.CampfirePresenter）：只维护 FireParticleSystem。
+        // 主机侧同一实例只用于"烧尽检测"（Update 前后快照 Campfires），不建任何客户端粒子。
+        private CampfireReplicaPresentation Presentation =>
+            (SubsystemTerrain as SuSubsystemTerrain)?.Bridge?.CampfirePresenter;
+
+        // 桥注入前（世界刚加载的第一帧）OnBlockGenerated 可能已经跑过：先记住格子（有界），
+        // 等表现层可用时按**当前格子值**重放一次（不是静态状态，也不静默丢）。
+        private const int PendingGeneratedCap = 512;
+        private readonly List<Point3> m_pendingGenerated = new List<Point3>(16);
+        private long m_pendingGeneratedDropped;
+        private bool m_pendingGeneratedReplayLogged;
+
+        private void ReplayPendingGenerated(CampfireReplicaPresentation presentation)
+        {
+            if (m_pendingGenerated.Count == 0) return;
+            if (SubsystemTerrain?.Terrain == null) return;
+            int replayed = 0;
+            for (int i = 0; i < m_pendingGenerated.Count; i++)
+            {
+                Point3 cell = m_pendingGenerated[i];
+                if (cell.Y < 0 || cell.Y > 255) continue;
+                int value = SubsystemTerrain.Terrain.GetCellValueFast(cell.X, cell.Y, cell.Z);
+                presentation.Present(value, cell.X, cell.Y, cell.Z);
+                replayed++;
+            }
+            int dropped = (int)MathUtils.Min(m_pendingGeneratedDropped, int.MaxValue);
+            m_pendingGenerated.Clear();
+            if (!m_pendingGeneratedReplayLogged)
+            {
+                m_pendingGeneratedReplayLogged = true;
+                Log.Information("[SuMP] 营火表现：桥注入前生成的 " + replayed +
+                    " 格已按当前格子值重放（超出上限丢弃 " + dropped + " 格）");
+            }
+        }
+
+        void IUpdateable.Update(float dt)
+        {
+            if (!ReplicaGates.Allow(SubsystemTerrain, ReplicaMutationSource.Campfire))
+            {
+                ReplicaGates.ClearTable(SubsystemTerrain, this, "m_toReduce",
+                    typeof(SubsystemCampfireBlockBehavior));
+                // 客户端：不推进燃料，只做 1 秒一次的有界越界扫除（campfireStaleSweep）。
+                CampfireReplicaPresentation presentation = Presentation;
+                if (presentation != null)
+                {
+                    ReplayPendingGenerated(presentation);
+                    presentation.Tick(dt);
+                    presentation.MaybeLog(Time.RealTime);
+                }
+                return;
+            }
+            // 主机：base.Update 的 5 秒分支把燃料 -1（data 到 0 时引擎播 Audio/Sizzles）。
+            // 前后快照 engine Campfires → 只把"刚烧尽"的格交给声音同步模块转给其它端。
+            Presentation?.BeginHostUpdate(this);
+            base.Update(dt);
+            Presentation?.EndHostUpdate();
+            Presentation?.MaybeLog(Time.RealTime);
+            ReplicaGates.RescueEvolutionCells(SubsystemTerrain);
+        }
+
+        public override void OnBlockGenerated(int value, int x, int y, int z, bool isLoaded)
+        {
+            if (ReplicaGates.IsClient(SubsystemTerrain))
+            {
+                // 区块从本地存档生成：客户端粒子由本 mod 的表现层建（引擎 base 会再建一份 → 双份）。
+                CampfireReplicaPresentation presentation = Presentation;
+                if (presentation != null)
+                {
+                    presentation.Present(value, x, y, z);
+                    return;
+                }
+                if (m_pendingGenerated.Count < PendingGeneratedCap)
+                {
+                    m_pendingGenerated.Add(new Point3(x, y, z));
+                }
+                else
+                {
+                    m_pendingGeneratedDropped++;
+                }
+                return;
+            }
+            base.OnBlockGenerated(value, x, y, z, isLoaded);
+        }
+
+        public override void OnBlockAdded(int value, int oldValue, int x, int y, int z)
+        {
+            if (ReplicaGates.IsClient(SubsystemTerrain))
+            {
+                // ApplyCells 落地主机"放置营火"后由 ClientBlockBehaviorNotifier 补发到这里。
+                Presentation?.Present(value, x, y, z);
+                return;
+            }
+            base.OnBlockAdded(value, oldValue, x, y, z);
+        }
+
+        public override void OnBlockModified(int value, int oldValue, int x, int y, int z)
+        {
+            if (ReplicaGates.IsClient(SubsystemTerrain))
+            {
+                // data-only（燃料递减 / 到 0 变灰烬）：表现层按新 data 重建或收掉粒子。
+                Presentation?.Present(value, x, y, z);
+                return;
+            }
+            base.OnBlockModified(value, oldValue, x, y, z);
+        }
+
+        public override void OnBlockRemoved(int value, int newValue, int x, int y, int z)
+        {
+            if (ReplicaGates.IsClient(SubsystemTerrain))
+            {
+                Presentation?.Forget(x, y, z);
+                return;
+            }
+            base.OnBlockRemoved(value, newValue, x, y, z);
+        }
+
+        public override void OnNeighborBlockChanged(int x, int y, int z, int neighborX, int neighborY,
+            int neighborZ)
+        {
+            if (!ReplicaGates.Allow(SubsystemTerrain, ReplicaMutationSource.Campfire))
+            {
+                ReplicaGates.ClearTable(SubsystemTerrain, this, "m_toReduce",
+                    typeof(SubsystemCampfireBlockBehavior));
+                return;
+            }
+            base.OnNeighborBlockChanged(x, y, z, neighborX, neighborY, neighborZ);
+            ReplicaGates.RescueEvolutionCells(SubsystemTerrain);
+        }
+
+        public override void OnChunkDiscarding(TerrainChunk chunk)
+        {
+            if (!ReplicaGates.Allow(SubsystemTerrain, ReplicaMutationSource.Campfire))
+            {
+                ReplicaGates.ClearTable(SubsystemTerrain, this, "m_toReduce",
+                    typeof(SubsystemCampfireBlockBehavior));
+                // base 会 ResizeCampfire(-15) → ChangeCell（客户端绝不写格）；
+                // 只把该块里的营火粒子收掉，避免陈旧粒子留在已丢弃的区块上。
+                Presentation?.ForgetChunk(chunk);
+                return;
+            }
+            base.OnChunkDiscarding(chunk);
+            ReplicaGates.RescueEvolutionCells(SubsystemTerrain);
+        }
+    }
+
+    // =====================================================================================
+    // 草陷阱：Game.SubsystemGrassTrapBlockBehavior
+    //   · OnCollide:20-32 累计 Damage（不写格）；
+    //   · Update:34-59 Damage>1 时 DestroyCell 周边 5 格草陷阱（:47）。
+    // 客户端本地累计 + 破坏 = 主机没有的编辑；客户端只做碰撞表现（无），不推进。
+    // =====================================================================================
+
+    public sealed class SuSubsystemGrassTrapBlockBehavior : SubsystemGrassTrapBlockBehavior, IUpdateable
+    {
+        void IUpdateable.Update(float dt)
+        {
+            if (!ReplicaGates.Allow(SubsystemTerrain, ReplicaMutationSource.GrassTrap))
+            {
+                ClearTables();
+                return;
+            }
+            base.Update(dt);
+            ReplicaGates.RescueEvolutionCells(SubsystemTerrain);
+        }
+
+        public override void OnCollide(CellFace cellFace, float velocity, ComponentBody componentBody)
+        {
+            if (!ReplicaGates.Allow(SubsystemTerrain, ReplicaMutationSource.GrassTrap)) return;
+            base.OnCollide(cellFace, velocity, componentBody);
+        }
+
+        private void ClearTables()
+        {
+            ReplicaGates.ClearTable(SubsystemTerrain, this, "m_trapValues",
+                typeof(SubsystemGrassTrapBlockBehavior));
+            ReplicaGates.ClearTable(SubsystemTerrain, this, "m_toRemove",
+                typeof(SubsystemGrassTrapBlockBehavior));
+        }
+    }
+
+    // =====================================================================================
+    // 树叶腐烂：Game.SubsystemWoodBlockBehavior
+    //   · OnBlockRemoved:20-51 原木被移除时把 3×3×3 内的树叶登记进 m_leavesToCheck（不写格）；
+    //   · Update:87-106 每 20 game-sec 取最多 200 片 → DecayLeavesIfNeeded:110-176
+    //     找不到原木就 ChangeCell(leaf,0)（:158）；
+    //   · OnChunkDiscarding:53-78 对丢弃区块内的树叶立即 DecayLeavesIfNeeded（同样写格）。
+    // 客户端本地砍树后再本地腐烂 = 主机没有的新状态；且清表竞争下与主机不同步。
+    // =====================================================================================
+
+    public sealed class SuSubsystemWoodBlockBehavior : SubsystemWoodBlockBehavior, IUpdateable
+    {
+        void IUpdateable.Update(float dt)
+        {
+            if (!ReplicaGates.Allow(SubsystemTerrain, ReplicaMutationSource.WoodDecay))
+            {
+                ReplicaGates.ClearTable(SubsystemTerrain, this, "m_leavesToCheck",
+                    typeof(SubsystemWoodBlockBehavior));
+                return;
+            }
+            base.Update(dt);
+            ReplicaGates.RescueEvolutionCells(SubsystemTerrain);
+        }
+
+        public override void OnBlockRemoved(int value, int newValue, int x, int y, int z)
+        {
+            if (!ReplicaGates.Allow(SubsystemTerrain, ReplicaMutationSource.WoodDecay))
+            {
+                ReplicaGates.ClearTable(SubsystemTerrain, this, "m_leavesToCheck",
+                    typeof(SubsystemWoodBlockBehavior));
+                return;
+            }
+            base.OnBlockRemoved(value, newValue, x, y, z);
+            ReplicaGates.RescueEvolutionCells(SubsystemTerrain);
+        }
+
+        public override void OnChunkDiscarding(TerrainChunk chunk)
+        {
+            if (!ReplicaGates.Allow(SubsystemTerrain, ReplicaMutationSource.WoodDecay))
+            {
+                ReplicaGates.ClearTable(SubsystemTerrain, this, "m_leavesToCheck",
+                    typeof(SubsystemWoodBlockBehavior));
+                return;
+            }
+            base.OnChunkDiscarding(chunk);
+            ReplicaGates.RescueEvolutionCells(SubsystemTerrain);
+        }
+    }
+
+    // =====================================================================================
+    // 宝藏生成器：Game.SubsystemTreasureGeneratorBlockBehavior
+    //   · OnNeighborBlockChanged:399-455 邻居是空气/树叶 → ChangeCell(self,0) 自毁（:401），
+    //     25% 概率 AddPickable 一大批宝藏（:430-450）。
+    // 客户端本地触发会同时删格 + 生成主机没有的拾取物实体（实体复制还会再收一份）；
+    // 主机对同一次邻居变化会自己执行并广播，客户端只收结果。
+    // =====================================================================================
+
+    public sealed class SuSubsystemTreasureGeneratorBlockBehavior :
+        SubsystemTreasureGeneratorBlockBehavior
+    {
+        public override void OnNeighborBlockChanged(int x, int y, int z, int neighborX, int neighborY,
+            int neighborZ)
+        {
+            if (!ReplicaGates.Allow(SubsystemTerrain, ReplicaMutationSource.Treasure)) return;
+            base.OnNeighborBlockChanged(x, y, z, neighborX, neighborY, neighborZ);
+            ReplicaGates.RescueEvolutionCells(SubsystemTerrain);
+        }
+    }
+
+    // =====================================================================================
+    // 延迟写格队列：Game.SubsystemCellChangeQueue
+    //   · Update:45-51 每 20 game-sec ApplyCellChanges:55-69 → ChangeCell。
+    // 目前只有已经被闸门的植物/仙人掌/落叶季相会入队；但它是**所有**延迟写格的总入口，
+    // 客户端统一不推进并清表，未来新增生产者也不会把延迟写格漏成客户端编辑。
+    // =====================================================================================
+
+    public sealed class SuSubsystemCellChangeQueue : SubsystemCellChangeQueue, IUpdateable
+    {
+        private SubsystemTerrain m_terrain;
+        private MethodInfo m_baseUpdate;
+
+        protected override void Load(ValuesDictionary valuesDictionary)
+        {
+            base.Load(valuesDictionary);
+            m_terrain = base.Project.FindSubsystem<SubsystemTerrain>(throwOnError: true);
+            // 引擎的 Update 是**显式接口实现**（SubsystemCellChangeQueue.cs:45），
+            // 派生类不能 base.Update；用接口映射拿到基类实现，只在真的有排队的格时调用
+            //（空表时 base 只做一次时间判断，没有副作用）。
+            InterfaceMapping map = typeof(SubsystemCellChangeQueue)
+                .GetInterfaceMap(typeof(IUpdateable));
+            m_baseUpdate = null;
+            for (int i = 0; i < map.InterfaceMethods.Length; i++)
+                if (map.InterfaceMethods[i].Name == "Update")
+                {
+                    m_baseUpdate = map.TargetMethods[i];
+                    break;
+                }
+            if (m_baseUpdate == null)
+            {
+                Log.Error("[SuMP] cellChangeQueue: 找不到 IUpdateable.Update 的基类实现 → " +
+                    "主机不会应用延迟写格（明确失败，不静默）");
+            }
+        }
+
+        void IUpdateable.Update(float dt)
+        {
+            if (!ReplicaGates.Allow(m_terrain, ReplicaMutationSource.CellChangeQueue))
+            {
+                ReplicaGates.ClearTable(m_terrain, this, "m_toChange",
+                    typeof(SubsystemCellChangeQueue));
+                return;
+            }
+            object table = ReplicaGates.GetField(this, "m_toChange",
+                typeof(SubsystemCellChangeQueue));
+            if (table is IDictionary dictionary && dictionary.Count == 0) return;
+            if (m_baseUpdate == null) return;
+            try
+            {
+                m_baseUpdate.Invoke(this, new object[] { dt });
+            }
+            catch (Exception e)
+            {
+                Log.Error("[SuMP] cellChangeQueue: 调用引擎 Update 失败：" +
+                    e.GetType().Name + " " + e.Message + "（延迟写格未应用）");
+                return;
+            }
+            ReplicaGates.RescueEvolutionCells(m_terrain);
+        }
+    }
+
+    // =====================================================================================
+    // 方块轮询驱动：Game.SubsystemBlocksScanner
+    //   · Update:35-99 遍历区块并调用每个 SubsystemPollableBlockBehavior.OnPoll。
+    // 它是所有"定时世界演化"（草/植物/仙人掌/腐坏/地毯/落叶/耕地/常春藤）的驱动入口。
+    // 这些目标已经各自有闸门；客户端再关掉驱动，等于给未来的 pollable 行为加一道总闸
+    // （不会改变主机；客户端也不会因为漏注入某个新 pollable 而本地演化）。
+    // =====================================================================================
+
+    public sealed class SuSubsystemBlocksScanner : SubsystemBlocksScanner, IUpdateable
+    {
+        private SubsystemTerrain m_terrain;
+
+        protected override void Load(ValuesDictionary valuesDictionary)
+        {
+            base.Load(valuesDictionary);
+            m_terrain = base.Project.FindSubsystem<SubsystemTerrain>(throwOnError: true);
+        }
+
+        void IUpdateable.Update(float dt)
+        {
+            if (!ReplicaGates.Allow(m_terrain, ReplicaMutationSource.BlocksScanner)) return;
+            base.Update(dt);
+        }
+    }
+    // =====================================================================================
+    // 活塞：**主机唯一模拟，客户端只表现**。
+    //
+    // 引擎事实（Source: Survivalcraft/Game/SubsystemPistonBlockBehavior.cs）：
+    //   · Update → ProcessQueuedActions（:176-231，每 0.125 游戏秒）→ MovePiston（:295-431）
+    //     往 SubsystemMovingBlocks 里放一个 Id=="Piston" 的 MovingBlockSet，并 ChangeCell 清掉
+    //     被移动的格子、把活塞改成"伸出"；
+    //   · 运动过程由 SubsystemMovingBlocks.Update 插值，UpdateMovableBlocks（:233-270）给集合补活塞杆；
+    //   · 结束（Stopped → StopPiston :433-469）才 DestroyCell / ChangeCell 落地 —— 走既有 CellChange 下发。
+    //
+    // 客户端不跑这段逻辑：它没有电路（SuSubsystemElectricity 已挡住），也绝不允许 StopPiston 的
+    // DestroyCell 在本地写格。客户端只保留**表现**：
+    //   · 本地副本集合（Id=="PistonReplica"，由 Engine/PistonReplicaEngine.cs 按主机消息创建）的
+    //     活塞杆由本外壳每帧维护（只 SetBlock 集合，不写格）；
+    //   · 下载世界里可能残留主机"移动到一半"的集合（Id=="Piston"）：同样只维护杆，到点后直接
+    //     移除（绝不调用 StopPiston）。
+    // =====================================================================================
+
+    public sealed class SuSubsystemPistonBlockBehavior : SubsystemPistonBlockBehavior, IUpdateable
+    {
+        /// <summary>同一类问题最短 10s 一条（错误都带累计次数，不静默）。</summary>
+        private const long ProblemLogMs = 10000;
+
+        /// <summary>主机侧跟踪中的运动集合（活塞格 → 集合 + 目标位置）。</summary>
+        private sealed class TrackedMove
+        {
+            public IMovingBlockSet Set;
+            public Vector3 Target;
+        }
+
+        private readonly Dictionary<Point3, TrackedMove> m_tracked =
+            new Dictionary<Point3, TrackedMove>();
+        private readonly List<IMovingBlockSet> m_scratch = new List<IMovingBlockSet>();
+        private readonly List<Point3> m_ended = new List<Point3>();
+        private readonly MovingBlockSetMotion m_motion = new MovingBlockSetMotion();
+
+        private SubsystemMovingBlocks m_movingBlocks;
+        private PistonReplicaEngine m_replica;
+        private long m_motionFieldFailures;
+        private long m_missingCellFailures;
+        private long m_invalidMoveFailures;
+        private long m_emitFailures;
+        private long m_rodFailures;
+        private long m_lastProblemLogMs;
+        private long m_lastErrorLogMs;
+        private long m_clientActionQueueFieldFailures;
+        private bool m_loaded;
+        /// <summary>base 的两个私有写格订阅是否已摘（false = 已 Error 点名，客户端每帧重试）。</summary>
+        private bool m_clientBaseHandlersDetached;
+        private bool m_clientStateMissingLogged;
+        /// <summary>防护窗口外壳是否缺失（只 Error 一次；缺失 ≠ 静默：事件摘除仍生效）。</summary>
+        private bool m_guardShellMissingLogged;
+
+        /// <summary>
+        /// 主机运动检测挂接点（实现 = Engine/PistonReplicaEngine.cs，组合根适配器在 Pump 里写入）。
+        /// **实例字段，无静态状态。** 为 null = 适配器还没挂上：主机照旧跑 base.Update，
+        /// 只是不广播（客户端没有中间过程；最终格仍由 CellChange 同步）。
+        /// </summary>
+        public PistonReplicaEngine Replica
+        {
+            get => m_replica;
+            set => m_replica = value;
+        }
+
+        void IUpdateable.Update(float dt)
+        {
+            SubsystemTerrain terrain = SubsystemTerrain;
+            if (!ReplicaGates.Allow(terrain, ReplicaMutationSource.Piston))
+            {
+                // 客户端：绝不 base.Update（ProcessQueuedActions / MovePiston / StopPiston 都会写格）。
+                EnsureClientBaseHandlersDetached();
+                UpdateClientPresentation(terrain);
+                return;
+            }
+            PistonReplicaEngine replica = m_replica;
+            SubsystemMovingBlocks moving = MovingBlocks;
+            if (replica == null || moving == null)
+            {
+                base.Update(dt);
+                return;
+            }
+            base.Update(dt);
+            // ① 不在跟踪表里的 Piston 集合 = 一次运动开始。
+            //    按"是否已跟踪"而不是"这一帧新出现"：读档时存档里就带着的主机中途集合
+            //    （SubsystemMovingBlocks.Save 会保存 MovingBlockSets）也必须补发，否则客户端
+            //    下载到"移动到一半"的世界后永远看不到剩下的行程。
+            m_scratch.Clear();
+            for (int i = 0; i < moving.MovingBlockSets.Count; i++)
+            {
+                IMovingBlockSet set = moving.MovingBlockSets[i];
+                if (set == null || set.Id != PistonReplicaPresentation.EnginePistonId) continue;
+                if (!(set.Tag is Point3 position)) continue;
+                if (m_tracked.TryGetValue(position, out TrackedMove tracked) &&
+                    ReferenceEquals(tracked.Set, set)) continue;
+                m_scratch.Add(set);
+            }
+            for (int i = 0; i < m_scratch.Count; i++) EmitStarted(replica, terrain, m_scratch[i]);
+            // ③ 跟踪中的集合已经不在列表里 = 引擎把它移除了（StopPiston / 拆除 / 区块卸载）。
+            if (m_tracked.Count > 0) EmitEnded(replica, moving);
+        }
+
+        public override void OnChunkDiscarding(TerrainChunk chunk)
+        {
+            if (!ReplicaGates.Allow(SubsystemTerrain, ReplicaMutationSource.Piston))
+            {
+                // 客户端：区块卸载时只移除**纯表现**集合；绝不调用 StopPiston（它会 DestroyCell）。
+                RemovePresentationSetsInChunk(chunk);
+                return;
+            }
+            base.OnChunkDiscarding(chunk);
+        }
+
+        protected override void Load(ValuesDictionary valuesDictionary)
+        {
+            base.Load(valuesDictionary);
+            m_movingBlocks = base.Project.FindSubsystem<SubsystemMovingBlocks>(false);
+            if (m_movingBlocks != null) m_movingBlocks.Stopped += OnPresentationStopped;
+            m_loaded = true;
+            // 客户端分支：base.Load 已把引擎的两个私有写格回调挂到共享的 SubsystemMovingBlocks 上。
+            // 角色（ClientReplica）通常在 Load 之后才由地形模块写入，所以这里先尝试一次；
+            // Update 的客户端分支每帧兜底（塌落外壳也会在本帧 MovingBlocks.Update 之前调用本方法）。
+            EnsureClientBaseHandlersDetached();
+        }
+
+        private SubsystemMovingBlocks MovingBlocks
+        {
+            get
+            {
+                if (m_movingBlocks != null) return m_movingBlocks;
+                m_movingBlocks = base.Project?.FindSubsystem<SubsystemMovingBlocks>(false);
+                return m_movingBlocks;
+            }
+        }
+
+        // ------------------------------------------------------------ 客户端：摘掉 base 的写格订阅
+
+        /// <summary>
+        /// 客户端：摘掉 base.Load 挂上的**引擎私有写格回调**，只保留本外壳的 OnPresentationStopped。
+        /// Source: Survivalcraft/Game/SubsystemPistonBlockBehavior.cs:Load:165-174
+        ///   m_subsystemMovingBlocks.Stopped += MovingBlocksStopped;
+        ///   m_subsystemMovingBlocks.CollidedWithTerrain += MovingBlocksCollidedWithTerrain;
+        /// 不摘的后果：下载世界里"移动到一半"的 Id=="Piston" 集合在客户端触发
+        /// MovingBlocksStopped（排队）或 MovingBlocksCollidedWithTerrain（直接写格）→ 引擎
+        /// StopPiston / ProcessQueuedActions 在本地落格（客户端禁止，最终格只收主机 CellChange）。
+        /// 返回 false = 本帧未完成（不是客户端 / 尚未 Load / 反射失败已 Error 点名），下一帧重试。
+        /// </summary>
+        internal bool EnsureClientBaseHandlersDetached()
+        {
+            if (m_clientBaseHandlersDetached) return true;
+            if (!m_loaded) return false;
+            if (!ReplicaGates.IsClient(SubsystemTerrain)) return false;
+            SubsystemMovingBlocks moving = MovingBlocks;
+            if (moving == null)
+            {
+                NoteDetachFailure("SubsystemMovingBlocks 不可用");
+                return false;
+            }
+            ClientEventDetachResult stopped = ClientReplicaEventDetach.DetachDeclaredHandlers(
+                moving, "Stopped", typeof(SubsystemPistonBlockBehavior));
+            ClientEventDetachResult collision = ClientReplicaEventDetach.DetachDeclaredHandlers(
+                moving, "CollidedWithTerrain", typeof(SubsystemPistonBlockBehavior));
+            bool ownStopped = ClientReplicaEventDetach.HasHandler(moving, "Stopped", this,
+                "OnPresentationStopped");
+            // base 可能已经排了停止动作（本帧摘除之前 / 上一轮摘除失败）：清空并计数，不留给 base.Update。
+            DropClientBaseActionQueue();
+            if (!stopped.Succeeded || !collision.Succeeded || !ownStopped)
+            {
+                string reason = !stopped.Succeeded
+                    ? stopped.Failure
+                    : !collision.Succeeded
+                        ? collision.Failure
+                        : "事件 'Stopped' 上找不到本外壳的 OnPresentationStopped 委托";
+                NoteDetachFailure(reason);
+                return false;
+            }
+            m_clientBaseHandlersDetached = true;
+            int detached = stopped.Removed + collision.Removed;
+            SuSubsystemTerrain shell = SubsystemTerrain as SuSubsystemTerrain;
+            if (shell == null)
+            {
+                if (!m_clientStateMissingLogged)
+                {
+                    m_clientStateMissingLogged = true;
+                    Log.Error("[SuMP] piston: 客户端已摘掉 base 写格订阅（" + detached +
+                        " 个），但 SubsystemTerrain 不是 SuSubsystemTerrain → 计数器无法登记" +
+                        "（明确失败；闸门本身已生效）");
+                }
+            }
+            else
+            {
+                shell.PistonState.NoteBaseSubscriptionsDetached(detached);
+                Log.Information("[SuMP] piston 客户端闸门：base 写格订阅已摘" +
+                    "（Stopped=" + stopped.Removed + " CollidedWithTerrain=" + collision.Removed +
+                    "，pistonBaseSubscriptionsDetached=" +
+                    shell.PistonState.BaseSubscriptionsDetached +
+                    "）· 本外壳 OnPresentationStopped 保留 · 残留 Piston 集合只移除不写格" +
+                    (detached == 0
+                        ? "（本次 0 个 = 共享事件已被塌落外壳兜底摘掉 / 本引擎版本未订阅）"
+                        : ""));
+            }
+            if (moving is not SuSubsystemMovingBlocks && !m_guardShellMissingLogged)
+            {
+                m_guardShellMissingLogged = true;
+                NoteError("SubsystemMovingBlocks 不是 SuSubsystemMovingBlocks → 客户端移动组 base " +
+                    "写格防护窗口不可用（事件摘除仍在生效；检查组合根是否注册了 " +
+                    "Game.SubsystemMovingBlocks）");
+            }
+            return true;
+        }
+
+        private void NoteDetachFailure(string reason)
+        {
+            SuSubsystemTerrain shell = SubsystemTerrain as SuSubsystemTerrain;
+            shell?.PistonState.NoteDetachFailure();
+            NoteError("客户端摘不掉 base 写格订阅：" + reason +
+                " → 本地活塞落地仍可能写格（明确失败，下一帧重试；失败累计 " +
+                (shell != null ? shell.PistonState.DetachFailures : 0) + "）");
+        }
+
+        /// <summary>
+        /// 客户端：base 的停止队列 m_actions 只是"下一次 base.Update 写格"的意图；客户端不跑
+        /// base.Update，这里清空并计入 clientShellBaseWriteAttempts（不静默留着）。
+        /// 字段读不到 = 引擎版本差异：点名 m_actions 告警（不假装清过）。
+        /// </summary>
+        private void DropClientBaseActionQueue()
+        {
+            object actions = ReplicaGates.GetField(this, "m_actions",
+                typeof(SubsystemPistonBlockBehavior));
+            if (actions == null)
+            {
+                m_clientActionQueueFieldFailures++;
+                NoteProblem("客户端读不到 base 停止队列表 m_actions（字段缺失）→ 无法确认队列为空（累计 " +
+                    m_clientActionQueueFieldFailures + "）");
+                return;
+            }
+            if (actions is not IDictionary dictionary || dictionary.Count == 0) return;
+            int pending = dictionary.Count;
+            dictionary.Clear();
+            NoteClientShellBaseWriteAttempt(pending, "base 停止队列 m_actions");
+        }
+
+        private void NoteClientShellBaseWriteAttempt(int count, string reason)
+        {
+            if (count <= 0) return;
+            SuSubsystemTerrain shell = SubsystemTerrain as SuSubsystemTerrain;
+            if (shell == null)
+            {
+                NoteError("客户端拦下 base 写格路径（" + reason + "）" + count +
+                    " 次，但 SubsystemTerrain 不是 SuSubsystemTerrain → 计数无法登记");
+                return;
+            }
+            shell.PistonState.NoteClientShellBaseWriteAttempts(count);
+            NoteProblem("客户端拦下 base 写格路径（" + reason + "）" + count +
+                " 次；clientShellBaseWriteAttempts 累计 " +
+                shell.PistonState.ClientShellBaseWriteAttempts);
+        }
+
+        /// <summary>
+        /// 客户端：base.OnBlockRemoved 会对活塞 / 活塞头调 StopPiston（DestroyCell / ChangeCell）。
+        /// 主机下发的 CellChange 落到本地时这个回调也会被调用；客户端只移除纯表现集合 + 计数。
+        /// Source: Survivalcraft/Game/SubsystemPistonBlockBehavior.cs:OnBlockRemoved:103-149
+        /// </summary>
+        public override void OnBlockRemoved(int value, int newValue, int x, int y, int z)
+        {
+            if (!ReplicaGates.Allow(SubsystemTerrain, ReplicaMutationSource.Piston))
+            {
+                int contents = Game.Terrain.ExtractContents(value);
+                if (contents != PistonBlock.Index && contents != PistonHeadBlock.Index) return;
+                NoteClientShellBaseWriteAttempt(1, "OnBlockRemoved");
+                RemovePresentationSetNear(value, new Point3(x, y, z));
+                return;
+            }
+            base.OnBlockRemoved(value, newValue, x, y, z);
+        }
+
+        private void RemovePresentationSetNear(int removedValue, Point3 cell)
+        {
+            Point3 anchor = cell;
+            if (Game.Terrain.ExtractContents(removedValue) == PistonHeadBlock.Index)
+            {
+                int data = Game.Terrain.ExtractData(removedValue);
+                Point3 point = CellFace.FaceToPoint3(PistonHeadBlock.GetFace(data));
+                anchor = new Point3(cell.X - point.X, cell.Y - point.Y, cell.Z - point.Z);
+            }
+            RemovePresentationSetsAt(anchor);
+        }
+
+        /// <summary>只 RemoveMovingBlockSet（不写格）；倒序删除避免移动集合列表位移。</summary>
+        private int RemovePresentationSetsAt(Point3 anchor)
+        {
+            SubsystemMovingBlocks moving = MovingBlocks;
+            if (moving == null) return 0;
+            int removed = 0;
+            for (int i = moving.MovingBlockSets.Count - 1; i >= 0; i--)
+            {
+                IMovingBlockSet set = moving.MovingBlockSets[i];
+                if (set == null) continue;
+                if (set.Id != PistonReplicaPresentation.ReplicaId &&
+                    set.Id != PistonReplicaPresentation.EnginePistonId) continue;
+                if (!(set.Tag is Point3 tag) || tag != anchor) continue;
+                moving.RemoveMovingBlockSet(set);
+                removed++;
+            }
+            if (removed > 0)
+            {
+                SuSubsystemTerrain shell = SubsystemTerrain as SuSubsystemTerrain;
+                shell?.PistonState.NoteStraySetsRemoved(removed);
+                NoteProblem("客户端移除已拆活塞的纯表现集合 " + removed + " 条（不写格）；" +
+                    "pistonStraySetsRemoved 累计 " +
+                    (shell != null ? shell.PistonState.StraySetsRemoved : removed));
+            }
+            return removed;
+        }
+
+        // ------------------------------------------------------------ 主机：检测开始 / 结束
+
+        /// <summary>
+        /// 主机：一次运动刚刚开始。把引擎 AddMovingBlockSet 的**全部参数**读出来交给适配器
+        /// （目标位置 / 速度 / 加速度 / 阻力 / 平滑度在私有嵌套类里，读不到时明确失败并计数）。
+        /// </summary>
+        private void EmitStarted(PistonReplicaEngine replica, SubsystemTerrain terrain,
+            IMovingBlockSet set)
+        {
+            if (!(set.Tag is Point3 position))
+            {
+                m_invalidMoveFailures++;
+                NoteProblem("活塞集合的 Tag 不是 Point3 → 本次运动无法广播（累计 " +
+                    m_invalidMoveFailures + "）");
+                return;
+            }
+            int cellValue = terrain.Terrain.GetCellValue(position.X, position.Y, position.Z);
+            if (Game.Terrain.ExtractContents(cellValue) != PistonBlock.Index)
+            {
+                m_missingCellFailures++;
+                NoteProblem("活塞格 (" + position.X + "," + position.Y + "," + position.Z +
+                    ") 不是活塞（contents=" + Game.Terrain.ExtractContents(cellValue) +
+                    "）→ 本次运动不广播（累计 " + m_missingCellFailures + "）");
+                return;
+            }
+            if (!m_motion.TryRead(set, out Vector3 target, out float speed, out float acceleration,
+                    out float drag, out Vector2 smoothness, out string motionReason))
+            {
+                m_motionFieldFailures++;
+                NoteProblem("读不到引擎 MovingBlockSet 的运动参数（" + motionReason +
+                    "）→ 本次运动不广播（客户端看不到这一段；累计 " + m_motionFieldFailures + "）");
+                return;
+            }
+            int data = Game.Terrain.ExtractData(cellValue);
+            PistonMode mode = PistonBlock.GetMode(data);
+            int face = PistonBlock.GetFace(data);
+            ReadOnlyList<MovingBlock> blocks = set.Blocks;
+            var blockData = new PistonBlockData[blocks.Count];
+            for (int i = 0; i < blocks.Count; i++)
+                blockData[i] = new PistonBlockData(blocks[i].Offset, blocks[i].Value);
+            var move = new PistonMoveData(position.X, position.Y, position.Z, cellValue,
+                (int)mode, face, set.Position, target, speed, acceleration, drag, smoothness,
+                blockData);
+            if (!PistonMoveCodec.TryValidateMove(in move, out string invalid))
+            {
+                m_invalidMoveFailures++;
+                NoteProblem("主机活塞运动参数不合法（" + invalid + "）：" + move.Describe() +
+                    " → 本次不广播（累计 " + m_invalidMoveFailures + "）");
+                return;
+            }
+            if (m_tracked.TryGetValue(position, out TrackedMove previous) &&
+                !ReferenceEquals(previous.Set, set))
+            {
+                // 同一活塞上一条集合还没登记结束就被换掉了（引擎不该发生）：先把旧的按中断结束，
+                // 否则客户端会同时持有两条动画。
+                m_tracked.Remove(position);
+                EmitEnd(replica, position, IsAtTarget(previous.Set.Position, previous.Target),
+                    "replaced");
+            }
+            m_tracked[position] = new TrackedMove { Set = set, Target = target };
+            try
+            {
+                replica.OnHostMoveStarted(in move);
+            }
+            catch (Exception e)
+            {
+                m_emitFailures++;
+                NoteProblem("活塞运动开始上报异常（" + e.GetType().Name + " " + e.Message +
+                    "）；累计 " + m_emitFailures);
+            }
+        }
+
+        /// <summary>
+        /// 主机：跟踪中的集合已经不在 <c>MovingBlockSets</c> 里 —— 引擎通过 StopPiston 把它移除了。
+        /// completed = 集合真的走到了 TargetPosition；false = 碰撞 / 拆除 / 区块卸载等提前结束。
+        /// Source: Survivalcraft/Game/SubsystemPistonBlockBehavior.cs:433-469 StopPiston
+        /// </summary>
+        private void EmitEnded(PistonReplicaEngine replica, SubsystemMovingBlocks moving)
+        {
+            m_ended.Clear();
+            foreach (KeyValuePair<Point3, TrackedMove> pair in m_tracked)
+            {
+                bool present = false;
+                for (int i = 0; i < moving.MovingBlockSets.Count; i++)
+                {
+                    if (!ReferenceEquals(moving.MovingBlockSets[i], pair.Value.Set)) continue;
+                    present = true;
+                    break;
+                }
+                if (!present) m_ended.Add(pair.Key);
+            }
+            for (int i = 0; i < m_ended.Count; i++)
+            {
+                Point3 cell = m_ended[i];
+                TrackedMove tracked = m_tracked[cell];
+                m_tracked.Remove(cell);
+                bool completed = IsAtTarget(tracked.Set.Position, tracked.Target);
+                EmitEnd(replica, cell, completed, completed ? "target" : "early");
+            }
+        }
+
+        /// <summary>
+        /// 主机：上报一次运动结束。StartEventId 先留 0 —— 真正的 event_id 由模块在发送时按
+        /// "这条运动的开始批次"填（PistonSyncModule.OnHostMoveEnded 用 m_sentStartIds 补），
+        /// 这里只是引擎事实。
+        /// </summary>
+        private void EmitEnd(PistonReplicaEngine replica, Point3 cell, bool completed, string reason)
+        {
+            var end = new PistonMoveEndData(cell.X, cell.Y, cell.Z, completed, reason, 0);
+            try
+            {
+                replica.OnHostMoveEnded(in end);
+            }
+            catch (Exception e)
+            {
+                m_emitFailures++;
+                NoteProblem("活塞运动结束上报异常（" + e.GetType().Name + " " + e.Message +
+                    "）；累计 " + m_emitFailures);
+            }
+        }
+
+        private static bool IsAtTarget(Vector3 position, Vector3 target) =>
+            Math.Abs(position.X - target.X) <= 1e-4f &&
+            Math.Abs(position.Y - target.Y) <= 1e-4f &&
+            Math.Abs(position.Z - target.Z) <= 1e-4f;
+
+        // ------------------------------------------------------------ 客户端：只表现
+
+        /// <summary>
+        /// 客户端：维护本地集合的活塞杆（只 <c>SetBlock</c>，绝不写格）。集合本身由适配器创建 /
+        /// 移除；这里只负责"杆在伸长 / 收回"的中间外观。
+        /// </summary>
+        private void UpdateClientPresentation(SubsystemTerrain terrain)
+        {
+            SubsystemMovingBlocks moving = MovingBlocks;
+            if (moving == null || terrain?.Terrain == null) return;
+            m_scratch.Clear();
+            for (int i = 0; i < moving.MovingBlockSets.Count; i++)
+            {
+                IMovingBlockSet set = moving.MovingBlockSets[i];
+                if (set == null) continue;
+                if (set.Id != PistonReplicaPresentation.ReplicaId &&
+                    set.Id != PistonReplicaPresentation.EnginePistonId) continue;
+                m_scratch.Add(set);
+            }
+            for (int i = 0; i < m_scratch.Count; i++)
+            {
+                if (PistonReplicaPresentation.UpdateRod(terrain, m_scratch[i], out string reason))
+                    continue;
+                // "not-piston" 是主机格变化还没到时的正常瞬时状态（下一帧就好），不算失败。
+                if (reason == "not-piston") continue;
+                m_rodFailures++;
+                NoteProblem("活塞杆表现跳过（" + reason + "）；累计 " + m_rodFailures);
+            }
+        }
+
+        /// <summary>
+        /// 客户端：下载世界里残留的主机中途集合（Id=="Piston"）到点后只移除表现对象。
+        /// 引擎自己的 StopPiston 会 DestroyCell / ChangeCell —— 客户端绝不走它。
+        /// </summary>
+        private void OnPresentationStopped(IMovingBlockSet set)
+        {
+            if (set == null) return;
+            if (!ReplicaGates.IsClient(SubsystemTerrain)) return;
+            if (!string.Equals(set.Id, PistonReplicaPresentation.EnginePistonId,
+                    StringComparison.Ordinal)) return;
+            SubsystemMovingBlocks moving = MovingBlocks;
+            if (moving == null) return;
+            moving.RemoveMovingBlockSet(set);
+            SuSubsystemTerrain shell = SubsystemTerrain as SuSubsystemTerrain;
+            shell?.PistonState.NoteStraySetsRemoved(1);
+            NoteProblem("客户端移除下载世界里残留的活塞中途集合（不写格，最终格取主机 CellChange）；" +
+                "pistonStraySetsRemoved 累计 " +
+                (shell != null ? shell.PistonState.StraySetsRemoved : 1));
+        }
+
+        /// <summary>客户端：区块卸载 → 只移除纯表现集合（绝不 StopPiston / DestroyCell）。</summary>
+        private void RemovePresentationSetsInChunk(TerrainChunk chunk)
+        {
+            SubsystemMovingBlocks moving = MovingBlocks;
+            if (moving == null || chunk == null) return;
+            var box = new BoundingBox(chunk.BoundingBox.Min - new Vector3(16f),
+                chunk.BoundingBox.Max + new Vector3(16f));
+            var result = new DynamicArray<IMovingBlockSet>();
+            moving.FindMovingBlocks(box, extendToFillCells: false, result);
+            int removed = 0;
+            int engineSets = 0;
+            for (int i = 0; i < result.Count; i++)
+            {
+                IMovingBlockSet set = result.Array[i];
+                if (set == null) continue;
+                if (set.Id != PistonReplicaPresentation.ReplicaId &&
+                    set.Id != PistonReplicaPresentation.EnginePistonId) continue;
+                if (set.Id == PistonReplicaPresentation.EnginePistonId) engineSets++;
+                moving.RemoveMovingBlockSet(set);
+                removed++;
+            }
+            if (removed <= 0) return;
+            SuSubsystemTerrain shell = SubsystemTerrain as SuSubsystemTerrain;
+            shell?.PistonState.NoteStraySetsRemoved(removed);
+            if (engineSets > 0)
+                shell?.PistonState.NoteClientShellBaseWriteAttempts(engineSets);
+            NoteProblem("客户端区块卸载 → 移除 " + removed + " 条纯表现活塞集合（不写格；" +
+                "其中 base 会落地写格的 Piston 集合 " + engineSets + " 条已拦下）；" +
+                "pistonStraySetsRemoved 累计 " +
+                (shell != null ? shell.PistonState.StraySetsRemoved : removed) +
+                " clientShellBaseWriteAttempts 累计 " +
+                (shell != null ? shell.PistonState.ClientShellBaseWriteAttempts : engineSets));
+        }
+
+        private void NoteProblem(string message)
+        {
+            long nowMs = (long)(Time.RealTime * 1000.0);
+            if (m_lastProblemLogMs != 0 && nowMs - m_lastProblemLogMs < ProblemLogMs) return;
+            m_lastProblemLogMs = nowMs;
+            Log.Warning("[SuMP] piston: " + message);
+        }
+
+        /// <summary>"摘不掉 base 写格订阅"是明确失败，用 Error 单独限流（不与普通表现告警混在一起）。</summary>
+        private void NoteError(string message)
+        {
+            long nowMs = (long)(Time.RealTime * 1000.0);
+            if (m_lastErrorLogMs != 0 && nowMs - m_lastErrorLogMs < ProblemLogMs) return;
+            m_lastErrorLogMs = nowMs;
+            Log.Error("[SuMP] piston: " + message);
+        }
+    }
+
+    // =====================================================================================
+    // 移动组驱动：Game.SubsystemMovingBlocks（**item 3 的防御性兜底**）
+    //
+    // 引擎事实：
+    //   · SubsystemMovingBlocks.Update:277-353 插值后调 TerrainCollision:508-535，
+    //     对每个碰撞格 Invoke(CollidedWithTerrain)；
+    //   · 订阅者 SubsystemPistonBlockBehavior.MovingBlocksCollidedWithTerrain:471-497 与
+    //     SubsystemCollapsingBlockBehavior.MovingBlocksCollidedWithTerrain:40-54 直接调
+    //     SubsystemTerrain.DestroyCell / ChangeCell（:229 / :278，**都不是虚方法**）。
+    // 正常路径：Piston / Collapsing 外壳在客户端把这两个私有委托从事件上摘掉
+    // （见 SuSubsystemPistonBlockBehavior.EnsureClientBaseHandlersDetached / ClientReplicaEventDetach）。
+    // 万一摘除失败 / 将来引擎改事件名：本外壳在客户端给 base.Update 套一个写格窗口
+    // （ClientMovingBlockWriteGuard），窗口内被移动组 base 回调改掉的格恢复原值 + 移出本地编辑捕获
+    // + 计入 clientShellBaseWriteAttempts / clientBasePistonWriteAttempt。客户端绝不把这类写入提交给主机。
+    //
+    // 主机 / 单机：直接 base.Update（一次 IsClient 判断，无窗口 / 无额外分配）。
+    // 无静态状态：窗口实例挂在本子系统实例上。
+    // =====================================================================================
+
+    public sealed class SuSubsystemMovingBlocks : SubsystemMovingBlocks, IUpdateable
+    {
+        private const long GuardProblemLogMs = 10000;
+
+        private readonly ClientMovingBlockWriteGuard m_clientWriteGuard =
+            new ClientMovingBlockWriteGuard();
+        private readonly List<ClientMovingBlockSetRef> m_guardSets =
+            new List<ClientMovingBlockSetRef>(4);
+
+        private SubsystemTerrain m_terrain;
+        private long m_lastGuardProblemLogMs;
+        private long m_guardSkippedTotal;
+        private bool m_missingShellLogged;
+
+        void IUpdateable.Update(float dt)
+        {
+            SubsystemTerrain terrain = m_terrain ??
+                (m_terrain = base.Project?.FindSubsystem<SubsystemTerrain>(false));
+            if (!ReplicaGates.IsClient(terrain) || terrain.Terrain == null)
+            {
+                base.Update(dt);
+                return;
+            }
+            SuSubsystemTerrain shell = terrain as SuSubsystemTerrain;
+            if (shell == null)
+            {
+                if (!m_missingShellLogged)
+                {
+                    m_missingShellLogged = true;
+                    Log.Error("[SuMP] movingBlocks: SubsystemTerrain 不是 SuSubsystemTerrain → " +
+                        "客户端移动组 base 写格防护窗口不可用（明确失败；活塞/塌落外壳的事件摘除仍在生效）");
+                }
+                base.Update(dt);
+                return;
+            }
+            BeginClientWriteGuard(shell);
+            try
+            {
+                base.Update(dt);
+            }
+            finally
+            {
+                m_clientWriteGuard.End(shell);
+            }
+        }
+
+        /// <summary>
+        /// 客户端：快照所有"引擎 base 回调可能写格"的移动组（Id=="Piston" / "CollapsingBlock"）
+        /// 当前包围盒（外扩 2 格）。只读集合，不写格。
+        /// </summary>
+        private void BeginClientWriteGuard(SuSubsystemTerrain shell)
+        {
+            m_guardSets.Clear();
+            IReadOnlyList<IMovingBlockSet> sets = MovingBlockSets;
+            for (int i = 0; i < sets.Count; i++)
+            {
+                IMovingBlockSet set = sets[i];
+                if (set == null) continue;
+                string source;
+                if (string.Equals(set.Id, PistonReplicaPresentation.EnginePistonId,
+                        StringComparison.Ordinal))
+                    source = ClientMovingBlockWriteGuard.PistonSource;
+                else if (string.Equals(set.Id, "CollapsingBlock", StringComparison.Ordinal))
+                    // Source: Survivalcraft/Game/SubsystemCollapsingBlockBehavior.cs:IdString "CollapsingBlock"
+                    source = ClientMovingBlockWriteGuard.CollapsingSource;
+                else
+                    continue;
+                ReadOnlyList<MovingBlock> blocks = set.Blocks;
+                if (blocks.Count == 0) continue;
+                Point3 min = blocks[0].Offset;
+                Point3 max = min;
+                for (int b = 1; b < blocks.Count; b++)
+                {
+                    Point3 offset = blocks[b].Offset;
+                    min = Point3.Min(min, offset);
+                    max = Point3.Max(max, offset);
+                }
+                m_guardSets.Add(new ClientMovingBlockSetRef(source, set.Position, min, max));
+            }
+            if (m_guardSets.Count == 0) return;
+            m_clientWriteGuard.Begin(m_guardSets, shell);
+            if (m_clientWriteGuard.LastSkippedSets <= 0) return;
+            m_guardSkippedTotal += m_clientWriteGuard.LastSkippedSets;
+            NoteGuardProblem("移动组几何超出防护窗口上限 → " +
+                m_clientWriteGuard.LastSkippedSets + " 条未快照（累计 " + m_guardSkippedTotal +
+                "；这些集合的 base 写格未被窗口兜底，事件摘除仍然是主防线）");
+        }
+
+        private void NoteGuardProblem(string message)
+        {
+            long nowMs = (long)(Time.RealTime * 1000.0);
+            if (m_lastGuardProblemLogMs != 0 &&
+                nowMs - m_lastGuardProblemLogMs < GuardProblemLogMs) return;
+            m_lastGuardProblemLogMs = nowMs;
+            Log.Warning("[SuMP] movingBlocks: " + message);
+        }
+    }
+
 }

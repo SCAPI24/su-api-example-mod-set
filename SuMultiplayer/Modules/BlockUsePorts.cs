@@ -58,6 +58,120 @@ namespace SuMultiplayer.Modules
     }
 
     /// <summary>
+    /// 一次容器编辑在主机**落地后**的结果：权威状态 + 主机实际做了什么（供状态行 / 日志计数）。
+    /// </summary>
+    public sealed class ContainerEditOutcome
+    {
+        public ContainerEditOutcome(ContainerStateData state, bool craftGridApplied,
+            int resultTakenCount, int resultValue, bool resultPredictionMismatch,
+            int playerRemoved, int playerAdded, int playerLeftover,
+            bool splitApplied = false, bool moveApplied = false, bool takeAndPlaceApplied = false,
+            bool creativeInventory = false, int creativeDataVariantAllowed = 0,
+            int creativeInventoryMoveAllowed = 0)
+        {
+            State = state;
+            CraftGridApplied = craftGridApplied;
+            ResultTakenCount = resultTakenCount;
+            ResultValue = resultValue;
+            ResultPredictionMismatch = resultPredictionMismatch;
+            PlayerRemoved = playerRemoved;
+            PlayerAdded = playerAdded;
+            PlayerLeftover = playerLeftover;
+            SplitApplied = splitApplied;
+            MoveApplied = moveApplied;
+            TakeAndPlaceApplied = takeAndPlaceApplied;
+            CreativeInventory = creativeInventory;
+            CreativeDataVariantAllowed = creativeDataVariantAllowed;
+            CreativeInventoryMoveAllowed = creativeInventoryMoveAllowed;
+        }
+
+        /// <summary>落地后的权威容器快照（rev 已前进）。</summary>
+        public ContainerStateData State { get; }
+        /// <summary>配方格是否真的变了（工作台）。</summary>
+        public bool CraftGridApplied { get; }
+        /// <summary>主机 RemoveSlotItems 实际取走的合成产物数量（0 = 没取）。</summary>
+        public int ResultTakenCount { get; }
+        /// <summary>取走产物的方块值（ResultTakenCount &gt; 0 时有意义）。</summary>
+        public int ResultValue { get; }
+        /// <summary>客户端本地预测的产物与主机 UpdateCraftingResult 的结果不一致（以主机为准）。</summary>
+        public bool ResultPredictionMismatch { get; }
+        /// <summary>主机从实时镜像背包扣除的物品数。</summary>
+        public int PlayerRemoved { get; }
+        /// <summary>主机放进实时镜像背包的物品数。</summary>
+        public int PlayerAdded { get; }
+        /// <summary>放进玩家背包时放不下的剩余数（明确计数，不静默丢弃）。</summary>
+        public int PlayerLeftover { get; }
+        /// <summary>本次编辑是一次同物品两槽拆分（source −k / destination +k）。</summary>
+        public bool SplitApplied { get; }
+        /// <summary>本次编辑是容器内的物品移动（非拆分、非取产物）。</summary>
+        public bool MoveApplied { get; }
+        /// <summary>本次编辑同时做了"取产物 + 把物品放进容器"。</summary>
+        public bool TakeAndPlaceApplied { get; }
+        /// <summary>
+        /// 请求者的主机侧背包是创造仓库（<c>ComponentCreativeInventory</c>）：本次编辑按创造模式
+        /// 规则校验（跳过"容器增加 ⇒ 玩家减少"的物品守恒），不是生存守恒。
+        /// </summary>
+        public bool CreativeInventory { get; }
+
+        /// <summary>
+        /// 创造模式放行的 **data 变体** 件数（物品完整值不在创造仓库，但 contents 位由创造仓库
+        /// 提供：内存条地图 / 告示牌文字 / 家具设计 id）。允许计数，不是拒绝。
+        /// </summary>
+        public int CreativeDataVariantAllowed { get; }
+
+        /// <summary>创造模式放行的"请求者权威背包里已有该物品"件数（移动，不是创造）。</summary>
+        public int CreativeInventoryMoveAllowed { get; }
+
+        public string Describe() =>
+            "craftGrid=" + (CraftGridApplied ? "applied" : "same") + " resultTaken=" +
+            ResultTakenCount + (ResultTakenCount > 0 ? "x" + ResultValue : string.Empty) +
+            " predMismatch=" + (ResultPredictionMismatch ? "yes" : "no") +
+            " player-" + PlayerRemoved + "+" + PlayerAdded + " leftover=" + PlayerLeftover +
+            " kind=" + (TakeAndPlaceApplied ? "take+place" : SplitApplied ? "split" :
+                MoveApplied ? "move" : "none") +
+            " requester=" + (CreativeInventory ? "creative" : "survival") +
+            " creativeDataVariant=" + CreativeDataVariantAllowed +
+            " creativeInventoryMove=" + CreativeInventoryMoveAllowed;
+    }
+
+    /// <summary>
+    /// 主机一次熔炉轮询的目标：一个熔炉 + 需要收到炉况的客户端
+    /// （打开它的客户端，以及 <c>NearFurnaceDistance</c> 内看得见它的客户端）。
+    /// 由模块按"被打开的容器"先建，端口再补"附近的燃烧熔炉"（关闭但可见也能同步外观）。
+    /// </summary>
+    public sealed class FurnacePollTarget
+    {
+        public FurnacePollTarget(ContainerKey key)
+        {
+            Key = key;
+        }
+
+        public ContainerKey Key { get; }
+
+        /// <summary>去重后的接收者 clientId（打开者 + 附近可见者）。</summary>
+        public System.Collections.Generic.List<int> ClientIds { get; } =
+            new System.Collections.Generic.List<int>(4);
+
+        public bool AddClient(int clientId)
+        {
+            if (ClientIds.Contains(clientId)) return false;
+            ClientIds.Add(clientId);
+            return true;
+        }
+
+        public static FurnacePollTarget Find(
+            System.Collections.Generic.List<FurnacePollTarget> targets, ContainerKey key)
+        {
+            if (targets == null) return null;
+            for (int i = 0; i < targets.Count; i++)
+            {
+                if (targets[i] != null && targets[i].Key.Equals(key)) return targets[i];
+            }
+            return null;
+        }
+    }
+
+    /// <summary>
     /// 客户端输入外壳（Engine/EntityRequestInput.cs:SuComponentInput）到模块的提交入口。
     /// 返回 true = 请求已入队发送（调用方随后必须吞掉原生输入，客户端不产生本地效果）。
     /// </summary>
@@ -114,15 +228,41 @@ namespace SuMultiplayer.Modules
         bool TryExecuteUse(int clientId, in BlockUseRequestData request,
             out BlockUseHostOutcome outcome, out string reason);
 
-        /// <summary>校验并落地一次容器编辑（base 必须与主机权威值一致）。</summary>
+        /// <summary>
+        /// 校验并落地一次容器编辑（base 必须与主机权威值一致；配方格 + 玩家背包按计划原子落地）。
+        /// </summary>
         bool TryApplyContainerEdit(int clientId, in ContainerEditRequestData request,
-            out ContainerStateData state, out string reason);
+            out ContainerEditOutcome outcome, out string reason);
 
         /// <summary>
         /// 轮询这些被客户端打开的容器：值变化时写入 <paramref name="states"/> 并返回数量。
         /// 主机自己的面板（原生 UI）改动、熔炉烧炼等都在这里被发现并广播。
         /// </summary>
         int PollContainerStates(IReadOnlyList<ContainerKey> keys, List<ContainerStateData> states);
+
+        /// <summary>
+        /// 主机：给 <paramref name="targets"/> 补上"任一连机角色
+        /// <c>NearFurnaceDistance</c> 内的熔炉"（**只补真正在烧 / 刚熄灭的**，关闭但可见的
+        /// 熔炉外观也能同步）。已有 target（被客户端打开）只追加附近客户端，不重复建。
+        /// 返回因"不在任何客户端附近且没人打开"而跳过本拍的燃烧熔炉数
+        /// （<paramref name="targets"/> 已满时也计入跳过并写明确日志）。
+        /// </summary>
+        int AddNearbyFurnaceTargets(List<FurnacePollTarget> targets, int maxTargets);
+
+        /// <summary>
+        /// 主机：抓一个熔炉的权威运行状态（热量 / 烧炼进度 / 剩余燃烧时间 / 燃烧外观格子值）。
+        /// 方块实体不存在 / 区块卸载 / 方块已不是熔炉 → 返回 false 并给出原因。
+        /// </summary>
+        bool TryCaptureFurnaceState(ContainerKey key, out FurnaceStateData state,
+            out string reason);
+
+        /// <summary>
+        /// 客户端：把权威炉况写进副本组件（热量 / 进度 / 剩余燃烧时间）并落地点亮格子值。
+        /// 纯表现：不推进烧炼、不消耗燃料、不写权威库存、不产生本地地形编辑。
+        /// 返回 false 仅在"两样都没应用"时；<paramref name="reason"/> 说明哪一部分失败。
+        /// </summary>
+        bool ApplyFurnacePresentation(FurnaceStateData state, out bool litApplied,
+            out bool progressApplied, out string reason);
 
         /// <summary>抓取一个容器的权威状态（拒绝编辑时回滚 / 首次打开时下发）。</summary>
         bool TryCaptureContainerState(ContainerKey key, out ContainerStateData state,

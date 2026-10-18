@@ -128,3 +128,38 @@ message ContainerEditResult {
   int32 revision = 4;
   ContainerKind container_kind = 5;
 }
+
+// Host -> client: authoritative runtime state of one furnace (block entity).
+//
+// The container slots only say what is inside the furnace; the furnace UI also reads
+// ComponentFurnace.HeatLevel (flame animation) and ComponentFurnace.SmeltingProgress
+// (progress bar), and the block's burning appearance is the cell contents 64 = furnace,
+// 65 = lit furnace. The client's replica ComponentFurnace has no simulation (its
+// IUpdateable is removed), so those values must arrive as state.
+//
+// Presentation-only on the client: heat / smelting progress / fire time are written to
+// the replica component, and the lit cell value is applied through the terrain apply
+// path (never as a local edit). The client never advances smelting and never consumes
+// fuel.
+//
+// Source: Survivalcraft/Game/ComponentFurnace.cs:Update (m_heatLevel / m_smeltingProgress /
+//         m_fireTimeRemaining, and the 64 -> 65 contents switch at the end of Update)
+// Source: Survivalcraft/Game/FurnaceWidget.cs:Update (fire particles = HeatLevel > 0,
+//         progress bar value = SmeltingProgress)
+// Source: Survivalcraft/Game/LitFurnaceBlock.cs (Index = 65)
+message FurnaceState {
+  int32 x = 1;
+  int32 y = 2;
+  int32 z = 3;
+  // Host monotonic per-furnace revision: the client drops an older state as stale
+  // (equal revision is a resend and is applied idempotently).
+  int32 revision = 4;
+  // ComponentFurnace runtime fields (host authoritative).
+  float heat_level = 5;
+  float smelting_progress = 6;
+  float fire_time_remaining = 7;
+  // Authoritative block cell value for the burning appearance: contents 64 (unlit) or
+  // 65 (lit) with the orientation in data. The client applies this cell value through
+  // the normal terrain apply path so the block looks exactly like the host.
+  int32 cell_value = 8;
+}

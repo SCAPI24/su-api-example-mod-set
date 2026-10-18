@@ -60,7 +60,7 @@ namespace SuMultiplayer.Protocol {
             "ZGl1cxgDIAEoBRILCgNleHQYZCABKAwSJAoGY3VzdG9tGGUgASgLMhQuZ29v",
             "Z2xlLnByb3RvYnVmLkFueSJICgNCeWUSDgoGcmVhc29uGAEgASgJEgsKA2V4",
             "dBhkIAEoDBIkCgZjdXN0b20YZSABKAsyFC5nb29nbGUucHJvdG9idWYuQW55",
-            "KusICgtNZXNzYWdlVHlwZRIcChhNRVNTQUdFX1RZUEVfVU5TUEVDSUZJRUQQ",
+            "KpEKCgtNZXNzYWdlVHlwZRIcChhNRVNTQUdFX1RZUEVfVU5TUEVDSUZJRUQQ",
             "ABIJCgVIRUxMTxABEg0KCUhFTExPX0FDSxACEhMKD0lOVEVSRVNUX1VQREFU",
             "RRADEhcKE0NIVU5LX0RJR0VTVF9SRVBPUlQQBBIRCg1DSFVOS19WRVJESUNU",
             "EAUSEAoMQ0hVTktfUkVTWU5DEAYSDwoLQ0VMTF9DSEFOR0UQBxITCg9ERUJV",
@@ -82,11 +82,14 @@ namespace SuMultiplayer.Protocol {
             "GQoVRU5USVRZX1JFU1lOQ19SRVFVRVNUECoSGQoVUElDS0FCTEVfRFJPUF9S",
             "RVFVRVNUEDISGAoUUElDS0FCTEVfRFJPUF9SRVNVTFQQMxIbChdQUk9KRUNU",
             "SUxFX0ZJUkVfUkVRVUVTVBA0EhoKFlBST0pFQ1RJTEVfRklSRV9SRVNVTFQQ",
-            "NRIUChBCVVJOX0FXQVlfRUZGRUNUECsSFQoRQkxPQ0tfVVNFX1JFUVVFU1QQ",
-            "PBIUChBCTE9DS19VU0VfUkVTVUxUED0SEwoPQ09OVEFJTkVSX1NUQVRFED4S",
-            "GgoWQ09OVEFJTkVSX0VESVRfUkVRVUVTVBA/EhkKFUNPTlRBSU5FUl9FRElU",
-            "X1JFU1VMVBBAQhtIAaoCFlN1TXVsdGlwbGF5ZXIuUHJvdG9jb2xiBnByb3Rv",
-            "Mw=="));
+            "NRIVChFXRUFQT05fRklSRV9FVkVOVBA2EhQKEEJVUk5fQVdBWV9FRkZFQ1QQ",
+            "KxIVChFCTE9DS19VU0VfUkVRVUVTVBA8EhQKEEJMT0NLX1VTRV9SRVNVTFQQ",
+            "PRITCg9DT05UQUlORVJfU1RBVEUQPhIaChZDT05UQUlORVJfRURJVF9SRVFV",
+            "RVNUED8SGQoVQ09OVEFJTkVSX0VESVRfUkVTVUxUEEASFQoRUElTVE9OX01P",
+            "VkVfRVZFTlQQQRITCg9QSVNUT05fTU9WRV9FTkQQQhIdChlDQU1QRklSRV9F",
+            "WFRJTkdVSVNIX0VWRU5UEEMSFwoTUkVNT1RFX0FDVElPTl9TT1VORBBEEhYK",
+            "ElBJQ0tVUF9TT1VORF9FVkVOVBBFEhEKDUZVUk5BQ0VfU1RBVEUQRkIbSAGq",
+            "AhZTdU11bHRpcGxheWVyLlByb3RvY29sYgZwcm90bzM="));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { global::Google.Protobuf.WellKnownTypes.AnyReflection.Descriptor, },
           new pbr::GeneratedClrTypeInfo(new[] {typeof(global::SuMultiplayer.Protocol.MessageType), }, null, new pbr::GeneratedClrTypeInfo[] {
@@ -237,6 +240,11 @@ namespace SuMultiplayer.Protocol {
     [pbr::OriginalName("PROJECTILE_FIRE_REQUEST")] ProjectileFireRequest = 52,
     [pbr::OriginalName("PROJECTILE_FIRE_RESULT")] ProjectileFireResult = 53,
     /// <summary>
+    /// Presentation-only weapon-fire sound relay (entities.proto):
+    /// host -> all clients after an accepted shot.  Append-only.
+    /// </summary>
+    [pbr::OriginalName("WEAPON_FIRE_EVENT")] WeaponFireEvent = 54,
+    /// <summary>
     /// Burn-away presentation (effects.proto): host-authoritative, clients only
     /// spawn debris particles / play the sizzle sound.  Append-only.
     /// Source: Survivalcraft/Game/SubsystemFireBlockBehavior.cs:227-256
@@ -260,6 +268,60 @@ namespace SuMultiplayer.Protocol {
     [pbr::OriginalName("CONTAINER_STATE")] ContainerState = 62,
     [pbr::OriginalName("CONTAINER_EDIT_REQUEST")] ContainerEditRequest = 63,
     [pbr::OriginalName("CONTAINER_EDIT_RESULT")] ContainerEditResult = 64,
+    /// <summary>
+    /// MovingBlockSet motion presentation (piston.proto): host-authoritative, clients visual-only.
+    /// The engine represents the intermediate motion as MovingBlockSets that are NOT cell data,
+    /// so clients never see the moving head/rod (piston) or the falling sand/gravel column
+    /// (collapsing) until the final CellChange arrives.
+    /// Both kinds share these two messages; PistonMove.kind / PistonMoveEndEntry.kind select
+    /// PISTON or COLLAPSING (append-only field, 0 = older host that only knows pistons).
+    /// Append-only: 65 / 66 are new ids, no existing id is renumbered.
+    /// Source: Survivalcraft/Game/SubsystemPistonBlockBehavior.cs:MovePiston/StopPiston
+    /// Source: Survivalcraft/Game/SubsystemCollapsingBlockBehavior.cs:TryCollapseColumn/MovingBlocksStopped
+    /// Source: Survivalcraft/Game/SubsystemMovingBlocks.cs:AddMovingBlockSet/Update
+    /// </summary>
+    [pbr::OriginalName("PISTON_MOVE_EVENT")] PistonMoveEvent = 65,
+    [pbr::OriginalName("PISTON_MOVE_END")] PistonMoveEnd = 66,
+    /// <summary>
+    /// Campfire extinguish presentation (effects.proto): host -> all clients after a
+    /// burning campfire has burned out (cell stays campfire 209, data = 0).
+    /// Presentation-only: clients just play Audio/Sizzles at the cell; terrain still
+    /// arrives through the ordinary CellChange stream.  Append-only: 67 is a new id,
+    /// no existing id is renumbered.
+    /// Source: Survivalcraft/Game/SubsystemCampfireBlockBehavior.cs:ResizeCampfire
+    /// </summary>
+    [pbr::OriginalName("CAMPFIRE_EXTINGUISH_EVENT")] CampfireExtinguishEvent = 67,
+    /// <summary>
+    /// Remote action sound relay (remotesound.proto): presentation-only.
+    /// Host -> the requesting client and every other client within 48 m, after the
+    /// host executed that client's BlockUseRequest / container interaction.  The
+    /// block behaviours call SubsystemAudio locally on the host, so the requester
+    /// otherwise hears nothing (switch / button / lever / door / campfire / ...).
+    /// Append-only: 68 is a new id, no existing id is renumbered.
+    /// Source: Survivalcraft/Game/SwitchElectricElement.cs:27
+    /// Source: Survivalcraft/Game/SubsystemAudio.cs:98/112/118/124/138/144
+    /// </summary>
+    [pbr::OriginalName("REMOTE_ACTION_SOUND")] RemoteActionSound = 68,
+    /// <summary>
+    /// Pickup sound relay (entities.proto): presentation-only.
+    /// Host -> the requesting client (always) and every other client within a small
+    /// radius (16 m), right after the host accepted that client's
+    /// PickableAcquireRequest.  The host executes the acquire itself, so the
+    /// requesting client otherwise hears nothing at all (the presentation is not in
+    /// any state stream).  Append-only: 69 is a new id, no existing id is renumbered.
+    /// Source: Survivalcraft/Game/SubsystemPickables.cs:210-213
+    ///         (Audio/PickableCollected, volume 0.7, pitch -0.4, min distance 2)
+    /// </summary>
+    [pbr::OriginalName("PICKUP_SOUND_EVENT")] PickupSoundEvent = 69,
+    /// <summary>
+    /// Host-authoritative furnace runtime state (blockuse.proto): the client's replica
+    /// ComponentFurnace has no simulation, so heat / smelting progress / fire time and the
+    /// lit block cell value arrive as state. Presentation-only on the client.
+    /// Append-only: 70 is a new id, no existing id is renumbered.
+    /// Source: Survivalcraft/Game/ComponentFurnace.cs:Update
+    /// Source: Survivalcraft/Game/FurnaceWidget.cs:Update
+    /// </summary>
+    [pbr::OriginalName("FURNACE_STATE")] FurnaceState = 70,
   }
 
   #endregion

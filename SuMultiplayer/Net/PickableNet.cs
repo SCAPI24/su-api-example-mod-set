@@ -227,16 +227,20 @@ namespace SuMultiplayer.Net
     /// <summary>一次完整快照（加入 / 重连 / 主动 resync）。</summary>
     public sealed class EntitySnapshotData
     {
-        public EntitySnapshotData(uint snapshotId, long serverTick, bool complete)
+        public EntitySnapshotData(uint snapshotId, long serverTick, bool complete,
+            uint stateVersion = 0)
         {
             SnapshotId = snapshotId;
             ServerTick = serverTick;
             Complete = complete;
+            StateVersion = stateVersion;
         }
 
         public uint SnapshotId { get; }
         public long ServerTick { get; }
         public bool Complete { get; }
+        /// <summary>快照生成时的主机 EntityState 版本（0 = 旧主机未提供）。</summary>
+        public uint StateVersion { get; }
         public List<PickableStateData> Pickables { get; } = new List<PickableStateData>();
         public List<ProjectileStateData> Projectiles { get; } = new List<ProjectileStateData>();
     }
@@ -569,7 +573,8 @@ namespace SuMultiplayer.Net
             {
                 SnapshotId = data.SnapshotId,
                 ServerTick = data.ServerTick,
-                Complete = data.Complete
+                Complete = data.Complete,
+                StateVersion = data.StateVersion
             };
             for (int i = 0; i < data.Pickables.Count; i++)
                 message.Pickables.Add(EncodePickable(data.Pickables[i]));
@@ -604,7 +609,7 @@ namespace SuMultiplayer.Net
                 return false;
             }
             var result = new EntitySnapshotData(message.SnapshotId, message.ServerTick,
-                message.Complete);
+                message.Complete, message.StateVersion);
             for (int i = 0; i < message.Pickables.Count; i++)
             {
                 if (!TryDecodePickable(message.Pickables[i], out PickableStateData pickable,
@@ -923,6 +928,9 @@ namespace SuMultiplayer.Net
     {
         private uint m_lastVersion;
         private uint m_lastSnapshotId;
+
+        /// <summary>最近一次已应用的 EntityState 版本（0 = 还没应用过）。</summary>
+        public uint LastStateVersion => m_lastVersion;
 
         public long Accepted { get; private set; }
         public long Duplicates { get; private set; }

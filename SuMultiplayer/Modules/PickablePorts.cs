@@ -41,7 +41,8 @@ namespace SuMultiplayer.Modules
     public readonly struct PickableAcquireOutcome
     {
         public PickableAcquireOutcome(int remainingCount, bool removed, int[] indices,
-            int[] values, int[] counts, int inventoryVersion)
+            int[] values, int[] counts, int inventoryVersion, int itemValue,
+            Vector3 position, bool playPickupSound)
         {
             RemainingCount = remainingCount;
             Removed = removed;
@@ -49,6 +50,9 @@ namespace SuMultiplayer.Modules
             Values = values ?? Array.Empty<int>();
             Counts = counts ?? Array.Empty<int>();
             InventoryVersion = inventoryVersion;
+            ItemValue = itemValue;
+            Position = position;
+            PlayPickupSound = playPickupSound;
         }
 
         public int RemainingCount { get; }
@@ -57,6 +61,17 @@ namespace SuMultiplayer.Modules
         public int[] Values { get; }
         public int[] Counts { get; }
         public int InventoryVersion { get; }
+        /// <summary>主机权威拾取物的完整物品值（contents + data）。</summary>
+        public int ItemValue { get; }
+        /// <summary>主机权威拾取位置（客户端上报的位置不参与）。</summary>
+        public Vector3 Position { get; }
+        /// <summary>
+        /// 主机这次拾取是否需要播放 <c>Audio/PickableCollected</c>。
+        /// 与引擎 <c>SubsystemPickables.Update</c> 同口径：只有**整堆被拾完**（Count 归零）且
+        /// 不是经验币（contents=248，引擎走 <c>AddExperience</c> 的 ExperienceCollected）时才播。
+        /// Source: Survivalcraft/Game/SubsystemPickables.cs:210-213
+        /// </summary>
+        public bool PlayPickupSound { get; }
 
         public bool HasInventory => Indices.Length > 0;
     }
@@ -98,6 +113,8 @@ namespace SuMultiplayer.Modules
         public long SnapshotRecords;
         public long SnapshotDropped;
         public long SnapshotStaleRemoved;
+        /// <summary>客户端：快照的 state_version 比已应用的增量状态更旧 → 整条拒绝（不误删新副本）。</summary>
+        public long SnapshotStale;
 
         // ---- 拾取请求 / 回执
         public long PickupRequestsSent;
@@ -111,6 +128,12 @@ namespace SuMultiplayer.Modules
         public long PickupInventoryFailures;
         public long PickupResultUnknown;
         public long PickupSuppressed;
+        /// <summary>客户端：掉落者拾取宽限内**没有**发请求的次数（pickupGraceBlocked 的客户端侧）。</summary>
+        public long PickupGraceSuppressed;
+        /// <summary>客户端：主机以 pickup-grace 拒绝后登记本地宽限的次数（回执明确原因）。</summary>
+        public long PickupGraceBlockedByHost;
+        /// <summary>客户端：本机造成的掉落副本被认领并登记拾取宽限的数量（挖 / 放 / 手丢）。</summary>
+        public long OwnDropGraceRegistered;
         public long PickupNoInventory;
         public long PickupPersisted;
         public long PickupPersistFailures;
@@ -137,6 +160,27 @@ namespace SuMultiplayer.Modules
         public long DropPersistFailures;
         public long DropResultSendFailures;
 
+        // ---- 客户端 UI 拖出丢弃（inventory drag-to-world；与键盘 Drop 分开计数）
+        /// <summary>客户端：UI 拖出被拦截并交给请求链的次数（= 收到 Source=UI 的意图）。</summary>
+        public long UiDropIntercepted;
+        /// <summary>客户端：UI 拖出请求**成功发送**的次数（主机裁决前的入队/发送）。</summary>
+        public long UiDropRequestSent;
+        /// <summary>客户端：UI 拖出被本端抑制（未就绪 / 请求表满 / 发送失败）——物品留在背包。</summary>
+        public long UiDropSuppressed;
+        /// <summary>客户端：主机接受了 UI 拖出请求（权威拾取物已生成）。</summary>
+        public long UiDropAccepted;
+        /// <summary>客户端：主机拒绝了 UI 拖出请求（原因见 <see cref="UiDropRejectReasons"/>）。</summary>
+        public long UiDropRejected;
+        /// <summary>客户端：UI 拖出请求回执超时（本地从未扣除，物品不丢）。</summary>
+        public long UiDropTimeouts;
+        /// <summary>主机：收到的 UI 拖出丢弃请求条数。</summary>
+        public long UiDropRequestsReceived;
+        /// <summary>
+        /// UI 拖出被拒绝的原因计数（固定原因词汇；实例对象，无静态状态）。
+        /// 客户端 = 收到的主机拒绝；主机 = 自己拒绝的 UI 请求。
+        /// </summary>
+        public readonly RequestReasonTally UiDropRejectReasons = new RequestReasonTally();
+
         // ---- 客户端投掷 / 开火请求
         public long FireRequestsSent;
         public long FireRequestFailures;
@@ -156,6 +200,62 @@ namespace SuMultiplayer.Modules
         public long FireProjectilesSpawned;
         /// <summary>主机接受但没有生成投射物的次数（空包弹 / 没装箭 / 弩没拉满）。</summary>
         public long FireBlankShots;
+
+        // ---- 开火复位 / 声音中继（本轮新增）
+        /// <summary>主机：开火后给所有端重播的权威手持物复位次数。</summary>
+        public long FireResetSent;
+        /// <summary>主机：复位广播失败次数。</summary>
+        public long FireResetFailures;
+        /// <summary>开火者客户端：应用回执稀疏背包增量完成弓 / 弩 / 火枪复位的次数。</summary>
+        public long FireResetApplied;
+        /// <summary>主机：成功广播的武器开火表现事件条数（按接收端计）。</summary>
+        public long FireSoundRelayed;
+        /// <summary>客户端：收到的武器开火表现事件条数（含自己的回声）。</summary>
+        public long FireSoundReceived;
+        /// <summary>本机成功播放的开火声音次数（主机本机 / 客户端）。</summary>
+        public long FireSoundPresented;
+        /// <summary>开火者客户端跳过的自己回声条数（本地已经播过）。</summary>
+        public long FireSoundOwnEchoSkipped;
+        /// <summary>开火声音播放失败 / 事件非法的次数。</summary>
+        public long FireSoundFailures;
+
+        // ---- 拾取声音中继（主机接受客户端拾取请求后的纯表现）
+        /// <summary>主机：成功入队的 PickupSoundEvent 条数（按接收端计；请求者恒定在内）。</summary>
+        public long PickupSoundRelayed;
+        /// <summary>客户端：收到的 PickupSoundEvent 条数（含非法载荷；方向错误的主机不计）。</summary>
+        public long PickupSoundReceived;
+        /// <summary>本机实际播放 Audio/PickableCollected 的次数（主机本机 + 客户端）。</summary>
+        public long PickupSoundPresented;
+        /// <summary>
+        /// 跳过的回声：主机本机拾取（引擎已原生播放，绝不再发事件）/ 主机收到方向错误的事件。
+        /// </summary>
+        public long PickupSoundEchoSkipped;
+        /// <summary>因超出附近半径而未发送 / 未播放的端数（主机收件人裁剪 + 客户端二次裁剪）。</summary>
+        public long PickupSoundSkippedDistance;
+        /// <summary>主机：读不到角色位置而没有收到拾取声音的端数（不猜原点）。</summary>
+        public long PickupSoundSkippedNoPosition;
+        /// <summary>客户端：载荷非法 / 解析失败而整条丢弃的事件数。</summary>
+        public long PickupSoundMalformed;
+        /// <summary>客户端：重复 / 更旧事件 id（重放）被拒绝的次数。</summary>
+        public long PickupSoundReplay;
+        /// <summary>发送 / 接收超过限速而跳过的事件数。</summary>
+        public long PickupSoundRateSkipped;
+        /// <summary>客户端：需要监听者位置却读不到（明确计数，不猜原点）。</summary>
+        public long PickupSoundNoListener;
+        /// <summary>主机：编码 / 发送失败次数（请求者可能听不到这次声音）。</summary>
+        public long PickupSoundSendFailures;
+        /// <summary>两端：引擎播放调用失败次数。</summary>
+        public long PickupSoundPresentFailures;
+
+        // ---- 客户端丢弃副本物化（本轮新增）
+        /// <summary>客户端：从主机回执（带 pickable_id）立即物化的丢弃副本数量。</summary>
+        public long DropReplicaMaterialised;
+        /// <summary>客户端：随后被 EntityState(ADD/UPDATE) 确认的丢弃副本数量。</summary>
+        public long DropReplicaConfirmed;
+        /// <summary>客户端：回执有 pickable_id 但迟迟没有状态确认的次数。</summary>
+        public long DropReplicaTimeouts;
+        /// <summary>客户端：按回执物化丢弃副本失败的次数（仍等待 EntityState）。</summary>
+        public long DropReplicaFailures;
 
         // ---- 客户端回执应用（丢弃 + 开火共用，需求里的 inventoryDeltaApplied）
         public long InventoryDeltaApplied;
@@ -202,6 +302,18 @@ namespace SuMultiplayer.Modules
         /// <summary>客户端安全网计数：被清除的“非主机复制”投射物（正常联机流程应保持 0）。</summary>
         long ForeignProjectilesRemoved { get; }
 
+        /// <summary>主机：从**主机化身**出生点调用 FireProjectile 的次数（客户端 origin 不参与）。</summary>
+        long FireSpawnAtHost { get; }
+
+        /// <summary>主机：FireProjectile 返回 null（出生射线被地形 / 自身包围盒挡住）的次数。</summary>
+        long FireSpawnCollided { get; }
+
+        /// <summary>客户端：主机丢弃副本已出现后清掉的本地预测拾取物数量。</summary>
+        long DropPredictionCulled { get; }
+
+        /// <summary>客户端：主机丢弃副本还没到时暂缓清理的本地预测拾取物次数。</summary>
+        long DropPredictionDeferred { get; }
+
         /// <summary>每帧调用：Project 换新 / 注入子系统出现 / 角色变化时重新挂接。</summary>
         void Pump();
 
@@ -222,9 +334,13 @@ namespace SuMultiplayer.Modules
             out PickableAcquireOutcome outcome, out string reason);
 
         /// <summary>
-        /// 主机：校验并执行一条客户端丢弃请求（整格丢出）。
-        /// 校验：玩家端 / 化身存活 / 活跃槽一致 / 槽内容与主机权威背包完全一致 / 距离 / 道具合法。
-        /// 执行：从**主机权威背包**移除整格 → 用引擎 AddPickable 在主机权威位置生成 →
+        /// 主机：校验并执行一条客户端丢弃请求。
+        ///   · <c>Source=INPUT</c>（键盘 / 手柄）：校验玩家端 / 化身存活 / 活跃槽 / 槽内容与
+        ///     主机权威背包一致 / 距离 / 道具合法；从权威背包移除**整格**。
+        ///   · <c>Source=UI</c>（背包拖出到世界）：同样校验槽内容 / 距离 / 道具合法，但移除
+        ///     **恰好 request.Count 个**（必须 1 ≤ count ≤ 权威槽数量，否则 "count-unavailable"），
+        ///     速度按引擎 ViewWidget.DragDrop 的 12 m/s × 拖拽方向生成。
+        /// 执行：从**主机权威背包**移除 → 用引擎 AddPickable 在主机权威位置生成 →
         /// 回传稀疏背包增量（客户端据此对账，本地之前没有任何扣除）。
         /// false + reason = 明确拒绝（两端都不掉物品）。
         /// </summary>
@@ -244,6 +360,13 @@ namespace SuMultiplayer.Modules
         /// <summary>客户端：创建 / 更新 / 移除一个拾取物副本（按 state.Action）。</summary>
         bool TryApplyPickable(in PickableStateData state, out string reason);
 
+        /// <summary>
+        /// 客户端：这个刚到的拾取物副本是不是**本机刚造成的掉落**（本机挖 / 放方块时本地引擎预测的掉落，
+        /// 或本机手丢预测）？true ⇒ 模块给该副本登记拾取宽限（1.5s 内不发 PickableAcquireRequest）；
+        /// 一条预测只匹配一个副本（调用即消费）。主机也会用 <c>pickup-grace</c> 拒绝，两头一致。
+        /// </summary>
+        bool TryClaimOwnDropGrace(in PickableStateData state);
+
         /// <summary>客户端：创建 / 更新 / 移除一个投射物副本（按 state.Action）。</summary>
         bool TryApplyProjectile(in ProjectileStateData state, out string reason);
 
@@ -252,6 +375,34 @@ namespace SuMultiplayer.Modules
 
         /// <summary>客户端：清空全部副本（断线 / 换房间 / 世界卸载）。</summary>
         bool ResetClientReplicas(string reason);
+
+        /// <summary>
+        /// 武器开火声音（纯表现）：主机执行客户端请求后本机播一次；客户端收到
+        /// WeaponFireEvent 后按同一入口播。绝不生成实体 / 扣物品 / 造成伤害。
+        /// false + reason = 没有 Project / 未知 kind（调用方计数并限流写日志）。
+        /// </summary>
+        bool TryPresentWeaponFire(in WeaponFireEventData fire, out string reason);
+
+        /// <summary>
+        /// 拾取声音（纯表现，两端同一条引擎参数）：只调 <c>SubsystemAudio.PlaySound</c>，
+        /// 绝不授予物品 / 删除拾取物 / 改地形。
+        /// 声音名 / 音量 / 音高 / 最小距离与引擎逐条一致：
+        /// <c>Audio/PickableCollected, 0.7f, -0.4f, position, 2f, autoDelay=false</c>。
+        /// Source: Survivalcraft/Game/SubsystemPickables.cs:210-213
+        /// </summary>
+        bool TryPresentPickupSound(in PickupSoundEventData sound, out string reason);
+
+        /// <summary>
+        /// 客户端：本机音频监听者位置（活动相机 → 本机角色）；读不到 false + reason
+        /// （调用方明确计数，不猜原点）。
+        /// </summary>
+        bool TryGetAudioListenerPosition(out Vector3 position, out string reason);
+
+        /// <summary>
+        /// 主机：收集在线玩家端（clientId + 主机侧角色位置），用于拾取声音的“附近客户端”裁剪。
+        /// 读不到位置的端仍然返回（HasPosition=false），由收件人策略明确计数。
+        /// </summary>
+        bool TryCollectPlayerPeers(List<RemoteSoundPeer> target, out string reason);
 
         /// <summary>状态行用：引擎侧计数 / 诊断文本（不改变行为）。</summary>
         string Describe();
@@ -264,7 +415,11 @@ namespace SuMultiplayer.Modules
     /// </summary>
     public interface IEntityRequestSink
     {
-        /// <summary>整格丢弃（客户端本地还没有任何扣除）。</summary>
+        /// <summary>
+        /// 丢弃（客户端本地还没有任何扣除）。<see cref="PickableDropIntent.Source"/> 区分：
+        /// 键盘 / 手柄整格丢弃（<see cref="DropSources.Input"/>）与背包拖出到世界
+        /// （<see cref="DropSources.Ui"/>，携带拖拽方向与明确数量）。
+        /// </summary>
         bool TrySubmitDrop(in PickableDropIntent intent, out string reason);
 
         /// <summary>投掷 / 弓 / 弩 / 火枪开火（客户端本地还没有扣道具 / 扣耐久）。</summary>

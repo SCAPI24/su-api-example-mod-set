@@ -44,8 +44,26 @@ sccmd lookat <x> <y> <z>              look at a world position (solved against e
 sccmd key <name> [holdMs]             key pulse (default holdMs = 40 ms ≈ one frame; explicit 0 = press+release in the same frame)
 sccmd hold <name> / release <name>|--all
 sccmd chord ctrl v                    modifier chord (same 40 ms default for the target key)
-sccmd mouse left click|down|up        world dig / place / interact
+sccmd mouse left click|down|up        world dig / attack (left button). Place/interact/use/aim are the
+                                      right button and have their own commands below
 sccmd wheel <notches>                 hotbar / list scrolling (negative = forward)
+sccmd act.use [--hold ms]             right-click edge -> ComponentMiner.Use (held item OnUse: bucket,
+                                      boat, whistle, match, hammer, rake, saddle, fertilizer)
+sccmd act.interact [--hold ms]        right-click edge -> ComponentMiner.Interact (chest, workbench,
+                                      door, switch, button, sign, furnace, ...)
+sccmd act.place [--hold ms]           right-click edge -> ComponentMiner.Place (place the held block)
+sccmd act.aim start [--hold ms]       hold the right button = PlayerInput.Aim (draw/aim); with --hold it
+                                      auto-releases after ms (= fire)
+sccmd act.aim release                 release -> AimState.Completed (fire/throw)
+sccmd act.aim cancel                  lower without firing (AimState.Cancelled + clear pending aim)
+sccmd closeui [--cancel]              close the blocking UI now: MessageDialog -> its own accept (Button1)
+                                      / cancel (Button2) path, other Dialog -> DialogsManager.HideDialog,
+                                      inventory/creative/container panel -> ComponentGui.ModalPanelWidget = null,
+                                      HUD MoreContents -> MoreButton.IsChecked = false.
+                                      Every world-input command (act.move/lookat/key/dig/use/interact/place/aim)
+                                      runs this check automatically and reports dismissedUi; if a blocker
+                                      cannot be dismissed the command fails with ui_blocking instead of
+                                      injecting a silent no-op.
 sccmd click <selector|id> [--at x y]  engine-internal UI click (re-validated before injecting)
 sccmd text <string>                   type into the focused text box
 sccmd raw <command> k=v ...           any protocol command
@@ -64,10 +82,10 @@ works offline.
 | 0 | success |
 | 1 | generic failure / unknown command |
 | 2 | `element_missing` — the selector does not exist on the current screen |
-| 3 | `element_occluded` / `ambiguous_selector` — exists but not clickable right now, or ambiguous |
+| 3 | `element_occluded` / `ambiguous_selector` — exists but not clickable right now, or `ui_modal_open` / `ui_blocking` (a modal/dialog eats the world input, or it could not be dismissed) |
 | 4 | discovery / connection problem (`instance_ambiguous` when several instances run and `--root` is missing) |
-| 5 | `screen_busy` (transition in progress) or `layout_invalid` or timeout |
-| 6 | `world_not_loaded` / `player_not_found` |
+| 5 | `screen_busy` (transition in progress) or `layout_invalid` / `window_not_active` / `world_not_active` / `input_channel_unavailable` or timeout |
+| 6 | `world_not_loaded` / `player_not_found` / `player_not_ready` (not ready, dead or sleeping) |
 | 7 | `waitfor` timed out - the condition is reported in `pendingCondition` |
 
 Codes 2 and 3 are the ones an AI must distinguish: 2 means "this step does not exist yet"

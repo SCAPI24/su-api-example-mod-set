@@ -146,6 +146,32 @@ namespace SuMultiplayer.Engine
         public bool TryGetRecordKey(int clientId, out string recordKey) =>
             m_clientRecordKeys.TryGetValue(clientId, out recordKey);
 
+        /// <summary>
+        /// 主机：该客户端**手持方块**的 <c>Block.ToolLevel</c>（掉落口径与 <c>ComponentMiner.Dig</c> 同源：
+        /// 它把 <c>BlocksManager.Blocks[ExtractContents(activeBlockValue)].ToolLevel</c> 传给 DestroyCell）。
+        /// 读的是主机侧联机化身的权威背包镜像（客户端上传的活跃槽 / 背包）；空手 = 0（AirBlock.ToolLevel）。
+        /// 返回 false = 化身 / 背包还没就绪（调用方明确记 no-tool-level，绝不猜 0）。
+        /// </summary>
+        public bool TryGetHeldToolLevel(int clientId, out int toolLevel)
+        {
+            toolLevel = 0;
+            if (!m_avatars.TryGetValue(clientId, out PlayerData playerData) ||
+                playerData?.ComponentPlayer == null)
+                return false;
+            ComponentMiner miner = playerData.ComponentPlayer.ComponentMiner;
+            IInventory inventory = miner?.Inventory;
+            if (inventory == null) return false;
+            int slot = inventory.ActiveSlotIndex;
+            if (slot < 0 || slot >= inventory.SlotsCount) return false;
+            int value = inventory.GetSlotValue(slot);
+            int contents = Game.Terrain.ExtractContents(value);
+            if (BlocksManager.Blocks == null || contents < 0 ||
+                contents >= BlocksManager.Blocks.Length)
+                return false;
+            toolLevel = BlocksManager.Blocks[contents].ToolLevel;
+            return true;
+        }
+
         // ------------------------------------------------------- 资料（名字 / 性别 / 皮肤 / 衣服）
 
         /// <summary>

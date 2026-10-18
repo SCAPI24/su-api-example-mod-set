@@ -90,6 +90,34 @@ namespace SuMultiplayer.Engine
         /// </summary>
         public FuseReplicaPresentation FusePresenter { get; set; }
 
+        /// <summary>
+        /// 客户端**营火表现**（组合根挂；主机 / 单机为 null）。只维护 FireParticleSystem：
+        ///   · <c>SuSubsystemCampfireBlockBehavior</c> 的行为回调（区块生成 / 本桥补发的通知）；
+        ///   · 1 秒一次的有界越界扫除（campfireStaleSweep）。
+        /// 由 <see cref="BlockBehaviorNotify"/> 在 <see cref="ApplyCells"/> 落地后触发，不单独写格。
+        /// </summary>
+        public CampfireReplicaPresentation CampfirePresenter { get; set; }
+
+        /// <summary>
+        /// 客户端**移动组表现**（活塞 / 塌落；组合根挂；主机 / 单机为 null）。
+        /// 只在 <see cref="ApplyCells"/> 把主机 CellChange / 整块下发落到客户端之后逐格通知：
+        /// 权威格变化落在某个本地只表现集合的影响区内 → **立刻取消该集合**，接受主机写入的值。
+        /// 不通知的后果（实机缺陷）：主机在碰撞 / 落地瞬间写下权威格，本地集合仍继续插值到原目标位置，
+        /// 表现为活塞 / 塌落列穿过被推方块约半格，等 PistonMoveEnd 到了才回跳。
+        /// 本类只移除 <c>SubsystemMovingBlocks</c> 里的表现对象，绝不写格（最终值就是主机的值）。
+        /// 详见 <see cref="PistonReplicaEngine.OnAuthoritativeCellsApplied"/>。
+        /// </summary>
+        public PistonReplicaEngine PistonPresenter { get; set; }
+
+        /// <summary>
+        /// 客户端方块行为通知的单一漏斗（presentation-only；镜像 ChangeCell 的
+        /// OnBlockRemoved / OnBlockAdded / OnBlockModified 派发规则）。
+        /// 只派发到纯表现行为（营火外壳 / 火把）；其余行为被拒绝并计数
+        /// clientBehaviorDeniedWrites（客户端保持 mutation-denied）。
+        /// </summary>
+        public ClientBlockBehaviorNotifier BlockBehaviorNotify { get; } =
+            new ClientBlockBehaviorNotifier();
+
         // ---- 主线程上触发的事件（模块订阅这些，模块不直接看引擎）----
         /// <summary>区块内容可用（新鲜加载 / 重载）。**摘要 / 校验只认这个信号**。</summary>
         public event Action<ChunkKey> ChunkLoaded;
@@ -240,12 +268,23 @@ namespace SuMultiplayer.Engine
             int baseZ = key.Z * 16;
             TerrainChunk chunk = terrain.GetChunkAtCell(baseX + 8, baseZ + 8);
             if (chunk == null || chunk.State < TerrainChunkState.InvalidLight) return;   // 块没加载：丢弃（上层会重问）
+            SubsystemTerrain subsystem = m_subsystem ??
+                GameManager.Project?.FindSubsystem<SubsystemTerrain>(false);
             for (int i = 0; i < edits.Count; i++)
             {
                 CellEdit edit = edits[i];
                 if (edit.Y < 0 || edit.Y > 255) continue;
+                int x = baseX + edit.X;
+                int z = baseZ + edit.Z;
                 int value = Game.Terrain.MakeBlockValue(edit.Contents, 0, edit.Data);
-                terrain.SetCellValueFast(baseX + edit.X, edit.Y, baseZ + edit.Z, value);
+                int oldValue = terrain.GetCellValueFast(x, edit.Y, z);
+                terrain.SetCellValueFast(x, edit.Y, z, value);
+                // 客户端补发方块行为通知（单一漏斗）：SetCellValueFast 绕过 ChangeCell，不补就
+                // 没有 OnBlockAdded/Removed/Modified → 营火/火把等 behavior 自己维护的粒子永远陈旧。
+                // 只派发纯表现行为；会写格 / 生成实体的行为被拒绝并计数（mutation-denied）。
+                // 与 ChangeCell 同一比较口径：光照位不参与"是否变化"（ChangeCell 先 ReplaceLight(0)）。
+                if (ClientReplica && Game.Terrain.ReplaceLight(oldValue, 0) != value)
+                    BlockBehaviorNotify.Notify(subsystem, oldValue, value, x, edit.Y, z);
             }
             AppliedCells += edits.Count;
             AppliedBatches++;
@@ -253,6 +292,10 @@ namespace SuMultiplayer.Engine
             // 这里落地后立即按同一份权威值更新粒子（不重建在烧的引信；熄灭/换方块则收掉）。
             // 只在客户端副本调用：主机的引信粒子由引擎 SubsystemExplosivesBlockBehavior 自己维护。
             if (ClientReplica) FusePresenter?.Apply(key, edits);
+            // 客户端移动组表现（活塞 / 塌落）：权威格变化落在本地只表现集合（起点格 / 方块扫掠区）
+            // 的影响区内 → 立刻移除该本地集合，接受主机格值。主机在碰撞 / 落地瞬间写格，
+            // 本地集合若继续插值就会穿过被推方块约半格（实机缺陷）；这里只移除表现对象，绝不写格。
+            if (ClientReplica) PistonPresenter?.OnAuthoritativeCellsApplied(key, edits);
             // 与 SubsystemTerrain.ChangeCell 同源的"降级邻域"，让几何/光照在正常流程里重算。
             // DowngradeChunkNeighborhoodState 是**实例**方法（旧实现能直接写，是因为它本身派生自
             // SubsystemTerrain），所以这里借子系统实例来调。
@@ -504,16 +547,38 @@ namespace SuMultiplayer.Engine
         public bool IsChunkLoaded(int chunkX, int chunkZ) => HasContents(new ChunkKey(chunkX, chunkZ));
 
         /// <summary>
+        /// 主机："客户端编辑造成的方块销毁 → 掉落"的引擎端口（组合根注入 = PickableReplicaEngine）。
+        /// null = 还没装配：编辑照常落地，但**明确**记 no-host-drops 并告警一次（绝不假装生成）。
+        /// </summary>
+        public IHostBlockDropSink HostBlockDrops { get; set; }
+
+        private bool m_hostDropSinkMissingLogged;
+        private long m_lastDropPrepareLogMs;
+        private const long DropPrepareLogIntervalMs = 5000;
+
+        /// <summary>
         /// 主机：按**权威路径**落地一条客户端编辑（<c>SubsystemTerrain.ChangeCell</c>）。
         /// 特意不用 SetCellValueFast：ChangeCell 会跑方块行为、进 m_modifiedCells，
         /// 因此既有 CellChange 广播会把最终结果（可能被行为改写）发给所有客户端。
+        ///
+        /// 方块销毁的掉落（本轮新增）：请求把非空气方块改成别的值（挖掉 / 放置挤掉）时，
+        /// 按引擎 <c>SubsystemTerrain.DestroyCell</c> 的**同一顺序**补生成掉落：
+        ///   ① 改格前：<c>block.GetDropValues(terrain, oldValue, requestedValue, toolLevel, ...)</c>
+        ///      + 逐条 <c>OnItemHarvested</c>（可改写要写入的值 / 掉落本身）；
+        ///   ② <c>ChangeCell</c>；
+        ///   ③ 改格后：<c>SubsystemPickables.AddPickable(..., position = 格心, velocity = null, ...)</c>
+        ///      （引擎默认随机上抛）。若引擎自己的落地路径（方块行为的 OnBlockRemoved 等）已经在
+        ///      该格生成过拾取物，就不再生成（<see cref="EditApplyOutcome.EngineSpawnedPickables"/>），
+        ///      绝不双份。
+        /// Source: Survivalcraft/Game/SubsystemTerrain.cs:SubsystemTerrain.DestroyCell
+        /// Source: Survivalcraft/Game/SubsystemTerrain.cs:SubsystemTerrain.ChangeCell
         /// </summary>
-        public bool TryApplyHostChange(int x, int y, int z, int contents, int data,
-            out int resultContents, out int resultData, out string reason)
+        public bool TryApplyHostChange(int clientId, int x, int y, int z, int contents, int data,
+            int toolLevel, bool hasToolLevel,
+            out EditApplyOutcome outcome, out string reason)
         {
             EnsureMainThread("TryApplyHostChange");
-            resultContents = 0;
-            resultData = 0;
+            outcome = default;
             reason = null;
             SubsystemTerrain subsystem = m_subsystem ??
                 GameManager.Project?.FindSubsystem<SubsystemTerrain>(false);
@@ -527,10 +592,60 @@ namespace SuMultiplayer.Engine
                 reason = "坐标越界";
                 return false;
             }
+            int oldValue;
+            try
+            {
+                oldValue = subsystem.Terrain.GetCellValueFast(x, y, z);
+            }
+            catch (Exception e)
+            {
+                reason = "读改格前值失败：" + e.GetType().Name + " " + e.Message;
+                return false;
+            }
+            int oldContents = Game.Terrain.ExtractContents(oldValue);
+            int requestedValue = Game.Terrain.MakeBlockValue(contents, 0, data);
+            // "销毁"= 旧格非空气、且请求要把 contents 改成别的。data-only 改动不算销毁。
+            bool destroying = EditDropPolicy.DestroysOldBlock(oldContents, contents);
+            HostBlockDropPlan plan = null;
+            if (destroying)
+            {
+                if (!hasToolLevel)
+                {
+                    outcome.SkipReason = EditDropSkipReason.NoToolLevel;
+                }
+                else
+                {
+                    IHostBlockDropSink sink = HostBlockDrops;
+                    if (sink == null)
+                    {
+                        outcome.SkipReason = EditDropSkipReason.NoHostDrops;
+                        NoteHostDropSinkMissing();
+                    }
+                    else if (!sink.TryPrepareBlockDrops(clientId, x, y, z, oldValue,
+                                 requestedValue, toolLevel, out plan, out string prepReason) ||
+                             plan == null)
+                    {
+                        plan = null;
+                        outcome.SkipReason = EditDropSkipReason.SpawnFailed;
+                        long nowMs = Environment.TickCount64;
+                        if (m_lastDropPrepareLogMs == 0 ||
+                            nowMs - m_lastDropPrepareLogMs >= DropPrepareLogIntervalMs)
+                        {
+                            m_lastDropPrepareLogMs = nowMs;
+                            Log.Warning("[SuMP] editDropPrepareFailed: cell=" + x + "," + y + "," + z +
+                                " value=" + oldValue + " → " + (prepReason ?? "unknown") +
+                                "（编辑照常落地，但这一格没有补生成掉落；已计入 " +
+                                "dropFromEditSkipped[spawn-failed]，同原因限流 " +
+                                (DropPrepareLogIntervalMs / 1000) + "s）");
+                        }
+                    }
+                }
+            }
+            int changeValue = plan != null ? plan.NewValue : requestedValue;
             try
             {
                 // Source: Survivalcraft/Game/SubsystemTerrain.cs:SubsystemTerrain.ChangeCell
-                subsystem.ChangeCell(x, y, z, Game.Terrain.MakeBlockValue(contents, 0, data));
+                subsystem.ChangeCell(x, y, z, changeValue);
             }
             catch (Exception e)
             {
@@ -538,9 +653,62 @@ namespace SuMultiplayer.Engine
                 return false;
             }
             int value = subsystem.Terrain.GetCellValueFast(x, y, z);
-            resultContents = Game.Terrain.ExtractContents(value);
-            resultData = Game.Terrain.ExtractData(value);
+            outcome.ResultContents = Game.Terrain.ExtractContents(value);
+            outcome.ResultData = Game.Terrain.ExtractData(value);
+            outcome.ResultDiffersFromRequest = value != requestedValue;
+            outcome.DestroyedOldBlock = oldContents != 0 && outcome.ResultContents != oldContents;
+            if (!destroying)
+            {
+                outcome.SkipReason = EditDropPolicy.NoDestructionReason(oldContents);
+                return true;
+            }
+            if (!outcome.DestroyedOldBlock)
+            {
+                // 请求要改掉一个非空气方块，落地后旧方块还在（被行为改回去了）：不生成掉落。
+                outcome.SkipReason = EditDropSkipReason.NotDestroyed;
+                return true;
+            }
+            if (plan == null)
+            {
+                if (outcome.SkipReason == EditDropSkipReason.None)
+                    outcome.SkipReason = EditDropSkipReason.SpawnFailed;
+                return true;
+            }
+            IHostBlockDropSink spawnSink = HostBlockDrops;
+            if (spawnSink == null)
+            {
+                outcome.SkipReason = EditDropSkipReason.NoHostDrops;
+                NoteHostDropSinkMissing();
+                return true;
+            }
+            if (spawnSink.TrySpawnPreparedDrops(plan, out int spawned, out bool engineSpawned,
+                    out string spawnReason))
+            {
+                outcome.HostSpawnedDrops = spawned > 0;
+                outcome.SpawnedPickables = spawned;
+                outcome.SkipReason = spawned > 0
+                    ? EditDropSkipReason.None
+                    : EditDropSkipReason.NoDropValues;
+            }
+            else
+            {
+                outcome.EngineSpawnedPickables = engineSpawned;
+                outcome.SkipReason = engineSpawned
+                    ? EditDropSkipReason.EngineSpawned
+                    : (spawnReason == "no-drop-values"
+                        ? EditDropSkipReason.NoDropValues
+                        : EditDropSkipReason.SpawnFailed);
+            }
             return true;
+        }
+
+        private void NoteHostDropSinkMissing()
+        {
+            if (m_hostDropSinkMissingLogged) return;
+            m_hostDropSinkMissingLogged = true;
+            Log.Warning("[SuMP] 主机没有注入方块掉落的引擎端口（TerrainBridge.HostBlockDrops == null）→ " +
+                "客户端编辑造成的方块销毁不会补生成拾取物（已计入 dropFromEditSkipped[no-host-drops]）；" +
+                "请检查组合根装配");
         }
 
         /// <summary>

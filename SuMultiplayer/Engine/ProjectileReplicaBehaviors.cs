@@ -54,6 +54,30 @@ namespace SuMultiplayer.Engine
             project?.FindSubsystem<SubsystemAudio>(false)?.PlaySound("Audio/MusketMisfire", 1f,
                 random.Float(-0.1f, 0.1f), origin, 3f, autoDelay: true);
         }
+
+        /// <summary>
+        /// 火枪开火的**表现版**：只播声音 + 枪口烟，不施加后坐力、不产生噪音
+        /// （这两项是主机权威玩法副作用，客户端/中继表现绝不能做）。
+        /// </summary>
+        public static void PlayMusketPresentation(Project project, Vector3 origin,
+            Vector3 direction, bool misfire)
+        {
+            global::Engine.Random random = new global::Engine.Random();
+            SubsystemAudio audio = project?.FindSubsystem<SubsystemAudio>(false);
+            if (misfire)
+            {
+                audio?.PlaySound("Audio/MusketMisfire", 1f, random.Float(-0.1f, 0.1f),
+                    origin, 3f, autoDelay: true);
+                return;
+            }
+            audio?.PlaySound("Audio/MusketFire", 1f, random.Float(-0.1f, 0.1f), origin, 10f,
+                autoDelay: true);
+            SubsystemParticles particles = project?.FindSubsystem<SubsystemParticles>(false);
+            SubsystemTerrain terrain = project?.FindSubsystem<SubsystemTerrain>(false);
+            if (particles != null && terrain != null)
+                particles.AddParticleSystem(new GunSmokeParticleSystem(terrain,
+                    origin + 0.3f * Vector3.Normalize(direction), direction));
+        }
     }
 
     /// <summary>

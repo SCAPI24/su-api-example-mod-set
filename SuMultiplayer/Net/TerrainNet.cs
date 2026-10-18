@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading;
+using System.Threading.Tasks;
 using SuMultiplayer.Protocol;
 
 namespace SuMultiplayer.Net
@@ -25,18 +26,41 @@ namespace SuMultiplayer.Net
         public static byte[] Encode(long sequence, MessageType type, byte[] payload)
         {
             payload = payload ?? Array.Empty<byte>();
-            if (payload.Length > MaxPayloadBytes) throw new ArgumentException("payload 过大");
-            int typeId = (int)type;
-            if (!MessageRegistry.IsValidId(typeId))
-                throw new ArgumentOutOfRangeException(nameof(type), "消息类型 id " + typeId +
-                    " 不在 1.." + MessageRegistry.ThirdPartyMax + " 内");
+            Validate(type, payload);
             var buffer = new byte[HeaderBytes + payload.Length];
+            EncodeTo(buffer, sequence, type, payload);
+            return buffer;
+        }
+
+        /// <summary>
+        /// 把一帧编码进**调用方提供的**缓冲（池化发送路径用，避免每帧 new byte[]）。
+        /// 返回帧总长度；缓冲不足抛 <see cref="ArgumentException"/>。
+        /// 校验 / 异常口径与 <see cref="Encode"/> 完全一致（payload 过大 / 类型 id 非法）。
+        /// </summary>
+        public static int EncodeTo(byte[] buffer, long sequence, MessageType type, byte[] payload)
+        {
+            payload = payload ?? Array.Empty<byte>();
+            Validate(type, payload);
+            int typeId = (int)type;
+            int length = HeaderBytes + payload.Length;
+            if (buffer == null || buffer.Length < length)
+                throw new ArgumentException("帧缓冲不足（需要 " + length + " 字节）", nameof(buffer));
             WriteInt32(buffer, 0, payload.Length);
             WriteInt64(buffer, 4, sequence);
             WriteUInt16(buffer, 12, (ushort)typeId);  // 紧凑 id（uint16：内置 + 第三方）
             WriteUInt16(buffer, 14, 0);              // flags
             Buffer.BlockCopy(payload, 0, buffer, HeaderBytes, payload.Length);
-            return buffer;
+            return length;
+        }
+
+        /// <summary>帧头校验（payload 上限 / 消息类型 id）；发送前先校验可以避免为非法负载借大缓冲。</summary>
+        public static void Validate(MessageType type, byte[] payload)
+        {
+            if (payload.Length > MaxPayloadBytes) throw new ArgumentException("payload 过大");
+            int typeId = (int)type;
+            if (!MessageRegistry.IsValidId(typeId))
+                throw new ArgumentOutOfRangeException(nameof(type), "消息类型 id " + typeId +
+                    " 不在 1.." + MessageRegistry.ThirdPartyMax + " 内");
         }
 
         /// <summary>解析帧头。返回 false = 协议违规，调用方必须关闭连接（不能当丢包忽略）。</summary>
@@ -214,70 +238,111 @@ namespace SuMultiplayer.Net
     }
 
     /// <summary>
-    /// TCP 通道（服务端）：每客户端一条连接、一个接收线程；发送走有界队列 + 发送线程。
-    /// 要点：<c>NoDelay</c>（否则最多攒 200 ms）；队列满 = 显式 Backpressured，**绝不静默丢**。
+    /// TCP 通道（服务端）：每客户端一条连接；接收 / 发送都是 **async 循环**（网络 IO 用
+    /// <c>ReadAsync</c>/<c>WriteAsync</c>，不再每个连接开两条专属线程）。
+    /// 发送走有界队列；队列满 = 显式 Backpressured，**绝不静默丢**。
+    /// 帧缓冲从 <see cref="ArrayPool{T}.Shared"/> 借、写完立即归还（借还计数见
+    /// <see cref="TransportDiagnostics"/>，<c>transportPoolLive</c> 必须归零）。
+    /// 要点：<c>NoDelay</c>（否则最多攒 200 ms）；16 字节帧头 / 序号 / 队列上限 / 背压语义与旧实现一致。
     /// 演示页标记：NET02。
     /// </summary>
-    public sealed class TcpTerrainServer : IDisposable
+    public class TcpTerrainServer : IDisposable
     {
+        private readonly struct SendFrame
+        {
+            public SendFrame(byte[] buffer, int length) { Buffer = buffer; Length = length; }
+            public byte[] Buffer { get; }
+            public int Length { get; }
+        }
+
         private sealed class Peer
         {
             public int Id;
             public TcpClient Tcp;
             public NetworkStream Stream;
-            public readonly Queue<byte[]> SendQueue = new Queue<byte[]>();
-            public readonly ManualResetEventSlim SendWake = new ManualResetEventSlim(false);
-            public Thread ReceiveThread;
-            public Thread SendThread;
+            public readonly Queue<SendFrame> SendQueue = new Queue<SendFrame>();
+            public readonly SemaphoreSlim SendSignal = new SemaphoreSlim(0, int.MaxValue);
             public volatile bool Alive = true;
             public ChannelState State = ChannelState.Connected;
             public ClientKind Kind = ClientKind.Player;
             public string Name = string.Empty;
             public readonly ChannelStats Stats = new ChannelStats();
             public long LastReceivedSequence = -1;
+            public bool ConnectionClosed;
         }
 
         private readonly TcpListener m_listener;
         private readonly List<Peer> m_peers = new List<Peer>();
         private readonly object m_gate = new object();
         private readonly int m_queueCapacity;
-        private Thread m_acceptThread;
         private int m_nextClientId = 1;
         private volatile bool m_running;
         private long m_sendSequence;
+        private bool m_listenerClosed;
+
+        /// <summary>给派生的内存传输（自检用）留的无 socket 构造：不绑定监听端口，也不起任何线程。</summary>
+        protected TcpTerrainServer(int queueCapacity)
+        {
+            m_queueCapacity = Math.Max(8, queueCapacity);
+        }
 
         /// <param name="bindAddress">
         /// 默认 <see cref="IPAddress.Any"/> —— **局域网内其它设备必须能连进来**。
         /// （只在本机自测时才可以传 Loopback；调试端那种只服务本机网页的场景另说。）
         /// </param>
         public TcpTerrainServer(int port, int queueCapacity = 256, IPAddress bindAddress = null)
+            : this(queueCapacity)
         {
-            m_queueCapacity = Math.Max(8, queueCapacity);
             m_listener = new TcpListener(bindAddress ?? IPAddress.Any, port);
+            TransportDiagnostics.OnListenerOpened();
+            TransportDiagnostics.OnSocketOpened();
         }
 
-        public int Port => ((IPEndPoint)m_listener.LocalEndpoint).Port;
-        public int QueueCapacity => m_queueCapacity;
+        public virtual int Port => ((IPEndPoint)m_listener.LocalEndpoint).Port;
+        public virtual int QueueCapacity => m_queueCapacity;
 
-        /// <summary>收到一帧（在接收线程上回调）。</summary>
+        /// <summary>收到一帧（在 async 接收循环的续体上回调；上层只应入队，不在这里碰引擎）。</summary>
         public event Action<ReceivedFrame> FrameReceived;
         public event Action<int, ChannelState, string> PeerStateChanged;
 
-        public void Start()
+        /// <summary>派生传输（自检的内存实现）用它把帧交给订阅者，走的是同一个事件契约。</summary>
+        protected void RaiseFrameReceived(ReceivedFrame frame) => FrameReceived?.Invoke(frame);
+
+        /// <summary>派生传输用它抛状态变化（与 socket 实现同一套语义）。</summary>
+        protected void RaisePeerStateChanged(int clientId, ChannelState state, string detail) =>
+            PeerStateChanged?.Invoke(clientId, state, detail);
+
+        public virtual void Start()
         {
             m_listener.Start();
             m_running = true;
-            m_acceptThread = new Thread(AcceptLoop) { IsBackground = true, Name = "SuMP-Accept" };
-            m_acceptThread.Start();
+            // fire-and-forget：循环内部处理所有异常；不在 Start 里阻塞、也不占专属线程。
+            _ = AcceptLoopAsync();
         }
 
-        private void AcceptLoop()
+        private async Task AcceptLoopAsync()
         {
             while (m_running)
             {
+                TcpClient tcp;
                 try
                 {
-                    TcpClient tcp = m_listener.AcceptTcpClient();
+                    tcp = await m_listener.AcceptTcpClientAsync().ConfigureAwait(false);
+                }
+                catch (SocketException) { break; }
+                catch (ObjectDisposedException) { break; }
+                catch (Exception e)
+                {
+                    ReportProblem("accept 失败", e);
+                    break;
+                }
+                if (!m_running)
+                {
+                    try { tcp.Close(); } catch (Exception) { }
+                    break;
+                }
+                try
+                {
                     tcp.NoDelay = true;
                     var peer = new Peer
                     {
@@ -286,24 +351,28 @@ namespace SuMultiplayer.Net
                         Stream = tcp.GetStream()
                     };
                     lock (m_gate) m_peers.Add(peer);
-                    peer.ReceiveThread = new Thread(() => ReceiveLoop(peer)) { IsBackground = true, Name = "SuMP-Recv" + peer.Id };
-                    peer.SendThread = new Thread(() => SendLoop(peer)) { IsBackground = true, Name = "SuMP-Send" + peer.Id };
-                    peer.ReceiveThread.Start();
-                    peer.SendThread.Start();
+                    TransportDiagnostics.OnConnectionCreated();
+                    // 两个 async 循环：没有专属线程，续体跑在线程池上。
+                    _ = ReceiveLoopAsync(peer);
+                    _ = SendLoopAsync(peer);
                 }
-                catch (SocketException) { break; }
-                catch (ObjectDisposedException) { break; }
+                catch (Exception e)
+                {
+                    ReportProblem("登记新连接失败", e);
+                    try { tcp.Close(); } catch (Exception) { }
+                }
             }
         }
 
-        private void ReceiveLoop(Peer peer)
+        private async Task ReceiveLoopAsync(Peer peer)
         {
-            var header = new byte[TerrainFrame.HeaderBytes];
+            // 帧头缓冲按连接借一次、循环复用；负载是消息所有权，交给上层（不池化）。
+            byte[] header = TransportDiagnostics.RentBuffer(TerrainFrame.HeaderBytes);
             try
             {
                 while (m_running && peer.Alive)
                 {
-                    if (!ReadExact(peer.Stream, header, TerrainFrame.HeaderBytes))
+                    if (!await ReadExactAsync(peer.Stream, header, TerrainFrame.HeaderBytes).ConfigureAwait(false))
                     {
                         Fail(peer, "对端关闭"); return;
                     }
@@ -312,44 +381,61 @@ namespace SuMultiplayer.Net
                         peer.Stats.ProtocolViolations++;
                         Fail(peer, "协议违规（帧头非法）"); return;
                     }
-                    var payload = new byte[len];
-                    if (len > 0 && !ReadExact(peer.Stream, payload, len))
+                    byte[] payload = len == 0 ? Array.Empty<byte>() : new byte[len];
+                    if (len > 0 && !await ReadExactAsync(peer.Stream, payload, len).ConfigureAwait(false))
                     {
                         Fail(peer, "负载截断"); return;
                     }
                     peer.Stats.FramesReceived++;
                     peer.Stats.BytesReceived += TerrainFrame.HeaderBytes + len;
                     peer.LastReceivedSequence = seq;
-                    FrameReceived?.Invoke(new ReceivedFrame(peer.Id, seq, type, payload));
+                    RaiseFrameReceived(new ReceivedFrame(peer.Id, seq, type, payload));
                 }
             }
             catch (Exception e) { Fail(peer, e.GetType().Name); }
+            finally { TransportDiagnostics.ReturnBuffer(header); }
         }
 
-        private void SendLoop(Peer peer)
+        private async Task SendLoopAsync(Peer peer)
         {
             try
             {
                 while (m_running && peer.Alive)
                 {
-                    byte[] frame = null;
+                    SendFrame frame = default;
+                    bool hasFrame = false;
                     lock (peer.SendQueue)
                     {
-                        if (peer.SendQueue.Count > 0) frame = peer.SendQueue.Dequeue();
+                        if (peer.SendQueue.Count > 0)
+                        {
+                            frame = peer.SendQueue.Dequeue();
+                            hasFrame = true;
+                            // 与入队时的 Release 配对消费一个信号量计数。
+                            peer.SendSignal.Wait(0);
+                        }
                     }
-                    if (frame == null)
+                    if (!hasFrame)
                     {
-                        peer.SendWake.Wait(5);
-                        peer.SendWake.Reset();
+                        // 旧实现是 5 ms 轮询唤醒；这里等同样的 5 ms，语义不变。
+                        try { await peer.SendSignal.WaitAsync(5).ConfigureAwait(false); }
+                        catch (ObjectDisposedException) { return; }
                         continue;
                     }
-                    peer.Stream.Write(frame, 0, frame.Length);
-                    peer.Stats.FramesSent++;
-                    peer.Stats.BytesSent += frame.Length;
-                    lock (peer.SendQueue)
+                    try
                     {
-                        if (peer.SendQueue.Count < m_queueCapacity && peer.State == ChannelState.Backpressured)
-                            SetState(peer, ChannelState.Connected, "队列回落");
+                        await peer.Stream.WriteAsync(frame.Buffer, 0, frame.Length).ConfigureAwait(false);
+                        peer.Stats.FramesSent++;
+                        peer.Stats.BytesSent += frame.Length;
+                        lock (peer.SendQueue)
+                        {
+                            if (peer.SendQueue.Count < m_queueCapacity && peer.State == ChannelState.Backpressured)
+                                SetPeerState(peer, ChannelState.Connected, "队列回落");
+                        }
+                    }
+                    finally
+                    {
+                        // 无论写完 / 抛异常，池化帧都必须归还（唯一归还点）。
+                        TransportDiagnostics.ReturnBuffer(frame.Buffer);
                     }
                 }
             }
@@ -358,29 +444,55 @@ namespace SuMultiplayer.Net
 
         /// <summary>
         /// 入队一帧。返回 false = 队列已满（**显式背压**，调用方必须处理；不丢包）。
+        /// 帧缓冲来自池，所有权在入队成功时转交发送循环；失败 / 异常路径当场归还。
         /// </summary>
-        public bool TrySend(int clientId, MessageType type, byte[] payload)
+        public virtual bool TrySend(int clientId, MessageType type, byte[] payload)
         {
             Peer peer = Find(clientId);
             if (peer == null || !peer.Alive) return false;
-            byte[] frame = TerrainFrame.Encode(Interlocked.Increment(ref m_sendSequence), type, payload);
-            lock (peer.SendQueue)
+            payload = payload ?? Array.Empty<byte>();
+            long sequence = Interlocked.Increment(ref m_sendSequence);
+            TerrainFrame.Validate(type, payload);          // 先校验再借缓冲（非法负载不占池）
+            int length = TerrainFrame.HeaderBytes + payload.Length;
+            byte[] frame = TransportDiagnostics.RentBuffer(length);
+            bool enqueued = false;
+            try
             {
-                if (peer.SendQueue.Count >= m_queueCapacity)
+                TerrainFrame.EncodeTo(frame, sequence, type, payload);
+                bool dead, full;
+                lock (peer.SendQueue)
                 {
-                    peer.Stats.BackpressureEvents++;
-                    lock (peer.SendQueue) peer.Stats.SendQueueHigh = Math.Max(peer.Stats.SendQueueHigh, peer.SendQueue.Count);
-                    SetState(peer, ChannelState.Backpressured, "发送队列已满（显式背压）");
+                    dead = !peer.Alive;
+                    full = !dead && peer.SendQueue.Count >= m_queueCapacity;
+                    if (!dead && !full)
+                    {
+                        peer.SendQueue.Enqueue(new SendFrame(frame, length));
+                        peer.Stats.SendQueueHigh = Math.Max(peer.Stats.SendQueueHigh, peer.SendQueue.Count);
+                        peer.SendSignal.Release();
+                        enqueued = true;
+                    }
+                }
+                if (dead) return false;
+                if (full)
+                {
+                    lock (peer.SendQueue)
+                    {
+                        peer.Stats.BackpressureEvents++;
+                        peer.Stats.SendQueueHigh = Math.Max(peer.Stats.SendQueueHigh, peer.SendQueue.Count);
+                    }
+                    SetPeerState(peer, ChannelState.Backpressured, "发送队列已满（显式背压）");
                     return false;
                 }
-                peer.SendQueue.Enqueue(frame);
-                peer.Stats.SendQueueHigh = Math.Max(peer.Stats.SendQueueHigh, peer.SendQueue.Count);
+                return true;
             }
-            peer.SendWake.Set();
-            return true;
+            finally
+            {
+                // 成功入队时所有权转交发送循环；其余路径（背压 / 断开 / 编码异常）当场归还。
+                if (!enqueued) TransportDiagnostics.ReturnBuffer(frame);
+            }
         }
 
-        public PeerInfo[] ListPeers()
+        public virtual PeerInfo[] ListPeers()
         {
             lock (m_gate)
             {
@@ -394,11 +506,11 @@ namespace SuMultiplayer.Net
             }
         }
 
-        public ChannelStats StatsOf(int clientId) => Find(clientId)?.Stats;
+        public virtual ChannelStats StatsOf(int clientId) => Find(clientId)?.Stats;
 
-        public ChannelState StateOf(int clientId) => Find(clientId)?.State ?? ChannelState.Disconnected;
+        public virtual ChannelState StateOf(int clientId) => Find(clientId)?.State ?? ChannelState.Disconnected;
 
-        public void SetPeerIdentity(int clientId, ClientKind kind, string name)
+        public virtual void SetPeerIdentity(int clientId, ClientKind kind, string name)
         {
             Peer peer = Find(clientId);
             if (peer == null) return;
@@ -415,22 +527,53 @@ namespace SuMultiplayer.Net
             return null;
         }
 
-        private void SetState(Peer peer, ChannelState state, string detail)
+        /// <summary>状态变化的唯一入口（派生传输不改这一处，直接复用）。</summary>
+        private void SetPeerState(Peer peer, ChannelState state, string detail)
         {
             if (peer.State == state) return;
             peer.State = state;
-            PeerStateChanged?.Invoke(peer.Id, state, detail);
+            RaisePeerStateChanged(peer.Id, state, detail);
         }
 
         private void Fail(Peer peer, string detail)
         {
             if (!peer.Alive) return;
             peer.Alive = false;
-            SetState(peer, ChannelState.Failed, detail);
+            SetPeerState(peer, ChannelState.Failed, detail);
             try { peer.Tcp.Close(); } catch (Exception) { }
-            peer.SendWake.Set();
+            peer.SendSignal.Release();
+            DrainSendQueue(peer);
+            if (!peer.ConnectionClosed) { peer.ConnectionClosed = true; TransportDiagnostics.OnConnectionClosed(); }
         }
 
+        /// <summary>把队列里还没发出去的池化帧全部归还（断开 / 关闭时调用，避免池泄漏）。</summary>
+        private void DrainSendQueue(Peer peer)
+        {
+            while (true)
+            {
+                SendFrame frame;
+                lock (peer.SendQueue)
+                {
+                    if (peer.SendQueue.Count == 0) return;
+                    frame = peer.SendQueue.Dequeue();
+                }
+                TransportDiagnostics.ReturnBuffer(frame.Buffer);
+            }
+        }
+
+        private static async Task<bool> ReadExactAsync(NetworkStream stream, byte[] buffer, int count)
+        {
+            int offset = 0;
+            while (offset < count)
+            {
+                int read = await stream.ReadAsync(buffer, offset, count - offset).ConfigureAwait(false);
+                if (read <= 0) return false;
+                offset += read;
+            }
+            return true;
+        }
+
+        /// <summary>旧的同步读实现保留（自检 / 诊断仍可复用），正式收发走 async。</summary>
         internal static bool ReadExact(NetworkStream stream, byte[] buffer, int count)
         {
             int offset = 0;
@@ -443,19 +586,41 @@ namespace SuMultiplayer.Net
             return true;
         }
 
-        public void Dispose()
+        private static void ReportProblem(string what, Exception e)
+        {
+            try
+            {
+                global::Engine.Log.Warning("[SuMP] transport " + what + "：" + e.GetType().Name + " " + e.Message);
+            }
+            catch (Exception)
+            {
+            }
+        }
+
+        public virtual void Dispose()
         {
             m_running = false;
-            try { m_listener.Stop(); } catch (Exception) { }
+            try { m_listener?.Stop(); } catch (Exception) { }
+            if (!m_listenerClosed)
+            {
+                m_listenerClosed = true;
+                // 派生内存传输没有 listener（protected 构造），不能记一次 socket 关闭。
+                if (m_listener != null) TransportDiagnostics.OnSocketClosed();
+            }
+            List<Peer> peers;
             lock (m_gate)
             {
-                foreach (Peer peer in m_peers)
-                {
-                    peer.Alive = false;
-                    try { peer.Tcp.Close(); } catch (Exception) { }
-                    peer.SendWake.Set();
-                }
+                peers = new List<Peer>(m_peers);
                 m_peers.Clear();
+            }
+            for (int i = 0; i < peers.Count; i++)
+            {
+                Peer peer = peers[i];
+                peer.Alive = false;
+                try { peer.Tcp.Close(); } catch (Exception) { }
+                peer.SendSignal.Release();
+                DrainSendQueue(peer);
+                if (!peer.ConnectionClosed) { peer.ConnectionClosed = true; TransportDiagnostics.OnConnectionClosed(); }
             }
         }
     }
@@ -474,81 +639,130 @@ namespace SuMultiplayer.Net
         public ChannelStats Stats { get; }
     }
 
-    /// <summary>TCP 通道（客户端侧）。</summary>
-    public sealed class TcpTerrainClient : IDisposable
+    /// <summary>
+    /// TCP 通道（客户端侧）。连接建立仍是同步 API（调用方按原样拿 bool），
+    /// 但收发改成 async 循环：不占专属线程，帧缓冲池化。
+    /// </summary>
+    public class TcpTerrainClient : IDisposable
     {
         private readonly string m_host;
         private readonly int m_port;
         private readonly int m_queueCapacity;
         private TcpClient m_tcp;
         private NetworkStream m_stream;
-        private Thread m_receiveThread;
-        private Thread m_sendThread;
-        private readonly Queue<byte[]> m_sendQueue = new Queue<byte[]>();
-        private readonly ManualResetEventSlim m_sendWake = new ManualResetEventSlim(false);
+        private readonly Queue<SendFrame> m_sendQueue = new Queue<SendFrame>();
+        private readonly SemaphoreSlim m_sendWake = new SemaphoreSlim(0, int.MaxValue);
         private long m_sendSequence;
         private volatile bool m_running;
+        private bool m_connectionCounted;
+        private bool m_socketCounted;
 
-        public TcpTerrainClient(string host, int port, int queueCapacity = 256)
+        private readonly struct SendFrame
         {
-            m_host = host; m_port = port; m_queueCapacity = Math.Max(8, queueCapacity);
+            public SendFrame(byte[] buffer, int length) { Buffer = buffer; Length = length; }
+            public byte[] Buffer { get; }
+            public int Length { get; }
+        }
+
+        /// <summary>给派生的内存传输（自检用）留的无 socket 构造。</summary>
+        protected TcpTerrainClient(int queueCapacity)
+        {
+            m_queueCapacity = Math.Max(8, queueCapacity);
+            m_host = string.Empty;
+            m_port = 0;
+        }
+
+        public TcpTerrainClient(string host, int port, int queueCapacity = 256) : this(queueCapacity)
+        {
+            m_host = host; m_port = port;
+            TransportDiagnostics.OnSocketOpened();
+            m_socketCounted = true;
         }
 
         public ChannelStats Stats { get; } = new ChannelStats();
-        public ChannelState State { get; private set; } = ChannelState.Disconnected;
+        public virtual ChannelState State { get; protected set; } = ChannelState.Disconnected;
         public event Action<ReceivedFrame> FrameReceived;
         public event Action<ChannelState, string> StateChanged;
+
+        /// <summary>派生传输（自检的内存实现）用它把帧交给订阅者。</summary>
+        protected void RaiseFrameReceived(ReceivedFrame frame) => FrameReceived?.Invoke(frame);
+
+        /// <summary>派生传输用它抛状态变化。</summary>
+        protected void RaiseStateChanged(ChannelState state, string detail) => StateChanged?.Invoke(state, detail);
 
         /// <summary>
         /// 最近一次状态变化的原因（Failed 时就是"对端关闭 / 协议违规 / IOException"这类实因）。
         /// 上层拆链重连时把它写进日志 —— 断链原因**必须**有据可查
         /// （实机故障：对端掉线后两端状态行只是"不再变化"，日志一个字都没有，排查只能靠猜）。
         /// </summary>
-        public string StateDetail { get; private set; } = string.Empty;
+        public virtual string StateDetail { get; protected set; } = string.Empty;
 
         /// <summary>
         /// 这条连接现在还能不能收发：只有 Connected / Backpressured 算活着。
-        /// 收线程或发线程一旦失败（<see cref="SetState"/> → Failed）它就是 false。
+        /// 收循环或发循环一旦失败（<see cref="SetState"/> → Failed）它就是 false。
         /// 上层**绝不能**拿"客户端对象还在"当"连接还在"（实机故障：对端掉线后位置快照一直往
         /// 死连接里塞、posSent 继续涨，主机一个字节都收不到）。
         /// </summary>
-        public bool IsAlive => m_running &&
+        public virtual bool IsAlive => m_running &&
             (State == ChannelState.Connected || State == ChannelState.Backpressured);
 
-        public bool Connect(int timeoutMs = 3000)
+        public virtual bool Connect(int timeoutMs = 3000)
         {
             try
             {
+                // 同一个对象重复 Connect 时先关掉旧 socket（旧实现会把它丢掉 → socket 泄漏）。
+                CloseSocket();
+                if (m_connectionCounted)
+                {
+                    m_connectionCounted = false;
+                    TransportDiagnostics.OnConnectionClosed();
+                }
                 m_tcp = new TcpClient { NoDelay = true };
+                TransportDiagnostics.OnSocketOpened();
+                m_socketCounted = true;
                 if (!m_tcp.ConnectAsync(m_host, m_port).Wait(timeoutMs))
                 {
+                    CloseSocket();
                     SetState(ChannelState.Failed, "连接超时");
                     return false;
                 }
                 m_stream = m_tcp.GetStream();
                 m_running = true;
+                TransportDiagnostics.OnConnectionCreated();
+                m_connectionCounted = true;
                 SetState(ChannelState.Connected, "已连接");
-                m_receiveThread = new Thread(ReceiveLoop) { IsBackground = true, Name = "SuMP-CRecv" };
-                m_sendThread = new Thread(SendLoop) { IsBackground = true, Name = "SuMP-CSend" };
-                m_receiveThread.Start();
-                m_sendThread.Start();
+                _ = ReceiveLoopAsync();
+                _ = SendLoopAsync();
                 return true;
             }
             catch (Exception e)
             {
+                CloseSocket();
                 SetState(ChannelState.Failed, e.GetType().Name);
                 return false;
             }
         }
 
-        private void ReceiveLoop()
+        private void CloseSocket()
         {
-            var header = new byte[TerrainFrame.HeaderBytes];
+            try { m_tcp?.Close(); } catch (Exception) { }
+            m_tcp = null;
+            m_stream = null;
+            if (m_socketCounted)
+            {
+                m_socketCounted = false;
+                TransportDiagnostics.OnSocketClosed();
+            }
+        }
+
+        private async Task ReceiveLoopAsync()
+        {
+            byte[] header = TransportDiagnostics.RentBuffer(TerrainFrame.HeaderBytes);
             try
             {
                 while (m_running)
                 {
-                    if (!TcpTerrainServer.ReadExact(m_stream, header, TerrainFrame.HeaderBytes))
+                    if (!await ReadExactAsync(m_stream, header, TerrainFrame.HeaderBytes).ConfigureAwait(false))
                     {
                         SetState(ChannelState.Failed, "对端关闭"); return;
                     }
@@ -557,71 +771,127 @@ namespace SuMultiplayer.Net
                         Stats.ProtocolViolations++;
                         SetState(ChannelState.Failed, "协议违规"); return;
                     }
-                    var payload = new byte[len];
-                    if (len > 0 && !TcpTerrainServer.ReadExact(m_stream, payload, len))
+                    byte[] payload = len == 0 ? Array.Empty<byte>() : new byte[len];
+                    if (len > 0 && !await ReadExactAsync(m_stream, payload, len).ConfigureAwait(false))
                     {
                         SetState(ChannelState.Failed, "负载截断"); return;
                     }
                     Stats.FramesReceived++;
                     Stats.BytesReceived += TerrainFrame.HeaderBytes + len;
-                    FrameReceived?.Invoke(new ReceivedFrame(0, seq, type, payload));
+                    RaiseFrameReceived(new ReceivedFrame(0, seq, type, payload));
                 }
             }
             catch (Exception e) { SetState(ChannelState.Failed, e.GetType().Name); }
+            finally { TransportDiagnostics.ReturnBuffer(header); }
         }
 
-        private void SendLoop()
+        private async Task SendLoopAsync()
         {
             try
             {
                 while (m_running)
                 {
-                    byte[] frame = null;
-                    lock (m_sendQueue) { if (m_sendQueue.Count > 0) frame = m_sendQueue.Dequeue(); }
-                    if (frame == null) { m_sendWake.Wait(5); m_sendWake.Reset(); continue; }
-                    m_stream.Write(frame, 0, frame.Length);
-                    Stats.FramesSent++;
-                    Stats.BytesSent += frame.Length;
+                    SendFrame frame = default;
+                    bool hasFrame = false;
                     lock (m_sendQueue)
                     {
-                        if (m_sendQueue.Count < m_queueCapacity && State == ChannelState.Backpressured)
-                            SetState(ChannelState.Connected, "队列回落");
+                        if (m_sendQueue.Count > 0)
+                        {
+                            frame = m_sendQueue.Dequeue();
+                            hasFrame = true;
+                            m_sendWake.Wait(0);
+                        }
+                    }
+                    if (!hasFrame)
+                    {
+                        try { await m_sendWake.WaitAsync(5).ConfigureAwait(false); }
+                        catch (ObjectDisposedException) { return; }
+                        continue;
+                    }
+                    try
+                    {
+                        await m_stream.WriteAsync(frame.Buffer, 0, frame.Length).ConfigureAwait(false);
+                        Stats.FramesSent++;
+                        Stats.BytesSent += frame.Length;
+                        lock (m_sendQueue)
+                        {
+                            if (m_sendQueue.Count < m_queueCapacity && State == ChannelState.Backpressured)
+                                SetState(ChannelState.Connected, "队列回落");
+                        }
+                    }
+                    finally
+                    {
+                        TransportDiagnostics.ReturnBuffer(frame.Buffer);
                     }
                 }
             }
             catch (Exception e) { SetState(ChannelState.Failed, e.GetType().Name); }
         }
 
-        public bool TrySend(MessageType type, byte[] payload)
+        private static async Task<bool> ReadExactAsync(NetworkStream stream, byte[] buffer, int count)
+        {
+            int offset = 0;
+            while (offset < count)
+            {
+                int read = await stream.ReadAsync(buffer, offset, count - offset).ConfigureAwait(false);
+                if (read <= 0) return false;
+                offset += read;
+            }
+            return true;
+        }
+
+        public virtual bool TrySend(MessageType type, byte[] payload)
         {
             // 死连接不假装"发成功"：Failed/Disconnected 之后入队只会越堆越多，
             // 调用方的 posSent 会继续涨而主机永远收不到（实机故障就是这样静默的）。
             if (!IsAlive) return false;
-            byte[] frame = TerrainFrame.Encode(Interlocked.Increment(ref m_sendSequence), type, payload);
-            lock (m_sendQueue)
+            payload = payload ?? Array.Empty<byte>();
+            long sequence = Interlocked.Increment(ref m_sendSequence);
+            TerrainFrame.Validate(type, payload);          // 先校验再借缓冲（非法负载不占池）
+            int length = TerrainFrame.HeaderBytes + payload.Length;
+            byte[] frame = TransportDiagnostics.RentBuffer(length);
+            bool enqueued = false;
+            try
             {
-                if (m_sendQueue.Count >= m_queueCapacity)
+                TerrainFrame.EncodeTo(frame, sequence, type, payload);
+                bool dead, full;
+                lock (m_sendQueue)
+                {
+                    dead = !m_running;
+                    full = !dead && m_sendQueue.Count >= m_queueCapacity;
+                    if (!dead && !full)
+                    {
+                        m_sendQueue.Enqueue(new SendFrame(frame, length));
+                        m_sendWake.Release();
+                        enqueued = true;
+                    }
+                }
+                if (dead) return false;
+                if (full)
                 {
                     Stats.BackpressureEvents++;
                     SetState(ChannelState.Backpressured, "发送队列已满（显式背压）");
                     return false;
                 }
-                m_sendQueue.Enqueue(frame);
+                return true;
             }
-            m_sendWake.Set();
-            return true;
+            finally
+            {
+                // 成功入队时所有权转交发送循环；其余路径（背压 / 断开 / 编码异常）当场归还。
+                if (!enqueued) TransportDiagnostics.ReturnBuffer(frame);
+            }
         }
 
-        private void SetState(ChannelState state, string detail)
+        protected virtual void SetState(ChannelState state, string detail)
         {
             if (State == state) return;
             State = state;
             if (!string.IsNullOrEmpty(detail)) StateDetail = detail;
-            StateChanged?.Invoke(state, detail);
+            RaiseStateChanged(state, detail);
         }
 
         /// <summary>等待发送队列清空（测试/关闭前用）。</summary>
-        public bool WaitDrained(int timeoutMs)
+        public virtual bool WaitDrained(int timeoutMs)
         {
             int waited = 0;
             while (waited < timeoutMs)
@@ -633,12 +903,32 @@ namespace SuMultiplayer.Net
             return false;
         }
 
-        public void Dispose()
+        public virtual void Dispose()
         {
             m_running = false;
-            try { m_tcp?.Close(); } catch (Exception) { }
-            m_sendWake.Set();
+            CloseSocket();
+            m_sendWake.Release();
+            DrainSendQueue();
+            if (m_connectionCounted)
+            {
+                m_connectionCounted = false;
+                TransportDiagnostics.OnConnectionClosed();
+            }
             SetState(ChannelState.Disconnected, "已关闭");
+        }
+
+        private void DrainSendQueue()
+        {
+            while (true)
+            {
+                SendFrame frame;
+                lock (m_sendQueue)
+                {
+                    if (m_sendQueue.Count == 0) return;
+                    frame = m_sendQueue.Dequeue();
+                }
+                TransportDiagnostics.ReturnBuffer(frame.Buffer);
+            }
         }
     }
 }

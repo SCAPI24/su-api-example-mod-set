@@ -20,7 +20,7 @@ namespace SuMultiplayer.Engine
     ///
     /// 演示页标记：ENG01。
     /// </summary>
-    public class SuSubsystemTerrain : SubsystemTerrain, IUpdateable
+    public class SuSubsystemTerrain : SubsystemTerrain, IUpdateable, IClientMovingBlockWatchHost
     {
         // Source: Survivalcraft/Game/SubsystemTerrain.cs:SubsystemTerrain.m_modifiedCells
         private Dictionary<Point3, bool> m_modifiedCells;
@@ -51,6 +51,14 @@ namespace SuMultiplayer.Engine
         private long m_lastFuseSummarySkipped;
         private long m_lastFuseSummaryDuplicates;
         private const long FuseSummaryIntervalMs = 10000;
+
+        // ---- 世界演化捕获限流摘要（草/土/常春藤/树苗/植物/仙人掌/腐坏/地毯/落叶/季相）----
+        private long m_lastEvolutionSummaryMs;
+        private long m_lastEvolutionSummaryCaptured;
+        private long m_lastEvolutionSummaryDuplicates;
+        private long m_lastEvolutionSummaryRescueCalls;
+        private long m_lastEvolutionSummaryDropped;
+        private const long EvolutionSummaryIntervalMs = 10000;
 
         /// <summary>
         /// 主机侧改动捕获的**唯一事实来源**（接住 / 合并 / 去重 / 计数都在这里，纯托管无引擎依赖）。
@@ -102,7 +110,92 @@ namespace SuMultiplayer.Engine
         /// <summary>客户端世界模拟闸门（实例状态，挂在注入后的子系统中，**没有静态字段**）。</summary>
         public ReplicaSimulationGate Gate => m_gate;
 
-        /// <summary>引擎侧会改地形的更新在动手之前问这一句；客户端返回 false 并**按来源计数**。</summary>
+        /// <summary>塌落副本计数（实例状态；客户端拒绝本地塌落 / 跳过移动组落地 / 清表）。</summary>
+        public CollapsingReplicaState CollapsingState { get; } = new CollapsingReplicaState();
+
+        /// <summary>
+        /// 活塞副本计数（实例状态；客户端摘掉 base 的私有写格订阅 / 拦下 base 写格路径 /
+        /// 移除残留的纯表现活塞集合）。口径见 <see cref="PistonReplicaState"/>。
+        /// </summary>
+        public PistonReplicaState PistonState { get; } = new PistonReplicaState();
+
+        // ---------------------------------------------------------------- 客户端"移动组 base 写格"防护窗口
+        //
+        // 引擎 SubsystemPistonBlockBehavior / SubsystemCollapsingBlockBehavior 的私有碰撞回调直接调
+        // SubsystemTerrain.DestroyCell / ChangeCell，而这两个方法**不是虚方法**，外壳 override 拦不住
+        // （逐字段核对：Survivalcraft/Game/SubsystemTerrain.cs:229 ChangeCell / :278 DestroyCell）。
+        // 正常路径由两个外壳把委托从 SubsystemMovingBlocks 的事件上摘掉（ClientReplicaEventDetach）；
+        // SuSubsystemMovingBlocks（Engine/ClientReplicaSubsystems.cs）再用本宿主做一道窗口兜底：
+        // 窗口内被改的格恢复原值 + 移出本地编辑捕获 + 计数（clientShellBaseWriteAttempts /
+        // clientBasePistonWriteAttempt）。主机 / 单机永远不会调到下面三个方法（调用方先判 IsClient）。
+        int IClientMovingBlockWatchHost.ReadCell(Point3 cell)
+        {
+            if (Terrain == null || cell.Y < 0 || cell.Y > 255) return 0;
+            return Terrain.GetCellValueFast(cell.X, cell.Y, cell.Z);
+        }
+
+        bool IClientMovingBlockWatchHost.RestoreCell(Point3 cell, int value)
+        {
+            if (!ClientReplica || Terrain == null || cell.Y < 0 || cell.Y > 255) return false;
+            TerrainChunk chunk = Terrain.GetChunkAtCell(cell.X, cell.Z);
+            if (chunk == null || chunk.State < TerrainChunkState.InvalidLight)
+            {
+                // 区块不在 / 内容未定稿：不猜值、不静默 —— 明确计数并由调用方写 Error。
+                NoteClientBaseWriteNotReverted("chunk-not-loaded", cell);
+                return false;
+            }
+            Terrain.SetCellValueFast(cell.X, cell.Y, cell.Z, value);
+            // 关键：把这一格从引擎改动表移除，否则它随后会被 CaptureClientEdits 当成玩家编辑提交。
+            if (EnsureModifiedCellsBound()) m_modifiedCells.Remove(cell);
+            else NoteClientBaseWriteNotReverted("modified-cells-unbound", cell);
+            // 与 SubsystemTerrain.ChangeCell / TerrainBridge.ApplyCells 同源的"降级邻域"。
+            TerrainUpdater?.DowngradeChunkNeighborhoodState(chunk.Coords, 1,
+                TerrainChunkState.InvalidLight, forceGeometryRegeneration: false);
+            return true;
+        }
+
+        void IClientMovingBlockWatchHost.NoteBaseWriteAttempt(string source, int count)
+        {
+            if (count <= 0) return;
+            PistonState.NoteClientShellBaseWriteAttempts(count,
+                string.Equals(source, ClientMovingBlockWriteGuard.PistonSource,
+                    StringComparison.Ordinal));
+            long now = Environment.TickCount64;
+            if (m_lastClientBaseWriteLogMs != 0 &&
+                now - m_lastClientBaseWriteLogMs < ClientBaseWriteLogIntervalMs) return;
+            m_lastClientBaseWriteLogMs = now;
+            Log.Warning("[SuMP] 客户端拦下移动组 base 写格回调 " + count + " 次（来源 " + source +
+                "）→ 已恢复原值并移出本地编辑捕获；clientShellBaseWriteAttempts 累计 " +
+                PistonState.ClientShellBaseWriteAttempts + "（clientBasePistonWriteAttempt " +
+                PistonState.ClientBasePistonWriteAttempts + " · notReverted " +
+                PistonState.ClientShellBaseWriteNotReverted + "）");
+        }
+
+        private void NoteClientBaseWriteNotReverted(string reason, Point3 cell)
+        {
+            PistonState.NoteClientShellBaseWriteNotReverted();
+            long now = Environment.TickCount64;
+            if (m_lastClientBaseWriteNotRevertedLogMs != 0 &&
+                now - m_lastClientBaseWriteNotRevertedLogMs < ClientBaseWriteLogIntervalMs) return;
+            m_lastClientBaseWriteNotRevertedLogMs = now;
+            Log.Error("[SuMP] 客户端无法恢复被移动组 base 回调改写的格 (" + cell.X + "," +
+                cell.Y + "," + cell.Z + ")：" + reason +
+                " → 该格可能作为本地编辑提交（明确失败）；clientShellBaseWriteNotReverted 累计 " +
+                PistonState.ClientShellBaseWriteNotReverted);
+        }
+
+        // ---- 副本覆盖清单日志（只在对局角色第一次确定时打一次；角色切换最少间隔 60s）----
+        private const long CoverageLogIntervalMs = 60000;
+        private long m_lastCoverageLogMs;
+        private int m_coverageLoggedRole = -1;
+
+        // ---- 客户端"移动组 base 写格"防护窗口的日志限流（见 IClientMovingBlockWatchHost）----
+        private const long ClientBaseWriteLogIntervalMs = 10000;
+        private long m_lastClientBaseWriteLogMs;
+        private long m_lastClientBaseWriteNotRevertedLogMs;
+
+        /// <summary>
+        /// 引擎侧会改地形的更新在动手之前问这一句；客户端返回 false 并**按来源计数**。</summary>
         /// <summary>
         /// 主机：把一次**绕过 ChangeCell 的直接写格**登记进改动表（下一步由既有桥下发）。
         /// 典型：流体 `UpdateIsTop` 用 <c>chunk.SetCellValueFast</c> 只改顶层 data，不进 m_modifiedCells；
@@ -424,6 +517,69 @@ namespace SuMultiplayer.Engine
                 m_captureState.FluidCellsMerged + " 格 · 丢弃 " + m_captureState.FluidCellsDropped + " 格");
         }
 
+        // ------------------------------------------------------------------ 世界演化捕获（主机）
+        //
+        // 引擎事实：草的转换写在 `SubsystemGrassBlockBehavior.OnNeighborBlockChanged`（:76/:82/:86）/
+        // `OnExplosion`（:94）/`Update`（:128）；土 / 常春藤 / 树苗 / 植物 / 仙人掌 / 腐坏 / 地毯 /
+        // 落叶 / 季相同样在各自回调里 ChangeCell。这些邻居回调**恰恰是在**
+        // `SubsystemFluidBlockBehavior.SpreadFluid` 末尾的 `ProcessModifiedCells()` 通知循环里被调用的
+        // （SubsystemTerrain.cs:71 先清表、再通知邻居），写入落在清表**之后**；SpreadFluid 一次 Update
+        // 跑两遍、每遍末尾都清表（:312），第二遍的清表把那一笔抹掉 ⇒ 地形 Update（Terrain=100）再读表
+        // 已经没有它（主机本地变了、客户端永远收不到）。所以演化外壳在每个会写格的回调 / Update 之后
+        // 调用本方法，把当前待下发的格子**立刻接进** carry（与流体 / 火 / 引信同一个汇合点），
+        // 由 Collect 与引擎改动表合并去重 —— 每格恰好下发一次。
+
+        /// <summary>
+        /// 主机：把当前引擎改动表里待下发的格子接进**跨清表存活**的 carry。
+        /// 由 <c>Engine/ClientReplicaSubsystems.cs</c> 的世界演化外壳在每个会写格的回调 / Update
+        /// 之后调用。客户端 / 单机不接（客户端不跑这些 base 回调，也就没有清表竞争）。
+        /// </summary>
+        public int RescueEvolutionCells()
+        {
+            if (ClientReplica) return 0;
+            IEnumerable<Point3> pending = null;
+            if (EnsureModifiedCellsBound() && m_modifiedCells.Count > 0)
+                pending = m_modifiedCells.Keys;
+            int captured = m_captureState.RescueEvolution(pending);
+            MaybeLogEvolutionSummary();
+            return captured;
+        }
+
+        /// <summary>
+        /// 世界演化捕获限流摘要（最多 10s 一行，且计数没变化就不写）：evolutionCellCaptured /
+        /// evolutionCellDuplicates / evolutionRescueCalls / 待下发 / 明确丢弃。不在热路径逐格打印。
+        /// </summary>
+        private void MaybeLogEvolutionSummary()
+        {
+            long captured = m_captureState.EvolutionCellCaptured;
+            long duplicates = m_captureState.EvolutionCellDuplicates;
+            long calls = m_captureState.EvolutionRescueCalls;
+            long dropped = m_captureState.EvolutionCellsDropped;
+            if (captured == m_lastEvolutionSummaryCaptured &&
+                duplicates == m_lastEvolutionSummaryDuplicates &&
+                calls == m_lastEvolutionSummaryRescueCalls &&
+                dropped == m_lastEvolutionSummaryDropped)
+            {
+                return;
+            }
+            long now = Environment.TickCount64;
+            if (m_lastEvolutionSummaryMs != 0 &&
+                now - m_lastEvolutionSummaryMs < EvolutionSummaryIntervalMs) return;
+            long deltaCaptured = captured - m_lastEvolutionSummaryCaptured;
+            long deltaDuplicates = duplicates - m_lastEvolutionSummaryDuplicates;
+            long deltaCalls = calls - m_lastEvolutionSummaryRescueCalls;
+            m_lastEvolutionSummaryCaptured = captured;
+            m_lastEvolutionSummaryDuplicates = duplicates;
+            m_lastEvolutionSummaryRescueCalls = calls;
+            m_lastEvolutionSummaryDropped = dropped;
+            m_lastEvolutionSummaryMs = now;
+            Log.Information("[SuMP] evolutionDataCapture: evolutionCellCaptured +" + deltaCaptured +
+                "（累计 " + captured + "） · evolutionCellDuplicates +" + deltaDuplicates +
+                "（累计 " + duplicates + "） · evolutionRescueCalls +" + deltaCalls +
+                "（累计 " + calls + "） · 待下发 " + m_captureState.PendingEvolutionCount +
+                " 格 · 丢弃 " + dropped + " 格（evolutionCellsDropped）");
+        }
+
         /// <summary>
         /// 主机：在**会把引擎改动表清空的调用之前**接住当前待下发的格子。
         ///
@@ -451,6 +607,31 @@ namespace SuMultiplayer.Engine
         {
             m_gate.ClientReplica = ClientReplica;
             return m_gate.Allow(source);
+        }
+
+        /// <summary>
+        /// 对局角色第一次确定时打印**完整**的 gated / un-gated 清单（Database.xml 的 Subsystems 全集）。
+        /// 限流：同一角色只打一次；角色切换（客户端 ⇄ 主机/单机）至少间隔 60s 才再打。
+        /// 缺口（unprotectedWorldSim）用 Warning 单列 —— 新增世界模拟没有闸门时日志里一定看得见。
+        /// </summary>
+        private void MaybeLogReplicaCoverage()
+        {
+            if (Bridge == null) return;
+            int role = ClientReplica ? 1 : 0;
+            long now = Environment.TickCount64;
+            if (m_coverageLoggedRole == role) return;
+            if (m_lastCoverageLogMs != 0 && now - m_lastCoverageLogMs < CoverageLogIntervalMs) return;
+            m_coverageLoggedRole = role;
+            m_lastCoverageLogMs = now;
+            Log.Information("[SuMP] replicaGates role=" +
+                (ClientReplica ? "client" : "authority") + " " +
+                ClientReplicaCoverage.DescribeAudit());
+            string gaps = ClientReplicaCoverage.DescribeGaps();
+            if (!string.IsNullOrEmpty(gaps))
+            {
+                Log.Warning("[SuMP] " + gaps +
+                    " → 世界模拟必须在 Plug/SuMultiplayerMod.cs 注入外壳并在 Engine/ClientReplicaSubsystems.cs 加闸门");
+            }
         }
 
         public long Frames => m_frames;
@@ -519,6 +700,7 @@ namespace SuMultiplayer.Engine
             // 瞬时是旧实例，捕获/下发也不会走错分支。
             if (ClientReplica != bridge.ClientReplica) ClientReplica = bridge.ClientReplica;
             m_gate.ClientReplica = ClientReplica;
+            MaybeLogReplicaCoverage();
             // 客户端：先把上一帧遗留的待捕获格推进一次（读不到地形/区块未定稿/没有订阅者时才会遗留）。
             // 放在 TerrainUpdater.Update 之前：这一帧的引擎清表不会影响已交付的格子。
             if (ClientReplica) bridge.RetryDeferredClientEdits();

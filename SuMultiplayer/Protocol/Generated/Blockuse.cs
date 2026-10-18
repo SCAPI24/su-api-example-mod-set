@@ -49,14 +49,17 @@ namespace SuMultiplayer.Protocol {
             "Eh0KFXBsYXllcl9kZXNpcmVkX2NvdW50cxgOIAMoBSKRAQoTQ29udGFpbmVy",
             "RWRpdFJlc3VsdBIQCghzZXF1ZW5jZRgBIAEoAxIQCghhY2NlcHRlZBgCIAEo",
             "CBIOCgZyZWFzb24YAyABKAkSEAoIcmV2aXNpb24YBCABKAUSNAoOY29udGFp",
-            "bmVyX2tpbmQYBSABKA4yHC5zdW1wLnByb3RvY29sLkNvbnRhaW5lcktpbmQq",
-            "SwoOQmxvY2tVc2VBY3Rpb24SHQoZQkxPQ0tfVVNFX0FDVElPTl9JTlRFUkFD",
-            "VBAAEhoKFkJMT0NLX1VTRV9BQ1RJT05fQ0xPU0UQASqfAQoNQ29udGFpbmVy",
-            "S2luZBIXChNDT05UQUlORVJfS0lORF9OT05FEAASIQodQ09OVEFJTkVSX0tJ",
-            "TkRfQ1JBRlRJTkdfVEFCTEUQARIYChRDT05UQUlORVJfS0lORF9DSEVTVBAC",
-            "EhoKFkNPTlRBSU5FUl9LSU5EX0ZVUk5BQ0UQAxIcChhDT05UQUlORVJfS0lO",
-            "RF9ESVNQRU5TRVIQBEIbSAGqAhZTdU11bHRpcGxheWVyLlByb3RvY29sYgZw",
-            "cm90bzM="));
+            "bmVyX2tpbmQYBSABKA4yHC5zdW1wLnByb3RvY29sLkNvbnRhaW5lcktpbmQi",
+            "oQEKDEZ1cm5hY2VTdGF0ZRIJCgF4GAEgASgFEgkKAXkYAiABKAUSCQoBehgD",
+            "IAEoBRIQCghyZXZpc2lvbhgEIAEoBRISCgpoZWF0X2xldmVsGAUgASgCEhkK",
+            "EXNtZWx0aW5nX3Byb2dyZXNzGAYgASgCEhsKE2ZpcmVfdGltZV9yZW1haW5p",
+            "bmcYByABKAISEgoKY2VsbF92YWx1ZRgIIAEoBSpLCg5CbG9ja1VzZUFjdGlv",
+            "bhIdChlCTE9DS19VU0VfQUNUSU9OX0lOVEVSQUNUEAASGgoWQkxPQ0tfVVNF",
+            "X0FDVElPTl9DTE9TRRABKp8BCg1Db250YWluZXJLaW5kEhcKE0NPTlRBSU5F",
+            "Ul9LSU5EX05PTkUQABIhCh1DT05UQUlORVJfS0lORF9DUkFGVElOR19UQUJM",
+            "RRABEhgKFENPTlRBSU5FUl9LSU5EX0NIRVNUEAISGgoWQ09OVEFJTkVSX0tJ",
+            "TkRfRlVSTkFDRRADEhwKGENPTlRBSU5FUl9LSU5EX0RJU1BFTlNFUhAEQhtI",
+            "AaoCFlN1TXVsdGlwbGF5ZXIuUHJvdG9jb2xiBnByb3RvMw=="));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { },
           new pbr::GeneratedClrTypeInfo(new[] {typeof(global::SuMultiplayer.Protocol.BlockUseAction), typeof(global::SuMultiplayer.Protocol.ContainerKind), }, null, new pbr::GeneratedClrTypeInfo[] {
@@ -64,7 +67,8 @@ namespace SuMultiplayer.Protocol {
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.BlockUseResult), global::SuMultiplayer.Protocol.BlockUseResult.Parser, new[]{ "Sequence", "Accepted", "Reason", "Action", "ContainerKind", "X", "Y", "Z" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.ContainerState), global::SuMultiplayer.Protocol.ContainerState.Parser, new[]{ "X", "Y", "Z", "ContainerKind", "Revision", "SlotValues", "SlotCounts" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.ContainerEditRequest), global::SuMultiplayer.Protocol.ContainerEditRequest.Parser, new[]{ "Sequence", "X", "Y", "Z", "ContainerKind", "BaseRevision", "BaseValues", "BaseCounts", "DesiredValues", "DesiredCounts", "PlayerBaseValues", "PlayerBaseCounts", "PlayerDesiredValues", "PlayerDesiredCounts" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.ContainerEditResult), global::SuMultiplayer.Protocol.ContainerEditResult.Parser, new[]{ "Sequence", "Accepted", "Reason", "Revision", "ContainerKind" }, null, null, null, null)
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.ContainerEditResult), global::SuMultiplayer.Protocol.ContainerEditResult.Parser, new[]{ "Sequence", "Accepted", "Reason", "Revision", "ContainerKind" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.FurnaceState), global::SuMultiplayer.Protocol.FurnaceState.Parser, new[]{ "X", "Y", "Z", "Revision", "HeatLevel", "SmeltingProgress", "FireTimeRemaining", "CellValue" }, null, null, null, null)
           }));
     }
     #endregion
@@ -2600,6 +2604,495 @@ namespace SuMultiplayer.Protocol {
           }
           case 40: {
             ContainerKind = (global::SuMultiplayer.Protocol.ContainerKind) input.ReadEnum();
+            break;
+          }
+        }
+      }
+    }
+    #endif
+
+  }
+
+  /// <summary>
+  /// Host -> client: authoritative runtime state of one furnace (block entity).
+  ///
+  /// The container slots only say what is inside the furnace; the furnace UI also reads
+  /// ComponentFurnace.HeatLevel (flame animation) and ComponentFurnace.SmeltingProgress
+  /// (progress bar), and the block's burning appearance is the cell contents 64 = furnace,
+  /// 65 = lit furnace. The client's replica ComponentFurnace has no simulation (its
+  /// IUpdateable is removed), so those values must arrive as state.
+  ///
+  /// Presentation-only on the client: heat / smelting progress / fire time are written to
+  /// the replica component, and the lit cell value is applied through the terrain apply
+  /// path (never as a local edit). The client never advances smelting and never consumes
+  /// fuel.
+  ///
+  /// Source: Survivalcraft/Game/ComponentFurnace.cs:Update (m_heatLevel / m_smeltingProgress /
+  ///         m_fireTimeRemaining, and the 64 -> 65 contents switch at the end of Update)
+  /// Source: Survivalcraft/Game/FurnaceWidget.cs:Update (fire particles = HeatLevel > 0,
+  ///         progress bar value = SmeltingProgress)
+  /// Source: Survivalcraft/Game/LitFurnaceBlock.cs (Index = 65)
+  /// </summary>
+  [global::System.Diagnostics.DebuggerDisplayAttribute("{ToString(),nq}")]
+  public sealed partial class FurnaceState : pb::IMessage<FurnaceState>
+  #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      , pb::IBufferMessage
+  #endif
+  {
+    private static readonly pb::MessageParser<FurnaceState> _parser = new pb::MessageParser<FurnaceState>(() => new FurnaceState());
+    private pb::UnknownFieldSet _unknownFields;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pb::MessageParser<FurnaceState> Parser { get { return _parser; } }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pbr::MessageDescriptor Descriptor {
+      get { return global::SuMultiplayer.Protocol.BlockuseReflection.Descriptor.MessageTypes[5]; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    pbr::MessageDescriptor pb::IMessage.Descriptor {
+      get { return Descriptor; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public FurnaceState() {
+      OnConstruction();
+    }
+
+    partial void OnConstruction();
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public FurnaceState(FurnaceState other) : this() {
+      x_ = other.x_;
+      y_ = other.y_;
+      z_ = other.z_;
+      revision_ = other.revision_;
+      heatLevel_ = other.heatLevel_;
+      smeltingProgress_ = other.smeltingProgress_;
+      fireTimeRemaining_ = other.fireTimeRemaining_;
+      cellValue_ = other.cellValue_;
+      _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public FurnaceState Clone() {
+      return new FurnaceState(this);
+    }
+
+    /// <summary>Field number for the "x" field.</summary>
+    public const int XFieldNumber = 1;
+    private int x_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int X {
+      get { return x_; }
+      set {
+        x_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "y" field.</summary>
+    public const int YFieldNumber = 2;
+    private int y_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int Y {
+      get { return y_; }
+      set {
+        y_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "z" field.</summary>
+    public const int ZFieldNumber = 3;
+    private int z_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int Z {
+      get { return z_; }
+      set {
+        z_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "revision" field.</summary>
+    public const int RevisionFieldNumber = 4;
+    private int revision_;
+    /// <summary>
+    /// Host monotonic per-furnace revision: the client drops an older state as stale
+    /// (equal revision is a resend and is applied idempotently).
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int Revision {
+      get { return revision_; }
+      set {
+        revision_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "heat_level" field.</summary>
+    public const int HeatLevelFieldNumber = 5;
+    private float heatLevel_;
+    /// <summary>
+    /// ComponentFurnace runtime fields (host authoritative).
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public float HeatLevel {
+      get { return heatLevel_; }
+      set {
+        heatLevel_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "smelting_progress" field.</summary>
+    public const int SmeltingProgressFieldNumber = 6;
+    private float smeltingProgress_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public float SmeltingProgress {
+      get { return smeltingProgress_; }
+      set {
+        smeltingProgress_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "fire_time_remaining" field.</summary>
+    public const int FireTimeRemainingFieldNumber = 7;
+    private float fireTimeRemaining_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public float FireTimeRemaining {
+      get { return fireTimeRemaining_; }
+      set {
+        fireTimeRemaining_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "cell_value" field.</summary>
+    public const int CellValueFieldNumber = 8;
+    private int cellValue_;
+    /// <summary>
+    /// Authoritative block cell value for the burning appearance: contents 64 (unlit) or
+    /// 65 (lit) with the orientation in data. The client applies this cell value through
+    /// the normal terrain apply path so the block looks exactly like the host.
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int CellValue {
+      get { return cellValue_; }
+      set {
+        cellValue_ = value;
+      }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override bool Equals(object other) {
+      return Equals(other as FurnaceState);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Equals(FurnaceState other) {
+      if (ReferenceEquals(other, null)) {
+        return false;
+      }
+      if (ReferenceEquals(other, this)) {
+        return true;
+      }
+      if (X != other.X) return false;
+      if (Y != other.Y) return false;
+      if (Z != other.Z) return false;
+      if (Revision != other.Revision) return false;
+      if (!pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.Equals(HeatLevel, other.HeatLevel)) return false;
+      if (!pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.Equals(SmeltingProgress, other.SmeltingProgress)) return false;
+      if (!pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.Equals(FireTimeRemaining, other.FireTimeRemaining)) return false;
+      if (CellValue != other.CellValue) return false;
+      return Equals(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override int GetHashCode() {
+      int hash = 1;
+      if (X != 0) hash ^= X.GetHashCode();
+      if (Y != 0) hash ^= Y.GetHashCode();
+      if (Z != 0) hash ^= Z.GetHashCode();
+      if (Revision != 0) hash ^= Revision.GetHashCode();
+      if (HeatLevel != 0F) hash ^= pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.GetHashCode(HeatLevel);
+      if (SmeltingProgress != 0F) hash ^= pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.GetHashCode(SmeltingProgress);
+      if (FireTimeRemaining != 0F) hash ^= pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.GetHashCode(FireTimeRemaining);
+      if (CellValue != 0) hash ^= CellValue.GetHashCode();
+      if (_unknownFields != null) {
+        hash ^= _unknownFields.GetHashCode();
+      }
+      return hash;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override string ToString() {
+      return pb::JsonFormatter.ToDiagnosticString(this);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void WriteTo(pb::CodedOutputStream output) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      output.WriteRawMessage(this);
+    #else
+      if (X != 0) {
+        output.WriteRawTag(8);
+        output.WriteInt32(X);
+      }
+      if (Y != 0) {
+        output.WriteRawTag(16);
+        output.WriteInt32(Y);
+      }
+      if (Z != 0) {
+        output.WriteRawTag(24);
+        output.WriteInt32(Z);
+      }
+      if (Revision != 0) {
+        output.WriteRawTag(32);
+        output.WriteInt32(Revision);
+      }
+      if (HeatLevel != 0F) {
+        output.WriteRawTag(45);
+        output.WriteFloat(HeatLevel);
+      }
+      if (SmeltingProgress != 0F) {
+        output.WriteRawTag(53);
+        output.WriteFloat(SmeltingProgress);
+      }
+      if (FireTimeRemaining != 0F) {
+        output.WriteRawTag(61);
+        output.WriteFloat(FireTimeRemaining);
+      }
+      if (CellValue != 0) {
+        output.WriteRawTag(64);
+        output.WriteInt32(CellValue);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(output);
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
+      if (X != 0) {
+        output.WriteRawTag(8);
+        output.WriteInt32(X);
+      }
+      if (Y != 0) {
+        output.WriteRawTag(16);
+        output.WriteInt32(Y);
+      }
+      if (Z != 0) {
+        output.WriteRawTag(24);
+        output.WriteInt32(Z);
+      }
+      if (Revision != 0) {
+        output.WriteRawTag(32);
+        output.WriteInt32(Revision);
+      }
+      if (HeatLevel != 0F) {
+        output.WriteRawTag(45);
+        output.WriteFloat(HeatLevel);
+      }
+      if (SmeltingProgress != 0F) {
+        output.WriteRawTag(53);
+        output.WriteFloat(SmeltingProgress);
+      }
+      if (FireTimeRemaining != 0F) {
+        output.WriteRawTag(61);
+        output.WriteFloat(FireTimeRemaining);
+      }
+      if (CellValue != 0) {
+        output.WriteRawTag(64);
+        output.WriteInt32(CellValue);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(ref output);
+      }
+    }
+    #endif
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int CalculateSize() {
+      int size = 0;
+      if (X != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeInt32Size(X);
+      }
+      if (Y != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeInt32Size(Y);
+      }
+      if (Z != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeInt32Size(Z);
+      }
+      if (Revision != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeInt32Size(Revision);
+      }
+      if (HeatLevel != 0F) {
+        size += 1 + 4;
+      }
+      if (SmeltingProgress != 0F) {
+        size += 1 + 4;
+      }
+      if (FireTimeRemaining != 0F) {
+        size += 1 + 4;
+      }
+      if (CellValue != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeInt32Size(CellValue);
+      }
+      if (_unknownFields != null) {
+        size += _unknownFields.CalculateSize();
+      }
+      return size;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(FurnaceState other) {
+      if (other == null) {
+        return;
+      }
+      if (other.X != 0) {
+        X = other.X;
+      }
+      if (other.Y != 0) {
+        Y = other.Y;
+      }
+      if (other.Z != 0) {
+        Z = other.Z;
+      }
+      if (other.Revision != 0) {
+        Revision = other.Revision;
+      }
+      if (other.HeatLevel != 0F) {
+        HeatLevel = other.HeatLevel;
+      }
+      if (other.SmeltingProgress != 0F) {
+        SmeltingProgress = other.SmeltingProgress;
+      }
+      if (other.FireTimeRemaining != 0F) {
+        FireTimeRemaining = other.FireTimeRemaining;
+      }
+      if (other.CellValue != 0) {
+        CellValue = other.CellValue;
+      }
+      _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(pb::CodedInputStream input) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      input.ReadRawMessage(this);
+    #else
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
+            break;
+          case 8: {
+            X = input.ReadInt32();
+            break;
+          }
+          case 16: {
+            Y = input.ReadInt32();
+            break;
+          }
+          case 24: {
+            Z = input.ReadInt32();
+            break;
+          }
+          case 32: {
+            Revision = input.ReadInt32();
+            break;
+          }
+          case 45: {
+            HeatLevel = input.ReadFloat();
+            break;
+          }
+          case 53: {
+            SmeltingProgress = input.ReadFloat();
+            break;
+          }
+          case 61: {
+            FireTimeRemaining = input.ReadFloat();
+            break;
+          }
+          case 64: {
+            CellValue = input.ReadInt32();
+            break;
+          }
+        }
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalMergeFrom(ref pb::ParseContext input) {
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
+            break;
+          case 8: {
+            X = input.ReadInt32();
+            break;
+          }
+          case 16: {
+            Y = input.ReadInt32();
+            break;
+          }
+          case 24: {
+            Z = input.ReadInt32();
+            break;
+          }
+          case 32: {
+            Revision = input.ReadInt32();
+            break;
+          }
+          case 45: {
+            HeatLevel = input.ReadFloat();
+            break;
+          }
+          case 53: {
+            SmeltingProgress = input.ReadFloat();
+            break;
+          }
+          case 61: {
+            FireTimeRemaining = input.ReadFloat();
+            break;
+          }
+          case 64: {
+            CellValue = input.ReadInt32();
             break;
           }
         }

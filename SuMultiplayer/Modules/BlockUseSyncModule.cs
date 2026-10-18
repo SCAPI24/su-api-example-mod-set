@@ -30,6 +30,14 @@ namespace SuMultiplayer.Modules
         private const int SummaryLogMs = 10000;
         private const int ProblemLogMs = 5000;
         private const int HostPollIntervalMs = 200;
+        /// <summary>熔炉炉况的主机轮询间隔：进度条 / 火焰要跟手，200ms 与容器轮询同频。</summary>
+        private const int FurnacePollIntervalMs = 200;
+        /// <summary>一拍最多下发多少个熔炉（被打开的 + 附近燃烧的）。</summary>
+        private const int MaxFurnaceTargets = 64;
+        /// <summary>客户端 / 主机缓存的熔炉状态键上限（超出整表清空并写一行日志，不是静默丢弃消息）。</summary>
+        private const int MaxTrackedFurnaceStates = 256;
+        /// <summary>打开面板时最多接受多久之前收到的炉况（超过就明确失败，不拿陈旧值冒充当前）。</summary>
+        private const int FurnaceStateMaxAgeMs = 2000;
         private const int RequestTimeoutMs = 5000;
         private const int EditTimeoutMs = 5000;
         private const int MaxPendingUses = 64;
@@ -43,6 +51,19 @@ namespace SuMultiplayer.Modules
             new Dictionary<int, ContainerKey>();
         private readonly List<ContainerKey> m_pollKeys = new List<ContainerKey>(16);
         private readonly List<ContainerStateData> m_pollStates = new List<ContainerStateData>(16);
+        /// <summary>主机：本拍要下发炉况的熔炉（被客户端打开的 + 附近燃烧的），有界。</summary>
+        private readonly List<ContainerKey> m_openFurnaceKeys = new List<ContainerKey>(8);
+        private readonly List<FurnacePollTarget> m_furnaceTargets =
+            new List<FurnacePollTarget>(16);
+        /// <summary>主机：最近一次下发过的炉况（变化才发；打开面板时无条件发一次）。</summary>
+        private readonly Dictionary<ContainerKey, FurnaceStateData> m_lastFurnaceStates =
+            new Dictionary<ContainerKey, FurnaceStateData>();
+        /// <summary>客户端：最近收到的炉况（打开面板时重放，解决"炉况先于面板打开到达"的顺序）。</summary>
+        private readonly Dictionary<ContainerKey, PendingFurnaceState> m_furnacePending =
+            new Dictionary<ContainerKey, PendingFurnaceState>();
+        /// <summary>客户端：每个熔炉已应用的 revision（旧状态按 stale 拒绝）。</summary>
+        private readonly Dictionary<ContainerKey, int> m_furnaceAppliedRevisions =
+            new Dictionary<ContainerKey, int>();
         private readonly Dictionary<string, long> m_lastProblemMs =
             new Dictionary<string, long>(StringComparer.Ordinal);
 
@@ -50,6 +71,12 @@ namespace SuMultiplayer.Modules
         private ITransportPort m_transport;
         private ITransportControlPort m_control;
         private IMessageRegistryPort m_messages;
+        /// <summary>
+        /// 远程动作声音中继（可选端口，实现 = Modules/RemoteAudioSyncModule.cs）。
+        /// 主机执行远端 BlockUseRequest / 容器编辑的同步窗口内捕获引擎在本端播放的声音，
+        /// 补发给请求者与附近客户端；缺失时只记录一次明确警告，不影响方块使用本身。
+        /// </summary>
+        private IRemoteAudioRelayPort m_remoteAudio;
         private Action<int, string, string, bool> m_clientJoinedHandler;
         private Action<int, string> m_clientLeftHandler;
         private bool m_attached;
@@ -59,6 +86,7 @@ namespace SuMultiplayer.Modules
         private long m_nextEditSequence;
         private long m_lastSummaryMs;
         private long m_nextHostPollMs;
+        private long m_nextHostFurnacePollMs;
 
         // 客户端当前打开的副本面板（key + 最近一次应用的权威状态 + 玩家背包基线）
         private ContainerKey? m_openKey;
@@ -82,6 +110,12 @@ namespace SuMultiplayer.Modules
         private int[] m_pendingEditDesiredValues;
         private int[] m_pendingEditDesiredCounts;
         private PlayerInventorySnapshot m_pendingEditPlayerBase;
+
+        // 刚被主机拒绝的那一次编辑（指纹相同就**不再重发**：防止拒绝 → 回滚 → 再发同一条的死循环）
+        private bool m_lastRejectedValid;
+        private ContainerKey m_lastRejectedKey;
+        private int m_lastRejectedBaseRevision;
+        private long m_lastRejectedFingerprint;
 
         // ---------------------------------------------------------------- 计数
         private long m_useSubmitted;
@@ -107,6 +141,31 @@ namespace SuMultiplayer.Modules
         private long m_containerStatesWithoutOpen;
         private long m_containerBroadcastPeers;
 
+        // ---------------------------------------------------------------- 熔炉炉况（FURNACE_STATE）
+        private long m_furnaceStatesSent;
+        private long m_furnaceStateSendFailures;
+        private long m_furnaceStatesReceived;
+        private long m_furnaceStatesApplied;
+        private long m_furnaceStatesRejected;
+        private long m_furnaceStatesStale;
+        private long m_furnaceStatesMalformed;
+        private long m_furnaceStateDirectionErrors;
+        /// <summary>主机：因"不在任何客户端附近且没人打开"而跳过的燃烧熔炉数（每拍累计）。</summary>
+        private long m_furnaceStateSkippedDistance;
+        /// <summary>主机：抓不到（方块实体 / 区块卸载 / 方块已变）而跳过的熔炉数。</summary>
+        private long m_furnaceStateSkippedUnloaded;
+        /// <summary>客户端：真的落地了燃烧外观格子值的次数。</summary>
+        private long m_furnaceLitApplied;
+        /// <summary>客户端：真的把热量 / 进度 / 余火写进副本组件的次数。</summary>
+        private long m_furnaceProgressApplied;
+        /// <summary>客户端：打开熔炉时没有可用的权威炉况（明确失败）的次数。</summary>
+        private long m_furnaceOpenStateMissing;
+        /// <summary>主机：本拍纳入目标的熔炉数 / 其中"关闭但可见（附近）"的熔炉数。</summary>
+        private long m_furnaceTargetsPolled;
+        private long m_furnaceNearbyTargets;
+        /// <summary>主机：数值未变化而未下发的轮询次数。</summary>
+        private long m_furnaceStatesSuppressed;
+
         private long m_editSubmitted;
         private long m_editSent;
         private long m_editSendFailures;
@@ -119,6 +178,41 @@ namespace SuMultiplayer.Modules
         private long m_editResultsUnknown;
         private long m_editResultsMalformed;
         private long m_editDirectionErrors;
+        /// <summary>客户端把"被拒绝 / 超时"的编辑回滚到权威状态的次数（含背包恢复）。</summary>
+        private long m_editReverts;
+        /// <summary>与刚被拒绝的编辑完全相同的重发被抑制的次数（防死循环）。</summary>
+        private long m_editSuppressed;
+        /// <summary>主机落地了的配方格变化次数（工作台）。</summary>
+        private long m_craftGridApplied;
+        /// <summary>主机取走合成产物的次数 / 总个数。</summary>
+        private long m_resultTaken;
+        private long m_resultTakenItems;
+        /// <summary>主机落地的"同物品两槽拆分"次数（面板里的拆分不再被回滚）。</summary>
+        private long m_splitApplied;
+        /// <summary>主机落地的容器内物品移动次数（非拆分、非取产物）。</summary>
+        private long m_moveApplied;
+        /// <summary>主机落地的"取产物 + 放进容器"同一条编辑次数。</summary>
+        private long m_takeAndPlaceApplied;
+        /// <summary>客户端本地预测的产物与主机重算不一致的次数（以主机为准）。</summary>
+        private long m_craftPredictionMismatch;
+        /// <summary>主机侧看到"请求者是创造仓库"的编辑次数（接受 + 因 creative-* 规则被拒）。</summary>
+        private long m_creativeInventoryDetected;
+        /// <summary>创造请求者的编辑被接受（守恒被创造规则替代）的次数。</summary>
+        private long m_creativeTransferAllowed;
+        /// <summary>
+        /// 创造模式放行的 data 变体件数（完整值不在创造仓库，但 contents 由创造仓库提供：
+        /// 内存条地图 / 告示牌文字 / 家具设计 id）。允许计数，不是拒绝原因。
+        /// </summary>
+        private long m_creativeDataVariantAllowed;
+        /// <summary>创造模式放行的"请求者权威背包里已有该物品"件数（移动，不是创造）。</summary>
+        private long m_creativeInventoryMoveAllowed;
+        private long m_playerLedgerRemoved;
+        private long m_playerLedgerAdded;
+        private long m_playerLedgerLeftover;
+        private long m_containerStatesDeferred;
+        private string m_lastRevertReason;
+        private readonly Dictionary<string, long> m_editRejectedByReason =
+            new Dictionary<string, long>(StringComparer.Ordinal);
 
         private long m_containerViewsOpened;
         private long m_containerViewsClosed;
@@ -145,6 +239,19 @@ namespace SuMultiplayer.Modules
 
         public string StatusLine() => "方块使用：" + Summary() + " · " + m_port.Describe();
 
+        /// <summary>客户端缓存的"刚收到的炉况"：打开面板时重放（带接收时间，过期不冒充当前值）。</summary>
+        private readonly struct PendingFurnaceState
+        {
+            public PendingFurnaceState(FurnaceStateData state, long receivedMs)
+            {
+                State = state;
+                ReceivedMs = receivedMs;
+            }
+
+            public FurnaceStateData State { get; }
+            public long ReceivedMs { get; }
+        }
+
         // ================================================================= 生命周期
 
         public void Attach(IModuleContext context)
@@ -169,6 +276,18 @@ namespace SuMultiplayer.Modules
             {
                 Log("警告：没有拿到消息注册表（IMessageRegistryPort）→ 收不到方块使用 / 容器消息");
             }
+            // 远程动作声音中继（可选）：主机替远端玩家执行交互时，方块行为只在主机调用
+            // SubsystemAudio（SwitchElectricElement.cs:27 等），请求者本来什么都听不到。
+            // 端口缺失时明确记录一次；方块使用本身照常工作（不是功能兜底）。
+            if (context.TryGetPort(out m_remoteAudio) && m_remoteAudio != null)
+            {
+                Log("远程动作声音中继已接入：主机执行远端交互期间捕获声音，请求者与附近客户端可听到");
+            }
+            else
+            {
+                m_remoteAudio = null;
+                Log("警告：没有远程动作声音中继端口（IRemoteAudioRelayPort）→ 客户端听不到主机执行交互的声音");
+            }
             m_clientJoinedHandler = HandleClientJoined;
             m_clientLeftHandler = HandleClientLeft;
             m_transport.ClientJoined += m_clientJoinedHandler;
@@ -190,6 +309,8 @@ namespace SuMultiplayer.Modules
                 new DelegateMessageHandler<P.BlockUseResult>(OnBlockUseResult), ModuleId);
             registry.Register((int)MessageType.ContainerState, P.ContainerState.Parser,
                 new DelegateMessageHandler<P.ContainerState>(OnContainerState), ModuleId);
+            registry.Register((int)MessageType.FurnaceState, P.FurnaceState.Parser,
+                new DelegateMessageHandler<P.FurnaceState>(OnFurnaceState), ModuleId);
             registry.Register((int)MessageType.ContainerEditRequest,
                 P.ContainerEditRequest.Parser,
                 new DelegateMessageHandler<P.ContainerEditRequest>(OnContainerEditRequest), ModuleId);
@@ -218,6 +339,11 @@ namespace SuMultiplayer.Modules
             m_openContainers.Clear();
             m_pendingUses.Clear();
             m_lastProblemMs.Clear();
+            m_lastFurnaceStates.Clear();
+            m_furnacePending.Clear();
+            m_furnaceAppliedRevisions.Clear();
+            m_furnaceTargets.Clear();
+            m_openFurnaceKeys.Clear();
             m_attached = false;
             Log("方块使用 / 容器同步下线（" + reason + "）：" + summary);
         }
@@ -235,6 +361,13 @@ namespace SuMultiplayer.Modules
                 {
                     m_nextHostPollMs = nowMs + HostPollIntervalMs;
                     PollHostContainers();
+                }
+                // 熔炉炉况单独节拍（同一 200ms 口径）：只发给"打开熔炉的客户端 + 附近看得见
+                // 燃烧熔炉的客户端"，数值变化才发；关闭但可见的燃烧熔炉也在这里同步外观。
+                if (connected && nowMs >= m_nextHostFurnacePollMs)
+                {
+                    m_nextHostFurnacePollMs = nowMs + FurnacePollIntervalMs;
+                    PollHostFurnaces(nowMs);
                 }
             }
             else
@@ -407,16 +540,32 @@ namespace SuMultiplayer.Modules
                 return;
             }
 
-            if (!m_port.TryExecuteUse(clientId, in request, out BlockUseHostOutcome outcome,
-                    out string reason))
+            // 远程动作声音：只在这段同步执行期间打开捕获窗口（引擎方块行为在主机本端播放
+            // 声音）。finally 保证动作抛异常时窗口也会关闭 —— 不允许泄漏捕获状态。
+            var anchor = new Vector3(request.X, request.Y, request.Z);
+            m_remoteAudio?.BeginRemoteAction(clientId, anchor, "block-use");
+            bool useAccepted;
+            BlockUseHostOutcome useOutcome;
+            string useReason;
+            try
+            {
+                useAccepted = m_port.TryExecuteUse(clientId, in request, out useOutcome,
+                    out useReason);
+            }
+            finally
+            {
+                m_remoteAudio?.EndRemoteAction(clientId, "block-use");
+            }
+            if (!useAccepted)
             {
                 m_useRejected++;
-                LogProblem("use-rejected:" + reason, "主机拒绝 clientId=" + clientId + " 的方块使用 " +
-                    request.Describe() + "（" + reason + "）→ 客户端不产生任何本地效果");
-                SendUseResult(clientId, new BlockUseResultData(request.Sequence, false, reason,
+                LogProblem("use-rejected:" + useReason, "主机拒绝 clientId=" + clientId + " 的方块使用 " +
+                    request.Describe() + "（" + useReason + "）→ 客户端不产生任何本地效果");
+                SendUseResult(clientId, new BlockUseResultData(request.Sequence, false, useReason,
                     request.Action, ContainerKinds.None, request.X, request.Y, request.Z));
                 return;
             }
+            BlockUseHostOutcome outcome = useOutcome;
 
             m_useAccepted++;
             if (outcome == null || outcome.Kind == BlockUseTargetKind.Native)
@@ -462,6 +611,11 @@ namespace SuMultiplayer.Modules
             }
             if (m_openContainers.Count < MaxOpenContainers || m_openContainers.ContainsKey(clientId))
                 m_openContainers[clientId] = state.Key;
+            // 熔炉：在结果之前补发一条权威炉况。客户端收到结果才打开面板，但此时炉况已经在手，
+            // 面板第一帧就能显示火焰 / 进度（不会先闪一帧默认值）。打开时**无条件**发一次，
+            // 这样关闭后重开 / 重连都能立刻拿到当前状态。
+            if (state.ContainerKind == ContainerKinds.Furnace)
+                SendFurnaceStateForOpen(clientId, state.Key);
             SendUseResult(clientId, new BlockUseResultData(request.Sequence, true, string.Empty,
                 request.Action, outcome.ContainerKind, request.X, request.Y, request.Z));
         }
@@ -556,6 +710,7 @@ namespace SuMultiplayer.Modules
             m_openRevision = state.Revision;
             m_openValues = (int[])state.Values.Clone();
             m_openCounts = (int[])state.Counts.Clone();
+            m_lastRejectedValid = false;
             m_containerViewsOpened++;
             if (state.ContainerKind == ContainerKinds.CraftingTable)
             {
@@ -575,6 +730,10 @@ namespace SuMultiplayer.Modules
             }
             Log("客户端打开容器面板 " + state.Describe() + "（" +
                 ContainerKinds.Name(state.ContainerKind) + "）· 主机权威库存");
+            // 熔炉：主机在 BlockUseResult 之前发了 FurnaceState；这里把它写进刚建好的副本组件，
+            // 面板第一帧就是正确的火焰 / 进度（客户端不跑烧炼）。
+            if (state.ContainerKind == ContainerKinds.Furnace)
+                ApplyPendingFurnaceState(state.Key);
         }
 
         // ================================================================= 主机：容器状态
@@ -637,6 +796,122 @@ namespace SuMultiplayer.Modules
             }
         }
 
+        // ================================================================= 主机：熔炉炉况
+
+        /// <summary>
+        /// 主机轮询熔炉：目标 = 被客户端打开的熔炉（记录里的打开者必收）+ 任一连机角色
+        /// 32 格内的燃烧熔炉（关闭但可见也有正确外观）。一拍最多 <see cref="MaxFurnaceTargets"/>
+        /// 个；数值没变不发；被打开时由 <see cref="SendFurnaceStateForOpen"/> 无条件发一次。
+        /// </summary>
+        private void PollHostFurnaces(long nowMs)
+        {
+            m_openFurnaceKeys.Clear();
+            foreach (KeyValuePair<int, ContainerKey> item in m_openContainers)
+            {
+                if (item.Value.Kind != ContainerKinds.Furnace) continue;
+                bool known = false;
+                for (int i = 0; i < m_openFurnaceKeys.Count; i++)
+                {
+                    if (m_openFurnaceKeys[i].Equals(item.Value)) { known = true; break; }
+                }
+                if (!known) m_openFurnaceKeys.Add(item.Value);
+            }
+            m_furnaceTargets.Clear();
+            for (int i = 0; i < m_openFurnaceKeys.Count && i < MaxFurnaceTargets; i++)
+                m_furnaceTargets.Add(new FurnacePollTarget(m_openFurnaceKeys[i]));
+            foreach (KeyValuePair<int, ContainerKey> item in m_openContainers)
+            {
+                if (item.Value.Kind != ContainerKinds.Furnace) continue;
+                FurnacePollTarget target = FurnacePollTarget.Find(m_furnaceTargets, item.Value);
+                target?.AddClient(item.Key);
+            }
+            int openedTargets = m_furnaceTargets.Count;
+            int skippedDistance = m_port.AddNearbyFurnaceTargets(m_furnaceTargets,
+                MaxFurnaceTargets);
+            int nearbyTargets = m_furnaceTargets.Count - openedTargets;
+            if (nearbyTargets > 0) m_furnaceNearbyTargets += nearbyTargets;
+            if (skippedDistance > 0)
+            {
+                m_furnaceStateSkippedDistance += skippedDistance;
+                LogProblem("furnace-skip-distance",
+                    "主机本拍有 " + skippedDistance + " 个燃烧熔炉不在任何联机角色附近且没有客户端打开" +
+                    " → 不下发炉况（外观 / 火焰只在本端；累计跳过 " + m_furnaceStateSkippedDistance +
+                    " 个·拍）");
+            }
+            if (m_furnaceTargets.Count == 0) return;
+            m_furnaceTargetsPolled += m_furnaceTargets.Count;
+            for (int i = 0; i < m_furnaceTargets.Count; i++)
+            {
+                FurnacePollTarget target = m_furnaceTargets[i];
+                if (!m_port.TryCaptureFurnaceState(target.Key, out FurnaceStateData state,
+                        out string reason))
+                {
+                    m_furnaceStateSkippedUnloaded++;
+                    // 方块实体 / 区块没了：把上次快照丢掉，等它回来时按"新状态"重新下发。
+                    m_lastFurnaceStates.Remove(target.Key);
+                    LogProblem("furnace-capture:" + reason + ":" + target.Key.Describe(),
+                        "主机抓不到熔炉炉况 " + target.Key.Describe() + "（" + reason +
+                        "）→ 本拍不下发（累计 " + m_furnaceStateSkippedUnloaded +
+                        " 次；区块恢复后会重新下发）");
+                    continue;
+                }
+                if (m_lastFurnaceStates.TryGetValue(target.Key, out FurnaceStateData last) &&
+                    last.SameValues(state))
+                {
+                    m_furnaceStatesSuppressed++;
+                    continue;
+                }
+                m_lastFurnaceStates[target.Key] = state;
+                for (int c = 0; c < target.ClientIds.Count; c++)
+                {
+                    SendFurnaceStateTo(target.ClientIds[c], state);
+                }
+            }
+            if (m_lastFurnaceStates.Count > MaxTrackedFurnaceStates)
+            {
+                // 只是"变化才发"的缓存：清空只会导致下一拍多一次幂等重发，不会丢消息。
+                int dropped = m_lastFurnaceStates.Count;
+                m_lastFurnaceStates.Clear();
+                Log("主机熔炉炉况缓存超过 " + MaxTrackedFurnaceStates + " 项（" + dropped +
+                    "）→ 清空（下一拍按当前状态重发一次）");
+            }
+        }
+
+        /// <summary>主机：打开熔炉时无条件把当前权威炉况发给该客户端（发送失败只记录，不影响打开）。</summary>
+        private void SendFurnaceStateForOpen(int clientId, ContainerKey key)
+        {
+            if (!m_port.TryCaptureFurnaceState(key, out FurnaceStateData state,
+                    out string reason))
+            {
+                m_furnaceOpenStateMissing++;
+                LogProblem("furnace-open-capture:" + reason + ":" + key.Describe(),
+                    "主机打开熔炉 " + key.Describe() + " 但抓不到炉况（" + reason +
+                    "）→ 客户端面板只剩槽位，火焰/进度保持默认值（明确失败，等轮询恢复）；累计 " +
+                    m_furnaceOpenStateMissing + " 次");
+                return;
+            }
+            m_lastFurnaceStates[key] = state;
+            SendFurnaceStateTo(clientId, state);
+        }
+
+        /// <summary>主机 -> 指定客户端：一条权威炉况（失败明确计数 + 限流日志）。</summary>
+        private bool SendFurnaceStateTo(int clientId, FurnaceStateData state)
+        {
+            if (m_transport == null || state == null) return false;
+            byte[] payload = BlockUseCodec.EncodeFurnaceStateBytes(state);
+            if (!m_transport.TrySendTo(clientId, MessageType.FurnaceState, payload))
+            {
+                m_furnaceStateSendFailures++;
+                LogProblem("furnace-send:" + clientId,
+                    "FurnaceState 发送失败（clientId=" + clientId + " " + state.Describe() +
+                    "）→ 客户端火焰/进度会停在旧值，下一次数值变化或重开面板会补发；累计失败 " +
+                    m_furnaceStateSendFailures);
+                return false;
+            }
+            m_furnaceStatesSent++;
+            return true;
+        }
+
         // ================================================================= 客户端：权威状态
 
         private void OnContainerState(MessageContext context, P.ContainerState message)
@@ -678,6 +953,13 @@ namespace SuMultiplayer.Modules
                     " < 已应用 rev=" + m_openRevision + "（" + state.Describe() + "）");
                 return;
             }
+            if (m_pendingEditActive && state.Revision <= m_pendingEditBaseRevision)
+            {
+                // 在途编辑 = 本地待确认的叠加层：revision 没有前进的权威状态（含主机拒绝时补发的
+                // "当前状态"）不覆盖玩家正在看的面板；回滚由 Reject/Timeout 用 m_openValues 完成。
+                m_containerStatesDeferred++;
+                return;
+            }
             ApplyAuthoritativeState(state);
         }
 
@@ -688,6 +970,8 @@ namespace SuMultiplayer.Modules
             m_openValues = (int[])state.Values.Clone();
             m_openCounts = (int[])state.Counts.Clone();
             m_containerStatesApplied++;
+            // 权威状态前进了：之前被拒绝的那条编辑不再是"当前面板"，允许重新提交。
+            m_lastRejectedValid = false;
             // 注意：**不要**在这里清掉在途编辑 —— 拒绝回执随后到达时还要用它的背包基线做回滚。
             // 只有"接受回执"或超时才结束一条在途编辑（见 OnContainerEditResult / Expire）。
             if (m_port.TryCapturePlayerInventory(out PlayerInventorySnapshot player,
@@ -701,6 +985,139 @@ namespace SuMultiplayer.Modules
                 LogProblem("apply-player-base", "应用容器权威状态后取不到本机玩家背包（" +
                     reason + "）→ 下一次槽位编辑会被拒绝（不猜背包）");
             }
+        }
+
+        // ================================================================= 客户端：熔炉炉况
+
+        /// <summary>
+        /// 客户端收到主机权威炉况：校验 -> 过期判定 -> 写副本组件（热量/进度/余火）+ 落地
+        /// 燃烧外观格子值。客户端绝不推进烧炼、不消耗燃料、不写权威库存。
+        /// </summary>
+        private void OnFurnaceState(MessageContext context, P.FurnaceState message)
+        {
+            m_furnaceStatesReceived++;
+            if (IsHosting)
+            {
+                m_furnaceStateDirectionErrors++;
+                m_furnaceStatesRejected++;
+                LogProblem("furnace-state-on-host",
+                    "主机收到了 FurnaceState（方向错误）→ 丢弃（客户端不能向主机发炉况）");
+                return;
+            }
+            if (!BlockUseCodec.TryConvertFurnaceState(message, out FurnaceStateData state,
+                    out string error))
+            {
+                m_furnaceStatesMalformed++;
+                m_furnaceStatesRejected++;
+                LogProblem("furnace-state-malformed:" + error,
+                    "FurnaceState 载荷非法（" + error + " @" + message.X + "," + message.Y + "," +
+                    message.Z + "）→ 整条拒绝");
+                return;
+            }
+            ContainerKey key = state.Key;
+            if (m_furnaceAppliedRevisions.TryGetValue(key, out int appliedRevision) &&
+                state.Revision < appliedRevision)
+            {
+                m_furnaceStatesStale++;
+                m_furnaceStatesRejected++;
+                LogProblem("furnace-state-stale:" + key.Describe(),
+                    "丢弃过期 FurnaceState rev=" + state.Revision + " < 已应用 rev=" +
+                    appliedRevision + "（" + state.Describe() + "）");
+                return;
+            }
+            bool applied = m_port.ApplyFurnacePresentation(state, out bool litApplied,
+                out bool progressApplied, out string reason);
+            if (!applied)
+            {
+                m_furnaceStatesRejected++;
+                LogProblem("furnace-state-apply:" + key.Describe(),
+                    "应用 FurnaceState 失败（" + reason + "）→ " + state.Describe() +
+                    "；不推进 revision，等主机下一次状态");
+                return;
+            }
+            m_furnaceStatesApplied++;
+            if (litApplied) m_furnaceLitApplied++;
+            if (progressApplied) m_furnaceProgressApplied++;
+            RememberFurnaceState(key, state, (long)(m_clock() * 1000.0));
+            m_furnaceAppliedRevisions[key] = state.Revision;
+            if (!litApplied)
+            {
+                LogProblem("furnace-lit-partial:" + key.Describe(),
+                    "FurnaceState 已应用但燃烧外观格子没落地（" + reason + "）→ " +
+                    state.Describe());
+            }
+            else if (!progressApplied)
+            {
+                // 面板还没打开 → 还没有副本组件。炉况会暂存，打开面板时重放；不是静默丢弃。
+                LogThrottledInfo("furnace-progress-pending:" + key.Describe(),
+                    "客户端收到炉况但还没有熔炉副本组件（面板未打开）→ 热量/进度暂存，打开面板时重放；" +
+                    "燃烧外观已落地（" + state.Describe() + "）");
+            }
+        }
+
+        /// <summary>客户端：记住最近炉况（打开面板时重放）；缓存有界，超出时清空并写明。</summary>
+        private void RememberFurnaceState(ContainerKey key, FurnaceStateData state, long nowMs)
+        {
+            if (!m_furnacePending.ContainsKey(key) &&
+                m_furnacePending.Count >= MaxTrackedFurnaceStates)
+            {
+                int dropped = m_furnacePending.Count;
+                m_furnacePending.Clear();
+                Log("客户端熔炉待打开炉况缓存超过 " + MaxTrackedFurnaceStates + " 项（" +
+                    dropped + "）→ 清空（之后再收到状态会重新缓存，不会把旧值当当前值）");
+            }
+            if (!m_furnaceAppliedRevisions.ContainsKey(key) &&
+                m_furnaceAppliedRevisions.Count >= MaxTrackedFurnaceStates)
+            {
+                int dropped = m_furnaceAppliedRevisions.Count;
+                m_furnaceAppliedRevisions.Clear();
+                Log("客户端熔炉 revision 表超过 " + MaxTrackedFurnaceStates + " 项（" + dropped +
+                    "）→ 清空（之后的同 revision 状态按幂等重放，不丢内容）");
+            }
+            m_furnacePending[key] = new PendingFurnaceState(state, nowMs);
+        }
+
+        /// <summary>
+        /// 客户端：面板刚打开时重放"打开前收到的炉况"。主机在 BlockUseResult 之前发炉况，
+        /// 所以正常路径一定命中；没有 / 过期 → 明确计数 + 日志（不拿默认值冒充主机状态）。
+        /// </summary>
+        private void ApplyPendingFurnaceState(ContainerKey key)
+        {
+            if (!m_furnacePending.TryGetValue(key, out PendingFurnaceState pending))
+            {
+                m_furnaceOpenStateMissing++;
+                LogProblem("open-furnace-state-missing:" + key.Describe(),
+                    "打开熔炉 " + key.Describe() +
+                    " 前没有收到对应的 FurnaceState → 面板热量/进度/火焰保持默认值（明确失败；" +
+                    "主机应在 BlockUseResult 之前下发）；累计 " + m_furnaceOpenStateMissing);
+                return;
+            }
+            m_furnacePending.Remove(key);
+            long nowMs = (long)(m_clock() * 1000.0);
+            long age = nowMs - pending.ReceivedMs;
+            if (age > FurnaceStateMaxAgeMs)
+            {
+                m_furnaceOpenStateMissing++;
+                LogProblem("open-furnace-state-stale:" + key.Describe(),
+                    "打开熔炉 " + key.Describe() + " 时缓存的 FurnaceState 已过期（" + age +
+                    "ms > " + FurnaceStateMaxAgeMs + "ms）→ 不用它冒充当前值（明确失败）；累计 " +
+                    m_furnaceOpenStateMissing);
+                return;
+            }
+            bool applied = m_port.ApplyFurnacePresentation(pending.State, out bool litApplied,
+                out bool progressApplied, out string reason);
+            if (litApplied) m_furnaceLitApplied++;
+            if (progressApplied) m_furnaceProgressApplied++;
+            if (!applied)
+            {
+                m_furnaceStatesRejected++;
+                LogProblem("open-furnace-apply:" + key.Describe(),
+                    "打开熔炉后应用缓存炉况失败（" + reason + "）→ " + pending.State.Describe());
+                return;
+            }
+            m_furnaceAppliedRevisions[key] = pending.State.Revision;
+            Log("客户端打开熔炉时应用权威炉况 " + pending.State.Describe() +
+                (age > 0 ? "（" + age + "ms 前收到）" : "（随打开一起收到）"));
         }
 
         // ================================================================= 客户端：容器编辑
@@ -719,7 +1136,15 @@ namespace SuMultiplayer.Modules
                 m_pendingEditActive = false;
                 m_pendingEditPlayerBase = null;
                 m_pendingContainerState = null;
+                m_lastRejectedValid = false;
                 m_containerViewsClosed++;
+                if (closed.Kind == ContainerKinds.Furnace)
+                {
+                    // 关闭后重开：主机打开时会无条件重发当前炉况；清掉本地 revision / 暂存，
+                    // 让重发的那条按"新的权威状态"应用（不会被同 revision 的旧判定挡住）。
+                    m_furnaceAppliedRevisions.Remove(closed);
+                    m_furnacePending.Remove(closed);
+                }
                 SendCloseRequest(closed);
                 return;
             }
@@ -778,6 +1203,21 @@ namespace SuMultiplayer.Modules
                 LogProblem("no-player-base", "没有玩家背包守恒基线 → 拒绝提交容器编辑（先打开一次容器让主机下发权威状态）");
                 return;
             }
+            long fingerprint = Fingerprint(values, counts);
+            if (m_lastRejectedValid && m_lastRejectedKey.Equals(m_openKey.Value) &&
+                m_lastRejectedBaseRevision == m_openRevision &&
+                m_lastRejectedFingerprint == fingerprint)
+            {
+                // 同一条被主机拒绝的编辑（base 与内容都没变）不重发：否则会形成
+                // "提交 → 拒绝 → 回滚 → 同一状态又提交"的死循环。玩家改动面板后指纹变化，自动恢复。
+                m_editSuppressed++;
+                LogProblem("edit-suppressed:" + m_openKey.Value.Describe(),
+                    "容器编辑与刚被主机拒绝的那条完全相同 @" + m_openKey.Value.Describe() +
+                    "（base rev=" + m_openRevision + "）→ 抑制重发（防回滚死循环；改动面板后自动重试）");
+                return;
+            }
+            if (m_lastRejectedValid && m_lastRejectedFingerprint != fingerprint)
+                m_lastRejectedValid = false;
             long sequence = NextEditSequence();
             var request = new ContainerEditRequestData(sequence, m_openKey.Value.X,
                 m_openKey.Value.Y, m_openKey.Value.Z, m_openKey.Value.Kind, m_openRevision,
@@ -825,9 +1265,27 @@ namespace SuMultiplayer.Modules
             }
             if (playerBase != null)
                 m_port.RestorePlayerInventory(playerBase, reason);
+            m_editReverts++;
+            m_lastRevertReason = ContainerEditPolicy.ReasonCode(reason);
             LogProblem("edit-rollback:" + reason, "容器编辑未获主机确认（" + reason +
                 "）→ 已回滚到主机权威库存" + (playerBase == null ? "（玩家背包基线缺失，未回滚背包）" : "并把玩家背包恢复到编辑前快照") +
-                " @ " + key.Describe());
+                " @ " + key.Describe() + " · 累计回滚 " + m_editReverts);
+        }
+
+        /// <summary>面板槽位指纹（FNV-1a）：只用于判定"是不是刚被拒绝的那条编辑"。</summary>
+        private static long Fingerprint(int[] values, int[] counts)
+        {
+            unchecked
+            {
+                long hash = 1469598103934665603L;
+                int length = Math.Min(values?.Length ?? 0, counts?.Length ?? 0);
+                for (int i = 0; i < length; i++)
+                {
+                    hash = (hash ^ values[i]) * 1099511628211L;
+                    hash = (hash ^ counts[i]) * 1099511628211L;
+                }
+                return hash;
+            }
         }
 
         // ================================================================= 主机：容器编辑
@@ -853,6 +1311,7 @@ namespace SuMultiplayer.Modules
                     out ContainerEditRequestData request, out string error))
             {
                 m_editRejected++;
+                NoteEditRejection("malformed:" + error);
                 LogProblem("edit-malformed:" + error, "ContainerEditRequest 载荷非法（" + error +
                     "）→ 拒绝");
                 SendEditResult(clientId, new ContainerEditResultData(0, false,
@@ -863,19 +1322,37 @@ namespace SuMultiplayer.Modules
                 !openKey.Equals(request.Key))
             {
                 m_editRejected++;
-                const string notOpen = "container-not-open";
+                const string notOpen = "container-not-open: 编辑者不是该容器的打开者（或已关闭）";
+                NoteEditRejection(notOpen);
                 LogProblem("edit-not-open", "clientId=" + clientId + " 的容器编辑没有对应的打开记录（" +
                     request.Describe() + "）→ 拒绝");
                 SendEditResult(clientId, new ContainerEditResultData(request.Sequence, false,
                     notOpen, 0, request.ContainerKind));
                 return;
             }
-            if (!m_port.TryApplyContainerEdit(clientId, in request, out ContainerStateData state,
-                    out string reason))
+            // 容器编辑同样可能触发方块行为的声音（例如分配器 / 家具）；用同一套捕获窗口，
+            // 与方块使用走同一条中继（不写第二套逻辑）。finally 保证窗口关闭。
+            var editAnchor = new Vector3(request.Key.X, request.Key.Y, request.Key.Z);
+            m_remoteAudio?.BeginRemoteAction(clientId, editAnchor, "container-edit");
+            bool editAccepted;
+            ContainerEditOutcome outcome;
+            string reason;
+            try
+            {
+                editAccepted = m_port.TryApplyContainerEdit(clientId, in request, out outcome,
+                    out reason);
+            }
+            finally
+            {
+                m_remoteAudio?.EndRemoteAction(clientId, "container-edit");
+            }
+            if (!editAccepted)
             {
                 m_editRejected++;
-                LogProblem("edit-reject:" + reason, "主机拒绝 clientId=" + clientId + " 的容器编辑 " +
-                    request.Describe() + "（" + reason + "）→ 下发权威状态供客户端回滚");
+                NoteEditRejection(reason);
+                LogProblem("edit-reject:" + ContainerEditPolicy.ReasonCode(reason),
+                    "主机拒绝 clientId=" + clientId + " 的容器编辑 " + request.Describe() + "（" +
+                    reason + "）→ 下发权威状态供客户端回滚");
                 if (m_port.TryCaptureContainerState(request.Key, out ContainerStateData current,
                         out string captureReason))
                 {
@@ -890,12 +1367,57 @@ namespace SuMultiplayer.Modules
                 }
                 return;
             }
+            if (outcome?.State == null)
+            {
+                // 端口契约：接受时必须给出权威状态；给不出就明确拒绝（不拿半条结果打开/广播）。
+                const string noState = "outcome-missing: 主机端口接受了编辑却没有返回权威状态";
+                m_editRejected++;
+                NoteEditRejection(noState);
+                LogProblem("edit-outcome-missing", "主机接受了 clientId=" + clientId +
+                    " 的容器编辑但没有返回权威状态 → 按拒绝回执（客户端回滚）");
+                SendEditResult(clientId, new ContainerEditResultData(request.Sequence, false,
+                    noState, 0, request.ContainerKind));
+                return;
+            }
+            ContainerStateData state = outcome.State;
             m_editApplied++;
+            if (outcome.CreativeInventory)
+            {
+                // 创造请求者：守恒被创造模式规则替代（引擎侧计数同样会进 StatusLine 的 port 段）。
+                m_creativeInventoryDetected++;
+                m_creativeTransferAllowed++;
+                m_creativeDataVariantAllowed += outcome.CreativeDataVariantAllowed;
+                m_creativeInventoryMoveAllowed += outcome.CreativeInventoryMoveAllowed;
+            }
+            if (outcome.CraftGridApplied) m_craftGridApplied++;
+            if (outcome.ResultTakenCount > 0)
+            {
+                m_resultTaken++;
+                m_resultTakenItems += outcome.ResultTakenCount;
+            }
+            if (outcome.ResultPredictionMismatch) m_craftPredictionMismatch++;
+            if (outcome.SplitApplied) m_splitApplied++;
+            if (outcome.MoveApplied) m_moveApplied++;
+            if (outcome.TakeAndPlaceApplied) m_takeAndPlaceApplied++;
+            m_playerLedgerRemoved += outcome.PlayerRemoved;
+            m_playerLedgerAdded += outcome.PlayerAdded;
+            m_playerLedgerLeftover += outcome.PlayerLeftover;
             // 权威状态先发给发起者（回执需要 revision），再广播给同容器的其他打开者。
             SendContainerStateTo(clientId, state);
             BroadcastContainerState(state.Key, state, clientId);
             SendEditResult(clientId, new ContainerEditResultData(request.Sequence, true,
                 string.Empty, state.Revision, state.ContainerKind));
+        }
+
+        private void NoteEditRejection(string reason)
+        {
+            string code = ContainerEditPolicy.ReasonCode(reason);
+            m_editRejectedByReason.TryGetValue(code, out long count);
+            m_editRejectedByReason[code] = count + 1;
+            // creative-* 拒绝原因只可能来自"请求者是创造仓库"的判定 → 也算一次创造仓库检测。
+            // （确认性计数：接受路径由 outcome.CreativeInventory 计数，见 OnContainerEditRequest）
+            if (code.StartsWith("creative-", StringComparison.Ordinal))
+                m_creativeInventoryDetected++;
         }
 
         private void SendEditResult(int clientId, in ContainerEditResultData result)
@@ -938,8 +1460,16 @@ namespace SuMultiplayer.Modules
             {
                 m_editResultsRejected++;
                 m_editRejected++;
-                LogProblem("edit-denied:" + result.Reason, "容器编辑被主机拒绝 seq=" +
-                    result.Sequence + "（" + result.Reason + "）→ 回滚到主机权威库存");
+                NoteEditRejection(result.Reason);
+                m_lastRejectedValid = true;
+                m_lastRejectedKey = m_pendingEditKey;
+                m_lastRejectedBaseRevision = m_pendingEditBaseRevision;
+                m_lastRejectedFingerprint = Fingerprint(m_pendingEditDesiredValues,
+                    m_pendingEditDesiredCounts);
+                LogProblem("edit-denied:" + ContainerEditPolicy.ReasonCode(result.Reason),
+                    "容器编辑被主机拒绝 seq=" + result.Sequence + "（" + result.Reason +
+                    "）→ 回滚到主机权威库存（同一条编辑不会重发） @" +
+                    m_pendingEditKey.Describe());
                 RollbackPendingEdit("rejected:" + result.Reason);
                 return;
             }
@@ -950,6 +1480,7 @@ namespace SuMultiplayer.Modules
             m_pendingEditBaseCounts = null;
             m_pendingEditDesiredValues = null;
             m_pendingEditDesiredCounts = null;
+            m_lastRejectedValid = false;
         }
 
         // ================================================================= 客户端：超时 / 会话
@@ -985,6 +1516,10 @@ namespace SuMultiplayer.Modules
             m_pendingContainerState = null;
             m_nextUseSequence = 0;
             m_nextEditSequence = 0;
+            m_lastRejectedValid = false;
+            // 重连 = 新连接：熔炉 revision / 暂存全部作废；主机打开时会重新下发当前炉况。
+            m_furnaceAppliedRevisions.Clear();
+            m_furnacePending.Clear();
             m_port.CloseContainerView(reason);
         }
 
@@ -1019,6 +1554,19 @@ namespace SuMultiplayer.Modules
             m_context?.Diagnostics.Warn(ModuleId, message);
         }
 
+        /// <summary>
+        /// 限流的信息级日志（与 <see cref="LogProblem"/> 共用限流表，10s 一条）：用于"炉况已收到
+        /// 但面板还没打开"这类**正常但必须可解释**的情况（计数仍在状态行，不静默）。
+        /// </summary>
+        private void LogThrottledInfo(string key, string message)
+        {
+            long nowMs = (long)(m_clock() * 1000.0);
+            if (m_lastProblemMs.TryGetValue(key, out long last) && nowMs - last < SummaryLogMs)
+                return;
+            m_lastProblemMs[key] = nowMs;
+            m_context?.Diagnostics.Info(ModuleId, message);
+        }
+
         private string Summary() =>
             "useRequest(sent=" + m_useSent + " accepted=" + m_useAccepted + " rejected=" +
             m_useRejected + " timeout=" + m_useTimeouts + " recv=" + m_useReceived +
@@ -1028,19 +1576,59 @@ namespace SuMultiplayer.Modules
             m_useSendFailures + " dirErr=" + m_useDirectionErrors + ")" +
             " · containerSync(sent=" + m_containerStatesSent + " recv=" +
             m_containerStatesReceived + " applied=" + m_containerStatesApplied + " rejected=" +
-            m_editRejected + " stale=" + m_containerStatesStale + " malformed=" +
+            m_editRejected + " stale=" + m_containerStatesStale + " deferred=" +
+            m_containerStatesDeferred + " malformed=" +
             m_containerStatesMalformed + " noOpen=" + m_containerStatesWithoutOpen +
             " broadcastPeers=" + m_containerBroadcastPeers + " sendFailed=" +
             m_containerStateSendFailures + ")" +
+            " · furnaceState(furnaceStateSent=" + m_furnaceStatesSent +
+            " furnaceStateRecv=" + m_furnaceStatesReceived + " furnaceStateApplied=" +
+            m_furnaceStatesApplied + " furnaceStateRejected=" + m_furnaceStatesRejected +
+            " furnaceStateStale=" + m_furnaceStatesStale + " furnaceStateMalformed=" +
+            m_furnaceStatesMalformed + " furnaceStateSkippedDistance=" +
+            m_furnaceStateSkippedDistance + " furnaceStateSkippedUnloaded=" +
+            m_furnaceStateSkippedUnloaded + " furnaceLitApplied=" + m_furnaceLitApplied +
+            " furnaceProgressApplied=" + m_furnaceProgressApplied +
+            " furnaceStateOpenMissing=" + m_furnaceOpenStateMissing +
+            " furnaceStateTargets=" + m_furnaceTargetsPolled + " furnaceStateNearby=" +
+            m_furnaceNearbyTargets + " furnaceStateSuppressed=" + m_furnaceStatesSuppressed +
+            " furnaceStateSendFailed=" + m_furnaceStateSendFailures +
+            " furnaceStateDirErr=" + m_furnaceStateDirectionErrors + ")" +
             " · containerEdit(sent=" + m_editSent + " recv=" + m_editReceived +
             " applied=" + m_editApplied + " rejected=" + m_editRejected +
+            " rejected[" + RejectedReasons() + "]" +
             " timeout=" + m_editTimeouts + " results=" + m_editResultsReceived + "/" +
             m_editResultsRejected + " unknown=" + m_editResultsUnknown +
             " malformed=" + m_editResultsMalformed + " submit=" + m_editSubmitted +
-            " sendFailed=" + m_editSendFailures + " dirErr=" + m_editDirectionErrors + ")" +
+            " sendFailed=" + m_editSendFailures + " dirErr=" + m_editDirectionErrors +
+            " revertCount=" + m_editReverts + " suppressed=" + m_editSuppressed +
+            " lastRevert=" + (m_lastRevertReason ?? "none") +
+            " craftGridApplied=" + m_craftGridApplied + " resultTaken=" + m_resultTaken + "/" +
+            m_resultTakenItems + " predMismatch=" + m_craftPredictionMismatch +
+            " splitApplied=" + m_splitApplied + " moveApplied=" + m_moveApplied +
+            " takeAndPlaceApplied=" + m_takeAndPlaceApplied +
+            " creativeInventoryDetected=" + m_creativeInventoryDetected +
+            " creativeTransferAllowed=" + m_creativeTransferAllowed +
+            " creativeDataVariantAllowed=" + m_creativeDataVariantAllowed +
+            " creativeInventoryMoveAllowed=" + m_creativeInventoryMoveAllowed +
+            " playerLedger=" + m_playerLedgerRemoved + "/" + m_playerLedgerAdded +
+            " leftover=" + m_playerLedgerLeftover + ")" +
             " · craftingView(opened=" + m_craftingViewOpened + " items=" + m_craftingViewItems +
             " views=" + m_containerViewsOpened + " closed=" + m_containerViewsClosed +
             " openFailed=" + m_containerViewOpenFailures + " stateMissing=" +
             m_containerViewStateMissing + ")";
+
+        /// <summary>按稳定原因 code 汇总拒绝次数（<c>code=count</c>，逗号分隔）；空 = none。</summary>
+        private string RejectedReasons()
+        {
+            if (m_editRejectedByReason.Count == 0) return "none";
+            var builder = new System.Text.StringBuilder();
+            foreach (KeyValuePair<string, long> item in m_editRejectedByReason)
+            {
+                if (builder.Length > 0) builder.Append(',');
+                builder.Append(item.Key).Append('=').Append(item.Value);
+            }
+            return builder.ToString();
+        }
     }
 }

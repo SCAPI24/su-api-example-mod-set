@@ -123,6 +123,11 @@ message EntitySnapshot {
   // false = the host truncated the snapshot (bounded record count).  Clients
   // must then keep existing replicas that are absent from this message.
   bool complete = 5;
+  // Host EntityState version at snapshot build time.  A snapshot built before
+  // an incremental state that this client already applied is stale: applying
+  // its complete=true removal set would delete replicas added by the newer
+  // state (and the host never re-sends ADD for them).  0 = old host.
+  uint32 state_version = 6;
   bytes ext = 100;
   google.protobuf.Any custom = 101;
 }
@@ -205,27 +210,49 @@ message EntityResyncRequest {
 //   PROJECTILE_FIRE_REQUEST = 52, PROJECTILE_FIRE_RESULT = 53.
 // ---------------------------------------------------------------------------
 
-// Client -> host: "drop the whole stack in this inventory slot".
+// Where one client drop request came from.  Both values are player intents
+// executed by the host; they differ in count semantics and spawn velocity.
+//   0 / DROP_SOURCE_INPUT (default, legacy): keyboard / gamepad PlayerInput.Drop.
+//       The engine drops the whole active slot (8 m/s along the eye direction).
+//   1 / DROP_SOURCE_UI: inventory drag-to-world (ViewWidget.DragDrop).
+//       Remove exactly `count` items from `active_slot` (the drag can carry a
+//       single item / the whole stack) and toss at 12 m/s along the drag
+//       direction (which is NOT tied to the avatar's eye rotation).
+enum DropSource {
+  DROP_SOURCE_INPUT = 0;
+  DROP_SOURCE_UI = 1;
+}
+
+// Client -> host: "drop items from this inventory slot".
 //
 // Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update
 //         （playerInput.Drop → RemoveSlotItems(active, count) → SubsystemPickables.AddPickable）
+// Source: Survivalcraft/Game/ViewWidget.cs:ViewWidget.DragDrop
+//         （inventory drag onto the world → RemoveSlotItems(slot, count) → AddPickable）
 message PickableDropRequest {
   // Per-connection request sequence, starts at 1, strictly increasing.
   int64 sequence = 1;
-  // Active inventory slot the drop came from.  The host requires it to match
-  // its own authoritative active slot (the engine only drops the active slot).
+  // Inventory slot the drop came from.  INPUT always drops the active slot;
+  // UI can drop from any player-inventory slot the drag started in.
   int32 active_slot = 2;
   // Item value (contents + data) the client believes it is dropping.  The host
-  // requires an exact match against its authoritative inventory slot; a stale
+  // requires a contents match against its authoritative inventory slot; a stale
   // mirror is rejected explicitly ("slot-mismatch") instead of guessing.
   int32 item_value = 3;
-  // Stack count the client believes it has.  Diagnostics only: the host drops
-  // its own authoritative count (never the claimed one).
+  // Number of items the client is dropping.  INPUT: diagnostics only (the host
+  // drops its authoritative whole slot).  UI: **authoritative removal count** —
+  // the host requires count ∈ [1, authoritative slot count] and removes exactly
+  // this many items (drag single item / split stack).
   int32 count = 4;
   // Client drop origin (diagnostics; the host spawns at its own avatar).
   sump.position.Vec3 position = 5;
-  // Normalized look direction (engine uses 8 m/s along it).
+  // Normalized drop direction.  INPUT: the eye direction (the host re-derives
+  // it from its authoritative avatar and only checks consistency).  UI: the
+  // drag ray direction (the host uses it as-is at 12 m/s; there is no
+  // eye-rotation equivalent for a UI drag).
   sump.position.Vec3 direction = 6;
+  // Request kind; see DropSource.  Unset (0) = legacy keyboard/gamepad drop.
+  DropSource source = 11;
   bytes ext = 100;
   google.protobuf.Any custom = 101;
 }
@@ -251,6 +278,11 @@ message PickableDropResult {
   // Sparse authoritative inventory delta for the requester.
   repeated InventorySlotDelta inventory = 8;
   int32 inventory_version = 9;
+  // Host-assigned entity-replication id of the created pickable.  The client
+  // uses it to materialise its replica immediately from this authoritative
+  // result (the EntityState(ADD) that follows is then just an update).  0 =
+  // not provided (old host): the client waits for the state stream instead.
+  int32 pickable_id = 10;
   bytes ext = 100;
   google.protobuf.Any custom = 101;
 }
@@ -316,6 +348,66 @@ message ProjectileFireResult {
   sump.position.Vec3 velocity = 8;
   repeated InventorySlotDelta inventory = 9;
   int32 inventory_version = 10;
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}
+
+// ---------------------------------------------------------------------------
+// Weapon-fire presentation (host-relayed).
+//
+// The shooter client already plays its own local sound when it intercepts the
+// engine's Completed branch.  The host executes the shot but its engine path
+// does not play any sound, and other clients see the projectile appear in
+// silence.  The host therefore relays this small presentation event after an
+// accepted ProjectileFireRequest: the host plays it locally, every other
+// client plays it at the shooter position, and the shooter skips its own echo
+// (it already played the sound locally).
+//
+// Wire id lives in protocol.proto (append-only): WEAPON_FIRE_EVENT = 54.
+// This message is presentation-only: receiving clients must never create a
+// projectile, consume an item or deal damage because of it.
+// ---------------------------------------------------------------------------
+message WeaponFireEvent {
+  // Host transport id of the shooter (0 = host itself).
+  int32 client_id = 1;
+  // Host simulation clock in milliseconds.
+  int64 server_tick = 2;
+  // Host session sequence, starts at 1, strictly increasing (clients dedupe).
+  uint32 event_id = 3;
+  // ProjectileFireKind (1..4).
+  int32 kind = 4;
+  // Host-authoritative shooter eye position (not the client's claim).
+  sump.position.Vec3 position = 5;
+  // Host-authoritative aim direction.
+  sump.position.Vec3 direction = 6;
+  // Musket misfire (water in barrel): sound is Audio/MusketMisfire, no shot.
+  bool misfire = 7;
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}
+
+// ---------------------------------------------------------------------------
+// Pickup sound presentation (host-relayed, append-only id 69).
+//
+// A client pickup is a request: the host executes the authoritative acquire and
+// removes the pickable.  The engine's Audio/PickableCollected call lives in the
+// host-side SubsystemPickables.Update, which never runs for the requesting
+// client, so without this event the requester hears nothing at all.
+//
+// The host plays the sound locally (same parameters as the engine) and sends
+// this tiny event to the requester (always) plus every other player within a
+// small radius.  It is presentation-only: receiving clients must never grant
+// the item, remove a pickable or alter terrain because of it.
+// ---------------------------------------------------------------------------
+message PickupSoundEvent {
+  // Host transport id of the player whose pickup this is (> 0).
+  int32 source_client_id = 1;
+  // Host simulation clock in milliseconds.
+  int64 server_tick_ms = 2;
+  // Host session sequence, starts at 1, strictly increasing (clients dedupe/replay).
+  uint32 event_id = 3;
+  // Host-authoritative pickable position (the client's claimed position is never used).
+  sump.position.Vec3 position = 4;
   bytes ext = 100;
   google.protobuf.Any custom = 101;
 }

@@ -58,6 +58,14 @@ namespace SuMultiplayer.Modules
         bool TryApplyInventory(int clientId, in PlayerInventoryDelta delta, out string reason);
 
         /// <summary>
+        /// 主机：从**主机权威化身背包**回读某个玩家端的手持物并立即广播给所有端。
+        /// 开火后调用：把弓 / 弩 / 火枪的 draw=0（箭 / 弹已清）复位同步给开火者与其他客户端，
+        /// 避免远端化身一直停在"满弓"姿势。
+        /// false + reason = 不是主机 / 没有化身 / 回读失败 / 没有广播端口。
+        /// </summary>
+        bool TryBroadcastHeldItem(int clientId, HeldItemAimKind aimKind, out string reason);
+
+        /// <summary>
         /// 每帧把动画表现写进远端化身（强制字段，见 <see cref="RemoteAvatarPresentation"/>）。
         /// 必须在引擎模型 Update 之后调用（组合根在 Frame.Update 里 tick）。
         /// </summary>
