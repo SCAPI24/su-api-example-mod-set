@@ -542,8 +542,9 @@ namespace SuMultiplayer.Terrain
         public int StaleVerdictRejudgeRetryMs { get; set; } = 3000;
 
         /// <summary>
-        /// 从登记“这块需要重新裁决”到**清除**陈旧红的上限（毫秒）。必须至少发出过一次请求；
+        /// 从**最后一次真的发出去的请求**到**清除**陈旧红的上限（毫秒）。必须至少发出过一次请求；
         /// 过了上限仍然没有新鲜裁决 → 清掉这条红（客户端可能已经不持有这块 / 不再上报）。
+        /// 从最后一次请求算起（而不是首次登记）：背压很久之后才补发的请求同样要给客户端一个完整的应答窗口。
         /// </summary>
         public int StaleVerdictClearMs { get; set; } = 12000;
 
@@ -837,12 +838,15 @@ namespace SuMultiplayer.Terrain
     internal sealed class StaleVerdictWatch
     {
         public ChunkKey Key;
-        /// <summary>首次登记时刻（TickCount64）：清除上限从这里算起。</summary>
+        /// <summary>首次登记时刻（TickCount64）：只用于日志里的“首次登记到现在”。</summary>
         public long FirstSeenMs;
         /// <summary>下一次允许主动要摘要的时刻（退避；给正常收敛路径留宽限）。</summary>
         public long NextRequestMs;
         /// <summary>已经**真的发出去**的“要新鲜摘要”次数（背压失败会退回，不虚增）。</summary>
         public int Requests;
+        /// <summary>上一次请求**真的发出去**的时刻：清除上限从这里算起 —— 背压很久之后补发的请求
+        /// 必须同样给客户端一个完整的应答窗口，不能“刚要到就清掉”。</summary>
+        public long LastRequestMs;
         /// <summary>触发登记的原因（最近一次；写进日志）。</summary>
         public string LastReason = string.Empty;
         /// <summary>上一次为这块写日志的时刻（限流，逐块）。</summary>
@@ -890,7 +894,7 @@ namespace SuMultiplayer.Terrain
         public long OnDemandLoadTimeouts;
         /// <summary>被拒绝的请求次数 = onDemandLoadRejected（= 下面三项之和）。</summary>
         public long OnDemandLoadRejected;
-        /// <summary>拒绝原因：并发上限已满。</summary>
+        /// <summary>拒绝原因：排队台账在册上限已满（真正的容量拒绝；不是并发满）。</summary>
         public long OnDemandLoadRejectedCap;
         /// <summary>拒绝原因：上一轮明确放弃后的冷却未过。</summary>
         public long OnDemandLoadRejectedCooldown;
@@ -900,6 +904,16 @@ namespace SuMultiplayer.Terrain
         public long OnDemandLoadReleased;
         /// <summary>当前在册的按需加载块数 = pendingOnDemand。</summary>
         public int PendingOnDemand;
+        /// <summary>当前在台账里排队（还没拿到引擎临时位置）的块数 = onDemandQueued。</summary>
+        public int OnDemandQueued;
+        /// <summary>当前活动的引擎单块加载请求数（已拿到临时位置、内容还没到）= onDemandActive。</summary>
+        public int OnDemandActive;
+        /// <summary>当前已服务、还在保留窗口内的临时位置数 = onDemandHeld。</summary>
+        public int OnDemandHeld;
+        /// <summary>为排队有压力而提前让出的"仍被客户端需要"的保留位置次数 = onDemandHeldReleasedUnderPressure。</summary>
+        public long OnDemandHeldReleasedUnderPressure;
+        /// <summary>台账接受但当时没有引擎槽位、进入排队等待的累计次数 = onDemandDeferred。</summary>
+        public long OnDemandDeferred;
         /// <summary>
         /// 因为"主机明确不为这块发起加载"（冷却 / 上限 / 引擎拒绝）而**没有**登记成待裁决的上报条数。
         /// 这些上报已经用 NotReady 回答过（客户端会按退避重问），不会变成永远挂着、永远裁决不了的黄框。
@@ -1876,6 +1890,11 @@ namespace SuMultiplayer.Terrain
                 snapshot.OnDemandLoadRejectedEngine = m_onDemand.RejectedEngine;
                 snapshot.OnDemandLoadReleased = m_onDemand.ReleasedServed;
                 snapshot.PendingOnDemand = m_onDemand.Pending;
+                snapshot.OnDemandQueued = m_onDemand.Queued;
+                snapshot.OnDemandActive = m_onDemand.Active;
+                snapshot.OnDemandHeld = m_onDemand.Held;
+                snapshot.OnDemandHeldReleasedUnderPressure = m_onDemand.ReleasedUnderPressure;
+                snapshot.OnDemandDeferred = m_onDemand.Deferred;
                 snapshot.OnDemandReportsDropped = m_onDemandReportsDropped;
                 snapshot.OnDemandReportsTimedOut = m_onDemandReportsTimedOut;
             }
@@ -3863,8 +3882,8 @@ namespace SuMultiplayer.Terrain
                     session.StaleVerdictScan.Enqueue(key);
                     continue;
                 }
-                if (watch.Requests >= 1 &&
-                    nowMs - watch.FirstSeenMs >= Math.Max(1, m_options.StaleVerdictClearMs))
+                if (watch.Requests >= 1 && watch.LastRequestMs != 0 &&
+                    nowMs - watch.LastRequestMs >= Math.Max(1, m_options.StaleVerdictClearMs))
                 {
                     ClearStaleVerdictLocked(state, session, watch, nowMs);
                     work++;
@@ -3933,6 +3952,7 @@ namespace SuMultiplayer.Terrain
                 ChunkKey key = m_staleVerdictBatch[i];
                 if (!session.StaleVerdicts.TryGetValue(key, out StaleVerdictWatch watch)) continue;
                 watch.Requests++;
+                watch.LastRequestMs = nowMs;
                 watch.NextRequestMs = nowMs + Math.Max(1, m_options.StaleVerdictRejudgeRetryMs);
                 if (watch.LastLogMs == 0 ||
                     nowMs - watch.LastLogMs >= Math.Max(1, m_options.StaleVerdictLogIntervalMs))
@@ -3965,7 +3985,8 @@ namespace SuMultiplayer.Terrain
             m_staleVerdictCleared++;
             NoteStaleVerdictTransition(state, session, watch.Key,
                 "陈旧的红已清除（s=3 → 0，不再画红框）：主机要过 " + watch.Requests +
-                " 次新鲜摘要、等了 " + ((nowMs - watch.FirstSeenMs) / 1000) + "s 仍没有新裁决" +
+                " 次新鲜摘要、最后一次之后等了 " + ((nowMs - watch.LastRequestMs) / 1000) +
+                "s（首次登记到现在 " + ((nowMs - watch.FirstSeenMs) / 1000) + "s）仍没有新裁决" +
                 "（原因：" + watch.LastReason + "；客户端可能已不持有这块 / 不再上报）——" +
                 "累计清除 " + m_staleVerdictCleared + " 块", warning: true);
         }

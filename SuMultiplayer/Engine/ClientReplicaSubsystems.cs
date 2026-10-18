@@ -713,6 +713,14 @@ namespace SuMultiplayer.Engine
 
     public sealed class SuSubsystemExplosions : SubsystemExplosions, IUpdateable
     {
+        /// <summary>
+        /// 主机爆炸复制挂接点（实现 = Engine/ExplosionReplicaEngine.cs，由组合根装配的适配器在
+        /// Pump 时写入；客户端也写入，用于拦下"投掷 / 点燃引信"请求）。**实例字段，无静态状态。**
+        /// 为 null = 适配器还没挂上：主机照旧跑 base.Update（本地爆炸正常，只是没有网络广播，
+        /// 适配器会按未挂接计数并写明原因）。
+        /// </summary>
+        public ExplosionReplicaEngine Replica { get; set; }
+
         void IUpdateable.Update(float dt)
         {
             SubsystemTerrain terrain = base.Project.FindSubsystem<SubsystemTerrain>(false);
@@ -722,6 +730,10 @@ namespace SuMultiplayer.Engine
                     typeof(SubsystemExplosions));
                 return;
             }
+            // 主机：由适配器复刻 base.Update 的队列消费循环，逐实例上报（含链式爆炸）。
+            // 客户端永远不会走到这里（上面已返回）。
+            ExplosionReplicaEngine replica = Replica;
+            if (replica != null && replica.UpdateHostExplosions(this, dt)) return;
             base.Update(dt);
         }
     }

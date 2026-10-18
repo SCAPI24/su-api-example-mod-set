@@ -1,0 +1,183 @@
+syntax = "proto3";
+
+package sump.entities;
+
+option csharp_namespace = "SuMultiplayer.Protocol.Entities";
+option optimize_for = SPEED;
+
+import "google/protobuf/any.proto";
+import "position.proto";
+
+// ---------------------------------------------------------------------------
+// Pickable (item drop) / projectile replication.
+//
+// Authority split (same shape as terrain / creatures / explosions):
+//   * host   : the ONLY side that creates, simulates, acquires and removes
+//              SubsystemPickables.Pickables / SubsystemProjectiles.Projectiles;
+//   * client : never runs acquisition and never spawns these by itself.  It
+//              only materialises the replicas described here so they render.
+//
+// Wire ids live in protocol.proto (append-only):
+//   ENTITY_STATE = 38, ENTITY_SNAPSHOT = 39,
+//   PICKABLE_ACQUIRE_REQUEST = 40, PICKABLE_ACQUIRE_RESULT = 41,
+//   ENTITY_RESYNC_REQUEST = 42.
+//
+// Source: Mod/ScMultiplayer/Message/PickableSyncMessage.cs:PickableSyncMessage
+// Source: Mod/ScMultiplayer/Message/ProjectileSyncMessage.cs:ProjectileSyncMessage
+// Source: Mod/ScMultiplayer/Modules/Entity/ScMultiplayerPickableProjectileHandlers.cs
+//         (Create / UpdatePosition / Delete / Acquire / RequestAcquire)
+// ---------------------------------------------------------------------------
+
+// Lifecycle edge carried by one record.
+//   ADD    = the host just created this object (replica must be created);
+//   UPDATE = value/count/position/velocity/... changed (coalesced, change driven);
+//   REMOVE = the host object no longer exists (picked up / burned / expired /
+//            projectiles hit and converted).  Clients remove the replica.
+enum EntityAction {
+  ENTITY_ACTION_ADD = 0;
+  ENTITY_ACTION_UPDATE = 1;
+  ENTITY_ACTION_REMOVE = 2;
+}
+
+// One host pickable (SubsystemPickables.Pickables entry).
+//
+// Source: Survivalcraft/Game/SubsystemPickables.cs:SubsystemPickables.AddPickable
+// Source: Survivalcraft/Game/Pickable.cs:Pickable.Count/FlyToPosition/StuckMatrix
+message PickableState {
+  // Host-assigned network id, unique per host session and per entity kind.
+  // 0 is invalid (never sent).
+  int32 id = 1;
+  EntityAction action = 2;
+  // Full engine block value (contents + data), e.g. block-break drop.
+  int32 value = 3;
+  // Remaining stack count. 0 is only valid on REMOVE.
+  int32 count = 4;
+  sump.position.Vec3 position = 5;
+  sump.position.Vec3 velocity = 6;
+  // Pickables have no free rotation; a projectile that stuck in a block is
+  // converted into a pickable with a rigid StuckMatrix (translation+rotation).
+  // Source: Survivalcraft/Game/SubsystemProjectiles.cs:CalculateVelocityAlignMatrix
+  bool has_stuck_matrix = 7;
+  sump.position.Vec3 stuck_position = 8;
+  sump.position.Quat stuck_rotation = 9;
+  // Host-side magnetic pull (native pickup animation). Clients only mirror it.
+  bool has_fly_to = 10;
+  sump.position.Vec3 fly_to = 11;
+  // REMOVE only: which player collected it (host transport id, -1 = unknown /
+  // not a pickup). Presentation hint; removal itself is already authoritative.
+  int32 collector_client_id = 12;
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}
+
+// One host projectile (SubsystemProjectiles.Projectiles entry).
+//
+// Source: Survivalcraft/Game/SubsystemProjectiles.cs:SubsystemProjectiles.AddProjectile
+// Source: Survivalcraft/Game/Projectile.cs:Projectile.Value/Position/Velocity/
+//         Rotation/AngularVelocity/TrailOffset/IsIncendiary
+message ProjectileState {
+  int32 id = 1;
+  EntityAction action = 2;
+  int32 value = 3;
+  sump.position.Vec3 position = 4;
+  sump.position.Vec3 velocity = 5;
+  // Axis-angle rotation (engine Projectile.Rotation).
+  sump.position.Vec3 rotation = 6;
+  sump.position.Vec3 angular_velocity = 7;
+  // Owner player (host transport id; -1 = no player owner / world projectile).
+  int32 owner_client_id = 8;
+  // true = the projectile has come to rest (velocity nearly zero); clients may
+  // stop extrapolating.  Lifecycle is still decided by the host.
+  bool stuck = 9;
+  bool incendiary = 10;
+  sump.position.Vec3 trail_offset = 11;
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}
+
+// Host -> clients: one coalesced, change-driven incremental batch.
+message EntityState {
+  // Host session sequence, starts at 1, strictly increasing.  Clients dedupe /
+  // reject stale batches by it (same pattern as ExplosionEvent.event_id).
+  uint32 version = 1;
+  // Host simulation clock in milliseconds (SubsystemGameInfo.TotalElapsedGameTime*1000).
+  int64 server_tick = 2;
+  repeated PickableState pickables = 3;
+  repeated ProjectileState projectiles = 4;
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}
+
+// Host -> one client: complete snapshot for join / reconnect / resync.
+//
+// The host sends this on ClientJoined (best effort; the client may not have a
+// world yet) and whenever a client sends EntityResyncRequest (authoritative
+// restore path).  A client that receives a snapshot with complete=true replaces
+// its replica set with exactly these records, so a reconnect can never leave a
+// duplicate or a ghost replica behind.
+message EntitySnapshot {
+  uint32 snapshot_id = 1;
+  int64 server_tick = 2;
+  repeated PickableState pickables = 3;
+  repeated ProjectileState projectiles = 4;
+  // false = the host truncated the snapshot (bounded record count).  Clients
+  // must then keep existing replicas that are absent from this message.
+  bool complete = 5;
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}
+
+// One sparse inventory slot change (same semantics as the player-inventory
+// delta in action.proto; duplicated here so this domain stays self-contained).
+message InventorySlotDelta {
+  int32 index = 1;
+  int32 value = 2;
+  int32 count = 3;
+}
+
+// Client -> host: "I want to pick up this replica".
+// Source: Mod/ScMultiplayer/Message/PickableSyncMessage.cs:PickAction.RequestAcquire
+message PickableAcquireRequest {
+  // Per-connection request sequence, starts at 1, strictly increasing.
+  int64 sequence = 1;
+  // Host-assigned pickable network id from EntityState / EntitySnapshot.
+  int32 pickable_id = 2;
+  // The client's pickup target (its eye position) for diagnostics only.
+  // The host validates against its OWN authoritative avatar position, never
+  // against this claim.
+  sump.position.Vec3 position = 3;
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}
+
+// Host -> collector: verdict for one PickableAcquireRequest.
+//
+// The removal itself is broadcast through EntityState(REMOVE) to every client
+// (including the collector); this result only carries the collector's private
+// inventory delta.  A rejected request always carries an explicit reason.
+message PickableAcquireResult {
+  int64 sequence = 1;
+  int32 pickable_id = 2;
+  bool accepted = 3;
+  // Explicit rejection reason ("not-player-peer", "unknown-pickable",
+  // "creation-grace", "distance", "inventory-full", ...). Empty when accepted.
+  string reason = 4;
+  // Remaining stack count after the acquisition (0 = fully consumed).
+  int32 remaining_count = 5;
+  // true = the host pickable was fully consumed and removed.
+  bool removed = 6;
+  // Sparse authoritative inventory delta for the collector.
+  repeated InventorySlotDelta inventory = 7;
+  // Host inventory version (monotonic; diagnostics / ordering hint).
+  int32 inventory_version = 8;
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}
+
+// Client -> host: "my world is ready / I missed updates: send a full snapshot".
+// Hosts answer with EntitySnapshot; the same path is used after a reconnect.
+message EntityResyncRequest {
+  string reason = 1;
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}

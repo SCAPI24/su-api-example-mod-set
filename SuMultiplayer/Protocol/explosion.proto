@@ -1,0 +1,131 @@
+syntax = "proto3";
+
+package sump.explosion;
+
+option csharp_namespace = "SuMultiplayer.Protocol.Explosion";
+option optimize_for = SPEED;
+
+import "google/protobuf/any.proto";
+import "position.proto";
+
+// ---------------------------------------------------------------------------
+// Explosion replication (host-authoritative; clients are presentation-only).
+//
+// Wire ids live in protocol.proto (MessageType.EXPLOSION_EVENT=34,
+// EXPLOSION_REQUEST=35, EXPLOSION_RESULT=36, PLAYER_DAMAGED=37).  They are
+// append-only: never renumber.
+//
+// Authority split:
+//   * host   : runs the engine's SubsystemExplosions (terrain, drops, damage),
+//              then broadcasts one ExplosionEvent per explosion instance;
+//   * client : never runs SubsystemExplosions.  It receives ExplosionEvents and
+//              only plays particles / smoke / flame / sound / camera shake.
+//              Terrain and pickables arrive through the existing host sync
+//              (CellChange / pickable / entity paths).
+//   * client item use (throw an explosive, light a fuse) is a request:
+//              ExplosionRequest -> host validates/executes -> ExplosionResult.
+//              A rejected request never plays a local explosion.
+// ---------------------------------------------------------------------------
+
+// Explosion source class.  Values are stable.
+//
+// Source: Survivalcraft/Game/SubsystemExplosions.cs:SubsystemExplosions.AddExplosion
+// Source: Survivalcraft/Game/SubsystemExplosions.cs:SubsystemExplosions.SimulateExplosion
+//         (chain explosion: a destroyed explosive cell calls TryExplodeBlock again)
+enum ExplosionKind {
+  EXPLOSION_KIND_UNSPECIFIED = 0;
+  // A queued explosion whose originating block could not be classified.
+  EXPLOSION_KIND_BLOCK = 1;
+  // Triggered while an earlier explosion of the same Update was simulating.
+  EXPLOSION_KIND_CHAIN = 2;
+  // BombBlock / IncendiaryBombBlock thrown as a projectile.
+  EXPLOSION_KIND_THROWABLE = 3;
+  // FireworksBlock: cosmetic only, never simulates terrain/damage.
+  EXPLOSION_KIND_FIREWORK = 4;
+  // GunpowderKegBlock (placed, ignited by match/fire/lava/electricity/impact).
+  EXPLOSION_KIND_KEG = 5;
+  // DetonatorBlock.
+  EXPLOSION_KIND_DETONATOR = 6;
+}
+
+// Source: Survivalcraft/Game/SubsystemExplosions.cs:SubsystemExplosions.AddExplosion
+message ExplosionEvent {
+  // Host session sequence, starts at 1, strictly increasing.  Clients dedupe by it.
+  uint32 event_id = 1;
+  // Host simulation clock in milliseconds (SubsystemGameInfo.TotalElapsedGameTime*1000).
+  // Clients order by (server_tick, event_id) and reject stale/duplicate events.
+  int64 server_tick = 2;
+  sump.position.Vec3 position = 3;
+  // ExplosionKind.
+  int32 kind = 4;
+  // Visual blast radius in cells (1..16), derived from the engine pressure at the
+  // charge centre by ExplosionVisualPolicy.  The raw pressure is carried in ext.
+  float radius = 5;
+  // Cell value of the exploding block (0 for chain explosions whose cell was
+  // already destroyed).  For fireworks this is the projectile item value with
+  // FireworksBlock data (shape / color / altitude / flickering).
+  uint32 block_value = 6;
+  // true: presentation only.  Clients must not simulate terrain / entities / damage.
+  bool cosmetic_only = 7;
+  // ext = 5 bytes: float32 pressure (little endian) + byte flags (bit0 = incendiary).
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}
+
+// Client -> host: use an explosive item.
+enum ExplosionRequestKind {
+  EXPLOSION_REQUEST_KIND_UNSPECIFIED = 0;
+  // Light the fuse of the GunpowderKegBlock / DetonatorBlock at position.
+  EXPLOSION_REQUEST_KIND_IGNITE = 1;
+  // Throw the held explosive (bomb / firework) along direction.
+  EXPLOSION_REQUEST_KIND_THROW = 2;
+}
+
+// Source: Survivalcraft/Game/SubsystemThrowableBlockBehavior.cs:OnAim(Completed)
+// Source: Survivalcraft/Game/SubsystemMatchBlockBehavior.cs:OnUse
+message ExplosionRequest {
+  // Per-connection request sequence, starts at 1.
+  int64 sequence = 1;
+  ExplosionRequestKind kind = 2;
+  // IGNITE: the target cell (integer cell corner).  THROW: the thrower eye position.
+  sump.position.Vec3 position = 3;
+  // THROW only: normalized aim direction.
+  sump.position.Vec3 direction = 4;
+  // Held item value at the time of the request (full contents + data).
+  int32 item_value = 5;
+  // Active inventory slot (-1 = unknown).
+  int32 active_slot = 6;
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}
+
+// Host -> client: verdict for one ExplosionRequest.
+message ExplosionResult {
+  int64 sequence = 1;
+  bool accepted = 2;
+  // Explicit rejection reason ("not-player-peer", "distance", "item-illegal",
+  // "block-illegal", "projectile-blocked", "no-avatar", ...). Never silent.
+  string reason = 3;
+  // Authoritative execution position (host side); zero for rejected requests.
+  sump.position.Vec3 position = 4;
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}
+
+// Host -> client: a player was hurt by the host simulation.  Presentation only:
+// clients never apply this to ComponentHealth (health replication is a follow-up).
+message PlayerDamaged {
+  uint32 event_id = 1;
+  int64 server_tick = 2;
+  // Host-side transport id; 0 = the host player itself.
+  int32 client_id = 3;
+  // Stable identity (UserId.dat) when known, otherwise empty.
+  string identity = 4;
+  // Display name for diagnostics / presentation.
+  string name = 5;
+  sump.position.Vec3 position = 6;
+  float damage = 7;
+  float health_after = 8;
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}

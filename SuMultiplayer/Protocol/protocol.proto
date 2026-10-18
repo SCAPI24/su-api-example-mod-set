@@ -79,6 +79,33 @@ enum MessageType {
   PLAYER_PROFILE = 27;
   AVATAR_REMOVE = 28;
   AVATAR_ROSTER = 29;
+
+  // Player action / animation state / held item / inventory replication (action.proto).
+  // Source: Mod/ScMultiplayer/Message/PlayerActionMessage.cs:PlayerActionMessage
+  // Source: Mod/ScMultiplayer/Message/PlayerAimMessage.cs:PlayerAimMessage
+  // Source: Mod/ScMultiplayer/Message/PlayerEquipmentMessage.cs:PlayerEquipmentMessage
+  // Source: Mod/ScMultiplayer/Message/GamePlayerPositionMessage.cs:78-160
+  //         （PokingPhase / AttackOrder / WalkOrder / JumpOrder / HandItem* / SlotValues 等字段）
+  PLAYER_ACTION = 30;
+  PLAYER_EQUIPMENT = 31;
+  PLAYER_INVENTORY = 32;
+  PLAYER_MOTION_STATE = 33;
+
+  // Explosion replication (explosion.proto): host-authoritative, clients visual-only.
+  EXPLOSION_EVENT = 34;
+  EXPLOSION_REQUEST = 35;
+  EXPLOSION_RESULT = 36;
+  PLAYER_DAMAGED = 37;
+
+  // Pickable (item drop) / projectile replication (entities.proto).
+  // Host-authoritative lifecycle; clients only materialise replicas.
+  // Source: Mod/ScMultiplayer/Message/PickableSyncMessage.cs:PickableSyncMessage
+  // Source: Mod/ScMultiplayer/Message/ProjectileSyncMessage.cs:ProjectileSyncMessage
+  ENTITY_STATE = 38;
+  ENTITY_SNAPSHOT = 39;
+  PICKABLE_ACQUIRE_REQUEST = 40;
+  PICKABLE_ACQUIRE_RESULT = 41;
+  ENTITY_RESYNC_REQUEST = 42;
 }
 
 // Logical envelope metadata.  The current single-message transport puts these

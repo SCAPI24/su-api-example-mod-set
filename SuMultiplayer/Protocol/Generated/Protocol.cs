@@ -60,7 +60,7 @@ namespace SuMultiplayer.Protocol {
             "ZGl1cxgDIAEoBRILCgNleHQYZCABKAwSJAoGY3VzdG9tGGUgASgLMhQuZ29v",
             "Z2xlLnByb3RvYnVmLkFueSJICgNCeWUSDgoGcmVhc29uGAEgASgJEgsKA2V4",
             "dBhkIAEoDBIkCgZjdXN0b20YZSABKAsyFC5nb29nbGUucHJvdG9idWYuQW55",
-            "KsMECgtNZXNzYWdlVHlwZRIcChhNRVNTQUdFX1RZUEVfVU5TUEVDSUZJRUQQ",
+            "Ku4GCgtNZXNzYWdlVHlwZRIcChhNRVNTQUdFX1RZUEVfVU5TUEVDSUZJRUQQ",
             "ABIJCgVIRUxMTxABEg0KCUhFTExPX0FDSxACEhMKD0lOVEVSRVNUX1VQREFU",
             "RRADEhcKE0NIVU5LX0RJR0VTVF9SRVBPUlQQBBIRCg1DSFVOS19WRVJESUNU",
             "EAUSEAoMQ0hVTktfUkVTWU5DEAYSDwoLQ0VMTF9DSEFOR0UQBxITCg9ERUJV",
@@ -72,8 +72,15 @@ namespace SuMultiplayer.Protocol {
             "X0NIVU5LUxAVEhIKDkNSRUFUVVJFX1NUQVRFEBYSGwoXQ1JFQVRVUkVfUkVT",
             "WU5DX1JFUVVFU1QQFxIVChFDRUxMX0VESVRfUkVRVUVTVBAYEhQKEENFTExf",
             "RURJVF9SRVNVTFQQGRIOCgpXT1JMRF9JTkZPEBoSEgoOUExBWUVSX1BST0ZJ",
-            "TEUQGxIRCg1BVkFUQVJfUkVNT1ZFEBwSEQoNQVZBVEFSX1JPU1RFUhAdQhtI",
-            "AaoCFlN1TXVsdGlwbGF5ZXIuUHJvdG9jb2xiBnByb3RvMw=="));
+            "TEUQGxIRCg1BVkFUQVJfUkVNT1ZFEBwSEQoNQVZBVEFSX1JPU1RFUhAdEhEK",
+            "DVBMQVlFUl9BQ1RJT04QHhIUChBQTEFZRVJfRVFVSVBNRU5UEB8SFAoQUExB",
+            "WUVSX0lOVkVOVE9SWRAgEhcKE1BMQVlFUl9NT1RJT05fU1RBVEUQIRITCg9F",
+            "WFBMT1NJT05fRVZFTlQQIhIVChFFWFBMT1NJT05fUkVRVUVTVBAjEhQKEEVY",
+            "UExPU0lPTl9SRVNVTFQQJBISCg5QTEFZRVJfREFNQUdFRBAlEhAKDEVOVElU",
+            "WV9TVEFURRAmEhMKD0VOVElUWV9TTkFQU0hPVBAnEhwKGFBJQ0tBQkxFX0FD",
+            "UVVJUkVfUkVRVUVTVBAoEhsKF1BJQ0tBQkxFX0FDUVVJUkVfUkVTVUxUECkS",
+            "GQoVRU5USVRZX1JFU1lOQ19SRVFVRVNUECpCG0gBqgIWU3VNdWx0aXBsYXll",
+            "ci5Qcm90b2NvbGIGcHJvdG8z"));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { global::Google.Protobuf.WellKnownTypes.AnyReflection.Descriptor, },
           new pbr::GeneratedClrTypeInfo(new[] {typeof(global::SuMultiplayer.Protocol.MessageType), }, null, new pbr::GeneratedClrTypeInfo[] {
@@ -179,6 +186,36 @@ namespace SuMultiplayer.Protocol {
     [pbr::OriginalName("PLAYER_PROFILE")] PlayerProfile = 27,
     [pbr::OriginalName("AVATAR_REMOVE")] AvatarRemove = 28,
     [pbr::OriginalName("AVATAR_ROSTER")] AvatarRoster = 29,
+    /// <summary>
+    /// Player action / animation state / held item / inventory replication (action.proto).
+    /// Source: Mod/ScMultiplayer/Message/PlayerActionMessage.cs:PlayerActionMessage
+    /// Source: Mod/ScMultiplayer/Message/PlayerAimMessage.cs:PlayerAimMessage
+    /// Source: Mod/ScMultiplayer/Message/PlayerEquipmentMessage.cs:PlayerEquipmentMessage
+    /// Source: Mod/ScMultiplayer/Message/GamePlayerPositionMessage.cs:78-160
+    ///         （PokingPhase / AttackOrder / WalkOrder / JumpOrder / HandItem* / SlotValues 等字段）
+    /// </summary>
+    [pbr::OriginalName("PLAYER_ACTION")] PlayerAction = 30,
+    [pbr::OriginalName("PLAYER_EQUIPMENT")] PlayerEquipment = 31,
+    [pbr::OriginalName("PLAYER_INVENTORY")] PlayerInventory = 32,
+    [pbr::OriginalName("PLAYER_MOTION_STATE")] PlayerMotionState = 33,
+    /// <summary>
+    /// Explosion replication (explosion.proto): host-authoritative, clients visual-only.
+    /// </summary>
+    [pbr::OriginalName("EXPLOSION_EVENT")] ExplosionEvent = 34,
+    [pbr::OriginalName("EXPLOSION_REQUEST")] ExplosionRequest = 35,
+    [pbr::OriginalName("EXPLOSION_RESULT")] ExplosionResult = 36,
+    [pbr::OriginalName("PLAYER_DAMAGED")] PlayerDamaged = 37,
+    /// <summary>
+    /// Pickable (item drop) / projectile replication (entities.proto).
+    /// Host-authoritative lifecycle; clients only materialise replicas.
+    /// Source: Mod/ScMultiplayer/Message/PickableSyncMessage.cs:PickableSyncMessage
+    /// Source: Mod/ScMultiplayer/Message/ProjectileSyncMessage.cs:ProjectileSyncMessage
+    /// </summary>
+    [pbr::OriginalName("ENTITY_STATE")] EntityState = 38,
+    [pbr::OriginalName("ENTITY_SNAPSHOT")] EntitySnapshot = 39,
+    [pbr::OriginalName("PICKABLE_ACQUIRE_REQUEST")] PickableAcquireRequest = 40,
+    [pbr::OriginalName("PICKABLE_ACQUIRE_RESULT")] PickableAcquireResult = 41,
+    [pbr::OriginalName("ENTITY_RESYNC_REQUEST")] EntityResyncRequest = 42,
   }
 
   #endregion

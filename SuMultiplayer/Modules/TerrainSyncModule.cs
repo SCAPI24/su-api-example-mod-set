@@ -2101,18 +2101,25 @@ namespace SuMultiplayer.Modules
                     " · hostCellNoRecipient " + m_hostCellNoRecipient + "）" +
                     // 按需单块加载（客户端上报的边缘块）：**不改任何角色的兴趣半径 / 内容距离**，
                     // 只给"主机没有内容的那些上报块"挂一条只覆盖该块的临时更新位置。
+                    //   容量限制的是**活动的引擎请求**（onDemandActive + onDemandHeld ≤ MaxActive），
+                    //   不是排队台账：onDemandQueued 可以到 512，按身份轮转 FIFO 等待而不是被拒绝。
                     //   onDemandLoadRequests/Served/Timeouts/Rejected 与 pendingOnDemand 都来自 Terrain 层同一份台账；
                     //   onDemandLoadLocations = 引擎里当前真的挂着几条临时位置（TerrainBridge 计数）。
-                    " · 按需单块加载 onDemandLoadRequests " + snapshot.OnDemandLoadRequests +
-                    "（区块 " + snapshot.OnDemandLoadChunks +
-                    " · onDemandLoadServed " + snapshot.OnDemandLoadServed +
-                    " · onDemandLoadTimeouts " + snapshot.OnDemandLoadTimeouts +
-                    " · pendingOnDemand " + snapshot.PendingOnDemand +
-                    " · 被拒绝 " + snapshot.OnDemandLoadRejected +
-                    "（cap " + snapshot.OnDemandLoadRejectedCap +
+                    " · 按需单块加载 onDemandQueued " + snapshot.OnDemandQueued +
+                    " · onDemandActive " + snapshot.OnDemandActive +
+                    " · onDemandHeld " + snapshot.OnDemandHeld +
+                    " · onDemandHeldReleasedUnderPressure " + snapshot.OnDemandHeldReleasedUnderPressure +
+                    " · onDemandDeferred " + snapshot.OnDemandDeferred +
+                    " · onDemandServed " + snapshot.OnDemandLoadServed +
+                    "（onDemandLoadServed）· onDemandTimeouts " + snapshot.OnDemandLoadTimeouts +
+                    "（onDemandLoadTimeouts）· onDemandRejected " + snapshot.OnDemandLoadRejected +
+                    "（onDemandLoadRejected：cap " + snapshot.OnDemandLoadRejectedCap +
                     " · cooldown " + snapshot.OnDemandLoadRejectedCooldown +
                     " · engine " + snapshot.OnDemandLoadRejectedEngine +
-                    "）· 摘掉待裁决 " + snapshot.OnDemandReportsTimedOut +
+                    "）· onDemandLoadRequests " + snapshot.OnDemandLoadRequests +
+                    "（区块 " + snapshot.OnDemandLoadChunks +
+                    "）· pendingOnDemand " + snapshot.PendingOnDemand +
+                    " · 摘掉待裁决 " + snapshot.OnDemandReportsTimedOut +
                     " · 未挂待裁决 " + snapshot.OnDemandReportsDropped +
                     " · 临时位置 " + m_bridge.OnDemandLoadLocations +
                     "（累计创建 " + m_bridge.OnDemandLoadLocationsCreated +

@@ -37,6 +37,16 @@ namespace SuMultiplayer
         private SessionModule m_sessionModule;
         private WorldTransferModule m_transferModule;
         private PlayerAvatarModule m_avatarModule;
+        /// <summary>角色动作 / 手持物 / 背包复制（主机权威）：引擎适配 + 角色记录落盘 + 模块。</summary>
+        private PlayerActionModule m_actionModule;
+        private AvatarActionBridge m_actionBridge;
+        private AvatarInventoryStore m_inventoryStore;
+        /// <summary>爆炸同步：引擎适配（主机检测 / 客户端表现 / 请求执行）+ 网络模块（新文件，不碰别人的模块）。</summary>
+        private ExplosionReplicaEngine m_explosionEngine;
+        private ExplosionSyncModule m_explosionModule;
+        /// <summary>拾取物 / 投射物复制：引擎适配（主机抓取/执行拾取、客户端副本）+ 网络模块。</summary>
+        private PickableReplicaEngine m_entityEngine;
+        private EntityReplicationModule m_entityModule;
         private CreatureSpawnModule m_creatureModule;
         private CreatureWorldAdapter m_creatureWorld;
         /// <summary>客户端副本 / 主机权威（编辑审批 + 世界信息 + RNG 状态）；组合根装配，模块只拿端口。</summary>
@@ -95,6 +105,27 @@ namespace SuMultiplayer
                 engineModManager.ModParentMethod, diagnostics, "player-avatar");
             m_avatarModule = new PlayerAvatarModule(avatarSpawner,
                 new SuMultiplayerPlayersXml("player-avatar", diagnostics), profileStore);
+            // 角色动作 / 手持物 / 背包：引擎适配层只读写远端化身与角色背包，
+            // 纯逻辑（动作边沿 / 动画状态 / 背包增量）在 Modules/PlayerActionModule.cs 与 Net/ 里，
+            // 因此自检可以直接编译同一份逻辑。背包落盘写角色记录（SuMultiplayerPlayers.xml）。
+            m_actionBridge = new AvatarActionBridge(avatarSpawner, engineModManager.ModParentField,
+                m_terrainModule.TransportPort, m_terrainModule.ControlPort, diagnostics, "player-action");
+            m_inventoryStore = new AvatarInventoryStore(avatarSpawner, m_avatarModule.Records,
+                diagnostics, "player-action");
+            m_actionModule = new PlayerActionModule(m_actionBridge, m_inventoryStore,
+                delegate { return Time.RealTime; });
+            // 爆炸同步：主机 = 引擎执行后广播（含链式 / 投掷物 / 烟花）；客户端 = 只做表现。
+            // 引擎适配器持有子系统挂接与请求执行，网络模块只做协议 / 排序 / 去重 / 计数。
+            m_explosionEngine = new ExplosionReplicaEngine(avatarSpawner,
+                engineModManager.ModParentField, engineModManager.ModParentMethod, diagnostics,
+                "explosion-sync");
+            m_explosionModule = new ExplosionSyncModule(m_explosionEngine);
+            // 拾取物 / 投射物：主机是唯一创建/删除方；客户端只建副本，拾取走请求。
+            // 引擎适配器负责对象 → 网络 id、主机拾取执行（引擎 AcquireItems）、客户端插值。
+            m_entityEngine = new PickableReplicaEngine(avatarSpawner,
+                engineModManager.ModParentField, diagnostics, "entity-replication");
+            m_entityModule = new EntityReplicationModule(m_entityEngine, m_actionBridge,
+                m_inventoryStore);
             // 主机 Hello 资料闸门 = 联机角色模块（它拥有角色记录与本地玩家）：
             // 没有记录且 Hello 没带完整资料 → profile_required，不下发世界。
             m_terrainModule.SetHelloProfileGate(m_avatarModule);
@@ -137,6 +168,12 @@ namespace SuMultiplayer
             m_moduleHost.Register(m_transferModule);
             // 联机角色模块要 transport + world.transfer 两个硬依赖，所以最后注册。
             m_moduleHost.Register(m_avatarModule);
+            // 动作/背包模块要 transport + player.avatars（由联机角色模块提供）→ 必须在它之后注册。
+            m_moduleHost.Register(m_actionModule);
+            // 爆炸同步：transport 硬依赖；消息处理在 Attach 里注册。
+            m_moduleHost.Register(m_explosionModule);
+            // 实体复制：transport 硬依赖；消息处理在 Attach 里注册。
+            m_moduleHost.Register(m_entityModule);
             m_moduleHost.Register(m_creatureModule);
             // 客户端权威模块：transport 硬依赖；端口缺失时 Attach 会写明确原因（不假装同步）。
             m_moduleHost.Register(m_authorityModule);
@@ -183,6 +220,11 @@ namespace SuMultiplayer
             Log.Information("[SuMP] " + m_transferModule.StatusLine());
             Log.Information("[SuMP] " + m_terrainModule.StatusLine());
             Log.Information("[SuMP] " + m_avatarModule.StatusLine());
+            Log.Information("[SuMP] " + m_actionModule.StatusLine());
+            Log.Information("[SuMP] " + m_inventoryStore.StatusLine());
+            Log.Information("[SuMP] " + m_explosionModule.StatusLine());
+            Log.Information("[SuMP] " + m_entityModule.StatusLine());
+            Log.Information("[SuMP] " + m_entityEngine.Describe());
             Log.Information("[SuMP] " + m_creatureModule.StatusLine());
             Log.Information("[SuMP] " + m_creatureWorld.StatusLine());
             Log.Information("[SuMP] " + m_authorityModule.StatusLine());
@@ -228,6 +270,23 @@ namespace SuMultiplayer
                 "SuMultiplayer.Engine.SuSubsystemSaplingBlockBehavior");
             modInjector.Register("Game.SubsystemExplosions",
                 "SuMultiplayer.Engine.SuSubsystemExplosions");
+            // 拾取物 / 投射物：客户端不跑引擎的拾取结算 / 投射物模拟（它们会改地形、伤人、
+            // 生成掉落物、触发爆炸）；主机保留原生模拟，只摘掉远端化身的“本地拾取”。
+            // Source: Mod/ScMultiplayer/Func/Subsystem/SuSubsystemPickables.cs
+            // Source: Mod/ScMultiplayer/Func/Subsystem/SuSubsystemProjectiles.cs
+            modInjector.Register("Game.SubsystemPickables",
+                "SuMultiplayer.Engine.SuSubsystemPickables");
+            modInjector.Register("Game.SubsystemProjectiles",
+                "SuMultiplayer.Engine.SuSubsystemProjectiles");
+            // 客户端用爆炸物：投掷 / 火柴点引信改成主机请求；烟花爆开由主机广播 cosmetic 事件。
+            // 只有这三个方块行为被替换，其它方块行为不动。
+            // Source: Pak/Database.xml（ThrowableBlockBehavior / MatchBlockBehavior / FireworksBlockBehavior 的 Class）
+            modInjector.Register("Game.SubsystemThrowableBlockBehavior",
+                "SuMultiplayer.Engine.SuSubsystemThrowableBlockBehavior");
+            modInjector.Register("Game.SubsystemMatchBlockBehavior",
+                "SuMultiplayer.Engine.SuSubsystemMatchBlockBehavior");
+            modInjector.Register("Game.SubsystemFireworksBlockBehavior",
+                "SuMultiplayer.Engine.SuSubsystemFireworksBlockBehavior");
             modInjector.Register("Game.SubsystemElectricity",
                 "SuMultiplayer.Engine.SuSubsystemElectricity");
             eventBus.SubscribeEvent("GameDatabase.GameDatabase", args =>
@@ -292,6 +351,10 @@ namespace SuMultiplayer
                         Log.Information("[SuMP] " + m_sessionModule?.StatusLine());
                         Log.Information("[SuMP] " + m_terrainModule?.StatusLine());
                         Log.Information("[SuMP] " + m_avatarModule?.StatusLine());
+                        Log.Information("[SuMP] " + m_actionModule?.StatusLine());
+                        Log.Information("[SuMP] " + m_inventoryStore?.StatusLine());
+                        Log.Information("[SuMP] " + m_explosionModule?.StatusLine());
+                        Log.Information("[SuMP] " + m_entityModule?.StatusLine());
                         Log.Information("[SuMP] " + m_creatureModule?.StatusLine());
                         Log.Information("[SuMP] " + m_creatureWorld?.StatusLine());
                         Log.Information("[SuMP] " + m_nameRoller?.StatusLine());
@@ -310,6 +373,10 @@ namespace SuMultiplayer
             try
             {
                 m_avatarModule?.Detach(ModuleDetachReason.HostShutdown);
+                m_actionModule?.Detach(ModuleDetachReason.HostShutdown);
+                m_explosionModule?.Detach(ModuleDetachReason.HostShutdown);
+                m_entityModule?.Detach(ModuleDetachReason.HostShutdown);
+                m_explosionEngine?.Shutdown();
                 m_creatureModule?.Detach(ModuleDetachReason.HostShutdown);
                 m_authorityModule?.Detach(ModuleDetachReason.HostShutdown);
                 m_transferModule?.Detach(ModuleDetachReason.HostShutdown);

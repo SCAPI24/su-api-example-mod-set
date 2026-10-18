@@ -1,0 +1,221 @@
+syntax = "proto3";
+
+package sump.action;
+
+option csharp_namespace = "SuMultiplayer.Protocol.Action";
+option optimize_for = SPEED;
+
+import "google/protobuf/any.proto";
+import "position.proto";
+
+// ---------------------------------------------------------------------------
+// 玩家**动作 / 动画状态 / 背包 / 手持物**的复制（主机权威，客户端只应用）。
+//
+// Source: Mod/ScMultiplayer/Message/PlayerActionMessage.cs:PlayerActionMessage
+//         （Poke / Dig / Interact / Hit / Jump 的**表现**部分：动作种类 + 序列号 + 命中射线 + 手持物）
+// Source: Mod/ScMultiplayer/Message/PlayerAimMessage.cs:PlayerAimMessage
+//         （瞄准 Start/Update/Release/Cancel + 瞄准射线）
+// Source: Mod/ScMultiplayer/Message/GamePlayerPositionMessage.cs:78-160
+//         （位置快照尾部的 PokingPhase / AttackOrder / RowLeftOrder / RowRightOrder /
+//           ActiveSlotIndex / HandItemValue / HandItemCount / ItemOffset / ItemRotation /
+//           AimHandAngle / SlotValues / SlotCounts —— 这些字段在本重写版里拆成
+//           PlayerAction / PlayerMotionState / PlayerEquipment / PlayerInventory 四条消息）
+// Source: Mod/ScMultiplayer/Message/PlayerEquipmentMessage.cs:PlayerEquipmentMessage
+// Source: Mod/ScMultiplayer/Modules/Player/ScMultiplayerPlayerSync.cs:53-101（发送）
+// Source: Mod/ScMultiplayer/Modules/Network/ScMultiplayerMessageHandlers.cs:38-160（接收 + 应用）
+//
+// 方向（与旧实现一致）：
+//   · 客户端 → 主机：本机玩家的动作边沿 / 动画状态 / 手持物 / 背包变更（**上报**，不改别人的状态）；
+//   · 主机 → 所有客户端：主机自己的（client_id = 0）+ 每个玩家端的权威状态（**广播**，
+//     包括回给发起者做背包对账）。
+//
+// 消息 id 见 protocol.proto 的 MessageType（30..33，内置区间 1..999）。
+// ---------------------------------------------------------------------------
+
+// 动作种类。数值稳定，不允许重排（不同构建的客户端必须对同一个值有同样的解释）。
+//
+// Source: Mod/ScMultiplayer/Message/PlayerActionMessage.cs:PlayerActionType
+//   旧枚举是"请求/结果"语义（HitRequest/InteractRequest/DropRequest/InteractResult...）；
+//   本重写版只复制**表现动作**：请求/结果的权威链（挖掘、放置、丢弃、近战裁决）在
+//   编辑权威与地形同步链里，不在这里重复。对应关系写在每个值上。
+enum PlayerActionKind {
+  PLAYER_ACTION_KIND_UNSPECIFIED = 0;
+
+  // 挖掘中（ComponentMiner.DigCellFace 有值）：带格子 + 面 + 进度。
+  // Source: Mod/ScMultiplayer/Message/DigPresentationMessage.cs:DigPresentationMessage
+  // Source: Survivalcraft/Game/ComponentMiner.cs:ComponentMiner.Dig/DigProgress
+  PLAYER_ACTION_KIND_DIG = 1;
+
+  // 放置方块（手持物数量因放置而减少的那次抬手）。
+  // Source: Survivalcraft/Game/ComponentMiner.cs:ComponentMiner.Place
+  PLAYER_ACTION_KIND_PLACE = 2;
+
+  // 使用物品 / 通用抬手（旧 PlayerActionType.Poke 的表现面）。
+  // Source: Mod/ScMultiplayer/Modules/Player/ScMultiplayerPlayerSync.cs:222-238（BroadcastPlayerPokeIfStarted）
+  PLAYER_ACTION_KIND_USE = 3;
+
+  // 进食（手持 FoodBlock 且发生使用）。
+  // Source: Survivalcraft/Game/ComponentVitalStats.cs:ComponentVitalStats.Eat
+  // Source: Survivalcraft/Game/ComponentClothing.cs:ComponentClothing.Use
+  PLAYER_ACTION_KIND_EAT = 4;
+
+  // 投掷 / 瞄准释放（旧 PlayerAimMessage 的 Release：弓 / 弩 / 火枪 / 长矛 / 投掷物）。
+  // Source: Mod/ScMultiplayer/Message/PlayerAimMessage.cs:PlayerAimAction.Release
+  // Source: Survivalcraft/Game/SubsystemThrowableBlockBehavior.cs:OnAim(Completed)
+  PLAYER_ACTION_KIND_THROW = 5;
+
+  // 近战挥击（ComponentCreatureModel.AttackOrder 边沿）。
+  // Source: Mod/ScMultiplayer/Message/PlayerActionMessage.cs:PlayerActionType.HitRequest
+  // Source: Survivalcraft/Game/ComponentHumanModel.cs:ComponentHumanModel.Update（m_punchPhase）
+  PLAYER_ACTION_KIND_HIT = 6;
+
+  // 跳跃（JumpOrder 边沿）。
+  // Source: Mod/ScMultiplayer/Message/PlayerActionMessage.cs:PlayerActionType.JumpRequest
+  PLAYER_ACTION_KIND_JUMP = 7;
+
+  // 瞄准开始 / 取消 / 释放（不带投掷的释放，例如单纯松手）。
+  // Source: Mod/ScMultiplayer/Message/PlayerAimMessage.cs:PlayerAimAction
+  PLAYER_ACTION_KIND_AIM_START = 8;
+  PLAYER_ACTION_KIND_AIM_CANCEL = 9;
+  PLAYER_ACTION_KIND_AIM_RELEASE = 10;
+}
+
+// 一条动作。带"边沿 + 当时的相位/手感参数"，客户端据此在远端化身上重放抬手。
+// 载荷刻意保持小：典型 40..72 字节；只在边沿发送，不随帧率变化。
+message PlayerAction {
+  int32 client_id = 1;
+  // 每个（clientId）单调递增的动作序号；接收端按它丢弃重复/迟到的动作。
+  int32 sequence = 2;
+  int32 server_tick = 3;
+  PlayerActionKind kind = 4;
+  // 动作发生时的 ComponentMiner.PokingPhase（0..1）。接收端用它给抬手动画"接上相位"。
+  // Source: Survivalcraft/Game/ComponentMiner.cs:ComponentMiner.PokingPhase
+  float swing_phase = 5;
+  // true = 这个动作还在持续（挖掘中 / 按住攻击）；接收端据此让相位继续循环。
+  bool sustained = 6;
+  int32 active_slot_index = 7;   // -1 = 没有选中槽
+  int32 item_value = 8;          // 动作发生时的手持物（contents + data 打包，0 = 空手）
+  int32 item_count = 9;
+  bool has_aim = 10;
+  sump.position.Vec3 aim_origin = 11;
+  sump.position.Vec3 aim_direction = 12;
+  bool has_cell = 13;
+  int32 cell_x = 14;
+  int32 cell_y = 15;
+  int32 cell_z = 16;
+  int32 cell_face = 17;          // CellFace.Face（0..5）
+  float dig_progress = 18;       // ComponentMiner.DigProgress（0..1）
+  bool has_position = 19;
+  sump.position.Vec3 position = 20;
+  bool has_velocity = 21;
+  sump.position.Vec3 velocity = 22;
+
+  // Third-party extension points: see doc/message-protocol.md.
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}
+
+// 动画状态位（PlayerMotionState.flags）。
+// 与引擎的对应关系写在每一位上；接收端只按这些位强制**表现字段**，不模拟输入。
+enum PlayerMotionFlags {
+  MOTION_FLAG_NONE = 0;
+  MOTION_FLAG_WALKING = 1;      // 有移动输入且水平速度 > 0.5（ComponentHumanModel 步行动画口径）
+  MOTION_FLAG_RUNNING = 2;      // 水平速度 > 4（同一口径的"跑"；推送给人看/诊断）
+  MOTION_FLAG_JUMPING = 4;      // JumpOrder > 0.5
+  MOTION_FLAG_SWIMMING = 8;     // ComponentBody.ImmersionFactor > 0.5
+  MOTION_FLAG_FLYING = 16;      // ComponentLocomotion.IsCreativeFlyEnabled
+  MOTION_FLAG_CROUCHING = 32;   // ComponentBody.TargetCrouchFactor > 0
+  MOTION_FLAG_GROUNDED = 64;    // ComponentBody.StandingOnValue 有值
+  MOTION_FLAG_ON_FIRE = 128;    // ComponentOnFire.IsOnFire
+  MOTION_FLAG_HURT = 256;       // ComponentHealth.HealthChange < 0（受伤闪红）
+  MOTION_FLAG_AIMING = 512;     // ComponentPlayer.m_aim 有值
+  MOTION_FLAG_ATTACKING = 1024; // ComponentCreatureModel.AttackOrder
+  MOTION_FLAG_DIGGING = 2048;   // ComponentMiner.DigCellFace 有值
+  MOTION_FLAG_USING = 4096;     // ComponentMiner.PokingPhase > 0
+  MOTION_FLAG_EATING = 8192;    // 手持 FoodBlock 且正在使用
+  MOTION_FLAG_ROW_LEFT = 16384;  // 划船（ComponentCreatureModel.RowLeftOrder）
+  MOTION_FLAG_ROW_RIGHT = 32768; // 划船（ComponentCreatureModel.RowRightOrder）
+}
+
+// 一帧的动画状态（变化驱动：只有变化时才发，32Hz 上限）。
+message PlayerMotionState {
+  int32 client_id = 1;
+  int32 server_tick = 2;
+  uint32 flags = 3;
+  bool has_walk_order = 4;
+  sump.position.Vec2 walk_order = 5;
+  float jump_order = 6;
+  sump.position.Vec2 turn_order = 7;
+  float immersion = 8;
+  int32 active_slot_index = 9;   // -1 = 未知
+
+  // Third-party extension points: see doc/message-protocol.md.
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}
+
+// 手持物分类（接收端据此算瞄准时的手部姿势；块 id 在两端的注册表里一致，但分类只在
+// 发送端算一次，避免接收端为了一个姿势去查 BlocksManager）。
+// Source: Mod/ScMultiplayer/Modules/Player/ScMultiplayerPlayerSync.cs:141-190
+//         （ApplyPersistentAimPresentation：BowBlock / CrossbowBlock / MusketBlock / SpearBlock / IsAimable）
+enum HeldItemAimKind {
+  HELD_ITEM_AIM_KIND_NONE = 0;
+  HELD_ITEM_AIM_KIND_BOW = 1;
+  HELD_ITEM_AIM_KIND_CROSSBOW = 2;
+  HELD_ITEM_AIM_KIND_MUSKET = 3;
+  HELD_ITEM_AIM_KIND_SPEAR = 4;
+  HELD_ITEM_AIM_KIND_AIMABLE = 5;   // 其它 IsAimable 物品
+}
+
+// 手持物显示（槽位 + 内容 + 数据 + 堆叠）。
+// 主机 → 客户端：远端化身手里显示的东西；客户端 → 主机：本机玩家的手持物上报。
+// Source: Mod/ScMultiplayer/Message/PlayerEquipmentMessage.cs:PlayerEquipmentMessage
+//         （ActiveSlotIndex + 槽位值/数量；本重写版把手持物单独成一条小消息，
+//           背包整体走 PlayerInventory 的变更槽位）
+message PlayerEquipment {
+  int32 client_id = 1;
+  int32 revision = 2;           // 每个 clientId 单调递增；接收端只应用更大的
+  int32 inventory_version = 3;  // 与 PlayerInventory 同一个背包版本号
+  int32 active_slot_index = 4;
+  int32 slot_index = 5;         // 手持物所在的槽位（= active_slot_index；-1 = 无）
+  int32 item_value = 6;         // 0 = 空手
+  int32 item_count = 7;
+  bool has_item = 8;            // false = 空手（item_value/count 无意义）
+  HeldItemAimKind aim_kind = 9;
+  bool aiming = 10;             // 手持瞄准状态（弓/弩/火枪/长矛/投掷）
+
+  // Third-party extension points: see doc/message-protocol.md.
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}
+
+// 一个变更槽位。
+message InventorySlotChange {
+  int32 index = 1;
+  int32 value = 2;   // contents + data 打包（Terrain.MakeBlockValue 的值域）
+  int32 count = 3;
+}
+
+// 背包（主机权威）。客户端上报变更槽位 → 主机应用 + 落盘 + 广播；
+// 加入/重连/追帧时主机发 full=true 的全量关键帧，客户端据此恢复。
+// Source: Mod/ScMultiplayer/Message/PlayerEquipmentMessage.cs:PlayerEquipmentMessage（槽位数组 + 增量）
+// Source: Mod/ScMultiplayer/Message/PlayerActionMessage.cs:InventorySlotIndices/BaseValues/BaseCounts
+// Source: Mod/ScMultiplayer/Modules/Player/ScMultiplayerProfileHandlers.cs:576-618（RestorePlayerRecordInventory）
+message PlayerInventory {
+  int32 client_id = 1;
+  int32 revision = 2;
+  int32 inventory_version = 3;
+  int32 active_slot_index = 4;
+  // true = 全量关键帧：slots 覆盖 0..slots_count-1（加入 / 重连 / 恢复）。
+  bool full = 5;
+  int32 slots_count = 6;
+  repeated InventorySlotChange slots = 7;
+  // 客户端 → 主机：请主机重发一次全量关键帧（客户端刚进世界 / 上一条关键帧没赶上）。
+  // 主机收到后**立即**回一条 full=true（来自角色记录或化身当前背包）；这是显式请求，
+  // 不是静默重试。此时 slots 为空是合法的。
+  bool request_keyframe = 8;
+
+  // Third-party extension points: see doc/message-protocol.md.
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}
