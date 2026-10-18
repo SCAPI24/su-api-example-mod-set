@@ -5,6 +5,8 @@ using System.Reflection;
 using Engine;
 using Game;
 using TemplatesDatabase;
+using SuMultiplayer.Modules;
+using SuMultiplayer.Net;
 using SuMultiplayer.Terrain;
 
 namespace SuMultiplayer.Engine
@@ -591,6 +593,35 @@ namespace SuMultiplayer.Engine
 
         private double m_nextClearTime;
 
+        // ---------------------------------------------------------------- 烧尽表现上报（主机）
+        //
+        // 引擎的 5 秒分支（Source: Survivalcraft/Game/SubsystemFireBlockBehavior.cs:227-256）：
+        //   foreach (m_toBurnAway) { ChangeCell(..., 0); 碎屑 < 24m 最多 15; Sizzles < 16m 最多 4 }
+        //   m_toBurnAway.Clear(); m_toExpand.Clear();
+        // 这两类表现都不在 CellChange 流里，所以主机在**分支真正跑过**之后把这一批格上报给
+        // Engine/BurnAwayEffectReplicaEngine.cs → EffectsSyncModule 广播。
+        //
+        // 判定（只认烧尽，不认普通内容变化）：
+        //   ① 更新前快照 m_toBurnAway 的键；更新后该表由非空变空（只有 5 秒分支会清它）
+        //      ⇒ 快照里的每一格都被引擎烧掉（引擎对每个条目都生成表现，不论 ChangeCell 是否 no-op）；
+        //   ② 同一帧内新排队并被同帧 5 秒分支消费的目标不在快照里，用火候选格的 before/after
+        //      差异补齐：只有"有内容 → 空气"才算（data-only / 换成别的方块 / 非火更新窗口都不算）。
+        // 不上报普通 CellChange：那些仍由火捕获窗口 + 引擎改动表按原路径下发。
+        // ----------------------------------------------------------------
+        private readonly BurnAwayBatchCollector m_burnAwayCollector = new BurnAwayBatchCollector();
+        private IBurnAwayEffectSink m_burnAwayReplica;
+        private IDictionary m_burnAwayTable;
+        private long m_burnAwayTableFailures;
+        private long m_burnAwaySinkFailures;
+        private long m_lastBurnAwayProblemLogMs;
+
+        /// <summary>主机烧尽批次上报点（Engine/BurnAwayEffectReplicaEngine.cs 的 Pump 挂接）。</summary>
+        internal IBurnAwayEffectSink BurnAwayReplica
+        {
+            get => m_burnAwayReplica;
+            set => m_burnAwayReplica = value;
+        }
+
         void IUpdateable.Update(float dt)
         {
             if (!ReplicaGates.Allow(SubsystemTerrain, ReplicaMutationSource.Fire))
@@ -603,17 +634,88 @@ namespace SuMultiplayer.Engine
             //    Collect 与引擎改动表合并 → 每格恰好下发一次。
             SuSubsystemTerrain shell = SubsystemTerrain as SuSubsystemTerrain;
             bool capturing = shell != null && shell.BeginFireCapture();
+            IBurnAwayEffectSink burnAwaySink = m_burnAwayReplica;
+            bool burnCapture = burnAwaySink != null;
+            if (burnCapture)
+            {
+                m_burnAwayCollector.BeginBatch();
+                m_burnAwayCollector.SnapshotPending(BurnAwayTable);
+            }
             try
             {
                 Point3[] candidates = capturing ? SnapshotFireCandidates(FireCandidateKeyCap) : Array.Empty<Point3>();
                 int[] before = capturing ? ReplicaGates.ReadCellValues(SubsystemTerrain, candidates) : Array.Empty<int>();
                 base.Update(dt);
                 if (capturing) ReplicaGates.RegisterFireChangedCells(SubsystemTerrain, candidates, before);
+                if (burnCapture)
+                {
+                    IDictionary table = BurnAwayTable;
+                    bool periodicBranchRan = table != null &&
+                        m_burnAwayCollector.PendingCount > 0 && table.Count == 0;
+                    m_burnAwayCollector.CollectProcessedPending(periodicBranchRan);
+                    if (capturing)
+                    {
+                        int[] after = ReplicaGates.ReadCellValues(SubsystemTerrain, candidates);
+                        m_burnAwayCollector.CollectCandidateChanges(candidates, before, after);
+                    }
+                }
             }
             finally
             {
                 if (capturing) shell?.EndFireCapture();
             }
+            if (burnCapture && m_burnAwayCollector.Count > 0)
+                EmitBurnAwayBatch(burnAwaySink);
+        }
+
+        /// <summary>引擎私有表 m_toBurnAway（只用于"5 秒分支是否清空"的判定与更新前快照）。</summary>
+        private IDictionary BurnAwayTable
+        {
+            get
+            {
+                if (m_burnAwayTable != null) return m_burnAwayTable;
+                m_burnAwayTable = ReplicaGates.GetField(this, "m_toBurnAway",
+                    typeof(SubsystemFireBlockBehavior)) as IDictionary;
+                if (m_burnAwayTable == null)
+                {
+                    m_burnAwayTableFailures++;
+                    LogBurnAwayProblem("读不到引擎私有表 m_toBurnAway → 主机无法上报烧尽批次" +
+                        "（客户端不会有碎屑/声音；累计 " + m_burnAwayTableFailures + " 次，明确失败不静默）");
+                }
+                return m_burnAwayTable;
+            }
+        }
+
+        /// <summary>一批烧尽格已经由引擎处理完：只上报一次（去重 + 封顶由收集器保证）。</summary>
+        private void EmitBurnAwayBatch(IBurnAwayEffectSink sink)
+        {
+            BurnAwayCellData[] cells = m_burnAwayCollector.ToArray();
+            int dropped = m_burnAwayCollector.Dropped;
+            try
+            {
+                sink.OnHostBurnAwayBatch(cells, dropped);
+            }
+            catch (Exception e)
+            {
+                m_burnAwaySinkFailures++;
+                LogBurnAwayProblem("烧尽批次上报异常（" + cells.Length + " 格）：" +
+                    e.GetType().Name + " " + e.Message +
+                    " → 本批客户端没有碎屑/声音（累计 " + m_burnAwaySinkFailures +
+                    " 次，明确计数，不静默）");
+            }
+        }
+
+        /// <summary>
+        /// 烧尽上报路径的限流日志（10s 一行，带累计次数）：反射失败 / 上报异常的可见出口。
+        /// 不用一次性标志 —— 后续失败也必须能被看见。
+        /// </summary>
+        private void LogBurnAwayProblem(string message)
+        {
+            long nowMs = (long)(Time.RealTime * 1000.0);
+            if (m_lastBurnAwayProblemLogMs != 0 &&
+                nowMs - m_lastBurnAwayProblemLogMs < 10000) return;
+            m_lastBurnAwayProblemLogMs = nowMs;
+            Log.Warning("[SuMP] burnAwayEffect: " + message);
         }
 
         /// <summary>

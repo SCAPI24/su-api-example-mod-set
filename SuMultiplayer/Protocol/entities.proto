@@ -181,3 +181,141 @@ message EntityResyncRequest {
   bytes ext = 100;
   google.protobuf.Any custom = 101;
 }
+
+// ---------------------------------------------------------------------------
+// Client-initiated item drop / throw / weapon fire (host requests).
+//
+// Authority split (client = presentation only):
+//   * client UI drop (Q / gamepad B / inventory drop) must NOT remove the item
+//     from the local inventory and must NOT call AddPickable.  The engine drop
+//     branch (ComponentPlayer.Update) is suppressed by the injected input shell;
+//     the client sends PickableDropRequest and waits for the host verdict.
+//   * client throw / bow / crossbow / musket fire must NOT call FireProjectile,
+//     must NOT consume the item and must NOT damage durability.  The block
+//     behaviour shells send ProjectileFireRequest instead.
+//   * host validates (identity / slot content vs its authoritative inventory /
+//     distance / item legality), mutates its authoritative avatar inventory,
+//     spawns the pickable / projectile with the engine's own API, persists the
+//     avatar inventory and broadcasts the entity through EntityState /
+//     EntitySnapshot (32 Hz change driven).  The requester also gets one sparse
+//     inventory delta so the local mirror converges without a local deduction.
+//
+// Wire ids live in protocol.proto (append-only, reserved 50..53):
+//   PICKABLE_DROP_REQUEST = 50, PICKABLE_DROP_RESULT = 51,
+//   PROJECTILE_FIRE_REQUEST = 52, PROJECTILE_FIRE_RESULT = 53.
+// ---------------------------------------------------------------------------
+
+// Client -> host: "drop the whole stack in this inventory slot".
+//
+// Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update
+//         （playerInput.Drop → RemoveSlotItems(active, count) → SubsystemPickables.AddPickable）
+message PickableDropRequest {
+  // Per-connection request sequence, starts at 1, strictly increasing.
+  int64 sequence = 1;
+  // Active inventory slot the drop came from.  The host requires it to match
+  // its own authoritative active slot (the engine only drops the active slot).
+  int32 active_slot = 2;
+  // Item value (contents + data) the client believes it is dropping.  The host
+  // requires an exact match against its authoritative inventory slot; a stale
+  // mirror is rejected explicitly ("slot-mismatch") instead of guessing.
+  int32 item_value = 3;
+  // Stack count the client believes it has.  Diagnostics only: the host drops
+  // its own authoritative count (never the claimed one).
+  int32 count = 4;
+  // Client drop origin (diagnostics; the host spawns at its own avatar).
+  sump.position.Vec3 position = 5;
+  // Normalized look direction (engine uses 8 m/s along it).
+  sump.position.Vec3 direction = 6;
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}
+
+// Host -> requester: verdict for one PickableDropRequest.
+//
+// The pickable itself is broadcast to every client through EntityState(ADD);
+// this result only carries the requester's private sparse inventory delta.
+// A rejected request never loses an item on either side, and the reason is
+// always explicit ("not-player-peer", "no-avatar", "slot-range", "empty-slot",
+// "slot-mismatch", "active-slot-changed", "distance", "direction-invalid",
+// "item-illegal", "remove-refused", "spawn-failed", ...).
+message PickableDropResult {
+  int64 sequence = 1;
+  bool accepted = 2;
+  string reason = 3;
+  // Authoritative item dropped (value + count); zero when rejected.
+  int32 item_value = 4;
+  int32 count = 5;
+  // Authoritative spawn position / velocity (zero when rejected).
+  sump.position.Vec3 position = 6;
+  sump.position.Vec3 velocity = 7;
+  // Sparse authoritative inventory delta for the requester.
+  repeated InventorySlotDelta inventory = 8;
+  int32 inventory_version = 9;
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}
+
+// Which engine path spawned the projectile(s).
+enum ProjectileFireKind {
+  PROJECTILE_FIRE_KIND_UNSPECIFIED = 0;
+  // SubsystemThrowableBlockBehavior: spear / snowball / stone chunk / egg / brick ...
+  PROJECTILE_FIRE_KIND_THROWABLE = 1;
+  // SubsystemBowBlockBehavior (one arrow, speed from draw).
+  PROJECTILE_FIRE_KIND_BOW = 2;
+  // SubsystemCrossbowBlockBehavior (one bolt, only when fully drawn).
+  PROJECTILE_FIRE_KIND_CROSSBOW = 3;
+  // SubsystemMusketBlockBehavior (musket ball / buckshot spread / blank shot).
+  PROJECTILE_FIRE_KIND_MUSKET = 4;
+}
+
+// Client -> host: throw an item / fire a bow, crossbow or musket.
+//
+// Source: Survivalcraft/Game/SubsystemThrowableBlockBehavior.cs:OnAim(Completed)
+// Source: Survivalcraft/Game/SubsystemBowBlockBehavior.cs:OnAim(Completed)
+// Source: Survivalcraft/Game/SubsystemCrossbowBlockBehavior.cs:OnAim(Completed)
+// Source: Survivalcraft/Game/SubsystemMusketBlockBehavior.cs:OnAim(Completed)
+message ProjectileFireRequest {
+  int64 sequence = 1;
+  // ProjectileFireKind.
+  int32 kind = 2;
+  // Held item value (contents + data) the client fired with.  The host requires
+  // an exact match against its authoritative active slot.
+  int32 item_value = 3;
+  int32 active_slot = 4;
+  // Client eye position (diagnostics; the host uses its own avatar eye).
+  sump.position.Vec3 origin = 5;
+  // Normalized aim direction.
+  sump.position.Vec3 direction = 6;
+  // Bow / crossbow draw (0..15) or musket hammer state (0/1); 0 for throwables.
+  // Diagnostics / sanity range only: the host executes with its own
+  // authoritative item data (draw, arrow type, load state).
+  int32 charge = 7;
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}
+
+// Host -> requester: verdict for one ProjectileFireRequest.
+//
+// The spawned projectiles are broadcast to every client through
+// EntityState(ADD); this result only carries the requester's private sparse
+// inventory delta (consumed item / durability / bow reset).
+// spawned = 0 with accepted = true is a faithful engine outcome (blank musket
+// shot, bow released without an arrow, crossbow not fully drawn): the host
+// still performed the authoritative state transition, it just created no
+// projectile.  A rejected request has spawned = 0 and never consumes anything.
+message ProjectileFireResult {
+  int64 sequence = 1;
+  bool accepted = 2;
+  string reason = 3;
+  int32 kind = 4;
+  int32 item_value = 5;
+  // Number of authoritative projectiles created by the host engine.
+  int32 spawned = 6;
+  // First projectile's authoritative position / velocity (zero when spawned=0).
+  sump.position.Vec3 position = 7;
+  sump.position.Vec3 velocity = 8;
+  repeated InventorySlotDelta inventory = 9;
+  int32 inventory_version = 10;
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}

@@ -120,19 +120,64 @@ namespace SuMultiplayer.Modules
         public long ResyncRequestsReceived;
         public long CaptureFailures;
         public long ClientStateOnHostRejected;
+
+        // ---- 客户端丢弃请求（dropRequestSent / Accepted / Rejected(reason) / Timeout）
+        public long DropRequestsSent;
+        public long DropRequestFailures;
+        public long DropRequestsReceived;
+        public long DropAccepted;
+        public long DropRejected;
+        public long DropDuplicate;
+        public long DropTimeouts;
+        public long DropSuppressed;
+        public long DropResultsUnknown;
+        public long DropInventoryApplied;
+        public long DropInventoryFailures;
+        public long DropPersisted;
+        public long DropPersistFailures;
+        public long DropResultSendFailures;
+
+        // ---- 客户端投掷 / 开火请求
+        public long FireRequestsSent;
+        public long FireRequestFailures;
+        public long FireRequestsReceived;
+        public long FireAccepted;
+        public long FireRejected;
+        public long FireDuplicate;
+        public long FireTimeouts;
+        public long FireSuppressed;
+        public long FireResultsUnknown;
+        public long FireInventoryApplied;
+        public long FireInventoryFailures;
+        public long FirePersisted;
+        public long FirePersistFailures;
+        public long FireResultSendFailures;
+        /// <summary>主机权威生成的投射物总数（含霰弹的多发）。</summary>
+        public long FireProjectilesSpawned;
+        /// <summary>主机接受但没有生成投射物的次数（空包弹 / 没装箭 / 弩没拉满）。</summary>
+        public long FireBlankShots;
+
+        // ---- 客户端回执应用（丢弃 + 开火共用，需求里的 inventoryDeltaApplied）
+        public long InventoryDeltaApplied;
+        public long InventoryDeltaFailures;
+
+        /// <summary>拒绝原因计数（按固定原因词汇；实例对象，无静态状态）。</summary>
+        public readonly RequestReasonTally DropRejectReasons = new RequestReasonTally();
+        public readonly RequestReasonTally FireRejectReasons = new RequestReasonTally();
     }
 
     /// <summary>
     /// 拾取物 / 投射物复制的**引擎侧端口**（实现方 = Engine/PickableReplicaEngine.cs，
     /// 组合根注入）。模块层（Modules/）保持不依赖 Game：
-    ///   · 主机：抓当前权威实体 / 执行客户端拾取请求；
+    ///   · 主机：抓当前权威实体 / 执行客户端拾取、丢弃、投掷与开火请求；
     ///   · 客户端：把主机的状态变成引擎里的**副本**（只渲染，不拾取、不参与任何权威结算）。
     ///
     /// 权威口径（不可回退）：
     ///   · 主机是唯一创建 / 更新 / 删除拾取物与投射物的一方；
     ///   · 客户端只调用 <see cref="TryApplyPickable"/> / <see cref="TryApplyProjectile"/>，
-    ///     引擎侧实现里没有 FireProjectile / AcquireItems / DestroyCell 的客户端路径；
-    ///   · 客户端的拾取只产生 <see cref="ClientPickupSubmitted"/> 请求。
+    ///     引擎侧实现里没有客户端自己的 FireProjectile / AddPickable / AcquireItems 路径；
+    ///   · 客户端的拾取只产生 <see cref="ClientPickupSubmitted"/> 请求；
+    ///   · 客户端的丢弃 / 投掷 / 开火只产生 <see cref="IEntityRequestSink"/> 请求。
     /// </summary>
     public interface IEntityReplicaPort
     {
@@ -144,6 +189,18 @@ namespace SuMultiplayer.Modules
 
         /// <summary>客户端：扫描到可以请求拾取的副本（模块负责序号 / 去重 / 发送）。</summary>
         event Action<PickablePickupCandidate> ClientPickupSubmitted;
+
+        /// <summary>
+        /// 模块在 Attach 里挂上的请求入口（引擎侧输入钩子 / 方块行为外壳调用它）。
+        /// null = 模块没上线：丢掉 / 开火意图会明确失败，绝不本地创建实体。
+        /// </summary>
+        IEntityRequestSink RequestSink { get; set; }
+
+        /// <summary>客户端安全网计数：被清除的“非主机复制”拾取物（正常联机流程应保持 0）。</summary>
+        long ForeignPickablesRemoved { get; }
+
+        /// <summary>客户端安全网计数：被清除的“非主机复制”投射物（正常联机流程应保持 0）。</summary>
+        long ForeignProjectilesRemoved { get; }
 
         /// <summary>每帧调用：Project 换新 / 注入子系统出现 / 角色变化时重新挂接。</summary>
         void Pump();
@@ -164,6 +221,26 @@ namespace SuMultiplayer.Modules
         bool TryAcquire(int clientId, in PickableAcquireRequestData request,
             out PickableAcquireOutcome outcome, out string reason);
 
+        /// <summary>
+        /// 主机：校验并执行一条客户端丢弃请求（整格丢出）。
+        /// 校验：玩家端 / 化身存活 / 活跃槽一致 / 槽内容与主机权威背包完全一致 / 距离 / 道具合法。
+        /// 执行：从**主机权威背包**移除整格 → 用引擎 AddPickable 在主机权威位置生成 →
+        /// 回传稀疏背包增量（客户端据此对账，本地之前没有任何扣除）。
+        /// false + reason = 明确拒绝（两端都不掉物品）。
+        /// </summary>
+        bool TryDrop(int clientId, in PickableDropRequestData request,
+            out PickableDropOutcome outcome, out string reason);
+
+        /// <summary>
+        /// 主机：校验并执行一条客户端投掷 / 开火请求（长矛 / 雪球 / 弓 / 弩 / 火枪）。
+        /// 执行：用引擎自己的 FireProjectile 生成权威投射物，并消费道具 / 耐久
+        /// （与对应方块行为的 Completed 分支同形）。
+        /// false + reason = 明确拒绝（不生成投射物、不消费）；成功但 spawned=0 是引擎本身的
+        /// 合法结果（空包弹 / 没装箭 / 弩没拉满），此时仍执行权威状态切换。
+        /// </summary>
+        bool TryFireProjectile(int clientId, in ProjectileFireRequestData request,
+            out ProjectileFireOutcome outcome, out string reason);
+
         /// <summary>客户端：创建 / 更新 / 移除一个拾取物副本（按 state.Action）。</summary>
         bool TryApplyPickable(in PickableStateData state, out string reason);
 
@@ -178,5 +255,19 @@ namespace SuMultiplayer.Modules
 
         /// <summary>状态行用：引擎侧计数 / 诊断文本（不改变行为）。</summary>
         string Describe();
+    }
+
+    /// <summary>
+    /// 模块实现的**客户端请求入口**：引擎侧采集到“丢弃 / 投掷 / 开火”意图后调用它。
+    /// 返回 true = 请求已入队发送（客户端可以安全吞掉本地预测）；
+    /// false + reason = 明确失败（客户端不扣物品、不生成实体，调用方必须写日志）。
+    /// </summary>
+    public interface IEntityRequestSink
+    {
+        /// <summary>整格丢弃（客户端本地还没有任何扣除）。</summary>
+        bool TrySubmitDrop(in PickableDropIntent intent, out string reason);
+
+        /// <summary>投掷 / 弓 / 弩 / 火枪开火（客户端本地还没有扣道具 / 扣耐久）。</summary>
+        bool TrySubmitProjectileFire(in ProjectileFireIntent intent, out string reason);
     }
 }

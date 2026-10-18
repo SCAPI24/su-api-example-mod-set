@@ -106,6 +106,41 @@ enum MessageType {
   PICKABLE_ACQUIRE_REQUEST = 40;
   PICKABLE_ACQUIRE_RESULT = 41;
   ENTITY_RESYNC_REQUEST = 42;
+
+  // Client-initiated item drop / throw / weapon fire (entities.proto).
+  // Host validates and executes; the client never deducts locally before the
+  // result and never creates pickables / projectiles by itself.
+  // Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update (Drop)
+  // Source: Survivalcraft/Game/SubsystemThrowableBlockBehavior.cs:OnAim
+  // Source: Survivalcraft/Game/SubsystemBowBlockBehavior.cs:OnAim
+  // Source: Survivalcraft/Game/SubsystemCrossbowBlockBehavior.cs:OnAim
+  // Source: Survivalcraft/Game/SubsystemMusketBlockBehavior.cs:OnAim
+  PICKABLE_DROP_REQUEST = 50;
+  PICKABLE_DROP_RESULT = 51;
+  PROJECTILE_FIRE_REQUEST = 52;
+  PROJECTILE_FIRE_RESULT = 53;
+
+  // Burn-away presentation (effects.proto): host-authoritative, clients only
+  // spawn debris particles / play the sizzle sound.  Append-only.
+  // Source: Survivalcraft/Game/SubsystemFireBlockBehavior.cs:227-256
+  BURN_AWAY_EFFECT = 43;
+
+  // Host-authoritative block use / interaction + container (block-entity) state.
+  // Client -> host: "I clicked this block" (use request / close). The host validates
+  // identity, distance, the block and its behaviour and performs the interaction.
+  // Host -> client: result + authoritative ContainerState for the opened inventory.
+  // Container edits are the UI's slot changes; the host applies them to the single
+  // authoritative ComponentInventoryBase and broadcasts the resulting state.
+  // Source: Survivalcraft/Game/SubsystemCraftingTableBlockBehavior.cs:OnInteract
+  // Source: Survivalcraft/Game/SubsystemChestBlockBehavior.cs:OnInteract
+  // Source: Survivalcraft/Game/SubsystemFurnaceBlockBehavior.cs:OnInteract
+  // Source: Survivalcraft/Game/SubsystemDispenserBlockBehavior.cs:OnInteract
+  // Source: Mod/ScMultiplayer/Modules/World/ScMultiplayerContainerHandlers.cs
+  BLOCK_USE_REQUEST = 60;
+  BLOCK_USE_RESULT = 61;
+  CONTAINER_STATE = 62;
+  CONTAINER_EDIT_REQUEST = 63;
+  CONTAINER_EDIT_RESULT = 64;
 }
 
 // Logical envelope metadata.  The current single-message transport puts these

@@ -776,6 +776,78 @@ namespace SuMultiplayer.Net
 
         private static bool IsValidId(int id) => id > 0 && id <= EntityReplicationLimits.MaxNetworkId;
 
+        /// <summary>
+        /// 稀疏背包槽位增量的严格解码（拾取回执 / 丢弃回执 / 开火回执共用同一口径）：
+        ///   · 下标 / 数量非负；
+        ///   · 数量为 0 ⇒ 值必须为 0（空槽带值语义含糊，绝不"按 0 猜"）；
+        ///   · 数量 &gt; 0 ⇒ 值必须非 0。
+        /// 任何一条非法 ⇒ 整条消息拒绝（不半条应用）。
+        /// </summary>
+        internal static bool TryDecodeInventorySlots(IList<PE.InventorySlotDelta> slots,
+            out int[] indices, out int[] values, out int[] counts, out string reason)
+        {
+            indices = Array.Empty<int>();
+            values = Array.Empty<int>();
+            counts = Array.Empty<int>();
+            reason = null;
+            if (slots == null) return true;
+            var outIndices = new int[slots.Count];
+            var outValues = new int[slots.Count];
+            var outCounts = new int[slots.Count];
+            for (int i = 0; i < slots.Count; i++)
+            {
+                PE.InventorySlotDelta slot = slots[i];
+                if (slot == null)
+                {
+                    reason = "slot[" + i + "]-null";
+                    return false;
+                }
+                if (slot.Index < 0)
+                {
+                    reason = "slot[" + i + "]-index-" + slot.Index;
+                    return false;
+                }
+                if (slot.Count < 0)
+                {
+                    reason = "slot[" + i + "]-count-" + slot.Count;
+                    return false;
+                }
+                if (slot.Count > 0 && slot.Value == 0)
+                {
+                    reason = "slot[" + i + "]-empty-value";
+                    return false;
+                }
+                if (slot.Count == 0 && slot.Value != 0)
+                {
+                    reason = "slot[" + i + "]-value-without-count";
+                    return false;
+                }
+                outIndices[i] = slot.Index;
+                outValues[i] = slot.Count == 0 ? 0 : slot.Value;
+                outCounts[i] = slot.Count;
+            }
+            indices = outIndices;
+            values = outValues;
+            counts = outCounts;
+            return true;
+        }
+
+        /// <summary>请求里的方向向量：有限、非零（客户端发单位向量；主机随后自己归一化）。</summary>
+        internal static bool TryDirection(PP.Vec3 value, string field, out Vector3 result,
+            out string reason)
+        {
+            result = Vector3.Zero;
+            if (!TryVector(value, field, out Vector3 raw, out reason)) return false;
+            float lengthSquared = raw.LengthSquared();
+            if (lengthSquared < 0.25f || lengthSquared > 4f)
+            {
+                reason = field + "-length-" + MathUtils.Sqrt(lengthSquared).ToString("F3");
+                return false;
+            }
+            result = Vector3.Normalize(raw);
+            return true;
+        }
+
         public static bool IsFinite(float value) => !float.IsNaN(value) && !float.IsInfinity(value);
 
         public static PP.Vec3 ToVec3(Vector3 value) =>
@@ -790,7 +862,7 @@ namespace SuMultiplayer.Net
         public static Quaternion FromQuat(PP.Quat value) =>
             new Quaternion(value.X, value.Y, value.Z, value.W);
 
-        private static bool TryVector(PP.Vec3 value, string field, out Vector3 result,
+        internal static bool TryVector(PP.Vec3 value, string field, out Vector3 result,
             out string reason)
         {
             result = Vector3.Zero;

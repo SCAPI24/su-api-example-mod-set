@@ -7,20 +7,23 @@ using SuMultiplayer.Net;
 namespace SuMultiplayer.Engine
 {
     /// <summary>
-    /// 客户端投掷拦截（**只拦爆炸物**：BombBlock / IncendiaryBombBlock / FireworksBlock）。
+    /// 客户端投掷拦截（爆炸物 → ExplosionRequest；其余投掷物 → ProjectileFireRequest）。
     ///
     /// 原引擎路径：<c>SubsystemThrowableBlockBehavior.OnAim(Completed)</c> 在**本机**
     /// FireProjectile + 扣道具。联机时客户端不模拟投掷物（否则客户端会出现一个主机不知道的
-    /// "幽灵炸弹"，且爆炸只能在客户端本地发生）。这里改成：
-    ///   · 客户端：发 ExplosionRequest(THROW) → 主机校验后 FireProjectile → 爆炸由主机广播；
-    ///   · 主机 / 单机：照旧 base.OnAim（原路径不动）；
-    ///   · 非爆炸类投掷物（长矛 / 雪球 …）保持原行为，不影响本次范围外的功能。
+    /// "幽灵炸弹 / 幽灵长矛"，且本地预测会被实体复制清理掉）。这里改成：
+    ///   · 爆炸物（BombBlock / IncendiaryBombBlock / FireworksBlock）：发 ExplosionRequest(THROW)
+    ///     → 主机校验后 FireProjectile → 爆炸由主机广播；
+    ///   · 其余投掷物（长矛 / 雪球 / 石块 / 鸡蛋 / 砖块 …）：发 ProjectileFireRequest
+    ///     → 主机校验后用引擎自己的 FireProjectile 生成权威投射物、扣主机权威背包；
+    ///   · 主机 / 单机：照旧 base.OnAim（原路径不动）。
     ///
     /// Source: Survivalcraft/Game/SubsystemThrowableBlockBehavior.cs:OnAim
     /// </summary>
     public sealed class SuSubsystemThrowableBlockBehavior : SubsystemThrowableBlockBehavior
     {
         private bool m_warnedNoReplica;
+        private bool m_warnedNoProjectileReplica;
 
         public override bool OnAim(Ray3 aim, ComponentMiner componentMiner, AimState state)
         {
@@ -36,7 +39,7 @@ namespace SuMultiplayer.Engine
                 contents >= BlocksManager.Blocks.Length) return false;
             Block block = BlocksManager.Blocks[contents];
             if (!(block is BombBlock) && !(block is IncendiaryBombBlock) && !(block is FireworksBlock))
-                return base.OnAim(aim, componentMiner, state);
+                return SubmitProjectileFire(aim, componentMiner, block, value, slot);
 
             ExplosionReplicaEngine replica = GetReplica();
             if (replica == null)
@@ -53,6 +56,41 @@ namespace SuMultiplayer.Engine
             var request = new ExplosionRequestData(0L, ExplosionRequestKinds.Throw, eye,
                 aim.Direction, value, slot);
             return replica.SubmitClientRequest(in request, out _);
+        }
+
+        /// <summary>
+        /// 非爆炸类投掷物：发 ProjectileFireRequest（主机生成权威投射物并扣道具）。
+        /// 客户端只播 Audio/Throw + 挥手，不生成任何本地投射物。
+        /// </summary>
+        private bool SubmitProjectileFire(Ray3 aim, ComponentMiner componentMiner, Block block,
+            int value, int slot)
+        {
+            if (!block.IsAimable || block.ProjectileSpeed <= 0f)
+                return base.OnAim(aim, componentMiner, AimState.Completed);
+            PickableReplicaEngine replica = GetProjectileReplica();
+            if (replica == null)
+            {
+                if (!m_warnedNoProjectileReplica)
+                {
+                    m_warnedNoProjectileReplica = true;
+                    Log.Warning("[SuMP] 客户端投掷时没有挂上实体复制适配器 → 请求不会发出，" +
+                        "本机也不生成幽灵投掷物（检查实体复制模块是否 Active）");
+                }
+                return false;
+            }
+            Vector3 eye = componentMiner.ComponentCreature.ComponentCreatureModel.EyePosition +
+                componentMiner.ComponentCreature.ComponentBody.Matrix.Right * 0.4f;
+            var intent = new ProjectileFireIntent(ProjectileFireKinds.Throwable, value, slot, eye,
+                Vector3.Normalize(aim.Direction), 0);
+            if (!replica.SubmitClientProjectileFire(in intent, out _)) return false;
+            ProjectileFirePresentation.PlayThrow(Project, componentMiner, eye);
+            return true;
+        }
+
+        private PickableReplicaEngine GetProjectileReplica()
+        {
+            SubsystemProjectiles projectiles = Project?.FindSubsystem<SubsystemProjectiles>(false);
+            return (projectiles as SuSubsystemProjectiles)?.Replica;
         }
 
         private bool IsClientReplica =>

@@ -44,9 +44,15 @@ namespace SuMultiplayer
         /// <summary>爆炸同步：引擎适配（主机检测 / 客户端表现 / 请求执行）+ 网络模块（新文件，不碰别人的模块）。</summary>
         private ExplosionReplicaEngine m_explosionEngine;
         private ExplosionSyncModule m_explosionModule;
+        /// <summary>烧尽表现同步：主机 = 引擎 5 秒烧尽批次后广播；客户端 = 只放碎屑 / 嘶嘶声。</summary>
+        private BurnAwayEffectReplicaEngine m_burnAwayEngine;
+        private EffectsSyncModule m_burnAwayModule;
         /// <summary>拾取物 / 投射物复制：引擎适配（主机抓取/执行拾取、客户端副本）+ 网络模块。</summary>
         private PickableReplicaEngine m_entityEngine;
         private EntityReplicationModule m_entityModule;
+        /// <summary>方块使用 / 容器同步：引擎适配（客户端输入拦截 + 副本面板 / 主机权威库存）+ 网络模块。</summary>
+        private ContainerReplicaEngine m_blockUseEngine;
+        private BlockUseSyncModule m_blockUseModule;
         private CreatureSpawnModule m_creatureModule;
         private CreatureWorldAdapter m_creatureWorld;
         /// <summary>客户端副本 / 主机权威（编辑审批 + 世界信息 + RNG 状态）；组合根装配，模块只拿端口。</summary>
@@ -125,12 +131,24 @@ namespace SuMultiplayer
                 engineModManager.ModParentField, engineModManager.ModParentMethod, diagnostics,
                 "explosion-sync");
             m_explosionModule = new ExplosionSyncModule(m_explosionEngine);
+            // 烧尽表现：引擎 5 秒烧尽分支（SubsystemFireBlockBehavior.cs:227-256）只在本端生成
+            // 碎屑/嘶嘶声，不随 CellChange 下发。火外壳上报已处理完的一批格，本模块负责广播；
+            // 客户端只做表现（24 m 碎屑 / 16 m 声音，每批 15 / 4，限速）。
+            m_burnAwayEngine = new BurnAwayEffectReplicaEngine(avatarSpawner, diagnostics, "effects-sync");
+            m_burnAwayModule = new EffectsSyncModule(m_burnAwayEngine);
             // 拾取物 / 投射物：主机是唯一创建/删除方；客户端只建副本，拾取走请求。
             // 引擎适配器负责对象 → 网络 id、主机拾取执行（引擎 AcquireItems）、客户端插值。
             m_entityEngine = new PickableReplicaEngine(avatarSpawner,
                 engineModManager.ModParentField, diagnostics, "entity-replication");
             m_entityModule = new EntityReplicationModule(m_entityEngine, m_actionBridge,
                 m_inventoryStore);
+            // 方块使用 / 容器：客户端在 ComponentPlayer.Update 之前拦下 Interact（不本地执行），
+            // 主机校验后执行引擎方块行为 / 提供权威方块实体库存；容器面板在客户端显示副本，
+            // 槽位变化走 ContainerEditRequest，主机落地后广播权威 ContainerState。
+            m_blockUseEngine = new ContainerReplicaEngine(avatarSpawner,
+                engineModManager.ModParentField, engineModManager.ModParentMethod, diagnostics,
+                "block-use");
+            m_blockUseModule = new BlockUseSyncModule(m_blockUseEngine);
             // 主机 Hello 资料闸门 = 联机角色模块（它拥有角色记录与本地玩家）：
             // 没有记录且 Hello 没带完整资料 → profile_required，不下发世界。
             m_terrainModule.SetHelloProfileGate(m_avatarModule);
@@ -177,8 +195,12 @@ namespace SuMultiplayer
             m_moduleHost.Register(m_actionModule);
             // 爆炸同步：transport 硬依赖；消息处理在 Attach 里注册。
             m_moduleHost.Register(m_explosionModule);
+            // 烧尽表现同步：transport 硬依赖；消息处理在 Attach 里注册。
+            m_moduleHost.Register(m_burnAwayModule);
             // 实体复制：transport 硬依赖；消息处理在 Attach 里注册。
             m_moduleHost.Register(m_entityModule);
+            // 方块使用 / 容器同步：transport 硬依赖；消息处理在 Attach 里注册。
+            m_moduleHost.Register(m_blockUseModule);
             m_moduleHost.Register(m_creatureModule);
             // 客户端权威模块：transport 硬依赖；端口缺失时 Attach 会写明确原因（不假装同步）。
             m_moduleHost.Register(m_authorityModule);
@@ -228,7 +250,9 @@ namespace SuMultiplayer
             Log.Information("[SuMP] " + m_actionModule.StatusLine());
             Log.Information("[SuMP] " + m_inventoryStore.StatusLine());
             Log.Information("[SuMP] " + m_explosionModule.StatusLine());
+            Log.Information("[SuMP] " + m_burnAwayModule.StatusLine());
             Log.Information("[SuMP] " + m_entityModule.StatusLine());
+            Log.Information("[SuMP] " + m_blockUseModule.StatusLine());
             Log.Information("[SuMP] " + m_entityEngine.Describe());
             Log.Information("[SuMP] " + m_creatureModule.StatusLine());
             Log.Information("[SuMP] " + m_creatureWorld.StatusLine());
@@ -310,6 +334,26 @@ namespace SuMultiplayer
                 "SuMultiplayer.Engine.SuSubsystemMatchBlockBehavior");
             modInjector.Register("Game.SubsystemFireworksBlockBehavior",
                 "SuMultiplayer.Engine.SuSubsystemFireworksBlockBehavior");
+            // 客户端投掷 / 弓 / 弩 / 火枪：Completed 分支改成主机请求（主机用引擎自己的
+            // FireProjectile 生成权威投射物并消费道具 / 耐久）；客户端不本地预测、不本地扣除。
+            // Source: Survivalcraft/Game/SubsystemThrowableBlockBehavior.cs:OnAim
+            // Source: Survivalcraft/Game/SubsystemBowBlockBehavior.cs:OnAim
+            // Source: Survivalcraft/Game/SubsystemCrossbowBlockBehavior.cs:OnAim
+            // Source: Survivalcraft/Game/SubsystemMusketBlockBehavior.cs:OnAim
+            modInjector.Register("Game.SubsystemBowBlockBehavior",
+                "SuMultiplayer.Engine.SuSubsystemBowBlockBehavior");
+            modInjector.Register("Game.SubsystemCrossbowBlockBehavior",
+                "SuMultiplayer.Engine.SuSubsystemCrossbowBlockBehavior");
+            modInjector.Register("Game.SubsystemMusketBlockBehavior",
+                "SuMultiplayer.Engine.SuSubsystemMusketBlockBehavior");
+            // 客户端丢弃（Q / 手柄 B）：引擎的丢弃分支在 ComponentPlayer.Update 里先扣物品再
+            // AddPickable（本地扣除 + 本地实体）。这里替换输入组件，在 ComponentInput.Update
+            // 之后、ComponentPlayer.Update 之前把 Drop 意图交给实体复制模块发 PickableDropRequest，
+            // 并清掉 Drop 标志 → 客户端不扣物品、不生成会被清理的幽灵拾取物。
+            // Source: Survivalcraft/Game/ComponentInput.cs:ComponentInput.Update（UpdateOrder.Input）
+            // Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update（Drop 分支）
+            modInjector.Register("Game.ComponentInput",
+                "SuMultiplayer.Engine.SuComponentInput");
             modInjector.Register("Game.SubsystemElectricity",
                 "SuMultiplayer.Engine.SuSubsystemElectricity");
             eventBus.SubscribeEvent("GameDatabase.GameDatabase", args =>
@@ -377,7 +421,9 @@ namespace SuMultiplayer
                         Log.Information("[SuMP] " + m_actionModule?.StatusLine());
                         Log.Information("[SuMP] " + m_inventoryStore?.StatusLine());
                         Log.Information("[SuMP] " + m_explosionModule?.StatusLine());
+                        Log.Information("[SuMP] " + m_burnAwayModule?.StatusLine());
                         Log.Information("[SuMP] " + m_entityModule?.StatusLine());
+                        Log.Information("[SuMP] " + m_blockUseModule?.StatusLine());
                         Log.Information("[SuMP] " + m_creatureModule?.StatusLine());
                         Log.Information("[SuMP] " + m_creatureWorld?.StatusLine());
                         Log.Information("[SuMP] " + m_nameRoller?.StatusLine());
@@ -399,8 +445,12 @@ namespace SuMultiplayer
                 m_avatarModule?.Detach(ModuleDetachReason.HostShutdown);
                 m_actionModule?.Detach(ModuleDetachReason.HostShutdown);
                 m_explosionModule?.Detach(ModuleDetachReason.HostShutdown);
+                m_burnAwayModule?.Detach(ModuleDetachReason.HostShutdown);
                 m_entityModule?.Detach(ModuleDetachReason.HostShutdown);
+                m_blockUseModule?.Detach(ModuleDetachReason.HostShutdown);
+                m_blockUseEngine?.SetRequestSink(null);
                 m_explosionEngine?.Shutdown();
+                m_burnAwayEngine?.Shutdown();
                 m_creatureModule?.Detach(ModuleDetachReason.HostShutdown);
                 m_authorityModule?.Detach(ModuleDetachReason.HostShutdown);
                 m_transferModule?.Detach(ModuleDetachReason.HostShutdown);

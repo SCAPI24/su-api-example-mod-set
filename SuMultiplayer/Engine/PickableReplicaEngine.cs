@@ -18,18 +18,23 @@ namespace SuMultiplayer.Engine
     ///     按对象分配稳定的网络 id（对象消失即从映射里剪掉，模块据此发 REMOVE）；
     ///   · 执行客户端拾取请求：距离 / 创建宽限 / 背包容量都由本端引擎判断，
     ///     用引擎自己的 <c>ComponentInventoryBase.AcquireItems</c> 落地，并回传稀疏背包增量；
+    ///   · 执行客户端丢弃 / 投掷 / 开火请求：校验玩家端 / 活跃槽 / 同种物品 / 距离，用引擎自己的
+    ///     <c>SubsystemPickables.AddPickable</c> / <c>SubsystemProjectiles.FireProjectile</c> 生成权威实体，
+    ///     消费道具 / 耐久后回传稀疏背包增量（与对应方块行为的 OnAim(Completed) 同形）；
     ///   · 把远端化身的“原生拾取”从引擎的拾取列表里摘掉：客户端拾取必须走请求链，
     ///     否则主机引擎会直接把掉落物塞进远端化身背包，客户端看不到背包变化、也没有回执。
     /// 客户端：
     ///   · 只创建 / 更新 / 移除引擎里的 Pickable / Projectile **副本**；
     ///   · 原生拾取由 <c>SuSubsystemPickables</c>（客户端清空玩家列表）抑制；
+    ///   · 丢弃输入（Q / 手柄 B）由 <c>SuComponentInput</c> 在 ComponentPlayer.Update 之前拦下，
+    ///     只发请求、**不本地扣物品**；投掷 / 开火由方块行为外壳只发请求、**不本地生成投射物**；
     ///   · 投射物**不跑** <c>SubsystemProjectiles.Update</c>（它会在客户端 DestroyCell / 伤人 /
     ///     生成掉落物 / 触发爆炸），位置由本适配层按主机快照插值；
     ///   · 扫描附近副本只产生 <see cref="IEntityReplicaPort.ClientPickupSubmitted"/>，不本地结算。
     ///
     /// 无静态状态：反射入口 / 化身表 / 计数器都挂在实例上。
     /// </summary>
-    public sealed class PickableReplicaEngine : IEntityReplicaPort
+    public sealed class PickableReplicaEngine : IEntityReplicaPort, IEntityDropInputSink
     {
         private const float RestingPositionEpsilonSquared = 0.0004f;
         private const float PickupAttractDistanceSquared = 3.0625f;   // 1.75m（引擎吸引范围）
@@ -46,6 +51,26 @@ namespace SuMultiplayer.Engine
             new Dictionary<string, long>(StringComparer.Ordinal);
         private readonly HashSet<string> m_loggedOnce = new HashSet<string>(StringComparer.Ordinal);
         private readonly Func<ComponentPlayer, bool> m_remoteAvatarFilter;
+
+        // ---- 客户端丢弃输入拦截（SuComponentInput 每帧调用）
+        /// <summary>
+        /// ComponentInput.m_playerInput 的 ref 入口（BindFieldRef 一次绑定、每帧无反射）：
+        /// 采集到丢弃意图后把 Drop 标志清掉，引擎的 ComponentPlayer.Update 因此不会本地扣物品 +
+        /// 本地 AddPickable（那会生成一个被"外来拾取物"清理掉的幽灵，物品直接消失）。
+        /// </summary>
+        private readonly ModFieldRef<ComponentInput, PlayerInput> m_inputRef;
+        private IEntityRequestSink m_requestSink;
+        private SuComponentInput m_dropInput;
+        private bool m_dropInputInjectionMissingLogged;
+        private long m_dropIntentSubmissions;
+        private long m_dropIntentFailures;
+        private long m_fireIntentSubmissions;
+        private long m_fireIntentFailures;
+        private long m_dropAccepted;
+        private long m_dropRejected;
+        private long m_fireAccepted;
+        private long m_fireRejected;
+        private readonly global::Engine.Random m_requestRandom = new global::Engine.Random();
 
         // ---- 引擎挂接
         private Project m_project;
@@ -143,6 +168,18 @@ namespace SuMultiplayer.Engine
             m_diagnostics = diagnostics;
             m_ownerId = string.IsNullOrEmpty(ownerId) ? "entity-replication" : ownerId;
             m_remoteAvatarFilter = IsRemoteAvatar;
+            // 丢弃拦截依赖 ComponentInput.m_playerInput：绑不上就是明确的装配失败（绝不静默）：
+            // 没有这条路径，客户端按 Q 会走引擎原生掉落 → 本地扣除 + 本地拾取物被清理 → 物品消失。
+            try
+            {
+                m_inputRef = m_parentField.BindFieldRef<ComponentInput, PlayerInput>("m_playerInput");
+            }
+            catch (Exception e)
+            {
+                throw new InvalidOperationException(
+                    "无法绑定 ComponentInput.m_playerInput：客户端丢弃请求无法在本地扣除之前拦截" +
+                    "（引擎版本不匹配？）", e);
+            }
         }
 
         public event Action<PickablePickupCandidate> ClientPickupSubmitted;
@@ -151,6 +188,17 @@ namespace SuMultiplayer.Engine
 
         public bool IsReplicaReady => m_project != null && m_pickables != null &&
             m_projectiles != null;
+
+        /// <summary>模块在 Attach 里挂上的请求入口（客户端丢弃 / 投掷 / 开火）。</summary>
+        public IEntityRequestSink RequestSink
+        {
+            get => m_requestSink;
+            set => m_requestSink = value;
+        }
+
+        public long ForeignPickablesRemoved => m_foreignPickablesRemoved;
+
+        public long ForeignProjectilesRemoved => m_foreignProjectilesRemoved;
 
         // ================================================================ 挂接
 
@@ -230,10 +278,67 @@ namespace SuMultiplayer.Engine
                 m_pickableShell.Replica = this;
                 m_pickableShell.IsRemotePlayer = m_clientReplica ? null : m_remoteAvatarFilter;
             }
+            // 客户端：把丢弃输入钩子挂到本机玩家的 SuComponentInput 上（主机 / 单机不挂）。
+            UpdateDropInput(project);
+        }
+
+        /// <summary>
+        /// 客户端丢弃输入钩子的挂接：找到本机玩家的 <see cref="SuComponentInput"/> 并把本适配器
+        /// 作为 sink 写进去（实例属性，**没有任何静态状态**）。主机会摘掉它（主机自己的丢弃
+        /// 走原生路径，由引擎权威执行后被实体复制抓走）。
+        /// </summary>
+        private void UpdateDropInput(Project project)
+        {
+            if (!m_clientReplica)
+            {
+                DetachDropInput();
+                return;
+            }
+            if (project == null || m_spawner == null)
+            {
+                DetachDropInput();
+                return;
+            }
+            ComponentPlayer local = null;
+            if (m_spawner.TryGetLocalPlayer(project, out PlayerData localData, out _))
+                local = localData?.ComponentPlayer;
+            ComponentInput input = local?.Entity?.FindComponent<ComponentInput>();
+            if (input == null)
+            {
+                DetachDropInput();
+                return;
+            }
+            if (!(input is SuComponentInput shell))
+            {
+                if (!m_dropInputInjectionMissingLogged)
+                {
+                    m_dropInputInjectionMissingLogged = true;
+                    LogProblemOnce("drop-input-injection-missing",
+                        "客户端没有注入 SuComponentInput（当前：" + input.GetType().Name +
+                        "）→ 丢弃无法在本地扣除之前拦截，物品可能被引擎原生掉落 + 清理（请检查 " +
+                        "Game.ComponentInput 注入）");
+                }
+                DetachDropInput();
+                return;
+            }
+            if (!ReferenceEquals(shell, m_dropInput))
+            {
+                DetachDropInput();
+                m_dropInput = shell;
+            }
+            shell.DropSink = this;
+        }
+
+        private void DetachDropInput()
+        {
+            if (m_dropInput == null) return;
+            if (ReferenceEquals(m_dropInput.DropSink, this)) m_dropInput.DropSink = null;
+            m_dropInput = null;
         }
 
         private void ResetEngineState(string reason)
         {
+            DetachDropInput();
             RemoveAllClientReplicas(reason);
             m_pickableKeys.Clear();
             m_pickableById.Clear();
@@ -675,6 +780,789 @@ namespace SuMultiplayer.Engine
             indices = changedIndices.ToArray();
             values = changedValues.ToArray();
             counts = changedCounts.ToArray();
+        }
+
+        // ================================================================ 客户端：丢弃 / 投掷 / 开火意图
+
+        /// <summary>
+        /// 客户端丢弃输入（由 <see cref="SuComponentInput"/> 在 base.Update 之后调用）。
+        ///
+        /// 关键口径：**本地绝不扣除**。这里只采集意图交给模块发 PickableDropRequest，然后把
+        /// 引擎这一帧的 <c>PlayerInput.Drop</c> 清掉，让 <c>ComponentPlayer.Update</c> 的
+        /// 原生掉落分支（RemoveSlotItems + AddPickable）不执行 —— 否则客户端会扣掉物品并生成
+        /// 一个被"外来拾取物"清理掉的幽灵，表现为"按 Q 东西直接消失"。
+        ///
+        /// 发送失败也照样吞掉原生掉落：宁可这一下没丢出去（有明确日志 + 计数），也不能丢物品。
+        /// Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update
+        /// </summary>
+        bool IEntityDropInputSink.TryAcceptDrop(ComponentInput input, ComponentPlayer player)
+        {
+            if (!m_clientReplica || input == null || player == null || m_project == null)
+                return false;
+            // 只处理**本机玩家**：远端化身的 Updateable 在联机角色创建时已被摘掉，这里仍显式校验。
+            if (m_spawner == null ||
+                !m_spawner.TryGetLocalPlayer(m_project, out PlayerData local, out _) ||
+                !ReferenceEquals(local?.ComponentPlayer, player))
+                return false;
+            ComponentMiner miner = player.ComponentMiner;
+            IInventory inventory = miner?.Inventory;
+            if (inventory == null) return false;
+            int slot = inventory.ActiveSlotIndex;
+            if (slot < 0 || slot >= inventory.SlotsCount) return false;
+            int value = inventory.GetSlotValue(slot);
+            int count = inventory.GetSlotCount(slot);
+            if (value == 0 || count <= 0) return false;   // 空手：原生分支本来也不会掉东西
+            ComponentBody body = player.ComponentBody;
+            ComponentCreatureModel model = player.ComponentCreatureModel;
+            if (body == null || model == null) return false;
+
+            // 与引擎 Drop 分支完全相同的落点与速度（方向 = 眼睛朝向）。
+            Vector3 position = body.Position +
+                new Vector3(0f, body.StanceBoxSize.Y * 0.66f, 0f) + 0.25f * body.Matrix.Forward;
+            Vector3 direction = Matrix.CreateFromQuaternion(model.EyeRotation).Forward;
+            var intent = new PickableDropIntent(slot, value, count, position, direction);
+
+            IEntityRequestSink sink = m_requestSink;
+            bool submitted;
+            string reason;
+            if (sink == null)
+            {
+                submitted = false;
+                reason = "no-request-sink";
+            }
+            else
+            {
+                try
+                {
+                    submitted = sink.TrySubmitDrop(in intent, out reason);
+                }
+                catch (Exception e)
+                {
+                    submitted = false;
+                    reason = "submit-exception-" + e.GetType().Name;
+                }
+            }
+            bool accept = submitted;
+            if (accept)
+            {
+                m_dropIntentSubmissions++;
+            }
+            else
+            {
+                m_dropIntentFailures++;
+                LogProblemOnce("drop-submit:" + reason,
+                    "客户端丢弃意图没有发出去（" + reason + "）→ 本机**不扣物品**、也不本地生成拾取物" +
+                    "（物品仍在背包里；可重试）");
+            }
+            // 无论发没发出去都吞掉引擎原生掉落：绝不本地扣除。
+            m_inputRef(input).Drop = false;
+            return accept;
+        }
+
+        /// <summary>
+        /// 客户端投掷 / 开火入口（由方块行为外壳调用）。
+        /// 成功 = 请求已入队发送；客户端不会本地生成投射物，也不扣道具 / 耐久。
+        /// </summary>
+        public bool SubmitClientProjectileFire(in ProjectileFireIntent intent, out string reason)
+        {
+            if (!m_clientReplica)
+            {
+                reason = "not-client-replica";
+                return false;
+            }
+            IEntityRequestSink sink = m_requestSink;
+            bool submitted;
+            if (sink == null)
+            {
+                submitted = false;
+                reason = "no-request-sink";
+            }
+            else
+            {
+                try
+                {
+                    submitted = sink.TrySubmitProjectileFire(in intent, out reason);
+                }
+                catch (Exception e)
+                {
+                    submitted = false;
+                    reason = "submit-exception-" + e.GetType().Name;
+                }
+            }
+            if (submitted)
+            {
+                m_fireIntentSubmissions++;
+                return true;
+            }
+            m_fireIntentFailures++;
+            LogProblemOnce("fire-submit:" + reason,
+                "客户端开火意图没有发出去 " + intent.Describe() + "（" + reason +
+                "）→ 本机**不生成投射物**、也不扣道具 / 耐久");
+            return false;
+        }
+
+        // ================================================================ 主机：执行丢弃请求
+
+        public bool TryDrop(int clientId, in PickableDropRequestData request,
+            out PickableDropOutcome outcome, out string reason)
+        {
+            try
+            {
+                bool accepted = TryDropCore(clientId, in request, out outcome, out reason);
+                if (accepted) m_dropAccepted++;
+                else m_dropRejected++;
+                return accepted;
+            }
+            catch (Exception e)
+            {
+                outcome = default;
+                reason = "host-exception-" + e.GetType().Name;
+                m_dropRejected++;
+                LogRateLimited("drop-exception:" + e.GetType().Name,
+                    "执行丢弃请求时引擎异常（clientId=" + clientId + " " + request.Describe() +
+                    "）：" + e.GetType().Name + " " + e.Message + " → 明确拒绝（不静默成功）");
+                return false;
+            }
+        }
+
+        private bool TryDropCore(int clientId, in PickableDropRequestData request,
+            out PickableDropOutcome outcome, out string reason)
+        {
+            outcome = default;
+            reason = null;
+            if (m_clientReplica)
+            {
+                reason = "not-host";
+                return false;
+            }
+            if (m_project == null)
+            {
+                reason = "no-project";
+                return false;
+            }
+            if (m_pickables == null)
+            {
+                reason = "no-pickables";
+                return false;
+            }
+            if (!TryResolveHostActor(m_project, clientId, out ComponentPlayer player, out _,
+                    out reason))
+                return false;
+            IInventory inventory = player.ComponentMiner?.Inventory;
+            if (inventory == null)
+            {
+                reason = "no-inventory";
+                return false;
+            }
+            int slot = request.ActiveSlot;
+            if (slot < 0 || slot >= inventory.SlotsCount)
+            {
+                reason = "slot-range";
+                return false;
+            }
+            int value = inventory.GetSlotValue(slot);
+            int count = inventory.GetSlotCount(slot);
+            if (value == 0 || count <= 0)
+            {
+                reason = "empty-slot";
+                return false;
+            }
+            // 槽内容必须是**同一种物品**（contents 完全一致）。data 位（拉弓进度 / 击锤 /
+            // 装填状态 / 家具款式）在客户端本地会随操作每 100ms 变化，而主机镜像要等一次上传；
+            // 要求整值完全相等会把合法丢弃判成 slot-mismatch。执行时一律使用**主机权威值**，
+            // 客户端上报的 data 只作诊断（不一致时限流记一行，不静默）。
+            if (value == 0 || request.ItemValue == 0 ||
+                global::Game.Terrain.ExtractContents(value) !=
+                global::Game.Terrain.ExtractContents(request.ItemValue))
+            {
+                reason = "slot-mismatch";
+                return false;
+            }
+            if (value != request.ItemValue)
+            {
+                LogRateLimited("drop-data-mismatch:" + clientId,
+                    "clientId=" + clientId + " 丢弃请求的物品 data 与主机镜像不同（请求 " +
+                    request.ItemValue + " / 权威 " + value + "）：按主机权威值丢弃" +
+                    "（draw/击锤等本地状态位允许一个 RTT 的滞后）");
+            }
+            Block block = ResolveBlock(value);
+            if (block == null)
+            {
+                reason = "item-illegal";
+                return false;
+            }
+            ComponentBody body = player.ComponentBody;
+            if (Vector3.DistanceSquared(body.Position, request.Position) > 36f)
+            {
+                reason = "distance";
+                return false;
+            }
+            Vector3 direction = Vector3.Normalize(request.Direction);
+            CaptureInventorySlots(inventory, out int[] beforeValues, out int[] beforeCounts);
+            int removed = inventory.RemoveSlotItems(slot, count);
+            if (removed <= 0)
+            {
+                reason = "remove-refused";
+                return false;
+            }
+            // 权威落点 / 速度与引擎原生 Drop 分支同形（位置用主机化身，不用客户端上报值）。
+            Vector3 position = body.Position +
+                new Vector3(0f, body.StanceBoxSize.Y * 0.66f, 0f) + 0.25f * body.Matrix.Forward;
+            Vector3 velocity = 8f * direction;
+            Pickable pickable;
+            try
+            {
+                pickable = m_pickables.AddPickable(value, removed, position, velocity, null);
+            }
+            catch (Exception e)
+            {
+                pickable = null;
+                LogRateLimited("drop-add-exception:" + e.GetType().Name,
+                    "主机 AddPickable 抛异常（clientId=" + clientId + " value=" + value +
+                    " count=" + removed + "）：" + e.GetType().Name + " " + e.Message);
+            }
+            if (pickable == null)
+            {
+                // 生成失败 → 把物品放回权威背包（绝不静默吞物品）。
+                int leftover = ComponentInventoryBase.AcquireItems(inventory, value, removed);
+                if (leftover > 0)
+                {
+                    LogRateLimited("drop-rollback-incomplete:" + clientId,
+                        "丢弃生成失败后回滚背包不完整（clientId=" + clientId + " value=" + value +
+                        " 未放回 " + leftover + "/" + removed + " 个）→ 物品可能丢失，请人工检查背包");
+                }
+                reason = "spawn-failed";
+                return false;
+            }
+            CaptureInventorySlots(inventory, out int[] afterValues, out int[] afterCounts);
+            BuildInventoryDelta(beforeValues, beforeCounts, afterValues, afterCounts, slot,
+                out int[] indices, out int[] values, out int[] counts);
+            outcome = new PickableDropOutcome(value, removed, pickable.Position, pickable.Velocity,
+                indices, values, counts, CurrentInventoryVersion());
+            return true;
+        }
+
+        // ================================================================ 主机：执行投掷 / 开火请求
+
+        public bool TryFireProjectile(int clientId, in ProjectileFireRequestData request,
+            out ProjectileFireOutcome outcome, out string reason)
+        {
+            try
+            {
+                bool accepted = TryFireProjectileCore(clientId, in request, out outcome,
+                    out reason);
+                if (accepted) m_fireAccepted++;
+                else m_fireRejected++;
+                return accepted;
+            }
+            catch (Exception e)
+            {
+                outcome = default;
+                reason = "host-exception-" + e.GetType().Name;
+                m_fireRejected++;
+                LogRateLimited("fire-exception:" + e.GetType().Name,
+                    "执行开火请求时引擎异常（clientId=" + clientId + " " + request.Describe() +
+                    "）：" + e.GetType().Name + " " + e.Message + " → 明确拒绝（不静默成功）");
+                return false;
+            }
+        }
+
+        private bool TryFireProjectileCore(int clientId, in ProjectileFireRequestData request,
+            out ProjectileFireOutcome outcome, out string reason)
+        {
+            outcome = default;
+            reason = null;
+            if (m_clientReplica)
+            {
+                reason = "not-host";
+                return false;
+            }
+            if (m_project == null)
+            {
+                reason = "no-project";
+                return false;
+            }
+            if (m_projectiles == null)
+            {
+                reason = "no-projectiles";
+                return false;
+            }
+            if (!TryResolveHostActor(m_project, clientId, out ComponentPlayer player, out _,
+                    out reason))
+                return false;
+            IInventory inventory = player.ComponentMiner?.Inventory;
+            if (inventory == null)
+            {
+                reason = "no-inventory";
+                return false;
+            }
+            int slot = request.ActiveSlot;
+            if (slot < 0 || slot >= inventory.SlotsCount)
+            {
+                reason = "slot-range";
+                return false;
+            }
+            // 引擎只在活跃槽上消费 / 扣耐久，所以请求槽必须与主机权威活跃槽一致。
+            if (inventory.ActiveSlotIndex != slot)
+            {
+                reason = "active-slot-changed";
+                return false;
+            }
+            if (inventory.GetSlotCount(slot) <= 0)
+            {
+                reason = "empty-slot";
+                return false;
+            }
+            int itemValue = inventory.GetSlotValue(slot);
+            // 同 TryDropCore：只要求同一种物品（contents 一致），data 位允许本地状态滞后；
+            // 执行用的 item value 一律取主机权威值（客户端上报值只作诊断）。
+            if (itemValue == 0 || request.ItemValue == 0 ||
+                global::Game.Terrain.ExtractContents(itemValue) !=
+                global::Game.Terrain.ExtractContents(request.ItemValue))
+            {
+                reason = "slot-mismatch";
+                return false;
+            }
+            if (itemValue != request.ItemValue)
+            {
+                LogRateLimited("fire-data-mismatch:" + clientId,
+                    "clientId=" + clientId + " 开火请求的物品 data 与主机镜像不同（请求 " +
+                    request.ItemValue + " / 权威 " + itemValue + "）：按主机权威值执行");
+            }
+            ComponentBody body = player.ComponentBody;
+            ComponentCreatureModel model = player.ComponentCreatureModel;
+            if (model == null)
+            {
+                reason = "no-model";
+                return false;
+            }
+            if (Vector3.DistanceSquared(model.EyePosition, request.Origin) > 36f)
+            {
+                reason = "distance";
+                return false;
+            }
+            // 编解码已经归一化并校验长度；这里再取一次，避免任何空向量的浮点噪声。
+            Vector3 direction = Vector3.Normalize(request.Direction);
+            Block block = ResolveBlock(itemValue);
+            if (block == null)
+            {
+                reason = "item-illegal";
+                return false;
+            }
+            CaptureInventorySlots(inventory, out int[] beforeValues, out int[] beforeCounts);
+            int spawned;
+            Vector3 firstPosition;
+            Vector3 firstVelocity;
+            switch (request.Kind)
+            {
+                case ProjectileFireKinds.Throwable:
+                    if (!TryFireThrowable(player, inventory, slot, itemValue, block,
+                            direction, out spawned, out firstPosition, out firstVelocity,
+                            out reason))
+                        return false;
+                    break;
+                case ProjectileFireKinds.Bow:
+                    if (!TryFireBow(player, inventory, slot, itemValue, block, direction,
+                            out spawned, out firstPosition, out firstVelocity, out reason))
+                        return false;
+                    break;
+                case ProjectileFireKinds.Crossbow:
+                    if (!TryFireCrossbow(player, inventory, slot, itemValue, block,
+                            direction, out spawned, out firstPosition, out firstVelocity,
+                            out reason))
+                        return false;
+                    break;
+                case ProjectileFireKinds.Musket:
+                    if (!TryFireMusket(player, inventory, slot, itemValue, block,
+                            direction, out spawned, out firstPosition, out firstVelocity,
+                            out reason))
+                        return false;
+                    break;
+                default:
+                    reason = "kind-unknown";
+                    return false;
+            }
+            CaptureInventorySlots(inventory, out int[] afterValues, out int[] afterCounts);
+            BuildInventoryDelta(beforeValues, beforeCounts, afterValues, afterCounts, slot,
+                out int[] indices, out int[] values, out int[] counts);
+            outcome = new ProjectileFireOutcome(request.Kind, spawned, itemValue,
+                firstPosition, firstVelocity, indices, values, counts, CurrentInventoryVersion());
+            return true;
+        }
+
+        /// <summary>
+        /// 投掷：与 <c>SubsystemThrowableBlockBehavior.OnAim(Completed)</c> 同形。
+        /// 先 FireProjectile（null = 被地形挡住 → 明确拒绝、不扣道具），成功后扣 1 个。
+        /// </summary>
+        private bool TryFireThrowable(ComponentPlayer player, IInventory inventory, int slot,
+            int itemValue, Block block, Vector3 direction, out int spawned,
+            out Vector3 firstPosition, out Vector3 firstVelocity, out string reason)
+        {
+            spawned = 0;
+            firstPosition = Vector3.Zero;
+            firstVelocity = Vector3.Zero;
+            reason = null;
+            // 爆炸物必须走 ExplosionRequest（否则同一个投掷物会既生成普通投射物又引爆）。
+            if (block is BombBlock || block is IncendiaryBombBlock || block is FireworksBlock)
+            {
+                reason = "use-explosion-request";
+                return false;
+            }
+            if (!block.IsAimable || block.ProjectileSpeed <= 0f)
+            {
+                reason = "item-not-throwable";
+                return false;
+            }
+            ComponentBody body = player.ComponentBody;
+            ComponentCreatureModel model = player.ComponentCreatureModel;
+            Vector3 origin = model.EyePosition + body.Matrix.Right * 0.4f;
+            float speed = block.ProjectileSpeed;
+            if (player.ComponentLevel != null)
+                speed *= 0.5f * (player.ComponentLevel.StrengthFactor - 1f) + 1f;
+            Vector3 velocity = body.Velocity + direction * speed;
+            Projectile projectile = m_projectiles.FireProjectile(itemValue, origin, velocity,
+                m_requestRandom.Vector3(5f, 10f), player);
+            if (projectile == null)
+            {
+                reason = "projectile-blocked";
+                return false;
+            }
+            int removed = inventory.RemoveSlotItems(slot, 1);
+            if (removed <= 0)
+            {
+                // 理论上不可能（前面校验过 count>0）：把刚生成的投射物撤掉，绝不白送。
+                projectile.ToRemove = true;
+                reason = "consume-refused";
+                return false;
+            }
+            spawned = 1;
+            firstPosition = projectile.Position;
+            firstVelocity = projectile.Velocity;
+            return true;
+        }
+
+        /// <summary>
+        /// 弓：与 <c>SubsystemBowBlockBehavior.OnAim(Completed)</c> 同形。
+        /// 有箭才生成箭投射物；**无论是否射出**都重置 draw=0 并扣耐久
+        /// （射出的箭类型同时从弓的 data 里清掉，与引擎一致）。
+        /// </summary>
+        private bool TryFireBow(ComponentPlayer player, IInventory inventory, int slot,
+            int itemValue, Block block, Vector3 direction, out int spawned,
+            out Vector3 firstPosition, out Vector3 firstVelocity, out string reason)
+        {
+            spawned = 0;
+            firstPosition = Vector3.Zero;
+            firstVelocity = Vector3.Zero;
+            reason = null;
+            if (!(block is BowBlock))
+            {
+                reason = "item-not-bow";
+                return false;
+            }
+            int data = global::Game.Terrain.ExtractData(itemValue);
+            int draw = MathUtils.Clamp(BowBlock.GetDraw(data), 0, 15);
+            ArrowBlock.ArrowType? arrowType = BowBlock.GetArrowType(data);
+            Projectile spawnedProjectile = null;
+            if (arrowType.HasValue)
+            {
+                ComponentBody body = player.ComponentBody;
+                ComponentCreatureModel model = player.ComponentCreatureModel;
+                Vector3 origin = model.EyePosition + body.Matrix.Right * 0.3f -
+                    body.Matrix.Up * 0.2f;
+                Vector3 spread = Vector3.Zero;
+                if (arrowType == ArrowBlock.ArrowType.WoodenArrow)
+                    spread = new Vector3(0.025f, 0.025f, 0.025f);
+                else if (arrowType == ArrowBlock.ArrowType.StoneArrow)
+                    spread = new Vector3(0.01f, 0.01f, 0.01f);
+                float speed = MathUtils.Lerp(0f, 28f, MathUtils.Pow((float)draw / 15f, 0.75f));
+                if (player.ComponentLevel != null)
+                    speed *= 0.5f * (player.ComponentLevel.StrengthFactor - 1f) + 1f;
+                Vector3 right = Vector3.Normalize(Vector3.Cross(direction, Vector3.UnitY));
+                Vector3 up = Vector3.Normalize(Vector3.Cross(direction, right));
+                Vector3 noise = m_requestRandom.Float(-spread.X, spread.X) * right +
+                    m_requestRandom.Float(-spread.Y, spread.Y) * up +
+                    m_requestRandom.Float(-spread.Z, spread.Z) * direction;
+                Vector3 velocity = body.Velocity + (direction + noise) * speed;
+                int arrowValue = global::Game.Terrain.MakeBlockValue(ArrowBlock.Index, 0,
+                    ArrowBlock.SetArrowType(0, arrowType.Value));
+                spawnedProjectile = m_projectiles.FireProjectile(arrowValue, origin, velocity,
+                    Vector3.Zero, player);
+                if (spawnedProjectile != null)
+                {
+                    spawned = 1;
+                    firstPosition = spawnedProjectile.Position;
+                    firstVelocity = spawnedProjectile.Velocity;
+                    data = BowBlock.SetArrowType(data, null);
+                }
+            }
+            int damage = draw >= 15 ? 2 : (draw >= 4 ? 1 : 0);
+            int resetValue = global::Game.Terrain.MakeBlockValue(BowBlock.Index, 0, BowBlock.SetDraw(data, 0));
+            if (!TryReplaceHeldStack(inventory, slot, resetValue, out reason))
+            {
+                if (spawnedProjectile != null) spawnedProjectile.ToRemove = true;
+                spawned = 0;
+                return false;
+            }
+            player.ComponentMiner?.DamageActiveTool(damage);
+            return true;
+        }
+
+        /// <summary>
+        /// 弩：与 <c>SubsystemCrossbowBlockBehavior.OnAim(Completed)</c> 同形。
+        /// 只有 draw==15 且装了弩箭才生成投射物；无论是否射出都重置 draw 并扣 1 点耐久（draw&gt;0）。
+        /// </summary>
+        private bool TryFireCrossbow(ComponentPlayer player, IInventory inventory, int slot,
+            int itemValue, Block block, Vector3 direction, out int spawned,
+            out Vector3 firstPosition, out Vector3 firstVelocity, out string reason)
+        {
+            spawned = 0;
+            firstPosition = Vector3.Zero;
+            firstVelocity = Vector3.Zero;
+            reason = null;
+            if (!(block is CrossbowBlock))
+            {
+                reason = "item-not-crossbow";
+                return false;
+            }
+            int data = global::Game.Terrain.ExtractData(itemValue);
+            int draw = CrossbowBlock.GetDraw(data);
+            ArrowBlock.ArrowType? arrowType = CrossbowBlock.GetArrowType(data);
+            Projectile spawnedProjectile = null;
+            if (draw == 15 && arrowType.HasValue)
+            {
+                ComponentBody body = player.ComponentBody;
+                ComponentCreatureModel model = player.ComponentCreatureModel;
+                Vector3 origin = model.EyePosition + body.Matrix.Right * 0.3f -
+                    body.Matrix.Up * 0.2f;
+                Vector3 velocity = body.Velocity + 38f * direction;
+                int boltValue = global::Game.Terrain.MakeBlockValue(ArrowBlock.Index, 0,
+                    ArrowBlock.SetArrowType(0, arrowType.Value));
+                spawnedProjectile = m_projectiles.FireProjectile(boltValue, origin, velocity,
+                    Vector3.Zero, player);
+                if (spawnedProjectile != null)
+                {
+                    spawned = 1;
+                    firstPosition = spawnedProjectile.Position;
+                    firstVelocity = spawnedProjectile.Velocity;
+                    data = CrossbowBlock.SetArrowType(data, null);
+                }
+            }
+            int resetValue = global::Game.Terrain.MakeBlockValue(CrossbowBlock.Index, 0,
+                CrossbowBlock.SetDraw(data, 0));
+            if (!TryReplaceHeldStack(inventory, slot, resetValue, out reason))
+            {
+                if (spawnedProjectile != null) spawnedProjectile.ToRemove = true;
+                spawned = 0;
+                return false;
+            }
+            if (draw > 0) player.ComponentMiner?.DamageActiveTool(1);
+            return true;
+        }
+
+        /// <summary>
+        /// 火枪：与 <c>SubsystemMusketBlockBehavior.OnAim(Completed)</c> 同形。
+        /// 空包弹 / 装填不足时引擎也会消耗装填并扣耐久，只是不生成投射物。
+        /// </summary>
+        private bool TryFireMusket(ComponentPlayer player, IInventory inventory, int slot,
+            int itemValue, Block block, Vector3 direction, out int spawned,
+            out Vector3 firstPosition, out Vector3 firstVelocity, out string reason)
+        {
+            spawned = 0;
+            firstPosition = Vector3.Zero;
+            firstVelocity = Vector3.Zero;
+            reason = null;
+            if (!(block is MusketBlock))
+            {
+                reason = "item-not-musket";
+                return false;
+            }
+            int data = global::Game.Terrain.ExtractData(itemValue);
+            if (!MusketBlock.GetHammerState(data))
+            {
+                reason = "hammer-not-cocked";
+                return false;
+            }
+            MusketBlock.LoadState loadState = MusketBlock.GetLoadState(data);
+            BulletBlock.BulletType? bulletType = MusketBlock.GetBulletType(data);
+            bool fired = false;
+            int bulletValue = 0;
+            int bulletCount = 0;
+            float bulletSpeed = 0f;
+            Vector3 bulletSpread = Vector3.Zero;
+            switch (loadState)
+            {
+                case MusketBlock.LoadState.Empty:
+                    // 没装火药：引擎只显示提示并放下击锤，不生成投射物、不扣耐久。
+                    break;
+                case MusketBlock.LoadState.Gunpowder:
+                case MusketBlock.LoadState.Wad:
+                    // 空包弹：有枪声/烟，没有投射物，但仍消耗装填 + 扣 1 点耐久。
+                    fired = true;
+                    break;
+                case MusketBlock.LoadState.Loaded:
+                    fired = true;
+                    if (bulletType == BulletBlock.BulletType.Buckshot)
+                    {
+                        bulletValue = global::Game.Terrain.MakeBlockValue(BulletBlock.Index, 0,
+                            BulletBlock.SetBulletType(0, BulletBlock.BulletType.BuckshotBall));
+                        bulletCount = 8;
+                        bulletSpread = new Vector3(0.04f, 0.04f, 0.25f);
+                        bulletSpeed = 80f;
+                    }
+                    else if (bulletType == BulletBlock.BulletType.BuckshotBall)
+                    {
+                        bulletValue = global::Game.Terrain.MakeBlockValue(BulletBlock.Index, 0,
+                            BulletBlock.SetBulletType(0, BulletBlock.BulletType.BuckshotBall));
+                        bulletCount = 1;
+                        bulletSpread = new Vector3(0.06f, 0.06f, 0f);
+                        bulletSpeed = 60f;
+                    }
+                    else if (bulletType.HasValue)
+                    {
+                        bulletValue = global::Game.Terrain.MakeBlockValue(BulletBlock.Index, 0,
+                            BulletBlock.SetBulletType(0, bulletType.Value));
+                        bulletCount = 1;
+                        bulletSpeed = 120f;
+                    }
+                    break;
+            }
+            var spawnedProjectiles = new List<Projectile>();
+            if (fired)
+            {
+                ComponentBody body = player.ComponentBody;
+                ComponentCreatureModel model = player.ComponentCreatureModel;
+                Vector3 origin = model.EyePosition + body.Matrix.Right * 0.3f -
+                    body.Matrix.Up * 0.2f;
+                // 枪管进水：引擎的哑火分支只有声音/烟，不生成投射物（装填照样消耗）。
+                bool misfire = body.ImmersionFactor > 0.4f;
+                if (!misfire && bulletCount > 0)
+                {
+                    Vector3 right = Vector3.Normalize(Vector3.Cross(direction, Vector3.UnitY));
+                    Vector3 up = Vector3.Normalize(Vector3.Cross(direction, right));
+                    for (int i = 0; i < bulletCount; i++)
+                    {
+                        Vector3 noise = m_requestRandom.Float(-bulletSpread.X, bulletSpread.X) *
+                            right + m_requestRandom.Float(-bulletSpread.Y, bulletSpread.Y) * up +
+                            m_requestRandom.Float(-bulletSpread.Z, bulletSpread.Z) * direction;
+                        Vector3 velocity = body.Velocity + bulletSpeed * (direction + noise);
+                        Projectile projectile = m_projectiles.FireProjectile(bulletValue, origin,
+                            velocity, Vector3.Zero, player);
+                        if (projectile == null) continue;
+                        projectile.ProjectileStoppedAction = ProjectileStoppedAction.Disappear;
+                        spawnedProjectiles.Add(projectile);
+                        if (spawned == 0)
+                        {
+                            firstPosition = projectile.Position;
+                            firstVelocity = projectile.Velocity;
+                        }
+                        spawned++;
+                    }
+                }
+                data = MusketBlock.SetLoadState(data, MusketBlock.LoadState.Empty);
+            }
+            data = MusketBlock.SetHammerState(data, false);
+            int resetValue = global::Game.Terrain.MakeBlockValue(MusketBlock.Index, 0, data);
+            if (!TryReplaceHeldStack(inventory, slot, resetValue, out reason))
+            {
+                for (int i = 0; i < spawnedProjectiles.Count; i++)
+                    spawnedProjectiles[i].ToRemove = true;
+                spawned = 0;
+                return false;
+            }
+            if (fired) player.ComponentMiner?.DamageActiveTool(1);
+            return true;
+        }
+
+        // ================================================================ 主机：执行辅助
+
+        private bool TryResolveHostActor(Project project, int clientId, out ComponentPlayer player,
+            out PlayerData playerData, out string reason)
+        {
+            player = null;
+            playerData = null;
+            reason = null;
+            if (m_spawner == null)
+            {
+                reason = "no-spawner";
+                return false;
+            }
+            if (clientId <= 0)
+            {
+                reason = "not-player-peer";
+                return false;
+            }
+            if (!m_spawner.TryGet(clientId, out playerData) || playerData == null)
+            {
+                reason = "no-avatar";
+                return false;
+            }
+            player = playerData.ComponentPlayer;
+            if (player == null)
+            {
+                reason = "no-avatar";
+                return false;
+            }
+            if (player.ComponentBody == null)
+            {
+                reason = "no-body";
+                return false;
+            }
+            if (player.ComponentHealth == null)
+            {
+                reason = "no-health";
+                return false;
+            }
+            if (player.ComponentHealth.Health <= 0f)
+            {
+                reason = "dead";
+                return false;
+            }
+            return true;
+        }
+
+        private static Block ResolveBlock(int value)
+        {
+            int contents = global::Game.Terrain.ExtractContents(value);
+            if (contents <= 0 || BlocksManager.Blocks == null ||
+                contents >= BlocksManager.Blocks.Length)
+                return null;
+            return BlocksManager.Blocks[contents];
+        }
+
+        private static void CaptureInventorySlots(IInventory inventory, out int[] values,
+            out int[] counts)
+        {
+            int slots = inventory.SlotsCount;
+            values = new int[slots];
+            counts = new int[slots];
+            for (int i = 0; i < slots; i++)
+            {
+                values[i] = inventory.GetSlotValue(i);
+                counts[i] = inventory.GetSlotCount(i);
+            }
+        }
+
+        /// <summary>
+        /// 把活跃槽里的 1 件物品换成新值（弓 / 弩 / 火枪的重置与耐久损耗都走这条）。
+        /// 返回 false + reason = 明确的引擎拒绝（调用方必须回滚它刚生成的投射物）。
+        /// </summary>
+        private static bool TryReplaceHeldStack(IInventory inventory, int slot, int newValue,
+            out string reason)
+        {
+            reason = null;
+            int removed = inventory.RemoveSlotItems(slot, 1);
+            if (removed <= 0)
+            {
+                reason = "consume-refused";
+                return false;
+            }
+            inventory.AddSlotItems(slot, newValue, 1);
+            if (inventory.GetSlotCount(slot) != 1 || inventory.GetSlotValue(slot) != newValue)
+            {
+                reason = "replace-refused";
+                return false;
+            }
+            return true;
         }
 
         // ================================================================ 客户端：应用副本
@@ -1254,9 +2142,14 @@ namespace SuMultiplayer.Engine
             " acquireAccepted=" + m_acquireAccepted + " acquireRejected=" + m_acquireRejected +
             " pickupCandidates=" + m_pickupCandidates +
             " projectileListFailures=" + m_projectileListFailures +
-            " foreignProjectilesRemoved=" + m_foreignProjectilesRemoved +
+            " foreignCulled=" + (m_foreignPickablesRemoved + m_foreignProjectilesRemoved) +
             " foreignPickablesRemoved=" + m_foreignPickablesRemoved +
+            " foreignProjectilesRemoved=" + m_foreignProjectilesRemoved +
             " pickableListFailures=" + m_pickableListFailures +
+            " dropIntents=" + m_dropIntentSubmissions + "/" + m_dropIntentFailures +
+            " fireIntents=" + m_fireIntentSubmissions + "/" + m_fireIntentFailures +
+            " hostDrop=" + m_dropAccepted + "/" + m_dropRejected +
+            " hostFire=" + m_fireAccepted + "/" + m_fireRejected +
             " remoteAvatarFilterCalls=" + m_remoteAvatarFilterCalls;
 
         private void Log(string message) => m_diagnostics?.Info(m_ownerId, message);

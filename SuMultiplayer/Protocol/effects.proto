@@ -1,0 +1,59 @@
+syntax = "proto3";
+
+package sump.effects;
+
+option csharp_namespace = "SuMultiplayer.Protocol.Effects";
+option optimize_for = SPEED;
+
+import "google/protobuf/any.proto";
+
+// ---------------------------------------------------------------------------
+// Burn-away presentation replication (host-authoritative; clients are
+// presentation-only).
+//
+// Wire id lives in protocol.proto (MessageType.BURN_AWAY_EFFECT=43).  It is
+// append-only: never renumber.
+//
+// Engine fact (Survivalcraft/Game/SubsystemFireBlockBehavior.cs:227-256):
+// every 5 game seconds the host consumes m_toBurnAway, replaces each queued
+// block with air, then spawns BurntDebrisParticleSystem (at most 15 within
+// 24 m of the nearest view) and plays Audio/Sizzles (at most 4 within 16 m).
+// None of that is part of the terrain stream, so clients currently see the
+// block disappear without any debris / sizzle.
+//
+// This message carries exactly that presentation batch:
+//   * one message per host burn-away batch (all cells coalesced);
+//   * cells are world coordinates;
+//   * sizzle = the host considers this cell eligible for the sizzle sound
+//     (currently every burned cell).  Each client still applies its own
+//     24 m debris / 16 m sound distance rule and the 15 / 4 per-batch caps,
+//     matching the engine's per-view experience.
+//
+// Clients must NEVER write cells, spawn entities or deal damage for this
+// message.  Terrain changes still arrive through the ordinary CellChange
+// stream.
+// ---------------------------------------------------------------------------
+
+// One burned-away cell (world coordinates).
+message CellKey {
+  sint32 x = 1;
+  sint32 y = 2;
+  sint32 z = 3;
+  // true = eligible for Audio/Sizzles when within 16 m of the local player.
+  bool sizzle = 4;
+}
+
+// Host -> client: one burn-away batch.
+message BurnAwayEffect {
+  // Host-side transport id; 0 = the host itself (the only producer today).
+  int32 client_id = 1;
+  // Host simulation clock in milliseconds (SubsystemGameInfo.TotalElapsedGameTime*1000).
+  int64 server_tick = 2;
+  // All cells that burned away in this batch (coalesced, host-capped).
+  repeated CellKey cells = 3;
+  // Host session sequence, starts at 1, strictly increasing.  Clients dedupe by it.
+  uint32 event_id = 4;
+
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}

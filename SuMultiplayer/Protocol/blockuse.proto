@@ -1,0 +1,130 @@
+syntax = "proto3";
+
+package sump.protocol;
+
+option csharp_namespace = "SuMultiplayer.Protocol";
+option optimize_for = SPEED;
+
+// ---------------------------------------------------------------------------
+// Block use / interaction + container (block-entity inventory) synchronisation.
+//
+// Authority model (same as terrain edits / explosions):
+//   · every message here is either a client intent or a host-authoritative answer;
+//   · the client never applies an interaction locally: its input shell captures the
+//     click and clears the native input before ComponentPlayer.Update runs;
+//   · the host validates (joined player, distance, block present, block behaviour /
+//     block-entity inventory) and is the only side that changes world state;
+//   · the client's container panel binds to a **replica** inventory that is filled
+//     from ContainerState only; any local slot change becomes CONTAINER_EDIT_REQUEST
+//     and is rolled back if the host rejects it.
+//
+// Source: Survivalcraft/Game/SubsystemCraftingTableBlockBehavior.cs:OnInteract
+// Source: Survivalcraft/Game/ComponentCraftingTable.cs
+// Source: Survivalcraft/Game/ComponentInventoryBase.cs
+// Source: Mod/ScMultiplayer/Message/ContainerSyncMessage.cs
+// ---------------------------------------------------------------------------
+
+// What the player did. INTERACT = open / use / press / toggle; CLOSE = the panel was
+// closed (host drops the "who has this container open" record; no world change).
+enum BlockUseAction {
+  BLOCK_USE_ACTION_INTERACT = 0;
+  BLOCK_USE_ACTION_CLOSE = 1;
+}
+
+// The engine component that owns the authoritative inventory. Ids (not class names)
+// are used on the wire: the client must never instantiate a type named by the peer.
+enum ContainerKind {
+  CONTAINER_KIND_NONE = 0;
+  CONTAINER_KIND_CRAFTING_TABLE = 1;
+  CONTAINER_KIND_CHEST = 2;
+  CONTAINER_KIND_FURNACE = 3;
+  CONTAINER_KIND_DISPENSER = 4;
+}
+
+// Client -> host: one "use" intent (right-click / interact key on a block).
+message BlockUseRequest {
+  // Per-connection monotonic sequence; the result echoes it.
+  int64 sequence = 1;
+  int32 x = 2;
+  int32 y = 3;
+  int32 z = 4;
+  // CellFace.Face 0..5 (the face the client clicked).
+  int32 face = 5;
+  // Terrain contents the client observed (host rejects a stale/mismatched target).
+  int32 contents = 6;
+  BlockUseAction action = 7;
+  // The interaction ray (presentation fidelity for behaviours that look at it;
+  // the host still decides from its own authoritative player/cell).
+  float ray_x = 8;
+  float ray_y = 9;
+  float ray_z = 10;
+  float direction_x = 11;
+  float direction_y = 12;
+  float direction_z = 13;
+}
+
+// Host -> client: authoritative answer for one BlockUseRequest.
+message BlockUseResult {
+  int64 sequence = 1;
+  bool accepted = 2;
+  // Explicit rejection reason (never empty when accepted = false).
+  string reason = 3;
+  BlockUseAction action = 4;
+  // NONE = no panel (native interaction: door / button / furniture / ...);
+  // anything else = the host sent ContainerState first and the client may open the panel.
+  ContainerKind container_kind = 5;
+  int32 x = 6;
+  int32 y = 7;
+  int32 z = 8;
+}
+
+// Host -> client: authoritative contents of one block-entity inventory.
+// Sent before BlockUseResult on open, and after every accepted edit (and whenever the
+// host itself changes an opened container, e.g. a furnace finishing a smelt).
+message ContainerState {
+  int32 x = 1;
+  int32 y = 2;
+  int32 z = 3;
+  ContainerKind container_kind = 4;
+  // Host revision; edits must carry the revision they are based on.
+  int32 revision = 5;
+  // Slot arrays (same length = inventory SlotsCount; 0 = empty slot).
+  repeated int32 slot_values = 6;
+  repeated int32 slot_counts = 7;
+}
+
+// Client -> host: the slot changes made in the opened container panel, plus the
+// player-inventory snapshot used to prove no items were created in the container.
+message ContainerEditRequest {
+  int64 sequence = 1;
+  int32 x = 2;
+  int32 y = 3;
+  int32 z = 4;
+  ContainerKind container_kind = 5;
+  // The authoritative revision the client last applied.
+  int32 base_revision = 6;
+  // The authoritative container snapshot of that revision (must match the host).
+  repeated int32 base_values = 7;
+  repeated int32 base_counts = 8;
+  // The container snapshot the client UI now shows.
+  repeated int32 desired_values = 9;
+  repeated int32 desired_counts = 10;
+  // The player inventory before and after the UI operation (conservation check;
+  // the player's own inventory stays client-authoritative, this only prevents the
+  // container from gaining items out of thin air).
+  repeated int32 player_base_values = 11;
+  repeated int32 player_base_counts = 12;
+  repeated int32 player_desired_values = 13;
+  repeated int32 player_desired_counts = 14;
+}
+
+// Host -> client: answer for one ContainerEditRequest. The authoritative
+// ContainerState is sent separately (and first), so a rejected edit can be rolled
+// back from the very same message flow.
+message ContainerEditResult {
+  int64 sequence = 1;
+  bool accepted = 2;
+  string reason = 3;
+  int32 revision = 4;
+  ContainerKind container_kind = 5;
+}

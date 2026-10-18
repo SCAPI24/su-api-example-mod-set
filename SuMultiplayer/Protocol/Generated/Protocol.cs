@@ -60,7 +60,7 @@ namespace SuMultiplayer.Protocol {
             "ZGl1cxgDIAEoBRILCgNleHQYZCABKAwSJAoGY3VzdG9tGGUgASgLMhQuZ29v",
             "Z2xlLnByb3RvYnVmLkFueSJICgNCeWUSDgoGcmVhc29uGAEgASgJEgsKA2V4",
             "dBhkIAEoDBIkCgZjdXN0b20YZSABKAsyFC5nb29nbGUucHJvdG9idWYuQW55",
-            "Ku4GCgtNZXNzYWdlVHlwZRIcChhNRVNTQUdFX1RZUEVfVU5TUEVDSUZJRUQQ",
+            "KusICgtNZXNzYWdlVHlwZRIcChhNRVNTQUdFX1RZUEVfVU5TUEVDSUZJRUQQ",
             "ABIJCgVIRUxMTxABEg0KCUhFTExPX0FDSxACEhMKD0lOVEVSRVNUX1VQREFU",
             "RRADEhcKE0NIVU5LX0RJR0VTVF9SRVBPUlQQBBIRCg1DSFVOS19WRVJESUNU",
             "EAUSEAoMQ0hVTktfUkVTWU5DEAYSDwoLQ0VMTF9DSEFOR0UQBxITCg9ERUJV",
@@ -79,8 +79,14 @@ namespace SuMultiplayer.Protocol {
             "UExPU0lPTl9SRVNVTFQQJBISCg5QTEFZRVJfREFNQUdFRBAlEhAKDEVOVElU",
             "WV9TVEFURRAmEhMKD0VOVElUWV9TTkFQU0hPVBAnEhwKGFBJQ0tBQkxFX0FD",
             "UVVJUkVfUkVRVUVTVBAoEhsKF1BJQ0tBQkxFX0FDUVVJUkVfUkVTVUxUECkS",
-            "GQoVRU5USVRZX1JFU1lOQ19SRVFVRVNUECpCG0gBqgIWU3VNdWx0aXBsYXll",
-            "ci5Qcm90b2NvbGIGcHJvdG8z"));
+            "GQoVRU5USVRZX1JFU1lOQ19SRVFVRVNUECoSGQoVUElDS0FCTEVfRFJPUF9S",
+            "RVFVRVNUEDISGAoUUElDS0FCTEVfRFJPUF9SRVNVTFQQMxIbChdQUk9KRUNU",
+            "SUxFX0ZJUkVfUkVRVUVTVBA0EhoKFlBST0pFQ1RJTEVfRklSRV9SRVNVTFQQ",
+            "NRIUChBCVVJOX0FXQVlfRUZGRUNUECsSFQoRQkxPQ0tfVVNFX1JFUVVFU1QQ",
+            "PBIUChBCTE9DS19VU0VfUkVTVUxUED0SEwoPQ09OVEFJTkVSX1NUQVRFED4S",
+            "GgoWQ09OVEFJTkVSX0VESVRfUkVRVUVTVBA/EhkKFUNPTlRBSU5FUl9FRElU",
+            "X1JFU1VMVBBAQhtIAaoCFlN1TXVsdGlwbGF5ZXIuUHJvdG9jb2xiBnByb3Rv",
+            "Mw=="));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { global::Google.Protobuf.WellKnownTypes.AnyReflection.Descriptor, },
           new pbr::GeneratedClrTypeInfo(new[] {typeof(global::SuMultiplayer.Protocol.MessageType), }, null, new pbr::GeneratedClrTypeInfo[] {
@@ -216,6 +222,44 @@ namespace SuMultiplayer.Protocol {
     [pbr::OriginalName("PICKABLE_ACQUIRE_REQUEST")] PickableAcquireRequest = 40,
     [pbr::OriginalName("PICKABLE_ACQUIRE_RESULT")] PickableAcquireResult = 41,
     [pbr::OriginalName("ENTITY_RESYNC_REQUEST")] EntityResyncRequest = 42,
+    /// <summary>
+    /// Client-initiated item drop / throw / weapon fire (entities.proto).
+    /// Host validates and executes; the client never deducts locally before the
+    /// result and never creates pickables / projectiles by itself.
+    /// Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update (Drop)
+    /// Source: Survivalcraft/Game/SubsystemThrowableBlockBehavior.cs:OnAim
+    /// Source: Survivalcraft/Game/SubsystemBowBlockBehavior.cs:OnAim
+    /// Source: Survivalcraft/Game/SubsystemCrossbowBlockBehavior.cs:OnAim
+    /// Source: Survivalcraft/Game/SubsystemMusketBlockBehavior.cs:OnAim
+    /// </summary>
+    [pbr::OriginalName("PICKABLE_DROP_REQUEST")] PickableDropRequest = 50,
+    [pbr::OriginalName("PICKABLE_DROP_RESULT")] PickableDropResult = 51,
+    [pbr::OriginalName("PROJECTILE_FIRE_REQUEST")] ProjectileFireRequest = 52,
+    [pbr::OriginalName("PROJECTILE_FIRE_RESULT")] ProjectileFireResult = 53,
+    /// <summary>
+    /// Burn-away presentation (effects.proto): host-authoritative, clients only
+    /// spawn debris particles / play the sizzle sound.  Append-only.
+    /// Source: Survivalcraft/Game/SubsystemFireBlockBehavior.cs:227-256
+    /// </summary>
+    [pbr::OriginalName("BURN_AWAY_EFFECT")] BurnAwayEffect = 43,
+    /// <summary>
+    /// Host-authoritative block use / interaction + container (block-entity) state.
+    /// Client -> host: "I clicked this block" (use request / close). The host validates
+    /// identity, distance, the block and its behaviour and performs the interaction.
+    /// Host -> client: result + authoritative ContainerState for the opened inventory.
+    /// Container edits are the UI's slot changes; the host applies them to the single
+    /// authoritative ComponentInventoryBase and broadcasts the resulting state.
+    /// Source: Survivalcraft/Game/SubsystemCraftingTableBlockBehavior.cs:OnInteract
+    /// Source: Survivalcraft/Game/SubsystemChestBlockBehavior.cs:OnInteract
+    /// Source: Survivalcraft/Game/SubsystemFurnaceBlockBehavior.cs:OnInteract
+    /// Source: Survivalcraft/Game/SubsystemDispenserBlockBehavior.cs:OnInteract
+    /// Source: Mod/ScMultiplayer/Modules/World/ScMultiplayerContainerHandlers.cs
+    /// </summary>
+    [pbr::OriginalName("BLOCK_USE_REQUEST")] BlockUseRequest = 60,
+    [pbr::OriginalName("BLOCK_USE_RESULT")] BlockUseResult = 61,
+    [pbr::OriginalName("CONTAINER_STATE")] ContainerState = 62,
+    [pbr::OriginalName("CONTAINER_EDIT_REQUEST")] ContainerEditRequest = 63,
+    [pbr::OriginalName("CONTAINER_EDIT_RESULT")] ContainerEditResult = 64,
   }
 
   #endregion
