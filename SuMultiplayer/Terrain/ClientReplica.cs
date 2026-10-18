@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
+using Engine;
 using SuMultiplayer.Net;
 
 using Google.Protobuf;
@@ -43,7 +44,12 @@ namespace SuMultiplayer.Terrain
         CreatureSpawn = 15,
         Spawn = 16,
         Electricity = 17,
-        Unknown = 18
+        Unknown = 18,
+        /// <summary>
+        /// 爆炸物引信（火药桶的倒计时由主机写进格子 data 并下发；客户端只表现、不倒计时）。
+        /// 见 <see cref="FuseCellState"/> 与 Engine/ClientReplicaSubsystems.cs 的引信外壳。
+        /// </summary>
+        Fuse = 19
     }
 
     public static class ReplicaMutationSourceNames
@@ -52,7 +58,7 @@ namespace SuMultiplayer.Terrain
         {
             "fluid", "magma", "fire", "weather", "grass", "plant", "deciduous-leaves",
             "cactus", "rot", "carpet", "fallen-leaves", "soil", "ivy", "sapling",
-            "explosion", "creature-spawn", "spawn", "electricity", "unknown"
+            "explosion", "creature-spawn", "spawn", "electricity", "unknown", "fuse"
         };
 
         public static string Of(ReplicaMutationSource source)
@@ -146,6 +152,203 @@ namespace SuMultiplayer.Terrain
         public int Contents { get; }
         public int Data { get; }
         public ChunkKey Key => new ChunkKey(X >> 4, Z >> 4);
+    }
+
+    /// <summary>
+    /// 客户端捕获暂存里一格被**明确丢弃**的原因。每一种都必须出现在状态行里（禁止静默丢）。
+    /// </summary>
+    public enum ClientCaptureDropReason : byte
+    {
+        /// <summary>世界 / Project 已经卸载：这些格子属于旧世界，不可能再上报（重试就是串到新世界）。</summary>
+        WorldUnloaded = 0,
+        /// <summary>本端角色切换（客户端 ⇄ 主机 / 重连）：旧角色下的待捕获作废。</summary>
+        RoleChanged = 1,
+        /// <summary>待捕获超过上限：按"最旧优先"丢弃并计数（绝不无限增长）。</summary>
+        Overflow = 2,
+        /// <summary>连续 <see cref="ClientEditCaptureQueue.MaxRetryFrames"/> 帧都读不到地形 / 没有订阅者。</summary>
+        Stale = 3,
+        /// <summary>模块下线。</summary>
+        Detached = 4,
+        /// <summary>坐标越界（引擎不允许 y &lt; 0 或 y &gt; 255；不该出现，出现就计数）。</summary>
+        InvalidCoordinate = 5,
+        Count = 6
+    }
+
+    public static class ClientCaptureDropReasonNames
+    {
+        private static readonly string[] s_names =
+        {
+            "worldUnloaded", "roleChanged", "overflow", "stale", "detached", "badCoord"
+        };
+
+        public static string Of(ClientCaptureDropReason reason)
+        {
+            int index = (int)reason;
+            return index >= 0 && index < s_names.Length ? s_names[index] : "unknown";
+        }
+
+        public static int Count => s_names.Length;
+    }
+
+    /// <summary>
+    /// 客户端"本地地形写入 → CellEditRequest"的**捕获暂存**（纯托管，P:\tmp\tsverify 直接编译本文件自检）。
+    ///
+    /// 为什么必须有这一层（实机丢编辑根因）：
+    ///   · 引擎的 <c>SubsystemTerrain.m_modifiedCells</c> 会被**多个** SubsystemFluidBlockBehavior
+    ///     派生类（水 / 岩浆 / 水下 / 水草 / 海参）在各自 Update 里 <c>ProcessModifiedCells()</c> 清掉
+    ///     （Survivalcraft/Game/SubsystemFluidBlockBehavior.cs:312）。玩家挖/放写在 Default 序，
+    ///     地形更新是 Terrain 序（100）；清表若落在两者之间，那一格在被捕获之前就没了；
+    ///   · 捕获那一帧如果读不到 Project / Terrain（世界切换、引用瞬时失效）或没有订阅者，
+    ///     旧实现直接 return，调用方随后照常 ProcessModifiedCells 清表 ⇒ 本地写入永远丢失。
+    ///
+    /// 所以这里把"要捕获的格子"**跨帧保留**：值在真正读得到的那一刻才读；读不到就继续等，
+    /// 只有世界卸载 / 角色切换 / 超过重试上限 / 超过容量才**明确丢弃并计数**（每种原因一个计数器）。
+    /// 纯策略、无静态状态。
+    /// </summary>
+    public sealed class ClientEditCaptureQueue
+    {
+        /// <summary>待捕获上限（正常一帧最多几格；超过是异常，必须计数并限流告警）。</summary>
+        public const int MaxPending = 4096;
+        /// <summary>最多重试多少帧（60fps ≈ 2s）：再读不到就明确丢弃并计数。</summary>
+        public const int MaxRetryFrames = 120;
+
+        private struct PendingCell
+        {
+            public long FirstFrame;
+            public long LastFrame;
+        }
+
+        private readonly Dictionary<Point3, PendingCell> m_pending =
+            new Dictionary<Point3, PendingCell>();
+        private readonly long[] m_dropped = new long[(int)ClientCaptureDropReason.Count];
+        private readonly List<Point3> m_expired = new List<Point3>(8);
+
+        /// <summary>累计"从引擎改动表/接住集合里看到的格子"（每格每帧一次）。</summary>
+        public long Staged { get; private set; }
+        /// <summary>累计成功读值并交给模块的格子数。</summary>
+        public long Delivered { get; private set; }
+        /// <summary>累计"这一帧没能读/没能交付、保留到下一帧"的次数（不是格数）。</summary>
+        public long DeferredFrames { get; private set; }
+        /// <summary>当前还留着等待重试的格数。</summary>
+        public int PendingCount => m_pending.Count;
+
+        public long Dropped(ClientCaptureDropReason reason)
+        {
+            int index = (int)reason;
+            return index >= 0 && index < m_dropped.Length ? m_dropped[index] : 0;
+        }
+
+        /// <summary>把这一帧的格子放进暂存（同一格只保留一份；值在真正读得到时才读）。返回新增格数。</summary>
+        public int Stage(IEnumerable<Point3> cells, long frame)
+        {
+            if (cells == null) return 0;
+            int added = 0;
+            foreach (Point3 cell in cells)
+            {
+                if (cell.Y < 0 || cell.Y > 255)
+                {
+                    m_dropped[(int)ClientCaptureDropReason.InvalidCoordinate]++;
+                    continue;
+                }
+                Staged++;
+                if (m_pending.TryGetValue(cell, out PendingCell existing))
+                {
+                    existing.LastFrame = frame;
+                    m_pending[cell] = existing;
+                    continue;
+                }
+                if (m_pending.Count >= MaxPending) DropOldest();
+                m_pending[cell] = new PendingCell { FirstFrame = frame, LastFrame = frame };
+                added++;
+            }
+            return added;
+        }
+
+        /// <summary>扫描一遍待捕获格（调用方负责不要边扫边改）。</summary>
+        public void CopyPending(List<Point3> output)
+        {
+            if (output == null) throw new ArgumentNullException(nameof(output));
+            output.Clear();
+            foreach (Point3 cell in m_pending.Keys) output.Add(cell);
+        }
+
+        /// <summary>一格已经读值并交给模块：从暂存移除（不存在返回 false，不重复计数）。</summary>
+        public bool Complete(Point3 cell)
+        {
+            if (!m_pending.Remove(cell)) return false;
+            Delivered++;
+            return true;
+        }
+
+        /// <summary>这一帧没能读值 / 没能交付：保留格子，下一帧重试（只记一次"帧"，不是丢格）。</summary>
+        public void NoteDeferredFrame() => DeferredFrames++;
+
+        /// <summary>超过重试上限的格子：移除并计入 <see cref="ClientCaptureDropReason.Stale"/>。返回丢弃格数。</summary>
+        public int Expire(long frame)
+        {
+            if (m_pending.Count == 0) return 0;
+            m_expired.Clear();
+            foreach (KeyValuePair<Point3, PendingCell> pair in m_pending)
+            {
+                if (frame - pair.Value.FirstFrame < MaxRetryFrames) continue;
+                m_expired.Add(pair.Key);
+            }
+            for (int i = 0; i < m_expired.Count; i++) m_pending.Remove(m_expired[i]);
+            int dropped = m_expired.Count;
+            if (dropped > 0) m_dropped[(int)ClientCaptureDropReason.Stale] += dropped;
+            return dropped;
+        }
+
+        /// <summary>放弃全部待捕获格（世界卸载 / 角色切换 / 模块下线）：按原因计数，返回丢弃格数。</summary>
+        public int Reset(ClientCaptureDropReason reason)
+        {
+            int dropped = m_pending.Count;
+            m_pending.Clear();
+            if (dropped > 0)
+            {
+                int index = (int)reason;
+                if (index >= 0 && index < m_dropped.Length) m_dropped[index] += dropped;
+            }
+            return dropped;
+        }
+
+        private void DropOldest()
+        {
+            if (m_pending.Count == 0) return;
+            Point3 oldest = default(Point3);
+            long oldestFrame = long.MaxValue;
+            foreach (KeyValuePair<Point3, PendingCell> pair in m_pending)
+            {
+                if (pair.Value.FirstFrame >= oldestFrame) continue;
+                oldestFrame = pair.Value.FirstFrame;
+                oldest = pair.Key;
+            }
+            m_pending.Remove(oldest);
+            m_dropped[(int)ClientCaptureDropReason.Overflow]++;
+        }
+
+        /// <summary>可审计的一行：每一级计数 + 每种丢弃原因（禁止静默丢）。</summary>
+        public string Describe()
+        {
+            var builder = new StringBuilder(192);
+            builder.Append("captureStaged=").Append(Staged.ToString(CultureInfo.InvariantCulture));
+            builder.Append(" captureDelivered=").Append(Delivered.ToString(CultureInfo.InvariantCulture));
+            builder.Append(" captureDeferredFrames=").Append(DeferredFrames.ToString(CultureInfo.InvariantCulture));
+            builder.Append(" capturePending=").Append(m_pending.Count.ToString(CultureInfo.InvariantCulture));
+            builder.Append(" captureDropped[");
+            bool any = false;
+            for (int i = 0; i < m_dropped.Length; i++)
+            {
+                if (m_dropped[i] == 0) continue;
+                if (any) builder.Append(',');
+                any = true;
+                builder.Append(ClientCaptureDropReasonNames.Of((ClientCaptureDropReason)i));
+                builder.Append('=').Append(m_dropped[i].ToString(CultureInfo.InvariantCulture));
+            }
+            if (!any) builder.Append("none");
+            builder.Append(']');
+            return builder.ToString();
+        }
     }
 
     /// <summary>

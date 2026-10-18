@@ -55,6 +55,12 @@ namespace SuMultiplayer.Modules
         /// <summary>编辑裁决统计（requests/accepted/rejected/...；限流日志用）。</summary>
         string EditStats { get; }
 
+        /// <summary>
+        /// 客户端捕获统计（staged / delivered / deferredFrames / pending / 每种丢弃原因）。
+        /// 捕获阶段在引擎侧，模块只消费事件；把这份计数拼进状态行，丢格时能直接定位是哪一级。
+        /// </summary>
+        string CaptureStats { get; }
+
         /// <summary>连接建立 / 断开：清掉该连接的序号去重状态（重连 = 新 clientId，序号从 1 开始）。</summary>
         void ResetEditClient(int clientId);
 

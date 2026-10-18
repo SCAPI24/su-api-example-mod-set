@@ -119,6 +119,12 @@ namespace SuMultiplayer.Modules
         /// 与 hostCellMissed 区分：前者是"没抓到"，后者是"抓到了但这一格没人持有"。
         /// </summary>
         private long m_hostCellNoRecipient;
+        /// <summary>
+        /// 客户端角色下本地写入落到了**主机路径**、而本端根本没有主机（连接断开 / 正在重连）的格数。
+        /// 这些格当下没有接收者（要等重连后的强制核对纠正）；必须计数并限流告警，禁止静默。
+        /// </summary>
+        private long m_hostCellNoHost;
+        private long m_lastHostCellNoHostLogMs;
 
         public TerrainSyncModule(SyncConfig config, TerrainSyncOptions options = null,
             LocalPlayerProfileStore profileStore = null)
@@ -1780,7 +1786,27 @@ namespace SuMultiplayer.Modules
 
         private void HandleHostCellChanged(ChunkKey key, CellEdit edit)
         {
-            if (m_host == null) return;
+            if (m_host == null)
+            {
+                // 本端不是主机：正常情况（单机 / 还没加入房间）不会有会话，直接忽略；
+                // 但**玩家本来就在客户端角色**（连接断开 / 正在重连）时，这一格是真实的本地写入，
+                // 当下没有接收者 —— 必须计数 + 限流告警，等重连后的强制核对纠正（不静默）。
+                if (m_wantClient)
+                {
+                    m_hostCellNoHost++;
+                    long now = Environment.TickCount64;
+                    if (m_lastHostCellNoHostLogMs == 0 ||
+                        now - m_lastHostCellNoHostLogMs >= 5000)
+                    {
+                        m_lastHostCellNoHostLogMs = now;
+                        LogWarning("[SuMP][terrain-sync] 本端是客户端角色但连接不在了：一格本地写入" +
+                            "（" + key + " " + edit.X + "," + edit.Y + "," + edit.Z +
+                            "）走不到主机 → 当下没有接收者；累计 " + m_hostCellNoHost +
+                            " 格（重连后由强制核对 / 整块回传纠正）");
+                    }
+                }
+                return;
+            }
             int sent = m_host.BroadcastCellChange(key, edit);
             if (sent == 0) m_hostCellNoRecipient++;
             if (m_verbose && sent > 0)
@@ -2099,6 +2125,14 @@ namespace SuMultiplayer.Modules
                     " · hostCellMissed " + m_bridge.HostCellMisses +
                     " · broadcastDuplicates " + m_bridge.HostCellDuplicates +
                     " · hostCellNoRecipient " + m_hostCellNoRecipient + "）" +
+                    // 引信捕获（火药桶 data-only 倒计时）：被流体清表抹掉、由引信 carry 补回的格数；
+                    // skipped = 候选格前后相同（不是真实改动）；duplicates = 同格多路报告合并成一次。
+                    " · 引信 fuseCellCaptured " +
+                    (m_shell != null ? m_shell.CaptureState.FuseCellCaptured : 0L) +
+                    "（skipped " + (m_shell != null ? m_shell.CaptureState.FuseCellSkipped : 0L) +
+                    " · duplicates " + (m_shell != null ? m_shell.CaptureState.FuseCellDuplicates : 0L) +
+                    " · 窗口 " + (m_shell != null ? m_shell.CaptureState.FuseCaptureWindows : 0L) +
+                    " · 丢弃 " + (m_shell != null ? m_shell.CaptureState.FuseCellsDropped : 0L) + "）" +
                     // 按需单块加载（客户端上报的边缘块）：**不改任何角色的兴趣半径 / 内容距离**，
                     // 只给"主机没有内容的那些上报块"挂一条只覆盖该块的临时更新位置。
                     //   容量限制的是**活动的引擎请求**（onDemandActive + onDemandHeld ≤ MaxActive），
@@ -2270,7 +2304,9 @@ namespace SuMultiplayer.Modules
                        " interestRadiusChanges=" + m_interestRadiusChanges +
                        " interestSends=" + m_interestSends +
                        " posSent=" + m_positionSnapshotsSent + " posApplied=" + m_positionSnapshotsApplied +
-                       " posDropped=" + m_positionSnapshotsDropped;
+                       " posDropped=" + m_positionSnapshotsDropped +
+                       // 客户端角色但连接不在时，本地写入走不到主机（没有接收者）的格数。
+                       " hostCellNoHost=" + m_hostCellNoHost;
             }
             if (m_wantClient)
                 return "terrain-sync: client 连接中 " + m_wantHost + ":" + m_wantPort +

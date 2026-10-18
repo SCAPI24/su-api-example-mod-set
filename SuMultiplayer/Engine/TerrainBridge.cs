@@ -83,6 +83,13 @@ namespace SuMultiplayer.Engine
             m_mainThreadId = Thread.CurrentThread.ManagedThreadId;
         }
 
+        /// <summary>
+        /// 客户端**引信表现**（组合根挂；主机 / 单机为 null）。只在 <see cref="ApplyCells"/> 把
+        /// 主机 CellChange / 整块下发落到客户端之后调用 —— 这是客户端格值写入的唯一漏斗。
+        /// 详见 <see cref="FuseReplicaPresentation"/>：只读格子 data，不倒计时、不爆炸。
+        /// </summary>
+        public FuseReplicaPresentation FusePresenter { get; set; }
+
         // ---- 主线程上触发的事件（模块订阅这些，模块不直接看引擎）----
         /// <summary>区块内容可用（新鲜加载 / 重载）。**摘要 / 校验只认这个信号**。</summary>
         public event Action<ChunkKey> ChunkLoaded;
@@ -113,8 +120,44 @@ namespace SuMultiplayer.Engine
         /// <summary>
         /// 本端是不是"联机客户端副本"。模块在角色确定后写入；写入前桥保持主机行为
         /// （不捕获、不下发 —— 没有会话时两端都不该有网络行为）。
+        /// 角色切换时把客户端**待捕获**的本地写入明确作废并计数：旧角色下攒下的格子
+        /// 不能在切换后冒充新角色的编辑发出去。
         /// </summary>
-        public bool ClientReplica { get; set; }
+        public bool ClientReplica
+        {
+            get => m_clientReplica;
+            set
+            {
+                if (m_clientReplica == value) return;
+                m_clientReplica = value;
+                int dropped = m_clientCapture.Reset(ClientCaptureDropReason.RoleChanged);
+                if (dropped > 0)
+                {
+                    m_clientCaptureDroppedTotal += dropped;
+                    Log.Warning("[SuMP] clientCapture: 角色切换清掉 " + dropped +
+                        " 格待捕获的本地写入（已计入 captureDropped[roleChanged]，不静默）");
+                }
+            }
+        }
+
+        private bool m_clientReplica;
+        /// <summary>客户端捕获暂存（跨帧重试；世界卸载 / 角色切换 / 超限都按原因计数）。</summary>
+        private readonly ClientEditCaptureQueue m_clientCapture = new ClientEditCaptureQueue();
+        /// <summary>捕获重试的帧号（只增不减；用于判定"连续多少帧读不到"）。</summary>
+        private long m_captureFrame;
+        /// <summary>扫描待捕获格时的复用缓冲（避免每帧分配）。</summary>
+        private readonly List<Point3> m_clientCaptureScan = new List<Point3>(64);
+        private long m_clientCaptureDroppedTotal;
+        private long m_clientCaptureApplyFailures;
+        private long m_lastClientCaptureLogMs;
+        private long m_lastClientCaptureDropLogMs;
+        private const long ClientCaptureLogIntervalMs = 5000;
+
+        /// <summary>客户端捕获各级计数 + 每种丢弃原因（状态行 / 自检用）。</summary>
+        public string ClientCaptureStats =>
+            m_clientCapture.Describe() + " captureApplyFailed=" + m_clientCaptureApplyFailures;
+        /// <summary>客户端捕获累计丢弃格数（含世界卸载 / 角色切换 / 超限 / 过期）。</summary>
+        public long ClientCaptureDropped => m_clientCaptureDroppedTotal;
 
         /// <summary>常驻（内容可用）区块数。校验 / 摘要口径。</summary>
         public long ResidentCount => m_residency.ResidentCount;
@@ -206,6 +249,10 @@ namespace SuMultiplayer.Engine
             }
             AppliedCells += edits.Count;
             AppliedBatches++;
+            // 客户端引信表现：主机把"剩余引信 tick"写进火药桶格子的 data（Terrain/FuseCellState.cs），
+            // 这里落地后立即按同一份权威值更新粒子（不重建在烧的引信；熄灭/换方块则收掉）。
+            // 只在客户端副本调用：主机的引信粒子由引擎 SubsystemExplosivesBlockBehavior 自己维护。
+            if (ClientReplica) FusePresenter?.Apply(key, edits);
             // 与 SubsystemTerrain.ChangeCell 同源的"降级邻域"，让几何/光照在正常流程里重算。
             // DowngradeChunkNeighborhoodState 是**实例**方法（旧实现能直接写，是因为它本身派生自
             // SubsystemTerrain），所以这里借子系统实例来调。
@@ -302,21 +349,141 @@ namespace SuMultiplayer.Engine
         /// <summary>
         /// 客户端：把一帧里被本地写入的格子**捕获**成编辑请求（主线程，ProcessModifiedCells 之前）。
         /// 不在这里直接发网络包：模块在同一线程里把每一格变成 CellEditRequest 并通过 TCP 发出去。
-        /// 读不到值（区块刚好卸载）= 明确丢弃（上层会重问 / 强制核对），不猜。
+        ///
+        /// 关键（实机丢编辑根因）：格子先**进暂存**再读值。Project/Terrain 瞬时读不到、区块内容还没定稿、
+        /// 模块订阅者暂时不在 —— 这些都不丢弃，保留到下一帧重试；只有世界真的卸载 / 角色切换 /
+        /// 超过重试上限 / 超过容量才**明确丢弃并计数**（<see cref="ClientCaptureStats"/> 每级可见）。
+        /// 旧实现在 terrain == null 时直接 return，调用方随后照常 ProcessModifiedCells 清表 ⇒ 永久丢失。
         /// </summary>
         public void CaptureClientEdits(ICollection<Point3> cells)
         {
             EnsureMainThread("CaptureClientEdits");
             if (cells == null || cells.Count == 0) return;
+            m_captureFrame++;
+            m_clientCapture.Stage(cells, m_captureFrame);
+            FlushClientCapture();
+        }
+
+        /// <summary>
+        /// 客户端每帧一次：推进**上一帧遗留**的待捕获格（读得到就交付，读不到继续等）。
+        /// 只在暂时读不到地形 / 区块未定稿 / 没有订阅者时才有待捕获格；平时是空队列、零开销。
+        /// </summary>
+        public void RetryDeferredClientEdits()
+        {
+            EnsureMainThread("RetryDeferredClientEdits");
+            if (m_clientCapture.PendingCount == 0) return;
+            m_captureFrame++;
+            FlushClientCapture();
+        }
+
+        /// <summary>推进客户端捕获暂存：能读的格子立刻交给模块，读不到的保留重试。</summary>
+        private void FlushClientCapture()
+        {
+            if (m_clientCapture.PendingCount == 0) return;
             Game.Terrain terrain = CurrentTerrain;
-            if (terrain == null) return;
-            foreach (Point3 cell in cells)
+            if (terrain == null)
             {
-                if (cell.Y < 0 || cell.Y > 255) continue;
-                int value = terrain.GetCellValueFast(cell.X, cell.Y, cell.Z);
-                ClientCellEdited?.Invoke(new ClientCellEdit(cell.X, cell.Y, cell.Z,
-                    Game.Terrain.ExtractContents(value), Game.Terrain.ExtractData(value)));
+                // Project 还在 = 引用瞬时不可用 → 保留重试；世界已卸载 = 这些格子属于旧世界 → 明确丢弃。
+                if (GameManager.Project == null)
+                {
+                    int dropped = m_clientCapture.Reset(ClientCaptureDropReason.WorldUnloaded);
+                    NoteClientCaptureDrop("世界已卸载（Project == null）", dropped);
+                }
+                else
+                {
+                    m_clientCapture.NoteDeferredFrame();
+                    LogClientCaptureDeferred("读不到当前地形（Project 还在 → 下一帧重试）");
+                }
+                m_clientCapture.Expire(m_captureFrame);
+                return;
             }
+            Action<ClientCellEdit> handler = ClientCellEdited;
+            if (handler == null)
+            {
+                m_clientCapture.NoteDeferredFrame();
+                LogClientCaptureDeferred("没有本地编辑订阅者（模块未装配 / 正在下线 → 下一帧重试）");
+                NoteClientCaptureExpired(m_clientCapture.Expire(m_captureFrame));
+                return;
+            }
+            m_clientCaptureScan.Clear();
+            m_clientCapture.CopyPending(m_clientCaptureScan);
+            bool deferred = false;
+            for (int i = 0; i < m_clientCaptureScan.Count; i++)
+            {
+                Point3 cell = m_clientCaptureScan[i];
+                TerrainChunk chunk = terrain.GetChunkAtCell(cell.X, cell.Z);
+                // 与 PublishHostCells / ApplyCells 同一判据：内容未定稿时读出来的是 0（空气），
+                // 绝不能把"读不到"当成本地写入的最终值发出去 → 保留重试。
+                if (chunk == null || !ChunkContentStages.IsContentValid((int)chunk.State))
+                {
+                    deferred = true;
+                    continue;
+                }
+                int value = terrain.GetCellValueFast(cell.X, cell.Y, cell.Z);
+                try
+                {
+                    handler(new ClientCellEdit(cell.X, cell.Y, cell.Z,
+                        Game.Terrain.ExtractContents(value), Game.Terrain.ExtractData(value)));
+                }
+                catch (Exception e)
+                {
+                    // 模块回调抛异常：**保留该格重试**并计数。异常绝不能让这一帧的捕获静默消失
+                    //（SubsystemUpdate 会吞掉 Update 抛出的异常，日志里什么都看不到）。
+                    m_clientCaptureApplyFailures++;
+                    long now = Environment.TickCount64;
+                    if (m_lastClientCaptureDropLogMs == 0 ||
+                        now - m_lastClientCaptureDropLogMs >= ClientCaptureLogIntervalMs)
+                    {
+                        m_lastClientCaptureDropLogMs = now;
+                        Log.Warning("[SuMP] clientCaptureApplyFailed: " + cell.X + "," + cell.Y + "," +
+                            cell.Z + " 交付模块异常（" + e.GetType().Name + " " + e.Message +
+                            "）→ 该格保留重试；累计 " + m_clientCaptureApplyFailures + " 次");
+                    }
+                    continue;
+                }
+                m_clientCapture.Complete(cell);
+            }
+            if (deferred)
+            {
+                m_clientCapture.NoteDeferredFrame();
+                LogClientCaptureDeferred("区块内容未定稿（保留重试，不猜 0=空气）");
+            }
+            NoteClientCaptureExpired(m_clientCapture.Expire(m_captureFrame));
+        }
+
+        private void NoteClientCaptureExpired(int expired)
+        {
+            if (expired <= 0) return;
+            NoteClientCaptureDrop("连续 " + ClientEditCaptureQueue.MaxRetryFrames +
+                " 帧无法交付（读不到地形 / 区块未定稿 / 无订阅者）", expired);
+        }
+
+        private void NoteClientCaptureDrop(string reason, int count)
+        {
+            if (count <= 0) return;
+            m_clientCaptureDroppedTotal += count;
+            long now = Environment.TickCount64;
+            if (m_lastClientCaptureDropLogMs != 0 &&
+                now - m_lastClientCaptureDropLogMs < ClientCaptureLogIntervalMs)
+            {
+                return;
+            }
+            m_lastClientCaptureDropLogMs = now;
+            Log.Warning("[SuMP] clientCaptureDropped: " + count + " 格本地写入没能上报（" + reason +
+                "）→ 累计丢弃 " + m_clientCaptureDroppedTotal + " 格；" + m_clientCapture.Describe());
+        }
+
+        private void LogClientCaptureDeferred(string reason)
+        {
+            // 帧级重试是热路径：只在第一次 / 每 ~5s 写一行，计数始终在 ClientCaptureStats 里。
+            long now = Environment.TickCount64;
+            if (m_lastClientCaptureLogMs != 0 &&
+                now - m_lastClientCaptureLogMs < ClientCaptureLogIntervalMs)
+            {
+                return;
+            }
+            m_lastClientCaptureLogMs = now;
+            Log.Warning("[SuMP] clientCaptureDeferred: " + reason + "；" + m_clientCapture.Describe());
         }
 
         /// <summary>主机：读一格当前值（编辑校验 / already 判定）。</summary>
@@ -695,6 +862,13 @@ namespace SuMultiplayer.Engine
         public void PublishHostCells(ICollection<Point3> cells)
         {
             if (cells == null || cells.Count == 0) return;
+            Action<ChunkKey, CellEdit> handler = HostCellChanged;
+            if (handler == null)
+            {
+                // 没有订阅者 = 抓到也发不出去（装配未就绪 / 模块下线）：如实计数，不静默。
+                NoteHostCaptureMiss(cells.Count, "没有主机广播订阅者（地形模块未装配 / 正在下线）");
+                return;
+            }
             Game.Terrain terrain = CurrentTerrain;
             if (terrain == null)
             {
@@ -719,7 +893,7 @@ namespace SuMultiplayer.Engine
                 int value = terrain.GetCellValueFast(cell.X, cell.Y, cell.Z);
                 var key = new ChunkKey(cell.X >> 4, cell.Z >> 4);
                 HostCellsCaptured++;
-                HostCellChanged?.Invoke(key, new CellEdit(cell.X & 15, cell.Y, cell.Z & 15,
+                handler(key, new CellEdit(cell.X & 15, cell.Y, cell.Z & 15,
                     Game.Terrain.ExtractContents(value), Game.Terrain.ExtractData(value)));
             }
         }

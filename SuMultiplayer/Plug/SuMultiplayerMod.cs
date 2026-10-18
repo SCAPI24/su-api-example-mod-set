@@ -52,6 +52,8 @@ namespace SuMultiplayer
         /// <summary>客户端副本 / 主机权威（编辑审批 + 世界信息 + RNG 状态）；组合根装配，模块只拿端口。</summary>
         private ClientReplicaEngine m_clientAuthority;
         private ClientAuthorityModule m_authorityModule;
+        /// <summary>客户端引信表现（只读主机下发的火药桶格子 data；主机路径不会进入）。</summary>
+        private FuseReplicaPresentation m_fusePresenter;
         private RoomUiAttacher m_uiAttacher;
         private EngineWorldTransfer m_engineWorldTransfer;
         /// <summary>角色创建屏的默认名字摇号（按身份稳定键 + 本次会话盐；计数器见 StatusLine）。
@@ -89,6 +91,9 @@ namespace SuMultiplayer
                 message => Log.Warning("[SuMP] " + message),
                 CharacterNameRoller.NewSessionSalt());
             m_terrainModule = new TerrainSyncModule(m_config, profileStore: profileStore);
+            // 客户端引信表现：挂在桥的 ApplyCells 漏斗上（主机 / 单机不会进入该分支）。
+            m_fusePresenter = new FuseReplicaPresentation();
+            m_terrainModule.Bridge.FusePresenter = m_fusePresenter;
             m_sessionModule = new SessionModule(m_config, profileStore);
             m_transferModule = new WorldTransferModule(m_config, m_engineWorldTransfer, m_engineWorldTransfer,
             m_engineWorldTransfer);
@@ -229,6 +234,7 @@ namespace SuMultiplayer
             Log.Information("[SuMP] " + m_creatureWorld.StatusLine());
             Log.Information("[SuMP] " + m_authorityModule.StatusLine());
             Log.Information("[SuMP] " + m_nameRoller.StatusLine());
+            Log.Information("[SuMP] " + m_fusePresenter.Describe());
 
             // 引擎注入：把 Game.SubsystemTerrain 换成我们的薄外壳
             modInjector.Register("Game.SubsystemTerrain", "SuMultiplayer.Engine.SuSubsystemTerrain");
@@ -246,6 +252,16 @@ namespace SuMultiplayer
                 "SuMultiplayer.Engine.SuSubsystemWaterBlockBehavior");
             modInjector.Register("Game.SubsystemMagmaBlockBehavior",
                 "SuMultiplayer.Engine.SuSubsystemMagmaBlockBehavior");
+            // 水族三个子类也继承 SubsystemWaterBlockBehavior.Update → SpreadFluid →
+            // 每 0.25 game-sec 两次 ProcessModifiedCells（清空引擎改动表）。不注入它们，
+            // 客户端/主机都会在"玩家挖/放 → 清表 → 地形捕获"之间丢掉本地写入（实机丢编辑根因）。
+            // Source: Survivalcraft/Game/SubsystemFluidBlockBehavior.cs:SpreadFluid (:312)
+            modInjector.Register("Game.SubsystemInWaterBlockBehavior",
+                "SuMultiplayer.Engine.SuSubsystemInWaterBlockBehavior");
+            modInjector.Register("Game.SubsystemWaterPlantBlockBehavior",
+                "SuMultiplayer.Engine.SuSubsystemWaterPlantBlockBehavior");
+            modInjector.Register("Game.SubsystemBottomSuckerBlockBehavior",
+                "SuMultiplayer.Engine.SuSubsystemBottomSuckerBlockBehavior");
             modInjector.Register("Game.SubsystemFireBlockBehavior",
                 "SuMultiplayer.Engine.SuSubsystemFireBlockBehavior");
             modInjector.Register("Game.SubsystemGrassBlockBehavior",
@@ -270,6 +286,13 @@ namespace SuMultiplayer
                 "SuMultiplayer.Engine.SuSubsystemSaplingBlockBehavior");
             modInjector.Register("Game.SubsystemExplosions",
                 "SuMultiplayer.Engine.SuSubsystemExplosions");
+            // 爆炸物引信：引擎的引信是**主机私有表**（SubsystemExplosivesBlockBehavior.m_explosiveDataByPoint），
+            // 不写格、也不随 CellChange 下发 → 客户端在爆炸前看不到引信在烧（实机问题）。
+            // 外壳在主机把"剩余引信 tick"写进火药桶格子 data（Terrain/FuseCellState.cs）走既有下发，
+            // 客户端只做表现、不跑 base.Update（不倒计时、不爆炸）；起爆器 data 0..5 是挂载面、
+            // 写高位会让方块不渲染，因此起爆器只显式计数+限流日志（见外壳注释）。
+            modInjector.Register("Game.SubsystemExplosivesBlockBehavior",
+                "SuMultiplayer.Engine.SuSubsystemExplosivesBlockBehavior");
             // 拾取物 / 投射物：客户端不跑引擎的拾取结算 / 投射物模拟（它们会改地形、伤人、
             // 生成掉落物、触发爆炸）；主机保留原生模拟，只摘掉远端化身的“本地拾取”。
             // Source: Mod/ScMultiplayer/Func/Subsystem/SuSubsystemPickables.cs
@@ -302,7 +325,7 @@ namespace SuMultiplayer
                     return new object[] { false, null };
                 modInjector.Apply(database, "SuMultiplayer");
                 DatabaseApplied = true;
-                Log.Information("[SuMP] 引擎注入已应用（SubsystemTerrain 外壳 + 客户端副本闸门 16 个子系统）");
+                Log.Information("[SuMP] 引擎注入已应用（SubsystemTerrain 外壳 + 客户端副本闸门：水/岩浆/水下/水草/海参 + 火/草/植物/…）");
                 return new object[] { false, database };
             }, EventPriority.HIGHEST);
 
@@ -358,6 +381,7 @@ namespace SuMultiplayer
                         Log.Information("[SuMP] " + m_creatureModule?.StatusLine());
                         Log.Information("[SuMP] " + m_creatureWorld?.StatusLine());
                         Log.Information("[SuMP] " + m_nameRoller?.StatusLine());
+                        Log.Information("[SuMP] " + m_fusePresenter?.Describe());
                     }
                 }
                 catch (Exception e)
@@ -382,6 +406,7 @@ namespace SuMultiplayer
                 m_transferModule?.Detach(ModuleDetachReason.HostShutdown);
                 m_sessionModule?.Detach(ModuleDetachReason.HostShutdown);
                 m_terrainModule?.Detach(ModuleDetachReason.HostShutdown);
+                m_fusePresenter?.Reset();
             }
             catch (Exception)
             {

@@ -125,6 +125,9 @@ namespace SuMultiplayer.Engine
 
         public string EditStats => m_authority.Describe();
 
+        /// <summary>客户端捕获统计（暂存 / 交付 / 重试帧 / 每种丢弃原因）；见 TerrainBridge.ClientCaptureStats。</summary>
+        public string CaptureStats => m_bridge.ClientCaptureStats;
+
         public void ResetEditClient(int clientId) => m_authority.ResetClient(clientId);
 
         private void EnsureBlockCount()

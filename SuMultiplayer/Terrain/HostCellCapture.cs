@@ -41,6 +41,295 @@ namespace SuMultiplayer.Terrain
         private long m_capturedTotal;
         private long m_duplicateTotal;
 
+        // ------------------------------------------------------------------ 火捕获窗口
+        //
+        // 为什么火也必须有自己的窗口（实机 2026-10-19：主机火格烧尽/熄灭后客户端永远显示燃烧的 FireBlock）：
+        //   · 引擎火的**所有**写格都在 `SubsystemFireBlockBehavior` 里：
+        //       :231 烧尽目标块 `ChangeCell(...,0)`、:109 `SetCellOnFire` → ChangeCell、
+        //       :305-310 邻居回调里把失去支撑的火格改成空气 → ChangeCell；
+        //   · 但引擎会在火 Update **之外**、每 0.25s 由流体子系统调用
+        //     `ProcessModifiedCells()`（Survivalcraft/Game/SubsystemFluidBlockBehavior.cs:312，
+        //     `SpreadFluid` 的 `for i in 0..1` 两遍各调一次；水/岩浆/水下/水草/海参五个子系统都可能在跑，
+        //     即使附近没有流体也照跑），它在 SubsystemTerrain.cs:71 **先清空整张改动表再通知邻居**；
+        //   · 火格被邻居回调改成空气的那一刻**正好发生在那次通知内部**（ChangeCell 在清表之后入表），
+        //     又被同一轮 / 下一轮清表抹掉 ⇒ 主机本地变空、客户端永远收不到，火永远画着。
+        //   ⇒ 火外壳（Engine/ClientReplicaSubsystems.cs:SuSubsystemFireBlockBehavior）把
+        //     Update 前后的候选格差异与行为回调里**确定发生**的写入收进本窗口；窗口（和窗口外的
+        //     邻居回调）一律进 <see cref="m_fireCarry"/> 这个**跨清表存活**的集合，
+        //     由 <see cref="Collect"/> 与引擎改动表合并去重 —— 与流体窗口同一个汇合点，绝不二次下发。
+        //
+        // 计数口径（限流摘要会写出来）：
+        //   · FireCellCaptured  ：真的并进下发批次、交给桥的火格累计数（每格一次）；
+        //   · FireCellSkipped   ：候选格读前读后相同（不是真实改动）→ 明确跳过的累计数；
+        //   · FireCellDuplicates：同一格被多条路径重复报告（表里已有 / 回调 + 候选复核 / 同帧两次改写）
+        //                        → 合并成一次下发的累计数。
+
+        private readonly Dictionary<Point3, bool> m_fireWindow = new Dictionary<Point3, bool>();
+        /// <summary>窗口 / 窗口外回调捕获的格子：**跨引擎清表存活**，由 Collect 与改动表合并。</summary>
+        private readonly Dictionary<Point3, bool> m_fireCarry = new Dictionary<Point3, bool>();
+        private bool m_fireWindowActive;
+        private long m_fireCellCaptured;
+        private long m_fireCellSkipped;
+        private long m_fireCellDuplicates;
+        private long m_fireCandidateCells;
+        private long m_fireCandidateCapHits;
+        private long m_fireWindows;
+        private long m_fireDropped;
+
+        // ------------------------------------------------------------------ 引信捕获窗口
+        //
+        // 为什么引信也必须有自己的窗口（实机 2026-10-19：主机点燃火药桶后客户端只看到爆炸、看不到引信在烧）：
+        //   · 引擎的引信**不在格子里**：`SubsystemExplosivesBlockBehavior` 的
+        //     `m_explosiveDataByPoint`（:33）→ `ExplosiveData.TimeToExplosion`（:16）是主机私有表；
+        //     `IgniteFuse`（:41-55）/ `Update`（:57-92）**都不写格子**；主机看到的引信只是
+        //     `FuseParticleSystem`（:69-73，仅火药桶）—— 本端表现，不随 CellChange 下发。
+        //   · 联机时由主机外壳（Engine/ClientReplicaSubsystems.cs:SuSubsystemExplosivesBlockBehavior）
+        //     把"剩余引信 tick"写进火药桶格子的 data（见 Terrain/FuseCellState.cs），
+        //     这一笔 ChangeCell 与火的写格一样会落进 `m_modifiedCells`，而流体子系统每 0.25s 的
+        //     `ProcessModifiedCells()`（SubsystemFluidBlockBehavior.cs:312）会先清表再通知邻居
+        //     （SubsystemTerrain.cs:71）⇒ 只靠引擎改动表，引信状态可能一条都不下发。
+        //   ⇒ 与火同一套窗口：窗口里的格子进**跨清表存活**的 carry，由 Collect 与引擎改动表合并去重，
+        //     每格恰好下发一次。
+        //
+        // 计数口径：
+        //   · FuseCellCaptured  ：真的并进下发批次、交给桥的引信格累计数（每格一次）；
+        //   · FuseCellSkipped   ：候选格读前读后相同（不是真实改动）→ 明确跳过的累计数；
+        //   · FuseCellDuplicates：同一格被多条路径重复报告（表里已有 / 回调 + 候选复核 / 同帧两次改写）
+        //                        → 合并成一次下发的累计数。
+
+        private readonly Dictionary<Point3, bool> m_fuseWindow = new Dictionary<Point3, bool>();
+        /// <summary>窗口内捕获的引信格：**跨引擎清表存活**，由 Collect 与改动表合并。</summary>
+        private readonly Dictionary<Point3, bool> m_fuseCarry = new Dictionary<Point3, bool>();
+        private bool m_fuseWindowActive;
+        private long m_fuseCellCaptured;
+        private long m_fuseCellSkipped;
+        private long m_fuseCellDuplicates;
+        private long m_fuseCandidateCells;
+        private long m_fuseCandidateCapHits;
+        private long m_fuseWindows;
+        private long m_fuseDropped;
+
+        /// <summary>当前是否处在一次火 Update 的捕获窗口内。</summary>
+        public bool FireWindowActive => m_fireWindowActive;
+        /// <summary>已捕获、等下一次 Collect 合并进下发批次的火格数。</summary>
+        public int PendingFireCount => m_fireCarry.Count;
+        /// <summary>真的进了下发批次（交给桥）的火格累计数 = fireCellCaptured。</summary>
+        public long FireCellCaptured => m_fireCellCaptured;
+        /// <summary>候选格读前读后相同（不是真实改动）而跳过的累计数 = fireCellSkipped。</summary>
+        public long FireCellSkipped => m_fireCellSkipped;
+        /// <summary>同一格被重复报告、合并为一次下发的累计数 = fireCellDuplicates。</summary>
+        public long FireCellDuplicates => m_fireCellDuplicates;
+        /// <summary>参与 before/after 比较的火候选格累计数（工作量口径）。</summary>
+        public long FireCandidateCells => m_fireCandidateCells;
+        /// <summary>候选键超过上限而没有比较的键累计数（行为回调仍覆盖这些格）。</summary>
+        public long FireCandidateCapHits => m_fireCandidateCapHits;
+        /// <summary>火捕获窗口打开次数（&gt;0 说明主机侧火捕获确实在跑）。</summary>
+        public long FireCaptureWindows => m_fireWindows;
+        /// <summary>因没有桥 / 会话结束而**明确丢弃**的火格累计数（不静默）。</summary>
+        public long FireCellsDropped => m_fireDropped;
+
+        /// <summary>打开一次火 Update 的捕获窗口（主机、有会话时才调用；客户端不走这里）。</summary>
+        public void BeginFireWindow()
+        {
+            m_fireWindowActive = true;
+            m_fireWindows++;
+        }
+
+        /// <summary>
+        /// 记录一次**确定发生**的火写入。<paramref name="dataOnly"/>：true = 内容不变、只有 data 变
+        /// （ChangeCell 的 OnBlockModified）；false = 内容变了（OnBlockAdded / OnBlockRemoved）。
+        /// 窗口内进窗口；窗口外（邻居回调从 ProcessModifiedCells 里打进来）直接进 carry，照样跨清表存活。
+        /// </summary>
+        public void NoteFireChange(Point3 cell, bool dataOnly)
+        {
+            if (cell.Y < 0 || cell.Y > 255) return;
+            Dictionary<Point3, bool> table = m_fireWindowActive ? m_fireWindow : m_fireCarry;
+            if (table.TryGetValue(cell, out bool existingDataOnly))
+            {
+                m_fireCellDuplicates++;
+                // 同一格既有内容变化又有 data 变化 ⇒ 仍只下发一次，按"内容变了"记账。
+                if (!dataOnly) table[cell] = false;
+                else if (existingDataOnly) table[cell] = true;
+                return;
+            }
+            table[cell] = dataOnly;
+        }
+
+        /// <summary>
+        /// 比较候选格在一次调用前后的值（contents+data）。只有真实变化才登记：
+        ///   · 内容变了 → 按内容变化记；内容不变、data 变了 → data-only；
+        ///   · 完全相同或只有光照变化 → 明确计入 skipped，不入队。
+        /// </summary>
+        public void NoteFireCandidate(Point3 cell, int before, int after)
+        {
+            m_fireCandidateCells++;
+            if (cell.Y < 0 || cell.Y > 255) return;
+            if (before == after)
+            {
+                m_fireCellSkipped++;
+                return;
+            }
+            int beforeContents = before & 0x3FF;
+            int afterContents = after & 0x3FF;
+            if (beforeContents != afterContents)
+            {
+                NoteFireChange(cell, dataOnly: false);
+                return;
+            }
+            int beforeData = (int)((uint)before >> 14);
+            int afterData = (int)((uint)after >> 14);
+            if (beforeData == afterData)
+            {
+                // 只有光照位不同：摘要只含 contents+data，不下发。
+                m_fireCellSkipped++;
+                return;
+            }
+            NoteFireChange(cell, dataOnly: true);
+        }
+
+        /// <summary>
+        /// 关闭火窗口：把窗口里的格子并进**跨清表存活**的 carry（去重），由 <see cref="Collect"/> 与引擎
+        /// 改动表合并。返回窗口里的格数（0 = 本次火 Update 没有任何真实改动）。
+        /// </summary>
+        public int EndFireWindow()
+        {
+            if (!m_fireWindowActive) return 0;
+            m_fireWindowActive = false;
+            int count = m_fireWindow.Count;
+            if (count > 0)
+            {
+                foreach (KeyValuePair<Point3, bool> pair in m_fireWindow)
+                {
+                    if (m_fireCarry.TryGetValue(pair.Key, out bool existingDataOnly))
+                    {
+                        m_fireCellDuplicates++;
+                        if (!pair.Value) m_fireCarry[pair.Key] = false;
+                        else if (existingDataOnly) m_fireCarry[pair.Key] = true;
+                        continue;
+                    }
+                    m_fireCarry[pair.Key] = pair.Value;
+                }
+                m_fireWindow.Clear();
+            }
+            return count;
+        }
+
+        /// <summary>候选键因每帧上限没有参与比较：只记账（这些格仍由行为回调覆盖）。</summary>
+        public void NoteFireCandidateCapHit(int skippedKeys)
+        {
+            if (skippedKeys > 0) m_fireCandidateCapHits += skippedKeys;
+        }
+
+        /// <summary>当前是否处在一次引信 Update 的捕获窗口内。</summary>
+        public bool FuseWindowActive => m_fuseWindowActive;
+        /// <summary>已捕获、等下一次 Collect 合并进下发批次的引信格数。</summary>
+        public int PendingFuseCount => m_fuseCarry.Count;
+        /// <summary>真的进了下发批次（交给桥）的引信格累计数 = fuseCellCaptured。</summary>
+        public long FuseCellCaptured => m_fuseCellCaptured;
+        /// <summary>候选格读前读后相同（不是真实改动）而跳过的累计数 = fuseCellSkipped。</summary>
+        public long FuseCellSkipped => m_fuseCellSkipped;
+        /// <summary>同一格被重复报告、合并为一次下发的累计数 = fuseCellDuplicates。</summary>
+        public long FuseCellDuplicates => m_fuseCellDuplicates;
+        /// <summary>参与 before/after 比较的引信候选格累计数（工作量口径）。</summary>
+        public long FuseCandidateCells => m_fuseCandidateCells;
+        /// <summary>候选键超过上限而没有比较的键累计数（行为回调仍覆盖这些格）。</summary>
+        public long FuseCandidateCapHits => m_fuseCandidateCapHits;
+        /// <summary>引信捕获窗口打开次数（&gt;0 说明主机侧引信捕获确实在跑）。</summary>
+        public long FuseCaptureWindows => m_fuseWindows;
+        /// <summary>因没有桥 / 会话结束而**明确丢弃**的引信格累计数（不静默）。</summary>
+        public long FuseCellsDropped => m_fuseDropped;
+
+        /// <summary>打开一次引信 Update 的捕获窗口（主机、有会话时才调用；客户端不走这里）。</summary>
+        public void BeginFuseWindow()
+        {
+            m_fuseWindowActive = true;
+            m_fuseWindows++;
+        }
+
+        /// <summary>
+        /// 记录一次**确定发生**的引信写入。<paramref name="dataOnly"/>：true = 内容不变、只有 data 变
+        /// （火药桶引信 tick 就是这一种）；false = 内容也变了。
+        /// 窗口内进窗口；窗口外直接进 carry，照样跨清表存活。
+        /// </summary>
+        public void NoteFuseChange(Point3 cell, bool dataOnly)
+        {
+            if (cell.Y < 0 || cell.Y > 255) return;
+            Dictionary<Point3, bool> table = m_fuseWindowActive ? m_fuseWindow : m_fuseCarry;
+            if (table.TryGetValue(cell, out bool existingDataOnly))
+            {
+                m_fuseCellDuplicates++;
+                if (!dataOnly) table[cell] = false;
+                else if (existingDataOnly) table[cell] = true;
+                return;
+            }
+            table[cell] = dataOnly;
+        }
+
+        /// <summary>
+        /// 比较候选格在一次调用前后的值（contents+data）。只有真实变化才登记：
+        ///   · 内容变了 → 按内容变化记；
+        ///   · 内容不变、data 变了 → data-only（引信 tick 的正常路径）；
+        ///   · 完全相同或只有光照变化 → 明确计入 skipped，不入队。
+        /// </summary>
+        public void NoteFuseCandidate(Point3 cell, int before, int after)
+        {
+            m_fuseCandidateCells++;
+            if (cell.Y < 0 || cell.Y > 255) return;
+            if (before == after)
+            {
+                m_fuseCellSkipped++;
+                return;
+            }
+            int beforeContents = before & 0x3FF;
+            int afterContents = after & 0x3FF;
+            if (beforeContents != afterContents)
+            {
+                NoteFuseChange(cell, dataOnly: false);
+                return;
+            }
+            int beforeData = (int)((uint)before >> 14);
+            int afterData = (int)((uint)after >> 14);
+            if (beforeData == afterData)
+            {
+                m_fuseCellSkipped++;
+                return;
+            }
+            NoteFuseChange(cell, dataOnly: true);
+        }
+
+        /// <summary>
+        /// 关闭引信窗口：把窗口里的格子并进**跨清表存活**的 carry（去重），由 <see cref="Collect"/>
+        /// 与引擎改动表合并。返回窗口里的格数（0 = 本次引信 Update 没有任何真实改动）。
+        /// </summary>
+        public int EndFuseWindow()
+        {
+            if (!m_fuseWindowActive) return 0;
+            m_fuseWindowActive = false;
+            int count = m_fuseWindow.Count;
+            if (count > 0)
+            {
+                foreach (KeyValuePair<Point3, bool> pair in m_fuseWindow)
+                {
+                    if (m_fuseCarry.TryGetValue(pair.Key, out bool existingDataOnly))
+                    {
+                        m_fuseCellDuplicates++;
+                        if (!pair.Value) m_fuseCarry[pair.Key] = false;
+                        else if (existingDataOnly) m_fuseCarry[pair.Key] = true;
+                        continue;
+                    }
+                    m_fuseCarry[pair.Key] = pair.Value;
+                }
+                m_fuseWindow.Clear();
+            }
+            return count;
+        }
+
+        /// <summary>候选键因每帧上限没有参与比较：只记账（这些格仍由行为回调覆盖）。</summary>
+        public void NoteFuseCandidateCapHit(int skippedKeys)
+        {
+            if (skippedKeys > 0) m_fuseCandidateCapHits += skippedKeys;
+        }
+
         /// <summary>累计接住的格子数（rescue 次数 × 格数，用于诊断清表竞争）。</summary>
         public long Rescued => m_rescuedTotal;
         /// <summary>累计交给下发的格子数（每一格一次 = hostCellCaptured）。</summary>
@@ -238,8 +527,13 @@ namespace SuMultiplayer.Terrain
         }
 
         /// <summary>
-        /// 合并"引擎改动表 ∪ 接住集合"，输出**去重后**的待下发清单（<paramref name="output"/> 会被清空）。
-        /// 返回本次去重掉的格子数；累计值见 <see cref="Duplicates"/>。
+        /// 合并"引擎改动表 ∪ 接住集合 ∪ 火 carry ∪ 引信 carry"，输出**去重后**的待下发清单
+        /// （<paramref name="output"/> 会被清空）。返回本次去重掉的格子数；累计值见 <see cref="Duplicates"/>。
+        ///
+        /// 火格 / 引信格必须并在这里（而不是只依赖引擎改动表）：引擎的流体子系统每 0.25s 会
+        /// <c>ProcessModifiedCells()</c> 两遍（SubsystemTerrain.cs:71 先清表再通知邻居），
+        /// 火格被邻居回调改成空气的那一刻正好在通知内部、且在清表之后入表 ⇒ 只靠表必然丢。
+        /// 引信 tick 是主机外壳在火药桶格子上的 data-only 写入，同样会被这次清表抹掉。
         /// </summary>
         public int Collect(IEnumerable<Point3> pendingCells, List<Point3> output)
         {
@@ -262,9 +556,34 @@ namespace SuMultiplayer.Terrain
                 {
                     // 引擎表里已经有它 ⇒ 这次合并只需下发一份（表里那份，值是最新的）。
                     if (m_pending.Contains(cell)) { duplicates++; continue; }
+                    if (!m_pending.Add(cell)) continue;
                     output.Add(cell);
                 }
                 m_rescued.Clear();
+            }
+            if (m_fireCarry.Count > 0)
+            {
+                foreach (KeyValuePair<Point3, bool> pair in m_fireCarry)
+                {
+                    // 引擎表 / 接住集合里已经有它 ⇒ 只下发一份（值以读表那一刻的最终值为准）。
+                    if (m_pending.Contains(pair.Key)) { m_fireCellDuplicates++; duplicates++; continue; }
+                    m_pending.Add(pair.Key);
+                    output.Add(pair.Key);
+                    m_fireCellCaptured++;
+                }
+                m_fireCarry.Clear();
+            }
+            if (m_fuseCarry.Count > 0)
+            {
+                foreach (KeyValuePair<Point3, bool> pair in m_fuseCarry)
+                {
+                    // 引擎表 / 接住集合里已经有它 ⇒ 只下发一份（值以读表那一刻的最终值为准）。
+                    if (m_pending.Contains(pair.Key)) { m_fuseCellDuplicates++; duplicates++; continue; }
+                    m_pending.Add(pair.Key);
+                    output.Add(pair.Key);
+                    m_fuseCellCaptured++;
+                }
+                m_fuseCarry.Clear();
             }
             m_pending.Clear();
             m_duplicateTotal += duplicates;
@@ -274,15 +593,26 @@ namespace SuMultiplayer.Terrain
 
         /// <summary>
         /// 放弃所有接住的格子（没有桥 / 表绑定失败 / 会话结束）：这些格子不会被下发，
-        /// 调用方必须**明确计数**（不能假装它们已经发过）。返回丢弃的格数（接住 + 流体窗口）。
+        /// 调用方必须**明确计数**（不能假装它们已经发过）。返回丢弃的格数
+        /// （接住 + 流体窗口 + 火窗口/carry + 引信窗口/carry；火/引信另计入各自 Dropped）。
         /// </summary>
         public int Clear()
         {
-            int dropped = m_rescued.Count + m_fluidWindow.Count;
+            int droppedFire = m_fireWindow.Count + m_fireCarry.Count;
+            int droppedFuse = m_fuseWindow.Count + m_fuseCarry.Count;
+            int dropped = m_rescued.Count + m_fluidWindow.Count + droppedFire + droppedFuse;
             m_rescued.Clear();
             m_pending.Clear();
             m_fluidWindow.Clear();
             m_fluidWindowActive = false;
+            m_fireWindow.Clear();
+            m_fireCarry.Clear();
+            m_fireWindowActive = false;
+            m_fuseWindow.Clear();
+            m_fuseCarry.Clear();
+            m_fuseWindowActive = false;
+            if (droppedFire > 0) m_fireDropped += droppedFire;
+            if (droppedFuse > 0) m_fuseDropped += droppedFuse;
             if (dropped > 0) m_fluidDropped += dropped;
             return dropped;
         }

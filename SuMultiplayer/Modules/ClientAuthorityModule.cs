@@ -59,6 +59,16 @@ namespace SuMultiplayer.Modules
         private long m_editReverifyRequests;
         private long m_editReverifyUnavailable;
         private long m_editCaptureIgnored;
+        /// <summary>从捕获入口进来的本地编辑数（= 引擎侧成功读值并抛事件的格数）。</summary>
+        private long m_editReceived;
+        /// <summary>成功交给传输层的编辑请求数（首次 + 重发）。</summary>
+        private long m_editSent;
+        private long m_editDroppedHosting;
+        private long m_editDroppedNoTransport;
+        private long m_editDroppedNotReplica;
+        private long m_editDroppedOverflow;
+        private long m_editDroppedClientReset;
+        private long m_editDroppedDetached;
         private long m_clientResetCount;
         private int m_lastLocalClientId = int.MinValue;
         private bool m_attached;
@@ -168,6 +178,7 @@ namespace SuMultiplayer.Modules
             }
             if (m_edit != null && m_localEditHandler != null)
                 m_edit.LocalEditCaptured -= m_localEditHandler;
+            m_editDroppedDetached += m_tracker.PendingCount;
             m_tracker.Clear();
             m_attached = false;
             Log("客户端权威模块下线（" + reason + "）：" + Summary());
@@ -198,10 +209,14 @@ namespace SuMultiplayer.Modules
                 {
                     if (m_lastLocalClientId != int.MinValue)
                     {
+                        int dropped = m_tracker.PendingCount;
                         m_tracker.Clear();
                         m_clientResetCount++;
+                        m_editDroppedClientReset += dropped;
                         Log("客户端连接已更换（LocalClientId " + m_lastLocalClientId + " → " +
-                            localClientId + "）→ 清空旧连接的在途编辑请求");
+                            localClientId + "）→ 清空旧连接的在途编辑请求（" + dropped +
+                            " 条；累计 droppedClientReset=" + m_editDroppedClientReset +
+                            "；旧序号的回执不再匹配）");
                     }
                     m_lastLocalClientId = localClientId;
                 }
@@ -301,16 +316,27 @@ namespace SuMultiplayer.Modules
 
         private void HandleLocalEdit(ClientCellEdit edit)
         {
-            if (m_control?.IsHosting == true) return;                 // 主机不捕获（它就是权威）
+            // 每一级都要有计数：captured（received）→ queued（tracker.Submitted）→ sent → acked（confirmed）。
+            // 任何一级丢弃都必须有明确原因，禁止像旧实现那样在主机角色下静默 return。
+            m_editReceived++;
+            if (m_control?.IsHosting == true)
+            {
+                m_editDroppedHosting++;
+                NoteProblem("本地编辑捕获发生在主机角色 → 不上报（主机本身就是权威）；" +
+                    "累计 droppedHosting=" + m_editDroppedHosting);
+                return;
+            }
             if (m_transport == null || !m_transport.IsConnected)
             {
                 m_editCaptureIgnored++;
+                m_editDroppedNoTransport++;
                 return;
             }
             if (m_edit == null || m_edit.IsClientReplica == false)
             {
                 // 不是副本（单机 / 还没确定角色）：本地写入就是最终值，不上报。
                 m_editCaptureIgnored++;
+                m_editDroppedNotReplica++;
                 return;
             }
             long nowMs = (long)(Time.RealTime * 1000.0);
@@ -318,14 +344,20 @@ namespace SuMultiplayer.Modules
                 edit.Contents, edit.Data, nowMs);
             if (request == null)
             {
+                m_editDroppedOverflow++;
                 NoteProblem("在途编辑请求已达上限 " + ClientEditTracker.MaxPending +
-                    "（溢出 " + m_tracker.Overflow + "）→ 本次本地写入没有上报；" +
+                    "（本格没有上报；累计 droppedOverflow=" + m_editDroppedOverflow +
+                    "，tracker overflow=" + m_tracker.Overflow + "）→ " +
                     "主机下一次核对会把它纠正回来");
                 return;
             }
-            if (!m_transport.TrySend(MessageType.CellEditRequest,
+            if (m_transport.TrySend(MessageType.CellEditRequest,
                     CellEditRequestCodec.Encode(request.Sequence, request.X, request.Y, request.Z,
                         request.Contents, request.Data)))
+            {
+                m_editSent++;
+            }
+            else
             {
                 m_editSendFailures++;
                 NoteProblem("CellEditRequest 发送失败（背压）→ 留在待确认表里按 250ms 重发");
@@ -344,6 +376,10 @@ namespace SuMultiplayer.Modules
                             request.Z, request.Contents, request.Data)))
                 {
                     m_editSendFailures++;
+                }
+                else
+                {
+                    m_editSent++;
                 }
             }
             IReadOnlyList<ClientEditRequest> expired = m_tracker.CollectExpired(nowMs);
@@ -467,6 +503,15 @@ namespace SuMultiplayer.Modules
                 " sendFailures=" + (m_worldInfoSendFailures + m_editSendFailures)
                     .ToString(CultureInfo.InvariantCulture) +
                 " edit=" + m_tracker.Describe() +
+                " received=" + m_editReceived.ToString(CultureInfo.InvariantCulture) +
+                " sent=" + m_editSent.ToString(CultureInfo.InvariantCulture) +
+                " dropped(hosting=" + m_editDroppedHosting.ToString(CultureInfo.InvariantCulture) +
+                ",noTransport=" + m_editDroppedNoTransport.ToString(CultureInfo.InvariantCulture) +
+                ",notReplica=" + m_editDroppedNotReplica.ToString(CultureInfo.InvariantCulture) +
+                ",overflow=" + m_editDroppedOverflow.ToString(CultureInfo.InvariantCulture) +
+                ",clientReset=" + m_editDroppedClientReset.ToString(CultureInfo.InvariantCulture) +
+                ",detached=" + m_editDroppedDetached.ToString(CultureInfo.InvariantCulture) + ")" +
+                " capture=[" + (m_edit == null ? "n/a" : m_edit.CaptureStats) + "]" +
                 " results=" + m_editResultsReceived.ToString(CultureInfo.InvariantCulture) +
                 " rollbacks=" + m_editRollbacks.ToString(CultureInfo.InvariantCulture) +
                 " reverify=" + m_editReverifyRequests.ToString(CultureInfo.InvariantCulture) +
