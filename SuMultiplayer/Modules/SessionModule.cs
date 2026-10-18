@@ -29,6 +29,8 @@ namespace SuMultiplayer.Modules
     {
         private readonly ModuleDescriptor m_descriptor;
         private readonly SyncConfig m_config;
+        /// <summary>本机资料存储（新加入 / 离开房间时清空：新世界必须重新走角色创建流程）。</summary>
+        private readonly SuMultiplayer.Players.LocalPlayerProfileStore m_profileStore;
         private readonly RoomDirectory m_directory = new RoomDirectory();
         private readonly JoinFlow m_join = new JoinFlow();
 
@@ -39,12 +41,20 @@ namespace SuMultiplayer.Modules
         private long m_lastListLogMs;
         private int m_lastLoggedCount = -1;
         private bool m_joinAnnounced;
+        /// <summary>
+        /// 从"角色创建屏"返回 Play 屏时置位：这次进入 Play 是**同一次加入的继续**（旧实现
+        /// SubmitPendingJoin 重新 JoinGame），不是离开房间 —— Play 屏的 Enter 不能调 LeaveRoom，
+        /// 否则会把刚建立的连接停掉，客户端永远收不到世界。只生效一次，且只在真正返回时置位。
+        /// </summary>
+        private bool m_preserveJoinOnNextPlayEnter;
         private string m_roomWorldName = string.Empty;
         private string m_roomGameMode = string.Empty;
 
-        public SessionModule(SyncConfig config)
+        public SessionModule(SyncConfig config,
+            SuMultiplayer.Players.LocalPlayerProfileStore profileStore = null)
         {
             m_config = config ?? new SyncConfig();
+            m_profileStore = profileStore;
             m_descriptor = new ModuleDescriptor("session", "房间会话")
             {
                 ProvidesCapabilities = new[] { "session.rooms" },
@@ -200,6 +210,10 @@ namespace SuMultiplayer.Modules
             long now = Environment.TickCount64;
             if (m_join.IsActive && SelectedAddress == entry.HostAddress && SelectedPort == entry.Port)
                 return true;
+            m_preserveJoinOnNextPlayEnter = false;
+            // 新的一次加入 = 新的一次角色申请（旧实现 m_activeJoinHasPlayerProfile = false）：
+            // 上一次房间留下的资料不能静默套到新世界；主机没有记录时会回 profile_required 重新创建。
+            m_profileStore?.Clear();
             if (!m_transportControl.ConnectTo(entry.HostAddress, entry.Port, out reason))
                 return false;
 
@@ -223,8 +237,10 @@ namespace SuMultiplayer.Modules
             bool wasActive = m_transportControl?.IsChannelRunning == true || m_joinAnnounced;
             m_transportControl?.StopChannel();
             m_joinAnnounced = false;
+            m_preserveJoinOnNextPlayEnter = false;
             SelectedAddress = null;
             SelectedPort = 0;
+            m_profileStore?.Clear();
             m_join.Reset(Environment.TickCount64);
             if (wasActive) Log("已离开上一个房间（通道已关闭，加入流程回到 Idle）");
             StartDiscovery("回到世界列表");
@@ -303,6 +319,24 @@ namespace SuMultiplayer.Modules
         public IReadOnlyList<RoomEntry> Rooms => m_directory.View;
 
         public bool IsHostingRoom => m_beaconHost != null;
+
+        /// <summary>
+        /// 角色创建完成、即将返回 Play 屏：这一次 Enter 保留连接（不要 LeaveRoom）。
+        /// 由角色创建屏在 SwitchScreen("Play") 之前调用；只生效一次。
+        /// </summary>
+        public void PreserveJoinOnNextPlayEnter()
+        {
+            m_preserveJoinOnNextPlayEnter = true;
+            Log("角色创建屏返回 Play：保留本次加入的连接（不执行 LeaveRoom），完成后会带资料重新握手");
+        }
+
+        /// <summary>Play 屏 Enter 调用：返回 true = 本次不要 LeaveRoom（同一次加入的继续）。</summary>
+        public bool ConsumePreserveJoinOnNextPlayEnter()
+        {
+            if (!m_preserveJoinOnNextPlayEnter) return false;
+            m_preserveJoinOnNextPlayEnter = false;
+            return true;
+        }
 
         public string RoomSummary
         {

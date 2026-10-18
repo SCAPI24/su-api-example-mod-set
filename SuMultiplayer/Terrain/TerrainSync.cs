@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using SuMultiplayer.Net;
+using SuMultiplayer.Players;
 
 using SuMultiplayer.Protocol;
 
@@ -58,8 +59,19 @@ namespace SuMultiplayer.Terrain
         /// <summary>该块的格子读取器（16×16×256；contents/data 分开）。</summary>
         ChunkCellSource GetCellSource(ChunkKey key);
         void ApplyCells(ChunkKey key, IReadOnlyList<CellEdit> edits);
-        /// <summary>让引擎去加载这一块（异步；完成后实现方自行调用 OnChunkLoaded）。</summary>
-        void RequestLoad(ChunkKey key);
+        /// <summary>
+        /// 主机：请求引擎**只加载这一块**（临时单块地形更新位置；见 <see cref="OnDemandChunkLoads"/>）。
+        /// 异步；完成后内容自然出现在 <see cref="HasContents"/>。
+        /// 返回 false = 引擎当前明确不接受（世界未加载 / 没有 TerrainUpdater / 临时位置已满），
+        /// <paramref name="reason"/> 是可直接写进日志的原因 —— **绝不静默失败、也绝不假装已经请求**。
+        /// 实现方（Engine/TerrainBridge.cs）不得借此改动任何角色的兴趣半径 / 内容距离。
+        /// </summary>
+        bool TryRequestSingleChunkLoad(ChunkKey key, out string reason);
+        /// <summary>
+        /// 主机：撤销 <see cref="TryRequestSingleChunkLoad"/> 建立的临时加载（块交回引擎按它自己的
+        /// 更新位置决定去留，下一帧回收）。没有登记过就什么也不做。
+        /// </summary>
+        void ReleaseSingleChunkLoad(ChunkKey key);
         /// <summary>引擎**已分配**（占用内存）的区块；与内容是否定稿无关（海洋 / 水面块也在里面）。</summary>
         IEnumerable<ChunkKey> MemoryChunks { get; }
         /// <summary>内容可用（常驻）的区块 —— 摘要 / 裁决 / 回传唯一认这一份。</summary>
@@ -277,11 +289,12 @@ namespace SuMultiplayer.Terrain
         public int PendingResolvesPerTick { get; set; } = 4;
 
         /// <summary>
-        /// 同一块还没加载出来时，重发引擎加载请求的最小间隔（毫秒）。
-        /// Source: Mod/ScMultiplayer/Modules/World/ScMultiplayerWorldObjectHandlers.cs:630-642
-        ///         （旧实现待办超过 5s 就重新入队 QueueClientTerrainChunkSync）
+        /// 主机侧**按需单块加载**的参数（逐块临时加载位置 / 退避 / 上限 / 超时 / 冷却 / 保留窗口）。
+        /// 为什么不再有"同一块多久重请一次"的全局间隔：重请节奏属于台账，见
+        /// <see cref="Terrain.OnDemandLoadOptions.RetryBaseMs"/>（指数退避 + 次数 / 时间上限 + 冷却）。
+        /// 用户口径（2026-10-18）：客户端上报的边缘也要加载，但主机**不**放大任何角色的范围。
         /// </summary>
-        public int PendingReloadIntervalMs { get; set; } = 5000;
+        public OnDemandLoadOptions OnDemandLoad { get; set; } = new OnDemandLoadOptions();
 
         /// <summary>
         /// 广播改动时"某个订阅端没发出去（显式背压 / 连接不可达）"的原因行最小间隔（毫秒）。
@@ -507,6 +520,38 @@ namespace SuMultiplayer.Terrain
         /// 正常情况下一次重连恰好一行；同一连接上世界重复激活时也不会刷屏。
         /// </summary>
         public int ResidentRequeueLogIntervalMs { get; set; } = 10000;
+
+        // ===================================================================================
+        // 陈旧裁决（红框）自愈：主机已经把内容补给这条身份 / 客户端本地早已一致，但裁决停在 Mismatch
+        //
+        // 实机症状（2026-10-18）：区块 (30,-4)/(30,-3) 一直是红。背压漏掉的那条 CellChange 后来由
+        // RepairCellChangesLocked 按历史补发（客户端内容因此与主机一致），而客户端本地校验器是 Fresh、
+        // 不会自发重报（它“已经重新核对过、什么都没变”）⇒ 主机那条 Mismatch 永远没人重判。
+        // 这里给出**有界**的出口：内容补齐 / 刚判 Mismatch 时登记一次“需要重新裁决”，
+        // 退避后主动要一份新鲜摘要（单块 VerifyChunks）→ 到了就重判（Match → ReVerified 蓝）；
+        // 要过摘要、过了清除上限仍没有新鲜裁决 → 明确清掉这条陈旧的红（计数 + 一行日志，绝不静默）。
+        // ===================================================================================
+
+        /// <summary>同一块“陈旧红”最多主动要几次新鲜摘要（一条单块 VerifyChunks 算一次）。</summary>
+        public int StaleVerdictRejudgeMaxRequests { get; set; } = 2;
+
+        /// <summary>
+        /// 两次主动要摘要之间的退避（毫秒）。也给“客户端本来就会自发重报”的正常收敛路径留宽限：
+        /// 正常 Mismatch → 回传落地 → 客户端再报 → Match 通常 1~2s 内完成，不会真的发请求。
+        /// </summary>
+        public int StaleVerdictRejudgeRetryMs { get; set; } = 3000;
+
+        /// <summary>
+        /// 从登记“这块需要重新裁决”到**清除**陈旧红的上限（毫秒）。必须至少发出过一次请求；
+        /// 过了上限仍然没有新鲜裁决 → 清掉这条红（客户端可能已经不持有这块 / 不再上报）。
+        /// </summary>
+        public int StaleVerdictClearMs { get; set; } = 12000;
+
+        /// <summary>每 tick 最多为几个区块要新鲜摘要（合并成一条 VerifyChunks，有界）。</summary>
+        public int StaleVerdictRequestsPerTick { get; set; } = 2;
+
+        /// <summary>陈旧裁决日志（同一块请求 / 重判）的限流间隔（毫秒）。</summary>
+        public int StaleVerdictLogIntervalMs { get; set; } = 10000;
     }
 
     /// <summary>
@@ -736,6 +781,23 @@ namespace SuMultiplayer.Terrain
         public readonly Queue<ChunkKey> PendingScan = new Queue<ChunkKey>();
 
         /// <summary>
+        /// **陈旧裁决自愈台账**：主机刚刚把内容补给了这条身份（补发 CellChange / 回传快照 / 追帧重放 /
+        /// 整块快照），或刚对它判了 Mismatch，而这块当前仍是红（<see cref="ChunkVerifyState.Failed"/>）
+        /// → 这条结论可能已经过期：客户端本地校验器可能是 Fresh（内容早已一致），它**不会自发重报**，
+        /// 红框就永远留着（实机 (30,-4)/(30,-3)）。这里按区块登记，由
+        /// <see cref="TerrainSyncHost.TickStaleVerdicts"/> 有界地主动要一份新鲜摘要。
+        /// 与 <see cref="Verdicts"/> 同生命周期（会话结束整体清空）；跨重连保留（同一身份）。
+        /// </summary>
+        public readonly Dictionary<ChunkKey, StaleVerdictWatch> StaleVerdicts =
+            new Dictionary<ChunkKey, StaleVerdictWatch>();
+
+        /// <summary>等待重新裁决区块的轮转顺序（每 tick 从队首取若干条，没到点的放回队尾）。</summary>
+        public readonly Queue<ChunkKey> StaleVerdictScan = new Queue<ChunkKey>();
+
+        /// <summary>在册等待重新裁决的区块数。</summary>
+        public int PendingStaleVerdicts => StaleVerdicts.Count;
+
+        /// <summary>
         /// 主机欠着裁决的上报**条数**（= <see cref="Pending"/> 的条数）：状态行 / 实时地图的"待裁决"、
         /// 重连复用日志里的"沿用 N 条待裁决"都读它（与 <see cref="TerrainHostSnapshot.PendingReports"/>
         /// 同一口径，但这里按**身份**归档）。
@@ -758,12 +820,33 @@ namespace SuMultiplayer.Terrain
         public uint ClientHash;
         /// <summary>第一次登记的时刻（TickCount64 口径），用于"欠了多久"。</summary>
         public long FirstSeenMs;
-        /// <summary>上一次向引擎发加载请求的时刻（限流：不高于 PendingReloadIntervalMs 一次）。</summary>
-        public long LastLoadRequestMs;
-        /// <summary>已经向引擎发过几次加载请求（写进原因行）。</summary>
-        public int LoadRequests;
-        /// <summary>"主机一直没拿到这块内容"的明确原因只写一行（同一块不重复刷屏）。</summary>
+        /// <summary>
+        /// "主机一直没拿到这块内容"的明确原因只写一行（同一块不重复刷屏）。
+        /// 加载重请的节奏 / 次数 / 超时**不在这里**：那是 <see cref="OnDemandChunkLoads"/> 的台账
+        /// （同一块一条记录，指数退避 + 次数上限 + 总超时 + 冷却），这里只留"欠了多久"。
+        /// </summary>
         public bool StalledLogged;
+    }
+
+    /// <summary>
+    /// 一条“这块的红（Mismatch）可能已经过期”的台账（见 <see cref="PlayerSessionRecord.StaleVerdicts"/>）。
+    /// 生命周期：登记（内容补给 / 刚判 Mismatch）→ 退避后主动要新鲜摘要（≤ 上限次）→
+    /// 收到 Match 改判（结束，计数 refreshed）或过了清除上限（明确清掉红，结束，计数 cleared）。
+    /// **绝不伪造 Match**：改判只来自客户端真实上报后主机的比对结果。
+    /// </summary>
+    internal sealed class StaleVerdictWatch
+    {
+        public ChunkKey Key;
+        /// <summary>首次登记时刻（TickCount64）：清除上限从这里算起。</summary>
+        public long FirstSeenMs;
+        /// <summary>下一次允许主动要摘要的时刻（退避；给正常收敛路径留宽限）。</summary>
+        public long NextRequestMs;
+        /// <summary>已经**真的发出去**的“要新鲜摘要”次数（背压失败会退回，不虚增）。</summary>
+        public int Requests;
+        /// <summary>触发登记的原因（最近一次；写进日志）。</summary>
+        public string LastReason = string.Empty;
+        /// <summary>上一次为这块写日志的时刻（限流，逐块）。</summary>
+        public long LastLogMs;
     }
 
     public sealed class TerrainHostSnapshot
@@ -795,6 +878,35 @@ namespace SuMultiplayer.Terrain
         /// 例：3 个区块各欠 1 个身份 → 本值为 3；1 个区块欠 2 个 → 也是 2。
         /// </summary>
         public int PendingClients;
+
+        // ---- 按需单块加载（主机：客户端上报的边缘块，逐块临时加载；口径见 Terrain/OnDemandChunkLoads.cs）----
+        /// <summary>真正交给引擎的单块加载请求**次数**（含重试）= onDemandLoadRequests。</summary>
+        public long OnDemandLoadRequests;
+        /// <summary>进入按需加载的区块数（重试不重复计）。</summary>
+        public long OnDemandLoadChunks;
+        /// <summary>内容到位、已经可以裁决的区块数 = onDemandLoadServed。</summary>
+        public long OnDemandLoadServed;
+        /// <summary>超时 / 引擎拒绝后**明确放弃**的区块数 = onDemandLoadTimeouts。</summary>
+        public long OnDemandLoadTimeouts;
+        /// <summary>被拒绝的请求次数 = onDemandLoadRejected（= 下面三项之和）。</summary>
+        public long OnDemandLoadRejected;
+        /// <summary>拒绝原因：并发上限已满。</summary>
+        public long OnDemandLoadRejectedCap;
+        /// <summary>拒绝原因：上一轮明确放弃后的冷却未过。</summary>
+        public long OnDemandLoadRejectedCooldown;
+        /// <summary>拒绝原因：引擎明确不接受（世界未加载 / 没有 TerrainUpdater / 临时位置满）。</summary>
+        public long OnDemandLoadRejectedEngine;
+        /// <summary>内容到位后按需撤掉的临时加载次数（服务完成 / 不再需要）。</summary>
+        public long OnDemandLoadReleased;
+        /// <summary>当前在册的按需加载块数 = pendingOnDemand。</summary>
+        public int PendingOnDemand;
+        /// <summary>
+        /// 因为"主机明确不为这块发起加载"（冷却 / 上限 / 引擎拒绝）而**没有**登记成待裁决的上报条数。
+        /// 这些上报已经用 NotReady 回答过（客户端会按退避重问），不会变成永远挂着、永远裁决不了的黄框。
+        /// </summary>
+        public long OnDemandReportsDropped;
+        /// <summary>因为按需加载明确放弃（超时 / 引擎拒绝）而从待裁决里摘掉的上报条数。</summary>
+        public long OnDemandReportsTimedOut;
 
         // ---- 客户端"内存区块集合"（v8 实时地图；= 引擎已分配的区块）的显式计数 ----
         /// <summary>在线身份内存（引擎已分配）区块条目总数（= 各身份 <see cref="PlayerSessionRecord.MemoryChunks"/> 之和）。</summary>
@@ -855,6 +967,18 @@ namespace SuMultiplayer.Terrain
         public long VerifyRequestsSent;
         /// <summary>上述请求没发出去的次数（显式背压 / 不可达）。</summary>
         public long VerifyRequestSendFailures;
+
+        // ---- 陈旧裁决自愈（红框在内容补齐后必须被重新裁决；口径见 TerrainSyncOptions.StaleVerdict*）----
+        /// <summary>已发出的“这块需要重新裁决、请给一份新鲜摘要”的区块请求数（按区块计）。</summary>
+        public long StaleVerdictRefreshRequested;
+        /// <summary>请求之后真的拿到新鲜裁决、并改判成 Match / ReVerified 的区块数。</summary>
+        public long StaleVerdictRefreshed;
+        /// <summary>要过摘要、过了清除上限仍没有新鲜裁决 → 明确清掉的陈旧红区块数。</summary>
+        public long StaleVerdictCleared;
+        /// <summary>请求没发出去（显式背压 / 连接不可达）的次数 —— 请求次数会退回，绝不假装要过。</summary>
+        public long StaleVerdictRefreshDeferred;
+        /// <summary>当前在册等待重新裁决的 (身份, 区块) 条数（实时地图 / 状态行用）。</summary>
+        public int PendingStaleVerdicts;
     }
 
     public sealed class TerrainClientSnapshot
@@ -1115,6 +1239,13 @@ namespace SuMultiplayer.Terrain
             public long HelloLastApplied;
             /// <summary>这次握手被判为首次加入的**明确原因**（写进 HelloAck，客户端据此写日志 / 作废旧会话）。</summary>
             public string RejoinReason = string.Empty;
+            /// <summary>
+            /// 主机没有这个身份的角色记录、Hello 也没带完整资料 → 这次握手**不下发世界**，
+            /// 客户端必须先建角色再重新握手（旧 SCMP_PROFILE_REQUIRED 流程）。
+            /// </summary>
+            public bool ProfileRequired;
+            /// <summary>ProfileRequired 的明确原因（日志 / HelloAck.profile_required_reason）。</summary>
+            public string ProfileRequiredReason = string.Empty;
             /// <summary>Accepted 重连后要追到的改动序号（-1 = 没有追帧任务）。</summary>
             public long CatchUpTarget = -1L;
             public long Match, Mismatch, NotReady, ResyncPartsSent, CellChangesSent;
@@ -1144,6 +1275,26 @@ namespace SuMultiplayer.Terrain
         private readonly MessageChannel m_messages;
         private readonly TerrainSyncOptions m_options;
         private readonly Dictionary<int, State> m_clients = new Dictionary<int, State>();
+
+        // ---- 按需单块加载（客户端上报的边缘块；**不放大**任何角色的兴趣半径 / 内容距离）----
+        /// <summary>
+        /// 逐块临时加载的台账（唯一入口；参数见 <see cref="TerrainSyncOptions.OnDemandLoad"/>）。
+        /// 引擎调用只通过 <see cref="ITerrainWorld.TryRequestSingleChunkLoad"/> /
+        /// <see cref="ITerrainWorld.ReleaseSingleChunkLoad"/>；本类只管"什么时候请求、什么时候裁决、什么时候放弃"。
+        /// </summary>
+        private readonly OnDemandChunkLoads m_onDemand;
+        /// <summary>本拍内容到位、要**立刻裁决**的块（复用缓冲，不在热路径分配）。</summary>
+        private readonly List<ChunkKey> m_onDemandServed = new List<ChunkKey>(16);
+        /// <summary>本拍明确放弃（超时 / 引擎拒绝）的块（宿主随后把它们从待裁决里摘掉）。</summary>
+        private readonly List<ChunkKey> m_onDemandTimedOut = new List<ChunkKey>(16);
+        /// <summary>按需加载台账产出的限流日志行（取走后交给 <see cref="OnDemandTrace"/>）。</summary>
+        private readonly List<string> m_onDemandLines = new List<string>(4);
+        /// <summary>"这块现在还该不该留在主机内存里"的判定（交给台账，避免每帧分配委托）。</summary>
+        private readonly Func<ChunkKey, bool> m_onDemandStillNeeded;
+        /// <summary>因为"主机明确不为这块发起加载"（冷却 / 上限 / 引擎拒绝）而没有登记成待裁决的上报条数。</summary>
+        private long m_onDemandReportsDropped;
+        /// <summary>因为按需加载明确放弃（超时 / 引擎拒绝）而从待裁决里摘掉的上报条数。</summary>
+        private long m_onDemandReportsTimedOut;
 
         /// <summary>
         /// 一条权威改动（有界改动历史的最小单元）。序号由 <see cref="BroadcastCellChange"/> 递增分配，
@@ -1286,6 +1437,20 @@ namespace SuMultiplayer.Terrain
         /// <summary>"订阅端没发出去"的原因行上一次写出的时刻（限流，见 CellChangeFailureLogIntervalMs）。</summary>
         private long m_lastCellChangeSendFailureLogMs;
 
+        // ---- 陈旧裁决自愈（红框在内容补齐后必须重新裁决；见 TerrainSyncOptions.StaleVerdict*）----
+        /// <summary>已发出的“要一份新鲜摘要”的区块请求数（按区块计）。</summary>
+        private long m_staleVerdictRefreshRequested;
+        /// <summary>请求后拿到新鲜裁决并改判成 Match / ReVerified 的区块数。</summary>
+        private long m_staleVerdictRefreshed;
+        /// <summary>过了清除上限仍没有新鲜裁决 → 明确清掉的陈旧红区块数。</summary>
+        private long m_staleVerdictCleared;
+        /// <summary>请求因显式背压 / 不可达没发出去的次数（请求次数会退回）。</summary>
+        private long m_staleVerdictRefreshDeferred;
+        /// <summary>“请求没发出去”原因行上一次写出的时刻（全局限流，避免背压时刷屏）。</summary>
+        private long m_lastStaleVerdictProblemLogMs;
+        /// <summary>本 tick 待合并成一条 VerifyChunks 的区块（复用，避免热路径分配）。</summary>
+        private readonly List<ChunkKey> m_staleVerdictBatch = new List<ChunkKey>();
+
         // ---- 客户端"当前内存区块集合"（v8 实时地图）的计数与限流 ----
         /// <summary>收齐的整集次数（所有身份累计）。</summary>
         private long m_clientChunkFullSets;
@@ -1322,9 +1487,17 @@ namespace SuMultiplayer.Terrain
             m_messages = messages ?? new MessageChannel(new MessageRegistry(),
                 (clientId, type, payload) => clientId > 0 && m_server.TrySend(clientId, type, payload),
                 "terrain-sync-host");
+            m_onDemand = new OnDemandChunkLoads(m_world, m_options.OnDemandLoad);
+            m_onDemandStillNeeded = HostStillNeedsOnDemandChunk;
             RegisterMessages();
             if (attachToChannel) m_server.FrameReceived += OnFrame;
         }
+
+        /// <summary>
+        /// 按需单块加载的**限流**日志行（超时放弃 / 被拒绝 / 汇总）。台账已经限流（同一块一行、
+        /// 拒绝与汇总按 10s），这里只负责抛给组合根写日志 —— 不在热路径逐条打印。
+        /// </summary>
+        public event Action<string> OnDemandTrace;
 
         /// <summary>主线程泵入口：处理一帧入站消息。</summary>
         public void ProcessFrame(in ReceivedFrame frame) => OnFrame(frame);
@@ -1515,6 +1688,13 @@ namespace SuMultiplayer.Terrain
         public string Name { get; set; } = string.Empty;
 
         /// <summary>
+        /// 资料闸门（由联机角色模块注入）：主机在 Hello 时决定"这个身份有没有角色记录 /
+        /// 要不要先建角色"。null = 没有接上资料模块（旧行为：不要求建角色）。
+        /// 见 <see cref="IHelloProfileGate"/>。
+        /// </summary>
+        public IHelloProfileGate ProfileGate { get; set; }
+
+        /// <summary>
         /// 本次房间 / 会话标识（32 位十六进制，由上层在建房时生成；**绝不落盘**）。
         /// HelloAck 与 WorldBegin 世界清单都带它；客户端把它与下载世界登记在一起，
         /// 重连时发回 Hello —— 只有与会话一致才允许"不重发整图、只追帧"。
@@ -1573,7 +1753,11 @@ namespace SuMultiplayer.Terrain
                 OwedSnapshotsQueued = m_owedSnapshotsQueued,
                 OwedSnapshotsSkippedNoContent = m_owedSnapshotsSkippedNoContent,
                 VerifyRequestsSent = m_verifyRequestsSent,
-                VerifyRequestSendFailures = m_verifyRequestSendFailures
+                VerifyRequestSendFailures = m_verifyRequestSendFailures,
+                StaleVerdictRefreshRequested = m_staleVerdictRefreshRequested,
+                StaleVerdictRefreshed = m_staleVerdictRefreshed,
+                StaleVerdictCleared = m_staleVerdictCleared,
+                StaleVerdictRefreshDeferred = m_staleVerdictRefreshDeferred
             };
             lock (m_gate)
             {
@@ -1636,6 +1820,7 @@ namespace SuMultiplayer.Terrain
                             snapshot.ClientChunkFullSets += session.ClientChunkFullSets;
                             snapshot.ClientChunkDeltaMessages += session.ClientChunkDeltaMessages;
                             snapshot.ClientChunkRejects += session.ClientChunkRejects;
+                            snapshot.PendingStaleVerdicts += session.PendingStaleVerdicts;
                         }
                         view.ClientChunkFullSets = session.ClientChunkFullSets;
                         view.ClientChunkDeltaMessages = session.ClientChunkDeltaMessages;
@@ -1680,6 +1865,19 @@ namespace SuMultiplayer.Terrain
                 snapshot.CatchUpActive = m_catchUps.Count;
                 snapshot.CatchUpSendDeferrals = m_catchUpSendDeferrals;
                 snapshot.CatchUpAckTimeouts = m_catchUpAckTimeouts;
+                // 按需单块加载（客户端上报的边缘块）：口径与计数都来自同一份台账，不另立一份。
+                snapshot.OnDemandLoadRequests = m_onDemand.Requests;
+                snapshot.OnDemandLoadChunks = m_onDemand.Chunks;
+                snapshot.OnDemandLoadServed = m_onDemand.Served;
+                snapshot.OnDemandLoadTimeouts = m_onDemand.Timeouts;
+                snapshot.OnDemandLoadRejected = m_onDemand.Rejected;
+                snapshot.OnDemandLoadRejectedCap = m_onDemand.RejectedCap;
+                snapshot.OnDemandLoadRejectedCooldown = m_onDemand.RejectedCooldown;
+                snapshot.OnDemandLoadRejectedEngine = m_onDemand.RejectedEngine;
+                snapshot.OnDemandLoadReleased = m_onDemand.ReleasedServed;
+                snapshot.PendingOnDemand = m_onDemand.Pending;
+                snapshot.OnDemandReportsDropped = m_onDemandReportsDropped;
+                snapshot.OnDemandReportsTimedOut = m_onDemandReportsTimedOut;
             }
             snapshot.Loaded.AddRange(m_world.LoadedChunks);
             return snapshot;
@@ -1705,6 +1903,10 @@ namespace SuMultiplayer.Terrain
             List<KeyValuePair<int, string>> lost = null;
             lock (m_gate)
             {
+                // ①' 按需单块加载（客户端上报的**边缘**块）：推进台账 —— 内容到位的**立刻裁决**（不用玩家移动），
+                // 明确放弃的**从待裁决里摘掉**（这就是"待裁决永远挂着"的出口）。**不放大**任何角色的兴趣半径。
+                // 放在客户端循环之前：本拍服务到的块在同一次 Tick 里就把裁决发出去。
+                TickOnDemandLoads(nowMs, ref work);
                 foreach (KeyValuePair<int, State> pair in m_clients)
                 {
                     State state = pair.Value;
@@ -1768,11 +1970,24 @@ namespace SuMultiplayer.Terrain
                         state.ResyncPartsSent++;
                         m_resyncBytes += job.Parts[job.Index].Length;
                         job.Index++;
-                        if (job.Index >= job.Parts.Count) state.PendingResync.Dequeue();
+                        if (job.Index >= job.Parts.Count)
+                        {
+                            state.PendingResync.Dequeue();
+                            // 整块快照已经全部发给它：这块如果还停在红（Mismatch），那条结论可能已经过期
+                            // （客户端内容刚被主机内容覆盖），必须重新裁决（见 TickStaleVerdicts）。
+                            NoteVerdictNeedsRejudge(state, job.Key,
+                                "整块回传快照已发出（编码水位 " + job.EncodeSequence + "）");
+                        }
                         work++;
                     }
                     // ④ 背压 / 追帧期间没发出去的改动：按改动历史顺序补发（每 tick 有界，顺序不变）。
                     work += RepairCellChangesLocked(state, nowMs);
+                    // ④' 陈旧裁决自愈：内容已经补给它的那些块如果还停在红（Mismatch）→ 有界地要一份
+                    // 新鲜摘要（重判成绿/蓝），到上限仍没有新裁决就明确清红。放在补发之后：本拍刚补上的
+                    // 内容在下一拍进入自愈流程（退避给"客户端本来就会自发重报"的正常路径留宽限）。
+                    // 只由该身份**当前**的那条连接驱动（旧连接的迟到帧不扫同一份台账）。
+                    if (state.Session == null || state.Session.CurrentClientId == state.Id)
+                        work += TickStaleVerdicts(state, nowMs);
                 }
                 if (lost != null)
                 {
@@ -1792,6 +2007,147 @@ namespace SuMultiplayer.Terrain
                 for (int i = 0; i < lost.Count; i++) ClientLost?.Invoke(lost[i].Key, lost[i].Value);
             }
             return work;
+        }
+
+        // ------------------------------------------------------------ 按需单块加载（主机；口径见 Terrain/OnDemandChunkLoads.cs）
+
+        /// <summary>
+        /// 推进按需单块加载台账，并把它这一拍的两个结果落到裁决上：
+        ///   · 内容到位（served）→ 用**真实主机摘要**立刻裁决（Match / Mismatch + 回传排队），
+        ///     不需要玩家移动；同一块被多个身份上报过就各答一条；
+        ///   · 明确放弃（超时 / 引擎拒绝）→ 把这块的待裁决**摘掉**并如实计数（一行点名原因由台账写）。
+        /// 调用方已持有 m_gate。
+        /// </summary>
+        private void TickOnDemandLoads(long nowMs, ref int work)
+        {
+            m_onDemand.Tick(nowMs, m_onDemandStillNeeded, m_onDemandServed, m_onDemandTimedOut);
+            for (int i = 0; i < m_onDemandServed.Count; i++)
+                work += ResolveOnDemandServed(m_onDemandServed[i]);
+            for (int i = 0; i < m_onDemandTimedOut.Count; i++)
+                DropOnDemandReports(m_onDemandTimedOut[i]);
+            m_onDemandLines.Clear();
+            m_onDemand.DrainLines(m_onDemandLines);
+            for (int i = 0; i < m_onDemandLines.Count; i++) OnDemandTrace?.Invoke(m_onDemandLines[i]);
+        }
+
+        /// <summary>
+        /// 为一个"主机没有内容"的上报登记按需加载（**唯一入口**：同一块已有登记 → 只追加归属，
+        /// 客户端重报不会产生第二个加载请求）。
+        /// 返回 false = 主机**明确不为这块发起加载**（冷却 / 并发上限 / 引擎拒绝）：调用方不得把这条上报
+        /// 登记成待裁决（那块没有任何人在加载，登记上就是永远裁决不了的黄框），只回 NotReady。
+        /// 拒绝的计数与点名原因行由台账负责（已限流）。
+        /// </summary>
+        private bool RequestOnDemandLoad(PlayerSessionRecord session, ChunkKey key, long nowMs)
+        {
+            if (m_onDemand.Request(key, session.StableKey, nowMs, out _)) return true;
+            m_onDemandReportsDropped++;
+            return false;
+        }
+
+        /// <summary>
+        /// 内容到位 → 用真实主机摘要立刻裁决（每个还欠着这块的身份各答一条）。
+        /// 返回真正发出去的裁决条数（背压没发出去的不算，留在待裁决里下一拍补）。
+        /// </summary>
+        private int ResolveOnDemandServed(ChunkKey key)
+        {
+            if (!m_world.HasContents(key)) return 0;      // 台账判定后又被引擎回收：不裁决（下一拍再判）
+            uint hostHash = HostDigest(key);
+            int sent = ResolveServedForSessions(m_sessions.Values, key, hostHash);
+            sent += ResolveServedForSessions(m_degradedSessions.Values, key, hostHash);
+            return sent;
+        }
+
+        private int ResolveServedForSessions(IEnumerable<PlayerSessionRecord> sessions, ChunkKey key,
+            uint hostHash)
+        {
+            int sent = 0;
+            foreach (PlayerSessionRecord session in sessions)
+            {
+                if (!session.Pending.TryGetValue(key, out PendingReport report)) continue;
+                State state = CurrentStateOf(session);
+                // 这条身份已经没有可达连接：**保留**待裁决（重连后按常规扫描继续用真实摘要作答），
+                // 这里不发（发也发不出去）。
+                if (state == null || !CanStillReachPeer(state)) continue;
+                DigestVerdict verdict = CompareReport(report.ClientHash, hostHash);
+                if (!SendVerdict(state, key, verdict, hostHash))
+                {
+                    // 显式背压：没发出去就还欠着（条目留在待裁决里，下一拍按常规扫描补发真实摘要）。
+                    continue;
+                }
+                ApplyVerdict(state, key, verdict);
+                sent++;
+            }
+            return sent;
+        }
+
+        /// <summary>
+        /// 按需加载明确放弃（超时 / 引擎拒绝）→ 把这块的待裁决**摘掉**：
+        ///   · 绝不发 Match / Mismatch（主机确实没有内容，不做假裁决）；
+        ///   · 状态从 Requested（黄）退回 None（不画框），否则那块黄框会永远挂着（这正是实机症状）；
+        ///   · 客户端早已收到 NotReady（会按退避重问），重问若落在冷却外会重新尝试加载。
+        /// </summary>
+        private void DropOnDemandReports(ChunkKey key)
+        {
+            m_onDemandReportsTimedOut += DropPendingForSessions(m_sessions.Values, key);
+            m_onDemandReportsTimedOut += DropPendingForSessions(m_degradedSessions.Values, key);
+        }
+
+        private int DropPendingForSessions(IEnumerable<PlayerSessionRecord> sessions, ChunkKey key)
+        {
+            int dropped = 0;
+            foreach (PlayerSessionRecord session in sessions)
+            {
+                if (!session.Pending.Remove(key)) continue;
+                ClearRequestedVerdict(session, key);
+                dropped++;
+            }
+            return dropped;
+        }
+
+        /// <summary>
+        /// 把这块的"黄（<see cref="ChunkVerifyState.Requested"/>）"退掉 —— 主机已明确不为它发起加载，
+        /// 再挂着就是永远裁决不了的黄框。**不动**已有结论（绿 / 红 / 蓝）：那些是过去真的裁决过的结果，
+        /// 不能被"这一次加载放弃"洗掉（实时地图只画最后一次结论）。
+        /// </summary>
+        private static void ClearRequestedVerdict(PlayerSessionRecord session, ChunkKey key)
+        {
+            if (session.Verdicts.TryGetValue(key, out byte value) &&
+                value == (byte)ChunkVerifyState.Requested)
+            {
+                session.Verdicts.Remove(key);
+            }
+        }
+
+        /// <summary>这条身份记录当前指向的连接状态（没有在线连接 / 句柄不匹配 → null）。</summary>
+        private State CurrentStateOf(PlayerSessionRecord session)
+        {
+            if (session == null || session.CurrentClientId < 0) return null;
+            return m_clients.TryGetValue(session.CurrentClientId, out State state) &&
+                   ReferenceEquals(state.Session, session) ? state : null;
+        }
+
+        /// <summary>
+        /// 这块现在还该不该留在主机内存里（按需加载的**回收判据**，交台账每 tick 判定）：
+        ///   · 还有在线身份的**当前内存集合**里有它（客户端还拿着这块 → 主机要能随时取到权威内容）；
+        ///   · 或者这条身份还欠着它的裁决；
+        ///   · 或者某条连接上还排着它的回传快照（没发完就回收会退化成 NotReady → 重报 → 又加载）。
+        /// 都不成立 → 台账过保留窗口后撤掉临时加载位置（主机不长期维持一圈更大的范围）。
+        /// </summary>
+        private bool HostStillNeedsOnDemandChunk(ChunkKey key)
+        {
+            foreach (KeyValuePair<int, State> pair in m_clients)
+            {
+                State state = pair.Value;
+                if (state.Session != null && state.Session.MemoryChunks.Contains(key)) return true;
+                if (state.PendingResync.Count == 0) continue;
+                foreach (PendingResyncJob job in state.PendingResync)
+                    if (job.Key.Equals(key)) return true;
+            }
+            foreach (KeyValuePair<string, PlayerSessionRecord> pair in m_sessions)
+                if (pair.Value.Pending.ContainsKey(key)) return true;
+            foreach (KeyValuePair<int, PlayerSessionRecord> pair in m_degradedSessions)
+                if (pair.Value.Pending.ContainsKey(key)) return true;
+            return false;
         }
 
         private void OnFrame(ReceivedFrame frame) => m_messages.Dispatch(in frame);
@@ -1841,6 +2197,41 @@ namespace SuMultiplayer.Terrain
             state.DeliveryIndex = 0L;
             state.RepairFromSequence = -1L;
             state.RepairUnavailableLogged = false;
+            // ---- 资料闸门（旧实现的 SCMP_PROFILE_REQUIRED；Source: ScMultiplayerPlayerHealthAndIngress.cs:941-961）----
+            // 主机有记录 → 采用记录里的名字/性别/皮肤/衣服；没有记录且 Hello 没带完整资料 →
+            // ProfileRequired=true，本次**不下发世界**（客户端先建角色，再带 Hello.profile 重新握手）。
+            HelloProfileDecision profileDecision = null;
+            PlayerProfileSnapshot claimedProfile = null;
+            if (state.Kind == ClientKind.Player && ProfileGate != null)
+            {
+                int claimedClientId = -1;
+                string claimedIdentity = string.Empty;
+                bool claimedIsHost = false;
+                bool claimedHasCharacter = false;
+                claimedProfile = PlayerProfileCodec.FromMessage(hello.Profile, out claimedClientId,
+                    out claimedIdentity, out claimedIsHost, out claimedHasCharacter);
+                try
+                {
+                    profileDecision = ProfileGate.AcceptHello(state.Id, state.Identity, state.Name,
+                        claimedProfile, claimedRejoin);
+                }
+                catch (Exception e)
+                {
+                    // 资料裁决失败 = 明确失败：本连接不下发世界，也不伪造一个角色。
+                    profileDecision = new HelloProfileDecision
+                    {
+                        ProfileRequired = true,
+                        Reason = "资料裁决异常：" + e.GetType().Name + " " + e.Message
+                    };
+                }
+                if (profileDecision != null)
+                {
+                    state.ProfileRequired = profileDecision.ProfileRequired;
+                    state.ProfileRequiredReason = profileDecision.Reason ?? string.Empty;
+                    if (!string.IsNullOrWhiteSpace(profileDecision.Name)) state.Name = profileDecision.Name;
+                    if (state.ProfileRequired) state.Rejoin = false;
+                }
+            }
             AttachSession(state);
             m_server.SetPeerIdentity(state.Id, state.Kind, state.Name);
             // 每握手一行：声明了重连没有 / 接受没有 / 依据（会话短标识 + 序号范围）。
@@ -1852,10 +2243,29 @@ namespace SuMultiplayer.Terrain
                 " · 主机会话=" + SessionIdentity.Short(SessionId) +
                 " · 上次应用序号=" + state.HelloLastApplied +
                 " · 保留历史=[" + (oldest > head ? "empty" : oldest + ".." + head) + "]" +
-                " · 依据=" + state.RejoinReason);
-            ClientJoined?.Invoke(state.Id,
-                string.IsNullOrEmpty(state.Name) ? ("client#" + state.Id) : state.Name,
-                state.Identity ?? string.Empty);
+                " · 依据=" + state.RejoinReason +
+                (state.ProfileRequired ? " · 角色资料=要求先创建（" + state.ProfileRequiredReason + "）" : string.Empty));
+            if (state.ProfileRequired)
+            {
+                // 没有角色就不发世界：世界传输/生物等模块不能把"连上了"当成"可以进世界"。
+                RejoinTrace?.Invoke("握手（clientId=" + state.Id + "）：主机没有该身份的角色记录，" +
+                    "Hello 也没有完整资料 → helloAck.profile_required=true，本次不下发世界；" +
+                    "客户端应打开角色创建界面后重新握手（旧 SCMP_PROFILE_REQUIRED 流程）");
+            }
+            else
+            {
+                ClientJoined?.Invoke(state.Id,
+                    string.IsNullOrEmpty(state.Name) ? ("client#" + state.Id) : state.Name,
+                    state.Identity ?? string.Empty);
+            }
+            PlayerProfileSnapshot hostProfile = null;
+            string hostProfileReason = null;
+            if (ProfileGate != null && !ProfileGate.TryGetHostProfile(out hostProfile, out hostProfileReason))
+            {
+                hostProfile = null;
+                RejoinTrace?.Invoke("主机资料不可用（" + (hostProfileReason ?? "未知原因") +
+                    "）→ HelloAck.host_profile 为空；客户端会明确记录\"主机外观未知\"（不伪造性别/皮肤）");
+            }
             var ack = new HelloAck
             {
                 Version = 1,
@@ -1866,6 +2276,17 @@ namespace SuMultiplayer.Terrain
                 // 主机身份 + 主机名字（客户端建"主机角色"必须按身份绑定，不能用 index 兜底）。
                 HostIdentity = Identity ?? string.Empty,
                 HostName = Name ?? string.Empty,
+                // 主机自己的资料：客户端建主机化身时直接用真实名字/性别/皮肤/衣服。
+                HostProfile = hostProfile != null
+                    ? PlayerProfileCodec.ToMessage(0, Identity ?? string.Empty, hostProfile, true, true)
+                    : null,
+                // 主机给本客户端分配的角色记录资料（没有记录 / 要求先创建时为空）。
+                AssignedProfile = profileDecision?.Profile != null
+                    ? PlayerProfileCodec.ToMessage(state.Id, state.Identity ?? string.Empty,
+                        profileDecision.Profile, false, profileDecision.HasCharacter)
+                    : null,
+                ProfileRequired = state.ProfileRequired,
+                ProfileRequiredReason = state.ProfileRequiredReason ?? string.Empty,
                 // 主机会话标识 + 是否接受重连 + 当前改动水位 + 依据。
                 // 客户端据此：① 记住"主机当前会话"（下一次重连的判定）；② 收到拒绝时明确作废旧会话并重下整图。
                 SessionId = SessionId ?? string.Empty,
@@ -2117,6 +2538,13 @@ namespace SuMultiplayer.Terrain
                         if (lastSequence > state.LastDeliveredSequence)
                             state.LastDeliveredSequence = lastSequence;
                         state.CellChangesSent += count;
+                        if (state.Session != null)
+                        {
+                            // 追帧重放同样会把"断线期间漏掉的改动"补进客户端：这些块若还是红，必须重新裁决。
+                            for (int i = 0; i < count; i++)
+                                NoteVerdictNeedsRejudge(state, job.Entries[job.Index + i].Key,
+                                    "追帧重放改动（序号 " + job.Entries[job.Index + i].Sequence + "）");
+                        }
                     }
                     job.Index += count;
                     job.BatchCount++;
@@ -2382,6 +2810,15 @@ namespace SuMultiplayer.Terrain
             state.Session = null;
             if (session == null) return;
             if (session.CurrentClientId == state.Id) session.CurrentClientId = -1;
+            // 这条身份（退化记录 = 这条连接）不再拥有任何按需单块加载：撤掉它的归属，
+            // 没有归属的记录立刻撤临时加载位置（块交回引擎按常规管理）。
+            int onDemand = m_onDemand.ReleaseOwner(session.StableKey);
+            if (onDemand > 0)
+            {
+                OnDemandTrace?.Invoke("身份 " + PlayerSessionKeys.ShortIdentity(session.Identity) +
+                    "（稳定键 " + session.StableKey + "）解绑（" + why + "）：撤掉 " + onDemand +
+                    " 条按需单块加载的临时位置（其余块仍按它自己的地形更新位置加载；没有任何范围被放大）");
+            }
             if (!session.Degraded) return;
             // 退化记录按连接生命周期：这条连接没了就没有归属，直接丢弃（明确写一行）。
             if (m_degradedSessions.TryGetValue(state.Id, out PlayerSessionRecord record) && record == session)
@@ -2558,11 +2995,21 @@ namespace SuMultiplayer.Terrain
                 if (!m_world.HasContents(key))
                 {
                     state.NotReady++;
+                    // 顺序很重要：**先**为这一个块登记按需加载（幂等；客户端重报不会产生第二个请求），
+                    // **再**决定这条上报要不要留在待裁决里：
+                    //   · 登记成功 → 主机确实欠着这条裁决（黄），内容一到就会用真实主机摘要回答；
+                    //   · 被明确拒绝（冷却 / 并发上限 / 引擎不接受）→ **不挂黄框**：没有人会去加载它，
+                    //     挂上就是永远裁决不了、玩家不动就永远不消失的那种框。只回 NotReady（客户端按退避重问）。
+                    if (!RequestOnDemandLoad(session, key, nowMs))
+                    {
+                        ClearRequestedVerdict(session, key);
+                        SendVerdict(state, key, DigestVerdict.NotReady, 0u);
+                        continue;
+                    }
                     // **Requested（黄）的唯一来源**：客户端确实上报了这一块、主机还没有内容可裁决。
                     session.Verdicts[key] = (byte)ChunkVerifyState.Requested;   // 等主机加载后才能核对
-                    RememberReport(session, key, clientHash, nowMs, loadRequested: true);   // 摘要留着，别丢
-                    m_world.RequestLoad(key);                                 // 按需从存档重载
-                    SendVerdict(state, key, DigestVerdict.NotReady, 0u);      // 明确的"还没好"
+                    RememberReport(session, key, clientHash, nowMs);           // 摘要留着，别丢
+                    SendVerdict(state, key, DigestVerdict.NotReady, 0u);       // 明确的"还没好"
                     continue;
                 }
                 ResolveReport(state, key, clientHash, nowMs);
@@ -2790,12 +3237,12 @@ namespace SuMultiplayer.Terrain
         /// <summary>
         /// 把一条上报登记成"待裁决"（块内容还没有时）。客户端重报同一块 → 只更新摘要，不重复入队。
         /// **登记在身份记录上**（跨重连保留）。
+        /// 调用方必须先确认"主机真的会去加载这块"（<see cref="RequestOnDemandLoad"/> 返回 true）——
+        /// 否则登记出来的就是一条永远裁决不了的黄框。
         /// Source: Mod/ScMultiplayer/Modules/World/ScMultiplayerWorldObjectHandlers.cs:572-575
         ///         （旧实现按坐标去重：pending/queued 里已有的块不再排队）
         /// </summary>
-        /// <param name="loadRequested">调用方是否已经为这块发过引擎加载请求（决定重请节奏从哪一刻起算）。</param>
-        private void RememberReport(PlayerSessionRecord session, ChunkKey key, uint clientHash, long nowMs,
-            bool loadRequested)
+        private void RememberReport(PlayerSessionRecord session, ChunkKey key, uint clientHash, long nowMs)
         {
             if (session.Pending.TryGetValue(key, out PendingReport existing))
             {
@@ -2805,9 +3252,7 @@ namespace SuMultiplayer.Terrain
             }
             session.Pending[key] = new PendingReport
             {
-                Key = key, ClientHash = clientHash, FirstSeenMs = nowMs,
-                LastLoadRequestMs = loadRequested ? nowMs : 0L,
-                LoadRequests = loadRequested ? 1 : 0
+                Key = key, ClientHash = clientHash, FirstSeenMs = nowMs
             };
             session.PendingScan.Enqueue(key);
         }
@@ -2827,16 +3272,37 @@ namespace SuMultiplayer.Terrain
             {
                 state.Match++;
                 // 之前失败过、回传后这次通过 = **二次验证成功**（蓝框），否则就是一次通过（绿框）
-                session.Verdicts[key] = session.Verdicts.TryGetValue(key, out byte previous) &&
-                                        previous == (byte)ChunkVerifyState.Failed
+                bool wasFailed = session.Verdicts.TryGetValue(key, out byte previous) &&
+                                 previous == (byte)ChunkVerifyState.Failed;
+                session.Verdicts[key] = wasFailed
                     ? (byte)ChunkVerifyState.ReVerified
                     : (byte)ChunkVerifyState.Verified;
+                // 陈旧裁决自愈：这块之前是红、主机为它主动要过（或已登记要）新鲜摘要 → 这次 Match 就是
+                // "重判成功"。只有登记过（= 主机确实怀疑这条红已过期）才计数；正常一次通过的绿不算。
+                if (session.StaleVerdicts.TryGetValue(key, out StaleVerdictWatch refreshed))
+                {
+                    session.StaleVerdicts.Remove(key);
+                    if (wasFailed)
+                    {
+                        m_staleVerdictRefreshed++;
+                        long nowMs = Environment.TickCount64;
+                        refreshed.LastLogMs = nowMs;
+                        NoteStaleVerdictTransition(state, session, key,
+                            "重新裁决通过（红 → 蓝 ReVerified）：客户端这次报的摘要与主机一致；" +
+                            "为它要过 " + refreshed.Requests + " 次新鲜摘要（原因：" +
+                            refreshed.LastReason + "）—— 累计重判 " + m_staleVerdictRefreshed + " 块",
+                            warning: false);
+                    }
+                }
                 // 裁决只决定"绿/蓝/红"与回传；**不**参与欠更新计数 ——
                 // 那面数字只跟"该身份当前内存集合里有没有这一块"走（见 m_pendingClients）。
                 return;
             }
             state.Mismatch++;
             session.Verdicts[key] = (byte)ChunkVerifyState.Failed;
+            // 刚判成红：如果这块已经在自愈台账里，只把下一次请求退避到正常收敛之后
+            // （**不**重置首次登记时刻 → 同一块的自愈次数与清除上限仍然有界）；否则登记一条。
+            NoteVerdictNeedsRejudge(session, key, "主机刚判 Mismatch（回传落地后需要一次新鲜摘要）");
             // 同一块已经有一份回传快照在队列里（客户端重报 / 迟到的裁决）→ **合并**，
             // 不再 1:1 放大回传队列与带宽。这一份快照在发送时刻按**当时最新内容**编码（见 PendingResyncJob），
             // 覆盖它本来就要覆盖的全部内容；客户端落地后仍不一致会再报一次，由下一份快照处理。
@@ -2868,7 +3334,7 @@ namespace SuMultiplayer.Terrain
                 // 这样"待裁决条数 = 黄框块数"在背压时也成立；已有结论（绿/红/蓝）不覆盖，
                 // 免得把二次验证（蓝）洗成黄。
                 if (!session.Verdicts.ContainsKey(key)) session.Verdicts[key] = (byte)ChunkVerifyState.Requested;
-                RememberReport(session, key, clientHash, nowMs, loadRequested: false);
+                RememberReport(session, key, clientHash, nowMs);
                 return;
             }
             ApplyVerdict(state, key, verdict);
@@ -2884,12 +3350,13 @@ namespace SuMultiplayer.Terrain
         /// <summary>
         /// 每 tick 轮转核对"欠着裁决"的上报（有界；待办挂在**身份记录**上，跨重连保留）：
         ///   · 内容已可用 → 现算真实主机摘要 → 发裁决 → 记账（Match→绿/蓝，Mismatch→红 + 排队回传）；
-        ///   · 内容还没有 → 按 <see cref="TerrainSyncOptions.PendingReloadIntervalMs"/> 的节奏重发加载请求，
-        ///     并写**一次**明确原因（同一块不重复刷屏），条目留在待办里继续核。
-        /// 绝不放弃、绝不假装匹配。调用方保证只有该身份**当前**的连接会进来（见 Tick）。
+        ///   · 内容还没有 → 交给按需加载台账（同一块一条记录：指数退避重试 + 次数 / 总超时上限 + 冷却），
+        ///     并写**一次**明确原因（同一块不重复刷屏）；台账超时后由
+        ///     <see cref="TickOnDemandLoads"/> 把这条上报**摘掉**（不无限挂着）。
+        /// 绝不伪造裁决。调用方保证只有该身份**当前**的连接会进来（见 Tick）。
         ///
         /// Source: Mod/ScMultiplayer/Modules/World/ScMultiplayerWorldObjectHandlers.cs:630-642
-        ///         （待办超过 5s → 重新入队请求；不因为一次没成就丢掉）
+        ///         （待办超过 5s → 重新入队请求；旧实现没有次数上限，这里换成有界重试 + 明确超时）
         /// Source: Mod/ScMultiplayer/Modules/World/ScMultiplayerWorldObjectHandlers.cs:652-660
         ///         （等块的 DueTime 到点后重查 chunk.State &gt;= Valid，可用才 QueueClientTerrainChunkSync）
         /// Source: Mod/ScMultiplayer/Modules/World/ScMultiplayerWorldObjectHandlers.cs:670-671
@@ -2914,14 +3381,17 @@ namespace SuMultiplayer.Terrain
                 scanned++;
                 if (!m_world.HasContents(key))
                 {
-                    if (nowMs - report.LastLoadRequestMs >= m_options.PendingReloadIntervalMs)
+                    // 加载节奏全部归按需加载台账（这里**不再**自己重请引擎，否则同一块会有两条请求路径）。
+                    if (!RequestOnDemandLoad(session, key, nowMs))
                     {
-                        report.LastLoadRequestMs = nowMs;
-                        report.LoadRequests++;
-                        m_world.RequestLoad(key);
+                        // 主机明确不为它发起加载（冷却 / 上限 / 引擎拒绝）→ 立刻摘掉这条待裁决，
+                        // 不放回队列：否则黄框会永远挂着，而底下根本没有人在加载。
+                        session.Pending.Remove(key);
+                        ClearRequestedVerdict(session, key);
+                        continue;
                     }
                     ReportStalled(state, session, report, nowMs);
-                    session.PendingScan.Enqueue(key);      // 下一轮继续核（不丢、不放弃）
+                    session.PendingScan.Enqueue(key);      // 下一轮继续核（有界：台账负责重试与超时）
                     continue;
                 }
                 uint hostHash = HostDigest(key);
@@ -2954,22 +3424,24 @@ namespace SuMultiplayer.Terrain
         }
 
         /// <summary>
-        /// 同一块"内容一直没加载出来"只写一行明确原因（含欠了多久、请求过几次、该身份的兴趣半径）。
-        /// 引擎没有"按需加载任意区块"的公开入口，加载只由地形更新位置驱动
-        /// （旧实现 MaintainRemoteTerrainLocations 给每个联机角色挂 SetUpdateLocation；
-        ///  本重写版在 Engine/NetworkAvatarSpawner.cs:421-502 搬运）—— 块不在更新范围内就加载不出来，
-        /// 这时**如实说明**并继续留在待办里，绝不放弃也绝不假装匹配。
+        /// 同一块"内容一直没加载出来"只写一行明确原因（含欠了多久、按需加载台账的状态、该身份的兴趣半径）。
+        /// 这是"客户端上报的边缘块"的现场说明：主机**已经为这一块单独发起按需加载**
+        /// （临时单块地形更新位置，见 <see cref="OnDemandChunkLoads"/>），而不是把某个角色的范围放大一圈；
+        /// 台账按退避重试，超时后**明确放弃**并把这条上报摘掉（绝不假装匹配、也不无限挂着）。
         /// </summary>
         private void ReportStalled(State state, PlayerSessionRecord session, PendingReport report, long nowMs)
         {
             if (report.StalledLogged) return;            // 限流：同一块最多一行
             report.StalledLogged = true;
+            string onDemand = m_onDemand.TryDescribe(report.Key, nowMs, out string described)
+                ? described
+                : "没有在册的按需加载";
             ReportUnresolved?.Invoke("主机一直拿不到区块 " + report.Key + " 的内容，身份 " +
                 PlayerSessionKeys.ShortIdentity(session.Identity) + "（稳定键 " + session.StableKey +
                 " · clientId=" + state.Id + "）的这条上报还没裁决（已等 " + ((nowMs - report.FirstSeenMs) / 1000) +
-                "s · 已请求加载 " + report.LoadRequests + " 次 · 该玩家端兴趣半径 " + session.Radius +
-                " 区块）—— 引擎只按地形更新位置异步加载（旧实现 MaintainRemoteTerrainLocations），" +
-                "主机侧没有强制加载单块的入口；本端继续按节奏重试，绝不假装匹配");
+                "s · " + onDemand + " · 该玩家端兴趣半径 " + session.Radius +
+                " 区块，**没有**放大任何角色的范围）—— 加载只由引擎按地形更新位置异步推进，" +
+                "本端已为这块单独请求加载并继续按退避重试，超时就明确放弃并摘掉这条待裁决，绝不假装匹配");
         }
 
         /// <summary>
@@ -3076,6 +3548,9 @@ namespace SuMultiplayer.Terrain
                             state.DeliveryIndex = target.Index;
                             state.LastDeliveredSequence = sequence;
                             state.CellChangesSent++;
+                            // 这条改动已经到它手里：如果这块的裁决停在红（Mismatch），那条结论可能已经
+                            // 过期（客户端内容因此补齐）→ 交给陈旧裁决自愈重新要一份新鲜摘要。
+                            NoteVerdictNeedsRejudge(state, key, "实时改动已送达（序号 " + sequence + "）");
                         }
                         m_cellChanges++;
                         if (target.MemoryRecipient) m_cellChangeMemoryRecipients++;
@@ -3267,6 +3742,11 @@ namespace SuMultiplayer.Terrain
                 state.CellChangesSent++;
                 m_cellChanges++;
                 m_cellChangeRepairs++;
+                // **实机根因路径**：背压漏掉的那条改动在这里按历史补齐 —— 客户端内容因此与主机一致，
+                // 但它本地校验器是 Fresh、不会自发重报（"重新核对过、什么都没变"）。这块若还是红，
+                // 必须重新裁决，否则红框永远留着（实机 (30,-4)/(30,-3)）。
+                NoteVerdictNeedsRejudge(state, entry.Key,
+                    "按历史补发缺失改动（序号 " + entry.Sequence + "）");
             }
             if (state.LastDeliveredSequence >= m_changeSequence)
             {
@@ -3298,6 +3778,220 @@ namespace SuMultiplayer.Terrain
             m_verifyRequestsSent++;
             CatchUpTrace?.Invoke("已要求客户端重新核对内存区块（clientId=" + state.Id +
                 "）：全部内存块；客户端上报后不一致的由主机回传整块（累计请求 " + m_verifyRequestsSent + " 次）");
+        }
+
+        // ------------------------------------------------------------ 陈旧裁决自愈（红框重判）
+
+        /// <summary>
+        /// 主机刚刚**把内容补给了这条身份**（补发缺失改动 / 整块回传快照 / 追帧重放 / 实时改动送达），
+        /// 或刚对它判了 Mismatch：那块如果当前是红（<see cref="ChunkVerifyState.Failed"/>），这条结论
+        /// 可能已经过期 —— 客户端可能早已与主机一致，而它的本地校验器停在 Fresh，**不会自发重报**
+        /// （实机：背压那条 CellChange 由历史补发后，(30,-4)/(30,-3) 一直是红）。
+        /// 这里只**登记**（同一块只一条、不重置清除上限），真正要摘要由
+        /// <see cref="TickStaleVerdicts"/> 按预算 / 退避 / 次数上限执行 —— 不在热路径逐块发消息。
+        /// 调用方已持有 m_gate。
+        /// </summary>
+        private void NoteVerdictNeedsRejudge(State state, ChunkKey key, string reason)
+        {
+            if (state == null) return;
+            NoteVerdictNeedsRejudge(state.Session, key, reason);
+        }
+
+        private void NoteVerdictNeedsRejudge(PlayerSessionRecord session, ChunkKey key, string reason)
+        {
+            if (session == null) return;
+            if (!session.Verdicts.TryGetValue(key, out byte value) ||
+                value != (byte)ChunkVerifyState.Failed) return;
+            long nowMs = Environment.TickCount64;
+            long due = nowMs + Math.Max(1, m_options.StaleVerdictRejudgeRetryMs);
+            if (session.StaleVerdicts.TryGetValue(key, out StaleVerdictWatch existing))
+            {
+                // 已在册：只把下一次请求安排到退避之后；**不**重置首次登记时刻（清除上限仍然有界）。
+                if (existing.NextRequestMs > due) existing.NextRequestMs = due;
+                existing.LastReason = reason ?? string.Empty;
+                return;
+            }
+            session.StaleVerdicts[key] = new StaleVerdictWatch
+            {
+                Key = key,
+                FirstSeenMs = nowMs,
+                NextRequestMs = due,
+                LastReason = reason ?? string.Empty
+            };
+            session.StaleVerdictScan.Enqueue(key);
+        }
+
+        /// <summary>
+        /// 每 tick 推进"陈旧红 → 重新裁决"台账（有界；台账挂在**身份记录**上，跨重连保留）：
+        ///   · 结论已经不是红（新鲜上报改判成绿 / 蓝，或这块被清了）→ 结束这一轮；
+        ///   · 连接暂不可达 → 留在册里（重连后继续），不发送、也不清；
+        ///   · 主机还欠这块一份整块回传快照（内容在路上）→ 先不重复要摘要，也不清红；
+        ///   · 到点 → 合并成**一条**单块 VerifyChunks：客户端把它排进强制核对（允许 Fresh），
+        ///     于是"本地早已一致、不会自发重报"的块也会给主机一份新鲜摘要；
+        ///   · 要过摘要、过了清除上限仍然没有新裁决 → 明确清掉这条陈旧的红（计数 + 一行日志）。
+        /// 绝不伪造 Match、绝不静默清状态。调用方已持有 m_gate。
+        /// </summary>
+        private int TickStaleVerdicts(State state, long nowMs)
+        {
+            PlayerSessionRecord session = state.Session;
+            if (session == null || session.StaleVerdictScan.Count == 0) return 0;
+            int initial = session.StaleVerdictScan.Count;
+            int work = 0;
+            int budget = Math.Max(1, m_options.StaleVerdictRequestsPerTick);
+            m_staleVerdictBatch.Clear();
+            for (int i = 0; i < initial && session.StaleVerdictScan.Count > 0; i++)
+            {
+                ChunkKey key = session.StaleVerdictScan.Dequeue();
+                if (!session.StaleVerdicts.TryGetValue(key, out StaleVerdictWatch watch)) continue;
+                if (!session.Verdicts.TryGetValue(key, out byte value) ||
+                    value != (byte)ChunkVerifyState.Failed)
+                {
+                    // 结论已经不是红（新鲜上报把它改判成绿 / 蓝，或这块被清了）：这一轮自愈结束。
+                    session.StaleVerdicts.Remove(key);
+                    continue;
+                }
+                if (!CanStillReachPeer(state))
+                {
+                    // 连接暂不可达：留在册里（同一身份重连后继续），这一拍不发、也不清。
+                    session.StaleVerdictScan.Enqueue(key);
+                    continue;
+                }
+                if (HasQueuedResyncLocked(state, key))
+                {
+                    // 主机还欠这块一份整块快照：内容会到，客户端落地后会按新规则再证明一次。
+                    // 这时既不重复要摘要（同一块两条请求），也不清红（内容还在路上）。
+                    session.StaleVerdictScan.Enqueue(key);
+                    continue;
+                }
+                if (watch.Requests >= 1 &&
+                    nowMs - watch.FirstSeenMs >= Math.Max(1, m_options.StaleVerdictClearMs))
+                {
+                    ClearStaleVerdictLocked(state, session, watch, nowMs);
+                    work++;
+                    continue;
+                }
+                if (watch.Requests >= Math.Max(1, m_options.StaleVerdictRejudgeMaxRequests))
+                {
+                    // 请求次数用尽、还没到清除上限：等新鲜裁决或上限到点。
+                    session.StaleVerdictScan.Enqueue(key);
+                    continue;
+                }
+                if (nowMs < watch.NextRequestMs || budget <= 0)
+                {
+                    session.StaleVerdictScan.Enqueue(key);
+                    continue;
+                }
+                m_staleVerdictBatch.Add(key);
+                budget--;
+                session.StaleVerdictScan.Enqueue(key);
+            }
+            if (m_staleVerdictBatch.Count > 0) work += SendStaleVerdictRequests(state, session, nowMs);
+            return work;
+        }
+
+        /// <summary>这条连接上是否还排着某块的整块回传快照（内容在路上）。调用方已持有 m_gate。</summary>
+        private static bool HasQueuedResyncLocked(State state, ChunkKey key)
+        {
+            foreach (PendingResyncJob job in state.PendingResync)
+                if (job.Key.Equals(key)) return true;
+            return false;
+        }
+
+        /// <summary>
+        /// 把本 tick 到点的区块合并成**一条** VerifyChunks（只列这些块）发给客户端：
+        /// 客户端收到后把它们排进强制核对（全部校验口径允许 Fresh），从而给主机一份新鲜摘要。
+        /// 发送失败 = 显式背压：请求次数**退回**、下一拍再要（绝不假装已经要过）。调用方已持有 m_gate。
+        /// </summary>
+        private int SendStaleVerdictRequests(State state, PlayerSessionRecord session, long nowMs)
+        {
+            var message = new PT.VerifyChunks();
+            for (int i = 0; i < m_staleVerdictBatch.Count; i++)
+            {
+                ChunkKey key = m_staleVerdictBatch[i];
+                message.Chunks.Add(new PT.ChunkKey { X = key.X, Z = key.Z });
+            }
+            if (!m_server.TrySend(state.Id, MessageType.VerifyChunks, message.ToByteArray()))
+            {
+                m_staleVerdictRefreshDeferred++;
+                long due = nowMs + Math.Max(1, m_options.StaleVerdictRejudgeRetryMs);
+                for (int i = 0; i < m_staleVerdictBatch.Count; i++)
+                {
+                    if (!session.StaleVerdicts.TryGetValue(m_staleVerdictBatch[i],
+                            out StaleVerdictWatch watch)) continue;
+                    if (watch.Requests > 0) watch.Requests--;       // 没发出去就不算要过
+                    if (watch.NextRequestMs < due) watch.NextRequestMs = due;
+                }
+                NoteStaleVerdictProblem(state, session, m_staleVerdictBatch[0],
+                    "请客户端重新核对这块的请求没发出去（显式背压 / 连接不可达）→ 下一拍再要，" +
+                    "这块的红**暂不改判**（累计没发出去 " + m_staleVerdictRefreshDeferred + " 次）");
+                return 0;
+            }
+            int sent = m_staleVerdictBatch.Count;
+            m_staleVerdictRefreshRequested += sent;
+            for (int i = 0; i < m_staleVerdictBatch.Count; i++)
+            {
+                ChunkKey key = m_staleVerdictBatch[i];
+                if (!session.StaleVerdicts.TryGetValue(key, out StaleVerdictWatch watch)) continue;
+                watch.Requests++;
+                watch.NextRequestMs = nowMs + Math.Max(1, m_options.StaleVerdictRejudgeRetryMs);
+                if (watch.LastLogMs == 0 ||
+                    nowMs - watch.LastLogMs >= Math.Max(1, m_options.StaleVerdictLogIntervalMs))
+                {
+                    watch.LastLogMs = nowMs;
+                    NoteStaleVerdictTransition(state, session, key,
+                        "这块仍停在 Mismatch（红），但主机已经把内容补给它了（原因：" + watch.LastReason +
+                        "）→ 主动请客户端重新核对这块（第 " + watch.Requests + " 次；上限 " +
+                        Math.Max(1, m_options.StaleVerdictRejudgeMaxRequests) + " 次）",
+                        warning: false);
+                }
+            }
+            return sent;
+        }
+
+        /// <summary>
+        /// 到达上限仍没有新鲜裁决 → **明确清掉**这条陈旧的红（实时地图 s=3 → s=0，不画红框）：
+        /// 客户端可能已经不持有这块 / 不再上报（它自己的校验器是 Fresh 时不会自发重报）。
+        /// 计数 + 一行点名区块的日志；绝不静默。调用方已持有 m_gate。
+        /// </summary>
+        private void ClearStaleVerdictLocked(State state, PlayerSessionRecord session,
+            StaleVerdictWatch watch, long nowMs)
+        {
+            session.StaleVerdicts.Remove(watch.Key);
+            if (session.Verdicts.TryGetValue(watch.Key, out byte value) &&
+                value == (byte)ChunkVerifyState.Failed)
+            {
+                session.Verdicts.Remove(watch.Key);
+            }
+            m_staleVerdictCleared++;
+            NoteStaleVerdictTransition(state, session, watch.Key,
+                "陈旧的红已清除（s=3 → 0，不再画红框）：主机要过 " + watch.Requests +
+                " 次新鲜摘要、等了 " + ((nowMs - watch.FirstSeenMs) / 1000) + "s 仍没有新裁决" +
+                "（原因：" + watch.LastReason + "；客户端可能已不持有这块 / 不再上报）——" +
+                "累计清除 " + m_staleVerdictCleared + " 块", warning: true);
+        }
+
+        /// <summary>陈旧裁决自愈的一条明确日志（请求 / 重判 = Info；清除 = Warning）。</summary>
+        private void NoteStaleVerdictTransition(State state, PlayerSessionRecord session, ChunkKey key,
+            string reason, bool warning)
+        {
+            string who = session == null
+                ? "clientId=" + (state != null ? state.Id : -1)
+                : "身份 " + PlayerSessionKeys.ShortIdentity(session.Identity) +
+                  "（稳定键 " + session.StableKey + " · clientId=" + (state != null ? state.Id : -1) + "）";
+            string line = "区块 " + key + " 的裁决自愈：" + reason + "；" + who;
+            if (warning) ReportUnresolved?.Invoke(line);
+            else PendingTrace?.Invoke(line);
+        }
+
+        /// <summary>请求没发出去（显式背压 / 不可达）→ Warning，全局限流（计数每次都涨）。</summary>
+        private void NoteStaleVerdictProblem(State state, PlayerSessionRecord session, ChunkKey key,
+            string reason)
+        {
+            long nowMs = Environment.TickCount64;
+            if (m_lastStaleVerdictProblemLogMs != 0 &&
+                nowMs - m_lastStaleVerdictProblemLogMs < m_options.ClientChunkLogIntervalMs) return;
+            m_lastStaleVerdictProblemLogMs = nowMs;
+            NoteStaleVerdictTransition(state, session, key, reason, warning: true);
         }
 
         public int SubscriberCount(ChunkKey key)
@@ -3431,6 +4125,8 @@ namespace SuMultiplayer.Terrain
                 int sessions = m_sessions.Count;
                 int degraded = m_degradedSessions.Count;
                 int reported = 0;
+                // 会话结束：按需单块加载的临时位置**全部撤掉**（不把上一个房间的块留在新世界里）。
+                int onDemand = m_onDemand.Clear();
                 m_sessions.Clear();
                 m_degradedSessions.Clear();
                 foreach (KeyValuePair<int, State> pair in m_clients)
@@ -3445,6 +4141,11 @@ namespace SuMultiplayer.Terrain
                 SessionTrace?.Invoke("会话结束：身份会话记录整体清空（清掉 " + sessions + " 条身份记录 / " +
                     degraded + " 条无身份退化记录；被引用的已上报区块共 " + reported +
                     " 条 —— 这些状态只在内存里，下次加入从头开始）");
+                if (onDemand > 0)
+                {
+                    OnDemandTrace?.Invoke("会话结束：撤掉 " + onDemand +
+                        " 条按需单块加载的临时位置（客户端上报的边缘块；随会话一起回收，不跨房间保留）");
+                }
                 // 会话结束：改动历史 / 追帧任务 / 改动水位一起清（只清本主机实例；新房间会生成新会话标识）。
                 int journal = m_changeJournal.Count;
                 int catchUps = m_catchUps.Count;
@@ -3468,6 +4169,12 @@ namespace SuMultiplayer.Terrain
                 m_owedSnapshotsSkippedNoContent = 0L;
                 m_verifyRequestsSent = 0L;
                 m_verifyRequestSendFailures = 0L;
+                m_staleVerdictRefreshRequested = 0L;
+                m_staleVerdictRefreshed = 0L;
+                m_staleVerdictCleared = 0L;
+                m_staleVerdictRefreshDeferred = 0L;
+                m_lastStaleVerdictProblemLogMs = 0L;
+                m_staleVerdictBatch.Clear();
                 m_lastOwedSnapshotLogMs = 0L;
                 m_clientChunkDeltaSnapshotsSinceLog = 0L;
                 m_cellChangeSendFailures = 0L;
@@ -3564,6 +4271,8 @@ namespace SuMultiplayer.Terrain
                 if (queued.Key.Equals(key)) return false;
             state.PendingResync.Enqueue(new PendingResyncJob { Key = key });
             m_owedSnapshotsQueued++;
+            // 这份快照把"它开始持有这块时可能错过的那次改动"补上了：这块若还是红，必须重新裁决。
+            NoteVerdictNeedsRejudge(state, key, "补发整块快照（清除欠账）");
             long nowMs = Environment.TickCount64;
             if (m_lastOwedSnapshotLogMs == 0 ||
                 nowMs - m_lastOwedSnapshotLogMs >= m_options.ClientChunkLogIntervalMs)
@@ -4046,6 +4755,27 @@ namespace SuMultiplayer.Terrain
         public string HostName { get; private set; } = string.Empty;
 
         /// <summary>
+        /// HelloAck 里收到的主机资料（名字/性别/皮肤/衣服）。未握手 / 旧构建 = null：
+        /// 客户端此时**明确记录"主机外观未知"**，不伪造性别或皮肤。
+        /// </summary>
+        public PlayerProfileSnapshot HostProfile { get; private set; }
+
+        /// <summary>
+        /// HelloAck 里主机给本客户端分配的角色记录资料（name/sex/skin/clothes）。
+        /// 主机没有该身份记录（profile_required）时为空。
+        /// </summary>
+        public PlayerProfileSnapshot AssignedProfile { get; private set; }
+
+        /// <summary>
+        /// 主机要求先创建角色（旧 SCMP_PROFILE_REQUIRED）：本连接**不会**收到世界，
+        /// 调用方必须打开角色创建界面，完成后带 Hello.profile 重新握手。
+        /// </summary>
+        public bool ProfileRequired { get; private set; }
+
+        /// <summary>ProfileRequired 的明确原因（主机给的 / 旧主机没有字段时为空）。</summary>
+        public string ProfileRequiredReason { get; private set; } = string.Empty;
+
+        /// <summary>
         /// 主机在 HelloAck 里给本端的编号（旧 <c>client.ClientID</c>，早就在这条线上，
         /// 只是此前被丢掉）。位置快照批里"本机玩家自己那一条"就是用它认出来的
         /// （旧 HandleGamePlayerPositionMessage 的 <c>remoteClientId == client.ClientID</c> 分支）。
@@ -4135,7 +4865,17 @@ namespace SuMultiplayer.Terrain
         /// 缺字段（旧构建）= false / 空会话 / 0，主机照常下发整图，语义不变。
         /// </summary>
         public void SendHello(string name, string identity, bool alreadyHasWorld,
-            string clientSessionId, long lastAppliedChangeSequence)
+            string clientSessionId, long lastAppliedChangeSequence) =>
+            SendHello(name, identity, alreadyHasWorld, clientSessionId, lastAppliedChangeSequence, null);
+
+        /// <summary>
+        /// Hello（带本机资料）。<paramref name="profile"/> = 客户端自己的显示名/性别/皮肤/衣服：
+        /// 主机据此建角色记录（首次加入）或用它核对老角色（重连）。旧构建不认这个字段，语义不变。
+        /// Source: Mod/ScMultiplayer/Message/GameWorldInfoMessage.cs:PlayerName/HasPlayerProfile/
+        ///         PlayerClass/CharacterSkinName
+        /// </summary>
+        public void SendHello(string name, string identity, bool alreadyHasWorld,
+            string clientSessionId, long lastAppliedChangeSequence, PlayerProfileSnapshot profile)
         {
             var hello = new Hello
             {
@@ -4149,8 +4889,19 @@ namespace SuMultiplayer.Terrain
                 AlreadyHasWorld = alreadyHasWorld,
                 // 下载世界的会话标识 + 上次应用的改动序号。
                 ClientSessionId = clientSessionId ?? string.Empty,
-                LastAppliedSequence = Math.Max(0L, lastAppliedChangeSequence)
+                LastAppliedSequence = Math.Max(0L, lastAppliedChangeSequence),
+                // 本机资料（首次加入没有 → 主机回 profile_required；有 → 主机据此建记录）。
+                Profile = profile != null
+                    ? PlayerProfileCodec.ToMessage(0, identity ?? string.Empty, profile, false,
+                        profile.HasName)
+                    : null
             };
+            // 新一次握手：上一轮的"要求建角色 / 主机资料 / 分配资料"全部作废，
+            // 只认这次 HelloAck 带回的事实（旧值留着会让客户端以为还缺角色）。
+            ProfileRequired = false;
+            ProfileRequiredReason = string.Empty;
+            HostProfile = null;
+            AssignedProfile = null;
             m_helloClaimedRejoin = alreadyHasWorld;
             m_catchUpRequestAttempts = 0;
             m_catchUpRequestSentMs = 0L;
@@ -4760,9 +5511,12 @@ namespace SuMultiplayer.Terrain
                 m_localHashes[part.Key] = hash;
                 m_digestsThisTick++;
                 m_digestsComputed++;
-                if (!m_verifier.TryBeginVerify(part.Key, hash, out DigestEntry entry))
+                // 回传落地后的**再证明**：必须允许 Fresh —— 本端此前可能已经核对通过（Fresh），
+                // 而这一块刚被主机内容覆盖；旧代码用 TryBeginVerify（Fresh → 拒绝）⇒ 客户端不再上报，
+                // 主机那条 Mismatch 永远没人重判（实机 (30,-4)/(30,-3) 一直红、"重新核对过什么都没变"）。
+                if (!m_verifier.TryBeginResyncConfirm(part.Key, hash, out DigestEntry entry))
                 {
-                    // 明确不静默：为什么这块没有发起确认（已 Fresh / 在途 / 重试用尽）——限流一行 + 计数。
+                    // 明确不静默：为什么这块没有发起确认（已有一条上报在途 / NotReady 重报次数用尽）——限流一行 + 计数。
                     NoteVerifyNotStarted(part.Key, "回传落地后确认");
                     continue;
                 }
@@ -5088,6 +5842,22 @@ namespace SuMultiplayer.Terrain
             LocalClientId = ack.ClientId;
             HostIdentity = ack.HostIdentity ?? string.Empty;
             HostName = ack.HostName ?? string.Empty;
+            int hostClientId = -1;
+            string hostProfileIdentity = string.Empty;
+            bool hostProfileIsHost = false;
+            bool hostProfileHasCharacter = false;
+            HostProfile = PlayerProfileCodec.FromMessage(ack.HostProfile, out hostClientId,
+                out hostProfileIdentity, out hostProfileIsHost, out hostProfileHasCharacter);
+            int assignedClientId = -1;
+            string assignedIdentity = string.Empty;
+            bool assignedIsHost = false;
+            bool assignedHasCharacter = false;
+            AssignedProfile = PlayerProfileCodec.FromMessage(ack.AssignedProfile,
+                out assignedClientId, out assignedIdentity, out assignedIsHost,
+                out assignedHasCharacter);
+            // 主机要求先创建角色（旧 SCMP_PROFILE_REQUIRED）：本连接不会有世界。
+            ProfileRequired = ack.ProfileRequired;
+            ProfileRequiredReason = ack.ProfileRequiredReason ?? string.Empty;
             HostSessionId = ack.SessionId ?? string.Empty;
             RejoinAccepted = ack.RejoinAccepted;
             RejoinHeadSequence = ack.HeadSequence;
@@ -5139,7 +5909,18 @@ namespace SuMultiplayer.Terrain
             }
             // (重)连握手完成 → 先发一份**内存区块集合（引擎已分配）**整集，让主机不残留上一轮的旧路径
             // （"客户端的方框只显示当前存在于客户端内存的"）。之后只发加载/卸载增量。
-            QueueClientChunkFullSet();
+            if (!ProfileRequired)
+            {
+                QueueClientChunkFullSet();
+            }
+            else
+            {
+                // 主机要求先创建角色：本连接不会有世界，也没有"客户端内存区块集合"可报。
+                // 不发这一帧 = 不在主机侧留下一个没有世界的客户端状态。
+                CatchUpTrace?.Invoke("HelloAck 要求先创建角色（" +
+                    (string.IsNullOrEmpty(ProfileRequiredReason) ? "主机未给原因" : ProfileRequiredReason) +
+                    "）→ 本次不上报客户端内存区块集合，等角色创建后重新握手");
+            }
         }
 
         /// <summary>

@@ -34,10 +34,36 @@ namespace SuMultiplayer.Engine
         /// 两套集合，且常驻判据多叠了一个 <c>chunk.IsLoaded</c> —— 那是灰框根因（见 <see cref="HasContents"/>）。
         /// </summary>
         private readonly ChunkResidencyTracker m_residency = new ChunkResidencyTracker();
-        private readonly HashSet<ChunkKey> m_requested = new HashSet<ChunkKey>();
         private readonly int m_mainThreadId;
         private SubsystemTerrain m_subsystem;
         private bool m_reportedWrongThread;
+
+        // ---- 按需单块加载（主机：客户端上报的边缘块，逐块临时地形更新位置）----
+        //
+        // 为什么要临时更新位置：TerrainUpdater 没有"加载某一块"的公开入口 —— 块的分配 / 推进只由
+        // 更新位置的**内容距离**驱动（Survivalcraft/Game/TerrainUpdater.cs:AllocateAndFreeChunks /
+        // FindBestChunkToUpdate）。所以"只加载这一块"的正确做法就是**为这一块挂一条临时更新位置**：
+        //   · 中心 = 该块中心 ((x+0.5)*16, (z+0.5)*16)；
+        //   · 可见 / 内容距离 = 8 格 → IsChunkInRange 的命中集合恒为该块本身（邻块中心相距 16 > 8）；
+        //   · 槽位号从 OnDemandSlotBase 起（引擎按 PlayerIndex 索引玩家的更新位置，0..MaxGameWidgets-1，
+        //     临时槽位一律 ≥ 1000，绝不与玩家槽位相撞）；
+        //   · 每次请求（含重试）都用**新的槽位号**：SetUpdateLocation 对同一 index 的同值调用会被引擎的
+        //     8 格滞回吞掉（TerrainUpdater.cs:258），换新 index 才能强制重新登记 / 让
+        //     AllocateAndFreeChunks 跑一次。
+        // 这条临时位置**只覆盖一块**：本类不碰任何角色的兴趣半径 / 内容距离，也不改
+        // Terrain/HostTerrainLocations.cs 的账本（状态行里的 hostUpdateLocations 不受影响）。
+        private readonly Dictionary<ChunkKey, int> m_onDemandSlots = new Dictionary<ChunkKey, int>();
+        private readonly HashSet<int> m_onDemandSlotIds = new HashSet<int>();
+        private const int OnDemandSlotBase = 1000;
+        private const int OnDemandSlotCount = 4096;
+        /// <summary>只覆盖目标块本身：中心到块边界 8 格，邻块中心相距 16 格。</summary>
+        private const float OnDemandContentDistance = 8f;
+        private int m_nextOnDemandSlot = OnDemandSlotBase;
+        private long m_lastOnDemandSlotLogMs;
+        /// <summary>当前挂着的临时单块加载位置数（状态行 / 设备核对用）。</summary>
+        public int OnDemandLoadLocations => m_onDemandSlots.Count;
+        /// <summary>累计创建过的临时单块加载位置数（每次重试都算一次）。</summary>
+        public long OnDemandLoadLocationsCreated { get; private set; }
 
         // ---- 更新位置覆盖判定（"这块引擎还会不会推进它"）----
         private FieldInfo m_updateParametersField;
@@ -78,8 +104,6 @@ namespace SuMultiplayer.Engine
         public event Action<ReceivedFrame> FrameArrived;
         /// <summary>主机侧权威改动（已捕获，尚未下发）。</summary>
         public event Action<ChunkKey, CellEdit> HostCellChanged;
-        /// <summary>需要主机按需加载某块。</summary>
-        public event Action<ChunkKey> ChunkLoadRequested;
         /// <summary>
         /// 客户端侧捕获到的**本地地形写入**（主线程）。架构上客户端只允许主机改地形，
         /// 所以这些写入必须变成 CellEditRequest 交给主机审批（Part B）。
@@ -190,9 +214,87 @@ namespace SuMultiplayer.Engine
                 TerrainChunkState.InvalidLight, forceGeometryRegeneration: false);
         }
 
-        public void RequestLoad(ChunkKey key)
+        /// <summary>
+        /// 主机：请求引擎**只加载这一块** —— 为它挂一条临时地形更新位置（口径见本类顶部的注释）。
+        /// 返回 false = 引擎当前明确不接受（原因写 <paramref name="reason"/>），**绝不假装已请求**。
+        /// 同一块再次请求（重试）= 先摘旧槽位、再换一个新槽位重新登记（引擎的 8 格滞回会吞掉同值调用，
+        /// 只有换 index 才能强制 AllocateAndFreeChunks 重跑）。
+        /// </summary>
+        public bool TryRequestSingleChunkLoad(ChunkKey key, out string reason)
         {
-            if (m_requested.Add(key)) ChunkLoadRequested?.Invoke(key);
+            reason = null;
+            EnsureMainThread("TryRequestSingleChunkLoad");
+            SubsystemTerrain subsystem = m_subsystem ?? GameManager.Project?.FindSubsystem<SubsystemTerrain>(false);
+            TerrainUpdater updater = subsystem?.TerrainUpdater;
+            if (updater == null || subsystem.Terrain == null)
+            {
+                reason = "找不到 SubsystemTerrain.TerrainUpdater（世界未加载 / 正在卸载）";
+                return false;
+            }
+            if (HasContents(key)) return true;       // 已经有内容：不需要临时位置（调用方下一拍就会看到）
+            if (m_onDemandSlots.TryGetValue(key, out int previous))
+            {
+                updater.RemoveUpdateLocation(previous);
+                m_onDemandSlots.Remove(key);
+                m_onDemandSlotIds.Remove(previous);
+            }
+            if (!TryAllocateOnDemandSlot(out int slot))
+            {
+                reason = "临时单块加载位置已满（上限 " + OnDemandSlotCount + "）";
+                return false;
+            }
+            // 中心 = 块中心；距离 8 格 → 引擎的 IsChunkInRange 只命中这一块（邻块中心相距 16 格）。
+            var center = new Vector2(((float)key.X + 0.5f) * 16f, ((float)key.Z + 0.5f) * 16f);
+            updater.SetUpdateLocation(slot, center, OnDemandContentDistance, OnDemandContentDistance);
+            m_onDemandSlots[key] = slot;
+            m_onDemandSlotIds.Add(slot);
+            OnDemandLoadLocationsCreated++;
+            return true;
+        }
+
+        /// <summary>
+        /// 主机：撤销 <see cref="TryRequestSingleChunkLoad"/> 的临时位置（块交回引擎按它自己的更新位置决定去留；
+        /// 下一帧 TerrainUpdater.Update 应用这条移除，必要时回收该块）。没有登记过就什么也不做。
+        /// </summary>
+        public void ReleaseSingleChunkLoad(ChunkKey key)
+        {
+            EnsureMainThread("ReleaseSingleChunkLoad");
+            if (!m_onDemandSlots.TryGetValue(key, out int slot)) return;
+            m_onDemandSlots.Remove(key);
+            m_onDemandSlotIds.Remove(slot);
+            SubsystemTerrain subsystem = m_subsystem ?? GameManager.Project?.FindSubsystem<SubsystemTerrain>(false);
+            subsystem?.TerrainUpdater?.RemoveUpdateLocation(slot);
+        }
+
+        /// <summary>
+        /// 世界没了（卸载 / 换世界）→ 引擎里那些临时更新位置随世界一起消失：账本**同步清空**并限流写一行，
+        /// 免得把上一个世界的槽位当成还挂着（那些槽位在新世界里已经不存在，继续留着就是假状态）。
+        /// </summary>
+        private void DropOnDemandSlots(string reason)
+        {
+            int count = m_onDemandSlots.Count;
+            m_onDemandSlots.Clear();
+            m_onDemandSlotIds.Clear();
+            long now = Environment.TickCount64;
+            if (m_lastOnDemandSlotLogMs != 0 && now - m_lastOnDemandSlotLogMs < StallWarningIntervalMs) return;
+            m_lastOnDemandSlotLogMs = now;
+            Log.Warning("[SuMP] onDemandLoad: " + count + " 条临时单块地形更新位置随世界一起丢失（" + reason +
+                "）→ 账本已同步清空（不当作还挂着）；累计创建 " + OnDemandLoadLocationsCreated + " 条");
+        }
+
+        private bool TryAllocateOnDemandSlot(out int slot)
+        {
+            for (int i = 0; i < OnDemandSlotCount; i++)
+            {
+                int candidate = m_nextOnDemandSlot;
+                m_nextOnDemandSlot = OnDemandSlotBase +
+                    (candidate - OnDemandSlotBase + 1) % OnDemandSlotCount;
+                if (m_onDemandSlotIds.Contains(candidate)) continue;
+                slot = candidate;
+                return true;
+            }
+            slot = 0;
+            return false;
         }
 
         // ---------------------------------------------------------------- 客户端副本 / 主机权威
@@ -400,6 +502,7 @@ namespace SuMultiplayer.Engine
             long nowMs = Environment.TickCount64;
             m_residency.BeginFrame(nowMs);
             Game.Terrain terrain = CurrentTerrain;
+            if (terrain == null && m_onDemandSlots.Count > 0) DropOnDemandSlots("当前没有地形（世界卸载 / 正在换世界）");
             TerrainChunk[] chunks = terrain?.AllocatedChunks;
             bool coveredKnown = chunks != null && CaptureUpdateLocations();
             if (chunks != null)
@@ -436,7 +539,6 @@ namespace SuMultiplayer.Engine
                         ChunkAllocated?.Invoke(change.Key);
                         break;
                     case ChunkResidencyEvent.BecameResident:
-                        m_requested.Remove(change.Key);
                         ChunkLoaded?.Invoke(change.Key);
                         break;
                     case ChunkResidencyEvent.BecameNotResident:

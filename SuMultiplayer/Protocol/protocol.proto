@@ -73,6 +73,12 @@ enum MessageType {
 
   // Host-authoritative world info (worldinfo.proto)
   WORLD_INFO = 26;
+
+  // Player identity / appearance replication (this file).
+  // Source: Mod/ScMultiplayer/Message/PlayerProfileMessage.cs:PlayerProfileMessage
+  PLAYER_PROFILE = 27;
+  AVATAR_REMOVE = 28;
+  AVATAR_ROSTER = 29;
 }
 
 // Logical envelope metadata.  The current single-message transport puts these
@@ -103,6 +109,12 @@ message Hello {
   bool already_has_world = 7;
   string client_session_id = 8;
   int64 last_applied_sequence = 9;
+  // The joining player's own profile (display name + sex + skin + clothes).
+  // Empty on the very first join: the host answers with profile_required=true and
+  // the client opens the character creation screen (legacy SCMP_PROFILE_REQUIRED).
+  // Source: Mod/ScMultiplayer/Message/GameWorldInfoMessage.cs:PlayerName/HasPlayerProfile/
+  //         PlayerClass/CharacterSkinName
+  PlayerProfile profile = 10;
 
   // Third-party extension points: see doc/message-protocol.md.
   bytes ext = 100;
@@ -122,9 +134,72 @@ message HelloAck {
   bool rejoin_accepted = 9;
   int64 head_sequence = 10;
   string rejoin_reason = 11;
+  // The host's own profile: clients create the host avatar with the real name / sex / skin.
+  // Source: Mod/ScMultiplayer/Modules/Player/ScMultiplayerProfileHandlers.cs:728-767
+  //         (SynchronizePlayerProfiles: host sends CapturePlayerRecord(hostPlayer.PlayerData))
+  PlayerProfile host_profile = 12;
+  // The host's authoritative record for the joining client (name / sex / skin / clothes).
+  // Empty while profile_required=true (no record exists yet).
+  PlayerProfile assigned_profile = 13;
+  // true => the host has no character record for this identity and the Hello carried no
+  // complete profile. The host does NOT start the world transfer; the client must open the
+  // character creation screen and reconnect with Hello.profile filled in.
+  // Source: Mod/ScMultiplayer/Modules/Player/ScMultiplayerPlayerHealthAndIngress.cs:945-961
+  bool profile_required = 14;
+  // Explicit reason for profile_required (logged by the client; empty for old hosts).
+  string profile_required_reason = 15;
 
   bytes ext = 100;
   google.protobuf.Any custom = 101;
+}
+
+// Engine appearance inputs of one player:
+//   sex        = Game.PlayerClass (PlayerData.PlayerClass)
+//   skin_name  = PlayerData.CharacterSkinName (built-in "$Male3" / custom file name)
+//   clothes    = ComponentClothing slots 0..3 (ClothingSlot values)
+//   skin_sha256= hash of a custom skin asset (empty for built-in skins)
+// Source: Survivalcraft/Game/PlayerData.cs:PlayerData.PlayerClass/CharacterSkinName
+// Source: Survivalcraft/Game/ComponentClothing.cs:ComponentClothing.GetClothes/SetClothes
+message PlayerAppearance {
+  uint32 sex = 1;
+  string skin_name = 2;
+  repeated ClothingSlot clothes = 3;
+  bytes skin_sha256 = 4;
+}
+
+// One ComponentClothing slot (the engine stores an int[] per ClothingSlot).
+message ClothingSlot {
+  repeated int32 values = 1;
+}
+
+// Host <-> client: one player's identity + appearance.
+// Client -> host: the client's own profile (client_id = its local transport id or 0).
+// Host -> clients: broadcast for the host (client_id = 0) and for every joined client
+// (client_id = the host-side transport id, which is also the remote avatar slot key).
+// Source: Mod/ScMultiplayer/Modules/Player/ScMultiplayerProfileHandlers.cs:763-849
+//         (HandlePlayerProfileMessage: host updates its record/avatar and broadcasts;
+//          clients apply to the local player or the remote avatar)
+message PlayerProfile {
+  int32 client_id = 1;
+  string identity = 2;
+  string name = 3;
+  PlayerAppearance appearance = 4;
+  bool is_host = 5;
+  bool has_character = 6;
+}
+
+// Host -> clients: this identity left the room (its remote avatar must be removed).
+message AvatarRemove {
+  int32 client_id = 1;
+  string identity = 2;
+  string reason = 3;
+}
+
+// Host -> clients: the **complete** current identity roster (host at client_id=0 + every
+// joined client). Clients replace their roster with exactly this list, so a reconnect or a
+// missed leave message can never leave a ghost avatar behind.
+message AvatarRoster {
+  repeated PlayerProfile avatars = 1;
 }
 
 // Client -> host: interest window centre (chunk coordinates) and radius.

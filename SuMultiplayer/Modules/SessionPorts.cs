@@ -43,6 +43,12 @@ namespace SuMultiplayer.Modules
         /// 会以为自己还连着，既不会重新下载世界，也不会重新进世界。
         /// </summary>
         void LeaveRoom();
+
+        /// <summary>
+        /// Play 屏 Enter 调用：true = 这次进入是"角色创建屏返回"的同一次加入，**不要** LeaveRoom。
+        /// 只生效一次（由角色创建屏在返回前置位）。
+        /// </summary>
+        bool ConsumePreserveJoinOnNextPlayEnter();
     }
 
     // 下载世界端口（IDownloadedWorldPort / IWorldReadyPort）也在 Modules/TransferPorts.cs：

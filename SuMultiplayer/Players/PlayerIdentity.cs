@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Linq;
 using Game;
 using GameEntitySystem;
@@ -44,17 +44,25 @@ namespace SuMultiplayer.Players
 
         /// <summary>
         /// 本机显示名。
+        ///
+        /// **必须优先取本机角色（PlayerData.Name）**：引擎的 <c>UserManager.ActiveUser.DisplayName</c>
+        /// 在现有引擎里是固定值 "Android User"（Source: Survivalcraft/Game/UserManager.cs:45），
+        /// 它不是玩家名字。旧实现的 GetLocalPlayerName 先取 DisplayName，于是联机时主机/客户端的
+        /// 名字永远显示成 "Android User"（实机缺陷：客户端看到主机的名字是 "Android User"）。
+        /// 这里改成"真实角色名优先，DisplayName 只作为没有世界时的最后来源"。
+        ///
         /// Source: Mod/ScMultiplayer/Modules/Session/ScMultiplayerClientEvents.cs:157-181
-        ///       UserManager.ActiveUser.DisplayName → 本机 PlayerData.Name → "Player"
+        /// Source: Survivalcraft/Game/PlayerData.cs:PlayerData.Name（角色创建界面写入的真实名字）
+        /// Source: Survivalcraft/Game/UserManager.cs:45（DisplayName = "Android User"）
         /// </summary>
         public static string LocalName()
         {
-            string name = UserManager.ActiveUser?.DisplayName;
-            if (!string.IsNullOrWhiteSpace(name)) return name.Trim();
             Project project = GameManager.Project;
             PlayerData local = project?.FindSubsystem<SubsystemPlayers>(false)?.PlayersData
                 .FirstOrDefault();
-            return string.IsNullOrWhiteSpace(local?.Name) ? "Player" : local.Name.Trim();
+            if (!string.IsNullOrWhiteSpace(local?.Name)) return local.Name.Trim();
+            string name = UserManager.ActiveUser?.DisplayName;
+            return string.IsNullOrWhiteSpace(name) ? "Player" : name.Trim();
         }
 
         /// <summary>
@@ -65,6 +73,18 @@ namespace SuMultiplayer.Players
             !string.IsNullOrWhiteSpace(identity)
                 ? UserKeyPrefix + identity.Trim()
                 : NameKeyPrefix + (fallbackName ?? string.Empty).Trim();
+
+        /// <summary>
+        /// 这个名字是不是**引擎自带的默认显示名**（现有引擎固定为 "Android User"，见
+        /// Survivalcraft/Game/UserManager.cs:45）。旧构建把 Hello.name 直接当角色名，
+        /// 于是联机角色记录里存下了这个默认值 —— 它不代表玩家真实名字，需要一次显式迁移。
+        /// </summary>
+        public static bool IsEngineDefaultName(string name)
+        {
+            string displayName = UserManager.ActiveUser?.DisplayName;
+            if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(displayName)) return false;
+            return string.Equals(name.Trim(), displayName.Trim(), StringComparison.Ordinal);
+        }
 
         /// <summary>该记录键是不是"按身份绑定"的（false = 按名字绑定的退化键）。</summary>
         public static bool IsUserKey(string recordKey) =>

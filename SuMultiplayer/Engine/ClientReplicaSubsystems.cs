@@ -53,52 +53,72 @@ namespace SuMultiplayer.Engine
         }
 
         /// <summary>
-        /// 主机：跑一次"会直接写格"的引擎钩子，并把**真的变了**的格子登记进下发批次。
+        /// 主机：跑一次"会直接写格"的引擎回调，并把**真的变了**的格子登记进下发批次。
         /// 客户端不调用（那些钩子已经在外面被闸门挡住）。
-        /// Source: Mod/ScMultiplayer/Func/Subsystem/SuSubsystemWaterBlockBehavior.cs:RegisterFluidDataChanges
+        ///
+        /// <paramref name="cellAlreadyChanged"/>：ChangeCell / DestroyCell 的行为回调
+        /// （OnBlockAdded / OnBlockModified / OnBlockRemoved）是在**写入之后**才被调用的 ——
+        /// 这一格本身一定变了；before/after 是为了抓 base 回调里 <c>UpdateIsTop</c> 的 data 直写
+        /// （它绕过 ChangeCell，只改顶层标志位，不进引擎改动表）。
         /// </summary>
-        internal static void RunAndRegisterCell(SubsystemTerrain terrain, Point3 cell, Action action)
+        internal static void RunAndCaptureCell(SubsystemTerrain terrain, Point3 cell, Action action,
+            bool cellAlreadyChanged, bool dataOnly)
         {
-            RunAndRegisterCells(terrain, new[] { cell }, action);
-        }
-
-        /// <summary>同上，但一次比较多个候选格（流体的邻居回调可能同时改 (x,y,z) 与 (x,y+1,z)）。</summary>
-        internal static void RunAndRegisterCells(SubsystemTerrain terrain, Point3[] cells, Action action)
-        {
-            if (action == null || terrain?.Terrain == null || cells == null || cells.Length == 0)
+            if (action == null) return;
+            SuSubsystemTerrain shell = terrain as SuSubsystemTerrain;
+            if (terrain?.Terrain == null)
             {
-                action?.Invoke();
+                action();
                 return;
             }
-            var before = new int[cells.Length];
-            for (int i = 0; i < cells.Length; i++)
-            {
-                Point3 cell = cells[i];
-                before[i] = cell.Y >= 0 && cell.Y <= 255
-                    ? terrain.Terrain.GetCellValueFast(cell.X, cell.Y, cell.Z) : 0;
-            }
+            int before = ReadCellValue(terrain, cell);
+            if (cellAlreadyChanged) shell?.NoteFluidCellChanged(cell, dataOnly);
             action();
+            int after = ReadCellValue(terrain, cell);
+            if (before != after) shell?.NoteFluidCandidate(cell, before, after);
+        }
+
+        /// <summary>一次比较多个候选格（邻居回调可能同时改 (x,y,z) 与 (x,y+1,z)，岩浆还会改 3×3×3）。</summary>
+        internal static void RunAndCaptureCells(SubsystemTerrain terrain, Point3[] cells, Action action)
+        {
+            if (action == null) return;
+            if (terrain?.Terrain == null || cells == null || cells.Length == 0)
+            {
+                action();
+                return;
+            }
             SuSubsystemTerrain shell = terrain as SuSubsystemTerrain;
+            var before = new int[cells.Length];
+            for (int i = 0; i < cells.Length; i++) before[i] = ReadCellValue(terrain, cells[i]);
+            action();
             for (int i = 0; i < cells.Length; i++)
             {
-                Point3 cell = cells[i];
-                if (cell.Y < 0 || cell.Y > 255) continue;
-                int after = terrain.Terrain.GetCellValueFast(cell.X, cell.Y, cell.Z);
+                int after = ReadCellValue(terrain, cells[i]);
                 if (before[i] == after) continue;
-                shell?.MarkCellModifiedForBroadcast(cell);
+                shell?.NoteFluidCandidate(cells[i], before[i], after);
             }
+        }
+
+        internal static int ReadCellValue(SubsystemTerrain terrain, Point3 cell)
+        {
+            if (terrain?.Terrain == null || cell.Y < 0 || cell.Y > 255) return 0;
+            return terrain.Terrain.GetCellValueFast(cell.X, cell.Y, cell.Z);
+        }
+
+        /// <summary>回调前后读同一格：真的变了才交给流体捕获窗口（无变化不产生任何下发）。</summary>
+        internal static void NoteCandidateIfChanged(SubsystemTerrain terrain, Point3 cell, int before)
+        {
+            if (terrain?.Terrain == null || cell.Y < 0 || cell.Y > 255) return;
+            int after = ReadCellValue(terrain, cell);
+            if (before == after) return;
+            (terrain as SuSubsystemTerrain)?.NoteFluidCandidate(cell, before, after);
         }
 
         internal static int[] ReadCellValues(SubsystemTerrain terrain, Point3[] cells)
         {
             if (terrain?.Terrain == null || cells == null) return Array.Empty<int>();
             var values = new int[cells.Length];
-            for (int i = 0; i < cells.Length; i++)
-            {
-                Point3 cell = cells[i];
-                values[i] = cell.Y >= 0 && cell.Y <= 255
-                    ? terrain.Terrain.GetCellValueFast(cell.X, cell.Y, cell.Z) : 0;
-            }
+            for (int i = 0; i < cells.Length; i++) values[i] = ReadCellValue(terrain, cells[i]);
             return values;
         }
 
@@ -107,6 +127,8 @@ namespace SuMultiplayer.Engine
         /// 流体 / 岩浆的写入点（<c>m_toSet</c> → ChangeCell / DestroyCell，以及 UpdateIsTop 的直写）
         /// 都在 base.Update 内部，而且 base 自己会 ProcessModifiedCells 清空改动表 ——
         /// 不在这里补登记，主机的流体变化永远不会下发给客户端（摘要含 data 会长期不一致）。
+        /// 注意：候选快照只是**补漏网**；SpreadFluid 第 1 遍的新前沿不在快照里，靠行为回调窗口
+        /// （<see cref="SuSubsystemTerrain.BeginFluidCapture"/>）捕获，二者在窗口里合并去重。
         /// </summary>
         internal static int RegisterChangedCells(SubsystemTerrain terrain, Point3[] cells, int[] before)
         {
@@ -117,9 +139,9 @@ namespace SuMultiplayer.Engine
             {
                 Point3 cell = cells[i];
                 if (cell.Y < 0 || cell.Y > 255) continue;
-                int after = terrain.Terrain.GetCellValueFast(cell.X, cell.Y, cell.Z);
+                int after = ReadCellValue(terrain, cell);
                 if (before[i] == after) continue;
-                shell?.MarkCellModifiedForBroadcast(cell);
+                shell?.NoteFluidCandidate(cell, before[i], after);
                 registered++;
             }
             return registered;
@@ -155,27 +177,42 @@ namespace SuMultiplayer.Engine
                 ClearWorkTables();
                 return;
             }
-            // 主机：流体写入点在 base.Update 内部（且 base 自己会 ProcessModifiedCells 清表），
-            // 前后各读一遍候选格，把真正变化的格补登记进下发批次。
-            Point3[] candidates = SnapshotCandidates(64);
-            int[] before = ReplicaGates.ReadCellValues(SubsystemTerrain, candidates);
-            // 引擎 SpreadFluid 末尾会**自己**调 ProcessModifiedCells 清空改动表（见本文件顶部与
-            // SuSubsystemTerrain.RescuePendingCells 的时序说明）。先把"本次流体 Update 之前就已待下发"
-            // 的格子接住（玩家挖/放、其它 Default 序行为），否则它们会被这次清表抹掉、永远不会广播
-            // —— 实机 desync 根因（某一格在主机日志里没有"下发改动"）。
-            (SubsystemTerrain as SuSubsystemTerrain)?.RescuePendingCells();
-            base.Update(dt);
-            ReplicaGates.RegisterChangedCells(SubsystemTerrain, candidates, before);
+            // 主机：流体写入点在 base.Update 内部（且 base 自己会在**每一遍**末尾 ProcessModifiedCells 清表）。
+            // ① 前置候选快照（m_toUpdate 键 + 水平邻居 + 上下格，沿用有界 64 键）补漏；
+            // ② 行为回调把**本次 Update 内所有真实写入**收进捕获窗口 —— 包括 SpreadFluid 第 1 遍
+            //    才排进来的新前沿（不在 ① 的快照里）；窗口在 finally 里并回引擎改动表，内部清表抹不掉。
+            SuSubsystemTerrain shell = SubsystemTerrain as SuSubsystemTerrain;
+            bool capturing = shell != null && shell.BeginFluidCapture();
+            try
+            {
+                Point3[] candidates = SnapshotCandidates(64);
+                int[] before = ReplicaGates.ReadCellValues(SubsystemTerrain, candidates);
+                // 引擎 SpreadFluid 末尾会**自己**调 ProcessModifiedCells 清空改动表（见本文件顶部与
+                // SuSubsystemTerrain.RescuePendingCells 的时序说明）。先把"本次流体 Update 之前就已待下发"
+                // 的格子接住（玩家挖/放、其它 Default 序行为），否则它们会被这次清表抹掉、永远不会广播
+                // —— 实机 desync 根因（某一格在主机日志里没有"下发改动"）。
+                shell?.RescuePendingCells();
+                base.Update(dt);
+                ReplicaGates.RegisterChangedCells(SubsystemTerrain, candidates, before);
+            }
+            finally
+            {
+                if (capturing) shell?.EndFluidCapture();
+            }
         }
 
         /// <summary>
         /// 本帧可能被流体写入的格：工作表 m_toUpdate 的键 + 四个水平邻居 + 上下格（有界 64 键）。
+        /// 注意这只是**补漏**：第 0 遍末尾 ProcessModifiedCells 才排进 m_toUpdate 的新前沿不在快照里，
+        /// 由行为回调窗口捕获（见 Update 注释）。
         /// Source: Survivalcraft/Game/SubsystemFluidBlockBehavior.cs:SubsystemFluidBlockBehavior.m_toUpdate/m_toSet
         /// </summary>
         private Point3[] SnapshotCandidates(int maxKeys)
         {
             object table = ReplicaGates.GetField(this, "m_toUpdate", typeof(SubsystemFluidBlockBehavior));
             if (table is not IDictionary dictionary || dictionary.Count == 0) return Array.Empty<Point3>();
+            if (dictionary.Count > maxKeys)
+                (SubsystemTerrain as SuSubsystemTerrain)?.NoteFluidCandidateCapHit(dictionary.Count - maxKeys);
             var cells = new List<Point3>(maxKeys * 6);
             int keys = 0;
             foreach (object key in dictionary.Keys)
@@ -196,27 +233,44 @@ namespace SuMultiplayer.Engine
         public override void OnBlockAdded(int value, int oldValue, int x, int y, int z)
         {
             if (!ReplicaGates.Allow(SubsystemTerrain, ReplicaMutationSource.Fluid)) return;
-            var cell = new Point3(x, y, z);
-            ReplicaGates.RunAndRegisterCell(SubsystemTerrain, cell,
-                delegate { base.OnBlockAdded(value, oldValue, x, y, z); });
+            // ChangeCell 已写入 → 这一格本身一定变了（内容变化）；before/after 抓 base 里的 UpdateIsTop data 直写。
+            ReplicaGates.RunAndCaptureCell(SubsystemTerrain, new Point3(x, y, z),
+                delegate { base.OnBlockAdded(value, oldValue, x, y, z); },
+                cellAlreadyChanged: true, dataOnly: false);
         }
 
         public override void OnBlockModified(int value, int oldValue, int x, int y, int z)
         {
             if (!ReplicaGates.Allow(SubsystemTerrain, ReplicaMutationSource.Fluid)) return;
-            var cell = new Point3(x, y, z);
-            ReplicaGates.RunAndRegisterCell(SubsystemTerrain, cell,
-                delegate { base.OnBlockModified(value, oldValue, x, y, z); });
+            // ChangeCell 只在"内容不变、值确实变了"时走这一支 ⇒ 这一格是 data-only 变化。
+            ReplicaGates.RunAndCaptureCell(SubsystemTerrain, new Point3(x, y, z),
+                delegate { base.OnBlockModified(value, oldValue, x, y, z); },
+                cellAlreadyChanged: true, dataOnly: true);
+        }
+
+        public override void OnBlockRemoved(int value, int newValue, int x, int y, int z)
+        {
+            if (!ReplicaGates.Allow(SubsystemTerrain, ReplicaMutationSource.Fluid)) return;
+            // 水/岩浆被替换掉（DestroyCell → ChangeCell 已写入）⇒ 内容变化，必须登记；
+            // 否则 SpreadFluid 内部清表后这一格永远不下发（客户端还留着旧水）。
+            ReplicaGates.RunAndCaptureCell(SubsystemTerrain, new Point3(x, y, z),
+                delegate { base.OnBlockRemoved(value, newValue, x, y, z); },
+                cellAlreadyChanged: true, dataOnly: false);
         }
 
         public override void OnNeighborBlockChanged(int x, int y, int z, int neighborX, int neighborY,
             int neighborZ)
         {
             if (!ReplicaGates.Allow(SubsystemTerrain, ReplicaMutationSource.Fluid)) return;
-            // 邻居在上方时引擎会重算"顶层" data（(x,y,z) 与 (x,y+1,z) 两格都可能被直接写）。
-            ReplicaGates.RunAndRegisterCells(SubsystemTerrain,
-                new[] { new Point3(x, y, z), new Point3(x, Math.Min(255, y + 1), z) },
-                delegate { base.OnNeighborBlockChanged(x, y, z, neighborX, neighborY, neighborZ); });
+            // 邻居在上方时引擎会重算"顶层" data（UpdateIsTop 直写 (x,y,z)）。回调前后各读一次，
+            // 只有真的变了才登记（无变化不产生下发）。
+            var cell = new Point3(x, y, z);
+            var above = new Point3(x, Math.Min(255, y + 1), z);
+            int beforeCell = ReplicaGates.ReadCellValue(SubsystemTerrain, cell);
+            int beforeAbove = ReplicaGates.ReadCellValue(SubsystemTerrain, above);
+            base.OnNeighborBlockChanged(x, y, z, neighborX, neighborY, neighborZ);
+            ReplicaGates.NoteCandidateIfChanged(SubsystemTerrain, cell, beforeCell);
+            ReplicaGates.NoteCandidateIfChanged(SubsystemTerrain, above, beforeAbove);
         }
 
         public override void OnChunkDiscarding(TerrainChunk chunk)
@@ -245,21 +299,33 @@ namespace SuMultiplayer.Engine
                 ClearWorkTables();
                 return;
             }
-            Point3[] candidates = SnapshotCandidates(64);
-            int[] before = ReplicaGates.ReadCellValues(SubsystemTerrain, candidates);
-            // 引擎 SpreadFluid 末尾会**自己**调 ProcessModifiedCells 清空改动表（见本文件顶部与
-            // SuSubsystemTerrain.RescuePendingCells 的时序说明）。先把"本次流体 Update 之前就已待下发"
-            // 的格子接住（玩家挖/放、其它 Default 序行为），否则它们会被这次清表抹掉、永远不会广播
-            // —— 实机 desync 根因（某一格在主机日志里没有"下发改动"）。
-            (SubsystemTerrain as SuSubsystemTerrain)?.RescuePendingCells();
-            base.Update(dt);
-            ReplicaGates.RegisterChangedCells(SubsystemTerrain, candidates, before);
+            // 与水完全相同的两段捕获：前置候选快照补漏 + 行为回调窗口（覆盖 SpreadFluid 第 1 遍的新前沿）。
+            SuSubsystemTerrain shell = SubsystemTerrain as SuSubsystemTerrain;
+            bool capturing = shell != null && shell.BeginFluidCapture();
+            try
+            {
+                Point3[] candidates = SnapshotCandidates(64);
+                int[] before = ReplicaGates.ReadCellValues(SubsystemTerrain, candidates);
+                // 引擎 SpreadFluid 末尾会**自己**调 ProcessModifiedCells 清空改动表（见本文件顶部与
+                // SuSubsystemTerrain.RescuePendingCells 的时序说明）。先把"本次流体 Update 之前就已待下发"
+                // 的格子接住（玩家挖/放、其它 Default 序行为），否则它们会被这次清表抹掉、永远不会广播
+                // —— 实机 desync 根因（某一格在主机日志里没有"下发改动"）。
+                shell?.RescuePendingCells();
+                base.Update(dt);
+                ReplicaGates.RegisterChangedCells(SubsystemTerrain, candidates, before);
+            }
+            finally
+            {
+                if (capturing) shell?.EndFluidCapture();
+            }
         }
 
         private Point3[] SnapshotCandidates(int maxKeys)
         {
             object table = ReplicaGates.GetField(this, "m_toUpdate", typeof(SubsystemFluidBlockBehavior));
             if (table is not IDictionary dictionary || dictionary.Count == 0) return Array.Empty<Point3>();
+            if (dictionary.Count > maxKeys)
+                (SubsystemTerrain as SuSubsystemTerrain)?.NoteFluidCandidateCapHit(dictionary.Count - maxKeys);
             var cells = new List<Point3>(maxKeys * 6);
             int keys = 0;
             foreach (object key in dictionary.Keys)
@@ -280,18 +346,39 @@ namespace SuMultiplayer.Engine
         public override void OnBlockAdded(int value, int oldValue, int x, int y, int z)
         {
             if (!ReplicaGates.Allow(SubsystemTerrain, ReplicaMutationSource.Magma)) return;
-            var cell = new Point3(x, y, z);
-            ReplicaGates.RunAndRegisterCell(SubsystemTerrain, cell,
-                delegate { base.OnBlockAdded(value, oldValue, x, y, z); });
+            // ChangeCell 已写入 → 这一格本身是内容变化；before/after 抓 base 里的 UpdateIsTop data 直写。
+            ReplicaGates.RunAndCaptureCell(SubsystemTerrain, new Point3(x, y, z),
+                delegate { base.OnBlockAdded(value, oldValue, x, y, z); },
+                cellAlreadyChanged: true, dataOnly: false);
+        }
+
+        public override void OnBlockModified(int value, int oldValue, int x, int y, int z)
+        {
+            if (!ReplicaGates.Allow(SubsystemTerrain, ReplicaMutationSource.Magma)) return;
+            ReplicaGates.RunAndCaptureCell(SubsystemTerrain, new Point3(x, y, z),
+                delegate { base.OnBlockModified(value, oldValue, x, y, z); },
+                cellAlreadyChanged: true, dataOnly: true);
+        }
+
+        public override void OnBlockRemoved(int value, int newValue, int x, int y, int z)
+        {
+            if (!ReplicaGates.Allow(SubsystemTerrain, ReplicaMutationSource.Magma)) return;
+            ReplicaGates.RunAndCaptureCell(SubsystemTerrain, new Point3(x, y, z),
+                delegate { base.OnBlockRemoved(value, newValue, x, y, z); },
+                cellAlreadyChanged: true, dataOnly: false);
         }
 
         public override void OnNeighborBlockChanged(int x, int y, int z, int neighborX, int neighborY,
             int neighborZ)
         {
             if (!ReplicaGates.Allow(SubsystemTerrain, ReplicaMutationSource.Magma)) return;
-            ReplicaGates.RunAndRegisterCells(SubsystemTerrain,
-                new[] { new Point3(x, y, z), new Point3(x, Math.Min(255, y + 1), z) },
-                delegate { base.OnNeighborBlockChanged(x, y, z, neighborX, neighborY, neighborZ); });
+            var cell = new Point3(x, y, z);
+            var above = new Point3(x, Math.Min(255, y + 1), z);
+            int beforeCell = ReplicaGates.ReadCellValue(SubsystemTerrain, cell);
+            int beforeAbove = ReplicaGates.ReadCellValue(SubsystemTerrain, above);
+            base.OnNeighborBlockChanged(x, y, z, neighborX, neighborY, neighborZ);
+            ReplicaGates.NoteCandidateIfChanged(SubsystemTerrain, cell, beforeCell);
+            ReplicaGates.NoteCandidateIfChanged(SubsystemTerrain, above, beforeAbove);
         }
 
         public override void OnChunkDiscarding(TerrainChunk chunk)

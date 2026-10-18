@@ -35,6 +35,13 @@ namespace SuMultiplayer.Modules
         private readonly MessageChannel m_messages;
         private readonly Port m_port;
         private readonly ControlPortImpl m_control;
+        /// <summary>
+        /// 本机资料存储（组合根创建并注入；角色创建界面写它、Hello 读它）。
+        /// null = 组合根没接资料链 → Hello 不带资料（主机据此要求建角色）。
+        /// </summary>
+        private readonly LocalPlayerProfileStore m_profileStore;
+        /// <summary>主机 Hello 资料闸门（联机角色模块在组合根里注入）。</summary>
+        private IHelloProfileGate m_helloProfileGate;
 
         private IModuleContext m_context;
         private TcpTerrainServer m_server;
@@ -113,9 +120,11 @@ namespace SuMultiplayer.Modules
         /// </summary>
         private long m_hostCellNoRecipient;
 
-        public TerrainSyncModule(SyncConfig config, TerrainSyncOptions options = null)
+        public TerrainSyncModule(SyncConfig config, TerrainSyncOptions options = null,
+            LocalPlayerProfileStore profileStore = null)
         {
             m_config = config ?? new SyncConfig();
+            m_profileStore = profileStore;
             m_port = new Port(this);
             m_control = new ControlPortImpl(this);
             m_options = options ?? new TerrainSyncOptions();
@@ -133,7 +142,8 @@ namespace SuMultiplayer.Modules
         public ModuleDescriptor Descriptor => m_descriptor;
 
         /// <summary>传输端口的实现（在模块内部，不对外暴露实现细节）。</summary>
-        private sealed class Port : ITransportPort, IAvatarTerrainBridge, IWorldSessionPort
+        private sealed class Port : ITransportPort, IAvatarTerrainBridge, IWorldSessionPort,
+            IPlayerProfileHandshakePort
         {
             private readonly TerrainSyncModule m_owner;
             public Port(TerrainSyncModule owner) { m_owner = owner; }
@@ -173,6 +183,13 @@ namespace SuMultiplayer.Modules
             public long CurrentChangeSequence => m_owner.CurrentChangeSequence;
             public void OnClientWorldInstalled(string worldDirectory, string sessionId, long baseSequence) =>
                 m_owner.OnClientWorldInstalled(worldDirectory, sessionId, baseSequence);
+
+            // IPlayerProfileHandshakePort：联机角色模块读握手资料 / 要求重新握手。
+            public PlayerProfileSnapshot HostProfile => m_owner.ClientHostProfile;
+            public PlayerProfileSnapshot AssignedProfile => m_owner.ClientAssignedProfile;
+            public bool ProfileRequired => m_owner.ClientProfileRequired;
+            public string ProfileRequiredReason => m_owner.ClientProfileRequiredReason;
+            public bool ReconnectClient(string reason) => m_owner.ReconnectClient(reason);
         }
 
         /// <summary>通道控制端口的实现：会话模块（UI 操作）通过它起停通道。</summary>
@@ -196,6 +213,21 @@ namespace SuMultiplayer.Modules
         public IWorldSessionPort WorldSessionPort => m_port;
         /// <summary>组合根把它交给会话模块（UI 操作 → 起停通道）。</summary>
         public ITransportControlPort ControlPort => m_control;
+        /// <summary>组合根把它注册给联机角色模块：握手资料（主机/分配/要求建角色）+ 重新握手。</summary>
+        public IPlayerProfileHandshakePort ProfileHandshakePort => m_port;
+
+        /// <summary>
+        /// 组合根在装配时把联机角色模块（它拥有角色记录与本地玩家）接到主机 Hello 闸门上。
+        /// 必须在任何连接之前调用；晚了会按"没有资料闸门"的旧语义处理（不静默：调用方会看日志）。
+        /// </summary>
+        public void SetHelloProfileGate(IHelloProfileGate gate)
+        {
+            m_helloProfileGate = gate;
+            if (m_host != null) m_host.ProfileGate = gate;
+        }
+
+        /// <summary>本机资料存储（角色创建界面 / Hello 共用）。组合根创建后传入。</summary>
+        public LocalPlayerProfileStore ProfileStore => m_profileStore;
 
         /// <summary>
         /// 消息层（类型 id ↔ 解析器/处理器 + 发送器）。第三方模块通过
@@ -339,7 +371,6 @@ namespace SuMultiplayer.Modules
             m_bridge.ChunkWireIncluded += HandleChunkWireIncluded;
             m_bridge.FrameArrived += HandleFrame;
             m_bridge.HostCellChanged += HandleHostCellChanged;
-            m_bridge.ChunkLoadRequested += HandleLoadRequested;
             m_attached = true;
             // 刻意**不在这里开通道**：建房/加入是玩家的操作，不是启动配置。
             Log("地形同步模块就绪（通道等玩家操作：游戏内 CR 建房 / Play 屏点房间加入）");
@@ -364,6 +395,8 @@ namespace SuMultiplayer.Modules
                 m_hostPort = m_server.Port;
                 m_host = new TerrainSyncHost(m_bridge, m_server, m_options, attachToChannel: false,
                     messages: m_messages);
+                // 资料闸门（联机角色模块）：Hello 时决定"有没有角色记录 / 要不要先建角色"。
+                m_host.ProfileGate = m_helloProfileGate;
                 // 会话标识：建房（房间会话开始）时生成一次，只存在内存里；主机重启 ⇒ 新标识 ⇒
                 // 客户端手里的世界被判过期 ⇒ 整图重下。绝不落盘（见 Terrain/SessionIdentity.cs）。
                 m_sessionId = SessionIdentity.NewSessionId();
@@ -379,6 +412,9 @@ namespace SuMultiplayer.Modules
                 // 欠更新计数器（实时地图格内数字）的生命周期决策：加标记 / 核对通过移除 / 客户端离开清掉它的
                 // 全部标记 / 会话结束整体清空。Terrain 层不认识引擎日志，所以走事件由这里写一行明确日志。
                 m_host.PendingTrace += HandleHostPendingTrace;
+                // 按需单块加载（客户端上报的边缘块）：超时放弃 / 被拒绝 / 汇总，Terrain 层已限流。
+                // 这是"客户端站着不动、边缘黄框也能变绿"的唯一证据链（旧实现的请求只到一行 verbose 日志）。
+                m_host.OnDemandTrace += HandleHostOnDemandTrace;
                 // 玩家端的连接**已经不可达**（对端关闭 / 链路失效）：必须写一行明确原因，
                 // 并把它在主机世界里的联机角色清掉 —— 否则那个角色实体会停在最后一个已应用的位置上
                 // （实机故障：主机侧角色卡死在 (-79.6,78.4,45.8)，重连后还会多出一个）。
@@ -475,10 +511,16 @@ namespace SuMultiplayer.Modules
                     ? Math.Max(m_clientChangeSequence, storedBaseSequence)
                     : 0L;
                 m_clientSync.SetAppliedChangeSequence(lastApplied);
-                m_clientSync.SendHello(PlayerIdentity.LocalName(), PlayerIdentity.LocalIdentity(),
+                // 本机资料：角色创建界面写进 store 的优先，其次本机角色（PlayerData.Name），
+                // **绝不**用引擎固定显示名 "Android User" 顶替真实资料（PlayerIdentity.LocalName 已修正）。
+                PlayerProfileSnapshot localProfile = m_profileStore?.Profile;
+                string helloName = localProfile != null && localProfile.HasName
+                    ? localProfile.Name
+                    : PlayerIdentity.LocalName();
+                m_clientSync.SendHello(helloName, PlayerIdentity.LocalIdentity(),
                     alreadyHasWorld,
                     alreadyHasWorld ? storedSessionId : string.Empty,
-                    lastApplied);
+                    lastApplied, localProfile);
                 // 新连接 = 新窗口：兴趣中心/半径必须重新上报（否则主机的旧窗口还停在上一轮的位置）。
                 m_hasCenter = false;
                 m_lastRadius = 0;
@@ -1557,6 +1599,43 @@ namespace SuMultiplayer.Modules
         /// <summary>客户端侧：主机给本端的传输层编号（旧 <c>client.ClientID</c>）；未握手 = -1。</summary>
         internal int ClientLocalClientId => m_clientSync?.LocalClientId ?? -1;
 
+        /// <summary>客户端侧：HelloAck 里的主机资料 / 本机分配资料 / 是否要求先建角色。</summary>
+        internal PlayerProfileSnapshot ClientHostProfile => m_clientSync?.HostProfile;
+
+        internal PlayerProfileSnapshot ClientAssignedProfile => m_clientSync?.AssignedProfile;
+
+        internal bool ClientProfileRequired => m_clientSync?.ProfileRequired ?? false;
+
+        internal string ClientProfileRequiredReason =>
+            m_clientSync?.ProfileRequiredReason ?? string.Empty;
+
+        /// <summary>
+        /// 角色创建完成 / 资料变化后重新握手（旧实现 SubmitPendingJoin → 新 JoinGame）。
+        /// 只有"玩家点了加入房间、通道要重连"时才允许：否则明确返回 false。
+        /// 走 StopChannel + ConnectTo（与玩家重新点房间同一条路径），不是另造一条连接链。
+        /// </summary>
+        private bool ReconnectClient(string reason)
+        {
+            if (!m_wantClient || m_client == null)
+            {
+                LogWarning("要求重新握手（" + (reason ?? string.Empty) + 
+                    "）时没有可重连的客户端通道（wantClient=" + m_wantClient +
+                    " · client=" + (m_client == null ? "null" : "connected") +
+                    "）→ 不假装重连成功；请从 Play 屏重新加入房间");
+                return false;
+            }
+            string host = m_wantHost;
+            int port = m_wantPort;
+            Log("按主机要求重新握手（" + (reason ?? string.Empty) + "）→ 重新连接 " + host + ":" + port +
+                "；本次 Hello 会带上角色创建界面刚确定的资料（姓名/性别/皮肤）");
+            StopChannel();
+            if (ConnectTo(host, port, out string connectReason)) return true;
+            // StartClientOnce 失败时 m_wantClient 仍为 true —— 按 5s 间隔自动重试（加入流程本身）。
+            LogWarning("重新握手的第一条连接没有连上（" + (connectReason ?? string.Empty) +
+                "）→ 保持加入流程，按 5s 间隔继续重试");
+            return true;
+        }
+
         /// <summary>
         /// 客户端：本端**此刻是不是正在游玩**这个下载来的联机世界？ → Hello 里的 alreadyHasWorld。
         ///
@@ -1709,13 +1788,14 @@ namespace SuMultiplayer.Modules
                     " 个投递目标（内存集合包含该块的身份 ∪ 兴趣窗口订阅者）");
         }
 
-        private void HandleLoadRequested(ChunkKey key)
+        /// <summary>
+        /// 主机：**按需单块加载**（客户端上报的边缘块）的限流行 —— 超时放弃 / 被拒绝 / 汇总。
+        /// TerrainSyncHost 与 OnDemandChunkLoads 已经限流（同一块一行、拒绝与汇总按 10s），这里照写一行。
+        /// 这条链路正是"客户端站着不动、边缘黄框也能变绿"的证据行（旧实现的请求只到一行 verbose 日志）。
+        /// </summary>
+        private void HandleHostOnDemandTrace(string reason)
         {
-            // 引擎没有"按需加载任意区块"的公开入口：主机侧的加载只由地形更新位置驱动
-            // （旧实现 MaintainRemoteTerrainLocations 给每个联机角色挂 SetUpdateLocation，
-            //  本重写版在 Engine/NetworkAvatarSpawner.cs:421-502 搬运）。主机侧拿不到内容时，
-            // TerrainSyncHost 会把这条上报留在待办里按 5s 节奏重请、并由 ReportUnresolved 写明确原因。
-            if (m_verbose) Log("请求加载 " + key + "（引擎按联机角色的地形更新位置异步加载，无强制单块入口）");
+            Log(reason);
         }
 
         /// <summary>
@@ -1999,6 +2079,13 @@ namespace SuMultiplayer.Modules
                     "/无内容跳过 " + snapshot.OwedSnapshotsSkippedNoContent +
                     " · 要求重新核对 " + snapshot.VerifyRequestsSent +
                     "/发送失败 " + snapshot.VerifyRequestSendFailures +
+                    // 陈旧裁决自愈：内容补齐后仍停在红（Mismatch）的块 → 有界地要一份新鲜摘要重判
+                    // （请求 / 重判成绿或蓝 / 到上限明确清红；在册 = 还没结论的条数）。
+                    " · 陈旧裁决自愈 请求 " + snapshot.StaleVerdictRefreshRequested +
+                    "/重判 " + snapshot.StaleVerdictRefreshed +
+                    "/清除 " + snapshot.StaleVerdictCleared +
+                    "（在册 " + snapshot.PendingStaleVerdicts +
+                    " · 没发出去 " + snapshot.StaleVerdictRefreshDeferred + "）" +
                     " · 投递失败 " + snapshot.CellChangesDeliveryFailed + "）" +
                     // 捕获口径（与投递口径分开：这一行回答"主机到底有没有抓到那一格"）：
                     //   hostCellCaptured   = 真正交给广播管线的格数（每一格一次）；
@@ -2011,7 +2098,25 @@ namespace SuMultiplayer.Modules
                     " · hostCellRescued " + (m_shell != null ? m_shell.CaptureState.Rescued : 0L) +
                     " · hostCellMissed " + m_bridge.HostCellMisses +
                     " · broadcastDuplicates " + m_bridge.HostCellDuplicates +
-                    " · hostCellNoRecipient " + m_hostCellNoRecipient + "）");
+                    " · hostCellNoRecipient " + m_hostCellNoRecipient + "）" +
+                    // 按需单块加载（客户端上报的边缘块）：**不改任何角色的兴趣半径 / 内容距离**，
+                    // 只给"主机没有内容的那些上报块"挂一条只覆盖该块的临时更新位置。
+                    //   onDemandLoadRequests/Served/Timeouts/Rejected 与 pendingOnDemand 都来自 Terrain 层同一份台账；
+                    //   onDemandLoadLocations = 引擎里当前真的挂着几条临时位置（TerrainBridge 计数）。
+                    " · 按需单块加载 onDemandLoadRequests " + snapshot.OnDemandLoadRequests +
+                    "（区块 " + snapshot.OnDemandLoadChunks +
+                    " · onDemandLoadServed " + snapshot.OnDemandLoadServed +
+                    " · onDemandLoadTimeouts " + snapshot.OnDemandLoadTimeouts +
+                    " · pendingOnDemand " + snapshot.PendingOnDemand +
+                    " · 被拒绝 " + snapshot.OnDemandLoadRejected +
+                    "（cap " + snapshot.OnDemandLoadRejectedCap +
+                    " · cooldown " + snapshot.OnDemandLoadRejectedCooldown +
+                    " · engine " + snapshot.OnDemandLoadRejectedEngine +
+                    "）· 摘掉待裁决 " + snapshot.OnDemandReportsTimedOut +
+                    " · 未挂待裁决 " + snapshot.OnDemandReportsDropped +
+                    " · 临时位置 " + m_bridge.OnDemandLoadLocations +
+                    "（累计创建 " + m_bridge.OnDemandLoadLocationsCreated +
+                    "；不改 hostUpdateLocations 的任何半径 / 内容距离，那一行见玩家化身模块状态行））");
             }
             else if (m_clientSync != null)
             {
@@ -2089,7 +2194,6 @@ namespace SuMultiplayer.Modules
             try { m_bridge.ChunkWireIncluded -= HandleChunkWireIncluded; } catch (Exception) { }
             try { m_bridge.FrameArrived -= HandleFrame; } catch (Exception) { }
             try { m_bridge.HostCellChanged -= HandleHostCellChanged; } catch (Exception) { }
-            try { m_bridge.ChunkLoadRequested -= HandleLoadRequested; } catch (Exception) { }
             StopChannel();
             if (m_shell != null)
             {
@@ -2117,6 +2221,8 @@ namespace SuMultiplayer.Modules
                        " outsideWindow=" + snapshot.CellChangesOutsideWindow +
                        " repairs=" + snapshot.CellChangeRepairs +
                        " repairUnavailable=" + snapshot.CellChangeRepairUnavailable +
+                       " staleVerdicts=" + snapshot.StaleVerdictRefreshRequested +
+                       "/" + snapshot.StaleVerdictRefreshed + "/" + snapshot.StaleVerdictCleared +
                        // v9：实时地图主机端动物（最近一次快照条数 / 累计截断条数）
                        " animalsInFeed=" + m_animalsInFeed +
                        " animalsTruncated=" + m_animalsTruncated +

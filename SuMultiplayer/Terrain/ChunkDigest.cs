@@ -298,6 +298,27 @@ namespace SuMultiplayer.Terrain
         }
 
         /// <summary>
+        /// **主机回传快照落地后的"再证明一次"**（实机故障的根因修复）。
+        ///
+        /// 与 <see cref="TryBeginVerify"/> 的唯一区别：**允许 Fresh**。
+        /// 为什么必须允许：主机判 Mismatch 后回传整块；如果这期间客户端本地已经通过别的路径一致了
+        /// （例如背压漏掉的 CellChange 后来按历史补发到位），本端状态机停在 Fresh，而旧代码在
+        /// 快照落地后走 <see cref="TryBeginVerify"/>（Fresh → 拒绝）⇒ 客户端**不再上报**，
+        /// 主机那条 Mismatch **永远没人重判**（实机：区块 (30,-4)/(30,-3) 一直红，客户端"不一致 0"/"队列 0"）。
+        /// 快照刚覆盖过这块 ⇒ 它必须重新证明一次；Verifying（已有一条上报在途）与 NotReady 重报次数
+        /// 用尽（<see cref="MaxRetries"/>）仍然不重复发起。
+        /// </summary>
+        public bool TryBeginResyncConfirm(ChunkKey key, uint clientHash, out DigestEntry entry)
+        {
+            entry = default;
+            if (StateOf(key) == ChunkFreshness.Verifying) return false;
+            if (m_retries.TryGetValue(key, out int retries) && retries > MaxRetries) return false;
+            m_states[key] = ChunkFreshness.Verifying;
+            entry = new DigestEntry(key, clientHash);
+            return true;
+        }
+
+        /// <summary>
         /// 把一块**明确退回"未核对"**（不增加 NotReady 重试次数）。
         /// 用于"主机回传的整块快照因过期被丢弃"：这一块既没有被覆盖、也没有一条上报在途，
         /// 继续停在 Stale（"等主机回传"）就再也不会有人发起核对 —— 必须退回未核对并重新上报，

@@ -76,7 +76,12 @@ namespace SuMultiplayer.UI
             //      既不会重新下载世界，也不会重新进世界；
             //   ② 清掉上一次**下载来的**世界（旧实现 CleanupDownloadedWorldsBeforeWorldList）——
             //      下载世界是临时的，不清就会每加入一次多堆一个同名世界目录。
-            m_rooms?.LeaveRoom();
+            // 从"角色创建屏"返回：这是同一次加入的继续，不能 LeaveRoom（否则连接被停掉，
+            // 客户端拿不到世界）；其它情况下回到世界列表 = 离开上一个房间。
+            if (m_rooms == null || !m_rooms.ConsumePreserveJoinOnNextPlayEnter())
+            {
+                m_rooms?.LeaveRoom();
+            }
             if (m_downloads != null) m_downloads.TryCleanup(out string cleanupNote);
             StartLocalScan();
         }

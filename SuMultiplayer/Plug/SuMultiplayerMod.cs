@@ -44,6 +44,9 @@ namespace SuMultiplayer
         private ClientAuthorityModule m_authorityModule;
         private RoomUiAttacher m_uiAttacher;
         private EngineWorldTransfer m_engineWorldTransfer;
+        /// <summary>角色创建屏的默认名字摇号（按身份稳定键 + 本次会话盐；计数器见 StatusLine）。
+        /// 组合根建一个、随本次会话存活 —— 模块与屏都不持有静态状态。</summary>
+        private CharacterNameRoller m_nameRoller;
         private IModEventBus m_eventBus;
         private IModInjector m_injector;
         private SyncConfig m_config;
@@ -67,8 +70,16 @@ namespace SuMultiplayer
             m_engineWorldTransfer = new EngineWorldTransfer();
             var diagnostics = new GameDiagnostics();
             m_moduleHost = new ModuleHost(diagnostics);
-            m_terrainModule = new TerrainSyncModule(m_config);
-            m_sessionModule = new SessionModule(m_config);
+            // 本机资料存储：角色创建界面写、Hello 读、主机分配的记录回填 —— 唯一来源。
+            var profileStore = new LocalPlayerProfileStore();
+            // 角色创建屏的默认名字：按身份稳定键（UserId.dat）+ 本次会话盐摇**游戏内置名字表**，
+            // 不再用共享的引擎 RNG 状态（否则两个客户端会摇到同一个名字）。日志走 [SuMP] 前缀。
+            m_nameRoller = new CharacterNameRoller(
+                message => Log.Information("[SuMP] " + message),
+                message => Log.Warning("[SuMP] " + message),
+                CharacterNameRoller.NewSessionSalt());
+            m_terrainModule = new TerrainSyncModule(m_config, profileStore: profileStore);
+            m_sessionModule = new SessionModule(m_config, profileStore);
             m_transferModule = new WorldTransferModule(m_config, m_engineWorldTransfer, m_engineWorldTransfer,
             m_engineWorldTransfer);
 
@@ -83,7 +94,10 @@ namespace SuMultiplayer
             var avatarSpawner = new NetworkAvatarSpawner(engineModManager.ModParentField,
                 engineModManager.ModParentMethod, diagnostics, "player-avatar");
             m_avatarModule = new PlayerAvatarModule(avatarSpawner,
-                new SuMultiplayerPlayersXml("player-avatar", diagnostics));
+                new SuMultiplayerPlayersXml("player-avatar", diagnostics), profileStore);
+            // 主机 Hello 资料闸门 = 联机角色模块（它拥有角色记录与本地玩家）：
+            // 没有记录且 Hello 没带完整资料 → profile_required，不下发世界。
+            m_terrainModule.SetHelloProfileGate(m_avatarModule);
 
             // 生物生成/同步：主机权威生成 + 按客户端区域分配；客户端只做复制。
             // 适配器同时是"客户端区域来源"（联机角色位置）与引擎侧生成子系统注入的持有者。
@@ -100,6 +114,8 @@ namespace SuMultiplayer
             // 世界传输模块要有 transport 能力才会启动。
             m_moduleHost.Register(m_terrainModule);
             m_moduleHost.RegisterPort<ITransportPort>(m_terrainModule.TransportPort);
+            // 握手资料视图（主机/分配资料/是否要求先建角色 + 重新握手）：联机角色模块用它。
+            m_moduleHost.RegisterPort<IPlayerProfileHandshakePort>(m_terrainModule.ProfileHandshakePort);
             // 实时地图 v9：主机端动物的只读位置来源（只枚举主机世界里的非玩家生物，
             // 不扰动生物同步的 50 Hz 扫描；客户端不贡献动物）。
             m_moduleHost.RegisterPort<IHostCreatureCellSource>(new HostCreatureCellSource());
@@ -170,6 +186,7 @@ namespace SuMultiplayer
             Log.Information("[SuMP] " + m_creatureModule.StatusLine());
             Log.Information("[SuMP] " + m_creatureWorld.StatusLine());
             Log.Information("[SuMP] " + m_authorityModule.StatusLine());
+            Log.Information("[SuMP] " + m_nameRoller.StatusLine());
 
             // 引擎注入：把 Game.SubsystemTerrain 换成我们的薄外壳
             modInjector.Register("Game.SubsystemTerrain", "SuMultiplayer.Engine.SuSubsystemTerrain");
@@ -240,6 +257,12 @@ namespace SuMultiplayer
                     {
                         ScreensManager.AddScreen("Play", new SuPlayScreen(m_sessionModule,
                             m_transferModule.ReadyPort, m_transferModule.DownloadedWorldPort));
+                        // 首次加入没有角色时的创建屏（旧 SuNetworkPlayerScreen 流程）。
+                        // 取消 = 放弃本次加入（停通道回 Play），不留下半个角色。
+                        ScreensManager.AddScreen("SuMultiplayerPlayerProfile",
+                            new SuNetworkPlayerScreen(engineModManager.ModParentField, m_nameRoller,
+                                delegate { m_sessionModule.LeaveRoom(); },
+                                delegate { m_sessionModule.PreserveJoinOnNextPlayEnter(); }));
                     }))
                 {
                     throw new InvalidOperationException(
@@ -271,6 +294,7 @@ namespace SuMultiplayer
                         Log.Information("[SuMP] " + m_avatarModule?.StatusLine());
                         Log.Information("[SuMP] " + m_creatureModule?.StatusLine());
                         Log.Information("[SuMP] " + m_creatureWorld?.StatusLine());
+                        Log.Information("[SuMP] " + m_nameRoller?.StatusLine());
                     }
                 }
                 catch (Exception e)

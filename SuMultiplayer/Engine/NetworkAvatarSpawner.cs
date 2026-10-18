@@ -146,6 +146,145 @@ namespace SuMultiplayer.Engine
         public bool TryGetRecordKey(int clientId, out string recordKey) =>
             m_clientRecordKeys.TryGetValue(clientId, out recordKey);
 
+        // ------------------------------------------------------- 资料（名字 / 性别 / 皮肤 / 衣服）
+
+        /// <summary>
+        /// 主机：抓本机玩家（PlayersData 里不是联机化身的那一条）的真实资料。
+        /// 名字取 PlayerData.Name（角色创建界面写进去的真实名字，不是引擎固定的 "Android User"）。
+        /// Source: Mod/ScMultiplayer/Modules/Player/ScMultiplayerProfileHandlers.cs:376-467
+        ///         （CapturePlayerRecord 的 Name / PlayerClass / SkinName / Clothes）
+        /// </summary>
+        public bool TryCaptureLocalProfile(out PlayerProfileSnapshot profile, out string reason)
+        {
+            profile = null;
+            Project project = GameManager.Project;
+            if (project == null)
+            {
+                reason = "没有加载中的 Project（主机还没进入世界）";
+                return false;
+            }
+            if (!TryGetLocalPlayer(project, out PlayerData localPlayer, out reason)) return false;
+            profile = CaptureProfile(localPlayer, out reason);
+            return profile != null;
+        }
+
+        /// <summary>
+        /// 抓一个 PlayerData 的资料（名字 / 性别 / 皮肤 / 衣服）。外观字段取引擎真实值：
+        /// <c>PlayerClass</c>、<c>CharacterSkinName</c>、<c>ComponentClothing</c> 的 4 个槽位。
+        /// </summary>
+        public PlayerProfileSnapshot CaptureProfile(PlayerData playerData, out string reason)
+        {
+            reason = null;
+            if (playerData == null)
+            {
+                reason = "没有 PlayerData";
+                return null;
+            }
+            string name = (playerData.Name ?? string.Empty).Trim();
+            if (name.Length == 0)
+            {
+                reason = "PlayerData.Name 为空（角色还没有名字）";
+                return null;
+            }
+            string skin = (playerData.CharacterSkinName ?? string.Empty).Trim();
+            if (skin.Length == 0)
+            {
+                reason = "PlayerData.CharacterSkinName 为空（拿不到皮肤）";
+                return null;
+            }
+            return new PlayerProfileSnapshot
+            {
+                Name = name,
+                Appearance = new PlayerAppearance
+                {
+                    Sex = ToPlayerSex(playerData.PlayerClass),
+                    SkinName = skin,
+                    Clothes = CaptureClothes(playerData.ComponentPlayer)
+                }
+            };
+        }
+
+        /// <summary>
+        /// 把一个远端化身的外观更新成资料里的值。
+        ///   · 名字 / 皮肤 / 衣服 → 就地更新（引擎的 ComponentClothing 会在 CharacterSkinName
+        ///     变化时重新加载贴图，见 Survivalcraft/Game/ComponentClothing.cs:497-500）；
+        ///   · **性别变了** → 不能改已存在 PlayerData 的 PlayerClass（引擎属性 setter 会抛），
+        ///     必须摘掉重建：返回 false + <paramref name="mustRecreate"/>=true，由调用方重建。
+        /// Source: Mod/ScMultiplayer/Modules/Player/ScMultiplayerProfileHandlers.cs:825-845
+        ///         （PlayerClass 变化 → RemoveNetworkPlayer + CreateNetworkPlayer；否则就地写 Name/Skin/Clothes）
+        /// </summary>
+        public bool TryApplyRemoteProfile(int clientId, PlayerProfileSnapshot profile,
+            out bool mustRecreate, out string reason)
+        {
+            mustRecreate = false;
+            reason = null;
+            if (profile == null || !profile.HasName)
+            {
+                reason = "资料为空或没有名字";
+                return false;
+            }
+            if (!m_avatars.TryGetValue(clientId, out PlayerData playerData) ||
+                playerData?.ComponentPlayer == null)
+            {
+                reason = "本机没有 clientId=" + clientId + " 的联机角色（或角色实体还没建好）";
+                return false;
+            }
+            PlayerClass playerClass = ToPlayerClass(profile.Appearance?.Sex ?? PlayerSex.Male);
+            if (playerData.PlayerClass != playerClass)
+            {
+                mustRecreate = true;
+                reason = "性别从 " + playerData.PlayerClass + " 变成 " + playerClass +
+                    "：已存在 PlayerData 的 PlayerClass 不可改，必须摘掉重建（旧实现同样重建）";
+                return false;
+            }
+            playerData.Name = profile.Name;
+            if (profile.Appearance != null && profile.Appearance.HasSkinName)
+                playerData.CharacterSkinName = profile.Appearance.SkinName;
+            ApplyClothes(playerData.ComponentPlayer, profile.Appearance?.Clothes);
+            return true;
+        }
+
+        /// <summary>
+        /// 客户端：把主机分配的资料应用到**本机玩家**（不是远端化身）。
+        /// 若本机 PlayerData 已经存在（下载世界带来的角色）且性别与资料不同，
+        /// 走旧实现的"替换本机 PlayerData"链：移除 → 用同样 PlayerIndex 重建 → 立即以 Respawn 出生。
+        /// Source: Mod/ScMultiplayer/Modules/Player/ScMultiplayerProfileHandlers.cs:1405-1469
+        ///         （ReplaceLocalPlayerData）
+        /// 返回 true = 本机玩家已经是资料里的样子。
+        /// </summary>
+        public bool TryApplyLocalProfile(PlayerProfileSnapshot profile, out bool replaced,
+            out string reason)
+        {
+            replaced = false;
+            reason = null;
+            Project project = GameManager.Project;
+            if (project == null)
+            {
+                reason = "没有加载中的 Project（客户端还没进入世界）";
+                return false;
+            }
+            if (profile == null || !profile.HasName)
+            {
+                reason = "资料为空或没有名字";
+                return false;
+            }
+            if (!TryGetLocalPlayer(project, out PlayerData localPlayer, out reason)) return false;
+            PlayerClass targetClass = ToPlayerClass(profile.Appearance?.Sex ?? PlayerSex.Male);
+            if (localPlayer.PlayerClass != targetClass)
+            {
+                if (!ReplaceLocalPlayerData(project, localPlayer, profile, out PlayerData replacement,
+                    out reason))
+                    return false;
+                localPlayer = replacement;
+                replaced = true;
+            }
+            localPlayer.Name = profile.Name;
+            if (profile.Appearance != null && profile.Appearance.HasSkinName)
+                localPlayer.CharacterSkinName = profile.Appearance.SkinName;
+            ApplyClothes(localPlayer.ComponentPlayer, profile.Appearance?.Clothes);
+            return true;
+        }
+
         /// <summary>该 PlayerData 是不是本机登记过的联机角色（网络化身）。</summary>
         public bool Contains(PlayerData playerData) =>
             playerData != null && m_avatars.Values.Any(item => ReferenceEquals(item, playerData));
@@ -1099,6 +1238,85 @@ namespace SuMultiplayer.Engine
             {
                 m_parentField.ModifyParentField(players, "m_nextPlayerIndex", maxPlayerIndex + 1,
                     typeof(SubsystemPlayers));
+            }
+        }
+
+        // 纯协议性别 ↔ 引擎 PlayerClass（数值一一对应；只在这一处转换）。
+        // Source: Survivalcraft/Game/PlayerClass.cs
+        public static PlayerClass ToPlayerClass(PlayerSex sex) =>
+            sex == PlayerSex.Female ? PlayerClass.Female : PlayerClass.Male;
+
+        public static PlayerSex ToPlayerSex(PlayerClass playerClass) =>
+            playerClass == PlayerClass.Female ? PlayerSex.Female : PlayerSex.Male;
+
+        // Source: Survivalcraft/Game/PlayerData.cs:PlayerData.SpawnPlayer
+        // Source: ScMultiplayerProfileHandlers.cs:92-106（InvokeClientPlaceholderPlayerSpawn）
+        private void InvokeClientPlaceholderPlayerSpawn(PlayerData playerData, Vector3 position)
+        {
+            Type spawnModeType = typeof(PlayerData).GetNestedType("SpawnMode", BindingFlags.NonPublic);
+            if (spawnModeType == null)
+                throw new MissingMemberException(typeof(PlayerData).FullName, "SpawnMode");
+            object respawn = Enum.Parse(spawnModeType, "Respawn");
+            playerData.SpawnPosition = position;
+            // Respawn 只建本机角色实体；初始物品 / 衣服 / 船等权威状态在联机记录里，
+            // 由主机侧记录同步链负责（本重写版尚未下发整份记录 —— 明确见报告，不伪造）。
+            m_parentMethod.InvokeParentMethod(playerData, "SpawnPlayer",
+                new[] { typeof(Vector3), spawnModeType }, position, respawn);
+        }
+
+        /// <summary>
+        /// 客户端：把下载世界带来的本机角色替换成资料里的角色（性别不同时唯一正确的做法）。
+        /// 保留同一个 PlayerIndex / 输入设备 / 当前位置；新角色立即以 Respawn 出生，
+        /// 之后由每帧的远端插值与主机权威位置把它带到正确位置。
+        /// Source: ScMultiplayerProfileHandlers.cs:1407-1469（ReplaceLocalPlayerData）
+        /// </summary>
+        private bool ReplaceLocalPlayerData(Project project, PlayerData current,
+            PlayerProfileSnapshot profile, out PlayerData replacement, out string reason)
+        {
+            replacement = null;
+            reason = null;
+            SubsystemPlayers players = project.FindSubsystem<SubsystemPlayers>(throwOnError: false);
+            if (players == null)
+            {
+                reason = "世界里找不到 SubsystemPlayers";
+                return false;
+            }
+            try
+            {
+                int playerIndex = current.PlayerIndex;
+                WidgetInputDevice inputDevice = current.InputDevice;
+                Vector3 position = current.ComponentPlayer?.ComponentBody?.Position ??
+                    current.SpawnPosition;
+                float level = current.Level;
+                players.RemovePlayerData(current);
+                replacement = new PlayerData(project)
+                {
+                    Name = profile.Name,
+                    PlayerClass = ToPlayerClass(profile.Appearance?.Sex ?? PlayerSex.Male),
+                    CharacterSkinName = profile.Appearance?.SkinName ?? string.Empty,
+                    Level = level,
+                    InputDevice = inputDevice,
+                    SpawnPosition = position != Vector3.Zero
+                        ? position
+                        : (players.GlobalSpawnPosition != Vector3.Zero
+                            ? players.GlobalSpawnPosition
+                            : Vector3.Zero)
+                };
+                // 引擎发号：AddPlayerData 用 m_nextPlayerIndex++；先把计数器压到原槽位再取号。
+                m_parentField.ModifyParentField(players, "m_nextPlayerIndex", playerIndex,
+                    typeof(SubsystemPlayers));
+                players.AddPlayerData(replacement);
+                RepairEnginePlayerIndexCounter(players);
+                InvokeClientPlaceholderPlayerSpawn(replacement, replacement.SpawnPosition);
+                m_parentField.GetParentField<StateMachine>(replacement, "m_stateMachine",
+                    typeof(PlayerData)).TransitionTo("Playing");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                reason = "替换本机角色失败：" + ex.GetType().Name + " " + ex.Message;
+                m_diagnostics?.Error(m_ownerId, reason, ex);
+                return false;
             }
         }
 

@@ -18,6 +18,13 @@ namespace SuMultiplayer.Players
     public class NetworkPlayerRecord
     {
         public string Name;
+        /// <summary>
+        /// 这个名字是否来自**已确认的真实资料**（角色创建屏 / 客户端 Hello.profile）。
+        /// 旧构建把引擎默认显示名 "Android User" 直接当角色名写进记录；这样的记录必须做一次
+        /// 显式迁移（要求客户端重新创建角色），不能把默认名当成真实玩家名字。
+        /// 新记录一律 true；读旧 XML 时缺失属性 = 按"名字是否为引擎默认名"推断（默认名 → false）。
+        /// </summary>
+        public bool NameConfirmed = true;
         public PlayerClass PlayerClass;
         public string SkinName;
         public byte[] SkinSha256 = Array.Empty<byte>();
@@ -331,6 +338,8 @@ namespace SuMultiplayer.Players
         private static NetworkPlayerRecord ReadPlayer(XElement element) => new NetworkPlayerRecord
         {
             Name = (string)element.Attribute("Name") ?? "Player",
+            NameConfirmed = PlayerRecordCodec.ParseBool((string)element.Attribute("NameConfirmed"),
+                !PlayerIdentity.IsEngineDefaultName((string)element.Attribute("Name"))),
             PlayerClass = PlayerRecordCodec.ParsePlayerClass((string)element.Attribute("Class")),
             SkinName = (string)element.Attribute("Skin") ?? string.Empty,
             SkinSha256 = PlayerRecordCodec.ParseSkinHash((string)element.Attribute("SkinSha256")),
@@ -439,6 +448,7 @@ namespace SuMultiplayer.Players
             var player = new XElement("Player",
                 new XAttribute("Identity", recordKey),
                 new XAttribute("Name", record.Name ?? "Player"),
+                new XAttribute("NameConfirmed", record.NameConfirmed),
                 new XAttribute("Class", record.PlayerClass),
                 new XAttribute("Skin", record.SkinName ?? string.Empty),
                 new XAttribute("SkinSha256", PlayerRecordCodec.FormatSkinHash(record.SkinSha256)),
