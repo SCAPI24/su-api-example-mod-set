@@ -1,0 +1,708 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chunk 位图 + XOR 增量：能做什么、不能做什么（SuMultiplayer）</title>
+<meta name="description" content="用位图表示客户端已加载 chunk 区域、用 XOR 求订阅增量、主机渲染区与常驻区的关系，以及为什么"是否最新"必须另用 revision 表。">
+<style>
+:root{
+  --bg:#f4f7fc;--card:#fff;--tint:#f7f9fe;--tint2:#eef3fb;--line:#dde5f1;--line2:#c3d1e6;
+  --tx:#16203a;--tx2:#48587a;--tx3:#7d8aa3;--cy:#0e7fa8;--cy2:#e4f5fc;--vi:#6a4bd8;--vi2:#efeafe;
+  --am:#a9740a;--am2:#fff4df;--gr:#0d8a63;--gr2:#e5f8f0;--rd:#c23a55;--rd2:#fdecf0;
+  --mono:ui-monospace,"Cascadia Mono",Consolas,"Liberation Mono",monospace;
+  --sans:system-ui,-apple-system,"Segoe UI","Microsoft YaHei","PingFang SC",sans-serif;
+  --r:12px;--r2:9px;--sh:0 1px 2px rgba(20,40,80,.05),0 6px 18px rgba(20,40,80,.05);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font-family:var(--sans);font-size:14.5px;line-height:1.7}
+a{color:var(--cy);text-decoration:none}a:hover{text-decoration:underline}
+code{font-family:var(--mono);font-size:.87em;background:var(--tint2);border:1px solid var(--line);border-radius:5px;padding:.05em .34em;color:#1d3a63;white-space:nowrap}
+.topbar{position:sticky;top:0;z-index:60;display:flex;align-items:center;gap:12px;padding:9px 20px;background:rgba(255,255,255,.9);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+.brand{display:flex;align-items:center;gap:10px;font-weight:750;white-space:nowrap}
+.brand .logo{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;font-size:12px;background:linear-gradient(140deg,var(--cy),var(--vi));color:#fff;font-weight:900}
+.brand small{display:block;font-weight:500;font-size:11px;color:var(--tx3)}
+.topbar .ver{font-family:var(--mono);font-size:11px;color:var(--tx2);border:1px solid var(--line);border-radius:999px;padding:2px 9px;background:var(--tint)}
+.topbar .grow{flex:1}
+.search input{padding:7px 11px;border-radius:999px;font-size:12.5px;color:var(--tx);background:var(--tint);border:1px solid var(--line);outline:none;min-width:200px}
+.btn{cursor:pointer;border:1px solid var(--line);background:#fff;color:var(--tx2);border-radius:999px;padding:6px 13px;font-size:12px;font-family:var(--sans)}
+.btn:hover{color:var(--tx);border-color:var(--line2);background:var(--tint)}
+.btn.pri{background:linear-gradient(120deg,var(--cy2),var(--gr2));border-color:var(--line2);color:#0b3b52;font-weight:650}
+.progress{position:fixed;top:0;left:0;height:3px;width:0;z-index:70;background:linear-gradient(90deg,var(--cy),var(--vi),var(--am))}
+.layout{display:grid;grid-template-columns:226px minmax(0,1fr);gap:24px;max-width:1440px;margin:0 auto;padding:0 22px 70px}
+.sidebar{position:sticky;top:58px;align-self:start;max-height:calc(100vh - 76px);overflow-y:auto;padding:16px 4px 24px 0;font-size:12.5px}
+.sidebar h4{margin:12px 0 5px;font-size:10.5px;letter-spacing:1.2px;color:var(--tx3)}
+.sidebar h4:first-child{margin-top:0}
+.sidebar a{display:flex;gap:7px;padding:3.5px 8px;border-radius:7px;color:var(--tx2);border-left:2px solid transparent}
+.sidebar a:hover{background:var(--tint);text-decoration:none;color:var(--tx)}
+.sidebar a.active{color:var(--tx);background:var(--cy2);border-left-color:var(--cy);font-weight:600}
+.sidebar a .id{font-family:var(--mono);font-size:10px;color:var(--tx3);min-width:42px}
+main{min-width:0;padding-top:6px}
+.hero{padding:30px 0 18px;border-bottom:1px solid var(--line);margin-bottom:10px}
+.hero .kicker{display:inline-flex;gap:8px;font-family:var(--mono);font-size:11.5px;color:var(--rd);border:1px solid #f4cbd6;background:var(--rd2);padding:4px 12px;border-radius:999px}
+.hero h1{margin:12px 0 8px;font-size:clamp(24px,3.2vw,36px);line-height:1.2;font-weight:800;letter-spacing:-.4px}
+.hero h1 .g{background:linear-gradient(96deg,var(--cy),var(--vi) 55%,var(--am));-webkit-background-clip:text;background-clip:text;color:transparent}
+.hero .lead{font-size:15px;color:var(--tx2);max-width:920px;margin:0 0 14px}
+.hero .actions{display:flex;gap:9px;flex-wrap:wrap;margin-bottom:16px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:10px}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:11px 13px;box-shadow:var(--sh)}
+.stat b{display:block;font-family:var(--mono);font-size:20px;color:var(--cy)}
+.stat span{display:block;font-size:11.5px;color:var(--tx3);margin-top:2px}
+section.sec{margin:24px 0 8px;scroll-margin-top:68px}
+.sec-head{display:flex;align-items:center;gap:11px;padding-bottom:9px;border-bottom:2px solid var(--line);margin-bottom:14px}
+.sec-head .no{font-family:var(--mono);font-size:11px;font-weight:700;color:#fff;border-radius:7px;padding:4px 8px;background:linear-gradient(140deg,var(--cy),var(--vi))}
+.sec-head h2{margin:0;font-size:clamp(18px,2vw,23px);font-weight:750}
+.sec-head .sub{color:var(--tx3);font-size:12px;margin-left:auto}
+.block{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:14px 16px;margin:11px 0;box-shadow:var(--sh);scroll-margin-top:68px}
+.block.hidden,.sec.hidden{display:none}
+.block-head{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-bottom:8px}
+.block-head h3{margin:0;font-size:15.5px;font-weight:720}
+.block-head .tagline{font-size:11.5px;color:var(--tx3)}
+.guid{font-family:var(--mono);font-size:11px;font-weight:700;cursor:pointer;color:#fff;background:linear-gradient(140deg,var(--cy),var(--vi));border:0;border-radius:6px;padding:2px 7px;user-select:none}
+.guid.copied{background:linear-gradient(140deg,var(--am),#e0a52a)}
+.ok-b{font-size:11px;font-family:var(--mono);color:#0a6247;background:var(--gr2);border:1px solid #c2e9d8;border-radius:999px;padding:2px 9px}
+.no-b{font-size:11px;font-family:var(--mono);color:#96243c;background:var(--rd2);border:1px solid #f4cbd6;border-radius:999px;padding:2px 9px}
+.warn-b{font-size:11px;font-family:var(--mono);color:#7d5606;background:var(--am2);border:1px solid #f0dcb0;border-radius:999px;padding:2px 9px}
+.tw{overflow-x:auto;margin:8px 0;border:1px solid var(--line);border-radius:var(--r2)}
+table{width:100%;border-collapse:collapse;font-size:12.6px;min-width:420px}
+thead th{background:var(--tint2);text-align:left;padding:7px 10px;font-weight:700;color:#25344f;border-bottom:1px solid var(--line2);white-space:nowrap;font-size:12px}
+tbody td{padding:6px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+tbody tr:nth-child(even){background:var(--tint)}
+tbody tr:last-child td{border-bottom:0}
+td.mono,.mono{font-family:var(--mono);font-size:11.8px}
+td.gid,.gid{font-family:var(--mono);font-size:11.4px;color:var(--cy);font-weight:700;white-space:nowrap}
+td.src,.src{font-family:var(--mono);font-size:11px;color:var(--tx3)}
+.num{text-align:right;font-family:var(--mono)}
+.grid{display:grid;gap:9px;margin:8px 0}
+.g2{grid-template-columns:repeat(auto-fit,minmax(250px,1fr))}
+.g3{grid-template-columns:repeat(auto-fit,minmax(190px,1fr))}
+.tile{background:var(--tint);border:1px solid var(--line);border-radius:var(--r2);padding:10px 11px}
+.tile h5{margin:0 0 4px;font-size:13px;color:#1d2b47}
+.tile p{margin:2px 0;font-size:12.4px;color:var(--tx2)}
+.tile .big{font-family:var(--mono);font-size:17px;color:var(--cy);display:block}
+.callout{border-radius:var(--r2);padding:9px 12px;margin:9px 0;font-size:12.7px;border:1px solid var(--line);background:var(--tint);border-left:3px solid var(--cy);color:var(--tx2)}
+.callout.ok{border-left-color:var(--gr);background:var(--gr2)}
+.callout.warn{border-left-color:var(--am);background:var(--am2)}
+.callout.bad{border-left-color:var(--rd);background:var(--rd2)}
+.callout .t{display:block;font-weight:700;margin-bottom:2px;color:var(--tx)}
+pre.codeblock{margin:8px 0;padding:10px 12px;background:#fff;border:1px solid var(--line);border-radius:var(--r2);font-family:var(--mono);font-size:11.6px;line-height:1.7;color:#1d3a63;overflow-x:auto;white-space:pre}
+figure{margin:9px 0;border:1px solid var(--line);border-radius:var(--r2);padding:11px 11px 5px;background:var(--tint)}
+figure svg{width:100%;height:auto;display:block}
+figcaption{margin-top:5px;font-size:11.5px;color:var(--tx3);text-align:center}
+.anim{margin:9px 0;border:1px solid var(--line);border-radius:var(--r2);padding:10px 11px 6px;background:var(--tint)}
+.anim .figsvg{background:#fff;border:1px solid var(--line);border-radius:8px;padding:6px}
+.anim svg{width:100%;height:auto;display:block}
+.playbar{display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap}
+.playbar input[type=range]{flex:1;min-width:110px;accent-color:#0e7fa8;height:4px}
+.phase{font-family:var(--mono);font-size:11.5px;color:var(--cy);min-width:250px}
+.xtra{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;color:var(--tx2);cursor:pointer}
+.xtra select{background:#fff;border:1px solid var(--line);border-radius:6px;padding:3px 6px;font-family:var(--mono);font-size:11.5px;color:var(--tx)}
+.anim figcaption{margin-top:6px;font-size:11.5px;color:var(--tx3);text-align:center}
+.dgb{fill:#fff;stroke:#c3d1e6}
+.dgb.cy{fill:#e4f5fc;stroke:#2b9fc4}.dgb.vi{fill:#efeafe;stroke:#7c5cf0}
+.dgb.gr{fill:#e5f8f0;stroke:#17a273}.dgb.am{fill:#fff4df;stroke:#d99b12}.dgb.rd{fill:#fdecf0;stroke:#d1495f}
+.dgt{fill:#26314a;font-family:var(--mono);font-size:11.5px}
+.dgt.sm{font-size:10.2px;fill:#5a6a86}
+.dgl{stroke:#93a6c4;stroke-width:1.4;fill:none}
+.dgl.cy{stroke:#2b9fc4}.dgl.vi{stroke:#7c5cf0}.dgl.am{stroke:#d99b12}.dgl.gr{stroke:#17a273}.dgl.rd{stroke:#d1495f}
+.dgl.dash{stroke-dasharray:5 4}
+.dghead{fill:#101a2e;font-size:12.5px;font-weight:700;font-family:var(--sans)}
+.toast{position:fixed;left:50%;bottom:26px;transform:translate(-50%,14px);z-index:90;background:#101a2e;color:#fff;padding:9px 18px;border-radius:999px;font-size:13px;opacity:0;pointer-events:none;transition:.22s}
+.toast.on{opacity:1;transform:translate(-50%,0)}
+#nores{display:none;padding:22px;text-align:center;color:var(--tx3);border:1px dashed var(--line2);border-radius:var(--r);margin:14px 0;background:#fff}
+.totop{position:fixed;right:20px;bottom:20px;z-index:80;width:38px;height:38px;border-radius:50%;display:grid;place-items:center;cursor:pointer;opacity:0;pointer-events:none;transition:.2s;background:#fff;border:1px solid var(--line2);color:var(--cy);font-size:16px}
+.totop.on{opacity:1;pointer-events:auto}
+footer{margin-top:24px;padding:16px 0 6px;border-top:1px solid var(--line);font-size:12px;color:var(--tx3)}
+@media (max-width:1020px){.layout{grid-template-columns:1fr;padding:0 14px 60px}.sidebar{position:static;max-height:none;border-bottom:1px solid var(--line);display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr))}.sec-head .sub{display:none}}
+@media print{.topbar,.sidebar,.totop,.progress,.toast{display:none!important}.layout{display:block;padding:0}.block,figure,.tile{break-inside:avoid;box-shadow:none}}
+</style>
+</head>
+<body>
+<div class="progress" id="prog"></div>
+<header class="topbar">
+  <div class="brand"><div class="logo">BX</div><div>Chunk 位图 + XOR 增量<small>能做什么 · 不能做什么</small></div></div>
+  <span class="ver">13 个标记 · 2 个可播放</span>
+  <div class="grow"></div>
+  <input id="q" type="search" placeholder="搜索内容或 GUID（例：FRH02）">
+  <button class="btn" onclick="window.print()">打印 / PDF</button>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="toc">
+    <h4>能不能用</h4>
+    <a href="#BMP01"><span class="id">BMP01</span>位图能表达什么</a>
+    <a href="#BMP02"><span class="id">BMP02</span>三个集合：画/存/档</a>
+    <a href="#BMP03"><span class="id">BMP03</span>XOR 的三种正确用法</a>
+    <a href="#BMP04"><span class="id">BMP04</span>位图 + XOR 增量（可播放）</a>
+    <a href="#BMP05"><span class="id">BMP05</span>行编码 vs 稠密位图</a>
+    <h4>新鲜度</h4>
+    <a href="#FRH01"><span class="id">FRH01</span>revision 表（另起一张）</a>
+    <a href="#FRH02"><span class="id">FRH02</span>只用 XOR 会漏什么（可播放）</a>
+    <a href="#FRH03"><span class="id">FRH03</span>2 bit 状态平面</a>
+    <h4>工程</h4>
+    <a href="#HYS01"><span class="id">HYS01</span>卸载滞回</a>
+    <a href="#CST01"><span class="id">CST01</span>存储与带宽</a>
+    <a href="#IMP01"><span class="id">IMP01</span>落到新 mod 的接口</a>
+    <a href="#TST01"><span class="id">TST01</span>测试用例</a>
+    <a href="#IDX01"><span class="id">IDX01</span>GUID 索引</a>
+  </aside>
+
+  <main id="top">
+    <section class="hero">
+      <div class="kicker">● 结论：位图 + XOR 很值，但它回答的是「在不在」，不是「新不新」</div>
+      <h1>用位图表示加载区域，用 <span class="g">XOR 求增量</span></h1>
+      <p class="lead">你的构思里有两张表被混成了一张：<b>兴趣位图</b>（1 bit/chunk，管订阅与常驻）和 <b>revision 表</b>（管内容是否最新）。
+        XOR 是驱动订阅增量的正确工具；但"客户端是否最新"必须由 revision 回答 —— 否则窗口内的一次方块修改不会翻转任何一位。</p>
+      <div class="actions">
+        <a class="btn pri" href="#BMP04">看位图 + XOR 增量</a>
+        <a class="btn" href="#FRH02">看只用 XOR 会漏什么</a>
+        <a class="btn" href="#IMP01">看接口设计</a>
+      </div>
+      <div class="stats">
+        <div class="stat"><b>1 bit</b><span>每 chunk 存在性</span></div>
+        <div class="stat"><b>37 B</b><span>r=8 的窗口位图</span></div>
+        <div class="stat"><b>64</b><span>每 ulong 的 chunk 数</span></div>
+        <div class="stat"><b>32 bit</b><span>每 chunk 的 revision</span></div>
+        <div class="stat"><b>2 bit</b><span>每 (客户端,chunk) 状态</span></div>
+        <div class="stat"><b>0</b><span>XOR 能告诉你的"新不新"</span></div>
+      </div>
+    </section>
+    <div id="nores">没有匹配的条目</div>
+
+    <section class="sec" id="grp-bmp">
+      <div class="sec-head"><span class="no">位图</span><div><h2>存在性这一层，位图是最优解</h2><div class="sub">但只到这一层</div></div></div>
+
+      <div class="block" id="BMP01">
+        <div class="block-head"><button class="guid" data-guid="BMP01">BMP01</button><h3>位图能表达什么、不能表达什么</h3>
+          <span class="tagline">一句话：比特没有"版本"</span></div>
+        <div class="tw"><table>
+          <thead><tr><th>问题</th><th class="mono">位图（1 bit/chunk）</th><th class="mono">revision 表</th></tr></thead>
+          <tbody>
+            <tr><td>这个 chunk 在不在任何人的窗口里？</td><td class="mono">✓ 一次 OR 就知道</td><td class="mono">不必要</td></tr>
+            <tr><td>谁要它？（要发给谁）</td><td class="mono">✓ 逐客户端 AND/OR</td><td class="mono">不必要</td></tr>
+            <tr><td>这一格该订阅还是退订？</td><td class="mono">✓ XOR 直接给出</td><td class="mono">不必要</td></tr>
+            <tr><td>主机该不该为它付内存？</td><td class="mono">✓ 订阅计数 &gt; 0</td><td class="mono">不必要</td></tr>
+            <tr><td><b>客户端手上的内容是不是最新？</b></td><td class="mono">✗ 位没变，但内容可能变了</td><td class="mono">✓ 唯一能回答的</td></tr>
+            <tr><td>这个 chunk 被改过几次？</td><td class="mono">✗</td><td class="mono">✓ revision 计数</td></tr>
+            <tr><td>客户端报的版本比我新还是旧？</td><td class="mono">✗</td><td class="mono">✓ 比较 revision</td></tr>
+          </tbody>
+        </table></div>
+        <div class="callout bad"><span class="t">关键坑：内容变化不翻转存在性位</span>
+          "A 在 (12,7) 放了一个方块" —— 该 chunk 仍然在窗口里、仍然加载着：<b>位图像素级完全没变</b>，XOR 结果是 0。
+          如果同步由 XOR 触发，这次修改就永远不会发出去。<br>
+          所以同步的触发器只能是「revision 差」，位图/XOR 只能用来管"谁该收到"和"要不要留内存"。</div>
+      </div>
+
+      <div class="block" id="BMP02">
+        <div class="block-head"><button class="guid" data-guid="BMP02">BMP02</button><h3>三个集合，别混成一个</h3>
+          <span class="tagline">你说的"主机只渲染自己所见"正是第三个集合</span></div>
+        <figure>
+          <svg viewBox="0 0 900 260" role="img" aria-label="渲染集 / 常驻集 / 存档">
+            <rect class="dgb am" x="330" y="30" width="240" height="170" rx="12"/>
+            <text class="dghead" x="450" y="56" text-anchor="middle">存档（save）</text>
+            <text class="dgt sm" x="450" y="78" text-anchor="middle">世界里存在过的全部 chunk</text>
+            <text class="dgt sm" x="450" y="98" text-anchor="middle">磁盘上的真相 · 无上限</text>
+            <rect class="dgb gr" x="190" y="76" width="290" height="124" rx="12"/>
+            <text class="dghead" x="250" y="100">常驻（resident）</text>
+            <text class="dgt sm" x="222" y="120">= 所有客户端窗口的 OR</text>
+            <text class="dgt sm" x="222" y="140">（含主机自己的窗口）</text>
+            <text class="dgt sm" x="222" y="164">决定内存与订阅反表</text>
+            <rect class="dgb cy" x="240" y="122" width="150" height="78" rx="10"/>
+            <text class="dghead" x="315" y="146" text-anchor="middle">渲染（render）</text>
+            <text class="dgt sm" x="315" y="166" text-anchor="middle">主机自己的所见区域</text>
+            <text class="dgt sm" x="315" y="186" text-anchor="middle">只决定画什么</text>
+            <path class="dgl rd dash" d="M392 150H460"/>
+            <text class="dgt sm" x="470" y="146">常驻 XOR 渲染 = 主机"留着但不画"</text>
+            <text class="dgt sm" x="470" y="166">（给别人用的那一圈；内存预算就看它）</text>
+            <text class="dgt sm" x="470" y="196">存档 − 常驻 = 需要时从磁盘重载的部分</text>
+            <text class="dgt sm" x="40" y="230">三者关系：渲染 ⊆ 常驻 ⊆ 存档。主机只画 render，但要为 resident 付内存，缺什么都能从 save 补。</text>
+            <text class="dgt sm" x="40" y="248">任何"主机没有"的抱怨，先问清楚是缺在 render、resident 还是 save —— 三种答案完全不同。</text>
+          </svg>
+          <figcaption>你的"主机只渲染自己所见"是对的；但常驻集合必须等于所有客户端窗口的并集</figcaption>
+        </figure>
+      </div>
+
+      <div class="block" id="BMP03">
+        <div class="block-head"><button class="guid" data-guid="BMP03">BMP03</button><h3>XOR 的三种正确用法</h3></div>
+        <div class="tw"><table>
+          <thead><tr><th class="mono">表达式</th><th>含义</th><th>用途</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">window_new XOR window_old</td><td>这个客户端窗口变化前后不一致的格子</td><td><b>订阅增量</b>：置位的格子里，1→0 退订、0→1 订阅；只碰变化的格，不重扫 289 格</td></tr>
+            <tr><td class="mono">A XOR B</td><td>两个客户端兴趣的对称差</td><td>诊断"这一块只有 A 要"，以及判断某格订阅者是不是降到了 1</td></tr>
+            <tr><td class="mono">resident XOR render</td><td>主机留着但不画的格子</td><td>内存预算与"为别人多付了多少"的可视化</td></tr>
+            <tr><td class="mono">state_new XOR state_old</td><td>（进阶）2 bit 状态平面的变化</td><td>精确得到"哪些 (客户端,chunk) 需要发数据"（见 FRH03）</td></tr>
+          </tbody>
+        </table></div>
+        <div class="callout ok"><span class="t">XOR 的真正价值：把 O(r²) 的扫描变成 O(变化数) 的更新</span>
+          订阅计数不需要每次全量重算：只对 XOR 置位的格子做 <code>count±1</code>。步子与窗口的并集保持精确一致，
+          这就是"用位运算把范围表变成可增量维护的结构"。</div>
+      </div>
+
+      <div class="block" id="BMP04">
+        <div class="block-head"><button class="guid" data-guid="BMP04">BMP04</button><h3>位图 + XOR 增量（可播放）</h3>
+          <span class="tagline">看订阅计数只被变化的格子触碰</span></div>
+        <div class="anim" data-anim="bitmap"></div>
+      </div>
+
+      <div class="block" id="BMP05">
+        <div class="block-head"><button class="guid" data-guid="BMP05">BMP05</button><h3>行编码 vs 稠密位图</h3>
+          <span class="tagline">窗口是矩形，用稠密位图其实浪费</span></div>
+        <div class="tw"><table>
+          <thead><tr><th class="mono">表示</th><th>r=8（289 格）</th><th>XOR 代价</th><th>适用</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">矩形窗口（center + r）</td><td class="mono">3 个整数</td><td class="mono">无需 XOR，直接重算</td><td>单客户端兴趣：<b>最省，推荐给客户端窗口</b></td></tr>
+            <tr><td class="mono">行游程（每行 start+len）</td><td class="mono">17×2 个数</td><td class="mono">O(r) 行</td><td>由矩形裁剪/挖洞得到的集合</td></tr>
+            <tr><td class="mono">稠密位图（1 bit/chunk）</td><td class="mono">37 B</td><td class="mono">O(r²/64) 字</td><td>并集/反表/稀疏区域；<b>推荐给"谁要这一格"</b></td></tr>
+            <tr><td class="mono">稀疏分块位图（64×64 一块）</td><td class="mono">1 块 = 512 B</td><td class="mono">按块命中</td><td>世界很大、只在有人去过的地方分配</td></tr>
+            <tr><td class="mono">订阅计数（ushort/chunk）</td><td class="mono">578 B</td><td class="mono">只动变化格</td><td>常驻判定；<b>必须由 XOR 增量维护</b></td></tr>
+          </tbody>
+        </table></div>
+        <div class="callout warn"><span class="t">你例子里的一个隐患</span>
+          <code>主机 01001001</code> / <code>A 010</code> / <code>B 001</code> 宽度不同（8 / 3 / 3）。
+          位图必须绑定<b>坐标系</b>（原点 + 行宽），否则不同客户端的两行无法对齐、XOR 没有意义。
+          建议：对外只用「窗口矩形 + 半径」，内部按<b>统一的分块坐标</b>存位图。</div>
+      </div>
+    </section>
+
+    <section class="sec" id="grp-frh">
+      <div class="sec-head"><span class="no">新鲜度</span><div><h2>"是否最新"必须另起一张表</h2><div class="sub">位图管不着它</div></div></div>
+
+      <div class="block" id="FRH01">
+        <div class="block-head"><button class="guid" data-guid="FRH01">FRH01</button><h3>revision 表</h3>
+          <span class="tagline">每 chunk 一个版本，每客户端一个已知版本</span></div>
+        <div class="tw"><table>
+          <thead><tr><th class="mono">表</th><th class="mono">键 → 值</th><th>更新时机</th><th>回答什么</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">chunkRevision</td><td class="mono">(cx,cz) → uint32</td><td>该 chunk 任一格被改 → +1（单调）</td><td>内容现在是什么版本</td></tr>
+            <tr><td class="mono">known</td><td class="mono">(clientId, cx,cz) → uint32</td><td>客户端上报"我已应用到此版本"</td><td>客户端<b>自称</b>到哪了</td></tr>
+            <tr><td class="mono">confirmed</td><td class="mono">(clientId, cx,cz) → uint32</td><td>检查点分片全部传完</td><td>主机<b>确认</b>它到哪了</td></tr>
+            <tr><td class="mono">pending</td><td class="mono">(clientId, cx,cz) → (已发片, 总片)</td><td>检查点发送过程</td><td>正在传，避免重复发起</td></tr>
+          </tbody>
+        </table></div>
+        <div class="callout"><span class="t">为什么 known 和 confirmed 要分开</span>
+          <code>known</code> 是客户端说的（可能虚报、可能回滚），<code>confirmed</code> 是主机自己的账。
+          判定用 <code>confirmed</code> 保守推进、用 <code>known</code> 决定发增量还是整块 —— 两者不一致时以 confirmed 为准。</div>
+      </div>
+
+      <div class="block" id="FRH02">
+        <div class="block-head"><button class="guid" data-guid="FRH02">FRH02</button><h3>只用 XOR 会漏什么（可播放）</h3>
+          <span class="tagline">切一下开关，看漏同步是怎么发生的</span></div>
+        <div class="anim" data-anim="freshness"></div>
+      </div>
+
+      <div class="block" id="FRH03">
+        <div class="block-head"><button class="guid" data-guid="FRH03">FRH03</button><h3>2 bit 状态平面：把两张表合成一次 XOR</h3>
+          <span class="tagline">你想要的那张"表"，正确形态是这个</span></div>
+        <div class="tw"><table>
+          <thead><tr><th class="mono">状态</th><th>含义</th><th>主机动作</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">00</td><td>不在这个客户端的窗口里</td><td>不退订则不用管；退订后计数 -1</td></tr>
+            <tr><td class="mono">01</td><td>在窗口里，但还没有基线（未确认）</td><td>等它请求检查点，或主动发起</td></tr>
+            <tr><td class="mono">10</td><td>已确认且 <code>confirmed == revision</code></td><td><b>什么都不做</b>（这是最常见的状态）</td></tr>
+            <tr><td class="mono">11</td><td>已确认但落后（<code>confirmed &lt; revision</code>）</td><td>发增量</td></tr>
+          </tbody>
+        </table></div>
+        <div class="grid g2">
+          <div class="tile"><h5>为什么是 2 bit 而不是 1 bit</h5>
+            <p>1 bit 只能编码 2 个状态（在/不在），而"在"至少还要分"有没有基线""是否落后"。2 bit 刚好够，且整行仍是 2 的幂。</p></div>
+          <div class="tile"><h5>XOR 用在哪一层</h5>
+            <p>分别对两个平面做 XOR：<code>presence_new XOR presence_old</code> 得订阅增量；<code>fresh_old XOR fresh_new</code> 得"哪几格需要发数据"。两平面分开算，不要混成一次 XOR。</p></div>
+        </div>
+        <pre class="codeblock">// 每个 (客户端, chunk) 2 bit；整行按 ulong 打包
+//   bits: 00 不在窗口 / 01 在窗口未基线 / 10 已最新 / 11 落后
+var delta = windowNow.Xor(windowPrev);          // 存在性平面：订阅增量
+var stale = freshNow.Xor(freshPrev);            // 新鲜度平面：需要发数据的格
+// 订阅计数只用 delta 更新；发送名单只用 stale；两者互不干扰
+foreach (var chunk in delta.SetBits())     refCount[chunk] += windowNow.Get(chunk) ? +1 : -1;
+foreach (var chunk in stale.SetBits())     pending.Add(chunk);   // revision 差 → 补差</pre>
+      </div>
+    </section>
+
+    <section class="sec" id="grp-eng">
+      <div class="sec-head"><span class="no">工程</span><div><h2>落地细节</h2><div class="sub">滞回、成本、接口</div></div></div>
+
+      <div class="block" id="HYS01">
+        <div class="block-head"><button class="guid" data-guid="HYS01">HYS01</button><h3>卸载滞回：防"进进出出"的抖动</h3>
+          <span class="tagline">订满即留，空了要等</span></div>
+        <figure>
+          <svg viewBox="0 0 900 230" role="img" aria-label="滞回">
+            <text class="dghead" x="40" y="30">订阅判定（进/出用不同的阈值）</text>
+            <rect class="dgb gr" x="40" y="52" width="380" height="60" rx="9"/>
+            <text class="dgt sm" x="54" y="76">进窗口：距离 ≤ r（客户端上报半径 + 余量 1）</text>
+            <text class="dgt sm" x="54" y="98">立刻登记订阅 → 触发一次基线检查点</text>
+            <rect class="dgb am" x="40" y="126" width="380" height="60" rx="9"/>
+            <text class="dgt sm" x="54" y="150">出窗口：距离 &gt; r + 1，且持续 ≥ 3 秒</text>
+            <text class="dgt sm" x="54" y="172">才退订；计数归零后再等一段才卸载</text>
+            <rect class="dgb rd" x="470" y="52" width="390" height="134" rx="9"/>
+            <text class="dghead" x="486" y="76">没有滞回会怎样</text>
+            <text class="dgt sm" x="486" y="100">玩家站在 chunk 边界线上：位置抖动导致该格</text>
+            <text class="dgt sm" x="486" y="120">反复 订阅→退订 → 每次都要重发基线检查点</text>
+            <text class="dgt sm" x="486" y="144">→ 带宽被"同一块地"吃掉，且客户端内容忽新忽旧</text>
+            <text class="dgt sm" x="486" y="168">→ 主机加载/卸载风暴（磁盘与 GC 抖动）</text>
+            <text class="dgt sm" x="40" y="212">代价：滞回让"该卸载的"多留几秒 —— 用一点内存换掉一整套抖动问题，很划算</text>
+          </svg>
+          <figcaption>进用 r，出用 r+1 并加时间阈值；卸载只在"计数归零且持续为空"后发生</figcaption>
+        </figure>
+      </div>
+
+      <div class="block" id="CST01">
+        <div class="block-head"><button class="guid" data-guid="CST01">CST01</button><h3>存储与带宽成本</h3></div>
+        <div class="tw"><table>
+          <thead><tr><th class="mono">结构</th><th class="mono">规模（r=8 单客户端）</th><th class="mono">4 个客户端</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">窗口（矩形）</td><td class="mono">12 B</td><td class="mono">48 B</td><td>center(2×int) + radius</td></tr>
+            <tr><td class="mono">存在性位图</td><td class="mono">37 B</td><td class="mono">148 B</td><td>只在需要位运算时物化</td></tr>
+            <tr><td class="mono">2 bit 状态平面</td><td class="mono">73 B</td><td class="mono">292 B</td><td>存在性 + 新鲜度的合成视图</td></tr>
+            <tr><td class="mono">订阅计数</td><td class="mono">578 B（共享）</td><td class="mono">578 B</td><td>全表一份，按 chunk</td></tr>
+            <tr><td class="mono">chunkRevision</td><td class="mono">4 B/chunk（常驻集）</td><td class="mono">≈ 4 KB / 1000 格</td><td>只对常驻集分配</td></tr>
+            <tr><td class="mono">known / confirmed</td><td class="mono">稀疏字典</td><td class="mono">只存"不同步"的项</td><td>绝大多数项等于 revision，可不存</td></tr>
+          </tbody>
+        </table></div>
+        <div class="callout ok"><span class="t">结论：位图这条路完全划算</span>
+          一个 4 客户端、r=8 的主机，兴趣表总开销在<b>几 KB 量级</b>；XOR 让每次窗口变化的更新量正比于"变化的格子数"（通常几十格），
+          而不是 289 格。真正需要小心的是<b>语义</b>（位图 ≠ 新鲜度）与<b>滞回</b>（防抖动），不是性能。</div>
+      </div>
+
+      <div class="block" id="IMP01">
+        <div class="block-head"><button class="guid" data-guid="IMP01">IMP01</button><h3>落到新 mod 的接口</h3>
+          <span class="tagline">纯逻辑模块，可单测，不碰引擎</span></div>
+        <pre class="codeblock">// SuMultiplayer/Terrain/ChunkInterestTable.cs —— 纯逻辑，无引擎依赖
+public sealed class ChunkInterestTable
+{
+    // 客户端窗口：矩形（最省），只在需要位运算时物化成 Bitmap
+    InterestDelta UpdateClient(int clientId, int centerCx, int centerCz, int radius, long nowMs);
+
+    // 常驻判定：计数 > 0 或滞回未过期
+    bool IsResident(int cx, int cz, long nowMs);
+    IReadOnlyList<ChunkKey> UnloadCandidates(long nowMs);   // 计数归零且滞回过期
+
+    // 广播投影：一次查到订阅者（反表）
+    IReadOnlyList&lt;int&gt; Subscribers(int cx, int cz);
+
+    // 新鲜度（另一张表，别和位图混）
+    uint Revision(int cx, int cz);
+    void BumpRevision(int cx, int cz);                      // 有格被改
+    void MarkKnown(int clientId, int cx, int cz, uint rev);
+    void MarkConfirmed(int clientId, int cx, int cz, uint rev);
+    bool NeedsSync(int clientId, int cx, int cz);            // confirmed &lt; revision
+    ChunkSyncState StateOf(int clientId, int cx, int cz);    // 2 bit: None/Unbased/Fresh/Stale
+}
+
+public readonly struct InterestDelta
+{
+    public IReadOnlyList&lt;ChunkKey&gt; Subscribed;    // windowNow XOR windowPrev 里 0→1
+    public IReadOnlyList&lt;ChunkKey&gt; Unsubscribed;  // 1→0
+    public IReadOnlyList&lt;ChunkKey&gt; UnloadReady;   // 计数归零 + 滞回过期
+}</pre>
+        <div class="grid g3">
+          <div class="tile"><h5>与已有组件的关系</h5><p>它提供能力 <code>terrain.interest</code>；<code>transfer</code> 模块按它的 <code>NeedsSync</code> 决定发什么，<code>hostAuthority</code> 按 <code>IsResident</code> 决定留不留内存。</p></div>
+          <div class="tile"><h5>可测性</h5><p>全部是纯函数 + 一个计数器，能在桌面 <code>dotnet run</code> 下逐条断言，和现有 129 条一起回归。</p></div>
+          <div class="tile"><h5>落地顺序</h5><p>先写这个模块（今天就能测），再接 <code>transfer</code>；两者之间只通过这个接口说话。</p></div>
+        </div>
+      </div>
+
+      <div class="block" id="TST01">
+        <div class="block-head"><button class="guid" data-guid="TST01">TST01</button><h3>测试用例</h3>
+          <span class="tagline">8 条，覆盖位运算与新鲜度两条线</span></div>
+        <div class="tw"><table>
+          <thead><tr><th class="mono">#</th><th>用例</th><th>判据</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">1</td><td>窗口右移 1 格</td><td>XOR 增量 = 新增 1 列 + 移除 1 列；订阅计数只在这两列变动</td></tr>
+            <tr><td class="mono">2</td><td>增量维护 vs 全量重算</td><td>100 次随机移动后，增量维护的计数与全量重算逐格一致（含跨块）</td></tr>
+            <tr><td class="mono">3</td><td>两个客户端重叠</td><td>重叠格计数 = 2；一方退订后 = 1；都退订后条目被删除</td></tr>
+            <tr><td class="mono">4</td><td>边界抖动</td><td>开滞回：边界来回 20 次，退订/卸载次数 ≤ 1；关滞回：次数 ≈ 20</td></tr>
+            <tr><td class="mono">5</td><td><b>窗口内改一格</b></td><td>存在性 XOR = 0，但 <code>NeedsSync</code> = true，<code>StateOf</code> 从 Fresh 变 Stale</td></tr>
+            <tr><td class="mono">6</td><td>客户端报超前版本</td><td>以 confirmed 为准推进；客户端被要求回滚，状态回 Fresh</td></tr>
+            <tr><td class="mono">7</td><td>卸载后再进入</td><td>从存档重载；revision 继续单调，不回退到 0</td></tr>
+            <tr><td class="mono">8</td><td>稀疏分块分配</td><td>只访问过的块被分配；卸载后块可回收</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+    </section>
+
+    <section class="sec" id="grp-idx">
+      <div class="sec-head"><span class="no">索引</span><div><h2>GUID 索引</h2><div class="sub">本页 13 个标记</div></div></div>
+      <div class="block" id="IDX01">
+        <div class="block-head"><button class="guid" data-guid="IDX01">IDX01</button><h3>GUID 索引</h3></div>
+        <div class="tw"><table>
+          <thead><tr><th class="mono">GUID</th><th>主题</th><th>要点</th></tr></thead>
+          <tbody>
+            <tr><td class="gid">BMP01</td><td>位图能表达什么</td><td>存在性 ✓ / 新鲜度 ✗</td></tr>
+            <tr><td class="gid">BMP02</td><td>三个集合</td><td>渲染 ⊆ 常驻 ⊆ 存档</td></tr>
+            <tr><td class="gid">BMP03</td><td>XOR 的三种用法</td><td>订阅增量 / 客户端差集 / 内存预算</td></tr>
+            <tr><td class="gid">BMP04</td><td>位图 + XOR 增量</td><td>可播放：只碰变化的格</td></tr>
+            <tr><td class="gid">BMP05</td><td>行编码 vs 稠密位图</td><td>窗口用矩形最省；位图给并集与反表</td></tr>
+            <tr><td class="gid">FRH01</td><td>revision 表</td><td>chunkRevision / known / confirmed</td></tr>
+            <tr><td class="gid">FRH02</td><td>只用 XOR 会漏什么</td><td>可播放：位没变但内容变了</td></tr>
+            <tr><td class="gid">FRH03</td><td>2 bit 状态平面</td><td>00/01/10/11 与两平面分别 XOR</td></tr>
+            <tr><td class="gid">HYS01</td><td>卸载滞回</td><td>进 r、出 r+1 且持续 3 s</td></tr>
+            <tr><td class="gid">CST01</td><td>存储与带宽</td><td>几 KB 量级；XOR 让更新正比于变化数</td></tr>
+            <tr><td class="gid">IMP01</td><td>接口设计</td><td>ChunkInterestTable 纯逻辑模块</td></tr>
+            <tr><td class="gid">TST01</td><td>测试用例</td><td>8 条</td></tr>
+            <tr><td class="gid">IDX01</td><td>GUID 索引</td><td>本表</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+    </section>
+
+    <footer>SuMultiplayer · chunk 位图 + XOR 增量 · 配套：<a href="chunk-interest.html">多客户端兴趣范围</a> · <a href="join-room-plan.html">最小加入房间方案</a> · <a href="chunk-region-sync.html">区块同步俯视图</a></footer>
+  </main>
+</div>
+<div class="toast" id="toast">已复制</div>
+<div class="totop" id="totop">↑</div>
+<script>
+(function () {
+  "use strict";
+  function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+  function rbox(x, y, w, h, cls, rx) {
+    return '<rect class="dgb ' + (cls || "") + '" x="' + x + '" y="' + y + '" width="' + w +
+      '" height="' + h + '" rx="' + (rx === undefined ? 9 : rx) + '"/>';
+  }
+  function rtxt(x, y, s, cls, anchor) {
+    return '<text class="' + (cls || "dgt") + '" x="' + x + '" y="' + y + '"' +
+      (anchor ? ' text-anchor="' + anchor + '"' : "") + ">" + esc(s) + "</text>";
+  }
+  function svgOf(w, h, b) { return '<svg viewBox="0 0 ' + w + " " + h + '" role="img">' + b + "</svg>"; }
+  function rrect(x, y, w, h, fill, stroke, sw, op) {
+    return '<rect x="' + x + '" y="' + y + '" width="' + w + '" height="' + h + '" fill="' + fill +
+      '" stroke="' + stroke + '" stroke-width="' + (sw === undefined ? 1 : sw) + '" opacity="' + (op === undefined ? 1 : op) + '"/>';
+  }
+  function num(host, sel, dflt) {
+    var el = host.querySelector(sel);
+    var v = el ? parseInt(el.value, 10) : NaN;
+    return isNaN(v) ? dflt : v;
+  }
+  function flag(host, sel, dflt) {
+    var el = host.querySelector(sel);
+    return el ? !!el.checked : dflt;
+  }
+
+  var toast = document.getElementById("toast"), timer = 0;
+  function say(m) { toast.textContent = m; toast.classList.add("on"); clearTimeout(timer); timer = setTimeout(function () { toast.classList.remove("on"); }, 1400); }
+  document.addEventListener("click", function (ev) {
+    var el = ev.target && ev.target.closest ? ev.target.closest(".guid") : null;
+    if (!el) return;
+    var g = el.getAttribute("data-guid") || el.textContent.trim();
+    function done() { el.classList.add("copied"); say("已复制 " + g); setTimeout(function () { el.classList.remove("copied"); }, 900); }
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(g).then(done, done); else done();
+  });
+  var input = document.getElementById("q"), nores = document.getElementById("nores");
+  var blocks = [].slice.call(document.querySelectorAll(".block"));
+  var secs = [].slice.call(document.querySelectorAll("section.sec"));
+  function filter() {
+    var q = (input.value || "").trim().toLowerCase();
+    if (!q) { blocks.forEach(function (b) { b.classList.remove("hidden"); }); secs.forEach(function (s) { s.classList.remove("hidden"); }); nores.style.display = "none"; return; }
+    var hits = 0;
+    blocks.forEach(function (b) {
+      var hit = b.textContent.toLowerCase().indexOf(q) >= 0 || b.id.toLowerCase().indexOf(q) >= 0;
+      b.classList.toggle("hidden", !hit); if (hit) hits++;
+    });
+    secs.forEach(function (s) {
+      s.classList.toggle("hidden", !s.querySelectorAll(".block:not(.hidden)").length);
+    });
+    nores.style.display = hits ? "none" : "block";
+  }
+  input.addEventListener("input", filter);
+  document.addEventListener("keydown", function (e) { if (e.key === "/" && document.activeElement !== input) { e.preventDefault(); input.focus(); } });
+  var links = {};
+  [].forEach.call(document.querySelectorAll("#toc a"), function (a) { links[a.getAttribute("href").slice(1)] = a; });
+  var prog = document.getElementById("prog"), top = document.getElementById("totop");
+  document.addEventListener("scroll", function () {
+    var max = document.documentElement.scrollHeight - window.innerHeight;
+    prog.style.width = (max > 0 ? (window.scrollY / max) * 100 : 0) + "%";
+    top.classList.toggle("on", window.scrollY > 500);
+  }, { passive: true });
+  top.addEventListener("click", function () { window.scrollTo({ top: 0, behavior: "smooth" }); });
+  if ("IntersectionObserver" in window) {
+    var io = new IntersectionObserver(function (es) {
+      es.forEach(function (en) {
+        if (!en.isIntersecting) return;
+        var a = links[en.target.id]; if (!a) return;
+        [].forEach.call(document.querySelectorAll("#toc a.active"), function (x) { x.classList.remove("active"); });
+        a.classList.add("active");
+      });
+    }, { rootMargin: "-70px 0px -74% 0px" });
+    blocks.forEach(function (b) { if (links[b.id]) io.observe(b); });
+  }
+
+  function buildAnim(def, host) {
+    host.innerHTML = '<div class="figsvg"></div><div class="playbar">' +
+      '<button class="btn pri js-play" type="button">▶ 播放</button>' +
+      '<button class="btn js-reset" type="button">↺ 重置</button>' +
+      '<input type="range" class="js-seek" min="0" max="1000" value="0">' +
+      '<span class="phase"></span>' + (def.extra || "") + "</div>" +
+      '<figcaption>' + def.cap + "</figcaption>";
+    var fig = host.querySelector(".figsvg"), phase = host.querySelector(".phase");
+    var seek = host.querySelector(".js-seek"), btn = host.querySelector(".js-play");
+    var t = 0, playing = false, last = 0;
+    function draw() {
+      fig.innerHTML = def.draw.call(def, t, host);
+      phase.textContent = def.phase.call(def, t, host);
+      seek.value = String(Math.round((t / def.duration) * 1000));
+    }
+    function loop(now) {
+      if (!playing) return;
+      if (!last) last = now;
+      t += Math.min((now - last) / 1000, 0.1); last = now;
+      if (t >= def.duration) { t = def.duration; playing = false; btn.textContent = "▶ 重播"; }
+      draw();
+      if (playing) requestAnimationFrame(loop); else last = 0;
+    }
+    btn.addEventListener("click", function () {
+      if (playing) { playing = false; btn.textContent = "▶ 继续"; return; }
+      if (t >= def.duration) t = 0;
+      playing = true; last = 0; btn.textContent = "⏸ 暂停"; requestAnimationFrame(loop);
+    });
+    host.querySelector(".js-reset").addEventListener("click", function () { playing = false; t = 0; btn.textContent = "▶ 播放"; draw(); });
+    seek.addEventListener("input", function () { playing = false; btn.textContent = "▶ 继续"; t = def.duration * (parseInt(seek.value, 10) / 1000); draw(); });
+    [].forEach.call(host.querySelectorAll("input,select"), function (el) { el.addEventListener("change", draw); });
+    if (def.bind) def.bind(host, draw);
+    draw();
+  }
+
+  var ANIM = {};
+
+  /* ---------- BMP04：位图 + XOR 增量 ---------- */
+  var COLS = 20, ROWS = 9, CELL = 38, GX = 30, GY = 46;
+  function bmpState(t, host) {
+    var rA = num(host, ".js-x-ra", 3);
+    var rB = num(host, ".js-x-rb", 5);
+    var k = t / 12;   // 全程都在移动：任何一帧都能看到 XOR 增量
+    var wins = [
+      { id: "H", x: 9, y: 4, r: 2, color: "#0d8a63" },
+      { id: "A", x: 2 + Math.round(k * 8), y: 2, r: rA, color: "#0e7fa8" },
+      { id: "B", x: 17 - Math.round(k * 7), y: 6 - Math.round(k * 3), r: rB, color: "#6a4bd8" }
+    ];
+    var grid = {};
+    wins.forEach(function (w) {
+      for (var x = w.x - w.r; x <= w.x + w.r; x++) {
+        for (var z = w.y - w.r; z <= w.y + w.r; z++) {
+          if (x < 0 || z < 0 || x >= COLS || z >= ROWS) continue;
+          var key = x + "," + z;
+          if (!grid[key]) grid[key] = [];
+          if (grid[key].indexOf(w.id) < 0) grid[key].push(w.id);
+        }
+      }
+    });
+    var union = 0, counts = {};
+    Object.keys(grid).forEach(function (key) { union++; counts[key] = grid[key].length; });
+    return { wins: wins, grid: grid, union: union, counts: counts, rA: rA, rB: rB };
+  }
+  ANIM.bitmap = {
+    w: 900, h: 470, duration: 9.0,
+    cap: "格子深浅 = 订阅计数；绿框 = 本步新订阅（0→1），红框 = 本步退订（1→0）—— 计数只被这些格子触碰",
+    extra: '<label class="xtra">A 半径 <select class="js-x-ra"><option value="2">2</option><option value="3" selected>3</option><option value="5">5</option></select></label>' +
+      '<label class="xtra">B 半径 <select class="js-x-rb"><option value="3">3</option><option value="5" selected>5</option><option value="8">8</option></select></label>',
+    phase: function (t, host) {
+      var s = bmpState(t, host), p = bmpState(Math.max(0, t - 0.6), host);
+      var add = 0, rem = 0;
+      Object.keys(s.counts).forEach(function (k) { if (!p.counts[k]) add++; });
+      Object.keys(p.counts).forEach(function (k) { if (!s.counts[k]) rem++; });
+      return "并集 " + s.union + " 格常驻 · 本步 XOR：订阅 +" + add + " / 退订 -" + rem +
+        "（若全量重扫要碰 " + (2 * s.rA + 1) * (2 * s.rA + 1) + " 格）";
+    },
+    draw: function (t, host) {
+      var s = bmpState(t, host), p = bmpState(Math.max(0, t - 0.6), host), body = "";
+      body += rtxt(GX, 28, "每格 1 bit：在不在窗口；颜色深浅 = 订阅计数（反表的值）", "dghead");
+      for (var x = 0; x < COLS; x++) {
+        for (var z = 0; z < ROWS; z++) {
+          var key = x + "," + z;
+          var list = s.grid[key], n = list ? list.length : 0;
+          var old = !!p.counts[key];
+          var fill = n === 0 ? "#ffffff" : n === 1 ? "#e4f5fc" : n === 2 ? "#a9d8ee" : "#6cbde0";
+          var px = GX + x * CELL, py = GY + z * CELL;
+          var stroke = "#dde5f1", sw = 1;
+          if (n > 0 && !old) { stroke = "#0d8a63"; sw = 2.4; }
+          else if (n === 0 && old) { stroke = "#c23a55"; sw = 2.4; }
+          body += rrect(px, py, CELL - 1, CELL - 1, fill, stroke, sw, 1);
+          if (n > 0) body += rtxt(px + (CELL - 2) / 2, py + 24, String(n), "dgt sm", "middle");
+        }
+      }
+      s.wins.forEach(function (w) {
+        if (w.id === "H") return;
+        body += '<rect x="' + (GX + (w.x - w.r) * CELL) + '" y="' + (GY + (w.y - w.r) * CELL) +
+          '" width="' + ((2 * w.r + 1) * CELL - 1) + '" height="' + ((2 * w.r + 1) * CELL - 1) +
+          '" fill="none" stroke="' + w.color + '" stroke-width="2.2"/>';
+      });
+      // 行位串（用户的 01001001 那种）
+      var rowZ = 4;
+      body += rtxt(GX, 420, "第 " + rowZ + " 行的位串：", "dghead");
+      ["H", "A", "B"].forEach(function (id, i) {
+        var str = "";
+        for (var x2 = 0; x2 < COLS; x2++) {
+          var l = s.grid[x2 + "," + rowZ];
+          str += (l && l.indexOf(id) >= 0) ? "1" : "0";
+        }
+        body += rtxt(GX + 130, 404 + i * 17, id + " " + str, "dgt sm");
+      });
+      body += rtxt(GX + 460, 420, "主机 retain = H OR A OR B（上图有色格）；render 只等于 H", "dgt sm");
+      body += rtxt(GX + 460, 440, "A XOR B 就是两行位串按位异或 → 只有一方要的格子", "dgt sm");
+      return svgOf(this.w, this.h, body);
+    }
+  };
+
+  /* ---------- FRH02：只用 XOR 会漏什么 ---------- */
+  ANIM.freshness = {
+    w: 900, h: 400, duration: 12.0,
+    cap: "窗口没变、位图没变、XOR = 0，但内容改了；只有 revision 表能发现这次修改",
+    extra: '<label class="xtra"><input type="checkbox" class="js-x-rev"> 用 revision 触发同步（正确做法）</label>',
+    sim: function (t, host) {
+      var useRev = flag(host, ".js-x-rev", false);
+      var edits = [2, 5, 8];
+      var done = edits.filter(function (e) { return t >= e; }).length;
+      var rev = 1 + done;                       // 每次修改 revision +1
+      var confirmed = useRev ? rev : 1;         // 正确做法：跟着补；错误做法：永远停在 1
+      var missed = useRev ? 0 : done;
+      var sent = useRev ? done : 0;
+      return { useRev: useRev, edits: edits, done: done, rev: rev, confirmed: confirmed,
+        missed: missed, sent: sent, stale: confirmed < rev };
+    },
+    phase: function (t, host) {
+      var s = this.sim(t, host);
+      return "位图 XOR = 0（窗口无变化）· revision " + s.rev + " · confirmed " + s.confirmed +
+        " · " + (s.stale ? "客户端落后" : "客户端最新") + " · 漏同步 " + s.missed + " 次 · 已发 " + s.sent + " 次";
+    },
+    draw: function (t, host) {
+      var s = this.sim(t, host), body = "";
+      body += rtxt(40, 28, "同一个 chunk：窗口一直在，位置没动，位图一个位都没翻转", "dghead");
+      body += rbox(40, 44, 300, 150, "", 10);
+      body += rtxt(56, 68, "存在性位图（A 的窗口那一行）", "dgt sm");
+      body += rtxt(56, 92, "改前  ...0 1 1 1 0...", "dgt sm");
+      body += rtxt(56, 112, "改后  ...0 1 1 1 0...  ← 完全一样", "dgt sm");
+      body += rtxt(56, 140, "XOR 结果 = 0000000", "dgt");
+      body += rtxt(56, 166, "→ 位图说：什么都没发生", "dgt sm");
+      body += rtxt(56, 186, "→ 真相：这个 chunk 被改了 " + s.done + " 次", "dgt sm");
+      body += rbox(360, 44, 500, 150, "", 10);
+      body += rtxt(376, 68, "revision 表", "dghead");
+      body += rtxt(376, 94, "chunkRevision      = 1 → " + s.rev + "（每次改动 +1）", "dgt sm");
+      body += rtxt(376, 116, "confirmed[A]       = " + s.confirmed, "dgt sm");
+      body += rtxt(376, 138, "NeedsSync(A)       = " + (s.stale ? "true → 发增量" : "false"), "dgt");
+      body += rtxt(376, 164, "StateOf(A)         = " + (s.stale ? "11 Stale（落后）" : "10 Fresh（最新）"), "dgt sm");
+      body += rtxt(376, 186, "这一层和位图没有关系，也不受窗口变化影响", "dgt sm");
+
+      body += rtxt(40, 226, "修改事件时间轴（都发生在已加载的同一个 chunk 内）", "dghead");
+      s.edits.forEach(function (e, i) {
+        var y = 248 + i * 30;
+        var fired = t >= e;
+        body += rbox(40, y - 18, 420, 26, fired ? "am" : "", 5);
+        body += rtxt(50, y, (fired ? "✓ " : "· ") + "t=" + e + "s　有人改了 3 格 → revision +1（= " + (2 + i) + "）", "dgt sm");
+      });
+      var verdictCls = s.useRev ? "gr" : "rd";
+      body += rbox(490, 230, 370, 108, verdictCls, 10);
+      body += rtxt(506, 254, s.useRev ? "当前：用 revision 触发" : "当前：只用位图 XOR 触发", "dghead");
+      body += rtxt(506, 280, s.useRev ? "每次 revision 变化 → 发增量（" + s.sent + " 次）" : "位图永远不变化 → 一次都不发", "dgt sm");
+      body += rtxt(506, 304, s.useRev ? "confirmed 追上 revision → 客户端最新" : "confirmed 停在 1，客户端长期落后 " + s.missed + " 次改动", "dgt sm");
+      body += rtxt(506, 326, s.useRev ? "✓ 一致" : "✗ 这就是「客户端看着有地形、内容却是旧的」的成因", "dgt sm");
+      body += rtxt(40, 372, "结论：位图/XOR 决定「谁该收」；revision 决定「该不该发」。两张表各管一件事，缺任何一张都不成立。", "dgt sm");
+      return svgOf(this.w, this.h, body);
+    }
+  };
+
+  [].forEach.call(document.querySelectorAll(".anim"), function (host) {
+    var def = ANIM[host.getAttribute("data-anim")];
+    if (def) buildAnim(def, host);
+  });
+})();
+</script>
+</body>
+</html>

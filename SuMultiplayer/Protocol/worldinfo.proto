@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+package sump.worldinfo;
+
+option csharp_namespace = "SuMultiplayer.Protocol.WorldInfo";
+option optimize_for = SPEED;
+
+import "google/protobuf/any.proto";
+
+message WorldSetting {
+  string key = 1;
+  string value = 2;
+}
+
+// Host -> client: authoritative world clock / weather / settings snapshot (~2 Hz).
+message WorldInfo {
+  int32 server_tick = 1;
+  double initial_game_time = 2;
+  double time_of_day_offset = 3;
+  double total_elapsed_game_time = 4;
+  int32 time_of_day_mode = 5;
+  bool precipitation_started = 6;
+  float precipitation_intensity = 7;
+  bool fog_started = 8;
+  float fog_progress = 9;
+  float fog_intensity = 10;
+  int32 fog_seed = 11;
+  bool has_lightning = 12;
+  int32 lightning_x = 13;
+  int32 lightning_y = 14;
+  int32 lightning_z = 15;
+  int32 lightning_revision = 16;
+  int64 world_time_revision = 17;
+  bool time_accelerated = 18;
+  float time_factor = 19;
+  repeated WorldSetting settings = 20;
+  // Third-party extension points: see doc/message-protocol.md.
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}

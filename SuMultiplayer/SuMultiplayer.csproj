@@ -1,0 +1,69 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>SuMultiplayer</RootNamespace>
+    <AssemblyName>SuMultiplayer</AssemblyName>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <CheckEolTargetFrameworks>false</CheckEolTargetFrameworks>
+    <DefineConstants>$(DefineConstants);WINDOWS</DefineConstants>
+    <!-- 引擎核心三件套走制品库源 cnb-nuget（与 Mod 集其它工程一致），不引用也不编译引擎工程。 -->
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <DisableTransitiveProjectReferences>true</DisableTransitiveProjectReferences>
+  </PropertyGroup>
+
+  <!--
+    Tools/ 下是独立工程（调试端等）。默认 glob 会把 Tools/**/obj/**/*.cs 一起编进来，
+    导致 TargetFrameworkAttribute 重复（CS0579）—— 必须显式排除。
+  -->
+  <ItemGroup>
+    <Compile Remove="Tools/**" />
+    <None Remove="Tools/**" />
+    <EmbeddedResource Remove="Tools/**" />
+    <!-- 生成的协议代码由 Grpc.Tools 在构建时从 Protocol/*.proto 产出；
+         仓库里的 Protocol/Generated/ 是同一份产物（供审阅 / 离线参考），不参与编译，
+         避免与构建产物重复定义。 -->
+    <Compile Remove="Protocol/Generated/**" />
+    <None Include="Protocol/Generated/**" />
+  </ItemGroup>
+
+  <!--
+    协议：.proto 在 Protocol/ 下，构建时用 Grpc.Tools 调 protoc 生成 C#。
+    运行期只需要 Google.Protobuf.dll（随 .scmod 平铺进 Lib/），不需要 protoc。
+    -p:RegenerateProtocol=true 会把生成物同步回 Protocol/Generated/（提交用）。
+  -->
+  <ItemGroup>
+    <PackageReference Include="Google.Protobuf" Version="3.28.3" />
+    <PackageReference Include="Grpc.Tools" Version="2.68.1" PrivateAssets="all" />
+    <Protobuf Include="Protocol\*.proto" ProtoRoot="Protocol" GrpcServices="None" />
+  </ItemGroup>
+
+  <Target Name="SyncProtocolGenerated" AfterTargets="Protobuf_Compile"
+          Condition="'$(RegenerateProtocol)' == 'true'">
+    <ItemGroup>
+      <_ProtocolGenerated Include="$(IntermediateOutputPath)*.cs"
+                        Exclude="$(IntermediateOutputPath)*AssemblyAttributes.cs" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_ProtocolGenerated)" DestinationFolder="Protocol\Generated"
+          SkipUnchangedFiles="true" />
+    <Message Importance="high" Text="Protocol: 已同步 @(_ProtocolGenerated->Count()) 个生成文件到 Protocol/Generated/" />
+  </Target>
+
+  <ItemGroup>
+    <PackageReference Include="Engine" Version="0.1.6" />
+    <PackageReference Include="EntitySystem" Version="0.1.6" />
+    <PackageReference Include="Survivalcraft" Version="0.1.6" />
+    <!-- SuAPICore 是游戏内置 Mod：只用于编译期解析 IMod / IModEventBus / IModInjector，
+         打 .scmod 时绝不把 SuAPICore.dll 放进 Lib/。 -->
+    <PackageReference Include="SuAPICore" Version="0.1.6" />
+  </ItemGroup>
+
+  <!--
+    传输层（Comms）与事件中间件（SuEventBus）在第一段真实代码落地时再加引用：
+      <ProjectReference Include="..\Comms\Comms.csproj" />
+      <ProjectReference Include="..\SuEventBus\SuEventBus.csproj" />
+    并在 ModInfo.xml 同步补 <Dependencies>，两边必须一致。
+  -->
+</Project>

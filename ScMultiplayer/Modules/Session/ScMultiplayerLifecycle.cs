@@ -57,8 +57,10 @@ namespace ScMultiplayer
             // 联机角色的统计不写进 Project.xml（见 SuSubsystemPlayerStats）
             modInjector.Register("Game.SubsystemPlayerStats",
                 "ScMultiplayer.SuSubsystemPlayerStats");
-            modInjector.RegisterBlock(Game.ButtonBlock.Index,
-                typeof(global::ScMultiplayer.ButtonBlock), Name);
+            // 按钮（index 142）不再由 ScMP 抢方块替换，也不再替换 ButtonBlockBehavior 子系统：
+            // 信道 Mod（Channel）持有 index 142 与 ButtonBlockBehavior，通过 SuEventBus 暴露
+            // 「创建按钮元件」「按钮/信道编辑」扩展点，ScMP 订阅这些事件接管联机部分。
+            // Source: Mod/ScMultiplayer/Func/Circuit/SuChannelEventAdapters.cs
             modInjector.RegisterBlock(Game.PressurePlateBlock.Index,
                 typeof(global::ScMultiplayer.PressurePlateBlock), Name);
             modInjector.RegisterBlock(Game.RandomGeneratorBlock.Index,
@@ -69,6 +71,8 @@ namespace ScMultiplayer
                 typeof(global::ScMultiplayer.DispenserBlock), Name);
             modInjector.RegisterBlock(Game.PistonBlock.Index,
                 typeof(global::ScMultiplayer.PistonBlock), Name);
+            // 信道 Mod（SuEventBus）扩展点：按钮元件、按钮编辑、信道编辑/提交
+            SuChannelEventAdapters.Subscribe();
             ScMultiplayerSettings.Load();
             ApplyServerDiagnosticsSetting();
             m_serverSettingsToken = eventBus.SubscribeEvent(
@@ -842,10 +846,9 @@ namespace ScMultiplayer
             subsystemSwitch.Value = "ScMultiplayer.SuSubsystemSwitchBlockBehavior";
 
             // Source: Pak/Database.xml:ButtonBlockBehavior.Class
-            var subsystemButton = database.FindDatabaseObject(
-                new Guid("4407e30b-89ee-40c7-b1d2-eb100c2b8ac4"),
-                database.FindDatabaseObjectType("Parameter", true), true);
-            subsystemButton.Value = "ScMultiplayer.SuSubsystemButtonBlockBehavior";
+            // 按钮行为子系统（Guid 4407e30b-...）不再由 ScMP 替换：
+            // 信道 Mod 用 Channel.SubsystemChannelBlockBehavior 接管该模板，
+            // ScMP 改为订阅 SuEventBus 的按钮/信道编辑事件（见 SuChannelEventAdapters）。
 
             // Source: Pak/Database.xml:PistonBlockBehavior.Class
             var subsystemPiston = database.FindDatabaseObject(
@@ -1008,6 +1011,7 @@ namespace ScMultiplayer
 
         public void OnUnload()
         {
+            SuChannelEventAdapters.Unsubscribe();
             DisposeDataModification();
             if (server != null)
                 server.JoinDiagnostic -= HandleServerJoinDiagnostic;

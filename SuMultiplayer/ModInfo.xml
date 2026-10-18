@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  SuMultiplayer —— 联机模块重写工程（ModInfo 必须保持扁平写法：
+  <Version> / <APIVersion> 直接挂在 <ModInfo> 下，禁止 <ModVersion><Version> 嵌套）。
+  依赖项等第一段代码真正引入传输层后再补 <Dependencies>，不要提前声明。
+-->
+<Mod>
+  <ModInfo>
+    <Identifier>SuMultiplayer</Identifier>
+    <LocalizedName>
+      <Text lang="en_US">SuMultiplayer</Text>
+      <Text lang="zh_CN">联机模组（重写版）</Text>
+    </LocalizedName>
+    <Version>0.1.0</Version>
+    <APIVersion>0.1.6.0</APIVersion>
+    <IsMergeLib>true</IsMergeLib>
+    <Asset>
+      <ContentRoot>Content/</ContentRoot>
+    </Asset>
+  </ModInfo>
+</Mod>

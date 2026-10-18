@@ -1,0 +1,820 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>最小加入房间 · 现状与实施方案（SuMultiplayer）</title>
+<meta name="description" content="SuMultiplayer 当前实现进度、Windows 建房 + 平板加入的最小功能链路、模块化解耦设计、Server/Client 日志分流方案。">
+<style>
+:root{
+  --bg:#f4f7fc;--card:#fff;--tint:#f7f9fe;--tint2:#eef3fb;--line:#dde5f1;--line2:#c3d1e6;
+  --tx:#16203a;--tx2:#48587a;--tx3:#7d8aa3;--cy:#0e7fa8;--cy2:#e4f5fc;--vi:#6a4bd8;--vi2:#efeafe;
+  --am:#a9740a;--am2:#fff4df;--gr:#0d8a63;--gr2:#e5f8f0;--rd:#c23a55;--rd2:#fdecf0;
+  --mono:ui-monospace,"Cascadia Mono",Consolas,"Liberation Mono",monospace;
+  --sans:system-ui,-apple-system,"Segoe UI","Microsoft YaHei","PingFang SC",sans-serif;
+  --r:12px;--r2:9px;--sh:0 1px 2px rgba(20,40,80,.05),0 6px 18px rgba(20,40,80,.05);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font-family:var(--sans);font-size:14.5px;line-height:1.7}
+a{color:var(--cy);text-decoration:none}a:hover{text-decoration:underline}
+code{font-family:var(--mono);font-size:.87em;background:var(--tint2);border:1px solid var(--line);border-radius:5px;padding:.05em .34em;color:#1d3a63;white-space:nowrap}
+.topbar{position:sticky;top:0;z-index:60;display:flex;align-items:center;gap:12px;padding:9px 20px;background:rgba(255,255,255,.9);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+.brand{display:flex;align-items:center;gap:10px;font-weight:750;white-space:nowrap}
+.brand .logo{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;font-size:12px;background:linear-gradient(140deg,var(--cy),var(--vi));color:#fff;font-weight:900}
+.brand small{display:block;font-weight:500;font-size:11px;color:var(--tx3)}
+.topbar .ver{font-family:var(--mono);font-size:11px;color:var(--tx2);border:1px solid var(--line);border-radius:999px;padding:2px 9px;background:var(--tint)}
+.topbar .grow{flex:1}
+.search input{padding:7px 11px;border-radius:999px;font-size:12.5px;color:var(--tx);background:var(--tint);border:1px solid var(--line);outline:none;min-width:200px}
+.btn{cursor:pointer;border:1px solid var(--line);background:#fff;color:var(--tx2);border-radius:999px;padding:6px 13px;font-size:12px;font-family:var(--sans)}
+.btn:hover{color:var(--tx);border-color:var(--line2);background:var(--tint)}
+.btn.pri{background:linear-gradient(120deg,var(--cy2),var(--gr2));border-color:var(--line2);color:#0b3b52;font-weight:650}
+.progress{position:fixed;top:0;left:0;height:3px;width:0;z-index:70;background:linear-gradient(90deg,var(--cy),var(--vi),var(--am))}
+.layout{display:grid;grid-template-columns:224px minmax(0,1fr);gap:24px;max-width:1440px;margin:0 auto;padding:0 22px 70px}
+.sidebar{position:sticky;top:58px;align-self:start;max-height:calc(100vh - 76px);overflow-y:auto;padding:16px 4px 24px 0;font-size:12.5px}
+.sidebar h4{margin:12px 0 5px;font-size:10.5px;letter-spacing:1.2px;color:var(--tx3)}
+.sidebar h4:first-child{margin-top:0}
+.sidebar a{display:flex;gap:7px;padding:3.5px 8px;border-radius:7px;color:var(--tx2);border-left:2px solid transparent}
+.sidebar a:hover{background:var(--tint);text-decoration:none;color:var(--tx)}
+.sidebar a.active{color:var(--tx);background:var(--cy2);border-left-color:var(--cy);font-weight:600}
+.sidebar a .id{font-family:var(--mono);font-size:10px;color:var(--tx3);min-width:40px}
+main{min-width:0;padding-top:6px}
+.hero{padding:30px 0 18px;border-bottom:1px solid var(--line);margin-bottom:10px}
+.hero .kicker{display:inline-flex;gap:8px;font-family:var(--mono);font-size:11.5px;color:var(--vi);border:1px solid #d6cbf7;background:var(--vi2);padding:4px 12px;border-radius:999px}
+.hero h1{margin:12px 0 8px;font-size:clamp(24px,3.2vw,36px);line-height:1.2;font-weight:800;letter-spacing:-.4px}
+.hero h1 .g{background:linear-gradient(96deg,var(--cy),var(--vi) 55%,var(--am));-webkit-background-clip:text;background-clip:text;color:transparent}
+.hero .lead{font-size:15px;color:var(--tx2);max-width:920px;margin:0 0 14px}
+.hero .actions{display:flex;gap:9px;flex-wrap:wrap;margin-bottom:16px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:10px}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:11px 13px;box-shadow:var(--sh)}
+.stat b{display:block;font-family:var(--mono);font-size:20px;color:var(--cy)}
+.stat span{display:block;font-size:11.5px;color:var(--tx3);margin-top:2px}
+section.sec{margin:24px 0 8px;scroll-margin-top:68px}
+.sec-head{display:flex;align-items:center;gap:11px;padding-bottom:9px;border-bottom:2px solid var(--line);margin-bottom:14px}
+.sec-head .no{font-family:var(--mono);font-size:11px;font-weight:700;color:#fff;border-radius:7px;padding:4px 8px;background:linear-gradient(140deg,var(--cy),var(--vi))}
+.sec-head h2{margin:0;font-size:clamp(18px,2vw,23px);font-weight:750}
+.sec-head .sub{color:var(--tx3);font-size:12px;margin-left:auto}
+.block{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:14px 16px;margin:11px 0;box-shadow:var(--sh);scroll-margin-top:68px}
+.block.hidden,.sec.hidden{display:none}
+.block-head{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-bottom:8px}
+.block-head h3{margin:0;font-size:15.5px;font-weight:720}
+.block-head .tagline{font-size:11.5px;color:var(--tx3)}
+.guid{font-family:var(--mono);font-size:11px;font-weight:700;cursor:pointer;color:#fff;background:linear-gradient(140deg,var(--cy),var(--vi));border:0;border-radius:6px;padding:2px 7px;user-select:none}
+.guid.copied{background:linear-gradient(140deg,var(--am),#e0a52a)}
+.done{font-size:11px;font-family:var(--mono);color:#0a6247;background:var(--gr2);border:1px solid #c2e9d8;border-radius:999px;padding:2px 9px}
+.todo{font-size:11px;font-family:var(--mono);color:#7d5606;background:var(--am2);border:1px solid #f0dcb0;border-radius:999px;padding:2px 9px}
+.no{font-size:11px;font-family:var(--mono);color:#96243c;background:var(--rd2);border:1px solid #f4cbd6;border-radius:999px;padding:2px 9px}
+.tw{overflow-x:auto;margin:8px 0;border:1px solid var(--line);border-radius:var(--r2)}
+table{width:100%;border-collapse:collapse;font-size:12.6px;min-width:420px}
+thead th{background:var(--tint2);text-align:left;padding:7px 10px;font-weight:700;color:#25344f;border-bottom:1px solid var(--line2);white-space:nowrap;font-size:12px}
+tbody td{padding:6px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+tbody tr:nth-child(even){background:var(--tint)}
+tbody tr:last-child td{border-bottom:0}
+td.mono,.mono{font-family:var(--mono);font-size:11.8px}
+td.gid,.gid{font-family:var(--mono);font-size:11.4px;color:var(--cy);font-weight:700;white-space:nowrap}
+td.src,.src{font-family:var(--mono);font-size:11px;color:var(--tx3)}
+.num{text-align:right;font-family:var(--mono)}
+.grid{display:grid;gap:9px;margin:8px 0}
+.g2{grid-template-columns:repeat(auto-fit,minmax(250px,1fr))}
+.g3{grid-template-columns:repeat(auto-fit,minmax(190px,1fr))}
+.g4{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
+.tile{background:var(--tint);border:1px solid var(--line);border-radius:var(--r2);padding:10px 11px}
+.tile h5{margin:0 0 4px;font-size:13px;color:#1d2b47}
+.tile p{margin:2px 0;font-size:12.4px;color:var(--tx2)}
+.tile .big{font-family:var(--mono);font-size:17px;color:var(--cy);display:block}
+.callout{border-radius:var(--r2);padding:9px 12px;margin:9px 0;font-size:12.7px;border:1px solid var(--line);background:var(--tint);border-left:3px solid var(--cy);color:var(--tx2)}
+.callout.ok{border-left-color:var(--gr);background:var(--gr2)}
+.callout.warn{border-left-color:var(--am);background:var(--am2)}
+.callout.bad{border-left-color:var(--rd);background:var(--rd2)}
+.callout .t{display:block;font-weight:700;margin-bottom:2px;color:var(--tx)}
+figure{margin:9px 0;border:1px solid var(--line);border-radius:var(--r2);padding:11px 11px 5px;background:var(--tint)}
+figure svg{width:100%;height:auto;display:block}
+figcaption{margin-top:5px;font-size:11.5px;color:var(--tx3);text-align:center}
+.anim{margin:9px 0;border:1px solid var(--line);border-radius:var(--r2);padding:10px 11px 6px;background:var(--tint)}
+.anim .figsvg{background:#fff;border:1px solid var(--line);border-radius:8px;padding:6px}
+.anim svg{width:100%;height:auto;display:block}
+.playbar{display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap}
+.playbar input[type=range]{flex:1;min-width:110px;accent-color:#0e7fa8;height:4px}
+.phase{font-family:var(--mono);font-size:11.5px;color:var(--cy);min-width:250px}
+.xtra{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;color:var(--tx2);cursor:pointer}
+.chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:7px}
+.chip{font-family:var(--mono);font-size:11px;padding:2.5px 9px;border-radius:999px;cursor:pointer;border:1px solid var(--line);background:#fff;color:var(--tx3);user-select:none}
+.chip.on{color:#fff;border-color:transparent}
+.anim figcaption{margin-top:6px;font-size:11.5px;color:var(--tx3);text-align:center}
+.dgb{fill:#fff;stroke:#c3d1e6}
+.dgb.cy{fill:#e4f5fc;stroke:#2b9fc4}.dgb.vi{fill:#efeafe;stroke:#7c5cf0}
+.dgb.gr{fill:#e5f8f0;stroke:#17a273}.dgb.am{fill:#fff4df;stroke:#d99b12}.dgb.rd{fill:#fdecf0;stroke:#d1495f}
+.dgt{fill:#26314a;font-family:var(--mono);font-size:11.5px}
+.dgt.sm{font-size:10.2px;fill:#5a6a86}
+.dgl{stroke:#93a6c4;stroke-width:1.4;fill:none}
+.dgl.cy{stroke:#2b9fc4}.dgl.vi{stroke:#7c5cf0}.dgl.am{stroke:#d99b12}.dgl.gr{stroke:#17a273}.dgl.rd{stroke:#d1495f}
+.dgl.dash{stroke-dasharray:5 4}
+.dghead{fill:#101a2e;font-size:12.5px;font-weight:700;font-family:var(--sans)}
+.toast{position:fixed;left:50%;bottom:26px;transform:translate(-50%,14px);z-index:90;background:#101a2e;color:#fff;padding:9px 18px;border-radius:999px;font-size:13px;opacity:0;pointer-events:none;transition:.22s}
+.toast.on{opacity:1;transform:translate(-50%,0)}
+#nores{display:none;padding:22px;text-align:center;color:var(--tx3);border:1px dashed var(--line2);border-radius:var(--r);margin:14px 0;background:#fff}
+.totop{position:fixed;right:20px;bottom:20px;z-index:80;width:38px;height:38px;border-radius:50%;display:grid;place-items:center;cursor:pointer;opacity:0;pointer-events:none;transition:.2s;background:#fff;border:1px solid var(--line2);color:var(--cy);font-size:16px}
+.totop.on{opacity:1;pointer-events:auto}
+footer{margin-top:24px;padding:16px 0 6px;border-top:1px solid var(--line);font-size:12px;color:var(--tx3)}
+@media (max-width:1020px){.layout{grid-template-columns:1fr;padding:0 14px 60px}.sidebar{position:static;max-height:none;border-bottom:1px solid var(--line);display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr))}.sec-head .sub{display:none}}
+@media print{.topbar,.sidebar,.totop,.progress,.toast{display:none!important}.layout{display:block;padding:0}.block,figure,.tile{break-inside:avoid;box-shadow:none}}
+</style>
+</head>
+<body>
+<div class="progress" id="prog"></div>
+<header class="topbar">
+  <div class="brand"><div class="logo">MJ</div><div>最小加入房间 · 现状与方案<small>Windows 建房 → 平板加入</small></div></div>
+  <span class="ver">16 个标记 · 3 个可播放</span>
+  <div class="grow"></div>
+  <input id="q" type="search" placeholder="搜索内容或 GUID（例：MOD02）">
+  <button class="btn" onclick="window.print()">打印 / PDF</button>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="toc">
+    <h4>现状</h4>
+    <a href="#CUR01"><span class="id">CUR01</span>已完成（纯逻辑核）</a>
+    <a href="#CUR02"><span class="id">CUR02</span>两端设备实测</a>
+    <a href="#CUR03"><span class="id">CUR03</span>还没接线的部分</a>
+    <h4>模块化</h4>
+    <a href="#MOD01"><span class="id">MOD01</span>新模块清单</a>
+    <a href="#MOD02"><span class="id">MOD02</span>能力图与下线（可播放）</a>
+    <a href="#MOD03"><span class="id">MOD03</span>解耦硬规则</a>
+    <h4>目标链路</h4>
+    <a href="#TGT01"><span class="id">TGT01</span>建房→加入全流程（可播放）</a>
+    <a href="#MSG01"><span class="id">MSG01</span>最小报文集（10 条）</a>
+    <a href="#OLD01"><span class="id">OLD01</span>与旧 mod 对照</a>
+    <h4>日志</h4>
+    <a href="#LOG01"><span class="id">LOG01</span>Server / Client 分流（可播放）</a>
+    <a href="#LOG02"><span class="id">LOG02</span>文件格式与写入策略</a>
+    <a href="#LOG03"><span class="id">LOG03</span>与状态队列的分工</a>
+    <h4>实施</h4>
+    <a href="#STP01"><span class="id">STP01</span>五步落地与验收</a>
+    <a href="#STP02"><span class="id">STP02</span>总体验收判据</a>
+    <a href="#RSK01"><span class="id">RSK01</span>已知坑</a>
+    <a href="#IDX01"><span class="id">IDX01</span>GUID 索引</a>
+  </aside>
+
+  <main id="top">
+    <section class="hero">
+      <div class="kicker">● 现状 = 纯逻辑核已实测 + 两端骨架已部署；接线未开始</div>
+      <h1>下一步：<span class="g">Windows 建房，平板加入</span></h1>
+      <p class="lead">目标是最小闭环：一端建房 → 另一端在列表里看到 → 加入 → 拿到世界 → 进入游戏；全程两端各写自己的日志文件，模块可单独下线。</p>
+      <div class="actions">
+        <a class="btn pri" href="#TGT01">看全流程动画</a>
+        <a class="btn" href="#MOD02">看模块下线</a>
+        <a class="btn" href="#LOG01">看日志分流</a>
+      </div>
+      <div class="stats">
+        <div class="stat"><b>13</b><span>已实现源文件（纯逻辑）</span></div>
+        <div class="stat"><b>129</b><span>断言全过（桌面 .NET）</span></div>
+        <div class="stat"><b>2</b><span>已部署端（PC + 平板）</span></div>
+        <div class="stat"><b>0</b><span>接线到游戏的部分</span></div>
+        <div class="stat"><b>9</b><span>目标模块</span></div>
+        <div class="stat"><b>10</b><span>最小报文数（旧 48）</span></div>
+      </div>
+    </section>
+    <div id="nores">没有匹配的条目</div>
+
+    <section class="sec" id="grp-cur">
+      <div class="sec-head"><span class="no">现状</span><div><h2>现在到哪一步了</h2><div class="sub">已完成 / 已验证 / 未接线，三档分清</div></div></div>
+
+      <div class="block" id="CUR01">
+        <div class="block-head"><button class="guid" data-guid="CUR01">CUR01</button><h3>已完成：13 个纯逻辑文件</h3>
+          <span class="done">129 断言全过</span></div>
+        <div class="tw"><table>
+          <thead><tr><th>目录</th><th class="mono">文件</th><th>职责</th><th>对应本页哪一步</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">Journal/</td><td class="num">5</td><td>48 B 定长记录 · 环形内存 · 分段落盘 · 分类筛选 · 崩溃恢复 · 写频率预设</td><td>两端操作记录的结构化来源</td></tr>
+            <tr><td class="mono">Modules/</td><td class="num">2</td><td>能力依赖解析 · 异常隔离 · 熔断 · 热插拔下线</td><td>本步所有模块的宿主</td></tr>
+            <tr><td class="mono">Atoms/</td><td class="num">2</td><td>原子契约 · Hz 分桶合并 · 双上限与背压</td><td>第 5 步位置同步</td></tr>
+            <tr><td class="mono">Protocol/</td><td class="num">1</td><td>信封 v2（TLV）· 未知字段/原子跳过 · 版本区间</td><td>第 1 步协议闸门</td></tr>
+            <tr><td class="mono">Session/</td><td class="num">2</td><td>房间列表（去重/排序/选择不跳）· 加入状态机（8 阶段 + 超时重试）</td><td>第 2、3 步</td></tr>
+            <tr><td class="mono">Join/</td><td class="num">1</td><td>世界分片重组 · 校验 · 缺失修复 · 存档条目名净化</td><td>第 4 步</td></tr>
+          </tbody>
+        </table></div>
+        <div class="callout warn"><span class="t">这 13 个文件目前与游戏零接触</span>
+          它们是纯 .NET，能在桌面 <code>dotnet run</code> 下跑 129 条断言，但<b>没有被任何游戏帧调用过</b> —— 本页右边一半的工作就是"接线"。</div>
+      </div>
+
+      <div class="block" id="CUR02">
+        <div class="block-head"><button class="guid" data-guid="CUR02">CUR02</button><h3>已验证：两端骨架部署 + 稳定性</h3>
+          <span class="done">实机通过</span></div>
+        <div class="tw"><table>
+          <thead><tr><th>端</th><th>加载</th><th>长跑</th><th>退出</th><th class="mono">窗口内报错</th></tr></thead>
+          <tbody>
+            <tr><td>Windows PC</td><td class="mono">[SuMP] SuMultiplayer 0.1.0 skeleton loaded</td><td>稳态 150 s</td><td>WM_CLOSE 正常关闭</td><td class="num">0</td></tr>
+            <tr><td>华为平板（Android 12）</td><td class="mono">同上</td><td>3 分 28 秒</td><td>BACK → Saved settings（自行退出）</td><td class="num">0（唯一 1 条 ERROR 是 SuAPI MOTD 明文 HTTP，与本 mod 无关）</td></tr>
+          </tbody>
+        </table></div>
+        <div class="grid g3">
+          <div class="tile"><h5>产物一致</h5><span class="big">42,411 B</span>
+            <p>SHA256 <code>6179458d…</code>，PC 与平板逐字节相同；包内 DLL == 构建产物 <code>ae7748fa…</code>。</p></div>
+          <div class="tile"><h5>共存</h5><span class="big">4 个 mod</span>
+            <p>与 CmdBridgeMod / PlayerAiMod / TranslationMod 同批加载无冲突；旧 ScMultiplayer 是 <code>.uninst</code>。</p></div>
+          <div class="tile"><h5>平板连接</h5><span class="big">Wi-Fi ADB</span>
+            <p>USB 一次 <code>adb tcpip 5555</code> 后走 <code>平板IP:5555</code>，便于后续反复部署。</p></div>
+        </div>
+      </div>
+
+      <div class="block" id="CUR03">
+        <div class="block-head"><button class="guid" data-guid="CUR03">CUR03</button><h3>还没接线：本步要补的 6 件</h3>
+          <span class="no">待做</span></div>
+        <div class="tw"><table>
+          <thead><tr><th class="mono">#</th><th>缺口</th><th>现状</th><th>本步补法</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">1</td><td>传输层</td><td>csproj 没有 Comms 引用；ModInfo 没有 Dependencies</td><td>加依赖（两处一致）+ 一个自定义消息往返自测</td></tr>
+            <tr><td class="mono">2</td><td>报文注册</td><td>没有 wire 表，一条消息都没有</td><td>注册 10 条最小报文（MSG01）</td></tr>
+            <tr><td class="mono">3</td><td>模块宿主接线</td><td><code>ModuleHost</code> 没被实例化</td><td>在 <code>OnLoad</code> 建宿主，注册 9 个模块</td></tr>
+            <tr><td class="mono">4</td><td>帧回调</td><td>模块没有 Tick 来源</td><td>接 SuAPI 帧事件（尽量用 EventBus，不替换原版 Subsystem）</td></tr>
+            <tr><td class="mono">5</td><td>日志文件</td><td>没有 <code>Logs/Server</code> / <code>Logs/Client</code> 写入</td><td>加 <code>LogRouter</code>（LOG01-03）</td></tr>
+            <tr><td class="mono">6</td><td>UI 入口</td><td>没有任何界面</td><td>最小：复用原版多人界面入口 + 一个房间列表（后续再美化）</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+    </section>
+
+    <section class="sec" id="grp-mod">
+      <div class="sec-head"><span class="no">模块</span><div><h2>9 个模块，靠能力拼装</h2><div class="sub">跨域一律软依赖</div></div></div>
+
+      <div class="block" id="MOD01">
+        <div class="block-head"><button class="guid" data-guid="MOD01">MOD01</button><h3>新模块清单</h3>
+          <span class="tagline">每个模块一个能力，硬依赖只在同一条链内</span></div>
+        <div class="tw"><table>
+          <thead><tr><th class="mono">模块</th><th class="mono">提供能力</th><th class="mono">硬依赖</th><th class="mono">软依赖</th><th>职责（只做一件事）</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">transport</td><td class="mono">net.transport</td><td class="mono">—</td><td class="mono">—</td><td>唯一 socket 所有者：Comms 客户端/服务端、连接生命周期、心跳</td></tr>
+            <tr><td class="mono">session</td><td class="mono">session.core</td><td class="mono">net.transport</td><td class="mono">—</td><td>房间对象、玩家列表、角色判定（host/client）、协议闸门</td></tr>
+            <tr><td class="mono">discovery</td><td class="mono">room.discovery</td><td class="mono">—</td><td class="mono">net.transport</td><td>局域网广播 + 服务器目录查询；<b>缺失时可手填 IP 加入</b></td></tr>
+            <tr><td class="mono">join</td><td class="mono">join.flow</td><td class="mono">session.core</td><td class="mono">room.discovery</td><td>复用 <code>Session/JoinFlow.cs</code> 状态机 + 审批交互</td></tr>
+            <tr><td class="mono">transfer</td><td class="mono">world.transfer</td><td class="mono">net.transport</td><td class="mono">—</td><td>复用 <code>Join/WorldTransferReceiver.cs</code>：分片、校验、修复</td></tr>
+            <tr><td class="mono">spawn</td><td class="mono">player.spawn</td><td class="mono">session.core</td><td class="mono">world.transfer</td><td>创建/放置玩家实体，进入世界</td></tr>
+            <tr><td class="mono">journal</td><td class="mono">journal.sink</td><td class="mono">—</td><td class="mono">—</td><td>复用 <code>Journal/</code>；写频率预设 + 分类闸门</td></tr>
+            <tr><td class="mono">logRouter</td><td class="mono">log.router</td><td class="mono">—</td><td class="mono">journal.sink</td><td>人读文本日志：主机写 Server、客户端写 Client</td></tr>
+            <tr><td class="mono">hostAuthority</td><td class="mono">host.authority</td><td class="mono">session.core</td><td class="mono">transfer</td><td><b>独占能力</b>：只有主机启用；客户端启用则启动即报错</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+
+      <div class="block" id="MOD02">
+        <div class="block-head"><button class="guid" data-guid="MOD02">MOD02</button><h3>能力图与下线表现（可播放）</h3>
+          <span class="tagline">点模块开关，看谁降级、谁还活着</span></div>
+        <div class="anim" data-anim="modules"></div>
+      </div>
+
+      <div class="block" id="MOD03">
+        <div class="block-head"><button class="guid" data-guid="MOD03">MOD03</button><h3>解耦硬规则（本步必须遵守）</h3></div>
+        <div class="tw"><table>
+          <thead><tr><th class="mono">#</th><th>规则</th><th>为什么</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">1</td><td>socket 只能由 <code>transport</code> 持有</td><td>两个模块各自收包会重复消费/漏包，且下线时无法归还</td></tr>
+            <tr><td class="mono">2</td><td>世界状态唯一所有者是 <code>session</code>（主机侧经 <code>host.authority</code>）</td><td>避免"两个模块都以为自己有权改世界"</td></tr>
+            <tr><td class="mono">3</td><td>模块之间只通过<b>端口 + 能力</b>通信，零直接引用</td><td>否则下线一个模块就是编译不过或空引用崩溃</td></tr>
+            <tr><td class="mono">4</td><td><code>host.authority</code> 声明为独占</td><td>一个进程只能有一个权威；第二个申请者直接不可用</td></tr>
+            <tr><td class="mono">5</td><td>日志、发现、队列<b>都不得成为硬依赖</b></td><td>它们挂了联机仍要能跑（日志写不进去就算了）</td></tr>
+            <tr><td class="mono">6</td><td>新消息必须先进 wire 表 + 原子契约，才允许发送</td><td>否则又回到"每条消息一套私有逻辑"的老路</td></tr>
+            <tr><td class="mono">7</td><td>任何模块不可用时，状态要能在 UI/日志里看到原因</td><td>"点了没反应"是最贵的 bug 类型</td></tr>
+            <tr><td class="mono">8</td><td>客户端不下发权威结果，只发意图</td><td>沿用旧实现的权威模型（AUT01）</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+    </section>
+
+    <section class="sec" id="grp-tgt">
+      <div class="sec-head"><span class="no">目标</span><div><h2>建房 → 加入 → 进游戏</h2><div class="sub">把旧 mod 的能力切到最小</div></div></div>
+
+      <div class="block" id="TGT01">
+        <div class="block-head"><button class="guid" data-guid="TGT01">TGT01</button><h3>全流程（可播放）</h3>
+          <span class="tagline">9 步，每步标明写哪个日志文件</span></div>
+        <div class="anim" data-anim="roomflow"></div>
+      </div>
+
+      <div class="block" id="MSG01">
+        <div class="block-head"><button class="guid" data-guid="MSG01">MSG01</button><h3>最小报文集：10 条</h3>
+          <span class="tagline">旧 mod 是 48 条</span></div>
+        <figure>
+          <svg viewBox="0 0 900 300" role="img" aria-label="最小报文时序">
+            <rect class="dgb vi" x="60" y="20" width="180" height="34" rx="8"/>
+            <text class="dghead" x="150" y="42" text-anchor="middle">Windows（主机）</text>
+            <rect class="dgb cy" x="660" y="20" width="180" height="34" rx="8"/>
+            <text class="dghead" x="750" y="42" text-anchor="middle">华为平板（客户端）</text>
+            <line class="dgl dash" x1="150" y1="60" x2="150" y2="280"/>
+            <line class="dgl dash" x1="750" y1="60" x2="750" y2="280"/>
+
+            <path class="dgl am" d="M750 76H150"/><path class="dgl am" d="M160 71L150 76L160 81"/>
+            <text class="dgt sm" x="452" y="72" text-anchor="middle">0 ProtocolHello（协议区间+能力集合）</text>
+            <path class="dgl gr" d="M150 100H750"/><path class="dgl gr" d="M740 95L750 100L740 105"/>
+            <text class="dgt sm" x="452" y="96" text-anchor="middle">1 ProtocolHelloAck</text>
+            <path class="dgl vi" d="M150 124H750" stroke-dasharray="5 4"/>
+            <text class="dgt sm" x="452" y="120" text-anchor="middle">2 RoomAdvertisement ×1 Hz（广播，可丢弃）</text>
+            <path class="dgl cy" d="M750 148H150"/><path class="dgl cy" d="M160 143L150 148L160 153"/>
+            <text class="dgt sm" x="452" y="144" text-anchor="middle">3 JoinRequest</text>
+            <path class="dgl gr" d="M150 172H750"/><path class="dgl gr" d="M740 167L750 172L740 177"/>
+            <text class="dgt sm" x="452" y="168" text-anchor="middle">4 JoinDecision=OK · 5 WorldInfo</text>
+            <path class="dgl gr" d="M150 196H750"/><path class="dgl gr" d="M740 191L750 196L740 201"/>
+            <text class="dgt sm" x="452" y="192" text-anchor="middle">6 WorldChunk ×N（可靠无序 + 校验和）</text>
+            <path class="dgl am" d="M750 220H150"/><path class="dgl am" d="M160 215L150 220L160 225"/>
+            <text class="dgt sm" x="452" y="216" text-anchor="middle">7 WorldChunkRequest（缺失清单 ≤64）</text>
+            <path class="dgl gr" d="M150 244H750"/><path class="dgl gr" d="M740 239L750 244L740 249"/>
+            <text class="dgt sm" x="452" y="240" text-anchor="middle">8 PlayerSpawn</text>
+            <path class="dgl cy" d="M150 268H750" stroke-dasharray="5 4"/>
+            <text class="dgt sm" x="452" y="264" text-anchor="middle">9 PlayerState 双向 ×8 Hz（可丢弃/Replace）</text>
+          </svg>
+          <figcaption>10 条报文就能跑通闭环；其余 38 条（地形检查点、电路、容器、领地…）留到后续阶段</figcaption>
+        </figure>
+        <div class="tw"><table>
+          <thead><tr><th class="mono">wire</th><th class="mono">名称</th><th class="mono">方向</th><th class="mono">投递</th><th class="mono">合并</th><th>失败时怎么办</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">0</td><td class="mono">ProtocolHello</td><td>C→H</td><td class="mono">可靠</td><td class="mono">NoMerge</td><td>超时 8 s → 连接失败（JoinFlow 已实现）</td></tr>
+            <tr><td class="mono">1</td><td class="mono">ProtocolHelloAck</td><td>H→C</td><td class="mono">可靠</td><td class="mono">NoMerge</td><td>版本不在区间 → 明确拒绝并给原因</td></tr>
+            <tr><td class="mono">2</td><td class="mono">RoomAdvertisement</td><td>H→广播</td><td class="mono">可丢弃</td><td class="mono">Replace</td><td>丢了自己靠下一帧覆盖（1 Hz 保底）</td></tr>
+            <tr><td class="mono">3</td><td class="mono">JoinRequest</td><td>C→H</td><td class="mono">可靠</td><td class="mono">NoMerge</td><td>重传；主机侧按玩家名去重</td></tr>
+            <tr><td class="mono">4</td><td class="mono">JoinDecision</td><td>H→C</td><td class="mono">可靠</td><td class="mono">NoMerge</td><td>拒绝带原因码（人数满/版本不符/被踢）</td></tr>
+            <tr><td class="mono">5</td><td class="mono">WorldInfo</td><td>H→C</td><td class="mono">可靠</td><td class="mono">NoMerge</td><td>与 Decision 同级，禁止沉默</td></tr>
+            <tr><td class="mono">6</td><td class="mono">WorldChunk</td><td>H→C</td><td class="mono">可靠无序</td><td class="mono">NoMerge</td><td>逐片校验和；失败计入缺失清单</td></tr>
+            <tr><td class="mono">7</td><td class="mono">WorldChunkRequest</td><td>C→H</td><td class="mono">可靠</td><td class="mono">NoMerge</td><td>限流重试；耗尽 → 重新下载（后续）</td></tr>
+            <tr><td class="mono">8</td><td class="mono">PlayerSpawn</td><td>H→C</td><td class="mono">可靠</td><td class="mono">Replace</td><td>未收到则停在"等待进入"并可重试</td></tr>
+            <tr><td class="mono">9</td><td class="mono">PlayerState</td><td>双向</td><td class="mono">可丢弃</td><td class="mono">Replace</td><td>8 Hz 保底 + 停变终态确认</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+
+      <div class="block" id="OLD01">
+        <div class="block-head"><button class="guid" data-guid="OLD01">OLD01</button><h3>与旧 mod 对照：怎么切、怎么复用</h3></div>
+        <div class="tw"><table>
+          <thead><tr><th>旧实现（ScMultiplayer）</th><th>新方案</th><th>做法</th></tr></thead>
+          <tbody>
+            <tr><td class="src">Modules/Session/ScMultiplayerLifecycle.cs（兼容宿主大文件）</td><td class="mono">transport + session + join</td><td><b>拆开</b>：连接、房间、加入各自成模块，互不直接引用</td></tr>
+            <tr><td class="src">Modules/Network/ScMultiplayerMessageHandlers.cs（消息总入口）</td><td class="mono">wire 表 + 原子契约</td><td><b>改写</b>：每条消息自带契约（投递/合并/幂等/审计），不再堆在一个分发器里</td></tr>
+            <tr><td class="src">Modules/Join/ScMultiplayerWorldTransferHandlers.cs</td><td class="mono">transfer 模块</td><td><b>复用逻辑核</b>：<code>Join/WorldTransferReceiver.cs</code> 已实现分片/校验/修复</td></tr>
+            <tr><td class="src">Modules/Join/WorldArchiveSanitizer.cs</td><td class="mono">WorldArchivePolicy</td><td><b>已迁移</b>：条目名净化（9 类输入判定已在测试里）</td></tr>
+            <tr><td class="src">Diagnostics/ScMultiplayerOperationLog.cs</td><td class="mono">logRouter 模块</td><td><b>沿用语义</b>：主机 Server / 客户端 Client，单句柄 + 每行 Flush + 异常吞掉</td></tr>
+            <tr><td class="src">Modules/Session/ActionRequestValidationPolicy.cs</td><td class="mono">后续阶段</td><td><b>本步不做</b>：挖掘/放置/交互验证不影响"进得去房间"</td></tr>
+            <tr><td class="src">Modules/Player/*（16 个文件）</td><td class="mono">spawn 模块（最小）</td><td><b>先只做出生</b>：档案、皮肤、健康等留到后面</td></tr>
+            <tr><td class="src">Modules/Terrain/*、World/*、Region/*</td><td class="mono">后续阶段</td><td><b>不在本步</b>：进房间只需要出生点附近的区块</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+    </section>
+
+    <section class="sec" id="grp-log">
+      <div class="sec-head"><span class="no">日志</span><div><h2>Server / Client 两个文件</h2><div class="sub">沿用旧 mod 的分流语义与文件约定</div></div></div>
+
+      <div class="block" id="LOG01">
+        <div class="block-head"><button class="guid" data-guid="LOG01">LOG01</button><h3>分流（可播放）</h3>
+          <span class="tagline">同一件事，两端各写各的</span></div>
+        <div class="anim" data-anim="logs"></div>
+      </div>
+
+      <div class="block" id="LOG02">
+        <div class="block-head"><button class="guid" data-guid="LOG02">LOG02</button><h3>文件格式与写入策略</h3>
+          <span class="tagline">照旧实现 + 一处必须改的文件名</span></div>
+        <div class="tw"><table>
+          <thead><tr><th>项</th><th>旧实现</th><th>新方案</th><th>原因</th></tr></thead>
+          <tbody>
+            <tr><td>主机文件</td><td class="mono">Logs/Server/ScMP-op-&lt;日期&gt;.log</td><td class="mono">Logs/Server/SuMP-op-&lt;日期&gt;.log</td><td><b>必须换名</b>：<code>Logs/Server/&lt;日期&gt;.log</code> 被无头端 ServerAuditLog 独占句柄，旧注释明确写了"同文件二次打开会失败"</td></tr>
+            <tr><td>客户端文件</td><td class="mono">Logs/Client/&lt;日期&gt;.log</td><td class="mono">Logs/Client/&lt;日期&gt;.log</td><td>沿用</td></tr>
+            <tr><td>行格式</td><td class="mono">HH:mm:ss.fff event=… k=v</td><td>同左</td><td>便于两端按时间对齐</td></tr>
+            <tr><td>句柄</td><td>单句柄；日期变化或角色切换时重开</td><td>同左</td><td>避免多次打开同一文件</td></tr>
+            <tr><td>刷盘</td><td>每行 <code>Flush()</code></td><td>同左（可关，见下）</td><td>崩溃时最后几行不丢；代价极小（人读日志量级）</td></tr>
+            <tr><td>失败处理</td><td>全部吞掉，绝不抛</td><td>同左</td><td>日志不允许影响游戏</td></tr>
+            <tr><td>大小控制</td><td>无（按天分文件）</td><td>按天 + 保留 7 天 + 单文件 16 MiB 截断提示</td><td>平板存储有限</td></tr>
+            <tr><td>根路径</td><td class="mono">data:/Logs/…</td><td>同左</td><td>游戏自己的 storage 根，安卓 12 分区存储下才可写</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+
+      <div class="block" id="LOG03">
+        <div class="block-head"><button class="guid" data-guid="LOG03">LOG03</button><h3>与状态队列的分工</h3>
+          <span class="tagline">两条记录线，别互相替代</span></div>
+        <div class="tw"><table>
+          <thead><tr><th></th><th class="mono">Journal（结构化）</th><th class="mono">Logs/Server · Logs/Client（人读）</th></tr></thead>
+          <tbody>
+            <tr><td>形态</td><td>48 B 定长二进制 · 分段落盘</td><td>文本行 · 按天一个文件</td></tr>
+            <tr><td>写频率</td><td>每条状态变化（可采样 / 可只留内存）</td><td>只写关键决策（加入、拒绝、分片完成、超时）</td></tr>
+            <tr><td>读的人</td><td>程序：筛选 / 导出 / 回放</td><td>人：直接看，贴工单</td></tr>
+            <tr><td>崩溃后</td><td>块级 CRC 恢复，续写序号</td><td>最后一行可能截断，靠 Flush 尽量少丢</td></tr>
+            <tr><td>关系</td><td colspan="2">同一条事件在 Journal 里落一条结构化记录，同时由 <code>logRouter</code> 决定要不要在文本里写一行 —— 用同一个 <code>JournalCategory</code> 判定，避免两套标准</td></tr>
+          </tbody>
+        </table></div>
+        <div class="callout ok"><span class="t">本步的日志验收</span>
+          平板加入成功后，<b>主机</b> <code>Logs/Server/SuMP-op-&lt;日期&gt;.log</code> 里应出现 <code>event=join.req client=…</code> 与 <code>event=transfer.chunk.serve client=…</code>；
+          <b>平板</b> <code>Logs/Client/&lt;日期&gt;.log</code> 里应出现 <code>event=join.send</code>、<code>event=join.decision result=ok</code>、<code>event=transfer.done chunks=N</code>。两端 <code>seq=</code> / <code>client=</code> 可对齐。</div>
+      </div>
+    </section>
+
+    <section class="sec" id="grp-stp">
+      <div class="sec-head"><span class="no">实施</span><div><h2>五步落地，每步自带验收</h2><div class="sub">任何一步都能单独回退</div></div></div>
+
+      <div class="block" id="STP01">
+        <div class="block-head"><button class="guid" data-guid="STP01">STP01</button><h3>步骤与验收</h3></div>
+        <div class="tw"><table>
+          <thead><tr><th class="mono">步</th><th>做什么</th><th>只碰哪些模块</th><th>验收（两端都要看）</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">1</td><td>加 Comms 依赖 + transport 模块 + 一条自定义往返消息</td><td><code>transport</code></td><td>平板日志出现 <code>event=net.pong rtt=…ms</code>；主机日志出现 <code>event=net.ping</code></td></tr>
+            <tr><td class="mono">2</td><td>建房 + 广播 + 房间列表（复用 RoomDirectory）</td><td><code>session</code> <code>discovery</code></td><td>平板列表里能看到 Windows 房间，含人数与延迟；关掉 discovery 仍可用手填 IP</td></tr>
+            <tr><td class="mono">3</td><td>加入 + 审批 + 世界信息（复用 JoinFlow）</td><td><code>join</code></td><td>平板 <code>event=join.decision result=ok</code>；主机 <code>event=join.req client=N</code>；被拒时有原因码</td></tr>
+            <tr><td class="mono">4</td><td>世界分片传输（复用 WorldTransferReceiver）</td><td><code>transfer</code></td><td>进度到 100%，校验失败可修复；主机记录 <code>chunk.serve</code></td></tr>
+            <tr><td class="mono">5</td><td>出生 + 位置同步（复用原子契约）</td><td><code>spawn</code> <code>logRouter</code></td><td>平板进入世界并看到主机玩家移动；两端 <code>Logs/*</code> 各有对应行</td></tr>
+          </tbody>
+        </table></div>
+        <div class="callout"><span class="t">每步都要做的三件事</span>
+          ① 新消息先进 wire 表与原子契约；② 两端 <code>Logs/</code> 有对应行；③ 用 <code>ModuleHost</code> 关掉本步模块，确认只掉这一个功能而不崩。</div>
+      </div>
+
+      <div class="block" id="STP02">
+        <div class="block-head"><button class="guid" data-guid="STP02">STP02</button><h3>总体验收判据</h3>
+          <span class="tagline">6 条，可执行</span></div>
+        <div class="grid g3">
+          <div class="tile"><h5>① 加载与长跑</h5><p>两端 <code>Game.log</code> 测试窗口 0 异常（沿用本次的窗口化读法）。</p></div>
+          <div class="tile"><h5>② 房间可见</h5><p>平板列表含主机房间，延迟与人数刷新正确。</p></div>
+          <div class="tile"><h5>③ 决策成对</h5><p><code>join.send</code> ↔ <code>join.req</code> ↔ <code>join.decision</code> 三行在两端都能找到。</p></div>
+          <div class="tile"><h5>④ 世界完整</h5><p>分片 100%，CRC 全过，缺失修复至少成功一次。</p></div>
+          <div class="tile"><h5>⑤ 进得去、留得住</h5><p>进入世界后连续 5 分钟不被动断线。</p></div>
+          <div class="tile"><h5>⑥ 下线不崩</h5><p>关 discovery → 仍能手填 IP 加入；关 journal → 游戏照常；关 transfer → 加入失败但会话与日志还在。</p></div>
+        </div>
+      </div>
+
+      <div class="block" id="RSK01">
+        <div class="block-head"><button class="guid" data-guid="RSK01">RSK01</button><h3>已知坑（本步会踩，先记下）</h3></div>
+        <div class="tw"><table>
+          <thead><tr><th class="mono">#</th><th>坑</th><th>对策</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">1</td><td>平板 <code>Game.log</code> 每次启动被重写（实测只剩 46 行）</td><td>分析用我们自己的 <code>Logs/Client</code> 文件；或用 <code>logcat</code></td></tr>
+            <tr><td class="mono">2</td><td><code>Logs/Server/&lt;日期&gt;.log</code> 被无头端独占</td><td>换文件名 <code>SuMP-op-*</code>，不要试图共用</td></tr>
+            <tr><td class="mono">3</td><td>Comms 依赖要改两处（csproj + ModInfo）</td><td>写进契约测试：两处声明的依赖集合必须相等</td></tr>
+            <tr><td class="mono">4</td><td>Android <code>force-stop</code> 不触发 <code>OnUnload</code></td><td>关键状态照 Journal 恢复，不依赖收尾代码</td></tr>
+            <tr><td class="mono">5</td><td>平板分区存储</td><td>只用游戏 <code>data:</code> 根，别写游戏目录之外</td></tr>
+            <tr><td class="mono">6</td><td>旧 mod 仍在 <code>.uninst</code> 但文件还在</td><td>测试前确认只有 SuMultiplayer 是 <code>.scmod</code>，避免两套联机抢同一个入口</td></tr>
+            <tr><td class="mono">7</td><td>部署脚本的 MSYS 路径坑（本地/远程路径语义相反）</td><td>已固化在 <code>deploy-sump.sh</code>：<code>cygpath -w</code> + <code>MSYS_NO_PATHCONV=1</code></td></tr>
+          </tbody>
+        </table></div>
+      </div>
+    </section>
+
+    <section class="sec" id="grp-idx">
+      <div class="sec-head"><span class="no">索引</span><div><h2>GUID 索引</h2><div class="sub">本页 16 个标记</div></div></div>
+      <div class="block" id="IDX01">
+        <div class="block-head"><button class="guid" data-guid="IDX01">IDX01</button><h3>GUID 索引</h3></div>
+        <div class="tw"><table>
+          <thead><tr><th class="mono">GUID</th><th>主题</th><th>状态</th></tr></thead>
+          <tbody>
+            <tr><td class="gid">CUR01</td><td>已完成的 13 个纯逻辑文件</td><td>已完成 · 129 断言</td></tr>
+            <tr><td class="gid">CUR02</td><td>两端设备实测</td><td>已完成 · 实机通过</td></tr>
+            <tr><td class="gid">CUR03</td><td>还没接线的 6 件</td><td>待做</td></tr>
+            <tr><td class="gid">MOD01</td><td>新模块清单（9 个）</td><td>设计定稿</td></tr>
+            <tr><td class="gid">MOD02</td><td>能力图与下线表现</td><td>可播放演示</td></tr>
+            <tr><td class="gid">MOD03</td><td>解耦硬规则（8 条）</td><td>规范</td></tr>
+            <tr><td class="gid">TGT01</td><td>建房→加入全流程</td><td>可播放演示</td></tr>
+            <tr><td class="gid">MSG01</td><td>最小报文集（10 条）</td><td>设计定稿</td></tr>
+            <tr><td class="gid">OLD01</td><td>与旧 mod 对照</td><td>复用/拆开/改写 三类</td></tr>
+            <tr><td class="gid">LOG01</td><td>Server / Client 分流</td><td>可播放演示</td></tr>
+            <tr><td class="gid">LOG02</td><td>文件格式与写入策略</td><td>沿用旧实现 + 换名</td></tr>
+            <tr><td class="gid">LOG03</td><td>与状态队列的分工</td><td>规范</td></tr>
+            <tr><td class="gid">STP01</td><td>五步落地与验收</td><td>实施计划</td></tr>
+            <tr><td class="gid">STP02</td><td>总体验收判据（6 条）</td><td>实施计划</td></tr>
+            <tr><td class="gid">RSK01</td><td>已知坑</td><td>风险清单</td></tr>
+            <tr><td class="gid">IDX01</td><td>GUID 索引</td><td>本表</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+    </section>
+
+    <footer>SuMultiplayer · 最小加入房间方案 · 配套：<a href="new-mod-status.html">功能总览</a> · <a href="state-journal.html">状态队列</a> · <a href="atom-merge.html">原子与合并</a> · <a href="module-decoupling.md">模块解耦规范</a> · <a href="multiplayer-architecture.html">旧 mod 解析</a></footer>
+  </main>
+</div>
+<div class="toast" id="toast">已复制</div>
+<div class="totop" id="totop">↑</div>
+<script>
+(function () {
+  "use strict";
+  function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+  function rbox(x, y, w, h, cls, rx) {
+    return '<rect class="dgb ' + (cls || "") + '" x="' + x + '" y="' + y + '" width="' + w +
+      '" height="' + h + '" rx="' + (rx === undefined ? 9 : rx) + '"/>';
+  }
+  function rtxt(x, y, s, cls, anchor) {
+    return '<text class="' + (cls || "dgt") + '" x="' + x + '" y="' + y + '"' +
+      (anchor ? ' text-anchor="' + anchor + '"' : "") + ">" + esc(s) + "</text>";
+  }
+  function svgOf(w, h, b) { return '<svg viewBox="0 0 ' + w + " " + h + '" role="img">' + b + "</svg>"; }
+
+  var toast = document.getElementById("toast"), timer = 0;
+  function say(m) { toast.textContent = m; toast.classList.add("on"); clearTimeout(timer); timer = setTimeout(function () { toast.classList.remove("on"); }, 1400); }
+  document.addEventListener("click", function (ev) {
+    var el = ev.target && ev.target.closest ? ev.target.closest(".guid") : null;
+    if (!el) return;
+    var g = el.getAttribute("data-guid") || el.textContent.trim();
+    function done() { el.classList.add("copied"); say("已复制 " + g); setTimeout(function () { el.classList.remove("copied"); }, 900); }
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(g).then(done, done); else done();
+  });
+  var input = document.getElementById("q"), nores = document.getElementById("nores");
+  var blocks = [].slice.call(document.querySelectorAll(".block"));
+  var secs = [].slice.call(document.querySelectorAll("section.sec"));
+  function filter() {
+    var q = (input.value || "").trim().toLowerCase();
+    if (!q) { blocks.forEach(function (b) { b.classList.remove("hidden"); }); secs.forEach(function (s) { s.classList.remove("hidden"); }); nores.style.display = "none"; return; }
+    var hits = 0;
+    blocks.forEach(function (b) {
+      var hit = b.textContent.toLowerCase().indexOf(q) >= 0 || b.id.toLowerCase().indexOf(q) >= 0;
+      b.classList.toggle("hidden", !hit); if (hit) hits++;
+    });
+    secs.forEach(function (s) { s.classList.toggle("hidden", !s.querySelectorAll(".block:not(.hidden)").length); });
+    nores.style.display = hits ? "none" : "block";
+  }
+  input.addEventListener("input", filter);
+  document.addEventListener("keydown", function (e) { if (e.key === "/" && document.activeElement !== input) { e.preventDefault(); input.focus(); } });
+  var links = {};
+  [].forEach.call(document.querySelectorAll("#toc a"), function (a) { links[a.getAttribute("href").slice(1)] = a; });
+  var prog = document.getElementById("prog"), top = document.getElementById("totop");
+  document.addEventListener("scroll", function () {
+    var max = document.documentElement.scrollHeight - window.innerHeight;
+    prog.style.width = (max > 0 ? (window.scrollY / max) * 100 : 0) + "%";
+    top.classList.toggle("on", window.scrollY > 500);
+  }, { passive: true });
+  top.addEventListener("click", function () { window.scrollTo({ top: 0, behavior: "smooth" }); });
+  if ("IntersectionObserver" in window) {
+    var io = new IntersectionObserver(function (es) {
+      es.forEach(function (en) {
+        if (!en.isIntersecting) return;
+        var a = links[en.target.id]; if (!a) return;
+        [].forEach.call(document.querySelectorAll("#toc a.active"), function (x) { x.classList.remove("active"); });
+        a.classList.add("active");
+      });
+    }, { rootMargin: "-70px 0px -74% 0px" });
+    blocks.forEach(function (b) { if (links[b.id]) io.observe(b); });
+  }
+
+  function buildAnim(def, host) {
+    host.innerHTML = '<div class="figsvg"></div><div class="playbar">' +
+      '<button class="btn pri js-play" type="button">▶ 播放</button>' +
+      '<button class="btn js-reset" type="button">↺ 重置</button>' +
+      '<input type="range" class="js-seek" min="0" max="1000" value="0">' +
+      '<span class="phase"></span>' + (def.extra || "") + "</div>" +
+      '<figcaption>' + def.cap + "</figcaption>";
+    var fig = host.querySelector(".figsvg"), phase = host.querySelector(".phase");
+    var seek = host.querySelector(".js-seek"), btn = host.querySelector(".js-play");
+    var t = 0, playing = false, last = 0;
+    function draw() {
+      fig.innerHTML = def.draw.call(def, t, host);
+      phase.textContent = def.phase.call(def, t, host);
+      seek.value = String(Math.round((t / def.duration) * 1000));
+    }
+    function loop(now) {
+      if (!playing) return;
+      if (!last) last = now;
+      t += Math.min((now - last) / 1000, 0.1); last = now;
+      if (t >= def.duration) { t = def.duration; playing = false; btn.textContent = "▶ 重播"; }
+      draw();
+      if (playing) requestAnimationFrame(loop); else last = 0;
+    }
+    btn.addEventListener("click", function () {
+      if (playing) { playing = false; btn.textContent = "▶ 继续"; return; }
+      if (t >= def.duration) t = 0;
+      playing = true; last = 0; btn.textContent = "⏸ 暂停"; requestAnimationFrame(loop);
+    });
+    host.querySelector(".js-reset").addEventListener("click", function () { playing = false; t = 0; btn.textContent = "▶ 播放"; draw(); });
+    seek.addEventListener("input", function () { playing = false; btn.textContent = "▶ 继续"; t = def.duration * (parseInt(seek.value, 10) / 1000); draw(); });
+    [].forEach.call(host.querySelectorAll("input,select"), function (el) { el.addEventListener("change", draw); });
+    if (def.bind) def.bind(host, draw);
+    draw();
+  }
+
+  var ANIM = {};
+
+  /* ---------- TGT01：建房 → 加入 ---------- */
+  var STEPS = [
+    { a: "host", t: "建房", d: "session.create name=家 world=存档A max=4", log: "S", l: "event=room.create name=存档A max=4" },
+    { a: "host", t: "广播", d: "RoomAdvertisement 1 Hz（可丢弃）", log: "S", l: "event=room.advertise tick=1" },
+    { a: "client", t: "发现", d: "discovery 扫到房间 → RoomDirectory 列表", log: "C", l: "event=room.found host=主机IP rtt=3ms" },
+    { a: "both", t: "握手", d: "ProtocolHello ⇄ Ack（协议区间 + 能力集合）", log: "C", l: "event=net.hello proto=2 cap=9" },
+    { a: "client", t: "申请", d: "JoinRequest（玩家名 + 皮肤哈希）", log: "C", l: "event=join.send name=Tablet" },
+    { a: "host", t: "审批", d: "JoinDecision=OK + WorldInfo（与请求同级可靠）", log: "S", l: "event=join.req client=2 → allow" },
+    { a: "client", t: "收世界", d: "WorldChunk ×N：校验和 + 缺失清单修复", log: "C", l: "event=transfer.done chunks=64 crc=ok" },
+    { a: "both", t: "屏障", d: "追帧屏障通过 → Ready", log: "S", l: "event=join.barrier client=2 passed" },
+    { a: "client", t: "进世界", d: "PlayerSpawn → 玩家实体就位，位置 8 Hz", log: "C", l: "event=spawn player=2 cell=128,64,128" }
+  ];
+  ANIM.roomflow = {
+    w: 900, h: 330, duration: 18.0,
+    cap: "九步闭环：Windows 建房 → 平板发现/申请 → 主机审批 → 传世界 → 屏障 → 进入；每步标注写哪个日志文件",
+    phase: function (t) {
+      var i = Math.min(STEPS.length - 1, Math.floor(t / 2));
+      var s = STEPS[i];
+      return "第 " + (i + 1) + "/9 步 · " + (s.a === "host" ? "主机" : s.a === "client" ? "客户端" : "双方") +
+        "：" + s.t + "　→ 写 " + (s.log === "S" ? "Logs/Server" : "Logs/Client");
+    },
+    draw: function (t) {
+      var i = Math.min(STEPS.length - 1, Math.floor(t / 2));
+      var s = STEPS[i], body = "";
+      var hostCls = (s.a === "host" || s.a === "both") ? "vi" : "";
+      var cliCls = (s.a === "client" || s.a === "both") ? "cy" : "";
+      body += rbox(30, 30, 250, 210, hostCls, 10);
+      body += rtxt(46, 54, "Windows（主机）", "dghead");
+      body += rtxt(46, 76, "transport · session · hostAuthority", "dgt sm");
+      body += rtxt(46, 96, "transfer（发送端）", "dgt sm");
+      body += rtxt(46, 118, "Logs/Server/SuMP-op-<日期>.log", "dgt sm");
+      if (s.log === "S") {
+        body += rbox(38, 130, 234, 26, "am", 6);
+        body += rtxt(48, 147, s.l, "dgt sm");
+      }
+      var files = [["room.create", 0], ["advertise", 1], ["join.req", 5], ["barrier", 7]];
+      files.forEach(function (f, k) {
+        if (f[1] <= i) body += rtxt(46, 176 + k * 16, "• " + f[0], "dgt sm");
+      });
+
+      body += rbox(620, 30, 250, 210, cliCls, 10);
+      body += rtxt(636, 54, "华为平板（客户端）", "dghead");
+      body += rtxt(636, 76, "transport · join · discovery", "dgt sm");
+      body += rtxt(636, 96, "transfer（接收端）· spawn", "dgt sm");
+      body += rtxt(636, 118, "Logs/Client/<日期>.log", "dgt sm");
+      if (s.log === "C") {
+        body += rbox(628, 130, 234, 26, "am", 6);
+        body += rtxt(638, 147, s.l, "dgt sm");
+      }
+      var cfiles = [["room.found", 2], ["net.hello", 3], ["join.send", 4], ["transfer.done", 6], ["spawn", 8]];
+      cfiles.forEach(function (f, k) {
+        if (f[1] <= i) body += rtxt(636, 176 + k * 14, "• " + f[0], "dgt sm");
+      });
+
+      body += rtxt(450, 54, "第 " + (i + 1) + " 步：" + s.t, "dghead", "middle");
+      body += rtxt(450, 78, s.d, "dgt sm", "middle");
+      var mid = [["RoomAdvertisement", 1], ["ProtocolHello / Ack", 3], ["JoinRequest", 4], ["JoinDecision + WorldInfo", 5], ["WorldChunk ×N", 6], ["PlayerSpawn", 8]];
+      mid.forEach(function (m, k) {
+        var y = 104 + k * 22;
+        var done = m[1] <= i;
+        body += rbox(330, y - 14, 240, 20, done ? "gr" : "", 5);
+        body += rtxt(340, y, (done ? "✓ " : "· ") + m[0], "dgt sm");
+      });
+
+      body += rbox(30, 254, 840, 62, "", 10);
+      body += rtxt(46, 278, "主机端那一步只写 Server，客户端那一步只写 Client；握手/屏障这类「双方都发生」的事件两端各写一行，用 event= 与 client= 对齐", "dgt sm");
+      body += rtxt(46, 300, "关闭 discovery 时第 3 步退化为「手填 IP」，其余步骤不变 —— 这就是软依赖的意义", "dgt sm");
+      return svgOf(this.w, this.h, body);
+    }
+  };
+
+  /* ---------- MOD02：模块下线 ---------- */
+  var MODS = [
+    { id: "transport", cap: "net.transport", hard: [], soft: [], x: 40, y: 40 },
+    { id: "session", cap: "session.core", hard: ["net.transport"], soft: [], x: 250, y: 40 },
+    { id: "discovery", cap: "room.discovery", hard: [], soft: ["net.transport"], x: 40, y: 130 },
+    { id: "join", cap: "join.flow", hard: ["session.core"], soft: ["room.discovery"], x: 460, y: 40 },
+    { id: "transfer", cap: "world.transfer", hard: ["net.transport"], soft: [], x: 250, y: 130 },
+    { id: "spawn", cap: "player.spawn", hard: ["session.core"], soft: ["world.transfer"], x: 460, y: 130 },
+    { id: "journal", cap: "journal.sink", hard: [], soft: [], x: 40, y: 220 },
+    { id: "logRouter", cap: "log.router", hard: [], soft: ["journal.sink"], x: 250, y: 220 },
+    { id: "hostAuthority", cap: "host.authority", hard: ["session.core"], soft: ["world.transfer"], x: 670, y: 85 }
+  ];
+  function offSet(host) {
+    var off = {};
+    [].forEach.call(host.querySelectorAll(".js-chip"), function (c) { if (!c.classList.contains("on")) off[c.getAttribute("data-m")] = true; });
+    return off;
+  }
+  function resolve(off) {
+    var avail = {}, state = {}, it = 0;
+    MODS.forEach(function (m) { state[m.id] = off[m.id] ? "Disabled" : "?"; if (!off[m.id]) avail[m.cap] = false; });
+    var changed = true;
+    while (changed) {
+      changed = false;
+      MODS.forEach(function (m) {
+        if (off[m.id] || state[m.id] === "Active" || state[m.id] === "Unavailable") return;
+        var ok = m.hard.every(function (c) { return avail[c]; });
+        if (ok) { state[m.id] = "Active"; avail[m.cap] = true; changed = true; }
+      });
+      if (++it > 20) break;
+    }
+    MODS.forEach(function (m) {
+      if (off[m.id]) return;
+      if (state[m.id] !== "Active") state[m.id] = "Unavailable";
+      var missing = m.soft.filter(function (c) { return !avail[c]; });
+      m._degraded = missing.length > 0;
+      m._missing = missing;
+    });
+    return { state: state, avail: avail };
+  }
+  var FEATURES = [
+    { n: "房间可见（列表）", need: ["room.discovery"] },
+    { n: "手填 IP 加入", need: ["net.transport", "session.core", "join.flow"] },
+    { n: "世界传输", need: ["world.transfer"] },
+    { n: "进入世界", need: ["player.spawn"] },
+    { n: "主机权威", need: ["host.authority"] },
+    { n: "文本日志", need: ["log.router"] },
+    { n: "结构化记录", need: ["journal.sink"] }
+  ];
+  ANIM.modules = {
+    w: 900, h: 360, duration: 8.0,
+    cap: "关掉任意模块看谁降级：硬依赖变 Unavailable，软依赖只降级；右侧列出「还能用的功能」",
+    extra: '<span class="chips js-chips">' + MODS.map(function (m) {
+      return '<span class="chip js-chip on" data-m="' + m.id + '" style="background:#0d8a63">' + m.id + "</span>";
+    }).join("") + "</span>",
+    bind: function (host, draw) {
+      [].forEach.call(host.querySelectorAll(".js-chip"), function (c) {
+        c.addEventListener("click", function () {
+          var on = !c.classList.contains("on");
+          c.classList.toggle("on", on);
+          c.style.background = on ? "#0d8a63" : "#fff";
+          draw();
+        });
+      });
+    },
+    phase: function (t, host) {
+      var r = resolve(offSet(host));
+      var active = 0, un = 0, dis = 0, deg = 0;
+      MODS.forEach(function (m) {
+        var s = r.state[m.id];
+        if (s === "Active") { active++; if (m._degraded) deg++; } else if (s === "Unavailable") un++; else dis++;
+      });
+      var ok = FEATURES.filter(function (f) { return f.need.every(function (c) { return r.avail[c]; }); }).length;
+      return "Active " + active + "（降级 " + deg + "）· Unavailable " + un + " · Disabled " + dis +
+        " · 可用功能 " + ok + "/" + FEATURES.length;
+    },
+    draw: function (t, host) {
+      var r = resolve(offSet(host)), body = rtxt(40, 24, "能力图（点上方标签下线模块）", "dghead");
+      // 边
+      MODS.forEach(function (m) {
+        m.hard.concat(m.soft).forEach(function (cap) {
+          var src = null;
+          MODS.forEach(function (o) { if (o.cap === cap) src = o; });
+          if (!src) return;
+          var isHard = m.hard.indexOf(cap) >= 0;
+          var ok = r.state[src.id] === "Active";
+          body += '<path class="dgl ' + (isHard ? "" : "dash") + '" d="M' + (src.x + 100) + " " + (src.y + 20) +
+            " H" + (m.x - 10) + " V" + (m.y + 20) + '" stroke="' + (ok ? (isHard ? "#2b9fc4" : "#93a6c4") : "#d1495f") + '"/>';
+        });
+      });
+      MODS.forEach(function (m) {
+        var st = r.state[m.id];
+        var cls = st === "Active" ? (m._degraded ? "am" : "gr") : (st === "Disabled" ? "" : "rd");
+        body += rbox(m.x, m.y, 200, 62, cls, 9);
+        body += rtxt(m.x + 10, m.y + 22, m.id, "dghead");
+        body += rtxt(m.x + 10, m.y + 40, st === "Active" ? (m._degraded ? "Active · Degraded" : "Active") : st, "dgt sm");
+        body += rtxt(m.x + 10, m.y + 56, m._missing && m._missing.length ? "缺：" + m._missing.join(",") : m.cap, "dgt sm");
+      });
+      body += rbox(250, 296, 620, 56, "", 10);
+      var okF = FEATURES.filter(function (f) { return f.need.every(function (c) { return r.avail[c]; }); });
+      body += rtxt(262, 318, "还能用：" + (okF.map(function (f) { return f.n; }).join(" · ") || "（无）"), "dgt sm");
+      body += rtxt(262, 340, "掉的功能：" + (FEATURES.filter(function (f) { return okF.indexOf(f) < 0; }).map(function (f) { return f.n; }).join(" · ") || "（无）"), "dgt sm");
+      body += rtxt(40, 320, "关键：transport 挂了联机全停，但游戏本体照常；journal 挂了只是不记录，联机不受影响", "dgt sm");
+      return svgOf(this.w, this.h, body);
+    }
+  };
+
+  /* ---------- LOG01：两端日志分流 ---------- */
+  var LOGLINES = [
+    { at: 1, side: "C", s: "event=room.found host=主机IP rtt=3ms" },
+    { at: 2, side: "S", s: "event=room.create name=存档A max=4" },
+    { at: 3, side: "C", s: "event=net.hello proto=2 cap=9" },
+    { at: 4, side: "S", s: "event=join.req client=2 name=Tablet" },
+    { at: 5, side: "C", s: "event=join.decision result=ok" },
+    { at: 6, side: "S", s: "event=join.allow client=2 spawn=128,64,128" },
+    { at: 7, side: "C", s: "event=transfer.chunk recv=32/64 crc=ok" },
+    { at: 8, side: "S", s: "event=transfer.chunk.serve client=2 sent=32" },
+    { at: 9, side: "C", s: "event=transfer.done chunks=64 repair=1" },
+    { at: 10, side: "S", s: "event=join.barrier client=2 passed" },
+    { at: 11, side: "C", s: "event=spawn player=2 cell=128,64,128" }
+  ];
+  ANIM.logs = {
+    w: 900, h: 320, duration: 13.0,
+    cap: "同一次加入，主机侧写 Logs/Server、客户端侧写 Logs/Client；两端用 event= 与 client= 对齐时间线",
+    phase: function (t) {
+      var n = LOGLINES.filter(function (l) { return l.at <= t; }).length;
+      var s = LOGLINES.filter(function (l) { return l.at <= t && l.side === "S"; }).length;
+      var c = LOGLINES.filter(function (l) { return l.at <= t && l.side === "C"; }).length;
+      return "已写 " + n + " 行 → Server " + s + " 行 · Client " + c + " 行";
+    },
+    draw: function (t) {
+      var body = rtxt(40, 24, "两个文件，互不干扰；写不进去也绝不影响游戏", "dghead");
+      var cols = [
+        { x: 30, title: "Logs/Server/SuMP-op-2026-10-16.log", cls: "vi", side: "S" },
+        { x: 470, title: "Logs/Client/2026-10-16.log", cls: "cy", side: "C" }
+      ];
+      cols.forEach(function (col) {
+        body += rbox(col.x, 38, 400, 236, "", 10);
+        body += rtxt(col.x + 14, 60, col.title, "dgt sm");
+        var lines = LOGLINES.filter(function (l) { return l.side === col.side && l.at <= t; });
+        body += rtxt(col.x + 14, 80, "句柄：单开 · 每行 Flush · 按天分文件", "dgt sm");
+        lines.forEach(function (l, i) {
+          var y = 104 + i * 21;
+          var fresh = (t - l.at) < 1.2;
+          body += '<rect x="' + (col.x + 8) + '" y="' + (y - 14) + '" width="384" height="19" rx="4" fill="' +
+            (fresh ? "#fff4df" : "transparent") + '"/>';
+          var hh = String(21).padStart(2, "0");
+          var mm = String(52 + Math.floor(l.at / 60)).padStart(2, "0");
+          var ss = String((l.at * 3) % 60).padStart(2, "0");
+          body += rtxt(col.x + 14, y, hh + ":" + mm + ":" + ss + ".017 " + l.s, "dgt sm");
+        });
+        if (!lines.length) body += rtxt(col.x + 14, 104, "（还没开始写）", "dgt sm");
+      });
+      body += rbox(30, 284, 840, 28, "", 8);
+      body += rtxt(44, 303, "主机端只写「玩家操作」（谁请求、谁被批准、服务了多少分片）；客户端只写「本地决策」（我请求了什么、收到什么、结果如何）", "dgt sm");
+      return svgOf(this.w, this.h, body);
+    }
+  };
+
+  [].forEach.call(document.querySelectorAll(".anim"), function (host) {
+    var def = ANIM[host.getAttribute("data-anim")];
+    if (def) buildAnim(def, host);
+  });
+})();
+</script>
+</body>
+</html>

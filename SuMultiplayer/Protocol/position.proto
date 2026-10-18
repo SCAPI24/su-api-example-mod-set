@@ -1,0 +1,50 @@
+syntax = "proto3";
+
+package sump.position;
+
+option csharp_namespace = "SuMultiplayer.Protocol.Position";
+option optimize_for = SPEED;
+
+import "google/protobuf/any.proto";
+
+message Vec2 {
+  float x = 1;
+  float y = 2;
+}
+
+message Vec3 {
+  float x = 1;
+  float y = 2;
+  float z = 3;
+}
+
+message Quat {
+  float x = 1;
+  float y = 2;
+  float z = 3;
+  float w = 4;
+}
+
+// One player position / pose snapshot. client_id is the transport-level peer id.
+message PlayerPosition {
+  int32 client_id = 1;
+  int32 server_tick = 2;
+  Vec3 position = 3;
+  Quat rotation = 4;
+  Vec3 velocity = 5;
+  Vec2 look_angles = 6;
+  bool is_crouching = 7;
+  bool is_flying = 8;
+  bool is_grounded = 9;
+  // Third-party extension points: see doc/message-protocol.md.
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}
+
+// Client -> host: one snapshot. Host -> client: a batch for all avatars.
+message PlayerPositions {
+  repeated PlayerPosition entries = 1;
+  // Third-party extension points: see doc/message-protocol.md.
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}

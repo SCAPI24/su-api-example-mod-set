@@ -1884,6 +1884,7 @@ namespace ScMultiplayer
                 kind == EditableDataKind.AdjustableDelay ? AdjustableDelayGateBlock.Index :
                 kind == EditableDataKind.SwitchVoltage ? SwitchBlock.Index :
                 kind == EditableDataKind.ButtonVoltage ? ButtonBlock.Index :
+                kind == EditableDataKind.ChannelNumber ? ButtonBlock.Index :
                 kind == EditableDataKind.Piston ? PistonBlock.Index :
                 kind == EditableDataKind.Dispenser ? DispenserBlock.Index : 0;
         }
@@ -1896,8 +1897,12 @@ namespace ScMultiplayer
             kind == EditableDataKind.AdjustableDelay ||
                 kind == EditableDataKind.SwitchVoltage ||
                 kind == EditableDataKind.ButtonVoltage ||
+                kind == EditableDataKind.ChannelNumber ||
                 kind == EditableDataKind.Piston ||
                 kind == EditableDataKind.Dispenser;
+
+        // 信道 Mod（Channel）的通道号位域：data bit 3..10（0..255）
+        private const int ChannelNumberDataMask = 0x7F8;
 
         // Source: Survivalcraft/Game/SubsystemAdjustableDelayGateBlockBehavior.cs:
         // SubsystemAdjustableDelayGateBlockBehavior.OnEditBlock
@@ -1930,6 +1935,13 @@ namespace ScMultiplayer
             {
                 data = ButtonBlock.SetVoltageLevel(currentData,
                     ButtonBlock.GetVoltageLevel(requestedData));
+                return true;
+            }
+            if (kind == EditableDataKind.ChannelNumber)
+            {
+                // 信道：只应用 data bit 3-10（通道号），face/朝向/类型码保持服务端当前值
+                data = (currentData & ~ChannelNumberDataMask) |
+                    (requestedData & ChannelNumberDataMask);
                 return true;
             }
             if (kind == EditableDataKind.Piston)

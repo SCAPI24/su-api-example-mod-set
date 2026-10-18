@@ -20,5 +20,11 @@
         <IsMergeLib>true</IsMergeLib>
       </ModInfo>
     </Dependency>
+    <Dependency>
+      <ModInfo>
+        <Identifier>SuEventBus</Identifier>
+        <IsMergeLib>true</IsMergeLib>
+      </ModInfo>
+    </Dependency>
   </Dependencies>
 </Mod>

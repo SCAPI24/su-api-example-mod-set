@@ -11,7 +11,16 @@ namespace CmdBridgeMod
     /// 但还没失焦"，于是键鼠仍然进游戏；另一个方向也要能查清"是不是我们把游戏拉到前台了"
     /// （我们从来只读、不写窗口状态，有了这个才有证据说清楚）。
     ///
-    /// 铁律：**只读**。这里没有、也不要加 `SetForegroundWindow` / `ShowWindow` / `Activate`。
+    /// ==================================================================================
+    /// 铁律（用户 2026-10-17 定）：**命令行桥存在时禁止抢占真实鼠标与窗口；请在后台用虚拟输入完成。**
+    /// 原因：用户明确要求；抢真实窗口/鼠标会打断用户操作，且所有操作在后台虚拟输入下都能完成。
+    /// 本类是该规则下**唯一允许**保留 user32 依赖的地方，且只用下面这 5 个**只读**入口：
+    ///   · `GetForegroundWindow` / `GetWindowTextW` / `GetWindowTextLengthW` /
+    ///     `GetWindowThreadProcessId` / `IsWindow`。
+    /// 这里没有、也不许加 `SetForegroundWindow` / `SetActiveWindow` / `ShowWindow` /
+    /// `SetCursorPos` / `mouse_event` / `SendInput` / `AttachThreadInput`。
+    /// 策略常量与完整说明见 `Server/FocusPolicy.cs`（`BackgroundOnlyPolicyName` / `BackgroundOnlyRuleMessage`）。
+    /// ==================================================================================
     /// 非 Windows 平台由调用方兜底（本类只在 Windows 上实例化）。
     /// </summary>
     internal sealed class ForegroundWindowProbe

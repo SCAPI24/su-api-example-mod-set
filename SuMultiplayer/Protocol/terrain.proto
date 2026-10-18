@@ -1,0 +1,148 @@
+syntax = "proto3";
+
+package sump.terrain;
+
+option csharp_namespace = "SuMultiplayer.Protocol.Terrain";
+option optimize_for = SPEED;
+
+import "google/protobuf/any.proto";
+
+// Chunk coordinates (x/z are chunk indices, not cell coordinates).
+message ChunkKey {
+  sint32 x = 1;
+  sint32 z = 2;
+}
+
+// One cell edit: cell coordinates are chunk-local for CellChange/ChunkResync and
+// world coordinates for CellEditRequest/CellEditResult (authority.proto).
+message CellEdit {
+  sint32 x = 1;
+  sint32 y = 2;
+  sint32 z = 3;
+  int32 contents = 4;
+  int32 data = 5;
+}
+
+// Verdict values mirror Terrain.DigestVerdict (0/1/2 on the old wire).
+enum ChunkDigestVerdict {
+  CHUNK_DIGEST_VERDICT_NOT_READY = 0;
+  CHUNK_DIGEST_VERDICT_MATCH = 1;
+  CHUNK_DIGEST_VERDICT_MISMATCH = 2;
+}
+
+// Client -> host: one or more chunk digest reports.
+message ChunkDigestReport {
+  message Entry {
+    ChunkKey key = 1;
+    uint32 hash = 2;
+  }
+  repeated Entry entries = 1;
+  // Third-party extension points: see doc/message-protocol.md.
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}
+
+// Host -> client: digest verdicts.
+message ChunkVerdict {
+  message Entry {
+    ChunkKey key = 1;
+    ChunkDigestVerdict verdict = 2;
+    uint32 host_hash = 3;
+  }
+  repeated Entry entries = 1;
+  // Third-party extension points: see doc/message-protocol.md.
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}
+
+// Host -> client: one whole-chunk snapshot part.
+//
+// "records" is a compact array of fixed 8-byte runs; entries * 8 == records.size.
+// A run is: uint8 x, uint8 z, uint8 start_y, uint8 length_minus_one,
+//           int32 packed (little endian, packed = (contents << 16) | data).
+// The array is deliberately opaque bytes: one chunk can contain 65k cells and
+// per-cell protobuf entries would multiply the frame size.
+message ChunkResync {
+  ChunkKey key = 1;
+  int32 index = 2;
+  int32 count = 3;
+  int32 entries = 4;
+  bytes records = 5;
+  // Change journal sequence captured when this snapshot was encoded (absent = unknown).
+  optional int64 watermark = 6;
+  // Third-party extension points: see doc/message-protocol.md.
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}
+
+// Host -> client: one or more authoritative cell changes.
+message CellChange {
+  message Entry {
+    ChunkKey key = 1;
+    CellEdit edit = 2;
+  }
+  repeated Entry entries = 1;
+  // Parallel to entries: journal sequence of each change (empty = unknown).
+  repeated int64 sequences = 2;
+  // bit0 = replay (catch-up), bit1..31 reserved.
+  uint32 flags = 3;
+  // Per-connection delivery stream. index = prev_index + 1; -1 = unknown.
+  int64 prev_delivery_index = 4;
+  int64 delivery_index = 5;
+  // Third-party extension points: see doc/message-protocol.md.
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}
+
+// Reconnect catch-up stages (Request/Applied are client -> host, the rest host -> client).
+enum CatchUpPhase {
+  CATCH_UP_PHASE_REQUEST = 0;
+  CATCH_UP_PHASE_BEGIN = 1;
+  CATCH_UP_PHASE_BARRIER = 2;
+  CATCH_UP_PHASE_REJECTED = 3;
+  CATCH_UP_PHASE_APPLIED = 4;
+}
+
+message CatchUp {
+  CatchUpPhase phase = 1;
+  int64 last_applied = 2;
+  int64 head = 3;
+  int64 first_retained = 4;
+  int32 change_count = 5;
+  string reason = 6;
+  // Third-party extension points: see doc/message-protocol.md.
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}
+
+// Client -> host: resident chunk set (full-set part or load/unload delta).
+enum ChunkSetMode {
+  CHUNK_SET_MODE_DELTA = 0;
+  CHUNK_SET_MODE_FULL_SET = 1;
+}
+
+message ClientChunks {
+  message Entry {
+    sint32 x = 1;
+    sint32 z = 2;
+    bool loaded = 3;
+  }
+  ChunkSetMode mode = 1;
+  int32 full_set_id = 2;
+  int32 part_index = 3;
+  int32 part_count = 4;
+  repeated Entry entries = 5;
+  // Payload revision (currently 1). A mismatch is rejected explicitly.
+  uint32 version = 6;
+  // Third-party extension points: see doc/message-protocol.md.
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}
+
+// Host -> client: re-verify chunks (an empty list means "all resident chunks").
+message VerifyChunks {
+  repeated ChunkKey chunks = 1;
+  // Third-party extension points: see doc/message-protocol.md.
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}

@@ -12,7 +12,9 @@ namespace ScMultiplayer
         SwitchVoltage = 4,
         ButtonVoltage = 5,
         Piston = 6,
-        Dispenser = 7
+        Dispenser = 7,
+        // 信道（Channel Mod）：只认 data 的 bit 3-10（通道号 0..255），其余位保持服务端当前值
+        ChannelNumber = 8
     }
 
     public enum EditableDataScope : byte

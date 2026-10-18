@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    tsverify：地形摘要 / 裁决链 / 身份归档 / 欠更新计数 / 位置快照 / 世界传输闸门的无设备自检
+    （真实 TCP 回环 + mod 的真实生产源码，不复制逻辑）。
+
+    本工程里所有路径都相对工程文件目录解析，不写任何机器绝对路径：
+      Verification\TsVerify\..\..\..\  =  Mod\SuMultiplayer\
+    引擎包走与 mod 相同的 PackageReference（同一 NuGet 源、同一版本），
+    因此不依赖"先手工构建过 mod、bin\ 下有 Engine.dll"。
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>TsVerify</AssemblyName>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <StartupObject>TsVerify.Check</StartupObject>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Check.cs" />
+    <!-- 直接编译 mod 的同一份源码（单一事实来源） -->
+    <Compile Include="..\..\..\Terrain\*.cs" />
+    <!-- TransportPort.cs 也编入：世界传输闸门用例要驱动真实的传输端口 -->
+    <Compile Include="..\..\..\Net\*.cs" />
+    <!-- 世界传输模块 + 它的端口契约（不依赖 Game）：真实 TCP 回归
+         "首次加入恰好发一次整图 / 重连绝不导出或发送"。 -->
+    <Compile Include="..\..\..\Modules\ModuleContracts.cs" />
+    <Compile Include="..\..\..\Modules\TransferPorts.cs" />
+    <Compile Include="..\..\..\Modules\WorldTransferModule.cs" />
+    <Compile Include="..\..\..\Transfer\WorldTransfer.cs" />
+    <Compile Include="..\..\..\Join\WorldTransferReceiver.cs" />
+    <Compile Include="..\..\..\Engine\SyncConfig.cs" />
+    <!-- 实时地图工具的真实 JSON 生产者（BuildStateJson）；它自带 Main，StartupObject 已指到 Check -->
+    <Compile Include="..\..\..\Tools\LiveMap\Program.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- PlayerPositionNet.cs 用引擎的 Vector3/Quaternion/Vector2/MathUtils。
+         版本与 mod 的 PackageReference 一致（cnb-nuget 源）。 -->
+    <PackageReference Include="Engine" Version="0.1.6" />
+  </ItemGroup>
+</Project>

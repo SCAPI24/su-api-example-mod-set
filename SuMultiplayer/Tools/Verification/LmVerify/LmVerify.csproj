@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    lmverify：实时地图载荷（LiveMapCodec）编解码 + 工具 /state JSON 的无设备自检。
+    直接编译 mod 与实时地图工具的真实生产源码（单一事实来源），不复制逻辑。
+
+    路径全部相对工程文件目录解析：
+      ..\..\..\Tools\LiveMap\Program.cs、..\..\..\Terrain\*.cs、..\..\..\Net\*.cs
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>LmVerify</AssemblyName>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <StartupObject>LmVerify.Verify</StartupObject>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Verify.cs" />
+    <Compile Include="..\..\..\Tools\LiveMap\Program.cs" />
+    <Compile Include="..\..\..\Terrain\*.cs" />
+    <!-- TransportPort.cs 只给模块用（依赖 Transfer/ 的世界传输端口）；
+         PlayerPositionNet.cs 是位置通道（用引擎的 Vector3），实时地图不消费它，
+         本工程刻意不引引擎程序集，所以排除。 -->
+    <Compile Include="..\..\..\Net\*.cs"
+             Exclude="..\..\..\Net\TransportPort.cs;..\..\..\Net\PlayerPositionNet.cs" />
+  </ItemGroup>
+</Project>

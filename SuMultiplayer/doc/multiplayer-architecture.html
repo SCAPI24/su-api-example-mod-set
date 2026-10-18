@@ -1,0 +1,1545 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Survivalcraft 联机模组 · 图解（架构 / 协议 / 流程 / 重写）</title>
+<meta name="description" content="以图表为主的 ScMultiplayer 联机模组解析：架构、协议、交互流程、权威模型、扩展能力与重写映射，每个知识点带 GUID 标记。">
+<style>
+:root{
+  --bg:#f4f7fc; --card:#ffffff; --tint:#f7f9fe; --tint2:#eef3fb;
+  --line:#dde5f1; --line2:#c3d1e6;
+  --tx:#16203a; --tx2:#48587a; --tx3:#7d8aa3;
+  --cy:#0e7fa8; --cy2:#e4f5fc;
+  --vi:#6a4bd8; --vi2:#efeafe;
+  --am:#a9740a; --am2:#fff4df;
+  --gr:#0d8a63; --gr2:#e5f8f0;
+  --rd:#c23a55; --rd2:#fdecf0;
+  --mono:ui-monospace,"Cascadia Mono","JetBrains Mono",Consolas,"Liberation Mono",monospace;
+  --sans:system-ui,-apple-system,"Segoe UI","Microsoft YaHei","PingFang SC","Noto Sans CJK SC",sans-serif;
+  --r:12px; --r2:9px;
+  --sh:0 1px 2px rgba(20,40,80,.05),0 6px 18px rgba(20,40,80,.05);
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0; background:var(--bg); color:var(--tx); font-family:var(--sans);
+  font-size:14.5px; line-height:1.7; -webkit-font-smoothing:antialiased}
+a{color:var(--cy); text-decoration:none}
+a:hover{text-decoration:underline}
+code{font-family:var(--mono); font-size:.87em; background:var(--tint2); border:1px solid var(--line);
+  border-radius:5px; padding:.05em .34em; color:#1d3a63; white-space:nowrap}
+
+.topbar{position:sticky; top:0; z-index:60; display:flex; align-items:center; gap:12px;
+  padding:9px 20px; background:rgba(255,255,255,.9); backdrop-filter:blur(10px);
+  border-bottom:1px solid var(--line)}
+.brand{display:flex; align-items:center; gap:10px; font-weight:750; white-space:nowrap; color:var(--tx)}
+.brand .logo{width:28px; height:28px; border-radius:8px; display:grid; place-items:center; font-size:13px;
+  background:linear-gradient(140deg,var(--cy),var(--gr)); color:#fff; font-weight:900}
+.brand small{display:block; font-weight:500; font-size:11px; color:var(--tx3)}
+.topbar .ver{font-family:var(--mono); font-size:11px; color:var(--tx2); border:1px solid var(--line);
+  border-radius:999px; padding:2px 9px; background:var(--tint)}
+.topbar .grow{flex:1}
+.search{position:relative; min-width:180px}
+.search input{width:100%; padding:7px 32px 7px 11px; border-radius:999px; font-family:var(--sans); font-size:12.5px;
+  color:var(--tx); background:var(--tint); border:1px solid var(--line); outline:none}
+.search input:focus{border-color:var(--cy); box-shadow:0 0 0 3px var(--cy2); background:#fff}
+.search .hint{position:absolute; right:9px; top:50%; transform:translateY(-50%); font-family:var(--mono);
+  font-size:10px; color:var(--tx3)}
+.btn{cursor:pointer; border:1px solid var(--line); background:#fff; color:var(--tx2); border-radius:999px;
+  padding:6px 13px; font-size:12px; font-family:var(--sans); transition:.14s; white-space:nowrap}
+.btn:hover{color:var(--tx); border-color:var(--line2); background:var(--tint)}
+.progress{position:fixed; top:0; left:0; height:3px; width:0; z-index:70;
+  background:linear-gradient(90deg,var(--cy),var(--gr),var(--am))}
+
+.layout{display:grid; grid-template-columns:236px minmax(0,1fr); gap:26px;
+  max-width:1460px; margin:0 auto; padding:0 22px 70px}
+.sidebar{position:sticky; top:58px; align-self:start; max-height:calc(100vh - 76px); overflow-y:auto;
+  padding:16px 4px 24px 0; font-size:12.5px}
+.sidebar::-webkit-scrollbar{width:6px}
+.sidebar::-webkit-scrollbar-thumb{background:var(--line2); border-radius:6px}
+.sidebar h4{margin:13px 0 5px; font-size:10.5px; letter-spacing:1.2px; color:var(--tx3); text-transform:uppercase}
+.sidebar h4:first-child{margin-top:0}
+.sidebar a{display:flex; gap:7px; padding:3.5px 8px; border-radius:7px; color:var(--tx2);
+  border-left:2px solid transparent}
+.sidebar a:hover{background:var(--tint); color:var(--tx); text-decoration:none}
+.sidebar a.active{color:var(--tx); background:var(--cy2); border-left-color:var(--cy); font-weight:600}
+.sidebar a .id{font-family:var(--mono); font-size:10px; color:var(--tx3); min-width:40px}
+.sidebar a.active .id{color:var(--cy)}
+main{min-width:0; padding-top:6px}
+
+.hero{padding:34px 0 22px; border-bottom:1px solid var(--line); margin-bottom:10px}
+.hero .kicker{display:inline-flex; align-items:center; gap:8px; font-family:var(--mono); font-size:11.5px;
+  color:var(--cy); border:1px solid var(--line2); background:var(--cy2); padding:4px 12px; border-radius:999px}
+.hero h1{margin:13px 0 9px; font-size:clamp(25px,3.4vw,38px); line-height:1.2; letter-spacing:-.4px; font-weight:800}
+.hero h1 .g{background:linear-gradient(96deg,var(--cy),var(--vi) 52%,var(--am));
+  -webkit-background-clip:text; background-clip:text; color:transparent}
+.hero .lead{font-size:15px; color:var(--tx2); max-width:880px; margin:0 0 16px}
+.hero .actions{display:flex; gap:9px; flex-wrap:wrap; margin-bottom:18px}
+.btn.pri{background:linear-gradient(120deg,var(--cy2),var(--gr2)); border-color:var(--line2);
+  color:#0b3b52; font-weight:650}
+.stats{display:grid; grid-template-columns:repeat(auto-fit,minmax(132px,1fr)); gap:10px}
+.stat{background:var(--card); border:1px solid var(--line); border-radius:var(--r); padding:11px 13px; box-shadow:var(--sh)}
+.stat b{display:block; font-family:var(--mono); font-size:21px; color:var(--cy); line-height:1.2}
+.stat span{display:block; font-size:11.5px; color:var(--tx3); margin-top:2px}
+
+section.sec{margin:26px 0 8px; scroll-margin-top:68px}
+.sec-head{display:flex; align-items:center; gap:11px; padding-bottom:9px; border-bottom:2px solid var(--line);
+  margin-bottom:14px}
+.sec-head .no{font-family:var(--mono); font-size:11px; font-weight:700; color:#fff; border-radius:7px;
+  padding:4px 8px; background:linear-gradient(140deg,var(--cy),var(--gr))}
+.sec-head h2{margin:0; font-size:clamp(18px,2vw,23px); font-weight:750; letter-spacing:-.2px}
+.sec-head .sub{color:var(--tx3); font-size:12px; margin-left:auto; text-align:right}
+
+.block{background:var(--card); border:1px solid var(--line); border-radius:var(--r); padding:14px 16px;
+  margin:11px 0; scroll-margin-top:68px; box-shadow:var(--sh)}
+.block.hidden,.sec.hidden{display:none}
+.block-head{display:flex; align-items:center; gap:9px; flex-wrap:wrap; margin-bottom:8px}
+.block-head h3{margin:0; font-size:15.5px; font-weight:720}
+.block-head .tagline{font-size:11.5px; color:var(--tx3)}
+.guid{font-family:var(--mono); font-size:11px; font-weight:700; letter-spacing:.4px; cursor:pointer;
+  color:#fff; background:linear-gradient(140deg,var(--cy),var(--gr)); border:0; border-radius:6px;
+  padding:2px 7px; transition:.14s; user-select:none}
+.guid:hover{filter:brightness(1.1); box-shadow:0 2px 8px rgba(14,127,168,.3)}
+.guid.copied{background:linear-gradient(140deg,var(--am),#e0a52a)}
+.cap{margin:0 0 9px; color:var(--tx2); font-size:13px}
+.notes{margin:8px 0 0; padding-left:18px; font-size:12.8px; color:var(--tx2)}
+.notes li{margin:2.5px 0}
+.notes li::marker{color:var(--cy)}
+.small{font-size:12.3px}
+.muted{color:var(--tx3)}
+
+figure{margin:9px 0; border:1px solid var(--line); border-radius:var(--r2); padding:11px 11px 5px; background:var(--tint)}
+figure svg{width:100%; height:auto; display:block}
+figcaption{margin-top:5px; font-size:11.5px; color:var(--tx3); text-align:center}
+
+.tw{overflow-x:auto; margin:8px 0; border:1px solid var(--line); border-radius:var(--r2)}
+table{width:100%; border-collapse:collapse; font-size:12.6px; min-width:420px}
+thead th{background:var(--tint2); text-align:left; padding:7px 10px; font-weight:700; color:#25344f;
+  border-bottom:1px solid var(--line2); white-space:nowrap; font-size:12px}
+tbody td{padding:6px 10px; border-bottom:1px solid var(--line); vertical-align:top}
+tbody tr:nth-child(even){background:var(--tint)}
+tbody tr:last-child td{border-bottom:0}
+td.mono,th.mono,.mono{font-family:var(--mono); font-size:11.8px}
+td.gid,.gid{font-family:var(--mono); font-size:11.4px; color:var(--cy); font-weight:700; white-space:nowrap}
+td.src,.src{font-family:var(--mono); font-size:11px; color:var(--tx3)}
+.num{text-align:right; font-family:var(--mono)}
+
+.grid{display:grid; gap:9px; margin:8px 0}
+.g2{grid-template-columns:repeat(auto-fit,minmax(250px,1fr))}
+.g3{grid-template-columns:repeat(auto-fit,minmax(190px,1fr))}
+.g4{grid-template-columns:repeat(auto-fit,minmax(146px,1fr))}
+.tile{background:var(--tint); border:1px solid var(--line); border-radius:var(--r2); padding:10px 11px}
+.tile h5{margin:0 0 4px; font-size:13px; display:flex; align-items:center; gap:6px; flex-wrap:wrap; color:#1d2b47}
+.tile p{margin:2px 0; font-size:12.4px; color:var(--tx2)}
+.tile .big{font-family:var(--mono); font-size:17px; color:var(--cy); display:block}
+.dot{width:8px; height:8px; border-radius:50%; display:inline-block}
+
+.callout{border-radius:var(--r2); padding:9px 12px; margin:9px 0; font-size:12.7px;
+  border:1px solid var(--line); background:var(--tint); border-left:3px solid var(--cy); color:var(--tx2)}
+.callout.warn{border-left-color:var(--am); background:var(--am2)}
+.callout.ok{border-left-color:var(--gr); background:var(--gr2)}
+.callout.bad{border-left-color:var(--rd); background:var(--rd2)}
+.callout b{color:var(--tx)}
+.callout .t{display:block; font-weight:700; margin-bottom:2px; color:var(--tx)}
+
+.pills{display:flex; flex-wrap:wrap; gap:6px; margin:8px 0}
+.pill{font-size:11.5px; padding:3px 10px; border-radius:999px; border:1px solid var(--line);
+  background:var(--tint); color:var(--tx2); font-family:var(--mono)}
+.pill.cy{color:#0a5871; border-color:#bfe3f0; background:var(--cy2)}
+.pill.gr{color:#0a6247; border-color:#c2e9d8; background:var(--gr2)}
+.pill.am{color:#7d5606; border-color:#f0dcb0; background:var(--am2)}
+.pill.vi{color:#4a30a8; border-color:#d6cbf7; background:var(--vi2)}
+.pill.rd{color:#96243c; border-color:#f4cbd6; background:var(--rd2)}
+
+.kv{display:grid; grid-template-columns:minmax(110px,180px) 1fr; border:1px solid var(--line);
+  border-radius:var(--r2); overflow:hidden; margin:8px 0; font-size:12.6px}
+.kv>dt{margin:0; padding:6px 11px; background:var(--tint2); font-weight:650; color:#25344f;
+  border-bottom:1px solid var(--line)}
+.kv>dd{margin:0; padding:6px 12px; border-bottom:1px solid var(--line); color:var(--tx2)}
+
+.timeline{position:relative; margin:9px 0 4px; padding-left:22px}
+.timeline::before{content:""; position:absolute; left:6px; top:5px; bottom:5px; width:2px; background:var(--line2)}
+.tl{position:relative; margin:0 0 9px}
+.tl::before{content:""; position:absolute; left:-20px; top:5px; width:10px; height:10px; border-radius:50%;
+  background:#fff; border:2px solid var(--cy)}
+.tl h5{margin:0 0 2px; font-size:13px; display:flex; gap:7px; align-items:center; flex-wrap:wrap}
+.tl p{margin:0; font-size:12.5px; color:var(--tx2)}
+
+.toast{position:fixed; left:50%; bottom:26px; transform:translate(-50%,14px); z-index:90; background:#101a2e;
+  color:#fff; padding:9px 18px; border-radius:999px; font-size:13px; opacity:0; pointer-events:none; transition:.22s}
+.toast.on{opacity:1; transform:translate(-50%,0)}
+#nores{display:none; padding:22px; text-align:center; color:var(--tx3); border:1px dashed var(--line2);
+  border-radius:var(--r); margin:14px 0; background:#fff}
+.totop{position:fixed; right:20px; bottom:20px; z-index:80; width:38px; height:38px; border-radius:50%;
+  display:grid; place-items:center; cursor:pointer; opacity:0; pointer-events:none; transition:.2s;
+  background:#fff; border:1px solid var(--line2); color:var(--cy); font-size:16px; box-shadow:var(--sh)}
+.totop.on{opacity:1; pointer-events:auto}
+footer{margin-top:28px; padding:18px 0 6px; border-top:1px solid var(--line); font-size:12px; color:var(--tx3)}
+footer .row{display:flex; gap:14px; flex-wrap:wrap; justify-content:space-between}
+noscript{display:block; padding:14px; background:var(--am2); border:1px solid #f0dcb0; border-radius:var(--r);
+  font-size:12.5px; color:#5d4106; margin:14px 0}
+
+.dgb{fill:#fff; stroke:#c3d1e6}
+.dgb.host{fill:#e4f5fc; stroke:#2b9fc4}
+.dgb.cli{fill:#efeafe; stroke:#7c5cf0}
+.dgb.srv{fill:#e5f8f0; stroke:#17a273}
+.dgb.warn{fill:#fff4df; stroke:#d99b12}
+.dgb.rd{fill:#fdecf0; stroke:#d1495f}
+.dgt{fill:#26314a; font-family:var(--mono); font-size:12px}
+.dgt.sm{font-size:10.5px; fill:#5a6a86}
+.dgl{stroke:#93a6c4; stroke-width:1.4; fill:none}
+.dgl.cy{stroke:#2b9fc4} .dgl.vi{stroke:#7c5cf0} .dgl.am{stroke:#d99b12}
+.dgl.gr{stroke:#17a273} .dgl.rd{stroke:#d1495f}
+.dgl.dash{stroke-dasharray:5 4}
+.dghead{fill:#101a2e; font-size:13px; font-weight:700; font-family:var(--sans)}
+
+@media (max-width:1040px){
+  .layout{grid-template-columns:1fr; gap:8px; padding:0 14px 60px}
+  .sidebar{position:static; max-height:none; border-bottom:1px solid var(--line); padding-bottom:10px;
+    display:grid; grid-template-columns:repeat(auto-fit,minmax(132px,1fr)); gap:1px}
+  .sidebar h4{grid-column:1/-1}
+  .sec-head .sub{display:none}
+}
+@media print{
+  body{background:#fff}
+  .topbar,.sidebar,.totop,.progress,.toast{display:none!important}
+  .layout{display:block; max-width:none; padding:0}
+  .block,figure,.tile,.callout{break-inside:avoid; box-shadow:none}
+  .sec{break-before:page}
+}
+</style>
+</head>
+<body>
+<div class="progress" id="prog"></div>
+
+<header class="topbar">
+  <div class="brand">
+    <div class="logo">MP</div>
+    <div>联机模组图解<small>ScMultiplayer → SuMultiplayer</small></div>
+  </div>
+  <span class="ver">v2.2.9 / 协议 v1</span>
+  <div class="grow"></div>
+  <div class="search">
+    <input id="q" type="search" placeholder="搜索内容或 GUID（例：FLW04）" autocomplete="off" spellcheck="false">
+    <span class="hint">/</span>
+  </div>
+  <button class="btn" id="expand">摘要模式</button>
+  <button class="btn" onclick="window.print()">打印 / PDF</button>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="toc"></aside>
+  <main id="top">
+    <section class="hero">
+      <div class="kicker">● 图表为主 · 112 个 GUID 定位标记</div>
+      <h1>联机模组：<span class="g">一张图看懂一个模块</span></h1>
+      <p class="lead">
+        每个知识点 = 一张图或一张表 + 一句说明。点击任意 <b>GUID</b> 可复制，用于移植时精确指代。
+      </p>
+      <div class="actions">
+        <a class="btn pri" href="#OVR01">一页纸摘要</a>
+        <a class="btn" href="chunk-region-sync.html">区块同步俯视图（另一页）</a>
+        <a class="btn" href="#IDX01">GUID 索引</a>
+      </div>
+      <div class="stats" id="stats"></div>
+    </section>
+    <div id="nores">没有匹配的条目 —— 换个 GUID 或关键词试试</div>
+    <div id="doc"></div>
+
+    <footer>
+      <div class="row">
+        <div>联机模组图解 · 依据本仓库源码实测生成</div>
+        <div>GUID：3 位域字母 + 2 位序号 · 共 112 个 · 参数与俯视图见 <a href="chunk-region-sync.html">chunk-region-sync.html</a></div>
+      </div>
+    </footer>
+  </main>
+</div>
+
+<noscript>
+  本页图表由脚本即时生成，请开启 JavaScript 查看。
+  静态 GUID 清单（可直接在仓库内搜索同名标记）：OVR01–04、MOD01–16、NET01–11、PRT01–07、FLW01–19、
+  AUT01–07、SYN01–06、DMX01–07、RGN01–06、SEC01–06、OPS01–07、RWT01–08、MAP01–03、IDX01–05。
+</noscript>
+
+<div class="toast" id="toast">已复制</div>
+<div class="totop" id="totop" title="回到顶部">↑</div>
+
+<script id="engine">
+/* ==========================================================================
+   图表引擎：内容以数据描述，统一渲染成 图 / 表 / 卡片，文字尽量短
+   ========================================================================== */
+(function () {
+  "use strict";
+  function esc(s) {
+    return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+  function h(html) {
+    var d = document.createElement("div");
+    d.innerHTML = String(html).trim();
+    return d.firstElementChild;
+  }
+  function cell(v) {
+    if (v === null || v === undefined) return "<td></td>";
+    if (typeof v === "object") {
+      if (v.g) return '<td class="gid">' + esc(v.g) + "</td>";
+      if (v.m) return '<td class="mono">' + esc(v.m) + "</td>";
+      if (v.s) return '<td class="src">' + esc(v.s) + "</td>";
+      if (v.n) return '<td class="num">' + esc(v.n) + "</td>";
+      return "<td>" + esc(v.t || "") + "</td>";
+    }
+    return "<td>" + esc(v) + "</td>";
+  }
+  function wrapFig(svg, cap) {
+    return h('<figure><div class="figsvg">' + svg + "</div>" +
+      (cap ? "<figcaption>" + esc(cap) + "</figcaption>" : "") + "</figure>");
+  }
+
+  function figCards(s) {
+    var html = '<div class="grid g' + (s.cols || 3) + '">';
+    (s.items || []).forEach(function (it) {
+      html += '<div class="tile">';
+      if (it.h) html += "<h5>" + (it.c ? '<span class="dot" style="color:' + it.c + ";background:" + it.c + '"></span>' : "") + esc(it.h) + "</h5>";
+      if (it.big) html += '<span class="big">' + esc(it.big) + "</span>";
+      if (it.p) html += "<p>" + it.p + "</p>";
+      html += "</div>";
+    });
+    return h(html + "</div>");
+  }
+
+  function figTable(s) {
+    var html = '<div class="tw"><table>';
+    if (s.head) {
+      html += "<thead><tr>";
+      s.head.forEach(function (c, i) {
+        html += "<th" + ((s.monoCols || []).indexOf(i) >= 0 ? ' class="mono"' : "") + ">" + esc(c) + "</th>";
+      });
+      html += "</tr></thead>";
+    }
+    html += "<tbody>";
+    (s.rows || []).forEach(function (row) {
+      html += "<tr>";
+      row.forEach(function (c) { html += cell(c); });
+      html += "</tr>";
+    });
+    return h(html + "</tbody></table></div>");
+  }
+
+  function figFlow(s) {
+    var nodes = s.nodes || [], n = nodes.length;
+    var W = 900, gap = 16, bw = (W - gap * (n - 1)) / n, bh = s.bh || 84;
+    var top = s.title ? 30 : 12;
+    var H = top + bh + (s.note ? 34 : 18);
+    var out = '<svg viewBox="0 0 ' + W + " " + H + '" role="img">';
+    if (s.title) out += '<text class="dghead" x="4" y="16">' + esc(s.title) + "</text>";
+    nodes.forEach(function (nd, i) {
+      var x = i * (bw + gap);
+      out += '<rect class="dgb ' + (nd.c || "") + '" x="' + x + '" y="' + top + '" width="' + bw + '" height="' + bh + '" rx="10"/>';
+      out += '<text class="dghead" x="' + (x + bw / 2) + '" y="' + (top + 24) + '" text-anchor="middle">' + esc(nd.t) + "</text>";
+      (nd.s || []).forEach(function (line, k) {
+        out += '<text class="dgt sm" x="' + (x + bw / 2) + '" y="' + (top + 44 + k * 16) + '" text-anchor="middle">' + esc(line) + "</text>";
+      });
+      if (i < n - 1) {
+        var ax = x + bw, ay = top + bh / 2;
+        out += '<path class="dgl ' + (s.arrow || "") + '" d="M' + ax + " " + ay + " L" + (ax + gap) + " " + ay + '"/>';
+        out += '<path class="dgl ' + (s.arrow || "") + '" d="M' + (ax + gap - 6) + " " + (ay - 3) + " L" + (ax + gap) + " " + ay + " L" + (ax + gap - 6) + " " + (ay + 3) + '"/>';
+      }
+    });
+    if (s.note) out += '<text class="dgt sm" x="4" y="' + (top + bh + 26) + '">' + esc(s.note) + "</text>";
+    return wrapFig(out + "</svg>", s.cap);
+  }
+
+  function figSeq(s) {
+    var lanes = s.lanes || [], steps = s.steps || [];
+    var W = 900, pad = 20, laneW = (W - pad * 2) / lanes.length;
+    var top = 46, stepH = 30, H = top + steps.length * stepH + 24;
+    var out = '<svg viewBox="0 0 ' + W + " " + H + '" role="img">';
+    var lc = s.laneClass || [];
+    lanes.forEach(function (name, i) {
+      var x = pad + laneW * i;
+      out += '<rect class="dgb ' + (lc[i] || "") + '" x="' + x + '" y="10" width="' + (laneW - 14) + '" height="26" rx="7"/>';
+      out += '<text class="dghead" x="' + (x + (laneW - 14) / 2) + '" y="28" text-anchor="middle">' + esc(name) + "</text>";
+      out += '<path class="dgl dash" d="M' + (x + (laneW - 14) / 2) + " " + top + " V" + (H - 14) + '"/>';
+    });
+    steps.forEach(function (st, i) {
+      var y = top + i * stepH;
+      var x1 = pad + laneW * st.from + (laneW - 14) / 2;
+      var x2 = pad + laneW * st.to + (laneW - 14) / 2;
+      out += '<path class="dgl ' + (st.c || "") + '" d="M' + x1 + " " + y + " L" + x2 + " " + y + '"/>';
+      var dir = x2 > x1 ? -1 : 1;
+      out += '<path class="dgl ' + (st.c || "") + '" d="M' + (x2 + dir * 7) + " " + (y - 3) + " L" + x2 + " " + y + " L" + (x2 + dir * 7) + " " + (y + 3) + '"/>';
+      out += '<text class="dgt sm" x="' + (Math.min(x1, x2) + 6) + '" y="' + (y - 4) + '">' + esc(st.label || "") + "</text>";
+    });
+    return wrapFig(out + "</svg>", s.cap);
+  }
+
+  function figLayers(s) {
+    var rows = s.rows || [], W = 900, rh = 44, gap = 8, H = rows.length * (rh + gap) + 16;
+    var out = '<svg viewBox="0 0 ' + W + " " + H + '" role="img">';
+    rows.forEach(function (r, i) {
+      var y = 8 + i * (rh + gap);
+      out += '<rect class="dgb ' + (r.c || "") + '" x="8" y="' + y + '" width="' + (W - 16) + '" height="' + rh + '" rx="8"/>';
+      out += '<text class="dghead" x="22" y="' + (y + 20) + '">' + esc(r.t) + "</text>";
+      if (r.s) out += '<text class="dgt sm" x="22" y="' + (y + 36) + '">' + esc(r.s) + "</text>";
+      if (r.note) out += '<text class="dgt sm" x="' + (W - 22) + '" y="' + (y + rh / 2 + 4) + '" text-anchor="end">' + esc(r.note) + "</text>";
+    });
+    return wrapFig(out + "</svg>", s.cap);
+  }
+
+  function figRings(s) {
+    var rings = (s.rings || []).slice().sort(function (a, b) { return b.r - a.r; });
+    var max = rings.length ? rings[0].r : 100;
+    var S = 400, cx = S / 2, cy = S / 2 + 4, scale = (S / 2 - 24) / max;
+    var W = S + 340, H = S + 12;
+    var out = '<svg viewBox="0 0 ' + W + " " + H + '" role="img">';
+    rings.forEach(function (r) {
+      out += '<circle cx="' + cx + '" cy="' + cy + '" r="' + (r.r * scale).toFixed(1) + '" fill="' + (r.fill || "none") +
+        '" stroke="' + (r.c || "#93a6c4") + '" stroke-width="1.5" stroke-dasharray="5 4"/>';
+    });
+    out += '<circle cx="' + cx + '" cy="' + cy + '" r="5" fill="#6a4bd8"/>';
+    out += '<text class="dgt sm" x="' + (cx + 9) + '" y="' + (cy + 4) + '">' + esc(s.center || "玩家") + "</text>";
+    var ly = 24;
+    rings.forEach(function (r) {
+      out += '<line x1="' + (S + 8) + '" y1="' + (ly - 4) + '" x2="' + (S + 22) + '" y2="' + (ly - 4) + '" stroke="' + (r.c || "#93a6c4") + '" stroke-width="2"/>';
+      out += '<text class="dgt sm" x="' + (S + 28) + '" y="' + ly + '">' + esc(r.label) + "</text>";
+      ly += 19;
+    });
+    return wrapFig(out + "</svg>", s.cap);
+  }
+
+  function figBars(s) {
+    var rows = s.rows || [], unit = s.unit || "";
+    var max = s.max || Math.max.apply(null, rows.map(function (r) { return r.v; }));
+    var W = 900, rh = 26, labelW = s.labelW || 210, H = rows.length * rh + 20;
+    var out = '<svg viewBox="0 0 ' + W + " " + H + '" role="img">';
+    rows.forEach(function (r, i) {
+      var y = 10 + i * rh;
+      var bw = (W - labelW - 96) * (r.v / max);
+      out += '<text class="dgt sm" x="4" y="' + (y + 14) + '">' + esc(r.label) + "</text>";
+      out += '<rect x="' + labelW + '" y="' + (y + 3) + '" width="' + Math.max(bw, 2).toFixed(1) + '" height="15" rx="4" fill="' + (r.c || "#2b9fc4") + '" opacity=".72"/>';
+      out += '<text class="dgt sm" x="' + (labelW + Math.max(bw, 2) + 7) + '" y="' + (y + 15) + '">' + esc(r.v + unit) + "</text>";
+    });
+    return wrapFig(out + "</svg>", s.cap);
+  }
+
+  function figTimeline(s) {
+    var html = '<div class="timeline">';
+    (s.items || []).forEach(function (it) {
+      html += '<div class="tl"><h5>' + (it.tag ? '<span class="pill ' + (it.c || "") + '">' + esc(it.tag) + "</span>" : "") + esc(it.t) + "</h5>";
+      if (it.p) html += "<p>" + it.p + "</p>";
+      html += "</div>";
+    });
+    return h(html + "</div>");
+  }
+  function figKv(s) {
+    var html = '<dl class="kv">';
+    (s.rows || []).forEach(function (r) { html += "<dt>" + esc(r[0]) + "</dt><dd>" + r[1] + "</dd>"; });
+    return h(html + "</dl>");
+  }
+  function figPills(s) {
+    return h('<div class="pills">' + (s.items || []).map(function (i) {
+      var o = typeof i === "string" ? { t: i } : i;
+      return '<span class="pill ' + (o.c || "") + '">' + esc(o.t) + "</span>";
+    }).join("") + "</div>");
+  }
+  function figCheck(s) {
+    return figTable({
+      head: ["#", "检查项", "对应"], monoCols: [0],
+      rows: (s.items || []).map(function (it, i) { return [String(i + 1), it[0], { g: it[1] }]; })
+    });
+  }
+  function figTopology() {
+    var out = '<svg viewBox="0 0 900 330" role="img">' +
+      '<text class="dghead" x="10" y="14">发现层</text>' +
+      '<rect class="dgb warn" x="10" y="22" width="270" height="40" rx="8"/><text class="dgt" x="22" y="40">局域网广播（UDP 51459）</text><text class="dgt sm" x="22" y="55">同网段免配置</text>' +
+      '<rect class="dgb warn" x="315" y="22" width="270" height="40" rx="8"/><text class="dgt" x="327" y="40">服务器目录（域名 + DoH）</text><text class="dgt sm" x="327" y="55">三端合并清单</text>' +
+      '<rect class="dgb warn" x="620" y="22" width="270" height="40" rx="8"/><text class="dgt" x="632" y="40">显式端点 / 个人网络世界</text><text class="dgt sm" x="632" y="55">手填地址</text>' +
+      '<rect class="dgb srv" x="330" y="132" width="250" height="60" rx="10"/><text class="dghead" x="455" y="156" text-anchor="middle">房间中继（Comms Server）</text><text class="dgt sm" x="455" y="176" text-anchor="middle">房间隔离 · 握手 · 转发 · UDP+TCP 同端口</text>' +
+      '<rect class="dgb cli" x="10" y="140" width="200" height="44" rx="9"/><text class="dghead" x="110" y="161" text-anchor="middle">客户端（本地预测）</text><text class="dgt sm" x="110" y="177" text-anchor="middle">只提出请求 + 播放表现</text>' +
+      '<rect class="dgb cli" x="10" y="204" width="200" height="44" rx="9"/><text class="dghead" x="110" y="225" text-anchor="middle">平板 / 手机客户端</text><text class="dgt sm" x="110" y="241" text-anchor="middle">与 PC 同一份 DLL</text>' +
+      '<rect class="dgb host" x="660" y="132" width="230" height="60" rx="10"/><text class="dghead" x="775" y="156" text-anchor="middle">主机（房主 / 无头服务端）</text><text class="dgt sm" x="775" y="176" text-anchor="middle">唯一权威：世界逻辑在此执行</text>' +
+      '<path class="dgl dash" d="M145 62V140"/><path class="dgl dash" d="M455 62V132"/><path class="dgl dash" d="M775 62V132"/>' +
+      '<path class="dgl vi" d="M212 162H330"/><path class="dgl vi" d="M322 157L330 162L322 167"/>' +
+      '<path class="dgl cy" d="M330 174H212"/><path class="dgl cy" d="M220 169L212 174L220 179"/>' +
+      '<text class="dgt sm" x="234" y="156">请求 ↑</text><text class="dgt sm" x="234" y="190">结果 ↓</text>' +
+      '<path class="dgl vi" d="M212 226C272 226 300 184 330 178"/>' +
+      '<path class="dgl cy" d="M580 178C620 184 640 226 660 226"/>' +
+      '<text class="dgt sm" x="455" y="238" text-anchor="middle">权威广播：只发给窗口覆盖该区块的客户端</text>' +
+      '<text class="dgt sm" x="455" y="256" text-anchor="middle">位置 / 姿态 → 可替换通道；操作 / 事务 / 电路 → 可靠通道</text>' +
+      '<rect class="dgb" x="10" y="286" width="880" height="34" rx="8"/>' +
+      '<text class="dgt sm" x="22" y="307">紫 = 上行意图　青 = 下行权威结果　绿 = 中继　黄 = 发现链路</text>' +
+      "</svg>";
+    return wrapFig(out, "三端拓扑：发现层负责找到，中继负责转发，主机负责裁决");
+  }
+  function figStack() {
+    return figLayers({
+      cap: "五层网络栈：只允许相邻层调用；模块看不见 socket",
+      rows: [
+        { t: "① 原版游戏 Engine / Survivalcraft / EntitySystem", s: "权威世界与所有真实对象", c: "" },
+        { t: "② 适配层（组件替换 / 子系统替换 / 私有字段方法）", s: "唯一允许碰原版的地方", c: "vi" },
+        { t: "③ 业务模块层（16 个域）", s: "只处理本域的请求与状态", c: "host" },
+        { t: "④ 端口层（传输 / 可靠通道 / 线程派发 / 快照）", s: "模块只能看见这一层", c: "srv" },
+        { t: "⑤ 传输层 Comms（UDP + TCP + 分片 + 重传 + 心跳）", s: "不知道地形、动物、玩家是什么", c: "warn" }
+      ]
+    });
+  }
+
+  var FIG = {
+    cards: figCards, table: figTable, flow: figFlow, seq: figSeq, layers: figLayers,
+    rings: figRings, bars: figBars, timeline: figTimeline, kv: figKv, pills: figPills,
+    check: figCheck, topology: figTopology, stack: figStack
+  };
+
+  var ALL = [];
+  function renderBlock(b) {
+    var el = document.createElement("div");
+    el.className = "block";
+    el.id = b.id;
+    el.innerHTML = '<div class="block-head"><button class="guid" data-guid="' + b.id + '">' + b.id +
+      "</button><h3>" + esc(b.t) + "</h3>" + (b.tag ? '<span class="tagline">' + esc(b.tag) + "</span>" : "") + "</div>";
+    if (b.cap) el.insertAdjacentHTML("beforeend", '<p class="cap">' + b.cap + "</p>");
+    if (b.fig && FIG[b.fig.type]) {
+      var f = FIG[b.fig.type](b.fig);
+      if (f) el.appendChild(f);
+    }
+    if (b.call) {
+      el.appendChild(h('<div class="callout ' + (b.call.k || "") + '">' +
+        (b.call.t ? '<span class="t">' + esc(b.call.t) + "</span>" : "") + b.call.p + "</div>"));
+    }
+    if (b.notes) {
+      el.insertAdjacentHTML("beforeend", '<ul class="notes">' +
+        b.notes.map(function (n) { return "<li>" + n + "</li>"; }).join("") + "</ul>");
+    }
+    return el;
+  }
+
+  function indexSpec() {
+    return {
+      head: ["GUID", "主题", "一句话"], monoCols: [],
+      rows: ALL.map(function (b) { return [{ g: b.id }, b.t, b.tag || (b.fig && b.fig.cap) || ""]; })
+    };
+  }
+
+  function renderDoc(doc) {
+    // 预登记：自动索引需要先知道全部标题
+    doc.sections.forEach(function (sec) {
+      sec.blocks.forEach(function (b) { ALL.push(b); });
+    });
+
+    var toc = document.getElementById("toc");
+    var main = document.getElementById("doc");
+
+    doc.sections.forEach(function (sec) {
+      var s = document.createElement("section");
+      s.className = "sec";
+      var head = document.createElement("div");
+      head.className = "sec-head";
+      head.innerHTML = '<span class="no">' + esc(sec.no) + "</span><h2>" + esc(sec.t) + "</h2>" +
+        (sec.sub ? '<div class="sub">' + esc(sec.sub) + "</div>" : "");
+      s.appendChild(head);
+
+      var h4 = document.createElement("h4");
+      h4.textContent = sec.no;
+      toc.appendChild(h4);
+
+      sec.blocks.forEach(function (b) {
+        if (b.special === "index") {
+          b = { id: b.id, t: b.t, tag: b.tag, cap: b.cap, fig: { type: "table", head: ["GUID", "主题", "一句话"], cap: "全部 " + ALL.length + " 个标记", rows: ALL.map(function (x) { return [{ g: x.id }, x.t, x.tag || ""]; }) } };
+        }
+        s.appendChild(renderBlock(b));
+        var a = document.createElement("a");
+        a.href = "#" + b.id;
+        a.innerHTML = '<span class="id">' + b.id + "</span>" + esc(b.t);
+        toc.appendChild(a);
+      });
+      main.appendChild(s);
+    });
+
+    var stats = document.getElementById("stats");
+    (doc.stats || []).forEach(function (st) {
+      var d = document.createElement("div");
+      d.className = "stat";
+      d.innerHTML = "<b>" + esc(st[0]) + "</b><span>" + esc(st[1]) + "</span>";
+      stats.appendChild(d);
+    });
+  }
+
+  function bind() {
+    var toast = document.getElementById("toast"), timer = 0;
+    function say(m) {
+      toast.textContent = m;
+      toast.classList.add("on");
+      clearTimeout(timer);
+      timer = setTimeout(function () { toast.classList.remove("on"); }, 1400);
+    }
+    function fallback(text) {
+      var ta = document.createElement("textarea");
+      ta.value = text; ta.style.position = "fixed"; ta.style.top = "-1000px";
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand("copy"); } catch (e) { }
+      document.body.removeChild(ta);
+    }
+    document.addEventListener("click", function (ev) {
+      var el = ev.target && ev.target.closest ? ev.target.closest(".guid") : null;
+      if (!el) return;
+      var g = el.getAttribute("data-guid") || el.textContent.trim();
+      function done() {
+        el.classList.add("copied");
+        say("已复制 " + g);
+        setTimeout(function () { el.classList.remove("copied"); }, 900);
+      }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(g).then(done, function () { fallback(g); done(); });
+      } else { fallback(g); done(); }
+    });
+
+    var input = document.getElementById("q"), nores = document.getElementById("nores");
+    function filter() {
+      var q = (input.value || "").trim().toLowerCase();
+      var blocks = Array.prototype.slice.call(document.querySelectorAll(".block"));
+      var secs = Array.prototype.slice.call(document.querySelectorAll("section.sec"));
+      if (!q) {
+        blocks.forEach(function (b) { b.classList.remove("hidden"); });
+        secs.forEach(function (s) { s.classList.remove("hidden"); });
+        nores.style.display = "none";
+        return;
+      }
+      var hits = 0;
+      blocks.forEach(function (b) {
+        var hit = (b.textContent || "").toLowerCase().indexOf(q) >= 0 || b.id.toLowerCase().indexOf(q) >= 0;
+        b.classList.toggle("hidden", !hit);
+        if (hit) hits++;
+      });
+      secs.forEach(function (s) {
+        var vis = Array.prototype.some.call(s.querySelectorAll(".block"), function (b) {
+          return !b.classList.contains("hidden");
+        });
+        s.classList.toggle("hidden", !vis);
+      });
+      nores.style.display = hits ? "none" : "block";
+    }
+    input.addEventListener("input", filter);
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "/" && document.activeElement !== input) { e.preventDefault(); input.focus(); }
+      else if (e.key === "Escape" && document.activeElement === input) { input.value = ""; filter(); input.blur(); }
+    });
+
+    var summarized = false;
+    document.getElementById("expand").addEventListener("click", function () {
+      summarized = !summarized;
+      document.body.classList.toggle("summarized", summarized);
+      this.textContent = summarized ? "退出摘要" : "摘要模式";
+    });
+    var style = document.createElement("style");
+    style.textContent = "body.summarized .block > :not(.block-head){display:none}" +
+      "body.summarized .block{margin:5px 0;padding:9px 14px}";
+    document.head.appendChild(style);
+
+    var links = {};
+    Array.prototype.forEach.call(document.querySelectorAll("#toc a"), function (a) {
+      links[a.getAttribute("href").slice(1)] = a;
+    });
+    if ("IntersectionObserver" in window) {
+      var io = new IntersectionObserver(function (entries) {
+        entries.forEach(function (en) {
+          if (!en.isIntersecting) return;
+          var a = links[en.target.id];
+          if (!a || a.classList.contains("active")) return;
+          Array.prototype.forEach.call(document.querySelectorAll("#toc a.active"), function (x) { x.classList.remove("active"); });
+          a.classList.add("active");
+        });
+      }, { rootMargin: "-70px 0px -74% 0px" });
+      Array.prototype.forEach.call(document.querySelectorAll(".block"), function (b) {
+        if (links[b.id]) io.observe(b);
+      });
+    }
+
+    var prog = document.getElementById("prog"), top = document.getElementById("totop");
+    function onScroll() {
+      var max = document.documentElement.scrollHeight - window.innerHeight;
+      prog.style.width = (max > 0 ? (window.scrollY / max) * 100 : 0) + "%";
+      top.classList.toggle("on", window.scrollY > 500);
+    }
+    document.addEventListener("scroll", onScroll, { passive: true });
+    top.addEventListener("click", function () { window.scrollTo({ top: 0, behavior: "smooth" }); });
+    onScroll();
+  }
+
+  window.SCMP_RENDER = function (doc) { renderDoc(doc); bind(); };
+})();
+</script>
+
+<script id="data-base">
+window.SCMP_DOC = {
+  stats: [
+    ["5.5万", "行联机代码（201 文件）"],
+    ["48", "条协议消息"],
+    ["16", "个业务域"],
+    ["5", "档投递语义"],
+    ["3", "端：PC / 移动 / 无头"],
+    ["1", "个权威源：主机"]
+  ],
+  sections: []
+};
+</script>
+
+<script id="data-a">
+SCMP_DOC.sections.push(
+{ no: "导读", t: "五分钟建立直觉", sub: "不假设你懂网络", blocks: [
+  { id: "OVR01", t: "一页纸摘要", tag: "四条主线", cap: "主机裁决、客户端申请；世界只有一份真相。",
+    fig: { type: "cards", cols: 4, items: [
+      { h: "① 找到彼此", c: "#0e7fa8", p: "局域网广播 / 服务器目录 / 显式端点" },
+      { h: "② 加入房间", c: "#6a4bd8", p: "审批 → 下载世界 → 追帧屏障" },
+      { h: "③ 同步世界", c: "#a9740a", p: "地形 · 玩家 · 实体 · 电路 · 天气" },
+      { h: "④ 可扩展面", c: "#0d8a63", p: "DM 通道 · 领地 · 无头服务器 · 代理" } ] },
+    call: { k: "ok", t: "一句话", p: "客户端提供<b>意图</b>，主机提供<b>事实</b>：伤害、掉落、生成、容器、命中、爆炸结果只由主机决定。" } },
+  { id: "OVR02", t: "七个词讲完联机", tag: "术语速通",
+    fig: { type: "kv", rows: [
+      ["主机", "开着世界的那一端，唯一有裁决权"],
+      ["客户端", "本地也跑游戏（画面跟手），关键结果等主机确认"],
+      ["权威", "「谁说了算」——本项目永远是主机"],
+      ["同步", "把状态变化有选择地发给需要知道的人"],
+      ["延迟", "无法消除，只能靠「预测 + 修正」掩盖"],
+      ["丢包", "高频可重来的数据丢了就丢；不能丢的走可靠通道"],
+      ["握手", "版本与身份确认；不一致在这里被挡下，而不是玩到一半炸掉"] ] } },
+  { id: "OVR03", t: "关键数字", tag: "全部来自源码",
+    fig: { type: "table", head: ["指标", "数值", "出处"], monoCols: [1], rows: [
+      ["代码规模", "201 文件 / 54,987 行", { s: "Mod/ScMultiplayer/**/*.cs" }],
+      ["协议消息", "48 条 wire ID（0–47）", { s: "Message/Message.cs 注册表" }],
+      ["业务域", "16 个", "会话 · 加入 · 玩家 · 地形 · 实体 · 电路 · 世界 · 容器 · DM · 领地" ],
+      ["投递语义", "5 档", "Raw / Unreliable / UnreliableSequenced / Reliable / ReliableSequenced"],
+      ["传输通道", "UDP + TCP 同端口", "可靠走 TCP 流，其余走 UDP，身份仍是 UDP 端点"],
+      ["数据报上限", "1200 字节", "IPv6 最小 MTU 1280 − 40 − 8"],
+      ["房间端口", "51459 起，连续 64 个", "每进程可指定首选端口"],
+      ["心跳 / 断线", "10s / 30s", { s: "PeerSettings" }],
+      ["状态发送", "输入 100Hz；状态变化即发 + 4Hz 保底", "低频资料 1Hz"],
+      ["世界信息", "2Hz 全量快照", "时间 · 天气 · 世界设置"],
+      ["加入宽限", "默认 60s", "断线保留化身，按身份复用"],
+      ["区块 / 区域文件", "16×16 方块 / 16×16 区块", "同步按区块，存档按区域文件" ] ] } },
+  { id: "OVR04", t: "GUID 定位标记", tag: "3 字母 + 2 位数字",
+    fig: { type: "table", head: ["域前缀", "含义", "域前缀", "含义"], monoCols: [0, 2], rows: [
+      [{ g: "OVR" }, "导读与总览", { g: "SYN" }, "同步数据面"],
+      [{ g: "MOD" }, "模块与架构", { g: "DMX" }, "数据调整（GM）通道"],
+      [{ g: "NET" }, "网络传输层", { g: "RGN" }, "玩家领地"],
+      [{ g: "PRT" }, "协议与消息", { g: "SEC" }, "安全与工程约束"],
+      [{ g: "FLW" }, "交互流程", { g: "OPS" }, "运维与发布"],
+      [{ g: "AUT" }, "权威与校验", { g: "RWT" }, "重写蓝图"],
+      [{ g: "IDX" }, "索引与附录", { g: "MAP" }, "迁移映射"] ] },
+    notes: ["点击标记即复制；顶部搜索框可按 GUID 或关键词过滤；IDX01 是完整索引表。"] }
+]},
+{ no: "架构", t: "三端 · 五层 · 十六域", sub: "先看全景，再看每个域", blocks: [
+  { id: "MOD01", t: "三端拓扑", tag: "发现 / 中继 / 主机",
+    fig: { type: "topology" },
+    notes: ["主机与「服务器」不是同一个东西：中继只转发，不跑游戏逻辑。",
+      "同一台机器可开多个房间：端口从 51459 起连续 64 个，每进程先绑首选端口。"] },
+  { id: "MOD02", t: "五层网络栈", tag: "只允许相邻层调用", fig: { type: "stack" },
+    notes: ["禁止反向依赖：模块不引用传输层具体类型；UI 不直接发网络包。"] },
+  { id: "MOD03", t: "模块化控制单元", tag: "调度器，不是业务代码",
+    fig: { type: "flow", arrow: "cy", nodes: [
+      { t: "Ingress", s: ["解码 · 校验", "去重 · 入队"], c: "host" },
+      { t: "Authority", s: ["主机裁决", "校验后执行"], c: "vi" },
+      { t: "Replication", s: ["生成增量", "选择受众"], c: "srv" },
+      { t: "Apply", s: ["客户端应用", "修正 · 回滚"], c: "warn" },
+      { t: "Egress", s: ["状态快照", "保底 · 推队列"], c: "host" },
+      { t: "Diagnostics", s: ["有界采样", "审计"], c: "" } ],
+      note: "单模块 / 单消息失败 → 只记一条有界诊断，不打断整帧",
+      cap: "帧内六阶段：模块声明所属阶段，顺序不靠调用先后碰运气" },
+    notes: ["模块契约只有四个方法：Initialize / Tick / Reset / Dispose。"] },
+  { id: "MOD04", t: "会话与连接注册表", tag: "角色 · 阶段 · 世代",
+    fig: { type: "table", head: ["身份", "来源", "用途"], rows: [
+      ["ClientID", "传输层", "网络身份（唯一可信来源）"],
+      ["PlayerIndex", "游戏内角色序号", "映射到实体"],
+      ["角色记录键", "登录 userid / network:clientId", "跨设备复用进度与权限"] ] },
+    call: { k: "bad", t: "铁律", p: "永远不要用序号判断身份：两端看到的序号语义相反。身份一律用<b>角色名 / userId / 坐标</b>比对。" } },
+  { id: "MOD05", t: "加入与资源传输域", tag: "导出 · 分片 · 追帧",
+    fig: { type: "cards", cols: 3, items: [
+      { h: "导出", p: "保存 → 卸载项目 → 导出新鲜快照 → 建房 → 重载" },
+      { h: "传输", p: "世界包分片 + 校验和 + 缺失补片 + 限速预算" },
+      { h: "追帧", p: "journal 补齐快照之后的改动，检查点屏障放行" } ] } },
+  { id: "MOD06", t: "玩家域", tag: "最高频、最敏感",
+    fig: { type: "cards", cols: 2, items: [
+      { h: "上行（客户端 → 主机）", p: "输入与姿态 · 动作意图（挖/放/攻击/交互）· 装备档案 · 能力申请" },
+      { h: "下行（主机 → 客户端）", p: "权威位置与动作 · 生命与生存属性 · 命中回执与修正 · 他人形象" } ] } },
+  { id: "MOD07", t: "地形域", tag: "同步量最大的一块",
+    fig: { type: "cards", cols: 4, items: [
+      { h: "① 实时广播", p: "按批次下发，可靠有序" },
+      { h: "② 本地预测", p: "先本地应用，画面跟手" },
+      { h: "③ 检查点", p: "按区块维护 revision" },
+      { h: "④ 恢复", p: "缺口定向补推或检查点重建" } ] },
+    notes: ["细节与俯视图见另一页：<a href=\"chunk-region-sync.html\">chunk-region-sync.html</a>（MOV01 / CPS01 / RCV01）。"] },
+  { id: "MOD08", t: "实体与世界对象域", tag: "动物 · 掉落 · 投射 · 家具",
+    fig: { type: "table", head: ["对象", "谁权威", "同步要点"], rows: [
+      ["动物", "主机", "生命周期 · 变换 · 行为状态机 · 声音 · 受伤边沿；频率按距离自适应"],
+      ["掉落物", "主机", "创建 / 运动 / 删除唯一；拾取走请求 + 确认"],
+      ["投射物", "主机", "发射消耗 · 飞行 · 命中 · 消失；客户端不判定命中"],
+      ["家具 / 标牌", "主机", "设计集与快照合并；建造走专用请求"],
+      ["移动方块", "主机", "活塞集合由主机发布；非活塞依赖最终地形收敛（见 SYN06）"] ] } },
+  { id: "MOD09", t: "电路域", tag: "顺序即正确性",
+    fig: { type: "cards", cols: 3, items: [
+      { h: "epoch + 序列", p: "表达「哪一代、第几批」" },
+      { h: "快照 + 事件", p: "缺事件时用快照重建" },
+      { h: "停滞超时 2s", p: "跳过缺口继续，避免永久停顿" } ] } },
+  { id: "MOD10", t: "世界控制域", tag: "时间 · 天气 · 雾 · 闪电",
+    fig: { type: "cards", cols: 2, items: [
+      { h: "同步什么", p: "时间偏移与模式 · 降水 / 雾 / 闪电 · 世界设置整份快照（2Hz）" },
+      { h: "两个坑", p: "开雨/雾会连带打开天气总开关；跳时间点前要把模式切回 Changing" } ] } },
+  { id: "MOD11", t: "容器与物品事务", tag: "不复制、不丢失",
+    fig: { type: "table", head: ["规则", "做法"], rows: [
+      ["打开容器", "= 交互（放行）"],
+      ["取出 / 放入", "= 修改，必须由主机执行"],
+      ["版本冲突", "拒绝旧版本事务并返回最新快照（不做尽力合并）"],
+      ["覆盖范围", "背包 · 快捷栏 · 箱子 · 熔炉 · 工作台 · 发射器"] ] } },
+  { id: "MOD12", t: "数据调整通道（DM）", tag: "受控的改数据入口",
+    fig: { type: "pills", items: [
+      { t: "身份以传输层 clientId 为准", c: "cy" },
+      { t: "远程客户端只能改自己", c: "vi" },
+      { t: "主机复算坐标与合法性", c: "am" },
+      { t: "payload 不转发给其它客户端", c: "gr" } ] },
+    notes: ["细节见 DMX01–DMX07；审批流程见 FLW17。"] },
+  { id: "MOD13", t: "玩家领地", tag: "边界即墙",
+    fig: { type: "cards", cols: 2, items: [
+      { h: "拥有者", p: "在领地内正常挖 / 放 / 拾取" },
+      { h: "其他人", p: "破坏被否决并改回；门 / 开关 / 家具照常交互" } ] },
+    notes: ["数据模型与执法挂点见 RGN01–RGN06。"] },
+  { id: "MOD14", t: "UI 与操作入口", tag: "CR · IF · TA · MP",
+    fig: { type: "table", head: ["入口", "作用"], monoCols: [0], rows: [
+      ["CR", "以当前世界开房（开房后变为 IF）"],
+      ["IF", "列出已加入玩家与坐标"],
+      ["TA", "房间聊天（本地立即回显）"],
+      ["MP", "房间信息 · 最近 50 条发言 · 主机管理（审批 / 踢人 / DM / 带宽）"] ] },
+    notes: ["世界列表条目区分来源：<b>在线（延迟 x ms）</b>= 局域网；<b>服务（延迟 x ms）</b>= 目录 / 显式端点。",
+      "设置落盘 <code>data:/ScMultiplayerSettings.json</code>：自动批准加入、自动开房、端口、带宽、DM 档位、宽限期等。"] },
+  { id: "MOD15", t: "诊断、日志与审计", tag: "默认静默，有界采样",
+    fig: { type: "table", head: ["文件", "内容", "用途"], monoCols: [0], rows: [
+      ["Logs/Client/&lt;日期&gt;.log", "地形 apply / chunk、加入屏障、回执", "客户端为什么没跟上"],
+      ["Logs/Server/ScMP-op-&lt;日期&gt;.log", "主机服务量、越权拒绝、审批决策", "主机到底执行了什么"],
+      ["Logs/Game.log", "加载、类型缺失、协议拒绝、异常", "装上了吗 / 为什么被拒"] ] } },
+  { id: "MOD16", t: "传输适配与端口边界", tag: "模块只能看见端口",
+    fig: { type: "table", head: ["端口", "所有者", "约束"], monoCols: [0], rows: [
+      ["INetworkTransport", "Comms 适配器", "只暴露端点、步数与原始发送"],
+      ["IReliableChannel", "可靠通道协调器", "只表达可靠策略，不复制 ACK/重传状态"],
+      ["IGameThreadDispatcher", "游戏线程适配器", "只排队主线程与帧尾动作"],
+      ["IAuthoritativeWorld", "世界适配器", "主机权威世界句柄与清理边界"],
+      ["IWorldSnapshotStore", "加入 / 地形模块", "revision 读取与按客户端重置"],
+      ["IPlayerStateStore", "玩家模块", "玩家快照读取与按客户端重置"],
+      ["IMultiplayerRuntimeHost", "旧兼容外壳", "八个阶段转发（重写目标：消灭它）"] ] } }
+]},
+{ no: "网络", t: "两条通道 · 五档语义 · 三条发现链路", sub: "传输由独立库 Comms 承担", blocks: [
+  { id: "NET01", t: "UDP 数据报通道", tag: "要快、允许丢",
+    fig: { type: "cards", cols: 3, items: [
+      { h: "单包上限", big: "1200 B", p: "IPv6 最小 MTU 下也不会被 IP 分片" },
+      { h: "收包", p: "单线程接收循环，收包即入队，不阻塞游戏线程" },
+      { h: "用途", p: "高频状态 · 发现广播 · ACK" } ] } },
+  { id: "NET02", t: "TCP 可靠流与混合发送器", tag: "可靠包走流",
+    fig: { type: "cards", cols: 2, items: [
+      { h: "分流规则", p: "可靠包 → TCP 流；Raw / 不可靠 / ACK → UDP；对外身份仍是 UDP 端点" },
+      { h: "不再自己 ACK", p: "流模式声明后跳过确认簿记；8 字节握手带 magic + 版本 + 宣告的 UDP 端口" } ] },
+    notes: ["TCP 复用与 UDP 相同的端口号；要求两者同时绑定成功才采用该端口。",
+      "发送只入队，由每连接写线程落 socket；队列深度计入未确认包数，应用层窗口仍然有效。"] },
+  { id: "NET03", t: "五档投递语义", tag: "值不值得重传",
+    fig: { type: "table", head: ["模式", "确认", "排序", "重发", "用途"], monoCols: [0], rows: [
+      ["Raw", "无", "无", "无", "局域网发现广播"],
+      ["Unreliable", "无", "无", "无", "高频位置 / 姿态"],
+      ["UnreliableSequenced", "无", "有序去旧", "无", "状态快照流"],
+      ["Reliable", "有", "无序", "有", "聊天 · 重要控制"],
+      ["ReliableSequenced", "有", "严格有序", "有", "地形改动 · 加入请求"] ] } },
+  { id: "NET04", t: "分片与单包上限", tag: "UDP 1200 / TCP 64K",
+    fig: { type: "cards", cols: 3, items: [
+      { h: "分片依据", p: "取两者较小值切分：可靠分片只是改走流，仍按数据报安全值切" },
+      { h: "半截消息", big: "10 s", p: "不完整的分片集合超时丢弃" },
+      { h: "大对象", p: "世界包 / 皮肤 / 批量 DM 都带序号 + 总数 + 校验，可请求补片" } ] } },
+  { id: "NET05", t: "重传与卡顿自愈", tag: "退避上限独立",
+    fig: { type: "table", head: ["参数", "取值", "含义"], monoCols: [1], rows: [
+      ["最大重发", "30 次", "之后交由业务层重建"],
+      ["重发基准", "0.1s / 0.15s", "按轮次取值"],
+      ["最小间隔", "0.08s", "下限保护"],
+      ["退避", "×1.25，最多 4 步，上限 1.0s", "上限独立，否则指数退避被压平成恒速"],
+      ["可靠有序停滞", "2s", "跳到最旧的已缓冲消息继续"],
+      ["重复包检测", "20s", "抵抗重传造成的重复投递"] ] } },
+  { id: "NET06", t: "心跳与断线判定", tag: "10 / 30 / 120 秒",
+    fig: { type: "bars", unit: " s", max: 130, rows: [
+      { label: "心跳周期", v: 10, c: "#2b9fc4" },
+      { label: "心跳重发", v: 1, c: "#7c5cf0" },
+      { label: "连接超时", v: 8, c: "#d99b12" },
+      { label: "连接丢失判定", v: 30, c: "#d1495f" },
+      { label: "空闲连接回收", v: 120, c: "#5a6a86" },
+      { label: "重连宽限期（默认）", v: 60, c: "#17a273" } ] },
+    notes: ["宽限期内化身原地保留、不接收输入、不存档、不广播离开；重连命中同一记录键即恢复。"] },
+  { id: "NET07", t: "局域网发现", tag: "开房也能被发现",
+    fig: { type: "cards", cols: 2, items: [
+      { h: "本端行为", p: "开房后暂停主动发现，但<b>应答照常</b>——所以「开房就搜不到」不成立" },
+      { h: "前提", p: "对方的 UDP 能到本机房间端口（51459 起）" } ] },
+    call: { k: "warn", t: "防火墙", p: "只有当主机的一端需要入站放行：房间端口 + 动态端口段 49152–65535；规则要覆盖当前网络档案。" } },
+  { id: "NET08", t: "互联网服务器目录", tag: "可合并的清单",
+    fig: { type: "timeline", items: [
+      { tag: "①", c: "cy", t: "读取域名清单", p: "内置嵌入资源 + 内容根同名文件，逐行一个域名或 IP" },
+      { tag: "②", c: "cy", t: "三端合并", p: "多仓库 raw 拉取合并；成功 300s、失败 30s 重试；上限 64 KiB / 256 主机" },
+      { tag: "③", c: "vi", t: "解析真实地址", p: "走 DoH（端点写成 IP，避免本地 fake-ip 抢答），结果缓存" },
+      { tag: "④", c: "vi", t: "逐族探测", p: "同时解析 A 与 AAAA，对每个地址探测房间" },
+      { tag: "⑤", c: "gr", t: "列表与短码", p: "目录房间显示「服务（延迟 x ms）」，可用短码进入" } ] } },
+  { id: "NET09", t: "源地址漂移与 NAT", tag: "身份跟着走",
+    fig: { type: "cards", cols: 2, items: [
+      { h: "机制", p: "数据报令牌 + 连接迁移：默认允许 IP 变化，最小变更间隔 1s" },
+      { h: "效果", p: "代理开关切换 / NAT 重绑 / 双栈切换都能不断线继续玩；切换瞬间丢几包由上层重传补齐" } ] } },
+  { id: "NET10", t: "代理与受限网络", tag: "纯客户端功能",
+    fig: { type: "table", head: ["通道", "SOCKS5 机制"], rows: [
+      ["TCP 可靠流", "CONNECT 域名:端口（域名交给代理解析，绕开 fake-ip）"],
+      ["UDP 数据报", "UDP ASSOCIATE + 10 字节报文头，回包按头里的源地址还原"],
+      ["私有地址", "10/8 · 172.16/12 · 192.168/16 · 回环 · ULA 始终直连"] ] },
+    call: { k: "warn", t: "判据", p: "TUN 模式下客户端 TCP Connect 成功<b>不能</b>作为通路判据；唯一权威判据是主机侧出现来自你公网地址的 ESTABLISHED。" } },
+  { id: "NET11", t: "IPv4 / IPv6 双栈", tag: "两族同端口",
+    fig: { type: "cards", cols: 4, items: [
+      { h: "同端口", p: "两族各拿一个端口会让同一客户端变成两个身份" },
+      { h: "IPv6Only", p: "避免重复收到 IPv4 流量" },
+      { h: "路由粘性", p: "当前路由静默 15s 才单向回退另一族" },
+      { h: "会话内不切族", p: "连接建立后固定端点，不存在来回跳变" } ] } }
+]},
+{ no: "协议", t: "48 条消息 · 一把协议闸门", sub: "协议是两端唯一的共同语言", blocks: [
+  { id: "PRT01", t: "消息封装格式", tag: "三段结构",
+    fig: { type: "flow", arrow: "vi", nodes: [
+      { t: "类型号", s: ["变长整数", "wire ID"], c: "host" },
+      { t: "发送者", s: ["是否有标记", "+ IP 端点"], c: "vi" },
+      { t: "消息体", s: ["各消息自定义", "字段顺序冻结"], c: "srv" } ],
+      note: "包里没有发送者字段时，使用传输层提供的来源端点" } },
+  { id: "PRT02", t: "消息总表（按域）", tag: "48 条，完整见 IDX04",
+    fig: { type: "table", head: ["域", "条数", "代表消息", "投递"], monoCols: [1], rows: [
+      ["会话与房间", "6", "房间/世界信息、握手、踢人", "可靠"],
+      ["加入与传输", "6", "世界包、分片、就绪、修复请求", "可靠 · 分片"],
+      ["玩家", "12", "位置/输入/动作/生命/装备/档案/能力/统计", "状态 + 可靠"],
+      ["地形", "5", "修改批次、区块检查点、恢复、挖掘", "可靠有序"],
+      ["实体与世界对象", "8", "实体生命周期、身体更新、掉落物、投射物、家具", "状态 + 可靠"],
+      ["电路与可编辑数据", "3", "电路同步、可编辑数据请求/状态", "可靠有序"],
+      ["世界控制与聊天", "3", "世界控制请求/回执、聊天", "可靠"],
+      ["扩展（DM / 领地 / 其它）", "5", "数据调整、领地认领、爆炸、批量、挖掘表现", "可靠"] ] } },
+  { id: "PRT03", t: "协议闸门", tag: "四项全等才放行",
+    fig: { type: "table", head: ["项", "来源", "作用"], rows: [
+      ["Mod 版本", { m: "2.2.9" }, "人类可读版本"],
+      ["协议版本", { m: "1" }, "结构性不兼容的分界"],
+      ["协议哈希", "SHA-256(消息清单 id:名称:修订号)", "任何字段变化都会改哈希"],
+      ["构建指纹", "SHA-256(程序集 MVID)", "精确到「这一次编译的产物」"] ] },
+    call: { k: "bad", t: "只重建一端", p: "加入会在任何连接动作之前被静默拒绝，调用方照样打印「已发送加入」——看起来像点了没反应。日志搜 <code>Refused incompatible room before join</code>。" } },
+  { id: "PRT04", t: "wire ID 稳定注册", tag: "追加式，永不重用",
+    fig: { type: "cards", cols: 3, items: [
+      { h: "显式写死", p: "Register&lt;T&gt;(id, 名称, 修订号)，不依赖反射顺序或混淆结果" },
+      { h: "只增不改", p: "字段变化必须提升修订号，修订号进协议哈希" },
+      { h: "启动自检", p: "未注册的具体消息类型直接抛异常" } ] } },
+  { id: "PRT05", t: "序列化约定", tag: "小端 + 变长整数",
+    fig: { type: "pills", items: [
+      { t: "小端序", c: "cy" }, { t: "变长整数压缩小数值", c: "cy" },
+      { t: "Point3 / Vector2 / Vector3 / Quaternion / Ray3 扩展方法", c: "vi" },
+      { t: "字符串与集合在入口有长度上限", c: "am" } ] } },
+  { id: "PRT06", t: "批次消息", tag: "减少包数",
+    fig: { type: "cards", cols: 1, items: [
+      { h: "SyncBatch", p: "同一帧内的多条小消息封进一个包；接收端按顺序展开，业务模块感受不到差别" } ] } },
+  { id: "PRT07", t: "通道选择策略", tag: "过时了还有没有价值",
+    fig: { type: "table", head: ["数据", "通道", "理由"], rows: [
+      ["位置 / 姿态 / 视角 / 手持动画", "可替换状态", "下一帧就有新值"],
+      ["动物普通快照", "可替换状态", "同上，且自适应降频"],
+      ["时间 / 天气 / 世界设置", "可替换状态", "2Hz 全量快照天然自愈"],
+      ["地形改动", "可靠有序", "必须同顺序应用，缺一块就是永久缺口"],
+      ["操作请求与回执", "可靠", "丢一次就是「点了没反应」"],
+      ["容器事务", "可靠 + 版本", "一致性优先于延迟"],
+      ["电路事件", "可靠有序", "顺序即正确性"] ] } }
+]}
+);
+</script>
+
+<script id="data-b">
+SCMP_DOC.sections.push(
+{ no: "流程", t: "19 个可复现过程", sub: "每一步都能单独验证", blocks: [
+  { id: "FLW01", t: "创建房间", tag: "五步，先卸载再导出",
+    fig: { type: "timeline", items: [
+      { tag: "1", c: "cy", t: "保存项目" }, { tag: "2", c: "cy", t: "卸载项目", p: "区域文件被占用时读不出来" },
+      { tag: "3", c: "vi", t: "导出全新权威快照", p: "绝不复用旧快照" }, { tag: "4", c: "vi", t: "创建 Comms 房间" },
+      { tag: "5", c: "gr", t: "重载同一个本地世界", p: "这次它同时是权威源" } ] } },
+  { id: "FLW02", t: "房间发现与列表刷新", tag: "三条链路并行",
+    fig: { type: "cards", cols: 2, items: [
+      { h: "来源标注", p: "「在线（延迟 x ms）」= 局域网；「服务（延迟 x ms）」= 目录 / 显式端点" },
+      { h: "刷新健壮性", p: "发现包临时丢失时保留原有选择索引，不清空列表、不跳选中项" } ] } },
+  { id: "FLW03", t: "加入审批", tag: "主机始终有最终决定权",
+    fig: { type: "cards", cols: 3, items: [
+      { h: "自动批准 · 开", p: "合法请求立即接受" },
+      { h: "自动批准 · 关", p: "每个请求都要决定，含曾经见过的身份" },
+      { h: "三个选项", p: "允许 / 拒绝 / 稍后（进入待处理队列）" } ] },
+    notes: ["传输握手有效期最多 5 分钟，过期前主动拒绝。"] },
+  { id: "FLW04", t: "世界下载与追帧", tag: "最容易被低估的一段",
+    fig: { type: "seq", lanes: ["客户端", "房间中继", "主机（权威）"], laneClass: ["cli", "srv", "host"], steps: [
+      { from: 0, to: 1, label: "① 选择房间 → 发起加入", c: "vi" },
+      { from: 1, to: 2, label: "② 转交申请", c: "vi" },
+      { from: 2, to: 1, label: "③ 审批结果（允许 / 拒绝 / 稍后）", c: "cy" },
+      { from: 1, to: 0, label: "④ 接受后建立可靠流并绑定身份", c: "cy" },
+      { from: 2, to: 0, label: "⑤ 世界包分片（序号 + 总数 + 校验）", c: "cy" },
+      { from: 0, to: 2, label: "⑥ 缺片 / 校验失败 → 请求修复（可多轮）", c: "am" },
+      { from: 0, to: 1, label: "⑦ 导入完成 → 上报就绪", c: "vi" },
+      { from: 2, to: 0, label: "⑧ 追帧：快照之后的地形改动逐批推送", c: "cy" },
+      { from: 1, to: 0, label: "⑨ 检查点屏障通过 → 进入可玩状态", c: "gr" } ],
+      cap: "加入全时序：上行请求 / 下行权威 / 修复重试" } },
+  { id: "FLW05", t: "追帧屏障", tag: "放行判据",
+    fig: { type: "cards", cols: 3, items: [
+      { h: "日志 journal", p: "主机把快照之后的改动按序列留档" },
+      { h: "检查点", p: "按区块标记「确认到哪一版」，作为放行判据" },
+      { h: "移动靶", p: "屏障要求的是主机<b>当前</b>值，等待期间要持续补推" } ] } },
+  { id: "FLW06", t: "帧主循环", tag: "上行 + 下行",
+    fig: { type: "cards", cols: 2, items: [
+      { h: "上行（发）", p: "输入 100Hz · 状态变化即发 + 4Hz 保底 · 主机侧编增量" },
+      { h: "下行（收）", p: "回调只解码/校验/去重/入队；状态修改只在固定阶段" } ] } },
+  { id: "FLW07", t: "移动与视角", tag: "可替换状态",
+    fig: { type: "timeline", items: [
+      { tag: "1", c: "cy", t: "采样输入与身体状态" }, { tag: "2", c: "cy", t: "变化即发 + 4Hz 保底（不重传）" },
+      { tag: "3", c: "vi", t: "主机写入远端角色组件" }, { tag: "4", c: "gr", t: "广播给其它客户端并插值渲染" },
+      { tag: "5", c: "am", t: "越界（速度/位移超限）→ 主机下发权威修正" } ] } },
+  { id: "FLW08", t: "挖掘与放置", tag: "权威闭环范例",
+    fig: { type: "seq", lanes: ["客户端", "主机", "其它客户端"], laneClass: ["cli", "host", "srv"], steps: [
+      { from: 0, to: 1, label: "① 动作意图（射线 + 槽位 + 序列号）", c: "vi" },
+      { from: 0, to: 0, label: "② 本地表现：动画 / 进度（不决定结果）", c: "am" },
+      { from: 1, to: 1, label: "③ 校验：距离 · 视线 · 工具 · 模式 · 冷却 · 领地", c: "cy" },
+      { from: 1, to: 2, label: "④ 执行 + 下发结果（地形批次 / 回执）", c: "cy" },
+      { from: 0, to: 0, label: "⑤ 被拒绝 → 把本地预测改回去", c: "rd" } ] } },
+  { id: "FLW09", t: "战斗、生命与生存属性", tag: "主机唯一结算",
+    fig: { type: "cards", cols: 2, items: [
+      { h: "攻击", p: "客户端提交射线 → 主机<b>重新做一次射线检测</b>并校验距离/冷却/武器 → 下发命中结果" },
+      { h: "生命与状态", p: "主机模拟并保存血量、空气、食物、耐力、睡眠、体温、湿度、等级；变化立即发 + 4Hz 保底" } ] },
+    call: { k: "warn", t: "绕过原版受伤入口", p: "引擎把死因与死亡统计写在原版受伤方法内；直接写血量的路径必须自己补这两项。" } },
+  { id: "FLW10", t: "背包 / 容器 / 熔炉 / 合成", tag: "事务 + 版本",
+    fig: { type: "table", head: ["操作", "主机校验", "回传"], rows: [
+      ["切换手持槽", "可见槽位范围", "活动槽 + 手持物"],
+      ["移动物品", "物品守恒 · 容量 · 槽位规则 · 容器版本", "完整快照 + 确认序列"],
+      ["丢弃 / 拾取", "持有物 · 位置合法性", "背包 + 掉落物创建/删除"],
+      ["使用 / 食用", "原版使用条件与消耗", "背包 + 属性 + 表现"],
+      ["熔炉 / 工作台 / 发射器", "配方 · 燃料 · 进度 · 槽位版本", "槽位 + 进度 + 火焰状态"] ] } },
+  { id: "FLW11", t: "掉落物与拾取保护", tag: "请求 + 短保护窗",
+    fig: { type: "cards", cols: 3, items: [
+      { h: "唯一创建", p: "掉落物的创建 / 移动 / 删除都由主机决定" },
+      { h: "拾取是请求", p: "主机校验距离与归属后执行" },
+      { h: "保护窗口", p: "本地约 0.5s 内不被自己的逻辑抢走，避免两端同时拾取" } ] } },
+  { id: "FLW12", t: "投射物与爆炸", tag: "主机唯一生成结果",
+    fig: { type: "cards", cols: 2, items: [
+      { h: "投射物", p: "客户端提交（槽位 / 射线 / 蓄力 / 请求 ID）→ 主机扣弹药、创建、判定命中并下发" },
+      { h: "爆炸", p: "只能由主机生成；地形变化、伤害、冲量一并结算后广播" } ] } },
+  { id: "FLW13", t: "动物行为与声音", tag: "主机跑 AI，客户端展示",
+    fig: { type: "cards", cols: 3, items: [
+      { h: "同步内容", p: "网络实体 ID · 变换 · 当前行为名 · 目标 · 群组 · 血量" },
+      { h: "自适应频率", p: "状态变化立即提高频率，平静时降频（见 ANM01）" },
+      { h: "声音", p: "空闲 / 攻击 / 嚎叫走独立声音消息；受伤序列复现痛苦音" } ] } },
+  { id: "FLW14", t: "电路事件与快照", tag: "序列 + 重建",
+    fig: { type: "timeline", items: [
+      { tag: "1", c: "cy", t: "本端收集事件（epoch + 序列号）" }, { tag: "2", c: "cy", t: "走可靠有序通道" },
+      { tag: "3", c: "vi", t: "接收端按序列应用；发现缺口则请求区间" },
+      { tag: "4", c: "am", t: "缺口过大 / 代次不符 → 请求快照重建" },
+      { tag: "5", c: "gr", t: "停滞 2s → 跳到最旧的已缓冲消息继续" } ] } },
+  { id: "FLW15", t: "聊天、世界控制与睡觉", tag: "三条独立链",
+    fig: { type: "cards", cols: 3, items: [
+      { h: "聊天", p: "发送者 → 主机 → 全体；本端立即回显；保留最近 50 条" },
+      { h: "世界控制", p: "时间点 / 降水 / 雾 / 闪电走请求 + 回执，复用 2Hz 广播分发" },
+      { h: "睡觉", p: "睡眠状态与时间加速由主机决定" } ] } },
+  { id: "FLW16", t: "断线、重连与清理", tag: "否则只能重启游戏",
+    fig: { type: "timeline", items: [
+      { tag: "宽限", c: "am", t: "默认 60s：化身原地保留，不接收输入、不存档、不广播离开" },
+      { tag: "重连", c: "cy", t: "命中同一身份 → 拆掉挂起化身，按正常加入流程恢复" },
+      { tag: "期满", c: "vi", t: "保存角色记录 → 移除运行时角色 → 释放序号" },
+      { tag: "客户端", c: "vi", t: "下载的世界 / 远程实体 / 待确认请求逐项回收" },
+      { tag: "主机消失", c: "rd", t: "心跳超时内退出世界并清理，不留幽灵房间" } ] },
+    call: { k: "ok", t: "验收口径", p: "连续 20 次断线重连不出现永久「加入中」；一个客户端退出不得影响其它客户端。" } },
+  { id: "FLW17", t: "数据调整审批流程", tag: "第三方改数据唯一入口",
+    fig: { type: "timeline", items: [
+      { tag: "1", c: "cy", t: "客户端 Mod 提交请求（Mod 标识 / 操作 / payload）" },
+      { tag: "2", c: "cy", t: "主机形成审批项，显示来源与数据规模，一次一条" },
+      { tag: "3", c: "am", t: "决定：允许 / 拒绝 / 永久信任该玩家；拒绝或 120s 未处理即终止" },
+      { tag: "4", c: "vi", t: "允许后进入主机该 Mod 的应用处理器，在游戏线程执行" },
+      { tag: "5", c: "gr", t: "结果回执（成功 / 失败 / 拒绝 / 忙 / 非法 / 不支持 / 取消）" } ] } },
+  { id: "FLW18", t: "领地建立与赋予", tag: "只有 GM 能改",
+    fig: { type: "timeline", items: [
+      { tag: "1", c: "cy", t: "两点确定 X/Z 范围（高度默认全高），本端显示线框预览" },
+      { tag: "2", c: "cy", t: "提交「建立领地」→ 主机审核通过后分配编号" },
+      { tag: "3", c: "vi", t: "赋予：把领地加入某身份的拥有者列表（可多人共享、可重叠）" },
+      { tag: "4", c: "vi", t: "剥夺 / 退回 / 放弃" },
+      { tag: "5", c: "am", t: "普通玩家面板里这些入口置灰" } ] } },
+  { id: "FLW19", t: "领地执法", tag: "按动作分别拦截",
+    fig: { type: "table", head: ["动作", "结果", "落地方式"], rows: [
+      ["挖掘", "否决", "领地内不产生挖掘进度；已发生的预测改回去并通知发起人"],
+      ["放置", "否决", "主机不执行，回执拒绝"],
+      ["拾取掉落物", "否决", "物品留在原地"],
+      ["点燃 / 火势", "阻断", "可燃方块入口在主机侧短路"],
+      ["爆炸破坏", "阻断", "爆炸仍发生，受保护方块不被破坏"],
+      ["水 / 岩浆", "拦截", "流体停在领地边界"],
+      ["活塞 / 发射器", "改写 / 短路", "行为层处理，不做整块替换"],
+      ["门 / 开关 / 家具", "放行", "交互白名单：能看见能操作，但不改归属"] ] } }
+]},
+{ no: "权威", t: "谁说了算", sub: "整个系统的宪法", blocks: [
+  { id: "AUT01", t: "主机权威原则", tag: "意图 vs 事实",
+    fig: { type: "cards", cols: 2, items: [
+      { h: "客户端的自由", p: "即时反馈（预测 / 动画 / 界面）· 展示（插值与特效）· 请求" },
+      { h: "主机独占", p: "伤害与死亡 · 掉落与投射物增删 · 实体生成消失 · 容器内容 · 爆炸结果 · 时间天气 · 领地" } ] } },
+  { id: "AUT02", t: "确认 / 拒绝 / 修正", tag: "只有三种结局",
+    fig: { type: "flow", arrow: "cy", nodes: [
+      { t: "客户端请求", s: ["意图 + 序列号"], c: "cli" },
+      { t: "主机校验", s: ["距离 · 视线 · 冷却", "模式 · 持有物 · 权限"], c: "host" },
+      { t: "Accepted", s: ["执行并广播"], c: "srv" } ],
+      note: "另两个出口：Rejected（附权威状态，客户端必须回滚）· Corrected（权威修正快照）" },
+    notes: ["三种结局之外还有「忙 / 非法 / 不支持 / 取消」——它们同样必须回执，不能沉默。"] },
+  { id: "AUT03", t: "序列号与幂等", tag: "重复只结算一次",
+    fig: { type: "cards", cols: 2, items: [
+      { h: "序列号", p: "每客户端单调；主机按序去重，旧序列丢弃" },
+      { h: "请求 ID", p: "一次性操作重复到达时只执行一次，并重发原结果" } ] } },
+  { id: "AUT04", t: "身份绑定", tag: "传输层才是真相",
+    fig: { type: "table", head: ["场景", "规则"], rows: [
+      ["远程客户端", "只能申请修改自己；填写别人的目标直接拒绝"],
+      ["主机本地 Mod", "身份为 0，可以指定在线目标"],
+      ["玩家级权限", "绑定账号身份而非会话编号，换设备后权限与颜色不变"],
+      ["坐标与偏移", "只是提示，最终位置由主机用原版安全落点计算"] ] },
+    call: { k: "bad", t: "不可协商", p: "身份永远以传输层提供的客户端编号为准；payload 里自称的编号不得覆盖它。" } },
+  { id: "AUT05", t: "主机校验清单", tag: "一条都不能少",
+    fig: { type: "table", head: ["维度", "校验内容", "挡住的问题"], rows: [
+      ["存活", "存在 / 活着 / 非互斥状态", "死后仍操作、叠加互斥动作"],
+      ["距离", "操作目标与角色距离上限", "隔着整张地图挖别人的箱子"],
+      ["视线", "复算射线确认瞄准方向", "客户端说打中了就算打中"],
+      ["冷却", "攻击 / 交互 / 放置频率下限", "连点加速、脚本刷物品"],
+      ["游戏模式", "创造 / 生存差异、飞行许可", "生存飞行、越权世界控制"],
+      ["持有物", "手上有物品、数量足够、工具可挖", "凭空放置、无工具挖掘"],
+      ["目标存在性", "网络实体 ID 仍有效且类型匹配", "打一个已经消失的实体"],
+      ["守恒", "物品总量 · 容器版本 · 容量", "复制物品、覆盖别人的操作"],
+      ["权限", "受信任名单 · 临时能力 · 领地归属", "越权改世界、改别人的地盘"] ] } },
+  { id: "AUT06", t: "预测与回滚", tag: "只预测可撤销的",
+    fig: { type: "cards", cols: 2, items: [
+      { h: "允许预测", p: "移动与转向 · 挖掘动画与进度表现 · 手持切换 · 开箱界面" },
+      { h: "禁止预测", p: "伤害结果 · 掉落归属 · 容器内容 · 投射物命中 · 爆炸结果 · 领地归属" } ] } },
+  { id: "AUT07", t: "客户端不能决定什么", tag: "一张表说清",
+    fig: { type: "table", head: ["项目", "客户端可否决定", "说明"], monoCols: [1], rows: [
+      ["自己的位置", "否（可预测）", "主机校验速度与位移上限"],
+      ["造成的伤害", "否", "主机复算并结算"],
+      ["自己的血量", "否", "只能上报「我掉血了」，主机只接受下调"],
+      ["掉落物归属", "否", "拾取是请求"],
+      ["容器内容", "否", "事务 + 版本"],
+      ["实体生成 / 消失", "否", "主机唯一"],
+      ["爆炸结果", "否", "主机唯一"],
+      ["时间 / 天气", "否（可申请）", "创造模式或授权能力"],
+      ["领地归属", "否", "只有 GM / 主机可增删"] ] } }
+]},
+{ no: "同步", t: "同步了什么、还差什么", sub: "诚实列出缺口", blocks: [
+  { id: "SYN01", t: "同步全景（已覆盖）", tag: "十个域",
+    fig: { type: "table", head: ["域", "已同步内容"], rows: [
+      ["玩家", "移动 · 视角 · 动作 · 生命 · 生存属性 · 死亡复活 · 等级 · 装备 · 档案 · 皮肤"],
+      ["载具", "精确坐骑身份 + 可靠的骑乘 / 下马"],
+      ["物品", "背包 · 衣服 · 箱子 · 熔炉 · 发射器 · 合成台"],
+      ["地形", "方块修改 · 区块检查点 · 缺口恢复"],
+      ["战斗", "投射物 · 命中与移除 · 爆炸及地形结果"],
+      ["实体", "动物生命周期 / 变换 / 行为 / 目标 / 血量 · 掉落物全流程"],
+      ["电路", "输入 · 状态快照 · 围栏与恢复 · 可编辑数据"],
+      ["世界对象", "家具设计建造 · 家具快照 · 标牌快照与编辑"],
+      ["世界", "世界传输 · 时间 · 天气 · 雾 · 闪电 · 世界控制"],
+      ["会话", "睡眠与时间加速 · 加入审批 · 踢人 · 断线宽限"] ] } },
+  { id: "SYN02", t: "频率与保底", tag: "变化即发 + 保底",
+    fig: { type: "bars", unit: " Hz", max: 100, labelW: 190, rows: [
+      { label: "连续输入采样", v: 100, c: "#2b9fc4" },
+      { label: "玩家状态保底", v: 4, c: "#7c5cf0" },
+      { label: "动物 · 身边 / 交战", v: 16, c: "#17a273" },
+      { label: "动物 · 附近", v: 8, c: "#17a273" },
+      { label: "动物 · 追击玩家", v: 4, c: "#d99b12" },
+      { label: "动物 · 远处常态", v: 2, c: "#5a6a86" },
+      { label: "世界信息（时间/天气/设置）", v: 2, c: "#d1495f" },
+      { label: "低优先级资料", v: 1, c: "#93a6c4" } ] } },
+  { id: "SYN03", t: "地形 revision 与恢复", tag: "三道保障",
+    fig: { type: "flow", arrow: "am", nodes: [
+      { t: "主机地形", s: ["每次修改 revision+1", "按批次下发"], c: "host" },
+      { t: "客户端应用", s: ["按序应用", "记录已知版本"], c: "vi" },
+      { t: "发现缺口", s: ["revision 不连续"], c: "warn" },
+      { t: "请求恢复", s: ["主机补推缺失区间"], c: "srv" } ] },
+    notes: ["检查点按区块维护「版本 + 数据是否完整」；恢复失败时用检查点重建这一片，而不是无限重传。"] },
+  { id: "SYN04", t: "自适应实体同步", tag: "距离定基线，状态改频率",
+    fig: { type: "rings", center: "玩家", cap: "动物同步频率带：越近越密，交战时升到最高",
+      rings: [
+        { r: 64, c: "#93a6c4", label: "64 格 · 飞行鸟 8 Hz" },
+        { r: 24, c: "#7c5cf0", label: "24 格 · 飞行鸟 16 Hz" },
+        { r: 16, c: "#17a273", label: "16 格 · 同群带动 16 Hz" },
+        { r: 12, c: "#d99b12", label: "10 / 12 格 · 身边 8 Hz" },
+        { r: 5, c: "#d1495f", label: "交战 / 追击 → 16 / 4 Hz" } ] },
+    notes: ["没有硬性距离切断：远处只是更新得稀疏。距离判定用「离最近的那个玩家」。",
+      "关键边沿（进入攻击 / 追击 / 受击）立即升频，表现不失真。"] },
+  { id: "SYN05", t: "带宽预算与限速", tag: "三层限速",
+    fig: { type: "cards", cols: 2, items: [
+      { h: "三层", p: "服务器总上传/下载（低/平衡/高三档或手填）· 加入传输单独限速 · 每连接待发队列计入窗口" },
+      { h: "为什么加人不卡全场", p: "加入传输预留净空（默认 96 kbps）与突发额度（默认 16 KiB）" } ] } },
+  { id: "SYN06", t: "已知缺口", tag: "是「还没做到」不是「不知道」",
+    fig: { type: "table", head: ["缺口", "现状", "影响"], rows: [
+      ["通用移动方块生命周期", "活塞类已同步；非活塞依赖最终地形收敛", "缺少连续的移动表现"],
+      ["通用物理冲量 / 刚体互撞", "伤害击退有权威序列；任意冲量事件无通用消息", "极端场景靠快照收敛"],
+      ["玩家梯子附着状态", "位置可收敛，无显式附着 / 动画权威字段", "动画表现可能短暂不一致"],
+      ["方块火焰计时元数据", "烧毁后的地形已同步；无逐格火焰时长", "表现层差异"],
+      ["流感 / 生病瞬时事件", "持续时间与咳嗽已同步；打喷嚏等缺失", "表现层差异"],
+      ["动物细粒度行为边沿", "主动行为 / 目标 / 群组已同步；挖洞俯身缺字段", "个别动画不同步"],
+      ["完整统计对象", "主机权威动作的统计会同步；无全量序列化", "非权威路径统计可能不同"],
+      ["家具集合管理", "快照合并与建造已覆盖；删除 / 改名 / 排序无专用操作", "管理语义不完整"] ] },
+    call: { k: "warn", t: "不在范围", p: "队伍 / 组队管理，以及领地的权限分层不做，不计入「缺失同步」。" } }
+]}
+);
+</script>
+<script id="data-c">
+SCMP_DOC.sections.push(
+{ no: "扩展 A", t: "数据调整通道（DM）", sub: "把「改数据」关进笼子", blocks: [
+  { id: "DMX01", t: "设计目标与边界", tag: "只做管道，不做业务",
+    fig: { type: "cards", cols: 2, items: [
+      { h: "它做什么", p: "受控的改数据入口 · 主机审批 + 应用处理器 · 有界队列与每帧预算 · 超时与取消" },
+      { h: "它绝不做什么", p: "不解释 payload 语义 · 不转发给其它客户端 · 拒绝时不构造对象 / 不起线程 / 不写盘" } ] } },
+  { id: "DMX02", t: "三档策略", tag: "reject / default / allow",
+    fig: { type: "table", head: ["档位", "行为", "适用"], monoCols: [0], rows: [
+      ["reject", "拒绝所有请求，不显示审批提示", "纯净生存 · 公开服务器"],
+      ["default", "每个请求进审批队列，一次一条；拒绝或 120s 未处理即终止", "默认档"],
+      ["allow", "不弹窗直接放行，但应用处理器仍须存在并显式返回成功", "自用 / GM 场景"] ] } },
+  { id: "DMX03", t: "快慢两条通道", tag: "8 KiB / 16 MiB",
+    fig: { type: "cards", cols: 2, items: [
+      { h: "快速通道", big: "8 KiB", p: "小请求；有界队列 + 每帧预算" },
+      { h: "大数据通道", big: "16 MiB", p: "开始 → 分片（768 B）→ 完成；每片必须能独立应用" } ] },
+    notes: ["客户端只在收到「已接受」后才发分片；分片走可靠<b>无序</b>通道，避免占用可靠有序控制消息的队头。",
+      "缓冲超过 2 MiB 或 30 s 未完成即取消；每帧预算可配低 / 平衡 / 高。"] },
+  { id: "DMX04", t: "内置操作族与临时能力", tag: "主机无需装第三方 Mod",
+    fig: { type: "table", head: ["操作", "要点"], monoCols: [0], rows: [
+      ["SetRespawnAnchor", "用原版安全落点搜索，只更新复活点"],
+      ["ReturnToPlayer", "传送到目标附近安全点；骑乘状态拒绝"],
+      ["GrantInventory", "先算容量，不足时一件都不加"],
+      ["RestoreLevel", "限有限正数范围，随后下发权威等级"],
+      ["Heal", "只对存活角色调用原版治疗"],
+      ["SafeRespawnRelocate", "复活点与当前位置一起改"],
+      ["Seal", "基岩外壳；仅主机本地申请"],
+      ["SetVitals", "位掩码指定字段；未置位 = 保持主机当前值"],
+      ["SetCondition", "施加 / 解除流感与中毒，时长上限 3600s"] ] },
+    notes: ["临时能力按客户端存在内存、不写存档：<b>CreativeFly</b>（输入边界强制）· <b>WorldControl</b>（复用主机权威执行）· <b>CreativeInventory</b>（切换为原版创造背包）。"] },
+  { id: "DMX05", t: "受信任名单", tag: "三种会被同意的来源",
+    fig: { type: "table", head: ["来源", "行为"], rows: [
+      ["世界受信任名单", "<b>连审批请求都不产生</b>，主机直接落地"],
+      ["无头服务器自动批准名单", "请求照常产生，由无头端立刻批准"],
+      ["策略档位 = allow", "所有请求一律同意"] ] },
+    call: { k: "bad", t: "两套开关独立", p: "「能不能进房间」由<b>自动批准加入</b>决定；受信任名单只改<b>数据修改权限</b>。" } },
+  { id: "DMX06", t: "第三方 Mod API", tag: "提交 / 应用 / 结果",
+    fig: { type: "table", head: ["API", "用途"], monoCols: [0], rows: [
+      ["SubmitFast(mod, op, payload)", "小型一次性请求"],
+      ["SubmitBulk(mod, op, batches)", "大数据分片请求"],
+      ["RequestPlayerModification(...)", "内置角色操作族的强类型入口"] ] },
+    call: { k: "warn", t: "payload 格式", p: "内置操作用纯文本「字段名 + TAB + 值」，不用 JSON：混淆改名会让 JSON 属性名静默解析成默认值。" } },
+  { id: "DMX07", t: "世界设置 / 世界控制", tag: "字段表",
+    fig: { type: "table", head: ["字段", "取值", "主机执行"], monoCols: [0], rows: [
+      ["Precipitation", "on / off / toggle", "开始或结束降水"],
+      ["Fog", "on / off / toggle", "开始或结束雾"],
+      ["Lightning", "strike", "方向取发起请求的客户端眼睛朝向"],
+      ["TimePoint", "dawn / noon / dusk / midnight", "定点跳转（先把模式切回 Changing）"],
+      ["TimeExact", "0..1", "与引擎时间口径一致"],
+      ["任意简单字段", "float / int / bool / string / 向量 / 枚举", "写入世界设置并即刻生效，随 2Hz 广播分发"] ] } }
+]},
+{ no: "扩展 B", t: "玩家领地", sub: "边界即墙", blocks: [
+  { id: "RGN01", t: "目标语义", tag: "破坏挡下，交互照常",
+    fig: { type: "cards", cols: 2, items: [
+      { h: "拥有者", p: "在领地内正常挖掘 · 放置 · 拾取" },
+      { h: "其他人", p: "挖 / 放 / 拾取 / 点燃 / 爆炸 / 流体破坏一律挡下，并把改动改回去" } ] },
+    call: { k: "ok", t: "交互白名单", p: "门 · 活板门 · 栅栏门 · 开关 / 按钮 / 拉杆 · 家具：打开查看 = 交互（放行）；取出放入 = 修改（拒绝）。" } },
+  { id: "RGN02", t: "数据模型与上限", tag: "64×64×256 / 128 块",
+    fig: { type: "cards", cols: 3, items: [
+      { h: "几何", p: "轴对齐长方体，整数格闭区间；高度默认 0–255" },
+      { h: "编号", p: "世界内自增、全局唯一；玩家用编号引用" },
+      { h: "拥有者", p: "一串账号身份（不是会话编号），可多人共享" },
+      { h: "单体上限", big: "64 × 64 × 256", p: "矩形即可，不要求正方形" },
+      { h: "数量上限", big: "世界默认 128 块", p: "不设每人上限" },
+      { h: "颜色", p: "由该身份在主机上的角色序号经导线调色板取值，换设备不变" } ] } },
+  { id: "RGN03", t: "选区与预览", tag: "线框 + 编号",
+    fig: { type: "cards", cols: 2, items: [
+      { h: "选区", p: "点 1 / 点 2（可设为角色所在方块或手填），两点齐备自动画线框" },
+      { h: "展示", p: "外侧面填充同色 + 除底面外 5 个外表面绘制领地编号；近处填充、远处只线框" } ] } },
+  { id: "RGN04", t: "归属与权限链路", tag: "指令走 DM 通道",
+    fig: { type: "timeline", items: [
+      { tag: "1", c: "cy", t: "面板选点、预览" },
+      { tag: "2", c: "cy", t: "「建立领地」作为指令提交，走 DM 通道（DMX06）" },
+      { tag: "3", c: "vi", t: "主机审核通过后分配编号并登记" },
+      { tag: "4", c: "gr", t: "归属变化立即广播增量，各端更新只读副本与绘制" } ] } },
+  { id: "RGN05", t: "执法挂点", tag: "拦在哪一层",
+    fig: { type: "table", head: ["行为", "挂点层次", "效果"], rows: [
+      ["挖（客户端）", "地形修改入口", "不产生进度；本地预测被改回"],
+      ["挖 / 放（主机本机）", "主机地形修改入口", "主机自己的越权同样被挡，口径一致"],
+      ["拾取", "拾取请求处理", "物品留在原地"],
+      ["火", "可燃方块行为层", "点燃入口短路"],
+      ["爆炸", "爆炸对地形的写入", "爆炸照常，受保护方块不破坏"],
+      ["流体", "流体结算", "停在边界，不越界"],
+      ["活塞 / 发射器", "可编辑电路行为层", "行为改写或短路，不整块替换"],
+      ["交互白名单", "交互入口", "门 / 开关 / 家具放行"] ] },
+    call: { k: "warn", t: "实现纪律", p: "只允许「钉住少量私有字段 + 行为层短路」这类最小侵入手段；替换组件会导致更新派发重映射。" } },
+  { id: "RGN06", t: "重叠与冲突", tag: "归编号最小者",
+    fig: { type: "cards", cols: 2, items: [
+      { h: "重叠规则", p: "允许重叠；重叠格归<b>编号最小</b>的领地，不依赖遍历顺序" },
+      { h: "变更后", p: "新建 / 赋予 / 剥夺 / 放弃都会重算受影响格的归属；判定统一走一个入口" } ] } }
+]},
+{ no: "工程", t: "六条让它不炸的纪律", sub: "踩过之后写进规范", blocks: [
+  { id: "SEC01", t: "三端同包与协议闸门", tag: "硬门禁",
+    fig: { type: "cards", cols: 2, items: [
+      { h: "规则", p: "任何重建后必须把同一个包放到客户端 / 平板 / 服务器，各自重启加载" },
+      { h: "判据", p: "四项全等（PRT03）+ 三端包哈希一致，而不是「我拷过去了」" } ] } },
+  { id: "SEC02", t: "混淆与按类名引用", tag: "保留名单",
+    fig: { type: "timeline", items: [
+      { tag: "症状", c: "rd", t: "加载阶段报「类型找不到」" },
+      { tag: "排查", c: "am", t: "日志搜 not found in any loaded assembly → 查保留名单" },
+      { tag: "修复", c: "gr", t: "补保留类型 → 重编 → 三端部署验证" } ] },
+    notes: ["凡按类名字符串被引用的类型都要保留：数据库类参数 · 注入器映射 · 反射 Type.GetType · 外部 Mod 按名引用。"] },
+  { id: "SEC03", t: "存档纯净", tag: "Project.xml 不含 Mod 类型名",
+    fig: { type: "pills", items: [
+      { t: "存档只写原版认得的类型名", c: "cy" },
+      { t: "替换 / 新增的类型名一律不得落盘", c: "rd" },
+      { t: "每次改注入后含服务器存档一起自查", c: "am" } ] },
+    call: { k: "bad", t: "后果", p: "未装 Mod 的原版读这个存档会报「类型不存在」或加载世界失败。" } },
+  { id: "SEC04", t: "输入校验", tag: "挡在业务之外",
+    fig: { type: "cards", cols: 3, items: [
+      { h: "在入口统一限制", p: "包长度 · 集合数量 · 字符串长度 · 分片索引与总数 · 资源大小 · 来源端点" },
+      { h: "不允许各写一套", p: "业务模块不得自行实现不一致的校验" },
+      { h: "越界处理", p: "一律丢弃并记有界诊断，不做「尽力解析」" } ] } },
+  { id: "SEC05", t: "异常隔离", tag: "不打断整帧",
+    fig: { type: "cards", cols: 3, items: [
+      { h: "影响范围", p: "单消息 / 单模块失败 → 一条带来源与序列号的有界记录" },
+      { h: "采样预算", p: "诊断采样本身也要有预算，不能进每包热路径" },
+      { h: "开关", p: "默认关闭；排障时打开，验证后移除临时探针" } ] } },
+  { id: "SEC06", t: "Mod-only 边界", tag: "不改原版源码",
+    fig: { type: "cards", cols: 2, items: [
+      { h: "允许的注入", p: "数据库替换（事件总线）· 类名映射（注入器）· 加载期注入" },
+      { h: "复用优先", p: "直接复用 → 继承并替换 → 组合适配器 → 新增网络控制类；禁止平行实现" } ] } }
+]},
+{ no: "运维", t: "部署 · 观察 · 排障", sub: "顺序是硬规定", blocks: [
+  { id: "OPS01", t: "三端部署", tag: "三种形态",
+    fig: { type: "table", head: ["端", "形态", "落点"], rows: [
+      ["PC", "自包含发布目录 + 客户端 Mods", "游戏根目录；<code>Mods/</code> 放 .scmod"],
+      ["平板 / 手机", "APK + 客户端 Mods", "下载目录下的游戏 Mods 目录"],
+      ["无头服务器", "隐藏窗口 · 禁用绘制 · 启用控制台", "服务器运行目录；<code>Mods/</code> 放 .scmod"] ] },
+    notes: ["内置 Mod 走游戏根目录；裸 DLL 不进 <code>Mods/</code>；同一个内置 Mod 只能有一份。"] },
+  { id: "OPS02", t: "打包规范", tag: ".scmod",
+    fig: { type: "pills", items: [
+      { t: "IsMergeLib=true", c: "cy" }, { t: "扁平 Lib/", c: "cy" }, { t: "条目用 / 分隔", c: "gr" },
+      { t: "ModInfo.xml 在根", c: "gr" }, { t: "扁平版本字段", c: "am" },
+      { t: "禁打包引擎与 SuAPICore", c: "rd" }, { t: "打包后列条目 + 解压校验", c: "vi" } ] },
+    notes: ["Windows 与 Android 共用同一份平台无关 DLL。"] },
+  { id: "OPS03", t: "无头服务器控制台", tag: "同样的权威，只是没画面",
+    fig: { type: "pills", items: [
+      { t: "托管设置", c: "cy" }, { t: "加入审批与待处理", c: "cy" }, { t: "踢人 / 断开", c: "am" },
+      { t: "GM 授权与受信任名单", c: "gr" }, { t: "数据修改审批页", c: "gr" }, { t: "最近决策记录", c: "vi" } ] } },
+  { id: "OPS04", t: "日志与排障顺序", tag: "先日志，再桥，最后探针",
+    fig: { type: "table", head: ["日志", "记录什么"], rows: [
+      ["客户端决策日志", "地形 apply 与 chunk 完成度 · 加入屏障 · 操作回执"],
+      ["主机操作审计", "地形服务量 · 越权拒绝 · 审批决策"],
+      ["引擎日志", "模组加载 · 类型缺失 · 协议拒绝 · 异常"] ] },
+    call: { k: "warn", t: "顺序", p: "① 先读日志（日志记录最后的操作）→ ② 用命令行桥取样 → ③ 才考虑临时探针，且验证后立即删除。" } },
+  { id: "OPS05", t: "命令行桥", tag: "只读观测",
+    fig: { type: "pills", items: [
+      { t: "status", c: "cy" }, { t: "player", c: "cy" }, { t: "aim / ui / dialogs", c: "cy" },
+      { t: "messages / events / snapshot", c: "vi" },
+      { t: "world time | entities | blocks --at x y z", c: "am" }, { t: "world fire", c: "gr" } ] },
+    notes: ["三端读数对照：PC 本机端口；平板经端口转发 + 令牌；服务器经 SSH 本地转发 + 令牌。"] },
+  { id: "OPS06", t: "指标与门禁", tag: "相对基线",
+    fig: { type: "cards", cols: 2, items: [
+      { h: "采什么", p: "收发量与包数 · 重传次数 · 待确认队列深度 · 处理耗时 p95 · 地形应用耗时 · 加入各阶段耗时" },
+      { h: "门禁", p: "空闲/单玩家收发量增幅 ≤5% · 压力场景 p95 与托管分配增幅 ≤5% · 5% 丢包 + 200ms 下队列可回落" } ] } },
+  { id: "OPS07", t: "工具链与核对", tag: "别混 SDK",
+    fig: { type: "cards", cols: 3, items: [
+      { h: "SDK", p: "Mod 制作可用新版 SDK（输出仍是 .NET 8）；主程序含 Android 目标必须 .NET 8 SDK" },
+      { h: "编译前", p: "结束游戏进程（会锁 DLL）；必要时触碰源文件防缓存跳过" },
+      { h: "部署后", p: "比对哈希：部署件 = 构建产物，且三端一致；<code>publish/</code> 只放 Release" } ] } }
+]},
+{ no: "重写", t: "SuMultiplayer 蓝图", sub: "把契约搬进可验证的骨架", blocks: [
+  { id: "RWT01", t: "目标与非目标", tag: "换实现，不换语义",
+    fig: { type: "cards", cols: 2, items: [
+      { h: "目标", p: "行为等价 · 边界可验证 · 热路径可控 · 状态无残留 · 可演进" },
+      { h: "非目标", p: "不改写原版逻辑 · 不改线上协议 · 不为目录漂亮拆稳定算法 · 不引入反射热点" } ] } },
+  { id: "RWT02", t: "架构原则", tag: "六条",
+    fig: { type: "cards", cols: 3, items: [
+      { h: "① 单向依赖", p: "适配器 → 模块 → 端口 → 传输" },
+      { h: "② 状态唯一所有者", p: "每个可变集合只有一个所有者" },
+      { h: "③ 端口而非接口堆砌", p: "只为传输 / 通道 / 线程 / 世界 / 存储建端口" },
+      { h: "④ 阶段即契约", p: "模块声明所属帧阶段" },
+      { h: "⑤ 异常隔离", p: "单模块失败只产生有界诊断" },
+      { h: "⑥ 复用优先", p: "原版类型继续做真实对象" } ] } },
+  { id: "RWT03", t: "目录结构", tag: "骨架已落地",
+    fig: { type: "table", head: ["路径", "职责", "状态"], monoCols: [0], rows: [
+      ["Plug/", "入口：只做组合与生命周期", "已落地"],
+      ["Control/", "组合根 · 阶段调度器", "已落地"],
+      ["Core/", "共享句柄 · 会话状态 · 帧上下文", "已落地"],
+      ["Ports/", "模块契约 · 传输端口 · 诊断出口", "已落地"],
+      ["Transport/", "传输适配器 · 可靠 / 可替换通道", "待补"],
+      ["Modules/", "十个业务域模块", "待补"],
+      ["Message/", "DTO · wire ID 注册表 · 协议身份", "待补"],
+      ["Adapters/", "原版与 UI 适配", "待补"],
+      ["Diagnostics/", "诊断出口实现 · 审计 · 指标", "部分"] ] } },
+  { id: "RWT04", t: "冻结不变量", tag: "改动即回归",
+    fig: { type: "timeline", items: [
+      { tag: "1", c: "cy", t: "wire ID 追加式", p: "字段变化提升修订号，注册表启动自检" },
+      { tag: "2", c: "cy", t: "协议闸门四项全等", p: "任何重建三端同包" },
+      { tag: "3", c: "vi", t: "权威单向", p: "伤害 / 掉落 / 生成 / 容器 / 命中 / 爆炸只由主机决定" },
+      { tag: "4", c: "vi", t: "请求可重放安全", p: "请求 ID + 序列去重，重复只执行一次" },
+      { tag: "5", c: "am", t: "可替换状态不进可靠队列" },
+      { tag: "6", c: "am", t: "地形可收敛", p: "预测必须能被 revision / 检查点 / 恢复覆盖" },
+      { tag: "7", c: "gr", t: "存档纯净" },
+      { tag: "8", c: "gr", t: "异常不打断帧" } ] } },
+  { id: "RWT05", t: "里程碑", tag: "每段都有门禁",
+    fig: { type: "timeline", items: [
+      { tag: "M0", c: "gr", t: "骨架（已完成）", p: "组合根 · 调度 · 会话状态 · 端口 · 诊断；构建 0 错 0 警" },
+      { tag: "M1", c: "cy", t: "传输与会话", p: "门禁：局域网与公网各 20 次建房 / 加入无卡死" },
+      { tag: "M2", c: "cy", t: "加入传输", p: "门禁：20 次首加入 + 20 次断线重连无永久「加入中」" },
+      { tag: "M3", c: "vi", t: "权威闭环", p: "门禁：1 万次方块修改后两端地形与碰撞一致" },
+      { tag: "M4", c: "vi", t: "世界对象", p: "门禁：既有回归全过；p95 与托管分配增幅 ≤5%" },
+      { tag: "M5", c: "am", t: "扩展面", p: "门禁：每个扩展有独立开关，关闭不改变基线行为" } ] } },
+  { id: "RWT06", t: "验收门禁", tag: "可直接写进验收单",
+    fig: { type: "table", head: ["类别", "判据"], rows: [
+      ["稳定性", "首加入 20 次、重连 20 次无卡死；单客户端退出不影响其它客户端"],
+      ["一致性", "1 万次方块修改后，客户端最终地形与碰撞与主机一致"],
+      ["事务", "两端同时操作同一容器：不复制、不丢失、旧版本事务被拒"],
+      ["战斗", "每次合法攻击只结算一次；血量 / 击退 / 仇恨一致"],
+      ["延迟容忍", "100–300ms 下移动 / 跳跃 / 蹲边无频繁回退"],
+      ["性能", "收发量增幅 ≤5%；压力场景 p95 / CPU p95 / 托管分配增幅 ≤5%"],
+      ["弱网", "5% 丢包 + 200ms 下可靠队列可回落"],
+      ["清理", "主机异常终止：客户端在心跳超时内退出并清理"] ] } },
+  { id: "RWT07", t: "功能去留", tag: "保留 / 废弃",
+    fig: { type: "table", head: ["旧能力", "处置"], monoCols: [1], rows: [
+      ["协议消息与 wire ID", "原样保留"], ["权威模型与校验清单", "原样保留"],
+      ["地形 revision / 检查点 / 恢复", "原样保留"], ["电路事件序列与 epoch", "原样保留"],
+      ["容器事务版本模型", "原样保留"], ["领地的存储 / 判定 / 执法", "原样保留"],
+      ["DM 三档策略与审批队列", "原样保留"], ["诊断日志字段与事件名", "兼容保留"],
+      ["阶段壳 + 兼容宿主转发", "废弃"], ["同一状态的第二份「权威副本」", "废弃"],
+      ["散落的静态集合（跨会话残留）", "废弃"], ["未被保留的混淆类名引用", "收敛"] ] } },
+  { id: "RWT08", t: "技术资产", tag: "只陈述可核查事实",
+    fig: { type: "cards", cols: 2, items: [
+      { h: "已建成的壁垒", p: "完整的主机权威底座 · 48 条稳定 wire ID 与协议闸门 · 高难度同步域（地形 / 实体 / 电路 / 容器）· 可复用扩展通道 · 三端同实现" },
+      { h: "难以复制的地方", p: "不是「连上线」，而是把不一致当故障处理；大量设计来自实测（通道分工 · 退避上限 · 协议闸门 · 加入屏障 · 代理判据 · 双栈身份）" } ] },
+    notes: ["可延展方向：玩法层（领地 / 经济）· 服务端托管运营 · 第三方生态 · 跨平台客户端。"] }
+]},
+{ no: "迁移", t: "旧 → 新对照", sub: "讨论移植时按 GUID 定位", blocks: [
+  { id: "MAP01", t: "模块映射总表", tag: "一行一行搬",
+    fig: { type: "table", head: ["旧落点", "新归宿", "对应", "处置"], monoCols: [0], rows: [
+      ["Control/*", "组合根与调度器", { g: "MOD03" }, "强化"],
+      ["Modules/Runtime/*", "删除阶段壳", { g: "MOD16" }, "替换"],
+      ["Modules/Session/* + NetworkStateMachine", "Session 域", { g: "MOD04" }, "搬迁移"],
+      ["Modules/Join/* + WorldTransferRegistry", "Join 域", { g: "MOD05" }, "搬迁移"],
+      ["Modules/Player/*", "Player 域", { g: "MOD06" }, "拆分"],
+      ["Modules/Terrain/* + SuSubsystemTerrain", "Terrain 域 + 原版适配", { g: "MOD07" }, "搬迁移"],
+      ["Modules/Entity/* + WorldObjectSynchronizer", "Entity / WorldObject 域", { g: "MOD08" }, "拆分"],
+      ["Circuit/CircuitSynchronizer", "Circuit 域（算法原样）", { g: "MOD09" }, "冻结搬运"],
+      ["Modules/World/*", "World / Container 域", { g: "MOD11" }, "拆分"],
+      ["DataModification/*", "DataMod 域", { g: "DMX01" }, "搬迁移"],
+      ["Modules/Region/*", "Region 域", { g: "RGN01" }, "搬迁移"],
+      ["Func/Screen/* · Func/Ui/*", "UI 适配器", { g: "MOD14" }, "搬迁移"],
+      ["Networking/* · Transport/* · Ports/*", "Transport 适配 + 端口", { g: "MOD16" }, "收敛"],
+      ["Diagnostics/*", "Diagnostics", { g: "MOD15" }, "搬迁移"],
+      ["Message/*（48 条）", "DTO + wire ID 注册表", { g: "PRT04" }, "冻结"] ] } },
+  { id: "MAP02", t: "消息迁移策略", tag: "先冻结，再搬",
+    fig: { type: "timeline", items: [
+      { tag: "1", c: "cy", t: "冻结清单", p: "48 条消息的 ID / 名称 / 修订号 / 字段顺序 / 投递语义（IDX04）" },
+      { tag: "2", c: "cy", t: "先搬注册表", p: "逐字段一致，启动自检通过" },
+      { tag: "3", c: "vi", t: "再搬编解码", p: "DTO 只负责字段与顺序" },
+      { tag: "4", c: "vi", t: "灰度对照", p: "用同一份 wire 表驱动两端" },
+      { tag: "5", c: "am", t: "最后搬业务", p: "每迁一个域就跑该域回归" },
+      { tag: "6", c: "rd", t: "永不改已发布 ID", p: "需要新字段就提升修订号（协议哈希变化 → 三端同包）" } ] } },
+  { id: "MAP03", t: "移植检查清单", tag: "12 项",
+    fig: { type: "check", items: [
+      ["该域的所有者是哪个模块？状态有没有第二份副本？", "RWT02"],
+      ["消息 ID / 字段顺序 / 投递语义是否与冻结表一致？", "MAP02"],
+      ["是否只经端口访问传输层（没有直接调底层发送）？", "MOD16"],
+      ["热路径是否只入队，状态修改是否只在固定阶段？", "FLW06"],
+      ["主机校验清单是否完整？", "AUT05"],
+      ["请求是否带序列号 / 请求 ID，重复到达是否幂等？", "AUT03"],
+      ["是否按类名字符串引用类型？保留名单是否补上？", "SEC02"],
+      ["是否会把 Mod 类型名写进存档？", "SEC03"],
+      ["Reset / Dispose 是否只清自己的状态？", "FLW16"],
+      ["诊断是否默认静默、有界、可移除？", "SEC05"],
+      ["三端是否同包（哈希一致）并各自重启验证？", "SEC01"],
+      ["该域的验收门禁是否跑过（含弱网与并发）？", "RWT06"] ] } }
+]},
+{ no: "附录", t: "索引与速查", sub: "挑 GUID、查出处", blocks: [
+  { id: "IDX01", t: "GUID 索引总表", tag: "自动生成", special: "index" },
+  { id: "IDX02", t: "术语表", tag: "18 条",
+    fig: { type: "kv", rows: [
+      ["主机 / 房主", "运行权威世界、拥有裁决权的一端"],
+      ["客户端", "加入房间的一端；有预测与表现，无裁决权"],
+      ["中继 / 房间服务", "Comms 服务器进程：房间隔离、转发、握手，不跑游戏逻辑"],
+      ["wire ID", "消息线上的类型编号，追加式分配、永不重用"],
+      ["投递语义", "一条消息是否需要确认、排序与重传（五档）"],
+      ["可靠通道", "有确认、有重传；用于不能丢的数据"],
+      ["可替换状态", "新快照顶替旧快照，丢包不重传"],
+      ["序列号 / 请求 ID", "去重与幂等：旧序列丢弃，重复请求重发原结果"],
+      ["revision / epoch", "地形版本号 / 电路会话代次"],
+      ["检查点", "按区块维护的「确认到哪一版」锚点"],
+      ["追帧 catch-up", "补齐「快照之后」发生的改动"],
+      ["DM", "受控的数据调整通道"],
+      ["领地 claim", "轴对齐长方体 + 拥有者列表；边界即墙"],
+      ["宽限期", "断线后主机保留化身的秒数"],
+      ["协议闸门", "连接前的四项一致性校验"],
+      ["构建指纹", "程序集模块 ID 的哈希，精确到这一次编译"],
+      ["混淆 / 保留名单", "发布改名与「按类名引用」的例外清单"],
+      ["区块 / 区域文件", "16×16 方块 / 16×16 区块（256×256 方块）"] ] } },
+  { id: "IDX03", t: "代码位置索引", tag: "Top 目录",
+    fig: { type: "table", head: ["路径", "文件", "行数", "职责"], monoCols: [0, 1, 2], rows: [
+      ["Modules/", "45", "26,491", "按域拆分的业务模块"],
+      ["Func/", "50", "13,171", "原版类型适配：组件 / 子系统 / 屏幕 / 电路"],
+      ["Message/", "51", "5,435", "协议消息 DTO 与编解码"],
+      ["DataModification/", "9", "3,738", "数据调整通道"],
+      ["Core/", "17", "2,512", "会话与运行时状态、策略、注册表"],
+      ["Networking/", "9", "2,290", "发送、路由、状态机、目录、代理"],
+      ["Diagnostics/", "6", "629", "决策记录、指标、审计"],
+      ["Control/", "3", "423", "控制单元、调度器、消息路由"],
+      ["Transport/ + Ports/", "9", "222", "端口与传输策略适配"],
+      ["Plug/", "1", "8", "组合根声明"] ] } },
+  { id: "IDX04", t: "wire ID 总表", tag: "48 条 · 迁移唯一事实来源",
+    fig: { type: "table", head: ["ID", "消息", "方向", "用途"], monoCols: [0, 1], rows: [
+      ["0", "ChatMessage", "双向广播", "房间聊天"],
+      ["1", "CircuitSyncMessage", "双向", "电路事件、快照与序列"],
+      ["2", "EditableDataRequestMessage", "C → H", "可编辑数据修改请求"],
+      ["3", "EditableDataStateMessage", "H → C", "可编辑数据权威状态"],
+      ["4", "GameKickPlayerMessage", "H → C", "踢出玩家"],
+      ["5", "GameModifiedCellsMessage", "H → C", "方块修改批次"],
+      ["6", "GamePakWorldMessage", "H → C", "世界包"],
+      ["7", "GamePlayerHealthMessage", "H → C", "权威生命与生存属性"],
+      ["8", "GamePlayerInputMessage", "C → H", "完整玩家输入"],
+      ["9", "GamePlayerPositionMessage", "双向", "位置 / 旋转 / 速度 / 手持 / 动画"],
+      ["10", "GamePlayerPositionsMessage", "H → C", "多玩家位置批量"],
+      ["11", "GameWorldInfoMessage", "广播", "房间 / 世界描述"],
+      ["12", "GameWorldInfoMessage1", "H → C", "时间 / 天气 / 世界设置快照"],
+      ["13", "PlayerAimMessage", "C → H", "瞄准状态"],
+      ["14", "SyncBatchMessage", "双向", "批量封装"],
+      ["15", "TerrainDigRequestMessage", "C → H", "挖掘请求"],
+      ["16", "TerrainDigResultMessage", "H → C", "挖掘回执"],
+      ["17", "WorldControlRequestMessage", "C → H", "时间 / 天气控制请求"],
+      ["18", "AnimalInteractionMessage", "C → H", "动物交互"],
+      ["19", "BodyUpdateMessage", "H → C", "身体 / 动物变换快照"],
+      ["20", "ContainerSyncMessage", "双向", "容器事务与快照"],
+      ["21", "EntityMessage", "H → C", "实体生成 / 消失"],
+      ["22", "ExplosionSyncMessage", "H → C", "爆炸结果"],
+      ["23", "GamePakWorldChunkMessage", "H → C", "世界包分片"],
+      ["24", "GamePakWorldReadyMessage", "C → H", "世界下载就绪"],
+      ["25", "GamePakWorldRepairRequestMessage", "C → H", "世界包修复请求"],
+      ["26", "PickableSyncMessage", "双向", "掉落物同步与拾取"],
+      ["27", "PlayerActionMessage", "C → H", "动作意图（挖 / 放 / 攻击 / 交互 / 丢弃）"],
+      ["28", "PlayerDataSyncMessage", "双向", "角色记录同步"],
+      ["29", "PlayerEquipmentMessage", "双向", "装备与衣服"],
+      ["30", "PlayerProfileMessage", "双向", "玩家档案与资料"],
+      ["31", "ProjectileSyncMessage", "H → C", "投射物生命周期"],
+      ["32", "TerrainRecoveryMessage", "双向", "地形缺口恢复"],
+      ["33", "WorldObjectSyncMessage", "H → C", "家具 / 标牌 / 世界对象"],
+      ["34", "WorldControlResultMessage", "H → C", "世界控制回执"],
+      ["35", "PlayerSkinAssetMessage", "双向", "自定义皮肤分片"],
+      ["36", "TerrainChunkSyncMessage", "H → C", "区块检查点（数据 / 完成 / 兴趣）"],
+      ["37", "DigPresentationMessage", "C → H → 全体", "挖掘动作表现"],
+      ["38", "MeleeHitResultMessage", "H → C", "近战命中回执"],
+      ["39", "AnimalSoundMessage", "H → C", "动物声音事件"],
+      ["40", "FurnitureBuildRequestMessage", "C → H", "家具建造请求"],
+      ["41", "MountActionMessage", "C → H", "骑乘 / 下马动作"],
+      ["42", "MountStateMessage", "H → C", "骑乘状态"],
+      ["43", "DataModificationMessage", "双向", "数据调整通道"],
+      ["44", "PlayerAuthorityMessage", "H → C", "权威修正快照"],
+      ["45", "PlayerCapabilityMessage", "H → C", "临时能力授予（带序号）"],
+      ["46", "PlayerStatsMessage", "H → C", "玩家统计"],
+      ["47", "RegionClaimMessage", "双向", "领地增量同步"] ] },
+    notes: ["每条消息的修订号也在注册表中，并参与协议哈希；方向为按域归纳，精确方向以发送入口为准。"] },
+  { id: "IDX05", t: "来源与版本", tag: "可核查",
+    fig: { type: "kv", rows: [
+      ["解析对象", "联机模组 v2.2.9 / 协议 v1"],
+      ["解析方式", "逐文件阅读源码（201 个 C# 文件、54,987 行），与项目内规则文档交叉核对"],
+      ["统计口径", "按文件行数实测，不含 <code>bin/</code> 与 <code>obj/</code>"],
+      ["参数细节", "区块 / 兴趣窗口 / 各类范围见 <a href=\"chunk-region-sync.html\">chunk-region-sync.html</a>"],
+      ["重写工程", "<code>Mod/SuMultiplayer/</code>（最简骨架，已通过编译）"],
+      ["维护约定", "协议或模块边界变化时同步更新对应 GUID 段落与 IDX04"] ] } }
+]}
+);
+</script>
+
+<script id="render">
+SCMP_RENDER(SCMP_DOC);
+</script>
+</body>
+</html>

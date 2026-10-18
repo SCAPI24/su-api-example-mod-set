@@ -1,0 +1,146 @@
+syntax = "proto3";
+
+package sump.protocol;
+
+option csharp_namespace = "SuMultiplayer.Protocol";
+option optimize_for = SPEED;
+
+import "google/protobuf/any.proto";
+
+// ---------------------------------------------------------------------------
+// MessageType is the compact id carried by the TCP frame header (uint16).
+//
+// Ranges:
+//   0        reserved / invalid; a frame with type 0 is a protocol violation.
+//   1..999   built-in SuMultiplayer messages (this enum).
+//   1000..1999 third-party messages registered through MessageRegistry.
+//
+// The frame header still carries [length][sequence][type][flags]; the message
+// itself is exactly the protobuf payload for that type.  Do not renumber an
+// existing value: peers of different builds must agree on the id.
+// ---------------------------------------------------------------------------
+enum MessageType {
+  MESSAGE_TYPE_UNSPECIFIED = 0;
+
+  // Handshake / transport control (protocol.proto)
+  HELLO = 1;
+  HELLO_ACK = 2;
+  INTEREST_UPDATE = 3;
+
+  // Terrain synchronisation (terrain.proto)
+  CHUNK_DIGEST_REPORT = 4;
+  CHUNK_VERDICT = 5;
+  CHUNK_RESYNC = 6;
+  CELL_CHANGE = 7;
+
+  // Reserved debug-control ids (kept stable; no payload is defined for them).
+  DEBUG_SUBSCRIBE = 8;
+  DEBUG_STATE = 9;
+
+  BYE = 10;
+
+  // World transfer (transfer.proto)
+  WORLD_BEGIN = 11;
+  WORLD_CHUNK = 12;
+  WORLD_END = 13;
+  WORLD_MISSING = 14;
+
+  // Live map.  Payloads are intentionally NOT protobuf: the web page feed is a
+  // frozen format (see Terrain/LiveMap.cs and doc/live-map.html).
+  MAP_REQUEST = 15;
+  MAP_STATE = 16;
+
+  // Player positions (position.proto)
+  PLAYER_POSITION = 17;
+  PLAYER_POSITIONS = 18;
+
+  // Client resident chunk set (terrain.proto)
+  CLIENT_CHUNKS = 19;
+
+  // Reconnect catch-up control (terrain.proto)
+  CATCH_UP = 20;
+
+  // Host -> client: re-verify these resident chunks (terrain.proto)
+  VERIFY_CHUNKS = 21;
+
+  // Creature replication (creature.proto)
+  CREATURE_STATE = 22;
+  CREATURE_RESYNC_REQUEST = 23;
+
+  // Client cell edits (authority.proto)
+  CELL_EDIT_REQUEST = 24;
+  CELL_EDIT_RESULT = 25;
+
+  // Host-authoritative world info (worldinfo.proto)
+  WORLD_INFO = 26;
+}
+
+// Logical envelope metadata.  The current single-message transport puts these
+// fields in the 16-byte TCP frame header, so the envelope message is not sent
+// on the wire today; it exists so batching / future transports share one
+// schema.  Never wrap MapState in it (the live-map payload is frozen).
+message Envelope {
+  uint32 protocol_version = 1;
+  uint64 sequence = 2;
+  MessageType type = 3;
+  uint32 flags = 4;
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}
+
+// Client -> host: first frame on a connection.
+message Hello {
+  // ClientKind: 0 = player, 1 = debug observer.
+  uint32 kind = 1;
+  string name = 2;
+  uint32 protocol_version = 3;
+  uint32 protocol_revision = 4;
+  // Interest radius in chunks (clamped by the host).
+  int32 radius = 5;
+  // Stable player identity (UserId.dat). Empty when the engine cannot provide it.
+  string identity = 6;
+  // True when this client is currently playing the downloaded world for this room.
+  bool already_has_world = 7;
+  string client_session_id = 8;
+  int64 last_applied_sequence = 9;
+
+  // Third-party extension points: see doc/message-protocol.md.
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}
+
+// Host -> client: handshake answer.
+message HelloAck {
+  uint32 version = 1;
+  int32 client_id = 2;
+  string room = 3;
+  uint32 flags = 4;
+  int32 max_radius = 5;
+  string host_identity = 6;
+  string host_name = 7;
+  string session_id = 8;
+  bool rejoin_accepted = 9;
+  int64 head_sequence = 10;
+  string rejoin_reason = 11;
+
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}
+
+// Client -> host: interest window centre (chunk coordinates) and radius.
+message InterestUpdate {
+  int32 center_x = 1;
+  int32 center_z = 2;
+  int32 radius = 3;
+
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}
+
+// Client -> host: leaving the room.
+message Bye {
+  string reason = 1;
+
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}

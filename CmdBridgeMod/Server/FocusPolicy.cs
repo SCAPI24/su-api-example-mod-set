@@ -65,6 +65,56 @@ namespace CmdBridgeMod
     /// </summary>
     internal sealed class FocusPolicy
     {
+        // ==================================================================================
+        // 铁律（用户 2026-10-17 定）：**命令行桥存在时禁止抢占真实鼠标与窗口；请在后台用虚拟输入完成。**
+        //
+        // 原因（用户明确要求）：抢真实窗口/鼠标会打断用户操作；而且所有操作在后台虚拟输入下
+        // 都能完成，根本没有必要去抢。
+        //
+        // 因此本 Mod 自己的路径上**禁止**出现这些真实窗口/光标 API（一个都不许加回来）：
+        //   `SetForegroundWindow` / `SetActiveWindow` / `ShowWindow` / `SetCursorPos` /
+        //   `mouse_event` / `SendInput` / `AttachThreadInput`，以及任何"为了把目标变得可点"
+        //   而注入的真实触摸/真实鼠标设备输入（`AndroidTouch` / 鼠标设备层）。
+        //
+        // 允许保留的只有两类写法，且都**不改变**用户看到的前台与光标：
+        //   · **只读探测**：`ForegroundWindowProbe` 的 `GetForegroundWindow` /
+        //     `GetWindowTextW` / `GetWindowTextLengthW` / `GetWindowThreadProcessId` / `IsWindow`，
+        //     以及 OpenTK 的 `GameWindow.Focused` —— 只用来回答"现在到底谁在前台"。
+        //   · **引擎内部的虚拟状态**：`Window.m_state`（让引擎以为窗口活跃，输入不被丢弃）、
+        //     每个 `WidgetInput` 的 `UseSoftMouseCursor` / `IsMouseCursorVisible` / `MousePosition`
+        //     （引擎自己的软光标）、`Mouse.IsMouseVisible` 与 OpenTK 的
+        //     `CursorVisible=true` / `CursorGrabbed=false`（**只为放开**系统光标，绝不抓取）。
+        //
+        // 调用方若要求占有前台/激活窗口 → 一律走 <see cref="RejectRealWindowRequest"/> 明确报错，
+        // 绝不静默退回旧行为。
+        // ==================================================================================
+
+        /// <summary>后台专用策略的名字（`focus.status` 会回报，让"规则生效"这件事可被机器读到）。</summary>
+        internal const string BackgroundOnlyPolicyName = "background-only-no-real-window-no-real-cursor";
+
+        /// <summary>本策略固定生效：它是铁律，不是开关，没有关掉它的配置项。</summary>
+        internal const bool BackgroundOnlyPolicyActive = true;
+
+        /// <summary>规则原文：任何"抢真实窗口/鼠标"的请求都必须原样回这一句。</summary>
+        internal const string BackgroundOnlyRuleMessage =
+            "命令行桥存在时禁止抢占真实鼠标与窗口；请在后台用虚拟输入完成";
+
+        /// <summary>
+        /// 用户定（2026-10-17）：**不做拦截式护栏、也不抛护栏异常**。
+        /// 调用方要求"抢真实前台 / 激活窗口"时，把这条事实**写进回包告诉调用者**：
+        /// 请求了什么、实际有没有执行、规则原文、以及"已按后台虚拟输入做"。
+        /// </summary>
+        internal static void FillRealWindowRequestInfo(Dictionary<string, object> result, string what)
+        {
+            if (result == null) return;
+            result["realWindowRequested"] = true;
+            result["realWindowExecuted"] = false;
+            result["realWindowRequest"] = what ?? "?";
+            result["realWindowRule"] = BackgroundOnlyRuleMessage;
+            result["realWindowNote"] =
+                "本次调用要求抢占真实窗口/前台；命令行桥存在时不做这件事（按后台虚拟输入执行），此信息回报给调用者。";
+        }
+
         private readonly InputInjector m_injector;
 
         private FocusMode m_mode = FocusMode.Auto;
@@ -276,7 +326,35 @@ namespace CmdBridgeMod
                 ["softCursorForced"] = m_softCursorInputs.Count,
                 ["windowStateError"] = m_windowStateError,
                 ["lastNote"] = m_lastNote,
-                ["lastError"] = m_lastError
+                ["lastError"] = m_lastError,
+                // 用户规则（2026-10-17）：有命令行桥时**禁止抢占真实鼠标与真实窗口**，
+                // 所有操作在后台用虚拟输入完成。这里把该事实**回给调用者**（不是拦截、不是护栏）：
+                // 每次 focus 查询/恢复都会告诉调用方"没有、也不会去抢真实鼠标窗口"。
+                ["realMouseWindowSeize"] = false,
+                ["realMouseWindowSeizeNote"] =
+                    "命令行桥存在时禁止抢占真实鼠标与真实窗口；本调用只读焦点状态，"
+                    + "输入一律走后台虚拟输入（用户 2026-10-17 定）。若调用方需要抢前台，请自行在游戏内操作。",
+                // 规则 2 的机器可读形式（代码级禁令见本类头部的铁律块）：
+                // policy = 策略名；policyActive = 恒为 true（没有关掉它的配置项）；
+                // realWindowApisForbidden = 本 Mod 路径上禁止出现的真实窗口/光标 API 清单；
+                // virtualInputChannels = 允许并且**正在**使用的后台虚拟输入通道。
+                ["backgroundOnlyPolicy"] = BackgroundOnlyPolicyName,
+                ["backgroundOnlyPolicyActive"] = BackgroundOnlyPolicyActive,
+                ["backgroundOnlyPolicyDate"] = "2026-10-17",
+                ["backgroundOnlyPolicyReason"] =
+                    "用户明确要求；抢真实窗口/鼠标会打断用户操作，且所有操作在后台虚拟输入下都能完成",
+                ["realWindowApisForbidden"] = new List<string>
+                {
+                    "SetForegroundWindow", "SetActiveWindow", "ShowWindow", "SetCursorPos",
+                    "mouse_event", "SendInput", "AttachThreadInput",
+                    "realTouchOrMouseInjectionToMakeTargetClickable"
+                },
+                ["virtualInputChannels"] = new List<string>
+                {
+                    "Keyboard.m_keysDownArray/m_keysDownOnceArray (SetKeyHeld)",
+                    "WidgetInput.UseSoftMouseCursor + MousePosition + IsMouseCursorVisible",
+                    "Touch.m_touchLocations (AndroidTouch, synthetic pointer id)"
+                }
             };
         }
 
@@ -474,7 +552,14 @@ namespace CmdBridgeMod
             }
         }
 
-        /// <summary>把引擎焦点恢复成真实值（卸载/停用时用）。</summary>
+        /// <summary>
+        /// 把引擎焦点恢复成真实值（**只在 Mod 卸载/停用时用**，见 `Plug/CmdBridgeMod.cs` OnUnload）。
+        ///
+        /// 规则 2（2026-10-17）：这是"**交还**"而不是"抢占"——它把 `Window.m_state` 写回 OS 上真实的
+        /// 焦点状态（真实失焦就写 Inactive），所以窗口根本不会因此被激活；真实前台/光标一个都不碰。
+        /// 命令面的 `focus.recover` **不再调用它**（那条命令现在只回报状态），
+        /// 因为每帧的 <see cref="ApplyFrameStart"/> 本来就会在 `IsDetached == false` 时做同样的事。
+        /// </summary>
         public void RestoreNaturalFocus()
         {
             try

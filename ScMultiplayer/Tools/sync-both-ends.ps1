@@ -69,14 +69,18 @@ if (-not $SkipBuild) {
 
 $obfuscated = Join-Path $scmpDir 'bin\Release\net8.0\Obfuscated\ScMultiplayer.dll'
 $comms = Join-Path $scmpDir 'bin\Release\net8.0\Comms.dll'
+# 中间件：信道 Mod 与 ScMP 共用的事件契约（两边的包都要带）
+$suEventBus = Join-Path $scmpDir 'bin\Release\net8.0\SuEventBus.dll'
 if (-not (Test-Path -LiteralPath $obfuscated)) { throw "missing $obfuscated - build first" }
 if (-not (Test-Path -LiteralPath $comms)) { throw "missing $comms - build first" }
+if (-not (Test-Path -LiteralPath $suEventBus)) { throw "missing $suEventBus - build SuEventBus first" }
 
 Write-Host '== packaging'
 New-Scmod -Out $package -Entries @(
     @{ Name = 'ModInfo.xml'; Path = (Join-Path $scmpDir 'ModInfo.xml') },
     @{ Name = 'Lib/ScMultiplayer.dll'; Path = $obfuscated },
-    @{ Name = 'Lib/Comms.dll'; Path = $comms }
+    @{ Name = 'Lib/Comms.dll'; Path = $comms },
+    @{ Name = 'Lib/SuEventBus.dll'; Path = $suEventBus }
 )
 $sha = (Get-FileHash -LiteralPath $package -Algorithm SHA256).Hash.ToLower()
 Write-Host ("   {0}  {1} bytes  SHA256={2}" -f $packageName, (Get-Item -LiteralPath $package).Length, $sha)

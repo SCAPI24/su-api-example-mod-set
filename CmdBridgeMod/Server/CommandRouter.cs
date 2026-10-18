@@ -13,6 +13,21 @@ namespace CmdBridgeMod
     /// <summary>
     /// 命令分发。obs.* 只读；act.* 走输入注入白名单。
     /// 所有触碰游戏对象的操作都在游戏线程（下一帧帧首）执行。
+    ///
+    /// ==================================================================================
+    /// 铁律（用户 2026-10-17 定）：**命令行桥存在时禁止抢占真实鼠标与窗口；请在后台用虚拟输入完成。**
+    /// 原因：用户明确要求；抢真实窗口/鼠标会打断用户操作，且所有操作在后台虚拟输入下都能完成。
+    ///
+    /// 因此本文件里：
+    ///   · `focus.recover` **只回报**焦点/挂接状态（外加把策略交回 `follow`）；它不再调用
+    ///     `RestoreNaturalFocus()`，也不再触碰任何窗口状态。调用方显式要求抢前台时走
+    ///     `FocusPolicy.RejectRealWindowRequest` 明确报错（错误码 `forbidden_real_window_activation`）。
+    ///   · `focus.auto/follow/attach/detach` 只改**引擎内部**的虚拟焦点状态（`Window.m_state`
+    ///     + 软光标），不碰真实窗口/真实光标 —— 这是"在后台操作"能成立的基础，必须保留。
+    ///   · 规则 1 的"点世界内 HUD 前先强制展开 HUD"在 `ui.click` / `ui.clickelement` / `act.uiclick`
+    ///     的点击路径里自动生效（`UiService.EnsureHudTargetRevealed`），不需要额外参数。
+    /// 完整禁令清单见 `Server/FocusPolicy.cs` 类头部的铁律块。
+    /// ==================================================================================
     /// </summary>
     internal sealed class CommandRouter
     {
@@ -22,7 +37,7 @@ namespace CmdBridgeMod
         /// ⚠️ **必须与 `ModInfo.xml` 的 `&lt;Version&gt;` 同步**：漏同步就会出现
         /// "装的是 1.1.20、状态里报 1.1.15"（本文件实际踩过一次，排查时容易误判成旧包装没生效）。
         /// </summary>
-        internal const string ModVersion = "1.1.25";
+        internal const string ModVersion = "1.1.27";
 
         /// <summary>
         /// 内建命令名（`cmd.list` 用）。加命令时**必须同步这里**：
@@ -43,7 +58,6 @@ namespace CmdBridgeMod
             "ui.locate", "ui.clickelement", "ui.marker",
             "ui.session.begin", "ui.session.end", "ui.session.status",
             "ui.cursor", "ui.press", "ui.release", "ui.move", "ui.click",
-            "ui.rightclick", "ui.shiftclick", "ui.drag", "ui.split",
             "focus.status", "focus.auto", "focus.follow", "focus.attach", "focus.detach", "focus.recover",
             "focus.merge", "focus.lookhold", "look.owner", "hotkey.status",
             "jump.status", "jump.buffer"
@@ -238,6 +252,13 @@ namespace CmdBridgeMod
                     // 带坐标、列表行、或显式 `mode=input` 时仍走会话，行为不变。
                     string directSelector = request.GetString("selector", null);
                     string clickMode = request.GetString("mode", null);
+                    // 用户定（2026-10-17）：`mode=input`（多帧软光标会话点击）**没有应用场景**，已删除。
+                    // 它在出屏 HUD 目标上必然报 `element_occluded`（会话在游戏线程逐帧跑，无法跨帧等侧栏滑入），
+                    // 而且全仓没有任何调用方使用它。这里明确报错，不静默走别的路径。
+                    if (string.Equals(clickMode, "input", StringComparison.OrdinalIgnoreCase))
+                        throw new BridgeCommandException("removed_click_mode",
+                            "`mode=input` 已删除（无应用场景）：请用默认 direct 路径；需要逐步驱动时用 "
+                            + "ui.session.begin / ui.press / ui.release / ui.move。");
                     if (!hasPoint && rowIndex < 0 && string.IsNullOrEmpty(rowText)
                         && !string.IsNullOrEmpty(directSelector)
                         && !string.Equals(clickMode, "input", StringComparison.OrdinalIgnoreCase))
@@ -630,6 +651,13 @@ namespace CmdBridgeMod
                     if (string.IsNullOrEmpty(selector))
                         throw new BridgeCommandException("invalid_argument", "ui.click needs a selector.");
                     string clickMode = request.GetString("mode", "direct");
+                    // 用户定（2026-10-17）：`mode=input`（多帧软光标会话点击）**没有应用场景**，已删除。
+                    // 它在出屏 HUD 目标上必然报 `element_occluded`（会话在游戏线程逐帧跑，无法跨帧等侧栏滑入），
+                    // 而且全仓没有任何调用方使用它。这里明确报错，不静默走别的路径。
+                    if (string.Equals(clickMode, "input", StringComparison.OrdinalIgnoreCase))
+                        throw new BridgeCommandException("removed_click_mode",
+                            "`mode=input` 已删除（无应用场景）：请用默认 direct 路径；需要逐步驱动时用 "
+                            + "ui.session.begin / ui.press / ui.release / ui.move。");
                     float clickX;
                     float clickY;
                     bool hasPoint = request.TryGetFloat("x", out clickX)
@@ -648,49 +676,6 @@ namespace CmdBridgeMod
                     }
                     return UiSessionCommand(request, () => m_injector.Session.Click(selector));
                 }
-                case "ui.rightclick":
-                {
-                    string selector = request.GetString("selector", null);
-                    if (string.IsNullOrEmpty(selector))
-                        throw new BridgeCommandException("invalid_argument", "ui.rightclick needs a selector.");
-                    return UiSessionCommand(request, () => m_injector.Session.RightClick(selector));
-                }
-                case "ui.shiftclick":
-                {
-                    string selector = request.GetString("selector", null);
-                    if (string.IsNullOrEmpty(selector))
-                        throw new BridgeCommandException("invalid_argument", "ui.shiftclick needs a selector.");
-                    return UiSessionCommand(request, () => m_injector.Session.ShiftClick(selector));
-                }
-                case "ui.drag":
-                case "ui.split":
-                {
-                    int steps = request.GetInteger("steps", 8);
-                    int holdMs = request.GetInteger("holdMs", request.Command == "ui.split" ? 600 : 0);
-                    float x1 = 0f;
-                    float y1 = 0f;
-                    float x2 = 0f;
-                    float y2 = 0f;
-                    bool hasPoints = request.TryGetFloat("x1", out x1) && request.TryGetFloat("y1", out y1)
-                        && request.TryGetFloat("x2", out x2) && request.TryGetFloat("y2", out y2);
-                    string from = request.GetString("from", null);
-                    string to = request.GetString("to", null);
-                    if (!hasPoints && (string.IsNullOrEmpty(from) || string.IsNullOrEmpty(to)))
-                    {
-                        throw new BridgeCommandException(
-                            "invalid_argument", "ui.drag needs x1/y1/x2/y2 or from/to selectors.");
-                    }
-
-                    UiMouseSession.Endpoint start = hasPoints
-                        ? UiMouseSession.Endpoint.At(new Vector2(x1, y1))
-                        : UiMouseSession.Endpoint.At(from);
-                    UiMouseSession.Endpoint end = hasPoints
-                        ? UiMouseSession.Endpoint.At(new Vector2(x2, y2))
-                        : UiMouseSession.Endpoint.At(to);
-                    return UiSessionCommand(request,
-                        () => m_injector.Session.Drag(start, end, steps, holdMs));
-                }
-
                 // ------------------------------------------------------ 空格/跳跃审计与缓冲（跳跃手感）
                 case "jump.status":
                     return m_jumpAssist.Describe();
@@ -731,12 +716,34 @@ namespace CmdBridgeMod
                 }
                 case "focus.recover":
                 {
-                    // 一键自救：万一焦点策略把鼠标卡住了（视角转不动 / 光标跑到程序外），
-                    // 这条命令立刻回到"跟随引擎"并把窗口状态恢复成真实值。
+                    // 规则 2（用户 2026-10-17 定）：**命令行桥存在时禁止抢占真实鼠标与窗口；请在后台用虚拟输入完成。**
+                    // 所以这条命令现在只做两件安全事，并**只回报**状态：
+                    //   ① 把焦点策略交回"跟随引擎"（`Follow`，虚拟输入照旧工作）；
+                    //   ② 回报焦点/挂接状态（只读）。
+                    // 它**不再**去动任何窗口状态：`RestoreNaturalFocus()` 已经从这条路上摘掉，
+                    // 因为 `FocusPolicy.ApplyFrameStart` 每帧本来就会在非脱离状态下把 `Window.m_state`
+                    // 写回真实焦点值 —— 交还这件事不需要、也不允许由一条命令"抢占式"地做。
+                    // 调用方若显式要求抢前台/激活窗口，一律明确报错（不静默退回旧行为）。
+                    bool wantsRealWindow =
+                        request.GetBoolean("activate", false)
+                        || request.GetBoolean("foreground", false)
+                        || request.GetBoolean("window", false)
+                        || request.GetBoolean("steal", false)
+                        || string.Equals(request.GetString("mode", null), "foreground",
+                            StringComparison.OrdinalIgnoreCase);
                     m_injector.Focus.Mode = FocusMode.Follow;
-                    m_injector.Focus.RestoreNaturalFocus();
-                    Log.Information("[CmdBridge] focus recovered to follow mode");
-                    return m_injector.Focus.Describe();
+                    Dictionary<string, object> focusResult = m_injector.Focus.Describe();
+                    if (wantsRealWindow)
+                    {
+                        // 用户定（2026-10-17）：不写拦截/护栏，也不静默 —— 把这次请求的信息回报给调用者。
+                        FocusPolicy.FillRealWindowRequestInfo(focusResult,
+                            "focus.recover activate/foreground/window/steal");
+                        Log.Information("[CmdBridge] focus.recover: caller asked for real window activation; "
+                            + "not executed (background-only), reported to caller");
+                    }
+                    Log.Information("[CmdBridge] focus.recover: follow mode restored, report-only "
+                        + "(rule 2: no real window/mouse seizure, virtual input only)");
+                    return focusResult;
                 }
                 case "focus.merge":
                     m_injector.Focus.MergeEnabled = request.GetBoolean("enabled", true);

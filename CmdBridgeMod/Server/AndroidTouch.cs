@@ -19,6 +19,20 @@ namespace CmdBridgeMod
     ///
     /// 注入时机必须落在**游戏帧首**（调用方 `FrameStartPump`），与项目输入铁律一致：
     /// 不能在 UI 线程之外直接改触摸表。
+    ///
+    /// ==================================================================================
+    /// 铁律（用户 2026-10-17 定）：**命令行桥存在时禁止抢占真实鼠标与窗口；请在后台用虚拟输入完成。**
+    /// 原因是用户明确要求；抢真实窗口/鼠标会打断用户操作，且所有操作在后台虚拟输入下都能完成。
+    /// 本类**不是**真实触摸注入，也不允许被改成真实触摸注入：
+    ///   · 它写的是**引擎自己的虚拟触摸表** `Engine.Input.Touch.m_touchLocations`，用的是合成 id
+    ///     （<see cref="SyntheticPointerId"/> = 1001，与真实手指 id 区分），全程不碰 Android 的
+    ///     OS 输入层（没有 `InputManager`/`MotionEvent`/`injectInputEvent`，也没有 `SendInput`）；
+    ///   · 它的唯一用途是**完成一次点击/拖拽**（`InputInjector.ApplyDirectUiClick`），
+    ///     **绝不许**被用来"把某个目标变得可点/可命中"（例如把真实鼠标/触摸挪到目标上）。
+    ///     世界内 HUD 因为被平移到屏外而不可点时，走的是规则 1 的
+    ///     `UiService.EnsureHudTargetRevealed`（玩家输入层按 E 展开 HUD），不是这里。
+    /// 完整禁令清单见 `Server/FocusPolicy.cs` 类头部的铁律块。
+    /// ==================================================================================
     /// </summary>
     internal static class AndroidTouch
     {

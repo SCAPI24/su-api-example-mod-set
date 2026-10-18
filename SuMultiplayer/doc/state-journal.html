@@ -1,0 +1,1436 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>状态变化队列 · 内存队列 + 快速落盘 + 按类别筛选（SuMultiplayer）</title>
+<meta name="description" content="联机系统的状态变化队列设计：48 字节定长记录、环形内存队列、位掩码分类筛选、分段落盘与崩溃恢复，含可播放动画与实测数据。">
+<style>
+:root{
+  --bg:#f4f7fc; --card:#ffffff; --tint:#f7f9fe; --tint2:#eef3fb;
+  --line:#dde5f1; --line2:#c3d1e6;
+  --tx:#16203a; --tx2:#48587a; --tx3:#7d8aa3;
+  --cy:#0e7fa8; --cy2:#e4f5fc;
+  --vi:#6a4bd8; --vi2:#efeafe;
+  --am:#a9740a; --am2:#fff4df;
+  --gr:#0d8a63; --gr2:#e5f8f0;
+  --rd:#c23a55; --rd2:#fdecf0;
+  --mono:ui-monospace,"Cascadia Mono","JetBrains Mono",Consolas,"Liberation Mono",monospace;
+  --sans:system-ui,-apple-system,"Segoe UI","Microsoft YaHei","PingFang SC","Noto Sans CJK SC",sans-serif;
+  --r:12px; --r2:9px;
+  --sh:0 1px 2px rgba(20,40,80,.05),0 6px 18px rgba(20,40,80,.05);
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0; background:var(--bg); color:var(--tx); font-family:var(--sans);
+  font-size:14.5px; line-height:1.7; -webkit-font-smoothing:antialiased}
+a{color:var(--cy); text-decoration:none}
+a:hover{text-decoration:underline}
+code{font-family:var(--mono); font-size:.87em; background:var(--tint2); border:1px solid var(--line);
+  border-radius:5px; padding:.05em .34em; color:#1d3a63; white-space:nowrap}
+
+.topbar{position:sticky; top:0; z-index:60; display:flex; align-items:center; gap:12px;
+  padding:9px 20px; background:rgba(255,255,255,.9); backdrop-filter:blur(10px); border-bottom:1px solid var(--line)}
+.brand{display:flex; align-items:center; gap:10px; font-weight:750; white-space:nowrap; color:var(--tx)}
+.brand .logo{width:28px; height:28px; border-radius:8px; display:grid; place-items:center; font-size:13px;
+  background:linear-gradient(140deg,var(--cy),var(--vi)); color:#fff; font-weight:900}
+.brand small{display:block; font-weight:500; font-size:11px; color:var(--tx3)}
+.topbar .ver{font-family:var(--mono); font-size:11px; color:var(--tx2); border:1px solid var(--line);
+  border-radius:999px; padding:2px 9px; background:var(--tint)}
+.topbar .grow{flex:1}
+.search{position:relative; min-width:180px}
+.search input{width:100%; padding:7px 32px 7px 11px; border-radius:999px; font-family:var(--sans); font-size:12.5px;
+  color:var(--tx); background:var(--tint); border:1px solid var(--line); outline:none}
+.search input:focus{border-color:var(--cy); box-shadow:0 0 0 3px var(--cy2); background:#fff}
+.search .hint{position:absolute; right:9px; top:50%; transform:translateY(-50%); font-family:var(--mono);
+  font-size:10px; color:var(--tx3)}
+.btn{cursor:pointer; border:1px solid var(--line); background:#fff; color:var(--tx2); border-radius:999px;
+  padding:6px 13px; font-size:12px; font-family:var(--sans); transition:.14s; white-space:nowrap}
+.btn:hover{color:var(--tx); border-color:var(--line2); background:var(--tint)}
+.btn.pri{background:linear-gradient(120deg,var(--cy2),var(--gr2)); border-color:var(--line2); color:#0b3b52; font-weight:650}
+.progress{position:fixed; top:0; left:0; height:3px; width:0; z-index:70;
+  background:linear-gradient(90deg,var(--cy),var(--vi),var(--am))}
+
+.layout{display:grid; grid-template-columns:230px minmax(0,1fr); gap:26px;
+  max-width:1460px; margin:0 auto; padding:0 22px 70px}
+.sidebar{position:sticky; top:58px; align-self:start; max-height:calc(100vh - 76px); overflow-y:auto;
+  padding:16px 4px 24px 0; font-size:12.5px}
+.sidebar::-webkit-scrollbar{width:6px}
+.sidebar::-webkit-scrollbar-thumb{background:var(--line2); border-radius:6px}
+.sidebar h4{margin:13px 0 5px; font-size:10.5px; letter-spacing:1.2px; color:var(--tx3); text-transform:uppercase}
+.sidebar h4:first-child{margin-top:0}
+.sidebar a{display:flex; gap:7px; padding:3.5px 8px; border-radius:7px; color:var(--tx2);
+  border-left:2px solid transparent}
+.sidebar a:hover{background:var(--tint); color:var(--tx); text-decoration:none}
+.sidebar a.active{color:var(--tx); background:var(--cy2); border-left-color:var(--cy); font-weight:600}
+.sidebar a .id{font-family:var(--mono); font-size:10px; color:var(--tx3); min-width:40px}
+.sidebar a.active .id{color:var(--cy)}
+main{min-width:0; padding-top:6px}
+
+.hero{padding:32px 0 20px; border-bottom:1px solid var(--line); margin-bottom:10px}
+.hero .kicker{display:inline-flex; align-items:center; gap:8px; font-family:var(--mono); font-size:11.5px;
+  color:var(--vi); border:1px solid #d6cbf7; background:var(--vi2); padding:4px 12px; border-radius:999px}
+.hero h1{margin:13px 0 9px; font-size:clamp(25px,3.4vw,38px); line-height:1.2; letter-spacing:-.4px; font-weight:800}
+.hero h1 .g{background:linear-gradient(96deg,var(--cy),var(--vi) 55%,var(--am));
+  -webkit-background-clip:text; background-clip:text; color:transparent}
+.hero .lead{font-size:15px; color:var(--tx2); max-width:920px; margin:0 0 16px}
+.hero .actions{display:flex; gap:9px; flex-wrap:wrap; margin-bottom:18px}
+.stats{display:grid; grid-template-columns:repeat(auto-fit,minmax(136px,1fr)); gap:10px}
+.stat{background:var(--card); border:1px solid var(--line); border-radius:var(--r); padding:11px 13px; box-shadow:var(--sh)}
+.stat b{display:block; font-family:var(--mono); font-size:20px; color:var(--cy); line-height:1.2}
+.stat span{display:block; font-size:11.5px; color:var(--tx3); margin-top:2px}
+
+section.sec{margin:24px 0 8px; scroll-margin-top:68px}
+.sec-head{display:flex; align-items:center; gap:11px; padding-bottom:9px; border-bottom:2px solid var(--line); margin-bottom:14px}
+.sec-head .no{font-family:var(--mono); font-size:11px; font-weight:700; color:#fff; border-radius:7px;
+  padding:4px 8px; background:linear-gradient(140deg,var(--cy),var(--vi))}
+.sec-head h2{margin:0; font-size:clamp(18px,2vw,23px); font-weight:750; letter-spacing:-.2px}
+.sec-head .sub{color:var(--tx3); font-size:12px; margin-left:auto; text-align:right}
+
+.block{background:var(--card); border:1px solid var(--line); border-radius:var(--r); padding:14px 16px;
+  margin:11px 0; scroll-margin-top:68px; box-shadow:var(--sh)}
+.block.hidden,.sec.hidden{display:none}
+.block-head{display:flex; align-items:center; gap:9px; flex-wrap:wrap; margin-bottom:8px}
+.block-head h3{margin:0; font-size:15.5px; font-weight:720}
+.block-head .tagline{font-size:11.5px; color:var(--tx3)}
+.guid{font-family:var(--mono); font-size:11px; font-weight:700; letter-spacing:.4px; cursor:pointer;
+  color:#fff; background:linear-gradient(140deg,var(--cy),var(--vi)); border:0; border-radius:6px;
+  padding:2px 7px; transition:.14s; user-select:none}
+.guid:hover{filter:brightness(1.1); box-shadow:0 2px 8px rgba(14,127,168,.3)}
+.guid.copied{background:linear-gradient(140deg,var(--am),#e0a52a)}
+h3.mini{margin:12px 0 6px; font-size:13.5px; color:#1d2b47}
+p{margin:6px 0}
+ul,ol{margin:6px 0; padding-left:20px}
+li{margin:2.5px 0}
+li::marker{color:var(--cy)}
+.muted{color:var(--tx3)}
+.small{font-size:12.3px}
+
+.tw{overflow-x:auto; margin:8px 0; border:1px solid var(--line); border-radius:var(--r2)}
+table{width:100%; border-collapse:collapse; font-size:12.6px; min-width:420px}
+thead th{background:var(--tint2); text-align:left; padding:7px 10px; font-weight:700; color:#25344f;
+  border-bottom:1px solid var(--line2); white-space:nowrap; font-size:12px}
+tbody td{padding:6px 10px; border-bottom:1px solid var(--line); vertical-align:top}
+tbody tr:nth-child(even){background:var(--tint)}
+tbody tr:last-child td{border-bottom:0}
+td.mono,th.mono,.mono{font-family:var(--mono); font-size:11.8px}
+td.gid,.gid{font-family:var(--mono); font-size:11.4px; color:var(--cy); font-weight:700; white-space:nowrap}
+td.src,.src{font-family:var(--mono); font-size:11px; color:var(--tx3)}
+.num{text-align:right; font-family:var(--mono)}
+
+.grid{display:grid; gap:9px; margin:8px 0}
+.g2{grid-template-columns:repeat(auto-fit,minmax(250px,1fr))}
+.g3{grid-template-columns:repeat(auto-fit,minmax(190px,1fr))}
+.g4{grid-template-columns:repeat(auto-fit,minmax(146px,1fr))}
+.tile{background:var(--tint); border:1px solid var(--line); border-radius:var(--r2); padding:10px 11px}
+.tile h5{margin:0 0 4px; font-size:13px; display:flex; align-items:center; gap:6px; flex-wrap:wrap; color:#1d2b47}
+.tile p{margin:2px 0; font-size:12.4px; color:var(--tx2)}
+.tile .big{font-family:var(--mono); font-size:17px; color:var(--cy); display:block}
+
+.callout{border-radius:var(--r2); padding:9px 12px; margin:9px 0; font-size:12.7px;
+  border:1px solid var(--line); background:var(--tint); border-left:3px solid var(--cy); color:var(--tx2)}
+.callout.warn{border-left-color:var(--am); background:var(--am2)}
+.callout.ok{border-left-color:var(--gr); background:var(--gr2)}
+.callout.bad{border-left-color:var(--rd); background:var(--rd2)}
+.callout b{color:var(--tx)}
+.callout .t{display:block; font-weight:700; margin-bottom:2px; color:var(--tx)}
+
+.pills{display:flex; flex-wrap:wrap; gap:6px; margin:8px 0}
+.pill{font-size:11.5px; padding:3px 10px; border-radius:999px; border:1px solid var(--line);
+  background:var(--tint); color:var(--tx2); font-family:var(--mono)}
+.pill.cy{color:#0a5871; border-color:#bfe3f0; background:var(--cy2)}
+.pill.vi{color:#4a30a8; border-color:#d6cbf7; background:var(--vi2)}
+.pill.am{color:#7d5606; border-color:#f0dcb0; background:var(--am2)}
+.pill.gr{color:#0a6247; border-color:#c2e9d8; background:var(--gr2)}
+.pill.rd{color:#96243c; border-color:#f4cbd6; background:var(--rd2)}
+
+.kv{display:grid; grid-template-columns:minmax(120px,190px) 1fr; border:1px solid var(--line);
+  border-radius:var(--r2); overflow:hidden; margin:8px 0; font-size:12.6px}
+.kv>dt{margin:0; padding:6px 11px; background:var(--tint2); font-weight:650; color:#25344f;
+  border-bottom:1px solid var(--line)}
+.kv>dd{margin:0; padding:6px 12px; border-bottom:1px solid var(--line); color:var(--tx2)}
+
+.timeline{position:relative; margin:9px 0 4px; padding-left:22px}
+.timeline::before{content:""; position:absolute; left:6px; top:5px; bottom:5px; width:2px; background:var(--line2)}
+.tl{position:relative; margin:0 0 9px}
+.tl::before{content:""; position:absolute; left:-20px; top:5px; width:10px; height:10px; border-radius:50%;
+  background:#fff; border:2px solid var(--cy)}
+.tl h5{margin:0 0 2px; font-size:13px; display:flex; gap:7px; align-items:center; flex-wrap:wrap}
+.tl p{margin:0; font-size:12.5px; color:var(--tx2)}
+
+figure{margin:9px 0; border:1px solid var(--line); border-radius:var(--r2); padding:11px 11px 5px; background:var(--tint)}
+figure svg{width:100%; height:auto; display:block}
+figcaption{margin-top:5px; font-size:11.5px; color:var(--tx3); text-align:center}
+pre.codeblock{margin:8px 0; padding:10px 12px; background:#fff; border:1px solid var(--line);
+  border-radius:var(--r2); font-family:var(--mono); font-size:11.6px; line-height:1.7; color:#1d3a63;
+  overflow-x:auto; white-space:pre; tab-size:4}
+
+/* 可播放图解 */
+.anim{margin:9px 0; border:1px solid var(--line); border-radius:var(--r2); padding:10px 11px 6px; background:var(--tint)}
+.anim .figsvg{background:#fff; border:1px solid var(--line); border-radius:8px; padding:6px}
+.anim svg{width:100%; height:auto; display:block}
+.playbar{display:flex; align-items:center; gap:8px; margin-top:8px; flex-wrap:wrap}
+.playbar input[type=range]{flex:1; min-width:110px; accent-color:#0e7fa8; height:4px}
+.phase{font-family:var(--mono); font-size:11.5px; color:var(--cy); min-width:260px}
+.xtra{display:inline-flex; align-items:center; gap:5px; font-size:11.5px; color:var(--tx2); cursor:pointer}
+.xtra select{background:#fff; border:1px solid var(--line); border-radius:6px; padding:3px 6px;
+  font-family:var(--mono); font-size:11.5px; color:var(--tx)}
+.anim figcaption{margin-top:6px; font-size:11.5px; color:var(--tx3); text-align:center}
+.chips{display:flex; flex-wrap:wrap; gap:5px; margin-top:7px}
+.chip{font-family:var(--mono); font-size:11px; padding:2.5px 9px; border-radius:999px; cursor:pointer;
+  border:1px solid var(--line); background:#fff; color:var(--tx3); user-select:none}
+.chip.on{color:#fff; border-color:transparent}
+
+.toast{position:fixed; left:50%; bottom:26px; transform:translate(-50%,14px); z-index:90; background:#101a2e;
+  color:#fff; padding:9px 18px; border-radius:999px; font-size:13px; opacity:0; pointer-events:none; transition:.22s}
+.toast.on{opacity:1; transform:translate(-50%,0)}
+#nores{display:none; padding:22px; text-align:center; color:var(--tx3); border:1px dashed var(--line2);
+  border-radius:var(--r); margin:14px 0; background:#fff}
+.totop{position:fixed; right:20px; bottom:20px; z-index:80; width:38px; height:38px; border-radius:50%;
+  display:grid; place-items:center; cursor:pointer; opacity:0; pointer-events:none; transition:.2s;
+  background:#fff; border:1px solid var(--line2); color:var(--cy); font-size:16px; box-shadow:var(--sh)}
+.totop.on{opacity:1; pointer-events:auto}
+footer{margin-top:26px; padding:16px 0 6px; border-top:1px solid var(--line); font-size:12px; color:var(--tx3)}
+footer .row{display:flex; gap:14px; flex-wrap:wrap; justify-content:space-between}
+
+.dgb{fill:#fff; stroke:#c3d1e6}
+.dgb.cy{fill:#e4f5fc; stroke:#2b9fc4}
+.dgb.vi{fill:#efeafe; stroke:#7c5cf0}
+.dgb.gr{fill:#e5f8f0; stroke:#17a273}
+.dgb.am{fill:#fff4df; stroke:#d99b12}
+.dgb.rd{fill:#fdecf0; stroke:#d1495f}
+.dgt{fill:#26314a; font-family:var(--mono); font-size:11.5px}
+.dgt.sm{font-size:10.2px; fill:#5a6a86}
+.dgl{stroke:#93a6c4; stroke-width:1.4; fill:none}
+.dgl.cy{stroke:#2b9fc4} .dgl.vi{stroke:#7c5cf0} .dgl.am{stroke:#d99b12}
+.dgl.gr{stroke:#17a273} .dgl.rd{stroke:#d1495f}
+.dgl.dash{stroke-dasharray:5 4}
+.dghead{fill:#101a2e; font-size:12.5px; font-weight:700; font-family:var(--sans)}
+
+@media (max-width:1040px){
+  .layout{grid-template-columns:1fr; gap:8px; padding:0 14px 60px}
+  .sidebar{position:static; max-height:none; border-bottom:1px solid var(--line); padding-bottom:10px;
+    display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:1px}
+  .sidebar h4{grid-column:1/-1}
+  .sec-head .sub{display:none}
+}
+@media print{
+  body{background:#fff}
+  .topbar,.sidebar,.totop,.progress,.toast,.ctrl{display:none!important}
+  .layout{display:block; max-width:none; padding:0}
+  .block,figure,.tile,.callout{break-inside:avoid; box-shadow:none}
+  .sec{break-before:page}
+}
+</style>
+</head>
+<body>
+<div class="progress" id="prog"></div>
+
+<header class="topbar">
+  <div class="brand">
+    <div class="logo">QL</div>
+    <div>状态变化队列<small>SuMultiplayer · 主机与客户端各一份</small></div>
+  </div>
+  <span class="ver">设计稿 · 已实测</span>
+  <div class="grow"></div>
+  <div class="search">
+    <input id="q" type="search" placeholder="搜索内容或 GUID（例：QUE01）" autocomplete="off" spellcheck="false">
+    <span class="hint">/</span>
+  </div>
+  <button class="btn" onclick="window.print()">打印 / PDF</button>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="toc">
+    <h4>目标</h4>
+    <a href="#JRN01"><span class="id">JRN01</span>三条硬指标</a>
+    <a href="#JRN02"><span class="id">JRN02</span>主机 / 客户端各一份</a>
+    <h4>记录与分类</h4>
+    <a href="#REC01"><span class="id">REC01</span>48 字节记录布局</a>
+    <a href="#REC02"><span class="id">REC02</span>为什么定长</a>
+    <a href="#CAT01"><span class="id">CAT01</span>16 个分类</a>
+    <a href="#CAT02"><span class="id">CAT02</span>事件码与上下文</a>
+    <h4>内存队列</h4>
+    <a href="#QUE01"><span class="id">QUE01</span>环形写入（可播放）</a>
+    <a href="#QUE02"><span class="id">QUE02</span>序号与窗口语义</a>
+    <h4>筛选</h4>
+    <a href="#FLT01"><span class="id">FLT01</span>掩码扫描（可播放）</a>
+    <a href="#FLT02"><span class="id">FLT02</span>稀疏索引</a>
+    <h4>落盘</h4>
+    <a href="#SEG01"><span class="id">SEG01</span>流水线</a>
+    <a href="#FIL01"><span class="id">FIL01</span>分段格式</a>
+    <a href="#FIL02"><span class="id">FIL02</span>manifest 索引</a>
+    <a href="#SEG02"><span class="id">SEG02</span>保留与滚动</a>
+    <a href="#SEG03"><span class="id">SEG03</span>背压（可播放）</a>
+    <a href="#CRS01"><span class="id">CRS01</span>崩溃恢复（可播放）</a>
+    <a href="#EXP01"><span class="id">EXP01</span>导出与回读</a>
+    <h4>接口</h4>
+    <a href="#API01"><span class="id">API01</span>代码接口</a>
+    <a href="#OPT01"><span class="id">OPT01</span>配置项</a>
+    <a href="#WIR01"><span class="id">WIR01</span>接进 SuMultiplayer</a>
+    <h4>实测与附录</h4>
+    <a href="#PRF01"><span class="id">PRF01</span>实测数据</a>
+    <a href="#PRF02"><span class="id">PRF02</span>存盘频率与预设</a>
+    <a href="#TST01"><span class="id">TST01</span>测试用例</a>
+    <a href="#SRC01"><span class="id">SRC01</span>来源</a>
+    <a href="#IDX01"><span class="id">IDX01</span>GUID 索引</a>
+  </aside>
+
+  <main id="top">
+    <section class="hero">
+      <div class="kicker">● 已实现并实测 · 25 个 GUID 标记</div>
+      <h1>联机状态变化：<span class="g">线性写入 · 快速落盘 · 按类别秒筛</span></h1>
+      <p class="lead">
+        主机端与客户端各自维护一条<b>只追加</b>的状态变化队列：48 字节定长记录、单调序号、位掩码分类；
+        落盘走独立线程按分段追加，筛选走位掩码顺序扫描 + 稀疏索引。
+      </p>
+      <div class="actions">
+        <a class="btn pri" href="#QUE01">看环形写入动画</a>
+        <a class="btn" href="#PRF01">实测数据</a>
+        <a class="btn" href="multiplayer-architecture.html">整体架构图解</a>
+      </div>
+      <div class="stats">
+        <div class="stat"><b>48 B</b><span>单条记录（定长）</span></div>
+        <div class="stat"><b>3 MiB</b><span>65536 条常驻内存</span></div>
+        <div class="stat"><b>54 ns</b><span>单条写入（实测）</span></div>
+        <div class="stat"><b>101 µs</b><span>6.5 万条全量筛选</span></div>
+        <div class="stat"><b>38 MiB/s</b><span>落盘吞吐（实测）</span></div>
+        <div class="stat"><b>&darr;4&times;</b><span>低频预设写块次数</span></div>
+        <div class="stat"><b>0</b><span>崩溃后丢失的有效记录</span></div>
+      </div>
+    </section>
+    <div id="nores">没有匹配的条目 —— 换个 GUID 或关键词试试</div>
+
+    <!-- ================= 目标 ================= -->
+    <section class="sec" id="grp-jrn">
+      <div class="sec-head"><span class="no">目标</span>
+        <div><h2>要解决什么</h2><div class="sub">排障与复盘都需要"事后能看到"</div></div></div>
+
+      <div class="block" id="JRN01">
+        <div class="block-head"><button class="guid" data-guid="JRN01">JRN01</button><h3>三条硬指标</h3></div>
+        <div class="grid g3">
+          <div class="tile"><h5>① 线性写入</h5><span class="big">O(1) · 零分配</span>
+            <p>游戏线程只做一次数组写入 + 一次序号发布；不排序、不加锁、不做 I/O。</p></div>
+          <div class="tile"><h5>② 快速存盘</h5><span class="big">分段追加 + CRC 块</span>
+            <p>独立线程顺序读序号区间，256 条一个块，4 MiB 一段；崩溃只可能坏最后一块。</p></div>
+          <div class="tile"><h5>③ 快速按类别筛选</h5><span class="big">位掩码 + 顺序扫描</span>
+            <p>16 个类别用位掩码；全量扫描 6.5 万条约 100 µs，"最近 N 条某类"走稀疏索引约 8 µs。</p></div>
+        </div>
+        <div class="callout ok"><span class="t">定位</span>
+          它是<b>诊断与复盘组件</b>，不是游戏状态的所有者：状态仍归各业务模块，队列只记录"发生了什么"。
+          因此落盘失败时只计数、不抛异常、不阻塞会话。</div>
+      </div>
+
+      <div class="block" id="JRN02">
+        <div class="block-head"><button class="guid" data-guid="JRN02">JRN02</button><h3>主机端与客户端各一份</h3>
+          <span class="tagline">同一套代码，两个实例</span></div>
+        <figure>
+          <svg viewBox="0 0 900 250" role="img" aria-label="主机端与客户端各自的队列">
+            <rect class="dgb vi" x="20" y="30" width="330" height="190" rx="10"/>
+            <text class="dghead" x="36" y="54">主机端队列</text>
+            <text class="dgt sm" x="36" y="76">记录：自己执行了什么、拒绝了谁</text>
+            <rect class="dgb" x="36" y="90" width="298" height="26" rx="6"/>
+            <text class="dgt sm" x="46" y="108">Terrain · PlayerAction · Inventory · Region …</text>
+            <text class="dgt sm" x="36" y="134">role = Host</text>
+            <text class="dgt sm" x="36" y="154">目录：data:/Journal/Host</text>
+            <text class="dgt sm" x="36" y="174">分段保留 8 段 ≈ 32 MiB</text>
+            <text class="dgt sm" x="36" y="200">用途：复盘"主机为什么拒了他"</text>
+
+            <rect class="dgb cy" x="550" y="30" width="330" height="190" rx="10"/>
+            <text class="dghead" x="566" y="54">客户端队列</text>
+            <text class="dgt sm" x="566" y="76">记录：本地预测、收到什么、什么时候放弃</text>
+            <rect class="dgb" x="566" y="90" width="298" height="26" rx="6"/>
+            <text class="dgt sm" x="576" y="108">Terrain · PlayerState · Transfer · Diagnostics …</text>
+            <text class="dgt sm" x="566" y="134">role = Client</text>
+            <text class="dgt sm" x="566" y="154">目录：data:/Journal/Client</text>
+            <text class="dgt sm" x="566" y="174">分段保留 8 段 ≈ 32 MiB</text>
+            <text class="dgt sm" x="566" y="200">用途：复盘"客户端为什么没跟上"</text>
+
+            <path class="dgl dash" d="M350 125 H550"/>
+            <text class="dgt sm" x="450" y="118" text-anchor="middle">同一份代码 / 同一个文件格式</text>
+            <text class="dgt sm" x="450" y="142" text-anchor="middle">比对两端序号区间即可定位分歧点</text>
+          </svg>
+          <figcaption>两端各写各的，格式一致：把两份导出拼在一个时间轴上看，分歧点一目了然</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <!-- ================= 记录与分类 ================= -->
+    <section class="sec" id="grp-rec">
+      <div class="sec-head"><span class="no">记录</span>
+        <div><h2>一条记录长什么样</h2><div class="sub">定长 48 字节，顺序布局</div></div></div>
+
+      <div class="block" id="REC01">
+        <div class="block-head"><button class="guid" data-guid="REC01">REC01</button><h3>48 字节记录布局</h3>
+          <span class="tagline">uint48 的全部字段</span></div>
+        <figure>
+          <svg viewBox="0 0 900 210" role="img" aria-label="记录字段布局">
+            <g>
+              <rect class="dgb vi" x="20" y="40" width="120" height="46" rx="7"/>
+              <text class="dgt" x="80" y="60" text-anchor="middle">Sequence</text>
+              <text class="dgt sm" x="80" y="78" text-anchor="middle">8 B · long</text>
+              <rect class="dgb vi" x="144" y="40" width="82" height="46" rx="7"/>
+              <text class="dgt" x="185" y="60" text-anchor="middle">Timestamp</text>
+              <text class="dgt sm" x="185" y="78" text-anchor="middle">8 B</text>
+              <rect class="dgb cy" x="230" y="40" width="128" height="46" rx="7"/>
+              <text class="dgt" x="294" y="60" text-anchor="middle">Category</text>
+              <text class="dgt sm" x="294" y="78" text-anchor="middle">4 B · 位掩码</text>
+              <rect class="dgb cy" x="362" y="40" width="60" height="46" rx="7"/>
+              <text class="dgt" x="392" y="60" text-anchor="middle">Code</text>
+              <text class="dgt sm" x="392" y="78" text-anchor="middle">2 B</text>
+              <rect class="dgb gr" x="426" y="40" width="56" height="46" rx="7"/>
+              <text class="dgt" x="454" y="60" text-anchor="middle">Role</text>
+              <text class="dgt sm" x="454" y="78" text-anchor="middle">1 B</text>
+              <rect class="dgb gr" x="486" y="40" width="78" height="46" rx="7"/>
+              <text class="dgt" x="525" y="60" text-anchor="middle">Severity</text>
+              <text class="dgt sm" x="525" y="78" text-anchor="middle">1 B</text>
+              <rect class="dgb am" x="568" y="40" width="86" height="46" rx="7"/>
+              <text class="dgt" x="611" y="60" text-anchor="middle">ActorId</text>
+              <text class="dgt sm" x="611" y="78" text-anchor="middle">4 B · clientId</text>
+              <rect class="dgb am" x="658" y="40" width="58" height="46" rx="7"/>
+              <text class="dgt" x="687" y="60" text-anchor="middle">A</text>
+              <text class="dgt sm" x="687" y="78" text-anchor="middle">4 B</text>
+              <rect class="dgb am" x="720" y="40" width="58" height="46" rx="7"/>
+              <text class="dgt" x="749" y="60" text-anchor="middle">B</text>
+              <text class="dgt sm" x="749" y="78" text-anchor="middle">4 B</text>
+              <rect class="dgb am" x="782" y="40" width="46" height="46" rx="7"/>
+              <text class="dgt" x="805" y="60" text-anchor="middle">C</text>
+              <text class="dgt sm" x="805" y="78" text-anchor="middle">4 B</text>
+              <rect class="dgb rd" x="832" y="40" width="48" height="46" rx="7"/>
+              <text class="dgt" x="856" y="60" text-anchor="middle">Ref</text>
+              <text class="dgt sm" x="856" y="78" text-anchor="middle">4 B</text>
+            </g>
+            <path class="dgl" d="M20 100 H880"/>
+            <text class="dgt sm" x="20" y="120">↑ 48 字节 = 8 + 8 + 4 + 2 + 1 + 1 + 4 + 4 + 4 + 4 + 4（+4 对齐填充）</text>
+            <text class="dgt sm" x="20" y="146">• A / B / C 三个上下文整数：坐标、格子数、批号、版本号、距离…（含义由 Code 决定）</text>
+            <text class="dgt sm" x="20" y="166">• Ref = 字符串池下标（聊天文本、错误摘要），-1 表示无；文本池独立且环形复用</text>
+            <text class="dgt sm" x="20" y="186">• 定长 ⇒ 队列是数组、落盘是字节块、筛选是顺序内存扫描，三者都不需要序列化框架</text>
+          </svg>
+          <figcaption>记录布局：字段顺序即文件里的字节顺序（小端）</figcaption>
+        </figure>
+      </div>
+
+      <div class="block" id="REC02">
+        <div class="block-head"><button class="guid" data-guid="REC02">REC02</button><h3>为什么坚持定长</h3></div>
+        <div class="tw">
+          <table>
+            <thead><tr><th>方案</th><th>写入</th><th>落盘</th><th>筛选</th><th>结论</th></tr></thead>
+            <tbody>
+              <tr><td>变长 JSON 行</td><td>每次分配 + 转义</td><td>逐条序列化</td><td>逐条解析</td><td>适合给人看，不适合高频写</td></tr>
+              <tr><td>对象列表 + 反射序列化</td><td>GC 压力大</td><td>反射慢</td><td>LINQ 分配</td><td>移动端帧内不可用</td></tr>
+              <tr><td><b>定长结构 + 环形数组</b></td><td class="mono">54 ns/条</td><td class="mono">块拷贝</td><td class="mono">顺序扫描</td><td><b>本项目采用</b></td></tr>
+              <tr><td>纯文本日志（现状）</td><td>格式化 + 字符串</td><td>行缓冲</td><td>grep</td><td>保留：导出的可读格式沿用文本</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout"><span class="t">与既有日志的关系</span>
+          文本日志继续存在（给人读），队列是它的"结构化上游"：文本导出就是从队列筛出来的一个视图（见 EXP01）。</div>
+      </div>
+
+      <div class="block" id="CAT01">
+        <div class="block-head"><button class="guid" data-guid="CAT01">CAT01</button><h3>16 个分类（位掩码）</h3>
+          <span class="tagline">一次筛选可同时命中多类</span></div>
+        <div class="tw">
+          <table>
+            <thead><tr><th class="mono">位</th><th>分类</th><th>记什么</th><th>典型事件码</th></tr></thead>
+            <tbody>
+              <tr><td class="mono">1&lt;&lt;0</td><td>Session</td><td>加入 / 离开 / 断线 / 宽限重连</td><td class="mono">SessionJoined · SessionRejoinGraceStarted</td></tr>
+              <tr><td class="mono">1&lt;&lt;1</td><td>Approval</td><td>加入审批 / 踢人</td><td class="mono">ApprovalAllowed · PlayerKicked</td></tr>
+              <tr><td class="mono">1&lt;&lt;2</td><td>Transfer</td><td>世界传输 / 分片 / 追帧 / 屏障</td><td class="mono">TransferChunkServed · CatchUpBarrierPassed</td></tr>
+              <tr><td class="mono">1&lt;&lt;3</td><td>Terrain</td><td>方块修改 / 区块检查点 / 恢复</td><td class="mono">TerrainCellsBroadcast · TerrainGapRecovered</td></tr>
+              <tr><td class="mono">1&lt;&lt;4</td><td>PlayerState</td><td>位置 / 姿态 / 生命 / 属性</td><td class="mono">PlayerStateSent · PlayerStateCorrected</td></tr>
+              <tr><td class="mono">1&lt;&lt;5</td><td>PlayerAction</td><td>挖掘 / 放置 / 攻击 / 交互</td><td class="mono">ActionRequested · ActionRejected</td></tr>
+              <tr><td class="mono">1&lt;&lt;6</td><td>Inventory</td><td>容器事务 / 物品</td><td class="mono">ContainerCommitted · ContainerRejected</td></tr>
+              <tr><td class="mono">1&lt;&lt;7</td><td>Entity</td><td>动物 / 掉落物 / 投射物 / 爆炸</td><td class="mono">EntitySpawned · ProjectileHit</td></tr>
+              <tr><td class="mono">1&lt;&lt;8</td><td>Circuit</td><td>电路事件与快照</td><td class="mono">CircuitSynced</td></tr>
+              <tr><td class="mono">1&lt;&lt;9</td><td>WorldControl</td><td>时间 / 天气 / 世界设置</td><td class="mono">WorldControlApplied · WorldSettingsChanged</td></tr>
+              <tr><td class="mono">1&lt;&lt;10</td><td>DataModification</td><td>DM 请求 / 审批 / 应用</td><td class="mono">DataModificationApproved</td></tr>
+              <tr><td class="mono">1&lt;&lt;11</td><td>Region</td><td>领地建立 / 赋予 / 执法拒绝</td><td class="mono">RegionEnforcementDenied</td></tr>
+              <tr><td class="mono">1&lt;&lt;12</td><td>Capability</td><td>临时能力授予 / 撤销</td><td class="mono">CapabilityGranted</td></tr>
+              <tr><td class="mono">1&lt;&lt;13</td><td>Chat</td><td>聊天路由</td><td class="mono">ChatMessageRouted</td></tr>
+              <tr><td class="mono">1&lt;&lt;14</td><td>Metrics</td><td>流量 / 重传 / 队列采样</td><td class="mono">MetricsSample</td></tr>
+              <tr><td class="mono">1&lt;&lt;15</td><td>Diagnostics</td><td>异常 / 丢弃 / 协议拒绝</td><td class="mono">ProtocolRefused · QueueOverflow</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout warn"><span class="t">分类是"桶"，事件码是"格子"</span>
+          分类只做粗筛（位掩码，命中即收）；要看具体发生了什么，再看事件码与 A/B/C 三个上下文整数。</div>
+      </div>
+
+      <div class="block" id="CAT02">
+        <div class="block-head"><button class="guid" data-guid="CAT02">CAT02</button><h3>事件码与三个上下文整数</h3>
+          <span class="tagline">同一份布局承载所有域</span></div>
+        <div class="tw">
+          <table>
+            <thead><tr><th>事件码</th><th>分类</th><th class="mono">ActorId</th><th class="mono">A</th><th class="mono">B</th><th class="mono">C</th></tr></thead>
+            <tbody>
+              <tr><td class="mono">TerrainCellsBroadcast</td><td>Terrain</td><td class="mono">目标客户端</td><td class="mono">格子数</td><td class="mono">序列号</td><td class="mono">服务端 tick</td></tr>
+              <tr><td class="mono">TerrainChunkCheckpointServed</td><td>Terrain</td><td class="mono">目标客户端</td><td class="mono">区块 X</td><td class="mono">区块 Z</td><td class="mono">版本 rev</td></tr>
+              <tr><td class="mono">ActionRejected</td><td>PlayerAction</td><td class="mono">发起客户端</td><td class="mono">动作类型</td><td class="mono">拒绝码</td><td class="mono">距离(×100)</td></tr>
+              <tr><td class="mono">PlayerStateCorrected</td><td>PlayerState</td><td class="mono">客户端</td><td class="mono">偏差(×100)</td><td class="mono">速度上限</td><td class="mono">修正序号</td></tr>
+              <tr><td class="mono">ContainerRejected</td><td>Inventory</td><td class="mono">客户端</td><td class="mono">容器版本</td><td class="mono">槽位</td><td class="mono">原因码</td></tr>
+              <tr><td class="mono">RegionEnforcementDenied</td><td>Region</td><td class="mono">客户端</td><td class="mono">领地编号</td><td class="mono">格 X</td><td class="mono">格 Z</td></tr>
+              <tr><td class="mono">ProtocolRefused</td><td>Diagnostics</td><td class="mono">对端</td><td class="mono">版本</td><td class="mono">哈希前 4 字节</td><td class="mono">阶段</td></tr>
+              <tr><td class="mono">QueueOverflow</td><td>Diagnostics</td><td class="mono">-1</td><td class="mono">丢弃条数</td><td class="mono">容量</td><td class="mono">积压条数</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+    <!-- ================= 内存队列 ================= -->
+    <section class="sec" id="grp-que">
+      <div class="sec-head"><span class="no">内存</span>
+        <div><h2>环形队列：写完就忘，忘之前先落盘</h2><div class="sub">容量固定 → 常驻内存可控</div></div></div>
+
+      <div class="block" id="QUE01">
+        <div class="block-head"><button class="guid" data-guid="QUE01">QUE01</button><h3>环形写入（可播放）</h3>
+          <span class="tagline">写指针转圈，落盘指针随后追</span></div>
+        <div class="anim" data-anim="queueloop"></div>
+        <div class="grid g3">
+          <div class="tile"><h5>写入</h5><p>槽位 = 序号 &amp; (容量−1)；容量取 2 的幂，取模变成按位与。</p></div>
+          <div class="tile"><h5>发布</h5><p>先写槽位、再把序号用 release 写出去；读端 acquire 读序号后读槽位，不会看到半条记录。</p></div>
+          <div class="tile"><h5>覆盖</h5><p>绕一圈后覆盖最旧槽位。若它还没落盘 → 计一次 <code>OverwrittenUnflushed</code>，不阻塞游戏线程。</p></div>
+        </div>
+      </div>
+
+      <div class="block" id="QUE02">
+        <div class="block-head"><button class="guid" data-guid="QUE02">QUE02</button><h3>序号与窗口语义</h3>
+          <span class="tagline">外部只认序号</span></div>
+        <div class="tw">
+          <table>
+            <thead><tr><th class="mono">成员</th><th>含义</th><th>谁在用</th></tr></thead>
+            <tbody>
+              <tr><td class="mono">NextSequence</td><td>下一条将写入的序号（单调，不回退）</td><td>落盘端判断"还有没有新东西"</td></tr>
+              <tr><td class="mono">PublishedSequence</td><td>已发布（内容可见）的最后一条</td><td>筛选窗口上界、增量消费</td></tr>
+              <tr><td class="mono">OldestSequence</td><td>仍在内存里最旧的序号</td><td>筛选窗口下界、缺口检测</td></tr>
+              <tr><td class="mono">TotalAppended</td><td>累计写入条数</td><td>诊断面板</td></tr>
+              <tr><td class="mono">OverwrittenUnflushed</td><td>未落盘就被覆盖的条数（&gt;0 说明刷盘跟不上）</td><td>背压告警（SEG03）</td></tr>
+              <tr><td class="mono">Reset()</td><td>清空内存窗口，<b>序号不回退</b></td><td>退出房间 / 换世界</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout"><span class="t">为什么序号不能回退</span>
+          外部（落盘端、导出、UI 分页）都拿着序号引用。一旦复用序号，旧引用会指向新记录，
+          就会出现"翻页看到别的事件"这类无法解释的现象。</div>
+      </div>
+    </section>
+
+    <!-- ================= 筛选 ================= -->
+    <section class="sec" id="grp-flt">
+      <div class="sec-head"><span class="no">筛选</span>
+        <div><h2>按类别秒筛：位掩码 + 顺序扫描</h2><div class="sub">定长记录让"扫描"变成"读连续内存"</div></div></div>
+
+      <div class="block" id="FLT01">
+        <div class="block-head"><button class="guid" data-guid="FLT01">FLT01</button><h3>掩码扫描（可播放）</h3>
+          <span class="tagline">点下面的分类开关，实时看命中变化</span></div>
+        <div class="anim" data-anim="scan"></div>
+        <div class="grid g3">
+          <div class="tile"><h5>条件全部为「与」</h5><p>类别掩码 · 序号区间 · 时间区间 · ActorId · 最低严重度 · skip/take。</p></div>
+          <div class="tile"><h5>零分配枚举</h5><p><code>foreach (var r in journal.CreateFilter(spec))</code> 走结构体枚举器，不建列表。</p></div>
+          <div class="tile"><h5>窗口冻结</h5><p>创建筛选器时冻结序号上界，使 UI 分页与落盘消费看到稳定结果。</p></div>
+        </div>
+      </div>
+
+      <div class="block" id="FLT02">
+        <div class="block-head"><button class="guid" data-guid="FLT02">FLT02</button><h3>稀疏索引：最近 N 条某分类</h3>
+          <span class="tagline">UI 与告警的常用查询</span></div>
+        <div class="tw">
+          <table>
+            <thead><tr><th>查询</th><th>走哪条路</th><th class="mono">实测（6.5 万条窗口）</th><th>适用</th></tr></thead>
+            <tbody>
+              <tr><td>全量筛选 / 区间筛选</td><td>顺序扫描 + 位掩码</td><td class="mono">101–124 µs</td><td>导出、复盘、按时间区间取</td></tr>
+              <tr><td>最近 1024 条某分类</td><td>分类稀疏索引（环形）</td><td class="mono">7.95 µs</td><td>面板"最新 N 条"、告警采样</td></tr>
+              <tr><td>按序号取单条</td><td>槽位直取 + 序号校验</td><td class="mono">&lt; 0.1 µs</td><td>点开某条记录看上下文</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout ok"><span class="t">两条路各管一段</span>
+          稀疏索引只为常用分类保留最近 1024 个序号（约 8 KiB/类），过期即被环形覆盖；
+          真正的"取全量"仍然走扫描——6.5 万条 100 µs，对交互式查询足够。</div>
+      </div>
+    </section>
+    <!-- ================= 落盘 ================= -->
+    <section class="sec" id="grp-seg">
+      <div class="sec-head"><span class="no">落盘</span>
+        <div><h2>快速存盘：独立线程按分段追加</h2><div class="sub">游戏线程永远不做 I/O</div></div></div>
+
+      <div class="block" id="SEG01">
+        <div class="block-head"><button class="guid" data-guid="SEG01">SEG01</button><h3>落盘流水线</h3>
+          <span class="tagline">写入 54 ns，落盘 38 MiB/s</span></div>
+        <figure>
+          <svg viewBox="0 0 900 250" role="img" aria-label="落盘流水线">
+            <rect class="dgb vi" x="16" y="40" width="180" height="76" rx="10"/>
+            <text class="dghead" x="106" y="64" text-anchor="middle">游戏线程</text>
+            <text class="dgt sm" x="106" y="86" text-anchor="middle">Append（单生产者）</text>
+            <text class="dgt sm" x="106" y="104" text-anchor="middle">数组写入 + 序号发布 · 54 ns</text>
+
+            <rect class="dgb am" x="228" y="40" width="180" height="76" rx="10"/>
+            <text class="dghead" x="318" y="64" text-anchor="middle">环形队列</text>
+            <text class="dgt sm" x="318" y="86" text-anchor="middle">65536 条 = 3 MiB</text>
+            <text class="dgt sm" x="318" y="104" text-anchor="middle">定长 48 B · 无锁</text>
+
+            <rect class="dgb cy" x="440" y="30" width="200" height="96" rx="10"/>
+            <text class="dghead" x="540" y="54" text-anchor="middle">落盘线程（BelowNormal）</text>
+            <text class="dgt sm" x="540" y="76" text-anchor="middle">按序号区间拷贝 → 组块</text>
+            <text class="dgt sm" x="540" y="94" text-anchor="middle">256 条/块 + 块内 CRC32</text>
+            <text class="dgt sm" x="540" y="112" text-anchor="middle">最多等 250 ms，或凑满即刷</text>
+
+            <rect class="dgb gr" x="672" y="30" width="212" height="96" rx="10"/>
+            <text class="dghead" x="778" y="54" text-anchor="middle">分段文件</text>
+            <text class="dgt sm" x="778" y="76" text-anchor="middle">journal-000001.smj …</text>
+            <text class="dgt sm" x="778" y="94" text-anchor="middle">每段 4 MiB ≈ 8.7 万条</text>
+            <text class="dgt sm" x="778" y="112" text-anchor="middle">超过就轮转 + 删最旧</text>
+
+            <path class="dgl vi" d="M198 78H226"/><path class="dgl vi" d="M218 73L226 78L218 83"/>
+            <path class="dgl am" d="M410 78H438"/><path class="dgl am" d="M430 73L438 78L430 83"/>
+            <path class="dgl cy" d="M642 78H670"/><path class="dgl cy" d="M662 73L670 78L662 83"/>
+
+            <rect class="dgb" x="16" y="146" width="868" height="40" rx="9"/>
+            <text class="dgt sm" x="30" y="164">刷盘触发：① 缓冲凑满 ② 距上次刷盘 ≥ 250 ms ③ 显式 RequestFlush（轻量信号）④ FlushAndWait（关闭/导出前）</text>
+            <text class="dgt sm" x="30" y="180">强持久化：FlushToDisk = true 时块尾 fsync；默认关（靠页缓存，吞吐高一个量级）</text>
+
+            <rect class="dgb rd" x="16" y="198" width="868" height="40" rx="9"/>
+            <text class="dgt sm" x="30" y="216">背压：落盘端落后时，环形只覆盖最旧的未落盘记录并计数（DroppedRecords / OverwrittenUnflushed）</text>
+            <text class="dgt sm" x="30" y="232">绝不阻塞游戏线程：宁可丢诊断，不可卡会话（见 SEG03 / CRS01）</text>
+          </svg>
+          <figcaption>三段式：游戏线程只写内存 → 落盘线程组块 → 分段文件滚动删除</figcaption>
+        </figure>
+      </div>
+
+      <div class="block" id="FIL01">
+        <div class="block-head"><button class="guid" data-guid="FIL01">FIL01</button><h3>分段文件格式</h3>
+          <span class="tagline">32 B 段头 + 12312 B/块</span></div>
+        <figure>
+          <svg viewBox="0 0 900 235" role="img" aria-label="分段文件格式">
+            <rect class="dgb vi" x="20" y="34" width="132" height="60" rx="8"/>
+            <text class="dgt" x="86" y="56" text-anchor="middle">段头 32 B</text>
+            <text class="dgt sm" x="86" y="76" text-anchor="middle">magic/版本/首序号</text>
+
+            <rect class="dgb cy" x="164" y="34" width="176" height="60" rx="8"/>
+            <text class="dgt" x="252" y="56" text-anchor="middle">块头 24 B</text>
+            <text class="dgt sm" x="252" y="76" text-anchor="middle">magic·条数·首序号·字节数·CRC</text>
+            <rect class="dgb gr" x="344" y="34" width="200" height="60" rx="8"/>
+            <text class="dgt" x="444" y="56" text-anchor="middle">256 × 48 B = 12288 B</text>
+            <text class="dgt sm" x="444" y="76" text-anchor="middle">连续记录（可直接当数组读）</text>
+            <rect class="dgb" x="556" y="34" width="120" height="60" rx="8"/>
+            <text class="dgt" x="616" y="62" text-anchor="middle">块 2 … 块 N</text>
+            <rect class="dgb rd" x="688" y="34" width="192" height="60" rx="8"/>
+            <text class="dgt" x="784" y="56" text-anchor="middle">撕裂尾块</text>
+            <text class="dgt sm" x="784" y="76" text-anchor="middle">CRC 失败 → 恢复时截断</text>
+
+            <path class="dgl dash" d="M20 112H880"/>
+            <text class="dgt sm" x="20" y="134">每块 = 24 + 12288 = 12312 B（256 条）</text>
+            <text class="dgt sm" x="20" y="154">每段 4 MiB ≈ 341 块 ≈ 87,296 条</text>
+            <text class="dgt sm" x="20" y="174">小端序、顺序布局、无指针：文件中一段区间可以内存映射或直接 memcpy 回记录数组</text>
+            <text class="dgt sm" x="20" y="194">块内 CRC：崩溃只可能破坏最后一块；前面所有块逐块自校验</text>
+            <text class="dgt sm" x="20" y="214">记录里的 PayloadRef 指向内存字符串池，不落盘（文本要靠 EXP01 导出时展开）</text>
+          </svg>
+          <figcaption>文件格式：段头 + 若干自校验块；损坏只影响尾部</figcaption>
+        </figure>
+        <div class="callout warn"><span class="t">文本不在磁盘格式里</span>
+          只有整数与位掩码落盘（48 B/条，零解析）；需要看文本时用 <code>ExportText</code> 从内存或从分段回读时展开。</div>
+      </div>
+
+      <div class="block" id="FIL02">
+        <div class="block-head"><button class="guid" data-guid="FIL02">FIL02</button><h3>manifest 索引</h3>
+          <span class="tagline">journal.index：段清单</span></div>
+        <pre class="codeblock">#SMJI1	1
+#segment	first	last	records	bytes
+journal-000001.smj	1	87296	87296	4194360
+journal-000002.smj	87297	174592	87296	4194360
+journal-000003.smj	174593	210000	35408	1701000</pre>
+        <div class="grid g3">
+          <div class="tile"><h5>作用</h5><p>启动时不必扫全部段就能知道"哪一段含第 N 条"，也用于崩溃后核对。</p></div>
+          <div class="tile"><h5>写法</h5><p>轮转与 FlushAndWait 时重写；<code>.tmp</code> + 原子替换，不产生半个清单。</p></div>
+          <div class="tile"><h5>损坏也没关系</h5><p>清单丢了就退回扫段头 + 块头重建（DescribeSegment），只是启动慢一点。</p></div>
+        </div>
+      </div>
+
+      <div class="block" id="SEG02">
+        <div class="block-head"><button class="guid" data-guid="SEG02">SEG02</button><h3>保留与滚动删除</h3>
+          <span class="tagline">磁盘占用有上限</span></div>
+        <div class="tw">
+          <table>
+            <thead><tr><th>参数</th><th class="mono">默认</th><th>行为</th><th class="mono">实测</th></tr></thead>
+            <tbody>
+              <tr><td>SegmentBytes</td><td class="mono">4 MiB</td><td>写满就轮转新段</td><td class="mono">341 块 / 87,296 条</td></tr>
+              <tr><td>MaxSegments</td><td class="mono">8</td><td>磁盘上最多 8 个文件（含正在写的）</td><td class="mono">64 KiB×3 → 3 个 / 147 KiB</td></tr>
+              <tr><td>磁盘上限</td><td class="mono">≈ 32 MiB</td><td>旧段在轮转时删除，删除失败下轮再试</td><td class="mono">—</td></tr>
+              <tr><td>每帧成本</td><td class="mono">0</td><td>删除与写盘都在落盘线程</td><td class="mono">—</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="block" id="SEG03">
+        <div class="block-head"><button class="guid" data-guid="SEG03">SEG03</button><h3>背压：磁盘慢下来会怎样（可播放）</h3>
+          <span class="tagline">调快写入 / 调慢磁盘，看积压与丢失</span></div>
+        <div class="anim" data-anim="backpressure"></div>
+        <div class="callout bad"><span class="t">设计取舍</span>
+          队列容量必须覆盖「写入速率 × 刷盘间隔」。覆盖不住时，<b>丢最旧的未落盘记录并计数</b>，
+          而不是让游戏线程等待磁盘——联机会话的流畅优先于诊断完整性（实测：容量 4096、突发 5 万条 → 落盘 4096、丢失计数 45904，游戏线程未阻塞）。</div>
+      </div>
+
+      <div class="block" id="CRS01">
+        <div class="block-head"><button class="guid" data-guid="CRS01">CRS01</button><h3>崩溃恢复（可播放）</h3>
+          <span class="tagline">撕裂的尾块被截断，序号从最后一条有效记录续写</span></div>
+        <div class="anim" data-anim="recovery"></div>
+        <div class="grid g3">
+          <div class="tile"><h5>① 逐块校验</h5><p>从头读块头 → 校验 magic / 条数 / 字节数 / CRC32，第一处失败即停止。</p></div>
+          <div class="tile"><h5>② 截断</h5><p>文件长度回退到最后一个有效块的末尾（实测：追加 3000 B 垃圾 → 截断 3000 B）。</p></div>
+          <div class="tile"><h5>③ 续写</h5><p>续写序号 = 最后一条有效记录 + 1（实测：60000 → 60001），旧数据零丢失。</p></div>
+        </div>
+      </div>
+
+      <div class="block" id="EXP01">
+        <div class="block-head"><button class="guid" data-guid="EXP01">EXP01</button><h3>导出与回读</h3>
+          <span class="tagline">筛选结果直接变成文件</span></div>
+        <div class="tw">
+          <table>
+            <thead><tr><th class="mono">接口</th><th>产物</th><th>用途</th><th class="mono">实测（8192 条 Terrain）</th></tr></thead>
+            <tbody>
+              <tr><td class="mono">ExportText(journal, path, spec)</td><td>TSV 文本，每行一条（含展开的 payload）</td><td>发给别人看 / 贴工单</td><td class="mono">586 KiB</td></tr>
+              <tr><td class="mono">ExportBinary(journal, path, spec)</td><td>同一套分段格式的独立文件</td><td>机器复盘、可被同格式读取器回放</td><td class="mono">385 KiB</td></tr>
+              <tr><td class="mono">ReadFile(path, visitor)</td><td>顺序回调记录</td><td>离线脚本分析（逐块校验）</td><td class="mono">回读 8192 条 ✓</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= 接口 ================= -->
+    <section class="sec" id="grp-api">
+      <div class="sec-head"><span class="no">接口</span>
+        <div><h2>代码怎么用</h2><div class="sub">纯 .NET，不依赖引擎</div></div></div>
+
+      <div class="block" id="API01">
+        <div class="block-head"><button class="guid" data-guid="API01">API01</button><h3>代码接口</h3>
+          <span class="tagline">全部在 SuMultiplayer.Journal 命名空间</span></div>
+        <div class="tw">
+          <table>
+            <thead><tr><th class="mono">成员</th><th>说明</th><th>线程</th></tr></thead>
+            <tbody>
+              <tr><td class="mono">Append(category, code, role, …)</td><td>追加一条（强类型重载）</td><td>游戏线程</td></tr>
+              <tr><td class="mono">AppendRaw(category, code, role, …)</td><td>追加一条（数值重载，供通用中间层）</td><td>游戏线程</td></tr>
+              <tr><td class="mono">TryGet(sequence, out record)</td><td>按序号取单条（已被覆盖返回 false）</td><td>任意</td></tr>
+              <tr><td class="mono">CopyRange(from, span)</td><td>顺序复制一段（落盘端用）</td><td>落盘线程</td></tr>
+              <tr><td class="mono">CreateFilter(spec)</td><td>得到筛选句柄：Count / CopyTo / foreach</td><td>任意</td></tr>
+              <tr><td class="mono">CopyRecent(category, span)</td><td>最近 N 条某分类（走稀疏索引）</td><td>任意</td></tr>
+              <tr><td class="mono">GetStats()</td><td>容量 / 在内存 / 最旧 / 已覆盖未落盘 / 上次筛选耗时</td><td>任意</td></tr>
+              <tr><td class="mono">JournalSegmentWriter.Start / RequestFlush / FlushAndWait</td><td>启动落盘线程 / 轻量信号 / 等待追上</td><td>任意</td></tr>
+              <tr><td class="mono">JournalSegmentWriter.Recover(dir, options)</td><td>启动恢复：校验、截断、清理、给出续写序号</td><td>启动时</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <pre class="codeblock">// 主机端（客户端只是换目录与 role）
+var options = new JournalOptions { Directory = "data:/Journal/Host", Capacity = 1 &lt;&lt; 16 };
+var journal = new StateChangeJournal(options);
+var writer  = new JournalSegmentWriter(options, journal);
+writer.Start();
+
+// 游戏线程：一次调用，零分配
+journal.Append(JournalCategory.Terrain, JournalEventCode.TerrainCellsBroadcast,
+    JournalRole.Host, JournalSeverity.Info, actorId: clientId,
+    valueA: cells.Count, valueB: sequence, valueC: serverTick);
+
+// 面板：最近 200 条被拒绝的操作
+var spec = new JournalFilterSpec(JournalCategory.PlayerAction | JournalCategory.Region,
+    minimumSeverity: JournalSeverity.Notice, take: 200);
+foreach (JournalRecord r in journal.CreateFilter(in spec)) Render(r);
+
+// 关闭 / 导出前：等落盘追上
+writer.FlushAndWait();</pre>
+      </div>
+
+      <div class="block" id="OPT01">
+        <div class="block-head"><button class="guid" data-guid="OPT01">OPT01</button><h3>配置项</h3>
+          <span class="tagline">默认值即本文档实测所用</span></div>
+        <div class="tw">
+          <table>
+            <thead><tr><th class="mono">选项</th><th class="mono">默认</th><th>说明</th></tr></thead>
+            <tbody>
+              <tr><td class="mono">Capacity</td><td class="mono">1 &lt;&lt; 16（65536）</td><td>环形条数，2 的幂；65536 × 48 B = 3 MiB</td></tr>
+              <tr><td class="mono">PayloadPoolCapacity</td><td class="mono">1 &lt;&lt; 12</td><td>文本池条数（聊天 / 错误摘要）</td></tr>
+              <tr><td class="mono">CategoryIndexCapacity</td><td class="mono">1 &lt;&lt; 10</td><td>每类稀疏索引条数（最近 N 条）</td></tr>
+              <tr><td class="mono">Directory</td><td class="mono">null</td><td>为空 = 只留内存（纯诊断模式）</td></tr>
+              <tr><td class="mono">SegmentBytes</td><td class="mono">4 MiB</td><td>分段大小，写满轮转</td></tr>
+              <tr><td class="mono">MaxSegments</td><td class="mono">8</td><td>磁盘上最多几个分段（含当前段）</td></tr>
+              <tr><td class="mono">RecordsPerBlock</td><td class="mono">256</td><td>每块条数（CRC 单元）</td></tr>
+              <tr><td class="mono">FlushIntervalMs</td><td class="mono">250</td><td>最长刷盘间隔</td></tr>
+              <tr><td class="mono">FlushToDisk</td><td class="mono">false</td><td>true = 每块 fsync（强持久化，吞吐降低）</td></tr>
+              <tr><td class="mono">MaxPendingRecords</td><td class="mono">1 &lt;&lt; 18</td><td>允许落盘落后的上限（超过即丢最旧并计数）</td></tr>
+              <tr><td class="mono">ClockMs</td><td class="mono">Environment.TickCount64</td><td>注入单调时钟（测试用），避免系统时间回拨</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="block" id="WIR01">
+        <div class="block-head"><button class="guid" data-guid="WIR01">WIR01</button><h3>接进 SuMultiplayer</h3>
+          <span class="tagline">两个实例，四个动作</span></div>
+        <div class="tw">
+          <table>
+            <thead><tr><th>时机</th><th>动作</th><th>说明</th></tr></thead>
+            <tbody>
+              <tr><td>Mod 加载</td><td class="mono">Recover() → new Journal → writer.Start()</td><td>主机用 <code>Journal/Host</code>，客户端用 <code>Journal/Client</code></td></tr>
+              <tr><td>帧阶段</td><td class="mono">Append(...)</td><td>任何阶段都可写；无锁、无 I/O，不占帧预算</td></tr>
+              <tr><td>退出房间 / 换世界</td><td class="mono">journal.Reset()</td><td>只清内存窗口，序号不回退；分段留给下次复盘</td></tr>
+              <tr><td>退出游戏 / 崩溃前</td><td class="mono">FlushAndWait() → writer.Dispose()</td><td>Dispose 内部再刷一次并写 manifest</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout"><span class="t">热路径纪律</span>
+          记录里不要塞字符串：<code>payload</code> 只在聊天/异常这类低频事件上传；
+          数值上下文用 A/B/C 三个 int 表达（如"格子数 / 序列号 / tick"），避免在每帧路径上做格式化。</div>
+      </div>
+    </section>
+
+    <!-- ================= 实测与附录 ================= -->
+    <section class="sec" id="grp-prf">
+      <div class="sec-head"><span class="no">实测</span>
+        <div><h2>实测数据与用例</h2><div class="sub">Release · 本机 · 见 SRC01</div></div></div>
+
+      <div class="block" id="PRF01">
+        <div class="block-head"><button class="guid" data-guid="PRF01">PRF01</button><h3>实测数据</h3>
+          <span class="tagline">260 万次写入 + 50 万条落盘</span></div>
+        <div class="tw">
+          <table>
+            <thead><tr><th>项目</th><th class="mono">实测</th><th>条件</th></tr></thead>
+            <tbody>
+              <tr><td>单条写入</td><td class="mono">54.3 ns（18.4 M 条/秒）</td><td>2,000,000 条混合分类，8 字节字段全填</td></tr>
+              <tr><td>单条记录</td><td class="mono">48 B</td><td>定长顺序布局</td></tr>
+              <tr><td>常驻内存</td><td class="mono">3 MiB</td><td>容量 65536 条</td></tr>
+              <tr><td>全量筛选（命中 8192）</td><td class="mono">101 µs</td><td>掩码 = Terrain，扫描 65536 条窗口</td></tr>
+              <tr><td>全量筛选（全命中）</td><td class="mono">124 µs</td><td>掩码 = All</td></tr>
+              <tr><td>空命中筛选</td><td class="mono">91 µs</td><td>掩码 = Diagnostics（扫描成本与命中量无关）</td></tr>
+              <tr><td>最近 1024 条某分类</td><td class="mono">7.95 µs</td><td>稀疏索引，不扫描全窗口</td></tr>
+              <tr><td>落盘吞吐</td><td class="mono">5.10 M 条/秒 · 38.2 MiB/s</td><td>500,000 条，每 32768 条强制刷一次，0 丢失</td></tr>
+              <tr><td>块大小 / 块数</td><td class="mono">12,312 B · 1954 块</td><td>256 条/块 + 24 B 块头</td></tr>
+              <tr><td>崩溃恢复</td><td class="mono">截断 3000 B · 撕裂块 1</td><td>尾部追加 3000 B 垃圾，有效 60000 条零丢失，续写序号 60001</td></tr>
+              <tr><td>滚动保留</td><td class="mono">3 个分段 / 147 KiB</td><td>段 64 KiB、保留 3 段</td></tr>
+              <tr><td>筛选导出</td><td class="mono">文本 586 KiB / 二进制 385 KiB</td><td>8192 条 Terrain，二进制回读 8192 条 ✓</td></tr>
+              <tr><td>背压（故意压垮）</td><td class="mono">落盘 4096 · 丢失计数 45904</td><td>容量 4096，突发写入 50000 条；游戏线程未阻塞</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout warn"><span class="t">怎么读这组数</span>
+          ①扫描成本与命中量无关（91 ≈ 124 µs），所以"筛全量"是可预测的；
+          ②写入 54 ns 与落盘 38 MiB/s 差 5 个数量级 ⇒ <b>容量必须覆盖刷盘间隔内的写入量</b>，这就是 SEG03 的意义。</div>
+      </div>
+
+      <div class="block" id="PRF02">
+        <div class="block-head"><button class="guid" data-guid="PRF02">PRF02</button><h3>存盘频率：能降多少</h3>
+          <span class="tagline">400,000 条 = 18.3 MiB 原始数据；写块次数 = 记录数 ÷ 每块条数</span></div>
+        <figure>
+          <svg viewBox="0 0 900 250" role="img" aria-label="写次数与崩溃窗口的取舍">
+            <line class="dgl" x1="90" y1="200" x2="840" y2="200"/>
+            <line class="dgl" x1="90" y1="30" x2="90" y2="200"/>
+            <text class="dgt sm" x="465" y="230" text-anchor="middle">写块次数（越左越少碰盘）</text>
+            <text class="dgt sm" x="30" y="115" transform="rotate(-90 30 115)" text-anchor="middle">崩溃最多丢（ms）</text>
+            <text class="dgt sm" x="90" y="216" text-anchor="middle">0</text>
+            <text class="dgt sm" x="468" y="216" text-anchor="middle">800</text>
+            <text class="dgt sm" x="840" y="216" text-anchor="middle">1563</text>
+            <text class="dgt sm" x="82" y="204" text-anchor="end">0</text>
+            <text class="dgt sm" x="82" y="120" text-anchor="end">1000</text>
+            <text class="dgt sm" x="82" y="44" text-anchor="end">2000</text>
+            <line class="dgl dash" x1="90" y1="120" x2="840" y2="120"/>
+            <circle cx="840" cy="188" r="7" fill="#0e7fa8"/>
+            <text class="dgt sm" x="830" y="180" text-anchor="end">RealTime（250 ms）</text>
+            <circle cx="474" cy="120" r="7" fill="#6a4bd8"/>
+            <text class="dgt sm" x="466" y="112" text-anchor="middle">Balanced（1000 ms）</text>
+            <circle cx="300" cy="44" r="7" fill="#0d8a63"/>
+            <text class="dgt sm" x="292" y="36" text-anchor="middle">LowFrequency（2000 ms）</text>
+            <circle cx="94" cy="40" r="7" fill="#a9740a"/>
+            <text class="dgt sm" x="104" y="34">MemoryOnly（不落盘）</text>
+            <text class="dgt sm" x="120" y="150">写次数 ∝ 1 ÷ 每块条数；崩溃窗口 = 刷盘间隔；容量必须 ≥ 速率 × 间隔</text>
+          </svg>
+          <figcaption>四档预设就是四个点：往左下走 = 少碰盘但多丢一段，往右上走 = 相反</figcaption>
+        </figure>
+        <div class="tw">
+          <table>
+            <thead><tr><th>配置</th><th class="mono">写块次数</th><th class="mono">fsync</th><th class="mono">轮转 / manifest</th><th class="mono">磁盘放大</th><th class="mono">吞吐</th></tr></thead>
+            <tbody>
+              <tr><td>A 默认（256 条/块 · 4 MiB · 250 ms · 关 fsync）</td><td class="num">1563</td><td class="num">0</td><td class="num">5 / 4</td><td class="num">1.00×</td><td class="num">231.7 MiB/s</td></tr>
+              <tr><td>B 开 fsync（FlushToDisk=true）</td><td class="num">1563</td><td class="num">1563</td><td class="num">5 / 4</td><td class="num">1.00×</td><td class="num">183.2 MiB/s</td></tr>
+              <tr><td>D 大块 1024 · 段 32 MiB · 1000 ms</td><td class="num">391</td><td class="num">0</td><td class="num">1 / 0</td><td class="num">1.00×</td><td class="num">287.4 MiB/s</td></tr>
+              <tr><td>E 低频预设（+2000 ms）</td><td class="num">391</td><td class="num">0</td><td class="num">1 / 0</td><td class="num">1.00×</td><td class="num">306.8 MiB/s</td></tr>
+              <tr><td>F 纯内存（Directory=null）</td><td class="num">0</td><td class="num">0</td><td class="num">0 / 0</td><td class="num">—</td><td class="num">不碰盘</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="grid g3">
+          <div class="tile"><h5>游戏线程不受影响</h5><span class="big">6.8 ms / 40 万条</span>
+            <p>存盘频率怎么调，append 成本不变（写内存 + 发布序号）。</p></div>
+          <div class="tile"><h5>fsync 代价</h5><span class="big">2.04 ms / 次</span>
+            <p>一个刷盘周期只 fsync 一次；1000 条/秒时约占墙钟 0.8%。</p></div>
+          <div class="tile"><h5>尾部等待</h5><span class="big">7 ms</span>
+            <p>攒 2.8 MiB 未落盘再 FlushAndWait（按需导出/关服）。</p></div>
+        </div>
+        <div class="tw">
+          <table>
+            <thead><tr><th>记录速率</th><th class="mono">100/s</th><th class="mono">1000/s</th><th class="mono">5000/s</th><th class="mono">20000/s</th></tr></thead>
+            <tbody>
+              <tr><td>容量 65,536 条能撑</td><td class="num">655 s</td><td class="num">66 s</td><td class="num">13 s</td><td class="num">3 s</td></tr>
+              <tr><td>容量 262,144 条能撑（低频预设）</td><td class="num">2621 s</td><td class="num">262 s</td><td class="num">52 s</td><td class="num">13 s</td></tr>
+              <tr><td>每秒原始字节</td><td class="num">5 KiB</td><td class="num">47 KiB</td><td class="num">234 KiB</td><td class="num">938 KiB</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="tw">
+          <table>
+            <thead><tr><th class="mono">预设</th><th class="mono">块 / 段 / 间隔 / fsync</th><th class="mono">容量</th><th>分类闸门</th></tr></thead>
+            <tbody>
+              <tr><td class="mono">RealTime</td><td class="mono">256 · 4 MiB · 250 ms · 关</td><td class="mono">1&lt;&lt;16</td><td>全量落盘（与原默认一致，向后兼容）</td></tr>
+              <tr><td class="mono">Balanced</td><td class="mono">512 · 8 MiB · 1000 ms · 关</td><td class="mono">1&lt;&lt;17</td><td>全量落盘</td></tr>
+              <tr><td class="mono">LowFrequency</td><td class="mono">1024 · 32 MiB · 2000 ms · 关</td><td class="mono">1&lt;&lt;18</td><td>Metrics 1/16、PlayerState/Terrain/Entity 1/4、Circuit 1/2；Inventory/DataModification/Diagnostics 全量 + 强制 fsync</td></tr>
+              <tr><td class="mono">MemoryOnly</td><td class="mono">不落盘（Directory=null）</td><td class="mono">1&lt;&lt;18</td><td>按需导出（文本 586 KiB / 二进制 385 KiB @8192 条）</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout warn"><span class="t">顺带修掉一个真问题</span>
+          改之前 <code>FlushToDisk=true</code> 在运行期是<b>空操作</b>：<code>Drain()</code> 只做 <code>Flush()</code>（刷到页缓存），
+          只有 <code>Dispose()</code> 才真正 fsync。所以那时"开 fsync"测不出代价（0.46 ms/块是假的）。
+          现在改为<b>每个刷盘周期末尾 fsync 一次</b>（块级 fsync 会把吞吐打掉一个量级），实测 2.04 ms/次。</div>
+        <div class="callout ok"><span class="t">五条降频杠杆（3 条纯配置）</span>
+          ① 少写记录本身（只写合并后的原子 / 值没变不写 / 高频类采样）→ 效果最大；
+          ② 加大块 <code>RecordsPerBlock</code>（↓4× 写次数）；③ 加大段 + 拉长间隔（↓轮转与 manifest）；
+          ④ 关 fsync（只给账本类开）；⑤ 纯内存 + 按需导出。②–⑤ 全部是配置，不用改代码。</div>
+      </div>
+      <div class="block" id="TST01">
+        <div class="block-head"><button class="guid" data-guid="TST01">TST01</button><h3>测试用例</h3>
+          <span class="tagline">跑通即可交付</span></div>
+        <div class="tw">
+          <table>
+            <thead><tr><th class="mono">#</th><th>用例</th><th>判据</th></tr></thead>
+            <tbody>
+              <tr><td class="mono">1</td><td>混合分类写入 200 万条</td><td>无异常；序号连续；54 ns/条量级</td></tr>
+              <tr><td class="mono">2</td><td>掩码筛选（单类 / 多类 / 全量 / 空命中）</td><td>命中数与写入分布一致；耗时 100 µs 量级</td></tr>
+              <tr><td class="mono">3</td><td>稀疏索引取最近 N 条</td><td>条数与顺序正确；8 µs 量级</td></tr>
+              <tr><td class="mono">4</td><td>50 万条落盘</td><td>落盘条数 = 写入条数；丢失 0；分段按大小轮转</td></tr>
+              <tr><td class="mono">5</td><td>尾部追加垃圾后恢复</td><td>截断 = 垃圾字节数；有效记录零丢失；续写序号 +1</td></tr>
+              <tr><td class="mono">6</td><td>保留策略</td><td>磁盘文件数 ≤ MaxSegments；最旧段被删</td></tr>
+              <tr><td class="mono">7</td><td>导出文本 / 二进制 + 回读</td><td>行数 / 条数与筛选命中一致</td></tr>
+              <tr><td class="mono">8</td><td>故意压垮（容量 &lt; 突发）</td><td>丢失被计数；调用线程未被阻塞</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="block" id="SRC01">
+        <div class="block-head"><button class="guid" data-guid="SRC01">SRC01</button><h3>来源</h3>
+          <span class="tagline">实现与测试落点</span></div>
+        <div class="tw">
+          <table>
+            <thead><tr><th class="mono">文件</th><th>内容</th></tr></thead>
+            <tbody>
+              <tr><td class="src">Mod/SuMultiplayer/Journal/JournalTypes.cs</td><td>分类 / 事件码 / 记录结构 / 筛选条件 / 统计结构</td></tr>
+              <tr><td class="src">Mod/SuMultiplayer/Journal/JournalOptions.cs</td><td>容量、分段、刷盘、保留等配置项与校验</td></tr>
+              <tr><td class="src">Mod/SuMultiplayer/Journal/StateChangeJournal.cs</td><td>环形内存队列、序号发布、掩码筛选、稀疏索引</td></tr>
+              <tr><td class="src">Mod/SuMultiplayer/Journal/JournalSegmentWriter.cs</td><td>落盘线程、文件格式、轮转与保留、崩溃恢复、CRC32</td></tr>
+              <tr><td class="src">Mod/SuMultiplayer/Journal/JournalExporter.cs</td><td>文本 / 二进制导出与回读、名称映射</td></tr>
+              <tr><td class="src">临时测试程序（本次实测所用）</td><td>8 个用例 + 基准；数据见 PRF01</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="block" id="IDX01">
+        <div class="block-head"><button class="guid" data-guid="IDX01">IDX01</button><h3>GUID 索引</h3>
+          <span class="tagline">本页 25 个标记</span></div>
+        <div class="tw">
+          <table>
+            <thead><tr><th class="mono">GUID</th><th>主题</th><th>一句话</th></tr></thead>
+            <tbody>
+              <tr><td class="gid">JRN01</td><td>三条硬指标</td><td>线性写入 O(1) / 分段快速存盘 / 位掩码秒筛</td></tr>
+              <tr><td class="gid">JRN02</td><td>主机与客户端各一份</td><td>同一份代码与格式，两个实例、两个目录</td></tr>
+              <tr><td class="gid">REC01</td><td>48 字节记录布局</td><td>序号 / 时间 / 分类 / 事件码 / 角色 / 严重度 / Actor / A·B·C / 文本引用</td></tr>
+              <tr><td class="gid">REC02</td><td>为什么定长</td><td>写入零分配、落盘字节块、筛选用顺序扫描</td></tr>
+              <tr><td class="gid">CAT01</td><td>16 个分类</td><td>位掩码粗筛，一次可命中多类</td></tr>
+              <tr><td class="gid">CAT02</td><td>事件码与上下文</td><td>同一布局承载所有域，A/B/C 语义由事件码决定</td></tr>
+              <tr><td class="gid">QUE01</td><td>环形写入</td><td>可播放：写指针转圈、落盘指针追赶、覆盖计数</td></tr>
+              <tr><td class="gid">QUE02</td><td>序号与窗口语义</td><td>Next / Published / Oldest / 已覆盖未落盘 / Reset 不回退</td></tr>
+              <tr><td class="gid">FLT01</td><td>掩码扫描</td><td>可播放：扫描游标 + 分类开关，实时命中与耗时</td></tr>
+              <tr><td class="gid">FLT02</td><td>稀疏索引</td><td>最近 N 条按类取，8 µs 量级</td></tr>
+              <tr><td class="gid">SEG01</td><td>落盘流水线</td><td>游戏线程零 I/O；落盘线程组块；分段滚动</td></tr>
+              <tr><td class="gid">FIL01</td><td>分段格式</td><td>32 B 段头 + 12312 B 块（256 条 + CRC）</td></tr>
+              <tr><td class="gid">FIL02</td><td>manifest 索引</td><td>journal.index 记录每段序号区间与字节数</td></tr>
+              <tr><td class="gid">SEG02</td><td>保留与滚动</td><td>磁盘占用有上限，删除在落盘线程</td></tr>
+              <tr><td class="gid">SEG03</td><td>背压</td><td>可播放：积压、覆盖、丢失计数，绝不阻塞游戏线程</td></tr>
+              <tr><td class="gid">CRS01</td><td>崩溃恢复</td><td>可播放：撕裂尾块被 CRC 识别并截断，序号续写</td></tr>
+              <tr><td class="gid">EXP01</td><td>导出与回读</td><td>筛选结果 → 文本 / 二进制文件，可回读</td></tr>
+              <tr><td class="gid">API01</td><td>代码接口</td><td>Append / TryGet / CreateFilter / CopyRecent / 落盘控制</td></tr>
+              <tr><td class="gid">OPT01</td><td>配置项</td><td>容量、分段、刷盘、保留、时钟注入</td></tr>
+              <tr><td class="gid">WIR01</td><td>接进 SuMultiplayer</td><td>加载 / 帧阶段 / 退出房间 / 退出游戏四个动作</td></tr>
+              <tr><td class="gid">PRF01</td><td>实测数据</td><td>54 ns · 101 µs · 38 MiB/s · 0 丢失</td></tr>
+              <tr><td class="gid">PRF02</td><td>存盘频率与预设</td><td>写块次数 ↓4×、fsync 2.04 ms/次、四档预设与分类闸门</td></tr>
+              <tr><td class="gid">TST01</td><td>测试用例</td><td>8 条判据，覆盖写入 / 筛选 / 落盘 / 恢复 / 背压</td></tr>
+              <tr><td class="gid">SRC01</td><td>来源</td><td>Journal/ 五个文件 + 临时测试程序</td></tr>
+              <tr><td class="gid">IDX01</td><td>GUID 索引</td><td>本表</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      <div class="row">
+        <div>状态变化队列 · SuMultiplayer（重写工程）· 实现与实测同源</div>
+        <div>配套：<a href="multiplayer-architecture.html">架构图解</a> · <a href="chunk-region-sync.html">区块同步图解</a></div>
+      </div>
+    </footer>
+  </main>
+</div>
+
+<div class="toast" id="toast">已复制</div>
+<div class="totop" id="totop" title="回到顶部">↑</div>
+<script>
+(function () {
+  "use strict";
+
+  /* ============ 通用：GUID 复制 / 搜索 / 侧栏 / 进度 ============ */
+  var toast = document.getElementById("toast"), toastTimer = 0;
+  function say(msg) {
+    toast.textContent = msg;
+    toast.classList.add("on");
+    window.clearTimeout(toastTimer);
+    toastTimer = window.setTimeout(function () { toast.classList.remove("on"); }, 1400);
+  }
+  function copyFallback(text) {
+    var ta = document.createElement("textarea");
+    ta.value = text; ta.style.position = "fixed"; ta.style.top = "-1000px";
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand("copy"); } catch (e) { }
+    document.body.removeChild(ta);
+  }
+  document.addEventListener("click", function (ev) {
+    var el = ev.target && ev.target.closest ? ev.target.closest(".guid") : null;
+    if (!el) return;
+    var g = el.getAttribute("data-guid") || el.textContent.trim();
+    function done() {
+      el.classList.add("copied");
+      say("已复制 " + g);
+      window.setTimeout(function () { el.classList.remove("copied"); }, 900);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(g).then(done, function () { copyFallback(g); done(); });
+    } else { copyFallback(g); done(); }
+  });
+
+  var input = document.getElementById("q"), nores = document.getElementById("nores");
+  var blocks = Array.prototype.slice.call(document.querySelectorAll(".block"));
+  var secs = Array.prototype.slice.call(document.querySelectorAll("section.sec"));
+  function filter() {
+    var q = (input.value || "").trim().toLowerCase();
+    if (!q) {
+      blocks.forEach(function (b) { b.classList.remove("hidden"); });
+      secs.forEach(function (s) { s.classList.remove("hidden"); });
+      nores.style.display = "none";
+      return;
+    }
+    var hits = 0;
+    blocks.forEach(function (b) {
+      var hit = (b.textContent || "").toLowerCase().indexOf(q) >= 0 || b.id.toLowerCase().indexOf(q) >= 0;
+      b.classList.toggle("hidden", !hit);
+      if (hit) hits++;
+    });
+    secs.forEach(function (s) {
+      var vis = Array.prototype.some.call(s.querySelectorAll(".block"), function (b) {
+        return !b.classList.contains("hidden");
+      });
+      s.classList.toggle("hidden", !vis);
+    });
+    nores.style.display = hits ? "none" : "block";
+  }
+  input.addEventListener("input", filter);
+  input.addEventListener("search", filter);
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "/" && document.activeElement !== input) { e.preventDefault(); input.focus(); }
+    else if (e.key === "Escape" && document.activeElement === input) { input.value = ""; filter(); input.blur(); }
+  });
+
+  var links = {};
+  Array.prototype.forEach.call(document.querySelectorAll("#toc a"), function (a) {
+    links[a.getAttribute("href").slice(1)] = a;
+  });
+  if ("IntersectionObserver" in window) {
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (en) {
+        if (!en.isIntersecting) return;
+        var a = links[en.target.id];
+        if (!a || a.classList.contains("active")) return;
+        Array.prototype.forEach.call(document.querySelectorAll("#toc a.active"), function (x) { x.classList.remove("active"); });
+        a.classList.add("active");
+      });
+    }, { rootMargin: "-70px 0px -74% 0px" });
+    blocks.forEach(function (b) { if (links[b.id]) io.observe(b); });
+  }
+
+  var prog = document.getElementById("prog"), top = document.getElementById("totop");
+  function onScroll() {
+    var max = document.documentElement.scrollHeight - window.innerHeight;
+    prog.style.width = (max > 0 ? (window.scrollY / max) * 100 : 0) + "%";
+    top.classList.toggle("on", window.scrollY > 500);
+  }
+  document.addEventListener("scroll", onScroll, { passive: true });
+  top.addEventListener("click", function () { window.scrollTo({ top: 0, behavior: "smooth" }); });
+  onScroll();
+
+  /* ============ 可播放图解 ============ */
+  function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+  function lerp(a, b, k) { return a + (b - a) * k; }
+  function clampK(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }
+  function rbox(x, y, w, h, cls, rx) {
+    return '<rect class="dgb ' + (cls || "") + '" x="' + x + '" y="' + y + '" width="' + w +
+      '" height="' + h + '" rx="' + (rx === undefined ? 9 : rx) + '"/>';
+  }
+  function rtxt(x, y, s, cls, anchor) {
+    return '<text class="' + (cls || "dgt") + '" x="' + x + '" y="' + y + '"' +
+      (anchor ? ' text-anchor="' + anchor + '"' : "") + ">" + esc(s) + "</text>";
+  }
+  function rarrow(x1, y1, x2, y2, cls, w) {
+    var a = Math.atan2(y2 - y1, x2 - x1);
+    var hx = x2 - 9 * Math.cos(a), hy = y2 - 9 * Math.sin(a);
+    return '<path class="dgl ' + (cls || "") + '" stroke-width="' + (w || 1.6) + '" d="M' + x1 + " " + y1 +
+      " L" + hx + " " + hy + '"/>' +
+      '<path class="dgl ' + (cls || "") + '" stroke-width="' + (w || 1.6) + '" d="M' + (hx - 6 * Math.sin(a)) +
+      " " + (hy + 6 * Math.cos(a)) + " L" + x2 + " " + y2 + " L" + (hx + 6 * Math.sin(a)) + " " +
+      (hy - 6 * Math.cos(a)) + '"/>';
+  }
+  function svgOf(w, h, body) { return '<svg viewBox="0 0 ' + w + " " + h + '" role="img">' + body + "</svg>"; }
+
+  var CATS = [
+    { name: "Terrain", color: "#0d8a63" },
+    { name: "PlayerState", color: "#0e7fa8" },
+    { name: "PlayerAction", color: "#6a4bd8" },
+    { name: "Entity", color: "#a9740a" },
+    { name: "Inventory", color: "#c23a55" },
+    { name: "Circuit", color: "#5a6a86" }
+  ];
+  function catOf(i) { return CATS[(i * 7 + (i >> 3)) % CATS.length]; }
+
+  var ANIM = {};
+
+  /* ---------- ① 环形写入 ---------- */
+  ANIM.queueloop = {
+    w: 900, h: 330, duration: 16.0,
+    cap: "写指针转圈写满 64 格（图上），落盘指针随后追；绕一圈时覆盖最旧未落盘槽位",
+    extra: '<label class="xtra"><input type="checkbox" class="js-x-follow" checked> 落盘端跟得上</label>',
+    phase: function (t, host) {
+      var C = 40, rate = 4;
+      var written = Math.floor(t * rate);
+      var follow = host.querySelector(".js-x-follow").checked;
+      var lag = follow ? 4 : Math.min(written, t * 4);
+      var flushed = Math.max(0, written - Math.floor(lag));
+      var lost = Math.max(0, written - C - flushed);
+      return "已写入 " + written + " 条 → 槽位 " + (written ? (written - 1) % C : 0) +
+        " · 已落盘 " + flushed + " · 未落盘 " + (written - flushed) + " · 被覆盖丢失 " + lost;
+    },
+    draw: function (t, host) {
+      var C = 40, rate = 4, cx = 235, cy = 170, R = 122;
+      var written = Math.floor(t * rate);
+      var follow = host.querySelector(".js-x-follow").checked;
+      var lag = follow ? 4 : Math.min(written, t * 4);
+      var flushed = Math.max(0, written - Math.floor(lag));
+      var lost = Math.max(0, written - C - flushed);
+      var s = "";
+      for (var i = 0; i < C; i++) {
+        var angle = -Math.PI / 2 + (i * 2 * Math.PI) / C;
+        var x = cx + Math.cos(angle) * R, y = cy + Math.sin(angle) * R;
+        var seq = written - 1 - (((written - 1 - i) % C + C) % C);
+        var has = seq >= 0 && written > 0;
+        var isFlushed = has && seq < flushed;
+        var isLost = has && !isFlushed && lost > 0;
+        var fill = !has ? "#ffffff" : (isFlushed ? catOf(seq).color : "#c9a227");
+        var stroke = isLost ? "#c23a55" : "#c3d1e6";
+        s += '<rect x="' + (x - 8).toFixed(1) + '" y="' + (y - 8).toFixed(1) + '" width="16" height="16" rx="4" fill="' +
+          fill + '" stroke="' + stroke + '" stroke-width="' + (isLost ? 2 : 1) + '" opacity="' +
+          (has ? (isFlushed ? 0.9 : 0.65) : 1) + '"/>';
+      }
+      // 写指针 / 落盘指针
+      if (written > 0) {
+        var wa = -Math.PI / 2 + (((written - 1) % C) * 2 * Math.PI) / C;
+        var wx = cx + Math.cos(wa) * (R + 30), wy = cy + Math.sin(wa) * (R + 30);
+        s += rarrow(wx, wy, cx + Math.cos(wa) * (R + 9), cy + Math.sin(wa) * (R + 9), "vi", 2.2) +
+          rtxt(wx, wy - 6, "写", "dgt sm", "middle");
+      }
+      if (flushed > 0) {
+        var fa = -Math.PI / 2 + (((flushed - 1) % C) * 2 * Math.PI) / C;
+        s += rarrow(cx + Math.cos(fa) * (R - 9), cy + Math.sin(fa) * (R - 9),
+          cx + Math.cos(fa) * (R - 34), cy + Math.sin(fa) * (R - 34), "cy", 2.2) +
+          rtxt(cx + Math.cos(fa) * (R - 44), cy + Math.sin(fa) * (R - 44), "落盘", "dgt sm", "middle");
+      }
+      s += '<circle cx="' + cx + '" cy="' + cy + '" r="52" fill="#f7f9fe" stroke="#dde5f1"/>';
+      s += rtxt(cx, cy - 12, "环形队列", "dghead", "middle");
+      s += rtxt(cx, cy + 6, "容量 65536 条", "dgt sm", "middle");
+      s += rtxt(cx, cy + 24, "= 3 MiB", "dgt sm", "middle");
+      // 右侧面板
+      s += rbox(500, 30, 380, 170, "", 10);
+      s += rtxt(518, 56, "运行统计（实时）", "dghead");
+      s += rtxt(518, 84, "已写入：" + written + " 条", "dgt");
+      s += rtxt(518, 108, "已落盘：" + flushed + " 条", "dgt");
+      s += rtxt(518, 132, "未落盘：" + (written - flushed) + " 条", "dgt");
+      s += rtxt(518, 156, "被覆盖未落盘：" + lost + " 条", lost > 0 ? "dgt" : "dgt sm");
+      s += rtxt(518, 180, "游戏线程耗时：0（无 I/O）", "dgt sm");
+      s += rtxt(500, 224, "紫箭头 = 写指针；青箭头 = 落盘指针；黄格 = 已写未落盘；红框 = 被覆盖的那一格", "dgt sm");
+      s += rtxt(500, 246, "实测：单条写入 54 ns，所以「写」从来不是瓶颈；能不能跟上取决于磁盘（见 SEG03）", "dgt sm");
+      s += '<rect x="500" y="266" width="380" height="34" rx="8" fill="#f7f9fe" stroke="#dde5f1"/>';
+      s += rtxt(516, 288, "图上 40 格代表 65536 条；一圈 = 一次覆盖", "dgt sm");
+      return svgOf(this.w, this.h, s);
+    }
+  };
+
+  /* ---------- ② 掩码扫描 ---------- */
+  ANIM.scan = {
+    w: 900, h: 330, duration: 6.0,
+    cap: "扫描游标逐格检查类别掩码；命中即收集 —— 成本只与「扫了多少条」有关，与命中多少无关",
+    extra: '<div class="chips js-chips">' + CATS.map(function (c, i) {
+      return '<span class="chip js-chip' + (i < 3 ? " on" : "") + '" data-cat="' + i +
+        '" style="' + (i < 3 ? "background:" + c.color : "") + '">' + c.name + "</span>";
+    }).join("") + "</div>",
+    mask: function (host) {
+      var m = 0;
+      Array.prototype.forEach.call(host.querySelectorAll(".js-chip"), function (chip, i) {
+        if (chip.classList.contains("on")) m |= (1 << i);
+      });
+      return m;
+    },
+    bind: function (host, draw) {
+      Array.prototype.forEach.call(host.querySelectorAll(".js-chip"), function (chip, i) {
+        chip.addEventListener("click", function () {
+          var on = !chip.classList.contains("on");
+          chip.classList.toggle("on", on);
+          chip.style.background = on ? CATS[i].color : "#fff";
+          draw();
+        });
+      });
+    },
+    phase: function (t, host) {
+      var total = 40;
+      var cursor = Math.min(total, Math.floor((t / this.duration) * total));
+      var mask = this.mask(host);
+      var hits = 0;
+      for (var i = 0; i < cursor; i++) if ((mask >> (i % CATS.length)) & 1) hits++;
+      return "已扫描 " + cursor + " / " + total + " 格 · 命中 " + hits + " 格 · 掩码 0x" + mask.toString(16).toUpperCase();
+    },
+    draw: function (t, host) {
+      var total = 40, cols = 10, cw = 78, ch = 46, x0 = 40, y0 = 44;
+      var cursor = Math.min(total, Math.floor((t / this.duration) * total));
+      var mask = this.mask(host), hits = 0;
+      var s = rtxt(40, 28, "内存窗口（图上 40 条 = 实际 65536 条）", "dghead");
+      for (var i = 0; i < total; i++) {
+        var col = i % cols, row = Math.floor(i / cols);
+        var x = x0 + col * cw, y = y0 + row * ch;
+        var cat = catOf(i);
+        var on = (mask >> (i % CATS.length)) & 1;
+        var scanned = i < cursor;
+        if (scanned && on) hits++;
+        var fill = on ? cat.color : "#eef3fb";
+        var opacity = scanned ? (on ? 0.92 : 0.5) : 0.28;
+        s += '<rect x="' + x + '" y="' + y + '" width="' + (cw - 8) + '" height="' + (ch - 10) + '" rx="6" fill="' +
+          fill + '" opacity="' + opacity + '" stroke="' + (i === cursor ? "#101a2e" : "#c3d1e6") +
+          '" stroke-width="' + (i === cursor ? 2.2 : 1) + '"/>';
+        if (scanned && on) {
+          s += '<circle cx="' + (x + cw - 20) + '" cy="' + (y + 10) + '" r="4" fill="#fff" stroke="' + cat.color + '"/>';
+        }
+      }
+      var progress = cursor / total;
+      s += rbox(830, 44, 56, 176, "", 8);
+      s += rtxt(858, 66, "扫", "dghead", "middle");
+      s += '<rect x="842" y="' + (218 - 160 * progress) + '" width="32" height="' + (160 * progress) +
+        '" rx="4" fill="#2b9fc4" opacity=".75"/>';
+      s += rtxt(858, 234, Math.round(progress * 100) + "%", "dgt sm", "middle");
+      s += rbox(40, 250, 846, 62, "", 10);
+      s += rtxt(56, 274, "命中 " + hits + " 条 · 已扫描 " + cursor + " 条 · 掩码 0x" + mask.toString(16).toUpperCase(), "dgt");
+      s += rtxt(56, 296, "实测对照：扫描 65536 条全窗口 ≈ 101 µs（约为每条约 1.5 ns）；命中 8192 条与命中 0 条耗时几乎相同", "dgt sm");
+      return svgOf(this.w, this.h, s);
+    }
+  };
+
+  /* ---------- ③ 背压 ---------- */
+  ANIM.backpressure = {
+    w: 900, h: 340, duration: 22.0,
+    cap: "写入速率一旦长期超过落盘速率，积压就会顶穿容量 —— 此时丢最旧的未落盘记录并计数",
+    extra: '<label class="xtra">写入 <select class="js-x-prod">' +
+      '<option value="6">慢（6 条/格）</option><option value="14" selected>中（14）</option>' +
+      '<option value="34">快（34）</option></select></label>' +
+      '<label class="xtra">磁盘 <select class="js-x-disk">' +
+      '<option value="16" selected>快（16 条/格）</option><option value="5">慢（5 条/格）</option></select></label>',
+    sim: function (t, host) {
+      var C = 64;
+      var rp = parseInt(host.querySelector(".js-x-prod").value, 10) || 14;
+      var rd = parseInt(host.querySelector(".js-x-disk").value, 10) || 16;
+      var steps = Math.min(400, Math.floor(t / 0.05));
+      var backlog = 0, lost = 0, series = [];
+      for (var i = 0; i <= steps; i++) {
+        backlog += (rp - rd) * 0.05;
+        if (backlog < 0) backlog = 0;
+        if (backlog > C) { lost += backlog - C; backlog = C; }
+        series.push(backlog);
+      }
+      return { backlog: backlog, lost: lost, series: series, rp: rp, rd: rd };
+    },
+    phase: function (t, host) {
+      var r = this.sim(t, host);
+      return "写入 " + r.rp + " / 格 · 落盘 " + r.rd + " / 格 · 积压 " + r.backlog.toFixed(0) + "/64 格 · 丢失计数 " + r.lost.toFixed(0);
+    },
+    draw: function (t, host) {
+      var r = this.sim(t, host), C = 64;
+      var s = rtxt(40, 28, "积压（未落盘条数，图上 64 格 = 实际 262144 条上限）", "dghead");
+      // 积压曲线
+      var x0 = 40, y0 = 250, wpx = 620, hpx = 180;
+      s += '<rect x="' + x0 + '" y="' + (y0 - hpx) + '" width="' + wpx + '" height="' + hpx +
+        '" fill="#fff" stroke="#dde5f1" rx="8"/>';
+      var capY = y0 - hpx * 0.86;
+      s += '<line x1="' + x0 + '" y1="' + capY + '" x2="' + (x0 + wpx) + '" y2="' + capY +
+        '" stroke="#c23a55" stroke-width="1.4" stroke-dasharray="6 4"/>';
+      s += rtxt(x0 + wpx - 6, capY - 6, "容量上限", "dgt sm", "end");
+      var pts = "";
+      for (var i = 0; i < r.series.length; i++) {
+        var px = x0 + (i / Math.max(1, r.series.length - 1)) * wpx;
+        var py = y0 - hpx * 0.86 * (r.series[i] / C);
+        pts += (i === 0 ? "M" : "L") + px.toFixed(1) + " " + py.toFixed(1);
+      }
+      if (r.series.length > 1) {
+        s += '<path d="' + pts + '" fill="none" stroke="#2b9fc4" stroke-width="2"/>';
+        var lastX = x0 + wpx, lastY = y0 - hpx * 0.86 * (r.backlog / C);
+        s += '<path d="' + pts + "L" + lastX.toFixed(1) + " " + y0 + " L" + x0 + " " + y0 + 'Z" fill="rgba(14,127,168,.12)"/>';
+        s += '<circle cx="' + lastX.toFixed(1) + '" cy="' + lastY.toFixed(1) + '" r="4.5" fill="#6a4bd8"/>';
+      }
+      s += rtxt(x0 + 8, y0 + 20, "t = " + t.toFixed(1) + " s", "dgt sm");
+      // 面板
+      s += rbox(690, 44, 190, 236, "", 10);
+      s += rtxt(706, 68, "实时状态", "dghead");
+      s += rtxt(706, 96, "写入速率 " + r.rp + " / 格", "dgt");
+      s += rtxt(706, 120, "落盘速率 " + r.rd + " / 格", "dgt");
+      s += rtxt(706, 144, "积压 " + r.backlog.toFixed(0) + " / 64", "dgt");
+      s += rtxt(706, 168, "丢失计数 " + r.lost.toFixed(0), r.lost > 0 ? "dgt" : "dgt sm");
+      s += rtxt(706, 196, r.rp > r.rd ? "生产者 > 消费者" : "追得上", r.rp > r.rd ? "dgt" : "dgt sm");
+      s += rtxt(706, 216, r.rp > r.rd ? "→ 积压持续增长" : "→ 积压回落", "dgt sm");
+      s += rtxt(706, 244, "游戏线程始终不等磁盘：", "dgt sm");
+      s += rtxt(706, 262, "顶穿时丢最旧 + 计数", "dgt sm");
+      s += rtxt(40, 320, "实测（故意压垮）：容量 4096 条、突发写入 50000 条 → 落盘 4096 条、丢失计数 45904，调用线程未被阻塞。", "dgt sm");
+      return svgOf(this.w, this.h, s);
+    }
+  };
+
+  /* ---------- ④ 崩溃恢复 ---------- */
+  ANIM.recovery = {
+    w: 900, h: 300, duration: 15.0,
+    cap: "逐块 CRC 校验 → 在第一个坏块处截断 → 用最后一条有效记录的序号 + 1 继续写",
+    phase: function (t) {
+      if (t < 3.0) return "运行中：块 " + (Math.min(10, Math.floor(t / 0.28)) + 1) + " / 10 正在追加";
+      if (t < 5.0) return "进程崩溃：尾部留下一个写了一半的块";
+      if (t < 9.4) {
+        var i = Math.floor((t - 5.0) / 0.44);
+        return "启动恢复：校验块 " + Math.min(11, i + 1) + " / 11 …";
+      }
+      if (t < 12.0) return "坏块 CRC 失败 → 截断到最后一个有效块（丢弃 1 块）";
+      return "续写起点 = 最后有效序号 + 1 = 3073（前 3072 条零丢失）";
+    },
+    draw: function (t) {
+      var blocks = 11, bw = 66, x0 = 44, y = 110, s = "";
+      var written = t < 3.0 ? Math.min(10, Math.floor(t / 0.28) + 1) : 10;
+      var crashed = t >= 3.0;
+      var scanI = t >= 5.0 ? Math.min(blocks, Math.floor((t - 5.0) / 0.44) + 1) : 0;
+      var truncated = t >= 9.4;
+      s += rtxt(40, 40, "journal-000007.smj", "dghead");
+      s += rtxt(40, 62, "段头 32 B", "dgt sm");
+      for (var i = 0; i < blocks; i++) {
+        var x = x0 + i * bw;
+        var isTorn = i === 10;
+        var valid = i < 10 && (t < 3.0 ? i < written : true);
+        var scanning = t >= 5.0 && t < 9.4 && i < scanI;
+        var fill = isTorn ? (truncated ? "#f0f2f7" : "#fdecf0") : (valid ? "#e5f8f0" : "#f7f9fe");
+        var stroke = isTorn ? "#c23a55" : (valid ? "#17a273" : "#c3d1e6");
+        if (isTorn && truncated) { stroke = "#c3d1e6"; }
+        s += '<rect x="' + x + '" y="' + y + '" width="' + (bw - 6) + '" height="58" rx="6" fill="' + fill +
+          '" stroke="' + stroke + '" stroke-width="1.6"/>';
+        s += rtxt(x + (bw - 6) / 2, y + 24, isTorn ? "撕裂" : "块 " + (i + 1), "dgt sm", "middle");
+        s += rtxt(x + (bw - 6) / 2, y + 42, isTorn ? "CRC ✗" : "256 条", "dgt sm", "middle");
+        if (scanning || (t >= 9.4 && t < 12.0 && i === 10)) {
+          s += '<circle cx="' + (x + (bw - 6) / 2) + '" cy="' + y + 74 + '" r="4" fill="#2b9fc4"/>';
+        }
+      }
+      if (t < 3.0) {
+        var wx = x0 + written * bw;
+        s += rarrow(wx + 30, y - 26, wx - 6, y + 4, "vi", 2);
+        s += rtxt(wx + 34, y - 30, "追加中", "dgt sm");
+      }
+      if (crashed && t < 5.0) {
+        s += rbox(40, 196, 840, 48, "rd", 9);
+        s += rtxt(56, 226, "⚡ 进程消失：最后一块只写了一半（内存里的记录也一起没了）", "dgt");
+      }
+      if (t >= 5.0 && t < 9.4) {
+        s += rbox(40, 196, 840, 48, "cy", 9);
+        s += rtxt(56, 226, "恢复：从段头开始逐块校验 magic / 条数 / 字节数 / CRC32 —— 游标走到哪，前面就算「确认有效」", "dgt sm");
+      }
+      if (truncated) {
+        s += rbox(40, 196, 840, 76, "gr", 9);
+        s += rtxt(56, 222, "① 在第一处 CRC 失败停下 → 文件截断到最后有效块末尾（实测：追加 3000 B 垃圾被整段截掉）", "dgt sm");
+        s += rtxt(56, 244, "② 有效记录 60000 条零丢失（实测）→ 续写序号 = 60001", "dgt sm");
+        s += rtxt(56, 264, "③ manifest 重建：段清单只剩有效区间，旧段按保留策略删除", "dgt sm");
+      }
+      return svgOf(this.w, this.h, s);
+    }
+  };
+
+  function buildAnim(def, host) {
+    host.innerHTML = '<div class="figsvg"></div>' +
+      '<div class="playbar">' +
+      '<button class="btn pri js-play" type="button">▶ 播放</button>' +
+      '<button class="btn js-reset" type="button">↺ 重置</button>' +
+      '<input type="range" class="js-seek" min="0" max="1000" value="0">' +
+      '<span class="phase"></span>' + (def.extra || "") +
+      "</div>" +
+      '<figcaption>' + def.cap + "</figcaption>";
+    var fig = host.querySelector(".figsvg");
+    var phase = host.querySelector(".phase");
+    var seek = host.querySelector(".js-seek");
+    var btn = host.querySelector(".js-play");
+    var t = 0, playing = false, last = 0;
+
+    function draw() {
+      fig.innerHTML = def.draw.call(def, t, host);
+      phase.textContent = def.phase.call(def, t, host);
+      seek.value = String(Math.round((t / def.duration) * 1000));
+    }
+    function loop(now) {
+      if (!playing) return;
+      if (!last) last = now;
+      var dt = Math.min((now - last) / 1000, 0.1);
+      last = now;
+      t += dt;
+      if (t >= def.duration) { t = def.duration; playing = false; btn.textContent = "▶ 重播"; }
+      draw();
+      if (playing) window.requestAnimationFrame(loop);
+      else last = 0;
+    }
+    btn.addEventListener("click", function () {
+      if (playing) { playing = false; btn.textContent = "▶ 继续"; return; }
+      if (t >= def.duration) t = 0;
+      playing = true; last = 0; btn.textContent = "⏸ 暂停";
+      window.requestAnimationFrame(loop);
+    });
+    host.querySelector(".js-reset").addEventListener("click", function () {
+      playing = false; t = 0; btn.textContent = "▶ 播放"; draw();
+    });
+    seek.addEventListener("input", function () {
+      playing = false; btn.textContent = "▶ 继续";
+      t = def.duration * (parseInt(seek.value, 10) / 1000);
+      draw();
+    });
+    Array.prototype.forEach.call(host.querySelectorAll("input,select"), function (el) {
+      el.addEventListener("change", draw);
+    });
+    if (def.bind) def.bind(host, draw);
+    draw();
+  }
+
+  Array.prototype.forEach.call(document.querySelectorAll(".anim"), function (host) {
+    var def = ANIM[host.getAttribute("data-anim")];
+    if (def) buildAnim(def, host);
+  });
+})();
+</script>
+</body>
+</html>

@@ -587,6 +587,151 @@ namespace CmdBridgeMod
                 || IsSelfOrDescendant(widget, hit));
         }
 
+        // ---------------------------------------------------------------- 世界内 HUD 归属
+
+        /// <summary>
+        /// 世界内 HUD（`GameWidget` 的 `Gui` 层）里那几条会**被整体平移到屏外**的容器。
+        ///
+        /// 依据（全部来自引擎自己的资源定义与布局代码，不是推测）：
+        ///   · 层次来自 `Pak/Widgets/GameWidget.xml`：`Gui` 下直接挂着 `ControlsContainer`
+        ///     （触屏控制 + `ModalPanelContainer`）、`LeftControlsContainer`、`RightControlsContainer`
+        ///     （`MoreContents` / `MoreButton` 在它里面）。
+        ///   · `Survivalcraft/Game/ComponentGui.cs:300-316` `UpdateSidePanelsAnimation()` 每帧把
+        ///     `m_leftControlsContainerWidget` 左移 `ActualSize.X * m_sidePanelsFactor`、
+        ///     `m_rightControlsContainerWidget` 右移同样的量；非触屏且**没有模态面板**时 `factor=1`
+        ///     → 两条侧栏整条落在屏外（实测 `clientPoint`：`BackButton` x=-55、`MoreButton` x=2139，
+        ///     客户区 2100）。
+        /// </summary>
+        internal static readonly string[] InWorldHudContainers =
+        {
+            "LeftControlsContainer", "RightControlsContainer", "MoreContents", "ControlsContainer"
+        };
+
+        /// <summary>
+        /// 控件是否属于世界内 HUD。返回命中的容器名（写进错误消息用，能直接说明"挡在哪一层"）。
+        /// 只看**祖先链上的名字**，不看可见性 —— 被折叠/移出屏幕的 HUD 正是要处理的场景。
+        /// </summary>
+        public static bool TryGetInWorldHudContainer(Widget widget, out string containerName)
+        {
+            containerName = null;
+            for (Widget current = widget; current != null; current = current.ParentWidget)
+            {
+                string name = current.Name;
+                if (string.IsNullOrEmpty(name))
+                    continue;
+                for (int i = 0; i < InWorldHudContainers.Length; i++)
+                {
+                    if (string.Equals(name, InWorldHudContainers[i], StringComparison.Ordinal))
+                    {
+                        containerName = name;
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        // ---------------------------------------------------------------- 二级开关（MoreContents / MoreButton）
+
+        /// <summary>
+        /// `MoreContents`：`MoreButton` 二级开关打开的那个容器
+        /// （`Pak/Widgets/GameWidget.xml:67`；`ComponentGui.cs:231` 按这个名字取它）。
+        /// </summary>
+        public const string MoreContentsName = "MoreContents";
+
+        /// <summary>
+        /// `MoreButton`：二级开关本身（`Pak/Widgets/GameWidget.xml:76`，
+        /// `IsAutoCheckingEnabled="true"` = 点一下展开、再点一下收起；
+        /// `ComponentGui.cs:400` 每帧把 `MoreContents.IsVisible` 绑到它的 `IsChecked` 上）。
+        /// </summary>
+        public const string MoreToggleName = "MoreButton";
+
+        /// <summary>
+        /// 目标是否**挂在 `MoreContents` 里**（也就是在 `MoreButton` 那个二级开关后面）。
+        ///
+        /// 依据（引擎自己的结构与代码，不是推测）：
+        ///   · `Pak/Widgets/GameWidget.xml:65-77`：`RightControlsContainer` 里那个横排
+        ///     `StackPanelWidget` 下**并排**放着 `MoreContents`（一列按钮）与 `MoreButton`；
+        ///   · `Survivalcraft/Game/ComponentGui.cs:231,400`：`m_moreContentsWidget =
+        ///     guiWidget.Children.Find<Widget>("MoreContents")`，每帧
+        ///     `m_moreContentsWidget.IsVisible = m_moreButtonWidget.IsChecked` ——
+        ///     二级收起时它里面的按钮既没被布局也没被绘制
+        ///     （`StackPanelWidget.MeasureOverride/ArrangeOverride` 跳过不可见子控件），于是不可点；
+        ///   · 外部 Mod 就是往这里挂按钮的（联机 Mod 的 `CR`：
+        ///     `Mod/ScMultiplayer/Func/Component/MultiplayerUiComponent.cs:85`）。
+        ///
+        /// 判定走**祖先链**（严格后代：从 `ParentWidget` 往上找名为 `MoreContents` 的控件），
+        /// 并要求它确实挂在世界内 HUD 的**右侧栏**下（`GameWidget.xml:65-67`：
+        /// `MoreContents` 的父控件是个没有名字的横排 `StackPanelWidget`，再往上是
+        /// `RightControlsContainer`）—— 光看名字会认下别的屏上的同名容器。
+        /// **不看可见性** —— "二级收着"正是要处理的场景。
+        /// </summary>
+        public static bool TryGetMoreContentsAncestor(Widget widget, out Widget moreContents)
+        {
+            moreContents = null;
+            for (Widget current = widget != null ? widget.ParentWidget : null;
+                 current != null;
+                 current = current.ParentWidget)
+            {
+                if (!string.Equals(current.Name, MoreContentsName, StringComparison.Ordinal))
+                    continue;
+                string hudContainer;
+                if (TryGetInWorldHudContainer(current.ParentWidget, out hudContainer)
+                    && string.Equals(hudContainer, "RightControlsContainer", StringComparison.Ordinal))
+                {
+                    moreContents = current;
+                    return true;
+                }
+                return false;   // 同名，但不在世界内 HUD 的右侧栏里：不是这个二级开关
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// `MoreContents` 的二级开关控件（`MoreButton`）：**只在同一个父容器的子树里按名字找**。
+        ///
+        /// 为什么不直接用全局 `Resolve(root, "MoreButton")`：家具面板里也有一个 `MoreButton`
+        /// （`Survivalcraft/Game/FurnitureInventoryPanel.cs:49`），面板开着时两个开关同时在树上 ——
+        /// 全局解析要么报 `ambiguous_selector`，要么更糟：拿到另一个开关（点错 = 把别的界面开开关关）。
+        /// 从 `MoreContents` 的**父控件**往下找（跳过 `MoreContents` 自己那一支），命中的一定是
+        /// 同一排里的那个开关（`GameWidget.xml:65-77`）。
+        /// </summary>
+        public static bool TryGetMoreContentsToggle(Widget moreContents, out Widget moreButton)
+        {
+            moreButton = null;
+            if (moreContents == null || moreContents.ParentWidget == null)
+                return false;
+            return TryFindByName(moreContents.ParentWidget, moreContents, MoreToggleName, out moreButton);
+        }
+
+        /// <summary>`MoreContents` 当前是否已展开（引擎每帧把它绑在 `MoreButton.IsChecked` 上）。</summary>
+        public static bool IsMoreContentsExpanded(Widget moreContents)
+        {
+            return moreContents != null && moreContents.IsVisible;
+        }
+
+        /// <summary>在子树里按名字找控件，跳过 `skip` 那一支。</summary>
+        private static bool TryFindByName(Widget root, Widget skip, string name, out Widget found)
+        {
+            found = null;
+            if (root == null || ReferenceEquals(root, skip))
+                return false;
+            if (string.Equals(root.Name, name, StringComparison.Ordinal))
+            {
+                found = root;
+                return true;
+            }
+            var container = root as ContainerWidget;
+            if (container == null)
+                return false;
+            foreach (Widget child in container.Children)
+            {
+                if (TryFindByName(child, skip, name, out found))
+                    return true;
+            }
+            return false;
+        }
+
         /// <summary>几何上命中得到：HitTestGlobal(中心) 解析到该控件或其子控件。</summary>
         public static bool IsHittable(Widget widget)
         {

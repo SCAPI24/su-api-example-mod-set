@@ -14,6 +14,9 @@
          不再引用也不再编译引擎工程。Obfuscar 需要能解析引用程序集，故把包程序集与 Comms 复制到输出目录。
          打 .scmod 时只取 ScMultiplayer.dll + Comms.dll，禁止把引擎 DLL / SuAPICore.dll 打进包。 -->
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <!-- 只取 SuEventBus.dll 自身，不让它的引擎工程引用传递进来
+         （本工程走 NuGet 制品库，混入工程版引擎会重复引用） -->
+    <DisableTransitiveProjectReferences>true</DisableTransitiveProjectReferences>
   </PropertyGroup>
 
   <ItemGroup>
@@ -32,6 +35,9 @@
   <ItemGroup>
     <!-- Comms 是本 mod 集内的独立 Mod 工程，不引用引擎，仍按工程引用构建 -->
     <ProjectReference Include="..\Comms\Comms.csproj" />
+    <!-- SuEventBus：中间件（信道 Mod 与 ScMP 共用事件契约），随包放进 Lib/SuEventBus.dll。
+         它的引擎引用不再传递（见 DisableTransitiveProjectReferences） -->
+    <ProjectReference Include="..\SuEventBus\SuEventBus.csproj" />
     <!-- SuAPICore 是游戏内置 Mod：从制品库源 cnb-nuget（nuget.cnb.cool/suceru.cb/SuAPICore）取包，
          构建时复制到 bin 以便 Obfuscar 解析其接口/基类成员；
          打 .scmod 时只取 ScMultiplayer.dll + Comms.dll，绝不把 SuAPICore.dll 放进 Lib/ -->

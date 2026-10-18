@@ -1,0 +1,6 @@
+# 编译产物不入库。
+# 这里不用 mod 根 .gitignore 生成区的规则：生成区的 bin/ obj/ 只匹配 Mod 根那一层，
+# 不会覆盖 Tools/Verification 下面的嵌套工程，所以本目录单独声明（与 Tools/DebugBridge/.gitignore 同一做法）。
+bin/
+obj/
+.vs/

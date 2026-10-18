@@ -1,0 +1,64 @@
+syntax = "proto3";
+
+package sump.creature;
+
+option csharp_namespace = "SuMultiplayer.Protocol.Creature";
+option optimize_for = SPEED;
+
+import "google/protobuf/any.proto";
+
+// Mirrors Creatures.CreatureSyncAction (0/1/2).
+enum CreatureAction {
+  CREATURE_ACTION_ADD = 0;
+  CREATURE_ACTION_UPDATE = 1;
+  CREATURE_ACTION_REMOVE = 2;
+}
+
+message Vec2 {
+  float x = 1;
+  float y = 2;
+}
+
+message Vec3 {
+  float x = 1;
+  float y = 2;
+  float z = 3;
+}
+
+message Quat {
+  float x = 1;
+  float y = 2;
+  float z = 3;
+  float w = 4;
+}
+
+message CreatureRecord {
+  CreatureAction action = 1;
+  int32 key = 2;
+  string template_name = 3;
+  Vec3 position = 4;
+  Quat rotation = 5;
+  Vec3 velocity = 6;
+  float health = 7;
+}
+
+// Host -> client: creature state batch.
+message CreatureState {
+  uint32 version = 1;
+  int32 server_tick = 2;
+  // bit0 = full snapshot, bit1 = last batch of that snapshot.
+  uint32 flags = 3;
+  int32 snapshot_id = 4;
+  repeated CreatureRecord records = 5;
+  // Third-party extension points: see doc/message-protocol.md.
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}
+
+// Client -> host: request a full creature snapshot.
+message CreatureResyncRequest {
+  string reason = 1;
+  // Third-party extension points: see doc/message-protocol.md.
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}

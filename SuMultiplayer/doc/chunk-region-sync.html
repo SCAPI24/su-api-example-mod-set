@@ -1,0 +1,2081 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chunk / Region 同步图解 · 谁在什么时候拿到哪一块地图</title>
+<meta name="description" content="用俯视图说明 Survivalcraft 联机模组的区块(chunk)与区域(region)同步：兴趣窗口、玩家走进新区域时的检查点请求、自愈校验环，以及天气/动物/地形变化的最大范围。">
+<style>
+:root{
+  --bg:#f4f7fc; --card:#ffffff; --tint:#f7f9fe; --tint2:#eef3fb;
+  --line:#dde5f1; --line2:#c3d1e6;
+  --tx:#16203a; --tx2:#48587a; --tx3:#7d8aa3;
+  --cy:#0e7fa8; --cy2:#e4f5fc;
+  --vi:#6a4bd8; --vi2:#efeafe;
+  --am:#a9740a; --am2:#fff4df;
+  --gr:#0d8a63; --gr2:#e5f8f0;
+  --rd:#c23a55; --rd2:#fdecf0;
+  --mono:ui-monospace,"Cascadia Mono","JetBrains Mono",Consolas,"Liberation Mono",monospace;
+  --sans:system-ui,-apple-system,"Segoe UI","Microsoft YaHei","PingFang SC","Noto Sans CJK SC",sans-serif;
+  --r:12px; --r2:9px;
+  --sh:0 1px 2px rgba(20,40,80,.05),0 6px 18px rgba(20,40,80,.05);
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0; background:var(--bg); color:var(--tx); font-family:var(--sans);
+  font-size:14.5px; line-height:1.7; -webkit-font-smoothing:antialiased}
+a{color:var(--cy); text-decoration:none}
+a:hover{text-decoration:underline}
+code{font-family:var(--mono); font-size:.87em; background:var(--tint2); border:1px solid var(--line);
+  border-radius:5px; padding:.05em .34em; color:#1d3a63; white-space:nowrap}
+
+.topbar{position:sticky; top:0; z-index:60; display:flex; align-items:center; gap:12px;
+  padding:9px 20px; background:rgba(255,255,255,.9); backdrop-filter:blur(10px); border-bottom:1px solid var(--line)}
+.brand{display:flex; align-items:center; gap:10px; font-weight:750; white-space:nowrap; color:var(--tx)}
+.brand .logo{width:28px; height:28px; border-radius:8px; display:grid; place-items:center; font-size:12px;
+  background:linear-gradient(140deg,var(--cy),var(--gr)); color:#fff; font-weight:900}
+.brand small{display:block; font-weight:500; font-size:11px; color:var(--tx3)}
+.topbar .ver{font-family:var(--mono); font-size:11px; color:var(--tx2); border:1px solid var(--line);
+  border-radius:999px; padding:2px 9px; background:var(--tint)}
+.topbar .grow{flex:1}
+.search{position:relative; min-width:180px}
+.search input{width:100%; padding:7px 32px 7px 11px; border-radius:999px; font-family:var(--sans); font-size:12.5px;
+  color:var(--tx); background:var(--tint); border:1px solid var(--line); outline:none}
+.search input:focus{border-color:var(--cy); box-shadow:0 0 0 3px var(--cy2); background:#fff}
+.search .hint{position:absolute; right:9px; top:50%; transform:translateY(-50%); font-family:var(--mono);
+  font-size:10px; color:var(--tx3)}
+.btn{cursor:pointer; border:1px solid var(--line); background:#fff; color:var(--tx2); border-radius:999px;
+  padding:6px 13px; font-size:12px; font-family:var(--sans); transition:.14s; white-space:nowrap}
+.btn:hover{color:var(--tx); border-color:var(--line2); background:var(--tint)}
+.btn.pri{background:linear-gradient(120deg,var(--cy2),var(--gr2)); border-color:var(--line2); color:#0b3b52; font-weight:650}
+.progress{position:fixed; top:0; left:0; height:3px; width:0; z-index:70;
+  background:linear-gradient(90deg,var(--cy),var(--gr),var(--am))}
+
+.layout{display:grid; grid-template-columns:224px minmax(0,1fr); gap:26px;
+  max-width:1440px; margin:0 auto; padding:0 22px 70px}
+.sidebar{position:sticky; top:58px; align-self:start; max-height:calc(100vh - 76px); overflow-y:auto;
+  padding:16px 4px 24px 0; font-size:12.5px}
+.sidebar::-webkit-scrollbar{width:6px}
+.sidebar::-webkit-scrollbar-thumb{background:var(--line2); border-radius:6px}
+.sidebar h4{margin:13px 0 5px; font-size:10.5px; letter-spacing:1.2px; color:var(--tx3); text-transform:uppercase}
+.sidebar h4:first-child{margin-top:0}
+.sidebar a{display:flex; gap:7px; padding:3.5px 8px; border-radius:7px; color:var(--tx2);
+  border-left:2px solid transparent}
+.sidebar a:hover{background:var(--tint); color:var(--tx); text-decoration:none}
+.sidebar a.active{color:var(--tx); background:var(--cy2); border-left-color:var(--cy); font-weight:600}
+.sidebar a .id{font-family:var(--mono); font-size:10px; color:var(--tx3); min-width:38px}
+.sidebar a.active .id{color:var(--cy)}
+main{min-width:0; padding-top:6px}
+
+.hero{padding:32px 0 20px; border-bottom:1px solid var(--line); margin-bottom:10px}
+.hero .kicker{display:inline-flex; align-items:center; gap:8px; font-family:var(--mono); font-size:11.5px;
+  color:var(--gr); border:1px solid var(--line2); background:var(--gr2); padding:4px 12px; border-radius:999px}
+.hero h1{margin:13px 0 9px; font-size:clamp(24px,3.2vw,36px); line-height:1.2; letter-spacing:-.4px; font-weight:800}
+.hero h1 .g{background:linear-gradient(96deg,var(--cy),var(--gr) 55%,var(--am));
+  -webkit-background-clip:text; background-clip:text; color:transparent}
+.hero .lead{font-size:15px; color:var(--tx2); max-width:900px; margin:0 0 16px}
+.hero .actions{display:flex; gap:9px; flex-wrap:wrap; margin-bottom:18px}
+.stats{display:grid; grid-template-columns:repeat(auto-fit,minmax(132px,1fr)); gap:10px}
+.stat{background:var(--card); border:1px solid var(--line); border-radius:var(--r); padding:11px 13px; box-shadow:var(--sh)}
+.stat b{display:block; font-family:var(--mono); font-size:20px; color:var(--cy); line-height:1.2}
+.stat span{display:block; font-size:11.5px; color:var(--tx3); margin-top:2px}
+
+section.sec{margin:24px 0 8px; scroll-margin-top:68px}
+.sec-head{display:flex; align-items:center; gap:11px; padding-bottom:9px; border-bottom:2px solid var(--line); margin-bottom:14px}
+.sec-head .no{font-family:var(--mono); font-size:11px; font-weight:700; color:#fff; border-radius:7px;
+  padding:4px 8px; background:linear-gradient(140deg,var(--cy),var(--gr))}
+.sec-head h2{margin:0; font-size:clamp(18px,2vw,23px); font-weight:750; letter-spacing:-.2px}
+.sec-head .sub{color:var(--tx3); font-size:12px; margin-left:auto; text-align:right}
+
+.block{background:var(--card); border:1px solid var(--line); border-radius:var(--r); padding:14px 16px;
+  margin:11px 0; scroll-margin-top:68px; box-shadow:var(--sh)}
+.block.hidden,.sec.hidden{display:none}
+.block-head{display:flex; align-items:center; gap:9px; flex-wrap:wrap; margin-bottom:8px}
+.block-head h3{margin:0; font-size:15.5px; font-weight:720}
+.block-head .tagline{font-size:11.5px; color:var(--tx3)}
+.guid{font-family:var(--mono); font-size:11px; font-weight:700; letter-spacing:.4px; cursor:pointer;
+  color:#fff; background:linear-gradient(140deg,var(--cy),var(--gr)); border:0; border-radius:6px;
+  padding:2px 7px; transition:.14s; user-select:none}
+.guid:hover{filter:brightness(1.1); box-shadow:0 2px 8px rgba(14,127,168,.3)}
+.guid.copied{background:linear-gradient(140deg,var(--am),#e0a52a)}
+h3.mini{margin:12px 0 6px; font-size:13.5px; color:#1d2b47}
+p{margin:6px 0}
+ul,ol{margin:6px 0; padding-left:20px}
+li{margin:2.5px 0}
+li::marker{color:var(--cy)}
+.muted{color:var(--tx3)}
+.small{font-size:12.3px}
+.center{text-align:center}
+
+.tw{overflow-x:auto; margin:8px 0; border:1px solid var(--line); border-radius:var(--r2)}
+table{width:100%; border-collapse:collapse; font-size:12.6px; min-width:420px}
+thead th{background:var(--tint2); text-align:left; padding:7px 10px; font-weight:700; color:#25344f;
+  border-bottom:1px solid var(--line2); white-space:nowrap; font-size:12px}
+tbody td{padding:6px 10px; border-bottom:1px solid var(--line); vertical-align:top}
+tbody tr:nth-child(even){background:var(--tint)}
+tbody tr:last-child td{border-bottom:0}
+td.mono,th.mono,.mono{font-family:var(--mono); font-size:11.8px}
+td.gid,.gid{font-family:var(--mono); font-size:11.4px; color:var(--cy); font-weight:700; white-space:nowrap}
+td.src,.src{font-family:var(--mono); font-size:11px; color:var(--tx3)}
+.num{text-align:right; font-family:var(--mono)}
+
+.grid{display:grid; gap:9px; margin:8px 0}
+.g2{grid-template-columns:repeat(auto-fit,minmax(250px,1fr))}
+.g3{grid-template-columns:repeat(auto-fit,minmax(190px,1fr))}
+.g4{grid-template-columns:repeat(auto-fit,minmax(146px,1fr))}
+.tile{background:var(--tint); border:1px solid var(--line); border-radius:var(--r2); padding:10px 11px}
+.tile h5{margin:0 0 4px; font-size:13px; display:flex; align-items:center; gap:6px; flex-wrap:wrap; color:#1d2b47}
+.tile p{margin:2px 0; font-size:12.4px; color:var(--tx2)}
+.tile .big{font-family:var(--mono); font-size:17px; color:var(--cy); display:block}
+
+.callout{border-radius:var(--r2); padding:9px 12px; margin:9px 0; font-size:12.7px;
+  border:1px solid var(--line); background:var(--tint); border-left:3px solid var(--cy); color:var(--tx2)}
+.callout.warn{border-left-color:var(--am); background:var(--am2)}
+.callout.ok{border-left-color:var(--gr); background:var(--gr2)}
+.callout.bad{border-left-color:var(--rd); background:var(--rd2)}
+.callout b{color:var(--tx)}
+.callout .t{display:block; font-weight:700; margin-bottom:2px; color:var(--tx)}
+
+.pills{display:flex; flex-wrap:wrap; gap:6px; margin:8px 0}
+.pill{font-size:11.5px; padding:3px 10px; border-radius:999px; border:1px solid var(--line);
+  background:var(--tint); color:var(--tx2); font-family:var(--mono)}
+.pill.cy{color:#0a5871; border-color:#bfe3f0; background:var(--cy2)}
+.pill.gr{color:#0a6247; border-color:#c2e9d8; background:var(--gr2)}
+.pill.am{color:#7d5606; border-color:#f0dcb0; background:var(--am2)}
+.pill.vi{color:#4a30a8; border-color:#d6cbf7; background:var(--vi2)}
+.pill.rd{color:#96243c; border-color:#f4cbd6; background:var(--rd2)}
+
+.kv{display:grid; grid-template-columns:minmax(110px,180px) 1fr; border:1px solid var(--line);
+  border-radius:var(--r2); overflow:hidden; margin:8px 0; font-size:12.6px}
+.kv>dt{margin:0; padding:6px 11px; background:var(--tint2); font-weight:650; color:#25344f;
+  border-bottom:1px solid var(--line)}
+.kv>dd{margin:0; padding:6px 12px; border-bottom:1px solid var(--line); color:var(--tx2)}
+
+.timeline{position:relative; margin:9px 0 4px; padding-left:22px}
+.timeline::before{content:""; position:absolute; left:6px; top:5px; bottom:5px; width:2px; background:var(--line2)}
+.tl{position:relative; margin:0 0 9px}
+.tl::before{content:""; position:absolute; left:-20px; top:5px; width:10px; height:10px; border-radius:50%;
+  background:#fff; border:2px solid var(--cy)}
+.tl h5{margin:0 0 2px; font-size:13px; display:flex; gap:7px; align-items:center; flex-wrap:wrap}
+.tl p{margin:0; font-size:12.5px; color:var(--tx2)}
+
+figure{margin:9px 0; border:1px solid var(--line); border-radius:var(--r2); padding:11px 11px 5px; background:var(--tint)}
+figure svg{width:100%; height:auto; display:block}
+figcaption{margin-top:5px; font-size:11.5px; color:var(--tx3); text-align:center}
+
+/* 交互地图 */
+.mapgrid{display:grid; grid-template-columns:minmax(0,1fr) 246px; gap:14px; margin:12px 0}
+@media (max-width:960px){.mapgrid{grid-template-columns:1fr}}
+#mapsvg{width:100%; height:auto; display:block; background:#fff; border:1px solid var(--line); border-radius:var(--r2)}
+.ctrl{background:var(--tint); border:1px solid var(--line); border-radius:var(--r2); padding:11px 12px; font-size:12.5px}
+.ctrl h5{margin:0 0 7px; font-size:12.5px; color:#1d2b47}
+.ctrl .row{display:flex; align-items:center; gap:7px; margin:7px 0; flex-wrap:wrap}
+.ctrl select{flex:1; background:#fff; color:var(--tx); border:1px solid var(--line); border-radius:8px;
+  padding:5px 7px; font-family:var(--mono); font-size:12px}
+.ctrl label{display:flex; gap:7px; align-items:flex-start; margin:5px 0; cursor:pointer; color:var(--tx2)}
+.ctrl label input{margin-top:4px}
+.ctrl .hint{font-size:11px; color:var(--tx3); line-height:1.55}
+.legend{display:flex; gap:12px; flex-wrap:wrap; font-size:11.5px; color:var(--tx2); margin-top:8px}
+.legend span{display:inline-flex; align-items:center; gap:5px}
+.legend i{display:inline-block; width:10px; height:10px; border-radius:3px}
+.readout{font-family:var(--mono); font-size:11.5px; color:var(--cy); margin-top:5px; display:block}
+#log{font-family:var(--mono); font-size:11.2px; max-height:150px; overflow:auto; margin-top:9px;
+  background:#fff; border:1px solid var(--line); border-radius:8px; padding:7px 9px; line-height:1.6}
+#log div{color:var(--tx3)}
+#log div.hi{color:#0a5871}
+#log div.ok{color:#0a6247}
+#log div.warn{color:#7d5606}
+
+.steps{counter-reset:s; margin:8px 0; padding:0; list-style:none; font-size:12.8px}
+.steps li{counter-increment:s; position:relative; padding:5px 0 5px 32px; border-bottom:1px dashed var(--line)}
+.steps li:last-child{border-bottom:0}
+.steps li::before{content:counter(s,decimal-leading-zero); position:absolute; left:0; top:5px; width:22px; height:22px;
+  border-radius:6px; display:grid; place-items:center; font-family:var(--mono); font-size:10.5px; font-weight:700;
+  color:var(--cy); background:var(--cy2); border:1px solid #bfe3f0}
+.steps b{color:var(--tx)}
+
+.toast{position:fixed; left:50%; bottom:26px; transform:translate(-50%,14px); z-index:90; background:#101a2e;
+  color:#fff; padding:9px 18px; border-radius:999px; font-size:13px; opacity:0; pointer-events:none; transition:.22s}
+.toast.on{opacity:1; transform:translate(-50%,0)}
+#nores{display:none; padding:22px; text-align:center; color:var(--tx3); border:1px dashed var(--line2);
+  border-radius:var(--r); margin:14px 0; background:#fff}
+.totop{position:fixed; right:20px; bottom:20px; z-index:80; width:38px; height:38px; border-radius:50%;
+  display:grid; place-items:center; cursor:pointer; opacity:0; pointer-events:none; transition:.2s;
+  background:#fff; border:1px solid var(--line2); color:var(--cy); font-size:16px; box-shadow:var(--sh)}
+.totop.on{opacity:1; pointer-events:auto}
+footer{margin-top:26px; padding:16px 0 6px; border-top:1px solid var(--line); font-size:12px; color:var(--tx3)}
+footer .row{display:flex; gap:14px; flex-wrap:wrap; justify-content:space-between}
+
+.dgb{fill:#fff; stroke:#c3d1e6}
+.dgb.host{fill:#e4f5fc; stroke:#2b9fc4}
+.dgb.cli{fill:#efeafe; stroke:#7c5cf0}
+.dgb.srv{fill:#e5f8f0; stroke:#17a273}
+.dgb.warn{fill:#fff4df; stroke:#d99b12}
+.dgb.rd{fill:#fdecf0; stroke:#d1495f}
+.dgt{fill:#26314a; font-family:var(--mono); font-size:11.5px}
+.dgt.sm{font-size:10.2px; fill:#5a6a86}
+.dgl{stroke:#93a6c4; stroke-width:1.4; fill:none}
+.dgl.cy{stroke:#2b9fc4} .dgl.vi{stroke:#7c5cf0} .dgl.am{stroke:#d99b12}
+.dgl.gr{stroke:#17a273} .dgl.rd{stroke:#d1495f}
+.dgl.dash{stroke-dasharray:5 4}
+.dghead{fill:#101a2e; font-size:12.5px; font-weight:700; font-family:var(--sans)}
+
+/* 可播放图解 */
+.anim{margin:9px 0; border:1px solid var(--line); border-radius:var(--r2); padding:10px 11px 6px; background:var(--tint)}
+.anim .figsvg{background:#fff; border:1px solid var(--line); border-radius:8px; padding:6px}
+.anim svg{width:100%; height:auto; display:block}
+.playbar{display:flex; align-items:center; gap:8px; margin-top:8px; flex-wrap:wrap}
+.playbar input[type=range]{flex:1; min-width:110px; accent-color:#0e7fa8; height:4px}
+.phase{font-family:var(--mono); font-size:11.5px; color:var(--cy); min-width:250px}
+.xtra{display:inline-flex; align-items:center; gap:5px; font-size:11.5px; color:var(--tx2); cursor:pointer}
+.xtra select{background:#fff; border:1px solid var(--line); border-radius:6px; padding:3px 6px;
+  font-family:var(--mono); font-size:11.5px; color:var(--tx)}
+.anim figcaption{margin-top:6px; font-size:11.5px; color:var(--tx3); text-align:center}
+
+@media (max-width:1040px){
+  .layout{grid-template-columns:1fr; gap:8px; padding:0 14px 60px}
+  .sidebar{position:static; max-height:none; border-bottom:1px solid var(--line); padding-bottom:10px;
+    display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:1px}
+  .sidebar h4{grid-column:1/-1}
+  .sec-head .sub{display:none}
+}
+@media print{
+  body{background:#fff}
+  .topbar,.sidebar,.totop,.progress,.toast,.ctrl{display:none!important}
+  .layout{display:block; max-width:none; padding:0}
+  .mapgrid{grid-template-columns:1fr}
+  .block,figure,.tile,.callout{break-inside:avoid; box-shadow:none}
+  .sec{break-before:page}
+  #mapsvg{background:#fff}
+}
+</style>
+</head>
+<body>
+<div class="progress" id="prog"></div>
+
+<header class="topbar">
+  <div class="brand">
+    <div class="logo">2D</div>
+    <div>Chunk / Region 同步图解<small>谁在什么时候拿到哪一块地图</small></div>
+  </div>
+  <span class="ver">ScMultiplayer v2.2.9</span>
+  <div class="grow"></div>
+  <div class="search">
+    <input id="q" type="search" placeholder="搜索内容或 GUID（例：MOV01）" autocomplete="off" spellcheck="false">
+    <span class="hint">/</span>
+  </div>
+  <button class="btn" onclick="window.print()">打印 / 存 PDF</button>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="toc">
+    <h4>基础尺度</h4>
+    <a href="#BAS01"><span class="id">BAS01</span>格 / 区块 / 区域文件</a>
+    <a href="#BAS02"><span class="id">BAS02</span>一次改动的传播路径</a>
+    <h4>兴趣窗口</h4>
+    <a href="#INT01"><span class="id">INT01</span>主机发给谁</a>
+    <a href="#INT02"><span class="id">INT02</span>可视距离→半径换算</a>
+    <h4>移动与新区块</h4>
+    <a href="#MOV01"><span class="id">MOV01</span>俯视图：走进新区块</a>
+    <a href="#MOV02"><span class="id">MOV02</span>新进入意味着什么</a>
+    <h4>区块检查点</h4>
+    <a href="#CPS01"><span class="id">CPS01</span>三阶段协议</a>
+    <a href="#CPS02"><span class="id">CPS02</span>节流与高水位</a>
+    <a href="#CPS03"><span class="id">CPS03</span>主机发什么</a>
+    <h4>自愈与恢复</h4>
+    <a href="#RCV01"><span class="id">RCV01</span>±2 区块校验环</a>
+    <a href="#RCV02"><span class="id">RCV02</span>漏格补救</a>
+    <a href="#RCV03"><span class="id">RCV03</span>历史恢复窗口</a>
+    <h4>各类最大范围</h4>
+    <a href="#WTH01"><span class="id">WTH01</span>天气</a>
+    <a href="#ANM01"><span class="id">ANM01</span>动物</a>
+    <a href="#TER01"><span class="id">TER01</span>地形变化</a>
+    <a href="#ENT01"><span class="id">ENT01</span>掉落物/投射物/交互</a>
+    <a href="#RGN01"><span class="id">RGN01</span>领地 region</a>
+    <a href="#SUM01"><span class="id">SUM01</span>范围汇总表</a>
+    <h4>附录</h4>
+    <a href="#OBS01"><span class="id">OBS01</span>怎么观察</a>
+    <a href="#SRC01"><span class="id">SRC01</span>数据来源</a>
+    <a href="#IDX01"><span class="id">IDX01</span>GUID 索引</a>
+  </aside>
+
+  <main id="top">
+    <section class="hero">
+      <div class="kicker">● 俯视图解说 · 区块与区域同步</div>
+      <h1>地图不是整张发过去的：<br><span class="g">区块、区域与「你走到哪就同步到哪」</span></h1>
+      <p class="lead">
+        地图被切成 <b>16×16 方块的区块</b>，只对玩家周围那一圈做同步；一走动，新进入的区块就要补一次检查点。
+        下面用俯视图画出这个过程，并标出天气 / 动物 / 地形变化的最大范围。
+      </p>
+      <div class="actions">
+        <a class="btn pri" href="#MOV01">直接看交互俯视图</a>
+        <a class="btn" href="#SUM01">跳到范围汇总表</a>
+        <a class="btn" href="#BAS01">从尺度讲起</a>
+      </div>
+      <div class="stats">
+        <div class="stat"><b>16×16</b><span>一个区块的水平尺寸（方块）</span></div>
+        <div class="stat"><b>256×256</b><span>一个区域文件（Region X,Y.dat）</span></div>
+        <div class="stat"><b>8 区块</b><span>默认可视距离 128 → 兴趣半径</span></div>
+        <div class="stat"><b>±2 区块</b><span>客户端自愈校验环</span></div>
+        <div class="stat"><b>32 区块</b><span>兴趣半径硬上限（=512 方块）</span></div>
+        <div class="stat"><b>96 格/批</b><span>地形改动广播的批大小</span></div>
+      </div>
+    </section>
+    <div id="nores">没有匹配的条目 —— 换个 GUID 或关键词试试</div>
+
+    <!-- ============ 基础尺度 ============ -->
+    <section class="sec" id="grp-bas">
+      <div class="sec-head">
+        <span class="no">基础</span>
+        <div>
+          <h2>先把三个尺度说清楚</h2>
+          <div class="sub">格 → 区块 → 区域文件：同一个地图的三级包装，联机与存档分别用不同的那一级</div>
+        </div>
+      </div>
+
+      <div class="block" id="BAS01">
+        <div class="block-head"><button class="guid" data-guid="BAS01">BAS01</button><h3>格 / 区块 / 区域文件</h3>
+          <span class="tagline">俯视图：从一格方块放大到一个存档区域</span></div>
+        <figure>
+          <svg viewBox="0 0 900 430" role="img" aria-label="格、区块、区域文件的尺度关系">
+            <text class="dghead" x="16" y="24">① 格（cell / 方块）</text>
+            <text class="dgt sm" x="16" y="44">1×1 方块，全高 256 格；地形改动的最小单位</text>
+            <g>
+              <rect class="dgb cli" x="16" y="56" width="26" height="26"/>
+              <text class="dgt sm" x="52" y="74">= 1 格</text>
+            </g>
+
+            <text class="dghead" x="16" y="116">② 区块（chunk）</text>
+            <text class="dgt sm" x="16" y="136">16×16 方块 × 全高 256 ⇒ 65,536 格；联机同步与检查点的单位</text>
+            <g>
+              <rect class="dgb srv" x="16" y="148" width="208" height="208" rx="3"/>
+              <g stroke="rgba(60,90,140,.30)" stroke-width=".8">
+                <path d="M29 148V356M42 148V356M55 148V356M68 148V356M81 148V356M94 148V356M107 148V356M120 148V356M133 148V356M146 148V356M159 148V356M172 148V356M185 148V356M198 148V356M211 148V356"/>
+                <path d="M16 161H224M16 174H224M16 187H224M16 200H224M16 213H224M16 226H224M16 239H224M16 252H224M16 265H224M16 278H224M16 291H224M16 304H224M16 317H224M16 330H224M16 343H224"/>
+              </g>
+              <rect fill="none" stroke="rgba(13,138,99,.85)" stroke-width="2" x="16" y="148" width="208" height="208"/>
+              <text class="dgt" x="120" y="258" text-anchor="middle">1 区块 = 16×16</text>
+              <text class="dgt sm" x="120" y="278" text-anchor="middle">（每小格 = 1 方块）</text>
+            </g>
+            <text class="dgt sm" x="16" y="380">代码：TerrainSerializer23.cs:672-676</text>
+            <text class="dgt sm" x="16" y="400">ChunkSizeX=16 / ChunkSizeY=256 / ChunkSizeZ=16</text>
+
+            <text class="dghead" x="300" y="24">③ 区域文件（region）</text>
+            <text class="dgt sm" x="300" y="44">16×16 个区块 = 256×256 方块；存档落盘单位，文件名 Region X,Y.dat</text>
+            <g>
+              <rect class="dgb warn" x="300" y="60" width="416" height="416" rx="4"/>
+              <g stroke="rgba(169,116,10,.35)" stroke-width=".9">
+                <path d="M326 60V476M352 60V476M378 60V476M404 60V476M430 60V476M456 60V476M482 60V476M508 60V476M534 60V476M560 60V476M586 60V476M612 60V476M638 60V476M664 60V476M690 60V476"/>
+                <path d="M300 86H716M300 112H716M300 138H716M300 164H716M300 190H716M300 216H716M300 242H716M300 268H716M300 294H716M300 320H716M300 346H716M300 372H716M300 398H716M300 424H716M300 450H716"/>
+              </g>
+              <rect fill="rgba(13,138,99,.16)" stroke="rgba(13,138,99,.9)" stroke-width="1.6" x="300" y="60" width="26" height="26"/>
+              <text class="dgt sm" x="332" y="80">其中一个小格 = 1 个区块</text>
+              <text class="dgt" x="508" y="286" text-anchor="middle">1 区域 = 16×16 区块 = 256×256 方块</text>
+              <text class="dgt sm" x="508" y="308" text-anchor="middle">（每小格 = 一个区块）</text>
+            </g>
+            <text class="dgt sm" x="300" y="398" text-anchor="middle">代码：TerrainSerializer23.cs:340-342, 521-523</text>
+            <text class="dgt sm" x="300" y="416" text-anchor="middle">RegionChunksBits=4 ⇒ 区块坐标 &gt;&gt; 4 = 区域坐标</text>
+
+            <rect class="dgb" x="740" y="60" width="146" height="416" rx="10"/>
+            <text class="dghead" x="756" y="84">谁用哪一级</text>
+            <text class="dgt sm" x="756" y="110">存档 → 区域文件</text>
+            <text class="dgt sm" x="756" y="130">（一整块 256×256</text>
+            <text class="dgt sm" x="756" y="148">写进一个 .dat）</text>
+            <text class="dgt sm" x="756" y="180">联机同步 → 区块</text>
+            <text class="dgt sm" x="756" y="198">（订阅、检查点、</text>
+            <text class="dgt sm" x="756" y="216">revision 都按区块）</text>
+            <text class="dgt sm" x="756" y="248">世界传输 → 整包</text>
+            <text class="dgt sm" x="756" y="266">（加入时一次性</text>
+            <text class="dgt sm" x="756" y="284">下载整个存档）</text>
+            <text class="dgt sm" x="756" y="316">改动广播 → 格</text>
+            <text class="dgt sm" x="756" y="334">（只发改过的格子，</text>
+            <text class="dgt sm" x="756" y="352">再按订阅区块过滤）</text>
+          </svg>
+          <figcaption>图 1 · 三个尺度：格是改动单位，区块是同步单位，区域文件是存档单位</figcaption>
+        </figure>
+        <div class="grid g3">
+          <div class="tile"><h5>为什么同步用区块而不是格</h5>
+            <p>逐格索要太啰嗦：一个区块改动通常只有十几到几十格。按区块问一次「你现在是什么版本」，主机一次性把该区块的记录发回来即可。</p></div>
+          <div class="tile"><h5>为什么不用区域文件同步</h5>
+            <p>一个区域文件覆盖 256×256 方块，远大于玩家的可视范围；按区域同步会传一大堆玩家根本看不到的地形。</p></div>
+          <div class="tile"><h5>区块是「整列」的</h5>
+            <p>区块在垂直方向是<b>全高</b>的（Y=0..255），所以俯视图上一个小方格 = 一整个垂直柱子。</p></div>
+        </div>
+      </div>
+
+      <div class="block" id="BAS02">
+        <div class="block-head"><button class="guid" data-guid="BAS02">BAS02</button><h3>一次改动从发生到看见</h3>
+          <span class="tagline">主机侧：合并 → 排序 → 按订阅投影 → 分批下发</span></div>
+        <figure>
+          <svg viewBox="0 0 900 300" role="img" aria-label="一次地形改动的传播路径">
+            <rect class="dgb host" x="16" y="30" width="190" height="92" rx="10"/>
+            <text class="dghead" x="111" y="54" text-anchor="middle">① 主机改了一格</text>
+            <text class="dgt sm" x="111" y="76" text-anchor="middle">挖掉 / 放置 / 烧毁 / 流体</text>
+            <text class="dgt sm" x="111" y="96" text-anchor="middle">进入待广播表（同格覆盖）</text>
+            <text class="dgt sm" x="111" y="112" text-anchor="middle">玩家操作立即刷；环境改动攒到网络 tick</text>
+
+            <rect class="dgb" x="234" y="30" width="180" height="92" rx="10"/>
+            <text class="dghead" x="324" y="54" text-anchor="middle">② 编号与记录</text>
+            <text class="dgt sm" x="324" y="76" text-anchor="middle">每批拿到单调序列号</text>
+            <text class="dgt sm" x="324" y="96" text-anchor="middle">写入主机 journal（回放用）</text>
+            <text class="dgt sm" x="324" y="112" text-anchor="middle">批大小 96 格</text>
+
+            <rect class="dgb srv" x="442" y="30" width="200" height="92" rx="10"/>
+            <text class="dghead" x="542" y="54" text-anchor="middle">③ 按客户端投影</text>
+            <text class="dgt sm" x="542" y="76" text-anchor="middle">查「这块地在谁的订阅里」</text>
+            <text class="dgt sm" x="542" y="96" text-anchor="middle">不在订阅里 → 不发给它</text>
+            <text class="dgt sm" x="542" y="112" text-anchor="middle">（但空包也推进它的序列屏障）</text>
+
+            <rect class="dgb cli" x="670" y="30" width="214" height="92" rx="10"/>
+            <text class="dghead" x="777" y="54" text-anchor="middle">④ 客户端应用</text>
+            <text class="dgt sm" x="777" y="76" text-anchor="middle">按序写入本地地形</text>
+            <text class="dgt sm" x="777" y="96" text-anchor="middle">记录已应用的序列 / 区块版本</text>
+            <text class="dgt sm" x="777" y="112" text-anchor="middle">不一致 → 走检查点或恢复</text>
+
+            <path class="dgl cy" d="M208 76H232"/><path class="dgl cy" d="M224 71L232 76L224 81"/>
+            <path class="dgl cy" d="M416 76H440"/><path class="dgl cy" d="M432 71L440 76L432 81"/>
+            <path class="dgl cy" d="M644 76H668"/><path class="dgl cy" d="M660 71L668 76L660 81"/>
+
+            <rect class="dgb" x="16" y="150" width="868" height="130" rx="10"/>
+            <text class="dghead" x="34" y="174">为什么要「按订阅投影」而不是广播给所有人</text>
+            <text class="dgt sm" x="34" y="198">· 一个房间里有 N 个玩家，每人只关心自己周围那一圈；广播会让所有人的上行/下行都按最远的那个人算。</text>
+            <text class="dgt sm" x="34" y="218">· 投影之后，客户端收到的每一格都在自己的兴趣窗口内；离开窗口的区域不再产生流量。</text>
+            <text class="dgt sm" x="34" y="238">· 序列号仍然全局单调：即使某次投影为空，也要推进该客户端的屏障，否则它以后会以为「中间漏了一段」而误触发恢复。</text>
+            <text class="dgt sm" x="34" y="262">代码：ScMultiplayerTerrainHandlers.cs:65-143（订阅表）、149-230（分批与投影）</text>
+          </svg>
+          <figcaption>图 2 · 改动传播：主机合批编号 → 按客户端订阅投影 → 客户端按序应用</figcaption>
+        </figure>
+      </div>
+    </section>
+    <!-- ============ 兴趣窗口 ============ -->
+    <section class="sec" id="grp-int">
+      <div class="sec-head">
+        <span class="no">兴趣窗口</span>
+        <div>
+          <h2>主机凭什么决定「这块改动发给谁」</h2>
+          <div class="sub">每个客户端在主机侧有一张订阅表：中心 + 半径 → 一组区块</div>
+        </div>
+      </div>
+
+      <div class="block" id="INT01">
+        <div class="block-head"><button class="guid" data-guid="INT01">INT01</button><h3>订阅表：中心 + 半径</h3>
+          <span class="tagline">中心由主机定，半径由客户端报</span></div>
+        <h3 class="mini">可播放：两个窗口移动时，一次改动发给谁</h3>
+        <div class="anim" data-anim="overlap"></div>
+        <figure>
+          <svg viewBox="0 0 900 400" role="img" aria-label="两个客户端的兴趣窗口与订阅">
+            <text class="dghead" x="16" y="24">主机内存里的订阅表（俯视）</text>
+
+            <g>
+              <rect class="dgb" x="16" y="40" width="640" height="320" rx="8"/>
+              <g stroke="rgba(60,90,140,.16)" stroke-width=".8">
+                <path d="M56 40V360M96 40V360M136 40V360M176 40V360M216 40V360M256 40V360M296 40V360M336 40V360M376 40V360M416 40V360M456 40V360M496 40V360M536 40V360M576 40V360M616 40V360"/>
+                <path d="M16 80H656M16 120H656M16 160H656M16 200H656M16 240H656M16 280H656M16 320H656"/>
+              </g>
+              <text class="dgt sm" x="26" y="56">每个小格 = 1 个区块（16×16 方块）</text>
+
+              <rect fill="rgba(106,75,216,.13)" stroke="rgba(106,75,216,.85)" stroke-width="1.6" x="136" y="120" width="200" height="200"/>
+              <circle cx="236" cy="220" r="7" fill="#6a4bd8"/>
+              <text class="dgt" x="236" y="112" text-anchor="middle">客户端 A（半径 5 区块）</text>
+              <text class="dgt sm" x="236" y="248" text-anchor="middle">中心 = A 的角色所在区块</text>
+
+              <rect fill="rgba(13,138,99,.13)" stroke="rgba(13,138,99,.85)" stroke-width="1.6" x="296" y="160" width="200" height="200"/>
+              <circle cx="396" cy="260" r="7" fill="#0d8a63"/>
+              <text class="dgt" x="452" y="152" text-anchor="middle">客户端 B（半径 5 区块）</text>
+              <text class="dgt sm" x="396" y="288" text-anchor="middle">中心 = B 的角色所在区块</text>
+
+              <rect x="296" y="200" width="40" height="120" fill="rgba(169,116,10,.22)" stroke="rgba(169,116,10,.7)" stroke-width="1"/>
+              <text class="dgt sm" x="316" y="196" text-anchor="middle">重叠</text>
+
+              <circle cx="360" cy="220" r="5" fill="#c2570a"/>
+              <text class="dgt sm" x="366" y="216">改动 X：在 A、B 都在的区块 → 两个人都收</text>
+              <circle cx="180" cy="300" r="5" fill="#c2570a"/>
+              <text class="dgt sm" x="186" y="296">改动 Y：只在 A 的窗口内 → 只发给 A</text>
+            </g>
+
+            <rect class="dgb host" x="676" y="40" width="208" height="320" rx="10"/>
+            <text class="dghead" x="692" y="64">两条数据结构</text>
+            <text class="dgt sm" x="692" y="90">① 正向：客户端 → 区块集合</text>
+            <text class="dgt sm" x="692" y="110">记录中心与半径，</text>
+            <text class="dgt sm" x="692" y="128">只有中心/半径变了才重算</text>
+            <text class="dgt sm" x="692" y="156">② 反向：区块 → 订阅者集合</text>
+            <text class="dgt sm" x="692" y="176">让「一格改动该发给谁」</text>
+            <text class="dgt sm" x="692" y="194">一次查表得出，不必遍历玩家</text>
+            <text class="dgt sm" x="692" y="226">客户端离线 → 从两张表移除</text>
+            <text class="dgt sm" x="692" y="254">客户端只被允许上报「半径」；</text>
+            <text class="dgt sm" x="692" y="272">窗口中心永远取主机的权威位置</text>
+            <text class="dgt sm" x="692" y="290">（否则可以伪造成「我在你旁边」）</text>
+            <text class="dgt sm" x="692" y="324">代码：ScMultiplayerTerrainHandlers.cs:</text>
+            <text class="dgt sm" x="692" y="342">65-143（建表）、431-449（收半径）</text>
+          </svg>
+          <figcaption>图 3 · 兴趣窗口与订阅反查表：重叠区域两人都收，独占区域只发给窗口内的人</figcaption>
+        </figure>
+        <div class="grid g2">
+          <div class="tile"><h5>半径从哪来</h5>
+            <p>客户端按自己的可视距离算出半径，用一条 <code>Interest</code> 阶段的消息上报；主机把它限制在 <b>1..32 区块</b>，记进订阅表。</p></div>
+          <div class="tile"><h5>窗口中心从哪来</h5>
+            <p>主机用自己这边那个<b>远端化身的权威坐标</b>算中心。客户端无法把中心挪到别处，所以「开一个大窗口去看远处」这条路走不通。</p></div>
+        </div>
+      </div>
+
+      <div class="block" id="INT02">
+        <div class="block-head"><button class="guid" data-guid="INT02">INT02</button><h3>可视距离 → 区块半径换算</h3>
+          <span class="tagline">半径 = ⌈可视距离 ÷ 16⌉，硬上限 32 区块</span></div>
+        <div class="pills">
+          <span class="pill cy">radius = ceil(max(visibility, 16) / 16)</span>
+          <span class="pill gr">再夹到 1 .. 32</span>
+          <span class="pill am">窗口边长 = (2×radius+1)×16 方块</span>
+        </div>
+        <div class="tw">
+          <table>
+            <thead><tr><th class="mono">可视距离</th><th class="mono">半径（区块）</th><th class="mono">窗口（区块）</th><th class="mono">窗口（方块）</th><th>说明</th></tr></thead>
+            <tbody>
+              <tr><td class="mono">32</td><td class="num">2</td><td class="num">5 × 5</td><td class="num">80 × 80</td><td>最低档</td></tr>
+              <tr><td class="mono">48</td><td class="num">3</td><td class="num">7 × 7</td><td class="num">112 × 112</td><td></td></tr>
+              <tr><td class="mono">64</td><td class="num">4</td><td class="num">9 × 9</td><td class="num">144 × 144</td><td>低内存设备的回退值</td></tr>
+              <tr><td class="mono">80</td><td class="num">5</td><td class="num">11 × 11</td><td class="num">176 × 176</td><td></td></tr>
+              <tr><td class="mono">96</td><td class="num">6</td><td class="num">13 × 13</td><td class="num">208 × 208</td><td></td></tr>
+              <tr><td class="mono">112</td><td class="num">7</td><td class="num">15 × 15</td><td class="num">240 × 240</td><td>内存 &lt;1 GiB 时的回退值</td></tr>
+              <tr><td class="mono">128</td><td class="num">8</td><td class="num">17 × 17</td><td class="num">272 × 272</td><td><b>默认值</b>（本文档俯视图用的就是这一档）</td></tr>
+              <tr><td class="mono">160</td><td class="num">10</td><td class="num">21 × 21</td><td class="num">336 × 336</td><td></td></tr>
+              <tr><td class="mono">192</td><td class="num">12</td><td class="num">25 × 25</td><td class="num">400 × 400</td><td></td></tr>
+              <tr><td class="mono">224</td><td class="num">14</td><td class="num">29 × 29</td><td class="num">464 × 464</td><td></td></tr>
+              <tr><td class="mono">256</td><td class="num">16</td><td class="num">33 × 33</td><td class="num">528 × 528</td><td></td></tr>
+              <tr><td class="mono">320</td><td class="num">20</td><td class="num">41 × 41</td><td class="num">656 × 656</td><td>Android 档位上限</td></tr>
+              <tr><td class="mono">384</td><td class="num">24</td><td class="num">49 × 49</td><td class="num">784 × 784</td><td>仅 Windows</td></tr>
+              <tr><td class="mono">448</td><td class="num">28</td><td class="num">57 × 57</td><td class="num">912 × 912</td><td>仅 Windows 最高档</td></tr>
+              <tr><td class="mono">≥ 496</td><td class="num">32（封顶）</td><td class="num">65 × 65</td><td class="num">1040 × 1040</td><td>超过上限一律按 32 区块算</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout warn"><span class="t">注意这是「双方都要扛」的量</span>
+          主机要为每个远端玩家把地形更新窗口开到同样的半径（<code>radius × 16</code> 方块），
+          并且每格改动都要按这张订阅表投影。所以把可视距离拉满，代价是<b>主机</b>要为每个人多养一圈区块。
+        </div>
+        <p class="small muted">来源：<code>SettingsPerformanceScreen.cs:14-25</code>（Windows 到 448 / Android 到 320）· <code>SettingsManager.cs:212,264-268</code></p>
+      </div>
+    </section>
+
+    <!-- ============ 移动与新区块 ============ -->
+    <section class="sec" id="grp-mov">
+      <div class="sec-head">
+        <span class="no">移动</span>
+        <div>
+          <h2>你往前走，地图跟着长出来</h2>
+          <div class="sub">下面是可交互的俯视图：玩家每跨过一个区块，就会多出一圈要同步的区块</div>
+        </div>
+      </div>
+
+      <div class="block" id="MOV01">
+        <div class="block-head"><button class="guid" data-guid="MOV01">MOV01</button><h3>俯视图：走进新区块时发生了什么</h3>
+          <span class="tagline">点「让玩家向东走」，看窗口滑动、新区块变琥珀、拿到检查点后变绿</span></div>
+        <div class="mapgrid">
+          <div>
+            <svg id="mapsvg" viewBox="0 0 900 620" role="img" aria-label="俯视图：玩家走进新区域时的区块同步"></svg>
+          </div>
+          <div class="ctrl">
+            <h5>播放</h5>
+            <div class="row">
+              <button class="btn pri" id="btnplay" style="flex:1">▶ 让玩家向东走</button>
+            </div>
+            <div class="row">
+              <button class="btn" id="btnreset" style="flex:1">重置到起点</button>
+            </div>
+            <h5 style="margin-top:14px">可视距离</h5>
+            <div class="row"><select id="vis"></select></div>
+            <span class="readout" id="readout">半径 8 区块 · 窗口 17×17</span>
+            <h5 style="margin-top:14px">图层</h5>
+            <label><input type="checkbox" id="ly-window" checked><span>兴趣窗口（= 订阅范围）</span></label>
+            <label><input type="checkbox" id="ly-verify" checked><span>自愈校验环 ±2 区块</span></label>
+            <label><input type="checkbox" id="ly-new" checked><span>新进入区块高亮</span></label>
+            <label><input type="checkbox" id="ly-region" checked><span>区域文件边界（256 方块）</span></label>
+            <label><input type="checkbox" id="ly-animal"><span>动物分级 12 / 16 / 24 / 64</span></label>
+            <label><input type="checkbox" id="ly-weather"><span>天气渲染 7–9 格</span></label>
+            <label><input type="checkbox" id="ly-ent"><span>掉落物 48 / 可见 128</span></label>
+            <p class="hint" style="margin-top:10px">图例：绿 = 已同步；琥珀 = 正在要检查点；灰 = 已离开窗口。小橙点 = 主机在该区块内改过的格子。</p>
+          </div>
+        </div>
+        <div class="legend">
+          <span><i style="background:rgba(13,138,99,.55);border:1px solid rgba(13,138,99,.9)"></i>已同步区块</span>
+          <span><i style="background:rgba(169,116,10,.55);border:1px solid rgba(169,116,10,.95)"></i>新进入 / 正在同步</span>
+          <span><i style="background:rgba(60,90,140,.16);border:1px solid rgba(60,90,140,.4)"></i>窗口内未变动</span>
+          <span><i style="background:rgba(106,75,216,.85)"></i>玩家角色</span>
+          <span><i style="background:rgba(14,127,168,.75)"></i>兴趣窗口边框</span>
+          <span><i style="background:rgba(194,58,85,.85)"></i>区域文件边界</span>
+        </div>
+        <div id="log"></div>
+        <p class="small muted" style="margin-top:10px">
+          俯视图里一个小方格 = 一个区块（16×16 方块，全高）。走动时窗口整体滑动，
+          新进入的一列区块要先向主机要一次检查点（琥珀 → 绿），离开的一列直接丢弃本地记录。
+        </p>
+      </div>
+
+      <div class="block" id="MOV02">
+        <div class="block-head"><button class="guid" data-guid="MOV02">MOV02</button><h3>「新进入一个区块」到底意味着什么</h3>
+          <span class="tagline">不是重新下载地图，而是核对一次版本</span></div>
+        <div class="tw"><table>
+          <thead><tr><th>步骤</th><th>做什么</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">① 算窗口</td><td>以玩家所在区块为中心、半径 R 的正方形 ⇒ 想订阅的区块集合</td></tr>
+            <tr><td class="mono">② 求差集</td><td>与上一帧比较 ⇒ <b>新进入</b>（要处理）/ <b>离开</b>（丢弃记录）</td></tr>
+            <tr><td class="mono">③ 分类</td><td>从没同步过 ⇒ 排队要检查点；同步过又回来 ⇒ 只探版本；1 秒内探过 ⇒ 跳过</td></tr>
+            <tr><td class="mono">④ 节流发出</td><td>去重 + 限速（见 <a href="#CPS02">CPS02</a>），主线程按预算发</td></tr>
+            <tr><td class="mono">⑤ 主机回</td><td>只发该区块里<b>改过的格子</b>（十几到几十格）+ 一个完成标记</td></tr>
+            <tr><td class="mono">⑥ 本地落地</td><td>作为优先批次应用；版本没对齐就留下待校验，下一轮再要</td></tr>
+          </tbody>
+        </table></div>
+        <div class="callout ok"><span class="t">关键设计：世界包已经给了完整基线</span>
+          加入时下载的整个世界是"某一刻的完整快照"，所以<b>重新进入一个曾经同步过的区域，只需要核对版本，不需要重新拉内容</b>。
+          否则玩家来回走动就会不断重复下载同一片地形。
+        </div>
+        <div class="callout warn"><span class="t">离开窗口不等于删除地形</span>
+          离开兴趣窗口只是<b>主机不再把该区块的改动推给你</b>（你也停止轮询它的版本）。
+          本地地形该保留的还是保留；下次回来时按版本补差。
+        </div>
+      </div>
+    </section>
+    <!-- ============ 区块检查点 ============ -->
+    <section class="sec" id="grp-cps">
+      <div class="sec-head">
+        <span class="no">检查点</span>
+        <div>
+          <h2>区块检查点：一条三阶段的小协议</h2>
+          <div class="sub">整个「走进新区域」的核心动作就是它；一段话可概括，但每一步都有讲究</div>
+        </div>
+      </div>
+
+      <div class="block" id="CPS01">
+        <div class="block-head"><button class="guid" data-guid="CPS01">CPS01</button><h3>Request → Data × N → Complete</h3>
+          <span class="tagline">只发「这个区块里改过的格子」，不发整块地形</span></div>
+        <h3 class="mini">可播放：一次检查点往返</h3>
+        <div class="anim" data-anim="cps"></div>
+        <figure>
+          <svg viewBox="0 0 900 430" role="img" aria-label="区块检查点三阶段">
+            <rect class="dgb cli" x="20" y="16" width="220" height="30" rx="8"/>
+            <text class="dghead" x="130" y="36" text-anchor="middle">客户端</text>
+            <rect class="dgb host" x="640" y="16" width="240" height="30" rx="8"/>
+            <text class="dghead" x="760" y="36" text-anchor="middle">主机</text>
+            <path class="dgl dash" d="M130 46V414"/>
+            <path class="dgl dash" d="M760 46V414"/>
+
+            <text class="dgt sm" x="136" y="72">① Request：区块坐标 + 本地已知版本（known）</text>
+            <path class="dgl vi" d="M130 84H752"/><path class="dgl vi" d="M744 79L752 84L744 89"/>
+            <text class="dgt sm" x="746" y="106" text-anchor="end">走可靠有序通道（不能丢、要保序）</text>
+
+            <rect class="dgb warn" x="600" y="120" width="280" height="86" rx="8"/>
+            <text class="dgt sm" x="614" y="142">主机：查该区块的改动记录表</text>
+            <text class="dgt sm" x="614" y="162">· 逐格改读「当下的实时地形值」</text>
+            <text class="dgt sm" x="614" y="180">· 每 32 格切成一批</text>
+            <text class="dgt sm" x="614" y="198">· 上报版本 = 这批真正发出去的最大序列号</text>
+
+            <text class="dgt sm" x="136" y="238">② Data ×N：格子坐标 + 该格的权威值 + 区块版本 + 批数</text>
+            <path class="dgl cy" d="M752 250H138"/><path class="dgl cy" d="M146 245L138 250L146 255"/>
+            <text class="dgt sm" x="136" y="272">走可靠<b>无序</b>通道：有序流在停顿时会丢消息，而每格的生效顺序已由版本/时间戳守卫</text>
+
+            <text class="dgt sm" x="136" y="304">③ Complete：同一个区块版本 + 总批数</text>
+            <path class="dgl gr" d="M752 316H138"/><path class="dgl gr" d="M146 311L138 316L146 321"/>
+
+            <rect class="dgb cli" x="20" y="336" width="860" height="78" rx="8"/>
+            <text class="dgt sm" x="34" y="358">客户端收到 Complete 时会核对：<tspan class="dgt">收到的批数 == 主机声明的总批数</tspan> 才落地该版本。</text>
+            <text class="dgt sm" x="34" y="378">批数不足 → 把这个版本标记为「失败」，重新排队要一次；<tspan class="dgt">绝不带着不完整的版本前进</tspan>。</text>
+            <text class="dgt sm" x="34" y="398">原因：一旦版本被推过没落地的格子，主机后续「只发比 known 更新的格」的过滤会永久跳过它们。</text>
+          </svg>
+          <figcaption>图 4 · 检查点三阶段：请求 → 若干数据批 → 完成标记；批数对不上就整块重来</figcaption>
+        </figure>
+        <div class="tw">
+          <table>
+            <thead><tr><th>阶段</th><th>方向</th><th>带上什么</th><th>通道</th></tr></thead>
+            <tbody>
+              <tr><td class="mono">Request</td><td>客户端 → 主机</td><td>区块坐标、本地已知版本 known</td><td>可靠有序</td></tr>
+              <tr><td class="mono">Data</td><td>主机 → 客户端</td><td>格子坐标数组、权威值数组、区块版本、总批数、服务端 tick</td><td>可靠无序</td></tr>
+              <tr><td class="mono">Complete</td><td>主机 → 客户端</td><td>区块版本、总批数</td><td>可靠无序</td></tr>
+              <tr><td class="mono">Interest</td><td>客户端 → 主机</td><td>只有半径（不发坐标）</td><td>原始消息</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="block" id="CPS02">
+        <div class="block-head"><button class="guid" data-guid="CPS02">CPS02</button><h3>节流、去重与高水位</h3>
+          <span class="tagline">不让「要检查点」变成新的流量洪泛</span></div>
+        <figure>
+          <svg viewBox="0 0 900 260" role="img" aria-label="请求队列的节流门">
+            <rect class="dgb" x="16" y="60" width="150" height="66" rx="9"/>
+            <text class="dghead" x="91" y="86" text-anchor="middle">待请求区块</text>
+            <text class="dgt sm" x="91" y="106" text-anchor="middle">去重：pending / queued</text>
+
+            <rect class="dgb warn" x="196" y="60" width="150" height="66" rx="9"/>
+            <text class="dghead" x="271" y="86" text-anchor="middle">队列</text>
+            <text class="dgt sm" x="271" y="106" text-anchor="middle">先进先出</text>
+
+            <rect class="dgb cy" x="376" y="60" width="170" height="66" rx="9"/>
+            <text class="dghead" x="461" y="86" text-anchor="middle">节流门</text>
+            <text class="dgt sm" x="461" y="106" text-anchor="middle">每 0.1 秒最多 4 个请求</text>
+
+            <rect class="dgb srv" x="576" y="60" width="170" height="66" rx="9"/>
+            <text class="dghead" x="661" y="86" text-anchor="middle">发往主机</text>
+            <text class="dgt sm" x="661" y="106" text-anchor="middle">进 pending 计时 5 秒</text>
+
+            <rect class="dgb rd" x="776" y="60" width="108" height="66" rx="9"/>
+            <text class="dghead" x="830" y="86" text-anchor="middle">超时</text>
+            <text class="dgt sm" x="830" y="106" text-anchor="middle">重新入队</text>
+
+            <path class="dgl cy" d="M168 93H194"/><path class="dgl cy" d="M186 88L194 93L186 98"/>
+            <path class="dgl cy" d="M348 93H374"/><path class="dgl cy" d="M366 88L374 93L366 98"/>
+            <path class="dgl cy" d="M548 93H574"/><path class="dgl cy" d="M566 88L574 93L566 98"/>
+            <path class="dgl am" d="M746 93H774"/><path class="dgl am" d="M766 88L774 93L766 98"/>
+            <path class="dgl am" d="M830 128V170H271V128"/><path class="dgl am" d="M266 136L271 128L276 136"/>
+
+            <rect class="dgb" x="16" y="182" width="868" height="62" rx="9"/>
+            <text class="dgt sm" x="34" y="204">两个刹车：① 未完成的同步动作 ≥ 32，或 ② 未落地的检查点批 ≥ 16 时，暂停发新请求（先消化已有的）。</text>
+            <text class="dgt sm" x="34" y="226">同一区块的探测有 1 秒冷却；已经排队/在途的区块不会重复入队。代码：ScMultiplayerWorldObjectHandlers.cs:661-703, 780-793</text>
+          </svg>
+          <figcaption>图 5 · 请求排队 → 节流 → 在途计时 → 超时回队；两个高水位刹车防止请求洪泛</figcaption>
+        </figure>
+        <div class="grid g3">
+          <div class="tile"><h5>去重</h5><p><span class="big">pending / queued</span>同一区块不会同时排两次队；探测过的区块 1 秒内不再探。</p></div>
+          <div class="tile"><h5>限速</h5><p><span class="big">4 / 0.1s</span>等于最多 40 个区块请求/秒，但正常稳定态远低于此。</p></div>
+          <div class="tile"><h5>刹车</h5><p><span class="big">32 / 16</span>在途任务或检查点批过多时先停手，避免把可靠队列堵满。</p></div>
+        </div>
+      </div>
+
+      <div class="block" id="CPS03">
+        <div class="block-head"><button class="guid" data-guid="CPS03">CPS03</button><h3>主机到底发什么：实时值 + 真实批数</h3></div>
+        <div class="tw"><table>
+          <thead><tr><th>要点</th><th>做法</th><th>为什么</th></tr></thead>
+          <tbody>
+            <tr><td>发什么值</td><td>下发前把记录过的格子<b>重读实时地形</b></td><td>否则「已烧成空气」的负向改动会让消失的方块复活</td></tr>
+            <tr><td>报什么版本</td><td>版本 = 这批<b>真正发出去的最大序列号</b></td><td>用主机自己的版本会把客户端记账推过它没收到的格子，之后被永久过滤</td></tr>
+            <tr><td>回看窗口</td><td>下发下限往回看 <b>64</b> 个序列号</td><td>覆盖「被 known 吞掉但其实没落地」的格子</td></tr>
+            <tr><td>批次大小</td><td>每 <b>32 格</b>一个 Data 消息</td><td>越大越容易卡在单包 / 流上</td></tr>
+            <tr><td>只发改动格</td><td>没改过的区块回一个空 Complete</td><td>一个区块通常只有十几到几十格有记录，代价可忽略</td></tr>
+            <tr><td>客户端落点</td><td>作为优先批次应用，<b>不推进</b>全局序列屏障</td><td>屏障只由常规广播推进</td></tr>
+          </tbody>
+        </table></div>
+        <p class="small muted">代码：<code>ScMultiplayerTerrainHandlers.cs:652-772</code>（主机侧）· <code>431-558</code>（客户端侧）</p>
+      </div>
+    </section>
+
+    <!-- ============ 自愈与恢复 ============ -->
+    <section class="sec" id="grp-rcv">
+      <div class="sec-head">
+        <span class="no">自愈</span>
+        <div>
+          <h2>丢了一格怎么办：三张自愈网</h2>
+          <div class="sub">网络会丢包、有序流会停顿。这套系统不假设「一定送达」，而是每层都留了发现与补救的路径</div>
+        </div>
+      </div>
+
+      <div class="block" id="RCV01">
+        <div class="block-head"><button class="guid" data-guid="RCV01">RCV01</button><h3>第一张网：±2 区块校验环</h3>
+          <span class="tagline">每 0.5 秒挑一个区块核对版本，轮完 25 个约 12.5 秒</span></div>
+        <h3 class="mini">可播放：校验环轮流体检</h3>
+        <div class="anim" data-anim="ring"></div>
+        <figure>
+          <svg viewBox="0 0 900 320" role="img" aria-label="±2 区块校验环">
+            <g>
+              <rect class="dgb" x="40" y="40" width="320" height="240" rx="8"/>
+              <g stroke="rgba(60,90,140,.16)" stroke-width=".8">
+                <path d="M104 40V280M168 40V280M232 40V280M296 40V280"/>
+                <path d="M40 88H360M40 136H360M40 184H360M40 232H360"/>
+              </g>
+              <rect fill="rgba(14,127,168,.12)" stroke="rgba(14,127,168,.8)" stroke-width="1.6" x="40" y="40" width="320" height="240"/>
+              <text class="dgt sm" x="52" y="60">玩家所在区块为圆心，取 ±2 区块 ⇒ 5×5 = 25 个区块</text>
+              <circle cx="200" cy="160" r="7" fill="#6a4bd8"/>
+              <text class="dgt sm" x="212" y="156">玩家</text>
+              <circle cx="104" cy="88" r="6" fill="#a9740a"/>
+              <text class="dgt sm" x="114" y="84">本轮正在校验的区块（每 0.5s 换一个）</text>
+            </g>
+            <rect class="dgb" x="400" y="40" width="484" height="240" rx="9"/>
+            <text class="dghead" x="418" y="66">为什么是「轮流」而不是「一次全要」</text>
+            <text class="dgt sm" x="418" y="92">· 每个区块只在版本可疑时才需要一次往返；一次全要会瞬间产生 25 个请求。</text>
+            <text class="dgt sm" x="418" y="116">· 稳定状态下每个区块通常「版本已对齐」→ 主机只回一个空 Complete（两个小包）。</text>
+            <text class="dgt sm" x="418" y="140">· 只要有一格没真正落地，该区块记录的版本就会落后 ⇒ 下一轮校验必然把它重新拉回来。</text>
+            <text class="dgt sm" x="418" y="164">· 单个区块的探测冷却 1 秒，避免在同一轮里反复问同一个区块。</text>
+            <text class="dgt sm" x="418" y="196">参数：ClientTerrainChunkVerifyRadius = 2、ClientTerrainChunkVerifyInterval = 0.5s、</text>
+            <text class="dgt sm" x="418" y="216">TerrainChunkRevisionProbeInterval = 1.0s</text>
+            <text class="dgt sm" x="418" y="246">代码：ScMultiplayerWorldObjectHandlers.cs:706-750、ScMultiplayerRuntimeState.cs:776-777</text>
+            <text class="dgt sm" x="418" y="266">这个环只覆盖玩家身边 5×5 个区块，属于「重点区域高频体检」，不是全图扫描。</text>
+          </svg>
+          <figcaption>图 6 · 校验环：以玩家为中心 5×5 个区块轮流核对，发现版本落后就补一次检查点</figcaption>
+        </figure>
+      </div>
+
+      <div class="block" id="RCV02">
+        <div class="block-head"><button class="guid" data-guid="RCV02">RCV02</button><h3>第二张网：漏格补救与版本回压</h3></div>
+        <div class="tw"><table>
+          <thead><tr><th>时机</th><th>动作</th><th>目的</th></tr></thead>
+          <tbody>
+            <tr><td>应用广播时</td><td>标记<b>没能落地的格子</b>（按坐标记进缺失集合）</td><td>把「格子层面的账」单独记下来</td></tr>
+            <tr><td>每 0.5 秒</td><td>按格向主机要一次权威值（绕开区块版本过滤）</td><td>直接把漏掉的格子补回来</td></tr>
+            <tr><td>同时</td><td>把该区块上报的 <code>known</code> <b>压回缺失格之前的序列</b></td><td>否则主机会认为「早就发过了」而永久跳过</td></tr>
+            <tr><td>缺失清空后</td><td>该区块回到常规校验节奏</td><td>不长期占用额外流量</td></tr>
+          </tbody>
+        </table></div>
+        <div class="callout"><span class="t">一句话</span>
+          版本是「区块层面」的账，漏格是「格子层面」的账：<b>格子没落地，区块版本就不能前进。</b>
+        </div>
+      </div>
+
+      <div class="block" id="RCV03">
+        <div class="block-head"><button class="guid" data-guid="RCV03">RCV03</button><h3>第三张网：历史恢复（journal）</h3>
+          <span class="tagline">给"正在下载世界的客户端"补上它错过的那一段</span></div>
+        <figure>
+          <svg viewBox="0 0 900 230" role="img" aria-label="主机 terrain journal 的保留策略">
+            <rect class="dgb" x="16" y="30" width="868" height="60" rx="9"/>
+            <text class="dghead" x="34" y="54">主机 journal：每次广播的批次都按序列号排队留档</text>
+            <text class="dgt sm" x="34" y="76">用途：客户端因为「世界下载 + 导入」还没进游戏时，把它错过的改动按序回放（而不是让它重新下载整个世界）</text>
+
+            <rect class="dgb gr" x="16" y="112" width="560" height="52" rx="9"/>
+            <text class="dgt" x="32" y="134">保留条件：至少 60 秒（兜底）</text>
+            <text class="dgt sm" x="32" y="154">或者：仍有在线客户端需要追到更低序列号 → 一直留着</text>
+
+            <rect class="dgb host" x="600" y="112" width="284" height="52" rx="9"/>
+            <text class="dgt" x="616" y="134">单次恢复消息上限：64 段区间</text>
+            <text class="dgt sm" x="616" y="154">按区间回放，不逐格重发</text>
+
+            <rect class="dgb rd" x="16" y="180" width="868" height="42" rx="9"/>
+            <text class="dgt sm" x="34" y="206">历史被裁掉之后客户端才回来要 → 主机回「必须重新同步」→ 客户端退化为重新下载整个世界（这是最后手段，不是常规路径）</text>
+          </svg>
+          <figcaption>图 7 · journal 保留策略：至少 60 秒、被在线客户端钉住、单次最多回放 64 段区间</figcaption>
+        </figure>
+        <div class="grid g3">
+          <div class="tile"><h5>为什么需要它</h5><p>世界包是「下载开始那一刻」的快照，下载 + 导入实际要几十秒；这期间主机改的每一格，客户端都还没见过。</p></div>
+          <div class="tile"><h5>60 秒兜底</h5><p>离线或已放弃的客户端不再占用内存；在线且有待恢复目标的客户端会把 journal 钉住，直到它追上。</p></div>
+          <div class="tile"><h5>上限保护</h5><p>单条恢复消息最多携带 64 段区间，超出的分多次发，避免一条消息过大。</p></div>
+        </div>
+        <p class="small muted">参数：<code>TerrainRecoveryRetention = 60s</code>、<code>MaximumTerrainRecoveryRanges = 64</code>
+          （<code>ScMultiplayerRuntimeState.cs:894-895</code>）；保留与裁剪逻辑：<code>ScMultiplayerTerrainHandlers.cs:311-358</code>。</p>
+      </div>
+    </section>
+    <!-- ============ 各类最大范围 ============ -->
+    <section class="sec" id="grp-rng">
+      <div class="sec-head">
+        <span class="no">范围</span>
+        <div>
+          <h2>天气、动物、地形变化：各自能影响多远</h2>
+          <div class="sub">重要的不是「一个数字」，而是<b>作用域类型</b>：全局 / 窗口 / 按距离分级</div>
+        </div>
+      </div>
+
+      <div class="block" id="WTH01">
+        <div class="block-head"><button class="guid" data-guid="WTH01">WTH01</button><h3>天气：状态全局，渲染只有身边几格</h3>
+          <span class="tagline">最容易误解的一项</span></div>
+        <h3 class="mini">可播放：相机移动时雨柱的创建与剔除</h3>
+        <div class="anim" data-anim="rain"></div>
+        <figure>
+          <svg viewBox="0 0 900 300" role="img" aria-label="天气的全局状态与本地渲染范围">
+            <rect class="dgb host" x="16" y="30" width="380" height="130" rx="10"/>
+            <text class="dghead" x="34" y="56">状态层：全局（主机权威）</text>
+            <text class="dgt sm" x="34" y="80">是否降雨 / 是否起雾 / 强度与进度 / 闪电落点</text>
+            <text class="dgt sm" x="34" y="102">由主机决定，随「世界信息」广播按 2Hz 全量下发</text>
+            <text class="dgt sm" x="34" y="124">客户端不自己决定天气，也不会因为距离而收到不同的天气</text>
+            <text class="dgt sm" x="34" y="146">⇒ 作用范围：全世界（没有距离上限）</text>
+
+            <rect class="dgb warn" x="420" y="30" width="464" height="130" rx="10"/>
+            <text class="dghead" x="438" y="56">表现层：只画相机周围一小圈雨柱</text>
+            <text class="dgt sm" x="438" y="80">雨/雪是按「1 格 = 1 根雨柱」的粒子系统铺出来的，只在相机周围生效：</text>
+            <text class="dgt sm" x="438" y="102">· 可视距离 ≤ 64 → 半径 7 格；65..128 → 8 格；&gt; 128 → 9 格</text>
+            <text class="dgt sm" x="438" y="124">· 只保留朝向前方约 60° 锥内的雨柱（点积 &gt; 0.5）</text>
+            <text class="dgt sm" x="438" y="146">⇒ 作用范围：相机周围 ≈7–9 格（约 12–15 米）</text>
+
+            <text class="dghead" x="16" y="204">俯视示意</text>
+            <rect class="dgb" x="16" y="216" width="240" height="66" rx="8"/>
+            <text class="dgt sm" x="30" y="240">整张地图：同一场雨</text>
+            <text class="dgt sm" x="30" y="262">（状态由主机广播，所有人与动物都受影响）</text>
+            <circle cx="350" cy="249" r="6" fill="#6a4bd8"/>
+            <circle cx="350" cy="249" r="12" fill="none" stroke="rgba(169,116,10,.85)" stroke-width="1.4"/>
+            <circle cx="350" cy="249" r="16" fill="none" stroke="rgba(169,116,10,.5)" stroke-width="1.2" stroke-dasharray="4 3"/>
+            <text class="dgt sm" x="376" y="245">相机周围 7–9 格：真正被画出来的雨柱</text>
+            <text class="dgt sm" x="376" y="265">再远就没有雨丝粒子 —— 但天气状态仍然是「下雨」</text>
+            <text class="dgt sm" x="376" y="285">（雾不按这个算：它的起止由可视距离决定，见 ENT01）</text>
+          </svg>
+          <figcaption>图 8 · 天气 = 全局状态 + 本地渲染：广播范围是全球，可见雨柱只有相机周围约 7–9 格</figcaption>
+        </figure>
+        <div class="callout warn"><span class="t">两个「改了没反应」的坑</span>
+          ①「打开降雨/雾」会顺带把天气总开关打开，否则客户端根本不渲染；
+          ②跳时间点前必须把时间模式切回 <code>Changing</code>，固定档位下改偏移看不到任何变化。
+        </div>
+        <p class="small muted">代码：<code>SubsystemWeather.cs:202, 221, 234-246</code>（雨柱半径与剔除）、
+          <code>PrecipitationShaftParticleSystem.cs</code>（每格一根雨柱，粒子在格内随机分布）。</p>
+      </div>
+
+      <div class="block" id="ANM01">
+        <div class="block-head"><button class="guid" data-guid="ANM01">ANM01</button><h3>动物：按「离最近玩家多远」分级，没有统一半径</h3>
+          <span class="tagline">主机跑完整 AI，同步频率按距离与状态变</span></div>
+        <h3 class="mini">可播放：动物从远处走近，频率逐级升高</h3>
+        <div class="anim" data-anim="animal"></div>
+        <figure>
+          <svg viewBox="0 0 900 340" role="img" aria-label="动物同步的距离分级">
+            <circle cx="300" cy="170" r="200" fill="rgba(60,90,140,.05)" stroke="rgba(60,90,140,.3)" stroke-dasharray="5 4"/>
+            <circle cx="300" cy="170" r="100" fill="rgba(14,127,168,.05)" stroke="rgba(14,127,168,.45)" stroke-dasharray="5 4"/>
+            <circle cx="300" cy="170" r="37.5" fill="rgba(106,75,216,.07)" stroke="rgba(106,75,216,.6)" stroke-dasharray="5 4"/>
+            <circle cx="300" cy="170" r="25" fill="rgba(13,138,99,.07)" stroke="rgba(13,138,99,.6)" stroke-dasharray="5 4"/>
+            <circle cx="300" cy="170" r="18.75" fill="rgba(169,116,10,.10)" stroke="rgba(169,116,10,.7)" stroke-dasharray="4 3"/>
+            <circle cx="300" cy="170" r="8" fill="#6a4bd8"/>
+            <text class="dgt sm" x="300" y="192" text-anchor="middle">玩家</text>
+
+            <text class="dgt sm" x="312" y="158">10 / 12 格：身边常速（8 Hz）</text>
+            <text class="dgt sm" x="322" y="128">16 格：同群带动（16 Hz）</text>
+            <text class="dgt sm" x="340" y="96">24 格：飞行鸟类（16 Hz）</text>
+            <text class="dgt sm" x="404" y="66">64 格：飞行鸟类（8 Hz）</text>
+            <text class="dgt sm" x="404" y="292">其余：常态 2 Hz；正在追玩家 → 4 Hz</text>
+
+            <rect class="dgb" x="560" y="30" width="324" height="286" rx="10"/>
+            <text class="dghead" x="578" y="56">分级规则（主机侧判定）</text>
+            <text class="dgt sm" x="578" y="82">tier 0 · 常态 → 0.5 s（2 Hz）</text>
+            <text class="dgt sm" x="578" y="106">tier 1 · 目标就是某玩家 → 0.25 s（4 Hz）</text>
+            <text class="dgt sm" x="578" y="130">tier 2 · 离最近玩家 ≤10 格（已是 2 级则 12 格）</text>
+            <text class="dgt sm" x="578" y="150">　　　或飞行鸟类 ≤64 格 → 0.125 s（8 Hz）</text>
+            <text class="dgt sm" x="578" y="174">tier 3 · 3 秒内被打过 / 同群成员在 ≤16 格内</text>
+            <text class="dgt sm" x="578" y="194">　　　或飞行鸟类 ≤24 格 → 0.0625 s（16 Hz）</text>
+            <text class="dgt sm" x="578" y="218">tier 4 · 正在攻击玩家 → 同样按 16 Hz</text>
+            <text class="dgt sm" x="578" y="250">睡眠时间加速期间：tier≥3 保持 16 Hz，</text>
+            <text class="dgt sm" x="578" y="270">tier 1 降到 4 Hz，其余 1 Hz</text>
+            <text class="dgt sm" x="578" y="300">代码：ScMultiplayerWorldSync.cs:864-876, 1134-1147</text>
+          </svg>
+          <figcaption>图 9 · 动物同步按距离与状态分级：最密 16 Hz（身边/交战），最疏 2 Hz（远处常态）</figcaption>
+        </figure>
+        <div class="callout"><span class="t">注意：这是「频率」分级，不是「范围」截断</span>
+          主机对自己维护的动物都会同步（没有硬性距离切断），只是远处的更新得稀疏。
+          距离判定用的是「<b>离最近的那个玩家</b>」——所以一只动物身边没人时会掉到 2 Hz，
+          一旦有人靠近立刻升频。
+        </div>
+      </div>
+
+      <div class="block" id="TER01">
+        <div class="block-head"><button class="guid" data-guid="TER01">TER01</button><h3>地形变化：没有「半径」，只有「订阅」</h3>
+          <span class="tagline">主机改了什么不重要，重要的是「谁订了那块地」</span></div>
+        <div class="tw">
+          <table>
+            <thead><tr><th>概念</th><th class="mono">数值</th><th>说明</th></tr></thead>
+            <tbody>
+              <tr><td>改动的投递范围</td><td class="mono">= 订阅该区块的客户端</td><td>不是按距离算的圆，而是按「谁的窗口里有这个区块」</td></tr>
+              <tr><td>兴趣窗口（默认）</td><td class="mono">17×17 区块 = 272×272 方块</td><td>可视距离 128 → 半径 8 区块</td></tr>
+              <tr><td>兴趣窗口（上限）</td><td class="mono">65×65 区块 = 1040×1040 方块</td><td>半径封顶 32 区块</td></tr>
+              <tr><td>单批格子数</td><td class="mono">96 格 / 批</td><td>主机合并待广播表后按批编号下发</td></tr>
+              <tr><td>检查点批大小</td><td class="mono">32 格 / 批</td><td>走进新区块时按批回内容</td></tr>
+              <tr><td>本地预测的作用范围</td><td class="mono">受交互距离限制</td><td>挖掘/放置本身只能作用于 5 格内（见 <a href="#ENT01">ENT01</a>）</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout ok"><span class="t">所以「地形变化的最大范围」应该这样回答</span>
+          地形改动可以发生在任何被主机模拟到的地方，但<b>它只会被送到「窗口覆盖该区块」的客户端</b>。
+          默认配置下就是每个玩家周围 272×272 方块的那一圈；把可视距离拉到最高档，理论上限是 1040×1040。
+        </div>
+      </div>
+
+      <div class="block" id="ENT01">
+        <div class="block-head"><button class="guid" data-guid="ENT01">ENT01</button><h3>掉落物、投射物、模型与交互距离</h3></div>
+        <div class="tw">
+          <table>
+            <thead><tr><th>对象 / 行为</th><th class="mono">范围</th><th>含义</th><th>来源</th></tr></thead>
+            <tbody>
+              <tr><td>掉落物（渲染）</td><td class="mono">min(可视距离, 48) 格</td><td>超出这个距离不再绘制，且必须在前向锥内</td><td class="src">SubsystemPickables.cs:93-105</td></tr>
+              <tr><td>投射物（渲染）</td><td class="mono">可视距离</td><td>超出可视距离的箭 / 投掷物不绘制</td><td class="src">SubsystemProjectiles.cs:149-153</td></tr>
+              <tr><td>生物模型（渲染）</td><td class="mono">可视距离</td><td>超出可视距离的模型不绘制（含远端玩家形象）</td><td class="src">ComponentModel.cs:75-77</td></tr>
+              <tr><td>雾 / 可见度</td><td class="mono">由可视距离决定</td><td>雾的起止按可视距离换算；拉高可视距离 = 看得更远也更费</td><td class="src">SubsystemSky.cs:349-358</td></tr>
+              <tr><td>交互 / 挖掘距离</td><td class="mono">生存 5 格</td><td>射线本身有 15 格，但会被「离眼睛 5 格内」的条件过滤</td><td class="src">ComponentMiner.cs:378-388</td></tr>
+              <tr><td>交互距离（创造模式）</td><td class="mono">7.5 格</td><td>创造模式的可达距离</td><td class="src">SettingsManager.cs:235</td></tr>
+              <tr><td>领地单体上限</td><td class="mono">64×64×256</td><td>一块领地最多覆盖 4×4 = 16 个区块的水平面积</td><td class="src">REGION-CLAIM-DESIGN.md</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="small muted">注意：这些是<b>渲染 / 操作客户端本地的范围</b>，与网络同步范围是两件事。
+          一个远端玩家站在你 100 格外，他的位置快照仍然在发（只要他在你的兴趣窗口里），只是模型不画。</p>
+      </div>
+
+      <div class="block" id="RGN01">
+        <div class="block-head"><button class="guid" data-guid="RGN01">RGN01</button><h3>领地 region：与地形区块的关系</h3>
+          <span class="tagline">这里的 region 指「玩家领地」，不是存档区域文件</span></div>
+        <figure>
+          <svg viewBox="0 0 900 300" role="img" aria-label="领地与区块的关系">
+            <g>
+              <rect class="dgb" x="40" y="50" width="440" height="220" rx="8"/>
+              <g stroke="rgba(60,90,140,.18)" stroke-width=".8">
+                <path d="M95 50V270M150 50V270M205 50V270M260 50V270M315 50V270M370 50V270M425 50V270"/>
+                <path d="M40 105H480M40 160H480M40 215H480"/>
+              </g>
+              <rect fill="rgba(169,116,10,.16)" stroke="rgba(169,116,10,.9)" stroke-width="2" x="150" y="105" width="220" height="110"/>
+              <text class="dgt" x="260" y="150" text-anchor="middle">领地 #3：64×64（4×4 区块）</text>
+              <text class="dgt sm" x="260" y="172" text-anchor="middle">高度默认 0..255（全高）</text>
+              <text class="dgt sm" x="55" y="66">小格 = 1 个地形区块（16×16）</text>
+              <text class="dgt sm" x="55" y="288">领地边界与区块边界不必对齐：判定按「格」，同步按「区块」</text>
+            </g>
+            <rect class="dgb" x="520" y="50" width="364" height="220" rx="10"/>
+            <text class="dghead" x="538" y="76">两个 region 概念别混</text>
+            <text class="dgt sm" x="538" y="102">① 存档区域文件：16×16 区块 = 256×256 方块</text>
+            <text class="dgt sm" x="538" y="122">　　—— 磁盘上的 Region X,Y.dat，与网络无关</text>
+            <text class="dgt sm" x="538" y="148">② 玩家领地：最大 64×64×256，世界默认 128 块</text>
+            <text class="dgt sm" x="538" y="168">　　—— 主机判定「这块地归谁」，越权修改被否决并改回</text>
+            <text class="dgt sm" x="538" y="194">领地只保护方块与掉落物；</text>
+            <text class="dgt sm" x="538" y="214">门 / 开关 / 家具属于「交互白名单」，照常可用</text>
+            <text class="dgt sm" x="538" y="240">重叠时归编号最小的领地；创建 / 赋予 / 剥夺只有 GM 可做</text>
+            <text class="dgt sm" x="538" y="262">代码：Modules/Region/*、Message/RegionClaimMessage.cs</text>
+          </svg>
+          <figcaption>图 10 · 领地（claim）与存档区域文件（region）是两个不同的「region」</figcaption>
+        </figure>
+      </div>
+
+      <div class="block" id="SUM01">
+        <div class="block-head"><button class="guid" data-guid="SUM01">SUM01</button><h3>范围汇总：一张同心图 + 一张表</h3></div>
+        <figure>
+          <svg viewBox="0 0 900 470" role="img" aria-label="玩家周围各类范围的同心示意">
+            <circle cx="330" cy="235" r="200" fill="rgba(14,127,168,.05)" stroke="rgba(14,127,168,.55)" stroke-dasharray="6 4"/>
+            <circle cx="330" cy="235" r="82" fill="rgba(106,75,216,.05)" stroke="rgba(106,75,216,.6)" stroke-dasharray="6 4"/>
+            <circle cx="330" cy="235" r="41" fill="rgba(13,138,99,.05)" stroke="rgba(13,138,99,.6)" stroke-dasharray="6 4"/>
+            <circle cx="330" cy="235" r="31" fill="rgba(14,127,168,.06)" stroke="rgba(14,127,168,.6)" stroke-dasharray="6 4"/>
+            <circle cx="330" cy="235" r="21" fill="rgba(169,116,10,.07)" stroke="rgba(169,116,10,.7)" stroke-dasharray="5 3"/>
+            <circle cx="330" cy="235" r="12" fill="rgba(194,58,85,.10)" stroke="rgba(194,58,85,.75)" stroke-dasharray="4 3"/>
+            <circle cx="330" cy="235" r="5" fill="#6a4bd8"/>
+            <text class="dgt sm" x="340" y="252">玩家</text>
+
+            <text class="dgt sm" x="356" y="222">5：交互 / 挖掘（创造 7.5）</text>
+            <text class="dgt sm" x="366" y="206">7–9：雨柱渲染</text>
+            <text class="dgt sm" x="378" y="188">10 / 12：动物 8 Hz</text>
+            <text class="dgt sm" x="392" y="150">16：同群带动 16 Hz</text>
+            <text class="dgt sm" x="392" y="232">24 / 64：飞行鸟类 16 / 8 Hz</text>
+            <text class="dgt sm" x="418" y="132">48：掉落物渲染上限</text>
+            <text class="dgt sm" x="536" y="104">128（默认可视距离）：投射物 / 模型 / 雾 / 兴趣窗口半径</text>
+
+            <rect class="dgb" x="556" y="250" width="328" height="200" rx="10"/>
+            <text class="dghead" x="574" y="276">读图要点</text>
+            <text class="dgt sm" x="574" y="302">· 圆形 = 按距离生效（渲染 / 同步频率）</text>
+            <text class="dgt sm" x="574" y="322">· 方形（见 MOV01）= 按区块订阅生效（网络）</text>
+            <text class="dgt sm" x="574" y="346">· 天气状态是全局的，所以没有圈</text>
+            <text class="dgt sm" x="574" y="370">· 同步范围（方形）默认 = 128 格半径</text>
+            <text class="dgt sm" x="574" y="390">· 渲染范围与同步范围互不替代：不渲染 ≠ 不发送</text>
+            <text class="dgt sm" x="574" y="414">· 动物没有硬性距离切断，只有频率分级</text>
+            <text class="dgt sm" x="574" y="438">· 半径按方块数等比绘制</text>
+          </svg>
+          <figcaption>图 11 · 同心范围示意（半径按方块数等比绘制，默认可视距离 128）</figcaption>
+        </figure>
+        <div class="tw">
+          <table>
+            <thead><tr><th>项目</th><th class="mono">数值</th><th>作用域类型</th><th>来源</th></tr></thead>
+            <tbody>
+              <tr><td>区块尺寸</td><td class="mono">16 × 16 × 256</td><td>单位</td><td class="src">TerrainSerializer23.cs:672-676</td></tr>
+              <tr><td>存档区域文件</td><td class="mono">16 × 16 区块（256×256）</td><td>单位</td><td class="src">TerrainSerializer23.cs:340-342</td></tr>
+              <tr><td>兴趣半径公式</td><td class="mono">⌈可视距离/16⌉，夹 1..32</td><td>窗口</td><td class="src">ScMultiplayerWorldObjectHandlers.cs:521-525</td></tr>
+              <tr><td>兴趣窗口（默认）</td><td class="mono">272 × 272 方块</td><td>窗口</td><td class="src">可视距离 128（SettingsManager.cs:212）</td></tr>
+              <tr><td>兴趣窗口（上限）</td><td class="mono">1040 × 1040 方块</td><td>窗口</td><td class="src">MaximumTerrainInterestRadius = 32</td></tr>
+              <tr><td>地形改动广播</td><td class="mono">96 格 / 批</td><td>批次</td><td class="src">ScMultiplayerRuntimeState.cs:923</td></tr>
+              <tr><td>检查点数据</td><td class="mono">32 格 / 批</td><td>批次</td><td class="src">ScMultiplayerRuntimeState.cs:924</td></tr>
+              <tr><td>校验环</td><td class="mono">±2 区块（5×5）</td><td>窗口（重点）</td><td class="src">ScMultiplayerRuntimeState.cs:777</td></tr>
+              <tr><td>校验节奏</td><td class="mono">0.5 s / 区块，单区块冷却 1 s</td><td>频率</td><td class="src">ScMultiplayerRuntimeState.cs:776, 916</td></tr>
+              <tr><td>请求节流</td><td class="mono">4 个 / 0.1 s；高水位 32 / 16</td><td>限速</td><td class="src">ScMultiplayerWorldObjectHandlers.cs:661-703</td></tr>
+              <tr><td>恢复历史保留</td><td class="mono">≥ 60 s；单次 ≤ 64 段</td><td>时间 / 批次</td><td class="src">ScMultiplayerRuntimeState.cs:894-895</td></tr>
+              <tr><td>雨柱渲染</td><td class="mono">相机周围 7 / 8 / 9 格</td><td>距离</td><td class="src">SubsystemWeather.cs:202, 221</td></tr>
+              <tr><td>掉落物渲染</td><td class="mono">min(可视距离, 48)</td><td>距离</td><td class="src">SubsystemPickables.cs:93</td></tr>
+              <tr><td>投射物 / 模型渲染</td><td class="mono">可视距离</td><td>距离</td><td class="src">SubsystemProjectiles.cs:149、ComponentModel.cs:75</td></tr>
+              <tr><td>交互距离</td><td class="mono">5（创造 7.5）</td><td>距离</td><td class="src">ComponentMiner.cs:378、SettingsManager.cs:235</td></tr>
+              <tr><td>动物同步频率分级</td><td class="mono">10 / 12 · 16 · 24 · 64 格</td><td>距离分级</td><td class="src">ScMultiplayerWorldSync.cs:864-876</td></tr>
+              <tr><td>领地单体</td><td class="mono">64 × 64 × 256</td><td>数据上限</td><td class="src">REGION-CLAIM-DESIGN.md</td></tr>
+              <tr><td>领地总量</td><td class="mono">世界默认 128 块</td><td>数据上限</td><td class="src">REGION-CLAIM-DESIGN.md</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+    <!-- ============ 附录 ============ -->
+    <section class="sec" id="grp-idx">
+      <div class="sec-head">
+        <span class="no">附录</span>
+        <div>
+          <h2>怎么观察、数据从哪来、索引</h2>
+          <div class="sub">区块同步的问题基本都能在日志里看见，不需要上手猜</div>
+        </div>
+      </div>
+
+      <div class="block" id="OBS01">
+        <div class="block-head"><button class="guid" data-guid="OBS01">OBS01</button><h3>怎么观察区块同步</h3></div>
+        <div class="tw">
+          <table>
+            <thead><tr><th>看什么</th><th>从哪里看</th><th>能回答的问题</th></tr></thead>
+            <tbody>
+              <tr><td>客户端区块完成度</td><td class="src">Logs/Client/&lt;日期&gt;.log<br>event=terrain.chunk.done known=/recorded=/recv=/applied=</td><td>这一片到底收到没有、应用到哪一步</td></tr>
+              <tr><td>客户端逐格应用</td><td class="src">event=terrain.apply result=applied|drop</td><td>收到的格子为什么被丢掉</td></tr>
+              <tr><td>主机服务了多少</td><td class="src">主机操作日志<br>event=terrain.chunk.serve known=/rev=/batches=/cells=</td><td>主机认为该发什么、实际发了多少格</td></tr>
+              <tr><td>检查点不完整</td><td class="src">event=terrain.chunk.incomplete rev=/received=/total=</td><td>批数对不上导致的整块重来</td></tr>
+              <tr><td>某个格子的当前值</td><td class="src">命令行桥：world blocks --at x y z [--radius N]</td><td>两端对同一格的认知是否一致</td></tr>
+              <tr><td>连接与世界状态</td><td class="src">命令行桥：status</td><td>谁在线、世界是否加载、步数是否推进</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout"><span class="t">排障顺序是硬规定</span>
+          <b>① 先读日志</b>（日志记录最后的操作，不看日志就下结论是被明令禁止的）→
+          <b>② 再用命令行桥取值</b> → <b>③ 最后才考虑临时探针</b>，而且探针验证后必须立即删除。
+        </div>
+      </div>
+
+      <div class="block" id="SRC01">
+        <div class="block-head"><button class="guid" data-guid="SRC01">SRC01</button><h3>数据来源</h3>
+          <span class="tagline">本页每个数字都能在源码里找到出处</span></div>
+        <div class="tw">
+          <table>
+            <thead><tr><th class="mono">文件</th><th>本页用到的内容</th></tr></thead>
+            <tbody>
+              <tr><td class="src">Survivalcraft/Game/TerrainSerializer23.cs</td><td>区块尺寸 16×16×256；区域文件 16×16 区块（RegionChunksBits=4）、命名 Region X,Y.dat</td></tr>
+              <tr><td class="src">Survivalcraft/Game/TerrainUpdater.cs</td><td>SetUpdateLocation 的语义（可视距离 / 内容距离）与区块跨度计算</td></tr>
+              <tr><td class="src">Survivalcraft/Game/SettingsManager.cs</td><td>默认可视距离 128、低内存回退 64 / 112、创造模式交互距离 7.5</td></tr>
+              <tr><td class="src">Survivalcraft/Game/SettingsPerformanceScreen.cs</td><td>可视距离档位表（Windows 32–448、Android 32–320）</td></tr>
+              <tr><td class="src">Survivalcraft/Game/SubsystemWeather.cs</td><td>雨柱半径 7 / 8 / 9 与前向锥剔除规则</td></tr>
+              <tr><td class="src">Survivalcraft/Game/SubsystemPickables.cs</td><td>掉落物绘制距离 min(可视距离, 48)</td></tr>
+              <tr><td class="src">Survivalcraft/Game/SubsystemProjectiles.cs</td><td>投射物绘制距离 = 可视距离</td></tr>
+              <tr><td class="src">Survivalcraft/Game/ComponentModel.cs</td><td>模型绘制距离 = 可视距离</td></tr>
+              <tr><td class="src">Survivalcraft/Game/ComponentMiner.cs</td><td>交互 / 挖掘的 5 格可达条件（射线长 15 格）</td></tr>
+              <tr><td class="src">ScMultiplayer/Modules/World/ScMultiplayerWorldObjectHandlers.cs</td><td>兴趣半径公式、客户端上报半径、校验环 ±2、请求节流与超时</td></tr>
+              <tr><td class="src">ScMultiplayer/Modules/Terrain/ScMultiplayerTerrainHandlers.cs</td><td>订阅表与反向表、按订阅投影、检查点组织与下发、journal 保留与裁剪</td></tr>
+              <tr><td class="src">ScMultiplayer/Modules/World/ScMultiplayerWorldSync.cs</td><td>动物同步分级与频率表</td></tr>
+              <tr><td class="src">ScMultiplayer/Core/ScMultiplayerRuntimeState.cs</td><td>批次 / 节流 / 超时 / 上限常量</td></tr>
+              <tr><td class="src">ScMultiplayer/doc/REGION-CLAIM-DESIGN.md</td><td>领地尺寸与数量上限、执法语义</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="small muted">所有数值按当前工作区源码（Mod 版本 2.2.9、协议版本 1）核对；行号对应本页生成时的文件状态。
+          如果某处实现变了而这页的数字没变，以源码为准。</p>
+      </div>
+
+      <div class="block" id="IDX01">
+        <div class="block-head"><button class="guid" data-guid="IDX01">IDX01</button><h3>GUID 索引</h3>
+          <span class="tagline">本页共 21 个标记（3 位域字母 + 2 位序号）</span></div>
+        <div class="tw">
+          <table>
+            <thead><tr><th class="mono">GUID</th><th>主题</th><th>一句话</th></tr></thead>
+            <tbody>
+              <tr><td class="gid">BAS01</td><td>格 / 区块 / 区域文件</td><td>1 区块 = 16×16 方块；1 区域文件 = 16×16 区块 = 256×256 方块</td></tr>
+              <tr><td class="gid">BAS02</td><td>一次改动的传播路径</td><td>主机合批编号 → 按客户端订阅投影 → 客户端按序应用</td></tr>
+              <tr><td class="gid">INT01</td><td>订阅表：中心 + 半径</td><td>中心由主机算（权威位置），半径由客户端报（1..32 区块）</td></tr>
+              <tr><td class="gid">INT02</td><td>可视距离 → 区块半径换算</td><td>radius = ⌈visibility/16⌉；默认 128 → 8 区块</td></tr>
+              <tr><td class="gid">MOV01</td><td>俯视图：走进新区块</td><td>可交互：窗口滑动、新区块琥珀 → 绿、事件日志</td></tr>
+              <tr><td class="gid">MOV02</td><td>「新进入」意味着什么</td><td>不是重下地图，而是核对版本；旧区域回来只探版本</td></tr>
+              <tr><td class="gid">CPS01</td><td>检查点三阶段协议</td><td>Request → Data ×N → Complete；批数对不上整块重来</td></tr>
+              <tr><td class="gid">CPS02</td><td>节流与高水位</td><td>4 个 / 0.1 s；在途 ≥32 或检查点批 ≥16 时刹车；5 s 超时回队</td></tr>
+              <tr><td class="gid">CPS03</td><td>主机发什么</td><td>实时值而非历史记录；版本 = 真正发出去的最大序列号</td></tr>
+              <tr><td class="gid">RCV01</td><td>±2 区块校验环</td><td>5×5 区块轮流核对，0.5 s 一个，单区块冷却 1 s</td></tr>
+              <tr><td class="gid">RCV02</td><td>漏格补救</td><td>按格要权威值 + 把 known 压回缺失格之前</td></tr>
+              <tr><td class="gid">RCV03</td><td>历史恢复窗口</td><td>journal ≥60 s，被在线待恢复客户端钉住，单次 ≤64 段</td></tr>
+              <tr><td class="gid">WTH01</td><td>天气作用域</td><td>状态全局（2 Hz 广播）；雨柱只渲染相机周围 7–9 格</td></tr>
+              <tr><td class="gid">ANM01</td><td>动物同步分级</td><td>10 / 12 · 16 · 24 · 64 格 → 8 / 16 Hz；2 Hz 起步，无硬截断</td></tr>
+              <tr><td class="gid">TER01</td><td>地形变化范围</td><td>按订阅投递：默认 272×272 方块，上限 1040×1040</td></tr>
+              <tr><td class="gid">ENT01</td><td>掉落物 / 投射物 / 交互</td><td>掉落物 48、投射物与模型 = 可视距离、交互 5 / 创造 7.5</td></tr>
+              <tr><td class="gid">RGN01</td><td>领地 region</td><td>领地最大 64×64×256（4×4 区块）；与存档区域文件不是一回事</td></tr>
+              <tr><td class="gid">SUM01</td><td>范围汇总</td><td>同心范围图 + 全量参数表（含源码出处）</td></tr>
+              <tr><td class="gid">OBS01</td><td>怎么观察</td><td>日志事件名、命令行桥取值、排障三步顺序</td></tr>
+              <tr><td class="gid">SRC01</td><td>数据来源</td><td>本页引用的全部源码文件</td></tr>
+              <tr><td class="gid">IDX01</td><td>GUID 索引</td><td>本表</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="small muted">配套文档：整体功能 / 架构 / 模块交互解析见
+          <a href="multiplayer-architecture.html">multiplayer-architecture.html</a>（另一份，112 个 GUID）。</p>
+      </div>
+    </section>
+
+    <footer>
+      <div class="row">
+        <div>Chunk / Region 同步图解 · 依据本仓库源码实测生成</div>
+        <div>GUID 格式：3 位域字母 + 2 位序号（如 <code>MOV01</code>）· 本页 21 个</div>
+      </div>
+    </footer>
+  </main>
+</div>
+
+<div class="toast" id="toast">已复制</div>
+<div class="totop" id="totop" title="回到顶部">↑</div>
+<script>
+(function () {
+  "use strict";
+
+  /* ==========================================================
+     通用部分：GUID 复制 / 搜索 / 侧栏高亮 / 进度条
+     ========================================================== */
+  var toast = document.getElementById("toast");
+  var toastTimer = 0;
+  function showToast(text) {
+    toast.textContent = text;
+    toast.classList.add("on");
+    window.clearTimeout(toastTimer);
+    toastTimer = window.setTimeout(function () { toast.classList.remove("on"); }, 1500);
+  }
+  function copyFallback(text) {
+    var ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.top = "-1000px";
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand("copy"); } catch (e) { /* 某些环境禁止，忽略 */ }
+    document.body.removeChild(ta);
+  }
+  document.addEventListener("click", function (event) {
+    var node = event.target;
+    if (!node || !node.closest) return;
+    var el = node.closest(".guid");
+    if (!el) return;
+    var guid = el.getAttribute("data-guid") || (el.textContent || "").trim();
+    if (!guid) return;
+    function done() {
+      el.classList.add("copied");
+      showToast("已复制 " + guid);
+      window.setTimeout(function () { el.classList.remove("copied"); }, 900);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(guid).then(done, function () { copyFallback(guid); done(); });
+    } else {
+      copyFallback(guid);
+      done();
+    }
+  });
+
+  var input = document.getElementById("q");
+  var blocks = Array.prototype.slice.call(document.querySelectorAll(".block"));
+  var sections = Array.prototype.slice.call(document.querySelectorAll("section.sec"));
+  var noResult = document.getElementById("nores");
+  function applyFilter() {
+    var query = (input.value || "").trim().toLowerCase();
+    if (!query) {
+      blocks.forEach(function (b) { b.classList.remove("hidden"); });
+      sections.forEach(function (s) { s.classList.remove("hidden"); });
+      noResult.style.display = "none";
+      return;
+    }
+    var hits = 0;
+    blocks.forEach(function (b) {
+      var hay = (b.textContent || "").toLowerCase() + " " + (b.id || "").toLowerCase();
+      var ok = hay.indexOf(query) >= 0;
+      b.classList.toggle("hidden", !ok);
+      if (ok) hits++;
+    });
+    sections.forEach(function (s) {
+      var visible = Array.prototype.slice.call(s.querySelectorAll(".block"))
+        .some(function (b) { return !b.classList.contains("hidden"); });
+      s.classList.toggle("hidden", !visible);
+    });
+    noResult.style.display = hits === 0 ? "block" : "none";
+  }
+  input.addEventListener("input", applyFilter);
+  input.addEventListener("search", applyFilter);
+  document.addEventListener("keydown", function (event) {
+    var typing = document.activeElement === input;
+    if (event.key === "/" && !typing) {
+      event.preventDefault(); input.focus(); input.select();
+    } else if (event.key === "Escape" && typing) {
+      input.value = ""; applyFilter(); input.blur();
+    }
+  });
+
+  var links = {};
+  Array.prototype.slice.call(document.querySelectorAll("#toc a")).forEach(function (a) {
+    var id = (a.getAttribute("href") || "").replace(/^#/, "");
+    if (id) links[id] = a;
+  });
+  function setActive(id) {
+    var link = links[id];
+    if (!link || link.classList.contains("active")) return;
+    Array.prototype.slice.call(document.querySelectorAll("#toc a.active"))
+      .forEach(function (x) { x.classList.remove("active"); });
+    link.classList.add("active");
+  }
+  if ("IntersectionObserver" in window) {
+    var observer = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) { if (entry.isIntersecting) setActive(entry.target.id); });
+    }, { rootMargin: "-80px 0px -72% 0px", threshold: 0 });
+    blocks.forEach(function (b) { if (links[b.id]) observer.observe(b); });
+  }
+
+  var progress = document.getElementById("prog");
+  var toTop = document.getElementById("totop");
+  function onScroll() {
+    var max = document.documentElement.scrollHeight - window.innerHeight;
+    progress.style.width = (max > 0 ? (window.scrollY / max) * 100 : 0) + "%";
+    toTop.classList.toggle("on", window.scrollY > 600);
+  }
+  document.addEventListener("scroll", onScroll, { passive: true });
+  toTop.addEventListener("click", function () { window.scrollTo({ top: 0, behavior: "smooth" }); });
+  onScroll();
+
+  /* ==========================================================
+     交互俯视图
+     参数全部来自源码：
+       区块 = 16 方块；区域文件 = 256 方块（16×16 区块）
+       兴趣半径 = ceil(可视距离 / 16)，夹 1..32
+       校验环 = ±2 区块
+       动物分级距离 = 10/12 · 16 · 24 · 64 格
+       雨柱渲染 = 7..9 格；掉落物 = min(可视距离, 48)
+     ========================================================== */
+  var svg = document.getElementById("mapsvg");
+  if (!svg) return;
+  var NS = "http://www.w3.org/2000/svg";
+  var VIEW_W = 900, VIEW_H = 620;
+  var CHUNK = 16, REGION = 256;
+  var VIS_OPTIONS = [32, 48, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 384, 448];
+  var WALK_SPEED = 26;          // 方块/秒
+  var WALK_DISTANCE = 340;      // 总共向东走多少方块
+  var SYNC_DELAY = 0.75;        // 新区块"要检查点"持续多久（秒）
+  var KEEP_SYNCED = 4.0;        // 同步完成后绿色保留多久（秒）
+
+  function mk(name, attrs, text) {
+    var node = document.createElementNS(NS, name);
+    if (attrs) {
+      for (var k in attrs) {
+        if (Object.prototype.hasOwnProperty.call(attrs, k)) node.setAttribute(k, attrs[k]);
+      }
+    }
+    if (text !== undefined && text !== null) node.textContent = text;
+    return node;
+  }
+  function clamp(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }
+
+  // 图层容器
+  var gGrid = mk("g"), gWin = mk("g"), gChunks = mk("g"), gRanges = mk("g"),
+      gPlayer = mk("g"), gText = mk("g");
+  [gGrid, gWin, gChunks, gRanges, gPlayer, gText].forEach(function (g) { svg.appendChild(g); });
+
+  var visibility = 128;
+  var radius = Math.ceil(Math.max(visibility, 16) / 16);
+  var PX = 1.5;
+  var playerX = 200, playerZ = 200;
+  var startX = 200;
+  var camX = 0, camZ = 0;
+  var walking = false;
+  var lastTime = 0;
+  var chunks = {};        // "cx,cz" -> {state:"sync"|"ok", t:秒}
+  var known = {};         // 曾经同步过的区块：再次进入时只探版本，不重新拉内容
+  var sparks = [];        // {x,z,life}
+  var logLines = [];
+  var lastCenter = null;
+  var accum = 0;
+
+  var elVis = document.getElementById("vis");
+  var elReadout = document.getElementById("readout");
+  var elLog = document.getElementById("log");
+  var elPlay = document.getElementById("btnplay");
+  var elReset = document.getElementById("btnreset");
+  var lyWindow = document.getElementById("ly-window");
+  var lyVerify = document.getElementById("ly-verify");
+  var lyNew = document.getElementById("ly-new");
+  var lyRegion = document.getElementById("ly-region");
+  var lyAnimal = document.getElementById("ly-animal");
+  var lyWeather = document.getElementById("ly-weather");
+  var lyEnt = document.getElementById("ly-ent");
+
+  VIS_OPTIONS.forEach(function (v) {
+    var opt = document.createElement("option");
+    opt.value = String(v);
+    opt.textContent = v + " 方块（半径 " + Math.ceil(v / 16) + " 区块）";
+    if (v === visibility) opt.selected = true;
+    elVis.appendChild(opt);
+  });
+
+  function log(text, cls) {
+    logLines.push({ text: text, cls: cls || "" });
+    if (logLines.length > 42) logLines.shift();
+    var html = logLines.map(function (line) {
+      return '<div class="' + line.cls + '">' + line.text + "</div>";
+    }).join("");
+    elLog.innerHTML = html;
+    elLog.scrollTop = elLog.scrollHeight;
+  }
+
+  function chunkOf(x, z) {
+    return [Math.floor(x / CHUNK), Math.floor(z / CHUNK)];
+  }
+  function updateScale() {
+    // 让兴趣窗口大约占视图宽度的 62%，并保证区块不至于太小
+    var windowBlocks = (2 * radius + 1) * CHUNK;
+    PX = clamp(VIEW_W * 0.62 / windowBlocks, 0.30, 1.5);
+  }
+  function updateCamera() {
+    camX = playerX - (VIEW_W * 0.32) / PX;
+    camZ = playerZ - (VIEW_H * 0.5) / PX;
+  }
+  function px(x) { return (x - camX) * PX; }
+  function pz(z) { return (z - camZ) * PX; }
+
+  function resetState() {
+    playerX = startX;
+    chunks = {};
+    known = {};
+    sparks = [];
+    lastCenter = null;
+    logLines = [];
+    elLog.innerHTML = "";
+    updateScale();
+    updateCamera();
+    syncWindow(true);
+    log("初始：可视距离 " + visibility + " → 半径 " + radius + " 区块，窗口 " +
+      (2 * radius + 1) + "×" + (2 * radius + 1) + " 区块", "hi");
+    render();
+  }
+
+  // 依据当前位置重算订阅集合；返回新进入的区块
+  function computeEntered() {
+    var center = chunkOf(playerX, playerZ);
+    var entered = [];
+    var revisited = 0;
+    for (var dx = -radius; dx <= radius; dx++) {
+      for (var dz = -radius; dz <= radius; dz++) {
+        var key = (center[0] + dx) + "," + (center[1] + dz);
+        if (!chunks[key]) {
+          if (known[key]) {
+            // 曾经同步过：只探一次版本，不重复拉整块内容
+            chunks[key] = { state: "ok", t: 0 };
+            revisited++;
+          } else {
+            chunks[key] = { state: "sync", t: 0 };
+            entered.push([center[0] + dx, center[1] + dz]);
+          }
+        }
+      }
+    }
+    if (entered.length > 0) {
+      var xs = entered.map(function (c) { return c[0]; });
+      log("进入 " + entered.length + " 个<b>新</b>区块（" +
+        Math.min.apply(null, xs) + " .. " + Math.max.apply(null, xs) +
+        " 列）→ 排队区块校验请求（节流 4 个 / 0.1 s）", "hi");
+    }
+    if (revisited > 0) {
+      log("回到 " + revisited + " 个曾同步过的区块 → 只探版本，不重下内容", "");
+    }
+    lastCenter = center;
+    return entered;
+  }
+  function syncWindow(force) {
+    var center = chunkOf(playerX, playerZ);
+    if (!force && lastCenter && center[0] === lastCenter[0] && center[1] === lastCenter[1]) return;
+    computeEntered();
+  }
+
+  function step(dt) {
+    // 区块状态推进
+    var finished = 0;
+    for (var key in chunks) {
+      var c = chunks[key];
+      c.t += dt;
+      if (c.state === "sync" && c.t >= SYNC_DELAY) {
+        c.state = "ok";
+        c.t = 0;
+        known[key] = true;
+        finished++;
+        var parts = key.split(",");
+        var cx = parseInt(parts[0], 10), cz = parseInt(parts[1], 10);
+        // 该区块里"被主机改过的格子"随机放 2~4 个
+        var n = 2 + (Math.abs((cx * 73856093) ^ (cz * 19349663)) % 3);
+        for (var i = 0; i < n; i++) {
+          var h = Math.abs((cx * 374761393 + cz * 668265263 + i * 2654435761) % 1000);
+          sparks.push({
+            x: cx * CHUNK + (h % CHUNK) + 0.5,
+            z: cz * CHUNK + ((h * 7) % CHUNK) + 0.5,
+            life: 3.0
+          });
+        }
+      } else if (c.state === "ok" && c.t > KEEP_SYNCED) {
+        delete chunks[key];
+      }
+    }
+    if (finished > 0) {
+      log("主机回 Data(格子) + Complete(rev) → " + finished + " 个区块落地（绿色）", "ok");
+    }
+    for (var s = sparks.length - 1; s >= 0; s--) {
+      sparks[s].life -= dt;
+      if (sparks[s].life <= 0) sparks.splice(s, 1);
+    }
+
+    if (walking) {
+      playerX += WALK_SPEED * dt;
+      if (playerX >= startX + WALK_DISTANCE) {
+        playerX = startX + WALK_DISTANCE;
+        walking = false;
+        elPlay.textContent = "▶ 让玩家向东走";
+        log("走到终点（向东 " + WALK_DISTANCE + " 方块）", "hi");
+      }
+      updateCamera();
+      syncWindow(false);
+    }
+  }
+
+  function render() {
+    while (gGrid.firstChild) gGrid.removeChild(gGrid.firstChild);
+    while (gWin.firstChild) gWin.removeChild(gWin.firstChild);
+    while (gChunks.firstChild) gChunks.removeChild(gChunks.firstChild);
+    while (gRanges.firstChild) gRanges.removeChild(gRanges.firstChild);
+    while (gPlayer.firstChild) gPlayer.removeChild(gPlayer.firstChild);
+    while (gText.firstChild) gText.removeChild(gText.firstChild);
+
+    var worldLeft = camX, worldRight = camX + VIEW_W / PX;
+    var worldTop = camZ, worldBottom = camZ + VIEW_H / PX;
+
+    // ---- 区块网格 ----
+    var c0 = Math.floor(worldLeft / CHUNK), c1 = Math.ceil(worldRight / CHUNK);
+    var r0 = Math.floor(worldTop / CHUNK), r1 = Math.ceil(worldBottom / CHUNK);
+    for (var cx = c0; cx <= c1; cx++) {
+      gGrid.appendChild(mk("line", {
+        x1: px(cx * CHUNK), y1: 0, x2: px(cx * CHUNK), y2: VIEW_H,
+        stroke: "rgba(60,90,140,.13)", "stroke-width": 1
+      }));
+    }
+    for (var cz = r0; cz <= r1; cz++) {
+      gGrid.appendChild(mk("line", {
+        x1: 0, y1: pz(cz * CHUNK), x2: VIEW_W, y2: pz(cz * CHUNK),
+        stroke: "rgba(60,90,140,.13)", "stroke-width": 1
+      }));
+    }
+
+    // ---- 区域文件边界（256 方块）----
+    if (lyRegion.checked) {
+      var g0 = Math.floor(worldLeft / REGION), g1 = Math.ceil(worldRight / REGION);
+      var h0 = Math.floor(worldTop / REGION), h1 = Math.ceil(worldBottom / REGION);
+      for (var gx = g0; gx <= g1; gx++) {
+        gGrid.appendChild(mk("line", {
+          x1: px(gx * REGION), y1: 0, x2: px(gx * REGION), y2: VIEW_H,
+          stroke: "rgba(194,58,85,.55)", "stroke-width": 1.6, "stroke-dasharray": "9 6"
+        }));
+        gGrid.appendChild(mk("text", {
+          x: px(gx * REGION) + 4, y: 14, class: "dgt sm", fill: "rgba(194,58,85,.85)"
+        }, "Region " + gx));
+      }
+      for (var gy = h0; gy <= h1; gy++) {
+        gGrid.appendChild(mk("line", {
+          x1: 0, y1: pz(gy * REGION), x2: VIEW_W, y2: pz(gy * REGION),
+          stroke: "rgba(194,58,85,.55)", "stroke-width": 1.6, "stroke-dasharray": "9 6"
+        }));
+        gGrid.appendChild(mk("text", {
+          x: 6, y: pz(gy * REGION) - 5, class: "dgt sm", fill: "rgba(194,58,85,.85)"
+        }, "Region " + gy));
+      }
+    }
+
+    // ---- 区块状态 ----
+    var showChunkState = lyNew.checked;
+    for (var key in chunks) {
+      var parts = key.split(",");
+      var kx = parseInt(parts[0], 10), kz = parseInt(parts[1], 10);
+      var left = px(kx * CHUNK), top = pz(kz * CHUNK), size = CHUNK * PX;
+      if (left + size < 0 || left > VIEW_W || top + size < 0 || top > VIEW_H) continue;
+      if (!showChunkState) continue;
+      var st = chunks[key];
+      if (st.state === "sync") {
+        gChunks.appendChild(mk("rect", {
+          x: left + 0.5, y: top + 0.5, width: size - 1, height: size - 1, rx: 2,
+          fill: "rgba(169,116,10,.30)", stroke: "rgba(169,116,10,.95)", "stroke-width": 1.2
+        }));
+      } else {
+        var alpha = clamp(0.42 * (1 - st.t / KEEP_SYNCED), 0, 0.42);
+        gChunks.appendChild(mk("rect", {
+          x: left + 0.5, y: top + 0.5, width: size - 1, height: size - 1, rx: 2,
+          fill: "rgba(13,138,99," + alpha.toFixed(3) + ")",
+          stroke: "rgba(13,138,99,.35)", "stroke-width": 1
+        }));
+      }
+    }
+
+    // ---- 兴趣窗口与校验环 ----
+    var center = chunkOf(playerX, playerZ);
+    var winLeft = px((center[0] - radius) * CHUNK);
+    var winTop = pz((center[1] - radius) * CHUNK);
+    var winSize = (2 * radius + 1) * CHUNK * PX;
+    if (lyWindow.checked) {
+      gWin.appendChild(mk("rect", {
+        x: winLeft, y: winTop, width: winSize, height: winSize, rx: 4,
+        fill: "rgba(14,127,168,.05)", stroke: "rgba(14,127,168,.75)",
+        "stroke-width": 2, "stroke-dasharray": "10 5"
+      }));
+    }
+    if (lyVerify.checked) {
+      var vLeft = px((center[0] - 2) * CHUNK);
+      var vTop = pz((center[1] - 2) * CHUNK);
+      var vSize = 5 * CHUNK * PX;
+      gWin.appendChild(mk("rect", {
+        x: vLeft, y: vTop, width: vSize, height: vSize, rx: 3,
+        fill: "none", stroke: "rgba(14,127,168,.9)", "stroke-width": 1.6
+      }));
+    }
+
+    // ---- 各种距离（可选图层）----
+    var ppx = px(playerX), ppz = pz(playerZ);
+    function ring(blocks, color, label, dash) {
+      gRanges.appendChild(mk("circle", {
+        cx: ppx, cy: ppz, r: blocks * PX, fill: "none",
+        stroke: color, "stroke-width": 1.4, "stroke-dasharray": dash || "5 4"
+      }));
+      gRanges.appendChild(mk("text", {
+        x: ppx + blocks * PX * 0.72, y: ppz - blocks * PX * 0.72,
+        class: "dgt sm", fill: color
+      }, label));
+    }
+    if (lyWeather.checked) {
+      var wBlocks = visibility <= 64 ? 7 : (visibility <= 128 ? 8 : 9);
+      ring(wBlocks, "rgba(169,116,10,.95)", "雨柱 " + wBlocks + " 格", "3 3");
+    }
+    if (lyAnimal.checked) {
+      ring(12, "rgba(169,116,10,.75)", "12 格：动物 8 Hz");
+      ring(16, "rgba(13,138,99,.75)", "16 格：同群 16 Hz");
+      ring(24, "rgba(106,75,216,.75)", "24 格：飞行鸟 16 Hz");
+      ring(64, "rgba(60,90,140,.55)", "64 格：飞行鸟 8 Hz");
+    }
+    if (lyEnt.checked) {
+      ring(48, "rgba(60,90,140,.5)", "48 格：掉落物渲染上限");
+      ring(visibility, "rgba(14,127,168,.5)", visibility + " 格：投射物 / 模型 / 雾", "8 5");
+    }
+
+    // ---- 改动格子的火花 ----
+    sparks.forEach(function (s) {
+      var a = clamp(s.life / 3.0, 0, 1);
+      gChunks.appendChild(mk("rect", {
+        x: px(s.x) - 2.5, y: pz(s.z) - 2.5, width: 5, height: 5, rx: 1,
+        fill: "rgba(194,87,10," + (0.35 + 0.6 * a).toFixed(2) + ")"
+      }));
+    });
+
+    // ---- 玩家 ----
+    gPlayer.appendChild(mk("circle", { cx: ppx, cy: ppz, r: 8, fill: "#6a4bd8" }));
+    gPlayer.appendChild(mk("circle", {
+      cx: ppx, cy: ppz, r: 13, fill: "none", stroke: "rgba(106,75,216,.6)", "stroke-width": 1.4
+    }));
+    gPlayer.appendChild(mk("path", {
+      d: "M" + (ppx + 12) + " " + ppz + " l14 -7 l0 14 z", fill: "rgba(106,75,216,.9)"
+    }));
+    gPlayer.appendChild(mk("text", {
+      x: ppx + 18, y: ppz - 16, class: "dgt", fill: "#16203a"
+    }, "玩家"));
+
+    // ---- 角标文字 ----
+    var regionX = Math.floor(playerX / REGION), regionZ = Math.floor(playerZ / REGION);
+    gText.appendChild(mk("rect", {
+      x: 10, y: VIEW_H - 74, width: 372, height: 64, rx: 8,
+      fill: "rgba(255,255,255,.94)", stroke: "rgba(60,90,140,.25)"
+    }));
+    gText.appendChild(mk("text", { x: 22, y: VIEW_H - 52, class: "dgt" },
+      "坐标 " + playerX.toFixed(0) + ", " + playerZ.toFixed(0) +
+      "　区块 " + center[0] + ", " + center[1] +
+      "　Region " + regionX + ", " + regionZ));
+    gText.appendChild(mk("text", { x: 22, y: VIEW_H - 30, class: "dgt sm" },
+      "可视距离 " + visibility + " → 半径 " + radius + " 区块（窗口 " +
+      (2 * radius + 1) + "×" + (2 * radius + 1) + " = " +
+      ((2 * radius + 1) * CHUNK) + "×" + ((2 * radius + 1) * CHUNK) + " 方块）"));
+    gText.appendChild(mk("text", { x: 22, y: VIEW_H - 12, class: "dgt sm" },
+      "琥珀 = 正在要检查点　绿 = 已同步　橙点 = 主机在该区块改过的格子"));
+
+    elReadout.textContent = "半径 " + radius + " 区块 · 窗口 " + (2 * radius + 1) + "×" +
+      (2 * radius + 1) + "（" + ((2 * radius + 1) * CHUNK) + " 方块）";
+  }
+
+  function frame(now) {
+    if (!lastTime) lastTime = now;
+    var dt = Math.min((now - lastTime) / 1000, 0.1);
+    lastTime = now;
+    if (walking || sparks.length > 0 || Object.keys(chunks).length > 0) {
+      step(dt);
+      render();
+    }
+    window.requestAnimationFrame(frame);
+  }
+
+  elPlay.addEventListener("click", function () {
+    if (walking) {
+      walking = false;
+      elPlay.textContent = "▶ 继续向东走";
+      log("暂停", "");
+    } else {
+      if (playerX >= startX + WALK_DISTANCE - 0.5) {
+        log("已到终点，先「重置到起点」", "");
+        return;
+      }
+      walking = true;
+      elPlay.textContent = "⏸ 暂停";
+      log("开始向东移动（" + WALK_SPEED + " 方块/秒）", "hi");
+      render();
+    }
+  });
+  elReset.addEventListener("click", function () {
+    walking = false;
+    elPlay.textContent = "▶ 让玩家向东走";
+    resetState();
+  });
+  elVis.addEventListener("change", function () {
+    visibility = parseInt(elVis.value, 10);
+    var newRadius = clamp(Math.ceil(Math.max(visibility, 16) / 16), 1, 32);
+    var changed = newRadius !== radius;
+    radius = newRadius;
+    updateScale();
+    updateCamera();
+    chunks = {};
+    lastCenter = null;
+    syncWindow(true);
+    log("可视距离 = " + visibility + " → 半径 " + radius + " 区块；" +
+      (changed ? "窗口尺寸已改变，重新建立订阅" : "窗口尺寸未变"), "warn");
+    render();
+  });
+  [lyWindow, lyVerify, lyNew, lyRegion, lyAnimal, lyWeather, lyEnt].forEach(function (box) {
+    box.addEventListener("change", render);
+  });
+
+  /* ==========================================================
+     可播放图解（与 MOV01 同一套播放器：▶ 播放 / ⏸ 暂停 / 拖动进度）
+     参数仍取自源码：检查点批 32 格、校验环 ±2 区块 0.5s/个、
+     雨柱 7/8/9 格且仅前向 60° 锥、动物分级 10/12·16·24·64 格、
+     兴趣窗口 = 中心区块 ± R（R = ⌈可视距离/16⌉）
+     ========================================================== */
+  function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+  function lerp(a, b, k) { return a + (b - a) * k; }
+  function easeK(t) { return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2; }
+  function clampK(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }
+  function rbox(x, y, w, h, cls, rx) {
+    return '<rect class="dgb ' + (cls || "") + '" x="' + x + '" y="' + y + '" width="' + w +
+      '" height="' + h + '" rx="' + (rx === undefined ? 9 : rx) + '"/>';
+  }
+  function rtxt(x, y, s, cls, anchor) {
+    return '<text class="' + (cls || "dgt") + '" x="' + x + '" y="' + y + '"' +
+      (anchor ? ' text-anchor="' + anchor + '"' : "") + ">" + esc(s) + "</text>";
+  }
+  function rarrow(x1, y1, x2, y2, cls, w) {
+    var a = Math.atan2(y2 - y1, x2 - x1);
+    var hx = x2 - 9 * Math.cos(a), hy = y2 - 9 * Math.sin(a);
+    var s = (w || 1.6) / 1.6;
+    return '<path class="dgl ' + (cls || "") + '" stroke-width="' + (w || 1.6) + '" d="M' + x1 + " " + y1 +
+      " L" + hx + " " + hy + '"/>' +
+      '<path class="dgl ' + (cls || "") + '" stroke-width="' + (w || 1.6) + '" d="M' + (hx - 6 * s * Math.sin(a)) +
+      " " + (hy + 6 * s * Math.cos(a)) + " L" + x2 + " " + y2 + " L" + (hx + 6 * s * Math.sin(a)) + " " +
+      (hy - 6 * s * Math.cos(a)) + '"/>';
+  }
+  function svgOf(w, h, body) { return '<svg viewBox="0 0 ' + w + " " + h + '" role="img">' + body + "</svg>"; }
+
+  var ANIM = {};
+
+  /* ---------- ① 检查点往返 ---------- */
+  ANIM.cps = {
+    w: 900, h: 260, duration: 9.2,
+    cap: "检查点往返：Request → Data ×N → Complete；批数对不上就整块重来",
+    extra: '<label class="xtra"><input type="checkbox" class="js-x-drop"> 模拟丢一批</label>',
+    phase: function (t, host) {
+      var drop = host.querySelector(".js-x-drop").checked;
+      if (t < 1.2) return "客户端 → 主机：Request(chunk 12,7 · known=1283)";
+      if (t < 2.0) return "主机查该区块的改动记录表";
+      if (t < 5.6) return "主机 → 客户端：Data ×3（每批 32 格）";
+      if (t < 6.4) return "主机 → 客户端：Complete(rev=1291 · batches=3)";
+      if (t < 7.2) return "客户端核对：收到的批数 vs 声明";
+      return drop ? "2/3 批 → 标记失败，整块重来" : "3/3 批 → 落地，区块版本 1291";
+    },
+    draw: function (t, host) {
+      var drop = host.querySelector(".js-x-drop").checked;
+      var cx = 150, hx = 750, y = 118;
+      var s = rbox(cx - 110, y - 46, 220, 92, "cli") +
+        rtxt(cx, y - 22, "客户端", "dghead", "middle") +
+        rtxt(cx, y - 2, "区块 12,7", "dgt sm", "middle") +
+        rtxt(cx, y + 18, "known / 缺失集合", "dgt sm", "middle") +
+        rbox(hx - 110, y - 46, 220, 92, "host") +
+        rtxt(hx, y - 22, "主机", "dghead", "middle") +
+        rtxt(hx, y - 2, "改动记录表", "dgt sm", "middle") +
+        rtxt(hx, y + 18, "只发改过的格子", "dgt sm", "middle");
+      var wave = 12 * Math.sin(t * 6);
+      // ① Request
+      if (t >= 0.1 && t < 1.3) {
+        var k = clampK((t - 0.1) / 1.0, 0, 1);
+        var x = lerp(cx + 110, hx - 110, k);
+        s += rarrow(x, y - 30, x + 20, y - 30, "vi", 2) + rtxt(cx + 40, y - 40, "① Request（可靠有序）", "dgt sm");
+      }
+      // ② 主机查表
+      if (t >= 1.2 && t < 2.1) {
+        s += rbox(hx - 118, y - 54, 236, 108, "warn", 12) +
+          rtxt(hx, y + 44, "查表：" + (12 + Math.round(wave)) + " 格有记录", "dgt sm", "middle");
+      }
+      // ③ Data ×3
+      var batches = [2.0, 3.2, 4.4];
+      for (var i = 0; i < batches.length; i++) {
+        var st = batches[i];
+        if (t < st || t > st + 1.0) continue;
+        var dropped = drop && i === 1;
+        var kk = clampK((t - st) / 0.9, 0, 1);
+        var bx = lerp(hx - 110, cx + 110, kk);
+        var cls = dropped ? "rd" : "cy";
+        s += rarrow(bx + 18, y + 30, bx, y + 30, cls, 2);
+        s += rtxt(cx + 40, y + 62, (dropped ? "✗ 丢失 " : "② ") + "Data 批 " + (i + 1) + "（32 格）", "dgt sm");
+      }
+      // ④ Complete
+      if (t >= 5.6 && t < 6.6) {
+        var k2 = clampK((t - 5.6) / 0.9, 0, 1);
+        var ax = lerp(hx - 110, cx + 110, k2);
+        s += rarrow(ax + 18, y - 62, ax, y - 62, "gr", 2) + rtxt(cx + 40, y - 72, "④ Complete(rev=1291, batches=3)", "dgt sm");
+      }
+      // ⑤ 核对
+      if (t >= 6.4) {
+        var got = drop ? 2 : 3;
+        var ok = got === 3 && t >= 7.2;
+        s += rbox(cx - 130, y + 78, 260, 46, ok ? "srv" : (t >= 7.2 ? "rd" : ""), 9) +
+          rtxt(cx, y + 100, "收到批数 " + got + " / 声明 3", "dgt", "middle") +
+          rtxt(cx, y + 118, ok ? "→ 落地" : (t >= 7.2 ? "→ 失败，重新排队" : "→ 核对中…"), "dgt sm", "middle");
+      }
+      return svgOf(this.w, this.h, s);
+    }
+  };
+
+  /* ---------- ② ±2 区块校验环 ---------- */
+  ANIM.ring = {
+    w: 900, h: 300, duration: 13.0,
+    cap: "校验环：每 0.5 秒挑一个区块核对版本；发现落后就补发一次检查点",
+    laggingCells: [2, 9, 16],
+    phase: function (t, host) {
+      var i = Math.min(24, Math.floor(t / 0.5));
+      var fixed = this.laggingCells.filter(function (c) { return c < i; }).length;
+      return "第 " + (i + 1) + " / 25 个区块 · 已补发 " + fixed + " 次";
+    },
+    draw: function (t, host) {
+      var cs = 46, x0 = 96, y0 = 32, i = Math.min(24, Math.floor(t / 0.5));
+      var cur = i, s = "";
+      for (var c = 0; c < 25; c++) {
+        var col = c % 5, row = Math.floor(c / 5);
+        var x = x0 + col * cs, y = y0 + row * cs;
+        var isLag = this.laggingCells.indexOf(c) >= 0;
+        var visited = c <= cur;
+        var cls = "";
+        if (c === cur && t < this.duration) cls = "warn";
+        else if (isLag && visited) cls = "srv";
+        else if (visited) cls = "";
+        s += '<rect class="dgb ' + cls + '" x="' + x + '" y="' + y + '" width="' + (cs - 4) + '" height="' + (cs - 4) + '" rx="6"/>';
+        s += rtxt(x + cs / 2 - 2, y + cs / 2 - 2, String(c + 1), "dgt sm", "middle");
+        if (isLag && visited && c !== cur) s += rtxt(x + cs / 2 - 2, y + cs / 2 + 12, "补发", "dgt sm", "middle");
+      }
+      s += rtxt(x0, y0 - 12, "玩家的 5×5 区块（±2）", "dghead");
+      s += rtxt(x0 + 5 * cs / 2 - 2, y0 + 5 * cs + 14, "▲ 绿 = 校验通过；黄 = 本轮正在校验", "dgt sm", "middle");
+      var fixed = this.laggingCells.filter(function (c) { return c < cur; }).length;
+      var px = x0 + 5 * cs + 40;
+      s += rbox(px, y0, 320, 190, "", 10);
+      s += rtxt(px + 16, y0 + 26, "稳定态 vs 异常态", "dghead");
+      s += rtxt(px + 16, y0 + 52, "已校验区块：" + (cur + 1) + " / 25", "dgt");
+      s += rtxt(px + 16, y0 + 74, "发现版本落后：" + fixed + " 个", "dgt");
+      s += rtxt(px + 16, y0 + 96, "补发请求：" + fixed + " 次", "dgt");
+      s += rtxt(px + 16, y0 + 124, "节流：4 个 / 0.1 s", "dgt sm");
+      s += rtxt(px + 16, y0 + 144, "高水位：在途 ≥32 或检查点批 ≥16 时暂停", "dgt sm");
+      s += rtxt(px + 16, y0 + 166, "单区块探测冷却：1.0 s", "dgt sm");
+      return svgOf(this.w, this.h, s);
+    }
+  };
+
+  /* ---------- ③ 雨柱：相机移动时创建与剔除 ---------- */
+  ANIM.rain = {
+    w: 900, h: 300, duration: 12.0,
+    cap: "雨柱只在相机周围 7–9 格、且仅前向约 60° 锥内被创建；走一步就换一批",
+    extra: '<label class="xtra">可视距离 <select class="js-x-vis">' +
+      '<option value="64">64 → 半径 7</option><option value="128" selected>128 → 半径 8</option>' +
+      '<option value="160">160 → 半径 9</option></select></label>',
+    phase: function (t, host) {
+      var vis = parseInt(host.querySelector(".js-x-vis").value, 10) || 128;
+      var R = vis <= 64 ? 7 : (vis <= 128 ? 8 : 9);
+      var bx = Math.floor(t * 1.6), fx = t * 1.6 - bx;
+      return "相机 x = " + bx + ".m" + Math.round(fx * 10) + " · 半径 " + R + " 格 · 只画前向锥内的雨柱";
+    },
+    draw: function (t, host) {
+      var vis = parseInt(host.querySelector(".js-x-vis").value, 10) || 128;
+      var R = vis <= 64 ? 7 : (vis <= 128 ? 8 : 9);
+      var sp = 15, cx = 340, cy = 150;
+      var bx = Math.floor(t * 1.6), fx = t * 1.6 - bx;
+      var s = "", live = 0;
+      s += '<circle cx="' + cx + '" cy="' + cy + '" r="' + (R * sp) + '" fill="rgba(14,127,168,.05)" stroke="rgba(14,127,168,.5)" stroke-dasharray="5 4"/>';
+      s += rarrow(cx, cy, cx + R * sp, cy, "cy", 1.4);
+      s += rtxt(cx + R * sp + 6, cy + 4, "前向", "dgt sm");
+      for (var dz = -R; dz <= R; dz++) {
+        for (var dx = -R; dx <= R; dx++) {
+          var d2 = dx * dx + dz * dz;
+          if (d2 > R * R) continue;
+          // 与源码一致：只保留与视线方向点积 > 0.5 的雨柱（≈ ±60° 锥）
+          if (d2 > 0 && dx / Math.sqrt(d2) <= 0.5) continue;
+          live++;
+          var px2 = cx + (dx - fx) * sp, py2 = cy + dz * sp;
+          s += '<line x1="' + px2 + '" y1="' + (py2 - 9) + '" x2="' + px2 + '" y2="' + (py2 + 9) +
+            '" stroke="rgba(14,127,168,.75)" stroke-width="1.6"/>';
+        }
+      }
+      s += '<circle cx="' + cx + '" cy="' + cy + '" r="6" fill="#6a4bd8"/>';
+      s += rtxt(cx, cy + 22, "相机", "dgt sm", "middle");
+      s += rbox(640, 40, 240, 130, "", 10);
+      s += rtxt(656, 66, "实时统计", "dghead");
+      s += rtxt(656, 92, "活跃雨柱：" + live + " 根", "dgt");
+      s += rtxt(656, 114, "半径：" + R + " 格", "dgt");
+      s += rtxt(656, 136, "可视距离：" + vis, "dgt");
+      s += rtxt(656, 158, "天气状态：全局（与距离无关）", "dgt sm");
+      s += rtxt(20, 286, "走进新格 → 右前方出现新雨柱，左后方被剔除；雨柱上端高度由该格的地形决定。", "dgt sm");
+      return svgOf(this.w, this.h, s);
+    }
+  };
+
+  /* ---------- ④ 动物靠近：频率分级 ---------- */
+  ANIM.animal = {
+    w: 900, h: 330, duration: 12.0,
+    cap: "动物从 70 格走近到 4 格：tier 与同步频率逐级升高（2 → 4 → 8 → 16 Hz）",
+    extra: '<label class="xtra"><input type="checkbox" class="js-x-chase"> 正在追玩家</label>' +
+      '<label class="xtra"><input type="checkbox" class="js-x-hit"> 3 秒内被打过</label>',
+    tier: function (d, chase, hit) {
+      var tier = 0;
+      if (chase) tier = 1;
+      if (d <= (tier >= 2 ? 12 : 10)) tier = Math.max(tier, 2);
+      if (hit) tier = Math.max(tier, 3);
+      return tier;
+    },
+    phase: function (t, host) {
+      var d = lerp(70, 4, easeK(clampK(t / this.duration, 0, 1)));
+      var chase = host.querySelector(".js-x-chase").checked;
+      var hit = host.querySelector(".js-x-hit").checked;
+      var tier = this.tier(d, chase, hit);
+      var iv = tier >= 3 ? 62.5 : tier === 2 ? 125 : tier === 1 ? 250 : 500;
+      return "距离 " + d.toFixed(1) + " 格 · tier " + tier + " · 间隔 " + iv + " ms（" + (1000 / iv).toFixed(0) + " Hz）";
+    },
+    draw: function (t, host) {
+      var d = lerp(70, 4, easeK(clampK(t / this.duration, 0, 1)));
+      var chase = host.querySelector(".js-x-chase").checked;
+      var hit = host.querySelector(".js-x-hit").checked;
+      var tier = this.tier(d, chase, hit);
+      var iv = tier >= 3 ? 0.0625 : tier === 2 ? 0.125 : tier === 1 ? 0.25 : 0.5;
+      var ox = 230, oy = 160, k = 2.4;
+      var s = "";
+      [[64, "#93a6c4", "64 格"], [24, "#7c5cf0", "24"], [16, "#17a273", "16"], [12, "#d99b12", "12"], [5, "#d1495f", "5"]]
+        .forEach(function (r) {
+          s += '<circle cx="' + ox + '" cy="' + oy + '" r="' + (r[0] * k) + '" fill="none" stroke="' + r[1] +
+            '" stroke-width="1.4" stroke-dasharray="5 4"/>';
+          s += rtxt(ox + r[0] * k - 4, oy - 4, r[2], "dgt sm", "middle");
+        });
+      s += '<circle cx="' + ox + '" cy="' + oy + '" r="6" fill="#6a4bd8"/>' + rtxt(ox - 6, oy + 20, "玩家", "dgt sm", "middle");
+      var ax = ox + d * k;
+      s += '<circle cx="' + ax + '" cy="' + oy + '" r="7" fill="#0d8a63"/>' + rtxt(ax, oy - 14, "动物", "dgt sm", "middle");
+      s += rarrow(ox + 8, oy + 34, ax, oy + 34, "gr", 1.4) + rtxt((ox + ax) / 2, oy + 50, d.toFixed(1) + " 格", "dgt sm", "middle");
+      var px = 620;
+      s += rbox(px, 26, 260, 150, "", 10);
+      s += rtxt(px + 16, 52, "当前频率", "dghead");
+      s += rtxt(px + 16, 80, "tier " + tier, "dgt");
+      s += rtxt(px + 16, 104, "间隔 " + (iv * 1000).toFixed(1) + " ms", "dgt");
+      s += rtxt(px + 16, 128, (1 / iv).toFixed(0) + " Hz", "dgt");
+      s += rtxt(px + 16, 152, "来源：最近距离 + 状态边沿", "dgt sm");
+      var spacing = 220 * (iv / 0.5);
+      for (var i = 0; i < 6; i++) {
+        var sx = px + 20 + i * spacing;
+        if (sx > px + 244) break;
+        s += '<line x1="' + sx + '" y1="196" x2="' + sx + '" y2="220" stroke="#17a273" stroke-width="2.4"/>';
+      }
+      s += rtxt(px, 240, "发送节奏（最近约 3 秒）", "dgt sm");
+      return svgOf(this.w, this.h, s);
+    }
+  };
+
+  /* ---------- ⑤ 两个窗口移动：改动发给谁 ---------- */
+  ANIM.overlap = {
+    w: 900, h: 320, duration: 14.0,
+    cap: "两个玩家的兴趣窗口随位置滑动；改动只会发给窗口覆盖该区块的人",
+    radiusChunks: 2,
+    phase: function (t, host) {
+      var a = lerp(180, 430, t / this.duration);
+      var b = lerp(560, 400, t / this.duration);
+      var subs = this.subs(a, b);
+      return "改动点 → 订阅者：" + (subs.length ? subs.join("、") : "无人（改动仍进 journal）");
+    },
+    subs: function (a, b) {
+      var R = this.radiusChunks, size = 16, ch = 430;
+      var out = [];
+      if (Math.abs(ch - a) <= R * size + size / 2) out.push("A");
+      if (Math.abs(ch - b) <= R * size + size / 2) out.push("B");
+      return out;
+    },
+    draw: function (t, host) {
+      var a = lerp(180, 430, t / this.duration);
+      var b = lerp(560, 400, t / this.duration);
+      var R = this.radiusChunks, cw = 16, k = 1.3;
+      var left = 60, s = "";
+      function px(x) { return left + (x - 100) * k; }
+      var x0 = Math.floor(100 / cw) * cw, x1 = 620;
+      for (var x = x0; x <= x1; x += cw) {
+        s += '<line x1="' + px(x) + '" y1="40" x2="' + px(x) + '" y2="250" stroke="rgba(60,90,140,.14)" stroke-width="1"/>';
+      }
+      var winW = (2 * R + 1) * cw * k;
+      s += '<rect x="' + (px(a) - winW / 2) + '" y="40" width="' + winW + '" height="210" fill="rgba(106,75,216,.10)" stroke="#7c5cf0" stroke-width="1.6"/>';
+      s += '<rect x="' + (px(b) - winW / 2) + '" y="40" width="' + winW + '" height="210" fill="rgba(13,138,99,.10)" stroke="#17a273" stroke-width="1.6"/>';
+      s += '<line x1="' + px(430) + '" y1="30" x2="' + px(430) + '" y2="262" stroke="#d1495f" stroke-width="2" stroke-dasharray="6 4"/>';
+      s += rtxt(px(430), 24, "改动点（区块 26,8）", "dgt sm", "middle");
+      s += '<circle cx="' + px(a) + '" cy="145" r="7" fill="#7c5cf0"/>' + rtxt(px(a), 168, "A", "dgt sm", "middle");
+      s += '<circle cx="' + px(b) + '" cy="145" r="7" fill="#17a273"/>' + rtxt(px(b), 168, "B", "dgt sm", "middle");
+      var subs = this.subs(a, b);
+      subs.forEach(function (who) {
+        var tx = who === "A" ? px(a) : px(b);
+        s += rarrow(px(430), 210, tx, 178, who === "A" ? "vi" : "gr", 1.8);
+      });
+      s += rbox(640, 40, 240, 120, "", 10);
+      s += rtxt(656, 66, "本次投影结果", "dghead");
+      s += rtxt(656, 92, "订阅者：" + (subs.length ? subs.join("、") : "无"), "dgt");
+      s += rtxt(656, 114, "窗口半径：" + R + " 区块（" + ((2 * R + 1) * cw) + " 方块）", "dgt sm");
+      s += rtxt(656, 136, "注：窗口中心取主机的权威位置", "dgt sm");
+      s += rtxt(20, 290, "窗口重叠时两人都收；只有一人在窗口内时只发给那个人；都不在则只进 journal，等追帧或重进时补。", "dgt sm");
+      return svgOf(this.w, this.h, s);
+    }
+  };
+
+  function buildAnim(def, host) {
+    host.innerHTML = '<div class="figsvg"></div>' +
+      '<div class="playbar">' +
+      '<button class="btn pri js-play" type="button">▶ 播放</button>' +
+      '<button class="btn js-reset" type="button">↺ 重置</button>' +
+      '<input type="range" class="js-seek" min="0" max="1000" value="0">' +
+      '<span class="phase"></span>' + (def.extra || "") +
+      "</div>" +
+      '<figcaption>' + def.cap + "</figcaption>";
+    var fig = host.querySelector(".figsvg");
+    var phase = host.querySelector(".phase");
+    var seek = host.querySelector(".js-seek");
+    var btn = host.querySelector(".js-play");
+    var t = 0, playing = false, last = 0, raf2 = 0;
+
+    function draw() {
+      fig.innerHTML = def.draw.call(def, t, host);
+      phase.textContent = def.phase.call(def, t, host);
+      seek.value = String(Math.round((t / def.duration) * 1000));
+    }
+    function loop(now) {
+      if (!playing) return;
+      if (!last) last = now;
+      var dt = Math.min((now - last) / 1000, 0.1);
+      last = now;
+      t += dt;
+      if (t >= def.duration) {
+        t = def.duration;
+        playing = false;
+        btn.textContent = "▶ 重播";
+      }
+      draw();
+      if (playing) raf2 = window.requestAnimationFrame(loop);
+      else last = 0;
+    }
+    btn.addEventListener("click", function () {
+      if (playing) { playing = false; btn.textContent = "▶ 继续"; return; }
+      if (t >= def.duration) t = 0;
+      playing = true;
+      last = 0;
+      btn.textContent = "⏸ 暂停";
+      raf2 = window.requestAnimationFrame(loop);
+    });
+    host.querySelector(".js-reset").addEventListener("click", function () {
+      playing = false;
+      t = 0;
+      btn.textContent = "▶ 播放";
+      draw();
+    });
+    seek.addEventListener("input", function () {
+      playing = false;
+      btn.textContent = "▶ 继续";
+      t = def.duration * (parseInt(seek.value, 10) / 1000);
+      draw();
+    });
+    Array.prototype.forEach.call(host.querySelectorAll("input,select"), function (el) {
+      el.addEventListener("change", draw);
+    });
+    draw();
+  }
+
+  Array.prototype.forEach.call(document.querySelectorAll(".anim"), function (host) {
+    var def = ANIM[host.getAttribute("data-anim")];
+    if (def) buildAnim(def, host);
+  });
+
+  resetState();
+  window.requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

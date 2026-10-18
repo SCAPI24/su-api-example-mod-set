@@ -40,8 +40,6 @@ namespace CmdBridgeMod
             ResolveMove,
             Press,
             Release,
-            KeyDown,
-            KeyUp,
             Finish
         }
 
@@ -52,31 +50,7 @@ namespace CmdBridgeMod
             public bool HasPoint;
             public string Selector;
             public MouseButton Button;
-            public Key Key;
             public string Note;
-        }
-
-        /// <summary>手势端点：要么是坐标，要么是元素选择器（运行时解析成中心点）。</summary>
-        internal struct Endpoint
-        {
-            public string Selector;
-            public Vector2 Point;
-            public bool HasPoint;
-
-            public static Endpoint At(Vector2 point)
-            {
-                return new Endpoint { Point = point, HasPoint = true };
-            }
-
-            public static Endpoint At(string selector)
-            {
-                return new Endpoint { Selector = selector };
-            }
-
-            public override string ToString()
-            {
-                return Selector != null ? Selector : ("(" + Point.X.ToString("0") + "," + Point.Y.ToString("0") + ")");
-            }
         }
 
         private readonly InputInjector m_injector;
@@ -312,63 +286,8 @@ namespace CmdBridgeMod
             return Describe();
         }
 
-        public Dictionary<string, object> RightClick(string selector)
-        {
-            Enqueue(new Step { Kind = StepKind.ResolveMove, Selector = selector, Note = "rclick:move" });
-            Enqueue(new Step { Kind = StepKind.Press, Button = MouseButton.Right, Note = "rclick:press" });
-            Enqueue(new Step { Kind = StepKind.Release, Button = MouseButton.Right, Note = "rclick:release" });
-            return Describe();
-        }
-
-        /// <summary>Shift + 左键：引擎把它当 `SpecialClick`（`WidgetInput.cs:755-760`）。</summary>
-        public Dictionary<string, object> ShiftClick(string selector)
-        {
-            Enqueue(new Step { Kind = StepKind.KeyDown, Key = Key.Shift, Note = "shift:down" });
-            Enqueue(new Step { Kind = StepKind.ResolveMove, Selector = selector, Note = "shift:move" });
-            Enqueue(new Step { Kind = StepKind.Press, Button = MouseButton.Left, Note = "shift:press" });
-            Enqueue(new Step { Kind = StepKind.Release, Button = MouseButton.Left, Note = "shift:release" });
-            Enqueue(new Step { Kind = StepKind.KeyUp, Key = Key.Shift, Note = "shift:up" });
-            return Describe();
-        }
-
-        /// <summary>
-        /// 拖拽：定位 → 按下 →（可选长按）→ 分步移动到目标 → 松开。
-        /// `holdMs ≥ 500` 时即为"长按分割源后拖动"，引擎会以 `SingleItem` 模式只搬 1 个（分离物品）。
-        /// </summary>
-        public Dictionary<string, object> Drag(Endpoint from, Endpoint to, int steps, int holdMs)
-        {
-            Vector2 a = ResolveEndpoint(from, "drag:from");
-            Vector2 b = ResolveEndpoint(to, "drag:to");
-            if (steps < 2)
-                steps = 2;
-
-            Enqueue(new Step { Kind = StepKind.Move, Point = a, HasPoint = true, Note = "drag:move-from" });
-            Enqueue(new Step { Kind = StepKind.Press, Button = MouseButton.Left, Note = "drag:press" });
-
-            int holdFrames = holdMs > 0 ? (int)Math.Ceiling(holdMs / 16.7) : 0;
-            for (int i = 0; i < holdFrames; i++)
-                Enqueue(new Step { Kind = StepKind.Assert, Note = "drag:hold" + i });
-
-            // 第一步必须跨过拖拽阈值（MinimumDragDistance * GlobalScale，默认约 10*scale），
-            // 否则引擎会把它当"长按"而不是拖拽。
-            Vector2 delta = b - a;
-            float distance = delta.Length();
-            float firstStepDistance = Math.Min(Math.Max(40f, distance * 0.25f), Math.Max(distance, 1f));
-            Vector2 firstPoint = distance > 1f ? a + Vector2.Normalize(delta) * firstStepDistance : b;
-            Enqueue(new Step { Kind = StepKind.Move, Point = firstPoint, HasPoint = true, Note = "drag:step1" });
-
-            int remaining = steps - 1;
-            for (int i = 1; i <= remaining; i++)
-            {
-                float t = i / (float)remaining;
-                Vector2 point = Vector2.Lerp(firstPoint, b, t);
-                Enqueue(new Step { Kind = StepKind.Move, Point = point, HasPoint = true, Note = "drag:step" + (i + 1) });
-            }
-
-            Enqueue(new Step { Kind = StepKind.Move, Point = b, HasPoint = true, Note = "drag:to-target" });
-            Enqueue(new Step { Kind = StepKind.Release, Button = MouseButton.Left, Note = "drag:release" });
-            return Describe();
-        }
+        // 用户定（2026-10-17）：`RightClick` / `ShiftClick` / `Drag` 三个会话动作**没有应用场景**，已删除
+        //（连同 `ui.rightclick` / `ui.shiftclick` / `ui.drag` / `ui.split` 命令与 `mode=input` 路径）。
 
         // ---------------------------------------------------------------- 队列与执行
 
@@ -529,16 +448,6 @@ namespace CmdBridgeMod
                     ApplyAndroidTouch();
                     break;
 
-                case StepKind.KeyDown:
-                    m_heldKeys.Add((int)step.Key);
-                    m_injector.SetKeyHeld(step.Key, true);
-                    break;
-
-                case StepKind.KeyUp:
-                    m_heldKeys.Remove((int)step.Key);
-                    m_injector.SetKeyHeld(step.Key, false);
-                    break;
-
                 case StepKind.Finish:
                     FinishSession();
                     break;
@@ -633,29 +542,7 @@ namespace CmdBridgeMod
             }
         }
 
-        /// <summary>把端点解析成坐标（元素端点需要在游戏线程解析 → 走一次帧首调度）。</summary>
-        private Vector2 ResolveEndpoint(Endpoint endpoint, string note)
-        {
-            if (endpoint.Selector == null)
-            {
-                if (!endpoint.HasPoint)
-                    throw new BridgeCommandException("invalid_argument", "Endpoint has neither selector nor point.");
-                return endpoint.Point;
-            }
-
-            Vector2 resolved = default(Vector2);
-            bool ok = false;
-            m_injector.RunOnFrame(delegate
-            {
-                resolved = ResolveElementCenter(endpoint.Selector);
-                ok = true;
-                return null;
-            });
-
-            if (!ok)
-                throw new BridgeCommandException("not_ready", "Failed to resolve endpoint " + endpoint.Selector);
-            return resolved;
-        }
+        // 用户定（2026-10-17）：端点拖拽已删除，`ResolveEndpoint`（只在拖拽里用）随之删除。
 
         private Vector2 ResolveElementCenter(string selector)
         {

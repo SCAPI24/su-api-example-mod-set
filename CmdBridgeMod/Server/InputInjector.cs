@@ -194,6 +194,21 @@ namespace CmdBridgeMod
             // 录进"本帧 UI 动作"：动作包靠它把菜单点击录成语义事件（`click:Play` / `click:list:…@…`）。
             NoteUiAction("click:" + target);
 
+            // 规则 1 + 规则 2（用户 2026-10-17 定）：目标在世界内 HUD 且当前不可点时，先由本 Mod 用
+            // 玩家输入层的 E 把 HUD 强制展开；目标挂在 `MoreContents` 里（`MoreButton` 是二级开关）
+            // 就再点一下 MoreButton 展开二级，然后才点。游戏线程上无法跨帧等待时它会**明确报错**
+            // （`hud_reveal_pending` / `more_toggle_pending`），绝不"照点一下当作成功"
+            // （实现见 `UiService.EnsureHudTargetRevealed`）。
+            // 这条入口只回 bool + error，装不下规则 1 / 规则 2 的字段，所以把经过写进日志
+            // （用户要求"要告诉我发生了什么"；`ui.click` 那条入口会把同样的内容写进回包字段）。
+            UiService.HudRevealReport reveal = Ui.EnsureHudTargetRevealed(target);
+            if (reveal.HudRevealed || reveal.MoreToggled)
+            {
+                Log.Information("[CmdBridge][hud] act.uiclick '" + target + "' -> "
+                    + (reveal.Note ?? "hudRevealed=" + reveal.HudRevealed
+                        + "; moreToggled=" + reveal.MoreToggled));
+            }
+
             bool viaSession = string.Equals(mode, "input", StringComparison.OrdinalIgnoreCase);
             if (GameThreadInvoker.IsGameThread())
             {
@@ -467,6 +482,21 @@ namespace CmdBridgeMod
             Key key = ParseKey(keyName);
             PulseKeyCore(key, holdMilliseconds);
             return DescribeHeldKeys();
+        }
+
+        /// <summary>
+        /// 走**玩家输入层**的按键脉冲，供 Mod 内部复用（规则 1 的"按 E 强制展开 HUD"用它）。
+        ///
+        /// 与 `act.hold` / `act.key` 是**同一条实现**（`SetKeyHeld` → 直接写引擎的
+        /// `Keyboard.m_keysDownArray` / `m_keysDownOnceArray`，`ComponentInput.cs:194` 的
+        /// `input.IsKeyDownOnce(Key.E)` 读的就是它），所以它同样能穿过控件层直达 `PlayerInput`
+        /// —— 这就是"`act.hold W` 能走路"而写在控件输入面上的按键不行的原因。
+        /// 绝不碰真实键盘：这里的数组就是引擎自己的输入状态。
+        /// </summary>
+        internal void PulsePlayerInputKey(Key key, int holdMilliseconds)
+        {
+            EnsureEnabled();
+            PulseKeyCore(key, holdMilliseconds);
         }
 
         /// <summary>持续按下 / 释放（移动类必须用这个）。</summary>

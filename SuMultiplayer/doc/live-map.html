@@ -1,0 +1,1931 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>地形实时地图 · 以角色为中心（SuMultiplayer LiveMap）</title>
+<meta name="description" content="读取 LiveMap 工具 GET /state 的真实区块数据：地形只用主机 chunks[] 上色（按列上色 + 按高度提亮，默认 12.4 px/格），客户端区块一律不填地形、只画按验证状态着色的线框（只画客户端当前内存里的区块，卸载即消失：绿=已验证同步 s=2 / 蓝=同步了主机数据 s=4 / 黄=已上报待裁决 s=1 / 红=验证失败 s=3）；画布覆盖本视图范围且始终以所选角色所在格为中心，带绝对坐标刻度；「居中角色」决定视图作用域 —— 选主机画主机地形 + 全部完整客户端的线框并画出所有角色，选某个客户端只画它自己的线框（地形仍只取落在它区块集合内的主机 chunks[]）与它自己的标记；主机地形只填充、不画任何方框（客户端区域线框是图上唯一的框）；主机端动物（animals[]）画成黑色实心圆点（仅位置、无名字/坐标标签、不可选中）；仍在主机 chunks[].n > 0 的区块正中画出「还有几个在线客户端没拿到最新内容」的数字（n=0 / 字段缺失一律不画）；未列出的区块保持空白，缺失字段在页面里明确说明。">
+<style>
+:root{
+  --bg:#f4f7fc;--card:#fff;--tint:#f7f9fe;--tint2:#eef3fb;--line:#dde5f1;--line2:#c3d1e6;
+  --tx:#16203a;--tx2:#48587a;--tx3:#7d8aa3;--cy:#0e7fa8;--cy2:#e4f5fc;--vi:#6a4bd8;--vi2:#efeafe;
+  --am:#a9740a;--am2:#fff4df;--gr:#0d8a63;--gr2:#e5f8f0;--rd:#c23a55;--rd2:#fdecf0;
+  --mono:ui-monospace,"Cascadia Mono",Consolas,"Liberation Mono",monospace;
+  --sans:system-ui,-apple-system,"Segoe UI","Microsoft YaHei","PingFang SC",sans-serif;
+  --r:12px;--r2:9px;--sh:0 1px 2px rgba(20,40,80,.05),0 6px 18px rgba(20,40,80,.05);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font-family:var(--sans);font-size:14.5px;line-height:1.7}
+a{color:var(--cy);text-decoration:none}a:hover{text-decoration:underline}
+code{font-family:var(--mono);font-size:.87em;background:var(--tint2);border:1px solid var(--line);border-radius:5px;padding:.05em .34em;color:#1d3a63;white-space:nowrap}
+.topbar{position:sticky;top:0;z-index:60;display:flex;align-items:center;gap:12px;padding:9px 20px;background:rgba(255,255,255,.92);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+.brand{display:flex;align-items:center;gap:10px;font-weight:750;white-space:nowrap}
+.brand .logo{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;font-size:12px;background:linear-gradient(140deg,var(--cy),var(--gr));color:#fff;font-weight:900}
+.brand small{display:block;font-weight:500;font-size:11px;color:var(--tx3)}
+.topbar .grow{flex:1}
+.lamp{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11.5px;border:1px solid var(--line);border-radius:999px;padding:3px 11px;background:var(--tint)}
+.lamp i{width:8px;height:8px;border-radius:50%;background:#c3d1e6;display:inline-block}
+.lamp.on i{background:#0d8a63;box-shadow:0 0 0 3px #e5f8f0}
+.lamp.off i{background:#c23a55;box-shadow:0 0 0 3px #fdecf0}
+.lamp.warn i{background:#d99b12;box-shadow:0 0 0 3px #fff4df}
+.btn{cursor:pointer;border:1px solid var(--line);background:#fff;border-radius:999px;padding:6px 13px;font-size:12px;color:var(--tx2);font-family:var(--sans)}
+.btn:hover{border-color:var(--line2);color:var(--tx)}
+.btn:disabled{opacity:.5;cursor:default}
+select{font-family:var(--sans);font-size:12.5px;border:1px solid var(--line2);border-radius:999px;padding:5px 11px;background:#fff;color:var(--tx)}
+.wrap{max-width:1620px;margin:0 auto;padding:14px 20px 60px}
+.pane{background:var(--card);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--sh);padding:12px 14px;min-width:0}
+/* 地图卡片随画布变宽（页面自己横向滚），其它卡片保持原来的宽度 */
+.pane.map-pane{width:max-content;min-width:100%}
+/* 卡片可能宽到几千像素：标题 / 说明 / 工具条 / 图例限制在可读宽度内，按钮不会被推到屏幕外 */
+.pane.map-pane h3,.pane.map-pane .sub,.pane.map-pane .toolbar,.pane.map-pane .legend{max-width:1240px}
+.pane h3{margin:0 0 4px;font-size:15px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.pane .sub{font-size:11.5px;color:var(--tx3);margin-bottom:8px}
+.toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:8px 0}
+.toolbar .sp{flex:1}
+.chip{font-family:var(--mono);font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--line);background:var(--tint);color:var(--tx2)}
+.chip.gr{color:#0a6247;background:var(--gr2);border-color:#c2e9d8}
+.chip.rd{color:#96243c;background:var(--rd2);border-color:#f4cbd6}
+.chip.am{color:#7d5606;background:var(--am2);border-color:#f0dcb0}
+/* 高度不再被钳住：没有 max-height，也没有 overflow:auto —— 地图多高页面就多高，滚动交给页面本身 */
+.mapbox{background:#fff;overflow:visible}
+/* outline 不参与布局 → 地图盒子的高度精确等于 canvas 的高度 */
+canvas.map{display:block;background:#fff;outline:1px solid var(--line)}
+.legend{display:flex;gap:12px;flex-wrap:wrap;font-size:11.5px;color:var(--tx2);margin:6px 0 2px}
+.legend span{display:inline-flex;align-items:center;gap:5px}
+.legend i{width:12px;height:12px;border-radius:3px;border:1px solid var(--line2);display:inline-block}
+.banner{margin:10px 0;padding:10px 13px;border-radius:var(--r2);font-size:13px;border:1px solid var(--line);border-left:3px solid var(--am);background:var(--am2);color:var(--tx2);display:none}
+.banner.on{display:block}
+.banner.bad{border-left-color:var(--rd);background:var(--rd2)}
+.banner.ok{border-left-color:var(--gr);background:var(--gr2)}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:9px;margin:8px 0}
+.tile{background:var(--tint);border:1px solid var(--line);border-radius:var(--r2);padding:9px 11px}
+.tile b{display:block;font-family:var(--mono);font-size:18px;color:var(--cy)}
+.tile span{display:block;font-size:11.5px;color:var(--tx3)}
+table{width:100%;border-collapse:collapse;font-size:12.4px;margin-top:8px}
+thead th{background:var(--tint2);text-align:left;padding:6px 9px;font-weight:700;color:#25344f;border-bottom:1px solid var(--line2);font-size:11.8px;white-space:nowrap}
+tbody td{padding:5px 9px;border-bottom:1px solid var(--line)}
+tbody tr:nth-child(even){background:var(--tint)}
+td.mono,.mono{font-family:var(--mono);font-size:11.6px}
+.num{text-align:right;font-family:var(--mono)}
+footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--line);font-size:12px;color:var(--tx3)}
+@media (max-width:1100px){.wrap{padding:12px 12px 48px}}
+@media print{.topbar{display:none}.pane{break-inside:avoid;box-shadow:none}}
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><div class="logo">LM</div><div>地形实时地图<small>LiveMap · GET /state · 整片已加载区域 · 以角色为中心</small></div></div>
+  <div class="grow"></div>
+  <span class="lamp off" id="lamp"><i></i><span id="lampText">连接中…</span></span>
+  <button class="btn" id="btnReload">立即刷新</button>
+</header>
+
+<div class="wrap" id="top">
+  <div class="banner" id="banner"></div>
+
+  <div class="pane map-pane" id="LM01">
+    <h3>俯视地形图<span class="chip" id="mapChip">等待数据</span></h3>
+    <div class="sub">每个格子 = 一个方块列（<b>12.4 px/格</b>）；颜色 = 该列最上层非空气方块，越亮 = 该列顶部越高。<b>地形填充只来自主机 <code>chunks[]</code></b>（主机真正加载的区域；未加载处保持空白）。<b>「居中角色」同时决定画哪些区块集合</b>（图例与统计面板都写明「当前视图」）：选 <b>Host（房主）</b> = 地形只有主机 <code>chunks[]</code>，<b>每个</b>完整客户端的 <code>clients[].chunks</code> 都画成线框，并画出<b>全部</b>角色的标记；选<b>某个客户端</b> = <b>只画它自己</b>的线框（地形仍只取落在它区块集合内的主机 <code>chunks[]</code>），也<b>只画它自己</b>的标记。<b>客户端当前内存区块 = 线框</b>（每个区块一圈、<b>不填地形</b>；<code>clients[].chunks</code> 是客户端<b>当前内存</b>里的区块，<b>已卸载的块立刻从图上消失</b>），颜色 = 该块相对<b>它自己那个客户端</b>的校验状态：<span style="color:#0d8a63"><b>绿</b></span>=已验证同步（s=2）、<span style="color:#2f6fd0"><b>蓝</b></span>=同步了主机端数据（s=4）、<span style="color:#a9740a"><b>黄</b></span>=已上报待裁决（s=1）、<span style="color:#c23a55"><b>红</b></span>=验证失败（s=3）；<code>s=0</code>（刚加载、尚未上报/裁决）是正常过渡，该块画<b>中性灰</b>线框、不报警；同一区块被多个客户端覆盖时线框**都画在同一条区块边界上**（与地形 16×16 严格对齐，不内缩），按身份稳定键排序只决定线宽（图例里写明规则）。标记标签给出角色的<b>绝对坐标与区块</b>。<b>动物（主机端）</b> = <b>黑色实心圆点</b>（仅位置：不显示名字 / 坐标、不可选中、不画连线；只来自 <code>animals[]</code>，客户端不贡献）。<b>主机地形只填充、不画任何方框</b>（<code>chunks[].s</code> 仍留在 feed 里，但页面不画主机侧框）；<b>客户端区域线框是图上唯一的框层</b>（粗实线 + 深色底衬）。旧参数 <code>?verify</code> 仍接受但已忽略（不再有任何主机侧框可开关）。</div>
+    <div class="toolbar">
+      <label for="centerSel" title="选主机 = 地形只有主机 chunks[] + 全部完整客户端的线框 + 全部角色的标记；选客户端 = 只画该客户端的线框与标记（地形仍只取落在它区块集合内的主机 chunks[]）" style="font-size:12.5px;color:var(--tx2)">居中角色</label>
+      <select id="centerSel" disabled><option>等待数据…</option></select>
+
+      <span class="sp"></span>
+      <button class="btn" id="btnZoomOut" title="比例 ×0.5">－ 缩小</button>
+      <button class="btn" id="btnZoomIn" title="比例 ×2">＋ 放大</button>
+      <button class="btn" id="btnFitAll" title="按浏览器窗口算出能装下本视图（当前居中角色决定）覆盖区域的比例">整片区域</button>
+      <span class="chip" id="scaleChip">12.4 px/格</span>
+    </div>
+    <div class="mapbox" id="mapbox"><canvas class="map" id="map" width="10" height="10"></canvas></div>
+    <div class="legend" id="regionLegend"></div>
+    <div class="legend" id="legend"><span style="font-family:var(--mono)">暂无图例（还没有画到任何方块列）</span></div>
+    <div class="legend" id="pendingLegend"></div>
+  </div>
+
+  <div class="pane" id="LM02" style="margin-top:14px">
+    <h3>统计<span class="chip" id="statChip">等待数据</span></h3>
+    <div class="tiles" id="tiles"></div>
+    <table>
+      <thead><tr><th>项</th><th>值</th><th>说明</th></tr></thead>
+      <tbody id="statBody"><tr><td colspan="3" class="mono">等待数据…</td></tr></tbody>
+    </table>
+    <div class="banner on" id="whyHint" style="border-left-color:var(--cy);background:var(--cy2)">
+      <b>为什么地图这么高？为什么有空的地方？</b>
+      画布高度 = <b>覆盖格数 × 12.4 px</b>，<b>不做任何钳制</b>：地图盒子不再有 <code>max-height</code> 与内部滚动条，
+      整页跟着地图一起变高、由页面自己滚动。空白是<b>故意不填色</b>的：那里要么不在 <code>/state</code> 列出的主机
+      <code>chunks</code> 里，要么该列的 <code>contents == 0</code>（没有方块）。画面只呈现真实拿到的数据，
+      不用底色或推测地形去糊满空白，否则会让「未加载」看起来像「已加载的黑色地面」。<b>地形填充只有主机已加载区域</b>（<code>chunks[]</code>）；
+      主机地形<b>只填充、不画任何方框</b>。<b>客户端当前内存区块只画线框、不填地形</b>（<code>clients[].chunks</code> = 客户端的当前内存集合，<b>卸载即消失</b>）：绿 = 已验证同步（s=2）、蓝 = 同步了主机端数据（s=4）、
+      黄 = 已上报待裁决（s=1）、红 = 验证失败（s=3）；同一区块被多个客户端覆盖时线框**都画在同一条区块边界上**（与地形 16×16 严格对齐、不内缩），按身份稳定键排序只决定线宽。
+      <b>区块正中的数字</b>（<code>chunks[].n</code>）是"这个区块还有几个在线客户端没拿到最新内容"：<code>0</code>（都已核对到最新）或字段缺失时不画，绝不猜一个值。
+    </div>
+  </div>
+
+  <div class="pane" id="LM03" style="margin-top:14px">
+    <h3>数据契约与用法</h3>
+    <table>
+      <thead><tr><th>怎么跑起来</th></tr></thead>
+      <tbody>
+        <tr><td>先建房并加入房间，再启动 LiveMap 工具；页面默认轮询 <span class="mono">http://127.0.0.1:8738/state</span>，约 700 ms 一次（<span class="mono">cache:"no-store"</span>）</td></tr>
+        <tr><td>换地址：<span class="mono">?url=http://127.0.0.1:8738/state</span>；预选居中角色：<span class="mono">?center=&lt;key&gt;</span>（key = 身份稳定键，重连不变；旧写法 <span class="mono">?center=&lt;id&gt;</span> 也认，只在第一个样本上生效一次，之后完全由工具栏的「居中角色」下拉框决定）；初始比例：<span class="mono">?scale=6</span>；<span class="mono">?verify</span> 是旧参数（仍接受但<b>已忽略</b>：主机侧不再画任何框，无需开关）</td></tr>
+        <tr><td><span class="mono">view</span> = <span class="mono">"all"</span>（整个已加载区域，<span class="mono">radius</span> 为 0）或 <span class="mono">"window"</span>（旧的“角色周围 N×N 区块”窗口，用 <span class="mono">radius</span>）；两者都只画 <span class="mono">chunks</span> 里列出的区块</td></tr>
+        <tr><td><b>当前视图 = 「居中角色」的选择</b>（图例与统计面板都逐字写明，只有一处代码决定这件事）：选 <b>Host（房主）</b> → <b>地形填充只有主机 <span class="mono">chunks[]</span></b>（主机真正加载的区域），<b>每个</b>完整客户端的 <span class="mono">clients[].chunks</span> 都画成<b>按状态着色的线框</b>，并画出<b>全部</b>角色的标记；选<b>某个客户端</b> → <b>只画它自己的线框</b>（不画其它客户端），地形仍只来自主机 <span class="mono">chunks[]</span> 且只限落在它区块集合内的那些块（别处的主机地形也不画），也只画<b>它自己</b>的标记。客户端区块没有地形载荷（<span class="mono">d</span>），所以它们<b>永远不填地形</b>——只画线框，绝不会被画成"已加载的地面"</td></tr>
+        <tr><td><span class="mono">bounds</span>（<span class="mono">chunkMin/chunkMax</span> 或 <span class="mono">cellMin/cellMax</span>）给出覆盖范围，工具算的是<b>主机区块 ∪ 各玩家端已加载区块</b>的并集（<span class="mono">boundsSource</span> 写明来源）；缺失或为 null 时，页面用 <span class="mono">chunks</span> + <span class="mono">clients</span> + <span class="mono">players</span> 自己算范围，绝不猜地形。<b>客户端视图不并入 <span class="mono">bounds</span></b>（那是主机的整片范围）：画布只按该客户端自己的区块与它自己的位置撑开，否则客户端的图会被撑成主机那么大</td></tr>
+        <tr><td>画布尺寸：半跨 = <span class="mono">max(|charX-minCellX|, |charX-maxCellX|)</span>（z 同理），画布 = <span class="mono">(2×半跨+1) 格 × scale</span> —— 多出来的那一格就是角色自己那一列，于是<b>角色所在格精确落在画布正中</b>；区域不对称时空的那一侧就留白。<span class="mono">minCellX/Max</span> 取的是<b>本视图作用域内</b>的区块范围，客户端视图里其它角色的位置不会扩画布</td></tr>
+        <tr><td>比例：默认 <span class="mono">12.4 px/格</span>；「－ 缩小 / ＋ 放大」按 <span class="mono">×0.5 / ×2</span> 步进，滚轮微调；「整片区域」按浏览器窗口算出能把整个覆盖范围装下的比例</td></tr>
+        <tr><td>自动拟合：feed 数据（覆盖范围 / 区块集合 / 角色坐标 / 客户端区域）一有变化，页面自动执行「整片区域」（最多 4 次/秒）；数据没变不重拟合、不抖动。手动缩放（「－ / ＋」或滚轮）后保留 <span class="mono">3 s</span>，之后下一次数据变化恢复自动拟合</td></tr>
+        <tr><td>每个 chunk 的 <span class="mono">d</span> = base64(768 字节)：0..511 为 256 个小端 uint16 的 <span class="mono">contents</span>（下标 <span class="mono">x + 16*z</span>），512..767 为 256 个字节的该列最高非空气方块的绝对 Y</td></tr>
+        <tr><td>主机 <span class="mono">chunks[]</span> 的 <span class="mono">s</span>（黄/绿/红/蓝校验状态）<b>仍留在 feed 里，但页面不再画任何主机侧方框</b>（用户要求：主机端不需要任何方框，主机只保留地形填充）；<span class="mono">?verify</span> 作为旧参数继续接受但被忽略。<b>客户端区块的状态不在这里</b>：每条 <span class="mono">clients[].chunks</span> 条目自带它相对<b>自己那个客户端</b>的 <span class="mono">s</span>（<span class="mono">[cx,cz,s]</span> 的第三项：2 绿 / 4 蓝 / 1 黄 / 3 红 / 0 中性灰），画成客户端区域线框 —— 这是图上<b>唯一</b>的框层</td></tr>
+        <tr><td>每个 chunk 的 <span class="mono">n</span> = <b>还有几个在线客户端没拿到该区块的最新内容</b>（主机侧内存计数，v5 追加）。<span class="mono">n &gt; 0</span> 时在该区块 16×16 格的正中画一个<b>数字</b>（深色描边 + 亮色填充，地形再花也读得出）；<span class="mono">n == 0</span>（全部客户端都已核对到最新）或<b>字段缺失</b>（旧版主机/工具）时<b>不画数字</b>，也绝不猜一个值。这个计数<b>不进存档</b>：客户端加入时的整图下载就是最新基线，所以新加入的客户端谁都不欠；主机离开过这一块也不清零（客户端进来时仍要核对）。工具侧的统计是 <span class="mono">counts.pendingMarks</span>（有几块标了数字）与 <span class="mono">counts.pendingClients</span>（各块 <span class="mono">n</span> 之和）</td></tr>
+        <tr><td><span class="mono">watched</span> = <span class="mono">{ id, key, name }</span>（v6 起带 <span class="mono">key</span> = 被观察身份的稳定键）：工具当前观察的客户端，统计面板显示「被观察客户端：&lt;name&gt;（键 &lt;key&gt;）」；<span class="mono">id === -1</span> 时显示「当前没有客户端在线（没有验证状态）」</td></tr>
+        <tr><td><span class="mono">players[]</span> = <span class="mono">[{ id, key, name, isHost, cell:[x,y,z]|null, cellReason, chunk:[cx,cz] }]</span>：<b>每个身份一条</b>（主机 <span class="mono">id=-1 · key="host"</span> + 每个玩家端），<span class="mono">id</span> = <b>当前</b>传输句柄 clientId（重连会变），<span class="mono">key</span> = <b>身份稳定键</b>（重连不变；**不是 UserId 全值**）。「居中角色」按 <span class="mono">key</span> 选，所以玩家端重连不会多出第二个条目、也不会把选择断掉。<span class="mono">cell</span> = 该角色在世界里的真实绝对坐标（主机 = 本机玩家；玩家端 = 主机侧那个联机角色实体的 <span class="mono">ComponentBody.Position</span>，不是按区块猜的）。标记标签是 <span class="mono">&lt;名字&gt; (x,z) chunk(cx,cz)</span>；<span class="mono">cell=null</span> 时标记退回区块中心并写「坐标未知」+ 原因。<b>画哪些标记也由「居中角色」决定</b>：主机视图画<b>全部</b>角色，客户端视图只画<b>它自己</b>。<span class="mono">centers[]</span> 是同一份数据的旧形状（只带区块），旧页面继续可用</td></tr>
+        <tr><td><span class="mono">clients[]</span> = <span class="mono">[{ key, id, name, reported, currentLoaded, merged, complete, chunks:[[cx,cz,s]…] }]</span>：<b>该身份的「客户端当前内存区块」集合</b> —— v8 起 <span class="mono">chunks</span> 就是客户端<b>当前内存里</b>的区块（客户端实时把增删告诉主机），<b>已卸载的块立刻从图里消失</b>。<span class="mono">key</span> = 身份稳定键（与 <span class="mono">players[].key</span> 同一个键），<span class="mono">id</span> = 当前 clientId；工具按 <span class="mono">key</span> 合并条目，所以同一身份重连前后仍是一个条目。<b><span class="mono">currentLoaded</span>（v8）= 客户端当前内存区块数</b>（= 本快照 <span class="mono">chunks</span> 的条数）；<span class="mono">reported</span> = <b>会话累计</b>上报条数（只增不减，仅作参考，<b>不是</b>当前内存集合大小）；<span class="mono">merged</span> = 本次真正合并进来的条目数。<b>每个条目是 <span class="mono">[cx, cz, s]</span></b>：<span class="mono">s</span> = 该块相对<b>这个身份自己</b>的校验状态（<span class="mono">0</span> 刚加载未裁决 = 正常过渡（不画线框、不报警）/ <span class="mono">2</span> 绿 / <span class="mono">4</span> 蓝 / <span class="mono">1</span> 黄 / <span class="mono">3</span> 红），页面据此画<b>线框</b>（每个区块一圈、<b>只有描边、不填地形</b>，线框下垫深色底衬，实线）。<b>主机视图</b>把每个完整客户端的当前内存区块都画成线框；<b>客户端视图只取被选中的那一个</b>。<b>多客户端覆盖同一块</b>：几何**都画在同一条区块边界上**（与地形 16×16 严格对齐、<b>不内缩不偏移</b>）；按身份稳定键排序，第 i 个线更宽（i=0 最细、画在最上层），颜色仍按各自状态。<span class="mono">complete=false</span>（<span class="mono">merged !== currentLoaded</span>：工具没把头部声明的当前内存条数全部合并起来）→ <b>整块区域不画、也不进线框集合</b>，并在图例与统计里写明条数。条目只有 <span class="mono">[cx,cz]</span>（旧版工具）或 <span class="mono">s</span> 不认识（负数 / 小数 / 非数字；<b>0 是正常值</b>）→ 该块<b>不画线框</b>并在图例里明确报警（绝不猜状态）</td></tr>
+        <tr><td><span class="mono">animals[]</span> = <span class="mono">[{ x, y, z }, …]</span>（v9）：<b>仅主机端生物、仅位置</b>（没有名字 / id / 状态）。页面把每只画成一个<b>黑色实心圆点</b>（半径约 2–3 px、随缩放轻微变化）：<b>不显示名字、不显示坐标、不响应选中、不画标签 / 连线</b>，与角色标记（彩色 + 名字/坐标）明确区分；客户端不贡献动物。<span class="mono">counts.animals</span> = 主机端动物数量（页面只做对照，以 <span class="mono">animals[]</span> 条数为准）；缺字段 → 不画动物并在图例里明说；条目的 x / z 不是有限数 → 该条不画并计数报警（绝不猜坐标）</td></tr>
+        <tr><td><span class="mono">payloadVersion</span> = <span class="mono">9</span>：LiveMap 线上的载荷版本（只追加字段，不重排旧字段）。页面按 v9 读字段（v8 = 每个客户端头部 <span class="mono">currentLoaded</span> 且 <span class="mono">clients[].chunks</span> = 客户端当前内存区块；<b>v9 = 新增 <span class="mono">animals[]</span>（主机端动物位置，仅 x/y/z）与 <span class="mono">counts.animals</span></b>；v5 = 每个 <span class="mono">chunks[]</span> 记录末尾追加 <span class="mono">n</span>；v6 = watched / players / clients 条目追加 <span class="mono">key</span>；v7 = 每条 <span class="mono">clients[].chunks</span> 条目末尾追加 <span class="mono">s</span>，页面输出为 <span class="mono">[cx,cz,s]</span>；v8 = <b>每个客户端头部记录末尾追加 <span class="mono">currentLoaded</span></b>，且 <span class="mono">clients[].chunks</span> 的含义改为<b>客户端当前内存区块</b>（卸载即消失））；版本不符 / <span class="mono">decodeFailures &gt; 0</span> 时在图例与统计面板里明确报警，不猜字段含义。<b>缺字段（旧版主机/工具）时页面明说不画</b>：没有 <span class="mono">players</span> → 坐标一栏写「未知」；没有 <span class="mono">clients</span> → 不画客户端线框；<span class="mono">clients[].chunks</span> 的条目没有第三项 <span class="mono">s</span> → 这些块不画线框（不猜状态）；没有 <span class="mono">currentLoaded</span>（旧版 v7 feed）→ 完整性退回按 <span class="mono">reported</span> 判定并在图例里明说；没有 <span class="mono">chunks[].n</span> → 不画数字；没有 <span class="mono">key</span> → 选角退回 <span class="mono">id</span>（旧版行为）；没有 <span class="mono">animals</span> → 不画动物并在图例里说明</td></tr>
+        <tr><td><span class="mono">counts</span> = 工具统计：<span class="mono">chunks / columns / players / clientChunks</span> 之外还有 <span class="mono">pendingMarks</span>（<span class="mono">chunks[].n &gt; 0</span> 的区块数）与 <span class="mono">pendingClients</span>（各块 <span class="mono">n</span> 之和）；页面只做对照，不据此画地形</td></tr>
+        <tr><td>覆盖范围 = <span class="mono">bounds</span> ∪ <span class="mono">chunks</span> ∪ <span class="mono">clients[].chunks</span> ∪ <span class="mono">players[].cell</span> —— 但每一项都先按<b>当前视图作用域</b>裁剪：主机视图取主机 ∪ 全部完整客户端的并集与全部角色位置（于是能看到分开的区域块），客户端视图只取该客户端自己的区块与它自己的位置（<span class="mono">bounds</span> 与其它角色都不并进来）</td></tr>
+        <tr><td><span class="mono">center.cell</span> 缺失（null）时，退回到所选角色的区块中心 <span class="mono">chunk*16 + 8</span>（并在图例与统计里标注「坐标未知，按区块中心画」）</td></tr>
+        <tr><td>颜色表按<b>游戏方块 id</b>（<span class="mono">Survivalcraft/Game/*Block.cs</span> 的 <span class="mono">Index</span>）校正，覆盖常见方块；<b>未收录的 id 一律中性灰</b>并在图例里标「未知方块 id」（<b>不再用哈希色相兜底</b> —— 那会把雪原画成青色、把未知方块冒充成水）。水（id 18）另有独立的「水域」色阶。整片区域可能上万列，因此按 <span class="mono">(id, 高度档)</span> 批量填充、不做逐列描边，一次样本只画一次（不跟动画帧）</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <footer>
+    SuMultiplayer · LiveMap 工具（<span class="mono">GET /state</span>）+ 自包含网页视图 · 相关：
+    <a href="terrain-sync-live.html">地形同步实时视图</a> ·
+    <a href="chunk-region-sync.html">区块同步图解</a> ·
+    <a href="multiplayer-architecture.html">架构图解</a>
+  </footer>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  /* ---------- 端点与查询参数 ---------- */
+  var DEFAULT_URL = "http://127.0.0.1:8738/state";
+  var POLL_MS = 700;
+  var DEFAULT_SCALE = 12.4;         // 默认比例：每个方块列 12.4 CSS 像素（用户指定，旧的约 5 px/格已作废）
+  var stateUrl = DEFAULT_URL, wantCenter = null, wantVerify = null, wantScale = null;
+  try {
+    if (typeof location !== "undefined" && location.search && typeof URLSearchParams === "function") {
+      var qs = new URLSearchParams(location.search);
+      var u = qs.get("url");
+      if (u) stateUrl = u;
+      var c = qs.get("center");
+      if (c !== null && c !== "") wantCenter = c;
+      // 旧参数 ?verify：**仍接受但已忽略**（主机侧不再画任何框；保留只为旧链接不报错）
+      if (qs.get("verify") !== null) wantVerify = true;
+      var wz = parseFloat(qs.get("scale"));          // ?scale=6 可指定初始比例（缺省仍是 12.4 px/格）
+      if (isFinite(wz) && wz > 0) wantScale = wz;
+    }
+  } catch (e0) { /* file:// 或桩环境：一律用默认地址 */ }
+
+  /* ---------- 视图状态 ---------- */
+  var cellScale = DEFAULT_SCALE;    // px / 方块列
+  var SCALE_MIN = 0.15, SCALE_MAX = 40;
+  var selectedKey = null;           // 当前居中的角色**身份稳定键**（players[].key；主机 = "host"）
+  var lastGood = null;              // 最近一次成功的 state
+  var ageAtGood = 0, lastGoodAt = 0;
+  var lampKind = "off", lampMsg = "连接中…";
+  var lastFrameKey = "";            // 角色稳定键|scale —— 只在换角色/换比例时把页面滚到角色
+  // 「整片区域」自动跟随：只有 feed 的**范围/集合**变化才自动拟合；首帧只记基线（?scale= 不被抢掉），
+  // 手动缩放后有 3 s 静默期，自动拟合最多 4 次/秒（节流窗口结束时尾随一次，不丢最后一次变化）。
+  var AUTO_FIT_MIN_MS = 250;        // ≤ 4 次/秒
+  var AUTO_FIT_GRACE_MS = 3000;     // 手动缩放后的静默期
+  var lastDataSig = null;           // 上一帧 feed 的数据签名（null = 还没收到第一帧）
+  var lastAutoFitAt = 0;            // 上一次自动拟合的时刻（节流用）
+  var manualZoomUntil = 0;          // 用户手动缩放到什么时候为止不再抢
+  var autoFitTimer = null;          // 节流窗口内的尾随拟合
+  var autoFitPending = false;
+  // 验证状态：feed 的 chunks[].s；页面只画「客户端上报过摘要」的 chunk 的框，0 / 缺失 / 未知值一律不画
+  var SC = {
+    1: { color: "#e0a800", label: "已上报、待裁决" },
+    2: { color: "#17a273", label: "验证通过" },
+    3: { color: "#d1495f", label: "验证失败" },
+    4: { color: "#2f6fd0", label: "二次验证通过" }
+  };
+  var SC_ORDER = [1, 2, 3, 4];
+  var drawStats = { drawn: 0, listed: 0, listedColumns: 0, chunks: 0, legend: [], watched: null, ok: false, region: null, frame: null, dprUsed: 1 };
+  // 画布后备存储上限：CSS 尺寸可以很大（页面自己滚），但离屏像素有上限 —— 超出就降采样绘制，绝不静默画空白
+  var MAX_CANVAS_SIDE = 8192, MAX_CANVAS_PX = 16000000;
+  var NOTE_W = 760, NOTE_H = 260;   // 没有任何数据时提示框的尺寸
+  var LEGEND_MAX = 28;
+
+  /* ---------- 小工具 ---------- */
+  function $(id) { return document.getElementById(id); }
+  function esc(s) {
+    return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+  function num(v) { return (typeof v === "number" && isFinite(v)) ? v : "—"; }
+  function banner(text, kind) {
+    var el = $("banner");
+    if (!el) return;
+    if (!text) { el.className = "banner"; el.textContent = ""; return; }
+    el.className = "banner on" + (kind ? " " + kind : "");
+    el.textContent = text;
+  }
+  function setLamp(kind, text) {
+    lampKind = kind; lampMsg = text;
+    var el = $("lamp");
+    if (!el) return;
+    el.className = "lamp " + kind;
+    var t = $("lampText");
+    if (t) t.textContent = text;
+  }
+  function fmtScale(v) { return String(Math.round(v * 1000) / 1000); }
+  function clampScale(v) {
+    var s = v;
+    if (!isFinite(s) || s <= 0) s = DEFAULT_SCALE;
+    if (Math.abs(s - DEFAULT_SCALE) < 0.06) s = DEFAULT_SCALE;    // 吸附回默认比例，避免 12.400000001
+    if (s < SCALE_MIN) s = SCALE_MIN;
+    if (s > SCALE_MAX) s = SCALE_MAX;
+    return Math.round(s * 1000) / 1000;
+  }
+
+  /* ---------- base64 -> 字节（atob + Uint8Array） ---------- */
+  function bytesFromBase64(b64) {
+    if (typeof atob !== "function" || typeof b64 !== "string") return null;
+    var bin;
+    try { bin = atob(b64); } catch (e) { return null; }
+    var out = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+  // 每列数据：contents = 小端 uint16（下标 x + 16*z），top = 该列最高非空气方块的绝对 Y
+  // s = 该 chunk 的验证状态（0/缺失 = 无、1 待验证、2 验证通过、3 验证失败、4 二次验证通过）；其它值一律当「无」
+  // n = 该 chunk 还有几个在线客户端没拿到最新内容（v5 追加；0 / 缺失 / 未知值 = 不画数字，绝不猜）
+  function chunkStatus(v) {
+    var n = (typeof v === "number") ? v : parseInt(v, 10);
+    return (n >= 1 && n <= 4 && (n | 0) === n) ? n : 0;
+  }
+  function pendingCount(v) {
+    if (v === undefined || v === null) return 0;
+    var n = (typeof v === "number") ? v : parseInt(v, 10);
+    return (isFinite(n) && (n | 0) === n && n > 0) ? n : 0;
+  }
+  function decodeChunk(ch) {
+    if (!ch || typeof ch.d !== "string") return null;
+    var b = bytesFromBase64(ch.d);
+    if (!b || b.length < 768) return null;
+    var contents = new Uint16Array(256), top = new Uint8Array(256), dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
+    for (var i = 0; i < 256; i++) { contents[i] = dv.getUint16(i * 2, true); top[i] = b[512 + i]; }
+    return { x: ch.x | 0, z: ch.z | 0, s: chunkStatus(ch.s), n: pendingCount(ch.n), contents: contents, top: top };
+  }
+  // chunks[].n 字段是否存在（v5 才有）：决定"画不画数字"以及"要不要在图例里明说旧版 feed 没有这个字段"。
+  // 只要有一块带 n 就算存在；0 块时也当存在（没有区块就没有可标注的数字，不需要报警）。
+  function pendingFieldOf(state) {
+    var arr = (state && state.chunks && state.chunks.length) ? state.chunks : [];
+    var present = arr.length === 0, marked = 0, total = 0, bad = 0;
+    for (var i = 0; i < arr.length; i++) {
+      var ch = arr[i];
+      if (!ch || typeof ch !== "object") continue;
+      if (ch.n === undefined || ch.n === null) continue;
+      present = true;
+      var n = pendingCount(ch.n);
+      if (n > 0) { marked++; total += n; }
+      else if (!(ch.n === 0)) bad++;         // 有值但不是 0 / 也不是正整数 → 页面一律不画（记一笔）
+    }
+    return { present: present, marked: marked, total: total, invalid: bad, chunks: arr.length };
+  }
+  // 整个 feed 的区块（整片区域可能上千块，一次样本解码一次）
+  function decodeChunks(state) {
+    var out = [], arr = (state && state.chunks && state.chunks.length) ? state.chunks : [];
+    for (var i = 0; i < arr.length; i++) {
+      var dec = decodeChunk(arr[i]);
+      if (dec) out.push(dec);
+    }
+    return out;
+  }
+
+  /* ---------- 方块 id -> 颜色（按游戏源码 Survivalcraft/Game/*Block.cs 的 Index 校正） ----------
+     真实事故：id 61 = SnowBlock（雪）没收录 → 旧版哈希色相兜底成青色，用户看到「大片均匀青色 + 像素噪点」，
+     误以为是渲染坏了/水面；现在未收录 id 一律中性灰 + 图例标「未知方块 id」（绝不冒充水/地形）。
+     水（id 18 = WaterBlock）单独一套更可辨识的水域色阶（见 bandColor）。 */
+  var PALETTE = [
+    [2, "泥土", "#8a6338"],
+    [3, "花岗岩", "#c9a58c"],
+    [4, "砂岩", "#ded3a6"],
+    [6, "砾石", "#9c9c96"],
+    [7, "沙", "#e7dca6"],
+    [8, "草地", "#5fae43"],
+    [9, "橡木", "#7a5631"],
+    [10, "白桦木", "#d9d2bd"],
+    [11, "云杉木", "#4f3b25"],
+    [12, "橡树叶", "#3f8f3a"],
+    [13, "白桦树叶", "#78b155"],
+    [14, "云杉树叶", "#2c5c38"],
+    [15, "玻璃", "#cfe9f5"],
+    [16, "煤矿石", "#4a4a50"],
+    [18, "水域（水）", "#3b78d8"],
+    [19, "高草", "#56a83e"],
+    [20, "红花", "#c23a55"],
+    [21, "木板", "#c49a5f"],
+    [22, "煤块", "#2f2f33"],
+    [23, "树枝", "#a97c4b"],
+    [24, "紫花", "#8f5bb8"],
+    [25, "白花", "#eef2f5"],
+    [26, "石砖", "#8f9498"],
+    [28, "枯灌木", "#a08a4a"],
+    [61, "雪", "#f0f5fa"],
+    [62, "冰", "#a8dff5"],
+    [63, "圣诞树", "#2f6f3a"],
+    [64, "熔炉", "#7d7d7d"],
+    [66, "石灰岩", "#cfcabc"],
+    [87, "草陷阱", "#6aa84f"],
+    [92, "岩浆块", "#e8641c"],
+    [93, "岩浆桶", "#a84a2a"],
+    [99, "大枯灌木", "#a8904a"],
+    [101, "硫磺矿", "#c9b23a"],
+    [102, "硝石堆", "#cfd8de"],
+    [103, "硫磺堆", "#d9cf4a"],
+    [104, "火", "#e8641c"],
+    [105, "小火药桶", "#8c5a2a"],
+    [106, "中火药桶", "#7a4a20"],
+    [107, "大火药桶", "#6b4a2a"],
+    [108, "火柴", "#d9c05a"],
+    [109, "火药", "#4a4a4a"],
+    [110, "奶桶", "#f2f2ee"],
+    [111, "钻石堆", "#7fe0e8"],
+    [112, "钻石矿", "#6fa8b8"],
+    [124, "铁砍刀", "#b0b4b8"],
+    [126, "钻石块", "#7fe0e8"],
+    [129, "油漆桶", "#c8c8c8"],
+    [131, "南瓜", "#d98226"],
+    [134, "与非门", "#9aa0a6"],
+    [140, "非门", "#9aa0a6"],
+    [141, "开关", "#8b8f94"],
+    [145, "延迟门", "#9aa0a6"],
+    [148, "锗矿", "#b08b7c"],
+    [149, "锗块", "#c9a58c"],
+    [150, "煤块", "#2f2f33"],
+    [151, "光电二极管", "#7a7f8a"],
+    [154, "穿石导线", "#8b8f94"],
+    [155, "穿半导体导线", "#6f8faf"],
+    [172, "钻石耙", "#7fe0e8"],
+    [174, "黑麦", "#c9a94a"],
+    [175, "面粉", "#f2efe2"],
+    [178, "船", "#8c6a3f"],
+    [184, "计数器", "#9aa0a6"],
+    [189, "墓碑", "#8c9096"],
+    [197, "常春藤", "#3d7b3d"],
+    [204, "棉花", "#e8e3d5"],
+    [207, "毛皮", "#8a6a4a"],
+    [225, "高大云杉叶", "#2c5c38"],
+    [227, "家具", "#a97c4b"],
+    [228, "燃烧弹", "#7a3a2a"],
+    [244, "烂南瓜", "#b06a2a"],
+    [258, "石堆", "#9aa0a6"],
+    [262, "杨木", "#b09060"],
+    [263, "杨树叶", "#4f9a3a"],
+  ];
+  var NAMES = (function () {
+    var m = {};
+    PALETTE.forEach(function (e) { if (m[e[0]] === undefined) m[e[0]] = e[1]; });
+    return m;
+  })();
+  // 未收录的方块 id：**中性灰**（不再用哈希色相兜底 —— 兜底色相会把雪原画成青色、把未知方块冒充成水/地形）
+  var UNKNOWN_BLOCK_COLOR = "#8d949e";
+  var FALLBACK = {};
+  PALETTE.forEach(function (e) { FALLBACK[e[0]] = e[2]; });
+
+  function baseColor(id) { return FALLBACK[id] || UNKNOWN_BLOCK_COLOR; }
+  function isFallback(id) { return FALLBACK[id] === undefined; }
+
+  function hexToRgb(hex) {
+    var h = hex.charAt(0) === "#" ? hex.slice(1) : hex;
+    if (h.length === 3) h = h.charAt(0) + h.charAt(0) + h.charAt(1) + h.charAt(1) + h.charAt(2) + h.charAt(2);
+    return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+  }
+  // 高度着色：越高的列越亮（在底色里混白），让地形起伏看得出来
+  function shadeColor(base, top) {
+    var h = Math.max(0, Math.min(255, top | 0));
+    var mix = Math.min(0.6, Math.max(0, (h - 32) / 96 * 0.6));
+    if (base.charAt(0) !== "#") return base;   // 兜底色非 hex：不混白，只保留色相
+    var c = hexToRgb(base);
+    return "rgb(" + Math.round(c[0] + (255 - c[0]) * mix) + "," +
+                    Math.round(c[1] + (255 - c[1]) * mix) + "," +
+                    Math.round(c[2] + (255 - c[2]) * mix) + ")";
+  }
+  // 高度档（8 格一档）：地图按档批量填充，图例色块与地图上的颜色因此完全一致
+  function bandOf(top) { return (Math.max(0, Math.min(255, top | 0)) / 8) | 0; }
+  function lightenRgb(base, mix) {
+    if (base.charAt(0) !== "#") return base;
+    var c = hexToRgb(base);
+    return "rgb(" + Math.round(c[0] + (255 - c[0]) * mix) + "," +
+                    Math.round(c[1] + (255 - c[1]) * mix) + "," +
+                    Math.round(c[2] + (255 - c[2]) * mix) + ")";
+  }
+  // 高度档（8 格一档）：地图按档批量填充，图例色块与地图上的颜色因此完全一致。
+  // 水（id 18 = WaterBlock）：单独一套更可辨识的水域色阶 —— 按水面高度档轻微提亮（浅滩更亮），
+  // 并在图例里标「水域（水）」；其它方块仍用「越亮 = 该列顶部越高」。
+  function bandColor(id, band) {
+    var top = Math.max(0, Math.min(255, band * 8));
+    if (id === 18) {
+      var waterMix = Math.max(0.06, Math.min(0.42, 0.06 + (top - 56) / 24 * 0.36));
+      return lightenRgb(baseColor(18), waterMix);
+    }
+    return shadeColor(baseColor(id), top);
+  }
+
+  /* ---------- 角色清单（players[]：主机 + 每个玩家端；带真实绝对坐标） ----------
+     feed 契约：
+       players[] = [{ id, key, name, isHost, cell:[x,y,z]|null, cellReason, chunk:[cx,cz] }]
+       （id = **当前** clientId（重连会变）；key = **身份稳定键**（重连不变，选角用它）；
+         工具同时输出同样数据的 centers[]，形状与旧版一致，供旧页面用；本页面优先读 players[]）
+     缺失处理（绝不猜）：
+       · 没有 players 字段 → 用 centers[] 只拿区块；坐标一栏如实写"feed 没有 players 字段"；
+       · 某个角色 cell 为 null → 用它的 chunk 中心当标记位置，但明确标注"坐标未知（按区块中心画）"；
+       · 连 chunk 都没有 → 这个条目无法定位，计入 unlocatable 并在图例里说明。 */
+  function nums3(v) {
+    if (!v || v.length !== 3) return null;
+    var out = [];
+    for (var i = 0; i < 3; i++) {
+      var n = (typeof v[i] === "number") ? v[i] : parseInt(v[i], 10);
+      if (typeof n !== "number" || !isFinite(n)) return null;
+      out.push(n | 0);
+    }
+    return out;
+  }
+  function nums2(v) {
+    if (!v || v.length !== 2) return null;
+    var out = [];
+    for (var i = 0; i < 2; i++) {
+      var n = (typeof v[i] === "number") ? v[i] : parseInt(v[i], 10);
+      if (typeof n !== "number" || !isFinite(n)) return null;
+      out.push(n | 0);
+    }
+    return out;
+  }
+  function playersOf(state) {
+    var list = (state && Object.prototype.toString.call(state.players) === "[object Array]")
+      ? state.players : null;
+    var legacy = false;
+    if (!list) { legacy = true; list = (state && state.centers) ? state.centers : []; }
+    var out = [], unlocatable = 0, missingCell = 0;
+    for (var i = 0; i < list.length; i++) {
+      var c = list[i];
+      if (!c || typeof c !== "object") continue;
+      var id = (typeof c.id === "number" && isFinite(c.id)) ? c.id
+        : ((typeof c.id === "string" && /^-?\d+$/.test(c.id)) ? parseInt(c.id, 10) : null);
+      // key = **身份稳定键**（v6；重连不变）。id 只是当前传输句柄（clientId，重连会变），
+      // 「居中角色」的选中值一律用 key；旧版 feed 没有 key 时退回 id（那时 id 是唯一键）。
+      var stableKey = (typeof c.key === "string" && c.key !== "") ? c.key
+        : (id === null ? null : String(id));
+      if (stableKey === null) continue;
+      var cell = nums3(c.cell);
+      var chunk = nums2(c.chunk);
+      // 旧版 feed（没有 players[]）：只有 center.cell 是真实坐标，且旧工具只在"选中的是主机"时才给值 →
+      // 主机那一条可以用它；玩家端的坐标旧 feed 根本没有，只能如实写"未知"。
+      if (!cell && legacy && c.isHost === true && state && state.center) {
+        var legacyHostCell = nums3(state.center.cell);
+        if (legacyHostCell) cell = legacyHostCell;
+      }
+      // 有坐标没区块：区块可以由坐标精确算出（floor(cell/16)），不是猜。
+      if (!chunk && cell) chunk = [Math.floor(cell[0] / 16), Math.floor(cell[2] / 16)];
+      if (!chunk) { unlocatable++; continue; }
+      if (!cell) missingCell++;
+      var reason = cell ? ""
+        : (c.cellReason ? String(c.cellReason)
+          : (legacy ? "feed 没有 players 字段（旧版主机/工具）→ 拿不到该角色的绝对坐标" : "feed 没有给出该角色的坐标"));
+      out.push({
+        id: id,
+        key: stableKey,
+        name: (c.name === undefined || c.name === null || c.name === "") ? String(stableKey) : String(c.name),
+        isHost: c.isHost === true,
+        chunk: chunk,
+        cell: cell,
+        cellReason: reason
+      });
+    }
+    return { list: out, legacy: legacy, missingCell: missingCell, unlocatable: unlocatable };
+  }
+  // 按**稳定键**找角色（重连后 clientId 变了、key 不变）；兼容旧链接里传的 id：
+  // key 优先，其次 id，最后 isHost 的 "host" 固定键。
+  function findCenter(list, key) {
+    for (var i = 0; i < list.length; i++) if (String(list[i].key) === String(key)) return list[i];
+    for (var j = 0; j < list.length; j++) if (String(list[j].id) === String(key)) return list[j];
+    return null;
+  }
+  function pickCenter(state, list) {
+    if (!list.length) return null;
+    // ?center=<id> 只在**第一次**选角时生效：用完即清，否则它会永远压住下拉框的选择
+    // （#centerSel 的 change 事件只改 selectedKey，压不住 wantCenter —— 用户切了就切不动）
+    if (wantCenter !== null) {
+      var w = findCenter(list, wantCenter);
+      wantCenter = null;
+      if (w) return w;
+    }
+    if (selectedKey !== null) { var s = findCenter(list, selectedKey); if (s) return s; }
+    for (var i = 0; i < list.length; i++) if (list[i].isHost) return list[i];
+    return list[0];
+  }
+
+  /* ---------- 客户端当前内存区块（clients[]：客户端**当前内存**里的区块 + 每块自己的验证状态） ----------
+     feed 契约（v8）：
+       clients[] = [{ key, id, name, reported, currentLoaded, merged, complete, chunks:[[cx,cz,s]…] }]
+       （key = 身份稳定键，与 players[].key 同一个键 —— 选角/匹配都按它，重连不变；
+         chunks = 客户端**当前内存**里的区块（客户端实时把增删告诉主机）—— **已卸载的块立刻消失**；
+         currentLoaded = 当前内存区块数（= chunks 条数）；reported = 会话累计上报条数（仅参考，不等于当前集合）；
+         s = 该块相对**这个身份自己**的校验状态：0 刚加载未裁决（正常）/ 2 绿 / 4 蓝 / 1 黄 / 3 红）
+     缺失 / 不完整处理（绝不画一片错的区域、绝不猜状态）：
+       · 没有 clients 字段 → 只画主机地形，图例里明说"feed 没有 clients 字段"；
+       · 某个客户端 complete === false（merged !== currentLoaded：工具没把当前内存条数全部合并起来）→ **不画它**，
+         图例里明说原因与条数；
+       · chunks 为空的客户端 → 画不出区域，图例里写明"0 块（当前内存里没有区块）"；
+       · 条目只有 [cx,cz]（旧版工具没有 s）→ 该块**不画线框**并计数，图例里明说（不猜状态）；
+       · s 不认识（负数 / 小数 / 非数字）→ 不画并计数；**s=0 是正常值**（刚加载、未裁决），不画线框但不报警。 */
+  function intOf(v) {
+    var n = (typeof v === "number") ? v : parseInt(v, 10);
+    return (typeof n === "number" && isFinite(n)) ? (n | 0) : null;
+  }
+  // 坐标对：接受 [cx,cz]（旧）与 [cx,cz,s]（v7），只取前两个数（状态另算，绝不把 s 当坐标）
+  function coords2(v) {
+    if (!v || v.length < 2) return null;
+    var x = intOf(v[0]), z = intOf(v[1]);
+    return (x === null || z === null) ? null : [x, z];
+  }
+  // 一条 clients[].chunks 条目：[cx, cz, s]（v8）。state 区分 ok(1..4) / zero(0) / missing（旧版 2 元）/ invalid
+  // v8：**s=0 是正常值**（块刚加载、还没上报/裁决）→ 不画线框，但不算异常、不报警；
+  // 只有线格式不认识的值（负数 / 小数 / 布尔 / 非数字）才是 invalid（绝不截断成一个假状态）。
+  function stateOf(v) {
+    var n;
+    if (typeof v === "number") n = v;
+    else if (typeof v === "string" && /^-?\d+$/.test(v)) n = parseInt(v, 10);
+    else return -1;                        // 布尔 / null / 对象 / 非数字字符串：线格式不认识，不猜
+    if (!isFinite(n) || Math.floor(n) !== n) return -1;
+    if (n === 0) return 0;                 // v8：刚加载、尚未上报/裁决（正常过渡）
+    return (n >= 1 && n <= 4) ? n : -1;    // 1..4 = 已知状态；其它值 = 不认识
+  }
+  function clientChunkEntry(v) {
+    if (Object.prototype.toString.call(v) !== "[object Array]" || v.length < 2) return { bad: true };
+    var x = intOf(v[0]), z = intOf(v[1]);
+    if (x === null || z === null) return { bad: true };
+    if (v.length === 2) return { x: x, z: z, s: 0, state: "missing" };
+    if (v.length === 3) {
+      var n = stateOf(v[2]);
+      if (n > 0) return { x: x, z: z, s: n, state: "ok" };
+      if (n === 0) return { x: x, z: z, s: 0, state: "zero" };   // v8：正常（未裁决），不画线框但不报警
+      return { x: x, z: z, s: 0, state: "invalid" };
+    }
+    return { x: x, z: z, s: 0, state: "invalid" };   // 多出来的字段同样是"线格式不认识"，不猜
+  }
+  function clientRegionsOf(state) {
+    var has = state && Object.prototype.toString.call(state.clients) === "[object Array]";
+    var list = has ? state.clients : [];
+    var out = [], incomplete = [], empty = [];
+    var stateMissing = 0, stateInvalid = 0, stateZero = 0, legacyCurrentCount = 0;
+    for (var i = 0; i < list.length; i++) {
+      var c = list[i];
+      if (!c || typeof c !== "object") continue;
+      var id = (typeof c.id === "number" && isFinite(c.id)) ? c.id
+        : ((typeof c.id === "string" && /^-?\d+$/.test(c.id)) ? parseInt(c.id, 10) : null);
+      if (id === null && !(typeof c.key === "string" && c.key !== "")) continue;
+      // key = **身份稳定键**（v6；重连不变）。与 players[].key 是同一个键 ⇒ 选角/匹配跨重连都成立；
+      // 旧版 feed 没有 key 时退回 id（那时 id 就是唯一键，行为与以前一致）。
+      var key = (typeof c.key === "string" && c.key !== "") ? c.key : String(id);
+      var name = (c.name === undefined || c.name === null || c.name === "") ? String(key) : String(c.name);
+      var raw = (Object.prototype.toString.call(c.chunks) === "[object Array]") ? c.chunks : [];
+      var chunks = [], miss = 0, invalid = 0, zero = 0;
+      for (var k = 0; k < raw.length; k++) {
+        var ce = clientChunkEntry(raw[k]);
+        if (!ce) continue;
+        if (ce.bad) { invalid++; continue; }          // 连坐标都读不出来：不计入区域，但要如实计数
+        if (ce.state === "missing") miss++;
+        else if (ce.state === "invalid") invalid++;
+        else if (ce.state === "zero") zero++;        // v8：刚加载未裁决 = 正常（不画线框，不报警）
+        // 坐标可用（仍参与画布范围），但 missing / invalid 没有可信状态 → 用 -1 标记「不画线框」；
+        // s=0 是 v8 的正常值（已加载、未裁决 → 中性灰线框），绝不能被当成 -1。
+        chunks.push([ce.x, ce.z, (ce.state === "ok" || ce.state === "zero") ? ce.s : -1]);
+      }
+      stateMissing += miss;
+      stateInvalid += invalid;
+      stateZero += zero;
+      // reported = **会话累计**上报条数（只增不减，仅作参考；不是客户端当前内存集合的大小）
+      var reported = (typeof c.reported === "number" && isFinite(c.reported)) ? c.reported : chunks.length;
+      // v8：完整性基准 = currentLoaded（客户端**当前内存**区块数，chunks 的条数与它一一对应）；
+      // 只有字段缺失（旧版 v7 feed）才退回 reported，并在图例里明说「旧口径」。
+      var currentLoaded = (typeof c.currentLoaded === "number" && isFinite(c.currentLoaded)) ? c.currentLoaded : null;
+      var legacyCurrent = false;
+      if (currentLoaded === null) { currentLoaded = reported; legacyCurrent = true; legacyCurrentCount++; }
+      var merged = (typeof c.merged === "number" && isFinite(c.merged)) ? c.merged : chunks.length;
+      var complete = (c.complete === false) ? false : true;
+      if (merged !== currentLoaded) complete = false;
+      if (!complete) incomplete.push(name + "（键 " + key + "，当前内存 " + currentLoaded + " 条 / 已合并 " + merged + " 条）");
+      else if (!chunks.length) empty.push(name + "（键 " + key + "）");
+      out.push({
+        id: id, key: key, name: name, chunks: chunks, reported: reported, currentLoaded: currentLoaded,
+        legacyCurrent: legacyCurrent, merged: merged, complete: complete,
+        stateMissing: miss, stateInvalid: invalid, stateZero: zero
+      });
+    }
+    return {
+      list: out, present: !!has, incomplete: incomplete, empty: empty,
+      stateMissing: stateMissing, stateInvalid: stateInvalid, stateZero: stateZero,
+      legacyCurrent: legacyCurrentCount
+    };
+  }
+
+  // 角色所在格：优先该角色自己的 players[].cell（绝对方块坐标）；缺失时退回它的区块中心
+  // （approx=true 表示"这不是真实坐标，是按区块中心画的"—— 图例与统计面板会明说）。
+  function characterCell(state, sel) {
+    if (!sel) {
+      var cell = state && state.center ? state.center.cell : null;
+      var fromFeed = nums3(cell);
+      if (fromFeed) return { xyz: fromFeed, src: "center.cell", approx: false };
+      return null;
+    }
+    if (sel.cell) return { xyz: sel.cell, src: "players[].cell", approx: false };
+    var legacy = state && state.center ? nums3(state.center.cell) : null;
+    if (legacy && sel.isHost) return { xyz: legacy, src: "center.cell（旧版 feed）", approx: false };
+    return {
+      xyz: [sel.chunk[0] * 16 + 8, null, sel.chunk[1] * 16 + 8],
+      src: "区块中心（该角色坐标未知）", approx: true
+    };
+  }
+  function chunkOf(cell) { return [Math.floor(cell[0] / 16), Math.floor(cell[2] / 16)]; }
+
+  /* ---------- 视图作用域：**唯一一处**决定「这次画哪些区块、哪些标记」 ----------
+     居中角色的选择（#centerSel / ?center=<key>）决定绘制的区块集合与标记；
+     选中的是**身份稳定键**（players[].key），所以玩家端重连（clientId 变了）后选择仍然有效：
+       · 选中的是主机（isHost:true）→ 地形填充 = 主机 chunks[]（**只有主机加载的区域**）；
+         线框 = **每个完整客户端的全部 clients[].chunks**（含与主机不重叠的部分）；
+         画布范围要装下两者的并集；并画出**全部**角色的标记；
+       · 选中的是某个客户端 → 地形填充仍只来自主机 chunks[]，且只限落在**这个客户端区块集合内**的
+         主机区块（不画别处的主机地形）；线框只画**这一个**客户端的区块；
+         也只画**它自己**的标记（主机与其它的标记都不画）。
+     线框集合 = 客户端**当前内存**区块（v8：clients[].chunks 随卸载实时收缩，**卸载的块立刻不画**）。
+     数据完整性照旧：complete === false 的客户端一块都不画（图例写明原因），因此它也不会进入线框集合。
+     标记也按同一份选择过滤：主机视图 = 全部条目，客户端视图 = 只有它自己。 */
+  function viewScope(sel, hostDecoded, clientRegions) {
+    var regs = (clientRegions && clientRegions.list) ? clientRegions.list : [];
+    var chunks = [], set = {}, picked = [], sets, markerList;
+    function add(cx, cz) {
+      var k = cx + "," + cz;
+      if (set[k]) return;
+      set[k] = true;
+      chunks.push([cx, cz]);
+    }
+    if (!sel || sel.isHost) {
+      // 主机视图：主机 chunks[] ∪ 每个**完整**客户端的**当前内存**区块 clients[].chunks（并集，去重）
+      for (var i = 0; i < regs.length; i++) {
+        if (!regs[i].complete) continue;                  // 不完整 → 不画（图例里写明原因）
+        picked.push(regs[i]);
+        for (var k = 0; k < regs[i].chunks.length; k++) add(regs[i].chunks[k][0], regs[i].chunks[k][1]);
+      }
+      for (var h = 0; h < hostDecoded.length; h++) add(hostDecoded[h].x, hostDecoded[h].z);
+      sets = 1 + picked.length;
+      markerList = null;                                  // null = 全部角色
+    } else {
+      // 客户端视图：只画选中的这**一个身份**的区块（主机 / 其它身份一律不画）。
+      // 匹配用稳定键（key）：重连后 clientId 变了、key 不变，所以选择仍然指向同一个人。
+      for (var j = 0; j < regs.length; j++) if (String(regs[j].key) === String(sel.key)) { picked.push(regs[j]); break; }
+      var cs = picked.length ? picked[0].chunks : [];
+      for (var m = 0; m < cs.length; m++) add(cs[m][0], cs[m][1]);
+      sets = picked.length ? 1 : 0;
+      markerList = [sel];                                 // 只有它自己的标记
+    }
+    var hostSet = hostChunkSet(hostDecoded);
+    var hostCells = [], clientOnly = [], byKey = {};
+    // byKey：主机区块的**解码后对象**（带 x / z / s / d），只用来判断某块是否属于主机 chunks[]
+    for (var hh = 0; hh < hostDecoded.length; hh++) byKey[hostDecoded[hh].x + "," + hostDecoded[hh].z] = hostDecoded[hh];
+    var clientKeySet = {};
+    for (var p0 = 0; p0 < picked.length; p0++) {
+      for (var n0 = 0; n0 < picked[p0].chunks.length; n0++) {
+        clientKeySet[picked[p0].chunks[n0][0] + "," + picked[p0].chunks[n0][1]] = true;
+      }
+    }
+    for (var q = 0; q < chunks.length; q++) {
+      var cx2 = chunks[q][0], cz2 = chunks[q][1], key = cx2 + "," + cz2;
+      var inHost = hostSet[key] === true, inClient = clientKeySet[key] === true;
+      if (inHost) {
+        hostCells.push([cx2, cz2]);                        // 属于主机 chunks[]（统计"线框压在主机地形上"用）
+        // 主机区块（有地形载荷）只用于统计/判定，页面不再为它画任何框
+      }
+      if (inClient && !inHost) clientOnly.push([cx2, cz2]); // 只有客户端上报过（主机没有地形）→ 只有线框
+    }
+    return {
+      host: !sel || sel.isHost === true,
+      markerList: markerList,            // 只画这些角色的标记；null = 全部
+      chunks: chunks,                    // 本视图要画的区块（去重后的并集 / 单个客户端的集合），元素 = [cx,cz]
+      chunkSet: set,                     // 同一份集合的查找表（主机地形按它过滤）
+
+      hostCells: hostCells,              // 同一集合里属于主机 chunks[] 的区块
+      clientOnly: clientOnly,            // 客户端有、主机没有（只画线框，绝不填地形）
+      sets: sets,                        // 参与并集的集合数：主机视图 = 1（主机）+ 每个完整客户端
+      picked: picked,                    // 参与并集的客户端区域
+      sel: sel || null
+    };
+  }
+  // feed 的 watched：工具当前观察的客户端（id = -1 或缺失表示没有客户端在线）；
+  // v6 起还带 key = 该身份的稳定键（重连不变）。
+  function watchedOf(state) {
+    var w = (state && state.watched && typeof state.watched === "object") ? state.watched : null;
+    if (!w) return null;
+    var id = (typeof w.id === "number" && isFinite(w.id)) ? w.id : ((typeof w.id === "string" && /^-?\d+$/.test(w.id)) ? parseInt(w.id, 10) : null);
+    var key = (typeof w.key === "string" && w.key !== "") ? w.key : (id === null ? "" : String(id));
+    return { id: id, key: key, name: (w.name === undefined || w.name === null || w.name === "") ? String(key) : String(w.name) };
+  }
+
+  /* ---------- 缩放与视口 ---------- */
+  function radiusOf(state) {
+    var r = (state && typeof state.radius === "number" && isFinite(state.radius)) ? Math.round(state.radius) : 2;
+    return Math.max(1, Math.min(6, r));
+  }
+  function viewMode(state) { return (state && state.view === "window") ? "window" : "all"; }
+  function dpr() { return (typeof devicePixelRatio === "number" && devicePixelRatio > 0) ? devicePixelRatio : 1; }
+
+  /* ---------- 覆盖区域：只认 feed 的 bounds / chunks / clients / players，不做任何地形推测 ---------- */
+  function arr2(v) { return (v && v.length === 2) ? [v[0] | 0, v[1] | 0] : null; }
+  function regionOf(state, decoded, clientRegions, players, view) {
+    var b = (state && state.bounds && typeof state.bounds === "object") ? state.bounds : null;
+    // 客户端视图（view.host === false）**不并入** feed 的 bounds：那是主机的整片已加载范围，并进来会把
+    // 画布撑成主机那么大，与「客户端只显示自己的地形」矛盾（画布只按它自己的区块 + 它自己的位置撑开）。
+    if (view && view.host === false) b = null;
+    var r = null, b2 = b ? arr2(b.cellMin) : null, c2 = b ? arr2(b.cellMax) : null;
+    if (b2 && c2) {
+      r = {
+        minCellX: Math.min(b2[0], c2[0]), maxCellX: Math.max(b2[0], c2[0]),
+        minCellZ: Math.min(b2[1], c2[1]), maxCellZ: Math.max(b2[1], c2[1]), src: "bounds.cellMin/Max"
+      };
+    } else {
+      var km = b ? arr2(b.chunkMin) : null, kx = b ? arr2(b.chunkMax) : null;
+      if (km && kx) {
+        r = {
+          minCellX: Math.min(km[0], kx[0]) * 16, maxCellX: Math.max(km[0], kx[0]) * 16 + 15,
+          minCellZ: Math.min(km[1], kx[1]) * 16, maxCellZ: Math.max(km[1], kx[1]) * 16 + 15, src: "bounds.chunkMin/Max"
+        };
+      }
+    }
+    function include(cx0, cx1, cz0, cz1, src) {
+      if (!r) { r = { minCellX: cx0, maxCellX: cx1, minCellZ: cz0, maxCellZ: cz1, src: src }; return; }
+      if (cx0 < r.minCellX) r.minCellX = cx0;
+      if (cx1 > r.maxCellX) r.maxCellX = cx1;
+      if (cz0 < r.minCellZ) r.minCellZ = cz0;
+      if (cz1 > r.maxCellZ) r.maxCellZ = cz1;
+    }
+    // 本视图实际要画的区块范围必须一并并入：保证本视图列出的每一列都落在画布里
+    // （view.chunks = 主机视图的主机 ∪ 全部客户端区块，或客户端视图里那一个客户端的区块，
+    //   元素是 [cx,cz]；decoded 的元素是解码对象 —— 两种形状都认）
+    var hostRange = (view && view.chunks) ? view.chunks : decoded;
+    for (var i = 0; i < hostRange.length; i++) {
+      var ch = hostRange[i];
+      var hx = (ch.x === undefined) ? ch[0] : ch.x, hz = (ch.z === undefined) ? ch[1] : ch.z;
+      include(hx * 16, hx * 16 + 15, hz * 16, hz * 16 + 15, "chunks");
+    }
+    // 客户端当前内存区块（只有数据完整的客户端才算：不完整就不画、也不扩画布；v8 已卸载的块不在集合里）
+    var regions = (clientRegions && clientRegions.list) ? clientRegions.list : [];
+    for (var m = 0; m < regions.length; m++) {
+      if (!regions[m].complete) continue;
+      if (view && view.host === false) continue;          // 客户端视图：不并入其它客户端 / 主机的范围
+      var cs = regions[m].chunks;
+      for (var k = 0; k < cs.length; k++) {
+        include(cs[k][0] * 16, cs[k][0] * 16 + 15, cs[k][1] * 16, cs[k][1] * 16 + 15, "clients[].chunks");
+      }
+    }
+    // 每个角色的位置也必须落在画布里（"两个角色都看得到"；客户端视图只有它自己那一个）
+    var clientView = !!(view && view.host === false);
+    var list = (players && players.list) ? players.list : [];
+    for (var p = 0; p < list.length; p++) {
+      if (clientView && String(list[p].key) !== String(view.sel.key)) continue;   // 其它身份的位置不扩画布
+      var cell = list[p].cell;
+      if (!cell) continue;
+      include(cell[0], cell[0], cell[2], cell[2], "players[].cell");
+    }
+    return r;
+  }
+  // view === "window"：老的“角色周围 (2r+1)×(2r+1) 区块”窗口
+  function windowRegion(state, who) {
+    var r = radiusOf(state);
+    var cx = Math.floor(who.xyz[0] / 16), cz = Math.floor(who.xyz[2] / 16);
+    return {
+      minCellX: (cx - r) * 16, maxCellX: (cx + r) * 16 + 15,
+      minCellZ: (cz - r) * 16, maxCellZ: (cz + r) * 16 + 15,
+      src: "view=window · radius=" + r
+    };
+  }
+  function regionFor(state, who, decoded, clientRegions, players, view) {
+    if (!who) return null;
+    if (viewMode(state) === "window") return windowRegion(state, who);
+    return regionOf(state, decoded, clientRegions, players, view);
+  }
+
+  /* ---------- 画面框：同时满足「装下整个覆盖区域」与「角色所在格精确居中」 ----------
+     半跨 = max(|charX-minCellX|, |charX-maxCellX|)（z 同理）；画布 = (2×半跨+1) 格 × scale。
+     多出来的那一格正是角色自己那一列 —— 少了它，区域边缘那半列会被切掉。 */
+  function frameOf(who, region) {
+    var halfX = Math.max(Math.abs(who.xyz[0] - region.minCellX), Math.abs(who.xyz[0] - region.maxCellX));
+    var halfZ = Math.max(Math.abs(who.xyz[2] - region.minCellZ), Math.abs(who.xyz[2] - region.maxCellZ));
+    var colsX = 2 * halfX + 1, colsZ = 2 * halfZ + 1;
+    // 向上取整：画布宁可多半像素，也绝不让覆盖区域最外侧那一列被切掉
+    var wPx = Math.max(1, Math.ceil(colsX * cellScale - 1e-9));
+    var hPx = Math.max(1, Math.ceil(colsZ * cellScale - 1e-9));
+    return {
+      colsX: colsX, colsZ: colsZ, halfX: halfX, halfZ: halfZ, wPx: wPx, hPx: hPx,
+      // 世界格坐标 -> 像素：x0/z0 = 画布左/上边缘所在的世界格坐标（可为小数），角色格中心恒等于 wPx/2、hPx/2
+      x0: who.xyz[0] + 0.5 - (wPx / 2) / cellScale,
+      z0: who.xyz[2] + 0.5 - (hPx / 2) / cellScale
+    };
+  }
+
+  /* ---------- canvas 尺寸（DPR 感知 + 后备存储上限） ---------- */
+  function fitCanvas(canvas, cssW, cssH) {
+    var d = dpr();
+    var cap = Math.min(MAX_CANVAS_SIDE / Math.max(1, cssW), MAX_CANVAS_SIDE / Math.max(1, cssH),
+                       Math.sqrt(MAX_CANVAS_PX / Math.max(1, cssW * cssH)));
+    if (cap > 0 && d > cap) d = cap;
+    if (!(d > 0) || !isFinite(d)) d = 1;
+    canvas.width = Math.max(1, Math.round(cssW * d));
+    canvas.height = Math.max(1, Math.round(cssH * d));
+    canvas.style.width = cssW + "px";
+    canvas.style.height = cssH + "px";
+    var ctx = canvas.getContext("2d");
+    ctx.setTransform(d, 0, 0, d, 0, 0);       // 之后一律用 CSS 像素坐标绘制
+    ctx.imageSmoothingEnabled = false;
+    drawStats.dprUsed = d;
+    return ctx;
+  }
+
+  /* ---------- 绘制 ---------- */
+  function drawEmptyNote(ctx, w, h, text) {
+    ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = "#7d8aa3"; ctx.font = "13px " + "ui-monospace,Consolas,monospace";
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(text, w / 2, h / 2);
+    ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+  }
+
+  function draw(state) {
+    var canvas = $("map");
+    if (!canvas || typeof canvas.getContext !== "function") return;
+
+    var decoded = decodeChunks(state);
+    var players = playersOf(state);
+    var sel = pickCenter(state, players.list);
+    var who = state ? characterCell(state, sel) : null;
+    var clientRegions = clientRegionsOf(state);
+    var animals = animalsOf(state);   // v9：主机端动物（仅位置，画黑点）
+    // 视图作用域：由**选中的居中角色**决定这次画哪些区块集合、画哪些角色的标记（唯一一处决定）
+    var view = viewScope(sel, decoded, clientRegions);
+    var region = state ? regionFor(state, who, decoded, clientRegions, players, view) : null;
+
+    drawStats = {
+      drawn: 0, listed: decoded.length, listedColumns: decoded.length * 256, chunks: 0, legend: [],
+      watched: watchedOf(state), ok: false, region: region,
+      frame: null, dprUsed: 1, players: players, regions: clientRegions, selected: sel, view: view,
+      wire: { clients: 0, chunks: 0, zero: 0, invalid: 0, byState: { 0: 0, 1: 0, 2: 0, 3: 0, 4: 0 }, offCanvas: 0, onHost: 0, tooSmall: false },
+      markers: { drawn: 0, approx: 0, offCanvas: 0, unlocatable: players.unlocatable },
+      animals: { present: animals.present, listed: animals.listed, invalid: animals.invalid, declared: animals.declared, drawn: 0, offCanvas: 0 },
+      pending: pendingFieldOf(state), pendingDrawn: 0
+    };
+
+    if (!state || !who || !region) {
+      // 没有可用数据：给一块固定大小的提示画布，绝不报错、也不钳制高度
+      var ctx0 = fitCanvas(canvas, NOTE_W, NOTE_H);
+      var why = !state
+        ? "暂无数据（先建房并加入房间，再启动 LiveMap 工具）"
+        : (state.online === true ? "online=true，但 feed 里没有可用的 center / chunks" : "工具在跑，但 online=false：当前没有实时房间数据");
+      drawEmptyNote(ctx0, NOTE_W, NOTE_H, why);
+      setLegend([]);
+      setRegionLegend(state, drawStats);
+      setPendingLegend(state, drawStats);
+      var chip0 = $("mapChip");
+      if (chip0) chip0.textContent = !state ? "等待数据" : "无可用中心格";
+      var sc0 = $("scaleChip");
+      if (sc0) sc0.textContent = fmtScale(cellScale) + " px/格";
+      return;
+    }
+
+    var f = frameOf(who, region);
+    var ctx = fitCanvas(canvas, f.wPx, f.hPx);
+    drawStats.frame = f;
+    drawStats.ok = true;
+
+    // 底色：整块画布都是背景；只有 state.chunks 里列出的列会被覆盖
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, f.wPx, f.hPx);
+
+    // 逐列上色：按 (方块 id, 高度档) 分组批量填充 —— 整片区域可能上万列，避免逐列切换 fillStyle
+    // **地形填充只来自主机 chunks[]**（decoded = state.chunks）：客户端区块没有地形载荷，
+    // 这里也不会给它们填任何底色 / 高度着色。视图作用域只决定"哪些主机区块落在画布内"：
+    //   主机视图 = 全部主机区块；客户端视图 = 只限与该客户端区块集合相交的主机区块（不画别处）。
+    var groups = {}, order = [], drawn = 0, usedChunks = 0, side = 16 * cellScale;
+    for (var i = 0; i < decoded.length; i++) {
+      var ch = decoded[i];
+      if (!view.chunkSet[ch.x + "," + ch.z]) continue;   // 不在本视图作用域内的主区块一律不画
+      var bx = (ch.x * 16 - f.x0) * cellScale, bz = (ch.z * 16 - f.z0) * cellScale;
+      if (bx + side <= 0 || bz + side <= 0 || bx >= f.wPx || bz >= f.hPx) continue;
+      usedChunks++;
+      for (var lz = 0; lz < 16; lz++) {
+        for (var lx = 0; lx < 16; lx++) {
+          var o = lx + 16 * lz;
+          var id = ch.contents[o];
+          if (!id) continue;                        // contents == 0 -> 保持背景
+          var px = bx + lx * cellScale, pz = bz + lz * cellScale;
+          if (px + cellScale <= 0 || pz + cellScale <= 0 || px >= f.wPx || pz >= f.hPx) continue;
+          var band = bandOf(ch.top[o]);
+          var key = id + "|" + band;
+          var g = groups[key];
+          if (!g) { g = groups[key] = { id: id, band: band, rects: [] }; order.push(key); }
+          g.rects.push(px, pz);
+          drawn++;
+        }
+      }
+    }
+    // 整片区域列数可能上万：不做逐列 1px 描边（stroke-width:0），描边只留给虚线范围框与十字
+    ctx.lineWidth = 0;
+    for (var k = 0; k < order.length; k++) {
+      var gg = groups[order[k]];
+      ctx.fillStyle = bandColor(gg.id, gg.band);
+      ctx.beginPath();
+      for (var r = 0; r < gg.rects.length; r += 2) ctx.rect(gg.rects[r], gg.rects[r + 1], cellScale, cellScale);
+      ctx.fill();
+    }
+    drawStats.drawn = drawn;
+    drawStats.chunks = usedChunks;
+    drawStats.legend = order.map(function (key) { return { id: groups[key].id, band: groups[key].band }; });
+
+    // 地形 / 客户端线框一律按**本视图作用域内的区块**走：不画别的角色、不画别处的主机地形。
+    // view.chunks = 本视图全部区块坐标 [cx,cz]（含只有客户端上报、主机没有载荷的区块 —— 那些只有线框）。
+    // 主机侧**不画任何方框**（用户要求：主机端不需要任何方框，主机只保留地形填充）——
+    // 原来这里画「主机已加载区域边界」与「主机验证框（chunks[].s）」，现在都删掉；
+    // 客户端区域线框是图上唯一的框层，画在地形之上。
+    var viewChunks = view.chunks;
+    drawClientWireframes(ctx, clientRegions, view, f);
+    // 格内数字（chunks[].n：这块还有几个在线客户端没拿到最新）画在客户端线框之上、刻度与角色标记之下
+    drawPendingDigits(ctx, decoded, view, f);
+    // 动物（主机端，仅位置）：黑色实心圆点，画在地形/线框/数字之上、角色标记之下
+    drawAnimals(ctx, animals, f);
+    drawTicks(ctx, f);
+    drawPlayerMarkers(ctx, players.list, sel, f, view.markerList);
+    setLegend(drawStats.legend);
+    setRegionLegend(state, drawStats);
+    setPendingLegend(state, drawStats);
+
+    var spanX = 0, spanZ = 0;
+    if (viewChunks.length) {
+      var mnx = 1e9, mxx = -1e9, mnz = 1e9, mxz = -1e9;
+      for (var q = 0; q < viewChunks.length; q++) {
+        if (viewChunks[q][0] < mnx) mnx = viewChunks[q][0];
+        if (viewChunks[q][0] > mxx) mxx = viewChunks[q][0];
+        if (viewChunks[q][1] < mnz) mnz = viewChunks[q][1];
+        if (viewChunks[q][1] > mxz) mxz = viewChunks[q][1];
+      }
+      spanX = mxx - mnx + 1; spanZ = mxz - mnz + 1;
+    }
+    var chip = $("mapChip");
+    if (chip) chip.textContent = "已画 " + drawn + " 列 · 覆盖 " + spanX + " × " + spanZ + " 区块";
+    var sc = $("scaleChip");
+    if (sc) sc.textContent = fmtScale(cellScale) + " px/格";
+  }
+
+  /* ---------- 客户端**当前内存**区块（线框，按验证状态着色） ----------
+     规则（与图例逐条对应）：
+       · 地形填充 = **只有主机 chunks[]**（主机真正加载的区域）；客户端区块**绝不填地形**
+         （没有底 colour、没有高度着色），哪怕它完全不与主机重叠；
+       · 客户端当前内存区块 = 每个 clients[].chunks 条目一个**线框矩形**（只有描边、不填充），
+         正好盖住该 chunk 的 16×16 方块列；**客户端卸载一块 → 它立刻不在集合里 → 立刻不画**；
+       · 线框颜色 = 该条目自己的 s：2 绿（验证通过）、4 蓝（同步了主机数据 / 二次验证通过）、
+         1 黄（已上报、待裁决）、3 红（验证失败）、**0 中性灰**（已加载、尚未上报/裁决）；
+       · v8：**currentLoaded 里每一块都画** —— s=0 用中性灰（保证只要客户端内存里有块就一定能看到方框），
+         不报警（刚加载、还没上报/裁决是正常过渡）；s 缺失（旧版 2 元条目）/ 不认识 → 不画并在图例里计数报警；
+       · 几何一律画在**区块边界**上（与地形 16×16 的边界严格对齐，**绝不内缩 / 不偏移**）；
+       · 多客户端覆盖同一块：按**身份稳定键**排序，第 i 个客户端线更宽（i=0 最细、最后画在最上层），
+         这样同一块上每个客户端的状态各有一条可见色带，且都落在同一条区块边界上；
+       · 不再画任何填充、也不再画每个客户端区域的外框（用户明确不要品红底与外框）。 */
+  // v8：s=0（客户端已加载、尚未上报/裁决）的中性色线框 —— 保证当前内存里每一块都看得到方框
+  var WIRE_ZERO_RGB = "146,155,168";
+  var WIRE_ZERO_COLOR = "rgba(146,155,168,.95)";
+  // 描边深色底衬（halo）：近黑半透明、比彩线宽 2 px（每侧外扩 1 px）。
+  // 水面是蓝的、亮地形也可能很亮 —— 只画彩线会在这些底色上糊掉，所以客户端区域线框先垫这一层。
+  var HALO_RGB = "10,14,22";
+  var HALO_STYLE = "rgba(" + HALO_RGB + ",.55)";
+  var HALO_EXTRA = 2;
+  function hostChunkSet(decoded) {
+    var set = {};
+    for (var i = 0; i < decoded.length; i++) set[decoded[i].x + "," + decoded[i].z] = true;
+    return set;
+  }
+  function drawClientWireframes(ctx, clientRegions, view, f) {
+    // 只画**本视图参与**的客户端（主机视图 = 全部完整客户端；客户端视图 = 只有选中的那一个）
+    var regions = (view && view.picked) ? view.picked.slice() : [];
+    var side = 16 * cellScale;
+    if (!regions.length) return;
+    // 多客户端重叠规则：按**身份稳定键**排序；**几何一律画在同一条区块边界上**（与地形严格对齐、绝不内缩）。
+    // 区分重叠的多个客户端只靠**线宽**：第 i 个更宽（i=0 最细、最后画 → 压在最上层），各状态各一条色带。
+    regions.sort(function (a, b) {
+      var ka = String(a.key), kb = String(b.key);
+      return ka < kb ? -1 : (ka > kb ? 1 : 0);
+    });
+    var baseLw = Math.max(1.5, Math.min(3, cellScale / 5));
+    var lwStep = Math.max(1.5, baseLw * 0.8);
+    if (side < 2) {                       // 每块不到 2 px：画不出可辨的线框，明说（图例里有计数）
+      drawStats.wire.tooSmall = true;
+      return;
+    }
+    var byClient = {};                    // clientIdx -> { state -> [rect…] }
+    var unique = {}, all = [];            // 底衬：同一块被多个客户端覆盖时只画一次
+    var hostCellsSet = {};
+    for (var h = 0; h < view.hostCells.length; h++) {
+      hostCellsSet[view.hostCells[h][0] + "," + view.hostCells[h][1]] = true;
+    }
+    var drawnIdx = 0;                     // 只给**真正画出来的**客户端编号（不完整 / 空集合不占号）
+    for (var i = 0; i < regions.length; i++) {
+      var reg = regions[i];
+      if (!reg.complete) continue;        // 数据不完整 → 不画（图例里写明原因）
+      if (!reg.chunks.length) continue;   // 还没上报任何区块 → 没有线框
+      drawStats.wire.clients++;
+      var clientIdx = drawnIdx;
+      drawnIdx++;
+      var g = byClient[clientIdx] = { 0: [], 1: [], 2: [], 3: [], 4: [] };
+      for (var k = 0; k < reg.chunks.length; k++) {
+        var entry = reg.chunks[k], st = entry[2];
+        // v8：**0..4 都画**（s=0 = 已加载、尚未上报/裁决 → 中性灰）；只有不认识的线格式才跳过并计数
+        if (!(st >= 0 && st <= 4)) { drawStats.wire.invalid++; continue; }
+        // 区块边界 = 地形同一个 16×16 区块格：左上角 bx/bz、边长 side（**不加 0.5、不内缩**）
+        var bx = (entry[0] * 16 - f.x0) * cellScale, bz = (entry[1] * 16 - f.z0) * cellScale;
+        if (bx + side <= 0 || bz + side <= 0 || bx >= f.wPx || bz >= f.hPx) {
+          drawStats.wire.offCanvas++;
+          continue;
+        }
+        var rect = [bx, bz, side, side];
+        g[st].push(rect);
+        var ukey = entry[0] + "," + entry[1];
+        if (!unique[ukey]) { unique[ukey] = true; all.push(rect); }
+        drawStats.wire.byState[st]++;
+        if (st === 0) drawStats.wire.zero++;
+        drawStats.wire.chunks++;
+        if (hostCellsSet[entry[0] + "," + entry[1]]) drawStats.wire.onHost++;
+      }
+    }
+    if (!all.length) return;
+    ctx.save();
+    ctx.setLineDash([]);
+    ctx.lineJoin = "miter";
+    // 1) 先把**所有**区块的深色底衬画一次（同一几何，线宽比最宽的色带还宽 2 px = 每侧外扩 1 px）
+    // 线宽最多叠 5 档（更多客户端时共用同样线宽），避免几十个客户端时线宽失控
+    var maxLw = baseLw + Math.min(Math.max(0, drawnIdx - 1), 4) * lwStep;
+    ctx.lineWidth = maxLw + HALO_EXTRA;
+    ctx.strokeStyle = HALO_STYLE;
+    ctx.beginPath();
+    for (var a = 0; a < all.length; a++) ctx.rect(all[a][0], all[a][1], all[a][2], all[a][3]);
+    ctx.stroke();
+    // 2) 按客户端从**宽到细**画：宽的先画、细的压在上面 → 同一块上每个客户端各留一条可见色带；
+    //    几何始终是同一条区块边界（与地形严格对齐），所以多客户端不会让方框看起来「偏移」。
+    for (var ci = drawnIdx - 1; ci >= 0; ci--) {
+      var cg = byClient[ci];
+      if (!cg) continue;
+      ctx.lineWidth = baseLw + Math.min(ci, 4) * lwStep;
+      for (var q = 0; q < SC_ORDER.length; q++) {
+        var state = SC_ORDER[q], rects = cg[state];
+        if (!rects.length) continue;
+        ctx.strokeStyle = SC[state].color;
+        ctx.beginPath();
+        for (var r = 0; r < rects.length; r++) ctx.rect(rects[r][0], rects[r][1], rects[r][2], rects[r][3]);
+        ctx.stroke();
+      }
+      if (cg[0].length) {
+        ctx.strokeStyle = WIRE_ZERO_COLOR;
+        ctx.beginPath();
+        for (var r0 = 0; r0 < cg[0].length; r0++) ctx.rect(cg[0][r0][0], cg[0][r0][1], cg[0][r0][2], cg[0][r0][3]);
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+  }
+
+  // 画布边缘的绝对坐标刻度（世界方块坐标，x 向东、z 向南）
+  function drawTicks(ctx, f) {
+    var step = 16;
+    while (step * cellScale < 52) step *= 2;                 // 至少隔 52 px 才放一个刻度
+    while (f.colsX / step > 60 || f.colsZ / step > 60) step *= 2;
+    var x1 = f.x0 + f.wPx / cellScale, z1 = f.z0 + f.hPx / cellScale;
+    ctx.save();
+    ctx.font = "11px ui-monospace,Consolas,monospace";
+    ctx.textBaseline = "top";
+    for (var wx = Math.ceil(f.x0 / step) * step; wx <= x1; wx += step) {
+      var px = (wx - f.x0) * cellScale;
+      ctx.strokeStyle = "rgba(90,106,134,.22)";
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(Math.round(px) + 0.5, 0); ctx.lineTo(Math.round(px) + 0.5, 9); ctx.stroke();
+      ctx.fillStyle = "rgba(70,88,122,.95)";
+      ctx.fillText("x" + wx, px + 3, 10);
+    }
+    for (var wz = Math.ceil(f.z0 / step) * step; wz <= z1; wz += step) {
+      var pz = (wz - f.z0) * cellScale;
+      ctx.strokeStyle = "rgba(90,106,134,.22)";
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(0, Math.round(pz) + 0.5); ctx.lineTo(9, Math.round(pz) + 0.5); ctx.stroke();
+      ctx.fillStyle = "rgba(70,88,122,.95)";
+      ctx.fillText("z" + wz, 11, pz + 3);
+    }
+    ctx.restore();
+  }
+
+  /* ---------- 角色标记（**每个**角色一个） ----------
+     标签格式（与需求逐字对应）：`Host (-75,140) chunk(-5,8)` = 名字 + 绝对坐标 (x,z) + 区块。
+     · 所选（"居中角色"）那一个：十字 + 大圆点（画布正中），标签带粗边；
+     · 其它角色：小圆点（品红=玩家端 / 紫=主机），标签同样给出坐标与区块；
+     · 该角色坐标未知（feed 里 cell=null）：标记落在它的区块中心，标签写"坐标未知"，
+       统计面板给出原因 —— 绝不假装那是真实坐标；
+     · 标记落在画布外（view=window 的远处角色）：贴到画布边缘并标注"画布外"。 */
+  function drawPlayerMarkers(ctx, players, sel, f, only) {
+    if (!players || !players.length) return;
+    // only != null 时只画这些角色的标记（客户端视图 = 只有该客户端自己的标记）
+    var draw = [], i0, j0;
+    if (only && only.length) {
+      for (i0 = 0; i0 < only.length; i0++) {
+        for (j0 = 0; j0 < players.length; j0++) {
+          if (String(players[j0].key) === String(only[i0].key)) { draw.push(players[j0]); break; }
+        }
+      }
+    } else {
+      draw = players;
+    }
+    for (var i = 0; i < draw.length; i++) {
+      var p = draw[i];
+      var approx = !p.cell;
+      var cell = p.cell ? p.cell : [p.chunk[0] * 16 + 8, null, p.chunk[1] * 16 + 8];
+      var isSel = sel ? String(p.key) === String(sel.key) : false;
+      var cx = (cell[0] + 0.5 - f.x0) * cellScale, cz = (cell[2] + 0.5 - f.z0) * cellScale;
+      var offCanvas = (cx < 0 || cz < 0 || cx > f.wPx || cz > f.hPx);
+      if (offCanvas) {
+        drawStats.markers.offCanvas++;
+        cx = Math.min(Math.max(10, cx), Math.max(10, f.wPx - 10));
+        cz = Math.min(Math.max(10, cz), Math.max(10, f.hPx - 10));
+      }
+      var color = p.isHost ? "#6a4bd8" : "#b5179e";
+      ctx.save();
+      if (isSel) {
+        ctx.strokeStyle = "rgba(255,255,255,.95)"; ctx.lineWidth = 3.5;
+        ctx.beginPath(); ctx.moveTo(cx - 11, cz); ctx.lineTo(cx + 11, cz); ctx.moveTo(cx, cz - 11); ctx.lineTo(cx, cz + 11); ctx.stroke();
+        ctx.strokeStyle = color; ctx.lineWidth = 1.8;
+        ctx.beginPath(); ctx.moveTo(cx - 11, cz); ctx.lineTo(cx + 11, cz); ctx.moveTo(cx, cz - 11); ctx.lineTo(cx, cz + 11); ctx.stroke();
+        ctx.beginPath(); ctx.arc(cx, cz, 4, 0, Math.PI * 2); ctx.fillStyle = color; ctx.fill();
+        ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.6; ctx.stroke();
+      } else {
+        ctx.beginPath(); ctx.arc(cx, cz, 5, 0, Math.PI * 2); ctx.fillStyle = color; ctx.fill();
+        ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.6; ctx.stroke();
+      }
+      var label = p.name + " " + (p.cell
+        ? ("(" + p.cell[0] + "," + p.cell[2] + ")")
+        : "坐标未知") + " chunk(" + p.chunk[0] + "," + p.chunk[1] + ")" +
+        (offCanvas ? " ·画布外" : "");
+      ctx.font = "12px ui-monospace,Consolas,monospace";
+      var w = ctx.measureText(label).width + 12;
+      var bx = Math.min(Math.max(4, cx + 9), Math.max(4, f.wPx - w - 4));
+      var by = Math.min(Math.max(4, cz + 9), Math.max(4, f.hPx - 26));
+      ctx.fillStyle = "rgba(255,255,255,.92)";
+      ctx.strokeStyle = color; ctx.lineWidth = isSel ? 1.6 : 1;
+      ctx.beginPath(); ctx.rect(bx, by, w, 20); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = p.isHost ? "#3d2c85" : "#7a0f6b"; ctx.textBaseline = "middle";
+      ctx.fillText(label, bx + 6, by + 10);
+      ctx.restore();
+      drawStats.markers.drawn++;
+      if (approx) drawStats.markers.approx++;
+    }
+  }
+
+  /* ---------- 区域图例：地形填充来源 + 客户端当前内存区块线框四色 + 多客户端规则 + **缺失字段的明确说明** ---------- */
+  function setRegionLegend(state, stats) {
+    var el = $("regionLegend");
+    if (!el) return;
+    var players = stats ? stats.players : null;
+    var regions = stats ? stats.regions : null;
+    var w = (stats && stats.wire) ? stats.wire
+      : { clients: 0, chunks: 0, zero: 0, invalid: 0, byState: { 0: 0, 1: 0, 2: 0, 3: 0, 4: 0 }, offCanvas: 0, onHost: 0, tooSmall: false };
+    var bs = w.byState || { 1: 0, 2: 0, 3: 0, 4: 0 };
+    var html = "<b>区域</b>";
+    // —— 当前视图：把「居中角色决定了画哪些区块集合」在图例里逐字说清 ——
+    var v = (stats && stats.view) ? stats.view : null;
+    if (v) {
+      var vWho = v.sel ? (esc(v.sel.name) + "（键 " + esc(v.sel.key) + "）") : "（尚未选出角色）";
+      var scope = v.host
+        ? "地形 = 主机 <code>chunks[]</code>（<b>仅主机加载的区域</b>）· 线框 = 全部完整客户端的<b>当前内存区块</b> <code>clients[].chunks</code>（卸载即消失）"
+        : (esc(v.sel.name) + "（<b>仅该客户端</b>：只画它的线框；地形仍只取落在它区块集合内的主机 <code>chunks[]</code>）");
+      html += "<span><i style='background:linear-gradient(90deg,#5fae43,#17a273);border-color:#7d8aa3'></i>当前视图</span>" +
+        "<span class='mono'>" + (v.host ? "Host（主机 + 全部客户端）" : (esc(v.sel.name) + "（仅该客户端）")) + "</span>";
+      html += "<span style='font-family:var(--mono)'>居中角色 " + vWho + " → " + scope + "</span>";
+      html += "<span style='font-family:var(--mono)'>本视图区块 " + v.sets + " 个集合 · 共 " + v.chunks.length + " 区块</span>";
+      html += "<span style='font-family:var(--mono);color:var(--tx3)'>标记 " +
+        (v.host ? "全部角色（" + ((stats.players && stats.players.list) ? stats.players.list.length : 0) + " 个）"
+                : "只有该客户端自己（" + esc(v.sel.name) + "）") + "</span>";
+    }
+    html += "<span style='flex-basis:100%;font-family:var(--mono);color:var(--tx3)'><b>主机地形（只填充、无框，来源 <code>chunks[]</code>）</b> —— 按方块 id 上色、越亮 = 该列顶部越高；<b>主机侧不画任何方框</b></span>";
+    // 客户端线框四色（线框 = 只有描边，没有填充）：颜色 = 该块相对**它自己那个客户端**的校验状态
+    html += "<span style='flex-basis:100%;font-family:var(--mono);color:var(--tx3)'><b>客户端区域线框（当前内存区块）</b> —— 粗实线 + 深色底衬、画在<b>区块边界</b>；客户端卸载一块就不再画</span>";
+    html += "<span><i style='background:transparent;border:2px solid #17a273'></i>客户端线框 · 绿 = 已验证同步（<code>s=2</code>）</span>";
+    html += "<span><i style='background:transparent;border:2px solid #2f6fd0'></i>客户端线框 · 蓝 = 同步了主机端数据（<code>s=4</code>，二次验证通过）</span>";
+    html += "<span><i style='background:transparent;border:2px solid #e0a800'></i>客户端线框 · 黄 = 已上报、待裁决（<code>s=1</code>）</span>";
+    html += "<span><i style='background:transparent;border:2px solid #d1495f'></i>客户端线框 · 红 = 验证失败（<code>s=3</code>）</span>";
+    html += "<span><i style='background:transparent;border:2px solid #929ba8'></i>客户端线框 · 中性灰 = 已加载、尚未上报/裁决（<code>s=0</code>，正常过渡，<b>照样画</b>）</span>";
+    html += "<span style='font-family:var(--mono)'>客户端区块<b>只画线框、不填地形</b>（没有底色 / 高度着色；线框下垫深色底衬）；<b>卸载即消失</b>（<code>clients[].chunks</code> = 客户端当前内存集合）</span>";
+    html += "<span style='font-family:var(--mono);color:var(--tx3)'>线框覆盖客户端<b>当前内存</b>里的每一块；<code>s=0</code>（刚加载、尚未上报/裁决）是<b>正常过渡</b> → 画<b>中性灰</b>线框、不报警</span>";
+    html += "<span style='font-family:var(--mono);color:var(--tx3)'>同一区块被多个客户端覆盖：<b>几何都画在同一条区块边界上</b>（与地形 16×16 严格对齐、<b>不内缩不偏移</b>）；按<b>身份稳定键</b>排序，第 i 个客户端线更宽（i=0 最细、画在最上层；最多叠 5 档线宽），颜色仍按各自状态</span>";
+    html += "<span style='font-family:var(--mono);color:var(--tx3)'>客户端 " + w.clients + " 个 · 线框 " + w.chunks +
+      " 块（绿 " + (bs[2] || 0) + " / 蓝 " + (bs[4] || 0) + " / 黄 " + (bs[1] || 0) + " / 红 " + (bs[3] || 0) + "）" +
+      (bs[0] ? " · 中性灰 s=0 " + bs[0] : "") +
+      " · 其中 " + w.onHost + " 块落在主机地形上" +
+      " · 灰 s=0 已加载未裁决 " + ((regions && regions.stateZero) || 0) + " 块（中性灰线框）" +
+      (w.offCanvas ? " · 画布外 " + w.offCanvas + " 块" : "") +
+      (w.tooSmall ? " · 比例太小（每块 < 2 px）→ 线框未画，请放大" : "") + "</span>";
+
+    // —— 动物（主机端，仅位置）：黑色实心圆点，无名字/坐标标签、不可选中、不画连线 ——
+    var an = (stats && stats.animals) ? stats.animals
+      : { present: false, listed: 0, invalid: 0, declared: null, drawn: 0, offCanvas: 0 };
+    html += "<span style='flex-basis:100%;font-family:var(--mono);color:var(--tx3)'><b>动物（主机端，仅位置）</b> —— 每只一个<b>黑色实心圆点</b>（半径约 2–3 px、随缩放轻微变化）；<b>不带名字 / 坐标标签、不可选中、不画连线</b>；只来自主机端 <code>animals[]</code>（客户端不贡献）</span>";
+    html += "<span><i style='background:#000;border-color:#000;border-radius:50%'></i>动物（主机端，仅位置）· 黑点</span>";
+    html += "<span style='font-family:var(--mono);color:var(--tx3)'>动物 " + an.drawn + " / " + an.listed +
+      " 个（本视图画出 / feed 列出）" +
+      (an.offCanvas ? " · 画布外 " + an.offCanvas : "") +
+      (an.invalid ? " · 坐标非法 " + an.invalid : "") +
+      (an.declared !== null && an.declared !== an.listed ? " · <code>counts.animals</code>=" + an.declared + " 与条目数不一致" : "") +
+      "</span>";
+
+    // —— 缺失 / 不完整的字段必须在这里明说（不画错区域、也不静默省略状态）——
+    var problems = [];
+    if (!state) {
+      problems.push("还没有收到任何 feed。");
+    } else {
+      if (players && players.legacy) {
+        problems.push("feed 里没有 <code>players</code> 字段（旧版主机/工具）：只能画区块，角色坐标未知；" +
+          "标记按区块中心画（<b>不准</b>）。");
+      }
+      if (players && players.missingCell > 0 && !players.legacy) {
+        problems.push(players.missingCell + " 个角色的 <code>cell</code> 为 null（主机读不到它的身体位置）→ " +
+          "标记按区块中心画，统计面板有原因。");
+      }
+      if (players && players.unlocatable > 0) {
+        problems.push(players.unlocatable + " 个角色既没有坐标也没有区块 → 无法在图上定位（既不画标记也不算居中）。");
+      }
+      if (regions && !regions.present) {
+        problems.push("feed 里没有 <code>clients</code> 字段（旧版主机/工具）→ <b>画不出客户端线框</b>；" +
+          "图上只有主机地形。请把主机端 Mod 与 LiveMap 工具一起更新到同一版本。");
+      }
+      if (regions && regions.stateMissing > 0) {
+        problems.push(regions.stateMissing + " 个 <code>clients[].chunks</code> 条目只有 <code>[cx,cz]</code>" +
+          "（旧版工具没有状态 <code>s</code>）→ 这些区块<b>不画线框</b>（绝不猜一个状态）；" +
+          "请把主机端 Mod 与工具一起更新到 v9。");
+      }
+      if (regions && regions.stateInvalid > 0) {
+        problems.push(regions.stateInvalid + " 个 <code>clients[].chunks</code> 条目的状态不认识（不是 0..4）→ " +
+          "这些区块<b>不画线框</b>（不猜状态；<b>0 是正常值</b>＝刚加载、未裁决，会画中性灰线框、不报警）。");
+      }
+      if (regions && regions.legacyCurrent > 0) {
+        problems.push(regions.legacyCurrent + " 个 <code>clients[]</code> 条目没有 <code>currentLoaded</code>" +
+          "（旧版 v7 feed）→ 完整性暂时按 <code>reported</code> 判定；请把主机端 Mod 与工具一起更新到 v9。");
+      }
+      if (regions && regions.incomplete.length) {
+        problems.push("客户端当前内存区块数据<b>不完整</b>（<code>merged !== currentLoaded</code>）→ 这几块<b>一律不画</b>（不画错的区域）：" +
+          regions.incomplete.join("、") + "。");
+      }
+      // 客户端当前内存为空的情形在图例尾部单独给一条醒目说明（不混进这里的 problems）
+      if (state.counts && state.counts.clientsComplete === false && state.counts.clientsIncompleteReason) {
+        problems.push("工具报告：" + state.counts.clientsIncompleteReason + "。");
+      }
+      if (an && !an.present && state) {
+        problems.push("feed 里没有 <code>animals</code> 字段（旧版主机/工具）→ <b>不画动物</b>；" +
+          "请把主机端 Mod 与工具一起更新到 v9。");
+      }
+      if (an && an.invalid > 0) {
+        problems.push(an.invalid + " 条 <code>animals[]</code> 条目没有可用的 x / z → 这些<b>不画</b>（绝不猜坐标）。");
+      }
+      if (an && an.declared !== null && an.declared !== an.listed) {
+        problems.push("<code>counts.animals</code> = " + an.declared + " 与 <code>animals[]</code> 条数 " + an.listed +
+          " 不一致 → 以条目为准，如实报出。");
+      }
+      if (typeof state.payloadVersion === "number" && state.payloadVersion !== 9) {
+        problems.push("feed 的 <code>payloadVersion</code> = " + state.payloadVersion +
+          "，本页面按 v9 读字段 → 请把工具与主机端 Mod 一起更新。");
+      }
+      if (typeof state.decodeFailures === "number" && state.decodeFailures > 0) {
+        problems.push("工具累计 " + state.decodeFailures + " 次载荷解包失败" +
+          (state.decodeFailureReason ? "（" + esc(state.decodeFailureReason) + "）" : "") + "。");
+      }
+    }
+    // 客户端视图是**故意**不画其它客户端与别处的主机地形：这不是缺数据（所以不进上面的 ⚠ 报警），但必须明说
+    if (v && !v.host) {
+      html += "<span style='flex-basis:100%;color:var(--tx3)'>当前居中角色是客户端 <b>" + esc(v.sel.name) +
+        "（键 " + esc(v.sel.key) + "）" +
+        "</b> → 本视图<b>只画它自己的 " + v.chunks.length + " 个区块线框</b>：其它客户端的线框与别处的主机地形" +
+        "<b>都不画</b>（要一起看就把「居中角色」切回「Host（房主）」，那时地形仍只有主机加载的区域，" +
+        "线框覆盖全部客户端的区块）。</span>";
+    }
+    // 客户端当前内存为空 → 不是「画错位置」，单独给一条醒目的说明（带客户端键 / 名字 + 原因）
+    if (regions && regions.present && regions.empty.length) {
+      html += "<span style='flex-basis:100%;color:#96243c;font-weight:600;font-size:12.5px'>⚠ 客户端区域线框为 <b>0</b>：" +
+        "<b>" + regions.empty.join("、") + "</b> 当前内存里没有区块 → <b>不画任何客户端区域线框</b>（不是画错位置）。" +
+        "原因：<b>客户端未加载区块</b>（在世界外 / 空中 / 刚加载完还没上报）。</span>";
+    }
+    if (problems.length) {
+      html += "<span style='flex-basis:100%;color:#96243c'>⚠ " + problems.join(" ") + "</span>";
+    }
+    el.innerHTML = html;
+  }
+
+  /* ---------- 动物（v9 的 animals[]：仅主机端生物、仅位置） ----------
+     契约：animals[] = [{ x, y, z }, …]（y 是高度，俯视图用不到 x/z 之外的字段；没有名字 / id）。
+     规则（与用户要求逐字对应）：**每只画一个黑色实心圆点**（半径约 2–3 px、随缩放轻微变化），
+     **不显示名字、不显示坐标、不响应选中、不画标签 / 连线**；与角色标记（彩色 + 名字/坐标）明确区分；
+     只来自主机端 animals[]，客户端不贡献（客户端视图 / 主机视图都照常画）。
+     缺失 / 非法处理（绝不猜坐标）：没有 animals 字段 → 不画并在图例里说明（旧版主机/工具）；
+     x/z 不是有限数 → 该条跳过并计数报警。 */
+  function animalsOf(state) {
+    var has = !!(state && Object.prototype.toString.call(state.animals) === "[object Array]");
+    var list = has ? state.animals : [];
+    function finiteOf(v) {
+      var n = (typeof v === "number") ? v : ((typeof v === "string" && v !== "") ? Number(v) : NaN);
+      return isFinite(n) ? n : null;
+    }
+    var out = [], invalid = 0;
+    for (var i = 0; i < list.length; i++) {
+      var a = list[i];
+      if (!a || typeof a !== "object") { invalid++; continue; }
+      var ax = finiteOf(a.x), az = finiteOf(a.z);
+      if (ax === null || az === null) { invalid++; continue; }   // 缺 x/z 无法定位：不猜
+      out.push({ x: ax, z: az });
+    }
+    var declared = null;
+    if (state && state.counts && typeof state.counts.animals === "number" && isFinite(state.counts.animals)) {
+      declared = state.counts.animals;
+    }
+    return { present: has, list: out, listed: list.length, invalid: invalid, declared: declared };
+  }
+  // 只画黑色实心圆点：不写文字、不画连线、不参与选中（角色标记另有一套彩色标记 + 标签）。
+  function drawAnimals(ctx, animals, f) {
+    var a = animals || { present: false, list: [], listed: 0, invalid: 0, declared: null };
+    drawStats.animals = {
+      present: a.present, listed: a.listed, invalid: a.invalid, declared: a.declared, drawn: 0, offCanvas: 0
+    };
+    if (!a.present || !a.list.length) return;
+    // 半径 2–3 px、随缩放轻微变化（缩小时不小于 2 px，放大时不超过 3 px）
+    var r = Math.max(2, Math.min(3, cellScale * 0.22));
+    ctx.save();
+    ctx.fillStyle = "#000";
+    for (var i = 0; i < a.list.length; i++) {
+      var p = a.list[i];
+      var px = (p.x - f.x0) * cellScale, pz = (p.z - f.z0) * cellScale;
+      if (px < -r || pz < -r || px > f.wPx + r || pz > f.hPx + r) { drawStats.animals.offCanvas++; continue; }
+      ctx.beginPath();
+      ctx.arc(px, pz, r, 0, Math.PI * 2);
+      ctx.fill();
+      drawStats.animals.drawn++;
+    }
+    ctx.restore();
+  }
+
+  /* ---------- 格内数字：chunks[].n = 该区块还有几个在线客户端没拿到最新内容 ----------
+     规则（与需求逐字对应）：
+       · n > 0 → 在该区块 16×16 格的正中画那个数字（深色描边 + 亮色填充 = 地形/客户端线框之上仍可读）；
+       · n == 0（全部在线客户端都已核对到最新）或字段缺失（旧版主机/工具）→ 一个数字都不画，
+         绝不按任何别的字段猜一个值；
+       · 与地形同一套 chunk→像素映射，且只画**本视图作用域内**且落在画布内的区块；
+       · n 是主机侧内存计数（不是 s）：页面不画任何主机侧框，只画这个数字注释。 */
+  function drawPendingDigits(ctx, decoded, view, f) {
+    if (!decoded || !decoded.length) return;
+    var side = 16 * cellScale;
+    if (side < 9) return;                        // 格子太小：画上去只会糊成一团，宁可不画（图例仍说明数量）
+    var size = Math.max(11, Math.min(40, side * 0.42));
+    ctx.save();
+    ctx.font = "bold " + size.toFixed(1) + "px ui-monospace,Consolas,monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.lineJoin = "round";
+    ctx.lineWidth = Math.max(2, size / 5);
+    ctx.strokeStyle = "rgba(24,18,8,.92)";       // 深色描边（halo）
+    for (var i = 0; i < decoded.length; i++) {
+      var ch = decoded[i];
+      if (!(ch.n > 0)) continue;                                  // 0 / 缺失 / 未知 → 不画
+      if (!view.chunkSet[ch.x + "," + ch.z]) continue;             // 不在本视图作用域 → 不画
+      var bx = (ch.x * 16 - f.x0) * cellScale, bz = (ch.z * 16 - f.z0) * cellScale;
+      if (bx + side <= 0 || bz + side <= 0 || bx >= f.wPx || bz >= f.hPx) continue;
+      var text = String(ch.n), cx = bx + side / 2, cz = bz + side / 2;
+      ctx.strokeText(text, cx, cz);
+      ctx.fillStyle = "#fff3c4";                 // 亮黄填充
+      ctx.fillText(text, cx, cz);
+      drawStats.pendingDrawn++;
+    }
+    ctx.restore();
+  }
+
+  function setLegend(items) {
+    var el = $("legend");
+    if (!el) return;
+    if (!items || !items.length) { el.innerHTML = "<span style='font-family:var(--mono)'>暂无图例（还没有画到任何方块列）</span>"; return; }
+    var byId = {}, ids = [];
+    items.forEach(function (it) {
+      if (byId[it.id] === undefined) { byId[it.id] = it.band; ids.push(it.id); }
+      else if (it.band > byId[it.id]) byId[it.id] = it.band;
+    });
+    ids.sort(function (a, b) { return a - b; });
+    var shown = ids.slice(0, LEGEND_MAX);
+    var html = shown.map(function (id) {
+      var name = NAMES[id] || ("未知方块 id" + id);
+      return "<span><i style='background:" + bandColor(id, byId[id]) + "'></i>" +
+        esc(name) + " <span style='font-family:var(--mono);color:var(--tx3)'>id" + id +
+        (isFallback(id) ? "·未知·中性灰" : "") + "</span></span>";
+    }).join("");
+    if (ids.length > shown.length) {
+      html += "<span style='font-family:var(--mono);color:var(--tx3)'>…另有 " + (ids.length - shown.length) + " 种方块 id</span>";
+    }
+    var unknownCount = 0;
+    for (var ui = 0; ui < shown.length; ui++) if (isFallback(shown[ui])) unknownCount++;
+    if (unknownCount) {
+      html += "<span style='color:#96243c'>⚠ " + unknownCount + " 种方块 id 不在颜色表里（用中性灰画，图例标「未知方块 id」）—— 可把 id 反馈给它补映射</span>";
+    }
+    html += "<span style='color:var(--tx3)'>· 同一方块越亮 = 该列顶部越高（按 8 格分档，图例色块与地图上的颜色完全一致）；雪 / 冰 / 水等按方块 id 着色，水面另有「水域」色阶</span>";
+    el.innerHTML = html;
+  }
+
+  // 格内数字图例：解释数字的含义、本快照的统计，以及**字段缺失时明说不画**（绝不猜一个值）
+  function setPendingLegend(state, stats) {
+    var el = $("pendingLegend");
+    if (!el) return;
+    var p = (stats && stats.pending) ? stats.pending
+      : { present: false, marked: 0, total: 0, invalid: 0, chunks: 0 };
+    var drawn = (stats && typeof stats.pendingDrawn === "number") ? stats.pendingDrawn : 0;
+    var html = "<b>欠更新数字</b>";
+    html += "<span><i style='background:#fff3c4;border-color:#241a08;color:#241a08;font-size:10px;" +
+      "line-height:12px;text-align:center;font-weight:700'>n</i>格内数字 = 该区块还有几个<b>在线客户端</b>" +
+      "没拿到最新内容（<code>chunks[].n</code>，主机侧内存计数、不进存档）</span>";
+    html += "<span><i style='background:transparent;border-color:#c9c9c9'></i>0 / 缺失不画数字</span>";
+    html += "<span style='font-family:var(--mono)'>n&gt;0 的区块 " + p.marked + " 块 · 欠更新客户端合计 " +
+      p.total + " · 本视图画出 " + drawn + " 个数字</span>";
+    var problems = [];
+    if (state && p.chunks > 0 && !p.present) {
+      problems.push("feed 里没有 <code>chunks[].n</code> 字段（旧版主机/工具）→ <b>一个数字都不画</b>" +
+        "（绝不猜一个值）；请把主机端 Mod 与 LiveMap 工具一起更新到同一版本。");
+    }
+    if (p.invalid > 0) {
+      problems.push(p.invalid + " 个区块的 <code>n</code> 不是 0 / 正整数 → 这些一律不画（不猜）。");
+    }
+    if (problems.length) {
+      html += "<span style='flex-basis:100%;color:#96243c'>⚠ " + problems.join(" ") + "</span>";
+    }
+    el.innerHTML = html;
+  }
+
+  /* ---------- 统计面板 ---------- */
+  function renderStats(state, sel, who) {
+    var t = $("tiles"), body = $("statBody");
+    if (!t || !body) return;
+    var ageNow = lastGoodAt ? Math.round(ageAtGood + (Date.now() - lastGoodAt)) : null;
+    var cell = who ? who.xyz : null;
+    var ch = cell ? chunkOf(cell) : null;
+    var feedChunks = drawStats.listed;
+    var counts = (state && state.counts) ? state.counts : null;
+    var f = drawStats.frame, region = drawStats.region;
+    var mode = viewMode(state);
+
+    var statChip = $("statChip");
+    if (statChip) statChip.textContent = state ? ("age " + num(ageNow) + " ms") : "无数据";
+
+    // 覆盖区块跨度（例：14 × 15）与覆盖格数
+    var spanX = "—", spanZ = "—", cellsX = "—", cellsZ = "—";
+    if (region) {
+      spanX = Math.floor(region.maxCellX / 16) - Math.floor(region.minCellX / 16) + 1;
+      spanZ = Math.floor(region.maxCellZ / 16) - Math.floor(region.minCellZ / 16) + 1;
+    }
+    if (f) { cellsX = f.colsX; cellsZ = f.colsZ; }
+
+    var tiles = [
+      { v: cell ? (cell[0] + "," + (cell[1] === null ? "?" : cell[1]) + "," + cell[2]) : "—", s: "中心格坐标 (x,y,z)" },
+      { v: ch ? (ch[0] + "," + ch[1]) : "—", s: "中心区块 (cx,cz)" },
+      { v: (spanX === "—") ? "—" : (spanX + " × " + spanZ), s: "覆盖区块跨度（区块）" },
+      { v: (cellsX === "—") ? "—" : (cellsX + " × " + cellsZ), s: "覆盖格数（方块列）" },
+      { v: feedChunks, s: "feed 列出的区块数" },
+      { v: drawStats.drawn, s: "本次实际画的方块列" },
+      { v: num(ageNow), s: "最近样本年龄 ms" }
+    ];
+    t.innerHTML = tiles.map(function (x) {
+      return "<div class='tile'><b>" + esc(x.v) + "</b><span>" + esc(x.s) + "</span></div>";
+    }).join("");
+    var ageEl = t.querySelectorAll(".tile b");
+    if (ageEl && ageEl.length >= 7) ageEl[6].id = "tileAge";
+
+    // 被观察的客户端（主机侧记录；页面不再画任何主机侧框）
+    var watched = drawStats.watched, noWatcher = !watched || watched.id === -1;
+    var wMsg = !watched
+      ? "工具没有报告 watched 字段（未知）"
+      : (noWatcher
+        ? "当前没有客户端在线（没有验证状态）"
+        : "被观察客户端：" + esc(String(watched.name)) + (watched.key === "" ? "" : "（键 " + esc(String(watched.key)) + "）"));
+    // 客户端线框统计（clients[].chunks + 每块相对它自己身份的 s）与角色坐标
+    var w = drawStats.wire || { clients: 0, chunks: 0, zero: 0, invalid: 0, byState: { 0: 0, 1: 0, 2: 0, 3: 0, 4: 0 }, offCanvas: 0, onHost: 0, tooSmall: false };
+    var bs = w.byState || { 1: 0, 2: 0, 3: 0, 4: 0 };
+    var regions = drawStats.regions || { list: [], present: false, incomplete: [], empty: [], stateMissing: 0, stateInvalid: 0, stateZero: 0, legacyCurrent: 0 };
+    var playersInfo = drawStats.players || { list: [], legacy: false, missingCell: 0, unlocatable: 0 };
+    var stateProblems = "";
+    if (regions.stateMissing > 0) stateProblems += " · 缺状态 " + regions.stateMissing + " 块不画（旧版 feed，绝不猜）";
+    if (regions.stateInvalid > 0) stateProblems += " · 状态不认识 " + regions.stateInvalid + " 块不画";
+    if (regions.stateZero > 0) stateProblems += " · s=0 已加载未裁决 " + regions.stateZero + " 块（中性灰线框）";
+    if (regions.legacyCurrent > 0) stateProblems += " · 旧版 v7 feed（缺 currentLoaded）按 reported 判完整性";
+    var wireMsg;
+    if (!regions.present) {
+      wireMsg = "feed 里没有 clients 字段（旧版主机/工具）→ 画不出客户端线框";
+    } else if (regions.incomplete.length) {
+      wireMsg = "数据不完整，未画：" + esc(regions.incomplete.join("；"));
+    } else if (regions.empty.length) {
+      wireMsg = "线框 0 块 · 客户端 " + regions.list.length + " 个（当前内存均为空）→ 没有客户端区域线框；" +
+        "原因：客户端未加载区块（在世界外 / 空中 / 刚加载完还没上报）：" + esc(regions.empty.join("；"));
+    } else {
+      wireMsg = "线框 " + w.chunks + " 块（绿 " + (bs[2] || 0) + " / 蓝 " + (bs[4] || 0) + " / 黄 " +
+        (bs[1] || 0) + " / 红 " + (bs[3] || 0) + (bs[0] ? " / 中性灰 s=0 " + bs[0] : "") + "）· 客户端 " + w.clients + " 个 · 其中 " + w.onHost +
+        " 块落在主机地形上" + (w.offCanvas ? " · 画布外 " + w.offCanvas + " 块" : "") +
+        (w.tooSmall ? " · 比例太小，线框未画" : "");
+    }
+    var playerLines = [];
+    for (var pi = 0; pi < playersInfo.list.length; pi++) {
+      var pp = playersInfo.list[pi];
+      playerLines.push(esc(pp.name) + "（键 " + esc(pp.key) + "）" + (pp.isHost ? "（房主）" : "") + "：" +
+        (pp.cell ? ("(" + pp.cell[0] + "," + pp.cell[1] + "," + pp.cell[2] + ")") : "坐标未知") +
+        " · chunk(" + pp.chunk[0] + "," + pp.chunk[1] + ")" +
+        (pp.cell ? "" : " ← " + esc(pp.cellReason || "feed 没有给出坐标")));
+    }
+    var clientLines = [];
+    for (var ci = 0; ci < regions.list.length; ci++) {
+      var cr = regions.list[ci];
+      var cs = { 0: 0, 1: 0, 2: 0, 3: 0, 4: 0 }, csUnknown = 0;
+      for (var z2 = 0; z2 < cr.chunks.length; z2++) {
+        var st2 = cr.chunks[z2][2];
+        if (st2 === -1 || st2 === undefined) csUnknown++;   // 线格式不认识 → 不画（与 s=0 正常值区分）
+        else if (cs[st2] === undefined) cs[0]++;
+        else cs[st2]++;
+      }
+      clientLines.push(esc(cr.name) + "（键 " + esc(cr.key) + "）：当前内存 " + cr.chunks.length +
+        " 块（绿 " + cs[2] + " / 蓝 " + cs[4] + " / 黄 " + cs[1] + " / 红 " + cs[3] +
+        (cs[0] ? " / s=0 已加载未裁决 " + cs[0] + "（中性灰）" : "") +
+        (csUnknown ? " / 状态未知 " + csUnknown + "（不画）" : "") + "）· 会话累计上报 " + cr.reported +
+        (cr.legacyCurrent ? "（旧版 feed 无 currentLoaded）" : "") +
+        (cr.complete ? "" : "（不完整：已合并 " + cr.merged + "/" + cr.currentLoaded + " → 不画）"));
+    }
+
+    var canvasRow = f
+      ? (f.wPx + " × " + f.hPx + " px = " + cellsX + " × " + cellsZ + " 格 × " + fmtScale(cellScale) + " px")
+      : "—";
+    // 当前视图（由「居中角色」决定）：把画了哪些区块集合、哪些标记明写成两行
+    var view = drawStats.view || null;
+    var viewLabel = !view ? "—" : (view.host ? "Host（主机 + 全部客户端）" : (esc(view.sel.name) + "（仅该客户端）"));
+    var viewDetail;
+    if (!view) {
+      viewDetail = "—";
+    } else if (view.host) {
+      viewDetail = "地形 = 主机 <code>chunks[]</code>（" + feedChunks + " 块，<b>仅主机加载的区域</b>）；" +
+        "线框 = 每个玩家端<b>当前内存区块</b> <code>clients[].chunks</code>（" + view.picked.length + " 个完整客户端，卸载即消失）→ " +
+        "画布共覆盖 <b>" + view.chunks.length + "</b> 块（主机 " + view.hostCells.length + " · 仅客户端 " + view.clientOnly.length + "）";
+    } else {
+      viewDetail = "只画这一个玩家端的 <b>" + view.chunks.length + "</b> 块线框；地形只取落在它区块集合内的主机 <code>chunks[]</code>" +
+        "（其它客户端与别处的主机地形都不画）" +
+        (view.picked.length === 0 ? "；它没有可用的 clients[] 条目 → 图上只有它自己这一个标记" : "");
+    }
+    var markerRow = !view ? "—"
+      : (view.host
+        ? "全部角色（" + playersInfo.list.length + " 个）：" + playersInfo.list.map(function (q) { return esc(q.name) + "（键 " + esc(q.key) + "）"; }).join("、")
+        : "只有该客户端自己：" + esc(view.sel.name) + "（键 " + esc(view.sel.key) + "）（主机与其它客户端的标记都不画）");
+
+    // 动物（animals[]，v9）：主机端生物、仅位置；只画黑点，缺失/非法时明说不画
+    var animalsInfo = drawStats.animals || { present: false, listed: 0, invalid: 0, declared: null, drawn: 0, offCanvas: 0 };
+    var animRow;
+    if (!state) {
+      animRow = "—";
+    } else if (!animalsInfo.present) {
+      animRow = "feed 没有 <code>animals</code> 字段（旧版主机/工具）→ 不画动物";
+    } else {
+      animRow = "主机端动物 " + animalsInfo.listed + " 个（<code>counts.animals</code> " +
+        (animalsInfo.declared === null ? "—" : animalsInfo.declared) + "）· 本视图画出 " + animalsInfo.drawn +
+        " 个黑点" + (animalsInfo.offCanvas ? " · 画布外 " + animalsInfo.offCanvas : "") +
+        (animalsInfo.invalid ? " · 坐标非法 " + animalsInfo.invalid : "");
+    }
+
+    // 欠更新数字（chunks[].n）：标块数 / 客户端合计 / 本视图画出几个；字段缺失时明说不画
+    var pendingInfo = drawStats.pending || { present: false, marked: 0, total: 0, invalid: 0, chunks: 0 };
+    var pendingDrawnN = drawStats.pendingDrawn || 0;
+    var pendingRow;
+    if (!state) {
+      pendingRow = "—";
+    } else if (pendingInfo.chunks > 0 && !pendingInfo.present) {
+      pendingRow = "feed 没有 <code>chunks[].n</code> 字段（旧版主机/工具）→ 不画数字";
+    } else {
+      pendingRow = "n&gt;0 的区块 " + pendingInfo.marked + " 块 · 欠更新客户端合计 " + pendingInfo.total +
+        " · 本视图画出 " + pendingDrawnN + " 个数字";
+    }
+
+    var rows = [
+      ["工具 t / online", num(state && state.t) + " / " + (state && state.online === true ? "true" : "false"), "online=false 表示工具当前没有实时房间数据"],
+      ["payloadVersion / 解包失败", num(state && state.payloadVersion) + " / " + num(state && state.decodeFailures), "工具与主机端 Mod 的 LiveMap 载荷版本（当前 v9：v8 的 clients[].chunks/currentLoaded 之外，新增 animals[] = 主机端动物位置（仅 x/y/z，只画黑点）；解包失败 > 0 说明两边版本不一致，需一起更新"],
+      ["view / radius", esc(mode) + " / " + num(state && state.radius), "view=all 画主机整个已加载区域；view=window 只画角色周围 (2×radius+1) 区块"],
+      ["覆盖范围来源", region ? esc(region.src) : "—", "优先 feed 的 bounds（cellMin/Max，其次 chunkMin/Max），并并入 chunks / clients / players 的实际范围；全部缺失时无画布"],
+      ["canvas 尺寸（格 × 比例）", esc(canvasRow), "地图盒子高度 = 这个高度，不做 max-height / 内部滚动；整页跟着变高"],
+      ["canvas 后备像素", f ? (num(drawStats.dprUsed) + " × 逻辑像素" + (drawStats.dprUsed < dpr() ? "（超大画布，已降采样绘制）" : "")) : "—", "CSS 尺寸不缩水，只限制离屏像素，避免超出浏览器 canvas 上限后静默画空白"],
+      ["中心格来源", who ? esc(who.src) : "—", who && who.approx ? "该角色坐标未知 → 标记按区块中心画（不准，绝不冒充真实坐标）" : "优先 players[].cell（真实绝对坐标）"],
+      ["居中角色", sel ? (esc(sel.name) + "（键=" + esc(sel.key) + (sel.isHost ? "，房主" : "") + "）") : "—", "players 里 isHost=true 的条目为默认；选中值 = 身份稳定键（重连不变），?center=&lt;key|id&gt; 可预选；两个角色都能选"],
+      ["当前视图（由居中角色决定）", viewLabel, "选主机 = 地形只有主机 chunks[]、线框覆盖全部完整客户端的当前内存区块、画全部角色的标记；选某个客户端 = 只画它自己的当前内存区块线框（地形仍只取落在它区块集合内的主机 chunks[]）、只画它自己的标记"],
+      ["正在画的区块集合", view ? (view.sets + " 个 · 共 " + view.chunks.length + " 区块") : "—", "主机视图：主机 chunks[] 1 个集合 + 每个「数据完整」的 clients[] 各 1 个（complete=false 的不画、不进线框集合；集合 = 客户端当前内存区块，卸载即收缩）；客户端视图：只有它自己那 1 个。集合只决定画布覆盖范围，地形填充永远只来自主机 chunks[]"],
+      ["本视图区块明细", viewDetail, "既在主机 chunks[] 又在客户端 clients[].chunks 里的区块：地形照常填（它的主机数据），上面再叠该客户端的线框；clients[].chunks = 客户端当前内存区块，卸载的块既没有线框也不再扩画布"],
+      ["本视图画的标记", markerRow, "标记集合与区块集合同源：客户端视图只画该客户端自己的标记"],
+      ["动物（animals[]）", animRow, "仅主机端生物、只给位置：每只画一个**黑色实心圆点**（半径随缩放 2–3 px），**不画名字 / 坐标标签、不响应选中、不画连线**；与角色标记（彩色 + 名字/坐标）明确区分；客户端不贡献动物"],
+      ["角色坐标（players[]）", playerLines.length ? playerLines.join("<br>") : (playersInfo.legacy ? "feed 没有 players 字段（旧版主机/工具）→ 只有区块，没有坐标" : "—"), "每个角色一行：名字 · 绝对坐标 (x,y,z) · 区块；坐标读不到时写明原因，不按区块中心冒充"],
+      ["客户端当前内存区块（clients[]）", clientLines.length ? clientLines.join("<br>") : (regions.present ? "feed 里没有在线玩家端的条目" : "feed 没有 clients 字段（旧版主机/工具）→ 画不出客户端线框"), "每块 = 客户端**当前内存**里的区块（客户端实时增删，已卸载的块立刻从图上消失）· currentLoaded = 当前内存块数 · reported = 会话累计上报条数（仅参考）· 线框颜色 = 该块相对它自己身份的 s（0 未裁决正常 / 2 绿 / 4 蓝 / 1 黄 / 3 红）；客户端区块只画线框、不填地形"],
+      ["客户端线框（clients[].chunks）", esc(wireMsg) + esc(stateProblems), "客户端区块 = 客户端当前内存区块（卸载即消失）；完整性按 merged === currentLoaded 判定（complete=false 的客户端整块不画）；线框几何 = 区块边界（与地形 16×16 严格对齐、不内缩）；多客户端覆盖同一块：按身份稳定键排序，第 i 个线更宽（i=0 最细、在上层）；s=0（刚加载未裁决）正常、不画不报警；缺状态 / 状态不认识才报警（不猜）"],
+      ["主机地形 / 客户端线框", "主机地形覆盖 " + drawStats.chunks + " / " + feedChunks + " 块（<b>无任何方框</b>）· 客户端线框 " + w.chunks + " 圈（绿 " + (bs[2] || 0) + " / 蓝 " + (bs[4] || 0) + " / 黄 " + (bs[1] || 0) + " / 红 " + (bs[3] || 0) + (bs[0] ? " / 中性灰 " + bs[0] : "") + "）", "主机地形只填充、不画任何框；客户端区域线框是图上**唯一**的框层（实线 + 深色底衬，按当前内存集合实时增删）"],
+      ["地形填充来源", "只有主机 <code>chunks[]</code>（" + feedChunks + " 块）", "客户端区块一律不填地形（没有底色 / 高度着色），即使它不与主机重叠；主机没列出的区块保持空白"],
+      ["feed 报告 counts", counts ? ("chunks " + num(counts.chunks) + " · columns " + num(counts.columns) + " · players " + num(counts.players) + " · clientChunks " + num(counts.clientChunks) + " · currentLoadedChunks " + num(counts.currentLoadedChunks) + " · animals " + num(counts.animals) + " · pendingMarks " + num(counts.pendingMarks) + " · pendingClients " + num(counts.pendingClients)) : "—", "由工具统计，页面只做对照；clientChunks / currentLoadedChunks = 各身份当前内存区块条目合计（v8）；pendingMarks / pendingClients = chunks[].n 的标块数与合计（v5）"],
+      ["已画 / 列出区块", drawStats.chunks + " / " + feedChunks, "只有同时在本视图作用域内（state.chunks ∩ 视图区块集合）且落在画布内的区块会被画"],
+      ["已画 / 列出方块列", drawStats.drawn + " / " + drawStats.listedColumns, "列出的列里 contents==0 的保持背景；未列出的区块一律不填色"],
+      ["欠更新数字（chunks[].n）", pendingRow, "格内数字 = 该区块还有几个在线客户端没拿到最新内容（主机侧内存计数、不进存档）；n=0 / 字段缺失一律不画数字（旧版 feed 在图例里明说）"],
+      ["被观察客户端", wMsg, "feed 的 watched = { id, key, name }（v6 起带 key = 身份稳定键）；watched.id === -1 表示当前没有客户端在线，此时没有任何验证状态"],
+      ["比例", fmtScale(cellScale) + " px/格" + (Math.abs(cellScale - DEFAULT_SCALE) < 1e-9 ? "（默认）" : ""), "「－/＋」按 ×0.5 / ×2 步进；「整片区域」按浏览器窗口自适应"]
+    ];
+    body.innerHTML = rows.map(function (r) {
+      return "<tr><td class='mono'>" + r[0] + "</td><td class='mono'>" + r[1] + "</td><td style='color:var(--tx3)'>" + r[2] + "</td></tr>";
+    }).join("");
+  }
+
+  /* ---------- 角色下拉框（主机 + 每个玩家端都能选，选中即"居中角色"） ----------
+     option 的 value = **身份稳定键**（key），不是 clientId：玩家端重连后 clientId 变了，
+     选中值不变，所以既不会多出一个选项、也不会把当前选择断掉。 */
+  function syncSelect(state, sel) {
+    var s = $("centerSel");
+    if (!s) return;
+    var list = playersOf(state).list;
+    var want = list.map(function (c) {
+      return String(c.key) + "|" + c.name + "|" + (c.isHost ? 1 : 0) + "|" + (c.cell ? c.cell.join(",") : "-") +
+        "|" + c.chunk[0] + "," + c.chunk[1];
+    }).join(";");
+    if (s.getAttribute("data-sig") !== want) {
+      s.setAttribute("data-sig", want);
+      s.innerHTML = list.length
+        ? list.map(function (c) {
+            return "<option value='" + esc(c.key) + "'>" + esc(c.name) + (c.isHost ? "（房主）" : "") +
+              " · " + (c.cell ? ("(" + c.cell[0] + "," + c.cell[2] + ")") : "坐标未知") +
+              " · chunk " + c.chunk[0] + "," + c.chunk[1] + "</option>";
+          }).join("")
+        : "<option>等待数据…</option>";
+    }
+    if (sel) { selectedKey = sel.key; s.value = String(sel.key); }
+    s.disabled = list.length <= 1;
+  }
+
+  /* ---------- 换角色 / 换比例时，把页面滚到角色所在位置（地图盒子自己不滚） ---------- */
+  function scrollToCharacter() {
+    if (typeof window === "undefined" || typeof window.scrollTo !== "function") return;
+    var canvas = $("map");
+    if (!canvas || typeof canvas.getBoundingClientRect !== "function") return;
+    var r = canvas.getBoundingClientRect();
+    if (!r || !r.width || !r.height) return;
+    var vw = window.innerWidth || 0, vh = window.innerHeight || 0;
+    if (!vw || !vh) return;
+    var sx = window.pageXOffset || 0, sy = window.pageYOffset || 0;
+    var tx = sx + r.left + r.width / 2 - vw / 2;
+    var ty = sy + r.top + r.height / 2 - vh / 2;
+    try { window.scrollTo(Math.max(0, Math.round(tx)), Math.max(0, Math.round(ty))); } catch (e) { /* 滚动失败不影响绘制 */ }
+  }
+
+  /* ---------- 一次数据渲染（一个样本只画一次，不跟动画帧） ---------- */
+  function renderAll() {
+    var state = lastGood;
+    var players = playersOf(state);
+    var sel = pickCenter(state, players.list);
+    var who = characterCell(state, sel);
+    try {
+      draw(state);
+      syncSelect(state, sel);
+      renderStats(state, sel, who);
+      var key = (sel ? sel.key : "-") + "@" + cellScale;
+      if (drawStats.frame && key !== lastFrameKey) {
+        lastFrameKey = key;
+        scrollToCharacter();
+      }
+    } catch (e) {
+      banner("渲染出错（已忽略，轮询继续）：" + (e && e.message ? e.message : e), "bad");
+    }
+  }
+
+  /* ---------- 轮询 ---------- */
+  var inFlight = false;
+  function poll() {
+    if (inFlight) return;
+    if (typeof fetch !== "function") {
+      setLamp("off", "连接失败");
+      banner("此环境没有 fetch：无法读取 " + stateUrl + "。请用本地 HTTP 服务或直接双击打开本文件（浏览器需支持 fetch）。", "bad");
+      renderAll();
+      return;
+    }
+    inFlight = true;
+    var p;
+    try {
+      p = fetch(stateUrl, { cache: "no-store" });
+    } catch (e1) {
+      inFlight = false;
+      onFail(e1);
+      return;
+    }
+    if (!p || typeof p.then !== "function") { inFlight = false; onFail(new Error("fetch 未返回 Promise")); return; }
+    Promise.resolve(p)
+      .then(function (r) {
+        if (!r || !r.ok) throw new Error("HTTP " + (r ? r.status : "?"));
+        return r.json();
+      })
+      .then(function (st) {
+        if (!st || typeof st !== "object") throw new Error("state 不是 JSON 对象");
+        lastGood = st; ageAtGood = (typeof st.ageMs === "number" ? st.ageMs : 0); lastGoodAt = Date.now();
+        var dataChanged = noteFeedSignature(st);   // 首帧只记基线；数据没变 → 不自动拟合（不抖）
+        if (st.online === true) { setLamp("on", "在线 · age " + Math.round(ageAtGood) + " ms"); banner(""); }
+        else { setLamp("warn", "无数据 · age " + Math.round(ageAtGood) + " ms"); banner("工具在跑，但当前没有实时房间数据（online=false）：先建房并加入房间，再启动 LiveMap 工具。", ""); }
+        // 范围变了就走自动「整片区域」（fitWholeRegion 自己会 renderAll）；被静默期/节流挡下时照常按当前比例画
+        if (!(dataChanged && requestAutoFit())) renderAll();
+      })
+      .catch(onFail)
+      .then(function () { inFlight = false; }, function () { inFlight = false; });
+  }
+  function onFail(err) {
+    var msg = (err && err.message) ? err.message : String(err);
+    setLamp("off", "连接失败");
+    banner("连不上 LiveMap 工具（" + stateUrl + "）：" + msg + " —— 确认工具已在跑（默认 " + DEFAULT_URL + "），或用 ?url=... 指定地址。", "bad");
+    renderAll();
+  }
+
+  /* ---------- 交互 ---------- */
+  function zoomBy(mult) {
+    cellScale = clampScale(cellScale * mult);
+    cancelAutoFit();                                    // 用户手动缩放：丢掉待执行的自动拟合
+    manualZoomUntil = Date.now() + AUTO_FIT_GRACE_MS;   // 3 s 内不抢回用户的缩放
+    lastFrameKey = "";        // 比例变了：允许重新把角色滚到视口中间
+    renderAll();
+  }
+  /* ---------- 自动「整片区域」：数据签名 + 节流 + 手动缩放静默期 ----------
+     签名只取"范围形状"：bounds / 主机区块坐标集合 / 每个客户端区域的键·完整性·块数 / 角色位置，
+     不取 d / s / n —— 那些是区块内容与注释，变了就重拟合只会让画布抖，不是"区域变了"。
+     首帧（lastDataSig === null）只记基线、不拟合：?scale= 指定的初始比例必须保住。 */
+  function dataSignature(state) {
+    if (!state || typeof state !== "object") return "-";
+    var parts = [], i;
+    function pair(v) { var a = arr2(v); return a ? (a[0] + "," + a[1]) : "-"; }
+    var b = (state.bounds && typeof state.bounds === "object") ? state.bounds : null;
+    parts.push("b:" + (b ? (pair(b.cellMin) + ":" + pair(b.cellMax) + ":" + pair(b.chunkMin) + ":" + pair(b.chunkMax)) : "-"));
+    // 主机区块集合：块数 + 坐标哈希（廉价，且能发现"块数不变但换了一批区块"）
+    var chunks = (Object.prototype.toString.call(state.chunks) === "[object Array]") ? state.chunks : [];
+    var h = 0;
+    for (i = 0; i < chunks.length; i++) {
+      var ch = chunks[i];
+      if (!ch || typeof ch !== "object") continue;
+      h = (h * 31 + (((ch.x | 0) * 73856093) ^ ((ch.z | 0) * 19349663))) | 0;
+    }
+    parts.push("c:" + chunks.length + ":" + h);
+    // 客户端区域：稳定键 + 完整性 + 块数 + 坐标哈希（区域是否完整决定了它进不进并集）
+    var cls = (Object.prototype.toString.call(state.clients) === "[object Array]") ? state.clients : null;
+    if (!cls) parts.push("k:-");
+    else {
+      var ks = [];
+      for (i = 0; i < cls.length; i++) {
+        var c = cls[i];
+        if (!c || typeof c !== "object") { ks.push("?"); continue; }
+        var ck = (typeof c.key === "string" && c.key !== "") ? c.key : String(c.id);
+        var cks = (Object.prototype.toString.call(c.chunks) === "[object Array]") ? c.chunks : [];
+        var cnum = 0, cch = 0;
+        for (var j = 0; j < cks.length; j++) {
+          var kk = coords2(cks[j]);               // [cx,cz] 或 [cx,cz,s]：状态 s 不参与"范围形状"签名
+          if (!kk) continue;
+          cnum++;
+          cch = (cch * 31 + ((kk[0] * 73856093) ^ (kk[1] * 19349663))) | 0;
+        }
+        // 与 clientRegionsOf 同一套完整性判定（v8）：complete === false，或 merged !== currentLoaded；
+        // currentLoaded 缺失（旧版 v7 feed）才退回 reported。
+        var reported = (typeof c.reported === "number" && isFinite(c.reported)) ? c.reported : cks.length;
+        var currentLoaded = (typeof c.currentLoaded === "number" && isFinite(c.currentLoaded)) ? c.currentLoaded : reported;
+        var merged = (typeof c.merged === "number" && isFinite(c.merged)) ? c.merged : cks.length;
+        var complete = (c.complete === false) ? false : (merged === currentLoaded);
+        ks.push(ck + ":" + (complete ? 1 : 0) + ":" + cnum + ":" + cch);
+      }
+      parts.push("k:" + ks.join(","));
+    }
+    // 角色位置（players[]；旧版 feed 退回 centers[]，此时 center.cell 也补进来）
+    var pls = (Object.prototype.toString.call(state.players) === "[object Array]") ? state.players
+      : ((Object.prototype.toString.call(state.centers) === "[object Array]") ? state.centers : []);
+    var ps = [];
+    for (i = 0; i < pls.length; i++) {
+      var p = pls[i];
+      if (!p || typeof p !== "object") continue;
+      var pk = (typeof p.key === "string" && p.key !== "") ? p.key : String(p.id);
+      var cell = nums3(p.cell), chk = nums2(p.chunk);
+      ps.push(pk + ":" + (p.isHost === true ? 1 : 0) + ":" + (cell ? cell.join(",") : "-") + ":" + (chk ? chk.join(",") : "-"));
+    }
+    parts.push("p:" + ps.join(","));
+    var cc = nums3(state.center && state.center.cell);
+    parts.push("cc:" + (cc ? cc.join(",") : "-"));
+    // view / radius 也算范围形状：切到 window 视图后的第一次数据变化应重新拟合
+    parts.push("v:" + (state.view === "window" ? "window" : "all") + ":" +
+      ((typeof state.radius === "number" && isFinite(state.radius)) ? Math.round(state.radius) : 0));
+    return parts.join("|");
+  }
+  // 返回"这一帧的形状是否真的变了"；首帧只记基线（不自动拟合，保住 ?scale=）
+  function noteFeedSignature(state) {
+    var sig = dataSignature(state);
+    var changed = (lastDataSig !== null && sig !== lastDataSig);
+    lastDataSig = sig;
+    return changed;
+  }
+  // 手动缩放时丢掉还没执行的尾随拟合：用户优先
+  function cancelAutoFit() {
+    autoFitPending = false;
+    if (autoFitTimer !== null && typeof clearTimeout === "function") {
+      try { clearTimeout(autoFitTimer); } catch (e) { /* 取消失败不影响绘制 */ }
+      autoFitTimer = null;
+    }
+  }
+  function runAutoFit() {
+    autoFitPending = false;
+    lastAutoFitAt = Date.now();
+    return fitWholeRegion();
+  }
+  // 只有数据真的变化才调用；静默期 / 节流窗口内不抢用户的缩放
+  function requestAutoFit() {
+    var now = Date.now();
+    if (now < manualZoomUntil) return false;          // 手动缩放静默期：等下一次数据变化再判断
+    var wait = AUTO_FIT_MIN_MS - (now - lastAutoFitAt);
+    if (wait > 0) {                                   // 节流窗口：尾随一次（最多 4 次/秒）
+      autoFitPending = true;
+      if (autoFitTimer === null && typeof setTimeout === "function") {
+        autoFitTimer = setTimeout(function () {
+          autoFitTimer = null;
+          if (!autoFitPending) return;
+          autoFitPending = false;
+          if (Date.now() < manualZoomUntil) return;   // 等待期间用户又缩放了 → 放弃这一次
+          lastAutoFitAt = Date.now();
+          fitWholeRegion();
+        }, wait);
+        if (autoFitTimer === null || autoFitTimer === undefined) autoFitTimer = 1;
+      }
+      return false;
+    }
+    return runAutoFit();
+  }
+  // 「整片区域」：按浏览器窗口算一个能把整个覆盖范围装下的比例
+  function fitWholeRegion() {
+    var state = lastGood;
+    var players = playersOf(state), sel = pickCenter(state, players.list);
+    var who = characterCell(state, sel);
+    var decoded = decodeChunks(state);
+    var clientRegions = clientRegionsOf(state);
+    var view = viewScope(sel, decoded, clientRegions);        // 与绘制同源：按当前选中的居中角色取视图作用域
+    var region = regionFor(state, who, decoded, clientRegions, players, view);
+    if (!who || !region) return false;
+    var f = frameOf(who, region);
+    var vw = (typeof window !== "undefined" && window.innerWidth) ? window.innerWidth : 1280;
+    var vh = (typeof window !== "undefined" && window.innerHeight) ? window.innerHeight : 800;
+    var availW = Math.max(240, vw - 120);       // 预留给页面留白 / 卡片内边距
+    var availH = Math.max(200, vh - 260);       // 预留给顶栏 / 标题 / 工具栏 / 图例
+    cellScale = clampScale(Math.min(availW / f.colsX, availH / f.colsZ));
+    lastFrameKey = "";
+    renderAll();
+    return true;
+  }
+  function bind(id, ev, fn) {
+    var el = $(id);
+    if (el && typeof el.addEventListener === "function") el.addEventListener(ev, fn);
+  }
+  bind("btnZoomIn", "click", function () { zoomBy(2); });
+  bind("btnZoomOut", "click", function () { zoomBy(0.5); });
+  bind("btnFitAll", "click", function () {
+    cancelAutoFit();
+    manualZoomUntil = 0;      // 用户主动点「整片区域」= 立即恢复自动跟随
+    lastAutoFitAt = Date.now();
+    fitWholeRegion();
+  });
+  bind("btnReload", "click", function () { poll(); });
+  bind("centerSel", "change", function (ev) {
+    var v = ev && ev.target ? ev.target.value : null;
+    selectedKey = v;
+    var list = playersOf(lastGood).list, sel = findCenter(list, v);
+    if (sel) selectedKey = sel.key;
+    lastFrameKey = "";
+    renderAll();
+  });
+  var mapEl = $("map");
+  if (mapEl && typeof mapEl.addEventListener === "function") {
+    mapEl.addEventListener("wheel", function (ev) {
+      if (ev && typeof ev.preventDefault === "function") ev.preventDefault();
+      zoomBy((ev && ev.deltaY < 0) ? 1.25 : 0.8);
+    }, { passive: false });
+  }
+
+  /* ---------- 启动 ---------- */
+  if (wantScale !== null) cellScale = clampScale(wantScale);   // ?scale=<px/格> 指定初始比例
+  renderAll();
+  poll();
+  if (typeof setInterval === "function") setInterval(poll, POLL_MS);
+  if (typeof setInterval === "function") setInterval(function () {   // 只刷新“年龄”，不重新拉数据、也不重画
+    try {
+      if (!lastGoodAt) return;
+      var ageNow = Math.round(ageAtGood + (Date.now() - lastGoodAt));
+      var c = $("statChip");
+      if (c) c.textContent = "age " + ageNow + " ms";
+      if (lampKind === "on") setLamp("on", "在线 · age " + ageNow + " ms");
+      var ageTile = $("tileAge");
+      if (ageTile) ageTile.textContent = String(ageNow);
+    } catch (e) { /* 年龄刷新失败不影响主流程 */ }
+  }, 200);
+})();
+</script>
+</body>
+</html>

@@ -1020,43 +1020,7 @@ namespace CmdBridgeMod
             }
         }
 
-        public bool UiRightClickElement(string selector)
-        {
-            return RunSession(() => m_injector.Session.RightClick(selector), 3000);
-        }
-
-        /// <summary>Shift+左键（引擎侧等价于 SpecialClick）。</summary>
-        public bool UiShiftClickElement(string selector)
-        {
-            return RunSession(() => m_injector.Session.ShiftClick(selector), 3000);
-        }
-
-        /// <summary>
-        /// 拖拽（槽位搬运、滑条、列表）。holdMs ≥ 500 时是"长按后拖动"，
-        /// 引擎会按 SingleItem 模式只搬 1 个 —— 也就是"分离物品"。
-        /// </summary>
-        public bool UiDrag(string fromSelector, string toSelector, int steps = 8, int holdMs = 0)
-        {
-            return RunSession(() => m_injector.Session.Drag(
-                UiMouseSession.Endpoint.At(fromSelector),
-                UiMouseSession.Endpoint.At(toSelector),
-                steps, holdMs), 6000);
-        }
-
-        /// <summary>按坐标拖拽（不知道元素选择器时用）。</summary>
-        public bool UiDragAt(float x1, float y1, float x2, float y2, int steps = 8, int holdMs = 0)
-        {
-            return RunSession(() => m_injector.Session.Drag(
-                UiMouseSession.Endpoint.At(new Vector2(x1, y1)),
-                UiMouseSession.Endpoint.At(new Vector2(x2, y2)),
-                steps, holdMs), 6000);
-        }
-
-        /// <summary>分离物品：长按源槽位后拖到目标槽位（只搬 1 个）。</summary>
-        public bool UiSplitItem(string fromSelector, string toSelector, int holdMs = 600)
-        {
-            return UiDrag(fromSelector, toSelector, 8, Math.Max(holdMs, 500));
-        }
+        // 用户定（2026-10-17）：右键 / Shift 点击 / 拖拽 / 分离物品 的会话入口**没有应用场景**，已删除。
 
         /// <summary>
         /// 例行释放：**只放掉本 Mod 注入并按住**的键/鼠标。

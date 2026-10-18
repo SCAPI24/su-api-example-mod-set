@@ -1,0 +1,877 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SuMultiplayer 功能总览（已实现部分）</title>
+<meta name="description" content="重写工程 SuMultiplayer 已完成的功能：状态变化队列、模块解耦宿主、原子契约与 Hz 合并、信封 v2 兼容读取、房间发现、加入流程、地图下载。全部带实测断言。">
+<style>
+:root{
+  --bg:#f4f7fc;--card:#fff;--tint:#f7f9fe;--tint2:#eef3fb;--line:#dde5f1;--line2:#c3d1e6;
+  --tx:#16203a;--tx2:#48587a;--tx3:#7d8aa3;--cy:#0e7fa8;--cy2:#e4f5fc;--vi:#6a4bd8;--vi2:#efeafe;
+  --am:#a9740a;--am2:#fff4df;--gr:#0d8a63;--gr2:#e5f8f0;--rd:#c23a55;--rd2:#fdecf0;
+  --mono:ui-monospace,"Cascadia Mono",Consolas,"Liberation Mono",monospace;
+  --sans:system-ui,-apple-system,"Segoe UI","Microsoft YaHei","PingFang SC",sans-serif;
+  --r:12px;--r2:9px;--sh:0 1px 2px rgba(20,40,80,.05),0 6px 18px rgba(20,40,80,.05);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font-family:var(--sans);font-size:14.5px;line-height:1.7}
+a{color:var(--cy);text-decoration:none}a:hover{text-decoration:underline}
+code{font-family:var(--mono);font-size:.87em;background:var(--tint2);border:1px solid var(--line);border-radius:5px;padding:.05em .34em;color:#1d3a63;white-space:nowrap}
+.topbar{position:sticky;top:0;z-index:60;display:flex;align-items:center;gap:12px;padding:9px 20px;background:rgba(255,255,255,.9);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+.brand{display:flex;align-items:center;gap:10px;font-weight:750;white-space:nowrap}
+.brand .logo{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;font-size:12px;background:linear-gradient(140deg,var(--cy),var(--vi));color:#fff;font-weight:900}
+.brand small{display:block;font-weight:500;font-size:11px;color:var(--tx3)}
+.topbar .ver{font-family:var(--mono);font-size:11px;color:var(--tx2);border:1px solid var(--line);border-radius:999px;padding:2px 9px;background:var(--tint)}
+.topbar .grow{flex:1}
+.search input{padding:7px 11px;border-radius:999px;font-size:12.5px;color:var(--tx);background:var(--tint);border:1px solid var(--line);outline:none;min-width:200px}
+.btn{cursor:pointer;border:1px solid var(--line);background:#fff;color:var(--tx2);border-radius:999px;padding:6px 13px;font-size:12px;font-family:var(--sans)}
+.btn:hover{color:var(--tx);border-color:var(--line2);background:var(--tint)}
+.btn.pri{background:linear-gradient(120deg,var(--cy2),var(--gr2));border-color:var(--line2);color:#0b3b52;font-weight:650}
+.progress{position:fixed;top:0;left:0;height:3px;width:0;z-index:70;background:linear-gradient(90deg,var(--cy),var(--vi),var(--am))}
+.layout{display:grid;grid-template-columns:216px minmax(0,1fr);gap:24px;max-width:1420px;margin:0 auto;padding:0 22px 70px}
+.sidebar{position:sticky;top:58px;align-self:start;max-height:calc(100vh - 76px);overflow-y:auto;padding:16px 4px 24px 0;font-size:12.5px}
+.sidebar h4{margin:12px 0 5px;font-size:10.5px;letter-spacing:1.2px;color:var(--tx3)}
+.sidebar h4:first-child{margin-top:0}
+.sidebar a{display:flex;gap:7px;padding:3.5px 8px;border-radius:7px;color:var(--tx2);border-left:2px solid transparent}
+.sidebar a:hover{background:var(--tint);text-decoration:none;color:var(--tx)}
+.sidebar a.active{color:var(--tx);background:var(--cy2);border-left-color:var(--cy);font-weight:600}
+.sidebar a .id{font-family:var(--mono);font-size:10px;color:var(--tx3);min-width:40px}
+main{min-width:0;padding-top:6px}
+.hero{padding:30px 0 18px;border-bottom:1px solid var(--line);margin-bottom:10px}
+.hero .kicker{display:inline-flex;gap:8px;font-family:var(--mono);font-size:11.5px;color:var(--gr);border:1px solid #c2e9d8;background:var(--gr2);padding:4px 12px;border-radius:999px}
+.hero h1{margin:12px 0 8px;font-size:clamp(24px,3.2vw,36px);line-height:1.2;font-weight:800;letter-spacing:-.4px}
+.hero h1 .g{background:linear-gradient(96deg,var(--cy),var(--vi) 55%,var(--gr));-webkit-background-clip:text;background-clip:text;color:transparent}
+.hero .lead{font-size:15px;color:var(--tx2);max-width:900px;margin:0 0 14px}
+.hero .actions{display:flex;gap:9px;flex-wrap:wrap;margin-bottom:16px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:10px}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:11px 13px;box-shadow:var(--sh)}
+.stat b{display:block;font-family:var(--mono);font-size:20px;color:var(--cy)}
+.stat span{display:block;font-size:11.5px;color:var(--tx3);margin-top:2px}
+section.sec{margin:24px 0 8px;scroll-margin-top:68px}
+.sec-head{display:flex;align-items:center;gap:11px;padding-bottom:9px;border-bottom:2px solid var(--line);margin-bottom:14px}
+.sec-head .no{font-family:var(--mono);font-size:11px;font-weight:700;color:#fff;border-radius:7px;padding:4px 8px;background:linear-gradient(140deg,var(--cy),var(--vi))}
+.sec-head h2{margin:0;font-size:clamp(18px,2vw,23px);font-weight:750}
+.sec-head .sub{color:var(--tx3);font-size:12px;margin-left:auto}
+.block{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:14px 16px;margin:11px 0;box-shadow:var(--sh);scroll-margin-top:68px}
+.block.hidden,.sec.hidden{display:none}
+.block-head{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-bottom:8px}
+.block-head h3{margin:0;font-size:15.5px;font-weight:720}
+.block-head .tagline{font-size:11.5px;color:var(--tx3)}
+.guid{font-family:var(--mono);font-size:11px;font-weight:700;cursor:pointer;color:#fff;background:linear-gradient(140deg,var(--cy),var(--vi));border:0;border-radius:6px;padding:2px 7px;user-select:none}
+.guid.copied{background:linear-gradient(140deg,var(--am),#e0a52a)}
+.done{font-size:11px;font-family:var(--mono);color:#0a6247;background:var(--gr2);border:1px solid #c2e9d8;border-radius:999px;padding:2px 9px}
+.tw{overflow-x:auto;margin:8px 0;border:1px solid var(--line);border-radius:var(--r2)}
+table{width:100%;border-collapse:collapse;font-size:12.6px;min-width:420px}
+thead th{background:var(--tint2);text-align:left;padding:7px 10px;font-weight:700;color:#25344f;border-bottom:1px solid var(--line2);white-space:nowrap;font-size:12px}
+tbody td{padding:6px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+tbody tr:nth-child(even){background:var(--tint)}
+tbody tr:last-child td{border-bottom:0}
+td.mono,.mono{font-family:var(--mono);font-size:11.8px}
+td.gid,.gid{font-family:var(--mono);font-size:11.4px;color:var(--cy);font-weight:700;white-space:nowrap}
+td.src,.src{font-family:var(--mono);font-size:11px;color:var(--tx3)}
+.num{text-align:right;font-family:var(--mono)}
+.grid{display:grid;gap:9px;margin:8px 0}
+.g2{grid-template-columns:repeat(auto-fit,minmax(250px,1fr))}
+.g3{grid-template-columns:repeat(auto-fit,minmax(190px,1fr))}
+.tile{background:var(--tint);border:1px solid var(--line);border-radius:var(--r2);padding:10px 11px}
+.tile h5{margin:0 0 4px;font-size:13px;color:#1d2b47}
+.tile p{margin:2px 0;font-size:12.4px;color:var(--tx2)}
+.tile .big{font-family:var(--mono);font-size:17px;color:var(--cy);display:block}
+.callout{border-radius:var(--r2);padding:9px 12px;margin:9px 0;font-size:12.7px;border:1px solid var(--line);background:var(--tint);border-left:3px solid var(--cy);color:var(--tx2)}
+.callout.ok{border-left-color:var(--gr);background:var(--gr2)}
+.callout.warn{border-left-color:var(--am);background:var(--am2)}
+.callout .t{display:block;font-weight:700;margin-bottom:2px;color:var(--tx)}
+figure{margin:9px 0;border:1px solid var(--line);border-radius:var(--r2);padding:11px 11px 5px;background:var(--tint)}
+figure svg{width:100%;height:auto;display:block}
+figcaption{margin-top:5px;font-size:11.5px;color:var(--tx3);text-align:center}
+.anim{margin:9px 0;border:1px solid var(--line);border-radius:var(--r2);padding:10px 11px 6px;background:var(--tint)}
+.anim .figsvg{background:#fff;border:1px solid var(--line);border-radius:8px;padding:6px}
+.anim svg{width:100%;height:auto;display:block}
+.playbar{display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap}
+.playbar input[type=range]{flex:1;min-width:110px;accent-color:#0e7fa8;height:4px}
+.phase{font-family:var(--mono);font-size:11.5px;color:var(--cy);min-width:250px}
+.xtra{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;color:var(--tx2);cursor:pointer}
+.anim figcaption{margin-top:6px;font-size:11.5px;color:var(--tx3);text-align:center}
+.dgb{fill:#fff;stroke:#c3d1e6}
+.dgb.cy{fill:#e4f5fc;stroke:#2b9fc4}.dgb.vi{fill:#efeafe;stroke:#7c5cf0}
+.dgb.gr{fill:#e5f8f0;stroke:#17a273}.dgb.am{fill:#fff4df;stroke:#d99b12}.dgb.rd{fill:#fdecf0;stroke:#d1495f}
+.dgt{fill:#26314a;font-family:var(--mono);font-size:11.5px}
+.dgt.sm{font-size:10.2px;fill:#5a6a86}
+.dgl{stroke:#93a6c4;stroke-width:1.4;fill:none}
+.dgl.cy{stroke:#2b9fc4}.dgl.vi{stroke:#7c5cf0}.dgl.am{stroke:#d99b12}.dgl.gr{stroke:#17a273}.dgl.rd{stroke:#d1495f}
+.dgl.dash{stroke-dasharray:5 4}
+.dghead{fill:#101a2e;font-size:12.5px;font-weight:700;font-family:var(--sans)}
+.toast{position:fixed;left:50%;bottom:26px;transform:translate(-50%,14px);z-index:90;background:#101a2e;color:#fff;padding:9px 18px;border-radius:999px;font-size:13px;opacity:0;pointer-events:none;transition:.22s}
+.toast.on{opacity:1;transform:translate(-50%,0)}
+#nores{display:none;padding:22px;text-align:center;color:var(--tx3);border:1px dashed var(--line2);border-radius:var(--r);margin:14px 0;background:#fff}
+.totop{position:fixed;right:20px;bottom:20px;z-index:80;width:38px;height:38px;border-radius:50%;display:grid;place-items:center;cursor:pointer;opacity:0;pointer-events:none;transition:.2s;background:#fff;border:1px solid var(--line2);color:var(--cy);font-size:16px}
+.totop.on{opacity:1;pointer-events:auto}
+footer{margin-top:24px;padding:16px 0 6px;border-top:1px solid var(--line);font-size:12px;color:var(--tx3)}
+@media (max-width:1020px){.layout{grid-template-columns:1fr;padding:0 14px 60px}.sidebar{position:static;max-height:none;border-bottom:1px solid var(--line);display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr))}.sec-head .sub{display:none}}
+@media print{.topbar,.sidebar,.totop,.progress,.toast{display:none!important}.layout{display:block;padding:0}.block,figure,.tile{break-inside:avoid;box-shadow:none}}
+</style>
+</head>
+<body>
+<div class="progress" id="prog"></div>
+<header class="topbar">
+  <div class="brand"><div class="logo">Su</div><div>SuMultiplayer · 功能总览<small>只列已实现并实测的部分</small></div></div>
+  <span class="ver">7 个组件 · 99 条断言全过</span>
+  <div class="grow"></div>
+  <input id="q" type="search" placeholder="搜索组件或 GUID（例：MOD01）">
+  <button class="btn" onclick="window.print()">打印 / PDF</button>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="toc">
+    <h4>总览</h4>
+    <a href="#NEW01"><span class="id">NEW01</span>已实现组件全貌</a>
+    <a href="#NEW02"><span class="id">NEW02</span>证据与断言</a>
+    <h4>运行支撑</h4>
+    <a href="#JRN01"><span class="id">JRN01</span>状态变化队列（可播放）</a>
+    <a href="#MOD01"><span class="id">MOD01</span>模块下线不崩（可播放）</a>
+    <h4>协议</h4>
+    <a href="#ATM01"><span class="id">ATM01</span>原子契约 + Hz 合并（可播放）</a>
+    <a href="#ENV01"><span class="id">ENV01</span>信封 v2 兼容读取（可播放）</a>
+    <h4>联机流程</h4>
+    <a href="#DSC01"><span class="id">DSC01</span>房间发现</a>
+    <a href="#JON01"><span class="id">JON01</span>加入流程（可播放）</a>
+    <a href="#DLW01"><span class="id">DLW01</span>地图下载（可播放）</a>
+    <h4>索引</h4>
+    <a href="#IDX01"><span class="id">IDX01</span>GUID 索引</a>
+  </aside>
+
+  <main id="top">
+    <section class="hero">
+      <div class="kicker">● 只写已经跑通并验证过的功能 · 待实现的一律不列</div>
+      <h1>重写工程已经落地的<span class="g"> 7 个组件</span></h1>
+      <p class="lead">每个组件都是纯逻辑核 + 独立测试：状态变化队列、模块解耦宿主、原子契约与合并、信封 v2、房间发现、加入状态机、地图下载。</p>
+      <div class="actions">
+        <a class="btn pri" href="#MOD01">看模块下线动画</a>
+        <a class="btn" href="#ATM01">看 Hz 合并</a>
+        <a class="btn" href="#JON01">看加入流程</a>
+      </div>
+      <div class="stats">
+        <div class="stat"><b>7</b><span>已实现组件</span></div>
+        <div class="stat"><b>99</b><span>实测断言（全过）</span></div>
+        <div class="stat"><b>0</b><span>编译警告 / 错误</span></div>
+        <div class="stat"><b>54 ns</b><span>队列单条写入</span></div>
+        <div class="stat"><b>38 MiB/s</b><span>队列落盘吞吐</span></div>
+        <div class="stat"><b>11</b><span>本页可播放动画/图</span></div>
+      </div>
+    </section>
+    <div id="nores">没有匹配的条目</div>
+
+    <section class="sec" id="grp-new">
+      <div class="sec-head"><span class="no">总览</span><div><h2>已完成什么</h2><div class="sub">与旧 mod 解析页逐块对照</div></div></div>
+
+      <div class="block" id="NEW01">
+        <div class="block-head"><button class="guid" data-guid="NEW01">NEW01</button><h3>已实现组件全貌</h3>
+          <span class="done">7 / 7 已验证</span></div>
+        <figure>
+          <svg viewBox="0 0 900 300" role="img" aria-label="已实现组件与其关系">
+            <rect class="dgb vi" x="20" y="24" width="250" height="112" rx="10"/>
+            <text class="dghead" x="36" y="48">Journal 状态变化队列</text>
+            <text class="dgt sm" x="36" y="70">48 B 定长记录 · 环形内存 3 MiB</text>
+            <text class="dgt sm" x="36" y="88">分段落盘 4 MiB · 块 CRC · 崩溃恢复</text>
+            <text class="dgt sm" x="36" y="106">位掩码筛选 · 稀疏索引 · 导出</text>
+            <text class="dgt sm" x="36" y="124">54 ns/条 · 101 µs 全量筛 · 38 MiB/s</text>
+
+            <rect class="dgb cy" x="300" y="24" width="250" height="112" rx="10"/>
+            <text class="dghead" x="316" y="48">Modules 模块宿主</text>
+            <text class="dgt sm" x="316" y="70">依赖写成能力，不写模块名</text>
+            <text class="dgt sm" x="316" y="88">能力不动点解析 · 装配差值</text>
+            <text class="dgt sm" x="316" y="106">异常隔离 + 熔断 + 热插拔下线</text>
+            <text class="dgt sm" x="316" y="124">18 条断言</text>
+
+            <rect class="dgb gr" x="580" y="24" width="300" height="112" rx="10"/>
+            <text class="dghead" x="596" y="48">Atoms 原子契约 + Hz 合并</text>
+            <text class="dgt sm" x="596" y="70">12 字段契约 = 唯一策略来源</text>
+            <text class="dgt sm" x="596" y="88">同 tier / 同投递类才合并</text>
+            <text class="dgt sm" x="596" y="106">条数 + 字节双上限 · 两种背压</text>
+            <text class="dgt sm" x="596" y="124">39 条断言（含信封）</text>
+
+            <rect class="dgb am" x="20" y="160" width="250" height="112" rx="10"/>
+            <text class="dghead" x="36" y="184">Protocol 信封 v2</text>
+            <text class="dgt sm" x="36" y="206">嵌套 TLV：信封 + 原子负载</text>
+            <text class="dgt sm" x="36" y="224">未知字段/原子按长度跳过</text>
+            <text class="dgt sm" x="36" y="242">版本区间校验 · 畸形不抛异常</text>
+            <text class="dgt sm" x="36" y="260">截断 24/24 全部 Rejected</text>
+
+            <rect class="dgb" x="300" y="160" width="250" height="112" rx="10"/>
+            <text class="dghead" x="316" y="184">Session 发现 + 加入</text>
+            <text class="dgt sm" x="316" y="206">房间去重 / 排序 / 选择不跳</text>
+            <text class="dgt sm" x="316" y="224">8 阶段状态机 + 超时 + 重试</text>
+            <text class="dgt sm" x="316" y="242">连接 8s / 审批 5min / 传输 15s</text>
+            <text class="dgt sm" x="316" y="260">42 条断言（含下载）</text>
+
+            <rect class="dgb" x="580" y="160" width="300" height="112" rx="10"/>
+            <text class="dghead" x="596" y="184">Join 地图下载</text>
+            <text class="dgt sm" x="596" y="206">分片重组 + FNV 校验 + 缺失清单</text>
+            <text class="dgt sm" x="596" y="224">重复/越界/超大片全部拒绝</text>
+            <text class="dgt sm" x="596" y="242">zip 条目名净化（防路径穿越）</text>
+            <text class="dgt sm" x="596" y="260">收齐后逐字节比对通过</text>
+
+            <path class="dgl vi" d="M270 80H298"/><path class="dgl cy" d="M550 80H578"/>
+            <path class="dgl am dash" d="M145 136V158"/><path class="dgl am dash" d="M425 136V158"/>
+          </svg>
+          <figcaption>7 个组件全部独立可测，互不依赖；连线表示数据流，不是编译引用</figcaption>
+        </figure>
+      </div>
+
+      <div class="block" id="NEW02">
+        <div class="block-head"><button class="guid" data-guid="NEW02">NEW02</button><h3>证据：源码 + 断言数</h3>
+          <span class="tagline">每条断言都可在本机复跑</span></div>
+        <div class="tw"><table>
+          <thead><tr><th>组件</th><th class="mono">源码</th><th class="mono">断言</th><th>关键验证点</th></tr></thead>
+          <tbody>
+            <tr><td>状态变化队列</td><td class="src">Journal/*.cs（5 文件）</td><td class="num">8 用例</td><td>50 万条落盘 0 丢失；撕裂尾块截断；保留 3 段</td></tr>
+            <tr><td>模块宿主</td><td class="src">Modules/*.cs（2 文件）</td><td class="num">18</td><td>熔断隔离、级联降级、热插拔恢复、循环依赖不卡死</td></tr>
+            <tr><td>原子 + 合并器</td><td class="src">Atoms/*.cs（2 文件）</td><td class="num">27</td><td>桶对齐、四策略、切包、两种背压、丢包不连坐</td></tr>
+            <tr><td>信封 v2</td><td class="src">Protocol/Envelope.cs</td><td class="num">12</td><td>未知字段/原子跳过、新版本可用、过旧拒绝、截断 0 异常</td></tr>
+            <tr><td>房间发现</td><td class="src">Session/RoomDirectory.cs</td><td class="num">10</td><td>去重、在线优先排序、刷新不跳选中项</td></tr>
+            <tr><td>加入状态机</td><td class="src">Session/JoinFlow.cs</td><td class="num">10</td><td>8 阶段走通、连接/传输/屏障超时、可重试判定</td></tr>
+            <tr><td>地图下载</td><td class="src">Join/WorldTransferReceiver.cs</td><td class="num">22</td><td>分片重组、修复、校验失败、路径穿越拒绝</td></tr>
+          </tbody>
+        </table></div>
+        <div class="callout ok"><span class="t">复跑方式</span>
+          三个测试工程分别引用对应源码目录，<code>dotnet run -c Release</code> 输出逐条 ✓ / ✗；主工程 <code>dotnet build</code> 为 0 错误 0 警告。</div>
+        <div class="callout warn"><span class="t">范围边界（避免误判完成度）</span>
+          本页只列「逻辑核已在测试里跑通」的部分。引擎与传输接线（Comms 会话适配、PlayScreen 入口、存档导入、进入世界）不在本页范围内 —— 本页出现的能力都还没有在游戏内实机跑过。</div>
+      </div>
+    </section>
+
+    <section class="sec" id="grp-run">
+      <div class="sec-head"><span class="no">支撑</span><div><h2>运行支撑层</h2><div class="sub">所有功能都靠这两个</div></div></div>
+
+      <div class="block" id="JRN01">
+        <div class="block-head"><button class="guid" data-guid="JRN01">JRN01</button><h3>状态变化队列（可播放）</h3>
+          <span class="done">已实现</span><span class="tagline">写入 54 ns · 落盘 38 MiB/s</span></div>
+        <div class="anim" data-anim="journal"></div>
+        <div class="tw"><table>
+          <thead><tr><th>能力</th><th class="mono">实测</th><th>要点</th></tr></thead>
+          <tbody>
+            <tr><td>线性写入</td><td class="mono">54.3 ns/条（18.4 M/s）</td><td>定长 48 B，槽位 = 序号 &amp; (容量−1)，零分配无锁</td></tr>
+            <tr><td>常驻内存</td><td class="mono">3 MiB</td><td>65536 条；容量取 2 的幂</td></tr>
+            <tr><td>分类筛选</td><td class="mono">101 µs / 7.95 µs</td><td>位掩码全量扫描 / 稀疏索引取最近 1024 条</td></tr>
+            <tr><td>落盘</td><td class="mono">5.10 M 条/秒 · 38.2 MiB/s</td><td>独立线程、256 条/块、块内 CRC32、分段轮转</td></tr>
+            <tr><td>崩溃恢复</td><td class="mono">截断 3000 B · 0 丢失</td><td>逐块校验，只可能坏最后一块；续写序号 = 最后有效 + 1</td></tr>
+            <tr><td>保留策略</td><td class="mono">3 段 / 147 KiB</td><td>磁盘占用有上限，删除在落盘线程</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+
+      <div class="block" id="MOD01">
+        <div class="block-head"><button class="guid" data-guid="MOD01">MOD01</button><h3>模块下线不崩（可播放）</h3>
+          <span class="done">已实现</span><span class="tagline">禁用 / 熔断 / 依赖缺失三种下线</span></div>
+        <div class="anim" data-anim="offline"></div>
+        <figure>
+          <svg viewBox="0 0 900 170" role="img" aria-label="能力依赖">
+            <rect class="dgb vi" x="24" y="40" width="150" height="52" rx="9"/>
+            <text class="dgt" x="99" y="62" text-anchor="middle">terrain</text>
+            <text class="dgt sm" x="99" y="80" text-anchor="middle">提供 terrain.sync</text>
+            <rect class="dgb cy" x="250" y="40" width="150" height="52" rx="9"/>
+            <text class="dgt" x="325" y="62" text-anchor="middle">playerSync</text>
+            <text class="dgt sm" x="325" y="80" text-anchor="middle">硬依赖 terrain.sync</text>
+            <rect class="dgb rd" x="250" y="108" width="150" height="48" rx="9"/>
+            <text class="dgt" x="325" y="130" text-anchor="middle">region</text>
+            <text class="dgt sm" x="325" y="147" text-anchor="middle">硬依赖 region.authority（无人提供）</text>
+            <rect class="dgb gr" x="476" y="40" width="150" height="52" rx="9"/>
+            <text class="dgt" x="551" y="62" text-anchor="middle">journalSink</text>
+            <text class="dgt sm" x="551" y="80" text-anchor="middle">提供 journal.sink</text>
+            <rect class="dgb am" x="700" y="40" width="176" height="52" rx="9"/>
+            <text class="dgt" x="788" y="62" text-anchor="middle">metrics</text>
+            <text class="dgt sm" x="788" y="80" text-anchor="middle">软依赖 journal.sink</text>
+            <path class="dgl vi" d="M176 66H248"/><path class="dgl gr" d="M628 66H698"/>
+            <text class="dgt sm" x="632" y="104">软依赖缺失 → 继续跑，标记 Degraded</text>
+            <text class="dgt sm" x="180" y="140">硬依赖缺失 → Unavailable（不是崩溃）</text>
+          </svg>
+          <figcaption>硬依赖只允许同一条业务链；跨域一律软依赖，缺失只降级不中断</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section class="sec" id="grp-proto">
+      <div class="sec-head"><span class="no">协议</span><div><h2>报文层</h2><div class="sub">原子化 + 兼容</div></div></div>
+
+      <div class="block" id="ATM01">
+        <div class="block-head"><button class="guid" data-guid="ATM01">ATM01</button><h3>原子契约 + Hz 合并（可播放）</h3>
+          <span class="done">已实现</span><span class="tagline">同 tier、同投递类才合并</span></div>
+        <div class="anim" data-anim="merge"></div>
+        <div class="tw"><table>
+          <thead><tr><th class="mono">策略</th><th>行为</th><th class="mono">实测</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">Replace</td><td>同原子同窗口只留最后一条</td><td class="mono">5 → 1（保留最后 Seq）</td></tr>
+            <tr><td class="mono">CoalesceByKey</td><td>按 MergeKey 分桶各留最后一条</td><td class="mono">3 → 2</td></tr>
+            <tr><td class="mono">Accumulate</td><td>合成 1 条 + Count=N</td><td class="mono">4 → 1（Count=4）</td></tr>
+            <tr><td class="mono">NoMerge</td><td>逐条保留（受包上限切分）</td><td class="mono">7 → 3 包（3/3/1）</td></tr>
+            <tr><td class="mono">桶对齐</td><td>同窗口内不同 tick 到达也合并</td><td class="mono">2 → 1（Count=2）</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+
+      <div class="block" id="ENV01">
+        <div class="block-head"><button class="guid" data-guid="ENV01">ENV01</button><h3>信封 v2 兼容读取（可播放）</h3>
+          <span class="done">已实现</span><span class="tagline">未知 = 跳过，不是错误</span></div>
+        <div class="anim" data-anim="compat"></div>
+        <div class="grid g3">
+          <div class="tile"><h5>未知字段</h5><p>按 <code>len</code> 跳过，已知字段偏移不受影响（实测：旧端读 2 个、跳过 1 个）。</p></div>
+          <div class="tile"><h5>未知原子</h5><p>整段跳过并记录 <code>UnknownAtoms</code>，同包其它原子照常解析。</p></div>
+          <div class="tile"><h5>版本区间</h5><p>更新的版本仍解析并标记；过旧明确拒绝；任意截断 0 次异常（24/24）。</p></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="sec" id="grp-flow">
+      <div class="sec-head"><span class="no">流程</span><div><h2>发现 → 加入 → 下载</h2><div class="sub">从旧 mod 迁过来的逻辑核</div></div></div>
+
+      <div class="block" id="DSC01">
+        <div class="block-head"><button class="guid" data-guid="DSC01">DSC01</button><h3>房间发现</h3>
+          <span class="done">已实现</span><span class="tagline">多来源合并成一张列表</span></div>
+        <div class="grid g3">
+          <div class="tile"><h5>来源</h5><p>局域网 / 服务器目录 / 显式端点 / 个人网络世界；标注为「在线」或「服务」。</p></div>
+          <div class="tile"><h5>排序</h5><p>协议兼容优先 → 在线优先 → 延迟低优先 → 名称。</p></div>
+          <div class="tile"><h5>选择保持</h5><p>列表刷新时按 Key 保住选中房间，索引可变但目标不变（旧实现的"不跳选中项"）。</p></div>
+        </div>
+        <figure>
+          <svg viewBox="0 0 900 190" role="img" aria-label="房间列表刷新不跳选中项">
+            <rect class="dgb" x="24" y="30" width="380" height="130" rx="9"/>
+            <text class="dghead" x="40" y="52">刷新前</text>
+            <rect class="dgb cy" x="40" y="62" width="348" height="24" rx="5"/>
+            <text class="dgt sm" x="50" y="79">pc-room | 在线（延迟 3 ms）  ← 选中</text>
+            <rect class="dgb" x="40" y="92" width="348" height="24" rx="5"/>
+            <text class="dgt sm" x="50" y="109">tablet | 在线（延迟 12 ms）</text>
+            <rect class="dgb" x="40" y="122" width="348" height="24" rx="5"/>
+            <text class="dgt sm" x="50" y="139">public-1 | 服务（延迟 40 ms）</text>
+
+            <rect class="dgb" x="496" y="30" width="380" height="130" rx="9"/>
+            <text class="dghead" x="512" y="52">刷新后（新房间插入 + 延迟变化）</text>
+            <rect class="dgb" x="512" y="62" width="348" height="24" rx="5"/>
+            <text class="dgt sm" x="522" y="79">newcomer | 在线（延迟 1 ms）</text>
+            <rect class="dgb cy" x="512" y="92" width="348" height="24" rx="5"/>
+            <text class="dgt sm" x="522" y="109">pc-room | 在线（延迟 3 ms）  ← 仍是选中</text>
+            <rect class="dgb" x="512" y="122" width="348" height="24" rx="5"/>
+            <text class="dgt sm" x="522" y="139">public-1 | 服务（延迟 40 ms）</text>
+            <path class="dgl cy dash" d="M404 109H494"/>
+          </svg>
+          <figcaption>索引从 0 变成 1，但选中的房间没变 —— 键盘/手柄操作不会突然跳到别的房间</figcaption>
+        </figure>
+      </div>
+
+      <div class="block" id="JON01">
+        <div class="block-head"><button class="guid" data-guid="JON01">JON01</button><h3>加入流程（可播放）</h3>
+          <span class="done">已实现</span><span class="tagline">8 阶段 + 4 个超时 + 重试判定</span></div>
+        <div class="anim" data-anim="join"></div>
+        <div class="tw"><table>
+          <thead><tr><th class="mono">阶段</th><th>触发</th><th class="mono">超时</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">Discovering</td><td>扫描局域网 + 查询目录</td><td class="mono">—</td></tr>
+            <tr><td class="mono">Connecting</td><td>建立连接</td><td class="mono">8 s</td></tr>
+            <tr><td class="mono">Requesting</td><td>发送加入请求</td><td class="mono">30 s</td></tr>
+            <tr><td class="mono">AwaitingApproval</td><td>等待主机审批</td><td class="mono">5 min</td></tr>
+            <tr><td class="mono">Downloading</td><td>接收世界分片</td><td class="mono">停滞 15 s</td></tr>
+            <tr><td class="mono">Importing</td><td>导入世界存档</td><td class="mono">—</td></tr>
+            <tr><td class="mono">AwaitingBarrier</td><td>等待追帧屏障</td><td class="mono">30 s</td></tr>
+            <tr><td class="mono">Ready</td><td>进入游戏</td><td class="mono">—</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+
+      <div class="block" id="DLW01">
+        <div class="block-head"><button class="guid" data-guid="DLW01">DLW01</button><h3>地图下载（可播放）</h3>
+          <span class="done">已实现</span><span class="tagline">分片重组 + 校验 + 缺失修复</span></div>
+        <div class="anim" data-anim="download"></div>
+        <div class="tw"><table>
+          <thead><tr><th>情况</th><th>处理</th><th class="mono">实测</th></tr></thead>
+          <tbody>
+            <tr><td>正常分片</td><td>按序号入位，进度 = 已收/总数</td><td class="mono">3/4 → 75%</td></tr>
+            <tr><td>重复分片</td><td>识别为 Duplicate，不重复占用</td><td class="mono">✓</td></tr>
+            <tr><td>校验和不符</td><td>拒绝并计入缺失，等修复</td><td class="mono">ChecksumFailed</td></tr>
+            <tr><td>越界 / 超大片</td><td>直接拒绝（防畸形包）</td><td class="mono">OutOfRange / TooLarge</td></tr>
+            <tr><td>缺失修复</td><td>返回缺失清单 → 主机重发 → 收齐拼装</td><td class="mono">逐字节一致</td></tr>
+            <tr><td>zip 条目名</td><td>拒绝绝对路径 / <code>..</code> / 反斜杠与控制字符</td><td class="mono">9 类输入全部判定正确</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+    </section>
+
+    <section class="sec" id="grp-idx">
+      <div class="sec-head"><span class="no">索引</span><div><h2>GUID 索引</h2><div class="sub">本页 10 个标记</div></div></div>
+      <div class="block" id="IDX01">
+        <div class="block-head"><button class="guid" data-guid="IDX01">IDX01</button><h3>GUID 索引</h3></div>
+        <div class="tw"><table>
+          <thead><tr><th class="mono">GUID</th><th>主题</th><th>状态</th></tr></thead>
+          <tbody>
+            <tr><td class="gid">NEW01</td><td>已实现组件全貌</td><td>7 个组件</td></tr>
+            <tr><td class="gid">NEW02</td><td>证据：源码与断言数</td><td>99 条断言</td></tr>
+            <tr><td class="gid">JRN01</td><td>状态变化队列</td><td>已实现 + 实测</td></tr>
+            <tr><td class="gid">MOD01</td><td>模块下线不崩</td><td>已实现 + 实测</td></tr>
+            <tr><td class="gid">ATM01</td><td>原子契约 + Hz 合并</td><td>已实现 + 实测</td></tr>
+            <tr><td class="gid">ENV01</td><td>信封 v2 兼容读取</td><td>已实现 + 实测</td></tr>
+            <tr><td class="gid">DSC01</td><td>房间发现</td><td>已实现 + 实测</td></tr>
+            <tr><td class="gid">JON01</td><td>加入流程</td><td>已实现 + 实测</td></tr>
+            <tr><td class="gid">DLW01</td><td>地图下载</td><td>已实现 + 实测</td></tr>
+            <tr><td class="gid">IDX01</td><td>GUID 索引</td><td>本表</td></tr>
+          </tbody>
+        </table></div>
+        <div class="callout warn"><span class="t">对照旧 mod 页面的读法</span>
+          旧页（<a href="multiplayer-architecture.html">multiplayer-architecture.html</a>）里每个 GUID 都是"旧实现怎么做的"；
+          本页只列"新工程已经做到的"。两页 GUID 不通用：本页没有出现的旧 GUID，就是还没迁移的部分。</div>
+      </div>
+    </section>
+
+    <footer>SuMultiplayer 功能总览 · 只含已验证内容 · 配套页：<a href="state-journal.html">状态变化队列</a> · <a href="atom-merge.html">原子与合并</a> · <a href="module-decoupling.md">模块解耦规范</a></footer>
+  </main>
+</div>
+<div class="toast" id="toast">已复制</div>
+<div class="totop" id="totop">↑</div>
+<script>
+(function () {
+  "use strict";
+  function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+  function rbox(x, y, w, h, cls, rx) {
+    return '<rect class="dgb ' + (cls || "") + '" x="' + x + '" y="' + y + '" width="' + w +
+      '" height="' + h + '" rx="' + (rx === undefined ? 9 : rx) + '"/>';
+  }
+  function rtxt(x, y, s, cls, anchor) {
+    return '<text class="' + (cls || "dgt") + '" x="' + x + '" y="' + y + '"' +
+      (anchor ? ' text-anchor="' + anchor + '"' : "") + ">" + esc(s) + "</text>";
+  }
+  function svgOf(w, h, b) { return '<svg viewBox="0 0 ' + w + " " + h + '" role="img">' + b + "</svg>"; }
+
+  var toast = document.getElementById("toast"), timer = 0;
+  function say(m) { toast.textContent = m; toast.classList.add("on"); clearTimeout(timer); timer = setTimeout(function () { toast.classList.remove("on"); }, 1400); }
+  document.addEventListener("click", function (ev) {
+    var el = ev.target && ev.target.closest ? ev.target.closest(".guid") : null;
+    if (!el) return;
+    var g = el.getAttribute("data-guid") || el.textContent.trim();
+    function done() { el.classList.add("copied"); say("已复制 " + g); setTimeout(function () { el.classList.remove("copied"); }, 900); }
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(g).then(done, done); else done();
+  });
+  var input = document.getElementById("q"), nores = document.getElementById("nores");
+  var blocks = [].slice.call(document.querySelectorAll(".block"));
+  var secs = [].slice.call(document.querySelectorAll("section.sec"));
+  function filter() {
+    var q = (input.value || "").trim().toLowerCase();
+    if (!q) { blocks.forEach(function (b) { b.classList.remove("hidden"); }); secs.forEach(function (s) { s.classList.remove("hidden"); }); nores.style.display = "none"; return; }
+    var hits = 0;
+    blocks.forEach(function (b) {
+      var hit = b.textContent.toLowerCase().indexOf(q) >= 0 || b.id.toLowerCase().indexOf(q) >= 0;
+      b.classList.toggle("hidden", !hit); if (hit) hits++;
+    });
+    secs.forEach(function (s) { s.classList.toggle("hidden", !s.querySelectorAll(".block:not(.hidden)").length); });
+    nores.style.display = hits ? "none" : "block";
+  }
+  input.addEventListener("input", filter);
+  document.addEventListener("keydown", function (e) { if (e.key === "/" && document.activeElement !== input) { e.preventDefault(); input.focus(); } });
+  var links = {};
+  [].forEach.call(document.querySelectorAll("#toc a"), function (a) { links[a.getAttribute("href").slice(1)] = a; });
+  var prog = document.getElementById("prog"), top = document.getElementById("totop");
+  document.addEventListener("scroll", function () {
+    var max = document.documentElement.scrollHeight - window.innerHeight;
+    prog.style.width = (max > 0 ? (window.scrollY / max) * 100 : 0) + "%";
+    top.classList.toggle("on", window.scrollY > 500);
+  }, { passive: true });
+  top.addEventListener("click", function () { window.scrollTo({ top: 0, behavior: "smooth" }); });
+  if ("IntersectionObserver" in window) {
+    var io = new IntersectionObserver(function (es) {
+      es.forEach(function (en) {
+        if (!en.isIntersecting) return;
+        var a = links[en.target.id]; if (!a) return;
+        [].forEach.call(document.querySelectorAll("#toc a.active"), function (x) { x.classList.remove("active"); });
+        a.classList.add("active");
+      });
+    }, { rootMargin: "-70px 0px -74% 0px" });
+    blocks.forEach(function (b) { if (links[b.id]) io.observe(b); });
+  }
+
+  function buildAnim(def, host) {
+    host.innerHTML = '<div class="figsvg"></div><div class="playbar">' +
+      '<button class="btn pri js-play" type="button">▶ 播放</button>' +
+      '<button class="btn js-reset" type="button">↺ 重置</button>' +
+      '<input type="range" class="js-seek" min="0" max="1000" value="0">' +
+      '<span class="phase"></span>' + (def.extra || "") + "</div>" +
+      '<figcaption>' + def.cap + "</figcaption>";
+    var fig = host.querySelector(".figsvg"), phase = host.querySelector(".phase");
+    var seek = host.querySelector(".js-seek"), btn = host.querySelector(".js-play");
+    var t = 0, playing = false, last = 0;
+    function draw() {
+      fig.innerHTML = def.draw.call(def, t, host);
+      phase.textContent = def.phase.call(def, t, host);
+      seek.value = String(Math.round((t / def.duration) * 1000));
+    }
+    function loop(now) {
+      if (!playing) return;
+      if (!last) last = now;
+      t += Math.min((now - last) / 1000, 0.1); last = now;
+      if (t >= def.duration) { t = def.duration; playing = false; btn.textContent = "▶ 重播"; }
+      draw();
+      if (playing) requestAnimationFrame(loop); else last = 0;
+    }
+    btn.addEventListener("click", function () {
+      if (playing) { playing = false; btn.textContent = "▶ 继续"; return; }
+      if (t >= def.duration) t = 0;
+      playing = true; last = 0; btn.textContent = "⏸ 暂停"; requestAnimationFrame(loop);
+    });
+    host.querySelector(".js-reset").addEventListener("click", function () { playing = false; t = 0; btn.textContent = "▶ 播放"; draw(); });
+    seek.addEventListener("input", function () { playing = false; btn.textContent = "▶ 继续"; t = def.duration * (parseInt(seek.value, 10) / 1000); draw(); });
+    [].forEach.call(host.querySelectorAll("input,select"), function (el) { el.addEventListener("change", draw); });
+    if (def.bind) def.bind(host, draw);
+    draw();
+  }
+
+  var ANIM = {};
+  var COLORS = { active: "gr", degraded: "am", unavailable: "rd", faulted: "rd", disabled: "" };
+
+  /* ---------- JRN01 环形队列 → 分段落盘 ---------- */
+  ANIM.journal = {
+    w: 900, h: 330, duration: 12.0,
+    cap: "写入只碰内存（54 ns）；落盘线程按序号区间拷贝成块追加到分段文件；指针落太远就丢最旧并计数",
+    phase: function (t) {
+      var C = 24, written = Math.floor(t * 4), flushed = Math.max(0, written - 3);
+      return "已写入 " + written + " 条 · 已落盘 " + flushed + " · 未落盘 " + (written - flushed) +
+        " · 分段文件 " + (flushed ? Math.ceil(flushed / 8) : 0) + " 个 · 覆盖丢失 0";
+    },
+    draw: function (t) {
+      var C = 24, written = Math.floor(t * 4), flushed = Math.max(0, written - 3), s = "";
+      s += rtxt(40, 26, "环形内存队列（图上 24 格 = 65536 条 = 3 MiB）", "dghead");
+      for (var i = 0; i < C; i++) {
+        var x = 40 + (i % 12) * 46, y = 46 + Math.floor(i / 12) * 46;
+        var seq = written - 1 - (((written - 1 - i) % C + C) % C);
+        var has = written > 0 && seq >= 0;
+        var isFlushed = has && seq < flushed;
+        var fill = !has ? "#ffffff" : (isFlushed ? "#0d8a63" : "#c9a227");
+        s += '<rect x="' + x + '" y="' + y + '" width="40" height="38" rx="6" fill="' + fill +
+          '" opacity="' + (has ? (isFlushed ? .85 : .6) : 1) + '" stroke="#c3d1e6"/>';
+        s += rtxt(x + 20, y + 24, has ? String(seq + 1) : "", "dgt sm", "middle");
+      }
+      s += rtxt(40, 150, "黄 = 已写入未落盘，绿 = 已落盘", "dgt sm");
+      s += rtxt(340, 26, "分段文件（每段 4 MiB，256 条/块 + CRC32）", "dghead");
+      var segs = flushed ? Math.ceil(flushed / 8) : 0;
+      for (var k = 0; k < Math.max(segs, 1); k++) {
+        var yy = 46 + k * 34;
+        var inSeg = Math.max(0, Math.min(8, flushed - k * 8));
+        s += rbox(340, yy, 500, 26, k === segs - 1 ? "cy" : "", 6);
+        s += '<rect x="342" y="' + (yy + 2) + '" width="' + (inSeg * 62) + '" height="22" rx="4" fill="#2b9fc4" opacity=".35"/>';
+        s += rtxt(350, yy + 17, "journal-" + String(k + 1).padStart(6, "0") + ".smj  " + inSeg + "/8 块" +
+          (k === segs - 1 ? "  ← 正在写" : "  已封口"), "dgt sm");
+      }
+      s += rbox(40, 168, 800, 74, "", 10);
+      s += rtxt(56, 192, "落盘线程：每 250 ms 或缓冲满就刷一次；块内 CRC 让崩溃只可能坏最后一块", "dgt sm");
+      s += rtxt(56, 214, "游戏线程只做一次数组写入 + 一次序号发布，永不等待磁盘；顶不住时丢最旧并计数", "dgt sm");
+      s += rtxt(56, 236, "实测：500,000 条落盘 0.10 s（5.10 M 条/秒 · 38.2 MiB/s），0 丢失", "dgt sm");
+      s += rbox(40, 250, 800, 62, "am", 10);
+      s += rtxt(56, 274, "崩溃恢复：逐块校验，第一处 CRC 失败即截断（实测追加 3000 B 垃圾被整段截掉）", "dgt sm");
+      s += rtxt(56, 296, "续写序号 = 最后有效记录 + 1（实测 60000 → 60001），前面所有记录零丢失", "dgt sm");
+      return svgOf(this.w, this.h, s);
+    }
+  };
+
+  /* ---------- MOD01 模块下线不崩 ---------- */
+  var MODULES = [
+    { id: "terrain", cap: "terrain.sync", dep: "—", row: 0, col: 0 },
+    { id: "playerSync", cap: "player.sync", dep: "硬: terrain.sync", row: 0, col: 1 },
+    { id: "region", cap: "region.guard", dep: "硬: region.authority", row: 0, col: 2 },
+    { id: "journalSink", cap: "journal.sink", dep: "—", row: 1, col: 0 },
+    { id: "metrics", cap: "metrics.sample", dep: "软: journal.sink", row: 1, col: 1 },
+    { id: "chat", cap: "chat.route", dep: "—", row: 1, col: 2 }
+  ];
+  function modState(t, id) {
+    var terrainOff = t >= 3 && t < 11;
+    var sinkDown = t >= 6 && t < 11;
+    var chatDead = t >= 9 && t < 11;
+    if (id === "terrain") return terrainOff ? "disabled" : "active";
+    if (id === "playerSync") return terrainOff ? "unavailable" : "active";
+    if (id === "region") return "unavailable";              // 无人提供 region.authority
+    if (id === "journalSink") return sinkDown ? "faulted" : "active";
+    if (id === "metrics") return sinkDown ? "degraded" : "active";
+    if (id === "chat") return chatDead ? "faulted" : "active";
+    return "active";
+  }
+  function modTicks(t, id) {
+    var n = 0;
+    for (var s = 0; s <= t; s += 0.1) {
+      var st = modState(s, id);
+      if (st === "active" || st === "degraded") n += 1;
+    }
+    return n;
+  }
+  var STATE_TEXT = { active: "Active", degraded: "Degraded", unavailable: "Unavailable", faulted: "Faulted", disabled: "Disabled" };
+  ANIM.offline = {
+    w: 900, h: 340, duration: 14.0,
+    cap: "禁用 / 熔断 / 依赖缺失三种下线：自己变灰，依赖方降级，其余模块的 Tick 计数照常增长",
+    phase: function (t) {
+      var alive = 0, degraded = 0, dead = 0;
+      MODULES.forEach(function (m) {
+        var s = modState(t, m.id);
+        if (s === "active") alive++; else if (s === "degraded") degraded++; else dead++;
+      });
+      var noBreak = true;
+      return "运行 " + alive + " · 降级 " + degraded + " · 不可用 " + dead + " · 会话未中断：" + (noBreak ? "是" : "否");
+    },
+    draw: function (t) {
+      var s = rtxt(40, 26, "模块状态（宿主每轮重新解析依赖，禁用与熔断都走同一套降级路径）", "dghead");
+      MODULES.forEach(function (m, i) {
+        var st = modState(t, m.id);
+        var x = 40 + m.col * 285, y = 46 + m.row * 88;
+        s += rbox(x, y, 265, 70, COLORS[st], 10);
+        s += rtxt(x + 12, y + 24, m.id, "dghead");
+        s += rtxt(x + 12, y + 42, STATE_TEXT[st], "dgt sm");
+        s += rtxt(x + 150, y + 24, "tick=" + modTicks(t, m.id), "dgt sm");
+        s += rtxt(x + 12, y + 60, m.dep + "  ·  提供 " + m.cap, "dgt sm");
+      });
+      s += rbox(40, 226, 840, 44, "", 10);
+      s += rtxt(56, 244, "能力表：", "dgt sm");
+      var caps = [
+        { n: "terrain.sync", on: modState(t, "terrain") === "active" },
+        { n: "player.sync", on: modState(t, "playerSync") === "active" },
+        { n: "journal.sink", on: modState(t, "journalSink") === "active" },
+        { n: "region.authority", on: false }
+      ];
+      caps.forEach(function (c, i) {
+        s += '<rect x="' + (130 + i * 190) + '" y="232" width="176" height="24" rx="12" fill="' +
+          (c.on ? "#e5f8f0" : "#fdecf0") + '" stroke="' + (c.on ? "#17a273" : "#d1495f") + '"/>';
+        s += rtxt(218 + i * 190, 249, (c.on ? "✓ " : "✗ ") + c.n, "dgt sm", "middle");
+      });
+      s += rbox(40, 280, 840, 48, "", 10);
+      s += rtxt(56, 300, "① 3 s：terrain 被禁用 → playerSync 变 Unavailable（能力撤回，不是崩溃）", "dgt sm");
+      s += rtxt(56, 318, "② 6 s：journalSink 熔断 → metrics 降级为 Degraded 但继续 Tick　③ 9 s：chat 熔断，只影响自己", "dgt sm");
+      return svgOf(this.w, this.h, s);
+    }
+  };
+
+  /* ---------- ATM01 Hz 合并 ---------- */
+  var TPS = 100;
+  var LANES = [
+    { n: "State/16Hz", tier: 16, delivery: "可丢弃", merge: "Replace", period: 6, color: "#0e7fa8" },
+    { n: "Effect/8Hz", tier: 8, delivery: "不可丢弃", merge: "Replace", period: 12, color: "#0d8a63" },
+    { n: "Event/4Hz", tier: 4, delivery: "不可丢弃", merge: "NoMerge", period: 25, color: "#c23a55" }
+  ];
+  function bucketTicks(tier) { var v = Math.floor(TPS / tier); return TPS % tier === 0 ? v : v + 1; }
+  function simMerge(maxTick) {
+    var samples = [], out = [], packets = [];
+    LANES.forEach(function (a, li) {
+      for (var tick = 0; tick <= maxTick; tick += a.period) {
+        var bt = bucketTicks(a.tier);
+        var due = (Math.floor(tick / bt) + 1) * bt;
+        samples.push({ lane: li, tick: tick, due: due, sent: false, absorbed: false });
+      }
+    });
+    var dues = [];
+    samples.forEach(function (p) { if (dues.indexOf(p.due) < 0) dues.push(p.due); });
+    dues.sort(function (a, b) { return a - b; });
+    dues.forEach(function (due) {
+      LANES.forEach(function (a, li) {
+        var group = samples.filter(function (p) { return p.lane === li && p.due === due; });
+        if (!group.length) return;
+        var kept = a.merge === "NoMerge" ? group : [group[group.length - 1]];
+        kept.forEach(function (p) { p.sent = true; });
+        group.forEach(function (p) { if (kept.indexOf(p) < 0) p.absorbed = true; });
+        packets.push({ due: due, tier: a.tier, delivery: a.delivery, atoms: kept.length, lane: li });
+      });
+    });
+    return { samples: samples, packets: packets, atomsOut: packets.reduce(function (n, p) { return n + p.atoms; }, 0) };
+  }
+  ANIM.merge = {
+    w: 900, h: 320, duration: 10.0,
+    cap: "三条数据流按 Hz 窗口对齐：同一个窗口里到达的才合并；不同投递类永远分属不同包",
+    phase: function (t) {
+      var tick = Math.min(100, Math.floor((t / this.duration) * 100));
+      var r = simMerge(tick);
+      var saved = r.samples.length ? (1 - r.atomsOut / r.samples.length) * 100 : 0;
+      return "tick " + tick + "/100 · 采样 " + r.samples.length + " 条 → 发送 " + r.atomsOut +
+        " 条（省 " + saved.toFixed(0) + "%）· 报文 " + r.packets.length + " 个";
+    },
+    draw: function (t) {
+      var tick = Math.min(100, Math.floor((t / this.duration) * 100));
+      var r = simMerge(tick), s = "";
+      s += rtxt(40, 26, "100 tick = 1 秒（@100 tick/s）", "dghead");
+      LANES.forEach(function (a, li) {
+        var x = 40, y = 46 + li * 46;
+        s += rbox(x, y, 520, 38, "", 8);
+        s += rtxt(x + 8, y + 16, a.n, "dgt sm");
+        s += rtxt(x + 8, y + 32, a.delivery + " / " + a.merge + " / 窗口 " + bucketTicks(a.tier) + " tick", "dgt sm");
+        r.samples.filter(function (p) { return p.lane === li && p.tick <= tick; }).forEach(function (p) {
+          var px = x + 200 + (p.tick / 100) * 310;
+          s += '<circle cx="' + px.toFixed(1) + '" cy="' + (y + 19) + '" r="' + (p.sent ? 4.4 : 2.6) +
+            '" fill="' + (p.absorbed ? "#c9ccd6" : a.color) + '" opacity="' + (p.sent ? 1 : .5) + '"/>';
+        });
+      });
+      s += rtxt(580, 26, "已发出的报文（按 window 到期）", "dghead");
+      r.packets.slice(-8).forEach(function (p, i) {
+        var y = 46 + i * 28;
+        s += rbox(580, y, 300, 22, p.delivery === "可丢弃" ? "cy" : "gr", 5);
+        s += rtxt(590, y + 15, "tick " + p.due + " · " + p.tier + "Hz · " + p.delivery + " · " + p.atoms + " 条", "dgt sm");
+      });
+      if (!r.packets.length) s += rtxt(590, 66, "（等第一个窗口到期）", "dgt sm");
+      var saved = r.samples.length ? (1 - r.atomsOut / r.samples.length) * 100 : 0;
+      s += rbox(40, 200, 840, 104, "", 10);
+      s += rtxt(56, 224, "采样 " + r.samples.length + " 条 → 合并后 " + r.atomsOut + " 条 · 省 " + saved.toFixed(0) +
+        "% · 报文 " + r.packets.length + " 个", "dgt");
+      s += rtxt(56, 248, "灰点 = 被策略吸收的样本（不是丢包）；每条原子保留自己的 Seq，接收端按 Seq 收敛", "dgt sm");
+      s += rtxt(56, 272, "规则：只合同投递类 · 只合同 tier 窗口 · 急件绕过窗口 · 成包受条数+字节双上限", "dgt sm");
+      s += rtxt(56, 296, "实测：Window 内 2 条 → 1 条（Count=2）；7 条 NoMerge 按 3 条/包切成 3/3/1", "dgt sm");
+      return svgOf(this.w, this.h, s);
+    }
+  };
+
+  /* ---------- ENV01 兼容读取 ---------- */
+  ANIM.compat = {
+    w: 900, h: 300, duration: 9.0,
+    cap: "同一份字节流：不认识的原子整段跳过、不认识的字段按长度跳过，已知部分照常解析且不抛异常",
+    extra: '<label class="xtra"><input type="checkbox" class="js-x-know3"> 本端也认得第 3 个字段</label>',
+    parse: function (knownFields) {
+      var items = [
+        { atom: 1, ver: 2, unknown: false, fields: [{ n: "cells", v: "42", k: true }, { n: "seq", v: "8891", k: true }, { n: "tick", v: "556", k: knownFields >= 3 }] },
+        { atom: 555, ver: 9, unknown: true, fields: [] },
+        { atom: 2, ver: 1, unknown: false, fields: [{ n: "playerX", v: "-128", k: true }] }
+      ];
+      var known = 0, unknownFields = 0, skipped = 0, vals = [];
+      items.forEach(function (it) {
+        if (it.unknown) { skipped += 8; return; }
+        it.fields.forEach(function (f) {
+          if (f.k) { known++; vals.push(f.n + "=" + f.v); } else { unknownFields++; skipped += f.v.length; }
+        });
+      });
+      return { items: items, known: known, unknownFields: unknownFields, skipped: skipped, vals: vals };
+    },
+    phase: function (t, host) {
+      var r = this.parse(host.querySelector(".js-x-know3").checked ? 3 : 2);
+      var step = Math.min(r.items.length, Math.floor((t / this.duration) * (r.items.length + 1)));
+      return "扫描 " + step + "/" + r.items.length + " 个原子 · 已知字段 " + r.known + " · 跳过未知字段 " +
+        r.unknownFields + " · 跳过 " + r.skipped + " B · Accepted=true";
+    },
+    draw: function (t, host) {
+      var r = this.parse(host.querySelector(".js-x-know3").checked ? 3 : 2);
+      var step = Math.floor((t / this.duration) * (r.items.length + 1));
+      var s = rtxt(40, 26, "收到的字节流（发送方比本端新：多一个字段 + 一个本端不认识的原子）", "dghead");
+      var x = 40;
+      r.items.forEach(function (it, i) {
+        var w = it.unknown ? 120 : 60 + it.fields.length * 80;
+        var active = i === step;
+        s += '<rect class="dgb ' + (it.unknown ? "am" : "cy") + '" x="' + x + '" y="42" width="' + w +
+          '" height="56" rx="7" opacity="' + (active ? 1 : .72) + '" stroke-width="' + (active ? 2.4 : 1.2) + '"/>';
+        if (it.unknown) {
+          s += rtxt(x + 8, 64, "atomId 555", "dgt sm");
+          s += rtxt(x + 8, 84, "整段跳过 8 B", "dgt sm");
+        } else {
+          s += rtxt(x + 8, 64, "atom " + it.atom + " v" + it.ver, "dgt sm");
+          it.fields.forEach(function (f, fi) { s += rtxt(x + 8 + fi * 80, 84, (f.k ? "✓ " : "✗ ") + f.n, "dgt sm"); });
+        }
+        x += w + 8;
+      });
+      s += rbox(40, 116, 840, 78, "", 10);
+      s += rtxt(56, 140, "解析结果", "dghead");
+      s += rtxt(56, 164, "已知原子 " + (r.items.length - 1) + " 个 · 已知字段 " + r.known + " 个 → " + (r.vals.join(" · ") || "—"), "dgt");
+      s += rtxt(56, 186, "未知原子 1 个（整段跳过）· 未知字段 " + r.unknownFields + " 个（跳过 " + r.skipped + " B）· 没有抛异常", "dgt sm");
+      s += rbox(40, 208, 840, 76, "", 10);
+      s += rtxt(56, 232, "实测（12 条断言）", "dghead");
+      s += rtxt(56, 256, "· 旧端读 2 个字段 / 跳过 1 个：已知字段的值完全不受影响", "dgt sm");
+      s += rtxt(56, 276, "· 任意截断 24/24 全部 Rejected 且 0 次异常；过旧版本被明确拒绝而不是静默接受", "dgt sm");
+      return svgOf(this.w, this.h, s);
+    }
+  };
+
+  /* ---------- JON01 加入流程 ---------- */
+  var STAGES = ["Discovering", "Connecting", "Requesting", "AwaitingApproval", "Downloading", "Importing", "AwaitingBarrier", "Ready"];
+  var JOIN_SCRIPT = [
+    { s: 0, e: 1.0, stage: 0, note: "扫描局域网与目录" },
+    { s: 1.0, e: 3.0, stage: 1, note: "第 1 次连接" },
+    { s: 3.0, e: 3.6, stage: 1, note: "连接超时 8 s（演示压缩）→ 重试" },
+    { s: 3.6, e: 5.0, stage: 1, note: "第 2 次连接" },
+    { s: 5.0, e: 6.0, stage: 2, note: "发送加入请求" },
+    { s: 6.0, e: 8.0, stage: 3, note: "等待主机审批" },
+    { s: 8.0, e: 10.0, stage: 4, note: "接收世界分片" },
+    { s: 10.0, e: 10.6, stage: 5, note: "导入世界存档" },
+    { s: 10.6, e: 11.4, stage: 6, note: "等待追帧屏障" },
+    { s: 11.4, e: 12.0, stage: 7, note: "进入游戏" }
+  ];
+  function joinAt(t) {
+    var cur = JOIN_SCRIPT[0];
+    for (var i = 0; i < JOIN_SCRIPT.length; i++) if (t >= JOIN_SCRIPT[i].s) cur = JOIN_SCRIPT[i];
+    return cur;
+  }
+  ANIM.join = {
+    w: 900, h: 300, duration: 12.0,
+    cap: "八个阶段依次推进；连接超时 → 回到 Connecting 重试（Attempt+1）；被拒绝则终止不重试",
+    phase: function (t) {
+      var c = joinAt(t);
+      var attempt = t >= 3.6 ? 2 : 1;
+      var dl = c.stage === 4 ? " · 分片 " + Math.min(24, Math.floor((t - 8.0) * 12)) + "/24" : "";
+      return "阶段 " + (c.stage + 1) + "/8 " + STAGES[c.stage] + " · Attempt=" + attempt + dl;
+    },
+    draw: function (t) {
+      var c = joinAt(t), s = "";
+      s += rtxt(40, 26, "加入阶段（当前阶段高亮，已完成的打勾，超时过的那次标红）", "dghead");
+      STAGES.forEach(function (name, i) {
+        var x = 40 + (i % 4) * 212, y = 46 + Math.floor(i / 4) * 74;
+        var done = i < c.stage, cur = i === c.stage;
+        var cls = cur ? "cy" : (done ? "gr" : "");
+        s += rbox(x, y, 196, 60, cls, 9);
+        s += rtxt(x + 12, y + 24, (done ? "✓ " : "") + name, "dgt sm");
+        s += rtxt(x + 12, y + 46, cur ? "← 进行中" : (done ? "完成" : "等待"), "dgt sm");
+      });
+      s += rbox(40, 202, 840, 84, "", 10);
+      s += rtxt(56, 226, "当前：" + STAGES[c.stage] + " — " + c.note, "dghead");
+      s += rtxt(56, 250, "超时表：连接 8 s（第 1 次超时 → 重试）· 审批 5 min · 传输停滞 15 s · 追帧屏障 30 s", "dgt sm");
+      s += rtxt(56, 272, "实测（10 条断言）：8 阶段走通到 Ready；4 类超时各自置 Failed 并给出原因；仅超时/主机消失类可重试", "dgt sm");
+      return svgOf(this.w, this.h, s);
+    }
+  };
+
+  /* ---------- DLW01 地图下载 ---------- */
+  var DL_TOTAL = 24, DL_BAD = 7, DL_LOST = 14;
+  function dlState(t) {
+    var recv = [], dup = 0, rej = 0;
+    for (var i = 0; i < DL_TOTAL; i++) {
+      var arr = 0.3 + i * 0.2;
+      if (i === DL_BAD) { if (t >= 7.0) recv.push(i); if (t >= arr) rej = 1; continue; }
+      if (i === DL_LOST) { if (t >= 7.4) recv.push(i); continue; }
+      if (t >= arr) recv.push(i);
+    }
+    var dupAt = t >= 1.0 ? 1 : 0;
+    var repairing = t >= 6.0 && recv.length < DL_TOTAL;
+    var complete = recv.length === DL_TOTAL;
+    return { recv: recv, rej: rej, dup: dupAt, repairing: repairing, complete: complete, pct: recv.length / DL_TOTAL * 100 };
+  }
+  ANIM.download = {
+    w: 900, h: 330, duration: 9.5,
+    cap: "分片按序号入位；校验和不符与丢失的分片进入缺失清单，主机重发后收齐并逐字节拼装",
+    phase: function (t) {
+      var d = dlState(t);
+      return "已收 " + d.recv.length + "/" + DL_TOTAL + "（" + d.pct.toFixed(0) + "%）· 重复 " + d.dup +
+        " · 校验失败 " + d.rej + " · " + (d.complete ? "已拼装完成" : (d.repairing ? "已发修复请求" : "接收中"));
+    },
+    draw: function (t) {
+      var d = dlState(t), s = "";
+      s += rtxt(40, 26, "世界分片（8 × 3 = 24 片；第 8 片校验失败、第 15 片丢失）", "dghead");
+      for (var i = 0; i < DL_TOTAL; i++) {
+        var x = 40 + (i % 8) * 104, y = 46 + Math.floor(i / 8) * 48;
+        var got = d.recv.indexOf(i) >= 0;
+        var bad = i === DL_BAD, lost = i === DL_LOST;
+        var cls = got ? "gr" : (bad || lost ? "rd" : "");
+        s += rbox(x, y, 96, 40, cls, 6);
+        s += rtxt(x + 48, y + 24, (got ? "✓ " : (bad ? "✗ " : (lost ? "? " : ""))) + (i + 1) + " 片", "dgt sm", "middle");
+      }
+      s += rbox(40, 206, 400, 108, "", 10);
+      s += rtxt(56, 230, "接收端计数", "dghead");
+      s += rtxt(56, 254, "已收 " + d.recv.length + " / " + DL_TOTAL + "　进度 " + d.pct.toFixed(0) + "%", "dgt sm");
+      s += rtxt(56, 276, "重复分片 " + d.dup + "（识别但不重复占用）　校验失败 " + d.rej, "dgt sm");
+      s += rtxt(56, 298, "缺失清单：" + (d.complete ? "空（已收齐）" : (t >= 6 ? "已发给主机请求重发" : "等待中")), "dgt sm");
+      s += rbox(460, 206, 420, 108, "", 10);
+      s += rtxt(476, 230, "拼装", "dghead");
+      s += rtxt(476, 254, d.complete ? "✓ 逐字节比对一致（实测：1000 B / 256 B → 4 片）" : "收齐后才允许拼装（未收齐返回 null）", "dgt sm");
+      s += rtxt(476, 276, "条目名净化：拒绝 ../ / 绝对路径 / 盘符 / 控制字符 / 空段 / 超长名", "dgt sm");
+      s += rtxt(476, 298, "大小上限 32 MiB / 条目，超限直接拒绝", "dgt sm");
+      return svgOf(this.w, this.h, s);
+    }
+  };
+
+  [].forEach.call(document.querySelectorAll(".anim"), function (host) {
+    var def = ANIM[host.getAttribute("data-anim")];
+    if (def) buildAnim(def, host);
+  });
+})();
+</script>
+</body>
+</html>

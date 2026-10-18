@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>SuMPLiveMap</AssemblyName>
+    <RootNamespace>SuMPLiveMap</RootNamespace>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- 复用 mod 的同一份协议/地图代码（单一事实来源，不复制粘贴） -->
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <!-- 只复用工具真正需要的协议/地图代码：Terrain 全量里的其它文件依赖引擎程序集与端口，本工具刻意不引 -->
+    <Compile Include="..\..\Terrain\LiveMap.cs" />
+    <Compile Include="..\..\Terrain\PlayerSessionKeys.cs" />
+    <Compile Include="..\..\Net\TerrainNet.cs" />
+    <Compile Include="..\..\Net\MessageChannel.cs" />
+    <Compile Include="..\..\Protocol\Generated\*.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Google.Protobuf" Version="3.28.3" />
+  </ItemGroup>
+</Project>

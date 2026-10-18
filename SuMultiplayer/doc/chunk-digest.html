@@ -1,0 +1,698 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>加载时校验 chunk 哈希（SuMultiplayer）</title>
+<meta name="description" content="客户端加载 chunk 时上报哈希、主机比对、不一致就回传正确内容；配合滚动哈希、光照与家具两个致命坑、以及唯一的漏洞与补法。含实现与 39 条实测断言。">
+<style>
+:root{
+  --bg:#f4f7fc;--card:#fff;--tint:#f7f9fe;--tint2:#eef3fb;--line:#dde5f1;--line2:#c3d1e6;
+  --tx:#16203a;--tx2:#48587a;--tx3:#7d8aa3;--cy:#0e7fa8;--cy2:#e4f5fc;--vi:#6a4bd8;--vi2:#efeafe;
+  --am:#a9740a;--am2:#fff4df;--gr:#0d8a63;--gr2:#e5f8f0;--rd:#c23a55;--rd2:#fdecf0;
+  --mono:ui-monospace,"Cascadia Mono",Consolas,"Liberation Mono",monospace;
+  --sans:system-ui,-apple-system,"Segoe UI","Microsoft YaHei","PingFang SC",sans-serif;
+  --r:12px;--r2:9px;--sh:0 1px 2px rgba(20,40,80,.05),0 6px 18px rgba(20,40,80,.05);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font-family:var(--sans);font-size:14.5px;line-height:1.7}
+a{color:var(--cy);text-decoration:none}a:hover{text-decoration:underline}
+code{font-family:var(--mono);font-size:.87em;background:var(--tint2);border:1px solid var(--line);border-radius:5px;padding:.05em .34em;color:#1d3a63;white-space:nowrap}
+.topbar{position:sticky;top:0;z-index:60;display:flex;align-items:center;gap:12px;padding:9px 20px;background:rgba(255,255,255,.9);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+.brand{display:flex;align-items:center;gap:10px;font-weight:750;white-space:nowrap}
+.brand .logo{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;font-size:12px;background:linear-gradient(140deg,var(--cy),var(--vi));color:#fff;font-weight:900}
+.brand small{display:block;font-weight:500;font-size:11px;color:var(--tx3)}
+.topbar .ver{font-family:var(--mono);font-size:11px;color:var(--tx2);border:1px solid var(--line);border-radius:999px;padding:2px 9px;background:var(--tint)}
+.topbar .grow{flex:1}
+.search input{padding:7px 11px;border-radius:999px;font-size:12.5px;color:var(--tx);background:var(--tint);border:1px solid var(--line);outline:none;min-width:200px}
+.btn{cursor:pointer;border:1px solid var(--line);background:#fff;color:var(--tx2);border-radius:999px;padding:6px 13px;font-size:12px;font-family:var(--sans)}
+.btn:hover{color:var(--tx);border-color:var(--line2);background:var(--tint)}
+.btn.pri{background:linear-gradient(120deg,var(--cy2),var(--gr2));border-color:var(--line2);color:#0b3b52;font-weight:650}
+.progress{position:fixed;top:0;left:0;height:3px;width:0;z-index:70;background:linear-gradient(90deg,var(--cy),var(--vi),var(--am))}
+.layout{display:grid;grid-template-columns:226px minmax(0,1fr);gap:24px;max-width:1440px;margin:0 auto;padding:0 22px 70px}
+.sidebar{position:sticky;top:58px;align-self:start;max-height:calc(100vh - 76px);overflow-y:auto;padding:16px 4px 24px 0;font-size:12.5px}
+.sidebar h4{margin:12px 0 5px;font-size:10.5px;letter-spacing:1.2px;color:var(--tx3)}
+.sidebar h4:first-child{margin-top:0}
+.sidebar a{display:flex;gap:7px;padding:3.5px 8px;border-radius:7px;color:var(--tx2);border-left:2px solid transparent}
+.sidebar a:hover{background:var(--tint);text-decoration:none;color:var(--tx)}
+.sidebar a.active{color:var(--tx);background:var(--cy2);border-left-color:var(--cy);font-weight:600}
+.sidebar a .id{font-family:var(--mono);font-size:10px;color:var(--tx3);min-width:42px}
+main{min-width:0;padding-top:6px}
+.hero{padding:30px 0 18px;border-bottom:1px solid var(--line);margin-bottom:10px}
+.hero .kicker{display:inline-flex;gap:8px;font-family:var(--mono);font-size:11.5px;color:var(--gr);border:1px solid #c2e9d8;background:var(--gr2);padding:4px 12px;border-radius:999px}
+.hero h1{margin:12px 0 8px;font-size:clamp(24px,3.2vw,36px);line-height:1.2;font-weight:800;letter-spacing:-.4px}
+.hero h1 .g{background:linear-gradient(96deg,var(--cy),var(--vi) 55%,var(--gr));-webkit-background-clip:text;background-clip:text;color:transparent}
+.hero .lead{font-size:15px;color:var(--tx2);max-width:920px;margin:0 0 14px}
+.hero .actions{display:flex;gap:9px;flex-wrap:wrap;margin-bottom:16px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:10px}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:11px 13px;box-shadow:var(--sh)}
+.stat b{display:block;font-family:var(--mono);font-size:20px;color:var(--cy)}
+.stat span{display:block;font-size:11.5px;color:var(--tx3);margin-top:2px}
+section.sec{margin:24px 0 8px;scroll-margin-top:68px}
+.sec-head{display:flex;align-items:center;gap:11px;padding-bottom:9px;border-bottom:2px solid var(--line);margin-bottom:14px}
+.sec-head .no{font-family:var(--mono);font-size:11px;font-weight:700;color:#fff;border-radius:7px;padding:4px 8px;background:linear-gradient(140deg,var(--cy),var(--vi))}
+.sec-head h2{margin:0;font-size:clamp(18px,2vw,23px);font-weight:750}
+.sec-head .sub{color:var(--tx3);font-size:12px;margin-left:auto}
+.block{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:14px 16px;margin:11px 0;box-shadow:var(--sh);scroll-margin-top:68px}
+.block.hidden,.sec.hidden{display:none}
+.block-head{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-bottom:8px}
+.block-head h3{margin:0;font-size:15.5px;font-weight:720}
+.block-head .tagline{font-size:11.5px;color:var(--tx3)}
+.guid{font-family:var(--mono);font-size:11px;font-weight:700;cursor:pointer;color:#fff;background:linear-gradient(140deg,var(--cy),var(--vi));border:0;border-radius:6px;padding:2px 7px;user-select:none}
+.guid.copied{background:linear-gradient(140deg,var(--am),#e0a52a)}
+.done{font-size:11px;font-family:var(--mono);color:#0a6247;background:var(--gr2);border:1px solid #c2e9d8;border-radius:999px;padding:2px 9px}
+.warn-b{font-size:11px;font-family:var(--mono);color:#7d5606;background:var(--am2);border:1px solid #f0dcb0;border-radius:999px;padding:2px 9px}
+.no-b{font-size:11px;font-family:var(--mono);color:#96243c;background:var(--rd2);border:1px solid #f4cbd6;border-radius:999px;padding:2px 9px}
+.tw{overflow-x:auto;margin:8px 0;border:1px solid var(--line);border-radius:var(--r2)}
+table{width:100%;border-collapse:collapse;font-size:12.6px;min-width:420px}
+thead th{background:var(--tint2);text-align:left;padding:7px 10px;font-weight:700;color:#25344f;border-bottom:1px solid var(--line2);white-space:nowrap;font-size:12px}
+tbody td{padding:6px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+tbody tr:nth-child(even){background:var(--tint)}
+tbody tr:last-child td{border-bottom:0}
+td.mono,.mono{font-family:var(--mono);font-size:11.8px}
+td.gid,.gid{font-family:var(--mono);font-size:11.4px;color:var(--cy);font-weight:700;white-space:nowrap}
+td.src,.src{font-family:var(--mono);font-size:11px;color:var(--tx3)}
+.num{text-align:right;font-family:var(--mono)}
+.grid{display:grid;gap:9px;margin:8px 0}
+.g2{grid-template-columns:repeat(auto-fit,minmax(250px,1fr))}
+.g3{grid-template-columns:repeat(auto-fit,minmax(190px,1fr))}
+.tile{background:var(--tint);border:1px solid var(--line);border-radius:var(--r2);padding:10px 11px}
+.tile h5{margin:0 0 4px;font-size:13px;color:#1d2b47}
+.tile p{margin:2px 0;font-size:12.4px;color:var(--tx2)}
+.tile .big{font-family:var(--mono);font-size:17px;color:var(--cy);display:block}
+.callout{border-radius:var(--r2);padding:9px 12px;margin:9px 0;font-size:12.7px;border:1px solid var(--line);background:var(--tint);border-left:3px solid var(--cy);color:var(--tx2)}
+.callout.ok{border-left-color:var(--gr);background:var(--gr2)}
+.callout.warn{border-left-color:var(--am);background:var(--am2)}
+.callout.bad{border-left-color:var(--rd);background:var(--rd2)}
+.callout .t{display:block;font-weight:700;margin-bottom:2px;color:var(--tx)}
+pre.codeblock{margin:8px 0;padding:10px 12px;background:#fff;border:1px solid var(--line);border-radius:var(--r2);font-family:var(--mono);font-size:11.6px;line-height:1.7;color:#1d3a63;overflow-x:auto;white-space:pre}
+figure{margin:9px 0;border:1px solid var(--line);border-radius:var(--r2);padding:11px 11px 5px;background:var(--tint)}
+figure svg{width:100%;height:auto;display:block}
+figcaption{margin-top:5px;font-size:11.5px;color:var(--tx3);text-align:center}
+.anim{margin:9px 0;border:1px solid var(--line);border-radius:var(--r2);padding:10px 11px 6px;background:var(--tint)}
+.anim .figsvg{background:#fff;border:1px solid var(--line);border-radius:8px;padding:6px}
+.anim svg{width:100%;height:auto;display:block}
+.playbar{display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap}
+.playbar input[type=range]{flex:1;min-width:110px;accent-color:#0e7fa8;height:4px}
+.phase{font-family:var(--mono);font-size:11.5px;color:var(--cy);min-width:250px}
+.xtra{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;color:var(--tx2);cursor:pointer}
+.xtra select{background:#fff;border:1px solid var(--line);border-radius:6px;padding:3px 6px;font-family:var(--mono);font-size:11.5px;color:var(--tx)}
+.anim figcaption{margin-top:6px;font-size:11.5px;color:var(--tx3);text-align:center}
+.dgb{fill:#fff;stroke:#c3d1e6}
+.dgb.cy{fill:#e4f5fc;stroke:#2b9fc4}.dgb.vi{fill:#efeafe;stroke:#7c5cf0}
+.dgb.gr{fill:#e5f8f0;stroke:#17a273}.dgb.am{fill:#fff4df;stroke:#d99b12}.dgb.rd{fill:#fdecf0;stroke:#d1495f}
+.dgt{fill:#26314a;font-family:var(--mono);font-size:11.5px}
+.dgt.sm{font-size:10.2px;fill:#5a6a86}
+.dgl{stroke:#93a6c4;stroke-width:1.4;fill:none}
+.dgl.cy{stroke:#2b9fc4}.dgl.vi{stroke:#7c5cf0}.dgl.am{stroke:#d99b12}.dgl.gr{stroke:#17a273}.dgl.rd{stroke:#d1495f}
+.dgl.dash{stroke-dasharray:5 4}
+.dghead{fill:#101a2e;font-size:12.5px;font-weight:700;font-family:var(--sans)}
+.toast{position:fixed;left:50%;bottom:26px;transform:translate(-50%,14px);z-index:90;background:#101a2e;color:#fff;padding:9px 18px;border-radius:999px;font-size:13px;opacity:0;pointer-events:none;transition:.22s}
+.toast.on{opacity:1;transform:translate(-50%,0)}
+#nores{display:none;padding:22px;text-align:center;color:var(--tx3);border:1px dashed var(--line2);border-radius:var(--r);margin:14px 0;background:#fff}
+.totop{position:fixed;right:20px;bottom:20px;z-index:80;width:38px;height:38px;border-radius:50%;display:grid;place-items:center;cursor:pointer;opacity:0;pointer-events:none;transition:.2s;background:#fff;border:1px solid var(--line2);color:var(--cy);font-size:16px}
+.totop.on{opacity:1;pointer-events:auto}
+footer{margin-top:24px;padding:16px 0 6px;border-top:1px solid var(--line);font-size:12px;color:var(--tx3)}
+@media (max-width:1020px){.layout{grid-template-columns:1fr;padding:0 14px 60px}.sidebar{position:static;max-height:none;border-bottom:1px solid var(--line);display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr))}.sec-head .sub{display:none}}
+@media print{.topbar,.sidebar,.totop,.progress,.toast{display:none!important}.layout{display:block;padding:0}.block,figure,.tile{break-inside:avoid;box-shadow:none}}
+</style>
+</head>
+<body>
+<div class="progress" id="prog"></div>
+<header class="topbar">
+  <div class="brand"><div class="logo">HS</div><div>加载时校验 chunk 哈希<small>实现 + 过程说明</small></div></div>
+  <span class="ver">11 个标记 · 2 个可播放</span>
+  <div class="grow"></div>
+  <input id="q" type="search" placeholder="搜索内容或 GUID（例：HSH01）">
+  <button class="btn" onclick="window.print()">打印 / PDF</button>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="toc">
+    <h4>方案</h4>
+    <a href="#HSH01"><span class="id">HSH01</span>加载时比对（可播放）</a>
+    <a href="#HSH02"><span class="id">HSH02</span>切片摘要与定位（可播放）</a>
+    <a href="#HSH03"><span class="id">HSH03</span>校验与数据消息的分工</a>
+    <h4>陷阱</h4>
+    <a href="#HSH04"><span class="id">HSH04</span>光照必须剥离</a>
+    <a href="#HSH05"><span class="id">HSH05</span>家具索引必须规范化</a>
+    <a href="#HSH06"><span class="id">HSH06</span>主机没这块怎么答</a>
+    <h4>工程</h4>
+    <a href="#HSH07"><span class="id">HSH07</span>协议与带宽</a>
+    <a href="#HSH08"><span class="id">HSH08</span>状态机</a>
+    <a href="#HSH09"><span class="id">HSH09</span>TCP 与不继承的包袱</a>
+    <a href="#HSH10"><span class="id">HSH10</span>已实现接口 + 实测</a>
+    <a href="#IDX01"><span class="id">IDX01</span>GUID 索引</a>
+  </aside>
+
+  <main id="top">
+    <section class="hero">
+      <div class="kicker">● 已实现：45 条断言全过 · 主工程 0 错 0 警</div>
+      <h1>客户端加载一块就报哈希，<span class="g">主机比对后只补不一致的</span></h1>
+      <p class="lead">比对只在<b>加载那一刻</b>发生一次；块加载之后的改动双方都有数据消息，天然同步 —— 你的这个简化是对的，而且比周期巡检省一个数量级的带宽。</p>
+      <div class="actions">
+        <a class="btn pri" href="#HSH01">看加载→比对动画</a>
+        <a class="btn" href="#HSH02">看滚动哈希</a>
+        <a class="btn" href="#HSH09">看唯一漏洞</a>
+      </div>
+      <div class="stats">
+        <div class="stat"><b>4 B</b><span>每块摘要（32 bit）</span></div>
+        <div class="stat"><b>6 B</b><span>每条上报（坐标+摘要）</span></div>
+        <div class="stat"><b>1.7 KiB</b><span>r=8 窗口一次性上报</span></div>
+        <div class="stat"><b>0.19 ms</b><span>单块算一次（仅加载时）</span></div>
+        <div class="stat"><b>1.8%</b><span>典型地形 RLE 载荷</span></div>
+        <div class="stat"><b>45</b><span>断言（全过）</span></div>
+      </div>
+    </section>
+    <div id="nores">没有匹配的条目</div>
+
+    <section class="sec" id="grp-plan">
+      <div class="sec-head"><span class="no">方案</span><div><h2>加载时校验，之后靠数据消息</h2><div class="sub">event-driven，不巡检</div></div></div>
+
+      <div class="block" id="HSH01">
+        <div class="block-head"><button class="guid" data-guid="HSH01">HSH01</button><h3>加载 → 上报哈希 → 主机比对（可播放）</h3>
+          <span class="tagline">一致：两边都是新的；不一致：主机回传正确内容</span></div>
+        <div class="anim" data-anim="verify"></div>
+      </div>
+
+      <div class="block" id="HSH02">
+        <div class="block-head"><button class="guid" data-guid="HSH02">HSH02</button><h3>加载时算一次 + 切片定位（可播放）</h3>
+          <span class="tagline">摘要不维护；比对时只回传不同的片</span></div>
+        <div class="anim" data-anim="slices"></div>
+        <div class="callout warn"><span class="t">摘要只在加载时算一次，不做常驻维护</span>
+          <b>客户端</b>：块加载完算一次（实测 <b>0.19 ms</b>/块，跑在加载线程）→ 上报 → 之后不再碰摘要。<br>
+          <b>主机</b>：收到上报时对那一块<b>按需现算</b>（同样 0.19 ms），不维护 289 块的常驻摘要表。<br>
+          <b>卸载</b>：只把摘要丢掉（<code>Forget()</code>），不计算任何东西。<br>
+          反例：若每帧对 289 块全量重算 ≈ <b>51 ms</b> —— 直接卡帧。</div>
+      </div>
+
+      <div class="block" id="HSH03">
+        <div class="block-head"><button class="guid" data-guid="HSH03">HSH03</button><h3>校验与数据消息的分工</h3></div>
+        <div class="tw"><table>
+          <thead><tr><th>情形</th><th>靠什么发现</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td>客户端本地存档是旧的 / 上一次会话残留</td><td><b>加载时校验</b></td><td>哈希不同 → 主机回传整块</td></tr>
+            <tr><td>客户端本地生成的地形与主机不同</td><td><b>加载时校验</b></td><td>这正是"客户端有地形但是错的"那种情况</td></tr>
+            <tr><td>客户端预测后被回滚</td><td><b>加载时校验</b> + 预测回执</td><td>预测期给宽限窗口，回滚后哈希自然对上</td></tr>
+            <tr><td>块加载之后有人改了方块</td><td><b>数据消息</b>（改动即发）</td><td>不再走比对；消息带 revision/hash，落地即 Fresh</td></tr>
+            <tr><td>块被卸载后再进入视野</td><td><b>又走一次加载时校验</b></td><td>卸载清状态 → 重载自动复检（外围圈的免费复检）</td></tr>
+            <tr><td>加载之后地形被改（含玩家不动时）</td><td><b>TCP 数据消息</b></td><td>有序可靠流：不会静默丢；失败是显式状态（Connected / Backpressured / Failed）</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+    </section>
+
+    <section class="sec" id="grp-trap">
+      <div class="sec-head"><span class="no">陷阱</span><div><h2>两个会让哈希"永远对不上"的坑</h2><div class="sub">都在引擎源码里核实过</div></div></div>
+
+      <div class="block" id="HSH04">
+        <div class="block-head"><button class="guid" data-guid="HSH04">HSH04</button><h3>光照必须剥离</h3>
+          <span class="warn-b">否则重传风暴</span></div>
+        <div class="grid g2">
+          <div class="tile"><h5>为什么</h5>
+            <p>格值 = contents + <b>light</b> + data。光照由两边<b>各自重算</b>（改动还会把 3×3 邻域降级到 <code>InvalidLight</code> 重新算，见 <code>SubsystemTerrain.cs:250</code>），时序必然不同步，会有几帧的"过渡值"。</p></div>
+          <div class="tile"><h5>怎么做</h5>
+            <p>API 层面就<b>不给你传光照的机会</b>：<code>ChunkDigest</code> 的读取器签名是 <code>(x,y,z) → (contents, data)</code>，光照进不来。<br>引擎侧：<code>contents = Terrain.ExtractContents(value)</code>、<code>data = Terrain.ExtractData(value)</code>。</p></div>
+        </div>
+        <div class="callout ok"><span class="t">引擎自己就是这么比的</span>
+          <code>SubsystemTerrain.ChangeCell:236-237</code> 判断"内容有没有变"时先做 <code>Terrain.ReplaceLight(value, 0)</code> —— 同一个口径。</div>
+      </div>
+
+      <div class="block" id="HSH05">
+        <div class="block-head"><button class="guid" data-guid="HSH05">HSH05</button><h3>家具设计索引必须规范化</h3>
+          <span class="no-b">否则永久误判，重传也修不好</span></div>
+        <figure>
+          <svg viewBox="0 0 900 210" role="img" aria-label="家具槽位号不一致">
+            <rect class="dgb vi" x="30" y="40" width="250" height="120" rx="10"/>
+            <text class="dghead" x="46" y="64">主机</text>
+            <text class="dgt sm" x="46" y="86">m_furnitureDesigns[1024]</text>
+            <text class="dgt sm" x="46" y="108">槽位 37 → 椅子设计</text>
+            <text class="dgt sm" x="46" y="130">格值 data = 37</text>
+            <rect class="dgb cy" x="330" y="40" width="250" height="120" rx="10"/>
+            <text class="dghead" x="346" y="64">客户端</text>
+            <text class="dgt sm" x="346" y="86">它自己的 m_furnitureDesigns[1024]</text>
+            <text class="dgt sm" x="346" y="108">槽位 91 → 同一把椅子</text>
+            <text class="dgt sm" x="346" y="130">格值 data = 91</text>
+            <path class="dgl rd" d="M282 100H328"/>
+            <text class="dgt sm" x="305" y="92" text-anchor="middle">✗</text>
+            <rect class="dgb gr" x="630" y="40" width="240" height="120" rx="10"/>
+            <text class="dghead" x="646" y="64">规范化后</text>
+            <text class="dgt sm" x="646" y="86">哈希时把家具 data 换成</text>
+            <text class="dgt sm" x="646" y="108">「设计内容的摘要」</text>
+            <text class="dgt sm" x="646" y="130">两边都得 0x5AA5 → 哈希相同</text>
+            <path class="dgl gr" d="M582 100H628"/>
+            <text class="dgt sm" x="40" y="186">槽位号是本机的数组下标（SubsystemFurnitureBlockBehavior.cs:31 分配、:255 写入；FurnitureBlock.cs:47/83 读取）</text>
+            <text class="dgt sm" x="40" y="204">所以"同一把椅子"两边字节天然不同 → 不规范化就会一直不匹配，重传也修不好（传过去还是各自的槽位号）</text>
+          </svg>
+          <figcaption>家具要么规范化进哈希，要么排除出去单独同步（旧 mod 就有专门的家具处理器）</figcaption>
+        </figure>
+      </div>
+
+      <div class="block" id="HSH06">
+        <div class="block-head"><button class="guid" data-guid="HSH06">HSH06</button><h3>主机没这块怎么答</h3>
+          <span class="tagline">三态，不允许沉默</span></div>
+        <div class="tw"><table>
+          <thead><tr><th class="mono">裁决</th><th>主机状态</th><th>主机动作</th><th>客户端动作</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">Match</td><td>有内容且哈希相同</td><td>回一个极小的确认（不传数据）</td><td>标记 Fresh，记下主机哈希</td></tr>
+            <tr><td class="mono">Mismatch</td><td>有内容但哈希不同</td><td>回传该块正确内容（带主机哈希）</td><td>覆盖本地，标记 Fresh</td></tr>
+            <tr><td class="mono">NotReady</td><td>内存里没有（已卸载 / 还没加载完）</td><td>先按需从存档重载；拿不到就明确回 NotReady</td><td>保留未确认，按重试上限重问（<b>不静默死等</b>）</td></tr>
+          </tbody>
+        </table></div>
+        <div class="callout"><span class="t">主机"有没有内容"的判据可以直接借引擎</span>
+          <code>TerrainChunkState &gt; InvalidContents4</code> —— 这正是序列化器 <code>TerrainSerializer23.SaveChunk:701</code> 判断"内容可用"用的条件。</div>
+      </div>
+    </section>
+
+    <section class="sec" id="grp-eng">
+      <div class="sec-head"><span class="no">工程</span><div><h2>协议、状态机、漏洞</h2><div class="sub">都已实现并测过</div></div></div>
+
+      <div class="block" id="HSH07">
+        <div class="block-head"><button class="guid" data-guid="HSH07">HSH07</button><h3>协议与带宽</h3></div>
+        <div class="tw"><table>
+          <thead><tr><th class="mono">方向</th><th class="mono">消息</th><th class="mono">载荷</th><th>何时发</th></tr></thead>
+          <tbody>
+            <tr><td>C→H</td><td class="mono">DigestReport</td><td class="mono">批头 8 B + 每块 6 B（2×int16 坐标 + 4 B 哈希）</td><td>块加载完后，按 32 块一批</td></tr>
+            <tr><td>H→C</td><td class="mono">DigestVerdict</td><td class="mono">一致：每块 3 B（坐标 + 1 状态位）；不一致：整块内容</td><td>收到上报后立即</td></tr>
+            <tr><td>H→C</td><td class="mono">ChunkResync</td><td class="mono">只传不同的切片（RLE，典型 1.8% 原始；实测 2 片 vs 整块）</td><td>Mismatch 后</td></tr>
+            <tr><td>双向</td><td class="mono">CellChange</td><td class="mono">改动格 + revision/hash</td><td><b>块加载之后的差异全走这条</b></td></tr>
+          </tbody>
+        </table></div>
+        <div class="grid g3">
+          <div class="tile"><h5>一次性上报</h5><span class="big">1.7 KiB</span>
+            <p>r=8 的 289 块 → 10 条消息（实测 <code>DigestBatching.BytesFor(289)</code> = <b>1814 B</b>），不是每块一条。</p></div>
+          <div class="tile"><h5>回传载荷必须压缩</h5><span class="big">256 KiB → 4.6 KiB</span>
+            <p>整块原始 65536 格 × 4 B = <b>256 KiB</b>，直接传是灾难。按列竖直 RLE：典型地形 <b>4608 B（1.8%）</b>、全空气 1536 B；噪声数据 RLE 反而更大 → 自动退回原始（取 min）。</p></div>
+          <div class="tile"><h5>摘要长度</h5><span class="big">32 bit</span>
+            <p>289 块一轮的误判率 6.7e-8。若压到 16 bit：<b>0.44%</b> —— 只适合做外层校验，不能当唯一判据。</p></div>
+        </div>
+      </div>
+
+      <div class="block" id="HSH08">
+        <div class="block-head"><button class="guid" data-guid="HSH08">HSH08</button><h3>状态机（5 个状态、4 条规则）</h3></div>
+        <div class="tw"><table>
+          <thead><tr><th class="mono">状态</th><th>含义</th><th>迁移</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">Unverified</td><td>刚加载，还没校验</td><td>加载 → Verifying</td></tr>
+            <tr><td class="mono">Verifying</td><td>已上报，等裁决</td><td>Match→Fresh / Mismatch→Stale / NotReady→Unverified（计数重试）</td></tr>
+            <tr><td class="mono">Fresh</td><td>与主机一致（或已被数据消息补上）</td><td>不再上报；后续改动由数据消息维持</td></tr>
+            <tr><td class="mono">Stale</td><td>主机说不一致，等覆盖</td><td>内容落地 → Fresh</td></tr>
+            <tr><td class="mono">（删除）</td><td>块被卸载</td><td>状态清空 → 重载时重新校验</td></tr>
+          </tbody>
+        </table></div>
+        <div class="grid g3">
+          <div class="tile"><h5>规则 1</h5><p>同一块只校验一次：<b>Fresh/Verifying 期间不重复上报</b>。</p></div>
+          <div class="tile"><h5>规则 2</h5><p>卸载即清状态：重新加载会<b>重新校验</b> —— 外围圈免费复检。</p></div>
+          <div class="tile"><h5>规则 3</h5><p>数据消息优先：到达即 Fresh，<b>不需要再比对</b>。</p></div>
+          <div class="tile"><h5>规则 4</h5><p>NotReady 有重试上限（默认 5），超限计数放弃 —— <b>不静默死循环</b>。</p></div>
+          <div class="tile"><h5>为什么不巡检</h5><p>巡检要周期性传哈希；加载时校验把成本压在"事件发生的那一刻"，稳态为 0。</p></div>
+          <div class="tile"><h5>和位图的关系</h5><p>位图管"谁该有这块"，哈希管"手里的对不对" —— 两者不重叠。</p></div>
+        </div>
+      </div>
+
+      <div class="block" id="HSH09">
+        <div class="block-head"><button class="guid" data-guid="HSH09">HSH09</button><h3>TCP：没有静默丢弃，所以不需要兜底</h3>
+          <span class="done">新 mod 不继承旧包袱</span></div>
+        <div class="tw"><table>
+          <thead><tr><th>决策</th><th class="mono">取值</th><th>为什么</th></tr></thead>
+          <tbody>
+            <tr><td>地形通道</td><td class="mono">有序可靠流（TCP）</td><td>地形加载涉及主机模拟（权威生成/加载），必须稳定同步；顺序与完整性不能靠运气</td></tr>
+            <tr><td>静默丢弃</td><td class="mono">禁止（AllowSilentDrop = false）</td><td>要么到达，要么是<b>显式</b>失败事件 —— 没有「丢了几条还能凑合」的中间态</td></tr>
+            <tr><td>摘要比对</td><td class="mono">只在加载时</td><td>TCP 保证加载后的改动一定到达 → 不需要周期巡检、不需要校验环</td></tr>
+            <tr><td>卸载</td><td class="mono">只丢状态</td><td>不计算摘要；重载时重算一次即可</td></tr>
+            <tr><td>通道状态</td><td class="mono">Connected / Backpressured / Failed</td><td>背压必须显式：队列满 → 暂停加载新块或断开，<b>绝不阻塞游戏帧</b></td></tr>
+          </tbody>
+        </table></div>
+        <div class="grid g2">
+          <div class="tile"><h5>那摘要还负责什么？</h5>
+            <p>不再是「补偿丢包」，而是<b>保证初始状态一致</b>：客户端本地存档可能是旧世界的、可能是它自己生成的、可能带着上次会话的预测残留 —— 这些 TCP 修不了，只有比对能发现。</p></div>
+          <div class="tile"><h5>TCP 的两个代价（要说清）</h5>
+            <p>① <b>队头阻塞</b>：一块大载荷会挡住这条连接上后面的消息 → 地形与高频状态最好分开（先全 TCP，观察后再拆）。<br>
+            ② <b>背压会传导</b>：对端读得慢 → 发送队列积压 → 必须有上限与显式降级。</p></div>
+        </div>
+        <div class="callout ok"><span class="t">明确不继承的旧包袱（六项）</span>
+          ① <code>ReliableSequenced</code> 停滞 2 s 会<b>主动跳号</b>（旧实现实测日志 <code>skipped N message(s)</code>）→ 弃用；<br>
+          ② 可靠消息重传上限（<code>MaxResends = 30</code>）耗尽即丢 → 弃用，由 TCP 语义代替；<br>
+          ③ ±2 圈 / 0.5 s 校验环 / 1 s 探测冷却 → 那是为不可靠传输做的补偿，新 mod 不需要；<br>
+          ④ 48 条 wire 的兼容负担 + 每条消息提升 revision → 新协议从最小报文集开始；<br>
+          ⑤ <code>ChunkCheckpoint</code> 的「32 格/批 + TotalBatches + KnownRevision」整条恢复链 → TCP 上可以直接传块；<br>
+          ⑥ 无头端 <code>ServerAuditLog</code> 与 ScMP 分工写 <code>Logs/Server</code> → 新 mod 自己写，不共用文件名。</div>
+        <div class="callout warn"><span class="t">唯一要保留的谨慎</span>
+          预测回滚仍需一套一致规则：客户端本地先应用、主机结果可能不同 —— 这不是「丢包补偿」，而是<b>权威模型</b>的一部分，下一轮单独定。</div>
+      </div>
+
+      <div class="block" id="HSH10">
+        <div class="block-head"><button class="guid" data-guid="HSH10">HSH10</button><h3>已实现接口 + 实测</h3>
+          <span class="done">45 条断言全过</span></div>
+        <pre class="codeblock">// Mod/SuMultiplayer/Terrain/ChunkDigest.cs —— 纯逻辑，无引擎依赖
+public sealed class ChunkDigest                       // 32 bit 内容摘要
+{
+    public Func&lt;int,int,int&gt; DataCanonicalizer { get; set; }   // 家具挂这里
+    public bool IncludeShafts { get; set; }                    // 两端口径必须一致
+    public uint Value { get; }                                  // 0 = 未计算
+    public uint SliceValue(int slice);                          // 16 片，chunk = 各片 XOR
+    public void Compute(ChunkCellSource source);                // 只在加载时算一次
+    public void ComputeShafts(Func&lt;int,int,int&gt; source);        // IncludeShafts 时
+    public void Forget();                                        // 卸载：只丢状态
+    public List&lt;int&gt; DifferingSlices(ChunkDigest other);         // 定位哪几片不同
+}
+
+public sealed class ChunkLoadVerifier                  // 加载时校验状态机
+{
+    public bool TryBeginVerify(ChunkKey key, uint clientHash, out DigestEntry entry);
+    public static DigestVerdict Compare(uint clientHash, uint hostHash, bool hostHasContents);
+    public void OnVerdict(ChunkKey key, in DigestEntry entry, uint hostHash);
+    public void OnNotReady(ChunkKey key);
+    public void OnResyncApplied(ChunkKey key, uint hostHash);
+    public void OnDataApplied(ChunkKey key, uint hostHash);   // 加载后的差异走这条
+    public void OnChunkUnloaded(ChunkKey key);                // 清状态 → 重载时复检
+    public ChunkFreshness StateOf(ChunkKey key);
+    public List&lt;DigestEntry&gt; TakePendingBatch(int maxEntries);  // 32 块/批
+}</pre>
+        <div class="tw"><table>
+          <thead><tr><th>实测项</th><th class="mono">结果</th></tr></thead>
+          <tbody>
+            <tr><td>只在加载时算</td><td class="mono">改内容不碰摘要；重算才变化；改回 → 重算得到原值</td></tr>
+            <tr><td>卸载只丢状态</td><td class="mono">Forget() 后 HasValue=false、Value=0（不做计算）</td></tr>
+            <tr><td>切片定位</td><td class="mono">两处改动 → 只列出片 2、片 12；chunk = 16 片 XOR</td></tr>
+            <tr><td>TCP 契约</td><td class="mono">OrderedReliableChannel=true / AllowSilentDrop=false；通道只有 3 态</td></tr>
+            <tr><td>回传载荷</td><td class="mono">原始 256 KiB → RLE 4608 B（1.8%）；噪声数据自动退回原始</td></tr>
+            <tr><td>家具规范化</td><td class="mono">槽位 37 vs 91（同设计）→ 规范化后哈希相同；不同设计仍不同</td></tr>
+            <tr><td>单块计算</td><td class="mono">0.19 ms（289 块 ≈ 51 ms → 只在加载时做）</td></tr>
+            <tr><td>上报带宽</td><td class="mono">289 块 → 10 条消息 / 1814 B</td></tr>
+            <tr><td>误判率</td><td class="mono">32 bit：6.7e-8　16 bit：0.44%</td></tr>
+            <tr><td>重试上限</td><td class="mono">NotReady 3 次后放弃并计数（MaxRetries=2）</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+    </section>
+
+    <section class="sec" id="grp-idx">
+      <div class="sec-head"><span class="no">索引</span><div><h2>GUID 索引</h2><div class="sub">本页 11 个标记</div></div></div>
+      <div class="block" id="IDX01">
+        <div class="block-head"><button class="guid" data-guid="IDX01">IDX01</button><h3>GUID 索引</h3></div>
+        <div class="tw"><table>
+          <thead><tr><th class="mono">GUID</th><th>主题</th><th>要点</th></tr></thead>
+          <tbody>
+            <tr><td class="gid">HSH01</td><td>加载时比对</td><td>可播放：一致 / 不一致两条路</td></tr>
+            <tr><td class="gid">HSH02</td><td>切片摘要与定位</td><td>可播放：加载时算一次、只回不同的片</td></tr>
+            <tr><td class="gid">HSH03</td><td>校验与数据消息分工</td><td>什么被覆盖、什么不被覆盖</td></tr>
+            <tr><td class="gid">HSH04</td><td>光照必须剥离</td><td>否则过渡值造成重传风暴</td></tr>
+            <tr><td class="gid">HSH05</td><td>家具索引规范化</td><td>否则永久误判</td></tr>
+            <tr><td class="gid">HSH06</td><td>主机没这块怎么答</td><td>Match / Mismatch / NotReady 三态</td></tr>
+            <tr><td class="gid">HSH07</td><td>协议与带宽</td><td>上报 1.7 KiB；回传走 RLE（典型 1.8%）</td></tr>
+            <tr><td class="gid">HSH08</td><td>状态机</td><td>5 状态 4 规则</td></tr>
+            <tr><td class="gid">HSH09</td><td>TCP 与不继承的包袱</td><td>无静默丢弃；六项旧包袱清单</td></tr>
+            <tr><td class="gid">HSH10</td><td>接口与实测</td><td>39 条断言</td></tr>
+            <tr><td class="gid">IDX01</td><td>GUID 索引</td><td>本表</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+    </section>
+
+    <footer>SuMultiplayer · 加载时 chunk 哈希校验 · 配套：<a href="chunk-bitmap-xor.html">位图 + XOR</a> · <a href="chunk-interest.html">多客户端兴趣范围</a> · <a href="join-room-plan.html">最小加入房间方案</a></footer>
+  </main>
+</div>
+<div class="toast" id="toast">已复制</div>
+<div class="totop" id="totop">↑</div>
+<script>
+(function () {
+  "use strict";
+  function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+  function rbox(x, y, w, h, cls, rx) {
+    return '<rect class="dgb ' + (cls || "") + '" x="' + x + '" y="' + y + '" width="' + w +
+      '" height="' + h + '" rx="' + (rx === undefined ? 9 : rx) + '"/>';
+  }
+  function rtxt(x, y, s, cls, anchor) {
+    return '<text class="' + (cls || "dgt") + '" x="' + x + '" y="' + y + '"' +
+      (anchor ? ' text-anchor="' + anchor + '"' : "") + ">" + esc(s) + "</text>";
+  }
+  function svgOf(w, h, b) { return '<svg viewBox="0 0 ' + w + " " + h + '" role="img">' + b + "</svg>"; }
+
+  var toast = document.getElementById("toast"), timer = 0;
+  function say(m) { toast.textContent = m; toast.classList.add("on"); clearTimeout(timer); timer = setTimeout(function () { toast.classList.remove("on"); }, 1400); }
+  document.addEventListener("click", function (ev) {
+    var el = ev.target && ev.target.closest ? ev.target.closest(".guid") : null;
+    if (!el) return;
+    var g = el.getAttribute("data-guid") || el.textContent.trim();
+    function done() { el.classList.add("copied"); say("已复制 " + g); setTimeout(function () { el.classList.remove("copied"); }, 900); }
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(g).then(done, done); else done();
+  });
+  var input = document.getElementById("q"), nores = document.getElementById("nores");
+  var blocks = [].slice.call(document.querySelectorAll(".block"));
+  var secs = [].slice.call(document.querySelectorAll("section.sec"));
+  function filter() {
+    var q = (input.value || "").trim().toLowerCase();
+    if (!q) { blocks.forEach(function (b) { b.classList.remove("hidden"); }); secs.forEach(function (s) { s.classList.remove("hidden"); }); nores.style.display = "none"; return; }
+    var hits = 0;
+    blocks.forEach(function (b) {
+      var hit = b.textContent.toLowerCase().indexOf(q) >= 0 || b.id.toLowerCase().indexOf(q) >= 0;
+      b.classList.toggle("hidden", !hit); if (hit) hits++;
+    });
+    secs.forEach(function (s) { s.classList.toggle("hidden", !s.querySelectorAll(".block:not(.hidden)").length); });
+    nores.style.display = hits ? "none" : "block";
+  }
+  input.addEventListener("input", filter);
+  document.addEventListener("keydown", function (e) { if (e.key === "/" && document.activeElement !== input) { e.preventDefault(); input.focus(); } });
+  var links = {};
+  [].forEach.call(document.querySelectorAll("#toc a"), function (a) { links[a.getAttribute("href").slice(1)] = a; });
+  var prog = document.getElementById("prog"), top = document.getElementById("totop");
+  document.addEventListener("scroll", function () {
+    var max = document.documentElement.scrollHeight - window.innerHeight;
+    prog.style.width = (max > 0 ? (window.scrollY / max) * 100 : 0) + "%";
+    top.classList.toggle("on", window.scrollY > 500);
+  }, { passive: true });
+  top.addEventListener("click", function () { window.scrollTo({ top: 0, behavior: "smooth" }); });
+  if ("IntersectionObserver" in window) {
+    var io = new IntersectionObserver(function (es) {
+      es.forEach(function (en) {
+        if (!en.isIntersecting) return;
+        var a = links[en.target.id]; if (!a) return;
+        [].forEach.call(document.querySelectorAll("#toc a.active"), function (x) { x.classList.remove("active"); });
+        a.classList.add("active");
+      });
+    }, { rootMargin: "-70px 0px -74% 0px" });
+    blocks.forEach(function (b) { if (links[b.id]) io.observe(b); });
+  }
+
+  function buildAnim(def, host) {
+    host.innerHTML = '<div class="figsvg"></div><div class="playbar">' +
+      '<button class="btn pri js-play" type="button">▶ 播放</button>' +
+      '<button class="btn js-reset" type="button">↺ 重置</button>' +
+      '<input type="range" class="js-seek" min="0" max="1000" value="0">' +
+      '<span class="phase"></span>' + (def.extra || "") + "</div>" +
+      '<figcaption>' + def.cap + "</figcaption>";
+    var fig = host.querySelector(".figsvg"), phase = host.querySelector(".phase");
+    var seek = host.querySelector(".js-seek"), btn = host.querySelector(".js-play");
+    var t = 0, playing = false, last = 0;
+    function draw() {
+      fig.innerHTML = def.draw.call(def, t, host);
+      phase.textContent = def.phase.call(def, t, host);
+      seek.value = String(Math.round((t / def.duration) * 1000));
+    }
+    function loop(now) {
+      if (!playing) return;
+      if (!last) last = now;
+      t += Math.min((now - last) / 1000, 0.1); last = now;
+      if (t >= def.duration) { t = def.duration; playing = false; btn.textContent = "▶ 重播"; }
+      draw();
+      if (playing) requestAnimationFrame(loop); else last = 0;
+    }
+    btn.addEventListener("click", function () {
+      if (playing) { playing = false; btn.textContent = "▶ 继续"; return; }
+      if (t >= def.duration) t = 0;
+      playing = true; last = 0; btn.textContent = "⏸ 暂停"; requestAnimationFrame(loop);
+    });
+    host.querySelector(".js-reset").addEventListener("click", function () { playing = false; t = 0; btn.textContent = "▶ 播放"; draw(); });
+    seek.addEventListener("input", function () { playing = false; btn.textContent = "▶ 继续"; t = def.duration * (parseInt(seek.value, 10) / 1000); draw(); });
+    [].forEach.call(host.querySelectorAll("input,select"), function (el) { el.addEventListener("change", draw); });
+    if (def.bind) def.bind(host, draw);
+    draw();
+  }
+
+  var ANIM = {};
+
+  /* ---------- HSH01：加载 → 上报 → 比对 ---------- */
+  var STEPS = [
+    { at: 0.5, actor: "C", text: "加载 chunkA（本地存档）→ 本地算得 s2 = A1B2C3D4", note: "" },
+    { at: 2.0, actor: "C→H", text: "DigestReport { A, A1B2C3D4 }（批 32 块）", note: "" },
+    { at: 3.5, actor: "H", text: "本机算得 s1 = A1B2C3D4 → 相同", note: "" },
+    { at: 5.0, actor: "H→C", text: "Verdict: Match（3 B，不传数据）", note: "chunkA = Fresh" },
+    { at: 6.5, actor: "C", text: "加载 chunkB → 本地算得 s2 = 11112222", note: "" },
+    { at: 8.0, actor: "H", text: "本机 s1 = 22223333 → 不相同", note: "" },
+    { at: 9.5, actor: "H→C", text: "Verdict: Mismatch + 回传 chunkB 正确内容（6144 B）", note: "" },
+    { at: 11.0, actor: "C", text: "覆盖本地 → 标记 Fresh（记下主机哈希）", note: "chunkB = Fresh" },
+    { at: 12.5, actor: "C", text: "加载 chunkC → 上报 s2 = DEADBEEF", note: "" },
+    { at: 14.0, actor: "H", text: "本机没有这块（已卸载）→ NotReady（先按需从存档重载）", note: "" },
+    { at: 15.5, actor: "C", text: "保留未确认，排入重试（上限 5，不静默死等）", note: "chunkC = Verifying" }
+  ];
+  ANIM.verify = {
+    w: 900, h: 340, duration: 17.0,
+    cap: "加载那一刻报一次哈希：一致 → 双方都新；不一致 → 主机回传正确内容；主机没有 → NotReady 而不是沉默",
+    phase: function (t) {
+      var i = -1;
+      for (var k = 0; k < STEPS.length; k++) if (STEPS[k].at <= t) i = k;
+      if (i < 0) return "0/" + STEPS.length + " · 等待第一个块加载";
+      return (i + 1) + "/" + STEPS.length + " · " + STEPS[i].actor + "：" + STEPS[i].text;
+    },
+    draw: function (t) {
+      var i = -1;
+      for (var k = 0; k < STEPS.length; k++) if (STEPS[k].at <= t) i = k;
+      var body = "";
+      body += rbox(30, 34, 300, 190, "", 10);
+      body += rtxt(46, 58, "客户端（加载方）", "dghead");
+      var chunks = [
+        { id: "chunkA", from: 0, state: i >= 2 ? (i >= 3 ? "Fresh" : "Verifying") : "—" },
+        { id: "chunkB", from: 4, state: i >= 7 ? "Fresh" : (i >= 4 ? "Verifying" : "—") },
+        { id: "chunkC", from: 8, state: i >= 10 ? "Verifying（重试排队）" : (i >= 8 ? "Verifying" : "—") }
+      ];
+      chunks.forEach(function (c, row) {
+        var y = 82 + row * 44;
+        var active = i >= c.from;
+        body += rbox(42, y, 276, 36, active ? (c.state === "Fresh" ? "gr" : "am") : "", 6);
+        body += rtxt(52, y + 22, (active ? c.id + "　" + c.state : c.id + "　（未加载）"), "dgt sm");
+      });
+      body += rtxt(46, 214, "本地摘要：用滚动哈希增量维护", "dgt sm");
+
+      body += rbox(570, 34, 300, 190, "", 10);
+      body += rtxt(586, 58, "主机（权威）", "dghead");
+      var rows = [
+        { id: "chunkA", h: "s1 = A1B2C3D4", at: 2 },
+        { id: "chunkB", h: "s1 = 22223333", at: 6 },
+        { id: "chunkC", h: "未加载 → 先从存档重载", at: 9 }
+      ];
+      rows.forEach(function (r, k2) {
+        var y = 82 + k2 * 34;
+        var active = i >= r.at;
+        body += rbox(582, y, 276, 26, active ? "cy" : "", 6);
+        body += rtxt(592, y + 18, (active ? r.id + "　" + r.h : r.id + "　（未处理）"), "dgt sm");
+      });
+      body += rtxt(586, 200, "判据：TerrainChunkState > InvalidContents4", "dgt sm");
+      body += rtxt(586, 216, "（和序列化器 SaveChunk 用的条件一致）", "dgt sm");
+
+      body += rtxt(450, 58, "报文", "dghead", "middle");
+      var msgs = [
+        { at: 1, txt: "DigestReport", cls: "am" },
+        { at: 3, txt: "Verdict: Match", cls: "gr" },
+        { at: 5, txt: "DigestReport", cls: "am" },
+        { at: 7, txt: "Verdict: Mismatch", cls: "rd" },
+        { at: 8.5, txt: "ChunkResync 6144 B", cls: "vi" },
+        { at: 9.5, txt: "DigestReport", cls: "am" },
+        { at: 10.5, txt: "Verdict: NotReady", cls: "rd" }
+      ];
+      msgs.forEach(function (m, k3) {
+        var y = 82 + k3 * 20;
+        var done = i >= m.at;
+        body += rbox(348, y, 204, 17, done ? m.cls : "", 4);
+        body += rtxt(356, y + 13, (done ? "✓ " : "· ") + m.txt, "dgt sm");
+      });
+
+      body += rbox(30, 240, 840, 82, "", 10);
+      body += rtxt(46, 264, "本轮到现在的账（r=8 窗口 289 块的一次性上报 = 10 条消息 / 1814 B）", "dghead");
+      body += rtxt(46, 288, "上报 3 条 · 一致 1 · 不一致 1 · NotReady 1 · 回传数据 6144 B · 确认消息 " +
+        (i >= 9 ? 2 : i >= 3 ? 1 : 0) + " 条", "dgt sm");
+      body += rtxt(46, 310, "加载之后的改动不再走比对：直接走 CellChange 数据消息（带 revision/hash，落地即 Fresh）", "dgt sm");
+      return svgOf(this.w, this.h, body);
+    }
+  };
+
+  /* ---------- HSH02：切片摘要与定位 ---------- */
+  // 演示用 32 位实现（与 C# 版同结构：位置相关 XOR + 切片 XOR）
+  function mul32(a, b) { return Math.imul(a, b) >>> 0; }
+  function cellHash(x, y, z, contents, data) {
+    var h = 0x9E3779B9 >>> 0;
+    h ^= mul32(x + 1, 0xBF58476D);
+    h ^= mul32(y + 7, 0x94D049BB);
+    h ^= mul32(z + 3, 0xD6E8FEB8);
+    h ^= mul32(contents + 11, 0xA0761D64);
+    h ^= mul32(data + 5, 0xE7037ED1);
+    h ^= h >>> 15; h = mul32(h, 0x85EBCA6B); h ^= h >>> 13;
+    return (h === 0 ? 0x9E3779B9 : h) >>> 0;
+  }
+  function hex(v) { return ("00000000" + (v >>> 0).toString(16).toUpperCase()).slice(-8); }
+  var SLICE_BASE = (function () {
+    var arr = [];
+    for (var s = 0; s < 16; s++) {
+      var h = 0;
+      for (var x = 0; x < 16; x++) for (var z = 0; z < 16; z++) h ^= cellHash(x, s * 16, z, 0, 0);
+      arr.push(h >>> 0);
+    }
+    return arr;
+  })();
+  var DIFF_SLICES = [2, 12];
+  function sliceState(t) {
+    var client = SLICE_BASE.slice(), host = SLICE_BASE.slice();
+    DIFF_SLICES.forEach(function (v) { host[v] = (host[v] ^ cellHash(3, v * 16 + 8, 7, 8, 17)) >>> 0; });
+    var applied = t >= 7.0;
+    if (applied) client = host.slice();
+    var diff = [];
+    for (var i = 0; i < 16; i++) if (client[i] !== host[i]) diff.push(i);
+    var cc = 0, ch = 0;
+    for (var j = 0; j < 16; j++) { cc ^= client[j]; ch ^= host[j]; }
+    return { client: client, host: host, diff: diff, applied: applied,
+      chunkClient: cc >>> 0, chunkHost: ch >>> 0 };
+  }
+  ANIM.slices = {
+    w: 900, h: 370, duration: 9.0,
+    cap: "加载时算一次 16 个切片摘要；比对只列出不同的片，回传也只回这几片（不是整块 65536 格）",
+    phase: function (t) {
+      var st = sliceState(t);
+      return "不同切片 " + st.diff.length + " 个" + (st.diff.length ? "（片 " + st.diff.join("、") + "）" : "（摘要一致）") +
+        " · 客户端 " + hex(st.chunkClient) + " / 主机 " + hex(st.chunkHost);
+    },
+    draw: function (t) {
+      var st = sliceState(t), body = "";
+      body += rtxt(40, 26, "客户端（加载时算的 16 片）", "dghead");
+      st.client.forEach(function (v, i) {
+        var x = 40 + (i % 8) * 104, y = 38 + Math.floor(i / 8) * 30;
+        var d = st.diff.indexOf(i) >= 0;
+        body += rbox(x, y, 96, 24, d ? "rd" : "gr", 6);
+        body += rtxt(x + 8, y + 16, "片" + String(i).padStart(2, "0") + " " + hex(v).slice(0, 6), "dgt sm");
+      });
+      body += rtxt(40, 124, "主机（收到上报时按需现算）", "dghead");
+      st.host.forEach(function (v, i) {
+        var x = 40 + (i % 8) * 104, y = 136 + Math.floor(i / 8) * 30;
+        var d = st.diff.indexOf(i) >= 0;
+        body += rbox(x, y, 96, 24, d ? "rd" : "gr", 6);
+        body += rtxt(x + 8, y + 16, "片" + String(i).padStart(2, "0") + " " + hex(v).slice(0, 6), "dgt sm");
+      });
+      body += rbox(40, 208, 420, 50, "", 9);
+      body += rtxt(52, 230, "整块摘要 = 16 片 XOR", "dgt sm");
+      body += rtxt(52, 250, "客户端 " + hex(st.chunkClient) + " 主机 " + hex(st.chunkHost) +
+        (st.applied ? "  ✓ 已一致" : "  ✗ 不一致"), st.applied ? "dgt" : "dgt sm");
+
+      var steps = [
+        { at: 0.5, txt: "块加载完 → 一次算出 16 片摘要（0.19 ms）" },
+        { at: 2.0, txt: "上报整块摘要（6 B）" },
+        { at: 3.5, txt: "主机现算 → 定位到片 2、片 12 不同（其余 14 片相同）" },
+        { at: 5.0, txt: "只回传这 2 片（8192 格），不传整块 65536 格" },
+        { at: 7.0, txt: "覆盖后这两片摘要一致 → Fresh" }
+      ];
+      body += rtxt(500, 26, "过程", "dghead");
+      steps.forEach(function (step, i) {
+        var y = 44 + i * 22;
+        var done = t >= step.at;
+        body += rbox(496, y - 13, 364, 19, done ? "cy" : "", 4);
+        body += rtxt(504, y, (done ? "✓ " : "· ") + step.txt, "dgt sm");
+      });
+      body += rbox(496, 160, 364, 96, "", 9);
+      body += rtxt(508, 182, "载荷账（回传一块）", "dghead");
+      body += rtxt(508, 204, "整块原始 65536 × 4 B = 262144 B", "dgt sm");
+      body += rtxt(508, 224, "整块 RLE（典型地形）= 4608 B（1.8%）", "dgt sm");
+      body += rtxt(508, 244, "只回 2 片 = 8192 格 → 更少；噪声数据退回原始", "dgt sm");
+
+      body += rtxt(40, 290, "为什么要切片：不一致时直接定位到「哪一片不同」，回传量按片算而不是按块算。", "dgt sm");
+      body += rtxt(40, 310, "摘要不维护：改动不碰它；只在块加载时算一次，卸载时丢掉。", "dgt sm");
+      body += rtxt(40, 334, "实测：单块计算 0.19 ms；289 块若一次性全算 ≈ 51 ms → 客户端逐块随加载算、主机按需现算。", "dgt sm");
+      return svgOf(this.w, this.h, body);
+    }
+  };
+
+  [].forEach.call(document.querySelectorAll(".anim"), function (host) {
+    var def = ANIM[host.getAttribute("data-anim")];
+    if (def) buildAnim(def, host);
+  });
+})();
+</script>
+</body>
+</html>

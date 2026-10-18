@@ -179,6 +179,12 @@ Channel/.vs/
 SuEventBus/bin/
 SuEventBus/obj/
 SuEventBus/.vs/
+## sync:SuMultiplayer
+!SuMultiplayer/
+!SuMultiplayer/**
+SuMultiplayer/bin/
+SuMultiplayer/obj/
+SuMultiplayer/.vs/
 ## ===== 生成区结束 =====
 
 # ── 手动维护区（在生成区之外，脚本不会改动这里）──
@@ -201,3 +207,7 @@ pack_release/
 
 # 全局忽略 Python 工具产物
 __pycache__/
+
+# 全局忽略构建中间产物（bin/obj，任何层级）
+bin/
+obj/

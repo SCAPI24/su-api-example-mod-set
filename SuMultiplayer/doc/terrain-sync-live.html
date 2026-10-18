@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>地形同步实时视图 · 主机 vs 客户端（SuMultiplayer）</title>
+<meta name="description" content="通过调试端（C# Debug Bridge）实时显示主机与客户端各自已加载的 chunk、摘要核对结果、不一致回传与走动反应。">
+<style>
+:root{
+  --bg:#f4f7fc;--card:#fff;--tint:#f7f9fe;--tint2:#eef3fb;--line:#dde5f1;--line2:#c3d1e6;
+  --tx:#16203a;--tx2:#48587a;--tx3:#7d8aa3;--cy:#0e7fa8;--cy2:#e4f5fc;--vi:#6a4bd8;--vi2:#efeafe;
+  --am:#a9740a;--am2:#fff4df;--gr:#0d8a63;--gr2:#e5f8f0;--rd:#c23a55;--rd2:#fdecf0;
+  --mono:ui-monospace,"Cascadia Mono",Consolas,"Liberation Mono",monospace;
+  --sans:system-ui,-apple-system,"Segoe UI","Microsoft YaHei","PingFang SC",sans-serif;
+  --r:12px;--r2:9px;--sh:0 1px 2px rgba(20,40,80,.05),0 6px 18px rgba(20,40,80,.05);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font-family:var(--sans);font-size:14.5px;line-height:1.7}
+a{color:var(--cy);text-decoration:none}a:hover{text-decoration:underline}
+code{font-family:var(--mono);font-size:.87em;background:var(--tint2);border:1px solid var(--line);border-radius:5px;padding:.05em .34em;color:#1d3a63;white-space:nowrap}
+.topbar{position:sticky;top:0;z-index:60;display:flex;align-items:center;gap:12px;padding:9px 20px;background:rgba(255,255,255,.92);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+.brand{display:flex;align-items:center;gap:10px;font-weight:750;white-space:nowrap}
+.brand .logo{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;font-size:12px;background:linear-gradient(140deg,var(--cy),var(--gr));color:#fff;font-weight:900}
+.brand small{display:block;font-weight:500;font-size:11px;color:var(--tx3)}
+.topbar .grow{flex:1}
+.lamp{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11.5px;border:1px solid var(--line);border-radius:999px;padding:3px 11px;background:var(--tint)}
+.lamp i{width:8px;height:8px;border-radius:50%;background:#c3d1e6;display:inline-block}
+.lamp.on i{background:#0d8a63;box-shadow:0 0 0 3px #e5f8f0}
+.lamp.off i{background:#c23a55;box-shadow:0 0 0 3px #fdecf0}
+.wrap{max-width:1620px;margin:0 auto;padding:14px 20px 60px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.pane{background:var(--card);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--sh);padding:12px 14px;min-width:0}
+.pane h3{margin:0 0 4px;font-size:15px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.pane .sub{font-size:11.5px;color:var(--tx3);margin-bottom:8px}
+.chip{font-family:var(--mono);font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--line);background:var(--tint);color:var(--tx2)}
+.chip.gr{color:#0a6247;background:var(--gr2);border-color:#c2e9d8}
+.chip.rd{color:#96243c;background:var(--rd2);border-color:#f4cbd6}
+.chip.am{color:#7d5606;background:var(--am2);border-color:#f0dcb0}
+.map{width:100%;height:auto;display:block;background:#fff;border:1px solid var(--line);border-radius:var(--r2)}
+table{width:100%;border-collapse:collapse;font-size:12.4px;margin-top:8px}
+thead th{background:var(--tint2);text-align:left;padding:6px 9px;font-weight:700;color:#25344f;border-bottom:1px solid var(--line2);font-size:11.8px;white-space:nowrap}
+tbody td{padding:5px 9px;border-bottom:1px solid var(--line)}
+tbody tr:nth-child(even){background:var(--tint)}
+td.mono,.mono{font-family:var(--mono);font-size:11.6px}
+.num{text-align:right;font-family:var(--mono)}
+.legend{display:flex;gap:12px;flex-wrap:wrap;font-size:11.5px;color:var(--tx2);margin:6px 0 2px}
+.legend span{display:inline-flex;align-items:center;gap:5px}
+.legend i{width:12px;height:12px;border-radius:3px;border:1px solid var(--line2);display:inline-block}
+.banner{margin:10px 0;padding:10px 13px;border-radius:var(--r2);font-size:13px;border:1px solid var(--line);border-left:3px solid var(--am);background:var(--am2);color:var(--tx2);display:none}
+.banner.on{display:block}
+.banner.bad{border-left-color:var(--rd);background:var(--rd2)}
+.banner.ok{border-left-color:var(--gr);background:var(--gr2)}
+.log{font-family:var(--mono);font-size:11.4px;background:#fff;border:1px solid var(--line);border-radius:var(--r2);padding:8px 10px;max-height:220px;overflow:auto;white-space:pre-wrap;color:var(--tx2)}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:9px;margin:8px 0}
+.tile{background:var(--tint);border:1px solid var(--line);border-radius:var(--r2);padding:9px 11px}
+.tile b{display:block;font-family:var(--mono);font-size:18px;color:var(--cy)}
+.tile span{display:block;font-size:11.5px;color:var(--tx3)}
+footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--line);font-size:12px;color:var(--tx3)}
+@media (max-width:1100px){.grid2{grid-template-columns:1fr}}
+@media print{.topbar{display:none}.pane{break-inside:avoid;box-shadow:none}}
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><div class="logo">LV</div><div>地形同步实时视图<small>主机 vs 客户端 · 由调试端提供数据</small></div></div>
+  <div class="grow"></div>
+  <span class="lamp off" id="lamp"><i></i><span id="lampText">未连接</span></span>
+  <button class="btn" style="cursor:pointer;border:1px solid var(--line);background:#fff;border-radius:999px;padding:6px 13px;font-size:12px" id="btnReload">立即刷新</button>
+</header>
+
+<div class="wrap" id="top">
+  <div class="banner" id="banner"></div>
+
+  <div class="tiles" id="tiles"></div>
+
+  <div class="grid2">
+    <div class="pane" id="LIV01">
+      <h3>主机端（权威）<span class="chip" id="hostChip">等待数据</span></h3>
+      <div class="sub" id="hostSub">—</div>
+      <svg class="map" id="hostMap" viewBox="0 0 900 520" preserveAspectRatio="xMidYMid meet"></svg>
+      <div class="legend">
+        <span><i style="background:#dbe7ff;border-color:#9fb6e8"></i>兴趣窗口（有人要）</span>
+        <span><i style="background:#7cc4e0;border-color:#2b9fc4"></i>主机已加载</span>
+        <span><i style="background:#ffffff"></i>未加载</span>
+      </div>
+    </div>
+
+    <div class="pane" id="LIV02">
+      <h3>客户端（平板）<span class="chip" id="clientChip">等待数据</span></h3>
+      <div class="sub" id="clientSub">—</div>
+      <svg class="map" id="clientMap" viewBox="0 0 900 520" preserveAspectRatio="xMidYMid meet"></svg>
+      <div class="legend">
+        <span><i style="background:#e5f8f0;border-color:#17a273"></i>已核对 Fresh</span>
+        <span><i style="background:#fdecf0;border-color:#d1495f"></i>不一致（等回传）</span>
+        <span><i style="background:#fff4df;border-color:#d99b12"></i>已加载未核对</span>
+        <span><i style="background:#ffffff"></i>未加载</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="pane" id="LIV03" style="margin-top:14px">
+    <h3>计数器</h3>
+    <div class="sub">主机侧按客户端统计；客户端侧来自各模拟端自己的快照</div>
+    <table>
+      <thead><tr><th>端 / 客户端</th><th class="num">窗口</th><th class="num">已加载</th><th class="num">匹配</th><th class="num">不一致</th><th class="num">NotReady</th><th class="num">回传分片</th><th class="num">收到改动</th><th class="num">核对往返</th><th class="mono">通道</th></tr></thead>
+      <tbody id="counterBody"><tr><td colspan="10" class="mono">等待数据…</td></tr></tbody>
+    </table>
+    <div id="extraCounters" class="legend"></div>
+  </div>
+
+  <div class="pane" id="LIV04" style="margin-top:14px">
+    <h3>事件流（调试端日志）</h3>
+    <div class="sub">走动 → 加载新块 → 上报摘要 → 裁决；不一致时回传并重新确认</div>
+    <div class="log" id="events">等待数据…</div>
+    <table>
+      <thead><tr><th>怎么跑起来</th></tr></thead>
+      <tbody>
+        <tr><td><span class="mono">dotnet run --project Mod/SuMultiplayer/Tools/DebugBridge -c Release</span> → 调试端起在 <span class="mono">http://127.0.0.1:8737</span>（TCP 端口随机，日志里会打印）</td></tr>
+        <tr><td>本页默认轮询 <span class="mono">http://127.0.0.1:8737/state</span>；换地址加参数：<span class="mono">?url=http://主机IP:8737/state</span>（平板上的浏览器也能看主机）</td></tr>
+        <tr><td>页面显示的是<b>真实 TCP 链路 + 真实摘要代码</b>产生的数据；合成世界是为了不依赖游戏运行</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <footer>
+    SuMultiplayer · 调试端（C#，ClientKind.Debug）+ 网页视图 · 相关：
+    <a href="chunk-digest.html">加载时摘要校验</a> ·
+    <a href="chunk-interest.html">多客户端兴趣范围</a> ·
+    <a href="join-room-plan.html">最小加入房间方案</a>
+  </footer>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var CELL = 32, PAD = 8;
+  var search = (typeof location !== "undefined" && location.search) ? location.search : "";
+  var stateUrl = "http://127.0.0.1:8737/state";
+  try {
+    if (search && typeof URLSearchParams === "function") {
+      var params = new URLSearchParams(search);
+      stateUrl = params.get("url") || stateUrl;
+    }
+  } catch (e) { /* 离线/桩环境：用默认地址 */ }
+  var lastState = null;
+
+  function $(id) { return document.getElementById(id); }
+  function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+  function keyOf(k) { return k[0] + "," + k[1]; }
+  function setOf(list) {
+    var set = {};
+    (list || []).forEach(function (k) { set[keyOf(k)] = true; });
+    return set;
+  }
+  function banner(text, kind) {
+    var el = $("banner");
+    if (!text) { el.className = "banner"; el.textContent = ""; return; }
+    el.className = "banner on" + (kind ? " " + kind : "");
+    el.textContent = text;
+  }
+  function lamp(on, text) {
+    $("lamp").className = "lamp " + (on ? "on" : "off");
+    $("lampText").textContent = text;
+  }
+
+  function bounds(lists) {
+    var minX = 1e9, maxX = -1e9, minZ = 1e9, maxZ = -1e9, any = false;
+    lists.forEach(function (list) {
+      (list || []).forEach(function (k) {
+        any = true;
+        if (k[0] < minX) minX = k[0];
+        if (k[0] > maxX) maxX = k[0];
+        if (k[1] < minZ) minZ = k[1];
+        if (k[1] > maxZ) maxZ = k[1];
+      });
+    });
+    if (!any) return null;
+    // 限制网格规模，避免无限画布
+    if (maxX - minX > 48) maxX = minX + 48;
+    if (maxZ - minZ > 26) maxZ = minZ + 26;
+    return { minX: minX, maxX: maxX, minZ: minZ, maxZ: maxZ };
+  }
+
+  function drawMap(svg, box, layers, centers) {
+    if (!svg) return;
+    if (!box) { svg.innerHTML = "<text x='20' y='30' fill='#7d8aa3' font-size='13'>暂无数据</text>"; return; }
+    var cols = box.maxX - box.minX + 1, rows = box.maxZ - box.minZ + 1;
+    var w = cols * CELL + PAD * 2, h = rows * CELL + PAD * 2;
+    svg.setAttribute("viewBox", "0 0 " + w + " " + h);
+    var out = "";
+    for (var i = 0; i < cols; i++) {
+      for (var j = 0; j < rows; j++) {
+        var cx = box.minX + i, cz = box.minZ + j;
+        var fill = "#ffffff", stroke = "#dde5f1", sw = 1, title = cx + "," + cz;
+        for (var L = layers.length - 1; L >= 0; L--) {
+          var layer = layers[L];
+          if (!layer.set[keyOf([cx, cz])]) continue;
+          fill = layer.fill;
+          stroke = layer.stroke || stroke;
+          sw = layer.sw || 1;
+          title = (layer.name || "") + " " + title;
+          break;
+        }
+        out += "<rect x='" + (PAD + i * CELL) + "' y='" + (PAD + j * CELL) + "' width='" + (CELL - 1) +
+          "' height='" + (CELL - 1) + "' fill='" + fill + "' stroke='" + stroke + "' stroke-width='" + sw + "'>" +
+          "<title>" + esc(title) + "</title></rect>";
+        if (CELL >= 26) {
+          out += "<text x='" + (PAD + i * CELL + 5) + "' y='" + (PAD + j * CELL + 19) +
+            "' font-size='10' fill='#5a6a86' font-family='ui-monospace'>" + cx + "," + cz + "</text>";
+        }
+      }
+    }
+    (centers || []).forEach(function (c) {
+      if (!c) return;
+      var i = c[0] - box.minX, j = c[1] - box.minZ;
+      if (i < 0 || j < 0 || i >= cols || j >= rows) return;
+      out += "<circle cx='" + (PAD + i * CELL + CELL / 2) + "' cy='" + (PAD + j * CELL + CELL / 2) +
+        "' r='" + (CELL / 4) + "' fill='#6a4bd8' stroke='#fff' stroke-width='2'><title>玩家中心 " +
+        esc(keyOf(c)) + "</title></circle>";
+    });
+    svg.innerHTML = out;
+  }
+
+  function row(cells) {
+    return "<tr>" + cells.map(function (c) { return "<td" + (c.cls ? " class='" + c.cls + "'" : "") + ">" + c.v + "</td>"; }).join("") + "</tr>";
+  }
+
+  function render(state) {
+    lastState = state;
+    var host = state.host, clients = state.clients || [];
+    var c0 = clients.length ? clients[0] : null;
+
+    var hostInterest = host ? setOf(host.interest) : {};
+    var hostLoaded = host ? setOf(host.loaded) : {};
+    var clientLoaded = c0 ? setOf(c0.loaded) : {};
+    var clientFresh = c0 ? setOf(c0.fresh) : {};
+    var clientStale = c0 ? setOf(c0.stale) : {};
+    var clientUnverified = c0 ? setOf(c0.unverified) : {};
+
+    var box = bounds([
+      host ? host.interest : [], host ? host.loaded : [],
+      c0 ? c0.loaded : [], c0 ? (c0.fresh || []).concat(c0.stale || [], c0.unverified || []) : []
+    ]);
+
+    drawMap($("hostMap"), box, [
+      { name: "已加载", set: hostLoaded, fill: "#7cc4e0", stroke: "#2b9fc4" },
+      { name: "兴趣窗口", set: hostInterest, fill: "#dbe7ff", stroke: "#9fb6e8" }
+    ], [c0 ? c0.center : null]);
+
+    drawMap($("clientMap"), box, [
+      { name: "Fresh", set: clientFresh, fill: "#e5f8f0", stroke: "#17a273", sw: 1.4 },
+      { name: "Stale", set: clientStale, fill: "#fdecf0", stroke: "#d1495f", sw: 1.6 },
+      { name: "未核对", set: clientUnverified, fill: "#fff4df", stroke: "#d99b12" },
+      { name: "已加载", set: clientLoaded, fill: "#eef3fb", stroke: "#c3d1e6" }
+    ], [c0 ? c0.center : null]);
+
+    $("hostChip").textContent = host ? ("兴趣 " + (host.interest || []).length + " · 已加载 " + (host.loaded || []).length) : "无数据";
+    $("clientChip").textContent = c0 ? ("已加载 " + (c0.loaded || []).length + " · Fresh " + (c0.fresh || []).length) : "无数据";
+    $("hostSub").textContent = host
+      ? "摘要上报 " + host.digestReports + " · 回传字节 " + host.resyncBytes + " · 广播改动 " + host.cellChanges +
+        " · 规则：主机只保留有人要的块，渲染与常驻分离"
+      : "—";
+    $("clientSub").textContent = c0
+      ? "中心 " + (c0.center || []).join(",") + " · 半径 " + c0.radius + " · 匹配 " + c0.match +
+        " · 不一致 " + c0.mismatch + " · 回传 " + c0.resyncApplied + "（重新确认 " + c0.resyncVerified + "）"
+      : "—";
+
+    var tiles = [];
+    tiles.push({ v: host ? host.digestReports : 0, s: "主机摘要上报" });
+    tiles.push({ v: c0 ? c0.match : 0, s: "客户端核对通过" });
+    tiles.push({ v: c0 ? c0.mismatch : 0, s: "不一致（触发回传）" });
+    tiles.push({ v: (c0 ? c0.lastVerifyMs : 0) + " ms", s: "最近核对往返" });
+    tiles.push({ v: c0 ? c0.loadedTotal : 0, s: "累计加载块数" });
+    tiles.push({ v: c0 ? c0.unloadedTotal : 0, s: "累计卸载块数" });
+    $("tiles").innerHTML = tiles.map(function (t) {
+      return "<div class='tile'><b>" + esc(t.v) + "</b><span>" + esc(t.s) + "</span></div>";
+    }).join("");
+
+    var body = "";
+    if (host && host.clients) {
+      host.clients.forEach(function (c) {
+        body += row([
+          { v: "<b>主机视角</b> " + esc(c.name) + " (" + esc(c.kind) + ")", cls: "mono" },
+          { v: c.window, cls: "num" },
+          { v: "—", cls: "num" },
+          { v: c.match, cls: "num" },
+          { v: c.mismatch, cls: "num" },
+          { v: c.notReady, cls: "num" },
+          { v: c.resyncParts, cls: "num" },
+          { v: c.cellChanges, cls: "num" },
+          { v: "—", cls: "num" },
+          { v: esc(c.state), cls: "mono" }
+        ]);
+      });
+    }
+    clients.forEach(function (c) {
+      body += row([
+        { v: "<b>客户端自己</b> " + esc(c.name), cls: "mono" },
+        { v: "—", cls: "num" },
+        { v: (c.loaded || []).length, cls: "num" },
+        { v: c.match, cls: "num" },
+        { v: c.mismatch, cls: "num" },
+        { v: c.retries, cls: "num" },
+        { v: c.resyncApplied + "/" + c.resyncVerified, cls: "num" },
+        { v: c.cellChangesApplied, cls: "num" },
+        { v: c.lastVerifyMs + " / " + c.maxVerifyMs, cls: "num" },
+        { v: esc(c.state), cls: "mono" }
+      ]);
+    });
+    $("counterBody").innerHTML = body || "<tr><td colspan='10' class='mono'>等待数据…</td></tr>";
+    $("extraCounters").innerHTML = clients.map(function (c) {
+      return "<span>· " + esc(c.name) + " 收到字节 " + c.bytesReceived + " · 半径 " + c.radius +
+        " · 中心 " + (c.center || []).join(",") + "</span>";
+    }).join("");
+
+    var events = (state.events || []).slice(-14).reverse();
+    $("events").textContent = events.length ? events.join("\n") : "暂无事件";
+  }
+
+  function poll() {
+    if (typeof fetch !== "function") {
+      lamp(false, "验证桩：无 fetch");
+      banner("此环境没有 fetch（离线验证桩）：页面结构与渲染逻辑仍会被检查，但拿不到实时数据。", "bad");
+      render({ host: null, clients: [], events: [] });
+      return;
+    }
+    fetch(stateUrl, { cache: "no-store" })
+      .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+      .then(function (json) {
+        lamp(true, "已连接 " + new Date().toLocaleTimeString());
+        banner("");
+        render(json);
+      })
+      .catch(function (err) {
+        lamp(false, "未连接");
+        banner("连不上调试端（" + stateUrl + "）：" + err.message +
+          " —— 先在电脑上跑 dotnet run --project Mod/SuMultiplayer/Tools/DebugBridge -c Release", "bad");
+        render({ host: lastState ? lastState.host : null, clients: lastState ? lastState.clients : [], events: lastState ? lastState.events : [] });
+      });
+  }
+
+  if (typeof document.getElementById("btnReload").addEventListener === "function") {
+    document.getElementById("btnReload").addEventListener("click", poll);
+  }
+  render({ host: null, clients: [], events: [] });
+  poll();
+  if (typeof setInterval === "function") setInterval(poll, 700);
+})();
+</script>
+</body>
+</html>

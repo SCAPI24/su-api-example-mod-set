@@ -1,0 +1,742 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>原子契约 · Hz 合并 · 兼容读取（SuMultiplayer）</title>
+<meta name="description" content="联机操作打散成原子 + 按 Hz 分桶合并成报文 + 信封 v2 前后兼容：设计、可播放演示与实测断言。">
+<style>
+:root{
+  --bg:#f4f7fc;--card:#fff;--tint:#f7f9fe;--tint2:#eef3fb;--line:#dde5f1;--line2:#c3d1e6;
+  --tx:#16203a;--tx2:#48587a;--tx3:#7d8aa3;--cy:#0e7fa8;--cy2:#e4f5fc;--vi:#6a4bd8;--vi2:#efeafe;
+  --am:#a9740a;--am2:#fff4df;--gr:#0d8a63;--gr2:#e5f8f0;--rd:#c23a55;--rd2:#fdecf0;
+  --mono:ui-monospace,"Cascadia Mono",Consolas,"Liberation Mono",monospace;
+  --sans:system-ui,-apple-system,"Segoe UI","Microsoft YaHei","PingFang SC",sans-serif;
+  --r:12px;--r2:9px;--sh:0 1px 2px rgba(20,40,80,.05),0 6px 18px rgba(20,40,80,.05);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font-family:var(--sans);font-size:14.5px;line-height:1.7}
+a{color:var(--cy);text-decoration:none}a:hover{text-decoration:underline}
+code{font-family:var(--mono);font-size:.87em;background:var(--tint2);border:1px solid var(--line);border-radius:5px;padding:.05em .34em;color:#1d3a63;white-space:nowrap}
+.topbar{position:sticky;top:0;z-index:60;display:flex;align-items:center;gap:12px;padding:9px 20px;
+  background:rgba(255,255,255,.9);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+.brand{display:flex;align-items:center;gap:10px;font-weight:750;white-space:nowrap}
+.brand .logo{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;font-size:12px;background:linear-gradient(140deg,var(--cy),var(--vi));color:#fff;font-weight:900}
+.brand small{display:block;font-weight:500;font-size:11px;color:var(--tx3)}
+.topbar .ver{font-family:var(--mono);font-size:11px;color:var(--tx2);border:1px solid var(--line);border-radius:999px;padding:2px 9px;background:var(--tint)}
+.topbar .grow{flex:1}
+.search input{padding:7px 11px;border-radius:999px;font-size:12.5px;color:var(--tx);background:var(--tint);border:1px solid var(--line);outline:none;min-width:200px}
+.btn{cursor:pointer;border:1px solid var(--line);background:#fff;color:var(--tx2);border-radius:999px;padding:6px 13px;font-size:12px;font-family:var(--sans)}
+.btn:hover{color:var(--tx);border-color:var(--line2);background:var(--tint)}
+.btn.pri{background:linear-gradient(120deg,var(--cy2),var(--gr2));border-color:var(--line2);color:#0b3b52;font-weight:650}
+.progress{position:fixed;top:0;left:0;height:3px;width:0;z-index:70;background:linear-gradient(90deg,var(--cy),var(--vi),var(--am))}
+.layout{display:grid;grid-template-columns:220px minmax(0,1fr);gap:24px;max-width:1420px;margin:0 auto;padding:0 22px 70px}
+.sidebar{position:sticky;top:58px;align-self:start;max-height:calc(100vh - 76px);overflow-y:auto;padding:16px 4px 24px 0;font-size:12.5px}
+.sidebar h4{margin:12px 0 5px;font-size:10.5px;letter-spacing:1.2px;color:var(--tx3)}
+.sidebar h4:first-child{margin-top:0}
+.sidebar a{display:flex;gap:7px;padding:3.5px 8px;border-radius:7px;color:var(--tx2);border-left:2px solid transparent}
+.sidebar a:hover{background:var(--tint);text-decoration:none;color:var(--tx)}
+.sidebar a.active{color:var(--tx);background:var(--cy2);border-left-color:var(--cy);font-weight:600}
+.sidebar a .id{font-family:var(--mono);font-size:10px;color:var(--tx3);min-width:40px}
+main{min-width:0;padding-top:6px}
+.hero{padding:30px 0 18px;border-bottom:1px solid var(--line);margin-bottom:10px}
+.hero .kicker{display:inline-flex;gap:8px;font-family:var(--mono);font-size:11.5px;color:var(--vi);border:1px solid #d6cbf7;background:var(--vi2);padding:4px 12px;border-radius:999px}
+.hero h1{margin:12px 0 8px;font-size:clamp(24px,3.2vw,36px);line-height:1.2;font-weight:800;letter-spacing:-.4px}
+.hero h1 .g{background:linear-gradient(96deg,var(--cy),var(--vi) 55%,var(--am));-webkit-background-clip:text;background-clip:text;color:transparent}
+.hero .lead{font-size:15px;color:var(--tx2);max-width:900px;margin:0 0 14px}
+.hero .actions{display:flex;gap:9px;flex-wrap:wrap;margin-bottom:16px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(136px,1fr));gap:10px}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:11px 13px;box-shadow:var(--sh)}
+.stat b{display:block;font-family:var(--mono);font-size:20px;color:var(--cy)}
+.stat span{display:block;font-size:11.5px;color:var(--tx3);margin-top:2px}
+section.sec{margin:24px 0 8px;scroll-margin-top:68px}
+.sec-head{display:flex;align-items:center;gap:11px;padding-bottom:9px;border-bottom:2px solid var(--line);margin-bottom:14px}
+.sec-head .no{font-family:var(--mono);font-size:11px;font-weight:700;color:#fff;border-radius:7px;padding:4px 8px;background:linear-gradient(140deg,var(--cy),var(--vi))}
+.sec-head h2{margin:0;font-size:clamp(18px,2vw,23px);font-weight:750}
+.sec-head .sub{color:var(--tx3);font-size:12px;margin-left:auto}
+.block{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:14px 16px;margin:11px 0;box-shadow:var(--sh);scroll-margin-top:68px}
+.block.hidden,.sec.hidden{display:none}
+.block-head{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-bottom:8px}
+.block-head h3{margin:0;font-size:15.5px;font-weight:720}
+.block-head .tagline{font-size:11.5px;color:var(--tx3)}
+.guid{font-family:var(--mono);font-size:11px;font-weight:700;cursor:pointer;color:#fff;background:linear-gradient(140deg,var(--cy),var(--vi));border:0;border-radius:6px;padding:2px 7px;user-select:none}
+.guid.copied{background:linear-gradient(140deg,var(--am),#e0a52a)}
+.cap{margin:0 0 8px;color:var(--tx2);font-size:13px}
+.tw{overflow-x:auto;margin:8px 0;border:1px solid var(--line);border-radius:var(--r2)}
+table{width:100%;border-collapse:collapse;font-size:12.6px;min-width:420px}
+thead th{background:var(--tint2);text-align:left;padding:7px 10px;font-weight:700;color:#25344f;border-bottom:1px solid var(--line2);white-space:nowrap;font-size:12px}
+tbody td{padding:6px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+tbody tr:nth-child(even){background:var(--tint)}
+tbody tr:last-child td{border-bottom:0}
+td.mono,.mono{font-family:var(--mono);font-size:11.8px}
+td.gid,.gid{font-family:var(--mono);font-size:11.4px;color:var(--cy);font-weight:700;white-space:nowrap}
+td.src,.src{font-family:var(--mono);font-size:11px;color:var(--tx3)}
+.grid{display:grid;gap:9px;margin:8px 0}
+.g2{grid-template-columns:repeat(auto-fit,minmax(250px,1fr))}
+.g3{grid-template-columns:repeat(auto-fit,minmax(190px,1fr))}
+.tile{background:var(--tint);border:1px solid var(--line);border-radius:var(--r2);padding:10px 11px}
+.tile h5{margin:0 0 4px;font-size:13px;color:#1d2b47}
+.tile p{margin:2px 0;font-size:12.4px;color:var(--tx2)}
+.tile .big{font-family:var(--mono);font-size:17px;color:var(--cy);display:block}
+.callout{border-radius:var(--r2);padding:9px 12px;margin:9px 0;font-size:12.7px;border:1px solid var(--line);background:var(--tint);border-left:3px solid var(--cy);color:var(--tx2)}
+.callout.warn{border-left-color:var(--am);background:var(--am2)}
+.callout.ok{border-left-color:var(--gr);background:var(--gr2)}
+.callout.bad{border-left-color:var(--rd);background:var(--rd2)}
+.callout .t{display:block;font-weight:700;margin-bottom:2px;color:var(--tx)}
+.pill{display:inline-block;font-size:11.5px;padding:3px 10px;border-radius:999px;border:1px solid var(--line);background:var(--tint);color:var(--tx2);font-family:var(--mono);margin:0 5px 5px 0}
+figure{margin:9px 0;border:1px solid var(--line);border-radius:var(--r2);padding:11px 11px 5px;background:var(--tint)}
+figure svg{width:100%;height:auto;display:block}
+figcaption{margin-top:5px;font-size:11.5px;color:var(--tx3);text-align:center}
+.anim{margin:9px 0;border:1px solid var(--line);border-radius:var(--r2);padding:10px 11px 6px;background:var(--tint)}
+.anim .figsvg{background:#fff;border:1px solid var(--line);border-radius:8px;padding:6px}
+.anim svg{width:100%;height:auto;display:block}
+.playbar{display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap}
+.playbar input[type=range]{flex:1;min-width:110px;accent-color:#0e7fa8;height:4px}
+.phase{font-family:var(--mono);font-size:11.5px;color:var(--cy);min-width:250px}
+.xtra{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;color:var(--tx2);cursor:pointer}
+.anim figcaption{margin-top:6px;font-size:11.5px;color:var(--tx3);text-align:center}
+.dgb{fill:#fff;stroke:#c3d1e6}
+.dgb.cy{fill:#e4f5fc;stroke:#2b9fc4}.dgb.vi{fill:#efeafe;stroke:#7c5cf0}
+.dgb.gr{fill:#e5f8f0;stroke:#17a273}.dgb.am{fill:#fff4df;stroke:#d99b12}.dgb.rd{fill:#fdecf0;stroke:#d1495f}
+.dgt{fill:#26314a;font-family:var(--mono);font-size:11.5px}
+.dgt.sm{font-size:10.2px;fill:#5a6a86}
+.dgl{stroke:#93a6c4;stroke-width:1.4;fill:none}
+.dgl.cy{stroke:#2b9fc4}.dgl.vi{stroke:#7c5cf0}.dgl.am{stroke:#d99b12}.dgl.gr{stroke:#17a273}.dgl.rd{stroke:#d1495f}
+.dgl.dash{stroke-dasharray:5 4}
+.dghead{fill:#101a2e;font-size:12.5px;font-weight:700;font-family:var(--sans)}
+.toast{position:fixed;left:50%;bottom:26px;transform:translate(-50%,14px);z-index:90;background:#101a2e;color:#fff;padding:9px 18px;border-radius:999px;font-size:13px;opacity:0;pointer-events:none;transition:.22s}
+.toast.on{opacity:1;transform:translate(-50%,0)}
+#nores{display:none;padding:22px;text-align:center;color:var(--tx3);border:1px dashed var(--line2);border-radius:var(--r);margin:14px 0;background:#fff}
+.totop{position:fixed;right:20px;bottom:20px;z-index:80;width:38px;height:38px;border-radius:50%;display:grid;place-items:center;cursor:pointer;opacity:0;pointer-events:none;transition:.2s;background:#fff;border:1px solid var(--line2);color:var(--cy);font-size:16px}
+.totop.on{opacity:1;pointer-events:auto}
+footer{margin-top:24px;padding:16px 0 6px;border-top:1px solid var(--line);font-size:12px;color:var(--tx3)}
+@media (max-width:1020px){.layout{grid-template-columns:1fr;padding:0 14px 60px}.sidebar{position:static;max-height:none;border-bottom:1px solid var(--line);display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr))}.sec-head .sub{display:none}}
+@media print{.topbar,.sidebar,.totop,.progress,.toast{display:none!important}.layout{display:block;padding:0}.block,figure,.tile{break-inside:avoid;box-shadow:none}}
+</style>
+</head>
+<body>
+<div class="progress" id="prog"></div>
+<header class="topbar">
+  <div class="brand"><div class="logo">AT</div><div>原子契约 · Hz 合并 · 兼容读取<small>SuMultiplayer</small></div></div>
+  <span class="ver">已实现并实测</span>
+  <div class="grow"></div>
+  <input id="q" type="search" placeholder="搜索内容或 GUID（例：MRG01）">
+  <button class="btn" onclick="window.print()">打印 / PDF</button>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="toc">
+    <h4>原子</h4>
+    <a href="#ATM01"><span class="id">ATM01</span>为什么要原子</a>
+    <a href="#ATM02"><span class="id">ATM02</span>五类原子</a>
+    <a href="#ATM03"><span class="id">ATM03</span>契约字段</a>
+    <a href="#ATM04"><span class="id">ATM04</span>多版本注册表</a>
+    <h4>合并</h4>
+    <a href="#MRG01"><span class="id">MRG01</span>Hz 分桶合并（可播放）</a>
+    <a href="#MRG02"><span class="id">MRG02</span>六条合并规则</a>
+    <a href="#MRG03"><span class="id">MRG03</span>四种合并策略</a>
+    <a href="#MRG04"><span class="id">MRG04</span>包上限与背压</a>
+    <a href="#MRG05"><span class="id">MRG05</span>丢包不连坐（可播放）</a>
+    <h4>兼容</h4>
+    <a href="#ENV01"><span class="id">ENV01</span>信封 v2 结构</a>
+    <a href="#ENV02"><span class="id">ENV02</span>兼容读取（可播放）</a>
+    <a href="#ENV03"><span class="id">ENV03</span>版本区间与拒绝</a>
+    <h4>实测</h4>
+    <a href="#TST01"><span class="id">TST01</span>断言清单</a>
+    <a href="#SRC01"><span class="id">SRC01</span>源码与索引</a>
+  </aside>
+
+  <main id="top">
+    <section class="hero">
+      <div class="kicker">● 39 条断言全过 · 不改线上协议即可先跑</div>
+      <h1>把操作拆成<span class="g">原子</span>，把报文按 <span class="g">Hz 分桶合并</span>，把兼容做在<span class="g">信封</span>上</h1>
+      <p class="lead">原子契约是唯一策略来源；合并只认契约；未知字段与未知原子一律跳过而不是报错。</p>
+      <div class="actions">
+        <a class="btn pri" href="#MRG01">看合并动画</a>
+        <a class="btn" href="#ENV02">看兼容读取</a>
+        <a class="btn" href="#TST01">看实测断言</a>
+      </div>
+      <div class="stats">
+        <div class="stat"><b>5→1</b><span>Replace 合并（同桶 5 条压 1 条）</span></div>
+        <div class="stat"><b>3/3/1</b><span>24 条上限自动切包</span></div>
+        <div class="stat"><b>1200 B</b><span>单报文字节上限</span></div>
+        <div class="stat"><b>未知→跳过</b><span>未知原子/字段不致命</span></div>
+        <div class="stat"><b>v2..v2</b><span>版本区间校验</span></div>
+        <div class="stat"><b>39</b><span>实测断言通过</span></div>
+      </div>
+    </section>
+    <div id="nores">没有匹配的条目</div>
+
+    <section class="sec" id="grp-atm">
+      <div class="sec-head"><span class="no">原子</span><div><h2>一个操作 = 一个原子</h2><div class="sub">契约先行，代码后写</div></div></div>
+
+      <div class="block" id="ATM01">
+        <div class="block-head"><button class="guid" data-guid="ATM01">ATM01</button><h3>为什么要原子化</h3>
+          <span class="tagline">模块组合原子，而不是模块互相调用</span></div>
+        <figure>
+          <svg viewBox="0 0 900 210" role="img" aria-label="原子与模块的关系">
+            <rect class="dgb vi" x="20" y="30" width="200" height="70" rx="9"/>
+            <text class="dghead" x="120" y="56" text-anchor="middle">客户端模块</text>
+            <text class="dgt sm" x="120" y="78" text-anchor="middle">组合原子 → 意图</text>
+            <rect class="dgb cy" x="20" y="120" width="200" height="70" rx="9"/>
+            <text class="dghead" x="120" y="146" text-anchor="middle">主机模块</text>
+            <text class="dgt sm" x="120" y="168" text-anchor="middle">组合原子 → 权威结果</text>
+
+            <rect class="dgb gr" x="280" y="30" width="280" height="160" rx="10"/>
+            <text class="dghead" x="420" y="56" text-anchor="middle">原子库（唯一策略来源）</text>
+            <text class="dgt sm" x="420" y="82" text-anchor="middle">校验 · 应用 · 合并 · 幂等 · 审计</text>
+            <text class="dgt sm" x="420" y="104" text-anchor="middle">12 个契约字段声明全部策略</text>
+            <text class="dgt sm" x="420" y="126" text-anchor="middle">纯函数：可单测、可主机/客户端复用</text>
+            <text class="dgt sm" x="420" y="152" text-anchor="middle">合并器/校验器/审计器都读它</text>
+            <text class="dgt sm" x="420" y="174" text-anchor="middle">模块之间不互相引用</text>
+
+            <rect class="dgb am" x="620" y="30" width="260" height="70" rx="9"/>
+            <text class="dghead" x="750" y="56" text-anchor="middle">合并器（Hz 分桶）</text>
+            <text class="dgt sm" x="750" y="78" text-anchor="middle">同 tier + 同投递类才合并</text>
+            <rect class="dgb" x="620" y="120" width="260" height="70" rx="9"/>
+            <text class="dghead" x="750" y="146" text-anchor="middle">信封 v2（TLV）</text>
+            <text class="dgt sm" x="750" y="168" text-anchor="middle">未知字段/原子按长度跳过</text>
+
+            <path class="dgl vi" d="M222 65H278"/><path class="dgl cy" d="M222 155H278"/>
+            <path class="dgl gr" d="M562 100H618"/><path class="dgl am" d="M618 168H562"/>
+          </svg>
+          <figcaption>模块只组合原子；原子只声明契约；合并器与信封只读契约</figcaption>
+        </figure>
+        <div class="callout"><span class="t">关键约束</span>
+          原子**不持有状态**、不引用别的原子；跨原子协作由模块编排，编排本身是一门可测试的组合（否则耦合会从模块转移到编排）。</div>
+      </div>
+
+      <div class="block" id="ATM02">
+        <div class="block-head"><button class="guid" data-guid="ATM02">ATM02</button><h3>五类原子</h3>
+          <span class="tagline">粒度只到这五档</span></div>
+        <div class="tw"><table>
+          <thead><tr><th class="mono">种类</th><th>谁执行</th><th>投递</th><th>合并</th><th>典型</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">Query</td><td>双方（只读）</td><td>可丢弃</td><td>Replace</td><td>状态查询、指标采样</td></tr>
+            <tr><td class="mono">Intent</td><td>主机执行 + 客户端可预测</td><td>不可丢弃</td><td>NoMerge（急件）</td><td>挖掘 / 放置 / 攻击请求</td></tr>
+            <tr><td class="mono">Effect</td><td>主机</td><td>不可丢弃</td><td>Replace</td><td>挖掘结果、爆炸结果</td></tr>
+            <tr><td class="mono">State</td><td>主机产出</td><td>可丢弃</td><td>Replace / CoalesceByKey</td><td>位置、动物快照、地形批次</td></tr>
+            <tr><td class="mono">Ledger</td><td>主机</td><td>不可丢弃</td><td>NoMerge（幂等键）</td><td>容器事务、商城发放</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+
+      <div class="block" id="ATM03">
+        <div class="block-head"><button class="guid" data-guid="ATM03">ATM03</button><h3>契约字段（12 个）</h3>
+          <span class="tagline">合并器/校验器/审计器都从这里读</span></div>
+        <div class="tw"><table>
+          <thead><tr><th class="mono">字段</th><th>作用</th><th class="mono">字段</th><th>作用</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">Id / Version</td><td>身份 + 单原子版本（兼容靠它）</td><td class="mono">Merge</td><td>Replace / CoalesceByKey / Accumulate / NoMerge</td></tr>
+            <tr><td class="mono">Kind</td><td>Query/Intent/Effect/State/Ledger</td><td class="mono">Order</td><td>None / PerActor / PerShard</td></tr>
+            <tr><td class="mono">Authority</td><td>谁能执行、能否预测</td><td class="mono">Reconcile</td><td>丢包后靠谁收敛</td></tr>
+            <tr><td class="mono">Delivery</td><td>可丢弃 / 不可丢弃</td><td class="mono">Tier</td><td>100/16/8/4/2/1 Hz</td></tr>
+            <tr><td class="mono">Capability</td><td>所需能力（模块下线时自动缺席）</td><td class="mono">Journal</td><td>落到状态变化队列的哪一类</td></tr>
+            <tr><td class="mono">MaxPayload</td><td>单原子负载上限（防畸形）</td><td class="mono">Urgent</td><td>绕过合并窗口立即发送</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+
+      <div class="block" id="ATM04">
+        <div class="block-head"><button class="guid" data-guid="ATM04">ATM04</button><h3>多版本共存与降级解析</h3>
+          <span class="tagline">同一 atomId 允许多个版本</span></div>
+        <div class="grid g3">
+          <div class="tile"><h5>解析规则</h5><p>精确版本优先；否则取「不高于请求版本的最高已知版本」，并标记 <code>VersionDowngraded</code>。</p></div>
+          <div class="tile"><h5>启动自检</h5><p>同一原子跨版本若改了 <b>Kind</b> / <b>Delivery</b> / <b>Tier</b> → 直接报错（会破坏合并与语义）。</p></div>
+          <div class="tile"><h5>实测</h5><p>注册 v1+v2，请求 v3 → 解析到 v2；注册重复版本被拒；Kind 变更被自检抓出。</p></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="sec" id="grp-mrg">
+      <div class="sec-head"><span class="no">合并</span><div><h2>Hz 分桶：同一个 tick 到期的才合并</h2><div class="sub">把你的"1Hz 遇上 8Hz"落成规则</div></div></div>
+
+      <div class="block" id="MRG01">
+        <div class="block-head"><button class="guid" data-guid="MRG01">MRG01</button><h3>分桶合并（可播放）</h3>
+          <span class="tagline">看每次发送省掉多少条</span></div>
+        <div class="anim" data-anim="merge"></div>
+      </div>
+
+      <div class="block" id="MRG02">
+        <div class="block-head"><button class="guid" data-guid="MRG02">MRG02</button><h3>六条合并规则</h3></div>
+        <div class="tw"><table>
+          <thead><tr><th class="mono">#</th><th>规则</th><th>不遵守的后果</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">1</td><td>只合并同投递类（可丢弃↔可丢弃）</td><td>关键数据被连带丢弃，或高频状态被重传拖死</td></tr>
+            <tr><td class="mono">2</td><td>只合并同 tier 桶</td><td>低频数据被高频包提前发/重复发，或一起丢</td></tr>
+            <tr><td class="mono">3</td><td>每条原子保留自己的 Seq</td><td>丢一个包作废无关原子；重试放大</td></tr>
+            <tr><td class="mono">4</td><td>合并策略由契约声明</td><td>把累加当替换 → 丢事件；把替换当累加 → 状态爆炸</td></tr>
+            <tr><td class="mono">5</td><td>急件绕过窗口</td><td>操作手感被合并窗口拖高</td></tr>
+            <tr><td class="mono">6</td><td>成包仍受条数 + 字节双上限</td><td>合并本身成为放大攻击面</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+
+      <div class="block" id="MRG03">
+        <div class="block-head"><button class="guid" data-guid="MRG03">MRG03</button><h3>四种合并策略</h3>
+          <span class="tagline">实测：5 条 → 1 条；3 条 → 2 条</span></div>
+        <div class="tw"><table>
+          <thead><tr><th class="mono">策略</th><th>行为</th><th>适合</th><th class="mono">实测</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">Replace</td><td>同原子同桶只留最后一条</td><td>状态快照</td><td class="mono">5 → 1（Seq=最后）</td></tr>
+            <tr><td class="mono">CoalesceByKey</td><td>按 MergeKey 分桶，每桶留最后一条</td><td>同一对象的多条更新</td><td class="mono">3 → 2（2 个 key）</td></tr>
+            <tr><td class="mono">Accumulate</td><td>合成 1 条 + <code>Count=N</code>（接收端应用 N 次）</td><td>伤害跳动、计数类</td><td class="mono">4 → 1（Count=4）</td></tr>
+            <tr><td class="mono">NoMerge</td><td>逐条保留（受包上限切分）</td><td>事件、账本</td><td class="mono">7 → 3 包（3/3/1）</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+
+      <div class="block" id="MRG04">
+        <div class="block-head"><button class="guid" data-guid="MRG04">MRG04</button><h3>包上限与背压</h3></div>
+        <div class="grid g3">
+          <div class="tile"><h5>双上限</h5><span class="big">24 条 / 1200 B</span>
+            <p>超限自动切成多个包；字节预算按「信封头 + 每原子固定开销 + 负载」估。</p></div>
+          <div class="tile"><h5>可丢弃桶满</h5><span class="big">丢旧保新</span>
+            <p>保证最新状态一定在包里（实测保留 Seq=9）。</p></div>
+          <div class="tile"><h5>不可丢弃桶满</h5><span class="big">拒新（背压）</span>
+            <p>绝不静默丢关键数据；丢弃计数进诊断（实测丢 6 条被计数）。</p></div>
+        </div>
+      </div>
+
+      <div class="block" id="MRG05">
+        <div class="block-head"><button class="guid" data-guid="MRG05">MRG05</button><h3>丢包不连坐（可播放）</h3>
+          <span class="tagline">可丢弃包被丢，可靠事件照常到达；状态靠下一帧收敛</span></div>
+        <div class="anim" data-anim="loss"></div>
+      </div>
+    </section>
+
+    <section class="sec" id="grp-env">
+      <div class="sec-head"><span class="no">兼容</span><div><h2>信封 v2：加字段不破兼容</h2><div class="sub">未知 = 跳过，不是错误</div></div></div>
+
+      <div class="block" id="ENV01">
+        <div class="block-head"><button class="guid" data-guid="ENV01">ENV01</button><h3>信封 v2 结构</h3>
+          <span class="tagline">嵌套 TLV：信封一层，原子负载一层</span></div>
+        <figure>
+          <svg viewBox="0 0 900 240" role="img" aria-label="信封 v2 结构">
+            <rect class="dgb vi" x="20" y="26" width="860" height="42" rx="8"/>
+            <text class="dgt" x="34" y="46">信封头：[ver:1][flags:1][atomCount:2][epoch:4][packetSeq:varint][tier:1]</text>
+            <text class="dgt sm" x="34" y="62">ver 决定能否解析；区间外明确拒绝，更新的版本仍尝试解析并标记</text>
+
+            <rect class="dgb cy" x="20" y="80" width="860" height="46" rx="8"/>
+            <text class="dgt" x="34" y="100">原子头：[atomId:varint][atomVersion:1][actorId:zigzag][shardId:zigzag][seq:varint][bodyLen:varint]</text>
+            <text class="dgt sm" x="34" y="118">未知 atomId / 版本解析不到 → 按 bodyLen 整段跳过（记 UnknownAtoms）</text>
+
+            <rect class="dgb gr" x="20" y="138" width="860" height="46" rx="8"/>
+            <text class="dgt" x="34" y="158">原子负载：[fieldCount:varint] 每条字段 [tag:varint][type:1][len:varint][value]</text>
+            <text class="dgt sm" x="34" y="176">未知 tag / 未知 type → 按 len 跳过（记 UnknownFieldCount）；缺字段用默认值</text>
+
+            <rect class="dgb am" x="20" y="196" width="860" height="34" rx="8"/>
+            <text class="dgt sm" x="34" y="217">解析失败一律返回「Accepted=false + 原因」，不抛异常；截断/篡改/超限都有独立原因码</text>
+          </svg>
+          <figcaption>信封与负载两层都是 TLV，所以新旧两端可以共存</figcaption>
+        </figure>
+      </div>
+
+      <div class="block" id="ENV02">
+        <div class="block-head"><button class="guid" data-guid="ENV02">ENV02</button><h3>兼容读取（可播放）</h3>
+          <span class="tagline">新端多两个字段 + 一个未知原子，旧端照样解析</span></div>
+        <div class="anim" data-anim="compat"></div>
+      </div>
+
+      <div class="block" id="ENV03">
+        <div class="block-head"><button class="guid" data-guid="ENV03">ENV03</button><h3>版本区间与拒绝</h3></div>
+        <div class="tw"><table>
+          <thead><tr><th>输入</th><th>本端区间</th><th>结果</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">ver = 2</td><td class="mono">2..2</td><td>Accepted</td></tr>
+            <tr><td class="mono">ver = 3（未来）</td><td class="mono">2..2</td><td>Accepted + <code>FromNewerVersion=true</code>（交给上层策略）</td></tr>
+            <tr><td class="mono">ver = 1（过旧）</td><td class="mono">2..2</td><td>Rejected + 原因「信封版本过旧」</td></tr>
+            <tr><td class="mono">任意截断（0..N-1 字节）</td><td class="mono">2..2</td><td>全部 Rejected，<b>0 次异常</b>（实测 24/24）</td></tr>
+            <tr><td class="mono">bodyLen 声称超限</td><td class="mono">≤64 KiB</td><td>Rejected + 「原子负载超限」</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+    </section>
+
+    <section class="sec" id="grp-tst">
+      <div class="sec-head"><span class="no">实测</span><div><h2>断言与来源</h2><div class="sub">39 条全过</div></div></div>
+
+      <div class="block" id="TST01">
+        <div class="block-head"><button class="guid" data-guid="TST01">TST01</button><h3>断言清单</h3></div>
+        <div class="tw"><table>
+          <thead><tr><th class="mono">组</th><th>覆盖</th><th class="mono">条数</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">A</td><td>分桶到期、Replace / CoalesceByKey、tier 不混装</td><td class="mono">7</td></tr>
+            <tr><td class="mono">A2</td><td>桶对齐：同窗口不同 tick 到达合并、跨窗口不合并</td><td class="mono">2</td></tr>
+            <tr><td class="mono">B</td><td>投递类隔离、急件绕过窗口</td><td class="mono">3</td></tr>
+            <tr><td class="mono">C</td><td>条数/字节切包、未注册原子拒绝、两种背压</td><td class="mono">5</td></tr>
+            <tr><td class="mono">D</td><td>丢包不连坐、下一帧快照收敛</td><td class="mono">3</td></tr>
+            <tr><td class="mono">E</td><td>七种字段类型往返</td><td class="mono">4</td></tr>
+            <tr><td class="mono">F</td><td>未知字段跳过、未知原子跳过、新版本可用、过旧拒绝</td><td class="mono">6</td></tr>
+            <tr><td class="mono">G</td><td>任意截断 0 异常、篡改不崩</td><td class="mono">3</td></tr>
+            <tr><td class="mono">H</td><td>多版本共存、降级解析、注册自检</td><td class="mono">6</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+
+      <div class="block" id="SRC01">
+        <div class="block-head"><button class="guid" data-guid="SRC01">SRC01</button><h3>源码与索引</h3></div>
+        <div class="tw"><table>
+          <thead><tr><th class="mono">文件 / 标记</th><th>内容</th></tr></thead>
+          <tbody>
+            <tr><td class="src">Mod/SuMultiplayer/Atoms/AtomTypes.cs</td><td>ATM01–ATM04：原子种类、契约、注册表、自检</td></tr>
+            <tr><td class="src">Mod/SuMultiplayer/Atoms/AtomMerger.cs</td><td>MRG01–MRG05：分桶合并、策略、上限与背压</td></tr>
+            <tr><td class="src">Mod/SuMultiplayer/Protocol/Envelope.cs</td><td>ENV01–ENV03：信封 v2、TLV 编解码、兼容读取</td></tr>
+            <tr><td class="src">本页</td><td>GUID：ATM01–04 · MRG01–05 · ENV01–03 · TST01 · SRC01（共 13 个）</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+    </section>
+
+    <footer>原子契约 · Hz 合并 · 兼容读取 · 全部数据来自本仓库实测（39 条断言）</footer>
+  </main>
+</div>
+<div class="toast" id="toast">已复制</div>
+<div class="totop" id="totop">↑</div>
+<script>
+(function () {
+  "use strict";
+  function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+  function rbox(x, y, w, h, cls, rx) {
+    return '<rect class="dgb ' + (cls || "") + '" x="' + x + '" y="' + y + '" width="' + w +
+      '" height="' + h + '" rx="' + (rx === undefined ? 9 : rx) + '"/>';
+  }
+  function rtxt(x, y, s, cls, anchor) {
+    return '<text class="' + (cls || "dgt") + '" x="' + x + '" y="' + y + '"' +
+      (anchor ? ' text-anchor="' + anchor + '"' : "") + ">" + esc(s) + "</text>";
+  }
+  function svgOf(w, h, body) { return '<svg viewBox="0 0 ' + w + " " + h + '" role="img">' + body + "</svg>"; }
+
+  // 顶层：GUID 复制 / 搜索 / 侧栏 / 进度
+  var toast = document.getElementById("toast"), timer = 0;
+  function say(m) { toast.textContent = m; toast.classList.add("on"); clearTimeout(timer); timer = setTimeout(function () { toast.classList.remove("on"); }, 1400); }
+  document.addEventListener("click", function (ev) {
+    var el = ev.target && ev.target.closest ? ev.target.closest(".guid") : null;
+    if (!el) return;
+    var g = el.getAttribute("data-guid") || el.textContent.trim();
+    function done() { el.classList.add("copied"); say("已复制 " + g); setTimeout(function () { el.classList.remove("copied"); }, 900); }
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(g).then(done, done);
+    else done();
+  });
+  var input = document.getElementById("q"), nores = document.getElementById("nores");
+  var blocks = [].slice.call(document.querySelectorAll(".block"));
+  var secs = [].slice.call(document.querySelectorAll("section.sec"));
+  function filter() {
+    var q = (input.value || "").trim().toLowerCase();
+    if (!q) { blocks.forEach(function (b) { b.classList.remove("hidden"); }); secs.forEach(function (s) { s.classList.remove("hidden"); }); nores.style.display = "none"; return; }
+    var hits = 0;
+    blocks.forEach(function (b) {
+      var hit = b.textContent.toLowerCase().indexOf(q) >= 0 || b.id.toLowerCase().indexOf(q) >= 0;
+      b.classList.toggle("hidden", !hit); if (hit) hits++;
+    });
+    secs.forEach(function (s) {
+      s.classList.toggle("hidden", !s.querySelectorAll(".block:not(.hidden)").length);
+    });
+    nores.style.display = hits ? "none" : "block";
+  }
+  input.addEventListener("input", filter);
+  document.addEventListener("keydown", function (e) { if (e.key === "/" && document.activeElement !== input) { e.preventDefault(); input.focus(); } });
+  var links = {};
+  [].forEach.call(document.querySelectorAll("#toc a"), function (a) { links[a.getAttribute("href").slice(1)] = a; });
+  var prog = document.getElementById("prog"), top = document.getElementById("totop");
+  document.addEventListener("scroll", function () {
+    var max = document.documentElement.scrollHeight - window.innerHeight;
+    prog.style.width = (max > 0 ? (window.scrollY / max) * 100 : 0) + "%";
+    top.classList.toggle("on", window.scrollY > 500);
+  }, { passive: true });
+  top.addEventListener("click", function () { window.scrollTo({ top: 0, behavior: "smooth" }); });
+  if ("IntersectionObserver" in window) {
+    var io = new IntersectionObserver(function (es) {
+      es.forEach(function (en) {
+        if (!en.isIntersecting) return;
+        var a = links[en.target.id]; if (!a) return;
+        [].forEach.call(document.querySelectorAll("#toc a.active"), function (x) { x.classList.remove("active"); });
+        a.classList.add("active");
+      });
+    }, { rootMargin: "-70px 0px -74% 0px" });
+    blocks.forEach(function (b) { if (links[b.id]) io.observe(b); });
+  }
+
+  /* ================= 合并模拟（纯函数，可拖动进度条） ================= */
+  var TPS = 100;                       // 每秒 100 tick
+  var ATOMS = {
+    state16: { id: 2, name: "State/16Hz", tier: 16, delivery: "可丢弃", merge: "Replace", period: 6, color: "#0e7fa8" },
+    effect8: { id: 1, name: "Effect/8Hz", tier: 8, delivery: "不可丢弃", merge: "Replace", period: 12, color: "#0d8a63" },
+    event4: { id: 7, name: "Event/4Hz", tier: 4, delivery: "不可丢弃", merge: "NoMerge", period: 25, color: "#c23a55" },
+    key1: { id: 3, name: "State/1Hz(key)", tier: 1, delivery: "可丢弃", merge: "Coalesce", period: 50, color: "#a9740a" }
+  };
+  var KEYS = ["state16", "effect8", "event4", "key1"];
+
+  function bucketTicks(tier) {
+    var t = Math.floor(TPS / tier);
+    return (TPS % tier === 0) ? t : t + 1;
+  }
+  function simulate(maxTick) {
+    var lanes = {}, packets = [], samples = 0, atomsOut = 0, packetsOut = 0;
+    KEYS.forEach(function (k) { lanes[k] = []; });
+    // 1) 采样
+    var pending = [];
+    KEYS.forEach(function (k) {
+      var a = ATOMS[k];
+      for (var tick = 0; tick <= maxTick; tick += a.period) {
+        var bt = bucketTicks(a.tier);
+        var due = (Math.floor(tick / bt) + 1) * bt;   // 对齐到全局窗口：同窗口到达的才会合并
+        var key = (k === "key1") ? (tick % 100 === 0 ? 11 : 22) : 0;
+        pending.push({ k: k, a: a, tick: tick, due: due, key: key, seq: lanes[k].length + 1 });
+        lanes[k].push({ tick: tick, due: due, seq: lanes[k].length + 1, packet: -1 });
+        samples++;
+      }
+    });
+    // 2) 分桶（同 tier + 同投递类），到 tick 出包
+    var buckets = {};
+    pending.sort(function (x, y) { return x.due - y.due || x.tick - y.tick; });
+    pending.forEach(function (p) {
+      var bkey = p.a.tier + "|" + p.a.delivery;
+      if (!buckets[bkey]) buckets[bkey] = [];
+      buckets[bkey].push(p);
+    });
+    var dueTicks = [];
+    Object.keys(buckets).forEach(function (bk) { buckets[bk].forEach(function (p) { if (dueTicks.indexOf(p.due) < 0) dueTicks.push(p.due); }); });
+    dueTicks.sort(function (a, b) { return a - b; });
+    dueTicks.forEach(function (tick) {
+      Object.keys(buckets).forEach(function (bk) {
+        var group = buckets[bk].filter(function (p) { return p.due === tick; });
+        if (!group.length) return;
+        // 按原子分组套策略
+        var byAtom = {};
+        group.forEach(function (p) { (byAtom[p.k] = byAtom[p.k] || []).push(p); });
+        var merged = [];
+        Object.keys(byAtom).forEach(function (k) {
+          var list = byAtom[k], a = ATOMS[k];
+          if (a.merge === "NoMerge") list.forEach(function (p) { merged.push(p); });
+          else if (a.merge === "Replace") merged.push(list[list.length - 1]);
+          else {
+            var byKey = {};
+            list.forEach(function (p) { byKey[p.key] = p; });
+            Object.keys(byKey).forEach(function (kk) { merged.push(byKey[kk]); });
+          }
+        });
+        var packetIndex = packets.length;
+        packets.push({ tick: tick, tier: group[0].a.tier, delivery: group[0].a.delivery, atoms: merged });
+        packetsOut++; atomsOut += merged.length;
+        merged.forEach(function (p) { p.packet = packetIndex; p.reduced = true; });
+        group.forEach(function (p) { if (merged.indexOf(p) < 0) p.droppedByMerge = true; });
+      });
+    });
+    return { lanes: lanes, packets: packets, samples: samples, atomsOut: atomsOut, packetsOut: packetsOut };
+  }
+
+  /* ============ 可播放图解播放器 ============ */
+  function buildAnim(def, host) {
+    host.innerHTML = '<div class="figsvg"></div><div class="playbar">' +
+      '<button class="btn pri js-play" type="button">▶ 播放</button>' +
+      '<button class="btn js-reset" type="button">↺ 重置</button>' +
+      '<input type="range" class="js-seek" min="0" max="1000" value="0">' +
+      '<span class="phase"></span>' + (def.extra || "") + "</div>" +
+      '<figcaption>' + def.cap + "</figcaption>";
+    var fig = host.querySelector(".figsvg"), phase = host.querySelector(".phase");
+    var seek = host.querySelector(".js-seek"), btn = host.querySelector(".js-play");
+    var t = 0, playing = false, last = 0;
+    function draw() {
+      fig.innerHTML = def.draw.call(def, t, host);
+      phase.textContent = def.phase.call(def, t, host);
+      seek.value = String(Math.round((t / def.duration) * 1000));
+    }
+    function loop(now) {
+      if (!playing) return;
+      if (!last) last = now;
+      t += Math.min((now - last) / 1000, 0.1); last = now;
+      if (t >= def.duration) { t = def.duration; playing = false; btn.textContent = "▶ 重播"; }
+      draw();
+      if (playing) requestAnimationFrame(loop); else last = 0;
+    }
+    btn.addEventListener("click", function () {
+      if (playing) { playing = false; btn.textContent = "▶ 继续"; return; }
+      if (t >= def.duration) t = 0;
+      playing = true; last = 0; btn.textContent = "⏸ 暂停"; requestAnimationFrame(loop);
+    });
+    host.querySelector(".js-reset").addEventListener("click", function () { playing = false; t = 0; btn.textContent = "▶ 播放"; draw(); });
+    seek.addEventListener("input", function () { playing = false; btn.textContent = "▶ 继续"; t = def.duration * (parseInt(seek.value, 10) / 1000); draw(); });
+    [].forEach.call(host.querySelectorAll("input,select"), function (el) { el.addEventListener("change", draw); });
+    if (def.bind) def.bind(host, draw);
+    draw();
+  }
+
+  var ANIM = {};
+
+  /* ---------- MRG01：分桶合并 ---------- */
+  ANIM.merge = {
+    w: 900, h: 360, duration: 14.0,
+    cap: "四条数据流按 Hz 分桶：到期的桶才成包，同一个桶里按策略压缩；右侧实时统计省了多少",
+    phase: function (t) {
+      var tick = Math.min(120, Math.floor((t / this.duration) * 120));
+      var s = simulate(tick);
+      var saved = s.samples ? (1 - s.atomsOut / s.samples) * 100 : 0;
+      return "tick " + tick + "/120 · 采样 " + s.samples + " 条 → 发送 " + s.atomsOut + " 条（省 " +
+        saved.toFixed(0) + "%）· 报文 " + s.packetsOut + " 个";
+    },
+    draw: function (t) {
+      var tick = Math.min(120, Math.floor((t / this.duration) * 120));
+      var s = simulate(tick);
+      var s2 = simulate(Math.max(0, tick - 1));
+      var s = s2 && false ? s2 : s;
+      var x0 = 40, laneW = 500;
+      var body = rtxt(40, 26, "时间轴（图上 120 tick = 1.2 秒 @100 tick/s）", "dghead");
+      KEYS.forEach(function (k, row) {
+        var a = ATOMS[k], y = 46 + row * 44;
+        body += rbox(x0, y, laneW, 36, "", 8);
+        body += rtxt(x0 + 8, y + 15, a.name, "dgt sm");
+        body += rtxt(x0 + 8, y + 30, a.delivery + " / " + a.merge, "dgt sm");
+        s.lanes[k].forEach(function (p) {
+          if (p.tick > tick) return;
+          var px = x0 + 120 + (p.tick / 120) * (laneW - 130);
+          var sent = p.packet >= 0;
+          body += '<circle cx="' + px.toFixed(1) + '" cy="' + (y + 18) + '" r="' + (sent ? 4.2 : 2.6) +
+            '" fill="' + (p.droppedByMerge ? "#c9ccd6" : a.color) + '" opacity="' + (sent ? 1 : .45) + '"/>';
+        });
+      });
+      body += '<line x1="' + (x0 + 120) + '" y1="40" x2="' + (x0 + 120) + '" y2="230" stroke="#c3d1e6" stroke-dasharray="4 4"/>';
+      body += rtxt(x0 + 120, 240, "首个桶到期", "dgt sm");
+
+      body += rtxt(560, 26, "已发出的报文", "dghead");
+      var shown = s.packets.slice(-7);
+      shown.forEach(function (p, i) {
+        var y = 46 + i * 30;
+        var cls = p.delivery === "可丢弃" ? "cy" : "gr";
+        body += rbox(560, y, 320, 24, cls, 6);
+        body += rtxt(570, y + 16, "tick " + String(p.tick).padStart(3, " ") + " · " + p.tier + "Hz · " +
+          p.delivery + " · " + p.atoms.length + " 条", "dgt sm");
+      });
+      if (!shown.length) body += rtxt(570, 66, "（还没有到期的桶）", "dgt sm");
+
+      var saved = s.samples ? (1 - s.atomsOut / s.samples) * 100 : 0;
+      body += rbox(40, 256, 840, 88, "", 10);
+      body += rtxt(56, 282, "采样 " + s.samples + " 条 · 合并后发出 " + s.atomsOut + " 条 · 省 " + saved.toFixed(0) +
+        "% · 报文 " + s.packetsOut + " 个", "dgt");
+      body += rtxt(56, 306, "灰点 = 被合并策略吸收掉的样本（不是丢包）；同桶只留最后一条 → 接收端按自己的 Seq 收敛", "dgt sm");
+      body += rtxt(56, 330, "规则 1 只合同投递类 · 规则 2 只合同 tier · 规则 3 每条原子自带 Seq · 规则 4 策略由契约声明", "dgt sm");
+      return svgOf(this.w, this.h, body);
+    }
+  };
+
+  /* ---------- MRG05：丢包不连坐 ---------- */
+  ANIM.loss = {
+    w: 900, h: 330, duration: 12.0,
+    cap: "同一个 tick 的「状态包」与「事件包」互不牵连：状态丢了自己被下一帧覆盖收敛，事件丢了会重传",
+    phase: function (t) {
+      var step = Math.min(6, Math.floor(t / 2));
+      var stateSeq = Math.min(6, Math.max(1, step));
+      var eventSent = step >= 1 ? (step >= 4 ? 2 : 1) : 0;
+      return "第 " + (step + 1) + " 轮 · 状态包 seq=" + stateSeq + " · 事件包 seq=" + eventSent +
+        " · 状态已丢 " + (step >= 1 ? 1 : 0) + " 次 · 事件重传 " + (step >= 4 ? 1 : 0) + " 次";
+    },
+    draw: function (t) {
+      var step = Math.min(6, Math.floor(t / 2));
+      var body = rtxt(40, 26, "发送端每轮产出两个包（不同投递类 → 必须分开）", "dghead");
+      for (var i = 0; i <= step; i++) {
+        var x = 60 + i * 92, y = 48;
+        var stateLost = (i === 0);
+        body += rbox(x, y, 76, 30, stateLost ? "rd" : "cy", 7);
+        body += rtxt(x + 38, y + 20, "状态 S" + (i + 1), "dgt sm", "middle");
+        body += rbox(x, y + 40, 76, 30, "gr", 7);
+        body += rtxt(x + 38, y + 60, "事件 E" + (i + 1), "dgt sm", "middle");
+        if (stateLost) {
+          body += rtxt(x + 38, y - 6, "✗ 丢", "dgt sm", "middle");
+        } else {
+          body += rtxt(x + 38, y - 6, "→", "dgt sm", "middle");
+        }
+        body += rtxt(x + 38, y + 92, "tick " + (i * 20), "dgt sm", "middle");
+      }
+      body += rbox(40, 190, 400, 118, "", 10);
+      body += rtxt(56, 214, "接收端：状态（可丢弃）", "dghead");
+      body += rtxt(56, 240, "已应用 Seq = " + Math.max(1, step + 1) + "（S1 丢了，但 S2 的 Seq 更大 → 直接覆盖收敛）", "dgt sm");
+      body += rtxt(56, 262, "缺口 = 可解释（不是错误）：状态类允许跳号，靠下一帧收敛", "dgt sm");
+      body += rtxt(56, 288, "实测：丢掉可丢弃状态包后，同 tick 的可靠事件仍然到达", "dgt sm");
+      body += rbox(460, 190, 420, 118, "", 10);
+      body += rtxt(476, 214, "接收端：事件（不可丢弃）", "dghead");
+      body += rtxt(476, 240, step >= 4 ? "E1 未确认 → 触发重传 → 已收到（重复执行被幂等键挡住）" : "E1 已确认收到（走可靠通道）", "dgt sm");
+      body += rtxt(476, 262, "缺口 = 必须补：按 PerActor 序号水位线判定，不允许跳号", "dgt sm");
+      body += rtxt(476, 288, "实测：NoMerge → 事件永远单独成包，不会被合并吞掉", "dgt sm");
+      return svgOf(this.w, this.h, body);
+    }
+  };
+
+  /* ---------- ENV02：兼容读取 ---------- */
+  ANIM.compat = {
+    w: 900, h: 350, duration: 10.0,
+    cap: "同一个报文字节流：本端不认的原子整段跳过、不认的字段按长度跳过，已知部分照常解析",
+    extra: '<label class="xtra"><input type="checkbox" class="js-x-know3"> 本端也认得第 3 个字段</label>',
+    parse: function (knownFields) {
+      // 手工构造"字节流模型"：三段
+      var items = [
+        { kind: "atom", atom: 1, ver: 2, fields: [{ tag: 1, name: "cells", value: "42", known: true },
+          { tag: 2, name: "seq", value: "8891", known: true },
+          { tag: 3, name: "tick", value: "556", known: knownFields >= 3 }] },
+        { kind: "atom", atom: 555, ver: 9, fields: [], unknown: true },
+        { kind: "atom", atom: 2, ver: 1, fields: [{ tag: 1, name: "playerX", value: "-128", known: true }] }
+      ];
+      var bytes = 12, unknownFields = 0, skipped = 0, known = 0, values = [];
+      items.forEach(function (it) {
+        bytes += 6;
+        if (it.unknown) { bytes += 8; skipped += 8; return; }
+        it.fields.forEach(function (f) {
+          bytes += 4;
+          if (f.known) { known++; values.push(f.name + "=" + f.value); bytes += f.value.length; }
+          else { unknownFields++; skipped += f.value.length; bytes += f.value.length; }
+        });
+      });
+      return { items: items, bytes: bytes, unknownFields: unknownFields, skipped: skipped, known: known, values: values };
+    },
+    phase: function (t, host) {
+      var known = host.querySelector(".js-x-know3").checked ? 3 : 2;
+      var r = this.parse(known);
+      var step = Math.floor((t / this.duration) * (r.items.length + 1));
+      return "扫描 " + Math.min(step, r.items.length) + "/" + r.items.length + " 个原子 · 已知字段 " + r.known +
+        " · 跳过未知字段 " + r.unknownFields + " · 跳过 " + r.skipped + " B · Rejected=false";
+    },
+    draw: function (t, host) {
+      var known = host.querySelector(".js-x-know3").checked ? 3 : 2;
+      var r = this.parse(known);
+      var step = Math.floor((t / this.duration) * (r.items.length + 1));
+      var body = rtxt(40, 26, "收到的字节流（新端发来：多一个字段 + 一个本端不认识的原子）", "dghead");
+      var x = 40;
+      r.items.forEach(function (it, idx) {
+        var w = it.unknown ? 110 : 60 + it.fields.length * 78;
+        var active = idx === step;
+        var cls = it.unknown ? "am" : "cy";
+        body += '<rect class="dgb ' + cls + '" x="' + x + '" y="42" width="' + w + '" height="52" rx="7" opacity="' +
+          (active ? 1 : .75) + '" stroke-width="' + (active ? 2.4 : 1.2) + '"/>';
+        if (it.unknown) {
+          body += rtxt(x + 8, 62, "atomId 555", "dgt sm");
+          body += rtxt(x + 8, 82, "整段跳过 8 B", "dgt sm");
+        } else {
+          body += rtxt(x + 8, 62, "atom " + it.atom + " v" + it.ver, "dgt sm");
+          it.fields.forEach(function (f, fi) {
+            body += rtxt(x + 8 + fi * 78, 82, (f.known ? "✓ " : "✗ ") + f.name, "dgt sm");
+          });
+        }
+        x += w + 8;
+      });
+      body += rbox(40, 116, 840, 92, "", 10);
+      body += rtxt(56, 140, "解析结果（旧端）", "dghead");
+      body += rtxt(56, 166, "已知原子 " + (r.items.length - 1) + " 个 · 已知字段 " + r.known + " 个 → " +
+        (r.values.length ? r.values.join(" · ") : "—"), "dgt");
+      body += rtxt(56, 190, "未知原子 1 个（整段跳过）· 未知字段 " + r.unknownFields + " 个（按长度跳过 " + r.skipped +
+        " B）· Accepted = true，没有抛异常", "dgt sm");
+      body += rbox(40, 220, 840, 100, "", 10);
+      body += rtxt(56, 244, "为什么这不是「凑合」而是「必须」", "dghead");
+      body += rtxt(56, 270, "① 旧端遇到新增字段不会误解：按 len 跳过，已知字段的偏移不受影响", "dgt sm");
+      body += rtxt(56, 292, "② 旧端遇到新原子不会断线：整段跳过并记录（UnknownAtoms），由能力协商决定要不要提示用户", "dgt sm");
+      body += rtxt(56, 314, "③ 钩住上面的「也认得第 3 个字段」：同一份字节流，解析出更多字段 —— 这正是前向兼容的判据", "dgt sm");
+      return svgOf(this.w, this.h, body);
+    }
+  };
+
+  [].forEach.call(document.querySelectorAll(".anim"), function (host) {
+    var def = ANIM[host.getAttribute("data-anim")];
+    if (def) buildAnim(def, host);
+  });
+})();
+</script>
+</body>
+</html>

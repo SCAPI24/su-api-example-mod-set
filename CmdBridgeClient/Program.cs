@@ -810,7 +810,7 @@ namespace CmdBridgeClient
   snapshot                    一次性拿全
   selftest                    注入点与可达性自检
   focusstatus                 焦点策略状态（mode/realFocus/detached/真实焦点来源）
-  focusrecover                焦点/鼠标卡住时自救：回到跟随引擎并恢复窗口状态
+  focusrecover                回到跟随引擎并**只回报**焦点状态（不抢真实窗口/鼠标；有命令行桥时禁止抢占）
   waitfor <condition> [--timeout ms]  条件等待（服务端逐帧求值，超时退出码 7）
       screen.animating.false | screen.is:<name> | element.present:<sel>
       element.hittable:<sel> | element.clickable:<sel> | modal.none | modal.is:<Type>

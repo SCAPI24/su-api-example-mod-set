@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    tsverify-before：改前对照（阴性对照）。
+    用**修复前的 Terrain 源码快照**（Terrain\*.cs，从 Mod 仓库索引取出）跑同一套断言，
+    应当有 5 条 K 节断言失败——这正是这些用例要抓住的旧 bug（窗口刷黄框）。
+    如果这里全绿，说明对照没有在测旧代码，必须先修复对照本身。
+
+    路径全部相对工程文件目录解析：
+      ..\..\..\Net\*.cs  =  Mod\SuMultiplayer\Net\*.cs（传输层用当前实现；本次对照只改 Terrain）
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>TsVerifyBefore</AssemblyName>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <StartupObject>TsVerify.Check</StartupObject>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Check.cs" />
+    <!-- 修复前的 Terrain 源码快照（本目录内，不随 mod 源码变化） -->
+    <Compile Include="Terrain\*.cs" />
+    <!-- 传输层用当前 mod 源码（本对照只验证 Terrain 的行为差异） -->
+    <Compile Include="..\..\..\Net\*.cs"
+             Exclude="..\..\..\Net\TransportPort.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Engine" Version="0.1.6" />
+  </ItemGroup>
+</Project>
