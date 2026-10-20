@@ -53,6 +53,24 @@
 相机回 H3 自己的 `ComponentPlayer` + 绑定前的 `ActiveCamera`（不可用时明确回退 `FppCamera` 并写日志）；
 模型重新加回渲染表；碰撞 / updateable / 输入 / 瞄准 / 命中测试 / 位置按绑定前快照写回。
 
+### 客户端死亡 / 复活：相机切 DeathCamera / FppCamera
+
+`MirrorCharacterEngine.ValidateBound` 每拍读客户端化身的权威生命
+（`ComponentHealth.Health <= 0`，`Engine/MirrorCharacterEngine.cs:731-732`），据此切换绑定分屏的相机：
+
+| 时点 | 动作 | 日志（`InfoOnce`，每个 `clientId` 只打一次） |
+|---|---|---|
+| 客户端角色死亡 | `ActiveCamera = DeathCamera`（引擎绕尸体视角），`Target` 仍是客户端 `ComponentPlayer`（`:734-746`） | `view-death-camera:<clientId>`：`角色死亡 → 镜像分屏已切到 DeathCamera（不再黑屏）` |
+| 客户端复活 | `ActiveCamera` 切回 `FppCamera`（客户端第一人称，`:756-767`） | `view-death-camera-restore:<clientId>`：`角色复活 → 镜像分屏已切回 FppCamera` |
+
+- 原因：客户端死亡后 `FppCamera` 仍按死亡模型读 `EyePosition`（眼睛位置失效），画面会黑；
+  `DeathCamera` 是引擎 `PlayerDead` 用的同一台相机（`PlayerData.cs:275-277`）。
+- `DeathCamera` 在相机复位判定里是合法状态（`:778-780`），不会被 `view-camera-reset` 切回第一人称。
+- 内部计数 `m_deathCameraShown` / `m_deathCameraRestored`（`:170-174`）只在代码里累加，**未输出到状态行**；
+  验收看首次切换的日志（同一 `clientId` 的重复死亡 / 复活不再重复打日志，相机仍照常切换）。
+- replace 与自动宿主共用同一段代码；`copy` 模式不绑视图，不切相机。死亡黑屏 / `YOU HAVE DIED`
+  大消息仍由反馈镜像写（见下文「反馈镜像」）。
+
 ## HUD：这个视图里显示什么、不显示什么
 
 - **来自「相机 Target = 客户端角色」的**（引擎按相机目标渲染）：
@@ -89,8 +107,8 @@ replace 期间 H3 自己的 `ComponentHealth.Update` / `ComponentVitalStats.Upda
 
 硬边界：**只读**客户端化身的 `ComponentHealth` / `ComponentVitalStats`（含私有
 `m_targetTemperature`）与 `PlayerData.Level`；**不写**它们的任何字段、不 `Injure`、不复制背包 / 衣物 /
-位置 / 动作（copy 模式才做）。**不切相机**（第三分屏的 `ActiveCamera` 必须留在客户端
-第一人称 `FppCamera`）。快捷栏仍然是 H3 自己的。
+位置 / 动作（copy 模式才做）。**反馈镜像不切相机**（正常游玩时第三分屏的 `ActiveCamera` 留在客户端
+第一人称 `FppCamera`）；客户端死亡 / 复活时的相机切换由 `MirrorCharacterEngine.ValidateBound` 负责（见上文「客户端死亡 / 复活：相机切 DeathCamera / FppCamera」）。快捷栏仍然是 H3 自己的。
 
 解绑时：把绑定前抓到的 HUD 显示值写回（血条 / 食物条 / 温度档位 / 等级文字）、
 清掉我们写过的黑屏 / 红屏 / 冰冻覆盖与死亡大消息，并停止更新（`MirrorViewFeedback.Release`）。
@@ -125,6 +143,9 @@ replace 模式还有第三分屏反馈镜像的计数（同一行状态行 / 10 
 侦测用细项 `viewIceWrites` / `viewRespawnClears` / `viewFrames`。
 未接入（配置关闭 / 已解绑）时全为 0，状态行不会缺键。
 
+replace 的相机切换另有内部计数 `m_deathCameraShown` / `m_deathCameraRestored`
+（只在代码里累加，未进状态行；日志见上文「客户端死亡 / 复活」）。
+
 ## 设备验证清单
 
 1. 主机有本地角色 `H3`（分屏里能看到它），客户端加入房间；
@@ -136,12 +157,16 @@ replace 模式还有第三分屏反馈镜像的计数（同一行状态行 / 10 
 7. 快捷栏仍是 H3 自己的（replace 不复制背包）；血条 / 食物条 / 温度档位 / 等级文字
    由反馈镜像每拍跟客户端（见上文"反馈镜像"）；
 8. **客户端被打掉血**：第三分屏闪红 + 血条下降 / 闪烉（与客户端自己的屏幕同一套公式）；
-9. **客户端死亡**：第三分屏黑屏 + "YOU HAVE DIED" + 死因（不出现 "Tap to respawn"）；
-10. **客户端复活**：黑屏 / 大消息立刻消失，血条回到 1；
+9. **客户端死亡**：主机日志出现 `view-death-camera` → 第三分屏已切到 `DeathCamera`（绕尸体）；
+   死亡黑屏 + "YOU HAVE DIED" + 死因仍由反馈镜像显示（不出现 "Tap to respawn"）；
+10. **客户端复活**：主机日志出现 `view-death-camera-restore` → 相机切回 `FppCamera`；
+   黑屏 / 大消息立刻消失，血条回到 1；
 11. **H3 自己不受影响**：绑定期间打 H3 不会让第三分屏亢血（镙到的是客户端）；
 12. 客户端离开 / 关房 / 退世界 / 关配置后：`mirrorUnbind … restored=True viewRestored=True bodyRestored=True`，
     H3 恢复渲染 / 碰撞 / 自己的第一人称视图，位置与背包不变；
     红屏 / 黑屏 / 死亡大消息清除，HUD 显示值写回绑定前的值（血条 / 食物条 / 温度档位 / 等级文字）。
+13. **客户端死亡姿态**：客户端角色在死亡屏期间呈躺姿、复活后站起（从另一客户端或主机非镜像分屏
+    观察，或用 `sccmd players` 读该角色 `action.deathPhase` 由 1 回 0；见 [`combat-and-death.md`](combat-and-death.md)）。
 
 ## 镜像宿主（`mirrorcharacterauto`，**默认开启**）：客户端加入时主机自动建一个真实本地角色
 

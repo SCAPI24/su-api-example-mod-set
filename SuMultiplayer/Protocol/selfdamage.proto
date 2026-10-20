@@ -1,0 +1,82 @@
+syntax = "proto3";
+
+package sump.selfdamage;
+
+option csharp_namespace = "SuMultiplayer.Protocol.SelfDamage";
+option optimize_for = SPEED;
+
+import "google/protobuf/any.proto";
+
+// ---------------------------------------------------------------------------
+// 客户端请求主机裁决的"自我伤害"（玩家的界面动作，不是战斗伤害）。
+//
+// 为什么需要这两个消息（引擎事实）：
+//   · 引擎"角色信息"界面里的骷髅按钮是 **纯本地** 伤害：
+//     `Survivalcraft/Game/VitalStatsWidget.cs:176-179`
+//       if (m_chokeButton.IsClicked)
+//           m_componentPlayer.ComponentHealth.Injure(0.1f, null,
+//               ignoreInvulnerability: true, "Choked");
+//     它跑在**持有控件的那一端**。单机没有别处写生命，所以立刻掉 10%。
+//   · 联机是**主机权威**（PLAYER_VITALS_REPORT = 95，host -> client）：客户端
+//     ComponentHealth.Update 已被摘掉，客户端本地 Injure 只是**预测**；下一拍主机
+//     权威上报把 Health 写回旧值 → 用户看到的就是"点了骷髅按钮不掉血"。
+//     主机自己的本机角色（clientId = 0）没有这个问题：那就是引擎原路径。
+//
+// 所以客户端把这次点击改成**请求**：`PLAYER_SELF_DAMAGE_REQUEST`（id 106，
+// client -> host），主机校验（归属 / 未知玩家 / 存活 / 数值 / 冷却）后**在主机侧**
+// 对那个角色调用**同一个引擎 Injure**（`ignoreInvulnerability: true`，死因字符串
+// 仍是引擎的 `"Choked"`），再由既有的体征下发把新血量推回客户端 →
+// 预测值与权威值收敛（主机拒绝时上报把血量写回，等于回滚）。
+//
+// 线路 append-only：106 / 107 是新 id，没有旧 id 被重编号。
+// Source: Survivalcraft/Game/VitalStatsWidget.cs:176-179
+// Source: Survivalcraft/Game/ComponentHealth.cs:74-136（Injure）
+// ---------------------------------------------------------------------------
+
+// Client -> host: "我在自己的角色信息界面按了自我伤害动作，请裁决"。
+message PlayerSelfDamageRequest {
+  // 请求方连接的 clientId；0 非法（主机对自己的本机角色直接走引擎原路径，不请求）。
+  uint32 client_id = 1;
+  // 该设备的本机角色槽位（0..3）。
+  uint32 slot = 2;
+  // 客户端单调请求序号（1..）；回执原样带回，用于丢弃陈旧裁决。
+  uint64 sequence = 3;
+  // 动作用途的稳定小写码，白名单：目前只有 "choked"（骷髅按钮）。
+  // 主机不接受白名单以外的值（整条拒绝，绝不"忽略原因码照着打"）。
+  string cause = 4;
+  // 伤害量（0 之后的有限数，上限 1 = 引擎 ComponentHealth.Health 的值域）。
+  // 0 被拒：引擎 Injure 对 amount <= 0 是**静默无操作**，那样就成了"假装成功"。
+  float amount = 5;
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}
+
+enum PlayerSelfDamageResultKind {
+  PLAYER_SELF_DAMAGE_RESULT_KIND_UNSPECIFIED = 0;
+  PLAYER_SELF_DAMAGE_RESULT_KIND_ACCEPTED = 1;
+  PLAYER_SELF_DAMAGE_RESULT_KIND_REJECTED = 2;
+}
+
+// Host -> 请求方：一次自我伤害请求的唯一裁决。
+//
+// 接受**也**能从权威体征上报（PLAYER_VITALS_REPORT = 95）看到 —— 那份上报才是客户端
+// 血量的唯一来源；这条结果消息存在的意义是"拒绝必须可解释"（否则就是"点了没反应"），
+// 以及让客户端把 chokeReqSent / 拒绝原因分开计数。
+message PlayerSelfDamageResult {
+  // 请求身份的回显（clientId / slot / sequence）。
+  uint32 client_id = 1;
+  uint32 slot = 2;
+  uint64 sequence = 3;
+  PlayerSelfDamageResultKind kind = 4;
+  // 稳定原因码。接受 = "accepted"；拒绝 = `wrong-owner` / `unknown-player` /
+  // `not-alive` / `invalid` / `cooldown` / `apply-failed`（首段固定码，绝不在这里写整句）。
+  string reason = 5;
+  // 回显这次请求的 cause（接受 / 拒绝都带，便于日志对齐）。
+  string cause = 6;
+  // 实际施加的量（接受 = 请求量；拒绝 = 0）。
+  float amount = 7;
+  // 主机侧施加之后的**权威生命**（接受时有效；拒绝 = 0，客户端不得据此写血量）。
+  float health_after = 8;
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}

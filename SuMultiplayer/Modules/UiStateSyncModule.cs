@@ -79,6 +79,7 @@ namespace SuMultiplayer.Modules
 
         private IModuleContext m_context;
         private ITransportPort m_transport;
+        private IUiMirrorTickPort m_presentation;
         private ITransportControlPort m_control;
         private IMessageRegistryPort m_messages;
         private bool m_attached;
@@ -121,6 +122,7 @@ namespace SuMultiplayer.Modules
         private long m_noView;
         private long m_retries;
         private long m_inputReasserts;
+        private long m_presentFailures;
         private long m_clientLimitHits;
         private long m_hostResets;
         private long m_summaryRounds;
@@ -180,6 +182,13 @@ namespace SuMultiplayer.Modules
             else
             {
                 Log("警告：没有拿到消息注册表（IMessageRegistryPort）→ 收不到 CLIENT_UI_STATE");
+            }
+            m_presentation = m_mirror as IUiMirrorTickPort;
+            if (m_presentation == null)
+            {
+                Log("UI 镜像：镜像端口没有每帧呈现能力（IUiMirrorTickPort）→ 第三屏的左侧按钮 / " +
+                    "冒泡消息 / 覆盖文字不会跟随客户端（输入形态 / HUD / 打开的界面仍然镜像；" +
+                    "明确原因，不是静默跳过）");
             }
             m_transport.ClientJoined += OnClientJoined;
             m_transport.ClientLeft += OnClientLeft;
@@ -285,7 +294,13 @@ namespace SuMultiplayer.Modules
                 else
                 {
                     m_hostResetForMissingWorld = false;
-                    if (connected) PumpHost(nowMs);
+                    if (connected)
+                    {
+                        PumpHost(nowMs);
+                        // 每帧呈现：引擎本帧已经重写过按钮 IsChecked / 清空覆盖文字，
+                        // 必须在 Draw 之前补写（Frame.Update；Program.cs:146-147）。
+                        PresentHost();
+                    }
                 }
             }
             else
@@ -316,6 +331,26 @@ namespace SuMultiplayer.Modules
                 m_summaryRounds++;
                 Log(Summary() + " · unsupportedTypes=" + DescribeUnsupported() +
                     " · " + m_mirror.Describe());
+            }
+        }
+
+        /// <summary>
+        /// 主机每帧表现施加（按钮 / 冒泡消息 / 覆盖文字）。异常显式计数 + 10 s 限流日志，
+        /// 绝不让一次表现失败静默地停掉第三屏跟随。
+        /// </summary>
+        private void PresentHost()
+        {
+            if (m_presentation == null) return;
+            try
+            {
+                m_presentation.Present();
+            }
+            catch (Exception e)
+            {
+                m_presentFailures++;
+                LogProblem("present",
+                    "第三屏 HUD 每帧呈现失败（按钮 / 冒泡消息 / 覆盖文字可能停更）：" + Describe(e) +
+                    "（累计 uiMirrorPresentFailures=" + m_presentFailures + "）");
             }
         }
 
@@ -600,6 +635,7 @@ namespace SuMultiplayer.Modules
             " uiInputReasserts=" + m_inputReasserts +
             " uiMirrorNoView=" + m_noView +
             " uiMirrorRetries=" + m_retries +
+            " uiMirrorPresentFailures=" + m_presentFailures +
             " uiMirrorHostResets=" + m_hostResets +
             " uiMirrorSummaryRounds=" + m_summaryRounds;
 

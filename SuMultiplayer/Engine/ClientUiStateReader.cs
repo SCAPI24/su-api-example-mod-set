@@ -2,6 +2,7 @@ using System;
 using Engine;
 using Game;
 using GameEntitySystem;
+using SuAPI;
 using SuMultiplayer.Modules;
 using SuMultiplayer.Net;
 using SuMultiplayer.Players;
@@ -11,7 +12,7 @@ namespace SuMultiplayer.Engine
     /// <summary>
     /// 客户端界面层的**只读采集**（<see cref="IClientUiStateSource"/> 的实现）。
     ///
-    /// 每帧只读四类引擎事实（全部是 getter，不改任何状态、不调用任何交互方法）：
+    /// 每帧只读这些引擎事实（全部是 getter，不改任何状态、不调用任何交互方法）：
     ///   ① 输入形态：本机玩家 <c>PlayerData.InputDevice</c>（用户选的设备组合）+ 活动的
     ///      <c>ComponentInput.IsControlledByTouch</c>（引擎真正用来决定触摸控件显隐的开关）。
     ///      Source: Survivalcraft/Game/ComponentInput.cs:30；
@@ -28,6 +29,12 @@ namespace SuMultiplayer.Engine
     ///      · 对话框 = <c>DialogsManager.Dialogs</c> 里父窗口正好是本机玩家 <c>GuiWidget</c>
     ///        的那一个（取最上面一层；Source: DialogsManager.cs:32-64）。
     ///   ④ 当前屏幕 = <c>ScreensManager.CurrentScreen</c> 的类名（Source: ScreensManager.cs:46）。
+    ///   ⑤ 底部冒泡消息 = <c>ComponentGui.m_messageWidget.m_messages</c>（只读投影，含已经显示
+    ///      多久；Source: MessageWidget.cs:12-39,70-111）——第三屏要按同一时限显示 / 消失；
+    ///   ⑥ 屏幕覆盖文字 = <c>ComponentScreenOverlays.FloatingMessage / Message</c>（含 factor，
+    ///      Source: ComponentScreenOverlays.cs:46-52,119-126）；
+    ///   ⑦ 手工制作网格 = 背包面板左半绑定的 <c>ComponentCraftingTable</c> 槽位
+    ///      （Source: FullInventoryWidget.cs:35-47）——结果槽由主机用引擎配方自己重算，不在这里读。
     ///
     /// 聊天输入行由组合根以委托注入（mod 自己的 ChatOverlay 状态），本类不反向引用 UI 类型。
     ///
@@ -40,11 +47,15 @@ namespace SuMultiplayer.Engine
     {
         private readonly NetworkAvatarSpawner m_avatars;
         private readonly Func<bool> m_chatInputOpen;
+        private readonly UiMirrorMessageAccess m_messageAccess;
 
-        public ClientUiStateReader(NetworkAvatarSpawner avatars, Func<bool> chatInputOpen)
+        public ClientUiStateReader(NetworkAvatarSpawner avatars, IModParentField parentField,
+            Func<bool> chatInputOpen)
         {
             m_avatars = avatars ?? throw new ArgumentNullException(nameof(avatars));
             m_chatInputOpen = chatInputOpen;
+            m_messageAccess = new UiMirrorMessageAccess(
+                parentField ?? throw new ArgumentNullException(nameof(parentField)));
         }
 
         public bool TryCapture(out ClientUiStateData state, out string reason)
@@ -106,8 +117,60 @@ namespace SuMultiplayer.Engine
                 string.Equals(screenName, UiStatePolicy.GameScreenName, StringComparison.Ordinal);
             bool chatInputOpen = m_chatInputOpen != null && m_chatInputOpen();
 
+            // ---- ⑤ 底部冒泡消息（MessageWidget 私有列表的只读投影；age 用于主机对齐时限）
+            if (!m_messageAccess.TryCapture(gui, Time.FrameStartTime,
+                    out UiSmallMessageData[] smallMessages, out string messageReason))
+            {
+                reason = "messages-" + messageReason;
+                return false;
+            }
+
+            // ---- ⑥ 屏幕覆盖文字（引擎每拍重置，这里读的是本帧各组件刚写入的值）
+            ComponentScreenOverlays overlays = player.ComponentScreenOverlays;
+            if (overlays == null)
+            {
+                reason = "no-ComponentScreenOverlays";
+                return false;
+            }
+            string floatingMessage = overlays.FloatingMessage ?? string.Empty;
+            float floatingFactor = overlays.FloatingMessageFactor;
+            string overlayMessage = overlays.Message ?? string.Empty;
+            float overlayFactor = overlays.MessageFactor;
+
+            // ---- ⑦ 手工制作网格（只有 FullInventoryWidget 左半需要；结果槽由主机自己推导）
+            bool handcraftPresent = false;
+            UiHandcraftData handcraft = default;
+            if (UiStateMirrorPlan.IsHandcraftModal(modalPresent, modalType))
+            {
+                ComponentCraftingTable table = player.Entity.FindComponent<ComponentCraftingTable>();
+                if (table == null)
+                {
+                    // 引擎里 FullInventoryWidget 的构造必须带 ComponentCraftingTable
+                    // （ComponentGui.cs:547），所以这里缺失就是引擎状态异常：明确失败，不猜空网格。
+                    reason = "no-ComponentCraftingTable-for-handcraft";
+                    return false;
+                }
+                int slots = table.SlotsCount;
+                if (slots <= 0 || slots > UiStatePolicy.MaxHandcraftSlots)
+                {
+                    reason = "handcraft-slots-out-of-range(" + slots + ")";
+                    return false;
+                }
+                var values = new int[slots];
+                var counts = new int[slots];
+                for (int i = 0; i < slots; i++)
+                {
+                    values[i] = table.GetSlotValue(i);
+                    counts[i] = table.GetSlotCount(i);
+                }
+                handcraftPresent = true;
+                handcraft = new UiHandcraftData(values, counts);
+            }
+
             state = new ClientUiStateData(inputKind, hudVisible, screenName, dialogPresent,
-                dialogType, modalPresent, modalType, chatInputOpen);
+                dialogType, modalPresent, modalType, chatInputOpen, smallMessages,
+                floatingMessage, floatingFactor, overlayMessage, overlayFactor,
+                handcraftPresent, handcraft);
             return true;
         }
     }

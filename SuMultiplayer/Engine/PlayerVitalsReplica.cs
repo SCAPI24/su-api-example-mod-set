@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using Engine;
+using Engine.Input;
 using Game;
 using GameEntitySystem;
 using SuAPI;
@@ -45,10 +46,19 @@ namespace SuMultiplayer.Engine
     ///     推到 1；<c>ComponentHumanModel.Update</c> 也按 <c>Health &lt;= 0</c> 或
     ///     <c>ComponentSleep.IsSleeping</c> 躺下；
     ///   · 客户端本机角色死亡时，引擎 <c>PlayerData</c> 的 Playing 状态一旦看到
-    ///     <c>Health &lt;= 0</c> 就会进入死亡屏，并在点击后**删除本机实体并本地复活** ——
-    ///     产品要求死亡由主机裁决，所以本机 ComponentHealth 保留一个非致命的极小值
-    ///     <see cref="LocalDeathHealthFloor"/>（血条 / 死亡提示显示主机下发的 0 与死因），
-    ///     只有主机 Respawn 事件才把本机角色按主机落点摆回去。
+    ///     <c>Health &lt;= 0</c> 就会进入原生死亡屏（DeathCamera + "YOU HAVE DIED" + 等级减半，
+    ///     <c>PlayerData.cs:270-300</c>），点击后**删除本机实体并本地复活**
+    ///     （<c>PlayerData.cs:306-320</c>）。产品要求死亡与复活都由主机裁决，所以：
+    ///     ① 死亡只由 <see cref="ApplyLocalVitals"/> / <see cref="ApplyLocalVitalEvent"/>
+    ///        按主机数据写 <c>CauseOfDeath</c> + <c>Health = 0</c>（**不写 m_lastHealth**），
+    ///        死亡表现交给引擎；
+    ///     ② 死亡期间在本机 <c>ComponentPlayer.GuiWidget</c> 上挂一个挡门对话框，
+    ///        使引擎的"点击 → 删实体"分支永远不成立（详见 ShowDeathGateDialog）；
+    ///     ③ 主机批准后由 <see cref="TryExecuteLocalRespawn"/> 关掉挡门框并执行引擎那一行
+    ///        <c>RemoveEntity(..., disposeEntity: true)</c>，之后 PrepareSpawn / SpawnDialog /
+    ///        WaitForTerrain / SpawnPlayer / FppCamera 全是引擎原生的；
+    ///     ④ 新实体出生后由 <see cref="TryReplayLocalRespawn"/> 用主机权威数据整体重放
+    ///        （落点 / 背包 / 合成格 / 衣服），并推进死亡 epoch 挡住复活之前的旧包。
     ///
     /// 无静态状态；所有上限与失败都有计数（<see cref="Describe"/>）与限流日志。
     /// </summary>
@@ -61,10 +71,10 @@ namespace SuMultiplayer.Engine
         private const float FullHealth = 1f;
 
         /// <summary>
-        /// 客户端本机角色"已死亡"时写进 ComponentHealth 的非致命极小值：让引擎 PlayerData
-        /// 不进入"本地删实体 → 本地复活"流程，同时血条 / 死亡提示仍按主机下发的 0 显示。
+        /// 引擎 <c>PlayerData.PlayerDead</c> 的点击门槛（<c>Time.RealTime - m_playerDeathTime &gt; 1.5</c>，
+        /// <c>Survivalcraft/Game/PlayerData.cs:306</c>）。诊断用：记录本机死亡请求时的实际等待。
         /// </summary>
-        private const float LocalDeathHealthFloor = 0.001f;
+        private const double EngineDeathTapGuardSeconds = 1.5;
 
         /// <summary>引擎的默认目标体温（<c>ComponentVitalStats.m_targetTemperature</c> 初值 8→12 口径见旧实现）。</summary>
         private const float DefaultTemperature = 12f;
@@ -162,6 +172,41 @@ namespace SuMultiplayer.Engine
             public int TextureIndex = int.MinValue;
         }
 
+        /// <summary>
+        /// 死亡那一刻冻结的本地权威副本。引擎 <c>PlayerData.SpawnPlayer</c> 建的是**全新实体**：
+        /// 空背包、空衣服、模板血量（<c>PlayerData.cs:568-640</c>：SpawnMode.Respawn 时
+        /// Clothing/Inventory 的 overrides 都是空串 / 0 个），所以复活后必须用这份副本覆盖。
+        /// 口径：背包 = 客户端自己维护并上报给主机的 <c>ComponentInventory</c>（含手持槽），
+        /// 合成格 = <c>ComponentCraftingTable</c>，装备 = <c>ComponentClothing</c> 的 4 个槽位。
+        /// </summary>
+        private sealed class LocalKeepState
+        {
+            public int[] InventoryValues;
+            public int[] InventoryCounts;
+            public int ActiveSlotIndex;
+            public int[] CraftingValues;
+            public int[] CraftingCounts;
+            public int[][] Clothes;
+        }
+
+        /// <summary>
+        /// 一个本机槽位的**死亡期引擎状态**（方案 A：引擎原生死亡流程）。
+        ///   · <see cref="GateDialog"/> = 挂在 <c>ComponentPlayer.GuiWidget</c> 上的挡门对话框。
+        ///     引擎 <c>PlayerDead</c> 的点击分支要求 <c>!DialogsManager.HasDialogs(GuiWidget)</c>
+        ///     （<c>PlayerData.cs:306</c>），挂着它就挡住了"未获主机批准就删实体"的自动复活；
+        ///   · <see cref="DeathToken"/> = 执行 <c>RemoveEntity</c> 时旧实体的标识（识别新实体出生）；
+        ///   · <see cref="ReplayedToken"/> = 已经重放过的实体标识（幂等，重复调用返回 NoPending）；
+        ///   · <see cref="Keep"/> = 死亡那一刻冻结的背包 / 合成格 / 衣服副本。
+        /// </summary>
+        private sealed class LocalDeathState
+        {
+            public Dialog GateDialog;
+            public int GateToken;
+            public int DeathToken;
+            public int ReplayedToken;
+            public LocalKeepState Keep;
+        }
+
         private long m_authorityCaptures;
         private long m_authorityCaptureFailures;
         private long m_slotPolls;
@@ -177,11 +222,40 @@ namespace SuMultiplayer.Engine
         private long m_localApplies;
         private long m_localDeaths;
         private long m_localRespawns;
+        /// <summary>已把本机角色推进引擎原生死亡流程（Health 写 0 → PlayerData.PlayerDead）的次数。</summary>
         private long m_deathScreensShown;
-        private long m_deathCameraFailures;
-        private long m_deathScreenFailures;
         private long m_terminalDeathTaps;
+        /// <summary>死亡屏上"只有 <c>Input.Any</c> 电平、没有按下沿"的帧数（按住 / 键盘自动重复）。</summary>
+        private long m_deathTapLevelsIgnored;
         private long m_respawnRejectedMessages;
+        /// <summary>
+        /// 本机槽位 → 死亡期引擎状态（挡门对话框 / 旧实体标识 / 冻结的背包副本）。
+        /// 只在主机裁决死亡时创建，出生后权威重放完成即销毁。
+        /// </summary>
+        private readonly Dictionary<int, LocalDeathState> m_localDeathStates =
+            new Dictionary<int, LocalDeathState>();
+        /// <summary>本机槽位 → 死亡 epoch（最近一次复活裁决的 revision）。陈旧死亡状态一律拒写。</summary>
+        private readonly Dictionary<int, uint> m_localDeathEpoch = new Dictionary<int, uint>();
+        private long m_gateShown;
+        private long m_gateHidden;
+        private long m_gateFailures;
+        /// <summary>挡门对话框的黑色遮罩被改成透明的次数（引擎死亡屏保持原样）。</summary>
+        private long m_gateCoverNeutralized;
+        /// <summary>挡门对话框的遮罩没被找到的次数（引擎内部分层变化 → 死亡屏会变暗，限流日志）。</summary>
+        private long m_gateCoverMisses;
+        /// <summary>mod 执行引擎 <c>RemoveEntity</c>（主机批准后推进复活流程）的成功次数。</summary>
+        private long m_engineRespawnExecuted;
+        private long m_engineRespawnFailures;
+        /// <summary>新实体出生后权威重放成功的次数。</summary>
+        private long m_replayApplied;
+        private long m_replayWaitFrames;
+        private long m_replayFailures;
+        private long m_replayInventoryRestores;
+        private long m_replayClothesRestores;
+        /// <summary>revision 不新于死亡 epoch 的死亡状态被拒写的次数（陈旧上报）。</summary>
+        private long m_staleDeathRejects;
+        /// <summary>把本机 PlayerData 从引擎死亡状态恢复回 Playing 的次数（主机确认角色活着时）。</summary>
+        private long m_localPlayerDataRestores;
         private long m_hudWrites;
         private long m_hudPresentationRefreshes;
         private long m_hudTemperatureTextures;
@@ -199,6 +273,11 @@ namespace SuMultiplayer.Engine
         private long m_avatarRespawnFailures;
         private long m_authoritySleepReads;
         private long m_authorityWakes;
+        private long m_authoritySleeps;
+        private long m_sleepAuthoritySleepFailures;
+        private long m_sleepLocalReverts;
+        private long m_sleepLocalForcedRejected;
+        private long m_sleepRejectMessages;
         private long m_sleepNoteFailures;
         private long m_sleepPresentationRuns;
         private long m_sleepMirrorRuns;
@@ -406,7 +485,8 @@ namespace SuMultiplayer.Engine
                 return PlayerVitalsApplyStatus.NoAvatar;
             try
             {
-                if (evt.IsDeath) ApplyLocalDeath(evt.Key.Slot, player, evt.CauseOfDeath);
+                if (evt.IsDeath)
+                    ApplyLocalDeath(evt.Key.Slot, player, evt.CauseOfDeath, evt.Revision);
                 else ApplyLocalRespawn(evt.Key.Slot, player, in evt);
                 return PlayerVitalsApplyStatus.Applied;
             }
@@ -421,24 +501,48 @@ namespace SuMultiplayer.Engine
         }
 
         /// <summary>
-        /// 主机权威值 → 本机角色。只写字段 / HUD；死亡时引擎里保留
-        /// <see cref="LocalDeathHealthFloor"/>，让引擎 PlayerData 不进入本地死亡 / 复活流程。
+        /// 主机权威值 → 本机角色。只写字段 / HUD。
+        ///
+        /// **死亡路径（方案 A：引擎原生）**：<c>snapshot.Dead</c> 时写 <c>CauseOfDeath</c> 并把
+        /// <c>Health</c> 写成 0，**且不写 <c>m_lastHealth</c>**（引擎要看到"掉到 0"的边沿）；
+        /// 引擎 <c>PlayerData.Playing</c> 因此自己进入 <c>PlayerDead</c>
+        /// （<c>Survivalcraft/Game/PlayerData.cs:270-300</c>）：DeathCamera + "YOU HAVE DIED" +
+        /// 等级减半全是引擎的，mod 不再自己切相机 / 写大字 / 写死亡姿态。
+        /// 客户端**不删实体、不掉物品、不本地复活**：删实体要等主机批准
+        /// （<see cref="TryExecuteLocalRespawn"/>），新实体出生后再整体重放
+        /// （<see cref="TryReplayLocalRespawn"/>）。
+        ///
+        /// 死亡 epoch：revision 不新于本槽位死亡 epoch 的死亡状态是"复活之前就在飞的旧包"，
+        /// 写进新实体会让引擎立刻再判一次死 → 这里直接拒写（计数 + 限流日志，不静默）。
         /// </summary>
         private void ApplyLocalState(int slot, ComponentPlayer player,
             in PlayerVitalsSnapshot snapshot)
         {
-            EnsureLocalPlayerNotLocallyDead(player.PlayerData, player);
             ComponentHealth health = player.ComponentHealth;
             bool dead = snapshot.Dead;
             bool wasDead = m_localDeadSlots.Contains(slot);
+            if (dead && PlayerRespawnEpoch.IsStaleDead(EpochOf(slot), snapshot.Revision))
+            {
+                m_staleDeathRejects++;
+                Problem("stale-dead:" + slot,
+                    "拒绝把本机槽位 " + slot + " 的陈旧死亡状态写进引擎（revision=" +
+                    snapshot.Revision + " ≤ 死亡 epoch " + EpochOf(slot) +
+                    "）：它属于复活之前的那次死亡，写进去会让刚出生的角色立刻再判一次死" +
+                    "（累计拒绝 " + m_staleDeathRejects + " 条）");
+                return;
+            }
             float previousHealth = health != null ? health.Health : FullHealth;
-            float engineHealth = dead ? LocalDeathHealthFloor : MathUtils.Saturate(snapshot.Health);
+            float engineHealth = dead ? 0f : MathUtils.Saturate(snapshot.Health);
             if (health != null)
             {
                 WriteField(health, "<Health>k__BackingField", engineHealth,
                     typeof(ComponentHealth));
-                m_parentField.ModifyParentField(health, "m_lastHealth", engineHealth,
-                    typeof(ComponentHealth));
+                if (!dead)
+                {
+                    // 活着：m_lastHealth 必须跟着 Health（否则引擎的损伤 / 恢复增量算错）。
+                    m_parentField.ModifyParentField(health, "m_lastHealth", engineHealth,
+                        typeof(ComponentHealth));
+                }
                 m_parentField.ModifyParentField(health, "<Air>k__BackingField",
                     MathUtils.Saturate(snapshot.Air), typeof(ComponentHealth));
                 m_parentField.ModifyParentField(health, "<HealthChange>k__BackingField", 0f,
@@ -450,7 +554,7 @@ namespace SuMultiplayer.Engine
                 // 绝不写 DeathTime：那是引擎死亡分支（掉落 / 尸体）的入口，客户端不跑它。
                 m_parentField.ModifyParentField(health, "<DeathTime>k__BackingField", null,
                     typeof(ComponentHealth));
-                if (snapshot.Health < previousHealth - PlayerVitalsLimits.ValueEpsilon)
+                if (!dead && snapshot.Health < previousHealth - PlayerVitalsLimits.ValueEpsilon)
                     ShowHurt(player, previousHealth - snapshot.Health);
                 m_healthWrites++;
             }
@@ -471,39 +575,49 @@ namespace SuMultiplayer.Engine
             }
             WriteConditions(player, in snapshot);
             WriteLocalFire(player, slot, snapshot.FireDuration);
-            WriteLocalHud(slot, player, snapshot.Dead ? 0f : engineHealth, snapshot.Food,
-                snapshot.Temperature, snapshot.TargetTemperature, snapshot.Dead);
+            WriteLocalHud(slot, player, dead ? 0f : engineHealth, snapshot.Food,
+                snapshot.Temperature, snapshot.TargetTemperature, dead);
 
             if (dead && !wasDead)
             {
                 m_localDeadSlots.Add(slot);
                 m_localDeaths++;
-                ShowLocalDeath(player, snapshot.CauseOfDeath);
+                ArmNativeDeath(slot, player, snapshot.CauseOfDeath, snapshot.Revision);
             }
             else if (!dead && wasDead)
             {
+                // 主机把同一个实体改回活着（没走"删旧实体 → 新实体"那条路时才会出现）：
+                // 生命已按权威写回，这里把死亡期状态（挡门对话框 / 引擎死亡状态）收掉。
                 m_localDeadSlots.Remove(slot);
-                HideLocalDeath(player);
-                ShowLocalRespawn(player);
+                ClearNativeDeath(slot, "主机权威状态显示本机角色已复活");
+                RestorePlayerDataToPlaying(slot, player);
+                m_localRespawns++;
             }
         }
 
-        private void ApplyLocalDeath(int slot, ComponentPlayer player, string cause)
+        private void ApplyLocalDeath(int slot, ComponentPlayer player, string cause,
+            uint revision)
         {
-            EnsureLocalPlayerNotLocallyDead(player.PlayerData, player);
+            if (PlayerRespawnEpoch.IsStaleDead(EpochOf(slot), revision))
+            {
+                m_staleDeathRejects++;
+                Problem("stale-death-event:" + slot,
+                    "拒绝应用本机槽位 " + slot + " 的陈旧 Death 事件（rev=" + revision +
+                    " ≤ 死亡 epoch " + EpochOf(slot) +
+                    "）：它属于复活之前的那次死亡（累计拒绝 " + m_staleDeathRejects + " 条）");
+                return;
+            }
             ComponentHealth health = player.ComponentHealth;
             if (health != null)
             {
-                WriteField(health, "<Health>k__BackingField", LocalDeathHealthFloor,
-                    typeof(ComponentHealth));
-                m_parentField.ModifyParentField(health, "m_lastHealth", LocalDeathHealthFloor,
-                    typeof(ComponentHealth));
-                m_parentField.ModifyParentField(health, "<HealthChange>k__BackingField", 0f,
-                    typeof(ComponentHealth));
+                // 死因先写：引擎 PlayerDead enter 读的就是它（PlayerData.cs:277-283）。
                 m_parentField.ModifyParentField(health, "<CauseOfDeath>k__BackingField",
                     string.IsNullOrEmpty(cause) ? "Unknown" : cause, typeof(ComponentHealth));
-                m_parentField.ModifyParentField(health, "<DeathTime>k__BackingField", null,
-                    typeof(ComponentHealth));
+                if (health.Health > 0f)
+                {
+                    WriteField(health, "<Health>k__BackingField", 0f, typeof(ComponentHealth));
+                    m_healthWrites++;
+                }
             }
             ComponentVitalStats deathVital = player.ComponentVitalStats;
             WriteLocalHud(slot, player, 0f,
@@ -513,22 +627,21 @@ namespace SuMultiplayer.Engine
             bool newlyDead = m_localDeadSlots.Add(slot);
             StopLocalFireParticles(slot);
             if (newlyDead) m_localDeaths++;
-            ShowLocalDeath(player, cause);
+            ArmNativeDeath(slot, player, cause, revision);
         }
 
+        /// <summary>
+        /// 主机裁决"本机角色复活"（事件）。方案 A 下复活 = 引擎删旧实体 + 新建实体，
+        /// 落点 / 数值由 <see cref="TryReplayLocalRespawn"/> 在**新实体出生后**一次性写入，
+        /// 所以这里不做任何搬运。唯一例外：旧实体还在、而且引擎已经把它判死
+        /// （主机在客户端动手之前就裁决复活）—— 那就把生命写回并让 PlayerData 回到 Playing，
+        /// 否则引擎会一直停在 PlayerDead，等玩家点一下删掉自己。
+        /// </summary>
         private void ApplyLocalRespawn(int slot, ComponentPlayer player,
             in PlayerVitalEventSnapshot evt)
         {
-            EnsureLocalPlayerNotLocallyDead(player.PlayerData, player);
-            ComponentBody body = player.ComponentBody;
-            if (body != null && evt.HasPosition)
-            {
-                body.Position = evt.Position;
-                body.Velocity = Vector3.Zero;
-                body.TargetCrouchFactor = 0f;
-            }
             ComponentHealth health = player.ComponentHealth;
-            if (health != null)
+            if (health != null && health.Health <= 0f)
             {
                 WriteField(health, "<Health>k__BackingField", FullHealth,
                     typeof(ComponentHealth));
@@ -542,58 +655,79 @@ namespace SuMultiplayer.Engine
                     string.Empty, typeof(ComponentHealth));
                 m_parentField.ModifyParentField(health, "<DeathTime>k__BackingField", null,
                     typeof(ComponentHealth));
+                m_healthWrites++;
             }
-            ComponentCreatureModel model = player.ComponentCreatureModel;
-            if (model != null)
+            ComponentBody body = player.ComponentBody;
+            if (body != null && evt.HasPosition)
             {
-                m_parentField.ModifyParentField(model, "<DeathPhase>k__BackingField", 0f,
-                    typeof(ComponentCreatureModel));
-                m_parentField.ModifyParentField(model, "<DeathCauseOffset>k__BackingField",
-                    Vector3.Zero, typeof(ComponentCreatureModel));
+                body.Position = evt.Position;
+                body.Velocity = Vector3.Zero;
+                body.TargetCrouchFactor = 0f;
             }
             StopLocalFireParticles(slot);
-            player.Entity.FindComponent<ComponentOnFire>()?.Extinguish();
-            ComponentSleep sleep = player.ComponentSleep;
-            if (sleep != null)
-            {
-                m_parentField.ModifyParentField(sleep, "m_sleepStartTime", null,
-                    typeof(ComponentSleep));
-                m_parentField.ModifyParentField(sleep, "m_sleepFactor", 0f, typeof(ComponentSleep));
-                m_parentField.ModifyParentField(sleep, "m_messageFactor", 0f, typeof(ComponentSleep));
-            }
-            // 复活 = 旧睡眠期作废：表现缓存清掉，下一次入睡从 0 重新淡入。
             m_localSleep.Remove(slot);
             m_localDeadSlots.Remove(slot);
+            ClearNativeDeath(slot, "主机裁决复活（旧实体仍在）");
+            RestorePlayerDataToPlaying(slot, player);
             ComponentVitalStats respawnVital = player.ComponentVitalStats;
             WriteLocalHud(slot, player, FullHealth,
                 respawnVital != null ? respawnVital.Food : 1f,
                 respawnVital != null ? respawnVital.Temperature : DefaultTemperature,
                 ReadTargetTemperature(respawnVital), false);
-            HideLocalDeath(player);
-            ShowLocalRespawn(player);
             m_localRespawns++;
         }
 
         /// <summary>
-        /// 客户端**不跑**自己的死亡流程：如果引擎 PlayerData 已经进入 PlayerDead（例如加入房间
-        /// 前本机模拟先把它打死了），把它拉回 Playing 并清掉死亡计时；否则点击后 PlayerData
-        /// 会删除本机实体并本地复活 —— 那是主机才有的裁决权。
+        /// 引擎 <c>PlayerData</c> 若还停在 <c>PlayerDead</c>（或残留 <c>m_playerDeathTime</c>），
+        /// 把它拉回 <c>Playing</c> 并切回第一人称相机。
+        ///
+        /// **只在主机确认"这个角色还活着"时调用**（<see cref="ApplyLocalRespawn"/> /
+        /// 主机权威状态从 Dead 翻成 Alive）。方案 A 下死亡本身**不**走这里：
+        /// 客户端必须让引擎自己进 PlayerDead，死亡画面才是原生的。
         /// </summary>
-        private void EnsureLocalPlayerNotLocallyDead(PlayerData playerData, ComponentPlayer player)
+        private bool RestorePlayerDataToPlaying(int slot, ComponentPlayer player)
         {
-            if (playerData == null) return;
-            StateMachine stateMachine = m_parentField.GetParentField<StateMachine>(playerData,
-                "m_stateMachine", typeof(PlayerData));
-            m_parentField.ModifyParentField(playerData, "m_playerDeathTime", null,
-                typeof(PlayerData));
-            if (stateMachine == null || stateMachine.CurrentState != "PlayerDead") return;
-            stateMachine.TransitionTo("Playing");
-            GameWidget widget = player.GameWidget;
-            if (widget != null && widget.ActiveCamera is DeathCamera)
-                widget.ActiveCamera = widget.FindCamera<FppCamera>();
-            Problem("local-playerdead:" + (player.PlayerData?.PlayerIndex ?? -1),
-                "本机角色曾被引擎 PlayerData 判死（PlayerDead）→ 已拉回 Playing 并清死亡计时：" +
-                "客户端不跑自己的死亡 / 复活流程（主机裁决）");
+            PlayerData playerData = player?.PlayerData;
+            if (playerData == null) return false;
+            bool restored = false;
+            try
+            {
+                object deathTime = m_parentField.GetParentField(playerData, "m_playerDeathTime",
+                    typeof(PlayerData));
+                if (deathTime != null)
+                {
+                    m_parentField.ModifyParentField(playerData, "m_playerDeathTime", null,
+                        typeof(PlayerData));
+                    restored = true;
+                }
+                StateMachine stateMachine = m_parentField.GetParentField<StateMachine>(playerData,
+                    "m_stateMachine", typeof(PlayerData));
+                if (stateMachine != null && stateMachine.CurrentState == "PlayerDead")
+                {
+                    stateMachine.TransitionTo("Playing");
+                    restored = true;
+                }
+                if (!restored) return false;
+                GameWidget widget = player.GameWidget;
+                if (widget != null && widget.ActiveCamera is DeathCamera)
+                {
+                    FppCamera fpp = widget.FindCamera<FppCamera>(false);
+                    if (fpp != null) widget.ActiveCamera = fpp;
+                }
+                m_localPlayerDataRestores++;
+                Info("本机槽位 " + slot + "：主机确认角色活着 → 已把引擎 PlayerData 从死亡状态" +
+                    "恢复到 Playing 并切回第一人称相机（累计 " + m_localPlayerDataRestores + " 次）");
+                return true;
+            }
+            catch (Exception e)
+            {
+                m_replayFailures++;
+                Problem("restore-playing:" + slot,
+                    "把本机槽位 " + slot + " 的引擎 PlayerData 从死亡状态恢复失败：" +
+                    e.GetType().Name + " " + e.Message +
+                    " → 引擎可能停在 PlayerDead（点一下会删实体本地复活）");
+                return false;
+            }
         }
 
         private void ShowHurt(ComponentPlayer player, float loss)
@@ -652,7 +786,9 @@ namespace SuMultiplayer.Engine
         public int RefreshLocalPresentation(out string reason)
         {
             reason = null;
-            if (m_disabledLocalSlots.Count == 0 && m_localHud.Count == 0) return 0;
+            if (m_disabledLocalSlots.Count == 0 && m_localHud.Count == 0 &&
+                m_localDeadSlots.Count == 0)
+                return 0;
             Project project = GameManager.Project;
             if (project == null)
             {
@@ -857,106 +993,344 @@ namespace SuMultiplayer.Engine
                 settings.GameMode == GameMode.Adventure, settings.IsAdventureRespawnAllowed);
         }
 
-        /// <summary>
-        /// 引擎等价的死亡屏（**不进入** PlayerData 的 PlayerDead 状态机）：
-        ///   · 相机：<c>GameWidget.ActiveCamera = GameWidget.FindCamera&lt;DeathCamera&gt;()</c>。
-        ///     每个 GameWidget 构造函数都会 <c>m_cameras.Add(new DeathCamera(this))</c>
-        ///     （GameWidget.cs:63-69），setter 是 public（GameWidget.cs:26-56），
-        ///     Activate 只读上一相机位置 + Target 身体（DeathCamera.cs:20-31），
-        ///     所以**不需要**状态机就能激活；DeathCamera.IsEntityControlEnabled = false
-        ///     还会让 ComponentInput 自动清零移动 / 跳跃（ComponentInput.cs:95-116），
-        ///     与引擎死亡时的表现一致。复活时由 <see cref="HideLocalDeath"/> 切回 FppCamera。
-        ///   · 文本：<c>ComponentGui.DisplayLargeMessage("YOU HAVE DIED", cause + 模式行, 30f, 1.5f)</c>，
-        ///     与 PlayerData.cs:275-300 的大消息 / 时长 / 延迟完全一致。
-        /// 不删实体、不掉物品、不本地复活（那些是主机裁决）。
-        /// </summary>
-        private bool ShowLocalDeath(ComponentPlayer player, string cause)
+        // ---------------------------------------------------------------- 死亡期：挡门对话框 / 冻结副本
+
+        /// <summary>本槽位当前的死亡 epoch（0 = 还没复活过）。</summary>
+        private uint EpochOf(int slot) =>
+            m_localDeathEpoch.TryGetValue(slot, out uint epoch) ? epoch : 0u;
+
+        private LocalDeathState GetOrCreateLocalDeathState(int slot)
         {
-            if (player == null)
+            if (!m_localDeathStates.TryGetValue(slot, out LocalDeathState state))
             {
-                m_deathScreenFailures++;
-                return false;
+                state = new LocalDeathState();
+                m_localDeathStates[slot] = state;
             }
-            ComponentGui gui = player.ComponentGui;
-            if (gui == null)
-            {
-                m_deathScreenFailures++;
-                Problem("death-screen-gui:" + (player.PlayerData?.PlayerIndex ?? -1),
-                    "死亡屏无法显示：本机角色没有 ComponentGui（不静默跳过）");
-                return false;
-            }
-            PlayerRespawnMode mode = GetRespawnMode(out string modeReason);
-            string gameModeName = null;
-            Project project = player.Project;
-            SubsystemGameInfo info = project?.FindSubsystem<SubsystemGameInfo>(false);
-            if (info?.WorldSettings != null) gameModeName = info.WorldSettings.GameMode.ToString();
-            if (mode == PlayerRespawnMode.Unknown)
-            {
-                Problem("death-screen-mode:" + (player.PlayerData?.PlayerIndex ?? -1),
-                    "死亡屏读不到世界模式（" + (modeReason ?? "端口没有给原因") +
-                    "）→ 仍显示死因，但不提供请求路径（不猜模式）");
-            }
-            string small = PlayerRespawnRules.BuildDeathSmallText(cause, mode, gameModeName);
-            GameWidget widget = player.GameWidget;
-            if (widget == null)
-            {
-                m_deathCameraFailures++;
-                Problem("death-camera-widget:" + (player.PlayerData?.PlayerIndex ?? -1),
-                    "死亡相机无法激活：本机角色没有 GameWidget（大消息仍显示）");
-            }
-            else
-            {
-                DeathCamera camera = widget.FindCamera<DeathCamera>(false);
-                if (camera == null)
-                {
-                    m_deathCameraFailures++;
-                    Problem("death-camera-missing:" + (player.PlayerData?.PlayerIndex ?? -1),
-                        "GameWidget 没有 DeathCamera（引擎构造时本应加入，GameWidget.cs:63-69）" +
-                        "→ 死亡屏退化为大消息，不切相机");
-                }
-                else
-                {
-                    // 与引擎 PlayerDead enter 完全相同的一行（相机先切，再显示消息）。
-                    try
-                    {
-                        widget.ActiveCamera = camera;
-                    }
-                    catch (Exception e)
-                    {
-                        m_deathCameraFailures++;
-                        Problem("death-camera-activate:" + (player.PlayerData?.PlayerIndex ?? -1),
-                            "激活 DeathCamera 抛异常：" + e.GetType().Name + " " + e.Message +
-                            " → 死亡屏仍显示大消息（不假装相机切成功）");
-                    }
-                }
-            }
-            gui.DisplayLargeMessage(PlayerRespawnRules.DeathLargeText, small,
-                PlayerRespawnRules.MessageDurationSeconds, PlayerRespawnRules.MessageDelaySeconds);
-            m_deathScreensShown++;
-            return true;
+            return state;
         }
 
-        private void HideLocalDeath(ComponentPlayer player)
+        /// <summary>
+        /// 主机裁决死亡 → 把引擎推进**原生**死亡流程，并（按世界模式）挂上挡门对话框。
+        ///
+        /// 引擎事实（照做，不另造表现）：
+        ///   · <c>PlayerData.Playing</c>：<c>ComponentHealth.Health &lt;= 0f</c> → 只记
+        ///     <c>m_playerDeathTime = Time.RealTime</c>（<c>PlayerData.cs:270</c>）；
+        ///   · <c>PlayerDead</c> enter：切 <c>DeathCamera</c> + <c>DisplayLargeMessage("YOU HAVE DIED",
+        ///     cause + 模式行)</c> + <c>Level = max(floor(Level/2), 1)</c>
+        ///     （<c>PlayerData.cs:275-300</c>）；
+        ///   · <c>PlayerDead</c> update：<c>Time.RealTime - m_playerDeathTime &gt; 1.5 &amp;&amp;
+        ///     !DialogsManager.HasDialogs(ComponentPlayer.GuiWidget) &amp;&amp;
+        ///     ComponentPlayer.GameWidget.Input.Any</c> → <c>m_project.RemoveEntity(...)</c>
+        ///     （<c>PlayerData.cs:306-320</c>）。
+        ///
+        /// 所以挡门对话框的唯一作用就是让上面第三个条件永远不成立，**直到主机批准**
+        /// （<see cref="TryExecuteLocalRespawn"/> 关掉它并执行同一行 RemoveEntity）。
+        /// 死亡屏（相机 / 文字 / 等级减半 / 死亡姿态）全部由引擎自己完成。
+        /// </summary>
+        private void ArmNativeDeath(int slot, ComponentPlayer player, string cause, uint revision)
         {
-            if (player == null) return;
-            player.ComponentGui?.DisplayLargeMessage(string.Empty, string.Empty, 0f, 0f);
-            GameWidget widget = player.GameWidget;
-            if (widget == null || !(widget.ActiveCamera is DeathCamera)) return;
-            FppCamera fpp = widget.FindCamera<FppCamera>(false);
-            if (fpp == null)
+            LocalDeathState state = GetOrCreateLocalDeathState(slot);
+            if (state.Keep == null) state.Keep = CaptureKeepState(slot, player);
+            m_deathScreensShown++;
+            PlayerRespawnMode mode = GetRespawnMode(out string modeReason);
+            if (mode == PlayerRespawnMode.Cruel)
             {
-                Problem("death-camera-restore:" + (player.PlayerData?.PlayerIndex ?? -1),
-                    "复活后无法切回 FppCamera（GameWidget 没有 FppCamera）→ 保持当前相机");
+                // Cruel：引擎自己的点击分支就是"打开 GameMenuDialog"（PlayerData.cs:308-311），
+                // 所以**不挂挡门**：死亡屏与菜单都是原生的，mod 不参与、也不发复活请求。
+                Info("本机槽位 " + slot + " 在 Cruel 模式死亡：不挂挡门对话框，" +
+                    "点击后由引擎自己打开 GameMenuDialog（PlayerData.cs:308-311），不发复活请求");
                 return;
             }
-            widget.ActiveCamera = fpp;
+            ShowDeathGateDialog(slot, player, mode, modeReason);
         }
 
         /// <summary>
-        /// 每帧读死亡屏输入。口径与引擎 PlayerData.PlayerDead update 完全一致：
-        /// <c>!DialogsManager.HasDialogs(ComponentPlayer.GuiWidget)</c> 且
-        /// <c>ComponentPlayer.GameWidget.Input.Any</c>（tap / click / key 都会置 Any，
-        /// WidgetInput.cs:683-739 / 864 / 1031）。1.5 秒门槛由模块的纯逻辑门判定。
+        /// 挂上挡门对话框（挂在 <c>ComponentPlayer.GuiWidget</c> 上，因为引擎
+        /// <c>DialogsManager.HasDialogs</c> 比较的正是这个父控件）。
+        /// </summary>
+        private void ShowDeathGateDialog(int slot, ComponentPlayer player, PlayerRespawnMode mode,
+            string modeReason)
+        {
+            LocalDeathState state = GetOrCreateLocalDeathState(slot);
+            int token = Token(player);
+            if (state.GateDialog != null && state.GateToken == token) return;
+            GameWidget widget = player.GameWidget;
+            ContainerWidget guiWidget = widget?.GuiWidget;
+            if (guiWidget == null)
+            {
+                m_gateFailures++;
+                Problem("gate-widget:" + slot,
+                    "挡门对话框挂不上：本机槽位 " + slot + " 没有 GameWidget.GuiWidget → " +
+                    "引擎会在死亡后 1.5 秒内自己删实体并本地复活（主机裁决失效）");
+                return;
+            }
+            try
+            {
+                var dialog = new Dialog();
+                // Dispatcher.Dispatch 在主线程立刻执行：对话框这一帧就挂上，
+                // 早于引擎下一次 PlayerDead.Update 的条件判定。
+                DialogsManager.ShowDialog(guiWidget, dialog);
+                state.GateDialog = dialog;
+                state.GateToken = token;
+                m_gateShown++;
+                NeutralizeDialogCover(slot, guiWidget, dialog);
+                Info("本机槽位 " + slot + " 已挂挡门对话框（模式=" +
+                    PlayerRespawnRules.Describe(mode) +
+                    "）：引擎 PlayerDead 的点击分支被挡住（!DialogsManager.HasDialogs，" +
+                    "PlayerData.cs:306），等主机批准后才执行 RemoveEntity" +
+                    (mode == PlayerRespawnMode.Unknown
+                        ? "；读不到世界复活模式（" + (modeReason ?? "端口没有给原因") +
+                          "）→ 不给请求路径（不猜模式）"
+                        : mode == PlayerRespawnMode.AdventureRestart
+                            ? "；Adventure 未允许复活：引擎点击后会 SwitchScreen(\"GameLoading\", " +
+                              "..., \"AdventureRestart\") 重启本地世界（PlayerData.cs:312-315），" +
+                              "联机不能照搬"
+                            : string.Empty));
+            }
+            catch (Exception e)
+            {
+                m_gateFailures++;
+                Error("gate-show:" + slot,
+                    "挂挡门对话框失败（本机槽位 " + slot + "）：引擎可能自行删实体本地复活", e);
+            }
+        }
+
+        /// <summary>
+        /// 引擎 <c>DialogsManager.ShowDialog</c> 会在同一个父控件里紧挨着对话框插一个全屏黑色遮罩
+        /// （<c>DialogsManager.cs:8-20</c> 的 <c>CoverWidget</c>，<c>Alpha=192</c>，
+        /// <c>DialogsManager.cs:67</c> 加入 <c>parentWidget.Children</c>）。它不参与
+        /// <c>HasDialogs</c> 判定，但会把引擎原生的死亡屏（"YOU HAVE DIED" 大字）压暗到 25%。
+        /// 这里只把它改成全透明，让死亡屏保持原生亮度；遮罩不参与点击判定，改它不影响任何逻辑。
+        ///
+        /// 找不到遮罩（引擎内部分层变了）时**不静默**：计数 + 限流日志，死亡屏会变暗但仍可用。
+        /// </summary>
+        private void NeutralizeDialogCover(int slot, ContainerWidget parent, Dialog dialog)
+        {
+            try
+            {
+                WidgetsList children = parent.Children;
+                int index = children.IndexOf(dialog);
+                if (index <= 0)
+                {
+                    m_gateCoverMisses++;
+                    Problem("gate-cover-index:" + slot,
+                        "挡门对话框在 GuiWidget.Children 里的位置是 " + index +
+                        " → 找不到它前面的遮罩，引擎死亡屏会被压暗（不假装成功）");
+                    return;
+                }
+                Widget cover = children[index - 1];
+                if (cover == null || cover.GetType().Name != "CoverWidget")
+                {
+                    m_gateCoverMisses++;
+                    Problem("gate-cover-type:" + slot,
+                        "挡门对话框前面的控件不是 DialogsManager.CoverWidget（实际=" +
+                        (cover == null ? "null" : cover.GetType().Name) +
+                        "）→ 引擎死亡屏会被压暗（不假装成功）");
+                    return;
+                }
+                if (!(cover is RectangleWidget rectangle))
+                {
+                    m_gateCoverMisses++;
+                    Problem("gate-cover-shape:" + slot,
+                        "DialogsManager.CoverWidget 不是 RectangleWidget → 无法改成透明");
+                    return;
+                }
+                rectangle.FillColor = Color.Transparent;
+                m_gateCoverNeutralized++;
+            }
+            catch (Exception e)
+            {
+                m_gateCoverMisses++;
+                Error("gate-cover:" + slot, "把挡门对话框的遮罩改成透明失败", e);
+            }
+        }
+
+        /// <summary>关掉某个槽位的挡门对话框（幂等）。返回 true = 这次真的关了一个。</summary>
+        private bool HideDeathGateDialog(int slot, string why)
+        {
+            if (!m_localDeathStates.TryGetValue(slot, out LocalDeathState state) ||
+                state.GateDialog == null)
+                return false;
+            Dialog dialog = state.GateDialog;
+            state.GateDialog = null;
+            state.GateToken = 0;
+            try
+            {
+                // DialogsManager.HideDialog 立刻把对话框从 m_dialogs 移除（淡出动画由 Update 收尾），
+                // 所以引擎 PlayerDead 的 !HasDialogs 条件当帧就成立。
+                DialogsManager.HideDialog(dialog);
+                m_gateHidden++;
+                Info("已关掉本机槽位 " + slot + " 的挡门对话框（" + why + "）");
+                return true;
+            }
+            catch (Exception e)
+            {
+                m_gateFailures++;
+                Error("gate-hide:" + slot, "关闭挡门对话框失败（本机槽位 " + slot + "：" + why + "）", e);
+                return false;
+            }
+        }
+
+        /// <summary>死亡期结束（复活 / 主机改回活着 / 世界切换）：关掉挡门对话框并计数。</summary>
+        private void ClearNativeDeath(int slot, string why)
+        {
+            HideDeathGateDialog(slot, why);
+            if (m_localDeathStates.TryGetValue(slot, out LocalDeathState state))
+            {
+                state.GateDialog = null;
+                state.GateToken = 0;
+            }
+        }
+
+        /// <summary>
+        /// 与引擎 <c>!DialogsManager.HasDialogs(ComponentPlayer.GuiWidget)</c>
+        /// （<c>PlayerData.cs:306</c>）同口径，但**排除本槽位自己的挡门对话框** ——
+        /// 否则玩家永远点不动（挡门框一直在）。
+        /// </summary>
+        private static bool HasForeignDialogs(Widget guiWidget, Dialog own)
+        {
+            if (guiWidget == null) return false;
+            var dialogs = DialogsManager.Dialogs;
+            for (int i = 0; i < dialogs.Count; i++)
+            {
+                Dialog dialog = dialogs[i];
+                if (dialog == null || ReferenceEquals(dialog, own)) continue;
+                if (dialog.ParentWidget == guiWidget) return true;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// 冻结死亡那一刻的本地权威副本（背包 / 手持槽 / 合成格 / 衣服）。
+        /// 客户端是这些状态的权威方（由它上报给主机），所以直接取本机组件即可。
+        /// 捕获失败 = 返回 null 并计数（复活后这几样保持引擎模板值，绝不假装恢复成功）。
+        /// </summary>
+        private LocalKeepState CaptureKeepState(int slot, ComponentPlayer player)
+        {
+            try
+            {
+                var keep = new LocalKeepState();
+                ComponentInventory inventory = player.Entity.FindComponent<ComponentInventory>();
+                if (inventory != null)
+                {
+                    int slots = inventory.SlotsCount;
+                    keep.InventoryValues = new int[slots];
+                    keep.InventoryCounts = new int[slots];
+                    for (int i = 0; i < slots; i++)
+                    {
+                        keep.InventoryValues[i] = inventory.GetSlotValue(i);
+                        keep.InventoryCounts[i] = inventory.GetSlotCount(i);
+                    }
+                    keep.ActiveSlotIndex = inventory.ActiveSlotIndex;
+                }
+                ComponentCraftingTable crafting =
+                    player.Entity.FindComponent<ComponentCraftingTable>();
+                if (crafting != null)
+                {
+                    int slots = crafting.SlotsCount;
+                    keep.CraftingValues = new int[slots];
+                    keep.CraftingCounts = new int[slots];
+                    for (int i = 0; i < slots; i++)
+                    {
+                        keep.CraftingValues[i] = crafting.GetSlotValue(i);
+                        keep.CraftingCounts[i] = crafting.GetSlotCount(i);
+                    }
+                }
+                ComponentClothing clothing = player.Entity.FindComponent<ComponentClothing>();
+                if (clothing != null)
+                {
+                    keep.Clothes = new int[clothing.SlotsCount][];
+                    for (int i = 0; i < clothing.SlotsCount; i++)
+                    {
+                        keep.Clothes[i] =
+                            new List<int>(clothing.GetClothes((ClothingSlot)i)).ToArray();
+                    }
+                }
+                Info("本机槽位 " + slot + " 已冻结死亡前的背包 / 合成格 / 衣服副本" +
+                    "（背包 " + (keep.InventoryCounts?.Length ?? 0) + " 格 / 合成格 " +
+                    (keep.CraftingCounts?.Length ?? 0) + " 格 / 衣服 " +
+                    (keep.Clothes?.Length ?? 0) + " 槽）：新实体是空模板，复活后用它覆盖");
+                return keep;
+            }
+            catch (Exception e)
+            {
+                m_replayFailures++;
+                Error("keep-capture:" + slot,
+                    "冻结本机槽位 " + slot + " 的背包 / 衣服副本失败 → 复活后这几样会保持" +
+                    "引擎模板值（空背包 / 空衣服），不假装恢复成功", e);
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// 把冻结副本写回**新实体**（引擎新实体是空模板）。返回 false = 有写失败（已计数 + 日志）。
+        /// </summary>
+        private bool RestoreKeepState(int slot, ComponentPlayer player, LocalKeepState keep)
+        {
+            if (keep == null) return false;
+            bool ok = true;
+            try
+            {
+                ComponentInventory inventory = player.Entity.FindComponent<ComponentInventory>();
+                if (inventory != null && keep.InventoryValues != null)
+                {
+                    int slots = MathUtils.Min(inventory.SlotsCount, keep.InventoryValues.Length);
+                    for (int i = 0; i < slots; i++)
+                    {
+                        int have = inventory.GetSlotCount(i);
+                        if (have > 0) inventory.RemoveSlotItems(i, have);
+                        if (keep.InventoryCounts[i] > 0)
+                            inventory.AddSlotItems(i, keep.InventoryValues[i],
+                                keep.InventoryCounts[i]);
+                    }
+                    inventory.ActiveSlotIndex = keep.ActiveSlotIndex;
+                    m_replayInventoryRestores++;
+                }
+                ComponentCraftingTable crafting =
+                    player.Entity.FindComponent<ComponentCraftingTable>();
+                if (crafting != null && keep.CraftingValues != null)
+                {
+                    int slots = MathUtils.Min(crafting.SlotsCount, keep.CraftingValues.Length);
+                    for (int i = 0; i < slots; i++)
+                    {
+                        int have = crafting.GetSlotCount(i);
+                        if (have > 0) crafting.RemoveSlotItems(i, have);
+                        if (keep.CraftingCounts[i] > 0)
+                            crafting.AddSlotItems(i, keep.CraftingValues[i],
+                                keep.CraftingCounts[i]);
+                    }
+                }
+                ComponentClothing clothing = player.Entity.FindComponent<ComponentClothing>();
+                if (clothing != null && keep.Clothes != null)
+                {
+                    int slots = MathUtils.Min(clothing.SlotsCount, keep.Clothes.Length);
+                    for (int i = 0; i < slots; i++)
+                    {
+                        clothing.SetClothes((ClothingSlot)i,
+                            keep.Clothes[i] ?? Array.Empty<int>());
+                    }
+                    m_replayClothesRestores++;
+                }
+                return ok;
+            }
+            catch (Exception e)
+            {
+                m_replayFailures++;
+                Error("keep-restore:" + slot,
+                    "把背包 / 衣服写回新实体失败（本机槽位 " + slot + "）", e);
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// 每帧读死亡屏输入，口径是**按下沿**而不是 <c>Input.Any</c> 电平（根因与引擎证据见
+        /// <see cref="PlayerDeathInputSample"/>）：返回 true 仅当这一帧出现了**新的按下**
+        /// （触摸按下帧 / 鼠标左(右)键按下帧 / 手柄 A 按下帧 / 键盘的**非自动重复**按下）。
+        /// <c>GameWidget.Input.Any</c> 只是"这一帧有输入事件"的标志，而键盘的
+        /// <c>LastKey</c> 在自动重复时也会置位（<c>WidgetInput.cs:704</c> +
+        /// <c>Keyboard.cs:170-176</c>）—— 直接用它判点击会让"死亡瞬间正按着的方向键"
+        /// 在 1.5 s 门槛后自动复活。按住 / 重复的电平只计数 + 限流日志，绝不当点击。
+        /// 对话框打开时不判定（与引擎 <c>PlayerData.cs:306</c> 的 <c>!DialogsManager.HasDialogs</c> 同口径）。
         /// </summary>
         public bool TryPollLocalDeathTap(PlayerKey key, out bool tapped, out string reason)
         {
@@ -973,7 +1347,27 @@ namespace SuMultiplayer.Engine
             }
             try
             {
-                tapped = !DialogsManager.HasDialogs(player.GuiWidget) && widget.Input.Any;
+                PlayerDeathInputSample sample = ReadDeathInput(widget.Input);
+                // 引擎 PlayerData.cs:306 同口径，但排除**我们自己**的挡门对话框：
+                // 挡门框一直挂着，若不排除就永远点不动（详见 HasForeignDialogs）。
+                m_localDeathStates.TryGetValue(key.Slot, out LocalDeathState gateState);
+                bool noDialogs = !HasForeignDialogs(player.GuiWidget,
+                    gateState?.GateDialog);
+                tapped = noDialogs && sample.IsFreshPress;
+                if (!noDialogs && sample.IsFreshPress)
+                {
+                    Problem("death-tap-dialog:" + key.Slot,
+                        "本机槽位 " + key.Slot + " 的死亡屏上有**别的**对话框（退出菜单等）→ " +
+                        "本帧的按下不当作复活点击（与引擎 PlayerData.cs:306 同口径）");
+                }
+                if (noDialogs && sample.IsLevelOnly)
+                {
+                    m_deathTapLevelsIgnored++;
+                    Problem("death-tap-level:" + key.Slot,
+                        "本机槽位 " + key.Slot + " 的死亡屏输入只有 Any 电平（按住 / 键盘自动重复），" +
+                        "没有任何新的按下 → **不当作点击**（累计忽略 " + m_deathTapLevelsIgnored +
+                        " 帧）：必须是按下沿（松手后再次按下）才发复活请求");
+                }
                 return true;
             }
             catch (Exception e)
@@ -984,12 +1378,36 @@ namespace SuMultiplayer.Engine
         }
 
         /// <summary>
+        /// 从一帧 <c>WidgetInput</c> 采样死亡屏点击信号（纯读，不消费、不清输入）。
+        /// 引擎事实：
+        ///   · 触摸只在 <c>TouchLocationState.Pressed</c> 那一帧置 <c>Tap</c>（<c>WidgetInput.cs:915-923</c>），
+        ///     之后 <c>Touch.AfterFrame</c> 把它改成 <c>Moved</c>（<c>Engine/Engine/Input/Touch.cs:56-66</c>）；
+        ///   · 鼠标 <c>Tap</c> 只在 <c>IsMouseButtonDownOnce</c> 那一帧（<c>WidgetInput.cs:864-871</c>）；
+        ///   · 手柄 A 按下帧置 <c>Ok</c> + <c>Tap</c>（<c>WidgetInput.cs:845</c>）；
+        ///   · 键盘 <c>LastKey</c> 在自动重复时也会被置位，只有 <c>IsKeyDownOnce</c> 才代表第一次按下
+        ///     （<c>Engine/Engine/Input/Keyboard.cs:170-176</c>）。
+        /// </summary>
+        private static PlayerDeathInputSample ReadDeathInput(WidgetInput input)
+        {
+            if (input == null) return default;
+            Key? lastKey = input.LastKey;
+            bool lastKeyPresent = lastKey.HasValue && lastKey.Value != Key.Escape;
+            // Escape 留给引擎的菜单路径（WidgetInput.cs:704 同样把它排除在 Any 之外）；
+            // 只有真正"第一次按下"才查 IsKeyDownOnce —— 自动重复期间它为 false。
+            bool lastKeyDownOnce = lastKeyPresent && input.IsKeyDownOnce(lastKey.Value);
+            return new PlayerDeathInputSample(input.Any, input.Tap.HasValue, input.Click.HasValue,
+                input.SpecialClick.HasValue, input.Ok, lastKeyPresent, lastKeyDownOnce);
+        }
+
+        /// <summary>
         /// 不可复活模式的点击（不发送 PLAYER_RESPAWN_REQUEST）：
-        ///   · Cruel：与引擎 PlayerData.cs:308-311 一样打开 <c>GameMenuDialog</c>；
+        ///   · Cruel：**不需要 mod 做任何事** —— 挡门对话框不挂，引擎自己的
+        ///     <c>PlayerData.cs:308-311</c> 会在点击后打开 <c>GameMenuDialog</c>；
+        ///     走到这里说明上层的模式判定与端口不一致，明确失败（不重复打开菜单）；
         ///   · Adventure 禁复活：引擎的终止路径是
         ///     <c>ScreensManager.SwitchScreen("GameLoading", GameManager.WorldInfo, "AdventureRestart")</c>
-        ///     （PlayerData.cs:312-315）。联机客户端不能重启主机世界（会把本端拉出共享会话、
-        ///     造成主机侧死亡角色 / 世界状态分叉），所以这里**不执行**它，改为打开同一个
+        ///     （<c>PlayerData.cs:312-315</c>）。联机客户端不能重启主机世界（会把本端拉出共享会话、
+        ///     造成主机侧死亡角色 / 世界状态分叉），所以挡门对话框继续挂着，这里打开同一个
         ///     GameMenuDialog 并把原因写进日志 —— 这是"报告为什么不能照搬"，不是静默兜底。
         /// </summary>
         public bool TryHandleTerminalDeathTap(PlayerKey key, PlayerRespawnMode mode,
@@ -1003,10 +1421,10 @@ namespace SuMultiplayer.Engine
             {
                 if (mode == PlayerRespawnMode.Cruel)
                 {
-                    DialogsManager.ShowDialog(player.GuiWidget, new GameMenuDialog(player));
                     m_terminalDeathTaps++;
-                    reason = "cruel: 已打开 GameMenuDialog（与引擎 PlayerData.cs:308-311 相同）";
-                    return true;
+                    reason = "cruel：引擎自己的 PlayerDead 点击分支就会打开 GameMenuDialog" +
+                        "（PlayerData.cs:308-311），mod 不重复处理";
+                    return false;
                 }
                 if (mode == PlayerRespawnMode.AdventureRestart)
                 {
@@ -1029,8 +1447,229 @@ namespace SuMultiplayer.Engine
             catch (Exception e)
             {
                 reason = "不可复活模式点击处理异常：" + e.GetType().Name + " " + e.Message;
+                m_gateFailures++;
+                Error("terminal-death-tap:" + key, "不可复活模式点击处理失败", e);
                 return false;
             }
+        }
+
+        /// <summary>
+        /// **主机批准之后**由 mod 推进引擎死亡流程：
+        ///   ① 关掉挡门对话框；
+        ///   ② 执行引擎 <c>PlayerData.PlayerDead</c> 点击分支里的那一行
+        ///      <c>m_project.RemoveEntity(ComponentPlayer.Entity, disposeEntity: true)</c>
+        ///      （<c>Survivalcraft/Game/PlayerData.cs:318</c>）。
+        /// 之后 PrepareSpawn → SpawnDialog → WaitForTerrain → SpawnPlayer → FppCamera 全自动
+        /// （<c>PlayerData.cs:163-256 / 404-421</c>）。
+        ///
+        /// 前置条件必须真实成立（否则明确失败，不强行推状态机）：
+        ///   · 本机槽位有 Project / 有槽位记录；
+        ///   · 引擎 PlayerData 真的在 PlayerDead（<c>m_playerDeathTime</c> 有值）。
+        /// 幂等：已经删过（没有 ComponentPlayer）= 返回 true + 说明。
+        /// </summary>
+        public bool TryExecuteLocalRespawn(PlayerKey key, out string reason)
+        {
+            reason = null;
+            int slot = key.Slot;
+            Project project = GameManager.Project;
+            if (project == null)
+            {
+                m_engineRespawnFailures++;
+                reason = "没有加载中的 Project（还没进世界）";
+                return false;
+            }
+            if (!m_spawner.TryGetLocalPlayer(project, slot, out PlayerData playerData, out reason))
+            {
+                m_engineRespawnFailures++;
+                return false;
+            }
+            LocalDeathState state = GetOrCreateLocalDeathState(slot);
+            ComponentPlayer player = playerData?.ComponentPlayer;
+            if (player == null)
+            {
+                if (state.DeathToken != 0)
+                {
+                    reason = "本机槽位 " + slot + " 的旧实体已经删除（引擎在 PrepareSpawn / " +
+                        "WaitForTerrain 中）";
+                    return true;
+                }
+                m_engineRespawnFailures++;
+                reason = "本机槽位 " + slot + " 没有 ComponentPlayer，也没有执行过删除 → " +
+                    "不能推进复活流程";
+                return false;
+            }
+            object deathTime;
+            try
+            {
+                deathTime = m_parentField.GetParentField(playerData, "m_playerDeathTime",
+                    typeof(PlayerData));
+            }
+            catch (Exception e)
+            {
+                m_engineRespawnFailures++;
+                Error("execute-death-time:" + slot,
+                    "读取引擎 PlayerData.m_playerDeathTime 失败（无法确认引擎已判死）", e);
+                reason = "读取 m_playerDeathTime 失败：" + e.GetType().Name + " " + e.Message;
+                return false;
+            }
+            if (deathTime == null)
+            {
+                m_engineRespawnFailures++;
+                reason = "引擎 PlayerData 不在 PlayerDead（m_playerDeathTime 为空）：" +
+                    "本机槽位 " + slot + " 还没被引擎判死 → 不删实体";
+                return false;
+            }
+            try
+            {
+                HideDeathGateDialog(slot, "主机已批准复活");
+                state.DeathToken = Token(player);
+                state.ReplayedToken = 0;
+                // Source: Survivalcraft/Game/PlayerData.cs:318（引擎点击分支的同一行）
+                project.RemoveEntity(player.Entity, disposeEntity: true);
+                m_engineRespawnExecuted++;
+                m_localDeadSlots.Remove(slot);
+                Info("本机槽位 " + slot + " 已执行引擎 RemoveEntity(disposeEntity: true) → " +
+                    "引擎开始原生 PrepareSpawn → SpawnDialog → WaitForTerrain → SpawnPlayer" +
+                    "（出生后由 TryReplayLocalRespawn 整体重放主机权威状态）");
+                return true;
+            }
+            catch (Exception e)
+            {
+                m_engineRespawnFailures++;
+                Error("execute-respawn:" + slot,
+                    "执行引擎 RemoveEntity 失败（本机槽位 " + slot + "）", e);
+                reason = "执行 RemoveEntity 异常：" + e.GetType().Name + " " + e.Message;
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// **新实体出生后的权威重放**（方案 A 的第三个闸门）。
+        ///
+        /// 引擎 <c>SpawnPlayer</c> 建的是全新实体（模板血量 / 空背包 / 空衣服），落点还会被
+        /// <c>FindNoIntroSpawnPosition</c> 偏移最多 8 格（<c>PlayerData.cs:454-477</c>）。
+        /// 所以新实体一出现就用主机权威数据覆盖：
+        ///   ① 落点 = 主机裁决的落点，同时写 <c>PlayerData.SpawnPosition</c>（以后复活的锚点）；
+        ///   ② 背包 / 手持槽 / 合成格 / 衣服 = 死亡那一刻冻结的副本；
+        ///   ③ 重新摘掉新实体的生命 / 体征 / 睡眠 / 病程 / 火焰模拟 + <c>IsInvulnerable</c>；
+        ///   ④ 重新初始化 HUD（新 GUI 是新的）；
+        ///   ⑤ 推进死亡 epoch（此后不新于它的死亡状态一律拒写）；
+        ///   ⑥ 五项体征由模块用最近一条主机快照补写（模块持有快照，端口不缓存）。
+        /// </summary>
+        public PlayerRespawnReplayStatus TryReplayLocalRespawn(PlayerKey key,
+            in PlayerRespawnReplayRequest request, out string reason)
+        {
+            reason = null;
+            int slot = key.Slot;
+            Project project = GameManager.Project;
+            if (project == null)
+            {
+                reason = "没有加载中的 Project（还没进世界）";
+                return PlayerRespawnReplayStatus.Failed;
+            }
+            if (!m_spawner.TryGetLocalPlayer(project, slot, out PlayerData playerData, out reason))
+                return PlayerRespawnReplayStatus.Failed;
+            LocalDeathState state = GetOrCreateLocalDeathState(slot);
+            ComponentPlayer player = playerData?.ComponentPlayer;
+            if (player == null)
+            {
+                m_replayWaitFrames++;
+                reason = "引擎还没建出新实体（ComponentPlayer 为空：PrepareSpawn / " +
+                    "WaitForTerrain 中；已等待 " + m_replayWaitFrames + " 帧）";
+                return PlayerRespawnReplayStatus.Waiting;
+            }
+            int token = Token(player);
+            if (state.ReplayedToken == token)
+            {
+                reason = "本机槽位 " + slot + " 的这个实体已经重放过";
+                return PlayerRespawnReplayStatus.NoPending;
+            }
+            try
+            {
+                if (request.HasPosition && request.HasFinitePosition)
+                {
+                    ComponentBody body = player.ComponentBody;
+                    if (body != null)
+                    {
+                        body.Position = request.Position;
+                        body.Velocity = Vector3.Zero;
+                        body.TargetCrouchFactor = 0f;
+                    }
+                    // 落点锚点：以后每次复活的搜索中心都是主机裁决的这个点。
+                    playerData.SpawnPosition = request.Position;
+                }
+                else
+                {
+                    Problem("replay-no-position:" + slot,
+                        "主机没有给出有限落点（" + request.Describe() +
+                        "）→ 落点保持引擎 FindNoIntroSpawnPosition 的结果，其余状态照常重放");
+                }
+                bool keepOk = RestoreKeepState(slot, player, state.Keep);
+                if (state.Keep != null && !keepOk)
+                {
+                    Problem("replay-keep:" + slot,
+                        "本机槽位 " + slot + " 的背包 / 衣服没有完全写回（见上面的错误日志）" +
+                        "：新角色可能缺物品，不假装成功");
+                }
+                // 新实体的组件实例是新的：重新摘模拟 + IsInvulnerable（内部按实体标识去重）。
+                if (DisableLocalSimulation(out int disabled, out string simReason) < 0)
+                {
+                    Problem("replay-sim:" + slot, "摘模拟失败：" + simReason);
+                }
+                if (!string.IsNullOrEmpty(simReason))
+                {
+                    Problem("replay-sim:" + slot,
+                        "重放时重新摘本机模拟失败：" + simReason + "（已摘 " + disabled + " 个）");
+                }
+                // 新 GUI = 新控件：HUD 重新初始化（DisableLocalSimulation 里已按新 token 做一次，
+                // 这里再显式保证一次，避免它被上一步的失败路径跳过）。
+                m_localHud.Remove(slot);
+                if (!SeedLocalHud(slot, player, out string hudReason))
+                {
+                    Problem("replay-hud:" + slot,
+                        "重放时初始化 HUD 失败：" + (hudReason ?? "端口没有给原因"));
+                }
+                m_localSleep.Remove(slot);
+                m_localDeadSlots.Remove(slot);
+                StopLocalFireParticles(slot);
+                m_localDeathEpoch[slot] = PlayerRespawnEpoch.Advance(EpochOf(slot), request.Epoch);
+                state.ReplayedToken = token;
+                state.DeathToken = 0;
+                state.Keep = null;
+                m_replayApplied++;
+                Info("本机槽位 " + slot + " 的复活权威重放完成（落点=" +
+                    (request.HasPosition ? request.Position.ToString() : "未提供") +
+                    "，死亡 epoch=" + EpochOf(slot) + "，背包恢复=" +
+                    m_replayInventoryRestores + "，衣服恢复=" + m_replayClothesRestores + "）");
+                return PlayerRespawnReplayStatus.Applied;
+            }
+            catch (Exception e)
+            {
+                m_replayFailures++;
+                Error("replay:" + slot, "本机槽位 " + slot + " 的复活权威重放失败", e);
+                reason = "重放异常：" + e.GetType().Name + " " + e.Message;
+                return PlayerRespawnReplayStatus.Failed;
+            }
+        }
+
+        /// <summary>
+        /// 把"已向主机请求复活、正在等裁决"显示在本机死亡屏上（小消息）。
+        /// 只做表现，不改请求状态。
+        /// </summary>
+        public bool TryShowLocalRespawnPending(PlayerKey key, out string reason)
+        {
+            reason = null;
+            if (!TryResolveLocal(key.Slot, out PlayerData playerData, out ComponentPlayer player,
+                    out reason))
+                return false;
+            ComponentGui gui = player.ComponentGui;
+            if (gui == null)
+            {
+                reason = "本机槽位 " + key.Slot + " 没有 ComponentGui（无法显示等待提示）";
+                return false;
+            }
+            gui.DisplaySmallMessage("Respawn requested", Color.White, false, true);
+            return true;
         }
 
         public bool TryShowLocalRespawnRejected(PlayerKey key, string reasonCode,
@@ -1051,11 +1690,6 @@ namespace SuMultiplayer.Engine
                 Color.White, false, true);
             m_respawnRejectedMessages++;
             return true;
-        }
-
-        private void ShowLocalRespawn(ComponentPlayer player)
-        {
-            player.ComponentGui?.DisplaySmallMessage("Respawned", Color.White, false, true);
         }
 
         private void WriteLocalFire(ComponentPlayer player, int slot, float fireDuration)
@@ -1157,7 +1791,6 @@ namespace SuMultiplayer.Engine
                     m_parentField.ModifyParentField(player.ComponentHealth,
                         "<IsInvulnerable>k__BackingField", true, typeof(ComponentHealth));
                 }
-                EnsureLocalPlayerNotLocallyDead(player.PlayerData, player);
                 m_disabledLocalSlots[slot] = token;
                 // 摘掉模拟的同一拍就把 HUD 从当前（下载世界 / 上一次主机）值初始化：
                 // 温度条的 BarSubtexture 不能等到第一条快照才第一次被写。
@@ -1204,6 +1837,7 @@ namespace SuMultiplayer.Engine
                 m_localFireParticles.Clear();
                 m_localHud.Clear();
                 m_localSleep.Clear();
+                ResetNativeDeathStates("没有加载中的 Project");
                 return true;
             }
             SubsystemUpdate update = project.FindSubsystem<SubsystemUpdate>(false);
@@ -1242,10 +1876,40 @@ namespace SuMultiplayer.Engine
             // 睡眠表现同理：ComponentSleep.Update 已重新加回 SubsystemUpdate，淡入 / 淡出 /
             // 黑屏 / 提示重新由引擎写；我们停止每帧补写，避免两套来源。
             m_localSleep.Clear();
+            // 客户端角色结束（退出房间 / 断开 / 改当主机）：死亡期的挡门对话框与冻结副本全部作废，
+            // 否则下次进世界会带着上一次的对话框 / 旧副本。
+            ResetNativeDeathStates("本机模拟恢复（退出客户端角色）");
             if (m_localSimRestores > 0)
                 Info("本机角色的生命 / 体征 / 睡眠 / 病程 / 火焰模拟已恢复（累计恢复 " +
                     m_localSimRestores + " 个槽位）");
             return true;
+        }
+
+        /// <summary>
+        /// 清空死亡期状态（挡门对话框 / 冻结副本 / 死亡 epoch）。离开世界、断开连接、
+        /// 改当主机时调用 —— 不留待重放项，也不留旧 epoch（新世界的 revision 从头开始）。
+        /// </summary>
+        private void ResetNativeDeathStates(string why)
+        {
+            if (m_localDeathStates.Count == 0 && m_localDeathEpoch.Count == 0) return;
+            Info("清空本机死亡期状态（" + why + "）：挡门对话框 " + m_localDeathStates.Count +
+                " 个，死亡 epoch " + m_localDeathEpoch.Count + " 个");
+            foreach (KeyValuePair<int, LocalDeathState> item in m_localDeathStates)
+            {
+                if (item.Value.GateDialog == null) continue;
+                try
+                {
+                    DialogsManager.HideDialog(item.Value.GateDialog);
+                    m_gateHidden++;
+                }
+                catch (Exception e)
+                {
+                    m_gateFailures++;
+                    Error("gate-reset:" + item.Key, "清空死亡期状态时关闭挡门对话框失败", e);
+                }
+            }
+            m_localDeathStates.Clear();
+            m_localDeathEpoch.Clear();
         }
 
         // ================================================================ 客户端侧：远端化身
@@ -2016,6 +2680,168 @@ namespace SuMultiplayer.Engine
             }
         }
 
+        /// <summary>
+        /// **客户端每帧**：读本机角色的"入睡申请"边沿，并**当场收回**主机未确认的本地睡眠。
+        ///
+        /// 为什么这样做（根因）：引擎唯一的入睡入口是 <c>ClothingWidget.Update</c>
+        /// （Source: Survivalcraft/Game/ClothingWidget.cs:78-90）——它跑在**持有控件的那一端**。
+        /// 在客户端上，它调的是客户端自己的 <c>ComponentSleep.Sleep(true)</c>，而主机的那个角色
+        /// 根本没睡。下一份权威上报（sleeping=false，<see cref="ApplyLocalSleep"/> 会写回
+        /// <c>m_sleepStartTime = null</c>）立刻把角色拉起来 —— 这就是"点击睡觉 → 躺下 → 秒起"。
+        ///
+        /// 所以客户端的 <c>IsSleeping</c> 只允许由主机确认的 <see cref="LocalSleepState.Sleeping"/>
+        /// 驱动：本地一旦出现引擎自己放进来的睡眠，就把它收回（不留任何本地睡眠状态），
+        /// 并把这一帧当作一次**入睡申请**边沿上报给模块（→ <c>PLAYER_SLEEP_REQUEST</c>）。
+        /// 收回是**权威口径的落实**，不是兜底：客户端从不持有主机没授予的睡眠。
+        /// </summary>
+        public bool TryPollLocalSleepRequest(PlayerKey key, out PlayerSleepRequestViewState state,
+            out bool requested, out string reason)
+        {
+            state = default;
+            requested = false;
+            reason = null;
+            if (!TryResolveLocal(key.Slot, out PlayerData playerData, out ComponentPlayer player,
+                    out reason))
+                return false;
+            ComponentSleep sleep = player.ComponentSleep;
+            if (sleep == null)
+            {
+                reason = "本机槽位 " + key.Slot + " 没有 ComponentSleep（无法判定入睡）";
+                return false;
+            }
+            if (!m_localSleep.TryGetValue(key.Slot, out LocalSleepState cached))
+            {
+                reason = "本机槽位 " + key.Slot + " 还没有收到主机的睡眠状态（不凭本地状态猜入睡）";
+                return false;
+            }
+            if (cached.EntityToken != Token(player))
+            {
+                reason = "本机槽位 " + key.Slot + " 的角色实体已换代（旧睡眠状态作废）";
+                return false;
+            }
+            try
+            {
+                state = new PlayerSleepRequestViewState(cached.Sleeping, cached.Dead);
+                if (!sleep.IsSleeping) return true;
+                if (cached.Sleeping) return true;   // 主机已确认：本地状态合法，不动它。
+                bool allowManualWake = m_parentField.GetParentField<bool>(sleep,
+                    "m_allowManualWakeUp", typeof(ComponentSleep));
+                if (!allowManualWake)
+                {
+                    // Sleep(allowManualWakeup: false) 只可能来自主机（昏迷 / Sleep(false)），
+                    // 客户端本地的这条路径已被摘掉 —— 出现就是异常，明确计数并收回。
+                    m_sleepLocalForcedRejected++;
+                    Problem("local-forced-sleep:" + key.Slot,
+                        "本机槽位 " + key.Slot + " 出现了引擎本地的强制睡眠（allowManualWake=false）" +
+                        "：客户端没有这条路径（ComponentVitalStats.Update 已摘掉）→ 已收回，" +
+                        "睡眠只能由主机授予");
+                    RevertLocalSleep(sleep);
+                    return true;
+                }
+                // 引擎的睡眠按钮刚在本地把角色放倒，但主机还没授予这一次睡眠。
+                requested = true;
+                RevertLocalSleep(sleep);
+                m_sleepLocalReverts++;
+                return true;
+            }
+            catch (Exception e)
+            {
+                reason = "读取本机槽位 " + key.Slot + " 的入睡申请异常：" + e.GetType().Name +
+                    " " + e.Message;
+                Error("local-sleep-request:" + key.Slot, reason, e);
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// **无副作用**地判断本机槽位是否可用（模块每帧用它发现"本机槽位表"）。
+        /// 与 <see cref="TryPollLocalSleepRequest"/> 的区别：**绝不收回本地睡眠、绝不吃掉
+        /// 入睡申请的边沿** —— 用带边沿的读法做发现会把玩家的第一次点击吃掉（实测顾虑）。
+        /// </summary>
+        public bool TryDescribeLocalSleep(PlayerKey key, out string reason)
+        {
+            reason = null;
+            if (!TryResolveLocal(key.Slot, out PlayerData playerData, out ComponentPlayer player,
+                    out reason))
+                return false;
+            if (player.ComponentSleep == null)
+            {
+                reason = "本机槽位 " + key.Slot + " 没有 ComponentSleep（无法判定入睡）";
+                return false;
+            }
+            if (!m_localSleep.TryGetValue(key.Slot, out LocalSleepState cached))
+            {
+                reason = "本机槽位 " + key.Slot + " 还没有收到主机的睡眠状态（不凭本地状态猜入睡）";
+                return false;
+            }
+            if (cached.EntityToken != Token(player))
+            {
+                reason = "本机槽位 " + key.Slot + " 的角色实体已换代（旧睡眠状态作废）";
+                return false;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// 收回主机未授予的本地睡眠（只清"睡眠本体"三个字段）：<c>m_sleepStartTime</c> 决定
+        /// 躺下姿势（Source: ComponentHumanModel.cs:86-94），<c>m_minWetness</c> /
+        /// <c>m_messageFactor</c> 是 <c>Sleep()</c> 一并重置的会话字段（ComponentSleep.cs:81-93）。
+        /// <c>m_sleepFactor</c> **不在这里清**：它由 <see cref="RefreshSleepPresentation"/> 按
+        /// 引擎速度淡出（1/s），直接归零会跳变。
+        /// </summary>
+        private void RevertLocalSleep(ComponentSleep sleep)
+        {
+            m_parentField.ModifyParentField(sleep, "m_sleepStartTime", null,
+                typeof(ComponentSleep));
+            m_parentField.ModifyParentField(sleep, "m_minWetness", float.MaxValue,
+                typeof(ComponentSleep));
+            m_parentField.ModifyParentField(sleep, "m_messageFactor", 0f, typeof(ComponentSleep));
+        }
+
+        /// <summary>确实发出入睡请求时清掉本帧输入（同一个点击不要再触发别的操作）。</summary>
+        public bool TryConsumeLocalSleepRequestInput(PlayerKey key, out string reason)
+        {
+            // 与 TryConsumeLocalSleepInput 同一个动作（引擎 WakeUp 前也是 Input.Clear()）；
+            // 分开命名只是让调用点读起来是"入睡请求"而不是"唤醒请求"。
+            return TryConsumeLocalSleepInput(key, out reason);
+        }
+
+        /// <summary>
+        /// 把主机拒绝入睡的原因显示在本机 HUD：与单机 <c>ClothingWidget.Update</c> 的
+        /// <c>DisplaySmallMessage(reason, Color.White, blinking: false, playNotificationSound: false)</c>
+        /// 逐参数一致（Source: Survivalcraft/Game/ClothingWidget.cs:82-86）。
+        /// </summary>
+        public bool TryShowLocalSleepRejected(PlayerKey key, string detail, out string reason)
+        {
+            reason = null;
+            if (string.IsNullOrEmpty(detail))
+            {
+                reason = "主机拒绝了入睡请求但没有给出可显示的细节（不编造一句）";
+                return false;
+            }
+            if (!TryResolveLocal(key.Slot, out PlayerData playerData, out ComponentPlayer player,
+                    out reason))
+                return false;
+            ComponentGui gui = player.ComponentGui;
+            if (gui == null)
+            {
+                reason = "本机槽位 " + key.Slot + " 没有 ComponentGui（无法显示入睡被拒原因）";
+                return false;
+            }
+            try
+            {
+                gui.DisplaySmallMessage(detail, Color.White, blinking: false,
+                    playNotificationSound: false);
+                m_sleepRejectMessages++;
+                return true;
+            }
+            catch (Exception e)
+            {
+                reason = "显示入睡被拒原因异常：" + e.GetType().Name + " " + e.Message;
+                return false;
+            }
+        }
+
         // ================================================================ 主机侧：唤醒权威（引擎 WakeUp）
 
         public bool TryReadAuthoritySleep(PlayerKey key, out PlayerSleepAuthorityState state,
@@ -2078,6 +2904,90 @@ namespace SuMultiplayer.Engine
                 reason = "对玩家键 " + key + " 调用 ComponentSleep.WakeUp() 抛异常：" +
                     e.GetType().Name + " " + e.Message;
                 Error("authority-wake:" + key, reason, e);
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// 主机：对主机侧那个角色调用**引擎** <c>ComponentSleep.Sleep(...)</c>
+        /// （<c>ComponentSleep.cs:81-94</c>：写 <c>m_sleepStartTime = TotalElapsedGameTime</c>、
+        /// <c>m_allowManualWakeUp</c>、<c>m_minWetness = MaxValue</c>、<c>m_messageFactor = 0</c>、
+        /// <c>PlayerStats.TimesWentToSleep++</c> —— 这些统计与 SpawnPosition 都只在主机上写）。
+        ///
+        /// 只由校验通过的 <c>PLAYER_SLEEP_REQUEST</c> 调用：客户端的睡眠按钮跑在客户端进程里，
+        /// 主机的这个角色必须由主机自己放倒，否则下一拍权威上报（sleeping=false）会把客户端
+        /// 刚躺下的角色立刻拉起来（实测"秒起"）。
+        ///
+        /// 先跑引擎自己的 <c>CanSleep(out reason)</c>（干地 / 方块舒适度 / 不够困 / 太湿 / 要有
+        /// 掩体，Source: ComponentSleep.cs:41-79），失败按 <c>can-sleep:&lt;原句&gt;</c> 明确拒绝。
+        /// </summary>
+        public bool TrySleepAuthorityPlayer(PlayerKey key, bool allowManualWake,
+            out string reasonCode, out string detail, out string reason)
+        {
+            reasonCode = null;
+            detail = null;
+            reason = null;
+            if (!TryResolveAuthorityPlayer(key, out PlayerData playerData,
+                    out ComponentPlayer player, out reason))
+            {
+                reasonCode = PlayerSleepReasons.UnknownPlayer;
+                return false;
+            }
+            ComponentSleep sleep = player.ComponentSleep;
+            if (sleep == null)
+            {
+                reasonCode = PlayerSleepReasons.SleepFailed;
+                reason = "玩家键 " + key + " 没有 ComponentSleep（无法调用引擎 Sleep）";
+                return false;
+            }
+            bool dead = player.ComponentHealth != null && player.ComponentHealth.Health <= 0f;
+            if (dead)
+            {
+                reasonCode = PlayerSleepReasons.Dead;
+                reason = "玩家键 " + key + " 已经死亡（尸体不能入睡）";
+                return false;
+            }
+            try
+            {
+                if (sleep.IsSleeping)
+                {
+                    // 已经在睡：不是失败路径（可能客户端重发了同一帧的点击）。
+                    // 不改状态、不重复写统计，把"已经在睡"作为明确的拒绝码回给客户端。
+                    reasonCode = PlayerSleepReasons.AlreadySleeping;
+                    reason = "玩家键 " + key + " 已经在睡（sleep_start_time=" +
+                        ReadSleepStartTime(sleep).ToString("0.##") + "）→ 不重复 Sleep()";
+                    return false;
+                }
+                if (!sleep.CanSleep(out string canSleepReason))
+                {
+                    // 引擎原句（"You must be on dry land" / "You are too wet" ...）既进日志
+                    // 也回给客户端显示 —— 与单机 ClothingWidget 的显示路径同一个字符串。
+                    reasonCode = PlayerSleepReasons.CanSleep + ":" + canSleepReason;
+                    detail = canSleepReason;
+                    reason = "玩家键 " + key + " 不满足引擎 CanSleep：" + canSleepReason;
+                    return false;
+                }
+                sleep.Sleep(allowManualWake);
+                if (!sleep.IsSleeping)
+                {
+                    // 引擎 Sleep() 只在 !IsSleeping 时生效；上面已排除已睡，走到这里说明
+                    // 组件状态与预期不符（例如另一次 WakeUp 插进来）→ 明确失败，不假装成功。
+                    reasonCode = PlayerSleepReasons.SleepFailed;
+                    reason = "对玩家键 " + key + " 调用 ComponentSleep.Sleep(" +
+                        allowManualWake + ") 之后 IsSleeping 仍为 false";
+                    m_sleepAuthoritySleepFailures++;
+                    return false;
+                }
+                m_authoritySleeps++;
+                return true;
+            }
+            catch (Exception e)
+            {
+                reasonCode = PlayerSleepReasons.SleepFailed;
+                reason = "对玩家键 " + key + " 调用 ComponentSleep.Sleep() 抛异常：" +
+                    e.GetType().Name + " " + e.Message;
+                m_sleepAuthoritySleepFailures++;
+                Error("authority-sleep:" + key, reason, e);
                 return false;
             }
         }
@@ -2534,10 +3444,21 @@ namespace SuMultiplayer.Engine
                 " condWrites=" + m_conditionWrites + " sleepWrites=" + m_sleepWrites +
                 " deathVisuals=" + m_deathVisuals + " respawnResets=" + m_respawnResets +
                 " localApply=" + m_localApplies + " localDeaths=" + m_localDeaths +
-                " localRespawns=" + m_localRespawns + " deathScreens=" +
-                m_deathScreensShown + "/" + m_deathScreenFailures + " deathCamFail=" +
-                m_deathCameraFailures + " terminalTaps=" + m_terminalDeathTaps +
-                " rejectedUi=" + m_respawnRejectedMessages + " hudWrites=" + m_hudWrites +
+                " localRespawns=" + m_localRespawns + " engineDeaths=" +
+                m_deathScreensShown + " terminalTaps=" + m_terminalDeathTaps +
+                " deathTapLevels=" + m_deathTapLevelsIgnored +
+                " playerDataRestores=" + m_localPlayerDataRestores +
+                " rejectedUi=" + m_respawnRejectedMessages +
+                " gateShown=" + m_gateShown + " gateHidden=" + m_gateHidden +
+                " gateFail=" + m_gateFailures + " gateCover=" + m_gateCoverNeutralized +
+                " gateCoverMiss=" + m_gateCoverMisses + " gateOpen=" +
+                m_localDeathStates.Count + " deathEpochs=" + m_localDeathEpoch.Count +
+                " engineRemove=" + m_engineRespawnExecuted + "/" + m_engineRespawnFailures +
+                " replay=" + m_replayApplied + "/" + m_replayFailures +
+                " replayWait=" + m_replayWaitFrames + " replayInv=" +
+                m_replayInventoryRestores + " replayClothes=" + m_replayClothesRestores +
+                " staleDeathRejects=" + m_staleDeathRejects +
+                " hudWrites=" + m_hudWrites +
                 " hudRefresh=" + m_hudPresentationRefreshes + " tempTex=" +
                 m_hudTemperatureTextures + " ice=" + m_hudIceWrites + " hudFail=" +
                 m_hudPresentationFailures + " hudNonFinite=" + m_hudNonFinite +
@@ -2553,7 +3474,11 @@ namespace SuMultiplayer.Engine
                 " sleepMirrorRuns=" + m_sleepMirrorRuns + " sleepMirrorFail=" +
                 m_sleepMirrorFailures + " sleepMirrorClears=" + m_sleepMirrorClears +
                 " sleepNoteFail=" + m_sleepNoteFailures + " authoritySleepReads=" +
-                m_authoritySleepReads + " authorityWakes=" + m_authorityWakes + "}";
+                m_authoritySleepReads + " authorityWakes=" + m_authorityWakes +
+                " authoritySleeps=" + m_authoritySleeps + " sleepAuthorityFail=" +
+                m_sleepAuthoritySleepFailures + " localSleepReverts=" + m_sleepLocalReverts +
+                " localSleepForced=" + m_sleepLocalForcedRejected + " sleepRejectMsg=" +
+                m_sleepRejectMessages + "}";
         }
 
         // ================================================================ 工具

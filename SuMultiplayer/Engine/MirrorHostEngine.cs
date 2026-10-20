@@ -74,7 +74,19 @@ namespace SuMultiplayer.Engine
         }
 
         private readonly NetworkAvatarSpawner m_avatars;
+
+        /// <summary>自动宿主卡死 → 触发引擎复活次数 / 失败次数。</summary>
+        private long m_revives;
+        private long m_reviveFailures;
+
+        /// <summary>免疫 / 卡死修复里被闸门拒掉的目标数（联机化身 / 不在账本 / 非自动命名）。</summary>
+        private long m_immunityRefusals;
+
+        /// <summary>读宿主 PlayerData 状态机失败次数（读不到就记失败，不当成"没卡死"）。</summary>
+        private long m_stateReadFailures;
+
         private readonly MirrorCharacterEngine m_mirror;
+        private readonly MirrorHostImmunityEngine m_immunity;
         private readonly IModuleDiagnostics m_diagnostics;
         private readonly Dictionary<int, Host> m_sessionOwned = new Dictionary<int, Host>();
         private readonly HashSet<string> m_reportedOnce = new HashSet<string>(StringComparer.Ordinal);
@@ -84,12 +96,18 @@ namespace SuMultiplayer.Engine
         private string m_namePrefix;
 
         public MirrorHostEngine(NetworkAvatarSpawner avatars, MirrorCharacterEngine mirror,
-            IModuleDiagnostics diagnostics)
+            MirrorHostImmunityEngine immunity, IModuleDiagnostics diagnostics)
         {
             m_avatars = avatars ?? throw new ArgumentNullException(nameof(avatars));
             m_mirror = mirror ?? throw new ArgumentNullException(nameof(mirror));
+            m_immunity = immunity ?? throw new ArgumentNullException(nameof(immunity));
             m_diagnostics = diagnostics;
         }
+
+        /// <summary>
+        /// 免疫写入引擎动作（组合根注入；本类不用反射入口，源码守卫按此分文件）。
+        /// </summary>
+        public MirrorHostImmunityEngine Immunity => m_immunity;
 
         /// <summary>
         /// 自动角色的前缀（由组合根按配置设置）。只用于"预先存在的 auto 角色"识别
@@ -414,6 +432,183 @@ namespace SuMultiplayer.Engine
 
         // ------------------------------------------------------------------ 端口：绑定 / 解绑
 
+        // ------------------------------------------------------------------ 端口：每拍维护（免疫 / 卡死修复）
+
+        /// <summary>
+        /// 自动宿主是否"卡死在死亡状态"（三条条件任一命中：引擎 PlayerData 停在
+        /// <c>PlayerDead</c> / 相机是 <c>DeathCamera</c> / 血量 ≤ 0）。命中时用引擎链路重建：
+        /// <c>Project.RemoveEntity(entity, disposeEntity:true)</c> 后 PlayerData 状态机会走
+        /// PrepareSpawn → WaitForTerrain → SpawnPlayer，同一个 PlayerData 复活
+        /// （<c>OnEntityRemoved</c> 先把 <c>ComponentPlayer</c> 置 null，
+        /// Source: PlayerData.cs:423-429；状态机随后 PrepareSpawn，Source: PlayerData.cs:302-305）。
+        /// 只对**本功能自动创建的宿主**调用；手动角色绝不动。
+        /// 卡死且**已绑定镜像**时先解绑（把快照写回到还活着的实体），再移除实体 ——
+        /// 否则解绑会把快照写回到已销毁的组件上。
+        /// </summary>
+        private bool TryReviveStuckAutoHost(Project project, PlayerData host, bool playerDataDead,
+            out bool reviving, out bool reviveFailed, out string reason)
+        {
+            reviving = false;
+            reviveFailed = false;
+            reason = null;
+            if (project == null || host == null) return false;
+            ComponentPlayer player = host.ComponentPlayer;
+            if (player == null) return false; // 还没出生：交给 IsReady 的 pending 路径
+            ComponentHealth health = player.ComponentHealth;
+            bool deadCamera = false;
+            try { deadCamera = host.GameWidget != null && host.GameWidget.ActiveCamera is DeathCamera; }
+            catch (Exception) { /* 没有 GameWidget 就不是"卡死相机"，按不卡死处理 */ }
+            bool offHealth = health != null && health.Health <= 0f;
+            if (!MirrorHostStuck.IsStuck(offHealth, deadCamera, playerDataDead, out string detail))
+                return false;
+            reviving = true;
+            // 已绑定的镜像先解绑：MirrorCharacterEngine 持有宿主的组件引用，实体销毁后再 Restore
+            // 会把绑定前快照写回到已销毁组件 / 已摘除的碰撞集合上。解绑失败就**不移除实体**。
+            if (m_mirror.IsBound && string.Equals((m_mirror.BoundCharacterName ?? string.Empty).Trim(),
+                    (host.Name ?? string.Empty).Trim(), StringComparison.OrdinalIgnoreCase))
+            {
+                if (!m_mirror.TryRestore(out MirrorRestoreOutcome restoreOutcome,
+                        out string restoreReason))
+                {
+                    reviveFailed = true;
+                    m_reviveFailures++;
+                    reason = "自动镜像宿主「" + (host.Name ?? "?") + "」" + detail +
+                        "，但先解绑镜像失败：" + (restoreReason ?? "原因未知") +
+                        "；本拍不移除实体（避免把绑定快照写回到已销毁实体）";
+                    m_diagnostics?.Error(OwnerId, reason, null);
+                    return true;
+                }
+                Log("自动镜像宿主「" + (host.Name ?? "?") + "」" + detail +
+                    " → 先解绑镜像（" + restoreOutcome.Describe() + "）再走引擎复活链路");
+            }
+            Entity entity = player.Entity;
+            if (entity == null)
+            {
+                reason = "自动镜像宿主「" + (host.Name ?? "?") +
+                    "」" + detail + " 但没有实体，等待引擎重建";
+                return true;
+            }
+            try
+            {
+                project.RemoveEntity(entity, disposeEntity: true);
+                m_revives++;
+                Log("自动镜像宿主「" + (host.Name ?? "?") + "」" + detail + "（health=" +
+                    (health == null ? "?" : health.Health.ToString("0.###")) +
+                    "）→ 用引擎复活链路移除实体并等待重新出生（不硬改状态机）");
+                reason = "自动镜像宿主卡死（" + detail + "）→ 已触发引擎复活，等待重新出生";
+            }
+            catch (Exception e)
+            {
+                reviveFailed = true;
+                m_reviveFailures++;
+                m_diagnostics?.Error(OwnerId, "自动镜像宿主「" + (host.Name ?? "?") +
+                    "」复活失败（RemoveEntity 抛异常）：" + e.GetType().Name + " " + e.Message, e);
+                reason = "自动镜像宿主复活失败（" + detail + "）：" + e.GetType().Name + " " +
+                    e.Message;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// 读宿主 <c>PlayerData</c> 是否卡在 <c>PlayerDead</c>（读失败 = 计数 + 限流日志，
+        /// 本拍按"没命中这条"继续，另外两条卡死条件仍然生效）。
+        /// </summary>
+        private bool TryReadPlayerDead(PlayerData host, out bool dead, out string failure)
+        {
+            dead = false;
+            failure = null;
+            if (m_immunity.TryReadPlayerDead(host, out dead, out failure)) return true;
+            m_stateReadFailures++;
+            WarnOnce("read-dead:" + (failure ?? "?"),
+                "读自动镜像宿主「" + (host?.Name ?? "?") +
+                "」的 PlayerData 状态机失败（本拍按「不在 PlayerDead」继续，health / 相机两条条件仍生效）：" +
+                (failure ?? "原因未知") + " · 累计=" + m_stateReadFailures);
+            return false;
+        }
+
+        /// <summary>
+        /// 每拍维护**自动镜像宿主**（端口 <see cref="IMirrorHostPort.TryMaintainAutoHosts"/>）：
+        ///   ① 只遍历宿主账本（<c>m_sessionOwned</c>）里、世界里还在的宿主；
+        ///   ② 过 <see cref="MirrorHostImmunityTarget"/> 三道闸门（账本 / 自动命名 / 不是联机化身）——
+        ///      手动角色（h1/h2/H3）与客户端化身**一个字段都不写**；
+        ///   ③ 卡死（health≤0 或 DeathCamera 或 PlayerData=PlayerDead）→ 引擎复活链路，
+        ///      本拍不再写免疫（实体已被移除，等重新出生）；
+        ///   ④ 否则按 <see cref="MirrorHostImmunityFields"/> 整套写免疫字段。
+        /// 返回 false = 引擎侧根本维护不了（世界没加载 / 找不到 SubsystemPlayers）；
+        /// 单宿主单字段失败不算 false，记在 <see cref="MirrorHostMaintenance.ImmunityFailures"/>。
+        /// </summary>
+        public bool TryMaintainAutoHosts(out MirrorHostMaintenance outcome, out string reason)
+        {
+            outcome = default(MirrorHostMaintenance);
+            reason = null;
+            Project project = GameManager.Project;
+            if (project == null)
+            {
+                reason = "没有加载中的 Project（世界已卸载）";
+                return false;
+            }
+            SubsystemPlayers players = project.FindSubsystem<SubsystemPlayers>(false);
+            if (players == null)
+            {
+                reason = "世界里找不到 SubsystemPlayers";
+                return false;
+            }
+            string firstFailure = null;
+            foreach (KeyValuePair<int, Host> pair in m_sessionOwned)
+            {
+                PlayerData host = pair.Value?.PlayerData;
+                if (host == null) continue;
+                if (!players.PlayersData.Contains(host)) continue; // 已不在世界里：本拍不碰
+                if (!MirrorHostImmunityTarget.IsEligible(sessionOwned: true, IsAutoName(host.Name),
+                        m_avatars.Contains(host), out string refused))
+                {
+                    m_immunityRefusals++;
+                    if (firstFailure == null) firstFailure = refused;
+                    continue;
+                }
+                ComponentPlayer player = host.ComponentPlayer;
+                if (player == null)
+                {
+                    outcome.CountAwaitingSpawn();
+                    continue; // 还没出生：等引擎 PlayerData 状态机 PrepareSpawn → SpawnPlayer
+                }
+                bool playerDataDead = false;
+                if (!TryReadPlayerDead(host, out playerDataDead, out string readFailure))
+                {
+                    outcome.CountImmunityFailure();
+                    if (firstFailure == null) firstFailure = readFailure;
+                }
+                if (TryReviveStuckAutoHost(project, host, playerDataDead, out bool reviving,
+                        out bool reviveFailed, out string reviveReason))
+                {
+                    outcome.CountStuck();
+                    if (reviveFailed)
+                    {
+                        outcome.CountReviveFailure();
+                        if (firstFailure == null) firstFailure = reviveReason;
+                    }
+                    else if (reviving)
+                    {
+                        outcome.CountRevived();
+                    }
+                    else if (firstFailure == null)
+                    {
+                        firstFailure = reviveReason;
+                    }
+                    continue;
+                }
+                if (!m_immunity.TryApply(player, out _, out string applyFailure))
+                {
+                    outcome.CountImmunityFailure();
+                    if (firstFailure == null) firstFailure = applyFailure;
+                    continue;
+                }
+                outcome.CountImmune();
+            }
+            if (firstFailure != null) reason = firstFailure;
+            return true;
+        }
+
         public bool TryBind(int clientId, string name, MirrorCharacterMode mode, out bool pending,
             out string reason)
         {
@@ -428,6 +623,20 @@ namespace SuMultiplayer.Engine
             if (!TryFindLocalPlayer(project, name, out PlayerData host, out string findReason))
             {
                 reason = findReason;
+                return false;
+            }
+            // 自动宿主是"一次性"的：出生在冬夜/危险环境可能在绑定前被冻死/打死，
+            // 而绑定后的 HUD 桥接会把血量写回客户端值 → 引擎 PlayerData 状态机却停在
+            // PlayerDead（实测 Mirror#4：state=PlayerDead、hp=1）→ ViewWidget 不再绘制，
+            // 第三屏永久黑屏。这里用**引擎自己的复活链路**重建它（移除实体 → PlayerData
+            // 检测到 ComponentPlayer==null → PrepareSpawn → 重新出生），不硬改状态机字段。
+            // 与每拍维护（TryMaintainAutoHosts）同一条判定：三条卡死条件任一命中。
+            bool playerDataDead = TryReadPlayerDead(host, out bool deadState, out _) && deadState;
+            if (TryReviveStuckAutoHost(project, host, playerDataDead, out bool reviving,
+                    out _, out string reviveReason))
+            {
+                pending = true;
+                reason = reviveReason;
                 return false;
             }
             if (!IsReady(host))

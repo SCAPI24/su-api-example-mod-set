@@ -25,17 +25,26 @@ namespace SuMultiplayer.Protocol.UiState {
       byte[] descriptorData = global::System.Convert.FromBase64String(
           string.Concat(
             "Cg11aXN0YXRlLnByb3RvEgxzdW1wLnVpc3RhdGUaGWdvb2dsZS9wcm90b2J1",
-            "Zi9hbnkucHJvdG8i/gEKDUNsaWVudFVpU3RhdGUSEAoIcmV2aXNpb24YASAB",
+            "Zi9hbnkucHJvdG8i/wMKDUNsaWVudFVpU3RhdGUSEAoIcmV2aXNpb24YASAB",
             "KA0SEgoKaW5wdXRfa2luZBgCIAEoDRITCgtodWRfdmlzaWJsZRgDIAEoCBIO",
             "CgZzY3JlZW4YBCABKAkSFgoOZGlhbG9nX3ByZXNlbnQYBSABKAgSEwoLZGlh",
             "bG9nX3R5cGUYBiABKAkSFQoNbW9kYWxfcHJlc2VudBgHIAEoCBISCgptb2Rh",
-            "bF90eXBlGAggASgJEhcKD2NoYXRfaW5wdXRfb3BlbhgJIAEoCBILCgNleHQY",
-            "ZCABKAwSJAoGY3VzdG9tGGUgASgLMhQuZ29vZ2xlLnByb3RvYnVmLkFueUIj",
-            "SAGqAh5TdU11bHRpcGxheWVyLlByb3RvY29sLlVpU3RhdGViBnByb3RvMw=="));
+            "bF90eXBlGAggASgJEhcKD2NoYXRfaW5wdXRfb3BlbhgJIAEoCBI0Cg5zbWFs",
+            "bF9tZXNzYWdlcxgKIAMoCzIcLnN1bXAudWlzdGF0ZS5VaVNtYWxsTWVzc2Fn",
+            "ZRIYChBmbG9hdGluZ19tZXNzYWdlGAsgASgJEh8KF2Zsb2F0aW5nX21lc3Nh",
+            "Z2VfZmFjdG9yGAwgASgCEhcKD292ZXJsYXlfbWVzc2FnZRgNIAEoCRIeChZv",
+            "dmVybGF5X21lc3NhZ2VfZmFjdG9yGA4gASgCEhkKEWhhbmRjcmFmdF9wcmVz",
+            "ZW50GA8gASgIEhwKEGhhbmRjcmFmdF92YWx1ZXMYECADKAVCAhABEhwKEGhh",
+            "bmRjcmFmdF9jb3VudHMYESADKAVCAhABEgsKA2V4dBhkIAEoDBIkCgZjdXN0",
+            "b20YZSABKAsyFC5nb29nbGUucHJvdG9idWYuQW55Ik8KDlVpU21hbGxNZXNz",
+            "YWdlEgwKBHRleHQYASABKAkSDQoFY29sb3IYAiABKA0SEAoIYmxpbmtpbmcY",
+            "AyABKAgSDgoGYWdlX21zGAQgASgNQiNIAaoCHlN1TXVsdGlwbGF5ZXIuUHJv",
+            "dG9jb2wuVWlTdGF0ZWIGcHJvdG8z"));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { global::Google.Protobuf.WellKnownTypes.AnyReflection.Descriptor, },
           new pbr::GeneratedClrTypeInfo(null, null, new pbr::GeneratedClrTypeInfo[] {
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.UiState.ClientUiState), global::SuMultiplayer.Protocol.UiState.ClientUiState.Parser, new[]{ "Revision", "InputKind", "HudVisible", "Screen", "DialogPresent", "DialogType", "ModalPresent", "ModalType", "ChatInputOpen", "Ext", "Custom" }, null, null, null, null)
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.UiState.ClientUiState), global::SuMultiplayer.Protocol.UiState.ClientUiState.Parser, new[]{ "Revision", "InputKind", "HudVisible", "Screen", "DialogPresent", "DialogType", "ModalPresent", "ModalType", "ChatInputOpen", "SmallMessages", "FloatingMessage", "FloatingMessageFactor", "OverlayMessage", "OverlayMessageFactor", "HandcraftPresent", "HandcraftValues", "HandcraftCounts", "Ext", "Custom" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.UiState.UiSmallMessage), global::SuMultiplayer.Protocol.UiState.UiSmallMessage.Parser, new[]{ "Text", "Color", "Blinking", "AgeMs" }, null, null, null, null)
           }));
     }
     #endregion
@@ -65,9 +74,15 @@ namespace SuMultiplayer.Protocol.UiState {
   ///   modal_present   / modal_type    ComponentGui.ModalPanelWidget class name.
   ///   chat_input_open mod-owned chat HUD input line (informational; see the module docs
   ///                   for why a per-view clone is not instantiated).
+  ///   small_messages  the client's visible MessageWidget entries (hint / pickup /
+  ///                   level / crafting notes), oldest first, at most 3.
+  ///   floating_message / overlay_message (+factors) ComponentScreenOverlays word /
+  ///                   bottom hint line currently drawn by the client.
+  ///   handcraft_*     the client's ComponentCraftingTable grid (FullInventoryWidget
+  ///                   left half) so the host can recompute the same recipe result.
   ///
   /// Wire id lives in protocol.proto (MessageType.CLIENT_UI_STATE = 100).
-  /// Append-only: never renumber.
+  /// Append-only: never renumber.  Field numbers 10..17 are the phase-2 additions.
   ///
   /// Source: Survivalcraft/Game/ComponentGui.cs:395（ControlsContainerWidget.IsVisible）
   /// Source: Survivalcraft/Game/ComponentGui.cs:536-559（ModalPanelWidget = FullInventoryWidget /
@@ -122,6 +137,14 @@ namespace SuMultiplayer.Protocol.UiState {
       modalPresent_ = other.modalPresent_;
       modalType_ = other.modalType_;
       chatInputOpen_ = other.chatInputOpen_;
+      smallMessages_ = other.smallMessages_.Clone();
+      floatingMessage_ = other.floatingMessage_;
+      floatingMessageFactor_ = other.floatingMessageFactor_;
+      overlayMessage_ = other.overlayMessage_;
+      overlayMessageFactor_ = other.overlayMessageFactor_;
+      handcraftPresent_ = other.handcraftPresent_;
+      handcraftValues_ = other.handcraftValues_.Clone();
+      handcraftCounts_ = other.handcraftCounts_.Clone();
       ext_ = other.ext_;
       custom_ = other.custom_ != null ? other.custom_.Clone() : null;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
@@ -267,6 +290,123 @@ namespace SuMultiplayer.Protocol.UiState {
       }
     }
 
+    /// <summary>Field number for the "small_messages" field.</summary>
+    public const int SmallMessagesFieldNumber = 10;
+    private static readonly pb::FieldCodec<global::SuMultiplayer.Protocol.UiState.UiSmallMessage> _repeated_smallMessages_codec
+        = pb::FieldCodec.ForMessage(82, global::SuMultiplayer.Protocol.UiState.UiSmallMessage.Parser);
+    private readonly pbc::RepeatedField<global::SuMultiplayer.Protocol.UiState.UiSmallMessage> smallMessages_ = new pbc::RepeatedField<global::SuMultiplayer.Protocol.UiState.UiSmallMessage>();
+    /// <summary>
+    /// The client's currently visible "small messages" (hint / pickup / level /
+    /// crafting notes) as an ordered list, oldest first.  The engine keeps at most
+    /// 3 at a time and each dies on its own timer, so the host mirrors the *list*
+    /// rather than one edge: a message that is gone here must disappear there.
+    /// Source: Survivalcraft/Game/MessageWidget.cs:DisplayMessage / MaxMessages = 3
+    /// Source: Survivalcraft/Game/ComponentGui.cs:189-196（DisplaySmallMessage）
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public pbc::RepeatedField<global::SuMultiplayer.Protocol.UiState.UiSmallMessage> SmallMessages {
+      get { return smallMessages_; }
+    }
+
+    /// <summary>Field number for the "floating_message" field.</summary>
+    public const int FloatingMessageFieldNumber = 11;
+    private string floatingMessage_ = "";
+    /// <summary>
+    /// ComponentScreenOverlays.FloatingMessage / Message + factors, i.e. the
+    /// camera-space "Zzz..." / "Aaa..." / "Ugh..." word and the bottom hint line.
+    /// Both are cleared to null/idle by ComponentScreenOverlays.Update (:60-77),
+    /// so the client reports the values it currently displays (empty = none).
+    /// Source: Survivalcraft/Game/ComponentScreenOverlays.cs:46-52,119
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string FloatingMessage {
+      get { return floatingMessage_; }
+      set {
+        floatingMessage_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "floating_message_factor" field.</summary>
+    public const int FloatingMessageFactorFieldNumber = 12;
+    private float floatingMessageFactor_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public float FloatingMessageFactor {
+      get { return floatingMessageFactor_; }
+      set {
+        floatingMessageFactor_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "overlay_message" field.</summary>
+    public const int OverlayMessageFieldNumber = 13;
+    private string overlayMessage_ = "";
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string OverlayMessage {
+      get { return overlayMessage_; }
+      set {
+        overlayMessage_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "overlay_message_factor" field.</summary>
+    public const int OverlayMessageFactorFieldNumber = 14;
+    private float overlayMessageFactor_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public float OverlayMessageFactor {
+      get { return overlayMessageFactor_; }
+      set {
+        overlayMessageFactor_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "handcraft_present" field.</summary>
+    public const int HandcraftPresentFieldNumber = 15;
+    private bool handcraftPresent_;
+    /// <summary>
+    /// The client's **handcrafting grid** (FullInventoryWidget left half): the
+    /// ComponentCraftingTable the panel is bound to, minus the derived result slot
+    /// (slot SlotsCount-2) which the host recomputes from these ingredients.
+    /// Present only while the client's modal panel is FullInventoryWidget; absent
+    /// means "nothing to mirror" (never "empty grid").
+    /// Source: Survivalcraft/Game/FullInventoryWidget.cs（componentCraftingTable 绑定）
+    /// Source: Survivalcraft/Game/ComponentCraftingTable.cs:99-142（UpdateCraftingResult）
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool HandcraftPresent {
+      get { return handcraftPresent_; }
+      set {
+        handcraftPresent_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "handcraft_values" field.</summary>
+    public const int HandcraftValuesFieldNumber = 16;
+    private static readonly pb::FieldCodec<int> _repeated_handcraftValues_codec
+        = pb::FieldCodec.ForInt32(130);
+    private readonly pbc::RepeatedField<int> handcraftValues_ = new pbc::RepeatedField<int>();
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public pbc::RepeatedField<int> HandcraftValues {
+      get { return handcraftValues_; }
+    }
+
+    /// <summary>Field number for the "handcraft_counts" field.</summary>
+    public const int HandcraftCountsFieldNumber = 17;
+    private static readonly pb::FieldCodec<int> _repeated_handcraftCounts_codec
+        = pb::FieldCodec.ForInt32(138);
+    private readonly pbc::RepeatedField<int> handcraftCounts_ = new pbc::RepeatedField<int>();
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public pbc::RepeatedField<int> HandcraftCounts {
+      get { return handcraftCounts_; }
+    }
+
     /// <summary>Field number for the "ext" field.</summary>
     public const int ExtFieldNumber = 100;
     private pb::ByteString ext_ = pb::ByteString.Empty;
@@ -318,6 +458,14 @@ namespace SuMultiplayer.Protocol.UiState {
       if (ModalPresent != other.ModalPresent) return false;
       if (ModalType != other.ModalType) return false;
       if (ChatInputOpen != other.ChatInputOpen) return false;
+      if(!smallMessages_.Equals(other.smallMessages_)) return false;
+      if (FloatingMessage != other.FloatingMessage) return false;
+      if (!pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.Equals(FloatingMessageFactor, other.FloatingMessageFactor)) return false;
+      if (OverlayMessage != other.OverlayMessage) return false;
+      if (!pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.Equals(OverlayMessageFactor, other.OverlayMessageFactor)) return false;
+      if (HandcraftPresent != other.HandcraftPresent) return false;
+      if(!handcraftValues_.Equals(other.handcraftValues_)) return false;
+      if(!handcraftCounts_.Equals(other.handcraftCounts_)) return false;
       if (Ext != other.Ext) return false;
       if (!object.Equals(Custom, other.Custom)) return false;
       return Equals(_unknownFields, other._unknownFields);
@@ -336,6 +484,14 @@ namespace SuMultiplayer.Protocol.UiState {
       if (ModalPresent != false) hash ^= ModalPresent.GetHashCode();
       if (ModalType.Length != 0) hash ^= ModalType.GetHashCode();
       if (ChatInputOpen != false) hash ^= ChatInputOpen.GetHashCode();
+      hash ^= smallMessages_.GetHashCode();
+      if (FloatingMessage.Length != 0) hash ^= FloatingMessage.GetHashCode();
+      if (FloatingMessageFactor != 0F) hash ^= pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.GetHashCode(FloatingMessageFactor);
+      if (OverlayMessage.Length != 0) hash ^= OverlayMessage.GetHashCode();
+      if (OverlayMessageFactor != 0F) hash ^= pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.GetHashCode(OverlayMessageFactor);
+      if (HandcraftPresent != false) hash ^= HandcraftPresent.GetHashCode();
+      hash ^= handcraftValues_.GetHashCode();
+      hash ^= handcraftCounts_.GetHashCode();
       if (Ext.Length != 0) hash ^= Ext.GetHashCode();
       if (custom_ != null) hash ^= Custom.GetHashCode();
       if (_unknownFields != null) {
@@ -392,6 +548,29 @@ namespace SuMultiplayer.Protocol.UiState {
         output.WriteRawTag(72);
         output.WriteBool(ChatInputOpen);
       }
+      smallMessages_.WriteTo(output, _repeated_smallMessages_codec);
+      if (FloatingMessage.Length != 0) {
+        output.WriteRawTag(90);
+        output.WriteString(FloatingMessage);
+      }
+      if (FloatingMessageFactor != 0F) {
+        output.WriteRawTag(101);
+        output.WriteFloat(FloatingMessageFactor);
+      }
+      if (OverlayMessage.Length != 0) {
+        output.WriteRawTag(106);
+        output.WriteString(OverlayMessage);
+      }
+      if (OverlayMessageFactor != 0F) {
+        output.WriteRawTag(117);
+        output.WriteFloat(OverlayMessageFactor);
+      }
+      if (HandcraftPresent != false) {
+        output.WriteRawTag(120);
+        output.WriteBool(HandcraftPresent);
+      }
+      handcraftValues_.WriteTo(output, _repeated_handcraftValues_codec);
+      handcraftCounts_.WriteTo(output, _repeated_handcraftCounts_codec);
       if (Ext.Length != 0) {
         output.WriteRawTag(162, 6);
         output.WriteBytes(Ext);
@@ -446,6 +625,29 @@ namespace SuMultiplayer.Protocol.UiState {
         output.WriteRawTag(72);
         output.WriteBool(ChatInputOpen);
       }
+      smallMessages_.WriteTo(ref output, _repeated_smallMessages_codec);
+      if (FloatingMessage.Length != 0) {
+        output.WriteRawTag(90);
+        output.WriteString(FloatingMessage);
+      }
+      if (FloatingMessageFactor != 0F) {
+        output.WriteRawTag(101);
+        output.WriteFloat(FloatingMessageFactor);
+      }
+      if (OverlayMessage.Length != 0) {
+        output.WriteRawTag(106);
+        output.WriteString(OverlayMessage);
+      }
+      if (OverlayMessageFactor != 0F) {
+        output.WriteRawTag(117);
+        output.WriteFloat(OverlayMessageFactor);
+      }
+      if (HandcraftPresent != false) {
+        output.WriteRawTag(120);
+        output.WriteBool(HandcraftPresent);
+      }
+      handcraftValues_.WriteTo(ref output, _repeated_handcraftValues_codec);
+      handcraftCounts_.WriteTo(ref output, _repeated_handcraftCounts_codec);
       if (Ext.Length != 0) {
         output.WriteRawTag(162, 6);
         output.WriteBytes(Ext);
@@ -491,6 +693,24 @@ namespace SuMultiplayer.Protocol.UiState {
       if (ChatInputOpen != false) {
         size += 1 + 1;
       }
+      size += smallMessages_.CalculateSize(_repeated_smallMessages_codec);
+      if (FloatingMessage.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(FloatingMessage);
+      }
+      if (FloatingMessageFactor != 0F) {
+        size += 1 + 4;
+      }
+      if (OverlayMessage.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(OverlayMessage);
+      }
+      if (OverlayMessageFactor != 0F) {
+        size += 1 + 4;
+      }
+      if (HandcraftPresent != false) {
+        size += 1 + 1;
+      }
+      size += handcraftValues_.CalculateSize(_repeated_handcraftValues_codec);
+      size += handcraftCounts_.CalculateSize(_repeated_handcraftCounts_codec);
       if (Ext.Length != 0) {
         size += 2 + pb::CodedOutputStream.ComputeBytesSize(Ext);
       }
@@ -536,6 +756,24 @@ namespace SuMultiplayer.Protocol.UiState {
       if (other.ChatInputOpen != false) {
         ChatInputOpen = other.ChatInputOpen;
       }
+      smallMessages_.Add(other.smallMessages_);
+      if (other.FloatingMessage.Length != 0) {
+        FloatingMessage = other.FloatingMessage;
+      }
+      if (other.FloatingMessageFactor != 0F) {
+        FloatingMessageFactor = other.FloatingMessageFactor;
+      }
+      if (other.OverlayMessage.Length != 0) {
+        OverlayMessage = other.OverlayMessage;
+      }
+      if (other.OverlayMessageFactor != 0F) {
+        OverlayMessageFactor = other.OverlayMessageFactor;
+      }
+      if (other.HandcraftPresent != false) {
+        HandcraftPresent = other.HandcraftPresent;
+      }
+      handcraftValues_.Add(other.handcraftValues_);
+      handcraftCounts_.Add(other.handcraftCounts_);
       if (other.Ext.Length != 0) {
         Ext = other.Ext;
       }
@@ -598,6 +836,40 @@ namespace SuMultiplayer.Protocol.UiState {
           }
           case 72: {
             ChatInputOpen = input.ReadBool();
+            break;
+          }
+          case 82: {
+            smallMessages_.AddEntriesFrom(input, _repeated_smallMessages_codec);
+            break;
+          }
+          case 90: {
+            FloatingMessage = input.ReadString();
+            break;
+          }
+          case 101: {
+            FloatingMessageFactor = input.ReadFloat();
+            break;
+          }
+          case 106: {
+            OverlayMessage = input.ReadString();
+            break;
+          }
+          case 117: {
+            OverlayMessageFactor = input.ReadFloat();
+            break;
+          }
+          case 120: {
+            HandcraftPresent = input.ReadBool();
+            break;
+          }
+          case 130:
+          case 128: {
+            handcraftValues_.AddEntriesFrom(input, _repeated_handcraftValues_codec);
+            break;
+          }
+          case 138:
+          case 136: {
+            handcraftCounts_.AddEntriesFrom(input, _repeated_handcraftCounts_codec);
             break;
           }
           case 802: {
@@ -666,6 +938,40 @@ namespace SuMultiplayer.Protocol.UiState {
             ChatInputOpen = input.ReadBool();
             break;
           }
+          case 82: {
+            smallMessages_.AddEntriesFrom(ref input, _repeated_smallMessages_codec);
+            break;
+          }
+          case 90: {
+            FloatingMessage = input.ReadString();
+            break;
+          }
+          case 101: {
+            FloatingMessageFactor = input.ReadFloat();
+            break;
+          }
+          case 106: {
+            OverlayMessage = input.ReadString();
+            break;
+          }
+          case 117: {
+            OverlayMessageFactor = input.ReadFloat();
+            break;
+          }
+          case 120: {
+            HandcraftPresent = input.ReadBool();
+            break;
+          }
+          case 130:
+          case 128: {
+            handcraftValues_.AddEntriesFrom(ref input, _repeated_handcraftValues_codec);
+            break;
+          }
+          case 138:
+          case 136: {
+            handcraftCounts_.AddEntriesFrom(ref input, _repeated_handcraftCounts_codec);
+            break;
+          }
           case 802: {
             Ext = input.ReadBytes();
             break;
@@ -675,6 +981,328 @@ namespace SuMultiplayer.Protocol.UiState {
               Custom = new global::Google.Protobuf.WellKnownTypes.Any();
             }
             input.ReadMessage(Custom);
+            break;
+          }
+        }
+      }
+    }
+    #endif
+
+  }
+
+  /// <summary>
+  /// One entry of the client's MessageWidget list (ScreenOverlays-style small text).
+  /// `blinking` is the engine flag that decides the fade curve (6 s vs 4 s + newlines).
+  /// Source: Survivalcraft/Game/MessageWidget.cs:Message(text, color, blinking)
+  /// </summary>
+  [global::System.Diagnostics.DebuggerDisplayAttribute("{ToString(),nq}")]
+  public sealed partial class UiSmallMessage : pb::IMessage<UiSmallMessage>
+  #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      , pb::IBufferMessage
+  #endif
+  {
+    private static readonly pb::MessageParser<UiSmallMessage> _parser = new pb::MessageParser<UiSmallMessage>(() => new UiSmallMessage());
+    private pb::UnknownFieldSet _unknownFields;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pb::MessageParser<UiSmallMessage> Parser { get { return _parser; } }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pbr::MessageDescriptor Descriptor {
+      get { return global::SuMultiplayer.Protocol.UiState.UistateReflection.Descriptor.MessageTypes[1]; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    pbr::MessageDescriptor pb::IMessage.Descriptor {
+      get { return Descriptor; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public UiSmallMessage() {
+      OnConstruction();
+    }
+
+    partial void OnConstruction();
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public UiSmallMessage(UiSmallMessage other) : this() {
+      text_ = other.text_;
+      color_ = other.color_;
+      blinking_ = other.blinking_;
+      ageMs_ = other.ageMs_;
+      _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public UiSmallMessage Clone() {
+      return new UiSmallMessage(this);
+    }
+
+    /// <summary>Field number for the "text" field.</summary>
+    public const int TextFieldNumber = 1;
+    private string text_ = "";
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string Text {
+      get { return text_; }
+      set {
+        text_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "color" field.</summary>
+    public const int ColorFieldNumber = 2;
+    private uint color_;
+    /// <summary>
+    /// Engine Color packed value (ARGB uint32); the host writes the same Color.
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public uint Color {
+      get { return color_; }
+      set {
+        color_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "blinking" field.</summary>
+    public const int BlinkingFieldNumber = 3;
+    private bool blinking_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Blinking {
+      get { return blinking_; }
+      set {
+        blinking_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "age_ms" field.</summary>
+    public const int AgeMsFieldNumber = 4;
+    private uint ageMs_;
+    /// <summary>
+    /// Milliseconds since this entry started.  The engine fades / expires a message from
+    /// its own StartTime (MessageWidget.cs:Message.Update / RemoveOldMessages), so the
+    /// host offsets its copy by the same age and the two fade out together.
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public uint AgeMs {
+      get { return ageMs_; }
+      set {
+        ageMs_ = value;
+      }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override bool Equals(object other) {
+      return Equals(other as UiSmallMessage);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Equals(UiSmallMessage other) {
+      if (ReferenceEquals(other, null)) {
+        return false;
+      }
+      if (ReferenceEquals(other, this)) {
+        return true;
+      }
+      if (Text != other.Text) return false;
+      if (Color != other.Color) return false;
+      if (Blinking != other.Blinking) return false;
+      if (AgeMs != other.AgeMs) return false;
+      return Equals(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override int GetHashCode() {
+      int hash = 1;
+      if (Text.Length != 0) hash ^= Text.GetHashCode();
+      if (Color != 0) hash ^= Color.GetHashCode();
+      if (Blinking != false) hash ^= Blinking.GetHashCode();
+      if (AgeMs != 0) hash ^= AgeMs.GetHashCode();
+      if (_unknownFields != null) {
+        hash ^= _unknownFields.GetHashCode();
+      }
+      return hash;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override string ToString() {
+      return pb::JsonFormatter.ToDiagnosticString(this);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void WriteTo(pb::CodedOutputStream output) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      output.WriteRawMessage(this);
+    #else
+      if (Text.Length != 0) {
+        output.WriteRawTag(10);
+        output.WriteString(Text);
+      }
+      if (Color != 0) {
+        output.WriteRawTag(16);
+        output.WriteUInt32(Color);
+      }
+      if (Blinking != false) {
+        output.WriteRawTag(24);
+        output.WriteBool(Blinking);
+      }
+      if (AgeMs != 0) {
+        output.WriteRawTag(32);
+        output.WriteUInt32(AgeMs);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(output);
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
+      if (Text.Length != 0) {
+        output.WriteRawTag(10);
+        output.WriteString(Text);
+      }
+      if (Color != 0) {
+        output.WriteRawTag(16);
+        output.WriteUInt32(Color);
+      }
+      if (Blinking != false) {
+        output.WriteRawTag(24);
+        output.WriteBool(Blinking);
+      }
+      if (AgeMs != 0) {
+        output.WriteRawTag(32);
+        output.WriteUInt32(AgeMs);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(ref output);
+      }
+    }
+    #endif
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int CalculateSize() {
+      int size = 0;
+      if (Text.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(Text);
+      }
+      if (Color != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt32Size(Color);
+      }
+      if (Blinking != false) {
+        size += 1 + 1;
+      }
+      if (AgeMs != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt32Size(AgeMs);
+      }
+      if (_unknownFields != null) {
+        size += _unknownFields.CalculateSize();
+      }
+      return size;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(UiSmallMessage other) {
+      if (other == null) {
+        return;
+      }
+      if (other.Text.Length != 0) {
+        Text = other.Text;
+      }
+      if (other.Color != 0) {
+        Color = other.Color;
+      }
+      if (other.Blinking != false) {
+        Blinking = other.Blinking;
+      }
+      if (other.AgeMs != 0) {
+        AgeMs = other.AgeMs;
+      }
+      _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(pb::CodedInputStream input) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      input.ReadRawMessage(this);
+    #else
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
+            break;
+          case 10: {
+            Text = input.ReadString();
+            break;
+          }
+          case 16: {
+            Color = input.ReadUInt32();
+            break;
+          }
+          case 24: {
+            Blinking = input.ReadBool();
+            break;
+          }
+          case 32: {
+            AgeMs = input.ReadUInt32();
+            break;
+          }
+        }
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalMergeFrom(ref pb::ParseContext input) {
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
+            break;
+          case 10: {
+            Text = input.ReadString();
+            break;
+          }
+          case 16: {
+            Color = input.ReadUInt32();
+            break;
+          }
+          case 24: {
+            Blinking = input.ReadBool();
+            break;
+          }
+          case 32: {
+            AgeMs = input.ReadUInt32();
             break;
           }
         }

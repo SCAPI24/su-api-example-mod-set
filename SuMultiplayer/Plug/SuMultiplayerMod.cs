@@ -578,6 +578,7 @@ namespace SuMultiplayer
             m_uiMirrorEngine = new UiMirrorEngine(avatarSpawner, m_blockUseModule,
                 engineModManager.ModParentField, diagnostics);
             m_uiStateReader = new ClientUiStateReader(avatarSpawner,
+                engineModManager.ModParentField,
                 delegate { return m_chatOverlay != null && m_chatOverlay.HasOpenInput; });
             m_uiStateModule = new UiStateSyncModule(m_uiStateReader, m_uiMirrorEngine);
             m_moduleHost.Register(m_uiStateModule);
@@ -641,7 +642,11 @@ namespace SuMultiplayer
             //   RemovePlayerData；绑定复用上面的 MirrorCharacterEngine）。
             //   与显式 mirrorcharacter 的关系：WorldDatabase 里已有同名的 auto 角色 → 复用它；
             //   手动创建的角色（h1/h2/H3）绝不被归入 auto 账本，离开时绝不被删除。
-            m_mirrorHostEngine = new MirrorHostEngine(avatarSpawner, m_mirrorCharacterEngine, diagnostics)
+            m_mirrorHostEngine = new MirrorHostEngine(avatarSpawner, m_mirrorCharacterEngine,
+                // 免疫写入（免伤 / 免病 / 着火 / 体征归位）走 SuAPI 的反射入口，单独成类注入：
+                // 宿主生命周期那条链路保持"只用公开 API"（源码守卫按文件检查）。
+                new MirrorHostImmunityEngine(engineModManager.ModParentField, diagnostics),
+                diagnostics)
             {
                 NamePrefix = m_config.MirrorHostNamePrefix
             };

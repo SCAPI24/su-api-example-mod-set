@@ -122,6 +122,9 @@ namespace SuMultiplayer.Engine
         private long m_predictionDisabled;
         private long m_predictionOverflow;
         private long m_predictionConfirmed;
+
+        /// <summary>命中预测确认后立刻删除红色 * 标记的次数（避免与权威伤害数字同时显示）。</summary>
+        private long m_predictionMarkersConfirmed;
         private long m_rollback;
         private long m_rollbackMarkerMissing;
         private long m_predictionTimedOut;
@@ -668,20 +671,10 @@ namespace SuMultiplayer.Engine
                 return false;
             }
             m_predicted++;
+            // 产品口径：**不显示任何预测标记**（红色 * / 白色 Miss 都不要）。攻击表现只由主机回执
+            // 驱动（命中 = 权威伤害数字，未命中 = 权威 Miss 标记），避免预测与权威叠两套表现。
+            // 预测仍保留：RNG 对账 / 命中确认或回滚的计数（不参与任何视觉）。
             ParticleSystemBase marker = null;
-            try
-            {
-                marker = predictedHit
-                    ? AddHitMarker(hitPoint, direction,
-                        player.ComponentBody?.Velocity ?? Vector3.Zero, Color.Red, "*")
-                    : AddHitMarker(hitPoint, direction,
-                        player.ComponentBody?.Velocity ?? Vector3.Zero, Color.White, "Miss");
-            }
-            catch (Exception e)
-            {
-                Problem("prediction-marker", "预测标记创建失败（" + e.GetType().Name + " " +
-                    e.Message + "）→ 表现改由主机回执驱动");
-            }
             m_predictionMarkers[sequence] = marker;
             if (predictedHit)
             {
@@ -1331,16 +1324,18 @@ namespace SuMultiplayer.Engine
                     if (prediction.PredictedHit)
                     {
                         if (CombatTelemetry != null) CombatTelemetry.PredictedHitConfirmed++;
-                        // 预测标记保留到粒子自然消失；只把它从"待对账"表里摘掉。
-                        m_predictionMarkers.Remove(result.Sequence);
+                        // 命中已由主机确认：**立刻删除预测的红色 * 标记**，只让权威伤害数字留下。
+                        // 单机引擎在命中时只有伤害数字（ComponentMiner.cs:520-526 的 HitValueParticleSystem），
+                        // 保留 * 会让玩家同时看到 "*" 和 "-N"（实测故障）。
+                        RemovePredictionMarker(result.Sequence, countMissing: false);
+                        m_predictionMarkersConfirmed++;
                     }
                     else
                     {
                         if (CombatTelemetry != null) CombatTelemetry.PredictedMissConfirmed++;
-                        // 预测的 Miss 与主机回执的 Miss 是同一个表现：保留预测标记，
-                        // 只把句柄从待回滚表里摘掉；下面的权威 flags 不再重复播 "Miss"。
+                        // 预测标记已关闭 → 不抑制权威 Miss：由主机回执统一显示一次 "Miss"。
                         m_predictionMarkers.Remove(result.Sequence);
-                        suppressMissMarker = true;
+                        suppressMissMarker = false;
                     }
                 }
             }
@@ -1467,6 +1462,7 @@ namespace SuMultiplayer.Engine
             " meleePredicted=" + m_predicted + " meleePredictionDisabled=" +
             m_predictionDisabled + " meleePredictionOverflow=" + m_predictionOverflow +
             " meleePredictionConfirmed=" + m_predictionConfirmed +
+            " meleePredictionMarkersConfirmed=" + m_predictionMarkersConfirmed +
             " meleeRollback=" + m_rollback + " meleeRollbackMarkerFailed=" +
             m_rollbackMarkerMissing + " meleePredictionTimeout=" + m_predictionTimedOut +
             " meleePredictionNotSent=" + m_predictionNotSent +

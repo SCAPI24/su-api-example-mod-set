@@ -56,7 +56,7 @@ namespace SuMultiplayer.Engine
     ///
     /// 无静态可变状态；反射入口与端口由组合根注入。
     /// </summary>
-    public sealed class UiMirrorEngine : IUiMirrorPort
+    public sealed class UiMirrorEngine : IUiMirrorPort, IUiMirrorTickPort
     {
         private const string OwnerId = "ui-mirror";
         private const int ProblemLogMs = 10000;
@@ -70,6 +70,7 @@ namespace SuMultiplayer.Engine
             public ComponentPlayer Remote;
             public ComponentInput Input;
             public ContainerWidget Gui;
+            public ComponentGui ViewGui;
             public bool OriginCaptured;
             public bool OriginControlledByTouch;
             public bool OriginGuiVisible;
@@ -100,12 +101,35 @@ namespace SuMultiplayer.Engine
             public bool HudIsLive;
             public bool HasDesired;
             public ClientUiStateData Desired;
+
+            // ---- 第三屏 HUD 的 phase-2 表现：左侧按钮 / 冒泡消息 / 屏幕覆盖文字 / 手工制作。
+            // 全部只写视图所有者（宿主角色）自己的显示层，绝不写客户端化身 / 客户端记录。
+            public ButtonWidget InventoryButton;
+            public ButtonWidget ClothingButton;
+            public bool ButtonsBound;
+            public string ButtonFailureReason;
+            public MessageWidget MessageWidget;
+            public bool MessageWidgetBound;
+            public string MessageFailureReason;
+            public UiMirrorMessageState MessageState;
+            public readonly HashSet<object> OwnedMessages = new HashSet<object>();
+            public readonly Dictionary<object, double> OwnedMessageExpiry =
+                new Dictionary<object, double>();
+            public ComponentScreenOverlays Overlays;
+            public bool OverlaysBound;
+            public string OverlayFailureReason;
+            public UiMirrorCraftingTable Crafting;
+            public bool HasAppliedHandcraft;
+            public UiHandcraftData AppliedHandcraft;
+            public string CraftingFailureReason;
         }
 
         private readonly NetworkAvatarSpawner m_avatars;
         private readonly IUiContainerCellPort m_containers;
         private readonly IModParentField m_parentField;
         private readonly IModuleDiagnostics m_diagnostics;
+        private readonly UiMirrorMessageAccess m_messageAccess;
+        private readonly UiMirrorHudCounters m_hud = new UiMirrorHudCounters();
         private readonly MethodInfo m_setControlledByTouch;
         private readonly string m_inputSwitchError;
         private readonly Dictionary<int, ViewMirror> m_views = new Dictionary<int, ViewMirror>();
@@ -113,6 +137,7 @@ namespace SuMultiplayer.Engine
             new Dictionary<string, long>(StringComparer.Ordinal);
         private readonly Dictionary<string, long> m_lastWarnMs =
             new Dictionary<string, long>(StringComparer.Ordinal);
+        private readonly List<object> m_ownedScratch = new List<object>(4);
 
         // ---------------------------------------------------------------- 计数
         private long m_applied;
@@ -143,6 +168,8 @@ namespace SuMultiplayer.Engine
             m_containers = containers;
             m_parentField = parentField;
             m_diagnostics = diagnostics;
+            m_messageAccess = new UiMirrorMessageAccess(
+                m_parentField ?? throw new ArgumentNullException(nameof(parentField)));
             PropertyInfo property = typeof(ComponentInput).GetProperty("IsControlledByTouch",
                 BindingFlags.Instance | BindingFlags.Public);
             m_setControlledByTouch = property?.GetSetMethod(true);
@@ -275,14 +302,23 @@ namespace SuMultiplayer.Engine
             if (!string.IsNullOrEmpty(dialogFailure) && string.IsNullOrEmpty(reason))
                 reason = dialogFailure;
 
-            // ---- ⑥ 聊天输入行（mod 自己的 HUD，per-view 克隆会变成主机侧输入）
+            // ---- ⑥ 底部冒泡消息（宿主 MessageWidget；过期 / 客户端清除都要跟着消失）
+            ApplySmallMessages(view, in state);
+
+            // ---- ⑦ 手工制作区（FullInventoryWidget 左半；结果由引擎配方在主机侧重算）
+            ApplyHandcraft(view, in state);
+
+            // ---- ⑧ 聊天输入行（mod 自己的 HUD，per-view 克隆会变成主机侧输入）
             if (state.ChatInputOpen) outcome |= UiMirrorOutcome.UnsupportedChat;
 
             m_applied++;
             view.Remote = TryGetRemotePlayer(clientId) ?? view.Remote;
             view.Desired = state;
             view.HasDesired = true;
-            return any || outcome != UiMirrorOutcome.None;
+            // false 只保留给"没有跟随该客户端的视图 / 解析失败"（调用方据此计失败）；
+            // 快照本身即使没有可见变化也算施加完成 —— 否则每次 2 s 心跳以及 phase-2 的
+            // age / factor 刷新都会被记成 uiStateApplyFailures（不是失败）。
+            return true;
         }
 
         public bool IsApplied(int clientId)
@@ -318,6 +354,13 @@ namespace SuMultiplayer.Engine
             if (!dialogMatches && !string.Equals(view.UnsupportedDialogType, desired.DialogType,
                     StringComparison.Ordinal))
                 return false;
+            // phase 2：手工制作网格 / 结果是否仍与客户端上报一致；不一致 = 让调用方补施加。
+            if (UiStateMirrorPlan.IsHandcraftModal(desired.ModalPresent, desired.ModalType) &&
+                desired.HandcraftPresent)
+            {
+                if (view.Crafting == null || !view.HasAppliedHandcraft) return false;
+                if (!view.AppliedHandcraft.SameAs(desired.Handcraft)) return false;
+            }
             return true;
         }
 
@@ -481,14 +524,20 @@ namespace SuMultiplayer.Engine
                 {
                     case UiModalKind.Inventory:
                     {
-                        ComponentCraftingTable crafting =
-                            entity.FindComponent<ComponentCraftingTable>();
-                        if (crafting == null)
+                        // 左半手工制作区绑定**表现用**合成台（不写客户端化身的权威组件 /
+                        // 不写客户端记录）；第一次构造面板时创建，面板关闭即释放。
+                        if (view.Crafting == null)
                         {
-                            reason = "no-ComponentCraftingTable";
-                            return null;
+                            if (!UiMirrorCraftingTable.TryCreate(view.Project, entity,
+                                    m_parentField, out UiMirrorCraftingTable craftingTable,
+                                    out string createReason))
+                            {
+                                reason = "presentation-crafting:" + createReason;
+                                return null;
+                            }
+                            view.Crafting = craftingTable;
                         }
-                        return new FullInventoryWidget(playerInventory, crafting);
+                        return new FullInventoryWidget(playerInventory, view.Crafting.Table);
                     }
                     case UiModalKind.CreativeInventory:
                     {
@@ -614,6 +663,23 @@ namespace SuMultiplayer.Engine
             view.ModalType = string.Empty;
             view.ModalCellX = view.ModalCellY = view.ModalCellZ = 0;
             SafeRemove(widget);
+            ReleaseCrafting(view);
+            view.HasAppliedHandcraft = false;
+            view.AppliedHandcraft = default;
+        }
+
+        /// <summary>释放表现用合成台（它不属于世界，只服务这个面板）。</summary>
+        private void ReleaseCrafting(ViewMirror view)
+        {
+            if (view.Crafting == null) return;
+            if (!view.Crafting.TryRelease(out string releaseReason))
+            {
+                m_hud.NoteCraftingFailure(releaseReason);
+                Warn("crafting-release:" + view.ClientId,
+                    "UI 镜像：释放手工制作表现合成台失败（clientId=" + view.ClientId + "）：" +
+                    releaseReason + "（累计 viewCraftingFailures=" + m_hud.ViewCraftingFailures + "）");
+            }
+            view.Crafting = null;
         }
 
         // ================================================================= 对话框
@@ -793,6 +859,453 @@ namespace SuMultiplayer.Engine
             SafeRemove(dialog);
         }
 
+        // ================================================================= phase 2：第三屏 HUD
+
+        /// <summary>
+        /// 每帧表现施加（<see cref="IUiMirrorTickPort.Present"/>）：在引擎本帧更新完
+        /// <c>ComponentGui.Update</c> / <c>ComponentScreenOverlays.Update</c> 之后、Draw 之前调用
+        /// （组合根 Frame.Update；Source: Program.cs:146-147）。只写视图所有者自己的显示层。
+        /// </summary>
+        public void Present()
+        {
+            if (m_views.Count == 0) return;
+            double now = Time.FrameStartTime;
+            foreach (KeyValuePair<int, ViewMirror> pair in m_views)
+            {
+                ViewMirror view = pair.Value;
+                if (view == null || !view.HasDesired) continue;
+                if (!IsViewAlive(view)) continue;
+                try
+                {
+                    m_hud.NoteFrame();
+                    PresentButtons(view);
+                    PresentMessages(view, now);
+                    PresentOverlays(view);
+                }
+                catch (Exception e)
+                {
+                    m_hud.NoteMessageFailure("present:" + Describe(e));
+                    Warn("present:" + pair.Key,
+                        "UI 镜像：第三屏 HUD 表现施加异常（clientId=" + pair.Key + "）：" +
+                        Describe(e) + "（累计 viewMessageFailures=" + m_hud.ViewMessageFailures +
+                        "；下一帧重试）");
+                }
+            }
+        }
+
+        // ---------------------------------------------------------------- 左侧按钮
+
+        /// <summary>
+        /// 背包 / 衣物按钮的 <c>IsChecked</c> 由引擎每帧按**宿主自己**的
+        /// <c>ModalPanelWidget</c> 重写（Source: ComponentGui.cs:430-431）——第三屏的模态面板
+        /// 是本类挂在 CanvasWidget 里的镜像，不会进入宿主的 modal 容器，所以引擎永远写 false。
+        /// 这里在引擎写完之后的同一帧按客户端的 modal 类型再写一次（只写表现，不触发点击逻辑）。
+        /// </summary>
+        private void PresentButtons(ViewMirror view)
+        {
+            if (!EnsureButtons(view, out string ensureReason))
+            {
+                NoteButtonFailure(view, ensureReason);
+                return;
+            }
+            view.ButtonFailureReason = null;
+            UiMirrorButtonState.Evaluate(view.Desired.ModalPresent, view.Desired.ModalType,
+                out bool inventoryChecked, out bool clothingChecked);
+            PresentButton(view, view.InventoryButton, inventoryChecked, "inventory");
+            PresentButton(view, view.ClothingButton, clothingChecked, "clothing");
+        }
+
+        private void PresentButton(ViewMirror view, ButtonWidget button, bool desired, string name)
+        {
+            if (button == null) return;
+            try
+            {
+                if (button.IsChecked == desired) return;
+                button.IsChecked = desired;
+                m_hud.NoteButton();
+            }
+            catch (Exception e)
+            {
+                m_hud.NoteButtonFailure(name + ":" + Describe(e));
+                Warn("button:" + view.ClientId + ":" + name,
+                    "UI 镜像：写第三屏 " + name + " 按钮的 IsChecked 失败（clientId=" +
+                    view.ClientId + "）：" + Describe(e) + "（累计 viewButtonFailures=" +
+                    m_hud.ViewButtonFailures + "；下一帧重试）");
+            }
+        }
+
+        private bool EnsureButtons(ViewMirror view, out string reason)
+        {
+            reason = null;
+            if (view.InventoryButton != null && view.ClothingButton != null)
+            {
+                view.ButtonsBound = true;
+                return true;
+            }
+            if (view.ViewGui == null)
+            {
+                reason = "no-view-component-gui";
+                return false;
+            }
+            try
+            {
+                if (view.InventoryButton == null)
+                {
+                    view.InventoryButton = m_parentField.GetParentField<ButtonWidget>(
+                        view.ViewGui, "m_inventoryButtonWidget", typeof(ComponentGui));
+                }
+                if (view.ClothingButton == null)
+                {
+                    view.ClothingButton = m_parentField.GetParentField<ButtonWidget>(
+                        view.ViewGui, "m_clothingButtonWidget", typeof(ComponentGui));
+                }
+            }
+            catch (Exception e)
+            {
+                reason = "m_buttonWidget:" + Describe(e);
+                return false;
+            }
+            if (view.InventoryButton == null)
+            {
+                reason = "inventory-button-null";
+                return false;
+            }
+            if (view.ClothingButton == null)
+            {
+                reason = "clothing-button-null";
+                return false;
+            }
+            view.ButtonsBound = true;
+            return true;
+        }
+
+        private void NoteButtonFailure(ViewMirror view, string reason)
+        {
+            if (string.Equals(view.ButtonFailureReason, reason, StringComparison.Ordinal)) return;
+            view.ButtonFailureReason = reason;
+            m_hud.NoteButtonFailure(reason);
+            Warn("buttons:" + view.ClientId + ":" + reason,
+                "UI 镜像：第三屏左侧按钮无法跟随客户端（clientId=" + view.ClientId + "，" +
+                reason + "）→ 背包 / 衣物按钮不亮（累计 viewButtonFailures=" +
+                m_hud.ViewButtonFailures + "；不静默）");
+        }
+
+        // ---------------------------------------------------------------- 底部冒泡消息
+
+        /// <summary>
+        /// 把客户端当前显示的冒泡消息同步到宿主 <c>MessageWidget</c>：
+        ///   · 新增条目用公开的 <c>DisplayMessage</c> 加入，并把 StartTime 前移客户端的 age，
+        ///     让第三屏的过期时刻与客户端一致（Source: MessageWidget.cs:35-36,70-77）；
+        ///   · 客户端已清除的条目用引擎自己的 <c>RemoveMessage</c> 立刻移除；
+        ///   · 只动本类自己加入的对象（宿主自己的消息按引用保持原样）。
+        /// </summary>
+        private void ApplySmallMessages(ViewMirror view, in ClientUiStateData state)
+        {
+            if (!EnsureMessageWidget(view, out string ensureReason))
+            {
+                NoteMessageFailure(view, "widget:" + ensureReason);
+                return;
+            }
+            var host = new List<UiMirrorHostMessage>(4);
+            if (!m_messageAccess.TryRead(view.MessageWidget, host, out string readReason))
+            {
+                NoteMessageFailure(view, "read:" + readReason);
+                return;
+            }
+            bool failed = false;
+            if (!PruneOwnedMessages(view, host, out string pruneReason))
+            {
+                failed = true;
+                NoteMessageFailure(view, pruneReason);
+            }
+            double now = Time.FrameStartTime;
+            view.MessageState.Sync(state.SmallMessages, now);
+            IReadOnlyList<UiMirroredMessage> desired = view.MessageState.Visible;
+            var used = new bool[host.Count];
+            int added = 0;
+            for (int i = 0; i < desired.Count; i++)
+            {
+                UiMirroredMessage entry = desired[i];
+                if (entry.ExpiresAtHostSeconds <= now) continue;
+                int match = -1;
+                for (int h = 0; h < host.Count; h++)
+                {
+                    if (used[h]) continue;
+                    if (!view.OwnedMessages.Contains(host[h].Message)) continue;
+                    if (!host[h].SameKey(entry.Text, entry.PackedColor, entry.Blinking)) continue;
+                    match = h;
+                    break;
+                }
+                if (match >= 0)
+                {
+                    used[match] = true;
+                    view.OwnedMessageExpiry[host[match].Message] = entry.ExpiresAtHostSeconds;
+                    continue;
+                }
+                if (!m_messageAccess.TryAdd(view.MessageWidget, entry.Text, entry.PackedColor,
+                        entry.Blinking, entry.ExpiresAtHostSeconds, out object message,
+                        out string addReason))
+                {
+                    failed = true;
+                    NoteMessageFailure(view, "add:" + addReason);
+                    continue;
+                }
+                view.OwnedMessages.Add(message);
+                view.OwnedMessageExpiry[message] = entry.ExpiresAtHostSeconds;
+                added++;
+            }
+            // 客户端已经不再显示的条目：立刻从第三屏移除（不能等引擎的时限）。
+            for (int i = 0; i < host.Count; i++)
+            {
+                if (used[i]) continue;
+                object message = host[i].Message;
+                if (!view.OwnedMessages.Contains(message)) continue;
+                RemoveOwnedMessage(view, message, "client-cleared");
+            }
+            if (!failed) view.MessageFailureReason = null;
+            if (added > 0) m_hud.NoteMessage(added);
+        }
+
+        private bool EnsureMessageWidget(ViewMirror view, out string reason)
+        {
+            reason = null;
+            if (view.MessageState == null) view.MessageState = new UiMirrorMessageState();
+            if (view.MessageWidget != null) return true;
+            if (!m_messageAccess.TryGetWidget(view.ViewGui, out MessageWidget widget, out reason))
+                return false;
+            view.MessageWidget = widget;
+            view.MessageWidgetBound = true;
+            return true;
+        }
+
+        private bool PruneOwnedMessages(ViewMirror view, List<UiMirrorHostMessage> host,
+            out string reason)
+        {
+            reason = null;
+            if (view.OwnedMessages.Count == 0) return true;
+            m_ownedScratch.Clear();
+            foreach (object owned in view.OwnedMessages)
+            {
+                bool present = false;
+                for (int i = 0; i < host.Count; i++)
+                {
+                    if (!ReferenceEquals(host[i].Message, owned)) continue;
+                    present = true;
+                    break;
+                }
+                if (!present) m_ownedScratch.Add(owned);
+            }
+            for (int i = 0; i < m_ownedScratch.Count; i++)
+            {
+                view.OwnedMessages.Remove(m_ownedScratch[i]);
+                view.OwnedMessageExpiry.Remove(m_ownedScratch[i]);
+            }
+            m_ownedScratch.Clear();
+            return true;
+        }
+
+        /// <summary>每帧清掉已经到宿主时限的条目（引擎也会按 StartTime 移除，这里是双保险）。</summary>
+        private void PresentMessages(ViewMirror view, double now)
+        {
+            if (view.MessageWidget == null || view.OwnedMessageExpiry.Count == 0) return;
+            m_ownedScratch.Clear();
+            foreach (KeyValuePair<object, double> pair in view.OwnedMessageExpiry)
+            {
+                if (pair.Value > now) continue;
+                m_ownedScratch.Add(pair.Key);
+            }
+            // 客户端快照里已经没有任何消息：即使上一次同步失败，也要清干净。
+            if (view.Desired.SmallMessages.Length == 0)
+            {
+                foreach (object owned in view.OwnedMessages)
+                {
+                    if (view.OwnedMessageExpiry.ContainsKey(owned) &&
+                        !m_ownedScratch.Contains(owned))
+                        m_ownedScratch.Add(owned);
+                }
+            }
+            for (int i = 0; i < m_ownedScratch.Count; i++)
+            {
+                bool expired = view.OwnedMessageExpiry.TryGetValue(m_ownedScratch[i],
+                    out double expiry) && expiry <= now;
+                RemoveOwnedMessage(view, m_ownedScratch[i],
+                    expired ? "expired" : "client-cleared");
+            }
+            m_ownedScratch.Clear();
+        }
+
+        private bool RemoveOwnedMessage(ViewMirror view, object message, string why)
+        {
+            if (message == null) return false;
+            view.OwnedMessages.Remove(message);
+            view.OwnedMessageExpiry.Remove(message);
+            if (view.MessageWidget == null) return false;
+            if (m_messageAccess.TryRemove(view.MessageWidget, message, out string reason))
+                return true;
+            NoteMessageFailure(view, "remove(" + why + "):" + reason);
+            return false;
+        }
+
+        private void NoteMessageFailure(ViewMirror view, string reason)
+        {
+            if (string.Equals(view.MessageFailureReason, reason, StringComparison.Ordinal)) return;
+            view.MessageFailureReason = reason;
+            m_hud.NoteMessageFailure(reason);
+            Warn("messages:" + view.ClientId + ":" + reason,
+                "UI 镜像：第三屏冒泡消息 / 覆盖文字无法跟随客户端（clientId=" + view.ClientId +
+                "，" + reason + "）→ 该条消息不显示 / 不清除（累计 viewMessageFailures=" +
+                m_hud.ViewMessageFailures + "；不静默）");
+        }
+
+        // ---------------------------------------------------------------- 屏幕覆盖文字
+
+        /// <summary>
+        /// <c>ComponentScreenOverlays</c> 的 <c>FloatingMessage / Message</c> 每帧被引擎清空
+        /// （Source: ComponentScreenOverlays.cs:60-77，UpdateOrder.Reset），所以必须在
+        /// 本帧 Update 之后**每帧重写**（与 Engine/MirrorViewFeedback.cs 同一条时序事实）。
+        /// 客户端没有文字时写 null / 0（第三屏不留上一帧的残影）。
+        /// </summary>
+        private void PresentOverlays(ViewMirror view)
+        {
+            if (!view.OverlaysBound || view.Overlays == null)
+            {
+                ComponentPlayer player = view.ViewPlayerData?.ComponentPlayer;
+                view.Overlays = player?.ComponentScreenOverlays;
+                view.OverlaysBound = true;
+                if (view.Overlays == null)
+                {
+                    NoteOverlayFailure(view, "no-ComponentScreenOverlays");
+                    return;
+                }
+            }
+            ClientUiStateData desired = view.Desired;
+            bool floating = !string.IsNullOrEmpty(desired.FloatingMessage);
+            bool message = !string.IsNullOrEmpty(desired.OverlayMessage);
+            try
+            {
+                view.Overlays.FloatingMessage = floating ? desired.FloatingMessage : null;
+                view.Overlays.FloatingMessageFactor = floating ? desired.FloatingMessageFactor : 0f;
+                view.Overlays.Message = message ? desired.OverlayMessage : null;
+                view.Overlays.MessageFactor = message ? desired.OverlayMessageFactor : 0f;
+            }
+            catch (Exception e)
+            {
+                NoteOverlayFailure(view, "write:" + Describe(e));
+                return;
+            }
+            view.OverlayFailureReason = null;
+            if (floating || message) m_hud.NoteOverlayMessage();
+        }
+
+        private void NoteOverlayFailure(ViewMirror view, string reason)
+        {
+            if (string.Equals(view.OverlayFailureReason, reason, StringComparison.Ordinal)) return;
+            view.OverlayFailureReason = reason;
+            m_hud.NoteMessageFailure("overlay:" + reason);
+            Warn("overlay:" + view.ClientId + ":" + reason,
+                "UI 镜像：第三屏屏幕覆盖文字无法写入（clientId=" + view.ClientId + "，" +
+                reason + "）：客户端睡醒 / 受伤等覆盖文字不会跟随（累计 viewMessageFailures=" +
+                m_hud.ViewMessageFailures + "）");
+        }
+
+        // ---------------------------------------------------------------- 手工制作区
+
+        /// <summary>
+        /// 背包面板左半（手工制作）：把客户端网格写进表现合成台，结果槽由**引擎自己的配方表**
+        /// 在主机侧重算（不采信客户端结果值，也不写客户端化身的权威组件 —— 见
+        /// <see cref="UiMirrorCraftingTable"/> 的说明）。
+        /// </summary>
+        private void ApplyHandcraft(ViewMirror view, in ClientUiStateData state)
+        {
+            if (!UiStateMirrorPlan.IsHandcraftModal(state.ModalPresent, state.ModalType)) return;
+            if (!state.HandcraftPresent)
+            {
+                NoteCraftingFailure(view, "no-handcraft-payload");
+                return;
+            }
+            if (view.Crafting == null)
+            {
+                NoteCraftingFailure(view, "no-presentation-table");
+                return;
+            }
+            float level = view.Remote?.PlayerData?.Level ?? 1f;
+            try
+            {
+                if (!view.Crafting.TryApply(state.Handcraft, level, out bool changed,
+                        out string reason))
+                {
+                    NoteCraftingFailure(view, reason);
+                    return;
+                }
+                view.AppliedHandcraft = state.Handcraft;
+                view.HasAppliedHandcraft = true;
+                view.CraftingFailureReason = null;
+                if (changed) m_hud.NoteCraftingRefresh();
+            }
+            catch (Exception e)
+            {
+                NoteCraftingFailure(view, "apply:" + Describe(e));
+            }
+        }
+
+        private void NoteCraftingFailure(ViewMirror view, string reason)
+        {
+            if (string.Equals(view.CraftingFailureReason, reason, StringComparison.Ordinal)) return;
+            view.CraftingFailureReason = reason;
+            m_hud.NoteCraftingFailure(reason);
+            Warn("crafting:" + view.ClientId + ":" + reason,
+                "UI 镜像：第三屏手工制作区无法跟随客户端（clientId=" + view.ClientId + "，" +
+                reason + "）→ 左半保持上一份网格（累计 viewCraftingFailures=" +
+                m_hud.ViewCraftingFailures + "；不静默）");
+        }
+
+        /// <summary>解绑 / 重置：把本类写进第三屏 HUD 的表现全部撤掉（不动引擎自己的数据）。</summary>
+        private void ReleasePresentation(ViewMirror view)
+        {
+            if (view == null) return;
+            bool alive = IsViewAlive(view);
+            if (alive)
+            {
+                m_ownedScratch.Clear();
+                foreach (object owned in view.OwnedMessages) m_ownedScratch.Add(owned);
+                for (int i = 0; i < m_ownedScratch.Count; i++)
+                    RemoveOwnedMessage(view, m_ownedScratch[i], "reset");
+                m_ownedScratch.Clear();
+                if (view.Overlays != null)
+                {
+                    try
+                    {
+                        view.Overlays.FloatingMessage = null;
+                        view.Overlays.FloatingMessageFactor = 0f;
+                        view.Overlays.Message = null;
+                        view.Overlays.MessageFactor = 0f;
+                    }
+                    catch (Exception e)
+                    {
+                        Warn("overlay-release:" + view.ClientId,
+                            "UI 镜像：重置时清除第三屏覆盖文字失败（clientId=" + view.ClientId +
+                            "）：" + Describe(e));
+                    }
+                }
+            }
+            else
+            {
+                view.OwnedMessages.Clear();
+                view.OwnedMessageExpiry.Clear();
+            }
+            view.MessageState?.Reset();
+            view.MessageWidget = null;
+            view.MessageWidgetBound = false;
+            view.Overlays = null;
+            view.OverlaysBound = false;
+            view.HasAppliedHandcraft = false;
+            view.AppliedHandcraft = default;
+            view.ButtonFailureReason = null;
+            view.MessageFailureReason = null;
+            view.OverlayFailureReason = null;
+            view.CraftingFailureReason = null;
+        }
+
         // ================================================================= 视图 / 覆盖层
 
         private bool TryResolveView(int clientId, out ViewMirror view, out string reason)
@@ -871,6 +1384,7 @@ namespace SuMultiplayer.Engine
                 Remote = remotePlayer,
                 Input = viewPlayer?.ComponentInput,
                 Gui = gui,
+                ViewGui = viewPlayer?.ComponentGui,
                 AppliedHud = gui.IsVisible,
                 DuplicateViews = duplicates,
                 HudIsLive = liveHud
@@ -1006,6 +1520,7 @@ namespace SuMultiplayer.Engine
             m_views.Remove(view.ClientId);
             RemoveModal(view);
             RemoveDialog(view);
+            ReleasePresentation(view);
             if (view.Overlay != null)
             {
                 SafeRemove(view.Overlay);
@@ -1063,7 +1578,10 @@ namespace SuMultiplayer.Engine
             " uiMirrorRestores=" + m_restores +
             " uiMirrorRestoreFailures=" + m_restoreFailures +
             " uiInputSurfaceRebuilds=" + InputSurfaceRebuilds +
-            " uiInputSurfaceRebuildRequestsRejected=" + InputSurfaceRebuildRequestsRejected;
+            " uiInputSurfaceRebuildRequestsRejected=" + InputSurfaceRebuildRequestsRejected +
+            " " + m_hud.Describe() +
+            " viewHudFailures=" + (m_hud.ViewButtonFailures + m_hud.ViewMessageFailures +
+                m_hud.ViewCraftingFailures);
 
         // ================================================================= 日志
 

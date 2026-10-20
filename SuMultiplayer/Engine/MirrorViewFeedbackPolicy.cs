@@ -111,7 +111,13 @@ namespace SuMultiplayer.Engine
     /// 第三分屏的死亡文字（与引擎同一套大消息 / 时长 / 延迟；小字只写死因与本端状态，
     /// **不**写 "Tap to respawn" —— 主机点屏幕不能替客户端复活，那句话会是假的）。
     ///
+    /// 文字 / 字号 / 时长 / 延迟与引擎完全一致，但**生命周期不同**：引擎的死亡屏"点到就复活"，消息
+    /// 30 秒后自己过期（<c>ComponentGui.cs:385-388</c>）；第三分屏必须**一直显示到客户端复活**，
+    /// 所以在到期前用 <see cref="RefreshDelaySeconds"/> 续期（见 <see cref="RefreshAt"/>）。
+    ///
     /// Source: Survivalcraft/Game/PlayerData.cs:PlayerData.PlayerDead:275-300
+    /// Source: Survivalcraft/Game/ComponentGui.cs:ComponentGui.DisplayLargeMessage:178-187
+    /// Source: Survivalcraft/Game/ComponentGui.cs:ComponentGui.UpdateWidgets:373-390（显示 / 淡入 / 过期）
     /// Source: SuMultiplayer/Net/PlayerRespawnNet.cs:PlayerRespawnRules.MessageDurationSeconds/MessageDelaySeconds
     /// </summary>
     public static class MirrorViewDeathText
@@ -124,6 +130,31 @@ namespace SuMultiplayer.Engine
 
         /// <summary>大消息延迟（引擎 1.5 秒）。</summary>
         public const float DelaySeconds = 1.5f;
+
+        /// <summary>
+        /// 续期时用的延迟：<c>-DelaySeconds</c>。引擎把 <c>StartTime</c> 记为
+        /// <c>Time.RealTime + delay</c>（Source: ComponentGui.cs:178-187），取负等于把开始时间
+        /// 回拨 1.5 秒 —— 淡入式子在那一拍已经是 1（Source: ComponentGui.cs:383），所以续期**不会闪**
+        /// （用 0 重新下发的话，文字会先变全透明、再花 0.5 秒淡入）。
+        /// </summary>
+        public const float RefreshDelaySeconds = -DelaySeconds;
+
+        /// <summary>续期提前量（秒）：到期前 1 秒就重新下发，避免文字先消失再淡入。</summary>
+        public const float RefreshLeadSeconds = 1f;
+
+        /// <summary>
+        /// 一次下发的到期时刻 = <c>callTime + delay + DurationSeconds</c>
+        /// （引擎在 <c>Time.RealTime &gt; StartTime + Duration</c> 时丢弃消息，Source: ComponentGui.cs:385-388）。
+        /// </summary>
+        public static double ExpiryAt(double callTime, float delay) =>
+            callTime + delay + DurationSeconds;
+
+        /// <summary>
+        /// 下一次续期时刻 = <see cref="ExpiryAt"/> 提前 <see cref="RefreshLeadSeconds"/> 秒。
+        /// 例如首次下发（delay = 1.5）后 30.5 秒续期；续期本身（delay = -1.5）后再过 27.5 秒再续期。
+        /// </summary>
+        public static double RefreshAt(double callTime, float delay) =>
+            ExpiryAt(callTime, delay) - RefreshLeadSeconds;
 
         /// <summary>
         /// 小字：<c>"Cause of death: &lt;cause&gt;\n\n&lt;client&gt; is dead (waiting for respawn)"</c>。
@@ -142,7 +173,9 @@ namespace SuMultiplayer.Engine
     /// 第三分屏客户端反馈镜像的计数器（实例持有，无静态状态）。字段名与需求逐项对应：
     /// <c>viewDamageFlash</c> / <c>viewHealthBarFlash</c> / <c>viewHudNumbers</c> /
     /// <c>viewDeathOverlay</c> / <c>viewFeedbackFailures</c> / <c>viewFeedbackSkipped</c>（+ 原因）。
-    /// 额外两个只在 Describe 里出现、便于实机排查的细项：<c>viewIceWrites</c>、<c>viewRespawnClears</c>。
+    /// 额外细项（便于实机排查）：<c>viewIceWrites</c>、<c>viewRespawnClears</c>、
+    /// <c>viewDeathTextWrite</c>（死亡大消息下发 / 续期次数）、<c>viewDeathTextMissing</c>
+    /// （大消息控件没能移出 HUD 根 = 文字会被 HUD 显隐一起藏掉）、<c>viewDeathTextFailures</c>（写入抛异常）。
     /// 计数**每拍如实累加**，日志按 10 秒限流（见 <see cref="MirrorViewFeedback"/>）。
     /// </summary>
     public sealed class MirrorViewFeedbackCounters
@@ -176,6 +209,21 @@ namespace SuMultiplayer.Engine
 
         /// <summary>复活清屏次数（清黑屏 / 清死亡大消息 / 红屏因子归零）。</summary>
         public long ViewRespawnClears { get; private set; }
+
+        /// <summary>死亡大消息的**下发次数**（死亡边沿 1 次 + 之后每次到期续期 1 次）。</summary>
+        public long ViewDeathTextWrite { get; private set; }
+
+        /// <summary>
+        /// 死亡大消息**画不出来**的次数：绑定期没能把 <c>Gui/LargeMessage</c> 移到 <c>GameWidget</c> 根下
+        /// （引擎 XML 改版 / 视图控件缺失）。这种状态下文字会随 HUD 显隐一起被藏掉，必须能在日志里看见。
+        /// </summary>
+        public long ViewDeathTextMissing { get; private set; }
+
+        /// <summary>死亡大消息写入抛异常的次数。</summary>
+        public long ViewDeathTextFailures { get; private set; }
+
+        /// <summary>最近一次死亡大消息的问题（稳定键 + 明细；没出过问题时为 null）。</summary>
+        public string LastDeathTextProblem { get; private set; }
 
         /// <summary>被驱动的帧数（分母；配置关闭 / 未绑定时不涨）。</summary>
         public long ViewFrames { get; private set; }
@@ -215,6 +263,23 @@ namespace SuMultiplayer.Engine
             ViewRespawnClears++;
         }
 
+        public void NoteDeathTextWrite()
+        {
+            ViewDeathTextWrite++;
+        }
+
+        public void NoteDeathTextMissing(string reason)
+        {
+            ViewDeathTextMissing++;
+            LastDeathTextProblem = reason;
+        }
+
+        public void NoteDeathTextFailures(string reason)
+        {
+            ViewDeathTextFailures++;
+            LastDeathTextProblem = reason;
+        }
+
         public void NoteFailure(string reason)
         {
             ViewFeedbackFailures++;
@@ -239,6 +304,10 @@ namespace SuMultiplayer.Engine
             " viewFailureReason=" + (LastFailureReason ?? "none") +
             " viewIceWrites=" + ViewIceWrites +
             " viewRespawnClears=" + ViewRespawnClears +
+            " viewDeathTextWrite=" + ViewDeathTextWrite +
+            " viewDeathTextMissing=" + ViewDeathTextMissing +
+            " viewDeathTextFailures=" + ViewDeathTextFailures +
+            " viewDeathTextProblem=" + (LastDeathTextProblem ?? "none") +
             " viewFrames=" + ViewFrames;
     }
 
@@ -535,7 +604,10 @@ namespace SuMultiplayer.Engine
 
             bool dead = sample.Health <= 0f;
             bool showDeath = dead && !m_deathOverlayShown;
-            bool keepBlackout = dead;
+            // 产品口径（2026-10-20）：镜像分屏死亡时**不再压黑屏**，改为让 MirrorCharacterEngine
+            // 切到引擎的 DeathCamera（环绕尸体视角）+ 保留 "YOU HAVE DIED" 大消息。
+            // 之前写 BlackoutFactor=1 会导致第四分屏全黑，看不到死亡相机。
+            bool keepBlackout = false;
             bool clearDeath = !dead && m_dead;
             if (showDeath) m_deathOverlayShown = true;
             if (clearDeath)

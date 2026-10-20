@@ -27,7 +27,7 @@ namespace SuMultiplayer.Protocol.Vitals {
             "Cgx2aXRhbHMucHJvdG8SC3N1bXAudml0YWxzGhlnb29nbGUvcHJvdG9idWYv",
             "YW55LnByb3RvIi0KClZpdGFsc1ZlYzMSCQoBeBgBIAEoAhIJCgF5GAIgASgC",
             "EgkKAXoYAyABKAIiNwoUUGxheWVyU2F0aWF0aW9uRW50cnkSEAoIY29udGVu",
-            "dHMYASABKA0SDQoFdmFsdWUYAiABKAIizAMKElBsYXllclZpdGFsc1ZhbHVl",
+            "dHMYASABKA0SDQoFdmFsdWUYAiABKAIi2wMKElBsYXllclZpdGFsc1ZhbHVl",
             "cxIOCgZoZWFsdGgYASABKAISCwoDYWlyGAIgASgCEgwKBGZvb2QYAyABKAIS",
             "DwoHc3RhbWluYRgEIAEoAhINCgVzbGVlcBgFIAEoAhITCgt0ZW1wZXJhdHVy",
             "ZRgGIAEoAhIPCgd3ZXRuZXNzGAcgASgCEhoKEnRhcmdldF90ZW1wZXJhdHVy",
@@ -37,39 +37,53 @@ namespace SuMultiplayer.Protocol.Vitals {
             "YXVzZV9vZl9kZWF0aBgPIAEoCRI0CglzYXRpYXRpb24YECADKAsyIS5zdW1w",
             "LnZpdGFscy5QbGF5ZXJTYXRpYXRpb25FbnRyeRIYChBzbGVlcF9zdGFydF90",
             "aW1lGBEgASgBEhUKDXNsZWVwX2VsYXBzZWQYEiABKAISGQoRYWxsb3dfbWFu",
-            "dWFsX3dha2UYEyABKAgSFAoMZm9yY2VkX3NsZWVwGBQgASgIIncKEVBsYXll",
-            "clZpdGFsc0VudHJ5EhEKCWNsaWVudF9pZBgBIAEoDRIMCgRzbG90GAIgASgN",
-            "EhAKCHJldmlzaW9uGAMgASgNEi8KBnZhbHVlcxgEIAEoCzIfLnN1bXAudml0",
-            "YWxzLlBsYXllclZpdGFsc1ZhbHVlcyKKAQoSUGxheWVyVml0YWxzUmVwb3J0",
-            "EhAKCHNlcXVlbmNlGAEgASgNEi8KB2VudHJpZXMYAiADKAsyHi5zdW1wLnZp",
-            "dGFscy5QbGF5ZXJWaXRhbHNFbnRyeRILCgNleHQYZCABKAwSJAoGY3VzdG9t",
-            "GGUgASgLMhQuZ29vZ2xlLnByb3RvYnVmLkFueSK+AQoVUGxheWVyVml0YWxF",
-            "dmVudEVudHJ5EhEKCWNsaWVudF9pZBgBIAEoDRIMCgRzbG90GAIgASgNEhAK",
-            "CHJldmlzaW9uGAMgASgNEi8KBGtpbmQYBCABKA4yIS5zdW1wLnZpdGFscy5Q",
-            "bGF5ZXJWaXRhbEV2ZW50S2luZBIWCg5jYXVzZV9vZl9kZWF0aBgFIAEoCRIp",
-            "Cghwb3NpdGlvbhgGIAEoCzIXLnN1bXAudml0YWxzLlZpdGFsc1ZlYzMijgEK",
-            "ElBsYXllclZpdGFsc0V2ZW50cxIQCghzZXF1ZW5jZRgBIAEoDRIzCgdlbnRy",
-            "aWVzGAIgAygLMiIuc3VtcC52aXRhbHMuUGxheWVyVml0YWxFdmVudEVudHJ5",
-            "EgsKA2V4dBhkIAEoDBIkCgZjdXN0b20YZSABKAsyFC5nb29nbGUucHJvdG9i",
-            "dWYuQW55IrIBChFQbGF5ZXJXYWtlUmVxdWVzdBIRCgljbGllbnRfaWQYASAB",
-            "KA0SDAoEc2xvdBgCIAEoDRIYChByZXF1ZXN0X3NlcXVlbmNlGAMgASgEEhUK",
-            "DXNsZWVwX2VsYXBzZWQYBCABKAISGAoQc2xlZXBfc3RhcnRfdGltZRgFIAEo",
-            "ARILCgNleHQYZCABKAwSJAoGY3VzdG9tGGUgASgLMhQuZ29vZ2xlLnByb3Rv",
-            "YnVmLkFueSp9ChRQbGF5ZXJWaXRhbEV2ZW50S2luZBInCiNQTEFZRVJfVklU",
-            "QUxfRVZFTlRfS0lORF9VTlNQRUNJRklFRBAAEhwKGFBMQVlFUl9WSVRBTF9F",
-            "VkVOVF9ERUFUSBABEh4KGlBMQVlFUl9WSVRBTF9FVkVOVF9SRVNQQVdOEAJC",
-            "IkgBqgIdU3VNdWx0aXBsYXllci5Qcm90b2NvbC5WaXRhbHNiBnByb3RvMw=="));
+            "dWFsX3dha2UYEyABKAgSFAoMZm9yY2VkX3NsZWVwGBQgASgIEg0KBWxldmVs",
+            "GBUgASgCIncKEVBsYXllclZpdGFsc0VudHJ5EhEKCWNsaWVudF9pZBgBIAEo",
+            "DRIMCgRzbG90GAIgASgNEhAKCHJldmlzaW9uGAMgASgNEi8KBnZhbHVlcxgE",
+            "IAEoCzIfLnN1bXAudml0YWxzLlBsYXllclZpdGFsc1ZhbHVlcyKKAQoSUGxh",
+            "eWVyVml0YWxzUmVwb3J0EhAKCHNlcXVlbmNlGAEgASgNEi8KB2VudHJpZXMY",
+            "AiADKAsyHi5zdW1wLnZpdGFscy5QbGF5ZXJWaXRhbHNFbnRyeRILCgNleHQY",
+            "ZCABKAwSJAoGY3VzdG9tGGUgASgLMhQuZ29vZ2xlLnByb3RvYnVmLkFueSK+",
+            "AQoVUGxheWVyVml0YWxFdmVudEVudHJ5EhEKCWNsaWVudF9pZBgBIAEoDRIM",
+            "CgRzbG90GAIgASgNEhAKCHJldmlzaW9uGAMgASgNEi8KBGtpbmQYBCABKA4y",
+            "IS5zdW1wLnZpdGFscy5QbGF5ZXJWaXRhbEV2ZW50S2luZBIWCg5jYXVzZV9v",
+            "Zl9kZWF0aBgFIAEoCRIpCghwb3NpdGlvbhgGIAEoCzIXLnN1bXAudml0YWxz",
+            "LlZpdGFsc1ZlYzMijgEKElBsYXllclZpdGFsc0V2ZW50cxIQCghzZXF1ZW5j",
+            "ZRgBIAEoDRIzCgdlbnRyaWVzGAIgAygLMiIuc3VtcC52aXRhbHMuUGxheWVy",
+            "Vml0YWxFdmVudEVudHJ5EgsKA2V4dBhkIAEoDBIkCgZjdXN0b20YZSABKAsy",
+            "FC5nb29nbGUucHJvdG9idWYuQW55IrIBChFQbGF5ZXJXYWtlUmVxdWVzdBIR",
+            "CgljbGllbnRfaWQYASABKA0SDAoEc2xvdBgCIAEoDRIYChByZXF1ZXN0X3Nl",
+            "cXVlbmNlGAMgASgEEhUKDXNsZWVwX2VsYXBzZWQYBCABKAISGAoQc2xlZXBf",
+            "c3RhcnRfdGltZRgFIAEoARILCgNleHQYZCABKAwSJAoGY3VzdG9tGGUgASgL",
+            "MhQuZ29vZ2xlLnByb3RvYnVmLkFueSKdAQoSUGxheWVyU2xlZXBSZXF1ZXN0",
+            "EhEKCWNsaWVudF9pZBgBIAEoDRIMCgRzbG90GAIgASgNEhgKEHJlcXVlc3Rf",
+            "c2VxdWVuY2UYAyABKAQSGQoRYWxsb3dfbWFudWFsX3dha2UYBCABKAgSCwoD",
+            "ZXh0GGQgASgMEiQKBmN1c3RvbRhlIAEoCzIULmdvb2dsZS5wcm90b2J1Zi5B",
+            "bnki0wEKEVBsYXllclNsZWVwUmVzdWx0EhEKCWNsaWVudF9pZBgBIAEoDRIM",
+            "CgRzbG90GAIgASgNEhgKEHJlcXVlc3Rfc2VxdWVuY2UYAyABKAQSMAoEa2lu",
+            "ZBgEIAEoDjIiLnN1bXAudml0YWxzLlBsYXllclNsZWVwUmVzdWx0S2luZBIO",
+            "CgZyZWFzb24YBSABKAkSDgoGZGV0YWlsGAYgASgJEgsKA2V4dBhkIAEoDBIk",
+            "CgZjdXN0b20YZSABKAsyFC5nb29nbGUucHJvdG9idWYuQW55Kn0KFFBsYXll",
+            "clZpdGFsRXZlbnRLaW5kEicKI1BMQVlFUl9WSVRBTF9FVkVOVF9LSU5EX1VO",
+            "U1BFQ0lGSUVEEAASHAoYUExBWUVSX1ZJVEFMX0VWRU5UX0RFQVRIEAESHgoa",
+            "UExBWUVSX1ZJVEFMX0VWRU5UX1JFU1BBV04QAiqPAQoVUGxheWVyU2xlZXBS",
+            "ZXN1bHRLaW5kEigKJFBMQVlFUl9TTEVFUF9SRVNVTFRfS0lORF9VTlNQRUNJ",
+            "RklFRBAAEiUKIVBMQVlFUl9TTEVFUF9SRVNVTFRfS0lORF9BQ0NFUFRFRBAB",
+            "EiUKIVBMQVlFUl9TTEVFUF9SRVNVTFRfS0lORF9SRUpFQ1RFRBACQiJIAaoC",
+            "HVN1TXVsdGlwbGF5ZXIuUHJvdG9jb2wuVml0YWxzYgZwcm90bzM="));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { global::Google.Protobuf.WellKnownTypes.AnyReflection.Descriptor, },
-          new pbr::GeneratedClrTypeInfo(new[] {typeof(global::SuMultiplayer.Protocol.Vitals.PlayerVitalEventKind), }, null, new pbr::GeneratedClrTypeInfo[] {
+          new pbr::GeneratedClrTypeInfo(new[] {typeof(global::SuMultiplayer.Protocol.Vitals.PlayerVitalEventKind), typeof(global::SuMultiplayer.Protocol.Vitals.PlayerSleepResultKind), }, null, new pbr::GeneratedClrTypeInfo[] {
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Vitals.VitalsVec3), global::SuMultiplayer.Protocol.Vitals.VitalsVec3.Parser, new[]{ "X", "Y", "Z" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Vitals.PlayerSatiationEntry), global::SuMultiplayer.Protocol.Vitals.PlayerSatiationEntry.Parser, new[]{ "Contents", "Value" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Vitals.PlayerVitalsValues), global::SuMultiplayer.Protocol.Vitals.PlayerVitalsValues.Parser, new[]{ "Health", "Air", "Food", "Stamina", "Sleep", "Temperature", "Wetness", "TargetTemperature", "FluDuration", "FluOnset", "SicknessDuration", "FireDuration", "Sleeping", "Dead", "CauseOfDeath", "Satiation", "SleepStartTime", "SleepElapsed", "AllowManualWake", "ForcedSleep" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Vitals.PlayerVitalsValues), global::SuMultiplayer.Protocol.Vitals.PlayerVitalsValues.Parser, new[]{ "Health", "Air", "Food", "Stamina", "Sleep", "Temperature", "Wetness", "TargetTemperature", "FluDuration", "FluOnset", "SicknessDuration", "FireDuration", "Sleeping", "Dead", "CauseOfDeath", "Satiation", "SleepStartTime", "SleepElapsed", "AllowManualWake", "ForcedSleep", "Level" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Vitals.PlayerVitalsEntry), global::SuMultiplayer.Protocol.Vitals.PlayerVitalsEntry.Parser, new[]{ "ClientId", "Slot", "Revision", "Values" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Vitals.PlayerVitalsReport), global::SuMultiplayer.Protocol.Vitals.PlayerVitalsReport.Parser, new[]{ "Sequence", "Entries", "Ext", "Custom" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Vitals.PlayerVitalEventEntry), global::SuMultiplayer.Protocol.Vitals.PlayerVitalEventEntry.Parser, new[]{ "ClientId", "Slot", "Revision", "Kind", "CauseOfDeath", "Position" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Vitals.PlayerVitalsEvents), global::SuMultiplayer.Protocol.Vitals.PlayerVitalsEvents.Parser, new[]{ "Sequence", "Entries", "Ext", "Custom" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Vitals.PlayerWakeRequest), global::SuMultiplayer.Protocol.Vitals.PlayerWakeRequest.Parser, new[]{ "ClientId", "Slot", "RequestSequence", "SleepElapsed", "SleepStartTime", "Ext", "Custom" }, null, null, null, null)
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Vitals.PlayerWakeRequest), global::SuMultiplayer.Protocol.Vitals.PlayerWakeRequest.Parser, new[]{ "ClientId", "Slot", "RequestSequence", "SleepElapsed", "SleepStartTime", "Ext", "Custom" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Vitals.PlayerSleepRequest), global::SuMultiplayer.Protocol.Vitals.PlayerSleepRequest.Parser, new[]{ "ClientId", "Slot", "RequestSequence", "AllowManualWake", "Ext", "Custom" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Vitals.PlayerSleepResult), global::SuMultiplayer.Protocol.Vitals.PlayerSleepResult.Parser, new[]{ "ClientId", "Slot", "RequestSequence", "Kind", "Reason", "Detail", "Ext", "Custom" }, null, null, null, null)
           }));
     }
     #endregion
@@ -80,6 +94,12 @@ namespace SuMultiplayer.Protocol.Vitals {
     [pbr::OriginalName("PLAYER_VITAL_EVENT_KIND_UNSPECIFIED")] Unspecified = 0,
     [pbr::OriginalName("PLAYER_VITAL_EVENT_DEATH")] PlayerVitalEventDeath = 1,
     [pbr::OriginalName("PLAYER_VITAL_EVENT_RESPAWN")] PlayerVitalEventRespawn = 2,
+  }
+
+  public enum PlayerSleepResultKind {
+    [pbr::OriginalName("PLAYER_SLEEP_RESULT_KIND_UNSPECIFIED")] Unspecified = 0,
+    [pbr::OriginalName("PLAYER_SLEEP_RESULT_KIND_ACCEPTED")] Accepted = 1,
+    [pbr::OriginalName("PLAYER_SLEEP_RESULT_KIND_REJECTED")] Rejected = 2,
   }
 
   #endregion
@@ -662,6 +682,7 @@ namespace SuMultiplayer.Protocol.Vitals {
       sleepElapsed_ = other.sleepElapsed_;
       allowManualWake_ = other.allowManualWake_;
       forcedSleep_ = other.forcedSleep_;
+      level_ = other.level_;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
     }
 
@@ -983,6 +1004,47 @@ namespace SuMultiplayer.Protocol.Vitals {
       }
     }
 
+    /// <summary>Field number for the "level" field.</summary>
+    public const int LevelFieldNumber = 21;
+    private float level_;
+    /// <summary>
+    /// ---- character level, host authoritative (append-only: 21) ----------------
+    ///
+    /// `PlayerData.Level` of the character this entry describes (`Survivalcraft/Game/
+    /// PlayerData.cs:118`).  The host runs the engine's own death path for every
+    /// simulated character, so the "level halves on death" rule
+    /// (`PlayerDead` enter: `Level = max(floor(Level / 2), 1)`, `PlayerData.cs:299`)
+    /// is executed **exactly once, on the host**, and the halved value is persisted
+    /// through the ordinary 5 s host record capture (`NetworkAvatarSpawner.
+    /// CapturePlayerRecord` already stores `Level`).  A client that also halves its
+    /// own PlayerData locally (the engine does that when *its* PlayerData enters
+    /// `PlayerDead`) is simply overwritten by this authoritative value, so the two
+    /// devices never end up halving twice in a row.
+    ///
+    /// Value semantics:
+    ///   * 1..1000   = the host's authoritative level (applied to the client's
+    ///                 `PlayerData.Level`, which is what `ComponentLevel` renders as
+    ///                 "Level N" and what `MeleeReplicaEngine` uses for tool gating);
+    ///   * 0         = "not carried" (an older host that does not know field 21).
+    ///                 A client must **not** write 0 into `PlayerData.Level`; it
+    ///                 counts `levelAbsent` instead (explicit, never a silent default).
+    ///   * negative / NaN / Inf / > 1000 = rejected by the codec (`levelRejected`).
+    ///
+    /// A **dead** entry is never written into the client's level (the local engine
+    /// is about to halve it; writing the already-halved host value first would make
+    /// the local halving happen on top of it).  The value is applied once the host
+    /// reports the character alive again (respawn), which is counted as
+    /// `levelRespawnOverrides` when it actually changes the new entity.
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public float Level {
+      get { return level_; }
+      set {
+        level_ = value;
+      }
+    }
+
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public override bool Equals(object other) {
@@ -1018,6 +1080,7 @@ namespace SuMultiplayer.Protocol.Vitals {
       if (!pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.Equals(SleepElapsed, other.SleepElapsed)) return false;
       if (AllowManualWake != other.AllowManualWake) return false;
       if (ForcedSleep != other.ForcedSleep) return false;
+      if (!pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.Equals(Level, other.Level)) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
 
@@ -1045,6 +1108,7 @@ namespace SuMultiplayer.Protocol.Vitals {
       if (SleepElapsed != 0F) hash ^= pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.GetHashCode(SleepElapsed);
       if (AllowManualWake != false) hash ^= AllowManualWake.GetHashCode();
       if (ForcedSleep != false) hash ^= ForcedSleep.GetHashCode();
+      if (Level != 0F) hash ^= pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.GetHashCode(Level);
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
       }
@@ -1140,6 +1204,10 @@ namespace SuMultiplayer.Protocol.Vitals {
         output.WriteRawTag(160, 1);
         output.WriteBool(ForcedSleep);
       }
+      if (Level != 0F) {
+        output.WriteRawTag(173, 1);
+        output.WriteFloat(Level);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
       }
@@ -1227,6 +1295,10 @@ namespace SuMultiplayer.Protocol.Vitals {
         output.WriteRawTag(160, 1);
         output.WriteBool(ForcedSleep);
       }
+      if (Level != 0F) {
+        output.WriteRawTag(173, 1);
+        output.WriteFloat(Level);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
       }
@@ -1294,6 +1366,9 @@ namespace SuMultiplayer.Protocol.Vitals {
       }
       if (ForcedSleep != false) {
         size += 2 + 1;
+      }
+      if (Level != 0F) {
+        size += 2 + 4;
       }
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
@@ -1364,6 +1439,9 @@ namespace SuMultiplayer.Protocol.Vitals {
       }
       if (other.ForcedSleep != false) {
         ForcedSleep = other.ForcedSleep;
+      }
+      if (other.Level != 0F) {
+        Level = other.Level;
       }
       _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
     }
@@ -1464,6 +1542,10 @@ namespace SuMultiplayer.Protocol.Vitals {
             ForcedSleep = input.ReadBool();
             break;
           }
+          case 173: {
+            Level = input.ReadFloat();
+            break;
+          }
         }
       }
     #endif
@@ -1561,6 +1643,10 @@ namespace SuMultiplayer.Protocol.Vitals {
           }
           case 160: {
             ForcedSleep = input.ReadBool();
+            break;
+          }
+          case 173: {
+            Level = input.ReadFloat();
             break;
           }
         }
@@ -3383,6 +3469,920 @@ namespace SuMultiplayer.Protocol.Vitals {
           }
           case 41: {
             SleepStartTime = input.ReadDouble();
+            break;
+          }
+          case 802: {
+            Ext = input.ReadBytes();
+            break;
+          }
+          case 810: {
+            if (custom_ == null) {
+              Custom = new global::Google.Protobuf.WellKnownTypes.Any();
+            }
+            input.ReadMessage(Custom);
+            break;
+          }
+        }
+      }
+    }
+    #endif
+
+  }
+
+  /// <summary>
+  /// Client -> host: "I pressed the sleep button (or bed), put me to sleep".
+  ///
+  /// Why this message has to exist: the engine's only sleep entry is
+  /// Survivalcraft/Game/ClothingWidget.cs:78-90, which runs on the peer that owns the
+  /// widget.  On a client that is the client's own ComponentSleep — a component the
+  /// host never reads and whose state the authoritative report overwrites with
+  /// `sleeping = false` on the very next tick, which is exactly the observed
+  /// "click sleep → lie down → instantly stand up".  The client therefore does not
+  /// decide sleep at all: it asks, and the host decides.
+  ///
+  /// The host validates with its own `ComponentSleep.CanSleep(out reason)` (dry
+  /// land / comfortable block / not too tired / not too wet / has shelter) and then
+  /// calls the **engine** `Sleep(allowManualWakeup: true)` on its own copy of that
+  /// character.  All wake paths stay on the host: satiety / daylight +180 s,
+  /// HealthChange &lt; 0, wetness, Attacked, and the >10 s manual tap
+  /// (PLAYER_WAKE_REQUEST, id 103).
+  ///
+  /// Append-only: message ids PLAYER_SLEEP_REQUEST = 104 / PLAYER_SLEEP_RESULT = 105.
+  /// Source: Survivalcraft/Game/ComponentSleep.cs:41-103（CanSleep / Sleep / WakeUp）
+  /// </summary>
+  [global::System.Diagnostics.DebuggerDisplayAttribute("{ToString(),nq}")]
+  public sealed partial class PlayerSleepRequest : pb::IMessage<PlayerSleepRequest>
+  #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      , pb::IBufferMessage
+  #endif
+  {
+    private static readonly pb::MessageParser<PlayerSleepRequest> _parser = new pb::MessageParser<PlayerSleepRequest>(() => new PlayerSleepRequest());
+    private pb::UnknownFieldSet _unknownFields;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pb::MessageParser<PlayerSleepRequest> Parser { get { return _parser; } }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pbr::MessageDescriptor Descriptor {
+      get { return global::SuMultiplayer.Protocol.Vitals.VitalsReflection.Descriptor.MessageTypes[8]; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    pbr::MessageDescriptor pb::IMessage.Descriptor {
+      get { return Descriptor; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public PlayerSleepRequest() {
+      OnConstruction();
+    }
+
+    partial void OnConstruction();
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public PlayerSleepRequest(PlayerSleepRequest other) : this() {
+      clientId_ = other.clientId_;
+      slot_ = other.slot_;
+      requestSequence_ = other.requestSequence_;
+      allowManualWake_ = other.allowManualWake_;
+      ext_ = other.ext_;
+      custom_ = other.custom_ != null ? other.custom_.Clone() : null;
+      _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public PlayerSleepRequest Clone() {
+      return new PlayerSleepRequest(this);
+    }
+
+    /// <summary>Field number for the "client_id" field.</summary>
+    public const int ClientIdFieldNumber = 1;
+    private uint clientId_;
+    /// <summary>
+    /// The requesting connection's client id; 0 is invalid (the host never asks).
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public uint ClientId {
+      get { return clientId_; }
+      set {
+        clientId_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "slot" field.</summary>
+    public const int SlotFieldNumber = 2;
+    private uint slot_;
+    /// <summary>
+    /// The sender's local-character slot (0..3).
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public uint Slot {
+      get { return slot_; }
+      set {
+        slot_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "request_sequence" field.</summary>
+    public const int RequestSequenceFieldNumber = 3;
+    private ulong requestSequence_;
+    /// <summary>
+    /// Client's monotonic request counter (1..); echoed in the result so the client
+    /// can drop a stale answer.
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong RequestSequence {
+      get { return requestSequence_; }
+      set {
+        requestSequence_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "allow_manual_wake" field.</summary>
+    public const int AllowManualWakeFieldNumber = 4;
+    private bool allowManualWake_;
+    /// <summary>
+    /// True = the engine path that started this (`allowManualWakeup: true`, the sleep
+    /// button / bed).  Always true today; the field exists so a future forced / scripted
+    /// entry reuses the same message instead of inventing a second one.
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool AllowManualWake {
+      get { return allowManualWake_; }
+      set {
+        allowManualWake_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "ext" field.</summary>
+    public const int ExtFieldNumber = 100;
+    private pb::ByteString ext_ = pb::ByteString.Empty;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public pb::ByteString Ext {
+      get { return ext_; }
+      set {
+        ext_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "custom" field.</summary>
+    public const int CustomFieldNumber = 101;
+    private global::Google.Protobuf.WellKnownTypes.Any custom_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public global::Google.Protobuf.WellKnownTypes.Any Custom {
+      get { return custom_; }
+      set {
+        custom_ = value;
+      }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override bool Equals(object other) {
+      return Equals(other as PlayerSleepRequest);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Equals(PlayerSleepRequest other) {
+      if (ReferenceEquals(other, null)) {
+        return false;
+      }
+      if (ReferenceEquals(other, this)) {
+        return true;
+      }
+      if (ClientId != other.ClientId) return false;
+      if (Slot != other.Slot) return false;
+      if (RequestSequence != other.RequestSequence) return false;
+      if (AllowManualWake != other.AllowManualWake) return false;
+      if (Ext != other.Ext) return false;
+      if (!object.Equals(Custom, other.Custom)) return false;
+      return Equals(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override int GetHashCode() {
+      int hash = 1;
+      if (ClientId != 0) hash ^= ClientId.GetHashCode();
+      if (Slot != 0) hash ^= Slot.GetHashCode();
+      if (RequestSequence != 0UL) hash ^= RequestSequence.GetHashCode();
+      if (AllowManualWake != false) hash ^= AllowManualWake.GetHashCode();
+      if (Ext.Length != 0) hash ^= Ext.GetHashCode();
+      if (custom_ != null) hash ^= Custom.GetHashCode();
+      if (_unknownFields != null) {
+        hash ^= _unknownFields.GetHashCode();
+      }
+      return hash;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override string ToString() {
+      return pb::JsonFormatter.ToDiagnosticString(this);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void WriteTo(pb::CodedOutputStream output) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      output.WriteRawMessage(this);
+    #else
+      if (ClientId != 0) {
+        output.WriteRawTag(8);
+        output.WriteUInt32(ClientId);
+      }
+      if (Slot != 0) {
+        output.WriteRawTag(16);
+        output.WriteUInt32(Slot);
+      }
+      if (RequestSequence != 0UL) {
+        output.WriteRawTag(24);
+        output.WriteUInt64(RequestSequence);
+      }
+      if (AllowManualWake != false) {
+        output.WriteRawTag(32);
+        output.WriteBool(AllowManualWake);
+      }
+      if (Ext.Length != 0) {
+        output.WriteRawTag(162, 6);
+        output.WriteBytes(Ext);
+      }
+      if (custom_ != null) {
+        output.WriteRawTag(170, 6);
+        output.WriteMessage(Custom);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(output);
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
+      if (ClientId != 0) {
+        output.WriteRawTag(8);
+        output.WriteUInt32(ClientId);
+      }
+      if (Slot != 0) {
+        output.WriteRawTag(16);
+        output.WriteUInt32(Slot);
+      }
+      if (RequestSequence != 0UL) {
+        output.WriteRawTag(24);
+        output.WriteUInt64(RequestSequence);
+      }
+      if (AllowManualWake != false) {
+        output.WriteRawTag(32);
+        output.WriteBool(AllowManualWake);
+      }
+      if (Ext.Length != 0) {
+        output.WriteRawTag(162, 6);
+        output.WriteBytes(Ext);
+      }
+      if (custom_ != null) {
+        output.WriteRawTag(170, 6);
+        output.WriteMessage(Custom);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(ref output);
+      }
+    }
+    #endif
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int CalculateSize() {
+      int size = 0;
+      if (ClientId != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt32Size(ClientId);
+      }
+      if (Slot != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt32Size(Slot);
+      }
+      if (RequestSequence != 0UL) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt64Size(RequestSequence);
+      }
+      if (AllowManualWake != false) {
+        size += 1 + 1;
+      }
+      if (Ext.Length != 0) {
+        size += 2 + pb::CodedOutputStream.ComputeBytesSize(Ext);
+      }
+      if (custom_ != null) {
+        size += 2 + pb::CodedOutputStream.ComputeMessageSize(Custom);
+      }
+      if (_unknownFields != null) {
+        size += _unknownFields.CalculateSize();
+      }
+      return size;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(PlayerSleepRequest other) {
+      if (other == null) {
+        return;
+      }
+      if (other.ClientId != 0) {
+        ClientId = other.ClientId;
+      }
+      if (other.Slot != 0) {
+        Slot = other.Slot;
+      }
+      if (other.RequestSequence != 0UL) {
+        RequestSequence = other.RequestSequence;
+      }
+      if (other.AllowManualWake != false) {
+        AllowManualWake = other.AllowManualWake;
+      }
+      if (other.Ext.Length != 0) {
+        Ext = other.Ext;
+      }
+      if (other.custom_ != null) {
+        if (custom_ == null) {
+          Custom = new global::Google.Protobuf.WellKnownTypes.Any();
+        }
+        Custom.MergeFrom(other.Custom);
+      }
+      _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(pb::CodedInputStream input) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      input.ReadRawMessage(this);
+    #else
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
+            break;
+          case 8: {
+            ClientId = input.ReadUInt32();
+            break;
+          }
+          case 16: {
+            Slot = input.ReadUInt32();
+            break;
+          }
+          case 24: {
+            RequestSequence = input.ReadUInt64();
+            break;
+          }
+          case 32: {
+            AllowManualWake = input.ReadBool();
+            break;
+          }
+          case 802: {
+            Ext = input.ReadBytes();
+            break;
+          }
+          case 810: {
+            if (custom_ == null) {
+              Custom = new global::Google.Protobuf.WellKnownTypes.Any();
+            }
+            input.ReadMessage(Custom);
+            break;
+          }
+        }
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalMergeFrom(ref pb::ParseContext input) {
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
+            break;
+          case 8: {
+            ClientId = input.ReadUInt32();
+            break;
+          }
+          case 16: {
+            Slot = input.ReadUInt32();
+            break;
+          }
+          case 24: {
+            RequestSequence = input.ReadUInt64();
+            break;
+          }
+          case 32: {
+            AllowManualWake = input.ReadBool();
+            break;
+          }
+          case 802: {
+            Ext = input.ReadBytes();
+            break;
+          }
+          case 810: {
+            if (custom_ == null) {
+              Custom = new global::Google.Protobuf.WellKnownTypes.Any();
+            }
+            input.ReadMessage(Custom);
+            break;
+          }
+        }
+      }
+    }
+    #endif
+
+  }
+
+  /// <summary>
+  /// Host -> requesting client: the single verdict for one sleep request.
+  ///
+  /// Acceptance is *also* visible through the authoritative report (sleeping = true,
+  /// with the host's sleep_start_time), which is what actually drives the pose /
+  /// blackout / Zzz.  The explicit result exists so a rejection is explainable
+  /// (`can-sleep:&lt;engine reason>`) instead of the client silently not lying down.
+  /// </summary>
+  [global::System.Diagnostics.DebuggerDisplayAttribute("{ToString(),nq}")]
+  public sealed partial class PlayerSleepResult : pb::IMessage<PlayerSleepResult>
+  #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      , pb::IBufferMessage
+  #endif
+  {
+    private static readonly pb::MessageParser<PlayerSleepResult> _parser = new pb::MessageParser<PlayerSleepResult>(() => new PlayerSleepResult());
+    private pb::UnknownFieldSet _unknownFields;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pb::MessageParser<PlayerSleepResult> Parser { get { return _parser; } }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pbr::MessageDescriptor Descriptor {
+      get { return global::SuMultiplayer.Protocol.Vitals.VitalsReflection.Descriptor.MessageTypes[9]; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    pbr::MessageDescriptor pb::IMessage.Descriptor {
+      get { return Descriptor; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public PlayerSleepResult() {
+      OnConstruction();
+    }
+
+    partial void OnConstruction();
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public PlayerSleepResult(PlayerSleepResult other) : this() {
+      clientId_ = other.clientId_;
+      slot_ = other.slot_;
+      requestSequence_ = other.requestSequence_;
+      kind_ = other.kind_;
+      reason_ = other.reason_;
+      detail_ = other.detail_;
+      ext_ = other.ext_;
+      custom_ = other.custom_ != null ? other.custom_.Clone() : null;
+      _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public PlayerSleepResult Clone() {
+      return new PlayerSleepResult(this);
+    }
+
+    /// <summary>Field number for the "client_id" field.</summary>
+    public const int ClientIdFieldNumber = 1;
+    private uint clientId_;
+    /// <summary>
+    /// Echo of the request identity.
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public uint ClientId {
+      get { return clientId_; }
+      set {
+        clientId_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "slot" field.</summary>
+    public const int SlotFieldNumber = 2;
+    private uint slot_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public uint Slot {
+      get { return slot_; }
+      set {
+        slot_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "request_sequence" field.</summary>
+    public const int RequestSequenceFieldNumber = 3;
+    private ulong requestSequence_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong RequestSequence {
+      get { return requestSequence_; }
+      set {
+        requestSequence_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "kind" field.</summary>
+    public const int KindFieldNumber = 4;
+    private global::SuMultiplayer.Protocol.Vitals.PlayerSleepResultKind kind_ = global::SuMultiplayer.Protocol.Vitals.PlayerSleepResultKind.Unspecified;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public global::SuMultiplayer.Protocol.Vitals.PlayerSleepResultKind Kind {
+      get { return kind_; }
+      set {
+        kind_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "reason" field.</summary>
+    public const int ReasonFieldNumber = 5;
+    private string reason_ = "";
+    /// <summary>
+    /// Stable reason code.  Accepted = "accepted"; rejected = one of
+    /// `wrong-owner`, `unknown-player`, `already-sleeping`, `dead`,
+    /// `can-sleep:&lt;engine reason>`, `sleep-failed` (never a free-form sentence in the
+    /// code slot; the engine's own sentence is carried in `detail`).
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string Reason {
+      get { return reason_; }
+      set {
+        reason_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "detail" field.</summary>
+    public const int DetailFieldNumber = 6;
+    private string detail_ = "";
+    /// <summary>
+    /// Human-readable detail for the client's HUD (the engine's CanSleep sentence).
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string Detail {
+      get { return detail_; }
+      set {
+        detail_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "ext" field.</summary>
+    public const int ExtFieldNumber = 100;
+    private pb::ByteString ext_ = pb::ByteString.Empty;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public pb::ByteString Ext {
+      get { return ext_; }
+      set {
+        ext_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "custom" field.</summary>
+    public const int CustomFieldNumber = 101;
+    private global::Google.Protobuf.WellKnownTypes.Any custom_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public global::Google.Protobuf.WellKnownTypes.Any Custom {
+      get { return custom_; }
+      set {
+        custom_ = value;
+      }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override bool Equals(object other) {
+      return Equals(other as PlayerSleepResult);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Equals(PlayerSleepResult other) {
+      if (ReferenceEquals(other, null)) {
+        return false;
+      }
+      if (ReferenceEquals(other, this)) {
+        return true;
+      }
+      if (ClientId != other.ClientId) return false;
+      if (Slot != other.Slot) return false;
+      if (RequestSequence != other.RequestSequence) return false;
+      if (Kind != other.Kind) return false;
+      if (Reason != other.Reason) return false;
+      if (Detail != other.Detail) return false;
+      if (Ext != other.Ext) return false;
+      if (!object.Equals(Custom, other.Custom)) return false;
+      return Equals(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override int GetHashCode() {
+      int hash = 1;
+      if (ClientId != 0) hash ^= ClientId.GetHashCode();
+      if (Slot != 0) hash ^= Slot.GetHashCode();
+      if (RequestSequence != 0UL) hash ^= RequestSequence.GetHashCode();
+      if (Kind != global::SuMultiplayer.Protocol.Vitals.PlayerSleepResultKind.Unspecified) hash ^= Kind.GetHashCode();
+      if (Reason.Length != 0) hash ^= Reason.GetHashCode();
+      if (Detail.Length != 0) hash ^= Detail.GetHashCode();
+      if (Ext.Length != 0) hash ^= Ext.GetHashCode();
+      if (custom_ != null) hash ^= Custom.GetHashCode();
+      if (_unknownFields != null) {
+        hash ^= _unknownFields.GetHashCode();
+      }
+      return hash;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override string ToString() {
+      return pb::JsonFormatter.ToDiagnosticString(this);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void WriteTo(pb::CodedOutputStream output) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      output.WriteRawMessage(this);
+    #else
+      if (ClientId != 0) {
+        output.WriteRawTag(8);
+        output.WriteUInt32(ClientId);
+      }
+      if (Slot != 0) {
+        output.WriteRawTag(16);
+        output.WriteUInt32(Slot);
+      }
+      if (RequestSequence != 0UL) {
+        output.WriteRawTag(24);
+        output.WriteUInt64(RequestSequence);
+      }
+      if (Kind != global::SuMultiplayer.Protocol.Vitals.PlayerSleepResultKind.Unspecified) {
+        output.WriteRawTag(32);
+        output.WriteEnum((int) Kind);
+      }
+      if (Reason.Length != 0) {
+        output.WriteRawTag(42);
+        output.WriteString(Reason);
+      }
+      if (Detail.Length != 0) {
+        output.WriteRawTag(50);
+        output.WriteString(Detail);
+      }
+      if (Ext.Length != 0) {
+        output.WriteRawTag(162, 6);
+        output.WriteBytes(Ext);
+      }
+      if (custom_ != null) {
+        output.WriteRawTag(170, 6);
+        output.WriteMessage(Custom);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(output);
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
+      if (ClientId != 0) {
+        output.WriteRawTag(8);
+        output.WriteUInt32(ClientId);
+      }
+      if (Slot != 0) {
+        output.WriteRawTag(16);
+        output.WriteUInt32(Slot);
+      }
+      if (RequestSequence != 0UL) {
+        output.WriteRawTag(24);
+        output.WriteUInt64(RequestSequence);
+      }
+      if (Kind != global::SuMultiplayer.Protocol.Vitals.PlayerSleepResultKind.Unspecified) {
+        output.WriteRawTag(32);
+        output.WriteEnum((int) Kind);
+      }
+      if (Reason.Length != 0) {
+        output.WriteRawTag(42);
+        output.WriteString(Reason);
+      }
+      if (Detail.Length != 0) {
+        output.WriteRawTag(50);
+        output.WriteString(Detail);
+      }
+      if (Ext.Length != 0) {
+        output.WriteRawTag(162, 6);
+        output.WriteBytes(Ext);
+      }
+      if (custom_ != null) {
+        output.WriteRawTag(170, 6);
+        output.WriteMessage(Custom);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(ref output);
+      }
+    }
+    #endif
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int CalculateSize() {
+      int size = 0;
+      if (ClientId != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt32Size(ClientId);
+      }
+      if (Slot != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt32Size(Slot);
+      }
+      if (RequestSequence != 0UL) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt64Size(RequestSequence);
+      }
+      if (Kind != global::SuMultiplayer.Protocol.Vitals.PlayerSleepResultKind.Unspecified) {
+        size += 1 + pb::CodedOutputStream.ComputeEnumSize((int) Kind);
+      }
+      if (Reason.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(Reason);
+      }
+      if (Detail.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(Detail);
+      }
+      if (Ext.Length != 0) {
+        size += 2 + pb::CodedOutputStream.ComputeBytesSize(Ext);
+      }
+      if (custom_ != null) {
+        size += 2 + pb::CodedOutputStream.ComputeMessageSize(Custom);
+      }
+      if (_unknownFields != null) {
+        size += _unknownFields.CalculateSize();
+      }
+      return size;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(PlayerSleepResult other) {
+      if (other == null) {
+        return;
+      }
+      if (other.ClientId != 0) {
+        ClientId = other.ClientId;
+      }
+      if (other.Slot != 0) {
+        Slot = other.Slot;
+      }
+      if (other.RequestSequence != 0UL) {
+        RequestSequence = other.RequestSequence;
+      }
+      if (other.Kind != global::SuMultiplayer.Protocol.Vitals.PlayerSleepResultKind.Unspecified) {
+        Kind = other.Kind;
+      }
+      if (other.Reason.Length != 0) {
+        Reason = other.Reason;
+      }
+      if (other.Detail.Length != 0) {
+        Detail = other.Detail;
+      }
+      if (other.Ext.Length != 0) {
+        Ext = other.Ext;
+      }
+      if (other.custom_ != null) {
+        if (custom_ == null) {
+          Custom = new global::Google.Protobuf.WellKnownTypes.Any();
+        }
+        Custom.MergeFrom(other.Custom);
+      }
+      _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(pb::CodedInputStream input) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      input.ReadRawMessage(this);
+    #else
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
+            break;
+          case 8: {
+            ClientId = input.ReadUInt32();
+            break;
+          }
+          case 16: {
+            Slot = input.ReadUInt32();
+            break;
+          }
+          case 24: {
+            RequestSequence = input.ReadUInt64();
+            break;
+          }
+          case 32: {
+            Kind = (global::SuMultiplayer.Protocol.Vitals.PlayerSleepResultKind) input.ReadEnum();
+            break;
+          }
+          case 42: {
+            Reason = input.ReadString();
+            break;
+          }
+          case 50: {
+            Detail = input.ReadString();
+            break;
+          }
+          case 802: {
+            Ext = input.ReadBytes();
+            break;
+          }
+          case 810: {
+            if (custom_ == null) {
+              Custom = new global::Google.Protobuf.WellKnownTypes.Any();
+            }
+            input.ReadMessage(Custom);
+            break;
+          }
+        }
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalMergeFrom(ref pb::ParseContext input) {
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
+            break;
+          case 8: {
+            ClientId = input.ReadUInt32();
+            break;
+          }
+          case 16: {
+            Slot = input.ReadUInt32();
+            break;
+          }
+          case 24: {
+            RequestSequence = input.ReadUInt64();
+            break;
+          }
+          case 32: {
+            Kind = (global::SuMultiplayer.Protocol.Vitals.PlayerSleepResultKind) input.ReadEnum();
+            break;
+          }
+          case 42: {
+            Reason = input.ReadString();
+            break;
+          }
+          case 50: {
+            Detail = input.ReadString();
             break;
           }
           case 802: {

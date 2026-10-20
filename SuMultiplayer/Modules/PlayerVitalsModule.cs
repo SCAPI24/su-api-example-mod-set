@@ -76,6 +76,13 @@ namespace SuMultiplayer.Modules
         /// </summary>
         private const int HostWakeRequestGapMs = 250;
 
+        /// <summary>
+        /// 客户端发出 <c>PLAYER_SLEEP_REQUEST</c> 之后等主机裁决的上限。超时不是"当成成功"：
+        /// 只计数 + 明确日志，并释放门控让下一次点击能重试（否则一次丢包会让玩家
+        /// 永远点不动睡眠按钮）。
+        /// </summary>
+        private const int SleepEntryPendingTimeoutMs = 3000;
+
         /// <summary>10 秒一条状态行（计数器）。</summary>
         private const int SummaryLogMs = 10000;
 
@@ -84,6 +91,32 @@ namespace SuMultiplayer.Modules
 
         /// <summary>一次最多发几条死亡 / 复活事件（超过就分多条）。</summary>
         private const int MaxEventsPerMessage = 8;
+
+        /// <summary>
+        /// 客户端一次死亡 / 复活的本地状态（方案 A：引擎原生死亡流程 + 主机批准后才推进）。
+        /// 只在**主机 Death 事件 / 主机裁决的死亡快照**到达时创建，复活重放完成后销毁。
+        /// </summary>
+        private sealed class LocalRespawnState
+        {
+            public PlayerKey Key;
+            /// <summary>这次死亡的 revision（主机 Death 事件里的那个）。</summary>
+            public uint DeathRevision;
+            /// <summary>主机 Respawn 事件的 revision（可能比死亡更新；0 = 还没收到）。</summary>
+            public uint RespawnRevision;
+            /// <summary>主机裁决的落点（from result 或 respawn event）。</summary>
+            public bool HasPosition;
+            public Vector3 Position;
+            /// <summary>主机已批准（= 可以执行引擎 RemoveEntity）的时刻；0 = 还没批准。</summary>
+            public long AcceptedAtMs;
+            /// <summary>已经执行过引擎 RemoveEntity。</summary>
+            public bool Executed;
+            /// <summary>已经完成出生后权威重放。</summary>
+            public bool ReplayApplied;
+            /// <summary>第一次发现"实体还没出生"的时刻（诊断用，0 = 没等过）。</summary>
+            public long WaitingSinceMs;
+            /// <summary>等待出生期间累计的帧数（诊断用）。</summary>
+            public long WaitFrames;
+        }
 
         /// <summary>主机侧一个角色的发送 / 边沿状态（主机本机角色与客户端化身共用）。</summary>
         private sealed class HostCharacterState
@@ -152,7 +185,7 @@ namespace SuMultiplayer.Modules
         /// 客户端侧：每个本机角色的死亡 / 复活请求状态机（1.5 秒门槛、每次死亡最多一个请求、
         /// 结果 / 超时后不再响应点击）。纯逻辑在 Net/PlayerRespawnNet.cs，可无设备自检。
         /// </summary>
-        private readonly PlayerRespawnGate m_respawnGate = new PlayerRespawnGate();
+        private readonly PlayerRespawnGate m_respawnGate;
         /// <summary>已对哪个死亡期执行过不可复活模式的点击动作（Cruel 菜单 / Adventure 说明）。</summary>
         private readonly HashSet<PlayerKey> m_terminalDeathHandled = new HashSet<PlayerKey>();
         /// <summary>每帧遍历死亡屏的复用缓冲。</summary>
@@ -160,13 +193,39 @@ namespace SuMultiplayer.Modules
         private long m_respawnRequestSequence;
 
         /// <summary>
+        /// 客户端本机角色：死亡 → 点击 → 主机批准 → 引擎删实体 → 新实体出生后权威重放。
+        /// 方案 A 的状态全在这里（纯决策，不含 Game 类型）；引擎侧动作通过
+        /// <see cref="IPlayerVitalsPort.TryExecuteLocalRespawn"/> /
+        /// <see cref="IPlayerVitalsPort.TryReplayLocalRespawn"/> 完成。
+        /// </summary>
+        private readonly Dictionary<PlayerKey, LocalRespawnState> m_localRespawns =
+            new Dictionary<PlayerKey, LocalRespawnState>();
+        /// <summary>每帧遍历待重放的复用缓冲。</summary>
+        private readonly List<PlayerKey> m_localRespawnKeys = new List<PlayerKey>(PlayerKey.SlotCount);
+        /// <summary>
+        /// 每键死亡 epoch（= 最近一次复活裁决的 revision）。revision 不新于它的 Dead 快照 /
+        /// Death 事件一律丢弃：那些是复活之前就在网络里飞着的旧状态，写进新实体会让引擎
+        /// 立刻再判一次死（见 <see cref="PlayerRespawnEpoch"/> 的注释）。
+        /// </summary>
+        private readonly Dictionary<PlayerKey, uint> m_localRespawnEpoch =
+            new Dictionary<PlayerKey, uint>();
+
+        /// <summary>
         /// 客户端睡眠点击门控（每次睡眠最多一条 PLAYER_WAKE_REQUEST）。纯逻辑在
         /// Net/PlayerSleepNet.cs：门槛 10 s / 强制睡眠不可唤醒 / 时钟安全余量都在那里。
         /// </summary>
         private readonly PlayerSleepGate m_sleepGate = new PlayerSleepGate();
+        /// <summary>
+        /// 客户端入睡申请门控（每次"按下"最多一条 PLAYER_SLEEP_REQUEST）。纯逻辑在
+        /// Net/PlayerSleepNet.cs：按下沿必须被释放过 / 已经在睡就不发 / 发过就不重复。
+        /// 这正是"进入睡眠的那次点击不能被当成第二次点击"的落点。
+        /// </summary>
+        private readonly PlayerSleepRequestGate m_sleepRequestGate = new PlayerSleepRequestGate();
         /// <summary>每帧遍历睡眠键的复用缓冲。</summary>
         private readonly List<PlayerKey> m_sleepKeys = new List<PlayerKey>(PlayerKey.SlotCount);
         private long m_sleepRequestSequence;
+        /// <summary>入睡请求的单调序号（与唤醒请求分开编号，日志里不混淆）。</summary>
+        private long m_sleepEntrySequence;
 
         private readonly List<PlayerVitalEventSnapshot> m_pendingEvents =
             new List<PlayerVitalEventSnapshot>(4);
@@ -225,6 +284,8 @@ namespace SuMultiplayer.Modules
         // 死亡屏 / 复活请求（客户端）
         private long m_deathScreensShown;
         private long m_respawnTapCaptured;
+        /// <summary>死亡屏输入仍是**同一个按下**（按住 / 键盘自动重复）而没有新按下沿的帧数。</summary>
+        private long m_respawnSamePress;
         private long m_respawnReqSent;
         private long m_respawnReqSendFailures;
         private long m_respawnReqTimeouts;
@@ -237,6 +298,27 @@ namespace SuMultiplayer.Modules
             new Dictionary<string, long>(StringComparer.Ordinal);
         private readonly Dictionary<string, long> m_respawnSuppressedReasons =
             new Dictionary<string, long>(StringComparer.Ordinal);
+        // 复活（客户端，引擎原生流程 + 主机批准 + 出生后权威重放）
+        /// <summary>被主机以 <c>cooldown</c> 拒绝后重新武装、允许再点一次的死亡期数。</summary>
+        private long m_respawnRetryArmed;
+        /// <summary><c>TryExecuteLocalRespawn</c> 成功的次数（= mod 执行了引擎的 RemoveEntity）。</summary>
+        private long m_engineRespawnExecuted;
+        /// <summary><c>TryExecuteLocalRespawn</c> 失败的次数（每条都有原因日志）。</summary>
+        private long m_engineRespawnFailures;
+        /// <summary>新实体出生后权威重放完成的次数。</summary>
+        private long m_respawnReplayApplied;
+        /// <summary>权威重放失败的次数（原因已写日志）。</summary>
+        private long m_respawnReplayFailures;
+        /// <summary>等引擎新实体出生的帧数（PrepareSpawn / WaitForTerrain 期间）。</summary>
+        private long m_respawnReplayWaitFrames;
+        /// <summary>被死亡 epoch 丢弃的陈旧 Dead 快照数。</summary>
+        private long m_respawnStaleDeadDropped;
+        /// <summary>被死亡 epoch 丢弃的陈旧 Death 事件数。</summary>
+        private long m_respawnStaleDeathDropped;
+        /// <summary>Respawn 事件先于 Result 到达的次数（落点照收，执行仍等结果）。</summary>
+        private long m_respawnEventBeforeResult;
+        /// <summary>请求超时但主机 Respawn 事件已到达 → 按事件推进执行的次数。</summary>
+        private long m_respawnExecutedWithoutResult;
         // 死亡屏 / 复活请求（主机）
         private long m_respawnReqRecv;
         private long m_respawnReqAccepted;
@@ -270,6 +352,36 @@ namespace SuMultiplayer.Modules
         private long m_sleepWakeReqWrongDirection;
         private readonly Dictionary<string, long> m_sleepWakeRejectReasons =
             new Dictionary<string, long>(StringComparer.Ordinal);
+
+        // 入睡请求（id 104/105）：客户端申请 → 主机用自己引擎的 CanSleep + Sleep 裁决。
+        private long m_sleepEntryTapCaptured;
+        private long m_sleepEntrySent;
+        private long m_sleepEntrySendFailures;
+        private long m_sleepEntrySuppressed;
+        private readonly Dictionary<string, long> m_sleepEntrySuppressedReasons =
+            new Dictionary<string, long>(StringComparer.Ordinal);
+        private long m_sleepEntryRecv;
+        private long m_sleepEntryAccepted;
+        private long m_sleepEntryRejected;
+        private long m_sleepEntryMalformed;
+        private long m_sleepEntryWrongDirection;
+        private readonly Dictionary<string, long> m_sleepEntryRejectReasons =
+            new Dictionary<string, long>(StringComparer.Ordinal);
+        private long m_sleepEntryResultRecv;
+        private long m_sleepEntryResultStale;
+        private long m_sleepEntryResultSendFailures;
+        private readonly Dictionary<string, long> m_sleepEntryObservedRejectReasons =
+            new Dictionary<string, long>(StringComparer.Ordinal);
+
+        /// <summary>
+        /// 客户端最近一次入睡申请的序号与时刻：用于"主机拒绝了，但客户端没有收到结果"的
+        /// 超时判定（<see cref="SleepEntryPendingTimeoutMs"/>）。0 = 当前没有未决申请。
+        /// </summary>
+        private long m_sleepEntryPendingSequence;
+        private long m_sleepEntryPendingAtMs;
+        private long m_sleepEntryTimeouts;
+        private readonly Dictionary<long, bool> m_sleepEntryHandled =
+            new Dictionary<long, bool>();
         /// <summary>
         /// 旧自动复活路径已删除：状态行固定输出 <c>autoRespawnRemoved=1</c>，防止有人把
         /// 2.5 秒计时器加回来而没有被发现（源码守卫 + 状态行双重痕迹）。
@@ -279,6 +391,8 @@ namespace SuMultiplayer.Modules
         public PlayerVitalsModule(Func<double> now)
         {
             m_now = now ?? throw new ArgumentNullException(nameof(now));
+            // 门控要能测"两次采样之间的间隔"（掉帧补偿 / 双击）：喂同一个时钟。
+            m_respawnGate = new PlayerRespawnGate(NowMs);
             m_descriptor = new ModuleDescriptor(ModuleIdText,
                 "玩家生命 / 体征 / 死亡状态同步（主机模拟并下发，客户端只跟随）")
             {
@@ -355,6 +469,10 @@ namespace SuMultiplayer.Modules
                 new DelegateMessageHandler<R.PlayerRespawnResult>(OnRespawnResultMessage), ModuleId);
             registry.Register((int)MessageType.PlayerWakeRequest, V.PlayerWakeRequest.Parser,
                 new DelegateMessageHandler<V.PlayerWakeRequest>(OnWakeRequestMessage), ModuleId);
+            registry.Register((int)MessageType.PlayerSleepRequest, V.PlayerSleepRequest.Parser,
+                new DelegateMessageHandler<V.PlayerSleepRequest>(OnSleepRequestMessage), ModuleId);
+            registry.Register((int)MessageType.PlayerSleepResult, V.PlayerSleepResult.Parser,
+                new DelegateMessageHandler<V.PlayerSleepResult>(OnSleepResultMessage), ModuleId);
         }
 
         public void Detach(ModuleDetachReason reason)
@@ -377,9 +495,14 @@ namespace SuMultiplayer.Modules
             m_hostCharacters.Clear();
             m_clientCharacters.Clear();
             m_pendingEvents.Clear();
+            ResetLocalRespawns("模块下线");
             m_respawnGate.Clear();
             m_terminalDeathHandled.Clear();
             m_sleepGate.Clear();
+            m_sleepRequestGate.Clear();
+            m_sleepEntryHandled.Clear();
+            m_sleepEntryPendingSequence = 0;
+            m_sleepEntryPendingAtMs = 0;
             m_sleepKeys.Clear();
             m_senderSequences.Clear();
             m_senderEventSequences.Clear();
@@ -414,7 +537,12 @@ namespace SuMultiplayer.Modules
             if (!hosting && connected && inWorld && !m_worldReady &&
                 m_transport != null && m_transport.LocalClientId >= 0)
                 OnClientWorldReady();
-            if (!inWorld) m_worldReady = false;
+            if (!inWorld)
+            {
+                m_worldReady = false;
+                // 离开世界：复活进度画面不能留在屏幕上（它的 GuiWidget 已经不在了）。
+                ResetLocalRespawns("离开世界");
+            }
 
             if (hosting) TickHost(nowMs, tick.DeltaTime);
             else if (connected && inWorld) TickClient(nowMs, tick.DeltaTime);
@@ -488,6 +616,7 @@ namespace SuMultiplayer.Modules
             }
             TickClientSleep(nowMs);
             TickClientRespawn(nowMs);
+            TickLocalRespawnReplay(nowMs);
         }
 
         // ---------------------------------------------------------------- 主机：边沿 / 复活
@@ -837,6 +966,20 @@ namespace SuMultiplayer.Modules
                     m_vitalsUnchanged++;
                     continue;
                 }
+                // 死亡 epoch：复活之前产生的 Dead 快照不许写进新实体。
+                // 引擎 PlayerData.Playing 只看 Health <= 0，写进去就会让刚出生的角色立刻再判一次死
+                // （见 PlayerRespawnEpoch 的注释）。这里丢弃 + 计数 + 限流日志，不猜。
+                if (local && snapshot.Dead &&
+                    PlayerRespawnEpoch.IsStaleDead(LocalEpoch(snapshot.Key), snapshot.Revision))
+                {
+                    m_respawnStaleDeadDropped++;
+                    Problem("respawn-stale-dead:" + snapshot.Key,
+                        "丢弃玩家键 " + snapshot.Key + " 的陈旧死亡状态（revision=" +
+                        snapshot.Revision + " <= 死亡 epoch " + LocalEpoch(snapshot.Key) +
+                        "）：它是复活之前的状态，写进新实体会被引擎再判一次死（已丢弃 " +
+                        m_respawnStaleDeadDropped + " 条）");
+                    continue;
+                }
                 if (local) EnsureLocalSimulationDisabled();
                 string reason;
                 PlayerVitalsApplyStatus status = local
@@ -867,6 +1010,14 @@ namespace SuMultiplayer.Modules
                 {
                     if (snapshot.Sleeping)
                     {
+                        // 主机已确认这一次睡眠：入睡申请门控收工（本次按下不再产生新请求），
+                        // 未决序号也清掉 —— 否则会被 3 秒超时误判成"主机没裁决"。
+                        m_sleepRequestGate.OnSleepConfirmed(snapshot.Key);
+                        if (m_sleepEntryPendingSequence != 0)
+                        {
+                            m_sleepEntryPendingSequence = 0;
+                            m_sleepEntryPendingAtMs = 0;
+                        }
                         if (m_sleepGate.OnSleep(snapshot.Key, snapshot.SleepStartTime))
                         {
                             Info("本机角色 " + snapshot.Key + " 进入睡眠（主机权威：start=" +
@@ -961,7 +1112,35 @@ namespace SuMultiplayer.Modules
                     continue;
                 }
                 bool local = IsLocalKey(evt.Key);
+                // 死亡 epoch：复活之前产生的 Death 事件不能再把新实体推进 PlayerDead。
+                // （主机每次裁决复活都会推进 epoch，所以复活后的真正新死亡 revision 一定大于它）。
+                if (local && evt.IsDeath &&
+                    PlayerRespawnEpoch.IsStaleDead(LocalEpoch(evt.Key), evt.Revision))
+                {
+                    m_respawnStaleDeathDropped++;
+                    state.LastEventRevision = evt.Revision;
+                    Problem("respawn-stale-death:" + evt.Key,
+                        "丢弃玩家键 " + evt.Key + " 的陈旧 Death 事件（rev=" + evt.Revision +
+                        " <= 死亡 epoch " + LocalEpoch(evt.Key) +
+                        "）：它属于复活之前的那次死亡（已丢弃 " +
+                        m_respawnStaleDeathDropped + " 条）");
+                    continue;
+                }
                 if (local) EnsureLocalSimulationDisabled();
+                // 本机角色的复活事件：不写旧实体（它已经 / 正在被删），
+                // 只记落点 + 推进 death epoch；真正的落点 / 数值重放在新实体出生后做
+                // （TickLocalRespawnReplay → TryReplayLocalRespawn）。
+                if (local && !evt.IsDeath)
+                {
+                    state.LastEventRevision = evt.Revision;
+                    if (evt.Revision > state.LastRevision) state.LastRevision = evt.Revision;
+                    RecordLocalRespawnEvent(in evt);
+                    m_respawnApplied++;
+                    Info("主机裁决玩家键 " + evt.Key + " 复活（rev=" + evt.Revision +
+                        " · 落点=" + (evt.HasPosition ? evt.Position.ToString() : "未提供") +
+                        "）→ 落点已记下，等引擎新实体出生后整体重放");
+                    continue;
+                }
                 string reason;
                 PlayerVitalsApplyStatus status = local
                     ? m_port.ApplyLocalVitalEvent(in evt, out reason)
@@ -996,14 +1175,9 @@ namespace SuMultiplayer.Modules
                 else
                 {
                     m_respawnApplied++;
-                    if (local)
-                    {
-                        m_sleepGate.OnWake(evt.Key);
-                        ClearLocalDeath(evt.Key, "主机复活事件");
-                    }
                     Info("主机裁决玩家键 " + evt.Key + " 复活（rev=" + evt.Revision + " · 落点=" +
                         (evt.HasPosition ? evt.Position.ToString() : "未提供") +
-                        "）→ 客户端按主机落点复位" + (local ? "（本机玩家）" : "（化身）"));
+                        "）→ 远端化身按主机落点复位（本机角色的复活走出生后权威重放）");
                 }
             }
         }
@@ -1011,9 +1185,11 @@ namespace SuMultiplayer.Modules
         // ---------------------------------------------------------------- 客户端：死亡屏 / 复活请求
 
         /// <summary>
-        /// 登记一次本机角色死亡：显示屏幕由端口在 ApplyLocalVitals / ApplyLocalVitalEvent
-        /// 里完成（引擎等价的 YOU HAVE DIED + DeathCamera），这里只负责 1.5 秒门槛、每次死亡
-        /// 最多一个请求、结果 / 超时后不再响应的状态机。重复的死亡快照 / 事件不会重复计数。
+        /// 登记一次本机角色死亡。死亡画面本身现在完全由**引擎原生**负责：端口写
+        /// <c>CauseOfDeath</c> + <c>Health = 0</c> 之后，引擎 <c>PlayerData.Playing</c> 自己进入
+        /// <c>PlayerDead</c>（DeathCamera + “YOU HAVE DIED” + 等级减半，<c>PlayerData.cs:270-300</c>）。
+        /// 这里只负责：记下这次死亡的 revision（后续复活 epoch 的下界）、1.5 秒点击门槛、
+        /// 每次死亡最多一个请求、结果 / 超时后不再响应的状态机。重复的死亡快照 / 事件不重复计数。
         /// </summary>
         private void ArmLocalDeath(PlayerKey key, uint revision, string cause, long nowMs,
             bool isEventEdge)
@@ -1023,17 +1199,20 @@ namespace SuMultiplayer.Modules
             if (mode == PlayerRespawnMode.Unknown)
             {
                 Problem("respawn-mode:" + key, "读不到世界复活模式（" + (modeReason ?? "端口没有给原因") +
-                    "）→ 显示死亡屏但不提供请求路径（不猜模式）");
+                    "）→ 死亡不提供请求路径（不猜模式）");
             }
+            LocalRespawnState local = GetOrCreateLocalRespawn(key);
+            local.DeathRevision = PlayerRespawnEpoch.Advance(local.DeathRevision, revision);
             if (!m_respawnGate.OnDeath(key, revision, mode, nowMs, isEventEdge)) return;
             m_terminalDeathHandled.Remove(key);
             m_deathScreensShown++;
-            Info("本机角色 " + key + " 死亡屏已显示（rev=" + revision + "，模式=" +
+            Info("本机角色 " + key + " 死亡（rev=" + revision + "，模式=" +
                 PlayerRespawnRules.Describe(mode) + "，死因=" +
-                (string.IsNullOrEmpty(cause) ? "未记录" : cause) + "）：引擎 1.5 秒点击门槛后" +
+                (string.IsNullOrEmpty(cause) ? "未记录" : cause) +
+                "）→ 引擎原生死亡画面；1.5 秒门槛后" +
                 (PlayerRespawnRules.AllowsRequest(mode)
-                    ? "由玩家点击发一次复活请求（主机不再自动复活）"
-                    : "点击只走引擎等价终止路径，不发复活请求"));
+                    ? "玩家点击发一次复活请求，主机批准后才由 mod 执行 RemoveEntity"
+                    : "点击走不可复活模式的终止路径，不发复活请求"));
         }
 
         private void ClearLocalDeath(PlayerKey key, string why)
@@ -1042,9 +1221,229 @@ namespace SuMultiplayer.Modules
             m_terminalDeathHandled.Remove(key);
         }
 
+        // ---------------------------------------------------------------- 客户端：复活执行 / 出生后重放
+
+        /// <summary>本槽位的死亡 epoch（0 = 还没复活过）。</summary>
+        private uint LocalEpoch(PlayerKey key) =>
+            m_localRespawnEpoch.TryGetValue(key, out uint epoch) ? epoch : 0u;
+
+        private LocalRespawnState GetOrCreateLocalRespawn(PlayerKey key)
+        {
+            if (!m_localRespawns.TryGetValue(key, out LocalRespawnState state))
+            {
+                state = new LocalRespawnState { Key = key };
+                m_localRespawns[key] = state;
+            }
+            return state;
+        }
+
         /// <summary>
-        /// 每帧：死亡屏上的输入（tap / click / key）→ 1.5 秒门槛 → 每次死亡最多一个请求。
+        /// 主机**批准**之后的唯一推进动作：关掉挡门对话框，并由 mod 执行引擎
+        /// <c>PlayerData.PlayerDead</c> 点击分支里的那一行
+        /// <c>m_project.RemoveEntity(ComponentPlayer.Entity, disposeEntity: true)</c>
+        /// （<c>Survivalcraft/Game/PlayerData.cs:318</c>）。
+        /// 之后的 PrepareSpawn → SpawnDialog → WaitForTerrain → SpawnPlayer → FppCamera
+        /// 全是引擎原生流程（<c>PlayerData.cs:163-256 / 404-421</c>）。
+        /// 失败**不静默**：计数 + 限流日志 + 保持死亡屏，下一帧重试。
+        /// </summary>
+        private void ExecuteLocalRespawn(PlayerKey key, long nowMs)
+        {
+            if (m_port == null) return;
+            LocalRespawnState state = GetOrCreateLocalRespawn(key);
+            if (state.AcceptedAtMs == 0) state.AcceptedAtMs = nowMs;
+            if (state.Executed) return;
+            if (!m_port.TryExecuteLocalRespawn(key, out string reason))
+            {
+                m_engineRespawnFailures++;
+                Problem("respawn-execute:" + key,
+                    "主机已批准复活，但执行引擎复活流程失败（玩家键 " + key + "）：" +
+                    (reason ?? "端口没有给原因") +
+                    " → 保持死亡屏并每帧重试（已失败 " + m_engineRespawnFailures + " 次）");
+                return;
+            }
+            state.Executed = true;
+            m_engineRespawnExecuted++;
+            // 本次死亡期结束：不再接受点击（门控条目移除 = 死亡屏输入轮询停止）。
+            m_respawnGate.OnRespawn(key);
+            m_terminalDeathHandled.Remove(key);
+            Info("主机批准玩家键 " + key + " 复活 → 已执行引擎 RemoveEntity，引擎开始原生" +
+                " PrepareSpawn → SpawnDialog → WaitForTerrain → SpawnPlayer" +
+                "（出生后由本模块按主机权威数据整体重放）");
+        }
+
+        /// <summary>
+        /// 收到主机的 Respawn 事件（本机键）：记下落点 + 推进死亡 epoch。
+        /// **不写任何组件状态**（旧实体已经 / 正在被删除，新实体还没出生）——
+        /// 落点在 <see cref="TickLocalRespawnReplay"/> 里对新实体一次性应用。
+        /// </summary>
+        private void RecordLocalRespawnEvent(in PlayerVitalEventSnapshot evt)
+        {
+            LocalRespawnState state = GetOrCreateLocalRespawn(evt.Key);
+            state.RespawnRevision = PlayerRespawnEpoch.Advance(state.RespawnRevision, evt.Revision);
+            if (evt.HasPosition)
+            {
+                state.HasPosition = true;
+                state.Position = evt.Position;
+            }
+            m_localRespawnEpoch[evt.Key] = PlayerRespawnEpoch.Advance(LocalEpoch(evt.Key),
+                state.RespawnRevision);
+            m_sleepGate.OnWake(evt.Key);
+            if (state.AcceptedAtMs == 0 && !state.Executed)
+            {
+                m_respawnEventBeforeResult++;
+                Info("主机下发玩家键 " + evt.Key + " 的复活事件（rev=" + evt.Revision +
+                    "，落点=" + (evt.HasPosition ? evt.Position.ToString() : "未提供") +
+                    "）比复活结果先到 → 落点先记下，执行仍等主机结果（不猜）");
+            }
+        }
+
+        /// <summary>
+        /// 每帧：对"主机已批准、引擎已开始重建角色"的死亡期做出生后**权威重放**（第三个闸门）。
+        ///
+        /// 为什么必须重放：引擎 <c>SpawnPlayer</c> 建的是**全新实体** —— 模板血量、空背包、
+        /// 空衣服（<c>PlayerData.cs:568-640</c>），落点还会被 <c>FindNoIntroSpawnPosition</c>
+        /// 偏移最多 8 格（<c>PlayerData.cs:454-477</c>）。所以：等新实体出生 → 端口用主机权威
+        /// 落点 / 背包 / 衣服 / 模拟闸门 / HUD 覆盖 → 这里再用最近一条主机快照补写五项体征 →
+        /// 清掉死亡期状态。引擎还在 PrepareSpawn / WaitForTerrain 时端口返回 <c>Waiting</c>，
+        /// 只计数 + 首次一条日志，不做任何写入。
+        /// </summary>
+        private void TickLocalRespawnReplay(long nowMs)
+        {
+            if (m_localRespawns.Count == 0) return;
+            m_localRespawnKeys.Clear();
+            foreach (PlayerKey key in m_localRespawns.Keys) m_localRespawnKeys.Add(key);
+            for (int i = 0; i < m_localRespawnKeys.Count; i++)
+            {
+                PlayerKey key = m_localRespawnKeys[i];
+                if (!m_localRespawns.TryGetValue(key, out LocalRespawnState state)) continue;
+                // 主机批准了但上一帧执行失败（例如引擎不在 PlayerDead）：本帧再试一次。
+                if (!state.Executed)
+                {
+                    if (state.AcceptedAtMs > 0) ExecuteLocalRespawn(key, nowMs);
+                    continue;
+                }
+                if (state.ReplayApplied) continue;
+                if (m_port == null) continue;
+                PlayerRespawnReplayRequest request = new PlayerRespawnReplayRequest(
+                    state.DeathRevision, state.RespawnRevision, state.HasPosition, state.Position);
+                PlayerRespawnReplayStatus status = m_port.TryReplayLocalRespawn(key, in request,
+                    out string replayReason);
+                if (status == PlayerRespawnReplayStatus.Waiting)
+                {
+                    if (state.WaitingSinceMs == 0) state.WaitingSinceMs = nowMs;
+                    state.WaitFrames++;
+                    m_respawnReplayWaitFrames++;
+                    if (state.WaitFrames == 1)
+                    {
+                        Info("玩家键 " + key + " 的复活重放：等引擎新实体出生（PrepareSpawn / " +
+                            "WaitForTerrain 中，落点=" +
+                            (state.HasPosition ? state.Position.ToString() : "未提供") + "）");
+                    }
+                    continue;
+                }
+                if (status == PlayerRespawnReplayStatus.NoPending)
+                {
+                    // 端口已经对这个实体重放过（重复调用）：不重复写，只清状态。
+                    state.ReplayApplied = true;
+                    m_localRespawns.Remove(key);
+                    Info("玩家键 " + key + " 的复活重放已经由端口完成过（重复调用返回 " +
+                        "NoPending）→ 清掉死亡期状态");
+                    continue;
+                }
+                if (status != PlayerRespawnReplayStatus.Applied)
+                {
+                    m_respawnReplayFailures++;
+                    Problem("respawn-replay:" + key,
+                        "出生后权威重放失败（玩家键 " + key + "）：" +
+                        (replayReason ?? "端口没有给原因") +
+                        " → 保留死亡期状态，下一帧重试（已失败 " + m_respawnReplayFailures +
+                        " 次）");
+                    continue;
+                }
+                state.ReplayApplied = true;
+                m_respawnReplayApplied++;
+                ReapplyAuthoritativeVitals(key);
+                // 这次死亡周期到此结束：把死亡 epoch 推到本次死亡的 revision，
+                // 此后"复活之前产生"的 Dead 快照 / Death 事件一律丢弃
+                //（否则会把刚出生的角色再写死一次，见 PlayerRespawnEpoch）。
+                m_localRespawnEpoch[key] = PlayerRespawnEpoch.Advance(LocalEpoch(key),
+                    state.DeathRevision);
+                ClearLocalDeath(key, "复活重放完成");
+                m_localRespawns.Remove(key);
+                Info("玩家键 " + key + " 复活重放完成（落点=" +
+                    (state.HasPosition ? state.Position.ToString() : "未提供") + "，等待 " +
+                    state.WaitFrames + " 帧，死亡 epoch=" + LocalEpoch(key) + "）");
+            }
+        }
+
+        /// <summary>
+        /// 五项体征的整体重放：新实体出生后立刻把**最近一条主机权威快照**写进它。
+        /// 主机在复活边沿会强制立即重发一条（<c>m_forceSend</c>），但那是下一拍的事 ——
+        /// 不重放的话新角色会以模板血量站到那条上报到达为止（中间态，产品不允许）。
+        ///
+        /// 快照本身是"死亡状态"（<c>Dead = true</c>）或 revision 不新于死亡 epoch 时**不重放**：
+        /// 那会把刚出生的角色立刻再写死一次（引擎 <c>PlayerData.Playing</c> 只看 Health ≤ 0）。
+        /// </summary>
+        private void ReapplyAuthoritativeVitals(PlayerKey key)
+        {
+            if (m_port == null) return;
+            if (!m_clientCharacters.TryGetValue(key, out ClientKeyState state) || !state.HasApplied)
+            {
+                Info("玩家键 " + key + " 复活重放：还没有可用的主机权威快照 → 等主机下一拍上报" +
+                    "（端口已完成落点 / 背包 / 衣服 / 模拟闸门）");
+                return;
+            }
+            PlayerVitalsSnapshot snapshot = state.LastApplied;
+            if (snapshot.Dead || PlayerRespawnEpoch.IsStaleDead(LocalEpoch(key), snapshot.Revision))
+            {
+                Info("玩家键 " + key + " 复活重放：最近一条快照是复活之前的死亡状态（rev=" +
+                    snapshot.Revision + " ≤ epoch " + LocalEpoch(key) +
+                    "）→ 不写进新实体，等主机下一拍复活后的权威上报");
+                state.HasApplied = false;
+                state.LastRevision = 0;
+                return;
+            }
+            PlayerVitalsApplyStatus status = m_port.ApplyLocalVitals(key, in snapshot,
+                out string reason);
+            if (status == PlayerVitalsApplyStatus.Applied)
+            {
+                m_clientVitalsApplied++;
+                return;
+            }
+            m_applyFailures++;
+            Problem("respawn-replay-vitals:" + key,
+                "复活重放时应用主机权威体征失败（玩家键 " + key + "）：" +
+                (reason ?? ("端口返回 " + status)) + " → 等主机下一拍上报补齐");
+        }
+
+        /// <summary>
+        /// 离开世界 / 断线 / 下线：清空本机死亡 / 复活状态表（不留待重放项，也不留死亡
+        /// epoch —— 重连后主机 revision 从头开始，旧 epoch 会误丢新状态）。
+        /// </summary>
+        private void ResetLocalRespawns(string why)
+        {
+            if (m_localRespawns.Count == 0 && m_localRespawnEpoch.Count == 0 &&
+                m_localRespawnKeys.Count == 0)
+                return;
+            Info("清空本机死亡 / 复活状态表（" + why + "）：待重放 " + m_localRespawns.Count +
+                " 项，死亡 epoch " + m_localRespawnEpoch.Count + " 项");
+            m_localRespawns.Clear();
+            m_localRespawnEpoch.Clear();
+            m_localRespawnKeys.Clear();
+        }
+
+        /// <summary>
+        /// 每帧：死亡屏上的**按下沿** → 1.5 秒门槛 → 每次死亡最多一个请求。
         /// 门槛前 / 已发过 / 模式禁止 / 已解决都明确计数（<c>respawnSuppressed</c>）。
+        ///
+        /// 点击口径 = **按下沿**，不是 <c>Input.Any</c> 电平（根因）：<c>WidgetInput.Any</c> 在
+        /// **键盘自动重复**时每帧都会重新为真（<c>WidgetInput.cs:704</c> 读 <c>Keyboard.LastKey</c>，
+        /// 而 <c>Keyboard.cs:170</c> 在重复事件里也无条件置 <c>m_lastKey</c>），所以"死亡瞬间正按着
+        /// 方向键 / 挖键"会让门槛一过就自动发一次复活请求（实测故障：刚死就瞬间复活，玩家没点）。
+        /// 这里两道闸：
+        ///   · 端口 <c>TryPollLocalDeathTap</c> 只报**新的按下**（<c>PlayerDeathInputSample.IsFreshPress</c>）；
+        ///   · 门控 <see cref="PlayerRespawnGate.NoteInput"/> 再做一层"必须先松手"的按下沿判定，
+        ///     同一个按下的后续帧记 <c>respawnSamePress</c>，绝不当第二次点击。
         /// </summary>
         private void TickClientRespawn(long nowMs)
         {
@@ -1065,14 +1464,39 @@ namespace SuMultiplayer.Modules
                         "复活请求 " + pending.RequestSequence + " 在 " +
                         PlayerRespawnRules.RequestTimeoutMs + " ms 内没有收到主机结果（" +
                         timeoutReason + "）→ 本次死亡不再重发（每次死亡最多一个请求）");
+                    // 结果包丢了，但主机 Respawn 事件已经到了：主机**确实**裁决了复活。
+                    // 按已确认的主机状态推进引擎流程（显式计数 + 日志，不是兜底猜测）。
+                    if (m_localRespawns.TryGetValue(key, out LocalRespawnState timedOut) &&
+                        timedOut.RespawnRevision > 0 && !timedOut.Executed)
+                    {
+                        m_respawnExecutedWithoutResult++;
+                        Info("玩家键 " + key + " 的复活请求超时，但主机 Respawn 事件已到达" +
+                            "（rev=" + timedOut.RespawnRevision + "）→ 按主机已裁决的状态执行" +
+                            "引擎复活流程");
+                        ExecuteLocalRespawn(key, nowMs);
+                    }
                 }
-                if (!m_port.TryPollLocalDeathTap(key, out bool tapped, out string pollReason))
+                if (!m_port.TryPollLocalDeathTap(key, out bool pressed, out string pollReason))
                 {
                     Problem("respawn-tap-poll:" + key, "读取死亡屏输入失败：" +
                         (pollReason ?? "端口没有给原因") + " → 本帧不判定点击（不猜输入）");
                     continue;
                 }
-                if (!tapped) continue;
+                // 按下沿判定必须在 OnTap 之前：先记"这一帧有没有输入"，只有"上一帧没有输入、
+                // 这一帧出现输入"才是新点击。按住 / 键盘自动重复的持续为真到此为止。
+                // NoteInput 返回 true = 出现了一次边沿；**松手沿**同样返回 true（"重新允许
+                // 下一次按下"），所以必须先看 pressed —— 松手帧只更新门控状态，绝不是点击。
+                bool edge = m_respawnGate.NoteInput(key, pressed);
+                if (!pressed) continue;
+                if (!edge)
+                {
+                    m_respawnSamePress++;
+                    Problem("respawn-same-press:" + key,
+                        "玩家键 " + key + " 的死亡屏输入仍是**同一个按下**（没有松手 / " +
+                        "键盘自动重复）→ 不当作点击、不发复活请求（累计 " +
+                        m_respawnSamePress + " 帧）；必须松手后再按下");
+                    continue;
+                }
                 m_respawnTapCaptured++;
                 long sequence = m_respawnRequestSequence + 1;
                 PlayerRespawnGateAction action = m_respawnGate.OnTap(key, nowMs, sequence,
@@ -1094,6 +1518,14 @@ namespace SuMultiplayer.Modules
                     case PlayerRespawnGateAction.SuppressedMode:
                         Bump(m_respawnSuppressedReasons, tapReason);
                         m_respawnSuppressed++;
+                        // Cruel：引擎自己的 PlayerDead 点击分支就是"打开 GameMenuDialog"
+                        //（PlayerData.cs:308-311），挡门对话框也不挂 —— mod 不重复打开菜单、不发请求。
+                        if (pending.Mode == PlayerRespawnMode.Cruel)
+                        {
+                            Info("玩家键 " + key + " 在 Cruel 模式点击死亡屏：交给引擎原生分支" +
+                                "（GameMenuDialog，PlayerData.cs:308-311），mod 不重复处理、不发请求");
+                            break;
+                        }
                         if (!m_terminalDeathHandled.Add(key)) break;
                         if (!m_port.TryHandleTerminalDeathTap(key, pending.Mode,
                                 out string terminalReason))
@@ -1165,7 +1597,14 @@ namespace SuMultiplayer.Modules
             }
             m_respawnReqSent++;
             Info("死亡屏点击 → 已发送复活请求 " + data.Describe() +
-                "（每次死亡只发一次；等待主机 PLAYER_RESPAWN_RESULT）");
+                "（每次死亡最多一次；等待主机 PLAYER_RESPAWN_RESULT）");
+            // 只做表现：死亡屏上加一行"已请求复活"，不改变任何请求状态。
+            if (!m_port.TryShowLocalRespawnPending(key, out string pendingReason))
+            {
+                Problem("respawn-pending-ui:" + key,
+                    "显示\"已请求复活\"提示失败（玩家键 " + key + "）：" +
+                    (pendingReason ?? "端口没有给原因") + " → 请求本身已发送，不影响裁决");
+            }
             return true;
         }
 
@@ -1208,7 +1647,9 @@ namespace SuMultiplayer.Modules
         /// </summary>
         private void TickClientSleep(long nowMs)
         {
-            if (m_sleepGate.Count == 0 || m_sleepPort == null) return;
+            if (m_sleepPort == null) return;
+            TickClientSleepEntry(nowMs);
+            if (m_sleepGate.Count == 0) return;
             m_sleepGate.CopyKeys(m_sleepKeys);
             for (int i = 0; i < m_sleepKeys.Count; i++)
             {
@@ -1427,6 +1868,393 @@ namespace SuMultiplayer.Modules
                 "（客户端淡出黑屏）");
         }
 
+        // ---------------------------------------------------------------- 客户端：入睡申请（104）
+
+        /// <summary>
+        /// 客户端每帧：睡眠按钮的**按下沿** → 发 <c>PLAYER_SLEEP_REQUEST</c>（每次按下最多一条）。
+        ///
+        /// 为什么客户端不能自己睡：引擎唯一的入睡入口是 <c>ClothingWidget.Update</c>
+        /// （Source: Survivalcraft/Game/ClothingWidget.cs:78-90），它跑在**持有控件的那一端**。
+        /// 客户端就地 <c>Sleep(true)</c> 只改了客户端自己的 <c>ComponentSleep</c>；主机那边的角色
+        /// 根本没睡，下一份权威上报（sleeping=false）会通过 <c>ApplyLocalSleep</c> 把
+        /// <c>m_sleepStartTime</c> 写回 null —— 表现就是"躺下 → 瞬间站起"。
+        /// 所以入睡也必须走"客户端申请 / 主机裁决"，与唤醒（103）对称。
+        ///
+        /// 按下沿纪律（防止"进入睡眠的那次点击被当成第二次点击"）：
+        ///   · 端口每帧把 <c>GameWidget.Input.Any</c> 的**释放**记进门控
+        ///     （<see cref="PlayerSleepRequestGate.NoteInput"/>）；
+        ///   · 只有"已释放过之后的一次按下"才算新请求；
+        ///   · 发出请求后本帧清输入（与引擎 <c>WakeUp()</c> 前同一手法，避免同一次点击又触发别的操作）。
+        /// </summary>
+        private void TickClientSleepEntry(long nowMs)
+        {
+            if (!TryRegisterLocalSleepKeys(out string registerReason))
+            {
+                Problem("sleep-entry-keys", "登记本机睡眠槽位失败：" +
+                    (registerReason ?? "端口没有给原因") + " → 本帧不判定入睡申请");
+                return;
+            }
+            if (m_sleepRequestGate.Count == 0) return;
+            m_sleepRequestGate.CopyKeys(m_sleepKeys);
+            for (int i = 0; i < m_sleepKeys.Count; i++)
+            {
+                PlayerKey key = m_sleepKeys[i];
+                if (!m_sleepPort.TryPollLocalSleepRequest(key,
+                        out PlayerSleepRequestViewState state, out bool requested,
+                        out string pollReason))
+                {
+                    Problem("sleep-entry-poll:" + key, "读取本机入睡状态失败：" +
+                        (pollReason ?? "端口没有给原因") + " → 本帧不判定入睡申请");
+                    continue;
+                }
+                // 先记录"本帧有没有输入"：没有输入 = 这一次按下已经松手，下一次按下才是新请求。
+                m_sleepRequestGate.NoteInput(key, requested);
+                if (!requested) continue;
+                m_sleepEntryTapCaptured++;
+                long sequence = m_sleepEntrySequence + 1;
+                PlayerSleepRequestAction action = m_sleepRequestGate.OnTap(key, in state,
+                    sequence, out string tapReason);
+                switch (action)
+                {
+                    case PlayerSleepRequestAction.SendRequest:
+                        m_sleepEntrySequence = sequence;
+                        if (SendSleepRequest(key, sequence))
+                        {
+                            m_sleepEntryPendingSequence = sequence;
+                            m_sleepEntryPendingAtMs = nowMs;
+                            if (!m_sleepPort.TryConsumeLocalSleepRequestInput(key,
+                                    out string consumeReason))
+                            {
+                                Problem("sleep-entry-input-clear:" + key, "清入睡输入失败：" +
+                                    (consumeReason ?? "端口没有给原因"));
+                            }
+                        }
+                        else
+                        {
+                            m_sleepRequestGate.OnSendFailed(key);
+                        }
+                        break;
+                    case PlayerSleepRequestAction.SuppressedSleeping:
+                    case PlayerSleepRequestAction.SuppressedDead:
+                    case PlayerSleepRequestAction.SuppressedSamePress:
+                    case PlayerSleepRequestAction.SuppressedAlreadyRequested:
+                    case PlayerSleepRequestAction.SuppressedInvalidSequence:
+                        Bump(m_sleepEntrySuppressedReasons, tapReason);
+                        m_sleepEntrySuppressed++;
+                        break;
+                }
+            }
+            // 未决超时：主机既没接受也没拒绝（丢包 / 通道抖动）。明确记一行并释放门控，
+            // 否则一次丢包会让睡眠按钮永远点不动（不把超时当成成功）。
+            if (m_sleepEntryPendingSequence > 0 &&
+                nowMs - m_sleepEntryPendingAtMs >= SleepEntryPendingTimeoutMs)
+            {
+                m_sleepEntryTimeouts++;
+                Problem("sleep-entry-timeout", "入睡请求 seq=" + m_sleepEntryPendingSequence +
+                    " 超过 " + SleepEntryPendingTimeoutMs + " ms 没有任何裁决（既没收到 " +
+                    "PLAYER_SLEEP_RESULT，权威上报也没变成 sleeping=true）→ 释放门控，" +
+                    "下一次点击可重试");
+                ReleaseSleepEntryRequests();
+            }
+        }
+
+        /// <summary>
+        /// 登记本机槽位（端口只按槽位解析）。端口没有"枚举本机槽位"的读法，所以按引擎上限
+        /// （<see cref="PlayerKey.SlotCount"/>）逐个探测：读得到状态的就是本机槽位。
+        /// 一个都没有 = 明确失败（不假装已登记）。
+        ///
+        /// **键必须是 <c>(LocalClientId, slot)</c>，不能是 <c>(0, slot)</c>**：
+        /// <c>PLAYER_SLEEP_RESULT</c> 的 <c>client_id</c> 是本端传输编号，解出的
+        /// <see cref="PlayerSleepResultData.Key"/> 是 <c>(clientId, slot)</c>；权威上报的键同样是
+        /// <c>(clientId, slot)</c>。门控若登记成主机键 <c>(0, slot)</c>，
+        /// <see cref="PlayerSleepRequestGate.OnRejected"/> /
+        /// <see cref="PlayerSleepRequestGate.OnSleepConfirmed"/> 会作用在**另一个**字典条目上而
+        /// 静默不生效（实测故障：被拒后下一次点击仍被判 same-press、按钮点不动）。
+        /// </summary>
+        private bool TryRegisterLocalSleepKeys(out string reason)
+        {
+            reason = null;
+            int localClientId = m_transport != null ? m_transport.LocalClientId : -1;
+            if (localClientId <= 0)
+            {
+                // 键必须带上本端真实 clientId（见方法注释）。0 是主机键；拿它登记客户端
+                // 门控条目会让主机的回执 / 权威快照落在另一个字典条目上（静默不生效）。
+                reason = "本端传输编号=" + localClientId + " 非法（客户端入睡键的 clientId 必须 > 0）";
+                return false;
+            }
+            for (int slot = 0; slot < PlayerKey.SlotCount; slot++)
+            {
+                var key = new PlayerKey(localClientId, slot);
+                if (m_sleepRequestGate.Contains(key)) continue;
+                // 用**无副作用**的探测做发现：带边沿的读法会把玩家的第一次点击吃掉。
+                if (!m_sleepPort.TryDescribeLocalSleep(key, out _)) continue;
+                // **不能**在这里 NoteInput(..., false)：那会把"按下沿已释放"每帧重新置位，
+                // 于是按住不放的按钮会被当成"每帧一次新按下"（重复发请求）。
+                // 登记本身不碰按下沿；门控条目初始就是"已释放"（Entry.PressReleased = true）。
+                m_sleepRequestGate.Register(key);
+            }
+            if (m_sleepRequestGate.Count == 0)
+            {
+                reason = "本机没有任何可用的睡眠槽位（角色还没建好 / 不在世界）";
+                return false;
+            }
+            return true;
+        }
+
+        private bool SendSleepRequest(PlayerKey key, long sequence)
+        {
+            int localClientId = m_transport != null ? m_transport.LocalClientId : -1;
+            if (localClientId <= 0 || m_messages == null)
+            {
+                m_sleepEntrySendFailures++;
+                Problem("sleep-entry-nochannel", "无法发送入睡请求（玩家键 " + key + "）：" +
+                    (m_messages == null ? "没有消息层" : "本端传输编号=" + localClientId) +
+                    " → 已释放本次请求（下一次点击可重试）");
+                return false;
+            }
+            var data = new PlayerSleepRequestData(localClientId, key.Slot, sequence,
+                allowManualWake: true);
+            V.PlayerSleepRequest message;
+            try
+            {
+                message = PlayerSleepRequestCodec.Encode(in data);
+            }
+            catch (Exception e)
+            {
+                m_sleepEntrySendFailures++;
+                Problem("sleep-entry-encode", "入睡请求编码失败（" + data.Describe() + "）：" +
+                    e.GetType().Name + " " + e.Message);
+                return false;
+            }
+            bool sent;
+            try
+            {
+                sent = m_messages.Sender.Send(0, message);
+            }
+            catch (Exception e)
+            {
+                sent = false;
+                Problem("sleep-entry-exception", "入睡请求发送异常（" + data.Describe() + "）：" +
+                    e.GetType().Name + " " + e.Message);
+            }
+            if (!sent)
+            {
+                m_sleepEntrySendFailures++;
+                Problem("sleep-entry-send", "入睡请求发送失败（" + data.Describe() +
+                    "）→ 已释放本次请求（下一次点击可重试；通道恢复前不会假装睡着）");
+                return false;
+            }
+            m_sleepEntrySent++;
+            Info("睡眠按钮 → 已发送入睡请求 " + data.Describe() +
+                "（主机用引擎 CanSleep 复检后 Sleep(true)；客户端不本地入睡）");
+            return true;
+        }
+
+        /// <summary>释放所有未决的入睡请求（发送失败 / 超时 / 主机拒绝）。</summary>
+        private void ReleaseSleepEntryRequests()
+        {
+            m_sleepEntryPendingSequence = 0;
+            m_sleepEntryPendingAtMs = 0;
+            m_sleepRequestGate.CopyKeys(m_sleepKeys);
+            for (int i = 0; i < m_sleepKeys.Count; i++)
+                m_sleepRequestGate.OnTimeout(m_sleepKeys[i]);
+        }
+
+        /// <summary>
+        /// 主机：客户端请求入睡。只接受**该角色的 owner**；用**主机自己的**引擎
+        /// <c>CanSleep()</c> + <c>Sleep(true)</c> 裁决（干地 / 舒适度 / 太困 / 太湿 / 掩体，
+        /// Source: Survivalcraft/Game/ComponentSleep.cs:41-94），接受后立刻下发权威状态
+        /// （sleeping=true + 主机 <c>sleep_start_time</c>），客户端据此躺下。
+        /// </summary>
+        private void OnSleepRequestMessage(MessageContext context, V.PlayerSleepRequest message)
+        {
+            if (!m_attached) return;
+            m_sleepEntryRecv++;
+            if (m_control == null || !m_control.IsHosting)
+            {
+                m_sleepEntryWrongDirection++;
+                Problem("sleep-entry-client", "客户端收到了 PLAYER_SLEEP_REQUEST（方向错误，" +
+                    "来源 clientId=" + context.ClientId + "）→ 忽略");
+                return;
+            }
+            if (!PlayerSleepRequestCodec.TryDecode(message, out PlayerSleepRequestData request,
+                    out string decodeReason))
+            {
+                m_sleepEntryMalformed++;
+                Problem("sleep-entry-malformed", "入睡请求畸形（" + decodeReason +
+                    "，来源 clientId=" + context.ClientId + "）→ 整条拒绝");
+                return;
+            }
+            if (request.ClientId != context.ClientId)
+            {
+                RejectSleepRequest(context.ClientId, in request, PlayerSleepReasons.WrongOwner,
+                    "请求里的 client_id=" + request.ClientId + " 与连接 " + context.ClientId +
+                    " 不一致");
+                return;
+            }
+            if (context.ClientId <= 0 || !m_clients.Contains(context.ClientId))
+            {
+                RejectSleepRequest(context.ClientId, in request,
+                    PlayerSleepReasons.UnknownPlayer,
+                    "连接没有登记为在线玩家端（clientId=" + context.ClientId + "）");
+                return;
+            }
+            if (m_sleepPort == null)
+            {
+                RejectSleepRequest(context.ClientId, in request,
+                    PlayerSleepReasons.SleepFailed, "睡眠端口未接（组合根没有注册）");
+                return;
+            }
+            // 已处理的序号：同一次按下重复到达（重传 / 双击）不重复执行引擎 Sleep()。
+            string handledKey = context.ClientId + ":" + request.Slot;
+            if (m_sleepEntryHandled.TryGetValue(request.RequestSequence, out bool duplicate) &&
+                duplicate)
+            {
+                RejectSleepRequest(context.ClientId, in request, PlayerSleepReasons.AlreadySleeping,
+                    "序号 seq=" + request.RequestSequence + " 已经处理过（重复投递，不重复 Sleep()）");
+                return;
+            }
+            m_sleepEntryHandled[request.RequestSequence] = true;
+            if (m_sleepEntryHandled.Count > 64) m_sleepEntryHandled.Clear();
+            if (!m_sleepPort.TrySleepAuthorityPlayer(request.Key, request.AllowManualWake,
+                    out string rejectCode, out string detail, out string sleepReason))
+            {
+                RejectSleepRequest(context.ClientId, in request,
+                    rejectCode ?? PlayerSleepReasons.SleepFailed,
+                    sleepReason ?? "端口没有给原因", detail);
+                return;
+            }
+            HostCharacterState state = GetOrCreateHostCharacter(request.Key);
+            // 睡眠状态变了：下一次抓取必须递增 revision 并立刻发出。
+            state.HasSent = false;
+            state.WasForcedSleep = false;
+            m_forceSend = true;
+            m_sleepEntryAccepted++;
+            SendSleepResult(context.ClientId, in request, true, PlayerSleepReasons.Accepted,
+                string.Empty);
+            Info("主机接受入睡请求（" + request.Describe() + " · 玩家键 " + request.Key +
+                "）：已调用引擎 ComponentSleep.Sleep(" + request.AllowManualWake +
+                ") → 立刻下发 sleeping=true（客户端躺下）" +
+                (string.IsNullOrEmpty(handledKey) ? "" : "") );
+        }
+
+        private void RejectSleepRequest(int clientId, in PlayerSleepRequestData request,
+            string reasonCode, string detail, string hudText = null)
+        {
+            m_sleepEntryRejected++;
+            Bump(m_sleepEntryRejectReasons, PlayerSleepReasons.Key(reasonCode));
+            Problem("sleep-entry-reject:" + PlayerSleepReasons.Key(reasonCode),
+                "拒绝入睡请求（clientId=" + clientId + " 玩家键=" + request.Key + " seq=" +
+                request.RequestSequence + "）：" + reasonCode + " —— " + detail);
+            SendSleepResult(clientId, in request, false, reasonCode,
+                hudText ?? detail);
+        }
+
+        private void SendSleepResult(int clientId, in PlayerSleepRequestData request,
+            bool accepted, string reasonCode, string detail)
+        {
+            if (m_transport == null || m_messages == null)
+            {
+                m_sleepEntryResultSendFailures++;
+                Problem("sleep-entry-result-channel", "无法发送入睡结果（clientId=" + clientId +
+                    " 玩家键=" + request.Key + "）：没有传输 / 消息层 → 客户端会在 " +
+                    SleepEntryPendingTimeoutMs + " ms 后超时（不假装已回执）");
+                return;
+            }
+            byte[] payload;
+            try
+            {
+                var data = new PlayerSleepResultData(clientId, request.Slot,
+                    request.RequestSequence, accepted, reasonCode, detail);
+                payload = PlayerSleepRequestCodec.EncodeResultBytes(in data);
+            }
+            catch (Exception e)
+            {
+                m_sleepEntryResultSendFailures++;
+                Problem("sleep-entry-result-encode", "入睡结果编码失败（clientId=" + clientId +
+                    " 玩家键=" + request.Key + "）：" + e.GetType().Name + " " + e.Message);
+                return;
+            }
+            // 与模块里其它主机 → 玩家端的定向消息同一条路径（ITransportPort.TrySendTo）：
+            // 主机必须指名目标，不能走"猜目标"的发送表面。
+            if (!m_transport.TrySendTo(clientId, MessageType.PlayerSleepResult, payload))
+            {
+                m_sleepEntryResultSendFailures++;
+                Problem("sleep-entry-result-send", "入睡结果发送失败（clientId=" + clientId +
+                    " 玩家键=" + request.Key + " seq=" + request.RequestSequence +
+                    "）→ 客户端会在 " + SleepEntryPendingTimeoutMs + " ms 后超时");
+            }
+        }
+
+        private void OnSleepResultMessage(MessageContext context, V.PlayerSleepResult message)
+        {
+            if (!m_attached) return;
+            m_sleepEntryResultRecv++;
+            if (m_control != null && m_control.IsHosting)
+            {
+                m_sleepEntryWrongDirection++;
+                Problem("sleep-entry-result-host", "主机收到了 PLAYER_SLEEP_RESULT（方向错误，" +
+                    "来源 clientId=" + context.ClientId + "）→ 忽略");
+                return;
+            }
+            if (context.ClientId != 0)
+            {
+                m_sleepEntryWrongDirection++;
+                Problem("sleep-entry-result-sender", "客户端收到来自 clientId=" +
+                    context.ClientId + " 的入睡结果（只有主机能回）→ 忽略");
+                return;
+            }
+            if (!m_worldReady)
+            {
+                m_notReadyDrops++;
+                return;
+            }
+            if (!PlayerSleepRequestCodec.TryDecodeResult(message,
+                    out PlayerSleepResultData result, out string decodeReason))
+            {
+                m_sleepEntryMalformed++;
+                Problem("sleep-entry-result-malformed", "主机下发的入睡结果畸形（" +
+                    decodeReason + "）→ 整条丢弃");
+                return;
+            }
+            int localClientId = m_transport != null ? m_transport.LocalClientId : -1;
+            if (result.ClientId != localClientId)
+            {
+                Problem("sleep-entry-result-owner", "入睡结果不属于本端（result clientId=" +
+                    result.ClientId + "，本端=" + localClientId + "）→ 忽略");
+                return;
+            }
+            if (m_sleepEntryPendingSequence != 0 &&
+                result.RequestSequence != m_sleepEntryPendingSequence)
+            {
+                m_sleepEntryResultStale++;
+                Problem("sleep-entry-result-stale", "丢弃陈旧的入睡结果（玩家键 " +
+                    result.Key + " seq=" + result.RequestSequence + "，当前未决 seq=" +
+                    m_sleepEntryPendingSequence + "）");
+                return;
+            }
+            m_sleepEntryPendingSequence = 0;
+            m_sleepEntryPendingAtMs = 0;
+            if (result.Accepted)
+            {
+                m_sleepRequestGate.OnSleepConfirmed(result.Key);
+                Info("主机接受入睡请求（玩家键 " + result.Key + " seq=" +
+                    result.RequestSequence + "）→ 等待权威上报 sleeping=true 驱动躺下");
+                return;
+            }
+            m_sleepRequestGate.OnRejected(result.Key);
+            Bump(m_sleepEntryObservedRejectReasons, PlayerSleepReasons.Key(result.Reason));
+            Problem("sleep-entry-rejected", "主机拒绝入睡请求（玩家键 " + result.Key + " seq=" +
+                result.RequestSequence + "）：" + result.Reason +
+                (string.IsNullOrEmpty(result.Detail) ? "" : "（" + result.Detail + "）"));
+            if (!m_sleepPort.TryShowLocalSleepRejected(result.Key, result.Detail,
+                    out string showReason))
+            {
+                Problem("sleep-entry-rejected-ui", "显示入睡被拒原因失败：" +
+                    (showReason ?? "端口没有给原因"));
+            }
+        }
+
         private void RejectWakeRequest(int clientId, in PlayerWakeRequestData request,
             string reasonCode, string detail)
         {
@@ -1634,10 +2462,19 @@ namespace SuMultiplayer.Modules
             if (action == PlayerRespawnGateAction.ResultAccepted)
             {
                 m_respawnAccepted++;
+                LocalRespawnState accepted = GetOrCreateLocalRespawn(result.Key);
+                accepted.AcceptedAtMs = NowMs();
+                if (result.HasPosition)
+                {
+                    accepted.HasPosition = true;
+                    accepted.Position = result.Position;
+                }
                 Info("主机接受复活请求（玩家键 " + result.Key + " seq=" +
                     result.RequestSequence + " · 落点=" +
                     (result.HasPosition ? result.Position.ToString() : "未提供") +
-                    "）→ 等待 Respawn 事件 + 权威状态");
+                    "）→ 由 mod 执行引擎 RemoveEntity，出生后按主机权威数据整体重放");
+                // 唯一的执行点：主机批准之后（引擎自己要等玩家点击才删实体）。
+                ExecuteLocalRespawn(result.Key, NowMs());
             }
             else
             {
@@ -1650,6 +2487,21 @@ namespace SuMultiplayer.Modules
                 {
                     Problem("respawn-rejected-ui", "显示复活拒绝原因失败：" +
                         (showReason ?? "端口没有给原因"));
+                }
+                // cooldown（客户端比主机的 1.5 s 门槛点得早）是**可恢复**的：重新武装门控，
+                // RetryAfterRejectMs 之后允许再点一次（显式计数 + 日志）。
+                // 其它拒绝原因都是终局，保持"本次死亡已解决"，不重发。
+                if (m_respawnGate.OnRejected(result.Key, NowMs(), out long retryAtMs,
+                        out string retryReason))
+                {
+                    m_respawnRetryArmed++;
+                    Info("玩家键 " + result.Key + " 的复活请求被主机以 cooldown 拒绝 → 已重新" +
+                        "允许一次点击（" + PlayerRespawnRules.RetryAfterRejectMs +
+                        " ms 后，最早 " + retryAtMs + " ms）：" + retryReason);
+                }
+                else if (!string.IsNullOrEmpty(retryReason))
+                {
+                    Info("玩家键 " + result.Key + " 的复活请求被拒绝且不重试：" + retryReason);
                 }
             }
         }
@@ -1732,8 +2584,13 @@ namespace SuMultiplayer.Modules
             m_hostCharacters.Clear();
             m_clientCharacters.Clear();
             m_pendingEvents.Clear();
+            ResetLocalRespawns("关闭主持的房间");
             m_respawnGate.Clear();
             m_sleepGate.Clear();
+            m_sleepRequestGate.Clear();
+            m_sleepEntryHandled.Clear();
+            m_sleepEntryPendingSequence = 0;
+            m_sleepEntryPendingAtMs = 0;
             m_sleepKeys.Clear();
             m_terminalDeathHandled.Clear();
             m_senderSequences.Clear();
@@ -1757,6 +2614,10 @@ namespace SuMultiplayer.Modules
             m_pendingEvents.Clear();
             m_respawnGate.Clear();
             m_sleepGate.Clear();
+            m_sleepRequestGate.Clear();
+            m_sleepEntryHandled.Clear();
+            m_sleepEntryPendingSequence = 0;
+            m_sleepEntryPendingAtMs = 0;
             m_sleepKeys.Clear();
             m_terminalDeathHandled.Clear();
             m_senderSequences.Clear();
@@ -1770,8 +2631,13 @@ namespace SuMultiplayer.Modules
             m_clientCharacters.Clear();
             m_hostCharacters.Clear();
             m_pendingEvents.Clear();
+            ResetLocalRespawns("通道重新建立");
             m_respawnGate.Clear();
             m_sleepGate.Clear();
+            m_sleepRequestGate.Clear();
+            m_sleepEntryHandled.Clear();
+            m_sleepEntryPendingSequence = 0;
+            m_sleepEntryPendingAtMs = 0;
             m_sleepKeys.Clear();
             m_terminalDeathHandled.Clear();
             m_senderSequences.Clear();
@@ -1796,8 +2662,13 @@ namespace SuMultiplayer.Modules
             m_clientCharacters.Clear();
             m_hostCharacters.Clear();
             m_pendingEvents.Clear();
+            ResetLocalRespawns("与主机断开");
             m_respawnGate.Clear();
             m_sleepGate.Clear();
+            m_sleepRequestGate.Clear();
+            m_sleepEntryHandled.Clear();
+            m_sleepEntryPendingSequence = 0;
+            m_sleepEntryPendingAtMs = 0;
             m_sleepKeys.Clear();
             m_terminalDeathHandled.Clear();
             m_senderSequences.Clear();
@@ -1814,8 +2685,13 @@ namespace SuMultiplayer.Modules
         {
             m_worldReady = true;
             m_clientCharacters.Clear();
+            ResetLocalRespawns("进入新世界");
             m_respawnGate.Clear();
             m_sleepGate.Clear();
+            m_sleepRequestGate.Clear();
+            m_sleepEntryHandled.Clear();
+            m_sleepEntryPendingSequence = 0;
+            m_sleepEntryPendingAtMs = 0;
             m_sleepKeys.Clear();
             m_terminalDeathHandled.Clear();
             m_senderSequences.Clear();
@@ -1934,9 +2810,18 @@ namespace SuMultiplayer.Modules
         ///   → vitalsRecv / vitalsApplied  = 收到 / 写进本机玩家或远端化身的条目数；
         ///   → vitalsStale / vitalsMalformed = 陈旧 / 畸形的条目（或消息）数；
         ///   → DeathApplied / RespawnApplied = 应用的死亡 / 复活边沿数；
-        ///   → deathScreenShown / respawnTapCaptured = 显示的死亡屏 / 捕获的点击次数；
+        ///   → deathScreenShown / respawnTapCaptured = 登记的死亡（引擎原生死亡画面）/ 捕获的点击次数；
         ///   → respawnReqSent / ResultRecv / Accepted / Rejected(reason) = 请求与结果；
         ///   → respawnSuppressed{reason}   = 1.5 秒门槛前 / 已发过 / 模式禁止 / 已解决的点击；
+        ///   → respawnRetryArmed           = 被主机以 cooldown 拒绝后重新允许一次点击的次数；
+        ///   → engineRespawnExec / Fail    = mod 执行引擎 RemoveEntity 的成功 / 失败次数
+        ///                                   （失败 = 引擎不在 PlayerDead 或没有 ComponentPlayer，每帧重试）；
+        ///   → respawnReplayApplied / Fail = 新实体出生后权威重放的成功 / 失败次数；
+        ///   → respawnReplayWaitFrames     = 等引擎新实体出生的帧数（PrepareSpawn / WaitForTerrain）；
+        ///   → respawnStaleDead / StaleDeath = 被死亡 epoch 丢弃的陈旧 Dead 快照 / Death 事件数；
+        ///   → respawnEventBeforeResult    = Respawn 事件先于结果到达的次数（落点照收，执行仍等结果）；
+        ///   → respawnExecNoResult         = 结果包丢了但 Respawn 事件已到 → 仍然执行的次数；
+        ///   → respawnPending / respawnEpochs = 当前待重放的死亡期数 / 死亡 epoch 表大小；
         ///   → clientLocalSimDisabled      = 当前被摘掉生命 / 体征 / 睡眠 / 病程 / 火焰模拟的本机角色数；
         ///   → clientReportRejected        = 拒绝的非主机上报 / 事件消息数。
         /// </summary>
@@ -1972,6 +2857,7 @@ namespace SuMultiplayer.Modules
                   " RespawnApplied=" + m_respawnApplied +
                   " deathScreenShown=" + m_deathScreensShown +
                   " respawnTapCaptured=" + m_respawnTapCaptured +
+                  " respawnSamePress=" + m_respawnSamePress +
                   " respawnReqSent=" + m_respawnReqSent +
                   " respawnReqSendFail=" + m_respawnReqSendFailures +
                   " respawnReqTimeout=" + m_respawnReqTimeouts +
@@ -1981,6 +2867,18 @@ namespace SuMultiplayer.Modules
                   " respawnRejectedBy=" + FormatReasons(m_respawnRejectReasons) +
                   " respawnSuppressed=" + m_respawnSuppressed +
                   " respawnSuppressedBy=" + FormatReasons(m_respawnSuppressedReasons) +
+                  " respawnRetryArmed=" + m_respawnRetryArmed +
+                  " engineRespawnExec=" + m_engineRespawnExecuted +
+                  " engineRespawnFail=" + m_engineRespawnFailures +
+                  " respawnReplayApplied=" + m_respawnReplayApplied +
+                  " respawnReplayFail=" + m_respawnReplayFailures +
+                  " respawnReplayWaitFrames=" + m_respawnReplayWaitFrames +
+                  " respawnStaleDead=" + m_respawnStaleDeadDropped +
+                  " respawnStaleDeath=" + m_respawnStaleDeathDropped +
+                  " respawnEventBeforeResult=" + m_respawnEventBeforeResult +
+                  " respawnExecNoResult=" + m_respawnExecutedWithoutResult +
+                  " respawnPending=" + m_localRespawns.Count +
+                  " respawnEpochs=" + m_localRespawnEpoch.Count +
                   " autoRespawnRemoved=" + AutoRespawnRemoved +
                   " clientLocalSimDisabled=" + m_clientLocalSimDisabled +
                   " clientReportRejected=" + m_clientReportRejected +
@@ -2040,7 +2938,26 @@ namespace SuMultiplayer.Modules
                 " sleepMirrorApplied=" + m_sleepMirrorApplied +
                 " sleepMirrorCleared=" + m_sleepMirrorCleared +
                 " sleepMissing=" + m_sleepMissing +
-                " sleepFail=" + m_sleepPresentationFailures;
+                " sleepFail=" + m_sleepPresentationFailures +
+                // 入睡申请（104 / 105）：与唤醒（103）分开计数，状态行里一眼能分清
+                // "主机不让睡"和"主机不让醒"。
+                " sleepEntryTapCaptured=" + m_sleepEntryTapCaptured +
+                " sleepEntrySent=" + m_sleepEntrySent +
+                " sleepEntrySendFail=" + m_sleepEntrySendFailures +
+                " sleepEntrySuppressed=" + m_sleepEntrySuppressed +
+                " sleepEntrySuppressedBy=" + FormatReasons(m_sleepEntrySuppressedReasons) +
+                " sleepEntryRecv=" + m_sleepEntryRecv +
+                " sleepEntryAccepted=" + m_sleepEntryAccepted +
+                " sleepEntryRejected=" + m_sleepEntryRejected +
+                " sleepEntryRejectedBy=" + FormatReasons(m_sleepEntryRejectReasons) +
+                " sleepEntryMalformed=" + m_sleepEntryMalformed +
+                " sleepEntryWrongDirection=" + m_sleepEntryWrongDirection +
+                " sleepEntryResultRecv=" + m_sleepEntryResultRecv +
+                " sleepEntryResultStale=" + m_sleepEntryResultStale +
+                " sleepEntryResultSendFail=" + m_sleepEntryResultSendFailures +
+                " sleepEntryObservedRejectedBy=" +
+                    FormatReasons(m_sleepEntryObservedRejectReasons) +
+                " sleepEntryTimeouts=" + m_sleepEntryTimeouts;
         }
 
         private void LogSummaryIfDue(long nowMs)

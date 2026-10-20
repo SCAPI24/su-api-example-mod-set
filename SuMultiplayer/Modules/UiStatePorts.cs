@@ -115,4 +115,29 @@ namespace SuMultiplayer.Modules
         /// <summary>Status-line counters (no behaviour change).</summary>
         string Describe();
     }
+
+    /// <summary>
+    /// Optional per-frame presentation capability of <see cref="IUiMirrorPort"/>.
+    ///
+    /// Why a separate interface: the phase-2 HUD items (left inventory / clothing buttons,
+    /// bubbling messages, screen-overlay words) are **per-frame** facts — the engine rewrites
+    /// <c>Button.IsChecked</c> and clears <c>ComponentScreenOverlays</c> every frame
+    /// (Source: ComponentGui.cs:430-431, ComponentScreenOverlays.cs:60-77), and messages must
+    /// disappear exactly when the client's copy does. <see cref="IUiMirrorPort.TryApply"/> only
+    /// runs on a snapshot (<=10 Hz), so these need one pass **after** the engine update and
+    /// **before** Draw (the mod's Frame.Update hook: Program.cs:146-147), i.e. from the
+    /// module's per-frame <c>Tick</c>.
+    ///
+    /// Implemented by <c>Engine/UiMirrorEngine.cs</c>; a port that only supports snapshot
+    /// application leaves it out, and the module logs exactly that (no silent no-op).
+    /// </summary>
+    public interface IUiMirrorTickPort
+    {
+        /// <summary>
+        /// One presentation pass. Must only write display-layer fields of the view that
+        /// follows each client (buttons / message widget / screen overlays); no authoritative
+        /// state, no client records, no second widget model.
+        /// </summary>
+        void Present();
+    }
 }

@@ -29,9 +29,15 @@ import "google/protobuf/any.proto";
 //   modal_present   / modal_type    ComponentGui.ModalPanelWidget class name.
 //   chat_input_open mod-owned chat HUD input line (informational; see the module docs
 //                   for why a per-view clone is not instantiated).
+//   small_messages  the client's visible MessageWidget entries (hint / pickup /
+//                   level / crafting notes), oldest first, at most 3.
+//   floating_message / overlay_message (+factors) ComponentScreenOverlays word /
+//                   bottom hint line currently drawn by the client.
+//   handcraft_*     the client's ComponentCraftingTable grid (FullInventoryWidget
+//                   left half) so the host can recompute the same recipe result.
 //
 // Wire id lives in protocol.proto (MessageType.CLIENT_UI_STATE = 100).
-// Append-only: never renumber.
+// Append-only: never renumber.  Field numbers 10..17 are the phase-2 additions.
 //
 // Source: Survivalcraft/Game/ComponentGui.cs:395（ControlsContainerWidget.IsVisible）
 // Source: Survivalcraft/Game/ComponentGui.cs:536-559（ModalPanelWidget = FullInventoryWidget /
@@ -70,7 +76,56 @@ message ClientUiState {
   // The mod's chat HUD input line is open on the client.
   bool chat_input_open = 9;
 
+  // -------------------------------------------------------------------------
+  // Phase 2 (append-only): the three remaining HUD gaps of the H3 replace view.
+  // Every field below is presentation-only data read from the client's engine
+  // widgets; the host never writes it back into any component.
+  // -------------------------------------------------------------------------
+
+  // The client's currently visible "small messages" (hint / pickup / level /
+  // crafting notes) as an ordered list, oldest first.  The engine keeps at most
+  // 3 at a time and each dies on its own timer, so the host mirrors the *list*
+  // rather than one edge: a message that is gone here must disappear there.
+  // Source: Survivalcraft/Game/MessageWidget.cs:DisplayMessage / MaxMessages = 3
+  // Source: Survivalcraft/Game/ComponentGui.cs:189-196（DisplaySmallMessage）
+  repeated UiSmallMessage small_messages = 10;
+
+  // ComponentScreenOverlays.FloatingMessage / Message + factors, i.e. the
+  // camera-space "Zzz..." / "Aaa..." / "Ugh..." word and the bottom hint line.
+  // Both are cleared to null/idle by ComponentScreenOverlays.Update (:60-77),
+  // so the client reports the values it currently displays (empty = none).
+  // Source: Survivalcraft/Game/ComponentScreenOverlays.cs:46-52,119
+  string floating_message = 11;
+  float floating_message_factor = 12;
+  string overlay_message = 13;
+  float overlay_message_factor = 14;
+
+  // The client's **handcrafting grid** (FullInventoryWidget left half): the
+  // ComponentCraftingTable the panel is bound to, minus the derived result slot
+  // (slot SlotsCount-2) which the host recomputes from these ingredients.
+  // Present only while the client's modal panel is FullInventoryWidget; absent
+  // means "nothing to mirror" (never "empty grid").
+  // Source: Survivalcraft/Game/FullInventoryWidget.cs（componentCraftingTable 绑定）
+  // Source: Survivalcraft/Game/ComponentCraftingTable.cs:99-142（UpdateCraftingResult）
+  bool handcraft_present = 15;
+  repeated int32 handcraft_values = 16 [packed = true];
+  repeated int32 handcraft_counts = 17 [packed = true];
+
   // Third-party extension points: see doc/message-protocol.md.
   bytes ext = 100;
   google.protobuf.Any custom = 101;
+}
+
+// One entry of the client's MessageWidget list (ScreenOverlays-style small text).
+// `blinking` is the engine flag that decides the fade curve (6 s vs 4 s + newlines).
+// Source: Survivalcraft/Game/MessageWidget.cs:Message(text, color, blinking)
+message UiSmallMessage {
+  string text = 1;
+  // Engine Color packed value (ARGB uint32); the host writes the same Color.
+  uint32 color = 2;
+  bool blinking = 3;
+  // Milliseconds since this entry started.  The engine fades / expires a message from
+  // its own StartTime (MessageWidget.cs:Message.Update / RemoveOldMessages), so the
+  // host offsets its copy by the same age and the two fade out together.
+  uint32 age_ms = 4;
 }

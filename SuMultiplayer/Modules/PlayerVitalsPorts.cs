@@ -89,6 +89,19 @@ namespace SuMultiplayer.Modules
     ///     （Engine/MirrorCharacterEngine.cs）的来源：主机绝不能再抑制 / 对账回滚这些化身，
     ///     否则 H3 读到的是假状态。
     ///
+    /// **死亡 / 复活（2026-10 产品决定：走引擎原生流程，方案 A）**：
+    ///   · 死亡 = 主机 Death 事件驱动客户端写 <c>CauseOfDeath</c> + <c>Health = 0</c>，
+    ///     之后**引擎自己的** <c>PlayerData</c> 状态机负责死亡相机 / "YOU HAVE DIED" /
+    ///     等级减半 / 点击后删实体 / PrepareSpawn / SpawnDialog / WaitForTerrain / SpawnPlayer
+    ///     （<c>PlayerData.cs:257-321</c>）；
+    ///   · mod 只做三件引擎做不到的事：①挡住引擎"未获批准就删实体"的点击分支
+    ///     （<see cref="TryPollLocalDeathTap"/> + 自己挂的挡门对话框）；②在主机批准后执行
+    ///     那一行 <c>RemoveEntity</c>（<see cref="TryExecuteLocalRespawn"/>）；③新实体出生后
+    ///     用主机权威数据整体重放 + 用死亡 epoch 丢弃陈旧状态
+    ///     （<see cref="TryReplayLocalRespawn"/>）；
+    ///   · Cruel / Adventure 禁复活的本地引擎分支（<c>PlayerData.cs:308-315</c>）由端口截住，
+    ///     绝不静默照搬（见 <see cref="TryHandleTerminalDeathTap"/>）。
+    ///
     /// 所有失败（没有 Project / 没有角色 / 值非法）都通过返回值 + <c>reason</c> 明确报告。
     /// </summary>
     public interface IPlayerVitalsPort
@@ -119,18 +132,24 @@ namespace SuMultiplayer.Modules
         /// <summary>
         /// **客户端侧**：把主机下发的权威状态写进**本机玩家**（按 <c>key.Slot</c> 取本机槽位；
         /// key 的 clientId 由模块判定，端口只认槽位）。
-        ///   · 只做字段赋值 + HUD / 受伤表现 / 死亡提示，**绝不**调用 <c>Injure</c> / <c>Heal</c>；
-        ///   · 死亡时把引擎里的生命值压在一个**非致命的极小值**（0.001），避免本机
-        ///     PlayerData 自己进入"死亡→移除实体→本地复活"流程（产品要求：死亡由主机裁决）；
-        ///     血条 / 死亡提示显示主机下发的 0 与死因。
+        ///   · 只做字段赋值 + HUD / 受伤表现，**绝不**调用 <c>Injure</c> / <c>Heal</c>；
+        ///   · <c>Dead = true</c> 时按主机权威写 <c>CauseOfDeath</c> 并把 <c>Health</c> 写成 0
+        ///     （**不写** <c>m_lastHealth</c>：引擎要看到"掉到 0"的边沿才播原生死亡表现），
+        ///     引擎 <c>PlayerData.Playing</c> 因此进入原生 <c>PlayerDead</c>
+        ///     （<c>PlayerData.cs:270/275-321</c>）；
+        ///     revision 不新于本槽位死亡 epoch 的死亡状态 = 陈旧，直接拒绝（不写 0）。
         /// </summary>
         PlayerVitalsApplyStatus ApplyLocalVitals(PlayerKey key,
             in PlayerVitalsSnapshot snapshot, out string reason);
 
         /// <summary>
         /// **客户端侧**：把主机下发的死亡 / 复活边沿应用到本机玩家：
-        ///   · 死亡 = 死因提示 + 血条清零（不生成死亡粒子、不掉物品、不删实体）；
-        ///   · 复活 = 按主机给的落点摆好身体 / 清速度 / 清死亡提示（数值由随后的权威状态补全）。
+        ///   · 死亡 = 写 <c>CauseOfDeath</c> + <c>Health = 0</c>（引擎原生死亡流程由此启动）
+        ///     并按模式挂上"挡门对话框"（TapToRespawn：挡住引擎自动删实体，等主机批准；
+        ///     Cruel：不挡，让引擎原生打开 GameMenuDialog；Adventure 禁复活：挡住引擎的
+        ///     本地重启冒险）。**不删实体、不掉物品、不本地复活**；
+        ///   · 复活 = 只推进死亡 epoch 并记录主机落点；真正的落点 / 数值重放在
+        ///     <see cref="TryReplayLocalRespawn"/> 里对新实体执行。
         /// </summary>
         PlayerVitalsApplyStatus ApplyLocalVitalEvent(in PlayerVitalEventSnapshot evt,
             out string reason);
@@ -203,18 +222,26 @@ namespace SuMultiplayer.Modules
         bool TryRespawnAvatar(PlayerKey key, out Vector3 position, out string reason);
 
         /// <summary>
-        /// **客户端侧 / 每帧**：死亡屏上是否发生了一次输入（tap / click / key）。口径与引擎
-        /// PlayerData.PlayerDead 完全一致：<c>!DialogsManager.HasDialogs(GuiWidget)</c> 且
-        /// <c>GameWidget.Input.Any</c>。这里只读输入，不发请求、不改状态。
+        /// **客户端侧 / 每帧**：死亡屏上是否出现了**一次新的按下**（按下沿）。
+        /// 对话框打开时不判定（与引擎 <c>PlayerData.PlayerDead</c> 的
+        /// <c>!DialogsManager.HasDialogs(GuiWidget)</c> 同口径）；但**不能用**
+        /// <c>GameWidget.Input.Any</c> 的电平代替按下沿 —— <c>Any</c> 在键盘自动重复时每帧都会重新为真
+        /// （<c>WidgetInput.cs:704</c> + <c>Keyboard.cs:170-176</c>），按住方向键会被当成"点击"→
+        /// 1.5 s 门槛一过就自动复活。生产实现见
+        /// <c>Engine/PlayerVitalsReplica.cs:TryPollLocalDeathTap</c>（口径
+        /// <see cref="SuMultiplayer.Net.PlayerDeathInputSample.IsFreshPress"/>）。
+        /// 这里只读输入，不发请求、不改状态、不清输入。
         /// </summary>
         bool TryPollLocalDeathTap(PlayerKey key, out bool tapped, out string reason);
 
         /// <summary>
         /// **客户端侧 / 不可复活模式**：引擎等价的终止路径 ——
-        ///   · Cruel：打开 <c>GameMenuDialog</c>（PlayerData.cs:308-311 相同）；
+        ///   · Cruel：**不再需要本方法**（挡门对话框不挂，引擎自己的
+        ///     <c>PlayerData.cs:308-311</c> 会在点击后打开 <c>GameMenuDialog</c>）；调用只会
+        ///     明确失败并说明"该模式已交给引擎"；
         ///   · Adventure 禁复活：引擎会 <c>ScreensManager.SwitchScreen("GameLoading", ...,
-        ///     "AdventureRestart")</c>；联机客户端不能重启主机世界，这里改为打开同一
-        ///     GameMenuDialog 并写清原因（返回 true，reason 里给出说明）。
+        ///     "AdventureRestart")</c>；联机客户端不能重启主机世界，所以挡门对话框继续挂着，
+        ///     这里打开 <c>GameMenuDialog</c> 并写清原因（返回 true，reason 里给出说明）。
         /// 不发送复活请求。
         /// </summary>
         bool TryHandleTerminalDeathTap(PlayerKey key, PlayerRespawnMode mode, out string reason);
@@ -223,6 +250,50 @@ namespace SuMultiplayer.Modules
         /// **客户端侧**：把主机拒绝复活的原因显示在本机死亡屏上（小消息），不改变请求状态。
         /// </summary>
         bool TryShowLocalRespawnRejected(PlayerKey key, string reasonCode, out string reason);
+
+        /// <summary>
+        /// **客户端侧**：主机**批准**复活之后，由 mod 自己把引擎的死亡流程推进到下一步 ——
+        ///   ① 关掉挡门对话框（<c>DialogsManager.HideDialog</c>）；
+        ///   ② 执行引擎 <c>PlayerData.PlayerDead</c> 点击分支那一行：
+        ///      <c>m_project.RemoveEntity(ComponentPlayer.Entity, disposeEntity: true)</c>
+        ///      （<c>Survivalcraft/Game/PlayerData.cs:318</c>）。
+        /// 之后引擎自己的
+        /// <c>PrepareSpawn → SpawnDialog → WaitForTerrain → SpawnPlayer → FppCamera</c>
+        /// 全流程自动跑完（<c>PlayerData.cs:163-256 / 404-421</c>）。
+        ///
+        /// 前置条件必须真实成立，否则明确失败（不猜、不强推状态机）：
+        ///   · 本机槽位有 ComponentPlayer；
+        ///   · 引擎 PlayerData 真的在 PlayerDead（<c>m_playerDeathTime</c> 有值，
+        ///     说明我们已经写过 Health = 0 且引擎自己判了死）。
+        /// 重复调用幂等：已经删过（没有 ComponentPlayer）= 返回 true + 说明。
+        /// </summary>
+        bool TryExecuteLocalRespawn(PlayerKey key, out string reason);
+
+        /// <summary>
+        /// **客户端侧 / 每帧**：新实体出生后的**权威重放**（方案 A 的第三个闸门）。
+        ///
+        /// 引擎 <c>SpawnPlayer</c> 建的是**全新实体**（模板血量 1、空背包、空衣服，
+        /// <c>PlayerData.cs:568-640</c> + <c>Database.xml</c> 的 Player 模板），落点还会被
+        /// <c>FindNoIntroSpawnPosition</c> 偏移最多 8 格（<c>PlayerData.cs:454-477</c>）。
+        /// 所以出生后必须用主机权威数据覆盖：
+        ///   · 落点 = <paramref name="request"/> 里的主机落点（同时写进
+        ///     <c>PlayerData.SpawnPosition</c>，作为以后复活的锚点）；
+        ///   · 背包 / 手持槽 / 工作台配方格 / 衣服 = **死亡那一刻冻结的权威副本**；
+        ///   · 重新摘掉新实体的生命 / 体征 / 睡眠 / 病程 / 火焰模拟 + <c>IsInvulnerable</c>；
+        ///   · 重新初始化 HUD（新 GUI 的控件是新的）。
+        /// 五项体征 / 死亡 epoch 由模块在拿到 <see cref="PlayerRespawnReplayStatus.Applied"/>
+        /// 之后用最近一条主机快照补写（模块持有快照，端口不缓存）。
+        /// 返回 <see cref="PlayerRespawnReplayStatus"/>；<paramref name="reason"/> 写清失败原因。
+        /// 幂等：同一个实体只重放一次（重复调用返回 <c>NoPending</c>）。
+        /// </summary>
+        PlayerRespawnReplayStatus TryReplayLocalRespawn(PlayerKey key,
+            in PlayerRespawnReplayRequest request, out string reason);
+
+        /// <summary>
+        /// **客户端侧**：把"已向主机请求复活、正在等裁决"显示在本机死亡屏上（小消息）。
+        /// 只做表现，不改请求状态。
+        /// </summary>
+        bool TryShowLocalRespawnPending(PlayerKey key, out string reason);
 
         /// <summary>状态行用：引擎侧动作计数（应用 / 死亡视觉 / 抑制 / 本地模拟闸门），不改变行为。</summary>
         string Describe();

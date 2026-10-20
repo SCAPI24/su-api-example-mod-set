@@ -345,12 +345,19 @@ namespace SuMultiplayer.Modules
     ///   <c>mirrorHostCreated</c> / <c>mirrorHostReused</c> / <c>mirrorHostRemoved</c> /
     ///   <c>mirrorHostPending</c> / <c>mirrorHostBind</c> / <c>mirrorHostRestore</c> /
     ///   <c>mirrorHostBlocked(max-players|cruel|adventure|duplicate-name|not-hosting|no-client)</c> /
-    ///   <c>mirrorHostFailures</c> / <c>mirrorHostFreeSlots</c>（+ <c>mirrorHostActive</c>）。
+    ///   <c>mirrorHostFailures</c> / <c>mirrorHostFreeSlots</c>（+ <c>mirrorHostActive</c>）
+    ///   —— 以及自动宿主维护的四项：
+    ///   <c>mirrorHostImmune</c>（成功写入整套免疫字段的宿主·拍数）/
+    ///   <c>mirrorHostImmunityFailures</c>（免疫字段 / 状态机读失败次数）/
+    ///   <c>mirrorHostStuckDead</c>（命中卡死条件的累计次数）/
+    ///   <c>mirrorHostRevived</c>（触发引擎复活的次数）。
     /// 口径：
     ///   · Created / Reused / Removed / Bind / Restore = **事件**次数（不是每帧）；
     ///   · Pending = "宿主还没就绪（IsReadyForPlaying / ComponentPlayer 未满足）"的**帧**数；
     ///   · Blocked = **事件**次数（同一客户端被拒绝后 1 秒内不重复尝试，避免每帧刷计数）；
-    ///   · FreeSlots = 当前值（池 = 4 − 主机真实本地角色数）；ActiveHosts = 当前自动宿主数。
+    ///   · FreeSlots = 当前值（池 = 4 − 主机真实本地角色数）；ActiveHosts = 当前自动宿主数；
+    ///   · Immune / StuckDead / Revived / ImmunityFailures = 引擎端口每拍返回的增量之和
+    ///     （只统计自动宿主，手动角色与客户端化身永不进入）。
     /// </summary>
     public sealed class MirrorHostCounters
     {
@@ -366,6 +373,18 @@ namespace SuMultiplayer.Modules
         public long Failures { get; private set; }
         public int FreeSlots { get; private set; }
         public int ActiveHosts { get; private set; }
+
+        /// <summary>成功写入整套免疫字段的宿主·拍数。</summary>
+        public long Immune { get; private set; }
+
+        /// <summary>免疫字段写失败 / PlayerData 状态机读失败的次数。</summary>
+        public long ImmunityFailures { get; private set; }
+
+        /// <summary>命中卡死条件（health≤0 / DeathCamera / PlayerData=PlayerDead）的累计次数。</summary>
+        public long StuckDead { get; private set; }
+
+        /// <summary>触发引擎复活链路（RemoveEntity）的累计次数。</summary>
+        public long Revived { get; private set; }
 
         public long BlockedTotal
         {
@@ -401,6 +420,20 @@ namespace SuMultiplayer.Modules
             m_blocked[key] = value + 1;
         }
 
+        /// <summary>累加一拍自动宿主维护结果（只加正增量；手动角色 / 客户端化身不进入统计）。</summary>
+        public void NoteMaintenance(in MirrorHostMaintenance maintenance)
+        {
+            if (maintenance.Immune > 0) Immune += maintenance.Immune;
+            if (maintenance.ImmunityFailures > 0)
+                ImmunityFailures += maintenance.ImmunityFailures;
+            if (maintenance.StuckDetected > 0) StuckDead += maintenance.StuckDetected;
+            if (maintenance.Revived > 0) Revived += maintenance.Revived;
+            if (maintenance.ReviveFailures > 0) ImmunityFailures += maintenance.ReviveFailures;
+        }
+
+        /// <summary>端口整拍失败（世界没加载 / 找不到 SubsystemPlayers）计一次免疫失败。</summary>
+        public void NoteImmunityFailure() => ImmunityFailures++;
+
         public void SetFreeSlots(int freeSlots) => FreeSlots = Math.Max(0, freeSlots);
 
         public void SetActiveHosts(int hosts) => ActiveHosts = Math.Max(0, hosts);
@@ -434,7 +467,11 @@ namespace SuMultiplayer.Modules
             }
             text.Append(") mirrorHostFailures=").Append(Failures)
                 .Append(" mirrorHostFreeSlots=").Append(FreeSlots)
-                .Append(" mirrorHostActive=").Append(ActiveHosts);
+                .Append(" mirrorHostActive=").Append(ActiveHosts)
+                .Append(" mirrorHostImmune=").Append(Immune)
+                .Append(" mirrorHostImmunityFailures=").Append(ImmunityFailures)
+                .Append(" mirrorHostStuckDead=").Append(StuckDead)
+                .Append(" mirrorHostRevived=").Append(Revived);
             return text.ToString();
         }
     }
@@ -568,6 +605,21 @@ namespace SuMultiplayer.Modules
 
         /// <summary>每拍校验已绑定的镜像（宿主还在 / 客户端化身还在 / 相机还对），必要时重绑相机。</summary>
         bool ValidateBound(out string reason);
+
+        /// <summary>
+        /// 每拍维护**自动镜像宿主**：
+        ///   · 免疫（免伤 / 免病 / 着火 / 体征归位，清单见 <see cref="MirrorHostImmunityFields"/>）；
+        ///   · 卡死自动修复（三条条件任一命中 → 引擎 <c>Project.RemoveEntity</c> 复活链路，
+        ///     见 <see cref="MirrorHostStuck"/>）。
+        ///
+        /// 只作用于**自动宿主**（<see cref="MirrorHostImmunityTarget"/> 三道闸门：宿主账本 /
+        /// 自动命名 / 不是联机化身）；手动角色（h1/h2/H3）与客户端化身一个字段都不写。
+        ///
+        /// 返回 false = 引擎侧根本维护不了（世界没加载 / 找不到 <c>SubsystemPlayers</c>），
+        /// <paramref name="reason"/> 写清原因；**单宿主单字段写失败不算 false**，
+        /// 记在 <see cref="MirrorHostMaintenance.ImmunityFailures"/> 里。
+        /// </summary>
+        bool TryMaintainAutoHosts(out MirrorHostMaintenance outcome, out string reason);
     }
 
     /// <summary>
@@ -738,7 +790,12 @@ namespace SuMultiplayer.Modules
                 m_nextAttemptTime.Remove(host.ClientId);
             }
 
-            // ③ 已绑定的镜像：先校验（客户端化身还在 / 相机还对），失效就解绑并等下一轮。
+            // ③ 自动宿主维护：免疫（免伤 / 免病 / 着火 / 体征归位）+ 卡死自动修复。
+            //    必须在 ValidateBound 之前：卡死修复会先解绑再移除实体，同一拍就不会再拿
+            //    "已销毁的宿主"去校验相机；随后 ⑤ 在宿主重新出生后重新绑定（HUD 桥接随之重建）。
+            MaintainHosts(hostLocals);
+
+            // ④ 已绑定的镜像：先校验（客户端化身还在 / 相机还对），失效就解绑并等下一轮。
             if (m_port.BoundClientId > 0 && !m_port.ValidateBound(out string invalidReason))
             {
                 WarnRateLimited("invalid",
@@ -747,7 +804,7 @@ namespace SuMultiplayer.Modules
                 Restore("绑定失效：" + invalidReason);
             }
 
-            // ④ 为"有联机角色但还没有宿主"的客户端补宿主（按 clientId 升序；每拍最多建一个）。
+            // ⑤ 为"有联机角色但还没有宿主"的客户端补宿主（按 clientId 升序；每拍最多建一个）。
             bool acted = false;
             for (int i = 0; i < m_clientIds.Count; i++)
             {
@@ -766,7 +823,7 @@ namespace SuMultiplayer.Modules
                 if (ok || stop) break;
             }
 
-            // ⑤ 已就绪但还没绑定的宿主 → 绑定（未就绪只计数 pending，绝不提前绑）。
+            // ⑥ 已就绪但还没绑定的宿主 → 绑定（未就绪只计数 pending，绝不提前绑）。
             if (m_port.TryListAutoHosts(m_autoHosts, out _))
             {
                 for (int i = 0; i < m_autoHosts.Count; i++)
@@ -788,7 +845,7 @@ namespace SuMultiplayer.Modules
             }
             m_counters.SetActiveHosts(m_port.AutoHostCount);
 
-            // ⑥ 10 秒一条状态行（池 / 自动宿主 / 计数；排查时一眼看到镜像宿主）。
+            // ⑦ 10 秒一条状态行（池 / 自动宿主 / 计数 / 免疫 + 卡死修复；排查时一眼看到镜像宿主）。
             InfoRateLimited("status",
                 "[SuMP][mirror-host] " + DescribeLive(hostLocals) + " bound=" +
                 (m_port.BoundClientId > 0
@@ -822,6 +879,46 @@ namespace SuMultiplayer.Modules
         public string DescribeCounters() => m_counters.Describe();
 
         // ------------------------------------------------------------------ 内部
+
+        /// <summary>
+        /// 每拍自动宿主维护（免疫 + 卡死修复）。三条硬约束：
+        ///   · **只对自动宿主**：判定与写入都在引擎端口里（<see cref="MirrorHostImmunityTarget"/>），
+        ///     这里只汇总计数，不碰任何玩家角色；
+        ///   · 卡死修复**只在引擎复活链路成功时**计 mirrorHostRevived（失败计
+        ///     mirrorHostImmunityFailures，并带原因写日志）；
+        ///   · 日志全部 10 秒限流（热路径每帧都会调用）。
+        /// </summary>
+        private void MaintainHosts(int hostLocals)
+        {
+            if (!m_port.TryMaintainAutoHosts(out MirrorHostMaintenance maintenance,
+                    out string reason))
+            {
+                m_counters.NoteImmunityFailure();
+                WarnRateLimited("maintain",
+                    "[SuMP][mirror-host] mirrorHostImmunityFailures=" +
+                    m_counters.ImmunityFailures + "：自动宿主维护失败（免疫与卡死修复本拍都没做）：" +
+                    (reason ?? "原因未知"));
+                return;
+            }
+            m_counters.NoteMaintenance(maintenance);
+            if (maintenance.StuckDetected > 0 || maintenance.Revived > 0 ||
+                maintenance.ReviveFailures > 0)
+            {
+                InfoRateLimited("maintain-revive",
+                    "[SuMP][mirror-host] mirrorHostStuckDead=" + m_counters.StuckDead +
+                    " mirrorHostRevived=" + m_counters.Revived +
+                    "：自动宿主卡死自动修复（" + maintenance.Describe() +
+                    "）→ 先解绑镜像再走引擎 RemoveEntity 复活链路，重新出生后由 ValidateBound / 绑定步骤重绑相机与 HUD · " +
+                    DescribeLive(hostLocals));
+            }
+            if (maintenance.ImmunityFailures > 0)
+            {
+                WarnRateLimited("maintain-fields",
+                    "[SuMP][mirror-host] mirrorHostImmunityFailures=" +
+                    m_counters.ImmunityFailures + "：自动宿主免疫字段没写全（" +
+                    maintenance.Describe() + "）：" + (reason ?? "原因未知"));
+            }
+        }
 
         private bool TryCollectClientIds(out string reason)
         {

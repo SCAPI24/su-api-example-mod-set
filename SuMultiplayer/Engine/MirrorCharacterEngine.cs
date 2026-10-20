@@ -167,6 +167,12 @@ namespace SuMultiplayer.Engine
         /// ComponentBody.TargetCrouchFactor，Source: ComponentGui.cs:428）。只写表现字段。</summary>
         private bool m_crouchBridged;
 
+        /// <summary>replace：客户端角色死亡 → 镜像分屏切 DeathCamera 的次数。</summary>
+        private long m_deathCameraShown;
+
+        /// <summary>replace：客户端复活 → 镜像分屏切回 FppCamera 的次数。</summary>
+        private long m_deathCameraRestored;
+
         /// <summary>replace 模式：H3 的模型是否已从 SubsystemModelsRenderer 的渲染表里摘掉。</summary>
         private bool m_bodyHidden;
 
@@ -207,7 +213,10 @@ namespace SuMultiplayer.Engine
         /// <c>viewFeedbackSkipped</c> + 原因 + 细项）。供控制器的状态行 / 10 秒限流日志输出。
         /// 未接入（配置关闭 / 已解绑）时是一串 0，不会让状态行缺键。
         /// </summary>
-        public string DescribeViewFeedback() => m_viewFeedback.Describe();
+        public string DescribeViewFeedback() =>
+            m_viewFeedback.Describe() +
+            " deathCameraShown=" + m_deathCameraShown +
+            " deathCameraRestored=" + m_deathCameraRestored;
 
         // ------------------------------------------------------------------ 枚举
 
@@ -717,7 +726,61 @@ namespace SuMultiplayer.Engine
                         "第三分屏的相机 Target 被引擎改成了别的角色 → 已重新对到客户端 " +
                         m_clientId + " 的 ComponentPlayer");
                 }
-                if (m_targetGameWidget != null && !(m_targetGameWidget.ActiveCamera is FppCamera))
+                // 客户端角色死亡 → 第四/第三分屏切到引擎的 DeathCamera（环绕尸体），
+                // 否则 FppCamera 盯着一具死亡模型（眼睛位置失效）会变成黑屏。
+                // 复活后自动切回 FppCamera（引擎 PlayerData 的 PlayerDead 就是这两台相机）。
+                if (m_targetGameWidget != null && m_sourcePlayer != null)
+                {
+                    bool sourceDead = m_sourcePlayer.ComponentHealth != null &&
+                        m_sourcePlayer.ComponentHealth.Health <= 0f;
+                    bool deathCameraActive = m_targetGameWidget.ActiveCamera is DeathCamera;
+                    if (sourceDead && !deathCameraActive)
+                    {
+                        DeathCamera death = m_targetGameWidget.FindCamera<DeathCamera>(false);
+                        if (death != null)
+                        {
+                            try
+                            {
+                                m_targetGameWidget.Target = m_sourcePlayer;
+                                m_targetGameWidget.ActiveCamera = death;
+                                m_deathCameraShown++;
+                                InfoOnce("view-death-camera:" + m_clientId,
+                                    "客户端 " + m_clientId +
+                                    " 角色死亡 → 镜像分屏已切到 DeathCamera（不再黑屏）");
+                            }
+                            catch (Exception e)
+                            {
+                                m_diagnostics?.Error(OwnerId,
+                                    "镜像分屏切 DeathCamera 失败（客户端 " + m_clientId + "）：" +
+                                    e.GetType().Name + " " + e.Message, e);
+                            }
+                        }
+                    }
+                    else if (!sourceDead && deathCameraActive)
+                    {
+                        FppCamera restore = m_targetGameWidget.FindCamera<FppCamera>(false);
+                        if (restore != null)
+                        {
+                            try
+                            {
+                                m_targetGameWidget.ActiveCamera = restore;
+                                m_deathCameraRestored++;
+                                InfoOnce("view-death-camera-restore:" + m_clientId,
+                                    "客户端 " + m_clientId +
+                                    " 角色复活 → 镜像分屏已切回 FppCamera");
+                            }
+                            catch (Exception e)
+                            {
+                                m_diagnostics?.Error(OwnerId,
+                                    "镜像分屏切回 FppCamera 失败（客户端 " + m_clientId + "）：" +
+                                    e.GetType().Name + " " + e.Message, e);
+                            }
+                        }
+                    }
+                }
+                if (m_targetGameWidget != null &&
+                    m_targetGameWidget.ActiveCamera is FppCamera == false &&
+                    !(m_targetGameWidget.ActiveCamera is DeathCamera))
                 {
                     FppCamera fpp = m_targetGameWidget.FindCamera<FppCamera>(false);
                     if (fpp == null)
@@ -1573,15 +1636,16 @@ namespace SuMultiplayer.Engine
             }
         }
 
-        /// <summary>replace：解绑时把快捷栏改回宿主自己的背包。</summary>
+        /// <summary>replace：解绑时把快捷栏改回宿主自己的背包 + 把蹲伏按钮的目标值交还给宿主身体。</summary>
         private void RestoreHudSources()
         {
-            if (!m_inventoryViewBound) return;
+            if (!m_inventoryViewBound && !m_crouchBridged) return;
             try
             {
                 ComponentGui targetGui = m_targetPlayer?.ComponentGui;
                 ComponentMiner targetMiner = m_targetPlayer?.ComponentMiner;
-                if (targetGui?.ShortInventoryWidget != null && targetMiner?.Inventory != null)
+                if (m_inventoryViewBound && targetGui?.ShortInventoryWidget != null &&
+                    targetMiner?.Inventory != null)
                     targetGui.ShortInventoryWidget.AssignComponents(targetMiner.Inventory);
             }
             catch (Exception e)
@@ -1590,6 +1654,22 @@ namespace SuMultiplayer.Engine
                     e.GetType().Name + " " + e.Message);
             }
             m_inventoryViewBound = false;
+            if (m_crouchBridged)
+            {
+                // 绑定期间宿主身体不参与更新，蹲伏目标值被我们每拍写成客户端的状态；
+                // 解绑后必须交还（否则按钮永远亮着/灭着，宿主也无法再自己蹲伏）。
+                try
+                {
+                    ComponentBody targetBody = m_targetPlayer?.ComponentBody;
+                    if (targetBody != null) targetBody.TargetCrouchFactor = 0f;
+                }
+                catch (Exception e)
+                {
+                    m_diagnostics?.Warn(OwnerId, "解绑时恢复第三分屏蹲伏按钮失败（显示层）：" +
+                        e.GetType().Name + " " + e.Message);
+                }
+                m_crouchBridged = false;
+            }
         }
 
         /// <summary>replace：相机回到 H3 自己（Target / ActiveCamera / 命中测试），返回是否真的恢复过。</summary>

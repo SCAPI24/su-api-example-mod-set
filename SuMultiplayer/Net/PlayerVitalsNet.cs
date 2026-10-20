@@ -35,6 +35,15 @@ namespace SuMultiplayer.Net
 
         /// <summary>病程计时的"没有变化"容差（秒）。</summary>
         public const float ConditionEpsilon = 0.01f;
+
+        /// <summary>
+        /// 角色等级上限（<c>PlayerData.Level</c>，vitals.proto 字段 21）：0 = 对端没有携带
+        /// （老版本主机），1..<see cref="MaxLevel"/> = 主机权威值，其余一律拒绝。
+        /// </summary>
+        public const float MaxLevel = 1000f;
+
+        /// <summary>两条等级被认定为"没有变化"的浮点容差。</summary>
+        public const float LevelEpsilon = 0.001f;
     }
 
     /// <summary>一条 <c>ComponentVitalStats.m_satiation</c> 记录（方块 contents → 累积值）。</summary>
@@ -103,7 +112,7 @@ namespace SuMultiplayer.Net
             float fluDuration, float fluOnset, float sicknessDuration, float fireDuration,
             bool sleeping, string causeOfDeath, IReadOnlyList<PlayerSatiation> satiation,
             Vector3 position, double sleepStartTime = 0.0, float sleepElapsed = 0f,
-            bool allowManualWake = false, bool forcedSleep = false)
+            bool allowManualWake = false, bool forcedSleep = false, float level = 0f)
         {
             Key = key;
             Revision = revision;
@@ -127,6 +136,7 @@ namespace SuMultiplayer.Net
             SleepElapsed = sleepElapsed;
             AllowManualWake = allowManualWake;
             ForcedSleep = forcedSleep;
+            Level = level;
         }
 
         public PlayerKey Key { get; }
@@ -170,6 +180,14 @@ namespace SuMultiplayer.Net
         /// </summary>
         public bool ForcedSleep { get; }
 
+        /// <summary>
+        /// 主机权威的 <c>PlayerData.Level</c>（vitals.proto 字段 21）。0 = 对端没有携带
+        /// （老版本主机）；1..<see cref="PlayerVitalsLimits.MaxLevel"/> = 权威值。客户端
+        /// **不得**把 0 写进本机等级，是否 / 何时写入由 <see cref="PlayerLevelPolicy.Decide"/>
+        /// 判定（死亡快照一律推迟到复活后）。
+        /// </summary>
+        public float Level { get; }
+
         /// <summary>睡眠状态的领域形态（校验 / 表现推进 / 唤醒门槛共用）。</summary>
         public PlayerSleepState SleepState =>
             new PlayerSleepState(Sleeping, Dead, AllowManualWake, ForcedSleep, SleepStartTime,
@@ -193,13 +211,13 @@ namespace SuMultiplayer.Net
             new PlayerVitalsSnapshot(key, Revision, Health, Air, Food, Stamina, Sleep, Temperature,
                 Wetness, TargetTemperature, FluDuration, FluOnset, SicknessDuration, FireDuration,
                 Sleeping, CauseOfDeath, m_satiation, Position, SleepStartTime, SleepElapsed,
-                AllowManualWake, ForcedSleep);
+                AllowManualWake, ForcedSleep, Level);
 
         public PlayerVitalsSnapshot WithRevision(uint revision) =>
             new PlayerVitalsSnapshot(Key, revision, Health, Air, Food, Stamina, Sleep, Temperature,
                 Wetness, TargetTemperature, FluDuration, FluOnset, SicknessDuration, FireDuration,
                 Sleeping, CauseOfDeath, m_satiation, Position, SleepStartTime, SleepElapsed,
-                AllowManualWake, ForcedSleep);
+                AllowManualWake, ForcedSleep, Level);
 
         /// <summary>
         /// 只替换生命值（对账修正用：其余字段保持从化身读到的现值，绝不凭空造值）。
@@ -209,7 +227,7 @@ namespace SuMultiplayer.Net
             new PlayerVitalsSnapshot(Key, Revision, health, Air, Food, Stamina, Sleep, Temperature,
                 Wetness, TargetTemperature, FluDuration, FluOnset, SicknessDuration, FireDuration,
                 Sleeping, CauseOfDeath, m_satiation, Position, SleepStartTime, SleepElapsed,
-                AllowManualWake, ForcedSleep);
+                AllowManualWake, ForcedSleep, Level);
 
         private static PlayerSatiation[] CopySatiation(IReadOnlyList<PlayerSatiation> source)
         {
@@ -227,6 +245,7 @@ namespace SuMultiplayer.Net
             IsFiniteValue(FluDuration) && IsFiniteValue(FluOnset) &&
             IsFiniteValue(SicknessDuration) && IsFiniteValue(FireDuration) &&
             IsFiniteDouble(SleepStartTime) && IsFiniteValue(SleepElapsed) &&
+            IsFiniteValue(Level) &&
             IsFiniteValue(Position.X) && IsFiniteValue(Position.Y) && IsFiniteValue(Position.Z);
 
         public static bool IsFiniteValue(float value) => !float.IsNaN(value) && !float.IsInfinity(value);
@@ -278,6 +297,10 @@ namespace SuMultiplayer.Net
             if (!InRange(FireDuration, 0f, PlayerVitalsLimits.MaxConditionSeconds))
                 return Fail("fire_duration", FireDuration,
                     "0.." + PlayerVitalsLimits.MaxConditionSeconds, out reason);
+            // 等级（append-only 21）：0 = 对端没有携带；1..1000 = 权威值。负数 / 超上限一律拒绝，
+            // 不夹紧（否则"对手 9999 级"会悄悄变成 1000 级）。NaN / Inf 已由 IsFinite 拦下。
+            if (!InRange(Level, 0f, PlayerVitalsLimits.MaxLevel))
+                return Fail("level", Level, "0.." + PlayerVitalsLimits.MaxLevel, out reason);
             // 睡眠表现权威字段（append-only 17..20）：睡眠中必须自洽（forced == !allow、
             // 起始时 > 0 才有表现权威）；醒着时不得带 forced / elapsed / start。
             // 老版本主机不发 17..20（start=0、elapsed=0、forced=false）仍然是合法状态。
@@ -391,6 +414,7 @@ namespace SuMultiplayer.Net
                 return true;
             }
             if (Changed(FireDuration, previous.FireDuration, PlayerVitalsLimits.ConditionEpsilon)) { what = "fire_duration"; return true; }
+            if (Changed(Level, previous.Level, PlayerVitalsLimits.LevelEpsilon)) { what = "level"; return true; }
             if (!string.Equals(CauseOfDeath, previous.CauseOfDeath, StringComparison.Ordinal))
             {
                 what = "cause_of_death";
@@ -777,7 +801,7 @@ namespace SuMultiplayer.Net
                 values.TargetTemperature, values.FluDuration, values.FluOnset,
                 values.SicknessDuration, values.FireDuration, values.Sleeping,
                 values.CauseOfDeath, satiation, Vector3.Zero, values.SleepStartTime,
-                values.SleepElapsed, values.AllowManualWake, values.ForcedSleep);
+                values.SleepElapsed, values.AllowManualWake, values.ForcedSleep, values.Level);
             return snapshot.TryValidate(out error);
         }
 
@@ -826,7 +850,8 @@ namespace SuMultiplayer.Net
                 SleepStartTime = s.SleepStartTime,
                 SleepElapsed = s.SleepElapsed,
                 AllowManualWake = s.AllowManualWake,
-                ForcedSleep = s.ForcedSleep
+                ForcedSleep = s.ForcedSleep,
+                Level = s.Level
             };
             IReadOnlyList<PlayerSatiation> satiation = s.Satiation;
             for (int i = 0; i < satiation.Count; i++)
@@ -866,6 +891,105 @@ namespace SuMultiplayer.Net
                 };
             }
             return message;
+        }
+    }
+
+    /// <summary>
+    /// 一次"主机权威等级 → 本机 PlayerData.Level"的判定结果（纯逻辑，可离线自检）。
+    /// </summary>
+    public enum PlayerLevelDecision
+    {
+        /// <summary>写进本机 <c>PlayerData.Level</c>（值与本地不同）。</summary>
+        Apply = 0,
+
+        /// <summary>与本地一致（容差内）：不用写（不算覆盖）。</summary>
+        Unchanged = 1,
+
+        /// <summary>对端没有携带等级（<c>level &lt;= 0</c>，老版本主机）：不写，计数。</summary>
+        Absent = 2,
+
+        /// <summary>非法值（NaN / Inf / 负数 / 超上限）：拒绝，计数。</summary>
+        Invalid = 3,
+
+        /// <summary>快照是死亡状态：本地引擎会按引擎规则减半，等复活后主机再报。</summary>
+        DeadDeferred = 4,
+
+        /// <summary>比已应用的 revision 旧：陈旧，忽略。</summary>
+        Stale = 5
+    }
+
+    /// <summary>
+    /// 等级权威策略（纯逻辑，无引擎依赖）。
+    ///
+    /// 权威口径（产品决定 2026-10）：**主机裁决等级**。
+    ///   · 主机的每个角色（本机槽位 + 客户端化身）都是真实的 <c>PlayerData</c>，死亡时引擎
+    ///     <c>PlayerDead</c> 入场执行 <c>Level = max(floor(Level / 2), 1)</c>
+    ///     （<c>Survivalcraft/Game/PlayerData.cs:299</c>）—— 减半**只由主机的引擎做一次**；
+    ///   · 主机把这个已减半的值写进业务记录（5 秒周期 <c>CapturePlayerRecord</c> 已包含
+    ///     <c>Level</c>），并随 <c>PLAYER_VITALS_REPORT</c> 下发（vitals.proto 字段 21）；
+    ///   · 客户端本机引擎在自己的 <c>PlayerDead</c> 入场也会减半一次（无法拦，也不该拦），
+    ///     但**死亡状态的快照一律不写等级**（<see cref="PlayerLevelDecision.DeadDeferred"/>）：
+    ///     这样主机的权威值不会在本地减半之前被写进去（那就是双端各减半一次）；
+    ///     等主机报"活着"（复活后）时再把主机值写进新实体，计数 <c>levelRespawnOverrides</c>。
+    ///
+    /// 因此客户端本地的等级只会在"活着"的主机快照上被改写，且同一个 revision 之内的
+    /// 陈旧条目由模块的 revision 门控丢弃；<see cref="Decide"/> 里还带一道显式的
+    /// revision 比较（<see cref="PlayerLevelDecision.Stale"/>），用于本机化的复核。
+    /// </summary>
+    public static class PlayerLevelPolicy
+    {
+        /// <summary>
+        /// 引擎死亡减半规则（<c>PlayerData.cs:299</c>）：
+        /// <c>Level = MathUtils.Max(MathUtils.Floor(Level / 2f), 1f)</c>。
+        /// 主机侧用它**校验**引擎确实只减半了一次（不一致只记日志，不改值）。
+        /// </summary>
+        public static float HalveOnDeath(float level)
+        {
+            if (!IsFinite(level)) return 1f;
+            return Math.Max((float)Math.Floor(level / 2f), 1f);
+        }
+
+        public static bool IsFinite(float value) => !float.IsNaN(value) && !float.IsInfinity(value);
+
+        /// <summary>0 = 对端没有携带（老版本），1..1000 = 权威值。</summary>
+        public static bool IsValid(float level) =>
+            IsFinite(level) && level >= 0f && level <= PlayerVitalsLimits.MaxLevel;
+
+        /// <summary>
+        /// 判定是否/如何把主机权威等级写进本机角色。
+        /// <paramref name="revision"/> = 本条快照的 revision，<paramref name="lastAppliedRevision"/> = 本槽位
+        /// 已写过的等级 revision（0 = 还没写过）。严格更旧 = 陈旧；相等 = 允许（复活重放会重发同一条快照）。
+        /// </summary>
+        public static PlayerLevelDecision Decide(float hostLevel, float localLevel, bool dead,
+            uint revision, uint lastAppliedRevision, out string reason)
+        {
+            reason = null;
+            if (revision != 0 && lastAppliedRevision != 0 && revision < lastAppliedRevision)
+            {
+                reason = "revision " + revision + " 比已应用的 " + lastAppliedRevision + " 旧";
+                return PlayerLevelDecision.Stale;
+            }
+            if (!IsValid(hostLevel))
+            {
+                reason = "等级 " + hostLevel.ToString("0.####") + " 非法（合法 0.." +
+                    PlayerVitalsLimits.MaxLevel + " 的有限值）";
+                return PlayerLevelDecision.Invalid;
+            }
+            if (dead)
+            {
+                reason = "快照是死亡状态：等级按主机的引擎减半一次，等复活后的权威值";
+                return PlayerLevelDecision.DeadDeferred;
+            }
+            if (hostLevel <= 0f)
+            {
+                reason = "对端没有携带等级（0 = 老版本主机）";
+                return PlayerLevelDecision.Absent;
+            }
+            if (Math.Abs(hostLevel - localLevel) <= PlayerVitalsLimits.LevelEpsilon)
+                return PlayerLevelDecision.Unchanged;
+            reason = "本地 " + localLevel.ToString("0.####") + " → 主机 " +
+                hostLevel.ToString("0.####");
+            return PlayerLevelDecision.Apply;
         }
     }
 }

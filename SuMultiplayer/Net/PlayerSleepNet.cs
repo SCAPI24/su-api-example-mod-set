@@ -71,6 +71,12 @@ namespace SuMultiplayer.Net
         /// <summary>一条唤醒请求的字节上限。</summary>
         public const int MaxWakeRequestBytes = 512;
 
+        /// <summary>一条入睡请求的字节上限。</summary>
+        public const int MaxSleepRequestBytes = 512;
+
+        /// <summary>一条入睡结果的字节上限（带引擎原句 detail，比请求宽）。</summary>
+        public const int MaxSleepResultBytes = 4096;
+
         /// <summary>稳定原因码长度上限（短码，不是句子）。</summary>
         public const int MaxReasonLength = 64;
 
@@ -128,6 +134,15 @@ namespace SuMultiplayer.Net
         public const string WakeFailed = "wake-failed";
         public const string Malformed = "malformed";
 
+        /// <summary>
+        /// 入睡请求（<c>PLAYER_SLEEP_REQUEST</c> = 104）的拒绝码。与唤醒请求分开：两端
+        /// 各自计数，状态行里不会把"主机不让睡"和"主机不让醒"混成同一个数。
+        /// </summary>
+        public const string AlreadySleeping = "already-sleeping";
+        public const string Dead = "dead";
+        public const string CanSleep = "can-sleep";
+        public const string SleepFailed = "sleep-failed";
+
         /// <summary>状态行计数的稳定键：第一个 ':' 之前的部分（空 = accepted）。</summary>
         public static string Key(string reason)
         {
@@ -149,6 +164,10 @@ namespace SuMultiplayer.Net
                 case Cooldown:
                 case WakeFailed:
                 case Malformed:
+                case AlreadySleeping:
+                case Dead:
+                case CanSleep:
+                case SleepFailed:
                     return true;
                 default:
                     return false;
@@ -892,5 +911,541 @@ namespace SuMultiplayer.Net
 
         private static bool IsFinite(double value) =>
             !double.IsNaN(value) && !double.IsInfinity(value);
+    }
+
+    // ==================================================================== 入睡请求（104 / 105）
+
+    /// <summary>
+    /// 一条已验证的 <c>PLAYER_SLEEP_REQUEST</c>（client -> host）：客户端按下了睡眠按钮 /
+    /// 床，请求主机把它放倒。客户端**不自己睡眠**（它的 <c>ComponentSleep</c> 状态由主机权威
+    /// 上报驱动，本地 <c>Sleep()</c> 会在下一拍被 <c>sleeping=false</c> 覆盖 → "秒起"）。
+    /// </summary>
+    public readonly struct PlayerSleepRequestData
+    {
+        public PlayerSleepRequestData(int clientId, int slot, long requestSequence,
+            bool allowManualWake)
+        {
+            ClientId = clientId;
+            Slot = slot;
+            RequestSequence = requestSequence;
+            AllowManualWake = allowManualWake;
+        }
+
+        public int ClientId { get; }
+        public int Slot { get; }
+        public long RequestSequence { get; }
+
+        /// <summary>引擎 <c>Sleep(allowManualWakeup:)</c> 的参数（今天恒为 true）。</summary>
+        public bool AllowManualWake { get; }
+
+        public PlayerKey Key => new PlayerKey(ClientId, Slot);
+
+        public string Describe() => "sleep-request{key=" + ClientId + ":" + Slot +
+            " seq=" + RequestSequence + " allowManualWake=" + AllowManualWake + "}";
+    }
+
+    /// <summary>
+    /// 一条已验证的 <c>PLAYER_SLEEP_RESULT</c>（host -> client）：主机对一次入睡请求的裁决。
+    /// 接受不是"睡着的唯一信号"（权威上报的 <c>sleeping=true</c> 才是），但拒绝必须能解释
+    /// 清楚 —— 否则客户端就是"点了没反应"，与"秒起"一样无从定位。
+    /// </summary>
+    public readonly struct PlayerSleepResultData
+    {
+        public PlayerSleepResultData(int clientId, int slot, long requestSequence,
+            bool accepted, string reason, string detail)
+        {
+            ClientId = clientId;
+            Slot = slot;
+            RequestSequence = requestSequence;
+            Accepted = accepted;
+            Reason = reason;
+            Detail = detail;
+        }
+
+        public int ClientId { get; }
+        public int Slot { get; }
+        public long RequestSequence { get; }
+        public bool Accepted { get; }
+
+        /// <summary>稳定原因码（<see cref="PlayerSleepReasons"/>；接受恒为 accepted）。</summary>
+        public string Reason { get; }
+
+        /// <summary>可直接显示的细节（引擎 <c>CanSleep</c> 的原文句子；接受时为空）。</summary>
+        public string Detail { get; }
+
+        public PlayerKey Key => new PlayerKey(ClientId, Slot);
+
+        public string Describe() => "sleep-result{key=" + ClientId + ":" + Slot +
+            " seq=" + RequestSequence + " " + (Accepted ? "accepted" : "rejected:" + Reason) +
+            "}";
+    }
+
+    /// <summary>
+    /// <c>PLAYER_SLEEP_REQUEST</c>（id 104）/ <c>PLAYER_SLEEP_RESULT</c>（id 105）的有界编解码。
+    /// 与唤醒请求同一套纪律：编码对非法数据抛异常；解码返回 false + 可直接定位的原因
+    /// （绝不静默丢弃 / 绝不夹紧）。
+    /// </summary>
+    public static class PlayerSleepRequestCodec
+    {
+        public static V.PlayerSleepRequest Encode(in PlayerSleepRequestData data)
+        {
+            if (!TryEncode(in data, out V.PlayerSleepRequest message, out string reason))
+                throw new InvalidOperationException("入睡请求编码失败：" + reason);
+            return message;
+        }
+
+        /// <summary>编码成线上载荷字节（模块用 <c>ITransportPort.TrySendTo</c> 定向发送）。</summary>
+        public static byte[] EncodeBytes(in PlayerSleepRequestData data)
+        {
+            V.PlayerSleepRequest message = Encode(in data);
+            byte[] payload = message.ToByteArray();
+            if (payload.Length > PlayerSleepLimits.MaxSleepRequestBytes)
+                throw new InvalidOperationException("入睡请求 " + payload.Length +
+                    " 字节超过上限 " + PlayerSleepLimits.MaxSleepRequestBytes);
+            return payload;
+        }
+
+        public static bool TryDecode(V.PlayerSleepRequest message,
+            out PlayerSleepRequestData data, out string reason)
+        {
+            data = default;
+            reason = null;
+            if (message == null)
+            {
+                reason = "sleep-request-null";
+                return false;
+            }
+            if (!CheckExt(message.Ext, out reason)) return false;
+            if (message.ClientId > int.MaxValue)
+            {
+                reason = "client_id=" + message.ClientId + " 超出 int 范围";
+                return false;
+            }
+            int clientId = (int)message.ClientId;
+            if (clientId <= 0)
+            {
+                reason = "client_id=" + clientId + " 非法（请求只能来自玩家端，> 0）";
+                return false;
+            }
+            if (message.Slot > PlayerKey.MaxSlot)
+            {
+                reason = "slot=" + message.Slot + " 非法（0.." + PlayerKey.MaxSlot + "）";
+                return false;
+            }
+            if (message.RequestSequence == 0 ||
+                message.RequestSequence > (ulong)PlayerSleepLimits.MaxRequestSequence)
+            {
+                reason = "request_sequence=" + message.RequestSequence + " 非法（1.." +
+                    PlayerSleepLimits.MaxRequestSequence + "）";
+                return false;
+            }
+            int size = message.CalculateSize();
+            if (size > PlayerSleepLimits.MaxSleepRequestBytes)
+            {
+                reason = "请求 " + size + " 字节超过上限 " +
+                    PlayerSleepLimits.MaxSleepRequestBytes;
+                return false;
+            }
+            data = new PlayerSleepRequestData(clientId, (int)message.Slot,
+                (long)message.RequestSequence, message.AllowManualWake);
+            return true;
+        }
+
+        public static bool TryDecodeResult(V.PlayerSleepResult message,
+            out PlayerSleepResultData data, out string reason)
+        {
+            data = default;
+            reason = null;
+            if (message == null)
+            {
+                reason = "sleep-result-null";
+                return false;
+            }
+            if (!CheckExt(message.Ext, out reason)) return false;
+            if (message.ClientId > int.MaxValue)
+            {
+                reason = "client_id=" + message.ClientId + " 超出 int 范围";
+                return false;
+            }
+            int clientId = (int)message.ClientId;
+            if (clientId <= 0)
+            {
+                reason = "client_id=" + clientId + " 非法（结果只发给玩家端，> 0）";
+                return false;
+            }
+            if (message.Slot > PlayerKey.MaxSlot)
+            {
+                reason = "slot=" + message.Slot + " 非法（0.." + PlayerKey.MaxSlot + "）";
+                return false;
+            }
+            if (message.RequestSequence == 0 ||
+                message.RequestSequence > (ulong)PlayerSleepLimits.MaxRequestSequence)
+            {
+                reason = "request_sequence=" + message.RequestSequence + " 非法（1.." +
+                    PlayerSleepLimits.MaxRequestSequence + "）";
+                return false;
+            }
+            bool accepted;
+            switch (message.Kind)
+            {
+                case V.PlayerSleepResultKind.Accepted:
+                    accepted = true;
+                    break;
+                case V.PlayerSleepResultKind.Rejected:
+                    accepted = false;
+                    break;
+                default:
+                    reason = "kind=" + message.Kind + " 非法（必须是 ACCEPTED / REJECTED）";
+                    return false;
+            }
+            string code = PlayerSleepReasons.Key(message.Reason);
+            if (accepted && code != PlayerSleepReasons.Accepted)
+            {
+                reason = "接受的结果却带 reason=" + message.Reason;
+                return false;
+            }
+            if (!accepted && code == PlayerSleepReasons.Accepted)
+            {
+                reason = "拒绝的结果没有原因码（reason 为空 / accepted）";
+                return false;
+            }
+            if (code.Length > PlayerSleepLimits.MaxReasonLength)
+            {
+                reason = "reason 长度 " + code.Length + " 超过 " +
+                    PlayerSleepLimits.MaxReasonLength;
+                return false;
+            }
+            data = new PlayerSleepResultData(clientId, (int)message.Slot,
+                (long)message.RequestSequence, accepted, code, message.Detail);
+            return true;
+        }
+
+        private static bool CheckExt(Google.Protobuf.ByteString ext, out string reason)
+        {
+            reason = null;
+            int length = ext?.Length ?? 0;
+            if (length <= PlayerSleepLimits.MaxExtBytes) return true;
+            reason = "ext=" + length + " 字节（内置消息必须为空；第三方扩展走 custom）";
+            return false;
+        }
+
+        private static bool TryEncode(in PlayerSleepRequestData data,
+            out V.PlayerSleepRequest message, out string reason)
+        {
+            message = null;
+            reason = null;
+            if (data.ClientId <= 0)
+            {
+                reason = "client_id=" + data.ClientId + " 非法（必须 > 0）";
+                return false;
+            }
+            if (data.Slot < 0 || data.Slot > PlayerKey.MaxSlot)
+            {
+                reason = "slot=" + data.Slot + " 非法（0.." + PlayerKey.MaxSlot + "）";
+                return false;
+            }
+            if (data.RequestSequence <= 0 ||
+                data.RequestSequence > PlayerSleepLimits.MaxRequestSequence)
+            {
+                reason = "request_sequence=" + data.RequestSequence + " 非法";
+                return false;
+            }
+            message = new V.PlayerSleepRequest
+            {
+                ClientId = (uint)data.ClientId,
+                Slot = (uint)data.Slot,
+                RequestSequence = (ulong)data.RequestSequence,
+                AllowManualWake = data.AllowManualWake
+            };
+            if (message.CalculateSize() > PlayerSleepLimits.MaxSleepRequestBytes)
+            {
+                reason = "请求超过 " + PlayerSleepLimits.MaxSleepRequestBytes + " 字节";
+                message = null;
+                return false;
+            }
+            return true;
+        }
+
+        public static V.PlayerSleepResult EncodeResult(in PlayerSleepResultData data)
+        {
+            if (!TryEncodeResult(in data, out V.PlayerSleepResult message, out string reason))
+                throw new InvalidOperationException("入睡结果编码失败：" + reason);
+            return message;
+        }
+
+        /// <summary>编码成线上载荷字节（主机用 <c>ITransportPort.TrySendTo</c> 定向回执）。</summary>
+        public static byte[] EncodeResultBytes(in PlayerSleepResultData data)
+        {
+            V.PlayerSleepResult message = EncodeResult(in data);
+            byte[] payload = message.ToByteArray();
+            if (payload.Length > PlayerSleepLimits.MaxSleepResultBytes)
+                throw new InvalidOperationException("入睡结果 " + payload.Length +
+                    " 字节超过上限 " + PlayerSleepLimits.MaxSleepResultBytes);
+            return payload;
+        }
+
+        public static bool TryEncodeResult(in PlayerSleepResultData data,
+            out V.PlayerSleepResult message, out string reason)
+        {
+            message = null;
+            reason = null;
+            if (data.ClientId <= 0)
+            {
+                reason = "client_id=" + data.ClientId + " 非法（必须 > 0）";
+                return false;
+            }
+            if (data.Slot < 0 || data.Slot > PlayerKey.MaxSlot)
+            {
+                reason = "slot=" + data.Slot + " 非法（0.." + PlayerKey.MaxSlot + "）";
+                return false;
+            }
+            if (data.RequestSequence <= 0 ||
+                data.RequestSequence > PlayerSleepLimits.MaxRequestSequence)
+            {
+                reason = "request_sequence=" + data.RequestSequence + " 非法";
+                return false;
+            }
+            string code = PlayerSleepReasons.Key(data.Reason);
+            if (data.Accepted && code != PlayerSleepReasons.Accepted)
+            {
+                reason = "接受的结果不能带原因码 " + code;
+                return false;
+            }
+            if (!data.Accepted && code == PlayerSleepReasons.Accepted)
+            {
+                reason = "拒绝的结果必须有原因码";
+                return false;
+            }
+            if (code.Length > PlayerSleepLimits.MaxReasonLength)
+            {
+                reason = "reason 长度 " + code.Length + " 超过 " +
+                    PlayerSleepLimits.MaxReasonLength;
+                return false;
+            }
+            message = new V.PlayerSleepResult
+            {
+                ClientId = (uint)data.ClientId,
+                Slot = (uint)data.Slot,
+                RequestSequence = (ulong)data.RequestSequence,
+                Kind = data.Accepted
+                    ? V.PlayerSleepResultKind.Accepted
+                    : V.PlayerSleepResultKind.Rejected,
+                Reason = code,
+                Detail = data.Detail ?? string.Empty
+            };
+            if (message.CalculateSize() > PlayerSleepLimits.MaxSleepResultBytes)
+            {
+                reason = "结果超过 " + PlayerSleepLimits.MaxSleepResultBytes + " 字节";
+                message = null;
+                return false;
+            }
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// 客户端**每次入睡点击最多一条** <c>PLAYER_SLEEP_REQUEST</c> 的门控（与
+    /// <see cref="PlayerSleepGate"/> 同一套纪律，方向相反）。
+    ///
+    /// 必须解决的问题（实测故障）：引擎的睡眠入口 <c>ClothingWidget.Update</c> 每帧读
+    /// <c>m_sleepButton.IsClicked</c>；客户端本地 <c>Sleep()</c> 被主机权威上报立刻推翻，
+    /// 于是角色"躺下→站起"，按钮的点击在同一帧里既启动了本地睡眠又留下了输入。
+    /// 门控三条规则：
+    ///   1. **只能在醒着时发**：已经在睡（主机已确认）时点击 = 唤醒路径，不由这里处理；
+    ///   2. **一次按下只发一条**：按下沿必须曾被释放过（<see cref="NoteInputReleased"/>），
+    ///      与旧实现 <c>SuComponentSleep.m_clientWakeInputReleased</c> 同一条纪律 ——
+    ///      否则"进入睡眠的那次点击"会被当成第二次点击；
+    ///   3. **每次入睡尝试只发一条**：发送失败 / 主机拒绝后才允许重试（<see cref="OnSendFailed"/> /
+    ///      <see cref="OnRejected"/>），避免按钮按住时按帧刷请求。
+    /// </summary>
+    public sealed class PlayerSleepRequestGate
+    {
+        private sealed class Entry
+        {
+            public bool RequestSent;
+            public long RequestSequence;
+            public bool PressReleased;
+        }
+
+        private readonly System.Collections.Generic.Dictionary<PlayerKey, Entry> m_entries =
+            new System.Collections.Generic.Dictionary<PlayerKey, Entry>();
+
+        public int Count => m_entries.Count;
+
+        public bool Contains(PlayerKey key) => m_entries.ContainsKey(key);
+
+        public void CopyKeys(System.Collections.Generic.List<PlayerKey> target)
+        {
+            if (target == null) return;
+            target.Clear();
+            foreach (PlayerKey key in m_entries.Keys) target.Add(key);
+        }
+
+        public void Clear() => m_entries.Clear();
+
+        private Entry Get(PlayerKey key)
+        {
+            if (!m_entries.TryGetValue(key, out Entry entry))
+            {
+                entry = new Entry { PressReleased = true };
+                m_entries[key] = entry;
+            }
+            return entry;
+        }
+
+        /// <summary>
+        /// 登记一个本机槽位（**不改变按下沿**）。初始状态是"已释放"，
+        /// 所以登记后的第一次按下就是一次合法的新请求。
+        /// </summary>
+        public void Register(PlayerKey key) => Get(key);
+
+        /// <summary>
+        /// 登记"这一刻没有睡眠输入"（按下沿必须被释放过）。端口每帧读输入时调用：
+        /// <paramref name="anyInput"/> = <c>GameWidget.Input.Any</c>。返回 true = 这一帧
+        /// 输入已释放（本次按下可以作为"新的按下"）。
+        /// </summary>
+        public bool NoteInput(PlayerKey key, bool anyInput)
+        {
+            Entry entry = Get(key);
+            if (!anyInput) entry.PressReleased = true;
+            return entry.PressReleased;
+        }
+
+        /// <summary>一次点击（输入刚出现）。返回 SendRequest = 发一条入睡请求。</summary>
+        public PlayerSleepRequestAction OnTap(PlayerKey key, in PlayerSleepRequestViewState state,
+            long requestSequence, out string reason)
+        {
+            reason = null;
+            if (state.Sleeping)
+            {
+                // 已经在睡：这次点击属于唤醒路径（PLAYER_WAKE_REQUEST），不在这里处理。
+                reason = PlayerSleepReasons.AlreadySleeping;
+                return PlayerSleepRequestAction.SuppressedSleeping;
+            }
+            if (state.Dead)
+            {
+                reason = PlayerSleepReasons.Dead;
+                return PlayerSleepRequestAction.SuppressedDead;
+            }
+            Entry entry = Get(key);
+            if (!entry.PressReleased)
+            {
+                // 同一个按下（还没松手）：绝不当成第二次点击。
+                reason = "same-press";
+                return PlayerSleepRequestAction.SuppressedSamePress;
+            }
+            if (entry.RequestSent)
+            {
+                reason = "already-sent";
+                return PlayerSleepRequestAction.SuppressedAlreadyRequested;
+            }
+            if (requestSequence <= 0 || requestSequence > PlayerSleepLimits.MaxRequestSequence)
+            {
+                reason = "invalid-sequence";
+                return PlayerSleepRequestAction.SuppressedInvalidSequence;
+            }
+            entry.RequestSent = true;
+            entry.RequestSequence = requestSequence;
+            // 本次按下已经用掉：必须松手才可能产生下一次。
+            entry.PressReleased = false;
+            return PlayerSleepRequestAction.SendRequest;
+        }
+
+        /// <summary>
+        /// 发送失败：释放本次请求并把按下沿也重置 —— 这条请求根本没发出去，不能因为
+        /// "按过一次"就要求玩家先松手（实测：丢包后睡眠按钮会点不动）。
+        /// </summary>
+        public void OnSendFailed(PlayerKey key)
+        {
+            if (!m_entries.TryGetValue(key, out Entry entry)) return;
+            entry.RequestSent = false;
+            entry.RequestSequence = 0;
+            entry.PressReleased = true;
+        }
+
+        /// <summary>
+        /// 主机拒绝：释放本次请求并把按下沿重置 —— 被拒 = 这次尝试结束，下一次点击即可重试
+        /// （不钉住按钮；RequestSent 仍清掉，避免同一次按下按帧刷请求）。
+        /// </summary>
+        public void OnRejected(PlayerKey key)
+        {
+            if (!m_entries.TryGetValue(key, out Entry entry)) return;
+            entry.RequestSent = false;
+            entry.RequestSequence = 0;
+            entry.PressReleased = true;
+        }
+
+        /// <summary>
+        /// 超时（主机既没接受也没拒绝）：释放本次请求让玩家能重试，但**保留按下沿纪律** ——
+        /// 仍按着按钮时不能按帧重发（实测：丢包 + 一直按着会连发多条请求）。
+        /// 玩家必须先松手，下一次按下才是新请求。
+        /// </summary>
+        public void OnTimeout(PlayerKey key)
+        {
+            if (!m_entries.TryGetValue(key, out Entry entry)) return;
+            entry.RequestSent = false;
+            entry.RequestSequence = 0;
+        }
+
+        /// <summary>主机接受（或权威上报确认已睡着）：本次尝试结束，等下一次醒来的点击。</summary>
+        public void OnSleepConfirmed(PlayerKey key)
+        {
+            if (!m_entries.TryGetValue(key, out Entry entry)) return;
+            entry.RequestSent = false;
+            entry.RequestSequence = 0;
+            entry.PressReleased = false;
+        }
+
+        /// <summary>诊断：请求是否已发（<c>false</c> = 没登记）。</summary>
+        public bool TryGetRequest(PlayerKey key, out bool sent, out long sequence)
+        {
+            sent = false;
+            sequence = 0;
+            if (!m_entries.TryGetValue(key, out Entry entry)) return false;
+            sent = entry.RequestSent;
+            sequence = entry.RequestSequence;
+            return true;
+        }
+    }
+
+    /// <summary>一次入睡点击的判定结果（客户端门控）。</summary>
+    public enum PlayerSleepRequestAction
+    {
+        None = 0,
+
+        /// <summary>发送一条 <c>PLAYER_SLEEP_REQUEST</c>。</summary>
+        SendRequest = 1,
+
+        /// <summary>已经在睡（这次点击属于唤醒路径）。</summary>
+        SuppressedSleeping = 2,
+
+        /// <summary>角色已经死亡。</summary>
+        SuppressedDead = 3,
+
+        /// <summary>同一个按下（还没松手），不是新的点击。</summary>
+        SuppressedSamePress = 4,
+
+        /// <summary>本次入睡尝试已经发过请求。</summary>
+        SuppressedAlreadyRequested = 5,
+
+        /// <summary>请求序号非法。</summary>
+        SuppressedInvalidSequence = 6
+    }
+
+    /// <summary>
+    /// 客户端**本机角色**当前是否在睡（入睡门控的只读输入）。
+    /// 与 <see cref="PlayerSleepViewState"/> 分开：入睡判定只关心 sleeping / dead，不看
+    /// elapsed / 唤醒权限（那两条只与唤醒有关）。
+    /// </summary>
+    public readonly struct PlayerSleepRequestViewState
+    {
+        public PlayerSleepRequestViewState(bool sleeping, bool dead)
+        {
+            Sleeping = sleeping;
+            Dead = dead;
+        }
+
+        public bool Sleeping { get; }
+        public bool Dead { get; }
     }
 }

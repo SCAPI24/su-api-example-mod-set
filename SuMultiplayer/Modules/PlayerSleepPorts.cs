@@ -62,8 +62,14 @@ namespace SuMultiplayer.Modules
     ///     <c>BlackoutFactor</c>、<c>FloatingMessage("Zzz...")</c>、
     ///     <c>Message("Tap to wake up early" / "You fell unconscious from lack of sleep")</c>、
     ///     <c>ControlsContainerWidget.IsVisible</c>。客户端不做任何唤醒决定；
+    ///   · **入睡也必须由主机执行**：引擎唯一的入睡入口是 <c>ClothingWidget</c> 的睡眠按钮，
+    ///     它跑在持有控件的那一端。客户端如果就地 <c>Sleep()</c>，下一拍权威上报
+    ///     （sleeping=false，因为主机的角色根本没睡）会立刻把角色拉起来 —— 这正是
+    ///     "点击睡觉 → 躺下 → 瞬间站起"。所以客户端只发 <c>PLAYER_SLEEP_REQUEST</c>（id 104），
+    ///     由主机用**它自己的** <c>CanSleep()</c> 复检并 <c>Sleep(true)</c>；
     ///   · 点击唤醒 = 客户端发 <c>PLAYER_WAKE_REQUEST</c>（id 103），主机复检后调用引擎
     ///     <c>ComponentSleep.WakeUp()</c>，再由权威上报（sleeping=false）驱动客户端淡出。
+    /// </summary>
     /// </summary>
     public interface IPlayerSleepPort
     {
@@ -97,11 +103,55 @@ namespace SuMultiplayer.Modules
         /// </summary>
         bool TryPollLocalSleepTap(PlayerKey key, out bool tapped, out string reason);
 
-        /// <summary>
-        /// **客户端侧**：真正发出唤醒请求时清掉本帧输入（引擎在 <c>WakeUp()</c> 前做
-        /// <c>GameWidget.Input.Clear()</c>，避免同一个点击又触发别的操作）。
-        /// </summary>
+        /// <summary>真正发出唤醒请求时清掉本帧输入（引擎在 <c>WakeUp()</c> 前做
+        /// <c>GameWidget.Input.Clear()</c>）。</summary>
         bool TryConsumeLocalSleepInput(PlayerKey key, out string reason);
+
+        /// <summary>
+        /// **客户端侧 / 每帧**：本机角色是否刚刚在**本地**被引擎放倒（= 睡眠按钮 / 床的唯一入口
+        /// <c>ClothingWidget.Update</c> 调用了本地 ComponentSleep 的 Sleep 方法）。
+        ///
+        /// 端口必须**当场收回**这次本地睡眠（客户端的 <c>IsSleeping</c> 只允许由主机确认的状态
+        /// 驱动，见 <see cref="TryReadLocalSleep"/>），并把这一帧报告为一次"入睡申请"边沿：
+        /// <paramref name="requested"/> = true。模块据此发 <c>PLAYER_SLEEP_REQUEST</c>（id 104）。
+        ///
+        /// 为什么不直接让客户端睡着：客户端本地 <c>Sleep()</c> 只改自己的组件，主机那个角色
+        /// 没睡；下一份权威上报（sleeping=false）会立刻把客户端刚躺下的角色拉起来 —— 实测
+        /// 故障"点击睡觉 → 躺下 → 秒起"。
+        ///
+        /// **无副作用探测**：<paramref name="requested"/> 为边沿；模块用来"发现本机槽位"的调用
+        /// 绝不能吞掉它（会把第一次点击吃掉）。
+        /// </summary>
+        bool TryPollLocalSleepRequest(PlayerKey key, out PlayerSleepRequestViewState state,
+            out bool requested, out string reason);
+
+        /// <summary>
+        /// **客户端侧**：本机槽位是否可用（有没有这个本机角色 + 有没有主机权威睡眠状态），
+        /// **完全不改变任何状态**（包括不吃掉入睡申请的边沿）。
+        /// 模块每帧用它发现"本机槽位表"——不能用 <see cref="TryPollLocalSleepRequest"/>
+        /// 做发现，那会把还没被处理的那一次点击吞掉。
+        /// </summary>
+        bool TryDescribeLocalSleep(PlayerKey key, out string reason);
+
+        /// <summary>
+        /// **客户端侧**：确实发出了入睡请求时清掉本帧输入（同一个按下不要再触发别的操作）。
+        /// </summary>
+        bool TryConsumeLocalSleepRequestInput(PlayerKey key, out string reason);
+
+        /// <summary>
+        /// **客户端侧**：把主机拒绝入睡的原因显示在本机 HUD（引擎 <c>CanSleep</c> 原文，
+        /// 与单机 <c>ClothingWidget</c> 的 <c>DisplaySmallMessage(reason)</c> 同一条路径）。
+        /// </summary>
+        bool TryShowLocalSleepRejected(PlayerKey key, string detail, out string reason);
+
+        /// <summary>
+        /// **主机侧**：用**主机自己**的引擎组件给某个角色重新判定并入睡（
+        /// <c>ComponentSleep.CanSleep()</c> → <c>Sleep(allowManualWakeup: true)</c>）。
+        /// 客户端从不本地入睡。失败给出稳定原因码（<c>already-sleeping</c> / <c>dead</c> /
+        /// <c>can-sleep:&lt;引擎原句&gt;</c> / <c>sleep-failed</c>）与可显示细节。
+        /// </summary>
+        bool TrySleepAuthorityPlayer(PlayerKey key, bool allowManualWake, out string reasonCode,
+            out string detail, out string reason);
 
         /// <summary>
         /// **主机侧**：读主机自己引擎里某个角色的**实时**睡眠权威状态（本机角色或客户端化身）。

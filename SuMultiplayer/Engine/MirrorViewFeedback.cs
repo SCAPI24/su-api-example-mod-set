@@ -36,7 +36,16 @@ namespace SuMultiplayer.Engine
     ///     <c>ComponentGui.DisplayLargeMessage</c>。
     ///   · **不切相机**：第三分屏的 <c>ActiveCamera</c> 必须留在客户端第一人称 <c>FppCamera</c>
     ///     （否则 <c>MirrorCharacterEngine.ValidateBound</c> 会把相机重新对回客户端）。
-    ///     死亡表现 = 黑屏 + "YOU HAVE DIED" 大消息（与引擎 <c>PlayerData.PlayerDead</c> 同文本 / 同时长）。
+    ///     死亡表现 = "YOU HAVE DIED" 大消息（与引擎 <c>PlayerData.PlayerDead</c> 同文本 / 同时长；
+    ///     产品口径 2026-10-20 起不再压黑屏，改由 <c>MirrorCharacterEngine</c> 切 <c>DeathCamera</c>）。
+    ///   · **死亡大消息控件的位置**（2026-10-20 修复"客户端死亡时第三分屏看不到死亡文字"）：
+    ///     引擎的 <c>Gui/LargeMessage</c> 在绑定期间被移到 <c>GameWidget</c> 根下。根因：客户端角色死亡 →
+    ///     它自己的 HUD 被隐藏（<c>DeathCamera.IsEntityControlEnabled = false</c> →
+    ///     <c>ComponentGui.UpdateWidgets</c> 关掉 <c>ControlsContainer</c>），UI 镜像把这个显隐写到
+    ///     **同一个镜像视图**的 <c>GuiWidget.IsVisible</c>（<c>Engine/UiMirrorEngine.cs:271</c>，主机日志
+    ///     <c>[SuMP][ui-state] … hudHidden=1</c>）—— 大消息是 <c>Gui</c> 的子控件，于是"写进去了却画不出来"
+    ///     （实测 <c>viewDeathOverlay=1</c> 而屏上无字）。移到 <c>GameWidget</c> 根下后不受 <c>Gui</c> 显隐
+    ///     影响，文字 / 淡入仍由引擎 <c>ComponentGui.UpdateWidgets</c> 驱动（外观同款），解绑按原索引移回。
     ///   · 解绑（离开房间 / 世界卸载 / 客户端离开 / 回滚）时把绑定前抓到的 HUD 显示值写回、
     ///     清掉我们设置的大消息与覆盖层，并停止更新（<see cref="Release"/>）。
     ///
@@ -71,6 +80,16 @@ namespace SuMultiplayer.Engine
         private bool m_wroteBlackout;
         private bool m_wroteIce;
         private bool m_showedDeathMessage;
+        // 死亡大消息控件（Gui/LargeMessage）：绑定期间移到 GameWidget 根下，解绑按原索引移回。
+        private ContainerWidget m_deathMessageWidget;
+        private ContainerWidget m_deathMessageOriginParent;
+        private int m_deathMessageOriginIndex = -1;
+        private bool m_deathMessageRelocated;
+
+        // 死亡大消息的生命周期（下发边沿 / 续期时刻 / 小字原文）。
+        private bool m_deathTextShown;
+        private double m_deathTextRefreshAt;
+        private string m_deathTextSmallText;
 
         // 绑定前 H3 的显示值（解绑写回；只碰显示层，不碰任何组件字段）。
         private bool m_savedHud;
@@ -149,15 +168,21 @@ namespace SuMultiplayer.Engine
             m_wroteBlackout = false;
             m_wroteIce = false;
             m_showedDeathMessage = false;
+            m_deathTextShown = false;
+            m_deathTextRefreshAt = 0.0;
+            m_deathTextSmallText = null;
             m_cachedTemperatureIndex = int.MinValue;
             m_cachedTemperatureTexture = null;
             m_diff.Reset();
             CaptureSavedHud();
+            // 死亡大消息控件必须离开 HUD 根：客户端死亡时 UI 镜像会关掉 Gui 根，文字会跟着被藏掉。
+            RelocateDeathMessage(viewOwner);
             m_linked = true;
             m_lastLogTime = m_clock == null ? 0.0 : m_clock();
             Log("第三分屏客户端反馈镜像已接入：视图所有者「" + m_viewOwnerName + "」← 客户端 " +
                 m_clientId + "「" + m_clientName + "」· 控件=" + DescribeWidgets() +
-                " · 只写显示层（血条 / 食物条 / 温度档位 / 等级文字 / 红屏 / 黑屏 / 大消息）；" +
+                " · 死亡大消息=" + DescribeDeathMessagePlacement() +
+                " · 只写显示层（血条 / 食物条 / 温度档位 / 等级文字 / 红屏 / 大消息）；" +
                 "不写 H3 的生命 / 体征 / 背包，不切相机");
             return true;
         }
@@ -287,6 +312,8 @@ namespace SuMultiplayer.Engine
                         m_gui.DisplayLargeMessage(string.Empty, string.Empty, 0f, 0f);
                         m_showedDeathMessage = false;
                     }
+                    // 把死亡大消息控件按原索引移回 HUD 根（不移回会留下"文字盖在 Gui 上"的副作用）。
+                    RestoreDeathMessage();
                 }
                 if (m_overlays != null)
                 {
@@ -313,6 +340,9 @@ namespace SuMultiplayer.Engine
             m_wroteBlackout = false;
             m_wroteIce = false;
             m_showedDeathMessage = false;
+            m_deathTextShown = false;
+            m_deathTextRefreshAt = 0.0;
+            m_deathTextSmallText = null;
             m_savedHud = false;
             m_savedLevelText = null;
             m_savedTemperatureTexture = null;
@@ -346,31 +376,12 @@ namespace SuMultiplayer.Engine
             MirrorViewDeathStep death = plan.Death;
             try
             {
-                if (death.ClearOverlay)
-                {
-                    // 复活：黑屏因子由引擎每拍清 0，这里只清我们自己写的大消息。
-                    if (m_showedDeathMessage)
-                    {
-                        m_gui.DisplayLargeMessage(string.Empty, string.Empty, 0f, 0f);
-                        m_showedDeathMessage = false;
-                    }
-                    m_counters.NoteRespawnClear();
-                }
                 if (death.KeepBlackout)
                 {
                     m_overlays.BlackoutFactor = 1f;
                     m_wroteBlackout = true;
                 }
-                if (death.ShowOverlay)
-                {
-                    m_gui.DisplayLargeMessage(MirrorViewDeathText.LargeText, death.SmallText,
-                        MirrorViewDeathText.DurationSeconds, MirrorViewDeathText.DelaySeconds);
-                    m_showedDeathMessage = true;
-                    m_counters.NoteDeathOverlay();
-                    Log("客户端 " + m_clientId + "「" + m_clientName + "」死亡 → 第三分屏显示黑屏 + \"" +
-                        MirrorViewDeathText.LargeText + "\"（死因：" +
-                        (death.Cause ?? "Unknown") + "）；复活后自动清除");
-                }
+                ApplyDeathText(in death);
                 if (damage.WriteRedout)
                 {
                     m_overlays.RedoutFactor = MathUtils.Max(m_overlays.RedoutFactor,
@@ -407,6 +418,223 @@ namespace SuMultiplayer.Engine
             }
         }
 
+        /// <summary>
+        /// 死亡大消息的**生命周期**（只写 H3 的显示层）：死亡边沿下发、死亡期间静默续期、复活清除。
+        ///
+        /// 为什么需要续期：引擎的大消息有 <c>Duration</c> 上限（30 秒，<c>PlayerData.cs:296</c>），到期
+        /// 引擎自己把消息丢掉（<c>ComponentGui.cs:385-388</c>）；而镜像分屏必须**一直显示到客户端复活**。
+        /// 续期用 <see cref="MirrorViewDeathText.RefreshDelaySeconds"/>（负延迟 = 开始时间回拨 1.5 秒），
+        /// 让引擎的淡入因子在续期那一拍就是 1（<c>ComponentGui.cs:383</c>），文字不会先消失再淡入。
+        ///
+        /// 独立 try/catch：异常单独计 <c>viewDeathTextFailures</c>，不混进 HUD 写入失败（下一拍重试）。
+        /// </summary>
+        private void ApplyDeathText(in MirrorViewDeathStep death)
+        {
+            try
+            {
+                if (death.ClearOverlay)
+                {
+                    // 复活：黑屏因子由引擎每拍清 0，这里只清我们下发的大消息。
+                    if (m_showedDeathMessage)
+                    {
+                        m_gui.DisplayLargeMessage(string.Empty, string.Empty, 0f, 0f);
+                        m_showedDeathMessage = false;
+                    }
+                    m_deathTextShown = false;
+                    m_deathTextRefreshAt = 0.0;
+                    m_deathTextSmallText = null;
+                    m_counters.NoteRespawnClear();
+                }
+                if (death.ShowOverlay)
+                {
+                    m_gui.DisplayLargeMessage(MirrorViewDeathText.LargeText, death.SmallText,
+                        MirrorViewDeathText.DurationSeconds, MirrorViewDeathText.DelaySeconds);
+                    m_showedDeathMessage = true;
+                    m_deathTextShown = true;
+                    m_deathTextSmallText = death.SmallText;
+                    m_deathTextRefreshAt = MirrorViewDeathText.RefreshAt(CurrentTime(),
+                        MirrorViewDeathText.DelaySeconds);
+                    m_counters.NoteDeathOverlay();
+                    m_counters.NoteDeathTextWrite();
+                    Log("客户端 " + m_clientId + "「" + m_clientName + "」死亡 → 第三分屏 \"" +
+                        MirrorViewDeathText.LargeText + "\"（死因：" + (death.Cause ?? "Unknown") +
+                        "）；显示到复活（到期前静默续期）· 死亡大消息控件=" +
+                        DescribeDeathMessagePlacement());
+                    return;
+                }
+                if (m_deathTextShown && CurrentTime() >= m_deathTextRefreshAt)
+                {
+                    // 续期：同文本 / 同时长，delay 取负 → 引擎的开始时间回拨 1.5 秒，淡入立即完成。
+                    m_gui.DisplayLargeMessage(MirrorViewDeathText.LargeText, m_deathTextSmallText,
+                        MirrorViewDeathText.DurationSeconds,
+                        MirrorViewDeathText.RefreshDelaySeconds);
+                    m_deathTextRefreshAt = MirrorViewDeathText.RefreshAt(CurrentTime(),
+                        MirrorViewDeathText.RefreshDelaySeconds);
+                    m_counters.NoteDeathTextWrite();
+                }
+            }
+            catch (Exception e)
+            {
+                string reason = "death-text: " + e.GetType().Name + " " + e.Message;
+                m_counters.NoteDeathTextFailures(reason);
+                m_diagnostics?.Warn(OwnerId,
+                    "第三分屏死亡大消息写入失败（本拍不写，下一拍重试）：" + reason +
+                    " · 死亡大消息控件=" + DescribeDeathMessagePlacement());
+            }
+        }
+
+        /// <summary>
+        /// 把 H3 的死亡大消息控件（<c>Gui/LargeMessage</c>）在绑定期间**移出 <c>Gui</c> 根**、挂到
+        /// <c>GameWidget</c> 下（与 <c>View</c> / <c>Gui</c> 平级，Source: Pak/Widgets/GameWidget.xml:3-5）。
+        ///
+        /// 根因（2026-10-20 主机日志坐实）：
+        ///   ① 客户端角色死亡 → 客户端把自己的相机换成 <c>DeathCamera</c>
+        ///      （<c>Engine/PlayerVitalsReplica.cs:914</c>），而 <c>DeathCamera.IsEntityControlEnabled = false</c>；
+        ///   ② 客户端引擎的 <c>ComponentGui.UpdateWidgets</c> 于是把 <c>ControlsContainer.IsVisible</c>
+        ///      置 false（Source: Survivalcraft/Game/ComponentGui.cs:394-395），客户端把 HUD 显隐上报；
+        ///   ③ 主机侧 UI 镜像把这个显隐写到**同一个镜像视图**的 <c>GameWidget.GuiWidget.IsVisible</c>
+        ///      （<c>Engine/UiMirrorEngine.cs:271</c>，日志 <c>[SuMP][ui-state] … hudHidden=1</c>）；
+        ///   ④ 死亡大消息是 <c>Gui</c> 的子控件（Pak/Widgets/GameWidget.xml:88-96）→
+        ///      **消息写进去了却画不出来**（实测 <c>viewDeathOverlay=1</c>、屏上没有文字）。
+        ///
+        /// 移到 <c>GameWidget</c> 根下后不受 <c>Gui.IsVisible</c> 影响；显示 / 淡入 / 文字仍由引擎
+        /// <c>ComponentGui.UpdateWidgets</c> 驱动（Source: ComponentGui.cs:373-390），外观与引擎同款。
+        /// 解绑按原索引移回（<see cref="RestoreDeathMessage"/>）。定位失败 = 明确计数 + 告警
+        /// （<c>viewDeathTextMissing</c>），不静默。
+        /// </summary>
+        private void RelocateDeathMessage(ComponentPlayer viewOwner)
+        {
+            m_deathMessageRelocated = false;
+            m_deathMessageWidget = null;
+            m_deathMessageOriginParent = null;
+            m_deathMessageOriginIndex = -1;
+            GameWidget gameWidget = viewOwner == null ? null : viewOwner.GameWidget;
+            if (gameWidget == null)
+            {
+                NoteDeathTextProblem("view-game-widget-missing",
+                    "第三分屏死亡大消息：视图所有者的 GameWidget 不存在 → 死亡文字无法移出 HUD 根，" +
+                    "客户端死亡时文字会被 HUD 显隐一起藏掉");
+                return;
+            }
+            ContainerWidget gui = gameWidget.GuiWidget;
+            if (gui == null)
+            {
+                NoteDeathTextProblem("view-gui-missing",
+                    "第三分屏死亡大消息：视图的 GameWidget 没有 Gui 根 → 死亡文字无法移出 HUD 根，" +
+                    "客户端死亡时文字会被 HUD 显隐一起藏掉");
+                return;
+            }
+            ContainerWidget message = null;
+            int index = -1;
+            for (int i = 0; i < gui.Children.Count; i++)
+            {
+                Widget child = gui.Children[i];
+                if (child is ContainerWidget container &&
+                    string.Equals(child.Name, "LargeMessage", StringComparison.Ordinal))
+                {
+                    message = container;
+                    index = i;
+                    break;
+                }
+            }
+            if (message == null)
+            {
+                NoteDeathTextProblem("large-message-widget-missing",
+                    "第三分屏死亡大消息：Gui 下没有 LargeMessage 控件（引擎 XML 改版，应为 " +
+                    "Pak/Widgets/GameWidget.xml:88 的 Gui/LargeMessage）→ 死亡文字无法移出 HUD 根");
+                return;
+            }
+            try
+            {
+                gui.Children.Remove(message);
+                gameWidget.Children.Add(message);
+                m_deathMessageWidget = message;
+                m_deathMessageOriginParent = gui;
+                m_deathMessageOriginIndex = index;
+                m_deathMessageRelocated = true;
+                Log("第三分屏死亡大消息控件已移出 HUD 根：Gui/LargeMessage → GameWidget#" +
+                    gameWidget.GameWidgetIndex + " 末尾（原索引 " + index +
+                    "）；客户端死亡时文字不再随 HUD 显隐一起消失（解绑按原索引移回）");
+            }
+            catch (Exception e)
+            {
+                // 移出失败要把控件放回原位（不放回会从 HUD 树上脱落）。
+                try
+                {
+                    if (message.ParentWidget is ContainerWidget current)
+                        current.Children.Remove(message);
+                    if (!gui.Children.Contains(message))
+                    {
+                        int restoreIndex = index < 0 || index > gui.Children.Count
+                            ? gui.Children.Count
+                            : index;
+                        gui.Children.Insert(restoreIndex, message);
+                    }
+                }
+                catch (Exception rollbackError)
+                {
+                    m_diagnostics?.Error(OwnerId,
+                        "第三分屏死亡大消息：移出 Gui 失败后放回也失败（控件可能已从 HUD 树上脱落）：" +
+                        rollbackError.GetType().Name + " " + rollbackError.Message, rollbackError);
+                }
+                NoteDeathTextProblem("relocate: " + e.GetType().Name + " " + e.Message,
+                    "第三分屏死亡大消息：把 Gui/LargeMessage 移到 GameWidget 根下失败 → 死亡文字会被 " +
+                    "HUD 显隐一起藏掉：" + e.GetType().Name + " " + e.Message);
+            }
+        }
+
+        /// <summary>
+        /// 解绑：把死亡大消息控件按原索引移回 <c>Gui</c>（幂等；没移过 / 控件已不可用 = 什么都不做）。
+        /// </summary>
+        private void RestoreDeathMessage()
+        {
+            ContainerWidget message = m_deathMessageWidget;
+            ContainerWidget origin = m_deathMessageOriginParent;
+            int index = m_deathMessageOriginIndex;
+            bool relocated = m_deathMessageRelocated;
+            m_deathMessageRelocated = false;
+            m_deathMessageWidget = null;
+            m_deathMessageOriginParent = null;
+            m_deathMessageOriginIndex = -1;
+            if (!relocated || message == null) return;
+            try
+            {
+                if (message.ParentWidget is ContainerWidget current)
+                    current.Children.Remove(message);
+                if (origin == null) return;
+                if (origin.Children.Contains(message)) return;
+                int restoreIndex = index < 0 || index > origin.Children.Count
+                    ? origin.Children.Count
+                    : index;
+                origin.Children.Insert(restoreIndex, message);
+            }
+            catch (Exception e)
+            {
+                m_counters.NoteDeathTextFailures("restore: " + e.GetType().Name + " " + e.Message);
+                m_diagnostics?.Warn(OwnerId,
+                    "解绑时把死亡大消息控件移回 Gui 根失败（文字控件可能停在 GameWidget 根下）：" +
+                    e.GetType().Name + " " + e.Message);
+            }
+        }
+
+        /// <summary>死亡大消息控件当前在哪（日志 / 状态行用）。</summary>
+        private string DescribeDeathMessagePlacement()
+        {
+            if (m_deathMessageRelocated)
+                return "已移出 Gui 根（不受 HUD 显隐影响，原索引 " + m_deathMessageOriginIndex + "）";
+            return "仍在 Gui 根内（" + (m_counters.LastDeathTextProblem ?? "未定位") +
+                "）→ 客户端死亡时文字会被 HUD 显隐一起藏掉";
+        }
+
+        /// <summary>定位 / 移出死亡大消息控件失败：计数 + 每个原因只告警一次。</summary>
+        private void NoteDeathTextProblem(string reason, string message)
+        {
+            m_counters.NoteDeathTextMissing(reason);
+            WarnOnce("death-text:" + reason, message);
+        }
+
+        /// <summary>当前实时时间（与引擎 <c>ComponentGui</c> 用的是同一个 <c>Time.RealTime</c>）。</summary>
+        private double CurrentTime() => m_clock == null ? 0.0 : m_clock();
         private void WriteHealthBar(float value)
         {
             ValueBarWidget bar = m_gui.HealthBarWidget;

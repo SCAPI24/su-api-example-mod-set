@@ -147,6 +147,35 @@ message PlayerVitalsValues {
   float sleep_elapsed = 18;
   bool allow_manual_wake = 19;
   bool forced_sleep = 20;
+
+  // ---- character level, host authoritative (append-only: 21) ----------------
+  //
+  // `PlayerData.Level` of the character this entry describes (`Survivalcraft/Game/
+  // PlayerData.cs:118`).  The host runs the engine's own death path for every
+  // simulated character, so the "level halves on death" rule
+  // (`PlayerDead` enter: `Level = max(floor(Level / 2), 1)`, `PlayerData.cs:299`)
+  // is executed **exactly once, on the host**, and the halved value is persisted
+  // through the ordinary 5 s host record capture (`NetworkAvatarSpawner.
+  // CapturePlayerRecord` already stores `Level`).  A client that also halves its
+  // own PlayerData locally (the engine does that when *its* PlayerData enters
+  // `PlayerDead`) is simply overwritten by this authoritative value, so the two
+  // devices never end up halving twice in a row.
+  //
+  // Value semantics:
+  //   * 1..1000   = the host's authoritative level (applied to the client's
+  //                 `PlayerData.Level`, which is what `ComponentLevel` renders as
+  //                 "Level N" and what `MeleeReplicaEngine` uses for tool gating);
+  //   * 0         = "not carried" (an older host that does not know field 21).
+  //                 A client must **not** write 0 into `PlayerData.Level`; it
+  //                 counts `levelAbsent` instead (explicit, never a silent default).
+  //   * negative / NaN / Inf / > 1000 = rejected by the codec (`levelRejected`).
+  //
+  // A **dead** entry is never written into the client's level (the local engine
+  // is about to halve it; writing the already-halved host value first would make
+  // the local halving happen on top of it).  The value is applied once the host
+  // reports the character alive again (respawn), which is counted as
+  // `levelRespawnOverrides` when it actually changes the new entity.
+  float level = 21;
 }
 
 message PlayerVitalsEntry {
@@ -233,6 +262,70 @@ message PlayerWakeRequest {
   // The sleep episode the client is asking to end (host game time at Sleep()).
   // Informational: lets the host log a mismatched episode.
   double sleep_start_time = 5;
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}
+
+// Client -> host: "I pressed the sleep button (or bed), put me to sleep".
+//
+// Why this message has to exist: the engine's only sleep entry is
+// Survivalcraft/Game/ClothingWidget.cs:78-90, which runs on the peer that owns the
+// widget.  On a client that is the client's own ComponentSleep — a component the
+// host never reads and whose state the authoritative report overwrites with
+// `sleeping = false` on the very next tick, which is exactly the observed
+// "click sleep → lie down → instantly stand up".  The client therefore does not
+// decide sleep at all: it asks, and the host decides.
+//
+// The host validates with its own `ComponentSleep.CanSleep(out reason)` (dry
+// land / comfortable block / not too tired / not too wet / has shelter) and then
+// calls the **engine** `Sleep(allowManualWakeup: true)` on its own copy of that
+// character.  All wake paths stay on the host: satiety / daylight +180 s,
+// HealthChange < 0, wetness, Attacked, and the >10 s manual tap
+// (PLAYER_WAKE_REQUEST, id 103).
+//
+// Append-only: message ids PLAYER_SLEEP_REQUEST = 104 / PLAYER_SLEEP_RESULT = 105.
+// Source: Survivalcraft/Game/ComponentSleep.cs:41-103（CanSleep / Sleep / WakeUp）
+message PlayerSleepRequest {
+  // The requesting connection's client id; 0 is invalid (the host never asks).
+  uint32 client_id = 1;
+  // The sender's local-character slot (0..3).
+  uint32 slot = 2;
+  // Client's monotonic request counter (1..); echoed in the result so the client
+  // can drop a stale answer.
+  uint64 request_sequence = 3;
+  // True = the engine path that started this (`allowManualWakeup: true`, the sleep
+  // button / bed).  Always true today; the field exists so a future forced / scripted
+  // entry reuses the same message instead of inventing a second one.
+  bool allow_manual_wake = 4;
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}
+
+enum PlayerSleepResultKind {
+  PLAYER_SLEEP_RESULT_KIND_UNSPECIFIED = 0;
+  PLAYER_SLEEP_RESULT_KIND_ACCEPTED = 1;
+  PLAYER_SLEEP_RESULT_KIND_REJECTED = 2;
+}
+
+// Host -> requesting client: the single verdict for one sleep request.
+//
+// Acceptance is *also* visible through the authoritative report (sleeping = true,
+// with the host's sleep_start_time), which is what actually drives the pose /
+// blackout / Zzz.  The explicit result exists so a rejection is explainable
+// (`can-sleep:<engine reason>`) instead of the client silently not lying down.
+message PlayerSleepResult {
+  // Echo of the request identity.
+  uint32 client_id = 1;
+  uint32 slot = 2;
+  uint64 request_sequence = 3;
+  PlayerSleepResultKind kind = 4;
+  // Stable reason code.  Accepted = "accepted"; rejected = one of
+  // `wrong-owner`, `unknown-player`, `already-sleeping`, `dead`,
+  // `can-sleep:<engine reason>`, `sleep-failed` (never a free-form sentence in the
+  // code slot; the engine's own sentence is carried in `detail`).
+  string reason = 5;
+  // Human-readable detail for the client's HUD (the engine's CanSleep sentence).
+  string detail = 6;
   bytes ext = 100;
   google.protobuf.Any custom = 101;
 }

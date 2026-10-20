@@ -66,7 +66,7 @@ namespace SuMultiplayer.Protocol {
             "ZW50ZXJfeBgBIAEoBRIQCghjZW50ZXJfehgCIAEoBRIOCgZyYWRpdXMYAyAB",
             "KAUSCwoDZXh0GGQgASgMEiQKBmN1c3RvbRhlIAEoCzIULmdvb2dsZS5wcm90",
             "b2J1Zi5BbnkiSAoDQnllEg4KBnJlYXNvbhgBIAEoCRILCgNleHQYZCABKAwS",
-            "JAoGY3VzdG9tGGUgASgLMhQuZ29vZ2xlLnByb3RvYnVmLkFueSqyEAoLTWVz",
+            "JAoGY3VzdG9tGGUgASgLMhQuZ29vZ2xlLnByb3RvYnVmLkFueSqkEQoLTWVz",
             "c2FnZVR5cGUSHAoYTUVTU0FHRV9UWVBFX1VOU1BFQ0lGSUVEEAASCQoFSEVM",
             "TE8QARINCglIRUxMT19BQ0sQAhITCg9JTlRFUkVTVF9VUERBVEUQAxIXChND",
             "SFVOS19ESUdFU1RfUkVQT1JUEAQSEQoNQ0hVTktfVkVSRElDVBAFEhAKDENI",
@@ -113,8 +113,10 @@ namespace SuMultiplayer.Protocol {
             "S19SRVFVRVNUEGESFwoTTUVMRUVfQVRUQUNLX1JFU1VMVBBiEhMKD0NPTUJB",
             "VF9STkdfU1lOQxBjEhMKD0NMSUVOVF9VSV9TVEFURRBkEhoKFlBMQVlFUl9S",
             "RVNQQVdOX1JFUVVFU1QQZRIZChVQTEFZRVJfUkVTUEFXTl9SRVNVTFQQZhIX",
-            "ChNQTEFZRVJfV0FLRV9SRVFVRVNUEGdCG0gBqgIWU3VNdWx0aXBsYXllci5Q",
-            "cm90b2NvbGIGcHJvdG8z"));
+            "ChNQTEFZRVJfV0FLRV9SRVFVRVNUEGcSGAoUUExBWUVSX1NMRUVQX1JFUVVF",
+            "U1QQaBIXChNQTEFZRVJfU0xFRVBfUkVTVUxUEGkSHgoaUExBWUVSX1NFTEZf",
+            "REFNQUdFX1JFUVVFU1QQahIdChlQTEFZRVJfU0VMRl9EQU1BR0VfUkVTVUxU",
+            "EGtCG0gBqgIWU3VNdWx0aXBsYXllci5Qcm90b2NvbGIGcHJvdG8z"));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { global::Google.Protobuf.WellKnownTypes.AnyReflection.Descriptor, },
           new pbr::GeneratedClrTypeInfo(new[] {typeof(global::SuMultiplayer.Protocol.MessageType), }, null, new pbr::GeneratedClrTypeInfo[] {
@@ -552,6 +554,41 @@ namespace SuMultiplayer.Protocol {
     /// Source: Survivalcraft/Game/ComponentSleep.cs:96-164（WakeUp / 10 s 手动唤醒门槛 / 提示文本）
     /// </summary>
     [pbr::OriginalName("PLAYER_WAKE_REQUEST")] PlayerWakeRequest = 103,
+    /// <summary>
+    /// Client-requested sleep entry (vitals.proto): "I pressed the sleep button, put me
+    /// to sleep".  The host is the only sleep authority, but the engine's sleep entry
+    /// (Survivalcraft/Game/ClothingWidget.cs:78-90) runs on whichever peer owns the
+    /// widget — on a client that is the client's own ComponentSleep, which the host
+    /// never sees.  Without this request the client's local `Sleep()` is contradicted
+    /// by the very next authoritative report (sleeping = false), so the character
+    /// stands up immediately ("秒起").  The host re-validates with its own
+    /// `ComponentSleep.CanSleep()` and calls the **engine** `Sleep(allowManualWakeup:
+    /// true)` on its own copy of that character, then answers with
+    /// PLAYER_SLEEP_RESULT (id 105) and the authoritative report (sleeping = true).
+    /// Append-only: 104 / 105 are new ids; 101..103 keep their meaning.
+    /// Source: Survivalcraft/Game/ComponentSleep.cs:41-94（CanSleep / Sleep）
+    /// Source: Survivalcraft/Game/ClothingWidget.cs:78-90（sleep 按钮的唯一入口）
+    /// </summary>
+    [pbr::OriginalName("PLAYER_SLEEP_REQUEST")] PlayerSleepRequest = 104,
+    [pbr::OriginalName("PLAYER_SLEEP_RESULT")] PlayerSleepResult = 105,
+    /// <summary>
+    /// Client-requested self-damage (selfdamage.proto): the "choke" button in the
+    /// character-info screen.  Survivalcraft/Game/VitalStatsWidget.cs:176-179 is a
+    /// PURELY LOCAL Injure — on a client that write is a prediction and the next
+    /// authoritative PLAYER_VITALS_REPORT (95) writes Health back, which is exactly
+    /// the observed "clicking the skull button does not lose health".  The client
+    /// therefore asks: the host validates owner / known player / alive / amount /
+    /// cooldown and calls the SAME engine
+    /// `ComponentHealth.Injure(amount, null, ignoreInvulnerability: true, "Choked")`
+    /// on its own copy of that character, then the existing vitals stream pushes the
+    /// new health back (an accepted request converges with the prediction; a rejected
+    /// one is rolled back by that same report).  Append-only: 106 / 107 are new ids;
+    /// no existing id is renumbered.
+    /// Source: Survivalcraft/Game/VitalStatsWidget.cs:176-179（骷髅按钮的唯一入口）
+    /// Source: Survivalcraft/Game/ComponentHealth.cs:74-136（Injure）
+    /// </summary>
+    [pbr::OriginalName("PLAYER_SELF_DAMAGE_REQUEST")] PlayerSelfDamageRequest = 106,
+    [pbr::OriginalName("PLAYER_SELF_DAMAGE_RESULT")] PlayerSelfDamageResult = 107,
   }
 
   #endregion
