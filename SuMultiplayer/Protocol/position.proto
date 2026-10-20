@@ -36,6 +36,10 @@ message PlayerPosition {
   bool is_crouching = 7;
   bool is_flying = 8;
   bool is_grounded = 9;
+  // Local-character slot on that client (0..3). Additive: absent / 0 = legacy
+  // single-character peer, so the old wire format is unchanged for slot 0.
+  // (client_id, slot) is the stable player key (Players/PlayerKey.cs).
+  uint32 slot = 10;
   // Third-party extension points: see doc/message-protocol.md.
   bytes ext = 100;
   google.protobuf.Any custom = 101;

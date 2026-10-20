@@ -195,6 +195,7 @@ namespace SuMultiplayer.Modules
             public PlayerProfileSnapshot AssignedProfile => m_owner.ClientAssignedProfile;
             public bool ProfileRequired => m_owner.ClientProfileRequired;
             public string ProfileRequiredReason => m_owner.ClientProfileRequiredReason;
+            public bool AssignedSkinAssetPresent => m_owner.ClientAssignedSkinAssetPresent;
             public bool ReconnectClient(string reason) => m_owner.ReconnectClient(reason);
         }
 
@@ -327,8 +328,10 @@ namespace SuMultiplayer.Modules
 
         private void OnPlayerPositions(MessageContext context, PP.PlayerPositions message)
         {
-            if (m_clientSync == null) return;
-            HandlePlayerPositionsMessage(message);
+            // 客户端收主机批；主机现在也收客户端的多本机角色批（单角色仍走 PlayerPosition 单条）。
+            if (m_clientSync == null && m_server == null) return;
+            if (m_server != null && !IsPlayerPeer(context.ClientId)) return;
+            HandlePlayerPositionsMessage(context, message);
         }
 
         private void OnMapRequest(MessageContext context, byte[] payload)
@@ -822,37 +825,65 @@ namespace SuMultiplayer.Modules
                     "（客户端会保持上一份权威位置，而不是被拉到某个猜测点）");
                 return;
             }
-            byte[] payload = PlayerPositionCodec.EncodeBatch(batch, out int dropped);
-            if (dropped > 0)
+            // 多本机角色：按**接收端**构建负载。旧构建（从没上报过本机槽位）只收槽位 0，
+            // 单角色房间的负载与旧版逐字节一致；新构建收全部槽位。
+            int[] peers = m_host.GetPlayerClientIds();
+            int sent = 0;
+            for (int i = 0; i < peers.Length; i++)
             {
-                LogOnce("position-batch-overflow",
-                    "位置快照批超过 " + PlayerPositionCodec.MaxBatchEntries + " 条 → 已丢弃 " + dropped +
-                    " 条（旧 GamePlayerPositionsMessage 同样是 16 条上限；多客户端同屏暂不支持）");
+                int peer = peers[i];
+                bool aware = m_avatarLink.PeerAnnouncedLocalSlots(peer);
+                int peerCount = 0;
+                for (int entry = 0; entry < batch.Count; entry++)
+                {
+                    if (batch[entry].Slot != 0 && !aware) continue;
+                    peerCount++;
+                }
+                if (peerCount == 0) continue;
+                var peerBatch = new List<PlayerPositionEntry>(peerCount);
+                for (int entry = 0; entry < batch.Count; entry++)
+                {
+                    if (batch[entry].Slot != 0 && !aware) continue;
+                    peerBatch.Add(batch[entry]);
+                }
+                byte[] payload = PlayerPositionCodec.EncodeBatch(peerBatch, out int dropped);
+                if (dropped > 0)
+                {
+                    LogOnce("position-batch-overflow:" + peer,
+                        "位置快照批超过 " + PlayerPositionCodec.MaxBatchEntries + " 条 → 已丢弃 " + dropped +
+                        " 条（发往 clientId=" + peer + "；上限已按 4 本机角色 × 5 端放宽到 " +
+                        PlayerPositionCodec.MaxBatchEntries + "）");
+                }
+                if (m_host.SendPlayerPositionsTo(peer, payload)) sent++;
             }
-            int sent = m_host.BroadcastPlayerPositions(payload);
             m_positionSnapshotsSent += sent;
-            if (sent < m_host.ClientCount)
+            if (sent < peers.Length)
             {
                 // 背压/未就绪 = 显式记录（位置是"下一拍还有"的最新状态，不回滚、不假装发成功）。
                 LogOnce("position-host-partial",
-                    "位置快照批只发到 " + sent + "/" + m_host.ClientCount + " 个客户端" +
+                    "位置快照批只发到 " + sent + "/" + peers.Length + " 个客户端" +
                     "（通道背压或对端未就绪；不缓存旧位置，下一拍重发）");
             }
         }
 
-        /// <summary>客户端 → 主机：本机玩家一份位置快照。</summary>
+        /// <summary>客户端 → 主机：**每个本机角色**一份位置快照（单角色时与旧版单条消息一致）。</summary>
         private void SendClientPlayerPosition()
         {
             m_positionPulseIndex++;
-            if (!m_avatarLink.TryCaptureLocalPlayerPosition(m_positionPulseIndex,
-                out PlayerPositionSnapshot snapshot, out string reason))
+            var entries = new List<PlayerPositionEntry>(PlayerKey.SlotCount);
+            int count = m_avatarLink.CaptureLocalPlayerPositions(m_positionPulseIndex, entries,
+                out string reason);
+            if (count <= 0)
             {
                 LogOnce("position-client-none",
                     "本拍取不到本机玩家的位置快照（" + reason + "）→ 不发送" +
                     "（绝不猜一个位置：主机会因此把客户端周围的地形更新位置摆到别处）");
                 return;
             }
-            byte[] payload = PlayerPositionCodec.EncodeSingle(0, in snapshot);
+            // 单角色（槽位 0）继续走旧的单条消息：旧主机也认；多角色用批（主机按来源重映射槽位）。
+            byte[] payload = count == 1 && entries[0].Slot == 0
+                ? PlayerPositionCodec.EncodeSingle(entries[0].Key, entries[0].Snapshot)
+                : PlayerPositionCodec.EncodeBatch(entries, out _);
             if (!m_clientSync.SendPlayerPosition(payload))
             {
                 // 每一拍都要**计数**（不是只写一行）：状态行的 posDropped 必须如实反映
@@ -893,7 +924,7 @@ namespace SuMultiplayer.Modules
                 m_positionSnapshotsDropped++;
                 return;
             }
-            if (!PlayerPositionCodec.TryConvert(message.Entries[0], out int clientId,
+            if (!PlayerPositionCodec.TryConvert(message.Entries[0], out PlayerKey key,
                 out PlayerPositionSnapshot snapshot, out string error))
             {
                 LogOnce("position-decode-single:" + context.ClientId,
@@ -909,21 +940,23 @@ namespace SuMultiplayer.Modules
                 m_positionSnapshotsDropped++;
                 return;
             }
-            if (clientId != 0 && clientId != context.ClientId)
+            if (key.ClientId != 0 && key.ClientId != context.ClientId)
             {
                 // 旧实现在主机侧校验 msg.PlayerIndex 必须等于来源 clientId（或 0）：
                 // 载荷里的编号不能冒领另一个玩家端的身份。
                 LogOnce("position-mismatch:" + context.ClientId,
-                    "clientId=" + context.ClientId + " 的位置快照自称 PlayerIndex=" + clientId +
-                    " → 丢弃（旧实现要求两者一致或为 0）");
+                    "clientId=" + context.ClientId + " 的位置快照自称玩家键 " + key +
+                    " → 丢弃（旧实现要求 clientId 一致或为 0）");
                 m_positionSnapshotsDropped++;
                 return;
             }
+            // 主机侧：槽位属于来源连接（客户端填 0 是该端自己的槽位，不是主机）。
+            PlayerKey sourceKey = new PlayerKey(context.ClientId, key.Slot);
             m_positionSnapshotsApplied++;
-            m_avatarLink.OnRemotePlayerPositionReceived(context.ClientId, in snapshot);
+            m_avatarLink.OnRemotePlayerPositionReceived(sourceKey, in snapshot);
         }
 
-        private void HandlePlayerPositionsMessage(PP.PlayerPositions message)
+        private void HandlePlayerPositionsMessage(MessageContext context, PP.PlayerPositions message)
         {
             if (m_avatarLink == null)
             {
@@ -939,9 +972,11 @@ namespace SuMultiplayer.Modules
                 m_positionSnapshotsDropped++;
                 return;
             }
+            bool hosting = m_host != null;
+            var decoded = new List<PlayerPositionEntry>(message.Entries.Count);
             for (int i = 0; i < message.Entries.Count; i++)
             {
-                if (!PlayerPositionCodec.TryConvert(message.Entries[i], out int clientId,
+                if (!PlayerPositionCodec.TryConvert(message.Entries[i], out PlayerKey key,
                         out PlayerPositionSnapshot snapshot, out string error))
                 {
                     LogOnce("position-decode-batch-item:" + i,
@@ -949,26 +984,42 @@ namespace SuMultiplayer.Modules
                     m_positionSnapshotsDropped++;
                     return;
                 }
-                // 批里"本机玩家自己那一条"（编号 = 主机在 HelloAck 里给本端的 clientId）：
-                // 旧实现走 ApplyAuthoritativeLocalPlayerState（受击击退的速度修正 + 背包权威），
-                // 而这条链尚未移植 —— **明确跳过**，绝不把它当远端角色应用（否则会去动本机玩家）。
-                if (clientId >= 0 && clientId == ClientLocalClientId)
+                if (hosting)
                 {
-                    LogOnce("position-own-entry",
-                        "位置快照批里 clientId=" + clientId + " 是本机玩家自己那一条：" +
-                        "旧实现用它做受击击退的速度修正与背包权威（ApplyAuthoritativeLocalPlayerState），" +
-                        "这条链尚未移植 → 跳过（本机玩家的位置/视线永远不由网络写回）");
+                    // 主机收到客户端的多本机角色批：载荷里的 clientId 只能是 0（= 来源端自己）或来源端编号。
+                    if (key.ClientId != 0 && key.ClientId != context.ClientId)
+                    {
+                        LogOnce("position-batch-spoof:" + context.ClientId,
+                            "clientId=" + context.ClientId + " 的位置快照批里第 " + (i + 1) +
+                            " 条自称玩家键 " + key + " → 整批丢弃（不能冒领别的玩家端）");
+                        m_positionSnapshotsDropped++;
+                        return;
+                    }
+                    key = new PlayerKey(context.ClientId, key.Slot);
+                }
+                decoded.Add(new PlayerPositionEntry(key, snapshot));
+            }
+            for (int i = 0; i < decoded.Count; i++)
+            {
+                PlayerKey key = decoded[i].Key;
+                PlayerPositionSnapshot snapshot = decoded[i].Snapshot;
+                // 客户端：批里"本机玩家自己那一条"（编号 = 主机在 HelloAck 里给本端的 clientId）。
+                // 旧实现走 ApplyAuthoritativeLocalPlayerState（受击击退 + 背包权威），尚未移植 →
+                // 明确跳过并计数，绝不把它当远端角色应用（否则会去动本机玩家）。
+                if (!hosting && key.ClientId == ClientLocalClientId)
+                {
+                    m_avatarLink.NotePositionSkippedOwn(key);
                     continue;
                 }
                 if (!snapshot.IsFinite)
                 {
-                    LogOnce("position-batch-nonfinite:" + clientId,
-                        "位置快照批里 clientId=" + clientId + " 含 NaN/Inf → 跳过该条");
+                    LogOnce("position-batch-nonfinite:" + key,
+                        "位置快照批里玩家键 " + key + " 含 NaN/Inf → 跳过该条");
                     m_positionSnapshotsDropped++;
                     continue;
                 }
                 m_positionSnapshotsApplied++;
-                m_avatarLink.OnRemotePlayerPositionReceived(clientId, in snapshot);
+                m_avatarLink.OnRemotePlayerPositionReceived(key, in snapshot);
             }
         }
 
@@ -1187,6 +1238,10 @@ namespace SuMultiplayer.Modules
         private IHostCreatureCellSource m_creatureCells;
         /// <summary>装配动物清单时复用的临时列表（每次快照清空；不制造持续垃圾）。</summary>
         private readonly List<LiveMapAnimal> m_liveMapAnimalScratch = new List<LiveMapAnimal>();
+        /// <summary>装配逐角色槽位清单时复用的临时列表（v10；每次快照清空）。</summary>
+        private readonly List<LiveMapPlayer> m_liveMapPlayerScratch = new List<LiveMapPlayer>();
+        /// <summary>上一份快照的槽位键签名（槽位增减时写一行明确日志，不刷屏）。</summary>
+        private string m_liveMapPlayerSignature = string.Empty;
         /// <summary>最近一次实时地图快照实际发出的动物数（= animalsInFeed）。</summary>
         private long m_animalsInFeed;
         /// <summary>累计被上限截掉的动物数（每次截断都计数；日志限流，绝不静默丢）。</summary>
@@ -1289,6 +1344,7 @@ namespace SuMultiplayer.Modules
                         " · " + snapshot.Chunks.Count + " 块 / " + m_liveMapBatches.Count + " 批" +
                         " · 玩家端 " + snapshot.Clients.Count + " 个 / 其当前内存区块条目 " +
                         snapshot.ClientChunks.Count + " 条" +
+                        " · 角色槽位 " + snapshot.Players.Count + " 个" +
                         " · 欠更新标块 " + pendingMarks + "（客户端 " + pendingClients + "）" +
                         " · 构建 " + ((long)(Time.RealTime * 1000.0) - started) + " ms");
                 }
@@ -1348,6 +1404,114 @@ namespace SuMultiplayer.Modules
             Log(message);
         }
 
+        /// <summary>
+        /// v10：把**每个玩家角色槽位**装进快照（主机本机槽位 0..N-1 + 每个联机化身的 (clientId, slot)）。
+        ///
+        /// 数据源只有一处：<see cref="IAvatarTerrainLink.CaptureLiveMapPlayers"/>（它内部走
+        /// <c>NetworkAvatarSpawner.TryCollectLocalPlayers</c> / 化身表 <c>Keys</c> / <c>TryGet</c>）。
+        /// 身份稳定键（页面选角 / clients[] 匹配）由**地形通道自己的身份会话表**按 clientId 补上：
+        /// 同一身份的所有槽位共用它，重连后 clientId 变了、键不变。
+        ///
+        /// 槽位增减（多开一个本机角色 / 一个玩家端重连）会在键集合变化时写一行日志；
+        /// 缺实体 / ComponentBody / 名字 / 身份键都照实列条目并写明原因，绝不丢槽位、也绝不顶替。
+        /// </summary>
+        private void BuildLiveMapPlayers(LiveMapSnapshot snapshot)
+        {
+            snapshot.Players.Clear();
+            if (m_avatarLink == null)
+            {
+                LogRateLimited("livemap-players-no-link", "实时地图：没有接上联机角色视图（IAvatarTerrainLink）→ " +
+                    "本次不给逐角色槽位清单（不拿身份清单顶替）", 5000);
+                return;
+            }
+            int captured = m_avatarLink.CaptureLiveMapPlayers(m_liveMapPlayerScratch, out string reason);
+            if (captured == 0)
+            {
+                if (!string.IsNullOrEmpty(reason))
+                {
+                    LogRateLimited("livemap-players-unavailable", "实时地图：读不到角色槽位（" + reason +
+                        "）→ 本快照 players=0（不猜、不拿区块中心顶替）", 5000);
+                }
+                m_liveMapPlayerSignature = string.Empty;
+                return;
+            }
+
+            // 身份稳定键：按**当前** clientId 从主机身份会话表取；主机自己的角色固定 "host"。
+            // 重连瞬间新旧连接交替时可能取不到 → 该条 stableKey 留空，工具/页面显式回退到 id，
+            // 但**绝不自造一个身份键**（那会让两个身份在页面上合并）。
+            Dictionary<int, string> stableByClient = null;
+            if (m_host != null)
+            {
+                TerrainHostSnapshot hostSnapshot = m_host.GetSnapshot();
+                stableByClient = new Dictionary<int, string>(hostSnapshot.Clients.Count);
+                for (int i = 0; i < hostSnapshot.Clients.Count; i++)
+                {
+                    ClientView view = hostSnapshot.Clients[i];
+                    if (view.Kind != ClientKind.Player) continue;
+                    stableByClient[view.Id] = view.StableKey ?? string.Empty;
+                }
+            }
+
+            var signature = new System.Text.StringBuilder();
+            for (int i = 0; i < captured; i++)
+            {
+                LiveMapPlayer source = m_liveMapPlayerScratch[i];
+                string stableKey;
+                if (source.IsHost)
+                {
+                    stableKey = LiveMapCodec.HostKey;
+                }
+                else if (stableByClient != null &&
+                         stableByClient.TryGetValue(source.ClientId, out string resolved) &&
+                         !string.IsNullOrEmpty(resolved))
+                {
+                    stableKey = resolved;
+                }
+                else
+                {
+                    stableKey = string.Empty;
+                    LogRateLimited("livemap-players-nostable:" + source.Key,
+                        "实时地图：角色槽位 " + source.Key + " 的身份稳定键暂时取不到（重连/会话记录未就绪）→ " +
+                        "本条 stableKey 留空（工具按 id 显式回退，不伪造身份）", 5000);
+                }
+                // 复制进快照：scratch 下一次快照会被清空/复用，快照必须持有自己的对象。
+                snapshot.Players.Add(new LiveMapPlayer
+                {
+                    ClientId = source.ClientId,
+                    Slot = source.Slot,
+                    Key = source.Key,
+                    StableKey = stableKey,
+                    Name = source.Name,
+                    IsHost = source.IsHost,
+                    HasCell = source.HasCell,
+                    CellX = source.CellX,
+                    CellY = source.CellY,
+                    CellZ = source.CellZ,
+                    CellReason = source.CellReason ?? string.Empty,
+                    ChunkX = source.ChunkX,
+                    ChunkZ = source.ChunkZ
+                });
+                if (i > 0) signature.Append(',');
+                signature.Append(source.Key);
+            }
+
+            string current = signature.ToString();
+            if (!string.Equals(current, m_liveMapPlayerSignature, StringComparison.Ordinal))
+            {
+                m_liveMapPlayerSignature = current;
+                int hostSlots = 0, avatarSlots = 0, missingCells = 0;
+                for (int i = 0; i < snapshot.Players.Count; i++)
+                {
+                    LiveMapPlayer player = snapshot.Players[i];
+                    if (player.IsHost) hostSlots++; else avatarSlots++;
+                    if (!player.HasCell) missingCells++;
+                }
+                Log("实时地图角色槽位：" + snapshot.Players.Count + " 个（主机 " + hostSlots +
+                    " 个槽位 / 联机化身 " + avatarSlots + " 个）· 键 " + current +
+                    (missingCells > 0 ? " · " + missingCells + " 个暂时读不到坐标（条目照列，原因随快照下发）" : ""));
+            }
+        }
+
         private LiveMapSnapshot BuildLiveMap(bool all, bool hasCell, int cellX, int cellY, int cellZ,
             int centerChunkX, int centerChunkZ, int radius)
         {
@@ -1366,6 +1530,8 @@ namespace SuMultiplayer.Modules
             };
             // v9：主机端动物位置（仅位置；客户端不贡献）。截断 / 读不到都在这里计数并限流写日志。
             BuildLiveMapAnimals(snapshot);
+            // v10：每个玩家角色槽位（主机本机槽位 0..N-1 + 每个联机化身的 (clientId, slot)）。
+            BuildLiveMapPlayers(snapshot);
             if (hasCell)
             {
                 snapshot.Centers.Add(new LiveMapCenter
@@ -1609,6 +1775,9 @@ namespace SuMultiplayer.Modules
         internal PlayerProfileSnapshot ClientHostProfile => m_clientSync?.HostProfile;
 
         internal PlayerProfileSnapshot ClientAssignedProfile => m_clientSync?.AssignedProfile;
+
+        internal bool ClientAssignedSkinAssetPresent =>
+            m_clientSync?.AssignedSkinAssetPresent == true;
 
         internal bool ClientProfileRequired => m_clientSync?.ProfileRequired ?? false;
 

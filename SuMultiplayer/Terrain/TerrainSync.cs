@@ -2306,6 +2306,8 @@ namespace SuMultiplayer.Terrain
                     : null,
                 ProfileRequired = state.ProfileRequired,
                 ProfileRequiredReason = state.ProfileRequiredReason ?? string.Empty,
+                // 主机角色记录里已有这个身份的自定义皮肤资源 → 客户端不用重新上传。
+                AssignedSkinAssetPresent = profileDecision?.AssignedSkinAssetPresent == true,
                 // 主机会话标识 + 是否接受重连 + 当前改动水位 + 依据。
                 // 客户端据此：① 记住"主机当前会话"（下一次重连的判定）；② 收到拒绝时明确作废旧会话并重下整图。
                 SessionId = SessionId ?? string.Empty,
@@ -4390,6 +4392,41 @@ namespace SuMultiplayer.Terrain
             }
             return sent;
         }
+
+        /// <summary>
+        /// 主机：当前**玩家端**的 clientId（多本机角色时位置批要按端过滤：旧的单角色端只收槽位 0）。
+        /// 顺序按 clientId 升序，调用方可以逐端构建自己的负载。
+        /// </summary>
+        public int[] GetPlayerClientIds()
+        {
+            var targets = new List<int>();
+            lock (m_gate)
+            {
+                foreach (KeyValuePair<int, State> pair in m_clients)
+                {
+                    if (pair.Value.Kind != ClientKind.Player) continue;
+                    targets.Add(pair.Key);
+                }
+            }
+            targets.Sort();
+            return targets.ToArray();
+        }
+
+        /// <summary>
+        /// 主机 → 指定玩家端：一份位置快照批。失败（背压 / 不可达）返回 false，调用方明确计数，
+        /// **绝不改投别的客户端**。
+        /// </summary>
+        public bool SendPlayerPositionsTo(int clientId, byte[] payload)
+        {
+            if (payload == null || payload.Length == 0) return false;
+            lock (m_gate)
+            {
+                if (!m_clients.TryGetValue(clientId, out State state) ||
+                    state.Kind != ClientKind.Player)
+                    return false;
+            }
+            return m_server.TrySend(clientId, MessageType.PlayerPositions, payload);
+        }
     }
 
     /// <summary>
@@ -4786,6 +4823,12 @@ namespace SuMultiplayer.Terrain
         /// 主机没有该身份记录（profile_required）时为空。
         /// </summary>
         public PlayerProfileSnapshot AssignedProfile { get; private set; }
+
+        /// <summary>
+        /// HelloAck.assigned_skin_asset_present：主机记录里是否已有本机资料对应的自定义皮肤资源。
+        /// false/旧主机 = 客户端需要在握手后上传自己的资源。
+        /// </summary>
+        public bool AssignedSkinAssetPresent { get; private set; }
 
         /// <summary>
         /// 主机要求先创建角色（旧 SCMP_PROFILE_REQUIRED）：本连接**不会**收到世界，
@@ -5876,6 +5919,7 @@ namespace SuMultiplayer.Terrain
             AssignedProfile = PlayerProfileCodec.FromMessage(ack.AssignedProfile,
                 out assignedClientId, out assignedIdentity, out assignedIsHost,
                 out assignedHasCharacter);
+            AssignedSkinAssetPresent = ack.AssignedSkinAssetPresent;
             // 主机要求先创建角色（旧 SCMP_PROFILE_REQUIRED）：本连接不会有世界。
             ProfileRequired = ack.ProfileRequired;
             ProfileRequiredReason = ack.ProfileRequiredReason ?? string.Empty;

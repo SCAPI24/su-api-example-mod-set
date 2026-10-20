@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using Engine;
 using Game;
 using SuAPI;
+using SuMultiplayer.Modules;
 
 namespace SuMultiplayer.Engine
 {
@@ -74,6 +75,14 @@ namespace SuMultiplayer.Engine
         /// <summary>客户端复制适配器（适配器 Pump 注入；主机为 null 也可）。</summary>
         public PickableReplicaEngine Replica { get; set; }
 
+        /// <summary>
+        /// 主机水花捕获窗口（Engine/WaterSplashReplicaEngine.cs 的 Pump 挂接）。窗口只包住
+        /// <c>base.Update</c>：引擎在落水分支里创建的 <c>WaterSplashParticleSystem</c> 由适配层
+        /// 做粒子表差集取出。客户端不打开窗口（引擎原生水花由主机下发，见下方 SplashGenerated）。
+        /// Source: Survivalcraft/Game/SubsystemPickables.cs:325-330
+        /// </summary>
+        internal IWaterSplashHostSink SplashSink { get; set; }
+
         /// <summary>拿不到玩家列表导致“过滤失败”的次数（状态行 / 诊断可审计）。</summary>
         public long PickupFilterFailures => m_filterFailures;
 
@@ -85,7 +94,7 @@ namespace SuMultiplayer.Engine
             Func<ComponentPlayer, bool> filter = clientReplica ? m_suppressAll : IsRemotePlayer;
             if (filter == null)
             {
-                base.Update(dt);
+                RunHostBaseUpdate(dt);
                 return;
             }
             if (ParentField == null || !EnsurePlayersBound())
@@ -111,7 +120,7 @@ namespace SuMultiplayer.Engine
                                 : "主机继续跑 base.Update（原生拾取会绕过请求链，请检查引擎版本）"));
                     }
                 }
-                if (!clientReplica) base.Update(dt);
+                if (!clientReplica) RunHostBaseUpdate(dt);
                 return;
             }
             // 客户端：整段不跑玩家拾取；主机：只摘远端化身。其余物理/到期/水面表现照常。
@@ -134,9 +143,15 @@ namespace SuMultiplayer.Engine
                     ReadOnlyList<Pickable> pickables = Pickables;
                     for (int i = 0; i < pickables.Count; i++)
                         if (pickables[i] != null) pickables[i].SplashGenerated = true;
+                    base.Update(dt);
+                    Replica?.CullForeignClientPickables();
                 }
-                base.Update(dt);
-                if (clientReplica) Replica?.CullForeignClientPickables();
+                else
+                {
+                    // 主机：窗口内新增的 WaterSplashParticleSystem 由 WaterSplashReplicaEngine
+                    // 取出并广播；引擎原生表现（本机看到 / 听到的水花）不受影响。
+                    RunHostBaseUpdate(dt);
+                }
             }
             finally
             {
@@ -149,6 +164,24 @@ namespace SuMultiplayer.Engine
                 }
                 m_removedPlayers.Clear();
                 m_removedIndices.Clear();
+            }
+        }
+
+        /// <summary>
+        /// 主机 base.Update 包一层水花捕获窗口。捕获开始失败（适配层未启用 / 反射失败）时
+        /// 仍然执行 base.Update：主机原生水花表现绝不因为网络表现失败而消失。
+        /// </summary>
+        private void RunHostBaseUpdate(float dt)
+        {
+            IWaterSplashHostSink sink = SplashSink;
+            bool capture = sink != null && sink.BeginSplashCapture(out _);
+            try
+            {
+                base.Update(dt);
+            }
+            finally
+            {
+                if (capture) sink.EndSplashCapture();
             }
         }
 
@@ -192,6 +225,14 @@ namespace SuMultiplayer.Engine
         /// <summary>客户端复制适配器（组合根 / 适配器 Pump 注入；主机为 null 也可）。</summary>
         public PickableReplicaEngine Replica { get; set; }
 
+        /// <summary>
+        /// 主机水花捕获窗口（Engine/WaterSplashReplicaEngine.cs 的 Pump 挂接）。窗口只包住
+        /// <c>base.Update</c>：投射物入水时引擎创建的 <c>WaterSplashParticleSystem</c> 由适配层
+        /// 做粒子表差集取出。客户端整段不跑 base.Update，因此不会打开窗口。
+        /// Source: Survivalcraft/Game/SubsystemProjectiles.cs:383-390
+        /// </summary>
+        internal IWaterSplashHostSink SplashSink { get; set; }
+
         void IUpdateable.Update(float dt)
         {
             SubsystemTerrain terrain = Project?.FindSubsystem<SubsystemTerrain>(false);
@@ -207,7 +248,18 @@ namespace SuMultiplayer.Engine
                 Replica?.CullForeignClientProjectiles();
                 return;
             }
-            base.Update(dt);
+            // 主机：窗口内新增的 WaterSplashParticleSystem 由 WaterSplashReplicaEngine
+            // 取出并广播；引擎原生表现（本机看到 / 听到的水花）不受影响。
+            IWaterSplashHostSink sink = SplashSink;
+            bool capture = sink != null && sink.BeginSplashCapture(out _);
+            try
+            {
+                base.Update(dt);
+            }
+            finally
+            {
+                if (capture) sink.EndSplashCapture();
+            }
         }
     }
 }

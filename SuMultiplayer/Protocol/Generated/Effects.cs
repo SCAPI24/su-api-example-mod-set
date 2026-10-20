@@ -25,23 +25,31 @@ namespace SuMultiplayer.Protocol.Effects {
       byte[] descriptorData = global::System.Convert.FromBase64String(
           string.Concat(
             "Cg1lZmZlY3RzLnByb3RvEgxzdW1wLmVmZmVjdHMaGWdvb2dsZS9wcm90b2J1",
-            "Zi9hbnkucHJvdG8iOgoHQ2VsbEtleRIJCgF4GAEgASgREgkKAXkYAiABKBES",
-            "CQoBehgDIAEoERIOCgZzaXp6bGUYBCABKAgiowEKDkJ1cm5Bd2F5RWZmZWN0",
-            "EhEKCWNsaWVudF9pZBgBIAEoBRITCgtzZXJ2ZXJfdGljaxgCIAEoAxIkCgVj",
-            "ZWxscxgDIAMoCzIVLnN1bXAuZWZmZWN0cy5DZWxsS2V5EhAKCGV2ZW50X2lk",
-            "GAQgASgNEgsKA2V4dBhkIAEoDBIkCgZjdXN0b20YZSABKAsyFC5nb29nbGUu",
-            "cHJvdG9idWYuQW55IqcBChdDYW1wZmlyZUV4dGluZ3Vpc2hFdmVudBIRCglj",
-            "bGllbnRfaWQYASABKAUSEwoLc2VydmVyX3RpY2sYAiABKAMSEAoIZXZlbnRf",
-            "aWQYAyABKA0SCQoBeBgEIAEoERIJCgF5GAUgASgREgkKAXoYBiABKBESCwoD",
-            "ZXh0GGQgASgMEiQKBmN1c3RvbRhlIAEoCzIULmdvb2dsZS5wcm90b2J1Zi5B",
-            "bnlCI0gBqgIeU3VNdWx0aXBsYXllci5Qcm90b2NvbC5FZmZlY3RzYgZwcm90",
-            "bzM="));
+            "Zi9hbnkucHJvdG8aDnBvc2l0aW9uLnByb3RvIjoKB0NlbGxLZXkSCQoBeBgB",
+            "IAEoERIJCgF5GAIgASgREgkKAXoYAyABKBESDgoGc2l6emxlGAQgASgIIqMB",
+            "Cg5CdXJuQXdheUVmZmVjdBIRCgljbGllbnRfaWQYASABKAUSEwoLc2VydmVy",
+            "X3RpY2sYAiABKAMSJAoFY2VsbHMYAyADKAsyFS5zdW1wLmVmZmVjdHMuQ2Vs",
+            "bEtleRIQCghldmVudF9pZBgEIAEoDRILCgNleHQYZCABKAwSJAoGY3VzdG9t",
+            "GGUgASgLMhQuZ29vZ2xlLnByb3RvYnVmLkFueSKnAQoXQ2FtcGZpcmVFeHRp",
+            "bmd1aXNoRXZlbnQSEQoJY2xpZW50X2lkGAEgASgFEhMKC3NlcnZlcl90aWNr",
+            "GAIgASgDEhAKCGV2ZW50X2lkGAMgASgNEgkKAXgYBCABKBESCQoBeRgFIAEo",
+            "ERIJCgF6GAYgASgREgsKA2V4dBhkIAEoDBIkCgZjdXN0b20YZSABKAsyFC5n",
+            "b29nbGUucHJvdG9idWYuQW55IoUBCgtXYXRlclNwbGFzaBIlCghwb3NpdGlv",
+            "bhgBIAEoCzITLnN1bXAucG9zaXRpb24uVmVjMxINCgVsYXJnZRgCIAEoCBIN",
+            "CgVzb3VuZBgDIAEoCBILCgNleHQYZCABKAwSJAoGY3VzdG9tGGUgASgLMhQu",
+            "Z29vZ2xlLnByb3RvYnVmLkFueSKcAQoQV2F0ZXJTcGxhc2hFdmVudBIWCg5z",
+            "ZXJ2ZXJfdGlja19tcxgBIAEoAxIQCghldmVudF9pZBgCIAEoDRIrCghzcGxh",
+            "c2hlcxgDIAMoCzIZLnN1bXAuZWZmZWN0cy5XYXRlclNwbGFzaBILCgNleHQY",
+            "ZCABKAwSJAoGY3VzdG9tGGUgASgLMhQuZ29vZ2xlLnByb3RvYnVmLkFueUIj",
+            "SAGqAh5TdU11bHRpcGxheWVyLlByb3RvY29sLkVmZmVjdHNiBnByb3RvMw=="));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
-          new pbr::FileDescriptor[] { global::Google.Protobuf.WellKnownTypes.AnyReflection.Descriptor, },
+          new pbr::FileDescriptor[] { global::Google.Protobuf.WellKnownTypes.AnyReflection.Descriptor, global::SuMultiplayer.Protocol.Position.PositionReflection.Descriptor, },
           new pbr::GeneratedClrTypeInfo(null, null, new pbr::GeneratedClrTypeInfo[] {
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Effects.CellKey), global::SuMultiplayer.Protocol.Effects.CellKey.Parser, new[]{ "X", "Y", "Z", "Sizzle" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Effects.BurnAwayEffect), global::SuMultiplayer.Protocol.Effects.BurnAwayEffect.Parser, new[]{ "ClientId", "ServerTick", "Cells", "EventId", "Ext", "Custom" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Effects.CampfireExtinguishEvent), global::SuMultiplayer.Protocol.Effects.CampfireExtinguishEvent.Parser, new[]{ "ClientId", "ServerTick", "EventId", "X", "Y", "Z", "Ext", "Custom" }, null, null, null, null)
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Effects.CampfireExtinguishEvent), global::SuMultiplayer.Protocol.Effects.CampfireExtinguishEvent.Parser, new[]{ "ClientId", "ServerTick", "EventId", "X", "Y", "Z", "Ext", "Custom" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Effects.WaterSplash), global::SuMultiplayer.Protocol.Effects.WaterSplash.Parser, new[]{ "Position", "Large", "Sound", "Ext", "Custom" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Effects.WaterSplashEvent), global::SuMultiplayer.Protocol.Effects.WaterSplashEvent.Parser, new[]{ "ServerTickMs", "EventId", "Splashes", "Ext", "Custom" }, null, null, null, null)
           }));
     }
     #endregion
@@ -1220,6 +1228,737 @@ namespace SuMultiplayer.Protocol.Effects {
           }
           case 48: {
             Z = input.ReadSInt32();
+            break;
+          }
+          case 802: {
+            Ext = input.ReadBytes();
+            break;
+          }
+          case 810: {
+            if (custom_ == null) {
+              Custom = new global::Google.Protobuf.WellKnownTypes.Any();
+            }
+            input.ReadMessage(Custom);
+            break;
+          }
+        }
+      }
+    }
+    #endif
+
+  }
+
+  /// <summary>
+  /// One host water splash.
+  /// </summary>
+  [global::System.Diagnostics.DebuggerDisplayAttribute("{ToString(),nq}")]
+  public sealed partial class WaterSplash : pb::IMessage<WaterSplash>
+  #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      , pb::IBufferMessage
+  #endif
+  {
+    private static readonly pb::MessageParser<WaterSplash> _parser = new pb::MessageParser<WaterSplash>(() => new WaterSplash());
+    private pb::UnknownFieldSet _unknownFields;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pb::MessageParser<WaterSplash> Parser { get { return _parser; } }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pbr::MessageDescriptor Descriptor {
+      get { return global::SuMultiplayer.Protocol.Effects.EffectsReflection.Descriptor.MessageTypes[3]; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    pbr::MessageDescriptor pb::IMessage.Descriptor {
+      get { return Descriptor; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public WaterSplash() {
+      OnConstruction();
+    }
+
+    partial void OnConstruction();
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public WaterSplash(WaterSplash other) : this() {
+      position_ = other.position_ != null ? other.position_.Clone() : null;
+      large_ = other.large_;
+      sound_ = other.sound_;
+      ext_ = other.ext_;
+      custom_ = other.custom_ != null ? other.custom_.Clone() : null;
+      _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public WaterSplash Clone() {
+      return new WaterSplash(this);
+    }
+
+    /// <summary>Field number for the "position" field.</summary>
+    public const int PositionFieldNumber = 1;
+    private global::SuMultiplayer.Protocol.Position.Vec3 position_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public global::SuMultiplayer.Protocol.Position.Vec3 Position {
+      get { return position_; }
+      set {
+        position_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "large" field.</summary>
+    public const int LargeFieldNumber = 2;
+    private bool large_;
+    /// <summary>
+    /// WaterSplashParticleSystem(terrain, position, large).  All current host call
+    /// sites pass large: false (engine facts above); carried so a future large call
+    /// cannot silently render small on clients.
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Large {
+      get { return large_; }
+      set {
+        large_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "sound" field.</summary>
+    public const int SoundFieldNumber = 3;
+    private bool sound_;
+    /// <summary>
+    /// true = the host also played Audio/Splashes for this splash.
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Sound {
+      get { return sound_; }
+      set {
+        sound_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "ext" field.</summary>
+    public const int ExtFieldNumber = 100;
+    private pb::ByteString ext_ = pb::ByteString.Empty;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public pb::ByteString Ext {
+      get { return ext_; }
+      set {
+        ext_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "custom" field.</summary>
+    public const int CustomFieldNumber = 101;
+    private global::Google.Protobuf.WellKnownTypes.Any custom_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public global::Google.Protobuf.WellKnownTypes.Any Custom {
+      get { return custom_; }
+      set {
+        custom_ = value;
+      }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override bool Equals(object other) {
+      return Equals(other as WaterSplash);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Equals(WaterSplash other) {
+      if (ReferenceEquals(other, null)) {
+        return false;
+      }
+      if (ReferenceEquals(other, this)) {
+        return true;
+      }
+      if (!object.Equals(Position, other.Position)) return false;
+      if (Large != other.Large) return false;
+      if (Sound != other.Sound) return false;
+      if (Ext != other.Ext) return false;
+      if (!object.Equals(Custom, other.Custom)) return false;
+      return Equals(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override int GetHashCode() {
+      int hash = 1;
+      if (position_ != null) hash ^= Position.GetHashCode();
+      if (Large != false) hash ^= Large.GetHashCode();
+      if (Sound != false) hash ^= Sound.GetHashCode();
+      if (Ext.Length != 0) hash ^= Ext.GetHashCode();
+      if (custom_ != null) hash ^= Custom.GetHashCode();
+      if (_unknownFields != null) {
+        hash ^= _unknownFields.GetHashCode();
+      }
+      return hash;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override string ToString() {
+      return pb::JsonFormatter.ToDiagnosticString(this);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void WriteTo(pb::CodedOutputStream output) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      output.WriteRawMessage(this);
+    #else
+      if (position_ != null) {
+        output.WriteRawTag(10);
+        output.WriteMessage(Position);
+      }
+      if (Large != false) {
+        output.WriteRawTag(16);
+        output.WriteBool(Large);
+      }
+      if (Sound != false) {
+        output.WriteRawTag(24);
+        output.WriteBool(Sound);
+      }
+      if (Ext.Length != 0) {
+        output.WriteRawTag(162, 6);
+        output.WriteBytes(Ext);
+      }
+      if (custom_ != null) {
+        output.WriteRawTag(170, 6);
+        output.WriteMessage(Custom);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(output);
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
+      if (position_ != null) {
+        output.WriteRawTag(10);
+        output.WriteMessage(Position);
+      }
+      if (Large != false) {
+        output.WriteRawTag(16);
+        output.WriteBool(Large);
+      }
+      if (Sound != false) {
+        output.WriteRawTag(24);
+        output.WriteBool(Sound);
+      }
+      if (Ext.Length != 0) {
+        output.WriteRawTag(162, 6);
+        output.WriteBytes(Ext);
+      }
+      if (custom_ != null) {
+        output.WriteRawTag(170, 6);
+        output.WriteMessage(Custom);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(ref output);
+      }
+    }
+    #endif
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int CalculateSize() {
+      int size = 0;
+      if (position_ != null) {
+        size += 1 + pb::CodedOutputStream.ComputeMessageSize(Position);
+      }
+      if (Large != false) {
+        size += 1 + 1;
+      }
+      if (Sound != false) {
+        size += 1 + 1;
+      }
+      if (Ext.Length != 0) {
+        size += 2 + pb::CodedOutputStream.ComputeBytesSize(Ext);
+      }
+      if (custom_ != null) {
+        size += 2 + pb::CodedOutputStream.ComputeMessageSize(Custom);
+      }
+      if (_unknownFields != null) {
+        size += _unknownFields.CalculateSize();
+      }
+      return size;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(WaterSplash other) {
+      if (other == null) {
+        return;
+      }
+      if (other.position_ != null) {
+        if (position_ == null) {
+          Position = new global::SuMultiplayer.Protocol.Position.Vec3();
+        }
+        Position.MergeFrom(other.Position);
+      }
+      if (other.Large != false) {
+        Large = other.Large;
+      }
+      if (other.Sound != false) {
+        Sound = other.Sound;
+      }
+      if (other.Ext.Length != 0) {
+        Ext = other.Ext;
+      }
+      if (other.custom_ != null) {
+        if (custom_ == null) {
+          Custom = new global::Google.Protobuf.WellKnownTypes.Any();
+        }
+        Custom.MergeFrom(other.Custom);
+      }
+      _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(pb::CodedInputStream input) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      input.ReadRawMessage(this);
+    #else
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
+            break;
+          case 10: {
+            if (position_ == null) {
+              Position = new global::SuMultiplayer.Protocol.Position.Vec3();
+            }
+            input.ReadMessage(Position);
+            break;
+          }
+          case 16: {
+            Large = input.ReadBool();
+            break;
+          }
+          case 24: {
+            Sound = input.ReadBool();
+            break;
+          }
+          case 802: {
+            Ext = input.ReadBytes();
+            break;
+          }
+          case 810: {
+            if (custom_ == null) {
+              Custom = new global::Google.Protobuf.WellKnownTypes.Any();
+            }
+            input.ReadMessage(Custom);
+            break;
+          }
+        }
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalMergeFrom(ref pb::ParseContext input) {
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
+            break;
+          case 10: {
+            if (position_ == null) {
+              Position = new global::SuMultiplayer.Protocol.Position.Vec3();
+            }
+            input.ReadMessage(Position);
+            break;
+          }
+          case 16: {
+            Large = input.ReadBool();
+            break;
+          }
+          case 24: {
+            Sound = input.ReadBool();
+            break;
+          }
+          case 802: {
+            Ext = input.ReadBytes();
+            break;
+          }
+          case 810: {
+            if (custom_ == null) {
+              Custom = new global::Google.Protobuf.WellKnownTypes.Any();
+            }
+            input.ReadMessage(Custom);
+            break;
+          }
+        }
+      }
+    }
+    #endif
+
+  }
+
+  /// <summary>
+  /// Host -> client: one batched set of splashes from the same host tick.
+  /// </summary>
+  [global::System.Diagnostics.DebuggerDisplayAttribute("{ToString(),nq}")]
+  public sealed partial class WaterSplashEvent : pb::IMessage<WaterSplashEvent>
+  #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      , pb::IBufferMessage
+  #endif
+  {
+    private static readonly pb::MessageParser<WaterSplashEvent> _parser = new pb::MessageParser<WaterSplashEvent>(() => new WaterSplashEvent());
+    private pb::UnknownFieldSet _unknownFields;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pb::MessageParser<WaterSplashEvent> Parser { get { return _parser; } }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pbr::MessageDescriptor Descriptor {
+      get { return global::SuMultiplayer.Protocol.Effects.EffectsReflection.Descriptor.MessageTypes[4]; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    pbr::MessageDescriptor pb::IMessage.Descriptor {
+      get { return Descriptor; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public WaterSplashEvent() {
+      OnConstruction();
+    }
+
+    partial void OnConstruction();
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public WaterSplashEvent(WaterSplashEvent other) : this() {
+      serverTickMs_ = other.serverTickMs_;
+      eventId_ = other.eventId_;
+      splashes_ = other.splashes_.Clone();
+      ext_ = other.ext_;
+      custom_ = other.custom_ != null ? other.custom_.Clone() : null;
+      _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public WaterSplashEvent Clone() {
+      return new WaterSplashEvent(this);
+    }
+
+    /// <summary>Field number for the "server_tick_ms" field.</summary>
+    public const int ServerTickMsFieldNumber = 1;
+    private long serverTickMs_;
+    /// <summary>
+    /// Host simulation clock in milliseconds (SubsystemGameInfo.TotalElapsedGameTime*1000).
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public long ServerTickMs {
+      get { return serverTickMs_; }
+      set {
+        serverTickMs_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "event_id" field.</summary>
+    public const int EventIdFieldNumber = 2;
+    private uint eventId_;
+    /// <summary>
+    /// Host session sequence, starts at 1, strictly increasing.  Clients dedupe by it.
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public uint EventId {
+      get { return eventId_; }
+      set {
+        eventId_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "splashes" field.</summary>
+    public const int SplashesFieldNumber = 3;
+    private static readonly pb::FieldCodec<global::SuMultiplayer.Protocol.Effects.WaterSplash> _repeated_splashes_codec
+        = pb::FieldCodec.ForMessage(26, global::SuMultiplayer.Protocol.Effects.WaterSplash.Parser);
+    private readonly pbc::RepeatedField<global::SuMultiplayer.Protocol.Effects.WaterSplash> splashes_ = new pbc::RepeatedField<global::SuMultiplayer.Protocol.Effects.WaterSplash>();
+    /// <summary>
+    /// 1 .. WaterSplashPolicy.MaxSplashesPerEvent.
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public pbc::RepeatedField<global::SuMultiplayer.Protocol.Effects.WaterSplash> Splashes {
+      get { return splashes_; }
+    }
+
+    /// <summary>Field number for the "ext" field.</summary>
+    public const int ExtFieldNumber = 100;
+    private pb::ByteString ext_ = pb::ByteString.Empty;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public pb::ByteString Ext {
+      get { return ext_; }
+      set {
+        ext_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "custom" field.</summary>
+    public const int CustomFieldNumber = 101;
+    private global::Google.Protobuf.WellKnownTypes.Any custom_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public global::Google.Protobuf.WellKnownTypes.Any Custom {
+      get { return custom_; }
+      set {
+        custom_ = value;
+      }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override bool Equals(object other) {
+      return Equals(other as WaterSplashEvent);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Equals(WaterSplashEvent other) {
+      if (ReferenceEquals(other, null)) {
+        return false;
+      }
+      if (ReferenceEquals(other, this)) {
+        return true;
+      }
+      if (ServerTickMs != other.ServerTickMs) return false;
+      if (EventId != other.EventId) return false;
+      if(!splashes_.Equals(other.splashes_)) return false;
+      if (Ext != other.Ext) return false;
+      if (!object.Equals(Custom, other.Custom)) return false;
+      return Equals(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override int GetHashCode() {
+      int hash = 1;
+      if (ServerTickMs != 0L) hash ^= ServerTickMs.GetHashCode();
+      if (EventId != 0) hash ^= EventId.GetHashCode();
+      hash ^= splashes_.GetHashCode();
+      if (Ext.Length != 0) hash ^= Ext.GetHashCode();
+      if (custom_ != null) hash ^= Custom.GetHashCode();
+      if (_unknownFields != null) {
+        hash ^= _unknownFields.GetHashCode();
+      }
+      return hash;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override string ToString() {
+      return pb::JsonFormatter.ToDiagnosticString(this);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void WriteTo(pb::CodedOutputStream output) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      output.WriteRawMessage(this);
+    #else
+      if (ServerTickMs != 0L) {
+        output.WriteRawTag(8);
+        output.WriteInt64(ServerTickMs);
+      }
+      if (EventId != 0) {
+        output.WriteRawTag(16);
+        output.WriteUInt32(EventId);
+      }
+      splashes_.WriteTo(output, _repeated_splashes_codec);
+      if (Ext.Length != 0) {
+        output.WriteRawTag(162, 6);
+        output.WriteBytes(Ext);
+      }
+      if (custom_ != null) {
+        output.WriteRawTag(170, 6);
+        output.WriteMessage(Custom);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(output);
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
+      if (ServerTickMs != 0L) {
+        output.WriteRawTag(8);
+        output.WriteInt64(ServerTickMs);
+      }
+      if (EventId != 0) {
+        output.WriteRawTag(16);
+        output.WriteUInt32(EventId);
+      }
+      splashes_.WriteTo(ref output, _repeated_splashes_codec);
+      if (Ext.Length != 0) {
+        output.WriteRawTag(162, 6);
+        output.WriteBytes(Ext);
+      }
+      if (custom_ != null) {
+        output.WriteRawTag(170, 6);
+        output.WriteMessage(Custom);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(ref output);
+      }
+    }
+    #endif
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int CalculateSize() {
+      int size = 0;
+      if (ServerTickMs != 0L) {
+        size += 1 + pb::CodedOutputStream.ComputeInt64Size(ServerTickMs);
+      }
+      if (EventId != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt32Size(EventId);
+      }
+      size += splashes_.CalculateSize(_repeated_splashes_codec);
+      if (Ext.Length != 0) {
+        size += 2 + pb::CodedOutputStream.ComputeBytesSize(Ext);
+      }
+      if (custom_ != null) {
+        size += 2 + pb::CodedOutputStream.ComputeMessageSize(Custom);
+      }
+      if (_unknownFields != null) {
+        size += _unknownFields.CalculateSize();
+      }
+      return size;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(WaterSplashEvent other) {
+      if (other == null) {
+        return;
+      }
+      if (other.ServerTickMs != 0L) {
+        ServerTickMs = other.ServerTickMs;
+      }
+      if (other.EventId != 0) {
+        EventId = other.EventId;
+      }
+      splashes_.Add(other.splashes_);
+      if (other.Ext.Length != 0) {
+        Ext = other.Ext;
+      }
+      if (other.custom_ != null) {
+        if (custom_ == null) {
+          Custom = new global::Google.Protobuf.WellKnownTypes.Any();
+        }
+        Custom.MergeFrom(other.Custom);
+      }
+      _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(pb::CodedInputStream input) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      input.ReadRawMessage(this);
+    #else
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
+            break;
+          case 8: {
+            ServerTickMs = input.ReadInt64();
+            break;
+          }
+          case 16: {
+            EventId = input.ReadUInt32();
+            break;
+          }
+          case 26: {
+            splashes_.AddEntriesFrom(input, _repeated_splashes_codec);
+            break;
+          }
+          case 802: {
+            Ext = input.ReadBytes();
+            break;
+          }
+          case 810: {
+            if (custom_ == null) {
+              Custom = new global::Google.Protobuf.WellKnownTypes.Any();
+            }
+            input.ReadMessage(Custom);
+            break;
+          }
+        }
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalMergeFrom(ref pb::ParseContext input) {
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
+            break;
+          case 8: {
+            ServerTickMs = input.ReadInt64();
+            break;
+          }
+          case 16: {
+            EventId = input.ReadUInt32();
+            break;
+          }
+          case 26: {
+            splashes_.AddEntriesFrom(ref input, _repeated_splashes_codec);
             break;
           }
           case 802: {

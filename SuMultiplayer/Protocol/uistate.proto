@@ -1,0 +1,76 @@
+syntax = "proto3";
+
+package sump.uistate;
+
+option csharp_namespace = "SuMultiplayer.Protocol.UiState";
+option optimize_for = SPEED;
+
+import "google/protobuf/any.proto";
+
+// ---------------------------------------------------------------------------
+// Client -> host: one snapshot of the client's **interface layer**.
+//
+// Why this message exists: the host's split-screen view of a client already
+// follows that client's camera (auto client view / H3 replace mode; both bind
+// GameWidget.Target to the client avatar's ComponentPlayer).  The view's HUD,
+// however, is the *host's* HUD for that view's local player, so without this
+// message the third view shows the host's input form / HUD / panels instead of
+// the client's.
+//
+// What is carried (all engine facts, read-only on the client):
+//   revision        monotonic per client session (>0); the host drops stale ones.
+//   input_kind      UiInputKind below: touch / keyboard+mouse / gamepad, derived
+//                   from the client's active GameWidget devices + the live
+//                   ComponentInput.IsControlledByTouch switch.
+//   hud_visible     engine HUD gate (ComponentGui.ControlsContainerWidget.IsVisible)
+//                   AND the client's current screen is the game screen.
+//   screen          ScreensManager.CurrentScreen class name ("GameScreen" = normal).
+//   dialog_present  / dialog_type   engine dialog class parented to the client's GuiWidget.
+//   modal_present   / modal_type    ComponentGui.ModalPanelWidget class name.
+//   chat_input_open mod-owned chat HUD input line (informational; see the module docs
+//                   for why a per-view clone is not instantiated).
+//
+// Wire id lives in protocol.proto (MessageType.CLIENT_UI_STATE = 100).
+// Append-only: never renumber.
+//
+// Source: Survivalcraft/Game/ComponentGui.cs:395（ControlsContainerWidget.IsVisible）
+// Source: Survivalcraft/Game/ComponentGui.cs:536-559（ModalPanelWidget = FullInventoryWidget /
+//         CreativeInventoryWidget / ClothingWidget）
+// Source: Survivalcraft/Game/ComponentInput.cs:30（IsControlledByTouch）
+// Source: Survivalcraft/Game/DialogsManager.cs:50（ShowDialog：dialog parented to GuiWidget）
+// Source: Survivalcraft/Game/ScreensManager.cs:46（CurrentScreen）
+// Source: Survivalcraft/Game/GameWidget.cs:101-162（per-view WidgetInput.Devices）
+// ---------------------------------------------------------------------------
+message ClientUiState {
+  // >0, monotonic per client session.  The host rejects revision <= last applied.
+  uint32 revision = 1;
+
+  // UiInputKind: 0 = unknown (never sent by this mod), 1 = touch,
+  // 2 = keyboard + mouse, 3 = gamepad.
+  uint32 input_kind = 2;
+
+  // Engine HUD visible for the client's primary local player.
+  bool hud_visible = 3;
+
+  // Active engine screen class name.  1..64 chars from [A-Za-z0-9_.] only.
+  string screen = 4;
+
+  // An engine dialog is open, and its class name (e.g. "GameMenuDialog").
+  // dialog_type must be empty when dialog_present = false.
+  bool dialog_present = 5;
+  string dialog_type = 6;
+
+  // A modal panel is open, and its class name (e.g. "FullInventoryWidget",
+  // "CreativeInventoryWidget", "ClothingWidget", "ChestWidget", "FurnaceWidget",
+  // "CraftingTableWidget", "DispenserWidget").
+  // modal_type must be empty when modal_present = false.
+  bool modal_present = 7;
+  string modal_type = 8;
+
+  // The mod's chat HUD input line is open on the client.
+  bool chat_input_open = 9;
+
+  // Third-party extension points: see doc/message-protocol.md.
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}

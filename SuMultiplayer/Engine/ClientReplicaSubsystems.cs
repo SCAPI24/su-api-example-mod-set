@@ -2392,6 +2392,183 @@ namespace SuMultiplayer.Engine
     }
 
     // =====================================================================================
+    // 熔炉：客户端只保留火焰粒子表现（Game.SubsystemFurnaceBlockBehavior）
+    //   · OnBlockAdded:30-49   contents 64/65 时 FindDatabaseObject("Furnace") → CreateEntity/AddEntity
+    //                          （方块实体），contents 65 时 AddFire（本地粒子）；
+    //   · OnBlockRemoved:51-70 非熔炉时 DropAllItems + RemoveEntity；contents 65 时 RemoveFire；
+    //   · OnBlockGenerated:72-78 / OnBlockModified 的 AddFire 调用点同理；
+    //   · OnChunkDiscarding:80-94 把本块里的火焰全部收掉；
+    //   · 没有 Update：火焰完全由"格子 contents == 65"驱动（ComponentFurnace.Update 每帧写 65/64）。
+    // 客户端 base 会建/删方块实体并掉落物品（都是主机权威），所以客户端的四个回调全部改走
+    // FurnaceReplicaPresentation（只建/收 FireParticleSystem），绝不调用 base。
+    // =====================================================================================
+
+    public sealed class SuSubsystemFurnaceBlockBehavior : SubsystemFurnaceBlockBehavior,
+        IUpdateable
+    {
+        private const int PendingGeneratedCap = 256;
+
+        // 桥注入前（世界刚加载的第一帧）OnBlockGenerated 可能已经跑过：先记住格子（有界），
+        // 等表现层可用时按**当前格子值**重放一次（不是静态状态，也不静默丢）。
+        private readonly List<Point3> m_pendingGenerated = new List<Point3>(16);
+        private long m_pendingGeneratedDropped;
+        private long m_missingPresenter;
+        private long m_lastMissingLogMs;
+        private bool m_replayLogged;
+        private bool m_dropLogged;
+
+        public UpdateOrder UpdateOrder => UpdateOrder.Default;
+
+        private FurnaceReplicaPresentation Presentation =>
+            (SubsystemTerrain as SuSubsystemTerrain)?.Bridge?.FurnacePresenter;
+
+        void IUpdateable.Update(float dt)
+        {
+            if (!ReplicaGates.IsClient(SubsystemTerrain)) return;
+            // 客户端：没有本地炉况模拟；只做 1 秒一次的有界越界扫除（furnaceFlameStaleSweep）
+            // 与"表现层接线前生成的格"重放。主机侧引擎行为本来就没有 Update，这里不额外推进。
+            FurnaceReplicaPresentation presentation = Presentation;
+            if (presentation == null)
+            {
+                NoteMissingPresenter("Update", 0, 0, 0);
+                return;
+            }
+            ReplayPendingGenerated(presentation);
+            presentation.Tick(dt);
+            presentation.MaybeLog(Time.RealTime);
+        }
+
+        private void ReplayPendingGenerated(FurnaceReplicaPresentation presentation)
+        {
+            if (m_pendingGenerated.Count == 0) return;
+            if (SubsystemTerrain?.Terrain == null) return;
+            int replayed = 0;
+            for (int i = m_pendingGenerated.Count - 1; i >= 0; i--)
+            {
+                Point3 cell = m_pendingGenerated[i];
+                if (cell.Y < 0 || cell.Y > 255)
+                {
+                    m_pendingGenerated.RemoveAt(i);
+                    continue;
+                }
+                TerrainChunk chunk = SubsystemTerrain.Terrain.GetChunkAtCell(cell.X, cell.Z);
+                if (chunk == null || !ChunkContentStages.IsContentValid((int)chunk.State))
+                    continue;   // 区块内容还没定稿：保留待重放
+                int value = SubsystemTerrain.Terrain.GetCellValueFast(cell.X, cell.Y, cell.Z);
+                presentation.PresentCell(value, cell.X, cell.Y, cell.Z);
+                m_pendingGenerated.RemoveAt(i);
+                replayed++;
+            }
+            if (replayed > 0 && !m_replayLogged)
+            {
+                m_replayLogged = true;
+                Log.Information("[SuMP] 熔炉火焰表现：桥注入前生成的 " + replayed +
+                    " 格已按当前格子值重放（超出上限丢弃 " + m_pendingGeneratedDropped + " 格）");
+            }
+        }
+
+        /// <summary>
+        /// 表现层未接线（TerrainBridge.FurnacePresenter == null）：明确计数 + 限流 Warning，
+        /// 不假装火焰已显示、也不退回 base（base 会建实体）。
+        /// </summary>
+        private void NoteMissingPresenter(string where, int x, int y, int z)
+        {
+            m_missingPresenter++;
+            long nowMs = (long)(Time.RealTime * 1000.0);
+            if (m_lastMissingLogMs != 0 && nowMs - m_lastMissingLogMs < 10000) return;
+            m_lastMissingLogMs = nowMs;
+            Log.Warning("[SuMP] 熔炉火焰表现层未接线（" + where + " @ " + x + "," + y + "," + z +
+                "）→ 本格火焰暂不显示；累计 " + m_missingPresenter +
+                " 次（TerrainBridge.FurnacePresenter == null，检查组合根装配）");
+        }
+
+        public override void OnBlockGenerated(int value, int x, int y, int z, bool isLoaded)
+        {
+            if (ReplicaGates.IsClient(SubsystemTerrain))
+            {
+                FurnaceReplicaPresentation presentation = Presentation;
+                if (presentation != null)
+                {
+                    presentation.PresentCell(value, x, y, z);
+                    return;
+                }
+                if (m_pendingGenerated.Count < PendingGeneratedCap)
+                {
+                    m_pendingGenerated.Add(new Point3(x, y, z));
+                }
+                else
+                {
+                    m_pendingGeneratedDropped++;
+                    if (!m_dropLogged)
+                    {
+                        m_dropLogged = true;
+                        Log.Warning("[SuMP] 熔炉火焰表现：待重放格子超过上限 " +
+                            PendingGeneratedCap + " → 之后的生成格不再排队（累计丢弃 " +
+                            m_pendingGeneratedDropped + " 格；表现层接线后由炉况 / 格子变化重试）");
+                    }
+                }
+                NoteMissingPresenter("OnBlockGenerated", x, y, z);
+                return;
+            }
+            base.OnBlockGenerated(value, x, y, z, isLoaded);
+        }
+
+        public override void OnBlockAdded(int value, int oldValue, int x, int y, int z)
+        {
+            if (ReplicaGates.IsClient(SubsystemTerrain))
+            {
+                // ApplyCells 落地主机"放置 / 点燃熔炉"后由 ClientBlockBehaviorNotifier 补发到这里。
+                // 绝不 base：引擎的 OnBlockAdded 会 CreateEntity/AddEntity。
+                FurnaceReplicaPresentation presentation = Presentation;
+                if (presentation != null) presentation.PresentCell(value, x, y, z);
+                else NoteMissingPresenter("OnBlockAdded", x, y, z);
+                return;
+            }
+            base.OnBlockAdded(value, oldValue, x, y, z);
+        }
+
+        public override void OnBlockModified(int value, int oldValue, int x, int y, int z)
+        {
+            if (ReplicaGates.IsClient(SubsystemTerrain))
+            {
+                // data-only（朝向变化）不会改变火焰参数：表现层只 Keep，不会重建第二个粒子。
+                FurnaceReplicaPresentation presentation = Presentation;
+                if (presentation != null) presentation.PresentCell(value, x, y, z);
+                else NoteMissingPresenter("OnBlockModified", x, y, z);
+                return;
+            }
+            base.OnBlockModified(value, oldValue, x, y, z);
+        }
+
+        public override void OnBlockRemoved(int value, int newValue, int x, int y, int z)
+        {
+            if (ReplicaGates.IsClient(SubsystemTerrain))
+            {
+                // 绝不 base：引擎的 OnBlockRemoved 会 DropAllItems + RemoveEntity。
+                FurnaceReplicaPresentation presentation = Presentation;
+                if (presentation != null) presentation.Forget(x, y, z);
+                else NoteMissingPresenter("OnBlockRemoved", x, y, z);
+                return;
+            }
+            base.OnBlockRemoved(value, newValue, x, y, z);
+        }
+
+        public override void OnChunkDiscarding(TerrainChunk chunk)
+        {
+            if (ReplicaGates.IsClient(SubsystemTerrain))
+            {
+                // base 只收火焰（不像营火会写格），但客户端仍需先按本块收掉自己建的粒子，
+                // 避免陈旧粒子留在已丢弃的区块上。
+                FurnaceReplicaPresentation presentation = Presentation;
+                if (presentation != null) presentation.ForgetChunk(chunk);
+                else NoteMissingPresenter("OnChunkDiscarding", 0, 0, 0);
+                return;
+            }
+            base.OnChunkDiscarding(chunk);
+        }
+    }
+
+    // =====================================================================================
     // 草陷阱：Game.SubsystemGrassTrapBlockBehavior
     //   · OnCollide:20-32 累计 Damage（不写格）；
     //   · Update:34-59 Damage>1 时 DestroyCell 周边 5 格草陷阱（:47）。

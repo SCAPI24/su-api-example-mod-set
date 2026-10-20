@@ -1,0 +1,89 @@
+syntax = "proto3";
+
+package sump.respawn;
+
+option csharp_namespace = "SuMultiplayer.Protocol.Respawn";
+option optimize_for = SPEED;
+
+import "google/protobuf/any.proto";
+import "vitals.proto";
+
+// ---------------------------------------------------------------------------
+// Client-requested respawn after a host-decided death (append-only ids 101 / 102).
+//
+// Product rule (2026-10, do not regress):
+//   * the host NEVER auto-respawns a dead client character and no longer has a
+//     respawn timer.  It sends the Death edge and marks the host-side avatar
+//     dead; it then waits for the owner's explicit request;
+//   * the client shows the engine-equivalent death screen (large message +
+//     DeathCamera, exactly the presentation in
+//     Survivalcraft/Game/PlayerData.cs:275-330) and only after the engine's
+//     1.5 s guard does any input (tap / click / key) send ONE request per death;
+//   * the host validates the request against the tracked owner + currently dead
+//     character and answers with PLAYER_RESPAWN_RESULT.  Accepting respawns at
+//     that PlayerData's SpawnPosition and then emits the existing RESPAWN event
+//     (id 96) + authoritative vitals report (id 95);
+//   * rejected requests are explicit: not-dead / wrong-owner / respawn-forbidden
+//     / cooldown / unknown-player (plus respawn-failed for an engine refusal).
+//
+// Why a separate result message instead of overloading the RESPAWN event: the
+// request must be answerable even when the host rejects it (nothing respawned,
+// so no RESPAWN edge exists), and the client needs the stable rejection reason
+// for its HUD + counters.
+//
+// Source: Survivalcraft/Game/PlayerData.cs:275-330 (PlayerDead presentation,
+//         1.5 s guard, GameMode.Cruel / Adventure restart rules)
+// Source: Survivalcraft/Game/GameWidget.cs:26-80,164-176 (per-widget DeathCamera,
+//         ActiveCamera setter; no state-machine entry required)
+// Source: Survivalcraft/Game/ComponentGui.cs:178-187 (DisplayLargeMessage)
+// ---------------------------------------------------------------------------
+
+// Client -> host: "the owner of this character tapped the death screen; respawn
+// it now".  Sent at most once per death episode (the client gate refuses to send
+// another request until the death is resolved).
+message PlayerRespawnRequest {
+  // The requesting client's own transport id.  Must equal the connection's
+  // clientId; a mismatch is rejected as `wrong-owner`.
+  uint32 client_id = 1;
+  // Local character slot on that device (0..3).  (client_id, slot) is the stable
+  // PlayerKey (Players/PlayerKey.cs).
+  uint32 slot = 2;
+  // Host death-edge revision the client is answering (0 = client did not have
+  // one, e.g. a legacy / late snapshot).  Diagnostics only; the host validates
+  // liveness from its own state, never from this field.
+  uint32 death_revision = 3;
+  // Per-session monotonic request counter (> 0); echoed in the result so the
+  // client can drop a stale answer.
+  int64 request_sequence = 4;
+  // Client real time of death (seconds, diagnostic only; the host applies its
+  // own 1.5 s guard against its own death-edge timestamp).
+  double client_death_time = 5;
+  // Third-party extension points: see doc/message-protocol.md.
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}
+
+enum PlayerRespawnResultKind {
+  PLAYER_RESPAWN_RESULT_KIND_UNSPECIFIED = 0;
+  PLAYER_RESPAWN_RESULT_KIND_ACCEPTED = 1;
+  PLAYER_RESPAWN_RESULT_KIND_REJECTED = 2;
+}
+
+// Host -> requesting client: the single verdict for one request.
+message PlayerRespawnResult {
+  // Echo of the request identity.
+  uint32 client_id = 1;
+  uint32 slot = 2;
+  int64 request_sequence = 3;
+  PlayerRespawnResultKind kind = 4;
+  // Stable reason code.  Accepted = "accepted".  Rejected = one of
+  // `not-dead`, `wrong-owner`, `respawn-forbidden`, `cooldown`,
+  // `unknown-player`, `respawn-failed` (never a free-form sentence).
+  string reason = 5;
+  // Accepted: the spawn point the host used (PlayerData.SpawnPosition).
+  bool has_position = 6;
+  sump.vitals.VitalsVec3 position = 7;
+  // Third-party extension points: see doc/message-protocol.md.
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}

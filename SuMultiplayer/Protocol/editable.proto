@@ -1,0 +1,99 @@
+syntax = "proto3";
+
+package sump.protocol;
+
+option csharp_namespace = "SuMultiplayer.Protocol";
+option optimize_for = SPEED;
+
+// ---------------------------------------------------------------------------
+// Editable block content (truth-table circuits / memory banks).
+//
+// Engine facts:
+//   · SubsystemEditableItemBehavior<T> keeps the block content in a private
+//     Dictionary<Point3,T> (m_blocksData) and the item content in m_itemsData
+//     (Source: Survivalcraft/Game/SubsystemEditableItemBehavior.cs:14-39).
+//   · OnEditBlock opens EditTruthTableDialog / EditMemoryBankDialog; the dialog's
+//     OK handler writes SetBlockData on **the side that owns the behaviour**.
+//     On a client replica that write is local-only, so the host never sees it
+//     (the reported bug: the editor sees the change, the host does not).
+//   · TruthTableData is exactly 16 nibbles (Source: TruthTableData.cs:15).
+//   · MemoryBankData is at most 256 nibbles plus LastOutput
+//     (Source: MemoryBankData.cs:35 address < 256, :59 LoadString caps at 256).
+//
+// Authority model (same as BLOCK_USE / CONTAINER_EDIT):
+//   · the client dialog commit becomes EDITABLE_EDIT_REQUEST (block cell + content);
+//     the client never calls SetBlockData on its replica from that path;
+//   · the host validates opener identity / distance / block cell / content shape,
+//     applies to the authoritative SubsystemEditableItemBehavior, then broadcasts
+//     EDITABLE_STATE (requester + clients near the block);
+//   · the client applies EDITABLE_STATE to its replica (presentation-only) and
+//     reverts on a rejected edit because the rejection carries the authoritative
+//     content (or the block is gone and the replica content is dropped).
+//
+// Append-only: the ids live in protocol.proto (EDITABLE_EDIT_REQUEST=72,
+// EDITABLE_EDIT_RESULT=73, EDITABLE_STATE=74); no existing id is renumbered.
+// ---------------------------------------------------------------------------
+
+// Which SubsystemEditableItemBehavior owns the content. Ids (not class names)
+// are on the wire: the client never instantiates a type named by the peer.
+enum EditableKind {
+  EDITABLE_KIND_NONE = 0;
+  // Source: Survivalcraft/Game/SubsystemTruthTableCircuitBlockBehavior.cs (contents 188)
+  EDITABLE_KIND_TRUTH_TABLE = 1;
+  // Source: Survivalcraft/Game/SubsystemMemoryBankBlockBehavior.cs (contents 186)
+  EDITABLE_KIND_MEMORY_BANK = 2;
+}
+
+// Client -> host: "apply this edited content to this block cell".
+message EditableEditRequest {
+  // Per-connection monotonic sequence; the result echoes it.
+  int64 sequence = 1;
+  int32 x = 2;
+  int32 y = 3;
+  int32 z = 4;
+  // Terrain contents the client observed (host rejects a stale/mismatched cell).
+  int32 contents = 5;
+  EditableKind kind = 6;
+  // The host revision the dialog was opened on (informational; the real
+  // precondition is base_data == authoritative content).
+  int32 base_revision = 7;
+  // The content the dialog started from (bounded: 16 bytes truth table /
+  // 257 bytes memory bank). The host accepts only when this still equals its
+  // authoritative content (no lost update).
+  bytes base_data = 8;
+  // The content the dialog produced (same bound as base_data).
+  bytes data = 9;
+  // Requester's effective interaction reach (same semantics as BlockUseRequest.reach).
+  optional float reach = 10;
+}
+
+// Host -> client: answer for one EditableEditRequest. The authoritative
+// EditableState (if the cell still exists) is sent before this message.
+message EditableEditResult {
+  int64 sequence = 1;
+  bool accepted = 2;
+  // Explicit rejection reason (never empty when accepted = false); stable code
+  // before the first ':' (stale-content / stale-revision / block-changed / ...).
+  string reason = 3;
+  EditableKind kind = 4;
+  int32 x = 5;
+  int32 y = 6;
+  int32 z = 7;
+  int32 revision = 8;
+}
+
+// Host -> client: authoritative content of one editable block cell.
+// Presentation-only on the client: it writes the replica content dictionary and
+// never queues electric simulation / never writes world state.
+message EditableState {
+  int32 x = 1;
+  int32 y = 2;
+  int32 z = 3;
+  int32 contents = 4;
+  EditableKind kind = 5;
+  // Host monotonic per-cell revision: the client drops an older state as stale
+  // (equal revision is a resend and is applied idempotently).
+  int32 revision = 6;
+  // Bounded engine content (16 / 257 bytes; see EditableKind above).
+  bytes data = 7;
+}

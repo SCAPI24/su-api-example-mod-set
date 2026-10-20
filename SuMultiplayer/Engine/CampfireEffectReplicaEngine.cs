@@ -59,6 +59,12 @@ namespace SuMultiplayer.Engine
 
         public event Action<CampfireExtinguishData> HostCampfireExtinguished;
 
+        /// <summary>
+        /// 全局声音中继覆盖口（组合根注入）：主机本端引擎已经播过 Audio/Sizzles，客户端由本
+        /// 模块的定向事件播放；登记后全局连续捕获不再重复发送（防双播）。
+        /// </summary>
+        public IHostSoundCoverPort SoundCover { get; set; }
+
         public bool IsClientReplica => m_clientReplica;
 
         public void Pump()
@@ -121,6 +127,10 @@ namespace SuMultiplayer.Engine
             }
             for (int i = 0; i < limit; i++)
             {
+                // 主机引擎已经在 ResizeCampfire 里播过这一格的 Sizzles：登记给全局捕获，
+                // 避免同一个声音再被全局中继发一遍（客户端只收本模块这一条事件）。
+                SoundCover?.CoverPlayedSoundDirectory("Audio/Sizzles",
+                    new Vector3(cells[i].X, cells[i].Y, cells[i].Z), 1f, 3f, 1, "campfire");
                 uint eventId = (uint)(++m_nextEventId);
                 if (eventId == 0) eventId = (uint)(++m_nextEventId);
                 var data = new CampfireExtinguishData(0, tick, eventId,

@@ -15,6 +15,12 @@ message CellEditRequest {
   int32 z = 4;
   int32 contents = 5;
   int32 data = 6;
+  // Requester's effective interaction reach in metres (engine ComponentMiner.Raycast:
+  // Creative ? SettingsManager.CreativeReach : 5f).  Host rule:
+  // allowed = min(reach + tolerance, serverMax); absent (old client) = 5.0 / 7.5
+  // depending on the host world's game mode.
+  // Source: Survivalcraft/Game/ComponentMiner.cs:378
+  optional float reach = 10;
   // Third-party extension points: see doc/message-protocol.md.
   bytes ext = 100;
   google.protobuf.Any custom = 101;

@@ -107,7 +107,7 @@ namespace SuMultiplayer.Net
     public readonly struct ExplosionRequestData
     {
         public ExplosionRequestData(long sequence, int kind, Vector3 position, Vector3 direction,
-            int itemValue, int activeSlot)
+            int itemValue, int activeSlot, bool hasReach = false, float reach = 0f)
         {
             Sequence = sequence;
             Kind = kind;
@@ -115,6 +115,8 @@ namespace SuMultiplayer.Net
             Direction = direction;
             ItemValue = itemValue;
             ActiveSlot = activeSlot;
+            HasReach = hasReach;
+            Reach = reach;
         }
 
         public long Sequence { get; }
@@ -123,6 +125,10 @@ namespace SuMultiplayer.Net
         public Vector3 Direction { get; }
         public int ItemValue { get; }
         public int ActiveSlot { get; }
+        /// <summary>请求是否携带了有效 reach（false = 旧客户端 / 旧载荷）。</summary>
+        public bool HasReach { get; }
+        /// <summary>请求者的有效交互距离（米）；<see cref="HasReach"/> = false 时无意义。</summary>
+        public float Reach { get; }
 
         public string Describe() => "seq=" + Sequence + " kind=" +
             (Kind == ExplosionRequestKinds.Ignite ? "ignite" : Kind == ExplosionRequestKinds.Throw
@@ -292,8 +298,9 @@ namespace SuMultiplayer.Net
             return true;
         }
 
-        public static P.ExplosionRequest EncodeRequest(in ExplosionRequestData request) =>
-            new P.ExplosionRequest
+        public static P.ExplosionRequest EncodeRequest(in ExplosionRequestData request)
+        {
+            var message = new P.ExplosionRequest
             {
                 Sequence = request.Sequence,
                 Kind = (P.ExplosionRequestKind)request.Kind,
@@ -302,6 +309,9 @@ namespace SuMultiplayer.Net
                 ItemValue = request.ItemValue,
                 ActiveSlot = request.ActiveSlot
             };
+            if (request.HasReach) message.Reach = request.Reach;
+            return message;
+        }
 
         public static bool TryDecodeRequest(P.ExplosionRequest message,
             out ExplosionRequestData request, out string reason)
@@ -355,7 +365,7 @@ namespace SuMultiplayer.Net
                 return false;
             }
             request = new ExplosionRequestData(message.Sequence, kind, position, direction,
-                message.ItemValue, message.ActiveSlot);
+                message.ItemValue, message.ActiveSlot, message.HasReach, message.Reach);
             reason = null;
             return true;
         }

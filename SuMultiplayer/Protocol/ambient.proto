@@ -1,0 +1,54 @@
+syntax = "proto3";
+
+package sump.ambient;
+
+option csharp_namespace = "SuMultiplayer.Protocol.Ambient";
+option optimize_for = SPEED;
+
+// ---------------------------------------------------------------------------
+// Host -> client: looping ambient-bed volumes for one client.
+//
+// Engine facts (Survivalcraft/Game/SubsystemAmbientSounds.cs):
+//   * Update drives three *looped* Sound objects created with
+//     SubsystemAudio.CreateSound: Audio/Fire, Audio/Water, Audio/Magma (:69-77);
+//   * the public FireSoundVolume / WaterSoundVolume / MagmaSoundVolume values are
+//     set every frame by block behaviours / ComponentOnFire, then reset to 0 at
+//     the end of the same Update (:61-63);
+//   * those setters live in behaviours that are gated off on a client replica
+//     (Engine/ClientReplicaSubsystems.cs), so a vanilla client would always feed
+//     0 into the loops and hear nothing.
+//
+// The host therefore computes the same volumes from the client avatar's position
+// and sends them here.  Four floats are carried:
+//   fire      = burning fire blocks (0.75 * inverse-square intensity) and
+//               entities on fire (CalculateVolume(distance, 2f, 5f));
+//   campfire  = nearest lit campfire (CalculateVolume(distance, 2f));
+//   water     = nearest flowing water (0.5 * CalculateVolume(distance, 2f, 3.5f));
+//   magma     = nearest magma (CalculateVolume(distance, 2f, 3.5f)).
+//
+// The client applies FireSoundVolume = max(fire, campfire), WaterSoundVolume =
+// water, MagmaSoundVolume = magma immediately before its own
+// SubsystemAmbientSounds.Update, so the engine keeps owning the loop / fade /
+// Sizzles logic.  Clients never write cells, spawn entities or run the gated
+// behaviours.
+//
+// Wire id lives in protocol.proto (MessageType.AMBIENT_SOUNDS_STATE = 93).
+// It is append-only: never renumber.
+// ---------------------------------------------------------------------------
+message AmbientSoundsState {
+  // Monotonically increasing per host session.  A client ignores revisions that
+  // are not newer than the last accepted one (duplicate / stale / replay).
+  uint32 revision = 1;
+  // Host time when the volumes were computed (ms, wraps).
+  uint32 server_tick_ms = 2;
+  // Target client.  The host addresses one small message per client; the client
+  // rejects a mismatch instead of applying somebody else's ambient bed.
+  uint32 target_client_id = 3;
+  // Final raw volumes (before SettingsManager.SoundsVolume).  Water / campfire /
+  // magma are in [0, 1]; fire is the sum of burning-cell inverse-square terms and
+  // may exceed 1 (the engine clamps the final Sound.Volume to 0..1).
+  float fire_volume = 4;
+  float campfire_volume = 5;
+  float water_volume = 6;
+  float magma_volume = 7;
+}

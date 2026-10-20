@@ -140,6 +140,12 @@ namespace CmdBridgeMod
             /// <summary>`MoreButton` 自己现在能不能点。</summary>
             public bool ToggleHittable;
 
+            /// <summary>`MoreButton` 所在视图的输入面没有鼠标设备 → 合成点击永远不会派生 Click。</summary>
+            public bool ToggleNoMouse;
+
+            /// <summary>没有鼠标设备时的 `Devices` 文本（写进错误消息）。</summary>
+            public string ToggleNoMouseDevices;
+
             /// <summary>是否真的点下去了（虚拟输入已写入）。</summary>
             public bool Clicked;
 
@@ -168,6 +174,8 @@ namespace CmdBridgeMod
             public bool OffScreen;
             public string BlockedBy;
             public string Reason;
+            public int? GameWidget;
+            public bool MouseDevice;
             public bool ModalPanelOpen;
             public string ModalPanel;
             public float ClientX;
@@ -212,7 +220,7 @@ namespace CmdBridgeMod
         /// （与 `CommandRouter.WaitForConditions` 同一套做法）。在游戏线程上它**明确报错**
         /// （`hud_reveal_pending` / `more_toggle_pending`）而不是卡住整帧或假装点成功。
         /// </summary>
-        internal HudRevealReport EnsureHudTargetRevealed(string target)
+        internal HudRevealReport EnsureHudTargetRevealed(string target, int? gameWidget = null)
         {
             var report = new HudRevealReport();
             if (string.IsNullOrWhiteSpace(target))
@@ -223,15 +231,16 @@ namespace CmdBridgeMod
             // 等布局 → 点 MoreButton → 等展开 → 复核"必须串行。
             lock (m_hudRevealGate)
             {
-                EnsureHudTargetRevealedCore(target, report);
+                EnsureHudTargetRevealedCore(target, gameWidget, report);
             }
             return report;
         }
 
         /// <summary>规则 1 + 规则 2 的串行实现（并发保护见 <see cref="EnsureHudTargetRevealed"/>）。</summary>
-        private void EnsureHudTargetRevealedCore(string target, HudRevealReport report)
+        private void EnsureHudTargetRevealedCore(string target, int? gameWidget,
+            HudRevealReport report)
         {
-            HudProbe probe = ProbeHudTarget(target);
+            HudProbe probe = ProbeHudTarget(target, gameWidget);
             if (!probe.Present || !probe.InHud)
             {
                 report.Note = "规则 1 / 规则 2 没有介入：目标不在世界内 HUD 里（present="
@@ -252,6 +261,11 @@ namespace CmdBridgeMod
                 && !probe.MoreToggleHittable && probe.MoreToggleOffScreen;
             // 规则 2 能帮上忙的唯一情形：目标挂在 `MoreContents` 里，而二级**收着**。
             bool secondLevelHelpful = probe.InMoreContents && !probe.MoreExpanded;
+            // E 是键盘输入，只到带键盘设备的那个视图（本地分屏 = H1）。目标在别的视图时绝不按 E。
+            int keyboardView = UiInspector.PrimaryGameWidgetIndex();
+            bool targetInKeyboardView = !probe.GameWidget.HasValue
+                || keyboardView == UiSplitView.NoView
+                || probe.GameWidget.Value == keyboardView;
 
             if (!targetOffScreen && !toggleOffScreen && !secondLevelHelpful)
             {
@@ -300,6 +314,30 @@ namespace CmdBridgeMod
                     return;
                 }
             }
+            else if (!targetInKeyboardView)
+            {
+                // E 只到"键盘视图"：本地分屏里只有 H1 的 GameWidget 带 Keyboard/Mouse 设备
+                // （Source: `GameWidget.DetermineInputDevices`，`GameWidget.cs:122-162`）。
+                // 目标是别的视图时按 E 只会打开**另一个玩家**的仓库 —— 那不是帮它，是改错人的状态。
+                Log.Information("[CmdBridge][hud] step 1/4 target '" + target + "' is in the in-world HUD ("
+                    + probe.HudContainer + ") of gameWidget " + (probe.GameWidget.HasValue
+                        ? probe.GameWidget.Value.ToString() : "<none>")
+                    + " and not hittable, but it is NOT the keyboard view (gameWidget "
+                    + keyboardView + ") -> NOT pressing " + HudRevealKeyName
+                    + " (that would open another player's inventory)"
+                    + (secondLevelHelpful
+                        ? "; the " + UiInspector.MoreToggleName
+                          + " step below acts on that view's own input surface"
+                        : "; the normal click path will report the real error"));
+                if (!secondLevelHelpful)
+                {
+                    report.Note = "规则 1 没有介入：目标属于 gameWidget "
+                        + (probe.GameWidget.HasValue ? probe.GameWidget.Value.ToString() : "<none>")
+                        + "，不是键盘视图（gameWidget " + keyboardView + "），按 " + HudRevealKeyName
+                        + " 只会打开另一个玩家的仓库；交回正常点击路径报真实原因。";
+                    return;
+                }
+            }
             else
             {
                 Log.Information("[CmdBridge][hud] step 1/4 target '" + target + "' is in the in-world HUD ("
@@ -336,7 +374,7 @@ namespace CmdBridgeMod
                 // ② 跨帧重解析：命令线程 sleep，游戏线程继续出帧（侧栏在这期间滑入）。
                 int attempts;
                 long elapsedMs;
-                probe = WaitForHudReveal(target, probe, out attempts, out elapsedMs);
+                probe = WaitForHudReveal(target, gameWidget, probe, out attempts, out elapsedMs);
                 if (probe.Hittable)
                 {
                     Log.Information("[CmdBridge][hud] step 2/4 HUD revealed: '" + target
@@ -393,7 +431,7 @@ namespace CmdBridgeMod
                     + " once through the same virtual-input path to open that second level");
 
                 var toggle = (MoreToggleResult)m_injector.OnGameThreadForUi(
-                    delegate { return (object)ToggleMoreContentsCore(target); });
+                    delegate { return (object)ToggleMoreContentsCore(target, gameWidget); });
 
                 if (toggle.TargetLeftMoreContents || toggle.Expanded)
                 {
@@ -403,7 +441,7 @@ namespace CmdBridgeMod
                     Log.Information("[CmdBridge][hud] step 3/4 " + why + " -> NOT clicking "
                         + UiInspector.MoreToggleName
                         + " (it is a toggle: clicking would collapse the panel); re-probing once");
-                    probe = ProbeHudTarget(target);
+                    probe = ProbeHudTarget(target, gameWidget);
                     if (!probe.Hittable)
                     {
                         report.Note = "规则 2 没有介入：" + why + "，点 " + UiInspector.MoreToggleName
@@ -412,6 +450,19 @@ namespace CmdBridgeMod
                             + (probe.Reason ?? "<unknown>") + "）。";
                         return;
                     }
+                }
+                else if (toggle.ToggleNoMouse)
+                {
+                    Log.Warning("[CmdBridge][hud] step 4/4 " + UiInspector.MoreToggleName
+                        + " is not on a mouse-capable input surface (devices="
+                        + (toggle.ToggleNoMouseDevices ?? "<none>")
+                        + ") -> a synthetic mouse click there can never derive a Click");
+                    throw new BridgeCommandException("hud_target_not_hittable",
+                        HudFailureMessage(target, probe, report)
+                        + "（二级开关 " + UiInspector.MoreToggleName + " 所在视图的输入面没有鼠标设备"
+                        + "（devices=" + (toggle.ToggleNoMouseDevices ?? "<none>") + "）：引擎只为"
+                        + " Mouse/MultiMice 输入面派生 Click（WidgetInput.cs:152-166,741），"
+                        + "合成鼠标点击在那一层永远不会生效。请用 --gamewidget 指向有鼠标的那个视图。）");
                 }
                 else if (toggle.ToggleMissing)
                 {
@@ -465,7 +516,7 @@ namespace CmdBridgeMod
                     {
                         Thread.Sleep(HudRevealPollIntervalMs);
                         moreAttempts++;
-                        probe = ProbeHudTarget(target);
+                        probe = ProbeHudTarget(target, gameWidget);
                         if (probe.Hittable)
                             break;
                     }
@@ -502,8 +553,8 @@ namespace CmdBridgeMod
         /// 提前结束的第二种情形：目标挂在 `MoreContents` 里、二级还收着，而 `MoreButton` 已经可点 ——
         /// 再等也不会可点（必须先开二级），把剩下的时间交给规则 2。
         /// </summary>
-        private HudProbe WaitForHudReveal(string target, HudProbe probe, out int attempts,
-            out long elapsedMs)
+        private HudProbe WaitForHudReveal(string target, int? gameWidget, HudProbe probe,
+            out int attempts, out long elapsedMs)
         {
             long startTicks = Environment.TickCount64;
             attempts = 0;
@@ -511,7 +562,7 @@ namespace CmdBridgeMod
             {
                 Thread.Sleep(HudRevealPollIntervalMs);
                 attempts++;
-                probe = ProbeHudTarget(target);
+                probe = ProbeHudTarget(target, gameWidget);
                 if (probe.Hittable)
                     break;
                 if (probe.InMoreContents && !probe.MoreExpanded && probe.MoreToggleFound
@@ -538,14 +589,14 @@ namespace CmdBridgeMod
         ///   · 二级已经展开 → 绝不点（它是开关，点了会把面板收起来）；
         ///   · 目标已经不在 `MoreContents` 里 → 绝不点（状态在等待期间变了，按新状态重判）。
         /// </summary>
-        private MoreToggleResult ToggleMoreContentsCore(string target)
+        private MoreToggleResult ToggleMoreContentsCore(string target, int? gameWidget)
         {
             var result = new MoreToggleResult();
             ContainerWidget root = ScreensManager.RootWidget;
             if (root == null)
                 throw new BridgeCommandException("not_ready", "The UI is not ready yet.");
 
-            Widget widget = ResolveElementCore(target);
+            Widget widget = ResolveElementCore(target, gameWidget);
             Widget moreContents;
             if (widget == null || !UiInspector.TryGetMoreContentsAncestor(widget, out moreContents))
             {
@@ -576,6 +627,18 @@ namespace CmdBridgeMod
             if (!result.ToggleHittable)
                 return result;
 
+            // 二级开关也走**鼠标点击**：它所在视图的输入面没有鼠标设备时，点下去同样派生不出 Click
+            // （`WidgetInput.cs:152-166,741`）—— 明确报出来，绝不做"看起来点过了"的假动作。
+            // Android 例外：那边的注入通道是触摸（`AndroidTouch`）。
+            if (!AndroidTouch.Available && !UiInspector.HasMouseDevice(moreButton.Input))
+            {
+                result.ToggleNoMouse = true;
+                result.ToggleNoMouseDevices = moreButton.Input != null
+                    ? moreButton.Input.Devices.ToString()
+                    : "<none>";
+                return result;
+            }
+
             // 与 `ClickDirectCore` 同一套前置条件：引擎在"窗口不活跃"时整段输入都不算
             // （`WidgetInput.Update()` 里 `if (Window.IsActive)`），这时合成点击会被**无声无息地丢掉**。
             // 与其让用户以为"点了 MoreButton 没反应"，不如如实拒绝并说清怎么让它能点。
@@ -590,6 +653,7 @@ namespace CmdBridgeMod
             // 落点与 `ClickDirectCore` 同一套：复合按钮内部包着一个 `ClickableWidget`，
             // 直接点中心常盖着图标/文字子控件 → 在矩形里扫一个真会被消费的落点。
             Vector2 clickPoint = PickClickPoint(root, moreButton, toggleCenter);
+            RequirePointInOwnView(moreButton, clickPoint, target);
             Widget hitAtClick = root.HitTestGlobal(clickPoint) ?? moreButton;
             var button = moreButton as ButtonWidget;
             result.WasChecked = button != null && button.IsChecked;
@@ -635,6 +699,9 @@ namespace CmdBridgeMod
         {
             return "世界内 HUD 目标 '" + target + "' 在强制展开 HUD（规则 1）与展开 "
                 + UiInspector.MoreContentsName + " 二级开关（规则 2）之后仍不可点：present=" + probe.Present
+                + "; gameWidget=" + (probe.GameWidget.HasValue
+                    ? probe.GameWidget.Value.ToString() : "<none>")
+                + "; inputHasMouse=" + probe.MouseDevice
                 + "; layer=" + (probe.HudContainer ?? "<none>")
                 + "; offScreen=" + probe.OffScreen
                 + "; inMoreContents=" + probe.InMoreContents
@@ -650,10 +717,10 @@ namespace CmdBridgeMod
         }
 
         /// <summary>在游戏线程上做一次只读判定（命令线程调用，等游戏线程那一帧）。</summary>
-        private HudProbe ProbeHudTarget(string target)
+        private HudProbe ProbeHudTarget(string target, int? gameWidget = null)
         {
             return (HudProbe)m_injector.OnGameThreadForUi(
-                delegate { return (object)ProbeHudTargetCore(target); });
+                delegate { return (object)ProbeHudTargetCore(target, gameWidget); });
         }
 
         /// <summary>
@@ -664,7 +731,7 @@ namespace CmdBridgeMod
         /// 解析失败（`element_missing` / `ambiguous_selector`）**不在这里报错**：那不是 HUD 的问题，
         /// 原样交回调用方原本的解析路径去报它自己的错误（保持错误码与消息不变）。
         /// </summary>
-        private static HudProbe ProbeHudTargetCore(string target)
+        private static HudProbe ProbeHudTargetCore(string target, int? gameWidget = null)
         {
             var probe = new HudProbe();
             ContainerWidget root = ScreensManager.RootWidget;
@@ -684,7 +751,8 @@ namespace CmdBridgeMod
             {
                 try
                 {
-                    widget = UiInspector.Resolve(root, parsed.Selector, false, default(Vector2));
+                    widget = UiInspector.Resolve(root, parsed.Selector, false,
+                        default(Vector2), gameWidget);
                 }
                 catch (BridgeCommandException)
                 {
@@ -695,6 +763,8 @@ namespace CmdBridgeMod
                 return probe;
 
             probe.Present = true;
+            probe.GameWidget = UiInspector.GameWidgetIndexOf(widget);
+            probe.MouseDevice = UiInspector.HasMouseDevice(widget.Input);
             string container;
             probe.InHud = UiInspector.TryGetInWorldHudContainer(widget, out container);
             probe.HudContainer = container;
@@ -739,7 +809,9 @@ namespace CmdBridgeMod
                 }
             }
 
-            ComponentPlayer player = FindPlayerOrNull();
+            // 模态面板要问**目标所在视图**的那个玩家：分屏里 H1 开着仓库，H2/H3 是各自独立的
+            // `ComponentGui.ModalPanelWidget`，拿 H1 的去判 H3 的 HUD 必然判错。
+            ComponentPlayer player = FindPlayerFor(widget);
             ComponentGui gui = player == null ? null : player.ComponentGui;
             if (gui != null && gui.ModalPanelWidget != null)
             {
@@ -768,6 +840,28 @@ namespace CmdBridgeMod
             }
         }
 
+        /// <summary>
+        /// 目标所在视图的玩家（分屏 H1/H2/H3 各有自己的 `ComponentGui`）；不属于任何视图
+        /// （菜单/对话框）时退回 `ComponentPlayers[0]`。
+        /// </summary>
+        private static ComponentPlayer FindPlayerFor(Widget widget)
+        {
+            try
+            {
+                GameWidget gameWidget = UiInspector.FindGameWidget(widget);
+                if (gameWidget != null && gameWidget.PlayerData != null
+                    && gameWidget.PlayerData.ComponentPlayer != null)
+                {
+                    return gameWidget.PlayerData.ComponentPlayer;
+                }
+            }
+            catch (Exception)
+            {
+                // PlayerData 在角色身体还没生成等瞬态下会取不到：退回"第一个玩家"即可。
+            }
+            return FindPlayerOrNull();
+        }
+
         // ---------------------------------------------------------------- 定位
 
         /// <summary>
@@ -778,11 +872,11 @@ namespace CmdBridgeMod
         /// 编辑器点「定位」时用，人眼一眼就能看出"它认为目标在哪"。
         /// </summary>
         public Dictionary<string, object> Locate(string target, bool mark, float markSeconds,
-            float markPixels)
+            float markPixels, int? gameWidget = null)
         {
             return (Dictionary<string, object>)m_injector.OnGameThreadForUi(delegate
             {
-                Dictionary<string, object> located = LocateCore(target);
+                Dictionary<string, object> located = LocateCore(target, gameWidget);
                 if (mark)
                     MarkLocation(located, markSeconds, markPixels);
                 return located;
@@ -836,7 +930,7 @@ namespace CmdBridgeMod
         }
 
         /// <summary>游戏线程内的定位实现（`Click` 与命令层共用）。</summary>
-        internal Dictionary<string, object> LocateCore(string target)
+        internal Dictionary<string, object> LocateCore(string target, int? gameWidget = null)
         {
             var result = new Dictionary<string, object>(StringComparer.Ordinal);
             result["target"] = target;
@@ -876,7 +970,8 @@ namespace CmdBridgeMod
 
             if (parsed.Kind == UiTarget.TargetKind.ListRow)
             {
-                Widget list = UiInspector.Resolve(root, parsed.Selector, false, default(Vector2));
+                Widget list = UiInspector.Resolve(root, parsed.Selector, false, default(Vector2),
+                    gameWidget);
                 if (list == null)
                 {
                     throw new BridgeCommandException("element_missing",
@@ -918,7 +1013,7 @@ namespace CmdBridgeMod
                 return result;
             }
 
-            widget = UiInspector.Resolve(root, parsed.Selector, false, default(Vector2));
+            widget = UiInspector.Resolve(root, parsed.Selector, false, default(Vector2), gameWidget);
             if (widget == null)
             {
                 throw new BridgeCommandException("element_missing",
@@ -930,7 +1025,18 @@ namespace CmdBridgeMod
             foreach (KeyValuePair<string, object> pair in element)
                 result[pair.Key] = pair.Value;
             result["pointSource"] = "element";
-            DescribePoint(result, point);
+            // 没布局过（被折叠面板里的控件、或非本地主视图里整套 HUD）**没有坐标**：
+            // `clientPoint` 保持 null（`DescribeElement` 已经这么报了），这里绝不补一个 (0,0) 出来。
+            if (element["laidOut"] is bool laidOut && laidOut)
+            {
+                DescribePoint(result, point);
+            }
+            else
+            {
+                result["clientPoint"] = null;
+                result["screenPoint"] = null;
+                result["layoutReason"] = element["clickReason"];
+            }
             return result;
         }
 
@@ -997,11 +1103,12 @@ namespace CmdBridgeMod
         /// 会如实写出桥替它做了什么。
         /// </summary>
         public Dictionary<string, object> Click(string target, string mode, int holdMilliseconds,
-            bool mark, float markSeconds, float markPixels)
+            bool mark, float markSeconds, float markPixels, int? gameWidget = null)
         {
             // 规则 1 / 规则 2：世界内 HUD 且当前不可点 → 先按 E 强制展开 HUD，目标挂在 `MoreContents`
             // 里就再点 MoreButton 展开二级，然后才点。做了什么全部写进下面的回包（见 `DescribeReveal`）。
-            HudRevealReport reveal = EnsureHudTargetRevealed(target);
+            // `gameWidget` 一路带下去：展开/点二级开关/取输入面都必须作用在**目标所在的那个视图**上。
+            HudRevealReport reveal = EnsureHudTargetRevealed(target, gameWidget);
 
             string wanted = string.IsNullOrEmpty(mode) ? "direct" : mode.Trim().ToLowerInvariant();
             if (wanted == "auto")
@@ -1050,7 +1157,7 @@ namespace CmdBridgeMod
                 {
                     var located = (Dictionary<string, object>)m_injector.OnGameThreadForUi(delegate
                     {
-                        Dictionary<string, object> found = LocateCore(target);
+                        Dictionary<string, object> found = LocateCore(target, gameWidget);
                         MarkLocation(found, markSeconds, markPixels);
                         return found;
                     });
@@ -1064,14 +1171,15 @@ namespace CmdBridgeMod
 
             if (used == "input")
             {
-                Dictionary<string, object> session = ClickViaSession(target, holdMilliseconds);
+                Dictionary<string, object> session = ClickViaSession(target, holdMilliseconds,
+                    gameWidget);
                 DescribeReveal(session, reveal);
                 return session;
             }
 
             var direct = (Dictionary<string, object>)m_injector.OnGameThreadForUi(delegate
             {
-                Dictionary<string, object> clicked = ClickDirectCore(target);
+                Dictionary<string, object> clicked = ClickDirectCore(target, gameWidget);
                 if (mark)
                     MarkLocation(clicked, markSeconds, markPixels);
                 return clicked;
@@ -1109,9 +1217,138 @@ namespace CmdBridgeMod
         /// 只求"点在哪"（行为树 / 门面的非阻塞路径用）：语义目标 → **当前**客户区坐标。
         /// 必须在游戏线程、且在点击那一刻调用（坐标随窗口尺寸与 UI 缩放变）。
         /// </summary>
-        internal Vector2 ResolvePointCore(string target)
+        internal Vector2 ResolvePointCore(string target, int? gameWidget = null)
         {
-            return PointOf(LocateCore(target));
+            Dictionary<string, object> located = LocateCore(target, gameWidget);
+            RequireMountedLocation(located, target);
+            RequireLaidOutLocation(located, target);
+            return PointOf(located);
+        }
+
+        /// <summary>
+        /// 目标**没被布局过**时明确失败：它没有矩形（被折叠的面板里的控件、或非本地主视图里
+        /// 整套 HUD），任何像素点下去都是点空。`DescribeElement` 已经把原因写全
+        /// （`laidOut:false` + `hiddenBy` + `clickReason`），这里原样带出来。
+        /// </summary>
+        private static void RequireLaidOutLocation(Dictionary<string, object> located, string target)
+        {
+            if (located == null)
+                return;
+            object laidOut;
+            if (!located.TryGetValue("laidOut", out laidOut) || !(laidOut is bool isLaidOut))
+                return;   // 坐标目标/列表行没有这个字段：不是这里的判据
+            if (isLaidOut)
+                return;
+            object reason;
+            located.TryGetValue("clickReason", out reason);
+            if (reason == null)
+                located.TryGetValue("layoutReason", out reason);
+            object path;
+            located.TryGetValue("path", out path);
+            throw new BridgeCommandException("element_not_laid_out",
+                "Target '" + (target ?? "?") + "'"
+                + (path as string != null ? " (path: " + path + ")" : "")
+                + " has no rectangle right now, so there is no pixel to click: "
+                + (reason as string ?? "it has not been laid out")
+                + " Nothing was injected (a click would land on another element).");
+        }
+
+        /// <summary>
+        /// 落点必须落在**目标所属的那个分屏视图**里（`GameWidget.HitTest` 的夹取判定）。
+        ///
+        /// 这是"坐标被算到另一个视图上"的**唯一守门**：多视图下如果用根/别的视图的坐标系
+        /// 去点，落点会落在本视图之外 —— 引擎的命中就会走到别的视图的 `ViewWidget` 上，
+        /// 表现就是"命令成功、界面纹丝不动"。这里明确拒绝，绝不注入。
+        /// </summary>
+        private static void RequirePointInOwnView(Widget target, Vector2 point, string selector)
+        {
+            GameWidget gameWidget = UiInspector.FindGameWidget(target);
+            if (gameWidget == null)
+                return;   // 菜单/对话框不在任何视图里：根坐标就是它的坐标
+            if (gameWidget.HitTest(point))
+                return;
+            BoundingRectangle view = gameWidget.GlobalBounds;
+            throw new BridgeCommandException("element_not_in_view",
+                "The click point (" + point.X.ToString("0.#") + "," + point.Y.ToString("0.#")
+                + ") is outside gameWidget " + gameWidget.GameWidgetIndex + "'s view rect"
+                + " (" + view.Min.X.ToString("0.#") + "," + view.Min.Y.ToString("0.#") + ","
+                + (view.Max.X - view.Min.X).ToString("0.#") + "x"
+                + (view.Max.Y - view.Min.Y).ToString("0.#") + "), so the engine would route it to"
+                + " another view's ViewWidget and nothing would happen. Target '"
+                + (selector ?? "?") + "' belongs to gameWidget " + gameWidget.GameWidgetIndex
+                + "; nothing was injected.");
+        }
+
+        /// <summary>
+        /// 目标所在视图的输入面**接不接受鼠标**。引擎里 `IsMouseCursorVisible` 在没有鼠标设备时
+        /// 恒为 false（`WidgetInput.cs:152-166`），而 `Press/Tap/Click` 的派生整段被它门控
+        /// （同文件 `:741`）—— 本地分屏的 H2/H3（GamePad/Touch）因此**永远**派生不出鼠标点击。
+        /// 以前这里静默失败（命令成功、界面不动），现在明确报错并指出该点哪个视图。
+        ///
+        /// Android 不受这条约束：那边真正的注入通道是触摸（`AndroidTouch`），
+        /// 世界内 HUD 用的就是它（见 `UiMouseSession.ApplyAndroidTouch`）。
+        /// </summary>
+        private static void RequireMouseSurface(Widget target, string selector)
+        {
+            if (AndroidTouch.Available)
+                return;
+            WidgetInput input = target != null ? target.Input : null;
+            if (input == null)
+                return;
+            if (UiInspector.HasMouseDevice(input))
+                return;
+            GameWidget gameWidget = UiInspector.FindGameWidget(target);
+            throw new BridgeCommandException("element_no_mouse_device",
+                "Target '" + (selector ?? "?") + "'"
+                + (gameWidget != null ? " (gameWidget " + gameWidget.GameWidgetIndex + ")" : "")
+                + " lives on an input surface without a mouse device (devices="
+                + input.Devices.ToString() + "). The engine only derives Press/Tap/Click for"
+                + " Mouse/MultiMice inputs (Survivalcraft/Game/WidgetInput.cs:152-166,741), so a"
+                + " synthetic click there can never work. Nothing was injected."
+                + (gameWidget != null
+                    ? " Target the view that owns the mouse (see 'obs.ui' -> views[] for"
+                      + " inputDevices, then --gamewidget <N>), or drive this player with keys/touch."
+                    : string.Empty));
+        }
+
+        /// <summary>
+        /// `LocateCore` 已经算出 `mounted:false`（还没走完转屏动画的当前屏 / 活动但未挂载的对话框）
+        /// 时**明确失败**：它没有绘制、也没有可信的输入面，照着旧坐标点会命中它下面那层。
+        /// 绝不静默点下去。错误码按 `scope` 区分（`screen_not_mounted` / `dialog_not_mounted`）。
+        /// 点击类入口（`ResolvePointCore` / `ResolveTargetCore` / `ClickDirectCore`）都先过这里；
+        /// 只读的 `ui.locate` 不受影响，仍会如实报 `mounted:false` + 原因。
+        /// </summary>
+        private static void RequireMountedLocation(Dictionary<string, object> located, string target)
+        {
+            if (located == null)
+                return;
+            object mounted;
+            if (!located.TryGetValue("mounted", out mounted) || !(mounted is bool isMounted)
+                || isMounted)
+            {
+                return;
+            }
+            object path;
+            located.TryGetValue("path", out path);
+            object scope;
+            located.TryGetValue("scope", out scope);
+            string pathText = path as string ?? "?";
+            if (scope as string == "screen")
+            {
+                throw new BridgeCommandException("screen_not_mounted",
+                    "Target '" + (target ?? "?") + "' is inside the current screen, but the screen"
+                    + " switch has not mounted it yet (path: " + pathText + ")."
+                    + " ScreensManager inserts the incoming screen into RootWidget only at the"
+                    + " midpoint of the transition animation"
+                    + " (Survivalcraft/Game/ScreensManager.cs:297-311), so it is not drawn and a"
+                    + " click would hit whatever is underneath; wait for 'screen.animating.false'"
+                    + " (or 'screen.is:<name>'), then click.");
+            }
+            throw new BridgeCommandException("dialog_not_mounted",
+                "Target '" + (target ?? "?") + "' is inside an active dialog that is not mounted on"
+                + " the current screen (path: " + pathText + "). It is not drawn,"
+                + " so a click would hit whatever is underneath; switch back to its screen, or"
+                + " close it with act.closeui.");
         }
 
         /// <summary>
@@ -1123,9 +1360,11 @@ namespace CmdBridgeMod
         /// 写错面 = 那一层什么都没变 = 点不动（实测：世界内 MoreButton）。
         /// 取不到（没命中任何控件）时返回 null，由调用方退回根输入面。
         /// </summary>
-        internal Widget ResolveTargetCore(string target)
+        internal Widget ResolveTargetCore(string target, int? gameWidget = null)
         {
-            Dictionary<string, object> located = LocateCore(target);
+            Dictionary<string, object> located = LocateCore(target, gameWidget);
+            RequireMountedLocation(located, target);
+            RequireLaidOutLocation(located, target);
             ContainerWidget root = ScreensManager.RootWidget;
             return root != null ? root.HitTestGlobal(PointOf(located)) : null;
         }
@@ -1142,9 +1381,11 @@ namespace CmdBridgeMod
         /// 要 6~10 帧），同帧重解析拿到的还是旧坐标；而且它在模态面板已开时也会按 E，
         /// 等于把用户已展开的面板关掉（E 是开关）。已删除，入口只保留一个。
         /// </summary>
-        internal Dictionary<string, object> ClickDirectCore(string target)
+        internal Dictionary<string, object> ClickDirectCore(string target, int? gameWidget = null)
         {
-            Dictionary<string, object> located = LocateCore(target);
+            Dictionary<string, object> located = LocateCore(target, gameWidget);
+            RequireMountedLocation(located, target);
+            RequireLaidOutLocation(located, target);
             Vector2 point = PointOf(located);
 
             ContainerWidget root = ScreensManager.RootWidget;
@@ -1163,14 +1404,17 @@ namespace CmdBridgeMod
                     + "或者它还没被布局。先用「定位」看它的真实坐标与不可点原因。");
             }
 
-
-
-
-
             // 落点要落在"目标自己或它内部的可点件"上：按钮中心常盖着图标子控件，直接点中心会点空。
-            Widget wanted = ResolveElementCore(target) ?? widget;
+            Widget wanted = ResolveElementCore(target, gameWidget) ?? widget;
             Vector2 clickPoint = PickClickPoint(root, wanted, point);
             bool adjusted = (clickPoint - point).Length() > 0.01f;
+
+            // 两条**分屏专属**的硬前提（都是"注入了也不会有任何效果"的情形，所以在这里明确拒绝）：
+            //   ① 落点必须在目标**自己的视图**矩形里 —— 否则引擎的命中会走到别的视图的 ViewWidget 上；
+            //   ② 目标所在视图的输入面必须有鼠标设备 —— 否则 Click 永远派生不出来。
+            RequirePointInOwnView(wanted, clickPoint, target);
+            RequireMouseSurface(wanted, target);
+
             Widget hitAtClick = root != null ? (root.HitTestGlobal(clickPoint) ?? widget) : widget;
 
             // 引擎在"窗口不活跃"时整段输入都不算（`WidgetInput.Update()` 里 `if (Window.IsActive)`）——
@@ -1218,7 +1462,7 @@ namespace CmdBridgeMod
         /// 解析"目标控件**本身**"（不是它中心盖着的那个子控件）。
         /// 点按钮时要的是按钮、或它内部那个真正的可点件，所以这个才是"想在哪儿点"的参照物。
         /// </summary>
-        internal Widget ResolveElementCore(string target)
+        internal Widget ResolveElementCore(string target, int? gameWidget = null)
         {
             ContainerWidget root = ScreensManager.RootWidget;
             if (root == null)
@@ -1227,8 +1471,13 @@ namespace CmdBridgeMod
             if (!UiTarget.TryParse(target, out parsed))
                 return null;
             if (parsed.Kind == UiTarget.TargetKind.Selector)
-                return UiInspector.Resolve(root, parsed.Selector, false, default(Vector2));
-            Vector2 point = PointOf(LocateCore(target));
+            {
+                Widget resolved = UiInspector.Resolve(root, parsed.Selector, false,
+                    default(Vector2), gameWidget);
+                UiInspector.RequireMounted(resolved, target);
+                return resolved;
+            }
+            Vector2 point = PointOf(LocateCore(target, gameWidget));
             return root.HitTestGlobal(point);
         }
 
@@ -1273,7 +1522,8 @@ namespace CmdBridgeMod
         }
 
         /// <summary>老的软光标会话（移动 → 按下 → 抬起，一步一帧）。</summary>
-        private Dictionary<string, object> ClickViaSession(string target, int holdMilliseconds)
+        private Dictionary<string, object> ClickViaSession(string target, int holdMilliseconds,
+            int? gameWidget = null)
         {
             UiTarget.Parsed parsed;
             if (!UiTarget.TryParse(target, out parsed))
@@ -1282,21 +1532,33 @@ namespace CmdBridgeMod
                     "Cannot parse the UI target '" + (target ?? "<null>") + "'.");
             }
 
+            // 会话路径同样只接受"挂载在当前屏上"的目标：未挂载的对话框没有可信坐标，
+            // 让它落进 UiClickSession 会安静地点到下面那层（见 RequireMounted 的注释）。
+            if (parsed.Kind == UiTarget.TargetKind.Selector)
+            {
+                ContainerWidget root = ScreensManager.RootWidget;
+                if (root == null)
+                    throw new BridgeCommandException("not_ready", "The UI is not ready yet.");
+                Widget resolved = UiInspector.Resolve(root, parsed.Selector, false,
+                    default(Vector2), gameWidget);
+                UiInspector.RequireMounted(resolved, target);
+            }
+
             // 复用 `act.uiclick` 那条已经验证过的路（会话 + 现算坐标）
             object clicked;
             switch (parsed.Kind)
             {
                 case UiTarget.TargetKind.ListRow:
                     clicked = m_injector.UiClickSession(parsed.Selector, false, 0f, 0f,
-                        parsed.RowIndex, parsed.RowText, holdMilliseconds);
+                        parsed.RowIndex, parsed.RowText, holdMilliseconds, gameWidget);
                     break;
                 case UiTarget.TargetKind.Point:
                     clicked = m_injector.UiClickSession(null, true, parsed.X, parsed.Y, -1, null,
-                        holdMilliseconds);
+                        holdMilliseconds, gameWidget);
                     break;
                 default:
                     clicked = m_injector.UiClickSession(parsed.Selector, false, 0f, 0f, -1, null,
-                        holdMilliseconds);
+                        holdMilliseconds, gameWidget);
                     break;
             }
 

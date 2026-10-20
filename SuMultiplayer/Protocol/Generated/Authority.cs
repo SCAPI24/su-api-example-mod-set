@@ -25,20 +25,21 @@ namespace SuMultiplayer.Protocol.Authority {
       byte[] descriptorData = global::System.Convert.FromBase64String(
           string.Concat(
             "Cg9hdXRob3JpdHkucHJvdG8SDnN1bXAuYXV0aG9yaXR5Ghlnb29nbGUvcHJv",
-            "dG9idWYvYW55LnByb3RvIpcBCg9DZWxsRWRpdFJlcXVlc3QSEAoIc2VxdWVu",
+            "dG9idWYvYW55LnByb3RvIrUBCg9DZWxsRWRpdFJlcXVlc3QSEAoIc2VxdWVu",
             "Y2UYASABKAMSCQoBeBgCIAEoBRIJCgF5GAMgASgFEgkKAXoYBCABKAUSEAoI",
-            "Y29udGVudHMYBSABKAUSDAoEZGF0YRgGIAEoBRILCgNleHQYZCABKAwSJAoG",
-            "Y3VzdG9tGGUgASgLMhQuZ29vZ2xlLnByb3RvYnVmLkFueSLLAQoOQ2VsbEVk",
-            "aXRSZXN1bHQSEAoIc2VxdWVuY2UYASABKAMSEAoIYWNjZXB0ZWQYAiABKAgS",
-            "CQoBeBgDIAEoBRIJCgF5GAQgASgFEgkKAXoYBSABKAUSEAoIY29udGVudHMY",
-            "BiABKAUSDAoEZGF0YRgHIAEoBRIOCgZyZWFzb24YCCABKAkSEQoJaGFzX3Zh",
-            "bHVlGAkgASgIEgsKA2V4dBhkIAEoDBIkCgZjdXN0b20YZSABKAsyFC5nb29n",
-            "bGUucHJvdG9idWYuQW55QiVIAaoCIFN1TXVsdGlwbGF5ZXIuUHJvdG9jb2wu",
-            "QXV0aG9yaXR5YgZwcm90bzM="));
+            "Y29udGVudHMYBSABKAUSDAoEZGF0YRgGIAEoBRISCgVyZWFjaBgKIAEoAkgA",
+            "iAEBEgsKA2V4dBhkIAEoDBIkCgZjdXN0b20YZSABKAsyFC5nb29nbGUucHJv",
+            "dG9idWYuQW55QggKBl9yZWFjaCLLAQoOQ2VsbEVkaXRSZXN1bHQSEAoIc2Vx",
+            "dWVuY2UYASABKAMSEAoIYWNjZXB0ZWQYAiABKAgSCQoBeBgDIAEoBRIJCgF5",
+            "GAQgASgFEgkKAXoYBSABKAUSEAoIY29udGVudHMYBiABKAUSDAoEZGF0YRgH",
+            "IAEoBRIOCgZyZWFzb24YCCABKAkSEQoJaGFzX3ZhbHVlGAkgASgIEgsKA2V4",
+            "dBhkIAEoDBIkCgZjdXN0b20YZSABKAsyFC5nb29nbGUucHJvdG9idWYuQW55",
+            "QiVIAaoCIFN1TXVsdGlwbGF5ZXIuUHJvdG9jb2wuQXV0aG9yaXR5YgZwcm90",
+            "bzM="));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { global::Google.Protobuf.WellKnownTypes.AnyReflection.Descriptor, },
           new pbr::GeneratedClrTypeInfo(null, null, new pbr::GeneratedClrTypeInfo[] {
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Authority.CellEditRequest), global::SuMultiplayer.Protocol.Authority.CellEditRequest.Parser, new[]{ "Sequence", "X", "Y", "Z", "Contents", "Data", "Ext", "Custom" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Authority.CellEditRequest), global::SuMultiplayer.Protocol.Authority.CellEditRequest.Parser, new[]{ "Sequence", "X", "Y", "Z", "Contents", "Data", "Reach", "Ext", "Custom" }, new[]{ "Reach" }, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Authority.CellEditResult), global::SuMultiplayer.Protocol.Authority.CellEditResult.Parser, new[]{ "Sequence", "Accepted", "X", "Y", "Z", "Contents", "Data", "Reason", "HasValue", "Ext", "Custom" }, null, null, null, null)
           }));
     }
@@ -57,6 +58,7 @@ namespace SuMultiplayer.Protocol.Authority {
   {
     private static readonly pb::MessageParser<CellEditRequest> _parser = new pb::MessageParser<CellEditRequest>(() => new CellEditRequest());
     private pb::UnknownFieldSet _unknownFields;
+    private int _hasBits0;
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pb::MessageParser<CellEditRequest> Parser { get { return _parser; } }
@@ -84,12 +86,14 @@ namespace SuMultiplayer.Protocol.Authority {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public CellEditRequest(CellEditRequest other) : this() {
+      _hasBits0 = other._hasBits0;
       sequence_ = other.sequence_;
       x_ = other.x_;
       y_ = other.y_;
       z_ = other.z_;
       contents_ = other.contents_;
       data_ = other.data_;
+      reach_ = other.reach_;
       ext_ = other.ext_;
       custom_ = other.custom_ != null ? other.custom_.Clone() : null;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
@@ -173,6 +177,40 @@ namespace SuMultiplayer.Protocol.Authority {
       }
     }
 
+    /// <summary>Field number for the "reach" field.</summary>
+    public const int ReachFieldNumber = 10;
+    private readonly static float ReachDefaultValue = 0F;
+
+    private float reach_;
+    /// <summary>
+    /// Requester's effective interaction reach in metres (engine ComponentMiner.Raycast:
+    /// Creative ? SettingsManager.CreativeReach : 5f).  Host rule:
+    /// allowed = min(reach + tolerance, serverMax); absent (old client) = 5.0 / 7.5
+    /// depending on the host world's game mode.
+    /// Source: Survivalcraft/Game/ComponentMiner.cs:378
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public float Reach {
+      get { if ((_hasBits0 & 1) != 0) { return reach_; } else { return ReachDefaultValue; } }
+      set {
+        _hasBits0 |= 1;
+        reach_ = value;
+      }
+    }
+    /// <summary>Gets whether the "reach" field is set</summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool HasReach {
+      get { return (_hasBits0 & 1) != 0; }
+    }
+    /// <summary>Clears the value of the "reach" field</summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void ClearReach() {
+      _hasBits0 &= ~1;
+    }
+
     /// <summary>Field number for the "ext" field.</summary>
     public const int ExtFieldNumber = 100;
     private pb::ByteString ext_ = pb::ByteString.Empty;
@@ -221,6 +259,7 @@ namespace SuMultiplayer.Protocol.Authority {
       if (Z != other.Z) return false;
       if (Contents != other.Contents) return false;
       if (Data != other.Data) return false;
+      if (!pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.Equals(Reach, other.Reach)) return false;
       if (Ext != other.Ext) return false;
       if (!object.Equals(Custom, other.Custom)) return false;
       return Equals(_unknownFields, other._unknownFields);
@@ -236,6 +275,7 @@ namespace SuMultiplayer.Protocol.Authority {
       if (Z != 0) hash ^= Z.GetHashCode();
       if (Contents != 0) hash ^= Contents.GetHashCode();
       if (Data != 0) hash ^= Data.GetHashCode();
+      if (HasReach) hash ^= pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.GetHashCode(Reach);
       if (Ext.Length != 0) hash ^= Ext.GetHashCode();
       if (custom_ != null) hash ^= Custom.GetHashCode();
       if (_unknownFields != null) {
@@ -280,6 +320,10 @@ namespace SuMultiplayer.Protocol.Authority {
         output.WriteRawTag(48);
         output.WriteInt32(Data);
       }
+      if (HasReach) {
+        output.WriteRawTag(85);
+        output.WriteFloat(Reach);
+      }
       if (Ext.Length != 0) {
         output.WriteRawTag(162, 6);
         output.WriteBytes(Ext);
@@ -322,6 +366,10 @@ namespace SuMultiplayer.Protocol.Authority {
         output.WriteRawTag(48);
         output.WriteInt32(Data);
       }
+      if (HasReach) {
+        output.WriteRawTag(85);
+        output.WriteFloat(Reach);
+      }
       if (Ext.Length != 0) {
         output.WriteRawTag(162, 6);
         output.WriteBytes(Ext);
@@ -358,6 +406,9 @@ namespace SuMultiplayer.Protocol.Authority {
       if (Data != 0) {
         size += 1 + pb::CodedOutputStream.ComputeInt32Size(Data);
       }
+      if (HasReach) {
+        size += 1 + 4;
+      }
       if (Ext.Length != 0) {
         size += 2 + pb::CodedOutputStream.ComputeBytesSize(Ext);
       }
@@ -393,6 +444,9 @@ namespace SuMultiplayer.Protocol.Authority {
       }
       if (other.Data != 0) {
         Data = other.Data;
+      }
+      if (other.HasReach) {
+        Reach = other.Reach;
       }
       if (other.Ext.Length != 0) {
         Ext = other.Ext;
@@ -444,6 +498,10 @@ namespace SuMultiplayer.Protocol.Authority {
           }
           case 48: {
             Data = input.ReadInt32();
+            break;
+          }
+          case 85: {
+            Reach = input.ReadFloat();
             break;
           }
           case 802: {
@@ -498,6 +556,10 @@ namespace SuMultiplayer.Protocol.Authority {
           }
           case 48: {
             Data = input.ReadInt32();
+            break;
+          }
+          case 85: {
+            Reach = input.ReadFloat();
             break;
           }
           case 802: {

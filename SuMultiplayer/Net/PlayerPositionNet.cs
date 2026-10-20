@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Engine;
 using Google.Protobuf;
+using SuMultiplayer.Players;
 using PP = SuMultiplayer.Protocol.Position;
 
 namespace SuMultiplayer.Net
@@ -68,19 +69,30 @@ namespace SuMultiplayer.Net
     }
 
     /// <summary>
-    /// 批里的一个角色：<paramref name="ClientId"/> 是**本机传输层编号**（主机自己 = 0），
-    /// 不是身份 —— 身份绑定仍由 <c>PlayerAvatarModule</c> 的角色记录键负责。
+    /// 批里的一个角色：<see cref="Key"/> 是**玩家键**（本机传输编号 + 本机角色槽位；
+    /// 主机自己 = 0:0）。身份绑定仍由 <c>PlayerAvatarModule</c> 的角色记录键负责。
     /// Source: Mod/ScMultiplayer/Message/GamePlayerPositionMessage.cs:10（PlayerIndex = 发送方 ClientID）
+    /// Source: Mod/SuMultiplayer/Players/PlayerKey.cs（Phase 1 起追加槽位）
     /// </summary>
     public readonly struct PlayerPositionEntry
     {
+        /// <summary>旧版单角色入口：clientId 的槽位 0。</summary>
         public PlayerPositionEntry(int clientId, in PlayerPositionSnapshot snapshot)
+            : this(new PlayerKey(clientId, 0), in snapshot)
         {
-            ClientId = clientId;
+        }
+
+        public PlayerPositionEntry(PlayerKey key, in PlayerPositionSnapshot snapshot)
+        {
+            Key = key;
             Snapshot = snapshot;
         }
 
-        public int ClientId { get; }
+        public PlayerKey Key { get; }
+        /// <summary>传输编号（= <c>Key.ClientId</c>；旧字段）。</summary>
+        public int ClientId => Key.ClientId;
+        /// <summary>本机角色槽位（= <c>Key.Slot</c>；0 = 旧版单角色）。</summary>
+        public int Slot => Key.Slot;
         public PlayerPositionSnapshot Snapshot { get; }
     }
 
@@ -93,7 +105,19 @@ namespace SuMultiplayer.Net
     /// </summary>
     public sealed class RemotePlayerPositionState
     {
-        public int ClientId;
+        /// <summary>玩家键（clientId + 本机槽位）；旧字段 <c>ClientId</c> 保留为它的第一段。</summary>
+        public PlayerKey Key;
+        /// <summary>旧字段（= Key.ClientId）；setter 保留给旧调用方，等价于改键的第一段。</summary>
+        public int ClientId
+        {
+            get => Key.ClientId;
+            set => Key = new PlayerKey(value, Key.Slot);
+        }
+        public int Slot
+        {
+            get => Key.Slot;
+            set => Key = new PlayerKey(Key.ClientId, value);
+        }
 
         /// <summary>最近一份权威快照（旧 <c>state.Position/Rotation/Velocity/LookAngles/Is*</c>）。</summary>
         public Vector3 Position;
@@ -158,22 +182,31 @@ namespace SuMultiplayer.Net
     /// 位置快照的编解码（proto：Protocol/position.proto）。
     ///
     ///   · 单条 = <c>PlayerPositions{ entries: [1] }</c>；批 = <c>PlayerPositions{ entries: [N] }</c>。
-    ///   · 批上限 16 与旧 <c>GamePlayerPositionsMessage</c> 的校验一致（超过 = 协议违规）。
+    ///   · 批上限：旧 <c>GamePlayerPositionsMessage</c> 是 16；多本机角色以后主机侧最多
+    ///     4 个本机角色 + 4 个玩家端 × 4 个本机角色 = 20 条，所以上限提到
+    ///     <see cref="MaxBatchEntries"/> = 24。旧客户端收到的批会被主机过滤成
+    ///     "每个连接只有槽位 0"（≤5 条），因此 16 条上限的旧客户端不受影响。
     ///   · 向量/四元数用 protobuf 的 <c>Vec3/Quat/Vec2</c> 子消息，值域与旧的
     ///     <c>WriteVector3/WriteQuaternion/WriteVector2</c> 完全一致（3/4/2 个 float）。
-    ///   · 解码失败（缺 position/rotation/velocity/look_angles、批超限、protobuf 非法）
+    ///   · 解码失败（缺 position/rotation/velocity/look_angles、批超限、槽位非法、protobuf 非法）
     ///     **必须显式失败**：返回 false + 原因，调用方丢弃并写日志，绝不用默认值顶替。
     /// </summary>
     public static class PlayerPositionCodec
     {
-        /// <summary>Source: Mod/ScMultiplayer/Message/GamePlayerPositionsMessage.cs:27-28（count &gt; 16 = 违规）。</summary>
-        public const int MaxBatchEntries = 16;
+        /// <summary>
+        /// 批上限。旧版 16；多本机角色需要 4（本机）+ 4 客户端 × 4 = 20。
+        /// </summary>
+        public const int MaxBatchEntries = 24;
 
-        /// <summary>客户端 → 主机：单条快照（旧 GamePlayerPositionMessage）。</summary>
-        public static byte[] EncodeSingle(int clientId, in PlayerPositionSnapshot snapshot)
+        /// <summary>客户端 → 主机：单条快照（旧 GamePlayerPositionMessage；槽位 0）。</summary>
+        public static byte[] EncodeSingle(int clientId, in PlayerPositionSnapshot snapshot) =>
+            EncodeSingle(new PlayerKey(clientId, 0), in snapshot);
+
+        /// <summary>客户端 → 主机：单条快照（多本机角色：<paramref name="key"/> 的槽位一起写）。</summary>
+        public static byte[] EncodeSingle(PlayerKey key, in PlayerPositionSnapshot snapshot)
         {
             var message = new PP.PlayerPositions();
-            message.Entries.Add(ToMessage(clientId, in snapshot));
+            message.Entries.Add(ToMessage(key, in snapshot));
             return message.ToByteArray();
         }
 
@@ -193,15 +226,34 @@ namespace SuMultiplayer.Net
             {
                 PlayerPositionEntry entry = entries[i];
                 PlayerPositionSnapshot snapshot = entry.Snapshot;
-                message.Entries.Add(ToMessage(entry.ClientId, in snapshot));
+                message.Entries.Add(ToMessage(entry.Key, in snapshot));
             }
             return message.ToByteArray();
         }
 
+        /// <summary>
+        /// 旧版单角色解码：只接受槽位 0（槽位 &gt; 0 返回 false + 明确原因，
+        /// 需要槽位的调用方用 <see cref="TryDecodeSingle(byte[], out PlayerKey, out PlayerPositionSnapshot, out string)"/>）。
+        /// </summary>
         public static bool TryDecodeSingle(byte[] payload, out int clientId,
             out PlayerPositionSnapshot snapshot, out string error)
         {
             clientId = 0;
+            if (!TryDecodeSingle(payload, out PlayerKey key, out snapshot, out error)) return false;
+            if (key.Slot != 0)
+            {
+                error = "单条快照的槽位是 " + key.Slot + "（旧接口只支持槽位 0）";
+                return false;
+            }
+            clientId = key.ClientId;
+            return true;
+        }
+
+        /// <summary>单条解码（带玩家键）。</summary>
+        public static bool TryDecodeSingle(byte[] payload, out PlayerKey key,
+            out PlayerPositionSnapshot snapshot, out string error)
+        {
+            key = default;
             snapshot = default;
             error = null;
             if (!TryParse(payload, out PP.PlayerPositions message, out error)) return false;
@@ -210,7 +262,7 @@ namespace SuMultiplayer.Net
                 error = "单条位置快照必须恰好 1 条条目（本次 " + message.Entries.Count + " 条）";
                 return false;
             }
-            return TryReadEntry(message.Entries[0], out clientId, out snapshot, out error);
+            return TryReadEntry(message.Entries[0], out key, out snapshot, out error);
         }
 
         public static bool TryDecodeBatch(byte[] payload, out List<PlayerPositionEntry> entries,
@@ -227,13 +279,13 @@ namespace SuMultiplayer.Net
             var result = new List<PlayerPositionEntry>(message.Entries.Count);
             for (int i = 0; i < message.Entries.Count; i++)
             {
-                if (!TryReadEntry(message.Entries[i], out int clientId, out PlayerPositionSnapshot item,
+                if (!TryReadEntry(message.Entries[i], out PlayerKey key, out PlayerPositionSnapshot item,
                         out error))
                 {
                     error = "第 " + (i + 1) + " 条：" + error;
                     return false;
                 }
-                result.Add(new PlayerPositionEntry(clientId, item));
+                result.Add(new PlayerPositionEntry(key, item));
             }
             entries = result;
             return true;
@@ -260,15 +312,30 @@ namespace SuMultiplayer.Net
             }
         }
 
-        /// <summary>把已解析的 protobuf 条目转成领域快照（强类型处理器用）。</summary>
+        /// <summary>把已解析的条目转成领域快照（旧接口，只接受槽位 0）。</summary>
         public static bool TryConvert(PP.PlayerPosition entry, out int clientId,
-            out PlayerPositionSnapshot snapshot, out string error) =>
-            TryReadEntry(entry, out clientId, out snapshot, out error);
-
-        private static bool TryReadEntry(PP.PlayerPosition entry, out int clientId,
             out PlayerPositionSnapshot snapshot, out string error)
         {
-            clientId = entry?.ClientId ?? 0;
+            clientId = 0;
+            if (!TryReadEntry(entry, out PlayerKey key, out snapshot, out error)) return false;
+            if (key.Slot != 0)
+            {
+                error = "条目槽位是 " + key.Slot + "（旧接口只支持槽位 0）";
+                return false;
+            }
+            clientId = key.ClientId;
+            return true;
+        }
+
+        /// <summary>把已解析的条目转成领域快照 + 玩家键。</summary>
+        public static bool TryConvert(PP.PlayerPosition entry, out PlayerKey key,
+            out PlayerPositionSnapshot snapshot, out string error) =>
+            TryReadEntry(entry, out key, out snapshot, out error);
+
+        private static bool TryReadEntry(PP.PlayerPosition entry, out PlayerKey key,
+            out PlayerPositionSnapshot snapshot, out string error)
+        {
+            key = default;
             snapshot = default;
             error = null;
             if (entry == null)
@@ -276,6 +343,7 @@ namespace SuMultiplayer.Net
                 error = "条目为空";
                 return false;
             }
+            if (!PlayerKey.TryCreate(entry.ClientId, (int)entry.Slot, out key, out error)) return false;
             if (entry.Position == null || entry.Rotation == null || entry.Velocity == null ||
                 entry.LookAngles == null)
             {
@@ -291,11 +359,12 @@ namespace SuMultiplayer.Net
             return true;
         }
 
-        private static PP.PlayerPosition ToMessage(int clientId, in PlayerPositionSnapshot s)
+        private static PP.PlayerPosition ToMessage(PlayerKey key, in PlayerPositionSnapshot s)
         {
             return new PP.PlayerPosition
             {
-                ClientId = clientId,
+                ClientId = key.ClientId,
+                Slot = (uint)key.Slot,
                 ServerTick = s.ServerTick,
                 Position = new PP.Vec3 { X = s.Position.X, Y = s.Position.Y, Z = s.Position.Z },
                 Rotation = new PP.Quat

@@ -108,7 +108,8 @@ namespace SuMultiplayer.Net
     public readonly struct PickableDropRequestData
     {
         public PickableDropRequestData(long sequence, int activeSlot, int itemValue, int count,
-            Vector3 position, Vector3 direction, int source = DropSources.Input)
+            Vector3 position, Vector3 direction, int source = DropSources.Input,
+            bool hasReach = false, float reach = 0f)
         {
             Sequence = sequence;
             ActiveSlot = activeSlot;
@@ -117,6 +118,8 @@ namespace SuMultiplayer.Net
             Position = position;
             Direction = direction;
             Source = source;
+            HasReach = hasReach;
+            Reach = reach;
         }
 
         public long Sequence { get; }
@@ -127,6 +130,10 @@ namespace SuMultiplayer.Net
         public Vector3 Direction { get; }
         /// <summary><see cref="DropSources"/> 之一。</summary>
         public int Source { get; }
+        /// <summary>请求是否携带了有效 reach（false = 旧客户端 / 旧载荷）。</summary>
+        public bool HasReach { get; }
+        /// <summary>请求者的有效交互距离（米）；<see cref="HasReach"/> = false 时无意义。</summary>
+        public float Reach { get; }
 
         public string Describe() => "seq=" + Sequence + " src=" + DropSources.Name(Source) +
             " slot=" + ActiveSlot + " value=" + ItemValue + " count=" + Count;
@@ -244,7 +251,7 @@ namespace SuMultiplayer.Net
     public readonly struct ProjectileFireRequestData
     {
         public ProjectileFireRequestData(long sequence, int kind, int itemValue, int activeSlot,
-            Vector3 origin, Vector3 direction, int charge)
+            Vector3 origin, Vector3 direction, int charge, bool hasReach = false, float reach = 0f)
         {
             Sequence = sequence;
             Kind = kind;
@@ -253,6 +260,8 @@ namespace SuMultiplayer.Net
             Origin = origin;
             Direction = direction;
             Charge = charge;
+            HasReach = hasReach;
+            Reach = reach;
         }
 
         public long Sequence { get; }
@@ -262,6 +271,10 @@ namespace SuMultiplayer.Net
         public Vector3 Origin { get; }
         public Vector3 Direction { get; }
         public int Charge { get; }
+        /// <summary>请求是否携带了有效 reach（false = 旧客户端 / 旧载荷）。</summary>
+        public bool HasReach { get; }
+        /// <summary>请求者的有效交互距离（米）；<see cref="HasReach"/> = false 时无意义。</summary>
+        public float Reach { get; }
 
         public string Describe() => "seq=" + Sequence + " " + ProjectileFireKinds.Name(Kind) +
             " value=" + ItemValue + " slot=" + ActiveSlot + " charge=" + Charge;
@@ -362,8 +375,9 @@ namespace SuMultiplayer.Net
 
         // ------------------------------------------------------------ 丢弃
 
-        public static PE.PickableDropRequest EncodeDrop(in PickableDropRequestData request) =>
-            new PE.PickableDropRequest
+        public static PE.PickableDropRequest EncodeDrop(in PickableDropRequestData request)
+        {
+            var message = new PE.PickableDropRequest
             {
                 Sequence = request.Sequence,
                 ActiveSlot = request.ActiveSlot,
@@ -373,6 +387,9 @@ namespace SuMultiplayer.Net
                 Direction = EntityCodec.ToVec3(request.Direction),
                 Source = (PE.DropSource)request.Source
             };
+            if (request.HasReach) message.Reach = request.Reach;
+            return message;
+        }
 
         public static byte[] EncodeDropBytes(in PickableDropRequestData request) =>
             EncodeDrop(in request).ToByteArray();
@@ -420,7 +437,8 @@ namespace SuMultiplayer.Net
                     out Vector3 direction, out reason))
                 return false;
             request = new PickableDropRequestData(message.Sequence, message.ActiveSlot,
-                message.ItemValue, message.Count, position, direction, source);
+                message.ItemValue, message.Count, position, direction, source, message.HasReach,
+                message.Reach);
             return true;
         }
 
@@ -516,8 +534,9 @@ namespace SuMultiplayer.Net
 
         // ------------------------------------------------------------ 开火
 
-        public static PE.ProjectileFireRequest EncodeFire(in ProjectileFireRequestData request) =>
-            new PE.ProjectileFireRequest
+        public static PE.ProjectileFireRequest EncodeFire(in ProjectileFireRequestData request)
+        {
+            var message = new PE.ProjectileFireRequest
             {
                 Sequence = request.Sequence,
                 Kind = request.Kind,
@@ -527,6 +546,9 @@ namespace SuMultiplayer.Net
                 Direction = EntityCodec.ToVec3(request.Direction),
                 Charge = request.Charge
             };
+            if (request.HasReach) message.Reach = request.Reach;
+            return message;
+        }
 
         public static byte[] EncodeFireBytes(in ProjectileFireRequestData request) =>
             EncodeFire(in request).ToByteArray();
@@ -574,7 +596,8 @@ namespace SuMultiplayer.Net
                     out Vector3 direction, out reason))
                 return false;
             request = new ProjectileFireRequestData(message.Sequence, kind, message.ItemValue,
-                message.ActiveSlot, origin, direction, message.Charge);
+                message.ActiveSlot, origin, direction, message.Charge, message.HasReach,
+                message.Reach);
             return true;
         }
 

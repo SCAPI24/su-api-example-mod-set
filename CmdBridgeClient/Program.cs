@@ -182,6 +182,10 @@ namespace CmdBridgeClient
                         return Print(client, "ui.reachability", null);
                     case "player":
                         return Print(client, "obs.player", null);
+                    // 每一个 PlayerData（主机分屏 + 联机远端 avatar），服务端命令 players.all。
+                    case "players":
+                    case "players.all":
+                        return PlayersCommand(client, args);
                     case "input":
                         return Print(client, "obs.input", null);
                     case "aim":
@@ -286,6 +290,29 @@ namespace CmdBridgeClient
                     case "text":
                         Require(args.Count >= 2, "text <string>");
                         return Print(client, "act.text", Args(("text", args[1])));
+                    case "settext":
+                        Require(args.Count >= 3, "settext <selector> <text>");
+                        return Print(client, "act.settext",
+                            Args(("selector", args[1]), ("text", args[2])));
+                    case "accept":
+                        return AcceptCommand(client, args, "act.accept");
+                    case "dialog":
+                        return DialogCommand(client, args);
+                    // SuMultiplayer 聊天注入：与手打走同一条 ChatModule 发送链。
+                    // 文本按剩余参数拼接，所以 `chat.send hello world` 与引号写法等价；
+                    // CJK 原样经 UTF-8 JSON 传输。
+                    case "chat.open":
+                        return Print(client, "chat.open", null);
+                    case "chat.text":
+                        Require(args.Count >= 2, "chat.text <text>");
+                        return Print(client, "chat.text", Args(("text", JoinText(args, 1))));
+                    case "chat.submit":
+                        return Print(client, "chat.submit", null);
+                    case "chat.send":
+                        Require(args.Count >= 2, "chat.send <text>");
+                        return Print(client, "chat.send", Args(("text", JoinText(args, 1))));
+                    case "chat.cancel":
+                        return Print(client, "chat.cancel", null);
                     case "raw":
                         Require(args.Count >= 2, "raw <command> [key=value ...]");
                         return RunRaw(client, args);
@@ -495,7 +522,8 @@ namespace CmdBridgeClient
 
         private static int ClickCommand(BridgeClient client, List<string> args)
         {
-            Require(args.Count >= 2, "click <selector|id> [--at <x> <y>] [holdMs]");
+            Require(args.Count >= 2,
+                "click <selector|id> [--at <x> <y>] [--gamewidget N] [holdMs]");
             var arguments = new Dictionary<string, object>(StringComparer.Ordinal)
             {
                 ["selector"] = args[1]
@@ -509,6 +537,10 @@ namespace CmdBridgeClient
                     arguments["y"] = ParseFloat(args[i + 2]);
                     i += 2;
                 }
+                else if (args[i] == "--gamewidget" && i + 1 < args.Count)
+                {
+                    arguments["gameWidget"] = ParseInt(args[++i]);
+                }
                 else if (int.TryParse(args[i], out int parsed))
                 {
                     holdMs = parsed;
@@ -516,6 +548,57 @@ namespace CmdBridgeClient
             }
             arguments["holdMs"] = holdMs;
             return Print(client, "act.uiclick", arguments);
+        }
+
+        /// <summary>
+        /// `sccmd accept [dialog] [--button &lt;selector&gt;]`：接受当前（或指定）对话框。
+        ///
+        /// 服务端走的是**引擎自己的点击路径**：在对话框的 OK 按钮上合成一次 Tap+Click，
+        /// 于是对话框 `Update` 里的 `IsClicked` 提交分支（内存条/真值表在 `Dismiss` 之前
+        /// 拷贝数据）真的跑起来 —— 不是只把窗口关掉。
+        /// </summary>
+        private static int AcceptCommand(BridgeClient client, List<string> args, string command)
+        {
+            var arguments = new Dictionary<string, object>(StringComparer.Ordinal);
+            for (int i = 1; i < args.Count; i++)
+            {
+                if (args[i] == "--button" && i + 1 < args.Count)
+                    arguments["button"] = args[++i];
+                else if (args[i] == "--dialog" && i + 1 < args.Count)
+                    arguments["dialog"] = args[++i];
+                else if (!args[i].StartsWith("--", StringComparison.Ordinal))
+                    arguments["dialog"] = args[i];
+            }
+            return Print(client, command, arguments);
+        }
+
+        /// <summary>
+        /// `sccmd dialog ok|cancel [dialog] [--button &lt;selector&gt;]`：同 `accept` / 取消分支。
+        /// </summary>
+        private static int DialogCommand(BridgeClient client, List<string> args)
+        {
+            Require(args.Count >= 2, "dialog ok|cancel [dialog] [--button <selector>]");
+            string action = args[1].ToLowerInvariant();
+            if (action != "ok" && action != "accept" && action != "cancel")
+            {
+                throw new BridgeException(
+                    "invalid_argument", "dialog action must be 'ok' (or 'accept') or 'cancel'.");
+            }
+            var arguments = new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["action"] = action
+            };
+            for (int i = 2; i < args.Count; i++)
+            {
+                if (args[i] == "--button" && i + 1 < args.Count)
+                    arguments["button"] = args[++i];
+                else if (args[i] == "--dialog" && i + 1 < args.Count)
+                    arguments["dialog"] = args[++i];
+                else if (!args[i].StartsWith("--", StringComparison.Ordinal)
+                    && !arguments.ContainsKey("dialog"))
+                    arguments["dialog"] = args[i];
+            }
+            return Print(client, "act.dialog", arguments);
         }
 
         /// <summary>
@@ -830,6 +913,31 @@ namespace CmdBridgeClient
             }
         }
 
+        /// <summary>
+        /// `sccmd players [--index N] [--max N] [--slots N]` → 服务端 `players.all`。
+        ///
+        /// 返回的是**数组**：每个 PlayerData 一条（主机每个本地角色一条，联机远端 avatar 也各一条）。
+        /// 用 `--json` 拿紧凑完整状态；默认缩进 JSON 便于直接读。
+        /// </summary>
+        private static int PlayersCommand(BridgeClient client, List<string> args)
+        {
+            var arguments = new Dictionary<string, object>(StringComparer.Ordinal);
+            for (int i = 1; i < args.Count; i++)
+            {
+                if (args[i] == "--index" && i + 1 < args.Count)
+                    arguments["index"] = ParseInt(args[++i]);
+                else if (args[i] == "--max" && i + 1 < args.Count)
+                    arguments["max"] = ParseInt(args[++i]);
+                else if (args[i] == "--slots" && i + 1 < args.Count)
+                    arguments["slots"] = ParseInt(args[++i]);
+                else
+                    throw new BridgeException("invalid_argument",
+                        "usage: players [--index N] [--max N] [--slots N]");
+            }
+
+            return Print(client, "players.all", arguments);
+        }
+
         private static int PrintUi(BridgeClient client, List<string> args)
         {
             var arguments = new Dictionary<string, object>(StringComparer.Ordinal);
@@ -841,6 +949,8 @@ namespace CmdBridgeClient
                     arguments["filter"] = args[++i];
                 else if (args[i] == "--max" && i + 1 < args.Count)
                     arguments["maxElements"] = ParseInt(args[++i]);
+                else if (args[i] == "--gamewidget" && i + 1 < args.Count)
+                    arguments["gameWidget"] = ParseInt(args[++i]);
             }
 
             JsonElement result = client.Send("obs.ui", arguments, s_timeoutMs);
@@ -854,25 +964,71 @@ namespace CmdBridgeClient
             {
                 Console.WriteLine(string.Format(
                     CultureInfo.InvariantCulture,
-                    "{0,-4} {1,-24} {2,-22} {3,-24} {4,-22} {5}",
-                    "id", "type", "name", "text", "clientPoint", "hittable"));
+                    "{0,-4} {1,-3} {2,-24} {3,-22} {4,-24} {5,-20} {6}",
+                    "id", "gw", "type", "name", "text", "clientPoint", "hittable"));
                 foreach (JsonElement element in elements.EnumerateArray())
                 {
+                    bool laidOut = !element.TryGetProperty("laidOut", out JsonElement laidOutValue)
+                        || laidOutValue.ValueKind != JsonValueKind.False;
+                    bool hittable = element.TryGetProperty("hittable", out JsonElement hittableValue)
+                        && hittableValue.ValueKind == JsonValueKind.True;
+                    string state;
+                    if (hittable)
+                    {
+                        state = "yes";
+                    }
+                    else if (!laidOut)
+                    {
+                        // 没布局过**不是**被遮挡：以前这里打印 "no (ViewWidget(View))"，把人带错方向。
+                        string hidden = GetText(element, "hiddenBy");
+                        state = "no (not laid out"
+                            + (string.IsNullOrEmpty(hidden) ? "" : " - hidden by " + hidden) + ")";
+                    }
+                    else
+                    {
+                        state = "no (" + GetText(element, "blockedBy") + ")";
+                    }
                     Console.WriteLine(string.Format(
                         CultureInfo.InvariantCulture,
-                        "{0,-4} {1,-24} {2,-22} {3,-24} {4,-22} {5}",
+                        "{0,-4} {1,-3} {2,-24} {3,-22} {4,-24} {5,-20} {6}",
                         GetText(element, "id"),
+                        GetText(element, "gameWidget"),
                         GetText(element, "type"),
                         Truncate(GetText(element, "name"), 22),
                         Truncate(GetText(element, "text"), 24),
                         FormatPoint(element, "clientPoint"),
-                        element.TryGetProperty("hittable", out JsonElement hittable) && hittable.GetBoolean()
-                            ? "yes"
-                            : "no (" + GetText(element, "blockedBy") + ")"));
+                        state));
                 }
             }
             if (result.TryGetProperty("totalCount", out JsonElement total))
                 Console.WriteLine("total=" + total.GetInt32());
+            if (result.TryGetProperty("primaryGameWidget", out JsonElement primary)
+                && primary.ValueKind != JsonValueKind.Null)
+            {
+                Console.WriteLine("primaryGameWidget=" + primary.GetInt32()
+                    + " (click without --gamewidget targets this split view)");
+            }
+            if (result.TryGetProperty("views", out JsonElement views)
+                && views.ValueKind == JsonValueKind.Array && views.GetArrayLength() > 0)
+            {
+                foreach (JsonElement view in views.EnumerateArray())
+                {
+                    Console.WriteLine(string.Format(
+                        CultureInfo.InvariantCulture,
+                        "view gw={0} player={1} rect={2} layout={3}{4} input={5} mouse={6}{7}",
+                        GetText(view, "gameWidget"),
+                        GetText(view, "player"),
+                        FormatRect(view),
+                        GetText(view, "layout"),
+                        view.TryGetProperty("cellAgrees", out JsonElement agrees)
+                            && agrees.ValueKind == JsonValueKind.False ? " CELL-MISMATCH" : "",
+                        GetText(view, "inputDevices"),
+                        view.TryGetProperty("acceptsMouse", out JsonElement mouse)
+                            && mouse.ValueKind == JsonValueKind.True ? "yes" : "no",
+                        view.TryGetProperty("primary", out JsonElement isPrimary)
+                            && isPrimary.ValueKind == JsonValueKind.True ? " PRIMARY" : ""));
+                }
+            }
             return 0;
         }
 
@@ -888,6 +1044,22 @@ namespace CmdBridgeClient
                 "{0:0},{1:0}",
                 point.GetProperty("x").GetSingle(),
                 point.GetProperty("y").GetSingle());
+        }
+
+        private static string FormatRect(JsonElement element)
+        {
+            if (!element.TryGetProperty("rect", out JsonElement rect) ||
+                rect.ValueKind != JsonValueKind.Object)
+            {
+                return "-";
+            }
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "{0:0},{1:0} {2:0}x{3:0}",
+                rect.GetProperty("x").GetSingle(),
+                rect.GetProperty("y").GetSingle(),
+                rect.GetProperty("w").GetSingle(),
+                rect.GetProperty("h").GetSingle());
         }
 
         private static string GetText(JsonElement element, string name)
@@ -914,9 +1086,16 @@ namespace CmdBridgeClient
 
 观察（只读，无限）
   status                      屏幕/窗口/动画/布局状态
-  ui [--all] [--filter T] [--max N]   当前界面元素（含坐标与 hittable）
+  ui [--all] [--filter T] [--max N] [--gamewidget N]
+                              当前界面元素（RootWidget + 当前屏 + 活动对话框；含坐标、text、
+                              hittable、mounted、scope、clicked、laidOut、gameWidget）
+                              分屏：每个视图各有一份同名 HUD 按钮，元素上的 gw 就是槽位号；
+                              views 段列出每个视图的矩形/布局/输入设备/主视图
   reachability                可达性报告：哪些元素点不到、被谁挡住
-  player                      玩家状态 + 当前按键意图 + 背包
+  player                      玩家状态 + 当前按键意图 + 背包（只报第一个本地角色）
+  players [--index N] [--max N] [--slots N]
+                              每一个 PlayerData：主机分屏 H1/H2/H3 + 联机远端 avatar
+                              （位置/朝向/生命/睡眠/着火/疾病/生命体征/背包/动作；数组）
   aim                         准星指向的方块/实体
   dialogs                     当前对话框
   snapshot                    一次性拿全
@@ -949,9 +1128,25 @@ namespace CmdBridgeClient
                               背包/创造背包等模态面板 → ModalPanelWidget = null；HUD MoreContents → 收起）
                               世界内输入命令（act.move/lookat/key/dig/use/interact/place/aim）注入前会自动做这一步
   wheel <n>                   滚轮
-  click <selector|id> [--at x y]  引擎内 UI 点击（注入前二次校验，不可跳级；
-                              --at 用于 ListPanelWidget 的虚拟列表项）
-  text <string>               逐字符输入
+  click <selector|id|text:文字> [--at x y] [--gamewidget N]
+                              引擎内 UI 点击（注入前二次校验，不可跳级；
+                              text:OK = 按控件文字选（对话框按钮最稳）；--at 用于 ListPanelWidget 的虚拟列表项）
+                              分屏多视图：不带 --gamewidget 时**确定性地点主视图**（接受鼠标的最小槽位，
+                              通常 H1=0）；要指定视图就 --gamewidget N（= GameWidgetIndex，见 ui 的 gw 列）。
+                              点不到会明确报错而不是静默：element_not_laid_out / element_no_mouse_device
+                              / element_not_in_view / element_occluded
+  text <string>               逐字符输入到**当前有焦点**的文本框（无焦点报 no_focused_textbox；
+                              满行/放不下报 text_rejected，不会静默丢字符）
+  settext <selector> <text>   用 TextBoxWidget.Text setter 替换整个值（触发 TextChanged，
+                              对话框内部状态同步；内存条行/真值表 LinearText 用这个）
+  accept [dialog] [--button <sel>]  接受当前（或指定）对话框 = 在它的 OK 按钮上合成一次
+                              引擎自己的 Tap+Click，让 Update 的 IsClicked 提交分支真的跑
+  dialog ok|cancel [dialog] [--button <sel>]  同上 / 取消（走对话框自己的 Cancel 按钮）
+  chat.open                   打开 SuMultiplayer 聊天输入行（未进联机会话报 chat_not_in_session）
+  chat.text <文本>            追加到已打开的聊天输入行（净化 + 200 字上限；未打开报 chat_not_open）
+  chat.submit                 提交当前聊天输入行（等价按回车，不追加文本）
+  chat.send <文本>            打开 + 追加 + 提交 = 一条真实聊天（与手打同一发送链，UTF-8/CJK 原样）
+  chat.cancel                 关闭聊天输入并清空缓冲区（等价按 Esc）
   raw <command> k=v ...       直接下发任意命令
   commands                    列出内建命令与各 Mod 注册的扩展命令
   enter [--row N|--world 名字] [--settle ms] [--steps N]
@@ -1000,6 +1195,14 @@ AI 内存态改写与导出（只改内存；原 .scbtpak 字节永远不变）
             return arguments;
         }
 
+        /// <summary>把从 <paramref name="start"/> 起的参数用单个空格拼回一段文本（支持不加引号的多词）。</summary>
+        private static string JoinText(List<string> args, int start)
+        {
+            if (args == null || start >= args.Count)
+                return string.Empty;
+            return string.Join(" ", args.GetRange(start, args.Count - start));
+        }
+
         private static float ParseFloat(string text)
         {
             return float.Parse(text, CultureInfo.InvariantCulture);
@@ -1029,6 +1232,15 @@ AI 内存态改写与导出（只改内存；原 .scbtpak 字节永远不变）
                 // 挡路的界面关不掉 / 当前不是游戏画面：同样属于"现在做不了这件事"。
                 case "ui_blocking":
                     return 3;
+                // 聊天输入没打开 / 不在联机会话 / 注入被拒绝：属于"当前状态下不能做"，
+                // 与"连接失败"区分开。
+                case "chat_not_open":
+                case "chat_not_in_session":
+                case "chat_inject_failed":
+                case "chat_send_failed":
+                    return 3;
+                case "chat_unavailable":
+                    return 5;
                 case "connect_timeout":
                 case "discovery_failed":
                 case "runtime_file_missing":

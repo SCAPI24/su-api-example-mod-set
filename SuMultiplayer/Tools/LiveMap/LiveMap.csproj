@@ -16,11 +16,18 @@
     <!-- 只复用工具真正需要的协议/地图代码：Terrain 全量里的其它文件依赖引擎程序集与端口，本工具刻意不引 -->
     <Compile Include="..\..\Terrain\LiveMap.cs" />
     <Compile Include="..\..\Terrain\PlayerSessionKeys.cs" />
+    <!-- v10：LiveMapPlayer 用 PlayerKey 的 (clientId, slot) 口径（纯值类型，无引擎依赖） -->
+    <Compile Include="..\..\Players\PlayerKey.cs" />
     <Compile Include="..\..\Net\TerrainNet.cs" />
+    <!-- TerrainNet 的传输统计走 TransportDiagnostics（同一个类型，不复制）；它只用 Engine.Log 写限流日志，
+         所以本工具需要 Engine 包（仅工具进程使用，不进游戏 / 不进 .scmod）。 -->
+    <Compile Include="..\..\Net\TransportDiagnostics.cs" />
     <Compile Include="..\..\Net\MessageChannel.cs" />
     <Compile Include="..\..\Protocol\Generated\*.cs" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Google.Protobuf" Version="3.28.3" />
+    <!-- TransportDiagnostics 的 Engine.Log 依赖（只用于工具进程的传输统计日志） -->
+    <PackageReference Include="Engine" Version="0.1.6" />
   </ItemGroup>
 </Project>

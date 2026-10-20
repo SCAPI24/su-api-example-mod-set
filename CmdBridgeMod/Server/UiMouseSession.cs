@@ -68,6 +68,18 @@ namespace CmdBridgeMod
         private bool m_rightDown;
         private readonly HashSet<int> m_heldKeys = new HashSet<int>();
         private WidgetInput m_input;
+
+        /// <summary>
+        /// 会话显式绑定的输入面（`UiClickSession` 用）：**目标控件在哪一层，软光标就写哪一层**。
+        ///
+        /// 引擎里每个 `WidgetsHierarchyInput` 是独立一份（`Widget.Input` 沿父链找最近的一份，
+        /// Source: `Survivalcraft/Game/Widget.cs:250-266`）。世界内对话框挂在
+        /// `GameWidget` 下，读的是 `GameWidget` 那一层（`GameWidget.cs:104-106`）；
+        /// 只写根输入面时，对话框那层的 `MousePosition` 还是真实鼠标位置，
+        /// `Click` 派生不出来 —— 这就是"坐标点击能解析到按钮、按钮却不动"的根因。
+        /// 为 null 时退回 <see cref="m_input"/> / 根输入面（原有行为）。
+        /// </summary>
+        private WidgetInput m_forcedInput;
         private string m_lastError;
         private string m_lastAction;
         private int m_executedSteps;
@@ -164,6 +176,9 @@ namespace CmdBridgeMod
                 m_lastError = null;
                 m_lastAction = "session.begin";
                 m_tickQueued = false;
+                // 上一轮绑定的输入面不能带到新会话：`ui.session.begin` 的语义是"从根输入面开始"。
+                m_forcedInput = null;
+                m_input = null;
                 m_steps.Enqueue(new Step { Kind = StepKind.Assert, Note = "begin" });
             }
 
@@ -172,6 +187,19 @@ namespace CmdBridgeMod
             // 而且"哪一帧开始生效"取决于下一条命令什么时候来）。
             QueueTickIfNeeded();
             return Describe();
+        }
+
+        /// <summary>
+        /// 把本次会话的软光标绑定到**目标控件所在的输入面**（`UiClickSession` 在 `Begin` 之后调用）。
+        /// 必须在 `Begin` 之后调用：`Begin` 会清掉上一轮的绑定。
+        /// </summary>
+        public void BindInput(WidgetInput input)
+        {
+            lock (m_gate)
+            {
+                m_forcedInput = input;
+                m_input = null;
+            }
         }
 
         /// <summary>结束会话：释放按键、清掉残留的按下起点、交回用户鼠标。</summary>
@@ -457,7 +485,7 @@ namespace CmdBridgeMod
         /// <summary>会话不变量：软光标 + 光标可见 + 当前位置 (+ mask 时的按键状态)。</summary>
         private void AssertState()
         {
-            WidgetInput input = m_input ?? m_injector.GetRootWidgetInput();
+            WidgetInput input = m_forcedInput ?? m_input ?? m_injector.GetRootWidgetInput();
             if (input == null)
                 throw new BridgeCommandException("not_ready", "The UI input surface is not ready.");
             m_input = input;
@@ -523,7 +551,7 @@ namespace CmdBridgeMod
                 m_injector.SetKeyHeld((Key)key, false);
             m_heldKeys.Clear();
 
-            WidgetInput input = m_input ?? m_injector.GetRootWidgetInput();
+            WidgetInput input = m_forcedInput ?? m_input ?? m_injector.GetRootWidgetInput();
             if (input != null)
             {
                 m_injector.ClearWidgetMouseDownPoint(input);
@@ -539,6 +567,8 @@ namespace CmdBridgeMod
                 m_leftDown = false;
                 m_rightDown = false;
                 m_tickQueued = false;
+                m_forcedInput = null;
+                m_input = null;
             }
         }
 

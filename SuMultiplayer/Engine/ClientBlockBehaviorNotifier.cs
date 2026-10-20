@@ -21,9 +21,12 @@ namespace SuMultiplayer.Engine
     /// <see cref="BlockBehaviorNotifyPolicy.IsPresentationBehavior"/> 允许的纯表现行为：
     ///   · campfire（本 mod 的 SuSubsystemCampfireBlockBehavior 外壳，客户端走
     ///     <see cref="CampfireReplicaPresentation"/>）；
+    ///   · furnace（本 mod 的 SuSubsystemFurnaceBlockBehavior 外壳，客户端走
+    ///     <see cref="FurnaceReplicaPresentation"/>：Added/Modified 建火焰、Removed 收掉）；
     ///   · torch（Add/Remove/Modified 只碰 FireParticleSystem）。
-    /// 其它 behavior（衣柜 / 工作台 / 熔炉 / 分配器会 AddEntity；门 / 栅栏 / 楼梯会 ChangeCell）
-    /// 一律**拒绝通知**并计入 <c>clientBehaviorDeniedWrites</c>：客户端副本保持 mutation-denied，
+    /// 其它 behavior（衣柜 / 工作台 / 分配器会 AddEntity；门 / 栅栏 / 楼梯会 ChangeCell；
+    /// 引擎的熔炉行为会 AddEntity + DropAllItems）一律**拒绝通知**并计入
+    /// <c>clientBehaviorDeniedWrites</c>：客户端副本保持 mutation-denied，
     /// 不允许它们通过这条补通知路径写格 / 生成实体。
     ///
     /// **不补 OnNeighborBlockChanged**：引擎在 <c>SubsystemTerrain.ProcessModifiedCells</c>

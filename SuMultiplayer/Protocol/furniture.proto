@@ -1,0 +1,153 @@
+syntax = "proto3";
+
+package sump.protocol;
+
+option csharp_namespace = "SuMultiplayer.Protocol";
+option optimize_for = SPEED;
+
+// ---------------------------------------------------------------------------
+// Furniture design + furniture inventory synchronisation.
+//
+// Authority model:
+//   · The **host world** owns the only authoritative furniture design table
+//     (SubsystemFurnitureBlockBehavior). Designs live there exactly like any
+//     other world data and are persisted by the host's normal world save.
+//   · A client never assigns a design index and never calls
+//     TryAddDesign / TryAddDesignChain locally. It sends a request carrying the
+//     design bytes (bounded, run-length encoded) plus the source cells; the host
+//     validates, installs the design, destroys the source blocks and creates the
+//     furniture item, then broadcasts the authoritative record with the
+//     host-assigned index.
+//   · Clients install host records into a **replica-only, session-scoped**
+//     design store. Their SubsystemFurnitureBlockBehavior never persists those
+//     designs (Save writes empty FurnitureDesigns / FurnitureSets), so the
+//     client's own furniture library and world save are not polluted.
+//   · Furniture inventories (ComponentFurnitureInventory: the design list the
+//     furniture panel shows) are derived from that authoritative design table,
+//     so FurnitureContentState is the authoritative "contents" snapshot:
+//     designs added = put, designs removed = take. A client that diverged
+//     removes its extra designs (rollback) and requests a full sync when a
+//     design is missing.
+//
+// Source: Survivalcraft/Game/SubsystemFurnitureBlockBehavior.cs:ScanDesign
+// Source: Survivalcraft/Game/SubsystemFurnitureBlockBehavior.cs:TryAddDesign
+// Source: Survivalcraft/Game/SubsystemFurnitureBlockBehavior.cs:Save
+// Source: Survivalcraft/Game/FurnitureDesign.cs:FurnitureDesign
+// Source: Survivalcraft/Game/FurnitureBlock.cs:FurnitureBlock.Paint
+// Source: Survivalcraft/Game/ComponentFurnitureInventory.cs:FillSlots
+// ---------------------------------------------------------------------------
+
+// What the client asks the host to do. CREATE covers both "new design from
+// blocks" and "edit an existing design" (the engine's ScanDesign clones the
+// source design, edits a copy and adds it as a new design). PAINT is the paint
+// bucket on a placed furniture block: the host owns the source design and the
+// cell, so the request only carries the cell + colour.
+enum FurnitureDesignOp {
+  FURNITURE_DESIGN_OP_CREATE = 0;
+  FURNITURE_DESIGN_OP_PAINT = 1;
+  // Rename an existing design (the engine dialog's "Rename Original Furniture"
+  // mutates the source design; in multiplayer that mutation is host-authoritative).
+  FURNITURE_DESIGN_OP_RENAME = 2;
+}
+
+// One authoritative design. Values are run-length encoded as two parallel
+// arrays: run_counts[i] repeats run_values[i]. Light bits are stripped
+// (values are light-normalised, exactly like FurnitureDesign.Save).
+message FurnitureDesignRecord {
+  // Host-assigned slot 0..1023 (SubsystemFurnitureBlockBehavior.MaxDesigns).
+  int32 index = 1;
+  // 2..16 (FurnitureDesign.MinResolution/MaxResolution).
+  int32 resolution = 2;
+  string name = 3;
+  // FurnitureInteractionMode: 0 = None, 1 = Multistate, 2 = ElectricButton,
+  // 3 = ElectricSwitch, 4 = ConnectedMultistate.
+  uint32 interaction_mode = 4;
+  // Linked design index for multi-state chains, -1 = none.
+  int32 linked_index = 5;
+  // FurnitureSet name ("" = uncategorised).
+  string furniture_set = 6;
+  repeated int32 run_counts = 7 [packed = true];
+  repeated int32 run_values = 8 [packed = true];
+  // Canonical content hash (resolution + mode + name + linked index + set name
+  // + light-normalised values). Used for idempotent apply / content diffs.
+  sfixed64 content_hash = 9;
+}
+
+// Client -> host: create/edit a design, or paint a placed furniture block.
+message FurnitureDesignRequest {
+  // Per-connection monotonic sequence; the result echoes it.
+  int64 sequence = 1;
+  FurnitureDesignOp op = 2;
+  int32 start_x = 3;
+  int32 start_y = 4;
+  int32 start_z = 5;
+  // CellFace.Face 0..5 the client clicked (diagnostics; validation uses cells).
+  int32 face = 6;
+  // CREATE: design payload (bounded by SuMultiplayer.Net.FurnitureDesignCodec).
+  int32 resolution = 7;
+  string name = 8;
+  uint32 interaction_mode = 9;
+  repeated int32 run_counts = 10 [packed = true];
+  repeated int32 run_values = 11 [packed = true];
+  // CREATE: source cells (the blocks the design was scanned from, or the
+  // single furniture cell for an edit). The host re-reads them and requires an
+  // exact light-normalised match before touching the world.
+  repeated int32 source_x = 12 [packed = true];
+  repeated int32 source_y = 13 [packed = true];
+  repeated int32 source_z = 14 [packed = true];
+  repeated int32 source_values = 15 [packed = true];
+  // CREATE (edit): source design index, -1 = new design.
+  int32 base_design_index = 16;
+  // PAINT: colour (0..15) or -1 for the "remove paint" bucket; ignored by CREATE.
+  int32 paint_color = 17;
+  // Requester's effective interaction reach in metres (engine ComponentMiner.Raycast:
+  // Creative ? SettingsManager.CreativeReach : 5f).  Host rule:
+  // allowed = min(reach + tolerance, serverMax); absent (old client) = 5.0 / 7.5.
+  // Source: Survivalcraft/Game/ComponentMiner.cs:378
+  optional float reach = 18;
+}
+
+// Host -> client: answer for one FurnitureDesignRequest.
+message FurnitureDesignResult {
+  int64 sequence = 1;
+  bool accepted = 2;
+  // Explicit rejection reason (never empty when accepted = false).
+  string reason = 3;
+  int32 design_index = 4;
+  sfixed64 content_hash = 5;
+  // The design already existed (identical content) and the host reused it.
+  bool duplicate = 6;
+  // Host design revision this result belongs to.
+  int32 revision = 7;
+  // Whether the host created the furniture item for the requesting player.
+  bool pickable_spawned = 8;
+}
+
+// Host -> client: authoritative design records (upsert) + explicit removals.
+// A full snapshot is sent as consecutive messages with full = true; removals
+// are also reconciled by FurnitureContentState, so a lost/partial batch cannot
+// leave a stale design behind.
+message FurnitureDesignState {
+  int32 revision = 1;
+  bool full = 2;
+  string reason = 3;
+  repeated FurnitureDesignRecord designs = 4;
+  repeated int32 removed_indices = 5 [packed = true];
+}
+
+// Client -> host: "my world is loaded / I reconnected, send the design table".
+message FurnitureDesignSyncRequest {
+  int32 known_revision = 1;
+  string reason = 2;
+}
+
+// Host -> client: authoritative furniture inventory contents = every design
+// index currently in the host's design table plus its content hash.
+// designs added since the previous state = put, removed = take.
+message FurnitureContentState {
+  int32 revision = 1;
+  bool full = 2;
+  string reason = 3;
+  repeated int32 design_indices = 4 [packed = true];
+  repeated sfixed64 design_hashes = 5 [packed = true];
+}

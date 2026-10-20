@@ -666,6 +666,45 @@ namespace SuMultiplayer.Creatures
             for (int i = 0; i < removedTokens.Count; i++) m_keyByToken.Remove(removedTokens[i]);
         }
 
+        /// <summary>
+        /// **主机**：把客户端上报 / 近战请求里的生物网络键解析成主机侧实体令牌
+        /// （<see cref="CreatureStateRecord.Token"/> = 主机世界里的 Entity）。
+        /// 键不存在 / 已移除时返回 false 并写明原因（调用方据此回 <c>target-missing</c>，
+        /// 绝不拿"最接近的一只"顶替）。
+        /// Source: Survivalcraft/Game/ComponentMiner.cs:376（近战目标必须能定位到权威实体）
+        /// </summary>
+        public bool TryGetHostCreatureToken(int key, out object token, out string reason)
+        {
+            token = null;
+            reason = null;
+            if (key <= 0)
+            {
+                reason = "生物网络键 " + key + " 非法（必须 > 0）";
+                return false;
+            }
+            if (!m_creaturesByKey.TryGetValue(key, out CreatureStateRecord record) ||
+                record == null || record.Token == null)
+            {
+                reason = "主机当前没有生物网络键 " + key + "（还没同步 / 已移除）";
+                return false;
+            }
+            token = record.Token;
+            return true;
+        }
+
+        /// <summary>
+        /// **主机**：主机侧实体令牌 → 本会话分配的生物网络键（近战 / 诊断用）。
+        /// 没有分配过返回 false（不新分配、不猜键）。
+        /// </summary>
+        public bool TryGetHostCreatureKey(object token, out int key)
+        {
+            key = 0;
+            return token != null && m_keyByToken.TryGetValue(token, out key) && key > 0;
+        }
+
+        /// <summary>主机当前跟踪的生物条数（状态行 / 诊断）。</summary>
+        public int HostCreatureCount => m_creaturesByKey.Count;
+
         private static CreatureStateRecord FindByKey(List<CreatureStateRecord> creatures, int key)
         {
             for (int i = 0; i < creatures.Count; i++)

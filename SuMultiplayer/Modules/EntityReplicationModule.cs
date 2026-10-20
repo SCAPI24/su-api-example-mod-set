@@ -1169,7 +1169,7 @@ namespace SuMultiplayer.Modules
             long sequence = ++m_nextPickupSequence;
             if (sequence <= 0) sequence = ++m_nextPickupSequence;
             var request = new PickableAcquireRequestData(sequence, candidate.PickableId,
-                candidate.Target);
+                candidate.Target, hasReach: true, reach: m_port.LocalReach);
             byte[] payload = EntityCodec.EncodeRequest(in request).ToByteArray();
             if (!m_transport.TrySend(MessageType.PickableAcquireRequest, payload))
             {
@@ -1534,7 +1534,8 @@ namespace SuMultiplayer.Modules
                 result = new PickableAcquireResultData(request.Sequence, request.PickableId, false,
                     reason ?? "rejected", 0, false, Array.Empty<int>(), Array.Empty<int>(),
                     Array.Empty<int>(), 0);
-                LogRateLimited("pickup-reject:" + clientId + ":" + reason,
+                LogRateLimited("pickup-reject:" + clientId + ":" +
+                    InteractionReachGate.ReasonCode(reason),
                     "拒绝 clientId=" + clientId + " 的拾取请求 " + request.Describe() + "：" + reason);
             }
             if (m_pickupHistory.TryGetValue(clientId, out PickupHistory updated))
@@ -1698,7 +1699,7 @@ namespace SuMultiplayer.Modules
             if (sequence <= 0) sequence = ++m_nextDropSequence;
             var request = new PickableDropRequestData(sequence, intent.ActiveSlot,
                 intent.ItemValue, intent.Count, intent.Position, intent.Direction,
-                intent.Source);
+                intent.Source, hasReach: true, reach: m_port.LocalReach);
             if (!m_transport.TrySend(MessageType.PickableDropRequest,
                     EntityRequestCodec.EncodeDropBytes(in request)))
             {
@@ -1757,7 +1758,8 @@ namespace SuMultiplayer.Modules
             long sequence = ++m_nextFireSequence;
             if (sequence <= 0) sequence = ++m_nextFireSequence;
             var request = new ProjectileFireRequestData(sequence, intent.Kind, intent.ItemValue,
-                intent.ActiveSlot, intent.Origin, intent.Direction, intent.Charge);
+                intent.ActiveSlot, intent.Origin, intent.Direction, intent.Charge,
+                hasReach: true, reach: m_port.LocalReach);
             if (!m_transport.TrySend(MessageType.ProjectileFireRequest,
                     EntityRequestCodec.EncodeFireBytes(in request)))
             {
@@ -2226,7 +2228,8 @@ namespace SuMultiplayer.Modules
                 result = new PickableDropResultData(request.Sequence, false, reason ?? "rejected",
                     0, 0, Vector3.Zero, Vector3.Zero, Array.Empty<int>(), Array.Empty<int>(),
                     Array.Empty<int>(), 0);
-                LogRateLimited("drop-reject:" + clientId + ":" + reason,
+                LogRateLimited("drop-reject:" + clientId + ":" +
+                    InteractionReachGate.ReasonCode(reason),
                     "拒绝 clientId=" + clientId + " 的丢弃请求 " + request.Describe() + "：" +
                     (reason ?? "rejected") + (requestUi
                         ? "（UI 拖出被拒：客户端从未撤销背包，物品不会消失）"
@@ -2345,7 +2348,8 @@ namespace SuMultiplayer.Modules
                 result = new ProjectileFireResultData(request.Sequence, false,
                     reason ?? "rejected", 0, 0, 0, Vector3.Zero, Vector3.Zero,
                     Array.Empty<int>(), Array.Empty<int>(), Array.Empty<int>(), 0);
-                LogRateLimited("fire-reject:" + clientId + ":" + reason,
+                LogRateLimited("fire-reject:" + clientId + ":" +
+                    InteractionReachGate.ReasonCode(reason),
                     "拒绝 clientId=" + clientId + " 的开火请求 " + request.Describe() + "：" +
                     (reason ?? "rejected") + "（不生成投射物、不消费道具）");
             }

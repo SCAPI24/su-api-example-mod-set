@@ -26,6 +26,8 @@ namespace SuMultiplayer.UI
         private readonly Action m_cancelled;
         /// <summary>Complete 真正返回 Play 之前调用（Session 用它保留本次加入的连接）。</summary>
         private readonly Action m_aboutToReturnToPlay;
+        /// <summary>构造时固定的完成回调（组合根直接接联机角色模块）；Enter 参数可覆盖。</summary>
+        private readonly Action<PlayerSkinChangeRequest> m_constructedCompleted;
         private readonly CharacterSkinsCache m_characterSkinsCache = new CharacterSkinsCache();
         private readonly PlayerModelWidget m_playerModel;
         private readonly ButtonWidget m_playerClassButton;
@@ -34,7 +36,7 @@ namespace SuMultiplayer.UI
         private readonly ButtonWidget m_characterSkinButton;
         private readonly LabelWidget m_descriptionLabel;
         private readonly ButtonWidget m_playButton;
-        private Action<string, PlayerClass, string> m_completed;
+        private Action<PlayerSkinChangeRequest> m_completed;
         private PlayerClass m_playerClass;
         private string m_skinName;
         private string m_defaultName;
@@ -43,12 +45,14 @@ namespace SuMultiplayer.UI
 
         // Source: Survivalcraft/Game/PlayerScreen.cs:PlayerScreen.PlayerScreen
         public SuNetworkPlayerScreen(IModParentField parentField, CharacterNameRoller nameRoller,
-            Action cancelled = null, Action aboutToReturnToPlay = null)
+            Action cancelled = null, Action aboutToReturnToPlay = null,
+            Action<PlayerSkinChangeRequest> completed = null)
         {
             m_parentField = parentField ?? throw new ArgumentNullException(nameof(parentField));
             m_nameRoller = nameRoller ?? throw new ArgumentNullException(nameof(nameRoller));
             m_cancelled = cancelled;
             m_aboutToReturnToPlay = aboutToReturnToPlay;
+            m_constructedCompleted = completed;
             XElement node = ContentManager.Get<XElement>("Screens/PlayerScreen");
             LoadContents(this, node);
             m_playerModel = Children.Find<PlayerModelWidget>("Model");
@@ -69,7 +73,8 @@ namespace SuMultiplayer.UI
 
         public override void Enter(object[] parameters)
         {
-            m_completed = parameters?.FirstOrDefault() as Action<string, PlayerClass, string>;
+            var fromParameters = parameters?.FirstOrDefault() as Action<PlayerSkinChangeRequest>;
+            m_completed = fromParameters ?? m_constructedCompleted;
             // 第二个参数 = 当前会话里已知的名字（模块收集：主机 + 名册里已经出现的人）。
             m_knownSessionNames = parameters != null && parameters.Length > 1 &&
                 parameters[1] is string[] names
@@ -118,14 +123,44 @@ namespace SuMultiplayer.UI
 
         private void Complete()
         {
-            Action<string, PlayerClass, string> completed = m_completed;
+            Action<PlayerSkinChangeRequest> completed = m_completed;
             string name = NameText.Trim();
+            // 自定义皮肤：在离开屏幕前把资源读出来并**完整校验**。失败就留在本屏并明确提示，
+            // 绝不把"列表里选过"当成资源可用（也不换成内置皮肤提交）。
+            byte[] customAsset = Array.Empty<byte>();
+            if (SkinAssetPolicy.IsCustomSkinName(m_skinName))
+            {
+                if (!CharacterSkinCatalog.TryReadCustomAsset(m_skinName,
+                        out customAsset, out string assetReason))
+                {
+                    ShowError("Custom skin unavailable",
+                        "无法使用自定义皮肤 \"" + m_skinName + "\"：\n" + assetReason);
+                    return;
+                }
+            }
+            else if (!CharacterSkinsManager.IsBuiltIn(m_skinName))
+            {
+                ShowError("Skin unavailable", "皮肤 \"" + m_skinName + "\" 不是可用的内置皮肤。");
+                return;
+            }
             // 返回 Play 之前先让 Session 知道"这是同一次加入的继续"：
             // Play 屏 Enter 会据此跳过 LeaveRoom，否则会停掉连接、永远收不到世界。
             m_aboutToReturnToPlay?.Invoke();
             // 再切回 Play，最后执行回调（旧实现顺序一致：回调里会重新 JoinGame）。
             ScreensManager.SwitchScreen("Play");
-            completed?.Invoke(name, m_playerClass, m_skinName);
+            completed?.Invoke(new PlayerSkinChangeRequest
+            {
+                Name = name,
+                Sex = (PlayerSex)(int)m_playerClass,
+                SkinName = m_skinName,
+                SkinAsset = customAsset,
+                Source = "character-screen"
+            });
+        }
+
+        private void ShowError(string title, string message)
+        {
+            DialogsManager.ShowDialog(null, new MessageDialog(title, message, "OK", null, null));
         }
 
         private bool VerifyName()
@@ -188,14 +223,19 @@ namespace SuMultiplayer.UI
             return names.ToArray();
         }
 
+        /// <summary>
+        /// 皮肤列表：内置 + **本机自定义皮肤**（后者由 CharacterSkinCatalog 只读校验后列出）。
+        /// 选中自定义皮肤时，<see cref="Complete"/> 会再读一次资源并交给模块随首次加入上传。
+        /// Source: Mod/ScMultiplayer/Func/Screen/SuNetworkPlayerScreen.cs:123-150（旧实现列出全部皮肤）
+        /// </summary>
         private void ShowSkinSelection()
         {
-            CharacterSkinsManager.UpdateCharacterSkinsList();
-            // 只列内置皮肤：本重写版还没有自定义皮肤资源下发（旧实现 PlayerSkinAssetMessage），
-            // 选自定义皮肤会让其他客户端拿到不存在的贴图 —— 这里从入口就不提供（不是静默换成别的）。
-            IEnumerable<string> skins = CharacterSkinsManager.CharacterSkinsNames.Where(name =>
-                CharacterSkinsManager.IsBuiltIn(name) &&
-                CharacterSkinsManager.GetPlayerClass(name) == m_playerClass);
+            string[] skins = CharacterSkinCatalog.NamesForClass(m_playerClass, includeCustom: true);
+            if (skins.Length == 0)
+            {
+                ShowError("No skins", "本机没有可用的 " + m_playerClass + " 皮肤。");
+                return;
+            }
             DialogsManager.ShowDialog(null, new ListSelectionDialog(
                 "Select Character Skin", skins, 64f, item =>
                 {
@@ -206,7 +246,8 @@ namespace SuMultiplayer.UI
                     widget.Children.Find<LabelWidget>("CharacterSkinItem.Text").Text =
                         CharacterSkinsManager.GetDisplayName(skin);
                     widget.Children.Find<LabelWidget>("CharacterSkinItem.Details").Text =
-                        $"{texture.Width}x{texture.Height}";
+                        $"{texture.Width}x{texture.Height}" +
+                        (CharacterSkinsManager.IsBuiltIn(skin) ? string.Empty : " | Custom");
                     PlayerModelWidget model = widget.Children.Find<PlayerModelWidget>("CharacterSkinItem.Model");
                     model.PlayerClass = m_playerClass;
                     model.CharacterSkinTexture = texture;

@@ -21,8 +21,9 @@ namespace SuMultiplayer.Players
     ///
     /// Source: Mod/ScMultiplayer/Core/PlayerStatsSnapshot.cs:24-268（逐字段照搬）
     /// **未搬**的部分：<c>PlayerStatsSnapshot.Write/Read(SuWriter/SuReader)</c>（:163-194）——
-    /// 那是 <c>PlayerStatsMessage</c> 网络编码，属于"客户端周期上报统计"那条还没接的功能链，
-    /// 本重写版暂不引入 Comms（见 Mod/SuMultiplayer/SuMultiplayer.csproj 注释）。
+    /// 那是旧实现 Comms 层的 `PlayerStatsMessage` 网络编码。本重写版不用 Comms：
+    /// "客户端把自己的统计上报给主机"走 <see cref="SuMultiplayer.Net.PlayerStatsWire"/>
+    /// （protobuf `PlayerStatsSnapshot` 分片，见 Modules/PlayerStatsModule.cs 的 ReportSelf）。
     /// </summary>
     public sealed class PlayerStatsSnapshot
     {
@@ -159,8 +160,8 @@ namespace SuMultiplayer.Players
         private static string FormatValue(object value, Type type)
         {
             if (value == null) return string.Empty;
-            if (type == typeof(double)) return ((double)value).ToString("R", CultureInfo.InvariantCulture);
-            if (type == typeof(float)) return ((float)value).ToString("R", CultureInfo.InvariantCulture);
+            if (type == typeof(double)) return FormatDouble((double)value);
+            if (type == typeof(float)) return FormatDouble((float)value);
             if (type == typeof(long)) return ((long)value).ToString(CultureInfo.InvariantCulture);
             if (type == typeof(int)) return ((int)value).ToString(CultureInfo.InvariantCulture);
             if (type == typeof(bool)) return (bool)value ? "1" : "0";
@@ -169,21 +170,57 @@ namespace SuMultiplayer.Players
             return Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
         }
 
+        /// <summary>
+        /// 浮点数的**线上 / 记录规范文本**：±∞ / NaN 固定写成 "Infinity" / "-Infinity" / "NaN"。
+        /// 不能依赖 <c>double.ToString("R")</c> 的无穷符号：.NET 不同版本 / 文化下可能写成
+        /// "Infinity" 或 "∞"，跨端解析会失败（<c>HighestAltitude</c> 的初值就是 -∞）。
+        /// </summary>
+        private static string FormatDouble(double value)
+        {
+            if (double.IsPositiveInfinity(value)) return "Infinity";
+            if (double.IsNegativeInfinity(value)) return "-Infinity";
+            if (double.IsNaN(value)) return "NaN";
+            return value.ToString("R", CultureInfo.InvariantCulture);
+        }
+
+        /// <summary>解析 <see cref="FormatDouble"/> 的规范文本；同时接受旧记录里的 "∞" / "-∞"。</summary>
+        private static bool TryReadDouble(string text, out double value)
+        {
+            value = 0.0;
+            if (string.Equals(text, "Infinity", StringComparison.Ordinal) ||
+                string.Equals(text, "+Infinity", StringComparison.Ordinal) ||
+                string.Equals(text, "∞", StringComparison.Ordinal))
+            {
+                value = double.PositiveInfinity;
+                return true;
+            }
+            if (string.Equals(text, "-Infinity", StringComparison.Ordinal) ||
+                string.Equals(text, "-∞", StringComparison.Ordinal))
+            {
+                value = double.NegativeInfinity;
+                return true;
+            }
+            if (string.Equals(text, "NaN", StringComparison.Ordinal))
+            {
+                value = double.NaN;
+                return true;
+            }
+            return double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out value);
+        }
+
         private static bool TryParseValue(string text, Type type, out object value)
         {
             value = null;
             if (type == typeof(double))
             {
-                if (!double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out double d))
-                    return false;
+                if (!TryReadDouble(text, out double d)) return false;
                 value = d;
                 return true;
             }
             if (type == typeof(float))
             {
-                if (!float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out float f))
-                    return false;
-                value = f;
+                if (!TryReadDouble(text, out double parsed)) return false;
+                value = (float)parsed;
                 return true;
             }
             if (type == typeof(long))

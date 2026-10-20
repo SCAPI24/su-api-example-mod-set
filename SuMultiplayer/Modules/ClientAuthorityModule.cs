@@ -340,8 +340,10 @@ namespace SuMultiplayer.Modules
                 return;
             }
             long nowMs = (long)(Time.RealTime * 1000.0);
+            // 每次本地编辑都带上**本端此刻**的有效交互距离（创造模式 SettingsManager.CreativeReach
+            // 可调，只在加入时上报会过期）。主机按 min(reach+容差, 主机上限) 校验。
             ClientEditRequest request = m_tracker.Begin(edit.X, edit.Y, edit.Z,
-                edit.Contents, edit.Data, nowMs);
+                edit.Contents, edit.Data, nowMs, hasReach: true, reach: m_edit.LocalReach);
             if (request == null)
             {
                 m_editDroppedOverflow++;
@@ -352,8 +354,7 @@ namespace SuMultiplayer.Modules
                 return;
             }
             if (m_transport.TrySend(MessageType.CellEditRequest,
-                    CellEditRequestCodec.Encode(request.Sequence, request.X, request.Y, request.Z,
-                        request.Contents, request.Data)))
+                    CellEditRequestCodec.Encode(request)))
             {
                 m_editSent++;
             }
@@ -372,8 +373,7 @@ namespace SuMultiplayer.Modules
             {
                 ClientEditRequest request = due[i];
                 if (m_transport == null || !m_transport.TrySend(MessageType.CellEditRequest,
-                        CellEditRequestCodec.Encode(request.Sequence, request.X, request.Y,
-                            request.Z, request.Contents, request.Data)))
+                        CellEditRequestCodec.Encode(request)))
                 {
                     m_editSendFailures++;
                 }

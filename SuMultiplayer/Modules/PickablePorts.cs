@@ -284,6 +284,13 @@ namespace SuMultiplayer.Modules
         /// <summary>本端是否是联机客户端副本（引擎侧同一事实：SuSubsystemTerrain.ClientReplica）。</summary>
         bool IsClientReplica { get; }
 
+        /// <summary>
+        /// 客户端本机**当前有效交互距离**（引擎 ComponentMiner.Raycast 的 reach：
+        /// 创造 = SettingsManager.CreativeReach，生存 = 5）。拾取 / 丢弃 / 开火请求都带上它；
+        /// 主机按 min(reach + 容差, 主机上限) 校验。
+        /// </summary>
+        float LocalReach { get; }
+
         /// <summary>引擎侧的拾取物 / 投射物子系统是否已经就绪（客户端没进世界时为 false）。</summary>
         bool IsReplicaReady { get; }
 

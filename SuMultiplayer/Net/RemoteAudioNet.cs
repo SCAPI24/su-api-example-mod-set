@@ -51,6 +51,89 @@ namespace SuMultiplayer.Net
         public const float MinMinDistance = 0.05f;
         public const float MaxMinDistance = 1024f;
 
+        // ---------------------------------------------------------------- 全局主机声音中继
+        //
+        // 与"远端动作窗口"共用同一条 REMOTE_ACTION_SOUND (id 68) 消息；全局中继把每帧
+        // 主机音频队列里**实际排入并即将播放**的声音按 100 ms 一轮、每端 ≤16 条批量下发。
+        // 位置无法从引擎队列反解（SoundInfo 只有 Time/Name/Volume/Pitch/Pan，位置在入队前
+        // 已折算成距离衰减），因此每条声音带 attenuation_mode + source_distance：
+        //   · Absolute     = 位置 / 音量就是最终值（远端动作窗口，锚点精确）；
+        //   · RelativeToHost = 位置 = 主机监听者，source_distance = 声源到主机监听者的距离；
+        //   · NonPositional = 无位置的 2D 声音，只在主机监听者附近播放。
+        // 客户端按自己到主机监听者的距离 re-project 音量（见 RemoteSoundPresentationPolicy）。
+
+        /// <summary>一条全局中继消息最多携带的声音数（主机封顶；未发出的留在下一轮，不静默丢）。</summary>
+        public const int MaxHostSoundsPerMessage = 16;
+
+        /// <summary>每个玩家端每秒最多收到的全局中继声音数（按声音计，不是按消息计）。</summary>
+        public const int MaxHostSoundsPerSecondPerPeer = 30;
+
+        /// <summary>全局待发队列上限（声音数）。超出时丢最旧的并计入 CapDropped。</summary>
+        public const int MaxPendingHostSounds = 256;
+
+        /// <summary>待发声音最长保留时间；超时仍没发给任何端 → Expired（明确计数）。</summary>
+        public const int HostPendingRetentionMs = 2000;
+
+        /// <summary>全局中继轮询周期（毫秒）：100 ms = 每秒最多 10 轮批量。</summary>
+        public const int HostBatchIntervalMs = 100;
+
+        /// <summary>远端声音距离上界（米）：主机 / 客户端都按这个"可听半径"裁剪。</summary>
+        public const float HostSourceDistanceMax = 1024f;
+
+        /// <summary>引擎位置音频的默认最小距离（与内容里最常见的 2 一致）。</summary>
+        public const float DefaultMinDistance = 2f;
+
+        /// <summary>
+        /// 复刻 <c>SubsystemAudio.CalculateVolume</c>（Source: Survivalcraft/Game/SubsystemAudio.cs:
+        /// CalculateVolume）。position 重载用默认 rolloffFactor=2。
+        /// 用于把"主机听感音量"反解成距离、以及客户端按自己的距离重算衰减。
+        /// </summary>
+        public static float CalculateVolume(float distance, float minDistance,
+            float rolloffFactor = 2f)
+        {
+            if (distance > minDistance)
+            {
+                return minDistance / (minDistance +
+                    MathUtils.Max(rolloffFactor * (distance - minDistance), 0f));
+            }
+            return 1f;
+        }
+
+        /// <summary>
+        /// 距离反解：已知主机侧的衰减音量 v 与最小距离 m，求 d 使
+        /// CalculateVolume(d, m) == v。v ≥ 1 表示落在最小距离内（d = 0 是安全下界）；
+        /// v ≤ 0 视为不可听，返回 <paramref name="maxDistance"/>。
+        /// 公式：v = m / (m + 2(d - m)) ⇒ d = m * (1 + 1/v) / 2。
+        /// </summary>
+        public static float InverseDistance(float volume, float minDistance,
+            float maxDistance)
+        {
+            if (maxDistance < 0f) maxDistance = 0f;
+            if (volume >= 1f) return 0f;
+            if (volume <= 0.0001f) return maxDistance;
+            float distance = minDistance * (1f + 1f / volume) * 0.5f;
+            if (float.IsNaN(distance) || float.IsInfinity(distance)) return maxDistance;
+            return MathUtils.Clamp(distance, 0f, maxDistance);
+        }
+
+        /// <summary>
+        /// 客户端按自己的估算距离重算音量：主机记录的 volume 是"主机监听者处的音量"，
+        /// 先除掉主机距离的衰减、再乘客户端距离的衰减。source_distance ≤ 0 时按未衰减处理。
+        /// </summary>
+        public static float RelativeVolume(float hostVolume, float sourceDistance,
+            float clientDistance, float minDistance)
+        {
+            if (hostVolume <= 0f) return 0f;
+            float hostAttenuation = sourceDistance <= 0f
+                ? 1f
+                : CalculateVolume(sourceDistance, minDistance);
+            if (hostAttenuation <= 0.0001f) return 0f;
+            float clientAttenuation = CalculateVolume(clientDistance, minDistance);
+            float result = hostVolume * clientAttenuation / hostAttenuation;
+            if (float.IsNaN(result) || float.IsInfinity(result)) return 0f;
+            return MathUtils.Clamp(result, 0f, MaxVolume);
+        }
+
         /// <summary>主机侧事件 id 会话内严格递增；客户端按它去重 / 拒绝重放。</summary>
         public static bool IsValidSoundName(string sound)
         {
@@ -65,11 +148,50 @@ namespace SuMultiplayer.Net
         }
     }
 
+    /// <summary>
+    /// 客户端如何把主机记录的音量落到自己的监听者上（线上 <c>attenuation_mode</c>）：
+    /// <list type="bullet">
+    /// <item><see cref="Absolute"/>：position / volume 就是最终播放参数（远端动作窗口）；</item>
+    /// <item><see cref="RelativeToHost"/>：position = 主机监听者，source_distance = 声源距离；</item>
+    /// <item><see cref="NonPositional"/>：引擎里没有位置的 2D 声音，只在主机监听者附近播；</item>
+    /// <item><see cref="SlotSource"/>：position = 主机某个**本机角色的真实位置**，
+    ///       volume = 主机侧最近监听者处的衰减音量，source_distance = 该声源到主机最近
+    ///       监听者的距离。客户端先用"自己最近的本地角色"到 position 的**精确距离**做
+    ///       48 m 裁剪，再用 <see cref="RemoteSoundPolicy.RelativeVolume"/> 把主机侧衰减
+    ///       还原成自己的距离衰减（不再需要方向各向同性假设）。</item>
+    /// </list>
+    /// 追加在末尾（append-only）：老载荷的 0/1/2 语义不变。
+    /// </summary>
+    public enum RemoteSoundAttenuation : byte
+    {
+        Absolute = 0,
+        RelativeToHost = 1,
+        NonPositional = 2,
+        /// <summary>声源位置精确 = 主机某个本机角色（多角色槽位归属）；见类注释。</summary>
+        SlotSource = 3
+    }
+
     /// <summary>一条已捕获 / 待播放的声音（纯值；与线上 <c>RemoteSoundClip</c> 一一对应）。</summary>
     public readonly struct RemoteSoundClipData
     {
         public RemoteSoundClipData(string sound, Vector3 position, float volume, float pitch,
             float minDistance, bool autoDelay)
+            : this(sound, position, volume, pitch, minDistance, autoDelay,
+                RemoteSoundAttenuation.Absolute, 0f, 0f)
+        {
+        }
+
+        public RemoteSoundClipData(string sound, Vector3 position, float volume, float pitch,
+            float minDistance, bool autoDelay, RemoteSoundAttenuation attenuation,
+            float sourceDistance)
+            : this(sound, position, volume, pitch, minDistance, autoDelay, attenuation,
+                sourceDistance, 0f)
+        {
+        }
+
+        public RemoteSoundClipData(string sound, Vector3 position, float volume, float pitch,
+            float minDistance, bool autoDelay, RemoteSoundAttenuation attenuation,
+            float sourceDistance, float delay)
         {
             Sound = sound;
             Position = position;
@@ -77,6 +199,9 @@ namespace SuMultiplayer.Net
             Pitch = pitch;
             MinDistance = minDistance;
             AutoDelay = autoDelay;
+            Attenuation = attenuation;
+            SourceDistance = sourceDistance;
+            Delay = delay;
         }
 
         public string Sound { get; }
@@ -85,11 +210,25 @@ namespace SuMultiplayer.Net
         public float Pitch { get; }
         public float MinDistance { get; }
         public bool AutoDelay { get; }
+        /// <summary>音量的解释方式；见 <see cref="RemoteSoundAttenuation"/>。</summary>
+        public RemoteSoundAttenuation Attenuation { get; }
+        /// <summary>RelativeToHost 时 = 声源到主机监听者的距离（米）；其它模式为 0。</summary>
+        public float SourceDistance { get; }
+        /// <summary>
+        /// 客户端播放前要等待的秒数（**只在本地表现计划里计算，不上线**）。
+        /// 引擎 autoDelay 的声音按客户端自己的距离重算 = min(距离/120, 3)（Source:
+        /// Survivalcraft/Game/SubsystemAudio.cs:CalculateDelay）；Present 用带 delay 的重载播放。
+        /// </summary>
+        public float Delay { get; }
 
         public string Describe() => Sound + "@(" + Position.X.ToString("F2") + "," +
             Position.Y.ToString("F2") + "," + Position.Z.ToString("F2") + ") vol=" +
             Volume.ToString("F3") + " pitch=" + Pitch.ToString("F2") + " min=" +
-            MinDistance.ToString("F2") + (AutoDelay ? " autoDelay" : string.Empty);
+            MinDistance.ToString("F2") + (AutoDelay ? " autoDelay" : string.Empty) +
+            (Attenuation == RemoteSoundAttenuation.Absolute
+                ? string.Empty
+                : " mode=" + Attenuation + " src=" + SourceDistance.ToString("F2")) +
+            (Delay > 0.0001f ? " delay=" + Delay.ToString("F3") : string.Empty);
     }
 
     /// <summary>一次远程动作产生的整批声音（主机 → 请求者 + 附近端）。</summary>
@@ -144,7 +283,9 @@ namespace SuMultiplayer.Net
                     Volume = clip.Volume,
                     Pitch = clip.Pitch,
                     MinDistance = clip.MinDistance,
-                    AutoDelay = clip.AutoDelay
+                    AutoDelay = clip.AutoDelay,
+                    AttenuationMode = (uint)clip.Attenuation,
+                    SourceDistance = clip.SourceDistance
                 });
             }
             message = encoded;
@@ -168,7 +309,7 @@ namespace SuMultiplayer.Net
                 reason = "remote-sound-null";
                 return false;
             }
-            if (message.SourceClientId <= 0)
+            if (message.SourceClientId < 0)
             {
                 reason = "remote-sound-source-" + message.SourceClientId;
                 return false;
@@ -189,7 +330,10 @@ namespace SuMultiplayer.Net
                 reason = "remote-sound-empty";
                 return false;
             }
-            if (count > RemoteSoundPolicy.MaxSoundsPerEvent)
+            int maxCount = message.SourceClientId == 0
+                ? RemoteSoundPolicy.MaxHostSoundsPerMessage
+                : RemoteSoundPolicy.MaxSoundsPerEvent;
+            if (count > maxCount)
             {
                 reason = "remote-sound-count-" + count;
                 return false;
@@ -232,8 +376,26 @@ namespace SuMultiplayer.Net
                     reason = "remote-sound-min-distance-" + i;
                     return false;
                 }
+                if (clip.AttenuationMode > (uint)RemoteSoundAttenuation.SlotSource)
+                {
+                    reason = "remote-sound-attenuation-" + i;
+                    return false;
+                }
+                if (!IsFinite(clip.SourceDistance) || clip.SourceDistance < 0f ||
+                    clip.SourceDistance > RemoteSoundPolicy.HostSourceDistanceMax)
+                {
+                    reason = "remote-sound-source-distance-" + i;
+                    return false;
+                }
+                var attenuation = (RemoteSoundAttenuation)clip.AttenuationMode;
+                // 两种"相对"模式都必须带主机侧距离；Absolute / NonPositional 忽略该字段。
+                float sourceDistance = attenuation == RemoteSoundAttenuation.RelativeToHost ||
+                    attenuation == RemoteSoundAttenuation.SlotSource
+                    ? clip.SourceDistance
+                    : 0f;
                 clips[i] = new RemoteSoundClipData(clip.Sound, position, clip.Volume,
-                    clip.Pitch, clip.MinDistance, clip.AutoDelay);
+                    clip.Pitch, clip.MinDistance, clip.AutoDelay, attenuation,
+                    sourceDistance);
             }
             data = new RemoteSoundEventData(message.SourceClientId, message.ServerTickMs,
                 message.EventId, clips);
@@ -266,7 +428,7 @@ namespace SuMultiplayer.Net
         private static bool TryValidate(in RemoteSoundEventData data, out string reason)
         {
             reason = null;
-            if (data.SourceClientId <= 0)
+            if (data.SourceClientId < 0)
             {
                 reason = "remote-sound-source-" + data.SourceClientId;
                 return false;
@@ -286,7 +448,10 @@ namespace SuMultiplayer.Net
                 reason = "remote-sound-empty";
                 return false;
             }
-            if (data.Sounds.Length > RemoteSoundPolicy.MaxSoundsPerEvent)
+            int maxCount = data.SourceClientId == 0
+                ? RemoteSoundPolicy.MaxHostSoundsPerMessage
+                : RemoteSoundPolicy.MaxSoundsPerEvent;
+            if (data.Sounds.Length > maxCount)
             {
                 reason = "remote-sound-count-" + data.Sounds.Length;
                 return false;
@@ -323,6 +488,17 @@ namespace SuMultiplayer.Net
                     clip.MinDistance > RemoteSoundPolicy.MaxMinDistance)
                 {
                     reason = "remote-sound-min-distance-" + i;
+                    return false;
+                }
+                if (clip.Attenuation > RemoteSoundAttenuation.SlotSource)
+                {
+                    reason = "remote-sound-attenuation-" + i;
+                    return false;
+                }
+                if (!IsFinite(clip.SourceDistance) || clip.SourceDistance < 0f ||
+                    clip.SourceDistance > RemoteSoundPolicy.HostSourceDistanceMax)
+                {
+                    reason = "remote-sound-source-distance-" + i;
                     return false;
                 }
             }
@@ -457,36 +633,177 @@ namespace SuMultiplayer.Net
     public readonly struct RemoteSoundPresentationPlan
     {
         public RemoteSoundPresentationPlan(RemoteSoundClipData[] clips, int skippedDistance)
+            : this(clips, skippedDistance, Array.Empty<float>(), 0, 0)
+        {
+        }
+
+        public RemoteSoundPresentationPlan(RemoteSoundClipData[] clips, int skippedDistance,
+            float[] effectiveDistances, int relativeCount, int nonPositionalCount)
         {
             Clips = clips ?? Array.Empty<RemoteSoundClipData>();
             SkippedDistance = skippedDistance;
+            EffectiveDistances = effectiveDistances ?? Array.Empty<float>();
+            RelativeCount = relativeCount;
+            NonPositionalCount = nonPositionalCount;
         }
 
+        /// <summary>
+        /// 已按本机监听者换算好的最终播放参数：
+        /// · Absolute 原样保留；
+        /// · RelativeToHost / NonPositional 已改成"在监听者位置、按重算音量播放"，
+        ///   因此 <see cref="IRemoteAudioPort"/> 的 Present 不需要再懂距离。
+        /// </summary>
         public RemoteSoundClipData[] Clips { get; }
         public int SkippedDistance { get; }
+        /// <summary>与 <see cref="Clips"/> 一一对应的"客户端到声源"估算距离（米）。</summary>
+        public float[] EffectiveDistances { get; }
+        public int RelativeCount { get; }
+        public int NonPositionalCount { get; }
     }
 
     public static class RemoteSoundPresentationPolicy
     {
+        /// <summary>
+        /// 找一个点最近的监听者（= 接收端**最近的本地角色**）。多角色分裂屏时每个角色都是
+        /// 一个监听者；空列表返回 -1（调用方必须显式失败，不猜原点）。
+        /// </summary>
+        public static int NearestListenerIndex(Vector3 position,
+            IReadOnlyList<Vector3> listeners)
+        {
+            if (listeners == null) return -1;
+            int best = -1;
+            float bestDistanceSq = float.MaxValue;
+            for (int i = 0; i < listeners.Count; i++)
+            {
+                Vector3 listener = listeners[i];
+                if (!IsFinite(listener)) continue;
+                float distanceSq = Vector3.DistanceSquared(listener, position);
+                if (float.IsNaN(distanceSq)) continue;
+                if (distanceSq < bestDistanceSq)
+                {
+                    bestDistanceSq = distanceSq;
+                    best = i;
+                }
+            }
+            return best;
+        }
+
+        /// <summary>
+        /// 估算"这个声源到某个监听者"的距离：
+        /// Absolute / SlotSource 用记录位置（SlotSource 的位置就是角色真实位置）；
+        /// RelativeToHost 用 sqrt(到主机监听者距离² + 声源距离²)
+        /// （方向无法从引擎队列反解，取各向同性期望值）；NonPositional 用监听者到主机监听者的距离。
+        /// </summary>
+        public static float EstimateClientDistance(in RemoteSoundClipData clip,
+            Vector3 listener)
+        {
+            float direct = Vector3.Distance(clip.Position, listener);
+            if (clip.Attenuation != RemoteSoundAttenuation.RelativeToHost) return direct;
+            float source = clip.SourceDistance;
+            return MathUtils.Sqrt(direct * direct + source * source);
+        }
+
+        /// <summary>单监听者重载（旧行为 / 单元测试用）。</summary>
         public static RemoteSoundPresentationPlan Plan(RemoteSoundClipData[] sounds,
-            Vector3 listener, float maxDistance)
+            Vector3 listener, float maxDistance) =>
+            Plan(sounds, new[] { listener }, maxDistance);
+
+        /// <summary>
+        /// 多监听者（多本机角色）重载：每条声音都按"离它最近的本地角色"算距离 / 重投影。
+        ///   · 距离裁剪（<paramref name="maxDistance"/>）对所有模式一致；
+        ///   · <see cref="RemoteSoundAttenuation.SlotSource"/>：位置 = 主机角色的真实位置，
+        ///     用精确距离 + <see cref="RemoteSoundPolicy.RelativeVolume"/> 把"主机侧最近监听者
+        ///     处的音量"换算成"本机最近角色处的音量"，并在该角色位置播放（引擎衰减 =
+        ///     距离 0，最终音量就是换算值）；
+        ///   · <see cref="RemoteSoundAttenuation.RelativeToHost"/>：保持原有各向同性重投影；
+        ///   · 空监听者列表 = 明确失败（空计划 + skipped = 全部），绝不拿原点猜。
+        /// </summary>
+        public static RemoteSoundPresentationPlan Plan(RemoteSoundClipData[] sounds,
+            IReadOnlyList<Vector3> listeners, float maxDistance)
         {
             if (sounds == null || sounds.Length == 0)
                 return new RemoteSoundPresentationPlan(Array.Empty<RemoteSoundClipData>(), 0);
             var present = new List<RemoteSoundClipData>(sounds.Length);
+            var distances = new List<float>(sounds.Length);
             int skippedDistance = 0;
+            int relativeCount = 0;
+            int nonPositionalCount = 0;
+            if (listeners == null || listeners.Count == 0)
+            {
+                return new RemoteSoundPresentationPlan(Array.Empty<RemoteSoundClipData>(),
+                    sounds.Length, Array.Empty<float>(), 0, 0);
+            }
             float maxDistanceSq = maxDistance * maxDistance;
             for (int i = 0; i < sounds.Length; i++)
             {
-                if (Vector3.DistanceSquared(sounds[i].Position, listener) > maxDistanceSq)
+                RemoteSoundClipData clip = sounds[i];
+                int listenerIndex = NearestListenerIndex(clip.Position, listeners);
+                if (listenerIndex < 0)
                 {
                     skippedDistance++;
                     continue;
                 }
-                present.Add(sounds[i]);
+                Vector3 listener = listeners[listenerIndex];
+                float distance = EstimateClientDistance(in clip, listener);
+                if (distance * distance > maxDistanceSq)
+                {
+                    skippedDistance++;
+                    continue;
+                }
+                switch (clip.Attenuation)
+                {
+                    case RemoteSoundAttenuation.SlotSource:
+                    {
+                        // 主机音量 = 最近主机监听者处的衰减音量；hostDistance 是该监听者到
+                        // 声源的距离。除法与乘法都用 DefaultMinDistance（与全局中继同口径），
+                        // 因为引擎队列里没有 minDistance。
+                        float volume = RemoteSoundPolicy.RelativeVolume(clip.Volume,
+                            clip.SourceDistance, distance, RemoteSoundPolicy.DefaultMinDistance);
+                        float delay = clip.AutoDelay
+                            ? MathUtils.Min(distance / 120f, 3f)
+                            : 0f;
+                        present.Add(new RemoteSoundClipData(clip.Sound, listener, volume,
+                            clip.Pitch, RemoteSoundPolicy.DefaultMinDistance, false,
+                            RemoteSoundAttenuation.Absolute, 0f, delay));
+                        relativeCount++;
+                        break;
+                    }
+                    case RemoteSoundAttenuation.RelativeToHost:
+                    {
+                        float volume = RemoteSoundPolicy.RelativeVolume(clip.Volume,
+                            clip.SourceDistance, distance, RemoteSoundPolicy.DefaultMinDistance);
+                        float delay = clip.AutoDelay
+                            ? MathUtils.Min(distance / 120f, 3f)
+                            : 0f;
+                        present.Add(new RemoteSoundClipData(clip.Sound, listener, volume,
+                            clip.Pitch, RemoteSoundPolicy.DefaultMinDistance, false,
+                            RemoteSoundAttenuation.Absolute, 0f, delay));
+                        relativeCount++;
+                        break;
+                    }
+                    case RemoteSoundAttenuation.NonPositional:
+                    {
+                        // 引擎里本来就没有位置：不额外衰减，只要求监听者在主机监听者附近。
+                        present.Add(new RemoteSoundClipData(clip.Sound, listener, clip.Volume,
+                            clip.Pitch, RemoteSoundPolicy.DefaultMinDistance, false,
+                            RemoteSoundAttenuation.Absolute, 0f));
+                        nonPositionalCount++;
+                        break;
+                    }
+                    default:
+                        present.Add(clip);
+                        break;
+                }
+                distances.Add(distance);
             }
-            return new RemoteSoundPresentationPlan(present.ToArray(), skippedDistance);
+            return new RemoteSoundPresentationPlan(present.ToArray(), skippedDistance,
+                distances.ToArray(), relativeCount, nonPositionalCount);
         }
+
+        private static bool IsFinite(Vector3 value) =>
+            !float.IsNaN(value.X) && !float.IsNaN(value.Y) && !float.IsNaN(value.Z) &&
+            !float.IsInfinity(value.X) && !float.IsInfinity(value.Y) &&
+            !float.IsInfinity(value.Z);
     }
 
     /// <summary>
@@ -537,6 +854,60 @@ namespace SuMultiplayer.Net
         }
     }
 
+    /// <summary>
+    /// 客户端重放保护：记住最近 <see cref="Capacity"/> 个 (server_tick_ms, event_id) 对。
+    /// <see cref="RemoteSoundOrderer"/> 只能拒绝"当前会话内"更旧 / 重复的 id；重连时 orderer
+    /// 会重置（主机的 event id 也从 1 重新开始），旧事件在网络里重放就会再次被接受。
+    /// 本保护**不**随重连清空：同一进程里已经播放过的事件永不重播。
+    /// </summary>
+    public sealed class RemoteSoundReplayGuard
+    {
+        public const int Capacity = 64;
+
+        private struct Entry
+        {
+            public long Tick;
+            public uint EventId;
+            public bool Used;
+        }
+
+        private readonly Entry[] m_entries = new Entry[Capacity];
+        private int m_next;
+
+        public long Rejected { get; private set; }
+        public long Accepted { get; private set; }
+
+        public bool TryAccept(in RemoteSoundEventData data)
+        {
+            for (int i = 0; i < Capacity; i++)
+            {
+                if (!m_entries[i].Used) continue;
+                if (m_entries[i].EventId != data.EventId) continue;
+                if (m_entries[i].Tick != data.ServerTickMs) continue;
+                Rejected++;
+                return false;
+            }
+            m_entries[m_next].Used = true;
+            m_entries[m_next].Tick = data.ServerTickMs;
+            m_entries[m_next].EventId = data.EventId;
+            m_next++;
+            if (m_next >= Capacity) m_next = 0;
+            Accepted++;
+            return true;
+        }
+
+        /// <summary>新连接只清计数，不清记忆（旧事件仍拒绝）。</summary>
+        public void NewConnection() => Accepted = 0;
+
+        public void Reset()
+        {
+            for (int i = 0; i < Capacity; i++) m_entries[i] = default;
+            m_next = 0;
+            Accepted = 0;
+            Rejected = 0;
+        }
+    }
+
     /// <summary>按 1 秒滑窗计数的限速器（主机发 / 客户端收共用；无静态状态）。</summary>
     public sealed class RemoteSoundRateLimiter
     {
@@ -554,19 +925,32 @@ namespace SuMultiplayer.Net
         public int MaxPerSecond => m_maxPerSecond;
         public long Skipped { get; private set; }
 
-        public bool TryAccept(long nowMs)
+        /// <summary>当前 1 秒窗口里还能接受多少个"单位"（声音 / 事件）。</summary>
+        public int Remaining(long nowMs)
         {
+            if (m_windowStartMs == 0 || nowMs - m_windowStartMs >= 1000)
+                return m_maxPerSecond;
+            int remaining = m_maxPerSecond - m_count;
+            return remaining > 0 ? remaining : 0;
+        }
+
+        public bool TryAccept(long nowMs) => TryAccept(nowMs, 1);
+
+        /// <summary>按权重接受（全局声音中继按"声音数"计，不是按消息数）。</summary>
+        public bool TryAccept(long nowMs, int weight)
+        {
+            if (weight <= 0) return true;
             if (m_windowStartMs == 0 || nowMs - m_windowStartMs >= 1000)
             {
                 m_windowStartMs = nowMs == 0 ? 1 : nowMs;
                 m_count = 0;
             }
-            if (m_count >= m_maxPerSecond)
+            if (m_count + weight > m_maxPerSecond)
             {
                 Skipped++;
                 return false;
             }
-            m_count++;
+            m_count += weight;
             return true;
         }
 

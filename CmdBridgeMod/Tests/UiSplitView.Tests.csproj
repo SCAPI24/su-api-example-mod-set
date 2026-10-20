@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    纯数学自检（不需要游戏、不需要网络、没有 NuGet 依赖）。
+
+    测的是 `Server/UiSplitView.cs`：分屏 2/3/4 视图的格子算式（逐行对照
+    `Survivalcraft/Game/GamesWidget.cs:ArrangeOverride`）、"主视图"选择规则、
+    "同名元素跨视图时选哪一个"的确定性规则、以及**单视图行为不变**。
+
+    为什么把它放在 Mod 工程里：整份算式只有一份（这里用 `<Compile Include>` 直接编同一文件），
+    测试与生产代码不可能漂移。Mod 工程用 `<Compile Remove="Tests/**/*.cs" />` 把本目录排除在
+    Mod 程序集之外（否则测试的 Program.cs 会被打进 CmdBridgeMod.dll）。
+
+    跑法：
+      dotnet run (with the project option pointing at) Mod/CmdBridgeMod/Tests/UiSplitView.Tests.csproj
+    退出码 0 = 全过，1 = 有失败（失败项逐条打印）。
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <AssemblyName>UiSplitView.Tests</AssemblyName>
+    <RootNamespace>CmdBridgeMod.Tests</RootNamespace>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\Server\UiSplitView.cs" Link="UiSplitView.cs" />
+  </ItemGroup>
+
+</Project>

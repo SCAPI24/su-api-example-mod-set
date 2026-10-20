@@ -6,6 +6,7 @@ option csharp_namespace = "SuMultiplayer.Protocol.Effects";
 option optimize_for = SPEED;
 
 import "google/protobuf/any.proto";
+import "position.proto";
 
 // ---------------------------------------------------------------------------
 // Burn-away presentation replication (host-authoritative; clients are
@@ -88,6 +89,62 @@ message CampfireExtinguishEvent {
   sint32 x = 4;
   sint32 y = 5;
   sint32 z = 6;
+
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}
+
+// ---------------------------------------------------------------------------
+// Water splash presentation (host-authoritative; clients presentation-only).
+//
+// Wire id lives in protocol.proto (MessageType.WATER_SPLASH_EVENT=71).
+// Append-only: never renumber.
+//
+// Engine fact:
+//   * SubsystemPickables.Update, per pickable in water with !SplashGenerated:
+//       AddParticleSystem(new WaterSplashParticleSystem(terrain, pickable.Position,
+//           large: false));
+//       PlayRandomSound("Audio/Splashes", 1f, random(-0.2, 0.2), pickable.Position,
+//           6f, autoDelay: true);
+//       pickable.SplashGenerated = true;
+//     (Source: Survivalcraft/Game/SubsystemPickables.cs:325-330)
+//   * SubsystemProjectiles.Update, when a projectile enters water:
+//       AddParticleSystem(new WaterSplashParticleSystem(terrain,
+//           new Vector3(projectile.Position.X, surfaceHeight, projectile.Position.Z),
+//           large: false));
+//       PlayRandomSound("Audio/Splashes", 1f, random(-0.2, 0.2), projectile.Position,
+//           6f, autoDelay: true);
+//     (Source: Survivalcraft/Game/SubsystemProjectiles.cs:383-390)
+//
+// This message carries exactly the host's already-created splashes:
+//   * one batch per host tick, capped at WaterSplashPolicy.MaxSplashesPerEvent;
+//   * position / large are the constructor arguments of the host particle system;
+//   * sound = the host also queued the engine's Audio/Splashes call.  Clients
+//     replay the same directory / volume / pitch range / min distance / autoDelay.
+// Clients must NEVER write cells, spawn entities or deal damage for this message.
+// ---------------------------------------------------------------------------
+
+// One host water splash.
+message WaterSplash {
+  sump.position.Vec3 position = 1;
+  // WaterSplashParticleSystem(terrain, position, large).  All current host call
+  // sites pass large: false (engine facts above); carried so a future large call
+  // cannot silently render small on clients.
+  bool large = 2;
+  // true = the host also played Audio/Splashes for this splash.
+  bool sound = 3;
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}
+
+// Host -> client: one batched set of splashes from the same host tick.
+message WaterSplashEvent {
+  // Host simulation clock in milliseconds (SubsystemGameInfo.TotalElapsedGameTime*1000).
+  int64 server_tick_ms = 1;
+  // Host session sequence, starts at 1, strictly increasing.  Clients dedupe by it.
+  uint32 event_id = 2;
+  // 1 .. WaterSplashPolicy.MaxSplashesPerEvent.
+  repeated WaterSplash splashes = 3;
 
   bytes ext = 100;
   google.protobuf.Any custom = 101;

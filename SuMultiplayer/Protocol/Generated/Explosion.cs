@@ -30,36 +30,36 @@ namespace SuMultiplayer.Protocol.Explosion {
             "JQoIcG9zaXRpb24YAyABKAsyEy5zdW1wLnBvc2l0aW9uLlZlYzMSDAoEa2lu",
             "ZBgEIAEoBRIOCgZyYWRpdXMYBSABKAISEwoLYmxvY2tfdmFsdWUYBiABKA0S",
             "FQoNY29zbWV0aWNfb25seRgHIAEoCBILCgNleHQYZCABKAwSJAoGY3VzdG9t",
-            "GGUgASgLMhQuZ29vZ2xlLnByb3RvYnVmLkFueSKDAgoQRXhwbG9zaW9uUmVx",
+            "GGUgASgLMhQuZ29vZ2xlLnByb3RvYnVmLkFueSKhAgoQRXhwbG9zaW9uUmVx",
             "dWVzdBIQCghzZXF1ZW5jZRgBIAEoAxIyCgRraW5kGAIgASgOMiQuc3VtcC5l",
             "eHBsb3Npb24uRXhwbG9zaW9uUmVxdWVzdEtpbmQSJQoIcG9zaXRpb24YAyAB",
             "KAsyEy5zdW1wLnBvc2l0aW9uLlZlYzMSJgoJZGlyZWN0aW9uGAQgASgLMhMu",
             "c3VtcC5wb3NpdGlvbi5WZWMzEhIKCml0ZW1fdmFsdWUYBSABKAUSEwoLYWN0",
-            "aXZlX3Nsb3QYBiABKAUSCwoDZXh0GGQgASgMEiQKBmN1c3RvbRhlIAEoCzIU",
-            "Lmdvb2dsZS5wcm90b2J1Zi5BbnkinwEKD0V4cGxvc2lvblJlc3VsdBIQCghz",
-            "ZXF1ZW5jZRgBIAEoAxIQCghhY2NlcHRlZBgCIAEoCBIOCgZyZWFzb24YAyAB",
-            "KAkSJQoIcG9zaXRpb24YBCABKAsyEy5zdW1wLnBvc2l0aW9uLlZlYzMSCwoD",
-            "ZXh0GGQgASgMEiQKBmN1c3RvbRhlIAEoCzIULmdvb2dsZS5wcm90b2J1Zi5B",
-            "bnki6QEKDVBsYXllckRhbWFnZWQSEAoIZXZlbnRfaWQYASABKA0SEwoLc2Vy",
-            "dmVyX3RpY2sYAiABKAMSEQoJY2xpZW50X2lkGAMgASgFEhAKCGlkZW50aXR5",
-            "GAQgASgJEgwKBG5hbWUYBSABKAkSJQoIcG9zaXRpb24YBiABKAsyEy5zdW1w",
-            "LnBvc2l0aW9uLlZlYzMSDgoGZGFtYWdlGAcgASgCEhQKDGhlYWx0aF9hZnRl",
-            "chgIIAEoAhILCgNleHQYZCABKAwSJAoGY3VzdG9tGGUgASgLMhQuZ29vZ2xl",
-            "LnByb3RvYnVmLkFueSrUAQoNRXhwbG9zaW9uS2luZBIeChpFWFBMT1NJT05f",
-            "S0lORF9VTlNQRUNJRklFRBAAEhgKFEVYUExPU0lPTl9LSU5EX0JMT0NLEAES",
-            "GAoURVhQTE9TSU9OX0tJTkRfQ0hBSU4QAhIcChhFWFBMT1NJT05fS0lORF9U",
-            "SFJPV0FCTEUQAxIbChdFWFBMT1NJT05fS0lORF9GSVJFV09SSxAEEhYKEkVY",
-            "UExPU0lPTl9LSU5EX0tFRxAFEhwKGEVYUExPU0lPTl9LSU5EX0RFVE9OQVRP",
-            "UhAGKoMBChRFeHBsb3Npb25SZXF1ZXN0S2luZBImCiJFWFBMT1NJT05fUkVR",
-            "VUVTVF9LSU5EX1VOU1BFQ0lGSUVEEAASIQodRVhQTE9TSU9OX1JFUVVFU1Rf",
-            "S0lORF9JR05JVEUQARIgChxFWFBMT1NJT05fUkVRVUVTVF9LSU5EX1RIUk9X",
-            "EAJCJUgBqgIgU3VNdWx0aXBsYXllci5Qcm90b2NvbC5FeHBsb3Npb25iBnBy",
-            "b3RvMw=="));
+            "aXZlX3Nsb3QYBiABKAUSEgoFcmVhY2gYByABKAJIAIgBARILCgNleHQYZCAB",
+            "KAwSJAoGY3VzdG9tGGUgASgLMhQuZ29vZ2xlLnByb3RvYnVmLkFueUIICgZf",
+            "cmVhY2ginwEKD0V4cGxvc2lvblJlc3VsdBIQCghzZXF1ZW5jZRgBIAEoAxIQ",
+            "CghhY2NlcHRlZBgCIAEoCBIOCgZyZWFzb24YAyABKAkSJQoIcG9zaXRpb24Y",
+            "BCABKAsyEy5zdW1wLnBvc2l0aW9uLlZlYzMSCwoDZXh0GGQgASgMEiQKBmN1",
+            "c3RvbRhlIAEoCzIULmdvb2dsZS5wcm90b2J1Zi5Bbnki6QEKDVBsYXllckRh",
+            "bWFnZWQSEAoIZXZlbnRfaWQYASABKA0SEwoLc2VydmVyX3RpY2sYAiABKAMS",
+            "EQoJY2xpZW50X2lkGAMgASgFEhAKCGlkZW50aXR5GAQgASgJEgwKBG5hbWUY",
+            "BSABKAkSJQoIcG9zaXRpb24YBiABKAsyEy5zdW1wLnBvc2l0aW9uLlZlYzMS",
+            "DgoGZGFtYWdlGAcgASgCEhQKDGhlYWx0aF9hZnRlchgIIAEoAhILCgNleHQY",
+            "ZCABKAwSJAoGY3VzdG9tGGUgASgLMhQuZ29vZ2xlLnByb3RvYnVmLkFueSrU",
+            "AQoNRXhwbG9zaW9uS2luZBIeChpFWFBMT1NJT05fS0lORF9VTlNQRUNJRklF",
+            "RBAAEhgKFEVYUExPU0lPTl9LSU5EX0JMT0NLEAESGAoURVhQTE9TSU9OX0tJ",
+            "TkRfQ0hBSU4QAhIcChhFWFBMT1NJT05fS0lORF9USFJPV0FCTEUQAxIbChdF",
+            "WFBMT1NJT05fS0lORF9GSVJFV09SSxAEEhYKEkVYUExPU0lPTl9LSU5EX0tF",
+            "RxAFEhwKGEVYUExPU0lPTl9LSU5EX0RFVE9OQVRPUhAGKoMBChRFeHBsb3Np",
+            "b25SZXF1ZXN0S2luZBImCiJFWFBMT1NJT05fUkVRVUVTVF9LSU5EX1VOU1BF",
+            "Q0lGSUVEEAASIQodRVhQTE9TSU9OX1JFUVVFU1RfS0lORF9JR05JVEUQARIg",
+            "ChxFWFBMT1NJT05fUkVRVUVTVF9LSU5EX1RIUk9XEAJCJUgBqgIgU3VNdWx0",
+            "aXBsYXllci5Qcm90b2NvbC5FeHBsb3Npb25iBnByb3RvMw=="));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { global::Google.Protobuf.WellKnownTypes.AnyReflection.Descriptor, global::SuMultiplayer.Protocol.Position.PositionReflection.Descriptor, },
           new pbr::GeneratedClrTypeInfo(new[] {typeof(global::SuMultiplayer.Protocol.Explosion.ExplosionKind), typeof(global::SuMultiplayer.Protocol.Explosion.ExplosionRequestKind), }, null, new pbr::GeneratedClrTypeInfo[] {
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Explosion.ExplosionEvent), global::SuMultiplayer.Protocol.Explosion.ExplosionEvent.Parser, new[]{ "EventId", "ServerTick", "Position", "Kind", "Radius", "BlockValue", "CosmeticOnly", "Ext", "Custom" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Explosion.ExplosionRequest), global::SuMultiplayer.Protocol.Explosion.ExplosionRequest.Parser, new[]{ "Sequence", "Kind", "Position", "Direction", "ItemValue", "ActiveSlot", "Ext", "Custom" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Explosion.ExplosionRequest), global::SuMultiplayer.Protocol.Explosion.ExplosionRequest.Parser, new[]{ "Sequence", "Kind", "Position", "Direction", "ItemValue", "ActiveSlot", "Reach", "Ext", "Custom" }, new[]{ "Reach" }, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Explosion.ExplosionResult), global::SuMultiplayer.Protocol.Explosion.ExplosionResult.Parser, new[]{ "Sequence", "Accepted", "Reason", "Position", "Ext", "Custom" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Explosion.PlayerDamaged), global::SuMultiplayer.Protocol.Explosion.PlayerDamaged.Parser, new[]{ "EventId", "ServerTick", "ClientId", "Identity", "Name", "Position", "Damage", "HealthAfter", "Ext", "Custom" }, null, null, null, null)
           }));
@@ -673,6 +673,7 @@ namespace SuMultiplayer.Protocol.Explosion {
   {
     private static readonly pb::MessageParser<ExplosionRequest> _parser = new pb::MessageParser<ExplosionRequest>(() => new ExplosionRequest());
     private pb::UnknownFieldSet _unknownFields;
+    private int _hasBits0;
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pb::MessageParser<ExplosionRequest> Parser { get { return _parser; } }
@@ -700,12 +701,14 @@ namespace SuMultiplayer.Protocol.Explosion {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public ExplosionRequest(ExplosionRequest other) : this() {
+      _hasBits0 = other._hasBits0;
       sequence_ = other.sequence_;
       kind_ = other.kind_;
       position_ = other.position_ != null ? other.position_.Clone() : null;
       direction_ = other.direction_ != null ? other.direction_.Clone() : null;
       itemValue_ = other.itemValue_;
       activeSlot_ = other.activeSlot_;
+      reach_ = other.reach_;
       ext_ = other.ext_;
       custom_ = other.custom_ != null ? other.custom_.Clone() : null;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
@@ -804,6 +807,39 @@ namespace SuMultiplayer.Protocol.Explosion {
       }
     }
 
+    /// <summary>Field number for the "reach" field.</summary>
+    public const int ReachFieldNumber = 7;
+    private readonly static float ReachDefaultValue = 0F;
+
+    private float reach_;
+    /// <summary>
+    /// Requester's effective interaction reach in metres (engine ComponentMiner.Raycast:
+    /// Creative ? SettingsManager.CreativeReach : 5f).  Host rule:
+    /// allowed = min(reach + tolerance, serverMax); absent (old client) = 5.0 / 7.5.
+    /// Source: Survivalcraft/Game/ComponentMiner.cs:378
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public float Reach {
+      get { if ((_hasBits0 & 1) != 0) { return reach_; } else { return ReachDefaultValue; } }
+      set {
+        _hasBits0 |= 1;
+        reach_ = value;
+      }
+    }
+    /// <summary>Gets whether the "reach" field is set</summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool HasReach {
+      get { return (_hasBits0 & 1) != 0; }
+    }
+    /// <summary>Clears the value of the "reach" field</summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void ClearReach() {
+      _hasBits0 &= ~1;
+    }
+
     /// <summary>Field number for the "ext" field.</summary>
     public const int ExtFieldNumber = 100;
     private pb::ByteString ext_ = pb::ByteString.Empty;
@@ -849,6 +885,7 @@ namespace SuMultiplayer.Protocol.Explosion {
       if (!object.Equals(Direction, other.Direction)) return false;
       if (ItemValue != other.ItemValue) return false;
       if (ActiveSlot != other.ActiveSlot) return false;
+      if (!pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.Equals(Reach, other.Reach)) return false;
       if (Ext != other.Ext) return false;
       if (!object.Equals(Custom, other.Custom)) return false;
       return Equals(_unknownFields, other._unknownFields);
@@ -864,6 +901,7 @@ namespace SuMultiplayer.Protocol.Explosion {
       if (direction_ != null) hash ^= Direction.GetHashCode();
       if (ItemValue != 0) hash ^= ItemValue.GetHashCode();
       if (ActiveSlot != 0) hash ^= ActiveSlot.GetHashCode();
+      if (HasReach) hash ^= pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.GetHashCode(Reach);
       if (Ext.Length != 0) hash ^= Ext.GetHashCode();
       if (custom_ != null) hash ^= Custom.GetHashCode();
       if (_unknownFields != null) {
@@ -908,6 +946,10 @@ namespace SuMultiplayer.Protocol.Explosion {
         output.WriteRawTag(48);
         output.WriteInt32(ActiveSlot);
       }
+      if (HasReach) {
+        output.WriteRawTag(61);
+        output.WriteFloat(Reach);
+      }
       if (Ext.Length != 0) {
         output.WriteRawTag(162, 6);
         output.WriteBytes(Ext);
@@ -950,6 +992,10 @@ namespace SuMultiplayer.Protocol.Explosion {
         output.WriteRawTag(48);
         output.WriteInt32(ActiveSlot);
       }
+      if (HasReach) {
+        output.WriteRawTag(61);
+        output.WriteFloat(Reach);
+      }
       if (Ext.Length != 0) {
         output.WriteRawTag(162, 6);
         output.WriteBytes(Ext);
@@ -985,6 +1031,9 @@ namespace SuMultiplayer.Protocol.Explosion {
       }
       if (ActiveSlot != 0) {
         size += 1 + pb::CodedOutputStream.ComputeInt32Size(ActiveSlot);
+      }
+      if (HasReach) {
+        size += 1 + 4;
       }
       if (Ext.Length != 0) {
         size += 2 + pb::CodedOutputStream.ComputeBytesSize(Ext);
@@ -1027,6 +1076,9 @@ namespace SuMultiplayer.Protocol.Explosion {
       }
       if (other.ActiveSlot != 0) {
         ActiveSlot = other.ActiveSlot;
+      }
+      if (other.HasReach) {
+        Reach = other.Reach;
       }
       if (other.Ext.Length != 0) {
         Ext = other.Ext;
@@ -1084,6 +1136,10 @@ namespace SuMultiplayer.Protocol.Explosion {
           }
           case 48: {
             ActiveSlot = input.ReadInt32();
+            break;
+          }
+          case 61: {
+            Reach = input.ReadFloat();
             break;
           }
           case 802: {
@@ -1144,6 +1200,10 @@ namespace SuMultiplayer.Protocol.Explosion {
           }
           case 48: {
             ActiveSlot = input.ReadInt32();
+            break;
+          }
+          case 61: {
+            Reach = input.ReadFloat();
             break;
           }
           case 802: {

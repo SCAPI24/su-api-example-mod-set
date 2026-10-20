@@ -28,6 +28,12 @@ namespace SuMultiplayer.Players
         public PlayerClass PlayerClass;
         public string SkinName;
         public byte[] SkinSha256 = Array.Empty<byte>();
+        /// <summary>
+        /// 自定义皮肤的**原始资源字节**（世界作用域，随本记录写进 SuMultiplayerPlayers.xml）。
+        /// 主机会在玩家加入 / 重连时直接补发，客户端不需要重新上传；内置皮肤 / 旧记录为空。
+        /// 只属于主机记录，绝不写客户端全局皮肤库。
+        /// </summary>
+        public byte[] SkinAsset = Array.Empty<byte>();
         public Vector3 Position;
         // Source: Survivalcraft/Game/PlayerData.cs:PlayerData.SpawnPosition
         public Vector3 SpawnPosition;
@@ -66,6 +72,17 @@ namespace SuMultiplayer.Players
         // 存进本记录（SuMultiplayerPlayers.xml）而不是 Project.xml。
         // Source: Survivalcraft/Game/SubsystemPlayerStats.cs:SubsystemPlayerStats
         public PlayerStatsSnapshot Stats;
+        /// <summary>
+        /// 主机权威的成就账本（id + UTC 解锁时间）。引擎没有成就子系统，
+        /// 成就由 SuMultiplayer 目录按权威统计判定；记录按**稳定身份键**保存，
+        /// 因此退出重进 / 重连后成就不会丢。未知 id 原样保留（前向兼容）。
+        /// </summary>
+        public AchievementLedger Achievements;
+        /// <summary>
+        /// 读取记录时被拒绝的成就条目数（非法 id / 负时间戳 / 超上限）。只用于诊断，
+        /// 不写入 XML；&gt;0 时 EnsureLoaded 会写一条明确日志。
+        /// </summary>
+        public int RejectedAchievements;
     }
 
     /// <summary>
@@ -174,7 +191,9 @@ namespace SuMultiplayer.Players
     public sealed class SuMultiplayerPlayersXml
     {
         public const string FileName = "SuMultiplayerPlayers.xml";
-        public const int Version = 6;
+        // v8：角色记录追加 <Achievements>（主机权威成就账本，id + UTC 解锁时间）。
+        // v7：角色记录追加 SkinAsset（自定义皮肤资源，世界作用域）。
+        public const int Version = 8;
 
         private readonly string m_ownerId;
         private readonly IModuleDiagnostics m_diagnostics;
@@ -200,6 +219,9 @@ namespace SuMultiplayer.Players
         /// <summary>本次加载是否失败（损坏文件）。为 true 时本会话拒绝写盘。</summary>
         public bool LoadFailed => m_loadFailed;
 
+        /// <summary>最近一次写盘是否失败（失败后保持 dirty，下一次 SaveIfDirty 会重试）。</summary>
+        public bool SaveFailed { get; private set; }
+
         public IEnumerable<KeyValuePair<string, NetworkPlayerRecord>> Entries => m_records;
 
         public bool TryGet(string recordKey, out NetworkPlayerRecord record) =>
@@ -221,6 +243,7 @@ namespace SuMultiplayer.Players
             m_isHost = true;
             m_dirty = false;
             m_loadFailed = false;
+            SaveFailed = false;
 
             string path = Storage.CombinePaths(worldDirectory, FileName);
             if (!Storage.FileExists(path)) return;   // 没有文件 = 空表，不是错误
@@ -233,7 +256,13 @@ namespace SuMultiplayer.Players
                 {
                     string identity = (string)element.Attribute("Identity");
                     if (string.IsNullOrWhiteSpace(identity)) continue;
-                    NetworkPlayerRecord record = ReadPlayer(element);
+                    NetworkPlayerRecord record = ReadPlayer(element, out string skinAssetReason);
+                    if (!string.IsNullOrEmpty(skinAssetReason))
+                    {
+                        m_diagnostics?.Warn(m_ownerId, "记录 " +
+                            PlayerIdentity.Describe((string)element.Attribute("Identity")) +
+                            " 的皮肤资源无法读取：" + skinAssetReason + "（仅保留哈希）");
+                    }
                     // Legacy records did not persist SpawnPosition. Keep their previous saved
                     // position as the respawn anchor instead of falling back to the creation point.
                     // Source: ScMultiplayerProfileHandlers.cs:197-200
@@ -244,7 +273,18 @@ namespace SuMultiplayer.Players
                     ReadHandcrafting(element.Element("Handcrafting"), record);
                     ReadSatiation(element.Element("Satiation"), record);
                     ReadClothes(element.Element("Clothes"), record);
+                    ValidateLoadedSkinAsset(element, record);
                     record.Stats = PlayerStatsSnapshot.FromXml(element.Element("Stats"));
+                    // 成就账本（v8）：未知 id 原样保留；非法 / 超上限的条目明确计数 + 记日志。
+                    record.Achievements = AchievementLedger.FromXml(
+                        element.Element("Achievements"), out int rejectedAchievements);
+                    record.RejectedAchievements = rejectedAchievements;
+                    if (rejectedAchievements > 0)
+                    {
+                        m_diagnostics?.Warn(m_ownerId, "记录 " + PlayerIdentity.Describe(identity) +
+                            " 里有 " + rejectedAchievements + " 条成就不合法（非法 id / 负时间戳 / 超上限）" +
+                            "→ 已丢弃并计数（其余条目保留）");
+                    }
                     if (element.Attribute("InitialItems") == null)
                     {
                         bool hasClothes = record.Clothes.Any(slot => slot != null && slot.Length > 0);
@@ -322,27 +362,67 @@ namespace SuMultiplayer.Players
                 using (Stream stream = Storage.OpenFile(path, OpenFileMode.Create))
                     new XDocument(root).Save(stream);
                 m_dirty = false;
+                SaveFailed = false;
                 return true;
             }
             catch (Exception ex)
             {
+                // 保持 dirty = true（下一次 SaveIfDirty 会重试），并让调用方看到明确失败。
+                SaveFailed = true;
                 m_diagnostics?.Error(m_ownerId,
                     "写联机角色记录失败：" + Storage.CombinePaths(m_worldDirectory, FileName), ex);
                 return false;
             }
         }
 
+        /// <summary>
+        /// 记录里的皮肤资源校验：大小 / PNG / 哈希必须自洽，否则**明确记日志并丢弃资源**
+        /// （哈希/名称保留，其他端会显示占位并计数；客户端可显式重传）。绝不静默使用损坏资源。
+        /// </summary>
+        private void ValidateLoadedSkinAsset(XElement element, NetworkPlayerRecord record)
+        {
+            if (record.SkinAsset == null || record.SkinAsset.Length == 0) return;
+            if (!PlayerRecordCodec.IsSkinHashValid(record.SkinSha256))
+            {
+                m_diagnostics?.Warn(m_ownerId, "记录 " + PlayerIdentity.Describe(
+                    (string)element.Attribute("Identity")) + " 有皮肤资源但没有合法哈希 → 丢弃资源");
+                record.SkinAsset = Array.Empty<byte>();
+                return;
+            }
+            if (!SkinAssetPolicy.TryValidateAssetData(record.SkinAsset, out string reason))
+            {
+                m_diagnostics?.Warn(m_ownerId, "记录 " + PlayerIdentity.Describe(
+                    (string)element.Attribute("Identity")) + " 的皮肤资源非法（" + reason +
+                    "）→ 丢弃资源，仅保留哈希（其他端会显示占位并计数）");
+                record.SkinAsset = Array.Empty<byte>();
+                return;
+            }
+            byte[] actual = SkinAssetPolicy.Sha256(record.SkinAsset);
+            if (!SkinAssetPolicy.BytesEqual(actual, record.SkinSha256))
+            {
+                m_diagnostics?.Warn(m_ownerId, "记录 " + PlayerIdentity.Describe(
+                    (string)element.Attribute("Identity")) + " 的皮肤资源哈希不一致（实际 " +
+                    SkinAssetPolicy.HashHex(actual) + " ≠ 记录 " +
+                    SkinAssetPolicy.HashHex(record.SkinSha256) + "）→ 丢弃资源");
+                record.SkinAsset = Array.Empty<byte>();
+            }
+        }
+
         // ---------------------------------------------------------------- XML（逐字段对照旧实现）
 
         // Source: ScMultiplayerProfileHandlers.cs:148-262
-        private static NetworkPlayerRecord ReadPlayer(XElement element) => new NetworkPlayerRecord
+        private static NetworkPlayerRecord ReadPlayer(XElement element, out string skinAssetReason)
         {
+            byte[] skinHash = PlayerRecordCodec.ParseSkinHash((string)element.Attribute("SkinSha256"));
+            return new NetworkPlayerRecord
+            {
             Name = (string)element.Attribute("Name") ?? "Player",
             NameConfirmed = PlayerRecordCodec.ParseBool((string)element.Attribute("NameConfirmed"),
                 !PlayerIdentity.IsEngineDefaultName((string)element.Attribute("Name"))),
             PlayerClass = PlayerRecordCodec.ParsePlayerClass((string)element.Attribute("Class")),
             SkinName = (string)element.Attribute("Skin") ?? string.Empty,
-            SkinSha256 = PlayerRecordCodec.ParseSkinHash((string)element.Attribute("SkinSha256")),
+            SkinSha256 = skinHash,
+            SkinAsset = ReadSkinAsset(element.Element("SkinAsset"), out skinAssetReason),
             Position = new Vector3(
                 PlayerRecordCodec.ParseFloat((string)element.Attribute("X")),
                 PlayerRecordCodec.ParseFloat((string)element.Attribute("Y")),
@@ -379,7 +459,37 @@ namespace SuMultiplayer.Players
             ActiveSlotIndex = (int?)element.Attribute("ActiveSlot") ?? 0,
             CreativeCategoryIndex = (int?)element.Attribute("CreativeCategory") ?? 0,
             CreativePageIndex = (int?)element.Attribute("CreativePage") ?? 0
-        };
+            };
+        }
+
+        /// <summary>
+        /// 读记录里的自定义皮肤资源（v7 追加的 &lt;SkinAsset&gt; 子元素）。
+        /// 只做 base64 有界解码；合法性（大小 / PNG / 哈希）由 EnsureLoaded 校验并明确记日志，
+        /// 损坏的资源不会被当成"可广播的资源"。
+        /// </summary>
+        private static byte[] ReadSkinAsset(XElement element, out string reason)
+        {
+            reason = null;
+            if (element == null) return Array.Empty<byte>();
+            string text = element.Value;
+            if (string.IsNullOrWhiteSpace(text)) return Array.Empty<byte>();
+            text = text.Trim();
+            // base64 上限：256 KiB 原始字节约 350 KiB 文本；超过一定不是合法资产。
+            if (text.Length > (SkinAssetPolicy.MaxAssetBytes / 3 + 1) * 4 + 8)
+            {
+                reason = "记录里的皮肤资源文本过长（" + text.Length + " 字符）";
+                return Array.Empty<byte>();
+            }
+            try
+            {
+                return Convert.FromBase64String(text);
+            }
+            catch (FormatException e)
+            {
+                reason = "记录里的皮肤资源不是合法 base64：" + e.Message;
+                return Array.Empty<byte>();
+            }
+        }
 
         // Source: ScMultiplayerProfileHandlers.cs:201-214
         private static void ReadInventory(XElement inventory,
@@ -483,6 +593,15 @@ namespace SuMultiplayer.Players
                 new XAttribute("ActiveSlot", record.ActiveSlotIndex),
                 new XAttribute("CreativeCategory", record.CreativeCategoryIndex),
                 new XAttribute("CreativePage", record.CreativePageIndex));
+            // 自定义皮肤资源（世界作用域）：主机记录是重连 / 新客户端补发的唯一来源。
+            if (record.SkinAsset != null && record.SkinAsset.Length > 0 &&
+                PlayerRecordCodec.IsSkinHashValid(record.SkinSha256))
+            {
+                player.Add(new XElement("SkinAsset",
+                    new XAttribute("Sha256", PlayerRecordCodec.FormatSkinHash(record.SkinSha256)),
+                    new XAttribute("Length", record.SkinAsset.Length),
+                    Convert.ToBase64String(record.SkinAsset)));
+            }
             var inventory = new XElement("Inventory");
             int slotsCount = Math.Min(record.SlotValues?.Length ?? 0, record.SlotCounts?.Length ?? 0);
             for (int i = 0; i < slotsCount; i++)
@@ -523,8 +642,11 @@ namespace SuMultiplayer.Players
                         i < clothesValues.Length ? clothesValues[i] : null))));
             }
             player.Add(clothes);
-            // 游戏统计：由客户端上报、存在角色记录里（不写 Project.xml）
+            // 游戏统计：由主机从权威 PlayerStats 抓取、存在角色记录里（不写 Project.xml）
             if (record.Stats != null && !record.Stats.IsEmpty) player.Add(record.Stats.ToXml());
+            // 成就账本（v8）：主机权威，id + UTC 解锁时间；未知 id 也原样保留。
+            if (record.Achievements != null && !record.Achievements.IsEmpty)
+                player.Add(record.Achievements.ToXml());
             return player;
         }
     }

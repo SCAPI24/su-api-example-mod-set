@@ -1,0 +1,68 @@
+syntax = "proto3";
+
+package sump.protocol;
+
+option csharp_namespace = "SuMultiplayer.Protocol";
+option optimize_for = SPEED;
+
+// ---------------------------------------------------------------------------
+// Player statistics + achievements (host-authoritative, clients presentation-only).
+//
+// Engine facts:
+//   · statistics are the [Stat] fields of Game.PlayerStats, stored per player index
+//     in SubsystemPlayerStats (Project.xml);
+//   · this engine build has NO achievement subsystem: achievements are a
+//     SuMultiplayer-owned catalog derived from the authoritative statistics
+//     (id + host unlock timestamp), persisted in the world-scoped player record
+//     (SuMultiplayerPlayers.xml) under the stable identity key.
+//
+// Source: Survivalcraft/Game/SubsystemPlayerStats.cs:SubsystemPlayerStats
+// Source: Survivalcraft/Game/PlayerStats.cs:PlayerStats.Save/Load
+//
+// Bounded by construction: at most 24 stat entries and 24 achievement entries per
+// message (StatsWire.MaxStatsPerChunk / MaxAchievementsPerChunk), at most 16 chunks,
+// so a frame stays far below TerrainFrame.MaxPayloadBytes (60 KiB).
+// ---------------------------------------------------------------------------
+
+// One [Stat] name/value pair. Values use InvariantCulture text exactly like
+// PlayerStats.Save (double "R", long/int decimal, enum as integer, string as-is).
+message PlayerStatEntry {
+  string name = 1;
+  string value = 2;
+}
+
+// One achievement unlock. id = stable catalog id (e.g. "sump.dig.100"); unknown ids
+// are kept for forward compatibility and counted (never silently dropped).
+message PlayerAchievementEntry {
+  string id = 1;
+  int64 unlocked_utc_seconds = 2;
+}
+
+// Host -> client: full authoritative statistics + achievements of one identity,
+// split into chunk_count messages (chunk_index 0..chunk_count-1). The receiver
+// replaces its stored snapshot for the identity only after every chunk arrived.
+message PlayerStatsSnapshot {
+  int32 client_id = 1;          // 0 = host itself, > 0 = host-side transport id
+  string identity = 2;          // stable key: "user:<UserId>" (or "name:<Name>" degraded)
+  string player_name = 3;       // display name (never authoritative)
+  uint32 generation = 4;        // bumped by the host for every new full snapshot
+  uint32 chunk_index = 5;
+  uint32 chunk_count = 6;
+  repeated PlayerStatEntry stats = 7;
+  repeated PlayerAchievementEntry achievements = 8;
+}
+
+// Host -> client: authoritative delta of one identity (changed stats + new unlocks).
+// revision is the host-wide monotonic delta revision; an older revision is stale and
+// is skipped (counted), an equal revision is another chunk of the same delta.
+message PlayerStatsDelta {
+  int32 client_id = 1;
+  string identity = 2;
+  string player_name = 3;
+  uint32 generation = 4;
+  uint64 revision = 5;
+  uint32 chunk_index = 6;
+  uint32 chunk_count = 7;
+  repeated PlayerStatEntry stats = 8;
+  repeated PlayerAchievementEntry achievements = 9;
+}

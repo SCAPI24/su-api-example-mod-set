@@ -38,12 +38,17 @@ namespace SuMultiplayer.Engine
         private readonly IModParentField m_parentField;
         private readonly IModParentMethod m_parentMethod;
         private readonly IModuleDiagnostics m_diagnostics;
+        private ISkinMaterializer m_skinMaterializer;
         private readonly string m_ownerId;
-        /// <summary>clientId → 网络化身的 PlayerData（只在本机存在，不落 Project.xml）。</summary>
-        private readonly Dictionary<int, PlayerData> m_avatars = new Dictionary<int, PlayerData>();
-        /// <summary>clientId → 该化身的角色记录键（身份键，绝不用 index 拼）。</summary>
-        private readonly Dictionary<int, string> m_clientRecordKeys = new Dictionary<int, string>();
-        private readonly HashSet<int> m_creating = new HashSet<int>();
+        /// <summary>玩家键 → 网络化身的 PlayerData（只在本机存在，不落 Project.xml）。</summary>
+        private readonly Dictionary<PlayerKey, PlayerData> m_avatars =
+            new Dictionary<PlayerKey, PlayerData>();
+        /// <summary>玩家键 → 该化身的角色记录键（身份键 + 槽位后缀，绝不用 index 拼）。</summary>
+        private readonly Dictionary<PlayerKey, string> m_clientRecordKeys =
+            new Dictionary<PlayerKey, string>();
+        private readonly HashSet<PlayerKey> m_creating = new HashSet<PlayerKey>();
+        /// <summary>clientId → 该连接当前的化身槽位数（ClientIds 的缓存，避免每帧 LINQ 分配）。</summary>
+        private readonly Dictionary<int, int> m_slotCountsByClient = new Dictionary<int, int>();
         /// <summary>
         /// 兴趣半径上限（单位 = 区块）。
         /// Source: Mod/ScMultiplayer/Core/ScMultiplayerRuntimeState.cs:917（MaximumTerrainInterestRadius）
@@ -62,9 +67,9 @@ namespace SuMultiplayer.Engine
         /// </summary>
         private readonly HostTerrainLocationTable m_hostTerrainLocations =
             new HostTerrainLocationTable();
-        /// <summary>clientId → 该联机角色"离自己的更新位置 &gt; 8 区块"的起始时刻（毫秒，Time.RealTime 口径）。</summary>
-        private readonly Dictionary<int, long> m_updateLocationDriftSinceMs =
-            new Dictionary<int, long>();
+        /// <summary>玩家键 → 该联机角色"离自己的更新位置 &gt; 8 区块"的起始时刻（毫秒，Time.RealTime 口径）。</summary>
+        private readonly Dictionary<PlayerKey, long> m_updateLocationDriftSinceMs =
+            new Dictionary<PlayerKey, long>();
         /// <summary>限流日志：key → 上次写入的毫秒（Time.RealTime 口径）。</summary>
         private readonly Dictionary<string, long> m_lastRateLimitedLogMs =
             new Dictionary<string, long>(StringComparer.Ordinal);
@@ -80,6 +85,12 @@ namespace SuMultiplayer.Engine
         private const long UpdateLocationLogIntervalMs = 5000;
         /// <summary>持续性问题 / 一次性事实只记一条（原因照实写，绝不静默）。</summary>
         private readonly HashSet<string> m_reportedOnce = new HashSet<string>(StringComparer.Ordinal);
+        /// <summary>
+        /// <c>PlayerStats.m_deathRecords</c>（引擎没有公开的 Clear）：恢复角色统计前必须清空，
+        /// 否则 PlayerIndex 复用时死亡记录会叠加到新角色上（统计面板会逐条显示）。
+        /// </summary>
+        private readonly FieldInfo m_deathRecordsField = typeof(PlayerStats).GetField(
+            "m_deathRecords", BindingFlags.Instance | BindingFlags.NonPublic);
 
         public NetworkAvatarSpawner(IModParentField parentField, IModParentMethod parentMethod,
             IModuleDiagnostics diagnostics, string ownerId)
@@ -92,7 +103,31 @@ namespace SuMultiplayer.Engine
 
         public int Count => m_avatars.Count;
 
-        public IEnumerable<int> ClientIds => m_avatars.Keys;
+        /// <summary>
+        /// 本机角色枚举因超过 4 个槽位而被截断的次数（状态行 tooManySlots）。
+        /// 引擎上限就是 4；真出现 &gt;4 说明世界数据异常，必须能从状态行看到。
+        /// 只在"从不超限变成超限"时 +1（不是每帧 +1，否则状态行毫无意义）。
+        /// </summary>
+        public long TooManyLocalSlots { get; private set; }
+
+        private bool m_tooManyLocalSlotsActive;
+
+        /// <summary>
+        /// 自定义皮肤贴图应用器（组合根装配 = Engine/PlayerSkinStore.cs）。
+        /// 每次把外观写进 PlayerData 之后调用：内置皮肤交给引擎自己加载；自定义皮肤用
+        /// 本会话缓存里的贴图（或确定性占位），绝不写全局皮肤库。
+        /// </summary>
+        public ISkinMaterializer SkinMaterializer
+        {
+            get => m_skinMaterializer;
+            set => m_skinMaterializer = value;
+        }
+
+        /// <summary>当前联机角色的玩家键（每个 (clientId, slot) 一个）。</summary>
+        public IEnumerable<PlayerKey> Keys => m_avatars.Keys;
+
+        /// <summary>当前有联机角色的连接编号（旧调用方按连接遍历时用；槽位明细走 Keys）。</summary>
+        public IEnumerable<int> ClientIds => m_slotCountsByClient.Keys;
 
         /// <summary>
         /// 累计"联机角色的地形更新位置换到另一个区块"的次数（实机排查"主机有没有跟着客户端移动"）。
@@ -104,47 +139,212 @@ namespace SuMultiplayer.Engine
         public int HostUpdateLocationCount => m_hostTerrainLocations.Count;
 
         /// <summary>
-        /// 状态行用：每个 clientId 的地形更新位置（区块 + 半径 + 内容距离 + 已移动次数）。
+        /// 状态行用：每个玩家键的地形更新位置（区块 + 半径 + 内容距离 + 已移动次数）。
         /// 空表返回 <c>none</c>（主机一个都没挂时一眼可见）。
         /// </summary>
         public string DescribeHostUpdateLocations() => m_hostTerrainLocations.Describe();
 
+        /// <summary>旧版单角色访问：clientId 的槽位 0。</summary>
         public bool TryGet(int clientId, out PlayerData playerData) =>
-            m_avatars.TryGetValue(clientId, out playerData);
+            TryGet(new PlayerKey(clientId, 0), out playerData);
+
+        public bool TryGet(PlayerKey key, out PlayerData playerData) =>
+            m_avatars.TryGetValue(key, out playerData);
 
         /// <summary>
-        /// 主机：某个玩家端的联机角色在世界里的**真实位置**（该角色实体的 ComponentBody.Position）。
+        /// 实体 → 联机角色的玩家键（射线命中的角色是谁）。本机角色不在
+        /// <see cref="m_avatars"/> 里（它们由 <see cref="TryCollectLocalPlayers"/> 枚举），
+        /// 因此本机角色会返回 false 并写明原因；调用方对"本机角色"用槽位表解析。
+        /// </summary>
+        public bool TryGetPlayerKey(Entity entity, out PlayerKey key, out string reason)
+        {
+            key = default;
+            reason = null;
+            if (entity == null)
+            {
+                reason = "实体为空";
+                return false;
+            }
+            foreach (KeyValuePair<PlayerKey, PlayerData> pair in m_avatars)
+            {
+                if (!ReferenceEquals(pair.Value?.ComponentPlayer?.Entity, entity)) continue;
+                key = pair.Key;
+                return true;
+            }
+            reason = "实体不是联机角色（本机角色不在化身表里）";
+            return false;
+        }
+
+        /// <summary>
+        /// 主机：某个联机角色在世界里的**真实位置**（该角色实体的 ComponentBody.Position）。
         /// 实时地图用它显示客户端坐标 —— 这是主机手里关于"客户端角色在哪"的唯一权威事实，
         /// 绝不按区块中心猜（区块中心是 16 格粒度，也拿不到 Y）。
         /// 读不到就返回 false 并写明原因（角色实体还没建好 / 没有 ComponentPlayer / 没有 ComponentBody），
         /// 由调用方明说"坐标未知"。
         /// </summary>
-        public bool TryGetAvatarCell(int clientId, out Vector3 position, out string reason)
+        public bool TryGetAvatarCell(int clientId, out Vector3 position, out string reason) =>
+            TryGetAvatarCell(new PlayerKey(clientId, 0), out position, out reason);
+
+        public bool TryGetAvatarCell(PlayerKey key, out Vector3 position, out string reason)
         {
             position = Vector3.Zero;
             reason = null;
-            if (!m_avatars.TryGetValue(clientId, out PlayerData playerData) || playerData == null)
+            if (!m_avatars.TryGetValue(key, out PlayerData playerData) || playerData == null)
             {
-                reason = "clientId=" + clientId + " 还没有联机角色（角色实体没建起来或已移除）";
+                reason = "玩家键 " + key + " 还没有联机角色（角色实体没建起来或已移除）";
                 return false;
             }
             ComponentPlayer component = playerData.ComponentPlayer;
             if (component == null)
             {
-                reason = "clientId=" + clientId + " 的联机角色还没有 ComponentPlayer";
+                reason = "玩家键 " + key + " 的联机角色还没有 ComponentPlayer";
                 return false;
             }
             if (component.ComponentBody == null)
             {
-                reason = "clientId=" + clientId + " 的联机角色还没有 ComponentBody（位置读不到）";
+                reason = "玩家键 " + key + " 的联机角色还没有 ComponentBody（位置读不到）";
                 return false;
             }
             position = component.ComponentBody.Position;
             return true;
         }
 
+        /// <summary>
+        /// 主机：实时地图的**逐角色槽位**清单（v10）。唯一枚举口径：
+        ///   · 本机角色 = <see cref="TryCollectLocalPlayers"/>（PlayersData 里不是联机化身的角色，
+        ///     按 PlayerIndex 升序，下标就是槽位 0..3；主机自己的 clientId = 0）；
+        ///   · 联机化身 = 化身表的 <see cref="Keys"/> / <see cref="TryGet(PlayerKey, out PlayerData)"/>
+        ///     （每个 (clientId, slot) 一条），按 (clientId, slot) 升序，保证每次快照顺序稳定。
+        ///
+        /// "角色没有实体 / ComponentBody / 名字没解析出来"都**不是**丢条目的理由：
+        /// 条目照样列出来，HasCell=false + CellReason 写清原因，名字留空（页面写占位）——
+        /// 实时地图必须能说明"这个槽位存在、但坐标/名字未知"，绝不拿别的位置或身份顶替。
+        /// 限流日志只报"缺了什么"（key 维度只报一次），不会每 700 ms 刷屏。
+        /// </summary>
+        public int CaptureLiveMapPlayers(List<LiveMapPlayer> target, out string reason)
+        {
+            reason = null;
+            if (target == null)
+            {
+                reason = "调用方没有给角色清单容器";
+                return 0;
+            }
+            target.Clear();
+            Project project = GameManager.Project;
+            if (project == null)
+            {
+                reason = "没有加载中的 Project（还没进世界）";
+                return 0;
+            }
+            var localPlayers = new List<PlayerData>(PlayerKey.SlotCount);
+            if (!TryCollectLocalPlayers(project, localPlayers, out bool tooMany, out string localReason))
+            {
+                reason = localReason;
+                ReportProblemOnce("livemap-players-local",
+                    "实时地图：本机角色枚举失败（" + localReason + "）→ 本次只列联机化身（不拿别的角色顶替）");
+            }
+            else
+            {
+                if (tooMany) ReportProblemOnce("livemap-players-local-too-many", "实时地图：" + localReason);
+                for (int slot = 0; slot < localPlayers.Count; slot++)
+                {
+                    PlayerData playerData = localPlayers[slot];
+                    int slotIndex = slot;
+                    var player = new LiveMapPlayer
+                    {
+                        ClientId = 0,
+                        Slot = slotIndex,
+                        Key = new PlayerKey(0, slotIndex).ToString(),
+                        IsHost = true,
+                        Name = playerData?.Name ?? string.Empty
+                    };
+                    if (player.Name.Length == 0)
+                    {
+                        ReportProblemOnce("livemap-players-name:0:" + slotIndex,
+                            "实时地图：本机槽位 " + slotIndex + " 的名字还没解析出来 → name 留空（页面写占位，不猜身份）");
+                    }
+                    player.HasCell = TryFillLiveMapCell(player, playerData, out string cellReason);
+                    player.CellReason = cellReason;
+                    target.Add(player);
+                }
+            }
+
+            var keys = new List<PlayerKey>(m_avatars.Count);
+            foreach (PlayerKey key in m_avatars.Keys)
+            {
+                if (m_avatars.TryGetValue(key, out PlayerData playerData) && playerData != null) keys.Add(key);
+            }
+            keys.Sort((left, right) => left.ClientId != right.ClientId
+                ? left.ClientId.CompareTo(right.ClientId)
+                : left.Slot.CompareTo(right.Slot));
+            for (int i = 0; i < keys.Count; i++)
+            {
+                PlayerKey key = keys[i];
+                m_avatars.TryGetValue(key, out PlayerData playerData);
+                var player = new LiveMapPlayer
+                {
+                    ClientId = key.ClientId,
+                    Slot = key.Slot,
+                    Key = key.ToString(),
+                    IsHost = key.IsHost,
+                    Name = playerData?.Name ?? string.Empty
+                };
+                if (player.Name.Length == 0)
+                {
+                    ReportProblemOnce("livemap-players-name:" + key,
+                        "实时地图：联机角色 " + key + " 的名字还没解析出来 → name 留空（页面写占位，不猜身份）");
+                }
+                player.HasCell = TryFillLiveMapCell(player, playerData, out string cellReason);
+                player.CellReason = cellReason;
+                target.Add(player);
+            }
+            return target.Count;
+        }
+
+        /// <summary>
+        /// 把角色的真实身体坐标填进实时地图条目。读不到（没有实体 / ComponentPlayer / ComponentBody /
+        /// 坐标含 NaN）→ 返回 false 并写清原因；坐标绝不用区块中心或别的位置代替。
+        /// </summary>
+        private static bool TryFillLiveMapCell(LiveMapPlayer player, PlayerData playerData, out string reason)
+        {
+            reason = null;
+            if (playerData == null)
+            {
+                reason = "角色数据不存在（还没建出 PlayerData）";
+                return false;
+            }
+            ComponentPlayer component = playerData.ComponentPlayer;
+            if (component == null)
+            {
+                reason = "角色还没有 ComponentPlayer（实体没建好）";
+                return false;
+            }
+            ComponentBody body = component.ComponentBody;
+            if (body == null)
+            {
+                reason = "角色还没有 ComponentBody（位置读不到）";
+                return false;
+            }
+            Vector3 position = body.Position;
+            if (float.IsNaN(position.X) || float.IsNaN(position.Y) || float.IsNaN(position.Z) ||
+                float.IsInfinity(position.X) || float.IsInfinity(position.Y) || float.IsInfinity(position.Z))
+            {
+                reason = "角色的 ComponentBody.Position 含 NaN/Inf（引擎状态异常）";
+                return false;
+            }
+            player.CellX = (int)Math.Floor(position.X);
+            player.CellY = (int)Math.Floor(position.Y);
+            player.CellZ = (int)Math.Floor(position.Z);
+            player.ChunkX = player.CellX >> 4;
+            player.ChunkZ = player.CellZ >> 4;
+            return true;
+        }
+
         public bool TryGetRecordKey(int clientId, out string recordKey) =>
-            m_clientRecordKeys.TryGetValue(clientId, out recordKey);
+            TryGetRecordKey(new PlayerKey(clientId, 0), out recordKey);
+
+        public bool TryGetRecordKey(PlayerKey key, out string recordKey) =>
+            m_clientRecordKeys.TryGetValue(key, out recordKey);
 
         /// <summary>
         /// 主机：该客户端**手持方块**的 <c>Block.ToolLevel</c>（掉落口径与 <c>ComponentMiner.Dig</c> 同源：
@@ -155,7 +355,7 @@ namespace SuMultiplayer.Engine
         public bool TryGetHeldToolLevel(int clientId, out int toolLevel)
         {
             toolLevel = 0;
-            if (!m_avatars.TryGetValue(clientId, out PlayerData playerData) ||
+            if (!m_avatars.TryGetValue(new PlayerKey(clientId, 0), out PlayerData playerData) ||
                 playerData?.ComponentPlayer == null)
                 return false;
             ComponentMiner miner = playerData.ComponentPlayer.ComponentMiner;
@@ -218,6 +418,11 @@ namespace SuMultiplayer.Engine
                 reason = "PlayerData.CharacterSkinName 为空（拿不到皮肤）";
                 return null;
             }
+            // 自定义皮肤：哈希来自本会话缓存（本机自己上传 / 主机广播收到的同一份），
+            // 没有资源时为空 —— 资料广播会带上空哈希，接收端据此显示确定性占位。
+            byte[] skinHash = Array.Empty<byte>();
+            if (m_skinMaterializer != null && m_skinMaterializer.TryGetSkinHash(skin, out byte[] hash))
+                skinHash = hash;
             return new PlayerProfileSnapshot
             {
                 Name = name,
@@ -225,6 +430,7 @@ namespace SuMultiplayer.Engine
                 {
                     Sex = ToPlayerSex(playerData.PlayerClass),
                     SkinName = skin,
+                    SkinSha256 = skinHash,
                     Clothes = CaptureClothes(playerData.ComponentPlayer)
                 }
             };
@@ -240,6 +446,10 @@ namespace SuMultiplayer.Engine
         ///         （PlayerClass 变化 → RemoveNetworkPlayer + CreateNetworkPlayer；否则就地写 Name/Skin/Clothes）
         /// </summary>
         public bool TryApplyRemoteProfile(int clientId, PlayerProfileSnapshot profile,
+            out bool mustRecreate, out string reason) =>
+            TryApplyRemoteProfile(new PlayerKey(clientId, 0), profile, out mustRecreate, out reason);
+
+        public bool TryApplyRemoteProfile(PlayerKey key, PlayerProfileSnapshot profile,
             out bool mustRecreate, out string reason)
         {
             mustRecreate = false;
@@ -249,10 +459,10 @@ namespace SuMultiplayer.Engine
                 reason = "资料为空或没有名字";
                 return false;
             }
-            if (!m_avatars.TryGetValue(clientId, out PlayerData playerData) ||
+            if (!m_avatars.TryGetValue(key, out PlayerData playerData) ||
                 playerData?.ComponentPlayer == null)
             {
-                reason = "本机没有 clientId=" + clientId + " 的联机角色（或角色实体还没建好）";
+                reason = "本机没有玩家键 " + key + " 的联机角色（或角色实体还没建好）";
                 return false;
             }
             PlayerClass playerClass = ToPlayerClass(profile.Appearance?.Sex ?? PlayerSex.Male);
@@ -267,6 +477,7 @@ namespace SuMultiplayer.Engine
             if (profile.Appearance != null && profile.Appearance.HasSkinName)
                 playerData.CharacterSkinName = profile.Appearance.SkinName;
             ApplyClothes(playerData.ComponentPlayer, profile.Appearance?.Clothes);
+            ApplySkinMaterial(playerData, profile.Appearance);
             return true;
         }
 
@@ -308,6 +519,7 @@ namespace SuMultiplayer.Engine
             if (profile.Appearance != null && profile.Appearance.HasSkinName)
                 localPlayer.CharacterSkinName = profile.Appearance.SkinName;
             ApplyClothes(localPlayer.ComponentPlayer, profile.Appearance?.Clothes);
+            ApplySkinMaterial(localPlayer, profile.Appearance);
             return true;
         }
 
@@ -323,6 +535,12 @@ namespace SuMultiplayer.Engine
         /// <param name="record">该身份的角色记录；没有记录时按引擎默认值建（旧实现同样支持 record == null）。</param>
         /// <param name="isHost">本端是不是主机（影响是否摘 Updateable、是否走首次出生流程）。</param>
         public bool TryCreate(int clientId, string requestedName, string recordKey,
+            NetworkPlayerRecord record, bool isHost, out string failureReason) =>
+            TryCreate(new PlayerKey(clientId, 0), requestedName, recordKey, record, isHost,
+                out failureReason);
+
+        /// <summary>建一个联机角色实体（多本机角色：玩家键的槽位决定它属于哪个本机角色）。</summary>
+        public bool TryCreate(PlayerKey key, string requestedName, string recordKey,
             NetworkPlayerRecord record, bool isHost, out string failureReason)
         {
             failureReason = null;
@@ -332,9 +550,15 @@ namespace SuMultiplayer.Engine
                 failureReason = "世界上没有加载中的 Project（还没进入世界）";
                 return false;
             }
-            if (m_avatars.ContainsKey(clientId) || !m_creating.Add(clientId))
+            if (!key.IsValid)
             {
-                failureReason = "clientId " + clientId + " 的联机角色已经存在或正在创建";
+                failureReason = "玩家键 " + key + " 非法（clientId 必须 >= 0、槽位 0.." +
+                    PlayerKey.MaxSlot + "）";
+                return false;
+            }
+            if (m_avatars.ContainsKey(key) || !m_creating.Add(key))
+            {
+                failureReason = "玩家键 " + key + " 的联机角色已经存在或正在创建";
                 return false;
             }
 
@@ -346,7 +570,7 @@ namespace SuMultiplayer.Engine
                 players = project.FindSubsystem<SubsystemPlayers>(throwOnError: true);
                 PlayerData hostPlayer = players.PlayersData.FirstOrDefault();
                 string playerName = string.IsNullOrWhiteSpace(requestedName)
-                    ? ("NetPlayer" + clientId)
+                    ? ("NetPlayer" + key.ClientId + "_" + key.Slot)
                     : requestedName.Trim();
                 if (playerName.Length > 14) playerName = playerName.Substring(0, 14);
                 playerData = new PlayerData(project)
@@ -434,6 +658,7 @@ namespace SuMultiplayer.Engine
                 RestorePlayerRecordCrafting(
                     playerData.ComponentPlayer?.Entity?.FindComponent<ComponentCraftingTable>(), record);
                 ApplyClothes(playerData.ComponentPlayer, record?.Clothes);
+                ApplySkinMaterial(playerData, record?.SkinName, record?.SkinSha256);
                 if (record != null)
                 {
                     ApplyAuthoritativePlayerStats(playerData.ComponentPlayer, record.Health, record.Air,
@@ -441,6 +666,12 @@ namespace SuMultiplayer.Engine
                         record.Level);
                     ApplyPlayerRecordState(playerData.ComponentPlayer, record);
                 }
+                // 统计槽位**必须**按这个身份自己的记录重建（没有记录 = 引擎默认值）：
+                // PlayerIndex 会被复用，而 SubsystemPlayerStats 不会在角色移除时清表 ——
+                // 不重置就会继承上一个人（或下载世界存档里旧角色）的统计。
+                // 实机缺陷：主机把世界存档里的旧角色统计当成客户端身份的统计写进了
+                // SuMultiplayerPlayers.xml，再回灌给客户端（客户端统计面板显示别人的数据）。
+                ApplyPlayerRecordStats(playerData.ComponentPlayer, record?.Stats);
 
                 m_parentField.GetParentField<StateMachine>(playerData, "m_stateMachine", typeof(PlayerData))
                     .TransitionTo("Playing");
@@ -459,12 +690,14 @@ namespace SuMultiplayer.Engine
                 if (playerData.ComponentPlayer != null && !componentPlayers.Contains(playerData.ComponentPlayer))
                     componentPlayers.Add(playerData.ComponentPlayer);
 
-                m_avatars.Add(clientId, playerData);
-                m_clientRecordKeys[clientId] = recordKey;
+                m_avatars.Add(key, playerData);
+                m_clientRecordKeys[key] = recordKey;
+                m_slotCountsByClient.TryGetValue(key.ClientId, out int existingSlots);
+                m_slotCountsByClient[key.ClientId] = existingSlots + 1;
                 // 新建（或重连后重建）的角色不沿用上一次的位置插值状态：第一份快照必须直接对齐
                 // （旧实现同样是 RemoveNetworkPlayer 清、CreateNetworkPlayer 后从零开始）。
-                ForgetRemotePosition(clientId);
-                Log("已创建联机角色：clientId=" + clientId + " · 记录键=" +
+                ForgetRemotePosition(key);
+                Log("已创建联机角色：玩家键 " + key + " · 记录键=" +
                     PlayerIdentity.Describe(recordKey) + " · PlayerIndex=" + playerData.PlayerIndex);
                 return true;
             }
@@ -487,17 +720,17 @@ namespace SuMultiplayer.Engine
                 catch (Exception rollbackError)
                 {
                     m_diagnostics?.Error(m_ownerId,
-                        "回滚 clientId " + clientId + " 的联机角色时又失败：" + rollbackError.GetType().Name +
+                        "回滚玩家键 " + key + " 的联机角色时又失败：" + rollbackError.GetType().Name +
                         " " + rollbackError.Message, rollbackError);
                 }
                 failureReason = ex.GetType().Name + " " + ex.Message;
                 m_diagnostics?.Error(m_ownerId,
-                    "创建 clientId " + clientId + " 的联机角色失败（已回滚，不再重试创建）：" + failureReason, ex);
+                    "创建玩家键 " + key + " 的联机角色失败（已回滚，不再重试创建）：" + failureReason, ex);
                 return false;
             }
             finally
             {
-                m_creating.Remove(clientId);
+                m_creating.Remove(key);
             }
         }
 
@@ -505,9 +738,12 @@ namespace SuMultiplayer.Engine
         /// 从活着的 PlayData 抓一份角色记录（生命/背包/位置等**主机权威**字段）。
         /// Source: ScMultiplayerProfileHandlers.cs:376-467（CapturePlayerRecord）
         /// </summary>
-        public NetworkPlayerRecord Capture(int clientId)
+        public NetworkPlayerRecord Capture(int clientId) =>
+            Capture(new PlayerKey(clientId, 0));
+
+        public NetworkPlayerRecord Capture(PlayerKey key)
         {
-            if (!m_avatars.TryGetValue(clientId, out PlayerData playerData)) return null;
+            if (!m_avatars.TryGetValue(key, out PlayerData playerData)) return null;
             return CapturePlayerRecord(playerData);
         }
 
@@ -518,20 +754,44 @@ namespace SuMultiplayer.Engine
         /// ⚠️ **目前没有任何调用方**：断线/离开房间的清理（含断线挂起、自动重连复用同一身份）
         /// 还没移植，所以这里只把引擎动作备好；接线时必须同时接上"离开时抓记录并落盘"。
         /// </summary>
-        public bool Remove(int clientId)
+        /// <summary>
+        /// 摘掉一个连接上的**全部**本机角色（客户端离开 / 链路失效）。
+        /// 旧版每个 clientId 只有一个角色，语义与旧版相同。
+        /// </summary>
+        public bool RemoveClient(int clientId)
         {
-            if (!m_avatars.TryGetValue(clientId, out PlayerData playerData)) return false;
-            m_avatars.Remove(clientId);
-            m_clientRecordKeys.Remove(clientId);
+            bool removed = false;
+            for (int slot = 0; slot <= PlayerKey.MaxSlot; slot++)
+                removed |= Remove(new PlayerKey(clientId, slot));
+            return removed;
+        }
+
+        /// <summary>旧版单角色入口：clientId 的槽位 0。</summary>
+        public bool Remove(int clientId) => RemoveClient(clientId);
+
+        /// <summary>摘掉一个玩家键的联机角色（槽位消失 / 性别变化重建）。</summary>
+        public bool Remove(PlayerKey key)
+        {
+            if (!m_avatars.TryGetValue(key, out PlayerData playerData)) return false;
+            m_skinMaterializer?.Forget(playerData);
+            m_avatars.Remove(key);
+            m_clientRecordKeys.Remove(key);
+            if (m_slotCountsByClient.TryGetValue(key.ClientId, out int remainingSlots))
+            {
+                if (remainingSlots <= 1) m_slotCountsByClient.Remove(key.ClientId);
+                else m_slotCountsByClient[key.ClientId] = remainingSlots - 1;
+            }
             // 旧实现在 UpdateHostTerrainInterestTable 的"过期客户端"清扫里同样把上报半径删掉。
-            m_hostTerrainReportedInterestRadii.Remove(clientId);
+            // 多本机角色：只有该连接**最后一个**角色摘掉后才清它上报的半径（半径是按连接上报的）。
+            if (!m_avatars.Keys.Any(item => item.ClientId == key.ClientId))
+                m_hostTerrainReportedInterestRadii.Remove(key.ClientId);
             // 角色离开 → 它那条引擎地形更新位置必须摘掉，否则引擎会继续在这个"已经不存在的角色"
             // 周围加载 / 保留区块（主机白加载，实时地图还会多出一片没有人站着的区域）。
             Project project = GameManager.Project;
-            RemoveHostTerrainUpdateLocation(project, clientId, playerData);
+            RemoveHostTerrainUpdateLocation(project, key, playerData);
             // 旧 RemoveNetworkPlayer 同时把该角色的位置状态丢掉（重连后重新对齐，不沿用旧轨迹）。
-            ForgetRemotePosition(clientId);
-            m_updateLocationDriftSinceMs.Remove(clientId);
+            ForgetRemotePosition(key);
+            m_updateLocationDriftSinceMs.Remove(key);
             SubsystemPlayers players = project?.FindSubsystem<SubsystemPlayers>(false);
             try
             {
@@ -556,7 +816,7 @@ namespace SuMultiplayer.Engine
             }
             catch (Exception ex)
             {
-                m_diagnostics?.Error(m_ownerId, "移除 clientId " + clientId + " 的联机角色失败：", ex);
+                m_diagnostics?.Error(m_ownerId, "移除玩家键 " + key + " 的联机角色失败：", ex);
                 return false;
             }
         }
@@ -564,9 +824,11 @@ namespace SuMultiplayer.Engine
         /// <summary>会话结束（换世界 / 下线）：忘掉全部化身的引用，不主动改世界状态。</summary>
         public void ForgetAll()
         {
+            m_skinMaterializer?.ForgetAll();
             m_avatars.Clear();
             m_clientRecordKeys.Clear();
             m_creating.Clear();
+            m_slotCountsByClient.Clear();
             m_hostTerrainReportedInterestRadii.Clear();
             // 不在这里调引擎 RemoveUpdateLocation：换世界时 GameManager.Project 已经是**新世界**，
             // 旧角色的 PlayerIndex 在新世界里可能正好是本机玩家的槽位 —— 盲删会摘掉新世界的本机相机。
@@ -662,24 +924,42 @@ namespace SuMultiplayer.Engine
                 // 账本同步清空，状态行不会残留"主机侧位置"的假象。
                 m_hostTerrainLocations.Clear();
                 m_updateLocationDriftSinceMs.Clear();
-                if (!TryGetLocalPlayer(project, out PlayerData localPlayer, out string localReason))
+                // 多本机角色（分屏）：每个本机角色都有自己的相机/可见范围，都要挂更新位置。
+                var localPlayers = new List<PlayerData>(PlayerKey.SlotCount);
+                if (!TryCollectLocalPlayers(project, localPlayers, out bool tooManyLocals,
+                        out string localReason) || localPlayers.Count == 0)
                 {
                     ReportProblemOnce("terrain-locations-no-local-player",
                         "找不到本机玩家（旧实现的规则：PlayersData 里不是联机角色的那一条）：" +
                         localReason + " → 本机地形不会更新");
                     return;
                 }
-                if (localPlayer.PlayerIndex < 0)
+                if (tooManyLocals)
                 {
-                    ReportProblemOnce("terrain-locations-local-index",
-                        "本机玩家还没有引擎玩家槽位（PlayerIndex=" + localPlayer.PlayerIndex +
-                        "）→ 本机地形不会更新");
-                    return;
+                    ReportProblemOnce("terrain-locations-too-many-local",
+                        localReason + "（地形只为本机槽位 0.." + PlayerKey.MaxSlot + " 维护）");
                 }
                 float clientVisibility = ResolveVisibility(project);
-                terrain.TerrainUpdater.SetUpdateLocation(localPlayer.PlayerIndex,
-                    localPlayer.ComponentPlayer.ComponentBody.Position.XZ,
-                    clientVisibility, clientVisibility);
+                for (int slot = 0; slot < localPlayers.Count; slot++)
+                {
+                    PlayerData localPlayer = localPlayers[slot];
+                    if (localPlayer.PlayerIndex < 0)
+                    {
+                        ReportProblemOnce("terrain-locations-local-index:" + slot,
+                            "本机玩家槽位 " + slot + " 还没有引擎玩家槽位（PlayerIndex=" +
+                            localPlayer.PlayerIndex + "）→ 这个本机角色的地形不会更新");
+                        continue;
+                    }
+                    if (localPlayer.ComponentPlayer?.ComponentBody == null)
+                    {
+                        ReportProblemOnce("terrain-locations-local-body:" + slot,
+                            "本机玩家槽位 " + slot + " 还没有 ComponentBody → 这个本机角色的地形不会更新");
+                        continue;
+                    }
+                    terrain.TerrainUpdater.SetUpdateLocation(localPlayer.PlayerIndex,
+                        localPlayer.ComponentPlayer.ComponentBody.Position.XZ,
+                        clientVisibility, clientVisibility);
+                }
                 return;
             }
 
@@ -690,14 +970,15 @@ namespace SuMultiplayer.Engine
             // 两条位置共用同一个 index 会互相覆盖（后写的那条生效），也就是"只有一个角色的地形在加载"。
             // 实机数据（2026-10-18 18:44）本机玩家 index=1、联机角色 0/2 → 没有碰撞；这里把它变成显式检查，
             // 以后换世界 / 重建角色一旦撞上就会在日志里说明，而不是静默地少加载一片地形。
-            TryGetLocalPlayer(project, out PlayerData hostLocalPlayer, out _);
-            foreach (KeyValuePair<int, PlayerData> item in m_avatars.ToArray())
+            var hostLocalPlayers = new List<PlayerData>(PlayerKey.SlotCount);
+            TryCollectLocalPlayers(project, hostLocalPlayers, out _, out _);
+            foreach (KeyValuePair<PlayerKey, PlayerData> item in m_avatars.ToArray())
             {
                 PlayerData playerData = item.Value;
                 if (playerData?.ComponentPlayer?.ComponentBody == null)
                 {
                     ReportProblemOnce("terrain-locations-avatar-body:" + item.Key,
-                        "联机角色 clientId=" + item.Key +
+                        "联机角色 " + item.Key +
                         " 还没有 ComponentBody → 本帧不给它挂地形更新位置");
                     continue;
                 }
@@ -705,30 +986,40 @@ namespace SuMultiplayer.Engine
                 if (playerData.PlayerIndex < 0)
                 {
                     ReportProblemOnce("terrain-locations-avatar-index:" + item.Key,
-                        "联机角色 clientId=" + item.Key + " 没有引擎玩家槽位（PlayerIndex=" +
+                        "联机角色 " + item.Key + " 没有引擎玩家槽位（PlayerIndex=" +
                         playerData.PlayerIndex + "）→ 本帧不给它挂地形更新位置");
                     // 身体在、槽位没有：更新位置挂不上，按"角色离最后一条更新位置多远"计时告警。
                     NoteUpdateLocationDrift(item.Key, position, nowMs);
                     continue;
                 }
-                if (hostLocalPlayer != null && hostLocalPlayer.PlayerIndex == playerData.PlayerIndex &&
-                    !ReferenceEquals(hostLocalPlayer, playerData))
+                bool clashesWithLocal = false;
+                for (int localSlot = 0; localSlot < hostLocalPlayers.Count; localSlot++)
+                {
+                    PlayerData hostLocalPlayer = hostLocalPlayers[localSlot];
+                    if (hostLocalPlayer != null && hostLocalPlayer.PlayerIndex == playerData.PlayerIndex &&
+                        !ReferenceEquals(hostLocalPlayer, playerData))
+                    {
+                        clashesWithLocal = true;
+                        break;
+                    }
+                }
+                if (clashesWithLocal)
                 {
                     ReportProblemOnce("terrain-locations-index-local:" + item.Key,
-                        "联机角色 clientId=" + item.Key + " 的 PlayerIndex=" + playerData.PlayerIndex +
+                        "联机角色 " + item.Key + " 的 PlayerIndex=" + playerData.PlayerIndex +
                         " 与本机玩家相同 → 两条地形更新位置会互相覆盖（引擎按 PlayerIndex 索引）；" +
                         "主机可能只在其中一方周围加载地形");
                 }
-                foreach (KeyValuePair<int, PlayerData> other in m_avatars)
+                foreach (KeyValuePair<PlayerKey, PlayerData> other in m_avatars)
                 {
                     if (other.Key == item.Key || other.Value?.PlayerIndex != playerData.PlayerIndex) continue;
                     ReportProblemOnce("terrain-locations-index-duplicate:" + item.Key,
-                        "联机角色 clientId=" + item.Key + " 与 clientId=" + other.Key +
+                        "联机角色 " + item.Key + " 与 " + other.Key +
                         " 共用 PlayerIndex=" + playerData.PlayerIndex +
                         " → 后写的那条会覆盖前者，主机不会同时在这两个角色周围加载地形");
                     break;
                 }
-                bool fromReport = m_hostTerrainReportedInterestRadii.TryGetValue(item.Key,
+                bool fromReport = m_hostTerrainReportedInterestRadii.TryGetValue(item.Key.ClientId,
                     out int reportedRadius);
                 int radius = fromReport
                     ? Math.Max(1, Math.Min(MaximumTerrainInterestRadius, reportedRadius))
@@ -745,7 +1036,7 @@ namespace SuMultiplayer.Engine
                     // 槽位变了（重建 / 复用）：先摘旧槽位，否则引擎里会留下一条永远不动的位置。
                     terrain.TerrainUpdater.RemoveUpdateLocation(previousLocation.PlayerIndex);
                     LogRateLimited("terrain-locations-index:" + item.Key,
-                        "联机角色 clientId=" + item.Key + " 的引擎玩家槽位从 PlayerIndex=" +
+                        "联机角色 " + item.Key + " 的引擎玩家槽位从 PlayerIndex=" +
                         previousLocation.PlayerIndex + " 变成 " + playerData.PlayerIndex +
                         " → 先摘掉旧槽位的更新位置，再在新区块挂新的（不留第二条）",
                         UpdateLocationLogIntervalMs);
@@ -760,7 +1051,7 @@ namespace SuMultiplayer.Engine
                     // 每个（clientId, 半径）只写一行：实机确认"主机确实在客户端角色周围生成地形"用这一行。
                     // 实际生效的两个距离（可见范围 / 内容距离）都写出来；区块也写出来，和客户端当前区块直接对数。
                     LogOnce("terrain-locations-applied:" + item.Key + ":" + radius,
-                        "已给联机角色 clientId=" + item.Key + " 挂引擎地形更新位置：PlayerIndex=" +
+                        "已给联机角色 " + item.Key + " 挂引擎地形更新位置：PlayerIndex=" +
                         playerData.PlayerIndex + " · 兴趣半径 " + radius + " 区块（" +
                         (fromReport ? "客户端上报" : "主机默认：客户端尚未上报") + "）· 可见范围 " +
                         remoteVisibility + "（= radius * 16f）· 内容距离 " + contentDistance +
@@ -771,7 +1062,7 @@ namespace SuMultiplayer.Engine
                 {
                     // 移动日志限流（每 clientId 最多 5 秒一行）：实时地图要验证"地形填充跟着角色走"看这一行。
                     LogRateLimited("terrain-locations-move:" + item.Key,
-                        "联机角色 clientId=" + item.Key + " 的地形更新位置跟随到区块 " +
+                        "联机角色 " + item.Key + " 的地形更新位置跟随到区块 " +
                         HostTerrainLocationTable.ChunkOf(position.XZ) + "（PlayerIndex=" +
                         playerData.PlayerIndex + " · 兴趣半径 " + radius + " · 内容距离 " +
                         contentDistance + " · 累计移动 " + m_hostTerrainLocations.Moves +
@@ -804,32 +1095,220 @@ namespace SuMultiplayer.Engine
         public bool TryGetLocalPlayer(Project project, out PlayerData localPlayer, out string reason)
         {
             localPlayer = null;
+            var players = new List<PlayerData>(PlayerKey.SlotCount);
+            if (!TryCollectLocalPlayers(project, players, out _, out reason) || players.Count == 0)
+                return false;
+            localPlayer = players[0];
+            if (localPlayer.ComponentPlayer?.ComponentBody == null)
+            {
+                reason = "本机玩家（PlayersData 里不是联机角色的那一条）还没有 ComponentPlayer/ComponentBody";
+                return false;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// 按**本机槽位** 0..3 取本机角色（下标口径与 <see cref="TryCollectLocalPlayers"/> 一致）。
+        /// 槽位不存在时明确失败，不回退到槽位 0（避免把别的角色的皮肤/资料套到这个槽位上）。
+        /// </summary>
+        public bool TryGetLocalPlayer(Project project, int slot, out PlayerData localPlayer,
+            out string reason)
+        {
+            localPlayer = null;
+            if (!PlayerEditSync.TryValidateSlot(slot, out reason)) return false;
+            var players = new List<PlayerData>(PlayerKey.SlotCount);
+            if (!TryCollectLocalPlayers(project, players, out _, out reason)) return false;
+            if (slot >= players.Count)
+            {
+                reason = "本机只有 " + players.Count + " 个角色（没有槽位 " + slot + "）";
+                return false;
+            }
+            localPlayer = players[slot];
+            if (localPlayer.ComponentPlayer?.ComponentBody == null)
+            {
+                reason = "本机槽位 " + slot + " 还没有 ComponentPlayer/ComponentBody";
+                return false;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// 本机角色枚举（Phase 1：多本机角色）：<c>PlayersData</c> 里**不是联机化身**的全部角色，
+        /// 按引擎 <c>PlayerIndex</c> 升序排列；列表下标就是**本机槽位**（0..3）。
+        /// 这是主机与客户端共用的唯一枚举口径：
+        ///   · 主机自己的本机角色 = clientId 0 的槽位 0..N-1；
+        ///   · 一个客户端的本机角色 = 它的 clientId 的槽位 0..N-1（客户端把同一份枚举结果上报给主机）。
+        /// 超过引擎上限（<see cref="PlayerKey.SlotCount"/>）时**明确失败**并把原因交给调用方
+        /// （不静默截断：调用方必须记 tooManySlots 并按前 4 个槽位继续，或拒绝）。
+        /// </summary>
+        public bool TryCollectLocalPlayers(Project project, List<PlayerData> target,
+            out bool tooMany, out string reason)
+        {
+            tooMany = false;
             reason = null;
+            if (target == null)
+            {
+                reason = "调用方没有给本机角色列表";
+                return false;
+            }
+            target.Clear();
             SubsystemPlayers players = project?.FindSubsystem<SubsystemPlayers>(throwOnError: false);
             if (players == null)
             {
                 reason = "世界里找不到 SubsystemPlayers";
                 return false;
             }
-            PlayerData candidate = null;
             foreach (PlayerData item in players.PlayersData)
             {
-                if (Contains(item)) continue;
-                candidate = item;
-                break;
+                if (item == null || Contains(item)) continue;
+                target.Add(item);
             }
-            if (candidate == null)
-            {
+            target.Sort((left, right) => left.PlayerIndex.CompareTo(right.PlayerIndex));
+            if (target.Count == 0)
                 reason = "PlayersData 里除了 " + m_avatars.Count + " 个联机角色以外没有任何角色";
-                return false;
-            }
-            if (candidate.ComponentPlayer?.ComponentBody == null)
+            if (target.Count > PlayerKey.SlotCount)
             {
-                reason = "本机玩家（PlayersData 里不是联机角色的那一条）还没有 ComponentPlayer/ComponentBody";
+                tooMany = true;
+                if (!m_tooManyLocalSlotsActive)
+                {
+                    m_tooManyLocalSlotsActive = true;
+                    TooManyLocalSlots++;
+                }
+                reason = "本机角色数 " + target.Count + " 超过引擎/协议上限 " + PlayerKey.SlotCount +
+                    "（SubsystemPlayers.MaxPlayers）；只取 PlayerIndex 最小的 " + PlayerKey.SlotCount +
+                    " 个作为槽位 0.." + PlayerKey.MaxSlot + "，多出来的角色不会被同步";
+                target.RemoveRange(PlayerKey.SlotCount, target.Count - PlayerKey.SlotCount);
+            }
+            else
+            {
+                m_tooManyLocalSlotsActive = false;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// 客户端 Phase 2：把下载世界里**不属于本机**的本机 <c>PlayerData</c>（主机自己的角色副本）
+        /// 从引擎里摘掉。只接受"非联机化身"的 PlayerData；联机化身请走 <see cref="Remove(PlayerKey)"/>。
+        ///
+        /// 引擎删除路径（不用任何 ad-hoc 字段编辑）：
+        ///   <c>SubsystemPlayers.RemovePlayerData</c> → 从 PlayersData 摘除 →
+        ///   <c>PlayerRemoved</c> 事件 → <c>SubsystemGameWidgets</c> 摘掉该角色的 GameWidget
+        ///   （相机 / 输入随之消失）→ <c>Project.RemoveEntity(ComponentPlayer.Entity, disposeEntity: true)</c>
+        ///   （实体 / Updateable 一并摘除）→ <c>PlayerData.Dispose()</c>。
+        /// Source: Survivalcraft/Game/SubsystemPlayers.cs:SubsystemPlayers.RemovePlayerData
+        /// Source: Survivalcraft/Game/SubsystemGameWidgets.cs:Load 的 PlayerRemoved 处理器
+        /// Source: Survivalcraft/Game/PlayerScreen.cs:PlayerScreen.Update（引擎自己的删除也走这条路径）
+        ///
+        /// 另外两个"下载世界留下的状态"也必须清：
+        ///   · <c>SubsystemPlayerStats</c> 没有删除 API（只有 Get/Load/Save）→ 把该 PlayerIndex 的
+        ///     统计槽位**重置为引擎默认值**（含死亡记录），避免这个索引写回 Project.xml 时留下
+        ///     下载来的主机统计，或被以后复用的角色继承；
+        ///   · 客户端的地形更新位置按 PlayerIndex 挂（<c>TerrainUpdater</c>）→ 摘掉该索引，
+        ///     以免引擎继续为一个已经不存在的本机角色加载区块。
+        /// </summary>
+        public bool RemoveLocalPlayer(Project project, PlayerData playerData, out string reason)
+        {
+            reason = null;
+            if (project == null)
+            {
+                reason = "没有加载中的 Project（世界已卸载）";
                 return false;
             }
-            localPlayer = candidate;
+            if (playerData == null)
+            {
+                reason = "要移除的本机角色为 null";
+                return false;
+            }
+            if (Contains(playerData))
+            {
+                reason = "PlayerData 是本机的联机化身（远端角色），不是下载来的本机角色副本；" +
+                    "远端化身必须走 Remove(PlayerKey)";
+                return false;
+            }
+            SubsystemPlayers players = project.FindSubsystem<SubsystemPlayers>(throwOnError: false);
+            if (players == null)
+            {
+                reason = "世界里找不到 SubsystemPlayers";
+                return false;
+            }
+            if (!players.PlayersData.Contains(playerData))
+            {
+                reason = "PlayerData 已经不在 PlayersData 里（可能已被引擎移除）→ 不重复删除";
+                return false;
+            }
+            int playerIndex = playerData.PlayerIndex;
+            string name = playerData.Name ?? string.Empty;
+            try
+            {
+                // 唯一的删除入口：引擎自己的玩家删除路径（GameWidget / 实体 / 相机 / Updateable / Dispose）。
+                players.RemovePlayerData(playerData);
+                if (!ResetLocalPlayerStatsSlot(playerIndex, out string statsReason))
+                {
+                    m_diagnostics?.Warn(m_ownerId,
+                        "已移除下载世界带来的主机角色副本「" + name + "」（PlayerIndex=" + playerIndex +
+                        "），但它的统计槽位重置失败：" + statsReason +
+                        "（该索引可能残留下载来的主机统计）");
+                }
+                SubsystemTerrain terrain = project.FindSubsystem<SubsystemTerrain>(throwOnError: false);
+                terrain?.TerrainUpdater?.RemoveUpdateLocation(playerIndex);
+                Log("已移除下载世界带来的主机角色副本：名字=" + name + " · PlayerIndex=" + playerIndex +
+                    " · 删除路径=SubsystemPlayers.RemovePlayerData（GameWidget / 实体 / 相机随 PlayerRemoved 摘除）· " +
+                    "统计槽位已重置 · 地形更新位置已摘除");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                reason = ex.GetType().Name + " " + ex.Message;
+                m_diagnostics?.Error(m_ownerId,
+                    "移除下载世界带来的主机角色副本「" + name + "」（PlayerIndex=" + playerIndex +
+                    "）失败：" + reason, ex);
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// 把一个本机角色的统计槽位重置成引擎默认值（含死亡记录）。
+        /// <c>SubsystemPlayerStats</c> 没有删除 API，所以"移除或重置"里只能选重置 —— 这是引擎公开
+        /// API（GetPlayerStats + PlayerStatsSnapshot 的 [Stat] 字段回填）能表达的唯一做法。
+        /// 死亡记录列表引擎没有公开 Clear，与本类 ApplyPlayerRecordStats 用同一个反射入口清理。
+        /// Source: Survivalcraft/Game/SubsystemPlayerStats.cs（只有 GetPlayerStats / Load / Save）
+        /// Source: SuMultiplayer/Engine/PlayerStatsStore.cs:SeparateDownloadedPlayerStats（同一套重置口径）
+        /// </summary>
+        private bool ResetLocalPlayerStatsSlot(int playerIndex, out string reason)
+        {
+            reason = null;
+            if (playerIndex < 0)
+            {
+                reason = "PlayerIndex=" + playerIndex + " 非法";
+                return false;
+            }
+            Project project = GameManager.Project;
+            if (project == null)
+            {
+                reason = "没有加载中的 Project";
+                return false;
+            }
+            SubsystemPlayerStats subsystem = project.FindSubsystem<SubsystemPlayerStats>(false);
+            if (subsystem == null)
+            {
+                reason = "世界没有 SubsystemPlayerStats";
+                return false;
+            }
+            PlayerStats slot = subsystem.GetPlayerStats(playerIndex);
+            PlayerStatsSnapshot defaults = PlayerStatsSnapshot.Capture(new PlayerStats());
+            // DeathRecordsString 是引擎把死亡记录序列化的内部载体，不是可同步的统计（同 PlayerStatsStore）。
+            defaults.Values.Remove("DeathRecordsString");
+            ClearPlayerDeathRecords(slot);
+            defaults.ApplyTo(slot);
             return true;
+        }
+
+        /// <summary>客户端本机角色数（归一化 / 容量判定用；枚举口径与 <see cref="TryCollectLocalPlayers"/> 完全一致）。</summary>
+        public int CountLocalPlayers(Project project)
+        {
+            var players = new List<PlayerData>(PlayerKey.SlotCount);
+            if (!TryCollectLocalPlayers(project, players, out _, out _)) return 0;
+            return players.Count;
         }
 
         // Source: Mod/ScMultiplayer/Modules/World/ScMultiplayerWorldObjectHandlers.cs:486 / :498
@@ -878,24 +1357,24 @@ namespace SuMultiplayer.Engine
         /// <c>ComponentBody.Position</c>（偏离 0）；只有更新位置挂不上 / 没刷新时这里才会累积，
         /// 那正是"主机不在角色周围加载地形"的征兆。
         /// </summary>
-        private void NoteUpdateLocationDrift(int clientId, Vector3 position, long nowMs)
+        private void NoteUpdateLocationDrift(PlayerKey key, Vector3 position, long nowMs)
         {
-            if (!m_hostTerrainLocations.TryGet(clientId, out HostTerrainLocation location)) return;
+            if (!m_hostTerrainLocations.TryGet(key, out HostTerrainLocation location)) return;
             ChunkKey bodyChunk = HostTerrainLocationTable.ChunkOf(position.XZ);
             int distance = HostTerrainLocationTable.ChunkDistance(bodyChunk, location.Chunk);
             if (distance <= UpdateLocationDriftChunkThreshold)
             {
-                m_updateLocationDriftSinceMs.Remove(clientId);
+                m_updateLocationDriftSinceMs.Remove(key);
                 return;
             }
-            if (!m_updateLocationDriftSinceMs.TryGetValue(clientId, out long since))
+            if (!m_updateLocationDriftSinceMs.TryGetValue(key, out long since))
             {
-                m_updateLocationDriftSinceMs[clientId] = nowMs;
+                m_updateLocationDriftSinceMs[key] = nowMs;
                 return;
             }
             if (nowMs - since < UpdateLocationDriftWarningMs) return;
-            LogRateLimited("terrain-locations-drift:" + clientId,
-                "联机角色 clientId=" + clientId + " 的 ComponentBody 在区块 " + bodyChunk +
+            LogRateLimited("terrain-locations-drift:" + key,
+                "联机角色 " + key + " 的 ComponentBody 在区块 " + bodyChunk +
                 "，而它的引擎地形更新位置还停在 " + location.Chunk + "（相距 " + distance +
                 " 区块 > " + UpdateLocationDriftChunkThreshold + "）已超过 " +
                 (nowMs - since) / 1000 + " 秒 → 主机不会在它周围加载地形" +
@@ -908,12 +1387,12 @@ namespace SuMultiplayer.Engine
         /// （比 PlayerData.PlayerIndex 更可靠：角色被 Dispose 后 PlayerData 可能已经变了）。
         /// 世界正在卸载（没有 TerrainUpdater）时只记一行事实：引擎会随世界一起丢掉这条位置。
         /// </summary>
-        private void RemoveHostTerrainUpdateLocation(Project project, int clientId,
+        private void RemoveHostTerrainUpdateLocation(Project project, PlayerKey key,
             PlayerData playerData)
         {
-            bool hadLocation = m_hostTerrainLocations.TryGet(clientId,
+            bool hadLocation = m_hostTerrainLocations.TryGet(key,
                 out HostTerrainLocation location);
-            m_hostTerrainLocations.Remove(clientId);
+            m_hostTerrainLocations.Remove(key);
             if (!hadLocation) return;
             int playerIndex = location.PlayerIndex >= 0
                 ? location.PlayerIndex
@@ -923,14 +1402,14 @@ namespace SuMultiplayer.Engine
                 project?.FindSubsystem<SubsystemTerrain>(throwOnError: false)?.TerrainUpdater;
             if (updater == null)
             {
-                ReportProblemOnce("terrain-locations-remove-no-updater:" + clientId,
-                    "联机角色 clientId=" + clientId + " 离开时找不到 TerrainUpdater（世界正在卸载）→ " +
+                ReportProblemOnce("terrain-locations-remove-no-updater:" + key,
+                    "联机角色 " + key + " 离开时找不到 TerrainUpdater（世界正在卸载）→ " +
                     "它的引擎地形更新位置（PlayerIndex=" + playerIndex +
                     "）没有显式摘除；引擎会随这个世界一起丢掉它");
                 return;
             }
             updater.RemoveUpdateLocation(playerIndex);
-            Log("联机角色 clientId=" + clientId + " 离开 → 已摘掉它的引擎地形更新位置（PlayerIndex=" +
+            Log("联机角色 " + key + " 离开 → 已摘掉它的引擎地形更新位置（PlayerIndex=" +
                 playerIndex + " · 区块 " + location.Chunk + "）；主机不再为它加载地形");
         }
 
@@ -945,9 +1424,9 @@ namespace SuMultiplayer.Engine
         //   · 应用到身体（插值/平滑）：ScMultiplayerClientEvents.cs:1054-1160
         //     （UpdateRemotePlayerPresentations，两端每帧各调一次）。
 
-        /// <summary>clientId → 该联机角色最近一份权威位置 + 插值状态（旧 RemotePlayers / NetworkPlayerState）。</summary>
-        private readonly Dictionary<int, RemotePlayerPositionState> m_remotePositions =
-            new Dictionary<int, RemotePlayerPositionState>();
+        /// <summary>玩家键 → 该联机角色最近一份权威位置 + 插值状态（旧 RemotePlayers / NetworkPlayerState）。</summary>
+        private readonly Dictionary<PlayerKey, RemotePlayerPositionState> m_remotePositions =
+            new Dictionary<PlayerKey, RemotePlayerPositionState>();
 
         public int RemotePositionCount => m_remotePositions.Count;
 
@@ -956,6 +1435,12 @@ namespace SuMultiplayer.Engine
 
         /// <summary>因为化身/身体缺失而跳过的位置快照数（跳过时都写了明确原因）。</summary>
         public long RemotePositionsSkipped { get; private set; }
+
+        /// <summary>
+        /// 客户端收到**自己**那条位置快照而跳过的次数（positionSkippedOwn）。
+        /// 主机批里包含每个客户端自己的化身；本机角色由本地模拟，网络位置绝不写回。
+        /// </summary>
+        public long RemotePositionsSkippedOwn { get; private set; }
 
         /// <summary>
         /// 客户端：本机玩家的一份位置/姿态快照。
@@ -967,14 +1452,58 @@ namespace SuMultiplayer.Engine
             out string reason)
         {
             snapshot = default;
+            var entries = new List<PlayerPositionEntry>(PlayerKey.SlotCount);
+            if (CaptureLocalPlayerPositions(serverTick, entries, out reason) == 0) return false;
+            snapshot = entries[0].Snapshot;
+            return true;
+        }
+
+        /// <summary>
+        /// 客户端：**所有本机角色**的位置快照（槽位 0..N-1）。单角色时与旧实现只有一条、
+        /// 键为 (0,0)（线上与旧版逐字节一致）；多角色时每个槽位一条。
+        /// 取不到某个角色 → 跳过它并写清原因（限流），绝不拿别的位置顶替。
+        /// </summary>
+        public int CaptureLocalPlayerPositions(int serverTick, List<PlayerPositionEntry> target,
+            out string reason)
+        {
+            reason = null;
+            if (target == null)
+            {
+                reason = "调用方没有给批次容器";
+                return 0;
+            }
+            target.Clear();
             Project project = GameManager.Project;
             if (project == null)
             {
                 reason = "没有加载中的 Project（还没进世界）";
-                return false;
+                return 0;
             }
-            if (!TryGetLocalPlayer(project, out PlayerData localPlayer, out reason)) return false;
-            return TryCapturePlayerPosition(localPlayer, serverTick, out snapshot, out reason);
+            var localPlayers = new List<PlayerData>(PlayerKey.SlotCount);
+            if (!TryCollectLocalPlayers(project, localPlayers, out bool tooMany, out reason) ||
+                localPlayers.Count == 0)
+            {
+                return 0;
+            }
+            if (tooMany)
+            {
+                ReportProblemOnce("position-local-too-many", reason);
+            }
+            int count = 0;
+            for (int slot = 0; slot < localPlayers.Count; slot++)
+            {
+                if (!TryCapturePlayerPosition(localPlayers[slot], serverTick,
+                        out PlayerPositionSnapshot snapshot, out string slotReason))
+                {
+                    ReportProblemOnce("position-local-slot:" + slot,
+                        "本机槽位 " + slot + " 的位置快照取不到（" + slotReason +
+                        "）→ 本拍跳过它（不拿别的位置顶替）");
+                    continue;
+                }
+                target.Add(new PlayerPositionEntry(new PlayerKey(0, slot), in snapshot));
+                count++;
+            }
+            return count;
         }
 
         /// <summary>
@@ -1000,15 +1529,11 @@ namespace SuMultiplayer.Engine
                 return 0;
             }
             int count = 0;
-            // 主机自己那一条：编号 = 本机通道槽位（主机 = 0，与客户端建"主机角色"用的槽位键一致）。
-            if (!TryGetLocalPlayer(project, out PlayerData localPlayer, out string localReason))
-            {
-                ReportProblemOnce("position-batch-local",
-                    "主机自己的位置快照取不到（" + localReason + "）→ 本拍不带上自己的位置" +
-                    "（客户端上的主机角色保持上一份权威位置，而不是被拉到一个猜测点）");
-            }
-            else if (!TryCapturePlayerPosition(localPlayer, serverTick,
-                out PlayerPositionSnapshot localSnapshot, out localReason))
+            // 主机自己的**每个本机角色**：键 = (0, slot)，与客户端建"主机角色"用的键一致。
+            // 单角色时就是旧的 (0,0) → 线上与旧版逐字节一致。
+            var localPlayers = new List<PlayerData>(PlayerKey.SlotCount);
+            if (!TryCollectLocalPlayers(project, localPlayers, out bool tooManyLocals,
+                    out string localReason) || localPlayers.Count == 0)
             {
                 ReportProblemOnce("position-batch-local",
                     "主机自己的位置快照取不到（" + localReason + "）→ 本拍不带上自己的位置" +
@@ -1016,18 +1541,32 @@ namespace SuMultiplayer.Engine
             }
             else
             {
-                target.Add(new PlayerPositionEntry(PlayerAvatarModule.HostAvatarSlotKey,
-                    in localSnapshot));
-                count++;
+                if (tooManyLocals)
+                {
+                    ReportProblemOnce("position-batch-local-too-many", localReason);
+                }
+                for (int slot = 0; slot < localPlayers.Count; slot++)
+                {
+                    if (!TryCapturePlayerPosition(localPlayers[slot], serverTick,
+                            out PlayerPositionSnapshot localSnapshot, out string slotReason))
+                    {
+                        ReportProblemOnce("position-batch-local:" + slot,
+                            "主机本机槽位 " + slot + " 的位置快照取不到（" + slotReason +
+                            "）→ 本拍不带上它（客户端上的主机角色保持上一份权威位置，而不是被拉到一个猜测点）");
+                        continue;
+                    }
+                    target.Add(new PlayerPositionEntry(new PlayerKey(0, slot), in localSnapshot));
+                    count++;
+                }
             }
-            foreach (KeyValuePair<int, PlayerData> item in m_avatars.ToArray())
+            foreach (KeyValuePair<PlayerKey, PlayerData> item in m_avatars.ToArray())
             {
                 PlayerData playerData = item.Value;
                 if (!TryCapturePlayerPosition(playerData, serverTick, out PlayerPositionSnapshot snapshot,
                     out string avatarReason))
                 {
                     ReportProblemOnce("position-batch-avatar:" + item.Key,
-                        "联机角色 clientId=" + item.Key + " 的位置快照取不到（" + avatarReason +
+                        "联机角色 " + item.Key + " 的位置快照取不到（" + avatarReason +
                         "）→ 本拍跳过它（不拿别的位置顶替）");
                     continue;
                 }
@@ -1084,22 +1623,25 @@ namespace SuMultiplayer.Engine
         ///           locomotion.IsCreativeFlyEnabled、LastUpdateTime = Time.RealTime）
         /// 化身 / ComponentBody 缺失 → **明确写原因并跳过**（限流一行），绝不伪造一个位置。
         /// </summary>
-        public void ApplyRemotePlayerPosition(int clientId, in PlayerPositionSnapshot snapshot)
+        public void ApplyRemotePlayerPosition(int clientId, in PlayerPositionSnapshot snapshot) =>
+            ApplyRemotePlayerPosition(new PlayerKey(clientId, 0), in snapshot);
+
+        public void ApplyRemotePlayerPosition(PlayerKey key, in PlayerPositionSnapshot snapshot)
         {
-            if (!m_avatars.TryGetValue(clientId, out PlayerData playerData) ||
+            if (!m_avatars.TryGetValue(key, out PlayerData playerData) ||
                 playerData?.ComponentPlayer?.ComponentBody == null)
             {
                 RemotePositionsSkipped++;
-                ReportProblemOnce("position-no-avatar:" + clientId,
-                    "收到 clientId=" + clientId + " 的位置快照，但本机没有它的联机角色（或还没建出 " +
+                ReportProblemOnce("position-no-avatar:" + key,
+                    "收到玩家键 " + key + " 的位置快照，但本机没有它的联机角色（或还没建出 " +
                     "ComponentBody）→ 跳过这次更新（绝不拿别的角色/默认点顶替；" +
                     "联机角色建好后位置会立刻跟上）");
                 return;
             }
-            if (!m_remotePositions.TryGetValue(clientId, out RemotePlayerPositionState state))
+            if (!m_remotePositions.TryGetValue(key, out RemotePlayerPositionState state))
             {
-                state = new RemotePlayerPositionState { ClientId = clientId };
-                m_remotePositions[clientId] = state;
+                state = new RemotePlayerPositionState { Key = key };
+                m_remotePositions[key] = state;
             }
             // 旧 :62-65：迟到的旧快照直接丢弃（TCP 有序，这里是防御性判定，照旧保留）。
             if (state.ServerTick >= 0 && snapshot.ServerTick < state.ServerTick) return;
@@ -1143,7 +1685,7 @@ namespace SuMultiplayer.Engine
             if (m_remotePositions.Count == 0) return;
             float dt = MathUtils.Clamp(deltaTime, 0f, 0.1f);
             double now = Time.RealTime;
-            foreach (KeyValuePair<int, RemotePlayerPositionState> item in m_remotePositions.ToArray())
+            foreach (KeyValuePair<PlayerKey, RemotePlayerPositionState> item in m_remotePositions.ToArray())
             {
                 RemotePlayerPositionState state = item.Value;
                 // 旧 :1061：快照过期（> 2 秒 = 对方停了/掉线）或没有化身/身体 → 本帧不动它
@@ -1227,7 +1769,20 @@ namespace SuMultiplayer.Engine
         }
 
         /// <summary>丢掉某个联机角色的位置状态（旧 RemoveNetworkPlayer 里的 RemotePlayers.Remove）。</summary>
-        private void ForgetRemotePosition(int clientId) => m_remotePositions.Remove(clientId);
+        private void ForgetRemotePosition(PlayerKey key) => m_remotePositions.Remove(key);
+
+        /// <summary>
+        /// 客户端：收到**本机自己**那条位置快照 → 明确跳过（本机角色由本地模拟，
+        /// 网络位置绝不写回）。计数 + 每键一行限流日志。
+        /// </summary>
+        public void NotePositionSkippedOwn(PlayerKey key)
+        {
+            RemotePositionsSkippedOwn++;
+            ReportProblemOnce("position-own-entry:" + key,
+                "位置快照批里的玩家键 " + key + " 是本机自己那一条（clientId = 本机通道编号）：" +
+                "旧实现用它做受击击退的速度修正与背包权威（ApplyAuthoritativeLocalPlayerState），" +
+                "这条链尚未移植 → 跳过（本机玩家的位置/视线永远不由网络写回）");
+        }
 
         // ---------------------------------------------------------------- 引擎动作（逐个对照旧实现）
 
@@ -1434,6 +1989,47 @@ namespace SuMultiplayer.Engine
         }
 
         // Source: ScMultiplayerProfileHandlers.cs:635-691（ApplyPlayerRecordState）
+        /// <summary>
+        /// 把角色记录里的**权威统计**重建到联机角色的 <c>PlayerStats</c>（与生命 / 背包同一恢复点）。
+        ///
+        /// 关键：**先重置成引擎默认值，再叠加本记录里的字段**。PlayerIndex 会被复用，而
+        /// <c>SubsystemPlayerStats</c> 不会在角色移除时清表（旧角色的条目还留在字典里）——
+        /// 只叠加记录字段、不重置，就会让新角色继承上一个角色 / 世界存档里旧角色的统计。
+        /// 没有记录（新玩家）时同样要重置，否则会继承该索引上的残留数据。
+        /// 统计字段用反射枚举（引擎 <c>PlayerStats.Load</c> 同一套 [Stat] 字段）。
+        /// Source: Survivalcraft/Game/PlayerStats.cs:PlayerStats.Load（:186-206）
+        /// </summary>
+        private void ApplyPlayerRecordStats(ComponentPlayer player, PlayerStatsSnapshot stats)
+        {
+            if (player?.PlayerData == null) return;
+            SubsystemPlayerStats subsystem = player.Project?.FindSubsystem<SubsystemPlayerStats>(false);
+            if (subsystem == null)
+            {
+                Log("联机角色统计回填失败：世界没有 SubsystemPlayerStats");
+                return;
+            }
+            PlayerStats engineStats = subsystem.GetPlayerStats(player.PlayerData.PlayerIndex);
+            PlayerStatsSnapshot effective = PlayerStatsSnapshot.Capture(new PlayerStats());
+            effective.Values.Remove("DeathRecordsString");
+            if (stats != null)
+            {
+                foreach (KeyValuePair<string, string> entry in stats.Values)
+                    effective.Values[entry.Key] = entry.Value;
+                foreach (string deathRecord in stats.DeathRecords)
+                    effective.DeathRecords.Add(deathRecord);
+            }
+            // 死亡记录列表没有公开 Clear：先清空，再由 ApplyTo 逐条装回记录里的（统计面板会显示）。
+            ClearPlayerDeathRecords(engineStats);
+            effective.ApplyTo(engineStats);
+        }
+
+        private void ClearPlayerDeathRecords(PlayerStats stats)
+        {
+            if (stats == null || m_deathRecordsField == null) return;
+            object value = m_deathRecordsField.GetValue(stats);
+            if (value is IList list) list.Clear();
+        }
+
         private void ApplyPlayerRecordState(ComponentPlayer player, NetworkPlayerRecord record)
         {
             if (player == null || record == null) return;
@@ -1545,6 +2141,16 @@ namespace SuMultiplayer.Engine
         private static int[] CaptureInventoryCounts(IInventory inventory) =>
             Enumerable.Range(0, inventory.SlotsCount).Select(inventory.GetSlotCount).ToArray();
 
+        private void ApplySkinMaterial(PlayerData playerData, string skinName, byte[] sha256)
+        {
+            if (m_skinMaterializer == null || playerData == null) return;
+            m_skinMaterializer.Apply(playerData, skinName ?? playerData.CharacterSkinName ?? string.Empty,
+                sha256);
+        }
+
+        private void ApplySkinMaterial(PlayerData playerData, PlayerAppearance appearance) =>
+            ApplySkinMaterial(playerData, appearance?.SkinName, appearance?.SkinSha256);
+
         // Source: Survivalcraft/Game/PlayerData.cs:PlayerData.Save
         // Source: Survivalcraft/Game/ComponentClothing.cs:ComponentClothing.Save
         // Source: ScMultiplayerProfileHandlers.cs:376-467（CapturePlayerRecord）
@@ -1627,8 +2233,12 @@ namespace SuMultiplayer.Engine
                 out record.HandcraftSlotCounts);
             // 游戏统计由客户端上报，Capture 不覆盖它（调用方保留记录里已有的 Stats）。
             record.Stats = null;
-            // 皮肤哈希属于还没移植的"皮肤资源下发"功能链 → 调用方保留记录里已有的哈希。
+            // 自定义皮肤哈希：来自本会话资源缓存；没有资源时为空（调用方保留记录里已有的哈希，
+            // 因此不会因为一次抓取把"待补发"的状态抹掉）。
             record.SkinSha256 = Array.Empty<byte>();
+            if (m_skinMaterializer != null && !string.IsNullOrEmpty(record.SkinName) &&
+                m_skinMaterializer.TryGetSkinHash(record.SkinName, out byte[] skinHash))
+                record.SkinSha256 = skinHash;
             return record;
         }
 

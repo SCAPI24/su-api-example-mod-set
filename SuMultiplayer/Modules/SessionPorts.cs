@@ -2,7 +2,9 @@ using System.Collections.Generic;
 using Engine;
 using Game;
 using SuMultiplayer.Net;
+using SuMultiplayer.Players;
 using SuMultiplayer.Session;
+using SuMultiplayer.Terrain;
 
 namespace SuMultiplayer.Modules
 {
@@ -79,6 +81,18 @@ namespace SuMultiplayer.Modules
         bool TryGetAvatarCell(int clientId, out Vector3 position, out string reason);
 
         /// <summary>
+        /// 主机：实时地图的**逐角色槽位**清单（v10）—— 本机槽位 0..N-1（clientId=0）+ 每个联机化身的
+        /// (clientId, slot)。唯一枚举口径：本机角色走 <see cref="NetworkAvatarSpawner.TryCollectLocalPlayers"/>
+        /// （按 PlayerIndex 排序，下标就是槽位），联机化身走化身表的 <c>Keys</c> / <c>TryGet</c>。
+        /// 条目直接填 <see cref="LiveMapPlayer"/> 的 ClientId / Slot / Key / Name / IsHost / 坐标；
+        /// 某个角色还没有实体 / ComponentBody → **照样列出来**，但 HasCell=false + CellReason 写清原因
+        /// （实时地图必须能说明"这个槽位存在但坐标未知"，绝不拿别的位置顶替）。
+        /// <see cref="LiveMapPlayer.StableKey"/> 由调用方（地形通道，拥有身份会话表）填。
+        /// 返回写进 <paramref name="target"/> 的条数；没有加载中的 Project 时返回 0 并写明原因。
+        /// </summary>
+        int CaptureLiveMapPlayers(List<LiveMapPlayer> target, out string reason);
+
+        /// <summary>
         /// 可见距离 → 兴趣半径。
         /// Source: Mod/ScMultiplayer/Modules/World/ScMultiplayerWorldObjectHandlers.cs:521-525
         ///         （GetTerrainInterestRadius）：max(1, ceil(visibility / 16))，夹到 1..32。
@@ -106,7 +120,15 @@ namespace SuMultiplayer.Modules
             out string reason);
 
         /// <summary>
-        /// 主机：把"本机玩家 + 每个联机角色"折成一批快照（旧 <c>positionBatch</c>）。
+        /// 客户端：**所有本机角色**的位置快照（Phase 1 多本机角色）。槽位 0 的第一条与旧实现
+        /// 相同（客户端编号 0、槽位 0），所以单角色房间的线上负载与旧版一致。
+        /// 返回实际写进的条数；某个本机角色的 ComponentBody 还没好就跳过并写清原因。
+        /// </summary>
+        int CaptureLocalPlayerPositions(int serverTick, List<PlayerPositionEntry> target,
+            out string reason);
+
+        /// <summary>
+        /// 主机：把"每个本机角色 + 每个联机角色"折成一批快照（旧 <c>positionBatch</c>）。
         /// Source: Mod/ScMultiplayer/Modules/Player/ScMultiplayerPlayerSync.cs:47-100
         ///         （本机玩家挂 <c>client.ClientID</c>；每个联机角色挂它自己的 clientId）
         /// 返回实际写进 <paramref name="target"/> 的条数；某个角色的 ComponentBody 还没好就
@@ -116,11 +138,23 @@ namespace SuMultiplayer.Modules
 
         /// <summary>
         /// 收到一份远端角色的位置快照，记进它的插值状态：
-        ///   · 主机侧：<paramref name="clientId"/> 那个玩家端的本机玩家；
-        ///   · 客户端侧：<paramref name="clientId"/> = 0 的主机角色。
+        ///   · 主机侧：键 = (来源 clientId, 槽位)，该玩家端的本机角色；
+        ///   · 客户端侧：键 = 主机名册里的 (clientId, 槽位)。
         /// 找不到对应联机角色 / ComponentBody → **明确写原因并跳过**（限流一行），不伪造位置。
         /// </summary>
-        void OnRemotePlayerPositionReceived(int clientId, in PlayerPositionSnapshot snapshot);
+        void OnRemotePlayerPositionReceived(PlayerKey key, in PlayerPositionSnapshot snapshot);
+
+        /// <summary>
+        /// 客户端：收到**本机自己**的键（clientId = 本机通道编号）→ 计数 positionSkippedOwn 并跳过。
+        /// </summary>
+        void NotePositionSkippedOwn(PlayerKey key);
+
+        /// <summary>
+        /// 主机：这个玩家端是否已经上报过本机槽位（<c>LOCAL_PLAYER_SLOTS</c>）。
+        /// false = 旧构建 / 尚未上报 → 位置批与名册只发槽位 0（单角色兼容，绝不让旧客户端
+        /// 把主机第二个角色当成主机角色来回拉扯）。
+        /// </summary>
+        bool PeerAnnouncedLocalSlots(int clientId);
 
         /// <summary>
         /// 每帧推进远端角色的插值/平滑并写回引擎。

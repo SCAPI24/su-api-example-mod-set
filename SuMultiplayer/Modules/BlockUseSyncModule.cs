@@ -25,7 +25,7 @@ namespace SuMultiplayer.Modules
     /// 无静态状态；引擎类型全部在 <see cref="IBlockUsePort"/> 实现里。
     /// </summary>
     public sealed class BlockUseSyncModule : IMultiplayerModule, ISuMPMessageModule,
-        IBlockUseRequestSink
+        IBlockUseRequestSink, IUiContainerCellPort
     {
         private const int SummaryLogMs = 10000;
         private const int ProblemLogMs = 5000;
@@ -238,6 +238,36 @@ namespace SuMultiplayer.Modules
         public string ModuleId => m_descriptor.Id;
 
         public string StatusLine() => "方块使用：" + Summary() + " · " + m_port.Describe();
+
+        // ---------------------------------------------------------------- IUiContainerCellPort
+        // 客户端界面层镜像（Modules/UiStateSyncModule.cs）需要知道"哪个方块格子的库存"：
+        // 这里给出的就是模块自己已经在用的权威键，镜像侧**不猜坐标**。
+        //   · 客户端 = 当前打开的副本面板的 key（TryOpenContainerView 成功后写入 m_openKey，
+        //     面板被关掉（ESC / 点外面）时由 PumpClientContainer 清空）；
+        //   · 主机 = 该玩家端打开中的容器（BlockUseRequest 成功后写入 m_openContainers，
+        //     它的 Close 请求 / 客户端离开时清除）。
+
+        public bool TryGetLocalContainerCell(out int x, out int y, out int z)
+        {
+            x = y = z = 0;
+            if (!m_openKey.HasValue) return false;
+            ContainerKey key = m_openKey.Value;
+            x = key.X;
+            y = key.Y;
+            z = key.Z;
+            return true;
+        }
+
+        public bool TryGetClientContainerCell(int clientId, out int x, out int y, out int z)
+        {
+            x = y = z = 0;
+            if (clientId <= 0) return false;
+            if (!m_openContainers.TryGetValue(clientId, out ContainerKey key)) return false;
+            x = key.X;
+            y = key.Y;
+            z = key.Z;
+            return true;
+        }
 
         /// <summary>客户端缓存的"刚收到的炉况"：打开面板时重放（带接收时间，过期不冒充当前值）。</summary>
         private readonly struct PendingFurnaceState
@@ -467,7 +497,8 @@ namespace SuMultiplayer.Modules
             if (m_transport == null || !m_transport.IsConnected) return;
             long sequence = NextUseSequence();
             var request = new BlockUseRequestData(sequence, key.X, key.Y, key.Z, 0, 0,
-                BlockUseActions.Close, 0f, 0f, 0f, 0f, 0f, 0f);
+                BlockUseActions.Close, 0f, 0f, 0f, 0f, 0f, 0f, hasReach: true,
+                reach: m_port.LocalReach);
             byte[] payload = BlockUseCodec.EncodeRequestBytes(in request);
             if (!m_transport.TrySend(MessageType.BlockUseRequest, payload))
             {
@@ -559,7 +590,8 @@ namespace SuMultiplayer.Modules
             if (!useAccepted)
             {
                 m_useRejected++;
-                LogProblem("use-rejected:" + useReason, "主机拒绝 clientId=" + clientId + " 的方块使用 " +
+                LogProblem("use-rejected:" + InteractionReachGate.ReasonCode(useReason),
+                    "主机拒绝 clientId=" + clientId + " 的方块使用 " +
                     request.Describe() + "（" + useReason + "）→ 客户端不产生任何本地效果");
                 SendUseResult(clientId, new BlockUseResultData(request.Sequence, false, useReason,
                     request.Action, ContainerKinds.None, request.X, request.Y, request.Z));
@@ -1222,7 +1254,8 @@ namespace SuMultiplayer.Modules
             var request = new ContainerEditRequestData(sequence, m_openKey.Value.X,
                 m_openKey.Value.Y, m_openKey.Value.Z, m_openKey.Value.Kind, m_openRevision,
                 m_openValues, m_openCounts, values, counts, m_playerBase.Values,
-                m_playerBase.Counts, playerDesired.Values, playerDesired.Counts);
+                m_playerBase.Counts, playerDesired.Values, playerDesired.Counts,
+                hasReach: true, reach: m_port.LocalReach);
             byte[] payload = BlockUseCodec.EncodeContainerEditBytes(in request);
             m_editSubmitted++;
             if (!m_transport.TrySend(MessageType.ContainerEditRequest, payload))

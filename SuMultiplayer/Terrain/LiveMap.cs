@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using SuMultiplayer.Net;
+using SuMultiplayer.Players;
 
 namespace SuMultiplayer.Terrain
 {
@@ -65,6 +66,55 @@ namespace SuMultiplayer.Terrain
         public float X;
         public float Y;
         public float Z;
+    }
+
+    /// <summary>
+    /// 实时地图上的**一个角色**（v10）：<b>每个玩家角色槽位一条</b>，不是每个身份一条。
+    ///
+    /// 为什么需要它：引擎最多支持 4 个本机角色（分屏 / 多角色世界），一个身份（主机 clientId=0、
+    /// 或某个玩家端的 clientId）在自己的设备上可以有槽位 0..3。旧版的 players/centers **只给
+    /// 每个身份一条**（槽位 0），所以主机的第二个本机角色（键 <c>0:1</c>）在网页上根本不存在。
+    ///
+    /// 字段口径：
+    ///   · <see cref="Key"/> = <c>clientId:slot</c>（<see cref="PlayerKey.ToString"/>；主机槽位 1 = "0:1"）；
+    ///   · <see cref="StableKey"/> = 该角色的**身份稳定键**（主机 = <see cref="LiveMapCodec.HostKey"/>，
+    ///     玩家端 = <see cref="PlayerSessionKeys.StableKeyOf"/> 派生；同一身份的所有槽位共用它，
+    ///     页面「居中角色」仍按身份选，重连不变）；
+    ///   · <see cref="Name"/> = 角色的真实名字（读不到时为空串，消费方必须给出显式占位，绝不猜身份）；
+    ///   · <see cref="IsHost"/> = clientId == 0（主机自己的本机角色，任意槽位）；
+    ///   · <see cref="HasCell"/> / CellX/Y/Z / <see cref="CellReason"/>：真实身体坐标（读不到 = false + 原因，
+    ///     绝不按区块中心猜）；<see cref="ChunkX"/> / <see cref="ChunkZ"/> 由坐标推导。
+    /// </summary>
+    public sealed class LiveMapPlayer
+    {
+        /// <summary>本机传输编号（主机 = 0；玩家端 = 主机分配的 clientId）。</summary>
+        public int ClientId;
+
+        /// <summary>该设备上的本机角色槽位（0..3）。</summary>
+        public int Slot;
+
+        /// <summary>角色键 = <c>clientId:slot</c>（主机槽位 1 = "0:1"）。</summary>
+        public string Key = string.Empty;
+
+        /// <summary>身份稳定键（同一身份的所有槽位共用；主机 = "host"）。</summary>
+        public string StableKey = string.Empty;
+
+        /// <summary>角色名字（读不到 = 空串；页面必须写明确占位，不猜）。</summary>
+        public string Name = string.Empty;
+
+        /// <summary>是否主机自己的本机角色（clientId == 0）。</summary>
+        public bool IsHost;
+
+        /// <summary>是否读到了真实绝对坐标（false = 读不到，原因见 <see cref="CellReason"/>）。</summary>
+        public bool HasCell;
+        public int CellX;
+        public int CellY;
+        public int CellZ;
+        public string CellReason = string.Empty;
+
+        /// <summary>由真实坐标推导的区块（hasCell=false 时为 0/0；页面不拿它冒充坐标）。</summary>
+        public int ChunkX;
+        public int ChunkZ;
     }
 
     /// <summary>可以当作地图中心的一个"角色"（主机自己 + 每个已连玩家端的兴趣中心）。</summary>
@@ -221,6 +271,14 @@ namespace SuMultiplayer.Terrain
         /// 超出时由 <see cref="LiveMapAnimalFeed.Fill"/> 截断并上报 dropped（调用方必须计数/记日志）。
         /// </summary>
         public readonly List<LiveMapAnimal> Animals = new List<LiveMapAnimal>();
+
+        /// <summary>
+        /// **每个玩家角色槽位**一条（v10）：主机本机槽位 0..N-1（clientId=0）+ 每个联机化身的
+        /// (clientId, slot)。顺序稳定：先主机槽位升序，再 (clientId, slot) 升序。
+        /// 每批都带**完整清单**（与 centers / clients 头部同一做法，任何一批都能自描述）。
+        /// 条数上限 <see cref="LiveMapCodec.MaxPlayers"/>，超限由编码器**明确失败**（绝不静默截断）。
+        /// </summary>
+        public readonly List<LiveMapPlayer> Players = new List<LiveMapPlayer>();
     }
 
     /// <summary>一批（一个 MapState 帧）解码结果：头部字段 + 这一批的 chunk。</summary>
@@ -303,16 +361,24 @@ namespace SuMultiplayer.Terrain
     ///       条目 <see cref="LiveMapSnapshot.ClientChunks"/> 现在逐条对应这份当前集合
     ///       （`[cx,cz,s]` 形状不变，s 仍是该身份自己的校验状态，0 = 还没上报/裁决，网页不画）。
     ///       `ReportedChunkCount`（JSON 的 reported）语义不变（会话累计），两者分开表达。
-    ///   · v9（当前）：**每批载荷末尾追加主机端动物的位置清单**
+    ///   · v9：**每批载荷末尾追加主机端动物的位置清单**
     ///       （<see cref="LiveMapSnapshot.Animals"/>，**仅位置、没有名字 / id / 生命值**；客户端不贡献）。
     ///       wire 只在 `clientChunks` 之后追加：`animalCount`(int32) + 每条 `x` / `y` / `z`（各 1 个
     ///       float32，小端）。清单按 <see cref="LiveMapAnimal.Key"/> 升序稳定排序、条数上限
     ///       <see cref="MaxAnimals"/>；每批都带**完整**清单（与 centers / clients 头部同一做法：
     ///       任何一批都能自描述，工具取任一批的头部即可，不会因为批序不同拼出不同结果）。
-    ///       v8 及以前的所有字段逐字节不变；旧消费者读到 v9 会在**版本字节**上直接失败
-    ///       （载荷首字节就是版本，不做向后兼容解析）。
-    ///     旧字段顺序逐字节不变，新字段各自追加在所属记录的末尾；旧的 v1..v8 消费者读到
-    ///     v9 会在**版本字节**上直接失败（载荷首字节就是版本，不做向后兼容解析）。
+    ///   · v10（当前）：**每批载荷末尾（animals 之后）追加"每个玩家角色槽位"清单**
+    ///       （<see cref="LiveMapSnapshot.Players"/>；主机本机槽位 0..N-1 + 每个联机化身的
+    ///       (clientId, slot)，**不再是一个身份只给槽位 0**）。wire 追加：
+    ///       `playerCount`(int32) + 每条
+    ///       `clientId`(int32) · `slot`(int32) · `key`(text，`clientId:slot`，主机槽位 1 = "0:1") ·
+    ///       `stableKey`(text，身份稳定键；主机 = "host") · `name`(text) · `isHost`(byte) ·
+    ///       `hasCell`(byte) · `cellX` / `cellY` / `cellZ`(各 int32) · `cellReason`(text) ·
+    ///       `chunkX` / `chunkZ`(各 int32)。
+    ///       每批都带完整清单；条数上限 <see cref="MaxPlayers"/>，超限由
+    ///       <see cref="EncodeBatches"/> **明确失败**（绝不静默截断）。v9 及以前的所有字段逐字节不变。
+    ///     旧字段顺序逐字节不变，新字段各自追加在所属记录的末尾；旧的 v1..v9 消费者读到
+    ///     v10 会在**版本字节**上直接失败（载荷首字节就是版本，不做向后兼容解析）。
     /// </summary>
     public static class LiveMapCodec
     {
@@ -338,11 +404,18 @@ namespace SuMultiplayer.Terrain
         /// </summary>
         public const int MaxAnimals = 512;
 
+        /// <summary>
+        /// 实时地图一次快照最多带多少**角色槽位**（v10）。512 条 × ~64 B ≈ 32 KiB，
+        /// 仍低于 60 KiB 帧上限（清单每批都带）。超限由编码器**明确失败**（绝不截断）。
+        /// 正常房间远到不了这个上限（主机 4 槽 + 每个玩家端最多 4 槽）。
+        /// </summary>
+        public const int MaxPlayers = 512;
+
         /// <summary>中心 / 玩家端清单的条数上限（线上是 1 字节计数）。</summary>
         public const int MaxListCount = 255;
 
         /// <summary>当前载荷版本。消费方必须**精确匹配**，不匹配就失败（不做向后兼容解析）。</summary>
-        public const int Version = 9;
+        public const int Version = 10;
 
         public static byte[] EncodeRequest(int radius, bool all, bool hasCenter, int centerChunkX,
             int centerChunkZ)
@@ -396,6 +469,12 @@ namespace SuMultiplayer.Terrain
                 // codec 不替调用方静默裁剪。
                 throw new ArgumentException("实时地图动物条目 " + snapshot.Animals.Count +
                     " 条超过上限 " + MaxAnimals + "（应先经 LiveMapAnimalFeed.Fill 截断并计数，不在这里静默裁剪）");
+            }
+            if (snapshot.Players.Count > MaxPlayers)
+            {
+                // 明确失败：角色槽位清单绝不静默裁剪（少一个角色就是网页少一个标记）。
+                throw new ArgumentException("实时地图角色槽位 " + snapshot.Players.Count +
+                    " 条超过上限 " + MaxPlayers + "（不截断：请确认在线玩家端数与槽位数）");
             }
             int chunkBatches = Math.Max(1, (chunks.Count + MaxChunksPerBatch - 1) / MaxChunksPerBatch);
             int clientBatches = (clientChunks.Count + MaxClientChunksPerBatch - 1) / MaxClientChunksPerBatch;
@@ -500,6 +579,26 @@ namespace SuMultiplayer.Terrain
                 writer.Single(animal.Y);
                 writer.Single(animal.Z);
             }
+            // v10 追加：**每个玩家角色槽位**清单（主机本机槽位 0..N-1 + 每个联机化身的 (clientId, slot)；
+            // 每批都带完整清单，任何一批都能自描述）。
+            writer.Int32(snapshot.Players.Count);
+            for (int i = 0; i < snapshot.Players.Count; i++)
+            {
+                LiveMapPlayer player = snapshot.Players[i];
+                writer.Int32(player.ClientId);
+                writer.Int32(player.Slot);
+                writer.Text(player.Key ?? string.Empty);
+                writer.Text(player.StableKey ?? string.Empty);
+                writer.Text(player.Name ?? string.Empty);
+                writer.Byte((byte)(player.IsHost ? 1 : 0));
+                writer.Byte((byte)(player.HasCell ? 1 : 0));
+                writer.Int32(player.CellX);
+                writer.Int32(player.CellY);
+                writer.Int32(player.CellZ);
+                writer.Text(player.CellReason ?? string.Empty);
+                writer.Int32(player.ChunkX);
+                writer.Int32(player.ChunkZ);
+            }
             return writer.ToArray();
         }
 
@@ -594,6 +693,30 @@ namespace SuMultiplayer.Terrain
                         Y = reader.Single(),
                         Z = reader.Single()
                     });
+                }
+                // v10 追加：每个玩家角色槽位（主机本机槽位 + 每个联机化身 (clientId, slot)）
+                int playerCount = reader.Int32();
+                if (playerCount < 0 || playerCount > MaxPlayers) return false;
+                for (int i = 0; i < playerCount; i++)
+                {
+                    var player = new LiveMapPlayer
+                    {
+                        ClientId = reader.Int32(),
+                        Slot = reader.Int32(),
+                        Key = reader.Text(),
+                        StableKey = reader.Text(),
+                        Name = reader.Text(),
+                        IsHost = reader.Byte() != 0,
+                        HasCell = reader.Byte() != 0,
+                        CellX = reader.Int32(),
+                        CellY = reader.Int32(),
+                        CellZ = reader.Int32(),
+                        CellReason = reader.Text(),
+                        ChunkX = reader.Int32(),
+                        ChunkZ = reader.Int32()
+                    };
+                    if (player.Slot < 0 || player.Slot > PlayerKey.MaxSlot) return false;
+                    header.Players.Add(player);
                 }
                 if (!reader.AtEnd) return false;        // 尾部多出字节 = 线格式不匹配：明确失败
                 result.Header = header;

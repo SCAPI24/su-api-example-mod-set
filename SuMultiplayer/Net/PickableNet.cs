@@ -251,16 +251,23 @@ namespace SuMultiplayer.Net
     /// </summary>
     public readonly struct PickableAcquireRequestData
     {
-        public PickableAcquireRequestData(long sequence, int pickableId, Vector3 position)
+        public PickableAcquireRequestData(long sequence, int pickableId, Vector3 position,
+            bool hasReach = false, float reach = 0f)
         {
             Sequence = sequence;
             PickableId = pickableId;
             Position = position;
+            HasReach = hasReach;
+            Reach = reach;
         }
 
         public long Sequence { get; }
         public int PickableId { get; }
         public Vector3 Position { get; }
+        /// <summary>请求是否携带了有效 reach（false = 旧客户端 / 旧载荷）。</summary>
+        public bool HasReach { get; }
+        /// <summary>请求者的有效交互距离（米）；<see cref="HasReach"/> = false 时无意义。</summary>
+        public float Reach { get; }
 
         public string Describe() => "seq=" + Sequence + " pickable=" + PickableId +
             " pos=(" + Position.X.ToString("F2") + "," + Position.Y.ToString("F2") + "," +
@@ -637,13 +644,17 @@ namespace SuMultiplayer.Net
         // ------------------------------------------------------------ 拾取请求 / 回执
 
         public static PE.PickableAcquireRequest EncodeRequest(
-            in PickableAcquireRequestData request) =>
-            new PE.PickableAcquireRequest
+            in PickableAcquireRequestData request)
+        {
+            var message = new PE.PickableAcquireRequest
             {
                 Sequence = request.Sequence,
                 PickableId = request.PickableId,
                 Position = ToVec3(request.Position)
             };
+            if (request.HasReach) message.Reach = request.Reach;
+            return message;
+        }
 
         public static bool TryDecodeRequest(PE.PickableAcquireRequest message,
             out PickableAcquireRequestData request, out string reason)
@@ -669,7 +680,7 @@ namespace SuMultiplayer.Net
                     out reason))
                 return false;
             request = new PickableAcquireRequestData(message.Sequence, message.PickableId,
-                position);
+                position, message.HasReach, message.Reach);
             return true;
         }
 

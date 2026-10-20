@@ -99,6 +99,16 @@ namespace SuMultiplayer.Engine
         public CampfireReplicaPresentation CampfirePresenter { get; set; }
 
         /// <summary>
+        /// 客户端**熔炉火焰表现**（组合根挂；主机 / 单机为 null）。只维护 FireParticleSystem：
+        ///   · <c>SuSubsystemFurnaceBlockBehavior</c> 的行为回调（区块生成 / 本桥补发的通知）；
+        ///   · <c>ContainerReplicaEngine.ApplyFurnacePresentation</c> 收到 FURNACE_STATE 后按
+        ///     heat/fireTime 直接驱动（面板关着也有火焰；重连时状态重发会重建）；
+        ///   · 1 秒一次的有界越界扫除（furnaceFlameStaleSweep）。
+        /// 不写格、不生成实体：火焰只是本地粒子。
+        /// </summary>
+        public FurnaceReplicaPresentation FurnacePresenter { get; set; }
+
+        /// <summary>
         /// 客户端**移动组表现**（活塞 / 塌落；组合根挂；主机 / 单机为 null）。
         /// 只在 <see cref="ApplyCells"/> 把主机 CellChange / 整块下发落到客户端之后逐格通知：
         /// 权威格变化落在某个本地只表现集合的影响区内 → **立刻取消该集合**，接受主机写入的值。
@@ -108,6 +118,16 @@ namespace SuMultiplayer.Engine
         /// 详见 <see cref="PistonReplicaEngine.OnAuthoritativeCellsApplied"/>。
         /// </summary>
         public PistonReplicaEngine PistonPresenter { get; set; }
+
+        /// <summary>
+        /// 可编辑方块内容（真值表 / 内存条）的引擎适配层（组合根挂；模块经端口与它通信）。
+        /// 两个注入外壳（Engine/EditableBlockSubsystems.cs）通过
+        /// <c>(SubsystemTerrain as SuSubsystemTerrain)?.Bridge?.EditableBlocks</c> 拿到它：
+        ///   · 客户端：对话框提交 → 请求，收到权威内容后只写副本；
+        ///   · 主机：本机提交直接落权威内容，再由 EditableSyncModule 广播给附近客户端。
+        /// 为 null = 未接线：客户端副本拒绝打开对话框（不本地写），主机退回原生行为。
+        /// </summary>
+        public EditableBlockBridge EditableBlocks { get; set; }
 
         /// <summary>
         /// 客户端方块行为通知的单一漏斗（presentation-only；镜像 ChangeCell 的

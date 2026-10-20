@@ -99,7 +99,9 @@ function worldMap(els, state) {
   const f = frameOf(els);
   if (!f) return null;
   const players = state.players || [];
-  const sel = players.find((p) => p.key === (state.center && state.center.key)) || players[0];
+  // v10：key = 角色键 "0:1"；身份稳定键是 stableKey（= center.key）。按 stableKey 找选中的身份，
+  // 同一身份有多个槽位时取排在前面的那个（= 槽位 0，页面默认居中的就是它）。
+  const sel = players.find((p) => (p.stableKey || p.key) === (state.center && state.center.key)) || players[0];
   if (!sel || !sel.cell) return null;
   const x0 = sel.cell[0] + 0.5 - (f.w / 2) / f.scale;
   const z0 = sel.cell[2] + 0.5 - (f.h / 2) / f.scale;
@@ -125,9 +127,35 @@ const main = async () => {
   console.log("真实 feed：" + stateUrl + " @ " + ts);
   console.log("payloadVersion=" + state.payloadVersion + " online=" + state.online +
     " ageMs=" + state.ageMs + " hostChunks=" + (state.chunks || []).length);
-  section("0. 载荷版本 v9（动物字段随 v9 引入；v8 应被拒绝）");
-  check(state.payloadVersion === 9,
-    "live feed 的 payloadVersion = " + state.payloadVersion + "（本页面按 v9 读字段；v8 会在图例报警且没有 animals）");
+  section("0. 载荷版本 v10（v10 = players[] 每个角色槽位一条；v9 及以前应被拒绝）");
+  check(state.payloadVersion === 10,
+    "live feed 的 payloadVersion = " + state.payloadVersion + "（本页面按 v10 读字段；v9 会在图例报警且没有 players[].slot）");
+
+  section("0b. players[] = 每个玩家角色槽位一条（主机槽位 0..N-1 + 每个联机化身 (clientId,slot)）");
+  {
+    const list = Array.isArray(state.players) ? state.players : [];
+    check(list.length > 0, "players[] 非空（实际 " + list.length + " 条）");
+    const bad = list.filter((p) => !p || typeof p.slot !== "number" || typeof p.key !== "string" ||
+      !/^\d+:\d+$/.test(p.key) || p.key !== p.id + ":" + p.slot || typeof p.stableKey !== "string");
+    check(bad.length === 0, "每条都有 slot / key=clientId:slot / stableKey（形状不对 " + bad.length + " 条）");
+    const host = list.filter((p) => p && p.isHost === true);
+    const hostSlots = host.map((p) => p.slot).sort((a, b) => a - b);
+    const expectedHost = (state.counts && typeof state.counts.hostPlayers === "number")
+      ? state.counts.hostPlayers : host.length;
+    check(host.length === expectedHost, "主机自己的角色槽位条数 " + host.length + " == counts.hostPlayers " + expectedHost);
+    check(host.every((p) => p.key === "0:" + p.slot), "主机条目 key 都是 \"0:<slot>\"（实际 " +
+      JSON.stringify(host.map((p) => p.key)) + "）");
+    if (host.length > 1) {
+      check(hostSlots.indexOf(1) >= 0, "主机的**第二个本机角色**（slot 1，键 0:1）出现在 /state players[] 里");
+      const slot1 = host.find((p) => p.slot === 1);
+      console.log("    host slot 1 = " + JSON.stringify({ key: slot1.key, name: slot1.name, cell: slot1.cell, chunk: slot1.chunk }));
+    }
+    // 身份稳定键：同一身份的多个槽位共用同一个 stableKey（页面「居中角色」按它选，不会把槽位当成新人）。
+    const byStable = {};
+    list.forEach((p) => { (byStable[p.stableKey] = byStable[p.stableKey] || []).push(p.slot); });
+    check(Object.keys(byStable).every((k) => k !== ""), "每条都有非空身份稳定键 stableKey");
+    check(host.every((p) => p.stableKey === "host"), "主机所有槽位共用 stableKey=\"host\"");
+  }
 
   const { els, ctx } = await runPage(state);
   const clients = (state.clients || []).filter((c) => c && c.complete !== false);
@@ -254,7 +282,7 @@ const main = async () => {
     const animalFills = ctx.ops.filter((o) => o.op === "fill" && o.style === "#000");
     const animalDots = animalFills.flatMap((o) => (o.lines || []).filter((l) => l[0] === "arc"));
     const animals = Array.isArray(state.animals) ? state.animals : null;
-    check(animals !== null, "live feed 带 animals 字段（v9）");
+    check(animals !== null, "live feed 带 animals 字段（v10 players[]）");
     if (animals) {
       check(animalDots.length === animals.length,
         "黑点数量 " + animalDots.length + " == animals[] 条数 " + animals.length);

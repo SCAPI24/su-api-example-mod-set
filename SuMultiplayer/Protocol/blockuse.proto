@@ -61,6 +61,12 @@ message BlockUseRequest {
   float direction_x = 11;
   float direction_y = 12;
   float direction_z = 13;
+  // Requester's effective interaction reach in metres (engine ComponentMiner.Raycast:
+  // Creative ? SettingsManager.CreativeReach : 5f).  Bounded / sanitized by the host:
+  // allowed = min(reach + tolerance, serverMax).  Absent (old client) = default for
+  // the host world's game mode (5.0 survival / 7.5 creative).
+  // Source: Survivalcraft/Game/ComponentMiner.cs:378
+  optional float reach = 14;
 }
 
 // Host -> client: authoritative answer for one BlockUseRequest.
@@ -116,6 +122,8 @@ message ContainerEditRequest {
   repeated int32 player_base_counts = 12;
   repeated int32 player_desired_values = 13;
   repeated int32 player_desired_counts = 14;
+  // Requester's effective interaction reach (same semantics as BlockUseRequest.reach).
+  optional float reach = 15;
 }
 
 // Host -> client: answer for one ContainerEditRequest. The authoritative

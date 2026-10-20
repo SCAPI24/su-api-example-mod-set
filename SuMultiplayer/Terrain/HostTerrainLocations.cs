@@ -1,8 +1,9 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
 using Engine;
+using SuMultiplayer.Players;
 
 namespace SuMultiplayer.Terrain
 {
@@ -19,7 +20,10 @@ namespace SuMultiplayer.Terrain
     /// </summary>
     public struct HostTerrainLocation
     {
-        public int ClientId;
+        /// <summary>玩家键（clientId + 本机槽位）；多本机角色时每个角色一条。</summary>
+        public PlayerKey Key;
+        public int ClientId => Key.ClientId;
+        public int Slot => Key.Slot;
         public int PlayerIndex;
         public Vector2 Center;
         public ChunkKey Chunk;
@@ -43,8 +47,8 @@ namespace SuMultiplayer.Terrain
     /// </summary>
     public sealed class HostTerrainLocationTable
     {
-        private readonly Dictionary<int, HostTerrainLocation> m_locations =
-            new Dictionary<int, HostTerrainLocation>();
+        private readonly Dictionary<PlayerKey, HostTerrainLocation> m_locations =
+            new Dictionary<PlayerKey, HostTerrainLocation>();
         private long m_moves;
 
         /// <summary>当前挂着的更新位置条数（= 主机侧联机角色数；角色离开后立刻减少）。</summary>
@@ -53,10 +57,15 @@ namespace SuMultiplayer.Terrain
         /// <summary>累计"位置换到另一个区块"的次数（状态行的 updateLocationMoves）。</summary>
         public long Moves => m_moves;
 
-        public IEnumerable<int> ClientIds => m_locations.Keys;
+        /// <summary>当前有更新位置的玩家键（旧调用方按 ClientIds 读 clientId，这里给键）。</summary>
+        public IEnumerable<PlayerKey> Keys => m_locations.Keys;
 
+        public bool TryGet(PlayerKey key, out HostTerrainLocation location) =>
+            m_locations.TryGetValue(key, out location);
+
+        /// <summary>旧版单角色入口：clientId 的槽位 0。</summary>
         public bool TryGet(int clientId, out HostTerrainLocation location) =>
-            m_locations.TryGetValue(clientId, out location);
+            TryGet(new PlayerKey(clientId, 0), out location);
 
         /// <summary>
         /// 记下（并更新）某个联机角色的更新位置。
@@ -64,10 +73,14 @@ namespace SuMultiplayer.Terrain
         /// 同一区块内的微小移动只刷新 Center（引擎自己按它的 8 格滞回决定要不要重排），不计 move。
         /// </summary>
         public bool Apply(int clientId, int playerIndex, Vector2 center, int radius,
+            float contentDistance) =>
+            Apply(new PlayerKey(clientId, 0), playerIndex, center, radius, contentDistance);
+
+        public bool Apply(PlayerKey key, int playerIndex, Vector2 center, int radius,
             float contentDistance)
         {
             ChunkKey chunk = ChunkOf(center);
-            if (m_locations.TryGetValue(clientId, out HostTerrainLocation location))
+            if (m_locations.TryGetValue(key, out HostTerrainLocation location))
             {
                 bool moved = !location.Chunk.Equals(chunk);
                 location.PlayerIndex = playerIndex;
@@ -80,12 +93,12 @@ namespace SuMultiplayer.Terrain
                     location.MoveCount++;
                     m_moves++;
                 }
-                m_locations[clientId] = location;
+                m_locations[key] = location;
                 return moved;
             }
             location = new HostTerrainLocation
             {
-                ClientId = clientId,
+                Key = key,
                 PlayerIndex = playerIndex,
                 Center = center,
                 Chunk = chunk,
@@ -93,12 +106,15 @@ namespace SuMultiplayer.Terrain
                 ContentDistance = contentDistance,
                 MoveCount = 0
             };
-            m_locations[clientId] = location;
+            m_locations[key] = location;
             return true;
         }
 
         /// <summary>角色离开：删掉它的账本（引擎那一侧的 RemoveUpdateLocation 由调用方负责）。</summary>
-        public bool Remove(int clientId) => m_locations.Remove(clientId);
+        public bool Remove(PlayerKey key) => m_locations.Remove(key);
+
+        /// <summary>旧版单角色入口：clientId 的槽位 0。</summary>
+        public bool Remove(int clientId) => Remove(new PlayerKey(clientId, 0));
 
         /// <summary>会话结束 / 换端：清空账本（累计移动次数一并归零，不跨会话继承）。</summary>
         public void Clear()
@@ -128,7 +144,9 @@ namespace SuMultiplayer.Terrain
             {
                 if (!first) builder.Append(' ');
                 first = false;
-                builder.Append(location.ClientId).Append(':')
+                // 槽位 0 打印旧的 clientId（状态行/自检与旧版一致）；多本机角色才打印 cid:slot。
+                builder.Append(location.Slot == 0 ? location.ClientId.ToString() : location.Key.ToString())
+                    .Append(':')
                     .Append("chunk=").Append(location.Chunk)
                     .Append(",index=").Append(location.PlayerIndex)
                     .Append(",r=").Append(location.Radius)

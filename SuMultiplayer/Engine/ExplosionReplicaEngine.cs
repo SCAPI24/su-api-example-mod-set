@@ -24,6 +24,7 @@ namespace SuMultiplayer.Engine
     public sealed class ExplosionReplicaEngine : IExplosionReplicaPort
     {
         private readonly NetworkAvatarSpawner m_spawner;
+        private readonly InteractionReachGate m_reachGate;
         private readonly IModParentField m_parentField;
         private readonly IModParentMethod m_parentMethod;
         private readonly IModuleDiagnostics m_diagnostics;
@@ -51,9 +52,11 @@ namespace SuMultiplayer.Engine
         private long m_damagePresented;
 
         public ExplosionReplicaEngine(NetworkAvatarSpawner spawner, IModParentField parentField,
-            IModParentMethod parentMethod, IModuleDiagnostics diagnostics, string ownerId)
+            IModParentMethod parentMethod, IModuleDiagnostics diagnostics, string ownerId,
+            InteractionReachGate reachGate)
         {
             m_spawner = spawner;
+            m_reachGate = reachGate ?? throw new ArgumentNullException(nameof(reachGate));
             m_parentField = parentField ?? throw new ArgumentNullException(nameof(parentField));
             m_parentMethod = parentMethod ?? throw new ArgumentNullException(nameof(parentMethod));
             m_diagnostics = diagnostics;
@@ -65,6 +68,12 @@ namespace SuMultiplayer.Engine
         public event Action<ExplosionEventData> HostExplosionExecuted;
         public event Action<PlayerDamageData> HostPlayerDamaged;
         public event Action<ExplosionRequestData> ClientRequestSubmitted;
+
+        /// <summary>
+        /// 全局声音中继覆盖口（组合根注入）：主机引擎已经按压力播过爆炸音（或烟花 Pop），
+        /// 客户端由本模块的定向事件播放；登记后全局连续捕获不再重复发送（防双播）。
+        /// </summary>
+        public IHostSoundCoverPort SoundCover { get; set; }
 
         public bool IsClientReplica => m_clientReplica;
 
@@ -140,6 +149,7 @@ namespace SuMultiplayer.Engine
                 record.Radius, record.BlockValue, record.CosmeticOnly, record.Pressure,
                 record.Incendiary);
             m_eventsEmitted++;
+            CoverHostExplosionSound(in data);
             Action<ExplosionEventData> handler = HostExplosionExecuted;
             if (handler == null)
             {
@@ -156,6 +166,34 @@ namespace SuMultiplayer.Engine
                     "爆炸事件广播处理器异常（" + data.Describe() + "）：" +
                     e.GetType().Name + " " + e.Message + " → 本帧其余爆炸与本地模拟不受影响");
             }
+        }
+
+        /// <summary>
+        /// 把"主机引擎实际播过的爆炸音"登记给全局声音捕获。阈值与
+        /// Engine/ExplosionReplicaPresentation.cs 的客户端表现逐条一致（pressure &gt; N），
+        /// 音量 1、autoDelay；烟花是 Audio/FireworksPop / minDistance=80。
+        /// </summary>
+        private void CoverHostExplosionSound(in ExplosionEventData data)
+        {
+            IHostSoundCoverPort cover = SoundCover;
+            if (cover == null) return;
+            if (data.CosmeticOnly || data.Kind == ExplosionKinds.Firework)
+            {
+                cover.CoverPlayedSound("Audio/FireworksPop", data.Position, 1f, 80f, 1,
+                    "explosion");
+                return;
+            }
+            if (data.Pressure <= 0f) return;
+            string sound;
+            float minDistance;
+            if (data.Pressure > 3000f) { sound = "Audio/Explosion7"; minDistance = 53f; }
+            else if (data.Pressure > 1500f) { sound = "Audio/Explosion6"; minDistance = 45f; }
+            else if (data.Pressure > 600f) { sound = "Audio/Explosion5"; minDistance = 38f; }
+            else if (data.Pressure > 250f) { sound = "Audio/Explosion4"; minDistance = 32f; }
+            else if (data.Pressure > 100f) { sound = "Audio/Explosion3"; minDistance = 27f; }
+            else if (data.Pressure > 30f) { sound = "Audio/Explosion2"; minDistance = 23f; }
+            else { sound = "Audio/Explosion1"; minDistance = 20f; }
+            cover.CoverPlayedSound(sound, data.Position, 1f, minDistance, 1, "explosion");
         }
 
         internal void EmitHostDamage(in HostDamageRecord record)
@@ -259,9 +297,11 @@ namespace SuMultiplayer.Engine
                 int y = global::Game.Terrain.ToCell(request.Position.Y);
                 int z = global::Game.Terrain.ToCell(request.Position.Z);
                 var target = new Vector3(x + 0.5f, y + 0.5f, z + 0.5f);
-                if (Vector3.Distance(actorPosition, target) > 12f)
+                if (!m_reachGate.TryCheckDistance(request.HasReach, request.Reach,
+                        EngineReach.IsCreative(project),
+                        Vector3.Distance(actorPosition, target), out string reachReason))
                 {
-                    reason = "distance";
+                    reason = reachReason;
                     return false;
                 }
                 int cellValue = terrain.Terrain.GetCellValue(x, y, z);
@@ -320,9 +360,12 @@ namespace SuMultiplayer.Engine
                     reason = "item-not-throwable";
                     return false;
                 }
-                if (Vector3.Distance(actorPosition, request.Position) > 6f)
+                if (!m_reachGate.TryCheckDistance(request.HasReach, request.Reach,
+                        EngineReach.IsCreative(project),
+                        Vector3.Distance(actorPosition, request.Position),
+                        out string reachReason))
                 {
-                    reason = "distance";
+                    reason = reachReason;
                     return false;
                 }
                 Vector3 direction = request.Direction;

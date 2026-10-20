@@ -25,20 +25,21 @@ namespace SuMultiplayer.Protocol.Remotesound {
       byte[] descriptorData = global::System.Convert.FromBase64String(
           string.Concat(
             "ChFyZW1vdGVzb3VuZC5wcm90bxIQc3VtcC5yZW1vdGVzb3VuZBoZZ29vZ2xl",
-            "L3Byb3RvYnVmL2FueS5wcm90bxoOcG9zaXRpb24ucHJvdG8ikAEKD1JlbW90",
+            "L3Byb3RvYnVmL2FueS5wcm90bxoOcG9zaXRpb24ucHJvdG8iwwEKD1JlbW90",
             "ZVNvdW5kQ2xpcBINCgVzb3VuZBgBIAEoCRIlCghwb3NpdGlvbhgCIAEoCzIT",
             "LnN1bXAucG9zaXRpb24uVmVjMxIOCgZ2b2x1bWUYAyABKAISDQoFcGl0Y2gY",
             "BCABKAISFAoMbWluX2Rpc3RhbmNlGAUgASgCEhIKCmF1dG9fZGVsYXkYBiAB",
-            "KAgivQEKEVJlbW90ZUFjdGlvblNvdW5kEhgKEHNvdXJjZV9jbGllbnRfaWQY",
-            "ASABKAUSFgoOc2VydmVyX3RpY2tfbXMYAiABKAMSEAoIZXZlbnRfaWQYAyAB",
-            "KA0SMQoGc291bmRzGAQgAygLMiEuc3VtcC5yZW1vdGVzb3VuZC5SZW1vdGVT",
-            "b3VuZENsaXASCwoDZXh0GGQgASgMEiQKBmN1c3RvbRhlIAEoCzIULmdvb2ds",
-            "ZS5wcm90b2J1Zi5BbnlCJ0gBqgIiU3VNdWx0aXBsYXllci5Qcm90b2NvbC5S",
-            "ZW1vdGVzb3VuZGIGcHJvdG8z"));
+            "KAgSGAoQYXR0ZW51YXRpb25fbW9kZRgHIAEoDRIXCg9zb3VyY2VfZGlzdGFu",
+            "Y2UYCCABKAIivQEKEVJlbW90ZUFjdGlvblNvdW5kEhgKEHNvdXJjZV9jbGll",
+            "bnRfaWQYASABKAUSFgoOc2VydmVyX3RpY2tfbXMYAiABKAMSEAoIZXZlbnRf",
+            "aWQYAyABKA0SMQoGc291bmRzGAQgAygLMiEuc3VtcC5yZW1vdGVzb3VuZC5S",
+            "ZW1vdGVTb3VuZENsaXASCwoDZXh0GGQgASgMEiQKBmN1c3RvbRhlIAEoCzIU",
+            "Lmdvb2dsZS5wcm90b2J1Zi5BbnlCJ0gBqgIiU3VNdWx0aXBsYXllci5Qcm90",
+            "b2NvbC5SZW1vdGVzb3VuZGIGcHJvdG8z"));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { global::Google.Protobuf.WellKnownTypes.AnyReflection.Descriptor, global::SuMultiplayer.Protocol.Position.PositionReflection.Descriptor, },
           new pbr::GeneratedClrTypeInfo(null, null, new pbr::GeneratedClrTypeInfo[] {
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Remotesound.RemoteSoundClip), global::SuMultiplayer.Protocol.Remotesound.RemoteSoundClip.Parser, new[]{ "Sound", "Position", "Volume", "Pitch", "MinDistance", "AutoDelay" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Remotesound.RemoteSoundClip), global::SuMultiplayer.Protocol.Remotesound.RemoteSoundClip.Parser, new[]{ "Sound", "Position", "Volume", "Pitch", "MinDistance", "AutoDelay", "AttenuationMode", "SourceDistance" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Remotesound.RemoteActionSound), global::SuMultiplayer.Protocol.Remotesound.RemoteActionSound.Parser, new[]{ "SourceClientId", "ServerTickMs", "EventId", "Sounds", "Ext", "Custom" }, null, null, null, null)
           }));
     }
@@ -92,6 +93,8 @@ namespace SuMultiplayer.Protocol.Remotesound {
       pitch_ = other.pitch_;
       minDistance_ = other.minDistance_;
       autoDelay_ = other.autoDelay_;
+      attenuationMode_ = other.attenuationMode_;
+      sourceDistance_ = other.sourceDistance_;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
     }
 
@@ -120,8 +123,9 @@ namespace SuMultiplayer.Protocol.Remotesound {
     public const int PositionFieldNumber = 2;
     private global::SuMultiplayer.Protocol.Position.Vec3 position_;
     /// <summary>
-    /// World position the sound is presented at (the interaction anchor; the
-    /// engine audio queue does not retain the original position, see the adapter).
+    /// World position the sound is presented at.  For the global host relay the
+    /// engine audio queue does not retain the original position, so this is the
+    /// host listener position and `source_distance` carries the inferred range.
     /// </summary>
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
@@ -136,9 +140,9 @@ namespace SuMultiplayer.Protocol.Remotesound {
     public const int VolumeFieldNumber = 3;
     private float volume_;
     /// <summary>
-    /// Effective emission volume.  The host derives it so that
-    /// CalculateVolume(host_listener_distance, min_distance) equals the volume the
-    /// engine actually queued (the host listener distance is not replicated).
+    /// Effective emission volume.  For ABSOLUTE it is the exact playback volume;
+    /// for RELATIVE_TO_HOST it is the volume the host heard (already attenuated at
+    /// `source_distance`) and the client re-projects it to its own listener.
     /// </summary>
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
@@ -191,6 +195,44 @@ namespace SuMultiplayer.Protocol.Remotesound {
       }
     }
 
+    /// <summary>Field number for the "attenuation_mode" field.</summary>
+    public const int AttenuationModeFieldNumber = 7;
+    private uint attenuationMode_;
+    /// <summary>
+    /// How `volume` / `position` must be interpreted (append-only; 0 = ABSOLUTE):
+    ///   0 ABSOLUTE         position + volume are the final playback parameters
+    ///                      (remote-action window: the interaction anchor is exact);
+    ///   1 RELATIVE_TO_HOST position = host listener, source_distance = source range;
+    ///   2 NON_POSITIONAL   the engine call had no position (ambient 2D); play only
+    ///                      when the client is near the host listener.
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public uint AttenuationMode {
+      get { return attenuationMode_; }
+      set {
+        attenuationMode_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "source_distance" field.</summary>
+    public const int SourceDistanceFieldNumber = 8;
+    private float sourceDistance_;
+    /// <summary>
+    /// Distance in metres from the host listener to the inferred source
+    /// (RELATIVE_TO_HOST only; 0 otherwise).  The engine queue stores only the
+    /// attenuated volume, so the host inverts CalculateVolume(volume, min=2) and,
+    /// when autoDelay is set, also uses delay*120 as a lower bound.
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public float SourceDistance {
+      get { return sourceDistance_; }
+      set {
+        sourceDistance_ = value;
+      }
+    }
+
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public override bool Equals(object other) {
@@ -212,6 +254,8 @@ namespace SuMultiplayer.Protocol.Remotesound {
       if (!pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.Equals(Pitch, other.Pitch)) return false;
       if (!pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.Equals(MinDistance, other.MinDistance)) return false;
       if (AutoDelay != other.AutoDelay) return false;
+      if (AttenuationMode != other.AttenuationMode) return false;
+      if (!pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.Equals(SourceDistance, other.SourceDistance)) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
 
@@ -225,6 +269,8 @@ namespace SuMultiplayer.Protocol.Remotesound {
       if (Pitch != 0F) hash ^= pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.GetHashCode(Pitch);
       if (MinDistance != 0F) hash ^= pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.GetHashCode(MinDistance);
       if (AutoDelay != false) hash ^= AutoDelay.GetHashCode();
+      if (AttenuationMode != 0) hash ^= AttenuationMode.GetHashCode();
+      if (SourceDistance != 0F) hash ^= pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.GetHashCode(SourceDistance);
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
       }
@@ -267,6 +313,14 @@ namespace SuMultiplayer.Protocol.Remotesound {
         output.WriteRawTag(48);
         output.WriteBool(AutoDelay);
       }
+      if (AttenuationMode != 0) {
+        output.WriteRawTag(56);
+        output.WriteUInt32(AttenuationMode);
+      }
+      if (SourceDistance != 0F) {
+        output.WriteRawTag(69);
+        output.WriteFloat(SourceDistance);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
       }
@@ -301,6 +355,14 @@ namespace SuMultiplayer.Protocol.Remotesound {
         output.WriteRawTag(48);
         output.WriteBool(AutoDelay);
       }
+      if (AttenuationMode != 0) {
+        output.WriteRawTag(56);
+        output.WriteUInt32(AttenuationMode);
+      }
+      if (SourceDistance != 0F) {
+        output.WriteRawTag(69);
+        output.WriteFloat(SourceDistance);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
       }
@@ -328,6 +390,12 @@ namespace SuMultiplayer.Protocol.Remotesound {
       }
       if (AutoDelay != false) {
         size += 1 + 1;
+      }
+      if (AttenuationMode != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt32Size(AttenuationMode);
+      }
+      if (SourceDistance != 0F) {
+        size += 1 + 4;
       }
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
@@ -361,6 +429,12 @@ namespace SuMultiplayer.Protocol.Remotesound {
       }
       if (other.AutoDelay != false) {
         AutoDelay = other.AutoDelay;
+      }
+      if (other.AttenuationMode != 0) {
+        AttenuationMode = other.AttenuationMode;
+      }
+      if (other.SourceDistance != 0F) {
+        SourceDistance = other.SourceDistance;
       }
       _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
     }
@@ -406,6 +480,14 @@ namespace SuMultiplayer.Protocol.Remotesound {
           }
           case 48: {
             AutoDelay = input.ReadBool();
+            break;
+          }
+          case 56: {
+            AttenuationMode = input.ReadUInt32();
+            break;
+          }
+          case 69: {
+            SourceDistance = input.ReadFloat();
             break;
           }
         }
@@ -454,6 +536,14 @@ namespace SuMultiplayer.Protocol.Remotesound {
             AutoDelay = input.ReadBool();
             break;
           }
+          case 56: {
+            AttenuationMode = input.ReadUInt32();
+            break;
+          }
+          case 69: {
+            SourceDistance = input.ReadFloat();
+            break;
+          }
         }
       }
     }
@@ -464,7 +554,10 @@ namespace SuMultiplayer.Protocol.Remotesound {
   /// <summary>
   /// Host -> one client (the requester) and to every other client within
   /// RemoteSoundPolicy.MaxRelayDistance.  Coalesced: one event per remote action,
-  /// carrying every sound that action produced.
+  /// carrying every sound that action produced.  The same message is also used by
+  /// the global host relay: source_client_id = 0 means "host world / host player
+  /// simulation" and the event carries up to MaxHostSoundsPerMessage sounds for
+  /// one peer (batched every HostBatchIntervalMs).
   /// </summary>
   [global::System.Diagnostics.DebuggerDisplayAttribute("{ToString(),nq}")]
   public sealed partial class RemoteActionSound : pb::IMessage<RemoteActionSound>
@@ -521,7 +614,7 @@ namespace SuMultiplayer.Protocol.Remotesound {
     private int sourceClientId_;
     /// <summary>
     /// Host-side transport id of the client whose action produced these sounds.
-    /// 0 is never used for a relayed event (the host's own actions are not relayed).
+    /// 0 = the host's own world simulation / host player (global relay).
     /// </summary>
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
@@ -568,8 +661,8 @@ namespace SuMultiplayer.Protocol.Remotesound {
         = pb::FieldCodec.ForMessage(34, global::SuMultiplayer.Protocol.Remotesound.RemoteSoundClip.Parser);
     private readonly pbc::RepeatedField<global::SuMultiplayer.Protocol.Remotesound.RemoteSoundClip> sounds_ = new pbc::RepeatedField<global::SuMultiplayer.Protocol.Remotesound.RemoteSoundClip>();
     /// <summary>
-    /// 1..RemoteSoundPolicy.MaxSoundsPerEvent entries (host-capped, extra sounds
-    /// are counted and logged, never silently dropped).
+    /// 1..MaxSoundsPerEvent / MaxHostSoundsPerMessage entries (host-capped, extra
+    /// sounds are counted and logged, never silently dropped).
     /// </summary>
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]

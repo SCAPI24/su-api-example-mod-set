@@ -95,6 +95,11 @@ message ExplosionRequest {
   int32 item_value = 5;
   // Active inventory slot (-1 = unknown).
   int32 active_slot = 6;
+  // Requester's effective interaction reach in metres (engine ComponentMiner.Raycast:
+  // Creative ? SettingsManager.CreativeReach : 5f).  Host rule:
+  // allowed = min(reach + tolerance, serverMax); absent (old client) = 5.0 / 7.5.
+  // Source: Survivalcraft/Game/ComponentMiner.cs:378
+  optional float reach = 7;
   bytes ext = 100;
   google.protobuf.Any custom = 101;
 }

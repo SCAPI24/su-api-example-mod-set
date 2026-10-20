@@ -47,8 +47,6 @@ namespace SuMultiplayer.Engine
     /// </summary>
     public sealed class ContainerReplicaEngine : IBlockUsePort, IEntityUseInputSink
     {
-        /// <summary>方块使用距离上限（格²）；与旧实现 ContainerSync 的 8 格一致。</summary>
-        private const float MaxUseDistanceSq = 8f * 8f;
         /// <summary>主机把"附近燃烧熔炉"纳入炉况下发的距离（格²）：关闭但可见也有正确外观。</summary>
         private const float NearFurnaceDistanceSq = 32f * 32f;
         /// <summary>主机 / 客户端熔炉状态表上限（超出清空；只影响"变化才发"的缓存，不丢消息）。</summary>
@@ -56,6 +54,7 @@ namespace SuMultiplayer.Engine
         private const int ProblemLogMs = 5000;
 
         private readonly NetworkAvatarSpawner m_spawner;
+        private readonly InteractionReachGate m_reachGate;
         private readonly IModParentField m_parentField;
         private readonly IModParentMethod m_parentMethod;
         private readonly IModuleDiagnostics m_diagnostics;
@@ -130,6 +129,8 @@ namespace SuMultiplayer.Engine
         private long m_clientFurnaceProgressWrites;
         private long m_clientFurnaceComponentMissing;
         private long m_clientFurnaceApplyFailures;
+        private long m_clientFurnaceFlamePresenterMissing;
+        private long m_clientFurnaceFlameFailures;
         /// <summary>请求者的主机侧背包是创造仓库（ComponentCreativeInventory）的容器编辑次数。</summary>
         private long m_hostCreativeInventoryDetected;
         /// <summary>创造请求者的编辑被接受（守恒被创造模式规则替代）的次数。</summary>
@@ -152,14 +153,19 @@ namespace SuMultiplayer.Engine
         private long m_clientReplicaKindReplaced;
 
         public ContainerReplicaEngine(NetworkAvatarSpawner spawner, IModParentField parentField,
-            IModParentMethod parentMethod, IModuleDiagnostics diagnostics, string ownerId)
+            IModParentMethod parentMethod, IModuleDiagnostics diagnostics, string ownerId,
+            InteractionReachGate reachGate)
         {
             m_spawner = spawner ?? throw new ArgumentNullException(nameof(spawner));
+            m_reachGate = reachGate ?? throw new ArgumentNullException(nameof(reachGate));
             m_parentField = parentField ?? throw new ArgumentNullException(nameof(parentField));
             m_parentMethod = parentMethod ?? throw new ArgumentNullException(nameof(parentMethod));
             m_diagnostics = diagnostics;
             m_ownerId = string.IsNullOrEmpty(ownerId) ? "block-use" : ownerId;
         }
+
+        /// <summary>客户端本机有效交互距离（引擎 reach），由 BlockUseRequest 携带给主机。</summary>
+        public float LocalReach => EngineReach.LocalReach();
 
         // ================================================================= IBlockUsePort（挂接）
 
@@ -225,7 +231,9 @@ namespace SuMultiplayer.Engine
             " furnaceLitWrites=" + m_clientFurnaceLitWrites + " furnaceProgressWrites=" +
             m_clientFurnaceProgressWrites + " furnaceComponentMissing=" +
             m_clientFurnaceComponentMissing + " furnaceApplyFailed=" +
-            m_clientFurnaceApplyFailures + ")";
+            m_clientFurnaceApplyFailures + " furnaceFlamePresenterMissing=" +
+            m_clientFurnaceFlamePresenterMissing + " furnaceFlameFailed=" +
+            m_clientFurnaceFlameFailures + ")";
 
         // ================================================================= 客户端：输入拦截
 
@@ -366,7 +374,7 @@ namespace SuMultiplayer.Engine
             var request = new BlockUseRequestData(0L, cellFace.X, cellFace.Y, cellFace.Z,
                 cellFace.Face, contents, BlockUseActions.Interact, ray.Value.Position.X,
                 ray.Value.Position.Y, ray.Value.Position.Z, direction.X, direction.Y,
-                direction.Z);
+                direction.Z, hasReach: true, reach: EngineReach.LocalReach());
             bool submitted;
             string reason;
             try
@@ -666,7 +674,10 @@ namespace SuMultiplayer.Engine
         ///      不会变成一次本地编辑）；
         ///   ② 副本组件：把 heat / smelting progress / fire time 写进
         ///      <c>ComponentFurnace</c> 的私有字段 —— 面板的火焰（HeatLevel &gt; 0）与进度条
-        ///      （SmeltingProgress）随下一帧 Update 显示，与主机完全一致。
+        ///      （SmeltingProgress）随下一帧 Update 显示，与主机完全一致；
+        ///   ③ 世界火焰（presentation-only）：heat/fireTime 交给
+        ///      <see cref="FurnaceReplicaPresentation"/> 建 / 收本地 FireParticleSystem ——
+        ///      面板关着也可见，重连时主机重发炉况会重建。
         /// 客户端摘掉了副本实体的 IUpdateable，所以这些字段**不会**驱动本地烧炼 / 燃料消耗。
         /// </summary>
         public bool ApplyFurnacePresentation(FurnaceStateData state, out bool litApplied,
@@ -716,6 +727,25 @@ namespace SuMultiplayer.Engine
                     "客户端还没有熔炉副本组件 @" + state.Key.Describe() + "（" + componentReason +
                     "）→ 热量/进度暂存到面板打开时重放；燃烧外观照常落地（" +
                     state.Describe() + "）");
+            }
+            // ③ 世界火焰：由权威炉况直接驱动（heat > 0 / fireTime > 0）。
+            //    与行为通知共用同一个表现层状态机 → 同一格重复状态只会 Keep，不会出现两个粒子。
+            FurnaceReplicaPresentation flamePresenter =
+                (terrain as SuSubsystemTerrain)?.Bridge?.FurnacePresenter;
+            if (flamePresenter == null)
+            {
+                m_clientFurnaceFlamePresenterMissing++;
+                LogProblem("furnace-flame-presenter:" + state.Key.Describe(),
+                    "客户端没有挂接熔炉火焰表现层（TerrainBridge.FurnacePresenter == null）@" +
+                    state.Key.Describe() + " → 面板状态照常应用，但世界里不会有火焰（累计 " +
+                    m_clientFurnaceFlamePresenterMissing + " 次）");
+            }
+            else if (!flamePresenter.Present(state, out string flameReason))
+            {
+                m_clientFurnaceFlameFailures++;
+                LogProblem("furnace-flame-present:" + state.Key.Describe(),
+                    "熔炉火焰表现应用失败（" + flameReason + "）→ " + state.Describe() +
+                    "（累计 " + m_clientFurnaceFlameFailures + " 次）");
             }
             if (!litApplied || !progressApplied)
             {
@@ -895,11 +925,12 @@ namespace SuMultiplayer.Engine
                 return false;
             }
             Vector3 center = new Vector3(x + 0.5f, y + 0.5f, z + 0.5f);
-            float distanceSq = Vector3.DistanceSquared(player.ComponentBody.Position, center);
-            if (distanceSq > MaxUseDistanceSq)
+            float measured = MathUtils.Sqrt(Vector3.DistanceSquared(
+                player.ComponentBody.Position, center));
+            if (!m_reachGate.TryCheckDistance(request.HasReach, request.Reach,
+                    EngineReach.IsCreative(m_project), measured, out string reachReason))
             {
-                reason = "距离过远（" + MathUtils.Sqrt(distanceSq).ToString("F1",
-                    CultureInfo.InvariantCulture) + " 格 > 8 格）";
+                reason = reachReason;
                 m_hostUseRejected++;
                 return false;
             }
@@ -1055,8 +1086,9 @@ namespace SuMultiplayer.Engine
                 return false;
             }
             if (!TryGetHostUseTarget(clientId, request.X, request.Y, request.Z,
-                    request.ContainerKind, out ComponentPlayer player,
-                    out IInventory playerInventory, out string targetReason))
+                    request.ContainerKind, request.HasReach, request.Reach,
+                    out ComponentPlayer player, out IInventory playerInventory,
+                    out string targetReason))
             {
                 reason = targetReason;
                 m_hostEditsRejected++;
@@ -1349,9 +1381,11 @@ namespace SuMultiplayer.Engine
 
         /// <summary>
         /// 主机校验一次容器编辑的"人 + 距离 + 方块"上下文：
-        /// 请求者必须是已加入的联机角色、在 8 格内、目标格仍是同一种容器方块且区块已加载。
+        /// 请求者必须是已加入的联机角色、在 min(reach + 容差, 主机上限) 内、
+        /// 目标格仍是同一种容器方块且区块已加载。
         /// </summary>
         private bool TryGetHostUseTarget(int clientId, int x, int y, int z, int kind,
+            bool hasReach, float reach,
             out ComponentPlayer player, out IInventory playerInventory, out string reason)
         {
             player = null;
@@ -1389,11 +1423,12 @@ namespace SuMultiplayer.Engine
                 return false;
             }
             Vector3 center = new Vector3(x + 0.5f, y + 0.5f, z + 0.5f);
-            float distanceSq = Vector3.DistanceSquared(player.ComponentBody.Position, center);
-            if (distanceSq > MaxUseDistanceSq)
+            float measured = MathUtils.Sqrt(Vector3.DistanceSquared(
+                player.ComponentBody.Position, center));
+            if (!m_reachGate.TryCheckDistance(hasReach, reach,
+                    EngineReach.IsCreative(m_project), measured, out string reachReason))
             {
-                reason = "too-far: " + MathUtils.Sqrt(distanceSq).ToString("F1",
-                    CultureInfo.InvariantCulture) + " 格 > 8 格";
+                reason = reachReason;
                 return false;
             }
             int contents = Game.Terrain.ExtractContents(terrain.Terrain.GetCellValue(x, y, z));

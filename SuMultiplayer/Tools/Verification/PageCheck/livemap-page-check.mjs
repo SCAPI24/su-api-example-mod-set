@@ -203,7 +203,7 @@ const CLIENT2_CHUNKS = [
 function baseFeed() {
   return {
     t: 123456, online: true, ageMs: 120, samples: 5, droppedPartial: 0,
-    payloadVersion: 9, decodeFailures: 0, decodeFailureReason: "",
+    payloadVersion: 10, decodeFailures: 0, decodeFailureReason: "",
     view: "all", radius: 0,
     watched: { id: 1234, name: "Android User" },
     center: { cell: HOST_CELL, cellReason: "", chunk: [-5, 8] },
@@ -467,7 +467,7 @@ async function main() {
     check(/Android User（键 1234）：\(-207,70,217\) · chunk\(-13,13\)/.test(sb), "统计面板列出客户端绝对坐标与区块");
     check(/当前内存 9 块（绿 6 \/ 蓝 1 \/ 黄 1 \/ 红 1）· 会话累计上报 9/.test(sb),
       "统计面板列出该客户端**当前内存**区块数与四色计数（reported 作为会话累计参考值）");
-    check(/payloadVersion \/ 解包失败<\/td><td class='mono'>9 \/ 0/.test(sb), "统计面板显示 payloadVersion=9 / 解包失败 0");
+    check(/payloadVersion \/ 解包失败<\/td><td class='mono'>10 \/ 0/.test(sb), "统计面板显示 payloadVersion=10 / 解包失败 0");
     check(/客户端线框（clients\[\]\.chunks）<\/td><td class='mono'>线框 9 块（绿 6 \/ 蓝 1 \/ 黄 1 \/ 红 1）/.test(sb),
       "统计面板「客户端线框」一行给出四色计数");
     check(/地形填充来源<\/td><td class='mono'>只有主机 <code>chunks\[\]<\/code>/.test(sb), "统计面板写明地形填充只来自主机 chunks[]");
@@ -600,11 +600,11 @@ async function main() {
     const feed = baseFeed();
     feed.payloadVersion = 3;
     feed.decodeFailures = 7;
-    feed.decodeFailureReason = "MapState 载荷解包失败：工具期望版本 v9";
+    feed.decodeFailureReason = "MapState 载荷解包失败：工具期望版本 v10";
     const { els } = await runPage(feed, "");
     const rl = els.get("regionLegend").innerHTML;
-    check(/payloadVersion<\/code> = 3/.test(rl), "图例明说 feed 的 payloadVersion 不是 9");
-    check(/本页面按 v9 读字段/.test(rl), "图例写明页面按 v9 读字段");
+    check(/payloadVersion<\/code> = 3/.test(rl), "图例明说 feed 的 payloadVersion 不是 10");
+    check(/本页面按 v10 读字段/.test(rl), "图例写明页面按 v10 读字段");
     check(/7 次载荷解包失败/.test(rl), "图例转述解包失败次数与原因");
 
     // 旧版 v6 工具（只有 [cx,cz]、没有状态）同样必须显式报警，而不是静默当 0 画
@@ -613,14 +613,14 @@ async function main() {
     feed6.clients[0].chunks = CLIENT_CHUNKS.map(([cx, cz]) => [cx, cz]);
     const r6 = await runPage(feed6, "");
     const rl6 = r6.els.get("regionLegend").innerHTML;
-    // v8（上一版）也必须被 v9 页面明确拒绝（版本字节是唯一闸门，不猜字段）
+    // v8 / v9（上一版）也必须被 v10 页面明确拒绝（版本字节是唯一闸门，不猜字段）
     const feed8 = baseFeed();
     feed8.payloadVersion = 8;
     const r8 = await runPage(feed8, "");
     const rl8 = r8.els.get("regionLegend").innerHTML;
-    check(/payloadVersion<\/code> = 8/.test(rl8) && /本页面按 v9 读字段/.test(rl8),
-      "v8 feed（上一版，无 animals）在图例里明确报警：页面按 v9 读字段");
-    check(/payloadVersion<\/code> = 6/.test(rl6) && /本页面按 v9 读字段/.test(rl6),
+    check(/payloadVersion<\/code> = 8/.test(rl8) && /本页面按 v10 读字段/.test(rl8),
+      "v8 feed（旧版，无 players 槽位）在图例里明确报警：页面按 v10 读字段");
+    check(/payloadVersion<\/code> = 6/.test(rl6) && /本页面按 v10 读字段/.test(rl6),
       "v6 feed 在图例里明确报警（版本字节级不兼容，不猜字段）");
     check(/9 个 <code>clients\[\]\.chunks<\/code> 条目只有 <code>\[cx,cz\]<\/code>/.test(rl6) &&
       /不画线框/.test(rl6), "v6 的 [cx,cz] 条目 → 图例明说 9 块不画线框（绝不猜状态）");
@@ -1377,6 +1377,102 @@ async function main() {
     }
     check(noTerrain === clientOnly.length, "客户端独有区块 " + clientOnly.length + " 块没有主机地形（没有底图可比，不是错位）");
     check(wireOk === clientOnly.length, "客户端独有区块仍照常画出线框（" + wireOk + "/" + clientOnly.length + "）");
+  }
+
+
+  section("V. v10 逐角色槽位（players[] 每个 (clientId,slot) 一条）：主机槽位暖色 Host#0/Host#1、玩家端 <名字>#<slot>、同格错开不重叠、图例");
+  {
+    const feed = baseFeed();
+    // 两个主机槽位与两个玩家端槽位都故意放在**同一个格**里：验证标签带 #槽位、颜色区分、同格错开不重叠。
+    feed.players = [
+      { id: 0, key: "0:0", slot: 0, name: "Host", isHost: true, host: true, stableKey: "host", cell: HOST_CELL, cellReason: "", chunk: [-5, 8] },
+      { id: 0, key: "0:1", slot: 1, name: "Host", isHost: true, host: true, stableKey: "host", cell: HOST_CELL, cellReason: "", chunk: [-5, 8] },
+      { id: 1234, key: "1234:0", slot: 0, name: "Android User", isHost: false, host: false, stableKey: "u1234", cell: CLIENT_CELL, cellReason: "", chunk: [-13, 13] },
+      { id: 1234, key: "1234:1", slot: 1, name: "Android User", isHost: false, host: false, stableKey: "u1234", cell: CLIENT_CELL, cellReason: "", chunk: [-13, 13] }
+    ];
+    feed.centers = [
+      { id: -1, key: "host", name: "Host", isHost: true, chunk: [-5, 8] },
+      { id: 1234, key: "u1234", name: "Android User", isHost: false, chunk: [-13, 13] }
+    ];
+    feed.clients[0].key = "u1234";
+    feed.counts.players = 4;
+    feed.counts.hostPlayers = 2;
+    const { ctx, els } = await runPage(feed, "");
+    const t = texts(ctx);
+
+    // —— 每个角色槽位一个标记 + 标签 Host#N / <名字>#N ——
+    check(t.includes("Host#0 (-75,140) chunk(-5,8)"), "主机槽位 0 标记标签 = Host#0 (-75,140) chunk(-5,8)（实际：" +
+      t.filter((x) => /^Host#/.test(x))[0] + "）");
+    check(t.includes("Host#1 (-75,140) chunk(-5,8)"), "主机槽位 1 标记标签 = Host#1 (-75,140) chunk(-5,8)（实际：" +
+      t.filter((x) => /^Host#/.test(x))[1] + "）");
+    check(t.includes("Android User#0 (-207,217) chunk(-13,13)"), "玩家端槽位 0 标签 = Android User#0 …");
+    check(t.includes("Android User#1 (-207,217) chunk(-13,13)"), "玩家端槽位 1 标签 = Android User#1 …");
+    check(els.get("centerSel").innerHTML.indexOf("本机 2 个槽位") >= 0,
+      "居中角色下拉框按**身份**去重并写明主机有 2 个本机槽位（不出现 4 个选项）");
+    const optCount = (els.get("centerSel").innerHTML.match(/<option /g) || []).length;
+    check(optCount === 2, "居中角色下拉框 = 2 个身份（主机 + 玩家端），实际 " + optCount + " 个");
+
+    // —— 颜色：主机槽位暖色、槽位之间不同；玩家端槽位冷色 ——
+    const hostArcs = ctx.ops.filter((o) => o.op === "fill" && ["#e8590c", "#c92a2a"].indexOf(o.style) >= 0)
+      .flatMap((o) => (o.lines || []).filter((l) => l[0] === "arc"));
+    check(hostArcs.length === 2, "两个主机槽位用两种不同的**暖色**画标记（实际 " + hostArcs.length + " 个）");
+    const clientArcs = ctx.ops.filter((o) => o.op === "fill" && ["#b5179e", "#6a4bd8"].indexOf(o.style) >= 0)
+      .flatMap((o) => (o.lines || []).filter((l) => l[0] === "arc"));
+    check(clientArcs.length === 2, "两个玩家端槽位用两种不同的槽位色画标记（实际 " + clientArcs.length + " 个）");
+
+    // —— 同一格里的两个槽位必须错开（中心距 > 5 px），绝不重叠 ——
+    function arcOf(style, radius) {
+      for (const o of ctx.ops) {
+        if (o.op !== "fill" || o.style !== style) continue;
+        for (const l of (o.lines || [])) if (l[0] === "arc" && l[3] === radius) return [l[1], l[2]];
+      }
+      return null;
+    }
+    const h0 = arcOf("#e8590c", 4), h1 = arcOf("#c92a2a", 5);
+    check(!!h0 && !!h1, "主机槽位 0（选中十字 r=4）与槽位 1（普通圆点 r=5）都画出来了");
+    if (h0 && h1) {
+      const dist = Math.hypot(h0[0] - h1[0], h0[1] - h1[1]);
+      check(dist > 5, "同一格里的 Host#0 / Host#1 标记错开 " + dist.toFixed(2) + " px（> 5，不重叠）");
+    }
+    const c0 = arcOf("#b5179e", 5), c1 = arcOf("#6a4bd8", 5);
+    if (c0 && c1) {
+      const dist = Math.hypot(c0[0] - c1[0], c0[1] - c1[1]);
+      check(dist > 5, "同一格里的 Android User#0 / #1 标记错开 " + dist.toFixed(2) + " px（> 5，不重叠）");
+    } else {
+      check(false, "玩家端槽位 0 / 1 的普通圆点都要画出来");
+    }
+
+    // —— 统计面板逐个槽位列出（键 = 角色键 clientId:slot）——
+    const sb = els.get("statBody").innerHTML;
+    check(/Host#0（键 0:0）（房主）：\(-75,70,140\) · chunk\(-5,8\)/.test(sb),
+      "统计面板列出主机槽位 0 的坐标与角色键 0:0");
+    check(/Host#1（键 0:1）（房主）：\(-75,70,140\) · chunk\(-5,8\)/.test(sb),
+      "统计面板列出主机槽位 1 的坐标与角色键 0:1");
+    check(/Android User#0（键 1234:0）：\(-207,70,217\)/.test(sb) &&
+      /Android User#1（键 1234:1）：\(-207,70,217\)/.test(sb),
+      "统计面板列出玩家端两个槽位与角色键 1234:0 / 1234:1");
+    check(/全部角色（4 个）/.test(sb), "统计面板写明本视图画全部 4 个角色槽位");
+
+    // —— 图例新增角色标记分组（暖色主机槽位 + 玩家端槽位）——
+    const rl = els.get("regionLegend").innerHTML;
+    check(/角色标记（每个角色槽位一条）/.test(rl), "图例新增「角色标记（每个角色槽位一条）」分组");
+    check(/Host#0（键 0:0）/.test(rl) && /Host#1（键 0:1）/.test(rl),
+      "图例逐个列出主机槽位 Host#0 / Host#1 与角色键");
+    check(/主机自己的本机槽位用暖色/.test(rl), "图例写明主机槽位用暖色");
+    check(/同一格内多个角色按槽位顺序/.test(rl) && /互不重叠/.test(rl), "图例写明同格角色按槽位顺序错开、互不重叠");
+    check(!/⚠/.test(rl), "这份 v10 feed 没有缺失字段 → 图例不报警（实际：" + (rl.match(/⚠[^<]*/) || ["无"])[0] + "）");
+
+    // —— 客户端视图只画该身份的**全部槽位**（不画主机）——
+    ctx.ops.length = 0;
+    els.get("centerSel").fire("change", { target: { value: "1234" } });
+    const t2 = texts(ctx);
+    check(t2.includes("Android User#0 (-207,217) chunk(-13,13)") &&
+      t2.includes("Android User#1 (-207,217) chunk(-13,13)"),
+      "切到客户端后它的两个槽位标记都在（#0 / #1）");
+    check(!t2.some((x) => /^Host#/.test(x)), "切到客户端后主机槽位标记一个都不画");
+    const cArcs = ctx.ops.filter((o) => o.op === "fill" && ["#b5179e", "#6a4bd8"].indexOf(o.style) >= 0)
+      .flatMap((o) => (o.lines || []).filter((l) => l[0] === "arc"));
+    check(cArcs.length === 2, "切到客户端后画出它自己的 2 个槽位标记（实际 " + cArcs.length + " 个）");
   }
 
   console.log("页面文件：" + htmlPath + "（" + htmlBytes + " 字节）");

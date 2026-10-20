@@ -379,17 +379,18 @@ namespace SuMPLiveMap
               .Append(",\"key\":\"").Append(Escape(snapshot?.WatchedStableKey ?? string.Empty))
               .Append("\",\"name\":\"").Append(Escape(snapshot?.WatchedClientName ?? string.Empty)).Append("\"}");
 
-            // —— 角色清单（players = 主机 + 每个玩家端；带真实坐标）——
+            // —— 旧形状的**身份**清单（centers = 主机 + 每个玩家端；带真实坐标）——
+            // 只用于 `centers[]`（旧页面 / /center?id 换算）；v10 起新的 `players[]` 是**逐角色槽位**清单。
             // v4 的主机端 Mod 会把主机自己作为 ClientId=-1 的条目放进 Centers；这里只在
             // "快照头部带主机坐标、但清单里没有主机条目"时补一条（用的仍是主机端的真实坐标，
             // 不按区块中心猜）。
-            var players = new List<LiveMapCenter>();
+            var identityPlayers = new List<LiveMapCenter>();
             if (snapshot != null)
             {
-                for (int i = 0; i < snapshot.Centers.Count; i++) players.Add(snapshot.Centers[i]);
-                if (snapshot.HasViewerCell && !HasHostEntry(players))
+                for (int i = 0; i < snapshot.Centers.Count; i++) identityPlayers.Add(snapshot.Centers[i]);
+                if (snapshot.HasViewerCell && !HasHostEntry(identityPlayers))
                 {
-                    players.Insert(0, new LiveMapCenter
+                    identityPlayers.Insert(0, new LiveMapCenter
                     {
                         ClientId = -1,
                         StableKey = LiveMapCodec.HostKey,
@@ -405,8 +406,14 @@ namespace SuMPLiveMap
                 }
             }
 
-            // —— 中心（网页上选中的那个角色）—— 按**稳定键**选（重连后 clientId 变了也不丢选择）
-            LiveMapCenter selected = null;
+            // —— v10：**每个玩家角色槽位**一条（主机本机槽位 0..N-1 + 每个联机化身的 (clientId, slot)）——
+            // key = "clientId:slot"（主机槽位 1 = "0:1"）；stableKey = 身份稳定键（同一身份的所有槽位共用，
+            // 页面「居中角色」按它选，重连不变）；id = 当前 clientId（主机 = 0）。
+            var players = snapshot != null ? snapshot.Players : new List<LiveMapPlayer>();
+
+            // —— 中心（网页上选中的那个角色）—— 按**身份稳定键**选（重连后 clientId 变了也不丢选择）；
+            // 同一个身份有多个槽位时选排在前面的那个（mod 侧顺序 = 槽位升序，即槽位 0）。
+            LiveMapPlayer selected = null;
             for (int i = 0; i < players.Count; i++)
             {
                 if (string.Equals(players[i].StableKey, s_selectedCenterKey, StringComparison.Ordinal))
@@ -423,35 +430,42 @@ namespace SuMPLiveMap
             {
                 sb.Append(",\"center\":{\"key\":\"").Append(Escape(selected.StableKey))
                   .Append("\",\"id\":").Append(selected.ClientId)
+                  .Append(",\"slot\":").Append(selected.Slot)
+                  .Append(",\"charKey\":\"").Append(Escape(selected.Key)).Append('"')
                   .Append(",\"cell\":").Append(CellJson(selected))
                   .Append(",\"cellReason\":\"").Append(Escape(selected.HasCell ? string.Empty : selected.CellReason))
                   .Append("\",\"chunk\":[").Append(selected.ChunkX).Append(',').Append(selected.ChunkZ)
                   .Append("]}");
             }
 
-            // —— 角色清单 ——
-            // players[] 的 id 仍是**当前** clientId（传输句柄），key = 身份稳定键（重连不变）；
-            // 页面「居中角色」按 key 选，所以重连不会多出第二个条目、也不会把选择断掉。
+            // —— 角色清单（逐槽位）——
+            // 每条：id / key（"0:1"）/ slot / name / isHost / host / stableKey / cell / cellReason / chunk。
+            // 旧字段（id / name / isHost / cell / cellReason / chunk）形状不变，只是**不再每个身份只给一条**；
+            // 新增 slot / key（角色键）/ stableKey / host（= isHost 的显式别名，需求口径 clientId==0）。
             sb.Append(",\"players\":[");
             for (int i = 0; i < players.Count; i++)
             {
-                LiveMapCenter player = players[i];
+                LiveMapPlayer player = players[i];
                 if (i > 0) sb.Append(',');
                 sb.Append("{\"id\":").Append(player.ClientId)
-                  .Append(",\"key\":\"").Append(Escape(player.StableKey)).Append('"')
+                  .Append(",\"key\":\"").Append(Escape(player.Key)).Append('"')
+                  .Append(",\"slot\":").Append(player.Slot)
                   .Append(",\"name\":\"").Append(Escape(player.Name)).Append('"')
                   .Append(",\"isHost\":").Append(player.IsHost ? "true" : "false")
+                  .Append(",\"host\":").Append(player.IsHost ? "true" : "false")
+                  .Append(",\"stableKey\":\"").Append(Escape(player.StableKey)).Append('"')
                   .Append(",\"cell\":").Append(CellJson(player))
                   .Append(",\"cellReason\":\"").Append(Escape(player.HasCell ? string.Empty : player.CellReason))
                   .Append("\",\"chunk\":[").Append(player.ChunkX).Append(',').Append(player.ChunkZ).Append("]}");
             }
             sb.Append(']');
 
-            // 兼容旧页面的同一份数据（形状不变：id / name / isHost / chunk；v6 追加 key）
+            // 兼容旧页面的同一份数据（形状不变：id / name / isHost / chunk；v6 追加 key）——
+            // 仍是**每个身份一条**（主机 id=-1），旧页面/旧脚本继续按它读。
             sb.Append(",\"centers\":[");
-            for (int i = 0; i < players.Count; i++)
+            for (int i = 0; i < identityPlayers.Count; i++)
             {
-                LiveMapCenter player = players[i];
+                LiveMapCenter player = identityPlayers[i];
                 if (i > 0) sb.Append(',');
                 sb.Append("{\"id\":").Append(player.ClientId)
                   .Append(",\"key\":\"").Append(Escape(player.StableKey)).Append('"')
@@ -627,6 +641,8 @@ namespace SuMPLiveMap
             sb.Append(",\"counts\":{\"chunks\":").Append(snapshot?.Chunks.Count ?? 0)
               .Append(",\"columns\":").Append(columnCount)
               .Append(",\"players\":").Append(players.Count)
+              // v10：players[] = **逐角色槽位**清单；hostPlayers / slotPlayers 是对照计数
+              .Append(",\"hostPlayers\":").Append(HostPlayerCount(players))
               .Append(",\"clientChunks\":").Append(clientChunkEntries)
               // v9：主机端动物条数（页面只做对照，以 animals[] 条数为准）
               .Append(",\"animals\":").Append(snapshot?.Animals.Count ?? 0)
@@ -657,8 +673,22 @@ namespace SuMPLiveMap
             return false;
         }
 
+        /// <summary>v10：players[] 里主机自己的角色槽位数（clientId == 0；页面只做对照）。</summary>
+        private static int HostPlayerCount(List<LiveMapPlayer> players)
+        {
+            int count = 0;
+            for (int i = 0; i < players.Count; i++) if (players[i].IsHost) count++;
+            return count;
+        }
+
         /// <summary>角色真实坐标的 JSON；读不到就是 <c>null</c>（绝不按区块中心猜一个坐标）。</summary>
         private static string CellJson(LiveMapCenter player) =>
+            player.HasCell
+                ? "[" + player.CellX + "," + player.CellY + "," + player.CellZ + "]"
+                : "null";
+
+        /// <summary>v10 逐角色槽位条目的坐标 JSON（读不到 = null，不猜）。</summary>
+        private static string CellJson(LiveMapPlayer player) =>
             player.HasCell
                 ? "[" + player.CellX + "," + player.CellY + "," + player.CellZ + "]"
                 : "null";

@@ -45,6 +45,7 @@ namespace SuMultiplayer.Engine
         private const int ProblemLogMs = 5000;
 
         private readonly NetworkAvatarSpawner m_spawner;
+        private readonly InteractionReachGate m_reachGate;
         private readonly IModParentField m_parentField;
         private readonly IModuleDiagnostics m_diagnostics;
         private readonly string m_ownerId;
@@ -212,10 +213,14 @@ namespace SuMultiplayer.Engine
         private readonly List<PendingDropPrediction> m_recentDropPredictions =
             new List<PendingDropPrediction>();
 
+        /// <summary>客户端本机有效交互距离（引擎 reach），供拾取 / 丢弃 / 开火请求携带。</summary>
+        public float LocalReach => EngineReach.LocalReach();
+
         public PickableReplicaEngine(NetworkAvatarSpawner spawner, IModParentField parentField,
-            IModuleDiagnostics diagnostics, string ownerId)
+            IModuleDiagnostics diagnostics, string ownerId, InteractionReachGate reachGate)
         {
             m_spawner = spawner;
+            m_reachGate = reachGate ?? throw new ArgumentNullException(nameof(reachGate));
             m_parentField = parentField ?? throw new ArgumentNullException(nameof(parentField));
             m_diagnostics = diagnostics;
             m_ownerId = string.IsNullOrEmpty(ownerId) ? "entity-replication" : ownerId;
@@ -760,13 +765,19 @@ namespace SuMultiplayer.Engine
                 return false;
             }
             Vector3 eye = body.Position + new Vector3(0f, 0.75f, 0f);
-            // 1.5m：客户端在 1.0m 内才发请求，但两端插值 + 一个 RTT 的移动量可能超过 1.1m；
-            // 仍然只按**主机自己的**化身位置判断，客户端请求里的 position 不作数。
-            // Source: Mod/ScMultiplayer/Modules/Entity/ScMultiplayerPickableProjectileHandlers.cs:263-300
-            //         （旧实现允许 request.Position 与化身相差 2m，但 pickable 与 request 只差 1.1m）
-            if (Vector3.DistanceSquared(eye, pickable.Position) > 2.25f)
+            // 与引擎原生拾取口径一致：眼位到物品 <1.75m 属于"可被吸引"范围（客户端也正是先进入吸引
+            // 范围、再在 1.0m 内发拾取请求）。主机阈值必须**宽于**客户端的 1.0m 触发点，否则两端
+            // 插值/一个 RTT 的移动量/化身与客户端的细微差值会让合法请求被判 distance（真机复现：
+            // "客户端要贴得很近才捡得起来"）。仍然只按**主机自己的**化身位置判断，客户端请求里的
+            // position 不作数。
+            // Source: Survivalcraft/Game/SubsystemPickables.cs:SubsystemPickables.Update
+            //         （num6 < 3.0625f 吸引；num6 < 1f 真正 AcquireItems）
+            if (!m_reachGate.TryCheckDistance(request.HasReach, request.Reach,
+                    EngineReach.IsCreative(m_project),
+                    MathUtils.Sqrt(Vector3.DistanceSquared(eye, pickable.Position)),
+                    out string reachReason))
             {
-                reason = "distance";
+                reason = reachReason;
                 return false;
             }
             int contents = Game.Terrain.ExtractContents(pickable.Value);
@@ -1337,9 +1348,12 @@ namespace SuMultiplayer.Engine
                 return false;
             }
             ComponentBody body = player.ComponentBody;
-            if (Vector3.DistanceSquared(body.Position, request.Position) > 36f)
+            if (!m_reachGate.TryCheckDistance(request.HasReach, request.Reach,
+                    EngineReach.IsCreative(m_project),
+                    MathUtils.Sqrt(Vector3.DistanceSquared(body.Position, request.Position)),
+                    out string reachReason))
             {
-                reason = "distance";
+                reason = reachReason;
                 return false;
             }
             // 来源：键盘 / 手柄（整格、视线方向）与 UI 拖出（指定数量、拖拽方向）走**同一**请求，
@@ -1763,9 +1777,12 @@ namespace SuMultiplayer.Engine
                 reason = "no-model";
                 return false;
             }
-            if (Vector3.DistanceSquared(model.EyePosition, request.Origin) > 36f)
+            if (!m_reachGate.TryCheckDistance(request.HasReach, request.Reach,
+                    EngineReach.IsCreative(m_project),
+                    MathUtils.Sqrt(Vector3.DistanceSquared(model.EyePosition, request.Origin)),
+                    out string reachReason))
             {
-                reason = "distance";
+                reason = reachReason;
                 return false;
             }
             // 方向一律取**主机权威化身**的视线朝向（EyeRotation = 机身旋转 + 同步的视线角）。
@@ -2471,6 +2488,13 @@ namespace SuMultiplayer.Engine
         }
 
         /// <summary>
+        /// 全局声音中继覆盖口（组合根注入）：武器开火 / 拾取声音在本端播放后已经由定向事件
+        /// (WeaponFireEvent / PickupSoundEvent) 发给客户端，登记后全局捕获不再重复发送。
+        /// 客户端上调用是空操作（全局捕获未启用）。
+        /// </summary>
+        public IHostSoundCoverPort SoundCover { get; set; }
+
+        /// <summary>
         /// 武器开火表现（声音）：只播放本机音频，不生成实体、不扣物品、不造成伤害。
         /// 主机执行完客户端请求后本机播一次；其他客户端收到 WeaponFireEvent 后按同一入口播。
         /// </summary>
@@ -2485,17 +2509,28 @@ namespace SuMultiplayer.Engine
             switch (fire.Kind)
             {
                 case ProjectileFireKinds.Throwable:
+                    SoundCover?.CoverPlayedSoundRange("Audio/Throw", fire.Position,
+                        0.2f, 0.3f, 2f, 1, "weapon-fire");
                     ProjectileFirePresentation.PlayThrow(m_project, null, fire.Position);
                     return true;
                 case ProjectileFireKinds.Bow:
+                    SoundCover?.CoverPlayedSound("Audio/Bow", fire.Position, 1f, 3f, 1,
+                        "weapon-fire");
                     ProjectileFirePresentation.PlayBow(m_project, fire.Position,
                         crossbow: false);
                     return true;
                 case ProjectileFireKinds.Crossbow:
+                    SoundCover?.CoverPlayedSound("Audio/Bow", fire.Position, 1f, 3f, 1,
+                        "weapon-fire");
+                    SoundCover?.CoverPlayedSound("Audio/CrossbowBoing", fire.Position, 1f, 3f,
+                        1, "weapon-fire");
                     ProjectileFirePresentation.PlayBow(m_project, fire.Position,
                         crossbow: true);
                     return true;
                 case ProjectileFireKinds.Musket:
+                    SoundCover?.CoverPlayedSound(
+                        fire.Misfire ? "Audio/MusketMisfire" : "Audio/MusketFire",
+                        fire.Position, 1f, fire.Misfire ? 3f : 10f, 1, "weapon-fire");
                     ProjectileFirePresentation.PlayMusketPresentation(m_project, fire.Position,
                         fire.Direction, fire.Misfire);
                     return true;
@@ -2532,6 +2567,8 @@ namespace SuMultiplayer.Engine
             }
             audio.PlaySound("Audio/PickableCollected", 0.7f, -0.4f, sound.Position, 2f,
                 autoDelay: false);
+            SoundCover?.CoverPlayedSound("Audio/PickableCollected", sound.Position, 0.7f, 2f, 1,
+                "pickup-sound");
             return true;
         }
 

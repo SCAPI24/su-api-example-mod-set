@@ -1,0 +1,87 @@
+syntax = "proto3";
+
+package sump.protocol;
+
+option csharp_namespace = "SuMultiplayer.Protocol";
+option optimize_for = SPEED;
+
+// ---------------------------------------------------------------------------
+// Custom player skin assets (owned by one client, host-authoritative).
+//
+// A skin is an engine `.scskin` file (a small PNG).  The raw asset is bounded by
+// SkinAssetPolicy.MaxAssetBytes, optionally DEFLATE-compressed and then split into
+// bounded chunks so every frame stays below TerrainFrame.MaxPayloadBytes.
+//
+// Direction:
+//   · owner client -> host  : upload (client_id = 0, identity/name/hash filled in)
+//   · host -> every client  : broadcast of a stored asset (client_id = owner's
+//                             host-side transport id, identity filled in)
+//
+// Append-only: new message ids 75/76, no existing id is renumbered.
+// Source: Mod/ScMultiplayer/Message/PlayerSkinAssetMessage.cs (semantics only;
+//         the old implementation wrote the asset into the global skin library,
+//         which this rewrite explicitly does not do)
+// ---------------------------------------------------------------------------
+message PlayerSkinAsset {
+  // Owner's host-side transport id (host -> clients).  A client always sends 0:
+  // the host identifies the owner from the connection, never from this field.
+  int32 client_id = 1;
+  // Stable identity (UserId.dat); empty when the engine could not provide one.
+  string identity = 2;
+  // Engine skin file name, e.g. "MySkin.scskin" (validated, no path separators).
+  string skin_name = 3;
+  // Engine PlayerClass: 0 = male, 1 = female.
+  uint32 player_class = 4;
+  // SHA-256 of the **uncompressed** asset bytes (32 bytes, validated).
+  bytes sha256 = 5;
+  // Uncompressed asset length (bounded by SkinAssetPolicy.MaxAssetBytes).
+  uint32 raw_length = 6;
+  // 0 = none, 1 = DEFLATE (raw deflate stream).
+  uint32 compression = 7;
+  // Id of this logical transfer, chosen by the sender (reassembly key).
+  uint32 transfer_id = 8;
+  // 0-based chunk index / total chunk count (1..SkinAssetPolicy.MaxChunkCount).
+  uint32 chunk_index = 9;
+  uint32 chunk_count = 10;
+  // Compressed payload chunk (each chunk <= SkinAssetPolicy.ChunkDataBytes).
+  bytes data = 11;
+  // Owner's local player slot 0..3 (append-only; old messages decode as 0).
+  // The asset itself is shared by hash; the slot only says which local character
+  // of the owner this upload/change belongs to (record key identity#slot).
+  uint32 slot = 12;
+}
+
+// Result / request of a skin change.
+//
+//   PENDING  client -> host : "my skin is now this one" (asset upload precedes it
+//                              for custom skins; built-in skins carry no asset).
+//   ACCEPTED host -> all    : host validated and stored it; other clients apply it.
+//   REJECTED host -> owner  : explicit reason (oversize / malformed / hash / name...).
+//   MISSING  host -> all    : the host does not have the asset for this hash; every
+//                              other client shows a deterministic placeholder and
+//                              counts it (never a silent fallback).
+enum SkinChangeStatus {
+  SKIN_CHANGE_STATUS_PENDING = 0;
+  SKIN_CHANGE_STATUS_ACCEPTED = 1;
+  SKIN_CHANGE_STATUS_REJECTED = 2;
+  SKIN_CHANGE_STATUS_MISSING = 3;
+}
+
+message PlayerSkinChanged {
+  int32 client_id = 1;
+  string identity = 2;
+  string skin_name = 3;
+  bytes sha256 = 4;
+  uint32 player_class = 5;
+  uint32 status = 6;
+  // Explicit reason for REJECTED / MISSING (empty for ACCEPTED).
+  string reason = 7;
+  // Host -> clients: true when the host already has (or is about to send) the asset.
+  bool has_asset = 8;
+  // True when the owner is the host itself (host has no transport record for itself).
+  bool is_host = 9;
+  // Owner's local player slot 0..3 (append-only; old messages decode as 0).
+  // Phase 1 multi-slot: one device can have up to four local characters, each with
+  // its own identity record and avatar; the skin change must name the slot it belongs to.
+  uint32 slot = 10;
+}

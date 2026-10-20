@@ -28,25 +28,25 @@ namespace SuMultiplayer.Protocol.Position {
             "YnVmL2FueS5wcm90byIcCgRWZWMyEgkKAXgYASABKAISCQoBeRgCIAEoAiIn",
             "CgRWZWMzEgkKAXgYASABKAISCQoBeRgCIAEoAhIJCgF6GAMgASgCIjIKBFF1",
             "YXQSCQoBeBgBIAEoAhIJCgF5GAIgASgCEgkKAXoYAyABKAISCQoBdxgEIAEo",
-            "AiLIAgoOUGxheWVyUG9zaXRpb24SEQoJY2xpZW50X2lkGAEgASgFEhMKC3Nl",
+            "AiLWAgoOUGxheWVyUG9zaXRpb24SEQoJY2xpZW50X2lkGAEgASgFEhMKC3Nl",
             "cnZlcl90aWNrGAIgASgFEiUKCHBvc2l0aW9uGAMgASgLMhMuc3VtcC5wb3Np",
             "dGlvbi5WZWMzEiUKCHJvdGF0aW9uGAQgASgLMhMuc3VtcC5wb3NpdGlvbi5R",
             "dWF0EiUKCHZlbG9jaXR5GAUgASgLMhMuc3VtcC5wb3NpdGlvbi5WZWMzEigK",
             "C2xvb2tfYW5nbGVzGAYgASgLMhMuc3VtcC5wb3NpdGlvbi5WZWMyEhQKDGlz",
             "X2Nyb3VjaGluZxgHIAEoCBIRCglpc19mbHlpbmcYCCABKAgSEwoLaXNfZ3Jv",
-            "dW5kZWQYCSABKAgSCwoDZXh0GGQgASgMEiQKBmN1c3RvbRhlIAEoCzIULmdv",
-            "b2dsZS5wcm90b2J1Zi5BbnkidAoPUGxheWVyUG9zaXRpb25zEi4KB2VudHJp",
-            "ZXMYASADKAsyHS5zdW1wLnBvc2l0aW9uLlBsYXllclBvc2l0aW9uEgsKA2V4",
-            "dBhkIAEoDBIkCgZjdXN0b20YZSABKAsyFC5nb29nbGUucHJvdG9idWYuQW55",
-            "QiRIAaoCH1N1TXVsdGlwbGF5ZXIuUHJvdG9jb2wuUG9zaXRpb25iBnByb3Rv",
-            "Mw=="));
+            "dW5kZWQYCSABKAgSDAoEc2xvdBgKIAEoDRILCgNleHQYZCABKAwSJAoGY3Vz",
+            "dG9tGGUgASgLMhQuZ29vZ2xlLnByb3RvYnVmLkFueSJ0Cg9QbGF5ZXJQb3Np",
+            "dGlvbnMSLgoHZW50cmllcxgBIAMoCzIdLnN1bXAucG9zaXRpb24uUGxheWVy",
+            "UG9zaXRpb24SCwoDZXh0GGQgASgMEiQKBmN1c3RvbRhlIAEoCzIULmdvb2ds",
+            "ZS5wcm90b2J1Zi5BbnlCJEgBqgIfU3VNdWx0aXBsYXllci5Qcm90b2NvbC5Q",
+            "b3NpdGlvbmIGcHJvdG8z"));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { global::Google.Protobuf.WellKnownTypes.AnyReflection.Descriptor, },
           new pbr::GeneratedClrTypeInfo(null, null, new pbr::GeneratedClrTypeInfo[] {
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Position.Vec2), global::SuMultiplayer.Protocol.Position.Vec2.Parser, new[]{ "X", "Y" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Position.Vec3), global::SuMultiplayer.Protocol.Position.Vec3.Parser, new[]{ "X", "Y", "Z" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Position.Quat), global::SuMultiplayer.Protocol.Position.Quat.Parser, new[]{ "X", "Y", "Z", "W" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Position.PlayerPosition), global::SuMultiplayer.Protocol.Position.PlayerPosition.Parser, new[]{ "ClientId", "ServerTick", "Position", "Rotation", "Velocity", "LookAngles", "IsCrouching", "IsFlying", "IsGrounded", "Ext", "Custom" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Position.PlayerPosition), global::SuMultiplayer.Protocol.Position.PlayerPosition.Parser, new[]{ "ClientId", "ServerTick", "Position", "Rotation", "Velocity", "LookAngles", "IsCrouching", "IsFlying", "IsGrounded", "Slot", "Ext", "Custom" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Position.PlayerPositions), global::SuMultiplayer.Protocol.Position.PlayerPositions.Parser, new[]{ "Entries", "Ext", "Custom" }, null, null, null, null)
           }));
     }
@@ -917,6 +917,7 @@ namespace SuMultiplayer.Protocol.Position {
       isCrouching_ = other.isCrouching_;
       isFlying_ = other.isFlying_;
       isGrounded_ = other.isGrounded_;
+      slot_ = other.slot_;
       ext_ = other.ext_;
       custom_ = other.custom_ != null ? other.custom_.Clone() : null;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
@@ -1036,6 +1037,23 @@ namespace SuMultiplayer.Protocol.Position {
       }
     }
 
+    /// <summary>Field number for the "slot" field.</summary>
+    public const int SlotFieldNumber = 10;
+    private uint slot_;
+    /// <summary>
+    /// Local-character slot on that client (0..3). Additive: absent / 0 = legacy
+    /// single-character peer, so the old wire format is unchanged for slot 0.
+    /// (client_id, slot) is the stable player key (Players/PlayerKey.cs).
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public uint Slot {
+      get { return slot_; }
+      set {
+        slot_ = value;
+      }
+    }
+
     /// <summary>Field number for the "ext" field.</summary>
     public const int ExtFieldNumber = 100;
     private pb::ByteString ext_ = pb::ByteString.Empty;
@@ -1087,6 +1105,7 @@ namespace SuMultiplayer.Protocol.Position {
       if (IsCrouching != other.IsCrouching) return false;
       if (IsFlying != other.IsFlying) return false;
       if (IsGrounded != other.IsGrounded) return false;
+      if (Slot != other.Slot) return false;
       if (Ext != other.Ext) return false;
       if (!object.Equals(Custom, other.Custom)) return false;
       return Equals(_unknownFields, other._unknownFields);
@@ -1105,6 +1124,7 @@ namespace SuMultiplayer.Protocol.Position {
       if (IsCrouching != false) hash ^= IsCrouching.GetHashCode();
       if (IsFlying != false) hash ^= IsFlying.GetHashCode();
       if (IsGrounded != false) hash ^= IsGrounded.GetHashCode();
+      if (Slot != 0) hash ^= Slot.GetHashCode();
       if (Ext.Length != 0) hash ^= Ext.GetHashCode();
       if (custom_ != null) hash ^= Custom.GetHashCode();
       if (_unknownFields != null) {
@@ -1161,6 +1181,10 @@ namespace SuMultiplayer.Protocol.Position {
         output.WriteRawTag(72);
         output.WriteBool(IsGrounded);
       }
+      if (Slot != 0) {
+        output.WriteRawTag(80);
+        output.WriteUInt32(Slot);
+      }
       if (Ext.Length != 0) {
         output.WriteRawTag(162, 6);
         output.WriteBytes(Ext);
@@ -1215,6 +1239,10 @@ namespace SuMultiplayer.Protocol.Position {
         output.WriteRawTag(72);
         output.WriteBool(IsGrounded);
       }
+      if (Slot != 0) {
+        output.WriteRawTag(80);
+        output.WriteUInt32(Slot);
+      }
       if (Ext.Length != 0) {
         output.WriteRawTag(162, 6);
         output.WriteBytes(Ext);
@@ -1259,6 +1287,9 @@ namespace SuMultiplayer.Protocol.Position {
       }
       if (IsGrounded != false) {
         size += 1 + 1;
+      }
+      if (Slot != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt32Size(Slot);
       }
       if (Ext.Length != 0) {
         size += 2 + pb::CodedOutputStream.ComputeBytesSize(Ext);
@@ -1316,6 +1347,9 @@ namespace SuMultiplayer.Protocol.Position {
       }
       if (other.IsGrounded != false) {
         IsGrounded = other.IsGrounded;
+      }
+      if (other.Slot != 0) {
+        Slot = other.Slot;
       }
       if (other.Ext.Length != 0) {
         Ext = other.Ext;
@@ -1391,6 +1425,10 @@ namespace SuMultiplayer.Protocol.Position {
           }
           case 72: {
             IsGrounded = input.ReadBool();
+            break;
+          }
+          case 80: {
+            Slot = input.ReadUInt32();
             break;
           }
           case 802: {
@@ -1469,6 +1507,10 @@ namespace SuMultiplayer.Protocol.Position {
           }
           case 72: {
             IsGrounded = input.ReadBool();
+            break;
+          }
+          case 80: {
+            Slot = input.ReadUInt32();
             break;
           }
           case 802: {

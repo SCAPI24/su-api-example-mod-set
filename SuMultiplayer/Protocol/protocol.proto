@@ -194,6 +194,192 @@ enum MessageType {
   // Source: Survivalcraft/Game/ComponentFurnace.cs:Update
   // Source: Survivalcraft/Game/FurnaceWidget.cs:Update
   FURNACE_STATE = 70;
+
+  // Water splash presentation (effects.proto): presentation-only.
+  // Host -> every client within 48 m of the splash position.  The engine creates
+  // WaterSplashParticleSystem and plays Audio/Splashes locally on the host when a
+  // pickable / projectile enters water; none of that is part of EntityState.
+  // Clients recreate exactly the same particle system (and, when sound=true, the
+  // same Audio/Splashes call) and never write cells / create entities / deal damage.
+  // Append-only: 71 is a new id, no existing id is renumbered.
+  // Source: Survivalcraft/Game/SubsystemPickables.cs:325-330
+  // Source: Survivalcraft/Game/SubsystemProjectiles.cs:383-390
+  // Source: Survivalcraft/Game/WaterSplashParticleSystem.cs:WaterSplashParticleSystem
+  WATER_SPLASH_EVENT = 71;
+
+  // Host-authoritative editable block content (editable.proto): the truth-table
+  // circuit / memory-bank dialog commit.  The client sends the edited content +
+  // the cell + the content its dialog started from; the host validates, applies
+  // to the authoritative SubsystemEditableItemBehavior and broadcasts the
+  // authoritative content back.  Presentation-only on the client.
+  // Append-only: 72 / 73 / 74 are new ids, no existing id is renumbered.
+  // Source: Survivalcraft/Game/SubsystemEditableItemBehavior.cs:23-39
+  // Source: Survivalcraft/Game/SubsystemTruthTableCircuitBlockBehavior.cs:38-53
+  // Source: Survivalcraft/Game/SubsystemMemoryBankBlockBehavior.cs:38-53
+  // Source: Survivalcraft/Game/EditTruthTableDialog.cs / EditMemoryBankDialog.cs
+  EDITABLE_EDIT_REQUEST = 72;
+  EDITABLE_EDIT_RESULT = 73;
+  EDITABLE_STATE = 74;
+
+  // Custom player skin asset transfer (skin.proto): owner client -> host upload and
+  // host -> other clients broadcast of a bounded, optionally compressed `.scskin`
+  // asset. The host stores it world-scoped in the player record; clients only keep
+  // a replica-scoped cache (never the global skin library / data:/CharacterSkins).
+  // Append-only: 75/76 are new ids, no existing id is renumbered.
+  PLAYER_SKIN_ASSET = 75;
+  // Skin change notification / verdict (skin.proto): carries the new skin name and
+  // hash plus the explicit reject / missing-asset reason.
+  PLAYER_SKIN_CHANGED = 76;
+
+  // Host-authoritative furniture design table + furniture inventory contents
+  // (furniture.proto).  Client create/edit/paint requests are validated and
+  // installed by the host into the world's SubsystemFurnitureBlockBehavior, then
+  // broadcast as authoritative records.  Clients install them into a
+  // replica-only, session-scoped store; their world save never contains those
+  // designs.  Append-only: 77..81 are new ids, no existing id is renumbered.
+  // Source: Survivalcraft/Game/SubsystemFurnitureBlockBehavior.cs:ScanDesign/Save
+  // Source: Survivalcraft/Game/FurnitureBlock.cs:FurnitureBlock.Paint
+  // Source: Survivalcraft/Game/ComponentFurnitureInventory.cs:FillSlots
+  FURNITURE_DESIGN_REQUEST = 77;
+  FURNITURE_DESIGN_RESULT = 78;
+  FURNITURE_DESIGN_STATE = 79;
+  FURNITURE_DESIGN_SYNC_REQUEST = 80;
+  FURNITURE_CONTENT_STATE = 81;
+
+  // Multiplayer chat (chat.proto), append-only: 82..84 are new ids, no
+  // existing id is renumbered.
+  // Client -> host request, host -> all clients accepted line, host -> sender
+  // explicit rejection.  The host is the only broadcaster: a client never
+  // sends CHAT_MESSAGE itself (see Protocol/chat.proto).
+  // Source: Mod/ScMultiplayer/Message/ChatMessage.cs:ChatMessage
+  CHAT_SEND_REQUEST = 82;
+  CHAT_MESSAGE = 83;
+  CHAT_REJECTED = 84;
+
+  // Real-time voice chat (voice.proto): managed IMA ADPCM / CVSD, 8 kHz mono,
+  // 40 ms packets, VAD gated, configurable quality profile (high/standard/low/
+  // ultra; default low).  Every VoicePacket carries its format id.  A client
+  // sends VOICE_PACKET only while talking; the host validates the negotiated
+  // profile and relays to every other voice-capable listener that has not
+  // muted that speaker.  Append-only: 85..90 are new ids, no existing id is
+  // renumbered.
+  // Source: Mod/SuMultiplayer/Voice/*.cs, Modules/VoiceChatModule.cs
+  VOICE_PACKET = 85;
+  VOICE_STATE = 86;
+  VOICE_ROSTER = 87;
+  VOICE_MUTE_REQUEST = 88;
+  VOICE_MUTE_RESULT = 89;
+  VOICE_CONTROL = 90;
+
+  // Host-authoritative player statistics + achievements (stats.proto).
+  // The host sends a chunked full snapshot to a joining / reconnecting client and
+  // then deltas whenever its simulation changes an identity's [Stat] fields or
+  // unlocks an achievement. Clients only apply these values for display; their own
+  // engine-side stat writes are reverted (the host is the single authority).
+  // Append-only: 91 / 92 are new ids, no existing id is renumbered.
+  // Source: Survivalcraft/Game/SubsystemPlayerStats.cs:SubsystemPlayerStats
+  // Source: Survivalcraft/Game/PlayerStats.cs:PlayerStats.Save/Load
+  PLAYER_STATS_SNAPSHOT = 91;
+  PLAYER_STATS_DELTA = 92;
+
+  // Host -> client: looping ambient-bed volumes (Audio/Fire, Audio/Water,
+  // Audio/Magma) computed by the host for *this* client's avatar position
+  // (ambient.proto).  The loops are created by SubsystemAmbientSounds via
+  // SubsystemAudio.CreateSound and never enter the queued-sound relay, so they
+  // need their own small per-client state message.
+  // Append-only: 93 is new, no existing id is renumbered.
+  AMBIENT_SOUNDS_STATE = 93;
+
+  // Multi-local-character roster (this file).  Client -> host: the complete list of
+  // local characters (max 4) on that device, so the host can create one avatar per
+  // (client_id, slot) and announce them to every client.  Sent after the handshake
+  // and whenever the local set changes.  A peer that never sends it is a legacy
+  // single-character peer (slot 0 only).  Append-only: 94 is new, no existing id is
+  // renumbered.
+  // Source: Survivalcraft/Game/SubsystemPlayers.cs:SubsystemPlayers.PlayersData
+  LOCAL_PLAYER_SLOTS = 94;
+
+  // Player vitals / health / death state (vitals.proto), audit finding F14/F7.
+  // HOST-AUTHORITATIVE: the host simulates every character (its own local slots
+  // and every host-side client avatar) and sends the authoritative state to the
+  // owner client + relays it to observers (pose / HUD).  Clients never report
+  // their own state; the host rejects and counts any inbound client report / event.
+  // The host decides death / respawn.  Change driven (5 Hz on change, 1 Hz
+  // heartbeat, immediately on death / respawn / rejoin).  Append-only: ids 95/96
+  // are reused only by changing direction semantics to host -> client; no id is
+  // renumbered and no new id was added.
+  // Source: Survivalcraft/Game/ComponentHealth.cs:ComponentHealth.Health/Air/DeathTime
+  // Source: Survivalcraft/Game/ComponentVitalStats.cs:ComponentVitalStats.Update
+  // Source: Survivalcraft/Game/ComponentHumanModel.cs:ComponentHumanModel.Update:86-94
+  // Source: Mod/ScMultiplayer/Message/GamePlayerHealthMessage.cs:12-119
+  PLAYER_VITALS_REPORT = 95;
+  PLAYER_VITALS_EVENTS = 96;
+
+  // Host-authoritative melee attack (melee.proto).  Client -> host: "I attacked this
+  // target (or the air), with this eye / look / reach".  Host -> attacker + observers:
+  // the single melee verdict (hit / miss / reject reason, damage, target health after,
+  // impact position + effect flags).  The client never rolls hit/miss and never applies
+  // damage locally; it only presents an optimistic swing / impact and rolls it back
+  // explicitly when the host result is a miss / reject.
+  // Append-only: 97 / 98 are new ids, no existing id is renumbered.
+  // Source: Survivalcraft/Game/ComponentMiner.cs:293（Hit：冷却 + 命中概率 + 伤害）
+  // Source: Survivalcraft/Game/ComponentMiner.cs:472（AttackBody：护甲 / 韧性 / Injure / 击退）
+  // Source: Survivalcraft/Game/ComponentMiner.cs:376（Raycast：reach + dot>0.7 + 遮挡）
+  // Source: Survivalcraft/Game/ComponentPlayer.cs:230（原生攻击分支：BodyRaycast + 2 m + Hit）
+  MELEE_ATTACK_REQUEST = 97;
+  MELEE_ATTACK_RESULT = 98;
+
+  // Shared combat random stream (melee.proto).  Host -> client: per-(clientId, slot)
+  // session seed + current attack index.  Sent on join / reconnect and whenever the
+  // client's own stream index must be resynchronised.  The client uses the same LCG
+  // as the engine to predict hit / miss at attack time; the host remains the sole
+  // authority for damage / HP and sends the actual rolls + damage in
+  // MELEE_ATTACK_RESULT.  Append-only: 99 is a new id, no existing id is renumbered.
+  // Source: Engine/Engine/Random.cs:13-58（LCG 常量 / Int / Bool / Float 语义）
+  // Source: Survivalcraft/Game/ComponentMiner.cs:309-326（命中概率 / 伤害方差）
+  COMBAT_RNG_SYNC = 99;
+
+  // Client UI state mirroring (uistate.proto).  Client -> host: the client's
+  // interface layer (input form / HUD visibility / active screen / open dialog /
+  // open modal panel / chat input) so the host's split-screen view of that client
+  // can show the same UI.  Change driven + heartbeat; read-only on the client.
+  // Append-only: 100 was the reserved gap between 99 and 101; it is now a real
+  // message id and no existing id is renumbered.
+  // Source: Survivalcraft/Game/ComponentGui.cs:395（ControlsContainerWidget.IsVisible）
+  // Source: Survivalcraft/Game/ComponentInput.cs:30（IsControlledByTouch）
+  // Source: Survivalcraft/Game/ScreensManager.cs:46（CurrentScreen）
+  // Source: Survivalcraft/Game/DialogsManager.cs:ShowDialog（dialog parent = GuiWidget）
+  CLIENT_UI_STATE = 100;
+
+  // Client-requested respawn after a host-decided death (respawn.proto).
+  // The host never auto-respawns a dead client character: it sends the Death
+  // edge and waits.  The client shows the engine-equivalent death screen and,
+  // after the engine's 1.5 s guard, sends ONE request per death.  The host
+  // validates owner + dead state + game-mode rules and answers with
+  // PLAYER_RESPAWN_RESULT (id 102); accepting emits the existing RESPAWN event
+  // (96) + authoritative report (95).
+  // Append-only: 101 / 102 are new ids.  100 was the reserved gap and is now
+  // CLIENT_UI_STATE (see above); no existing id is renumbered.
+  // Source: Survivalcraft/Game/PlayerData.cs:275-330（死亡屏 / 1.5 s 点击门槛）
+  // Source: Survivalcraft/Game/GameWidget.cs:63-80（每个 GameWidget 自己的 DeathCamera）
+  PLAYER_RESPAWN_REQUEST = 101;
+  PLAYER_RESPAWN_RESULT = 102;
+
+  // Client-requested "tap to wake up early" while sleeping (vitals.proto).
+  // The host is the only sleep authority (it runs the real ComponentSleep for every
+  // character and sends `sleeping` in PLAYER_VITALS_REPORT).  A sleeping client shows
+  // the engine-equivalent sleep screen from the authoritative sleep fields; a tap /
+  // click / key after the engine's 10 s manual-wake gate sends ONE
+  // PLAYER_WAKE_REQUEST (id 103) per sleep episode.  The host validates owner + still
+  // sleeping + manual wake allowed + elapsed > 10 s + not forced, calls the engine
+  // `ComponentSleep.WakeUp()` on its own copy, and the updated report
+  // (sleeping = false) fades the client's blackout out.  There is no result message:
+  // acceptance is observed through that same report, rejections are counted / logged
+  // by the host (`sleepWakeReqRejectedBy`).
+  // Append-only: 103 is a new id; 101 / 102 stay the respawn request / result and no
+  // existing id is renumbered.
+  // Source: Survivalcraft/Game/ComponentSleep.cs:96-164（WakeUp / 10 s 手动唤醒门槛 / 提示文本）
+  PLAYER_WAKE_REQUEST = 103;
 }
 
 // Logical envelope metadata.  The current single-message transport puts these
@@ -263,6 +449,11 @@ message HelloAck {
   bool profile_required = 14;
   // Explicit reason for profile_required (logged by the client; empty for old hosts).
   string profile_required_reason = 15;
+  // true => the host already stores the custom skin asset for this identity's
+  // assigned_profile (world-scoped player record), so the client must NOT re-upload
+  // it; the host sends it proactively. false/old host => the client uploads its own
+  // asset right after the handshake (first join / repair).
+  bool assigned_skin_asset_present = 16;
 
   bytes ext = 100;
   google.protobuf.Any custom = 101;
@@ -301,6 +492,11 @@ message PlayerProfile {
   PlayerAppearance appearance = 4;
   bool is_host = 5;
   bool has_character = 6;
+  // Local-character slot on that device (0..3). Append-only: absent / 0 = legacy
+  // single-character peer (the old wire format is byte-identical because proto3
+  // omits the default value). (client_id, slot) is the stable player key.
+  // Source: Mod/SuMultiplayer/Players/PlayerKey.cs
+  uint32 slot = 7;
 }
 
 // Host -> clients: this identity left the room (its remote avatar must be removed).
@@ -308,6 +504,33 @@ message AvatarRemove {
   int32 client_id = 1;
   string identity = 2;
   string reason = 3;
+  // Local-character slot (0..3); absent / 0 = legacy single-character peer.
+  uint32 slot = 4;
+}
+
+// One local character announced by a client (client -> host).
+message LocalPlayerSlot {
+  // Slot 0..3. Invalid values are a protocol violation (host rejects the message).
+  uint32 slot = 1;
+  // The character's own identity + appearance (name / sex / skin / clothes).
+  PlayerProfile profile = 2;
+  // Engine PlayerIndex of the local PlayerData (diagnostics only; never an identity).
+  int32 local_player_index = 3;
+}
+
+// Client -> host: the **complete** list of local characters this device currently plays.
+// Sent once after the handshake and re-sent whenever the local set / a profile changes
+// (a split-screen player is added or removed). A peer that never sends it is treated as a
+// legacy single-character peer (slot 0 only), so old clients keep working unchanged.
+// Append-only: new message id 94, no existing id is renumbered.
+// Source: Survivalcraft/Game/SubsystemPlayers.cs:SubsystemPlayers.PlayersData (max 4 local players)
+message LocalPlayerSlots {
+  // Number of valid entries (must equal entries.size; 1..4).
+  uint32 count = 1;
+  repeated LocalPlayerSlot slots = 2;
+  // Third-party extension points: see doc/message-protocol.md.
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
 }
 
 // Host -> clients: the **complete** current identity roster (host at client_id=0 + every

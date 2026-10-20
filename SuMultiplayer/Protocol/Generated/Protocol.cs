@@ -35,7 +35,7 @@ namespace SuMultiplayer.Protocol {
             "aGFzX3dvcmxkGAcgASgIEhkKEWNsaWVudF9zZXNzaW9uX2lkGAggASgJEh0K",
             "FWxhc3RfYXBwbGllZF9zZXF1ZW5jZRgJIAEoAxItCgdwcm9maWxlGAogASgL",
             "Mhwuc3VtcC5wcm90b2NvbC5QbGF5ZXJQcm9maWxlEgsKA2V4dBhkIAEoDBIk",
-            "CgZjdXN0b20YZSABKAsyFC5nb29nbGUucHJvdG9idWYuQW55Ir4DCghIZWxs",
+            "CgZjdXN0b20YZSABKAsyFC5nb29nbGUucHJvdG9idWYuQW55IuMDCghIZWxs",
             "b0FjaxIPCgd2ZXJzaW9uGAEgASgNEhEKCWNsaWVudF9pZBgCIAEoBRIMCgRy",
             "b29tGAMgASgJEg0KBWZsYWdzGAQgASgNEhIKCm1heF9yYWRpdXMYBSABKAUS",
             "FQoNaG9zdF9pZGVudGl0eRgGIAEoCRIRCglob3N0X25hbWUYByABKAkSEgoK",
@@ -44,62 +44,89 @@ namespace SuMultiplayer.Protocol {
             "DGhvc3RfcHJvZmlsZRgMIAEoCzIcLnN1bXAucHJvdG9jb2wuUGxheWVyUHJv",
             "ZmlsZRI2ChBhc3NpZ25lZF9wcm9maWxlGA0gASgLMhwuc3VtcC5wcm90b2Nv",
             "bC5QbGF5ZXJQcm9maWxlEhgKEHByb2ZpbGVfcmVxdWlyZWQYDiABKAgSHwoX",
-            "cHJvZmlsZV9yZXF1aXJlZF9yZWFzb24YDyABKAkSCwoDZXh0GGQgASgMEiQK",
-            "BmN1c3RvbRhlIAEoCzIULmdvb2dsZS5wcm90b2J1Zi5BbnkidQoQUGxheWVy",
-            "QXBwZWFyYW5jZRILCgNzZXgYASABKA0SEQoJc2tpbl9uYW1lGAIgASgJEiwK",
-            "B2Nsb3RoZXMYAyADKAsyGy5zdW1wLnByb3RvY29sLkNsb3RoaW5nU2xvdBIT",
-            "Cgtza2luX3NoYTI1NhgEIAEoDCIeCgxDbG90aGluZ1Nsb3QSDgoGdmFsdWVz",
-            "GAEgAygFIp8BCg1QbGF5ZXJQcm9maWxlEhEKCWNsaWVudF9pZBgBIAEoBRIQ",
-            "CghpZGVudGl0eRgCIAEoCRIMCgRuYW1lGAMgASgJEjMKCmFwcGVhcmFuY2UY",
-            "BCABKAsyHy5zdW1wLnByb3RvY29sLlBsYXllckFwcGVhcmFuY2USDwoHaXNf",
-            "aG9zdBgFIAEoCBIVCg1oYXNfY2hhcmFjdGVyGAYgASgIIkMKDEF2YXRhclJl",
-            "bW92ZRIRCgljbGllbnRfaWQYASABKAUSEAoIaWRlbnRpdHkYAiABKAkSDgoG",
-            "cmVhc29uGAMgASgJIj0KDEF2YXRhclJvc3RlchItCgdhdmF0YXJzGAEgAygL",
-            "Mhwuc3VtcC5wcm90b2NvbC5QbGF5ZXJQcm9maWxlIncKDkludGVyZXN0VXBk",
-            "YXRlEhAKCGNlbnRlcl94GAEgASgFEhAKCGNlbnRlcl96GAIgASgFEg4KBnJh",
-            "ZGl1cxgDIAEoBRILCgNleHQYZCABKAwSJAoGY3VzdG9tGGUgASgLMhQuZ29v",
-            "Z2xlLnByb3RvYnVmLkFueSJICgNCeWUSDgoGcmVhc29uGAEgASgJEgsKA2V4",
-            "dBhkIAEoDBIkCgZjdXN0b20YZSABKAsyFC5nb29nbGUucHJvdG9idWYuQW55",
-            "KpEKCgtNZXNzYWdlVHlwZRIcChhNRVNTQUdFX1RZUEVfVU5TUEVDSUZJRUQQ",
-            "ABIJCgVIRUxMTxABEg0KCUhFTExPX0FDSxACEhMKD0lOVEVSRVNUX1VQREFU",
-            "RRADEhcKE0NIVU5LX0RJR0VTVF9SRVBPUlQQBBIRCg1DSFVOS19WRVJESUNU",
-            "EAUSEAoMQ0hVTktfUkVTWU5DEAYSDwoLQ0VMTF9DSEFOR0UQBxITCg9ERUJV",
-            "R19TVUJTQ1JJQkUQCBIPCgtERUJVR19TVEFURRAJEgcKA0JZRRAKEg8KC1dP",
-            "UkxEX0JFR0lOEAsSDwoLV09STERfQ0hVTksQDBINCglXT1JMRF9FTkQQDRIR",
-            "Cg1XT1JMRF9NSVNTSU5HEA4SDwoLTUFQX1JFUVVFU1QQDxINCglNQVBfU1RB",
-            "VEUQEBITCg9QTEFZRVJfUE9TSVRJT04QERIUChBQTEFZRVJfUE9TSVRJT05T",
-            "EBISEQoNQ0xJRU5UX0NIVU5LUxATEgwKCENBVENIX1VQEBQSEQoNVkVSSUZZ",
-            "X0NIVU5LUxAVEhIKDkNSRUFUVVJFX1NUQVRFEBYSGwoXQ1JFQVRVUkVfUkVT",
-            "WU5DX1JFUVVFU1QQFxIVChFDRUxMX0VESVRfUkVRVUVTVBAYEhQKEENFTExf",
-            "RURJVF9SRVNVTFQQGRIOCgpXT1JMRF9JTkZPEBoSEgoOUExBWUVSX1BST0ZJ",
-            "TEUQGxIRCg1BVkFUQVJfUkVNT1ZFEBwSEQoNQVZBVEFSX1JPU1RFUhAdEhEK",
-            "DVBMQVlFUl9BQ1RJT04QHhIUChBQTEFZRVJfRVFVSVBNRU5UEB8SFAoQUExB",
-            "WUVSX0lOVkVOVE9SWRAgEhcKE1BMQVlFUl9NT1RJT05fU1RBVEUQIRITCg9F",
-            "WFBMT1NJT05fRVZFTlQQIhIVChFFWFBMT1NJT05fUkVRVUVTVBAjEhQKEEVY",
-            "UExPU0lPTl9SRVNVTFQQJBISCg5QTEFZRVJfREFNQUdFRBAlEhAKDEVOVElU",
-            "WV9TVEFURRAmEhMKD0VOVElUWV9TTkFQU0hPVBAnEhwKGFBJQ0tBQkxFX0FD",
-            "UVVJUkVfUkVRVUVTVBAoEhsKF1BJQ0tBQkxFX0FDUVVJUkVfUkVTVUxUECkS",
-            "GQoVRU5USVRZX1JFU1lOQ19SRVFVRVNUECoSGQoVUElDS0FCTEVfRFJPUF9S",
-            "RVFVRVNUEDISGAoUUElDS0FCTEVfRFJPUF9SRVNVTFQQMxIbChdQUk9KRUNU",
-            "SUxFX0ZJUkVfUkVRVUVTVBA0EhoKFlBST0pFQ1RJTEVfRklSRV9SRVNVTFQQ",
-            "NRIVChFXRUFQT05fRklSRV9FVkVOVBA2EhQKEEJVUk5fQVdBWV9FRkZFQ1QQ",
-            "KxIVChFCTE9DS19VU0VfUkVRVUVTVBA8EhQKEEJMT0NLX1VTRV9SRVNVTFQQ",
-            "PRITCg9DT05UQUlORVJfU1RBVEUQPhIaChZDT05UQUlORVJfRURJVF9SRVFV",
-            "RVNUED8SGQoVQ09OVEFJTkVSX0VESVRfUkVTVUxUEEASFQoRUElTVE9OX01P",
-            "VkVfRVZFTlQQQRITCg9QSVNUT05fTU9WRV9FTkQQQhIdChlDQU1QRklSRV9F",
-            "WFRJTkdVSVNIX0VWRU5UEEMSFwoTUkVNT1RFX0FDVElPTl9TT1VORBBEEhYK",
-            "ElBJQ0tVUF9TT1VORF9FVkVOVBBFEhEKDUZVUk5BQ0VfU1RBVEUQRkIbSAGq",
-            "AhZTdU11bHRpcGxheWVyLlByb3RvY29sYgZwcm90bzM="));
+            "cHJvZmlsZV9yZXF1aXJlZF9yZWFzb24YDyABKAkSIwobYXNzaWduZWRfc2tp",
+            "bl9hc3NldF9wcmVzZW50GBAgASgIEgsKA2V4dBhkIAEoDBIkCgZjdXN0b20Y",
+            "ZSABKAsyFC5nb29nbGUucHJvdG9idWYuQW55InUKEFBsYXllckFwcGVhcmFu",
+            "Y2USCwoDc2V4GAEgASgNEhEKCXNraW5fbmFtZRgCIAEoCRIsCgdjbG90aGVz",
+            "GAMgAygLMhsuc3VtcC5wcm90b2NvbC5DbG90aGluZ1Nsb3QSEwoLc2tpbl9z",
+            "aGEyNTYYBCABKAwiHgoMQ2xvdGhpbmdTbG90Eg4KBnZhbHVlcxgBIAMoBSKt",
+            "AQoNUGxheWVyUHJvZmlsZRIRCgljbGllbnRfaWQYASABKAUSEAoIaWRlbnRp",
+            "dHkYAiABKAkSDAoEbmFtZRgDIAEoCRIzCgphcHBlYXJhbmNlGAQgASgLMh8u",
+            "c3VtcC5wcm90b2NvbC5QbGF5ZXJBcHBlYXJhbmNlEg8KB2lzX2hvc3QYBSAB",
+            "KAgSFQoNaGFzX2NoYXJhY3RlchgGIAEoCBIMCgRzbG90GAcgASgNIlEKDEF2",
+            "YXRhclJlbW92ZRIRCgljbGllbnRfaWQYASABKAUSEAoIaWRlbnRpdHkYAiAB",
+            "KAkSDgoGcmVhc29uGAMgASgJEgwKBHNsb3QYBCABKA0iagoPTG9jYWxQbGF5",
+            "ZXJTbG90EgwKBHNsb3QYASABKA0SLQoHcHJvZmlsZRgCIAEoCzIcLnN1bXAu",
+            "cHJvdG9jb2wuUGxheWVyUHJvZmlsZRIaChJsb2NhbF9wbGF5ZXJfaW5kZXgY",
+            "AyABKAUigwEKEExvY2FsUGxheWVyU2xvdHMSDQoFY291bnQYASABKA0SLQoF",
+            "c2xvdHMYAiADKAsyHi5zdW1wLnByb3RvY29sLkxvY2FsUGxheWVyU2xvdBIL",
+            "CgNleHQYZCABKAwSJAoGY3VzdG9tGGUgASgLMhQuZ29vZ2xlLnByb3RvYnVm",
+            "LkFueSI9CgxBdmF0YXJSb3N0ZXISLQoHYXZhdGFycxgBIAMoCzIcLnN1bXAu",
+            "cHJvdG9jb2wuUGxheWVyUHJvZmlsZSJ3Cg5JbnRlcmVzdFVwZGF0ZRIQCghj",
+            "ZW50ZXJfeBgBIAEoBRIQCghjZW50ZXJfehgCIAEoBRIOCgZyYWRpdXMYAyAB",
+            "KAUSCwoDZXh0GGQgASgMEiQKBmN1c3RvbRhlIAEoCzIULmdvb2dsZS5wcm90",
+            "b2J1Zi5BbnkiSAoDQnllEg4KBnJlYXNvbhgBIAEoCRILCgNleHQYZCABKAwS",
+            "JAoGY3VzdG9tGGUgASgLMhQuZ29vZ2xlLnByb3RvYnVmLkFueSqyEAoLTWVz",
+            "c2FnZVR5cGUSHAoYTUVTU0FHRV9UWVBFX1VOU1BFQ0lGSUVEEAASCQoFSEVM",
+            "TE8QARINCglIRUxMT19BQ0sQAhITCg9JTlRFUkVTVF9VUERBVEUQAxIXChND",
+            "SFVOS19ESUdFU1RfUkVQT1JUEAQSEQoNQ0hVTktfVkVSRElDVBAFEhAKDENI",
+            "VU5LX1JFU1lOQxAGEg8KC0NFTExfQ0hBTkdFEAcSEwoPREVCVUdfU1VCU0NS",
+            "SUJFEAgSDwoLREVCVUdfU1RBVEUQCRIHCgNCWUUQChIPCgtXT1JMRF9CRUdJ",
+            "ThALEg8KC1dPUkxEX0NIVU5LEAwSDQoJV09STERfRU5EEA0SEQoNV09STERf",
+            "TUlTU0lORxAOEg8KC01BUF9SRVFVRVNUEA8SDQoJTUFQX1NUQVRFEBASEwoP",
+            "UExBWUVSX1BPU0lUSU9OEBESFAoQUExBWUVSX1BPU0lUSU9OUxASEhEKDUNM",
+            "SUVOVF9DSFVOS1MQExIMCghDQVRDSF9VUBAUEhEKDVZFUklGWV9DSFVOS1MQ",
+            "FRISCg5DUkVBVFVSRV9TVEFURRAWEhsKF0NSRUFUVVJFX1JFU1lOQ19SRVFV",
+            "RVNUEBcSFQoRQ0VMTF9FRElUX1JFUVVFU1QQGBIUChBDRUxMX0VESVRfUkVT",
+            "VUxUEBkSDgoKV09STERfSU5GTxAaEhIKDlBMQVlFUl9QUk9GSUxFEBsSEQoN",
+            "QVZBVEFSX1JFTU9WRRAcEhEKDUFWQVRBUl9ST1NURVIQHRIRCg1QTEFZRVJf",
+            "QUNUSU9OEB4SFAoQUExBWUVSX0VRVUlQTUVOVBAfEhQKEFBMQVlFUl9JTlZF",
+            "TlRPUlkQIBIXChNQTEFZRVJfTU9USU9OX1NUQVRFECESEwoPRVhQTE9TSU9O",
+            "X0VWRU5UECISFQoRRVhQTE9TSU9OX1JFUVVFU1QQIxIUChBFWFBMT1NJT05f",
+            "UkVTVUxUECQSEgoOUExBWUVSX0RBTUFHRUQQJRIQCgxFTlRJVFlfU1RBVEUQ",
+            "JhITCg9FTlRJVFlfU05BUFNIT1QQJxIcChhQSUNLQUJMRV9BQ1FVSVJFX1JF",
+            "UVVFU1QQKBIbChdQSUNLQUJMRV9BQ1FVSVJFX1JFU1VMVBApEhkKFUVOVElU",
+            "WV9SRVNZTkNfUkVRVUVTVBAqEhkKFVBJQ0tBQkxFX0RST1BfUkVRVUVTVBAy",
+            "EhgKFFBJQ0tBQkxFX0RST1BfUkVTVUxUEDMSGwoXUFJPSkVDVElMRV9GSVJF",
+            "X1JFUVVFU1QQNBIaChZQUk9KRUNUSUxFX0ZJUkVfUkVTVUxUEDUSFQoRV0VB",
+            "UE9OX0ZJUkVfRVZFTlQQNhIUChBCVVJOX0FXQVlfRUZGRUNUECsSFQoRQkxP",
+            "Q0tfVVNFX1JFUVVFU1QQPBIUChBCTE9DS19VU0VfUkVTVUxUED0SEwoPQ09O",
+            "VEFJTkVSX1NUQVRFED4SGgoWQ09OVEFJTkVSX0VESVRfUkVRVUVTVBA/EhkK",
+            "FUNPTlRBSU5FUl9FRElUX1JFU1VMVBBAEhUKEVBJU1RPTl9NT1ZFX0VWRU5U",
+            "EEESEwoPUElTVE9OX01PVkVfRU5EEEISHQoZQ0FNUEZJUkVfRVhUSU5HVUlT",
+            "SF9FVkVOVBBDEhcKE1JFTU9URV9BQ1RJT05fU09VTkQQRBIWChJQSUNLVVBf",
+            "U09VTkRfRVZFTlQQRRIRCg1GVVJOQUNFX1NUQVRFEEYSFgoSV0FURVJfU1BM",
+            "QVNIX0VWRU5UEEcSGQoVRURJVEFCTEVfRURJVF9SRVFVRVNUEEgSGAoURURJ",
+            "VEFCTEVfRURJVF9SRVNVTFQQSRISCg5FRElUQUJMRV9TVEFURRBKEhUKEVBM",
+            "QVlFUl9TS0lOX0FTU0VUEEsSFwoTUExBWUVSX1NLSU5fQ0hBTkdFRBBMEhwK",
+            "GEZVUk5JVFVSRV9ERVNJR05fUkVRVUVTVBBNEhsKF0ZVUk5JVFVSRV9ERVNJ",
+            "R05fUkVTVUxUEE4SGgoWRlVSTklUVVJFX0RFU0lHTl9TVEFURRBPEiEKHUZV",
+            "Uk5JVFVSRV9ERVNJR05fU1lOQ19SRVFVRVNUEFASGwoXRlVSTklUVVJFX0NP",
+            "TlRFTlRfU1RBVEUQURIVChFDSEFUX1NFTkRfUkVRVUVTVBBSEhAKDENIQVRf",
+            "TUVTU0FHRRBTEhEKDUNIQVRfUkVKRUNURUQQVBIQCgxWT0lDRV9QQUNLRVQQ",
+            "VRIPCgtWT0lDRV9TVEFURRBWEhAKDFZPSUNFX1JPU1RFUhBXEhYKElZPSUNF",
+            "X01VVEVfUkVRVUVTVBBYEhUKEVZPSUNFX01VVEVfUkVTVUxUEFkSEQoNVk9J",
+            "Q0VfQ09OVFJPTBBaEhkKFVBMQVlFUl9TVEFUU19TTkFQU0hPVBBbEhYKElBM",
+            "QVlFUl9TVEFUU19ERUxUQRBcEhgKFEFNQklFTlRfU09VTkRTX1NUQVRFEF0S",
+            "FgoSTE9DQUxfUExBWUVSX1NMT1RTEF4SGAoUUExBWUVSX1ZJVEFMU19SRVBP",
+            "UlQQXxIYChRQTEFZRVJfVklUQUxTX0VWRU5UUxBgEhgKFE1FTEVFX0FUVEFD",
+            "S19SRVFVRVNUEGESFwoTTUVMRUVfQVRUQUNLX1JFU1VMVBBiEhMKD0NPTUJB",
+            "VF9STkdfU1lOQxBjEhMKD0NMSUVOVF9VSV9TVEFURRBkEhoKFlBMQVlFUl9S",
+            "RVNQQVdOX1JFUVVFU1QQZRIZChVQTEFZRVJfUkVTUEFXTl9SRVNVTFQQZhIX",
+            "ChNQTEFZRVJfV0FLRV9SRVFVRVNUEGdCG0gBqgIWU3VNdWx0aXBsYXllci5Q",
+            "cm90b2NvbGIGcHJvdG8z"));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { global::Google.Protobuf.WellKnownTypes.AnyReflection.Descriptor, },
           new pbr::GeneratedClrTypeInfo(new[] {typeof(global::SuMultiplayer.Protocol.MessageType), }, null, new pbr::GeneratedClrTypeInfo[] {
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Envelope), global::SuMultiplayer.Protocol.Envelope.Parser, new[]{ "ProtocolVersion", "Sequence", "Type", "Flags", "Ext", "Custom" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Hello), global::SuMultiplayer.Protocol.Hello.Parser, new[]{ "Kind", "Name", "ProtocolVersion", "ProtocolRevision", "Radius", "Identity", "AlreadyHasWorld", "ClientSessionId", "LastAppliedSequence", "Profile", "Ext", "Custom" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.HelloAck), global::SuMultiplayer.Protocol.HelloAck.Parser, new[]{ "Version", "ClientId", "Room", "Flags", "MaxRadius", "HostIdentity", "HostName", "SessionId", "RejoinAccepted", "HeadSequence", "RejoinReason", "HostProfile", "AssignedProfile", "ProfileRequired", "ProfileRequiredReason", "Ext", "Custom" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.HelloAck), global::SuMultiplayer.Protocol.HelloAck.Parser, new[]{ "Version", "ClientId", "Room", "Flags", "MaxRadius", "HostIdentity", "HostName", "SessionId", "RejoinAccepted", "HeadSequence", "RejoinReason", "HostProfile", "AssignedProfile", "ProfileRequired", "ProfileRequiredReason", "AssignedSkinAssetPresent", "Ext", "Custom" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.PlayerAppearance), global::SuMultiplayer.Protocol.PlayerAppearance.Parser, new[]{ "Sex", "SkinName", "Clothes", "SkinSha256" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.ClothingSlot), global::SuMultiplayer.Protocol.ClothingSlot.Parser, new[]{ "Values" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.PlayerProfile), global::SuMultiplayer.Protocol.PlayerProfile.Parser, new[]{ "ClientId", "Identity", "Name", "Appearance", "IsHost", "HasCharacter" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.AvatarRemove), global::SuMultiplayer.Protocol.AvatarRemove.Parser, new[]{ "ClientId", "Identity", "Reason" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.PlayerProfile), global::SuMultiplayer.Protocol.PlayerProfile.Parser, new[]{ "ClientId", "Identity", "Name", "Appearance", "IsHost", "HasCharacter", "Slot" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.AvatarRemove), global::SuMultiplayer.Protocol.AvatarRemove.Parser, new[]{ "ClientId", "Identity", "Reason", "Slot" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.LocalPlayerSlot), global::SuMultiplayer.Protocol.LocalPlayerSlot.Parser, new[]{ "Slot", "Profile", "LocalPlayerIndex" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.LocalPlayerSlots), global::SuMultiplayer.Protocol.LocalPlayerSlots.Parser, new[]{ "Count", "Slots", "Ext", "Custom" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.AvatarRoster), global::SuMultiplayer.Protocol.AvatarRoster.Parser, new[]{ "Avatars" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.InterestUpdate), global::SuMultiplayer.Protocol.InterestUpdate.Parser, new[]{ "CenterX", "CenterZ", "Radius", "Ext", "Custom" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Bye), global::SuMultiplayer.Protocol.Bye.Parser, new[]{ "Reason", "Ext", "Custom" }, null, null, null, null)
@@ -322,6 +349,209 @@ namespace SuMultiplayer.Protocol {
     /// Source: Survivalcraft/Game/FurnaceWidget.cs:Update
     /// </summary>
     [pbr::OriginalName("FURNACE_STATE")] FurnaceState = 70,
+    /// <summary>
+    /// Water splash presentation (effects.proto): presentation-only.
+    /// Host -> every client within 48 m of the splash position.  The engine creates
+    /// WaterSplashParticleSystem and plays Audio/Splashes locally on the host when a
+    /// pickable / projectile enters water; none of that is part of EntityState.
+    /// Clients recreate exactly the same particle system (and, when sound=true, the
+    /// same Audio/Splashes call) and never write cells / create entities / deal damage.
+    /// Append-only: 71 is a new id, no existing id is renumbered.
+    /// Source: Survivalcraft/Game/SubsystemPickables.cs:325-330
+    /// Source: Survivalcraft/Game/SubsystemProjectiles.cs:383-390
+    /// Source: Survivalcraft/Game/WaterSplashParticleSystem.cs:WaterSplashParticleSystem
+    /// </summary>
+    [pbr::OriginalName("WATER_SPLASH_EVENT")] WaterSplashEvent = 71,
+    /// <summary>
+    /// Host-authoritative editable block content (editable.proto): the truth-table
+    /// circuit / memory-bank dialog commit.  The client sends the edited content +
+    /// the cell + the content its dialog started from; the host validates, applies
+    /// to the authoritative SubsystemEditableItemBehavior and broadcasts the
+    /// authoritative content back.  Presentation-only on the client.
+    /// Append-only: 72 / 73 / 74 are new ids, no existing id is renumbered.
+    /// Source: Survivalcraft/Game/SubsystemEditableItemBehavior.cs:23-39
+    /// Source: Survivalcraft/Game/SubsystemTruthTableCircuitBlockBehavior.cs:38-53
+    /// Source: Survivalcraft/Game/SubsystemMemoryBankBlockBehavior.cs:38-53
+    /// Source: Survivalcraft/Game/EditTruthTableDialog.cs / EditMemoryBankDialog.cs
+    /// </summary>
+    [pbr::OriginalName("EDITABLE_EDIT_REQUEST")] EditableEditRequest = 72,
+    [pbr::OriginalName("EDITABLE_EDIT_RESULT")] EditableEditResult = 73,
+    [pbr::OriginalName("EDITABLE_STATE")] EditableState = 74,
+    /// <summary>
+    /// Custom player skin asset transfer (skin.proto): owner client -> host upload and
+    /// host -> other clients broadcast of a bounded, optionally compressed `.scskin`
+    /// asset. The host stores it world-scoped in the player record; clients only keep
+    /// a replica-scoped cache (never the global skin library / data:/CharacterSkins).
+    /// Append-only: 75/76 are new ids, no existing id is renumbered.
+    /// </summary>
+    [pbr::OriginalName("PLAYER_SKIN_ASSET")] PlayerSkinAsset = 75,
+    /// <summary>
+    /// Skin change notification / verdict (skin.proto): carries the new skin name and
+    /// hash plus the explicit reject / missing-asset reason.
+    /// </summary>
+    [pbr::OriginalName("PLAYER_SKIN_CHANGED")] PlayerSkinChanged = 76,
+    /// <summary>
+    /// Host-authoritative furniture design table + furniture inventory contents
+    /// (furniture.proto).  Client create/edit/paint requests are validated and
+    /// installed by the host into the world's SubsystemFurnitureBlockBehavior, then
+    /// broadcast as authoritative records.  Clients install them into a
+    /// replica-only, session-scoped store; their world save never contains those
+    /// designs.  Append-only: 77..81 are new ids, no existing id is renumbered.
+    /// Source: Survivalcraft/Game/SubsystemFurnitureBlockBehavior.cs:ScanDesign/Save
+    /// Source: Survivalcraft/Game/FurnitureBlock.cs:FurnitureBlock.Paint
+    /// Source: Survivalcraft/Game/ComponentFurnitureInventory.cs:FillSlots
+    /// </summary>
+    [pbr::OriginalName("FURNITURE_DESIGN_REQUEST")] FurnitureDesignRequest = 77,
+    [pbr::OriginalName("FURNITURE_DESIGN_RESULT")] FurnitureDesignResult = 78,
+    [pbr::OriginalName("FURNITURE_DESIGN_STATE")] FurnitureDesignState = 79,
+    [pbr::OriginalName("FURNITURE_DESIGN_SYNC_REQUEST")] FurnitureDesignSyncRequest = 80,
+    [pbr::OriginalName("FURNITURE_CONTENT_STATE")] FurnitureContentState = 81,
+    /// <summary>
+    /// Multiplayer chat (chat.proto), append-only: 82..84 are new ids, no
+    /// existing id is renumbered.
+    /// Client -> host request, host -> all clients accepted line, host -> sender
+    /// explicit rejection.  The host is the only broadcaster: a client never
+    /// sends CHAT_MESSAGE itself (see Protocol/chat.proto).
+    /// Source: Mod/ScMultiplayer/Message/ChatMessage.cs:ChatMessage
+    /// </summary>
+    [pbr::OriginalName("CHAT_SEND_REQUEST")] ChatSendRequest = 82,
+    [pbr::OriginalName("CHAT_MESSAGE")] ChatMessage = 83,
+    [pbr::OriginalName("CHAT_REJECTED")] ChatRejected = 84,
+    /// <summary>
+    /// Real-time voice chat (voice.proto): managed IMA ADPCM / CVSD, 8 kHz mono,
+    /// 40 ms packets, VAD gated, configurable quality profile (high/standard/low/
+    /// ultra; default low).  Every VoicePacket carries its format id.  A client
+    /// sends VOICE_PACKET only while talking; the host validates the negotiated
+    /// profile and relays to every other voice-capable listener that has not
+    /// muted that speaker.  Append-only: 85..90 are new ids, no existing id is
+    /// renumbered.
+    /// Source: Mod/SuMultiplayer/Voice/*.cs, Modules/VoiceChatModule.cs
+    /// </summary>
+    [pbr::OriginalName("VOICE_PACKET")] VoicePacket = 85,
+    [pbr::OriginalName("VOICE_STATE")] VoiceState = 86,
+    [pbr::OriginalName("VOICE_ROSTER")] VoiceRoster = 87,
+    [pbr::OriginalName("VOICE_MUTE_REQUEST")] VoiceMuteRequest = 88,
+    [pbr::OriginalName("VOICE_MUTE_RESULT")] VoiceMuteResult = 89,
+    [pbr::OriginalName("VOICE_CONTROL")] VoiceControl = 90,
+    /// <summary>
+    /// Host-authoritative player statistics + achievements (stats.proto).
+    /// The host sends a chunked full snapshot to a joining / reconnecting client and
+    /// then deltas whenever its simulation changes an identity's [Stat] fields or
+    /// unlocks an achievement. Clients only apply these values for display; their own
+    /// engine-side stat writes are reverted (the host is the single authority).
+    /// Append-only: 91 / 92 are new ids, no existing id is renumbered.
+    /// Source: Survivalcraft/Game/SubsystemPlayerStats.cs:SubsystemPlayerStats
+    /// Source: Survivalcraft/Game/PlayerStats.cs:PlayerStats.Save/Load
+    /// </summary>
+    [pbr::OriginalName("PLAYER_STATS_SNAPSHOT")] PlayerStatsSnapshot = 91,
+    [pbr::OriginalName("PLAYER_STATS_DELTA")] PlayerStatsDelta = 92,
+    /// <summary>
+    /// Host -> client: looping ambient-bed volumes (Audio/Fire, Audio/Water,
+    /// Audio/Magma) computed by the host for *this* client's avatar position
+    /// (ambient.proto).  The loops are created by SubsystemAmbientSounds via
+    /// SubsystemAudio.CreateSound and never enter the queued-sound relay, so they
+    /// need their own small per-client state message.
+    /// Append-only: 93 is new, no existing id is renumbered.
+    /// </summary>
+    [pbr::OriginalName("AMBIENT_SOUNDS_STATE")] AmbientSoundsState = 93,
+    /// <summary>
+    /// Multi-local-character roster (this file).  Client -> host: the complete list of
+    /// local characters (max 4) on that device, so the host can create one avatar per
+    /// (client_id, slot) and announce them to every client.  Sent after the handshake
+    /// and whenever the local set changes.  A peer that never sends it is a legacy
+    /// single-character peer (slot 0 only).  Append-only: 94 is new, no existing id is
+    /// renumbered.
+    /// Source: Survivalcraft/Game/SubsystemPlayers.cs:SubsystemPlayers.PlayersData
+    /// </summary>
+    [pbr::OriginalName("LOCAL_PLAYER_SLOTS")] LocalPlayerSlots = 94,
+    /// <summary>
+    /// Player vitals / health / death state (vitals.proto), audit finding F14/F7.
+    /// HOST-AUTHORITATIVE: the host simulates every character (its own local slots
+    /// and every host-side client avatar) and sends the authoritative state to the
+    /// owner client + relays it to observers (pose / HUD).  Clients never report
+    /// their own state; the host rejects and counts any inbound client report / event.
+    /// The host decides death / respawn.  Change driven (5 Hz on change, 1 Hz
+    /// heartbeat, immediately on death / respawn / rejoin).  Append-only: ids 95/96
+    /// are reused only by changing direction semantics to host -> client; no id is
+    /// renumbered and no new id was added.
+    /// Source: Survivalcraft/Game/ComponentHealth.cs:ComponentHealth.Health/Air/DeathTime
+    /// Source: Survivalcraft/Game/ComponentVitalStats.cs:ComponentVitalStats.Update
+    /// Source: Survivalcraft/Game/ComponentHumanModel.cs:ComponentHumanModel.Update:86-94
+    /// Source: Mod/ScMultiplayer/Message/GamePlayerHealthMessage.cs:12-119
+    /// </summary>
+    [pbr::OriginalName("PLAYER_VITALS_REPORT")] PlayerVitalsReport = 95,
+    [pbr::OriginalName("PLAYER_VITALS_EVENTS")] PlayerVitalsEvents = 96,
+    /// <summary>
+    /// Host-authoritative melee attack (melee.proto).  Client -> host: "I attacked this
+    /// target (or the air), with this eye / look / reach".  Host -> attacker + observers:
+    /// the single melee verdict (hit / miss / reject reason, damage, target health after,
+    /// impact position + effect flags).  The client never rolls hit/miss and never applies
+    /// damage locally; it only presents an optimistic swing / impact and rolls it back
+    /// explicitly when the host result is a miss / reject.
+    /// Append-only: 97 / 98 are new ids, no existing id is renumbered.
+    /// Source: Survivalcraft/Game/ComponentMiner.cs:293（Hit：冷却 + 命中概率 + 伤害）
+    /// Source: Survivalcraft/Game/ComponentMiner.cs:472（AttackBody：护甲 / 韧性 / Injure / 击退）
+    /// Source: Survivalcraft/Game/ComponentMiner.cs:376（Raycast：reach + dot>0.7 + 遮挡）
+    /// Source: Survivalcraft/Game/ComponentPlayer.cs:230（原生攻击分支：BodyRaycast + 2 m + Hit）
+    /// </summary>
+    [pbr::OriginalName("MELEE_ATTACK_REQUEST")] MeleeAttackRequest = 97,
+    [pbr::OriginalName("MELEE_ATTACK_RESULT")] MeleeAttackResult = 98,
+    /// <summary>
+    /// Shared combat random stream (melee.proto).  Host -> client: per-(clientId, slot)
+    /// session seed + current attack index.  Sent on join / reconnect and whenever the
+    /// client's own stream index must be resynchronised.  The client uses the same LCG
+    /// as the engine to predict hit / miss at attack time; the host remains the sole
+    /// authority for damage / HP and sends the actual rolls + damage in
+    /// MELEE_ATTACK_RESULT.  Append-only: 99 is a new id, no existing id is renumbered.
+    /// Source: Engine/Engine/Random.cs:13-58（LCG 常量 / Int / Bool / Float 语义）
+    /// Source: Survivalcraft/Game/ComponentMiner.cs:309-326（命中概率 / 伤害方差）
+    /// </summary>
+    [pbr::OriginalName("COMBAT_RNG_SYNC")] CombatRngSync = 99,
+    /// <summary>
+    /// Client UI state mirroring (uistate.proto).  Client -> host: the client's
+    /// interface layer (input form / HUD visibility / active screen / open dialog /
+    /// open modal panel / chat input) so the host's split-screen view of that client
+    /// can show the same UI.  Change driven + heartbeat; read-only on the client.
+    /// Append-only: 100 was the reserved gap between 99 and 101; it is now a real
+    /// message id and no existing id is renumbered.
+    /// Source: Survivalcraft/Game/ComponentGui.cs:395（ControlsContainerWidget.IsVisible）
+    /// Source: Survivalcraft/Game/ComponentInput.cs:30（IsControlledByTouch）
+    /// Source: Survivalcraft/Game/ScreensManager.cs:46（CurrentScreen）
+    /// Source: Survivalcraft/Game/DialogsManager.cs:ShowDialog（dialog parent = GuiWidget）
+    /// </summary>
+    [pbr::OriginalName("CLIENT_UI_STATE")] ClientUiState = 100,
+    /// <summary>
+    /// Client-requested respawn after a host-decided death (respawn.proto).
+    /// The host never auto-respawns a dead client character: it sends the Death
+    /// edge and waits.  The client shows the engine-equivalent death screen and,
+    /// after the engine's 1.5 s guard, sends ONE request per death.  The host
+    /// validates owner + dead state + game-mode rules and answers with
+    /// PLAYER_RESPAWN_RESULT (id 102); accepting emits the existing RESPAWN event
+    /// (96) + authoritative report (95).
+    /// Append-only: 101 / 102 are new ids.  100 was the reserved gap and is now
+    /// CLIENT_UI_STATE (see above); no existing id is renumbered.
+    /// Source: Survivalcraft/Game/PlayerData.cs:275-330（死亡屏 / 1.5 s 点击门槛）
+    /// Source: Survivalcraft/Game/GameWidget.cs:63-80（每个 GameWidget 自己的 DeathCamera）
+    /// </summary>
+    [pbr::OriginalName("PLAYER_RESPAWN_REQUEST")] PlayerRespawnRequest = 101,
+    [pbr::OriginalName("PLAYER_RESPAWN_RESULT")] PlayerRespawnResult = 102,
+    /// <summary>
+    /// Client-requested "tap to wake up early" while sleeping (vitals.proto).
+    /// The host is the only sleep authority (it runs the real ComponentSleep for every
+    /// character and sends `sleeping` in PLAYER_VITALS_REPORT).  A sleeping client shows
+    /// the engine-equivalent sleep screen from the authoritative sleep fields; a tap /
+    /// click / key after the engine's 10 s manual-wake gate sends ONE
+    /// PLAYER_WAKE_REQUEST (id 103) per sleep episode.  The host validates owner + still
+    /// sleeping + manual wake allowed + elapsed > 10 s + not forced, calls the engine
+    /// `ComponentSleep.WakeUp()` on its own copy, and the updated report
+    /// (sleeping = false) fades the client's blackout out.  There is no result message:
+    /// acceptance is observed through that same report, rejections are counted / logged
+    /// by the host (`sleepWakeReqRejectedBy`).
+    /// Append-only: 103 is a new id; 101 / 102 stay the respawn request / result and no
+    /// existing id is renumbered.
+    /// Source: Survivalcraft/Game/ComponentSleep.cs:96-164（WakeUp / 10 s 手动唤醒门槛 / 提示文本）
+    /// </summary>
+    [pbr::OriginalName("PLAYER_WAKE_REQUEST")] PlayerWakeRequest = 103,
   }
 
   #endregion
@@ -1426,6 +1656,7 @@ namespace SuMultiplayer.Protocol {
       assignedProfile_ = other.assignedProfile_ != null ? other.assignedProfile_.Clone() : null;
       profileRequired_ = other.profileRequired_;
       profileRequiredReason_ = other.profileRequiredReason_;
+      assignedSkinAssetPresent_ = other.assignedSkinAssetPresent_;
       ext_ = other.ext_;
       custom_ = other.custom_ != null ? other.custom_.Clone() : null;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
@@ -1635,6 +1866,24 @@ namespace SuMultiplayer.Protocol {
       }
     }
 
+    /// <summary>Field number for the "assigned_skin_asset_present" field.</summary>
+    public const int AssignedSkinAssetPresentFieldNumber = 16;
+    private bool assignedSkinAssetPresent_;
+    /// <summary>
+    /// true => the host already stores the custom skin asset for this identity's
+    /// assigned_profile (world-scoped player record), so the client must NOT re-upload
+    /// it; the host sends it proactively. false/old host => the client uploads its own
+    /// asset right after the handshake (first join / repair).
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool AssignedSkinAssetPresent {
+      get { return assignedSkinAssetPresent_; }
+      set {
+        assignedSkinAssetPresent_ = value;
+      }
+    }
+
     /// <summary>Field number for the "ext" field.</summary>
     public const int ExtFieldNumber = 100;
     private pb::ByteString ext_ = pb::ByteString.Empty;
@@ -1689,6 +1938,7 @@ namespace SuMultiplayer.Protocol {
       if (!object.Equals(AssignedProfile, other.AssignedProfile)) return false;
       if (ProfileRequired != other.ProfileRequired) return false;
       if (ProfileRequiredReason != other.ProfileRequiredReason) return false;
+      if (AssignedSkinAssetPresent != other.AssignedSkinAssetPresent) return false;
       if (Ext != other.Ext) return false;
       if (!object.Equals(Custom, other.Custom)) return false;
       return Equals(_unknownFields, other._unknownFields);
@@ -1713,6 +1963,7 @@ namespace SuMultiplayer.Protocol {
       if (assignedProfile_ != null) hash ^= AssignedProfile.GetHashCode();
       if (ProfileRequired != false) hash ^= ProfileRequired.GetHashCode();
       if (ProfileRequiredReason.Length != 0) hash ^= ProfileRequiredReason.GetHashCode();
+      if (AssignedSkinAssetPresent != false) hash ^= AssignedSkinAssetPresent.GetHashCode();
       if (Ext.Length != 0) hash ^= Ext.GetHashCode();
       if (custom_ != null) hash ^= Custom.GetHashCode();
       if (_unknownFields != null) {
@@ -1793,6 +2044,10 @@ namespace SuMultiplayer.Protocol {
         output.WriteRawTag(122);
         output.WriteString(ProfileRequiredReason);
       }
+      if (AssignedSkinAssetPresent != false) {
+        output.WriteRawTag(128, 1);
+        output.WriteBool(AssignedSkinAssetPresent);
+      }
       if (Ext.Length != 0) {
         output.WriteRawTag(162, 6);
         output.WriteBytes(Ext);
@@ -1871,6 +2126,10 @@ namespace SuMultiplayer.Protocol {
         output.WriteRawTag(122);
         output.WriteString(ProfileRequiredReason);
       }
+      if (AssignedSkinAssetPresent != false) {
+        output.WriteRawTag(128, 1);
+        output.WriteBool(AssignedSkinAssetPresent);
+      }
       if (Ext.Length != 0) {
         output.WriteRawTag(162, 6);
         output.WriteBytes(Ext);
@@ -1933,6 +2192,9 @@ namespace SuMultiplayer.Protocol {
       }
       if (ProfileRequiredReason.Length != 0) {
         size += 1 + pb::CodedOutputStream.ComputeStringSize(ProfileRequiredReason);
+      }
+      if (AssignedSkinAssetPresent != false) {
+        size += 2 + 1;
       }
       if (Ext.Length != 0) {
         size += 2 + pb::CodedOutputStream.ComputeBytesSize(Ext);
@@ -2002,6 +2264,9 @@ namespace SuMultiplayer.Protocol {
       }
       if (other.ProfileRequiredReason.Length != 0) {
         ProfileRequiredReason = other.ProfileRequiredReason;
+      }
+      if (other.AssignedSkinAssetPresent != false) {
+        AssignedSkinAssetPresent = other.AssignedSkinAssetPresent;
       }
       if (other.Ext.Length != 0) {
         Ext = other.Ext;
@@ -2095,6 +2360,10 @@ namespace SuMultiplayer.Protocol {
           }
           case 122: {
             ProfileRequiredReason = input.ReadString();
+            break;
+          }
+          case 128: {
+            AssignedSkinAssetPresent = input.ReadBool();
             break;
           }
           case 802: {
@@ -2191,6 +2460,10 @@ namespace SuMultiplayer.Protocol {
           }
           case 122: {
             ProfileRequiredReason = input.ReadString();
+            break;
+          }
+          case 128: {
+            AssignedSkinAssetPresent = input.ReadBool();
             break;
           }
           case 802: {
@@ -2760,6 +3033,7 @@ namespace SuMultiplayer.Protocol {
       appearance_ = other.appearance_ != null ? other.appearance_.Clone() : null;
       isHost_ = other.isHost_;
       hasCharacter_ = other.hasCharacter_;
+      slot_ = other.slot_;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
     }
 
@@ -2841,6 +3115,24 @@ namespace SuMultiplayer.Protocol {
       }
     }
 
+    /// <summary>Field number for the "slot" field.</summary>
+    public const int SlotFieldNumber = 7;
+    private uint slot_;
+    /// <summary>
+    /// Local-character slot on that device (0..3). Append-only: absent / 0 = legacy
+    /// single-character peer (the old wire format is byte-identical because proto3
+    /// omits the default value). (client_id, slot) is the stable player key.
+    /// Source: Mod/SuMultiplayer/Players/PlayerKey.cs
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public uint Slot {
+      get { return slot_; }
+      set {
+        slot_ = value;
+      }
+    }
+
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public override bool Equals(object other) {
@@ -2862,6 +3154,7 @@ namespace SuMultiplayer.Protocol {
       if (!object.Equals(Appearance, other.Appearance)) return false;
       if (IsHost != other.IsHost) return false;
       if (HasCharacter != other.HasCharacter) return false;
+      if (Slot != other.Slot) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
 
@@ -2875,6 +3168,7 @@ namespace SuMultiplayer.Protocol {
       if (appearance_ != null) hash ^= Appearance.GetHashCode();
       if (IsHost != false) hash ^= IsHost.GetHashCode();
       if (HasCharacter != false) hash ^= HasCharacter.GetHashCode();
+      if (Slot != 0) hash ^= Slot.GetHashCode();
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
       }
@@ -2917,6 +3211,10 @@ namespace SuMultiplayer.Protocol {
         output.WriteRawTag(48);
         output.WriteBool(HasCharacter);
       }
+      if (Slot != 0) {
+        output.WriteRawTag(56);
+        output.WriteUInt32(Slot);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
       }
@@ -2951,6 +3249,10 @@ namespace SuMultiplayer.Protocol {
         output.WriteRawTag(48);
         output.WriteBool(HasCharacter);
       }
+      if (Slot != 0) {
+        output.WriteRawTag(56);
+        output.WriteUInt32(Slot);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
       }
@@ -2978,6 +3280,9 @@ namespace SuMultiplayer.Protocol {
       }
       if (HasCharacter != false) {
         size += 1 + 1;
+      }
+      if (Slot != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt32Size(Slot);
       }
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
@@ -3011,6 +3316,9 @@ namespace SuMultiplayer.Protocol {
       }
       if (other.HasCharacter != false) {
         HasCharacter = other.HasCharacter;
+      }
+      if (other.Slot != 0) {
+        Slot = other.Slot;
       }
       _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
     }
@@ -3058,6 +3366,10 @@ namespace SuMultiplayer.Protocol {
             HasCharacter = input.ReadBool();
             break;
           }
+          case 56: {
+            Slot = input.ReadUInt32();
+            break;
+          }
         }
       }
     #endif
@@ -3102,6 +3414,10 @@ namespace SuMultiplayer.Protocol {
           }
           case 48: {
             HasCharacter = input.ReadBool();
+            break;
+          }
+          case 56: {
+            Slot = input.ReadUInt32();
             break;
           }
         }
@@ -3152,6 +3468,7 @@ namespace SuMultiplayer.Protocol {
       clientId_ = other.clientId_;
       identity_ = other.identity_;
       reason_ = other.reason_;
+      slot_ = other.slot_;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
     }
 
@@ -3197,6 +3514,21 @@ namespace SuMultiplayer.Protocol {
       }
     }
 
+    /// <summary>Field number for the "slot" field.</summary>
+    public const int SlotFieldNumber = 4;
+    private uint slot_;
+    /// <summary>
+    /// Local-character slot (0..3); absent / 0 = legacy single-character peer.
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public uint Slot {
+      get { return slot_; }
+      set {
+        slot_ = value;
+      }
+    }
+
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public override bool Equals(object other) {
@@ -3215,6 +3547,7 @@ namespace SuMultiplayer.Protocol {
       if (ClientId != other.ClientId) return false;
       if (Identity != other.Identity) return false;
       if (Reason != other.Reason) return false;
+      if (Slot != other.Slot) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
 
@@ -3225,6 +3558,7 @@ namespace SuMultiplayer.Protocol {
       if (ClientId != 0) hash ^= ClientId.GetHashCode();
       if (Identity.Length != 0) hash ^= Identity.GetHashCode();
       if (Reason.Length != 0) hash ^= Reason.GetHashCode();
+      if (Slot != 0) hash ^= Slot.GetHashCode();
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
       }
@@ -3255,6 +3589,10 @@ namespace SuMultiplayer.Protocol {
         output.WriteRawTag(26);
         output.WriteString(Reason);
       }
+      if (Slot != 0) {
+        output.WriteRawTag(32);
+        output.WriteUInt32(Slot);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
       }
@@ -3277,6 +3615,10 @@ namespace SuMultiplayer.Protocol {
         output.WriteRawTag(26);
         output.WriteString(Reason);
       }
+      if (Slot != 0) {
+        output.WriteRawTag(32);
+        output.WriteUInt32(Slot);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
       }
@@ -3295,6 +3637,9 @@ namespace SuMultiplayer.Protocol {
       }
       if (Reason.Length != 0) {
         size += 1 + pb::CodedOutputStream.ComputeStringSize(Reason);
+      }
+      if (Slot != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt32Size(Slot);
       }
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
@@ -3316,6 +3661,9 @@ namespace SuMultiplayer.Protocol {
       }
       if (other.Reason.Length != 0) {
         Reason = other.Reason;
+      }
+      if (other.Slot != 0) {
+        Slot = other.Slot;
       }
       _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
     }
@@ -3346,6 +3694,10 @@ namespace SuMultiplayer.Protocol {
           }
           case 26: {
             Reason = input.ReadString();
+            break;
+          }
+          case 32: {
+            Slot = input.ReadUInt32();
             break;
           }
         }
@@ -3379,6 +3731,624 @@ namespace SuMultiplayer.Protocol {
             Reason = input.ReadString();
             break;
           }
+          case 32: {
+            Slot = input.ReadUInt32();
+            break;
+          }
+        }
+      }
+    }
+    #endif
+
+  }
+
+  /// <summary>
+  /// One local character announced by a client (client -> host).
+  /// </summary>
+  [global::System.Diagnostics.DebuggerDisplayAttribute("{ToString(),nq}")]
+  public sealed partial class LocalPlayerSlot : pb::IMessage<LocalPlayerSlot>
+  #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      , pb::IBufferMessage
+  #endif
+  {
+    private static readonly pb::MessageParser<LocalPlayerSlot> _parser = new pb::MessageParser<LocalPlayerSlot>(() => new LocalPlayerSlot());
+    private pb::UnknownFieldSet _unknownFields;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pb::MessageParser<LocalPlayerSlot> Parser { get { return _parser; } }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pbr::MessageDescriptor Descriptor {
+      get { return global::SuMultiplayer.Protocol.ProtocolReflection.Descriptor.MessageTypes[7]; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    pbr::MessageDescriptor pb::IMessage.Descriptor {
+      get { return Descriptor; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public LocalPlayerSlot() {
+      OnConstruction();
+    }
+
+    partial void OnConstruction();
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public LocalPlayerSlot(LocalPlayerSlot other) : this() {
+      slot_ = other.slot_;
+      profile_ = other.profile_ != null ? other.profile_.Clone() : null;
+      localPlayerIndex_ = other.localPlayerIndex_;
+      _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public LocalPlayerSlot Clone() {
+      return new LocalPlayerSlot(this);
+    }
+
+    /// <summary>Field number for the "slot" field.</summary>
+    public const int SlotFieldNumber = 1;
+    private uint slot_;
+    /// <summary>
+    /// Slot 0..3. Invalid values are a protocol violation (host rejects the message).
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public uint Slot {
+      get { return slot_; }
+      set {
+        slot_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "profile" field.</summary>
+    public const int ProfileFieldNumber = 2;
+    private global::SuMultiplayer.Protocol.PlayerProfile profile_;
+    /// <summary>
+    /// The character's own identity + appearance (name / sex / skin / clothes).
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public global::SuMultiplayer.Protocol.PlayerProfile Profile {
+      get { return profile_; }
+      set {
+        profile_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "local_player_index" field.</summary>
+    public const int LocalPlayerIndexFieldNumber = 3;
+    private int localPlayerIndex_;
+    /// <summary>
+    /// Engine PlayerIndex of the local PlayerData (diagnostics only; never an identity).
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int LocalPlayerIndex {
+      get { return localPlayerIndex_; }
+      set {
+        localPlayerIndex_ = value;
+      }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override bool Equals(object other) {
+      return Equals(other as LocalPlayerSlot);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Equals(LocalPlayerSlot other) {
+      if (ReferenceEquals(other, null)) {
+        return false;
+      }
+      if (ReferenceEquals(other, this)) {
+        return true;
+      }
+      if (Slot != other.Slot) return false;
+      if (!object.Equals(Profile, other.Profile)) return false;
+      if (LocalPlayerIndex != other.LocalPlayerIndex) return false;
+      return Equals(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override int GetHashCode() {
+      int hash = 1;
+      if (Slot != 0) hash ^= Slot.GetHashCode();
+      if (profile_ != null) hash ^= Profile.GetHashCode();
+      if (LocalPlayerIndex != 0) hash ^= LocalPlayerIndex.GetHashCode();
+      if (_unknownFields != null) {
+        hash ^= _unknownFields.GetHashCode();
+      }
+      return hash;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override string ToString() {
+      return pb::JsonFormatter.ToDiagnosticString(this);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void WriteTo(pb::CodedOutputStream output) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      output.WriteRawMessage(this);
+    #else
+      if (Slot != 0) {
+        output.WriteRawTag(8);
+        output.WriteUInt32(Slot);
+      }
+      if (profile_ != null) {
+        output.WriteRawTag(18);
+        output.WriteMessage(Profile);
+      }
+      if (LocalPlayerIndex != 0) {
+        output.WriteRawTag(24);
+        output.WriteInt32(LocalPlayerIndex);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(output);
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
+      if (Slot != 0) {
+        output.WriteRawTag(8);
+        output.WriteUInt32(Slot);
+      }
+      if (profile_ != null) {
+        output.WriteRawTag(18);
+        output.WriteMessage(Profile);
+      }
+      if (LocalPlayerIndex != 0) {
+        output.WriteRawTag(24);
+        output.WriteInt32(LocalPlayerIndex);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(ref output);
+      }
+    }
+    #endif
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int CalculateSize() {
+      int size = 0;
+      if (Slot != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt32Size(Slot);
+      }
+      if (profile_ != null) {
+        size += 1 + pb::CodedOutputStream.ComputeMessageSize(Profile);
+      }
+      if (LocalPlayerIndex != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeInt32Size(LocalPlayerIndex);
+      }
+      if (_unknownFields != null) {
+        size += _unknownFields.CalculateSize();
+      }
+      return size;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(LocalPlayerSlot other) {
+      if (other == null) {
+        return;
+      }
+      if (other.Slot != 0) {
+        Slot = other.Slot;
+      }
+      if (other.profile_ != null) {
+        if (profile_ == null) {
+          Profile = new global::SuMultiplayer.Protocol.PlayerProfile();
+        }
+        Profile.MergeFrom(other.Profile);
+      }
+      if (other.LocalPlayerIndex != 0) {
+        LocalPlayerIndex = other.LocalPlayerIndex;
+      }
+      _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(pb::CodedInputStream input) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      input.ReadRawMessage(this);
+    #else
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
+            break;
+          case 8: {
+            Slot = input.ReadUInt32();
+            break;
+          }
+          case 18: {
+            if (profile_ == null) {
+              Profile = new global::SuMultiplayer.Protocol.PlayerProfile();
+            }
+            input.ReadMessage(Profile);
+            break;
+          }
+          case 24: {
+            LocalPlayerIndex = input.ReadInt32();
+            break;
+          }
+        }
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalMergeFrom(ref pb::ParseContext input) {
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
+            break;
+          case 8: {
+            Slot = input.ReadUInt32();
+            break;
+          }
+          case 18: {
+            if (profile_ == null) {
+              Profile = new global::SuMultiplayer.Protocol.PlayerProfile();
+            }
+            input.ReadMessage(Profile);
+            break;
+          }
+          case 24: {
+            LocalPlayerIndex = input.ReadInt32();
+            break;
+          }
+        }
+      }
+    }
+    #endif
+
+  }
+
+  /// <summary>
+  /// Client -> host: the **complete** list of local characters this device currently plays.
+  /// Sent once after the handshake and re-sent whenever the local set / a profile changes
+  /// (a split-screen player is added or removed). A peer that never sends it is treated as a
+  /// legacy single-character peer (slot 0 only), so old clients keep working unchanged.
+  /// Append-only: new message id 94, no existing id is renumbered.
+  /// Source: Survivalcraft/Game/SubsystemPlayers.cs:SubsystemPlayers.PlayersData (max 4 local players)
+  /// </summary>
+  [global::System.Diagnostics.DebuggerDisplayAttribute("{ToString(),nq}")]
+  public sealed partial class LocalPlayerSlots : pb::IMessage<LocalPlayerSlots>
+  #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      , pb::IBufferMessage
+  #endif
+  {
+    private static readonly pb::MessageParser<LocalPlayerSlots> _parser = new pb::MessageParser<LocalPlayerSlots>(() => new LocalPlayerSlots());
+    private pb::UnknownFieldSet _unknownFields;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pb::MessageParser<LocalPlayerSlots> Parser { get { return _parser; } }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pbr::MessageDescriptor Descriptor {
+      get { return global::SuMultiplayer.Protocol.ProtocolReflection.Descriptor.MessageTypes[8]; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    pbr::MessageDescriptor pb::IMessage.Descriptor {
+      get { return Descriptor; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public LocalPlayerSlots() {
+      OnConstruction();
+    }
+
+    partial void OnConstruction();
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public LocalPlayerSlots(LocalPlayerSlots other) : this() {
+      count_ = other.count_;
+      slots_ = other.slots_.Clone();
+      ext_ = other.ext_;
+      custom_ = other.custom_ != null ? other.custom_.Clone() : null;
+      _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public LocalPlayerSlots Clone() {
+      return new LocalPlayerSlots(this);
+    }
+
+    /// <summary>Field number for the "count" field.</summary>
+    public const int CountFieldNumber = 1;
+    private uint count_;
+    /// <summary>
+    /// Number of valid entries (must equal entries.size; 1..4).
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public uint Count {
+      get { return count_; }
+      set {
+        count_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "slots" field.</summary>
+    public const int SlotsFieldNumber = 2;
+    private static readonly pb::FieldCodec<global::SuMultiplayer.Protocol.LocalPlayerSlot> _repeated_slots_codec
+        = pb::FieldCodec.ForMessage(18, global::SuMultiplayer.Protocol.LocalPlayerSlot.Parser);
+    private readonly pbc::RepeatedField<global::SuMultiplayer.Protocol.LocalPlayerSlot> slots_ = new pbc::RepeatedField<global::SuMultiplayer.Protocol.LocalPlayerSlot>();
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public pbc::RepeatedField<global::SuMultiplayer.Protocol.LocalPlayerSlot> Slots {
+      get { return slots_; }
+    }
+
+    /// <summary>Field number for the "ext" field.</summary>
+    public const int ExtFieldNumber = 100;
+    private pb::ByteString ext_ = pb::ByteString.Empty;
+    /// <summary>
+    /// Third-party extension points: see doc/message-protocol.md.
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public pb::ByteString Ext {
+      get { return ext_; }
+      set {
+        ext_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "custom" field.</summary>
+    public const int CustomFieldNumber = 101;
+    private global::Google.Protobuf.WellKnownTypes.Any custom_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public global::Google.Protobuf.WellKnownTypes.Any Custom {
+      get { return custom_; }
+      set {
+        custom_ = value;
+      }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override bool Equals(object other) {
+      return Equals(other as LocalPlayerSlots);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Equals(LocalPlayerSlots other) {
+      if (ReferenceEquals(other, null)) {
+        return false;
+      }
+      if (ReferenceEquals(other, this)) {
+        return true;
+      }
+      if (Count != other.Count) return false;
+      if(!slots_.Equals(other.slots_)) return false;
+      if (Ext != other.Ext) return false;
+      if (!object.Equals(Custom, other.Custom)) return false;
+      return Equals(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override int GetHashCode() {
+      int hash = 1;
+      if (Count != 0) hash ^= Count.GetHashCode();
+      hash ^= slots_.GetHashCode();
+      if (Ext.Length != 0) hash ^= Ext.GetHashCode();
+      if (custom_ != null) hash ^= Custom.GetHashCode();
+      if (_unknownFields != null) {
+        hash ^= _unknownFields.GetHashCode();
+      }
+      return hash;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override string ToString() {
+      return pb::JsonFormatter.ToDiagnosticString(this);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void WriteTo(pb::CodedOutputStream output) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      output.WriteRawMessage(this);
+    #else
+      if (Count != 0) {
+        output.WriteRawTag(8);
+        output.WriteUInt32(Count);
+      }
+      slots_.WriteTo(output, _repeated_slots_codec);
+      if (Ext.Length != 0) {
+        output.WriteRawTag(162, 6);
+        output.WriteBytes(Ext);
+      }
+      if (custom_ != null) {
+        output.WriteRawTag(170, 6);
+        output.WriteMessage(Custom);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(output);
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
+      if (Count != 0) {
+        output.WriteRawTag(8);
+        output.WriteUInt32(Count);
+      }
+      slots_.WriteTo(ref output, _repeated_slots_codec);
+      if (Ext.Length != 0) {
+        output.WriteRawTag(162, 6);
+        output.WriteBytes(Ext);
+      }
+      if (custom_ != null) {
+        output.WriteRawTag(170, 6);
+        output.WriteMessage(Custom);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(ref output);
+      }
+    }
+    #endif
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int CalculateSize() {
+      int size = 0;
+      if (Count != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt32Size(Count);
+      }
+      size += slots_.CalculateSize(_repeated_slots_codec);
+      if (Ext.Length != 0) {
+        size += 2 + pb::CodedOutputStream.ComputeBytesSize(Ext);
+      }
+      if (custom_ != null) {
+        size += 2 + pb::CodedOutputStream.ComputeMessageSize(Custom);
+      }
+      if (_unknownFields != null) {
+        size += _unknownFields.CalculateSize();
+      }
+      return size;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(LocalPlayerSlots other) {
+      if (other == null) {
+        return;
+      }
+      if (other.Count != 0) {
+        Count = other.Count;
+      }
+      slots_.Add(other.slots_);
+      if (other.Ext.Length != 0) {
+        Ext = other.Ext;
+      }
+      if (other.custom_ != null) {
+        if (custom_ == null) {
+          Custom = new global::Google.Protobuf.WellKnownTypes.Any();
+        }
+        Custom.MergeFrom(other.Custom);
+      }
+      _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(pb::CodedInputStream input) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      input.ReadRawMessage(this);
+    #else
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
+            break;
+          case 8: {
+            Count = input.ReadUInt32();
+            break;
+          }
+          case 18: {
+            slots_.AddEntriesFrom(input, _repeated_slots_codec);
+            break;
+          }
+          case 802: {
+            Ext = input.ReadBytes();
+            break;
+          }
+          case 810: {
+            if (custom_ == null) {
+              Custom = new global::Google.Protobuf.WellKnownTypes.Any();
+            }
+            input.ReadMessage(Custom);
+            break;
+          }
+        }
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalMergeFrom(ref pb::ParseContext input) {
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
+            break;
+          case 8: {
+            Count = input.ReadUInt32();
+            break;
+          }
+          case 18: {
+            slots_.AddEntriesFrom(ref input, _repeated_slots_codec);
+            break;
+          }
+          case 802: {
+            Ext = input.ReadBytes();
+            break;
+          }
+          case 810: {
+            if (custom_ == null) {
+              Custom = new global::Google.Protobuf.WellKnownTypes.Any();
+            }
+            input.ReadMessage(Custom);
+            break;
+          }
         }
       }
     }
@@ -3406,7 +4376,7 @@ namespace SuMultiplayer.Protocol {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::SuMultiplayer.Protocol.ProtocolReflection.Descriptor.MessageTypes[7]; }
+      get { return global::SuMultiplayer.Protocol.ProtocolReflection.Descriptor.MessageTypes[9]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -3596,7 +4566,7 @@ namespace SuMultiplayer.Protocol {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::SuMultiplayer.Protocol.ProtocolReflection.Descriptor.MessageTypes[8]; }
+      get { return global::SuMultiplayer.Protocol.ProtocolReflection.Descriptor.MessageTypes[10]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -3954,7 +4924,7 @@ namespace SuMultiplayer.Protocol {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::SuMultiplayer.Protocol.ProtocolReflection.Descriptor.MessageTypes[9]; }
+      get { return global::SuMultiplayer.Protocol.ProtocolReflection.Descriptor.MessageTypes[11]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]

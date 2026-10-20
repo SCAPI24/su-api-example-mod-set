@@ -9,6 +9,16 @@
 
   <ItemGroup>
     <!--
+      `Tests/` 是**独立**的控制台自检工程（`Tests/UiSplitView.Tests.csproj`）：它用
+      `<Compile Include="..\Server\UiSplitView.cs" />` 直接编同一份源码，所以这里必须把
+      整个测试目录排除在 Mod 程序集之外 —— 否则 `Tests/Program.cs`（含它自己的 Main）
+      会被打进 `CmdBridgeMod.dll`，而且 `Tests/obj/**` 里自动生成的 AssemblyInfo 会与 Mod 的重复。
+    -->
+    <Compile Remove="Tests/**/*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
       CM-2：共控合并需要读**真实**设备状态（OpenTK 的全局键盘/鼠标快照）。
       OpenTK 改为**纯反射**访问（Server/OpenTkInput.cs）：Android 端不部署 OpenTK，
       任何以它的类型声明的字段/参数都会让 Mod 在加载时失败（实测），因此这里不再

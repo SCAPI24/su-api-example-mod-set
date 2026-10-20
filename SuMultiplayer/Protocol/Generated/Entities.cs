@@ -56,37 +56,39 @@ namespace SuMultiplayer.Protocol.Entities {
             "ASgIEhUKDXN0YXRlX3ZlcnNpb24YBiABKA0SCwoDZXh0GGQgASgMEiQKBmN1",
             "c3RvbRhlIAEoCzIULmdvb2dsZS5wcm90b2J1Zi5BbnkiQQoSSW52ZW50b3J5",
             "U2xvdERlbHRhEg0KBWluZGV4GAEgASgFEg0KBXZhbHVlGAIgASgFEg0KBWNv",
-            "dW50GAMgASgFIpkBChZQaWNrYWJsZUFjcXVpcmVSZXF1ZXN0EhAKCHNlcXVl",
+            "dW50GAMgASgFIrcBChZQaWNrYWJsZUFjcXVpcmVSZXF1ZXN0EhAKCHNlcXVl",
             "bmNlGAEgASgDEhMKC3BpY2thYmxlX2lkGAIgASgFEiUKCHBvc2l0aW9uGAMg",
-            "ASgLMhMuc3VtcC5wb3NpdGlvbi5WZWMzEgsKA2V4dBhkIAEoDBIkCgZjdXN0",
-            "b20YZSABKAsyFC5nb29nbGUucHJvdG9idWYuQW55Io4CChVQaWNrYWJsZUFj",
-            "cXVpcmVSZXN1bHQSEAoIc2VxdWVuY2UYASABKAMSEwoLcGlja2FibGVfaWQY",
-            "AiABKAUSEAoIYWNjZXB0ZWQYAyABKAgSDgoGcmVhc29uGAQgASgJEhcKD3Jl",
-            "bWFpbmluZ19jb3VudBgFIAEoBRIPCgdyZW1vdmVkGAYgASgIEjQKCWludmVu",
-            "dG9yeRgHIAMoCzIhLnN1bXAuZW50aXRpZXMuSW52ZW50b3J5U2xvdERlbHRh",
-            "EhkKEWludmVudG9yeV92ZXJzaW9uGAggASgFEgsKA2V4dBhkIAEoDBIkCgZj",
-            "dXN0b20YZSABKAsyFC5nb29nbGUucHJvdG9idWYuQW55IlgKE0VudGl0eVJl",
-            "c3luY1JlcXVlc3QSDgoGcmVhc29uGAEgASgJEgsKA2V4dBhkIAEoDBIkCgZj",
-            "dXN0b20YZSABKAsyFC5nb29nbGUucHJvdG9idWYuQW55IowCChNQaWNrYWJs",
-            "ZURyb3BSZXF1ZXN0EhAKCHNlcXVlbmNlGAEgASgDEhMKC2FjdGl2ZV9zbG90",
-            "GAIgASgFEhIKCml0ZW1fdmFsdWUYAyABKAUSDQoFY291bnQYBCABKAUSJQoI",
-            "cG9zaXRpb24YBSABKAsyEy5zdW1wLnBvc2l0aW9uLlZlYzMSJgoJZGlyZWN0",
-            "aW9uGAYgASgLMhMuc3VtcC5wb3NpdGlvbi5WZWMzEikKBnNvdXJjZRgLIAEo",
-            "DjIZLnN1bXAuZW50aXRpZXMuRHJvcFNvdXJjZRILCgNleHQYZCABKAwSJAoG",
-            "Y3VzdG9tGGUgASgLMhQuZ29vZ2xlLnByb3RvYnVmLkFueSLSAgoSUGlja2Fi",
-            "bGVEcm9wUmVzdWx0EhAKCHNlcXVlbmNlGAEgASgDEhAKCGFjY2VwdGVkGAIg",
-            "ASgIEg4KBnJlYXNvbhgDIAEoCRISCgppdGVtX3ZhbHVlGAQgASgFEg0KBWNv",
-            "dW50GAUgASgFEiUKCHBvc2l0aW9uGAYgASgLMhMuc3VtcC5wb3NpdGlvbi5W",
-            "ZWMzEiUKCHZlbG9jaXR5GAcgASgLMhMuc3VtcC5wb3NpdGlvbi5WZWMzEjQK",
-            "CWludmVudG9yeRgIIAMoCzIhLnN1bXAuZW50aXRpZXMuSW52ZW50b3J5U2xv",
-            "dERlbHRhEhkKEWludmVudG9yeV92ZXJzaW9uGAkgASgFEhMKC3BpY2thYmxl",
-            "X2lkGAogASgFEgsKA2V4dBhkIAEoDBIkCgZjdXN0b20YZSABKAsyFC5nb29n",
-            "bGUucHJvdG9idWYuQW55IvABChVQcm9qZWN0aWxlRmlyZVJlcXVlc3QSEAoI",
-            "c2VxdWVuY2UYASABKAMSDAoEa2luZBgCIAEoBRISCgppdGVtX3ZhbHVlGAMg",
-            "ASgFEhMKC2FjdGl2ZV9zbG90GAQgASgFEiMKBm9yaWdpbhgFIAEoCzITLnN1",
-            "bXAucG9zaXRpb24uVmVjMxImCglkaXJlY3Rpb24YBiABKAsyEy5zdW1wLnBv",
-            "c2l0aW9uLlZlYzMSDgoGY2hhcmdlGAcgASgFEgsKA2V4dBhkIAEoDBIkCgZj",
-            "dXN0b20YZSABKAsyFC5nb29nbGUucHJvdG9idWYuQW55Is8CChRQcm9qZWN0",
+            "ASgLMhMuc3VtcC5wb3NpdGlvbi5WZWMzEhIKBXJlYWNoGAQgASgCSACIAQES",
+            "CwoDZXh0GGQgASgMEiQKBmN1c3RvbRhlIAEoCzIULmdvb2dsZS5wcm90b2J1",
+            "Zi5BbnlCCAoGX3JlYWNoIo4CChVQaWNrYWJsZUFjcXVpcmVSZXN1bHQSEAoI",
+            "c2VxdWVuY2UYASABKAMSEwoLcGlja2FibGVfaWQYAiABKAUSEAoIYWNjZXB0",
+            "ZWQYAyABKAgSDgoGcmVhc29uGAQgASgJEhcKD3JlbWFpbmluZ19jb3VudBgF",
+            "IAEoBRIPCgdyZW1vdmVkGAYgASgIEjQKCWludmVudG9yeRgHIAMoCzIhLnN1",
+            "bXAuZW50aXRpZXMuSW52ZW50b3J5U2xvdERlbHRhEhkKEWludmVudG9yeV92",
+            "ZXJzaW9uGAggASgFEgsKA2V4dBhkIAEoDBIkCgZjdXN0b20YZSABKAsyFC5n",
+            "b29nbGUucHJvdG9idWYuQW55IlgKE0VudGl0eVJlc3luY1JlcXVlc3QSDgoG",
+            "cmVhc29uGAEgASgJEgsKA2V4dBhkIAEoDBIkCgZjdXN0b20YZSABKAsyFC5n",
+            "b29nbGUucHJvdG9idWYuQW55IqoCChNQaWNrYWJsZURyb3BSZXF1ZXN0EhAK",
+            "CHNlcXVlbmNlGAEgASgDEhMKC2FjdGl2ZV9zbG90GAIgASgFEhIKCml0ZW1f",
+            "dmFsdWUYAyABKAUSDQoFY291bnQYBCABKAUSJQoIcG9zaXRpb24YBSABKAsy",
+            "Ey5zdW1wLnBvc2l0aW9uLlZlYzMSJgoJZGlyZWN0aW9uGAYgASgLMhMuc3Vt",
+            "cC5wb3NpdGlvbi5WZWMzEikKBnNvdXJjZRgLIAEoDjIZLnN1bXAuZW50aXRp",
+            "ZXMuRHJvcFNvdXJjZRISCgVyZWFjaBgMIAEoAkgAiAEBEgsKA2V4dBhkIAEo",
+            "DBIkCgZjdXN0b20YZSABKAsyFC5nb29nbGUucHJvdG9idWYuQW55QggKBl9y",
+            "ZWFjaCLSAgoSUGlja2FibGVEcm9wUmVzdWx0EhAKCHNlcXVlbmNlGAEgASgD",
+            "EhAKCGFjY2VwdGVkGAIgASgIEg4KBnJlYXNvbhgDIAEoCRISCgppdGVtX3Zh",
+            "bHVlGAQgASgFEg0KBWNvdW50GAUgASgFEiUKCHBvc2l0aW9uGAYgASgLMhMu",
+            "c3VtcC5wb3NpdGlvbi5WZWMzEiUKCHZlbG9jaXR5GAcgASgLMhMuc3VtcC5w",
+            "b3NpdGlvbi5WZWMzEjQKCWludmVudG9yeRgIIAMoCzIhLnN1bXAuZW50aXRp",
+            "ZXMuSW52ZW50b3J5U2xvdERlbHRhEhkKEWludmVudG9yeV92ZXJzaW9uGAkg",
+            "ASgFEhMKC3BpY2thYmxlX2lkGAogASgFEgsKA2V4dBhkIAEoDBIkCgZjdXN0",
+            "b20YZSABKAsyFC5nb29nbGUucHJvdG9idWYuQW55Io4CChVQcm9qZWN0aWxl",
+            "RmlyZVJlcXVlc3QSEAoIc2VxdWVuY2UYASABKAMSDAoEa2luZBgCIAEoBRIS",
+            "CgppdGVtX3ZhbHVlGAMgASgFEhMKC2FjdGl2ZV9zbG90GAQgASgFEiMKBm9y",
+            "aWdpbhgFIAEoCzITLnN1bXAucG9zaXRpb24uVmVjMxImCglkaXJlY3Rpb24Y",
+            "BiABKAsyEy5zdW1wLnBvc2l0aW9uLlZlYzMSDgoGY2hhcmdlGAcgASgFEhIK",
+            "BXJlYWNoGAggASgCSACIAQESCwoDZXh0GGQgASgMEiQKBmN1c3RvbRhlIAEo",
+            "CzIULmdvb2dsZS5wcm90b2J1Zi5BbnlCCAoGX3JlYWNoIs8CChRQcm9qZWN0",
             "aWxlRmlyZVJlc3VsdBIQCghzZXF1ZW5jZRgBIAEoAxIQCghhY2NlcHRlZBgC",
             "IAEoCBIOCgZyZWFzb24YAyABKAkSDAoEa2luZBgEIAEoBRISCgppdGVtX3Zh",
             "bHVlGAUgASgFEg8KB3NwYXduZWQYBiABKAUSJQoIcG9zaXRpb24YByABKAsy",
@@ -121,12 +123,12 @@ namespace SuMultiplayer.Protocol.Entities {
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Entities.EntityState), global::SuMultiplayer.Protocol.Entities.EntityState.Parser, new[]{ "Version", "ServerTick", "Pickables", "Projectiles", "Ext", "Custom" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Entities.EntitySnapshot), global::SuMultiplayer.Protocol.Entities.EntitySnapshot.Parser, new[]{ "SnapshotId", "ServerTick", "Pickables", "Projectiles", "Complete", "StateVersion", "Ext", "Custom" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Entities.InventorySlotDelta), global::SuMultiplayer.Protocol.Entities.InventorySlotDelta.Parser, new[]{ "Index", "Value", "Count" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Entities.PickableAcquireRequest), global::SuMultiplayer.Protocol.Entities.PickableAcquireRequest.Parser, new[]{ "Sequence", "PickableId", "Position", "Ext", "Custom" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Entities.PickableAcquireRequest), global::SuMultiplayer.Protocol.Entities.PickableAcquireRequest.Parser, new[]{ "Sequence", "PickableId", "Position", "Reach", "Ext", "Custom" }, new[]{ "Reach" }, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Entities.PickableAcquireResult), global::SuMultiplayer.Protocol.Entities.PickableAcquireResult.Parser, new[]{ "Sequence", "PickableId", "Accepted", "Reason", "RemainingCount", "Removed", "Inventory", "InventoryVersion", "Ext", "Custom" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Entities.EntityResyncRequest), global::SuMultiplayer.Protocol.Entities.EntityResyncRequest.Parser, new[]{ "Reason", "Ext", "Custom" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Entities.PickableDropRequest), global::SuMultiplayer.Protocol.Entities.PickableDropRequest.Parser, new[]{ "Sequence", "ActiveSlot", "ItemValue", "Count", "Position", "Direction", "Source", "Ext", "Custom" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Entities.PickableDropRequest), global::SuMultiplayer.Protocol.Entities.PickableDropRequest.Parser, new[]{ "Sequence", "ActiveSlot", "ItemValue", "Count", "Position", "Direction", "Source", "Reach", "Ext", "Custom" }, new[]{ "Reach" }, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Entities.PickableDropResult), global::SuMultiplayer.Protocol.Entities.PickableDropResult.Parser, new[]{ "Sequence", "Accepted", "Reason", "ItemValue", "Count", "Position", "Velocity", "Inventory", "InventoryVersion", "PickableId", "Ext", "Custom" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Entities.ProjectileFireRequest), global::SuMultiplayer.Protocol.Entities.ProjectileFireRequest.Parser, new[]{ "Sequence", "Kind", "ItemValue", "ActiveSlot", "Origin", "Direction", "Charge", "Ext", "Custom" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Entities.ProjectileFireRequest), global::SuMultiplayer.Protocol.Entities.ProjectileFireRequest.Parser, new[]{ "Sequence", "Kind", "ItemValue", "ActiveSlot", "Origin", "Direction", "Charge", "Reach", "Ext", "Custom" }, new[]{ "Reach" }, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Entities.ProjectileFireResult), global::SuMultiplayer.Protocol.Entities.ProjectileFireResult.Parser, new[]{ "Sequence", "Accepted", "Reason", "Kind", "ItemValue", "Spawned", "Position", "Velocity", "Inventory", "InventoryVersion", "Ext", "Custom" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Entities.WeaponFireEvent), global::SuMultiplayer.Protocol.Entities.WeaponFireEvent.Parser, new[]{ "ClientId", "ServerTick", "EventId", "Kind", "Position", "Direction", "Misfire", "Ext", "Custom" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Entities.PickupSoundEvent), global::SuMultiplayer.Protocol.Entities.PickupSoundEvent.Parser, new[]{ "SourceClientId", "ServerTickMs", "EventId", "Position", "Ext", "Custom" }, null, null, null, null)
@@ -2795,6 +2797,7 @@ namespace SuMultiplayer.Protocol.Entities {
   {
     private static readonly pb::MessageParser<PickableAcquireRequest> _parser = new pb::MessageParser<PickableAcquireRequest>(() => new PickableAcquireRequest());
     private pb::UnknownFieldSet _unknownFields;
+    private int _hasBits0;
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pb::MessageParser<PickableAcquireRequest> Parser { get { return _parser; } }
@@ -2822,9 +2825,11 @@ namespace SuMultiplayer.Protocol.Entities {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public PickableAcquireRequest(PickableAcquireRequest other) : this() {
+      _hasBits0 = other._hasBits0;
       sequence_ = other.sequence_;
       pickableId_ = other.pickableId_;
       position_ = other.position_ != null ? other.position_.Clone() : null;
+      reach_ = other.reach_;
       ext_ = other.ext_;
       custom_ = other.custom_ != null ? other.custom_.Clone() : null;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
@@ -2883,6 +2888,39 @@ namespace SuMultiplayer.Protocol.Entities {
       }
     }
 
+    /// <summary>Field number for the "reach" field.</summary>
+    public const int ReachFieldNumber = 4;
+    private readonly static float ReachDefaultValue = 0F;
+
+    private float reach_;
+    /// <summary>
+    /// Requester's effective interaction reach (metres): engine ComponentMiner.Raycast
+    /// uses Creative ? SettingsManager.CreativeReach : 5f.  Host rule:
+    /// allowed = min(reach + tolerance, serverMax); absent (old client) = 5.0 / 7.5.
+    /// Source: Survivalcraft/Game/ComponentMiner.cs:378
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public float Reach {
+      get { if ((_hasBits0 & 1) != 0) { return reach_; } else { return ReachDefaultValue; } }
+      set {
+        _hasBits0 |= 1;
+        reach_ = value;
+      }
+    }
+    /// <summary>Gets whether the "reach" field is set</summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool HasReach {
+      get { return (_hasBits0 & 1) != 0; }
+    }
+    /// <summary>Clears the value of the "reach" field</summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void ClearReach() {
+      _hasBits0 &= ~1;
+    }
+
     /// <summary>Field number for the "ext" field.</summary>
     public const int ExtFieldNumber = 100;
     private pb::ByteString ext_ = pb::ByteString.Empty;
@@ -2925,6 +2963,7 @@ namespace SuMultiplayer.Protocol.Entities {
       if (Sequence != other.Sequence) return false;
       if (PickableId != other.PickableId) return false;
       if (!object.Equals(Position, other.Position)) return false;
+      if (!pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.Equals(Reach, other.Reach)) return false;
       if (Ext != other.Ext) return false;
       if (!object.Equals(Custom, other.Custom)) return false;
       return Equals(_unknownFields, other._unknownFields);
@@ -2937,6 +2976,7 @@ namespace SuMultiplayer.Protocol.Entities {
       if (Sequence != 0L) hash ^= Sequence.GetHashCode();
       if (PickableId != 0) hash ^= PickableId.GetHashCode();
       if (position_ != null) hash ^= Position.GetHashCode();
+      if (HasReach) hash ^= pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.GetHashCode(Reach);
       if (Ext.Length != 0) hash ^= Ext.GetHashCode();
       if (custom_ != null) hash ^= Custom.GetHashCode();
       if (_unknownFields != null) {
@@ -2969,6 +3009,10 @@ namespace SuMultiplayer.Protocol.Entities {
         output.WriteRawTag(26);
         output.WriteMessage(Position);
       }
+      if (HasReach) {
+        output.WriteRawTag(37);
+        output.WriteFloat(Reach);
+      }
       if (Ext.Length != 0) {
         output.WriteRawTag(162, 6);
         output.WriteBytes(Ext);
@@ -2999,6 +3043,10 @@ namespace SuMultiplayer.Protocol.Entities {
         output.WriteRawTag(26);
         output.WriteMessage(Position);
       }
+      if (HasReach) {
+        output.WriteRawTag(37);
+        output.WriteFloat(Reach);
+      }
       if (Ext.Length != 0) {
         output.WriteRawTag(162, 6);
         output.WriteBytes(Ext);
@@ -3025,6 +3073,9 @@ namespace SuMultiplayer.Protocol.Entities {
       }
       if (position_ != null) {
         size += 1 + pb::CodedOutputStream.ComputeMessageSize(Position);
+      }
+      if (HasReach) {
+        size += 1 + 4;
       }
       if (Ext.Length != 0) {
         size += 2 + pb::CodedOutputStream.ComputeBytesSize(Ext);
@@ -3055,6 +3106,9 @@ namespace SuMultiplayer.Protocol.Entities {
           Position = new global::SuMultiplayer.Protocol.Position.Vec3();
         }
         Position.MergeFrom(other.Position);
+      }
+      if (other.HasReach) {
+        Reach = other.Reach;
       }
       if (other.Ext.Length != 0) {
         Ext = other.Ext;
@@ -3097,6 +3151,10 @@ namespace SuMultiplayer.Protocol.Entities {
               Position = new global::SuMultiplayer.Protocol.Position.Vec3();
             }
             input.ReadMessage(Position);
+            break;
+          }
+          case 37: {
+            Reach = input.ReadFloat();
             break;
           }
           case 802: {
@@ -3142,6 +3200,10 @@ namespace SuMultiplayer.Protocol.Entities {
               Position = new global::SuMultiplayer.Protocol.Position.Vec3();
             }
             input.ReadMessage(Position);
+            break;
+          }
+          case 37: {
+            Reach = input.ReadFloat();
             break;
           }
           case 802: {
@@ -4015,6 +4077,7 @@ namespace SuMultiplayer.Protocol.Entities {
   {
     private static readonly pb::MessageParser<PickableDropRequest> _parser = new pb::MessageParser<PickableDropRequest>(() => new PickableDropRequest());
     private pb::UnknownFieldSet _unknownFields;
+    private int _hasBits0;
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pb::MessageParser<PickableDropRequest> Parser { get { return _parser; } }
@@ -4042,6 +4105,7 @@ namespace SuMultiplayer.Protocol.Entities {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public PickableDropRequest(PickableDropRequest other) : this() {
+      _hasBits0 = other._hasBits0;
       sequence_ = other.sequence_;
       activeSlot_ = other.activeSlot_;
       itemValue_ = other.itemValue_;
@@ -4049,6 +4113,7 @@ namespace SuMultiplayer.Protocol.Entities {
       position_ = other.position_ != null ? other.position_.Clone() : null;
       direction_ = other.direction_ != null ? other.direction_.Clone() : null;
       source_ = other.source_;
+      reach_ = other.reach_;
       ext_ = other.ext_;
       custom_ = other.custom_ != null ? other.custom_.Clone() : null;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
@@ -4174,6 +4239,36 @@ namespace SuMultiplayer.Protocol.Entities {
       }
     }
 
+    /// <summary>Field number for the "reach" field.</summary>
+    public const int ReachFieldNumber = 12;
+    private readonly static float ReachDefaultValue = 0F;
+
+    private float reach_;
+    /// <summary>
+    /// Requester's effective interaction reach (same semantics as PickableAcquireRequest.reach).
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public float Reach {
+      get { if ((_hasBits0 & 1) != 0) { return reach_; } else { return ReachDefaultValue; } }
+      set {
+        _hasBits0 |= 1;
+        reach_ = value;
+      }
+    }
+    /// <summary>Gets whether the "reach" field is set</summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool HasReach {
+      get { return (_hasBits0 & 1) != 0; }
+    }
+    /// <summary>Clears the value of the "reach" field</summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void ClearReach() {
+      _hasBits0 &= ~1;
+    }
+
     /// <summary>Field number for the "ext" field.</summary>
     public const int ExtFieldNumber = 100;
     private pb::ByteString ext_ = pb::ByteString.Empty;
@@ -4220,6 +4315,7 @@ namespace SuMultiplayer.Protocol.Entities {
       if (!object.Equals(Position, other.Position)) return false;
       if (!object.Equals(Direction, other.Direction)) return false;
       if (Source != other.Source) return false;
+      if (!pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.Equals(Reach, other.Reach)) return false;
       if (Ext != other.Ext) return false;
       if (!object.Equals(Custom, other.Custom)) return false;
       return Equals(_unknownFields, other._unknownFields);
@@ -4236,6 +4332,7 @@ namespace SuMultiplayer.Protocol.Entities {
       if (position_ != null) hash ^= Position.GetHashCode();
       if (direction_ != null) hash ^= Direction.GetHashCode();
       if (Source != global::SuMultiplayer.Protocol.Entities.DropSource.Input) hash ^= Source.GetHashCode();
+      if (HasReach) hash ^= pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.GetHashCode(Reach);
       if (Ext.Length != 0) hash ^= Ext.GetHashCode();
       if (custom_ != null) hash ^= Custom.GetHashCode();
       if (_unknownFields != null) {
@@ -4284,6 +4381,10 @@ namespace SuMultiplayer.Protocol.Entities {
         output.WriteRawTag(88);
         output.WriteEnum((int) Source);
       }
+      if (HasReach) {
+        output.WriteRawTag(101);
+        output.WriteFloat(Reach);
+      }
       if (Ext.Length != 0) {
         output.WriteRawTag(162, 6);
         output.WriteBytes(Ext);
@@ -4330,6 +4431,10 @@ namespace SuMultiplayer.Protocol.Entities {
         output.WriteRawTag(88);
         output.WriteEnum((int) Source);
       }
+      if (HasReach) {
+        output.WriteRawTag(101);
+        output.WriteFloat(Reach);
+      }
       if (Ext.Length != 0) {
         output.WriteRawTag(162, 6);
         output.WriteBytes(Ext);
@@ -4368,6 +4473,9 @@ namespace SuMultiplayer.Protocol.Entities {
       }
       if (Source != global::SuMultiplayer.Protocol.Entities.DropSource.Input) {
         size += 1 + pb::CodedOutputStream.ComputeEnumSize((int) Source);
+      }
+      if (HasReach) {
+        size += 1 + 4;
       }
       if (Ext.Length != 0) {
         size += 2 + pb::CodedOutputStream.ComputeBytesSize(Ext);
@@ -4413,6 +4521,9 @@ namespace SuMultiplayer.Protocol.Entities {
       }
       if (other.Source != global::SuMultiplayer.Protocol.Entities.DropSource.Input) {
         Source = other.Source;
+      }
+      if (other.HasReach) {
+        Reach = other.Reach;
       }
       if (other.Ext.Length != 0) {
         Ext = other.Ext;
@@ -4474,6 +4585,10 @@ namespace SuMultiplayer.Protocol.Entities {
           }
           case 88: {
             Source = (global::SuMultiplayer.Protocol.Entities.DropSource) input.ReadEnum();
+            break;
+          }
+          case 101: {
+            Reach = input.ReadFloat();
             break;
           }
           case 802: {
@@ -4538,6 +4653,10 @@ namespace SuMultiplayer.Protocol.Entities {
           }
           case 88: {
             Source = (global::SuMultiplayer.Protocol.Entities.DropSource) input.ReadEnum();
+            break;
+          }
+          case 101: {
+            Reach = input.ReadFloat();
             break;
           }
           case 802: {
@@ -5220,6 +5339,7 @@ namespace SuMultiplayer.Protocol.Entities {
   {
     private static readonly pb::MessageParser<ProjectileFireRequest> _parser = new pb::MessageParser<ProjectileFireRequest>(() => new ProjectileFireRequest());
     private pb::UnknownFieldSet _unknownFields;
+    private int _hasBits0;
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pb::MessageParser<ProjectileFireRequest> Parser { get { return _parser; } }
@@ -5247,6 +5367,7 @@ namespace SuMultiplayer.Protocol.Entities {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public ProjectileFireRequest(ProjectileFireRequest other) : this() {
+      _hasBits0 = other._hasBits0;
       sequence_ = other.sequence_;
       kind_ = other.kind_;
       itemValue_ = other.itemValue_;
@@ -5254,6 +5375,7 @@ namespace SuMultiplayer.Protocol.Entities {
       origin_ = other.origin_ != null ? other.origin_.Clone() : null;
       direction_ = other.direction_ != null ? other.direction_.Clone() : null;
       charge_ = other.charge_;
+      reach_ = other.reach_;
       ext_ = other.ext_;
       custom_ = other.custom_ != null ? other.custom_.Clone() : null;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
@@ -5367,6 +5489,36 @@ namespace SuMultiplayer.Protocol.Entities {
       }
     }
 
+    /// <summary>Field number for the "reach" field.</summary>
+    public const int ReachFieldNumber = 8;
+    private readonly static float ReachDefaultValue = 0F;
+
+    private float reach_;
+    /// <summary>
+    /// Requester's effective interaction reach (same semantics as PickableAcquireRequest.reach).
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public float Reach {
+      get { if ((_hasBits0 & 1) != 0) { return reach_; } else { return ReachDefaultValue; } }
+      set {
+        _hasBits0 |= 1;
+        reach_ = value;
+      }
+    }
+    /// <summary>Gets whether the "reach" field is set</summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool HasReach {
+      get { return (_hasBits0 & 1) != 0; }
+    }
+    /// <summary>Clears the value of the "reach" field</summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void ClearReach() {
+      _hasBits0 &= ~1;
+    }
+
     /// <summary>Field number for the "ext" field.</summary>
     public const int ExtFieldNumber = 100;
     private pb::ByteString ext_ = pb::ByteString.Empty;
@@ -5413,6 +5565,7 @@ namespace SuMultiplayer.Protocol.Entities {
       if (!object.Equals(Origin, other.Origin)) return false;
       if (!object.Equals(Direction, other.Direction)) return false;
       if (Charge != other.Charge) return false;
+      if (!pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.Equals(Reach, other.Reach)) return false;
       if (Ext != other.Ext) return false;
       if (!object.Equals(Custom, other.Custom)) return false;
       return Equals(_unknownFields, other._unknownFields);
@@ -5429,6 +5582,7 @@ namespace SuMultiplayer.Protocol.Entities {
       if (origin_ != null) hash ^= Origin.GetHashCode();
       if (direction_ != null) hash ^= Direction.GetHashCode();
       if (Charge != 0) hash ^= Charge.GetHashCode();
+      if (HasReach) hash ^= pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.GetHashCode(Reach);
       if (Ext.Length != 0) hash ^= Ext.GetHashCode();
       if (custom_ != null) hash ^= Custom.GetHashCode();
       if (_unknownFields != null) {
@@ -5477,6 +5631,10 @@ namespace SuMultiplayer.Protocol.Entities {
         output.WriteRawTag(56);
         output.WriteInt32(Charge);
       }
+      if (HasReach) {
+        output.WriteRawTag(69);
+        output.WriteFloat(Reach);
+      }
       if (Ext.Length != 0) {
         output.WriteRawTag(162, 6);
         output.WriteBytes(Ext);
@@ -5523,6 +5681,10 @@ namespace SuMultiplayer.Protocol.Entities {
         output.WriteRawTag(56);
         output.WriteInt32(Charge);
       }
+      if (HasReach) {
+        output.WriteRawTag(69);
+        output.WriteFloat(Reach);
+      }
       if (Ext.Length != 0) {
         output.WriteRawTag(162, 6);
         output.WriteBytes(Ext);
@@ -5561,6 +5723,9 @@ namespace SuMultiplayer.Protocol.Entities {
       }
       if (Charge != 0) {
         size += 1 + pb::CodedOutputStream.ComputeInt32Size(Charge);
+      }
+      if (HasReach) {
+        size += 1 + 4;
       }
       if (Ext.Length != 0) {
         size += 2 + pb::CodedOutputStream.ComputeBytesSize(Ext);
@@ -5606,6 +5771,9 @@ namespace SuMultiplayer.Protocol.Entities {
       }
       if (other.Charge != 0) {
         Charge = other.Charge;
+      }
+      if (other.HasReach) {
+        Reach = other.Reach;
       }
       if (other.Ext.Length != 0) {
         Ext = other.Ext;
@@ -5667,6 +5835,10 @@ namespace SuMultiplayer.Protocol.Entities {
           }
           case 56: {
             Charge = input.ReadInt32();
+            break;
+          }
+          case 69: {
+            Reach = input.ReadFloat();
             break;
           }
           case 802: {
@@ -5731,6 +5903,10 @@ namespace SuMultiplayer.Protocol.Entities {
           }
           case 56: {
             Charge = input.ReadInt32();
+            break;
+          }
+          case 69: {
+            Reach = input.ReadFloat();
             break;
           }
           case 802: {

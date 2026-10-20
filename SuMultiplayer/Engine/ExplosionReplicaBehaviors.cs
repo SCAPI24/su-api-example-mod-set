@@ -54,7 +54,7 @@ namespace SuMultiplayer.Engine
             }
             Vector3 eye = componentMiner.ComponentCreature.ComponentCreatureModel.EyePosition;
             var request = new ExplosionRequestData(0L, ExplosionRequestKinds.Throw, eye,
-                aim.Direction, value, slot);
+                aim.Direction, value, slot, hasReach: true, reach: EngineReach.LocalReach());
             return replica.SubmitClientRequest(in request, out _);
         }
 
@@ -147,7 +147,8 @@ namespace SuMultiplayer.Engine
             }
             var request = new ExplosionRequestData(0L, ExplosionRequestKinds.Ignite,
                 new Vector3(cell.X + 0.5f, cell.Y + 0.5f, cell.Z + 0.5f), Vector3.Zero,
-                componentMiner.ActiveBlockValue, componentMiner.Inventory.ActiveSlotIndex);
+                componentMiner.ActiveBlockValue, componentMiner.Inventory.ActiveSlotIndex,
+                hasReach: true, reach: EngineReach.LocalReach());
             return replica.SubmitClientRequest(in request, out _);
         }
 

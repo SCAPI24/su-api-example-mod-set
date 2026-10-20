@@ -90,7 +90,8 @@ See `doc/cmdbridge-ui-automation.md` section 14.
 ## Commands
 
 Read-only: `ping` (also reports `dispatcherReady`), `status`, `obs.snapshot`, `obs.ui`,
-`obs.player`, `obs.input`, `obs.aim`, `obs.inventory`, `obs.sleep` (inside `obs.player`),
+`obs.player`, `players.all` / `obs.players` (every `PlayerData`, see below), `obs.input`,
+`obs.aim`, `obs.inventory`, `obs.sleep` (inside `obs.player`),
 `obs.messages`, `obs.dialogs`, `obs.events`, `obs.world.time`, `obs.world.entities`,
 `obs.world.blocks`, `ui.reachability`, `obs.selftest`, `obs.waitFor`.
 
@@ -111,6 +112,84 @@ all three are the same `PlayerInput.Interact` edge, and `ComponentPlayer.Update`
 `act.aim start|release|cancel` holds / releases / cancels `PlayerInput.Aim`
 (`ComponentInput.cs:185`, `ComponentPlayer.cs:183-227`). See
 `doc/cmdbridge-ui-automation.md` section 13 for the full mapping and caveats.
+
+## All players: `players.all` / `obs.players`
+
+`obs.player` only reports `SubsystemPlayers.ComponentPlayers[0]`. This command instead merges
+**three engine collections**, because no single one contains every character:
+
+- `SubsystemPlayers.PlayersData` — host split-screen H1/H2/H3, including a `PlayerData` whose
+  body has not spawned yet.
+- `SubsystemPlayers.ComponentPlayers` — characters that currently have a `ComponentPlayer`.
+  The current SuMultiplayer removes the remote avatar's `PlayerData` from `m_playersData` and
+  keeps only its `ComponentPlayer` in `m_componentPlayers`
+  (`Mod/SuMultiplayer/Engine/NetworkAvatarSpawner.cs`, the “remote avatar has no UI” block).
+- `SubsystemBodies.Bodies` — every body-bearing entity. The remote avatar's entity is removed
+  from `Project.m_entities` directly (without `OnEntityRemoved`), so its `ComponentBody` stays
+  here; engine bookkeeping (`UpdateComponentPlayers`) can also drop the remote from
+  `ComponentPlayers` when any other entity is added/removed. Scanning bodies by their
+  `ComponentPlayer` is what keeps the joined client visible in that state.
+
+The merge is deduped by `PlayerData` reference and sorted by `playerIndex`. Remote avatars are
+still `PlayerData`; only their `GameWidget` has been removed, so they must not be looked up
+through `PlayerData.GameWidget` (that getter throws or returns a stale cached widget).
+Local/remote is decided by reverse-matching `GameWidget.PlayerData` in
+`SubsystemGameWidgets.GameWidgets`. Every entry reports `inPlayersData` /
+`inComponentPlayers` / `inBodies` so the engine representation is visible; a live SuMP host
+can show the client avatar as `inPlayersData:false`, `inComponentPlayers:false`,
+`inBodies:true`.
+
+The result is a **JSON array**, one entry per player character:
+
+```text
+sccmd players [--index N] [--max N] [--slots N]
+raw: players.all { index?: -1, max?: 0, slots?: 16 }
+```
+
+| Argument | Meaning |
+|---|---|
+| `index` | `-1` (default) = every player; otherwise only that `playerIndex` (engine-assigned, **not** the split-screen slot — use `isLocal` + `gameWidgetIndex` for H1/H2/H3). Unknown index → `player_not_found` (with the valid indices in the message). |
+| `max` | `0` (default) = all; otherwise at most N entries. Hard cap = 32 (engine `MaxPlayers` is 4). |
+| `slots` | per-inventory non-empty slot details returned; default 16, hard cap 64. `0` returns only the counts. |
+
+Each entry contains identity (`playerIndex`, `name`, `playerClass`, `isLocal`,
+`inPlayersData`, `inComponentPlayers`, `inBodies`, `gameWidgetIndex`, `hasEntity`,
+`hasComponentPlayer`, `playerState`, …), position/velocity/
+rotation, look (`yawDeg` from body rotation, `pitchDeg` + `headYawDeg` from
+`ComponentLocomotion.LookAngles`, eye position/rotation from `ComponentCreatureModel`),
+health (`health`, `air`, `airCapacity`, `isDead`, `causeOfDeath`, …), sleep, on-fire,
+flu/sickness, vitals (food/stamina/sleep/temperature/wetness/satiation), inventory
+(`slotsCount`, `activeSlot`, `holding`, bounded `slots`), and action hints (`aiming`,
+mining/dig progress, attack power, model motion state). Missing components or a disposed
+entity never throw: `stateRead`/`stateReason` mark the entry and `errors` maps each failed
+field to its exception text. A local `PlayerData` whose body has not spawned yet is still
+listed with `hasComponentPlayer:false` / `hasEntity:false`; a remote avatar appears with
+`inPlayersData:false` / `inBodies:true` (`inComponentPlayers` may be false).
+
+```jsonc
+{
+  "playerIndex": 1, "name": "Basil", "playerClass": "male", "isLocal": true,
+  "inPlayersData": true, "inComponentPlayers": true, "inBodies": true,
+  "gameWidgetIndex": 1, "hasEntity": true, "hasComponentPlayer": true,
+  "playerState": "Playing", "stateRead": true, "stateReason": null,
+  "position": {"x":198.6,"y":65.0,"z":98.3},
+  "look": {"yawDeg":-120.7,"pitchDeg":21.4,"headYawDeg":0.0},
+  "health": {"health":1.0,"air":1.0,"airCapacity":1.0,"breathingMode":"Air"},
+  "isDead": false,
+  "sleep": {"isSleeping":false,"sleepFactor":0.0},
+  "fire": {"isOnFire":false,"touchesFire":false},
+  "flu": {"hasFlu":false,"isCoughing":false},
+  "sickness": {"isSick":false,"isPuking":false},
+  "vitals": {"food":0.07,"stamina":1.0,"sleep":0.30,"temperature":10.8,
+             "wetness":0.0,"satiation":{"total":0.4,"count":1,"entries":[...]}},
+  "inventory": {"slotsCount":26,"activeSlot":0,"holding":{...},
+                "slots":[{"slot":1,"value":162,"contents":162,"data":0,"count":1}],
+                "slotsNonEmpty":1,"slotsReturned":1,"slotsOmitted":0,"slotLimit":16},
+  "action": {"aiming":false,"digging":false,"digProgress":0.0,"digTime":0.0,
+             "attackPower":0.0,"movementAnimationPhase":1.2,"deathPhase":0.0},
+  "errors": {}
+}
+```
 
 Wire format is one UTF-8 JSON object per line:
 

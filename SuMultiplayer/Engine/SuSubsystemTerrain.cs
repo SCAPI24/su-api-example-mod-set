@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using Engine;
 using Game;
 using SuMultiplayer.Terrain;
+using SuMultiplayer.Modules;
 
 namespace SuMultiplayer.Engine
 {
@@ -109,6 +110,19 @@ namespace SuMultiplayer.Engine
 
         /// <summary>客户端世界模拟闸门（实例状态，挂在注入后的子系统中，**没有静态字段**）。</summary>
         public ReplicaSimulationGate Gate => m_gate;
+
+        /// <summary>
+        /// 客户端家具设计闸门（组合根注入 Engine/FurnitureReplicaEngine.cs）。
+        /// 客户端把一格改成家具方块时，data 里的设计索引必须是主机已经下发的副本设计；
+        /// 否则主机会按自己的设计槽位解释成另一个设计（实机错位根因）。
+        /// 未同步完成（IsSynced=false）时不拦：那时"还不知道"不是错误。
+        /// </summary>
+        public IClientFurnitureDesignGuard ClientFurnitureGuard { get; set; }
+
+        /// <summary>因设计索引不在主机副本表里而**不提交**的客户端家具格编辑数。</summary>
+        public long ClientFurnitureEditsDropped { get; private set; }
+
+        private long m_lastFurnitureEditLogMs;
 
         /// <summary>塌落副本计数（实例状态；客户端拒绝本地塌落 / 跳过移动组落地 / 清表）。</summary>
         public CollapsingReplicaState CollapsingState { get; } = new CollapsingReplicaState();
@@ -730,13 +744,59 @@ namespace SuMultiplayer.Engine
             if (m_capture.Count > 0)
             {
                 if (bridge.ClientReplica)
+                {
+                    FilterUnsyncedFurnitureEdits(m_capture);
                     bridge.CaptureClientEdits(m_capture);
+                }
                 else
+                {
                     bridge.PublishHostCells(m_capture);
+                }
             }
 
             // Source: Survivalcraft/Game/SubsystemTerrain.cs:SubsystemTerrain.ProcessModifiedCells
             ProcessModifiedCells();
+        }
+
+        /// <summary>
+        /// 客户端家具格编辑闸门：只保留 data 指向"主机已下发副本设计"的家具格编辑。
+        /// 本地格子已经被引擎改了，这里不能提交给主机（主机不会按客户端的本地设计槽位解释），
+        /// 明确计数 + 限流日志（不是静默丢弃）。设计同步完成后 GetDesign / 渲染仍由主机记录恢复。
+        /// </summary>
+        private void FilterUnsyncedFurnitureEdits(List<Point3> cells)
+        {
+            IClientFurnitureDesignGuard guard = ClientFurnitureGuard;
+            if (guard == null || !guard.IsSynced || cells.Count == 0) return;
+            int removed = 0;
+            for (int i = cells.Count - 1; i >= 0; i--)
+            {
+                Point3 cell = cells[i];
+                if (cell.Y < 0 || cell.Y > 255) continue;
+                int value;
+                try
+                {
+                    value = Terrain.GetCellValueFast(cell.X, cell.Y, cell.Z);
+                }
+                catch (Exception)
+                {
+                    continue;
+                }
+                if (Game.Terrain.ExtractContents(value) != FurnitureBlock.Index) continue;
+                int designIndex = FurnitureBlock.GetDesignIndex(
+                    Game.Terrain.ExtractData(value));
+                if (guard.IsReplicaDesign(designIndex)) continue;
+                cells.RemoveAt(i);
+                removed++;
+            }
+            if (removed <= 0) return;
+            ClientFurnitureEditsDropped += removed;
+            long now = Environment.TickCount64;
+            if (m_lastFurnitureEditLogMs != 0 &&
+                now - m_lastFurnitureEditLogMs < 10000) return;
+            m_lastFurnitureEditLogMs = now;
+            Log.Warning("[SuMP] 客户端丢弃 " + removed + " 条家具格编辑：data 里的设计索引不在" +
+                "主机已下发的副本表（clientFurnitureEditsDropped 累计 " +
+                ClientFurnitureEditsDropped + "）→ 该格不会提交给主机");
         }
 
         private bool EnsureModifiedCellsBound()

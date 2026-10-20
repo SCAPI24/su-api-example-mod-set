@@ -41,33 +41,49 @@ import "position.proto";
 message RemoteSoundClip {
   // Audio content name exactly as passed to SubsystemAudio (e.g. "Audio/Click").
   string sound = 1;
-  // World position the sound is presented at (the interaction anchor; the
-  // engine audio queue does not retain the original position, see the adapter).
+  // World position the sound is presented at.  For the global host relay the
+  // engine audio queue does not retain the original position, so this is the
+  // host listener position and `source_distance` carries the inferred range.
   sump.position.Vec3 position = 2;
-  // Effective emission volume.  The host derives it so that
-  // CalculateVolume(host_listener_distance, min_distance) equals the volume the
-  // engine actually queued (the host listener distance is not replicated).
+  // Effective emission volume.  For ABSOLUTE it is the exact playback volume;
+  // for RELATIVE_TO_HOST it is the volume the host heard (already attenuated at
+  // `source_distance`) and the client re-projects it to its own listener.
   float volume = 3;
   float pitch = 4;
   // Effective minimum distance for the client-side falloff.
   float min_distance = 5;
   // true = the original call used autoDelay (recomputed per receiving client).
   bool auto_delay = 6;
+  // How `volume` / `position` must be interpreted (append-only; 0 = ABSOLUTE):
+  //   0 ABSOLUTE         position + volume are the final playback parameters
+  //                      (remote-action window: the interaction anchor is exact);
+  //   1 RELATIVE_TO_HOST position = host listener, source_distance = source range;
+  //   2 NON_POSITIONAL   the engine call had no position (ambient 2D); play only
+  //                      when the client is near the host listener.
+  uint32 attenuation_mode = 7;
+  // Distance in metres from the host listener to the inferred source
+  // (RELATIVE_TO_HOST only; 0 otherwise).  The engine queue stores only the
+  // attenuated volume, so the host inverts CalculateVolume(volume, min=2) and,
+  // when autoDelay is set, also uses delay*120 as a lower bound.
+  float source_distance = 8;
 }
 
 // Host -> one client (the requester) and to every other client within
 // RemoteSoundPolicy.MaxRelayDistance.  Coalesced: one event per remote action,
-// carrying every sound that action produced.
+// carrying every sound that action produced.  The same message is also used by
+// the global host relay: source_client_id = 0 means "host world / host player
+// simulation" and the event carries up to MaxHostSoundsPerMessage sounds for
+// one peer (batched every HostBatchIntervalMs).
 message RemoteActionSound {
   // Host-side transport id of the client whose action produced these sounds.
-  // 0 is never used for a relayed event (the host's own actions are not relayed).
+  // 0 = the host's own world simulation / host player (global relay).
   int32 source_client_id = 1;
   // Host clock in milliseconds (diagnostics / ordering).
   int64 server_tick_ms = 2;
   // Host session sequence, starts at 1, strictly increasing.  Clients dedupe by it.
   uint32 event_id = 3;
-  // 1..RemoteSoundPolicy.MaxSoundsPerEvent entries (host-capped, extra sounds
-  // are counted and logged, never silently dropped).
+  // 1..MaxSoundsPerEvent / MaxHostSoundsPerMessage entries (host-capped, extra
+  // sounds are counted and logged, never silently dropped).
   repeated RemoteSoundClip sounds = 4;
 
   bytes ext = 100;

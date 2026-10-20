@@ -54,6 +54,10 @@ offset 16 : protobuf payload       （该 type 对应的消息字节）
 | `Protocol/authority.proto` | 单元格编辑请求 / 裁决 |
 | `Protocol/position.proto` | 玩家位置 / 姿态单条与批 |
 | `Protocol/creature.proto` | 生物记录批 / 全量重发请求 |
+| `Protocol/ambient.proto` | 主机 → 客户端的循环环境音音量（`AMBIENT_SOUNDS_STATE = 93`，每个客户端一条 4 float 小消息） |
+| `Protocol/uistate.proto` | 客户端 → 主机的界面层状态（`CLIENT_UI_STATE = 100`：输入形态 / HUD 显隐 / 当前屏幕 / 打开的对话框与模态面板 / 聊天输入行；变化驱动 + 2 s 心跳，见 `Modules/UiStateSyncModule.cs`） |
+| `Protocol/vitals.proto` | 主机 → 客户端权威生命 / 体征 / 死亡边沿（`PLAYER_VITALS_REPORT = 95` / `PLAYER_VITALS_EVENTS = 96`） |
+| `Protocol/respawn.proto` | 客户端 → 主机复活请求 `PLAYER_RESPAWN_REQUEST = 101` / 主机回执 `PLAYER_RESPAWN_RESULT = 102`（死亡屏点击后每次死亡最多一次；主机校验 owner / dead / 模式 / 冷却；接受后沿用 95/96） |
 | `Protocol/Generated/` | 构建时生成并提交的 C#（不参与编译，只作审阅 / 离线参考） |
 
 id 区间：
@@ -65,7 +69,9 @@ id 区间：
 ```
 
 **id 只允许追加，绝不复用**。第三方不要用 1..999；重复 id 注册会抛
-`InvalidOperationException`（不会静默覆盖）。
+`InvalidOperationException`（不会静默覆盖）。当前内置 id 最大为 **102**
+（`PLAYER_RESPAWN_RESULT`；100 是 `CLIENT_UI_STATE`，99 是 `COMBAT_RNG_SYNC`）；
+新增内置消息请从 103 开始。
 
 ---
 
@@ -390,7 +396,84 @@ clientSender.Send(0, new Ping { Value = 41, Text = "hello" });
 
 ---
 
-## 9. 检查清单（提 PR 前）
+## 9. 交互距离（reach）：请求者有效 reach + 主机上限
+
+引擎事实（`Survivalcraft/Game/ComponentMiner.cs:378`）：
+
+```text
+reach = (WorldSettings.GameMode == Creative) ? SettingsManager.CreativeReach : 5f
+```
+
+`SettingsManager.CreativeReach` 是**客户端本地可调**设置（默认 7.5）。所以主机不能用
+`8 m / 6 m / 1.75 m` 之类的固定常量：客户端把 reach 调到 12 m 后本地能点到的方块，
+固定 8 m 的主机会判"too-far"；反过来，固定常量也会让主机接受客户端射线根本够不到的目标。
+
+协议：所有玩家交互请求都追加了一个 `optional float reach = N` 字段
+（`BlockUseRequest` / `ContainerEditRequest` / `EditableEditRequest` / `CellEditRequest` /
+`PickableAcquireRequest` / `PickableDropRequest` / `ProjectileFireRequest` /
+`FurnitureDesignRequest` / `ExplosionRequest`）。客户端填**此刻**的引擎 reach
+（创造 = `SettingsManager.CreativeReach`，生存 = 5，夹到可发送范围）。
+
+主机校验只有一条规则（实现：`Net/InteractionReach.cs` 的 `InteractionReachGate`）：
+
+```text
+allowed = min(requesterReach + 0.5 m, serverMax)
+```
+
+| 项 | 值 | 说明 |
+|---|---|---|
+| `tolerance` | 0.5 m | 覆盖一个 RTT 的位移 + 身体中心 / 眼睛位置差异 |
+| `serverMax` | 默认 16 m，可配置 5..64 | `SuMultiplayer.json` 的 `maxinteractionreach`；防作弊上限 |
+| 旧客户端 | 缺字段 → 生存 5.0 / 创造 7.5 | 与引擎 `ComponentMiner.Raycast` 同源 |
+| 合法声明 | `[0.5, 1024]` m 的有限数 | 否则整条请求 `reach-invalid` 拒绝 |
+| 超上限声明 | 按 `serverMax` 放行 | 计数 `reachClampedToServerMax`（不是拒绝） |
+
+拒绝原因固定为 `too-far: <实测> m > <允许> m（reach=...）` 与
+`reach-invalid: <值> m（合法范围 ...）`，日志由各模块限流。计数
+`reachAwareChecks / reachClampedToServerMax / reachInvalid` 随 5 s 状态行输出。
+非玩家相对的距离检查（区块加载 / 世界边界 / 家具源格跨度）不套用本规则。
+
+---
+
+## 10. 声音中继（`REMOTE_ACTION_SOUND = 68`）
+
+同一 id 68 承载两类**纯表现**声音，靠 `source_client_id` 区分：
+
+| 来源 | `source_client_id` | 触发 | 位置语义 |
+|---|---|---|---|
+| 远端动作窗口 | 请求者 clientId（>0） | 主机替远端玩家执行交互的同步窗口 | `position` = 交互锚点（精确） |
+| 全局主机声音 | `0` | 主机每帧音频队列新增条目 | `position` = 主机监听者；`source_distance` = 反解距离 |
+
+全局中继口径：
+
+* 捕获点 = `SuSubsystemAudio`（数据库 `Game.SubsystemAudio` 注入）。它在
+  `base.Update` **排空 `m_queuedSounds` 之前**把新增条目交给
+  `Engine/RemoteActionAudioReplica.cs`；队列只读，不静音 / 不删条目。
+* 每条消息 ≤ 16 条（`MaxHostSoundsPerMessage`），每端每秒 ≤ 30 条
+  （`MaxHostSoundsPerSecondPerPeer`），待发上限 256、保留 2 s，
+  每 100 ms 一轮；超出全部有计数（`CapDropped` / `Expired` / `SkippedRate`）。
+* 只发给客户端角色到（推断）声源 ≤ 48 m 的端；读不到位置的端不发。
+* `attenuation_mode` / `source_distance` 是 append-only 字段：
+  `0 ABSOLUTE`（窗口）/ `1 RELATIVE_TO_HOST`（全局：客户端按自己的距离重投影）/
+  `2 NON_POSITIONAL`（引擎里没有位置的 2D 声音）。
+* 防双播：远端动作窗口与营火 / 烧尽 / 拾取 / 水花 / 爆炸 / 武器开火在主机播完后
+  登记 `HostSoundCoveredLedger`，全局捕获在**排空时**按（名字 / 目录前缀, 衰减音量）
+  消费；客户端本机播过的同名声音由 `ClientLocalSoundLedger` 跳过
+  （`audioLocalEchoSkipped`）。客户端绝不产生声音事件。
+* 客户端顺序：`(tick,event_id)` 重放保护 → 严格解码 → `event_id` 排序去重 →
+  事件限速 → 本机距离裁剪 → 本机回声过滤 → 只调 `SubsystemAudio.PlaySound`。
+  autoDelay 的声音按客户端距离重算延迟（`min(d/120, 3)`）。
+
+已知 bypass（明确不覆盖）：`SubsystemAmbientSounds` 的 `Audio/Fire` / `Audio/Water` /
+`Audio/Magma` 是 `CreateSound` 的**循环 Sound**，从不进入 `m_queuedSounds`；
+本中继不复制连续低鸣。岩浆 / 火焰 / 营火的随机 `Audio/Sizzles` 仍走队列，会中继。
+无头主机没有本机监听者时，适配层用客户端化身位置作为虚拟监听者（显式计数
+`virtualListenerFrames`），单客户端会话完全正确；多客户端按最近客户端衰减 +
+同一距离重投影模型。
+
+---
+
+## 11. 检查清单（提 PR 前）
 
 - [ ] `.proto` 改了 → `-p:RegenerateProtocol=true` 并提交 `Protocol/Generated/`。
 - [ ] 新 id 在正确区间；没有复用已删除的 id。

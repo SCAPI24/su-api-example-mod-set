@@ -29,7 +29,30 @@ namespace SuMultiplayer.UI
         private readonly IRoomBrowsePort m_rooms;
         private readonly IWorldReadyPort m_ready;
         private readonly List<BevelledButtonWidget> m_buttons = new List<BevelledButtonWidget>();
+        /// <summary>
+        /// 已经**消费过**当前这一次按下沿的按钮（见 <see cref="TryConsumeClick"/>）。
+        ///
+        /// 为什么需要它：`IsClicked` 是 `ClickableWidget.Update()` 每帧重算的**单帧边沿**
+        /// （`Survivalcraft/Game/ClickableWidget.cs:28-52`），而本类是在 `Frame.Update` 里轮的。
+        /// 一旦点击动作会切屏，`ScreensManager.SwitchScreen()` 会把
+        /// `RootWidget.IsUpdateEnabled` 置 false（`ScreensManager.cs:79-83`），转屏期间整棵控件树
+        /// **不再 Update** —— 那个 true 就冻结在那里；而 `Frame.Update` 不受它门控，于是每帧都会
+        /// 再调一次 `SwitchScreen()`。`UpdateAnimation()` 每次都被新建的 AnimationData 从 Factor=0
+        /// 重新开始（`ScreensManager.cs:61-92`），永远到不了 0.5 的中段插入点（`:297-311`）——
+        /// 新屏永远不进 `RootWidget`：屏幕上还是旧 GameScreen、`status.screen` 却是目标屏、
+        /// `animating` 永久为 true、新屏的 `Update()` 一次都不跑（Back/Escape 与 Cancel 全部失效）。
+        /// 因此这里必须自己记边沿：一次 true 只动作一次，直到按钮真的被 Update 回 false
+        /// （重新进游戏屏、控件树恢复更新）再复位。
+        /// </summary>
+        private readonly HashSet<BevelledButtonWidget> m_consumedClicks =
+            new HashSet<BevelledButtonWidget>();
         private bool m_roomClosedOnLeave;
+
+        // 帧驱动计数：控件缺失 / 帧异常只计数 + 限流日志，绝不每帧抛到 Frame.Update。
+        private long m_moreContentsMisses;
+        private long m_tickFailures;
+        private readonly Dictionary<string, long> m_lastLogMs =
+            new Dictionary<string, long>(StringComparer.Ordinal);
 
         public RoomUiAttacher(IRoomBrowsePort rooms, IWorldReadyPort ready = null)
         {
@@ -39,10 +62,26 @@ namespace SuMultiplayer.UI
 
         public void Tick()
         {
+            try
+            {
+                TickCore();
+            }
+            catch (Exception e)
+            {
+                m_tickFailures++;
+                WarnRateLimited("room-ui-tick",
+                    "[SuMP][ui] 房间 HUD 帧驱动异常（已隔离，下一帧继续）：" +
+                    e.GetType().Name + " " + e.Message);
+            }
+        }
+
+        private void TickCore()
+        {
             Project project = GameManager.Project;
             if (project == null)
             {
                 m_buttons.Clear();
+                m_consumedClicks.Clear();
                 // 离开世界 = 房间的世界没了：把房间收掉，而不是留一个"房间还在但世界不在"的假状态。
                 if (m_rooms != null && m_rooms.IsHostingRoom && !m_roomClosedOnLeave)
                 {
@@ -71,18 +110,69 @@ namespace SuMultiplayer.UI
             {
                 GameWidget gameWidget = gameWidgets[i];
                 if (gameWidget == null) continue;
-                StackPanelWidget moreContents = gameWidget.Children.Find<StackPanelWidget>("MoreContents", true);
-                if (moreContents == null) continue;
+                // required:false：HUD 结构变化（或 XML 被别的 Mod 改过）不能让帧驱动每帧抛异常。
+                StackPanelWidget moreContents =
+                    gameWidget.Children.Find<StackPanelWidget>("MoreContents", false);
+                if (moreContents == null)
+                {
+                    m_moreContentsMisses++;
+                    WarnRateLimited("room-ui-morecontents",
+                        "[SuMP][ui] GameWidget 里没有 MoreContents（引擎 HUD 结构变化）→ " +
+                        "CR 按钮本帧不挂载（下一帧继续尝试）");
+                    continue;
+                }
                 // 判重以**面板**为准（重进世界会重建 GameWidget，静态标志会让新 HUD 一个按钮都没有）。
                 BevelledButtonWidget button =
                     moreContents.Children.Find<BevelledButtonWidget>(ButtonName, false);
-                if (button == null) button = CreateButton(moreContents);
+                if (button == null) button = CreateButton(moreContents, ButtonName, "CR",
+                    "CR 建房按钮已挂到 MoreContents（游戏内建房入口）");
                 if (button.Text != text) button.Text = text;
                 m_buttons.Add(button);
-                if (!button.IsClicked) continue;
-                if (hosting) ShowRoomInfo();
-                else CreateRoom();
+                if (TryConsumeClick(button))
+                {
+                    if (hosting) ShowRoomInfo();
+                    else CreateRoom();
+                }
+
+                // 名字 / 皮肤统一走引擎自己的 Edit Players 屏（ESC → More → Edit Players）；
+                // 独立的 SK 按钮与 SuSkinChangeScreen 已按用户要求删除，HUD 不再有第二个换肤入口。
+                // 统计 / 成就没有独立的 HUD 入口：显示路径就是引擎自带的统计屏
+                // （ESC → Game Menu → Statistics，读本机 ComponentPlayer.PlayerStats）。
+                // 旧的 ST 按钮 / SyncedStatsDialog 已按用户要求删除。
             }
+            // 只丢掉"肯定不会再被误读"的记录：控件已不在这一帧的面板里，**并且** IsClicked 也已经
+            // 被 Update 回 false。冻结在 true 的记录必须留着 —— 否则会话掉线时按钮会暂时隐藏
+            // （不在 m_buttons 里），重新出现时就会把同一次旧点击再触发一遍。
+            m_consumedClicks.RemoveWhere(delegate (BevelledButtonWidget b)
+            {
+                return !b.IsClicked && !m_buttons.Contains(b);
+            });
+        }
+
+        /// <summary>
+        /// `IsClicked` 的**上升沿**只返回一次 true，并记录"这一次已经消费过"。
+        ///
+        /// 直接读 `IsClicked` 在"点击会切屏"的按钮上会变成每帧重复触发：切屏把
+        /// `RootWidget.IsUpdateEnabled` 置 false，控件树停止 Update → `IsClicked` 冻结为 true，
+        /// 而本 Tick 走 `Frame.Update` 仍在跑 → 每帧 `SwitchScreen()` → 转屏动画每帧重置 →
+        /// 新屏永远不挂载。完整因果见 <see cref="m_consumedClicks"/> 的注释与
+        /// `Survivalcraft/Game/ScreensManager.cs:61-92,282-323`。
+        ///
+        /// 复位条件 = 按钮真的被 Update 回 false（控件树恢复更新、这一帧没有 Click 边沿）。
+        /// 因此从别的屏返回游戏屏、GameScreen 重新进入 RootWidget 后，旧边沿会被清掉，
+        /// 下一次真人点击照常生效（不会永久吞点击）。
+        /// </summary>
+        private bool TryConsumeClick(BevelledButtonWidget button)
+        {
+            if (button == null) return false;
+            if (!button.IsClicked)
+            {
+                m_consumedClicks.Remove(button);
+                return false;
+            }
+            if (m_consumedClicks.Contains(button)) return false;
+            m_consumedClicks.Add(button);
+            return true;
         }
 
         /// <summary>
@@ -112,13 +202,14 @@ namespace SuMultiplayer.UI
             ScreensManager.SwitchScreen("GameLoading", imported, null);
         }
 
-        private static BevelledButtonWidget CreateButton(StackPanelWidget moreContents)
+        private BevelledButtonWidget CreateButton(StackPanelWidget moreContents,
+            string name, string text, string logMessage)
         {
             // Source: Survivalcraft/Game/BevelledButtonWidget.cs:BevelledButtonWidget
             var button = new BevelledButtonWidget
             {
-                Name = ButtonName,
-                Text = "CR",
+                Name = name,
+                Text = text,
                 Size = new Vector2(76f, 64f),
                 Margin = new Vector2(3f, 0f),
                 Color = Color.White,
@@ -126,7 +217,7 @@ namespace SuMultiplayer.UI
                 BevelColor = new Color(120, 120, 120)
             };
             moreContents.Children.Add(button);
-            global::Engine.Log.Information("[SuMP][ui] CR 建房按钮已挂到 MoreContents（游戏内建房入口）");
+            InfoRateLimited("room-ui-button-" + name, "[SuMP][ui] " + logMessage);
             return button;
         }
 
@@ -157,6 +248,33 @@ namespace SuMultiplayer.UI
             string summary = m_rooms?.RoomSummary ?? "Multiplayer module is not loaded";
             global::Engine.Log.Information("[SuMP][ui] IF：" + summary);
             ShowDialog("Room", summary);
+        }
+
+        /// <summary>帧驱动计数（5 秒状态行 / 限流日志用）。</summary>
+        public string DescribeCounters() =>
+            "room-ui: buttons=" + m_buttons.Count +
+            " moreContentsMissing=" + m_moreContentsMisses +
+            " tickFail=" + m_tickFailures;
+
+        private void WarnRateLimited(string key, string message, int intervalMs = 10000)
+        {
+            if (!ShouldLog(key, intervalMs)) return;
+            global::Engine.Log.Warning(message + " · " + DescribeCounters());
+        }
+
+        private void InfoRateLimited(string key, string message, int intervalMs = 5000)
+        {
+            if (!ShouldLog(key, intervalMs)) return;
+            global::Engine.Log.Information(message + " · " + DescribeCounters());
+        }
+
+        private bool ShouldLog(string key, int intervalMs)
+        {
+            long nowMs = (long)(Time.RealTime * 1000.0);
+            if (m_lastLogMs.TryGetValue(key, out long last) && nowMs - last < intervalMs)
+                return false;
+            m_lastLogMs[key] = nowMs;
+            return true;
         }
 
         /// <summary>建房需要**当前正在玩的世界**；没有世界就明确拒绝（这正是旧实现 CR 的语义）。</summary>

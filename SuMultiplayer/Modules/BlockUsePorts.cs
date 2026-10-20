@@ -268,6 +268,13 @@ namespace SuMultiplayer.Modules
         bool TryCaptureContainerState(ContainerKey key, out ContainerStateData state,
             out string reason);
 
+        /// <summary>
+        /// 客户端本机**当前有效交互距离**（引擎 ComponentMiner.Raycast 的 reach：
+        /// 创造 = SettingsManager.CreativeReach，生存 = 5）。容器编辑请求必须带上它；
+        /// 主机按 min(reach + 容差, 主机上限) 校验。
+        /// </summary>
+        float LocalReach { get; }
+
         string Describe();
     }
 }

@@ -384,7 +384,8 @@ namespace SuMultiplayer.Modules
             if (m_control?.IsHosting == true) return;    // 主机自己走引擎原路径
             long sequence = ++m_nextRequestSequence;
             var sequenced = new ExplosionRequestData(sequence, request.Kind, request.Position,
-                request.Direction, request.ItemValue, request.ActiveSlot);
+                request.Direction, request.ItemValue, request.ActiveSlot, request.HasReach,
+                request.Reach);
             m_requestsSubmitted++;
             if (m_pendingRequests.Count >= MaxPendingRequests)
             {
@@ -434,7 +435,8 @@ namespace SuMultiplayer.Modules
             if (!result.Accepted)
             {
                 m_resultsRejected++;
-                LogProblem("request-rejected:" + result.Reason, "主机拒绝了爆炸请求 seq=" +
+                LogProblem("request-rejected:" + InteractionReachGate.ReasonCode(result.Reason),
+                    "主机拒绝了爆炸请求 seq=" +
                     result.Sequence + "（" + pending.Request.Describe() + "）→ " + result.Reason +
                     "；客户端不放本地爆炸");
                 return;
@@ -555,7 +557,8 @@ namespace SuMultiplayer.Modules
                     Vector3.Zero);
                 RememberResult(context.ClientId, rejected);
                 SendResult(context.ClientId, rejected);
-                LogProblem("request-rejected:" + reason, "拒绝爆炸请求 clientId=" +
+                LogProblem("request-rejected:" + InteractionReachGate.ReasonCode(reason),
+                    "拒绝爆炸请求 clientId=" +
                     context.ClientId + " " + request.Describe() + " → " + reason);
                 return;
             }

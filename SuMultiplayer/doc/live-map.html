@@ -85,7 +85,7 @@ footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--line);font-si
 
   <div class="pane map-pane" id="LM01">
     <h3>俯视地形图<span class="chip" id="mapChip">等待数据</span></h3>
-    <div class="sub">每个格子 = 一个方块列（<b>12.4 px/格</b>）；颜色 = 该列最上层非空气方块，越亮 = 该列顶部越高。<b>地形填充只来自主机 <code>chunks[]</code></b>（主机真正加载的区域；未加载处保持空白）。<b>「居中角色」同时决定画哪些区块集合</b>（图例与统计面板都写明「当前视图」）：选 <b>Host（房主）</b> = 地形只有主机 <code>chunks[]</code>，<b>每个</b>完整客户端的 <code>clients[].chunks</code> 都画成线框，并画出<b>全部</b>角色的标记；选<b>某个客户端</b> = <b>只画它自己</b>的线框（地形仍只取落在它区块集合内的主机 <code>chunks[]</code>），也<b>只画它自己</b>的标记。<b>客户端当前内存区块 = 线框</b>（每个区块一圈、<b>不填地形</b>；<code>clients[].chunks</code> 是客户端<b>当前内存</b>里的区块，<b>已卸载的块立刻从图上消失</b>），颜色 = 该块相对<b>它自己那个客户端</b>的校验状态：<span style="color:#0d8a63"><b>绿</b></span>=已验证同步（s=2）、<span style="color:#2f6fd0"><b>蓝</b></span>=同步了主机端数据（s=4）、<span style="color:#a9740a"><b>黄</b></span>=已上报待裁决（s=1）、<span style="color:#c23a55"><b>红</b></span>=验证失败（s=3）；<code>s=0</code>（刚加载、尚未上报/裁决）是正常过渡，该块画<b>中性灰</b>线框、不报警；同一区块被多个客户端覆盖时线框**都画在同一条区块边界上**（与地形 16×16 严格对齐，不内缩），按身份稳定键排序只决定线宽（图例里写明规则）。标记标签给出角色的<b>绝对坐标与区块</b>。<b>动物（主机端）</b> = <b>黑色实心圆点</b>（仅位置：不显示名字 / 坐标、不可选中、不画连线；只来自 <code>animals[]</code>，客户端不贡献）。<b>主机地形只填充、不画任何方框</b>（<code>chunks[].s</code> 仍留在 feed 里，但页面不画主机侧框）；<b>客户端区域线框是图上唯一的框层</b>（粗实线 + 深色底衬）。旧参数 <code>?verify</code> 仍接受但已忽略（不再有任何主机侧框可开关）。</div>
+    <div class="sub">每个格子 = 一个方块列（<b>12.4 px/格</b>）；颜色 = 该列最上层非空气方块，越亮 = 该列顶部越高。<b>地形填充只来自主机 <code>chunks[]</code></b>（主机真正加载的区域；未加载处保持空白）。<b>「居中角色」同时决定画哪些区块集合</b>（图例与统计面板都写明「当前视图」）：选 <b>Host（房主）</b> = 地形只有主机 <code>chunks[]</code>，<b>每个</b>完整客户端的 <code>clients[].chunks</code> 都画成线框，并画出<b>全部</b>角色的标记；选<b>某个客户端</b> = <b>只画它自己</b>的线框（地形仍只取落在它区块集合内的主机 <code>chunks[]</code>），也<b>只画它自己</b>的标记。<b>客户端当前内存区块 = 线框</b>（每个区块一圈、<b>不填地形</b>；<code>clients[].chunks</code> 是客户端<b>当前内存</b>里的区块，<b>已卸载的块立刻从图上消失</b>），颜色 = 该块相对<b>它自己那个客户端</b>的校验状态：<span style="color:#0d8a63"><b>绿</b></span>=已验证同步（s=2）、<span style="color:#2f6fd0"><b>蓝</b></span>=同步了主机端数据（s=4）、<span style="color:#a9740a"><b>黄</b></span>=已上报待裁决（s=1）、<span style="color:#c23a55"><b>红</b></span>=验证失败（s=3）；<code>s=0</code>（刚加载、尚未上报/裁决）是正常过渡，该块画<b>中性灰</b>线框、不报警；同一区块被多个客户端覆盖时线框**都画在同一条区块边界上**（与地形 16×16 严格对齐，不内缩），按身份稳定键排序只决定线宽（图例里写明规则）。标记标签给出角色的<b>绝对坐标与区块</b>：<b>每个玩家角色槽位各一个标记</b> —— 主机自己的本机槽位是 <b>Host#0 / Host#1 …</b>（暖色），玩家端槽位是 <b>&lt;名字&gt;#&lt;槽位&gt;</b>（同格时按槽位顺序错开、不重叠）。<b>动物（主机端）</b> = <b>黑色实心圆点</b>（仅位置：不显示名字 / 坐标、不可选中、不画连线；只来自 <code>animals[]</code>，客户端不贡献）。<b>主机地形只填充、不画任何方框</b>（<code>chunks[].s</code> 仍留在 feed 里，但页面不画主机侧框）；<b>客户端区域线框是图上唯一的框层</b>（粗实线 + 深色底衬）。旧参数 <code>?verify</code> 仍接受但已忽略（不再有任何主机侧框可开关）。</div>
     <div class="toolbar">
       <label for="centerSel" title="选主机 = 地形只有主机 chunks[] + 全部完整客户端的线框 + 全部角色的标记；选客户端 = 只画该客户端的线框与标记（地形仍只取落在它区块集合内的主机 chunks[]）" style="font-size:12.5px;color:var(--tx2)">居中角色</label>
       <select id="centerSel" disabled><option>等待数据…</option></select>
@@ -138,11 +138,11 @@ footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--line);font-si
         <tr><td>主机 <span class="mono">chunks[]</span> 的 <span class="mono">s</span>（黄/绿/红/蓝校验状态）<b>仍留在 feed 里，但页面不再画任何主机侧方框</b>（用户要求：主机端不需要任何方框，主机只保留地形填充）；<span class="mono">?verify</span> 作为旧参数继续接受但被忽略。<b>客户端区块的状态不在这里</b>：每条 <span class="mono">clients[].chunks</span> 条目自带它相对<b>自己那个客户端</b>的 <span class="mono">s</span>（<span class="mono">[cx,cz,s]</span> 的第三项：2 绿 / 4 蓝 / 1 黄 / 3 红 / 0 中性灰），画成客户端区域线框 —— 这是图上<b>唯一</b>的框层</td></tr>
         <tr><td>每个 chunk 的 <span class="mono">n</span> = <b>还有几个在线客户端没拿到该区块的最新内容</b>（主机侧内存计数，v5 追加）。<span class="mono">n &gt; 0</span> 时在该区块 16×16 格的正中画一个<b>数字</b>（深色描边 + 亮色填充，地形再花也读得出）；<span class="mono">n == 0</span>（全部客户端都已核对到最新）或<b>字段缺失</b>（旧版主机/工具）时<b>不画数字</b>，也绝不猜一个值。这个计数<b>不进存档</b>：客户端加入时的整图下载就是最新基线，所以新加入的客户端谁都不欠；主机离开过这一块也不清零（客户端进来时仍要核对）。工具侧的统计是 <span class="mono">counts.pendingMarks</span>（有几块标了数字）与 <span class="mono">counts.pendingClients</span>（各块 <span class="mono">n</span> 之和）</td></tr>
         <tr><td><span class="mono">watched</span> = <span class="mono">{ id, key, name }</span>（v6 起带 <span class="mono">key</span> = 被观察身份的稳定键）：工具当前观察的客户端，统计面板显示「被观察客户端：&lt;name&gt;（键 &lt;key&gt;）」；<span class="mono">id === -1</span> 时显示「当前没有客户端在线（没有验证状态）」</td></tr>
-        <tr><td><span class="mono">players[]</span> = <span class="mono">[{ id, key, name, isHost, cell:[x,y,z]|null, cellReason, chunk:[cx,cz] }]</span>：<b>每个身份一条</b>（主机 <span class="mono">id=-1 · key="host"</span> + 每个玩家端），<span class="mono">id</span> = <b>当前</b>传输句柄 clientId（重连会变），<span class="mono">key</span> = <b>身份稳定键</b>（重连不变；**不是 UserId 全值**）。「居中角色」按 <span class="mono">key</span> 选，所以玩家端重连不会多出第二个条目、也不会把选择断掉。<span class="mono">cell</span> = 该角色在世界里的真实绝对坐标（主机 = 本机玩家；玩家端 = 主机侧那个联机角色实体的 <span class="mono">ComponentBody.Position</span>，不是按区块猜的）。标记标签是 <span class="mono">&lt;名字&gt; (x,z) chunk(cx,cz)</span>；<span class="mono">cell=null</span> 时标记退回区块中心并写「坐标未知」+ 原因。<b>画哪些标记也由「居中角色」决定</b>：主机视图画<b>全部</b>角色，客户端视图只画<b>它自己</b>。<span class="mono">centers[]</span> 是同一份数据的旧形状（只带区块），旧页面继续可用</td></tr>
+        <tr><td><span class="mono">players[]</span> = <span class="mono">[{ id, key, slot, name, isHost, host, stableKey, cell:[x,y,z]|null, cellReason, chunk:[cx,cz] }]</span>（v10）：<b>每个玩家角色槽位一条</b> —— 主机自己的本机槽位 0..3（<span class="mono">id=0 · key="0:0"/"0:1" · host=true</span>）+ 每个联机化身的 (clientId, slot)。<span class="mono">key</span> = <b>角色键</b> <span class="mono">clientId:slot</span>；<span class="mono">slot</span> = 该设备上的本机角色槽位；<span class="mono">stableKey</span> = <b>身份稳定键</b>（同一身份的所有槽位共用，「居中角色」按它选，重连不变）；<span class="mono">host</span> = clientId==0 的显式别名。<span class="mono">cell</span> = 该角色在世界里的真实绝对坐标（主机本机角色 = 它的 ComponentBody；联机化身 = 主机侧实体的 ComponentBody，不是按区块猜的）。标记标签：主机槽位 <span class="mono">Host#0 / Host#1</span>（暖色），玩家端槽位 <span class="mono">&lt;名字&gt;#&lt;slot&gt;</span>（槽位色）；同一格内多个角色按槽位顺序错开、不重叠；<span class="mono">cell=null</span> 时标记退回区块中心并写「坐标未知」+ 原因。<b>画哪些标记也由「居中角色」决定</b>：主机视图画<b>全部</b>角色槽位，客户端视图只画<b>该身份的全部槽位</b>。<span class="mono">centers[]</span> 仍是旧形状（<b>每个身份一条</b>，只带区块），旧页面继续可用
         <tr><td><span class="mono">clients[]</span> = <span class="mono">[{ key, id, name, reported, currentLoaded, merged, complete, chunks:[[cx,cz,s]…] }]</span>：<b>该身份的「客户端当前内存区块」集合</b> —— v8 起 <span class="mono">chunks</span> 就是客户端<b>当前内存里</b>的区块（客户端实时把增删告诉主机），<b>已卸载的块立刻从图里消失</b>。<span class="mono">key</span> = 身份稳定键（与 <span class="mono">players[].key</span> 同一个键），<span class="mono">id</span> = 当前 clientId；工具按 <span class="mono">key</span> 合并条目，所以同一身份重连前后仍是一个条目。<b><span class="mono">currentLoaded</span>（v8）= 客户端当前内存区块数</b>（= 本快照 <span class="mono">chunks</span> 的条数）；<span class="mono">reported</span> = <b>会话累计</b>上报条数（只增不减，仅作参考，<b>不是</b>当前内存集合大小）；<span class="mono">merged</span> = 本次真正合并进来的条目数。<b>每个条目是 <span class="mono">[cx, cz, s]</span></b>：<span class="mono">s</span> = 该块相对<b>这个身份自己</b>的校验状态（<span class="mono">0</span> 刚加载未裁决 = 正常过渡（不画线框、不报警）/ <span class="mono">2</span> 绿 / <span class="mono">4</span> 蓝 / <span class="mono">1</span> 黄 / <span class="mono">3</span> 红），页面据此画<b>线框</b>（每个区块一圈、<b>只有描边、不填地形</b>，线框下垫深色底衬，实线）。<b>主机视图</b>把每个完整客户端的当前内存区块都画成线框；<b>客户端视图只取被选中的那一个</b>。<b>多客户端覆盖同一块</b>：几何**都画在同一条区块边界上**（与地形 16×16 严格对齐、<b>不内缩不偏移</b>）；按身份稳定键排序，第 i 个线更宽（i=0 最细、画在最上层），颜色仍按各自状态。<span class="mono">complete=false</span>（<span class="mono">merged !== currentLoaded</span>：工具没把头部声明的当前内存条数全部合并起来）→ <b>整块区域不画、也不进线框集合</b>，并在图例与统计里写明条数。条目只有 <span class="mono">[cx,cz]</span>（旧版工具）或 <span class="mono">s</span> 不认识（负数 / 小数 / 非数字；<b>0 是正常值</b>）→ 该块<b>不画线框</b>并在图例里明确报警（绝不猜状态）</td></tr>
         <tr><td><span class="mono">animals[]</span> = <span class="mono">[{ x, y, z }, …]</span>（v9）：<b>仅主机端生物、仅位置</b>（没有名字 / id / 状态）。页面把每只画成一个<b>黑色实心圆点</b>（半径约 2–3 px、随缩放轻微变化）：<b>不显示名字、不显示坐标、不响应选中、不画标签 / 连线</b>，与角色标记（彩色 + 名字/坐标）明确区分；客户端不贡献动物。<span class="mono">counts.animals</span> = 主机端动物数量（页面只做对照，以 <span class="mono">animals[]</span> 条数为准）；缺字段 → 不画动物并在图例里明说；条目的 x / z 不是有限数 → 该条不画并计数报警（绝不猜坐标）</td></tr>
-        <tr><td><span class="mono">payloadVersion</span> = <span class="mono">9</span>：LiveMap 线上的载荷版本（只追加字段，不重排旧字段）。页面按 v9 读字段（v8 = 每个客户端头部 <span class="mono">currentLoaded</span> 且 <span class="mono">clients[].chunks</span> = 客户端当前内存区块；<b>v9 = 新增 <span class="mono">animals[]</span>（主机端动物位置，仅 x/y/z）与 <span class="mono">counts.animals</span></b>；v5 = 每个 <span class="mono">chunks[]</span> 记录末尾追加 <span class="mono">n</span>；v6 = watched / players / clients 条目追加 <span class="mono">key</span>；v7 = 每条 <span class="mono">clients[].chunks</span> 条目末尾追加 <span class="mono">s</span>，页面输出为 <span class="mono">[cx,cz,s]</span>；v8 = <b>每个客户端头部记录末尾追加 <span class="mono">currentLoaded</span></b>，且 <span class="mono">clients[].chunks</span> 的含义改为<b>客户端当前内存区块</b>（卸载即消失））；版本不符 / <span class="mono">decodeFailures &gt; 0</span> 时在图例与统计面板里明确报警，不猜字段含义。<b>缺字段（旧版主机/工具）时页面明说不画</b>：没有 <span class="mono">players</span> → 坐标一栏写「未知」；没有 <span class="mono">clients</span> → 不画客户端线框；<span class="mono">clients[].chunks</span> 的条目没有第三项 <span class="mono">s</span> → 这些块不画线框（不猜状态）；没有 <span class="mono">currentLoaded</span>（旧版 v7 feed）→ 完整性退回按 <span class="mono">reported</span> 判定并在图例里明说；没有 <span class="mono">chunks[].n</span> → 不画数字；没有 <span class="mono">key</span> → 选角退回 <span class="mono">id</span>（旧版行为）；没有 <span class="mono">animals</span> → 不画动物并在图例里说明</td></tr>
-        <tr><td><span class="mono">counts</span> = 工具统计：<span class="mono">chunks / columns / players / clientChunks</span> 之外还有 <span class="mono">pendingMarks</span>（<span class="mono">chunks[].n &gt; 0</span> 的区块数）与 <span class="mono">pendingClients</span>（各块 <span class="mono">n</span> 之和）；页面只做对照，不据此画地形</td></tr>
+        <tr><td><span class="mono">payloadVersion</span> = <span class="mono">10</span>：LiveMap 线上的载荷版本（只追加字段，不重排旧字段）。页面按 v10 读字段（<b>v10 = 新增 <span class="mono">players[]</span> 逐角色槽位清单（<span class="mono">key</span>=clientId:slot / <span class="mono">slot</span> / <span class="mono">stableKey</span> / <span class="mono">host</span>），于是主机槽位 0..3 与每个联机化身的 (clientId,slot) 都能画出来</b>；v8 = 每个客户端头部 <span class="mono">currentLoaded</span> 且 <span class="mono">clients[].chunks</span> = 客户端当前内存区块；<b>v9 = 新增 <span class="mono">animals[]</span>（主机端动物位置，仅 x/y/z）与 <span class="mono">counts.animals</span></b>；v9 = 新增 <span class="mono">animals[]</span>；v5 = 每个 <span class="mono">chunks[]</span> 记录末尾追加 <span class="mono">n</span>；v6 = watched / players / clients 条目追加 <span class="mono">key</span>；v7 = 每条 <span class="mono">clients[].chunks</span> 条目末尾追加 <span class="mono">s</span>，页面输出为 <span class="mono">[cx,cz,s]</span>；v8 = <b>每个客户端头部记录末尾追加 <span class="mono">currentLoaded</span></b>，且 <span class="mono">clients[].chunks</span> 的含义改为<b>客户端当前内存区块</b>（卸载即消失））；版本不符 / <span class="mono">decodeFailures &gt; 0</span> 时在图例与统计面板里明确报警，不猜字段含义。<b>缺字段（旧版主机/工具）时页面明说不画</b>：没有 <span class="mono">players</span> → 坐标一栏写「未知」；没有 <span class="mono">clients</span> → 不画客户端线框；<span class="mono">clients[].chunks</span> 的条目没有第三项 <span class="mono">s</span> → 这些块不画线框（不猜状态）；没有 <span class="mono">currentLoaded</span>（旧版 v7 feed）→ 完整性退回按 <span class="mono">reported</span> 判定并在图例里明说；没有 <span class="mono">chunks[].n</span> → 不画数字；没有 <span class="mono">key</span> → 选角退回 <span class="mono">id</span>（旧版行为）；没有 <span class="mono">animals</span> → 不画动物并在图例里说明</td></tr>
+        <tr><td><span class="mono">counts</span> = 工具统计：<span class="mono">chunks / columns / players（= 角色槽位数，v10）/ hostPlayers（主机自己的槽位数）/ clientChunks</span> 之外还有 <span class="mono">pendingMarks</span>（<span class="mono">chunks[].n &gt; 0</span> 的区块数）与 <span class="mono">pendingClients</span>（各块 <span class="mono">n</span> 之和）；页面只做对照，不据此画地形</td></tr>
         <tr><td>覆盖范围 = <span class="mono">bounds</span> ∪ <span class="mono">chunks</span> ∪ <span class="mono">clients[].chunks</span> ∪ <span class="mono">players[].cell</span> —— 但每一项都先按<b>当前视图作用域</b>裁剪：主机视图取主机 ∪ 全部完整客户端的并集与全部角色位置（于是能看到分开的区域块），客户端视图只取该客户端自己的区块与它自己的位置（<span class="mono">bounds</span> 与其它角色都不并进来）</td></tr>
         <tr><td><span class="mono">center.cell</span> 缺失（null）时，退回到所选角色的区块中心 <span class="mono">chunk*16 + 8</span>（并在图例与统计里标注「坐标未知，按区块中心画」）</td></tr>
         <tr><td>颜色表按<b>游戏方块 id</b>（<span class="mono">Survivalcraft/Game/*Block.cs</span> 的 <span class="mono">Index</span>）校正，覆盖常见方块；<b>未收录的 id 一律中性灰</b>并在图例里标「未知方块 id」（<b>不再用哈希色相兜底</b> —— 那会把雪原画成青色、把未知方块冒充成水）。水（id 18）另有独立的「水域」色阶。整片区域可能上万列，因此按 <span class="mono">(id, 高度档)</span> 批量填充、不做逐列描边，一次样本只画一次（不跟动画帧）</td></tr>
@@ -428,11 +428,15 @@ footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--line);font-si
     return shadeColor(baseColor(id), top);
   }
 
-  /* ---------- 角色清单（players[]：主机 + 每个玩家端；带真实绝对坐标） ----------
-     feed 契约：
-       players[] = [{ id, key, name, isHost, cell:[x,y,z]|null, cellReason, chunk:[cx,cz] }]
-       （id = **当前** clientId（重连会变）；key = **身份稳定键**（重连不变，选角用它）；
-         工具同时输出同样数据的 centers[]，形状与旧版一致，供旧页面用；本页面优先读 players[]）
+  /* ---------- 角色清单（players[]：v10 起 = **每个玩家角色槽位**一条；带真实绝对坐标） ----------
+     feed 契约（v10）：
+       players[] = [{ id, key, slot, name, isHost, host, stableKey, cell:[x,y,z]|null, cellReason, chunk:[cx,cz] }]
+       （id = **当前** clientId（主机 = 0，重连会变）；key = **角色键** "clientId:slot"（主机槽位 1 = "0:1"）；
+         slot = 该设备上的本机角色槽位 0..3；stableKey = **身份稳定键**（同一身份的所有槽位共用，
+         页面「居中角色」按它选，重连不变）；host = isHost 的显式别名（clientId==0）；
+         工具同时输出 **每个身份一条** 的旧形状 centers[]，供旧页面用；本页面优先读 players[]）
+     兼容：旧版 feed 的 players[] 没有 slot / stableKey（每个身份一条）→ 退回旧规则（key 就是稳定键、
+       一个身份一个标记），标签与旧版逐字一致（不显示 #槽位）。
      缺失处理（绝不猜）：
        · 没有 players 字段 → 用 centers[] 只拿区块；坐标一栏如实写"feed 没有 players 字段"；
        · 某个角色 cell 为 null → 用它的 chunk 中心当标记位置，但明确标注"坐标未知（按区块中心画）"；
@@ -462,16 +466,20 @@ footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--line);font-si
       ? state.players : null;
     var legacy = false;
     if (!list) { legacy = true; list = (state && state.centers) ? state.centers : []; }
-    var out = [], unlocatable = 0, missingCell = 0;
+    var out = [], unlocatable = 0, missingCell = 0, perSlotCount = 0;
     for (var i = 0; i < list.length; i++) {
       var c = list[i];
       if (!c || typeof c !== "object") continue;
       var id = (typeof c.id === "number" && isFinite(c.id)) ? c.id
         : ((typeof c.id === "string" && /^-?\d+$/.test(c.id)) ? parseInt(c.id, 10) : null);
-      // key = **身份稳定键**（v6；重连不变）。id 只是当前传输句柄（clientId，重连会变），
-      // 「居中角色」的选中值一律用 key；旧版 feed 没有 key 时退回 id（那时 id 是唯一键）。
-      var stableKey = (typeof c.key === "string" && c.key !== "") ? c.key
-        : (id === null ? null : String(id));
+      // v10：带 slot 字段 ⇒ players[] 是**逐角色槽位**清单（一个身份可以有多个槽位）。
+      var perSlot = (typeof c.slot === "number" && isFinite(c.slot));
+      var slot = perSlot ? (Math.floor(c.slot) | 0) : 0;
+      var charKey = (typeof c.key === "string" && c.key !== "") ? c.key : null;
+      // key = **身份稳定键**（同一身份的所有槽位共用；重连不变）。v10 用显式 stableKey；
+      // 旧版 feed 的 key 本身就是稳定键；再缺就退回 id（旧版行为）。
+      var stableKey = (typeof c.stableKey === "string" && c.stableKey !== "") ? c.stableKey
+        : (charKey !== null ? charKey : (id === null ? null : String(id)));
       if (stableKey === null) continue;
       var cell = nums3(c.cell);
       var chunk = nums2(c.chunk);
@@ -488,23 +496,39 @@ footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--line);font-si
       var reason = cell ? ""
         : (c.cellReason ? String(c.cellReason)
           : (legacy ? "feed 没有 players 字段（旧版主机/工具）→ 拿不到该角色的绝对坐标" : "feed 没有给出该角色的坐标"));
+      var rawName = (c.name === undefined || c.name === null) ? "" : String(c.name);
+      // 名字读不到：v10 逐槽位条目用 Host / Player<id> 占位（页面标签再补 #槽位），旧版行为保持不变。
+      var name = rawName !== "" ? rawName
+        : (perSlot ? (c.isHost === true ? "Host" : (id === null ? String(stableKey) : "Player" + id))
+          : String(stableKey));
+      if (perSlot) perSlotCount++;
       out.push({
         id: id,
-        key: stableKey,
-        name: (c.name === undefined || c.name === null || c.name === "") ? String(stableKey) : String(c.name),
+        key: stableKey,                 // 身份稳定键（选角 / clients[] 匹配）
+        charKey: charKey === null ? String(stableKey) : charKey,   // 角色键 "clientId:slot"
+        slot: slot,
+        perSlot: perSlot,
+        name: name,
+        rawName: rawName,
         isHost: c.isHost === true,
         chunk: chunk,
         cell: cell,
         cellReason: reason
       });
     }
-    return { list: out, legacy: legacy, missingCell: missingCell, unlocatable: unlocatable };
+    return {
+      list: out, legacy: legacy, missingCell: missingCell, unlocatable: unlocatable,
+      perSlot: perSlotCount > 0
+    };
   }
-  // 按**稳定键**找角色（重连后 clientId 变了、key 不变）；兼容旧链接里传的 id：
-  // key 优先，其次 id，最后 isHost 的 "host" 固定键。
+  // 按**稳定键**找角色（重连后 clientId 变了、key 不变）；兼容旧链接里传的 id / v10 的角色键 "0:1":
+  // 稳定键优先，其次角色键（精确到槽位），其次 id，最后 isHost 的 "host" 固定键。
   function findCenter(list, key) {
     for (var i = 0; i < list.length; i++) if (String(list[i].key) === String(key)) return list[i];
-    for (var j = 0; j < list.length; j++) if (String(list[j].id) === String(key)) return list[j];
+    for (var j = 0; j < list.length; j++) {
+      if (list[j].charKey && String(list[j].charKey) === String(key)) return list[j];
+    }
+    for (var k = 0; k < list.length; k++) if (String(list[k].id) === String(key)) return list[k];
     return null;
   }
   function pickCenter(state, list) {
@@ -1122,39 +1146,98 @@ footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--line);font-si
     ctx.restore();
   }
 
-  /* ---------- 角色标记（**每个**角色一个） ----------
-     标签格式（与需求逐字对应）：`Host (-75,140) chunk(-5,8)` = 名字 + 绝对坐标 (x,z) + 区块。
-     · 所选（"居中角色"）那一个：十字 + 大圆点（画布正中），标签带粗边；
-     · 其它角色：小圆点（品红=玩家端 / 紫=主机），标签同样给出坐标与区块；
+  /* ---------- 角色标记（**每个角色槽位**一个，v10） ----------
+     标签格式：v10 逐槽位 feed 用 `Host#0 / Host#1`（主机自己的本机槽位，暖色）与
+     `<名字>#<slot>`（玩家端槽位），后面照旧跟绝对坐标 (x,z) 与区块：
+       `Host#1 (-18,34) chunk(-2,2)`
+     旧版 feed（没有 slot 字段、每个身份一条）标签保持原样：`Host (-75,140) chunk(-5,8)`。
+     · 所选（"居中角色"）那个**身份**的槽位：十字 + 大圆点（默认槽位 0 在画布正中，与旧版一致）；
+     · 同一格里有多个角色（例如主机槽位 0 与某个玩家端槽位 0 站在一起）→ 按槽位顺序在
+       半径约 7 px 的小圆周上错开，**互不重叠**；只有 1 个角色时不偏移（精确落在格中心）；
+     · 颜色：主机槽位 = 暖色（橙 / 红 / 深橙 / 绛），玩家端槽位 = 冷色（品红 / 紫 / 蓝 / 青）；
      · 该角色坐标未知（feed 里 cell=null）：标记落在它的区块中心，标签写"坐标未知"，
        统计面板给出原因 —— 绝不假装那是真实坐标；
      · 标记落在画布外（view=window 的远处角色）：贴到画布边缘并标注"画布外"。 */
+  // 主机自己的本机槽位：**暖色**（槽位 0..3 各不相同；v10 起主机可以有多个本机角色）。
+  var HOST_SLOT_COLORS = ["#e8590c", "#c92a2a", "#d9480f", "#a61e4d"];
+  // 玩家端槽位：冷色（槽位 0 保持旧版的品红，其余槽位用紫 / 蓝 / 青区分）。
+  var CLIENT_SLOT_COLORS = ["#b5179e", "#6a4bd8", "#1c7ed6", "#0ca678"];
+  function markerColor(p) {
+    var palette = p.isHost ? HOST_SLOT_COLORS : CLIENT_SLOT_COLORS;
+    var slot = (typeof p.slot === "number" && p.slot >= 0) ? (p.slot % palette.length) : 0;
+    return palette[slot];
+  }
+  // 标记的显示名：v10 逐槽位 = Host#<slot> / <名字>#<slot>；旧版 feed 保持旧标签（不加 #槽位）。
+  function markerName(p) {
+    if (!p.perSlot) return p.name;
+    if (p.isHost) return "Host#" + p.slot;
+    return (p.rawName || ("Player" + p.id)) + "#" + p.slot;
+  }
   function drawPlayerMarkers(ctx, players, sel, f, only) {
     if (!players || !players.length) return;
-    // only != null 时只画这些角色的标记（客户端视图 = 只有该客户端自己的标记）
+    // only != null 时只画**这个身份**的标记（客户端视图 = 该玩家端的全部槽位；主机与其它身份不画）
     var draw = [], i0, j0;
     if (only && only.length) {
-      for (i0 = 0; i0 < only.length; i0++) {
-        for (j0 = 0; j0 < players.length; j0++) {
-          if (String(players[j0].key) === String(only[i0].key)) { draw.push(players[j0]); break; }
-        }
+      var onlyKeys = {};
+      for (i0 = 0; i0 < only.length; i0++) onlyKeys[String(only[i0].key)] = true;
+      for (j0 = 0; j0 < players.length; j0++) {
+        if (onlyKeys[String(players[j0].key)]) draw.push(players[j0]);
       }
     } else {
       draw = players;
+    }
+    // —— 同一格里的多个角色按槽位顺序错开（防止标记重叠）——
+    // 分组键 = 真实格坐标（cell 优先；坐标未知时用区块中心）；组内顺序 = draw 顺序
+    // （mod 侧 = 主机槽位升序、再 (clientId, slot) 升序；同一格内槽位号小的先排）。
+    var cellGroups = {};
+    for (var gi = 0; gi < draw.length; gi++) {
+      var gp = draw[gi];
+      var gcell = gp.cell ? gp.cell : [gp.chunk[0] * 16 + 8, null, gp.chunk[1] * 16 + 8];
+      var gkey = gcell[0] + "," + gcell[2];
+      (cellGroups[gkey] = cellGroups[gkey] || []).push(gi);
+    }
+    function markerOffset(gi) {
+      var gp = draw[gi];
+      var gcell = gp.cell ? gp.cell : [gp.chunk[0] * 16 + 8, null, gp.chunk[1] * 16 + 8];
+      var group = cellGroups[gcell[0] + "," + gcell[2]] || [gi];
+      if (group.length <= 1) return { x: 0, y: 0, labelDy: 0 };   // 单个角色：精确落在格中心
+      var pos = group.indexOf(gi); if (pos < 0) pos = 0;
+      var n = group.length;
+      var radius = 7 + Math.max(0, n - 4) * 2;            // 角色多时小幅放大圆周
+      var angle = -Math.PI / 2 + (2 * Math.PI * pos) / n; // 从正上方开始，按顺序均匀分布
+      // 同格的标签也按顺序上下错开（每档 21 px = 标签框 20 px + 1 px 缝），避免标签互相盖住。
+      return {
+        x: Math.cos(angle) * radius,
+        y: Math.sin(angle) * radius,
+        labelDy: (pos - (n - 1) / 2) * 21
+      };
+    }
+    // 标签也做一次简单的避让：候选位置依次尝试（右下 → 右上 → 左下 → 左上 → 更下 → 更上），
+    // 取第一个不与已放标签相交的位置 —— 同格 / 相邻格的角色标签不会互相盖住。
+    var placedLabels = [];
+    function labelFree(x, y, w, h) {
+      for (var li = 0; li < placedLabels.length; li++) {
+        var r = placedLabels[li];
+        if (x < r[0] + r[2] + 2 && x + w + 2 > r[0] && y < r[1] + r[3] + 2 && y + h + 2 > r[1]) return false;
+      }
+      return true;
     }
     for (var i = 0; i < draw.length; i++) {
       var p = draw[i];
       var approx = !p.cell;
       var cell = p.cell ? p.cell : [p.chunk[0] * 16 + 8, null, p.chunk[1] * 16 + 8];
-      var isSel = sel ? String(p.key) === String(sel.key) : false;
-      var cx = (cell[0] + 0.5 - f.x0) * cellScale, cz = (cell[2] + 0.5 - f.z0) * cellScale;
+      // 选中 = 同一个**身份**（v10 同一身份有多个槽位；默认槽位 0 画十字，其余画普通圆点）
+      var isSel = sel ? (String(p.key) === String(sel.key) && (p.slot | 0) === (sel.slot | 0)) : false;
+      var off = markerOffset(i);
+      var cx = (cell[0] + 0.5 - f.x0) * cellScale + off.x;
+      var cz = (cell[2] + 0.5 - f.z0) * cellScale + off.y;
       var offCanvas = (cx < 0 || cz < 0 || cx > f.wPx || cz > f.hPx);
       if (offCanvas) {
         drawStats.markers.offCanvas++;
         cx = Math.min(Math.max(10, cx), Math.max(10, f.wPx - 10));
         cz = Math.min(Math.max(10, cz), Math.max(10, f.hPx - 10));
       }
-      var color = p.isHost ? "#6a4bd8" : "#b5179e";
+      var color = markerColor(p);
       ctx.save();
       if (isSel) {
         ctx.strokeStyle = "rgba(255,255,255,.95)"; ctx.lineWidth = 3.5;
@@ -1167,18 +1250,33 @@ footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--line);font-si
         ctx.beginPath(); ctx.arc(cx, cz, 5, 0, Math.PI * 2); ctx.fillStyle = color; ctx.fill();
         ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.6; ctx.stroke();
       }
-      var label = p.name + " " + (p.cell
+      var label = markerName(p) + " " + (p.cell
         ? ("(" + p.cell[0] + "," + p.cell[2] + ")")
         : "坐标未知") + " chunk(" + p.chunk[0] + "," + p.chunk[1] + ")" +
         (offCanvas ? " ·画布外" : "");
       ctx.font = "12px ui-monospace,Consolas,monospace";
       var w = ctx.measureText(label).width + 12;
-      var bx = Math.min(Math.max(4, cx + 9), Math.max(4, f.wPx - w - 4));
-      var by = Math.min(Math.max(4, cz + 9), Math.max(4, f.hPx - 26));
+      var candidates = [
+        [cx + 9, cz + 9 + off.labelDy],
+        [cx + 9, cz - 26], [cx - w - 9, cz + 9], [cx - w - 9, cz - 26],
+        [cx + 9, cz + 34], [cx + 9, cz - 51]
+      ];
+      var bx = 4, by = 4, placed = false;
+      for (var ci = 0; ci < candidates.length; ci++) {
+        var tx = Math.min(Math.max(4, candidates[ci][0]), Math.max(4, f.wPx - w - 4));
+        var ty = Math.min(Math.max(4, candidates[ci][1]), Math.max(4, f.hPx - 26));
+        if (labelFree(tx, ty, w, 20)) { bx = tx; by = ty; placed = true; break; }
+      }
+      if (!placed) {
+        // 所有候选都被占：退回第一个候选的钳制位置（仍然画标签，只是可能与其他标签相邻）。
+        bx = Math.min(Math.max(4, candidates[0][0]), Math.max(4, f.wPx - w - 4));
+        by = Math.min(Math.max(4, candidates[0][1]), Math.max(4, f.hPx - 26));
+      }
+      placedLabels.push([bx, by, w, 20]);
       ctx.fillStyle = "rgba(255,255,255,.92)";
       ctx.strokeStyle = color; ctx.lineWidth = isSel ? 1.6 : 1;
       ctx.beginPath(); ctx.rect(bx, by, w, 20); ctx.fill(); ctx.stroke();
-      ctx.fillStyle = p.isHost ? "#3d2c85" : "#7a0f6b"; ctx.textBaseline = "middle";
+      ctx.fillStyle = p.isHost ? "#5a2a00" : "#4a0f4a"; ctx.textBaseline = "middle";
       ctx.fillText(label, bx + 6, by + 10);
       ctx.restore();
       drawStats.markers.drawn++;
@@ -1242,6 +1340,30 @@ footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--line);font-si
       (an.declared !== null && an.declared !== an.listed ? " · <code>counts.animals</code>=" + an.declared + " 与条目数不一致" : "") +
       "</span>";
 
+    // —— 角色标记（v10：players[] = **每个角色槽位**一条）——
+    // 主机自己的本机槽位用暖色（Host#0 / Host#1 …），玩家端槽位 = <名字>#<槽位>；
+    // 同一格内多个角色按槽位顺序错开、互不重叠。图例逐个列出标记颜色与角色键。
+    var plist = (players && players.list) ? players.list : [];
+    // 说明文字保持**单个文本节点**（这个容器是 inline-flex，嵌套 <b>/<code> 会被拆成多个
+    // flex item、按 gap 换行，中文说明会变得不可读）；强调只放在前后两个普通 span 里。
+    html += "<span style='flex-basis:100%;font-family:var(--mono);color:var(--tx3)'>角色标记（每个角色槽位一条） —— " +
+      (players && players.perSlot
+        ? "主机自己的本机槽位用暖色（Host#0 / Host#1 …），玩家端槽位 = 名字#槽位（槽位色互不相同）；"
+        : "本 feed 是旧的「每个身份一条」形状（没有 slot 字段）→ 标签与旧版一致；") +
+      "同一格内多个角色按槽位顺序在 ~7 px 小圆周上错开，互不重叠；" +
+      "cell=null 的条目按区块中心画并写明「坐标未知」（不冒充真实坐标）</span>";
+    var maxMarkerChips = 16;
+    for (var pi2 = 0; pi2 < plist.length && pi2 < maxMarkerChips; pi2++) {
+      var pp2 = plist[pi2];
+      var mc = markerColor(pp2);
+      html += "<span><i style='background:" + mc + ";border-color:" + mc + ";border-radius:50%'></i>" +
+        esc(markerName(pp2)) + (pp2.perSlot ? "（键 " + esc(pp2.charKey) + "）" : "") + "</span>";
+    }
+    if (plist.length > maxMarkerChips) {
+      html += "<span style='font-family:var(--mono);color:var(--tx3)'>… 其余 " + (plist.length - maxMarkerChips) +
+        " 个角色未在图例逐个列出（图上照画）</span>";
+    }
+
     // —— 缺失 / 不完整的字段必须在这里明说（不画错区域、也不静默省略状态）——
     var problems = [];
     if (!state) {
@@ -1265,7 +1387,7 @@ footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--line);font-si
       if (regions && regions.stateMissing > 0) {
         problems.push(regions.stateMissing + " 个 <code>clients[].chunks</code> 条目只有 <code>[cx,cz]</code>" +
           "（旧版工具没有状态 <code>s</code>）→ 这些区块<b>不画线框</b>（绝不猜一个状态）；" +
-          "请把主机端 Mod 与工具一起更新到 v9。");
+          "请把主机端 Mod 与工具一起更新到 v10。");
       }
       if (regions && regions.stateInvalid > 0) {
         problems.push(regions.stateInvalid + " 个 <code>clients[].chunks</code> 条目的状态不认识（不是 0..4）→ " +
@@ -1273,7 +1395,7 @@ footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--line);font-si
       }
       if (regions && regions.legacyCurrent > 0) {
         problems.push(regions.legacyCurrent + " 个 <code>clients[]</code> 条目没有 <code>currentLoaded</code>" +
-          "（旧版 v7 feed）→ 完整性暂时按 <code>reported</code> 判定；请把主机端 Mod 与工具一起更新到 v9。");
+          "（旧版 v7 feed）→ 完整性暂时按 <code>reported</code> 判定；请把主机端 Mod 与工具一起更新到 v10。");
       }
       if (regions && regions.incomplete.length) {
         problems.push("客户端当前内存区块数据<b>不完整</b>（<code>merged !== currentLoaded</code>）→ 这几块<b>一律不画</b>（不画错的区域）：" +
@@ -1285,7 +1407,7 @@ footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--line);font-si
       }
       if (an && !an.present && state) {
         problems.push("feed 里没有 <code>animals</code> 字段（旧版主机/工具）→ <b>不画动物</b>；" +
-          "请把主机端 Mod 与工具一起更新到 v9。");
+          "请把主机端 Mod 与工具一起更新到 v10。");
       }
       if (an && an.invalid > 0) {
         problems.push(an.invalid + " 条 <code>animals[]</code> 条目没有可用的 x / z → 这些<b>不画</b>（绝不猜坐标）。");
@@ -1294,9 +1416,9 @@ footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--line);font-si
         problems.push("<code>counts.animals</code> = " + an.declared + " 与 <code>animals[]</code> 条数 " + an.listed +
           " 不一致 → 以条目为准，如实报出。");
       }
-      if (typeof state.payloadVersion === "number" && state.payloadVersion !== 9) {
+      if (typeof state.payloadVersion === "number" && state.payloadVersion !== 10) {
         problems.push("feed 的 <code>payloadVersion</code> = " + state.payloadVersion +
-          "，本页面按 v9 读字段 → 请把工具与主机端 Mod 一起更新。");
+          "，本页面按 v10 读字段 → 请把工具与主机端 Mod 一起更新。");
       }
       if (typeof state.decodeFailures === "number" && state.decodeFailures > 0) {
         problems.push("工具累计 " + state.decodeFailures + " 次载荷解包失败" +
@@ -1537,7 +1659,11 @@ footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--line);font-si
     var playerLines = [];
     for (var pi = 0; pi < playersInfo.list.length; pi++) {
       var pp = playersInfo.list[pi];
-      playerLines.push(esc(pp.name) + "（键 " + esc(pp.key) + "）" + (pp.isHost ? "（房主）" : "") + "：" +
+      // v10：逐槽位条目的标签 = Host#<slot> / <名字>#<slot>，键列给出**角色键** clientId:slot
+      // （旧版 feed 保持旧文案「名字（键 稳定键）（房主）：…」，不改变旧页面的断言）。
+      var pLabel = pp.perSlot ? markerName(pp) : pp.name;
+      var pKey = pp.perSlot ? pp.charKey : pp.key;
+      playerLines.push(esc(pLabel) + "（键 " + esc(pKey) + "）" + (pp.isHost ? "（房主）" : "") + "：" +
         (pp.cell ? ("(" + pp.cell[0] + "," + pp.cell[1] + "," + pp.cell[2] + ")") : "坐标未知") +
         " · chunk(" + pp.chunk[0] + "," + pp.chunk[1] + ")" +
         (pp.cell ? "" : " ← " + esc(pp.cellReason || "feed 没有给出坐标")));
@@ -1580,8 +1706,16 @@ footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--line);font-si
     }
     var markerRow = !view ? "—"
       : (view.host
-        ? "全部角色（" + playersInfo.list.length + " 个）：" + playersInfo.list.map(function (q) { return esc(q.name) + "（键 " + esc(q.key) + "）"; }).join("、")
-        : "只有该客户端自己：" + esc(view.sel.name) + "（键 " + esc(view.sel.key) + "）（主机与其它客户端的标记都不画）");
+        ? "全部角色（" + playersInfo.list.length + " 个）：" + playersInfo.list.map(function (q) {
+            return q.perSlot
+              ? esc(markerName(q)) + "（键 " + esc(q.charKey) + "）"
+              : esc(q.name) + "（键 " + esc(q.key) + "）";
+          }).join("、")
+        : (view.sel.perSlot
+          ? "只有该客户端自己：" + esc(view.sel.name) + "（键 " + esc(view.sel.key) + "）· 该身份全部 " +
+            playersInfo.list.filter(function (q) { return String(q.key) === String(view.sel.key); }).length +
+            " 个槽位（主机与其它客户端的标记都不画）"
+          : "只有该客户端自己：" + esc(view.sel.name) + "（键 " + esc(view.sel.key) + "）（主机与其它客户端的标记都不画）"));
 
     // 动物（animals[]，v9）：主机端生物、仅位置；只画黑点，缺失/非法时明说不画
     var animalsInfo = drawStats.animals || { present: false, listed: 0, invalid: 0, declared: null, drawn: 0, offCanvas: 0 };
@@ -1612,13 +1746,13 @@ footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--line);font-si
 
     var rows = [
       ["工具 t / online", num(state && state.t) + " / " + (state && state.online === true ? "true" : "false"), "online=false 表示工具当前没有实时房间数据"],
-      ["payloadVersion / 解包失败", num(state && state.payloadVersion) + " / " + num(state && state.decodeFailures), "工具与主机端 Mod 的 LiveMap 载荷版本（当前 v9：v8 的 clients[].chunks/currentLoaded 之外，新增 animals[] = 主机端动物位置（仅 x/y/z，只画黑点）；解包失败 > 0 说明两边版本不一致，需一起更新"],
+      ["payloadVersion / 解包失败", num(state && state.payloadVersion) + " / " + num(state && state.decodeFailures), "工具与主机端 Mod 的 LiveMap 载荷版本（当前 v10：在 v9 的 animals[] 之外，新增 players[] = **每个角色槽位**一条（key=clientId:slot / slot / name / stableKey / cell / chunk / host）；解包失败 > 0 说明两边版本不一致，需一起更新"],
       ["view / radius", esc(mode) + " / " + num(state && state.radius), "view=all 画主机整个已加载区域；view=window 只画角色周围 (2×radius+1) 区块"],
       ["覆盖范围来源", region ? esc(region.src) : "—", "优先 feed 的 bounds（cellMin/Max，其次 chunkMin/Max），并并入 chunks / clients / players 的实际范围；全部缺失时无画布"],
       ["canvas 尺寸（格 × 比例）", esc(canvasRow), "地图盒子高度 = 这个高度，不做 max-height / 内部滚动；整页跟着变高"],
       ["canvas 后备像素", f ? (num(drawStats.dprUsed) + " × 逻辑像素" + (drawStats.dprUsed < dpr() ? "（超大画布，已降采样绘制）" : "")) : "—", "CSS 尺寸不缩水，只限制离屏像素，避免超出浏览器 canvas 上限后静默画空白"],
       ["中心格来源", who ? esc(who.src) : "—", who && who.approx ? "该角色坐标未知 → 标记按区块中心画（不准，绝不冒充真实坐标）" : "优先 players[].cell（真实绝对坐标）"],
-      ["居中角色", sel ? (esc(sel.name) + "（键=" + esc(sel.key) + (sel.isHost ? "，房主" : "") + "）") : "—", "players 里 isHost=true 的条目为默认；选中值 = 身份稳定键（重连不变），?center=&lt;key|id&gt; 可预选；两个角色都能选"],
+      ["居中角色", sel ? (esc(sel.perSlot ? markerName(sel) : sel.name) + "（键=" + esc(sel.key) + (sel.isHost ? "，房主" : "") + "）") : "—", "players 里 isHost=true 的条目为默认；选中值 = 身份稳定键（重连不变），?center=&lt;key|id&gt; 可预选；v10 起同一身份的每个本机槽位都有自己的标记（Host#0 / Host#1 …）"],
       ["当前视图（由居中角色决定）", viewLabel, "选主机 = 地形只有主机 chunks[]、线框覆盖全部完整客户端的当前内存区块、画全部角色的标记；选某个客户端 = 只画它自己的当前内存区块线框（地形仍只取落在它区块集合内的主机 chunks[]）、只画它自己的标记"],
       ["正在画的区块集合", view ? (view.sets + " 个 · 共 " + view.chunks.length + " 区块") : "—", "主机视图：主机 chunks[] 1 个集合 + 每个「数据完整」的 clients[] 各 1 个（complete=false 的不画、不进线框集合；集合 = 客户端当前内存区块，卸载即收缩）；客户端视图：只有它自己那 1 个。集合只决定画布覆盖范围，地形填充永远只来自主机 chunks[]"],
       ["本视图区块明细", viewDetail, "既在主机 chunks[] 又在客户端 clients[].chunks 里的区块：地形照常填（它的主机数据），上面再叠该客户端的线框；clients[].chunks = 客户端当前内存区块，卸载的块既没有线框也不再扩画布"],
@@ -1629,7 +1763,7 @@ footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--line);font-si
       ["客户端线框（clients[].chunks）", esc(wireMsg) + esc(stateProblems), "客户端区块 = 客户端当前内存区块（卸载即消失）；完整性按 merged === currentLoaded 判定（complete=false 的客户端整块不画）；线框几何 = 区块边界（与地形 16×16 严格对齐、不内缩）；多客户端覆盖同一块：按身份稳定键排序，第 i 个线更宽（i=0 最细、在上层）；s=0（刚加载未裁决）正常、不画不报警；缺状态 / 状态不认识才报警（不猜）"],
       ["主机地形 / 客户端线框", "主机地形覆盖 " + drawStats.chunks + " / " + feedChunks + " 块（<b>无任何方框</b>）· 客户端线框 " + w.chunks + " 圈（绿 " + (bs[2] || 0) + " / 蓝 " + (bs[4] || 0) + " / 黄 " + (bs[1] || 0) + " / 红 " + (bs[3] || 0) + (bs[0] ? " / 中性灰 " + bs[0] : "") + "）", "主机地形只填充、不画任何框；客户端区域线框是图上**唯一**的框层（实线 + 深色底衬，按当前内存集合实时增删）"],
       ["地形填充来源", "只有主机 <code>chunks[]</code>（" + feedChunks + " 块）", "客户端区块一律不填地形（没有底色 / 高度着色），即使它不与主机重叠；主机没列出的区块保持空白"],
-      ["feed 报告 counts", counts ? ("chunks " + num(counts.chunks) + " · columns " + num(counts.columns) + " · players " + num(counts.players) + " · clientChunks " + num(counts.clientChunks) + " · currentLoadedChunks " + num(counts.currentLoadedChunks) + " · animals " + num(counts.animals) + " · pendingMarks " + num(counts.pendingMarks) + " · pendingClients " + num(counts.pendingClients)) : "—", "由工具统计，页面只做对照；clientChunks / currentLoadedChunks = 各身份当前内存区块条目合计（v8）；pendingMarks / pendingClients = chunks[].n 的标块数与合计（v5）"],
+      ["feed 报告 counts", counts ? ("chunks " + num(counts.chunks) + " · columns " + num(counts.columns) + " · players " + num(counts.players) + (typeof counts.hostPlayers === "number" ? "（主机 " + num(counts.hostPlayers) + "）" : "") + " · clientChunks " + num(counts.clientChunks) + " · currentLoadedChunks " + num(counts.currentLoadedChunks) + " · animals " + num(counts.animals) + " · pendingMarks " + num(counts.pendingMarks) + " · pendingClients " + num(counts.pendingClients)) : "—", "由工具统计，页面只做对照；v10 起 players = **角色槽位数**（players[] 条数，主机自己的槽位见 hostPlayers）；clientChunks / currentLoadedChunks = 各身份当前内存区块条目合计（v8）；pendingMarks / pendingClients = chunks[].n 的标块数与合计（v5）"],
       ["已画 / 列出区块", drawStats.chunks + " / " + feedChunks, "只有同时在本视图作用域内（state.chunks ∩ 视图区块集合）且落在画布内的区块会被画"],
       ["已画 / 列出方块列", drawStats.drawn + " / " + drawStats.listedColumns, "列出的列里 contents==0 的保持背景；未列出的区块一律不填色"],
       ["欠更新数字（chunks[].n）", pendingRow, "格内数字 = 该区块还有几个在线客户端没拿到最新内容（主机侧内存计数、不进存档）；n=0 / 字段缺失一律不画数字（旧版 feed 在图例里明说）"],
@@ -1643,27 +1777,43 @@ footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--line);font-si
 
   /* ---------- 角色下拉框（主机 + 每个玩家端都能选，选中即"居中角色"） ----------
      option 的 value = **身份稳定键**（key），不是 clientId：玩家端重连后 clientId 变了，
-     选中值不变，所以既不会多出一个选项、也不会把当前选择断掉。 */
+     选中值不变，所以既不会多出一个选项、也不会把当前选择断掉。
+     v10：players[] 是逐角色槽位清单 → 下拉框按**身份**去重（同一身份的多个槽位只出现一次，
+     选项里写明槽位数）；旧版 feed 一个身份一条，输出与旧版逐字一致。 */
   function syncSelect(state, sel) {
     var s = $("centerSel");
     if (!s) return;
     var list = playersOf(state).list;
+    // 按身份稳定键聚合（保持出现顺序：主机槽位 0 在最前）。
+    var byKey = {}, order = [], options = [];
+    for (var oi = 0; oi < list.length; oi++) {
+      var oc = list[oi], ok = String(oc.key);
+      if (!byKey[ok]) {
+        byKey[ok] = { key: oc.key, name: oc.name, isHost: oc.isHost, cell: oc.cell, chunk: oc.chunk,
+          slots: 0, perSlot: oc.perSlot };
+        order.push(ok);
+        options.push(byKey[ok]);
+      }
+      byKey[ok].slots++;
+      // 多个槽位时下拉框显示“第一个（槽位 0）”的坐标，选择仍作用于整个身份（居中 / 视图作用域）。
+    }
     var want = list.map(function (c) {
       return String(c.key) + "|" + c.name + "|" + (c.isHost ? 1 : 0) + "|" + (c.cell ? c.cell.join(",") : "-") +
-        "|" + c.chunk[0] + "," + c.chunk[1];
+        "|" + c.chunk[0] + "," + c.chunk[1] + "|" + (c.perSlot ? c.slot : "");
     }).join(";");
     if (s.getAttribute("data-sig") !== want) {
       s.setAttribute("data-sig", want);
-      s.innerHTML = list.length
-        ? list.map(function (c) {
+      s.innerHTML = options.length
+        ? options.map(function (c) {
             return "<option value='" + esc(c.key) + "'>" + esc(c.name) + (c.isHost ? "（房主）" : "") +
               " · " + (c.cell ? ("(" + c.cell[0] + "," + c.cell[2] + ")") : "坐标未知") +
-              " · chunk " + c.chunk[0] + "," + c.chunk[1] + "</option>";
+              " · chunk " + c.chunk[0] + "," + c.chunk[1] +
+              (c.perSlot && c.slots > 1 ? " · 本机 " + c.slots + " 个槽位" : "") + "</option>";
           }).join("")
         : "<option>等待数据…</option>";
     }
     if (sel) { selectedKey = sel.key; s.value = String(sel.key); }
-    s.disabled = list.length <= 1;
+    s.disabled = options.length <= 1;
   }
 
   /* ---------- 换角色 / 换比例时，把页面滚到角色所在位置（地图盒子自己不滚） ---------- */

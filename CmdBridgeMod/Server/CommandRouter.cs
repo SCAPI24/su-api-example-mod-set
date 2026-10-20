@@ -1,4 +1,4 @@
-using Engine;
+﻿using Engine;
 using Engine.Graphics;
 using Engine.Input;
 using Game;
@@ -37,7 +37,7 @@ namespace CmdBridgeMod
         /// ⚠️ **必须与 `ModInfo.xml` 的 `&lt;Version&gt;` 同步**：漏同步就会出现
         /// "装的是 1.1.20、状态里报 1.1.15"（本文件实际踩过一次，排查时容易误判成旧包装没生效）。
         /// </summary>
-        internal const string ModVersion = "1.1.31";
+        internal const string ModVersion = "1.1.38";
 
         /// <summary>
         /// 内建命令名（`cmd.list` 用）。加命令时**必须同步这里**：
@@ -47,13 +47,25 @@ namespace CmdBridgeMod
         {
             "ping", "status", "cmd.list", "obs.selftest",
             "obs.snapshot", "obs.ui", "obs.player", "obs.input", "obs.aim", "obs.events",
+            // 枚举**每一个**玩家角色：PlayersData（主机分屏 H1/H2/H3，含未生成身体的）
+            // + ComponentPlayers（当前 SuMultiplayer 只把远端 avatar 留在这里），去重合并。
+            // `players.all` 是主名，`obs.players` 是只读观察面的别名。
+            "players.all", "obs.players",
             "obs.world.blocks", "obs.world.entities", "obs.world.time", "obs.messages", "obs.chat",
             "obs.dialogs",
             "obs.waitfor", "ui.elements", "ui.reachability",
             // 调试/验收用的"凭空塞一条聊天"（只进观察层队列，不发网络消息、不碰游戏状态）
             "dev.chat.inject",
+            // SuMultiplayer 聊天注入（反射 SuMultiplayerMod.ChatAutomation）：
+            // 与手打同一条 ChatModule 净化 / 限速 / 网络链；没装 SuMultiplayer 时明确 chat_unavailable。
+            "chat.open", "chat.text", "chat.submit", "chat.send", "chat.cancel",
             "act.look", "act.lookdelta", "act.lookat", "act.key", "act.hold", "act.chord",
-            "act.mouse", "act.wheel", "act.uiclick", "act.text", "act.releaseall",
+            "act.mouse", "act.wheel", "act.uiclick", "act.text",
+            // 对话框文本与接受/取消：文本走 `TextBoxWidget.Text` setter（触发 TextChanged，
+            // 对话框内部状态同步）；接受 = 在 OK 按钮上合成一次引擎自己的 Tap+Click，
+            // 让 `Update` 里的 `IsClicked` 提交分支跑起来（`Dismiss` 本身不提交数据）。
+            "act.settext", "act.accept", "act.dialog",
+            "act.releaseall",
             // 玩家交互输入（右键 = 引擎的"使用/交互/放置/瞄准"）：act.use / act.interact /
             // act.place 是同一个 `PlayerInput.Interact` 边沿，act.aim 是按住 `PlayerInput.Aim`。
             // 详见 `Server/PlayerInteractionInjector.cs` 类头。
@@ -167,9 +179,20 @@ namespace CmdBridgeMod
                         m_config,
                         request.GetBoolean("all", false),
                         request.GetInteger("maxElements", m_config.MaxElements),
-                        request.GetString("filter", null)));
+                        request.GetString("filter", null),
+                        ReadGameWidget(request)));
                 case "obs.player":
                     return OnGameThread(PlayerObserver.Describe);
+                // 每个玩家角色一条记录（主机本地分屏 + 远端 avatar）。
+                // PlayersData 与 ComponentPlayers 合并去重：当前 SuMultiplayer 把远端 avatar
+                // 从 PlayersData 移除、只保留 ComponentPlayer，只看一个集合都会漏人。
+                // 参数：index=-1 全部 / max=0 全部 / slots=每个背包最多返回几个非空格子。
+                case "players.all":
+                case "obs.players":
+                    return OnGameThread(() => AllPlayersObserver.Describe(
+                        request.GetInteger("index", -1),
+                        request.GetInteger("max", 0),
+                        request.GetInteger("slots", 16)));
                 case "obs.input":
                     return OnGameThread(PlayerObserver.DescribeRawInput);
                 case "obs.aim":
@@ -230,6 +253,21 @@ namespace CmdBridgeMod
                             ["note"] = "injected into the chat observer only; no network message was sent"
                         };
                     });
+                // ---------------------------------------------------------- 聊天注入（SuMultiplayer）
+                // 这三条不是"观察层注入"：它们经反射调用 SuMultiplayer 的
+                // SuMultiplayerMod.ChatAutomation，走与手打完全相同的 ChatModule 发送链
+                // （净化 / 限速 / 客户端请求 / 主机校验 / 广播）。没装 SuMultiplayer 或
+                // 装的是没有钩子的旧包 → chat_unavailable，不做任何替代路径。
+                case "chat.open":
+                    return OnGameThread(ChatOpen);
+                case "chat.text":
+                    return OnGameThread(() => ChatText(request));
+                case "chat.submit":
+                    return OnGameThread(ChatSubmit);
+                case "chat.send":
+                    return OnGameThread(() => ChatSend(request));
+                case "chat.cancel":
+                    return OnGameThread(ChatCancel);
                 case "obs.dialogs":
                     return OnGameThread(DescribeDialogs);
                 case "ui.reachability":
@@ -306,16 +344,50 @@ namespace CmdBridgeMod
                     {
                         return m_injector.Ui.Click(directSelector, "direct",
                             request.GetInteger("holdMs", 0), false,
-                            UiMarker.DefaultSeconds, UiMarker.DefaultDiameterPixels);
+                            UiMarker.DefaultSeconds, UiMarker.DefaultDiameterPixels,
+                            ReadGameWidget(request));
                     }
                     // 走 CM-1 会话（一步一帧）：直注入的"按下+抬起"会落在同一帧，界面纹丝不动。
                     return m_injector.UiClickSession(
                         request.GetString("selector", null),
                         hasPoint, clickX, clickY, rowIndex, rowText,
-                        request.GetInteger("holdMs", 0));
+                        request.GetInteger("holdMs", 0), ReadGameWidget(request));
                 }
                 case "act.text":
+                    // 只输入到"当前获得焦点"的 TextBoxWidget；没有焦点就明确报 no_focused_textbox
+                    // （旧实现把字符写进 Keyboard.m_lastChar 就返回，界面一个字都不会变）。
                     return m_injector.TypeText(request.GetString("text", string.Empty));
+                case "act.settext":
+                    // 用 TextBoxWidget.Text 的公开 setter 替换整个值：TextChanged 与键盘路径是
+                    // 同一个事件，对话框的临时状态（内存条 16 行 / 真值表）会一起更新。
+                    return m_injector.Dialogs.SetText(
+                        request.GetString("selector", request.GetString("target", null)),
+                        request.GetString("text", string.Empty));
+                case "act.accept":
+                    // 接受当前（或指定）对话框：在它的 OK 按钮上合成一次引擎自己的 Tap+Click，
+                    // 让对话框 Update 的 IsClicked 分支执行"提交 + Dismiss"。
+                    return m_injector.Dialogs.Accept(
+                        request.GetString("dialog", request.GetString("target", null)),
+                        request.GetString("button", null));
+                case "act.dialog":
+                {
+                    // `act.dialog { action: "ok"|"cancel", dialog?, target?, button? }`
+                    string dialogAction = (request.GetString("action", null) ?? string.Empty)
+                        .Trim().ToLowerInvariant();
+                    string dialogTarget = request.GetString("dialog", request.GetString("target", null));
+                    string buttonTarget = request.GetString("button", null);
+                    if (string.Equals(dialogAction, "ok", StringComparison.Ordinal)
+                        || string.Equals(dialogAction, "accept", StringComparison.Ordinal))
+                    {
+                        return m_injector.Dialogs.Accept(dialogTarget, buttonTarget);
+                    }
+                    if (string.Equals(dialogAction, "cancel", StringComparison.Ordinal))
+                        return m_injector.Dialogs.Cancel(dialogTarget, buttonTarget);
+                    throw new BridgeCommandException(
+                        "invalid_argument",
+                        "act.dialog action must be 'ok' (or 'accept') or 'cancel' (got '"
+                        + dialogAction + "').");
+                }
                 case "act.releaseall":
                 case "act.releaseAll":
                     // 输入数组整体清零（含 `act.aim start` 按住的右键），本类自己的瞄准簿记也要失效，
@@ -458,7 +530,8 @@ namespace CmdBridgeMod
                         request.GetString("target", request.GetString("selector", null)),
                         request.GetBoolean("mark", false),
                         request.GetFloat("markMs", UiMarker.DefaultSeconds * 1000f) / 1000f,
-                        request.GetFloat("markPx", UiMarker.DefaultDiameterPixels));
+                        request.GetFloat("markPx", UiMarker.DefaultDiameterPixels),
+                        ReadGameWidget(request));
                 case "ui.clickelement":
                     return m_injector.Ui.Click(
                         request.GetString("target", request.GetString("selector", null)),
@@ -466,7 +539,8 @@ namespace CmdBridgeMod
                         request.GetInteger("holdMs", 0),
                         request.GetBoolean("mark", false),
                         request.GetFloat("markMs", UiMarker.DefaultSeconds * 1000f) / 1000f,
-                        request.GetFloat("markPx", UiMarker.DefaultDiameterPixels));
+                        request.GetFloat("markPx", UiMarker.DefaultDiameterPixels),
+                        ReadGameWidget(request));
                 // 落点标记的自查（只读）：`drawFrames > 0` 证明引擎真的调用过它的 Draw）
                 // 而不是"命令返回了、屏幕上什么都没有"。
                 case "ui.marker":
@@ -835,7 +909,8 @@ namespace CmdBridgeMod
                         return m_injector.Ui.Click(selector, "direct",
                             request.GetInteger("holdMs", 0), request.GetBoolean("mark", false),
                             request.GetFloat("markMs", UiMarker.DefaultSeconds * 1000f) / 1000f,
-                            request.GetFloat("markPx", UiMarker.DefaultDiameterPixels));
+                            request.GetFloat("markPx", UiMarker.DefaultDiameterPixels),
+                            ReadGameWidget(request));
                     }
                     return UiSessionCommand(request, () => m_injector.Session.Click(selector));
                 }
@@ -1195,6 +1270,27 @@ namespace CmdBridgeMod
         private object OnGameThread(Func<object> action)
         {
             return m_invoker.Invoke(action);
+        }
+
+        /// <summary>
+        /// 可选的 `gameWidget` 目标（`gameWidget=N` / CLI `--gamewidget N`）：**分屏槽位号**，
+        /// 就是 `GameWidget.GameWidgetIndex`（H1=0 / H2=1 / H3=2…），也是 `obs.ui` 每个元素的
+        /// `gameWidget` 字段与 `views[]` 里的索引。不传 = 用主视图（规则见
+        /// `UiSplitView.SelectPrimaryView`：接受鼠标的最小槽位）。
+        /// 只做"读出来并校验存在"，其它语义全部在 `UiInspector` / `UiService` 里，只有一份实现。
+        /// </summary>
+        private static int? ReadGameWidget(BridgeRequest request)
+        {
+            int value;
+            if (!request.TryGetInteger("gameWidget", out value))
+                return null;
+            if (value < 0)
+            {
+                throw new BridgeCommandException("invalid_argument",
+                    "gameWidget must be >= 0 (it is the split-screen slot: H1=0, H2=1, H3=2, H4=3).");
+            }
+            UiInspector.RequireKnownGameWidget(value);
+            return value;
         }
 
         // ---------------------------------------------------------------- 注入前 UI 检查
@@ -1902,6 +1998,149 @@ namespace CmdBridgeMod
             if (players == null || players.ComponentPlayers.Count == 0)
                 return null;
             return players.ComponentPlayers[0];
+        }
+
+        // ---------------------------------------------------------------- 聊天注入（SuMultiplayer）
+
+        /// <summary>`chat.open`：打开聊天输入行；已打开时幂等成功。</summary>
+        private static object ChatOpen()
+        {
+            SuChatAutomation chat = SuChatAutomation.Resolve();
+            bool alreadyOpen = chat.IsChatInputOpen;
+            chat.OpenChatInput();
+            return new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["open"] = chat.IsChatInputOpen,
+                ["alreadyOpen"] = alreadyOpen,
+                ["inSession"] = chat.IsInSession,
+                ["hook"] = "SuMultiplayer.SuMultiplayerMod.ChatAutomation"
+            };
+        }
+
+        /// <summary>
+        /// `chat.text`：只追加到**已经打开**的输入行（等价于往输入框里打字）。
+        /// 没打开 → chat_not_open；空 / 超长 / 原生软键盘占用 → chat_inject_failed。
+        /// </summary>
+        private static object ChatText(BridgeRequest request)
+        {
+            string text = request.GetString("text", null);
+            if (text == null)
+            {
+                throw new BridgeCommandException("invalid_argument",
+                    "text is required (use: chat.text text=你好 or sccmd chat.text 你好).");
+            }
+            SuChatAutomation chat = SuChatAutomation.Resolve();
+            if (!chat.IsChatInputOpen)
+            {
+                throw new BridgeCommandException("chat_not_open",
+                    "The SuMultiplayer chat input line is closed. Run chat.open first "
+                    + "(or use chat.send, which opens + injects + submits in one command).");
+            }
+            chat.InjectChatText(text);
+            string inputText = chat.CurrentChatInputText;
+            return new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["injected"] = text,
+                ["inputText"] = inputText,
+                ["utf16Length"] = inputText.Length,
+                ["open"] = chat.IsChatInputOpen
+            };
+        }
+
+        /// <summary>
+        /// `chat.submit`：把当前输入缓冲区按回车路径提交（不追加文本）。
+        /// 没打开 → chat_not_open；空消息 / 限速 / 主机拒绝 → 明确失败。
+        /// </summary>
+        private static object ChatSubmit()
+        {
+            SuChatAutomation chat = SuChatAutomation.Resolve();
+            if (!chat.IsChatInputOpen)
+            {
+                throw new BridgeCommandException("chat_not_open",
+                    "The SuMultiplayer chat input line is closed; run chat.open first.");
+            }
+            string text = chat.CurrentChatInputText;
+            chat.SubmitChatInput();
+            return new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["sent"] = true,
+                ["text"] = text,
+                ["utf16Length"] = text.Length,
+                ["inSession"] = chat.IsInSession,
+                ["note"] = "submitted through ChatModule.TrySendLocalText; "
+                    + "the sender still waits for the host echo"
+            };
+        }
+
+        /// <summary>
+        /// `chat.send`：打开（若还没打开）→ 注入 → 提交，最终走 ChatModule 的真实发送链。
+        /// 失败时如果输入行是这条命令打开的，会先关掉，保持可重试的稳定状态。
+        /// </summary>
+        private static object ChatSend(BridgeRequest request)
+        {
+            string text = request.GetString("text", null);
+            if (text == null)
+            {
+                throw new BridgeCommandException("invalid_argument",
+                    "text is required (use: chat.send text=你好 or sccmd chat.send 你好).");
+            }
+            SuChatAutomation chat = SuChatAutomation.Resolve();
+            bool openedHere = false;
+            if (!chat.IsChatInputOpen)
+            {
+                chat.OpenChatInput();
+                openedHere = true;
+            }
+            try
+            {
+                chat.InjectChatText(text);
+                string sanitized = chat.CurrentChatInputText;
+                chat.SubmitChatInput();
+                return new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    ["sent"] = true,
+                    ["text"] = sanitized,
+                    ["utf16Length"] = sanitized.Length,
+                    ["openedByCommand"] = openedHere,
+                    ["inSession"] = chat.IsInSession,
+                    ["note"] = "submitted through ChatModule.TrySendLocalText; "
+                        + "the sender still waits for the host echo"
+                };
+            }
+            catch (BridgeCommandException failure)
+            {
+                if (openedHere && chat.IsChatInputOpen)
+                {
+                    try
+                    {
+                        chat.CancelChatInput();
+                    }
+                    catch (BridgeCommandException cleanup)
+                    {
+                        throw new BridgeCommandException(failure.Code,
+                            failure.Message + " (additionally, closing the chat input failed: "
+                            + cleanup.Message + ")");
+                    }
+                }
+                throw;
+            }
+        }
+
+        /// <summary>`chat.cancel`：关闭输入行并清空缓冲区（等价按 Esc）；没打开 → chat_not_open。</summary>
+        private static object ChatCancel()
+        {
+            SuChatAutomation chat = SuChatAutomation.Resolve();
+            if (!chat.IsChatInputOpen)
+            {
+                throw new BridgeCommandException("chat_not_open",
+                    "The SuMultiplayer chat input line is already closed; nothing to cancel.");
+            }
+            chat.CancelChatInput();
+            return new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["cancelled"] = true,
+                ["open"] = chat.IsChatInputOpen
+            };
         }
 
         private List<Dictionary<string, object>> DescribeDialogs()

@@ -82,8 +82,18 @@ namespace SuMultiplayer.Players
             }
         }
 
-        /// <summary>只接受内置皮肤名（本重写版还没有自定义皮肤资源下发链路）。</summary>
+        /// <summary>有皮肤名（内置 "$Male3" 或自定义 "Foo.scskin"）。</summary>
         public bool HasSkinName => !string.IsNullOrWhiteSpace(SkinName);
+
+        /// <summary>是不是自定义皮肤（需要资源下发；内置皮肤由引擎自带）。</summary>
+        public bool HasCustomSkin => SkinAssetPolicy.IsCustomSkinName(SkinName);
+
+        /// <summary>
+        /// 外观是否可用：内置皮肤只需要名字；自定义皮肤还必须有合法的 32 字节 SHA-256
+        /// （资源本身可以稍后由客户端上传 / 主机记录补发 —— 缺资源时接收端显示确定性占位并计数）。
+        /// </summary>
+        public bool HasUsableSkin =>
+            HasSkinName && (!HasCustomSkin || SkinAssetPolicy.IsValidHash(SkinSha256));
     }
 
     /// <summary>
@@ -107,7 +117,7 @@ namespace SuMultiplayer.Players
         public bool HasName => !string.IsNullOrWhiteSpace(Name);
 
         public bool HasUsableAppearance =>
-            Appearance != null && Appearance.HasSkinName;
+            Appearance != null && Appearance.HasUsableSkin;
     }
 
     /// <summary>
@@ -131,6 +141,13 @@ namespace SuMultiplayer.Players
 
         /// <summary>主机采用的资料（记录或客户端提交的完整资料）；ProfileRequired 时为空。</summary>
         public PlayerProfileSnapshot Profile;
+
+        /// <summary>
+        /// 主机角色记录里是否已经存着这个身份的自定义皮肤资源（HelloAck.assigned_skin_asset_present）。
+        /// true => 客户端不需要重新上传，主机会在加入时主动补发；
+        /// false => 客户端在握手后显式上传（首次加入 / 记录缺资源时的显式重发）。
+        /// </summary>
+        public bool AssignedSkinAssetPresent;
 
         /// <summary>明确原因（profile required / 资料无效 / 记录损坏…）。</summary>
         public string Reason;

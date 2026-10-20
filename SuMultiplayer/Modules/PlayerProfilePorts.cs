@@ -29,6 +29,13 @@ namespace SuMultiplayer.Modules
         string ProfileRequiredReason { get; }
 
         /// <summary>
+        /// HelloAck.assigned_skin_asset_present：主机角色记录里已经保存了本机资料对应的
+        /// 自定义皮肤资源。true 时客户端不需要重新上传（主机会在加入时主动补发）；
+        /// false / 旧主机 = 客户端在握手后显式上传。
+        /// </summary>
+        bool AssignedSkinAssetPresent { get; }
+
+        /// <summary>
         /// 角色创建完成 / 资料变化后**重新握手**（旧实现同样是重新 JoinGame）。
         /// 返回 false = 当前没有可重连的客户端通道（已明确记录，不假装重连成功）。
         /// </summary>

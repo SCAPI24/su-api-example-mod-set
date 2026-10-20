@@ -5,6 +5,7 @@ using Engine;
 using Game;
 using GameEntitySystem;
 using SuMultiplayer.Modules;
+using SuMultiplayer.Net;
 using SuMultiplayer.Terrain;
 
 namespace SuMultiplayer.Engine
@@ -36,6 +37,7 @@ namespace SuMultiplayer.Engine
 
         private readonly TerrainBridge m_bridge;
         private readonly ClientEditAuthority m_authority;
+        private readonly InteractionReachGate m_reachGate;
         private readonly int m_sessionSeed;
         private ClientRangeResolver m_rangeResolver;
         private double m_initialGameTime;
@@ -58,13 +60,28 @@ namespace SuMultiplayer.Engine
         /// <summary>方块合法性上限 = BlocksManager.Blocks.Length（首次调用时读取，避免构造期引擎未初始化）。</summary>
         private int m_blockCount = -1;
 
-        public ClientReplicaEngine(TerrainBridge bridge)
+        public ClientReplicaEngine(TerrainBridge bridge, InteractionReachGate reachGate)
         {
             m_bridge = bridge ?? throw new ArgumentNullException(nameof(bridge));
+            m_reachGate = reachGate ?? throw new ArgumentNullException(nameof(reachGate));
             m_authority = new ClientEditAuthority(new BridgeEditWorld(bridge));
+            m_authority.ReachGate = m_reachGate;
             int seed = unchecked((int)(DateTime.UtcNow.Ticks ^ Environment.TickCount * 2654435761L));
             if (seed == 0) seed = 1;
             m_sessionSeed = seed;
+        }
+
+        /// <summary>客户端本机有效交互距离（引擎 reach），由编辑请求携带给主机。</summary>
+        public float LocalReach => EngineReach.LocalReach();
+
+        /// <summary>
+        /// 组合根注入：clientId → 主机侧联机化身的**权威身体位置**。
+        /// 编辑请求的玩家相对距离校验用它（读不到 = 明确拒绝，不猜区块中心）。
+        /// </summary>
+        public void SetPlayerPositionResolver(ClientEditAuthority.ClientEditPositionResolver resolver)
+        {
+            if (resolver == null) throw new ArgumentNullException(nameof(resolver));
+            m_authority.PlayerPositions = resolver;
         }
 
         /// <summary>模块注入：clientId → 该客户端当前兴趣窗口（区块中心 + 半径）。</summary>
@@ -72,6 +89,13 @@ namespace SuMultiplayer.Engine
             out int centerChunkZ, out int radiusChunks);
 
         public void SetRangeResolver(ClientRangeResolver resolver) => m_rangeResolver = resolver;
+
+        /// <summary>
+        /// 组合根注入：家具值校验（contents == 227 时 data 里的设计索引必须在主机设计表）。
+        /// 家具同步模块不依赖 Game，所以由组合根把 Game 查询包成这个委托。
+        /// </summary>
+        public void SetFurnitureValueValidator(Func<int, int, bool> validator) =>
+            m_authority.FurnitureValueValidator = validator;
 
         /// <summary>
         /// 组合根注入：clientId → 该客户端手持物的 <c>Block.ToolLevel</c>（读主机侧联机化身的权威背包）。
@@ -122,6 +146,7 @@ namespace SuMultiplayer.Engine
             bool hasRange, int centerChunkX, int centerChunkZ, int radiusChunks)
         {
             EnsureBlockCount();
+            m_authority.HostWorldCreative = EngineReach.IsCreative(GameManager.Project);
             ClientEditDecision decision = m_authority.Handle(clientId, payload, isPlayerPeer,
                 hasRange, centerChunkX, centerChunkZ, radiusChunks);
             MaybeLogDropSummary();
@@ -133,6 +158,7 @@ namespace SuMultiplayer.Engine
             bool hasRange, int centerChunkX, int centerChunkZ, int radiusChunks)
         {
             EnsureBlockCount();
+            m_authority.HostWorldCreative = EngineReach.IsCreative(GameManager.Project);
             ClientEditDecision decision = m_authority.Handle(clientId, request, isPlayerPeer,
                 hasRange, centerChunkX, centerChunkZ, radiusChunks);
             MaybeLogDropSummary();

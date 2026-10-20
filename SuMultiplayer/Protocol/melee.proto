@@ -1,0 +1,156 @@
+syntax = "proto3";
+
+package sump.melee;
+
+option csharp_namespace = "SuMultiplayer.Protocol.Melee";
+option optimize_for = SPEED;
+
+import "google/protobuf/any.proto";
+import "position.proto";
+
+// ---------------------------------------------------------------------------
+// Host-authoritative melee attack (append-only wire ids 97 / 98 in protocol.proto).
+//
+// 权威口径（与地形 / 生物 / 爆炸 / 生命体征一致，不可回退）：
+//   * the host decides hit / miss, damage and the resulting health on the authoritative
+//     entities; the client **never rolls hit/miss** and never applies damage locally;
+//   * 主机决定一切：命中 / 未命中、伤害、目标剩余生命都由主机在**权威实体**上算；
+//   * 客户端绝不本地 roll 命中、绝不本地扣血（本机 ComponentMiner.Hit 的攻击路径被
+//     输入拦截吞掉，见 Engine/MeleeReplicaEngine.cs）；
+//   * 客户端只做**预测表现**（挥手 / 挥击声 / 红色命中标记），收到主机结果后
+//     确认（hit）或显式回滚（miss / 拒绝，日志 + 计数 meleeRollback）；
+//   * 距离口径与交互 / 挖掘一致：allowed = min(请求 reach + 0.5 m, 主机 meleereachmax,
+//     主机引擎 reach)；两侧用同一个纯函数（Net/MeleeNet.cs:MeleeReachRule）。
+//
+// Source: Survivalcraft/Game/ComponentMiner.cs:293-350（ComponentMiner.Hit：0.66 s 冷却 +
+//         命中概率 + 伤害 + 击退；主机只调一次，绝不本地预演命中）
+// Source: Survivalcraft/Game/ComponentMiner.cs:472-564（AttackBody：护甲 / 韧性 / Injure /
+//         击退 / 眩晕 —— 客户端不调用）
+// Source: Survivalcraft/Game/ComponentMiner.cs:376-430（Raycast：reach + dot>0.7 的
+//         身体筛选 + 最近命中的地形 / 移动方块遮挡）
+// Source: Survivalcraft/Game/ComponentPlayer.cs:230-242（原生攻击分支：BodyRaycast +
+//         眼到命中点 <= 2 m + Hit；客户端这段被输入拦截跳过）
+// ---------------------------------------------------------------------------
+
+// 目标种类。NONE = 对空气挥击（仍然上行，让旁观者听到挥击声；主机不回伤害）。
+enum MeleeTargetKind {
+  MELEE_TARGET_NONE = 0;
+  MELEE_TARGET_CREATURE = 1;   // target_id = 主机分配的生物网络键（CreatureRecord.key，> 0）
+  MELEE_TARGET_AVATAR = 2;     // target_client_id / target_slot = 玩家键（主机 = 0）
+}
+
+// Client -> host: 我想攻击这个目标（或对空气挥击）。
+message MeleeAttackRequest {
+  // 每连接单调递增（> 0）；由客户端分配，结果按 (attacker_client_id, sequence) 对应。
+  int64 sequence = 1;
+  // 客户端本地 tick（诊断 / 日志用；主机不用它做裁决）。
+  int64 client_tick = 2;
+  // 发起攻击的本机角色槽位（0..3；旧客户端 / 单角色 = 0）。
+  int32 attacker_slot = 3;
+  MeleeTargetKind target_kind = 4;
+  // CREATURE：生物网络键（> 0）。其它种类必须为 0。
+  int32 target_id = 5;
+  // AVATAR：目标玩家键（主机 = 0，客户端 = 主机分配的传输编号）。
+  int32 target_client_id = 6;
+  // AVATAR：目标本机槽位（0..3）。
+  int32 target_slot = 7;
+  // 客户端自报的眼睛位置（必须有限；主机只用它做诊断 / 日志，几何一律以主机权威身体为准）。
+  sump.position.Vec3 eye_position = 8;
+  // 客户端自报的视线方向（解码时归一化；长度必须 > 1e-6）。
+  sump.position.Vec3 look_direction = 9;
+  // false = 旧客户端 / 畸形载荷没有 reach 字段：主机按世界模式默认（生存 5 / 创造 7.5）。
+  bool has_reach = 10;
+  // 客户端声明的有效 reach（米，0.5..1024）；主机夹到 min(reach + 0.5, meleereachmax, 引擎 reach)。
+  float reach = 11;
+  // 客户端认为主机将为这次攻击使用的战斗随机 index（append-only 字段 12）。
+  // 主机用**自己的** index 结算；两边不同 = 客户端预测作废（结果里回传实际 index + 流位置）。
+  int64 attack_index = 12;
+
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}
+
+// Host -> attacker + observers: 主机对这次攻击的**唯一裁决**。
+message MeleeAttackResult {
+  // 对应请求的 sequence（主机自己发起的攻击也分配同一个序列空间）。
+  int64 sequence = 1;
+  // 主机权威 tick（SubsystemTime.GameTime × 60，向下取整）。
+  int64 server_tick = 2;
+  // 发起者在主机侧的玩家键：attacker_client_id = 0 表示主机自己的角色。
+  int32 attacker_client_id = 3;
+  int32 attacker_slot = 4;
+  // false = 主机拒绝（reason 必填）；此时 hit 必须为 false，客户端必须回滚预测。
+  bool accepted = 5;
+  // 主机 roll 的唯一结果（引擎 ComponentMiner.Hit 的命中判定）。
+  bool hit = 6;
+  // 稳定原因码（accepted=true：reason="" = 命中，reason="miss" = 主机权威未命中，
+  // reason="air-swing" = 对空气挥击）：
+  //   attacker-unknown / attacker-dead / target-missing / target-dead / target-self /
+  //   tool-level / friendly-fire / cooldown / reach-invalid / out-of-reach / aim /
+  //   line-of-sight / target-mismatch / host-unavailable / air-swing / miss
+  string reason = 7;
+  MeleeTargetKind target_kind = 8;
+  int32 target_id = 9;
+  int32 target_client_id = 10;
+  int32 target_slot = 11;
+  // 引擎口径的"显示伤害"（= 生命掉落 × AttackResilience，和单机伤害数字同源）。
+  float damage = 12;
+  // 目标攻击后的权威生命；-1 = 目标没有 ComponentHealth（主机明确标注，不是 0）。
+  float health_after = 13;
+  // 生命实际掉落（攻击前 - 攻击后，生命点）。
+  float health_drop = 14;
+  // 主机权威落点 / 方向（表现用；观测端按这个位置播声音 / 粒子）。
+  sump.position.Vec3 position = 15;
+  sump.position.Vec3 direction = 16;
+  // 表现开关位（见 Net/MeleeNet.cs:MeleeEffectFlags）。
+  uint32 effect_flags = 17;
+  // 主机实测距离（眼 → 目标包围盒中心）与本次允许距离（诊断 / 边界核对）。
+  float measured_distance = 18;
+  float allowed_distance = 19;
+  // 主机的配置上限与引擎 reach（客户端据此用**同一个公式**做下一次预检）。
+  float server_max_reach = 20;
+  float host_engine_reach = 21;
+
+  // ---- 共享战斗随机流（append-only 字段 22..，不重编号已有字段）----
+  // 主机为这次攻击**实际使用**的 index；拒绝 = 请求里的 index（不消耗）。
+  int64 attack_index = 22;
+  // 主机结算后的流位置（下一发攻击 index）；-1 = 旧主机没有该字段。
+  int64 stream_index = 23;
+  // 固定 4 槽的实际取值：[0] u 命中值，[1] f 伤害方差(0.8..1.2)，[2] a 护甲槽，[3] 预留。
+  float roll_u = 24;
+  float roll_f = 25;
+  float roll_a = 26;
+  float roll_reserved = 27;
+  // 主机结算用的命中概率 p（0.66 / block.GetMeleeHitProbability，×3 慢目标）。
+  // 客户端据此校验 hit == (roll_u < p)，并审计主客两端是否用同一公式。
+  float hit_probability = 28;
+  // false = 旧主机 / 拒绝回执：上面 4 个 roll 字段无意义（不是 0 值命中）。
+  bool has_rolls = 29;
+
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}
+
+// Host -> client: 共享战斗随机流的种子 + 当前位置（append-only id 99）。
+// 加入 / 重连时发送；主机发现客户端的 attack_index 与自己的流位置不一致时补发。
+message CombatRngStream {
+  // 流所属玩家端（0 = 主机自己的角色）。
+  int32 client_id = 1;
+  // 该玩家端的本机角色槽位（0..3）。
+  int32 slot = 2;
+  // 会话种子（48 位 LCG 内部状态的初始值；64 位承载，主机 RNG 生成）。
+  uint64 seed = 3;
+  // 下一发**已接受**攻击将使用的 index（拒绝不消耗）。
+  int64 index = 4;
+}
+
+message CombatRngSync {
+  int64 server_tick = 1;
+  // true = 重连：客户端丢弃旧流，按 seed + index 重建（缺失的结果不重放）。
+  bool reset = 2;
+  // 本玩家端各槽位的流（同一 client_id 的 0..3）。
+  repeated CombatRngStream streams = 3;
+
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}

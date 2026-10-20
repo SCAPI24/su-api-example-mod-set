@@ -70,9 +70,21 @@ namespace SuMultiplayer.Players
         /// Source: Mod/ScMultiplayer/Modules/Player/PlayerRecordKeyResolver.cs:10-15
         /// </summary>
         public static string RecordKey(string identity, string fallbackName) =>
-            !string.IsNullOrWhiteSpace(identity)
+            RecordKey(identity, fallbackName, 0);
+
+        /// <summary>
+        /// 记录键（多本机角色版，append-only）：槽位 0 与旧版**完全相同**；
+        /// 槽位 1..3 追加 <c>#&lt;slot&gt;</c>。同一设备上的多个本机角色共享 UserId，
+        /// 只有加上槽位才能各存一条互不覆盖的角色记录。
+        /// 旧记录文件无需迁移：新键只是新的 Identity 属性值，旧构建读到了也不会用。
+        /// </summary>
+        public static string RecordKey(string identity, string fallbackName, int slot)
+        {
+            string baseKey = !string.IsNullOrWhiteSpace(identity)
                 ? UserKeyPrefix + identity.Trim()
                 : NameKeyPrefix + (fallbackName ?? string.Empty).Trim();
+            return slot <= 0 ? baseKey : baseKey + "#" + slot;
+        }
 
         /// <summary>
         /// 这个名字是不是**引擎自带的默认显示名**（现有引擎固定为 "Android User"，见
@@ -100,12 +112,20 @@ namespace SuMultiplayer.Players
                 : text.Substring(0, LogIdentityLength) + "...";
         }
 
-        /// <summary>日志用记录键描述：身份键只显示前 8 位身份。</summary>
+        /// <summary>日志用记录键描述：身份键只显示前 8 位身份（槽位后缀 <c>#n</c> 保留）。</summary>
         public static string Describe(string recordKey)
         {
             if (string.IsNullOrEmpty(recordKey)) return "(none)";
             if (!IsUserKey(recordKey)) return recordKey;
-            return UserKeyPrefix + Shorten(recordKey.Substring(UserKeyPrefix.Length));
+            string body = recordKey.Substring(UserKeyPrefix.Length);
+            int hash = body.LastIndexOf('#');
+            int slot = 0;
+            if (hash > 0 && int.TryParse(body.Substring(hash + 1), out int parsedSlot))
+            {
+                slot = parsedSlot;
+                body = body.Substring(0, hash);
+            }
+            return UserKeyPrefix + Shorten(body) + (slot > 0 ? "#" + slot : string.Empty);
         }
     }
 }

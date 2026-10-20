@@ -61,6 +61,17 @@ namespace SuMultiplayer.Engine
         private long m_despawnScopeRuns;
         private long m_healthApplyFailures;
 
+        // 反射读取的失败分项：每个协议/帧路径都有独立计数，日志只按限流写（绝不每帧）。
+        private long m_despawnProtectionFailures;
+        private long m_viewScopeFailures;
+        private long m_areaByBodyReadFailures;
+        /// <summary>
+        /// m_spawnEntityTemplateName 的安全绑定：成员实际类型必须是 System.String；
+        /// null 值 = 未赋值（合法），不是类型错误。类型/读取异常只禁用该反射路径一次。
+        /// </summary>
+        private readonly ReflectiveStringMember m_shapeshiftMember =
+            new ReflectiveStringMember("m_spawnEntityTemplateName");
+
         // ---------------------------------------------------------------- 客户端复制体：分项计数
         //
         // 这些计数是"复制体到底有没有真的进世界"的唯一可审计口径，逐段对应：
@@ -584,15 +595,38 @@ namespace SuMultiplayer.Engine
             Dictionary<ComponentBody, Point2> areaByBody;
             try
             {
-                areaByBody = m_parentField.GetParentField<Dictionary<ComponentBody, Point2>>(bodies,
-                    "m_areaByComponentBody", typeof(SubsystemBodies));
+                // 同上：非泛型读取，避免字段为 null 时被泛型 getter 判成类型不匹配。
+                object raw = m_parentField.GetParentField(bodies, "m_areaByComponentBody",
+                    typeof(SubsystemBodies));
+                areaByBody = raw as Dictionary<ComponentBody, Point2>;
+                if (raw != null && areaByBody == null)
+                {
+                    m_areaByBodyReadFailures++;
+                    LogThrottled("area-by-body-type",
+                        "读取 SubsystemBodies.m_areaByComponentBody 得到 " +
+                        (raw.GetType().FullName ?? raw.GetType().Name) +
+                        "（期望 Dictionary<ComponentBody, Point2>）→ 本轮不隐藏远端块外的生物；累计 " +
+                        m_areaByBodyReadFailures + " 次", 10000, error: true);
+                    return null;
+                }
             }
             catch (Exception e)
             {
-                Warn("读取 SubsystemBodies.m_areaByComponentBody 失败：" + e.GetType().Name + " " + e.Message);
+                m_areaByBodyReadFailures++;
+                LogThrottled("area-by-body-read",
+                    "读取 SubsystemBodies.m_areaByComponentBody 失败 → 本轮不隐藏远端块外的生物；累计 " +
+                    m_areaByBodyReadFailures + " 次：" + e.GetType().Name + " " + e.Message,
+                    10000, error: true);
                 return null;
             }
-            if (areaByBody == null) return null;
+            if (areaByBody == null)
+            {
+                m_areaByBodyReadFailures++;
+                LogThrottled("area-by-body-null",
+                    "SubsystemBodies.m_areaByComponentBody 为空 → 本轮不隐藏远端块外的生物；累计 " +
+                    m_areaByBodyReadFailures + " 次", 10000, error: true);
+                return null;
+            }
             float radiusSquared = radius * radius;
             var outside = new List<ComponentBody>();
             foreach (ComponentBody body in areaByBody.Keys)
@@ -660,18 +694,42 @@ namespace SuMultiplayer.Engine
             if (m_clientReplicaMode || m_project == null || m_avatars == null) return null;
             SubsystemGameWidgets views = m_project.FindSubsystem<SubsystemGameWidgets>(false);
             if (views == null) return null;
+            // 不用 GetParentField<T>：泛型版用 `value is T` 判定，字段为 null 时会抛
+            // InvalidCastException；而本方法每帧都跑 → 会变成每帧 WARNING。先取 object 再显式判型。
             List<GameWidget> list;
             try
             {
-                list = m_parentField.GetParentField<List<GameWidget>>(views, "m_gameWidgets",
+                object raw = m_parentField.GetParentField(views, "m_gameWidgets",
                     typeof(SubsystemGameWidgets));
+                list = raw as List<GameWidget>;
+                if (raw != null && list == null)
+                {
+                    m_viewScopeFailures++;
+                    LogThrottled("view-scope-type",
+                        "读取 SubsystemGameWidgets.m_gameWidgets 得到 " +
+                        (raw.GetType().FullName ?? raw.GetType().Name) +
+                        "（期望 List<GameWidget>）→ 远端模拟视图本轮不挂载；累计 " +
+                        m_viewScopeFailures + " 次", 5000, error: true);
+                    return null;
+                }
             }
             catch (Exception e)
             {
-                Warn("读取 SubsystemGameWidgets.m_gameWidgets 失败：" + e.GetType().Name + " " + e.Message);
+                m_viewScopeFailures++;
+                LogThrottled("view-scope-read",
+                    "读取 SubsystemGameWidgets.m_gameWidgets 失败 → 远端模拟视图本轮不挂载；累计 " +
+                    m_viewScopeFailures + " 次：" + e.GetType().Name + " " + e.Message,
+                    5000, error: true);
                 return null;
             }
-            if (list == null) return null;
+            if (list == null)
+            {
+                m_viewScopeFailures++;
+                LogThrottled("view-scope-null",
+                    "SubsystemGameWidgets.m_gameWidgets 为空 → 远端模拟视图本轮不挂载；累计 " +
+                    m_viewScopeFailures + " 次", 5000, error: true);
+                return null;
+            }
             var added = new List<GameWidget>();
             foreach (int clientId in m_avatars.ClientIds)
             {
@@ -752,11 +810,10 @@ namespace SuMultiplayer.Engine
                     bool isShapeshifting = false;
                     ComponentShapeshifter shapeshifter =
                         componentSpawn.Entity.FindComponent<ComponentShapeshifter>();
-                    if (shapeshifter != null)
+                    if (shapeshifter != null &&
+                        TryReadShapeshiftTarget(shapeshifter, out string shapeshiftTarget))
                     {
-                        string target = m_parentField.GetParentField<string>(shapeshifter,
-                            "m_spawnEntityTemplateName", typeof(ComponentShapeshifter));
-                        isShapeshifting = !string.IsNullOrEmpty(target);
+                        isShapeshifting = !string.IsNullOrEmpty(shapeshiftTarget);
                     }
                     if (isShapeshifting && !componentSpawn.IsDespawning)
                     {
@@ -774,8 +831,13 @@ namespace SuMultiplayer.Engine
                 }
                 catch (Exception e)
                 {
-                    Warn("远端脱困保护跳过一只生物（key 未知：" + componentSpawn.Entity.ValuesDictionary
-                        .DatabaseObject.Name + "）：" + e.GetType().Name + " " + e.Message);
+                    // 这里在 SubsystemSpawn.Update 的每帧路径里：只计数 + 限流一行，
+                    // 绝不再拼接可能二次抛异常的实体信息，也绝不再每只生物每帧写日志。
+                    m_despawnProtectionFailures++;
+                    LogThrottled("despawn-protection",
+                        "远端脱困保护跳过一只生物（累计 " + m_despawnProtectionFailures +
+                        " 次；本行每 5 秒最多一条）：" + e.GetType().Name + " " + e.Message,
+                        5000, error: true);
                 }
             }
             if (protectedSpawns.Count == 0) return null;
@@ -811,6 +873,102 @@ namespace SuMultiplayer.Engine
             }
         }
 
+        /// <summary>
+        /// 绑定 ComponentShapeshifter.m_spawnEntityTemplateName 的实际类型。
+        /// 搜索顺序与 IModParentField.GetParentField 一致：声明类型 → 基类，DeclaredOnly。
+        /// </summary>
+        private static bool TryResolveShapeshiftMemberType(out Type memberType, out string source)
+        {
+            const BindingFlags Flags = BindingFlags.Instance | BindingFlags.Public |
+                BindingFlags.NonPublic | BindingFlags.DeclaredOnly;
+            for (Type current = typeof(ComponentShapeshifter);
+                 current != null && current != typeof(object); current = current.BaseType)
+            {
+                FieldInfo field = current.GetField("m_spawnEntityTemplateName", Flags);
+                if (field != null)
+                {
+                    memberType = field.FieldType;
+                    source = "字段 " + current.FullName;
+                    return true;
+                }
+                PropertyInfo property = current.GetProperty("m_spawnEntityTemplateName", Flags);
+                if (property != null)
+                {
+                    memberType = property.PropertyType;
+                    source = "属性 " + current.FullName;
+                    return true;
+                }
+            }
+            memberType = null;
+            source = null;
+            return false;
+        }
+
+        /// <summary>
+        /// 读取"这只生物是否正在变形"。返回 false = 反射路径不可用（成员缺失 / 类型不匹配 /
+        /// 读取异常），调用方按"未在变形"继续做其余脱困保护 —— 不再让异常把整只生物跳过。
+        /// 不匹配只记一次（Mismatches 最多 1），之后只累计 SkippedReads，日志由调用方限流。
+        /// </summary>
+        private bool TryReadShapeshiftTarget(ComponentShapeshifter shapeshifter, out string target)
+        {
+            target = null;
+            if (m_shapeshiftMember.State == ReflectiveStringMember.BindingState.Unknown)
+            {
+                if (!TryResolveShapeshiftMemberType(out Type memberType, out string source))
+                {
+                    m_shapeshiftMember.TryBind(null, null);
+                    Warn("远端脱困保护：找不到 ComponentShapeshifter.m_spawnEntityTemplateName → " +
+                        "变形检测反射路径已禁用（其余脱困保护继续）；mismatches=" +
+                        m_shapeshiftMember.Mismatches);
+                    return false;
+                }
+                if (!m_shapeshiftMember.TryBind(memberType, source))
+                {
+                    Warn("远端脱困保护：m_spawnEntityTemplateName 实际类型 " +
+                        m_shapeshiftMember.BoundTypeName + "（" + source + "）不是 System.String → " +
+                        "变形检测反射路径已禁用（其余脱困保护继续，按\"未在变形\"处理）；" +
+                        "mismatches=" + m_shapeshiftMember.Mismatches);
+                    return false;
+                }
+                Info("远端脱困保护：m_spawnEntityTemplateName 绑定类型 = " +
+                    m_shapeshiftMember.BoundTypeName + "（" + source + "）");
+            }
+            if (m_shapeshiftMember.State != ReflectiveStringMember.BindingState.Ready)
+            {
+                // 已禁用：连反射读取都不再做，只累计 skip（这是"路径已停用"的可审计证据）。
+                m_shapeshiftMember.NoteSkippedRead();
+                return false;
+            }
+            try
+            {
+                object raw = m_parentField.GetParentField(shapeshifter,
+                    "m_spawnEntityTemplateName", typeof(ComponentShapeshifter));
+                if (!m_shapeshiftMember.TryInterpret(raw, out target, out string failure,
+                        out bool disabledNow))
+                {
+                    if (disabledNow)
+                    {
+                        Warn("远端脱困保护：m_spawnEntityTemplateName " + failure +
+                            " → 变形检测反射路径已禁用（其余脱困保护继续，按\"未在变形\"处理）；" +
+                            "mismatches=" + m_shapeshiftMember.Mismatches);
+                    }
+                    return false;
+                }
+                return true;
+            }
+            catch (Exception e)
+            {
+                string reason = "读取异常 " + e.GetType().Name + " " + e.Message;
+                if (m_shapeshiftMember.TryReject(reason))
+                {
+                    Warn("远端脱困保护：m_spawnEntityTemplateName " + reason +
+                        " → 变形检测反射路径已禁用（其余脱困保护继续，按\"未在变形\"处理）；" +
+                        "mismatches=" + m_shapeshiftMember.Mismatches);
+                }
+                return false;
+            }
+        }
+
         private void RemovePersistedSpawnRecord(SubsystemSpawn spawn, ComponentSpawn componentSpawn)
         {
             SpawnChunk chunk = spawn.GetSpawnChunk(Game.Terrain.ToChunk(componentSpawn.ComponentFrame.Position.XZ));
@@ -824,6 +982,30 @@ namespace SuMultiplayer.Engine
         }
 
         // ------------------------------------------------------------------ 客户端：复制体
+
+        /// <summary>
+        /// **客户端**：射线命中的本地实体 → 主机分配的生物网络键（近战请求的目标标识）。
+        /// 不是复制体（玩家 / 方块实体 / 本地预测实体）返回 false 并写明原因；调用方把这类
+        /// 命中按"打空"处理（不猜键、不本地扣血）。
+        /// </summary>
+        public bool TryGetReplicaKey(Entity entity, out int key, out string reason)
+        {
+            key = 0;
+            reason = null;
+            if (entity == null)
+            {
+                reason = "实体为空";
+                return false;
+            }
+            foreach (KeyValuePair<int, Entity> pair in m_replicas)
+            {
+                if (!ReferenceEquals(pair.Value, entity)) continue;
+                key = pair.Key;
+                return key > 0;
+            }
+            reason = "实体不是本端的生物复制体（可能是玩家 / 方块实体 / 本地预测实体）";
+            return false;
+        }
 
         public bool TryCreateReplica(CreatureStateRecord record, out string reason)
         {
@@ -1243,8 +1425,10 @@ namespace SuMultiplayer.Engine
             catch (Exception e)
             {
                 m_healthApplyFailures++;
-                Warn("复制体生命值写入失败（位置/姿态仍按主机记录同步）：" +
-                    e.GetType().Name + " " + e.Message);
+                LogThrottled("replica-health-apply",
+                    "复制体生命值写入失败（位置/姿态仍按主机记录同步；累计 " +
+                    m_healthApplyFailures + " 次）：" + e.GetType().Name + " " + e.Message,
+                    5000, error: true);
             }
         }
 
@@ -1284,7 +1468,14 @@ namespace SuMultiplayer.Engine
             " visibilityChecks=" + m_visibilityChecks +
             " viewScopes=" + m_viewScopeRuns +
             " despawnScopes=" + m_despawnScopeRuns +
-            " healthFail=" + m_healthApplyFailures;
+            " healthFail=" + m_healthApplyFailures +
+            " despawnProtectFail=" + m_despawnProtectionFailures +
+            " viewScopeFail=" + m_viewScopeFailures +
+            " areaReadFail=" + m_areaByBodyReadFailures +
+            " shapeshiftType=" + m_shapeshiftMember.BoundTypeName +
+            " shapeshiftState=" + m_shapeshiftMember.State +
+            " shapeshiftMismatch=" + m_shapeshiftMember.Mismatches +
+            " shapeshiftSkips=" + m_shapeshiftMember.SkippedReads;
 
         private void Warn(string message) => m_diagnostics?.Warn("creature-spawn", message);
 

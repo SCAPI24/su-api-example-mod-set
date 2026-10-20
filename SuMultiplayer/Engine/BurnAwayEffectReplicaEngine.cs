@@ -71,6 +71,12 @@ namespace SuMultiplayer.Engine
 
         public event Action<BurnAwayEffectData> HostBurnAwayBatch;
 
+        /// <summary>
+        /// 全局声音中继覆盖口（组合根注入）：主机引擎的 5 秒烧尽分支最多在 16 m 内播 4 次
+        /// Audio/Sizzles；这些声音已经由本模块的定向事件在客户端播放，登记后全局捕获跳过。
+        /// </summary>
+        public IHostSoundCoverPort SoundCover { get; set; }
+
         public bool IsClientReplica => m_clientReplica;
 
         // ------------------------------------------------------------ 挂接
@@ -153,6 +159,7 @@ namespace SuMultiplayer.Engine
                     cells.Length + " 格）→ 丢弃（客户端绝不广播）");
                 return;
             }
+            CoverPlayedSizzles(cells);
             uint eventId = (uint)(++m_nextEventId);
             if (eventId == 0) eventId = (uint)(++m_nextEventId);
             long tick = CurrentTick();
@@ -176,6 +183,28 @@ namespace SuMultiplayer.Engine
                 LogProblem("emit:" + e.GetType().Name, "烧尽批次广播处理器异常（" +
                     data.Describe() + "）：" + e.GetType().Name + " " + e.Message +
                     " → 本帧其余批次与本地引擎表现不受影响");
+            }
+        }
+
+        /// <summary>
+        /// 引擎的 5 秒分支按 m_toBurnAway 的迭代顺序、仅对最近视点 &lt; 16 m 的前 4 格播
+        /// Sizzles（Source: SubsystemFireBlockBehavior.cs:242-250）。报告顺序与引擎迭代顺序一致，
+        /// 因此这里同样取前 4 个 16 m 内的格登记覆盖；没有真正播放的条目到期计入 coverUnused。
+        /// </summary>
+        private void CoverPlayedSizzles(BurnAwayCellData[] cells)
+        {
+            IHostSoundCoverPort cover = SoundCover;
+            if (cover == null) return;
+            SubsystemAudio audio = m_project?.FindSubsystem<SubsystemAudio>(false);
+            int covered = 0;
+            for (int i = 0; i < cells.Length && covered < 4; i++)
+            {
+                BurnAwayCellData cell = cells[i];
+                if (!cell.Sizzle) continue;
+                var position = new Vector3(cell.X, cell.Y, cell.Z);
+                if (audio != null && audio.CalculateListenerDistance(position) >= 16f) continue;
+                cover.CoverPlayedSoundDirectory("Audio/Sizzles", position, 1f, 3f, 1, "burn-away");
+                covered++;
             }
         }
 

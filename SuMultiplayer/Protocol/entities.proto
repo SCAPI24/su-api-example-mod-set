@@ -151,6 +151,11 @@ message PickableAcquireRequest {
   // The host validates against its OWN authoritative avatar position, never
   // against this claim.
   sump.position.Vec3 position = 3;
+  // Requester's effective interaction reach (metres): engine ComponentMiner.Raycast
+  // uses Creative ? SettingsManager.CreativeReach : 5f.  Host rule:
+  // allowed = min(reach + tolerance, serverMax); absent (old client) = 5.0 / 7.5.
+  // Source: Survivalcraft/Game/ComponentMiner.cs:378
+  optional float reach = 4;
   bytes ext = 100;
   google.protobuf.Any custom = 101;
 }
@@ -253,6 +258,8 @@ message PickableDropRequest {
   sump.position.Vec3 direction = 6;
   // Request kind; see DropSource.  Unset (0) = legacy keyboard/gamepad drop.
   DropSource source = 11;
+  // Requester's effective interaction reach (same semantics as PickableAcquireRequest.reach).
+  optional float reach = 12;
   bytes ext = 100;
   google.protobuf.Any custom = 101;
 }
@@ -322,6 +329,8 @@ message ProjectileFireRequest {
   // Diagnostics / sanity range only: the host executes with its own
   // authoritative item data (draw, arrow type, load state).
   int32 charge = 7;
+  // Requester's effective interaction reach (same semantics as PickableAcquireRequest.reach).
+  optional float reach = 8;
   bytes ext = 100;
   google.protobuf.Any custom = 101;
 }

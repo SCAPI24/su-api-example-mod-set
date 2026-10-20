@@ -87,7 +87,7 @@ namespace SuMultiplayer.Net
     {
         public BlockUseRequestData(long sequence, int x, int y, int z, int face, int contents,
             int action, float rayX, float rayY, float rayZ, float directionX, float directionY,
-            float directionZ)
+            float directionZ, bool hasReach = false, float reach = 0f)
         {
             Sequence = sequence;
             X = x;
@@ -102,6 +102,8 @@ namespace SuMultiplayer.Net
             DirectionX = directionX;
             DirectionY = directionY;
             DirectionZ = directionZ;
+            HasReach = hasReach;
+            Reach = reach;
         }
 
         public long Sequence { get; }
@@ -117,9 +119,14 @@ namespace SuMultiplayer.Net
         public float DirectionX { get; }
         public float DirectionY { get; }
         public float DirectionZ { get; }
+        /// <summary>请求是否携带了有效 reach（false = 旧客户端 / 旧载荷）。</summary>
+        public bool HasReach { get; }
+        /// <summary>请求者的有效交互距离（米）；<see cref="HasReach"/> = false 时无意义。</summary>
+        public float Reach { get; }
 
         public BlockUseRequestData WithSequence(long sequence) => new BlockUseRequestData(sequence,
-            X, Y, Z, Face, Contents, Action, RayX, RayY, RayZ, DirectionX, DirectionY, DirectionZ);
+            X, Y, Z, Face, Contents, Action, RayX, RayY, RayZ, DirectionX, DirectionY, DirectionZ,
+            HasReach, Reach);
 
         public string Describe() => BlockUseActions.Name(Action) + " @" + X + "," + Y + "," + Z +
             " face=" + Face + " contents=" + Contents + " seq=" + Sequence;
@@ -317,7 +324,8 @@ namespace SuMultiplayer.Net
         public ContainerEditRequestData(long sequence, int x, int y, int z, int containerKind,
             int baseRevision, int[] baseValues, int[] baseCounts, int[] desiredValues,
             int[] desiredCounts, int[] playerBaseValues, int[] playerBaseCounts,
-            int[] playerDesiredValues, int[] playerDesiredCounts)
+            int[] playerDesiredValues, int[] playerDesiredCounts, bool hasReach = false,
+            float reach = 0f)
         {
             Sequence = sequence;
             X = x;
@@ -333,6 +341,8 @@ namespace SuMultiplayer.Net
             PlayerBaseCounts = playerBaseCounts ?? Array.Empty<int>();
             PlayerDesiredValues = playerDesiredValues ?? Array.Empty<int>();
             PlayerDesiredCounts = playerDesiredCounts ?? Array.Empty<int>();
+            HasReach = hasReach;
+            Reach = reach;
         }
 
         public long Sequence { get; }
@@ -349,13 +359,17 @@ namespace SuMultiplayer.Net
         public int[] PlayerBaseCounts { get; }
         public int[] PlayerDesiredValues { get; }
         public int[] PlayerDesiredCounts { get; }
+        /// <summary>请求是否携带了有效 reach（false = 旧客户端 / 旧载荷）。</summary>
+        public bool HasReach { get; }
+        /// <summary>请求者的有效交互距离（米）；<see cref="HasReach"/> = false 时无意义。</summary>
+        public float Reach { get; }
 
         public ContainerKey Key => new ContainerKey(X, Y, Z, ContainerKind);
 
         public ContainerEditRequestData WithSequence(long sequence) => new ContainerEditRequestData(
             sequence, X, Y, Z, ContainerKind, BaseRevision, BaseValues, BaseCounts, DesiredValues,
             DesiredCounts, PlayerBaseValues, PlayerBaseCounts, PlayerDesiredValues,
-            PlayerDesiredCounts);
+            PlayerDesiredCounts, HasReach, Reach);
 
         public string Describe() => Key.Describe() + " baseRev=" + BaseRevision + " seq=" +
             Sequence;
@@ -391,7 +405,7 @@ namespace SuMultiplayer.Net
 
         public static P.BlockUseRequest EncodeRequest(in BlockUseRequestData request)
         {
-            return new P.BlockUseRequest
+            var message = new P.BlockUseRequest
             {
                 Sequence = request.Sequence,
                 X = request.X,
@@ -407,6 +421,8 @@ namespace SuMultiplayer.Net
                 DirectionY = request.DirectionY,
                 DirectionZ = request.DirectionZ
             };
+            if (request.HasReach) message.Reach = request.Reach;
+            return message;
         }
 
         public static byte[] EncodeRequestBytes(in BlockUseRequestData request) =>
@@ -447,7 +463,8 @@ namespace SuMultiplayer.Net
             }
             request = new BlockUseRequestData(message.Sequence, message.X, message.Y, message.Z,
                 message.Face, message.Contents, action, message.RayX, message.RayY, message.RayZ,
-                message.DirectionX, message.DirectionY, message.DirectionZ);
+                message.DirectionX, message.DirectionY, message.DirectionZ, message.HasReach,
+                message.Reach);
             return true;
         }
 
@@ -737,6 +754,7 @@ namespace SuMultiplayer.Net
             message.PlayerBaseCounts.AddRange(request.PlayerBaseCounts);
             message.PlayerDesiredValues.AddRange(request.PlayerDesiredValues);
             message.PlayerDesiredCounts.AddRange(request.PlayerDesiredCounts);
+            if (request.HasReach) message.Reach = request.Reach;
             return message;
         }
 
@@ -790,7 +808,7 @@ namespace SuMultiplayer.Net
             request = new ContainerEditRequestData(message.Sequence, message.X, message.Y,
                 message.Z, (int)message.ContainerKind, message.BaseRevision, baseValues,
                 baseCounts, desiredValues, desiredCounts, playerBaseValues, playerBaseCounts,
-                playerDesiredValues, playerDesiredCounts);
+                playerDesiredValues, playerDesiredCounts, message.HasReach, message.Reach);
             return true;
         }
 

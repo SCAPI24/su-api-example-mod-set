@@ -389,6 +389,10 @@ namespace SuMultiplayer.Terrain
         public int Z;
         public int Contents;
         public int Data;
+        /// <summary>请求是否携带了有效 reach（false = 旧客户端 / 旧载荷）。</summary>
+        public bool HasReach;
+        /// <summary>请求者的有效交互距离（米）；<see cref="HasReach"/> = false 时无意义。</summary>
+        public float Reach;
         /// <summary>第一次发送的时刻（毫秒，调用方时钟口径）。</summary>
         public long FirstSentMs;
         /// <summary>最近一次发送的时刻（毫秒）。</summary>
@@ -440,7 +444,8 @@ namespace SuMultiplayer.Terrain
         public long LastAllocatedSequence { get; private set; }
 
         /// <summary>登记一次本地编辑；返回 null = 超过上限（<see cref="Overflow"/> 已计数）。</summary>
-        public ClientEditRequest Begin(int x, int y, int z, int contents, int data, long nowMs)
+        public ClientEditRequest Begin(int x, int y, int z, int contents, int data, long nowMs,
+            bool hasReach = false, float reach = 0f)
         {
             if (m_pending.Count >= MaxPending)
             {
@@ -457,6 +462,8 @@ namespace SuMultiplayer.Terrain
                 Z = z,
                 Contents = contents,
                 Data = data,
+                HasReach = hasReach,
+                Reach = reach,
                 FirstSentMs = nowMs,
                 LastSentMs = nowMs,
                 Attempts = 1
@@ -559,7 +566,8 @@ namespace SuMultiplayer.Terrain
     /// </summary>
     public static class CellEditRequestCodec
     {
-        public static byte[] Encode(long sequence, int x, int y, int z, int contents, int data)
+        public static byte[] Encode(long sequence, int x, int y, int z, int contents, int data,
+            bool hasReach = false, float reach = 0f)
         {
             var message = new PA.CellEditRequest
             {
@@ -570,16 +578,29 @@ namespace SuMultiplayer.Terrain
                 Contents = contents,
                 Data = data
             };
+            if (hasReach) message.Reach = reach;
             return message.ToByteArray();
         }
 
         public static byte[] Encode(ClientCellEdit edit, long sequence) =>
             Encode(sequence, edit.X, edit.Y, edit.Z, edit.Contents, edit.Data);
 
+        public static byte[] Encode(ClientEditRequest request) =>
+            Encode(request.Sequence, request.X, request.Y, request.Z, request.Contents,
+                request.Data, request.HasReach, request.Reach);
+
         public static bool TryDecode(byte[] payload, out long sequence, out int x, out int y, out int z,
             out int contents, out int data)
         {
+            return TryDecode(payload, out sequence, out x, out y, out z, out contents, out data,
+                out _, out _);
+        }
+
+        public static bool TryDecode(byte[] payload, out long sequence, out int x, out int y, out int z,
+            out int contents, out int data, out bool hasReach, out float reach)
+        {
             sequence = 0; x = 0; y = 0; z = 0; contents = 0; data = 0;
+            hasReach = false; reach = 0f;
             if (payload == null || payload.Length == 0) return false;
             try
             {
@@ -590,6 +611,8 @@ namespace SuMultiplayer.Terrain
                 z = message.Z;
                 contents = message.Contents;
                 data = message.Data;
+                hasReach = message.HasReach;
+                reach = message.Reach;
                 return sequence > 0;
             }
             catch (Exception)
@@ -727,6 +750,36 @@ namespace SuMultiplayer.Terrain
         /// <summary>方块索引上限（= BlocksManager.Blocks.Length；由引擎侧注入）。</summary>
         public int BlockCount { get; set; } = 1024;
 
+        /// <summary>
+        /// 家具值校验（引擎侧注入）：参数 = (contents, data)。contents == 家具方块时，
+        /// data 里的设计索引必须在主机的权威设计表里；否则拒绝这次编辑。
+        /// null = 不校验（自检 / 没有家具模块）。
+        /// </summary>
+        public Func<int, int, bool> FurnitureValueValidator { get; set; }
+
+        /// <summary>因家具设计索引不在主机设计表而被拒的客户端编辑次数。</summary>
+        public long UnknownFurnitureDesigns { get; private set; }
+
+        /// <summary>
+        /// 请求者**有效交互距离**门槛（组合根注入；所有交互共用同一个实例）。
+        /// null = 纯策略自检没有注入（此时不做玩家相对距离校验，只保留兴趣窗口检查）。
+        /// </summary>
+        public InteractionReachGate ReachGate { get; set; }
+
+        /// <summary>主机侧读请求者权威化身位置（身体位置）；null = 没有位置来源。</summary>
+        public delegate bool ClientEditPositionResolver(int clientId, out Vector3 position);
+
+        public ClientEditPositionResolver PlayerPositions { get; set; }
+
+        /// <summary>主机世界当前是否创造模式（旧客户端缺 reach 字段时的默认值依据）。</summary>
+        public bool HostWorldCreative { get; set; }
+
+        /// <summary>因 reach 声明畸形（reach-invalid）或实测距离超限（too-far）被拒的编辑数。</summary>
+        public long ReachRejected { get; private set; }
+
+        /// <summary>拿不到请求者化身位置而被拒的编辑数。</summary>
+        public long PositionMissing { get; private set; }
+
         /// <summary>距离上限（格）：客户端只能改自己兴趣窗口内的格子，外加这个边距。</summary>
         public int MaxDistanceMargin { get; set; } = 16;
 
@@ -768,7 +821,7 @@ namespace SuMultiplayer.Terrain
             bool hasRange, int centerCellX, int centerCellZ, int radiusChunks)
         {
             if (!CellEditRequestCodec.TryDecode(payload, out long sequence, out int x, out int y,
-                out int z, out int contents, out int data))
+                out int z, out int contents, out int data, out bool hasReach, out float reach))
             {
                 Requests++;
                 Malformed++;
@@ -779,10 +832,13 @@ namespace SuMultiplayer.Terrain
                 Rejected++;
                 return malformed;
             }
-            return Handle(clientId, new PA.CellEditRequest
+            var decoded = new PA.CellEditRequest
             {
                 Sequence = sequence, X = x, Y = y, Z = z, Contents = contents, Data = data
-            }, isPlayerPeer, hasRange, centerCellX, centerCellZ, radiusChunks);
+            };
+            if (hasReach) decoded.Reach = reach;
+            return Handle(clientId, decoded, isPlayerPeer, hasRange, centerCellX, centerCellZ,
+                radiusChunks);
         }
 
         /// <summary>强类型入口（MessageRegistry 分发用）：不再"解析→再序列化→再解析"。</summary>
@@ -860,6 +916,16 @@ namespace SuMultiplayer.Terrain
                 OutOfRange++;
                 decision.Reason = "方块 data 越界：" + data.ToString(CultureInfo.InvariantCulture);
             }
+            else if (contents == 227 && FurnitureValueValidator != null &&
+                !FurnitureValueValidator(contents, data))
+            {
+                // 家具方块：data 里的设计索引必须存在于主机的权威设计表。否则客户端会把
+                // 本地槽位号发上来，主机按自己的设计表解释成另一件家具（错位污染）。
+                Rejected++;
+                UnknownFurnitureDesigns++;
+                decision.Reason = "家具设计索引不在主机设计表（data=" +
+                    data.ToString(CultureInfo.InvariantCulture) + "）";
+            }
             else if (!hasRange)
             {
                 Rejected++;
@@ -875,6 +941,10 @@ namespace SuMultiplayer.Terrain
                     centerCellX.ToString(CultureInfo.InvariantCulture) + "," +
                     centerCellZ.ToString(CultureInfo.InvariantCulture) + " 半径 " +
                     radiusChunks.ToString(CultureInfo.InvariantCulture) + " 内）";
+            }
+            else if (!TryValidateReach(clientId, x, y, z, request, decision))
+            {
+                // TryValidateReach 已写明确原因（requester-missing / reach-invalid / too-far）。
             }
             else
             {
@@ -948,6 +1018,39 @@ namespace SuMultiplayer.Terrain
             return decision;
         }
 
+        /// <summary>
+        /// 主机侧玩家相对距离校验（place / dig 编辑请求）：
+        ///   实测 = 请求者权威化身身体位置 → 目标格中心；
+        ///   允许 = min(请求 reach + 容差, 主机上限)。
+        /// 没有注入 ReachGate / PlayerPositions（纯策略自检）时不做这一层，只保留兴趣窗口检查。
+        /// </summary>
+        private bool TryValidateReach(int clientId, int x, int y, int z,
+            PA.CellEditRequest request, ClientEditDecision decision)
+        {
+            if (ReachGate == null || PlayerPositions == null) return true;
+            if (!PlayerPositions(clientId, out Vector3 position))
+            {
+                Rejected++;
+                PositionMissing++;
+                decision.Reason = "requester-missing: 主机读不到 clientId=" + clientId +
+                    " 的化身位置 → 无法做交互距离校验";
+                return false;
+            }
+            var center = new Vector3(x + 0.5f, y + 0.5f, z + 0.5f);
+            float measured = Vector3.Distance(position, center);
+            bool hasReach = request != null && request.HasReach;
+            float reach = request?.Reach ?? 0f;
+            if (!ReachGate.TryCheckDistance(hasReach, reach, HostWorldCreative, measured,
+                    out string reachReason))
+            {
+                Rejected++;
+                ReachRejected++;
+                decision.Reason = reachReason;
+                return false;
+            }
+            return true;
+        }
+
         private bool InRange(int x, int z, int centerCellX, int centerCellZ, int radiusChunks)
         {
             int limit = Math.Max(1, radiusChunks) * 16 + MaxDistanceMargin;
@@ -965,6 +1068,9 @@ namespace SuMultiplayer.Terrain
                 " notPlayer=" + NotPlayer.ToString(CultureInfo.InvariantCulture) +
                 " chunkNotLoaded=" + ChunkNotLoaded.ToString(CultureInfo.InvariantCulture) +
                 " applyFailures=" + ApplyFailures.ToString(CultureInfo.InvariantCulture) +
+                " reachRejected=" + ReachRejected.ToString(CultureInfo.InvariantCulture) +
+                " positionMissing=" + PositionMissing.ToString(CultureInfo.InvariantCulture) +
+                " unknownFurnitureDesign=" + UnknownFurnitureDesigns.ToString(CultureInfo.InvariantCulture) +
                 " · " + Drops.Describe();
         }
     }
@@ -1241,6 +1347,9 @@ namespace SuMultiplayer.Terrain
     ///                              结果同格同值（幂等），不是独立模拟；
     ///   · InteractionOnly          只在 OnUse/OnInteract/OnEditBlock/OnEditInventoryItem 里写格；
     ///                              客户端交互走主机请求（BlockUse/Authority），不本地落地；
+    ///   · EditableEditGate         只写 SubsystemEditableItemBehavior 的方块内容（不写地形）；
+    ///                              客户端副本由两个注入外壳接管对话框提交（EDITABLE_EDIT_REQUEST），
+    ///                              内容只接收主机 EDITABLE_STATE，本地绝不 SetBlockData；
     ///   · ElectricityDependent     只在 SubsystemElectricity 求解里写格；客户端电力已闸门；
     ///   · ProtectedByHandlerDetach 自身不写格；最终落格在别的行为的 Stopped/CollidedWithTerrain 里，
     ///                              客户端由 Piston/Collapsing 外壳摘掉这些订阅（移动组只做视觉）；
@@ -1313,10 +1422,10 @@ namespace SuMultiplayer.Terrain
         public static readonly string[] InteractionOnly =
         {
             "Game.SubsystemButtonBlockBehavior", "Game.SubsystemFertilizerBlockBehavior",
-            "Game.SubsystemTruthTableCircuitBlockBehavior", "Game.SubsystemRakeBlockBehavior",
+            "Game.SubsystemRakeBlockBehavior",
             "Game.SubsystemBatteryBlockBehavior", "Game.SubsystemFurnitureBlockBehavior",
             "Game.SubsystemBucketBlockBehavior", "Game.SubsystemSwitchBlockBehavior",
-            "Game.SubsystemChestBlockBehavior", "Game.SubsystemMemoryBankBlockBehavior",
+            "Game.SubsystemChestBlockBehavior",
             "Game.SubsystemFenceGateBlockBehavior", "Game.SubsystemSaddleBlockBehavior",
             "Game.SubsystemCraftingTableBlockBehavior", "Game.SubsystemBulletBlockBehavior",
             "Game.SubsystemWhistleBlockBehavior", "Game.SubsystemFurnaceBlockBehavior",
@@ -1324,6 +1433,20 @@ namespace SuMultiplayer.Terrain
             "Game.SubsystemImpactExplosivesBlockBehavior", "Game.SubsystemDispenserBlockBehavior",
             "Game.SubsystemBombBlockBehavior", "Game.SubsystemEggBlockBehavior",
             "Game.SubsystemHammerBlockBehavior", "Game.SubsystemBoatBlockBehavior"
+        };
+
+        /// <summary>
+        /// 只写 <c>SubsystemEditableItemBehavior</c> 方块数据的两个行为（真值表 188 / 内存条 186）。
+        /// 客户端副本由注入外壳 <c>SuSubsystemTruthTableCircuitBlockBehavior</c> /
+        /// <c>SuSubsystemMemoryBankBlockBehavior</c> 覆盖 OnEditBlock：
+        /// 对话框改副本复制品 → EDITABLE_EDIT_REQUEST，内容只收主机 EDITABLE_STATE，
+        /// **提交回调里没有 SetBlockData**（Source: Engine/EditableBlockSubsystems.cs）。
+        /// 因此单独成类：它们不是"会改地形却没闸门"的模拟，也不该被算进 Gated 的世界演化口径。
+        /// </summary>
+        public static readonly string[] EditableEditGate =
+        {
+            "Game.SubsystemTruthTableCircuitBlockBehavior",
+            "Game.SubsystemMemoryBankBlockBehavior"
         };
 
         public static readonly string[] ElectricityDependent =
@@ -1349,7 +1472,7 @@ namespace SuMultiplayer.Terrain
 
         public static int TotalCount =>
             Gated.Length + Presentation.Length + DeterministicEdit.Length +
-            InteractionOnly.Length + ElectricityDependent.Length +
+            InteractionOnly.Length + EditableEditGate.Length + ElectricityDependent.Length +
             ProtectedByHandlerDetach.Length + MissingSource.Length +
             UnprotectedWorldSim.Length;
 
@@ -1377,6 +1500,9 @@ namespace SuMultiplayer.Terrain
                 " [" + Join(DeterministicEdit) + "]" +
                 " · interactionOnly=" + InteractionOnly.Length.ToString(CultureInfo.InvariantCulture) +
                 " [" + Join(InteractionOnly) + "]" +
+                " · editableEditGate=" +
+                EditableEditGate.Length.ToString(CultureInfo.InvariantCulture) +
+                " [" + Join(EditableEditGate) + "]" +
                 " · electricityDependent=" +
                 ElectricityDependent.Length.ToString(CultureInfo.InvariantCulture) +
                 " [" + Join(ElectricityDependent) + "]" +

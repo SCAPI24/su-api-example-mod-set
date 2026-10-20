@@ -1,0 +1,125 @@
+syntax = "proto3";
+
+package sump.voice;
+
+option csharp_namespace = "SuMultiplayer.Protocol.Voice";
+option optimize_for = SPEED;
+
+import "google/protobuf/any.proto";
+
+// ---------------------------------------------------------------------------
+// Real-time voice chat.  Managed, AOT-safe, no native codec:
+//   capture 8 kHz mono 16-bit -> VAD (energy + zero crossings, 160 ms hangover)
+//   -> 20 ms frames -> one self-contained block per 40 ms packet (320 samples)
+//   -> VoicePacket.
+//
+// Configurable codec profiles (format field, append-only ids; default low):
+//   high     = 4-bit IMA/DVI ADPCM, 163 payload bytes / packet (~36.8 kbit/s)
+//   standard = 3-bit IMA ADPCM,     123 payload bytes / packet (~28.8 kbit/s)
+//   low      = 2-bit IMA ADPCM,      83 payload bytes / packet (~20.8 kbit/s)
+//   ultra    = 1-bit CVSD,           43 payload bytes / packet (~12.8 kbit/s)
+// Bandwidths include the 16-byte TCP frame header and protobuf fields at
+// 25 packets/s; silence is not sent at all.  No native Opus/other codec is
+// shipped by the engine, so a managed codec is the only portable option
+// (see doc/VOICE-CHAT.md).
+//
+// Wire ids live in protocol.proto (MessageType.VOICE_* = 85..90, append-only).
+// ---------------------------------------------------------------------------
+
+// Client -> host while talking, and host -> every relaying listener.
+// A client MUST send source_client_id = 0; the host rejects any other value
+// (a client can never impersonate another speaker).
+message VoicePacket {
+  // Host-side transport id of the speaker; 0 = the host itself.  Filled in by
+  // the host when relaying; ignored (and required to be 0) on client -> host.
+  int32 source_client_id = 1;
+  // Per-speaker packet counter, starts at 1 and strictly increases.  Receivers
+  // reorder / drop duplicates and late packets by it.
+  uint32 sequence = 2;
+  // bit 0 = first packet of a talk spurt, bit 1 = last packet (may be padded).
+  uint32 flags = 3;
+  // Wire profile id (append-only): 0 = unspecified (rejected), 1 = high
+  // (4-bit IMA, 163 B), 2 = standard (3-bit IMA, 123 B), 3 = low (2-bit IMA,
+  // 83 B), 4 = ultra (1-bit CVSD, 43 B).  A receiver MUST reject 0/unknown
+  // ids and MUST NOT guess a profile; the host additionally rejects packets
+  // whose format differs from the speaker's VoiceState.format.
+  uint32 format = 5;
+  // One self-contained codec block: 3-byte header (int16 predictor + uint8
+  // index/step) + 320 samples at the declared profile's bit depth.
+  bytes data = 4;
+
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}
+
+// Client -> host: this client speaks voice and its current microphone state.
+// Sent on every connection and whenever the local state changes.  A host only
+// relays voice to / from clients that announced supported = true.
+message VoiceState {
+  // false = voice is disabled locally (settings) or the mod cannot use it.
+  bool supported = 1;
+  // false = microphone muted / no capture device / no permission.
+  bool mic_enabled = 2;
+  bool push_to_talk = 3;
+  // Explicit reason when mic_enabled is false:
+  //   "" | "disabled" | "no-device" | "no-permission" | "android-recording-not-allowed"
+  string reason = 4;
+  // Wire profile id this client is currently sending (1..4).  The host stores
+  // it per speaker and rejects packets with a different format.  0 / unknown
+  // makes the host reject this client's voice explicitly (VoiceControl reason),
+  // never silently decode it with a default profile.
+  uint32 format = 5;
+
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}
+
+message VoicePeer {
+  int32 client_id = 1;
+  string name = 2;
+  bool supported = 3;
+  bool mic_enabled = 4;
+}
+
+// Host -> clients: authoritative voice roster (includes the host at id 0).
+// Clients use it for the speaking indicator and the per-peer mute buttons.
+message VoiceRoster {
+  repeated VoicePeer peers = 1;
+  uint32 revision = 2;
+
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}
+
+// Client -> host: "stop/start relaying this speaker to me".  The host stores
+// the per-listener mute table and never relays a muted speaker to that listener
+// (bandwidth is saved), then answers with VoiceMuteResult.
+message VoiceMuteRequest {
+  // 0 = the host itself; otherwise a client id from the roster.
+  int32 target_client_id = 1;
+  bool muted = 2;
+
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}
+
+message VoiceMuteResult {
+  int32 target_client_id = 1;
+  bool muted = 2;
+  bool accepted = 3;
+  string reason = 4;
+
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}
+
+// Host -> client: whether voice is enabled for this session.  enabled = false
+// means the host refuses to relay / play voice (reason is shown in the log and
+// in the voice HUD).
+message VoiceControl {
+  bool enabled = 1;
+  string reason = 2;
+
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}

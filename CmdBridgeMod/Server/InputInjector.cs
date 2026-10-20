@@ -125,10 +125,14 @@ namespace CmdBridgeMod
             Hotkeys = new HotkeyRegistry();
             Commands = new CommandExtensionRegistry();
             Ui = new UiService(this);
+            Dialogs = new UiDialogs(this);
         }
 
         /// <summary>UI 定位 / 点击服务（`ui.locate` / `ui.click`，编辑器与行为树共用）。</summary>
         internal UiService Ui { get; }
+
+        /// <summary>对话框文本与接受/取消动作（`act.settext` / `act.accept` / `act.dialog`）。</summary>
+        internal UiDialogs Dialogs { get; }
 
         /// <summary>单帧合成点击用的输入面（下一帧帧首收尾时把它交回去）。</summary>
         private WidgetInput m_directClickInput;
@@ -558,34 +562,332 @@ namespace CmdBridgeMod
             return DescribeHeldKeys();
         }
 
-        /// <summary>逐字符输入（每帧一个字符），供文本框使用。</summary>
+        /// <summary>
+        /// 逐字符输入（每帧一个字符），路由到**当前获得焦点的 `TextBoxWidget`**。
+        ///
+        /// 之前的实现只往 `Keyboard.m_lastChar` 写字符，没有检查焦点 —— 结果是"命令返回
+        /// typed=16、界面一个字都没变"：`TextBoxWidget.Update` 只在 `m_hasFocus` 时才读
+        /// `LastChar`（Source: `Survivalcraft/Game/TextBoxWidget.cs:164-172`）。
+        /// 同时它也不检查容量：满行（例如内存条 16 位十六进制行，`MaximumLength="16"`）里
+        /// `EnterText` 的 `m_text.Length + s.Length &lt;= MaximumLength` 永远不成立
+        /// （同文件 :293-325），键入会被静默丢弃。现在两种失败都变成**明确错误**：
+        ///   · 没有焦点文本框 → `no_focused_textbox`（先 `click` 那个文本框，或用 `act.settext`）；
+        ///   · 文本放不下 / 引擎没接受 → `text_rejected`（带 maximumLength/currentLength/caret）。
+        ///
+        /// 为什么"一次 OnGameThread 一个字符"就是"一帧一个字符"：后台线程每次调用都会
+        /// `Dispatcher.Dispatch` 入队并等待，动作在**下一帧** `Dispatcher.BeforeFrame` 执行
+        /// （Source: `Engine/Engine/Dispatcher.cs:79-105`、`GameThreadInvoker.cs:56-66`），
+        /// 而帧末 `Keyboard.AfterFrame` 会清掉 `m_lastChar`（Source: `Engine/Engine/Input/Keyboard.cs:132-143`）。
+        /// 因此每个字符恰好只被一个帧体看到一次，与真人敲键的节奏一致。
+        /// </summary>
         public object TypeText(string text)
         {
             EnsureEnabled();
-            if (string.IsNullOrEmpty(text))
-                return new Dictionary<string, object>(StringComparer.Ordinal) { ["typed"] = 0 };
 
-            string sanitized = text.Replace("\r", string.Empty).Replace("\n", string.Empty);
-            int typed = 0;
-            for (int i = 0; i < sanitized.Length; i++)
+            string sanitized = (text ?? string.Empty).Replace("\r", string.Empty).Replace("\n", string.Empty);
+            if (sanitized.Length == 0)
             {
-                char character = sanitized[i];
-                OnGameThread(() =>
+                return new Dictionary<string, object>(StringComparer.Ordinal)
                 {
-                    Fields.ModifyStaticField(
-                        typeof(Keyboard), InputWhitelist.KeyboardLastChar, (char?)character);
-                    return null;
-                });
-                typed++;
+                    ["typed"] = 0,
+                    ["skippedControl"] = 0,
+                    ["note"] = "empty text: nothing to type"
+                };
             }
 
-            OnGameThread(() =>
-            {
-                Fields.ModifyStaticField(typeof(Keyboard), InputWhitelist.KeyboardLastChar, null);
-                return null;
-            });
+            // 1) 帧首：定位焦点文本框 + 预检容量 + 算出"引擎 EnterText 语义下"的期望结果。
+            TypingTarget target = (TypingTarget)OnGameThread(delegate { return PlanTyping(sanitized); });
 
-            return new Dictionary<string, object>(StringComparer.Ordinal) { ["typed"] = typed };
+            // 游戏线程（行为树 tick / CmdBridgeInput 门面）**不能同步跨帧等待**：把"每帧一个字符"
+            // 排进帧首泵后立即返回"已受理"。命令通道（后台线程）走下面的同步路径，能逐帧读回。
+            if (GameThreadInvoker.IsGameThread())
+            {
+                QueueTyping(target, 0);
+                return new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    ["typed"] = 0,
+                    ["scheduled"] = target.Characters.Length,
+                    ["skippedControl"] = target.SkippedControl,
+                    ["path"] = target.Path,
+                    ["dialog"] = target.Dialog,
+                    ["before"] = target.Before,
+                    ["expected"] = target.Expected,
+                    ["maximumLength"] = target.MaximumLength,
+                    ["overwriteMode"] = target.OverwriteMode,
+                    ["note"] = "called on the game thread: characters are queued on the frame-start"
+                        + " pump (one per frame) because a synchronous wait would stall the frame."
+                };
+            }
+
+            // 2) 每帧一个字符（见方法注释里的时序依据）。
+            int typed = 0;
+            try
+            {
+                for (int i = 0; i < target.Characters.Length; i++)
+                {
+                    char character = target.Characters[i];
+                    OnGameThread(delegate
+                    {
+                        Fields.ModifyStaticField(
+                            typeof(Keyboard), InputWhitelist.KeyboardLastChar, (char?)character);
+                        return null;
+                    });
+                    typed++;
+                }
+            }
+            finally
+            {
+                OnGameThread(delegate
+                {
+                    Fields.ModifyStaticField(typeof(Keyboard), InputWhitelist.KeyboardLastChar, null);
+                    return null;
+                });
+            }
+
+            // 3) 下一帧读回：焦点是否还在、文本是否真的变了。
+            return OnGameThread(delegate { return VerifyTyping(target, typed); });
+        }
+
+        /// <summary>
+        /// 帧首泵版逐字符输入（游戏线程调用方用）：每次只写一个字符，然后把自己排到**下一帧**，
+        /// 与命令通道那条路径的时序完全一致（`Keyboard.AfterFrame` 帧末清 `m_lastChar`）。
+        /// </summary>
+        private void QueueTyping(TypingTarget target, int index)
+        {
+            Pump.Enqueue(delegate
+            {
+                if (index < target.Characters.Length)
+                {
+                    char character = target.Characters[index];
+                    Fields.ModifyStaticField(
+                        typeof(Keyboard), InputWhitelist.KeyboardLastChar, (char?)character);
+                    QueueTyping(target, index + 1);
+                }
+                else
+                {
+                    Fields.ModifyStaticField(typeof(Keyboard), InputWhitelist.KeyboardLastChar, null);
+                }
+            });
+        }
+
+        private sealed class TypingTarget
+        {
+            public Widget Widget;
+            public string Path;
+            public string Dialog;
+            public string Before;
+            public string Expected;
+            public string Characters;
+            public int SkippedControl;
+            public int CaretPosition;
+            public int MaximumLength;
+            public bool OverwriteMode;
+        }
+
+        /// <summary>
+        /// 找"当前焦点文本框"并做**全有或全无**的容量预检（引擎的 `EnterText` 会按 MaximumLength
+        /// 静默丢掉多余字符，自动化不能接受这种"半成功"）。必须在游戏线程调用。
+        /// </summary>
+        private TypingTarget PlanTyping(string sanitized)
+        {
+            Widget widget = FindFocusedTextBox();
+            if (widget == null)
+            {
+                throw new BridgeCommandException(
+                    "no_focused_textbox",
+                    "No TextBoxWidget has focus, so the engine would ignore every character."
+                    + " Focus one first (click its selector, e.g. 'sccmd click EditMemoryBankDialog.Line0'),"
+                    + " or replace the whole value with act.settext <selector> <text>.");
+            }
+            if (!widget.IsVisibleGlobal)
+            {
+                throw new BridgeCommandException(
+                    "no_focused_textbox",
+                    "The focused text box (" + UiInspector.BuildPath(widget)
+                    + ") is not visible right now.");
+            }
+
+            string before = TextBoxAccess.Text(widget);
+            int maximumLength = TextBoxAccess.MaximumLength(widget);
+            int caret = TextBoxAccess.CaretPosition(widget);
+            bool overwrite = TextBoxAccess.OverwriteMode(widget);
+
+            // 控制字符引擎本来就忽略（Source: TextBoxWidget.cs:168 的 `!char.IsControl`），
+            // 单独计数，不混进 typed。
+            var characters = new System.Text.StringBuilder();
+            int skipped = 0;
+            for (int i = 0; i < sanitized.Length; i++)
+            {
+                if (char.IsControl(sanitized[i]))
+                    skipped++;
+                else
+                    characters.Append(sanitized[i]);
+            }
+            string toType = characters.ToString();
+            if (toType.Length == 0)
+            {
+                throw new BridgeCommandException(
+                    "text_rejected",
+                    "the text contains no typeable characters (" + skipped + " control characters).");
+            }
+
+            // 与 TextBoxWidget.EnterText 相同的容量判定（逐字符版本）：
+            //   · OverwriteMode：CaretPosition + n <= MaximumLength（同 :297）
+            //   · 插入模式    ：Text.Length + n <= MaximumLength（同 :313）
+            bool fits = overwrite
+                ? caret + toType.Length <= maximumLength
+                : before.Length + toType.Length <= maximumLength;
+            if (!fits)
+            {
+                throw new BridgeCommandException(
+                    "text_rejected",
+                    "the focused text box cannot accept " + toType.Length + " characters:"
+                    + " maximumLength=" + maximumLength + ", currentLength=" + before.Length
+                    + ", caretPosition=" + caret + ", overwriteMode=" + overwrite.ToString().ToLowerInvariant()
+                    + ". The engine's EnterText would silently drop the overflow."
+                    + " Use act.settext <selector> <text> to replace the whole value instead.");
+            }
+
+            // 期望值：按引擎逐字符 EnterText 的语义算（只用于回报/诊断）。
+            string expected = before;
+            int position = caret;
+            for (int i = 0; i < toType.Length; i++)
+            {
+                if (overwrite)
+                {
+                    if (position < expected.Length)
+                        expected = expected.Remove(position, 1).Insert(position, toType[i].ToString());
+                    else
+                        expected += toType[i];
+                }
+                else
+                {
+                    expected = expected.Insert(position, toType[i].ToString());
+                }
+                position++;
+            }
+
+            Dialog dialog = UiInspector.FindAncestorDialog(widget);
+            return new TypingTarget
+            {
+                Widget = widget,
+                Path = UiInspector.BuildPath(widget),
+                Dialog = dialog != null ? dialog.GetType().Name : null,
+                Before = before,
+                Expected = expected,
+                Characters = toType,
+                SkippedControl = skipped,
+                CaretPosition = caret,
+                MaximumLength = maximumLength,
+                OverwriteMode = overwrite
+            };
+        }
+
+        /// <summary>
+        /// 当前获得焦点的 TextBoxWidget。范围 = 根树 + 当前屏 + 活动对话框（与 `obs.ui` 同一口径），
+        /// 只认 `IsVisibleGlobal` 且未失焦的。多个同时有焦点是引擎里不该出现的状态：
+        /// 明确报 `ambiguous_focused_textbox`，不替调用方猜。
+        /// </summary>
+        private static Widget FindFocusedTextBox()
+        {
+            ContainerWidget root = ScreensManager.RootWidget;
+            if (root == null)
+                throw new BridgeCommandException("not_ready", "The UI is not ready yet.");
+
+            var focused = new List<Widget>();
+            List<Widget> widgets = UiInspector.EnumerateWidgets(root);
+            for (int i = 0; i < widgets.Count; i++)
+            {
+                Widget widget = widgets[i];
+                if (widget == null || !TextBoxAccess.IsTextBox(widget) || !widget.IsVisibleGlobal)
+                    continue;
+                // 未挂载的对话框（父屏已切走）不在更新，写字符只会石沉大海。
+                if (!UiInspector.IsUnderRoot(widget))
+                    continue;
+                if (TextBoxAccess.HasFocus(widget))
+                    focused.Add(widget);
+            }
+            if (focused.Count == 0)
+                return null;
+            if (focused.Count > 1)
+            {
+                var paths = new List<string>();
+                for (int i = 0; i < focused.Count; i++)
+                    paths.Add(UiInspector.BuildPath(focused[i]));
+                throw new BridgeCommandException(
+                    "ambiguous_focused_textbox",
+                    focused.Count + " text boxes report HasFocus at the same time: "
+                    + string.Join(", ", paths.ToArray())
+                    + ". Click the one you want first; nothing was typed.");
+            }
+            return focused[0];
+        }
+
+        /// <summary>读回并判定：焦点丢了 / 文本完全没变 → `text_rejected`；其余如实回报。</summary>
+        private static object VerifyTyping(TypingTarget target, int typed)
+        {
+            string after;
+            bool hasFocus;
+            int caretAfter;
+            try
+            {
+                after = TextBoxAccess.Text(target.Widget);
+                hasFocus = TextBoxAccess.HasFocus(target.Widget);
+                caretAfter = TextBoxAccess.CaretPosition(target.Widget);
+            }
+            catch (Exception exception)
+            {
+                throw new BridgeCommandException(
+                    "text_rejected",
+                    "could not read the text box back after typing: " + exception.GetType().Name
+                    + ": " + exception.Message);
+            }
+
+            bool textChanged = !string.Equals(after, target.Before, StringComparison.Ordinal);
+            bool caretMoved = caretAfter != target.CaretPosition;
+            if (!hasFocus)
+            {
+                throw new BridgeCommandException(
+                    "text_rejected",
+                    "the text box lost focus while typing (" + typed + " characters sent);"
+                    + " text before='" + Shorten(target.Before) + "', after='" + Shorten(after)
+                    + "'. Focus it again and retry.");
+            }
+            if (!textChanged && !caretMoved)
+            {
+                throw new BridgeCommandException(
+                    "text_rejected",
+                    typed + " characters were sent but the engine did not apply any of them"
+                    + " (text and caret are unchanged). Check that the dialog/screen is still"
+                    + " updating, or use act.settext to set the whole value.");
+            }
+
+            return new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["typed"] = typed,
+                ["skippedControl"] = target.SkippedControl,
+                ["path"] = target.Path,
+                ["dialog"] = target.Dialog,
+                ["before"] = target.Before,
+                ["after"] = after,
+                ["expected"] = target.Expected,
+                ["changed"] = textChanged,
+                ["matchedExpected"] = string.Equals(after, target.Expected, StringComparison.Ordinal),
+                ["caretBefore"] = target.CaretPosition,
+                ["caretAfter"] = caretAfter,
+                ["maximumLength"] = target.MaximumLength,
+                ["overwriteMode"] = target.OverwriteMode,
+                ["focused"] = hasFocus,
+                ["note"] = "one character per frame through Keyboard.m_lastChar"
+                    + " (Source: Survivalcraft/Game/TextBoxWidget.cs:164-172)"
+            };
+        }
+
+        private static string Shorten(string text)
+        {
+            if (string.IsNullOrEmpty(text))
+                return string.Empty;
+            return text.Length <= 40 ? text : text.Substring(0, 39) + "…";
         }
 
         // ---------------------------------------------------------------- 鼠标
@@ -722,7 +1024,7 @@ namespace CmdBridgeMod
         /// 列表行（`row`/`text`）→ 控件选择器/路径 → 坐标兜底。
         /// </summary>
         public object UiClickSession(string selector, bool hasPoint, float pointX, float pointY,
-            int rowIndex, string rowText, int holdMilliseconds)
+            int rowIndex, string rowText, int holdMilliseconds, int? gameWidget = null)
         {
             EnsureEnabled();
 
@@ -754,6 +1056,8 @@ namespace CmdBridgeMod
                     if (list == null)
                         throw new BridgeCommandException("element_missing",
                             "no list matches '" + (selector ?? "?") + "'.");
+                    // 未挂载的对话框列表没有可信坐标：明确失败，绝不把旧像素点到下面那层。
+                    UiInspector.RequireMounted(list, selector);
                     Vector2 rowPoint;
                     int index;
                     string text;
@@ -778,20 +1082,62 @@ namespace CmdBridgeMod
                 }
                 else
                 {
-                    target = UiInspector.Resolve(root, selector, false, default(Vector2));
+                    target = UiInspector.Resolve(root, selector, false, default(Vector2), gameWidget);
                     if (target == null)
                         throw new BridgeCommandException("element_missing",
                             "no element matches '" + (selector ?? "?") + "'.");
+                    UiInspector.RequireMounted(target, selector);
                     point = UiInspector.CenterOf(target);
                 }
 
                 Dictionary<string, object> info = UiInspector.DescribeElement(target, 0);
+
+                // 分屏下三条"注入了也不会有任何效果"的前提，全部在这里明确拒绝（绝不静默点下去）：
+                //   ① 控件没被布局过（被折叠面板跳过测量 → GlobalBounds 恒为 0,0，没有可信落点）；
+                //   ② 落点不在它**自己的视图**矩形里（坐标算到了别的视图上，命中会走到别人的 ViewWidget）；
+                //   ③ 它所在视图的输入面没有鼠标设备（引擎只为 Mouse/MultiMice 派生 Click，
+                //      Source: `Survivalcraft/Game/WidgetInput.cs:152-166,741`）。
+                // Android 不受 ③ 约束：那边的注入通道是触摸（`AndroidTouch`）。
+                if (info["laidOut"] is bool laidOut && !laidOut)
+                {
+                    throw new BridgeCommandException("element_not_laid_out",
+                        "target '" + (selector ?? "?") + "' has no rectangle right now, so there is"
+                        + " no pixel to click: " + (info["clickReason"] as string
+                            ?? "it has not been laid out"));
+                }
+                if (!AndroidTouch.Available && !UiInspector.HasMouseDevice(target.Input))
+                {
+                    GameWidget view = UiInspector.FindGameWidget(target);
+                    throw new BridgeCommandException("element_no_mouse_device",
+                        "target '" + (selector ?? "?") + "'"
+                        + (view != null ? " (gameWidget " + view.GameWidgetIndex + ")" : "")
+                        + " lives on an input surface without a mouse device (devices="
+                        + (info["inputDevices"] as string ?? "<none>") + "); the engine only derives"
+                        + " Press/Tap/Click for Mouse/MultiMice inputs, so a synthetic click there can"
+                        + " never work. Nothing was injected.");
+                }
+                GameWidget ownView = UiInspector.FindGameWidget(target);
+                if (ownView != null && !ownView.HitTest(point))
+                {
+                    BoundingRectangle view = ownView.GlobalBounds;
+                    throw new BridgeCommandException("element_not_in_view",
+                        "the click point (" + point.X.ToString("0.#") + ","
+                        + point.Y.ToString("0.#") + ") is outside gameWidget "
+                        + ownView.GameWidgetIndex + "'s view rect ("
+                        + view.Min.X.ToString("0.#") + "," + view.Min.Y.ToString("0.#") + ","
+                        + (view.Max.X - view.Min.X).ToString("0.#") + "x"
+                        + (view.Max.Y - view.Min.Y).ToString("0.#") + "); the engine would route"
+                        + " the input to another view's ViewWidget. Nothing was injected.");
+                }
                 info["clickPoint"] = new Dictionary<string, object>(StringComparer.Ordinal)
                 {
                     ["x"] = point.X,
                     ["y"] = point.Y
                 };
                 info["value"] = point;
+                // 输入面必须取自**目标控件所在的层**（世界内对话框/HUD 挂在 GameWidget 下，
+                // 只写根输入面时那一层派生不出 Click —— 见 UiMouseSession.m_forcedInput 的注释）。
+                info["input"] = target.Input;
                 return info;
             });
 
@@ -800,8 +1146,14 @@ namespace CmdBridgeMod
                 throw new BridgeCommandException("failed", "could not resolve the click target.");
             var clickPoint = (Vector2)described["value"];
             described.Remove("value");
+            var inputSurface = described.ContainsKey("input")
+                ? described["input"] as WidgetInput
+                : null;
+            described.Remove("input");
 
             Session.Begin(false);
+            if (inputSurface != null)
+                Session.BindInput(inputSurface);
             Session.MoveTo(clickPoint, 1);
             Session.Press(MouseButton.Left);
             Session.Release(MouseButton.Left);

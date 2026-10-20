@@ -1,0 +1,238 @@
+syntax = "proto3";
+
+package sump.vitals;
+
+option csharp_namespace = "SuMultiplayer.Protocol.Vitals";
+option optimize_for = SPEED;
+
+import "google/protobuf/any.proto";
+
+// ---------------------------------------------------------------------------
+// Player vitals / health / death-state replication (audit finding F14/F7).
+//
+// WHO IS AUTHORITATIVE (2026-10 product decision: HOST-AUTHORITATIVE)
+//   The **host** runs every character's health / vitals simulation:
+//     * the host's own local characters (SubsystemPlayers.PlayersData, slots
+//       0..3) are simulated by the host engine;
+//     * every client character exists on the host as a network avatar
+//       (client_id > 0, slot 0..3) and is simulated by the host engine too
+//       (creatures / explosions / fall / drown / fire / magma / starvation /
+//       sickness all apply there exactly as in single player).
+//   The host sends the authoritative state **host -> client**:
+//     * `PLAYER_VITALS_REPORT` = per-(client_id, slot) health / air / vitals /
+//       flu / sickness / fire / sleeping / dead / cause, sent to the owner and
+//       relayed to observing clients for pose / HUD;
+//     * `PLAYER_VITALS_EVENTS` = death / respawn edges, decided by the host
+//       (the host respawns a dead client avatar at its own spawn point).
+//   A client **never** reports its own state.  It removes the local player's
+//   ComponentHealth / ComponentVitalStats / ComponentSleep / ComponentFlu /
+//   ComponentSickness / ComponentOnFire updateables and only writes the values
+//   that arrive in this stream.  The host rejects (and counts) any inbound
+//   client report / event: ids 95/96 are now host -> client only.  Their ids are
+//   reused, append-only, and no existing id is renumbered.
+//
+// WIRE SEMANTICS
+//   * Both messages are bounded and change driven (5 Hz on change, 1 Hz
+//     heartbeat, immediately on a death / respawn edge or a rejoining client).
+//   * `revision` is a per-(client_id, slot) monotonic version of the host's
+//     authoritative state.  It only increases when the state changes or a
+//     death / respawn edge happens, so a receiver can reject stale entries while
+//     duplicated heartbeat entries (same revision) are simply ignored.
+//   * `sequence` is the host's monotonic report / event message counter
+//     (diagnostics + whole-message stale rejection on one TCP connection).
+//   * (client_id, slot) is the stable PlayerKey (Players/PlayerKey.cs).
+//     client_id = 0 is the host's own local slots; client_id > 0 identifies the
+//     owning client's avatar.  The host writes both kinds in the same report so
+//     the owner gets its own state and every observer gets pose / HUD state.
+//
+// Source: Mod/ScMultiplayer/Message/GamePlayerHealthMessage.cs:12-119
+//         (the old health message field set that this compact report replaces)
+// Source: Mod/ScMultiplayer/Modules/Player/ScMultiplayerPlayerHealthAndIngress.cs:40-100
+//         (host authoritative health capture / send; clients only follow)
+// Source: Mod/ScMultiplayer/Modules/Session/ScMultiplayerClientEvents.cs:3123-3260
+//         (ResetNetworkPlayerAfterRespawn / ResetNetworkPlayerVitals: the engine
+//          fields that must be restored on respawn)
+// Source: Survivalcraft/Game/ComponentHealth.cs:ComponentHealth.Health/Air/DeathTime
+// Source: Survivalcraft/Game/ComponentVitalStats.cs:ComponentVitalStats.Food/Stamina/
+//         Sleep/Temperature/Wetness/m_satiation/m_targetTemperature
+// Source: Survivalcraft/Game/ComponentFlu.cs:ComponentFlu.m_fluDuration/m_fluOnset
+// Source: Survivalcraft/Game/ComponentSickness.cs:ComponentSickness.m_sicknessDuration
+// Source: Survivalcraft/Game/ComponentOnFire.cs:ComponentOnFire.m_fireDuration
+// Source: Survivalcraft/Game/ComponentHumanModel.cs:ComponentHumanModel.Update:86-94
+//         (Health <= 0 or ComponentSleep.IsSleeping => lie-down pose)
+// Source: Survivalcraft/Game/ComponentCreatureModel.cs:ComponentCreatureModel.Update:186-189
+//         (DeathPhase rises while Health == 0)
+// ---------------------------------------------------------------------------
+
+// Position carried only by a respawn edge (authoritative spawn point chosen by the
+// owner).  Defined locally so this file needs no cross-proto import; the ordinary
+// position stream (position.proto) stays the only source of continuous motion.
+message VitalsVec3 {
+  float x = 1;
+  float y = 2;
+  float z = 3;
+}
+
+// One ComponentVitalStats.m_satiation pair: block contents -> accumulated value.
+// Bounded by PlayerVitalsLimits.MaxSatiationEntries (32) at encode / decode.
+message PlayerSatiationEntry {
+  uint32 contents = 1;
+  float value = 2;
+}
+
+// The full owner-reported state of one character.  This is a **message** (not a
+// set of scalar fields on the entry) so "values missing" is distinguishable from
+// "all values are 0": an entry without `values` is rejected by the codec instead
+// of being applied as a dead, starved character.
+message PlayerVitalsValues {
+  // 0..1; health == 0 is death (see `dead`).
+  float health = 1;
+  // 0..1 (ComponentHealth.Air / AirCapacity is engine-side and untouched).
+  float air = 2;
+  // 0..1.
+  float food = 3;
+  // 0..1.
+  float stamina = 4;
+  // 0..1.
+  float sleep = 5;
+  // 0..24 (engine clamps the property to this range).
+  float temperature = 6;
+  // 0..1.
+  float wetness = 7;
+  // ComponentVitalStats.m_targetTemperature (environment target; applied clamped 0..24).
+  float target_temperature = 8;
+  // Seconds remaining (ComponentFlu.m_fluDuration).
+  float flu_duration = 9;
+  // Seconds of cold exposure accumulated (ComponentFlu.m_fluOnset).
+  float flu_onset = 10;
+  // Seconds remaining (ComponentSickness.m_sicknessDuration).
+  float sickness_duration = 11;
+  // Seconds remaining (ComponentOnFire.m_fireDuration); 0 = extinguished.
+  float fire_duration = 12;
+  // ComponentSleep.IsSleeping (drives the lying pose while alive).
+  bool sleeping = 13;
+  // True iff health <= 0.  The codec rejects an entry where the two disagree.
+  bool dead = 14;
+  // ComponentHealth.CauseOfDeath at the moment of death (bounded to 64 chars).
+  string cause_of_death = 15;
+  repeated PlayerSatiationEntry satiation = 16;
+
+  // ---- ComponentSleep presentation authority (append-only: 17..20) ----------
+  //
+  // The host runs the real ComponentSleep.Update for every simulated character
+  // (host locals + client avatars).  The client removes its own
+  // ComponentSleep.Update (`DisableLocalSimulation`), so all of the sleep
+  // *presentation* that Update used to produce (blackout fade, Zzz, tap-to-wake /
+  // unconscious hint, control hiding) must be driven from these authoritative
+  // fields.  Source: Survivalcraft/Game/ComponentSleep.cs:104-164
+  //
+  // sleep_start_time = ComponentSleep.m_sleepStartTime (SubsystemGameInfo
+  //   .TotalElapsedGameTime when Sleep() was called; 0 = not sleeping / unknown;
+  //   the engine itself maps a persisted 0.0 back to null in Load()).
+  // sleep_elapsed = (host TotalElapsedGameTime at capture) - sleep_start_time.
+  //   This is **absolute from the sleep start**, so a client can keep advancing
+  //   it with its own (host-synced) world clock between reports instead of
+  //   depending on cross-device clock alignment.  It changes on every report and
+  //   therefore does NOT count as a "meaningful change" for the report cadence.
+  // allow_manual_wake = ComponentSleep.m_allowManualWakeUp.
+  // forced_sleep = sleeping && !allow_manual_wake  (engine Sleep(false): the
+  //   character fainted from lack of sleep / a sleep-causing effect and cannot
+  //   tap to wake).  While awake it is always false.
+  //
+  // Older peers that do not know 17..20 send proto3 defaults, which decode as
+  // "sleeping without sleep authority" (sleep_start_time = 0): the client still
+  // shows the engine-equivalent Zzz / blackout fade but exposes no wake path and
+  // counts `sleepLegacy` instead of inventing an episode length.
+  double sleep_start_time = 17;
+  float sleep_elapsed = 18;
+  bool allow_manual_wake = 19;
+  bool forced_sleep = 20;
+}
+
+message PlayerVitalsEntry {
+  // Character owner: 0 = the host's own local slot, > 0 = that client's avatar.
+  uint32 client_id = 1;
+  // Local-character slot on that device (0..3).
+  uint32 slot = 2;
+  // Per-(client_id, slot) monotonic state version; 0 is invalid.
+  uint32 revision = 3;
+  PlayerVitalsValues values = 4;
+}
+
+// Host -> client authoritative state (the client never sends this message).
+//   * entries with client_id = 0: the host's own local characters;
+//   * entries with client_id > 0: that client's host-simulated avatar.
+// The host sends the full current report to every player client: the owner sees
+// its own rows, observers see everyone else's pose / HUD rows.
+message PlayerVitalsReport {
+  // Sender's monotonic report counter; 0 is invalid.
+  uint32 sequence = 1;
+  // Bounded by PlayerVitalsLimits.MaxReportEntries (24).
+  repeated PlayerVitalsEntry entries = 2;
+  // Third-party extension points: see doc/message-protocol.md.
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}
+
+enum PlayerVitalEventKind {
+  PLAYER_VITAL_EVENT_KIND_UNSPECIFIED = 0;
+  PLAYER_VITAL_EVENT_DEATH = 1;
+  PLAYER_VITAL_EVENT_RESPAWN = 2;
+}
+
+// One edge event.  The event is sent **before** the report that carries the new
+// revision, so a receiver applies the edge immediately (pose / death visual) and
+// then applies the full values from the report.
+message PlayerVitalEventEntry {
+  uint32 client_id = 1;
+  uint32 slot = 2;
+  // Host state revision at the edge (> last applied revision of that key).
+  uint32 revision = 3;
+  PlayerVitalEventKind kind = 4;
+  // Death: ComponentHealth.CauseOfDeath (bounded to 64 chars; may be empty).
+  string cause_of_death = 5;
+  // Respawn: the host-chosen spawn position; absent on death events.
+  VitalsVec3 position = 6;
+}
+
+// Host -> client death / respawn edges, decided by the host and sent immediately
+// (never delayed): the owner client shows death / follows the respawn position;
+// observing clients update the avatar pose.
+message PlayerVitalsEvents {
+  uint32 sequence = 1;
+  // Bounded by PlayerVitalsLimits.MaxReportEntries (24).
+  repeated PlayerVitalEventEntry entries = 2;
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}
+
+// Client -> host: "I tapped while I was sleeping, wake me up".
+//
+// The host is the only authority on sleep (it runs the real ComponentSleep):
+// it validates owner / still sleeping / manual wake allowed / elapsed > 10 s /
+// not forced, calls the **engine** `ComponentSleep.WakeUp()` on its own copy of
+// that character and then sends the updated authoritative report
+// (sleeping = false), which fades the client's blackout out.  There is no
+// separate result message by design: acceptance is observed through the same
+// authoritative vitals report that already carries `sleeping`, and the host
+// answers a rejected request with a rate-limited log + `sleepWakeReqRejectedBy`
+// counter (the client gate never sends a request the engine rule would refuse).
+//
+// Append-only: message id PLAYER_WAKE_REQUEST = 103 (101 / 102 stay the respawn
+// request / result).
+message PlayerWakeRequest {
+  // The requesting connection's client id; 0 is invalid (the host never asks).
+  uint32 client_id = 1;
+  // The sender's local-character slot (0..3).
+  uint32 slot = 2;
+  // Client's monotonic request counter (1..); diagnostics / log correlation.
+  uint64 request_sequence = 3;
+  // Client's estimate of the host sleep elapsed at the tap (seconds).  The host
+  // **never trusts it** for the 10 s gate; it re-reads its own ComponentSleep.
+  float sleep_elapsed = 4;
+  // The sleep episode the client is asking to end (host game time at Sleep()).
+  // Informational: lets the host log a mismatched episode.
+  double sleep_start_time = 5;
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}

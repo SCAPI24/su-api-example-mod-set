@@ -68,6 +68,13 @@ namespace SuMultiplayer.Modules
 
         /// <summary>本端是否是联机客户端副本（供模块更新闸门 / 诊断；引擎侧同一事实）。</summary>
         bool IsClientReplica { get; }
+
+        /// <summary>
+        /// 客户端本机**当前有效交互距离**（引擎 ComponentMiner.Raycast 的 reach：
+        /// 创造 = SettingsManager.CreativeReach，生存 = 5；已夹到可发送的合理范围）。
+        /// 每次编辑请求都带上它，主机按 min(reach + 容差, 主机上限) 校验。
+        /// </summary>
+        float LocalReach { get; }
     }
 
     /// <summary>

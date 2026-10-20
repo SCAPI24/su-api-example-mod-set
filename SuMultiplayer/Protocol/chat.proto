@@ -1,0 +1,106 @@
+syntax = "proto3";
+
+package sump.protocol;
+
+option csharp_namespace = "SuMultiplayer.Protocol";
+option optimize_for = SPEED;
+
+// ---------------------------------------------------------------------------
+// Multiplayer chat (transient; never persisted, never replayed on reconnect).
+//
+// Source: Mod/ScMultiplayer/Message/ChatMessage.cs:ChatMessage
+//         (Sender / SenderIdentity / Text; the legacy message carried a GUID and a
+//          binary timestamp, this rewrite uses host-assigned ids and ticks).
+//
+// Authority model:
+//   · A client NEVER broadcasts a ChatMessage itself.  It sends a
+//     ChatSendRequest (client -> host) and only shows its own line when the
+//     host echoes the accepted ChatMessage back (id = CHAT_MESSAGE).
+//   · The host sanitizes / validates the text, applies the per-client rate
+//     limit, assigns a monotonically increasing message_id + server_tick and
+//     broadcasts the resulting ChatMessage to every joined player (the sender
+//     included, exactly once).
+//   · The host's own chat goes through the same validation and broadcast, but
+//     it is appended to the host feed locally because the broadcast targets
+//     only remote player connections.
+//   · Rejections are explicit: ChatRejected carries the request id, the
+//     machine-readable reason and a human-readable detail.  Silently dropping
+//     a message is not allowed.
+//
+// Append-only: these messages use type ids 82 / 83 / 84 (see protocol.proto),
+// no existing id is renumbered.
+// ---------------------------------------------------------------------------
+
+// Keep "all" the default so an older peer that omits the field means the same
+// thing.  CHAT_CHANNEL_NEARBY is reserved for a later nearby-only channel and
+// is explicitly rejected by this build (no silent fallback to "all").
+enum ChatChannel {
+  CHAT_CHANNEL_ALL = 0;
+  CHAT_CHANNEL_NEARBY = 1;
+}
+
+// Explicit rejection reasons.  The numeric values are part of the wire format;
+// append new reasons at the end and never renumber an existing value.
+enum ChatRejectReason {
+  CHAT_REJECT_UNSPECIFIED = 0;
+  CHAT_REJECT_EMPTY = 1;
+  CHAT_REJECT_TOO_LONG = 2;
+  CHAT_REJECT_RATE_LIMITED = 3;
+  CHAT_REJECT_FLOOD = 4;
+  CHAT_REJECT_UNSUPPORTED_CHANNEL = 5;
+  CHAT_REJECT_NOT_IN_ROOM = 6;
+  CHAT_REJECT_MALFORMED = 7;
+  CHAT_REJECT_NOT_PLAYER = 8;
+}
+
+// Client -> host: "I want to say this".  request_id is the local monotonic
+// request sequence; the host echoes it in ChatMessage / ChatRejected so the
+// sender can match the result.  sender_name / sender_identity are display
+// hints only -- the host resolves the authoritative values from the joined
+// player record and sanitizes whatever it uses.
+message ChatSendRequest {
+  int64 request_id = 1;
+  string text = 2;
+  ChatChannel channel = 3;
+  string sender_name = 4;
+  string sender_identity = 5;
+  // Client-side tick/sequence at the moment the request was created
+  // (diagnostics only; the host never trusts it for ordering).
+  int64 client_tick = 6;
+
+  bytes ext = 100;
+}
+
+// Host -> every joined player: one accepted, sanitized chat line.
+message ChatMessage {
+  // Host-assigned, monotonically increasing within the room session.
+  int64 message_id = 1;
+  // Host transport id of the sender (0 = the host itself).
+  int32 sender_client_id = 2;
+  // Sender identity (UserId.dat); empty when the host has none.
+  string sender_identity = 3;
+  // Sanitized display name.
+  string sender_name = 4;
+  // Sanitized, bounded message body (no control characters).
+  string text = 5;
+  // Host-assigned tick (monotonic accepted-message counter).
+  int64 server_tick = 6;
+  ChatChannel channel = 7;
+  // Echo of the originating ChatSendRequest.request_id (0 for host chat).
+  int64 request_id = 8;
+
+  bytes ext = 100;
+}
+
+// Host -> the requesting client: the message was not accepted.
+message ChatRejected {
+  int64 request_id = 1;
+  ChatRejectReason reason = 2;
+  // Short human-readable explanation (already sanitized by the host).
+  string detail = 3;
+  int64 server_tick = 4;
+  // Hint for CHAT_REJECT_RATE_LIMITED / CHAT_REJECT_FLOOD (0 = unknown).
+  int32 retry_after_ms = 5;
+
+  bytes ext = 100;
+}

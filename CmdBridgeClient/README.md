@@ -26,7 +26,11 @@ of silently picking one. A `runtime.json` whose `pid` is not the live process is
 sccmd status                          screen / window / animation / layout state
 sccmd ui [--all] [--filter T] [--max N]    UI elements with coordinates and reachability
 sccmd reachability                    which elements cannot be reached, and what blocks them
-sccmd player                          player state, key intent, inventory, sleep
+sccmd player                          player state, key intent, inventory, sleep (first local player only)
+sccmd players [--index N] [--max N] [--slots N]
+                                      every player character as a JSON array: host split-screen
+                                      H1/H2/H3 plus the remote avatar (if any), merged from
+                                      PlayersData + ComponentPlayers; bounded slots
 sccmd input                           raw engine input state (also diagnoses stuck input)
 sccmd aim [maxDistance]               what the crosshair points at
 sccmd messages                        the game's own on-screen hints and overlays
@@ -65,7 +69,16 @@ sccmd closeui [--cancel]              close the blocking UI now: MessageDialog -
                                       cannot be dismissed the command fails with ui_blocking instead of
                                       injecting a silent no-op.
 sccmd click <selector|id> [--at x y]  engine-internal UI click (re-validated before injecting)
-sccmd text <string>                   type into the focused text box
+sccmd text <string>                   type into the *focused* text box, one char per frame;
+                                      no focus -> no_focused_textbox, no room -> text_rejected
+sccmd settext <selector> <text>       replace a TextBoxWidget's whole text through its own
+                                      Text property (fires TextChanged, so the dialog's internal
+                                      state follows). Use this for EditMemoryBankDialog.Line0..F /
+                                      LinearText and EditTruthTableDialog.LinearText.
+sccmd accept [dialog] [--button <sel>] accept the current (or named) dialog: a synthetic Tap+Click
+                                      on its OK button runs the dialog's own IsClicked commit
+                                      branch (Dismiss alone would not commit)
+sccmd dialog ok|cancel [dialog]      same as accept / the dialog's own Cancel button
 sccmd raw <command> k=v ...           any protocol command
 
 # interactive
@@ -74,6 +87,34 @@ sccmd                                 REPL: ui / click 3 / hold w / lookat 12 68
 
 Global options: `--json`, `--root`, `--port`, `--token`, `--timeout <ms>`. `sccmd help`
 works offline.
+
+## Comparing host characters with the joined client: `sccmd players`
+
+`player` only prints `SubsystemPlayers.ComponentPlayers[0]`. `players` asks the server for
+`players.all`, which returns a **JSON array with one entry per player character**: H1/H2/H3 on
+the host and the remote avatar of a joined client. The server merges `PlayersData` (host local,
+including not-yet-spawned characters), `ComponentPlayers`, and `SubsystemBodies.Bodies` (the
+remote avatar's `PlayerData` is removed from `PlayersData`, and engine bookkeeping can also
+drop it from `ComponentPlayers`, but its body stays in `SubsystemBodies`). Entries are deduped
+by `PlayerData`. Remote avatars have no `GameWidget` (the multiplayer layer removes it), so
+`isLocal:false` identifies them; `inPlayersData` / `inComponentPlayers` / `inBodies` show which
+engine collection supplied the entry, and `hasComponentPlayer` / `hasEntity` distinguish "data
+exists but body not spawned yet" from a live body.
+
+```bash
+sccmd --json players                       # compact JSON array, full state
+sccmd players                              # indented JSON
+sccmd players --index 0                    # only playerIndex 0 (not the split-screen slot)
+sccmd players --max 2 --slots 4            # first two entries, at most 4 inventory slots each
+```
+
+Compare entries by `playerIndex` + `isLocal`: host H1/H2/H3 are the `isLocal:true` entries
+(their `gameWidgetIndex` is the split-screen slot), the joined client is the `isLocal:false`
+entry (typically `inPlayersData:false` + `inBodies:true`; `inComponentPlayers` may be false
+after engine bookkeeping).
+`health`, `look`, `position`, `sleep`, `vitals`, `inventory.slots` are directly
+comparable. `errors` is an object (empty when everything was readable); a disposed entity is
+reported with `stateRead:false` + `stateReason` instead of throwing.
 
 ## Exit codes
 
@@ -97,3 +138,5 @@ captured" (use keys, scroll, or close the covering dialog first).
 `sccmd` 是 CmdBridgeMod 的命令行客户端（纯 BCL，零游戏引用）：自动发现运行中的游戏并读取端口/token，
 支持一次性命令与交互式 REPL，`--json` 便于脚本/AI 解析，退出码区分"元素不存在"（2）与"存在但点不到"（3）。
 观察面只读；动作面只走玩家控制器（视角/键盘/鼠标/UI 点击/文本），不做任何状态修改。
+`sccmd players` 一次列出**全部** `PlayerData`（主机分屏 H1/H2/H3 + 联机远端 avatar），
+`--json` 返回数组原文；`player` 仍然只报第一个本地角色。

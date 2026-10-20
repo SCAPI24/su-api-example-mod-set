@@ -252,6 +252,8 @@ namespace SuMultiplayer.Net
     ///
     /// 因此只有一个**单一漏斗**，且只派发到"纯表现"行为：
     ///   · <c>SuSubsystemCampfireBlockBehavior</c> —— 营火粒子（本 mod 的外壳，客户端走表现层）；
+    ///   · <c>SuSubsystemFurnaceBlockBehavior</c> —— 熔炉火焰（本 mod 的外壳，客户端只建
+    ///     FireParticleSystem；base 会 AddEntity / RemoveEntity，客户端绝不放行）；
     ///   · <c>SubsystemTorchBlockBehavior</c> —— 火把粒子（Add/Remove/Modified 只碰粒子）。
     /// 其余 behavior 一律**拒绝通知**并计入 <c>clientBehaviorDeniedWrites</c>（它们可能写格 /
     /// 生成实体；客户端副本保持 mutation-denied，不静默应用）。
@@ -259,6 +261,7 @@ namespace SuMultiplayer.Net
     public static class BlockBehaviorNotifyPolicy
     {
         public const string CampfireShellType = "SuSubsystemCampfireBlockBehavior";
+        public const string FurnaceShellType = "SuSubsystemFurnaceBlockBehavior";
         public const string TorchType = "SubsystemTorchBlockBehavior";
 
         /// <summary>内容是否变化决定派发 Added/Removed 还是 Modified（与 ChangeCell 完全一致）。</summary>
@@ -274,6 +277,7 @@ namespace SuMultiplayer.Net
         public static bool IsPresentationBehavior(string typeName) => typeName switch
         {
             CampfireShellType => true,
+            FurnaceShellType => true,
             TorchType => true,
             _ => false
         };
@@ -283,7 +287,7 @@ namespace SuMultiplayer.Net
         {
             "SubsystemChestBlockBehavior" => "创建箱子方块实体（客户端由容器副本维护，行为通知会重复建实体）",
             "SubsystemCraftingTableBlockBehavior" => "创建工作台方块实体（客户端由容器副本维护）",
-            "SubsystemFurnaceBlockBehavior" => "创建熔炉方块实体 + 火焰粒子（方块实体由容器副本维护）",
+            "SubsystemFurnaceBlockBehavior" => "创建熔炉方块实体 / DropAllItems / RemoveEntity（火焰由 SuSubsystemFurnaceBlockBehavior 外壳单独表现）",
             "SubsystemDispenserBlockBehavior" => "创建分配器方块实体（客户端由容器副本维护）",
             "SubsystemDoorBlockBehavior" => "OnBlockAdded/Removed 会 ChangeCell 门的上/下半格",
             "SubsystemFenceBlockBehavior" => "OnBlockAdded 会 ChangeCell 改写栅栏变体",

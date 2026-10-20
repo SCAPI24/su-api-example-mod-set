@@ -61,11 +61,20 @@ namespace SuMultiplayer.Net
         }
 
         public static Proto.PlayerProfile ToMessage(int clientId, string identity,
+            PlayerProfileSnapshot profile, bool isHost, bool hasCharacter) =>
+            ToMessage(new PlayerKey(clientId, 0), identity, profile, isHost, hasCharacter);
+
+        /// <summary>
+        /// 多本机角色版：<paramref name="key"/> 的槽位写进追加字段 <c>slot</c>。
+        /// 槽位 0 时 proto3 不写默认值 → 线上与旧版逐字节一致。
+        /// </summary>
+        public static Proto.PlayerProfile ToMessage(PlayerKey key, string identity,
             PlayerProfileSnapshot profile, bool isHost, bool hasCharacter)
         {
             var message = new Proto.PlayerProfile
             {
-                ClientId = clientId,
+                ClientId = key.ClientId,
+                Slot = (uint)key.Slot,
                 Identity = identity ?? string.Empty,
                 Name = profile?.Name ?? string.Empty,
                 IsHost = isHost,
@@ -78,9 +87,18 @@ namespace SuMultiplayer.Net
 
         /// <summary>解析一条资料消息；消息为空时返回 null（调用方必须明确处理"没有资料"）。</summary>
         public static PlayerProfileSnapshot FromMessage(Proto.PlayerProfile message,
-            out int clientId, out string identity, out bool isHost, out bool hasCharacter)
+            out int clientId, out string identity, out bool isHost, out bool hasCharacter) =>
+            FromMessage(message, out clientId, out _, out identity, out isHost, out hasCharacter);
+
+        /// <summary>
+        /// 多本机角色版：额外带回追加字段 <c>slot</c>（旧构建 / 槽位 0 = 0）。
+        /// </summary>
+        public static PlayerProfileSnapshot FromMessage(Proto.PlayerProfile message,
+            out int clientId, out int slot, out string identity, out bool isHost,
+            out bool hasCharacter)
         {
             clientId = message?.ClientId ?? -1;
+            slot = (int)(message?.Slot ?? 0);
             identity = (message?.Identity ?? string.Empty).Trim();
             isHost = message?.IsHost ?? false;
             hasCharacter = message?.HasCharacter ?? false;
@@ -90,6 +108,22 @@ namespace SuMultiplayer.Net
                 Name = (message.Name ?? string.Empty).Trim(),
                 Appearance = ToAppearance(message.Appearance)
             };
+        }
+
+        /// <summary>
+        /// 解析玩家键；槽位非法（>3）时返回 false + 明确原因（调用方必须丢弃该消息，不夹紧）。
+        /// </summary>
+        public static bool TryReadKey(Proto.PlayerProfile message, out PlayerKey key,
+            out string error)
+        {
+            key = default;
+            error = null;
+            if (message == null)
+            {
+                error = "资料消息为空";
+                return false;
+            }
+            return PlayerKey.TryCreate(message.ClientId, (int)message.Slot, out key, out error);
         }
 
         /// <summary>协议里是否真的带了资料（旧构建 / 首次加入 = 全是空字段）。</summary>
