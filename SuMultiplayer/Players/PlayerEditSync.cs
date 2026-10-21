@@ -82,7 +82,10 @@ namespace SuMultiplayer.Players
             Clothes = PlayerAppearance.CloneClothes(Clothes)
         };
 
-        /// <summary>把引擎资料转成快照（槽位由调用方给出；资料为空时返回 null）。</summary>
+        /// <summary>
+        /// 把引擎资料转成快照（槽位由调用方给出；资料为空时返回 null）。
+        /// 名字**原样保留**（不 Trim）：校验 / 比较都看引擎收到的同一个字符串。
+        /// </summary>
         public static PlayerEditSlotSnapshot FromProfile(int slot, PlayerProfileSnapshot profile)
         {
             if (profile == null) return null;
@@ -90,7 +93,7 @@ namespace SuMultiplayer.Players
             return new PlayerEditSlotSnapshot
             {
                 Slot = slot,
-                Name = (profile.Name ?? string.Empty).Trim(),
+                Name = profile.Name ?? string.Empty,
                 Sex = appearance.Sex,
                 SkinName = (appearance.SkinName ?? string.Empty).Trim(),
                 SkinSha256 = appearance.SkinSha256 != null
@@ -404,41 +407,40 @@ namespace SuMultiplayer.Players
         }
 
         /// <summary>
-        /// 名字规则与引擎 <c>PlayerData.VerifyName</c> **逐条一致**（2..14、字母/数字/空格、
-        /// 首尾不能是空格）。这里不检查重复 —— 重名是允许的。
+        /// 玩家名字校验的**唯一自写实现**（本文件属于 Players/ 纯逻辑层，不能引用 Game）。
+        /// 规则与引擎 <c>PlayerData.VerifyName</c> **逐条相同**；本实现**不 Trim、不改写输入**
+        /// （首尾空格由规则本身拒绝，合法性以传入的原始字符串为准）。UI 输入边界是否 Trim
+        /// 以引擎 <c>PlayerScreen</c> 自己的约定为准（PlayerData.cs:353-371 只认最终字符串）。
+        /// 这里不检查重复 —— 重名是允许的。
+        ///
+        /// Source: Survivalcraft/Game/PlayerData.cs:353-371 PlayerData.VerifyName
+        ///         （长度 2..14；每个字符 char.IsLetterOrDigit 或空格；首尾不能是空格）
         /// </summary>
         public static bool TryValidateName(string name, out string reason)
         {
             reason = null;
-            string trimmed = (name ?? string.Empty).Trim();
-            if (trimmed.Length == 0)
+            if (string.IsNullOrEmpty(name))
             {
-                reason = "名字为空";
+                reason = "名字为空（引擎要求 2..14 个字符）";
                 return false;
             }
-            if (trimmed.Length < 2 || trimmed.Length > 14)
+            if (name.Length < 2 || name.Length > 14)
             {
-                reason = "名字长度 " + trimmed.Length + " 非法（允许 2..14）";
+                reason = "名字长度 " + name.Length + " 非法（允许 2..14）";
                 return false;
             }
-            for (int i = 0; i < trimmed.Length; i++)
+            for (int i = 0; i < name.Length; i++)
             {
-                char c = trimmed[i];
+                char c = name[i];
                 if (!char.IsLetterOrDigit(c) && c != ' ')
                 {
                     reason = "名字包含非法字符 '" + c + "'（只允许字母/数字/空格）";
                     return false;
                 }
             }
-            if (trimmed[0] == ' ' || trimmed[trimmed.Length - 1] == ' ')
+            if (name[0] == ' ' || name[name.Length - 1] == ' ')
             {
                 reason = "名字首尾不能是空格";
-                return false;
-            }
-            if (!string.Equals(trimmed, name ?? string.Empty, StringComparison.Ordinal))
-            {
-                // 调用方传进来的是未 trim 的值：引擎自己会 trim，这里明确要求先 trim（不静默改写）。
-                reason = "名字前后有空白（调用方必须先 Trim）";
                 return false;
             }
             return true;
@@ -578,9 +580,33 @@ namespace SuMultiplayer.Players
         public long HostProfileBroadcast { get; private set; }
         public long MissingAsset { get; private set; }
         public long Rejected { get; private set; }
+        /// <summary>编辑屏退出时把名字文本框的最终值写回 PlayerData 的次数（Android 键盘不一定触发 FocusLost）。</summary>
+        public long UiNameCommitted { get; private set; }
+        /// <summary>编辑屏退出时把皮肤预览的最终值写回 PlayerData 的次数。</summary>
+        public long UiSkinCommitted { get; private set; }
+        /// <summary>想补写 UI 值但拿不到被编辑的 PlayerData / 文本框，导致值只能留在屏幕上的次数。</summary>
+        public long UiCommitFailures { get; private set; }
 
         public void OnEditScreenEntered() => Entered++;
         public void OnEditScreenExited() => Exited++;
+
+        /// <summary>退出时补写名字成功（值已经和 PlayerData 一致时不计数）。</summary>
+        public void OnUiNameCommitted(long count = 1)
+        {
+            if (count > 0) UiNameCommitted += count;
+        }
+
+        /// <summary>退出时补写皮肤成功（值已经和 PlayerData 一致时不计数）。</summary>
+        public void OnUiSkinCommitted(long count = 1)
+        {
+            if (count > 0) UiSkinCommitted += count;
+        }
+
+        /// <summary>补写失败（被编辑的 PlayerData 取不到 / 文本框读不到）；必须限流写原因，不静默。</summary>
+        public void OnUiCommitFailure(long count = 1)
+        {
+            if (count > 0) UiCommitFailures += count;
+        }
 
         public void OnProfileResubmitted(long count = 1)
         {
@@ -640,7 +666,10 @@ namespace SuMultiplayer.Players
                 .Append(" skinChanged=").Append(SkinChanged)
                 .Append(" hostProfileBroadcast=").Append(HostProfileBroadcast)
                 .Append(" missingAsset=").Append(MissingAsset)
-                .Append(" profileUpdateRejected=").Append(Rejected);
+                .Append(" profileUpdateRejected=").Append(Rejected)
+                .Append(" uiNameCommitted=").Append(UiNameCommitted)
+                .Append(" uiSkinCommitted=").Append(UiSkinCommitted)
+                .Append(" uiCommitFailures=").Append(UiCommitFailures);
             if (m_rejectedReasons.Count > 0)
             {
                 var keys = new List<string>(m_rejectedReasons.Keys);

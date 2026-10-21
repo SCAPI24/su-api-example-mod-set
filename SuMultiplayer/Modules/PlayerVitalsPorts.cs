@@ -28,6 +28,29 @@ namespace SuMultiplayer.Modules
     ///   · <see cref="CauseOfDeath"/> = 主机引擎写下的死因（死亡边沿事件用）。
     /// 每帧只读这几个字段，不做 satiation 字典拷贝（那是 5 Hz 的完整抓取才做的事）。
     /// </summary>
+    /// <summary>
+    /// 一条主机下发的**表现事件**的应用结果（实机问题 4：客户端自己的化身咳嗽 / 呕吐 / 着火
+    /// 必须在客户端播放）。模块据此累计 <c>fluEffectRecv / Presented / Rejected / ...</c>，
+    /// 端口只负责"能不能播 / 为什么不能"，不决定计数口径。
+    /// </summary>
+    public enum PlayerEffectApplyStatus
+    {
+        /// <summary>已播放（音效 / 粒子 / 覆盖层至少一项真的写进了引擎）。</summary>
+        Applied = 0,
+
+        /// <summary>本机没有这个玩家键的角色（本机槽位不存在 / 联机化身还没建好）。</summary>
+        NoAvatar = 1,
+
+        /// <summary>值非法 / 播放失败（<c>reason</c> 写清原因，模块计数 + 限流日志）。</summary>
+        Rejected = 2,
+
+        /// <summary>重复事件（同键 sequence 不新于已应用的那条）—— 计数后丢弃，绝不重复播放。</summary>
+        Duplicate = 3,
+
+        /// <summary>过期事件（超过 <see cref="SuMultiplayer.Net.PlayerEffectPolicy.TtlSeconds"/>）。</summary>
+        Stale = 4
+    }
+
     public readonly struct PlayerVitalsSlotSample
     {
         public PlayerVitalsSlotSample(int slot, bool hasHealth, bool dead, int entityToken,
@@ -124,6 +147,32 @@ namespace SuMultiplayer.Modules
         int PollAuthoritySlots(List<PlayerVitalsSlotSample> target, out string reason);
 
         /// <summary>
+        /// **主机侧 / 每帧**：轮询主机模拟的**客户端化身**（client_id &gt; 0）的
+        /// ComponentFlu / ComponentSickness / ComponentOnFire 私有计时字段，识别
+        /// **上升沿**（一次新咳嗽 / 喷嚏 / 恶心 / 呕吐 / 着火 / 熄灭）并写进
+        /// <paramref name="target"/>（vitals.proto 的 PLAYER_EFFECT_EVENTS = 109）。
+        ///
+        /// 为什么每帧：这些表现只有 1~4 秒（喷嚏 1 秒、咳嗽动作 4 秒），5 Hz 的体征抓取
+        /// 可能整段错过；每帧读几个私有计时字段是廉价的（每化身约 6 次反射读）。
+        /// 第一次看到一个角色只**播种**（不把"已经咳嗽了"当成新事件）。
+        /// 每条事件的 sequence 是每键单调序号（客户端按它去重）。
+        /// 返回本拍新事件条数；失败时返回 0 并写 <paramref name="reason"/>（不静默）。
+        /// </summary>
+        int PollAuthorityEffects(List<SuMultiplayer.Net.PlayerEffectEventSnapshot> target,
+            out string reason);
+
+        /// <summary>
+        /// **客户端侧**：应用一条主机下发的表现事件（音效 / 粒子 / 覆盖层）。
+        ///   · 只播放，**绝不**改生命 / 体征 / 权威状态（扣血仍由 PLAYER_VITALS_REPORT 下发）；
+        ///   · 按 (key, sequence) 去重（<see cref="PlayerEffectApplyStatus.Duplicate"/>）；
+        ///   · 超过 <see cref="SuMultiplayer.Net.PlayerEffectPolicy.TtlSeconds"/> 的事件
+        ///     （用客户端已对齐的主机游戏时钟比较）返回 <see cref="PlayerEffectApplyStatus.Stale"/>；
+        ///   · 解析不到角色返回 <see cref="PlayerEffectApplyStatus.NoAvatar"/>。
+        /// </summary>
+        PlayerEffectApplyStatus ApplyEffect(
+            in SuMultiplayer.Net.PlayerEffectEventSnapshot evt, out string reason);
+
+        /// <summary>
         /// 读某个**联机化身**（客户端角色 / 主机角色在客户端的副本）当前的生命 / 体征。
         /// H3 调试镜像 / 诊断用；false = 没有这个化身（<paramref name="reason"/> 明确）。
         /// </summary>
@@ -165,7 +214,7 @@ namespace SuMultiplayer.Modules
         /// 写（内部去重）。只写**显示属性**，绝不写组件字段、绝不跑模拟。
         /// 返回刷新到的本机角色数；<paramref name="reason"/> 非空 = 有槽位失败（原因可直接写日志）。
         /// </summary>
-        int RefreshLocalPresentation(out string reason);
+        int RefreshLocalPresentation(float deltaTime, out string reason);
 
         /// <summary>
         /// **客户端侧**：把主机下发的权威状态写进**远端化身**（不跑任何伤害 / 治疗模拟）。

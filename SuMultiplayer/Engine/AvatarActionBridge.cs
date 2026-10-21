@@ -54,6 +54,15 @@ namespace SuMultiplayer.Engine
         private long m_heldItemsApplied;
         private long m_presentationsApplied;
         private long m_slotDrops;
+        /// <summary>最近一次抓取/同步的背包槽位数（状态行 inventorySyncSlots；普通背包 = 26）。</summary>
+        private int m_inventorySyncSlots;
+        /// <summary>普通背包"全量槽位模式"抓取次数（状态行 inventoryFullSync）。</summary>
+        private long m_inventoryFullSync;
+        /// <summary>背包槽位越界丢弃次数（状态行 inventorySlotDrops）。</summary>
+        private long m_inventorySlotDrops;
+        /// <summary>限流日志表：key → 最后一次输出时间（秒，Time.RealTime）。</summary>
+        private readonly Dictionary<string, double> m_lastLogTimes =
+            new Dictionary<string, double>(StringComparer.Ordinal);
 
         /// <summary>
         /// 组合根在构造完 <see cref="PlayerActionModule"/> 后注入：开火复位需要模块持有的
@@ -293,8 +302,10 @@ namespace SuMultiplayer.Engine
         }
 
         /// <summary>
-        /// 抓一个角色的可用背包（前 <see cref="PlayerInventoryMath.MaxSyncSlots"/> 槽）。
-        /// 创造仓库有 1622 槽：只同步快捷栏 10 槽（整包下发会重演旧实现"巨大网络尖峰"）。
+        /// 抓一个角色的可用背包。同步范围按 <see cref="PlayerInventoryMath.SyncSlotsFor"/> 决定：
+        /// 普通背包（26 槽）**全部槽位**；创造仓库（1622 槽）仍只同步快捷栏 10 槽
+        /// （整包下发会重演旧实现"巨大网络尖峰"，Source:
+        /// Mod/ScMultiplayer/Modules/Player/ScMultiplayerPlayerSync.cs:409-413）。
         /// Source: Survivalcraft/Game/ComponentInventoryBase.cs:IInventory.GetSlotValue/GetSlotCount
         /// </summary>
         private bool TryCaptureInventory(PlayerData playerData, out int[] values, out int[] counts,
@@ -310,7 +321,7 @@ namespace SuMultiplayer.Engine
                 reason = "角色还没有 ComponentMiner.Inventory";
                 return false;
             }
-            int slots = Math.Min(inventory.SlotsCount, PlayerInventoryMath.MaxSyncSlots);
+            int slots = PlayerInventoryMath.SyncSlotsFor(inventory.SlotsCount);
             if (slots <= 0)
             {
                 reason = "背包槽数为 0";
@@ -324,6 +335,15 @@ namespace SuMultiplayer.Engine
                 counts[i] = inventory.GetSlotCount(i);
             }
             activeSlotIndex = inventory.ActiveSlotIndex;
+            m_inventorySyncSlots = slots;
+            if (slots > PlayerInventoryMath.MaxSyncSlots)
+            {
+                m_inventoryFullSync++;
+                LogOnce("inventory-full-sync:" + slots,
+                    "背包槽位数 " + inventory.SlotsCount + " → 按普通背包全量同步 " + slots +
+                    " 槽（不再截断前 " + PlayerInventoryMath.MaxSyncSlots + " 槽；创造仓库仍为 " +
+                    PlayerInventoryMath.MaxSyncSlots + " 槽，见 PlayerInventoryMath.SyncSlotsFor）");
+            }
             CountCapture("inventory");
             return true;
         }
@@ -381,9 +401,11 @@ namespace SuMultiplayer.Engine
                 if (index < 0 || index >= inventory.SlotsCount)
                 {
                     m_slotDrops++;
-                    LogOnce("inventory-slot-range:" + clientId + ":" + index,
+                    m_inventorySlotDrops++;
+                    LogRateLimited("inventory-slot-range:" + clientId + ":" + index,
                         "clientId=" + clientId + " 的背包槽位 " + index + " 越界（本端 " +
-                        inventory.SlotsCount + " 槽）→ 跳过该槽（其余槽照常落地）");
+                        inventory.SlotsCount + " 槽）→ 跳过该槽（其余槽照常落地）；累计越界丢弃 " +
+                        m_inventorySlotDrops + " 次");
                     continue;
                 }
                 if (!SetSlot(inventory, index, delta.Values[i], delta.Counts[i], clientId, out reason))
@@ -598,7 +620,11 @@ namespace SuMultiplayer.Engine
                 " inventoryApplied=" + m_inventoryApplied.ToString(CultureInfo.InvariantCulture) +
                 " heldItemsApplied=" + m_heldItemsApplied.ToString(CultureInfo.InvariantCulture) +
                 " presentations=" + m_presentationsApplied.ToString(CultureInfo.InvariantCulture) +
-                " slotDrops=" + m_slotDrops.ToString(CultureInfo.InvariantCulture) + ")";
+                " slotDrops=" + m_slotDrops.ToString(CultureInfo.InvariantCulture) +
+                " inventorySyncSlots=" + m_inventorySyncSlots.ToString(CultureInfo.InvariantCulture) +
+                " inventoryFullSync=" + m_inventoryFullSync.ToString(CultureInfo.InvariantCulture) +
+                " inventorySlotDrops=" + m_inventorySlotDrops.ToString(CultureInfo.InvariantCulture) +
+                ")";
         }
 
         private void CountCapture(string kind)
@@ -617,6 +643,15 @@ namespace SuMultiplayer.Engine
         {
             if (!m_reportedOnce.Add(key)) return;
             m_diagnostics?.Warn(m_ownerId, message);
+        }
+
+        /// <summary>失败日志限流：同一 key 每 10 秒最多一行（计数在状态行累计，不丢事件）。</summary>
+        private void LogRateLimited(string key, string message)
+        {
+            double now = Time.RealTime;
+            if (m_lastLogTimes.TryGetValue(key, out double last) && now - last < 10.0) return;
+            m_lastLogTimes[key] = now;
+            m_diagnostics?.Info(m_ownerId, message);
         }
     }
 }

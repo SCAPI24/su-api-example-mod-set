@@ -44,6 +44,159 @@ namespace SuMultiplayer.Net
 
         /// <summary>两条等级被认定为"没有变化"的浮点容差。</summary>
         public const float LevelEpsilon = 0.001f;
+
+        /// <summary>
+        /// 一份表现事件消息最多几条（vitals.proto <c>PLAYER_EFFECT_EVENTS</c> = 109）。
+        /// 主机每帧最多为一个 4 槽客户端产出几条（咳嗽 / 喷嚏 / 恶心 / 呕吐 / 着火 / 熄灭），
+        /// 16 条足够覆盖 4 个槽位的一帧；超出的条目显式计 <c>dropped</c>，不静默截断。
+        /// </summary>
+        public const int MaxEffectEntries = 16;
+
+        /// <summary>表现事件里的引擎资源名上限（<c>Audio/Creatures/HumanCough</c> 量级）。</summary>
+        public const int MaxEffectSoundLength = 64;
+
+        /// <summary>
+        /// 冻结阶段上限（vitals.proto 字段 23）：0 none / 1 chilly / 2 cold / 3 hypothermia /
+        /// 4 frozen。越界一律拒绝（不夹紧：夹紧会把"未知的新阶段"悄悄当成已知的阶段）。
+        /// </summary>
+        public const uint MaxFreezeStage = 4;
+    }
+
+    /// <summary>
+    /// 主机权威的**冻结进度 / 阶段**纯策略（不引用 Game，自检可直接编译）。
+    ///
+    /// 引擎事实（为什么客户端不能自己算）：
+    ///   · 冰冻屏幕覆盖 <c>ComponentScreenOverlays.IceFactor</c> 由
+    ///     <c>ComponentVitalStats.UpdateTemperature</c> 每帧写成
+    ///     <c>Saturate(1 - Temperature / 6)</c>（<c>ComponentVitalStats.cs:579</c>）；
+    ///   · 冷阶段阈值（同方法 <c>:532-557</c>）：&lt;= 0 → <c>Injure(1, "Froze to death")</c>；
+    ///     &lt; 3 → 每 10 秒 <c>Injure(0.05, "Hypothermia")</c>；&lt; 6 / &lt; 8 → 提示 + 温度条闪。
+    ///   · 客户端的 <c>ComponentVitalStats.Update</c> 被摘掉，Temperature 只由 95 上报写入
+    ///     （5 Hz）：如果客户端继续自己从温度推导覆盖强度，就会在两次上报之间**跳变**，
+    ///     并且与主机第三分屏（读主机连续温度）不在同一时刻冻上（实机问题 1/2）。
+    /// 所以：主机用自己模拟的 Temperature 算 progress/stage 随 95 下发（字段 22/23），
+    /// 客户端**只跟随**（插值），不再本地推导。老版本主机不带字段时（proto3 默认 0），
+    /// 只要权威 temperature &lt; 6 就能判定"字段缺失"，此时用主机权威温度推导，
+    /// 显式计 <c>freezeLegacy</c> —— 仍然是主机值，不是本地模拟。
+    /// </summary>
+    public static class PlayerFreezePolicy
+    {
+        /// <summary>引擎冰覆盖的温度跨度（<c>Saturate(1 - Temperature / 6)</c>）。</summary>
+        public const float IceTemperatureSpan = 6f;
+
+        /// <summary>0 = 不冷（Temperature &gt;= 8）。</summary>
+        public const uint StageNone = 0;
+
+        /// <summary>1 = 微冷（Temperature &lt; 8，引擎提示 "You feel a bit chilly"）。</summary>
+        public const uint StageChilly = 1;
+
+        /// <summary>2 = 冷（Temperature &lt; 6，引擎提示 "getting cold" + 冰覆盖开始出现）。</summary>
+        public const uint StageCold = 2;
+
+        /// <summary>3 = 低体温（Temperature &lt; 3，每 10 秒掉 0.05 血）。</summary>
+        public const uint StageHypothermia = 3;
+
+        /// <summary>4 = 冻死（Temperature &lt;= 0，引擎直接 <c>Injure(1, "Froze to death")</c>）。</summary>
+        public const uint StageFrozen = 4;
+
+        public static bool IsFinite(float value) =>
+            !float.IsNaN(value) && !float.IsInfinity(value);
+
+        /// <summary>引擎同款冰冻覆盖强度（0..1）；非有限值返回 false（调用方明确失败）。</summary>
+        public static bool TryProgress(float temperature, out float progress)
+        {
+            progress = 0f;
+            if (!IsFinite(temperature)) return false;
+            progress = MathUtils.Saturate(1f - temperature / IceTemperatureSpan);
+            return true;
+        }
+
+        /// <summary>引擎同款冷阶段（严格小于阈值，与 <c>UpdateTemperature</c> 的分支一致）。</summary>
+        public static bool TryStage(float temperature, out uint stage)
+        {
+            stage = StageNone;
+            if (!IsFinite(temperature)) return false;
+            if (temperature <= 0f) stage = StageFrozen;
+            else if (temperature < 3f) stage = StageHypothermia;
+            else if (temperature < 6f) stage = StageCold;
+            else if (temperature < 8f) stage = StageChilly;
+            else stage = StageNone;
+            return true;
+        }
+
+        /// <summary>主机抓取口径：进度与阶段来自同一份 Temperature。</summary>
+        public static bool TryCapture(float temperature, out float progress, out uint stage)
+        {
+            progress = 0f;
+            stage = StageNone;
+            if (!TryProgress(temperature, out progress)) return false;
+            return TryStage(temperature, out stage);
+        }
+
+        /// <summary>阶段 → 稳定短名（日志 / 状态行用）；未知阶段返回 false。</summary>
+        public static bool TryDescribeStage(uint stage, out string name)
+        {
+            switch (stage)
+            {
+                case StageNone: name = "none"; return true;
+                case StageChilly: name = "chilly"; return true;
+                case StageCold: name = "cold"; return true;
+                case StageHypothermia: name = "hypothermia"; return true;
+                case StageFrozen: name = "frozen"; return true;
+                default: name = null; return false;
+            }
+        }
+
+        /// <summary>
+        /// 接收口径：主机携带的字段优先；两者都是 0 且权威 temperature &lt; 6 = 老版本主机
+        /// 没有携带（<paramref name="legacy"/> = true），用权威温度推导。
+        /// 任何非法输入返回 false + 原因（绝不夹紧 / 绝不猜）。
+        /// </summary>
+        public static bool TryResolve(float freezeProgress, uint freezeStage, float temperature,
+            out float progress, out uint stage, out bool legacy, out string error)
+        {
+            progress = 0f;
+            stage = StageNone;
+            legacy = false;
+            error = null;
+            if (!IsFinite(freezeProgress))
+            {
+                error = "freeze_progress 不是有限数（" + freezeProgress + "）";
+                return false;
+            }
+            if (freezeProgress < 0f || freezeProgress > 1f)
+            {
+                error = "freeze_progress = " + freezeProgress.ToString("0.###") + " 越界（0..1）";
+                return false;
+            }
+            if (freezeStage > PlayerVitalsLimits.MaxFreezeStage)
+            {
+                error = "freeze_stage = " + freezeStage + " 越界（0.." +
+                    PlayerVitalsLimits.MaxFreezeStage + "）";
+                return false;
+            }
+            bool carried = freezeStage != StageNone || freezeProgress > 0f;
+            if (carried)
+            {
+                progress = freezeProgress;
+                stage = freezeStage;
+                if (freezeProgress > 0f && stage < StageCold)
+                {
+                    error = "freeze_progress = " + freezeProgress.ToString("0.###") +
+                        " 但 freeze_stage = " + stage + "（进度 > 0 必须处于 cold 及以下阶段）";
+                    return false;
+                }
+                return true;
+            }
+            if (!IsFinite(temperature))
+            {
+                error = "主机没有携带冻结字段，且 temperature 不是有限数（无法判定是否不冷）";
+                return false;
+            }
+            if (temperature >= IceTemperatureSpan) return true;   // 不冷：0/0 正确
+            legacy = true;
+            return TryCapture(temperature, out progress, out stage);
+        }
     }
 
     /// <summary>一条 <c>ComponentVitalStats.m_satiation</c> 记录（方块 contents → 累积值）。</summary>
@@ -112,7 +265,8 @@ namespace SuMultiplayer.Net
             float fluDuration, float fluOnset, float sicknessDuration, float fireDuration,
             bool sleeping, string causeOfDeath, IReadOnlyList<PlayerSatiation> satiation,
             Vector3 position, double sleepStartTime = 0.0, float sleepElapsed = 0f,
-            bool allowManualWake = false, bool forcedSleep = false, float level = 0f)
+            bool allowManualWake = false, bool forcedSleep = false, float level = 0f,
+            float freezeProgress = 0f, uint freezeStage = 0)
         {
             Key = key;
             Revision = revision;
@@ -137,6 +291,8 @@ namespace SuMultiplayer.Net
             AllowManualWake = allowManualWake;
             ForcedSleep = forcedSleep;
             Level = level;
+            FreezeProgress = freezeProgress;
+            FreezeStage = freezeStage;
         }
 
         public PlayerKey Key { get; }
@@ -188,6 +344,23 @@ namespace SuMultiplayer.Net
         /// </summary>
         public float Level { get; }
 
+        /// <summary>
+        /// 主机权威的**冻结进度**（vitals.proto 字段 22，0..1）：主机用自己模拟的
+        /// <c>ComponentVitalStats.Temperature</c> 算出的引擎同款冰冻覆盖强度
+        /// （<c>Saturate(1 - Temperature / 6)</c>，<c>ComponentVitalStats.cs:579</c>）。
+        /// 客户端只按这个值做表现（连续插值），**不**再自己从温度推导。
+        /// 0 + <c>temperature &lt; 6</c> = 老版本主机没有携带该字段（客户端计
+        /// <c>freezeLegacy</c>，仍用主机权威 temperature 推导，绝不本地模拟）。
+        /// </summary>
+        public float FreezeProgress { get; }
+
+        /// <summary>
+        /// 主机权威的冻结阶段（vitals.proto 字段 23）：0 none / 1 chilly(&lt;8) /
+        /// 2 cold(&lt;6) / 3 hypothermia(&lt;3) / 4 frozen(&lt;=0)。阶段变化只做诊断 /
+        /// 计数（<c>freezeStageChanges</c>），视觉强度由 <see cref="FreezeProgress"/> 决定。
+        /// </summary>
+        public uint FreezeStage { get; }
+
         /// <summary>睡眠状态的领域形态（校验 / 表现推进 / 唤醒门槛共用）。</summary>
         public PlayerSleepState SleepState =>
             new PlayerSleepState(Sleeping, Dead, AllowManualWake, ForcedSleep, SleepStartTime,
@@ -211,13 +384,13 @@ namespace SuMultiplayer.Net
             new PlayerVitalsSnapshot(key, Revision, Health, Air, Food, Stamina, Sleep, Temperature,
                 Wetness, TargetTemperature, FluDuration, FluOnset, SicknessDuration, FireDuration,
                 Sleeping, CauseOfDeath, m_satiation, Position, SleepStartTime, SleepElapsed,
-                AllowManualWake, ForcedSleep, Level);
+                AllowManualWake, ForcedSleep, Level, FreezeProgress, FreezeStage);
 
         public PlayerVitalsSnapshot WithRevision(uint revision) =>
             new PlayerVitalsSnapshot(Key, revision, Health, Air, Food, Stamina, Sleep, Temperature,
                 Wetness, TargetTemperature, FluDuration, FluOnset, SicknessDuration, FireDuration,
                 Sleeping, CauseOfDeath, m_satiation, Position, SleepStartTime, SleepElapsed,
-                AllowManualWake, ForcedSleep, Level);
+                AllowManualWake, ForcedSleep, Level, FreezeProgress, FreezeStage);
 
         /// <summary>
         /// 只替换生命值（对账修正用：其余字段保持从化身读到的现值，绝不凭空造值）。
@@ -227,7 +400,7 @@ namespace SuMultiplayer.Net
             new PlayerVitalsSnapshot(Key, Revision, health, Air, Food, Stamina, Sleep, Temperature,
                 Wetness, TargetTemperature, FluDuration, FluOnset, SicknessDuration, FireDuration,
                 Sleeping, CauseOfDeath, m_satiation, Position, SleepStartTime, SleepElapsed,
-                AllowManualWake, ForcedSleep, Level);
+                AllowManualWake, ForcedSleep, Level, FreezeProgress, FreezeStage);
 
         private static PlayerSatiation[] CopySatiation(IReadOnlyList<PlayerSatiation> source)
         {
@@ -245,7 +418,7 @@ namespace SuMultiplayer.Net
             IsFiniteValue(FluDuration) && IsFiniteValue(FluOnset) &&
             IsFiniteValue(SicknessDuration) && IsFiniteValue(FireDuration) &&
             IsFiniteDouble(SleepStartTime) && IsFiniteValue(SleepElapsed) &&
-            IsFiniteValue(Level) &&
+            IsFiniteValue(Level) && IsFiniteValue(FreezeProgress) &&
             IsFiniteValue(Position.X) && IsFiniteValue(Position.Y) && IsFiniteValue(Position.Z);
 
         public static bool IsFiniteValue(float value) => !float.IsNaN(value) && !float.IsInfinity(value);
@@ -301,6 +474,50 @@ namespace SuMultiplayer.Net
             // 不夹紧（否则"对手 9999 级"会悄悄变成 1000 级）。NaN / Inf 已由 IsFinite 拦下。
             if (!InRange(Level, 0f, PlayerVitalsLimits.MaxLevel))
                 return Fail("level", Level, "0.." + PlayerVitalsLimits.MaxLevel, out reason);
+            // 冻结表现（append-only 22..23）：进度 0..1、阶段 0..4；进度 > 0 只可能出现在
+            // 温度 < 6 的"cold"及以下阶段（引擎 Saturate(1-T/6)），所以 stage 不能是 0。
+            if (!InRange(FreezeProgress, 0f, 1f))
+                return Fail("freeze_progress", FreezeProgress, "0..1", out reason);
+            if (FreezeStage > PlayerVitalsLimits.MaxFreezeStage)
+            {
+                reason = "玩家键 " + Key + " 的 freeze_stage = " + FreezeStage + " 越界（合法 0.." +
+                    PlayerVitalsLimits.MaxFreezeStage + "）";
+                return false;
+            }
+            if (FreezeProgress > PlayerVitalsLimits.ValueEpsilon &&
+                FreezeStage < PlayerFreezePolicy.StageCold)
+            {
+                reason = "玩家键 " + Key + " 的 freeze_progress = " +
+                    FreezeProgress.ToString("0.###") + " 但 freeze_stage = " + FreezeStage +
+                    "（进度 > 0 必须处于 cold 及以下阶段）";
+                return false;
+            }
+            // 冻结进度必须与主机权威温度自洽（同一份快照里两个字段来自同一次抓取）：
+            // 温度 >= 6 时引擎覆盖必为 0；温度 < 6 时进度必须等于引擎口径（容差 1e-3）。
+            if (InRange(Temperature, 0f, 24f) &&
+                Temperature >= PlayerFreezePolicy.IceTemperatureSpan)
+            {
+                if (FreezeProgress > PlayerVitalsLimits.ValueEpsilon)
+                {
+                    reason = "玩家键 " + Key + " 的 temperature = " +
+                        Temperature.ToString("0.###") + " >= 6 但 freeze_progress = " +
+                        FreezeProgress.ToString("0.###") + "（引擎 IceFactor 此时必为 0）";
+                    return false;
+                }
+            }
+            else if (InRange(Temperature, 0f, 24f) && FreezeProgress > 0f)
+            {
+                float expected = MathUtils.Saturate(1f -
+                    Temperature / PlayerFreezePolicy.IceTemperatureSpan);
+                if (Math.Abs(expected - FreezeProgress) > PlayerVitalsLimits.ValueEpsilon)
+                {
+                    reason = "玩家键 " + Key + " 的 freeze_progress = " +
+                        FreezeProgress.ToString("0.###") + " 与 temperature = " +
+                        Temperature.ToString("0.###") + " 的引擎口径 " +
+                        expected.ToString("0.###") + " 不一致";
+                    return false;
+                }
+            }
             // 睡眠表现权威字段（append-only 17..20）：睡眠中必须自洽（forced == !allow、
             // 起始时 > 0 才有表现权威）；醒着时不得带 forced / elapsed / start。
             // 老版本主机不发 17..20（start=0、elapsed=0、forced=false）仍然是合法状态。
@@ -415,6 +632,9 @@ namespace SuMultiplayer.Net
             }
             if (Changed(FireDuration, previous.FireDuration, PlayerVitalsLimits.ConditionEpsilon)) { what = "fire_duration"; return true; }
             if (Changed(Level, previous.Level, PlayerVitalsLimits.LevelEpsilon)) { what = "level"; return true; }
+            if (Changed(FreezeProgress, previous.FreezeProgress,
+                    PlayerVitalsLimits.ValueEpsilon)) { what = "freeze_progress"; return true; }
+            if (FreezeStage != previous.FreezeStage) { what = "freeze_stage"; return true; }
             if (!string.Equals(CauseOfDeath, previous.CauseOfDeath, StringComparison.Ordinal))
             {
                 what = "cause_of_death";
@@ -451,7 +671,9 @@ namespace SuMultiplayer.Net
             (Dead ? " DEAD" : "") + " air=" + Air.ToString("0.###") +
             " food=" + Food.ToString("0.##") + " stam=" + Stamina.ToString("0.##") +
             " sleep=" + Sleep.ToString("0.##") + " temp=" + Temperature.ToString("0.#") +
-            " wet=" + Wetness.ToString("0.##") + (Sleeping ? " sleeping" : "");
+            " wet=" + Wetness.ToString("0.##") +
+            " freeze=" + FreezeProgress.ToString("0.###") + "/" + FreezeStage +
+            (Sleeping ? " sleeping" : "");
     }
 
     /// <summary>死亡 / 复活边沿的种类（线格式 = vitals.proto 的 PlayerVitalEventKind）。</summary>
@@ -545,7 +767,198 @@ namespace SuMultiplayer.Net
     }
 
     /// <summary>
-    /// 生命 / 体征上报与死亡 / 复活事件的编解码（proto：Protocol/vitals.proto）。
+    /// 一条主机广播的**表现事件**（vitals.proto <c>PlayerEffectEventEntry</c> / 消息 109）。
+    ///
+    /// 只描述"该播什么表现"：类型 / 坐标 / 主机资源名 / 强度 / 主机游戏时刻 / 每键单调序号。
+    /// **绝不携带 / 修改生命值**（扣血仍由 PLAYER_VITALS_REPORT 95 下发，见实机问题 4）。
+    /// </summary>
+    public readonly struct PlayerEffectEventSnapshot
+    {
+        private readonly string m_sound;
+
+        public PlayerEffectEventSnapshot(PlayerKey key, uint sequence, PlayerEffectKind kind,
+            Vector3 position, double hostTime, float strength, string sound)
+        {
+            Key = key;
+            Sequence = sequence;
+            Kind = kind;
+            Position = position;
+            HostTime = hostTime;
+            Strength = strength;
+            m_sound = sound ?? string.Empty;
+        }
+
+        public PlayerKey Key { get; }
+
+        /// <summary>每 (client_id, slot) 单调的事件序号（&gt; 0；重复 = 同序号）。</summary>
+        public uint Sequence { get; }
+
+        public PlayerEffectKind Kind { get; }
+
+        /// <summary>事件发生时的身体坐标（必须有限；用于诊断 / 空间音频）。</summary>
+        public Vector3 Position { get; }
+
+        /// <summary>主机 <c>SubsystemGameInfo.TotalElapsedGameTime</c>（秒）。</summary>
+        public double HostTime { get; }
+
+        /// <summary>
+        /// 表现强度：黑屏 / 绿屏时长（秒）、着火时的权威剩余火时长、熄灭 = 1 表示被水浇灭。
+        /// 0 = 这次表现没有覆盖层（引擎此次没有设置黑屏 / 绿屏时长，例如单纯受冷打喷嚏）。
+        /// </summary>
+        public float Strength { get; }
+
+        /// <summary>主机端该角色实际使用的引擎资源名（可空；核对 / 日志用）。</summary>
+        public string Sound => m_sound ?? string.Empty;
+
+        public bool IsKnownKind => PlayerEffectPolicy.IsKnown(Kind);
+
+        public bool IsFinite =>
+            PlayerVitalsSnapshot.IsFiniteValue(Position.X) &&
+            PlayerVitalsSnapshot.IsFiniteValue(Position.Y) &&
+            PlayerVitalsSnapshot.IsFiniteValue(Position.Z) &&
+            PlayerVitalsSnapshot.IsFiniteDouble(HostTime) &&
+            PlayerVitalsSnapshot.IsFiniteValue(Strength);
+
+        public bool TryValidate(out string reason)
+        {
+            reason = null;
+            if (!Key.IsValid)
+            {
+                reason = "玩家键 " + Key + " 非法";
+                return false;
+            }
+            if (Sequence == 0)
+            {
+                reason = "玩家键 " + Key + " 的表现事件 sequence = 0（必须 > 0）";
+                return false;
+            }
+            if (!IsKnownKind)
+            {
+                reason = "玩家键 " + Key + " 的表现事件种类非法：" + (int)Kind;
+                return false;
+            }
+            if (!IsFinite)
+            {
+                reason = "玩家键 " + Key + " 的表现事件含 NaN/Inf（坐标 / 主机时刻 / 强度）";
+                return false;
+            }
+            if (HostTime < 0.0)
+            {
+                reason = "玩家键 " + Key + " 的表现事件 host_time = " + HostTime + "（必须 >= 0）";
+                return false;
+            }
+            if (Strength < 0f || Strength > PlayerVitalsLimits.MaxConditionSeconds)
+            {
+                reason = "玩家键 " + Key + " 的表现事件 strength = " + Strength.ToString("0.###") +
+                    " 越界（0.." + PlayerVitalsLimits.MaxConditionSeconds + "）";
+                return false;
+            }
+            if (Sound.Length > PlayerVitalsLimits.MaxEffectSoundLength)
+            {
+                reason = "玩家键 " + Key + " 的表现事件音效名长度 " + Sound.Length + " 超过上限 " +
+                    PlayerVitalsLimits.MaxEffectSoundLength;
+                return false;
+            }
+            return true;
+        }
+
+        public PlayerEffectEventSnapshot WithKey(PlayerKey key) =>
+            new PlayerEffectEventSnapshot(key, Sequence, Kind, Position, HostTime, Strength, Sound);
+
+        public string Describe() =>
+            Key + " #" + Sequence + " " + PlayerEffectPolicy.Describe(Kind) +
+            " t=" + HostTime.ToString("0.###") + " s=" + Strength.ToString("0.###") +
+            " sound=" + (Sound.Length == 0 ? "-" : Sound);
+    }
+
+    /// <summary>表现事件的领域种类（线格式 = vitals.proto 的 PlayerEffectKind）。</summary>
+    public enum PlayerEffectKind
+    {
+        /// <summary>非法 / 未指定（解码拒绝）。</summary>
+        Unspecified = 0,
+
+        /// <summary>流感咳嗽（引擎 <c>ComponentFlu.Cough</c> → <c>PlayCoughSound</c> + 4 秒咳嗽动作）。</summary>
+        FluCough = 1,
+
+        /// <summary>流感到期喷嚏（<c>ComponentFlu.Sneeze</c> → <c>PlaySneezeSound</c>）。</summary>
+        FluSneeze = 2,
+
+        /// <summary>恶心（<c>ComponentSickness.NauseaEffect</c> → <c>PlayMoanSound</c> + 绿屏渐入）。</summary>
+        SicknessNausea = 3,
+
+        /// <summary>呕吐（<c>ComponentSickness.NauseaEffect</c> → <c>PukeParticleSystem</c> + <c>PlayPukeSound</c>）。</summary>
+        SicknessPuke = 4,
+
+        /// <summary>着火（<c>ComponentOnFire.Update</c> → <c>OnFireParticleSystem</c>，火声由环境音负责）。</summary>
+        FireIgnite = 5,
+
+        /// <summary>火灭（<c>ComponentOnFire.Update</c> 水中熄灭 → "Audio/SizzleLong"）。</summary>
+        FireExtinguish = 6
+    }
+
+    /// <summary>
+    /// 表现事件的**纯策略**：种类合法性 / 过期 TTL / 引擎默认强度 / 该播什么。
+    /// TTL 用于"过期事件去重计数"：客户端的游戏时钟由世界信息持续对齐主机，
+    /// 所以可以用事件里的 <c>host_time</c> 判过期（引擎这些表现本身都只有 1~4 秒）。
+    /// </summary>
+    public static class PlayerEffectPolicy
+    {
+        /// <summary>引擎呕吐时绿屏的固定时长（<c>m_greenoutDuration = 0.8f</c>）。</summary>
+        public const float PukeGreenoutSeconds = 0.8f;
+
+        public static bool IsKnown(PlayerEffectKind kind) =>
+            kind >= PlayerEffectKind.FluCough && kind <= PlayerEffectKind.FireExtinguish;
+
+        /// <summary>
+        /// 事件的过期上限（秒）：超过它到达的事件不再播放（计数为 stale），因为对应的引擎表现
+        /// 早已结束。取值与引擎各表现的持续时间同量级（咳嗽动作 4 秒 / 喷嚏 1 秒 / 恶心 3 秒周期）。
+        /// </summary>
+        public static float TtlSeconds(PlayerEffectKind kind)
+        {
+            switch (kind)
+            {
+                case PlayerEffectKind.FluCough: return 2.0f;
+                case PlayerEffectKind.FluSneeze: return 1.5f;
+                case PlayerEffectKind.SicknessNausea: return 3.0f;
+                case PlayerEffectKind.SicknessPuke: return 2.0f;
+                case PlayerEffectKind.FireIgnite: return 3.0f;
+                case PlayerEffectKind.FireExtinguish: return 2.0f;
+                default: return 0f;
+            }
+        }
+
+        /// <summary>该种类是否由 <c>ComponentCreatureSounds</c> 播放人声（引擎同款方法）。</summary>
+        public static bool UsesCreatureSound(PlayerEffectKind kind) =>
+            kind == PlayerEffectKind.FluCough || kind == PlayerEffectKind.FluSneeze ||
+            kind == PlayerEffectKind.SicknessNausea || kind == PlayerEffectKind.SicknessPuke;
+
+        /// <summary>该种类是否由引擎覆盖层（黑屏 / 绿屏）表现。</summary>
+        public static bool UsesOverlay(PlayerEffectKind kind) =>
+            kind == PlayerEffectKind.FluCough || kind == PlayerEffectKind.FluSneeze ||
+            kind == PlayerEffectKind.SicknessNausea || kind == PlayerEffectKind.SicknessPuke;
+
+        /// <summary>该种类是否产生粒子（呕吐 / 火焰）。</summary>
+        public static bool UsesParticles(PlayerEffectKind kind) =>
+            kind == PlayerEffectKind.SicknessPuke || kind == PlayerEffectKind.FireIgnite ||
+            kind == PlayerEffectKind.FireExtinguish;
+
+        public static string Describe(PlayerEffectKind kind)
+        {
+            switch (kind)
+            {
+                case PlayerEffectKind.FluCough: return "flu-cough";
+                case PlayerEffectKind.FluSneeze: return "flu-sneeze";
+                case PlayerEffectKind.SicknessNausea: return "sickness-nausea";
+                case PlayerEffectKind.SicknessPuke: return "sickness-puke";
+                case PlayerEffectKind.FireIgnite: return "fire-ignite";
+                case PlayerEffectKind.FireExtinguish: return "fire-extinguish";
+                default: return "unspecified";
+            }
+        }
+    }
+
+    /// <summary>
+    /// 生命 / 体征上报、死亡 / 复活事件与表现事件的编解码（proto：Protocol/vitals.proto）。
     ///
     ///   · 单条上报 = <c>PlayerVitalsReport{ sequence, entries[N] }</c>，N ≤ 24；
     ///   · 单条事件 = <c>PlayerVitalsEvents{ sequence, entries[N] }</c>，N ≤ 24；
@@ -684,6 +1097,99 @@ namespace SuMultiplayer.Net
             return payload;
         }
 
+        public static byte[] EncodeEffects(uint sequence,
+            IReadOnlyList<PlayerEffectEventSnapshot> entries, out int dropped, out string error)
+        {
+            dropped = 0;
+            error = null;
+            if (sequence == 0)
+            {
+                error = "表现事件 sequence = 0（必须 > 0）";
+                return null;
+            }
+            int count = entries?.Count ?? 0;
+            if (count > PlayerVitalsLimits.MaxEffectEntries)
+            {
+                dropped = count - PlayerVitalsLimits.MaxEffectEntries;
+                count = PlayerVitalsLimits.MaxEffectEntries;
+            }
+            var message = new V.PlayerEffectEvents { Sequence = sequence };
+            for (int i = 0; i < count; i++)
+            {
+                PlayerEffectEventSnapshot evt = entries[i];
+                if (!evt.TryValidate(out string itemError))
+                {
+                    error = "第 " + (i + 1) + " 条：" + itemError;
+                    return null;
+                }
+                if (!TryToProtocolEffectKind(evt.Kind, out V.PlayerEffectKind protocolKind))
+                {
+                    error = "第 " + (i + 1) + " 条：表现种类 " + (int)evt.Kind + " 无法编码";
+                    return null;
+                }
+                message.Entries.Add(ToMessage(evt, protocolKind));
+            }
+            byte[] payload = message.ToByteArray();
+            if (payload.Length > PlayerVitalsLimits.MaxPayloadBytes)
+            {
+                error = "表现事件编码后 " + payload.Length + " 字节超过上限 " +
+                    PlayerVitalsLimits.MaxPayloadBytes;
+                return null;
+            }
+            return payload;
+        }
+
+        public static bool TryDecodeEffects(byte[] payload, out uint sequence,
+            out List<PlayerEffectEventSnapshot> entries, out string error)
+        {
+            sequence = 0;
+            entries = null;
+            error = null;
+            if (!TryParse(payload, V.PlayerEffectEvents.Parser, out V.PlayerEffectEvents message,
+                    out error))
+                return false;
+            return TryConvertEffects(message, out sequence, out entries, out error);
+        }
+
+        /// <summary>已解析消息 → 领域事件（校验口径与 <see cref="TryDecodeEffects"/> 相同）。</summary>
+        public static bool TryConvertEffects(V.PlayerEffectEvents message, out uint sequence,
+            out List<PlayerEffectEventSnapshot> entries, out string error)
+        {
+            sequence = 0;
+            entries = null;
+            error = null;
+            if (message == null)
+            {
+                error = "消息为空";
+                return false;
+            }
+            if (message.Sequence == 0)
+            {
+                error = "表现事件 sequence = 0（必须 > 0）";
+                return false;
+            }
+            if (message.Entries.Count > PlayerVitalsLimits.MaxEffectEntries)
+            {
+                error = "表现事件条数 " + message.Entries.Count + " 超过上限 " +
+                    PlayerVitalsLimits.MaxEffectEntries;
+                return false;
+            }
+            var result = new List<PlayerEffectEventSnapshot>(message.Entries.Count);
+            for (int i = 0; i < message.Entries.Count; i++)
+            {
+                if (!TryReadEffect(message.Entries[i], out PlayerEffectEventSnapshot evt,
+                        out string itemError))
+                {
+                    error = "第 " + (i + 1) + " 条：" + itemError;
+                    return false;
+                }
+                result.Add(evt);
+            }
+            sequence = message.Sequence;
+            entries = result;
+            return true;
+        }
+
         public static bool TryDecodeEvents(byte[] payload, out uint sequence,
             out List<PlayerVitalEventSnapshot> entries, out string error)
         {
@@ -801,8 +1307,38 @@ namespace SuMultiplayer.Net
                 values.TargetTemperature, values.FluDuration, values.FluOnset,
                 values.SicknessDuration, values.FireDuration, values.Sleeping,
                 values.CauseOfDeath, satiation, Vector3.Zero, values.SleepStartTime,
-                values.SleepElapsed, values.AllowManualWake, values.ForcedSleep, values.Level);
+                values.SleepElapsed, values.AllowManualWake, values.ForcedSleep, values.Level,
+                values.FreezeProgress, values.FreezeStage);
             return snapshot.TryValidate(out error);
+        }
+
+        private static bool TryReadEffect(V.PlayerEffectEventEntry entry,
+            out PlayerEffectEventSnapshot evt, out string error)
+        {
+            evt = default;
+            error = null;
+            if (entry == null)
+            {
+                error = "条目为空";
+                return false;
+            }
+            if (!PlayerKey.TryCreate((int)entry.ClientId, (int)entry.Slot, out PlayerKey key,
+                    out error))
+                return false;
+            if (!TryToDomainEffectKind(entry.Kind, out PlayerEffectKind kind))
+            {
+                error = "玩家键 " + key + " 的表现种类非法：" + (int)entry.Kind;
+                return false;
+            }
+            if (entry.Position == null)
+            {
+                error = "玩家键 " + key + " 的表现事件缺少坐标";
+                return false;
+            }
+            var position = new Vector3(entry.Position.X, entry.Position.Y, entry.Position.Z);
+            evt = new PlayerEffectEventSnapshot(key, entry.Sequence, kind, position,
+                entry.HostTime, entry.Strength, entry.Sound);
+            return evt.TryValidate(out error);
         }
 
         private static bool TryReadEvent(V.PlayerVitalEventEntry entry,
@@ -851,7 +1387,9 @@ namespace SuMultiplayer.Net
                 SleepElapsed = s.SleepElapsed,
                 AllowManualWake = s.AllowManualWake,
                 ForcedSleep = s.ForcedSleep,
-                Level = s.Level
+                Level = s.Level,
+                FreezeProgress = s.FreezeProgress,
+                FreezeStage = s.FreezeStage
             };
             IReadOnlyList<PlayerSatiation> satiation = s.Satiation;
             for (int i = 0; i < satiation.Count; i++)
@@ -869,6 +1407,73 @@ namespace SuMultiplayer.Net
                 Revision = s.Revision,
                 Values = values
             };
+        }
+
+        private static V.PlayerEffectEventEntry ToMessage(in PlayerEffectEventSnapshot e,
+            V.PlayerEffectKind kind)
+        {
+            return new V.PlayerEffectEventEntry
+            {
+                ClientId = (uint)e.Key.ClientId,
+                Slot = (uint)e.Key.Slot,
+                Sequence = e.Sequence,
+                Kind = kind,
+                Position = new V.VitalsVec3
+                {
+                    X = e.Position.X,
+                    Y = e.Position.Y,
+                    Z = e.Position.Z
+                },
+                HostTime = e.HostTime,
+                Strength = e.Strength,
+                Sound = e.Sound
+            };
+        }
+
+        private static bool TryToDomainEffectKind(V.PlayerEffectKind kind,
+            out PlayerEffectKind result)
+        {
+            switch (kind)
+            {
+                case V.PlayerEffectKind.FluCough: result = PlayerEffectKind.FluCough; return true;
+                case V.PlayerEffectKind.FluSneeze: result = PlayerEffectKind.FluSneeze; return true;
+                case V.PlayerEffectKind.SicknessNausea:
+                    result = PlayerEffectKind.SicknessNausea;
+                    return true;
+                case V.PlayerEffectKind.SicknessPuke:
+                    result = PlayerEffectKind.SicknessPuke;
+                    return true;
+                case V.PlayerEffectKind.FireIgnite: result = PlayerEffectKind.FireIgnite; return true;
+                case V.PlayerEffectKind.FireExtinguish:
+                    result = PlayerEffectKind.FireExtinguish;
+                    return true;
+                default:
+                    result = PlayerEffectKind.Unspecified;
+                    return false;
+            }
+        }
+
+        private static bool TryToProtocolEffectKind(PlayerEffectKind kind,
+            out V.PlayerEffectKind result)
+        {
+            switch (kind)
+            {
+                case PlayerEffectKind.FluCough: result = V.PlayerEffectKind.FluCough; return true;
+                case PlayerEffectKind.FluSneeze: result = V.PlayerEffectKind.FluSneeze; return true;
+                case PlayerEffectKind.SicknessNausea:
+                    result = V.PlayerEffectKind.SicknessNausea;
+                    return true;
+                case PlayerEffectKind.SicknessPuke:
+                    result = V.PlayerEffectKind.SicknessPuke;
+                    return true;
+                case PlayerEffectKind.FireIgnite: result = V.PlayerEffectKind.FireIgnite; return true;
+                case PlayerEffectKind.FireExtinguish:
+                    result = V.PlayerEffectKind.FireExtinguish;
+                    return true;
+                default:
+                    result = V.PlayerEffectKind.Unspecified;
+                    return false;
+            }
         }
 
         private static V.PlayerVitalEventEntry ToMessage(in PlayerVitalEventSnapshot e)
@@ -956,6 +1561,18 @@ namespace SuMultiplayer.Net
             IsFinite(level) && level >= 0f && level <= PlayerVitalsLimits.MaxLevel;
 
         /// <summary>
+        /// 非法等级的分类标签（<c>levelRejectedBy</c> 用）。**有界**：不把每个越界数值
+        /// 变成一个新的计数字典键（否则一个乱发等级的对端能把状态行撑爆）。
+        /// </summary>
+        public static string RejectionTag(float level)
+        {
+            if (!IsFinite(level)) return "nonfinite";
+            if (level < 0f) return "negative";
+            if (level > PlayerVitalsLimits.MaxLevel) return "over-max";
+            return "invalid";
+        }
+
+        /// <summary>
         /// 判定是否/如何把主机权威等级写进本机角色。
         /// <paramref name="revision"/> = 本条快照的 revision，<paramref name="lastAppliedRevision"/> = 本槽位
         /// 已写过的等级 revision（0 = 还没写过）。严格更旧 = 陈旧；相等 = 允许（复活重放会重发同一条快照）。
@@ -990,6 +1607,236 @@ namespace SuMultiplayer.Net
             reason = "本地 " + localLevel.ToString("0.####") + " → 主机 " +
                 hostLevel.ToString("0.####");
             return PlayerLevelDecision.Apply;
+        }
+    }
+
+    /// <summary>
+    /// 主机抓取 <c>PlayerData.Level</c> 的唯一入口（纯逻辑，编解码 / 自检共用）。
+    ///
+    /// 口径（vitals.proto 字段 21）：
+    ///   · 0 = 对端没有携带（读不到 / 老版本），快照里就是 0；
+    ///   · 1..<see cref="PlayerVitalsLimits.MaxLevel"/> = 主机权威值；
+    ///   · NaN / Inf / 负数 / 超上限 = **抓取失败**：返回 false，调用方计数 + 限流日志，
+    ///     快照按 0 上报（**绝不夹紧** —— 夹紧会把"对手 9999 级"悄悄变成 1000 级）。
+    /// </summary>
+    public static class PlayerLevelCapture
+    {
+        public static bool TryCapture(float rawLevel, out float level, out string reason)
+        {
+            level = 0f;
+            reason = null;
+            if (!PlayerLevelPolicy.IsFinite(rawLevel))
+            {
+                reason = "PlayerData.Level 不是有限数（NaN / Inf）";
+                return false;
+            }
+            if (rawLevel < 0f || rawLevel > PlayerVitalsLimits.MaxLevel)
+            {
+                reason = "PlayerData.Level = " + rawLevel.ToString("0.####") + " 越界（合法 0.." +
+                    PlayerVitalsLimits.MaxLevel + "）";
+                return false;
+            }
+            level = rawLevel;
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// 主机侧**客户端化身**的死亡减半账本（纯逻辑，无引擎依赖）：
+    /// 同一个玩家键在**当前这次死亡**里只允许减半一次。
+    ///
+    /// 为什么需要它：
+    ///   · 主机本机槽位（<c>clientId == 0</c>）的 <c>PlayerData.Update</c> 会跑引擎
+    ///     <c>PlayerDead</c> 入场，减半由引擎做（<c>PlayerData.cs:299</c>）——这里永远返回 false；
+    ///   · 主机侧客户端化身的 <c>PlayerData</c> 被 <c>NetworkAvatarSpawner</c> 从
+    ///     <c>SubsystemPlayers.m_playersData</c> 摘掉（模块化角色不走引擎玩家更新），
+    ///     <c>PlayerDead</c> 永远不会跑 → **引擎不会替它减半**，必须由主机在这里减一次；
+    ///   · 抓取是 5 Hz 的重复调用：没有"本次死亡已减"的账本就会每拍减半一次（4 → 2 → 1）。
+    ///
+    /// 复活（<see cref="NoteAlive"/>）清掉账本 → 下一次死亡可以再减一次。
+    /// 写回 <c>PlayerData.Level</c> 失败时**不要** <see cref="CommitHalved"/>，下一拍会重试。
+    /// </summary>
+    public sealed class HostAvatarLevelAuthority
+    {
+        private readonly Dictionary<PlayerKey, int> m_halvedTokens =
+            new Dictionary<PlayerKey, int>();
+        private long m_halvedEpisodes;
+
+        /// <summary>累计减半的死亡期数（状态行 <c>levelHostHalved</c>）。</summary>
+        public long HalvedEpisodes => m_halvedEpisodes;
+
+        /// <summary>当前仍处于"已减半、等复活"的客户端化身数。</summary>
+        public int ActiveDeaths => m_halvedTokens.Count;
+
+        /// <summary>
+        /// 这次抓取是否应该减半。<paramref name="halvedLevel"/> = 减半后的值
+        /// （未减半时 = <paramref name="currentLevel"/>）。真正的"已减"由
+        /// <see cref="CommitHalved"/> 在写回成功后登记。
+        /// </summary>
+        public bool ShouldHalve(PlayerKey key, int entityToken, bool dead, float currentLevel,
+            out float halvedLevel, out string reason)
+        {
+            halvedLevel = currentLevel;
+            reason = null;
+            if (!key.IsValid || key.ClientId <= 0)
+            {
+                // 主机本机槽位：引擎 PlayerDead 已经减半，mod 不再减（否则双端 / 双次减半）。
+                return false;
+            }
+            if (!dead) return false;
+            if (!PlayerLevelPolicy.IsFinite(currentLevel) || currentLevel <= 0f)
+            {
+                reason = "玩家键 " + key + " 的等级是 " +
+                    (PlayerLevelPolicy.IsFinite(currentLevel)
+                        ? "0（未携带）"
+                        : "非有限值（NaN / Inf）") +
+                    " → 不减半（绝不凭空造出 1 级）";
+                return false;
+            }
+            if (m_halvedTokens.TryGetValue(key, out int token) && token == entityToken)
+                return false;
+            halvedLevel = PlayerLevelPolicy.HalveOnDeath(currentLevel);
+            reason = "主机侧客户端化身 " + key + " 死亡：等级 " +
+                currentLevel.ToString("0.####") + " → " + halvedLevel.ToString("0.####") +
+                "（本次死亡只减一次；主机记录里的等级是唯一权威源）";
+            return true;
+        }
+
+        /// <summary>写回 <c>PlayerData.Level</c> 成功之后登记（同一死亡期不再减）。</summary>
+        public void CommitHalved(PlayerKey key, int entityToken)
+        {
+            m_halvedTokens[key] = entityToken;
+            m_halvedEpisodes++;
+        }
+
+        /// <summary>复活：清掉本键的"本次死亡已减半"标记，下一次死亡可以再减一次。</summary>
+        public void NoteAlive(PlayerKey key)
+        {
+            if (key.IsValid) m_halvedTokens.Remove(key);
+        }
+
+        public void Reset() => m_halvedTokens.Clear();
+    }
+
+    /// <summary>
+    /// 等级同步的计数（10 秒状态行；由引擎适配层 <c>Describe()</c> 输出）。
+    /// 字段名就是排查时用的名字：<c>levelApplied / levelRejectedBy / levelDeadDeferred /
+    /// levelStale / levelAbsent / levelRespawnOverrides / levelCaptureFailures</c>。
+    /// </summary>
+    public sealed class PlayerLevelCounters
+    {
+        private readonly Dictionary<string, long> m_rejectedBy =
+            new Dictionary<string, long>(StringComparer.Ordinal);
+        private readonly Dictionary<string, long> m_captureFailuresBy =
+            new Dictionary<string, long>(StringComparer.Ordinal);
+
+        /// <summary>主机权威等级写进本机 <c>PlayerData.Level</c> 的次数（不含复活覆盖）。</summary>
+        public long Applied { get; private set; }
+
+        /// <summary>与本地一致（容差内）而没写的次数。</summary>
+        public long Unchanged { get; private set; }
+
+        /// <summary>越界 / NaN 被拒绝的次数（分类见 <see cref="RejectedByText"/>）。</summary>
+        public long Invalid { get; private set; }
+
+        /// <summary>死亡状态快照被推迟的次数（等复活后的权威值）。</summary>
+        public long DeadDeferred { get; private set; }
+
+        /// <summary>revision 比已应用的旧而被忽略的次数。</summary>
+        public long Stale { get; private set; }
+
+        /// <summary>对端没有携带等级（0 = 老版本主机）的次数。</summary>
+        public long Absent { get; private set; }
+
+        /// <summary>复活后覆盖新实体等级的次数。</summary>
+        public long RespawnOverrides { get; private set; }
+
+        /// <summary>主机抓取 <c>PlayerData.Level</c> 失败的次数（非法值 / 读不到）。</summary>
+        public long CaptureFailures { get; private set; }
+
+        /// <summary>把等级写回 <c>PlayerData.Level</c> 抛异常的次数。</summary>
+        public long WriteFailures { get; private set; }
+
+        /// <summary>主机侧客户端化身死亡减半的次数（每次死亡只应 +1）。</summary>
+        public long HostHalved { get; private set; }
+
+        public string RejectedByText => Format(m_rejectedBy);
+        public string CaptureFailuresByText => Format(m_captureFailuresBy);
+
+        public void NoteApplied(bool respawnOverride)
+        {
+            if (respawnOverride) RespawnOverrides++;
+            else Applied++;
+        }
+
+        public void NoteUnchanged() => Unchanged++;
+        public void NoteDeadDeferred() => DeadDeferred++;
+        public void NoteStale() => Stale++;
+        public void NoteAbsent() => Absent++;
+        public void NoteHostHalved() => HostHalved++;
+        public void NoteWriteFailure() => WriteFailures++;
+
+        public void NoteInvalid(string tag)
+        {
+            Invalid++;
+            Increment(m_rejectedBy, string.IsNullOrEmpty(tag) ? "invalid" : tag);
+        }
+
+        public void NoteCaptureFailure(string tag)
+        {
+            CaptureFailures++;
+            Increment(m_captureFailuresBy, string.IsNullOrEmpty(tag) ? "unknown" : tag);
+        }
+
+        public string Describe() =>
+            "levelApplied=" + Applied +
+            " levelUnchanged=" + Unchanged +
+            " levelRejected=" + Invalid +
+            " levelRejectedBy=" + RejectedByText +
+            " levelDeadDeferred=" + DeadDeferred +
+            " levelStale=" + Stale +
+            " levelAbsent=" + Absent +
+            " levelRespawnOverrides=" + RespawnOverrides +
+            " levelCaptureFailures=" + CaptureFailures +
+            " levelCaptureFailuresBy=" + CaptureFailuresByText +
+            " levelWriteFailures=" + WriteFailures +
+            " levelHostHalved=" + HostHalved;
+
+        public void Reset()
+        {
+            Applied = 0;
+            Unchanged = 0;
+            Invalid = 0;
+            DeadDeferred = 0;
+            Stale = 0;
+            Absent = 0;
+            RespawnOverrides = 0;
+            CaptureFailures = 0;
+            WriteFailures = 0;
+            HostHalved = 0;
+            m_rejectedBy.Clear();
+            m_captureFailuresBy.Clear();
+        }
+
+        private static void Increment(Dictionary<string, long> values, string key)
+        {
+            values.TryGetValue(key, out long count);
+            values[key] = count + 1;
+        }
+
+        private static string Format(Dictionary<string, long> values)
+        {
+            if (values == null || values.Count == 0) return "{}";
+            var keys = new List<string>(values.Keys);
+            keys.Sort(StringComparer.Ordinal);
+            var builder = new System.Text.StringBuilder("{");
+            for (int i = 0; i < keys.Count; i++)
+            {
+                if (i > 0) builder.Append(',');
+                builder.Append(keys[i]).Append(':').Append(values[keys[i]]);
+            }
+            builder.Append('}');
+            return builder.ToString();
         }
     }
 }

@@ -1,0 +1,67 @@
+syntax = "proto3";
+
+package sump.protocol;
+
+option csharp_namespace = "SuMultiplayer.Protocol";
+option optimize_for = SPEED;
+
+import "protocol.proto";
+import "google/protobuf/any.proto";
+
+// ---------------------------------------------------------------------------
+// Runtime player-profile report (PLAYER_PROFILE_SYNC = 108).
+//
+// Why this message exists (product feedback 2026-10-20): the Edit Players screen
+// writes PlayerData.Name / PlayerClass / CharacterSkinName locally, and the
+// old event-driven path (PLAYER_PROFILE = 27 + PlayerEditWatcher) only fires
+// when ScreensManager.CurrentScreen changes.  A change that does not go through
+// that exact screen transition (or a screen that is left before the TextBox
+// LostFocus handler runs) never reaches the host, so the host and every other
+// player keep the old name/skin.  This message is the runtime change report:
+//
+//   client -> host : the client's own complete profile for one (clientId, slot)
+//   host -> clients: the authoritative profile after host validation/apply
+//
+// The host broadcast keeps the old PLAYER_PROFILE (27) path untouched for
+// joins / HelloAck / roster; this id is append-only and never renumbers 1..107.
+// Source: Mod/ScMultiplayer/Message/PlayerProfileMessage.cs:PlayerProfileMessage
+// Source: Mod/ScMultiplayer/Modules/Player/ScMultiplayerProfileHandlers.cs:728-890
+//         (SynchronizePlayerProfiles / HandlePlayerProfileMessage)
+//
+// Fields:
+//   client_id / slot  : the stable PlayerKey (host = 0; slot 0..3).
+//   identity          : UserId.dat; the host rejects a report whose identity
+//                       contradicts the Hello identity of the source connection.
+//   player_class      : engine PlayerClass (0 = Male, 1 = Female); any other
+//                       value is rejected (never clamped).
+//   skin_name         : built-in "$Male1" (must exist in CharacterSkinsNames and
+//                       match player_class when the name carries a class) or a
+//                       custom "*.scskin" with a valid 32-byte SHA-256.
+//   clothes           : 4 ComponentClothing slots.  An EMPTY list means
+//                       "do not overwrite"; a client that really wants to clear
+//                       a slot sends a present slot with zero values.
+//   sequence/revision : anti-replay.  sequence is per sender connection and
+//                       monotonically increases; revision is the profile
+//                       revision for that PlayerKey.  The receiver drops any
+//                       report that is not newer than the last accepted pair.
+//   session           : sender session id.  A new session resets the sequence
+//                       book (reconnect must not be rejected as stale); an
+//                       older session is always stale.
+// ---------------------------------------------------------------------------
+message PlayerProfileSync {
+  int32 client_id = 1;
+  uint32 slot = 2;
+  string identity = 3;
+  string name = 4;
+  uint32 player_class = 5;
+  string skin_name = 6;
+  repeated ClothingSlot clothes = 7;
+  bytes skin_sha256 = 8;
+  uint32 sequence = 9;
+  uint32 revision = 10;
+  uint32 session = 11;
+
+  // Third-party extension points: see doc/message-protocol.md.
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}

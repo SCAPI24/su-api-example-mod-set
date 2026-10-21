@@ -643,20 +643,40 @@ namespace SuMultiplayer.Net
     /// 客户端一帧的自我伤害读数：<see cref="Pressed"/> = 角色信息界面的骷髅按钮
     /// （<c>VitalStatsWidget</c> 的 <c>ChokeButton</c>）这一帧的 <c>IsClicked</c>；
     /// <see cref="Dead"/> = 本机角色当前 <c>Health &lt;= 0</c>（主机权威值）。
+    ///
+    /// <see cref="HasAuthorityHealth"/> / <see cref="AuthorityHealth"/> = 客户端缓存的主机
+    /// 权威生命（最近一份 <c>PLAYER_VITALS_REPORT</c> / 已接受的 107 结果）。**没有权威值就不发
+    /// 请求**：引擎控件那一行 <c>Injure(0.1f, ...)</c> 是纯本地预测，没有权威值就无法在
+    /// <c>PlayerData.Update</c> 之前把它回滚，客户端可能自己判死 —— 这是明确失败，不是猜。
     /// </summary>
     public readonly struct PlayerSelfDamagePressState
     {
         public PlayerSelfDamagePressState(bool pressed, bool dead)
+            : this(pressed, dead, false, 0f)
+        {
+        }
+
+        public PlayerSelfDamagePressState(bool pressed, bool dead, bool hasAuthorityHealth,
+            float authorityHealth)
         {
             Pressed = pressed;
             Dead = dead;
+            HasAuthorityHealth = hasAuthorityHealth;
+            AuthorityHealth = authorityHealth;
         }
 
         public bool Pressed { get; }
         public bool Dead { get; }
 
+        /// <summary>false = 还没收到主机权威生命（本帧不发送，客户端不自行判死）。</summary>
+        public bool HasAuthorityHealth { get; }
+
+        /// <summary>缓存的主机权威生命（<see cref="HasAuthorityHealth"/> 为 true 时有效）。</summary>
+        public float AuthorityHealth { get; }
+
         public override string ToString() =>
-            "selfDamagePress{pressed=" + Pressed + " dead=" + Dead + "}";
+            "selfDamagePress{pressed=" + Pressed + " dead=" + Dead + " authority=" +
+            (HasAuthorityHealth ? AuthorityHealth.ToString("0.###") : "missing") + "}";
     }
 
     /// <summary>一次点击采样的判定结果（客户端门控）。</summary>
@@ -677,7 +697,13 @@ namespace SuMultiplayer.Net
         SuppressedInvalidSequence = 4,
 
         /// <summary>本次按下已经发过请求（同一次按下只发一条）。</summary>
-        SuppressedAlreadySent = 5
+        SuppressedAlreadySent = 5,
+
+        /// <summary>
+        /// 还没有主机权威生命（客户端不能证明本地预测能回滚到哪个值）→ 不发请求。
+        /// 这是明确的抑制原因，不是静默丢弃：模块计数 + 限流日志。
+        /// </summary>
+        SuppressedNoAuthority = 6
     }
 
     /// <summary>
@@ -762,6 +788,13 @@ namespace SuMultiplayer.Net
             {
                 reason = "already-sent";
                 return PlayerSelfDamageGateAction.SuppressedAlreadySent;
+            }
+            if (!state.HasAuthorityHealth)
+            {
+                // 没有权威生命就没有"回滚到哪个值"：本地 Injure 可能把角色自己写死。
+                // 不发请求（与"发送失败"不同：按下沿已经消耗，必须松手后再按）。
+                reason = "no-authority-health";
+                return PlayerSelfDamageGateAction.SuppressedNoAuthority;
             }
             if (state.Dead)
             {

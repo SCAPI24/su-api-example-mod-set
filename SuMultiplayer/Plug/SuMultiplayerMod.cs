@@ -129,6 +129,8 @@ namespace SuMultiplayer
         private VoiceAudioEngine m_voiceAudio;
         private VoiceChatModule m_voiceModule;
         private VoiceHud m_voiceHud;
+        /// <summary>MoreContents 的单只 VO 按钮 + VOICE 静音表格（唯一静音入口）。</summary>
+        private VoiceMuteTableAttacher m_voiceMuteTable;
         /// <summary>客户端 UI 拖出（inventory drag-to-world）拦截：替换 GameWidget 的 DragHost。</summary>
         private UiDropAttacher m_uiDropAttacher;
         /// <summary>
@@ -486,6 +488,7 @@ namespace SuMultiplayer
             m_moduleHost.Register(m_transferModule);
             // 联机角色模块要 transport + world.transfer 两个硬依赖，所以最后注册。
             m_moduleHost.Register(m_avatarModule);
+            m_moduleHost.Register(new PlayerProfileModule(m_avatarModule, m_avatarModule, delegate { return Time.RealTime; })); // 资料运行时同步：PLAYER_PROFILE_SYNC=108（主机权威）
             // 自定义皮肤：记录端口由联机角色模块提供，引擎资源端口由 PlayerSkinStore 提供。
             // 模块硬依赖 transport + player.avatars，所以必须排在联机角色模块之后。
             m_moduleHost.RegisterPort<IPlayerSkinPort>(m_skinStore);
@@ -493,6 +496,7 @@ namespace SuMultiplayer
             // 统计 / 成就：模块只拿引擎端口（本机 PlayerStats / 记录），不直接引用 Game。
             m_moduleHost.RegisterPort<IPlayerStatsPort>(m_statsPort);
             m_skinModule = new PlayerSkinModule(m_skinCounters, profileStore);
+            m_moduleHost.RegisterPort<IProfileSkinSyncPort>(m_skinModule); // 资料同步（108）检测到本机换肤 → 同一皮肤资源链（客户端上传 / 主机广播）
             m_moduleHost.Register(m_skinModule);
             // 编辑玩家屏退出时，自定义皮肤必须走皮肤模块的资源链（读取/校验/上传/主机广播）；
             // 联机角色模块只负责名字/性别/内置皮肤/衣服的资料消息与记录。
@@ -506,6 +510,7 @@ namespace SuMultiplayer
             // PlayerVitalsReplica 实现，必须与 IPlayerVitalsPort 一起注册（模块硬依赖两个端口）。
             m_moduleHost.RegisterPort<IPlayerSleepPort>(m_vitalsEngine);
             m_moduleHost.Register(m_vitalsModule);
+            m_moduleHost.Register(new PlayerSelfDamageModule(m_vitalsEngine, delegate { return Time.RealTime; })); // 自我伤害（106/107）：客户端只发请求，主机在主机侧化身执行引擎 Injure，107 结果驱动受伤音效 / 红屏
             // 动作/背包模块要 transport + player.avatars（由联机角色模块提供）→ 必须在它之后注册。
             m_moduleHost.Register(m_actionModule);
             // 爆炸同步：transport 硬依赖；消息处理在 Attach 里注册。
@@ -629,6 +634,8 @@ namespace SuMultiplayer
             // 配置关闭时控制器 Tick 直接 return，不产生任何引擎调用 / 对象。
             m_mirrorCharacterEngine = new MirrorCharacterEngine(avatarSpawner,
                 engineModManager.ModParentField, engineModManager.ModParentMethod, diagnostics);
+            m_mirrorCharacterEngine.ViewFreezeProbe = m_vitalsEngine.TryGetAuthorityFreeze;
+            m_moduleHost.RegisterPort<IViewCameraModePort>(m_mirrorCharacterEngine);
             m_mirrorCharacter = new MirrorCharacterController(m_config.MirrorCharacter,
                 m_config.MirrorCharacterClient, m_config.MirrorCharacterMode,
                 m_mirrorCharacterEngine,
@@ -696,11 +703,13 @@ namespace SuMultiplayer
             // 与聊天 HUD 是同一个实例；输入 / 提交走 ChatModule 的同一条发送链。
             ChatAutomation = new ChatAutomation(m_chatOverlay);
             // 语音 HUD：右下角语音状态图标（聊天按钮正上方，唯一的开关；点按 / U 键）+
-            // 右上状态行 / TALK（可选 PTT，无键盘绑定）/ MUTE ALL + 每个远端的静音按钮。
+            // 右上状态行 / TALK（可选 PTT，无键盘绑定）；静音入口是 MoreContents 的 VO 按钮，
+            // 点开 VOICE 静音表格（VoiceMuteTableAttacher）。
             // U 键的文本输入抑制由聊天 HUD 的"输入行是否打开"提供（组合根是唯一同时知道
             // 两个 UI 的地方；VoiceHud 不反向依赖 ChatOverlay 类型）。
             m_voiceHud = new VoiceHud(m_voiceModule,
                 delegate { return m_chatOverlay != null && m_chatOverlay.HasOpenInput; });
+            m_voiceMuteTable = new VoiceMuteTableAttacher(m_voiceModule);
 
             // 第三方模块接入点：在 OnLoad 里订阅这个事件即可拿到 MessageRegistry + IMessageSender
             // （见 doc/message-protocol.md）。事件只在 SuMultiplayer 加载完成时触发一次；
@@ -1056,6 +1065,9 @@ namespace SuMultiplayer
                     try { m_voiceHud?.Tick(); }
                     catch (Exception e) { NoteFrameStepFailure("voice-ui", e); }
 
+                    try { m_voiceMuteTable?.Tick(); }
+                    catch (Exception e) { NoteFrameStepFailure("voice-table-ui", e); }
+
                     // UI 拖出安全网的"拖出前"背包快照：必须放在所有模块 tick 之后
                     // （到下一帧控件输入之间背包不会再变），否则会把上一帧的扣除误当成拖出。
                     try { m_uiDropAttacher?.Tick(); }
@@ -1154,7 +1166,8 @@ namespace SuMultiplayer
                             (m_uiDropAttacher?.InstalledCount ?? 0));
                         Log.Information("[SuMP] HUD: " +
                             (m_voiceHud?.DescribeCounters() ?? "voice-hud=n/a") + " · " +
-                            (m_uiAttacher?.DescribeCounters() ?? "room-ui=n/a") +
+                            (m_uiAttacher?.DescribeCounters() ?? "room-ui=n/a") + " · " +
+                            (m_voiceMuteTable?.DescribeCounters() ?? "vo=n/a") +
                             " · frameSteps=" + m_frameStepFailureTotal + " [" +
                             DescribeFrameStepCounters() + "]");
                         if (m_debugMirror != null && m_debugMirror.IsConfigured)
@@ -1358,6 +1371,7 @@ namespace SuMultiplayer
                 m_authorityModule?.Detach(ModuleDetachReason.HostShutdown);
                 m_chatModule?.Detach(ModuleDetachReason.HostShutdown);
                 m_voiceHud?.Detach();
+                m_voiceMuteTable?.Detach();
                 m_voiceModule?.Detach(ModuleDetachReason.HostShutdown);
                 m_voiceAudio?.Shutdown();
                 m_transferModule?.Detach(ModuleDetachReason.HostShutdown);
@@ -1390,6 +1404,7 @@ namespace SuMultiplayer
             m_voiceModule = null;
             m_voiceAudio = null;
             m_voiceHud = null;
+            m_voiceMuteTable = null;
             Log.Information("[SuMP] " + ModIdentifier + " 已卸载");
         }
 

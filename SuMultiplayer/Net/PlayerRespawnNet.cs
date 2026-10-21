@@ -246,6 +246,120 @@ namespace SuMultiplayer.Net
         /// <summary>推进 epoch：只增不减（同一死亡的多个信号取最大）。</summary>
         public static uint Advance(uint current, uint candidate) =>
             candidate > current ? candidate : current;
+
+        /// <summary>
+        /// **复活 epoch 的唯一来源**：主机复活裁决（Respawn 事件 / 重放请求里的 respawn revision）。
+        /// 复活事件还没到时用这次死亡的 revision 作为下界；复活 revision 若因乱序比死亡 revision
+        /// 还小（不应发生的异常主机），也以下界为准，保证 epoch 绝不倒退。
+        ///
+        /// 旧实现的问题（2026-10-21 实机排查）：
+        ///   · 日志里同时出现"死亡 epoch=3513"（引擎端口推进的值）与"epoch 479"（模块里上一次
+        ///     复活周期的值）—— 是**两套变量 + 推进时机不同**，不是 uint 截断，也不是不同槽位；
+        ///   · 正确语义是"主机复活时下发的 revision"：本例死亡 rev=3513、复活 rev=3514，
+        ///     epoch 必须是 3514（于是 3513 ≤ 3514 一眼可判旧死亡），而不是死亡 revision 本身。
+        /// </summary>
+        public static uint ForRespawn(uint deathRevision, uint respawnRevision) =>
+            Advance(deathRevision, respawnRevision);
+    }
+
+    /// <summary>
+    /// 复活窗口（<c>respawnInProgress</c>）：从 mod 执行引擎 <c>RemoveEntity</c>（复活开始）到
+    /// **第一份主机权威存活快照**（Health &gt; 0 且 revision &gt; 复活裁决 revision）之间的门控状态。
+    ///
+    /// 为什么需要它（实机缺陷，2026-10-21）：复活 = 删旧实体 + 新实体出生（约 2 秒）。主机下一次
+    /// 5 Hz 状态抓取在新实体出生那一刻仍可能携带**这次死亡**的状态（rev 3513），而复活裁决
+    /// （Respawn 事件）在它之后才到（rev 3514）。旧代码只按 epoch（上一次复活的 revision，本例
+    /// 479）过滤，于是 rev=3513 的死亡状态被写进新实体 → 引擎再次进入 PlayerDead → 挡门对话框 /
+    /// 死亡屏被重新挂上；随后的复活重放只写数值，没有人清这个表现。
+    ///
+    /// 门控口径（纯逻辑，可被 <c>P:/tmp/tsverify</c> 直接驱动）：
+    ///   · 窗口打开 = 主机批准 + mod 执行了 RemoveEntity；
+    ///   · **窗口内任何旧 Dead 状态一律不应用**（旧死亡的快照 / Death 事件都可能比复活裁决早；
+    ///     比复活裁决更新的真实新死亡是唯一例外，见下）；
+    ///   · 关闭 = 收到主机权威存活快照且 <c>revision &gt; 复活 revision</c>。复活事件还没到
+    ///     （<see cref="RespawnRevision"/> = 0）时以下界 <see cref="DeathRevision"/> 比较；
+    ///   · 窗口内收到**比复活裁决更新的死亡**（<c>revision &gt; RespawnRevision &gt; 0</c>）=
+    ///     玩家复活后真的又死了：结束窗口并**按真实死亡应用**（旧死亡 rev ≤ 复活裁决仍然拒绝）——
+    ///     绝不把真实死亡永久挡在门外；
+    ///   · epoch 只由 <see cref="PlayerRespawnEpoch.ForRespawn"/> 给出：主机复活 revision，
+    ///     且绝不落到这次死亡 revision 之下（旧实现把"上一次复活周期的 479"当成 epoch）。
+    /// </summary>
+    public sealed class PlayerRespawnWindow
+    {
+        /// <summary>窗口是否打开（= respawnInProgress）。</summary>
+        public bool Active { get; private set; }
+
+        /// <summary>这次死亡的 revision（窗口下界；主机复活事件未到时的 epoch）。</summary>
+        public uint DeathRevision { get; private set; }
+
+        /// <summary>主机复活裁决（Respawn 事件）的 revision；0 = 还没收到。</summary>
+        public uint RespawnRevision { get; private set; }
+
+        /// <summary>统一 epoch：主机复活 revision（未到 → 死亡 revision 下界）。</summary>
+        public uint Epoch => PlayerRespawnEpoch.ForRespawn(DeathRevision, RespawnRevision);
+
+        /// <summary>
+        /// 关闭 / 新死亡判定下界：主机复活 revision（未到 → 死亡 revision）。
+        /// 存活快照必须**严格大于**它才能关闭窗口；Dead 必须严格大于它才算复活后的真实新死亡。
+        /// </summary>
+        public uint CloseRevision => PlayerRespawnEpoch.ForRespawn(DeathRevision, RespawnRevision);
+
+        /// <summary>打开窗口（幂等：重复打开 = 用新一次复活的两级 revision 重置）。</summary>
+        public void Open(uint deathRevision, uint respawnRevision)
+        {
+            Active = true;
+            DeathRevision = deathRevision;
+            RespawnRevision = respawnRevision;
+        }
+
+        /// <summary>记下这次死亡的 revision（只增不减）。</summary>
+        public void NoteDeathRevision(uint revision)
+        {
+            DeathRevision = PlayerRespawnEpoch.Advance(DeathRevision, revision);
+        }
+
+        /// <summary>收到主机复活裁决（Respawn 事件 / 重放请求里的 respawn revision）。</summary>
+        public bool NoteRespawnRevision(uint revision)
+        {
+            if (revision == 0) return false;
+            uint previous = RespawnRevision;
+            RespawnRevision = PlayerRespawnEpoch.Advance(RespawnRevision, revision);
+            return RespawnRevision != previous;
+        }
+
+        /// <summary>窗口内的 Dead 是否必须拒绝（任何 Dead 都拒绝）。</summary>
+        public bool ShouldSuppressDead => Active;
+
+        /// <summary>
+        /// 这条 Dead 是否比主机复活裁决更新（= 复活后真正的新死亡）。下界用
+        /// <see cref="CloseRevision"/>：复活裁决 revision / 死亡 revision 的较大值 ——
+        /// 任何一条旧死亡（含复活裁决还没到时到达的那条）都不会被误判成"新死亡"而放行。
+        /// </summary>
+        public bool IsDeathAfterRespawn(uint revision) =>
+            Active && RespawnRevision != 0 && revision > CloseRevision;
+
+        /// <summary>主机权威存活快照是否满足关闭条件。</summary>
+        public bool CanCloseOnAlive(uint revision, float health) =>
+            Active && !(health <= 0f) && revision > CloseRevision;
+
+        /// <summary>revision 不新于 epoch 的死亡状态（陈旧）。</summary>
+        public bool IsStale(uint revision) => PlayerRespawnEpoch.IsStaleDead(Epoch, revision);
+
+        public void Close()
+        {
+            Active = false;
+        }
+
+        public void Reset()
+        {
+            Active = false;
+            DeathRevision = 0;
+            RespawnRevision = 0;
+        }
+
+        public string Describe() => "respawn-window{active=" + Active + " death=" +
+            DeathRevision + " respawn=" + RespawnRevision + " epoch=" + Epoch +
+            " closeBelow=" + CloseRevision + "}";
     }
 
     /// <summary>出生后重放（<c>TryReplayLocalRespawn</c>）的结果。</summary>
@@ -268,17 +382,21 @@ namespace SuMultiplayer.Net
     /// 一次"出生后权威重放"请求（模块 → 引擎端口）。主机裁决的落点 + 两级 revision：
     ///   · <see cref="DeathRevision"/> = 这次死亡的 revision（主机 Death 事件里的那个）；
     ///   · <see cref="RespawnRevision"/> = 主机 Respawn 事件的 revision（可能比死亡更新）。
-    /// <see cref="Epoch"/> 是两者的较大值，模块用它挡陈旧死亡状态。
+    /// <see cref="Epoch"/> = **主机复活 revision**（<see cref="PlayerRespawnEpoch.ForRespawn"/>），
+    /// 不再取两者的较大值；模块也会把已经统一好的 epoch 显式传进来。
     /// </summary>
     public readonly struct PlayerRespawnReplayRequest
     {
         public PlayerRespawnReplayRequest(uint deathRevision, uint respawnRevision,
-            bool hasPosition, Vector3 position)
+            bool hasPosition, Vector3 position, uint epoch = 0)
         {
             DeathRevision = deathRevision;
             RespawnRevision = respawnRevision;
             HasPosition = hasPosition;
             Position = position;
+            Epoch = epoch != 0
+                ? epoch
+                : PlayerRespawnEpoch.ForRespawn(deathRevision, respawnRevision);
         }
 
         public uint DeathRevision { get; }
@@ -286,7 +404,11 @@ namespace SuMultiplayer.Net
         public bool HasPosition { get; }
         public Vector3 Position { get; }
 
-        public uint Epoch => PlayerRespawnEpoch.Advance(DeathRevision, RespawnRevision);
+        /// <summary>
+        /// 复活 epoch：**主机复活裁决的 revision**。模块把统一后的 epoch 直接传进来
+        /// （&gt; 0）时以此为准，保证引擎端口 / 状态行 / 日志里是同一个数；0 = 由两级 revision 推导。
+        /// </summary>
+        public uint Epoch { get; }
 
         public bool HasFinitePosition =>
             PlayerVitalsSnapshot.IsFiniteValue(Position.X) &&

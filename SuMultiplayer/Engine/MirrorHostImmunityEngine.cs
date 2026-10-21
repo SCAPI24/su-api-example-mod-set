@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Game;
 using GameEntitySystem;
 using SuAPI;
@@ -32,8 +33,18 @@ namespace SuMultiplayer.Engine
     {
         private const string OwnerId = "mirror-host-immunity";
 
+        /// <summary>
+        /// 同一失败键的日志最小间隔（秒）。热路径**每帧**都会调用 <see cref="TryApply"/>，
+        /// 引擎版本变化导致某个字段写不进去时必须仍然每帧计数、但日志按 10 秒一行（与控制器状态行同口径）。
+        /// </summary>
+        private const double FailureLogIntervalSeconds = 10.0;
+
         private readonly IModParentField m_parentField;
         private readonly IModuleDiagnostics m_diagnostics;
+
+        /// <summary>失败键 → 上次写日志的时刻（<c>Engine.Time.RealTime</c>，10 秒限流）。</summary>
+        private readonly Dictionary<string, double> m_lastFailureLog =
+            new Dictionary<string, double>(StringComparer.Ordinal);
 
         /// <summary>累计写入成功的字段数（诊断用；每拍清零的增量由调用方统计）。</summary>
         private long m_writes;
@@ -46,6 +57,9 @@ namespace SuMultiplayer.Engine
 
         /// <summary>累计清掉的症状粒子（呕吐 / 着火）次数。</summary>
         private long m_particlesStopped;
+
+        /// <summary>累计停症状粒子失败的次数（拿不到粒子句柄 / 停粒子抛异常）。</summary>
+        private long m_particleFailures;
 
         public MirrorHostImmunityEngine(IModParentField parentField, IModuleDiagnostics diagnostics)
         {
@@ -65,11 +79,33 @@ namespace SuMultiplayer.Engine
         /// <summary>累计停掉的症状粒子数（呕吐 / 着火）。</summary>
         public long ParticlesStopped => m_particlesStopped;
 
+        /// <summary>累计停症状粒子失败的次数（每次都计数，日志 10 秒限流）。</summary>
+        public long ParticleFailures => m_particleFailures;
+
         /// <summary>一行诊断摘要（10 秒状态行用）。</summary>
         public string Describe() =>
             "writes=" + m_writes + " writeFailures=" + m_writeFailures +
             " stateReadFailures=" + m_stateReadFailures +
-            " particlesStopped=" + m_particlesStopped;
+            " particlesStopped=" + m_particlesStopped +
+            " particleFailures=" + m_particleFailures;
+
+        /// <summary>
+        /// 失败日志（**每次都计数、日志 10 秒限流**）：热路径每帧都会走到这里，
+        /// 同一个失败键 10 秒内只写一行；消息里带累计次数与可直接定位的原因（绝不静默）。
+        /// </summary>
+        private void LogFailure(string key, bool error, string message, Exception exception)
+        {
+            // Source: Engine/Engine/Time.cs:24 的静态时钟（与控制器注入的 Time.RealTime 同一个值；
+            // 纯 Stopwatch 读取，不会抛异常，因此这里没有兜底分支）。
+            // 必须写 global:: —— 本文件在 SuMultiplayer.Engine 命名空间里，Engine.Time 会被解析成该命名空间。
+            double now = global::Engine.Time.RealTime;
+            if (m_lastFailureLog.TryGetValue(key, out double last) &&
+                now - last < FailureLogIntervalSeconds)
+                return;
+            m_lastFailureLog[key] = now;
+            if (error) m_diagnostics?.Error(OwnerId, message, exception);
+            else m_diagnostics?.Warn(OwnerId, message);
+        }
 
         /// <summary>
         /// 读宿主 <c>PlayerData</c> 是否处于 <c>PlayerDead</c> 状态（该状态只有在
@@ -128,7 +164,7 @@ namespace SuMultiplayer.Engine
         /// <summary>
         /// 把免疫字段清单整套写进这个宿主：<paramref name="applied"/> = 成功写入的字段数。
         /// 返回 false = 至少有一个字段没写进去（<paramref name="failure"/> 写清第一个失败原因，
-        /// 后续失败同样计入 <see cref="WriteFailures"/> 并逐条写日志）。
+        /// 后续失败同样计入 <see cref="WriteFailures"/>；日志按失败键 10 秒限流，消息里带累计次数）。
         /// </summary>
         public bool TryApply(ComponentPlayer player, out int applied, out string failure)
         {
@@ -156,7 +192,9 @@ namespace SuMultiplayer.Engine
             {
                 failure = "宿主实体没有 ComponentOnFire（引擎模板变了）：" +
                     e.GetType().Name + " " + e.Message;
-                m_diagnostics?.Error(OwnerId, failure, e);
+                m_writeFailures++;
+                LogFailure("component:onfire", true,
+                    failure + " · 累计字段失败=" + m_writeFailures, e);
                 return false;
             }
             // 先停症状粒子（呕吐 / 着火）：只清持续时间的话，已经生成的粒子会继续挂在世界里。
@@ -174,7 +212,8 @@ namespace SuMultiplayer.Engine
                 {
                     m_writeFailures++;
                     if (failure == null) failure = resolveFailure;
-                    m_diagnostics?.Warn(OwnerId, resolveFailure);
+                    LogFailure("resolve:" + field.Key, false,
+                        resolveFailure + " · 累计字段失败=" + m_writeFailures, null);
                     continue;
                 }
                 try
@@ -190,7 +229,8 @@ namespace SuMultiplayer.Engine
                     string message = "写免疫字段 " + field.Key + " = " + field.Describe() +
                         " 失败：" + e.GetType().Name + " " + e.Message;
                     if (failure == null) failure = message;
-                    m_diagnostics?.Error(OwnerId, message + "（" + field.Role + "）", e);
+                    LogFailure("write:" + field.Key, true,
+                        message + "（" + field.Role + "）· 累计字段失败=" + m_writeFailures, e);
                 }
             }
             return failure == null;
@@ -226,9 +266,11 @@ namespace SuMultiplayer.Engine
                 }
                 catch (Exception e)
                 {
+                    m_particleFailures++;
                     failure = "停掉宿主的呕吐粒子失败：" + e.GetType().Name + " " + e.Message;
-                    m_diagnostics?.Error(OwnerId, failure + "（" +
-                        MirrorHostImmunityFields.OwnerSickness + ".m_pukeParticleSystem）", e);
+                    LogFailure("particle:puke", true, failure + "（" +
+                        MirrorHostImmunityFields.OwnerSickness + ".m_pukeParticleSystem）· 累计粒子失败=" +
+                        m_particleFailures, e);
                 }
             }
             if (onFire != null && onFire.IsOnFire)
@@ -249,9 +291,11 @@ namespace SuMultiplayer.Engine
                 }
                 catch (Exception e)
                 {
+                    m_particleFailures++;
                     string message = "息灭宿主身上的火失败：" + e.GetType().Name + " " + e.Message;
                     if (failure == null) failure = message;
-                    m_diagnostics?.Error(OwnerId, message, e);
+                    LogFailure("particle:onfire", true,
+                        message + " · 累计粒子失败=" + m_particleFailures, e);
                 }
             }
             return failure;

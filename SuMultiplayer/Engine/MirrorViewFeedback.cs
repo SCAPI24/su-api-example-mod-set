@@ -1,12 +1,23 @@
 using System;
 using System.Collections.Generic;
+using System.Runtime.CompilerServices;
 using Engine;
 using Game;
+using GameEntitySystem;
 using SuAPI;
 using SuMultiplayer.Modules;
+using SuMultiplayer.Players;
 
 namespace SuMultiplayer.Engine
 {
+    /// <summary>
+    /// 组合根 → <see cref="MirrorViewFeedback"/> 的**主机权威冻结读取器**
+    /// （实现 = <c>PlayerVitalsReplica.TryGetAuthorityFreeze</c>）。
+    /// 第三分屏的冰覆盖只允许用它的返回值（95 字段 22 的原值），不得再按温度自己算。
+    /// </summary>
+    public delegate bool MirrorViewAuthorityFreezeProbe(PlayerKey key, out float progress,
+        out uint stage, out string reason);
+
     /// <summary>
     /// replace 模式（<c>mirrorcharacter</c> / <c>mirrorcharactermode</c>）下**第三分屏的客户端反馈镜像**：
     /// 把客户端化身的掉血 / 血条 / 食物条 / 温度档位 / 等级文字 / 死亡表现重放到**视图所有者 H3** 的显示层上。
@@ -49,6 +60,33 @@ namespace SuMultiplayer.Engine
     ///   · 解绑（离开房间 / 世界卸载 / 客户端离开 / 回滚）时把绑定前抓到的 HUD 显示值写回、
     ///     清掉我们设置的大消息与覆盖层，并停止更新（<see cref="Release"/>）。
     ///
+    /// 实机问题 1（2026-10-21）· **冰覆盖必须与客户端同一条权威值 / 同一条平滑**：
+    ///   · 客户端：<c>freeze_progress</c>（vitals.proto 字段 22 = 主机侧客户端化身的
+    ///     <c>PlayerFreezePolicy.TryCapture(Temperature)</c>）经 95 下发，再由
+    ///     <c>PlayerVitalsReplica.ApplyLocalHud</c> 用 <see cref="PlayerPresentationInterpolator"/>
+    ///     （时间常数 0.2 s / 限速 3 每秒 / 0.002 贴合）每帧逼近后写 <c>IceFactor</c>；
+    ///   · 旧实现的第三屏**自己**按 <c>vitals.Temperature</c> 算 <c>Saturate(1 - T/6)</c> 并**阶跃**写入
+    ///     —— 与客户端不是同一条数据 / 时序，于是"客户端先冻、第三屏晚很多、屏幕占比不一样"；
+    ///   · 现在：目标值只来自 <see cref="MirrorViewAuthorityFreezeProbe"/>（= <c>PlayerVitalsReplica</c>
+    ///     缓存的**95 原值**），平滑复用**同一个** <see cref="PlayerPresentationInterpolator"/>；
+    ///     拿不到权威值就明确跳过 + 计数（<c>viewIceSource=authority-missing</c>），绝不按温度顶替。
+    ///
+    /// 实机问题 2（2026-10-21）· **客户端流感 / 食物中毒 / 着火在第三屏也要有同款表现**：
+    ///   · 主机侧客户端化身的 <c>ComponentFlu / ComponentSickness / ComponentOnFire</c> Update
+    ///     **在主机上跑**（<c>PlayerVitalsReplica.SuppressRemoteAvatars</c> 只在客户端调用），所以
+    ///     咳嗽 / 喷嚏 / 呕吐音效、<c>PukeParticleSystem</c>、<c>OnFireParticleSystem</c> 主机世界里
+    ///     本来就有；第三分屏的相机既渲染同一批粒子，也**本身就是**音频监听点
+    ///     （<c>SubsystemAudio.Update:178-182</c> 收集每个 GameWidget 的 <c>ActiveCamera</c>），
+    ///     所以这里**绝不重播**音效 / 粒子（重播会双份）；
+    ///   · 真正缺的是**屏幕覆盖层**：<c>ComponentFlu.Update</c> 把黑屏因子写在**化身自己的**
+    ///     <c>ComponentScreenOverlays</c> 上，而 <c>ComponentScreenOverlays.Draw</c> 只在
+    ///     <c>m_componentPlayer.GameWidget == camera.GameWidget</c> 时画，化身的 GameWidget 已被
+    ///     <c>NetworkAvatarSpawner</c> 从界面子系统摘掉 ⇒ 第三屏永远看不到绿屏 / 黑屏；
+    ///   · 现在：每拍把主机权威 <c>m_blackoutFactor</c> / <c>m_greenoutFactor</c>（引擎已按
+    ///     0.5/s 渐入 0.95 / 0.5/s 渐出算好的曲线，与客户端 <c>AdvanceLocalEffectPresentation</c>
+    ///     同一组式子）镜像到 H3 的 <c>BlackoutFactor / GreenoutFactor</c>，并用
+    ///     <see cref="MirrorViewEffectWatch"/> 计 <c>viewFluEffectPresented / Duplicate / Stale / Rejected</c>。
+    ///
     /// 无静态可变状态：视图所有者 / 客户端 / 时钟 / 诊断都由组合根经 <c>MirrorCharacterEngine</c> 注入。
     /// </summary>
     public sealed class MirrorViewFeedback
@@ -63,8 +101,23 @@ namespace SuMultiplayer.Engine
         private readonly IModuleDiagnostics m_diagnostics;
         private readonly MirrorViewFeedbackCounters m_counters = new MirrorViewFeedbackCounters();
         private readonly MirrorViewFeedbackDiff m_diff = new MirrorViewFeedbackDiff();
+
+        /// <summary>
+        /// 病程 / 火焰表现的逐帧状态机（实机问题 2）：读**主机侧客户端化身**的权威表现因子
+        /// （<c>ComponentFlu.m_blackoutFactor</c> / <c>ComponentSickness.m_greenoutFactor</c>）
+        /// 并镜像到 H3 的覆盖层。纯逻辑在 <see cref="MirrorViewEffectWatch"/>。
+        /// </summary>
+        private readonly MirrorViewEffectWatch m_effects = new MirrorViewEffectWatch();
+
         private readonly HashSet<string> m_reportedOnce =
             new HashSet<string>(StringComparer.Ordinal);
+
+        /// <summary>问题日志的 10 秒限流表（问题键 → 上次写日志的 <c>Time.RealTime</c>）。</summary>
+        private readonly Dictionary<string, double> m_problemLogTime =
+            new Dictionary<string, double>(StringComparer.Ordinal);
+
+        /// <summary>病程表现的数据源稳定键（状态行 <c>viewFluEffectSource</c>）。</summary>
+        private const string FluEffectSource = "authority-host-avatar";
 
         private bool m_linked;
         private ComponentPlayer m_viewOwner;
@@ -78,6 +131,7 @@ namespace SuMultiplayer.Engine
         // 我们真的写过覆盖层 / 大消息才需要在解绑时清（H3 自己的覆盖层不归我们管）。
         private bool m_wroteRedout;
         private bool m_wroteBlackout;
+        private bool m_wroteGreenout;
         private bool m_wroteIce;
         private bool m_showedDeathMessage;
         // 死亡大消息控件（Gui/LargeMessage）：绑定期间移到 GameWidget 根下，解绑按原索引移回。
@@ -86,10 +140,9 @@ namespace SuMultiplayer.Engine
         private int m_deathMessageOriginIndex = -1;
         private bool m_deathMessageRelocated;
 
-        // 死亡大消息的生命周期（下发边沿 / 续期时刻 / 小字原文）。
+        // 死亡大消息的生命周期（下发边沿 / 引擎同款到期时刻）。
         private bool m_deathTextShown;
-        private double m_deathTextRefreshAt;
-        private string m_deathTextSmallText;
+        private double m_deathTextExpiresAt;
 
         // 绑定前 H3 的显示值（解绑写回；只碰显示层，不碰任何组件字段）。
         private bool m_savedHud;
@@ -166,14 +219,16 @@ namespace SuMultiplayer.Engine
                 : (viewOwner.PlayerData.Name ?? string.Empty);
             m_wroteRedout = false;
             m_wroteBlackout = false;
+            m_wroteGreenout = false;
             m_wroteIce = false;
             m_showedDeathMessage = false;
             m_deathTextShown = false;
-            m_deathTextRefreshAt = 0.0;
-            m_deathTextSmallText = null;
+            m_deathTextExpiresAt = 0.0;
             m_cachedTemperatureIndex = int.MinValue;
             m_cachedTemperatureTexture = null;
             m_diff.Reset();
+            m_effects.Reset();
+            m_problemLogTime.Clear();
             CaptureSavedHud();
             // 死亡大消息控件必须离开 HUD 根：客户端死亡时 UI 镜像会关掉 Gui 根，文字会跟着被藏掉。
             RelocateDeathMessage(viewOwner);
@@ -190,9 +245,12 @@ namespace SuMultiplayer.Engine
         /// <summary>
         /// 每拍驱动（replace 绑定期间由 <c>MirrorCharacterEngine.ValidateBound</c> 调用）。
         /// 只读客户端化身的组件；把计划里的显示值写进 H3 的控件。异常 / 控件缺失一律计数 + 限流告警。
+        ///
+        /// <paramref name="freeze"/> = 主机权威冻结采样（<c>PlayerVitalsReplica.TryGetAuthorityFreeze</c>，
+        /// 由 <c>MirrorCharacterEngine</c> 每拍取一次喂进来）：第三屏冰覆盖**只**用它，不再按温度自己算。
         /// </summary>
         public void Tick(ComponentPlayer viewOwner, ComponentPlayer source, string clientName,
-            float dt)
+            float dt, in MirrorViewFreezeSample freeze)
         {
             m_counters.NoteFrame();
             if (!m_linked)
@@ -221,6 +279,9 @@ namespace SuMultiplayer.Engine
                 LogRateLimited();
                 return;
             }
+            // 病程 / 火焰表现（实机问题 2）：与体征 HUD 相互独立 —— 即使温度读不到本拍也照样呈现
+            // （覆盖层每拍被引擎清 0，漏一拍就闪一下）。
+            ApplyEffects(source);
             ComponentVitalStats vitals = source.ComponentVitalStats;
             PlayerData sourceData = source.PlayerData;
             if (sourceData == null)
@@ -252,7 +313,9 @@ namespace SuMultiplayer.Engine
                 causeOfDeath: health.CauseOfDeath, hasVitals: vitals != null,
                 food: vitals == null ? 0f : vitals.Food,
                 temperature: vitals == null ? 0f : vitals.Temperature,
-                targetTemperature: targetTemperature, level: sourceData.Level);
+                targetTemperature: targetTemperature, level: sourceData.Level,
+                hasFreeze: freeze.Available, freezeProgress: freeze.Progress,
+                freezeStage: freeze.Stage);
             MirrorViewFramePlan plan = m_diff.Advance(in sample, dt, clientName ?? m_clientName);
             if (plan.SkipReason != null)
             {
@@ -320,8 +383,10 @@ namespace SuMultiplayer.Engine
                     // 这三个因子每拍被引擎清 0（ComponentScreenOverlays.Update:60-77），
                     // 停止更新本身就等于清除；这里对"我们自己写过的"再显式写 0，
                     // 保证解绑当帧（同帧还有 Draw）不残留一次客户端画面。
+                    // 绿屏（病程表现，实机问题 2）同理。
                     if (m_wroteRedout) m_overlays.RedoutFactor = 0f;
                     if (m_wroteBlackout) m_overlays.BlackoutFactor = 0f;
+                    if (m_wroteGreenout) m_overlays.GreenoutFactor = 0f;
                     if (m_wroteIce) m_overlays.IceFactor = 0f;
                 }
             }
@@ -338,11 +403,11 @@ namespace SuMultiplayer.Engine
             m_overlays = null;
             m_wroteRedout = false;
             m_wroteBlackout = false;
+            m_wroteGreenout = false;
             m_wroteIce = false;
             m_showedDeathMessage = false;
             m_deathTextShown = false;
-            m_deathTextRefreshAt = 0.0;
-            m_deathTextSmallText = null;
+            m_deathTextExpiresAt = 0.0;
             m_savedHud = false;
             m_savedLevelText = null;
             m_savedTemperatureTexture = null;
@@ -352,6 +417,8 @@ namespace SuMultiplayer.Engine
             m_clientName = string.Empty;
             m_viewOwnerName = string.Empty;
             m_diff.Reset();
+            m_effects.Reset();
+            m_problemLogTime.Clear();
             if (linked)
             {
                 Log("第三分屏客户端反馈镜像已解除（" + (reason ?? "未给原因") + "）· HUD 显示值写回=" +
@@ -365,7 +432,8 @@ namespace SuMultiplayer.Engine
         public string Describe() =>
             "linked=" + (m_linked ? "1" : "0") + " viewOwner=\"" + m_viewOwnerName +
             "\" client=" + m_clientId + " clientName=\"" + m_clientName + "\" " +
-            m_counters.Describe() + " diff{" + m_diff.Describe() + "}";
+            m_counters.Describe() + " diff{" + m_diff.Describe() + "}" +
+            " effects{" + m_effects.Describe() + "}";
 
         // ---------------------------------------------------------------- 写显示层
 
@@ -400,12 +468,7 @@ namespace SuMultiplayer.Engine
                     WriteFoodBar(hud.FoodBarValue);
                 if (hud.WriteTemperatureTexture)
                     WriteTemperature(hud.TemperatureTextureIndex, hud.TemperatureTextureName);
-                if (hud.WriteIce)
-                {
-                    m_overlays.IceFactor = hud.IceFactor;
-                    m_wroteIce = true;
-                    m_counters.NoteIceWrite();
-                }
+                ApplyIce(plan.Ice);
                 if (hud.WriteLevelLabel)
                     WriteLevelLabel(hud.Level);
             }
@@ -419,66 +482,241 @@ namespace SuMultiplayer.Engine
         }
 
         /// <summary>
-        /// 死亡大消息的**生命周期**（只写 H3 的显示层）：死亡边沿下发、死亡期间静默续期、复活清除。
+        /// 冰覆盖（实机问题 1）：把**主机权威 freeze_progress 的插值结果**写进 H3 的 <c>IceFactor</c>。
         ///
-        /// 为什么需要续期：引擎的大消息有 <c>Duration</c> 上限（30 秒，<c>PlayerData.cs:296</c>），到期
-        /// 引擎自己把消息丢掉（<c>ComponentGui.cs:385-388</c>）；而镜像分屏必须**一直显示到客户端复活**。
-        /// 续期用 <see cref="MirrorViewDeathText.RefreshDelaySeconds"/>（负延迟 = 开始时间回拨 1.5 秒），
-        /// 让引擎的淡入因子在续期那一拍就是 1（<c>ComponentGui.cs:383</c>），文字不会先消失再淡入。
+        /// 时序事实：<c>ComponentScreenOverlays.Update</c> 每拍先清 0（<c>:68-73</c>），
+        /// 所以只要 &gt; 0 就必须每拍重写；为 0 时不写（引擎已经是 0）。
+        /// 计数：<c>viewIceSource / viewIceValue / viewIceFrames / viewIceSnap / viewIceMissing / viewIceFailures</c>。
+        /// 独立 try/catch：写失败只计 <c>viewIceFailures</c>，不影响血条 / 食物条 / 温度档位。
+        /// </summary>
+        private void ApplyIce(MirrorViewIceStep ice)
+        {
+            m_counters.NoteIceSource(ice.Source, ice.Value);
+            if (ice.Advanced)
+            {
+                // 只有"真的有权威目标"的帧才计帧数 / 贴合次数；死亡归零帧只体现在
+                // viewIceSource=authority-dead（否则尸体期间 viewIceSnap 会每拍 +1）。
+                m_counters.NoteIceFrame();
+                if (ice.Snapped) m_counters.NoteIceSnap();
+            }
+            if (ice.Source == MirrorViewIceSource.Missing)
+            {
+                m_counters.NoteIceMissing("authority-freeze-missing");
+                NoteProblem("view-ice-missing",
+                    "第三分屏冰覆盖：主机权威冻结进度这一拍不可观测（" +
+                    (m_counters.LastFailureReason ?? "未给原因") +
+                    "）→ 本拍不写 IceFactor（绝不按温度自己算，也不拿 0 顶替）· " +
+                    m_diff.Describe());
+                return;
+            }
+            if (!ice.Write) return;
+            try
+            {
+                m_overlays.IceFactor = ice.Value;
+                m_wroteIce = true;
+                m_counters.NoteIceWrite();
+            }
+            catch (Exception e)
+            {
+                string reason = "view-ice-write: " + e.GetType().Name + " " + e.Message;
+                m_counters.NoteIceFailure(reason);
+                NoteProblem("view-ice-write",
+                    "第三分屏冰覆盖写 IceFactor 失败（本拍不写；下一拍重试）：" + reason);
+            }
+        }
+
+        /// <summary>
+        /// 病程 / 火焰表现（实机问题 2）：每拍读**主机侧客户端化身**的权威表现因子并镜像到 H3 的覆盖层。
         ///
-        /// 独立 try/catch：异常单独计 <c>viewDeathTextFailures</c>，不混进 HUD 写入失败（下一拍重试）。
+        /// 为什么读组件状态而不是重放 109 事件（选型理由）：
+        ///   ① 109 的产生端 <c>PlayerVitalsReplica.PollAuthorityEffects</c> 由 <c>PlayerVitalsModule</c>
+        ///      的主机 tick 独占消费（它每拍推进边沿状态并清空容器），要在第三屏再播一遍就得把事件
+        ///      广播回引擎层（新增端口 + 改模块 + 组合根多行接线），并且要自己再维护一份
+        ///      "已播 / 过期" 账本 —— 与"不改权威模拟、不重复扣血"的目标相悖；
+        ///   ② 第三分屏与权威在**同一个进程、同一帧**：直接读化身的权威表现因子，边沿与曲线天然一致、
+        ///      零网络延迟，也不会把同一次咳嗽在主机世界与第三屏播两遍；
+        ///   ③ 声音 / 粒子本来就由主机模拟产生（咳嗽音效、<c>PukeParticleSystem</c>、
+        ///      <c>OnFireParticleSystem</c>），第三分屏的相机渲染同一批粒子、也是音频监听点之一，
+        ///      **只需要补屏幕覆盖层**（<c>ComponentScreenOverlays.Draw</c> 只画自己 GameWidget 的那一份）。
+        ///
+        /// 计数：<c>viewFluEffectPresented / Frames / Rejected / Duplicate / Stale</c> +
+        /// <c>viewFluBlackoutFrames / viewFluGreenoutFrames / viewFluCoughFrames / viewFluPukeFrames /
+        /// viewFireFrames</c>；失败按 10 秒限流（<see cref="NoteProblem"/>）。
+        /// </summary>
+        private void ApplyEffects(ComponentPlayer source)
+        {
+            if (!TryReadEffectSample(source, out MirrorViewEffectSample sample,
+                    out string readReason))
+            {
+                m_counters.NoteFluRejected(readReason);
+                NoteProblem("view-effect-read",
+                    "第三分屏病程表现：读主机侧客户端化身的表现因子失败（本拍不写覆盖层）：" +
+                    readReason);
+                return;
+            }
+            MirrorViewEffectPlan plan = m_effects.Advance(in sample);
+            if (plan.Failure != null)
+            {
+                m_counters.NoteFluRejected(plan.Failure);
+                NoteProblem("view-effect-invalid",
+                    "第三分屏病程表现：主机侧客户端化身的表现因子非法（" + plan.Failure +
+                    "）→ 本拍不写覆盖层 · " + sample.Describe());
+                return;
+            }
+            m_counters.NoteFluSource(FluEffectSource);
+            if (plan.Stale)
+            {
+                m_counters.NoteFluStale();
+                Log("第三分屏病程表现：客户端化身换代（复活换实体）→ 上一段黑屏 / 绿屏 / 着火表现作废" +
+                    "（累计 viewFluEffectStale=" + m_counters.ViewFluEffectStale + "）");
+            }
+            try
+            {
+                if (plan.WriteBlackout)
+                {
+                    m_overlays.BlackoutFactor = MathUtils.Max(m_overlays.BlackoutFactor,
+                        plan.Blackout);
+                    m_wroteBlackout = true;
+                    m_counters.NoteFluBlackoutFrame();
+                }
+                if (plan.WriteGreenout)
+                {
+                    m_overlays.GreenoutFactor = MathUtils.Max(m_overlays.GreenoutFactor,
+                        plan.Greenout);
+                    m_wroteGreenout = true;
+                    m_counters.NoteFluGreenoutFrame();
+                }
+            }
+            catch (Exception e)
+            {
+                string reason = "view-effect-write: " + e.GetType().Name + " " + e.Message;
+                m_counters.NoteFluRejected(reason);
+                NoteProblem("view-effect-write",
+                    "第三分屏病程表现写覆盖层失败（本拍不写；下一拍重试）：" + reason);
+                return;
+            }
+            if (plan.BlackoutOnset || plan.GreenoutOnset || plan.FireOnset)
+                m_counters.NoteFluPresented();
+            if (plan.Duplicate) m_counters.NoteFluDuplicate();
+            if (plan.Coughing) m_counters.NoteFluCoughFrame();
+            if (plan.Puking) m_counters.NoteFluPukeFrame();
+            if (plan.FireOn) m_counters.NoteFireFrame();
+            if (plan.WriteBlackout || plan.WriteGreenout || plan.FireOn)
+                m_counters.NoteFluFrame();
+        }
+
+        /// <summary>
+        /// 读主机侧客户端化身的**权威**病程 / 火焰表现状态（只读，绝不写）：
+        ///   · <c>ComponentFlu.m_blackoutFactor</c>（引擎已按 0.5/s 渐入 0.95 / 渐出算好的黑屏因子）；
+        ///   · <c>ComponentSickness.m_greenoutFactor</c>（同款绿屏因子）；
+        ///   · 公开的 <c>IsCoughing</c> / <c>IsPuking</c> / <c>IsOnFire</c>（音效 / 粒子由主机模拟产生）。
+        /// 任何一次私有字段读取失败都返回 false + 明确原因（不拿 0 顶替）。
+        /// </summary>
+        private bool TryReadEffectSample(ComponentPlayer source,
+            out MirrorViewEffectSample sample, out string reason)
+        {
+            sample = default;
+            reason = null;
+            Entity entity = source == null ? null : source.Entity;
+            if (entity == null)
+            {
+                reason = "source-entity-missing（客户端化身这一拍没有实体）";
+                return false;
+            }
+            ComponentFlu flu = entity.FindComponent<ComponentFlu>();
+            ComponentSickness sickness = entity.FindComponent<ComponentSickness>();
+            ComponentOnFire onFire = entity.FindComponent<ComponentOnFire>();
+            float blackout = 0f;
+            float greenout = 0f;
+            try
+            {
+                if (flu != null)
+                    blackout = m_parentField.GetParentField<float>(flu, "m_blackoutFactor",
+                        typeof(ComponentFlu));
+                if (sickness != null)
+                    greenout = m_parentField.GetParentField<float>(sickness, "m_greenoutFactor",
+                        typeof(ComponentSickness));
+            }
+            catch (Exception e)
+            {
+                reason = "effect-factor-unreadable: " + e.GetType().Name + " " + e.Message;
+                return false;
+            }
+            sample = new MirrorViewEffectSample(
+                RuntimeHelpers.GetHashCode(entity),
+                flu != null, blackout, flu != null && flu.IsCoughing,
+                sickness != null, greenout, sickness != null && sickness.IsPuking,
+                onFire != null, onFire != null && onFire.IsOnFire);
+            return true;
+        }
+
+        /// <summary>
+        /// 死亡大消息的**生命周期**（只写 H3 的显示层）：死亡边沿下发**一次**、到期由引擎自己丢弃、
+        /// 复活时显式清除 —— 与引擎单机口径完全一致（实机问题 5）。
+        ///
+        /// 为什么不再续期：旧实现用负延迟每 27~30 秒续期，好让第三屏"一直显示到客户端复活"。
+        /// 实测客户端死亡后长时间不复活时，第三屏 "CAUSE OF DEATH" 会一直挂着（日志里死亡 9 分钟
+        /// 后 `viewDeathTextWrite` 仍在增长），而单机 / 客户端自己的死亡文字 30 秒后自己消失。
+        /// 现在：下发一次 → 引擎在 <c>StartTime + Duration</c> 时丢弃（<c>ComponentGui.cs:385-388</c>）
+        /// → 复活边沿再显式清一次（防止玩家在 30 秒内复活时文字残留）。
+        ///
+        /// 独立 try/catch：异常单独计 <c>viewDeathTextFailures</c>（复活清除失败另计
+        /// <c>viewDeathTextClearFailures</c>），不混进 HUD 写入失败（下一拍重试）。
         /// </summary>
         private void ApplyDeathText(in MirrorViewDeathStep death)
         {
+            bool clearing = death.ClearOverlay;
             try
             {
-                if (death.ClearOverlay)
+                if (clearing)
                 {
                     // 复活：黑屏因子由引擎每拍清 0，这里只清我们下发的大消息。
-                    if (m_showedDeathMessage)
+                    if (m_showedDeathMessage || m_deathTextShown)
                     {
                         m_gui.DisplayLargeMessage(string.Empty, string.Empty, 0f, 0f);
-                        m_showedDeathMessage = false;
+                        m_counters.NoteDeathTextCleared();
                     }
+                    m_showedDeathMessage = false;
                     m_deathTextShown = false;
-                    m_deathTextRefreshAt = 0.0;
-                    m_deathTextSmallText = null;
+                    m_deathTextExpiresAt = 0.0;
                     m_counters.NoteRespawnClear();
                 }
                 if (death.ShowOverlay)
                 {
+                    // 与引擎同款：30 秒 / 1.5 秒延迟；只下发这一次，不再续期。
                     m_gui.DisplayLargeMessage(MirrorViewDeathText.LargeText, death.SmallText,
                         MirrorViewDeathText.DurationSeconds, MirrorViewDeathText.DelaySeconds);
                     m_showedDeathMessage = true;
                     m_deathTextShown = true;
-                    m_deathTextSmallText = death.SmallText;
-                    m_deathTextRefreshAt = MirrorViewDeathText.RefreshAt(CurrentTime(),
+                    m_deathTextExpiresAt = MirrorViewDeathText.ExpiryAt(CurrentTime(),
                         MirrorViewDeathText.DelaySeconds);
                     m_counters.NoteDeathOverlay();
+                    m_counters.NoteDeathTextShown();
                     m_counters.NoteDeathTextWrite();
                     Log("客户端 " + m_clientId + "「" + m_clientName + "」死亡 → 第三分屏 \"" +
                         MirrorViewDeathText.LargeText + "\"（死因：" + (death.Cause ?? "Unknown") +
-                        "）；显示到复活（到期前静默续期）· 死亡大消息控件=" +
+                        "）；与引擎同款 30 秒到期或复活时清除（不再续期）· 死亡大消息控件=" +
                         DescribeDeathMessagePlacement());
                     return;
                 }
-                if (m_deathTextShown && CurrentTime() >= m_deathTextRefreshAt)
+                if (m_deathTextShown && CurrentTime() >= m_deathTextExpiresAt)
                 {
-                    // 续期：同文本 / 同时长，delay 取负 → 引擎的开始时间回拨 1.5 秒，淡入立即完成。
-                    m_gui.DisplayLargeMessage(MirrorViewDeathText.LargeText, m_deathTextSmallText,
-                        MirrorViewDeathText.DurationSeconds,
-                        MirrorViewDeathText.RefreshDelaySeconds);
-                    m_deathTextRefreshAt = MirrorViewDeathText.RefreshAt(CurrentTime(),
-                        MirrorViewDeathText.RefreshDelaySeconds);
-                    m_counters.NoteDeathTextWrite();
+                    // 引擎已经在 StartTime + Duration 之后丢弃消息（ComponentGui.cs:385-388）。
+                    // 这里只做状态收尾：**不再**写控件（续期正是文字永不消失的根因）。
+                    m_deathTextShown = false;
+                    m_showedDeathMessage = false;
+                    m_deathTextExpiresAt = 0.0;
+                    m_counters.NoteDeathTextExpired();
                 }
             }
             catch (Exception e)
             {
                 string reason = "death-text: " + e.GetType().Name + " " + e.Message;
                 m_counters.NoteDeathTextFailures(reason);
+                if (clearing) m_counters.NoteDeathTextClearFailures(reason);
                 m_diagnostics?.Warn(OwnerId,
-                    "第三分屏死亡大消息写入失败（本拍不写，下一拍重试）：" + reason +
+                    (clearing ? "第三分屏复活清除死亡大消息失败" : "第三分屏死亡大消息写入失败") +
+                    "（本拍不写，下一拍重试）：" + reason +
                     " · 死亡大消息控件=" + DescribeDeathMessagePlacement());
             }
         }
@@ -771,6 +1009,21 @@ namespace SuMultiplayer.Engine
             if (m_diagnostics == null) return;
             if (!m_reportedOnce.Add(key)) return;
             m_diagnostics.Warn(OwnerId, message);
+        }
+
+        /// <summary>
+        /// 问题日志的 **10 秒限流**（需求：失败 10 秒限流）。同一问题键 10 秒内只写一行，
+        /// 之后只在计数继续增长时再写下一行 —— 不静默、也不刷屏。
+        /// </summary>
+        private void NoteProblem(string key, string message)
+        {
+            if (m_diagnostics == null || m_clock == null) return;
+            double now = m_clock();
+            if (m_problemLogTime.TryGetValue(key, out double last) &&
+                now - last < LogIntervalSeconds)
+                return;
+            m_problemLogTime[key] = now;
+            m_diagnostics.Warn(OwnerId, "[10s] " + message);
         }
     }
 }

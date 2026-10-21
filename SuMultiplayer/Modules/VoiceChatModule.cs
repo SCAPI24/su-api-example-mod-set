@@ -54,6 +54,10 @@ namespace SuMultiplayer.Modules
         private readonly VoiceMuteTable m_muteTable = new VoiceMuteTable();
         private readonly VoiceCounters m_counters = new VoiceCounters();
         private readonly VoiceActivityDetector m_vad;
+        // 右下角图标的 5 格音量条：采集帧 → dBFS 归一化 → 平滑 0..1 → 0..5 格（纯逻辑，见 Voice/VoiceMicMeter.cs）。
+        private readonly VoiceMicMeter m_micMeter = new VoiceMicMeter();
+        // 10 s 电平窗口：mean / level 的 min·avg·max + 采集帧 vs 电平计帧的对账（诊断标尺用）。
+        private readonly VoiceMicMeterWindow m_micWindow = new VoiceMicMeterWindow();
         private readonly VoicePacketizer m_packetizer = new VoicePacketizer();
         private readonly Dictionary<int, SpeakerStream> m_streams =
             new Dictionary<int, SpeakerStream>();
@@ -200,6 +204,36 @@ namespace SuMultiplayer.Modules
 
         public int MicLevel => m_micLevel;
 
+        /// <summary>
+        /// 当前采集电平 0..1（按 20 ms 帧 attack/release 平滑；麦克风关 / 停采时 0）。
+        /// 数据来源：每帧 <c>VoiceActivityDetector.LastLevel</c>（该帧 mean(|sample|)）→ 纯逻辑
+        /// <see cref="VoiceMicMeter"/>。HUD 的 5 格音量条只读它，不参与任何发送决策。
+        /// </summary>
+        public float MicLevelNormalized => m_micMeter.Level;
+
+        /// <summary>
+        /// 5 格音量条点亮的格数 = round(level × 5)（0 = 静音，5 = 满格）。
+        /// 语音关闭 / 采集没开时为 0：图标在 OFF 状态只显示灰底 + 红斜杠（2026-10-21 产品要求）。
+        /// </summary>
+        public int MicLevelBars => m_voiceOn && m_captureActive ? m_micMeter.Bars : 0;
+
+        /// <summary>电平计本身（帧数 / 拒绝数 / 停滞衰减计数；状态行与 HUD 日志用）。</summary>
+        public VoiceMicMeter MicMeter => m_micMeter;
+
+        /// <summary>10 s 电平窗口（mean / level 的 min·avg·max + 采集帧对账；日志与自检用）。</summary>
+        public VoiceMicMeterWindow MicWindow => m_micWindow;
+
+        /// <summary>
+        /// 累计：采集帧到了但**没有**推进电平计的帧数（闸门跳过 / 对账缺失）。
+        /// 与 voiceCaptureFrames 一起看：它涨而 micMeter.frames 不涨时，这里会给出差多少。
+        /// </summary>
+        public long MeterFramesNotPushed => m_micWindow.FramesNotPushed;
+
+        /// <summary>
+        /// 累计：电平计推进的帧数**多于**采集帧的帧数（正常永远 0；出现即说明有帧绕过了采集回调）。
+        /// </summary>
+        public long MeterPushedWithoutCapture => m_micWindow.PushedWithoutCapture;
+
         public int StreamCount => m_streams.Count;
 
         public IReadOnlyCollection<int> MutedSpeakers => m_mutedSpeakers;
@@ -302,6 +336,8 @@ namespace SuMultiplayer.Modules
         {
             if (!m_attached) return;
             m_nowMs = (long)(tick.Now * 1000.0);
+            // 音量条停滞衰减：采集停了 / 设备挂住时按时间落回 0（新帧到达会重置停滞计时）。
+            m_micMeter.Advance(m_nowMs);
             // 运行期切换档位：编码按 m_options.Quality，计数与主机名册跟着更新，
             // 下一包就带新的 format 字节（接收端逐包解码）。
             if (m_counters.Quality != m_options.Quality) m_counters.SetQuality(m_options.Quality);
@@ -387,7 +423,11 @@ namespace SuMultiplayer.Modules
                 (m_captureReason.Length > 0 ? "(" + m_captureReason + ")" : "") +
                 " talking=" + (m_talking ? "yes" : "no") +
                 " streams=" + m_streams.Count + " muted=" + m_mutedSpeakers.Count +
-                " " + m_counters.Describe() + " · " + m_roster.Describe();
+                " bars=" + MicLevelBars + "/" + VoiceMicMeter.BarCount +
+                " " + m_micMeter.Describe() +
+                " meterFramesNotPushed=" + m_micWindow.FramesNotPushed +
+                " meterPushedWithoutCapture=" + m_micWindow.PushedWithoutCapture + " " +
+                m_counters.Describe() + " · " + m_roster.Describe();
         }
 
         public string Describe() => StatusLine() + " · audio=" + m_audio.Describe();
@@ -511,6 +551,8 @@ namespace SuMultiplayer.Modules
             {
                 if (m_audio.IsCapturing) m_audio.StopCapture();
                 m_captureActive = false;
+                // 没有采集就没有电平：音量条归 0（麦克风关 / 本端语音被会话关闭）。
+                m_micMeter.Reset();
                 if (!m_voiceOn) m_captureStatus = "off";
                 return;
             }
@@ -520,6 +562,7 @@ namespace SuMultiplayer.Modules
             {
                 if (m_audio.IsCapturing) m_audio.StopCapture();
                 m_captureActive = false;
+                m_micMeter.Reset();
                 m_captureStatus = "permission-required";
                 return;
             }
@@ -581,6 +624,8 @@ namespace SuMultiplayer.Modules
             m_captureRingCount = 0;
             m_preRollCount = 0;
             m_vad.Reset();
+            // 采集（重新）启动：音量条从 0 格开始，上一段会话的旧电平不残留。
+            m_micMeter.Reset();
             m_packetizer.Reset();
             m_talking = false;
             m_packetStartPending = false;
@@ -605,6 +650,8 @@ namespace SuMultiplayer.Modules
                 m_captureActive = false;
                 m_captureStatus = "read-failed";
                 m_captureReason = reason;
+                // 读失败 = 没采到任何样本：音量条归 0，不让上一帧的电平贴在图标上。
+                m_micMeter.Reset();
                 m_audio.StopCapture();   // 设备可能已失效：关掉后按 5 s 重试重开
                 m_nextCaptureAttemptMs = m_nowMs + 5000;
                 LogProblem("capture-read", "语音采集读取失败：" + reason + " → 5 s 后重开");
@@ -640,6 +687,21 @@ namespace SuMultiplayer.Modules
             VoiceFrameClass kind = m_vad.Classify(m_frameScratch, 0,
                 VoiceFormat.FrameSamples);
             m_micLevel = m_vad.LastLevel;
+            // 5 格音量条的唯一数据入口：只有 voice=on 且 capture=capturing 才更新电平计。
+            // 权限被永久拒绝（平板 PermanentlyDenied）/ 停采时电平保持 0，Push 一次都不调，
+            // micMeter 的 frames / rejected / staleDecays 也保持不变（不伪造电平）。
+            // 若真的出现"有采集帧但闸门不允许"，显式记到窗口的 skipped，由 10 s 对账报出来。
+            if (m_voiceOn && m_captureActive)
+            {
+                long framesBefore = m_micMeter.Frames;
+                m_micMeter.Push(m_micLevel, m_nowMs);
+                if (m_micMeter.Frames > framesBefore)
+                    m_micWindow.Add(m_micLevel, m_micMeter.Level, m_micMeter.Bars);
+            }
+            else
+            {
+                m_micWindow.NoteSkipped();
+            }
 
             bool gate = !m_options.PushToTalk || IsPttActive;
             if (!gate)
@@ -1580,7 +1642,11 @@ namespace SuMultiplayer.Modules
                 m_counters.NoteSendFailure();
         }
 
-        /// <summary>HUD 标题行（不分配大字符串；每帧一次可以接受）。</summary>
+        /// <summary>
+        /// 状态文字（诊断 / 日志用；不分配大字符串，只在 ON/OFF 切换时调一次）。
+        /// **右上角状态面板的状态行与 SPEAKING 行都已按产品要求删除（2026-10-21）**，
+        /// 这段文字只出现在 `[SuMP][ui] 语音图标状态更新` 日志里，HUD 上只剩图标 + TALK（仅 ptt）。
+        /// </summary>
         public string HudText()
         {
             if (!m_attached) return "VOICE: off";
@@ -1602,6 +1668,10 @@ namespace SuMultiplayer.Modules
                 (m_muteAll ? " · ALL MUTED" : "");
         }
 
+        /// <summary>
+        /// SPEAKING 状态文字（含本机 "You" / 远端名字）：HUD 不再显示这一行（产品要求 2026-10-21），
+        /// 只由 <c>VoiceHud.UpdateSpeakingLog</c> 按 1 s 采样写日志 / speakingChanges 计数。
+        /// </summary>
         public string SpeakingText(long nowMs)
         {
             string text = string.Empty;
@@ -1635,8 +1705,41 @@ namespace SuMultiplayer.Modules
             {
                 m_lastSummaryMs = m_nowMs;
                 Log.Information("[SuMP][voice] " + StatusLine());
+                LogMicWindow();
             }
         }
+
+        /// <summary>
+        /// 10 s 电平窗口日志（与状态行同一节奏，绝不每帧打）：
+        /// 原始采集均值 mean(min/avg/max) + 平滑电平 level(min/avg/max) + 格数(min/max)，
+        /// 外加 dBFS 标尺常量与采集帧 / 电平计帧的对账计数 —— 下次调标尺直接看这一行。
+        /// 本窗口没有任何采集帧时不写（没开麦不刷日志），但照样推进对账基线。
+        /// </summary>
+        private void LogMicWindow()
+        {
+            m_micWindow.Reconcile(m_counters.CaptureFrames, m_micMeter.Frames,
+                m_micMeter.Rejected);
+            bool active = m_micWindow.HasSamples || m_micWindow.LastCaptureDelta != 0 ||
+                m_micWindow.LastMeterDelta != 0 || m_micWindow.LastRejectedDelta != 0 ||
+                m_micWindow.LastSkippedDelta != 0;
+            if (active)
+            {
+                Log.Information("[SuMP][voice] 电平窗口 " + m_micWindow.DescribeWindow() +
+                    " captureDelta=" + m_micWindow.LastCaptureDelta +
+                    " meterDelta=" + m_micWindow.LastMeterDelta +
+                    " rejectedDelta=" + m_micWindow.LastRejectedDelta +
+                    " gateSkipped=" + m_micWindow.LastSkippedDelta +
+                    " meterFramesNotPushed=" + m_micWindow.FramesNotPushed +
+                    " meterPushedWithoutCapture=" + m_micWindow.PushedWithoutCapture +
+                    " floorDbfs=" + DbfsLabel(VoiceMicMeter.FloorDbfs) +
+                    " fullDbfs=" + DbfsLabel(VoiceMicMeter.FullDbfs));
+            }
+            m_micWindow.ResetWindow();
+        }
+
+        /// <summary>dBFS 常量写进日志时固定用不变文化（不受机器区域的小数点影响）。</summary>
+        private static string DbfsLabel(double value) =>
+            value.ToString("0.#", CultureInfo.InvariantCulture);
 
         private void StopPipeline()
         {
@@ -1649,6 +1752,8 @@ namespace SuMultiplayer.Modules
             m_packetStartPending = false;
             m_packetizer.Reset();
             m_vad.Reset();
+            // 停采 = 没有电平：5 格音量条立刻归 0（不把旧电平留在图标上）。
+            m_micMeter.Reset();
             m_pttLatch = false;
             m_streamKeys.Clear();
             foreach (KeyValuePair<int, SpeakerStream> pair in m_streams)

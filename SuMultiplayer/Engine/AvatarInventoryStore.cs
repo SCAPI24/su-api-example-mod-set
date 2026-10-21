@@ -21,8 +21,9 @@ namespace SuMultiplayer.Engine
     ///           （Equipment 消息落地后 m_playerRecords[recordKey] = CapturePlayerRecord(player); dirty = true）
     ///
     /// 两个刻意的边界（都在报告里写明）：
-    ///   · 只覆盖**同步范围**（前 <see cref="PlayerInventoryMath.MaxSyncSlots"/> 槽）；记录里超出范围的槽位
-    ///     （创造仓库）保持原样，由主机 5 秒周期的角色记录抓取照常更新 —— 不在这里截断记录。
+    ///   · 只覆盖**同步范围**（<see cref="PlayerInventoryMath.SyncSlotsFor"/>）：普通背包（26 槽）
+    ///     全部槽位；创造仓库（1622 槽）仍只覆盖前 <see cref="PlayerInventoryMath.MaxSyncSlots"/> 槽，
+    ///     记录里超出的槽位保持原样，由主机 5 秒周期的角色记录抓取照常更新 —— 不在这里截断记录。
     ///   · 写盘按 1 秒节流：背包每次变化都重写 XML 会造成磁盘抖动；离开 / 5 秒周期仍会落盘，
     ///     所以最坏情况丢的是最近 1 秒内的变化，而不是整份背包。
     /// </summary>
@@ -71,7 +72,14 @@ namespace SuMultiplayer.Engine
                 reason = "身份 " + PlayerIdentity.Describe(recordKey) + " 没有角色记录";
                 return false;
             }
-            int slots = Math.Min(values.Length, PlayerInventoryMath.MaxSyncSlots);
+            // values.Length 就是抓取侧的同步范围（普通 26 / 创造 10），由 SyncSlotsFor 决定
+            // （它保证返回值 ≤ 输入，不需要再套一层 Math.Min）。
+            int slots = PlayerInventoryMath.SyncSlotsFor(values.Length);
+            if (slots <= 0)
+            {
+                reason = "背包数组长度为 " + values.Length + "，同步槽位数为 0（没有可落盘的槽位）";
+                return false;
+            }
             if (record.SlotValues == null || record.SlotCounts == null ||
                 record.SlotValues.Length < slots || record.SlotCounts.Length < slots)
             {
@@ -92,7 +100,9 @@ namespace SuMultiplayer.Engine
             }
             LogOnce("store:" + recordKey,
                 "客户端背包已写进角色记录：身份 " + PlayerIdentity.Describe(recordKey) +
-                " · " + slots + " 槽 · 活跃槽 " + record.ActiveSlotIndex +
+                " · " + slots + " 槽（" + (slots > PlayerInventoryMath.MaxSyncSlots
+                    ? "普通背包全量" : "创造仓库前 " + PlayerInventoryMath.MaxSyncSlots + " 槽") +
+                "）· 活跃槽 " + record.ActiveSlotIndex +
                 "（写盘按 1 秒节流；离开 / 5 秒周期仍会落盘）");
             return true;
         }
@@ -116,7 +126,12 @@ namespace SuMultiplayer.Engine
                 reason = "身份 " + PlayerIdentity.Describe(recordKey) + " 的角色记录里没有背包槽位";
                 return false;
             }
-            slots = Math.Min(slots, PlayerInventoryMath.MaxSyncSlots);
+            // 记录里可能是普通背包 26 槽或创造仓库记录（只有前 10 槽参与同步）：
+            // 按记录自己的类型决定关键帧长度。Source: PlayerRecordCodec.LooksLikeLegacyCreativeInventory
+            int syncSlots = record.InventoryWasCreative
+                ? Math.Min(slots, PlayerInventoryMath.MaxSyncSlots)
+                : PlayerInventoryMath.SyncSlotsFor(slots);
+            slots = syncSlots;
             values = new int[slots];
             counts = new int[slots];
             Array.Copy(record.SlotValues, values, slots);
@@ -125,7 +140,9 @@ namespace SuMultiplayer.Engine
             m_loaded++;
             LogOnce("load:" + recordKey,
                 "读回角色记录里的背包：身份 " + PlayerIdentity.Describe(recordKey) + " · " + slots +
-                " 槽 · 活跃槽 " + activeSlotIndex + "（重连 / 加入关键帧）");
+                " 槽（" + (record.InventoryWasCreative
+                    ? "创造仓库前 " + PlayerInventoryMath.MaxSyncSlots + " 槽" : "普通背包全量") +
+                "）· 活跃槽 " + activeSlotIndex + "（重连 / 加入关键帧）");
             return true;
         }
 

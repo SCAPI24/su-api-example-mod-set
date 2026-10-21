@@ -233,6 +233,16 @@ namespace SuMultiplayer.Modules
             new List<PlayerVitalEventSnapshot>(MaxEventsPerMessage);
         private readonly Dictionary<int, uint> m_senderSequences = new Dictionary<int, uint>();
         private readonly Dictionary<int, uint> m_senderEventSequences = new Dictionary<int, uint>();
+        // 表现事件（PLAYER_EFFECT_EVENTS = 109）：主机每帧轮询产生的待发事件 + 发送批。
+        private readonly List<PlayerEffectEventSnapshot> m_effectPoll =
+            new List<PlayerEffectEventSnapshot>(PlayerVitalsLimits.MaxEffectEntries);
+        private readonly List<PlayerEffectEventSnapshot> m_pendingEffects =
+            new List<PlayerEffectEventSnapshot>(PlayerVitalsLimits.MaxEffectEntries);
+        private readonly List<PlayerEffectEventSnapshot> m_effectBatch =
+            new List<PlayerEffectEventSnapshot>(PlayerVitalsLimits.MaxEffectEntries);
+        private readonly Dictionary<int, uint> m_senderEffectSequences =
+            new Dictionary<int, uint>();
+        private uint m_effectSequence;
         private readonly Dictionary<string, long> m_lastProblemMs =
             new Dictionary<string, long>(StringComparer.Ordinal);
         private readonly HashSet<string> m_reportedOnce = new HashSet<string>(StringComparer.Ordinal);
@@ -259,6 +269,26 @@ namespace SuMultiplayer.Modules
         private long m_pollFailures;
         private long m_encodeFailures;
         private long m_eventSendFailures;
+        // 表现事件（109）：主机产出 / 下发 / 失败；客户端收到 / 播放 / 拒绝。
+        private long m_fluEffectCaptured;
+        private long m_fluEffectSent;
+        private long m_fluEffectSendFailures;
+        private long m_fluEffectEncodeFailures;
+        private long m_fluEffectDropped;
+        private long m_fluEffectOverflow;
+        private long m_fluEffectNoRecipients;
+        private long m_effectPollFailures;
+        private long m_fluEffectRecv;
+        private long m_fluEffectPresented;
+        private long m_fluEffectRejected;
+        private long m_fluEffectDuplicate;
+        private long m_fluEffectStale;
+        private long m_fluEffectNoAvatar;
+        private long m_fluEffectNonOwner;
+        private long m_fluEffectMalformed;
+        private long m_fluEffectWrongDirection;
+        private readonly Dictionary<string, long> m_fluEffectRejectReasons =
+            new Dictionary<string, long>(StringComparer.Ordinal);
         private long m_hostRespawnFailures;
         private long m_noRecipients;
         // 客户端
@@ -319,6 +349,25 @@ namespace SuMultiplayer.Modules
         private long m_respawnEventBeforeResult;
         /// <summary>请求超时但主机 Respawn 事件已到达 → 按事件推进执行的次数。</summary>
         private long m_respawnExecutedWithoutResult;
+        // 复活窗口（respawnInProgress）：RemoveEntity 之后 → 第一份主机权威存活快照之前。
+        /// <summary>本机玩家键 → 复活窗口（Death 事件 / RemoveEntity / 第一份存活快照的门控）。</summary>
+        private readonly Dictionary<PlayerKey, PlayerRespawnWindow> m_respawnWindows =
+            new Dictionary<PlayerKey, PlayerRespawnWindow>();
+        /// <summary>进入复活窗口的次数（= 主机批准后成功执行 RemoveEntity 的次数）。</summary>
+        private long m_respawnWindowOpened;
+        /// <summary>窗口内被拒绝的 Dead 快照 / Death 事件数（绝不写进引擎）。</summary>
+        private long m_respawnWindowDeadSuppressed;
+        /// <summary>窗口被主机权威存活快照关闭的次数（清理死亡表现成功的次数）。</summary>
+        private long m_respawnWindowClosed;
+        /// <summary>复活之后到达的旧死亡包（rev ≤ 复活 epoch）被丢弃的条数（窗口内外都算）。</summary>
+        private long m_respawnWindowStaleDrops;
+        /// <summary>关闭窗口时清理死亡表现失败的次数（端口返回 Rejected：窗口保持，下一拍重试）。</summary>
+        private long m_respawnWindowCleanupFailures;
+        /// <summary>
+        /// 窗口内收到**比复活裁决更新**的死亡（rev &gt; respawn rev）= 复活后真正的新死亡：
+        /// 窗口结束并按真实死亡应用（旧死亡 rev ≤ 复活裁决仍全部拒绝，绝不把真实死亡永久挡住）。
+        /// </summary>
+        private long m_respawnWindowNewDeath;
         // 死亡屏 / 复活请求（主机）
         private long m_respawnReqRecv;
         private long m_respawnReqAccepted;
@@ -451,8 +500,10 @@ namespace SuMultiplayer.Modules
             m_transport.ClientLeft += OnClientLeft;
             m_messages.Registry.RegisterModule(this);
             m_attached = true;
-            Info("玩家生命 / 体征同步就绪：主机模拟全部角色并 5 Hz 变化 / 1 Hz 心跳下发（死亡与复活立刻），" +
-                "客户端只应用、本机生命 / 体征 / 睡眠 / 病程 / 火焰模拟被摘掉；客户端不再上报");
+            Info("玩家生命 / 体征同步就绪：主机模拟全部角色并 5 Hz 变化 / 1 Hz 心跳下发（冻结进度 / 阶段随 95，" +
+                "死亡与复活立刻），客户端只应用、本机生命 / 体征 / 睡眠 / 病程 / 火焰模拟被摘掉；" +
+                "主机每帧轮询客户端化身的咳嗽 / 呕吐 / 着火表现并按 109 广播，客户端不再上报；" +
+                "复活：主机批准 PLAYER_RESPAWN_REQUEST 后立即 TryRespawnAvatar，回执 + Respawn 事件 + 权威状态");
         }
 
         public void Register(MessageRegistry registry)
@@ -463,6 +514,8 @@ namespace SuMultiplayer.Modules
                 new DelegateMessageHandler<V.PlayerVitalsReport>(OnReportMessage), ModuleId);
             registry.Register((int)MessageType.PlayerVitalsEvents, V.PlayerVitalsEvents.Parser,
                 new DelegateMessageHandler<V.PlayerVitalsEvents>(OnEventsMessage), ModuleId);
+            registry.Register((int)MessageType.PlayerEffectEvents, V.PlayerEffectEvents.Parser,
+                new DelegateMessageHandler<V.PlayerEffectEvents>(OnEffectEventsMessage), ModuleId);
             registry.Register((int)MessageType.PlayerRespawnRequest, R.PlayerRespawnRequest.Parser,
                 new DelegateMessageHandler<R.PlayerRespawnRequest>(OnRespawnRequestMessage), ModuleId);
             registry.Register((int)MessageType.PlayerRespawnResult, R.PlayerRespawnResult.Parser,
@@ -495,6 +548,10 @@ namespace SuMultiplayer.Modules
             m_hostCharacters.Clear();
             m_clientCharacters.Clear();
             m_pendingEvents.Clear();
+            m_effectPoll.Clear();
+            m_pendingEffects.Clear();
+            m_effectBatch.Clear();
+            m_senderEffectSequences.Clear();
             ResetLocalRespawns("模块下线");
             m_respawnGate.Clear();
             m_terminalDeathHandled.Clear();
@@ -540,7 +597,7 @@ namespace SuMultiplayer.Modules
             if (!inWorld)
             {
                 m_worldReady = false;
-                // 离开世界：复活进度画面不能留在屏幕上（它的 GuiWidget 已经不在了）。
+                // 离开世界：死亡 / 复活状态不能留在内存里（它的 GuiWidget 已经不在了）。
                 ResetLocalRespawns("离开世界");
             }
 
@@ -570,11 +627,17 @@ namespace SuMultiplayer.Modules
                         "clientId（加入事件早于模块装配）→ 生命 / 体征本轮不下发（不猜目标）");
                 }
                 m_pendingEvents.Clear();
+                if (m_pendingEffects.Count > 0)
+                {
+                    m_fluEffectNoRecipients += m_pendingEffects.Count;
+                    m_pendingEffects.Clear();
+                }
                 return;
             }
 
             TickHostEdges(nowMs);
             FlushPendingEvents();
+            TickHostEffects();
             TickHostReport(nowMs);
         }
 
@@ -594,7 +657,7 @@ namespace SuMultiplayer.Modules
             // 体征 HUD 必须**每帧**刷新：ComponentVitalStats.Update 已被摘掉，
             // 而 ComponentScreenOverlays.Update 每帧把 IceFactor 清 0（温度条贴图内部去重）。
             // 这里只写显示属性，不写组件字段、不跑模拟。
-            int hudRefreshed = m_port.RefreshLocalPresentation(out string hudReason);
+            int hudRefreshed = m_port.RefreshLocalPresentation(deltaTime, out string hudReason);
             m_hudRefreshes += hudRefreshed;
             if (!string.IsNullOrEmpty(hudReason))
             {
@@ -711,6 +774,120 @@ namespace SuMultiplayer.Modules
             m_forceSend = true;
             Info("主机角色 " + sample.Key + " 复活（rev=" + state.Revision + " · 落点 " +
                 sample.Position + "）→ 立刻发复活事件");
+        }
+
+        /// <summary>
+        /// 主机侧每帧：轮询**主机模拟的客户端化身**的表现上升沿（咳嗽 / 喷嚏 / 恶心 / 呕吐 /
+        /// 着火 / 熄灭），排队后立刻广播（PLAYER_EFFECT_EVENTS = 109）。
+        ///
+        /// 为什么不用 5 Hz 的体征抓取：喷嚏的计时只有 1 秒、咳嗽动作 4 秒，5 Hz 抓取可能整段
+        /// 错过；每帧读几个私有计时字段是廉价且确定的。扣血仍由 95 上报下发，本消息只描述表现。
+        /// </summary>
+        private void TickHostEffects()
+        {
+            if (m_port == null) return;
+            m_effectPoll.Clear();
+            int captured = m_port.PollAuthorityEffects(m_effectPoll, out string reason);
+            if (!string.IsNullOrEmpty(reason))
+            {
+                m_effectPollFailures++;
+                Problem("effect-poll", "主机表现事件轮询失败：" + reason +
+                    "（本拍没有新的表现事件；扣血仍由体征上报下发）");
+            }
+            if (captured > 0 && m_effectPoll.Count > 0)
+            {
+                m_fluEffectCaptured += m_effectPoll.Count;
+                m_pendingEffects.AddRange(m_effectPoll);
+            }
+            int cap = PlayerVitalsLimits.MaxEffectEntries * 4;
+            if (m_pendingEffects.Count > cap)
+            {
+                int drop = m_pendingEffects.Count - cap;
+                m_pendingEffects.RemoveRange(0, drop);
+                m_fluEffectOverflow += drop;
+                Problem("effect-overflow", "表现事件积压 " + m_pendingEffects.Count +
+                    " 条超过上限 " + cap + " → 丢弃最旧 " + drop +
+                    " 条（客户端本来也会按 TTL 丢弃过期事件）");
+            }
+            if (m_clients.Count == 0)
+            {
+                if (m_pendingEffects.Count > 0)
+                {
+                    m_fluEffectNoRecipients += m_pendingEffects.Count;
+                    m_pendingEffects.Clear();
+                }
+                return;
+            }
+            FlushPendingEffects();
+        }
+
+        /// <summary>
+        /// 把待发表情事件广播给每个在线玩家端（单条 ≤ <see cref="PlayerVitalsLimits.MaxEffectEntries"/>
+        /// 条）。发送失败**保留**待发事件下一帧重试（客户端按每键 sequence 去重，重复不会重播）。
+        /// </summary>
+        private void FlushPendingEffects()
+        {
+            if (m_pendingEffects.Count == 0) return;
+            int index = 0;
+            int deliveredClients = 0;
+            int failedClients = 0;
+            int deliveredEvents = 0;
+            while (index < m_pendingEffects.Count)
+            {
+                int take = Math.Min(PlayerVitalsLimits.MaxEffectEntries,
+                    m_pendingEffects.Count - index);
+                m_effectBatch.Clear();
+                for (int i = 0; i < take; i++) m_effectBatch.Add(m_pendingEffects[index + i]);
+                m_effectSequence = NextRevision(m_effectSequence);
+                byte[] payload = PlayerVitalsCodec.EncodeEffects(m_effectSequence, m_effectBatch,
+                    out int dropped, out string error);
+                if (payload == null)
+                {
+                    m_fluEffectEncodeFailures++;
+                    Problem("encode-effects", "表现事件编码失败（" + (error ?? "未知") +
+                        "）→ 本批丢弃，计数 " + m_fluEffectEncodeFailures);
+                    break;
+                }
+                if (dropped > 0)
+                {
+                    m_fluEffectDropped += dropped;
+                    Problem("effects-overflow", "表现事件超过单条上限 " +
+                        PlayerVitalsLimits.MaxEffectEntries + " → 丢弃 " + dropped +
+                        " 条（不静默截断）");
+                }
+                CollectClients();
+                int batchDelivered = 0;
+                for (int c = 0; c < m_clientList.Count; c++)
+                {
+                    int clientId = m_clientList[c];
+                    if (!m_transport.TrySendTo(clientId, MessageType.PlayerEffectEvents, payload))
+                    {
+                        failedClients++;
+                        m_fluEffectSendFailures++;
+                        continue;
+                    }
+                    deliveredClients++;
+                    batchDelivered++;
+                }
+                if (batchDelivered > 0) deliveredEvents += take;
+                index += take;
+            }
+            if (failedClients > 0)
+            {
+                Problem("effects-send", "表现事件有 " + failedClients +
+                    " 个玩家端发送失败 → 保留并下一帧重试（客户端按每键 sequence 去重）");
+                return;
+            }
+            if (deliveredEvents > 0)
+            {
+                m_fluEffectSent += deliveredEvents;
+                m_pendingEffects.Clear();
+            }
+            else
+            {
+                m_fluEffectNoRecipients += m_pendingEffects.Count;
+                m_pendingEffects.Clear();
+            }
         }
 
         private void FlushPendingEvents()
@@ -940,15 +1117,27 @@ namespace SuMultiplayer.Modules
                     continue;
                 }
                 ClientKeyState state = GetOrCreateClientCharacter(snapshot.Key);
+                bool local = IsLocalKey(snapshot.Key);
+                // 先把本机模拟摘掉（幂等）：即使这一条是被复活窗口拒绝的死亡状态，新实体也已经
+                // 出生，不能让它的生命 / 体征在本端继续模拟。
+                if (local) EnsureLocalSimulationDisabled();
+                // 复活窗口（respawnInProgress）：mod 已执行 RemoveEntity，新实体还没有拿到第一份
+                // 主机权威存活快照。窗口内任何 Dead 状态都可能是复活之前那次死亡的迟到包
+                // （实机：Death rev=3513 与 Respawn rev=3514 交错），一律拒绝，绝不再挂死亡屏。
+                if (local && snapshot.Dead &&
+                    TrySuppressRespawnWindowDeath(snapshot.Key, snapshot.Revision,
+                        "权威死亡状态", snapshot.CauseOfDeath, isEvent: false))
+                    continue;
                 if (state.LastRevision > 0 && snapshot.Revision < state.LastRevision)
                 {
                     m_vitalsStale++;
+                    if (local && snapshot.Dead && LocalEpoch(snapshot.Key) != 0)
+                        m_respawnWindowStaleDrops++;
                     Problem("stale-entry:" + snapshot.Key,
                         "丢弃玩家键 " + snapshot.Key + " 的陈旧状态（revision=" +
                         snapshot.Revision + " < 已应用 " + state.LastRevision + "）");
                     continue;
                 }
-                bool local = IsLocalKey(snapshot.Key);
                 if (local && m_sleepPort != null)
                 {
                     // 心跳（同 revision）也携带新的 sleep_elapsed：先校准客户端外推起点，
@@ -964,23 +1153,31 @@ namespace SuMultiplayer.Modules
                 if (state.LastRevision > 0 && snapshot.Revision == state.LastRevision)
                 {
                     m_vitalsUnchanged++;
+                    if (local && snapshot.Dead && LocalEpoch(snapshot.Key) != 0)
+                        m_respawnWindowStaleDrops++;
                     continue;
                 }
                 // 死亡 epoch：复活之前产生的 Dead 快照不许写进新实体。
                 // 引擎 PlayerData.Playing 只看 Health <= 0，写进去就会让刚出生的角色立刻再判一次死
                 // （见 PlayerRespawnEpoch 的注释）。这里丢弃 + 计数 + 限流日志，不猜。
+                // epoch 统一为"主机复活 revision"（PlayerRespawnEpoch.ForRespawn），与端口 / 日志同源。
                 if (local && snapshot.Dead &&
                     PlayerRespawnEpoch.IsStaleDead(LocalEpoch(snapshot.Key), snapshot.Revision))
                 {
                     m_respawnStaleDeadDropped++;
+                    m_respawnWindowStaleDrops++;
                     Problem("respawn-stale-dead:" + snapshot.Key,
                         "丢弃玩家键 " + snapshot.Key + " 的陈旧死亡状态（revision=" +
-                        snapshot.Revision + " <= 死亡 epoch " + LocalEpoch(snapshot.Key) +
+                        snapshot.Revision + " <= 复活 epoch " + LocalEpoch(snapshot.Key) +
                         "）：它是复活之前的状态，写进新实体会被引擎再判一次死（已丢弃 " +
                         m_respawnStaleDeadDropped + " 条）");
                     continue;
                 }
-                if (local) EnsureLocalSimulationDisabled();
+                // 关闭窗口的判定必须在**应用之前**取：应用后窗口状态 / 快照都会被覆盖。
+                PlayerRespawnWindow window = null;
+                bool closingWindow = local && !snapshot.Dead &&
+                    TryGetActiveRespawnWindow(snapshot.Key, out window) &&
+                    window.CanCloseOnAlive(snapshot.Revision, snapshot.Health);
                 string reason;
                 PlayerVitalsApplyStatus status = local
                     ? m_port.ApplyLocalVitals(snapshot.Key, in snapshot, out reason)
@@ -999,6 +1196,15 @@ namespace SuMultiplayer.Modules
                     m_applyFailures++;
                     Problem("apply-rejected:" + snapshot.Key, "应用玩家键 " + snapshot.Key +
                         " 的生命 / 体征被拒绝：" + (reason ?? "端口没有给原因"));
+                    if (closingWindow)
+                    {
+                        m_respawnWindowCleanupFailures++;
+                        Problem("respawn-window-cleanup:" + snapshot.Key,
+                            "复活窗口关闭失败：清理死亡表现被端口拒绝（玩家键 " + snapshot.Key +
+                            " rev=" + snapshot.Revision + "）：" + (reason ?? "端口没有给原因") +
+                            " → 保持窗口并下一拍重试（累计 " + m_respawnWindowCleanupFailures +
+                            " 次；挡门框 / 死亡屏可能仍在）");
+                    }
                     continue;
                 }
                 bool wasSleeping = state.HasApplied && state.LastApplied.Sleeping;
@@ -1006,6 +1212,7 @@ namespace SuMultiplayer.Modules
                 state.LastApplied = snapshot;
                 state.LastRevision = snapshot.Revision;
                 m_clientVitalsApplied++;
+                if (closingWindow) CloseRespawnWindow(snapshot.Key, window, snapshot.Revision);
                 if (local)
                 {
                     if (snapshot.Sleeping)
@@ -1105,28 +1312,37 @@ namespace SuMultiplayer.Modules
                     continue;
                 }
                 ClientKeyState state = GetOrCreateClientCharacter(evt.Key);
+                bool local = IsLocalKey(evt.Key);
+                if (local) EnsureLocalSimulationDisabled();
+                // 复活窗口（respawnInProgress）：窗口内任何 Death 事件都可能是复活之前那次死亡的
+                // 迟到包，一律拒绝（不 ArmLocalDeath、不挂挡门框 / 死亡屏）。
+                if (local && evt.IsDeath &&
+                    TrySuppressRespawnWindowDeath(evt.Key, evt.Revision, "Death 事件",
+                        evt.CauseOfDeath, isEvent: true))
+                    continue;
                 if (state.LastEventRevision > 0 && evt.Revision <= state.LastEventRevision)
                 {
                     if (evt.Revision < state.LastEventRevision) m_vitalsStale++;
                     else m_vitalsUnchanged++;
+                    if (local && evt.IsDeath && LocalEpoch(evt.Key) != 0)
+                        m_respawnWindowStaleDrops++;
                     continue;
                 }
-                bool local = IsLocalKey(evt.Key);
                 // 死亡 epoch：复活之前产生的 Death 事件不能再把新实体推进 PlayerDead。
-                // （主机每次裁决复活都会推进 epoch，所以复活后的真正新死亡 revision 一定大于它）。
+                // （epoch = 主机复活裁决 revision；复活后的真正新死亡 revision 一定大于它）。
                 if (local && evt.IsDeath &&
                     PlayerRespawnEpoch.IsStaleDead(LocalEpoch(evt.Key), evt.Revision))
                 {
                     m_respawnStaleDeathDropped++;
+                    m_respawnWindowStaleDrops++;
                     state.LastEventRevision = evt.Revision;
                     Problem("respawn-stale-death:" + evt.Key,
                         "丢弃玩家键 " + evt.Key + " 的陈旧 Death 事件（rev=" + evt.Revision +
-                        " <= 死亡 epoch " + LocalEpoch(evt.Key) +
+                        " <= 复活 epoch " + LocalEpoch(evt.Key) +
                         "）：它属于复活之前的那次死亡（已丢弃 " +
                         m_respawnStaleDeathDropped + " 条）");
                     continue;
                 }
-                if (local) EnsureLocalSimulationDisabled();
                 // 本机角色的复活事件：不写旧实体（它已经 / 正在被删），
                 // 只记落点 + 推进 death epoch；真正的落点 / 数值重放在新实体出生后做
                 // （TickLocalRespawnReplay → TryReplayLocalRespawn）。
@@ -1182,6 +1398,106 @@ namespace SuMultiplayer.Modules
             }
         }
 
+        // ---------------------------------------------------------------- 表现事件（109）
+
+        /// <summary>
+        /// 客户端收到主机广播的表现事件：校验方向 / 消息序号 / 每条值的合法性 → 只对**自己的**
+        /// 玩家键播放（observer 的键只计数 <c>fluEffectNonOwner</c>，本次修复范围是客户端自己的
+        /// 化身）→ 交给端口播放（音效 / 粒子 / 覆盖层）。去重 / 过期判定在端口里做，模块只计数。
+        /// </summary>
+        private void OnEffectEventsMessage(MessageContext context, V.PlayerEffectEvents message)
+        {
+            if (!m_attached) return;
+            if (m_control != null && m_control.IsHosting)
+            {
+                m_fluEffectWrongDirection++;
+                Problem("client-effects", "主机收到 clientId=" + context.ClientId +
+                    " 的表现事件（客户端不得上报表现）→ 整条拒绝，共 " +
+                    CountEffectEntries(message) + " 条");
+                return;
+            }
+            if (context.ClientId != 0)
+            {
+                m_fluEffectWrongDirection++;
+                Problem("client-effects-sender", "客户端收到来自 clientId=" + context.ClientId +
+                    " 的表现事件（只有主机能下发）→ 整条拒绝，共 " +
+                    CountEffectEntries(message) + " 条");
+                return;
+            }
+            if (!m_worldReady)
+            {
+                m_notReadyDrops++;
+                return;
+            }
+            if (!PlayerVitalsCodec.TryConvertEffects(message, out uint sequence,
+                    out List<PlayerEffectEventSnapshot> entries, out string error))
+            {
+                m_decodeFailures++;
+                m_fluEffectMalformed += CountEffectEntries(message);
+                Problem("malformed-effects", "主机下发的表现事件解码失败：" + error + "（整条丢弃）");
+                return;
+            }
+            int sender = 0;
+            if (m_senderEffectSequences.TryGetValue(sender, out uint lastSequence) &&
+                sequence <= lastSequence)
+            {
+                m_fluEffectStale += entries.Count;
+                Problem("stale-effects", "丢弃主机的陈旧表现事件（sequence=" + sequence +
+                    " ≤ 已处理 " + lastSequence + "，共 " + entries.Count + " 条）");
+                return;
+            }
+            m_senderEffectSequences[sender] = sequence;
+            for (int i = 0; i < entries.Count; i++)
+            {
+                PlayerEffectEventSnapshot evt = entries[i];
+                m_fluEffectRecv++;
+                if (!evt.TryValidate(out string itemError))
+                {
+                    m_fluEffectMalformed++;
+                    Problem("malformed-effect:" + evt.Key, "主机下发的第 " + (i + 1) +
+                        " 条表现事件非法：" + itemError + " → 丢弃该条");
+                    continue;
+                }
+                if (!IsLocalKey(evt.Key))
+                {
+                    // 其它玩家端化身的同类表现不在本次范围（要发声也得有一套 observer 表现，
+                    // 不能半实现）：显式计数，不静默播放到错误的目标身上。
+                    m_fluEffectNonOwner++;
+                    continue;
+                }
+                PlayerEffectApplyStatus status = m_port.ApplyEffect(in evt, out string reason);
+                switch (status)
+                {
+                    case PlayerEffectApplyStatus.Applied:
+                        m_fluEffectPresented++;
+                        break;
+                    case PlayerEffectApplyStatus.Duplicate:
+                        m_fluEffectDuplicate++;
+                        break;
+                    case PlayerEffectApplyStatus.Stale:
+                        m_fluEffectStale++;
+                        Problem("effect-stale:" + evt.Key, "丢弃过期的表现事件（" +
+                            evt.Describe() + "）：" + (reason ?? "端口没有给原因"));
+                        break;
+                    case PlayerEffectApplyStatus.NoAvatar:
+                        m_fluEffectNoAvatar++;
+                        Problem("effect-no-avatar:" + evt.Key, "收到玩家键 " + evt.Key +
+                            " 的表现事件，但本机没有它的本机角色（" +
+                            (reason ?? "端口没有给原因") + "）→ 丢弃（不猜目标）");
+                        break;
+                    default:
+                        m_fluEffectRejected++;
+                        Bump(m_fluEffectRejectReasons, reason);
+                        Problem("effect-rejected:" + evt.Key, "播放玩家键 " + evt.Key +
+                            " 的表现事件失败：" + (reason ?? "端口没有给原因"));
+                        break;
+                }
+            }
+        }
+
+        private static int CountEffectEntries(V.PlayerEffectEvents message) =>
+            message?.Entries?.Count ?? 0;
+
         // ---------------------------------------------------------------- 客户端：死亡屏 / 复活请求
 
         /// <summary>
@@ -1201,9 +1517,29 @@ namespace SuMultiplayer.Modules
                 Problem("respawn-mode:" + key, "读不到世界复活模式（" + (modeReason ?? "端口没有给原因") +
                     "）→ 死亡不提供请求路径（不猜模式）");
             }
+            if (!m_respawnGate.OnDeath(key, revision, mode, nowMs, isEventEdge)) return;
+            // **新的死亡期**：上一轮复活可能还没走完（真实新死亡提前到来）。必须作废旧状态，
+            // 否则 ExecuteLocalRespawn 会因 Executed=true 直接返回、窗口会带着上一轮的
+            // RespawnRevision（把本次死亡的迟到包误判成"复活后新死亡"而放行）。
+            if (m_localRespawns.TryGetValue(key, out LocalRespawnState previous) &&
+                (previous.Executed || previous.AcceptedAtMs != 0 || previous.ReplayApplied))
+            {
+                m_localRespawns.Remove(key);
+                m_respawnWindows.Remove(key);
+                Info("玩家键 " + key + " 的新死亡作废上一轮未完成的复活状态（Executed=" +
+                    previous.Executed + "，AcceptedAt=" + previous.AcceptedAtMs +
+                    "，ReplayApplied=" + previous.ReplayApplied + "）→ 本次死亡重新走请求 / 批准");
+            }
             LocalRespawnState local = GetOrCreateLocalRespawn(key);
             local.DeathRevision = PlayerRespawnEpoch.Advance(local.DeathRevision, revision);
-            if (!m_respawnGate.OnDeath(key, revision, mode, nowMs, isEventEdge)) return;
+            local.RespawnRevision = 0;
+            local.HasPosition = false;
+            local.Position = Vector3.Zero;
+            local.AcceptedAtMs = 0;
+            local.Executed = false;
+            local.ReplayApplied = false;
+            local.WaitingSinceMs = 0;
+            local.WaitFrames = 0;
             m_terminalDeathHandled.Remove(key);
             m_deathScreensShown++;
             Info("本机角色 " + key + " 死亡（rev=" + revision + "，模式=" +
@@ -1226,6 +1562,84 @@ namespace SuMultiplayer.Modules
         /// <summary>本槽位的死亡 epoch（0 = 还没复活过）。</summary>
         private uint LocalEpoch(PlayerKey key) =>
             m_localRespawnEpoch.TryGetValue(key, out uint epoch) ? epoch : 0u;
+
+        private PlayerRespawnWindow GetOrCreateRespawnWindow(PlayerKey key)
+        {
+            if (!m_respawnWindows.TryGetValue(key, out PlayerRespawnWindow window))
+            {
+                window = new PlayerRespawnWindow();
+                m_respawnWindows[key] = window;
+            }
+            return window;
+        }
+
+        private bool TryGetActiveRespawnWindow(PlayerKey key,
+            out PlayerRespawnWindow window)
+        {
+            if (m_respawnWindows.TryGetValue(key, out window) && window.Active) return true;
+            window = null;
+            return false;
+        }
+
+        /// <summary>
+        /// 复活窗口内收到死亡状态 / Death 事件：**默认拒绝**（返回 true = 已丢弃，调用方 continue）。
+        /// 计数 <c>respawnWindowDeadSuppressed</c>；rev ≤ epoch 的迟到旧包另计
+        /// <c>respawnWindowStaleDrops</c>，并与 <c>respawnStaleDead/StaleDeath</c> 同源计数
+        /// （保持既有状态行语义）。唯一的出口是"比复活裁决更新"的真实新死亡
+        /// （<see cref="PlayerRespawnWindow.IsDeathAfterRespawn"/>）：结束窗口并**按真实死亡应用**。
+        ///
+        /// 为什么真实新死亡必须放行：如果连 rev &gt; respawn 的死亡也一直拒绝，玩家复活后立刻
+        /// 再次死亡时客户端会永远停在"活着"的画面，主机却已经判死（真实边界，非兜底）。
+        /// 旧死亡（rev ≤ 复活裁决 rev）仍然一条都进不来。
+        /// </summary>
+        private bool TrySuppressRespawnWindowDeath(PlayerKey key, uint revision, string kind,
+            string cause, bool isEvent)
+        {
+            if (!TryGetActiveRespawnWindow(key, out PlayerRespawnWindow window)) return false;
+            if (window.IsDeathAfterRespawn(revision))
+            {
+                m_respawnWindowNewDeath++;
+                window.Close();
+                m_respawnWindows.Remove(key);
+                Problem("respawn-window-new-death:" + key,
+                    "复活窗口内收到**比复活裁决更新**的" + kind + "（玩家键 " + key + " rev=" +
+                    revision + " > respawn=" + window.RespawnRevision + "，死因=" +
+                    (string.IsNullOrEmpty(cause) ? "未记录" : cause) +
+                    "）= 复活后真正的新死亡 → 结束窗口并按真实新死亡应用（旧死亡 rev ≤ respawn " +
+                    "仍然一条都进不来；累计 " + m_respawnWindowNewDeath + " 次）");
+                return false;
+            }
+            m_respawnWindowDeadSuppressed++;
+            bool stale = window.IsStale(revision);
+            if (stale)
+            {
+                m_respawnWindowStaleDrops++;
+                if (isEvent) m_respawnStaleDeathDropped++;
+                else m_respawnStaleDeadDropped++;
+            }
+            Problem("respawn-window-dead:" + key,
+                "复活窗口拒绝" + kind + "（玩家键 " + key + " rev=" + revision +
+                (string.IsNullOrEmpty(cause) ? string.Empty : "，死因=" + cause) + "）：" +
+                window.Describe() +
+                (stale
+                    ? "；rev ≤ 复活 epoch（复活之前的旧死亡）"
+                    : "；复活裁决未到 / 无法证明比裁决新 → 按旧死亡拒绝") +
+                " → 不写引擎、绝不挂挡门框 / 死亡屏（累计拒绝 " +
+                m_respawnWindowDeadSuppressed + " 条）");
+            return true;
+        }
+
+        /// <summary>主机权威存活快照关闭窗口（清理死亡表现已由端口的 ApplyLocalVitals 完成）。</summary>
+        private void CloseRespawnWindow(PlayerKey key, PlayerRespawnWindow window,
+            uint revision)
+        {
+            window.Close();
+            m_respawnWindows.Remove(key);
+            m_respawnWindowClosed++;
+            Info("玩家键 " + key + " 的复活窗口关闭（respawnInProgress 结束）：主机权威存活 rev=" +
+                revision + " > 复活 epoch=" + window.Epoch + "（死亡 rev=" +
+                window.DeathRevision + "）→ 已确认存活，死亡表现由端口清除");
+        }
 
         private LocalRespawnState GetOrCreateLocalRespawn(PlayerKey key)
         {
@@ -1263,6 +1677,19 @@ namespace SuMultiplayer.Modules
             }
             state.Executed = true;
             m_engineRespawnExecuted++;
+            // 复活窗口（respawnInProgress）：从引擎 RemoveEntity 到第一份主机权威存活快照。
+            // 窗口内任何 Dead 状态都可能是复活之前那次死亡的迟到包（实机 rev=3513 vs 复活 3514），
+            // 一律拒绝，绝不再挂挡门框 / 死亡屏；存活快照到达后由端口主动清理死亡表现。
+            PlayerRespawnWindow window = GetOrCreateRespawnWindow(key);
+            window.Open(state.DeathRevision, state.RespawnRevision);
+            m_respawnWindowOpened++;
+            Info("玩家键 " + key + " 进入复活窗口（respawnInProgress）：死亡 rev=" +
+                state.DeathRevision + " / 复活 rev=" +
+                (state.RespawnRevision != 0
+                    ? state.RespawnRevision.ToString()
+                    : "0（复活裁决事件未到，先以死亡 revision 为下界）") +
+                " / epoch=" + window.Epoch +
+                " → 第一份权威存活快照之前拒绝任何死亡状态（旧死亡不得再挂死亡屏）");
             // 本次死亡期结束：不再接受点击（门控条目移除 = 死亡屏输入轮询停止）。
             m_respawnGate.OnRespawn(key);
             m_terminalDeathHandled.Remove(key);
@@ -1278,6 +1705,29 @@ namespace SuMultiplayer.Modules
         /// </summary>
         private void RecordLocalRespawnEvent(in PlayerVitalEventSnapshot evt)
         {
+            // 复活已经执行 / 重放完成后，模块会把待重放状态移除；此时主机**迟到的**复活事件
+            // 只应推进 epoch / 窗口，绝不能再创建一个永不执行的待重放状态
+            //（实机日志里"复活事件比结果先到"就是在这种迟到的情形下被误打印的）。
+            bool pending = m_localRespawns.ContainsKey(evt.Key) ||
+                m_respawnGate.TryGet(evt.Key, out _);
+            if (!pending)
+            {
+                m_localRespawnEpoch[evt.Key] = PlayerRespawnEpoch.Advance(LocalEpoch(evt.Key),
+                    evt.Revision);
+                if (m_respawnWindows.TryGetValue(evt.Key, out PlayerRespawnWindow lateWindow) &&
+                    lateWindow.Active && lateWindow.NoteRespawnRevision(evt.Revision))
+                {
+                    Info("玩家键 " + evt.Key + " 迟到的复活裁决 rev=" + evt.Revision +
+                        " → 窗口 epoch=" + lateWindow.Epoch +
+                        "（复活已执行 / 重放完成，只推进 epoch）");
+                }
+                m_sleepGate.OnWake(evt.Key);
+                m_respawnApplied++;
+                Info("主机复活事件 rev=" + evt.Revision + "（玩家键 " + evt.Key +
+                    "）属于已完成的复活期 → 只推进 epoch，不创建待重放状态" +
+                    "（避免 respawnPending 残留 + 误报『事件比结果先到』）");
+                return;
+            }
             LocalRespawnState state = GetOrCreateLocalRespawn(evt.Key);
             state.RespawnRevision = PlayerRespawnEpoch.Advance(state.RespawnRevision, evt.Revision);
             if (evt.HasPosition)
@@ -1287,6 +1737,13 @@ namespace SuMultiplayer.Modules
             }
             m_localRespawnEpoch[evt.Key] = PlayerRespawnEpoch.Advance(LocalEpoch(evt.Key),
                 state.RespawnRevision);
+            if (m_respawnWindows.TryGetValue(evt.Key, out PlayerRespawnWindow window) &&
+                window.Active && window.NoteRespawnRevision(evt.Revision))
+            {
+                Info("玩家键 " + evt.Key + " 的复活窗口收到主机复活裁决 rev=" + evt.Revision +
+                    " → epoch=" + window.Epoch + "（死亡 rev=" + window.DeathRevision +
+                    "）；窗口内死亡状态继续拒绝，等第一份权威存活快照");
+            }
             m_sleepGate.OnWake(evt.Key);
             if (state.AcceptedAtMs == 0 && !state.Executed)
             {
@@ -1303,8 +1760,10 @@ namespace SuMultiplayer.Modules
         /// 为什么必须重放：引擎 <c>SpawnPlayer</c> 建的是**全新实体** —— 模板血量、空背包、
         /// 空衣服（<c>PlayerData.cs:568-640</c>），落点还会被 <c>FindNoIntroSpawnPosition</c>
         /// 偏移最多 8 格（<c>PlayerData.cs:454-477</c>）。所以：等新实体出生 → 端口用主机权威
-        /// 落点 / 背包 / 衣服 / 模拟闸门 / HUD 覆盖 → 这里再用最近一条主机快照补写五项体征 →
-        /// 清掉死亡期状态。引擎还在 PrepareSpawn / WaitForTerrain 时端口返回 <c>Waiting</c>，
+        /// 落点 / 模拟闸门 / HUD 覆盖 → 这里再用最近一条主机快照补写五项体征 → 清掉死亡期状态。
+        /// 背包 / 手持 / 衣服 / 合成格**不恢复**：引擎死亡分支已把它们掉在死亡地点（单机行为），
+        /// 复活后背包为空，由玩家自己捡回（否则会凭空多一份，见 TryReplayLocalRespawn）。
+        /// 引擎还在 PrepareSpawn / WaitForTerrain 时端口返回 <c>Waiting</c>，
         /// 只计数 + 首次一条日志，不做任何写入。
         /// </summary>
         private void TickLocalRespawnReplay(long nowMs)
@@ -1324,8 +1783,15 @@ namespace SuMultiplayer.Modules
                 }
                 if (state.ReplayApplied) continue;
                 if (m_port == null) continue;
+                // epoch 必须在重放 / ReapplyAuthoritativeVitals **之前**推进成同一个数：
+                // 旧实现把推进放在 Reapply 之后，日志里 Reapply 打的是上一次复活周期的 epoch
+                // （实机：死亡 rev=3513 却打印 "≤ epoch 479"），看起来像 uint 截断 / 另一套变量。
+                uint epoch = PlayerRespawnEpoch.Advance(LocalEpoch(key),
+                    PlayerRespawnEpoch.ForRespawn(state.DeathRevision, state.RespawnRevision));
+                m_localRespawnEpoch[key] = epoch;
                 PlayerRespawnReplayRequest request = new PlayerRespawnReplayRequest(
-                    state.DeathRevision, state.RespawnRevision, state.HasPosition, state.Position);
+                    state.DeathRevision, state.RespawnRevision, state.HasPosition, state.Position,
+                    epoch);
                 PlayerRespawnReplayStatus status = m_port.TryReplayLocalRespawn(key, in request,
                     out string replayReason);
                 if (status == PlayerRespawnReplayStatus.Waiting)
@@ -1363,16 +1829,19 @@ namespace SuMultiplayer.Modules
                 state.ReplayApplied = true;
                 m_respawnReplayApplied++;
                 ReapplyAuthoritativeVitals(key);
-                // 这次死亡周期到此结束：把死亡 epoch 推到本次死亡的 revision，
+                // 这次死亡周期到此结束：epoch 已在重放前推进为"主机复活 revision"
+                //（ForRespawn；复活事件未到时是这次死亡的 revision 下界）。
                 // 此后"复活之前产生"的 Dead 快照 / Death 事件一律丢弃
                 //（否则会把刚出生的角色再写死一次，见 PlayerRespawnEpoch）。
-                m_localRespawnEpoch[key] = PlayerRespawnEpoch.Advance(LocalEpoch(key),
-                    state.DeathRevision);
+                m_localRespawnEpoch[key] = PlayerRespawnEpoch.Advance(LocalEpoch(key), epoch);
                 ClearLocalDeath(key, "复活重放完成");
                 m_localRespawns.Remove(key);
                 Info("玩家键 " + key + " 复活重放完成（落点=" +
                     (state.HasPosition ? state.Position.ToString() : "未提供") + "，等待 " +
-                    state.WaitFrames + " 帧，死亡 epoch=" + LocalEpoch(key) + "）");
+                    state.WaitFrames + " 帧，死亡 rev=" + state.DeathRevision + " / 复活 rev=" +
+                    (state.RespawnRevision != 0
+                        ? state.RespawnRevision.ToString()
+                        : "0（事件未到）") + " / 复活 epoch=" + LocalEpoch(key) + "）");
             }
         }
 
@@ -1390,7 +1859,7 @@ namespace SuMultiplayer.Modules
             if (!m_clientCharacters.TryGetValue(key, out ClientKeyState state) || !state.HasApplied)
             {
                 Info("玩家键 " + key + " 复活重放：还没有可用的主机权威快照 → 等主机下一拍上报" +
-                    "（端口已完成落点 / 背包 / 衣服 / 模拟闸门）");
+                    "（端口已完成落点 / 模拟闸门；背包由引擎死亡掉落，不在重放中恢复）");
                 return;
             }
             PlayerVitalsSnapshot snapshot = state.LastApplied;
@@ -1423,13 +1892,15 @@ namespace SuMultiplayer.Modules
         private void ResetLocalRespawns(string why)
         {
             if (m_localRespawns.Count == 0 && m_localRespawnEpoch.Count == 0 &&
-                m_localRespawnKeys.Count == 0)
+                m_localRespawnKeys.Count == 0 && m_respawnWindows.Count == 0)
                 return;
             Info("清空本机死亡 / 复活状态表（" + why + "）：待重放 " + m_localRespawns.Count +
-                " 项，死亡 epoch " + m_localRespawnEpoch.Count + " 项");
+                " 项，死亡 epoch " + m_localRespawnEpoch.Count + " 项，复活窗口 " +
+                m_respawnWindows.Count + " 项");
             m_localRespawns.Clear();
             m_localRespawnEpoch.Clear();
             m_localRespawnKeys.Clear();
+            m_respawnWindows.Clear();
         }
 
         /// <summary>
@@ -2373,6 +2844,7 @@ namespace SuMultiplayer.Modules
                 "，落点 " + position + "；立刻发 Respawn 事件 + 权威状态");
         }
 
+
         private void RejectRespawnRequest(int clientId, PlayerKey key, long sequence,
             string reasonCode, string detail)
         {
@@ -2584,6 +3056,10 @@ namespace SuMultiplayer.Modules
             m_hostCharacters.Clear();
             m_clientCharacters.Clear();
             m_pendingEvents.Clear();
+            m_pendingEffects.Clear();
+            m_effectBatch.Clear();
+            m_senderEffectSequences.Clear();
+            m_effectSequence = 0;
             ResetLocalRespawns("关闭主持的房间");
             m_respawnGate.Clear();
             m_sleepGate.Clear();
@@ -2724,6 +3200,13 @@ namespace SuMultiplayer.Modules
         {
             if (!m_attached) return;
             m_clients.Remove(clientId);
+            int dropped = m_pendingEffects.RemoveAll(evt => evt.Key.ClientId == clientId);
+            if (dropped > 0)
+            {
+                m_fluEffectNoRecipients += dropped;
+                Problem("effects-client-left", "玩家端 clientId=" + clientId + " 离开 → 丢弃 " +
+                    dropped + " 条发给它的待发表情事件（不再广播给别的端）");
+            }
             DropClientState(clientId);
             Info("玩家端 clientId=" + clientId + " 离开（" + reason +
                 "）：它的角色状态（含死亡标记）已随化身一起从主机权威表里移除" +
@@ -2819,6 +3302,17 @@ namespace SuMultiplayer.Modules
         ///   → respawnReplayApplied / Fail = 新实体出生后权威重放的成功 / 失败次数；
         ///   → respawnReplayWaitFrames     = 等引擎新实体出生的帧数（PrepareSpawn / WaitForTerrain）；
         ///   → respawnStaleDead / StaleDeath = 被死亡 epoch 丢弃的陈旧 Dead 快照 / Death 事件数；
+        ///   → respawnWindowOpened            = 进入复活窗口（respawnInProgress）的次数
+        ///                                      （= 主机批准后成功执行 RemoveEntity）；
+        ///   → respawnWindowDeadSuppressed    = 窗口内被拒绝、绝不写进引擎的 Dead 快照 / Death 事件数；
+        ///   → respawnWindowClosed            = 被主机权威存活快照关闭的窗口数（死亡表现清理成功）；
+        ///   → respawnWindowStaleDrops        = 复活之后到达的旧死亡包（rev ≤ 复活 epoch）数
+        ///                                      （窗口内外都算，与 respawnStale* 同源）；
+        ///   → respawnWindowCleanupFailures   = 关闭窗口时清理死亡表现失败的次数（端口 Rejected；
+        ///                                      窗口保持，下一拍重试，绝不假装清掉）；
+        ///   → respawnWindowNewDeath          = 窗口内收到比复活裁决更新的死亡（真实新死亡）而结束
+        ///                                      窗口的次数（按真实死亡应用；旧死亡仍全部拒绝）；
+        ///   → respawnWindowActive            = 当前仍在 respawnInProgress 的玩家键数；
         ///   → respawnEventBeforeResult    = Respawn 事件先于结果到达的次数（落点照收，执行仍等结果）；
         ///   → respawnExecNoResult         = 结果包丢了但 Respawn 事件已到 → 仍然执行的次数；
         ///   → respawnPending / respawnEpochs = 当前待重放的死亡期数 / 死亡 epoch 表大小；
@@ -2875,6 +3369,13 @@ namespace SuMultiplayer.Modules
                   " respawnReplayWaitFrames=" + m_respawnReplayWaitFrames +
                   " respawnStaleDead=" + m_respawnStaleDeadDropped +
                   " respawnStaleDeath=" + m_respawnStaleDeathDropped +
+                  " respawnWindowOpened=" + m_respawnWindowOpened +
+                  " respawnWindowDeadSuppressed=" + m_respawnWindowDeadSuppressed +
+                  " respawnWindowClosed=" + m_respawnWindowClosed +
+                  " respawnWindowStaleDrops=" + m_respawnWindowStaleDrops +
+                  " respawnWindowCleanupFailures=" + m_respawnWindowCleanupFailures +
+                  " respawnWindowNewDeath=" + m_respawnWindowNewDeath +
+                  " respawnWindowActive=" + m_respawnWindows.Count +
                   " respawnEventBeforeResult=" + m_respawnEventBeforeResult +
                   " respawnExecNoResult=" + m_respawnExecutedWithoutResult +
                   " respawnPending=" + m_localRespawns.Count +
@@ -2891,8 +3392,42 @@ namespace SuMultiplayer.Modules
                   " suppress:" + m_suppressFailures +
                   " result:" + m_respawnResultSendFailures + "}";
             return "玩家生命/体征同步[" + (hosting ? "host" : "client") + "]：" + counters +
-                " " + SleepStatusCounters() +
+                " " + SleepStatusCounters() + " " + FeedbackStatusCounters() +
                 " · " + (m_port != null ? m_port.Describe() : "端口未接");
+        }
+
+        /// <summary>
+        /// 表现事件（109）的 10 秒计数器（主机 / 客户端都输出同一组名字，不适用的那侧为 0）：
+        ///   · 主机：<c>fluEffectCaptured</c>（轮询识别出的上升沿）/ <c>fluEffectSent</c>（成功下发的
+        ///     条数，不按玩家端重复计）/ <c>fluEffectSendFail</c> / <c>fluEffectEncodeFail</c> /
+        ///     <c>fluEffectDropped</c>（单条超限）/ <c>fluEffectOverflow</c>（积压丢弃最旧）/
+        ///     <c>fluEffectNoRecipients</c> / <c>fluEffectPollFail</c>；
+        ///   · 客户端：<c>fluEffectRecv</c>（收到的条数）/ <c>fluEffectPresented</c>（真的播放）/
+        ///     <c>fluEffectRejected</c>(+By 原因) / <c>fluEffectDuplicate</c>（同键旧序号）/
+        ///     <c>fluEffectStale</c>（超过 TTL 或消息序号陈旧）/ <c>fluEffectNoAvatar</c> /
+        ///     <c>fluEffectNonOwner</c>（其它玩家端化身的事件：显式忽略）/
+        ///     <c>fluEffectMalformed</c> / <c>fluEffectWrongDirection</c>。
+        /// </summary>
+        private string FeedbackStatusCounters()
+        {
+            return "fluEffectCaptured=" + m_fluEffectCaptured +
+                " fluEffectSent=" + m_fluEffectSent +
+                " fluEffectSendFail=" + m_fluEffectSendFailures +
+                " fluEffectEncodeFail=" + m_fluEffectEncodeFailures +
+                " fluEffectDropped=" + m_fluEffectDropped +
+                " fluEffectOverflow=" + m_fluEffectOverflow +
+                " fluEffectNoRecipients=" + m_fluEffectNoRecipients +
+                " fluEffectPollFail=" + m_effectPollFailures +
+                " fluEffectRecv=" + m_fluEffectRecv +
+                " fluEffectPresented=" + m_fluEffectPresented +
+                " fluEffectRejected=" + m_fluEffectRejected +
+                " fluEffectRejectedBy=" + FormatReasons(m_fluEffectRejectReasons) +
+                " fluEffectDuplicate=" + m_fluEffectDuplicate +
+                " fluEffectStale=" + m_fluEffectStale +
+                " fluEffectNoAvatar=" + m_fluEffectNoAvatar +
+                " fluEffectNonOwner=" + m_fluEffectNonOwner +
+                " fluEffectMalformed=" + m_fluEffectMalformed +
+                " fluEffectWrongDirection=" + m_fluEffectWrongDirection;
         }
 
         /// <summary>

@@ -1221,6 +1221,28 @@ namespace SuMultiplayer.Terrain
             BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public;
 
         /// <summary>
+        /// 找事件的编译器 backing field：**沿基类链逐层找**。
+        ///
+        /// 根因（2026-10-21 平板帧率问题）：客户端把 `Game.SubsystemMovingBlocks` 替换成
+        /// `SuSubsystemMovingBlocks : SubsystemMovingBlocks`，而 `Stopped` / `CollidedWithTerrain`
+        /// 两个事件声明在**基类**里 —— 它们的 backing field 是基类的私有字段。Type.GetField()
+        /// 在派生类型上不返回基类私有字段，原先只在 `eventOwner.GetType()` 上找 → 每次都失败 →
+        /// 摘除永远不成功、HasHandler 永远 false → EnsureEventHandler 每帧重复订阅，
+        /// 事件委托链无限增长（实测 3.5 小时累计 46 万次失败），越跑越卡。
+        /// </summary>
+        private static FieldInfo FindEventBackingField(Type type, string eventName)
+        {
+            if (type == null || string.IsNullOrEmpty(eventName)) return null;
+            for (Type t = type; t != null; t = t.BaseType)
+            {
+                FieldInfo field = t.GetField(eventName,
+                    EventFieldFlags | BindingFlags.DeclaredOnly);
+                if (field != null) return field;
+            }
+            return null;
+        }
+
+        /// <summary>
         /// 从 <paramref name="eventOwner"/> 的 <paramref name="eventName"/> 事件上摘掉所有
         /// 由 <paramref name="declaringType"/> 声明的方法（委托）。返回后置条件复核结果：
         /// 只有"事件存在且剩余该类委托 = 0"才算成功。
@@ -1234,10 +1256,10 @@ namespace SuMultiplayer.Terrain
                 return Fail(eventName, "eventName 为空");
             if (declaringType == null)
                 return Fail(eventName, "declaringType=null");
-            FieldInfo field = eventOwner.GetType().GetField(eventName, EventFieldFlags);
+            FieldInfo field = FindEventBackingField(eventOwner.GetType(), eventName);
             if (field == null)
                 return Fail(eventName, "事件 backing field 不存在（宿主 " +
-                    eventOwner.GetType().FullName + "）");
+                    eventOwner.GetType().FullName + " 及全部基类）");
             if (field.IsStatic)
                 return Fail(eventName, "事件 backing field 是静态的（拒绝改动）");
             Delegate handlers;
@@ -1296,7 +1318,7 @@ namespace SuMultiplayer.Terrain
         {
             if (eventOwner == null || string.IsNullOrEmpty(eventName) || target == null)
                 return false;
-            FieldInfo field = eventOwner.GetType().GetField(eventName, EventFieldFlags);
+            FieldInfo field = FindEventBackingField(eventOwner.GetType(), eventName);
             if (field == null || field.IsStatic) return false;
             Delegate handlers;
             try

@@ -35,9 +35,14 @@ import "google/protobuf/any.proto";
 //                   bottom hint line currently drawn by the client.
 //   handcraft_*     the client's ComponentCraftingTable grid (FullInventoryWidget
 //                   left half) so the host can recompute the same recipe result.
+//   camera_mode     the client's own GameWidget.ActiveCamera: 1 = Fpp, 2 = Tpp,
+//                   3 = Orbit, 4 = Fixed, 0 = unknown / do not change.  The host's
+//                   view of that client follows it (death -> DeathCamera first;
+//                   respawn -> last mode).
 //
 // Wire id lives in protocol.proto (MessageType.CLIENT_UI_STATE = 100).
-// Append-only: never renumber.  Field numbers 10..17 are the phase-2 additions.
+// Append-only: never renumber.  Field numbers 10..17 are the phase-2 additions;
+// 18 is the phase-3 camera mode.
 //
 // Source: Survivalcraft/Game/ComponentGui.cs:395（ControlsContainerWidget.IsVisible）
 // Source: Survivalcraft/Game/ComponentGui.cs:536-559（ModalPanelWidget = FullInventoryWidget /
@@ -110,6 +115,39 @@ message ClientUiState {
   bool handcraft_present = 15;
   repeated int32 handcraft_values = 16 [packed = true];
   repeated int32 handcraft_counts = 17 [packed = true];
+
+  // -------------------------------------------------------------------------
+  // Phase 3 (append-only): the client's own camera mode, so the host's view of
+  // that client can use the **same** camera instead of being pinned to FppCamera.
+  //
+  // 0 = unknown / do not change: the client's ActiveCamera is not one of the four
+  //     player-selectable modes this message carries (DeathCamera while dead, or
+  //     Intro / Loading), or the client has not reported a mode yet.  The host
+  //     keeps its last known mode and the death / respawn camera logic keeps
+  //     priority.
+  // 1 = first person (the client's GameWidget.ActiveCamera is FppCamera).
+  // 2 = third person (the client's GameWidget.ActiveCamera is TppCamera).
+  // 3 = orbit        (the client's GameWidget.ActiveCamera is OrbitCamera).
+  // 4 = fixed        (the client's GameWidget.ActiveCamera is FixedCamera).
+  //
+  // Values > 4 are invalid: the codec rejects the whole snapshot (host camera
+  // unchanged) instead of coercing.  Old clients only send 0/1/2, which keeps
+  // exactly the old behaviour.
+  //
+  // Why no camera_pitch / camera_yaw / orbit angles / fixed position: the host's
+  // view Target is the client's own ComponentPlayer, so TppCamera computes its
+  // orbit from Target.ComponentCreatureModel.EyeRotation and FppCamera from
+  // EyePosition / EyeRotation (Source: Survivalcraft/Game/TppCamera.cs:27-89,
+  // Survivalcraft/Game/FppCamera.cs:21-44).  OrbitCamera orbits the same Target
+  // body but takes its angles / distance from the *view's own* player input
+  // (Source: Survivalcraft/Game/OrbitCamera.cs:26-47), and FixedCamera just
+  // freezes the view where it was activated
+  // (Source: Survivalcraft/Game/FixedCamera.cs:16-22) — both are per-view state,
+  // so the host view runs its own; sending them would be a second copy of input
+  // state the engine already owns and would fight it every frame.
+  // Source: Survivalcraft/Game/ComponentGui.cs:645-670（V 键 / 视角按钮：
+  //         Fpp → Tpp → Orbit → Fixed → Fpp）
+  uint32 camera_mode = 18;
 
   // Third-party extension points: see doc/message-protocol.md.
   bytes ext = 100;

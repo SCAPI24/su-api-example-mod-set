@@ -57,12 +57,15 @@ namespace SuMultiplayer.Engine
     ///     ③ 主机批准后由 <see cref="TryExecuteLocalRespawn"/> 关掉挡门框并执行引擎那一行
     ///        <c>RemoveEntity(..., disposeEntity: true)</c>，之后 PrepareSpawn / SpawnDialog /
     ///        WaitForTerrain / SpawnPlayer / FppCamera 全是引擎原生的；
-    ///     ④ 新实体出生后由 <see cref="TryReplayLocalRespawn"/> 用主机权威数据整体重放
-    ///        （落点 / 背包 / 合成格 / 衣服），并推进死亡 epoch 挡住复活之前的旧包。
+    ///     ④ 新实体出生后由 <see cref="TryReplayLocalRespawn"/> 用主机权威数据重放
+    ///        （落点 / 等级 / 五项体征 / HUD / 模拟闸门），并推进死亡 epoch 挡住复活之前的旧包。
+    ///        背包 / 手持 / 衣服 / 合成格**不恢复**：引擎死亡分支已把它们掉在死亡地点
+    ///        （单机行为），复活后背包为空，由玩家自己捡回（否则会凭空多一份）。
     ///
     /// 无静态状态；所有上限与失败都有计数（<see cref="Describe"/>）与限流日志。
     /// </summary>
-    public sealed class PlayerVitalsReplica : IPlayerVitalsPort, IPlayerSleepPort
+    public sealed class PlayerVitalsReplica : IPlayerVitalsPort, IPlayerSleepPort,
+        IPlayerSelfDamagePort
     {
         /// <summary>同一条问题日志的最小间隔（毫秒）。</summary>
         private const long ProblemLogMs = 10000;
@@ -95,6 +98,50 @@ namespace SuMultiplayer.Engine
             new Dictionary<int, OnFireParticleSystem>();
         /// <summary>本机槽位 → 主机是否已裁决死亡（显示死亡提示；引擎里保留非致命极小值）。</summary>
         private readonly HashSet<int> m_localDeadSlots = new HashSet<int>();
+
+        /// <summary>主机侧读不到复活锚点的次数（<c>ResolveHostRespawnAnchor</c> 不可用）。</summary>
+        private long m_respawnAnchorFailures;
+
+        /// <summary>
+        /// 本机槽位 → **最近一份主机权威生命**（95 上报 / 已接受的 107 结果）。
+        /// 这是客户端唯一允许用来回滚本地预测的值：引擎 <c>VitalStatsWidget</c> 的骷髅按钮
+        /// 会在客户端本地先 <c>Injure(0.1f)</c>，客户端 <c>ComponentHealth.Update</c> 已摘掉，
+        /// 若不回滚，本地可能先掉到 0 让引擎 <c>PlayerData</c> 自己判死 —— 主机却还活着。
+        /// </summary>
+        private readonly Dictionary<int, float> m_localAuthorityHealth =
+            new Dictionary<int, float>();
+
+        /// <summary>本机槽位 → 107 接受结果触发的红屏因子（每帧衰减后写 RedoutFactor）。</summary>
+        private readonly Dictionary<int, float> m_selfDamageRedout =
+            new Dictionary<int, float>();
+        /// <summary>每帧刷新红屏 / 守卫时复用的本机角色与键缓冲。</summary>
+        private readonly List<PlayerData> m_selfDamageLocalBuffer =
+            new List<PlayerData>(PlayerKey.SlotCount);
+        private readonly List<int> m_selfDamageRedoutSlots = new List<int>(PlayerKey.SlotCount);
+        /// <summary>
+        /// 客户端"本地预测回滚"守卫：<c>SubsystemUpdate</c> 里的一个 <c>IUpdateable</c>
+        /// （<see cref="UpdateOrder.Reset"/> = −100，早于 <c>SubsystemPlayers</c> 的 −20）。
+        /// 在引擎控件本地扣血之后、<c>PlayerData.Update</c> 判死之前把生命写回主机权威值。
+        /// </summary>
+        private SelfDamageGuard m_selfDamageGuard;
+        private Project m_selfDamageGuardProject;
+        private long m_selfDamageGuardInstalls;
+        private long m_selfDamageGuardRemovals;
+        private long m_selfDamageGuardFrames;
+        private long m_selfDamageLocalPredictionsCanceled;
+        private long m_selfDamageLocalDeathsRepaired;
+        private long m_selfDamageGuardNoAuthority;
+        private long m_selfDamageGuardFailures;
+        private long m_selfDamageAuthorityApplies;
+        private long m_selfDamageAuthorityFailures;
+        private long m_selfDamageLocalResults;
+        private long m_selfDamageLocalResultFailures;
+        private long m_selfDamageRollbacks;
+        private long m_selfDamageRollbackFailures;
+        private long m_selfDamageFeedbackSounds;
+        private long m_selfDamageRedoutArms;
+        private long m_selfDamageRedoutFrames;
+        private long m_selfDamageRedoutFailures;
 
         /// <summary>
         /// 本机槽位 → HUD 显示缓存（主机权威值派生 + 已经写进控件的温度贴图档位）。
@@ -168,25 +215,91 @@ namespace SuMultiplayer.Engine
         {
             public int EntityToken;
             public PlayerVitalsHudValues Values;
+            /// <summary>这一份权威状态是否已死亡（死亡后冰覆盖必须像引擎一样立刻消失）。</summary>
+            public bool Dead;
             /// <summary>已经写进控件的贴图档位；<c>int.MinValue</c> = 还没写过。</summary>
             public int TextureIndex = int.MinValue;
+            /// <summary>主机权威冻结进度（vitals.proto 字段 22）：每帧插值的目标值。</summary>
+            public float TargetFreezeProgress;
+            /// <summary>主机权威冻结阶段（字段 23）：只用于阶段变化计数 / 状态行。</summary>
+            public uint TargetFreezeStage;
+            /// <summary>是否收到过主机冻结字段（没有 = 用 <see cref="Values"/> 里的初始化值）。</summary>
+            public bool HasFreezeTarget;
+            /// <summary>这一份冻结值来自"老版本主机没带字段 → 用权威温度推导"（显式计数）。</summary>
+            public bool FreezeLegacy;
+            /// <summary>
+            /// 冰冻覆盖的连续插值（每帧按时间常数 + 最大速率逼近主机值）。5 Hz 快照直接写
+            /// <c>IceFactor</c> 会一顿一顿地跳，第三分屏（读主机连续温度）也会与客户端不同步。
+            /// </summary>
+            public readonly PlayerPresentationInterpolator Freeze =
+                new PlayerPresentationInterpolator();
+
+            /// <summary>
+            /// 血条 / 食物条的连续插值（实机问题 2 的通用要求：5 Hz 快照不直接阶跃写表现）。
+            /// 时间常数比冰冻覆盖短（0.12 s）：掉血仍然"立刻看到"，只是把 200 ms 的台阶抹平；
+            /// 伤害本身 / 闪烁 / 红屏仍由权威值即时触发。
+            /// </summary>
+            public readonly PlayerPresentationInterpolator HealthBar =
+                new PlayerPresentationInterpolator(0.12f, 6f);
+
+            public readonly PlayerPresentationInterpolator FoodBar =
+                new PlayerPresentationInterpolator(0.12f, 2f);
         }
 
         /// <summary>
-        /// 死亡那一刻冻结的本地权威副本。引擎 <c>PlayerData.SpawnPlayer</c> 建的是**全新实体**：
-        /// 空背包、空衣服、模板血量（<c>PlayerData.cs:568-640</c>：SpawnMode.Respawn 时
-        /// Clothing/Inventory 的 overrides 都是空串 / 0 个），所以复活后必须用这份副本覆盖。
-        /// 口径：背包 = 客户端自己维护并上报给主机的 <c>ComponentInventory</c>（含手持槽），
-        /// 合成格 = <c>ComponentCraftingTable</c>，装备 = <c>ComponentClothing</c> 的 4 个槽位。
+        /// 一个本机槽位的**表现事件状态**（实机问题 3/4）：
+        ///   · <see cref="RedFactor"/> = 引擎 <c>ComponentHealth.m_redScreenFactor</c> 的镜像
+        ///     （主机权威掉血驱动，每帧按 <c>Pow(0.2, dt)</c> 衰减后写 <c>RedoutFactor</c>）；
+        ///   · <see cref="FluBlackoutDuration"/> / <see cref="FluBlackoutFactor"/> = 引擎
+        ///     <c>ComponentFlu.m_blackoutDuration/m_blackoutFactor</c> 的表现（咳嗽 / 喷嚏事件驱动，
+        ///     0.5/s 渐入到 0.95、0.5/s 渐出，每帧写 <c>BlackoutFactor</c>）；
+        ///   · <see cref="GreenoutDuration"/> / <see cref="GreenoutFactor"/> = 引擎
+        ///     <c>ComponentSickness.m_greenoutDuration/m_greenoutFactor</c>（恶心 / 呕吐事件驱动）；
+        ///   · <see cref="Puke"/> = 引擎 <c>PukeParticleSystem</c>（呕吐粒子，每帧跟随眼位 / 朝向）。
+        /// 全部只在**表现层**：不写任何权威字段、不扣血（扣血由 95 上报）。
         /// </summary>
-        private sealed class LocalKeepState
+        private sealed class LocalEffectState
         {
-            public int[] InventoryValues;
-            public int[] InventoryCounts;
-            public int ActiveSlotIndex;
-            public int[] CraftingValues;
-            public int[] CraftingCounts;
-            public int[][] Clothes;
+            public int EntityToken;
+            public float RedFactor;
+            public float FluBlackoutDuration;
+            public float FluBlackoutFactor;
+            public float GreenoutDuration;
+            public float GreenoutFactor;
+            public PukeParticleSystem Puke;
+
+            public void Reset()
+            {
+                RedFactor = 0f;
+                FluBlackoutDuration = 0f;
+                FluBlackoutFactor = 0f;
+                GreenoutDuration = 0f;
+                GreenoutFactor = 0f;
+                if (Puke != null)
+                {
+                    Puke.IsStopped = true;
+                    Puke = null;
+                }
+            }
+        }
+
+        /// <summary>
+        /// 主机侧一个客户端化身的表现事件**边沿检测状态**：保存上一拍读到的引擎私有计时字段。
+        /// 只在**上升沿**产出一条事件（咳嗽 4 秒计时被重置 / 喷嚏 1 秒 / 恶心 / 呕吐时刻变化 /
+        /// 火从无到有 / 从有到无）。<see cref="Sequence"/> 跨实体换代保持单调（客户端按它去重）。
+        /// </summary>
+        private sealed class AuthorityEffectWatch
+        {
+            public int Token;
+            public bool Seeded;
+            public float CoughDuration;
+            public float SneezeDuration;
+            public bool HasNausea;
+            public double NauseaTime;
+            public bool HasPuke;
+            public double PukeTime;
+            public float FireDuration;
+            public uint Sequence;
         }
 
         /// <summary>
@@ -195,8 +308,7 @@ namespace SuMultiplayer.Engine
         ///     引擎 <c>PlayerDead</c> 的点击分支要求 <c>!DialogsManager.HasDialogs(GuiWidget)</c>
         ///     （<c>PlayerData.cs:306</c>），挂着它就挡住了"未获主机批准就删实体"的自动复活；
         ///   · <see cref="DeathToken"/> = 执行 <c>RemoveEntity</c> 时旧实体的标识（识别新实体出生）；
-        ///   · <see cref="ReplayedToken"/> = 已经重放过的实体标识（幂等，重复调用返回 NoPending）；
-        ///   · <see cref="Keep"/> = 死亡那一刻冻结的背包 / 合成格 / 衣服副本。
+        ///   · <see cref="ReplayedToken"/> = 已经重放过的实体标识（幂等，重复调用返回 NoPending）。
         /// </summary>
         private sealed class LocalDeathState
         {
@@ -204,7 +316,14 @@ namespace SuMultiplayer.Engine
             public int GateToken;
             public int DeathToken;
             public int ReplayedToken;
-            public LocalKeepState Keep;
+            /// <summary>
+            /// 复活窗口（respawnInProgress）：RemoveEntity 之后 → 第一份主机权威存活快照之前。
+            /// 窗口内 Dead 快照 / Death 事件一律拒绝；关闭时主动清理死亡表现（见
+            /// <see cref="ClearRespawnDeathPresentation"/>）。
+            /// </summary>
+            public readonly PlayerRespawnWindow Window = new PlayerRespawnWindow();
+            /// <summary>这次死亡见过的最大 revision（窗口下界；复活事件未到时的 epoch 下界）。</summary>
+            public uint DeathRevision;
         }
 
         private long m_authorityCaptures;
@@ -229,13 +348,19 @@ namespace SuMultiplayer.Engine
         private long m_deathTapLevelsIgnored;
         private long m_respawnRejectedMessages;
         /// <summary>
-        /// 本机槽位 → 死亡期引擎状态（挡门对话框 / 旧实体标识 / 冻结的背包副本）。
+        /// 本机槽位 → 死亡期引擎状态（挡门对话框 / 旧实体标识）。
         /// 只在主机裁决死亡时创建，出生后权威重放完成即销毁。
         /// </summary>
         private readonly Dictionary<int, LocalDeathState> m_localDeathStates =
             new Dictionary<int, LocalDeathState>();
         /// <summary>本机槽位 → 死亡 epoch（最近一次复活裁决的 revision）。陈旧死亡状态一律拒写。</summary>
         private readonly Dictionary<int, uint> m_localDeathEpoch = new Dictionary<int, uint>();
+        // 复活窗口（respawnInProgress）诊断计数（状态行见 Describe）。
+        private long m_replicaWindowOpened;
+        private long m_replicaWindowDeadSuppressed;
+        private long m_replicaWindowClosed;
+        private long m_replicaWindowNewDeath;
+        private long m_replicaWindowCleanupFailures;
         private long m_gateShown;
         private long m_gateHidden;
         private long m_gateFailures;
@@ -250,8 +375,8 @@ namespace SuMultiplayer.Engine
         private long m_replayApplied;
         private long m_replayWaitFrames;
         private long m_replayFailures;
-        private long m_replayInventoryRestores;
-        private long m_replayClothesRestores;
+        /// <summary>复活重放**没有**恢复背包 / 手持 / 衣服 / 合成格的次数（物品只由引擎死亡掉落一次）。</summary>
+        private long m_respawnInventoryDroppedByEngine;
         /// <summary>revision 不新于死亡 epoch 的死亡状态被拒写的次数（陈旧上报）。</summary>
         private long m_staleDeathRejects;
         /// <summary>把本机 PlayerData 从引擎死亡状态恢复回 Playing 的次数（主机确认角色活着时）。</summary>
@@ -262,6 +387,56 @@ namespace SuMultiplayer.Engine
         private long m_hudIceWrites;
         private long m_hudPresentationFailures;
         private long m_hudNonFinite;
+        // 冻结权威 / 连续插值（实机问题 1/2）
+        private float m_freezeHostValue;
+        private long m_freezeClientApplied;
+        private long m_freezeInterpolatedFrames;
+        private long m_freezeStageChanges;
+        private long m_freezeLegacy;
+        private long m_freezeInvalid;
+        private long m_freezeCaptureFailures;
+        private long m_freezeSeeds;
+        private long m_iceFactorWriteFailures;
+        private readonly Dictionary<PlayerKey, uint> m_freezeHostStage =
+            new Dictionary<PlayerKey, uint>();
+        /// <summary>
+        /// 主机为每个角色算出的冻结进度（= vitals.proto 字段 22 的**原值**，随 95 下发）。
+        /// <see cref="TryGetAuthorityFreeze"/> 只读它 —— 第三分屏的冰覆盖必须与客户端同一个数
+        /// （实机问题 1：第三屏不得再按温度自己推导）。
+        /// </summary>
+        private readonly Dictionary<PlayerKey, float> m_freezeHostProgress =
+            new Dictionary<PlayerKey, float>();
+        /// <summary>只读查询成功 / 未命中的次数（第三分屏冰覆盖的可观测性）。</summary>
+        private long m_freezeAuthorityReads;
+        private long m_freezeAuthorityMisses;
+        // 受伤反馈（实机问题 3）
+        private long m_hurtFeedbackSound;
+        private long m_hurtRedoutHits;
+        private long m_hurtRedoutFrames;
+        private long m_hurtRedoutFailures;
+        // 咳嗽 / 呕吐 / 着火表现事件（实机问题 4）
+        private readonly Dictionary<int, LocalEffectState> m_localEffects =
+            new Dictionary<int, LocalEffectState>();
+        private readonly Dictionary<PlayerKey, AuthorityEffectWatch> m_effectWatch =
+            new Dictionary<PlayerKey, AuthorityEffectWatch>();
+        private readonly Dictionary<PlayerKey, uint> m_effectLastSequence =
+            new Dictionary<PlayerKey, uint>();
+        private long m_effectPolls;
+        private long m_effectPollFailures;
+        private long m_effectEventsEmitted;
+        private long m_effectPositionFailures;
+        private long m_effectSoundReadFailures;
+        private long m_fluEffectApplied;
+        private long m_fluEffectSounds;
+        private long m_fluEffectParticles;
+        private long m_fluEffectRejected;
+        private long m_fluEffectDuplicate;
+        private long m_fluEffectStale;
+        private long m_fluEffectSoundMismatch;
+        private long m_fluEffectParticleFailures;
+        private long m_fluBlackoutFrames;
+        private long m_fluGreenoutFrames;
+        private long m_effectSoundReadFailuresLocal;
         private long m_localSimDisableRuns;
         private long m_localSimDisabledNew;
         private long m_localSimRestores;
@@ -283,6 +458,33 @@ namespace SuMultiplayer.Engine
         private long m_sleepMirrorRuns;
         private long m_sleepMirrorFailures;
         private long m_sleepMirrorClears;
+        /// <summary>
+        /// 主机侧客户端化身的死亡减半账本：这些化身不在 <c>SubsystemPlayers.m_playersData</c> 里，
+        /// 引擎 <c>PlayerDead</c> 不会跑 → 由主机在抓取时减一次，并写回 <c>PlayerData.Level</c>
+        /// （<c>NetworkAvatarSpawner.CapturePlayerRecord</c> → <c>PlayerAvatarModule.RefreshHostRecords</c>
+        /// 每 5 秒把它持久化到身份记录）。本机槽位由引擎自己减半，这里不记账。
+        /// </summary>
+        private readonly HostAvatarLevelAuthority m_hostLevelAuthority =
+            new HostAvatarLevelAuthority();
+        /// <summary>等级同步计数（输出在 <see cref="Describe"/> 的 vitals 状态行里）。</summary>
+        private readonly PlayerLevelCounters m_levelCounters = new PlayerLevelCounters();
+        /// <summary>
+        /// 本机槽位 → 最近一次主机权威等级（&gt; 0）。**死亡快照也缓存**：主机在死亡时已经把
+        /// 等级减半，复活重放要把这份权威值写进引擎新建的实体（默认 Level=1）。
+        /// </summary>
+        private readonly Dictionary<int, float> m_localAuthorityLevel =
+            new Dictionary<int, float>();
+        /// <summary>本机槽位 → 那份权威等级对应的 revision。</summary>
+        private readonly Dictionary<int, uint> m_localAuthorityLevelRevision =
+            new Dictionary<int, uint>();
+        /// <summary>本机槽位 → 已经写进 <c>PlayerData.Level</c> 的 revision（0 = 还没写过）。</summary>
+        private readonly Dictionary<int, uint> m_localLevelAppliedRevision =
+            new Dictionary<int, uint>();
+        /// <summary>
+        /// 本机槽位 → "复活重放已经发生、等主机权威等级落位"：下一次真正写入计
+        /// <c>levelRespawnOverrides</c>（不是普通 <c>levelApplied</c>）。
+        /// </summary>
+        private readonly HashSet<int> m_localLevelRespawnPending = new HashSet<int>();
 
         public PlayerVitalsReplica(NetworkAvatarSpawner spawner, IModParentField parentField,
             IModuleDiagnostics diagnostics, string ownerId)
@@ -334,7 +536,9 @@ namespace SuMultiplayer.Engine
                         m_authorityCaptureFailures++;
                         continue;
                     }
-                    target.Add(CaptureOne(new PlayerKey(0, slot), player));
+                    PlayerKey localKey = new PlayerKey(0, slot);
+                    float localLevel = ReadCapturedLevel(locals[slot], localKey);
+                    target.Add(CaptureOne(localKey, player, localLevel));
                     count++;
                 }
             }
@@ -361,7 +565,9 @@ namespace SuMultiplayer.Engine
                     m_authorityCaptureFailures++;
                     continue;
                 }
-                target.Add(CaptureOne(key, player));
+                bool dead = player.ComponentHealth.Health <= 0f;
+                float level = ReadHostAuthorityLevel(key, playerData, player, dead);
+                target.Add(CaptureOne(key, player, level));
                 count++;
             }
 
@@ -431,6 +637,230 @@ namespace SuMultiplayer.Engine
             return count;
         }
 
+        /// <summary>
+        /// **主机侧 / 每帧**：轮询主机模拟的客户端化身（client_id &gt; 0）的
+        /// <c>ComponentFlu</c> / <c>ComponentSickness</c> / <c>ComponentOnFire</c> 私有计时字段，
+        /// 在**上升沿**产出一条表现事件（实机问题 4：客户端自己的化身咳嗽 / 呕吐 / 着火时，
+        /// 以前只有主机设备上能看到 / 听到，客户端只掉血）。
+        ///
+        /// 引擎事实（逐条已核对）：
+        ///   · <c>ComponentFlu.Cough()</c>：<c>m_coughDuration = 4f</c> + <c>PlayCoughSound</c>；
+        ///     <c>Sneeze()</c>：<c>m_sneezeDuration = 1f</c> + <c>PlaySneezeSound</c>；
+        ///     <c>FluEffect()</c> 还设 <c>m_blackoutDuration</c>（黑屏渐入）；
+        ///   · <c>ComponentSickness.NauseaEffect()</c>：<c>m_lastNauseaTime = GameTime</c>
+        ///     + <c>PlayMoanSound</c>；可吐时建 <c>PukeParticleSystem</c> + <c>PlayPukeSound</c>
+        ///     并写 <c>m_lastPukeTime</c>；<c>m_greenoutDuration</c> 驱动绿屏；
+        ///   · <c>ComponentOnFire.Update</c>：<c>m_fireDuration &gt; 0</c> 时维护
+        ///     <c>OnFireParticleSystem</c>；水中熄灭时播 <c>Audio/SizzleLong</c>。
+        /// 客户端这些 Update 全被摘掉，所以必须由主机把"发生了哪一次表现"下发（音效 / 粒子 /
+        /// 覆盖层），**扣血仍由 95 上报下发**（本方法绝不产生伤害）。
+        ///
+        /// 只有客户端化身（client_id &gt; 0）：主机自己的本机角色表现本来就在主机上跑。
+        /// 第一次观察一个角色只播种（不把"已经咳嗽了"当成新事件）；实体换代保留 sequence
+        /// （客户端按每键 sequence 去重，跨复活仍然单调）。
+        /// </summary>
+        public int PollAuthorityEffects(List<PlayerEffectEventSnapshot> target, out string reason)
+        {
+            reason = null;
+            if (target == null)
+            {
+                reason = "调用方没有给表现事件容器";
+                return 0;
+            }
+            target.Clear();
+            Project project = GameManager.Project;
+            if (project == null)
+            {
+                reason = "没有加载中的 Project（还没进世界）";
+                return 0;
+            }
+            m_effectPolls++;
+            var keys = new List<PlayerKey>();
+            foreach (PlayerKey key in m_spawner.Keys)
+            {
+                if (key.ClientId > 0) keys.Add(key);
+            }
+            keys.Sort(CompareKeys);
+            int emitted = 0;
+            string firstFailure = null;
+            for (int i = 0; i < keys.Count; i++)
+            {
+                PlayerKey key = keys[i];
+                if (!m_spawner.TryGet(key, out PlayerData playerData) ||
+                    playerData?.ComponentPlayer == null)
+                    continue;
+                ComponentPlayer player = playerData.ComponentPlayer;
+                ComponentBody body = player.ComponentBody;
+                if (body == null) continue;
+                int token = Token(player);
+                if (!m_effectWatch.TryGetValue(key, out AuthorityEffectWatch watch))
+                {
+                    watch = new AuthorityEffectWatch();
+                    m_effectWatch[key] = watch;
+                }
+                if (watch.Token != token)
+                {
+                    // 新实体：重新播种；Sequence 保留（每键跨复活单调，客户端才能去重）。
+                    watch.Token = token;
+                    watch.Seeded = false;
+                }
+                float cough = 0f, sneeze = 0f, blackout = 0f, greenout = 0f, fire = 0f;
+                double? nausea = null, puke = null;
+                try
+                {
+                    ComponentFlu flu = player.Entity.FindComponent<ComponentFlu>();
+                    if (flu != null)
+                    {
+                        cough = m_parentField.GetParentField<float>(flu, "m_coughDuration",
+                            typeof(ComponentFlu));
+                        sneeze = m_parentField.GetParentField<float>(flu, "m_sneezeDuration",
+                            typeof(ComponentFlu));
+                        blackout = m_parentField.GetParentField<float>(flu, "m_blackoutDuration",
+                            typeof(ComponentFlu));
+                    }
+                    ComponentSickness sickness = player.Entity.FindComponent<ComponentSickness>();
+                    if (sickness != null)
+                    {
+                        greenout = m_parentField.GetParentField<float>(sickness,
+                            "m_greenoutDuration", typeof(ComponentSickness));
+                        nausea = ReadNullableDouble(m_parentField.GetParentField(sickness,
+                            "m_lastNauseaTime", typeof(ComponentSickness)));
+                        puke = ReadNullableDouble(m_parentField.GetParentField(sickness,
+                            "m_lastPukeTime", typeof(ComponentSickness)));
+                    }
+                    ComponentOnFire onFire = player.Entity.FindComponent<ComponentOnFire>();
+                    if (onFire != null)
+                    {
+                        fire = m_parentField.GetParentField<float>(onFire, "m_fireDuration",
+                            typeof(ComponentOnFire));
+                    }
+                }
+                catch (Exception e)
+                {
+                    m_effectPollFailures++;
+                    watch.Seeded = false;
+                    if (firstFailure == null)
+                    {
+                        firstFailure = "玩家键 " + key + " 的病程 / 火焰计时读不到：" +
+                            e.GetType().Name + " " + e.Message;
+                    }
+                    continue;
+                }
+                if (!watch.Seeded)
+                {
+                    watch.Seeded = true;
+                    watch.CoughDuration = cough;
+                    watch.SneezeDuration = sneeze;
+                    watch.HasNausea = nausea.HasValue;
+                    watch.NauseaTime = nausea ?? 0.0;
+                    watch.HasPuke = puke.HasValue;
+                    watch.PukeTime = puke ?? 0.0;
+                    watch.FireDuration = fire;
+                    continue;
+                }
+                double hostTime = CurrentGameTime(player);
+                Vector3 position = body.Position;
+                ComponentCreatureSounds sounds = player.Entity.FindComponent<ComponentCreatureSounds>();
+                const float active = 0.0001f;
+                // 咳嗽 / 喷嚏：计时被重置 = 新的一次表现（引擎 Cough 4 秒 / Sneeze 1 秒）。
+                if (cough > active && cough > watch.CoughDuration + active)
+                {
+                    emitted += EmitEffect(target, key, watch, PlayerEffectKind.FluCough, position,
+                        hostTime, blackout, ReadSoundName(sounds, "m_coughSound"));
+                }
+                if (sneeze > active && sneeze > watch.SneezeDuration + active)
+                {
+                    emitted += EmitEffect(target, key, watch, PlayerEffectKind.FluSneeze, position,
+                        hostTime, blackout, ReadSoundName(sounds, "m_sneezeSound"));
+                }
+                // 恶心 / 呕吐：引擎写的是 GameTime 时刻（double?），变化即新的一次表现。
+                if (nausea.HasValue &&
+                    (!watch.HasNausea || Math.Abs(nausea.Value - watch.NauseaTime) > 1e-6))
+                {
+                    emitted += EmitEffect(target, key, watch, PlayerEffectKind.SicknessNausea,
+                        position, hostTime, greenout, ReadSoundName(sounds, "m_moanSound"));
+                }
+                if (puke.HasValue &&
+                    (!watch.HasPuke || Math.Abs(puke.Value - watch.PukeTime) > 1e-6))
+                {
+                    emitted += EmitEffect(target, key, watch, PlayerEffectKind.SicknessPuke,
+                        position, hostTime, PlayerEffectPolicy.PukeGreenoutSeconds,
+                        ReadSoundName(sounds, "m_pukeSound"));
+                }
+                // 着火 / 熄灭：权威火时长从 0 变正 / 从正变 0。
+                if (fire > active && watch.FireDuration <= active)
+                {
+                    emitted += EmitEffect(target, key, watch, PlayerEffectKind.FireIgnite, position,
+                        hostTime, fire, string.Empty);
+                }
+                else if (fire <= active && watch.FireDuration > active)
+                {
+                    bool water = body.ImmersionFactor > 0.5f &&
+                        body.ImmersionFluidBlock is WaterBlock;
+                    emitted += EmitEffect(target, key, watch, PlayerEffectKind.FireExtinguish,
+                        position, hostTime, water ? 1f : 0f, "Audio/SizzleLong");
+                }
+                watch.CoughDuration = cough;
+                watch.SneezeDuration = sneeze;
+                watch.HasNausea = nausea.HasValue;
+                watch.NauseaTime = nausea ?? watch.NauseaTime;
+                watch.HasPuke = puke.HasValue;
+                watch.PukeTime = puke ?? watch.PukeTime;
+                watch.FireDuration = fire;
+            }
+            // 注意：**不**清理已经离开的玩家的边沿状态 —— 每条事件的 sequence 必须在同一个
+            // 玩家键上跨化身重建保持单调（客户端按它去重）。主机进程内这个字典只会随"曾经
+            // 出现过的玩家键"增长（每项几十字节），换世界 / 重开会话时整体作废即可。
+            reason = firstFailure;
+            return emitted;
+        }
+
+        private int EmitEffect(List<PlayerEffectEventSnapshot> target, PlayerKey key,
+            AuthorityEffectWatch watch, PlayerEffectKind kind, Vector3 position, double hostTime,
+            float strength, string sound)
+        {
+            if (!PlayerVitalsSnapshot.IsFiniteValue(position.X) ||
+                !PlayerVitalsSnapshot.IsFiniteValue(position.Y) ||
+                !PlayerVitalsSnapshot.IsFiniteValue(position.Z))
+            {
+                m_effectPositionFailures++;
+                Problem("effect-position:" + key, "玩家键 " + key + " 的表现事件坐标不是有限数" +
+                    " → 丢弃这一条（不拿 Zero 顶替）");
+                return 0;
+            }
+            watch.Sequence = watch.Sequence == uint.MaxValue ? 1u : watch.Sequence + 1u;
+            target.Add(new PlayerEffectEventSnapshot(key, watch.Sequence, kind, position, hostTime,
+                MathUtils.Max(strength, 0f), sound ?? string.Empty));
+            m_effectEventsEmitted++;
+            return 1;
+        }
+
+        private string ReadSoundName(ComponentCreatureSounds sounds, string field)
+        {
+            if (sounds == null) return string.Empty;
+            try
+            {
+                return m_parentField.GetParentField(sounds, field,
+                    typeof(ComponentCreatureSounds)) as string ?? string.Empty;
+            }
+            catch (Exception e)
+            {
+                m_effectSoundReadFailures++;
+                Problem("effect-sound-read:" + field,
+                    "读取主机角色 ComponentCreatureSounds." + field + " 失败：" +
+                    e.GetType().Name + " " + e.Message + " → 该事件不带资源名（客户端仍用引擎" +
+                    "同款方法发声，资源名只用于核对）");
+                return string.Empty;
+            }
+        }
+
+        private static double? ReadNullableDouble(object raw)
+        {
+            if (raw is double value && !double.IsNaN(value) && !double.IsInfinity(value))
+                return value;
+            return null;
+        }
+
         private static int CompareKeys(PlayerKey left, PlayerKey right) =>
             left.ClientId != right.ClientId
                 ? left.ClientId.CompareTo(right.ClientId)
@@ -461,7 +891,16 @@ namespace SuMultiplayer.Engine
                 return PlayerVitalsApplyStatus.NoAvatar;
             try
             {
-                ApplyLocalState(key.Slot, player, in snapshot);
+                // ApplyLocalState 用 out 参数报告"复活窗口清理失败"（方法签名保持
+                // private void ApplyLocalState(int slot, ComponentPlayer player, ...)：既有源码守卫
+                // 按这个前缀定位方法体）。失败 = 不写 LastRevision，模块下一拍重试。
+                ApplyLocalState(key.Slot, player, in snapshot, out string applyFailure);
+                if (applyFailure != null)
+                {
+                    reason = applyFailure;
+                    m_applyFailures++;
+                    return PlayerVitalsApplyStatus.Rejected;
+                }
                 m_localApplies++;
                 return PlayerVitalsApplyStatus.Applied;
             }
@@ -515,12 +954,389 @@ namespace SuMultiplayer.Engine
         /// 死亡 epoch：revision 不新于本槽位死亡 epoch 的死亡状态是"复活之前就在飞的旧包"，
         /// 写进新实体会让引擎立刻再判一次死 → 这里直接拒写（计数 + 限流日志，不静默）。
         /// </summary>
-        private void ApplyLocalState(int slot, ComponentPlayer player,
-            in PlayerVitalsSnapshot snapshot)
+        /// <summary>
+        /// **客户端侧**：播放一条主机下发的表现事件（<c>PLAYER_EFFECT_EVENTS</c> = 109）。
+        ///
+        /// 只播表现（实机问题 4：客户端自己的化身流感咳嗽 / 呕吐 / 着火以前只有主机看得到）：
+        ///   · 人声 = 引擎同款 <c>ComponentCreatureSounds.PlayCoughSound / PlaySneezeSound /
+        ///     PlayMoanSound / PlayPukeSound</c>（资源名 / 音量 / 最小距离都是引擎配置的，
+        ///     事件里带的 <c>sound</c> 只用于核对，不一致计 <c>fluEffectSoundMismatch</c>）；
+        ///   · 呕吐粒子 = 引擎 <c>PukeParticleSystem</c>（每帧跟随眼位 / 朝向）；
+        ///   · 黑屏 / 绿屏 = 引擎 <c>ComponentFlu</c> / <c>ComponentSickness</c> 的
+        ///     0.5/s 渐入渐出（<see cref="AdvanceLocalEffectPresentation"/> 每帧写）；
+        ///   · 火 = 客户端已维护的 <c>OnFireParticleSystem</c>（<see cref="TryEnsureLocalFireParticles"/>），
+        ///     熄灭按引擎在**水中**熄灭时播 <c>Audio/SizzleLong</c>。
+        /// **绝不**写生命 / 体征、绝不 Injure、绝不判死：扣血仍由 95 上报下发。
+        ///
+        /// 去重 / 过期：每键 <c>sequence</c> 必须严格递增；事件的 <c>host_time</c> 与客户端已对齐的
+        /// 主机游戏时钟相差超过 <see cref="PlayerEffectPolicy.TtlSeconds"/> = 过期（计数后丢弃）。
+        /// </summary>
+        public PlayerEffectApplyStatus ApplyEffect(in PlayerEffectEventSnapshot evt,
+            out string reason)
         {
+            reason = null;
+            if (!evt.TryValidate(out reason))
+            {
+                m_fluEffectRejected++;
+                return PlayerEffectApplyStatus.Rejected;
+            }
+            if (evt.Key.ClientId <= 0)
+            {
+                m_fluEffectRejected++;
+                reason = "表现事件的 clientId = " + evt.Key.ClientId +
+                    "（主机本机角色的表现不会下发，收到即协议错误）";
+                return PlayerEffectApplyStatus.Rejected;
+            }
+            if (!TryResolveLocal(evt.Key.Slot, out PlayerData playerData,
+                    out ComponentPlayer player, out reason))
+                return PlayerEffectApplyStatus.NoAvatar;
+            uint last = m_effectLastSequence.TryGetValue(evt.Key, out uint applied)
+                ? applied
+                : 0u;
+            if (last != 0 && evt.Sequence <= last)
+            {
+                m_fluEffectDuplicate++;
+                reason = "sequence " + evt.Sequence + " <= 已应用 " + last;
+                return PlayerEffectApplyStatus.Duplicate;
+            }
+            float ttl = PlayerEffectPolicy.TtlSeconds(evt.Kind);
+            if (!(ttl > 0f))
+            {
+                m_fluEffectRejected++;
+                reason = "表现种类 " + (int)evt.Kind + " 没有过期上限（未知种类）";
+                return PlayerEffectApplyStatus.Rejected;
+            }
+            double age = CurrentGameTime(player) - evt.HostTime;
+            if (age > ttl)
+            {
+                // 记下序号：同一条事件重发仍然是过期，不重复计数 / 播放。
+                m_effectLastSequence[evt.Key] = evt.Sequence;
+                m_fluEffectStale++;
+                reason = "事件已过期 " + age.ToString("0.###") + "s > TTL " +
+                    ttl.ToString("0.##") + "s";
+                return PlayerEffectApplyStatus.Stale;
+            }
+            try
+            {
+                LocalEffectState state = GetOrCreateLocalEffect(evt.Key.Slot, player);
+                float strength = MathUtils.Max(evt.Strength, 0f);
+                switch (evt.Kind)
+                {
+                    case PlayerEffectKind.FluCough:
+                    case PlayerEffectKind.FluSneeze:
+                    {
+                        if (!TryPlayCreatureSound(player, evt.Kind, evt.Sound, out reason))
+                        {
+                            m_fluEffectRejected++;
+                            return PlayerEffectApplyStatus.Rejected;
+                        }
+                        // 黑屏时长 = 主机 ComponentFlu.m_blackoutDuration（引擎 FluEffect 才设置）；
+                        // 0 = 这次表现引擎没有黑屏（例如单纯受冷打喷嚏），客户端也不黑屏。
+                        if (strength > 0f)
+                        {
+                            state.FluBlackoutDuration = MathUtils.Clamp(
+                                MathUtils.Max(state.FluBlackoutDuration, strength), 0f,
+                                PlayerVitalsLimits.MaxConditionSeconds);
+                        }
+                        break;
+                    }
+                    case PlayerEffectKind.SicknessNausea:
+                    {
+                        if (!TryPlayCreatureSound(player, evt.Kind, evt.Sound, out reason))
+                        {
+                            m_fluEffectRejected++;
+                            return PlayerEffectApplyStatus.Rejected;
+                        }
+                        // 绿屏时长 = 主机 ComponentSickness.m_greenoutDuration（0 = 不绿屏）。
+                        if (strength > 0f)
+                        {
+                            state.GreenoutDuration = MathUtils.Clamp(
+                                MathUtils.Max(state.GreenoutDuration, strength), 0f,
+                                PlayerVitalsLimits.MaxConditionSeconds);
+                        }
+                        break;
+                    }
+                    case PlayerEffectKind.SicknessPuke:
+                    {
+                        if (!TryPlayCreatureSound(player, evt.Kind, evt.Sound, out reason))
+                        {
+                            m_fluEffectRejected++;
+                            return PlayerEffectApplyStatus.Rejected;
+                        }
+                        state.GreenoutDuration = MathUtils.Max(state.GreenoutDuration,
+                            PlayerEffectPolicy.PukeGreenoutSeconds);
+                        if (!TryStartLocalPuke(player, state, out string pukeReason))
+                        {
+                            m_fluEffectParticleFailures++;
+                            Problem("effect-puke:" + evt.Key.Slot,
+                                "本机槽位 " + evt.Key.Slot + " 的呕吐粒子无法创建：" + pukeReason +
+                                "（呕吐音效已播放；扣血仍由体征同步）");
+                        }
+                        break;
+                    }
+                    case PlayerEffectKind.FireIgnite:
+                    {
+                        if (TryEnsureLocalFireParticles(player, evt.Key.Slot)) m_fluEffectParticles++;
+                        else m_fluEffectParticleFailures++;
+                        break;
+                    }
+                    case PlayerEffectKind.FireExtinguish:
+                    {
+                        StopLocalFireParticles(evt.Key.Slot);
+                        if (strength >= 0.5f)
+                        {
+                            SubsystemAudio audio = player.Project?.FindSubsystem<SubsystemAudio>(false);
+                            if (audio == null)
+                            {
+                                m_fluEffectRejected++;
+                                reason = "Project 缺少 SubsystemAudio（无法播放水中熄灭的 SizzleLong）";
+                                return PlayerEffectApplyStatus.Rejected;
+                            }
+                            // Source: ComponentOnFire.cs:62-65（水中熄灭：Audio/SizzleLong）
+                            audio.PlaySound("Audio/SizzleLong", 1f, 0f, evt.Position, 4f,
+                                autoDelay: true);
+                            m_fluEffectSounds++;
+                        }
+                        break;
+                    }
+                    default:
+                        m_fluEffectRejected++;
+                        reason = "表现种类 " + (int)evt.Kind + " 没有播放实现";
+                        return PlayerEffectApplyStatus.Rejected;
+                }
+                m_effectLastSequence[evt.Key] = evt.Sequence;
+                m_fluEffectApplied++;
+                return PlayerEffectApplyStatus.Applied;
+            }
+            catch (Exception e)
+            {
+                m_fluEffectRejected++;
+                reason = "播放玩家键 " + evt.Key + " 的表现事件时抛异常：" + e.GetType().Name +
+                    " " + e.Message;
+                Error("effect-apply:" + evt.Key, reason, e);
+                return PlayerEffectApplyStatus.Rejected;
+            }
+        }
+
+        /// <summary>用引擎同款人声方法播放（资源名 / 音量 / 最小距离都来自数据库配置）。</summary>
+        private bool TryPlayCreatureSound(ComponentPlayer player, PlayerEffectKind kind,
+            string hostSound, out string reason)
+        {
+            reason = null;
+            ComponentCreatureSounds sounds = player.ComponentCreatureSounds;
+            if (sounds == null)
+            {
+                reason = "本机角色没有 ComponentCreatureSounds（无法播放 " +
+                    PlayerEffectPolicy.Describe(kind) + "）";
+                return false;
+            }
+            string localSound = ReadLocalSoundName(sounds, kind);
+            if (hostSound.Length > 0 && localSound.Length > 0 &&
+                !string.Equals(hostSound, localSound, StringComparison.Ordinal))
+            {
+                m_fluEffectSoundMismatch++;
+                Problem("effect-sound-mismatch:" + kind, "主机资源名 " + hostSound +
+                    " 与本机配置 " + localSound + " 不一致（仍按引擎同款方法播放本机资源）");
+            }
+            switch (kind)
+            {
+                case PlayerEffectKind.FluCough:
+                    sounds.PlayCoughSound();
+                    break;
+                case PlayerEffectKind.FluSneeze:
+                    sounds.PlaySneezeSound();
+                    break;
+                case PlayerEffectKind.SicknessNausea:
+                    sounds.PlayMoanSound();
+                    break;
+                case PlayerEffectKind.SicknessPuke:
+                    sounds.PlayPukeSound();
+                    break;
+                default:
+                    reason = "表现种类 " + (int)kind + " 不是人声（不该走到这里）";
+                    return false;
+            }
+            m_fluEffectSounds++;
+            return true;
+        }
+
+        private string ReadLocalSoundName(ComponentCreatureSounds sounds, PlayerEffectKind kind)
+        {
+            string field;
+            switch (kind)
+            {
+                case PlayerEffectKind.FluCough: field = "m_coughSound"; break;
+                case PlayerEffectKind.FluSneeze: field = "m_sneezeSound"; break;
+                case PlayerEffectKind.SicknessNausea: field = "m_moanSound"; break;
+                case PlayerEffectKind.SicknessPuke: field = "m_pukeSound"; break;
+                default: return string.Empty;
+            }
+            try
+            {
+                return m_parentField.GetParentField(sounds, field,
+                    typeof(ComponentCreatureSounds)) as string ?? string.Empty;
+            }
+            catch (Exception e)
+            {
+                m_effectSoundReadFailuresLocal++;
+                Problem("local-sound-read:" + field,
+                    "读取本机 ComponentCreatureSounds." + field + " 失败：" +
+                    e.GetType().Name + " " + e.Message + "（资源名核对跳过，仍用引擎方法播放）");
+                return string.Empty;
+            }
+        }
+
+        private bool TryStartLocalPuke(ComponentPlayer player, LocalEffectState state,
+            out string reason)
+        {
+            reason = null;
+            if (state.Puke != null && !state.Puke.IsStopped)
+            {
+                UpdatePukeTransform(player, state);
+                return true;
+            }
+            Project project = player.Project;
+            SubsystemParticles particles = project?.FindSubsystem<SubsystemParticles>(false);
+            SubsystemTerrain terrain = project?.FindSubsystem<SubsystemTerrain>(false);
+            if (particles == null || terrain == null)
+            {
+                reason = "Project 缺少 SubsystemParticles / SubsystemTerrain";
+                return false;
+            }
+            state.Puke = new PukeParticleSystem(terrain);
+            particles.AddParticleSystem(state.Puke);
+            UpdatePukeTransform(player, state);
+            m_fluEffectParticles++;
+            return true;
+        }
+
+        private void UpdatePukeTransform(ComponentPlayer player, LocalEffectState state)
+        {
+            if (state.Puke == null) return;
+            if (state.Puke.IsStopped)
+            {
+                state.Puke = null;
+                return;
+            }
+            ComponentCreatureModel model = player.ComponentCreatureModel;
+            if (model == null) return;
+            Vector3 up = model.EyeRotation.GetUpVector();
+            Vector3 forward = model.EyeRotation.GetForwardVector();
+            // Source: ComponentSickness.cs:150-153（同一位置 / 方向式子）
+            state.Puke.Position = model.EyePosition - 0.08f * up + 0.3f * forward;
+            state.Puke.Direction = Vector3.Normalize(forward + 0.5f * up);
+        }
+
+        /// <summary>
+        /// 每帧把表现事件驱动的覆盖层写回引擎（<c>ComponentScreenOverlays.Update</c> 每帧清 0）：
+        ///   · 红屏 = <c>PlayerHurtFeedback</c> 的衰减因子（受伤音效在 <see cref="ShowHurt"/>）；
+        ///   · 黑屏 = 引擎 <c>ComponentFlu.Update:147-159</c> 同款 0.5/s 渐入到 0.95 / 0.5/s 渐出；
+        ///   · 绿屏 = 引擎 <c>ComponentSickness.Update:112-131</c> 同款；
+        ///   · 呕吐粒子跟随眼位 / 朝向（引擎 <c>ComponentSickness.Update:150-153</c>）。
+        /// </summary>
+        private bool AdvanceLocalEffectPresentation(int slot, ComponentPlayer player,
+            LocalEffectState state, float deltaTime, out string reason)
+        {
+            reason = null;
+            if (!(deltaTime >= 0f) || float.IsInfinity(deltaTime))
+            {
+                m_hurtRedoutFailures++;
+                reason = "槽位 " + slot + " 的表现帧时长非法（" + deltaTime + "）";
+                return false;
+            }
+            ComponentScreenOverlays overlays = player.ComponentScreenOverlays;
+            if (overlays == null)
+            {
+                m_hurtRedoutFailures++;
+                reason = "槽位 " + slot + " 的角色没有 ComponentScreenOverlays";
+                return false;
+            }
+            bool complete = true;
+            state.RedFactor = PlayerHurtFeedback.Decay(state.RedFactor, deltaTime);
+            if (state.RedFactor > PlayerHurtFeedback.RedoutCutoff)
+            {
+                try
+                {
+                    overlays.RedoutFactor = MathUtils.Max(overlays.RedoutFactor,
+                        state.RedFactor);
+                    m_hurtRedoutFrames++;
+                }
+                catch (Exception e)
+                {
+                    m_hurtRedoutFailures++;
+                    complete = false;
+                    reason = "写 RedoutFactor 失败：" + e.GetType().Name + " " + e.Message;
+                }
+            }
+            if (state.FluBlackoutDuration > 0f)
+            {
+                state.FluBlackoutDuration = MathUtils.Max(state.FluBlackoutDuration - deltaTime, 0f);
+                state.FluBlackoutFactor = MathUtils.Min(state.FluBlackoutFactor +
+                    0.5f * deltaTime, 0.95f);
+            }
+            else if (state.FluBlackoutFactor > 0f)
+            {
+                state.FluBlackoutFactor = MathUtils.Max(state.FluBlackoutFactor -
+                    0.5f * deltaTime, 0f);
+            }
+            if (state.FluBlackoutFactor > 0.01f)
+            {
+                overlays.BlackoutFactor = MathUtils.Max(overlays.BlackoutFactor,
+                    state.FluBlackoutFactor);
+                m_fluBlackoutFrames++;
+            }
+            if (state.GreenoutDuration > 0f)
+            {
+                state.GreenoutDuration = MathUtils.Max(state.GreenoutDuration - deltaTime, 0f);
+                state.GreenoutFactor = MathUtils.Min(state.GreenoutFactor + 0.5f * deltaTime, 0.95f);
+            }
+            else if (state.GreenoutFactor > 0f)
+            {
+                state.GreenoutFactor = MathUtils.Max(state.GreenoutFactor - 0.5f * deltaTime, 0f);
+            }
+            if (state.GreenoutFactor > 0.01f)
+            {
+                overlays.GreenoutFactor = MathUtils.Max(overlays.GreenoutFactor,
+                    state.GreenoutFactor);
+                m_fluGreenoutFrames++;
+            }
+            UpdatePukeTransform(player, state);
+            return complete;
+        }
+
+        private void ApplyLocalState(int slot, ComponentPlayer player,
+            in PlayerVitalsSnapshot snapshot, out string failure)
+        {
+            failure = null;
             ComponentHealth health = player.ComponentHealth;
             bool dead = snapshot.Dead;
             bool wasDead = m_localDeadSlots.Contains(slot);
+            m_localDeathStates.TryGetValue(slot, out LocalDeathState deathState);
+            bool windowActive = deathState != null && deathState.Window.Active;
+            if (dead && windowActive)
+            {
+                if (deathState.Window.IsDeathAfterRespawn(snapshot.Revision))
+                {
+                    // 比复活裁决更新的死亡 = 玩家复活后真的又死了：本拍结束窗口并按真实死亡应用，
+                    // 绝不把真实死亡挡在门外（旧死亡 rev 一定 ≤ 复活裁决 rev）。
+                    m_replicaWindowNewDeath++;
+                    deathState.Window.Close();
+                    Info("本机槽位 " + slot + " 的复活窗口收到比复活裁决更新的死亡（rev=" +
+                        snapshot.Revision + " > respawn=" +
+                        deathState.Window.RespawnRevision +
+                        "）→ 结束窗口并按真实新死亡应用");
+                }
+                else
+                {
+                    m_replicaWindowDeadSuppressed++;
+                    Problem("respawn-window-dead:" + slot,
+                        "复活窗口拒绝本机槽位 " + slot + " 的死亡状态（rev=" +
+                        snapshot.Revision + "）：" + deathState.Window.Describe() +
+                        " → 不写引擎、不挂挡门框 / 死亡屏（累计拒绝 " +
+                        m_replicaWindowDeadSuppressed + " 条）");
+                    return;
+                }
+            }
             if (dead && PlayerRespawnEpoch.IsStaleDead(EpochOf(slot), snapshot.Revision))
             {
                 m_staleDeathRejects++;
@@ -555,7 +1371,9 @@ namespace SuMultiplayer.Engine
                 m_parentField.ModifyParentField(health, "<DeathTime>k__BackingField", null,
                     typeof(ComponentHealth));
                 if (!dead && snapshot.Health < previousHealth - PlayerVitalsLimits.ValueEpsilon)
-                    ShowHurt(player, previousHealth - snapshot.Health);
+                    ShowAuthoritativeHurt(slot, player, previousHealth - snapshot.Health);
+                // 本机槽位唯一的权威生命缓存：自我伤害守卫 / 107 拒绝回滚都只认这个值。
+                m_localAuthorityHealth[slot] = engineHealth;
                 m_healthWrites++;
             }
 
@@ -576,12 +1394,17 @@ namespace SuMultiplayer.Engine
             WriteConditions(player, in snapshot);
             WriteLocalFire(player, slot, snapshot.FireDuration);
             WriteLocalHud(slot, player, dead ? 0f : engineHealth, snapshot.Food,
-                snapshot.Temperature, snapshot.TargetTemperature, dead);
+                snapshot.Temperature, snapshot.TargetTemperature, dead,
+                snapshot.FreezeProgress, snapshot.FreezeStage);
 
             if (dead && !wasDead)
             {
                 m_localDeadSlots.Add(slot);
                 m_localDeaths++;
+                // 死亡边沿（主机权威状态先到、Death 事件后到或丢失）：红屏 / 黑屏 / 绿屏 /
+                // 呕吐粒子收掉，火焰粒子也停 —— 与 ApplyLocalDeath 同一条表现口径。
+                GetOrCreateLocalEffect(slot, player).Reset();
+                StopLocalFireParticles(slot);
                 ArmNativeDeath(slot, player, snapshot.CauseOfDeath, snapshot.Revision);
             }
             else if (!dead && wasDead)
@@ -593,11 +1416,188 @@ namespace SuMultiplayer.Engine
                 RestorePlayerDataToPlaying(slot, player);
                 m_localRespawns++;
             }
+            // 等级：死亡快照只缓存（DeadDeferred），活着才写 PlayerData.Level。
+            // 若引擎已经开始复活（旧实体已删、新实体已出生但重放还没跑），这一条活着的主机快照
+            // 同样算"复活覆盖"（新实体默认 Level=1）。
+            bool respawnPending = deathState != null && deathState.DeathToken != 0 &&
+                deathState.ReplayedToken != Token(player);
+            ApplyLocalLevel(slot, player, snapshot.Level, dead, snapshot.Revision,
+                respawnPending, "state");
+            // 复活窗口关闭：主机权威存活快照（rev 严格大于复活裁决 rev）。
+            // 必须在这里主动清理死亡表现 —— 重放已经先把 m_localDeadSlots 清掉，旧的
+            // "!dead && wasDead" 分支不会成立（实机死亡屏残留的根因之一）。
+            if (!dead && windowActive && deathState.Window.CanCloseOnAlive(snapshot.Revision,
+                    snapshot.Health))
+            {
+                if (!ClearRespawnDeathPresentation(slot, player, in snapshot,
+                        out string cleanupReason))
+                {
+                    // 计数在 ClearRespawnDeathPresentation 里（失败即 +1，和 Describe 同源）。
+                    failure = "复活窗口清理死亡表现失败：" + cleanupReason;
+                    Problem("respawn-window-cleanup:" + slot,
+                        "本机槽位 " + slot + " 的复活窗口关闭失败：清理死亡表现失败（" +
+                        cleanupReason + "）→ 保持窗口、下一拍重试（累计 " +
+                        m_replicaWindowCleanupFailures +
+                        " 次；挡门框 / 死亡屏可能仍在，绝不假装清掉）");
+                    return;
+                }
+                deathState.Window.Close();
+                m_replicaWindowClosed++;
+                Info("本机槽位 " + slot + " 的复活窗口关闭（respawnInProgress 结束）：主机权威存活 rev=" +
+                    snapshot.Revision + " > respawn=" + deathState.Window.RespawnRevision +
+                    " / epoch=" + EpochOf(slot) + "（死亡 rev=" +
+                    deathState.Window.DeathRevision + "）→ 死亡表现已主动清除");
+            }
+        }
+
+        /// <summary>
+        /// 主机权威等级 → 本机 <c>PlayerData.Level</c>（vitals.proto 字段 21）。
+        ///
+        /// 判定全部走 <see cref="PlayerLevelPolicy.Decide"/>：
+        ///   · Apply → 写 <c>PlayerData.Level</c>（自动属性；setter 维护
+        ///     <c>&lt;Level&gt;k__BackingField</c>）；
+        ///   · DeadDeferred → **不写**（引擎死亡时自己会减半；此时写主机值 = 双端各减一次），
+        ///     但快照里的等级是主机减半后的权威值，照样缓存给复活重放；
+        ///   · Stale → 忽略并计数；Invalid → 拒绝 + 计数（分类进 <c>levelRejectedBy</c>）+ 限流日志；
+        ///   · Absent（0 = 老版本主机）/ Unchanged → 忽略。
+        ///
+        /// <paramref name="isRespawn"/> = 这次写入发生在"复活重放"链路（新实体默认 Level=1）：
+        /// 成功写入计 <c>levelRespawnOverrides</c>。
+        /// </summary>
+        private void ApplyLocalLevel(int slot, ComponentPlayer player, float hostLevel, bool dead,
+            uint revision, bool isRespawn, string source)
+        {
+            PlayerData playerData = player?.PlayerData;
+            if (playerData == null)
+            {
+                m_levelCounters.NoteWriteFailure();
+                Problem("level-apply:" + slot + ":" + source,
+                    "本机槽位 " + slot + " 没有 PlayerData → 等级无法应用（" + source + "）");
+                return;
+            }
+            float localLevel = playerData.Level;
+            uint lastApplied = m_localLevelAppliedRevision.TryGetValue(slot,
+                out uint appliedRevision)
+                ? appliedRevision
+                : 0u;
+            PlayerLevelDecision decision = PlayerLevelPolicy.Decide(hostLevel, localLevel, dead,
+                revision, lastApplied, out string reason);
+            switch (decision)
+            {
+                case PlayerLevelDecision.Apply:
+                {
+                    try
+                    {
+                        playerData.Level = hostLevel;
+                    }
+                    catch (Exception e)
+                    {
+                        m_levelCounters.NoteWriteFailure();
+                        Error("level-write:" + slot,
+                            "把主机权威等级写进本机槽位 " + slot + " 的 PlayerData.Level 失败", e);
+                        return;
+                    }
+                    m_localLevelAppliedRevision[slot] = revision;
+                    bool pendingOverride = m_localLevelRespawnPending.Remove(slot);
+                    bool respawnOverride = isRespawn || pendingOverride;
+                    m_levelCounters.NoteApplied(respawnOverride);
+                    m_localAuthorityLevel[slot] = hostLevel;
+                    m_localAuthorityLevelRevision[slot] = revision;
+                    Info("本机槽位 " + slot + " 的等级已由主机权威覆盖（" + source + "）：" +
+                        localLevel.ToString("0.####") + " → " + hostLevel.ToString("0.####") +
+                        "（rev=" + revision + (respawnOverride ? "，复活覆盖" : string.Empty) + "）");
+                    return;
+                }
+                case PlayerLevelDecision.DeadDeferred:
+                    m_levelCounters.NoteDeadDeferred();
+                    if (PlayerLevelPolicy.IsValid(hostLevel) && hostLevel > 0f)
+                    {
+                        m_localAuthorityLevel[slot] = hostLevel;
+                        m_localAuthorityLevelRevision[slot] = revision;
+                    }
+                    return;
+                case PlayerLevelDecision.Stale:
+                    m_levelCounters.NoteStale();
+                    Problem("level-stale:" + slot, "忽略本机槽位 " + slot + " 的陈旧等级（" +
+                        reason + "，来源 " + source + "）");
+                    return;
+                case PlayerLevelDecision.Invalid:
+                    m_levelCounters.NoteInvalid(PlayerLevelPolicy.RejectionTag(hostLevel));
+                    Problem("level-invalid:" + slot, "拒绝本机槽位 " + slot + " 的主机等级（" +
+                        reason + "，来源 " + source + "）：不夹紧、不写入，等下一拍权威值");
+                    return;
+                case PlayerLevelDecision.Absent:
+                    // 0 = 老版本主机没有携带等级：不是失败，忽略并计数（状态行 levelAbsent 可见）。
+                    m_levelCounters.NoteAbsent();
+                    return;
+                default:
+                    m_localLevelRespawnPending.Remove(slot);
+                    m_levelCounters.NoteUnchanged();
+                    return;
+            }
+        }
+
+        /// <summary>
+        /// 复活重放：把缓存的主机权威等级写进引擎新建的实体。缓存来自最近一条主机快照
+        /// （死亡快照也缓存 —— 主机在死亡时已经把等级减半）。没有缓存时**不猜**：
+        /// 计数 <c>levelAbsent</c> + 限流日志，等主机复活后的权威上报第一次到达时按 policy 写入
+        /// （那时仍计 <c>levelRespawnOverrides</c>）。
+        /// </summary>
+        private void ApplyCachedAuthorityLevel(int slot, ComponentPlayer player,
+            uint deathRevision, uint fallbackRevision, string source)
+        {
+            if (!m_localAuthorityLevel.TryGetValue(slot, out float hostLevel) || hostLevel <= 0f)
+            {
+                m_levelCounters.NoteAbsent();
+                Problem("level-respawn:" + slot, "复活重放没有可用的主机权威等级（" + source +
+                    "）→ 新实体保持引擎默认 Level=1，等主机复活后的权威上报（不猜等级）");
+                return;
+            }
+            uint revision = m_localAuthorityLevelRevision.TryGetValue(slot, out uint cached)
+                ? cached
+                : fallbackRevision;
+            // 缓存必须来自本次死亡之后（死亡事件 revision 之后的那条快照才是主机已减半的值）。
+            // 死亡之前的活着快照 Revision < 死亡事件 Revision：写进去等于把未减半的旧等级带回新实体。
+            if (deathRevision != 0 && revision <= deathRevision)
+            {
+                m_levelCounters.NoteAbsent();
+                Problem("level-respawn-cache:" + slot, "复活重放的缓存等级 revision=" + revision +
+                    " ≤ 死亡 revision=" + deathRevision +
+                    "（属于死亡之前的快照）→ 不写进新实体，等复活后的权威上报");
+                return;
+            }
+            ApplyLocalLevel(slot, player, hostLevel, dead: false, revision, isRespawn: true,
+                source);
         }
 
         private void ApplyLocalDeath(int slot, ComponentPlayer player, string cause,
             uint revision)
         {
+            LocalDeathState deathState = GetOrCreateLocalDeathState(slot);
+            deathState.DeathRevision = PlayerRespawnEpoch.Advance(deathState.DeathRevision,
+                revision);
+            if (deathState.Window.Active)
+            {
+                if (deathState.Window.IsDeathAfterRespawn(revision))
+                {
+                    m_replicaWindowNewDeath++;
+                    deathState.Window.Close();
+                    Info("本机槽位 " + slot + " 的复活窗口收到比复活裁决更新的 Death 事件（rev=" +
+                        revision + " > respawn=" + deathState.Window.RespawnRevision +
+                        "）→ 结束窗口并按真实新死亡应用");
+                }
+                else
+                {
+                    m_replicaWindowDeadSuppressed++;
+                    Problem("respawn-window-death-event:" + slot,
+                        "复活窗口拒绝本机槽位 " + slot + " 的 Death 事件（rev=" + revision +
+                        "，死因=" + (string.IsNullOrEmpty(cause) ? "未记录" : cause) + "）：" +
+                        deathState.Window.Describe() +
+                        " → 不写引擎、不挂挡门框 / 死亡屏（累计拒绝 " +
+                        m_replicaWindowDeadSuppressed + " 条）");
+                    return;
+                }
+            }
             if (PlayerRespawnEpoch.IsStaleDead(EpochOf(slot), revision))
             {
                 m_staleDeathRejects++;
@@ -619,15 +1619,22 @@ namespace SuMultiplayer.Engine
                     m_healthWrites++;
                 }
             }
+            // 死亡也是主机权威生命的一部分：自我伤害守卫不能把本地预测从 0 回滚成"活着"。
+            m_localAuthorityHealth[slot] = 0f;
             ComponentVitalStats deathVital = player.ComponentVitalStats;
             WriteLocalHud(slot, player, 0f,
                 deathVital != null ? deathVital.Food : 1f,
                 deathVital != null ? deathVital.Temperature : DefaultTemperature,
-                ReadTargetTemperature(deathVital), true);
+                ReadTargetTemperature(deathVital), true, 0f, PlayerFreezePolicy.StageNone);
+            // 死亡边沿：红屏 / 黑屏 / 绿屏 / 呕吐粒子全部收掉（引擎死亡画面接管）。
+            GetOrCreateLocalEffect(slot, player).Reset();
             bool newlyDead = m_localDeadSlots.Add(slot);
             StopLocalFireParticles(slot);
             if (newlyDead) m_localDeaths++;
             ArmNativeDeath(slot, player, cause, revision);
+            // 死亡边沿没有等级字段：按"死亡中"显式推迟（绝不在这里写 0 / 猜一个值）。
+            ApplyLocalLevel(slot, player, 0f, dead: true, revision, isRespawn: false,
+                "death-event");
         }
 
         /// <summary>
@@ -667,13 +1674,19 @@ namespace SuMultiplayer.Engine
             StopLocalFireParticles(slot);
             m_localSleep.Remove(slot);
             m_localDeadSlots.Remove(slot);
+            // 主机裁决复活 = 新的权威生命从满血开始（新实体的模板值；主机随后会再下发确认）。
+            m_localAuthorityHealth[slot] = FullHealth;
             ClearNativeDeath(slot, "主机裁决复活（旧实体仍在）");
             RestorePlayerDataToPlaying(slot, player);
+            // 等级：旧实体仍活着时直接用缓存的主机权威值（主机死亡时已减半）。
+            m_localLevelRespawnPending.Add(slot);
+            ApplyCachedAuthorityLevel(slot, player, 0u, evt.Revision, "respawn-event");
             ComponentVitalStats respawnVital = player.ComponentVitalStats;
+            GetOrCreateLocalEffect(slot, player).Reset();
             WriteLocalHud(slot, player, FullHealth,
                 respawnVital != null ? respawnVital.Food : 1f,
                 respawnVital != null ? respawnVital.Temperature : DefaultTemperature,
-                ReadTargetTemperature(respawnVital), false);
+                ReadTargetTemperature(respawnVital), false, 0f, PlayerFreezePolicy.StageNone);
             m_localRespawns++;
         }
 
@@ -714,6 +1727,9 @@ namespace SuMultiplayer.Engine
                     FppCamera fpp = widget.FindCamera<FppCamera>(false);
                     if (fpp != null) widget.ActiveCamera = fpp;
                 }
+                // 客户端**不写**死亡大字（引擎 PlayerData.PlayerDead 的 DisplayLargeMessage 由引擎
+                // 自己管，30 秒后自己过期，见 ComponentGui.cs:385-388）；第三屏的死亡文字
+                // 由 Engine/MirrorViewFeedback.cs 负责（引擎同款时长 + 复活清除）。
                 m_localPlayerDataRestores++;
                 Info("本机槽位 " + slot + "：主机确认角色活着 → 已把引擎 PlayerData 从死亡状态" +
                     "恢复到 Playing 并切回第一人称相机（累计 " + m_localPlayerDataRestores + " 次）");
@@ -730,44 +1746,105 @@ namespace SuMultiplayer.Engine
             }
         }
 
+        /// <summary>
+        /// 掉血的即时反馈（血条闪烁 + 受伤音效）。**红屏不在这里写一次**：引擎
+        /// <c>ComponentScreenOverlays.Update</c> 每帧把 <c>RedoutFactor</c> 清 0，只写一次 =
+        /// 只闪一帧（实机问题 3"客户端受伤没有红屏"就是这么来的）。红屏因子由
+        /// <see cref="ShowAuthoritativeHurt"/>（95 上报）/ 自我伤害 107 的每帧衰减路径维护。
+        /// </summary>
         private void ShowHurt(ComponentPlayer player, float loss)
         {
             ComponentGui gui = player.ComponentGui;
             if (gui != null && gui.HealthBarWidget != null)
             {
-                gui.HealthBarWidget.Flash(MathUtils.Clamp((int)(loss * 30f), 1, 10));
+                gui.HealthBarWidget.Flash(PlayerHurtFeedback.FlashCount(loss));
                 gui.HealthBarWidget.Value = MathUtils.Max(0f,
                     player.ComponentHealth != null ? player.ComponentHealth.Health : 0f);
             }
             player.ComponentCreatureSounds?.PlayPainSound();
-            ComponentScreenOverlays overlays = player.ComponentScreenOverlays;
-            if (overlays != null)
+            m_hurtFeedbackSound++;
+        }
+
+        /// <summary>
+        /// 主机权威掉血（PLAYER_VITALS_REPORT 95）→ 受伤音效 + **每帧衰减**的红屏因子
+        /// （引擎 <c>ComponentHealth.Update:141-147/256-261</c> 的同等行为）。
+        /// 只写表现，不调用 <c>Injure</c>、不判死（死亡仍由主机 Death 事件 / Health=0 驱动）。
+        /// </summary>
+        private void ShowAuthoritativeHurt(int slot, ComponentPlayer player, float loss)
+        {
+            ShowHurt(player, loss);
+            LocalEffectState state = GetOrCreateLocalEffect(slot, player);
+            state.RedFactor = PlayerHurtFeedback.AddDamage(state.RedFactor, loss);
+            m_hurtRedoutHits++;
+        }
+
+        private LocalEffectState GetOrCreateLocalEffect(int slot, ComponentPlayer player)
+        {
+            if (!m_localEffects.TryGetValue(slot, out LocalEffectState state))
             {
-                overlays.RedoutFactor = MathUtils.Max(overlays.RedoutFactor,
-                    MathUtils.Clamp(loss * 4f, 0f, 1f));
+                state = new LocalEffectState();
+                m_localEffects[slot] = state;
             }
+            int token = Token(player);
+            if (state.EntityToken != token)
+            {
+                state.Reset();
+                state.EntityToken = token;
+            }
+            return state;
         }
 
         /// <summary>
         /// 把一份主机权威体征写进本机角色的 HUD（血条 / 食物条 / 温度条贴图 / 冰冻覆盖）。
         /// 只写**显示属性**，不写任何组件字段、不跑模拟。输入非法时保留上一次有效显示并计数。
+        ///
+        /// 冻结覆盖（实机问题 1/2）：**只用主机下发的 <c>freeze_progress</c> / <c>freeze_stage</c>**
+        /// （vitals.proto 字段 22/23）作为插值目标，不再从本机温度推导。老版本主机（两者都是 0）
+        /// 且权威温度 &lt; 6 时，用**主机权威温度**推导并计 <c>freezeLegacy</c>（仍不是本地模拟）。
         /// </summary>
         private void WriteLocalHud(int slot, ComponentPlayer player, float healthValue,
-            float foodValue, float temperature, float targetTemperature, bool dead)
+            float foodValue, float temperature, float targetTemperature, bool dead,
+            float freezeProgress, uint freezeStage)
         {
-            if (!PlayerVitalsPresentation.TryCreate(healthValue, foodValue, temperature,
-                    targetTemperature, dead, out PlayerVitalsHudValues values))
+            LocalHudState state = GetOrCreateLocalHud(slot, player);
+            float targetFreeze;
+            if (PlayerFreezePolicy.TryResolve(freezeProgress, freezeStage, temperature,
+                    out float resolvedProgress, out uint resolvedStage, out bool legacy,
+                    out string freezeError))
+            {
+                if (legacy) m_freezeLegacy++;
+                state.HasFreezeTarget = true;
+                state.FreezeLegacy = legacy;
+                if (state.TargetFreezeStage != resolvedStage) m_freezeStageChanges++;
+                state.TargetFreezeProgress = resolvedProgress;
+                state.TargetFreezeStage = resolvedStage;
+                m_freezeHostValue = resolvedProgress;
+                m_freezeClientApplied++;
+                targetFreeze = resolvedProgress;
+            }
+            else
+            {
+                m_freezeInvalid++;
+                Problem("freeze-values:" + slot, "本机槽位 " + slot + " 的主机冻结值非法：" +
+                    freezeError + "（progress=" + freezeProgress + " stage=" + freezeStage +
+                    "）→ 保留上一次有效冻结目标（不拿 0 顶替、不改本机权威）");
+                targetFreeze = state.HasFreezeTarget
+                    ? state.TargetFreezeProgress
+                    : state.Values.IceFactor;
+            }
+            if (!PlayerVitalsPresentation.TryCreateWithFreeze(healthValue, foodValue, temperature,
+                    targetTemperature, targetFreeze, dead, out PlayerVitalsHudValues values))
             {
                 m_hudNonFinite++;
-                Problem("hud-values:" + slot, "本机槽位 " + slot + " 的体征 HUD 输入不是有限数：" +
+                Problem("hud-values:" + slot, "本机槽位 " + slot + " 的体征 HUD 输入非法：" +
                     "health=" + healthValue + " food=" + foodValue + " temperature=" +
-                    temperature + " target=" + targetTemperature +
+                    temperature + " target=" + targetTemperature + " freeze=" + targetFreeze +
                     " → 保留上一次有效显示（不写 NaN、不拿默认值顶替）");
                 return;
             }
-            LocalHudState state = GetOrCreateLocalHud(slot, player);
             state.Values = values;
-            if (!ApplyLocalHud(slot, player, state, out string reason))
+            state.Dead = dead;
+            if (!ApplyLocalHud(slot, player, state, 0f, out string reason))
             {
                 Problem("hud-apply:" + slot, "本机槽位 " + slot + " 的体征 HUD 写入失败：" +
                     reason);
@@ -783,11 +1860,11 @@ namespace SuMultiplayer.Engine
         /// 变化时写（<see cref="LocalHudState.TextureIndex"/> 去重）。实体换代 = 新 GUI，重新写。
         /// 返回刷新到的本机角色数；<paramref name="reason"/> 非空 = 有槽位刷新失败（限流日志由调用方做）。
         /// </summary>
-        public int RefreshLocalPresentation(out string reason)
+        public int RefreshLocalPresentation(float deltaTime, out string reason)
         {
             reason = null;
             if (m_disabledLocalSlots.Count == 0 && m_localHud.Count == 0 &&
-                m_localDeadSlots.Count == 0)
+                m_localDeadSlots.Count == 0 && m_localEffects.Count == 0)
                 return 0;
             Project project = GameManager.Project;
             if (project == null)
@@ -822,7 +1899,7 @@ namespace SuMultiplayer.Engine
                     }
                     state = m_localHud[slot];
                 }
-                if (!ApplyLocalHud(slot, player, state, out string applyReason))
+                if (!ApplyLocalHud(slot, player, state, deltaTime, out string applyReason))
                 {
                     if (firstFailure == null)
                         firstFailure = "槽位 " + slot + "：" + applyReason;
@@ -862,6 +1939,21 @@ namespace SuMultiplayer.Engine
             }
             LocalHudState state = GetOrCreateLocalHud(slot, player);
             state.Values = values;
+            state.Dead = dead;
+            // 第一条主机快照到达前：用当前组件值（= 下载世界 / 上一次主机值）作为起点，
+            // 插值器直接贴合（不从 0 淡入）。第一条真正的冻结字段会立刻覆盖它。
+            if (!state.HasFreezeTarget)
+            {
+                state.TargetFreezeProgress = values.IceFactor;
+                state.TargetFreezeStage = PlayerFreezePolicy.StageNone;
+                if (state.Freeze.TrySetImmediate(values.IceFactor, out string freezeError))
+                    m_freezeSeeds++;
+                else
+                    Problem("hud-seed-freeze:" + slot, "本机槽位 " + slot +
+                        " 的冰冻插值播种失败：" + freezeError);
+                state.HealthBar.TrySetImmediate(values.HealthBarValue, out _);
+                state.FoodBar.TrySetImmediate(values.FoodBarValue, out _);
+            }
             return true;
         }
 
@@ -875,9 +1967,16 @@ namespace SuMultiplayer.Engine
             int token = Token(player);
             if (state.EntityToken != token)
             {
-                // 角色实体换代 = 新 GUI：控件里的贴图不一定还是我们上次写的那张。
+                // 角色实体换代 = 新 GUI：控件里的贴图不一定还是我们上次写的那张；
+                // 冰冻插值也不能从上一次死亡画面的值淡入（下次推进直接播种到主机目标）。
                 state.EntityToken = token;
                 state.TextureIndex = int.MinValue;
+                state.HasFreezeTarget = false;
+                state.TargetFreezeProgress = 0f;
+                state.TargetFreezeStage = PlayerFreezePolicy.StageNone;
+                state.Freeze.Reset();
+                state.HealthBar.Reset();
+                state.FoodBar.Reset();
             }
             return state;
         }
@@ -887,27 +1986,50 @@ namespace SuMultiplayer.Engine
         /// 冰冻覆盖每次都写（引擎每帧清 0）。任何控件缺失都返回 false + 明确原因，不静默跳过。
         /// </summary>
         private bool ApplyLocalHud(int slot, ComponentPlayer player, LocalHudState state,
-            out string reason)
+            float deltaTime, out string reason)
         {
             reason = null;
+            bool effectsComplete = AdvanceLocalEffectPresentation(slot, player,
+                GetOrCreateLocalEffect(slot, player), deltaTime, out string effectReason);
+            if (!effectsComplete && reason == null) reason = effectReason;
             ComponentGui gui = player.ComponentGui;
             if (gui == null)
             {
                 m_hudPresentationFailures++;
-                reason = "角色没有 ComponentGui";
+                if (reason == null) reason = "角色没有 ComponentGui";
                 return false;
             }
             bool complete = true;
+            // 死亡：血条立刻归零（引擎 ComponentHealth.Update 在死亡前已经把 Health/血条写成 0），
+            // 不从上一次血量慢慢滑下去。
+            if (state.Dead) state.HealthBar.Reset();
+            float healthTarget = state.Dead ? 0f : state.Values.HealthBarValue;
+            if (!state.HealthBar.TryAdvance(healthTarget, deltaTime, out float healthBar,
+                    out string healthError))
+            {
+                m_hudPresentationFailures++;
+                complete = false;
+                if (reason == null) reason = "血条插值失败：" + healthError;
+                healthBar = state.HealthBar.Value;
+            }
             if (gui.HealthBarWidget != null)
-                gui.HealthBarWidget.Value = state.Values.HealthBarValue;
+                gui.HealthBarWidget.Value = healthBar;
             else
             {
                 m_hudPresentationFailures++;
                 complete = false;
-                reason = "ComponentGui 没有 HealthBarWidget";
+                if (reason == null) reason = "ComponentGui 没有 HealthBarWidget";
+            }
+            if (!state.FoodBar.TryAdvance(state.Values.FoodBarValue, deltaTime,
+                    out float foodBar, out string foodError))
+            {
+                m_hudPresentationFailures++;
+                complete = false;
+                if (reason == null) reason = "食物条插值失败：" + foodError;
+                foodBar = state.FoodBar.Value;
             }
             if (gui.FoodBarWidget != null)
-                gui.FoodBarWidget.Value = state.Values.FoodBarValue;
+                gui.FoodBarWidget.Value = foodBar;
             else
             {
                 m_hudPresentationFailures++;
@@ -952,12 +2074,39 @@ namespace SuMultiplayer.Engine
             if (overlays == null)
             {
                 m_hudPresentationFailures++;
+                m_iceFactorWriteFailures++;
                 if (reason == null) reason = "角色没有 ComponentScreenOverlays（冰冻覆盖无法显示）";
                 return false;
             }
-            overlays.IceFactor = state.Values.IceFactor;
-            m_hudIceWrites++;
-            return complete && reason == null;
+            // 连续插值：每帧按时间常数 + 最大速率逼近主机权威冻结进度，绝不把 5 Hz 快照直接阶跃写入。
+            // 死亡后引擎不再写 IceFactor（整个画面由死亡相机接管）：这里也立刻归零，与单机一致。
+            if (state.Dead) state.Freeze.Reset();
+            float target = state.Dead
+                ? 0f
+                : (state.HasFreezeTarget ? state.TargetFreezeProgress : state.Values.IceFactor);
+            if (!state.Freeze.TryAdvance(target, deltaTime, out float iceFactor,
+                    out string freezeError))
+            {
+                m_freezeInvalid++;
+                Problem("freeze-advance:" + slot, "本机槽位 " + slot +
+                    " 的冰冻插值推进失败：" + freezeError + " → 保留当前值 " +
+                    state.Freeze.Value.ToString("F3"));
+                iceFactor = state.Freeze.Value;
+            }
+            if (target > 0f || iceFactor > 0f) m_freezeInterpolatedFrames++;
+            try
+            {
+                overlays.IceFactor = iceFactor;
+                m_hudIceWrites++;
+            }
+            catch (Exception e)
+            {
+                m_iceFactorWriteFailures++;
+                complete = false;
+                if (reason == null)
+                    reason = "写 IceFactor 失败：" + e.GetType().Name + " " + e.Message;
+            }
+            return complete && effectsComplete && reason == null;
         }
 
         /// <summary>读主机权威目标体温（<c>m_targetTemperature</c>，客户端只读）。</summary>
@@ -999,6 +2148,17 @@ namespace SuMultiplayer.Engine
         private uint EpochOf(int slot) =>
             m_localDeathEpoch.TryGetValue(slot, out uint epoch) ? epoch : 0u;
 
+        /// <summary>当前仍在 respawnInProgress 的槽位数（诊断 / 状态行）。</summary>
+        private int CountActiveRespawnWindows()
+        {
+            int active = 0;
+            foreach (LocalDeathState state in m_localDeathStates.Values)
+            {
+                if (state.Window.Active) active++;
+            }
+            return active;
+        }
+
         private LocalDeathState GetOrCreateLocalDeathState(int slot)
         {
             if (!m_localDeathStates.TryGetValue(slot, out LocalDeathState state))
@@ -1030,7 +2190,7 @@ namespace SuMultiplayer.Engine
         private void ArmNativeDeath(int slot, ComponentPlayer player, string cause, uint revision)
         {
             LocalDeathState state = GetOrCreateLocalDeathState(slot);
-            if (state.Keep == null) state.Keep = CaptureKeepState(slot, player);
+            state.DeathRevision = PlayerRespawnEpoch.Advance(state.DeathRevision, revision);
             m_deathScreensShown++;
             PlayerRespawnMode mode = GetRespawnMode(out string modeReason);
             if (mode == PlayerRespawnMode.Cruel)
@@ -1145,41 +2305,235 @@ namespace SuMultiplayer.Engine
             }
         }
 
-        /// <summary>关掉某个槽位的挡门对话框（幂等）。返回 true = 这次真的关了一个。</summary>
+        /// <summary>
+        /// 关掉某个槽位的挡门对话框（幂等）。返回 true = 这次真的关了一个；
+        /// false = 没有对话框或**关闭失败**（失败时保留引用，下一次清理重试，绝不假装关掉）。
+        /// </summary>
         private bool HideDeathGateDialog(int slot, string why)
         {
             if (!m_localDeathStates.TryGetValue(slot, out LocalDeathState state) ||
                 state.GateDialog == null)
                 return false;
             Dialog dialog = state.GateDialog;
-            state.GateDialog = null;
-            state.GateToken = 0;
             try
             {
                 // DialogsManager.HideDialog 立刻把对话框从 m_dialogs 移除（淡出动画由 Update 收尾），
                 // 所以引擎 PlayerDead 的 !HasDialogs 条件当帧就成立。
                 DialogsManager.HideDialog(dialog);
-                m_gateHidden++;
-                Info("已关掉本机槽位 " + slot + " 的挡门对话框（" + why + "）");
-                return true;
             }
             catch (Exception e)
             {
                 m_gateFailures++;
-                Error("gate-hide:" + slot, "关闭挡门对话框失败（本机槽位 " + slot + "：" + why + "）", e);
+                // 限流日志（10 s）：清理失败可能每拍重试，不能用 Error 每帧刷屏。
+                Problem("gate-hide:" + slot,
+                    "关闭挡门对话框失败（本机槽位 " + slot + "：" + why + "）：" +
+                    e.GetType().Name + " " + e.Message +
+                    " → 保留引用，下一次清理重试（不假装关掉）");
                 return false;
             }
+            state.GateDialog = null;
+            state.GateToken = 0;
+            m_gateHidden++;
+            Info("已关掉本机槽位 " + slot + " 的挡门对话框（" + why + "）");
+            return true;
         }
 
         /// <summary>死亡期结束（复活 / 主机改回活着 / 世界切换）：关掉挡门对话框并计数。</summary>
         private void ClearNativeDeath(int slot, string why)
         {
-            HideDeathGateDialog(slot, why);
-            if (m_localDeathStates.TryGetValue(slot, out LocalDeathState state))
+            if (m_localDeathStates.TryGetValue(slot, out LocalDeathState state) &&
+                state.GateDialog != null && !HideDeathGateDialog(slot, why))
             {
-                state.GateDialog = null;
-                state.GateToken = 0;
+                Problem("gate-clear:" + slot,
+                    "死亡期结束但挡门对话框没关掉（本机槽位 " + slot + "：" + why +
+                    "）→ 保留引用，下一次清理重试（绝不假装已关）");
             }
+        }
+
+        /// <summary>
+        /// 关闭复活窗口前的**主动清理**：把可能已经误挂的死亡表现全部收掉。
+        /// 只在主机权威 Health &gt; 0 时调用（调用方已确认）。
+        ///
+        /// 为什么必须主动清：复活 = 删旧实体 + 新实体，重放会先把 <c>m_localDeadSlots</c>
+        /// 清掉；旧的"同一实体从死改活"分支（<c>!dead &amp;&amp; wasDead</c>）因此永远不会成立。
+        /// 实机 rev=3513 的旧死亡状态在新实体上又走了一次 PlayerDead，挡门框 / 死亡屏被挂回，
+        /// 而复活重放只写数值 —— 没有人清表现。
+        ///
+        /// 清理项（任何一项失败都返回 false + 原因；调用方计数 + 10 s 限流日志，下一拍重试）：
+        ///   ① 引擎 PlayerData 回 Playing（含 m_playerDeathTime）；
+        ///   ② ComponentHealth：Health / CauseOfDeath / DeathTime / HealthChange / m_lastHealth；
+        ///   ③ ComponentCreatureModel.DeathPhase / DeathCauseOffset（死亡姿态）；
+        ///   ④ 引擎死亡大消息（ComponentGui.m_message：玩家看到的 "YOU HAVE DIED"）；
+        ///   ⑤ 挡门对话框；
+        ///   ⑥ 相机 DeathCamera → FppCamera（只在死亡相机还挂着时切）。
+        /// </summary>
+        private bool ClearRespawnDeathPresentation(int slot, ComponentPlayer player,
+            in PlayerVitalsSnapshot snapshot, out string reason)
+        {
+            reason = null;
+            if (snapshot.Dead || !(snapshot.Health > 0f))
+            {
+                reason = "主机权威不是存活（health=" + snapshot.Health + "）→ 不清理死亡表现";
+                return false;
+            }
+            var failures = new List<string>(4);
+            float authoritative = MathUtils.Saturate(snapshot.Health);
+            // ① PlayerData：先离开 PlayerDead（PlayerDead.Update 一旦看到输入就会 RemoveEntity）。
+            try
+            {
+                RestorePlayerDataToPlaying(slot, player);
+                PlayerData playerData = player.PlayerData;
+                StateMachine stateMachine = playerData != null
+                    ? m_parentField.GetParentField<StateMachine>(playerData, "m_stateMachine",
+                        typeof(PlayerData))
+                    : null;
+                object deathTime = playerData != null
+                    ? m_parentField.GetParentField(playerData, "m_playerDeathTime",
+                        typeof(PlayerData))
+                    : null;
+                if (stateMachine == null || stateMachine.CurrentState != "Playing" ||
+                    deathTime != null)
+                {
+                    failures.Add("PlayerData 未回到 Playing（state=" +
+                        (stateMachine != null ? stateMachine.CurrentState : "null") +
+                        (deathTime != null ? "，m_playerDeathTime 仍有值" : string.Empty) + "）");
+                }
+            }
+            catch (Exception e)
+            {
+                failures.Add("恢复 PlayerData 异常：" + e.GetType().Name + " " + e.Message);
+            }
+            // ② 生命字段：Health 用主机权威值；其余三项是引擎死亡分支的入口 / 残留。
+            ComponentHealth health = player.ComponentHealth;
+            if (health == null)
+            {
+                failures.Add("缺少 ComponentHealth");
+            }
+            else
+            {
+                try
+                {
+                    WriteField(health, "<Health>k__BackingField", authoritative,
+                        typeof(ComponentHealth));
+                    m_parentField.ModifyParentField(health, "m_lastHealth", authoritative,
+                        typeof(ComponentHealth));
+                    m_parentField.ModifyParentField(health, "<CauseOfDeath>k__BackingField",
+                        string.Empty, typeof(ComponentHealth));
+                    m_parentField.ModifyParentField(health, "<DeathTime>k__BackingField", null,
+                        typeof(ComponentHealth));
+                    m_parentField.ModifyParentField(health, "<HealthChange>k__BackingField", 0f,
+                        typeof(ComponentHealth));
+                    if (!(health.Health > 0f))
+                        failures.Add("Health 仍为 " + health.Health);
+                    if (!string.IsNullOrEmpty(health.CauseOfDeath))
+                        failures.Add("CauseOfDeath 仍为 " + health.CauseOfDeath);
+                    if (health.DeathTime != null)
+                        failures.Add("DeathTime 仍为 " + health.DeathTime);
+                    if (health.HealthChange != 0f)
+                        failures.Add("HealthChange 仍为 " + health.HealthChange);
+                }
+                catch (Exception e)
+                {
+                    failures.Add("清 ComponentHealth 异常：" + e.GetType().Name + " " + e.Message);
+                }
+            }
+            // ③ 死亡姿态：Health 回到 >0 后 ComponentCreatureModel.Update 不会再推进 DeathPhase，
+            //    已经推到 1 的姿势必须显式归零（与远端化身 ResetDeathState 同一口径）。
+            ComponentCreatureModel model = player.ComponentCreatureModel;
+            if (model == null)
+            {
+                failures.Add("缺少 ComponentCreatureModel");
+            }
+            else
+            {
+                try
+                {
+                    m_parentField.ModifyParentField(model, "<DeathPhase>k__BackingField", 0f,
+                        typeof(ComponentCreatureModel));
+                    m_parentField.ModifyParentField(model, "<DeathCauseOffset>k__BackingField",
+                        Vector3.Zero, typeof(ComponentCreatureModel));
+                    if (model.DeathPhase > 0f)
+                        failures.Add("DeathPhase 仍为 " + model.DeathPhase);
+                }
+                catch (Exception e)
+                {
+                    failures.Add("清 DeathPhase 异常：" + e.GetType().Name + " " + e.Message);
+                }
+            }
+            // ④ 死亡大消息（ComponentGui.m_message）：30 秒才自然过期，复活必须立刻清。
+            ComponentGui gui = player.ComponentGui;
+            if (gui == null)
+            {
+                failures.Add("缺少 ComponentGui");
+            }
+            else
+            {
+                try
+                {
+                    m_parentField.ModifyParentField(gui, "m_message", null, typeof(ComponentGui));
+                    object message = m_parentField.GetParentField(gui, "m_message",
+                        typeof(ComponentGui));
+                    if (message != null) failures.Add("死亡大消息 m_message 未清空");
+                }
+                catch (Exception e)
+                {
+                    failures.Add("清死亡大消息异常：" + e.GetType().Name + " " + e.Message);
+                }
+            }
+            // ⑤ 挡门对话框（挂着的对话框会让引擎 !HasDialogs 条件永远不成立 / 界面挡输入）。
+            if (m_localDeathStates.TryGetValue(slot, out LocalDeathState gateState) &&
+                gateState.GateDialog != null &&
+                !HideDeathGateDialog(slot, "复活窗口关闭：主机权威存活"))
+            {
+                failures.Add("挡门对话框关闭失败");
+            }
+            // ⑥ 相机：死亡相机必须回第一人称（PlayerData 回 Playing 时引擎通常已切，但
+            //    "同一实体改活"等路径可能仍停在 DeathCamera 上）。
+            GameWidget widget = player.GameWidget;
+            if (widget == null)
+            {
+                failures.Add("缺少 GameWidget");
+            }
+            else
+            {
+                try
+                {
+                    if (widget.ActiveCamera is DeathCamera)
+                    {
+                        FppCamera fpp = widget.FindCamera<FppCamera>(false);
+                        if (fpp == null)
+                        {
+                            failures.Add("找不到 FppCamera");
+                        }
+                        else
+                        {
+                            widget.ActiveCamera = fpp;
+                            if (!(widget.ActiveCamera is FppCamera))
+                                failures.Add("ActiveCamera 仍是 " + widget.ActiveCamera);
+                        }
+                    }
+                }
+                catch (Exception e)
+                {
+                    failures.Add("切回第一人称相机异常：" + e.GetType().Name + " " + e.Message);
+                }
+            }
+            // 死亡期缓存 / 表现：全部归零（幂等）。
+            m_localDeadSlots.Remove(slot);
+            m_localEffects.Remove(slot);
+            StopLocalFireParticles(slot);
+            m_localAuthorityHealth[slot] = authoritative;
+            if (m_localHud.TryGetValue(slot, out LocalHudState hud)) hud.Dead = false;
+            if (failures.Count > 0)
+            {
+                m_replicaWindowCleanupFailures++;
+                reason = string.Join("；", failures);
+                return false;
+            }
+            Info("本机槽位 " + slot + " 的死亡表现已清理（PlayerData=Playing / 死亡相机→Fpp / " +
+                "死亡大消息=清 / 挡门框=关 / DeathPhase=0 / Health=" +
+                authoritative.ToString("F3") + "）");
+            return true;
         }
 
         /// <summary>
@@ -1198,128 +2552,6 @@ namespace SuMultiplayer.Engine
                 if (dialog.ParentWidget == guiWidget) return true;
             }
             return false;
-        }
-
-        /// <summary>
-        /// 冻结死亡那一刻的本地权威副本（背包 / 手持槽 / 合成格 / 衣服）。
-        /// 客户端是这些状态的权威方（由它上报给主机），所以直接取本机组件即可。
-        /// 捕获失败 = 返回 null 并计数（复活后这几样保持引擎模板值，绝不假装恢复成功）。
-        /// </summary>
-        private LocalKeepState CaptureKeepState(int slot, ComponentPlayer player)
-        {
-            try
-            {
-                var keep = new LocalKeepState();
-                ComponentInventory inventory = player.Entity.FindComponent<ComponentInventory>();
-                if (inventory != null)
-                {
-                    int slots = inventory.SlotsCount;
-                    keep.InventoryValues = new int[slots];
-                    keep.InventoryCounts = new int[slots];
-                    for (int i = 0; i < slots; i++)
-                    {
-                        keep.InventoryValues[i] = inventory.GetSlotValue(i);
-                        keep.InventoryCounts[i] = inventory.GetSlotCount(i);
-                    }
-                    keep.ActiveSlotIndex = inventory.ActiveSlotIndex;
-                }
-                ComponentCraftingTable crafting =
-                    player.Entity.FindComponent<ComponentCraftingTable>();
-                if (crafting != null)
-                {
-                    int slots = crafting.SlotsCount;
-                    keep.CraftingValues = new int[slots];
-                    keep.CraftingCounts = new int[slots];
-                    for (int i = 0; i < slots; i++)
-                    {
-                        keep.CraftingValues[i] = crafting.GetSlotValue(i);
-                        keep.CraftingCounts[i] = crafting.GetSlotCount(i);
-                    }
-                }
-                ComponentClothing clothing = player.Entity.FindComponent<ComponentClothing>();
-                if (clothing != null)
-                {
-                    keep.Clothes = new int[clothing.SlotsCount][];
-                    for (int i = 0; i < clothing.SlotsCount; i++)
-                    {
-                        keep.Clothes[i] =
-                            new List<int>(clothing.GetClothes((ClothingSlot)i)).ToArray();
-                    }
-                }
-                Info("本机槽位 " + slot + " 已冻结死亡前的背包 / 合成格 / 衣服副本" +
-                    "（背包 " + (keep.InventoryCounts?.Length ?? 0) + " 格 / 合成格 " +
-                    (keep.CraftingCounts?.Length ?? 0) + " 格 / 衣服 " +
-                    (keep.Clothes?.Length ?? 0) + " 槽）：新实体是空模板，复活后用它覆盖");
-                return keep;
-            }
-            catch (Exception e)
-            {
-                m_replayFailures++;
-                Error("keep-capture:" + slot,
-                    "冻结本机槽位 " + slot + " 的背包 / 衣服副本失败 → 复活后这几样会保持" +
-                    "引擎模板值（空背包 / 空衣服），不假装恢复成功", e);
-                return null;
-            }
-        }
-
-        /// <summary>
-        /// 把冻结副本写回**新实体**（引擎新实体是空模板）。返回 false = 有写失败（已计数 + 日志）。
-        /// </summary>
-        private bool RestoreKeepState(int slot, ComponentPlayer player, LocalKeepState keep)
-        {
-            if (keep == null) return false;
-            bool ok = true;
-            try
-            {
-                ComponentInventory inventory = player.Entity.FindComponent<ComponentInventory>();
-                if (inventory != null && keep.InventoryValues != null)
-                {
-                    int slots = MathUtils.Min(inventory.SlotsCount, keep.InventoryValues.Length);
-                    for (int i = 0; i < slots; i++)
-                    {
-                        int have = inventory.GetSlotCount(i);
-                        if (have > 0) inventory.RemoveSlotItems(i, have);
-                        if (keep.InventoryCounts[i] > 0)
-                            inventory.AddSlotItems(i, keep.InventoryValues[i],
-                                keep.InventoryCounts[i]);
-                    }
-                    inventory.ActiveSlotIndex = keep.ActiveSlotIndex;
-                    m_replayInventoryRestores++;
-                }
-                ComponentCraftingTable crafting =
-                    player.Entity.FindComponent<ComponentCraftingTable>();
-                if (crafting != null && keep.CraftingValues != null)
-                {
-                    int slots = MathUtils.Min(crafting.SlotsCount, keep.CraftingValues.Length);
-                    for (int i = 0; i < slots; i++)
-                    {
-                        int have = crafting.GetSlotCount(i);
-                        if (have > 0) crafting.RemoveSlotItems(i, have);
-                        if (keep.CraftingCounts[i] > 0)
-                            crafting.AddSlotItems(i, keep.CraftingValues[i],
-                                keep.CraftingCounts[i]);
-                    }
-                }
-                ComponentClothing clothing = player.Entity.FindComponent<ComponentClothing>();
-                if (clothing != null && keep.Clothes != null)
-                {
-                    int slots = MathUtils.Min(clothing.SlotsCount, keep.Clothes.Length);
-                    for (int i = 0; i < slots; i++)
-                    {
-                        clothing.SetClothes((ClothingSlot)i,
-                            keep.Clothes[i] ?? Array.Empty<int>());
-                    }
-                    m_replayClothesRestores++;
-                }
-                return ok;
-            }
-            catch (Exception e)
-            {
-                m_replayFailures++;
-                Error("keep-restore:" + slot,
-                    "把背包 / 衣服写回新实体失败（本机槽位 " + slot + "）", e);
-                return false;
-            }
         }
 
         /// <summary>
@@ -1528,6 +2760,12 @@ namespace SuMultiplayer.Engine
                 project.RemoveEntity(player.Entity, disposeEntity: true);
                 m_engineRespawnExecuted++;
                 m_localDeadSlots.Remove(slot);
+                state.Window.Open(state.DeathRevision, 0u);
+                m_replicaWindowOpened++;
+                Info("本机槽位 " + slot + " 进入复活窗口（respawnInProgress）：死亡 rev=" +
+                    state.DeathRevision + " / epoch=" + state.Window.Epoch +
+                    "（复活裁决 revision 等重放请求 / 主机复活事件带入）→ 第一份权威存活快照" +
+                    "之前拒绝任何死亡状态（旧死亡不得再挂死亡屏）");
                 Info("本机槽位 " + slot + " 已执行引擎 RemoveEntity(disposeEntity: true) → " +
                     "引擎开始原生 PrepareSpawn → SpawnDialog → WaitForTerrain → SpawnPlayer" +
                     "（出生后由 TryReplayLocalRespawn 整体重放主机权威状态）");
@@ -1550,7 +2788,9 @@ namespace SuMultiplayer.Engine
         /// <c>FindNoIntroSpawnPosition</c> 偏移最多 8 格（<c>PlayerData.cs:454-477</c>）。
         /// 所以新实体一出现就用主机权威数据覆盖：
         ///   ① 落点 = 主机裁决的落点，同时写 <c>PlayerData.SpawnPosition</c>（以后复活的锚点）；
-        ///   ② 背包 / 手持槽 / 合成格 / 衣服 = 死亡那一刻冻结的副本；
+        ///   ② **不恢复**背包 / 手持 / 衣服 / 合成格：引擎死亡分支已把它们掉在死亡地点
+        ///      （<c>ComponentHealth.cs:275</c>，单机原版行为），复活后背包为空、由玩家自己捡回。
+        ///      在此重放冻结副本会与地上那一份重复（用户实机缺陷），所以只计数"跳过"；
         ///   ③ 重新摘掉新实体的生命 / 体征 / 睡眠 / 病程 / 火焰模拟 + <c>IsInvulnerable</c>；
         ///   ④ 重新初始化 HUD（新 GUI 是新的）；
         ///   ⑤ 推进死亡 epoch（此后不新于它的死亡状态一律拒写）；
@@ -1570,6 +2810,11 @@ namespace SuMultiplayer.Engine
             if (!m_spawner.TryGetLocalPlayer(project, slot, out PlayerData playerData, out reason))
                 return PlayerRespawnReplayStatus.Failed;
             LocalDeathState state = GetOrCreateLocalDeathState(slot);
+            if (state.Window.Active)
+            {
+                state.Window.NoteDeathRevision(request.DeathRevision);
+                state.Window.NoteRespawnRevision(request.RespawnRevision);
+            }
             ComponentPlayer player = playerData?.ComponentPlayer;
             if (player == null)
             {
@@ -1604,13 +2849,9 @@ namespace SuMultiplayer.Engine
                         "主机没有给出有限落点（" + request.Describe() +
                         "）→ 落点保持引擎 FindNoIntroSpawnPosition 的结果，其余状态照常重放");
                 }
-                bool keepOk = RestoreKeepState(slot, player, state.Keep);
-                if (state.Keep != null && !keepOk)
-                {
-                    Problem("replay-keep:" + slot,
-                        "本机槽位 " + slot + " 的背包 / 衣服没有完全写回（见上面的错误日志）" +
-                        "：新角色可能缺物品，不假装成功");
-                }
+                // 物品只由引擎死亡掉落一次：这里**绝不**把冻结副本写回新实体，
+                // 否则地上那一份 + 手里这一份 = 凭空多一份（用户实机缺陷）。
+                m_respawnInventoryDroppedByEngine++;
                 // 新实体的组件实例是新的：重新摘模拟 + IsInvulnerable（内部按实体标识去重）。
                 if (DisableLocalSimulation(out int disabled, out string simReason) < 0)
                 {
@@ -1631,16 +2872,29 @@ namespace SuMultiplayer.Engine
                 }
                 m_localSleep.Remove(slot);
                 m_localDeadSlots.Remove(slot);
+                m_localEffects.Remove(slot);
                 StopLocalFireParticles(slot);
+                // 新实体的模板生命是 1；在主机下一拍权威上报到达之前，自我伤害守卫必须以它为准，
+                // 否则会拿死亡前的 0 回滚，把刚出生的角色立刻写死。
+                m_localAuthorityHealth[slot] = FullHealth;
                 m_localDeathEpoch[slot] = PlayerRespawnEpoch.Advance(EpochOf(slot), request.Epoch);
+                // 等级也是"主机权威整体重放"的一部分：引擎新实体默认 Level=1，用最近一条
+                // 主机快照（死亡快照也缓存 —— 主机已减半）覆盖；没有缓存则显式 absent。
+                m_localLevelRespawnPending.Add(slot);
+                ApplyCachedAuthorityLevel(slot, player, request.DeathRevision,
+                    request.RespawnRevision, "respawn-replay");
                 state.ReplayedToken = token;
                 state.DeathToken = 0;
-                state.Keep = null;
                 m_replayApplied++;
                 Info("本机槽位 " + slot + " 的复活权威重放完成（落点=" +
                     (request.HasPosition ? request.Position.ToString() : "未提供") +
-                    "，死亡 epoch=" + EpochOf(slot) + "，背包恢复=" +
-                    m_replayInventoryRestores + "，衣服恢复=" + m_replayClothesRestores + "）");
+                    "，死亡 rev=" + request.DeathRevision + " / 复活 rev=" +
+                    (request.RespawnRevision != 0
+                        ? request.RespawnRevision.ToString()
+                        : "0（事件未到，epoch 先取死亡 rev 下界）") +
+                    " / 复活 epoch=" + EpochOf(slot) +
+                    "，背包/手持/衣服/合成格=跳过（引擎死亡掉落，累计跳过 " +
+                    m_respawnInventoryDroppedByEngine + " 次））");
                 return PlayerRespawnReplayStatus.Applied;
             }
             catch (Exception e)
@@ -1700,12 +2954,12 @@ namespace SuMultiplayer.Engine
             // 粒子表现由客户端自己维护（ComponentOnFire.Update 已被摘掉）。
             m_parentField.ModifyParentField(onFire, "m_fireDuration",
                 MathUtils.Max(fireDuration, 0f), typeof(ComponentOnFire));
-            if (fireDuration > 0.01f) EnsureLocalFireParticles(player, slot);
+            if (fireDuration > 0.01f) TryEnsureLocalFireParticles(player, slot);
             else StopLocalFireParticles(slot);
             m_conditionWrites++;
         }
 
-        private void EnsureLocalFireParticles(ComponentPlayer player, int slot)
+        private bool TryEnsureLocalFireParticles(ComponentPlayer player, int slot)
         {
             ComponentBody body = player.ComponentBody;
             Project project = player.Project;
@@ -1715,7 +2969,7 @@ namespace SuMultiplayer.Engine
                 Problem("local-fire-particles:" + slot,
                     "本机角色火焰粒子无法创建（缺少 ComponentBody / SubsystemParticles）" +
                     "（火焰状态仍然跟随主机）");
-                return;
+                return false;
             }
             if (!m_localFireParticles.TryGetValue(slot, out OnFireParticleSystem system) ||
                 system == null)
@@ -1727,6 +2981,7 @@ namespace SuMultiplayer.Engine
             BoundingBox box = body.BoundingBox;
             system.Position = 0.5f * (box.Min + box.Max);
             system.Radius = 0.5f * MathUtils.Min(box.Max.X - box.Min.X, box.Max.Z - box.Min.Z);
+            return true;
         }
 
         private void StopLocalFireParticles(int slot)
@@ -1814,7 +3069,12 @@ namespace SuMultiplayer.Engine
                 StopLocalFireParticles(stale[i]);
                 m_localDeadSlots.Remove(stale[i]);
                 m_localHud.Remove(stale[i]);
+                m_localEffects.Remove(stale[i]);
                 m_localSleep.Remove(stale[i]);
+                m_localAuthorityLevel.Remove(stale[i]);
+                m_localAuthorityLevelRevision.Remove(stale[i]);
+                m_localLevelAppliedRevision.Remove(stale[i]);
+                m_localLevelRespawnPending.Remove(stale[i]);
             }
             totalDisabled = m_disabledLocalSlots.Count;
             if (added > 0)
@@ -1838,6 +3098,8 @@ namespace SuMultiplayer.Engine
                 m_localHud.Clear();
                 m_localSleep.Clear();
                 ResetNativeDeathStates("没有加载中的 Project");
+                ResetLocalLevelState("没有加载中的 Project");
+                m_hostLevelAuthority.Reset();
                 return true;
             }
             SubsystemUpdate update = project.FindSubsystem<SubsystemUpdate>(false);
@@ -1870,6 +3132,21 @@ namespace SuMultiplayer.Engine
             }
             m_disabledLocalSlots.Clear();
             m_localDeadSlots.Clear();
+            // 退出客户端角色：本地预测回滚守卫 / 权威生命缓存 / 未决红屏全部作废，
+            // 否则下次进世界会拿上一个会话的权威值回滚。
+            RemoveSelfDamageGuard();
+            m_localAuthorityHealth.Clear();
+            m_selfDamageRedout.Clear();
+            // 冻结 / 表现事件的每键状态作废：本机模拟恢复后由引擎自己写 IceFactor / 病程表现，
+            // 旧的主机目标值不能带进下一个会话。
+            foreach (KeyValuePair<int, LocalEffectState> effect in m_localEffects)
+                effect.Value.Reset();
+            m_localEffects.Clear();
+            m_effectLastSequence.Clear();
+            m_effectWatch.Clear();
+            m_freezeHostStage.Clear();
+            // 第三分屏冰覆盖的只读缓存同理：新会话开始，旧的权威冻结值不能带过去。
+            m_freezeHostProgress.Clear();
             // 本地模拟恢复后，引擎的 ComponentVitalStats.UpdateTemperature 会重新写温度条 /
             // 冰冻覆盖 —— 清掉我们这份只读显示缓存，避免两套来源。
             m_localHud.Clear();
@@ -1879,6 +3156,9 @@ namespace SuMultiplayer.Engine
             // 客户端角色结束（退出房间 / 断开 / 改当主机）：死亡期的挡门对话框与冻结副本全部作废，
             // 否则下次进世界会带着上一次的对话框 / 旧副本。
             ResetNativeDeathStates("本机模拟恢复（退出客户端角色）");
+            // 等级权威缓存同理：新世界 / 新会话的 revision 从头开始，旧等级不能带过去。
+            ResetLocalLevelState("本机模拟恢复（退出客户端角色）");
+            m_hostLevelAuthority.Reset();
             if (m_localSimRestores > 0)
                 Info("本机角色的生命 / 体征 / 睡眠 / 病程 / 火焰模拟已恢复（累计恢复 " +
                     m_localSimRestores + " 个槽位）");
@@ -1912,6 +3192,24 @@ namespace SuMultiplayer.Engine
             m_localDeathEpoch.Clear();
         }
 
+        /// <summary>
+        /// 清空本机等级权威缓存（离开世界 / 断开连接 / 改当主机时）。只清"每槽位状态"，
+        /// 累计计数器保留（状态行仍能看到本次会话同步过多少等级）。
+        /// </summary>
+        private void ResetLocalLevelState(string why)
+        {
+            if (m_localAuthorityLevel.Count == 0 && m_localAuthorityLevelRevision.Count == 0 &&
+                m_localLevelAppliedRevision.Count == 0 && m_localLevelRespawnPending.Count == 0)
+                return;
+            Info("清空本机等级权威缓存（" + why + "）：权威 " + m_localAuthorityLevel.Count +
+                " 个，已应用 " + m_localLevelAppliedRevision.Count + " 个，待复活覆盖 " +
+                m_localLevelRespawnPending.Count + " 个");
+            m_localAuthorityLevel.Clear();
+            m_localAuthorityLevelRevision.Clear();
+            m_localLevelAppliedRevision.Clear();
+            m_localLevelRespawnPending.Clear();
+        }
+
         // ================================================================ 客户端侧：远端化身
 
         public bool TryGetAvatarVitals(PlayerKey key, out PlayerVitalsSnapshot snapshot,
@@ -1927,7 +3225,7 @@ namespace SuMultiplayer.Engine
                 reason = "玩家键 " + key + " 的化身缺少 ComponentHealth / ComponentVitalStats";
                 return false;
             }
-            snapshot = CaptureOne(key, player);
+            snapshot = CaptureOne(key, player, ReadObservedLevel(playerData));
             m_avatarReads++;
             return true;
         }
@@ -2055,7 +3353,21 @@ namespace SuMultiplayer.Engine
 
         // ================================================================ 主机侧：复活客户端化身
 
+        /// <summary>
+        /// 主机：批准客户端复活请求后**立即**复活化身（不再等待任何客户端握手）。
+        /// 落点 = 主机锚点（<c>PlayerData.SpawnPosition</c>，零 / 非有限时退到
+        /// <c>SubsystemPlayers.GlobalSpawnPosition</c>）；客户端随后由 mod 执行 RemoveEntity、
+        /// 引擎原生 PrepareSpawn / SpawnPlayer，并在新实体出生后按 Respawn 事件重放落点与体征。
+        ///
+        /// Source: Survivalcraft/Game/PlayerData.cs:454-477（FindNoIntroSpawnPosition ±8 格搜索）
+        /// Source: Survivalcraft/Game/PlayerData.cs:586-640（SpawnPlayer 之后才写位置）
+        /// </summary>
         public bool TryRespawnAvatar(PlayerKey key, out Vector3 position, out string reason)
+        {
+            return TryRespawnAvatarCore(key, out position, out reason);
+        }
+
+        private bool TryRespawnAvatarCore(PlayerKey key, out Vector3 position, out string reason)
         {
             position = Vector3.Zero;
             reason = null;
@@ -2068,26 +3380,27 @@ namespace SuMultiplayer.Engine
                 m_avatarRespawnFailures++;
                 return false;
             }
-            Vector3 spawn = playerData.SpawnPosition;
-            if (!IsFinite(spawn) || spawn == Vector3.Zero)
-            {
-                SubsystemPlayers players = GameManager.Project?
-                    .FindSubsystem<SubsystemPlayers>(false);
-                spawn = players != null ? players.GlobalSpawnPosition : Vector3.Zero;
-            }
+            Vector3 spawn = ResolveHostRespawnAnchor(playerData);
             if (!IsFinite(spawn) || spawn == Vector3.Zero)
             {
                 reason = "玩家键 " + key + " 没有可用的出生点（PlayerData.SpawnPosition 与 " +
                     "SubsystemPlayers.GlobalSpawnPosition 都是零 / 非有限值）→ 不猜落点";
                 m_avatarRespawnFailures++;
+                m_respawnAnchorFailures++;
                 return false;
             }
+            Vector3 target = spawn;
             try
             {
                 var evt = new PlayerVitalEventSnapshot(key, 1, PlayerVitalEventKind.Respawn,
-                    string.Empty, true, spawn);
+                    string.Empty, true, target);
                 ResetAfterRespawn(player, in evt);
-                position = spawn;
+                // 落点锚点与客户端重放保持同一语义（PlayerData.cs:454 的搜索中心）。
+                playerData.SpawnPosition = target;
+                // 化身复活回到同一个 PlayerData：清掉"本次死亡已减半"标记；
+                // 等级保持主机已减半的权威值（下一次死亡可以再减一次）。
+                m_hostLevelAuthority.NoteAlive(key);
+                position = target;
                 m_avatarRespawns++;
                 return true;
             }
@@ -2101,6 +3414,16 @@ namespace SuMultiplayer.Engine
             }
         }
 
+        /// <summary>主机侧的复活锚点：<c>PlayerData.SpawnPosition</c>，不可用时退到全局出生点。</summary>
+        private Vector3 ResolveHostRespawnAnchor(PlayerData playerData)
+        {
+            Vector3 spawn = playerData != null ? playerData.SpawnPosition : Vector3.Zero;
+            if (IsFinite(spawn) && spawn != Vector3.Zero) return spawn;
+            SubsystemPlayers players = GameManager.Project?
+                .FindSubsystem<SubsystemPlayers>(false);
+            return players != null ? players.GlobalSpawnPosition : Vector3.Zero;
+        }
+
         private static bool IsFinite(Vector3 value) =>
             PlayerVitalsSnapshot.IsFiniteValue(value.X) &&
             PlayerVitalsSnapshot.IsFiniteValue(value.Y) &&
@@ -2108,7 +3431,90 @@ namespace SuMultiplayer.Engine
 
         // ================================================================ 抓取 / 写入公共实现
 
-        private PlayerVitalsSnapshot CaptureOne(PlayerKey key, ComponentPlayer player)
+        /// <summary>
+        /// 读主机侧角色（本机槽位 / 客户端化身）的 <c>PlayerData.Level</c>（vitals.proto 字段 21）。
+        /// 读不到 / 非有限 / 负数 / 超上限 = 抓取失败：计数 + 限流日志，快照按 0（未携带）上报，
+        /// **绝不夹紧**（夹紧会把越界值悄悄变成合法等级）。
+        /// </summary>
+        private float ReadCapturedLevel(PlayerData playerData, PlayerKey key)
+        {
+            if (playerData == null)
+            {
+                m_levelCounters.NoteCaptureFailure("no-player-data");
+                Problem("level-capture:" + key, "玩家键 " + key + " 没有 PlayerData → 等级按 0" +
+                    "（未携带）上报（累计抓取失败 " + m_levelCounters.CaptureFailures + " 次）");
+                return 0f;
+            }
+            float raw = playerData.Level;
+            if (!PlayerLevelCapture.TryCapture(raw, out float level, out string captureError))
+            {
+                string tag = PlayerLevelPolicy.RejectionTag(raw);
+                m_levelCounters.NoteCaptureFailure(tag);
+                Problem("level-capture:" + key, "玩家键 " + key + " 的 " + captureError +
+                    " → 等级按 0（未携带）上报，不夹紧（累计抓取失败 " +
+                    m_levelCounters.CaptureFailures + " 次，原因 " +
+                    m_levelCounters.CaptureFailuresByText + "）");
+                return 0f;
+            }
+            return level;
+        }
+
+        /// <summary>
+        /// 主机侧客户端化身的权威等级：先读 <c>PlayerData.Level</c>，死亡时按
+        /// <see cref="PlayerLevelPolicy.HalveOnDeath"/> **减一次**并写回。
+        ///   · 本机槽位（<c>key.ClientId == 0</c>）不走减半：引擎 <c>PlayerData.PlayerDead</c>
+        ///     入场已经减半（<c>PlayerData.cs:299</c>）；
+        ///   · 主机侧客户端化身的 <c>PlayerData</c> 不在 <c>SubsystemPlayers.m_playersData</c> 里，
+        ///     引擎不会替它跑 <c>PlayerDead</c> → 这里减，写回的是**唯一权威源**；
+        ///   · 写回 <c>PlayerData.Level</c> 后，现有记录链
+        ///     （<c>NetworkAvatarSpawner.CapturePlayerRecord</c> → <c>PlayerAvatarModule</c>
+        ///     每 5 秒 <c>RefreshHostRecords</c>）会把它持久化到身份记录；
+        ///   · 写回失败**不登记**"已减半"→ 下一拍重试（绝不假装成功，也不会每拍重复减）。
+        /// </summary>
+        private float ReadHostAuthorityLevel(PlayerKey key, PlayerData playerData,
+            ComponentPlayer player, bool dead)
+        {
+            float level = ReadCapturedLevel(playerData, key);
+            if (!m_hostLevelAuthority.ShouldHalve(key, Token(player), dead, level,
+                    out float halvedLevel, out string halveReason))
+            {
+                if (!string.IsNullOrEmpty(halveReason)) Problem("level-halve:" + key, halveReason);
+                // 复活边沿：清掉"本次死亡已减半"标记（下一次死亡可以再减一次）。
+                if (!dead) m_hostLevelAuthority.NoteAlive(key);
+                return halvedLevel;
+            }
+            try
+            {
+                playerData.Level = halvedLevel;
+            }
+            catch (Exception e)
+            {
+                m_levelCounters.NoteCaptureFailure("halve-write");
+                Error("level-halve-write:" + key,
+                    "把减半后的等级写回 PlayerData.Level 失败（下一拍重试，不假装成功）", e);
+                return level;
+            }
+            m_hostLevelAuthority.CommitHalved(key, Token(player));
+            m_levelCounters.NoteHostHalved();
+            Info(halveReason + " → 已写回 PlayerData.Level；" +
+                "NetworkAvatarSpawner.CapturePlayerRecord 会把它持久化到身份记录" +
+                "（累计减半死亡期 " + m_levelCounters.HostHalved + " 次）");
+            return halvedLevel;
+        }
+
+        /// <summary>
+        /// 只读观察（客户端 <see cref="TryGetAvatarVitals"/> / 诊断）：不做减半、不改任何状态；
+        /// 非法值按 0（未携带）返回，绝不把越界值当成权威。
+        /// </summary>
+        private static float ReadObservedLevel(PlayerData playerData)
+        {
+            if (playerData == null) return 0f;
+            float level = playerData.Level;
+            return PlayerLevelCapture.TryCapture(level, out float captured, out _) ? captured : 0f;
+        }
+
+        private PlayerVitalsSnapshot CaptureOne(PlayerKey key, ComponentPlayer player,
+            float level)
         {
             ComponentHealth health = player.ComponentHealth;
             ComponentVitalStats vital = player.ComponentVitalStats;
@@ -2120,6 +3526,34 @@ namespace SuMultiplayer.Engine
                 ? player.ComponentBody.Position
                 : Vector3.Zero;
             PlayerSleepState sleepState = CaptureSleepState(player, sleep);
+            // 冻结进度 / 阶段（vitals.proto 字段 22/23）：**主机**用自己的 Temperature 算，
+            // 客户端只跟随（不再本地从温度推导）。Source: ComponentVitalStats.cs:532-557,579
+            float freezeProgress = 0f;
+            uint freezeStage = PlayerFreezePolicy.StageNone;
+            if (!PlayerFreezePolicy.TryCapture(vital.Temperature, out freezeProgress,
+                    out freezeStage))
+            {
+                m_freezeCaptureFailures++;
+                Problem("freeze-capture:" + key, "主机角色 " + key +
+                    " 的 Temperature 不是有限数 → 冻结进度按不可观测处理（下发 0/0）");
+                freezeProgress = 0f;
+                freezeStage = PlayerFreezePolicy.StageNone;
+            }
+            else
+            {
+                m_freezeHostValue = freezeProgress;
+                // 只读缓存：95 上报的**原值**。第三分屏的冰覆盖只允许读它（实机问题 1），
+                // 保证两端是同一个 float、同一时刻；抓取失败时不覆盖（客户端也会保留上一次有效目标）。
+                m_freezeHostProgress[key] = freezeProgress;
+                if (m_freezeHostStage.TryGetValue(key, out uint previousStage) &&
+                    previousStage != freezeStage)
+                {
+                    m_freezeStageChanges++;
+                    Info("主机角色 " + key + " 冻结阶段 " + previousStage + " → " +
+                        freezeStage + "（进度 " + freezeProgress.ToString("F3") + "）");
+                }
+                m_freezeHostStage[key] = freezeStage;
+            }
             // revision 由模块持有并覆盖（WithRevision）；这里给 1 只是让快照自身通过校验。
             return new PlayerVitalsSnapshot(key, 1, health.Health, health.Air, vital.Food,
                 vital.Stamina, vital.Sleep, vital.Temperature, vital.Wetness,
@@ -2146,7 +3580,45 @@ namespace SuMultiplayer.Engine
                 sleepState.SleepStartTime,
                 sleepState.SleepElapsed,
                 sleepState.AllowManualWake,
-                sleepState.ForcedSleep);
+                sleepState.ForcedSleep,
+                level,
+                freezeProgress,
+                freezeStage);
+        }
+
+        /// <summary>
+        /// **只读查询**（实机问题 1）：主机为某个角色算出的**冻结进度 / 阶段** —— 就是
+        /// vitals.proto 字段 22/23 的**原值**（与随 95 下发给客户端的是同一个 float）。
+        ///
+        /// 为什么需要它：第三分屏（<c>Engine/MirrorViewFeedback</c>）以前自己按
+        /// <c>ComponentVitalStats.Temperature</c> 算 <c>Saturate(1 - T/6)</c> 并阶跃写入，
+        /// 而客户端走的是本条权威值 + <see cref="PlayerPresentationInterpolator"/> 平滑 ——
+        /// 两条数据 / 两条时序必然错开（实测"客户端先冻、第三屏晚很多、屏幕占比不一样"）。
+        /// 现在第三屏只读这里的值，用**同一个**插值器逼近，两端完全同步。
+        ///
+        /// 只读、不改任何状态、不产生日志（日志由调用方限流）：
+        ///   · false = 还没抓到过这个角色（还没进世界 / 化身未就绪 / 抓取失败）；
+        ///     调用方必须明确失败 / 跳过，**不得**拿 0 顶替（0 是"不冷"这个合法值）；
+        ///   · 抓取失败时保留上一次成功值（与客户端"保留上一次有效冻结目标"同口径）。
+        /// </summary>
+        public bool TryGetAuthorityFreeze(PlayerKey key, out float progress, out uint stage,
+            out string reason)
+        {
+            progress = 0f;
+            stage = PlayerFreezePolicy.StageNone;
+            reason = null;
+            if (m_freezeHostProgress.TryGetValue(key, out float capturedProgress) &&
+                m_freezeHostStage.TryGetValue(key, out uint capturedStage))
+            {
+                progress = capturedProgress;
+                stage = capturedStage;
+                m_freezeAuthorityReads++;
+                return true;
+            }
+            m_freezeAuthorityMisses++;
+            reason = "主机还没有抓到玩家键 " + key + " 的冻结进度（还没进世界 / 化身未就绪 / " +
+                "抓取失败；已采样冻结值 " + m_freezeHostProgress.Count + " 个角色）";
+            return false;
         }
 
         /// <summary>
@@ -3434,6 +4906,538 @@ namespace SuMultiplayer.Engine
                 body.StanceBoxSize.X));
         }
 
+        // ================================================================ 客户端自我伤害（106 / 107）
+
+        /// <summary>
+        /// 客户端本地预测回滚守卫（<see cref="IUpdateable"/>，不挂在实体上）。
+        ///
+        /// 时序是这条链路的关键（引擎事实）：
+        ///   ① <c>ScreensManager.Update</c> → 控件树 → <c>VitalStatsWidget.Update</c> 执行
+        ///      <c>ComponentHealth.Injure(0.1f, null, ignoreInvulnerability: true, "Choked")</c>
+        ///      （<c>Survivalcraft/Game/VitalStatsWidget.cs:176-179</c>）——**纯本地**；
+        ///   ② 同一个 <c>GameScreen.Update</c> 才调用 <c>GameManager.UpdateProject()</c>；
+        ///   ③ Project 更新里 <c>SubsystemUpdate</c> 按 UpdateOrder 排序；本守卫 =
+        ///      <see cref="UpdateOrder.Reset"/>（−100），<c>SubsystemPlayers</c> = −20，
+        ///      所以守卫在 <c>PlayerData.Update</c> 看到 <c>Health &lt;= 0</c> 之前把生命写回
+        ///      最近一份主机权威值。客户端因此**不会**自己进入 PlayerDead。
+        /// </summary>
+        private sealed class SelfDamageGuard : IUpdateable
+        {
+            private readonly PlayerVitalsReplica m_owner;
+
+            public SelfDamageGuard(PlayerVitalsReplica owner)
+            {
+                m_owner = owner;
+            }
+
+            public UpdateOrder UpdateOrder => UpdateOrder.Reset;
+
+            public void Update(float dt) => m_owner.GuardLocalSelfDamage();
+        }
+
+        private void EnsureSelfDamageGuard()
+        {
+            Project project = GameManager.Project;
+            if (project == null) return;
+            if (m_selfDamageGuardProject == project && m_selfDamageGuard != null) return;
+            RemoveSelfDamageGuard();
+            SubsystemUpdate update = project.FindSubsystem<SubsystemUpdate>(false);
+            if (update == null)
+            {
+                m_selfDamageGuardFailures++;
+                Problem("self-damage-guard-subsystem",
+                    "找不到 SubsystemUpdate → 无法安装本地自我伤害预测回滚守卫" +
+                    "（客户端可能在主机裁决前自己判死）");
+                return;
+            }
+            if (m_selfDamageGuard == null) m_selfDamageGuard = new SelfDamageGuard(this);
+            try
+            {
+                update.AddUpdateable(m_selfDamageGuard);
+            }
+            catch (Exception e)
+            {
+                m_selfDamageGuardFailures++;
+                Error("self-damage-guard-install", "安装本地自我伤害预测回滚守卫失败", e);
+                return;
+            }
+            m_selfDamageGuardProject = project;
+            m_selfDamageGuardInstalls++;
+        }
+
+        private void RemoveSelfDamageGuard()
+        {
+            if (m_selfDamageGuardProject == null || m_selfDamageGuard == null) return;
+            try
+            {
+                SubsystemUpdate update = m_selfDamageGuardProject
+                    .FindSubsystem<SubsystemUpdate>(false);
+                update?.RemoveUpdateable(m_selfDamageGuard);
+                m_selfDamageGuardRemovals++;
+            }
+            catch (Exception e)
+            {
+                m_selfDamageGuardFailures++;
+                Error("self-damage-guard-remove", "移除本地自我伤害预测回滚守卫失败", e);
+            }
+            m_selfDamageGuardProject = null;
+        }
+
+        /// <summary>
+        /// 守卫本体：只在"角色信息界面打开 + 骷髅按钮这一帧被点 + 有主机权威生命"时动作。
+        /// 把本地 <c>Health</c> / <c>m_lastHealth</c> / <c>HealthChange</c> / 死因 / DeathTime
+        /// 写回最近一份主机权威值；若同一帧之前已经因为本地预测进入了 PlayerDead，再显式
+        /// 把 PlayerData 拉回 Playing（主机明确说活着时，本地死亡就是假死亡）。
+        /// **绝不**在 authority == 0 时把角色写活：那才是主机裁决的死亡。
+        /// </summary>
+        private void GuardLocalSelfDamage()
+        {
+            Project project = m_selfDamageGuardProject;
+            if (project == null || GameManager.Project != project) return;
+            m_selfDamageGuardFrames++;
+            if (!m_spawner.TryCollectLocalPlayers(project, m_selfDamageLocalBuffer,
+                    out bool tooMany, out string reason))
+            {
+                m_selfDamageGuardFailures++;
+                Problem("self-damage-guard-players", "读取本机角色失败：" +
+                    (reason ?? "端口没有给原因") + " → 本帧不回滚本地自我伤害预测");
+                return;
+            }
+            if (tooMany)
+            {
+                Problem("self-damage-guard-too-many",
+                    "本机角色数超过引擎上限（" + reason + "）→ 只检查前 " +
+                    PlayerKey.SlotCount + " 个槽位");
+            }
+            for (int slot = 0; slot < m_selfDamageLocalBuffer.Count; slot++)
+            {
+                ComponentPlayer player = m_selfDamageLocalBuffer[slot]?.ComponentPlayer;
+                if (player == null) continue;
+                ComponentGui gui = player.ComponentGui;
+                if (gui == null) continue;
+                if (!(gui.ModalPanelWidget is VitalStatsWidget widget)) continue;
+                ButtonWidget choke = widget.Children.Find<ButtonWidget>("ChokeButton", false);
+                if (choke == null || !choke.IsClicked) continue;
+                ComponentHealth health = player.ComponentHealth;
+                if (health == null) continue;
+                if (!m_localAuthorityHealth.TryGetValue(slot, out float authority))
+                {
+                    m_selfDamageGuardNoAuthority++;
+                    Problem("self-damage-guard-no-authority:" + slot,
+                        "本机槽位 " + slot + " 按了骷髅按钮，但还没有主机权威生命 → " +
+                        "无法安全回滚本地预测（本次点击不发 106；等下一份 95 上报）");
+                    continue;
+                }
+                try
+                {
+                    if (MathUtils.Abs(health.Health - authority) >
+                        PlayerVitalsLimits.ValueEpsilon)
+                    {
+                        WriteField(health, "<Health>k__BackingField", authority,
+                            typeof(ComponentHealth));
+                        m_parentField.ModifyParentField(health, "m_lastHealth", authority,
+                            typeof(ComponentHealth));
+                        m_parentField.ModifyParentField(health, "<HealthChange>k__BackingField",
+                            0f, typeof(ComponentHealth));
+                        if (authority > 0f)
+                        {
+                            m_parentField.ModifyParentField(health,
+                                "<CauseOfDeath>k__BackingField", string.Empty,
+                                typeof(ComponentHealth));
+                            m_parentField.ModifyParentField(health,
+                                "<DeathTime>k__BackingField", null, typeof(ComponentHealth));
+                        }
+                        if (gui.HealthBarWidget != null)
+                            gui.HealthBarWidget.Value = authority;
+                        m_selfDamageLocalPredictionsCanceled++;
+                        m_healthWrites++;
+                    }
+                    if (authority > 0f && player.PlayerData != null)
+                    {
+                        object deathTime = m_parentField.GetParentField(player.PlayerData,
+                            "m_playerDeathTime", typeof(PlayerData));
+                        if (deathTime != null)
+                        {
+                            m_selfDamageLocalDeathsRepaired++;
+                            RestorePlayerDataToPlaying(slot, player);
+                        }
+                    }
+                }
+                catch (Exception e)
+                {
+                    m_selfDamageGuardFailures++;
+                    Error("self-damage-guard:" + slot,
+                        "回滚本机槽位 " + slot + " 的本地自我伤害预测失败", e);
+                }
+            }
+        }
+
+        // ---------------------------------------------------------------- 端口实现
+
+        public bool TryPollLocalSelfDamageClick(PlayerKey key,
+            out PlayerSelfDamagePressState state, out string reason)
+        {
+            state = default;
+            reason = null;
+            if (key.ClientId != 0)
+            {
+                reason = "自我伤害点击只读本机角色（clientId=0），收到玩家键 " + key;
+                return false;
+            }
+            if (!TryResolveLocal(key.Slot, out PlayerData playerData, out ComponentPlayer player,
+                    out reason))
+                return false;
+            EnsureSelfDamageGuard();
+            ComponentHealth health = player.ComponentHealth;
+            bool hasAuthority = m_localAuthorityHealth.TryGetValue(key.Slot,
+                out float authority);
+            bool dead = hasAuthority
+                ? authority <= 0f
+                : health != null && health.Health <= 0f;
+            ComponentGui gui = player.ComponentGui;
+            if (gui == null)
+            {
+                reason = "本机槽位 " + key.Slot + " 没有 ComponentGui（无法读骷髅按钮）";
+                return false;
+            }
+            bool pressed = false;
+            if (gui.ModalPanelWidget is VitalStatsWidget widget)
+            {
+                ButtonWidget choke = widget.Children.Find<ButtonWidget>("ChokeButton", false);
+                if (choke == null)
+                {
+                    reason = "本机槽位 " + key.Slot +
+                        " 的角色信息界面没有 ChokeButton（控件结构变化）";
+                    return false;
+                }
+                pressed = choke.IsClicked;
+            }
+            state = new PlayerSelfDamagePressState(pressed, dead, hasAuthority, authority);
+            return true;
+        }
+
+        public PlayerSelfDamageApplyStatus TryApplyAuthoritySelfDamage(PlayerKey key,
+            float amount, string cause, out float healthAfter, out string reason)
+        {
+            healthAfter = 0f;
+            reason = null;
+            if (!key.IsValid)
+            {
+                reason = "玩家键 " + key + " 非法";
+                return PlayerSelfDamageApplyStatus.Invalid;
+            }
+            if (key.ClientId <= 0)
+            {
+                // 主机本机角色走引擎原路径（VitalStatsWidget 直接 Injure），不经过 106。
+                reason = "玩家键 " + key + " 不是客户端化身（自我伤害请求只裁决 clientId>0）";
+                return PlayerSelfDamageApplyStatus.Invalid;
+            }
+            if (!PlayerSelfDamageRules.IsAcceptedAmount(amount, out reason))
+                return PlayerSelfDamageApplyStatus.Invalid;
+            if (!PlayerSelfDamageCauses.TryNormalize(cause, out string causeCode,
+                    out string causeReason))
+            {
+                reason = causeReason;
+                return PlayerSelfDamageApplyStatus.Invalid;
+            }
+            string engineCause = PlayerSelfDamageCauses.EngineDeathCause(causeCode);
+            if (engineCause == null)
+            {
+                reason = "cause=" + causeCode + " 没有对应的引擎死因字符串";
+                return PlayerSelfDamageApplyStatus.Invalid;
+            }
+            if (!TryResolveAvatar(key, out PlayerData playerData, out ComponentPlayer player,
+                    out reason))
+                return PlayerSelfDamageApplyStatus.NoAvatar;
+            ComponentHealth health = player.ComponentHealth;
+            if (health == null)
+            {
+                reason = "玩家键 " + key + " 的化身缺少 ComponentHealth";
+                return PlayerSelfDamageApplyStatus.NoAvatar;
+            }
+            if (health.Health <= 0f)
+            {
+                reason = "玩家键 " + key + " 已经死亡（Health=" + health.Health +
+                    "）→ 尸体不能再受自我伤害";
+                return PlayerSelfDamageApplyStatus.NotAlive;
+            }
+            float before = health.Health;
+            try
+            {
+                // Source: Survivalcraft/Game/VitalStatsWidget.cs:176-179（与单机同一行）
+                health.Injure(amount, null, ignoreInvulnerability: true, engineCause);
+            }
+            catch (Exception e)
+            {
+                m_selfDamageAuthorityFailures++;
+                reason = "对主机侧角色 " + key + " 调用 ComponentHealth.Injure 抛异常：" +
+                    e.GetType().Name + " " + e.Message;
+                Error("self-damage-authority:" + key, reason, e);
+                return PlayerSelfDamageApplyStatus.ApplyFailed;
+            }
+            healthAfter = health.Health;
+            if (!(healthAfter < before - PlayerVitalsLimits.ValueEpsilon))
+            {
+                m_selfDamageAuthorityFailures++;
+                reason = "主机侧角色 " + key + " 的 Health 没有变化（before=" + before +
+                    " after=" + healthAfter + "）→ 不假装施加成功";
+                return PlayerSelfDamageApplyStatus.ApplyFailed;
+            }
+            m_selfDamageAuthorityApplies++;
+            return PlayerSelfDamageApplyStatus.Applied;
+        }
+
+        public bool TryApplyLocalSelfDamageResult(PlayerKey key,
+            in PlayerSelfDamageResultData result, out bool playedSound, out bool redoutArmed,
+            out string reason)
+        {
+            playedSound = false;
+            redoutArmed = false;
+            reason = null;
+            if (!result.Accepted)
+            {
+                reason = "只应用 accepted 的 107 结果（拒绝走 TryRestoreLocalAuthorityHealth）";
+                return false;
+            }
+            if (key.ClientId != 0 || result.Slot != key.Slot)
+            {
+                // 模块已校验 result.ClientId == 本端连接编号；这里的 key 是本机角色键
+                // （clientId 固定 0），只按槽位对齐。
+                reason = "107 结果槽位 " + result.Slot + " 与本机键 " + key + " 不一致";
+                return false;
+            }
+            if (!TryResolveLocal(key.Slot, out PlayerData playerData, out ComponentPlayer player,
+                    out reason))
+                return false;
+            ComponentHealth health = player.ComponentHealth;
+            if (health == null)
+            {
+                reason = "本机槽位 " + key.Slot + " 缺少 ComponentHealth";
+                return false;
+            }
+            try
+            {
+                float healthAfter = MathUtils.Saturate(result.HealthAfter);
+                float before = health.Health;
+                float loss = before - healthAfter;
+                if (loss > PlayerVitalsLimits.ValueEpsilon)
+                {
+                    // 只在这个分支更新权威缓存：如果 95 上报已经先写入了**更高**的权威值
+                    // （治疗 / 回血），不能拿这条更旧的 107 把缓存降回去。
+                    m_localAuthorityHealth[key.Slot] = healthAfter;
+                    WriteField(health, "<Health>k__BackingField", healthAfter,
+                        typeof(ComponentHealth));
+                    m_parentField.ModifyParentField(health, "<HealthChange>k__BackingField", 0f,
+                        typeof(ComponentHealth));
+                    if (healthAfter > 0f)
+                    {
+                        m_parentField.ModifyParentField(health, "m_lastHealth", healthAfter,
+                            typeof(ComponentHealth));
+                        m_parentField.ModifyParentField(health,
+                            "<CauseOfDeath>k__BackingField", string.Empty,
+                            typeof(ComponentHealth));
+                        m_parentField.ModifyParentField(health, "<DeathTime>k__BackingField",
+                            null, typeof(ComponentHealth));
+                    }
+                    else
+                    {
+                        // 主机裁决的 0 血：死因用结果回显的 cause（与单机 "Choked" 同一个字符串）。
+                        string engineCause = PlayerSelfDamageCauses.EngineDeathCause(
+                            result.Cause);
+                        m_parentField.ModifyParentField(health,
+                            "<CauseOfDeath>k__BackingField",
+                            engineCause ?? PlayerSelfDamageCauses.ChokedEngineDeathCause,
+                            typeof(ComponentHealth));
+                    }
+                    m_healthWrites++;
+                    // 客户端 ComponentHealth.Update 已摘掉：受伤音效 / 红屏 / 血条闪烁必须由
+                    // 权威结果驱动，否则就是"看得到掉血数字但没有受伤表现"。
+                    ShowHurt(player, loss);
+                    playedSound = true;
+                    redoutArmed = true;
+                    m_selfDamageFeedbackSounds++;
+                    m_selfDamageRedoutArms++;
+                    m_selfDamageRedout[key.Slot] = MathUtils.Max(
+                        m_selfDamageRedout.TryGetValue(key.Slot, out float pending)
+                            ? pending
+                            : 0f,
+                        MathUtils.Clamp(loss * 4f, 0f, 1f));
+                }
+                m_selfDamageLocalResults++;
+                return true;
+            }
+            catch (Exception e)
+            {
+                m_selfDamageLocalResultFailures++;
+                reason = "应用已接受的自我伤害结果失败（玩家键 " + key + "）：" +
+                    e.GetType().Name + " " + e.Message;
+                Error("self-damage-local-result:" + key, reason, e);
+                return false;
+            }
+        }
+
+        public bool TryRestoreLocalAuthorityHealth(PlayerKey key, out float health,
+            out string reason)
+        {
+            health = 0f;
+            reason = null;
+            if (!m_localAuthorityHealth.TryGetValue(key.Slot, out health))
+            {
+                reason = "本机槽位 " + key.Slot +
+                    " 还没有主机权威生命缓存（没有可回滚的目标值）";
+                return false;
+            }
+            if (!TryResolveLocal(key.Slot, out PlayerData playerData, out ComponentPlayer player,
+                    out reason))
+                return false;
+            ComponentHealth component = player.ComponentHealth;
+            if (component == null)
+            {
+                reason = "本机槽位 " + key.Slot + " 缺少 ComponentHealth";
+                return false;
+            }
+            try
+            {
+                if (MathUtils.Abs(component.Health - health) >
+                    PlayerVitalsLimits.ValueEpsilon)
+                {
+                    WriteField(component, "<Health>k__BackingField", health,
+                        typeof(ComponentHealth));
+                    m_parentField.ModifyParentField(component, "<HealthChange>k__BackingField",
+                        0f, typeof(ComponentHealth));
+                    if (health > 0f)
+                    {
+                        m_parentField.ModifyParentField(component, "m_lastHealth", health,
+                            typeof(ComponentHealth));
+                        m_parentField.ModifyParentField(component,
+                            "<CauseOfDeath>k__BackingField", string.Empty,
+                            typeof(ComponentHealth));
+                        m_parentField.ModifyParentField(component,
+                            "<DeathTime>k__BackingField", null, typeof(ComponentHealth));
+                    }
+                    ComponentGui gui = player.ComponentGui;
+                    if (gui?.HealthBarWidget != null) gui.HealthBarWidget.Value = health;
+                    m_healthWrites++;
+                    m_selfDamageRollbacks++;
+                }
+                if (health > 0f && player.PlayerData != null)
+                {
+                    object deathTime = m_parentField.GetParentField(player.PlayerData,
+                        "m_playerDeathTime", typeof(PlayerData));
+                    if (deathTime != null)
+                    {
+                        m_selfDamageLocalDeathsRepaired++;
+                        RestorePlayerDataToPlaying(key.Slot, player);
+                    }
+                }
+                return true;
+            }
+            catch (Exception e)
+            {
+                m_selfDamageRollbackFailures++;
+                reason = "回滚本机槽位 " + key.Slot + " 的权威生命失败：" +
+                    e.GetType().Name + " " + e.Message;
+                Error("self-damage-rollback:" + key, reason, e);
+                return false;
+            }
+        }
+
+        public int RefreshLocalSelfDamagePresentation(float deltaTime, out string reason)
+        {
+            reason = null;
+            if (m_selfDamageRedout.Count == 0) return 0;
+            Project project = GameManager.Project;
+            if (project == null)
+            {
+                reason = "没有加载中的 Project（自我伤害红屏无法刷新）";
+                return 0;
+            }
+            if (!m_spawner.TryCollectLocalPlayers(project, m_selfDamageLocalBuffer,
+                    out bool tooMany, out string localReason))
+            {
+                m_selfDamageRedoutFailures++;
+                reason = "读取本机角色失败：" + (localReason ?? "端口没有给原因");
+                return 0;
+            }
+            if (tooMany)
+            {
+                Problem("self-damage-redout-too-many",
+                    "本机角色数超过引擎上限（" + localReason + "）→ 红屏只刷新前 " +
+                    PlayerKey.SlotCount + " 个槽位");
+            }
+            float decay = MathUtils.Pow(0.2f, MathUtils.Max(deltaTime, 0f));
+            int applied = 0;
+            string firstFailure = null;
+            m_selfDamageRedoutSlots.Clear();
+            foreach (int slot in m_selfDamageRedout.Keys) m_selfDamageRedoutSlots.Add(slot);
+            for (int i = 0; i < m_selfDamageRedoutSlots.Count; i++)
+            {
+                int slot = m_selfDamageRedoutSlots[i];
+                float factor = m_selfDamageRedout[slot] * decay;
+                if (factor <= 0.01f)
+                {
+                    m_selfDamageRedout.Remove(slot);
+                    continue;
+                }
+                m_selfDamageRedout[slot] = factor;
+                ComponentPlayer player = slot >= 0 && slot < m_selfDamageLocalBuffer.Count
+                    ? m_selfDamageLocalBuffer[slot]?.ComponentPlayer
+                    : null;
+                if (player == null)
+                {
+                    m_selfDamageRedoutFailures++;
+                    if (firstFailure == null)
+                        firstFailure = "槽位 " + slot + " 还没有 ComponentPlayer";
+                    continue;
+                }
+                ComponentScreenOverlays overlays = player.ComponentScreenOverlays;
+                if (overlays == null)
+                {
+                    m_selfDamageRedoutFailures++;
+                    if (firstFailure == null)
+                        firstFailure = "槽位 " + slot + " 缺少 ComponentScreenOverlays";
+                    continue;
+                }
+                overlays.RedoutFactor = MathUtils.Max(overlays.RedoutFactor, factor);
+                applied++;
+                m_selfDamageRedoutFrames++;
+            }
+            reason = firstFailure;
+            return applied;
+        }
+
+        public void DetachSelfDamage()
+        {
+            RemoveSelfDamageGuard();
+            m_selfDamageRedout.Clear();
+            m_selfDamageRedoutSlots.Clear();
+            m_localAuthorityHealth.Clear();
+            m_selfDamageLocalBuffer.Clear();
+        }
+
+        public string DescribeSelfDamage()
+        {
+            return "selfDamageEngine{guardInstalls=" + m_selfDamageGuardInstalls +
+                " guardRemovals=" + m_selfDamageGuardRemovals +
+                " guardFrames=" + m_selfDamageGuardFrames +
+                " localPredictionsCanceled=" + m_selfDamageLocalPredictionsCanceled +
+                " localDeathsRepaired=" + m_selfDamageLocalDeathsRepaired +
+                " noAuthority=" + m_selfDamageGuardNoAuthority +
+                " guardFailures=" + m_selfDamageGuardFailures +
+                " authorityApplied=" + m_selfDamageAuthorityApplies +
+                " authorityFailures=" + m_selfDamageAuthorityFailures +
+                " localResults=" + m_selfDamageLocalResults +
+                " localResultFailures=" + m_selfDamageLocalResultFailures +
+                " rollbacks=" + m_selfDamageRollbacks +
+                " rollbackFailures=" + m_selfDamageRollbackFailures +
+                " feedbackSounds=" + m_selfDamageFeedbackSounds +
+                " redoutArms=" + m_selfDamageRedoutArms +
+                " redoutFrames=" + m_selfDamageRedoutFrames +
+                " redoutFailures=" + m_selfDamageRedoutFailures +
+                " authorityHealthSlots=" + m_localAuthorityHealth.Count +
+                " redoutPending=" + m_selfDamageRedout.Count + "}";
+        }
+
         // ================================================================ 诊断
 
         public string Describe()
@@ -3455,17 +5459,56 @@ namespace SuMultiplayer.Engine
                 m_localDeathStates.Count + " deathEpochs=" + m_localDeathEpoch.Count +
                 " engineRemove=" + m_engineRespawnExecuted + "/" + m_engineRespawnFailures +
                 " replay=" + m_replayApplied + "/" + m_replayFailures +
-                " replayWait=" + m_replayWaitFrames + " replayInv=" +
-                m_replayInventoryRestores + " replayClothes=" + m_replayClothesRestores +
+                " replayWait=" + m_replayWaitFrames + " respawnInventoryDroppedByEngine=" +
+                m_respawnInventoryDroppedByEngine +
                 " staleDeathRejects=" + m_staleDeathRejects +
+                " replicaWindowOpened=" + m_replicaWindowOpened +
+                " replicaWindowSuppressed=" + m_replicaWindowDeadSuppressed +
+                " replicaWindowClosed=" + m_replicaWindowClosed +
+                " replicaWindowNewDeath=" + m_replicaWindowNewDeath +
+                " replicaWindowCleanupFail=" + m_replicaWindowCleanupFailures +
+                " replicaWindowActive=" + CountActiveRespawnWindows() +
                 " hudWrites=" + m_hudWrites +
                 " hudRefresh=" + m_hudPresentationRefreshes + " tempTex=" +
                 m_hudTemperatureTextures + " ice=" + m_hudIceWrites + " hudFail=" +
                 m_hudPresentationFailures + " hudNonFinite=" + m_hudNonFinite +
+                " freezeHostValue=" + m_freezeHostValue.ToString("F3") +
+                " freezeClientApplied=" + m_freezeClientApplied +
+                " freezeInterpolatedFrames=" + m_freezeInterpolatedFrames +
+                " freezeStageChanges=" + m_freezeStageChanges +
+                " freezeLegacy=" + m_freezeLegacy + " freezeInvalid=" + m_freezeInvalid +
+                " freezeCaptureFailures=" + m_freezeCaptureFailures +
+                " freezeSeeds=" + m_freezeSeeds +
+                " freezeAuthorityReads=" + m_freezeAuthorityReads +
+                " freezeAuthorityMisses=" + m_freezeAuthorityMisses +
+                " freezeAuthorityKeys=" + m_freezeHostProgress.Count +
+                " iceFactorWriteFailures=" + m_iceFactorWriteFailures +
+                " hurtFeedbackSound=" + m_hurtFeedbackSound +
+                " hurtFeedbackRedout=" + m_hurtRedoutHits +
+                " hurtFeedbackFrames=" + m_hurtRedoutFrames +
+                " hurtFeedbackFailures=" + m_hurtRedoutFailures +
+                " fluEffectApplied=" + m_fluEffectApplied +
+                " fluEffectSound=" + m_fluEffectSounds +
+                " fluEffectParticles=" + m_fluEffectParticles +
+                " fluEffectParticleFail=" + m_fluEffectParticleFailures +
+                " fluEffectRejected=" + m_fluEffectRejected +
+                " fluEffectDuplicate=" + m_fluEffectDuplicate +
+                " fluEffectStale=" + m_fluEffectStale +
+                " fluEffectSoundMismatch=" + m_fluEffectSoundMismatch +
+                " fluBlackoutFrames=" + m_fluBlackoutFrames +
+                " fluGreenoutFrames=" + m_fluGreenoutFrames +
+                " fluEffectPolls=" + m_effectPolls +
+                " fluEffectEmitted=" + m_effectEventsEmitted +
+                " fluEffectPollFailures=" + m_effectPollFailures +
+                " fluEffectPositionFailures=" + m_effectPositionFailures +
+                " fluEffectSoundReadFailures=" + (m_effectSoundReadFailures +
+                    m_effectSoundReadFailuresLocal) +
+                " effectStates=" + m_localEffects.Count +
                 " localSimOff=" + m_localSimDisabledNew + "/" + m_localSimDisableRuns +
                 " localSimOn=" + m_localSimRestores + " avatarReads=" + m_avatarReads +
                 " noAvatar=" + m_noAvatar + " applyFail=" + m_applyFailures +
                 " avatarRespawns=" + m_avatarRespawns + "/" + m_avatarRespawnFailures +
+                " respawnAnchorFail=" + m_respawnAnchorFailures +
                 " suppressRuns=" + m_suppressRuns + " suppressedNew=" + m_suppressedNew +
                 " suppressed=" + m_suppressedTokens.Count + " missing=" + m_suppressedMissing +
                 " deathParticleFail=" + m_deathParticleFailures +
@@ -3478,7 +5521,9 @@ namespace SuMultiplayer.Engine
                 " authoritySleeps=" + m_authoritySleeps + " sleepAuthorityFail=" +
                 m_sleepAuthoritySleepFailures + " localSleepReverts=" + m_sleepLocalReverts +
                 " localSleepForced=" + m_sleepLocalForcedRejected + " sleepRejectMsg=" +
-                m_sleepRejectMessages + "}";
+                m_sleepRejectMessages + " " + m_levelCounters.Describe() +
+                " levelHalvedDeaths=" + m_hostLevelAuthority.ActiveDeaths + "} " +
+                DescribeSelfDamage();
         }
 
         // ================================================================ 工具

@@ -78,6 +78,33 @@ namespace SuMultiplayer.Net
     }
 
     /// <summary>
+    /// The client's **own camera mode** (<c>CLIENT_UI_STATE.camera_mode</c>, field 18), i.e.
+    /// which camera the client's primary GameWidget is using. Numbers are wire values:
+    /// append only, never renumber.
+    ///
+    /// <see cref="Unknown"/> is "do not change", not "no camera": the client's camera is not
+    /// one of the four modes this protocol carries (DeathCamera while dead, or the
+    /// Intro / Loading cameras the engine also uses) — the host keeps its last known mode so
+    /// the death / respawn logic stays in charge.
+    ///
+    /// Source: Survivalcraft/Game/ComponentGui.cs:645-670（V 键 / 视角按钮：
+    ///         Fpp → Tpp → Orbit → Fixed → Fpp）
+    /// </summary>
+    public enum UiCameraMode
+    {
+        /// <summary>Do not change the host view (death camera / engine screen / mode not reported).</summary>
+        Unknown = 0,
+        /// <summary>The client's <c>GameWidget.ActiveCamera</c> is <c>FppCamera</c>.</summary>
+        Fpp = 1,
+        /// <summary>The client's <c>GameWidget.ActiveCamera</c> is <c>TppCamera</c>.</summary>
+        Tpp = 2,
+        /// <summary>The client's <c>GameWidget.ActiveCamera</c> is <c>OrbitCamera</c>.</summary>
+        Orbit = 3,
+        /// <summary>The client's <c>GameWidget.ActiveCamera</c> is <c>FixedCamera</c>.</summary>
+        Fixed = 4
+    }
+
+    /// <summary>
     /// One visible <c>MessageWidget</c> entry on the client (small hint / pickup / level /
     /// crafting note). Pure values: the host re-creates the same engine widget from it.
     ///
@@ -191,7 +218,7 @@ namespace SuMultiplayer.Net
             bool chatInputOpen)
             : this(inputKind, hudVisible, screen, dialogPresent, dialogType, modalPresent,
                 modalType, chatInputOpen, null, null, 0f, null, 0f, false,
-                default(UiHandcraftData))
+                default(UiHandcraftData), UiCameraMode.Unknown)
         {
         }
 
@@ -200,6 +227,18 @@ namespace SuMultiplayer.Net
             bool chatInputOpen, UiSmallMessageData[] smallMessages, string floatingMessage,
             float floatingMessageFactor, string overlayMessage, float overlayMessageFactor,
             bool handcraftPresent, UiHandcraftData handcraft)
+            : this(inputKind, hudVisible, screen, dialogPresent, dialogType, modalPresent,
+                modalType, chatInputOpen, smallMessages, floatingMessage, floatingMessageFactor,
+                overlayMessage, overlayMessageFactor, handcraftPresent, handcraft,
+                UiCameraMode.Unknown)
+        {
+        }
+
+        public ClientUiStateData(UiInputKind inputKind, bool hudVisible, string screen,
+            bool dialogPresent, string dialogType, bool modalPresent, string modalType,
+            bool chatInputOpen, UiSmallMessageData[] smallMessages, string floatingMessage,
+            float floatingMessageFactor, string overlayMessage, float overlayMessageFactor,
+            bool handcraftPresent, UiHandcraftData handcraft, UiCameraMode cameraMode)
         {
             InputKind = inputKind;
             HudVisible = hudVisible;
@@ -216,6 +255,7 @@ namespace SuMultiplayer.Net
             OverlayMessageFactor = overlayMessageFactor;
             HandcraftPresent = handcraftPresent;
             Handcraft = handcraft;
+            CameraMode = cameraMode;
         }
 
         public UiInputKind InputKind { get; }
@@ -249,6 +289,13 @@ namespace SuMultiplayer.Net
         public UiHandcraftData Handcraft { get; }
 
         /// <summary>
+        /// The client's own camera mode (field 18): 0 = do not change, 1 = Fpp, 2 = Tpp,
+        /// 3 = Orbit, 4 = Fixed. <see cref="UiCameraMode.Unknown"/> = "do not change"
+        /// (death camera / engine screen / not reported), never "no camera".
+        /// </summary>
+        public UiCameraMode CameraMode { get; }
+
+        /// <summary>
         /// Field equality (revision is not part of the data): the diff layer only sends
         /// when this is false, so an unchanged client produces no traffic.
         /// </summary>
@@ -268,7 +315,8 @@ namespace SuMultiplayer.Net
                 string.Equals(OverlayMessage, other.OverlayMessage, StringComparison.Ordinal) &&
                 SameFactor(OverlayMessageFactor, other.OverlayMessageFactor) &&
                 HandcraftPresent == other.HandcraftPresent &&
-                (!HandcraftPresent || Handcraft.SameAs(other.Handcraft));
+                (!HandcraftPresent || Handcraft.SameAs(other.Handcraft)) &&
+                CameraMode == other.CameraMode;
         }
 
         private bool SameSmallMessages(in ClientUiStateData other)
@@ -305,7 +353,8 @@ namespace SuMultiplayer.Net
                     ? "-"
                     : "\"" + OverlayMessage + "\":" + OverlayMessageFactor.ToString("F2",
                         CultureInfo.InvariantCulture)) +
-                " handcraft=" + (HandcraftPresent ? Handcraft.Describe() : "-");
+                " handcraft=" + (HandcraftPresent ? Handcraft.Describe() : "-") +
+                " camera=" + UiStatePolicy.Name(CameraMode);
         }
     }
 
@@ -353,7 +402,7 @@ namespace SuMultiplayer.Net
         /// <summary>Engine class names are short; anything longer is not an engine type name.</summary>
         public const int MaxNameLength = 64;
 
-        /// <summary>Defensive wire bound (the message is 17 small fields + two short names).</summary>
+        /// <summary>Defensive wire bound (the message is 18 small fields + two short names).</summary>
         public const int MaxWireBytes = 1024;
 
         /// <summary>
@@ -484,6 +533,33 @@ namespace SuMultiplayer.Net
         }
 
         /// <summary>
+        /// The camera mode values this build accepts: 0 = unknown / do not change, 1 = Fpp,
+        /// 2 = Tpp, 3 = Orbit, 4 = Fixed. Anything else (> 4) is rejected (the codec drops the
+        /// whole snapshot) instead of being coerced — a mode the host does not implement must
+        /// never move the view. Old clients only send 0/1/2 and keep the old behaviour.
+        /// </summary>
+        public static bool TryValidateCameraMode(UiCameraMode mode, out string reason)
+        {
+            reason = null;
+            if (mode >= UiCameraMode.Unknown && mode <= UiCameraMode.Fixed) return true;
+            reason = "camera-mode-invalid(" + (int)mode + ")";
+            return false;
+        }
+
+        /// <summary>Diagnostics word for a camera mode.</summary>
+        public static string Name(UiCameraMode mode)
+        {
+            switch (mode)
+            {
+                case UiCameraMode.Fpp: return "fpp";
+                case UiCameraMode.Tpp: return "tpp";
+                case UiCameraMode.Orbit: return "orbit";
+                case UiCameraMode.Fixed: return "fixed";
+                default: return "unknown";
+            }
+        }
+
+        /// <summary>
         /// A small-message text is mirrorable when it is non-empty, single-line-safe and
         /// within <see cref="MaxMessageTextLength"/>. Control characters (other than tab)
         /// are rejected: the label widget cannot draw them and they are never engine text.
@@ -605,6 +681,7 @@ namespace SuMultiplayer.Net
     /// (never truncated / never defaulted):
     ///   · revision &gt; 0;
     ///   · input_kind 0..3;
+    ///   · camera_mode 0..2（0 = 不改变；未知值整条拒绝并计数，绝不猜一个相机）;
     ///   · screen / dialog_type / modal_type 1..64 chars [A-Za-z0-9_.], and the type
     ///     fields must be empty exactly when their "present" flag is false;
     ///   · encoded size within <see cref="UiStatePolicy.MaxWireBytes"/>.
@@ -625,6 +702,11 @@ namespace SuMultiplayer.Net
                 data.InputKind != UiInputKind.KeyboardMouse && data.InputKind != UiInputKind.Gamepad)
             {
                 reason = "input-kind-invalid(" + (int)data.InputKind + ")";
+                return false;
+            }
+            if (!UiStatePolicy.TryValidateCameraMode(data.CameraMode, out reason))
+            {
+                // reason 已经是 camera-mode-invalid(<值>)：整条快照拒绝，绝不猜一个相机。
                 return false;
             }
             if (!UiStatePolicy.TryGetValidName(data.Screen, out string screen, out reason))
@@ -656,6 +738,8 @@ namespace SuMultiplayer.Net
                 ModalType = modalType,
                 ChatInputOpen = data.ChatInputOpen
             };
+            // ---- phase 3: 客户端本机视角模式（0 = 不改变，1 = Fpp，2 = Tpp，3 = Orbit，4 = Fixed）
+            encoded.CameraMode = (uint)data.CameraMode;
             // ---- phase 2: small messages / overlay words / handcrafting grid
             if (data.SmallMessages.Length > UiStatePolicy.MaxSmallMessages)
             {
@@ -748,6 +832,11 @@ namespace SuMultiplayer.Net
             if (message.InputKind > (uint)UiInputKind.Gamepad)
             {
                 reason = "input-kind-invalid(" + message.InputKind + ")";
+                return false;
+            }
+            if (!UiStatePolicy.TryValidateCameraMode((UiCameraMode)message.CameraMode, out reason))
+            {
+                // 未知值（>4）整条拒绝：主机相机状态不变，调用方计入 uiStateMalformed。
                 return false;
             }
             if (!UiStatePolicy.TryGetValidName(message.Screen, out string screen, out reason))
@@ -846,7 +935,8 @@ namespace SuMultiplayer.Net
                 screen, message.DialogPresent, dialogType, message.ModalPresent, modalType,
                 message.ChatInputOpen, smallMessages, message.FloatingMessage,
                 message.FloatingMessageFactor, message.OverlayMessage,
-                message.OverlayMessageFactor, message.HandcraftPresent, handcraft);
+                message.OverlayMessageFactor, message.HandcraftPresent, handcraft,
+                (UiCameraMode)message.CameraMode);
             return true;
         }
     }

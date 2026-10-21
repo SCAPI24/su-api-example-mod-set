@@ -371,14 +371,43 @@ namespace SuMultiplayer.Net
     public static class PlayerInventoryMath
     {
         /// <summary>
-        /// 同步的背包槽位数上限（= 引擎快捷栏 10 槽）。
+        /// 超大背包（创造仓库）的同步槽位数上限（= 引擎快捷栏 10 槽）。
         /// Source: Survivalcraft/Game/ComponentInventory.cs:ShortInventorySlotsCount = 10
         /// 创造仓库（<c>ComponentCreativeInventory</c> 有 1622 槽）只同步前 10 槽（快捷栏）：
         /// 整包下发会重演旧实现"创造背包每次同步巨大网络尖峰"的问题
         /// （Source: Mod/ScMultiplayer/Modules/Player/ScMultiplayerPlayerSync.cs:409-413）。
-        /// 记录里的完整槽位仍由主机的 5 秒抓取 + 离开时抓取落盘。
+        /// 普通玩家背包（26 槽）不用这个上限，见 <see cref="SyncSlotsFor"/>。
         /// </summary>
         public const int MaxSyncSlots = 10;
+
+        /// <summary>
+        /// 引擎普通（生存）玩家背包的槽位数 = 26（前 10 槽是快捷栏，其余 16 槽是背包格）。
+        /// Source: Pak/Database.xml:4162-4166（ComponentTemplate Name="Inventory" SlotsCount=26）
+        /// Source: Survivalcraft/Game/ComponentInventoryBase.cs:Load（按 SlotsCount 建槽）
+        /// 实机缺陷（2026-10-21）：只同步前 10 槽时，客户端把快捷栏物品拖到背包格（槽 10..25）
+        /// 从未上传 → 主机侧化身的背包不更新 → 第三屏背包面板显示旧值。
+        /// </summary>
+        public const int NormalInventorySlots = 26;
+
+        /// <summary>
+        /// "普通背包"的安全槽位上限：槽位数 &lt;= 64 一律视为普通背包（全量同步），
+        /// 超过 64 视为创造仓库 / 超大背包（只同步 <see cref="MaxSyncSlots"/> 槽）。
+        /// 64 = 普通 26 槽的两倍多，容纳模板调整，又远小于创造仓库的 1622 槽。
+        /// </summary>
+        public const int MaxNormalInventorySlots = 64;
+
+        /// <summary>
+        /// 本次应当同步 / 抓取的背包槽位数（纯逻辑，生产侧与自检共用）：
+        ///   · 普通背包（slotsCount &lt;= <see cref="MaxNormalInventorySlots"/>，含 26）→ **全部槽位**；
+        ///   · 超大背包（创造仓库 1622 等）→ <see cref="MaxSyncSlots"/>（保留历史网络尖峰上限）。
+        /// 返回值恒 &lt;= slotsCount（slotsCount &lt;= 0 → 0）。
+        /// </summary>
+        public static int SyncSlotsFor(int slotsCount)
+        {
+            if (slotsCount <= 0) return 0;
+            if (slotsCount <= MaxNormalInventorySlots) return slotsCount;
+            return Math.Min(slotsCount, MaxSyncSlots);
+        }
 
         public static bool ArraysEqual(int[] left, int[] right)
         {

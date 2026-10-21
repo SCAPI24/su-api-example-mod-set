@@ -647,7 +647,12 @@ namespace SuMultiplayer.Protocol.Respawn {
     public const int HasPositionFieldNumber = 6;
     private bool hasPosition_;
     /// <summary>
-    /// Accepted: the spawn point the host used (PlayerData.SpawnPosition).
+    /// Accepted: the spawn point the host actually used (PlayerData.SpawnPosition).
+    /// Product rule (2026-10-21 revert): the host respawns the avatar immediately on
+    /// acceptance; the client then removes its dead entity through the engine's
+    /// native flow and replays this point after the new entity spawns.  Item stacks
+    /// stay on the ground where the engine dropped them (single-player behavior);
+    /// the replay never restores inventory / clothes / crafting slots.
     /// </summary>
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]

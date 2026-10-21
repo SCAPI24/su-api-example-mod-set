@@ -140,4 +140,34 @@ namespace SuMultiplayer.Modules
         /// </summary>
         void Present();
     }
+
+    /// <summary>
+    /// 第三分屏**相机模式**的主机侧接收口（实现方 = <c>Engine/MirrorCharacterEngine.cs</c>）。
+    ///
+    /// 为什么单独一个端口而不是塞进 <see cref="IUiMirrorPort"/>：客户端视角模式的消费者是
+    /// **相机的所有者**（H3 replace 的第三分屏绑在 <c>MirrorCharacterEngine</c> 上，死亡 /
+    /// 复活 / 重绑 / 解绑都由它按顺序裁决），而 HUD 镜像是另一个引擎（<c>UiMirrorEngine</c>）。
+    /// 模式必须和相机绑定走同一条生命周期，否则死亡切换与模式应用会互相覆盖。
+    ///
+    /// 语义：
+    ///   · 0（<see cref="UiCameraMode.Unknown"/>）= **不改变**：客户端停在死亡相机 / 引擎屏上，
+    ///     主机保留最后已知模式（复活后按它恢复），不是错误；
+    ///   · 1 = Fpp，2 = Tpp，3 = Orbit，4 = Fixed：活着时第三分屏切到同一个相机；死亡时仍以
+    ///     DeathCamera 优先；
+    ///   · false + reason = 明确拒绝（非法值 / 第三屏正绑在别的客户端），主机相机不变、不改状态。
+    ///
+    /// 端口缺失 = 组合根没有接线（<c>Plug/SuMultiplayerMod.cs</c> 的
+    /// <c>RegisterPort&lt;IViewCameraModePort&gt;</c>），调用方必须计数 + 限流日志，
+    /// 不能当成"模式已同步"（不静默）。
+    /// </summary>
+    public interface IViewCameraModePort
+    {
+        /// <summary>
+        /// 记录一台客户端上报的视角模式（0 = 不改变，1 = Fpp，2 = Tpp，3 = Orbit，4 = Fixed），
+        /// 并在第三屏绑定到该客户端时按它设置 <c>GameWidget.ActiveCamera</c>（活着）/
+        /// 保持 DeathCamera（死亡）。真实写入次数由实现方的 <c>viewCameraApply</c> 计数，
+        /// 调用方不能把 true 当成"相机已经切好"。
+        /// </summary>
+        bool TrySetClientCameraMode(int clientId, UiCameraMode mode, out string reason);
+    }
 }

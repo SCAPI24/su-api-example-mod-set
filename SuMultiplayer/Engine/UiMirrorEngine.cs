@@ -41,9 +41,11 @@ namespace SuMultiplayer.Engine
     ///      · 衣物 <c>ClothingWidget</c>：化身 ComponentPlayer；
     ///      · 容器（箱子 / 熔炉 / 工作台 / 分配器）：玩家背包 + 主机**权威方块实体**库存
     ///        （坐标来自被该客户端打开的容器记录，见 <see cref="IUiContainerCellPort"/>）。
-    ///      数据口径：物品槽只有前 10 格实时同步（PlayerInventoryMath.MaxSyncSlots，
-    ///      Source: Net/PlayerInventoryNet.cs:376-381），其余槽位是主机侧化身的最近记录值 ——
-    ///      快捷栏精确、整包其余槽位可能滞后（不伪造、不藏起来，见报告）。
+    ///      数据口径：普通背包（26 槽）**全部槽位**实时同步（PlayerInventoryMath.SyncSlotsFor，
+    ///      Source: Net/PlayerInventoryNet.cs:PlayerInventoryMath），创造仓库仍只同步前
+    ///      PlayerInventoryMath.MaxSyncSlots 槽（历史网络尖峰上限）。面板直接绑定化身实体的
+    ///      ComponentMiner.Inventory（与 AvatarActionBridge.TryApplyInventory 写入的是同一个对象），
+    ///      因此主机把 delta 写进化身背包后，第三屏面板下一帧就显示权威值，不经过任何记录/克隆。
     ///   ④ 对话框：只实例化能从类名重建的引擎对话框（GameMenuDialog / KeyboardHelpDialog /
     ///      GamepadHelpDialog）。GameMenuDialog 构造时会按"设备快 / 慢"弹一次性能提示
     ///      （Source: GameMenuDialog.cs:24-40，静态一次性标志 + Analytics）；镜像构造期间用

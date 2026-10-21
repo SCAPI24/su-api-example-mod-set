@@ -22,7 +22,8 @@
 | `Engine/VoiceAudioEngine.cs` | OpenAL Soft `alcCapture*` 采集 + `alSourceQueueBuffers` 流播放（P/Invoke）；Android 录音权限请求 / 结果 / 设置页 |
 | `Voice/VoiceToggleGate.cs` | U 键边沿判定（一次按下 = 一次切换；文本输入抑制）纯逻辑 |
 | `Voice/VoiceHudIcon.cs` | 图标位置规则 / ON·OFF 视觉映射 / 状态变化计数（纯逻辑，可被 `P:\tmp\tsverify` 直接自检） |
-| `UI/VoiceHud.cs` | 右下角语音状态图标（聊天按钮正上方，点按 / U 键）/ 状态行 + TALK（可选 PTT，仅点按）/ MUTE ALL + 每个远端静音按钮 + SPEAKING 行 |
+| `UI/VoiceHud.cs` | 右下角语音状态图标（聊天按钮正上方，点按 / U 键，ON 时右侧 5 格音量条）+ TALK（可选 PTT，仅点按）；**状态行与 SPEAKING 行都已按产品要求删除（2026-10-21）**，说话状态只进日志 / 计数；静音入口是 MoreContents 的 `VO 按钮` |
+| `Voice/VoiceMicMeter.cs` | 麦克风电平 → 5 格音量条：**统一 dBFS 标尺**（`20·log10(mean/32768)`，floor −50 / full −8.5 dBFS）/ attack·release 平滑 / 停滞衰减 / 格数 + 10 s 统计窗口与采集帧对账（纯逻辑，可被 `P:\tmp\tsverify` 直接自检） |
 | `Protocol/voice.proto` | `VOICE_PACKET` = 85 … `VOICE_CONTROL` = 90（append-only） |
 
 ---
@@ -285,9 +286,53 @@ low / ultra 任务书按更小的固定开销估算，本实现把 3 B 块头、
 
 - **语音状态图标**（按钮名 **`SuMPVoiceIcon`**）：**右下角、聊天按钮正上方**
   （`Far/Far`；距底 300 = 聊天按钮 236 + 按钮高 56 + 间距 8；宽 64 × 高 56 的紧凑
-  图标按钮）。图标是**唯一的语音开关**：点一下切换 ON/OFF；ON = 绿底白麦，
-  OFF = 灰底灰麦 + 红色斜杠（颜色与形状双重区分）；进房间**默认 OFF**，
+  图标按钮）。图标是**唯一的语音开关**：点一下切换 ON/OFF；ON = 绿底白麦 +
+  **麦克风右侧 5 格音量条**（点亮 `round(平滑电平 × 5)` 格：静音 0 格、满格 5 格；
+  电平来自采集帧的 `VoiceActivityDetector.LastLevel`，经 `Voice/VoiceMicMeter.cs`
+  按**统一 dBFS 标尺**归一化 / 平滑，格子在图标自绘里画 —— **不新建控件**），
+  OFF = 灰底灰麦 + 红色斜杠 + 整条音量条不画（颜色与形状双重区分）；进房间**默认 OFF**，
   离开房间 / 断线自动 OFF 并释放麦克风；
+- **5 格映射规则（统一 dBFS 标尺；2026-10-21 实机修复）**：旧标尺把采集均值
+  `mean(|sample|)` 按平板经验值线性映射（floor=180 / full=3000），PC 麦克风正常说话
+  均值 3000~10000（−20.8 ~ −10.3 dBFS）直接越过 full → **图标永远 5 格**。现在统一换算成
+  dBFS（与采集接口 / 设备无关，标尺常量只在 `VoiceMicMeter` 一处）：
+
+  ```
+  dbfs  = 20·log10(max(mean, 1) / 32768)                 # 32768 = int16 满幅
+  level = (dbfs − FloorDbfs) / (FullDbfs − FloorDbfs)    # clamp 0..1
+  格数   = round(level × 5)                               # 0 = 静音，5 = 满格
+  FloorDbfs = −50 dBFS（≈ mean 104，安静房间底噪）
+  FullDbfs  = −8.5 dBFS（≈ mean 12315，贴着实测“大声约 13000”；−6 dBFS = mean 16424
+              会把正常说话 3000 压到 3 格，故不采用）
+  ```
+
+  典型值（mean→格）：104→0、200→1、1000→2、1500→3、3000→4、≥12315→5；
+  正弦音 `mean = 2A/π`（幅度 A=8000 约 mean 5093 → 4 格）。起音 0.6 / 释放 0.18 的平滑与
+  250 ms 停滞衰减不变。**只有 `voice=on && capture=capturing` 才更新电平**：权限被永久拒绝
+  （Android `PermanentlyDenied`）/ 停采 / 读失败时保持 0，`micMeter` 的 frames / rejected /
+  staleDecays 不增长（不伪造电平）；停采 / 关麦 / 读失败都会 `Reset()` 归零；
+- **5 格绘制对比（2026-10-21 实机修复，与上面的 dBFS 标尺是两个独立问题）**：
+  点亮格 = 麦克风同色（ON 时白 `#FFFFFF`），**未点亮格 = 黑色 α176（≈69% 黑）压出的暗槽**
+  —— 5 个格子始终都在（0 格时就是 5 个暗槽），在绿色按钮底与浅绿斜面上都是“熄灭”观感。
+  旧实现用半透明白 α70（`Color(255,255,255,70)`）：在绿底 `#2E7D4F` / 浅绿斜面 `#9AD6AE`
+  上合成后是 `#67A17F` / `#B6E1C4`，**比底色更亮**，实机看起来 5 格永远全亮；数据侧
+  `bars=1/5`、`bars=2/5` 一直正确，问题只在绘制对比。白 vs 暗槽在绿底中心亮度对比约
+  16:1（浅绿斜面约 10:1）。
+  绘制仍是同一个 `FlatBatch2D` 里的 5 个 quad，不新建控件、不每帧分配；`micBars/micBarUpdates`
+  计数含义不变（`UnlitAlpha` 是绘制常量；每次 bars 变化那行 10 s 限流日志会写明
+  “亮格=麦克风同色 / 熄灭格=黑α176”）；
+- **10 s 电平窗口（诊断标尺用，绝不每帧打日志）**：
+
+  ```
+  [SuMP][voice] 电平窗口 micWin(n=… mean(min/avg/max)=…/…/… level(min/avg/max)=…/…/…
+    bars(min/max)=…/…) captureDelta=… meterDelta=… rejectedDelta=… gateSkipped=…
+    meterFramesNotPushed=… meterPushedWithoutCapture=… floorDbfs=-50 fullDbfs=-8.5
+  ```
+
+  `captureDelta` = 本窗口 `voiceCaptureFrames` 增量、`meterDelta` = `micMeter.frames` 增量；
+  正常 `captureDelta − rejectedDelta − gateSkipped == meterDelta`。不等时：
+  `meterFramesNotPushed` 记“采集帧涨但电平计没涨”的帧数，`meterPushedWithoutCapture`
+  记反向（正常恒 0）。下次调标尺直接看这一行的 mean / level 分布；
 - **Windows `U` 键**：同一个开关（`Engine.Input.Keyboard` 的
   `IsKeyDownOnce(Key.U)`，边沿判定在纯逻辑 `Voice/VoiceToggleGate.cs`：
   一次按下 = 一次切换，按住不连发）；**聊天输入 / 文本框 / 对话框 / 软键盘打开时忽略**
@@ -296,13 +341,20 @@ low / ultra 任务书按更小的固定开销估算，本实现把 3 B 块头、
 - `TALK`：**可选 PTT 模式**（`voicemode=ptt`）下的“点一下开 / 再点一下关”；
   **不绑定任何键盘键** —— 旧“按住 V”键盘 PTT 已按产品要求移除，**V 键不做任何语音操作**；
   默认 open-mic 模式下 TALK 不显示；
-- `MUTE ALL / UNMUTE ALL`：静音所有远端；每个远端还有名字按钮，可单独静音；
-- 状态行 + `SPEAKING: 名字, ...`（400 ms 内有播放 / 本机正在说话）；
-- 右上角状态面板只放：状态行 / SPEAKING / TALK（可选）/ MUTE ALL / 远端静音按钮；
+- **静音入口只有一个**：MoreContents 里的单只 **`VO 按钮`**（`UI/VoiceMuteTable.cs`），
+  点开是 `VOICE` 表格：`MUTE ALL / UNMUTE ALL` + 每个远端一行；右上角面板不放任何静音按钮；
+- `SPEAKING`：**屏幕上这一行已按产品要求删除（2026-10-21）**；说话状态（400 ms 内有播放 /
+  本机正在说话）只进日志与计数：`VoiceHud.UpdateSpeakingLog` 每 1 s 采样一次，状态真正变化才
+  写一行 `[SuMP][ui] 说话状态 → …（仅日志 / 计数）`（计数 `speakingChanges`），**不新建任何控件**；
+- 右上角面板只剩 `TALK`（可选 PTT）：**整行 `VOICE: off …` 状态文字与整行 `SPEAKING`
+  都已删除（2026-10-21，连同 26 px 的控件一起删，不留空白行）**；状态文字 / 权限提示改由
+  `VoiceChatModule.HudText()` 写进 ON/OFF 切换那一行日志
+  （`[SuMP][ui] 语音图标状态更新 → …（状态文字只进日志：…）`）；
   **不重复放 VOICE 开关**（开关只保留右下角图标，避免双入口）；
-- 权限流程的提示直接写在状态行：`requesting mic permission…` /
-  `mic permission denied — press U to retry` /
-  `mic permission blocked — enable it in Settings` / `mic permission unavailable — …`。
+- 权限流程的提示（`requesting mic permission…` / `mic permission denied — press U to retry` /
+  `mic permission blocked — enable it in Settings` / `mic permission unavailable — …`）
+  仍照常写进日志（`LogProblem`）与状态文字；因为面板状态行已删，**屏幕上只看得到图标保持 OFF**，
+  具体原因去 `Logs/Game.log` 搜 `[SuMP][voice]`。
 
 > 聊天输入只用 **Enter**（产品要求）：关闭时 Enter 打开输入，打开时 Enter 发送，Esc 取消；
 > **T 不再打开聊天**（关闭时直接交给游戏；输入打开期间游戏键仍被抑制）；触摸端保留常驻“聊天”按钮。
@@ -399,7 +451,19 @@ low / ultra 任务书按更小的固定开销估算，本实现把 3 B 块头、
   - **VI1–VI9** 语音状态图标（35 条）：右下角 / 聊天按钮正上方布局规则、
     ON（绿底白麦）/ OFF（灰底灰麦 + 红斜杠）视觉映射、点击与 U 键同一帧更新、
     图标挂在 GuiWidget 且不进 MoreContents、无 V 键绑定、面板不重复放开关、
-    EnsurePanel 惰性创建、create/update/toggle 计数、文档同步与 CRLF 守卫。
+    EnsurePanel 惰性创建、create/update/toggle 计数、文档同步与 CRLF 守卫；
+  - **MB1–MB7** 麦克风 5 格音量条（61 条）：**统一 dBFS 标尺** 0..5 格边界（静音 0 / 满格 5 /
+    中点远离零）、attack·release 平滑（起音快 / 释放慢 / 静音落回 0）、
+    停滞 250 ms 后按时间衰减（幂等 + Reset）、负电平 / 时钟倒退显式拒绝计数、
+    真实 `VoiceChatModule` 采集帧 → `MicLevelBars` 跟手（静音 / 关麦 = 0 格）、
+    源码守卫（状态行已删 / 图标仍显式定位 / U 键与点击未改 / 5 格不新建控件 / CRLF /
+    熄灭格黑 α176 与点亮白格的合成对比）。
+  - **DB1–DB7** 5 格电平统一 dBFS 标尺（附加用例 `VoiceMeterScaleChecks.cs`，43 条）：
+    dBFS 换算边界（0 / 104 / 12315 / 32767，NaN / ±∞ / 负值）、典型值映射
+    （104→0、1000→2、3000→4、13000→5）与旧标尺回归、标尺常量只在 `VoiceMicMeter`
+    一处（模块不硬编码 32768）、平滑 / 停滞 / 拒绝不变、10 s 窗口 mean·level 的
+    min/avg/max 与采集帧对账（两个方向 + 闸门跳过）、真实模块 mean→bars 跟手、
+    Android 权限永久拒绝不伪造电平、文档同步与 CRLF。
 - 带宽实测断言：high 170 B / 4650 B/s、standard 129 B / 3625 B/s、
   low 89 B / 2625 B/s、ultra 49 B / 1625 B/s（25 包/秒，含 16 B TCP 帧头）。
 
@@ -411,9 +475,10 @@ low / ultra 任务书按更小的固定开销估算，本实现把 3 B 块头、
 
 1. 用同一份 `SuMultiplayer.dll` 打包 `.scmod`（`IsMergeLib=true`，平铺 `Lib/`）。
 2. 两端都进同一个房间（主机先 CR 建房、客户端 Play 屏加入）。
-3. 右下角出现**麦克风图标按钮**（**聊天按钮正上方**），状态行 `VOICE: off · press U`：
-   **进房间默认 OFF**；按 **U**（或点麦克风图标）变成 `VOICE: on · MIC ON`，
-   图标由灰底灰麦 + 红斜杠变成绿底白麦。离开房间后自动回到 OFF。
+3. 右下角出现**麦克风图标按钮**（**聊天按钮正上方**），**面板不再有 `VOICE: off` 状态行文字**
+   （状态文案只进日志）：**进房间默认 OFF**；按 **U**（或点麦克风图标）变成绿底白麦，
+   图标右侧 **5 格音量条**随说话点亮（静音 0 格、大声 5 格）；OFF 时整条不画。
+   离开房间后自动回到 OFF。
 4. **V 键不产生任何语音效果**（既不 PTT、也不切换开关）；PTT 只保留 `TALK` 点按。
 
 **Android**
@@ -430,7 +495,11 @@ low / ultra 任务书按更小的固定开销估算，本实现把 3 B 块头、
 
 | 项 | 期望 | 本次状态 |
 |---|---|---|
-| PC：进房间默认 OFF | 右下角麦克风图标是**灰底灰麦 + 红斜杠**；状态行 `VOICE: off · press U`，不采集 | 逻辑用例 VI1–VI3 / VC9 / VC10 验证；需真机复核图标 |
+| PC：进房间默认 OFF | 右下角麦克风图标是**灰底灰麦 + 红斜杠**；**没有状态行 / SPEAKING 文字**（只进日志），不采集 | 逻辑用例 VI1–VI3 / VC9 / VC10 / MB6 验证；需真机复核图标 |
+| PC：ON 时 5 格音量条 | 说话时图标右侧 5 格从 0 逐格点亮（**熄灭格 = 黑 α176 暗槽、点亮格 = 白**；**安静 0~1 格、正常说话 2~4 格、大声 5 格**），闭嘴后约 0.3 s 落回 0 格；OFF 时整条不画 | dBFS 映射 / 平滑 DB1–DB4 + MB1–MB3 + 模块接线 DB6 / MB5；需真机说话目视 |
+| PC：5 格熄灭 / 点亮一眼可分 | 安静时只看到 1 个亮白格 + 4 个暗槽，说话逐格变亮，不再“5 格永远全亮”；关麦整条消失 | 颜色守卫 MB7（黑 α176 / 白 vs 暗槽合成对比）+ 绘制源码守卫 MB6；需真机目视 |
+| PC：10 s 电平窗口日志 | 说话时日志出现 `电平窗口 micWin(mean(min/avg/max)=… level(min/avg/max)=… bars(min/max)=…)`，并带 `floorDbfs=-50 fullDbfs=-8.5`、`captureDelta==meterDelta`、`meterFramesNotPushed=0 meterPushedWithoutCapture=0` | DB5 / DB6 逻辑验证；需真机看 10 s 日志调标尺 |
+| PC：状态行 / SPEAKING 删除后无空白 | 右上角面板只剩 TALK（仅 ptt），原状态行与 SPEAKING 位置没有空行 / 空框 | 源码守卫 MB6 / VM6 / NV（无 SpeakingName / LabelWidget）；需真机目视 |
 | PC：图标在聊天按钮正上方 | 两者同一右下角列（Far/Far，图标距底 300 = 聊天 236 + 56 + 8），不挡聊天按钮 | 布局规则 VI1 + 源码守卫 VI4；需真机看位置与点击 |
 | PC：点图标切换 | 点一下 ON（绿底白麦）/ 再点一下 OFF（灰底 + 斜杠），图标同一帧更新 | 点击路径 VI6 + 纯逻辑 VI3；需真机点击 |
 | PC：U 一次按下一次切换 | 按住不连发；图标同步；聊天输入 / 对话框打开时不触发 | 边沿逻辑 VC14 + 图标同步 VI3/VI6；需真机按 U |

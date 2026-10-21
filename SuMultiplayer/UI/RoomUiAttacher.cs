@@ -104,7 +104,12 @@ namespace SuMultiplayer.UI
             if (gameWidgets.Count == 0) return;
 
             bool hosting = m_rooms?.IsHostingRoom == true;
-            string text = hosting ? "IF" : "CR";
+            // 产品口径（2026-10-21）：客户端加入房间后**只显示 IF**（房间信息），不再出现 CR。
+            // 否则客户端能在别人的房间里再建一个房 → 双主机分裂（本地重建角色/位置错乱，
+            // 连接又没断，所以既不踢人也不弹掉线框）。建房入口只留给"未连接、未主持"的本端。
+            bool clientInRoom = !hosting && m_rooms?.IsClientInRoom == true;
+            bool showInfo = hosting || clientInRoom;
+            string text = showInfo ? "IF" : "CR";
             m_buttons.Clear();
             for (int i = 0; i < gameWidgets.Count; i++)
             {
@@ -130,7 +135,7 @@ namespace SuMultiplayer.UI
                 m_buttons.Add(button);
                 if (TryConsumeClick(button))
                 {
-                    if (hosting) ShowRoomInfo();
+                    if (showInfo) ShowRoomInfo();
                     else CreateRoom();
                 }
 

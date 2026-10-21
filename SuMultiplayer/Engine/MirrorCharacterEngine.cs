@@ -23,12 +23,21 @@ namespace SuMultiplayer.Engine
     ///         摘除）、从 <c>SubsystemBodies</c> 摘除（不可碰撞）、停掉会改状态/推挤的 updateable；
     ///         **不改坐标**（坐标会广播给客户端 / 进存档 / 上实时地图）。
     ///       - H3 的 <c>GameWidget</c> 相机绑到客户端角色的 <c>ComponentPlayer</c>
-    ///         （<c>GameWidget.Target</c> + <c>ActiveCamera = FppCamera</c>）→ 该分屏 = 客户端第一人称。
+    ///         （<c>GameWidget.Target</c> + <c>ActiveCamera</c> = 客户端上报的模式：
+    ///         <c>FppCamera</c> / <c>TppCamera</c> / <c>OrbitCamera</c> / <c>FixedCamera</c>）
+    ///         → 该分屏 = 客户端当前视角。
     ///         <c>ViewWidget.Draw</c> 只用 H3 自己的 <c>PlayerData.ComponentPlayer / IsReadyForPlaying</c>
     ///         决定画不画（Source: Survivalcraft/Game/ViewWidget.cs:45-51），<c>FppCamera</c> 读
     ///         <c>GameWidget.Target.ComponentCreatureModel.EyePosition/EyeRotation</c>
-    ///         （Source: Survivalcraft/Game/FppCamera.cs:21-44）；与 <c>Engine/DebugMirrorClient.cs:275-280</c>
-    ///         是同一条已证明路径。
+    ///         （Source: Survivalcraft/Game/FppCamera.cs:21-44），<c>TppCamera</c> 用同一个
+    ///         <c>EyeRotation</c> 算环绕位置并做地形遮挡收缩（Source: Survivalcraft/Game/TppCamera.cs:27-89），
+    ///         <c>OrbitCamera</c> 以 <c>Target.ComponentBody</c> 为中心、角度由本视图输入驱动
+    ///         （Source: Survivalcraft/Game/OrbitCamera.cs:26-47），<c>FixedCamera</c> 冻结切换时的视点
+    ///         （Source: Survivalcraft/Game/FixedCamera.cs:16-22）；
+    ///         与 <c>Engine/DebugMirrorClient.cs:275-280</c> 是同一条已证明路径。
+    ///         客户端视角模式来自 <c>CLIENT_UI_STATE.camera_mode</c>（字段 18，见
+    ///         <see cref="IViewCameraModePort"/>）：死亡时 <c>DeathCamera</c> 优先，复活 / 重绑 /
+    ///         解绑后回到客户端最后上报的模式；四种玩家可选相机都是合法相机，不再被当成"被改坏"。
     ///       - **不复制任何状态**（背包 / 生命 / 动作都不动；没有第二份状态、没有第二个模型）。
     ///       - H3 的 PlayerData / GameWidget / 身份 / 统计 / 记录都不动，解绑时恢复模型渲染、碰撞、
     ///         updateable、输入、相机与快照里的位置。
@@ -83,9 +92,12 @@ namespace SuMultiplayer.Engine
     ///
     /// 本类**无静态可变状态**：反射入口 / 化身表 / 诊断由组合根以实例注入。
     /// </summary>
-    public sealed class MirrorCharacterEngine : IMirrorCharacterPort, IDisposable
+    public sealed class MirrorCharacterEngine : IMirrorCharacterPort, IViewCameraModePort, IDisposable
     {
         private const string OwnerId = "mirror-character";
+
+        /// <summary>相机模式失败 / 变化的日志限流（毫秒口径的需求 = 10 秒）。</summary>
+        private const double CameraLogIntervalSeconds = 10.0;
 
         /// <summary>只镜像引擎快捷栏（与既有 PlayerInventory 同步范围一致）。</summary>
         private const int CreativeMirrorSlots = PlayerInventoryMath.MaxSyncSlots;
@@ -170,8 +182,72 @@ namespace SuMultiplayer.Engine
         /// <summary>replace：客户端角色死亡 → 镜像分屏切 DeathCamera 的次数。</summary>
         private long m_deathCameraShown;
 
-        /// <summary>replace：客户端复活 → 镜像分屏切回 FppCamera 的次数。</summary>
+        /// <summary>replace：客户端复活 → 镜像分屏切回客户端模式的次数。</summary>
         private long m_deathCameraRestored;
+
+        // ---------------------------------------------------------------- 第三屏视角模式（字段 18）
+        /// <summary>
+        /// 客户端最后上报的视角模式（0 = 未知 / 不改变，1 = Fpp，2 = Tpp，3 = Orbit，4 = Fixed）。
+        /// 0 不覆盖它：客户端死亡期间上报 0（DeathCamera），这里保留死亡前的模式，复活时按它恢复。
+        /// </summary>
+        private int m_clientCameraMode;
+
+        /// <summary>
+        /// 上面这条模式属于哪个客户端（-1 = 还没有）。不同客户端绝不共享；同一客户端重绑
+        /// （客户端角色重生重建）时保留，<see cref="ClearBinding"/> 也不清它 —— 复活 / 重绑后
+        /// 立刻按最后模式恢复。
+        /// </summary>
+        private int m_clientCameraModeClientId = -1;
+
+        /// <summary>客户端视角模式变化次数（<c>viewCameraModeChanges</c>）。</summary>
+        private long m_viewCameraModeChanges;
+
+        /// <summary>按模式成功写 <c>GameWidget.ActiveCamera</c> 的次数（<c>viewCameraApply</c>）。</summary>
+        private long m_viewCameraApply;
+
+        /// <summary>写相机失败次数（<c>viewCameraApplyFailures</c>：缺相机 / setter 抛异常 / 引擎拒绝）。</summary>
+        private long m_viewCameraApplyFailures;
+
+        /// <summary>模式被拒绝的次数（<c>viewCameraModeRejects</c>）。</summary>
+        private long m_viewCameraModeRejects;
+
+        /// <summary>最近一次拒绝原因（<c>viewCameraModeRejectedBy</c>；未拒绝 = none）。</summary>
+        private string m_viewCameraModeRejectedBy = ViewCameraPolicy.RejectedByNone;
+
+        /// <summary>相机相关日志的 10 秒限流表（键 → 上次写日志的 <c>Time.RealTime</c>）。</summary>
+        private readonly Dictionary<string, double> m_cameraLogTime =
+            new Dictionary<string, double>(StringComparer.Ordinal);
+
+        /// <summary>
+        /// 宿主由 <c>MirrorHostImmunity</c> 托管（自动镜像宿主 <c>Mirror#N</c>）：绑定期间**不写宿主权威组件**
+        /// （Health / Air / 体征由免疫每拍钉在安全值），只写表现层（底部 HUD 每拍写控件）。
+        /// 手动角色走 <see cref="TryBind"/>（<c>presentationOnlyHost: false</c>）：只保留 IsInvulnerable 防死，
+        /// 同样不写数值。
+        /// </summary>
+        private bool m_presentationOnlyHost;
+
+        /// <summary>replace：底部 HUD 条每拍成功写入的控件数（<c>viewBottomBarWrite</c>；正常 3 个/帧）。</summary>
+        private long m_bottomBarWrites;
+
+        /// <summary>replace：底部 HUD 条写入失败次数（<c>viewBottomBarFailures</c>；每次失败都计数）。</summary>
+        private long m_bottomBarFailures;
+
+        /// <summary>
+        /// replace：底部 HUD 条当前数据源（<c>viewBottomBarSource</c>）。绑定期间 = 客户端化身权威值；
+        /// 写入失败的那一拍带 <c>blocked:&lt;失败键&gt;</c>，未绑定 = <c>none</c>。见 <see cref="MirrorBottomHudPolicy"/>。
+        /// </summary>
+        private string m_bottomBarSource = MirrorBottomHudPolicy.SourceNone;
+
+        /// <summary>replace：HUD 桥接里**非底部条**的失败次数（<c>viewHudBridgeFailures</c>：蹲伏 / IsInvulnerable）。</summary>
+        private long m_hudBridgeFailures;
+
+        /// <summary>底部 HUD 失败日志的 10 秒限流表（失败键 → 上次写日志的 <c>Time.RealTime</c>）。</summary>
+        private readonly Dictionary<string, double> m_hudFailureLogTime =
+            new Dictionary<string, double>(StringComparer.Ordinal);
+
+        /// <summary>温度条贴图缓存（档位 → 贴图；只在档位变化时查一次 ContentManager）。</summary>
+        private Subtexture m_bottomBarTemperatureTexture;
+        private int m_bottomBarTemperatureIndex = int.MinValue;
 
         /// <summary>replace 模式：H3 的模型是否已从 SubsystemModelsRenderer 的渲染表里摘掉。</summary>
         private bool m_bodyHidden;
@@ -203,6 +279,15 @@ namespace SuMultiplayer.Engine
 
         public bool IsBound => m_bound;
 
+        /// <summary>
+        /// 主机权威冻结进度的**只读读取器**（组合根注入 = <c>PlayerVitalsReplica.TryGetAuthorityFreeze</c>）。
+        /// 第三分屏的冰覆盖**只**用它的返回值（= vitals.proto 字段 22
+        /// <c>freeze_progress</c> 的原值，与客户端收到的是同一个 float），不再按温度自己推导
+        /// （实机问题 1：两端各算一遍会让冻结时刻 / 屏幕占比不一致）。
+        /// 未注入 / 拿不到时由反馈层明确计 <c>viewIceSource=authority-missing</c>，绝不静默顶替。
+        /// </summary>
+        public MirrorViewAuthorityFreezeProbe ViewFreezeProbe { get; set; }
+
         public int BoundClientId => m_bound ? m_clientId : -1;
 
         public string BoundCharacterName => m_bound ? m_characterName : string.Empty;
@@ -215,8 +300,91 @@ namespace SuMultiplayer.Engine
         /// </summary>
         public string DescribeViewFeedback() =>
             m_viewFeedback.Describe() +
+            " " + MirrorBottomHudPolicy.DescribeCounters(m_bottomBarWrites, m_bottomBarFailures,
+                m_bound ? m_bottomBarSource : MirrorBottomHudPolicy.SourceNone) +
+            " viewHudBridgeFailures=" + m_hudBridgeFailures +
             " deathCameraShown=" + m_deathCameraShown +
-            " deathCameraRestored=" + m_deathCameraRestored;
+            " deathCameraRestored=" + m_deathCameraRestored +
+            " " + ViewCameraPolicy.DescribeCounters(m_clientCameraMode, m_viewCameraModeChanges,
+                m_viewCameraApply, m_viewCameraApplyFailures, m_viewCameraModeRejectedBy,
+                m_viewCameraModeRejects) +
+            " viewCameraActual=" + DescribeCurrentViewCamera();
+
+        // ------------------------------------------------------------------ 第三屏视角模式
+
+        /// <summary>
+        /// 主机侧接收一台客户端上报的视角模式（<c>CLIENT_UI_STATE.camera_mode</c>，字段 18）。
+        ///
+        ///   · 0 = 不改变：客户端停在死亡相机 / 引擎屏上，保留最后已知模式
+        ///     （复活时按它恢复），不写任何相机；
+        ///   · 1..4 = Fpp / Tpp / Orbit / Fixed：活着时由 <see cref="ValidateBound"/> 每拍按它校正
+        ///     第三分屏相机（死亡 / 复活挂起期间仍以 DeathCamera 优先）；
+        ///   · 还没绑定时先记住（同一客户端绑定后立刻生效；不同客户端不共享）；
+        ///   · 非法值（>4，编解码本应已拒绝）/ 第三屏正绑在别的客户端 → false + reason，
+        ///     **不改任何状态**。
+        /// </summary>
+        public bool TrySetClientCameraMode(int clientId, UiCameraMode mode, out string reason)
+        {
+            reason = null;
+            if (clientId <= 0)
+            {
+                reason = "clientId=" + clientId + " 非法（视角模式只来自远端客户端）";
+                RejectViewCameraMode("invalid-client", reason);
+                return false;
+            }
+            int reported = (int)mode;
+            if (!UiStatePolicy.TryValidateCameraMode(mode, out reason))
+            {
+                reason = "camera_mode=" + reported +
+                    " 非法（只接受 0..4：0 不改变 / 1 Fpp / 2 Tpp / 3 Orbit / 4 Fixed；" +
+                    "编解码应当已经拒绝）";
+                RejectViewCameraMode("invalid-mode(" + reported + ")", reason);
+                return false;
+            }
+            if (m_bound && clientId != m_clientId)
+            {
+                reason = "第三分屏当前绑定的是客户端 " + m_clientId + "，拒绝 clientId=" + clientId +
+                    " 的视角模式（主机相机不变）";
+                RejectViewCameraMode("bound-to-client(" + m_clientId + ")", reason);
+                return false;
+            }
+            if (!m_bound && m_clientCameraModeClientId != clientId)
+            {
+                // 还没绑定：记住"下一个绑定客户端"的模式；不同客户端的模式绝不共享。
+                m_clientCameraModeClientId = clientId;
+                m_clientCameraMode = ViewCameraPolicy.ModeUnknown;
+            }
+            if (mode == UiCameraMode.Unknown)
+            {
+                // 0 = 不改变（死亡相机 / 引擎屏 / 本协议不表达的相机）：保留最后已知模式。
+                return true;
+            }
+            if (reported == m_clientCameraMode) return true;
+            m_clientCameraMode = reported;
+            m_viewCameraModeChanges++;
+            LogCameraEvent("mode",
+                "第三屏视角模式 ← 客户端 " + clientId + "：" +
+                ViewCameraPolicy.Name(reported) + "（累计 viewCameraModeChanges=" +
+                m_viewCameraModeChanges + " inviewCameraApply=" + m_viewCameraApply + "）");
+            return true;
+        }
+
+        /// <summary>第三屏当前实际相机（状态行 <c>viewCameraActual</c>；未绑定 = none）。</summary>
+        private string DescribeCurrentViewCamera()
+        {
+            GameWidget widget = m_bound ? m_targetGameWidget : null;
+            if (widget == null) return "none";
+            return ViewCameraPolicy.Name(CameraKind(widget.ActiveCamera));
+        }
+
+        private void RejectViewCameraMode(string by, string message)
+        {
+            m_viewCameraModeRejects++;
+            m_viewCameraModeRejectedBy = by;
+            LogCameraProblem("reject:" + by,
+                "拒绝客户端视角模式：" + message + "（累计 viewCameraModeRejects=" +
+                m_viewCameraModeRejects + " · viewCameraModeRejectedBy=" + by + "）");
+        }
 
         // ------------------------------------------------------------------ 枚举
 
@@ -278,7 +446,23 @@ namespace SuMultiplayer.Engine
         // ------------------------------------------------------------------ 绑定 / 解绑
 
         public bool TryBind(string characterName, int clientId, MirrorCharacterPlan plan,
-            out MirrorBindOutcome outcome, out string reason)
+            out MirrorBindOutcome outcome, out string reason) =>
+            TryBindCore(characterName, clientId, plan, presentationOnlyHost: false, out outcome,
+                out reason);
+
+        /// <summary>
+        /// 自动镜像宿主（<c>Mirror#N</c>，受 <c>MirrorHostImmunity</c> 托管）的绑定入口：
+        /// 绑定期间**不写宿主权威组件**（Health / Air / 体征每拍末尾被免疫钉回安全值），
+        /// 第三分屏底部 HUD 只写表现层（<see cref="RefreshBottomHud"/>）。
+        /// 手动角色仍走 <see cref="TryBind"/>：保留 IsInvulnerable 防死，但同样不写数值。
+        /// </summary>
+        public bool TryBindPresentationOnly(string characterName, int clientId,
+            MirrorCharacterPlan plan, out MirrorBindOutcome outcome, out string reason) =>
+            TryBindCore(characterName, clientId, plan, presentationOnlyHost: true, out outcome,
+                out reason);
+
+        private bool TryBindCore(string characterName, int clientId, MirrorCharacterPlan plan,
+            bool presentationOnlyHost, out MirrorBindOutcome outcome, out string reason)
         {
             outcome = default;
             reason = null;
@@ -303,6 +487,13 @@ namespace SuMultiplayer.Engine
             {
                 reason = "clientId=" + clientId + " 非法（必须是远端连接，主机 0 不是镜像目标）";
                 return false;
+            }
+            if (m_clientCameraModeClientId != clientId)
+            {
+                // 不同客户端不共享视角模式：换绑时清掉上一台客户端的最后模式。
+                // 同一客户端重绑（客户端角色重生 / 重建实体）保留，绑定后立刻按它恢复。
+                m_clientCameraModeClientId = clientId;
+                m_clientCameraMode = ViewCameraPolicy.ModeUnknown;
             }
             if (plan.IsEmpty)
             {
@@ -508,6 +699,7 @@ namespace SuMultiplayer.Engine
             m_sourceClothing = sourcePlayer.Entity.FindComponent<ComponentClothing>();
             m_snapshot = snapshot;
             m_plan = plan;
+            m_presentationOnlyHost = presentationOnlyHost;
             m_characterName = found.Name ?? characterName ?? string.Empty;
             m_clientId = clientId;
             m_removedUpdateables.Clear();
@@ -657,6 +849,115 @@ namespace SuMultiplayer.Engine
             }
         }
 
+        /// <summary>
+        /// 引擎相机对象 → <see cref="ViewCameraKind"/>（第三屏能用的五台镜像相机：
+        /// Fpp / Tpp / Orbit / Fixed / Death；其余 Loading / Intro / null 都是
+        /// <see cref="ViewCameraKind.Unknown"/>）。
+        /// </summary>
+        private static ViewCameraKind CameraKind(Camera camera)
+        {
+            if (camera is FppCamera) return ViewCameraKind.FirstPerson;
+            if (camera is TppCamera) return ViewCameraKind.ThirdPerson;
+            if (camera is OrbitCamera) return ViewCameraKind.Orbit;
+            if (camera is FixedCamera) return ViewCameraKind.Fixed;
+            if (camera is DeathCamera) return ViewCameraKind.Death;
+            return ViewCameraKind.Unknown;
+        }
+
+        /// <summary>
+        /// 按客户端最后上报的视角模式设置第三分屏相机（只在客户端活着时调用；死亡相机由
+        /// <see cref="ValidateBound"/> 的死亡分支优先处理）。
+        ///
+        /// 模式 → 相机：1 = <c>FppCamera</c>，2 = <c>TppCamera</c>，3 = <c>OrbitCamera</c>，
+        /// 4 = <c>FixedCamera</c>；缺哪台就显式失败（计数 + 限流日志），不静默停在别的相机。
+        ///
+        /// 引擎事实：<c>GameWidget.ActiveCamera</c> 的 setter 只接受属于该 widget 的相机，并且
+        /// 在 <c>IsCameraAllowed</c> 为 false 时会**静默换成 FppCamera**（VR 下只允许 Fpp / Death /
+        /// Loading，Source: Survivalcraft/Game/GameWidget.cs:35-50,164-176）—— 所以写完必须复查，
+        /// 被替换 = 显式失败（计数 + 限流日志），绝不假装成功。
+        /// </summary>
+        private bool TryApplyClientCameraMode(string trigger)
+        {
+            GameWidget widget = m_targetGameWidget;
+            if (widget == null)
+            {
+                NoteViewCameraFailure("no-view", null,
+                    "第三分屏的 GameWidget 已失效，无法设置视角模式（trigger=" + trigger + "）");
+                return false;
+            }
+            ViewCameraKind current = CameraKind(widget.ActiveCamera);
+            ViewCameraKind target = ViewCameraPolicy.Select(current, m_clientCameraMode,
+                sourceDead: false);
+            if (target == current) return true;
+            Camera camera;
+            switch (target)
+            {
+                case ViewCameraKind.ThirdPerson:
+                    camera = widget.FindCamera<TppCamera>(false);
+                    break;
+                case ViewCameraKind.FirstPerson:
+                    camera = widget.FindCamera<FppCamera>(false);
+                    break;
+                case ViewCameraKind.Orbit:
+                    camera = widget.FindCamera<OrbitCamera>(false);
+                    break;
+                case ViewCameraKind.Fixed:
+                    camera = widget.FindCamera<FixedCamera>(false);
+                    break;
+                default:
+                    camera = null;
+                    break;
+            }
+            if (camera == null)
+            {
+                NoteViewCameraFailure("missing-" + ViewCameraPolicy.Name(target), null,
+                    "第三分屏的 GameWidget 没有 " + ViewCameraPolicy.Name(target) +
+                    " 相机（引擎版本不匹配）→ 视角模式未生效（客户端 " + m_clientId +
+                    " · trigger=" + trigger + "）");
+                return false;
+            }
+            try
+            {
+                widget.Target = m_sourcePlayer;
+                widget.ActiveCamera = camera;
+                if (!ReferenceEquals(widget.ActiveCamera, camera))
+                {
+                    NoteViewCameraFailure("rejected-" + ViewCameraPolicy.Name(target), null,
+                        "第三分屏相机切到 " + ViewCameraPolicy.Name(target) + " 被引擎拒绝（" +
+                        "ActiveCamera 仍为 " + ViewCameraPolicy.Name(
+                            CameraKind(widget.ActiveCamera)) +
+                        "；客户端 " + m_clientId + " · trigger=" + trigger + "）");
+                    return false;
+                }
+                widget.ActiveCamera.Update(0f);
+                m_viewCameraApply++;
+                LogCameraEvent("apply:" + ViewCameraPolicy.Name(target),
+                    "第三分屏相机 → " + ViewCameraPolicy.Name(target) + "（客户端 " + m_clientId +
+                    " 视角模式=" + ViewCameraPolicy.Name(m_clientCameraMode) +
+                    " · trigger=" + trigger + " · 累计 viewCameraApply=" + m_viewCameraApply + "）");
+                return true;
+            }
+            catch (Exception e)
+            {
+                NoteViewCameraFailure("set-" + ViewCameraPolicy.Name(target), e,
+                    "第三分屏相机切到 " + ViewCameraPolicy.Name(target) + " 失败（客户端 " +
+                    m_clientId + " · trigger=" + trigger + "）");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// 相机写入 / 相机缺失的**显式失败**计数（<c>viewCameraApplyFailures</c>）+ 10 秒限流日志。
+        /// 每次失败都计数（与 viewBottomBarFailures 同口径），日志按失败键 10 秒一行。
+        /// </summary>
+        private void NoteViewCameraFailure(string key, Exception exception, string message)
+        {
+            m_viewCameraApplyFailures++;
+            LogCameraProblem("apply-fail:" + key,
+                message + "（累计 viewCameraApplyFailures=" + m_viewCameraApplyFailures + "）",
+                exception);
+        }
+
         public bool ValidateBound(out string reason)
         {
             reason = null;
@@ -726,9 +1027,9 @@ namespace SuMultiplayer.Engine
                         "第三分屏的相机 Target 被引擎改成了别的角色 → 已重新对到客户端 " +
                         m_clientId + " 的 ComponentPlayer");
                 }
-                // 客户端角色死亡 → 第四/第三分屏切到引擎的 DeathCamera（环绕尸体），
+                // 客户端角色死亡 → 第三分屏切到引擎的 DeathCamera（环绕尸体），
                 // 否则 FppCamera 盯着一具死亡模型（眼睛位置失效）会变成黑屏。
-                // 复活后自动切回 FppCamera（引擎 PlayerData 的 PlayerDead 就是这两台相机）。
+                // 活着时按客户端最后上报的视角模式选 Fpp / Tpp；复活后回到那个模式。
                 if (m_targetGameWidget != null && m_sourcePlayer != null)
                 {
                     bool sourceDead = m_sourcePlayer.ComponentHealth != null &&
@@ -736,8 +1037,16 @@ namespace SuMultiplayer.Engine
                     bool deathCameraActive = m_targetGameWidget.ActiveCamera is DeathCamera;
                     if (sourceDead && !deathCameraActive)
                     {
+                        // 客户端角色死亡 → DeathCamera 优先（环绕尸体；FppCamera 盯着一具死亡模型
+                        // 眼睛位置失效会黑屏）。此时不按视角模式写相机。
                         DeathCamera death = m_targetGameWidget.FindCamera<DeathCamera>(false);
-                        if (death != null)
+                        if (death == null)
+                        {
+                            NoteViewCameraFailure("missing-death", null,
+                                "第三分屏的 GameWidget 没有 DeathCamera（引擎版本不匹配）→ " +
+                                "死亡相机未切（客户端 " + m_clientId + "）");
+                        }
+                        else
                         {
                             try
                             {
@@ -750,51 +1059,44 @@ namespace SuMultiplayer.Engine
                             }
                             catch (Exception e)
                             {
-                                m_diagnostics?.Error(OwnerId,
-                                    "镜像分屏切 DeathCamera 失败（客户端 " + m_clientId + "）：" +
-                                    e.GetType().Name + " " + e.Message, e);
+                                NoteViewCameraFailure("set-death", e,
+                                    "镜像分屏切 DeathCamera 失败（客户端 " + m_clientId + "）");
                             }
                         }
                     }
                     else if (!sourceDead && deathCameraActive)
                     {
-                        FppCamera restore = m_targetGameWidget.FindCamera<FppCamera>(false);
-                        if (restore != null)
+                        // 客户端复活 → 回到它最后上报的模式（Fpp / Tpp；模式未知 = 引擎默认 Fpp）。
+                        // 客户端在 prepare / spawn 阶段上报 0 = 不改变，所以"最后已知"不会被清掉。
+                        if (TryApplyClientCameraMode("respawn"))
                         {
-                            try
-                            {
-                                m_targetGameWidget.ActiveCamera = restore;
-                                m_deathCameraRestored++;
-                                InfoOnce("view-death-camera-restore:" + m_clientId,
-                                    "客户端 " + m_clientId +
-                                    " 角色复活 → 镜像分屏已切回 FppCamera");
-                            }
-                            catch (Exception e)
-                            {
-                                m_diagnostics?.Error(OwnerId,
-                                    "镜像分屏切回 FppCamera 失败（客户端 " + m_clientId + "）：" +
-                                    e.GetType().Name + " " + e.Message, e);
-                            }
+                            m_deathCameraRestored++;
+                            LogCameraEvent("respawn",
+                                "客户端 " + m_clientId + " 角色复活 → 镜像分屏按客户端最后模式 " +
+                                ViewCameraPolicy.Name(m_clientCameraMode) +
+                                " 恢复（累计 deathCameraRestored=" + m_deathCameraRestored +
+                                " · viewCameraApply=" + m_viewCameraApply + "）");
                         }
                     }
-                }
-                if (m_targetGameWidget != null &&
-                    m_targetGameWidget.ActiveCamera is FppCamera == false &&
-                    !(m_targetGameWidget.ActiveCamera is DeathCamera))
-                {
-                    FppCamera fpp = m_targetGameWidget.FindCamera<FppCamera>(false);
-                    if (fpp == null)
+                    else if (!sourceDead)
                     {
-                        reason = "第三分屏的 GameWidget 没有 FppCamera（引擎版本不匹配）";
-                        return false;
+                        // 活着：按客户端模式校正（引擎把相机改成 Loading / Intro、
+                        // 或客户端在 Fpp / Tpp / Orbit / Fixed 之间切换，都在这里生效）。
+                        // 合法集合 = Fpp / Tpp / Orbit / Fixed / Death，
+                        // 不再把第三人称 / 轨道 / 固定视点当成"被改坏"强制切回第一人称。
+                        if (!ViewCameraPolicy.IsMirrorCamera(
+                                CameraKind(m_targetGameWidget.ActiveCamera)))
+                        {
+                            LogCameraEvent("view-camera-reset:" + m_clientId,
+                                "第三分屏的相机被引擎改成了 " +
+                                (m_targetGameWidget.ActiveCamera == null
+                                    ? "null"
+                                    : m_targetGameWidget.ActiveCamera.GetType().Name) +
+                                "（不是 Fpp / Tpp / Orbit / Fixed / Death）→ 按客户端最后模式 " +
+                                ViewCameraPolicy.Name(m_clientCameraMode) + " 校正");
+                        }
+                        TryApplyClientCameraMode("validate");
                     }
-                    m_targetGameWidget.ActiveCamera = fpp;
-                    WarnOnce("view-camera-reset:" + m_clientId,
-                        "第三分屏的相机被引擎切成了 " +
-                        (m_targetGameWidget.ActiveCamera == null
-                            ? "null"
-                            : m_targetGameWidget.ActiveCamera.GetType().Name) +
-                        " → 已切回 FppCamera（客户端第一人称）");
                 }
             }
             if (m_plan.BindView)
@@ -806,10 +1108,34 @@ namespace SuMultiplayer.Engine
             {
                 // 第三分屏的客户端反馈：每拍只读客户端化身、只写 H3 的显示层。放在相机校验之后，
                 // 客户端重生换了 ComponentPlayer 时本拍用的就是新的那个。
+                // 第 5 个参数 = 主机权威冻结采样（冰覆盖的唯一数据源，实机问题 1）。
                 m_viewFeedback.Tick(m_targetPlayer, m_sourcePlayer, m_source?.Name,
-                    Time.FrameDuration);
+                    Time.FrameDuration, ReadViewFreeze());
             }
             return true;
+        }
+
+        /// <summary>
+        /// 取一次**主机权威冻结进度**（vitals.proto 字段 22/23 的原值，与 95 上报同一个数）：
+        /// 由组合根注入的 <see cref="ViewFreezeProbe"/>（= <c>PlayerVitalsReplica.TryGetAuthorityFreeze</c>）
+        /// 按绑定客户端的玩家键 <c>(clientId, 0)</c> 读取（客户端化身固定槽位 0，见 <see cref="TryBind"/>）。
+        /// 未注入 / 读取失败都返回 <see cref="MirrorViewFreezeSample.Available"/> = false + 原因，
+        /// 由反馈层明确计 <c>viewIceSource=authority-missing</c>（绝不按温度自己算、也不拿 0 顶替）。
+        /// </summary>
+        private MirrorViewFreezeSample ReadViewFreeze()
+        {
+            MirrorViewAuthorityFreezeProbe probe = ViewFreezeProbe;
+            if (probe == null)
+                return new MirrorViewFreezeSample(false, 0f, PlayerFreezePolicy.StageNone,
+                    "view-freeze-probe-missing（组合根没有注入 PlayerVitalsReplica）");
+            if (m_clientId <= 0)
+                return new MirrorViewFreezeSample(false, 0f, PlayerFreezePolicy.StageNone,
+                    "no-bound-client");
+            if (probe(new PlayerKey(m_clientId, 0), out float progress, out uint stage,
+                    out string reason))
+                return new MirrorViewFreezeSample(true, progress, stage, null);
+            return new MirrorViewFreezeSample(false, 0f, PlayerFreezePolicy.StageNone,
+                string.IsNullOrEmpty(reason) ? "authority-freeze-unavailable" : reason);
         }
 
         public bool TryCopy(MirrorCopyPlan plan, out MirrorCopyOutcome outcome, out string reason)
@@ -1497,10 +1823,17 @@ namespace SuMultiplayer.Engine
             widget.ActiveCamera.Update(0f);
             if (widget.ViewWidget != null) widget.ViewWidget.IsHitTestVisible = false;
             m_viewBound = true;
+            // 重新绑定同一客户端时立刻恢复它最后上报的模式（客户端可能在未绑定期间切过 Tpp /
+            // Orbit / Fixed）。失败由 TryApplyClientCameraMode 显式计数 + 10 秒限流日志，绑定本身
+            // 不回滚（相机继续停在 FppCamera，下一拍 ValidateBound 会继续按同一模式校正）。
+            if (m_clientCameraMode != ViewCameraPolicy.ModeUnknown)
+                TryApplyClientCameraMode("bind");
             BindHudSourcesToSource();
             Log("第三分屏相机已绑定客户端 " + m_clientId + "：GameWidget#" + widget.GameWidgetIndex +
-                " · Target=客户端 ComponentPlayer · ActiveCamera=FppCamera（原相机 " + previous +
-                "）· 视图不接受命中测试");
+                " · Target=客户端 ComponentPlayer · ActiveCamera=" +
+                ViewCameraPolicy.Name(CameraKind(widget.ActiveCamera)) +
+                "（客户端最后上报模式=" + ViewCameraPolicy.Name(m_clientCameraMode) +
+                "；原相机 " + previous + "）· 视图不接受命中测试");
         }
 
         /// <summary>
@@ -1538,102 +1871,262 @@ namespace SuMultiplayer.Engine
                 m_diagnostics?.Error(OwnerId, "第三分屏 HUD 数据源桥接异常：" +
                     e.GetType().Name + " " + e.Message, e);
             }
+            // 底部 HUD 条：每拍写表现层（数据源 = 客户端化身的权威值），与属性面板同源。
+            // 温度条贴图缓存按"档位"索引，重新绑定必须清掉（换客户端可能换档位）。
+            m_bottomBarTemperatureIndex = int.MinValue;
+            m_bottomBarTemperatureTexture = null;
+            Log("第三分屏底部 HUD（" + MirrorBottomHudPolicy.DescribeTargets() +
+                "，每拍刷新=" + (MirrorBottomHudPolicy.RequiresContinuousRefresh ? "是" : "否") +
+                "，正常每拍写 " + MirrorBottomHudPolicy.WidgetCount + " 个控件）改为每拍写表现层：数据源 = " +
+                MirrorBottomHudPolicy.SourceClientAvatar +
+                "（主机侧客户端化身的权威值，与属性面板同源）；宿主权威值（Health / Air / 体征）不写 · " +
+                (m_presentationOnlyHost
+                    ? "宿主由 MirrorHostImmunity 托管（Health=1 / 体征归位）：只写显示"
+                    : "宿主只保留 IsInvulnerable（防绑定期间死亡）"));
         }
 
-        /// <summary>replace：每拍把客户端化身的蹲伏表现映射到宿主（只写显示相关字段）。</summary>
+        /// <summary>底部 HUD 失败日志的最小间隔（秒）：热路径每帧计数，同一失败键 10 秒一行日志。</summary>
+        private const double BottomHudLogIntervalSeconds = 10.0;
+
+        /// <summary>
+        /// replace：每拍把客户端的**显示相关状态**映射到宿主（只写表现层）。
+        ///   · 蹲伏按钮：宿主 <c>ComponentBody.TargetCrouchFactor</c>（只是按钮高亮，不是权威值）；
+        ///   · 底部 HUD 条：每拍把客户端化身的权威值写进宿主 <c>ComponentGui</c> 的三个
+        ///     <c>ValueBarWidget</c>（血条 / 食物条 / 温度条），见 <see cref="RefreshBottomHud"/>。
+        ///
+        /// 宿主自己的权威值（Health / Air / Food / Stamina / Sleep / Temperature / Wetness）**不写**：
+        ///   · 自动镜像宿主由 <c>MirrorHostImmunity</c> 在本拍**最后**把 Health / 体征钉回安全值
+        ///     （Health=1 / Food=1 / Temperature=12 / m_targetTemperature=12）——桥接写进去的值留不住，
+        ///     而且那是"宿主自己的血"，不是被镜像角色的血（Source: Modules/MirrorHostImmunity.cs）；
+        ///   · 手动宿主只保留 IsInvulnerable（防绑定期间被冻死 / 打死 → PlayerData=PlayerDead →
+        ///     第三屏永久黑屏），同样不写数值 —— 显示由本方法直接写控件，不依赖宿主组件自己的 Update。
+        ///
+        /// 为什么必须**每帧**写控件（而不是"值变了才写"）：replace 绑定保留了宿主的
+        /// <c>ComponentHealth.Update</c> / <c>ComponentVitalStats.Update</c>（见 <see cref="TryBindCore"/>），
+        /// 它们每帧把宿主组件值写进这三个控件（Source: ComponentHealth.cs:265 /
+        /// ComponentVitalStats.cs:345 / :589-616）。引擎 Update 先跑、本方法（Frame.Update，
+        /// Source: Program.cs:146-147）后跑，所以只有每帧都写，屏上的最终值才是客户端化身的权威值。
+        /// 口径与计数见 <see cref="MirrorBottomHudPolicy"/>。
+        /// </summary>
         private void TickHudBridge()
         {
             if (m_targetPlayer == null || m_sourcePlayer == null) return;
+
             ComponentBody targetBody = m_targetPlayer.ComponentBody;
             ComponentBody sourceBody = m_sourcePlayer.ComponentBody;
-            if (targetBody == null || sourceBody == null) return;
-            try
+            if (targetBody != null && sourceBody != null)
             {
-                // 蹲伏按钮 = IsChecked(TargetCrouchFactor > 0)（ComponentGui.cs:428）；宿主身体在绑定期间
-                // 不参与更新，所以这里每拍跟随客户端，避免按钮永远不亮。
-                // 只写可写属性 TargetCrouchFactor（CrouchFactor 是只读的，由身体自己按目标值推进；
-                // 宿主身体在绑定期间不参与更新，但按钮只看 TargetCrouchFactor > 0，Source: ComponentGui.cs:428）。
-                float crouch = sourceBody.TargetCrouchFactor;
-                targetBody.TargetCrouchFactor = crouch;
-                m_crouchBridged = true;
-
-                // —— 生命 / 饱食 / 温度：把客户端化身的权威值灌进宿主组件，让引擎自己写 HUD。
-                // 宿主这两个组件的 Update 保留（见绑定处），所以 HUD 只有一个写入方 → 不会抖动。
-                // 同时把宿主标记为无敌，避免它自己受伤/饿死/冻死（数值每拍都会被拉回客户端值）。
-                ComponentHealth srcHealth = m_sourcePlayer.ComponentHealth;
-                ComponentHealth dstHealth = m_targetPlayer.ComponentHealth;
-                if (srcHealth != null && dstHealth != null)
-                {
-                    m_parentField.ModifyParentField(dstHealth, "<IsInvulnerable>k__BackingField", true,
-                        typeof(ComponentHealth));
-                    WriteHealth(dstHealth, srcHealth.Health, srcHealth.Air);
-                }
-                ComponentVitalStats srcVitals = m_sourcePlayer.ComponentVitalStats;
-                ComponentVitalStats dstVitals = m_targetPlayer.ComponentVitalStats;
-                if (srcVitals != null && dstVitals != null)
-                {
-                    WriteVitals(dstVitals, srcVitals);
-                }
-            }
-            catch (Exception)
-            {
-                // 表现层失败不影响相机绑定；解绑日志里会体现（不静默：计数在 failures 里）
-            }
-        }
-
-        /// <summary>把生命/空气写入宿主的 ComponentHealth（私有 backing field；引擎随后自己刷血条）。</summary>
-        private void WriteHealth(ComponentHealth target, float health, float air)
-        {
-            if (target == null) return;
-            if (!float.IsFinite(health) || !float.IsFinite(air)) return;
-            try
-            {
-                // Health 是 private set（ComponentHealth.cs:40）→ 写 backing field；
-                // 同时同步 m_lastHealth，避免引擎把它当成一次"掉血边沿"而触发红屏/音效。
-                m_parentField.ModifyParentField(target, "<Health>k__BackingField", MathUtils.Clamp(health, 0f, 1f), typeof(ComponentHealth));
-                m_parentField.ModifyParentField(target, "m_lastHealth", MathUtils.Clamp(health, 0f, 1f), typeof(ComponentHealth));
-                m_parentField.ModifyParentField(target, "<Air>k__BackingField", MathUtils.Clamp(air, 0f, 1f), typeof(ComponentHealth));
-            }
-            catch (Exception)
-            {
-                // 表现层失败不影响相机；由调用方的计数/日志体现（不静默吞掉权威逻辑）。
-            }
-        }
-
-        /// <summary>把客户端的饱食/体力/睡眠/体温/湿度写入宿主 ComponentVitalStats（引擎随后自己刷 HUD）。</summary>
-        private void WriteVitals(ComponentVitalStats target, ComponentVitalStats source)
-        {
-            if (target == null || source == null) return;
-            try
-            {
-                m_parentField.ModifyParentField(target, "m_food",
-                    MathUtils.Clamp(source.Food, 0f, 1f), typeof(ComponentVitalStats));
-                m_parentField.ModifyParentField(target, "m_stamina",
-                    MathUtils.Clamp(source.Stamina, 0f, 1f), typeof(ComponentVitalStats));
-                m_parentField.ModifyParentField(target, "m_sleep",
-                    MathUtils.Clamp(source.Sleep, 0f, 1f), typeof(ComponentVitalStats));
-                m_parentField.ModifyParentField(target, "m_temperature",
-                    MathUtils.Clamp(source.Temperature, 0f, 24f), typeof(ComponentVitalStats));
-                m_parentField.ModifyParentField(target, "m_wetness",
-                    MathUtils.Clamp(source.Wetness, 0f, 1f), typeof(ComponentVitalStats));
-                // 温度档位贴图由 m_targetTemperature 决定（ComponentVitalStats.cs:589-616）；
-                // 该属性是 private（ComponentVitalStats.cs:62），用反射读后再写。
-                float targetTemperature;
                 try
                 {
-                    targetTemperature = m_parentField.GetParentField<float>(source,
-                        "m_targetTemperature", typeof(ComponentVitalStats));
+                    // 蹲伏按钮 = IsChecked(TargetCrouchFactor > 0)（ComponentGui.cs:428）；宿主身体在绑定期间
+                    // 不参与更新，所以这里每拍跟随客户端，避免按钮永远不亮。
+                    // 只写可写属性 TargetCrouchFactor（CrouchFactor 是只读的，由身体自己按目标值推进；
+                    // 宿主身体在绑定期间不参与更新，但按钮只看 TargetCrouchFactor > 0，Source: ComponentGui.cs:428）。
+                    targetBody.TargetCrouchFactor = sourceBody.TargetCrouchFactor;
+                    m_crouchBridged = true;
                 }
-                catch (Exception)
+                catch (Exception e)
                 {
-                    targetTemperature = source.Temperature;
+                    NoteHudBridgeFailure("crouch:" + e.GetType().Name,
+                        "第三分屏蹲伏按钮桥接失败（显示层，下一拍继续试）：" +
+                        e.GetType().Name + " " + e.Message, e);
                 }
-                m_parentField.ModifyParentField(target, "m_targetTemperature",
-                    MathUtils.Clamp(targetTemperature, 0f, 24f), typeof(ComponentVitalStats));
             }
-            catch (Exception)
+
+            ComponentHealth sourceHealth = m_sourcePlayer.ComponentHealth;
+            ComponentVitalStats sourceVitals = m_sourcePlayer.ComponentVitalStats;
+            if (!m_presentationOnlyHost)
+                WriteHostInvulnerable(m_targetPlayer.ComponentHealth);
+            RefreshBottomHud(sourceHealth, sourceVitals);
+        }
+
+        /// <summary>
+        /// 手动宿主的"防死保护位"：绑定期间宿主身体不参与更新，也没有人能替它复活 —— 一旦被冻死 /
+        /// 饿死 / 打死，<c>PlayerData</c> 会停在 <c>PlayerDead</c>，第三屏永久黑屏。
+        /// 只写这一个保护位；**不写** Health / Air / 体征数值（那是宿主自己的权威值，
+        /// 底部条显示由 <see cref="RefreshBottomHud"/> 直接写控件完成）。
+        /// 自动镜像宿主由 <c>MirrorHostImmunity</c> 负责（本方法不写），避免与免疫抢同一个字段。
+        /// </summary>
+        private void WriteHostInvulnerable(ComponentHealth target)
+        {
+            if (target == null) return;
+            try
             {
+                m_parentField.ModifyParentField(target, "<IsInvulnerable>k__BackingField", true,
+                    typeof(ComponentHealth));
             }
+            catch (Exception e)
+            {
+                NoteHudBridgeFailure("host-invulnerable:" + e.GetType().Name,
+                    "写宿主 IsInvulnerable 失败（绑定期间宿主可能被冻死 / 打死 → 第三屏黑屏）：" +
+                    e.GetType().Name + " " + e.Message, e);
+            }
+        }
+
+        /// <summary>
+        /// 每拍把**客户端化身的权威值**写进宿主 <c>ComponentGui</c> 的三个底部 HUD 条
+        /// （血条 / 食物条 / 温度条）：与属性面板同一个数据源，受伤 / 回血 / 死亡 / 复活都跟随。
+        ///
+        /// 口径见 <see cref="MirrorBottomHudPolicy"/>：宿主自己的组件值不参与显示（自动宿主被
+        /// MirrorHostImmunity 钉在安全值），控件每帧重写（宿主 Update 每帧都会覆盖）。
+        /// 失败**每帧计数**（<c>viewBottomBarFailures</c>）+ 同一失败键 10 秒一行日志；
+        /// 不静默、不拿默认值顶替（失败时保留上一帧显示，状态行 source 标 blocked:&lt;键&gt;）。
+        /// </summary>
+        private void RefreshBottomHud(ComponentHealth sourceHealth, ComponentVitalStats sourceVitals)
+        {
+            m_bottomBarSource = MirrorBottomHudPolicy.SourceOf(bound: true);
+            ComponentGui gui = m_targetPlayer?.ComponentGui;
+            if (gui == null)
+            {
+                NoteBottomHudFailure("target-gui-missing",
+                    "宿主没有 ComponentGui（第三分屏 HUD 不可用）→ 底部条保持上一帧显示");
+                return;
+            }
+            if (sourceHealth == null)
+            {
+                NoteBottomHudFailure("source-health-missing",
+                    "客户端化身没有 ComponentHealth → 底部条保持上一帧显示");
+                return;
+            }
+            if (sourceVitals == null)
+            {
+                NoteBottomHudFailure("source-vitals-missing",
+                    "客户端化身没有 ComponentVitalStats → 底部条保持上一帧显示");
+                return;
+            }
+            float targetTemperature;
+            try
+            {
+                targetTemperature = m_parentField.GetParentField<float>(sourceVitals,
+                    "m_targetTemperature", typeof(ComponentVitalStats));
+            }
+            catch (Exception e)
+            {
+                NoteBottomHudFailure("target-temperature-unreadable",
+                    "读不到客户端化身的 m_targetTemperature（温度条档位无法确定）→ 本拍不写底部条：" +
+                    e.GetType().Name + " " + e.Message);
+                return;
+            }
+            if (!MirrorBottomHudPolicy.TryCreateValues(sourceHealth.Health, sourceVitals.Food,
+                    sourceVitals.Temperature, targetTemperature,
+                    out PlayerVitalsHudValues values))
+            {
+                NoteBottomHudFailure("source-vitals-not-finite",
+                    "客户端化身的体征不是有限数（Health / Food / Temperature / m_targetTemperature）" +
+                    "→ 本拍不写底部条");
+                return;
+            }
+
+            ValueBarWidget healthBar = gui.HealthBarWidget;
+            if (healthBar == null)
+            {
+                NoteBottomHudFailure("health-bar-missing",
+                    "宿主 Gui 里没有 HealthBar 控件（引擎 XML 改了）→ 血条保持上一帧显示");
+            }
+            else
+            {
+                // 与引擎 ComponentHealth.Update:265 同口径：Value = Health（客户端死亡 = 0）。
+                healthBar.Value = values.HealthBarValue;
+                m_bottomBarWrites++;
+            }
+
+            ValueBarWidget foodBar = gui.FoodBarWidget;
+            if (foodBar == null)
+            {
+                NoteBottomHudFailure("food-bar-missing",
+                    "宿主 Gui 里没有 FoodBar 控件（引擎 XML 改了）→ 饥饿条保持上一帧显示");
+            }
+            else
+            {
+                // 与引擎 ComponentVitalStats.UpdateFood:345 同口径：Value = Food。
+                foodBar.Value = values.FoodBarValue;
+                m_bottomBarWrites++;
+            }
+
+            ValueBarWidget temperatureBar = gui.TemperatureBarWidget;
+            if (temperatureBar == null)
+            {
+                NoteBottomHudFailure("temperature-bar-missing",
+                    "宿主 Gui 里没有 TemperatureBar 控件（引擎 XML 改了）→ 温度条保持上一帧显示");
+            }
+            else
+            {
+                WriteTemperatureBar(temperatureBar, in values);
+            }
+        }
+
+        /// <summary>
+        /// 温度条：档位贴图按客户端化身的 <c>m_targetTemperature</c> 选（与引擎
+        /// ComponentVitalStats.UpdateTemperature:589-616 同阈值，复用 <see cref="PlayerVitalsPresentation"/>），
+        /// <c>Value</c> 固定 1（它不是进度条）。贴图只在档位变化时查 ContentManager，缓存引用。
+        /// </summary>
+        private void WriteTemperatureBar(ValueBarWidget bar, in PlayerVitalsHudValues values)
+        {
+            if (m_bottomBarTemperatureIndex != values.TemperatureTextureIndex)
+            {
+                Subtexture texture;
+                try
+                {
+                    texture = ContentManager.Get<Subtexture>(values.TemperatureTextureName);
+                }
+                catch (Exception e)
+                {
+                    NoteBottomHudFailure("temperature-texture:" + e.GetType().Name,
+                        "读温度条贴图 " + (values.TemperatureTextureName ?? "(null)") + " 抛异常：" +
+                        e.GetType().Name + " " + e.Message + " → 温度条保持上一档");
+                    return;
+                }
+                if (texture == null)
+                {
+                    NoteBottomHudFailure("temperature-texture-missing:" +
+                        (values.TemperatureTextureName ?? "(null)"),
+                        "温度条贴图 " + (values.TemperatureTextureName ?? "(null)") +
+                        " 不存在 → 温度条保持上一档");
+                    return;
+                }
+                m_bottomBarTemperatureTexture = texture;
+                m_bottomBarTemperatureIndex = values.TemperatureTextureIndex;
+            }
+            bar.BarSubtexture = m_bottomBarTemperatureTexture;
+            bar.Value = values.TemperatureBarValue;
+            m_bottomBarWrites++;
+        }
+
+        /// <summary>
+        /// 底部条写入失败：**每次失败都计数**（热路径每帧都会走到），同一失败键 10 秒一行日志，
+        /// 并把 <c>viewBottomBarSource</c> 标成带失败键的 blocked 口径（状态行能直接看出哪一步没写进去）。
+        /// </summary>
+        private void NoteBottomHudFailure(string key, string message, Exception exception = null)
+        {
+            m_bottomBarFailures++;
+            m_bottomBarSource = MirrorBottomHudPolicy.BlockedSource(key);
+            LogHudFailureLimited("bottom-bar:" + key,
+                "第三分屏底部 HUD 条写入失败（" + message + "）· viewBottomBarFailures=" +
+                m_bottomBarFailures + " / viewBottomBarWrite=" + m_bottomBarWrites +
+                " / viewBottomBarSource=" + m_bottomBarSource, exception);
+        }
+
+        /// <summary>HUD 桥接里非底部条的失败（蹲伏 / IsInvulnerable）：每帧计数 + 10 秒限流日志。</summary>
+        private void NoteHudBridgeFailure(string key, string message, Exception exception)
+        {
+            m_hudBridgeFailures++;
+            LogHudFailureLimited("hud-bridge:" + key,
+                message + " · viewHudBridgeFailures=" + m_hudBridgeFailures, exception);
+        }
+
+        /// <summary>
+        /// 失败日志 10 秒限流（每帧计数，日志不刷屏）：同一失败键 10 秒内只写一行；
+        /// 消息里带累计次数，排查时不用猜"是不是只失败了一次"。
+        /// </summary>
+        private void LogHudFailureLimited(string key, string message, Exception exception)
+        {
+            double now = Time.RealTime;
+            if (m_hudFailureLogTime.TryGetValue(key, out double last) &&
+                now - last < BottomHudLogIntervalSeconds)
+                return;
+            m_hudFailureLogTime[key] = now;
+            if (exception != null) m_diagnostics?.Error(OwnerId, message, exception);
+            else m_diagnostics?.Warn(OwnerId, message);
         }
 
         /// <summary>replace：解绑时把快捷栏改回宿主自己的背包 + 把蹲伏按钮的目标值交还给宿主身体。</summary>
@@ -1850,6 +2343,10 @@ namespace SuMultiplayer.Engine
             m_restoreDuringDisposeOutcome = default;
             m_plan = MirrorCharacterPlan.None;
             m_viewBound = false;
+            m_presentationOnlyHost = false;
+            m_bottomBarSource = MirrorBottomHudPolicy.SourceNone;
+            m_bottomBarTemperatureIndex = int.MinValue;
+            m_bottomBarTemperatureTexture = null;
             m_bodyHidden = false;
             m_hiddenModels.Clear();
             m_hiddenModelData.Clear();
@@ -1978,6 +2475,31 @@ namespace SuMultiplayer.Engine
         }
 
         private void Log(string message) => m_diagnostics?.Info(OwnerId, message);
+
+        /// <summary>相机模式变化 / 成功写入：同一键 10 秒最多一行（高频切换不刷屏，但计数照常累加）。</summary>
+        private void LogCameraEvent(string key, string message)
+        {
+            double now = Time.RealTime;
+            if (m_cameraLogTime.TryGetValue(key, out double last) &&
+                now - last < CameraLogIntervalSeconds)
+                return;
+            m_cameraLogTime[key] = now;
+            m_diagnostics?.Info(OwnerId, message);
+        }
+
+        /// <summary>相机模式的显式失败：同一失败键 10 秒一行（计数每拍 / 每次如实累加）。</summary>
+        private void LogCameraProblem(string key, string message, Exception exception = null)
+        {
+            double now = Time.RealTime;
+            if (m_cameraLogTime.TryGetValue(key, out double last) &&
+                now - last < CameraLogIntervalSeconds)
+                return;
+            m_cameraLogTime[key] = now;
+            string text = exception == null
+                ? message
+                : message + "：" + exception.GetType().Name + " " + exception.Message;
+            m_diagnostics?.Warn(OwnerId, text);
+        }
 
         private void InfoOnce(string key, string message)
         {

@@ -27,7 +27,7 @@ namespace SuMultiplayer.Protocol.Vitals {
             "Cgx2aXRhbHMucHJvdG8SC3N1bXAudml0YWxzGhlnb29nbGUvcHJvdG9idWYv",
             "YW55LnByb3RvIi0KClZpdGFsc1ZlYzMSCQoBeBgBIAEoAhIJCgF5GAIgASgC",
             "EgkKAXoYAyABKAIiNwoUUGxheWVyU2F0aWF0aW9uRW50cnkSEAoIY29udGVu",
-            "dHMYASABKA0SDQoFdmFsdWUYAiABKAIi2wMKElBsYXllclZpdGFsc1ZhbHVl",
+            "dHMYASABKA0SDQoFdmFsdWUYAiABKAIiigQKElBsYXllclZpdGFsc1ZhbHVl",
             "cxIOCgZoZWFsdGgYASABKAISCwoDYWlyGAIgASgCEgwKBGZvb2QYAyABKAIS",
             "DwoHc3RhbWluYRgEIAEoAhINCgVzbGVlcBgFIAEoAhITCgt0ZW1wZXJhdHVy",
             "ZRgGIAEoAhIPCgd3ZXRuZXNzGAcgASgCEhoKEnRhcmdldF90ZW1wZXJhdHVy",
@@ -38,52 +38,70 @@ namespace SuMultiplayer.Protocol.Vitals {
             "LnZpdGFscy5QbGF5ZXJTYXRpYXRpb25FbnRyeRIYChBzbGVlcF9zdGFydF90",
             "aW1lGBEgASgBEhUKDXNsZWVwX2VsYXBzZWQYEiABKAISGQoRYWxsb3dfbWFu",
             "dWFsX3dha2UYEyABKAgSFAoMZm9yY2VkX3NsZWVwGBQgASgIEg0KBWxldmVs",
-            "GBUgASgCIncKEVBsYXllclZpdGFsc0VudHJ5EhEKCWNsaWVudF9pZBgBIAEo",
-            "DRIMCgRzbG90GAIgASgNEhAKCHJldmlzaW9uGAMgASgNEi8KBnZhbHVlcxgE",
-            "IAEoCzIfLnN1bXAudml0YWxzLlBsYXllclZpdGFsc1ZhbHVlcyKKAQoSUGxh",
-            "eWVyVml0YWxzUmVwb3J0EhAKCHNlcXVlbmNlGAEgASgNEi8KB2VudHJpZXMY",
-            "AiADKAsyHi5zdW1wLnZpdGFscy5QbGF5ZXJWaXRhbHNFbnRyeRILCgNleHQY",
-            "ZCABKAwSJAoGY3VzdG9tGGUgASgLMhQuZ29vZ2xlLnByb3RvYnVmLkFueSK+",
-            "AQoVUGxheWVyVml0YWxFdmVudEVudHJ5EhEKCWNsaWVudF9pZBgBIAEoDRIM",
-            "CgRzbG90GAIgASgNEhAKCHJldmlzaW9uGAMgASgNEi8KBGtpbmQYBCABKA4y",
-            "IS5zdW1wLnZpdGFscy5QbGF5ZXJWaXRhbEV2ZW50S2luZBIWCg5jYXVzZV9v",
-            "Zl9kZWF0aBgFIAEoCRIpCghwb3NpdGlvbhgGIAEoCzIXLnN1bXAudml0YWxz",
-            "LlZpdGFsc1ZlYzMijgEKElBsYXllclZpdGFsc0V2ZW50cxIQCghzZXF1ZW5j",
-            "ZRgBIAEoDRIzCgdlbnRyaWVzGAIgAygLMiIuc3VtcC52aXRhbHMuUGxheWVy",
-            "Vml0YWxFdmVudEVudHJ5EgsKA2V4dBhkIAEoDBIkCgZjdXN0b20YZSABKAsy",
-            "FC5nb29nbGUucHJvdG9idWYuQW55IrIBChFQbGF5ZXJXYWtlUmVxdWVzdBIR",
-            "CgljbGllbnRfaWQYASABKA0SDAoEc2xvdBgCIAEoDRIYChByZXF1ZXN0X3Nl",
-            "cXVlbmNlGAMgASgEEhUKDXNsZWVwX2VsYXBzZWQYBCABKAISGAoQc2xlZXBf",
-            "c3RhcnRfdGltZRgFIAEoARILCgNleHQYZCABKAwSJAoGY3VzdG9tGGUgASgL",
-            "MhQuZ29vZ2xlLnByb3RvYnVmLkFueSKdAQoSUGxheWVyU2xlZXBSZXF1ZXN0",
+            "GBUgASgCEhcKD2ZyZWV6ZV9wcm9ncmVzcxgWIAEoAhIUCgxmcmVlemVfc3Rh",
+            "Z2UYFyABKA0idwoRUGxheWVyVml0YWxzRW50cnkSEQoJY2xpZW50X2lkGAEg",
+            "ASgNEgwKBHNsb3QYAiABKA0SEAoIcmV2aXNpb24YAyABKA0SLwoGdmFsdWVz",
+            "GAQgASgLMh8uc3VtcC52aXRhbHMuUGxheWVyVml0YWxzVmFsdWVzIooBChJQ",
+            "bGF5ZXJWaXRhbHNSZXBvcnQSEAoIc2VxdWVuY2UYASABKA0SLwoHZW50cmll",
+            "cxgCIAMoCzIeLnN1bXAudml0YWxzLlBsYXllclZpdGFsc0VudHJ5EgsKA2V4",
+            "dBhkIAEoDBIkCgZjdXN0b20YZSABKAsyFC5nb29nbGUucHJvdG9idWYuQW55",
+            "Ir4BChVQbGF5ZXJWaXRhbEV2ZW50RW50cnkSEQoJY2xpZW50X2lkGAEgASgN",
+            "EgwKBHNsb3QYAiABKA0SEAoIcmV2aXNpb24YAyABKA0SLwoEa2luZBgEIAEo",
+            "DjIhLnN1bXAudml0YWxzLlBsYXllclZpdGFsRXZlbnRLaW5kEhYKDmNhdXNl",
+            "X29mX2RlYXRoGAUgASgJEikKCHBvc2l0aW9uGAYgASgLMhcuc3VtcC52aXRh",
+            "bHMuVml0YWxzVmVjMyKOAQoSUGxheWVyVml0YWxzRXZlbnRzEhAKCHNlcXVl",
+            "bmNlGAEgASgNEjMKB2VudHJpZXMYAiADKAsyIi5zdW1wLnZpdGFscy5QbGF5",
+            "ZXJWaXRhbEV2ZW50RW50cnkSCwoDZXh0GGQgASgMEiQKBmN1c3RvbRhlIAEo",
+            "CzIULmdvb2dsZS5wcm90b2J1Zi5BbnkisgEKEVBsYXllcldha2VSZXF1ZXN0",
             "EhEKCWNsaWVudF9pZBgBIAEoDRIMCgRzbG90GAIgASgNEhgKEHJlcXVlc3Rf",
-            "c2VxdWVuY2UYAyABKAQSGQoRYWxsb3dfbWFudWFsX3dha2UYBCABKAgSCwoD",
-            "ZXh0GGQgASgMEiQKBmN1c3RvbRhlIAEoCzIULmdvb2dsZS5wcm90b2J1Zi5B",
-            "bnki0wEKEVBsYXllclNsZWVwUmVzdWx0EhEKCWNsaWVudF9pZBgBIAEoDRIM",
-            "CgRzbG90GAIgASgNEhgKEHJlcXVlc3Rfc2VxdWVuY2UYAyABKAQSMAoEa2lu",
-            "ZBgEIAEoDjIiLnN1bXAudml0YWxzLlBsYXllclNsZWVwUmVzdWx0S2luZBIO",
-            "CgZyZWFzb24YBSABKAkSDgoGZGV0YWlsGAYgASgJEgsKA2V4dBhkIAEoDBIk",
-            "CgZjdXN0b20YZSABKAsyFC5nb29nbGUucHJvdG9idWYuQW55Kn0KFFBsYXll",
-            "clZpdGFsRXZlbnRLaW5kEicKI1BMQVlFUl9WSVRBTF9FVkVOVF9LSU5EX1VO",
-            "U1BFQ0lGSUVEEAASHAoYUExBWUVSX1ZJVEFMX0VWRU5UX0RFQVRIEAESHgoa",
-            "UExBWUVSX1ZJVEFMX0VWRU5UX1JFU1BBV04QAiqPAQoVUGxheWVyU2xlZXBS",
-            "ZXN1bHRLaW5kEigKJFBMQVlFUl9TTEVFUF9SRVNVTFRfS0lORF9VTlNQRUNJ",
-            "RklFRBAAEiUKIVBMQVlFUl9TTEVFUF9SRVNVTFRfS0lORF9BQ0NFUFRFRBAB",
-            "EiUKIVBMQVlFUl9TTEVFUF9SRVNVTFRfS0lORF9SRUpFQ1RFRBACQiJIAaoC",
-            "HVN1TXVsdGlwbGF5ZXIuUHJvdG9jb2wuVml0YWxzYgZwcm90bzM="));
+            "c2VxdWVuY2UYAyABKAQSFQoNc2xlZXBfZWxhcHNlZBgEIAEoAhIYChBzbGVl",
+            "cF9zdGFydF90aW1lGAUgASgBEgsKA2V4dBhkIAEoDBIkCgZjdXN0b20YZSAB",
+            "KAsyFC5nb29nbGUucHJvdG9idWYuQW55Ip0BChJQbGF5ZXJTbGVlcFJlcXVl",
+            "c3QSEQoJY2xpZW50X2lkGAEgASgNEgwKBHNsb3QYAiABKA0SGAoQcmVxdWVz",
+            "dF9zZXF1ZW5jZRgDIAEoBBIZChFhbGxvd19tYW51YWxfd2FrZRgEIAEoCBIL",
+            "CgNleHQYZCABKAwSJAoGY3VzdG9tGGUgASgLMhQuZ29vZ2xlLnByb3RvYnVm",
+            "LkFueSLTAQoRUGxheWVyU2xlZXBSZXN1bHQSEQoJY2xpZW50X2lkGAEgASgN",
+            "EgwKBHNsb3QYAiABKA0SGAoQcmVxdWVzdF9zZXF1ZW5jZRgDIAEoBBIwCgRr",
+            "aW5kGAQgASgOMiIuc3VtcC52aXRhbHMuUGxheWVyU2xlZXBSZXN1bHRLaW5k",
+            "Eg4KBnJlYXNvbhgFIAEoCRIOCgZkZXRhaWwYBiABKAkSCwoDZXh0GGQgASgM",
+            "EiQKBmN1c3RvbRhlIAEoCzIULmdvb2dsZS5wcm90b2J1Zi5Bbnki1wEKFlBs",
+            "YXllckVmZmVjdEV2ZW50RW50cnkSEQoJY2xpZW50X2lkGAEgASgNEgwKBHNs",
+            "b3QYAiABKA0SEAoIc2VxdWVuY2UYAyABKA0SKwoEa2luZBgEIAEoDjIdLnN1",
+            "bXAudml0YWxzLlBsYXllckVmZmVjdEtpbmQSKQoIcG9zaXRpb24YBSABKAsy",
+            "Fy5zdW1wLnZpdGFscy5WaXRhbHNWZWMzEhEKCWhvc3RfdGltZRgGIAEoARIQ",
+            "CghzdHJlbmd0aBgHIAEoAhINCgVzb3VuZBgIIAEoCSKPAQoSUGxheWVyRWZm",
+            "ZWN0RXZlbnRzEhAKCHNlcXVlbmNlGAEgASgNEjQKB2VudHJpZXMYAiADKAsy",
+            "Iy5zdW1wLnZpdGFscy5QbGF5ZXJFZmZlY3RFdmVudEVudHJ5EgsKA2V4dBhk",
+            "IAEoDBIkCgZjdXN0b20YZSABKAsyFC5nb29nbGUucHJvdG9idWYuQW55Kn0K",
+            "FFBsYXllclZpdGFsRXZlbnRLaW5kEicKI1BMQVlFUl9WSVRBTF9FVkVOVF9L",
+            "SU5EX1VOU1BFQ0lGSUVEEAASHAoYUExBWUVSX1ZJVEFMX0VWRU5UX0RFQVRI",
+            "EAESHgoaUExBWUVSX1ZJVEFMX0VWRU5UX1JFU1BBV04QAiqPAQoVUGxheWVy",
+            "U2xlZXBSZXN1bHRLaW5kEigKJFBMQVlFUl9TTEVFUF9SRVNVTFRfS0lORF9V",
+            "TlNQRUNJRklFRBAAEiUKIVBMQVlFUl9TTEVFUF9SRVNVTFRfS0lORF9BQ0NF",
+            "UFRFRBABEiUKIVBMQVlFUl9TTEVFUF9SRVNVTFRfS0lORF9SRUpFQ1RFRBAC",
+            "KpUCChBQbGF5ZXJFZmZlY3RLaW5kEiIKHlBMQVlFUl9FRkZFQ1RfS0lORF9V",
+            "TlNQRUNJRklFRBAAEiAKHFBMQVlFUl9FRkZFQ1RfS0lORF9GTFVfQ09VR0gQ",
+            "ARIhCh1QTEFZRVJfRUZGRUNUX0tJTkRfRkxVX1NORUVaRRACEiYKIlBMQVlF",
+            "Ul9FRkZFQ1RfS0lORF9TSUNLTkVTU19OQVVTRUEQAxIkCiBQTEFZRVJfRUZG",
+            "RUNUX0tJTkRfU0lDS05FU1NfUFVLRRAEEiIKHlBMQVlFUl9FRkZFQ1RfS0lO",
+            "RF9GSVJFX0lHTklURRAFEiYKIlBMQVlFUl9FRkZFQ1RfS0lORF9GSVJFX0VY",
+            "VElOR1VJU0gQBkIiSAGqAh1TdU11bHRpcGxheWVyLlByb3RvY29sLlZpdGFs",
+            "c2IGcHJvdG8z"));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { global::Google.Protobuf.WellKnownTypes.AnyReflection.Descriptor, },
-          new pbr::GeneratedClrTypeInfo(new[] {typeof(global::SuMultiplayer.Protocol.Vitals.PlayerVitalEventKind), typeof(global::SuMultiplayer.Protocol.Vitals.PlayerSleepResultKind), }, null, new pbr::GeneratedClrTypeInfo[] {
+          new pbr::GeneratedClrTypeInfo(new[] {typeof(global::SuMultiplayer.Protocol.Vitals.PlayerVitalEventKind), typeof(global::SuMultiplayer.Protocol.Vitals.PlayerSleepResultKind), typeof(global::SuMultiplayer.Protocol.Vitals.PlayerEffectKind), }, null, new pbr::GeneratedClrTypeInfo[] {
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Vitals.VitalsVec3), global::SuMultiplayer.Protocol.Vitals.VitalsVec3.Parser, new[]{ "X", "Y", "Z" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Vitals.PlayerSatiationEntry), global::SuMultiplayer.Protocol.Vitals.PlayerSatiationEntry.Parser, new[]{ "Contents", "Value" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Vitals.PlayerVitalsValues), global::SuMultiplayer.Protocol.Vitals.PlayerVitalsValues.Parser, new[]{ "Health", "Air", "Food", "Stamina", "Sleep", "Temperature", "Wetness", "TargetTemperature", "FluDuration", "FluOnset", "SicknessDuration", "FireDuration", "Sleeping", "Dead", "CauseOfDeath", "Satiation", "SleepStartTime", "SleepElapsed", "AllowManualWake", "ForcedSleep", "Level" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Vitals.PlayerVitalsValues), global::SuMultiplayer.Protocol.Vitals.PlayerVitalsValues.Parser, new[]{ "Health", "Air", "Food", "Stamina", "Sleep", "Temperature", "Wetness", "TargetTemperature", "FluDuration", "FluOnset", "SicknessDuration", "FireDuration", "Sleeping", "Dead", "CauseOfDeath", "Satiation", "SleepStartTime", "SleepElapsed", "AllowManualWake", "ForcedSleep", "Level", "FreezeProgress", "FreezeStage" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Vitals.PlayerVitalsEntry), global::SuMultiplayer.Protocol.Vitals.PlayerVitalsEntry.Parser, new[]{ "ClientId", "Slot", "Revision", "Values" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Vitals.PlayerVitalsReport), global::SuMultiplayer.Protocol.Vitals.PlayerVitalsReport.Parser, new[]{ "Sequence", "Entries", "Ext", "Custom" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Vitals.PlayerVitalEventEntry), global::SuMultiplayer.Protocol.Vitals.PlayerVitalEventEntry.Parser, new[]{ "ClientId", "Slot", "Revision", "Kind", "CauseOfDeath", "Position" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Vitals.PlayerVitalsEvents), global::SuMultiplayer.Protocol.Vitals.PlayerVitalsEvents.Parser, new[]{ "Sequence", "Entries", "Ext", "Custom" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Vitals.PlayerWakeRequest), global::SuMultiplayer.Protocol.Vitals.PlayerWakeRequest.Parser, new[]{ "ClientId", "Slot", "RequestSequence", "SleepElapsed", "SleepStartTime", "Ext", "Custom" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Vitals.PlayerSleepRequest), global::SuMultiplayer.Protocol.Vitals.PlayerSleepRequest.Parser, new[]{ "ClientId", "Slot", "RequestSequence", "AllowManualWake", "Ext", "Custom" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Vitals.PlayerSleepResult), global::SuMultiplayer.Protocol.Vitals.PlayerSleepResult.Parser, new[]{ "ClientId", "Slot", "RequestSequence", "Kind", "Reason", "Detail", "Ext", "Custom" }, null, null, null, null)
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Vitals.PlayerSleepResult), global::SuMultiplayer.Protocol.Vitals.PlayerSleepResult.Parser, new[]{ "ClientId", "Slot", "RequestSequence", "Kind", "Reason", "Detail", "Ext", "Custom" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Vitals.PlayerEffectEventEntry), global::SuMultiplayer.Protocol.Vitals.PlayerEffectEventEntry.Parser, new[]{ "ClientId", "Slot", "Sequence", "Kind", "Position", "HostTime", "Strength", "Sound" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Vitals.PlayerEffectEvents), global::SuMultiplayer.Protocol.Vitals.PlayerEffectEvents.Parser, new[]{ "Sequence", "Entries", "Ext", "Custom" }, null, null, null, null)
           }));
     }
     #endregion
@@ -100,6 +118,16 @@ namespace SuMultiplayer.Protocol.Vitals {
     [pbr::OriginalName("PLAYER_SLEEP_RESULT_KIND_UNSPECIFIED")] Unspecified = 0,
     [pbr::OriginalName("PLAYER_SLEEP_RESULT_KIND_ACCEPTED")] Accepted = 1,
     [pbr::OriginalName("PLAYER_SLEEP_RESULT_KIND_REJECTED")] Rejected = 2,
+  }
+
+  public enum PlayerEffectKind {
+    [pbr::OriginalName("PLAYER_EFFECT_KIND_UNSPECIFIED")] Unspecified = 0,
+    [pbr::OriginalName("PLAYER_EFFECT_KIND_FLU_COUGH")] FluCough = 1,
+    [pbr::OriginalName("PLAYER_EFFECT_KIND_FLU_SNEEZE")] FluSneeze = 2,
+    [pbr::OriginalName("PLAYER_EFFECT_KIND_SICKNESS_NAUSEA")] SicknessNausea = 3,
+    [pbr::OriginalName("PLAYER_EFFECT_KIND_SICKNESS_PUKE")] SicknessPuke = 4,
+    [pbr::OriginalName("PLAYER_EFFECT_KIND_FIRE_IGNITE")] FireIgnite = 5,
+    [pbr::OriginalName("PLAYER_EFFECT_KIND_FIRE_EXTINGUISH")] FireExtinguish = 6,
   }
 
   #endregion
@@ -683,6 +711,8 @@ namespace SuMultiplayer.Protocol.Vitals {
       allowManualWake_ = other.allowManualWake_;
       forcedSleep_ = other.forcedSleep_;
       level_ = other.level_;
+      freezeProgress_ = other.freezeProgress_;
+      freezeStage_ = other.freezeStage_;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
     }
 
@@ -1045,6 +1075,64 @@ namespace SuMultiplayer.Protocol.Vitals {
       }
     }
 
+    /// <summary>Field number for the "freeze_progress" field.</summary>
+    public const int FreezeProgressFieldNumber = 22;
+    private float freezeProgress_;
+    /// <summary>
+    /// ---- host-authoritative freeze presentation (append-only: 22..23) --------
+    ///
+    /// Product decision 2026-10-21 (实机问题 1/2): the **host** owns the freeze
+    /// progress.  The client must not derive its ice overlay from its own copy of
+    /// the temperature (that value only arrives at 5 Hz and was applied as a step,
+    /// so the client's screen iced over ahead of the host's third-screen view and
+    /// the two devices disagreed about when the freeze happened).  The host
+    /// computes the progress from the **host-simulated** character (the same
+    /// Temperature that the engine writes IceFactor from) and sends it here; the
+    /// client only interpolates towards it (see PlayerFreezeInterpolator).
+    ///
+    /// freeze_progress = engine-equivalent ice overlay strength:
+    ///   Saturate(1 - Temperature / 6)   (Source: ComponentVitalStats.cs:579)
+    ///   0    = no ice overlay (Temperature >= 6) **or** a peer that predates
+    ///          this field (it sends proto3 defaults).  A receiver distinguishes
+    ///          the two through the authoritative `temperature`: when
+    ///          temperature &lt; 6 and this field is 0 the field is absent -> the
+    ///          client counts `freezeLegacy` and derives the progress from the
+    ///          authoritative temperature (still a host value, never a local
+    ///          simulation).
+    ///   1    = fully iced (Temperature == 0 = engine "Froze to death").
+    ///
+    /// freeze_stage = the engine's cold thresholds as a stable enum value:
+    ///   0 = none (Temperature >= 8), 1 = chilly (&lt; 8), 2 = cold (&lt; 6),
+    ///   3 = hypothermia (&lt; 3, engine injures 0.05 every 10 s), 4 = frozen
+    ///   (Temperature &lt;= 0 -> engine Injure(1, "Froze to death")).
+    /// Source: Survivalcraft/Game/ComponentVitalStats.cs:UpdateTemperature:532-557,579
+    ///
+    /// Both fields are validated (progress 0..1 finite, stage 0..4, progress > 0
+    /// implies stage >= 2) and never clamped silently (PlayerVitalsSnapshot.
+    /// TryValidate).  Death itself stays host-authoritative through the existing
+    /// death edge / health field: the client never decides "I froze".
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public float FreezeProgress {
+      get { return freezeProgress_; }
+      set {
+        freezeProgress_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "freeze_stage" field.</summary>
+    public const int FreezeStageFieldNumber = 23;
+    private uint freezeStage_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public uint FreezeStage {
+      get { return freezeStage_; }
+      set {
+        freezeStage_ = value;
+      }
+    }
+
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public override bool Equals(object other) {
@@ -1081,6 +1169,8 @@ namespace SuMultiplayer.Protocol.Vitals {
       if (AllowManualWake != other.AllowManualWake) return false;
       if (ForcedSleep != other.ForcedSleep) return false;
       if (!pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.Equals(Level, other.Level)) return false;
+      if (!pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.Equals(FreezeProgress, other.FreezeProgress)) return false;
+      if (FreezeStage != other.FreezeStage) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
 
@@ -1109,6 +1199,8 @@ namespace SuMultiplayer.Protocol.Vitals {
       if (AllowManualWake != false) hash ^= AllowManualWake.GetHashCode();
       if (ForcedSleep != false) hash ^= ForcedSleep.GetHashCode();
       if (Level != 0F) hash ^= pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.GetHashCode(Level);
+      if (FreezeProgress != 0F) hash ^= pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.GetHashCode(FreezeProgress);
+      if (FreezeStage != 0) hash ^= FreezeStage.GetHashCode();
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
       }
@@ -1208,6 +1300,14 @@ namespace SuMultiplayer.Protocol.Vitals {
         output.WriteRawTag(173, 1);
         output.WriteFloat(Level);
       }
+      if (FreezeProgress != 0F) {
+        output.WriteRawTag(181, 1);
+        output.WriteFloat(FreezeProgress);
+      }
+      if (FreezeStage != 0) {
+        output.WriteRawTag(184, 1);
+        output.WriteUInt32(FreezeStage);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
       }
@@ -1299,6 +1399,14 @@ namespace SuMultiplayer.Protocol.Vitals {
         output.WriteRawTag(173, 1);
         output.WriteFloat(Level);
       }
+      if (FreezeProgress != 0F) {
+        output.WriteRawTag(181, 1);
+        output.WriteFloat(FreezeProgress);
+      }
+      if (FreezeStage != 0) {
+        output.WriteRawTag(184, 1);
+        output.WriteUInt32(FreezeStage);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
       }
@@ -1369,6 +1477,12 @@ namespace SuMultiplayer.Protocol.Vitals {
       }
       if (Level != 0F) {
         size += 2 + 4;
+      }
+      if (FreezeProgress != 0F) {
+        size += 2 + 4;
+      }
+      if (FreezeStage != 0) {
+        size += 2 + pb::CodedOutputStream.ComputeUInt32Size(FreezeStage);
       }
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
@@ -1442,6 +1556,12 @@ namespace SuMultiplayer.Protocol.Vitals {
       }
       if (other.Level != 0F) {
         Level = other.Level;
+      }
+      if (other.FreezeProgress != 0F) {
+        FreezeProgress = other.FreezeProgress;
+      }
+      if (other.FreezeStage != 0) {
+        FreezeStage = other.FreezeStage;
       }
       _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
     }
@@ -1546,6 +1666,14 @@ namespace SuMultiplayer.Protocol.Vitals {
             Level = input.ReadFloat();
             break;
           }
+          case 181: {
+            FreezeProgress = input.ReadFloat();
+            break;
+          }
+          case 184: {
+            FreezeStage = input.ReadUInt32();
+            break;
+          }
         }
       }
     #endif
@@ -1647,6 +1775,14 @@ namespace SuMultiplayer.Protocol.Vitals {
           }
           case 173: {
             Level = input.ReadFloat();
+            break;
+          }
+          case 181: {
+            FreezeProgress = input.ReadFloat();
+            break;
+          }
+          case 184: {
+            FreezeStage = input.ReadUInt32();
             break;
           }
         }
@@ -4383,6 +4519,812 @@ namespace SuMultiplayer.Protocol.Vitals {
           }
           case 50: {
             Detail = input.ReadString();
+            break;
+          }
+          case 802: {
+            Ext = input.ReadBytes();
+            break;
+          }
+          case 810: {
+            if (custom_ == null) {
+              Custom = new global::Google.Protobuf.WellKnownTypes.Any();
+            }
+            input.ReadMessage(Custom);
+            break;
+          }
+        }
+      }
+    }
+    #endif
+
+  }
+
+  [global::System.Diagnostics.DebuggerDisplayAttribute("{ToString(),nq}")]
+  public sealed partial class PlayerEffectEventEntry : pb::IMessage<PlayerEffectEventEntry>
+  #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      , pb::IBufferMessage
+  #endif
+  {
+    private static readonly pb::MessageParser<PlayerEffectEventEntry> _parser = new pb::MessageParser<PlayerEffectEventEntry>(() => new PlayerEffectEventEntry());
+    private pb::UnknownFieldSet _unknownFields;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pb::MessageParser<PlayerEffectEventEntry> Parser { get { return _parser; } }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pbr::MessageDescriptor Descriptor {
+      get { return global::SuMultiplayer.Protocol.Vitals.VitalsReflection.Descriptor.MessageTypes[10]; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    pbr::MessageDescriptor pb::IMessage.Descriptor {
+      get { return Descriptor; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public PlayerEffectEventEntry() {
+      OnConstruction();
+    }
+
+    partial void OnConstruction();
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public PlayerEffectEventEntry(PlayerEffectEventEntry other) : this() {
+      clientId_ = other.clientId_;
+      slot_ = other.slot_;
+      sequence_ = other.sequence_;
+      kind_ = other.kind_;
+      position_ = other.position_ != null ? other.position_.Clone() : null;
+      hostTime_ = other.hostTime_;
+      strength_ = other.strength_;
+      sound_ = other.sound_;
+      _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public PlayerEffectEventEntry Clone() {
+      return new PlayerEffectEventEntry(this);
+    }
+
+    /// <summary>Field number for the "client_id" field.</summary>
+    public const int ClientIdFieldNumber = 1;
+    private uint clientId_;
+    /// <summary>
+    /// Character owner: > 0 = that client's host-simulated avatar (the host never
+    /// sends its own local characters here: their presentation already runs on the
+    /// host and this fix is about the client's own avatar).
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public uint ClientId {
+      get { return clientId_; }
+      set {
+        clientId_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "slot" field.</summary>
+    public const int SlotFieldNumber = 2;
+    private uint slot_;
+    /// <summary>
+    /// Local-character slot on that device (0..3).
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public uint Slot {
+      get { return slot_; }
+      set {
+        slot_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "sequence" field.</summary>
+    public const int SequenceFieldNumber = 3;
+    private uint sequence_;
+    /// <summary>
+    /// Per-(client_id, slot) monotonic presentation-event counter; 0 is invalid.
+    /// The client drops an event whose sequence is not newer than the last applied
+    /// one and counts it as a duplicate.
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public uint Sequence {
+      get { return sequence_; }
+      set {
+        sequence_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "kind" field.</summary>
+    public const int KindFieldNumber = 4;
+    private global::SuMultiplayer.Protocol.Vitals.PlayerEffectKind kind_ = global::SuMultiplayer.Protocol.Vitals.PlayerEffectKind.Unspecified;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public global::SuMultiplayer.Protocol.Vitals.PlayerEffectKind Kind {
+      get { return kind_; }
+      set {
+        kind_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "position" field.</summary>
+    public const int PositionFieldNumber = 5;
+    private global::SuMultiplayer.Protocol.Vitals.VitalsVec3 position_;
+    /// <summary>
+    /// Body position at the moment of the effect (bounded to finite floats).
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public global::SuMultiplayer.Protocol.Vitals.VitalsVec3 Position {
+      get { return position_; }
+      set {
+        position_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "host_time" field.</summary>
+    public const int HostTimeFieldNumber = 6;
+    private double hostTime_;
+    /// <summary>
+    /// Host TotalElapsedGameTime at the event (seconds; used for the staleness TTL).
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public double HostTime {
+      get { return hostTime_; }
+      set {
+        hostTime_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "strength" field.</summary>
+    public const int StrengthFieldNumber = 7;
+    private float strength_;
+    /// <summary>
+    /// Presentation strength (seconds of blackout / greenout exactly as the host
+    /// engine set them, remaining fire duration, 1 = water extinguish).
+    /// 0 = that effect carried no overlay this time (e.g. a cold sneeze has no
+    /// flu blackout; a direct Sneeze() call sets no blackout) -> the client must
+    /// NOT invent a default overlay, only play the sound / particles.
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public float Strength {
+      get { return strength_; }
+      set {
+        strength_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "sound" field.</summary>
+    public const int SoundFieldNumber = 8;
+    private string sound_ = "";
+    /// <summary>
+    /// Engine resource name actually used by the host character (bounded to 64).
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string Sound {
+      get { return sound_; }
+      set {
+        sound_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override bool Equals(object other) {
+      return Equals(other as PlayerEffectEventEntry);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Equals(PlayerEffectEventEntry other) {
+      if (ReferenceEquals(other, null)) {
+        return false;
+      }
+      if (ReferenceEquals(other, this)) {
+        return true;
+      }
+      if (ClientId != other.ClientId) return false;
+      if (Slot != other.Slot) return false;
+      if (Sequence != other.Sequence) return false;
+      if (Kind != other.Kind) return false;
+      if (!object.Equals(Position, other.Position)) return false;
+      if (!pbc::ProtobufEqualityComparers.BitwiseDoubleEqualityComparer.Equals(HostTime, other.HostTime)) return false;
+      if (!pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.Equals(Strength, other.Strength)) return false;
+      if (Sound != other.Sound) return false;
+      return Equals(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override int GetHashCode() {
+      int hash = 1;
+      if (ClientId != 0) hash ^= ClientId.GetHashCode();
+      if (Slot != 0) hash ^= Slot.GetHashCode();
+      if (Sequence != 0) hash ^= Sequence.GetHashCode();
+      if (Kind != global::SuMultiplayer.Protocol.Vitals.PlayerEffectKind.Unspecified) hash ^= Kind.GetHashCode();
+      if (position_ != null) hash ^= Position.GetHashCode();
+      if (HostTime != 0D) hash ^= pbc::ProtobufEqualityComparers.BitwiseDoubleEqualityComparer.GetHashCode(HostTime);
+      if (Strength != 0F) hash ^= pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.GetHashCode(Strength);
+      if (Sound.Length != 0) hash ^= Sound.GetHashCode();
+      if (_unknownFields != null) {
+        hash ^= _unknownFields.GetHashCode();
+      }
+      return hash;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override string ToString() {
+      return pb::JsonFormatter.ToDiagnosticString(this);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void WriteTo(pb::CodedOutputStream output) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      output.WriteRawMessage(this);
+    #else
+      if (ClientId != 0) {
+        output.WriteRawTag(8);
+        output.WriteUInt32(ClientId);
+      }
+      if (Slot != 0) {
+        output.WriteRawTag(16);
+        output.WriteUInt32(Slot);
+      }
+      if (Sequence != 0) {
+        output.WriteRawTag(24);
+        output.WriteUInt32(Sequence);
+      }
+      if (Kind != global::SuMultiplayer.Protocol.Vitals.PlayerEffectKind.Unspecified) {
+        output.WriteRawTag(32);
+        output.WriteEnum((int) Kind);
+      }
+      if (position_ != null) {
+        output.WriteRawTag(42);
+        output.WriteMessage(Position);
+      }
+      if (HostTime != 0D) {
+        output.WriteRawTag(49);
+        output.WriteDouble(HostTime);
+      }
+      if (Strength != 0F) {
+        output.WriteRawTag(61);
+        output.WriteFloat(Strength);
+      }
+      if (Sound.Length != 0) {
+        output.WriteRawTag(66);
+        output.WriteString(Sound);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(output);
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
+      if (ClientId != 0) {
+        output.WriteRawTag(8);
+        output.WriteUInt32(ClientId);
+      }
+      if (Slot != 0) {
+        output.WriteRawTag(16);
+        output.WriteUInt32(Slot);
+      }
+      if (Sequence != 0) {
+        output.WriteRawTag(24);
+        output.WriteUInt32(Sequence);
+      }
+      if (Kind != global::SuMultiplayer.Protocol.Vitals.PlayerEffectKind.Unspecified) {
+        output.WriteRawTag(32);
+        output.WriteEnum((int) Kind);
+      }
+      if (position_ != null) {
+        output.WriteRawTag(42);
+        output.WriteMessage(Position);
+      }
+      if (HostTime != 0D) {
+        output.WriteRawTag(49);
+        output.WriteDouble(HostTime);
+      }
+      if (Strength != 0F) {
+        output.WriteRawTag(61);
+        output.WriteFloat(Strength);
+      }
+      if (Sound.Length != 0) {
+        output.WriteRawTag(66);
+        output.WriteString(Sound);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(ref output);
+      }
+    }
+    #endif
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int CalculateSize() {
+      int size = 0;
+      if (ClientId != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt32Size(ClientId);
+      }
+      if (Slot != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt32Size(Slot);
+      }
+      if (Sequence != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt32Size(Sequence);
+      }
+      if (Kind != global::SuMultiplayer.Protocol.Vitals.PlayerEffectKind.Unspecified) {
+        size += 1 + pb::CodedOutputStream.ComputeEnumSize((int) Kind);
+      }
+      if (position_ != null) {
+        size += 1 + pb::CodedOutputStream.ComputeMessageSize(Position);
+      }
+      if (HostTime != 0D) {
+        size += 1 + 8;
+      }
+      if (Strength != 0F) {
+        size += 1 + 4;
+      }
+      if (Sound.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(Sound);
+      }
+      if (_unknownFields != null) {
+        size += _unknownFields.CalculateSize();
+      }
+      return size;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(PlayerEffectEventEntry other) {
+      if (other == null) {
+        return;
+      }
+      if (other.ClientId != 0) {
+        ClientId = other.ClientId;
+      }
+      if (other.Slot != 0) {
+        Slot = other.Slot;
+      }
+      if (other.Sequence != 0) {
+        Sequence = other.Sequence;
+      }
+      if (other.Kind != global::SuMultiplayer.Protocol.Vitals.PlayerEffectKind.Unspecified) {
+        Kind = other.Kind;
+      }
+      if (other.position_ != null) {
+        if (position_ == null) {
+          Position = new global::SuMultiplayer.Protocol.Vitals.VitalsVec3();
+        }
+        Position.MergeFrom(other.Position);
+      }
+      if (other.HostTime != 0D) {
+        HostTime = other.HostTime;
+      }
+      if (other.Strength != 0F) {
+        Strength = other.Strength;
+      }
+      if (other.Sound.Length != 0) {
+        Sound = other.Sound;
+      }
+      _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(pb::CodedInputStream input) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      input.ReadRawMessage(this);
+    #else
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
+            break;
+          case 8: {
+            ClientId = input.ReadUInt32();
+            break;
+          }
+          case 16: {
+            Slot = input.ReadUInt32();
+            break;
+          }
+          case 24: {
+            Sequence = input.ReadUInt32();
+            break;
+          }
+          case 32: {
+            Kind = (global::SuMultiplayer.Protocol.Vitals.PlayerEffectKind) input.ReadEnum();
+            break;
+          }
+          case 42: {
+            if (position_ == null) {
+              Position = new global::SuMultiplayer.Protocol.Vitals.VitalsVec3();
+            }
+            input.ReadMessage(Position);
+            break;
+          }
+          case 49: {
+            HostTime = input.ReadDouble();
+            break;
+          }
+          case 61: {
+            Strength = input.ReadFloat();
+            break;
+          }
+          case 66: {
+            Sound = input.ReadString();
+            break;
+          }
+        }
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalMergeFrom(ref pb::ParseContext input) {
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
+            break;
+          case 8: {
+            ClientId = input.ReadUInt32();
+            break;
+          }
+          case 16: {
+            Slot = input.ReadUInt32();
+            break;
+          }
+          case 24: {
+            Sequence = input.ReadUInt32();
+            break;
+          }
+          case 32: {
+            Kind = (global::SuMultiplayer.Protocol.Vitals.PlayerEffectKind) input.ReadEnum();
+            break;
+          }
+          case 42: {
+            if (position_ == null) {
+              Position = new global::SuMultiplayer.Protocol.Vitals.VitalsVec3();
+            }
+            input.ReadMessage(Position);
+            break;
+          }
+          case 49: {
+            HostTime = input.ReadDouble();
+            break;
+          }
+          case 61: {
+            Strength = input.ReadFloat();
+            break;
+          }
+          case 66: {
+            Sound = input.ReadString();
+            break;
+          }
+        }
+      }
+    }
+    #endif
+
+  }
+
+  /// <summary>
+  /// Host -> all clients: presentation effects for host-simulated client avatars.
+  /// Bounded by PlayerVitalsLimits.MaxEffectEntries (16) per message.
+  /// </summary>
+  [global::System.Diagnostics.DebuggerDisplayAttribute("{ToString(),nq}")]
+  public sealed partial class PlayerEffectEvents : pb::IMessage<PlayerEffectEvents>
+  #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      , pb::IBufferMessage
+  #endif
+  {
+    private static readonly pb::MessageParser<PlayerEffectEvents> _parser = new pb::MessageParser<PlayerEffectEvents>(() => new PlayerEffectEvents());
+    private pb::UnknownFieldSet _unknownFields;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pb::MessageParser<PlayerEffectEvents> Parser { get { return _parser; } }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pbr::MessageDescriptor Descriptor {
+      get { return global::SuMultiplayer.Protocol.Vitals.VitalsReflection.Descriptor.MessageTypes[11]; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    pbr::MessageDescriptor pb::IMessage.Descriptor {
+      get { return Descriptor; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public PlayerEffectEvents() {
+      OnConstruction();
+    }
+
+    partial void OnConstruction();
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public PlayerEffectEvents(PlayerEffectEvents other) : this() {
+      sequence_ = other.sequence_;
+      entries_ = other.entries_.Clone();
+      ext_ = other.ext_;
+      custom_ = other.custom_ != null ? other.custom_.Clone() : null;
+      _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public PlayerEffectEvents Clone() {
+      return new PlayerEffectEvents(this);
+    }
+
+    /// <summary>Field number for the "sequence" field.</summary>
+    public const int SequenceFieldNumber = 1;
+    private uint sequence_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public uint Sequence {
+      get { return sequence_; }
+      set {
+        sequence_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "entries" field.</summary>
+    public const int EntriesFieldNumber = 2;
+    private static readonly pb::FieldCodec<global::SuMultiplayer.Protocol.Vitals.PlayerEffectEventEntry> _repeated_entries_codec
+        = pb::FieldCodec.ForMessage(18, global::SuMultiplayer.Protocol.Vitals.PlayerEffectEventEntry.Parser);
+    private readonly pbc::RepeatedField<global::SuMultiplayer.Protocol.Vitals.PlayerEffectEventEntry> entries_ = new pbc::RepeatedField<global::SuMultiplayer.Protocol.Vitals.PlayerEffectEventEntry>();
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public pbc::RepeatedField<global::SuMultiplayer.Protocol.Vitals.PlayerEffectEventEntry> Entries {
+      get { return entries_; }
+    }
+
+    /// <summary>Field number for the "ext" field.</summary>
+    public const int ExtFieldNumber = 100;
+    private pb::ByteString ext_ = pb::ByteString.Empty;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public pb::ByteString Ext {
+      get { return ext_; }
+      set {
+        ext_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "custom" field.</summary>
+    public const int CustomFieldNumber = 101;
+    private global::Google.Protobuf.WellKnownTypes.Any custom_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public global::Google.Protobuf.WellKnownTypes.Any Custom {
+      get { return custom_; }
+      set {
+        custom_ = value;
+      }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override bool Equals(object other) {
+      return Equals(other as PlayerEffectEvents);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Equals(PlayerEffectEvents other) {
+      if (ReferenceEquals(other, null)) {
+        return false;
+      }
+      if (ReferenceEquals(other, this)) {
+        return true;
+      }
+      if (Sequence != other.Sequence) return false;
+      if(!entries_.Equals(other.entries_)) return false;
+      if (Ext != other.Ext) return false;
+      if (!object.Equals(Custom, other.Custom)) return false;
+      return Equals(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override int GetHashCode() {
+      int hash = 1;
+      if (Sequence != 0) hash ^= Sequence.GetHashCode();
+      hash ^= entries_.GetHashCode();
+      if (Ext.Length != 0) hash ^= Ext.GetHashCode();
+      if (custom_ != null) hash ^= Custom.GetHashCode();
+      if (_unknownFields != null) {
+        hash ^= _unknownFields.GetHashCode();
+      }
+      return hash;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override string ToString() {
+      return pb::JsonFormatter.ToDiagnosticString(this);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void WriteTo(pb::CodedOutputStream output) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      output.WriteRawMessage(this);
+    #else
+      if (Sequence != 0) {
+        output.WriteRawTag(8);
+        output.WriteUInt32(Sequence);
+      }
+      entries_.WriteTo(output, _repeated_entries_codec);
+      if (Ext.Length != 0) {
+        output.WriteRawTag(162, 6);
+        output.WriteBytes(Ext);
+      }
+      if (custom_ != null) {
+        output.WriteRawTag(170, 6);
+        output.WriteMessage(Custom);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(output);
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
+      if (Sequence != 0) {
+        output.WriteRawTag(8);
+        output.WriteUInt32(Sequence);
+      }
+      entries_.WriteTo(ref output, _repeated_entries_codec);
+      if (Ext.Length != 0) {
+        output.WriteRawTag(162, 6);
+        output.WriteBytes(Ext);
+      }
+      if (custom_ != null) {
+        output.WriteRawTag(170, 6);
+        output.WriteMessage(Custom);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(ref output);
+      }
+    }
+    #endif
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int CalculateSize() {
+      int size = 0;
+      if (Sequence != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt32Size(Sequence);
+      }
+      size += entries_.CalculateSize(_repeated_entries_codec);
+      if (Ext.Length != 0) {
+        size += 2 + pb::CodedOutputStream.ComputeBytesSize(Ext);
+      }
+      if (custom_ != null) {
+        size += 2 + pb::CodedOutputStream.ComputeMessageSize(Custom);
+      }
+      if (_unknownFields != null) {
+        size += _unknownFields.CalculateSize();
+      }
+      return size;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(PlayerEffectEvents other) {
+      if (other == null) {
+        return;
+      }
+      if (other.Sequence != 0) {
+        Sequence = other.Sequence;
+      }
+      entries_.Add(other.entries_);
+      if (other.Ext.Length != 0) {
+        Ext = other.Ext;
+      }
+      if (other.custom_ != null) {
+        if (custom_ == null) {
+          Custom = new global::Google.Protobuf.WellKnownTypes.Any();
+        }
+        Custom.MergeFrom(other.Custom);
+      }
+      _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(pb::CodedInputStream input) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      input.ReadRawMessage(this);
+    #else
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
+            break;
+          case 8: {
+            Sequence = input.ReadUInt32();
+            break;
+          }
+          case 18: {
+            entries_.AddEntriesFrom(input, _repeated_entries_codec);
+            break;
+          }
+          case 802: {
+            Ext = input.ReadBytes();
+            break;
+          }
+          case 810: {
+            if (custom_ == null) {
+              Custom = new global::Google.Protobuf.WellKnownTypes.Any();
+            }
+            input.ReadMessage(Custom);
+            break;
+          }
+        }
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalMergeFrom(ref pb::ParseContext input) {
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
+            break;
+          case 8: {
+            Sequence = input.ReadUInt32();
+            break;
+          }
+          case 18: {
+            entries_.AddEntriesFrom(ref input, _repeated_entries_codec);
             break;
           }
           case 802: {

@@ -18,16 +18,28 @@ namespace SuMultiplayer.Modules
     ///   ③ 中途换肤：本机立刻应用 → 上传 → 主机校验（大小/格式/哈希）→ 广播 → 其他客户端应用；
     ///      主机拒绝时给所有者明确原因，所有者回退到主机确认过的资料（不是静默失败）。
     ///   ④ 防御：超限 / 结构非法 / 哈希不符 / 未知发送方 / 记录写入失败全部显式拒绝并计数；
-    ///      主机没有资源时明确发 MISSING，其他客户端显示**确定性占位**并计数（宿主知道没发出去）。
+    ///      主机只在**确实无法提供**资源时（主机自己的皮肤库缺文件 / 角色记录缺资源）发 MISSING，
+    ///      其他客户端显示**确定性占位**并计数（宿主知道没发出去）。
     ///   ⑤ 不写全局皮肤库：本模块只通过 <see cref="IPlayerSkinPort"/> 读本机皮肤文件；
     ///      收到的资源只在内存副本缓存里（客户端重装 / 新客户端不会被污染）。
     ///   ⑥ 计数器（10 秒限流日志）：skinAssetSent / Recv / Applied / Rejected(reason) /
-    ///      Malformed / Oversize / HashMismatch / PlaceholderShown。
+    ///      Malformed / Oversize / HashMismatch / PlaceholderShown，以及产品口径 2026-10-21 的
+    ///      uploadAccepted / uploadRejected / assetForwarded / forwardExcludedOrigin / ackSent /
+    ///      ackFailures / tooLarge（见 <see cref="SkinAssetCounters"/>）。
+    ///   ⑦ 用户口径 2026-10-21（主机广播皮肤）：
+    ///      · **不接受"主机没有这个皮肤就拒绝"**：客户端上传的 `.scskin` 只要通过 SkinAssetPolicy
+    ///        校验，主机就接受、写 PlayerSkinStore + 身份记录，再转发给其他客户端；
+    ///      · **资源绝不回传给换皮肤的那个客户端**：转发走
+    ///        <see cref="IPeerBroadcastPort.BroadcastToPlayersExcept"/>，发起者只收
+    ///        <see cref="ITransportPort.TrySendTo"/> 单发的一条回执（accepted / rejected + 原因）；
+    ///      · 哈希已存在 → 不重传资源，只给发起者 accepted 回执 + 给其他端一条引用该 sha256 的
+    ///        皮肤变化通知；
+    ///      · 主机自己换皮肤 = 没有"发起者"例外，广播给所有客户端（excludeClientId = -1）。
     ///
     /// 模块不引用 Game：引擎动作（读文件 / 解码 / 注入贴图 / 写记录）都在端口实现里，
     /// 因此自检可以直接编译本文件并用真实 TCP 跑完整流程。
     /// </summary>
-    public sealed class PlayerSkinModule : IMultiplayerModule, IEditPlayerSkinSink
+    public sealed class PlayerSkinModule : IMultiplayerModule, IEditPlayerSkinSink, IProfileSkinSyncPort
     {
         private const int HostSlotKey = 0;
 
@@ -54,9 +66,19 @@ namespace SuMultiplayer.Modules
         private readonly HashSet<string> m_receivedSelfHashes = new HashSet<string>(StringComparer.Ordinal);
         /// <summary>已经给某个玩家端发过 MISSING 的 (clientId:hash)，避免每帧刷。</summary>
         private readonly HashSet<string> m_missingSent = new HashSet<string>(StringComparer.Ordinal);
+        /// <summary>
+        /// 主机：**上传路径刚刚接受过**的 (clientId:slot:hash) → 接受时刻（Environment.TickCount64）。
+        /// 同一次换肤先上传资源、再发变化通知；上传路径已经回过 accepted 回执并转发 / 通知过，
+        /// 变化通知不能再回一条（"发起者只收一条回执"）也不能再广播一次。
+        /// </summary>
+        private readonly Dictionary<string, long> m_acceptedUploads =
+            new Dictionary<string, long>(StringComparer.Ordinal);
         private readonly HashSet<string> m_reportedOnce = new HashSet<string>(StringComparer.Ordinal);
         private readonly Dictionary<string, long> m_lastReasonLogMs =
             new Dictionary<string, long>(StringComparer.Ordinal);
+
+        /// <summary>上传路径接受后，变化通知在此时限内视为同一次换肤（不重复回执 / 广播）。</summary>
+        private const long AcceptedUploadDedupeMs = 10000;
 
         private IModuleContext m_context;
         private ITransportPort m_transport;
@@ -274,6 +296,25 @@ namespace SuMultiplayer.Modules
         }
 
         /// <summary>
+        /// 资料同步（108）检测到本机皮肤变化后的入口（<see cref="IProfileSkinSyncPort"/>）：
+        /// 与编辑屏退出共用**同一条**资源链（读取本机皮肤库 → 校验 → 缓存 → 本机应用 →
+        /// 客户端分片上传 + 变化通知 / 主机写记录 + 广播），不复制第二套上传逻辑。
+        /// <paramref name="isHost"/> 必须与本端真实角色一致：方向不对就明确拒绝（不静默走错）。
+        /// </summary>
+        public bool TrySyncDetectedSkin(PlayerProfileSnapshot profile, int slot, bool isHost,
+            out string reason)
+        {
+            bool hosting = IsHostingNow;
+            if (isHost != hosting)
+            {
+                reason = "调用方角色不一致（isHost=" + isHost + "，本端 IsHosting=" + hosting +
+                    "）→ 拒绝走错方向的皮肤链";
+                return false;
+            }
+            return TrySyncEditedSkin(profile, slot, isHost, out reason);
+        }
+
+        /// <summary>
         /// 编辑玩家屏退出时的自定义皮肤同步入口（<see cref="IEditPlayerSkinSink"/>）：
         ///   · 内置皮肤：什么都不做（名字/性别/内置皮肤 id 由 PlayerProfile 资料消息携带）；
         ///   · 自定义皮肤：走既有资源链（读取本机皮肤库 → 校验 → 缓存 → 本机应用 →
@@ -377,6 +418,7 @@ namespace SuMultiplayer.Modules
 
         private void TickHost(long nowMs)
         {
+            ExpireAcceptedUploads();
             if (m_records == null || m_skin == null) return;
             if (!m_records.TryCaptureLocalProfile(out PlayerProfileSnapshot profile, out string reason))
             {
@@ -594,7 +636,8 @@ namespace SuMultiplayer.Modules
             }
             if (!SkinAssetPolicy.TryValidateAssetData(data, out string validateReason))
             {
-                m_counters.OnRejected(SkinAssetRejectReason.Malformed, validateReason);
+                bool tooLarge = data != null && data.Length > SkinAssetPolicy.MaxAssetBytes;
+                CountReject(SkinAssetRejectReason.Malformed, validateReason, tooLarge);
                 ErrorOnce("skin-invalid:" + skinName, "本机皮肤 \"" + skinName +
                     "\" 资源非法：" + validateReason);
                 missing = true;
@@ -602,7 +645,7 @@ namespace SuMultiplayer.Modules
             }
             if (!m_skin.TryDecodeAssetData(data, out int width, out int height, out string decodeReason))
             {
-                m_counters.OnRejected(SkinAssetRejectReason.Malformed, decodeReason);
+                CountReject(SkinAssetRejectReason.Malformed, decodeReason);
                 ErrorOnce("skin-decode:" + skinName, "本机皮肤 \"" + skinName +
                     "\" 无法解码：" + decodeReason);
                 missing = true;
@@ -618,7 +661,7 @@ namespace SuMultiplayer.Modules
             };
             if (!m_skin.StoreAsset(record, SkinAssetOrigin.Owned, out _, out string storeReason))
             {
-                m_counters.OnRejected(SkinAssetRejectReason.Malformed, storeReason);
+                CountReject(SkinAssetRejectReason.Malformed, storeReason);
                 ErrorOnce("skin-store-owned:" + skinName, "缓存本机皮肤资源失败：" + storeReason);
                 missing = true;
                 return null;
@@ -754,14 +797,14 @@ namespace SuMultiplayer.Modules
                 out List<Proto.PlayerSkinAsset> messages, out byte[] sha256);
             if (!check.Ok)
             {
-                m_counters.OnRejected(check.Kind, check.Reason);
+                CountReject(check.Kind, check.Reason,
+                    tooLarge: check.Kind == SkinAssetRejectReason.Oversize);
                 reason = check.Reason;
                 return false;
             }
             if (!SkinAssetPolicy.BytesEqual(sha256, record.Sha256))
             {
-                m_counters.OnRejected(SkinAssetRejectReason.HashMismatch,
-                    "编码后的哈希与缓存记录不一致");
+                CountReject(SkinAssetRejectReason.HashMismatch, "编码后的哈希与缓存记录不一致");
                 reason = "编码后的哈希与缓存记录不一致";
                 return false;
             }
@@ -780,7 +823,11 @@ namespace SuMultiplayer.Modules
             return true;
         }
 
-        /// <summary>主机：把一份资源广播给所有其他玩家端（owner 自己单独收到 accepted）。</summary>
+        /// <summary>
+        /// 主机：把一份资源广播给除 <paramref name="excludeClientId"/> 外的玩家端
+        /// （资源走独立分块通道，随后给这些端一条 accepted 变化通知）。
+        /// excludeClientId &lt; 0 = 主机自己的皮肤 → 没有"发起者"例外，发给所有玩家端。
+        /// </summary>
         private bool BroadcastAsset(PlayerSkinAssetRecord record, int excludeClientId,
             int ownerClientId, string identity, bool isHost, out string reason) =>
             BroadcastAsset(record, excludeClientId, ownerClientId, identity, isHost, 0, out reason);
@@ -788,10 +835,36 @@ namespace SuMultiplayer.Modules
         private bool BroadcastAsset(PlayerSkinAssetRecord record, int excludeClientId,
             int ownerClientId, string identity, bool isHost, int ownerSlot, out string reason)
         {
+            if (!ForwardAssetChunks(excludeClientId, record, ownerClientId, identity, ownerSlot,
+                    out reason))
+                return false;
+            NotifyChangedExcept(excludeClientId, ownerClientId, identity, record, isHost,
+                Proto.SkinChangeStatus.Accepted, hasAsset: true, ownerSlot);
+            return true;
+        }
+
+        /// <summary>
+        /// 主机：把一份自定义皮肤资源编码成分片，经**独立资源通道**转发给除
+        /// <paramref name="excludeClientId"/> 外的所有玩家端（
+        /// <see cref="IPeerBroadcastPort.BroadcastToPlayersExcept"/>；绝不塞进主同步报文）。
+        /// excludeClientId &lt; 0 = 发给所有玩家端（主机自己的皮肤）。
+        ///
+        /// 计数：skinAssetForwarded = 成功入队的分片次数（分片 × 目标端）；
+        ///       skinForwardExcludedOrigin = 这次转发排除了发起者。
+        /// 返回 false + reason = 编码失败 / 没有广播端口 / 没有任何端收到任一分片。
+        /// </summary>
+        private bool ForwardAssetChunks(int excludeClientId, PlayerSkinAssetRecord record,
+            int ownerClientId, string identity, int ownerSlot, out string reason)
+        {
             reason = null;
             if (record == null || !record.HasData)
             {
-                reason = "没有资源可广播";
+                reason = "没有资源可转发";
+                return false;
+            }
+            if (m_broadcast == null)
+            {
+                reason = "没有广播端口（IPeerBroadcastPort）→ 无法把资源转发给其他客户端";
                 return false;
             }
             if (!PlayerEditSync.TryValidateSlot(ownerSlot, out reason)) return false;
@@ -800,44 +873,86 @@ namespace SuMultiplayer.Modules
                 out List<Proto.PlayerSkinAsset> messages, out byte[] sha256);
             if (!check.Ok)
             {
-                m_counters.OnRejected(check.Kind, check.Reason);
+                CountReject(check.Kind, check.Reason, tooLarge: check.Kind == SkinAssetRejectReason.Oversize);
                 reason = check.Reason;
                 return false;
             }
-            for (int i = 0; i < messages.Count; i++) messages[i].Slot = (uint)ownerSlot;
-            int targets = 0;
-            int failures = 0;
-            foreach (int peerId in new List<int>(m_peers.Keys))
+            if (!SkinAssetPolicy.BytesEqual(sha256, record.Sha256))
             {
-                if (peerId == excludeClientId) continue;
-                targets++;
-                bool sent = true;
-                for (int i = 0; i < messages.Count; i++)
+                CountReject(SkinAssetRejectReason.HashMismatch, "编码后的哈希与缓存记录不一致");
+                reason = "编码后的哈希与缓存记录不一致";
+                return false;
+            }
+            if (excludeClientId >= 0) m_counters.OnForwardExcludedOrigin();
+            int expected = ExpectedForwardTargets(excludeClientId);
+            int queuedChunks = 0;
+            int lastQueued = -1;
+            for (int i = 0; i < messages.Count; i++)
+            {
+                messages[i].Slot = (uint)ownerSlot;
+                int queued = m_broadcast.BroadcastToPlayersExcept(excludeClientId,
+                    Proto.MessageType.PlayerSkinAsset, messages[i].ToByteArray());
+                queuedChunks += queued;
+                if (queued <= 0 && expected > 0)
                 {
-                    if (Send(peerId, messages[i])) continue;
-                    sent = false;
-                    break;
+                    reason = "第 " + i + "/" + messages.Count + " 片没有入队到任何玩家端（期望 " +
+                        expected + " 端）";
+                    m_counters.OnSendFailed("皮肤转发：" + reason);
+                    continue;
                 }
-                if (sent) continue;
-                failures++;
-                m_counters.OnSendFailed("clientId=" + peerId + " · \"" + record.SkinName + "\"");
-                Warn("把皮肤资源发给 clientId=" + peerId + " 失败（通道不可用 / 背压）→ " +
-                    "该端会在资料哈希到达后显示确定性占位（已计数，不静默）");
+                if (lastQueued >= 0 && queued != lastQueued)
+                {
+                    // 同一次转发的各分片入队端数不一致 = 有端只收到一部分分片
+                    // （接收端装配器会按 15s 超时显式丢弃并计数，不会得到半份皮肤）。
+                    m_counters.OnSendFailed("皮肤转发分片入队端数不一致：第 " + i + " 片 " + queued +
+                        " ≠ 上一片 " + lastQueued);
+                }
+                lastQueued = queued;
             }
-            if (targets > 0 && failures < targets)
+            m_counters.OnAssetForwarded(queuedChunks);
+            if (queuedChunks > 0) m_counters.OnSent();
+            if (queuedChunks <= 0)
             {
-                m_counters.OnSent();
+                if (expected <= 0)
+                {
+                    Info("皮肤资源暂无可转发的玩家端（\"" + record.SkinName +
+                        "\"）；资源已落库，新客户端加入时会从角色记录补发");
+                    return true;
+                }
+                reason = "没有任何玩家端收到皮肤资源分片";
+                return false;
             }
-            if (targets == 0)
-                Info("皮肤资源暂无可广播的玩家端（\"" + record.SkinName + "\"）；新客户端加入时会单独补发");
+            Info("已转发自定义皮肤资源：" + (excludeClientId >= 0
+                    ? "跳过发起者 clientId=" + excludeClientId
+                    : "主机自己的皮肤，发给所有玩家端") +
+                " · \"" + record.SkinName + "\" · " + messages.Count + " 片 · 入队 " +
+                queuedChunks + " 次");
+            return true;
+        }
+
+        /// <summary>这次转发期望的玩家端数（m_peers = 已完成加入握手的玩家端）。</summary>
+        private int ExpectedForwardTargets(int excludeClientId)
+        {
+            int count = 0;
+            foreach (int peerId in m_peers.Keys)
+                if (peerId != excludeClientId) count++;
+            return count;
+        }
+
+        /// <summary>
+        /// 主机：把"皮肤变化"通知发给除 <paramref name="excludeClientId"/> 外的玩家端。
+        /// 资源本身只走 <see cref="ForwardAssetChunks"/>；这里只带皮肤名 / sha256 / 结果。
+        /// </summary>
+        private void NotifyChangedExcept(int excludeClientId, int ownerClientId, string identity,
+            PlayerSkinAssetRecord record, bool isHost, Proto.SkinChangeStatus status, bool hasAsset,
+            int ownerSlot)
+        {
             foreach (int peerId in new List<int>(m_peers.Keys))
             {
                 if (peerId == excludeClientId) continue;
-                SendChanged(peerId, ownerClientId, identity, null, record,
-                    Proto.SkinChangeStatus.Accepted, hasAsset: true, isHost: isHost,
+                SendChanged(peerId, ownerClientId, identity, null, record, status, hasAsset, isHost,
                     reason: null, slot: ownerSlot);
             }
-            return failures == 0;
         }
 
         private void BroadcastMissing(int ownerClientId, string identity, PlayerProfileSnapshot profile,
@@ -913,6 +1028,68 @@ namespace SuMultiplayer.Modules
         private bool Send<T>(int targetClientId, T message) where T : class, IMessage<T> =>
             m_messages != null && m_messages.Sender.Send(targetClientId, message);
 
+        /// <summary>
+        /// 主机 → 发起者：一条**明确回执**（accepted / rejected + 原因），走
+        /// <see cref="ITransportPort.TrySendTo"/> **单发**。回执里 has_asset=false —
+        /// 发起者绝不会再收到自己的皮肤资源（用户口径 2026-10-21）。
+        /// 回执内容：client_id = 发起者、identity、skin_name、sha256、status、reason、slot。
+        /// 返回 false = 通道不可用 / 背压 / 没有目标（已计数 + 一行明确原因，不假装已送达）。
+        /// </summary>
+        private bool SendAck(int targetClientId, int ownerClientId, string identity,
+            PlayerSkinAssetRecord record, Proto.SkinChangeStatus status, string reason, int slot,
+            bool isHost = false)
+        {
+            if (targetClientId <= 0)
+            {
+                m_counters.OnAckFailure("回执没有目标连接（clientId=" + targetClientId + "）");
+                return false;
+            }
+            if (m_transport == null)
+            {
+                m_counters.OnAckFailure("没有传输端口 → 回执发不到 clientId=" + targetClientId);
+                return false;
+            }
+            Proto.PlayerSkinChanged message = ChangedMessage(ownerClientId, identity, null, record,
+                status, hasAsset: false, isHost: isHost, reason: reason, slot: slot);
+            byte[] payload = message.ToByteArray();
+            if (m_transport.TrySendTo(targetClientId, Proto.MessageType.PlayerSkinChanged, payload))
+            {
+                m_counters.OnAckSent();
+                return true;
+            }
+            string failure = "回执发送失败（通道不可用 / 背压）：clientId=" + targetClientId +
+                " · status=" + status + " · \"" + message.SkinName + "\"";
+            m_counters.OnAckFailure(failure);
+            ErrorOnce("skin-ack:" + targetClientId + ":" + status + ":" + message.Slot, failure);
+            return false;
+        }
+
+        /// <summary>上传路径接受后的去重键（同一 clientId / 槽位 / 哈希 = 同一次换肤）。</summary>
+        private static string AcceptedUploadKey(int clientId, int slot, byte[] hash) =>
+            clientId + ":" + slot + ":" + SkinAssetPolicy.HashHex(hash);
+
+        /// <summary>清理超过 10 秒的上传接受记录（变化通知只在紧随其后的同一拍里需要去重）。</summary>
+        private void ExpireAcceptedUploads()
+        {
+            if (m_acceptedUploads.Count == 0) return;
+            long nowMs = NowMs();
+            List<string> stale = null;
+            foreach (KeyValuePair<string, long> item in m_acceptedUploads)
+            {
+                if (nowMs - item.Value <= AcceptedUploadDedupeMs) continue;
+                stale ??= new List<string>();
+                stale.Add(item.Key);
+            }
+            if (stale == null) return;
+            for (int i = 0; i < stale.Count; i++) m_acceptedUploads.Remove(stale[i]);
+        }
+
+        private void CountReject(SkinAssetRejectReason kind, string reason, bool tooLarge = false)
+        {
+            m_counters.OnRejected(kind, reason);
+            if (tooLarge) m_counters.OnTooLarge(reason);
+        }
+
         private int NextTransferId()
         {
             m_transferCounter++;
@@ -945,7 +1122,8 @@ namespace SuMultiplayer.Modules
             if (!PlayerEditSync.TryValidateSlot(slot, out string slotReason))
             {
                 Reject(context.ClientId, SkinAssetRejectReason.Malformed,
-                    "皮肤资源的槽位非法：" + slotReason, context.ClientId);
+                    "皮肤资源的槽位非法：" + slotReason, context.ClientId, upload: IsHostingNow,
+                    skinName: skinName, sha256: sha256, identity: identity);
                 return;
             }
             if (IsHostingNow) HandleUpload(context.ClientId, ownerClientId, transferId, skinName,
@@ -961,20 +1139,23 @@ namespace SuMultiplayer.Modules
             if (senderClientId <= 0)
             {
                 Reject(senderClientId, SkinAssetRejectReason.UnknownClient,
-                    "主机收到的上传没有来源连接", senderClientId);
+                    "主机收到的上传没有来源连接", senderClientId, upload: true,
+                    skinName: skinName, sha256: sha256, slot: slot);
                 return;
             }
             if (!m_peers.TryGetValue(senderClientId, out Peer peer))
             {
                 Reject(senderClientId, SkinAssetRejectReason.UnknownClient,
                     "clientId=" + senderClientId + " 还没有完成加入（不能上传皮肤资源）",
-                    senderClientId);
+                    senderClientId, upload: true, skinName: skinName, sha256: sha256, slot: slot);
                 return;
             }
             if (claimedOwner != 0 && claimedOwner != senderClientId)
             {
                 Reject(senderClientId, SkinAssetRejectReason.NotAllowed,
-                    "clientId=" + senderClientId + " 冒领 owner=" + claimedOwner, senderClientId);
+                    "clientId=" + senderClientId + " 冒领 owner=" + claimedOwner, senderClientId,
+                    upload: true, skinName: skinName, sha256: sha256, identity: peer.Identity,
+                    slot: slot);
                 return;
             }
             string effectiveIdentity = peer.Identity;
@@ -987,7 +1168,8 @@ namespace SuMultiplayer.Modules
                 {
                     Reject(senderClientId, SkinAssetRejectReason.Oversize,
                         "clientId=" + senderClientId + " 的并发传输超过 " +
-                        SkinAssetPolicy.MaxConcurrentTransfers, senderClientId);
+                        SkinAssetPolicy.MaxConcurrentTransfers, senderClientId, upload: true,
+                        skinName: skinName, sha256: sha256, identity: effectiveIdentity, slot: slot);
                     return;
                 }
                 assembler = new SkinAssetAssembler();
@@ -1000,7 +1182,9 @@ namespace SuMultiplayer.Modules
             if (!check.Ok)
             {
                 m_uploads.Remove(key);
-                Reject(senderClientId, check.Kind, check.Reason, senderClientId);
+                Reject(senderClientId, check.Kind, check.Reason, senderClientId, upload: true,
+                    tooLarge: check.Kind == SkinAssetRejectReason.Oversize, skinName: skinName,
+                    sha256: sha256, identity: effectiveIdentity, slot: slot);
                 return;
             }
             if (complete == null) return;    // 还在等其余分片
@@ -1010,13 +1194,15 @@ namespace SuMultiplayer.Modules
             if (m_skin == null || m_records == null)
             {
                 Reject(senderClientId, SkinAssetRejectReason.StoreFailed,
-                    "皮肤端口 / 角色记录端口不可用", senderClientId);
+                    "皮肤端口 / 角色记录端口不可用", senderClientId, upload: true,
+                    skinName: skinName, sha256: sha256, identity: effectiveIdentity, slot: slot);
                 return;
             }
             if (!m_skin.TryDecodeAssetData(complete, out _, out _, out string decodeReason))
             {
                 Reject(senderClientId, SkinAssetRejectReason.Malformed,
-                    "引擎无法解码这份皮肤：" + decodeReason, senderClientId);
+                    "引擎无法解码这份皮肤：" + decodeReason, senderClientId, upload: true,
+                    skinName: skinName, sha256: sha256, identity: effectiveIdentity, slot: slot);
                 return;
             }
             byte[] actualHash = SkinAssetPolicy.Sha256(complete);
@@ -1031,14 +1217,17 @@ namespace SuMultiplayer.Modules
                     out string storeReason))
             {
                 Reject(senderClientId, SkinAssetRejectReason.HashMismatch, storeReason,
-                    senderClientId);
+                    senderClientId, upload: true, skinName: skinName, sha256: actualHash,
+                    identity: effectiveIdentity, slot: slot);
                 return;
             }
             if (!m_records.StoreRecordSkin(effectiveIdentity, peer.Name, senderClientId, record,
                     slot, out string recordReason))
             {
                 Reject(senderClientId, SkinAssetRejectReason.StoreFailed,
-                    "写角色记录失败（槽位 " + slot + "）：" + recordReason, senderClientId);
+                    "写角色记录失败（槽位 " + slot + "）：" + recordReason, senderClientId,
+                    upload: true, skinName: skinName, sha256: actualHash,
+                    identity: effectiveIdentity, slot: slot);
                 return;
             }
             m_records.UpdateSkinAppearance(senderClientId, effectiveIdentity, peer.Name, record, slot);
@@ -1054,30 +1243,47 @@ namespace SuMultiplayer.Modules
                     " 的化身失败（" + applyReason + "）；资源已存进角色记录，化身建好后会再应用");
             }
 
+            // 上传路径是"主机接受未知皮肤"的**唯一权威入口**（用户口径 2026-10-21）：
+            // 只要字节通过 SkinAssetPolicy，就接受 + 落库（PlayerSkinStore + 身份记录），
+            // 不因为"主机之前没有这个皮肤"而拒绝。
+            m_counters.OnUploadAccepted();
+            m_acceptedUploads[AcceptedUploadKey(senderClientId, slot, actualHash)] = NowMs();
+
             if (duplicate)
             {
                 m_counters.OnDeduped();
-                SendChanged(senderClientId, senderClientId, effectiveIdentity, null, record,
-                    Proto.SkinChangeStatus.Accepted, hasAsset: true, isHost: false,
-                    reason: null, slot: slot);
-                Info("收到重复的皮肤资源（同一哈希）→ 去重，不重复广播：\"" + skinName + "\"");
+                // 哈希已存在 → **不重传资源**；发起者只收 accepted 回执，其他端只收引用该 sha256
+                // 的变化通知（用户口径 #3）。
+                SendAck(senderClientId, senderClientId, effectiveIdentity, record,
+                    Proto.SkinChangeStatus.Accepted, reason: null, slot: slot);
+                NotifyChangedExcept(senderClientId, senderClientId, effectiveIdentity, record,
+                    isHost: false, status: Proto.SkinChangeStatus.Accepted, hasAsset: true,
+                    ownerSlot: slot);
+                Info("收到重复的皮肤资源（同一哈希）→ 不重传资源：只给发起者 accepted 回执 + " +
+                    "给其他玩家端一条变化通知 \"" + skinName + "\" · " +
+                    SkinAssetPolicy.HashHex(actualHash));
                 return;
             }
 
+            // 新资源：资源**只**转发给其他客户端（发起者绝不收到自己的皮肤资源），
+            // 再给发起者一条 accepted 回执（单发，has_asset=false）。
+            if (!ForwardAssetChunks(senderClientId, record, senderClientId, effectiveIdentity, slot,
+                    out string forwardReason))
+            {
+                ErrorOnce("upload-forward:" + senderClientId + ":" + slot + ":" +
+                    SkinAssetPolicy.HashHex(actualHash),
+                    "已接受并落库 clientId=" + senderClientId + " 的皮肤资源，但转发给其他客户端失败：" +
+                    forwardReason + "（已计数；资源在角色记录里，新客户端加入时会补发）");
+            }
+            NotifyChangedExcept(senderClientId, senderClientId, effectiveIdentity, record,
+                isHost: false, status: Proto.SkinChangeStatus.Accepted, hasAsset: true,
+                ownerSlot: slot);
+            SendAck(senderClientId, senderClientId, effectiveIdentity, record,
+                Proto.SkinChangeStatus.Accepted, reason: null, slot: slot);
             Info("主机接受客户端自定义皮肤：玩家键 " + new PlayerKey(senderClientId, slot) +
                 " · \"" + skinName + "\" · " + complete.Length + "B · " +
-                SkinAssetPolicy.HashHex(actualHash) + " → 已写世界角色记录并广播");
-            BroadcastAsset(record, excludeClientId: senderClientId, ownerClientId: senderClientId,
-                identity: effectiveIdentity, isHost: false, ownerSlot: slot,
-                out string broadcastReason);
-            if (broadcastReason != null)
-            {
-                ErrorOnce("upload-broadcast:" + senderClientId,
-                    "广播 clientId=" + senderClientId + " 的皮肤资源失败：" + broadcastReason);
-            }
-            SendChanged(senderClientId, senderClientId, effectiveIdentity, null, record,
-                Proto.SkinChangeStatus.Accepted, hasAsset: true, isHost: false,
-                reason: null, slot: slot);
+                SkinAssetPolicy.HashHex(actualHash) +
+                " → 已写世界角色记录；资源只转发给其他客户端，发起者只收回执");
         }
 
         private void HandleDownload(int ownerClientId, int transferId, string skinName,
@@ -1106,7 +1312,8 @@ namespace SuMultiplayer.Modules
             if (!check.Ok)
             {
                 m_downloads.Remove(key);
-                Reject(-1, check.Kind, check.Reason, -1);
+                Reject(-1, check.Kind, check.Reason, -1,
+                    tooLarge: check.Kind == SkinAssetRejectReason.Oversize);
                 return;
             }
             if (complete == null) return;
@@ -1229,7 +1436,8 @@ namespace SuMultiplayer.Modules
                     return;
                 }
                 bool cached = m_skin.TryGetCachedAsset(hash, skinName,
-                    out PlayerSkinAssetRecord record) && record != null && record.HasData;
+                        out PlayerSkinAssetRecord record) && record != null && record.HasData &&
+                    SkinAssetPolicy.BytesEqual(record.Sha256, hash);
                 if (!cached &&
                     m_records.TryGetRecordSkin(identity, peer.Name, slot,
                         out PlayerSkinAssetRecord fromRecord, out _) &&
@@ -1243,16 +1451,17 @@ namespace SuMultiplayer.Modules
                 }
                 if (!cached)
                 {
-                    string reason = "主机没有皮肤资源 \"" + skinName + "\"（" +
-                        SkinAssetPolicy.HashHex(hash) + "）→ 客户端应先上传资源";
-                    m_counters.OnMissing(reason);
-                    SendChanged(senderClientId, senderClientId, identity, null, null,
-                        Proto.SkinChangeStatus.Missing, hasAsset: false, isHost: false,
-                        reason: reason, slot: slot);
-                    ErrorOnce("host-change-missing:" + senderClientId + ":" + slot + ":" +
+                    // 用户口径 2026-10-21：**不接受"主机没有这个皮肤就拒绝"**。
+                    // 资源字节由上传路径（HandleUpload）负责接受 + 落库 + 转发；这里没有字节，
+                    // 既不伪造记录、也不回 MISSING / REJECTED。明确计数 + 限流一行原因；
+                    // 上传完成后由上传路径给发起者一条 accepted 回执。
+                    m_counters.OnChangeWithoutAsset("clientId=" + senderClientId + " 槽位 " + slot +
+                        " 的 \"" + skinName + "\" 资源还没到（" + SkinAssetPolicy.HashHex(hash) + "）");
+                    ErrorOnce("host-change-no-asset:" + senderClientId + ":" + slot + ":" +
                         SkinAssetPolicy.HashHex(hash),
-                        "玩家键 " + ownerKey + " 请求换成 \"" + skinName +
-                        "\"，但主机没有资源 → 已回 MISSING 要求上传；其他端暂显示占位");
+                        "玩家键 " + ownerKey + " 请求换成 \"" + skinName + "\"，但主机此刻没有资源 → " +
+                        "按口径不拒绝、也不发 MISSING；等上传路径接受（上传完成会给发起者回执；" +
+                        "若上传已失败，客户端已单独收到 rejected 原因）");
                     return;
                 }
                 if (!m_records.StoreRecordSkin(identity, peer.Name, senderClientId, record,
@@ -1271,17 +1480,25 @@ namespace SuMultiplayer.Modules
                     if (placeholder) m_counters.OnPlaceholderShown();
                 }
                 else Warn("应用玩家键 " + ownerKey + " 的新皮肤失败：" + applyReason);
-                BroadcastAsset(record, excludeClientId: senderClientId, ownerClientId: senderClientId,
-                    identity: identity, isHost: false, ownerSlot: slot,
-                    out string broadcastReason);
-                if (broadcastReason != null)
-                    ErrorOnce("change-broadcast:" + senderClientId,
-                        "广播新皮肤失败：" + broadcastReason);
-                SendChanged(senderClientId, senderClientId, identity, null, record,
-                    Proto.SkinChangeStatus.Accepted, hasAsset: true, isHost: false,
-                    reason: null, slot: slot);
-                Info("主机接受中途换肤：玩家键 " + ownerKey + " → \"" + skinName +
-                    "\" · " + SkinAssetPolicy.HashHex(record.Sha256));
+
+                // 上传路径刚刚接受过同一次换肤：它已经发过 accepted 回执 + 转发 / 变化通知，
+                // 这里不能重复（"发起者只收一条回执"）。
+                string acceptedKey = AcceptedUploadKey(senderClientId, slot, hash);
+                if (m_acceptedUploads.TryGetValue(acceptedKey, out long acceptedMs) &&
+                    NowMs() - acceptedMs <= AcceptedUploadDedupeMs)
+                {
+                    Info("玩家键 " + ownerKey + " 的皮肤变化已由上传路径接受（不重复回执 / 不重复转发）");
+                    return;
+                }
+
+                // 哈希已存在（主机之前就有这份资源）→ **不重传资源**：
+                // 发起者只收 accepted 回执，其他端只收一条引用该 sha256 的变化通知。
+                SendAck(senderClientId, senderClientId, identity, record,
+                    Proto.SkinChangeStatus.Accepted, reason: null, slot: slot);
+                NotifyChangedExcept(senderClientId, senderClientId, identity, record, isHost: false,
+                    status: Proto.SkinChangeStatus.Accepted, hasAsset: record.HasData, ownerSlot: slot);
+                Info("主机接受中途换肤（资源已存在，不重传）：玩家键 " + ownerKey + " → \"" +
+                    skinName + "\" · " + SkinAssetPolicy.HashHex(record.Sha256));
                 return;
             }
 
@@ -1315,11 +1532,11 @@ namespace SuMultiplayer.Modules
                 Info("应用内置皮肤到玩家键 " + ownerKey + " 失败（" + builtInApplyReason +
                     "）；资料已写记录，化身建好后会再应用");
             }
-            BroadcastChanged(senderClientId, identity, null, builtIn, isHost: false,
+            // 内置皮肤：发起者只收一条 accepted 回执；其他端只收变化通知（没有资源分片）。
+            NotifyChangedExcept(senderClientId, senderClientId, identity, builtIn, isHost: false,
                 status: Proto.SkinChangeStatus.Accepted, hasAsset: false, ownerSlot: slot);
-            SendChanged(senderClientId, senderClientId, identity, null, builtIn,
-                Proto.SkinChangeStatus.Accepted, hasAsset: false, isHost: false,
-                reason: null, slot: slot);
+            SendAck(senderClientId, senderClientId, identity, builtIn,
+                Proto.SkinChangeStatus.Accepted, reason: null, slot: slot);
             Info("主机接受中途换内置皮肤：玩家键 " + ownerKey + " → \"" + skinName + "\"");
         }
 
@@ -1327,11 +1544,21 @@ namespace SuMultiplayer.Modules
             Proto.PlayerSkinChanged request, string reason, SkinAssetRejectReason kind,
             int slot = 0)
         {
-            m_counters.OnRejected(kind, reason);
+            CountReject(kind, reason, tooLarge: kind == SkinAssetRejectReason.Oversize);
             m_counters.OnChangeRejected(reason);
-            SendChanged(senderClientId, senderClientId, peer?.Identity ?? string.Empty, null, null,
-                Proto.SkinChangeStatus.Rejected, hasAsset: false, isHost: false, reason: reason,
-                slot: slot);
+            var evidence = new PlayerSkinAssetRecord
+            {
+                SkinName = skinName ?? string.Empty,
+                Sex = request != null && request.PlayerClass == (uint)PlayerSex.Female
+                    ? PlayerSex.Female
+                    : PlayerSex.Male,
+                Sha256 = request?.Sha256?.Length > 0
+                    ? request.Sha256.ToByteArray()
+                    : Array.Empty<byte>(),
+                Data = Array.Empty<byte>()
+            };
+            SendAck(senderClientId, senderClientId, peer?.Identity ?? string.Empty, evidence,
+                Proto.SkinChangeStatus.Rejected, reason, slot);
             LogReject(kind, "clientId=" + senderClientId + " 换肤 \"" + skinName + "\" 被拒：" + reason,
                 senderClientId);
         }
@@ -1404,7 +1631,7 @@ namespace SuMultiplayer.Modules
                 if (m_skin == null) return;
                 if (record.HasHash &&
                     m_skin.TryGetCachedAsset(record.Sha256, skinName, out PlayerSkinAssetRecord cached) &&
-                    cached.HasData)
+                    cached.HasData && SkinAssetPolicy.BytesEqual(cached.Sha256, record.Sha256))
                 {
                     if (m_skin.TryApplyAvatarSkin(ownerKey, cached, allowPlaceholder: true,
                             out bool placeholder, out string applyReason))
@@ -1607,6 +1834,10 @@ namespace SuMultiplayer.Modules
             foreach (string key in m_uploads.Keys)
                 if (key.StartsWith(clientId + ":", StringComparison.Ordinal)) stale.Add(key);
             for (int i = 0; i < stale.Count; i++) m_uploads.Remove(stale[i]);
+            stale.Clear();
+            foreach (string key in m_acceptedUploads.Keys)
+                if (key.StartsWith(clientId + ":", StringComparison.Ordinal)) stale.Add(key);
+            for (int i = 0; i < stale.Count; i++) m_acceptedUploads.Remove(stale[i]);
             m_missingSent.RemoveWhere(key => key.StartsWith(clientId + ":", StringComparison.Ordinal));
             m_skin?.ForgetAvatar(clientId);
         }
@@ -1620,7 +1851,8 @@ namespace SuMultiplayer.Modules
                 out List<Proto.PlayerSkinAsset> messages, out byte[] sha256);
             if (!check.Ok)
             {
-                m_counters.OnRejected(check.Kind, check.Reason);
+                CountReject(check.Kind, check.Reason,
+                    tooLarge: check.Kind == SkinAssetRejectReason.Oversize);
                 return false;
             }
             for (int i = 0; i < messages.Count; i++)
@@ -1673,15 +1905,22 @@ namespace SuMultiplayer.Modules
         }
 
         private void Reject(int senderClientId, SkinAssetRejectReason kind, string reason,
-            int targetClientId)
+            int targetClientId, bool upload = false, bool tooLarge = false,
+            string skinName = null, byte[] sha256 = null, string identity = null, int slot = 0)
         {
-            m_counters.OnRejected(kind, reason);
+            CountReject(kind, reason, tooLarge);
+            if (upload) m_counters.OnUploadRejected(reason);
             LogReject(kind, reason, senderClientId);
-            if (targetClientId > 0)
+            if (targetClientId <= 0) return;
+            var evidence = new PlayerSkinAssetRecord
             {
-                SendChanged(targetClientId, targetClientId, string.Empty, null, null,
-                    Proto.SkinChangeStatus.Rejected, hasAsset: false, isHost: false, reason: reason);
-            }
+                SkinName = skinName ?? string.Empty,
+                Sex = PlayerSex.Male,
+                Sha256 = sha256 != null ? (byte[])sha256.Clone() : Array.Empty<byte>(),
+                Data = Array.Empty<byte>()
+            };
+            SendAck(targetClientId, senderClientId > 0 ? senderClientId : targetClientId,
+                identity ?? string.Empty, evidence, Proto.SkinChangeStatus.Rejected, reason, slot);
         }
 
         private void LogReject(SkinAssetRejectReason kind, string reason, int senderClientId)
@@ -1734,6 +1973,7 @@ namespace SuMultiplayer.Modules
             m_sentUploads.Clear();
             m_receivedSelfHashes.Clear();
             m_missingSent.Clear();
+            m_acceptedUploads.Clear();
             m_reportedOnce.Clear();
             m_peers.Clear();
             m_confirmedProfile = null;

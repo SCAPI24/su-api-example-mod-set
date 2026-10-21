@@ -33,7 +33,8 @@ namespace SuMultiplayer.Modules
         bool TryCaptureLocalSignals(out LocalPlayerSignals signals, out string reason);
 
         /// <summary>
-        /// 抓本机玩家可用背包的槽位值/数量/活跃槽（前 <see cref="PlayerInventoryMath.MaxSyncSlots"/> 槽）。
+        /// 抓本机玩家可用背包的槽位值/数量/活跃槽（范围按
+        /// <see cref="PlayerInventoryMath.SyncSlotsFor"/>：普通背包全部槽位，创造仓库前 10 槽）。
         /// Source: Survivalcraft/Game/ComponentInventoryBase.cs（GetSlotValue/GetSlotCount/ActiveSlotIndex）
         /// </summary>
         bool TryCaptureLocalInventory(out int[] values, out int[] counts, out int activeSlotIndex,

@@ -9,6 +9,11 @@ namespace SuMultiplayer.Players
     ///   skinAssetSent / Recv / Applied / Rejected(reason) / Malformed / Oversize /
     ///   HashMismatch / PlaceholderShown。
     ///
+    /// 产品口径 2026-10-21（主机接受未知皮肤 / 资源只转发给其他端 / 发起者只收回执）新增：
+    ///   skinUploadAccepted / skinUploadRejected(原因) / skinAssetForwarded /
+    ///   skinForwardExcludedOrigin / skinAckSent / skinAckFailures / skinTooLarge(原因) /
+    ///   skinChangeWithoutAsset（收到换肤通知但主机还没有资源 → 不拒绝、不回 MISSING）。
+    ///
     /// 额外计数只用于把"明确失败"说清楚（发送失败 / 记录缺资源 / 去重 / 变更被拒），
     /// 不替代上面 8 项的语义。日志由模块按 10 秒限流输出 <see cref="Describe"/>。
     ///
@@ -40,10 +45,31 @@ namespace SuMultiplayer.Players
         /// <summary>换肤请求因本机没有资源 / 无法上传而明确失败。</summary>
         public long ChangeFailed { get; private set; }
 
+        // ---- 产品口径 2026-10-21：主机接受未知皮肤 / 资源只转发给其他端 / 发起者只收回执 ----
+
+        /// <summary>主机完整接收并接受了一次客户端皮肤上传（新资源与重复哈希都算接受）。</summary>
+        public long UploadAccepted { get; private set; }
+        /// <summary>主机拒绝了一次客户端皮肤上传（原因进 reasons=upload-rejected:...）。</summary>
+        public long UploadRejected { get; private set; }
+        /// <summary>皮肤资源分片成功入队给玩家的次数（分片 × 目标端；不含发起者）。</summary>
+        public long AssetForwarded { get; private set; }
+        /// <summary>转发资源时**排除了发起者**的次数（"资源不回传给换皮肤的人"）。</summary>
+        public long ForwardExcludedOrigin { get; private set; }
+        /// <summary>主机给发起者发出的一条 accepted / rejected 回执（ITransportPort.TrySendTo 单发）。</summary>
+        public long AckSent { get; private set; }
+        /// <summary>回执发送失败（通道不可用 / 背压 / 没有目标）。</summary>
+        public long AckFailures { get; private set; }
+        /// <summary>因超过 SkinAssetPolicy 上限被拒绝（单资产 / 分片 / 压缩后；原因进 reasons=too-large:...）。</summary>
+        public long TooLarge { get; private set; }
+        /// <summary>主机收到"换成某自定义皮肤"的通知，但此刻没有该资源（不伪造、不回 MISSING，等上传路径）。</summary>
+        public long ChangeWithoutAsset { get; private set; }
+
         /// <summary>计数器自上次日志以来的总变化量（模块据此决定是否写一行）。</summary>
         public long Total =>
             Sent + Received + Applied + Rejected + PlaceholderShown + SendFailed + Missing +
-            Deduped + ChangeRejected + ChangeFailed;
+            Deduped + ChangeRejected + ChangeFailed + UploadAccepted + UploadRejected +
+            AssetForwarded + ForwardExcludedOrigin + AckSent + AckFailures + TooLarge +
+            ChangeWithoutAsset;
 
         public IReadOnlyDictionary<string, long> Reasons => m_reasons;
 
@@ -79,6 +105,50 @@ namespace SuMultiplayer.Players
         {
             ChangeFailed++;
             AddReason("change-failed:" + Normalize(reason));
+        }
+
+        /// <summary>主机完整接收并接受了一次客户端上传（新资源 / 重复哈希都算）。</summary>
+        public void OnUploadAccepted() => UploadAccepted++;
+
+        /// <summary>主机拒绝了客户端的一次上传（明确原因；同时计入 Rejected 分类）。</summary>
+        public void OnUploadRejected(string reason)
+        {
+            UploadRejected++;
+            AddReason("upload-rejected:" + Normalize(reason));
+        }
+
+        /// <summary>资源分片成功入队给玩家端的次数（分片 × 目标端）。</summary>
+        public void OnAssetForwarded(int chunkQueues)
+        {
+            if (chunkQueues <= 0) return;
+            AssetForwarded += chunkQueues;
+        }
+
+        /// <summary>这次转发排除了发起者（资源绝不回传给换皮肤的那个客户端）。</summary>
+        public void OnForwardExcludedOrigin() => ForwardExcludedOrigin++;
+
+        /// <summary>给发起者发出的一条明确回执（accepted / rejected）。</summary>
+        public void OnAckSent() => AckSent++;
+
+        /// <summary>回执发送失败：显式计数 + 原因（调用方不能假装发起者已收到）。</summary>
+        public void OnAckFailure(string reason)
+        {
+            AckFailures++;
+            AddReason("ack:" + Normalize(reason));
+        }
+
+        /// <summary>超过 SkinAssetPolicy 上限（单资产 / 分片 / 压缩后）。</summary>
+        public void OnTooLarge(string reason)
+        {
+            TooLarge++;
+            AddReason("too-large:" + Normalize(reason));
+        }
+
+        /// <summary>主机收到某自定义皮肤的换肤通知，但此刻没有资源（不伪造记录 / 不回 MISSING）。</summary>
+        public void OnChangeWithoutAsset(string reason)
+        {
+            ChangeWithoutAsset++;
+            AddReason("change-no-asset:" + Normalize(reason));
         }
 
         /// <summary>记录一次拒绝：Rejected 总数 + 具体分类 + 原因明细（原因不静默）。</summary>
@@ -133,6 +203,14 @@ namespace SuMultiplayer.Players
             text.Append(" skinAssetDeduped=").Append(Deduped);
             text.Append(" skinChangeRejected=").Append(ChangeRejected);
             text.Append(" skinChangeFailed=").Append(ChangeFailed);
+            text.Append(" skinUploadAccepted=").Append(UploadAccepted);
+            text.Append(" skinUploadRejected=").Append(UploadRejected);
+            text.Append(" skinAssetForwarded=").Append(AssetForwarded);
+            text.Append(" skinForwardExcludedOrigin=").Append(ForwardExcludedOrigin);
+            text.Append(" skinAckSent=").Append(AckSent);
+            text.Append(" skinAckFailures=").Append(AckFailures);
+            text.Append(" skinTooLarge=").Append(TooLarge);
+            text.Append(" skinChangeWithoutAsset=").Append(ChangeWithoutAsset);
             if (m_reasonOrder.Count > 0)
             {
                 text.Append(" reasons=");

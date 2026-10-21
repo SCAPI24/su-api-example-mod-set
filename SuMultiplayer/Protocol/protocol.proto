@@ -413,6 +413,40 @@ enum MessageType {
   // Source: Survivalcraft/Game/ComponentHealth.cs:74-136（Injure）
   PLAYER_SELF_DAMAGE_REQUEST = 106;
   PLAYER_SELF_DAMAGE_RESULT = 107;
+
+  // Runtime player-profile report (playerprofile.proto): the Edit Players screen
+  // writes PlayerData.Name / PlayerClass / CharacterSkinName locally, but the old
+  // event-driven path (PLAYER_PROFILE = 27 + PlayerEditWatcher) only fires on a
+  // ScreensManager.CurrentScreen transition.  A change that is not observed there
+  // never reaches the host, so the host and every other client keep the old name
+  // / skin ("改了没生效").  This message is the runtime change channel:
+  //   client -> host : the client's own complete profile for one (clientId, slot)
+  //   host -> clients: the authoritative profile after validation/apply
+  // The host broadcast is sent to every player (including the changed client) and
+  // carries a monotonic revision, so an older packet can never overwrite a newer
+  // value.  Append-only: 108 = current max 107 + 1; no existing id is renumbered.
+  // Source: Mod/ScMultiplayer/Modules/Player/ScMultiplayerProfileHandlers.cs:728-890
+  PLAYER_PROFILE_SYNC = 108;
+
+  // Host -> all clients: presentation effects of host-simulated client avatars
+  // (vitals.proto PlayerEffectEvents).  The client removes its own
+  // ComponentFlu / ComponentSickness / ComponentOnFire updateables so the host
+  // is the only place those presentation effects are produced; the host polls
+  // rising edges (cough / sneeze / nausea / puke / ignite / extinguish) on the
+  // avatars it simulates and broadcasts them, and the owner client replays the
+  // engine-equivalent sound / particle / overlay.  Health loss keeps arriving
+  // through PLAYER_VITALS_REPORT (95); this message never changes vitals.
+  // Append-only: 109 = current max 108 + 1; no existing id is renumbered.
+  // Source: Survivalcraft/Game/ComponentFlu.cs:Cough/Sneeze/FluEffect
+  // Source: Survivalcraft/Game/ComponentSickness.cs:NauseaEffect
+  // Source: Survivalcraft/Game/ComponentOnFire.cs:Update
+  PLAYER_EFFECT_EVENTS = 109;
+
+  // 110 was the reverted respawn-progress handshake (respawn.proto
+  // PlayerRespawnStage: client -> host preparing / spawned).  The host now
+  // respawns immediately on PLAYER_RESPAWN_REQUEST, so the message is gone.
+  // 110 is retired and must never be reused for a different message.
+  reserved 110;
 }
 
 // Logical envelope metadata.  The current single-message transport puts these

@@ -283,10 +283,19 @@ namespace SuMultiplayer.Modules
     /// <summary>
     /// 自动镜像宿主"卡死在死亡状态"的判定（纯逻辑，三条条件**任一命中**即卡死）：
     ///   · <c>ComponentHealth.Health &lt;= 0</c>（引擎 Playing 状态会把这种宿主推进 PlayerDead）；
-    ///   · 分屏相机是 <c>DeathCamera</c>（PlayerDead 状态进入时切它，Source: PlayerData.cs:275-277）；
+    ///   · 分屏相机是 <c>DeathCamera</c> 且**不是**"客户端角色死亡"的预期表现
+    ///     （PlayerDead 进入时切它，Source: PlayerData.cs:275-277）；
     ///   · <c>PlayerData</c> 状态机当前状态 = <c>PlayerDead</c>
     ///     （该状态只在 <c>GameWidget.Input.Any</c> 时自己复活，而自动宿主 <c>InputDevice=None</c>
     ///     ⇒ 不修就永远卡住，Source: PlayerData.cs:300-321）。
+    ///
+    /// **为什么相机那条要排除"预期表现"**：replace 模式下客户端角色死亡时，
+    /// <c>MirrorCharacterEngine.ValidateBound</c> 会**主动**把第三分屏切到 <c>DeathCamera</c>
+    /// （环绕客户端尸体，Source: Engine/MirrorCharacterEngine.cs:729-776），客户端复活时再切回
+    /// <c>FppCamera</c>；客户端的死亡屏同样走原生链路（Source: Engine/PlayerVitalsReplica.cs:540、:863）。
+    /// 若把这种相机当成宿主卡死，客户端**每次死亡**都会触发"解绑 + RemoveEntity"复活，
+    /// 第三屏在客户端死亡期间反复重建 —— 那正是要修掉的抖动。宿主自己真死时，
+    /// 另外两条（health≤0 / PlayerData=PlayerDead）仍然命中。
     /// </summary>
     public static class MirrorHostStuck
     {
@@ -294,12 +303,29 @@ namespace SuMultiplayer.Modules
         public const string ReasonDeathCamera = "camera=DeathCamera";
         public const string ReasonPlayerDead = "PlayerData=PlayerDead";
 
-        /// <summary>三条条件任一命中即卡死；<paramref name="detail"/> 列出命中哪几条（可直接定位）。</summary>
+        /// <summary>
+        /// 这台 <c>DeathCamera</c> 是否是"客户端角色死亡"的预期表现（= 绑定在这个宿主上 + 客户端
+        /// 化身的 <c>ComponentHealth.Health &lt;= 0</c>）。true = 不按宿主卡死处理。
+        /// </summary>
+        public static bool IsClientDeathPresentation(bool boundToThisHost, bool clientAvatarDead) =>
+            boundToThisHost && clientAvatarDead;
+
+        /// <summary>
+        /// 三条条件任一命中即卡死；<paramref name="detail"/> 列出命中哪几条（可直接定位）。
+        /// 这个重载不区分"相机是不是客户端死亡的预期表现"（等价于第 4 个参数传 false）——
+        /// 引擎侧用带过滤的重载，纯逻辑测试两个都覆盖。
+        /// </summary>
         public static bool IsStuck(bool healthAtOrBelowZero, bool deathCamera, bool playerDataDead,
-            out string detail)
+            out string detail) =>
+            IsStuck(healthAtOrBelowZero, deathCamera, false, playerDataDead, out detail);
+
+        /// <summary>带"客户端死亡表现"过滤的卡死判定（引擎侧用这个重载）。</summary>
+        public static bool IsStuck(bool healthAtOrBelowZero, bool deathCamera,
+            bool clientDeathPresentation, bool playerDataDead, out string detail)
         {
             detail = null;
-            if (!healthAtOrBelowZero && !deathCamera && !playerDataDead) return false;
+            bool stuckCamera = deathCamera && !clientDeathPresentation;
+            if (!healthAtOrBelowZero && !stuckCamera && !playerDataDead) return false;
             var text = new StringBuilder("卡死条件命中：");
             bool first = true;
             if (healthAtOrBelowZero)
@@ -307,7 +333,7 @@ namespace SuMultiplayer.Modules
                 text.Append(ReasonHealth);
                 first = false;
             }
-            if (deathCamera)
+            if (stuckCamera)
             {
                 if (!first) text.Append(" + ");
                 text.Append(ReasonDeathCamera);
@@ -327,15 +353,26 @@ namespace SuMultiplayer.Modules
     /// "谁可以被免疫 / 卡死修复"的判定（纯逻辑）：**只允许自动镜像宿主**。
     /// 三道闸门缺一不可：
     ///   · 必须在宿主账本里（<c>m_sessionOwned</c>，本功能创建 / 收编的）；
-    ///   · 名字必须是本功能的自动命名 <c>&lt;前缀&gt;#&lt;clientId&gt;</c>
-    ///     （手动角色 h1/h2/H3 不满足 ⇒ 一个字段都不写）；
+    ///   · 名字必须是本功能的自动命名 <c>&lt;前缀&gt;#&lt;clientId&gt;</c>，**或者**它在世界存档里带着
+    ///     本功能的自动宿主标记（<c>SuSubsystemPlayers.MarkAutoHost</c>，两种证据任一成立即可；
+    ///     手动角色 h1/h2/H3 两种都不满足 ⇒ 一个字段都不写）；
     ///   · 绝不能是联机化身（客户端角色，它的生命由客户端自己权威）。
     /// </summary>
     public static class MirrorHostImmunityTarget
     {
         /// <summary>是否可以维护（false = <paramref name="reason"/> 写清是哪道闸门拒的）。</summary>
         public static bool IsEligible(bool sessionOwned, bool autoName, bool isNetworkAvatar,
-            out string reason)
+            out string reason) =>
+            IsEligible(sessionOwned, autoName, autoHostFlag: false, isNetworkAvatar, out reason);
+
+        /// <summary>
+        /// 带"自动宿主标记"的判别（引擎侧用这个重载）：<paramref name="autoHostFlag"/> = 世界存档里
+        /// 本功能的 <c>MarkAutoHost</c> 标记（自动创建 / 收编时写入）。
+        /// 名字前缀与存档标记是**两种证据**：显式名字（<c>mirrorcharacter</c>）收编的 auto 宿主
+        /// 名字可能不满足 <c>&lt;前缀&gt;#&lt;N&gt;</c>，但标记仍在 ⇒ 也算自动宿主。
+        /// </summary>
+        public static bool IsEligible(bool sessionOwned, bool autoName, bool autoHostFlag,
+            bool isNetworkAvatar, out string reason)
         {
             reason = null;
             if (isNetworkAvatar)
@@ -348,9 +385,10 @@ namespace SuMultiplayer.Modules
                 reason = "目标不在镜像宿主账本里（手动角色 h1/h2/H3 一律不动）";
                 return false;
             }
-            if (!autoName)
+            if (!autoName && !autoHostFlag)
             {
-                reason = "目标名字不是自动命名（<前缀>#<clientId>）→ 按手动角色处理，不动";
+                reason = "目标既不是自动命名（<前缀>#<clientId>），也没有自动宿主标记" +
+                    "（MarkAutoHost）→ 按手动角色处理，不动";
                 return false;
             }
             return true;
@@ -360,7 +398,8 @@ namespace SuMultiplayer.Modules
     /// <summary>
     /// 一拍"自动宿主维护"的增量结果（纯值）：引擎侧逐宿主累加，控制器按拍汇总进
     /// <c>MirrorHostCounters</c>（状态行键 <c>mirrorHostImmune</c> / <c>mirrorHostRevived</c> /
-    /// <c>mirrorHostStuckDead</c> / <c>mirrorHostImmunityFailures</c>）。
+    /// <c>mirrorHostStuckDead</c> / <c>mirrorHostImmunityFailures</c> /
+    /// <c>mirrorHostReviveFailures</c>）。
     /// 口径：
     ///   · <see cref="Immune"/> = 本拍成功写入全部免疫字段的**宿主数**（不是字段数）；
     ///   · <see cref="StuckDetected"/> = 本拍命中卡死条件的宿主数；

@@ -1782,6 +1782,14 @@ namespace SuMultiplayer.Engine
 
         /// <summary>base.Load 的两个写格订阅已摘 + 只判停替代已挂上（false = 限流 Error，客户端不静默）。</summary>
         private bool m_clientMotionHandlersDetached;
+
+        /// <summary>
+        /// 摘除永久失败后停止每帧重试的闸门（防反射风暴；错误已单独 Error 点名）。
+        /// 2026-10-21 平板帧率：原实现只要摘除失败就**每帧重试 + 每帧重复订阅**，
+        /// 事件委托链无限增长（3.5h 累计 46 万次）；基类字段查找修好后此闸门仅作兜底。
+        /// </summary>
+        private bool m_clientDetachAbandoned;
+        private const long ClientDetachMaxAttempts = 300;
         /// <summary>摘除失败时的重试/日志计数（限流 10s 一条，不逐帧刷屏）。</summary>
         private const long ClientDetachFailureLogMs = 10000;
         private long m_clientDetachAttempts;
@@ -2012,6 +2020,7 @@ namespace SuMultiplayer.Engine
         private void EnsureClientHandlersDetached()
         {
             if (m_clientMotionHandlersDetached) return;
+            if (m_clientDetachAbandoned) return;
             if (!ReplicaGates.IsClient(SubsystemTerrain)) return;
 
             object moving = ReplicaGates.GetField(this, "m_subsystemMovingBlocks",
@@ -2054,6 +2063,13 @@ namespace SuMultiplayer.Engine
                   stoppedCountAdded))
             {
                 NoteClientDetachFailure(stopped, collision, collisionStopAdded, stoppedCountAdded);
+                if (m_clientDetachAttempts >= ClientDetachMaxAttempts)
+                {
+                    m_clientDetachAbandoned = true;
+                    Log.Error("[SuMP] collapsing: 客户端摘订阅连续失败 " +
+                        m_clientDetachAttempts + " 次 → 停止每帧重试（明确失败，不再重试；" +
+                        "客户端本地塌落仍可能写格，需按日志修反射/引擎版本差异）");
+                }
                 return;
             }
             m_isCollapseSupportBlock = typeof(SubsystemCollapsingBlockBehavior).GetMethod(
@@ -2805,6 +2821,11 @@ namespace SuMultiplayer.Engine
         private bool m_loaded;
         /// <summary>base 的两个私有写格订阅是否已摘（false = 已 Error 点名，客户端每帧重试）。</summary>
         private bool m_clientBaseHandlersDetached;
+
+        /// <summary>活塞 base 订阅摘除的每帧重试计数与放弃闸门（同塌落外壳，防反射风暴）。</summary>
+        private long m_clientBaseDetachAttempts;
+        private bool m_clientBaseDetachAbandoned;
+        private const long ClientBaseDetachMaxAttempts = 300;
         private bool m_clientStateMissingLogged;
         /// <summary>防护窗口外壳是否缺失（只 Error 一次；缺失 ≠ 静默：事件摘除仍生效）。</summary>
         private bool m_guardShellMissingLogged;
@@ -2905,6 +2926,7 @@ namespace SuMultiplayer.Engine
         internal bool EnsureClientBaseHandlersDetached()
         {
             if (m_clientBaseHandlersDetached) return true;
+            if (m_clientBaseDetachAbandoned) return false;
             if (!m_loaded) return false;
             if (!ReplicaGates.IsClient(SubsystemTerrain)) return false;
             SubsystemMovingBlocks moving = MovingBlocks;
@@ -2929,6 +2951,14 @@ namespace SuMultiplayer.Engine
                         ? collision.Failure
                         : "事件 'Stopped' 上找不到本外壳的 OnPresentationStopped 委托";
                 NoteDetachFailure(reason);
+                m_clientBaseDetachAttempts++;
+                if (m_clientBaseDetachAttempts >= ClientBaseDetachMaxAttempts)
+                {
+                    m_clientBaseDetachAbandoned = true;
+                    Log.Error("[SuMP] piston: 客户端 base 写格订阅连续摘除失败 " +
+                        m_clientBaseDetachAttempts + " 次 → 停止每帧重试（明确失败，不再重试；" +
+                        "原因见上一条 Error，需修反射/引擎版本差异）");
+                }
                 return false;
             }
             m_clientBaseHandlersDetached = true;

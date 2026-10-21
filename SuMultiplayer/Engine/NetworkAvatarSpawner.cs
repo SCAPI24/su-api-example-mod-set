@@ -661,7 +661,12 @@ namespace SuMultiplayer.Engine
                 ApplySkinMaterial(playerData, record?.SkinName, record?.SkinSha256);
                 if (record != null)
                 {
-                    ApplyAuthoritativePlayerStats(playerData.ComponentPlayer, record.Health, record.Air,
+                    // 出生必须是活的：角色记录可能是在**死亡时**抓取的（Health=0），
+                    // 直接回灌会让新化身一出生就死（实测：客户端加入即 `主机角色 2:0 死亡 rev=1，
+                    // 死因=未记录`，之后无限死亡循环）。单机原版复活/新出生一律满血，
+                    // 这里把 Health<=0 的记录按"存活"处理；其它体征仍按记录恢复。
+                    float spawnHealth = record.Health > 0f ? record.Health : 1f;
+                    ApplyAuthoritativePlayerStats(playerData.ComponentPlayer, spawnHealth, record.Air,
                         record.Food, record.Stamina, record.Sleep, record.Temperature, record.Wetness,
                         record.Level);
                     ApplyPlayerRecordState(playerData.ComponentPlayer, record);
@@ -2172,7 +2177,11 @@ namespace SuMultiplayer.Engine
                 Position = player?.ComponentBody.Position ?? playerData?.SpawnPosition ?? Vector3.Zero,
                 SpawnPosition = playerData?.SpawnPosition ?? Vector3.Zero,
                 Level = playerData?.Level ?? PlayerRecordCodec.DefaultLevel,
-                Health = player?.ComponentHealth?.Health ?? PlayerRecordCodec.DefaultHealth,
+                // 死亡时的 0 不落盘：记录只用于下次加入/重连，出生必须满血。
+                // （单机原版没有"角色记录健康"这回事；写 0 会导致下次出生即死。）
+                Health = (player?.ComponentHealth?.Health > 0f
+                    ? player.ComponentHealth.Health
+                    : PlayerRecordCodec.DefaultHealth),
                 Air = player?.ComponentHealth?.Air ?? PlayerRecordCodec.DefaultAir,
                 Food = vitalStats?.Food ?? PlayerRecordCodec.DefaultFood,
                 Stamina = vitalStats?.Stamina ?? PlayerRecordCodec.DefaultStamina,

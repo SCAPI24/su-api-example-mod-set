@@ -99,7 +99,8 @@ namespace SuMultiplayer.Modules
     ///     其余部分只能是同物品的槽位移动（拆分 / 取出 / 放入）。
     ///   · 工作台的 result 槽是主机推导的：客户端 desired result 只当本地预测，主机
     ///     UpdateCraftingResult 重算；取产物用主机 RemoveSlotItems(result, n) 落地。
-    ///   · 玩家背包在主机侧只镜像前 <see cref="PlayerInventoryMath.MaxSyncSlots"/> 槽，
+    ///   · 玩家背包在主机侧的实时镜像范围按 <see cref="PlayerInventoryMath.SyncSlotsFor"/>：
+    ///     普通背包（26 槽）全部槽位、创造仓库前 <see cref="PlayerInventoryMath.MaxSyncSlots"/> 槽，
     ///     所以计划只带这段"实时镜像"的客户端 desired 槽值。
     /// </summary>
     public sealed class ContainerEditPlan

@@ -1198,7 +1198,8 @@ namespace SuMultiplayer.Engine
                 return;
             IInventory inventory = local.ComponentPlayer.ComponentMiner?.Inventory;
             if (inventory == null || inventory.SlotsCount <= 0) return;
-            int slots = Math.Min(inventory.SlotsCount, PlayerInventoryMath.MaxSyncSlots);
+            // 与背包同步同一口径：普通背包（26 槽）全部槽位；创造仓库仍只取前 10 槽。
+            int slots = PlayerInventoryMath.SyncSlotsFor(inventory.SlotsCount);
             if (slots <= 0) return;
             // 每帧复用缓冲（客户端每帧一次；热路径不做数组分配）。
             if (m_localInventorySnapshotValues == null ||

@@ -649,6 +649,28 @@ namespace SuMultiplayer.Modules
             return sent;
         }
 
+        /// <summary>
+        /// 主机：把一条消息发给除 <paramref name="excludeClientId"/> 外的**所有在线玩家端**
+        /// （皮肤资源转发专用：发起者只收回执，绝不再收到资源）。
+        /// 过滤口径与 <see cref="BroadcastToPlayers"/> 完全一致，只多跳过目标 clientId；
+        /// 返回成功入队的端数（0 = 没有可发目标或全部失败，调用方据此计数，不静默）。
+        /// </summary>
+        public int BroadcastToPlayersExcept(int excludeClientId, MessageType type, byte[] payload)
+        {
+            if (m_server == null) return 0;
+            int sent = 0;
+            PeerInfo[] peers = m_server.ListPeers();
+            for (int i = 0; i < peers.Length; i++)
+            {
+                PeerInfo peer = peers[i];
+                if (peer.Id == excludeClientId) continue;
+                if (!peer.Alive || peer.Kind != ClientKind.Player) continue;
+                if (peer.State != ChannelState.Connected && peer.State != ChannelState.Backpressured) continue;
+                if (m_server.TrySend(peer.Id, type, payload)) sent++;
+            }
+            return sent;
+        }
+
         public int PlayerPeerCount => CountPlayerPeers();
 
         public bool IsPlayerClient(int clientId) => IsPlayerPeer(clientId);

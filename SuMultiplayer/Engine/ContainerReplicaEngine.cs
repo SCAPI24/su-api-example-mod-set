@@ -1063,7 +1063,9 @@ namespace SuMultiplayer.Engine
         /// 普通槽的净增物品必须由玩家背包的净减覆盖（按种类守恒）；工作台的 result / remains
         /// 由主机推导 —— 放料时客户端预测的产物只当参考（主机 UpdateCraftingResult 重算），
         /// 取产物时主机 RemoveSlotItems(result, n) 原子消费配方格。
-        /// 玩家背包在主机侧只镜像前 MaxSyncSlots 槽；台账只动这段实时镜像，背包部分由客户端权威上报。
+        /// 玩家背包在主机侧的实时镜像范围按 <see cref="PlayerInventoryMath.SyncSlotsFor"/> 决定：
+        /// 普通背包（26 槽）全部槽位；创造仓库仍只有前 <see cref="PlayerInventoryMath.MaxSyncSlots"/> 槽。
+        /// 台账只动这段实时镜像，背包部分由客户端权威上报。
         ///
         /// 请求者背包是创造仓库（<c>ComponentCreativeInventory</c>）时：跳过物品守恒，改按
         /// <see cref="ContainerEditPolicy.TryBuildPlan"/> 的创造规则校验（物品值必须由创造仓库
@@ -1191,7 +1193,8 @@ namespace SuMultiplayer.Engine
                     current.Counts, request.DesiredValues, request.DesiredCounts, resultSlot,
                     remainsSlot, craftingRules, request.PlayerBaseValues,
                     request.PlayerBaseCounts, request.PlayerDesiredValues,
-                    request.PlayerDesiredCounts, PlayerInventoryMath.MaxSyncSlots,
+                    request.PlayerDesiredCounts,
+                    PlayerInventoryMath.SyncSlotsFor(playerInventory.SlotsCount),
                     in requester, out ContainerEditPlan plan, out reason))
             {
                 m_hostEditsRejected++;
@@ -1557,9 +1560,11 @@ namespace SuMultiplayer.Engine
         }
 
         /// <summary>
-        /// 把计划里的玩家背包**实时镜像区**（前 <see cref="PlayerInventoryMath.MaxSyncSlots"/> 槽）写成客户端 desired。
-        /// 只有当主机实时镜像等于客户端 base 或 desired 时才写（说明客户端快照没有超过镜像）；
-        /// 否则明确计数 + 限流日志，容器编辑照常落地，玩家背包由客户端权威上报对账。
+        /// 把计划里的玩家背包**实时镜像区**（<see cref="PlayerInventoryMath.SyncSlotsFor"/>：
+        /// 普通背包 26 槽全量 / 创造仓库前 <see cref="PlayerInventoryMath.MaxSyncSlots"/> 槽）
+        /// 写成客户端 desired。只有当主机实时镜像等于客户端 base 或 desired 时才写
+        /// （说明客户端快照没有超过镜像）；否则明确计数 + 限流日志，容器编辑照常落地，
+        /// 玩家背包由客户端权威上报对账。
         /// </summary>
         private void ApplyPlayerMirror(IInventory inventory, in ContainerEditPlan plan,
             int clientId, int[] hostValues, int[] hostCounts, int[] playerBaseValues,
@@ -1570,7 +1575,7 @@ namespace SuMultiplayer.Engine
             leftover = 0;
             if (inventory == null || plan?.LivePlayerValues == null) return;
             int live = Math.Min(plan.LivePlayerValues.Length, inventory.SlotsCount);
-            live = Math.Min(live, PlayerInventoryMath.MaxSyncSlots);
+            live = Math.Min(live, PlayerInventoryMath.SyncSlotsFor(inventory.SlotsCount));
             if (live <= 0) return;
             bool matchesBase = LiveRangeEquals(hostValues, hostCounts, playerBaseValues,
                 playerBaseCounts, live);

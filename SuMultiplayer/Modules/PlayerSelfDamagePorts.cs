@@ -70,6 +70,46 @@ namespace SuMultiplayer.Modules
         PlayerSelfDamageApplyStatus TryApplyAuthoritySelfDamage(PlayerKey key, float amount,
             string cause, out float healthAfter, out string reason);
 
+        /// <summary>
+        /// **客户端侧**：应用一条**已接受**的 107 结果。
+        ///   · 把主机权威 <c>health_after</c> 写进本机角色（只在当前本地值更高时写：
+        ///     主机上报可能已经先到，不能把更新的权威值改回旧值）；
+        ///   · 驱动与单机掉血一致的**受伤表现**：受伤音效 + 红屏因子 + 血条闪烁
+        ///     （客户端 <c>ComponentHealth.Update</c> 已被摘掉，这一行表现不会自己发生）；
+        ///   · <c>health_after == 0</c> 时按主机权威写死因 + 0 血，让引擎原生死亡流程启动
+        ///     （不是客户端自己判死：0 来自主机的 107 结果）。
+        /// 返回 false = 没有本机角色 / 写入异常（<paramref name="reason"/> 明确）；
+        /// <paramref name="playedSound"/> / <paramref name="redoutArmed"/> = 本次是否真的
+        /// 播了受伤音效 / 起了红屏（模块计数用；重复的结果不会重复表现）。
+        /// </summary>
+        bool TryApplyLocalSelfDamageResult(PlayerKey key, in PlayerSelfDamageResultData result,
+            out bool playedSound, out bool redoutArmed, out string reason);
+
+        /// <summary>
+        /// **客户端侧**：主机拒绝之后立刻按**缓存的主机权威生命**回写本地（107 拒绝结果不带
+        /// <c>health_after</c>，所以用最近一份 95 上报 / 已接受结果缓存的值）。
+        /// 只在本地值不同时写；返回 false = 没有权威缓存 / 没有本机角色（不猜）。
+        /// </summary>
+        bool TryRestoreLocalAuthorityHealth(PlayerKey key, out float health, out string reason);
+
+        /// <summary>
+        /// **客户端侧 / 每帧**（Frame.Update，晚于 <c>ComponentScreenOverlays.Update</c> 的每帧
+        /// Reset）：把 107 结果 / 95 上报触发的红屏因子按引擎速度衰减并写回
+        /// <c>ComponentScreenOverlays.RedoutFactor</c>。返回本拍写到的槽位数；
+        /// <paramref name="reason"/> 非空 = 有槽位失败（模块限流日志）。
+        /// 只写显示层，不跑任何本地生命模拟。
+        /// </summary>
+        int RefreshLocalSelfDamagePresentation(float deltaTime, out string reason);
+
+        /// <summary>
+        /// **客户端侧**：移除"本地预测回滚"守卫（离开世界 / 断开主机 / 模块下线）。
+        /// 守卫是 <c>SubsystemUpdate</c> 里的一个 <c>IUpdateable</c>（UpdateOrder.Reset，
+        /// 早于 <c>SubsystemPlayers</c> 的 −20）：它在引擎控件把本地 <c>Health</c> 扣掉之后、
+        /// <c>PlayerData.Update</c> 判死之前，把本地值写回**最近一份主机权威生命**，
+        /// 从而禁止"客户端自己判死"。重复调用幂等。
+        /// </summary>
+        void DetachSelfDamage();
+
         /// <summary>状态行用：引擎侧自我伤害计数（点击读数 / 主机施加 / 失败），不改变行为。</summary>
         string DescribeSelfDamage();
     }

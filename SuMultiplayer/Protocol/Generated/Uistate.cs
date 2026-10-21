@@ -25,7 +25,7 @@ namespace SuMultiplayer.Protocol.UiState {
       byte[] descriptorData = global::System.Convert.FromBase64String(
           string.Concat(
             "Cg11aXN0YXRlLnByb3RvEgxzdW1wLnVpc3RhdGUaGWdvb2dsZS9wcm90b2J1",
-            "Zi9hbnkucHJvdG8i/wMKDUNsaWVudFVpU3RhdGUSEAoIcmV2aXNpb24YASAB",
+            "Zi9hbnkucHJvdG8ilAQKDUNsaWVudFVpU3RhdGUSEAoIcmV2aXNpb24YASAB",
             "KA0SEgoKaW5wdXRfa2luZBgCIAEoDRITCgtodWRfdmlzaWJsZRgDIAEoCBIO",
             "CgZzY3JlZW4YBCABKAkSFgoOZGlhbG9nX3ByZXNlbnQYBSABKAgSEwoLZGlh",
             "bG9nX3R5cGUYBiABKAkSFQoNbW9kYWxfcHJlc2VudBgHIAEoCBISCgptb2Rh",
@@ -35,15 +35,15 @@ namespace SuMultiplayer.Protocol.UiState {
             "Z2VfZmFjdG9yGAwgASgCEhcKD292ZXJsYXlfbWVzc2FnZRgNIAEoCRIeChZv",
             "dmVybGF5X21lc3NhZ2VfZmFjdG9yGA4gASgCEhkKEWhhbmRjcmFmdF9wcmVz",
             "ZW50GA8gASgIEhwKEGhhbmRjcmFmdF92YWx1ZXMYECADKAVCAhABEhwKEGhh",
-            "bmRjcmFmdF9jb3VudHMYESADKAVCAhABEgsKA2V4dBhkIAEoDBIkCgZjdXN0",
-            "b20YZSABKAsyFC5nb29nbGUucHJvdG9idWYuQW55Ik8KDlVpU21hbGxNZXNz",
-            "YWdlEgwKBHRleHQYASABKAkSDQoFY29sb3IYAiABKA0SEAoIYmxpbmtpbmcY",
-            "AyABKAgSDgoGYWdlX21zGAQgASgNQiNIAaoCHlN1TXVsdGlwbGF5ZXIuUHJv",
-            "dG9jb2wuVWlTdGF0ZWIGcHJvdG8z"));
+            "bmRjcmFmdF9jb3VudHMYESADKAVCAhABEhMKC2NhbWVyYV9tb2RlGBIgASgN",
+            "EgsKA2V4dBhkIAEoDBIkCgZjdXN0b20YZSABKAsyFC5nb29nbGUucHJvdG9i",
+            "dWYuQW55Ik8KDlVpU21hbGxNZXNzYWdlEgwKBHRleHQYASABKAkSDQoFY29s",
+            "b3IYAiABKA0SEAoIYmxpbmtpbmcYAyABKAgSDgoGYWdlX21zGAQgASgNQiNI",
+            "AaoCHlN1TXVsdGlwbGF5ZXIuUHJvdG9jb2wuVWlTdGF0ZWIGcHJvdG8z"));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { global::Google.Protobuf.WellKnownTypes.AnyReflection.Descriptor, },
           new pbr::GeneratedClrTypeInfo(null, null, new pbr::GeneratedClrTypeInfo[] {
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.UiState.ClientUiState), global::SuMultiplayer.Protocol.UiState.ClientUiState.Parser, new[]{ "Revision", "InputKind", "HudVisible", "Screen", "DialogPresent", "DialogType", "ModalPresent", "ModalType", "ChatInputOpen", "SmallMessages", "FloatingMessage", "FloatingMessageFactor", "OverlayMessage", "OverlayMessageFactor", "HandcraftPresent", "HandcraftValues", "HandcraftCounts", "Ext", "Custom" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.UiState.ClientUiState), global::SuMultiplayer.Protocol.UiState.ClientUiState.Parser, new[]{ "Revision", "InputKind", "HudVisible", "Screen", "DialogPresent", "DialogType", "ModalPresent", "ModalType", "ChatInputOpen", "SmallMessages", "FloatingMessage", "FloatingMessageFactor", "OverlayMessage", "OverlayMessageFactor", "HandcraftPresent", "HandcraftValues", "HandcraftCounts", "CameraMode", "Ext", "Custom" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.UiState.UiSmallMessage), global::SuMultiplayer.Protocol.UiState.UiSmallMessage.Parser, new[]{ "Text", "Color", "Blinking", "AgeMs" }, null, null, null, null)
           }));
     }
@@ -80,9 +80,14 @@ namespace SuMultiplayer.Protocol.UiState {
   ///                   bottom hint line currently drawn by the client.
   ///   handcraft_*     the client's ComponentCraftingTable grid (FullInventoryWidget
   ///                   left half) so the host can recompute the same recipe result.
+  ///   camera_mode     the client's own GameWidget.ActiveCamera: 1 = Fpp, 2 = Tpp,
+  ///                   3 = Orbit, 4 = Fixed, 0 = unknown / do not change.  The host's
+  ///                   view of that client follows it (death -> DeathCamera first;
+  ///                   respawn -> last mode).
   ///
   /// Wire id lives in protocol.proto (MessageType.CLIENT_UI_STATE = 100).
-  /// Append-only: never renumber.  Field numbers 10..17 are the phase-2 additions.
+  /// Append-only: never renumber.  Field numbers 10..17 are the phase-2 additions;
+  /// 18 is the phase-3 camera mode.
   ///
   /// Source: Survivalcraft/Game/ComponentGui.cs:395（ControlsContainerWidget.IsVisible）
   /// Source: Survivalcraft/Game/ComponentGui.cs:536-559（ModalPanelWidget = FullInventoryWidget /
@@ -145,6 +150,7 @@ namespace SuMultiplayer.Protocol.UiState {
       handcraftPresent_ = other.handcraftPresent_;
       handcraftValues_ = other.handcraftValues_.Clone();
       handcraftCounts_ = other.handcraftCounts_.Clone();
+      cameraMode_ = other.cameraMode_;
       ext_ = other.ext_;
       custom_ = other.custom_ != null ? other.custom_.Clone() : null;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
@@ -407,6 +413,51 @@ namespace SuMultiplayer.Protocol.UiState {
       get { return handcraftCounts_; }
     }
 
+    /// <summary>Field number for the "camera_mode" field.</summary>
+    public const int CameraModeFieldNumber = 18;
+    private uint cameraMode_;
+    /// <summary>
+    /// -------------------------------------------------------------------------
+    /// Phase 3 (append-only): the client's own camera mode, so the host's view of
+    /// that client can use the **same** camera instead of being pinned to FppCamera.
+    ///
+    /// 0 = unknown / do not change: the client's ActiveCamera is not one of the four
+    ///     player-selectable modes this message carries (DeathCamera while dead, or
+    ///     Intro / Loading), or the client has not reported a mode yet.  The host
+    ///     keeps its last known mode and the death / respawn camera logic keeps
+    ///     priority.
+    /// 1 = first person (the client's GameWidget.ActiveCamera is FppCamera).
+    /// 2 = third person (the client's GameWidget.ActiveCamera is TppCamera).
+    /// 3 = orbit        (the client's GameWidget.ActiveCamera is OrbitCamera).
+    /// 4 = fixed        (the client's GameWidget.ActiveCamera is FixedCamera).
+    ///
+    /// Values > 4 are invalid: the codec rejects the whole snapshot (host camera
+    /// unchanged) instead of coercing.  Old clients only send 0/1/2, which keeps
+    /// exactly the old behaviour.
+    ///
+    /// Why no camera_pitch / camera_yaw / orbit angles / fixed position: the host's
+    /// view Target is the client's own ComponentPlayer, so TppCamera computes its
+    /// orbit from Target.ComponentCreatureModel.EyeRotation and FppCamera from
+    /// EyePosition / EyeRotation (Source: Survivalcraft/Game/TppCamera.cs:27-89,
+    /// Survivalcraft/Game/FppCamera.cs:21-44).  OrbitCamera orbits the same Target
+    /// body but takes its angles / distance from the *view's own* player input
+    /// (Source: Survivalcraft/Game/OrbitCamera.cs:26-47), and FixedCamera just
+    /// freezes the view where it was activated
+    /// (Source: Survivalcraft/Game/FixedCamera.cs:16-22) — both are per-view state,
+    /// so the host view runs its own; sending them would be a second copy of input
+    /// state the engine already owns and would fight it every frame.
+    /// Source: Survivalcraft/Game/ComponentGui.cs:645-670（V 键 / 视角按钮：
+    ///         Fpp → Tpp → Orbit → Fixed → Fpp）
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public uint CameraMode {
+      get { return cameraMode_; }
+      set {
+        cameraMode_ = value;
+      }
+    }
+
     /// <summary>Field number for the "ext" field.</summary>
     public const int ExtFieldNumber = 100;
     private pb::ByteString ext_ = pb::ByteString.Empty;
@@ -466,6 +517,7 @@ namespace SuMultiplayer.Protocol.UiState {
       if (HandcraftPresent != other.HandcraftPresent) return false;
       if(!handcraftValues_.Equals(other.handcraftValues_)) return false;
       if(!handcraftCounts_.Equals(other.handcraftCounts_)) return false;
+      if (CameraMode != other.CameraMode) return false;
       if (Ext != other.Ext) return false;
       if (!object.Equals(Custom, other.Custom)) return false;
       return Equals(_unknownFields, other._unknownFields);
@@ -492,6 +544,7 @@ namespace SuMultiplayer.Protocol.UiState {
       if (HandcraftPresent != false) hash ^= HandcraftPresent.GetHashCode();
       hash ^= handcraftValues_.GetHashCode();
       hash ^= handcraftCounts_.GetHashCode();
+      if (CameraMode != 0) hash ^= CameraMode.GetHashCode();
       if (Ext.Length != 0) hash ^= Ext.GetHashCode();
       if (custom_ != null) hash ^= Custom.GetHashCode();
       if (_unknownFields != null) {
@@ -571,6 +624,10 @@ namespace SuMultiplayer.Protocol.UiState {
       }
       handcraftValues_.WriteTo(output, _repeated_handcraftValues_codec);
       handcraftCounts_.WriteTo(output, _repeated_handcraftCounts_codec);
+      if (CameraMode != 0) {
+        output.WriteRawTag(144, 1);
+        output.WriteUInt32(CameraMode);
+      }
       if (Ext.Length != 0) {
         output.WriteRawTag(162, 6);
         output.WriteBytes(Ext);
@@ -648,6 +705,10 @@ namespace SuMultiplayer.Protocol.UiState {
       }
       handcraftValues_.WriteTo(ref output, _repeated_handcraftValues_codec);
       handcraftCounts_.WriteTo(ref output, _repeated_handcraftCounts_codec);
+      if (CameraMode != 0) {
+        output.WriteRawTag(144, 1);
+        output.WriteUInt32(CameraMode);
+      }
       if (Ext.Length != 0) {
         output.WriteRawTag(162, 6);
         output.WriteBytes(Ext);
@@ -711,6 +772,9 @@ namespace SuMultiplayer.Protocol.UiState {
       }
       size += handcraftValues_.CalculateSize(_repeated_handcraftValues_codec);
       size += handcraftCounts_.CalculateSize(_repeated_handcraftCounts_codec);
+      if (CameraMode != 0) {
+        size += 2 + pb::CodedOutputStream.ComputeUInt32Size(CameraMode);
+      }
       if (Ext.Length != 0) {
         size += 2 + pb::CodedOutputStream.ComputeBytesSize(Ext);
       }
@@ -774,6 +838,9 @@ namespace SuMultiplayer.Protocol.UiState {
       }
       handcraftValues_.Add(other.handcraftValues_);
       handcraftCounts_.Add(other.handcraftCounts_);
+      if (other.CameraMode != 0) {
+        CameraMode = other.CameraMode;
+      }
       if (other.Ext.Length != 0) {
         Ext = other.Ext;
       }
@@ -870,6 +937,10 @@ namespace SuMultiplayer.Protocol.UiState {
           case 138:
           case 136: {
             handcraftCounts_.AddEntriesFrom(input, _repeated_handcraftCounts_codec);
+            break;
+          }
+          case 144: {
+            CameraMode = input.ReadUInt32();
             break;
           }
           case 802: {
@@ -970,6 +1041,10 @@ namespace SuMultiplayer.Protocol.UiState {
           case 138:
           case 136: {
             handcraftCounts_.AddEntriesFrom(ref input, _repeated_handcraftCounts_codec);
+            break;
+          }
+          case 144: {
+            CameraMode = input.ReadUInt32();
             break;
           }
           case 802: {

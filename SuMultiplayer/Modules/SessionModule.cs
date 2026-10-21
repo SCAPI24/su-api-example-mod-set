@@ -321,6 +321,15 @@ namespace SuMultiplayer.Modules
         public bool IsHostingRoom => m_beaconHost != null;
 
         /// <summary>
+        /// 本端是否作为客户端加入了房间（与主持互斥）。判据：不是房主，且加入流程已发起过
+        /// （<see cref="m_joinAnnounced"/>，直到 <see cref="LeaveRoom"/> 才复位）或传输通道正在跑。
+        /// 产品口径：客户端加入房间后 HUD 只显示 IF，绝不出现 CR（见 <see cref="IRoomBrowsePort"/>）。
+        /// </summary>
+        public bool IsClientInRoom =>
+            !IsHostingRoom &&
+            (m_joinAnnounced || m_transportControl?.IsChannelRunning == true);
+
+        /// <summary>
         /// 角色创建完成、即将返回 Play 屏：这一次 Enter 保留连接（不要 LeaveRoom）。
         /// 由角色创建屏在 SwitchScreen("Play") 之前调用；只生效一次。
         /// </summary>

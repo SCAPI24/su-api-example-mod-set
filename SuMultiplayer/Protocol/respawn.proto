@@ -80,10 +80,21 @@ message PlayerRespawnResult {
   // `not-dead`, `wrong-owner`, `respawn-forbidden`, `cooldown`,
   // `unknown-player`, `respawn-failed` (never a free-form sentence).
   string reason = 5;
-  // Accepted: the spawn point the host used (PlayerData.SpawnPosition).
+  // Accepted: the spawn point the host actually used (PlayerData.SpawnPosition).
+  // Product rule (2026-10-21 revert): the host respawns the avatar immediately on
+  // acceptance; the client then removes its dead entity through the engine's
+  // native flow and replays this point after the new entity spawns.  Item stacks
+  // stay on the ground where the engine dropped them (single-player behavior);
+  // the replay never restores inventory / clothes / crafting slots.
   bool has_position = 6;
   sump.vitals.VitalsVec3 position = 7;
   // Third-party extension points: see doc/message-protocol.md.
   bytes ext = 100;
   google.protobuf.Any custom = 101;
 }
+
+// NOTE: PLAYER_RESPAWN_STAGE = 110 (respawn.proto PlayerRespawnStage:
+// client -> host preparing/spawned progress handshake) was reverted on
+// 2026-10-21.  The host now calls TryRespawnAvatar immediately when it accepts
+// PLAYER_RESPAWN_REQUEST, so no progress message exists any more.  Id 110 is
+// retired and must never be reused for a different message.

@@ -176,6 +176,41 @@ message PlayerVitalsValues {
   // reports the character alive again (respawn), which is counted as
   // `levelRespawnOverrides` when it actually changes the new entity.
   float level = 21;
+
+  // ---- host-authoritative freeze presentation (append-only: 22..23) --------
+  //
+  // Product decision 2026-10-21 (实机问题 1/2): the **host** owns the freeze
+  // progress.  The client must not derive its ice overlay from its own copy of
+  // the temperature (that value only arrives at 5 Hz and was applied as a step,
+  // so the client's screen iced over ahead of the host's third-screen view and
+  // the two devices disagreed about when the freeze happened).  The host
+  // computes the progress from the **host-simulated** character (the same
+  // Temperature that the engine writes IceFactor from) and sends it here; the
+  // client only interpolates towards it (see PlayerFreezeInterpolator).
+  //
+  // freeze_progress = engine-equivalent ice overlay strength:
+  //   Saturate(1 - Temperature / 6)   (Source: ComponentVitalStats.cs:579)
+  //   0    = no ice overlay (Temperature >= 6) **or** a peer that predates
+  //          this field (it sends proto3 defaults).  A receiver distinguishes
+  //          the two through the authoritative `temperature`: when
+  //          temperature < 6 and this field is 0 the field is absent -> the
+  //          client counts `freezeLegacy` and derives the progress from the
+  //          authoritative temperature (still a host value, never a local
+  //          simulation).
+  //   1    = fully iced (Temperature == 0 = engine "Froze to death").
+  //
+  // freeze_stage = the engine's cold thresholds as a stable enum value:
+  //   0 = none (Temperature >= 8), 1 = chilly (< 8), 2 = cold (< 6),
+  //   3 = hypothermia (< 3, engine injures 0.05 every 10 s), 4 = frozen
+  //   (Temperature <= 0 -> engine Injure(1, "Froze to death")).
+  // Source: Survivalcraft/Game/ComponentVitalStats.cs:UpdateTemperature:532-557,579
+  //
+  // Both fields are validated (progress 0..1 finite, stage 0..4, progress > 0
+  // implies stage >= 2) and never clamped silently (PlayerVitalsSnapshot.
+  // TryValidate).  Death itself stays host-authoritative through the existing
+  // death edge / health field: the client never decides "I froze".
+  float freeze_progress = 22;
+  uint32 freeze_stage = 23;
 }
 
 message PlayerVitalsEntry {
@@ -326,6 +361,83 @@ message PlayerSleepResult {
   string reason = 5;
   // Human-readable detail for the client's HUD (the engine's CanSleep sentence).
   string detail = 6;
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}
+
+// ---------------------------------------------------------------------------
+// Host-authoritative presentation effects (append-only).
+//
+// 实机问题 3/4（2026-10-21）：客户端本机角色的 ComponentFlu / ComponentSickness /
+// ComponentOnFire 的 Update 在客户端被摘掉（`PlayerVitalsReplica.DisableLocalSimulation`，
+// 客户端只跟随主机权威），于是主机模拟客户端化身时产生的 **咳嗽 / 打喷嚏 / 恶心呕吐 /
+// 着火** 表现全部只在主机设备上出现：客户端只看到扣血（扣血本身由体征上报 95 下发），
+// 没有咳嗽声、没有呕吐粒子、没有燃烧表现。旧联机 mod 也是这个症状（咳嗽只扣血）。
+//
+// 因此主机把**表现事件**单独下发（owner 客户端播放；扣血仍由 95 下发，绝不由本消息
+// 改变生命 / 体征）：
+//   * 主机每帧轮询它**自己模拟**的客户端化身（client_id > 0）的 ComponentFlu /
+//     ComponentSickness / ComponentOnFire 私有计时字段，用**上升沿**识别一次新表现；
+//   * 每条事件带 (client_id, slot, sequence) —— sequence 是每键单调序号，客户端按
+//     (键, sequence) 去重（重复 / 过期事件计数后丢弃，绝不重复播放）；
+//   * `kind` = 表现种类；`position` = 事件发生时化身的身体坐标（诊断 / 空间音频）；
+//   * `sound` = 主机端该角色实际使用的**引擎资源名**（ComponentCreatureSounds 的
+//     m_coughSound / m_sneezeSound / m_pukeSound / m_moanSound，或 ComponentOnFire 的
+//     "Audio/SizzleLong"），客户端用引擎同款方法播放（资源名只用于核对 / 日志）；
+//   * `host_time` = 主机 SubsystemGameInfo.TotalElapsedGameTime（客户端的游戏时钟由世界
+//     信息持续对齐，所以客户端可以用它判过期：`PlayerEffectPolicy.TtlSeconds(kind)`）；
+//   * `strength` = 表现强度（黑屏 / 绿屏时长秒数；着火 = 权威剩余火时长；熄灭 = 1 表示
+//     被水浇灭 → 引擎会播 Audio/SizzleLong）。
+//
+// 方向：host -> client，**广播**给所有在线玩家端（observer 收到非自己键的事件时只计数
+// `fluEffectNonOwner`，不播放 —— 本次修复范围是"客户端自己的化身"）。
+// Append-only: 消息 id PLAYER_EFFECT_EVENTS = 109（当前最大 108 + 1），旧编号不变。
+// Source: Survivalcraft/Game/ComponentFlu.cs:Cough/Sneeze/FluEffect
+// Source: Survivalcraft/Game/ComponentSickness.cs:NauseaEffect
+// Source: Survivalcraft/Game/ComponentOnFire.cs:Update（粒子 / Audio/SizzleLong）
+// ---------------------------------------------------------------------------
+
+enum PlayerEffectKind {
+  PLAYER_EFFECT_KIND_UNSPECIFIED = 0;
+  PLAYER_EFFECT_KIND_FLU_COUGH = 1;
+  PLAYER_EFFECT_KIND_FLU_SNEEZE = 2;
+  PLAYER_EFFECT_KIND_SICKNESS_NAUSEA = 3;
+  PLAYER_EFFECT_KIND_SICKNESS_PUKE = 4;
+  PLAYER_EFFECT_KIND_FIRE_IGNITE = 5;
+  PLAYER_EFFECT_KIND_FIRE_EXTINGUISH = 6;
+}
+
+message PlayerEffectEventEntry {
+  // Character owner: > 0 = that client's host-simulated avatar (the host never
+  // sends its own local characters here: their presentation already runs on the
+  // host and this fix is about the client's own avatar).
+  uint32 client_id = 1;
+  // Local-character slot on that device (0..3).
+  uint32 slot = 2;
+  // Per-(client_id, slot) monotonic presentation-event counter; 0 is invalid.
+  // The client drops an event whose sequence is not newer than the last applied
+  // one and counts it as a duplicate.
+  uint32 sequence = 3;
+  PlayerEffectKind kind = 4;
+  // Body position at the moment of the effect (bounded to finite floats).
+  VitalsVec3 position = 5;
+  // Host TotalElapsedGameTime at the event (seconds; used for the staleness TTL).
+  double host_time = 6;
+  // Presentation strength (seconds of blackout / greenout exactly as the host
+  // engine set them, remaining fire duration, 1 = water extinguish).
+  // 0 = that effect carried no overlay this time (e.g. a cold sneeze has no
+  // flu blackout; a direct Sneeze() call sets no blackout) -> the client must
+  // NOT invent a default overlay, only play the sound / particles.
+  float strength = 7;
+  // Engine resource name actually used by the host character (bounded to 64).
+  string sound = 8;
+}
+
+// Host -> all clients: presentation effects for host-simulated client avatars.
+// Bounded by PlayerVitalsLimits.MaxEffectEntries (16) per message.
+message PlayerEffectEvents {
+  uint32 sequence = 1;
+  repeated PlayerEffectEventEntry entries = 2;
   bytes ext = 100;
   google.protobuf.Any custom = 101;
 }

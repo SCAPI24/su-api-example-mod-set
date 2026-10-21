@@ -35,6 +35,8 @@ namespace SuMultiplayer.Engine
     ///      Source: ComponentScreenOverlays.cs:46-52,119-126）；
     ///   ⑦ 手工制作网格 = 背包面板左半绑定的 <c>ComponentCraftingTable</c> 槽位
     ///      （Source: FullInventoryWidget.cs:35-47）——结果槽由主机用引擎配方自己重算，不在这里读。
+    ///   ⑧ 本机视角模式 = 本机 <c>GameWidget.ActiveCamera</c> 的实际类型（Fpp / Tpp / Orbit / Fixed
+    ///      → 1..4；死亡相机与引擎其它相机 = 0 不改变，Source: ComponentGui.cs:645-670）。
     ///
     /// 聊天输入行由组合根以委托注入（mod 自己的 ChatOverlay 状态），本类不反向引用 UI 类型。
     ///
@@ -117,6 +119,16 @@ namespace SuMultiplayer.Engine
                 string.Equals(screenName, UiStatePolicy.GameScreenName, StringComparison.Ordinal);
             bool chatInputOpen = m_chatInputOpen != null && m_chatInputOpen();
 
+            // ---- ⑧ 本机视角模式（第三屏按它选 Fpp / Tpp / Orbit / Fixed；只读本机 GameWidget.ActiveCamera）
+            // 引擎的 V 键 / 视角按钮在 Fpp → Tpp → Orbit → Fixed 之间循环
+            // （Source: Survivalcraft/Game/ComponentGui.cs:645-670）；四种相机按**实际类型**映射
+            // 1..4，其余（死亡相机 / Intro / Loading）上报 0 = 主机不改变，保留最后已知模式
+            // （复活后就回到它）。
+            Camera activeCamera = player.GameWidget.ActiveCamera;
+            UiCameraMode cameraMode = (UiCameraMode)ViewCameraPolicy.ModeOfCameraTypes(
+                activeCamera is FppCamera, activeCamera is TppCamera,
+                activeCamera is OrbitCamera, activeCamera is FixedCamera);
+
             // ---- ⑤ 底部冒泡消息（MessageWidget 私有列表的只读投影；age 用于主机对齐时限）
             if (!m_messageAccess.TryCapture(gui, Time.FrameStartTime,
                     out UiSmallMessageData[] smallMessages, out string messageReason))
@@ -170,7 +182,7 @@ namespace SuMultiplayer.Engine
             state = new ClientUiStateData(inputKind, hudVisible, screenName, dialogPresent,
                 dialogType, modalPresent, modalType, chatInputOpen, smallMessages,
                 floatingMessage, floatingFactor, overlayMessage, overlayFactor,
-                handcraftPresent, handcraft);
+                handcraftPresent, handcraft, cameraMode);
             return true;
         }
     }

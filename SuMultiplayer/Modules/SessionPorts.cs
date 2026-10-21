@@ -23,6 +23,13 @@ namespace SuMultiplayer.Modules
         /// <summary>本端是否正在主持房间（CR 已按下）。</summary>
         bool IsHostingRoom { get; }
 
+        /// <summary>
+        /// 本端是否**作为客户端加入了房间**（不是房主）。产品口径（2026-10-21）：客户端加入房间后
+        /// 游戏内 HUD 只显示 IF（房间信息），不再出现 CR（建房）入口 —— 在别人的房间里建房会
+        /// 形成"双主机"分裂（客户端本地重建角色、位置错乱、连接不断所以既不踢人也不掉线）。
+        /// </summary>
+        bool IsClientInRoom { get; }
+
         /// <summary>房间状态文本（给按钮信息弹窗）。</summary>
         string RoomSummary { get; }
 

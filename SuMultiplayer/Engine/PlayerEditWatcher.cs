@@ -221,6 +221,9 @@ namespace SuMultiplayer.Engine
         /// <summary>
         /// 引擎 <see cref="PlayerScreen"/> 的 <c>m_playerData</c>（私有字段）：
         /// 走 SuAPI 的官方父类反射入口，用来在退出时把 UI 最终值补写回**正确的那一条** PlayerData。
+        /// 用**非泛型**读取：泛型版在字段为 null 时会抛 InvalidCastException —— 屏幕切换那一帧
+        /// <c>PlayerScreen.Enter</c> 还没跑（m_playerData 还是 null），泛型版会误报"不是 PlayerData"，
+        /// 之后 m_editedPlayer 绑定失败，退出时补写 UI 值整条路径失效（实机 2026-10-21 的报错）。
         /// 绑定失败只报一次并继续（不崩溃）；快照仍按整组本机槽位比较。
         /// </summary>
         private PlayerData TryGetEditedPlayer(PlayerScreen screen)
@@ -228,7 +231,8 @@ namespace SuMultiplayer.Engine
             if (m_parentField == null || screen == null) return null;
             try
             {
-                return m_parentField.GetParentField<PlayerData>(screen, "m_playerData");
+                object value = m_parentField.GetParentField(screen, "m_playerData");
+                return value as PlayerData;      // null = 屏幕还没进入 / 已经 Leave（正常时序，不是绑定失败）
             }
             catch (Exception e)
             {
@@ -250,19 +254,28 @@ namespace SuMultiplayer.Engine
         /// </summary>
         private void CommitScreenValuesToPlayerData(PlayerScreen screen, PlayerData playerData)
         {
-            if (screen == null || playerData == null) return;
+            if (screen == null || playerData == null)
+            {
+                m_counters.OnUiCommitFailure();
+                LogReasonRateLimited("edit-commit-no-player",
+                    "编辑玩家屏退出：拿不到被编辑的那条 PlayerData → 名字/皮肤的最终值无法补写" +
+                    "（只按 PlayerData 里已有的值比较；请检查 Screen 切换时序 / m_playerData 反射）");
+                return;
+            }
             // TextBoxWidget 在引擎里是 internal（Survivalcraft/Game/TextBoxWidget.cs:9），
-            // 所以按控件名取 Widget，再走 SuAPI 的父类反射入口读它的 public Text 属性。
+            // 所以按控件名取 Widget，再走 SuAPI 的父类反射入口读它的 public Text 属性
+            // （ModParentField.GetParentField 先找字段再找属性，TextBoxWidget.Text 是属性）。
             Widget nameBox = screen.Children.Find<Widget>("Name", false);
             if (nameBox != null && m_parentField != null)
             {
                 string text = null;
                 try
                 {
-                    text = m_parentField.GetParentField<string>(nameBox, "Text");
+                    text = m_parentField.GetParentField(nameBox, "Text") as string;
                 }
                 catch (Exception e)
                 {
+                    m_counters.OnUiCommitFailure();
                     LogReasonRateLimited("edit-namebox-read",
                         "读 PlayerScreen 名字文本框失败（" + e.GetType().Name + " " + e.Message +
                         "）→ 只同步 PlayerData 里已有的名字");
@@ -273,11 +286,13 @@ namespace SuMultiplayer.Engine
                     if (PlayerData.VerifyName(name))
                     {
                         playerData.Name = name;
+                        m_counters.OnUiNameCommitted();
                         Info("编辑玩家屏：名字文本框的最终值已写回 PlayerData（\"" + name +
                             "\"，引擎 FocusLost 可能来不及触发）");
                     }
                     else
                     {
+                        m_counters.OnUiCommitFailure();
                         LogReasonRateLimited("edit-invalid-name:" + name,
                             "编辑玩家屏：名字文本框的最终值 \"" + name +
                             "\" 未通过 PlayerData.VerifyName → 保持原名字 \"" +
@@ -293,6 +308,7 @@ namespace SuMultiplayer.Engine
                     !string.Equals(skin, playerData.CharacterSkinName, StringComparison.Ordinal))
                 {
                     playerData.CharacterSkinName = skin;
+                    m_counters.OnUiSkinCommitted();
                     Info("编辑玩家屏：皮肤预览的最终值已写回 PlayerData（\"" + skin + "\"）");
                 }
             }

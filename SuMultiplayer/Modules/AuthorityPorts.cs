@@ -132,6 +132,21 @@ namespace SuMultiplayer.Modules
         /// <summary>发给所有在线玩家端（调试端不算）；返回成功入队的端数。</summary>
         int BroadcastToPlayers(MessageType type, byte[] payload);
 
+        /// <summary>
+        /// 发给所有在线玩家端，但**跳过 <paramref name="excludeClientId"/>**；返回成功入队的端数。
+        /// 语义与 <see cref="BroadcastToPlayers"/> 相同，只多一个排除项 —— 皮肤资源转发用它保证
+        /// "发起者不收资源、只收回执"（资源绝不能发回换皮肤的那个客户端）。
+        /// excludeClientId &lt; 0 = 不排除任何人（等价于全广播）。
+        ///
+        /// 默认实现只支持 excludeClientId &lt; 0；需要真正排除时必须由实现方覆盖
+        /// （**不做"忽略排除项照发"的静默兜底** —— 那会把皮肤资源发回发起者）。
+        /// </summary>
+        int BroadcastToPlayersExcept(int excludeClientId, MessageType type, byte[] payload) =>
+            excludeClientId < 0
+                ? BroadcastToPlayers(type, payload)
+                : throw new NotSupportedException(
+                    "IPeerBroadcastPort 的实现没有提供 BroadcastToPlayersExcept：不能安全地排除发起者");
+
         /// <summary>当前在线玩家端数量（诊断 / 世界信息按需发送用）。</summary>
         int PlayerPeerCount { get; }
 

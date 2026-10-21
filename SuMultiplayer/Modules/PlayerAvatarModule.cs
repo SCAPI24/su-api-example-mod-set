@@ -39,7 +39,7 @@ namespace SuMultiplayer.Modules
     /// 本模块**不含静态状态**，也不直接引用别的模块内部：只从 <see cref="IModuleContext"/> 取端口。
     /// </summary>
     public sealed class PlayerAvatarModule : IMultiplayerModule, IAvatarTerrainLink, IHelloProfileGate,
-        IPlayerSkinRecordPort
+        IPlayerSkinRecordPort, IPlayerProfileAuthorityPort, IProfileSkinCatalog
     {
         /// <summary>主机角色在**本机**通道里的槽位键（旧实现同样用 0）；它只是本机索引，不是身份。
         /// 位置快照批里"主机自己那一条"用的也是这个键（<c>NetworkAvatarSpawner.CapturePlayerPositionBatch</c>）。</summary>
@@ -125,6 +125,20 @@ namespace SuMultiplayer.Modules
         private string m_localProfileSignature = string.Empty;
         /// <summary>客户端：最近一次应用到本机玩家的资料签名。</summary>
         private string m_appliedSelfSignature = string.Empty;
+        /// <summary>
+        /// 客户端：主机在 HelloAck 里分配的资料快照已经应用过的签名。
+        /// 加入时的快照**只按新快照应用一次**；不能每帧拿"本机资料存储 != 分配快照"当条件 ——
+        /// 玩家在编辑屏改名/换肤后，下一帧就会被旧快照覆盖回去（实机 2026-10-21：
+        /// nameChanged/skinChanged 恒为 0、108 的 profileSent 不涨）。
+        /// 本机编辑由 108 / 编辑屏退出通道上报，主机更新记录后以 108 广播回来。
+        /// </summary>
+        private string m_appliedAssignedProfileSignature = string.Empty;
+        /// <summary>客户端：真正应用了几次主机分配资料（重连 / 换世界各一次，不再每帧重放）。</summary>
+        private long m_assignedProfileApplied;
+        /// <summary>客户端：分配快照已应用过、但本机资料存储已有更新的编辑 → 保留本机值（计数）。</summary>
+        private long m_assignedProfileKeptLocal;
+        /// <summary>上一次因"保留本机编辑"而计数的资料签名（避免每帧 +1；同一份编辑只计一次）。</summary>
+        private string m_keptLocalStoreSignature = string.Empty;
         /// <summary>客户端：最近一次上报的本机槽位集合签名（变了才发 LOCAL_PLAYER_SLOTS）。</summary>
         private string m_localSlotsSignature = string.Empty;
         /// <summary>
@@ -879,53 +893,225 @@ namespace SuMultiplayer.Modules
             bool hosting = m_broadcast?.IsHosting == true;
             if (hosting)
             {
-                HandleClientProfileMessage(context.ClientId, key, identity, profile);
+                HandleClientProfileMessage(context.ClientId, key, identity, profile,
+                    broadcastLegacy: true, out _);
                 return;
             }
             // 客户端：主机广播的 host（clientId=0）/ 其他客户端 / 本机自己的记录。
-            if (key.ClientId == m_transport?.LocalClientId)
+            ProfileSyncApplyOutcome outcome = ApplyProfileBroadcastClient(key, identity, profile,
+                isHost, out string applyReason);
+            if (outcome == ProfileSyncApplyOutcome.Rejected)
+            {
+                ErrorOnce("profile-client-apply:" + key,
+                    "应用主机广播的资料失败（玩家键 " + key + "）：" + applyReason);
+            }
+        }
+
+        /// <summary>
+        /// 客户端侧的唯一应用入口（27 与 108 两条消息共用，避免两套结果不一致）：
+        ///   · 本机槽位 0 → 写资料存储 + 应用到本机 PlayerData（本机 UI 已改成同一值时是 Unchanged）；
+        ///   · 本机槽位 &gt; 0 → 只登记资料存储（Phase 1 不回写本机 PlayerData，显式计数/日志）；
+        ///   · 主机 / 其他客户端 → 更新名册并执行建/更新/重建化身。
+        /// </summary>
+        private ProfileSyncApplyOutcome ApplyProfileBroadcastClient(PlayerKey key, string identity,
+            PlayerProfileSnapshot profile, bool isHost, out string reason)
+        {
+            reason = null;
+            if (profile == null)
+            {
+                reason = "资料为空";
+                return ProfileSyncApplyOutcome.Rejected;
+            }
+            if (m_transport != null && key.ClientId == m_transport.LocalClientId)
             {
                 if (key.Slot == 0)
                 {
-                    m_profileStore?.Set(profile, "host-record");
+                    if (m_profileStore == null)
+                    {
+                        reason = "没有本机资料存储（LocalPlayerProfileStore 未注入）";
+                        return ProfileSyncApplyOutcome.Rejected;
+                    }
+                    string before = m_profileStore.Profile?.Signature ?? string.Empty;
+                    m_profileStore.Set(profile, "host-record");
                     // 世界还没加载时只存资料；等 Project 就绪后由 TickClient 应用到本机角色
                     // （这里不报"应用失败"，那只是正常时序）。
                     if (GameManager.Project != null) ApplySelfProfileFromStore();
+                    if (string.Equals(before, profile.Signature, StringComparison.Ordinal))
+                    {
+                        reason = "本机资料没有变化";
+                        return ProfileSyncApplyOutcome.Unchanged;
+                    }
+                    reason = "已应用到本机角色";
+                    return ProfileSyncApplyOutcome.Applied;
                 }
-                else
-                {
-                    LogRateLimited("profile-self-slot:" + key,
-                        "收到主机广播的本机槽位 " + key.Slot + " 资料（名字 " + profile.Name +
-                        "）→ Phase 1 只把槽位 0 应用到本机角色；其余本机角色保留本地 PlayerData 资料" +
-                        "（per-slot 资料回写属于后续阶段）");
-                }
-                return;
+                LogRateLimited("profile-self-slot:" + key,
+                    "收到主机广播的本机槽位 " + key.Slot + " 资料（名字 " + profile.Name +
+                    "）→ Phase 1 只把槽位 0 应用到本机角色；其余本机角色保留本地 PlayerData 资料" +
+                    "（per-slot 资料回写属于后续阶段）");
+                reason = "本机槽位 " + key.Slot + " 只登记资料存储，不回写本机 PlayerData";
+                return ProfileSyncApplyOutcome.Unchanged;
             }
             IReadOnlyList<AvatarRosterChange> changes = m_roster.Apply(key, identity,
-                profile.Name, profile.Appearance, isHost, "host-broadcast");
+                profile.Name, profile.Appearance, isHost, "profile-sync");
             ApplyRosterChanges(changes, "资料广播");
+            if (changes.Count == 0)
+            {
+                reason = "名册里的资料没有变化";
+                return ProfileSyncApplyOutcome.Unchanged;
+            }
+            reason = "已更新 " + changes.Count + " 个名册条目";
+            return ProfileSyncApplyOutcome.Applied;
         }
 
-        private void HandleClientProfileMessage(int sourceClientId, PlayerKey claimedKey,
-            string identity, PlayerProfileSnapshot profile)
+        /// <summary>
+        /// 主机：应用一条**已由资料同步模块校验过**的客户端资料（108）。
+        /// 不广播 27（由调用方广播 108）；返回 Applied 时调用方必须广播权威资料。
+        /// </summary>
+        public ProfileSyncApplyOutcome ApplyProfileSyncOnHost(int sourceClientId, PlayerKey key,
+            string identity, PlayerProfileSnapshot profile, out string reason)
         {
-            if (sourceClientId <= 0) return;
-            if (claimedKey.ClientId != 0 && claimedKey.ClientId != sourceClientId)
+            if (!m_attached)
+            {
+                reason = "联机角色模块未装配";
+                return ProfileSyncApplyOutcome.Rejected;
+            }
+            return HandleClientProfileMessage(sourceClientId, key, identity, profile,
+                broadcastLegacy: false, out reason);
+        }
+
+        /// <summary>客户端：应用主机广播的权威资料（108）。与 27 广播共用同一个应用入口。</summary>
+        public ProfileSyncApplyOutcome ApplyProfileSyncBroadcast(PlayerKey key, string identity,
+            PlayerProfileSnapshot profile, bool isHost, out string reason)
+        {
+            if (!m_attached)
+            {
+                reason = "联机角色模块未装配";
+                return ProfileSyncApplyOutcome.Rejected;
+            }
+            return ApplyProfileBroadcastClient(key, identity, profile, isHost, out reason);
+        }
+
+        // ---------------------------------------------------------------- 资料同步端口（IPlayerProfileAuthorityPort / IProfileSkinCatalog）
+
+        /// <summary>客户端：本机资料已经应用成自己的资料（下载世界的主机角色不能当自己上报）。</summary>
+        public bool IsSelfProfileReady => m_appliedSelfSignature.Length > 0;
+
+        /// <summary>本机身份（UserId.dat）；为空 = 身份不可用（资料同步会明确记录）。</summary>
+        public string LocalIdentity => PlayerIdentity.LocalIdentity();
+
+        /// <summary>本机角色槽位数（没有世界 / 没有本机玩家 = 0；调用方必须按 0 处理并写原因）。</summary>
+        public int LocalPlayerSlotCount
+        {
+            get
+            {
+                Project project = GameManager.Project;
+                if (project == null) return 0;
+                var players = new List<PlayerData>(PlayerKey.SlotCount);
+                return m_spawner.TryCollectLocalPlayers(project, players, out _, out _)
+                    ? players.Count
+                    : 0;
+            }
+        }
+
+        /// <summary>本机槽位是否已经通过 LOCAL_PLAYER_SLOTS 公告给主机（槽位 &gt; 0 的先决条件）。</summary>
+        public bool WasLocalSlotAnnounced(int slot) =>
+            slot >= 0 && slot < m_localSlotsCount;
+
+        /// <summary>
+        /// 主机最终校验：名字 = 引擎 <see cref="PlayerData.VerifyName"/>（经 IsCompleteProfile）；
+        /// 内置皮肤 = CharacterSkinsNames；自定义皮肤哈希 / 职业；衣服边界。
+        /// </summary>
+        public bool TryValidateProfileForSync(PlayerProfileSnapshot profile, int slot,
+            out string reason)
+        {
+            if (!PlayerEditSync.TryValidateProfile(profile, slot, out reason)) return false;
+            if (!IsCompleteProfile(profile))
+            {
+                reason = "资料不完整/皮肤与职业不兼容（名字 \"" + (profile?.Name ?? string.Empty) +
+                    "\" · 皮肤 \"" + (profile?.Appearance?.SkinName ?? string.Empty) + "\"）";
+                return false;
+            }
+            return true;
+        }
+
+        /// <summary>已知的权威资料：主机端已登记的对端资料 / 客户端名册 / 本机引擎角色。</summary>
+        public bool TryGetKnownProfile(PlayerKey key, out PlayerProfileSnapshot profile)
+        {
+            if (m_peerSlots.TryGetValue(key, out PeerSlot peer) && peer.Profile != null)
+            {
+                profile = peer.Profile;
+                return true;
+            }
+            if (m_roster.TryGet(key, out AvatarRosterEntry entry) && entry != null)
+            {
+                profile = new PlayerProfileSnapshot
+                {
+                    Name = entry.Name ?? string.Empty,
+                    Appearance = entry.Appearance?.Clone() ?? new PlayerAppearance()
+                };
+                return profile.HasName;
+            }
+            if (m_spawner.TryGet(key, out PlayerData playerData))
+            {
+                profile = m_spawner.CaptureProfile(playerData, out _);
+                return profile != null;
+            }
+            // 注意：不能把本机 PlayerData 当成主机（clientId=0）的已知资料 ——
+            // 客户端上的本机角色是"自己"，把它复制到主机资料上会把本机衣服/皮肤写给别人。
+            // 拿不到已知资料时由调用方明确拒绝"空衣服"（不猜、不覆盖）。
+            profile = null;
+            return false;
+        }
+
+        /// <summary>内置皮肤目录（CharacterSkinsNames）；自定义 .scskin 不走这里。</summary>
+        public bool TryGetBuiltInClass(string skinName, out PlayerSex? playerClass)
+        {
+            playerClass = null;
+            string skin = (skinName ?? string.Empty).Trim();
+            if (skin.Length == 0) return false;
+            // 与既有 IsKnownBuiltInSkin 同一口径：先刷新列表（外部皮肤可能刚导入）。
+            CharacterSkinsManager.UpdateCharacterSkinsList();
+            if (!CharacterSkinsManager.CharacterSkinsNames.Contains(skin)) return false;
+            PlayerClass? engineClass = CharacterSkinsManager.GetPlayerClass(skin);
+            if (engineClass.HasValue)
+            {
+                playerClass = engineClass.Value == PlayerClass.Female
+                    ? PlayerSex.Female
+                    : PlayerSex.Male;
+            }
+            return true;
+        }
+
+        private ProfileSyncApplyOutcome HandleClientProfileMessage(int sourceClientId,
+            PlayerKey claimedKey, string identity, PlayerProfileSnapshot profile,
+            bool broadcastLegacy, out string reason)
+        {
+            reason = null;
+            if (sourceClientId <= 0)
+            {
+                reason = "来源连接编号 " + sourceClientId + " 非法";
+                return ProfileSyncApplyOutcome.Rejected;
+            }
+            // owner 严格校验（照旧实现）：载荷里的 client_id 必须等于来源连接编号；
+            // 0 是主机广播方向，不是客户端可以申报的值。
+            if (claimedKey.ClientId != sourceClientId)
             {
                 m_rejectedPeers++;
+                reason = "载荷 client_id=" + claimedKey.ClientId + " != 来源 " + sourceClientId;
                 ErrorOnce("profile-spoof:" + sourceClientId,
                     "clientId=" + sourceClientId + " 的资料自称玩家键 " + claimedKey +
                     " → 拒绝（不允许冒领另一个身份的资料）");
-                return;
+                return ProfileSyncApplyOutcome.Rejected;
             }
             string localIdentity = PlayerIdentity.LocalIdentity();
             if (!string.IsNullOrEmpty(identity) &&
                 string.Equals(identity, localIdentity, StringComparison.Ordinal))
             {
                 m_rejectedPeers++;
+                reason = "资料用了主机自己的身份";
                 ErrorOnce("profile-host-identity:" + sourceClientId,
                     "clientId=" + sourceClientId + " 的资料用了主机自己的身份 → 拒绝");
-                return;
+                return ProfileSyncApplyOutcome.Rejected;
             }
             // 最小校验：名字长度/字符集（与引擎 PlayerData.VerifyName 同规则）、皮肤名、自定义
             // 皮肤哈希、衣服数组边界。**不检查名字唯一性** —— 产品明确允许重名，重名照常应用并广播。
@@ -933,19 +1119,21 @@ namespace SuMultiplayer.Modules
             {
                 m_rejectedPeers++;
                 m_editCounters.OnProfileUpdateRejected(editReason);
+                reason = editReason;
                 ErrorOnce("profile-edit-invalid:" + sourceClientId + ":" + claimedKey.Slot,
                     "玩家键 " + claimedKey + " 上报的资料未通过最小校验：" + editReason +
                     " → 保留旧资料（不夹紧、不换默认皮肤、不因重名拒绝）");
-                return;
+                return ProfileSyncApplyOutcome.Rejected;
             }
             if (!IsCompleteProfile(profile))
             {
                 m_avatarAppearanceUnavailable++;
+                reason = "资料不完整/皮肤与职业不兼容";
                 ErrorOnce("profile-invalid:" + sourceClientId + ":" + claimedKey.Slot,
                     "玩家键 " + claimedKey + " 上报的资料不完整/非法（名字 " +
                     (profile.Name ?? string.Empty) + " · 皮肤 " + (profile.Appearance?.SkinName ?? string.Empty) +
                     "）→ 保留旧资料，不拿默认值覆盖");
-                return;
+                return ProfileSyncApplyOutcome.Rejected;
             }
             // 载荷里的 clientId 只用于校验；权威来源是连接编号 + 申报槽位。
             PlayerKey key = new PlayerKey(sourceClientId, claimedKey.Slot);
@@ -956,11 +1144,12 @@ namespace SuMultiplayer.Modules
                  key.Slot >= announcedSlotCount))
             {
                 m_rosterMismatch++;
+                reason = "槽位 " + key.Slot + " 没有被 LOCAL_PLAYER_SLOTS 公告过";
                 ErrorOnce("profile-unannounced-slot:" + key,
                     "玩家键 " + key + " 的资料来自一个没有公告过的槽位（该端已公告 " +
                     (m_peerSlotCounts.TryGetValue(sourceClientId, out int known) ? known : 0) +
                     " 个槽位）→ 拒绝（先发 LOCAL_PLAYER_SLOTS 再发该槽位资料）");
-                return;
+                return ProfileSyncApplyOutcome.Rejected;
             }
             string recordKey = m_spawner.TryGetRecordKey(key, out string existingKey)
                 ? existingKey
@@ -981,16 +1170,20 @@ namespace SuMultiplayer.Modules
                 m_records.SaveIfDirty();
                 if (string.Equals(before, RecordToProfile(record).Signature, StringComparison.Ordinal) &&
                     m_slotAwareClients.Contains(sourceClientId))
-                    return;
+                {
+                    reason = "资料与记录一致";
+                    return ProfileSyncApplyOutcome.Unchanged;
+                }
             }
             if (m_recordKeyOwner.TryGetValue(recordKey, out PlayerKey recordOwner) &&
                 recordOwner.ClientId != sourceClientId)
             {
                 m_rosterMismatch++;
+                reason = "记录键已属于玩家键 " + recordOwner;
                 ErrorOnce("profile-record-owner:" + key,
                     "玩家键 " + key + " 的记录键 " + PlayerIdentity.Describe(recordKey) +
                     " 已属于玩家键 " + recordOwner + " → 拒绝这次资料（同一身份+槽位只能有一个角色）");
-                return;
+                return ProfileSyncApplyOutcome.Rejected;
             }
             m_recordKeyOwner[recordKey] = key;
             PeerSlot peer = EnsurePeerSlot(key);
@@ -1004,7 +1197,7 @@ namespace SuMultiplayer.Modules
             if (m_spawner.TryGet(key, out _))
             {
                 if (m_spawner.TryApplyRemoteProfile(key, profile,
-                        out bool mustRecreate, out string reason))
+                        out bool mustRecreate, out string reason2))
                 {
                     m_avatarsUpdated++;
                     m_avatarAppearanceApplied++;
@@ -1013,7 +1206,7 @@ namespace SuMultiplayer.Modules
                 }
                 else if (mustRecreate)
                 {
-                    Info("客户端角色性别变化（玩家键 " + key + "）：摘掉旧化身并按新资料重建 —— " + reason);
+                    Info("客户端角色性别变化（玩家键 " + key + "）：摘掉旧化身并按新资料重建 —— " + reason2);
                     if (m_spawner.Remove(key)) m_avatarsRemoved++;
                     m_appliedAvatarSignatures.Remove(key);
                     QueuePendingPeer(key, identity, profile, recordKey);
@@ -1021,20 +1214,25 @@ namespace SuMultiplayer.Modules
                 else
                 {
                     ErrorOnce("profile-apply:" + key,
-                        "更新客户端角色外观失败（玩家键 " + key + "）：" + reason);
+                        "更新客户端角色外观失败（玩家键 " + key + "）：" + reason2);
                 }
             }
             else
             {
                 QueuePendingPeer(key, identity, profile, recordKey);
             }
-            BroadcastProfile(key, profile, isHost: false, identity: identity);
-            BroadcastRoster("客户端资料上报");
-            // 客户端自己的角色记录也回给它（名字/性别/皮肤/衣服以主机记录为准）。
-            // Phase 1 只回槽位 0（HelloAck.assigned_profile 的口径）；其余槽位后续阶段再回写。
-            if (key.Slot == 0 && recordKey.Length > 0 &&
-                m_records.TryGet(recordKey, out NetworkPlayerRecord assigned))
-                SendAssignedProfile(sourceClientId, assigned);
+            if (broadcastLegacy)
+            {
+                BroadcastProfile(key, profile, isHost: false, identity: identity);
+                BroadcastRoster("客户端资料上报");
+                // 客户端自己的角色记录也回给它（名字/性别/皮肤/衣服以主机记录为准）。
+                // Phase 1 只回槽位 0（HelloAck.assigned_profile 的口径）；其余槽位后续阶段再回写。
+                if (key.Slot == 0 && recordKey.Length > 0 &&
+                    m_records.TryGet(recordKey, out NetworkPlayerRecord assigned))
+                    SendAssignedProfile(sourceClientId, assigned);
+            }
+            reason = "已应用并更新记录";
+            return ProfileSyncApplyOutcome.Applied;
         }
 
         /// <summary>客户端：主机广播"某人离开" → 摘掉对应化身（按身份去重，重连也不会留下旧的）。</summary>
@@ -1648,10 +1846,11 @@ namespace SuMultiplayer.Modules
                 m_profilePromptShown = false;
                 return;
             }
-            string trimmed = (request.Name ?? string.Empty).Trim();
-            if (!PlayerData.VerifyName(trimmed))
+            // 名字按引擎原样校验（不 Trim）：合法性只由 PlayerData.VerifyName 决定。
+            string name = request.Name ?? string.Empty;
+            if (!PlayerData.VerifyName(name))
             {
-                Error("角色创建返回的名字非法（\"" + trimmed + "\"）→ 不提交；请重新创建");
+                Error("角色创建返回的名字非法（\"" + name + "\"）→ 不提交；请重新创建");
                 m_profilePromptShown = false;
                 return;
             }
@@ -1715,7 +1914,7 @@ namespace SuMultiplayer.Modules
             }
             var profile = new PlayerProfileSnapshot
             {
-                Name = trimmed,
+                Name = name,
                 Appearance = new PlayerAppearance
                 {
                     Sex = request.Sex,
@@ -2286,6 +2485,9 @@ namespace SuMultiplayer.Modules
             if (m_roster.LocalClientId != m_transport.LocalClientId)
             {
                 m_roster.LocalClientId = m_transport.LocalClientId;
+                // 新连接 / 重新握手：允许主机分配资料按新快照再应用一次（旧快照的应用标记作废）。
+                m_appliedAssignedProfileSignature = string.Empty;
+                m_keptLocalStoreSignature = string.Empty;
                 // 自己那一条已经登记过的话，重新标记 IsSelf（名册按身份去重，不会多出化身）。
                 SeedSelfFlagFromRoster();
             }
@@ -2302,13 +2504,42 @@ namespace SuMultiplayer.Modules
             PlayerProfileSnapshot assigned = m_handshake?.AssignedProfile;
             if (assigned != null && assigned.HasName)
             {
-                string stored = m_profileStore?.Profile?.Signature ?? string.Empty;
-                if (!string.Equals(stored, assigned.Signature, StringComparison.Ordinal))
+                // **只按"分配快照换了一份"应用一次**：旧实现比较"本机资料存储 != 分配快照"，
+                // 每帧都会把分配快照重新写回存储 —— 玩家在编辑屏改名/换肤后，下一帧就被旧快照
+                // 覆盖（nameChanged/skinChanged 恒为 0、profileSent 不涨的根因）。
+                // 本机编辑走 108 / 编辑屏退出上报，主机记录更新后由 108 广播回来。
+                if (!string.Equals(m_appliedAssignedProfileSignature, assigned.Signature,
+                        StringComparison.Ordinal))
                 {
+                    m_appliedAssignedProfileSignature = assigned.Signature;
+                    m_keptLocalStoreSignature = string.Empty;
                     m_profileStore?.Set(assigned, "host-record");
+                    m_assignedProfileApplied++;
                     Info("主机分配的本机角色资料：名字=" + assigned.Name + " · 性别=" +
                         assigned.Appearance.Sex + " · 皮肤=" + assigned.Appearance.SkinName +
                         " → 应用到本机角色（下载世界自带的角色不会冒充自己）");
+                }
+                else if (m_profileStore != null &&
+                         !string.Equals(m_profileStore.Profile?.Signature ?? string.Empty,
+                             assigned.Signature, StringComparison.Ordinal))
+                {
+                    // 分配快照已经应用过，但本机资料存储被一次更新的编辑改过 → 保留本机编辑，
+                    // 等 108 / 编辑屏退出通道把它送到主机（不再用旧快照回滚）。
+                    string storeSignature = m_profileStore.Profile?.Signature ?? string.Empty;
+                    if (!string.Equals(m_keptLocalStoreSignature, storeSignature,
+                            StringComparison.Ordinal))
+                    {
+                        m_keptLocalStoreSignature = storeSignature;
+                        m_assignedProfileKeptLocal++;
+                    }
+                    LogRateLimited("assigned-kept-local",
+                        "主机分配资料是加入时的快照，本机资料存储已有更新（编辑玩家屏改名/换肤）" +
+                        "→ 保留本机值，等 108 / 编辑屏退出上报主机（不再每帧用旧快照覆盖；" +
+                        "assignedProfileKeptLocal=" + m_assignedProfileKeptLocal + "）");
+                }
+                else
+                {
+                    m_keptLocalStoreSignature = string.Empty;
                 }
             }
 
@@ -2362,6 +2593,9 @@ namespace SuMultiplayer.Modules
                 m_normalizeNoWorldLogged = false;
                 m_normalizeNotClientLogged = false;
                 m_capacityRefusedKeys.Clear();
+                // 新世界（整图重下 / 重新加入）：下载来的本机角色是主机副本，分配快照要重新应用一次。
+                m_appliedAssignedProfileSignature = string.Empty;
+                m_keptLocalStoreSignature = string.Empty;
             }
             if (m_normalizeApplied)
             {
@@ -3011,7 +3245,8 @@ namespace SuMultiplayer.Modules
         {
             if (record == null || profile == null) return;
             record.NameConfirmed = true;
-            if (profile.HasName) record.Name = profile.Name.Trim();
+            // 名字原样写入（不 Trim）：记录里的名字 = 引擎校验通过的那个字符串。
+            if (profile.HasName) record.Name = profile.Name;
             if (profile.Appearance != null)
             {
                 record.PlayerClass = NetworkAvatarSpawner.ToPlayerClass(profile.Appearance.Sex);
@@ -3043,7 +3278,8 @@ namespace SuMultiplayer.Modules
         private bool IsCompleteProfile(PlayerProfileSnapshot profile)
         {
             if (profile == null || !profile.HasName) return false;
-            if (!PlayerData.VerifyName(profile.Name.Trim())) return false;
+            // 最终校验只调用引擎 PlayerData.VerifyName，输入不 Trim（合法性以原字符串为准）。
+            if (!PlayerData.VerifyName(profile.Name)) return false;
             if (profile.Appearance == null || !profile.Appearance.HasSkinName) return false;
             string skin = profile.Appearance.SkinName.Trim();
             if (SkinAssetPolicy.IsCustomSkinName(skin))
@@ -3468,6 +3704,9 @@ namespace SuMultiplayer.Modules
             m_normalizeNoWorldLogged = false;
             m_normalizeNotClientLogged = false;
             m_capacityRefusedKeys.Clear();
+            // 分配快照的应用标记随模块下线一起丢掉（重新上线后按当前 Project / 握手重新判定）。
+            m_appliedAssignedProfileSignature = string.Empty;
+            m_keptLocalStoreSignature = string.Empty;
             m_handshake = null;
             m_broadcast = null;
             m_messages = null;
@@ -3519,6 +3758,10 @@ namespace SuMultiplayer.Modules
             " updateLocationMoves=" + m_spawner.UpdateLocationMoves +
             (m_records.LoadFailed ? " 记录文件损坏(本会话不写盘)" : string.Empty) +
             " rejected=" + m_rejectedPeers +
+            // 主机分配资料：真正应用次数 / 因本机已有更新编辑而保留本机值的次数
+            // （旧实现每帧重放分配快照，会把编辑屏的改名/换肤覆盖回去）。
+            " assignedProfileApplied=" + m_assignedProfileApplied +
+            " assignedProfileKeptLocal=" + m_assignedProfileKeptLocal +
             // 编辑玩家屏同步：进入/退出、重提资料、改名/换肤、主机广播、缺失资源、拒绝原因。
             " · " + m_editCounters.Describe();
 

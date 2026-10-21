@@ -66,7 +66,7 @@ namespace SuMultiplayer.Protocol {
             "ZW50ZXJfeBgBIAEoBRIQCghjZW50ZXJfehgCIAEoBRIOCgZyYWRpdXMYAyAB",
             "KAUSCwoDZXh0GGQgASgMEiQKBmN1c3RvbRhlIAEoCzIULmdvb2dsZS5wcm90",
             "b2J1Zi5BbnkiSAoDQnllEg4KBnJlYXNvbhgBIAEoCRILCgNleHQYZCABKAwS",
-            "JAoGY3VzdG9tGGUgASgLMhQuZ29vZ2xlLnByb3RvYnVmLkFueSqkEQoLTWVz",
+            "JAoGY3VzdG9tGGUgASgLMhQuZ29vZ2xlLnByb3RvYnVmLkFueSrdEQoLTWVz",
             "c2FnZVR5cGUSHAoYTUVTU0FHRV9UWVBFX1VOU1BFQ0lGSUVEEAASCQoFSEVM",
             "TE8QARINCglIRUxMT19BQ0sQAhITCg9JTlRFUkVTVF9VUERBVEUQAxIXChND",
             "SFVOS19ESUdFU1RfUkVQT1JUEAQSEQoNQ0hVTktfVkVSRElDVBAFEhAKDENI",
@@ -116,7 +116,9 @@ namespace SuMultiplayer.Protocol {
             "ChNQTEFZRVJfV0FLRV9SRVFVRVNUEGcSGAoUUExBWUVSX1NMRUVQX1JFUVVF",
             "U1QQaBIXChNQTEFZRVJfU0xFRVBfUkVTVUxUEGkSHgoaUExBWUVSX1NFTEZf",
             "REFNQUdFX1JFUVVFU1QQahIdChlQTEFZRVJfU0VMRl9EQU1BR0VfUkVTVUxU",
-            "EGtCG0gBqgIWU3VNdWx0aXBsYXllci5Qcm90b2NvbGIGcHJvdG8z"));
+            "EGsSFwoTUExBWUVSX1BST0ZJTEVfU1lOQxBsEhgKFFBMQVlFUl9FRkZFQ1Rf",
+            "RVZFTlRTEG0iBAhuEG5CG0gBqgIWU3VNdWx0aXBsYXllci5Qcm90b2NvbGIG",
+            "cHJvdG8z"));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { global::Google.Protobuf.WellKnownTypes.AnyReflection.Descriptor, },
           new pbr::GeneratedClrTypeInfo(new[] {typeof(global::SuMultiplayer.Protocol.MessageType), }, null, new pbr::GeneratedClrTypeInfo[] {
@@ -589,6 +591,36 @@ namespace SuMultiplayer.Protocol {
     /// </summary>
     [pbr::OriginalName("PLAYER_SELF_DAMAGE_REQUEST")] PlayerSelfDamageRequest = 106,
     [pbr::OriginalName("PLAYER_SELF_DAMAGE_RESULT")] PlayerSelfDamageResult = 107,
+    /// <summary>
+    /// Runtime player-profile report (playerprofile.proto): the Edit Players screen
+    /// writes PlayerData.Name / PlayerClass / CharacterSkinName locally, but the old
+    /// event-driven path (PLAYER_PROFILE = 27 + PlayerEditWatcher) only fires on a
+    /// ScreensManager.CurrentScreen transition.  A change that is not observed there
+    /// never reaches the host, so the host and every other client keep the old name
+    /// / skin ("改了没生效").  This message is the runtime change channel:
+    ///   client -> host : the client's own complete profile for one (clientId, slot)
+    ///   host -> clients: the authoritative profile after validation/apply
+    /// The host broadcast is sent to every player (including the changed client) and
+    /// carries a monotonic revision, so an older packet can never overwrite a newer
+    /// value.  Append-only: 108 = current max 107 + 1; no existing id is renumbered.
+    /// Source: Mod/ScMultiplayer/Modules/Player/ScMultiplayerProfileHandlers.cs:728-890
+    /// </summary>
+    [pbr::OriginalName("PLAYER_PROFILE_SYNC")] PlayerProfileSync = 108,
+    /// <summary>
+    /// Host -> all clients: presentation effects of host-simulated client avatars
+    /// (vitals.proto PlayerEffectEvents).  The client removes its own
+    /// ComponentFlu / ComponentSickness / ComponentOnFire updateables so the host
+    /// is the only place those presentation effects are produced; the host polls
+    /// rising edges (cough / sneeze / nausea / puke / ignite / extinguish) on the
+    /// avatars it simulates and broadcasts them, and the owner client replays the
+    /// engine-equivalent sound / particle / overlay.  Health loss keeps arriving
+    /// through PLAYER_VITALS_REPORT (95); this message never changes vitals.
+    /// Append-only: 109 = current max 108 + 1; no existing id is renumbered.
+    /// Source: Survivalcraft/Game/ComponentFlu.cs:Cough/Sneeze/FluEffect
+    /// Source: Survivalcraft/Game/ComponentSickness.cs:NauseaEffect
+    /// Source: Survivalcraft/Game/ComponentOnFire.cs:Update
+    /// </summary>
+    [pbr::OriginalName("PLAYER_EFFECT_EVENTS")] PlayerEffectEvents = 109,
   }
 
   #endregion

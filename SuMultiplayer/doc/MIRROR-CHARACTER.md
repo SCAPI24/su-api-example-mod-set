@@ -1,4 +1,4 @@
-# 调试镜像角色（mirrorcharacter）— 把 H3 的第三个分屏变成客户端的第一人称
+# 调试镜像角色（mirrorcharacter）— 把 H3 的第三个分屏变成客户端当前的视角（第一 / 第三人称 / 轨道 / 固定视点）
 
 > 默认关闭。纯逻辑 = `Modules/DebugMirrorCharacterPorts.cs`；引擎动作 = `Engine/MirrorCharacterEngine.cs`。
 > 配置键在 `Engine/SyncConfig.cs`（`data:/Mods/SuMultiplayer.json`）。
@@ -21,7 +21,7 @@
 }
 ```
 
-## replace（默认）：第三分屏 = 客户端的第一人称
+## replace（默认）：第三分屏 = 客户端当前的视角（第一 / 第三人称 / 轨道 / 固定视点）
 
 绑定条件：主机 + 世界内 + `mirrorcharacter` 名字唯一匹配 + 该客户端的联机化身有
 `ComponentPlayer` / `ComponentBody` / `ComponentCreatureModel`。
@@ -29,11 +29,14 @@
 绑定动作（**不复制任何状态**）：
 
 1. **相机**：把 H3 那个 `GameWidget` 的 `Target` 换成客户端的 `ComponentPlayer`，
-   `ActiveCamera` 切成 `FppCamera`（与 `Engine/DebugMirrorClient.cs:275-280` 同一条已证明路径）。
+   `ActiveCamera` 按**客户端上报的视角模式**选 `FppCamera` / `TppCamera` / `OrbitCamera` /
+   `FixedCamera`（见下文「视角模式同步」；
+   与 `Engine/DebugMirrorClient.cs:275-280` 同一条已证明路径）。
    - `ViewWidget.Draw` 只用 H3 自己的 `PlayerData.ComponentPlayer != null && IsReadyForPlaying` 决定画不画
      （Source: `Survivalcraft/Game/ViewWidget.cs:45-51`）—— H3 的 PlayerData 一直活着，所以这个分屏照常画；
    - `FppCamera.Update` 每帧读 `GameWidget.Target.ComponentCreatureModel.EyePosition / EyeRotation`
-     （Source: `Survivalcraft/Game/FppCamera.cs:21-44`）—— 换 Target 后就是客户端的第一人称。
+     （Source: `Survivalcraft/Game/FppCamera.cs:21-44`）；`TppCamera.Update` 用同一个 `EyeRotation`
+     算环绕位置并按地形遮挡收缩（Source: `Survivalcraft/Game/TppCamera.cs:27-89`）。
    - 注：`PlayerData` **没有** `ActiveCamera` 成员；相机是 `PlayerData.GameWidget.ActiveCamera`。
 2. **H3 的身体从世界表现里摘掉**（**不改坐标**）：
    - 模型不渲染：把 H3 实体的每个 `ComponentModel` 从 `SubsystemModelsRenderer.m_componentModels`
@@ -53,28 +56,64 @@
 相机回 H3 自己的 `ComponentPlayer` + 绑定前的 `ActiveCamera`（不可用时明确回退 `FppCamera` 并写日志）；
 模型重新加回渲染表；碰撞 / updateable / 输入 / 瞄准 / 命中测试 / 位置按绑定前快照写回。
 
-### 客户端死亡 / 复活：相机切 DeathCamera / FppCamera
+### 视角模式同步（`CLIENT_UI_STATE.camera_mode`，字段 18）
+
+客户端 V 键 / "视角变化"按钮在 `Fpp → Tpp → Orbit → Fixed → Fpp` 之间循环
+（Source: `Survivalcraft/Game/ComponentGui.cs:645-670`）。客户端每帧只读本机
+`GameWidget.ActiveCamera`，按类型上报 `camera_mode`（`Engine/ClientUiStateReader.cs`）：
+
+| 客户端当前相机 | `camera_mode` | 主机第三屏 |
+|---|---|---|
+| `FppCamera` | 1 | `FppCamera`（第一人称） |
+| `TppCamera` | 2 | `TppCamera`（第三人称，环绕 / 地形遮挡由引擎算） |
+| `OrbitCamera` | 3 | `OrbitCamera`（以客户端身体为环绕中心；环绕角 = 主机这一视图的输入） |
+| `FixedCamera` | 4 | `FixedCamera`（冻结在主机这一视图切换那一刻的视点） |
+| `DeathCamera` / `Intro` / `Loading` | 0（不改变） | 保留最后已知模式；死亡时仍 `DeathCamera` 优先 |
+
+- 链路：`CLIENT_UI_STATE` → `Modules/UiStateSyncModule.cs` 解码校验（未知值 > 4 **整条拒绝**并计入
+  `uiStateMalformed`，不改变主机状态）→ 转发 `IViewCameraModePort`（实现 =
+  `Engine/MirrorCharacterEngine.cs`，组合根单行注册）→ `ValidateBound` 每拍按模式校正相机。
+- 记录口径：`0` **不覆盖**最后已知模式（客户端死亡期间上报 0，复活后就按死亡前的模式恢复）；
+  不同客户端不共享模式，同一客户端重绑（客户端角色重生重建）保留模式。
+- 不复制俯仰 / 朝向角 / 轨道参数 / 固定视点位置：主机视图的 `Target` 就是客户端 `ComponentPlayer`，
+  `TppCamera` 用它的 `EyeRotation` 算环绕、`FppCamera` 用 `EyePosition/EyeRotation`；
+  `OrbitCamera` 虽然也以 `Target.ComponentBody` 为中心，但角度 / 距离来自**本视图自己的**玩家输入
+  （Source: `Survivalcraft/Game/OrbitCamera.cs:26-47`），`FixedCamera.Update` 是空实现、只在
+  `Activate` 时冻结上一台相机的视点（Source: `Survivalcraft/Game/FixedCamera.cs:16-22`）——
+  再传一份客户端输入状态只会和引擎每帧打架（`Protocol/uistate.proto` 的字段注释有同一条理由）。
+  即：模式一致；Orbit 的环绕角是主机本地可调的，Fixed 的位置是主机视图切换点（不是客户端那个点）。
+- 计数（进 `mirror-character` 状态行，10 秒限流日志）：`viewCameraMode`（当前 0..4）、
+  `viewCameraModeChanges`、`viewCameraApply`、`viewCameraApplyFailures`、
+  `viewCameraModeRejectedBy`（最近拒绝原因，未拒绝 = `none`）+ `viewCameraModeRejects` /
+  `viewCameraActual`（fpp / tpp / orbit / fixed / death / none）。缺相机 / 写相机抛异常 /
+  引擎把不允许的相机换成 `FppCamera`（VR 下只允许 Fpp / Death / Loading）都计入失败。
+
+### 客户端死亡 / 复活：相机切 DeathCamera → 客户端最后模式
 
 `MirrorCharacterEngine.ValidateBound` 每拍读客户端化身的权威生命
-（`ComponentHealth.Health <= 0`，`Engine/MirrorCharacterEngine.cs:731-732`），据此切换绑定分屏的相机：
+（`ComponentHealth.Health <= 0`，`Engine/MirrorCharacterEngine.cs`），据此切换绑定分屏的相机：
 
-| 时点 | 动作 | 日志（`InfoOnce`，每个 `clientId` 只打一次） |
+| 时点 | 动作 | 日志（10 秒限流，计数累加） |
 |---|---|---|
-| 客户端角色死亡 | `ActiveCamera = DeathCamera`（引擎绕尸体视角），`Target` 仍是客户端 `ComponentPlayer`（`:734-746`） | `view-death-camera:<clientId>`：`角色死亡 → 镜像分屏已切到 DeathCamera（不再黑屏）` |
-| 客户端复活 | `ActiveCamera` 切回 `FppCamera`（客户端第一人称，`:756-767`） | `view-death-camera-restore:<clientId>`：`角色复活 → 镜像分屏已切回 FppCamera` |
+| 客户端角色死亡 | `ActiveCamera = DeathCamera`（引擎绕尸体视角），`Target` 仍是客户端 `ComponentPlayer`；**此时不按视角模式写相机** | `view-death-camera:<clientId>`：`角色死亡 → 镜像分屏已切到 DeathCamera（不再黑屏）` |
+| 客户端复活 | 按**客户端最后上报的模式**恢复：Fpp / Tpp / Orbit / Fixed 各自对应同一台相机（`deathCameraRestored++`） | `客户端 <id> 角色复活 → 镜像分屏按客户端最后模式 <fpp/tpp/orbit/fixed> 恢复` |
 
 - 原因：客户端死亡后 `FppCamera` 仍按死亡模型读 `EyePosition`（眼睛位置失效），画面会黑；
   `DeathCamera` 是引擎 `PlayerDead` 用的同一台相机（`PlayerData.cs:275-277`）。
-- `DeathCamera` 在相机复位判定里是合法状态（`:778-780`），不会被 `view-camera-reset` 切回第一人称。
-- 内部计数 `m_deathCameraShown` / `m_deathCameraRestored`（`:170-174`）只在代码里累加，**未输出到状态行**；
-  验收看首次切换的日志（同一 `clientId` 的重复死亡 / 复活不再重复打日志，相机仍照常切换）。
+- 合法相机集合 = `FppCamera` / `TppCamera` / `OrbitCamera` / `FixedCamera` / `DeathCamera`
+  （`Engine/ViewCameraPolicy.cs` 的 `IsMirrorCamera`）；旧逻辑"只认 Fpp，被改成 Tpp 就强制切回
+  第一人称"已删除。
+- 复活期间第三屏的死亡相机由它每拍断言；
+  释放时它只在相机仍停在 `DeathCamera` 时才写 `FppCamera`，下一拍 `ValidateBound` 再按客户端
+  最后模式（含 Orbit / Fixed）校正，客户端的第一 / 第三 / 轨道 / 固定视点选择仍由本节的视角同步
+  负责（两边不会互相覆盖；释放瞬间最多一帧 Fpp）。
 - replace 与自动宿主共用同一段代码；`copy` 模式不绑视图，不切相机。死亡黑屏 / `YOU HAVE DIED`
   大消息仍由反馈镜像写（见下文「反馈镜像」）。
 
 ## HUD：这个视图里显示什么、不显示什么
 
 - **来自「相机 Target = 客户端角色」的**（引擎按相机目标渲染）：
-  - 3D 画面 / 视锥 / 视点位置与朝向 = 客户端的第一人称；
+  - 3D 画面 / 视锥 / 视点位置与朝向 = 客户端当前的视角（第一 / 第三 / 轨道 / 固定视点，按 `camera_mode`）；
   - 第一人称手与手持物（`ComponentFirstPersonModel.Draw` 在
     `camera.GameWidget.IsEntityFirstPersonTarget(entity)` 时绘制，Source:
     `Survivalcraft/Game/ComponentFirstPersonModel.cs:57-60`）；
@@ -107,8 +146,9 @@ replace 期间 H3 自己的 `ComponentHealth.Update` / `ComponentVitalStats.Upda
 
 硬边界：**只读**客户端化身的 `ComponentHealth` / `ComponentVitalStats`（含私有
 `m_targetTemperature`）与 `PlayerData.Level`；**不写**它们的任何字段、不 `Injure`、不复制背包 / 衣物 /
-位置 / 动作（copy 模式才做）。**反馈镜像不切相机**（正常游玩时第三分屏的 `ActiveCamera` 留在客户端
-第一人称 `FppCamera`）；客户端死亡 / 复活时的相机切换由 `MirrorCharacterEngine.ValidateBound` 负责（见上文「客户端死亡 / 复活：相机切 DeathCamera / FppCamera」）。快捷栏仍然是 H3 自己的。
+位置 / 动作（copy 模式才做）。**反馈镜像不切相机**（第三分屏的 `ActiveCamera` 由 `MirrorCharacterEngine.ValidateBound` 按客户端
+`camera_mode` 选 Fpp / Tpp / Orbit / Fixed，死亡时 DeathCamera 优先，见上文「视角模式同步」与「客户端死亡 / 复活」）。
+快捷栏仍然是 H3 自己的。
 
 解绑时：把绑定前抓到的 HUD 显示值写回（血条 / 食物条 / 温度档位 / 等级文字）、
 清掉我们写过的黑屏 / 红屏 / 冰冻覆盖与死亡大消息，并停止更新（`MirrorViewFeedback.Release`）。
@@ -152,15 +192,19 @@ replace 的相机切换另有内部计数 `m_deathCameraShown` / `m_deathCameraR
 2. `mirrorcharactermode` 留空或 `replace`，`mirrorcharacter=H3`；
 3. 主机日志出现 `mirrorBind … mirrorMode=replace … viewBound=1 bodyHidden=1`；
 4. **H3 原来站的位置看不到 H3 了**（模型不渲染、其它玩家的视角里也看不见），且走过去不会撞到它；
-5. **第三个分屏 = 客户端的第一人称**（画面随客户端转头/走动；看得到客户端的双手 / 手持物）；
-6. **屏幕上只有一个客户端角色模型**（在 H3 分屏里只有第一人称手；H3 的模型不再出现）；
+5. **第三个分屏 = 客户端当前的视角**（画面随客户端转头/走动；第一人称看得到客户端的双手 /
+   手持物；第三人称看得到客户端角色在身后被环绕跟随）；
+5b. **客户端按 V / 点"视角变化"切到第三人称** → 主机第三屏跟着变成 `TppCamera`（日志出现
+   `第三屏视角模式 ← 客户端 … tpp` 与 `第三分屏相机 → tpp`）；**切回第一人称** → 第三屏跟着变回
+   `FppCamera`（`viewCameraMode` 依次 = 2 / 1，`viewCameraApply` 递增）；
+6. **屏幕上只有一个客户端角色模型**（第一人称分屏里只有第一人称手；H3 的模型不再出现）；
 7. 快捷栏仍是 H3 自己的（replace 不复制背包）；血条 / 食物条 / 温度档位 / 等级文字
    由反馈镜像每拍跟客户端（见上文"反馈镜像"）；
 8. **客户端被打掉血**：第三分屏闪红 + 血条下降 / 闪烉（与客户端自己的屏幕同一套公式）；
 9. **客户端死亡**：主机日志出现 `view-death-camera` → 第三分屏已切到 `DeathCamera`（绕尸体）；
    死亡黑屏 + "YOU HAVE DIED" + 死因仍由反馈镜像显示（不出现 "Tap to respawn"）；
-10. **客户端复活**：主机日志出现 `view-death-camera-restore` → 相机切回 `FppCamera`；
-   黑屏 / 大消息立刻消失，血条回到 1；
+10. **客户端复活**：主机日志出现 `角色复活 → 镜像分屏按客户端最后模式 … 恢复` →
+    相机回到客户端死亡前的模式（Tpp 仍是 Tpp）；黑屏 / 大消息立刻消失，血条回到 1；
 11. **H3 自己不受影响**：绑定期间打 H3 不会让第三分屏亢血（镙到的是客户端）；
 12. 客户端离开 / 关房 / 退世界 / 关配置后：`mirrorUnbind … restored=True viewRestored=True bodyRestored=True`，
     H3 恢复渲染 / 碰撞 / 自己的第一人称视图，位置与背包不变；
@@ -180,8 +224,8 @@ replace 的相机切换另有内部计数 `m_deathCameraShown` / `m_deathCameraR
 引擎的分屏视图必须是**本机 PlayerData** 的 GameWidget；只有真的是"本机玩家"才会带
 引擎自带的触控控件 / HUD / 界面镜像 / 睡眠与受击表现。`clientview` 那种 camera-only 壳
 （实体不进 Project、PlayerData 立刻从 PlayersData 摘掉）只有画面，没有这些表现。
-本功能按引擎官方链路创建一个真实角色，再把它的相机绑到客户端的第一人称，
-所以第三 / 第四分屏 = 客户端的第一人称 + 完整的本地角色表现。
+本功能按引擎官方链路创建一个真实角色，再把它的相机绑到客户端当前的视角（第一 / 第三 / 轨道 /
+固定视点，`camera_mode` 同步），所以第三 / 第四分屏 = 客户端当前的视角 + 完整的本地角色表现。
 
 ### 配置键
 

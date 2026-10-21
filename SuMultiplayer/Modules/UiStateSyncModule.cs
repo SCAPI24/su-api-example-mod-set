@@ -37,8 +37,9 @@ namespace SuMultiplayer.Modules
     ///   · 模态面板（背包 / 创造背包 / 衣物 / 箱子 / 熔炉 / 工作台 / 分配器）：用**引擎自己的
     ///     面板类**围绕主机侧已同步的化身背包 / 权威容器库存实例化，纯显示
     ///     （整棵子树 IsHitTestVisible=false，主机点不到、也不会产生任何主机侧编辑）。
-    ///     物品槽的实时同步范围是前 10 格（<c>PlayerInventoryMath.MaxSyncSlots</c>），
-    ///     其余槽位来自主机侧化身记录，因此**前 10 格精确、其余为最近一次记录值**（见
+    ///     物品槽的实时同步范围按 <c>PlayerInventoryMath.SyncSlotsFor</c> 决定：普通背包（26 槽）
+    ///     **全部槽位实时同步**，创造仓库仍只同步前 <c>PlayerInventoryMath.MaxSyncSlots</c> 槽
+    ///     （历史网络尖峰上限）。面板绑定化身实体的 ComponentMiner.Inventory（见
     ///     <c>UiMirrorEngine</c> 的说明）。
     ///   · 对话框：只镜像**能从类名重建的引擎对话框**（GameMenuDialog / KeyboardHelpDialog /
     ///     GamepadHelpDialog）；带参数的消息框 / 文本输入框 / 列表选择 / 编辑框**不支持**，
@@ -48,6 +49,14 @@ namespace SuMultiplayer.Modules
     ///     游戏屏（"GameScreen"）本身无遮罩 = 正常镜像，计数 uiMirrorScreen。
     ///   · 聊天输入行：**不支持**（mod 自己的 ChatOverlay 是每个 GameWidget 一份、由键盘/触摸
     ///     直接驱动输入；在镜像视图里替客户端开输入行会变成主机侧输入）。字段仍然上报并计数。
+    ///   · 本机视角模式（<c>camera_mode</c> = 18）：**转发给相机所有者**（
+    ///     <see cref="IViewCameraModePort"/>，实现 = <c>Engine/MirrorCharacterEngine.cs</c>）。
+    ///     客户端 V 键 / 视角按钮在 Fpp → Tpp → Orbit → Fixed 之间循环
+    ///     （Source: Survivalcraft/Game/ComponentGui.cs:645-670），按 ActiveCamera 的实际类型上报
+    ///     1..4（Fpp / Tpp / Orbit / Fixed）；其余相机（Death / Intro / Loading）上报 0 =
+    ///     不改变，主机保留最后已知模式。未知值（>4）整条快照拒绝（uiStateMalformed）；
+    ///     第三屏死亡时仍以 DeathCamera 优先，复活后回到客户端最后上报的模式。端口缺失 / 被拒绝
+    ///     都显式计数 + 10 秒限流日志（绝不静默丢掉）。
     ///
     /// 生命周期：连接建立 / 断开、客户端加入 / 离开、离开房间、世界卸载、模块下线都会
     /// 清空镜像（客户端重置发送快照与 revision，主机 ResetAll/ResetClient 并恢复视图原值）。
@@ -55,7 +64,8 @@ namespace SuMultiplayer.Modules
     /// 计数（10 秒限流日志）：uiStateSent/Recv/Applied/Stale/Unsupported、
     /// uiMirrorScreen/Dialog/Modal/Closed、uiTouchMirror/KeyboardMirror、hudHidden、
     /// uiStateMalformed/SendFailures/EncodeFailures/ApplyFailures/DirectionErrors/
-    /// CaptureFailures、uiMirrorNoView/Retries、uiInputReasserts。
+    /// CaptureFailures、uiMirrorNoView/Retries、uiInputReasserts、
+    /// uiViewCameraModeForwarded/Rejected/PortMissing/Unknown。
     /// </summary>
     public sealed class UiStateSyncModule : IMultiplayerModule, ISuMPMessageModule
     {
@@ -82,6 +92,7 @@ namespace SuMultiplayer.Modules
         private IUiMirrorTickPort m_presentation;
         private ITransportControlPort m_control;
         private IMessageRegistryPort m_messages;
+        private IViewCameraModePort m_viewCameraMode;
         private bool m_attached;
         private bool m_wasConnected;
         private bool m_hostResetForMissingWorld;
@@ -126,6 +137,12 @@ namespace SuMultiplayer.Modules
         private long m_clientLimitHits;
         private long m_hostResets;
         private long m_summaryRounds;
+
+        // ---------------------------------------------------------------- 第三屏视角模式（字段 18）
+        private long m_cameraModeForwarded;
+        private long m_cameraModeRejected;
+        private long m_cameraModePortMissing;
+        private long m_cameraModeUnknown;
 
         public UiStateSyncModule(IClientUiStateSource source, IUiMirrorPort mirror)
         {
@@ -194,13 +211,15 @@ namespace SuMultiplayer.Modules
             m_transport.ClientLeft += OnClientLeft;
             ResetClientSendState();
             ResetHostState();
+            m_viewCameraMode = null;
             m_wasConnected = false;
             m_attached = true;
             Log("UI 镜像就绪：客户端 = 只读采集界面层（变化才发 + " +
                 UiStatePolicy.HeartbeatMs + " ms 心跳）· 主机 = 施加到相机 Target 为该客户端 " +
                 "ComponentPlayer 的 GameWidget（自动客户端视图 / H3 replace 模式）· " +
                 "可镜像：输入形态 / HUD 显隐 / 背包·创造背包·衣物·容器·熔炉·工作台·分配器面板 / " +
-                "GameMenu·键盘帮助·手柄帮助对话框；不支持（显式计数 uiMirrorUnsupported:<type>）：" +
+                "GameMenu·键盘帮助·手柄帮助对话框 / 第三屏视角模式（camera_mode 18 → " +
+                "IViewCameraModePort）· 不支持（显式计数 uiMirrorUnsupported:<type>）：" +
                 "全屏 Screen、带参数的对话框、聊天输入行");
         }
 
@@ -233,6 +252,7 @@ namespace SuMultiplayer.Modules
             catch (Exception e) { LogProblem("detach-reset", "模块下线时清空镜像失败：" + Describe(e)); }
             ResetHostState();
             ResetClientSendState();
+            m_viewCameraMode = null;
             m_lastProblemMs.Clear();
             m_attached = false;
             Log("UI 镜像下线（" + reason + "）：" + summary);
@@ -499,6 +519,9 @@ namespace SuMultiplayer.Modules
 
         private bool Apply(int clientId, in ClientUiStateData data, uint revision)
         {
+            // 第三屏视角模式先交给相机所有者（与 HUD 镜像是否成功无关：H3 replace 的相机
+            // 绑定和 HUD 面板是两条独立的引擎路径，视图缺失不应该挡住宿主切相机）。
+            ForwardClientCameraMode(clientId, in data);
             UiMirrorOutcome outcome;
             string reason;
             bool ok;
@@ -559,6 +582,57 @@ namespace SuMultiplayer.Modules
             if ((outcome & UiMirrorOutcome.UnsupportedInput) != 0)
                 Unsupported("input", "IsControlledByTouch", clientId);
             return true;
+        }
+
+        /// <summary>
+        /// 把客户端上报的视角模式交给第三分屏的相机所有者（<see cref="IViewCameraModePort"/>，
+        /// 实现 = <c>Engine/MirrorCharacterEngine.cs</c>）。
+        ///
+        /// 0（<see cref="UiCameraMode.Unknown"/>）= **不改变**：客户端停在死亡相机 / 引擎屏上，
+        /// 不转发（主机保留最后已知模式，复活后按它恢复）。1..4（Fpp / Tpp / Orbit / Fixed）
+        /// 原样转发，由相机所有者选相机。
+        /// 端口缺失 / 被拒绝都显式计数 + 10 秒限流日志 —— 绝不静默当成已同步。
+        /// </summary>
+        private void ForwardClientCameraMode(int clientId, in ClientUiStateData data)
+        {
+            if (data.CameraMode == UiCameraMode.Unknown)
+            {
+                m_cameraModeUnknown++;
+                return;
+            }
+            if (m_viewCameraMode == null &&
+                (m_context == null || !m_context.TryGetPort(out m_viewCameraMode) ||
+                 m_viewCameraMode == null))
+            {
+                m_cameraModePortMissing++;
+                LogProblem("camera-mode-port",
+                    "第三屏视角模式无法施加：没有 IViewCameraModePort（组合根未注册）→ clientId=" +
+                    clientId + " camera_mode=" + (int)data.CameraMode + " 未生效（累计 " +
+                    m_cameraModePortMissing + "；不静默当成已同步）");
+                return;
+            }
+            try
+            {
+                if (!m_viewCameraMode.TrySetClientCameraMode(clientId, data.CameraMode,
+                        out string reason))
+                {
+                    m_cameraModeRejected++;
+                    LogProblem("camera-mode:" + clientId,
+                        "第三屏视角模式被拒绝（clientId=" + clientId + " camera_mode=" +
+                        (int)data.CameraMode + "）：" + (reason ?? "原因未知") + "（累计 " +
+                        m_cameraModeRejected + "；主机相机不变）");
+                    return;
+                }
+                m_cameraModeForwarded++;
+            }
+            catch (Exception e)
+            {
+                m_cameraModeRejected++;
+                LogProblem("camera-mode-throw:" + clientId,
+                    "转交第三屏视角模式时异常（clientId=" + clientId + " camera_mode=" +
+                    (int)data.CameraMode + "）：" + Describe(e) + "（累计 " +
+                    m_cameraModeRejected + "）");
+            }
         }
 
         private void Unsupported(string kind, string typeName, int clientId)
@@ -637,6 +711,10 @@ namespace SuMultiplayer.Modules
             " uiMirrorRetries=" + m_retries +
             " uiMirrorPresentFailures=" + m_presentFailures +
             " uiMirrorHostResets=" + m_hostResets +
+            " uiViewCameraModeForwarded=" + m_cameraModeForwarded +
+            " uiViewCameraModeRejected=" + m_cameraModeRejected +
+            " uiViewCameraModePortMissing=" + m_cameraModePortMissing +
+            " uiViewCameraModeUnknown=" + m_cameraModeUnknown +
             " uiMirrorSummaryRounds=" + m_summaryRounds;
 
         private readonly struct HostEntry
