@@ -233,6 +233,16 @@ namespace SuMultiplayer.Engine
         /// </summary>
         internal IWaterSplashHostSink SplashSink { get; set; }
 
+        /// <summary>
+        /// 主机投射物命中捕获窗口（Engine/ProjectileHitReplicaEngine.cs 的 Pump 挂接）。
+        /// 窗口同样只包住 <c>base.Update</c>：引擎在这一段里执行 AttackBody（伤害数字 +
+        /// 实际扣血），适配层用"命中前血量 vs 命中后血量"取出真实伤害。
+        /// 客户端整段不跑 base.Update，因此永远不会打开窗口。
+        /// Source: Survivalcraft/Game/SubsystemProjectiles.cs:221-240
+        /// Source: Survivalcraft/Game/ComponentMiner.cs:506-526
+        /// </summary>
+        internal IProjectileHitHostSink HitSink { get; set; }
+
         void IUpdateable.Update(float dt)
         {
             SubsystemTerrain terrain = Project?.FindSubsystem<SubsystemTerrain>(false);
@@ -252,6 +262,10 @@ namespace SuMultiplayer.Engine
             // 取出并广播；引擎原生表现（本机看到 / 听到的水花）不受影响。
             IWaterSplashHostSink sink = SplashSink;
             bool capture = sink != null && sink.BeginSplashCapture(out _);
+            // 主机：命中伤害由 ProjectileHitReplicaEngine 在窗口前后做血量差取出，
+            // 再按每个客户端的兴趣窗口中继（世界分区：远处命中不发给没载入那片地形的端）。
+            IProjectileHitHostSink hitSink = HitSink;
+            hitSink?.BeginHostHitCapture(dt);
             try
             {
                 base.Update(dt);
@@ -259,6 +273,7 @@ namespace SuMultiplayer.Engine
             finally
             {
                 if (capture) sink.EndSplashCapture();
+                hitSink?.EndHostHitCapture();
             }
         }
     }

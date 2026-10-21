@@ -442,6 +442,18 @@ enum MessageType {
   // Source: Survivalcraft/Game/ComponentOnFire.cs:Update
   PLAYER_EFFECT_EVENTS = 109;
 
+  // Host -> every client whose interest window contains the hit: projectile hit
+  // feedback (entities.proto ProjectileHitEvent).  Presentation only.  The
+  // engine's "-N" HitValueParticleSystem lives inside ComponentMiner.AttackBody,
+  // which a client replica never runs for projectiles (SuSubsystemProjectiles
+  // skips base.Update on the replica), so without this event the shooter and
+  // every other client see no damage number.  Clients only spawn the same
+  // particle: never injure, never edit cells, never create entities.
+  // Append-only: 111 = current max 109 + 1 (110 is retired); no id renumbered.
+  // Source: Survivalcraft/Game/ComponentMiner.cs:506-526
+  // Source: Survivalcraft/Game/SubsystemProjectiles.cs:221-240
+  PROJECTILE_HIT_EVENT = 111;
+
   // 110 was the reverted respawn-progress handshake (respawn.proto
   // PlayerRespawnStage: client -> host preparing / spawned).  The host now
   // respawns immediately on PLAYER_RESPAWN_REQUEST, so the message is gone.
@@ -463,6 +475,16 @@ message Envelope {
 }
 
 // Client -> host: first frame on a connection.
+// One "I already have this character record" claim (client -> host, in Hello).
+// record_key = PlayerIdentity.RecordKey(identity, name, slot); hash = the record_hash
+// published by the host earlier (0 = unknown, never sent). The host compares it with its
+// current record hash and only re-sends the records that actually changed.
+// Append-only: new message, no existing message is renumbered.
+message KnownRecordHash {
+  string record_key = 1;
+  uint64 hash = 2;
+}
+
 message Hello {
   // ClientKind: 0 = player, 1 = debug observer.
   uint32 kind = 1;
@@ -483,6 +505,11 @@ message Hello {
   // Source: Mod/ScMultiplayer/Message/GameWorldInfoMessage.cs:PlayerName/HasPlayerProfile/
   //         PlayerClass/CharacterSkinName
   PlayerProfile profile = 10;
+  // Character records this client already holds locally (from the downloaded world pak,
+  // i.e. <world>/SuMultiplayerPlayers.xml it imported earlier). The host diffs them against
+  // its current per-record hashes and only re-sends the changed records on rejoin.
+  // Empty = first join / old client => full backfill (no behavior change).
+  repeated KnownRecordHash known_records = 11;
 
   // Third-party extension points: see doc/message-protocol.md.
   bytes ext = 100;
@@ -564,6 +591,14 @@ message PlayerProfile {
   // omits the default value). (client_id, slot) is the stable player key.
   // Source: Mod/SuMultiplayer/Players/PlayerKey.cs
   uint32 slot = 7;
+  // Per-character record hash (the "does not change often" subset of the player
+  // record: name / class / skin (incl. custom asset hash) / clothes / inventory /
+  // level). Stored in SuMultiplayerPlayers.xml (never in Project.xml) and carried by
+  // the world pak, so a rejoining client can diff which character records changed and
+  // only the changed ones are re-sent. Append-only: 0 / absent = old host or unknown
+  // (clients must then treat the record as changed).
+  // Source: Mod/SuMultiplayer/Players/PlayerRecordHash.cs
+  uint64 record_hash = 8;
 }
 
 // Host -> clients: this identity left the room (its remote avatar must be removed).

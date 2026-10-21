@@ -24,6 +24,11 @@ namespace SuMultiplayer.Players
         public PlayerSex Sex = PlayerSex.Male;
         public byte[] Sha256 = Array.Empty<byte>();
         public byte[] Data = Array.Empty<byte>();
+        /// <summary>
+        /// 这份皮肤所属**角色记录**的不常变内容 hash（<see cref="PlayerRecordHash"/>；0 = 未知）。
+        /// 主机补发皮肤资源前用它和该连接申报的已知 hash 比对：相等 = 对端本地已有这条记录，不必重发。
+        /// </summary>
+        public ulong RecordHash;
 
         public bool HasData => Data != null && Data.Length > 0;
 
@@ -41,7 +46,8 @@ namespace SuMultiplayer.Players
             SkinName = SkinName ?? string.Empty,
             Sex = Sex,
             Sha256 = Sha256 != null ? (byte[])Sha256.Clone() : Array.Empty<byte>(),
-            Data = Data != null ? (byte[])Data.Clone() : Array.Empty<byte>()
+            Data = Data != null ? (byte[])Data.Clone() : Array.Empty<byte>(),
+            RecordHash = RecordHash
         };
 
         public string Describe() =>

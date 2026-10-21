@@ -28,106 +28,110 @@ namespace SuMultiplayer.Protocol {
             "YnVmL2FueS5wcm90byKiAQoIRW52ZWxvcGUSGAoQcHJvdG9jb2xfdmVyc2lv",
             "bhgBIAEoDRIQCghzZXF1ZW5jZRgCIAEoBBIoCgR0eXBlGAMgASgOMhouc3Vt",
             "cC5wcm90b2NvbC5NZXNzYWdlVHlwZRINCgVmbGFncxgEIAEoDRILCgNleHQY",
-            "ZCABKAwSJAoGY3VzdG9tGGUgASgLMhQuZ29vZ2xlLnByb3RvYnVmLkFueSKx",
-            "AgoFSGVsbG8SDAoEa2luZBgBIAEoDRIMCgRuYW1lGAIgASgJEhgKEHByb3Rv",
-            "Y29sX3ZlcnNpb24YAyABKA0SGQoRcHJvdG9jb2xfcmV2aXNpb24YBCABKA0S",
-            "DgoGcmFkaXVzGAUgASgFEhAKCGlkZW50aXR5GAYgASgJEhkKEWFscmVhZHlf",
-            "aGFzX3dvcmxkGAcgASgIEhkKEWNsaWVudF9zZXNzaW9uX2lkGAggASgJEh0K",
-            "FWxhc3RfYXBwbGllZF9zZXF1ZW5jZRgJIAEoAxItCgdwcm9maWxlGAogASgL",
-            "Mhwuc3VtcC5wcm90b2NvbC5QbGF5ZXJQcm9maWxlEgsKA2V4dBhkIAEoDBIk",
-            "CgZjdXN0b20YZSABKAsyFC5nb29nbGUucHJvdG9idWYuQW55IuMDCghIZWxs",
-            "b0FjaxIPCgd2ZXJzaW9uGAEgASgNEhEKCWNsaWVudF9pZBgCIAEoBRIMCgRy",
-            "b29tGAMgASgJEg0KBWZsYWdzGAQgASgNEhIKCm1heF9yYWRpdXMYBSABKAUS",
-            "FQoNaG9zdF9pZGVudGl0eRgGIAEoCRIRCglob3N0X25hbWUYByABKAkSEgoK",
-            "c2Vzc2lvbl9pZBgIIAEoCRIXCg9yZWpvaW5fYWNjZXB0ZWQYCSABKAgSFQoN",
-            "aGVhZF9zZXF1ZW5jZRgKIAEoAxIVCg1yZWpvaW5fcmVhc29uGAsgASgJEjIK",
-            "DGhvc3RfcHJvZmlsZRgMIAEoCzIcLnN1bXAucHJvdG9jb2wuUGxheWVyUHJv",
-            "ZmlsZRI2ChBhc3NpZ25lZF9wcm9maWxlGA0gASgLMhwuc3VtcC5wcm90b2Nv",
-            "bC5QbGF5ZXJQcm9maWxlEhgKEHByb2ZpbGVfcmVxdWlyZWQYDiABKAgSHwoX",
-            "cHJvZmlsZV9yZXF1aXJlZF9yZWFzb24YDyABKAkSIwobYXNzaWduZWRfc2tp",
-            "bl9hc3NldF9wcmVzZW50GBAgASgIEgsKA2V4dBhkIAEoDBIkCgZjdXN0b20Y",
-            "ZSABKAsyFC5nb29nbGUucHJvdG9idWYuQW55InUKEFBsYXllckFwcGVhcmFu",
-            "Y2USCwoDc2V4GAEgASgNEhEKCXNraW5fbmFtZRgCIAEoCRIsCgdjbG90aGVz",
-            "GAMgAygLMhsuc3VtcC5wcm90b2NvbC5DbG90aGluZ1Nsb3QSEwoLc2tpbl9z",
-            "aGEyNTYYBCABKAwiHgoMQ2xvdGhpbmdTbG90Eg4KBnZhbHVlcxgBIAMoBSKt",
-            "AQoNUGxheWVyUHJvZmlsZRIRCgljbGllbnRfaWQYASABKAUSEAoIaWRlbnRp",
-            "dHkYAiABKAkSDAoEbmFtZRgDIAEoCRIzCgphcHBlYXJhbmNlGAQgASgLMh8u",
-            "c3VtcC5wcm90b2NvbC5QbGF5ZXJBcHBlYXJhbmNlEg8KB2lzX2hvc3QYBSAB",
-            "KAgSFQoNaGFzX2NoYXJhY3RlchgGIAEoCBIMCgRzbG90GAcgASgNIlEKDEF2",
-            "YXRhclJlbW92ZRIRCgljbGllbnRfaWQYASABKAUSEAoIaWRlbnRpdHkYAiAB",
-            "KAkSDgoGcmVhc29uGAMgASgJEgwKBHNsb3QYBCABKA0iagoPTG9jYWxQbGF5",
-            "ZXJTbG90EgwKBHNsb3QYASABKA0SLQoHcHJvZmlsZRgCIAEoCzIcLnN1bXAu",
-            "cHJvdG9jb2wuUGxheWVyUHJvZmlsZRIaChJsb2NhbF9wbGF5ZXJfaW5kZXgY",
-            "AyABKAUigwEKEExvY2FsUGxheWVyU2xvdHMSDQoFY291bnQYASABKA0SLQoF",
-            "c2xvdHMYAiADKAsyHi5zdW1wLnByb3RvY29sLkxvY2FsUGxheWVyU2xvdBIL",
-            "CgNleHQYZCABKAwSJAoGY3VzdG9tGGUgASgLMhQuZ29vZ2xlLnByb3RvYnVm",
-            "LkFueSI9CgxBdmF0YXJSb3N0ZXISLQoHYXZhdGFycxgBIAMoCzIcLnN1bXAu",
-            "cHJvdG9jb2wuUGxheWVyUHJvZmlsZSJ3Cg5JbnRlcmVzdFVwZGF0ZRIQCghj",
-            "ZW50ZXJfeBgBIAEoBRIQCghjZW50ZXJfehgCIAEoBRIOCgZyYWRpdXMYAyAB",
-            "KAUSCwoDZXh0GGQgASgMEiQKBmN1c3RvbRhlIAEoCzIULmdvb2dsZS5wcm90",
-            "b2J1Zi5BbnkiSAoDQnllEg4KBnJlYXNvbhgBIAEoCRILCgNleHQYZCABKAwS",
-            "JAoGY3VzdG9tGGUgASgLMhQuZ29vZ2xlLnByb3RvYnVmLkFueSrdEQoLTWVz",
-            "c2FnZVR5cGUSHAoYTUVTU0FHRV9UWVBFX1VOU1BFQ0lGSUVEEAASCQoFSEVM",
-            "TE8QARINCglIRUxMT19BQ0sQAhITCg9JTlRFUkVTVF9VUERBVEUQAxIXChND",
-            "SFVOS19ESUdFU1RfUkVQT1JUEAQSEQoNQ0hVTktfVkVSRElDVBAFEhAKDENI",
-            "VU5LX1JFU1lOQxAGEg8KC0NFTExfQ0hBTkdFEAcSEwoPREVCVUdfU1VCU0NS",
-            "SUJFEAgSDwoLREVCVUdfU1RBVEUQCRIHCgNCWUUQChIPCgtXT1JMRF9CRUdJ",
-            "ThALEg8KC1dPUkxEX0NIVU5LEAwSDQoJV09STERfRU5EEA0SEQoNV09STERf",
-            "TUlTU0lORxAOEg8KC01BUF9SRVFVRVNUEA8SDQoJTUFQX1NUQVRFEBASEwoP",
-            "UExBWUVSX1BPU0lUSU9OEBESFAoQUExBWUVSX1BPU0lUSU9OUxASEhEKDUNM",
-            "SUVOVF9DSFVOS1MQExIMCghDQVRDSF9VUBAUEhEKDVZFUklGWV9DSFVOS1MQ",
-            "FRISCg5DUkVBVFVSRV9TVEFURRAWEhsKF0NSRUFUVVJFX1JFU1lOQ19SRVFV",
-            "RVNUEBcSFQoRQ0VMTF9FRElUX1JFUVVFU1QQGBIUChBDRUxMX0VESVRfUkVT",
-            "VUxUEBkSDgoKV09STERfSU5GTxAaEhIKDlBMQVlFUl9QUk9GSUxFEBsSEQoN",
-            "QVZBVEFSX1JFTU9WRRAcEhEKDUFWQVRBUl9ST1NURVIQHRIRCg1QTEFZRVJf",
-            "QUNUSU9OEB4SFAoQUExBWUVSX0VRVUlQTUVOVBAfEhQKEFBMQVlFUl9JTlZF",
-            "TlRPUlkQIBIXChNQTEFZRVJfTU9USU9OX1NUQVRFECESEwoPRVhQTE9TSU9O",
-            "X0VWRU5UECISFQoRRVhQTE9TSU9OX1JFUVVFU1QQIxIUChBFWFBMT1NJT05f",
-            "UkVTVUxUECQSEgoOUExBWUVSX0RBTUFHRUQQJRIQCgxFTlRJVFlfU1RBVEUQ",
-            "JhITCg9FTlRJVFlfU05BUFNIT1QQJxIcChhQSUNLQUJMRV9BQ1FVSVJFX1JF",
-            "UVVFU1QQKBIbChdQSUNLQUJMRV9BQ1FVSVJFX1JFU1VMVBApEhkKFUVOVElU",
-            "WV9SRVNZTkNfUkVRVUVTVBAqEhkKFVBJQ0tBQkxFX0RST1BfUkVRVUVTVBAy",
-            "EhgKFFBJQ0tBQkxFX0RST1BfUkVTVUxUEDMSGwoXUFJPSkVDVElMRV9GSVJF",
-            "X1JFUVVFU1QQNBIaChZQUk9KRUNUSUxFX0ZJUkVfUkVTVUxUEDUSFQoRV0VB",
-            "UE9OX0ZJUkVfRVZFTlQQNhIUChBCVVJOX0FXQVlfRUZGRUNUECsSFQoRQkxP",
-            "Q0tfVVNFX1JFUVVFU1QQPBIUChBCTE9DS19VU0VfUkVTVUxUED0SEwoPQ09O",
-            "VEFJTkVSX1NUQVRFED4SGgoWQ09OVEFJTkVSX0VESVRfUkVRVUVTVBA/EhkK",
-            "FUNPTlRBSU5FUl9FRElUX1JFU1VMVBBAEhUKEVBJU1RPTl9NT1ZFX0VWRU5U",
-            "EEESEwoPUElTVE9OX01PVkVfRU5EEEISHQoZQ0FNUEZJUkVfRVhUSU5HVUlT",
-            "SF9FVkVOVBBDEhcKE1JFTU9URV9BQ1RJT05fU09VTkQQRBIWChJQSUNLVVBf",
-            "U09VTkRfRVZFTlQQRRIRCg1GVVJOQUNFX1NUQVRFEEYSFgoSV0FURVJfU1BM",
-            "QVNIX0VWRU5UEEcSGQoVRURJVEFCTEVfRURJVF9SRVFVRVNUEEgSGAoURURJ",
-            "VEFCTEVfRURJVF9SRVNVTFQQSRISCg5FRElUQUJMRV9TVEFURRBKEhUKEVBM",
-            "QVlFUl9TS0lOX0FTU0VUEEsSFwoTUExBWUVSX1NLSU5fQ0hBTkdFRBBMEhwK",
-            "GEZVUk5JVFVSRV9ERVNJR05fUkVRVUVTVBBNEhsKF0ZVUk5JVFVSRV9ERVNJ",
-            "R05fUkVTVUxUEE4SGgoWRlVSTklUVVJFX0RFU0lHTl9TVEFURRBPEiEKHUZV",
-            "Uk5JVFVSRV9ERVNJR05fU1lOQ19SRVFVRVNUEFASGwoXRlVSTklUVVJFX0NP",
-            "TlRFTlRfU1RBVEUQURIVChFDSEFUX1NFTkRfUkVRVUVTVBBSEhAKDENIQVRf",
-            "TUVTU0FHRRBTEhEKDUNIQVRfUkVKRUNURUQQVBIQCgxWT0lDRV9QQUNLRVQQ",
-            "VRIPCgtWT0lDRV9TVEFURRBWEhAKDFZPSUNFX1JPU1RFUhBXEhYKElZPSUNF",
-            "X01VVEVfUkVRVUVTVBBYEhUKEVZPSUNFX01VVEVfUkVTVUxUEFkSEQoNVk9J",
-            "Q0VfQ09OVFJPTBBaEhkKFVBMQVlFUl9TVEFUU19TTkFQU0hPVBBbEhYKElBM",
-            "QVlFUl9TVEFUU19ERUxUQRBcEhgKFEFNQklFTlRfU09VTkRTX1NUQVRFEF0S",
-            "FgoSTE9DQUxfUExBWUVSX1NMT1RTEF4SGAoUUExBWUVSX1ZJVEFMU19SRVBP",
-            "UlQQXxIYChRQTEFZRVJfVklUQUxTX0VWRU5UUxBgEhgKFE1FTEVFX0FUVEFD",
-            "S19SRVFVRVNUEGESFwoTTUVMRUVfQVRUQUNLX1JFU1VMVBBiEhMKD0NPTUJB",
-            "VF9STkdfU1lOQxBjEhMKD0NMSUVOVF9VSV9TVEFURRBkEhoKFlBMQVlFUl9S",
-            "RVNQQVdOX1JFUVVFU1QQZRIZChVQTEFZRVJfUkVTUEFXTl9SRVNVTFQQZhIX",
-            "ChNQTEFZRVJfV0FLRV9SRVFVRVNUEGcSGAoUUExBWUVSX1NMRUVQX1JFUVVF",
-            "U1QQaBIXChNQTEFZRVJfU0xFRVBfUkVTVUxUEGkSHgoaUExBWUVSX1NFTEZf",
-            "REFNQUdFX1JFUVVFU1QQahIdChlQTEFZRVJfU0VMRl9EQU1BR0VfUkVTVUxU",
-            "EGsSFwoTUExBWUVSX1BST0ZJTEVfU1lOQxBsEhgKFFBMQVlFUl9FRkZFQ1Rf",
-            "RVZFTlRTEG0iBAhuEG5CG0gBqgIWU3VNdWx0aXBsYXllci5Qcm90b2NvbGIG",
-            "cHJvdG8z"));
+            "ZCABKAwSJAoGY3VzdG9tGGUgASgLMhQuZ29vZ2xlLnByb3RvYnVmLkFueSIz",
+            "Cg9Lbm93blJlY29yZEhhc2gSEgoKcmVjb3JkX2tleRgBIAEoCRIMCgRoYXNo",
+            "GAIgASgEIugCCgVIZWxsbxIMCgRraW5kGAEgASgNEgwKBG5hbWUYAiABKAkS",
+            "GAoQcHJvdG9jb2xfdmVyc2lvbhgDIAEoDRIZChFwcm90b2NvbF9yZXZpc2lv",
+            "bhgEIAEoDRIOCgZyYWRpdXMYBSABKAUSEAoIaWRlbnRpdHkYBiABKAkSGQoR",
+            "YWxyZWFkeV9oYXNfd29ybGQYByABKAgSGQoRY2xpZW50X3Nlc3Npb25faWQY",
+            "CCABKAkSHQoVbGFzdF9hcHBsaWVkX3NlcXVlbmNlGAkgASgDEi0KB3Byb2Zp",
+            "bGUYCiABKAsyHC5zdW1wLnByb3RvY29sLlBsYXllclByb2ZpbGUSNQoNa25v",
+            "d25fcmVjb3JkcxgLIAMoCzIeLnN1bXAucHJvdG9jb2wuS25vd25SZWNvcmRI",
+            "YXNoEgsKA2V4dBhkIAEoDBIkCgZjdXN0b20YZSABKAsyFC5nb29nbGUucHJv",
+            "dG9idWYuQW55IuMDCghIZWxsb0FjaxIPCgd2ZXJzaW9uGAEgASgNEhEKCWNs",
+            "aWVudF9pZBgCIAEoBRIMCgRyb29tGAMgASgJEg0KBWZsYWdzGAQgASgNEhIK",
+            "Cm1heF9yYWRpdXMYBSABKAUSFQoNaG9zdF9pZGVudGl0eRgGIAEoCRIRCglo",
+            "b3N0X25hbWUYByABKAkSEgoKc2Vzc2lvbl9pZBgIIAEoCRIXCg9yZWpvaW5f",
+            "YWNjZXB0ZWQYCSABKAgSFQoNaGVhZF9zZXF1ZW5jZRgKIAEoAxIVCg1yZWpv",
+            "aW5fcmVhc29uGAsgASgJEjIKDGhvc3RfcHJvZmlsZRgMIAEoCzIcLnN1bXAu",
+            "cHJvdG9jb2wuUGxheWVyUHJvZmlsZRI2ChBhc3NpZ25lZF9wcm9maWxlGA0g",
+            "ASgLMhwuc3VtcC5wcm90b2NvbC5QbGF5ZXJQcm9maWxlEhgKEHByb2ZpbGVf",
+            "cmVxdWlyZWQYDiABKAgSHwoXcHJvZmlsZV9yZXF1aXJlZF9yZWFzb24YDyAB",
+            "KAkSIwobYXNzaWduZWRfc2tpbl9hc3NldF9wcmVzZW50GBAgASgIEgsKA2V4",
+            "dBhkIAEoDBIkCgZjdXN0b20YZSABKAsyFC5nb29nbGUucHJvdG9idWYuQW55",
+            "InUKEFBsYXllckFwcGVhcmFuY2USCwoDc2V4GAEgASgNEhEKCXNraW5fbmFt",
+            "ZRgCIAEoCRIsCgdjbG90aGVzGAMgAygLMhsuc3VtcC5wcm90b2NvbC5DbG90",
+            "aGluZ1Nsb3QSEwoLc2tpbl9zaGEyNTYYBCABKAwiHgoMQ2xvdGhpbmdTbG90",
+            "Eg4KBnZhbHVlcxgBIAMoBSLCAQoNUGxheWVyUHJvZmlsZRIRCgljbGllbnRf",
+            "aWQYASABKAUSEAoIaWRlbnRpdHkYAiABKAkSDAoEbmFtZRgDIAEoCRIzCgph",
+            "cHBlYXJhbmNlGAQgASgLMh8uc3VtcC5wcm90b2NvbC5QbGF5ZXJBcHBlYXJh",
+            "bmNlEg8KB2lzX2hvc3QYBSABKAgSFQoNaGFzX2NoYXJhY3RlchgGIAEoCBIM",
+            "CgRzbG90GAcgASgNEhMKC3JlY29yZF9oYXNoGAggASgEIlEKDEF2YXRhclJl",
+            "bW92ZRIRCgljbGllbnRfaWQYASABKAUSEAoIaWRlbnRpdHkYAiABKAkSDgoG",
+            "cmVhc29uGAMgASgJEgwKBHNsb3QYBCABKA0iagoPTG9jYWxQbGF5ZXJTbG90",
+            "EgwKBHNsb3QYASABKA0SLQoHcHJvZmlsZRgCIAEoCzIcLnN1bXAucHJvdG9j",
+            "b2wuUGxheWVyUHJvZmlsZRIaChJsb2NhbF9wbGF5ZXJfaW5kZXgYAyABKAUi",
+            "gwEKEExvY2FsUGxheWVyU2xvdHMSDQoFY291bnQYASABKA0SLQoFc2xvdHMY",
+            "AiADKAsyHi5zdW1wLnByb3RvY29sLkxvY2FsUGxheWVyU2xvdBILCgNleHQY",
+            "ZCABKAwSJAoGY3VzdG9tGGUgASgLMhQuZ29vZ2xlLnByb3RvYnVmLkFueSI9",
+            "CgxBdmF0YXJSb3N0ZXISLQoHYXZhdGFycxgBIAMoCzIcLnN1bXAucHJvdG9j",
+            "b2wuUGxheWVyUHJvZmlsZSJ3Cg5JbnRlcmVzdFVwZGF0ZRIQCghjZW50ZXJf",
+            "eBgBIAEoBRIQCghjZW50ZXJfehgCIAEoBRIOCgZyYWRpdXMYAyABKAUSCwoD",
+            "ZXh0GGQgASgMEiQKBmN1c3RvbRhlIAEoCzIULmdvb2dsZS5wcm90b2J1Zi5B",
+            "bnkiSAoDQnllEg4KBnJlYXNvbhgBIAEoCRILCgNleHQYZCABKAwSJAoGY3Vz",
+            "dG9tGGUgASgLMhQuZ29vZ2xlLnByb3RvYnVmLkFueSr3EQoLTWVzc2FnZVR5",
+            "cGUSHAoYTUVTU0FHRV9UWVBFX1VOU1BFQ0lGSUVEEAASCQoFSEVMTE8QARIN",
+            "CglIRUxMT19BQ0sQAhITCg9JTlRFUkVTVF9VUERBVEUQAxIXChNDSFVOS19E",
+            "SUdFU1RfUkVQT1JUEAQSEQoNQ0hVTktfVkVSRElDVBAFEhAKDENIVU5LX1JF",
+            "U1lOQxAGEg8KC0NFTExfQ0hBTkdFEAcSEwoPREVCVUdfU1VCU0NSSUJFEAgS",
+            "DwoLREVCVUdfU1RBVEUQCRIHCgNCWUUQChIPCgtXT1JMRF9CRUdJThALEg8K",
+            "C1dPUkxEX0NIVU5LEAwSDQoJV09STERfRU5EEA0SEQoNV09STERfTUlTU0lO",
+            "RxAOEg8KC01BUF9SRVFVRVNUEA8SDQoJTUFQX1NUQVRFEBASEwoPUExBWUVS",
+            "X1BPU0lUSU9OEBESFAoQUExBWUVSX1BPU0lUSU9OUxASEhEKDUNMSUVOVF9D",
+            "SFVOS1MQExIMCghDQVRDSF9VUBAUEhEKDVZFUklGWV9DSFVOS1MQFRISCg5D",
+            "UkVBVFVSRV9TVEFURRAWEhsKF0NSRUFUVVJFX1JFU1lOQ19SRVFVRVNUEBcS",
+            "FQoRQ0VMTF9FRElUX1JFUVVFU1QQGBIUChBDRUxMX0VESVRfUkVTVUxUEBkS",
+            "DgoKV09STERfSU5GTxAaEhIKDlBMQVlFUl9QUk9GSUxFEBsSEQoNQVZBVEFS",
+            "X1JFTU9WRRAcEhEKDUFWQVRBUl9ST1NURVIQHRIRCg1QTEFZRVJfQUNUSU9O",
+            "EB4SFAoQUExBWUVSX0VRVUlQTUVOVBAfEhQKEFBMQVlFUl9JTlZFTlRPUlkQ",
+            "IBIXChNQTEFZRVJfTU9USU9OX1NUQVRFECESEwoPRVhQTE9TSU9OX0VWRU5U",
+            "ECISFQoRRVhQTE9TSU9OX1JFUVVFU1QQIxIUChBFWFBMT1NJT05fUkVTVUxU",
+            "ECQSEgoOUExBWUVSX0RBTUFHRUQQJRIQCgxFTlRJVFlfU1RBVEUQJhITCg9F",
+            "TlRJVFlfU05BUFNIT1QQJxIcChhQSUNLQUJMRV9BQ1FVSVJFX1JFUVVFU1QQ",
+            "KBIbChdQSUNLQUJMRV9BQ1FVSVJFX1JFU1VMVBApEhkKFUVOVElUWV9SRVNZ",
+            "TkNfUkVRVUVTVBAqEhkKFVBJQ0tBQkxFX0RST1BfUkVRVUVTVBAyEhgKFFBJ",
+            "Q0tBQkxFX0RST1BfUkVTVUxUEDMSGwoXUFJPSkVDVElMRV9GSVJFX1JFUVVF",
+            "U1QQNBIaChZQUk9KRUNUSUxFX0ZJUkVfUkVTVUxUEDUSFQoRV0VBUE9OX0ZJ",
+            "UkVfRVZFTlQQNhIUChBCVVJOX0FXQVlfRUZGRUNUECsSFQoRQkxPQ0tfVVNF",
+            "X1JFUVVFU1QQPBIUChBCTE9DS19VU0VfUkVTVUxUED0SEwoPQ09OVEFJTkVS",
+            "X1NUQVRFED4SGgoWQ09OVEFJTkVSX0VESVRfUkVRVUVTVBA/EhkKFUNPTlRB",
+            "SU5FUl9FRElUX1JFU1VMVBBAEhUKEVBJU1RPTl9NT1ZFX0VWRU5UEEESEwoP",
+            "UElTVE9OX01PVkVfRU5EEEISHQoZQ0FNUEZJUkVfRVhUSU5HVUlTSF9FVkVO",
+            "VBBDEhcKE1JFTU9URV9BQ1RJT05fU09VTkQQRBIWChJQSUNLVVBfU09VTkRf",
+            "RVZFTlQQRRIRCg1GVVJOQUNFX1NUQVRFEEYSFgoSV0FURVJfU1BMQVNIX0VW",
+            "RU5UEEcSGQoVRURJVEFCTEVfRURJVF9SRVFVRVNUEEgSGAoURURJVEFCTEVf",
+            "RURJVF9SRVNVTFQQSRISCg5FRElUQUJMRV9TVEFURRBKEhUKEVBMQVlFUl9T",
+            "S0lOX0FTU0VUEEsSFwoTUExBWUVSX1NLSU5fQ0hBTkdFRBBMEhwKGEZVUk5J",
+            "VFVSRV9ERVNJR05fUkVRVUVTVBBNEhsKF0ZVUk5JVFVSRV9ERVNJR05fUkVT",
+            "VUxUEE4SGgoWRlVSTklUVVJFX0RFU0lHTl9TVEFURRBPEiEKHUZVUk5JVFVS",
+            "RV9ERVNJR05fU1lOQ19SRVFVRVNUEFASGwoXRlVSTklUVVJFX0NPTlRFTlRf",
+            "U1RBVEUQURIVChFDSEFUX1NFTkRfUkVRVUVTVBBSEhAKDENIQVRfTUVTU0FH",
+            "RRBTEhEKDUNIQVRfUkVKRUNURUQQVBIQCgxWT0lDRV9QQUNLRVQQVRIPCgtW",
+            "T0lDRV9TVEFURRBWEhAKDFZPSUNFX1JPU1RFUhBXEhYKElZPSUNFX01VVEVf",
+            "UkVRVUVTVBBYEhUKEVZPSUNFX01VVEVfUkVTVUxUEFkSEQoNVk9JQ0VfQ09O",
+            "VFJPTBBaEhkKFVBMQVlFUl9TVEFUU19TTkFQU0hPVBBbEhYKElBMQVlFUl9T",
+            "VEFUU19ERUxUQRBcEhgKFEFNQklFTlRfU09VTkRTX1NUQVRFEF0SFgoSTE9D",
+            "QUxfUExBWUVSX1NMT1RTEF4SGAoUUExBWUVSX1ZJVEFMU19SRVBPUlQQXxIY",
+            "ChRQTEFZRVJfVklUQUxTX0VWRU5UUxBgEhgKFE1FTEVFX0FUVEFDS19SRVFV",
+            "RVNUEGESFwoTTUVMRUVfQVRUQUNLX1JFU1VMVBBiEhMKD0NPTUJBVF9STkdf",
+            "U1lOQxBjEhMKD0NMSUVOVF9VSV9TVEFURRBkEhoKFlBMQVlFUl9SRVNQQVdO",
+            "X1JFUVVFU1QQZRIZChVQTEFZRVJfUkVTUEFXTl9SRVNVTFQQZhIXChNQTEFZ",
+            "RVJfV0FLRV9SRVFVRVNUEGcSGAoUUExBWUVSX1NMRUVQX1JFUVVFU1QQaBIX",
+            "ChNQTEFZRVJfU0xFRVBfUkVTVUxUEGkSHgoaUExBWUVSX1NFTEZfREFNQUdF",
+            "X1JFUVVFU1QQahIdChlQTEFZRVJfU0VMRl9EQU1BR0VfUkVTVUxUEGsSFwoT",
+            "UExBWUVSX1BST0ZJTEVfU1lOQxBsEhgKFFBMQVlFUl9FRkZFQ1RfRVZFTlRT",
+            "EG0SGAoUUFJPSkVDVElMRV9ISVRfRVZFTlQQbyIECG4QbkIbSAGqAhZTdU11",
+            "bHRpcGxheWVyLlByb3RvY29sYgZwcm90bzM="));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { global::Google.Protobuf.WellKnownTypes.AnyReflection.Descriptor, },
           new pbr::GeneratedClrTypeInfo(new[] {typeof(global::SuMultiplayer.Protocol.MessageType), }, null, new pbr::GeneratedClrTypeInfo[] {
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Envelope), global::SuMultiplayer.Protocol.Envelope.Parser, new[]{ "ProtocolVersion", "Sequence", "Type", "Flags", "Ext", "Custom" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Hello), global::SuMultiplayer.Protocol.Hello.Parser, new[]{ "Kind", "Name", "ProtocolVersion", "ProtocolRevision", "Radius", "Identity", "AlreadyHasWorld", "ClientSessionId", "LastAppliedSequence", "Profile", "Ext", "Custom" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.KnownRecordHash), global::SuMultiplayer.Protocol.KnownRecordHash.Parser, new[]{ "RecordKey", "Hash" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Hello), global::SuMultiplayer.Protocol.Hello.Parser, new[]{ "Kind", "Name", "ProtocolVersion", "ProtocolRevision", "Radius", "Identity", "AlreadyHasWorld", "ClientSessionId", "LastAppliedSequence", "Profile", "KnownRecords", "Ext", "Custom" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.HelloAck), global::SuMultiplayer.Protocol.HelloAck.Parser, new[]{ "Version", "ClientId", "Room", "Flags", "MaxRadius", "HostIdentity", "HostName", "SessionId", "RejoinAccepted", "HeadSequence", "RejoinReason", "HostProfile", "AssignedProfile", "ProfileRequired", "ProfileRequiredReason", "AssignedSkinAssetPresent", "Ext", "Custom" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.PlayerAppearance), global::SuMultiplayer.Protocol.PlayerAppearance.Parser, new[]{ "Sex", "SkinName", "Clothes", "SkinSha256" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.ClothingSlot), global::SuMultiplayer.Protocol.ClothingSlot.Parser, new[]{ "Values" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.PlayerProfile), global::SuMultiplayer.Protocol.PlayerProfile.Parser, new[]{ "ClientId", "Identity", "Name", "Appearance", "IsHost", "HasCharacter", "Slot" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.PlayerProfile), global::SuMultiplayer.Protocol.PlayerProfile.Parser, new[]{ "ClientId", "Identity", "Name", "Appearance", "IsHost", "HasCharacter", "Slot", "RecordHash" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.AvatarRemove), global::SuMultiplayer.Protocol.AvatarRemove.Parser, new[]{ "ClientId", "Identity", "Reason", "Slot" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.LocalPlayerSlot), global::SuMultiplayer.Protocol.LocalPlayerSlot.Parser, new[]{ "Slot", "Profile", "LocalPlayerIndex" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.LocalPlayerSlots), global::SuMultiplayer.Protocol.LocalPlayerSlots.Parser, new[]{ "Count", "Slots", "Ext", "Custom" }, null, null, null, null),
@@ -621,6 +625,19 @@ namespace SuMultiplayer.Protocol {
     /// Source: Survivalcraft/Game/ComponentOnFire.cs:Update
     /// </summary>
     [pbr::OriginalName("PLAYER_EFFECT_EVENTS")] PlayerEffectEvents = 109,
+    /// <summary>
+    /// Host -> every client whose interest window contains the hit: projectile hit
+    /// feedback (entities.proto ProjectileHitEvent).  Presentation only.  The
+    /// engine's "-N" HitValueParticleSystem lives inside ComponentMiner.AttackBody,
+    /// which a client replica never runs for projectiles (SuSubsystemProjectiles
+    /// skips base.Update on the replica), so without this event the shooter and
+    /// every other client see no damage number.  Clients only spawn the same
+    /// particle: never injure, never edit cells, never create entities.
+    /// Append-only: 111 = current max 109 + 1 (110 is retired); no id renumbered.
+    /// Source: Survivalcraft/Game/ComponentMiner.cs:506-526
+    /// Source: Survivalcraft/Game/SubsystemProjectiles.cs:221-240
+    /// </summary>
+    [pbr::OriginalName("PROJECTILE_HIT_EVENT")] ProjectileHitEvent = 111,
   }
 
   #endregion
@@ -1026,7 +1043,247 @@ namespace SuMultiplayer.Protocol {
 
   /// <summary>
   /// Client -> host: first frame on a connection.
+  /// One "I already have this character record" claim (client -> host, in Hello).
+  /// record_key = PlayerIdentity.RecordKey(identity, name, slot); hash = the record_hash
+  /// published by the host earlier (0 = unknown, never sent). The host compares it with its
+  /// current record hash and only re-sends the records that actually changed.
+  /// Append-only: new message, no existing message is renumbered.
   /// </summary>
+  [global::System.Diagnostics.DebuggerDisplayAttribute("{ToString(),nq}")]
+  public sealed partial class KnownRecordHash : pb::IMessage<KnownRecordHash>
+  #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      , pb::IBufferMessage
+  #endif
+  {
+    private static readonly pb::MessageParser<KnownRecordHash> _parser = new pb::MessageParser<KnownRecordHash>(() => new KnownRecordHash());
+    private pb::UnknownFieldSet _unknownFields;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pb::MessageParser<KnownRecordHash> Parser { get { return _parser; } }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pbr::MessageDescriptor Descriptor {
+      get { return global::SuMultiplayer.Protocol.ProtocolReflection.Descriptor.MessageTypes[1]; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    pbr::MessageDescriptor pb::IMessage.Descriptor {
+      get { return Descriptor; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public KnownRecordHash() {
+      OnConstruction();
+    }
+
+    partial void OnConstruction();
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public KnownRecordHash(KnownRecordHash other) : this() {
+      recordKey_ = other.recordKey_;
+      hash_ = other.hash_;
+      _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public KnownRecordHash Clone() {
+      return new KnownRecordHash(this);
+    }
+
+    /// <summary>Field number for the "record_key" field.</summary>
+    public const int RecordKeyFieldNumber = 1;
+    private string recordKey_ = "";
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string RecordKey {
+      get { return recordKey_; }
+      set {
+        recordKey_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "hash" field.</summary>
+    public const int HashFieldNumber = 2;
+    private ulong hash_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong Hash {
+      get { return hash_; }
+      set {
+        hash_ = value;
+      }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override bool Equals(object other) {
+      return Equals(other as KnownRecordHash);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Equals(KnownRecordHash other) {
+      if (ReferenceEquals(other, null)) {
+        return false;
+      }
+      if (ReferenceEquals(other, this)) {
+        return true;
+      }
+      if (RecordKey != other.RecordKey) return false;
+      if (Hash != other.Hash) return false;
+      return Equals(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override int GetHashCode() {
+      int hash = 1;
+      if (RecordKey.Length != 0) hash ^= RecordKey.GetHashCode();
+      if (Hash != 0UL) hash ^= Hash.GetHashCode();
+      if (_unknownFields != null) {
+        hash ^= _unknownFields.GetHashCode();
+      }
+      return hash;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override string ToString() {
+      return pb::JsonFormatter.ToDiagnosticString(this);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void WriteTo(pb::CodedOutputStream output) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      output.WriteRawMessage(this);
+    #else
+      if (RecordKey.Length != 0) {
+        output.WriteRawTag(10);
+        output.WriteString(RecordKey);
+      }
+      if (Hash != 0UL) {
+        output.WriteRawTag(16);
+        output.WriteUInt64(Hash);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(output);
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
+      if (RecordKey.Length != 0) {
+        output.WriteRawTag(10);
+        output.WriteString(RecordKey);
+      }
+      if (Hash != 0UL) {
+        output.WriteRawTag(16);
+        output.WriteUInt64(Hash);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(ref output);
+      }
+    }
+    #endif
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int CalculateSize() {
+      int size = 0;
+      if (RecordKey.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(RecordKey);
+      }
+      if (Hash != 0UL) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt64Size(Hash);
+      }
+      if (_unknownFields != null) {
+        size += _unknownFields.CalculateSize();
+      }
+      return size;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(KnownRecordHash other) {
+      if (other == null) {
+        return;
+      }
+      if (other.RecordKey.Length != 0) {
+        RecordKey = other.RecordKey;
+      }
+      if (other.Hash != 0UL) {
+        Hash = other.Hash;
+      }
+      _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(pb::CodedInputStream input) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      input.ReadRawMessage(this);
+    #else
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
+            break;
+          case 10: {
+            RecordKey = input.ReadString();
+            break;
+          }
+          case 16: {
+            Hash = input.ReadUInt64();
+            break;
+          }
+        }
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalMergeFrom(ref pb::ParseContext input) {
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
+            break;
+          case 10: {
+            RecordKey = input.ReadString();
+            break;
+          }
+          case 16: {
+            Hash = input.ReadUInt64();
+            break;
+          }
+        }
+      }
+    }
+    #endif
+
+  }
+
   [global::System.Diagnostics.DebuggerDisplayAttribute("{ToString(),nq}")]
   public sealed partial class Hello : pb::IMessage<Hello>
   #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
@@ -1042,7 +1299,7 @@ namespace SuMultiplayer.Protocol {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::SuMultiplayer.Protocol.ProtocolReflection.Descriptor.MessageTypes[1]; }
+      get { return global::SuMultiplayer.Protocol.ProtocolReflection.Descriptor.MessageTypes[2]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -1072,6 +1329,7 @@ namespace SuMultiplayer.Protocol {
       clientSessionId_ = other.clientSessionId_;
       lastAppliedSequence_ = other.lastAppliedSequence_;
       profile_ = other.profile_ != null ? other.profile_.Clone() : null;
+      knownRecords_ = other.knownRecords_.Clone();
       ext_ = other.ext_;
       custom_ = other.custom_ != null ? other.custom_.Clone() : null;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
@@ -1222,6 +1480,23 @@ namespace SuMultiplayer.Protocol {
       }
     }
 
+    /// <summary>Field number for the "known_records" field.</summary>
+    public const int KnownRecordsFieldNumber = 11;
+    private static readonly pb::FieldCodec<global::SuMultiplayer.Protocol.KnownRecordHash> _repeated_knownRecords_codec
+        = pb::FieldCodec.ForMessage(90, global::SuMultiplayer.Protocol.KnownRecordHash.Parser);
+    private readonly pbc::RepeatedField<global::SuMultiplayer.Protocol.KnownRecordHash> knownRecords_ = new pbc::RepeatedField<global::SuMultiplayer.Protocol.KnownRecordHash>();
+    /// <summary>
+    /// Character records this client already holds locally (from the downloaded world pak,
+    /// i.e. &lt;world>/SuMultiplayerPlayers.xml it imported earlier). The host diffs them against
+    /// its current per-record hashes and only re-sends the changed records on rejoin.
+    /// Empty = first join / old client => full backfill (no behavior change).
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public pbc::RepeatedField<global::SuMultiplayer.Protocol.KnownRecordHash> KnownRecords {
+      get { return knownRecords_; }
+    }
+
     /// <summary>Field number for the "ext" field.</summary>
     public const int ExtFieldNumber = 100;
     private pb::ByteString ext_ = pb::ByteString.Empty;
@@ -1274,6 +1549,7 @@ namespace SuMultiplayer.Protocol {
       if (ClientSessionId != other.ClientSessionId) return false;
       if (LastAppliedSequence != other.LastAppliedSequence) return false;
       if (!object.Equals(Profile, other.Profile)) return false;
+      if(!knownRecords_.Equals(other.knownRecords_)) return false;
       if (Ext != other.Ext) return false;
       if (!object.Equals(Custom, other.Custom)) return false;
       return Equals(_unknownFields, other._unknownFields);
@@ -1293,6 +1569,7 @@ namespace SuMultiplayer.Protocol {
       if (ClientSessionId.Length != 0) hash ^= ClientSessionId.GetHashCode();
       if (LastAppliedSequence != 0L) hash ^= LastAppliedSequence.GetHashCode();
       if (profile_ != null) hash ^= Profile.GetHashCode();
+      hash ^= knownRecords_.GetHashCode();
       if (Ext.Length != 0) hash ^= Ext.GetHashCode();
       if (custom_ != null) hash ^= Custom.GetHashCode();
       if (_unknownFields != null) {
@@ -1353,6 +1630,7 @@ namespace SuMultiplayer.Protocol {
         output.WriteRawTag(82);
         output.WriteMessage(Profile);
       }
+      knownRecords_.WriteTo(output, _repeated_knownRecords_codec);
       if (Ext.Length != 0) {
         output.WriteRawTag(162, 6);
         output.WriteBytes(Ext);
@@ -1411,6 +1689,7 @@ namespace SuMultiplayer.Protocol {
         output.WriteRawTag(82);
         output.WriteMessage(Profile);
       }
+      knownRecords_.WriteTo(ref output, _repeated_knownRecords_codec);
       if (Ext.Length != 0) {
         output.WriteRawTag(162, 6);
         output.WriteBytes(Ext);
@@ -1459,6 +1738,7 @@ namespace SuMultiplayer.Protocol {
       if (profile_ != null) {
         size += 1 + pb::CodedOutputStream.ComputeMessageSize(Profile);
       }
+      size += knownRecords_.CalculateSize(_repeated_knownRecords_codec);
       if (Ext.Length != 0) {
         size += 2 + pb::CodedOutputStream.ComputeBytesSize(Ext);
       }
@@ -1510,6 +1790,7 @@ namespace SuMultiplayer.Protocol {
         }
         Profile.MergeFrom(other.Profile);
       }
+      knownRecords_.Add(other.knownRecords_);
       if (other.Ext.Length != 0) {
         Ext = other.Ext;
       }
@@ -1579,6 +1860,10 @@ namespace SuMultiplayer.Protocol {
               Profile = new global::SuMultiplayer.Protocol.PlayerProfile();
             }
             input.ReadMessage(Profile);
+            break;
+          }
+          case 90: {
+            knownRecords_.AddEntriesFrom(input, _repeated_knownRecords_codec);
             break;
           }
           case 802: {
@@ -1654,6 +1939,10 @@ namespace SuMultiplayer.Protocol {
             input.ReadMessage(Profile);
             break;
           }
+          case 90: {
+            knownRecords_.AddEntriesFrom(ref input, _repeated_knownRecords_codec);
+            break;
+          }
           case 802: {
             Ext = input.ReadBytes();
             break;
@@ -1690,7 +1979,7 @@ namespace SuMultiplayer.Protocol {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::SuMultiplayer.Protocol.ProtocolReflection.Descriptor.MessageTypes[2]; }
+      get { return global::SuMultiplayer.Protocol.ProtocolReflection.Descriptor.MessageTypes[3]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -2577,7 +2866,7 @@ namespace SuMultiplayer.Protocol {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::SuMultiplayer.Protocol.ProtocolReflection.Descriptor.MessageTypes[3]; }
+      get { return global::SuMultiplayer.Protocol.ProtocolReflection.Descriptor.MessageTypes[4]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -2878,7 +3167,7 @@ namespace SuMultiplayer.Protocol {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::SuMultiplayer.Protocol.ProtocolReflection.Descriptor.MessageTypes[4]; }
+      get { return global::SuMultiplayer.Protocol.ProtocolReflection.Descriptor.MessageTypes[5]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -3076,7 +3365,7 @@ namespace SuMultiplayer.Protocol {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::SuMultiplayer.Protocol.ProtocolReflection.Descriptor.MessageTypes[5]; }
+      get { return global::SuMultiplayer.Protocol.ProtocolReflection.Descriptor.MessageTypes[6]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -3103,6 +3392,7 @@ namespace SuMultiplayer.Protocol {
       isHost_ = other.isHost_;
       hasCharacter_ = other.hasCharacter_;
       slot_ = other.slot_;
+      recordHash_ = other.recordHash_;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
     }
 
@@ -3202,6 +3492,27 @@ namespace SuMultiplayer.Protocol {
       }
     }
 
+    /// <summary>Field number for the "record_hash" field.</summary>
+    public const int RecordHashFieldNumber = 8;
+    private ulong recordHash_;
+    /// <summary>
+    /// Per-character record hash (the "does not change often" subset of the player
+    /// record: name / class / skin (incl. custom asset hash) / clothes / inventory /
+    /// level). Stored in SuMultiplayerPlayers.xml (never in Project.xml) and carried by
+    /// the world pak, so a rejoining client can diff which character records changed and
+    /// only the changed ones are re-sent. Append-only: 0 / absent = old host or unknown
+    /// (clients must then treat the record as changed).
+    /// Source: Mod/SuMultiplayer/Players/PlayerRecordHash.cs
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong RecordHash {
+      get { return recordHash_; }
+      set {
+        recordHash_ = value;
+      }
+    }
+
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public override bool Equals(object other) {
@@ -3224,6 +3535,7 @@ namespace SuMultiplayer.Protocol {
       if (IsHost != other.IsHost) return false;
       if (HasCharacter != other.HasCharacter) return false;
       if (Slot != other.Slot) return false;
+      if (RecordHash != other.RecordHash) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
 
@@ -3238,6 +3550,7 @@ namespace SuMultiplayer.Protocol {
       if (IsHost != false) hash ^= IsHost.GetHashCode();
       if (HasCharacter != false) hash ^= HasCharacter.GetHashCode();
       if (Slot != 0) hash ^= Slot.GetHashCode();
+      if (RecordHash != 0UL) hash ^= RecordHash.GetHashCode();
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
       }
@@ -3284,6 +3597,10 @@ namespace SuMultiplayer.Protocol {
         output.WriteRawTag(56);
         output.WriteUInt32(Slot);
       }
+      if (RecordHash != 0UL) {
+        output.WriteRawTag(64);
+        output.WriteUInt64(RecordHash);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
       }
@@ -3322,6 +3639,10 @@ namespace SuMultiplayer.Protocol {
         output.WriteRawTag(56);
         output.WriteUInt32(Slot);
       }
+      if (RecordHash != 0UL) {
+        output.WriteRawTag(64);
+        output.WriteUInt64(RecordHash);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
       }
@@ -3352,6 +3673,9 @@ namespace SuMultiplayer.Protocol {
       }
       if (Slot != 0) {
         size += 1 + pb::CodedOutputStream.ComputeUInt32Size(Slot);
+      }
+      if (RecordHash != 0UL) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt64Size(RecordHash);
       }
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
@@ -3388,6 +3712,9 @@ namespace SuMultiplayer.Protocol {
       }
       if (other.Slot != 0) {
         Slot = other.Slot;
+      }
+      if (other.RecordHash != 0UL) {
+        RecordHash = other.RecordHash;
       }
       _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
     }
@@ -3437,6 +3764,10 @@ namespace SuMultiplayer.Protocol {
           }
           case 56: {
             Slot = input.ReadUInt32();
+            break;
+          }
+          case 64: {
+            RecordHash = input.ReadUInt64();
             break;
           }
         }
@@ -3489,6 +3820,10 @@ namespace SuMultiplayer.Protocol {
             Slot = input.ReadUInt32();
             break;
           }
+          case 64: {
+            RecordHash = input.ReadUInt64();
+            break;
+          }
         }
       }
     }
@@ -3514,7 +3849,7 @@ namespace SuMultiplayer.Protocol {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::SuMultiplayer.Protocol.ProtocolReflection.Descriptor.MessageTypes[6]; }
+      get { return global::SuMultiplayer.Protocol.ProtocolReflection.Descriptor.MessageTypes[7]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -3829,7 +4164,7 @@ namespace SuMultiplayer.Protocol {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::SuMultiplayer.Protocol.ProtocolReflection.Descriptor.MessageTypes[7]; }
+      get { return global::SuMultiplayer.Protocol.ProtocolReflection.Descriptor.MessageTypes[8]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -4127,7 +4462,7 @@ namespace SuMultiplayer.Protocol {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::SuMultiplayer.Protocol.ProtocolReflection.Descriptor.MessageTypes[8]; }
+      get { return global::SuMultiplayer.Protocol.ProtocolReflection.Descriptor.MessageTypes[9]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -4445,7 +4780,7 @@ namespace SuMultiplayer.Protocol {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::SuMultiplayer.Protocol.ProtocolReflection.Descriptor.MessageTypes[9]; }
+      get { return global::SuMultiplayer.Protocol.ProtocolReflection.Descriptor.MessageTypes[10]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -4635,7 +4970,7 @@ namespace SuMultiplayer.Protocol {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::SuMultiplayer.Protocol.ProtocolReflection.Descriptor.MessageTypes[10]; }
+      get { return global::SuMultiplayer.Protocol.ProtocolReflection.Descriptor.MessageTypes[11]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -4993,7 +5328,7 @@ namespace SuMultiplayer.Protocol {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::SuMultiplayer.Protocol.ProtocolReflection.Descriptor.MessageTypes[11]; }
+      get { return global::SuMultiplayer.Protocol.ProtocolReflection.Descriptor.MessageTypes[12]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]

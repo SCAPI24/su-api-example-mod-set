@@ -156,7 +156,21 @@ stage(1) lastApplied int64 head int64 firstRetained int64 changeCount int32 reas
 | 加入时追帧（StartTick/HeadSequence） | `Modules/Join/ScMultiplayerWorldTransferHandlers.cs:58-110`（`SendTerrainCatchUp`） |
 | 客户端应用追帧（HeadSequence 水位） | `Func/Subsystem/SuSubsystemTerrain.cs:159-193, 566-581, 969-975` |
 
-## 7. 明确的失败路径（没有静默兜底）
+## 7. 重连时的角色记录 diff（每角色独立 hash）
+
+角色记录（名字 / 皮肤 / 衣服 / 背包 / 等级 …）不在 `Project.xml` 里，而在世界目录的
+`SuMultiplayerPlayers.xml`；世界 pak 导出时整个世界目录被复制，所以加入端本地也有一份。
+重连不重发 pak，因此用**每角色一个 hash** 做 diff：
+
+- 记录文件里每条 `<Player RecordHash="…">`（v9，FNV-1a 64，只覆盖**不常变**字段）；
+- 客户端 Hello 里 `known_records` 上报"我本地已有这些记录的 hash"（读本地 pak 副本 + 本次进程缓存）；
+- 主机只对 hash 不同的角色重发不常变大块数据（目前是自定义皮肤资源），相同的跳过并计数
+  `BackfillSkippedUnchanged`；
+- 客户端在名册 / 资料广播里也收到 `record_hash`，用来维护缓存。
+
+字段口径、常量与跳过规则见 `doc/message-protocol.md` 第 12 节。
+
+## 8. 明确的失败路径（没有静默兜底）
 
 - 主机没有会话标识：`WorldTransferModule` **不发世界**并写错误（没有会话标签的世界会让每次加入都整图重下）。
 - 客户端缺失 / 会话不一致 / 序号越界：Hello 或追帧请求被**明确拒绝**，写清原因；客户端作废旧会话并重下。

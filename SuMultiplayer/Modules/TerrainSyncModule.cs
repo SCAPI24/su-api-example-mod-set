@@ -26,7 +26,8 @@ namespace SuMultiplayer.Modules
     ///
     /// 演示页标记：MOD01。
     /// </summary>
-    public sealed class TerrainSyncModule : IMultiplayerModule, IChunkReverifyPort, IPeerBroadcastPort
+    public sealed class TerrainSyncModule : IMultiplayerModule, IChunkReverifyPort, IPeerBroadcastPort,
+        IWindowBroadcastPort, IKnownRecordHashPort
     {
         private readonly ModuleDescriptor m_descriptor;
         private readonly SyncConfig m_config;
@@ -80,6 +81,8 @@ namespace SuMultiplayer.Modules
         /// 与算兴趣半径；为 null 时**明确失败**，绝不退回"第一个有 GameWidget 的角色"。
         /// </summary>
         private IAvatarTerrainLink m_avatarLink;
+        /// <summary>客户端握手时上报的"已有角色记录 hash"复用容器（每次连接一次，不热）。</summary>
+        private readonly List<RecordHashRef> m_knownRecordScratch = new List<RecordHashRef>(64);
         /// <summary>持续性问题只报一次（原因照实写，不静默）。</summary>
         private readonly HashSet<string> m_reportedFrameProblems = new HashSet<string>(StringComparer.Ordinal);
         /// <summary>玩家点了"加入房间"：通道断了要按间隔重连（这是加入流程的一部分，不是兜底）。</summary>
@@ -114,6 +117,10 @@ namespace SuMultiplayer.Modules
         private long m_positionSnapshotsSent;
         private long m_positionSnapshotsApplied;
         private long m_positionSnapshotsDropped;
+        /// <summary>位置批里因收件端窗口外被裁掉的化身条目数（含窗口未知时只发自己的）。</summary>
+        private long m_positionEntriesOutOfWindow;
+        /// <summary>还没上报兴趣窗口的端数（只发它自己的位置；明确计数，绝不改发全体）。</summary>
+        private long m_positionWindowUnknownPeers;
         /// <summary>
         /// 主机：确实捕获到、但这一条**没有任何投递目标**的改动数（订阅表 ∪ 客户端内存集合都为空）。
         /// 与 hostCellMissed 区分：前者是"没抓到"，后者是"抓到了但这一格没人持有"。
@@ -526,10 +533,16 @@ namespace SuMultiplayer.Modules
                 string helloName = localProfile != null && localProfile.HasName
                     ? localProfile.Name
                     : PlayerIdentity.LocalName();
+                // 本机已有的角色记录 hash（来自下载世界 pak 里的 SuMultiplayerPlayers.xml）：
+                // 主机据此只重发变化了的角色记录。读失败 / 首次加入 = 0 条（主机全量补发，不会漏）。
+                m_knownRecordScratch.Clear();
+                int knownRecords = m_avatarLink != null
+                    ? m_avatarLink.CaptureKnownRecordHashes(m_knownRecordScratch)
+                    : 0;
                 m_clientSync.SendHello(helloName, PlayerIdentity.LocalIdentity(),
                     alreadyHasWorld,
                     alreadyHasWorld ? storedSessionId : string.Empty,
-                    lastApplied, localProfile);
+                    lastApplied, localProfile, m_knownRecordScratch);
                 // 新连接 = 新窗口：兴趣中心/半径必须重新上报（否则主机的旧窗口还停在上一轮的位置）。
                 m_hasCenter = false;
                 m_lastRadius = 0;
@@ -543,6 +556,7 @@ namespace SuMultiplayer.Modules
                     " · 下载世界会话=" + SessionIdentity.Short(storedSessionId) +
                     " · 最近主机会话=" + SessionIdentity.Short(m_lastHostSessionId) +
                     " · 上次应用序号=" + lastApplied +
+                    " · 已知角色记录=" + knownRecords + " 条" +
                     " · 依据：" + rejoinReason +
                     " · 世界传输：" + (alreadyHasWorld
                         ? "主机不重发整图，只按序号追帧（同会话）"
@@ -673,7 +687,207 @@ namespace SuMultiplayer.Modules
 
         public int PlayerPeerCount => CountPlayerPeers();
 
+        /// <summary>
+        /// 主机：按 clientId 升序抓在线玩家端 + 稳定用户键（逐用户投递的 mask 位序依据）。
+        /// 身份还没就绪的连接**不出现**在结果里（调用方计数），绝不按 clientId 顶替用户键。
+        /// </summary>
+        public int CapturePlayerUsers(List<PlayerPeerUser> target)
+        {
+            if (target == null) return 0;
+            target.Clear();
+            if (m_server == null || m_host == null) return 0;
+            PeerInfo[] peers = m_server.ListPeers();
+            List<PeerInfo> players = new List<PeerInfo>(peers.Length);
+            for (int i = 0; i < peers.Length; i++)
+            {
+                PeerInfo peer = peers[i];
+                if (!peer.Alive || peer.Kind != ClientKind.Player) continue;
+                if (peer.State != ChannelState.Connected && peer.State != ChannelState.Backpressured) continue;
+                players.Add(peer);
+            }
+            players.Sort(ComparePeerById);
+            for (int i = 0; i < players.Count; i++)
+            {
+                int clientId = players[i].Id;
+                if (!m_host.TryGetClientUserKey(clientId, out string userKey)) continue;
+                target.Add(new PlayerPeerUser(clientId, userKey));
+            }
+            return target.Count;
+        }
+
+        private static int ComparePeerById(PeerInfo left, PeerInfo right) => left.Id.CompareTo(right.Id);
+
+        /// <summary>
+        /// 主机：按 mask 发给 <paramref name="roster"/> 对应下标的玩家端 —— 同一份 payload、一次编码。
+        /// 位对应的连接现在必须仍是"在线玩家端"才入队；<paramref name="deliveredMask"/> 回填实际入队位，
+        /// 没入队的位由调用方保留重试（这里绝不假装成功）。
+        /// </summary>
+        public int BroadcastToPlayersMasked(MessageType type, byte[] payload,
+            IReadOnlyList<PlayerPeerUser> roster, ulong mask, out ulong deliveredMask)
+        {
+            deliveredMask = 0UL;
+            if (m_server == null || roster == null || mask == 0UL) return 0;
+            PeerInfo[] peers = m_server.ListPeers();   // 一次取快照：一次编码 → N 个连接并发入队
+            int sent = 0;
+            int count = roster.Count < 64 ? roster.Count : 64;
+            for (int i = 0; i < count; i++)
+            {
+                ulong bit = 1UL << i;
+                if ((mask & bit) == 0UL) continue;
+                int clientId = roster[i].ClientId;
+                if (!IsConnectedPlayerPeer(peers, clientId)) continue;
+                if (!m_server.TrySend(clientId, type, payload)) continue;
+                deliveredMask |= bit;
+                sent++;
+            }
+            return sent;
+        }
+
+        /// <summary>这一位对应的连接现在还是不是"在线的玩家端"（背压也算在线：消息会排队）。</summary>
+        private static bool IsConnectedPlayerPeer(PeerInfo[] peers, int clientId)
+        {
+            if (peers == null) return false;
+            for (int i = 0; i < peers.Length; i++)
+            {
+                PeerInfo peer = peers[i];
+                if (peer.Id != clientId) continue;
+                if (!peer.Alive || peer.Kind != ClientKind.Player) return false;
+                return peer.State == ChannelState.Connected || peer.State == ChannelState.Backpressured;
+            }
+            return false;
+        }
+
         public bool IsPlayerClient(int clientId) => IsPlayerPeer(clientId);
+
+        /// <summary>
+        /// 主机：窗口（外扩 <paramref name="chunkMargin"/> 环）包含该位置的在线玩家端 → 并发入队。
+        /// 一次编码、同一份 payload；窗口口径与地形 / 编辑校验 / 实体同步完全相同。
+        /// </summary>
+        public int BroadcastToPlayersAt(MessageType type, byte[] payload, Vector3 position,
+            int chunkMargin, out int candidates)
+        {
+            candidates = 0;
+            if (m_server == null || payload == null) return 0;
+            if (chunkMargin < 0) chunkMargin = 0;
+            int chunkX = EntityInterestWindowDiff.ChunkOf(position.X);
+            int chunkZ = EntityInterestWindowDiff.ChunkOf(position.Z);
+            PeerInfo[] peers = m_server.ListPeers();
+            int sent = 0;
+            for (int i = 0; i < peers.Length; i++)
+            {
+                PeerInfo peer = peers[i];
+                if (!peer.Alive || peer.Kind != ClientKind.Player) continue;
+                if (peer.State != ChannelState.Connected &&
+                    peer.State != ChannelState.Backpressured) continue;
+                if (!TryGetClientRange(peer.Id, out int centerX, out int centerZ, out int radius))
+                    continue;   // 还没上报兴趣窗口：明确不计入候选，绝不用"全体"替代
+                candidates++;
+                if (!EntityInterestWindowDiff.InWindow(chunkX, chunkZ, centerX, centerZ,
+                        radius + chunkMargin)) continue;
+                if (!m_server.TrySend(peer.Id, type, payload)) continue;
+                sent++;
+            }
+            return sent;
+        }
+
+        /// <summary>
+        /// 主机：枚举"此刻有可用兴趣窗口的在线玩家端"（逐端过滤内容时用）。
+        /// 顺序 = 稳定用户槽位顺序（CapturePlayerUsers 同一顺序），不随连接重排变化。
+        /// </summary>
+        public int CaptureClientWindows(List<ClientWindowView> target)
+        {
+            if (target == null) return 0;
+            target.Clear();
+            if (m_server == null) return 0;
+            PeerInfo[] peers = m_server.ListPeers();
+            List<PeerInfo> players = new List<PeerInfo>(peers.Length);
+            for (int i = 0; i < peers.Length; i++)
+            {
+                PeerInfo peer = peers[i];
+                if (!peer.Alive || peer.Kind != ClientKind.Player) continue;
+                if (peer.State != ChannelState.Connected &&
+                    peer.State != ChannelState.Backpressured) continue;
+                players.Add(peer);
+            }
+            players.Sort(ComparePeerById);
+            for (int i = 0; i < players.Count; i++)
+            {
+                int clientId = players[i].Id;
+                if (!TryGetClientRange(clientId, out int centerX, out int centerZ,
+                        out int radius)) continue;   // 还没上报窗口：不算候选，绝不猜
+                target.Add(new ClientWindowView(clientId, centerX, centerZ, radius));
+            }
+            return target.Count;
+        }
+
+        /// <summary>主机：给单个在线玩家端发一条已编码消息（逐端过滤后投递用）。</summary>
+        public bool SendToClient(int clientId, MessageType type, byte[] payload)
+        {
+            if (m_server == null || payload == null) return false;
+            PeerInfo[] peers = m_server.ListPeers();
+            if (!IsConnectedPlayerPeer(peers, clientId)) return false;
+            return m_server.TrySend(clientId, type, payload);
+        }
+
+        /// <summary>
+        /// 主机：窗口包含该玩家端化身位置的端 + 化身自己的端（永远包含）。
+        /// 位置来自主机侧角色实体的 <c>ComponentBody.Position</c>（<see cref="IAvatarTerrainLink"/>），
+        /// 不按区块中心猜。化身还没实体 → 只发自己的端并回填 <c>avatarCellKnown=false</c>。
+        ///
+        /// <paramref name="avatarClientId"/> = 0 表示**主机本机玩家**（不是联机化身）：
+        /// 位置取同一份"本机玩家位置"口径；它没有"自己的端"，只发窗口内的观察者端。
+        /// </summary>
+        public int BroadcastToPlayersAtAvatar(MessageType type, byte[] payload, int avatarClientId,
+            int chunkMargin, out int candidates, out bool avatarCellKnown)
+        {
+            candidates = 0;
+            avatarCellKnown = false;
+            if (m_server == null || payload == null || avatarClientId < 0) return 0;
+            if (chunkMargin < 0) chunkMargin = 0;
+            Vector3 position = Vector3.Zero;
+            bool hasCell;
+            if (avatarClientId == 0)
+            {
+                // 主机本机玩家不是联机化身（m_avatars 里没有它的键）：用同一份"本机玩家位置"
+                // 口径（ComponentBody.Position），不按区块中心猜。观察者端看得到它才需要它的背包镜像。
+                PlayerPositionSnapshot local = default;
+                hasCell = m_avatarLink != null &&
+                    m_avatarLink.TryCaptureLocalPlayerPosition(0, out local, out _);
+                if (hasCell) position = local.Position;
+            }
+            else
+            {
+                hasCell = m_avatarLink != null &&
+                    m_avatarLink.TryGetAvatarCell(avatarClientId, out position, out _);
+            }
+            avatarCellKnown = hasCell;
+            int chunkX = hasCell ? EntityInterestWindowDiff.ChunkOf(position.X) : 0;
+            int chunkZ = hasCell ? EntityInterestWindowDiff.ChunkOf(position.Z) : 0;
+            PeerInfo[] peers = m_server.ListPeers();
+            int sent = 0;
+            for (int i = 0; i < peers.Length; i++)
+            {
+                PeerInfo peer = peers[i];
+                if (!peer.Alive || peer.Kind != ClientKind.Player) continue;
+                if (peer.State != ChannelState.Connected &&
+                    peer.State != ChannelState.Backpressured) continue;
+                if (peer.Id == avatarClientId)
+                {
+                    // 自己的状态必须到：不依赖它是否已上报窗口。
+                    if (m_server.TrySend(peer.Id, type, payload)) sent++;
+                    continue;
+                }
+                if (!hasCell) continue;   // 位置未知：观察者一个都不发（绝不改发全体）
+                if (!TryGetClientRange(peer.Id, out int centerX, out int centerZ, out int radius))
+                    continue;
+                candidates++;
+                if (!EntityInterestWindowDiff.InWindow(chunkX, chunkZ, centerX, centerZ,
+                        radius + chunkMargin)) continue;
+                if (!m_server.TrySend(peer.Id, type, payload)) continue;
+                sent++;
+            }
+            return sent;
+        }
 
         public bool IsHosting => m_server != null;
 
@@ -692,6 +906,21 @@ namespace SuMultiplayer.Modules
             centerChunkZ = center.Z;
             radiusChunks = radius;
             return true;
+        }
+
+        /// <summary>
+        /// 主机：该连接在 Hello 里申报的"我已有角色记录 hash"清单。
+        /// 数据源是这次连接的握手内容（<see cref="TerrainSyncHost.CaptureKnownRecordHashes"/>）。
+        /// </summary>
+        public int CaptureKnownRecordHashes(int clientId, List<RecordHashRef> target) =>
+            m_host != null ? m_host.CaptureKnownRecordHashes(clientId, target) : 0;
+
+        /// <summary>主机：该连接是否已持有该记录键的当前 hash（true = 这条记录不必重发）。</summary>
+        public bool TryGetKnownRecordHash(int clientId, string recordKey, out ulong hash)
+        {
+            if (m_host != null) return m_host.TryGetKnownRecordHash(clientId, recordKey, out hash);
+            hash = 0UL;
+            return false;
         }
 
         /// <summary>客户端：编辑请求超时 → 把该块排进强制核对（主机比对不一致就回传整块）。</summary>
@@ -849,16 +1078,35 @@ namespace SuMultiplayer.Modules
             }
             // 多本机角色：按**接收端**构建负载。旧构建（从没上报过本机槽位）只收槽位 0，
             // 单角色房间的负载与旧版逐字节一致；新构建收全部槽位。
+            //
+            // 逐端裁剪（用户口径）：客户端 A 只加载自己周围那片地形，所以只要 B（另一个客户端）
+            // 在 A 的兴趣窗口内就该继续同步位置 —— 即使被墙 / 树完全遮挡、看不见人也一样：
+            // 位置是"下一拍还有"的最新状态，客户端必须能在他进入视野的瞬间直接渲染，不能等他
+            // 绕过遮挡物再开始同步（那会出现人从墙后"瞬移"出来）。
+            // 窗口外扩 1 环（16 m）作为进入缓冲：贴着窗口边缘、刚跨进可视范围的化身也有位置。
+            // 客户端自己的角色永远包含（它要用权威位置做对账，即使还没上报窗口）。
             int[] peers = m_host.GetPlayerClientIds();
             int sent = 0;
+            int windowUnknownPeers = 0;
+            int entriesFiltered = 0;
             for (int i = 0; i < peers.Length; i++)
             {
                 int peer = peers[i];
                 bool aware = m_avatarLink.PeerAnnouncedLocalSlots(peer);
+                bool hasWindow = TryGetClientRange(peer, out int windowX, out int windowZ,
+                    out int windowRadius);
+                if (!hasWindow)
+                {
+                    windowUnknownPeers++;
+                    LogOnce("position-window-unknown:" + peer,
+                        "客户端 " + peer + " 还没上报兴趣窗口 → 这一拍只发它自己的角色位置" +
+                        "（不发别的化身；不会退回「发给所有人」）");
+                }
                 int peerCount = 0;
                 for (int entry = 0; entry < batch.Count; entry++)
                 {
                     if (batch[entry].Slot != 0 && !aware) continue;
+                    if (!hasWindow && batch[entry].Key.ClientId != peer) continue;
                     peerCount++;
                 }
                 if (peerCount == 0) continue;
@@ -866,8 +1114,28 @@ namespace SuMultiplayer.Modules
                 for (int entry = 0; entry < batch.Count; entry++)
                 {
                     if (batch[entry].Slot != 0 && !aware) continue;
+                    if (batch[entry].Key.ClientId == peer)
+                    {
+                        peerBatch.Add(batch[entry]);   // 自己的位置：永远发
+                        continue;
+                    }
+                    if (!hasWindow)
+                    {
+                        entriesFiltered++;             // 窗口未知：只发自己的，绝不猜
+                        continue;
+                    }
+                    Vector3 position = batch[entry].Snapshot.Position;
+                    if (!EntityInterestWindowDiff.InWindow(
+                            EntityInterestWindowDiff.ChunkOf(position.X),
+                            EntityInterestWindowDiff.ChunkOf(position.Z),
+                            windowX, windowZ, windowRadius + 1))
+                    {
+                        entriesFiltered++;
+                        continue;
+                    }
                     peerBatch.Add(batch[entry]);
                 }
+                if (peerBatch.Count == 0) continue;
                 byte[] payload = PlayerPositionCodec.EncodeBatch(peerBatch, out int dropped);
                 if (dropped > 0)
                 {
@@ -879,6 +1147,8 @@ namespace SuMultiplayer.Modules
                 if (m_host.SendPlayerPositionsTo(peer, payload)) sent++;
             }
             m_positionSnapshotsSent += sent;
+            if (entriesFiltered > 0) m_positionEntriesOutOfWindow += entriesFiltered;
+            if (windowUnknownPeers > 0) m_positionWindowUnknownPeers += windowUnknownPeers;
             if (sent < peers.Length)
             {
                 // 背压/未就绪 = 显式记录（位置是"下一拍还有"的最新状态，不回滚、不假装发成功）。
@@ -2464,7 +2734,10 @@ namespace SuMultiplayer.Modules
                        " animalsInFeed=" + m_animalsInFeed +
                        " animalsTruncated=" + m_animalsTruncated +
                        " posSent=" + m_positionSnapshotsSent + " posApplied=" + m_positionSnapshotsApplied +
-                       " posDropped=" + m_positionSnapshotsDropped;
+                       " posDropped=" + m_positionSnapshotsDropped +
+                       // 逐端裁剪审计：窗口外被裁掉的化身条目 / 还没上报窗口的端
+                       " posOutOfWindow=" + m_positionEntriesOutOfWindow +
+                       " posWindowUnknown=" + m_positionWindowUnknownPeers;
             }
             if (m_clientSync != null)
             {

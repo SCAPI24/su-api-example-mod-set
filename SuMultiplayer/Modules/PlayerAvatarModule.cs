@@ -192,6 +192,19 @@ namespace SuMultiplayer.Modules
         private long m_tooManySlots;
         /// <summary>按槽位 0 兼容旧构建发送的次数（legacyDefaultSlot）。</summary>
         private long m_legacyDefaultSlot;
+        /// <summary>客户端：本地角色记录 hash 读取失败次数（Hello 将不申报任何已知记录 → 主机全量补发）。</summary>
+        private long m_knownRecordHashReadFailures;
+        /// <summary>客户端：最近一次 Hello 申报的已知角色记录条数（诊断；每次握手一行日志）。</summary>
+        private long m_knownRecordHashesReported;
+        /// <summary>主机：名册条目里成功带上 record_hash 的条数（0 = 记录缺失 / 旧数据）。</summary>
+        private long m_rosterRecordHashes;
+        /// <summary>
+        /// 客户端：本次进程内已知的"角色记录键 → 不常变 hash"（来自主机名册 / 资料广播）。
+        /// 重连时和本地 pak 副本里的 hash 一起上报（缓存优先：它比磁盘副本更新）。
+        /// 不随名册清空而清（连接断了不代表这些记录内容变了）。
+        /// </summary>
+        private readonly Dictionary<string, ulong> m_knownRecordHashCache =
+            new Dictionary<string, ulong>(StringComparer.Ordinal);
 
         // ---------------------------------------------------------------- Phase 2：客户端本机角色归一化
         // 下载世界里的 PlayersData 是**主机自己的角色**；客户端必须把它们当远端化身，而不是本机槽位。
@@ -868,6 +881,13 @@ namespace SuMultiplayer.Modules
 
         // ---------------------------------------------------------------- 资料消息（收发）
 
+        /// <summary>记下"这条角色记录的当前版本"（主机在资料 / 名册里下发的 record_hash）。</summary>
+        private void NoteRecordHash(string identity, string name, int slot, ulong hash)
+        {
+            if (hash == 0UL) return;   // 旧主机 / 未知：不缓存，重连时按"变了"处理
+            m_knownRecordHashCache[PlayerIdentity.RecordKey(identity, name, slot)] = hash;
+        }
+
         /// <summary>
         /// 资料消息：主机收到客户端自己的资料 → 更新记录/化身并广播；
         /// 客户端收到主机/其他客户端资料 → 写进名册（主机的 client_id=0）。
@@ -876,7 +896,8 @@ namespace SuMultiplayer.Modules
         private void OnPlayerProfileMessage(MessageContext context, Proto.PlayerProfile message)
         {
             PlayerProfileSnapshot profile = PlayerProfileCodec.FromMessage(message, out int clientId,
-                out int slot, out string identity, out bool isHost, out bool hasCharacter);
+                out int slot, out string identity, out bool isHost, out bool hasCharacter,
+                out ulong recordHash);
             if (profile == null)
             {
                 ErrorOnce("profile-null", "收到空资料消息 → 丢弃（不猜任何字段）");
@@ -898,6 +919,7 @@ namespace SuMultiplayer.Modules
                 return;
             }
             // 客户端：主机广播的 host（clientId=0）/ 其他客户端 / 本机自己的记录。
+            NoteRecordHash(identity, profile.Name, slot, recordHash);
             ProfileSyncApplyOutcome outcome = ApplyProfileBroadcastClient(key, identity, profile,
                 isHost, out string applyReason);
             if (outcome == ProfileSyncApplyOutcome.Rejected)
@@ -1272,7 +1294,7 @@ namespace SuMultiplayer.Modules
                 if (item == null) continue;
                 PlayerProfileSnapshot profile = PlayerProfileCodec.FromMessage(item,
                     out int clientId, out int slot, out string identity, out bool isHost,
-                    out bool hasCharacter);
+                    out bool hasCharacter, out ulong recordHash);
                 bool keyValid = PlayerKey.TryCreate(clientId, slot, out PlayerKey key,
                     out string keyError);
                 if (profile == null || !profile.HasName || !keyValid)
@@ -1293,6 +1315,7 @@ namespace SuMultiplayer.Modules
                         "完整名册里玩家键 " + key + " 出现了多次 → 只应用第一条（协议违规；计数 rosterMismatch）");
                     continue;
                 }
+                NoteRecordHash(identity, profile.Name, slot, recordHash);
                 if (key.ClientId == m_transport?.LocalClientId)
                 {
                     if (key.Slot == 0)
@@ -2367,6 +2390,8 @@ namespace SuMultiplayer.Modules
             }
             skin = new PlayerSkinAssetRecord
             {
+                // 角色记录的不常变内容 hash：皮肤补发前用它和该连接申报的已知 hash 比对。
+                RecordHash = record.RecordHash,
                 SkinName = record.SkinName ?? string.Empty,
                 Sex = NetworkAvatarSpawner.ToPlayerSex(record.PlayerClass),
                 Sha256 = record.SkinSha256 != null ? (byte[])record.SkinSha256.Clone()
@@ -3112,6 +3137,57 @@ namespace SuMultiplayer.Modules
         }
 
         // ------------------------------------------------- 交给地形通道的联机角色视图（IAvatarTerrainLink）
+        /// <summary>
+        /// 客户端：本机**已有的角色记录 hash**清单 —— 直接读本机世界目录里的
+        /// `SuMultiplayerPlayers.xml`（它来自主机导出的 world pak；pak 里带着这份文件）。
+        /// Hello 里上报给主机，主机据此只重发变化了的角色记录。
+        /// 读失败 / 没进世界 / 本地没有文件 → 0 条（主机按全量补发，绝不漏）。
+        /// </summary>
+        public int CaptureKnownRecordHashes(List<RecordHashRef> target)
+        {
+            if (target == null) return 0;
+            target.Clear();
+            Project project = GameManager.Project;
+            SubsystemGameInfo gameInfo = project?.FindSubsystem<SubsystemGameInfo>(false);
+            string directory = gameInfo?.DirectoryName;
+            if (string.IsNullOrEmpty(directory)) return 0;   // 没进世界：没有本地副本可申报
+            if (!SuMultiplayerPlayersXml.TryReadRecordHashes(directory, target, out string reason))
+            {
+                m_knownRecordHashReadFailures++;
+                ErrorOnce("known-record-hashes",
+                    "读取本地角色记录 hash 失败（" + reason + "）→ 本次 Hello 不申报任何已知记录，" +
+                    "主机会全量补发（不会漏发；明确计数）");
+                return 0;
+            }
+            // 进程内缓存（主机名册 / 资料广播刚下发的 hash）优先于磁盘副本：
+            // 它比 pak 里的那份新（重连前收到的最新版本）。同键覆盖，不产生重复条目。
+            if (m_knownRecordHashCache.Count > 0)
+            {
+                for (int i = 0; i < target.Count; i++)
+                {
+                    if (!m_knownRecordHashCache.TryGetValue(target[i].RecordKey,
+                            out ulong cached)) continue;
+                    if (cached == target[i].Hash) continue;
+                    target[i] = new RecordHashRef(target[i].RecordKey, cached);
+                }
+                foreach (KeyValuePair<string, ulong> item in m_knownRecordHashCache)
+                {
+                    bool exists = false;
+                    for (int i = 0; i < target.Count; i++)
+                    {
+                        if (!string.Equals(target[i].RecordKey, item.Key,
+                                StringComparison.Ordinal)) continue;
+                        exists = true;
+                        break;
+                    }
+                    if (exists) continue;
+                    target.Add(new RecordHashRef(item.Key, item.Value));
+                }
+            }
+            m_knownRecordHashesReported = target.Count;
+            return target.Count;
+        }
+
 
         /// <summary>
         /// Source: ScMultiplayerWorldObjectHandlers.cs:481-484
@@ -3406,8 +3482,11 @@ namespace SuMultiplayer.Modules
             string peerIdentity = identity;
             if (peerIdentity == null && key.ClientId > 0)
                 m_peerIdentities.TryGetValue(key.ClientId, out peerIdentity);
+            string lookupIdentity = isHost ? PlayerIdentity.LocalIdentity()
+                : (peerIdentity ?? string.Empty);
+            ulong recordHash = RecordHashOf(lookupIdentity, profile.Name, key.Slot);
             Proto.PlayerProfile message = PlayerProfileCodec.ToMessage(key,
-                peerIdentity ?? string.Empty, profile, isHost, hasCharacter: true);
+                peerIdentity ?? string.Empty, profile, isHost, hasCharacter: true, recordHash);
             byte[] payload = message.ToByteArray();
             int sent = 0;
             foreach (int target in m_spawner.ClientIds.ToArray())
@@ -3446,6 +3525,13 @@ namespace SuMultiplayer.Modules
         }
 
         /// <summary>
+        /// 主机：某条角色记录的当前"不常变内容 hash"（<see cref="PlayerRecordHash"/>；0 = 没有记录）。
+        /// 名册 / 资料广播带上它，客户端据此缓存"我已有这条记录的哪个版本"，重连 Hello 上报做 diff。
+        /// </summary>
+        private ulong RecordHashOf(string identity, string name, int slot) =>
+            m_records.TryGetRecordHash(identity, name, slot, out ulong hash) ? hash : 0UL;
+
+        /// <summary>
         /// 主机：把当前房间里**每个本机角色槽位**（主机 0:0..0:N-1 + 每个客户端自己的槽位）
         /// 作为一份完整名册广播给每个客户端。客户端用整表替换而不是增量叠加：
         /// 重连换连接、离开消息丢失、槽位增删都不会留下幽灵化身。
@@ -3476,8 +3562,12 @@ namespace SuMultiplayer.Modules
                         continue;
                     }
                     PlayerKey key = new PlayerKey(0, slot);
+                    ulong hostRecordHash = RecordHashOf(PlayerIdentity.LocalIdentity(),
+                        hostProfile.Name, slot);
+                    if (hostRecordHash != 0UL) m_rosterRecordHashes++;
                     Proto.PlayerProfile item = PlayerProfileCodec.ToMessage(key,
-                        PlayerIdentity.LocalIdentity(), hostProfile, isHost: true, hasCharacter: true);
+                        PlayerIdentity.LocalIdentity(), hostProfile, isHost: true,
+                        hasCharacter: true, hostRecordHash);
                     full.Avatars.Add(item);
                     if (slot == 0) legacy.Avatars.Add(item);
                     signature.Append(key).Append(':').Append(hostProfile.Signature).Append(';');
@@ -3499,8 +3589,12 @@ namespace SuMultiplayer.Modules
                 if (!m_peerSlots.TryGetValue(key, out PeerSlot peer) || peer.Profile == null ||
                     !peer.Profile.HasName) continue;
                 m_peerIdentities.TryGetValue(key.ClientId, out string identity);
-                Proto.PlayerProfile item = PlayerProfileCodec.ToMessage(key, identity ?? string.Empty,
-                    peer.Profile, isHost: false, hasCharacter: true);
+                ulong peerRecordHash = RecordHashOf(identity ?? string.Empty, peer.Profile.Name,
+                    key.Slot);
+                if (peerRecordHash != 0UL) m_rosterRecordHashes++;
+                Proto.PlayerProfile item = PlayerProfileCodec.ToMessage(key,
+                    identity ?? string.Empty, peer.Profile, isHost: false, hasCharacter: true,
+                    peerRecordHash);
                 full.Avatars.Add(item);
                 if (key.Slot == 0) legacy.Avatars.Add(item);
                 signature.Append(key).Append(':').Append(peer.Profile.Signature).Append(';');

@@ -18,7 +18,9 @@ namespace SuMultiplayer.Modules
     ///
     /// 方向与权威（照旧实现）：
     ///   · 客户端 → 主机：本机玩家的动作边沿 / 动画状态 / 手持物 / 背包变更（**上报**）；
-    ///   · 主机 → 所有客户端（含发起者，用于背包对账）：主机自己的（client_id=0）+ 每个玩家端的权威状态。
+    ///   · 主机 → 客户端：主机自己的（client_id=0）+ 每个玩家端的权威动作/动画/手持物发给所有玩家端；
+    ///     背包（PLAYER_INVENTORY=32）按收件人裁剪：**所有者端**（权威背包对账）+ 兴趣窗口包含其
+    ///     化身位置的观察者端（客户端把别人的背包应用到远端化身做镜像；窗口外的端看不到它）。
     ///   客户端绝不模拟别的玩家：只把状态写进远端化身的**表现字段**（强制字段，见
     ///   <see cref="RemoteAvatarPresentation"/>）；位置/物理仍由位置快照的插值驱动。
     ///
@@ -61,6 +63,12 @@ namespace SuMultiplayer.Modules
         private ITransportPort m_transport;
         private ITransportControlPort m_control;
         private IPeerBroadcastPort m_broadcast;
+        /// <summary>
+        /// 主机：纯表现 / 镜像类事件（背包增量等）按客户端兴趣窗口投递（一次编码、并发入队）。
+        /// 窗口只有地形模块这一处真相（客户端上报的中心区块 + 半径，与地形完全相同）；
+        /// 拿不到端口时明确逐次计失败，绝不退回"发给所有人"。
+        /// </summary>
+        private IWindowBroadcastPort m_window;
         private IMessageRegistryPort m_messages;
         private bool m_attached;
 
@@ -123,6 +131,14 @@ namespace SuMultiplayer.Modules
         private long m_equipmentRejected;
         private long m_equipmentDropped;
         private long m_inventorySent;
+        /// <summary>主机：背包投递时化身位置未知（主机还没有该玩家端的化身实体）的条数 —— 只发了它自己的端。</summary>
+        private long m_inventoryAvatarCellUnknown;
+        /// <summary>主机：背包投递时没有任何观察者端上报兴趣窗口（candidates=0）的条数。</summary>
+        private long m_inventoryNoWindowObservers;
+        /// <summary>主机：背包投递失败条数（缺 client_id / 端口缺失 / 入队 0 个端）—— 每次都明确计数。</summary>
+        private long m_inventorySendFailures;
+        /// <summary>主机：本机玩家背包投递到"窗口内观察者端"的入队数（主机自己没有网络收件人）。</summary>
+        private long m_inventoryLocalHostObservers;
         private long m_inventoryReceived;
         private long m_inventoryApplied;
         private long m_inventoryRejected;
@@ -180,6 +196,11 @@ namespace SuMultiplayer.Modules
             if (!context.TryGetPort(out m_broadcast) || m_broadcast == null)
             {
                 Log("警告：没有拿到广播端口（IPeerBroadcastPort）→ 主机无法把客户端动作/背包广播给所有人");
+            }
+            if (!context.TryGetPort(out m_window) || m_window == null)
+            {
+                Log("警告：没有拿到窗口投递端口（IWindowBroadcastPort）→ 主机无法把背包按" +
+                    "所有者 + 观察者兴趣窗口投递（每次广播计入失败，绝不退回发给所有人）");
             }
             if (context.TryGetPort(out m_messages) && m_messages != null)
             {
@@ -244,6 +265,7 @@ namespace SuMultiplayer.Modules
             m_localInventorySynchronized = false;
             m_control = null;
             m_broadcast = null;
+            m_window = null;
             m_transport = null;
             m_attached = false;
             Log("角色动作/手持物/背包模块下线（" + reason + "）：" + summary);
@@ -496,11 +518,77 @@ namespace SuMultiplayer.Modules
             m_equipmentSent += sent;
         }
 
+        /// <summary>
+        /// 主机：把权威背包增量 / 关键帧投给"**所有者端** + 兴趣窗口包含其化身位置的**观察者端**"。
+        ///
+        /// 收件人依据（读同文件客户端处理器 <see cref="OnPlayerInventory"/>）：
+        ///   (a) 所有者端（载荷里的 <c>delta.ClientId</c> 自己的端）：客户端把它当主机权威背包应用到
+        ///       本机（客户端分支里的 <c>m_port.IsLocalSlot(localCandidate)</c>）→ 对账 + 解锁上传，必须到；
+        ///   (b) 观察者端：客户端对 <c>HasAvatar</c> 的远端化身同样调用
+        ///       <c>m_port.TryApplyInventory(clientId, delta)</c> 做镜像（手持物 / 展示一致性）→
+        ///       只有兴趣窗口包含该化身的端才看得见它，窗口外的端不需要这份背包。
+        /// 化身位置取自主机侧化身实体（<see cref="IWindowBroadcastPort.BroadcastToPlayersAtAvatar"/>，
+        /// 与地形 / 实体同步同一份客户端上报窗口）；位置未知时只发它自己的端，观察者一个不发。
+        /// **绝不退回"发给所有人"** —— 那正是本次要消掉的带宽浪费。
+        /// </summary>
         private void BroadcastInventory(PlayerInventoryDelta delta)
         {
-            int sent = m_broadcast?.BroadcastToPlayers(MessageType.PlayerInventory,
-                PlayerInventoryCodec.Encode(delta)) ?? 0;
+            if (delta.ClientId < 0)
+            {
+                // 负 client_id = 载荷没有可定位的所有者端（协议异常）：明确计数，不发给全体。
+                m_inventorySendFailures++;
+                NoteProblem("背包广播缺少 client_id（clientId=" + delta.ClientId +
+                    "）→ 不入队（不发给所有人）");
+                return;
+            }
+            if (m_window == null)
+            {
+                // Attach 已经明确记录过一次；这里逐次计入失败，绝不退回 BroadcastToPlayers。
+                m_inventorySendFailures++;
+                NoteProblem("没有窗口投递端口（IWindowBroadcastPort）→ clientId=" + delta.ClientId +
+                    " 的背包无法投递（计入失败，绝不改发所有人）");
+                return;
+            }
+            byte[] payload = PlayerInventoryCodec.Encode(delta);
+            int sent = m_window.BroadcastToPlayersAtAvatar(MessageType.PlayerInventory, payload,
+                delta.ClientId, 0, out int candidates, out bool avatarCellKnown);
             m_inventorySent += sent;
+            if (!avatarCellKnown)
+            {
+                // 主机还没有这个化身的实体 → 端口只发它自己的端，观察者端一个都不发。
+                m_inventoryAvatarCellUnknown++;
+                NoteProblem("背包投递时 clientId=" + delta.ClientId +
+                    " 的化身位置未知（主机还没有它的实体）→ 只发它自己的端，观察者端本次不发（绝不改发所有人）");
+            }
+            if (candidates == 0)
+            {
+                m_inventoryNoWindowObservers++;
+                if (avatarCellKnown)
+                {
+                    NoteProblem("背包投递时没有任何观察者端上报兴趣窗口（candidates=0，clientId=" +
+                        delta.ClientId + "）→ 观察者端本次不发（等它们上报窗口后自然收到）");
+                }
+            }
+            if (delta.ClientId == 0)
+            {
+                // 主机本机玩家：没有"自己的端"（本地引擎已经应用）。伙伴端在兴趣窗口里能
+                // 看到主机化身 → 需要这份背包做镜像（手持物 / 展示）；窗口外不需要。
+                // 因此只有观察者投递，"入队 0"不是失败，但必须可审计。
+                m_inventoryLocalHostObservers += sent;
+                if (sent == 0 && candidates == 0)
+                {
+                    NoteProblem("主机本机背包没有需要镜像的观察者端（candidates=0）→ 本次不入队" +
+                        "（本地已应用，不发给所有人）");
+                }
+                return;
+            }
+            if (sent == 0)
+            {
+                m_inventorySendFailures++;
+                NoteProblem("背包投递入队 0 个端（clientId=" + delta.ClientId + "，candidates=" +
+                    candidates + "，化身位置已知=" + avatarCellKnown +
+                    "）→ 所有者端不在线/背压，计入失败（绝不改发所有人）");
+            }
         }
 
         private void SendAction(in PlayerActionSnapshot action)
@@ -1291,6 +1379,10 @@ namespace SuMultiplayer.Modules
             " inventory(sent=" + m_inventorySent + " recv=" + m_inventoryReceived +
             " applied=" + m_inventoryApplied + " rejected=" + m_inventoryRejected +
             " dropped=" + m_inventoryDropped + " keyframes=" + m_inventoryKeyframesSent +
+            " avatarCellUnknown=" + m_inventoryAvatarCellUnknown +
+            " noWindowObservers=" + m_inventoryNoWindowObservers +
+            " sendFailures=" + m_inventorySendFailures +
+            " localHostObservers=" + m_inventoryLocalHostObservers +
             " persisted=" + m_inventoryPersisted + " persistFailures=" + m_inventoryPersistFailures +
             " gated=" + m_inventoryUploadsGated +
             " keyframeRequests=" + m_keyframeRequests + ")" +

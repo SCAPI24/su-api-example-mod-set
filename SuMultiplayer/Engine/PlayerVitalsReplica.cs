@@ -414,6 +414,13 @@ namespace SuMultiplayer.Engine
         private long m_hurtRedoutHits;
         private long m_hurtRedoutFrames;
         private long m_hurtRedoutFailures;
+        // 远端化身受伤闪红：引擎的闪红只看 ComponentHealth.HealthChange
+        // （ComponentCreatureModel.cs:185-193），而本层把 Health 与 m_lastHealth 写成同一个值
+        // ⇒ HealthChange 恒为 0 ⇒ 远端化身永远不闪。这里记住"上一次已应用的权威血量"，
+        // 只在真实下降时补一次 m_injuryColorFactor（与 AvatarActionBridge.HurtFlash 同一手法）。
+        private readonly Dictionary<PlayerKey, float> m_flashHealth =
+            new Dictionary<PlayerKey, float>();
+        private long m_hurtFlashes;
         // 咳嗽 / 呕吐 / 着火表现事件（实机问题 4）
         private readonly Dictionary<int, LocalEffectState> m_localEffects =
             new Dictionary<int, LocalEffectState>();
@@ -3144,6 +3151,8 @@ namespace SuMultiplayer.Engine
             m_localEffects.Clear();
             m_effectLastSequence.Clear();
             m_effectWatch.Clear();
+            // 受伤闪红的"上一拍血量"同样作废：新会话第一次应用不闪（见 m_flashHealth 注释）。
+            m_flashHealth.Clear();
             m_freezeHostStage.Clear();
             // 第三分屏冰覆盖的只读缓存同理：新会话开始，旧的权威冻结值不能带过去。
             m_freezeHostProgress.Clear();
@@ -3240,7 +3249,7 @@ namespace SuMultiplayer.Engine
                 return PlayerVitalsApplyStatus.NoAvatar;
             try
             {
-                ActivePlayerState state = ApplyRemoteState(player, in snapshot);
+                ActivePlayerState state = ApplyRemoteState(key, player, in snapshot);
                 if (state == ActivePlayerState.None)
                 {
                     reason = "玩家键 " + key + " 的化身在这批字段上什么都没写成（组件缺失）";
@@ -3684,7 +3693,7 @@ namespace SuMultiplayer.Engine
         /// 把一份主机权威值写进远端化身。返回写成了哪一类（Alive/Dead）；组件全缺时返回 None。
         /// 所有写入都是**字段赋值**：不经过 Injure / Heal，不产生伤害、不掉物品、不写地形。
         /// </summary>
-        private ActivePlayerState ApplyRemoteState(ComponentPlayer player,
+        private ActivePlayerState ApplyRemoteState(PlayerKey key, ComponentPlayer player,
             in PlayerVitalsSnapshot snapshot)
         {
             ComponentHealth health = player.ComponentHealth;
@@ -3700,6 +3709,9 @@ namespace SuMultiplayer.Engine
                     WriteField(health, "<Health>k__BackingField", 0f, typeof(ComponentHealth));
                     m_parentField.ModifyParentField(health, "m_lastHealth", 0f,
                         typeof(ComponentHealth));
+                    // 死亡本身不补闪红（死亡表现另走 DeathPhase）；同时把"上一拍血量"记成 0，
+                    // 复活后的第一份存活快照不会被当成掉血。
+                    m_flashHealth[key] = 0f;
                 }
                 else
                 {
@@ -3709,6 +3721,7 @@ namespace SuMultiplayer.Engine
                         typeof(ComponentHealth));
                     m_parentField.ModifyParentField(health, "m_lastHealth", safeHealth,
                         typeof(ComponentHealth));
+                    ApplyRemoteHurtFlash(key, player, safeHealth);
                 }
                 m_parentField.ModifyParentField(health, "<Air>k__BackingField",
                     MathUtils.Saturate(snapshot.Air), typeof(ComponentHealth));
@@ -3730,6 +3743,42 @@ namespace SuMultiplayer.Engine
             return wrote
                 ? (snapshot.Dead ? ActivePlayerState.Dead : ActivePlayerState.Alive)
                 : ActivePlayerState.None;
+        }
+
+        /// <summary>
+        /// 远端化身受伤闪红（纯表现，不产生伤害、不改血量）。
+        ///
+        /// 引擎原生闪红由 <c>ComponentCreatureModel.Update</c> 读
+        /// <c>ComponentHealth.HealthChange</c> 驱动（ComponentCreatureModel.cs:185-193），
+        /// 而本层的权威写回把 Health 与 m_lastHealth 写成同一个值 ⇒ HealthChange 恒为 0
+        /// ⇒ 客户端看到的远端化身永远不会闪红。这里按"上一次已应用的权威血量"判断真实下降，
+        /// 直接写引擎私有字段 <c>m_injuryColorFactor = 1f</c>（与 AvatarActionBridge 的
+        /// HurtFlash 同一手法），之后由引擎自己按 3f/s 衰减，不需要每帧驱动。
+        ///
+        /// 第一次应用不闪：新化身 Health 默认 1，若直接比较会在出生那一刻凭空闪一下。
+        /// </summary>
+        private void ApplyRemoteHurtFlash(PlayerKey key, ComponentPlayer player, float health)
+        {
+            if (m_flashHealth.TryGetValue(key, out float lastApplied) &&
+                health < lastApplied - 1.0e-4f)
+            {
+                ComponentCreatureModel model = player?.ComponentCreatureModel;
+                if (model != null)
+                {
+                    try
+                    {
+                        m_parentField.ModifyParentField(model, "m_injuryColorFactor", 1f,
+                            typeof(ComponentCreatureModel));
+                        m_hurtFlashes++;
+                    }
+                    catch (Exception e)
+                    {
+                        Error("hurt-flash:" + key, "远端化身受伤闪红写入失败（" + key +
+                            "）：" + e.GetType().Name + " " + e.Message, e);
+                    }
+                }
+            }
+            m_flashHealth[key] = health;
         }
 
         private void WriteVitalStats(ComponentVitalStats vital, in PlayerVitalsSnapshot snapshot)
@@ -5487,6 +5536,7 @@ namespace SuMultiplayer.Engine
                 " hurtFeedbackRedout=" + m_hurtRedoutHits +
                 " hurtFeedbackFrames=" + m_hurtRedoutFrames +
                 " hurtFeedbackFailures=" + m_hurtRedoutFailures +
+                " remoteHurtFlash=" + m_hurtFlashes +
                 " fluEffectApplied=" + m_fluEffectApplied +
                 " fluEffectSound=" + m_fluEffectSounds +
                 " fluEffectParticles=" + m_fluEffectParticles +

@@ -98,6 +98,18 @@ namespace SuMultiplayer
         /// <summary>水花表现：主机 = 拾取物 / 投射物子系统 Update 窗口内捕获粒子；客户端 = 重建同一粒子 + 声音。</summary>
         private WaterSplashReplicaEngine m_waterSplashEngine;
         private WaterSplashSyncModule m_waterSplashModule;
+        /// <summary>
+        /// 投射物命中反馈：主机 = <c>SuSubsystemProjectiles.Update</c> 窗口内做血量差捕获，
+        /// 按每个客户端的兴趣窗口中继；客户端 = 可见范围 + 区块已载入后只建伤害数字。
+        /// </summary>
+        private ProjectileHitReplicaEngine m_projectileHitEngine;
+        /// <summary>
+        /// 逐端兴趣窗口的**唯一只读适配器**：实体复制（逐用户投递）与投射物命中都用它。
+        /// 之前它只作为构造参数传给投射物模块、没注册成端口 → EntityReplicationModule 拿不到，
+        /// 主机每拍直接返回、一条实体状态都不发（客户端看不到任何掉落物）。现在注册成端口。
+        /// </summary>
+        private ClientInterestWindowAdapter m_clientInterestWindow;
+        private ProjectileHitModule m_projectileHitModule;
         /// <summary>活塞运动表现：主机 = 每次运动开始 / 结束广播；客户端 = 建本地只表现集合（不写格）。</summary>
         private PistonReplicaEngine m_pistonEngine;
         private PistonSyncModule m_pistonModule;
@@ -387,6 +399,23 @@ namespace SuMultiplayer
                 "water-splash");
             m_waterSplashEngine.SoundCover = m_remoteAudioEngine;
             m_waterSplashModule = new WaterSplashSyncModule(m_waterSplashEngine);
+            // 投射物命中反馈：引擎的 "-N" 伤害数字只在 ComponentMiner.AttackBody 里创建
+            // （ComponentMiner.cs:506-526，投射物命中走 SubsystemProjectiles.cs:221-240），
+            // 客户端副本不跑投射物 Update ⇒ 开火者与其他客户端都没有数字。适配器在主机
+            // SuSubsystemProjectiles 的 base.Update 前后做"血量差"捕获，模块按每个客户端的
+            // 兴趣窗口逐个下发（世界分区：没载入那片地形的端收不到），客户端只建同一个粒子。
+            // 受伤闪红是同一份权威血量的表现（PlayerVitalsReplica.ApplyRemoteState），不新增流量。
+            m_projectileHitEngine = new ProjectileHitReplicaEngine(avatarSpawner, diagnostics,
+                "projectile-hit");
+            m_clientInterestWindow = new ClientInterestWindowAdapter(
+                delegate (int clientId, out int centerChunkX, out int centerChunkZ,
+                    out int radiusChunks)
+                {
+                    return m_terrainModule.TryGetClientRange(clientId, out centerChunkX,
+                        out centerChunkZ, out radiusChunks);
+                });
+            m_projectileHitModule = new ProjectileHitModule(m_projectileHitEngine,
+                m_clientInterestWindow);
             // 活塞运动表现：引擎把推 / 拉的中间过程放在 SubsystemMovingBlocks 里（不是格子数据），
             // 客户端不跑活塞逻辑 ⇒ 中间过程看不到。适配器在主机检测每次运动开始 / 结束（含提前结束），
             // 客户端按主机参数在本地 SubsystemMovingBlocks 建只表现集合；最终格仍走既有 CellChange。
@@ -464,6 +493,15 @@ namespace SuMultiplayer
             m_moduleHost.RegisterPort<ITransportControlPort>(m_terrainModule.ControlPort);
             // 客户端权威模块的端口：世界信息广播 / 编辑超时回滚 / 编辑捕获与主机权威落地 / RNG 状态。
             m_moduleHost.RegisterPort<IPeerBroadcastPort>(m_terrainModule);
+            // 纯表现类事件（爆炸 / 烧尽 / 营火 / 武器声 …）的"按兴趣窗口投递"：窗口只有地形模块
+            // 这一处真相，其它模块不再各自拼广播目标，也不再无脑发给全体客户端。
+            m_moduleHost.RegisterPort<IWindowBroadcastPort>(m_terrainModule);
+            // 逐端兴趣窗口只读视图（实体复制的逐用户投递 + 投射物命中共用同一个适配器）。
+            // 数据源 = 地形模块（客户端 INTEREST_UPDATE），没有第二套窗口口径。
+            m_moduleHost.RegisterPort<IClientInterestWindowPort>(m_clientInterestWindow);
+            // 每角色记录 hash（Hello 上报 / 加入补发 diff）：世界 pak 里带着角色记录文件，
+            // 重连时只重发"不常变内容变了"的角色记录（自定义皮肤资源这类大块数据）。
+            m_moduleHost.RegisterPort<IKnownRecordHashPort>(m_terrainModule);
             m_moduleHost.RegisterPort<IChunkReverifyPort>(m_terrainModule);
             m_moduleHost.RegisterPort<IClientEditPort>(m_clientAuthority);
             m_moduleHost.RegisterPort<IWorldInfoPort>(m_clientAuthority);
@@ -481,6 +519,8 @@ namespace SuMultiplayer
             m_moduleHost.RegisterPort<IAmbientSoundPort>(m_ambientSoundEngine);
             // 水花表现：模块只拿端口（捕获开关 / 玩家端位置 / 客户端表现），不直接接触引擎粒子表。
             m_moduleHost.RegisterPort<IWaterSplashPort>(m_waterSplashEngine);
+            // 投射物命中反馈：模块拿引擎端口（捕获上报 / 客户端建数字）与兴趣窗口只读视图。
+            m_moduleHost.RegisterPort<IProjectileHitPort>(m_projectileHitEngine);
             // 可编辑方块内容：模块只拿端口（内容读写 / 身份与距离校验 / 广播目标 / 副本应用）。
             m_moduleHost.RegisterPort<IEditableBlockPort>(m_editableBridge);
             m_moduleHost.ProvideCapability("transport");
@@ -526,6 +566,8 @@ namespace SuMultiplayer
             m_moduleHost.Register(m_ambientSoundModule);
             // 水花表现同步：transport 硬依赖；消息处理在 Attach 里注册。
             m_moduleHost.Register(m_waterSplashModule);
+            // 投射物命中反馈：transport 硬依赖；主机按兴趣窗口逐个发，客户端只建伤害数字。
+            m_moduleHost.Register(m_projectileHitModule);
             // 方块使用 / 容器同步：transport 硬依赖；消息处理在 Attach 里注册。
             m_moduleHost.Register(m_blockUseModule);
             // 家具设计 / 内容同步：transport 硬依赖；消息处理在 Attach 里注册。
@@ -760,6 +802,7 @@ namespace SuMultiplayer
             Log.Information("[SuMP] " + m_ambientSoundModule.StatusLine());
             Log.Information("[SuMP] " + m_ambientSoundEngine.Describe());
             Log.Information("[SuMP] " + m_waterSplashModule.StatusLine());
+            Log.Information("[SuMP] " + m_projectileHitModule.StatusLine());
             Log.Information("[SuMP] " + m_pistonModule.StatusLine());
             Log.Information("[SuMP] " + m_entityEngine.Describe());
             Log.Information("[SuMP] " + m_creatureModule.StatusLine());
@@ -1153,6 +1196,7 @@ namespace SuMultiplayer
                         Log.Information("[SuMP] " + m_ambientSoundModule?.StatusLine());
                         Log.Information("[SuMP] " + m_voiceModule?.StatusLine());
                         Log.Information("[SuMP] " + m_waterSplashModule?.StatusLine());
+                        Log.Information("[SuMP] " + m_projectileHitModule?.StatusLine());
                         Log.Information("[SuMP] " + m_pistonModule?.StatusLine());
                         Log.Information("[SuMP] " + m_creatureModule?.StatusLine());
                         Log.Information("[SuMP] " + m_creatureWorld?.StatusLine());
@@ -1359,6 +1403,8 @@ namespace SuMultiplayer
                 m_ambientSoundEngine?.Shutdown();
                 m_waterSplashModule?.Detach(ModuleDetachReason.HostShutdown);
                 m_waterSplashEngine?.Shutdown();
+                m_projectileHitModule?.Detach(ModuleDetachReason.HostShutdown);
+                m_projectileHitEngine?.Shutdown();
                 m_blockUseEngine?.SetRequestSink(null);
                 m_editableModule?.Detach(ModuleDetachReason.HostShutdown);
                 m_editableBridge?.SetRequestSink(null);

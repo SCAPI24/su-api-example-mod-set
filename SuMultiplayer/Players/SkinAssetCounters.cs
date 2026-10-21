@@ -63,13 +63,18 @@ namespace SuMultiplayer.Players
         public long TooLarge { get; private set; }
         /// <summary>主机收到"换成某自定义皮肤"的通知，但此刻没有该资源（不伪造、不回 MISSING，等上传路径）。</summary>
         public long ChangeWithoutAsset { get; private set; }
+        /// <summary>
+        /// 主机加入补发时因"对端 Hello 申报的角色记录 hash 与当前一致"而跳过重发的资源条数
+        /// （重连 diff 的省流量部分；跳过的都是对端本地 pak 副本里已有的不常变内容）。
+        /// </summary>
+        public long BackfillSkippedUnchanged { get; private set; }
 
         /// <summary>计数器自上次日志以来的总变化量（模块据此决定是否写一行）。</summary>
         public long Total =>
             Sent + Received + Applied + Rejected + PlaceholderShown + SendFailed + Missing +
             Deduped + ChangeRejected + ChangeFailed + UploadAccepted + UploadRejected +
             AssetForwarded + ForwardExcludedOrigin + AckSent + AckFailures + TooLarge +
-            ChangeWithoutAsset;
+            ChangeWithoutAsset + BackfillSkippedUnchanged;
 
         public IReadOnlyDictionary<string, long> Reasons => m_reasons;
 
@@ -150,6 +155,9 @@ namespace SuMultiplayer.Players
             ChangeWithoutAsset++;
             AddReason("change-no-asset:" + Normalize(reason));
         }
+
+        /// <summary>主机加入补发时因对端已有同版本记录而跳过一条资源（重连 diff 省流量）。</summary>
+        public void OnBackfillSkippedUnchanged() => BackfillSkippedUnchanged++;
 
         /// <summary>记录一次拒绝：Rejected 总数 + 具体分类 + 原因明细（原因不静默）。</summary>
         public void OnRejected(SkinAssetRejectReason kind, string reason)

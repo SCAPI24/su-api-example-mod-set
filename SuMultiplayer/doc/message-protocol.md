@@ -54,6 +54,7 @@ offset 16 : protobuf payload       （该 type 对应的消息字节）
 | `Protocol/authority.proto` | 单元格编辑请求 / 裁决 |
 | `Protocol/position.proto` | 玩家位置 / 姿态单条与批 |
 | `Protocol/creature.proto` | 生物记录批 / 全量重发请求 |
+| `Protocol/entities.proto` | 拾取物 / 投射物复制与拾取裁决（`ENTITY_STATE = 38` / `ENTITY_SNAPSHOT = 39` / 拾取请求与回执），以及纯表现事件：`WEAPON_FIRE_EVENT = 54`、`PICKUP_SOUND_EVENT = 69`、`PROJECTILE_HIT_EVENT = 111`（投射物命中伤害数字：主机按每个客户端的兴趣窗口中继，客户端只建 `HitValueParticleSystem`，不扣血 / 不改格） |
 | `Protocol/ambient.proto` | 主机 → 客户端的循环环境音音量（`AMBIENT_SOUNDS_STATE = 93`，每个客户端一条 4 float 小消息） |
 | `Protocol/uistate.proto` | 客户端 → 主机的界面层状态（`CLIENT_UI_STATE = 100`：输入形态 / HUD 显隐 / 当前屏幕 / 打开的对话框与模态面板 / 聊天输入行 / 本机视角模式（`camera_mode = 18`：0 不改变 / 1 第一人称 / 2 第三人称 / 3 轨道环绕 / 4 固定视点，>4 拒绝）；变化驱动 + 2 s 心跳，见 `Modules/UiStateSyncModule.cs`） |
 | `Protocol/vitals.proto` | 主机 → 客户端权威生命 / 体征 / 死亡边沿（`PLAYER_VITALS_REPORT = 95` / `PLAYER_VITALS_EVENTS = 96`） |
@@ -69,10 +70,11 @@ id 区间：
 ```
 
 **id 只允许追加，绝不复用**。第三方不要用 1..999；重复 id 注册会抛
-`InvalidOperationException`（不会静默覆盖）。当前内置 id 最大为 **109**
-（`PLAYER_EFFECT_EVENTS`；110 曾是已回退的复活进度握手，编号保留、禁止复用；108 是 `PLAYER_PROFILE_SYNC`，
-101/102 是复活请求 / 回执，100 是 `CLIENT_UI_STATE`，99 是 `COMBAT_RNG_SYNC`）；
-新增内置消息请从 111 开始。
+`InvalidOperationException`（不会静默覆盖）。当前内置 id 最大为 **111**
+（`PROJECTILE_HIT_EVENT` = 投射物命中伤害数字，主机按每个客户端的兴趣窗口中继；
+110 曾是已回退的复活进度握手，编号保留、禁止复用；109 是 `PLAYER_EFFECT_EVENTS`，
+108 是 `PLAYER_PROFILE_SYNC`，101/102 是复活请求 / 回执，100 是 `CLIENT_UI_STATE`，
+99 是 `COMBAT_RNG_SYNC`）；新增内置消息请从 112 开始。
 
 ---
 
@@ -474,7 +476,106 @@ allowed = min(requesterReach + 0.5 m, serverMax)
 
 ---
 
-## 11. 检查清单（提 PR 前）
+## 11. 收件人按"客户端兴趣窗口"裁剪（纯表现事件 / 逐角色状态）
+
+**口径唯一**：世界是分区加载的 —— 主机加载全部地形并模拟全部实体，客户端通过
+`INTEREST_UPDATE` 上报"中心区块 + 半径"，只加载自己周围那片。兴趣窗口 = 以该中心为圆心、
+`radius` 环的**切比雪夫方形**（`|dx| ≤ r && |dz| ≤ r`；1 环 = 1 区块 = 16 m），半径由游戏
+`SubsystemSky.VisibilityRange / 16` 推出（`TerrainSyncRange.RadiusForVisibility`，夹 1..32）。
+地形下发、编辑距离校验、实体同步、投射物命中、纯表现事件全部用**这一份**窗口，不存在第二套区间。
+
+实现端口：`Modules/WindowBroadcastPorts.cs` 的 `IWindowBroadcastPort`（实现方 =
+`Modules/TerrainSyncModule.cs`，它是窗口数据的所有者）：
+
+| 方法 | 语义 |
+|---|---|
+| `BroadcastToPlayersAt(type, payload, position, chunkMargin, out candidates)` | 同一份**已编码** payload 并发入队给"窗口外扩 `chunkMargin` 环包含该世界坐标"的在线玩家端；一次编码、N 个连接并发入队 |
+| `BroadcastToPlayersAtAvatar(type, payload, avatarClientId, chunkMargin, ...)` | 同上，位置取该玩家端**化身实体**的 `ComponentBody.Position`；该化身自己的端**永远包含**（不依赖它是否已上报窗口）；`avatarClientId = 0` = 主机本机玩家（位置取本机玩家口径，只发窗口内观察者） |
+| `CaptureClientWindows(target)` + `SendToClient(clientId, ...)` | 需要**逐端过滤消息内容**时枚举"有窗口的端"再逐端发送（例如一批烧尽格子按每个端自己的窗口裁剪） |
+
+窗口未知（端还没上报 `INTEREST_UPDATE`，例如正在下载世界）的端**不会**被当成"要发给它的"：
+它收不到观察者数据，只发它自己的状态（若有），并计入 `windowUnknown` 类计数。
+**任何路径都不允许回退到"发给所有人"** —— 跳过一次就计数 + 限流日志。
+
+| 消息 | 收件人规则 | 额外余量 |
+|---|---|---|
+| `PLAYER_POSITIONS = 18` | 每个端一份**按自己窗口裁剪**的批：自己的角色**永远**包含；其他角色仅当窗口包含其位置 | 外扩 **1 环**（16 m，进入可视范围的缓冲；被遮挡也照样同步） |
+| `ENTITY_STATE = 38` / `ENTITY_SNAPSHOT = 39` | 每个**稳定用户**一份 mask（位序 = userid 派生的槽位，**不是 clientId**）；窗口进入某区块补该区块实体的 ADD、离开补 REMOVE；快照按该端窗口截取，`complete=true` = "你窗口内完整" | 0（窗口本身） |
+| `EXPLOSION_EVENT = 34` | 爆炸点落在窗口内（含外扩）的端；纯表现 | **6 环 = 96 m**（视觉/听觉半径） |
+| `PLAYER_DAMAGED = 37` | 只发**被伤害玩家自己**的端（客户端处理器无任何观察者可见表现；受伤 HUD / 音效走 `PLAYER_VITALS_REPORT`） | — |
+| `BURN_AWAY_EFFECT = 43` | 逐端过滤批次里的格子：只发窗口包含的格子（过滤后重新编码） | 0 |
+| `WEAPON_FIRE_EVENT = 54` | 开火点落在窗口内的端（客户端按声音衰减自己决定播不播 / 多响） | 0 |
+| `CAMPFIRE_EXTINGUISH_EVENT = 67` | 营火格落在窗口内的端 | 0 |
+| `PLAYER_VITALS_REPORT = 95` | 每个端一份过滤后的批：owner 条目**永远**包含；观察者条目仅窗口内 + 按距离分级降频（≤32 m 每拍、32–64 m 每 2 拍、>64 m 每 4 拍）；死亡 / 强制睡眠等关键边沿不降频 | 0 |
+| `PLAYER_INVENTORY = 32` | 所有者端**永远**包含；观察者端仅窗口包含其化身位置时（客户端用它镜像远端化身）；主机本机玩家只发窗口内观察者 | 0 |
+| `REMOTE_ACTION_SOUND = 68` | 已按 48 m 距离裁剪（见第 10 节） | 48 m |
+| `WATER_SPLASH_EFFECT` / 拾取声音 / 环境音 / 活塞 / 生物 / 地形 | 已按窗口或固定距离裁剪 | — |
+
+**明确不按窗口裁剪**（有状态一致性 / 身份 / 回执语义，裁剪会破坏正确性）：
+聊天与语音、`WORLD_INFO = 26`、身份与皮肤（27/28/29/75/76/108）、容器 / 活塞终态等待
+一致性消息（62/70/74/79/81）、各类请求回执、`COMBAT_RNG_SYNC = 99`、96/109、91/92。
+
+状态行审计：每个模块的 `StatusLine()` 都会列出"窗口外裁剪 / 窗口未知 / 入队失败"计数
+（例如实体复制的 `outOfWindow` / `windowUnknown`、位置的 `posOutOfWindow` /
+`posWindowUnknown`），计数只增不清零，便于对照日志定位漏发。
+
+---
+
+## 12. 角色记录 hash 与重连 diff（不常变内容）
+
+联机角色的记录（名字 / 性别 / 皮肤 / 衣服 / 背包 / 等级 …）只存在于世界目录的
+`SuMultiplayerPlayers.xml`（角色实体被从 `Project.m_entities` 摘除，**永远不进 `Project.xml`**）。
+主机导出世界时整个世界目录被复制进 pak，所以这份记录文件**跟着世界 pak 一起到加入端**。
+重连时 pak 不重发，于是用"每角色一个 hash"把**不常变内容变了的角色**挑出来，只重发这些角色
+（自定义皮肤资源这类大块数据），常变部分继续走各自的增量流。
+
+### 12.1 口径
+
+| 项 | 规则 |
+|---|---|
+| 粒度 | **每个角色记录独立一个 hash**（不是整表一个） |
+| 算法 | FNV-1a 64，固定字段顺序 + `Version="rec1"` 前缀（改字段集合 = 改版本 = 旧 hash 自然失效） |
+| 存放 | `SuMultiplayerPlayers.xml` 的 `<Player RecordHash="…">`（v9）；**绝不写进 `Project.xml`** |
+| 载入校验 | 属性缺失（v8 及更早）/ 与内容重算不一致 → 按内容重算 + 记一行日志 + 计数 + 随下次落盘修正 |
+| 落盘 | `Put()` 与 `SaveIfDirty()` 都重算，保证文件里的 hash 永远等于文件里的内容 |
+
+**不常变（进 hash）**：名字、名字已确认、性别、皮肤名、皮肤 SHA-256、皮肤资源长度、
+衣服 4 槽、背包槽位值/数量、活跃槽、手工制造槽（仅真正装着东西的）、等级、
+初始物品标志、创造背包标志、创造分类/页。
+
+**常变（不进 hash）**：生命 / 空气 / 食物 / 体力 / 睡眠 / 温度 / 目标温度 / 湿度 /
+疾病时长 / 火焰时长 / 位置 / 身体朝向 / 视角 / 饱食度 / 游戏统计 / 成就账本。
+这些要么每拍都在变（进 hash 会让"记录没变"永远不成立），要么由别的增量流负责。
+
+### 12.2 线上字段（append-only）
+
+| 消息 | 字段 | 方向 | 语义 |
+|---|---|---|---|
+| `PlayerProfile` | `uint64 record_hash = 8` | 主机 → 客户端 | 该角色的当前记录 hash（名册 / 资料广播都带）；0 = 旧主机 / 未知 |
+| `Hello` | `repeated KnownRecordHash known_records = 11` | 客户端 → 主机 | 客户端**本地已有**的角色记录 hash：`record_key` + `hash`；空 = 首次加入 / 旧客户端 |
+
+`record_key` 一律是 `PlayerIdentity.RecordKey(identity, name, slot)`（槽位 0 与旧键完全一致）。
+客户端的数据源：它下载的 world pak 副本里的 `SuMultiplayerPlayers.xml`
+（只读解析 `RecordHash` 属性，`SuMultiplayerPlayersXml.TryReadRecordHashes`），
+再叠加本次进程内从名册 / 资料广播收到的 hash（更新的优先）。上限 64 条；空键 / hash=0 一律拒绝。
+
+### 12.3 主机 diff 行为
+
+端口 `IKnownRecordHashPort`（实现方 = `Modules/TerrainSyncModule.cs`，数据源 = 这次连接的 Hello）。
+`Modules/PlayerSkinModule.cs` 的加入补发在**三条路径**上按 hash 跳过：
+
+1. 主机自己的自定义皮肤 → 对端申报的 hash 与主机记录相同则跳过；
+2. 房间里已有玩家的自定义皮肤 → 逐人比对，相同则跳过；
+3. 加入者自己记录里的资源（回传它自己 + 二次广播给其他端）→ 逐端比对，相同则跳过。
+
+跳过只发生在"对端明确申报且 hash 完全相等"时，计入 `BackfillSkippedUnchanged` 并写一行日志；
+没申报（首次加入 / 旧客户端）/ hash 不同 / 记录没有 hash → **照旧全量重发**（绝不误跳过）。
+旧主机不认 `known_records` → 客户端照旧上传 / 接收资源；旧客户端不带 `known_records`
+→ 主机全量补发。两个方向的旧构建行为都与改动前完全一致。
+
+---
+
+## 13. 检查清单（提 PR 前）
 
 - [ ] `.proto` 改了 → `-p:RegenerateProtocol=true` 并提交 `Protocol/Generated/`。
 - [ ] 新 id 在正确区间；没有复用已删除的 id。

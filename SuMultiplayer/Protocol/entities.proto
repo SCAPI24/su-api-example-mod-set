@@ -420,3 +420,39 @@ message PickupSoundEvent {
   bytes ext = 100;
   google.protobuf.Any custom = 101;
 }
+
+// ---------------------------------------------------------------------------
+// Projectile hit feedback (host -> clients whose interest window contains the
+// hit; append-only id 111 in protocol.proto).
+//
+// On the host the engine creates the damage number itself: ComponentMiner
+// .AttackBody spawns a HitValueParticleSystem when a player-owned attack really
+// removed health, and SubsystemProjectiles routes every projectile body hit
+// through that same method.  A client replica never runs either path (its
+// SuSubsystemProjectiles skips base.Update and never calls AttackBody), so the
+// shooter and every other client would see the projectile vanish with no "-N".
+//
+// The host therefore relays the hit it already executed.  Receiving clients may
+// only spawn the same particle at the same point; they must never injure a
+// body, edit terrain or create an entity because of this message.  Health stays
+// authoritative in PLAYER_VITALS_REPORT (95).
+//
+// Source: Survivalcraft/Game/ComponentMiner.cs:506-526
+// Source: Survivalcraft/Game/SubsystemProjectiles.cs:221-240
+// ---------------------------------------------------------------------------
+message ProjectileHitEvent {
+  // Host session sequence, starts at 1, strictly increasing (clients dedupe).
+  uint32 event_id = 1;
+  // Host simulation clock in milliseconds.
+  int64 server_tick = 2;
+  // Host-authoritative hit point (body raycast result).
+  sump.position.Vec3 position = 3;
+  // Normalised projectile flight direction.
+  sump.position.Vec3 direction = 4;
+  // Attacker body velocity at the hit (the engine adds it to the particle).
+  sump.position.Vec3 velocity = 5;
+  // (healthBefore - healthAfter) * AttackResilience, same formula as the engine.
+  float damage = 6;
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}

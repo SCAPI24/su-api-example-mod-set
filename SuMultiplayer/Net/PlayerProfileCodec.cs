@@ -69,7 +69,16 @@ namespace SuMultiplayer.Net
         /// 槽位 0 时 proto3 不写默认值 → 线上与旧版逐字节一致。
         /// </summary>
         public static Proto.PlayerProfile ToMessage(PlayerKey key, string identity,
-            PlayerProfileSnapshot profile, bool isHost, bool hasCharacter)
+            PlayerProfileSnapshot profile, bool isHost, bool hasCharacter) =>
+            ToMessage(key, identity, profile, isHost, hasCharacter, 0UL);
+
+        /// <summary>
+        /// 多本机角色版 + 每角色记录 hash（<c>record_hash</c>，见 <see cref="PlayerRecordHash"/>）。
+        /// hash = 0 时不写（proto3 省略默认值）→ 与旧版的线上字节完全一致；旧主机 / 旧客户端
+        /// 读到的就是"未知"，一律按"记录变了"处理（不会误跳过重发）。
+        /// </summary>
+        public static Proto.PlayerProfile ToMessage(PlayerKey key, string identity,
+            PlayerProfileSnapshot profile, bool isHost, bool hasCharacter, ulong recordHash)
         {
             var message = new Proto.PlayerProfile
             {
@@ -78,7 +87,8 @@ namespace SuMultiplayer.Net
                 Identity = identity ?? string.Empty,
                 Name = profile?.Name ?? string.Empty,
                 IsHost = isHost,
-                HasCharacter = hasCharacter
+                HasCharacter = hasCharacter,
+                RecordHash = recordHash
             };
             if (profile?.Appearance != null)
                 message.Appearance = ToAppearanceMessage(profile.Appearance);
@@ -95,8 +105,16 @@ namespace SuMultiplayer.Net
         /// </summary>
         public static PlayerProfileSnapshot FromMessage(Proto.PlayerProfile message,
             out int clientId, out int slot, out string identity, out bool isHost,
-            out bool hasCharacter)
+            out bool hasCharacter) =>
+            FromMessage(message, out clientId, out slot, out identity, out isHost,
+                out hasCharacter, out _);
+
+        /// <summary>同上，额外带回每角色记录 hash（0 = 旧主机 / 未知）。</summary>
+        public static PlayerProfileSnapshot FromMessage(Proto.PlayerProfile message,
+            out int clientId, out int slot, out string identity, out bool isHost,
+            out bool hasCharacter, out ulong recordHash)
         {
+            recordHash = message?.RecordHash ?? 0UL;
             clientId = message?.ClientId ?? -1;
             slot = (int)(message?.Slot ?? 0);
             identity = (message?.Identity ?? string.Empty).Trim();

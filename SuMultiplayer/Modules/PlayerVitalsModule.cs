@@ -22,9 +22,12 @@ namespace SuMultiplayer.Modules
     ///     ComponentSickness / ComponentOnFire 的 Update 被摘掉，只应用主机下发的值
     ///     （见 <see cref="IPlayerVitalsPort.DisableLocalSimulation"/> / ApplyLocalVitals）。
     ///   · **按 (clientId, slot) 定向 + 观察者转发**：主机给每个在线玩家端各发一份
-    ///     `PLAYER_VITALS_REPORT`，内容 = 该端自己的权威状态（owner 条目）+ 其它角色
-    ///     （观察者条目，用于姿势 / HUD）。TCP 按连接保序，同一份载荷可以发给多个端；
-    ///     每个端的 sequence 单调，revision 仍是每键单调。
+    ///     `PLAYER_VITALS_REPORT`，内容 = 该端自己的权威状态（owner 条目，**永远每拍到**）+
+    ///     其它角色（观察者条目，用于姿势 / HUD）。观察者条目只发给"该端兴趣窗口包含它"的端
+    ///     （窗口 = 客户端上报的中心区块 + 半径，与地形同一份口径），并按"该端自己角色 → 它"
+    ///     的水平距离分级限流（≤32 m 每拍 / 32–64 m 每 2 拍 / &gt;64 m 每 4 拍）；死亡 / 死因变化 /
+    ///     进入强制睡眠这三个关键边沿与心跳 / 强制整表重发**不受限流**。每个端各自编码一份，
+    ///     sequence 仍按拍单调，revision 仍是每键单调。
     ///   · **死亡 / 复活由主机裁决，但复活必须由玩家端请求**：主机检测死亡边沿 →
     ///     立刻发 Death 事件（死因）→ 标记该客户端化身死亡 → **等待 owner 的
     ///     PLAYER_RESPAWN_REQUEST**（主机不再有自动复活计时器）。客户端显示引擎等价的
@@ -54,6 +57,14 @@ namespace SuMultiplayer.Modules
 
         /// <summary>没有变化时的心跳间隔（丢了 / 新对端加入靠它补齐）。</summary>
         private const int HeartbeatMs = 1000;
+
+        /// <summary>
+        /// 观察者条目的距离分级（米，水平 XZ 距离）：≤32 m 每拍都发；32–64 m 每 2 拍 1 次；
+        /// &gt;64 m 每 4 拍 1 次。窗口本身只按区块 X/Z 判定（<see cref="ClientWindowView.Contains"/>），
+        /// 距离也用水平口径，避免"人在正上方 / 正下方"被垂直差误判成远档。
+        /// </summary>
+        private const float ObserverNearRangeM = 32f;
+        private const float ObserverMidRangeM = 64f;
 
         /// <summary>客户端本机模拟闸门的重扫间隔（新角色 / 复活换实体后 0.5 秒内补摘）。</summary>
         private const int LocalSimIntervalMs = 500;
@@ -157,6 +168,13 @@ namespace SuMultiplayer.Modules
         private ITransportControlPort m_control;
         private IMessageRegistryPort m_messages;
         private IPeerBroadcastPort m_broadcastPort;
+        /// <summary>
+        /// 主机：兴趣窗口端口（<see cref="IWindowBroadcastPort"/>，实现 = 地形模块，与地形下发
+        /// 同一份窗口）。软依赖：缺失时生命 / 体征同步照常（owner 条目 / 死亡 / 复活都不依赖它），
+        /// 只是**观察者条目一律不下发**并计 <see cref="m_observerWindowUnknown"/> ——
+        /// 绝不因此改回"发给全体"。
+        /// </summary>
+        private IWindowBroadcastPort m_windowPort;
         private IPlayerVitalsPort m_port;
         /// <summary>睡眠表现 / 点击唤醒引擎端口（同一实现 = PlayerVitalsReplica）。</summary>
         private IPlayerSleepPort m_sleepPort;
@@ -174,6 +192,29 @@ namespace SuMultiplayer.Modules
             new List<PlayerVitalsSnapshot>(PlayerVitalsLimits.MaxReportEntries);
         private readonly List<PlayerVitalsSnapshot> m_sendEntries =
             new List<PlayerVitalsSnapshot>(PlayerVitalsLimits.MaxReportEntries);
+        /// <summary>
+        /// 与 <see cref="m_sendEntries"/> 一一对应的"永不限流"标记（死亡 / 死因变化 /
+        /// 进入强制睡眠的边沿，以及首份样本）。观察者条目被距离分级限流时，命中这里的条目照发。
+        /// </summary>
+        private readonly List<bool> m_sendEntryUrgent =
+            new List<bool>(PlayerVitalsLimits.MaxReportEntries);
+        /// <summary>逐端过滤后的上报条目（复用；每个端重新填充后各编码一份 95 上报）。</summary>
+        private readonly List<PlayerVitalsSnapshot> m_clientSendEntries =
+            new List<PlayerVitalsSnapshot>(PlayerVitalsLimits.MaxReportEntries);
+        /// <summary>
+        /// 本拍该端 owner 条目的位置（距离分级的参照；复用，一台设备 ≤4 个本机槽位）。
+        /// 分屏时取最近的那个本机角色 —— 窗口 / 距离都是"整个端"的口径。
+        /// </summary>
+        private readonly List<Vector3> m_ownerPositions = new List<Vector3>(PlayerKey.SlotCount);
+        /// <summary>本拍的客户端兴趣窗口（复用；CaptureClientWindows 填充，≤4 端）。</summary>
+        private readonly List<ClientWindowView> m_clientWindows = new List<ClientWindowView>(4);
+        /// <summary>
+        /// (玩家端 clientId, 被观察玩家键) → 距上次发送已经过的"机会数"。
+        /// 只在 32–64 m（每 2 拍）/ &gt;64 m（每 4 拍）档位累积；发送 / 边沿 / 心跳 / 整表重发后归 0。
+        /// 按端分字典：端离开时整只移除（见 <see cref="DropClientState"/>），不会无限增长。
+        /// </summary>
+        private readonly Dictionary<int, Dictionary<PlayerKey, uint>> m_observerSendCounts =
+            new Dictionary<int, Dictionary<PlayerKey, uint>>();
         private readonly List<PlayerVitalsSlotSample> m_samples =
             new List<PlayerVitalsSlotSample>(PlayerVitalsLimits.MaxReportEntries);
 
@@ -269,6 +310,23 @@ namespace SuMultiplayer.Modules
         private long m_pollFailures;
         private long m_encodeFailures;
         private long m_eventSendFailures;
+        // 95 上报的逐端过滤 / 距离分级（主机）
+        /// <summary>因"该端兴趣窗口不含该角色"而未下发的观察者条目数。</summary>
+        private long m_observerFilteredByWindow;
+        /// <summary>窗口内但本拍被距离分级限流的观察者条目数（32–64 m / &gt;64 m 档）。</summary>
+        private long m_observerThrottled;
+        /// <summary>该端还没有上报兴趣窗口 → 观察者条目全部未下发（owner 条目照发）的条目数。</summary>
+        private long m_observerWindowUnknown;
+        /// <summary>该端没有 owner 条目（距离未知）→ 按最近一档下发的观察者条目数。</summary>
+        private long m_observerOwnerPositionUnknown;
+        /// <summary>因死亡 / 死因变化 / 进入强制睡眠边沿而绕过距离限流的观察者条目数。</summary>
+        private long m_observerUrgent;
+        /// <summary>成功入队的 owner 条目数（每端自己的权威状态，每拍必到）。</summary>
+        private long m_ownerEntriesSent;
+        /// <summary>逐端编码 95 上报失败的端次数（只跳过该端，不影响其它端）。</summary>
+        private long m_perClientEncodeFailures;
+        /// <summary>逐端过滤后条目为空而跳过编码的端次数（= 该端的 owner 条目还没被抓到）。</summary>
+        private long m_perClientEmptyReports;
         // 表现事件（109）：主机产出 / 下发 / 失败；客户端收到 / 播放 / 拒绝。
         private long m_fluEffectCaptured;
         private long m_fluEffectSent;
@@ -496,6 +554,16 @@ namespace SuMultiplayer.Modules
                     "生命 / 体征同步不启用（不猜发送目标）");
                 return;
             }
+            if (!context.TryGetPort(out m_windowPort) || m_windowPort == null)
+            {
+                // 软依赖：窗口端口缺失不能让整个生命 / 体征同步停掉（owner 条目 / 死亡 / 复活
+                // 都不依赖它），但也**绝不**把观察者条目发回全体。明确退化为"只发 owner 条目"，
+                // 每条被拦下的观察者条目都计入 observerWindowUnknown（状态行可见）。
+                m_windowPort = null;
+                Problem("window-port", "没有拿到兴趣窗口端口（IWindowBroadcastPort）→ 观察者条目" +
+                    "一律不下发（只发每端自己的 owner 条目；被拦下的条目计 observerWindowUnknown，" +
+                    "绝不改回发给全体）");
+            }
             m_transport.ClientJoined += OnClientJoined;
             m_transport.ClientLeft += OnClientLeft;
             m_messages.Registry.RegisterModule(this);
@@ -563,12 +631,18 @@ namespace SuMultiplayer.Modules
             m_sleepKeys.Clear();
             m_senderSequences.Clear();
             m_senderEventSequences.Clear();
+            m_clientWindows.Clear();
+            m_clientSendEntries.Clear();
+            m_sendEntryUrgent.Clear();
+            m_ownerPositions.Clear();
+            m_observerSendCounts.Clear();
             m_lastProblemMs.Clear();
             m_reportedOnce.Clear();
             m_messages = null;
             m_port = null;
             m_sleepPort = null;
             m_broadcastPort = null;
+            m_windowPort = null;
             m_control = null;
             m_transport = null;
             m_attached = false;
@@ -946,7 +1020,18 @@ namespace SuMultiplayer.Modules
 
         /// <summary>
         /// 抓主机模拟的全部角色 → 逐键递增 revision（只在值变化 / 首份 / 边沿后）→
-        /// 给每个在线玩家端各发一份报告（自己的 owner 条目 + 其它角色的观察者条目）。
+        /// **逐端**构造"自己的 owner 条目 + 窗口内观察者条目（按距离分级限流）"，
+        /// 每个端各自编码一份 95 上报后定向发送。
+        ///
+        /// 收件人 / 条目口径（2026-10 本次改动）：
+        ///   · owner 条目（<c>entry.Key.ClientId == clientId</c>）= 该端自己的权威状态，
+        ///     **永远包含**、不看窗口、不受限流（死亡屏 / HUD / 复活都靠它，迟一拍都是故障）；
+        ///   · 观察者条目只发给"该端兴趣窗口 Contains(entry.Position, 0)"的端（与地形下发 /
+        ///     实体同步同一份窗口）；该端还没上报窗口 → 观察者条目全部不发，计
+        ///     observerWindowUnknown（绝不改回发给全体）；
+        ///   · 观察者条目按"该端自己角色位置 → 条目位置"的水平距离分级限流：≤32 m 每拍、
+        ///     32–64 m 每 2 拍、&gt;64 m 每 4 拍；heartbeat / m_forceSend 整表重发，
+        ///     死亡 / 死因变化 / 进入强制睡眠这三个边沿也绕过限流（见 <see cref="IsUnthrottledEdge"/>）。
         /// </summary>
         private void TickHostReport(long nowMs)
         {
@@ -966,6 +1051,7 @@ namespace SuMultiplayer.Modules
             }
 
             m_sendEntries.Clear();
+            m_sendEntryUrgent.Clear();
             bool changed = false;
             for (int i = 0; i < m_authorityCapture.Count; i++)
             {
@@ -978,6 +1064,8 @@ namespace SuMultiplayer.Modules
                 bool forcedSleep = snapshot.Sleeping && snapshot.ForcedSleep;
                 if (forcedSleep && !state.WasForcedSleep) m_sleepForced++;
                 state.WasForcedSleep = forcedSleep;
+                // 边沿必须在覆盖 LastSent 之前判定（首份样本也算边沿：加入 / 重连后的第一份必须完整）。
+                bool urgent = !state.HasSent || IsUnthrottledEdge(snapshot, state.LastSent);
                 if (!state.HasSent || snapshot.HasMeaningfulChangeFrom(state.LastSent, out _))
                 {
                     state.Revision = NextRevision(state.Revision);
@@ -989,6 +1077,7 @@ namespace SuMultiplayer.Modules
                 PlayerVitalsSnapshot withRevision = snapshot.WithRevision(state.Revision);
                 state.LastSent = withRevision;
                 m_sendEntries.Add(withRevision);
+                m_sendEntryUrgent.Add(urgent);
             }
             if (m_sendEntries.Count == 0)
             {
@@ -1004,27 +1093,122 @@ namespace SuMultiplayer.Modules
 
             m_lastReportAttemptMs = nowMs;
             m_reportSequence = NextRevision(m_reportSequence);
-            byte[] payload = PlayerVitalsCodec.EncodeReport(m_reportSequence, m_sendEntries,
-                out int dropped, out string error);
-            if (payload == null)
+            // 本拍窗口快照：主机玩家端 ≤4，线性查找即可（不每拍建字典 / 不分配大对象）。
+            if (m_windowPort != null)
             {
-                m_encodeFailures++;
-                Problem("encode-report", "生命 / 体征上报编码失败（" + (error ?? "未知") +
-                    "）→ 本拍不发（绝不夹紧 / 补默认值）");
-                return;
+                m_windowPort.CaptureClientWindows(m_clientWindows);
             }
-            if (dropped > 0)
+            else
             {
-                Problem("report-overflow", "生命 / 体征上报超过单份上限 " +
-                    PlayerVitalsLimits.MaxReportEntries + " 条 → 丢弃 " + dropped + " 条");
+                // 端口缺失：观察者条目在下面按"窗口未知"逐条拦下并计数（owner 条目照发）。
+                m_clientWindows.Clear();
             }
-
+            bool bypassThrottle = heartbeat || m_forceSend;
             CollectClients();
             int delivered = 0;
             int failures = 0;
+            int encodeFailures = 0;
             for (int c = 0; c < m_clientList.Count; c++)
             {
                 int clientId = m_clientList[c];
+                bool hasWindow = TryGetClientWindow(clientId, out ClientWindowView window);
+                bool warnedWindowUnknown = false;
+                bool warnedOwnerPositionUnknown = false;
+                m_clientSendEntries.Clear();
+                m_ownerPositions.Clear();
+                // 先收 owner 条目：权威抓取顺序是"主机本机角色在前、客户端化身在后"，一趟循环时
+                // owner 的位置可能还没填进 m_ownerPositions，前面的观察者条目会被误判成"距离未知"。
+                for (int e = 0; e < m_sendEntries.Count; e++)
+                {
+                    PlayerVitalsSnapshot entry = m_sendEntries[e];
+                    if (entry.Key.ClientId != clientId) continue;
+                    // owner 条目：该端自己的权威状态永远每拍到（不看窗口、不受限流）。
+                    m_clientSendEntries.Add(entry);
+                    m_ownerPositions.Add(entry.Position);
+                }
+                for (int e = 0; e < m_sendEntries.Count; e++)
+                {
+                    PlayerVitalsSnapshot entry = m_sendEntries[e];
+                    if (entry.Key.ClientId == clientId) continue;
+                    if (!hasWindow)
+                    {
+                        // 该端还没上报窗口（或窗口端口缺失）→ 观察者条目一条都不发。
+                        m_observerWindowUnknown++;
+                        if (!warnedWindowUnknown)
+                        {
+                            warnedWindowUnknown = true;
+                            Problem("observer-window-unknown:" + clientId, "玩家端 clientId=" +
+                                clientId + " 还没有可用的兴趣窗口 → 本拍观察者条目全部不下发" +
+                                "（owner 条目照发；窗口端口" +
+                                (m_windowPort == null ? "缺失" : "在线，等它上报窗口") + "）");
+                        }
+                        continue;
+                    }
+                    if (!window.Contains(entry.Position, 0))
+                    {
+                        m_observerFilteredByWindow++;
+                        continue;
+                    }
+                    bool urgent = bypassThrottle || m_sendEntryUrgent[e];
+                    if (!urgent)
+                    {
+                        float distance = ClosestOwnerDistance(entry.Position,
+                            out bool ownerPositionKnown);
+                        if (!ownerPositionKnown)
+                        {
+                            m_observerOwnerPositionUnknown++;
+                            if (!warnedOwnerPositionUnknown)
+                            {
+                                warnedOwnerPositionUnknown = true;
+                                Problem("observer-owner-unknown:" + clientId, "玩家端 clientId=" +
+                                    clientId + " 没有 owner 条目（主机还没抓到它的角色位置）→ " +
+                                    "观察者条目按最近一档下发（每拍都发，宁可多发也不能把状态卡住）");
+                            }
+                        }
+                        uint interval = ObserverSendInterval(distance);
+                        if (interval > 1 &&
+                            NextObserverOpportunity(clientId, entry.Key) < interval)
+                        {
+                            m_observerThrottled++;
+                            continue;
+                        }
+                        ResetObserverOpportunity(clientId, entry.Key);
+                    }
+                    else
+                    {
+                        if (!bypassThrottle) m_observerUrgent++;
+                        ResetObserverOpportunity(clientId, entry.Key);
+                    }
+                    m_clientSendEntries.Add(entry);
+                }
+                if (m_clientSendEntries.Count == 0)
+                {
+                    // owner 条目本应永远非空；这里出现 = 主机还没抓到该端的角色（化身未出生）。
+                    // 不编码空上报（没有意义），计数 + 限流日志，绝不当成成功。
+                    m_perClientEmptyReports++;
+                    Problem("report-client-empty:" + clientId, "玩家端 clientId=" + clientId +
+                        " 本拍没有任何可发条目（没有它的 owner 条目：主机还没抓到它的化身）" +
+                        "→ 跳过该端（不编码空上报；下一拍重试）");
+                    continue;
+                }
+                byte[] payload = PlayerVitalsCodec.EncodeReport(m_reportSequence,
+                    m_clientSendEntries, out int dropped, out string encodeError);
+                if (payload == null)
+                {
+                    encodeFailures++;
+                    m_perClientEncodeFailures++;
+                    m_encodeFailures++;
+                    Problem("encode-report:" + clientId, "玩家端 clientId=" + clientId +
+                        " 的生命 / 体征上报编码失败（" + (encodeError ?? "未知") +
+                        "）→ 只跳过该端（其它端照发；绝不夹紧 / 补默认值）");
+                    continue;
+                }
+                if (dropped > 0)
+                {
+                    Problem("report-overflow:" + clientId, "玩家端 clientId=" + clientId +
+                        " 的上报条目超过单份上限 " + PlayerVitalsLimits.MaxReportEntries +
+                        " → 丢弃 " + dropped + " 条");
+                }
                 if (!m_transport.TrySendTo(clientId, MessageType.PlayerVitalsReport, payload))
                 {
                     failures++;
@@ -1033,10 +1217,17 @@ namespace SuMultiplayer.Modules
                 }
                 delivered++;
                 // owner 条目 = 这个端自己的角色；其余 = 观察者转发（姿势 / HUD）。
-                for (int e = 0; e < m_sendEntries.Count; e++)
+                for (int e = 0; e < m_clientSendEntries.Count; e++)
                 {
-                    if (m_sendEntries[e].Key.ClientId == clientId) m_vitalsSent++;
-                    else m_broadcast++;
+                    if (m_clientSendEntries[e].Key.ClientId == clientId)
+                    {
+                        m_vitalsSent++;
+                        m_ownerEntriesSent++;
+                    }
+                    else
+                    {
+                        m_broadcast++;
+                    }
                 }
             }
             if (delivered > 0)
@@ -1054,7 +1245,112 @@ namespace SuMultiplayer.Modules
                 Problem("send-report", "生命 / 体征上报有 " + failures +
                     " 个玩家端发送失败 → 下一拍（≤5 Hz）重试（不缓存陈旧值）");
             }
-            m_forceSend = false;
+            // 编码失败保留 m_forceSend：下一拍整表重试（与原"全局编码失败下一拍重发"同口径）。
+            // 只跳过受影响的那一端，其它端已经收到，不受影响。
+            if (encodeFailures == 0) m_forceSend = false;
+        }
+
+        /// <summary>
+        /// "永不限流"的观察者边沿：死亡 / 复活（<see cref="PlayerVitalsSnapshot.Dead"/> 翻转）、
+        /// 死因变化、进入强制睡眠（Sleeping &amp;&amp; ForcedSleep 从 false 变 true）。
+        ///
+        /// 依据：这三个字段是**离散边沿**（不是每拍变化的连续值），所以"本拍快照 vs 上一次
+        /// 抓取（<see cref="HostCharacterState.LastSent"/>）"的差异等价于"与上次已发条目"的差异；
+        /// 首份样本由调用方按 <see cref="HostCharacterState.HasSent"/> == false 处理。
+        /// 连续值（health / temperature / sleep_elapsed …）**不**走这里，它们照距离分级限流。
+        /// </summary>
+        private static bool IsUnthrottledEdge(in PlayerVitalsSnapshot current,
+            in PlayerVitalsSnapshot previous)
+        {
+            if (current.Dead != previous.Dead) return true;
+            if (!string.Equals(current.CauseOfDeath, previous.CauseOfDeath,
+                    StringComparison.Ordinal)) return true;
+            bool forcedSleep = current.Sleeping && current.ForcedSleep;
+            bool wasForcedSleep = previous.Sleeping && previous.ForcedSleep;
+            return forcedSleep && !wasForcedSleep;
+        }
+
+        /// <summary>线性查找某个端的兴趣窗口（≤4 端；不建字典 / 不分配）。</summary>
+        private bool TryGetClientWindow(int clientId, out ClientWindowView window)
+        {
+            for (int i = 0; i < m_clientWindows.Count; i++)
+            {
+                if (m_clientWindows[i].ClientId != clientId) continue;
+                window = m_clientWindows[i];
+                return true;
+            }
+            window = default;
+            return false;
+        }
+
+        /// <summary>
+        /// 观察者条目到"该端自己角色"的最近水平距离（米）。分屏时一个端可能有多个 owner 条目：
+        /// 取最近的（= 最需要新鲜状态的那个本机视角）。距离未知（该端没有 owner 条目 /
+        /// 还没抓到它的角色）时返回 false，调用方按最近一档处理并计数。
+        /// </summary>
+        private float ClosestOwnerDistance(Vector3 position, out bool ownerKnown)
+        {
+            ownerKnown = m_ownerPositions.Count > 0;
+            if (!ownerKnown) return 0f;
+            float bestSquared = float.MaxValue;
+            for (int i = 0; i < m_ownerPositions.Count; i++)
+            {
+                Vector3 owner = m_ownerPositions[i];
+                float dx = position.X - owner.X;
+                float dz = position.Z - owner.Z;
+                float squared = dx * dx + dz * dz;
+                if (squared < bestSquared) bestSquared = squared;
+            }
+            return (float)Math.Sqrt(bestSquared);
+        }
+
+        /// <summary>距离 → 发送节拍：1 = 每拍，2 = 每 2 拍，4 = 每 4 拍（≤32 m / ≤64 m / 更远）。</summary>
+        private static uint ObserverSendInterval(float distance)
+        {
+            if (distance <= ObserverNearRangeM) return 1;
+            if (distance <= ObserverMidRangeM) return 2;
+            return 4;
+        }
+
+        /// <summary>该 (端, 被观察角色) 的"距上次发送机会数" +1（只在 2 拍 / 4 拍档位用）。</summary>
+        private uint NextObserverOpportunity(int clientId, PlayerKey key)
+        {
+            if (!m_observerSendCounts.TryGetValue(clientId,
+                    out Dictionary<PlayerKey, uint> counts))
+            {
+                counts = new Dictionary<PlayerKey, uint>(PlayerKey.SlotCount * 2);
+                m_observerSendCounts[clientId] = counts;
+            }
+            counts.TryGetValue(key, out uint count);
+            count++;
+            counts[key] = count;
+            return count;
+        }
+
+        /// <summary>这一条观察者条目本拍发了（或走了不限流路径）→ 节拍计数归零。</summary>
+        private void ResetObserverOpportunity(int clientId, PlayerKey key)
+        {
+            if (!m_observerSendCounts.TryGetValue(clientId,
+                    out Dictionary<PlayerKey, uint> counts))
+                return;
+            if (counts.TryGetValue(key, out uint count) && count != 0) counts[key] = 0;
+        }
+
+        /// <summary>
+        /// 某个玩家端离开 / 它的化身被移除 → 清掉各端为它攒的"距离分级节拍"键，
+        /// 防止长会话里 (端, 已离开角色) 的键无限累积。只在成员变化时调用，热路径不分配。
+        /// </summary>
+        private void DropObservedSendCounts(int observedClientId)
+        {
+            if (m_observerSendCounts.Count == 0) return;
+            var stale = new List<PlayerKey>();
+            foreach (Dictionary<PlayerKey, uint> counts in m_observerSendCounts.Values)
+            {
+                stale.Clear();
+                foreach (PlayerKey key in counts.Keys)
+                    if (key.ClientId == observedClientId) stale.Add(key);
+                for (int i = 0; i < stale.Count; i++) counts.Remove(stale[i]);
+            }
         }
 
         // ---------------------------------------------------------------- 接收：方向裁决
@@ -3071,6 +3367,7 @@ namespace SuMultiplayer.Modules
             m_terminalDeathHandled.Clear();
             m_senderSequences.Clear();
             m_senderEventSequences.Clear();
+            m_observerSendCounts.Clear();
             m_reportSequence = 0;
             m_eventSequence = 0;
             m_lastReportSentMs = 0;
@@ -3098,6 +3395,7 @@ namespace SuMultiplayer.Modules
             m_terminalDeathHandled.Clear();
             m_senderSequences.Clear();
             m_senderEventSequences.Clear();
+            m_observerSendCounts.Clear();
             m_forceSend = false;
             Info("房间已关闭：主机权威状态表已清空" + (connected ? "" : "（通道未连接）"));
         }
@@ -3118,6 +3416,7 @@ namespace SuMultiplayer.Modules
             m_terminalDeathHandled.Clear();
             m_senderSequences.Clear();
             m_senderEventSequences.Clear();
+            m_observerSendCounts.Clear();
             m_forceSend = true;
             m_lastReportAttemptMs = 0;
             m_lastReportSentMs = 0;
@@ -3149,6 +3448,7 @@ namespace SuMultiplayer.Modules
             m_terminalDeathHandled.Clear();
             m_senderSequences.Clear();
             m_senderEventSequences.Clear();
+            m_observerSendCounts.Clear();
             m_worldReady = false;
             m_forceSend = false;
             m_lastSuppressMs = 0;
@@ -3221,6 +3521,10 @@ namespace SuMultiplayer.Modules
             for (int i = 0; i < stale.Count; i++) m_hostCharacters.Remove(stale[i]);
             m_senderSequences.Remove(clientId);
             m_senderEventSequences.Remove(clientId);
+            // 该端的距离分级节拍不能跨会话复用（clientId 会被重新分配）；同时清掉别人
+            // 为它攒的节拍键（它的化身已经移除，不会再出现在上报里）。
+            m_observerSendCounts.Remove(clientId);
+            DropObservedSendCounts(clientId);
         }
 
         private void CollectClients()
@@ -3285,6 +3589,14 @@ namespace SuMultiplayer.Modules
         ///   → vitalsApplied  = 主机引擎已模拟、被这次抓取认定为权威变化的条目数
         ///                      （主机不做网络写入，所以这里统计"已经为真的权威值"）；
         ///   → Broadcast      = 作为观察者转发给其它玩家端的条目数（姿势 / HUD）；
+        ///   → ownerEntriesSent = 成功入队的 owner 条目数（每端自己的权威状态，每拍必到）；
+        ///   → observerFilteredByWindow = 该端窗口不含该角色 → 未下发的观察者条目数；
+        ///   → observerThrottled        = 窗口内但本拍被距离分级限流（不发）的观察者条目数；
+        ///   → observerWindowUnknown    = 该端还没上报窗口 → 观察者条目全部不发（owner 照发）的条目数；
+        ///   → observerOwnerPositionUnknown = 该端没有 owner 条目（距离未知）→ 按最近一档下发的条目数；
+        ///   → observerUrgent              = 死亡 / 死因 / 强制睡眠边沿绕过限流而发出的观察者条目数；
+        ///   → perClientEncodeFailures / perClientEmptyReports =
+        ///     逐端编码失败 / 过滤后为空而跳过的端次数；
         ///   → DeathEvents / RespawnEvents = 主机裁决并排队的边沿数；
         ///   → respawnReqRecv / Accepted / Rejected(reason) = 主机收到的复活请求 / 接受 / 按原因拒绝；
         ///   → autoRespawnRemoved = 1（旧的 2.5 秒自动复活路径已删除）。
@@ -3339,6 +3651,14 @@ namespace SuMultiplayer.Modules
                   " reports=" + m_reportsSent +
                   " clients=" + m_clients.Count +
                   " noRecipients=" + m_noRecipients +
+                  " ownerEntriesSent=" + m_ownerEntriesSent +
+                  " observerFilteredByWindow=" + m_observerFilteredByWindow +
+                  " observerThrottled=" + m_observerThrottled +
+                  " observerWindowUnknown=" + m_observerWindowUnknown +
+                  " observerOwnerPositionUnknown=" + m_observerOwnerPositionUnknown +
+                  " observerUrgent=" + m_observerUrgent +
+                  " perClientEncodeFailures=" + m_perClientEncodeFailures +
+                  " perClientEmptyReports=" + m_perClientEmptyReports +
                   " fails={send:" + m_sendFailures + " event:" + m_eventSendFailures +
                   " encode:" + m_encodeFailures + " capture:" + m_captureFailures +
                   " poll:" + m_pollFailures + " respawn:" + m_hostRespawnFailures +

@@ -18,7 +18,9 @@ namespace SuMultiplayer.Modules
     ///
     /// 主机侧：
     ///   · 营火外壳在 base.Update 前后快照 engine Campfires，找出"刚烧尽"的格；
-    ///   · 这里编码 <c>CampfireExtinguishEvent</c> 广播给所有玩家端（本机由引擎自己表现）；
+    ///   · 这里编码 <c>CampfireExtinguishEvent</c> 并按**兴趣窗口**投递
+    ///     （<see cref="IWindowBroadcastPort"/>，与地形同一份窗口口径）：只有窗口包含该格
+    ///     中心的端才需要播这条火声；主机本机的表现由引擎自己执行、不走网络；
     ///   · 地形仍走既有 CellChange，本模块绝不改格 / 不生成实体。
     ///
     /// 客户端侧：
@@ -42,7 +44,7 @@ namespace SuMultiplayer.Modules
         private IModuleContext m_context;
         private ITransportPort m_transport;
         private ITransportControlPort m_control;
-        private IPeerBroadcastPort m_broadcast;
+        private IWindowBroadcastPort m_window;
         private IMessageRegistryPort m_messages;
         private bool m_attached;
         private bool m_wasConnected;
@@ -54,8 +56,10 @@ namespace SuMultiplayer.Modules
         private long m_relayed;
         private long m_relayPeers;
         private long m_sendFailures;
-        private long m_noRecipients;
         private long m_encodeFailures;
+        // 按兴趣窗口投递的"未送达原因"（区分：没人上报窗口 / 有窗口但都不包含该格中心）。
+        private long m_noWindowClients;
+        private long m_outOfRange;
 
         private long m_received;
         private long m_malformed;
@@ -97,9 +101,11 @@ namespace SuMultiplayer.Modules
                     "营火熄灭火声同步不启用（不猜方向）");
                 return;
             }
-            if (!context.TryGetPort(out m_broadcast) || m_broadcast == null)
+            if (!context.TryGetPort(out m_window) || m_window == null)
             {
-                Log("警告：没有拿到广播端口（IPeerBroadcastPort）→ 主机无法把营火烧尽事件广播给客户端");
+                // 端口缺失是硬失败：不猜目标、不改回"发给全体"；每次主机事件都会明确计数失败。
+                LogProblem("no-window-port", "警告：没有拿到兴趣窗口投递端口（IWindowBroadcastPort）→ " +
+                    "主机无法把营火烧尽事件按窗口下发给客户端（发送一律计失败，绝不回退全体广播）");
             }
             if (context.TryGetPort(out m_messages) && m_messages != null)
             {
@@ -111,8 +117,8 @@ namespace SuMultiplayer.Modules
             }
             m_port.HostCampfireExtinguished += OnHostCampfireExtinguished;
             m_attached = true;
-            Log("营火熄灭火声同步模块就绪：主机 = 营火烧尽后广播；客户端 = 解码 / 排序去重 / 限速后" +
-                "只播 Audio/Sizzles（200 ms 限速）");
+            Log("营火熄灭火声同步模块就绪：主机 = 营火烧尽后按兴趣窗口投递（只有加载了该格的端才收到）；" +
+                "客户端 = 解码 / 排序去重 / 限速后只播 Audio/Sizzles（200 ms 限速）");
         }
 
         public void Register(MessageRegistry registry)
@@ -180,18 +186,12 @@ namespace SuMultiplayer.Modules
                 }
                 return;
             }
-            if (m_broadcast == null)
+            if (m_window == null)
             {
                 m_sendFailures++;
-                LogProblem("no-broadcast-port", "主机有营火烧尽事件 " + data.Describe() +
-                    "，但没有广播端口 → 没有客户端能听到（明确计数，不静默）");
-                return;
-            }
-            if (m_broadcast.PlayerPeerCount <= 0)
-            {
-                m_noRecipients++;
-                LogProblem("no-peers", "主机有营火烧尽事件 " + data.Describe() +
-                    "，此刻没有在线玩家端 → 没有下发目标（计数 campfireSoundNoRecipients）");
+                LogProblem("no-window-port", "主机有营火烧尽事件 " + data.Describe() +
+                    "，但没有兴趣窗口投递端口（IWindowBroadcastPort）→ 没有任何客户端能听到" +
+                    "（明确计数，绝不回退全体广播）");
                 return;
             }
             if (!CampfireExtinguishCodec.TryEncode(in data,
@@ -202,13 +202,29 @@ namespace SuMultiplayer.Modules
                     " 编码失败（" + reason + "）→ 本条不下发（不会静默）");
                 return;
             }
-            int peers = m_broadcast.BroadcastToPlayers(MessageType.CampfireExtinguishEvent,
-                message.ToByteArray());
+            // 坐标字段确认：CampfireExtinguishData.X/Y/Z 是**格坐标**（Net/CampfireNet.cs:313-337，
+            // 且 Point3 Cell => new Point3(X, Y, Z)），不是世界坐标 → 投递位置取格中心
+            // = 格坐标 + (0.5, 0.5, 0.5)（引擎 CellCenter 惯用法，与 ClientWindowView.Contains
+            // 的区块换算 Floor(world / 16) 同一口径）。
+            var cellCenter = new Vector3(data.X + 0.5f, data.Y + 0.5f, data.Z + 0.5f);
+            int peers = m_window.BroadcastToPlayersAt(MessageType.CampfireExtinguishEvent,
+                message.ToByteArray(), cellCenter, 0, out int candidates);
             if (peers <= 0)
             {
-                m_sendFailures++;
-                LogProblem("send-failed", "营火烧尽事件 " + data.Describe() + " 广播失败（" +
-                    m_broadcast.PlayerPeerCount + " 个玩家端，入队 0）");
+                if (candidates <= 0)
+                {
+                    m_noWindowClients++;
+                    LogProblem("no-window-clients", "主机有营火烧尽事件 " + data.Describe() +
+                        "，此刻没有任何在线玩家端上报兴趣窗口 → 没有下发目标" +
+                        "（计数 campfireSoundNoWindowClients，绝不回退全体广播）");
+                }
+                else
+                {
+                    m_outOfRange++;
+                    LogProblem("out-of-range", "主机有营火烧尽事件 " + data.Describe() +
+                        "，有 " + candidates + " 个端上报了兴趣窗口但都不包含该格中心 → 入队 0" +
+                        "（计数 campfireSoundOutOfRange，绝不回退全体广播）");
+                }
                 return;
             }
             m_relayed++;
@@ -291,7 +307,8 @@ namespace SuMultiplayer.Modules
             " hostIdle=" + m_hostIdle +
             " hostRejected=" + m_hostRejected +
             " sendFailed=" + m_sendFailures +
-            " noRecipients=" + m_noRecipients +
+            " noWindowClients=" + m_noWindowClients +
+            " outOfRange=" + m_outOfRange +
             " encodeFailed=" + m_encodeFailures +
             " · campfireSoundRecv=" + m_received +
             " presented=" + m_presented +

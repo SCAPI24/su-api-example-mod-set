@@ -83,6 +83,31 @@ namespace SuMultiplayer.Players
         /// 不写入 XML；&gt;0 时 EnsureLoaded 会写一条明确日志。
         /// </summary>
         public int RejectedAchievements;
+
+        /// <summary>
+        /// 这个角色记录**不常变内容**的独立哈希（算法 / 参与字段见 <see cref="PlayerRecordHash"/>）。
+        /// 随记录写进 <c>SuMultiplayerPlayers.xml</c>（**绝不写进 Project.xml**）：世界 pak 里带着
+        /// 这份文件，加入端本地也有一份，重连时用它做"哪些角色记录变了"的 diff。
+        /// 0 = 未知（旧文件没有该属性 / 解析失败）：调用方必须重算后写回，不能当成"没变"。
+        /// </summary>
+        public ulong RecordHash;
+    }
+
+    /// <summary>
+    /// "某个角色记录的 hash"（身份键 → hash）的纯值载体。
+    /// Hello 里由客户端上报"我本地已有的角色记录 hash"，主机据此只重发变化了的角色记录。
+    /// </summary>
+    public readonly struct RecordHashRef
+    {
+        /// <summary>角色记录键（<see cref="PlayerIdentity.RecordKey(string,string,int)"/>）。</summary>
+        public readonly string RecordKey;
+        public readonly ulong Hash;
+
+        public RecordHashRef(string recordKey, ulong hash)
+        {
+            RecordKey = recordKey ?? string.Empty;
+            Hash = hash;
+        }
     }
 
     /// <summary>
@@ -191,9 +216,10 @@ namespace SuMultiplayer.Players
     public sealed class SuMultiplayerPlayersXml
     {
         public const string FileName = "SuMultiplayerPlayers.xml";
+        // v9：角色记录追加 RecordHash（不常变内容的独立哈希，用于重连时的角色记录 diff）。
         // v8：角色记录追加 <Achievements>（主机权威成就账本，id + UTC 解锁时间）。
         // v7：角色记录追加 SkinAsset（自定义皮肤资源，世界作用域）。
-        public const int Version = 8;
+        public const int Version = 9;
 
         private readonly string m_ownerId;
         private readonly IModuleDiagnostics m_diagnostics;
@@ -203,6 +229,8 @@ namespace SuMultiplayer.Players
         private bool m_dirty;
         private bool m_isHost;
         private bool m_loadFailed;
+        /// <summary>本次加载里 RecordHash 被重算（缺失 / 不一致）的记录数（诊断；随加载日志写一行）。</summary>
+        private int m_hashRepairs;
 
         public SuMultiplayerPlayersXml(string ownerId, IModuleDiagnostics diagnostics)
         {
@@ -226,6 +254,72 @@ namespace SuMultiplayer.Players
 
         public bool TryGet(string recordKey, out NetworkPlayerRecord record) =>
             m_records.TryGetValue(recordKey ?? string.Empty, out record);
+
+        /// <summary>
+        /// 取某条角色记录的**不常变内容 hash**（0 = 没有这条记录 / 还没算）。
+        /// 名册 / HelloAck 下发 `record_hash`、皮肤资源补发前做 diff 都用它。
+        /// </summary>
+        public bool TryGetRecordHash(string recordKey, out ulong hash)
+        {
+            hash = 0UL;
+            if (!m_records.TryGetValue(recordKey ?? string.Empty, out NetworkPlayerRecord record) ||
+                record == null) return false;
+            // 现算而不是读缓存字段：调用方可能在 Put 之后又改了记录字段（资料 / 背包落地），
+            // 读旧缓存会把"变了"报成"没变"，导致重连时漏发。
+            hash = PlayerRecordHash.Compute(record);
+            return true;
+        }
+
+        /// <summary>按 (身份, 名字, 槽位) 取记录 hash（槽位 0 = 旧口径）。</summary>
+        public bool TryGetRecordHash(string identity, string name, int slot, out ulong hash) =>
+            TryGetRecordHash(PlayerIdentity.RecordKey(identity, name, slot), out hash);
+
+        /// <summary>
+        /// **只读**地从任意世界目录的 `SuMultiplayerPlayers.xml` 读出"身份键 → hash"清单。
+        /// 客户端用它报告"我本地这份 pak 副本里已有的角色记录 hash"（客户端不拥有记录表，只读）。
+        /// 文件不存在 = 空清单（首次加入，不是错误）；解析失败 = false + reason（调用方明确计数）。
+        /// 没有 RecordHash 属性的旧记录 → hash 0（= 未知，上报时跳过，主机按"变了"处理）。
+        /// </summary>
+        public static bool TryReadRecordHashes(string worldDirectory,
+            List<RecordHashRef> target, out string reason)
+        {
+            reason = null;
+            if (target == null)
+            {
+                reason = "调用方没有给清单容器";
+                return false;
+            }
+            target.Clear();
+            if (string.IsNullOrEmpty(worldDirectory))
+            {
+                reason = "世界目录为空（没进世界 / 不是下载世界）";
+                return false;
+            }
+            string path = Storage.CombinePaths(worldDirectory, FileName);
+            if (!Storage.FileExists(path)) return true;   // 首次加入：本地没有文件 = 空清单
+            try
+            {
+                XDocument document;
+                using (Stream stream = Storage.OpenFile(path, OpenFileMode.Read))
+                    document = XDocument.Load(stream);
+                foreach (XElement element in document.Root?.Elements("Player") ??
+                    Enumerable.Empty<XElement>())
+                {
+                    string identity = (string)element.Attribute("Identity");
+                    if (string.IsNullOrWhiteSpace(identity)) continue;
+                    ulong hash = PlayerRecordHash.Parse((string)element.Attribute("RecordHash"));
+                    if (hash == 0UL) continue;   // 旧记录没有 hash：不冒充"已知内容"
+                    target.Add(new RecordHashRef(identity, hash));
+                }
+                return true;
+            }
+            catch (Exception ex)
+            {
+                target.Clear();
+                reason = "读取本地角色记录 hash 失败：" + ex.Message;
+                return false;
+            }
+        }
 
         /// <summary>
         /// 世界目录变化时重新加载（同一个目录只加载一次）。
@@ -301,9 +395,26 @@ namespace SuMultiplayer.Players
                         record.SlotCounts = Array.Empty<int>();
                         m_dirty = true;
                     }
+                    // 每角色独立 hash（v9）：与本次加载到的**不常变**字段重算值比对。
+                    // 缺失（v8 及更早的文件）/ 不一致（文件被外部改过 / 字段集合升级）→ 用重算值覆盖并记一条
+                    // 明确日志 + 计数，随后落盘修正（绝不把"未知"当成"没变"去跳过重发）。
+                    ulong storedHash = PlayerRecordHash.Parse((string)element.Attribute("RecordHash"));
+                    ulong computedHash = PlayerRecordHash.Compute(record);
+                    if (storedHash != computedHash)
+                    {
+                        m_hashRepairs++;
+                        m_diagnostics?.Info(m_ownerId, "记录 " + PlayerIdentity.Describe(identity) +
+                            " 的 RecordHash " + (storedHash == 0UL ? "缺失（旧版本文件）" :
+                                "与内容不一致（" + PlayerRecordHash.Format(storedHash) + "）") +
+                            " → 已按记录内容重算为 " + PlayerRecordHash.Format(computedHash) +
+                            " 并会随下次落盘修正");
+                        m_dirty = true;
+                    }
+                    record.RecordHash = computedHash;
                     m_records[identity] = record;
                 }
-                m_diagnostics?.Info(m_ownerId, "已加载联机角色记录 " + m_records.Count + " 条：" + path);
+                m_diagnostics?.Info(m_ownerId, "已加载联机角色记录 " + m_records.Count + " 条：" + path +
+                    (m_hashRepairs > 0 ? "（其中 " + m_hashRepairs + " 条 RecordHash 已重算）" : string.Empty));
                 if (m_dirty) SaveIfDirty();
             }
             catch (Exception ex)
@@ -328,6 +439,8 @@ namespace SuMultiplayer.Players
                 return false;
             }
             if (record == null || string.IsNullOrEmpty(recordKey)) return false;
+            // hash 与记录内容同步：名册 / HelloAck 下发 record_hash 时直接读它，不必等落盘。
+            record.RecordHash = PlayerRecordHash.Compute(record);
             m_records[recordKey] = record;
             m_dirty = true;
             return true;
@@ -356,6 +469,9 @@ namespace SuMultiplayer.Players
                 {
                     NetworkPlayerRecord record = item.Value;
                     if (record == null) continue;
+                    // 落盘前重算：hash 必须与**文件里真正写出的内容**一致（调用方可能直接改了记录字段
+                    // 而没走 Put；不重算就会出现"文件内容变了、hash 还是旧的"→ 重连 diff 漏发）。
+                    record.RecordHash = PlayerRecordHash.Compute(record);
                     root.Add(WritePlayer(item.Key, record));
                 }
                 string path = Storage.CombinePaths(m_worldDirectory, FileName);
@@ -557,6 +673,8 @@ namespace SuMultiplayer.Players
         {
             var player = new XElement("Player",
                 new XAttribute("Identity", recordKey),
+                // 每角色独立 hash（v9）：跟着记录走（世界 pak 里也有这份文件），不写进 Project.xml。
+                new XAttribute("RecordHash", PlayerRecordHash.Format(record.RecordHash)),
                 new XAttribute("Name", record.Name ?? "Player"),
                 new XAttribute("NameConfirmed", record.NameConfirmed),
                 new XAttribute("Class", record.PlayerClass),

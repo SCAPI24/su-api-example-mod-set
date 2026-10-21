@@ -124,6 +124,31 @@ namespace SuMultiplayer.Modules
     }
 
     /// <summary>
+    /// 一条在线玩家端 + 它的**稳定用户键**。
+    ///
+    /// 用户键 = <see cref="SuMultiplayer.Terrain.PlayerSessionKeys"/> 派生的 userid 键
+    /// （有身份 = <c>u</c>+FNV-1a；没有身份 = <c>c</c>+clientId 的明确退化），**不是传输编号**：
+    /// clientId 每次连接都会重分配（重连即变），拿它当位序会让上一轮的数据投给下一个人。
+    ///
+    /// mask 位序 = 调用方（实体复制模块）按用户键分配的**槽位**，槽位在一次主机会话内
+    /// 不复用（见 <c>Net/EntityInterestNet.cs</c>），所以一个 bit 永远只代表同一个用户。
+    /// </summary>
+    public readonly struct PlayerPeerUser
+    {
+        public PlayerPeerUser(int clientId, string userKey)
+        {
+            ClientId = clientId;
+            UserKey = userKey ?? string.Empty;
+        }
+
+        /// <summary>当前这次连接的传输句柄（重连会变）。</summary>
+        public int ClientId { get; }
+
+        /// <summary>稳定用户键（mask 的正确位序依据）。</summary>
+        public string UserKey { get; }
+    }
+
+    /// <summary>
     /// 主机侧向**全部玩家端**广播（世界信息 2 Hz）。与 ITransportPort.TrySend 的区别：
     /// 后者只发给"最后加入的那个"，多客户端时另一个永远收不到。
     /// </summary>
@@ -146,6 +171,25 @@ namespace SuMultiplayer.Modules
                 ? BroadcastToPlayers(type, payload)
                 : throw new NotSupportedException(
                     "IPeerBroadcastPort 的实现没有提供 BroadcastToPlayersExcept：不能安全地排除发起者");
+
+        /// <summary>
+        /// 按 clientId 升序抓取当前在线玩家端与它们的稳定用户键（mask 位序的依据，见
+        /// <see cref="PlayerPeerUser"/>）。窗口/身份都还没就绪的连接不会出现在结果里
+        /// （调用方计数，不退化成按 clientId 投递）。
+        /// </summary>
+        int CapturePlayerUsers(List<PlayerPeerUser> target) =>
+            throw new NotSupportedException(
+                "IPeerBroadcastPort 的实现没有提供 CapturePlayerUsers：不能按稳定用户键投递");
+
+        /// <summary>
+        /// 按 mask 发给对应玩家端（位序 = <paramref name="roster"/> 下标，同一份 payload，一次编码）。
+        /// <paramref name="deliveredMask"/> 回填**实际入队**的位 —— 没入队的位由调用方保留重试，
+        /// 绝不"当成功"地把它们从待发里删掉。返回成功入队端数。
+        /// </summary>
+        int BroadcastToPlayersMasked(MessageType type, byte[] payload,
+            IReadOnlyList<PlayerPeerUser> roster, ulong mask, out ulong deliveredMask) =>
+            throw new NotSupportedException(
+                "IPeerBroadcastPort 的实现没有提供 BroadcastToPlayersMasked：不能按用户掩码投递");
 
         /// <summary>当前在线玩家端数量（诊断 / 世界信息按需发送用）。</summary>
         int PlayerPeerCount { get; }

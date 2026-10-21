@@ -264,6 +264,22 @@ namespace SuMultiplayer.Modules
         /// <summary>拒绝原因计数（按固定原因词汇；实例对象，无静态状态）。</summary>
         public readonly RequestReasonTally DropRejectReasons = new RequestReasonTally();
         public readonly RequestReasonTally FireRejectReasons = new RequestReasonTally();
+
+        // ---- 逐用户兴趣窗口（主机：客户端只订阅自己窗口内的实体同步）
+        /// <summary>主机：一条记录在拍内被投递的用户位数（按位计，mask 位 = 稳定用户槽位）。</summary>
+        public long EntityInterestDeliveries;
+        /// <summary>主机：跨窗口进入时补发的实体条数（按用户计）。</summary>
+        public long EntitySeedAdds;
+        /// <summary>主机：跨窗口离开时补发的移除条数（按用户计）。</summary>
+        public long EntitySeedRemoves;
+        /// <summary>主机：因所有在线用户窗口都不含该实体而本拍未投递的记录数。</summary>
+        public long EntityOutOfWindow;
+        /// <summary>主机：待投递位图里标记在线的端没有窗口（还没上报兴趣）→ 跳过的次数。</summary>
+        public long EntityWindowUnknown;
+        /// <summary>主机：稳定用户槽位用尽（&gt;64 个不同用户）而无法分配的次数（明确失败，不误投）。</summary>
+        public long EntityUserSlotOverflow;
+        /// <summary>主机：按用户掩码投递时整条没入队（全部目标都背压/断开）的次数。</summary>
+        public long EntityMaskedSendFailures;
     }
 
     /// <summary>

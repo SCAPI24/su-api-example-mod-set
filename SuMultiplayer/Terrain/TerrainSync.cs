@@ -1202,6 +1202,9 @@ namespace SuMultiplayer.Terrain
     /// </summary>
     public sealed class TerrainSyncHost
     {
+        /// <summary>Hello 里"我已有角色记录 hash"的条数上限（4 本机角色 × 多端，余量充足）。</summary>
+        private const int MaxKnownRecordHashes = 64;
+
         /// <summary>
         /// **一条连接**（transport handle）的状态。clientId 只是传输编号：
         /// 这里**不放任何**"上报过的块 / 裁决状态 / 待裁决"——那些全部挂在
@@ -1249,6 +1252,12 @@ namespace SuMultiplayer.Terrain
             public bool Rejoin;
             /// <summary>Hello 追加字段：对端下载世界登记的主机会话标识（旧构建 = 空串）。</summary>
             public string ClientSessionId = string.Empty;
+            /// <summary>
+            /// Hello 追加字段：对端本地已有的**角色记录 hash**（来自它下载的 world pak 里的
+            /// SuMultiplayerPlayers.xml）。主机据此只重发变化了的角色记录（皮肤资源等不常变部分）。
+            /// 空 = 首次加入 / 旧客户端 → 全量补发（语义与改动前一致）。
+            /// </summary>
+            public readonly List<RecordHashRef> KnownRecords = new List<RecordHashRef>();
             /// <summary>Hello 追加字段：对端上次应用的改动序号（旧构建 = 0）。</summary>
             public long HelloLastApplied;
             /// <summary>这次握手被判为首次加入的**明确原因**（写进 HelloAck，客户端据此写日志 / 作废旧会话）。</summary>
@@ -1621,6 +1630,45 @@ namespace SuMultiplayer.Terrain
         }
 
         /// <summary>
+        /// 该连接在 Hello 里申报的"我本地已有这些角色记录 hash"清单（重连 diff 用）。
+        /// 读的是**这次连接**的握手内容；首次加入 / 旧客户端 = 0 条（= 全量补发）。
+        /// </summary>
+        public int CaptureKnownRecordHashes(int clientId, List<RecordHashRef> target)
+        {
+            if (target == null) return 0;
+            lock (m_gate)
+            {
+                target.Clear();
+                if (!m_clients.TryGetValue(clientId, out State state)) return 0;
+                target.AddRange(state.KnownRecords);
+                return target.Count;
+            }
+        }
+
+        /// <summary>
+        /// 这个连接是否已经持有某条角色记录的**当前** hash：
+        /// true = 对端本地内容与我们一致 → 这条记录（皮肤资源这类不常变大块数据）不必重发。
+        /// false = 没申报 / 没这条 / hash 不同 → 调用方按"变了"处理（绝不静默跳过）。
+        /// </summary>
+        public bool TryGetKnownRecordHash(int clientId, string recordKey, out ulong hash)
+        {
+            hash = 0UL;
+            if (string.IsNullOrEmpty(recordKey)) return false;
+            lock (m_gate)
+            {
+                if (!m_clients.TryGetValue(clientId, out State state)) return false;
+                for (int i = 0; i < state.KnownRecords.Count; i++)
+                {
+                    if (!string.Equals(state.KnownRecords[i].RecordKey, recordKey,
+                            StringComparison.Ordinal)) continue;
+                    hash = state.KnownRecords[i].Hash;
+                    return hash != 0UL;
+                }
+                return false;
+            }
+        }
+
+        /// <summary>
         /// 该客户端当前兴趣窗口（区块中心 + 半径）。客户端编辑请求的**距离校验**唯一依据：
         /// 没有窗口（还没上报兴趣中心）就返回 false —— 没有距离依据时编辑一律拒绝，绝不猜中心。
         /// </summary>
@@ -1633,6 +1681,33 @@ namespace SuMultiplayer.Terrain
                 if (!m_clients.TryGetValue(clientId, out State state) || !state.WindowValid) return false;
                 center = state.Center;
                 radius = state.Radius;
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// 这条连接的**稳定用户键**（userid 派生，见 <see cref="PlayerSessionKeys"/>）。
+        ///
+        /// 为什么不能用 clientId 当逐用户投递的位序：clientId 只是**这一次连接**的传输句柄，
+        /// 重连就会重分配（同一个人换号、新的人拿到旧号）。按它归档 / 投递会让上一轮的数据
+        /// 投给下一个人。所以实体复制、位置、体征这类"逐端裁剪"一律用这个键定位用户，
+        /// 再用 State 上的当前连接句柄把数据发出去。
+        ///
+        /// 没有身份会话（Hello 还没到）时返回**按连接派生的退化键** —— 明确退化（前缀不同，
+        /// 与身份键永不合并），不静默当成某个已知用户。
+        /// </summary>
+        public bool TryGetClientUserKey(int clientId, out string userKey)
+        {
+            lock (m_gate)
+            {
+                userKey = string.Empty;
+                if (!m_clients.TryGetValue(clientId, out State state)) return false;
+                if (state.Session != null && !string.IsNullOrEmpty(state.Session.StableKey))
+                {
+                    userKey = state.Session.StableKey;
+                    return true;
+                }
+                userKey = PlayerSessionKeys.DegradedKeyOf(clientId);
                 return true;
             }
         }
@@ -2183,6 +2258,33 @@ namespace SuMultiplayer.Terrain
             // 下载世界登记的主机会话标识 + 上次应用的改动序号（空会话 ⇒ 不接受重连）。
             state.ClientSessionId = (hello.ClientSessionId ?? string.Empty).Trim();
             state.HelloLastApplied = hello.LastAppliedSequence;
+            // 对端本地已有的角色记录 hash（重连时用来做"哪些角色记录变了"的 diff）。
+            state.KnownRecords.Clear();
+            int knownRecordRejects = 0;
+            for (int i = 0; i < hello.KnownRecords.Count; i++)
+            {
+                KnownRecordHash item = hello.KnownRecords[i];
+                if (state.KnownRecords.Count >= MaxKnownRecordHashes)
+                {
+                    knownRecordRejects++;
+                    continue;
+                }
+                string recordKey = (item?.RecordKey ?? string.Empty).Trim();
+                ulong hash = item?.Hash ?? 0UL;
+                if (recordKey.Length == 0 || hash == 0UL)
+                {
+                    knownRecordRejects++;   // 空键 / 0 = 未知，绝不冒充"已知内容"
+                    continue;
+                }
+                state.KnownRecords.Add(new RecordHashRef(recordKey, hash));
+            }
+            if (knownRecordRejects > 0)
+            {
+                RejoinTrace?.Invoke("握手（clientId=" + state.Id + "）：已知角色记录 hash 有 " +
+                    knownRecordRejects + " 条被拒绝（空键 / hash=0 / 超过上限 " +
+                    MaxKnownRecordHashes + "）→ 只按剩下的 " + state.KnownRecords.Count +
+                    " 条做 diff（其余按变化处理，绝不跳过重发）");
+            }
 
             // 重连的唯一判定（会话一致 + 序号仍在保留历史内）。不成立 ⇒ 首次加入 ⇒ 世界传输会重发整图。
             string rejectReason = null;
@@ -4909,6 +5011,9 @@ namespace SuMultiplayer.Terrain
             // 复位会让随后到达的帧误报"投递缺口"；真正的新连接在 SendHello / 新实例里复位。
         }
 
+        /// <summary>Hello 里上报"我已有角色记录 hash"的条数上限（与主机侧 64 一致）。</summary>
+        private const int MaxKnownRecordHashesPerHello = 64;
+
         /// <summary>Hello：旧字段（kind, name, 1, 1, radius）+ 末尾追加的身份。保留单参重载给既有调用方。</summary>
         public void SendHello(string name) => SendHello(name, string.Empty, false, string.Empty, 0L);
 
@@ -4939,7 +5044,19 @@ namespace SuMultiplayer.Terrain
         ///         PlayerClass/CharacterSkinName
         /// </summary>
         public void SendHello(string name, string identity, bool alreadyHasWorld,
-            string clientSessionId, long lastAppliedChangeSequence, PlayerProfileSnapshot profile)
+            string clientSessionId, long lastAppliedChangeSequence, PlayerProfileSnapshot profile) =>
+            SendHello(name, identity, alreadyHasWorld, clientSessionId, lastAppliedChangeSequence,
+                profile, null);
+
+        /// <summary>
+        /// Hello（带本机资料 + "我本地已有的角色记录 hash"）。
+        /// <paramref name="knownRecords"/> = 客户端从它下载的 world pak 里读到的角色记录 hash 清单
+        /// （<see cref="SuMultiplayerPlayersXml.TryReadRecordHashes"/>）：主机据此只重发变化了的角色记录；
+        /// 空 / null = 首次加入或旧客户端 → 全量补发，语义与改动前完全一致。
+        /// </summary>
+        public void SendHello(string name, string identity, bool alreadyHasWorld,
+            string clientSessionId, long lastAppliedChangeSequence, PlayerProfileSnapshot profile,
+            IReadOnlyList<RecordHashRef> knownRecords)
         {
             var hello = new Hello
             {
@@ -4960,6 +5077,22 @@ namespace SuMultiplayer.Terrain
                         profile.HasName)
                     : null
             };
+            // 客户端本地已有的角色记录 hash（来自下载世界里的 SuMultiplayerPlayers.xml）：
+            // 主机据此只重发变化了的角色记录。上限与主机侧一致；0 / 空键不冒充"已知"。
+            if (knownRecords != null)
+            {
+                int limit = Math.Min(knownRecords.Count, MaxKnownRecordHashesPerHello);
+                for (int i = 0; i < limit; i++)
+                {
+                    RecordHashRef item = knownRecords[i];
+                    if (string.IsNullOrEmpty(item.RecordKey) || item.Hash == 0UL) continue;
+                    hello.KnownRecords.Add(new KnownRecordHash
+                    {
+                        RecordKey = item.RecordKey,
+                        Hash = item.Hash
+                    });
+                }
+            }
             // 新一次握手：上一轮的"要求建角色 / 主机资料 / 分配资料"全部作废，
             // 只认这次 HelloAck 带回的事实（旧值留着会让客户端以为还缺角色）。
             ProfileRequired = false;

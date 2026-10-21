@@ -31,6 +31,17 @@ namespace SuMultiplayer.Modules
     ///   · 待发队列有界，超出时按状态（REMOVE &gt; ADD &gt; UPDATE）保序丢弃并计数；
     ///   · 快照有界（512 / 256 条），截断时 complete=false（客户端据此不删除未列出的副本）。
     ///
+    /// **逐用户兴趣（客户端只订阅自己窗口内的实体）**：
+    ///   · 主机仍然模拟 / 跟踪**全部**实体（不裁剪权威），只是不再把窗口外的记录发给看不见它的端；
+    ///   · mask 位序 = **稳定用户键**（userid 派生，见 <c>Net/EntityInterestNet.cs</c>），**不是 clientId**
+    ///     —— clientId 每次连接都会重分配，按它投递会把数据投给下一个人；每个端自己的角色在本地
+    ///     从 0 开始编号（<c>PlayerKey</c> / <c>ITransportPort.LocalClientId</c>），按传输编号对齐必然错位；
+    ///   · 一次编码 + 按 mask 并发入队（<c>IPeerBroadcastPort.BroadcastToPlayersMasked</c>），不逐端重编码；
+    ///   · 客户端申报的区域 = 它的兴趣窗口（中心区块 + 半径，与地形同一口径）。进入某区块时补该区块内
+    ///     现有实体的 ADD，离开时补 REMOVE —— 掉落物 / 投射物本就持续更新位置，所以只在"首次进入该 chunk"
+    ///     时需要补一次基线；
+    ///   · 窗口未知（还没上报兴趣）的端**不发**（计数 + 限流日志），绝不退化成全世界广播。
+    ///
     /// 旧实现来源：
     ///   Source: Mod/ScMultiplayer/Message/PickableSyncMessage.cs:PickableSyncMessage
     ///   Source: Mod/ScMultiplayer/Message/ProjectileSyncMessage.cs:ProjectileSyncMessage
@@ -95,10 +106,34 @@ namespace SuMultiplayer.Modules
             new Dictionary<int, PickableStateData>();
         private readonly Dictionary<int, ProjectileStateData> m_lastProjectiles =
             new Dictionary<int, ProjectileStateData>();
-        private readonly Dictionary<int, PickableStateData> m_pendingPickables =
-            new Dictionary<int, PickableStateData>();
-        private readonly Dictionary<int, ProjectileStateData> m_pendingProjectiles =
-            new Dictionary<int, ProjectileStateData>();
+
+        // ---- 主机：逐用户兴趣（mask 位序 = 稳定用户槽位，**不是 clientId**，见 Net/EntityInterestNet.cs）
+        //
+        // 客户端只订阅自己窗口内的同步：每条待发记录带一个"该发给哪些用户"的位图，发的时刻只编码一次，
+        // 按位图并发投给对应连接。主机自己仍然模拟 / 跟踪全部实体（不裁剪），只是不再把窗口外的
+        // 记录塞给看不见它的端。
+        private readonly EntityInterestSlots m_userSlots = new EntityInterestSlots();
+        private readonly List<PlayerPeerUser> m_userRoster = new List<PlayerPeerUser>(16);
+        private readonly List<PlayerPeerUser> m_userCapture = new List<PlayerPeerUser>(16);
+        private readonly List<UserWindow> m_userWindows = new List<UserWindow>(16);
+        private readonly List<long> m_windowEntered = new List<long>(4096);
+        private readonly List<long> m_windowLeft = new List<long>(4096);
+        private readonly List<int> m_seedScratch = new List<int>(512);
+        private readonly Dictionary<long, List<int>> m_pickableChunks =
+            new Dictionary<long, List<int>>();
+        private readonly Dictionary<long, List<int>> m_projectileChunks =
+            new Dictionary<long, List<int>>();
+        private readonly Dictionary<int, ulong> m_pickableKnown = new Dictionary<int, ulong>();
+        private readonly Dictionary<int, ulong> m_projectileKnown = new Dictionary<int, ulong>();
+        /// <summary>实体当前所在区块（用于窗口边沿补种 / 补移除；键 = EntityInterestWindowDiff.Key）。</summary>
+        private readonly Dictionary<int, long> m_pickableChunkOf = new Dictionary<int, long>();
+        private readonly Dictionary<int, long> m_projectileChunkOf = new Dictionary<int, long>();
+
+        private readonly Dictionary<int, MaskedPickable> m_pendingPickables =
+            new Dictionary<int, MaskedPickable>();
+        private readonly Dictionary<int, MaskedProjectile> m_pendingProjectiles =
+            new Dictionary<int, MaskedProjectile>();
+
         private readonly Dictionary<int, double> m_pendingSnapshots = new Dictionary<int, double>();
         private readonly Dictionary<int, PickupHistory> m_pickupHistory =
             new Dictionary<int, PickupHistory>();
@@ -143,6 +178,13 @@ namespace SuMultiplayer.Modules
         private ITransportPort m_transport;
         private ITransportControlPort m_control;
         private IPeerBroadcastPort m_broadcast;
+        /// <summary>
+        /// 主机：读每个客户端的兴趣窗口（与地形完全同一口径：客户端上报的中心区块 + 半径）。
+        /// 没有它就没法逐端裁剪 —— 明确记一行，不退化成广播。
+        /// </summary>
+        private IClientInterestWindowPort m_interest;
+        /// <summary>主机：纯表现事件（开火声音等）按客户端兴趣窗口投递（一次编码、并发入队）。</summary>
+        private IWindowBroadcastPort m_window;
         private IMessageRegistryPort m_messages;
         private Action<int, string, string, bool> m_clientJoinedHandler;
         private Action<int, string> m_clientLeftHandler;
@@ -178,6 +220,44 @@ namespace SuMultiplayer.Modules
             public long LastSequence;
             public bool HasResult;
             public PickableAcquireResultData LastResult;
+        }
+
+        /// <summary>
+        /// 一条待发拾取物记录 + 三种动作各自的用户位图（mask 位 = 稳定用户槽位）。
+        /// 同一实体可能"对知道它的端发 UPDATE、对刚看到它的端发 ADD、对窗口移出去的端发 REMOVE"，
+        /// 所以不能用单一动作字段；三个位图可以并存，发送时按 REMOVE &gt; ADD &gt; UPDATE 的顺序清位。
+        /// </summary>
+        private struct MaskedPickable
+        {
+            public PickableStateData State;
+            public ulong AddMask;
+            public ulong UpdateMask;
+            public ulong RemoveMask;
+        }
+
+        /// <summary>一条待发投射物记录 + 三种动作各自的用户位图（同 <see cref="MaskedPickable"/>）。</summary>
+        private struct MaskedProjectile
+        {
+            public ProjectileStateData State;
+            public ulong AddMask;
+            public ulong UpdateMask;
+            public ulong RemoveMask;
+        }
+
+        /// <summary>
+        /// 一个稳定用户（slot 下标）的兴趣窗口缓存。窗口口径与地形完全一致：
+        /// 中心区块 + 半径（切比雪夫方形），来自该端 <c>InterestUpdate</c> 的上报值。
+        /// </summary>
+        private sealed class UserWindow
+        {
+            public string UserKey = string.Empty;
+            public int ClientId = -1;
+            /// <summary>上一次刷新时绑定的连接（换了连接 = 新的这次连接，客户端手上没有副本）。</summary>
+            public int LastClientId = -1;
+            public bool Valid;
+            public int CenterX;
+            public int CenterZ;
+            public int Radius;
         }
 
         private sealed class DropHistory
@@ -255,6 +335,13 @@ namespace SuMultiplayer.Modules
 
         public string StatusLine() => "实体复制：" +
             (m_hosting ? "主机权威" : "客户端副本") +
+            " · 逐用户兴趣：deliveries=" + m_counters.EntityInterestDeliveries +
+            " seedAdds=" + m_counters.EntitySeedAdds +
+            " seedRemoves=" + m_counters.EntitySeedRemoves +
+            " outOfWindow=" + m_counters.EntityOutOfWindow +
+            " windowUnknown=" + m_counters.EntityWindowUnknown +
+            " slotOverflow=" + m_counters.EntityUserSlotOverflow +
+            " maskedSendFail=" + m_counters.EntityMaskedSendFailures +
             " pickableAdd=" + m_counters.PickableAdd +
             " pickableUpdate=" + m_counters.PickableUpdate +
             " pickableRemove=" + m_counters.PickableRemove +
@@ -343,6 +430,16 @@ namespace SuMultiplayer.Modules
             {
                 Log("警告：没有拿到广播端口（IPeerBroadcastPort）→ 主机无法把实体状态广播给所有客户端");
             }
+            if (!context.TryGetPort(out m_interest) || m_interest == null)
+            {
+                Log("警告：没有拿到兴趣窗口端口（IClientInterestWindowPort）→ 主机无法逐端裁剪实体同步" +
+                    "（本端不会退化成广播：没有窗口的客户端将收不到实体状态）");
+            }
+            if (!context.TryGetPort(out m_window) || m_window == null)
+            {
+                Log("警告：没有拿到窗口投递端口（IWindowBroadcastPort）→ 开火声音等纯表现事件" +
+                    "无法按客户端兴趣窗口中继（明确计数，绝不退回发给所有人）");
+            }
             if (context.TryGetPort(out m_messages) && m_messages != null)
             {
                 m_messages.Registry.RegisterModule(this);
@@ -425,6 +522,7 @@ namespace SuMultiplayer.Modules
             m_lastProjectiles.Clear();
             m_pendingPickables.Clear();
             m_pendingProjectiles.Clear();
+            ResetHostInterestState();
             m_pendingSnapshots.Clear();
             m_pickupHistory.Clear();
             m_capturePickables.Clear();
@@ -499,6 +597,7 @@ namespace SuMultiplayer.Modules
                 m_lastProjectiles.Clear();
                 m_pendingPickables.Clear();
                 m_pendingProjectiles.Clear();
+                ResetHostInterestState();
                 m_pickupHistory.Clear();
                 Log("本端 = 主机：拾取物 / 投射物由本端引擎创建与删除，" +
                     "客户端只能请求拾取（32Hz 变化驱动广播）");
@@ -560,6 +659,7 @@ namespace SuMultiplayer.Modules
             m_lastProjectiles.Clear();
             m_pendingPickables.Clear();
             m_pendingProjectiles.Clear();
+            ResetHostInterestState();
             m_clientPickableIds.Clear();
             m_clientProjectileIds.Clear();
             Log("本端 = 客户端副本：不创建 / 不结算拾取物与投射物；" +
@@ -583,6 +683,86 @@ namespace SuMultiplayer.Modules
             m_pickupHistory.Remove(clientId);
             m_dropHistory.Remove(clientId);
             m_fireHistory.Remove(clientId);
+            DropUserSlot(clientId);
+        }
+
+        /// <summary>
+        /// 这个连接走了：清掉它的"已知"位与待发位 —— 它的副本随连接一起消失，位留着只会让
+        /// 每拍重试投给一个不存在的端。用户槽位保留（重连还是它），重连后由快照 + 窗口补种重建。
+        /// </summary>
+        private void DropUserSlot(int clientId)
+        {
+            int slot = -1;
+            for (int i = 0; i < m_userRoster.Count; i++)
+            {
+                if (m_userRoster[i].ClientId != clientId) continue;
+                slot = i;
+                break;
+            }
+            if (slot < 0) return;
+            ulong bit = EntityInterestSlots.Bit(slot);
+            DropBitFromKnown(m_pickableKnown, bit);
+            DropBitFromKnown(m_projectileKnown, bit);
+            DropBitFromPending(bit);
+            if (slot < m_userWindows.Count)
+            {
+                m_userWindows[slot].ClientId = -1;
+                m_userWindows[slot].Valid = false;
+            }
+        }
+
+        private void DropBitFromKnown(Dictionary<int, ulong> known, ulong bit)
+        {
+            m_removalScratch.Clear();
+            foreach (KeyValuePair<int, ulong> item in known)
+            {
+                if ((item.Value & bit) != 0UL) m_removalScratch.Add(item.Key);
+            }
+            for (int i = 0; i < m_removalScratch.Count; i++)
+            {
+                int id = m_removalScratch[i];
+                ulong remaining = known[id] & ~bit;
+                if (remaining == 0UL) known.Remove(id);
+                else known[id] = remaining;
+            }
+        }
+
+        private void DropBitFromPending(ulong bit)
+        {
+            m_removalScratch.Clear();
+            foreach (KeyValuePair<int, MaskedPickable> item in m_pendingPickables)
+            {
+                m_removalScratch.Add(item.Key);
+            }
+            for (int i = 0; i < m_removalScratch.Count; i++)
+            {
+                int id = m_removalScratch[i];
+                MaskedPickable pending = m_pendingPickables[id];
+                pending.AddMask &= ~bit;
+                pending.UpdateMask &= ~bit;
+                pending.RemoveMask &= ~bit;
+                if (pending.AddMask == 0UL && pending.UpdateMask == 0UL && pending.RemoveMask == 0UL)
+                    m_pendingPickables.Remove(id);
+                else
+                    m_pendingPickables[id] = pending;
+            }
+            m_removalScratch.Clear();
+            foreach (KeyValuePair<int, MaskedProjectile> item in m_pendingProjectiles)
+            {
+                m_removalScratch.Add(item.Key);
+            }
+            for (int i = 0; i < m_removalScratch.Count; i++)
+            {
+                int id = m_removalScratch[i];
+                MaskedProjectile pending = m_pendingProjectiles[id];
+                pending.AddMask &= ~bit;
+                pending.UpdateMask &= ~bit;
+                pending.RemoveMask &= ~bit;
+                if (pending.AddMask == 0UL && pending.UpdateMask == 0UL && pending.RemoveMask == 0UL)
+                    m_pendingProjectiles.Remove(id);
+                else
+                    m_pendingProjectiles[id] = pending;
+            }
         }
 
         // ================================================================ 主机
@@ -599,6 +779,9 @@ namespace SuMultiplayer.Modules
         private void PumpHost(double now)
         {
             m_serverTickMs = Math.Max(m_serverTickMs, (long)(now * 1000.0));
+            // 先刷新"逐用户兴趣窗口"（mask 位序 = 稳定用户槽位）：窗口变化会在这里补种 / 补移除，
+            // 然后再抓实体，保证本拍算出的位图用的是最新窗口。
+            RefreshHostUsers();
             m_capturePickables.Clear();
             m_captureProjectiles.Clear();
             bool okPickables;
@@ -671,20 +854,13 @@ namespace SuMultiplayer.Modules
                 foreach (int id in m_lastPickables.Keys)
                     if (!m_capturePickableIds.Contains(id)) m_removalScratch.Add(id);
                 for (int i = 0; i < m_removalScratch.Count; i++)
-                {
-                    int id = m_removalScratch[i];
-                    PickableStateData last = m_lastPickables[id];
-                    m_lastPickables.Remove(id);
-                    EnqueuePickable(last.WithAction(EntityActions.Remove).WithCollector(-1));
-                }
+                    RemoveTrackedPickable(m_removalScratch[i], "captured-missing");
             }
             for (int i = 0; i < count; i++)
             {
                 PickableStateData current = captured[i].WithAction(EntityActions.Add);
-                if (!m_lastPickables.TryGetValue(current.Id, out PickableStateData previous))
-                    EnqueuePickable(current);
-                else if (!current.EqualsState(previous))
-                    EnqueuePickable(current.WithAction(EntityActions.Update));
+                bool isNew = !m_lastPickables.TryGetValue(current.Id, out PickableStateData previous);
+                if (isNew || !current.EqualsState(previous)) PublishPickable(current, isNew);
                 m_lastPickables[current.Id] = current;
             }
         }
@@ -709,20 +885,13 @@ namespace SuMultiplayer.Modules
                 foreach (int id in m_lastProjectiles.Keys)
                     if (!m_captureProjectileIds.Contains(id)) m_removalScratch.Add(id);
                 for (int i = 0; i < m_removalScratch.Count; i++)
-                {
-                    int id = m_removalScratch[i];
-                    ProjectileStateData last = m_lastProjectiles[id];
-                    m_lastProjectiles.Remove(id);
-                    EnqueueProjectile(last.WithAction(EntityActions.Remove));
-                }
+                    RemoveTrackedProjectile(m_removalScratch[i], "captured-missing");
             }
             for (int i = 0; i < count; i++)
             {
                 ProjectileStateData current = captured[i].WithAction(EntityActions.Add);
-                if (!m_lastProjectiles.TryGetValue(current.Id, out ProjectileStateData previous))
-                    EnqueueProjectile(current);
-                else if (!current.EqualsState(previous))
-                    EnqueueProjectile(current.WithAction(EntityActions.Update));
+                bool isNew = !m_lastProjectiles.TryGetValue(current.Id, out ProjectileStateData previous);
+                if (isNew || !current.EqualsState(previous)) PublishProjectile(current, isNew);
                 m_lastProjectiles[current.Id] = current;
             }
         }
@@ -732,89 +901,162 @@ namespace SuMultiplayer.Modules
             int messages = 0;
             while (messages < MaxStateMessagesPerPulse)
             {
-                m_batchPickableIds.Clear();
-                m_batchProjectileIds.Clear();
-                var state = BuildStateMessage(m_batchPickableIds, m_batchProjectileIds);
-                if (state.Pickables.Count == 0 && state.Projectiles.Count == 0) return;
-                byte[] payload = EntityCodec.EncodeStateBytes(state);
-                int sent = m_broadcast.BroadcastToPlayers(MessageType.EntityState, payload);
-                if (sent <= 0)
-                {
-                    m_counters.StateSendFailures++;
-                    LogRateLimited("state-send",
-                        "EntityState 广播没有入队（玩家端 " + m_broadcast.PlayerPeerCount +
-                        " 个，可能背压）→ 本拍保留 " + state.Pickables.Count + " 拾取物 + " +
-                        state.Projectiles.Count + " 投射物，下一拍重试");
-                    return;
-                }
-                m_counters.StateMessagesSent++;
-                m_counters.StateRecordsSent += state.Pickables.Count + state.Projectiles.Count;
-                CountSentPickables(state.Pickables);
-                CountSentProjectiles(state.Projectiles);
-                for (int i = 0; i < m_batchPickableIds.Count; i++)
-                    m_pendingPickables.Remove(m_batchPickableIds[i]);
-                for (int i = 0; i < m_batchProjectileIds.Count; i++)
-                    m_pendingProjectiles.Remove(m_batchProjectileIds[i]);
-                messages++;
+                // 顺序固定 Remove > Add > Update：同一拍内客户端不会看到"先加后删"的矛盾。
+                if (TryFlushPickables(EntityActions.Remove, ref messages)) continue;
+                if (TryFlushProjectiles(EntityActions.Remove, ref messages)) continue;
+                if (TryFlushPickables(EntityActions.Add, ref messages)) continue;
+                if (TryFlushProjectiles(EntityActions.Add, ref messages)) continue;
+                if (TryFlushPickables(EntityActions.Update, ref messages)) continue;
+                if (TryFlushProjectiles(EntityActions.Update, ref messages)) continue;
+                return;
             }
         }
 
-        private EntityStateData BuildStateMessage(List<int> pickableIds, List<int> projectileIds)
+        /// <summary>
+        /// 发一条"同一动作 + 同一收件人位图"的拾取物状态：**一次编码**，按位图并发投给对应连接
+        /// （<c>BroadcastToPlayersMasked</c>），不是逐端重新编码。返回 true = 本拍发掉了一条。
+        /// </summary>
+        private bool TryFlushPickables(int action, ref int messages)
         {
+            ulong mask = 0UL;
+            foreach (KeyValuePair<int, MaskedPickable> item in m_pendingPickables)
+            {
+                ulong candidate = PickableMaskOf(item.Value, action);
+                if (candidate == 0UL) continue;
+                mask = candidate;
+                break;
+            }
+            if (mask == 0UL) return false;
             var state = new EntityStateData(NextStateVersion(), m_serverTickMs);
-            int pickableCount = 0;
-            // 优先级：REMOVE > ADD > UPDATE（生命周期边沿先到，避免客户端先看到 add 又立刻 remove）。
-            foreach (KeyValuePair<int, PickableStateData> item in m_pendingPickables)
+            m_batchPickableIds.Clear();
+            foreach (KeyValuePair<int, MaskedPickable> item in m_pendingPickables)
             {
-                if (pickableCount >= MaxPickableRecordsPerMessage) break;
-                if (item.Value.Action != EntityActions.Remove) continue;
-                state.Pickables.Add(item.Value);
-                pickableIds.Add(item.Key);
-                pickableCount++;
+                if (state.Pickables.Count >= MaxPickableRecordsPerMessage) break;
+                if (PickableMaskOf(item.Value, action) != mask) continue;
+                state.Pickables.Add(item.Value.State.WithAction(action));
+                m_batchPickableIds.Add(item.Key);
             }
-            foreach (KeyValuePair<int, PickableStateData> item in m_pendingPickables)
-            {
-                if (pickableCount >= MaxPickableRecordsPerMessage) break;
-                if (item.Value.Action != EntityActions.Add) continue;
-                state.Pickables.Add(item.Value);
-                pickableIds.Add(item.Key);
-                pickableCount++;
-            }
-            foreach (KeyValuePair<int, PickableStateData> item in m_pendingPickables)
-            {
-                if (pickableCount >= MaxPickableRecordsPerMessage) break;
-                if (item.Value.Action != EntityActions.Update) continue;
-                state.Pickables.Add(item.Value);
-                pickableIds.Add(item.Key);
-                pickableCount++;
-            }
-            int projectileCount = 0;
-            foreach (KeyValuePair<int, ProjectileStateData> item in m_pendingProjectiles)
-            {
-                if (projectileCount >= MaxProjectileRecordsPerMessage) break;
-                if (item.Value.Action != EntityActions.Remove) continue;
-                state.Projectiles.Add(item.Value);
-                projectileIds.Add(item.Key);
-                projectileCount++;
-            }
-            foreach (KeyValuePair<int, ProjectileStateData> item in m_pendingProjectiles)
-            {
-                if (projectileCount >= MaxProjectileRecordsPerMessage) break;
-                if (item.Value.Action != EntityActions.Add) continue;
-                state.Projectiles.Add(item.Value);
-                projectileIds.Add(item.Key);
-                projectileCount++;
-            }
-            foreach (KeyValuePair<int, ProjectileStateData> item in m_pendingProjectiles)
-            {
-                if (projectileCount >= MaxProjectileRecordsPerMessage) break;
-                if (item.Value.Action != EntityActions.Update) continue;
-                state.Projectiles.Add(item.Value);
-                projectileIds.Add(item.Key);
-                projectileCount++;
-            }
-            return state;
+            if (state.Pickables.Count == 0) return false;
+            return SendMaskedState(state, mask, false, action, ref messages);
         }
+
+        /// <summary>投射物版本（同 <see cref="TryFlushPickables"/>）。</summary>
+        private bool TryFlushProjectiles(int action, ref int messages)
+        {
+            ulong mask = 0UL;
+            foreach (KeyValuePair<int, MaskedProjectile> item in m_pendingProjectiles)
+            {
+                ulong candidate = ProjectileMaskOf(item.Value, action);
+                if (candidate == 0UL) continue;
+                mask = candidate;
+                break;
+            }
+            if (mask == 0UL) return false;
+            var state = new EntityStateData(NextStateVersion(), m_serverTickMs);
+            m_batchProjectileIds.Clear();
+            foreach (KeyValuePair<int, MaskedProjectile> item in m_pendingProjectiles)
+            {
+                if (state.Projectiles.Count >= MaxProjectileRecordsPerMessage) break;
+                if (ProjectileMaskOf(item.Value, action) != mask) continue;
+                state.Projectiles.Add(item.Value.State.WithAction(action));
+                m_batchProjectileIds.Add(item.Key);
+            }
+            if (state.Projectiles.Count == 0) return false;
+            return SendMaskedState(state, mask, true, action, ref messages);
+        }
+
+        private static ulong PickableMaskOf(in MaskedPickable pending, int action)
+        {
+            switch (action)
+            {
+                case EntityActions.Add: return pending.AddMask;
+                case EntityActions.Update: return pending.UpdateMask;
+                case EntityActions.Remove: return pending.RemoveMask;
+                default: return 0UL;
+            }
+        }
+
+        private static ulong ProjectileMaskOf(in MaskedProjectile pending, int action)
+        {
+            switch (action)
+            {
+                case EntityActions.Add: return pending.AddMask;
+                case EntityActions.Update: return pending.UpdateMask;
+                case EntityActions.Remove: return pending.RemoveMask;
+                default: return 0UL;
+            }
+        }
+
+        /// <summary>
+        /// 编码一次 + 按 mask 投递；把**实际入队**的位从待发记录里清掉，没入队的位留到下一拍重试。
+        /// </summary>
+        private bool SendMaskedState(EntityStateData state, ulong mask, bool projectiles, int action,
+            ref int messages)
+        {
+            byte[] payload = EntityCodec.EncodeStateBytes(state);
+            int sent = m_broadcast.BroadcastToPlayersMasked(MessageType.EntityState, payload,
+                m_userRoster, mask, out ulong delivered);
+            int records = state.Pickables.Count + state.Projectiles.Count;
+            if (sent <= 0 || delivered == 0UL)
+            {
+                m_counters.EntityMaskedSendFailures++;
+                m_counters.StateSendFailures++;
+                LogRateLimited("state-send-masked",
+                    "EntityState（掩码 " + EntityInterestSlots.Describe(mask) + "，动作 " +
+                    EntityActions.Name(action) + "，" + records +
+                    " 条）没有任何端入队（背压 / 已断开）→ 全部保留，下一拍重试");
+                return false;
+            }
+            m_counters.StateMessagesSent++;
+            m_counters.StateRecordsSent += records;
+            m_counters.EntityInterestDeliveries += (long)CountBits(delivered) * records;
+            if (state.Pickables.Count > 0) CountSentPickables(state.Pickables);
+            if (state.Projectiles.Count > 0) CountSentProjectiles(state.Projectiles);
+            if (projectiles)
+            {
+                for (int i = 0; i < m_batchProjectileIds.Count; i++)
+                {
+                    int id = m_batchProjectileIds[i];
+                    if (!m_pendingProjectiles.TryGetValue(id, out MaskedProjectile pending)) continue;
+                    pending.AddMask &= ~delivered;
+                    pending.UpdateMask &= ~delivered;
+                    pending.RemoveMask &= ~delivered;
+                    if (pending.AddMask == 0UL && pending.UpdateMask == 0UL && pending.RemoveMask == 0UL)
+                        m_pendingProjectiles.Remove(id);
+                    else
+                        m_pendingProjectiles[id] = pending;
+                }
+            }
+            else
+            {
+                for (int i = 0; i < m_batchPickableIds.Count; i++)
+                {
+                    int id = m_batchPickableIds[i];
+                    if (!m_pendingPickables.TryGetValue(id, out MaskedPickable pending)) continue;
+                    pending.AddMask &= ~delivered;
+                    pending.UpdateMask &= ~delivered;
+                    pending.RemoveMask &= ~delivered;
+                    if (pending.AddMask == 0UL && pending.UpdateMask == 0UL && pending.RemoveMask == 0UL)
+                        m_pendingPickables.Remove(id);
+                    else
+                        m_pendingPickables[id] = pending;
+                }
+            }
+            messages++;
+            return true;
+        }
+
+        private static int CountBits(ulong value)
+        {
+            int count = 0;
+            while (value != 0UL)
+            {
+                value &= value - 1UL;
+                count++;
+            }
+            return count;
+        }
+
 
         private void FlushSnapshots(double now)
         {
@@ -828,6 +1070,10 @@ namespace SuMultiplayer.Modules
             foreach (KeyValuePair<int, double> item in m_pendingSnapshots)
             {
                 if (now - item.Value <= SnapshotQueueTimeoutSeconds) continue;
+                // 还在下世界 / 没上报兴趣窗口的端不算"卡住"：下载世界本来就可能几分钟。
+                // 这类排队一直留到它上报窗口（那时马上发），只有真发不出去的才算超时。
+                if (m_interest == null ||
+                    !m_interest.TryGetClientRange(item.Key, out _, out _, out _)) continue;
                 if (expired == null) expired = new List<int>();
                 expired.Add(item.Key);
             }
@@ -844,14 +1090,22 @@ namespace SuMultiplayer.Modules
                 }
             }
             if (m_pendingSnapshots.Count == 0) return;
-            var snapshot = BuildSnapshot();
-            byte[] payload = EntityCodec.EncodeSnapshot(snapshot).ToByteArray();
             m_removalScratch.Clear();
             foreach (KeyValuePair<int, double> item in m_pendingSnapshots)
                 m_removalScratch.Add(item.Key);
             for (int i = 0; i < m_removalScratch.Count; i++)
             {
                 int clientId = m_removalScratch[i];
+                // 快照内容按**该端自己的窗口**截取：窗口外的实体它根本不加载，没有理由下载。
+                if (m_interest == null ||
+                    !m_interest.TryGetClientRange(clientId, out int centerX, out int centerZ,
+                        out int radius))
+                {
+                    m_counters.EntityWindowUnknown++;
+                    continue;   // 保留排队：等它上报兴趣窗口后再发（绝不发全世界）
+                }
+                EntitySnapshotData snapshot = BuildSnapshotForWindow(centerX, centerZ, radius);
+                byte[] payload = EntityCodec.EncodeSnapshot(snapshot).ToByteArray();
                 if (!m_transport.TrySendTo(clientId, MessageType.EntitySnapshot, payload))
                 {
                     m_counters.SnapshotSendFailures++;
@@ -862,42 +1116,451 @@ namespace SuMultiplayer.Modules
                 m_pendingSnapshots.Remove(clientId);
                 m_counters.SnapshotsSent++;
                 m_counters.SnapshotRecords += snapshot.Pickables.Count + snapshot.Projectiles.Count;
+                MarkSnapshotKnown(clientId, snapshot);
             }
         }
 
-        private EntitySnapshotData BuildSnapshot()
+        /// <summary>快照里已经给过这个端的东西 = 它现在知道 → 之后的变化只发 UPDATE / REMOVE。</summary>
+        private void MarkSnapshotKnown(int clientId, EntitySnapshotData snapshot)
         {
-            bool truncated = m_capturePickables.Count > MaxSnapshotPickables ||
-                m_captureProjectiles.Count > MaxSnapshotProjectiles;
-            int pickableCount = Math.Min(m_capturePickables.Count, MaxSnapshotPickables);
-            int projectileCount = Math.Min(m_captureProjectiles.Count, MaxSnapshotProjectiles);
+            int slot = -1;
+            for (int i = 0; i < m_userRoster.Count; i++)
+            {
+                if (m_userRoster[i].ClientId != clientId) continue;
+                slot = i;
+                break;
+            }
+            if (slot < 0) return;
+            ulong bit = EntityInterestSlots.Bit(slot);
+            for (int i = 0; i < snapshot.Pickables.Count; i++)
+            {
+                int id = snapshot.Pickables[i].Id;
+                m_pickableKnown.TryGetValue(id, out ulong known);
+                m_pickableKnown[id] = known | bit;
+            }
+            for (int i = 0; i < snapshot.Projectiles.Count; i++)
+            {
+                int id = snapshot.Projectiles[i].Id;
+                m_projectileKnown.TryGetValue(id, out ulong known);
+                m_projectileKnown[id] = known | bit;
+            }
+        }
+
+        /// <summary>
+        /// 给**某一个端**的实体快照：内容只取该端兴趣窗口内的实体（客户端只加载自己窗口内的世界）。
+        /// 窗口内超过上限才截断，并置 complete=false（客户端据此不删除未列出的旧副本）。
+        /// </summary>
+        private EntitySnapshotData BuildSnapshotForWindow(int centerChunkX, int centerChunkZ,
+            int radiusChunks)
+        {
+            int pickableCount = 0;
+            int projectileCount = 0;
+            bool truncated = false;
+            int outsideWindow = 0;
+            var pickables = new List<PickableStateData>(Math.Min(m_capturePickables.Count, 64));
+            for (int i = 0; i < m_capturePickables.Count; i++)
+            {
+                PickableStateData state = m_capturePickables[i];
+                if (!ProjectileHitViewPolicy.IsCellInInterestWindow(state.Position, centerChunkX,
+                        centerChunkZ, radiusChunks))
+                {
+                    outsideWindow++;
+                    continue;
+                }
+                if (pickableCount >= MaxSnapshotPickables)
+                {
+                    truncated = true;
+                    break;
+                }
+                pickables.Add(state.WithAction(EntityActions.Add).WithCollector(-1));
+                pickableCount++;
+            }
+            var projectiles = new List<ProjectileStateData>(
+                Math.Min(m_captureProjectiles.Count, 32));
+            for (int i = 0; i < m_captureProjectiles.Count; i++)
+            {
+                ProjectileStateData state = m_captureProjectiles[i];
+                if (!ProjectileHitViewPolicy.IsCellInInterestWindow(state.Position, centerChunkX,
+                        centerChunkZ, radiusChunks))
+                {
+                    outsideWindow++;
+                    continue;
+                }
+                if (projectileCount >= MaxSnapshotProjectiles)
+                {
+                    truncated = true;
+                    break;
+                }
+                projectiles.Add(state.WithAction(EntityActions.Add));
+                projectileCount++;
+            }
+            if (outsideWindow > 0) m_counters.EntityOutOfWindow += outsideWindow;
             var snapshot = new EntitySnapshotData(NextSnapshotId(), m_serverTickMs, !truncated,
                 m_stateVersion);
-            for (int i = 0; i < pickableCount; i++)
-                snapshot.Pickables.Add(m_capturePickables[i].WithAction(EntityActions.Add)
-                    .WithCollector(-1));
-            for (int i = 0; i < projectileCount; i++)
-                snapshot.Projectiles.Add(m_captureProjectiles[i].WithAction(EntityActions.Add));
+            for (int i = 0; i < pickables.Count; i++) snapshot.Pickables.Add(pickables[i]);
+            for (int i = 0; i < projectiles.Count; i++) snapshot.Projectiles.Add(projectiles[i]);
             if (truncated)
             {
-                int dropped = m_capturePickables.Count - pickableCount +
-                    m_captureProjectiles.Count - projectileCount;
-                m_counters.SnapshotDropped += dropped;
+                m_counters.SnapshotDropped += pickableCount + projectileCount;
                 LogRateLimited("snapshot-truncated",
-                    "实体快照超过上限（拾取物 " + m_capturePickables.Count + "/" +
-                    MaxSnapshotPickables + "，投射物 " + m_captureProjectiles.Count + "/" +
-                    MaxSnapshotProjectiles + "）→ 截断 " + dropped +
-                    " 条并置 complete=false（客户端不会删除未列出的副本；其余走增量）");
+                    "该端窗口内的实体超过快照上限（拾取物 " + MaxSnapshotPickables +
+                    "，投射物 " + MaxSnapshotProjectiles +
+                    "）→ 截断并置 complete=false（其余走增量）");
             }
             return snapshot;
         }
 
-        private void EnqueuePickable(PickableStateData state)
+        // ------------------------------------------------------------ 主机：逐用户兴趣（窗口订阅）
+
+        /// <summary>
+        /// 每拍刷新"稳定用户 → 槽位 → 当前连接 + 兴趣窗口"。窗口变化时立即补种 / 补移除：
+        /// 客户端只订阅自己窗口内的实体，主机不为窗口外的端生成投递（主机自身仍模拟全部实体）。
+        /// </summary>
+        private void RefreshHostUsers()
         {
-            if (m_pendingPickables.Count >= MaxPendingPickables &&
-                !m_pendingPickables.ContainsKey(state.Id))
+            for (int i = 0; i < m_userWindows.Count; i++) m_userWindows[i].ClientId = -1;
+            m_userCapture.Clear();
+            if (m_interest == null || m_broadcast == null)
             {
-                if (state.Action == EntityActions.Remove)
+                m_userRoster.Clear();
+                return;
+            }
+            m_broadcast.CapturePlayerUsers(m_userCapture);
+            for (int i = 0; i < m_userCapture.Count; i++)
+            {
+                PlayerPeerUser peer = m_userCapture[i];
+                int slot = m_userSlots.GetOrAlloc(peer.UserKey);
+                if (slot < 0)
+                {
+                    m_counters.EntityUserSlotOverflow++;
+                    LogRateLimited("entity-interest-slot-overflow",
+                        "稳定用户槽位用满 " + EntityInterestSlots.MaxUsers + " 个 → clientId=" +
+                        peer.ClientId + " 本拍不投递实体（明确失败，绝不投给别的用户）");
+                    continue;
+                }
+                UserWindow window = EnsureUserWindow(slot, peer.UserKey);
+                window.ClientId = peer.ClientId;
+                if (window.LastClientId >= 0 && window.LastClientId != peer.ClientId)
+                {
+                    // 同一个人换了连接（重连）：上一轮的副本已经随旧连接消失 → 清已知位，按第一次整窗补种。
+                    ulong resetBit = EntityInterestSlots.Bit(slot);
+                    DropBitFromKnown(m_pickableKnown, resetBit);
+                    DropBitFromKnown(m_projectileKnown, resetBit);
+                    DropBitFromPending(resetBit);
+                    window.Valid = false;
+                }
+                window.LastClientId = peer.ClientId;
+                if (!m_interest.TryGetClientRange(peer.ClientId, out int cx, out int cz, out int radius))
+                {
+                    // 没有兴趣窗口（Hello 刚完成 / 还没进世界）：本拍不投递；下次上报按"第一次"整窗补种。
+                    window.Valid = false;
+                    m_counters.EntityWindowUnknown++;
+                    continue;
+                }
+                UpdateUserWindow(window, cx, cz, radius);
+            }
+            RebuildRoster();
+        }
+
+        private UserWindow EnsureUserWindow(int slot, string userKey)
+        {
+            while (m_userWindows.Count <= slot) m_userWindows.Add(new UserWindow());
+            UserWindow window = m_userWindows[slot];
+            if (window.UserKey.Length == 0) window.UserKey = userKey;
+            return window;
+        }
+
+        /// <summary>mask 位序 = 槽位：roster 下标必须与槽位一一对应（离线用户留 -1 占位，绝不压缩下标）。</summary>
+        private void RebuildRoster()
+        {
+            m_userRoster.Clear();
+            for (int slot = 0; slot < m_userWindows.Count; slot++)
+            {
+                UserWindow window = m_userWindows[slot];
+                m_userRoster.Add(new PlayerPeerUser(window.ClientId, window.UserKey));
+            }
+        }
+
+        private void UpdateUserWindow(UserWindow window, int centerX, int centerZ, int radius)
+        {
+            if (window.Valid && window.CenterX == centerX && window.CenterZ == centerZ &&
+                window.Radius == radius) return;   // 窗口没变：不重算差集（每拍都会走到这里）
+            int slot = m_userSlots.IndexOf(window.UserKey);
+            if (slot < 0) return;
+            EntityInterestWindowDiff.Compute(window.Valid, window.CenterX, window.CenterZ,
+                window.Radius, centerX, centerZ, radius, m_windowEntered, m_windowLeft);
+            window.Valid = true;
+            window.CenterX = centerX;
+            window.CenterZ = centerZ;
+            window.Radius = radius;
+            ulong bit = EntityInterestSlots.Bit(slot);
+            if (m_windowLeft.Count > 0) DropChunksFromUser(bit, m_windowLeft);
+            if (m_windowEntered.Count > 0) SeedChunksForUser(bit, m_windowEntered);
+        }
+
+        /// <summary>该用户新进入这些区块：把区块内现有实体补一条 ADD（他只见过窗口内的东西）。</summary>
+        private void SeedChunksForUser(ulong bit, List<long> chunks)
+        {
+            for (int c = 0; c < chunks.Count; c++)
+            {
+                long chunkKey = chunks[c];
+                if (m_pickableChunks.TryGetValue(chunkKey, out List<int> pickables))
+                {
+                    for (int i = 0; i < pickables.Count; i++)
+                    {
+                        int id = pickables[i];
+                        m_pickableKnown.TryGetValue(id, out ulong known);
+                        if ((known & bit) != 0UL) continue;
+                        if (!m_lastPickables.TryGetValue(id, out PickableStateData state)) continue;
+                        EnqueuePickable(state, EntityActions.Add, bit);
+                        m_pickableKnown[id] = known | bit;
+                        m_counters.EntitySeedAdds++;
+                    }
+                }
+                if (m_projectileChunks.TryGetValue(chunkKey, out List<int> projectiles))
+                {
+                    for (int i = 0; i < projectiles.Count; i++)
+                    {
+                        int id = projectiles[i];
+                        m_projectileKnown.TryGetValue(id, out ulong known);
+                        if ((known & bit) != 0UL) continue;
+                        if (!m_lastProjectiles.TryGetValue(id, out ProjectileStateData state)) continue;
+                        EnqueueProjectile(state, EntityActions.Add, bit);
+                        m_projectileKnown[id] = known | bit;
+                        m_counters.EntitySeedAdds++;
+                    }
+                }
+            }
+        }
+
+        /// <summary>该用户离开这些区块：他手上该区块的副本补一条 REMOVE。</summary>
+        private void DropChunksFromUser(ulong bit, List<long> chunks)
+        {
+            for (int c = 0; c < chunks.Count; c++)
+            {
+                long chunkKey = chunks[c];
+                if (m_pickableChunks.TryGetValue(chunkKey, out List<int> pickables))
+                {
+                    for (int i = 0; i < pickables.Count; i++)
+                    {
+                        int id = pickables[i];
+                        m_pickableKnown.TryGetValue(id, out ulong known);
+                        if ((known & bit) == 0UL) continue;
+                        if (!m_lastPickables.TryGetValue(id, out PickableStateData state)) continue;
+                        EnqueuePickable(state, EntityActions.Remove, bit);
+                        m_pickableKnown[id] = known & ~bit;
+                        m_counters.EntitySeedRemoves++;
+                    }
+                }
+                if (m_projectileChunks.TryGetValue(chunkKey, out List<int> projectiles))
+                {
+                    for (int i = 0; i < projectiles.Count; i++)
+                    {
+                        int id = projectiles[i];
+                        m_projectileKnown.TryGetValue(id, out ulong known);
+                        if ((known & bit) == 0UL) continue;
+                        if (!m_lastProjectiles.TryGetValue(id, out ProjectileStateData state)) continue;
+                        EnqueueProjectile(state, EntityActions.Remove, bit);
+                        m_projectileKnown[id] = known & ~bit;
+                        m_counters.EntitySeedRemoves++;
+                    }
+                }
+            }
+        }
+
+        /// <summary>该坐标落在哪些在线用户的窗口里（mask）。没有任何窗口命中 = 0（主机不投递）。</summary>
+        private ulong ComputeWindowMask(Vector3 position, out long chunkKey)
+        {
+            int chunkX = EntityInterestWindowDiff.ChunkOf(position.X);
+            int chunkZ = EntityInterestWindowDiff.ChunkOf(position.Z);
+            chunkKey = EntityInterestWindowDiff.Key(chunkX, chunkZ);
+            ulong mask = 0UL;
+            for (int slot = 0; slot < m_userWindows.Count; slot++)
+            {
+                UserWindow window = m_userWindows[slot];
+                if (!window.Valid || window.ClientId < 0) continue;
+                if (!EntityInterestWindowDiff.InWindow(chunkX, chunkZ, window.CenterX,
+                        window.CenterZ, window.Radius)) continue;
+                mask |= EntityInterestSlots.Bit(slot);
+            }
+            return mask;
+        }
+
+        /// <summary>把"当前状态"翻译成逐用户投递（新增 / 变化 / 跨窗口移除），并维护区块索引。</summary>
+        private void PublishPickable(PickableStateData state, bool isNew)
+        {
+            ulong inWindow = ComputeWindowMask(state.Position, out long chunkKey);
+            m_pickableKnown.TryGetValue(state.Id, out ulong known);
+            if (isNew)
+            {
+                if (inWindow != 0UL)
+                {
+                    EnqueuePickable(state, EntityActions.Add, inWindow);
+                    known |= inWindow;
+                }
+                m_pickableKnown[state.Id] = known;
+                IndexPickableChunk(state.Id, chunkKey);
+                return;
+            }
+            ulong addMask = inWindow & ~known;
+            ulong updateMask = known & inWindow;
+            ulong removeMask = known & ~inWindow;
+            if (removeMask != 0UL)
+            {
+                EnqueuePickable(state, EntityActions.Remove, removeMask);
+                known &= ~removeMask;
+            }
+            if (addMask != 0UL)
+            {
+                EnqueuePickable(state, EntityActions.Add, addMask);
+                known |= addMask;
+            }
+            if (updateMask != 0UL) EnqueuePickable(state, EntityActions.Update, updateMask);
+            m_pickableKnown[state.Id] = known;
+            IndexPickableChunk(state.Id, chunkKey);
+        }
+
+        /// <summary>投射物版本（同 <see cref="PublishPickable"/>）。</summary>
+        private void PublishProjectile(ProjectileStateData state, bool isNew)
+        {
+            ulong inWindow = ComputeWindowMask(state.Position, out long chunkKey);
+            m_projectileKnown.TryGetValue(state.Id, out ulong known);
+            if (isNew)
+            {
+                if (inWindow != 0UL)
+                {
+                    EnqueueProjectile(state, EntityActions.Add, inWindow);
+                    known |= inWindow;
+                }
+                m_projectileKnown[state.Id] = known;
+                IndexProjectileChunk(state.Id, chunkKey);
+                return;
+            }
+            ulong addMask = inWindow & ~known;
+            ulong updateMask = known & inWindow;
+            ulong removeMask = known & ~inWindow;
+            if (removeMask != 0UL)
+            {
+                EnqueueProjectile(state, EntityActions.Remove, removeMask);
+                known &= ~removeMask;
+            }
+            if (addMask != 0UL)
+            {
+                EnqueueProjectile(state, EntityActions.Add, addMask);
+                known |= addMask;
+            }
+            if (updateMask != 0UL) EnqueueProjectile(state, EntityActions.Update, updateMask);
+            m_projectileKnown[state.Id] = known;
+            IndexProjectileChunk(state.Id, chunkKey);
+        }
+
+        private void RemoveTrackedPickable(int id, string reason)
+        {
+            if (!m_lastPickables.TryGetValue(id, out PickableStateData last))
+            {
+                RemovePickableChunkIndex(id);
+                return;
+            }
+            m_lastPickables.Remove(id);
+            m_pickableKnown.TryGetValue(id, out ulong known);
+            m_pickableKnown.Remove(id);
+            RemovePickableChunkIndex(id);
+            if (m_pendingPickables.TryGetValue(id, out MaskedPickable pending))
+            {
+                // 还没发出去的 ADD 位 = 对端从未见过它 → 直接取消；已发出去的位 → 转成 REMOVE。
+                pending.AddMask = 0UL;
+                pending.RemoveMask |= pending.UpdateMask | known;
+                pending.UpdateMask = 0UL;
+                pending.State = last.WithAction(EntityActions.Remove).WithCollector(-1);
+                if (pending.RemoveMask == 0UL) m_pendingPickables.Remove(id);
+                else m_pendingPickables[id] = pending;
+                return;
+            }
+            if (known == 0UL) return;
+            EnqueuePickable(last.WithAction(EntityActions.Remove).WithCollector(-1),
+                EntityActions.Remove, known);
+        }
+
+        private void RemoveTrackedProjectile(int id, string reason)
+        {
+            if (!m_lastProjectiles.TryGetValue(id, out ProjectileStateData last))
+            {
+                RemoveProjectileChunkIndex(id);
+                return;
+            }
+            m_lastProjectiles.Remove(id);
+            m_projectileKnown.TryGetValue(id, out ulong known);
+            m_projectileKnown.Remove(id);
+            RemoveProjectileChunkIndex(id);
+            if (m_pendingProjectiles.TryGetValue(id, out MaskedProjectile pending))
+            {
+                pending.AddMask = 0UL;
+                pending.RemoveMask |= pending.UpdateMask | known;
+                pending.UpdateMask = 0UL;
+                pending.State = last.WithAction(EntityActions.Remove);
+                if (pending.RemoveMask == 0UL) m_pendingProjectiles.Remove(id);
+                else m_pendingProjectiles[id] = pending;
+                return;
+            }
+            if (known == 0UL) return;
+            EnqueueProjectile(last.WithAction(EntityActions.Remove), EntityActions.Remove, known);
+        }
+
+        // ------------------------------------------------------------ 区块索引（窗口边沿补种用）
+
+        private void IndexPickableChunk(int id, long chunkKey) =>
+            IndexChunk(m_pickableChunks, m_pickableChunkOf, id, chunkKey);
+
+        private void RemovePickableChunkIndex(int id) =>
+            RemoveChunkIndex(m_pickableChunks, m_pickableChunkOf, id);
+
+        private void IndexProjectileChunk(int id, long chunkKey) =>
+            IndexChunk(m_projectileChunks, m_projectileChunkOf, id, chunkKey);
+
+        private void RemoveProjectileChunkIndex(int id) =>
+            RemoveChunkIndex(m_projectileChunks, m_projectileChunkOf, id);
+
+        private static void IndexChunk(Dictionary<long, List<int>> index,
+            Dictionary<int, long> owner, int id, long chunkKey)
+        {
+            if (owner.TryGetValue(id, out long previous))
+            {
+                if (previous == chunkKey) return;
+                DetachChunk(index, previous, id);
+            }
+            owner[id] = chunkKey;
+            if (!index.TryGetValue(chunkKey, out List<int> bucket))
+            {
+                bucket = new List<int>(4);
+                index[chunkKey] = bucket;
+            }
+            bucket.Add(id);
+        }
+
+        private static void RemoveChunkIndex(Dictionary<long, List<int>> index,
+            Dictionary<int, long> owner, int id)
+        {
+            if (!owner.TryGetValue(id, out long chunkKey)) return;
+            owner.Remove(id);
+            DetachChunk(index, chunkKey, id);
+        }
+
+        private static void DetachChunk(Dictionary<long, List<int>> index, long chunkKey, int id)
+        {
+            if (!index.TryGetValue(chunkKey, out List<int> bucket)) return;
+            bucket.Remove(id);
+            if (bucket.Count == 0) index.Remove(chunkKey);
+        }
+
+        // ------------------------------------------------------------ 待发队列（带收件人位图）
+
+        private void EnqueuePickable(PickableStateData state, int action, ulong mask)
+        {
+            if (mask == 0UL) return;
+            if (!m_pendingPickables.ContainsKey(state.Id) &&
+                m_pendingPickables.Count >= MaxPendingPickables)
+            {
+                if (action == EntityActions.Remove)
                 {
                     if (!TryEvictPendingPickable(false))
                     {
@@ -915,45 +1578,44 @@ namespace SuMultiplayer.Modules
                         m_counters.PickableDropped++;
                         LogRateLimited("pending-pickables-cap",
                             "待发拾取物队列已满 → 丢弃一条 " +
-                            EntityActions.Name(state.Action) + "（id=" + state.Id + "）");
+                            EntityActions.Name(action) + "（id=" + state.Id + "）");
                         return;
                     }
                 }
             }
-            m_pendingPickables[state.Id] = state;
-        }
-
-        /// <summary>true = 成功腾出一格；updateOnly=true 时只丢 UPDATE（不丢还没发出的 ADD）。</summary>
-        private bool TryEvictPendingPickable(bool updateOnly)
-        {
-            int evict = 0;
-            foreach (KeyValuePair<int, PickableStateData> item in m_pendingPickables)
+            m_pendingPickables.TryGetValue(state.Id, out MaskedPickable pending);
+            pending.State = state;
+            switch (action)
             {
-                if (item.Value.Action != EntityActions.Update) continue;
-                evict = item.Key;
-                break;
-            }
-            if (evict == 0 && !updateOnly)
-            {
-                foreach (KeyValuePair<int, PickableStateData> item in m_pendingPickables)
-                {
-                    if (item.Value.Action != EntityActions.Add) continue;
-                    evict = item.Key;
+                case EntityActions.Add:
+                    pending.AddMask |= mask;
+                    pending.RemoveMask &= ~mask;
                     break;
-                }
+                case EntityActions.Update:
+                    pending.UpdateMask |= mask;
+                    pending.RemoveMask &= ~mask;
+                    break;
+                case EntityActions.Remove:
+                    pending.RemoveMask |= mask;
+                    pending.AddMask &= ~mask;
+                    pending.UpdateMask &= ~mask;
+                    break;
             }
-            if (evict == 0) return false;
-            m_pendingPickables.Remove(evict);
-            m_counters.PickableDropped++;
-            return true;
+            if (pending.AddMask == 0UL && pending.UpdateMask == 0UL && pending.RemoveMask == 0UL)
+            {
+                m_pendingPickables.Remove(state.Id);
+                return;
+            }
+            m_pendingPickables[state.Id] = pending;
         }
 
-        private void EnqueueProjectile(ProjectileStateData state)
+        private void EnqueueProjectile(ProjectileStateData state, int action, ulong mask)
         {
-            if (m_pendingProjectiles.Count >= MaxPendingProjectiles &&
-                !m_pendingProjectiles.ContainsKey(state.Id))
+            if (mask == 0UL) return;
+            if (!m_pendingProjectiles.ContainsKey(state.Id) &&
+                m_pendingProjectiles.Count >= MaxPendingProjectiles)
             {
-                if (state.Action == EntityActions.Remove)
+                if (action == EntityActions.Remove)
                 {
                     if (!TryEvictPendingProjectile(false))
                     {
@@ -971,45 +1633,125 @@ namespace SuMultiplayer.Modules
                         m_counters.ProjectileDropped++;
                         LogRateLimited("pending-projectiles-cap",
                             "待发投射物队列已满 → 丢弃一条 " +
-                            EntityActions.Name(state.Action) + "（id=" + state.Id + "）");
+                            EntityActions.Name(action) + "（id=" + state.Id + "）");
                         return;
                     }
                 }
             }
-            m_pendingProjectiles[state.Id] = state;
+            m_pendingProjectiles.TryGetValue(state.Id, out MaskedProjectile pending);
+            pending.State = state;
+            switch (action)
+            {
+                case EntityActions.Add:
+                    pending.AddMask |= mask;
+                    pending.RemoveMask &= ~mask;
+                    break;
+                case EntityActions.Update:
+                    pending.UpdateMask |= mask;
+                    pending.RemoveMask &= ~mask;
+                    break;
+                case EntityActions.Remove:
+                    pending.RemoveMask |= mask;
+                    pending.AddMask &= ~mask;
+                    pending.UpdateMask &= ~mask;
+                    break;
+            }
+            if (pending.AddMask == 0UL && pending.UpdateMask == 0UL && pending.RemoveMask == 0UL)
+            {
+                m_pendingProjectiles.Remove(state.Id);
+                return;
+            }
+            m_pendingProjectiles[state.Id] = pending;
         }
 
-        private bool TryEvictPendingProjectile(bool updateOnly)
+        /// <summary>true = 成功腾出一格；updateOnly=true 时只丢 UPDATE（不丢还没发出的 ADD / REMOVE）。</summary>
+        private bool TryEvictPendingPickable(bool updateOnly)
         {
             int evict = 0;
-            foreach (KeyValuePair<int, ProjectileStateData> item in m_pendingProjectiles)
+            foreach (KeyValuePair<int, MaskedPickable> item in m_pendingPickables)
             {
-                if (item.Value.Action != EntityActions.Update) continue;
+                if (item.Value.RemoveMask != 0UL || item.Value.UpdateMask == 0UL) continue;
                 evict = item.Key;
                 break;
             }
             if (evict == 0 && !updateOnly)
             {
-                foreach (KeyValuePair<int, ProjectileStateData> item in m_pendingProjectiles)
+                foreach (KeyValuePair<int, MaskedPickable> item in m_pendingPickables)
                 {
-                    if (item.Value.Action != EntityActions.Add) continue;
+                    if (item.Value.RemoveMask != 0UL || item.Value.AddMask == 0UL) continue;
                     evict = item.Key;
                     break;
                 }
             }
             if (evict == 0) return false;
+            // 被丢弃的 ADD 位 = 对端不会收到它 → 同步清掉"已知"，避免之后把 UPDATE 发给没见过它的端。
+            MaskedPickable dropped = m_pendingPickables[evict];
+            if (dropped.AddMask != 0UL && m_pickableKnown.TryGetValue(evict, out ulong known))
+                m_pickableKnown[evict] = known & ~dropped.AddMask;
+            m_pendingPickables.Remove(evict);
+            m_counters.PickableDropped++;
+            return true;
+        }
+
+        private bool TryEvictPendingProjectile(bool updateOnly)
+        {
+            int evict = 0;
+            foreach (KeyValuePair<int, MaskedProjectile> item in m_pendingProjectiles)
+            {
+                if (item.Value.RemoveMask != 0UL || item.Value.UpdateMask == 0UL) continue;
+                evict = item.Key;
+                break;
+            }
+            if (evict == 0 && !updateOnly)
+            {
+                foreach (KeyValuePair<int, MaskedProjectile> item in m_pendingProjectiles)
+                {
+                    if (item.Value.RemoveMask != 0UL || item.Value.AddMask == 0UL) continue;
+                    evict = item.Key;
+                    break;
+                }
+            }
+            if (evict == 0) return false;
+            MaskedProjectile dropped = m_pendingProjectiles[evict];
+            if (dropped.AddMask != 0UL && m_projectileKnown.TryGetValue(evict, out ulong known))
+                m_projectileKnown[evict] = known & ~dropped.AddMask;
             m_pendingProjectiles.Remove(evict);
             m_counters.ProjectileDropped++;
             return true;
+        }
+
+        /// <summary>
+        /// 主机角色切换 / 断开时清空逐用户兴趣状态（槽位表、窗口、已知位、区块索引）。
+        /// 槽位表**必须**在这里清：它原本"一次主机会话内不复用"，跨会话不清就会一直涨到 64 个后拒绝投递。
+        /// </summary>
+        private void ResetHostInterestState()
+        {
+            m_userSlots.Reset();
+            m_userWindows.Clear();
+            m_userRoster.Clear();
+            m_userCapture.Clear();
+            m_pickableKnown.Clear();
+            m_projectileKnown.Clear();
+            m_pickableChunks.Clear();
+            m_projectileChunks.Clear();
+            m_pickableChunkOf.Clear();
+            m_projectileChunkOf.Clear();
         }
 
         private void DropPendingStates(string reason)
         {
             int pickables = m_pendingPickables.Count;
             int projectiles = m_pendingProjectiles.Count;
-            if (pickables == 0 && projectiles == 0) return;
             m_pendingPickables.Clear();
             m_pendingProjectiles.Clear();
+            m_pickableKnown.Clear();
+            m_projectileKnown.Clear();
+            m_pickableChunks.Clear();
+            m_projectileChunks.Clear();
+            m_pickableChunkOf.Clear();
+            m_projectileChunkOf.Clear();
+            for (int i = 0; i < m_userWindows.Count; i++) m_userWindows[i].Valid = false;
+            if (pickables == 0 && projectiles == 0) return;
             m_counters.StateDropped += pickables + projectiles;
             LogRateLimited("drop-pending:" + reason,
                 "没有在线玩家端 → 丢弃 " + pickables + " 条拾取物 / " + projectiles +
@@ -1625,23 +2367,35 @@ namespace SuMultiplayer.Modules
             {
                 if (m_lastPickables.TryGetValue(pickableId, out PickableStateData partial))
                 {
-                    m_lastPickables[pickableId] = partial;
-                    EnqueuePickable(partial.WithCount(outcome.RemainingCount)
-                        .WithAction(EntityActions.Update).WithCollector(-1));
+                    PickableStateData updated = partial.WithCount(outcome.RemainingCount)
+                        .WithAction(EntityActions.Update).WithCollector(-1);
+                    m_lastPickables[pickableId] = updated;
+                    m_pickableKnown.TryGetValue(pickableId, out ulong known);
+                    if (known != 0UL)
+                        EnqueuePickable(updated, EntityActions.Update, known);
                 }
                 return;
             }
             if (m_lastPickables.TryGetValue(pickableId, out PickableStateData last))
             {
                 m_lastPickables.Remove(pickableId);
-                EnqueuePickable(last.WithAction(EntityActions.Remove)
-                    .WithCollector(collectorClientId));
+                m_pickableKnown.TryGetValue(pickableId, out ulong known);
+                m_pickableKnown.Remove(pickableId);
+                RemovePickableChunkIndex(pickableId);
+                if (known != 0UL)
+                {
+                    EnqueuePickable(
+                        last.WithAction(EntityActions.Remove).WithCollector(collectorClientId),
+                        EntityActions.Remove, known);
+                }
                 return;
             }
             var removal = new PickableStateData(pickableId, EntityActions.Remove, 0,
                 outcome.RemainingCount, Vector3.Zero, Vector3.Zero, false, Vector3.Zero,
                 Quaternion.Identity, false, Vector3.Zero, collectorClientId);
-            EnqueuePickable(removal);
+            m_pickableKnown.TryGetValue(pickableId, out ulong remainingKnown);
+            if (remainingKnown != 0UL)
+                EnqueuePickable(removal, EntityActions.Remove, remainingKnown);
         }
 
         // ================================================================ 客户端：丢弃 / 投掷 / 开火请求
@@ -2452,17 +3206,34 @@ namespace SuMultiplayer.Modules
                 return;
             }
             byte[] payload = encoded.ToByteArray();
-            int sent = m_broadcast.BroadcastToPlayers(MessageType.WeaponFireEvent, payload);
+            // 收件人 = 兴趣窗口包含开火点的端（客户端自己按声音衰减决定播不播 / 播多响）：
+            // 客户端只加载自己周围那片地形，窗口外的端既看不到也听不到，没有理由中继。
+            if (m_window == null)
+            {
+                m_counters.FireSoundFailures++;
+                LogRateLimited("fire-sound-no-window-port",
+                    "没有窗口投递端口 → 开火声音无法按窗口中继（clientId=" + clientId +
+                    "，已计入 FireSoundFailures；绝不退回全体广播）");
+                return;
+            }
+            int sent = m_window.BroadcastToPlayersAt(MessageType.WeaponFireEvent, payload,
+                outcome.Origin, 0, out int candidates);
             if (sent > 0)
             {
                 m_counters.FireSoundRelayed += sent;
             }
+            else if (candidates == 0)
+            {
+                m_counters.FireSoundFailures++;
+                LogRateLimited("fire-sound-no-window",
+                    "开火声音没有可投递的端（'没有端上报兴趣窗口'）：" + fire.Describe());
+            }
             else
             {
                 m_counters.FireSoundFailures++;
-                LogRateLimited("fire-sound-relay",
-                    "开火声音中继没有入队（玩家端 " + m_broadcast.PlayerPeerCount +
-                    " 个，可能背压）：" + fire.Describe());
+                LogRateLimited("fire-sound-out-of-window",
+                    "开火声音的窗口内端全部背压 / 断开（候选 " + candidates +
+                    "）：" + fire.Describe());
             }
         }
 

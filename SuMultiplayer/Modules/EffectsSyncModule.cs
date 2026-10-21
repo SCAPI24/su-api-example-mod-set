@@ -19,7 +19,9 @@ namespace SuMultiplayer.Modules
     /// 主机侧：
     ///   · 火外壳（Engine/ClientReplicaSubsystems.cs 的 SuSubsystemFireBlockBehavior）在一次
     ///     烧尽批次结束时上报**已经处理完**的格（已去重、已封顶）；
-    ///   · 这里编码一条 <c>BurnAwayEffect</c> 广播给所有玩家端（含本机；本机由引擎自己表现）；
+    ///   · 这里按**每个端的兴趣窗口**逐端裁剪这批格（<see cref="IWindowBroadcastPort"/> 与地形
+    ///     同一份窗口口径）：一批格里只有落在该端窗口内的才需要表现，对每个端过滤后用现有
+    ///     编码器重新编码一份再点对点下发；主机本机的表现由引擎自己执行、不走网络；
     ///   · 地形仍走既有主机同步（CellChange），本模块绝不改格 / 不生成实体。
     ///
     /// 客户端侧：
@@ -41,11 +43,15 @@ namespace SuMultiplayer.Modules
         private readonly BurnAwayEffectRateLimiter m_rateLimiter = new BurnAwayEffectRateLimiter();
         private readonly Dictionary<string, long> m_lastProblemMs =
             new Dictionary<string, long>(StringComparer.Ordinal);
+        // 逐端过滤的复用容器（烧尽批次约 5 游戏秒一次，不在热路径；避免每批给 GC 添垃圾）。
+        private readonly List<ClientWindowView> m_clientWindows = new List<ClientWindowView>();
+        private readonly List<BurnAwayCellData> m_filteredCells =
+            new List<BurnAwayCellData>(BurnAwayEffectPolicy.MaxCellsPerMessage);
 
         private IModuleContext m_context;
         private ITransportPort m_transport;
         private ITransportControlPort m_control;
-        private IPeerBroadcastPort m_broadcast;
+        private IWindowBroadcastPort m_window;
         private IMessageRegistryPort m_messages;
         private bool m_attached;
         private bool m_wasConnected;
@@ -56,11 +62,17 @@ namespace SuMultiplayer.Modules
         private long m_hostBatchesRejected;
         private long m_hostBatchesIdle;
         private long m_hostCells;
+        // 批级：至少有一个端成功入队的批次数；cells 按端累加（同一格发给 N 个端计 N）。
         private long m_effectsSent;
         private long m_effectsSentCells;
-        private long m_effectsSentPeers;
         private long m_sendFailures;
-        private long m_noRecipients;
+        // 逐端窗口过滤 / 投递明细（区分：没人上报窗口 / 格都在某端窗口外 / 单端编码或发送失败）。
+        private long m_clientsSent;
+        private long m_noWindowClients;
+        private long m_windowedCellsDropped;
+        private long m_clientBatchesOutside;
+        private long m_perClientEncodeFailures;
+        private long m_perClientSendFailures;
 
         // ---------------------------------------------------------------- 客户端计数
         private long m_effectsReceived;
@@ -110,9 +122,11 @@ namespace SuMultiplayer.Modules
                     "烧尽表现同步不启用（不猜方向）");
                 return;
             }
-            if (!context.TryGetPort(out m_broadcast) || m_broadcast == null)
+            if (!context.TryGetPort(out m_window) || m_window == null)
             {
-                Log("警告：没有拿到广播端口（IPeerBroadcastPort）→ 主机无法把烧尽批次广播给客户端");
+                // 端口缺失是硬失败：不猜目标、不改回"发给全体"；每次主机批次都会明确计数失败。
+                LogProblem("no-window-port", "警告：没有拿到兴趣窗口投递端口（IWindowBroadcastPort）→ " +
+                    "主机无法把烧尽批次按窗口下发给客户端（发送一律计失败，绝不回退全体广播）");
             }
             if (context.TryGetPort(out m_messages) && m_messages != null)
             {
@@ -124,8 +138,8 @@ namespace SuMultiplayer.Modules
             }
             m_port.HostBurnAwayBatch += OnHostBurnAwayBatch;
             m_attached = true;
-            Log("烧尽表现同步模块就绪：主机 = 引擎烧尽批次后广播；客户端 = 解码 / 排序 / 去重 / 限速后" +
-                "只做碎屑粒子与嘶嘶声（距离 24 m / 16 m，每批 15 / 4）");
+            Log("烧尽表现同步模块就绪：主机 = 引擎烧尽批次后按各端兴趣窗口逐端裁剪 / 重新编码后点对点下发；" +
+                "客户端 = 解码 / 排序 / 去重 / 限速后只做碎屑粒子与嘶嘶声（距离 24 m / 16 m，每批 15 / 4）");
         }
 
         public void Register(MessageRegistry registry)
@@ -195,40 +209,92 @@ namespace SuMultiplayer.Modules
                 }
                 return;
             }
-            if (m_broadcast == null)
+            if (m_window == null)
             {
                 m_sendFailures++;
-                LogProblem("no-broadcast-port", "主机有烧尽批次 " + batch.Describe() +
-                    "，但没有广播端口 → 没有客户端能看到（明确计数，不静默）");
+                LogProblem("no-window-port", "主机有烧尽批次 " + batch.Describe() +
+                    "，但没有兴趣窗口投递端口（IWindowBroadcastPort）→ 没有任何客户端能收到" +
+                    "（明确计数，绝不回退全体广播）");
                 return;
             }
-            if (m_broadcast.PlayerPeerCount <= 0)
-            {
-                m_noRecipients++;
-                LogProblem("no-peers", "主机有烧尽批次 " + batch.Describe() +
-                    "，此刻没有在线玩家端 → 没有下发目标（计数 burnEffectNoRecipients）");
-                return;
-            }
-            if (!BurnAwayEffectCodec.TryEncode(in batch, out P.BurnAwayEffect message,
-                    out string reason))
+            // 整批先做一次编码校验：保留改动前的严格语义 —— 非法批次（坏坐标 / 批内重复）整批
+            // 不下发并明确失败，绝不靠逐端窗口过滤把非法格"顺手丢掉"；合法批次随后再按各端
+            // 窗口过滤、各自重新编码一份子集。
+            if (!BurnAwayEffectCodec.TryEncode(in batch, out _, out string reason))
             {
                 m_sendFailures++;
                 LogProblem("encode:" + reason, "烧尽批次 " + batch.Describe() +
                     " 编码失败（" + reason + "）→ 本批不下发（不会静默）");
                 return;
             }
-            int peers = m_broadcast.BroadcastToPlayers(MessageType.BurnAwayEffect,
-                message.ToByteArray());
-            if (peers <= 0)
+            // 逐端过滤：客户端只加载自己周围那片地形（兴趣窗口与地形同步同一口径），
+            // 一批格里只有落在该端窗口内的格才需要表现；每个端重新编码一份自己的子集。
+            int windowedClients = m_window.CaptureClientWindows(m_clientWindows);
+            if (windowedClients <= 0)
             {
-                m_sendFailures++;
-                LogProblem("send-failed", "烧尽批次 " + batch.Describe() + " 广播失败（" +
-                    m_broadcast.PlayerPeerCount + " 个玩家端，入队 0）");
+                m_noWindowClients++;
+                LogProblem("no-window-clients", "主机有烧尽批次 " + batch.Describe() +
+                    "，此刻没有任何在线玩家端上报兴趣窗口 → 没有下发目标" +
+                    "（计数 burnEffectNoWindowClients，绝不回退全体广播）");
+                return;
+            }
+            int deliveredClients = 0;
+            int deliveredCells = 0;
+            for (int i = 0; i < m_clientWindows.Count; i++)
+            {
+                ClientWindowView windowView = m_clientWindows[i];
+                m_filteredCells.Clear();
+                for (int c = 0; c < batch.Cells.Length; c++)
+                {
+                    BurnAwayCellData cell = batch.Cells[c];
+                    // 格坐标 → 世界坐标：引擎惯用格中心 = 格坐标 + (0.5, 0.5, 0.5)，
+                    // 与 ClientWindowView.Contains 的区块换算（Floor(world / 16)）同一口径。
+                    var cellCenter = new Vector3(cell.X + 0.5f, cell.Y + 0.5f, cell.Z + 0.5f);
+                    if (windowView.Contains(cellCenter, 0)) m_filteredCells.Add(cell);
+                    else m_windowedCellsDropped++;
+                }
+                if (m_filteredCells.Count == 0)
+                {
+                    m_clientBatchesOutside++;
+                    LogProblem("client-batch-outside", "烧尽批次 " + batch.Describe() +
+                        " 的全部格子都在客户端 " + windowView.ClientId + " 的兴趣窗口外 → " +
+                        "这个端本批不下发（逐端过滤；计数 burnEffectClientBatchesOutside）");
+                    continue;
+                }
+                var filtered = new BurnAwayEffectData(batch.ClientId, batch.ServerTick,
+                    batch.EventId, m_filteredCells.ToArray());
+                if (!BurnAwayEffectCodec.TryEncode(in filtered, out P.BurnAwayEffect message,
+                        out string encodeReason))
+                {
+                    m_perClientEncodeFailures++;
+                    LogProblem("client-encode:" + encodeReason, "烧尽批次 " + batch.Describe() +
+                        " 给客户端 " + windowView.ClientId + " 的窗口过滤批次（" +
+                        m_filteredCells.Count + " 格）编码失败（" + encodeReason +
+                        "）→ 这个端本批不下发（明确计数，不静默）");
+                    continue;
+                }
+                if (!m_window.SendToClient(windowView.ClientId, MessageType.BurnAwayEffect,
+                        message.ToByteArray()))
+                {
+                    m_perClientSendFailures++;
+                    LogProblem("client-send-failed", "烧尽批次 " + batch.Describe() +
+                        " 发给客户端 " + windowView.ClientId + " 失败（连接已不在线 / 已不是玩家端 / " +
+                        "背压拒绝；过滤后 " + m_filteredCells.Count +
+                        " 格）→ 这个端本批没收到（明确计数，不静默）");
+                    continue;
+                }
+                m_clientsSent++;
+                deliveredClients++;
+                deliveredCells += m_filteredCells.Count;
+            }
+            if (deliveredClients <= 0)
+            {
+                // 每个端都有自己的原因分支（全在窗口外 / 编码失败 / 发送失败，已计数并限流日志）；
+                // 这里不猜目标、不回退全体广播。
                 return;
             }
             m_effectsSent++;
-            m_effectsSentCells += batch.Cells.Length;
-            m_effectsSentPeers += peers;
+            m_effectsSentCells += deliveredCells;
         }
 
         // ------------------------------------------------------------ 客户端：表现
@@ -310,9 +376,13 @@ namespace SuMultiplayer.Modules
 
         private string Summary() => "host burnEffectSent=" + m_effectsSent +
             " burnEffectCells=" + m_effectsSentCells +
-            " burnEffectPeers=" + m_effectsSentPeers +
+            " burnEffectClientsSent=" + m_clientsSent +
             " burnEffectSendFailed=" + m_sendFailures +
-            " burnEffectNoRecipients=" + m_noRecipients +
+            " burnEffectNoWindowClients=" + m_noWindowClients +
+            " burnEffectClientBatchesOutside=" + m_clientBatchesOutside +
+            " burnEffectWindowedCellsDropped=" + m_windowedCellsDropped +
+            " burnEffectPerClientSendFailed=" + m_perClientSendFailures +
+            " burnEffectPerClientEncodeFailed=" + m_perClientEncodeFailures +
             " burnEffectHostBatches=" + m_hostBatches +
             " burnEffectHostCells=" + m_hostCells +
             " burnEffectHostRejected=" + m_hostBatchesRejected +

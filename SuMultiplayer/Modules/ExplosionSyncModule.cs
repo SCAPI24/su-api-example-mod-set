@@ -14,11 +14,14 @@ namespace SuMultiplayer.Modules
     /// 主机侧：
     ///   · 引擎的 SubsystemExplosions 执行每一个爆炸（点火 / 投掷物 / 撞击 / 火 / 岩浆 /
     ///     连锁 / 烟花），引擎适配层把"已执行"的实例上报到这里；
-    ///   · 这里编码 <c>ExplosionEvent</c> 广播给所有玩家端（含发起者，便于确认）；
+    ///   · 这里编码 <c>ExplosionEvent</c>，按**客户端兴趣窗口**投递：窗口外扩
+    ///     <see cref="ExplosionWindowChunkMargin"/> 环（96 m 视觉 / 听觉半径）包含爆炸点的端才收
+    ///     （世界是分区加载的，窗口外的端根本没有这片地形）；
     ///   · 地形仍走既有主机同步（CellChange），不在这里重复；掉落物 / 投射物属于**实体域**，
     ///     由 Modules/EntityReplicationModule.cs（主机权威，32Hz 变化驱动）负责；本模块绝不伪造实体，
     ///     也绝不因为"客户端看不到掉落物"就本地 AddPickable；
-    ///   · 玩家受伤由引擎结算，只额外广播 <c>PlayerDamaged</c> 供表现；客户端**不**改血量。
+    ///   · 玩家受伤由引擎结算，<c>PlayerDamaged</c> 只发给**被伤害玩家自己的端**（最小收件人；
+    ///     客户端处理器只记录 / 计数，没有任何观察者可见的表现）；客户端**不**改血量。
     ///
     /// 客户端侧：
     ///   · 收到 ExplosionEvent 先按 (server_tick, event_id) 排序、按 event_id 去重；
@@ -39,6 +42,14 @@ namespace SuMultiplayer.Modules
         private const int MaxPendingRequests = 32;
         private const long RequestTimeoutMs = 5000;
 
+        /// <summary>爆炸表现（粒子 / 声音 / 震动）需要覆盖的半径：视觉 / 听觉按 96 m 计。</summary>
+        private const int ExplosionPresentationRadiusMeters = 96;
+        /// <summary>
+        /// 兴趣窗口外扩环数 = 96 m ÷ 16 m/环 = 6 环
+        /// （<see cref="IWindowBroadcastPort"/> 的约定：1 环 = 1 区块 = 16 m）。
+        /// </summary>
+        private const int ExplosionWindowChunkMargin = ExplosionPresentationRadiusMeters / 16;
+
         private readonly ModuleDescriptor m_descriptor;
         private readonly IExplosionReplicaPort m_port;
         private readonly ExplosionEventOrderer m_eventOrderer = new ExplosionEventOrderer();
@@ -55,6 +66,11 @@ namespace SuMultiplayer.Modules
         private ITransportPort m_transport;
         private ITransportControlPort m_control;
         private IPeerBroadcastPort m_broadcast;
+        /// <summary>
+        /// 主机：把纯表现事件按客户端兴趣窗口投递（定义见 Modules/WindowBroadcastPorts.cs）。
+        /// 拿不到时爆炸下发明确失败计数（<c>m_explosionsNoWindowPort</c>），绝不退回"发给全体玩家端"。
+        /// </summary>
+        private IWindowBroadcastPort m_window;
         private IMessageRegistryPort m_messages;
         private Action<int, string, string, bool> m_clientJoinedHandler;
         private Action<int, string> m_clientLeftHandler;
@@ -67,8 +83,13 @@ namespace SuMultiplayer.Modules
         private long m_explosionsExecuted;
         private long m_explosionsSent;
         private long m_explosionsSentPeers;
-        private long m_explosionSendFailures;
         private long m_explosionsWithoutRecipients;
+        /// <summary>没有拿到 IWindowBroadcastPort → 爆炸一次都投不出去（能力缺失，不是"没人需要"）。</summary>
+        private long m_explosionsNoWindowPort;
+        /// <summary>candidates == 0：此刻没有任何在线玩家端上报过兴趣窗口 → 没有可评估的收件人。</summary>
+        private long m_explosionsNoWindowPeers;
+        /// <summary>candidates &gt; 0 但入队 0：窗口端全部在 96 m 覆盖范围外（或连接背压拒绝入队）。</summary>
+        private long m_explosionsOutOfWindow;
         private long m_cosmeticSent;
         private long m_eventsReceived;
         private long m_eventsApplied;
@@ -97,6 +118,8 @@ namespace SuMultiplayer.Modules
         private long m_playerDamagesReceived;
         private long m_playerDamagesPresented;
         private long m_playerDamageSendFailures;
+        /// <summary>clientId == 0 = 主机本机玩家：没有网络收件人（本机表现由引擎本地完成），不是失败。</summary>
+        private long m_playerDamagesLocalHost;
         private bool m_loggedSelfDamage;
 
         private readonly struct PendingRequest
@@ -144,7 +167,14 @@ namespace SuMultiplayer.Modules
             }
             if (!context.TryGetPort(out m_broadcast) || m_broadcast == null)
             {
-                Log("警告：没有拿到广播端口（IPeerBroadcastPort）→ 主机无法把爆炸事件广播给所有客户端");
+                Log("警告：没有拿到广播端口（IPeerBroadcastPort）→ 主机无法校验爆炸请求的玩家端身份" +
+                    "（ExplosionRequest 一律按 not-player-peer 拒绝）");
+            }
+            if (!context.TryGetPort(out m_window) || m_window == null)
+            {
+                LogProblem("no-window-port", "警告：没有拿到兴趣窗口广播端口（IWindowBroadcastPort）→ " +
+                    "爆炸表现无法按客户端兴趣窗口投递（每次发送计入 explosionsNoWindowPort，" +
+                    "绝不退回发给全体玩家端）");
             }
             if (context.TryGetPort(out m_messages) && m_messages != null)
             {
@@ -238,44 +268,88 @@ namespace SuMultiplayer.Modules
         {
             m_explosionsExecuted++;
             if (explosion.CosmeticOnly) m_cosmeticSent++;
-            if (m_broadcast == null)
+            // 收件人 = 兴趣窗口（外扩 ExplosionWindowChunkMargin 环 = 96 m）包含爆炸点的**在线玩家端**。
+            // 依据：爆炸在客户端是纯表现（粒子 / 声音 / 震动，见 OnExplosionEvent → IExplosionReplicaPort.Present），
+            // 地形 / 伤害已由主机结算并经别的路径同步；世界是分区加载的，窗口外的端根本没有这片地形，
+            // 给它播爆炸只会是"凭空出现"的假象。一次编码、端口内部并发入队，不是逐端重编码。
+            // 绝不退回 BroadcastToPlayers（那正是本次要消掉的带宽浪费）。
+            if (m_window == null)
             {
                 m_explosionsWithoutRecipients++;
-                LogProblem("no-broadcast-port", "主机执行了爆炸 " + explosion.Describe() +
-                    "，但没有广播端口 → 没有客户端能看到（明确计数，不静默）");
-                return;
-            }
-            if (m_broadcast.PlayerPeerCount <= 0)
-            {
-                m_explosionsWithoutRecipients++;
-                LogProblem("no-peers", "主机执行了爆炸 " + explosion.Describe() +
-                    "，此刻没有在线玩家端 → 没有下发目标（计数 explosionsWithoutRecipients）");
+                m_explosionsNoWindowPort++;
+                LogProblem("no-window-port", "主机执行了爆炸 " + explosion.Describe() +
+                    "，但没有兴趣窗口广播端口（IWindowBroadcastPort）→ 没有下发目标" +
+                    "（计数 explosionsNoWindowPort；不退回全体广播）");
                 return;
             }
             byte[] payload = ExplosionEventCodec.Encode(explosion).ToByteArray();
-            int peers = m_broadcast.BroadcastToPlayers(MessageType.ExplosionEvent, payload);
-            if (peers <= 0)
+            int peers = m_window.BroadcastToPlayersAt(MessageType.ExplosionEvent, payload,
+                explosion.Position, ExplosionWindowChunkMargin, out int candidates);
+            if (peers > 0)
             {
-                m_explosionSendFailures++;
-                LogProblem("explosion-send-failed", "爆炸事件 " + explosion.Describe() +
-                    " 广播失败（" + m_broadcast.PlayerPeerCount + " 个玩家端，入队 0）");
+                m_explosionsSent++;
+                m_explosionsSentPeers += peers;
                 return;
             }
-            m_explosionsSent++;
-            m_explosionsSentPeers += peers;
+            m_explosionsWithoutRecipients++;
+            if (candidates <= 0)
+            {
+                // 不是"没人需要"，而是还没有任何在线玩家端上报过兴趣窗口：不能把它们当成无窗口自由投递。
+                m_explosionsNoWindowPeers++;
+                LogProblem("no-window-peers", "爆炸事件 " + explosion.Describe() +
+                    " 没有投递目标：此刻没有已上报兴趣窗口的在线玩家端（candidates=0）" +
+                    "→ 计数 explosionsNoWindowPeers（不退回全体广播）");
+                return;
+            }
+            // candidates > 0：有窗口端，但它的窗口（外扩 6 环后）仍不包含爆炸点 → 它确实"看不到 / 听不到"；
+            // 也可能是连接背压让这一帧入队失败（端口只返回入队数，无法在这里区分）。
+            m_explosionsOutOfWindow++;
+            LogProblem("explosion-out-of-window", "爆炸事件 " + explosion.Describe() + " 有 " +
+                candidates + " 个已上报兴趣窗口的端，但入队 0（窗口全部在 " +
+                ExplosionPresentationRadiusMeters + " m 覆盖范围外，或连接背压拒绝入队）→ 计数 " +
+                "explosionsOutOfWindow（不退回全体广播）");
         }
 
         private void OnHostPlayerDamaged(PlayerDamageData damage)
         {
-            if (m_broadcast == null || m_broadcast.PlayerPeerCount <= 0) return;
+            // 收件人 = **被伤害玩家自己的端**（最小集合，点对点），不是全体、也不是观察者。
+            // 依据（都读过源码）：
+            //   · 客户端处理器 = 本文件 OnPlayerDamaged：只做 方向检查 → 解码 → (server_tick,event_id)
+            //     闸门 → IExplosionReplicaPort.PresentPlayerDamage；除此之外唯一的副作用是
+            //     damage.ClientId == 本机 LocalClientId 时写一行"我受伤了"的日志（m_loggedSelfDamage）。
+            //   · PresentPlayerDamage（Engine/ExplosionReplicaEngine.cs）当前**没有任何视觉 / 声音 / HUD**：
+            //     只 +1 计数并返回 true（注释写明"血量同步是后续项"）；PlayerDamageData.Position 在客户端
+            //     处理器里也完全没有被使用 → 不存在"附近观察者看到 / 听到别人受伤"的表现。
+            //   · Protocol/explosion.proto 的 PlayerDamaged 注释：presentation only；
+            //     client_id = "Host-side transport id; 0 = the host player itself"。
+            // 所以只发给 ClientId 对应的那一个玩家端；观察者一个都不发（省掉 人数 × 事件数 的无用流量）。
+            // 点对点发送不依赖兴趣窗口端口（窗口口径只用于爆炸这种"广播表现"）：IWindowBroadcastPort
+            // 缺失只影响爆炸下发（计 explosionsNoWindowPort），PlayerDamaged 仍按本节规则定向送达。
+            // ClientId → 连接号的映射：PlayerDamageData.ClientId 由主机侧 ResolveClientId 取自
+            // NetworkAvatarSpawner.ClientIds（= 主机通道里的传输编号），与 ITransportPort.TrySendTo 的
+            // clientId 同一口径（0 = 主机本机玩家，没有网络收件人）。
+            if (damage.ClientId == 0)
+            {
+                m_playerDamagesLocalHost++;
+                LogProblem("damage-local-host", "玩家受伤 clientId=0（主机本机玩家）→ 没有网络收件人" +
+                    "（本机表现由引擎本地完成；计数 playerDamagesLocalHost，不是失败）");
+                return;
+            }
+            if (m_transport == null)
+            {
+                m_playerDamageSendFailures++;
+                LogProblem("damage-no-transport", "玩家受伤事件 clientId=" + damage.ClientId +
+                    " 无法投递：没有传输端口 → 计数 playerDamageSendFailures");
+                return;
+            }
             byte[] payload = ExplosionEventCodec.EncodeDamage(damage).ToByteArray();
-            int peers = m_broadcast.BroadcastToPlayers(MessageType.PlayerDamaged, payload);
-            if (peers <= 0)
+            if (!m_transport.TrySendTo(damage.ClientId, MessageType.PlayerDamaged, payload))
             {
                 m_playerDamageSendFailures++;
                 LogProblem("damage-send-failed", "玩家受伤事件 clientId=" + damage.ClientId +
                     " name=" + damage.Name + " damage=" + damage.Damage.ToString("F3") +
-                    " 广播失败（" + m_broadcast.PlayerPeerCount + " 个玩家端，入队 0）");
+                    " 定向发送失败（连接不可达 / 非玩家端 / 背压拒绝入队）→ 计数 " +
+                    "playerDamageSendFailures（不退回全体广播）");
                 return;
             }
             m_playerDamagesSent++;
@@ -616,8 +690,9 @@ namespace SuMultiplayer.Modules
 
         private string Summary() => "host executed=" + m_explosionsExecuted +
             " eventsSent=" + m_explosionsSent + "/peers=" + m_explosionsSentPeers +
-            " sendFailed=" + m_explosionSendFailures + " noRecipients=" +
-            m_explosionsWithoutRecipients + " cosmetic=" + m_cosmeticSent +
+            " noRecipients=" + m_explosionsWithoutRecipients + " noWindowPort=" +
+            m_explosionsNoWindowPort + " noWindowPeers=" + m_explosionsNoWindowPeers +
+            " outOfWindow=" + m_explosionsOutOfWindow + " cosmetic=" + m_cosmeticSent +
             " · client recv=" + m_eventsReceived + " applied=" + m_eventsApplied +
             " deduped=" + m_eventsDeduped + " stale=" + m_eventsOutOfOrder +
             " malformed=" + m_eventsMalformed + " rejected=" + m_eventsRejected +
@@ -630,6 +705,8 @@ namespace SuMultiplayer.Modules
             " results=" + m_resultsReceived + "/" + m_resultsAccepted + "/" + m_resultsRejected +
             " unknown=" + m_resultsUnknown + " itemConsumed=" + m_itemConsumed +
             " itemFailed=" + m_itemConsumeFailures + " · damage sent=" + m_playerDamagesSent +
-            " recv=" + m_playerDamagesReceived + " presented=" + m_playerDamagesPresented;
+            " sendFailed=" + m_playerDamageSendFailures + " localHost=" +
+            m_playerDamagesLocalHost + " recv=" + m_playerDamagesReceived + " presented=" +
+            m_playerDamagesPresented;
     }
 }

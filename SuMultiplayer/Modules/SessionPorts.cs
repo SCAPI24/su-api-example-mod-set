@@ -127,6 +127,14 @@ namespace SuMultiplayer.Modules
             out string reason);
 
         /// <summary>
+        /// 客户端：本机**已有的角色记录 hash**清单（从它下载的 world pak 里的
+        /// `SuMultiplayerPlayers.xml` 读出来）。Hello 里上报给主机，主机据此只重发变化了的
+        /// 角色记录（自定义皮肤资源这类不常变的大块数据）。
+        /// 0 条 = 首次加入 / 没有本地副本 / 读失败（调用方明确计数；主机按全量补发，不会漏）。
+        /// </summary>
+        int CaptureKnownRecordHashes(List<RecordHashRef> target);
+
+        /// <summary>
         /// 客户端：**所有本机角色**的位置快照（Phase 1 多本机角色）。槽位 0 的第一条与旧实现
         /// 相同（客户端编号 0、槽位 0），所以单角色房间的线上负载与旧版一致。
         /// 返回实际写进的条数；某个本机角色的 ComponentBody 还没好就跳过并写清原因。
@@ -171,6 +179,24 @@ namespace SuMultiplayer.Modules
         ///         （外推 + 死区 + 追赶速度 + Lerp/Slerp，绝不把裸浮点噪声直接平移进引擎）
         /// </summary>
         void UpdateRemotePlayerPresentations(float deltaTime);
+    }
+
+    /// <summary>
+    /// 主机：某条连接在 Hello 里申报的"我本地已有的角色记录 hash"。
+    /// 实现方 = Modules/TerrainSyncModule.cs（数据源 = Hello 追加字段 + TerrainSyncHost 的逐连接状态）。
+    /// 用途：重连时只重发**不常变内容变了**的角色记录（皮肤资源等），其余按"对端已有"跳过。
+    /// 没申报（首次加入 / 旧客户端）= 0 条 → 一律按"变了"处理（绝不误跳过重发）。
+    /// </summary>
+    public interface IKnownRecordHashPort
+    {
+        /// <summary>该连接申报的清单条数（0 = 没申报）。</summary>
+        int CaptureKnownRecordHashes(int clientId, List<RecordHashRef> target);
+
+        /// <summary>
+        /// 该连接是否已持有 <paramref name="recordKey"/> 的**当前** hash：
+        /// true = 对端内容与我们一致 → 这条记录不必重发；false = 没申报 / hash 不同 → 必须发。
+        /// </summary>
+        bool TryGetKnownRecordHash(int clientId, string recordKey, out ulong hash);
     }
 
     /// <summary>

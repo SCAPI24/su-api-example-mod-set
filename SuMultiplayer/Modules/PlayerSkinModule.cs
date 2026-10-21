@@ -85,6 +85,12 @@ namespace SuMultiplayer.Modules
         private IPeerBroadcastPort m_broadcast;
         private IPlayerSkinPort m_skin;
         private IPlayerSkinRecordPort m_records;
+        /// <summary>
+        /// 主机：某连接在 Hello 里申报的"我已有角色记录 hash"（软依赖）。
+        /// 有它 → 加入补发按 hash diff，只发对端还没有的角色记录（皮肤资源这类不常变大块数据）；
+        /// 没有它 → 全量补发（与改动前一致，明确写一行，不静默退化）。
+        /// </summary>
+        private IKnownRecordHashPort m_knownRecordHashes;
         private IPlayerProfileHandshakePort m_handshake;
         private IMessageRegistryPort m_messages;
         private bool m_attached;
@@ -144,6 +150,11 @@ namespace SuMultiplayer.Modules
                 Error("没有拿到引擎皮肤端口（IPlayerSkinPort）→ 无法读本机皮肤 / 应用贴图");
             if (!context.TryGetPort(out m_records))
                 Error("没有拿到角色记录端口（IPlayerSkinRecordPort）→ 主机无法把皮肤写进世界记录");
+            if (!context.TryGetPort(out m_knownRecordHashes))
+                m_knownRecordHashes = null;
+            if (m_knownRecordHashes == null)
+                Info("没有拿到已知角色记录 hash 端口（IKnownRecordHashPort）→ 加入补发不做 diff，" +
+                    "每次加入都会全量重发自定义皮肤资源（明确说明，不静默）");
             context.TryGetPort(out m_handshake);
             if (context.TryGetPort(out m_messages))
                 RegisterMessages();
@@ -1741,6 +1752,20 @@ namespace SuMultiplayer.Modules
 
         // ------------------------------------------------------------ 加入 / 离开
 
+        /// <summary>
+        /// 这个连接是否**已经持有**这条角色记录的当前版本（Hello 申报的 hash 与记录当前 hash 相同）。
+        /// true = 对端本地 pak 副本里的内容与我们一致 → 皮肤资源不必再发；
+        /// false = 没申报 / hash 不同 / 没有记录 hash → 必须发（绝不误跳过）。
+        /// </summary>
+        private bool ClientAlreadyHoldsRecord(int clientId, string identity, string name,
+            int slot, ulong recordHash)
+        {
+            if (recordHash == 0UL || m_knownRecordHashes == null || clientId <= 0) return false;
+            string recordKey = PlayerIdentity.RecordKey(identity, name, slot);
+            return m_knownRecordHashes.TryGetKnownRecordHash(clientId, recordKey, out ulong known) &&
+                known == recordHash;
+        }
+
         private void OnClientJoined(int clientId, string name, string identity, bool rejoin)
         {
             if (!IsHostingNow || clientId <= 0) return;
@@ -1758,7 +1783,20 @@ namespace SuMultiplayer.Modules
                 string hostSkinName = string.Empty;
                 if (m_records.TryCaptureLocalProfile(out PlayerProfileSnapshot hostProfile, out _))
                     hostSkinName = hostProfile.Appearance?.SkinName ?? string.Empty;
-                if (hostSkinName.Length > 0 &&
+                ulong hostRecordHash = 0UL;
+                string hostIdentity = LocalIdentity();
+                if (m_records.TryGetRecordSkin(hostIdentity, hostProfile?.Name ?? string.Empty,
+                        out PlayerSkinAssetRecord hostSkinRecord, out _))
+                    hostRecordHash = hostSkinRecord?.RecordHash ?? 0UL;
+                if (ClientAlreadyHoldsRecord(clientId, hostIdentity, hostProfile?.Name ?? string.Empty,
+                        0, hostRecordHash))
+                {
+                    // 对端 Hello 申报的 hash 与主机自己这条记录一致：它本地 pak 副本里已经有这份资源。
+                    m_counters.OnBackfillSkippedUnchanged();
+                    Info("加入补发 diff：clientId=" + clientId + " 已持有主机角色记录（hash=" +
+                        PlayerRecordHash.Format(hostRecordHash) + "）→ 跳过主机自定义皮肤资源重发");
+                }
+                else if (hostSkinName.Length > 0 &&
                     m_skin.TryGetCachedAsset(null, hostSkinName, out PlayerSkinAssetRecord hostRecord) &&
                     hostRecord.HasData)
                 {
@@ -1783,6 +1821,16 @@ namespace SuMultiplayer.Modules
                     continue;
                 if (!SkinAssetPolicy.IsCustomSkinName(peerSkin.SkinName) || !peerSkin.HasData)
                     continue;
+                if (ClientAlreadyHoldsRecord(clientId, existing.Value.Identity,
+                        existing.Value.Name, 0, peerSkin.RecordHash))
+                {
+                    // 对端本地 pak 副本里已有这个人当前的记录（含皮肤资源哈希）→ 不必重发。
+                    m_counters.OnBackfillSkippedUnchanged();
+                    Info("加入补发 diff：clientId=" + clientId + " 已持有 clientId=" +
+                        existing.Key + " 的角色记录（hash=" +
+                        PlayerRecordHash.Format(peerSkin.RecordHash) + "）→ 跳过其自定义皮肤重发");
+                    continue;
+                }
                 m_skin?.StoreAsset(peerSkin, SkinAssetOrigin.HostRecord, out _, out _);
                 SendAssetToClient(clientId, peerSkin, existing.Key, existing.Value.Identity,
                     isHost: false);
@@ -1798,12 +1846,29 @@ namespace SuMultiplayer.Modules
                 if (record.HasData && m_skin != null)
                 {
                     m_skin.StoreAsset(record, SkinAssetOrigin.HostRecord, out _, out _);
-                    SendAssetToClient(clientId, record, clientId, identity, isHost: false);
+                    // 它自己的资源：对端 Hello 申报的记录 hash 与当前一致 → 它本地已有，不必回传。
+                    if (ClientAlreadyHoldsRecord(clientId, identity, name, 0, record.RecordHash))
+                    {
+                        m_counters.OnBackfillSkippedUnchanged();
+                        Info("加入补发 diff：clientId=" + clientId + " 已持有自己的角色记录（hash=" +
+                            PlayerRecordHash.Format(record.RecordHash) + "）→ 跳过回传它自己的皮肤资源");
+                    }
+                    else
+                    {
+                        SendAssetToClient(clientId, record, clientId, identity, isHost: false);
+                    }
                     // 这个玩家自己的资源也要补发给**房间里已经在的其他端**（他们可能在它
-                    // 之前加入、当时记录里还没有这份资源）。owner 自己的连接跳过。
+                    // 之前加入、当时记录里还没有这份资源）。owner 自己的连接跳过，
+                    // 已有同版本记录的端也跳过（它们的 pak 副本里已有这份资源）。
                     foreach (int peerId in new List<int>(m_peers.Keys))
                     {
                         if (peerId == clientId) continue;
+                        if (ClientAlreadyHoldsRecord(peerId, identity, name, 0,
+                                record.RecordHash))
+                        {
+                            m_counters.OnBackfillSkippedUnchanged();
+                            continue;
+                        }
                         SendAssetToClient(peerId, record, clientId, identity, isHost: false);
                     }
                     Info("重连 / 新加入：从主机角色记录补发自定义皮肤给 clientId=" + clientId +

@@ -105,16 +105,21 @@ namespace SuMultiplayer.Protocol.Entities {
             "dBIYChBzb3VyY2VfY2xpZW50X2lkGAEgASgFEhYKDnNlcnZlcl90aWNrX21z",
             "GAIgASgDEhAKCGV2ZW50X2lkGAMgASgNEiUKCHBvc2l0aW9uGAQgASgLMhMu",
             "c3VtcC5wb3NpdGlvbi5WZWMzEgsKA2V4dBhkIAEoDBIkCgZjdXN0b20YZSAB",
-            "KAsyFC5nb29nbGUucHJvdG9idWYuQW55KlkKDEVudGl0eUFjdGlvbhIVChFF",
-            "TlRJVFlfQUNUSU9OX0FERBAAEhgKFEVOVElUWV9BQ1RJT05fVVBEQVRFEAES",
-            "GAoURU5USVRZX0FDVElPTl9SRU1PVkUQAio3CgpEcm9wU291cmNlEhUKEURS",
-            "T1BfU09VUkNFX0lOUFVUEAASEgoORFJPUF9TT1VSQ0VfVUkQASrAAQoSUHJv",
-            "amVjdGlsZUZpcmVLaW5kEiQKIFBST0pFQ1RJTEVfRklSRV9LSU5EX1VOU1BF",
-            "Q0lGSUVEEAASIgoeUFJPSkVDVElMRV9GSVJFX0tJTkRfVEhST1dBQkxFEAES",
-            "HAoYUFJPSkVDVElMRV9GSVJFX0tJTkRfQk9XEAISIQodUFJPSkVDVElMRV9G",
-            "SVJFX0tJTkRfQ1JPU1NCT1cQAxIfChtQUk9KRUNUSUxFX0ZJUkVfS0lORF9N",
-            "VVNLRVQQBEIkSAGqAh9TdU11bHRpcGxheWVyLlByb3RvY29sLkVudGl0aWVz",
-            "YgZwcm90bzM="));
+            "KAsyFC5nb29nbGUucHJvdG9idWYuQW55IvQBChJQcm9qZWN0aWxlSGl0RXZl",
+            "bnQSEAoIZXZlbnRfaWQYASABKA0SEwoLc2VydmVyX3RpY2sYAiABKAMSJQoI",
+            "cG9zaXRpb24YAyABKAsyEy5zdW1wLnBvc2l0aW9uLlZlYzMSJgoJZGlyZWN0",
+            "aW9uGAQgASgLMhMuc3VtcC5wb3NpdGlvbi5WZWMzEiUKCHZlbG9jaXR5GAUg",
+            "ASgLMhMuc3VtcC5wb3NpdGlvbi5WZWMzEg4KBmRhbWFnZRgGIAEoAhILCgNl",
+            "eHQYZCABKAwSJAoGY3VzdG9tGGUgASgLMhQuZ29vZ2xlLnByb3RvYnVmLkFu",
+            "eSpZCgxFbnRpdHlBY3Rpb24SFQoRRU5USVRZX0FDVElPTl9BREQQABIYChRF",
+            "TlRJVFlfQUNUSU9OX1VQREFURRABEhgKFEVOVElUWV9BQ1RJT05fUkVNT1ZF",
+            "EAIqNwoKRHJvcFNvdXJjZRIVChFEUk9QX1NPVVJDRV9JTlBVVBAAEhIKDkRS",
+            "T1BfU09VUkNFX1VJEAEqwAEKElByb2plY3RpbGVGaXJlS2luZBIkCiBQUk9K",
+            "RUNUSUxFX0ZJUkVfS0lORF9VTlNQRUNJRklFRBAAEiIKHlBST0pFQ1RJTEVf",
+            "RklSRV9LSU5EX1RIUk9XQUJMRRABEhwKGFBST0pFQ1RJTEVfRklSRV9LSU5E",
+            "X0JPVxACEiEKHVBST0pFQ1RJTEVfRklSRV9LSU5EX0NST1NTQk9XEAMSHwob",
+            "UFJPSkVDVElMRV9GSVJFX0tJTkRfTVVTS0VUEARCJEgBqgIfU3VNdWx0aXBs",
+            "YXllci5Qcm90b2NvbC5FbnRpdGllc2IGcHJvdG8z"));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { global::Google.Protobuf.WellKnownTypes.AnyReflection.Descriptor, global::SuMultiplayer.Protocol.Position.PositionReflection.Descriptor, },
           new pbr::GeneratedClrTypeInfo(new[] {typeof(global::SuMultiplayer.Protocol.Entities.EntityAction), typeof(global::SuMultiplayer.Protocol.Entities.DropSource), typeof(global::SuMultiplayer.Protocol.Entities.ProjectileFireKind), }, null, new pbr::GeneratedClrTypeInfo[] {
@@ -131,7 +136,8 @@ namespace SuMultiplayer.Protocol.Entities {
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Entities.ProjectileFireRequest), global::SuMultiplayer.Protocol.Entities.ProjectileFireRequest.Parser, new[]{ "Sequence", "Kind", "ItemValue", "ActiveSlot", "Origin", "Direction", "Charge", "Reach", "Ext", "Custom" }, new[]{ "Reach" }, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Entities.ProjectileFireResult), global::SuMultiplayer.Protocol.Entities.ProjectileFireResult.Parser, new[]{ "Sequence", "Accepted", "Reason", "Kind", "ItemValue", "Spawned", "Position", "Velocity", "Inventory", "InventoryVersion", "Ext", "Custom" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Entities.WeaponFireEvent), global::SuMultiplayer.Protocol.Entities.WeaponFireEvent.Parser, new[]{ "ClientId", "ServerTick", "EventId", "Kind", "Position", "Direction", "Misfire", "Ext", "Custom" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Entities.PickupSoundEvent), global::SuMultiplayer.Protocol.Entities.PickupSoundEvent.Parser, new[]{ "SourceClientId", "ServerTickMs", "EventId", "Position", "Ext", "Custom" }, null, null, null, null)
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Entities.PickupSoundEvent), global::SuMultiplayer.Protocol.Entities.PickupSoundEvent.Parser, new[]{ "SourceClientId", "ServerTickMs", "EventId", "Position", "Ext", "Custom" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Entities.ProjectileHitEvent), global::SuMultiplayer.Protocol.Entities.ProjectileHitEvent.Parser, new[]{ "EventId", "ServerTick", "Position", "Direction", "Velocity", "Damage", "Ext", "Custom" }, null, null, null, null)
           }));
     }
     #endregion
@@ -7532,6 +7538,538 @@ namespace SuMultiplayer.Protocol.Entities {
               Position = new global::SuMultiplayer.Protocol.Position.Vec3();
             }
             input.ReadMessage(Position);
+            break;
+          }
+          case 802: {
+            Ext = input.ReadBytes();
+            break;
+          }
+          case 810: {
+            if (custom_ == null) {
+              Custom = new global::Google.Protobuf.WellKnownTypes.Any();
+            }
+            input.ReadMessage(Custom);
+            break;
+          }
+        }
+      }
+    }
+    #endif
+
+  }
+
+  /// <summary>
+  /// ---------------------------------------------------------------------------
+  /// Projectile hit feedback (host -> clients whose interest window contains the
+  /// hit; append-only id 111 in protocol.proto).
+  ///
+  /// On the host the engine creates the damage number itself: ComponentMiner
+  /// .AttackBody spawns a HitValueParticleSystem when a player-owned attack really
+  /// removed health, and SubsystemProjectiles routes every projectile body hit
+  /// through that same method.  A client replica never runs either path (its
+  /// SuSubsystemProjectiles skips base.Update and never calls AttackBody), so the
+  /// shooter and every other client would see the projectile vanish with no "-N".
+  ///
+  /// The host therefore relays the hit it already executed.  Receiving clients may
+  /// only spawn the same particle at the same point; they must never injure a
+  /// body, edit terrain or create an entity because of this message.  Health stays
+  /// authoritative in PLAYER_VITALS_REPORT (95).
+  ///
+  /// Source: Survivalcraft/Game/ComponentMiner.cs:506-526
+  /// Source: Survivalcraft/Game/SubsystemProjectiles.cs:221-240
+  /// ---------------------------------------------------------------------------
+  /// </summary>
+  [global::System.Diagnostics.DebuggerDisplayAttribute("{ToString(),nq}")]
+  public sealed partial class ProjectileHitEvent : pb::IMessage<ProjectileHitEvent>
+  #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      , pb::IBufferMessage
+  #endif
+  {
+    private static readonly pb::MessageParser<ProjectileHitEvent> _parser = new pb::MessageParser<ProjectileHitEvent>(() => new ProjectileHitEvent());
+    private pb::UnknownFieldSet _unknownFields;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pb::MessageParser<ProjectileHitEvent> Parser { get { return _parser; } }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pbr::MessageDescriptor Descriptor {
+      get { return global::SuMultiplayer.Protocol.Entities.EntitiesReflection.Descriptor.MessageTypes[14]; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    pbr::MessageDescriptor pb::IMessage.Descriptor {
+      get { return Descriptor; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ProjectileHitEvent() {
+      OnConstruction();
+    }
+
+    partial void OnConstruction();
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ProjectileHitEvent(ProjectileHitEvent other) : this() {
+      eventId_ = other.eventId_;
+      serverTick_ = other.serverTick_;
+      position_ = other.position_ != null ? other.position_.Clone() : null;
+      direction_ = other.direction_ != null ? other.direction_.Clone() : null;
+      velocity_ = other.velocity_ != null ? other.velocity_.Clone() : null;
+      damage_ = other.damage_;
+      ext_ = other.ext_;
+      custom_ = other.custom_ != null ? other.custom_.Clone() : null;
+      _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ProjectileHitEvent Clone() {
+      return new ProjectileHitEvent(this);
+    }
+
+    /// <summary>Field number for the "event_id" field.</summary>
+    public const int EventIdFieldNumber = 1;
+    private uint eventId_;
+    /// <summary>
+    /// Host session sequence, starts at 1, strictly increasing (clients dedupe).
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public uint EventId {
+      get { return eventId_; }
+      set {
+        eventId_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "server_tick" field.</summary>
+    public const int ServerTickFieldNumber = 2;
+    private long serverTick_;
+    /// <summary>
+    /// Host simulation clock in milliseconds.
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public long ServerTick {
+      get { return serverTick_; }
+      set {
+        serverTick_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "position" field.</summary>
+    public const int PositionFieldNumber = 3;
+    private global::SuMultiplayer.Protocol.Position.Vec3 position_;
+    /// <summary>
+    /// Host-authoritative hit point (body raycast result).
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public global::SuMultiplayer.Protocol.Position.Vec3 Position {
+      get { return position_; }
+      set {
+        position_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "direction" field.</summary>
+    public const int DirectionFieldNumber = 4;
+    private global::SuMultiplayer.Protocol.Position.Vec3 direction_;
+    /// <summary>
+    /// Normalised projectile flight direction.
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public global::SuMultiplayer.Protocol.Position.Vec3 Direction {
+      get { return direction_; }
+      set {
+        direction_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "velocity" field.</summary>
+    public const int VelocityFieldNumber = 5;
+    private global::SuMultiplayer.Protocol.Position.Vec3 velocity_;
+    /// <summary>
+    /// Attacker body velocity at the hit (the engine adds it to the particle).
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public global::SuMultiplayer.Protocol.Position.Vec3 Velocity {
+      get { return velocity_; }
+      set {
+        velocity_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "damage" field.</summary>
+    public const int DamageFieldNumber = 6;
+    private float damage_;
+    /// <summary>
+    /// (healthBefore - healthAfter) * AttackResilience, same formula as the engine.
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public float Damage {
+      get { return damage_; }
+      set {
+        damage_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "ext" field.</summary>
+    public const int ExtFieldNumber = 100;
+    private pb::ByteString ext_ = pb::ByteString.Empty;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public pb::ByteString Ext {
+      get { return ext_; }
+      set {
+        ext_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "custom" field.</summary>
+    public const int CustomFieldNumber = 101;
+    private global::Google.Protobuf.WellKnownTypes.Any custom_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public global::Google.Protobuf.WellKnownTypes.Any Custom {
+      get { return custom_; }
+      set {
+        custom_ = value;
+      }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override bool Equals(object other) {
+      return Equals(other as ProjectileHitEvent);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Equals(ProjectileHitEvent other) {
+      if (ReferenceEquals(other, null)) {
+        return false;
+      }
+      if (ReferenceEquals(other, this)) {
+        return true;
+      }
+      if (EventId != other.EventId) return false;
+      if (ServerTick != other.ServerTick) return false;
+      if (!object.Equals(Position, other.Position)) return false;
+      if (!object.Equals(Direction, other.Direction)) return false;
+      if (!object.Equals(Velocity, other.Velocity)) return false;
+      if (!pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.Equals(Damage, other.Damage)) return false;
+      if (Ext != other.Ext) return false;
+      if (!object.Equals(Custom, other.Custom)) return false;
+      return Equals(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override int GetHashCode() {
+      int hash = 1;
+      if (EventId != 0) hash ^= EventId.GetHashCode();
+      if (ServerTick != 0L) hash ^= ServerTick.GetHashCode();
+      if (position_ != null) hash ^= Position.GetHashCode();
+      if (direction_ != null) hash ^= Direction.GetHashCode();
+      if (velocity_ != null) hash ^= Velocity.GetHashCode();
+      if (Damage != 0F) hash ^= pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.GetHashCode(Damage);
+      if (Ext.Length != 0) hash ^= Ext.GetHashCode();
+      if (custom_ != null) hash ^= Custom.GetHashCode();
+      if (_unknownFields != null) {
+        hash ^= _unknownFields.GetHashCode();
+      }
+      return hash;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override string ToString() {
+      return pb::JsonFormatter.ToDiagnosticString(this);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void WriteTo(pb::CodedOutputStream output) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      output.WriteRawMessage(this);
+    #else
+      if (EventId != 0) {
+        output.WriteRawTag(8);
+        output.WriteUInt32(EventId);
+      }
+      if (ServerTick != 0L) {
+        output.WriteRawTag(16);
+        output.WriteInt64(ServerTick);
+      }
+      if (position_ != null) {
+        output.WriteRawTag(26);
+        output.WriteMessage(Position);
+      }
+      if (direction_ != null) {
+        output.WriteRawTag(34);
+        output.WriteMessage(Direction);
+      }
+      if (velocity_ != null) {
+        output.WriteRawTag(42);
+        output.WriteMessage(Velocity);
+      }
+      if (Damage != 0F) {
+        output.WriteRawTag(53);
+        output.WriteFloat(Damage);
+      }
+      if (Ext.Length != 0) {
+        output.WriteRawTag(162, 6);
+        output.WriteBytes(Ext);
+      }
+      if (custom_ != null) {
+        output.WriteRawTag(170, 6);
+        output.WriteMessage(Custom);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(output);
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
+      if (EventId != 0) {
+        output.WriteRawTag(8);
+        output.WriteUInt32(EventId);
+      }
+      if (ServerTick != 0L) {
+        output.WriteRawTag(16);
+        output.WriteInt64(ServerTick);
+      }
+      if (position_ != null) {
+        output.WriteRawTag(26);
+        output.WriteMessage(Position);
+      }
+      if (direction_ != null) {
+        output.WriteRawTag(34);
+        output.WriteMessage(Direction);
+      }
+      if (velocity_ != null) {
+        output.WriteRawTag(42);
+        output.WriteMessage(Velocity);
+      }
+      if (Damage != 0F) {
+        output.WriteRawTag(53);
+        output.WriteFloat(Damage);
+      }
+      if (Ext.Length != 0) {
+        output.WriteRawTag(162, 6);
+        output.WriteBytes(Ext);
+      }
+      if (custom_ != null) {
+        output.WriteRawTag(170, 6);
+        output.WriteMessage(Custom);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(ref output);
+      }
+    }
+    #endif
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int CalculateSize() {
+      int size = 0;
+      if (EventId != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt32Size(EventId);
+      }
+      if (ServerTick != 0L) {
+        size += 1 + pb::CodedOutputStream.ComputeInt64Size(ServerTick);
+      }
+      if (position_ != null) {
+        size += 1 + pb::CodedOutputStream.ComputeMessageSize(Position);
+      }
+      if (direction_ != null) {
+        size += 1 + pb::CodedOutputStream.ComputeMessageSize(Direction);
+      }
+      if (velocity_ != null) {
+        size += 1 + pb::CodedOutputStream.ComputeMessageSize(Velocity);
+      }
+      if (Damage != 0F) {
+        size += 1 + 4;
+      }
+      if (Ext.Length != 0) {
+        size += 2 + pb::CodedOutputStream.ComputeBytesSize(Ext);
+      }
+      if (custom_ != null) {
+        size += 2 + pb::CodedOutputStream.ComputeMessageSize(Custom);
+      }
+      if (_unknownFields != null) {
+        size += _unknownFields.CalculateSize();
+      }
+      return size;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(ProjectileHitEvent other) {
+      if (other == null) {
+        return;
+      }
+      if (other.EventId != 0) {
+        EventId = other.EventId;
+      }
+      if (other.ServerTick != 0L) {
+        ServerTick = other.ServerTick;
+      }
+      if (other.position_ != null) {
+        if (position_ == null) {
+          Position = new global::SuMultiplayer.Protocol.Position.Vec3();
+        }
+        Position.MergeFrom(other.Position);
+      }
+      if (other.direction_ != null) {
+        if (direction_ == null) {
+          Direction = new global::SuMultiplayer.Protocol.Position.Vec3();
+        }
+        Direction.MergeFrom(other.Direction);
+      }
+      if (other.velocity_ != null) {
+        if (velocity_ == null) {
+          Velocity = new global::SuMultiplayer.Protocol.Position.Vec3();
+        }
+        Velocity.MergeFrom(other.Velocity);
+      }
+      if (other.Damage != 0F) {
+        Damage = other.Damage;
+      }
+      if (other.Ext.Length != 0) {
+        Ext = other.Ext;
+      }
+      if (other.custom_ != null) {
+        if (custom_ == null) {
+          Custom = new global::Google.Protobuf.WellKnownTypes.Any();
+        }
+        Custom.MergeFrom(other.Custom);
+      }
+      _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(pb::CodedInputStream input) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      input.ReadRawMessage(this);
+    #else
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
+            break;
+          case 8: {
+            EventId = input.ReadUInt32();
+            break;
+          }
+          case 16: {
+            ServerTick = input.ReadInt64();
+            break;
+          }
+          case 26: {
+            if (position_ == null) {
+              Position = new global::SuMultiplayer.Protocol.Position.Vec3();
+            }
+            input.ReadMessage(Position);
+            break;
+          }
+          case 34: {
+            if (direction_ == null) {
+              Direction = new global::SuMultiplayer.Protocol.Position.Vec3();
+            }
+            input.ReadMessage(Direction);
+            break;
+          }
+          case 42: {
+            if (velocity_ == null) {
+              Velocity = new global::SuMultiplayer.Protocol.Position.Vec3();
+            }
+            input.ReadMessage(Velocity);
+            break;
+          }
+          case 53: {
+            Damage = input.ReadFloat();
+            break;
+          }
+          case 802: {
+            Ext = input.ReadBytes();
+            break;
+          }
+          case 810: {
+            if (custom_ == null) {
+              Custom = new global::Google.Protobuf.WellKnownTypes.Any();
+            }
+            input.ReadMessage(Custom);
+            break;
+          }
+        }
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalMergeFrom(ref pb::ParseContext input) {
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
+            break;
+          case 8: {
+            EventId = input.ReadUInt32();
+            break;
+          }
+          case 16: {
+            ServerTick = input.ReadInt64();
+            break;
+          }
+          case 26: {
+            if (position_ == null) {
+              Position = new global::SuMultiplayer.Protocol.Position.Vec3();
+            }
+            input.ReadMessage(Position);
+            break;
+          }
+          case 34: {
+            if (direction_ == null) {
+              Direction = new global::SuMultiplayer.Protocol.Position.Vec3();
+            }
+            input.ReadMessage(Direction);
+            break;
+          }
+          case 42: {
+            if (velocity_ == null) {
+              Velocity = new global::SuMultiplayer.Protocol.Position.Vec3();
+            }
+            input.ReadMessage(Velocity);
+            break;
+          }
+          case 53: {
+            Damage = input.ReadFloat();
             break;
           }
           case 802: {
