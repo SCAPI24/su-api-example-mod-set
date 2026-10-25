@@ -30,18 +30,15 @@ namespace SuMultiplayer.Engine
     ///     只发请求、**不本地扣物品**；投掷 / 开火由方块行为外壳只发请求、**不本地生成投射物**；
     ///   · 投射物**不跑** <c>SubsystemProjectiles.Update</c>（它会在客户端 DestroyCell / 伤人 /
     ///     生成掉落物 / 触发爆炸），位置由本适配层按主机快照插值；
-    ///   · 扫描附近副本只产生 <see cref="IEntityReplicaPort.ClientPickupSubmitted"/>，不本地结算。
+    ///   · 拾取由主机引擎对化身原生计算（2026-10-26 起）：主机在拾取窗口差分化身背包，
+    ///     经 <see cref="HostNativePickup"/> 通知客户端，客户端不再扫描 / 请求。
     ///
     /// 无静态状态：反射入口 / 化身表 / 计数器都挂在实例上。
     /// </summary>
     public sealed class PickableReplicaEngine : IEntityReplicaPort, IEntityDropInputSink,
-        IHostBlockDropSink, IUiDropSink
+        IHostBlockDropSink, IUiDropSink, IPickupHostWindowSink
     {
         private const float RestingPositionEpsilonSquared = 0.0004f;
-        private const float PickupAttractDistanceSquared = 3.0625f;   // 1.75m（引擎吸引范围）
-        private const float PickupAcquireDistanceSquared = 1.0f;      // 1.0m（引擎直接拾取）
-        private const double PickupScanIntervalSeconds = 0.05;        // 20Hz 扫描
-        private const double PickupRequestIntervalSeconds = 0.75;     // 同一副本的重试间隔
         private const int ProblemLogMs = 5000;
 
         private readonly NetworkAvatarSpawner m_spawner;
@@ -52,7 +49,6 @@ namespace SuMultiplayer.Engine
         private readonly Dictionary<string, long> m_lastProblemMs =
             new Dictionary<string, long>(StringComparer.Ordinal);
         private readonly HashSet<string> m_loggedOnce = new HashSet<string>(StringComparer.Ordinal);
-        private readonly Func<ComponentPlayer, bool> m_remoteAvatarFilter;
 
         // ---- 客户端丢弃输入拦截（SuComponentInput 每帧调用）
         /// <summary>
@@ -171,9 +167,18 @@ namespace SuMultiplayer.Engine
             new Dictionary<int, ClientPickableReplica>();
         private readonly Dictionary<int, ClientProjectileReplica> m_clientProjectiles =
             new Dictionary<int, ClientProjectileReplica>();
-        private readonly Dictionary<int, double> m_lastPickupRequestMs =
-            new Dictionary<int, double>();
-        private double m_nextPickupScanTime;
+
+        // ---- 主机拾取捕获窗口（IPickupHostWindowSink；见 PickableReplicaSubsystems.cs 的窗口包法）
+        private bool m_pickupWindowActive;
+        private readonly List<Pickable> m_windowRemovedPickables = new List<Pickable>();
+        private sealed class AvatarInventorySnapshot
+        {
+            public int ClientId;
+            public ComponentPlayer Player;
+            public int[] Values;
+            public int[] Counts;
+        }
+        private List<AvatarInventorySnapshot> m_windowAvatarInventories;
 
         // ---- 反射：SubsystemProjectiles 的私有列表（客户端删除副本时必须用）
         private List<Projectile> m_projectileList;
@@ -190,12 +195,13 @@ namespace SuMultiplayer.Engine
         private long m_applyFailures;
         private long m_acquireAccepted;
         private long m_acquireRejected;
-        private long m_pickupCandidates;
+        private long m_hostNativePickups;
+        private long m_hostNativePickupFaults;
+        private long m_avatarsInjected;
         private long m_projectileListFailures;
         private long m_pickableListFailures;
         private long m_foreignProjectilesRemoved;
         private long m_foreignPickablesRemoved;
-        private long m_remoteAvatarFilterCalls;
         private long m_fireSpawnAtHost;
         private long m_fireSpawnCollided;
         private long m_dropPredictionCulled;
@@ -224,7 +230,6 @@ namespace SuMultiplayer.Engine
             m_parentField = parentField ?? throw new ArgumentNullException(nameof(parentField));
             m_diagnostics = diagnostics;
             m_ownerId = string.IsNullOrEmpty(ownerId) ? "entity-replication" : ownerId;
-            m_remoteAvatarFilter = IsRemoteAvatar;
             // 丢弃拦截依赖 ComponentInput.m_playerInput：绑不上就是明确的装配失败（绝不静默）：
             // 没有这条路径，客户端按 Q 会走引擎原生掉落 → 本地扣除 + 本地拾取物被清理 → 物品消失。
             try
@@ -239,7 +244,15 @@ namespace SuMultiplayer.Engine
             }
         }
 
-        public event Action<PickablePickupCandidate> ClientPickupSubmitted;
+        /// <summary>
+        /// 主机：引擎原生替某个化身拾取了物品（窗口内背包差分得到）。
+        /// 模块把它编码成 <c>PickableAcquireResult(sequence=0)</c> 定向发给该客户端，
+        /// 并中继拾取音（引擎已在主机播过，不再回放主机）。
+        /// **2026-10-26 架构口径**：拾取由主机模拟（引擎对化身的原生 1.75m 磁吸 + 1.0m 收取，
+        /// 与主机玩家同一段代码、同款手感），客户端不再扫描 / 请求 —— 物品在主机真实飞行，
+        /// 经实体复制把"被吸起到身上"的动画镜像给所有端。
+        /// </summary>
+        public event Action<int, PickableAcquireOutcome> HostNativePickup;
 
         public bool IsClientReplica => m_clientReplica;
 
@@ -298,6 +311,12 @@ namespace SuMultiplayer.Engine
             SubsystemPickables pickables = project.FindSubsystem<SubsystemPickables>(false);
             if (!ReferenceEquals(pickables, m_pickables))
             {
+                if (m_pickables != null)
+                {
+                    // 换子系统（世界重载）：摘掉旧实例上的移除订阅，避免悬挂回调。
+                    try { m_pickables.PickableRemoved -= OnHostPickableRemoved; }
+                    catch (Exception) { }
+                }
                 m_pickables = pickables;
                 m_pickableShell = pickables as SuSubsystemPickables;
                 m_pickableList = null;
@@ -305,6 +324,12 @@ namespace SuMultiplayer.Engine
                 m_pickableById.Clear();
                 m_pickableKeys.Clear();
                 m_publishedPickablePositions.Clear();
+                if (pickables != null)
+                {
+                    // 引擎拾取物移除事件：主机拾取窗口内记录，用于原生拾取的归属与拾取音。
+                    try { pickables.PickableRemoved += OnHostPickableRemoved; }
+                    catch (Exception) { }
+                }
                 Log("已挂接拾取物子系统：" + (pickables == null
                     ? "缺失（注入可能未生效）"
                     : pickables.GetType().Name));
@@ -365,13 +390,24 @@ namespace SuMultiplayer.Engine
             }
             if (m_blockBehaviors == null)
                 m_blockBehaviors = project.FindSubsystem<SubsystemBlockBehaviors>(false);
-            // 主机：远端化身不是引擎的“拾取者”。客户端由 SuSubsystemPickables 自己按
-            // ReplicaGates.IsClient 清空玩家列表；这里只给主机装远端化身过滤器。
+            // 主机：引擎对化身**原生拾取**（2026-10-26 架构口径：拾取由主机模拟）。
+            // 只装"自丢宽限内"的化身抑制器（防刚丢出去被自己捡回）；拾取捕获窗口 +
+            // PickableRemoved 订阅（在上方子系统换接块里）用于差分背包、发
+            // PickableAcquireResult(sequence=0) 通知。客户端由 SuSubsystemPickables 自己按
+            // ReplicaGates.IsClient 清空玩家列表。
             if (m_pickableShell != null)
             {
                 m_pickableShell.ParentField = m_parentField;
                 m_pickableShell.Replica = this;
-                m_pickableShell.IsRemotePlayer = m_clientReplica ? null : m_remoteAvatarFilter;
+                m_pickableShell.AvatarPlayersProvider = m_clientReplica
+                    ? null
+                    : EnumerateAvatarPlayers;
+                m_pickableShell.PickupWindowSink = m_clientReplica ? null : this;
+                LogOnce("pickup-window-wired",
+                    "拾取窗口挂接：clientReplica=" + m_clientReplica +
+                    " provider=" + (!m_clientReplica) + " suppressor=" + (!m_clientReplica) +
+                    " window=" + (!m_clientReplica) +
+                    "（主机=把化身注入引擎拾取循环原生拾取；客户端=纯表现）");
             }
             // 客户端：把丢弃输入钩子挂到本机玩家的 SuComponentInput 上（主机 / 单机不挂）。
             UpdateDropInput(project);
@@ -464,18 +500,6 @@ namespace SuMultiplayer.Engine
         /// true ⇒ 在 <c>SuSubsystemPickables</c> 的 base.Update 期间把它从玩家列表里摘掉，
         /// 于是主机不会替客户端“本地拾取”；客户端只能通过请求链拾取。
         /// </summary>
-        private bool IsRemoteAvatar(ComponentPlayer player)
-        {
-            m_remoteAvatarFilterCalls++;
-            if (player?.PlayerData == null || m_spawner == null) return false;
-            foreach (int clientId in m_spawner.ClientIds)
-            {
-                if (!m_spawner.TryGet(clientId, out PlayerData data) || data == null) continue;
-                if (ReferenceEquals(data, player.PlayerData)) return true;
-            }
-            return false;
-        }
-
         // ================================================================ 主机：抓取
 
         public bool TryCaptureHostPickables(List<PickableStateData> target, out string reason)
@@ -2342,7 +2366,6 @@ namespace SuMultiplayer.Engine
                 {
                     RemovePickableReplica(removed);
                     m_clientPickables.Remove(state.Id);
-                    m_lastPickupRequestMs.Remove(state.Id);
                     m_replicasRemoved++;
                 }
                 return true;
@@ -2650,7 +2673,8 @@ namespace SuMultiplayer.Engine
             m_ownDropPredictions.Prune(now);
             UpdatePickableReplicas(step, now);
             UpdateProjectileReplicas(step, now);
-            ScanPickupCandidates(now);
+            // 2026-10-26：客户端拾取扫描 / 请求链已删 —— 拾取由主机引擎对化身原生计算
+            // （1.75m 磁吸 + 1.0m 收取），主机经 HostNativePickup 通知背包增量与拾取音。
         }
 
         private void UpdatePickableReplicas(float step, double now)
@@ -2715,7 +2739,6 @@ namespace SuMultiplayer.Engine
             for (int i = 0; i < stale.Count; i++)
             {
                 m_clientPickables.Remove(stale[i]);
-                m_lastPickupRequestMs.Remove(stale[i]);
             }
         }
 
@@ -2772,54 +2795,144 @@ namespace SuMultiplayer.Engine
         }
 
         /// <summary>
-        /// 客户端扫描：与引擎相同的吸引/拾取距离，但**不**调用 AcquireItems；
-        /// 只把候选交给模块发请求（主机校验后才真正拾取）。
-        /// Source: Survivalcraft/Game/SubsystemPickables.cs:SubsystemPickables.Update
-        /// Source: Mod/ScMultiplayer/Modules/Entity/ScMultiplayerPickableProjectileHandlers.cs:170-260
+        /// 【已删】客户端拾取扫描 / 请求链（旧 ScanPickupCandidates，20Hz / 1.0m 触发）。
+        /// 2026-10-26 架构口径（用户定）：**丢出才由客户端请求；拾取由主机模拟，主机通知客户端**。
+        /// 旧链的三个毛病都源于"客户端决定拾取时机"：触发线 1.0m 把引擎 1.75m 磁吸带吃掉
+        /// （主机吸 3 格、客户端 1 格）、本地 FlyToPosition 假飞行动画与主机真物品脱节、
+        /// 触发节奏随客户端扫描漂移（"过一会突然出现"）。现在引擎对化身原生拾取，物品在
+        /// 主机真实飞行、经实体复制镜像给所有端。
+        /// Source: Survivalcraft/Game/SubsystemPickables.cs:SubsystemPickables.Update:183-219
         /// </summary>
-        private void ScanPickupCandidates(double now)
+
+        // ------------------------------------------------------------ 主机：原生拾取捕获窗口
+
+        /// <summary>引擎在窗口内移除拾取物时记录（拾取音 / 结果归属用；host 才有意义）。</summary>
+        private void OnHostPickableRemoved(Pickable pickable)
         {
-            if (now < m_nextPickupScanTime) return;
-            m_nextPickupScanTime = now + PickupScanIntervalSeconds;
-            if (m_spawner == null || m_project == null) return;
-            if (!m_spawner.TryGetLocalPlayer(m_project, out PlayerData local, out _)) return;
-            ComponentPlayer player = local?.ComponentPlayer;
-            if (player?.ComponentBody == null || player.ComponentHealth == null ||
-                player.ComponentHealth.Health <= 0f)
-                return;
-            SubsystemGameInfo gameInfo = m_project.FindSubsystem<SubsystemGameInfo>(false);
-            if (gameInfo == null) return;
-            Vector3 eye = player.ComponentBody.Position + new Vector3(0f, 0.75f, 0f);
-            Vector3 bodyVelocity = player.ComponentBody.Velocity;
-            foreach (KeyValuePair<int, ClientPickableReplica> item in m_clientPickables)
+            if (m_pickupWindowActive) m_windowRemovedPickables.Add(pickable);
+        }
+
+        /// <summary>
+        /// 主机侧化身枚举（外壳 AvatarPlayersProvider）：注入引擎拾取循环的玩家集合。
+        /// 化身的 PlayerData 不在 SubsystemPlayers.m_playersData 里（建好即移除），
+        /// 引擎重建玩家列表时化身会被清掉 —— 所以每一帧拾取窗口都重新注入（见外壳注释）。
+        /// </summary>
+        private IEnumerable<ComponentPlayer> EnumerateAvatarPlayers()
+        {
+            if (m_spawner == null || m_clientReplica) yield break;
+            foreach (int clientId in m_spawner.ClientIds)
             {
-                Pickable pickable = item.Value.Pickable;
-                if (pickable == null || pickable.ToRemove || pickable.StuckMatrix.HasValue)
-                    continue;
-                if (gameInfo.TotalElapsedGameTime - pickable.CreationTime <= 0.5) continue;
-                float distanceSquared = Vector3.DistanceSquared(eye, pickable.Position);
-                if (distanceSquared >= PickupAttractDistanceSquared) continue;
-                // 表现：让副本被“吸”向本机玩家（引擎自己也会做，但它的玩家列表在客户端被清空了）。
-                pickable.FlyToPosition = eye + 0.1f * MathUtils.Sqrt(distanceSquared) *
-                    bodyVelocity;
-                if (distanceSquared >= PickupAcquireDistanceSquared) continue;
-                if (m_lastPickupRequestMs.TryGetValue(item.Key, out double lastRequest) &&
-                    now - lastRequest < PickupRequestIntervalSeconds)
-                    continue;
-                m_lastPickupRequestMs[item.Key] = now;
-                m_pickupCandidates++;
+                if (!m_spawner.TryGet(clientId, out PlayerData data)) continue;
+                ComponentPlayer player = data?.ComponentPlayer;
+                if (player == null) continue;
+                m_avatarsInjected++;
+                yield return player;
+            }
+        }
+
+        public void BeginPickupWindow()
+        {
+            m_windowRemovedPickables.Clear();
+            m_windowAvatarInventories = null;
+            m_pickupWindowActive = false;
+            if (m_clientReplica || m_spawner == null || m_project == null) return;
+            foreach (int clientId in m_spawner.ClientIds)
+            {
+                if (!m_spawner.TryGet(clientId, out PlayerData data)) continue;
+                ComponentPlayer player = data?.ComponentPlayer;
+                IInventory inventory = player?.ComponentMiner?.Inventory;
+                if (inventory == null) continue;
+                // 诊断（一次性）：主机侧化身背包的真实槽数 —— 引擎 FindAcquireSlotForItem
+                // 在这份背包上找槽，槽数 / 有没有同类槽决定"能不能拾取"。
+                LogOnce("pickup-window-avatar:" + clientId,
+                    "拾取窗口化身背包：clientId=" + clientId + " slots=" + inventory.SlotsCount);
+                var snapshot = new AvatarInventorySnapshot
+                {
+                    ClientId = clientId,
+                    Player = player,
+                    Values = new int[inventory.SlotsCount],
+                    Counts = new int[inventory.SlotsCount]
+                };
+                for (int i = 0; i < inventory.SlotsCount; i++)
+                {
+                    snapshot.Values[i] = inventory.GetSlotValue(i);
+                    snapshot.Counts[i] = inventory.GetSlotCount(i);
+                }
+                (m_windowAvatarInventories ??= new List<AvatarInventorySnapshot>()).Add(snapshot);
+            }
+            m_pickupWindowActive = true;
+        }
+
+        public void EndPickupWindow()
+        {
+            m_pickupWindowActive = false;
+            List<AvatarInventorySnapshot> snapshots = m_windowAvatarInventories;
+            m_windowAvatarInventories = null;
+            if (snapshots == null || snapshots.Count == 0)
+            {
+                m_windowRemovedPickables.Clear();
+                return;
+            }
+            for (int s = 0; s < snapshots.Count; s++)
+            {
+                AvatarInventorySnapshot snapshot = snapshots[s];
+                IInventory inventory = snapshot.Player?.ComponentMiner?.Inventory;
+                if (inventory == null ||
+                    inventory.SlotsCount != snapshot.Values.Length) continue;
+                List<int> indices = null, values = null, counts = null;
+                for (int i = 0; i < inventory.SlotsCount; i++)
+                {
+                    int value = inventory.GetSlotValue(i);
+                    int count = inventory.GetSlotCount(i);
+                    if (value == snapshot.Values[i] && count == snapshot.Counts[i]) continue;
+                    (indices ??= new List<int>()).Add(i);
+                    (values ??= new List<int>()).Add(value);
+                    (counts ??= new List<int>()).Add(count);
+                }
+                if (indices == null) continue;
+                // 归属：取窗口内被移除、且离该化身最近的拾取物（引擎只在整堆拾完时移除并播音）。
+                Pickable attributed = null;
+                float bestSquared = float.MaxValue;
+                Vector3 avatarPosition = snapshot.Player.ComponentBody?.Position ??
+                    Vector3.Zero;
+                for (int r = 0; r < m_windowRemovedPickables.Count; r++)
+                {
+                    Pickable removed = m_windowRemovedPickables[r];
+                    float squared = Vector3.DistanceSquared(removed.Position, avatarPosition);
+                    if (squared < bestSquared)
+                    {
+                        bestSquared = squared;
+                        attributed = removed;
+                    }
+                }
+                int pickableId = 0;
+                if (attributed != null && m_pickableKeys.TryGetValue(attributed, out HostKey key))
+                    pickableId = key.Id;
+                // 诊断（一次性）：窗口检出原生拾取（背包差分 + 归属）。
+                LogOnce("native-pickup-detected:" + snapshot.ClientId,
+                    "原生拾取检出：clientId=" + snapshot.ClientId + " 槽变更=" + indices.Count +
+                    " 归属pickable=" + pickableId + " 窗口内移除=" + m_windowRemovedPickables.Count);
+                var outcome = new PickableAcquireOutcome(
+                    attributed?.Count ?? 0, attributed != null,
+                    indices.ToArray(), values.ToArray(), counts.ToArray(),
+                    CurrentInventoryVersion(), attributed?.Value ?? 0,
+                    attributed?.Position ?? avatarPosition,
+                    playPickupSound: attributed != null);
+                m_hostNativePickups++;
                 try
                 {
-                    ClientPickupSubmitted?.Invoke(new PickablePickupCandidate(item.Key,
-                        pickable.Position, eye));
+                    HostNativePickup?.Invoke(snapshot.ClientId, outcome);
                 }
                 catch (Exception e)
                 {
-                    LogProblemOnce("pickup-submit:" + e.GetType().Name,
-                        "拾取候选处理器异常（id=" + item.Key + "）：" + e.GetType().Name + " " +
-                        e.Message + " → 本次不重试，下一轮扫描会再上报");
+                    m_hostNativePickupFaults++;
+                    LogProblemOnce("native-pickup:" + e.GetType().Name,
+                        "主机原生拾取通知处理器异常（clientId=" + snapshot.ClientId + " 槽位数=" +
+                        indices.Count + "）：" + e.GetType().Name + " " + e.Message +
+                        " → 拾取本身已生效，只是该客户端这次没收到通知（背包会在下次关键帧对齐）");
                 }
             }
+            m_windowRemovedPickables.Clear();
         }
 
         /// <summary>
@@ -2979,7 +3092,6 @@ namespace SuMultiplayer.Engine
             foreach (KeyValuePair<int, ClientProjectileReplica> item in m_clientProjectiles)
                 RemoveProjectileReplica(item.Value);
             m_clientProjectiles.Clear();
-            m_lastPickupRequestMs.Clear();
             m_replicasRemoved += pickables + projectiles;
             Log("清空实体副本（" + reason + "）：拾取物 " + pickables + " / 投射物 " + projectiles);
         }
@@ -3114,7 +3226,9 @@ namespace SuMultiplayer.Engine
             " created=" + m_replicasCreated + " updated=" + m_replicasUpdated +
             " removed=" + m_replicasRemoved + " applyFailures=" + m_applyFailures +
             " acquireAccepted=" + m_acquireAccepted + " acquireRejected=" + m_acquireRejected +
-            " pickupCandidates=" + m_pickupCandidates +
+            " hostNativePickups=" + m_hostNativePickups +
+            " hostNativePickupFaults=" + m_hostNativePickupFaults +
+            " avatarsInjected=" + m_avatarsInjected +
             " projectileListFailures=" + m_projectileListFailures +
             " foreignCulled=" + (m_foreignPickablesRemoved + m_foreignProjectilesRemoved) +
             " foreignPickablesRemoved=" + m_foreignPickablesRemoved +
@@ -3140,10 +3254,16 @@ namespace SuMultiplayer.Engine
             " dropSpawnVelocity=" + m_dropSpawnVelocity +
             " pickupGraceBlocked=" + m_pickupGraceBlocked +
             " pickupGrace[" + m_dropGrace.Describe() + "]" +
-            " ownDropPrediction[" + m_ownDropPredictions.Describe() + "]" +
-            " remoteAvatarFilterCalls=" + m_remoteAvatarFilterCalls;
+            " ownDropPrediction[" + m_ownDropPredictions.Describe() + "]";
 
         private void Log(string message) => m_diagnostics?.Info(m_ownerId, message);
+
+        /// <summary>一次性 INFO（每个 key 只写一行；用于窗口挂接 / 原生拾取检出的诊断证据）。</summary>
+        private void LogOnce(string key, string message)
+        {
+            if (!m_loggedOnce.Add(key)) return;
+            m_diagnostics?.Info(m_ownerId, message);
+        }
 
         private void LogProblemOnce(string key, string message)
         {

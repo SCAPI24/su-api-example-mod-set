@@ -30,6 +30,8 @@ namespace SuMultiplayer.Engine
         private readonly Func<ComponentPlayer, bool> m_suppressAll;
         private readonly List<ComponentPlayer> m_removedPlayers = new List<ComponentPlayer>();
         private readonly List<int> m_removedIndices = new List<int>();
+        /// <summary>主机拾取窗口内注入玩家列表的化身（窗口结束逐个移除，恢复引擎自己的列表）。</summary>
+        private readonly List<ComponentPlayer> m_injectedPlayers = new List<ComponentPlayer>();
         private List<ComponentPlayer> m_componentPlayers;
         private bool m_bindFailureLogged;
         private bool m_phantomFaultLogged;
@@ -64,10 +66,19 @@ namespace SuMultiplayer.Engine
         }
 
         /// <summary>
-        /// 主机侧“这个玩家是远端化身”过滤器（由 Engine/PickableReplicaEngine.cs 每帧写入）。
-        /// null = 没有联机会话（单机 / 主机还没装配）：完全走原生行为。
+        /// 主机侧化身枚举（由 Engine/PickableReplicaEngine.cs 每帧写入）。
+        ///
+        /// **为什么要注入**（2026-10-26 实测定案）：SuMultiplayer 建好远端 avatar 后会把它的
+        /// PlayerData 从 <c>SubsystemPlayers.m_playersData</c> 移除（CmdBridgeMod 的
+        /// AllPlayersObserver 注释同样记载了这一点），而引擎的
+        /// <c>UpdateComponentPlayers</c> 每次实体增删都从 m_playersData **清空重建**玩家列表 →
+        /// 化身不在 <c>SubsystemPickables.Update</c> 的玩家表里，引擎磁吸对化身根本不生效
+        /// （站在掉落物上也不吸，真机复现）。所以主机在拾取窗口内把化身**注入**玩家列表
+        /// （追加在本机玩家之后 = 分屏同款顺序），窗口结束移除——只影响这一段 Update，
+        /// 引擎自己的列表在其他系统眼里保持原样。
+        /// null = 没有联机会话 / 适配层未挂接：完全走原生行为。
         /// </summary>
-        public Func<ComponentPlayer, bool> IsRemotePlayer { get; set; }
+        public Func<IEnumerable<ComponentPlayer>> AvatarPlayersProvider { get; set; }
 
         /// <summary>反射入口由组合根注入（不在子系统里访问全局单例）。</summary>
         public IModParentField ParentField { get; set; }
@@ -83,6 +94,14 @@ namespace SuMultiplayer.Engine
         /// </summary>
         internal IWaterSplashHostSink SplashSink { get; set; }
 
+        /// <summary>
+        /// 主机拾取捕获窗口（PickableReplicaEngine 的 Pump 挂接，接口见 Modules/PickablePorts.cs）。
+        /// 窗口只包住 host 分支的 <c>base.Update</c>：引擎原生替化身拾取后背包被静默改变，
+        /// 适配层在窗口两端做快照差分，把增量作为 <c>PickableAcquireResult(sequence=0)</c>
+        /// 通知对应客户端（见 entities.proto）。
+        /// </summary>
+        internal IPickupHostWindowSink PickupWindowSink { get; set; }
+
         /// <summary>拿不到玩家列表导致“过滤失败”的次数（状态行 / 诊断可审计）。</summary>
         public long PickupFilterFailures => m_filterFailures;
 
@@ -91,8 +110,59 @@ namespace SuMultiplayer.Engine
         {
             SubsystemTerrain terrain = Project?.FindSubsystem<SubsystemTerrain>(false);
             bool clientReplica = ReplicaGates.IsClient(terrain);
-            Func<ComponentPlayer, bool> filter = clientReplica ? m_suppressAll : IsRemotePlayer;
-            if (filter == null)
+            if (clientReplica)
+            {
+                // 客户端：整段不跑玩家拾取（摘掉全部玩家）；水面音效/粒子由主机播过，
+                // 副本不重复触发；外来拾取物在 base.Update 后清理。
+                if (ParentField == null || !EnsurePlayersBound())
+                {
+                    m_filterFailures++;
+                    if (!m_bindFailureLogged)
+                    {
+                        m_bindFailureLogged = true;
+                        Log.Warning("[SuMP] SuSubsystemPickables 客户端拿不到 " +
+                            "SubsystemPlayers.m_componentPlayers（反射失败 / ParentField 未注入）" +
+                            "→ 本帧不跑 base.Update（宁可副本不动，也不让客户端本地拾取主机物品）");
+                    }
+                    return;
+                }
+                m_removedPlayers.Clear();
+                m_removedIndices.Clear();
+                for (int i = m_componentPlayers.Count - 1; i >= 0; i--)
+                {
+                    ComponentPlayer player = m_componentPlayers[i];
+                    if (player == null) continue;
+                    m_removedPlayers.Add(player);
+                    m_removedIndices.Add(i);
+                    m_componentPlayers.RemoveAt(i);
+                }
+                try
+                {
+                    // Source: Mod/ScMultiplayer/Func/Subsystem/SuSubsystemPickables.cs:136-145
+                    ReadOnlyList<Pickable> pickables = Pickables;
+                    for (int i = 0; i < pickables.Count; i++)
+                        if (pickables[i] != null) pickables[i].SplashGenerated = true;
+                    base.Update(dt);
+                    Replica?.CullForeignClientPickables();
+                }
+                finally
+                {
+                    // 按原下标升序插回，保持 SubsystemPlayers 的玩家顺序（就近选择等逻辑依赖顺序）。
+                    for (int i = m_removedIndices.Count - 1; i >= 0; i--)
+                    {
+                        int index = m_removedIndices[i];
+                        if (index > m_componentPlayers.Count) index = m_componentPlayers.Count;
+                        m_componentPlayers.Insert(index, m_removedPlayers[i]);
+                    }
+                    m_removedPlayers.Clear();
+                    m_removedIndices.Clear();
+                }
+                return;
+            }
+            // 主机：把远端化身注入玩家列表（引擎 UpdateComponentPlayers 的重建会清掉化身，
+            // 见 AvatarPlayersProvider 注释），窗口结束移除——引擎拾取循环因此对化身生效，
+            // 与主机玩家同一段代码：磁吸 1.75m、飞行、1.0m 收取、背包入格、拾取音全在主机。
+            if (AvatarPlayersProvider == null)
             {
                 RunHostBaseUpdate(dt);
                 return;
@@ -103,85 +173,56 @@ namespace SuMultiplayer.Engine
                 if (!m_bindFailureLogged)
                 {
                     m_bindFailureLogged = true;
-                    if (ParentField == null)
-                    {
-                        // 反射入口由适配器在第一次 Pump 时注入；这里只是启动顺序，不是失败。
-                        Log.Information("[SuMP] SuSubsystemPickables 的反射入口尚未注入 → " +
-                            (clientReplica
-                                ? "本帧不跑 base.Update（绝不本地拾取）"
-                                : "本帧按原生行为跑 base.Update"));
-                    }
-                    else
-                    {
-                        Log.Warning("[SuMP] SuSubsystemPickables 拿不到 " +
-                            "SubsystemPlayers.m_componentPlayers（反射失败）→ " +
-                            (clientReplica
-                                ? "客户端不跑 base.Update（宁可副本不动，也不让客户端本地拾取主机物品）"
-                                : "主机继续跑 base.Update（原生拾取会绕过请求链，请检查引擎版本）"));
-                    }
+                    Log.Warning("[SuMP] SuSubsystemPickables 主机拿不到 " +
+                        "SubsystemPlayers.m_componentPlayers（反射失败 / ParentField 未注入）→ " +
+                        "本帧按原生行为跑 base.Update（化身不在玩家表里，拾取不会替它们发生）");
                 }
-                if (!clientReplica) RunHostBaseUpdate(dt);
+                RunHostBaseUpdate(dt);
                 return;
             }
-            // 客户端：整段不跑玩家拾取；主机：只摘远端化身。其余物理/到期/水面表现照常。
-            m_removedPlayers.Clear();
-            m_removedIndices.Clear();
-            for (int i = m_componentPlayers.Count - 1; i >= 0; i--)
-            {
-                ComponentPlayer player = m_componentPlayers[i];
-                if (player == null || !filter(player)) continue;
-                m_removedPlayers.Add(player);
-                m_removedIndices.Add(i);
-                m_componentPlayers.RemoveAt(i);
-            }
+            m_injectedPlayers.Clear();
             try
             {
-                if (clientReplica)
+                foreach (ComponentPlayer player in AvatarPlayersProvider())
                 {
-                    // Source: Mod/ScMultiplayer/Func/Subsystem/SuSubsystemPickables.cs:136-145
-                    // 远端副本的水面进入音效/粒子不应被本端重复触发（主机已经播过）。
-                    ReadOnlyList<Pickable> pickables = Pickables;
-                    for (int i = 0; i < pickables.Count; i++)
-                        if (pickables[i] != null) pickables[i].SplashGenerated = true;
-                    base.Update(dt);
-                    Replica?.CullForeignClientPickables();
+                    if (player == null || m_componentPlayers.Contains(player)) continue;
+                    // 不做额外的"掉落者宽限"：引擎自己的 0.5s 创建宽限对所有人一致
+                    // （2026-10-26 用户口径：客户端丢出→吸回的节奏必须与主机玩家相同；
+                    //   旧 1.5s 宽限是请求链时代为防"刚丢即回吸"加的，原生路径不需要）。
+                    // 追加在本机玩家之后（分屏同款顺序：本机先判定，化身后判定）。
+                    m_componentPlayers.Add(player);
+                    m_injectedPlayers.Add(player);
                 }
-                else
-                {
-                    // 主机：窗口内新增的 WaterSplashParticleSystem 由 WaterSplashReplicaEngine
-                    // 取出并广播；引擎原生表现（本机看到 / 听到的水花）不受影响。
-                    RunHostBaseUpdate(dt);
-                }
+                // 窗口内新增的 WaterSplashParticleSystem 由 WaterSplashReplicaEngine 取出并广播；
+                // 拾取窗口（PickupWindowSink）差分化身背包发通知；引擎原生表现不受影响。
+                RunHostBaseUpdate(dt);
             }
             finally
             {
-                // 按原下标升序插回，保持 SubsystemPlayers 的玩家顺序（就近选择等逻辑依赖顺序）。
-                for (int i = m_removedIndices.Count - 1; i >= 0; i--)
-                {
-                    int index = m_removedIndices[i];
-                    if (index > m_componentPlayers.Count) index = m_componentPlayers.Count;
-                    m_componentPlayers.Insert(index, m_removedPlayers[i]);
-                }
-                m_removedPlayers.Clear();
-                m_removedIndices.Clear();
+                for (int i = 0; i < m_injectedPlayers.Count; i++)
+                    m_componentPlayers.Remove(m_injectedPlayers[i]);
+                m_injectedPlayers.Clear();
             }
         }
 
         /// <summary>
-        /// 主机 base.Update 包一层水花捕获窗口。捕获开始失败（适配层未启用 / 反射失败）时
-        /// 仍然执行 base.Update：主机原生水花表现绝不因为网络表现失败而消失。
+        /// 主机 base.Update 包一层水花捕获窗口 + 拾取捕获窗口。捕获开始失败（适配层未启用 /
+        /// 反射失败）时仍然执行 base.Update：主机原生水花 / 原生拾取表现绝不因为网络表现失败而消失。
         /// </summary>
         private void RunHostBaseUpdate(float dt)
         {
-            IWaterSplashHostSink sink = SplashSink;
-            bool capture = sink != null && sink.BeginSplashCapture(out _);
+            IWaterSplashHostSink splashSink = SplashSink;
+            bool capture = splashSink != null && splashSink.BeginSplashCapture(out _);
+            IPickupHostWindowSink pickupSink = PickupWindowSink;
+            pickupSink?.BeginPickupWindow();
             try
             {
                 base.Update(dt);
             }
             finally
             {
-                if (capture) sink.EndSplashCapture();
+                if (capture) splashSink.EndSplashCapture();
+                pickupSink?.EndPickupWindow();
             }
         }
 

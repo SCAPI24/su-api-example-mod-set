@@ -3294,6 +3294,15 @@ namespace SuMultiplayer.Protocol.Entities {
     /// <summary>Field number for the "sequence" field.</summary>
     public const int SequenceFieldNumber = 1;
     private long sequence_;
+    /// <summary>
+    /// Per-connection request sequence, starts at 1, strictly increasing.
+    /// sequence = 0 is NOT a reply: it is a host-initiated notice that the host
+    /// engine natively picked something up for the collector's avatar (the engine
+    /// SubsystemPickables magnet runs for avatars on the host).  Clients apply
+    /// the inventory delta directly, without pending-request matching; accepted
+    /// must be true, and pickable_id may be 0 when the delta cannot be attributed
+    /// to a single removed pickable (partial stack pickup, inventory overflow).
+    /// </summary>
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public long Sequence {

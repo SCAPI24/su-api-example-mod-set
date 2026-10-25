@@ -721,12 +721,17 @@ namespace SuMultiplayer.Net
                 reason = "result-null";
                 return false;
             }
-            if (message.Sequence <= 0)
+            // sequence = 0：主机主动通知（引擎原生替化身拾取），不是对某条请求的回执 ——
+            // 只能是 accepted，且不参与客户端的待回执对账（见 entities.proto 注释）。
+            if (message.Sequence < 0 || message.Sequence == 0 && !message.Accepted)
             {
                 reason = "result-sequence-" + message.Sequence;
                 return false;
             }
-            if (!IsValidId(message.PickableId))
+            // 主机通知（sequence=0）允许 pickable_id=0：背包增量无法唯一归属到某个
+            // 已移除拾取物时（部分拾取 / 背包溢出）不猜 id。
+            if (!IsValidId(message.PickableId) &&
+                !(message.Sequence == 0 && message.PickableId == 0))
             {
                 reason = "result-pickable-" + message.PickableId;
                 return false;

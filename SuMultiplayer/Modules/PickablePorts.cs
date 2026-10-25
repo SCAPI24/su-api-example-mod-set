@@ -6,30 +6,19 @@ using SuMultiplayer.Net;
 namespace SuMultiplayer.Modules
 {
     /// <summary>
-    /// 客户端引擎适配层上报的"可以请主机拾取"的候选。
-    ///
-    /// 只由客户端产生：引擎原生的拾取在客户端被
-    /// <c>Engine/PickableReplicaSubsystems.cs:SuSubsystemPickables</c> 抑制，
-    /// 由适配层按与引擎相同的距离/创建宽限判据扫描后交给模块发请求。
-    /// Source: Survivalcraft/Game/SubsystemPickables.cs:SubsystemPickables.Update
-    ///         （3.0625 = 1.75m 吸引，1.0 = 直接拾取，CreationTime 0.5s 宽限）
-    /// Source: Mod/ScMultiplayer/Modules/Entity/ScMultiplayerPickableProjectileHandlers.cs:170-260
-    ///         （RequestNearbyPickableAcquisition）
+    /// 主机拾取捕获窗口（实现 = Engine/PickableReplicaEngine.cs）。
+    /// <see cref="BeginPickupWindow"/> / <see cref="EndPickupWindow"/> 只包住 host 分支的
+    /// <c>SubsystemPickables.Update</c>：引擎原生替化身拾取会静默改化身背包，适配层在窗口
+    /// 两端做背包快照差分，把增量变成 <c>PickableAcquireResult(sequence=0)</c> 通知客户端。
+    /// 与 <c>IWaterSplashHostSink</c>（Modules/SplashPorts.cs）同一模式。
     /// </summary>
-    public readonly struct PickablePickupCandidate
+    public interface IPickupHostWindowSink
     {
-        public PickablePickupCandidate(int pickableId, Vector3 position, Vector3 target)
-        {
-            PickableId = pickableId;
-            Position = position;
-            Target = target;
-        }
+        /// <summary>窗口开始：快照所有远端化身背包，开始记录窗口内的拾取物移除。</summary>
+        void BeginPickupWindow();
 
-        public int PickableId { get; }
-        /// <summary>副本当前位置（诊断 / 日志）。</summary>
-        public Vector3 Position { get; }
-        /// <summary>本机玩家眼睛位置（请求里只作诊断；主机用自己算出的位置校验）。</summary>
-        public Vector3 Target { get; }
+        /// <summary>窗口结束：差分背包，把变化作为主机原生拾取通知上报（异常不得抛出）。</summary>
+        void EndPickupWindow();
     }
 
     /// <summary>
@@ -117,7 +106,12 @@ namespace SuMultiplayer.Modules
         public long SnapshotStale;
 
         // ---- 拾取请求 / 回执
-        public long PickupRequestsSent;
+        /// <summary>主机：引擎原生替化身拾取后发出的 PickableAcquireResult(sequence=0) 通知数。</summary>
+        public long PickupNoticeSent;
+        /// <summary>主机：原生拾取通知发送失败数（拾取已生效，客户端靠关键帧对齐）。</summary>
+        public long PickupNoticeFailed;
+        /// <summary>客户端：收到并应用的主机原生拾取通知数（sequence=0）。</summary>
+        public long PickupNoticeApplied;
         public long PickupRequestFailures;
         public long PickupRequestsReceived;
         public long PickupAccepted;
@@ -292,7 +286,8 @@ namespace SuMultiplayer.Modules
     ///   · 主机是唯一创建 / 更新 / 删除拾取物与投射物的一方；
     ///   · 客户端只调用 <see cref="TryApplyPickable"/> / <see cref="TryApplyProjectile"/>，
     ///     引擎侧实现里没有客户端自己的 FireProjectile / AddPickable / AcquireItems 路径；
-    ///   · 客户端的拾取只产生 <see cref="ClientPickupSubmitted"/> 请求；
+    ///   · 拾取由主机引擎对化身原生计算（2026-10-26 起）：主机经
+    ///     <see cref="HostNativePickup"/> 通知客户端背包增量与拾取音，客户端不再扫描 / 请求；
     ///   · 客户端的丢弃 / 投掷 / 开火只产生 <see cref="IEntityRequestSink"/> 请求。
     /// </summary>
     public interface IEntityReplicaPort
@@ -310,8 +305,12 @@ namespace SuMultiplayer.Modules
         /// <summary>引擎侧的拾取物 / 投射物子系统是否已经就绪（客户端没进世界时为 false）。</summary>
         bool IsReplicaReady { get; }
 
-        /// <summary>客户端：扫描到可以请求拾取的副本（模块负责序号 / 去重 / 发送）。</summary>
-        event Action<PickablePickupCandidate> ClientPickupSubmitted;
+        /// <summary>
+        /// 主机：引擎原生替某个客户端的化身拾取了物品（窗口内背包差分得到）。
+        /// 模块编码成 <c>PickableAcquireResult(sequence=0)</c> 定向发给该客户端，
+        /// 并中继拾取音（引擎已在主机播过，不再在主机回放）。
+        /// </summary>
+        event Action<int, PickableAcquireOutcome> HostNativePickup;
 
         /// <summary>
         /// 模块在 Attach 里挂上的请求入口（引擎侧输入钩子 / 方块行为外壳调用它）。

@@ -359,11 +359,13 @@ namespace SuMultiplayer.Modules
             " snapshotSent=" + m_counters.SnapshotsSent +
             " snapshotRecv=" + m_counters.SnapshotsReceived +
             " snapshotStale=" + m_counters.SnapshotStale +
-            " · pickupReq/acc/rej=" + m_counters.PickupRequestsSent + "/" +
-            m_counters.PickupAccepted + "/" + m_counters.PickupRejected +
+            " · pickupAcc/rej=" + m_counters.PickupAccepted + "/" +
+            m_counters.PickupRejected +
+            " nativeNotice(sent/recv)=" + m_counters.PickupNoticeSent + "/" +
+            m_counters.PickupNoticeApplied +
+            " noticeFail=" + m_counters.PickupNoticeFailed +
             " persisted=" + m_counters.PickupPersisted +
             " persistFail=" + m_counters.PickupPersistFailures +
-            " pickupGraceSuppressed=" + m_counters.PickupGraceSuppressed +
             " pickupGraceBlockedByHost=" + m_counters.PickupGraceBlockedByHost +
             " ownDropGrace=" + m_counters.OwnDropGraceRegistered +
             " resync=" + m_counters.ResyncRequestsSent +
@@ -448,7 +450,7 @@ namespace SuMultiplayer.Modules
             {
                 Log("警告：没有拿到消息注册表（IMessageRegistryPort）→ 收不到实体状态 / 拾取请求");
             }
-            m_port.ClientPickupSubmitted += OnClientPickupSubmitted;
+            m_port.HostNativePickup += OnHostNativePickup;
             // 客户端丢弃 / 投掷 / 开火：引擎适配层采集到意图后调用本模块（IEntityRequestSink）。
             // 主机 / 单机 / 模块未上线时适配层不会调用（sink=null 会明确计失败，不本地扣物品）。
             m_port.RequestSink = this;
@@ -503,7 +505,7 @@ namespace SuMultiplayer.Modules
         public void Detach(ModuleDetachReason reason)
         {
             string summary = StatusLine();
-            m_port.ClientPickupSubmitted -= OnClientPickupSubmitted;
+            m_port.HostNativePickup -= OnHostNativePickup;
             if (ReferenceEquals(m_port.RequestSink, this)) m_port.RequestSink = null;
             if (m_transport != null)
             {
@@ -1871,57 +1873,41 @@ namespace SuMultiplayer.Modules
             }
         }
 
-        private void OnClientPickupSubmitted(PickablePickupCandidate candidate)
+        /// <summary>
+        /// 主机：引擎原生替某客户端的化身拾取了物品（适配层拾取窗口差分得到，2026-10-26 起
+        /// 拾取由主机模拟）。定向发给该客户端：<c>PickableAcquireResult(sequence=0)</c>
+        /// 背包增量 + 拾取音中继（引擎已在主机原生播过，presentOnHost=false 不回放）。
+        /// 拾取物的移除本身走实体复制的 EntityState(REMOVE) 广播，这里不重复发。
+        /// </summary>
+        private void OnHostNativePickup(int clientId, PickableAcquireOutcome outcome)
         {
-            if (!m_attached || m_hosting) return;
-            if (m_transport == null || !m_transport.IsConnected || !m_clientReady)
+            if (!m_attached || !m_hosting) return;
+            if (m_transport == null)
             {
-                m_counters.PickupSuppressed++;
+                m_counters.PickupNoticeFailed++;
+                LogRateLimited("pickup-notice-no-transport",
+                    "主机原生拾取通知无法发送（clientId=" + clientId + " 没有传输）→ " +
+                    "拾取已生效；客户端背包会在下次权威关键帧对齐");
                 return;
             }
-            if (m_pendingPickups.ContainsKey(candidate.PickableId))
+            m_inventoryVersion++;
+            var notice = new PickableAcquireResultData(0, 0, true, string.Empty,
+                outcome.RemainingCount, outcome.Removed, outcome.Indices, outcome.Values,
+                outcome.Counts, m_inventoryVersion);
+            byte[] payload = EntityCodec.EncodeResult(in notice).ToByteArray();
+            if (m_transport.TrySendTo(clientId, MessageType.PickableAcquireResult, payload))
             {
-                m_counters.PickupSuppressed++;
-                return;
+                m_counters.PickupNoticeSent++;
             }
-            double now = NowSeconds();
-            if (m_pickupCooldown.TryGetValue(candidate.PickableId, out double until) && now < until)
+            else
             {
-                m_counters.PickupSuppressed++;
-                return;
+                m_counters.PickupNoticeFailed++;
+                LogRateLimited("pickup-notice-send",
+                    "主机原生拾取通知发送失败（clientId=" + clientId + " 通道背压/未连接）→ " +
+                    "拾取已生效；客户端背包会在下次权威关键帧对齐");
             }
-            // 掉落者宽限：自己刚丢出 / 刚造成的掉落，本机扫描在窗口内不发请求（主机也会拒绝）。
-            if (m_ownPickupGrace.TryGetValue(candidate.PickableId, out double graceUntil))
-            {
-                if (now < graceUntil)
-                {
-                    m_counters.PickupGraceSuppressed++;
-                    return;
-                }
-                m_ownPickupGrace.Remove(candidate.PickableId);
-            }
-            if (m_pendingPickups.Count >= MaxPendingPickups)
-            {
-                m_counters.PickupSuppressed++;
-                LogRateLimited("pickup-pending-cap",
-                    "同时待回执的拾取请求已达 " + MaxPendingPickups + " → 暂不请求 id=" +
-                    candidate.PickableId);
-                return;
-            }
-            long sequence = ++m_nextPickupSequence;
-            if (sequence <= 0) sequence = ++m_nextPickupSequence;
-            var request = new PickableAcquireRequestData(sequence, candidate.PickableId,
-                candidate.Target, hasReach: true, reach: m_port.LocalReach);
-            byte[] payload = EntityCodec.EncodeRequest(in request).ToByteArray();
-            if (!m_transport.TrySend(MessageType.PickableAcquireRequest, payload))
-            {
-                m_counters.PickupRequestFailures++;
-                LogRateLimited("pickup-send",
-                    "拾取请求发送失败（通道背压/未连接）：" + request.Describe());
-                return;
-            }
-            m_pendingPickups[candidate.PickableId] = new PendingPickup(sequence, now);
-            m_counters.PickupRequestsSent++;
+            PersistPickupInventory(clientId);
+            RelayPickupSound(clientId, 0, in outcome, presentOnHost: false);
         }
 
         private void OnPickableAcquireResult(MessageContext context, PE.PickableAcquireResult message)
@@ -1940,6 +1926,15 @@ namespace SuMultiplayer.Modules
                 m_counters.PickableRejected++;
                 LogRateLimited("result-invalid:" + error,
                     "PickableAcquireResult 载荷非法（" + error + "）→ 整条丢弃");
+                return;
+            }
+            if (result.Sequence == 0)
+            {
+                // 主机主动通知（引擎原生替本端化身拾取，2026-10-26 起）：没有对应请求，
+                // 不做待回执对账；移除由实体复制的 EntityState(REMOVE) 广播负责，不重复移除。
+                m_counters.PickupNoticeApplied++;
+                if (result.HasInventory) ApplyPickupInventory(result);
+                else m_counters.PickupNoInventory++;
                 return;
             }
             if (!m_pendingPickups.TryGetValue(result.PickableId,
@@ -3260,7 +3255,7 @@ namespace SuMultiplayer.Modules
         ///   · 发送 / 接收都有限速；所有失败都写限流日志 + 计数，绝不静默。
         /// </summary>
         private void RelayPickupSound(int clientId, int pickableId,
-            in PickableAcquireOutcome outcome)
+            in PickableAcquireOutcome outcome, bool presentOnHost = true)
         {
             if (!outcome.PlayPickupSound) return;
             if (clientId <= 0)
@@ -3284,27 +3279,32 @@ namespace SuMultiplayer.Modules
             var sound = new PickupSoundEventData(clientId, m_serverTickMs,
                 NextPickupSoundEventId(), outcome.Position);
             // 主机本机播放：与引擎同一条声音参数（附近主机玩家应当听到这次拾取）。
-            string presentReason;
-            bool presented;
-            try
+            // presentOnHost=false（引擎原生替化身拾取）时跳过 —— 引擎自己的 Update 已经在
+            // 主机播过同一条 Audio/PickableCollected，再播就是回声。
+            if (presentOnHost)
             {
-                presented = m_port.TryPresentPickupSound(in sound, out presentReason);
-            }
-            catch (Exception e)
-            {
-                presented = false;
-                presentReason = "exception-" + e.GetType().Name + ": " + e.Message;
-            }
-            if (presented)
-            {
-                m_counters.PickupSoundPresented++;
-            }
-            else
-            {
-                m_counters.PickupSoundPresentFailures++;
-                LogRateLimited("pickup-sound-host-present:" + presentReason,
-                    "主机播放拾取声音失败（" + sound.Describe() + "）：" + presentReason +
-                    " → 仍继续中继给客户端");
+                string presentReason;
+                bool presented;
+                try
+                {
+                    presented = m_port.TryPresentPickupSound(in sound, out presentReason);
+                }
+                catch (Exception e)
+                {
+                    presented = false;
+                    presentReason = "exception-" + e.GetType().Name + ": " + e.Message;
+                }
+                if (presented)
+                {
+                    m_counters.PickupSoundPresented++;
+                }
+                else
+                {
+                    m_counters.PickupSoundPresentFailures++;
+                    LogRateLimited("pickup-sound-host-present:" + presentReason,
+                        "主机播放拾取声音失败（" + sound.Describe() + "）：" + presentReason +
+                        " → 仍继续中继给客户端");
+                }
             }
             m_pickupSoundPeers.Clear();
             if (!m_port.TryCollectPlayerPeers(m_pickupSoundPeers, out string peerReason))

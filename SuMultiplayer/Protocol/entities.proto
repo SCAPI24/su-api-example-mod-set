@@ -166,6 +166,13 @@ message PickableAcquireRequest {
 // (including the collector); this result only carries the collector's private
 // inventory delta.  A rejected request always carries an explicit reason.
 message PickableAcquireResult {
+  // Per-connection request sequence, starts at 1, strictly increasing.
+  // sequence = 0 is NOT a reply: it is a host-initiated notice that the host
+  // engine natively picked something up for the collector's avatar (the engine
+  // SubsystemPickables magnet runs for avatars on the host).  Clients apply
+  // the inventory delta directly, without pending-request matching; accepted
+  // must be true, and pickable_id may be 0 when the delta cannot be attributed
+  // to a single removed pickable (partial stack pickup, inventory overflow).
   int64 sequence = 1;
   int32 pickable_id = 2;
   bool accepted = 3;
