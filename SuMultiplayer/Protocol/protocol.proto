@@ -459,6 +459,12 @@ enum MessageType {
   // respawns immediately on PLAYER_RESPAWN_REQUEST, so the message is gone.
   // 110 is retired and must never be reused for a different message.
   reserved 110;
+
+  // 世界控制（worldcontrol.proto）：客户端创意四按钮（降水/雾/闪电/时间）
+  // 不在本地执行，发请求由主机在权威世界上落地；结果回执给请求者显示提示。
+  // Append-only: new message ids 112/113, no existing id is renumbered.
+  WORLD_CONTROL_REQUEST = 112;
+  WORLD_CONTROL_RESULT = 113;
 }
 
 // Logical envelope metadata.  The current single-message transport puts these
@@ -548,6 +554,12 @@ message HelloAck {
   // it; the host sends it proactively. false/old host => the client uploads its own
   // asset right after the handshake (first join / repair).
   bool assigned_skin_asset_present = 16;
+  // true => the host declined this join (manual host approval): no world transfer is
+  // started and the client must abort the join and show reject_reason.
+  // Source: Mod/ScMultiplayer (join approval: Allow/Reject or auto-approve setting)
+  bool rejected = 17;
+  // Explicit reject reason (logged / shown by the client; empty = host did not explain).
+  string reject_reason = 18;
 
   bytes ext = 100;
   google.protobuf.Any custom = 101;

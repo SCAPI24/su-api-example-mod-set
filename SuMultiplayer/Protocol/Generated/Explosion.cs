@@ -45,16 +45,17 @@ namespace SuMultiplayer.Protocol.Explosion {
             "EQoJY2xpZW50X2lkGAMgASgFEhAKCGlkZW50aXR5GAQgASgJEgwKBG5hbWUY",
             "BSABKAkSJQoIcG9zaXRpb24YBiABKAsyEy5zdW1wLnBvc2l0aW9uLlZlYzMS",
             "DgoGZGFtYWdlGAcgASgCEhQKDGhlYWx0aF9hZnRlchgIIAEoAhILCgNleHQY",
-            "ZCABKAwSJAoGY3VzdG9tGGUgASgLMhQuZ29vZ2xlLnByb3RvYnVmLkFueSrU",
+            "ZCABKAwSJAoGY3VzdG9tGGUgASgLMhQuZ29vZ2xlLnByb3RvYnVmLkFueSry",
             "AQoNRXhwbG9zaW9uS2luZBIeChpFWFBMT1NJT05fS0lORF9VTlNQRUNJRklF",
             "RBAAEhgKFEVYUExPU0lPTl9LSU5EX0JMT0NLEAESGAoURVhQTE9TSU9OX0tJ",
             "TkRfQ0hBSU4QAhIcChhFWFBMT1NJT05fS0lORF9USFJPV0FCTEUQAxIbChdF",
             "WFBMT1NJT05fS0lORF9GSVJFV09SSxAEEhYKEkVYUExPU0lPTl9LSU5EX0tF",
-            "RxAFEhwKGEVYUExPU0lPTl9LSU5EX0RFVE9OQVRPUhAGKoMBChRFeHBsb3Np",
-            "b25SZXF1ZXN0S2luZBImCiJFWFBMT1NJT05fUkVRVUVTVF9LSU5EX1VOU1BF",
-            "Q0lGSUVEEAASIQodRVhQTE9TSU9OX1JFUVVFU1RfS0lORF9JR05JVEUQARIg",
-            "ChxFWFBMT1NJT05fUkVRVUVTVF9LSU5EX1RIUk9XEAJCJUgBqgIgU3VNdWx0",
-            "aXBsYXllci5Qcm90b2NvbC5FeHBsb3Npb25iBnByb3RvMw=="));
+            "RxAFEhwKGEVYUExPU0lPTl9LSU5EX0RFVE9OQVRPUhAGEhwKGEVYUExPU0lP",
+            "Tl9LSU5EX0xJR0hUTklORxAHKoMBChRFeHBsb3Npb25SZXF1ZXN0S2luZBIm",
+            "CiJFWFBMT1NJT05fUkVRVUVTVF9LSU5EX1VOU1BFQ0lGSUVEEAASIQodRVhQ",
+            "TE9TSU9OX1JFUVVFU1RfS0lORF9JR05JVEUQARIgChxFWFBMT1NJT05fUkVR",
+            "VUVTVF9LSU5EX1RIUk9XEAJCJUgBqgIgU3VNdWx0aXBsYXllci5Qcm90b2Nv",
+            "bC5FeHBsb3Npb25iBnByb3RvMw=="));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { global::Google.Protobuf.WellKnownTypes.AnyReflection.Descriptor, global::SuMultiplayer.Protocol.Position.PositionReflection.Descriptor, },
           new pbr::GeneratedClrTypeInfo(new[] {typeof(global::SuMultiplayer.Protocol.Explosion.ExplosionKind), typeof(global::SuMultiplayer.Protocol.Explosion.ExplosionRequestKind), }, null, new pbr::GeneratedClrTypeInfo[] {
@@ -101,6 +102,17 @@ namespace SuMultiplayer.Protocol.Explosion {
     /// DetonatorBlock.
     /// </summary>
     [pbr::OriginalName("EXPLOSION_KIND_DETONATOR")] Detonator = 6,
+    /// <summary>
+    /// Lightning strike.  Source: Survivalcraft/Game/SubsystemSky.cs:MakeLightningStrike
+    /// -- the only no-sound AddExplosion caller in the engine (pressure 19 or 39,
+    /// queued at the cell ABOVE the struck cell).  For this kind block_value carries
+    /// the STRUCK cell's pre-destruction value (e.g. sand) so clients can replay the
+    /// block-colored BlockDebrisParticleSystem the host's MakeLightningStrike spawns
+    /// (SubsystemSky.cs:249-255); no explosion sound is played (host is silent, thunder
+    /// arrives through the audio path).  Boundary: a strike into leaves spawns no
+    /// explosion at all (SubsystemSky.cs:228-243), so no event and no debris.
+    /// </summary>
+    [pbr::OriginalName("EXPLOSION_KIND_LIGHTNING")] Lightning = 7,
   }
 
   /// <summary>
@@ -239,8 +251,10 @@ namespace SuMultiplayer.Protocol.Explosion {
     public const int RadiusFieldNumber = 5;
     private float radius_;
     /// <summary>
-    /// Visual blast radius in cells (1..16), derived from the engine pressure at the
-    /// charge centre by ExplosionVisualPolicy.  The raw pressure is carried in ext.
+    /// Visual blast radius in cells (0.5..16), derived from the engine pressure at the
+    /// charge centre by ExplosionVisualPolicy.  0.5 = fire on the centre cell only
+    /// (lightning tier; the surrounding debris ring is block projectiles replicated by
+    /// the entity domain, not fire).  The raw pressure is carried in ext.
     /// </summary>
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
@@ -257,7 +271,8 @@ namespace SuMultiplayer.Protocol.Explosion {
     /// <summary>
     /// Cell value of the exploding block (0 for chain explosions whose cell was
     /// already destroyed).  For fireworks this is the projectile item value with
-    /// FireworksBlock data (shape / color / altitude / flickering).
+    /// FireworksBlock data (shape / color / altitude / flickering).  For lightning
+    /// strikes this is the STRUCK cell's pre-destruction value (debris burst source).
     /// </summary>
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]

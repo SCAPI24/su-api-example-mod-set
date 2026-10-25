@@ -1,0 +1,39 @@
+syntax = "proto3";
+
+package sump.worldcontrol;
+
+option csharp_namespace = "SuMultiplayer.Protocol.WorldControl";
+option optimize_for = SPEED;
+
+// Client -> host：请求主机执行世界控制动作（语义 = 引擎创意模式四按钮，
+// Source: Survivalcraft/Game/ComponentGui.cs:679-737）。客户端不本地执行——
+// 权威状态由既有 WorldInfo 快照（~2 Hz）广播回来，客户端只在回执后显示提示。
+message WorldControlRequest {
+  int64 request_id = 1;
+  // 四个动作可以合并一次请求（同一帧内只可能各出现一次：点击是一次性的）。
+  bool precipitation = 2;  // 切换降水（ManualPrecipitationStart/End）
+  bool fog = 3;            // 切换雾（ManualFogStart/End）
+  bool lightning = 4;      // 在 origin 朝 direction 劈一次闪电（请求者眼睛 + 视线）
+  bool time_of_day = 5;    // 时间跳到最近的 晨/午/暮/夜（引擎同款区间判定）
+  // 闪电的瞄准参数（lightning=true 时必须全为有限值）。
+  float lightning_x = 6;
+  float lightning_y = 7;
+  float lightning_z = 8;
+  float dir_x = 9;
+  float dir_y = 10;
+  float dir_z = 11;
+}
+
+// Host -> client：权威结果。accepted=false 时 reject_reason 写明可定位的原因；
+// accepted=true 时 applied 是实际应用的动作位（与请求的位语义一致），
+// 客户端据此显示与引擎一致的提示（"Precipitation On"/"Dawn"…）。
+message WorldControlResult {
+  int64 request_id = 1;
+  bool accepted = 2;
+  string reject_reason = 3;
+  bool precipitation_started = 4;
+  bool fog_started = 5;
+  // 0 无 / 1 晨 Dawn / 2 午 Noon / 3 暮 Dusk / 4 夜 Midnight。
+  int32 time_result = 6;
+  int32 applied = 7;
+}

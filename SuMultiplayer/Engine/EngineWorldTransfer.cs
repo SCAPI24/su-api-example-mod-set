@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Text;
 using Engine;
 using Game;
 using SuMultiplayer.Transfer;
@@ -150,63 +151,67 @@ namespace SuMultiplayer.Engine
 
         // ---------------------------------------------------------------- 下载世界的登记与删除
 
-        /// <summary>下载世界登记表（旧实现 ScMultiplayer 用的同一套做法：一行一个目录）。</summary>
-        private const string DownloadedWorldsRegistryPath = "data:/SuMultiplayerDownloadedWorlds.txt";
+        /// <summary>
+        /// 下载来的世界是**临时目录**：客户端**不保存任何下载世界**（用户口径 2026-10-21）。
+        /// 每个下载世界在自己的目录里有一个标记文件；回到 Play 屏 / 空闲时的清理流程会删除
+        /// 所有带标记的世界 → 每次加入都从主机重新整图下载，不同世界之间不保留任何东西。
+        /// 标记随世界目录一起删除，不会在仓库根留全局登记表。
+        /// </summary>
+        private const string DownloadedMarkerFileName = "SuMultiplayerDownloadedWorld.mark";
 
         /// <summary>
-        /// 登记表的一行：<c>sessionId \t baseSequence \t directory</c>。
-        /// 旧文件里的裸目录行仍然可读（没有会话标识 ⇒ 重连时按首次加入处理，绝不猜）。
+        /// **只在本次进程内**记住"下载世界 ↔ 主机会话/基线"，用于同一次游玩里的断线重连（追帧）。
+        /// 进程重启 / 离开房间后就没有这份记忆 → Hello 不声明重连，主机按首次加入重新下发整图；
+        /// 世界目录本身也会被清理删掉（客户端不保留下载世界）。
         /// </summary>
-        private sealed class DownloadedWorldEntry
+        private readonly Dictionary<string, SessionMemory> m_sessionMemory =
+            new Dictionary<string, SessionMemory>(StringComparer.OrdinalIgnoreCase);
+
+        private sealed class SessionMemory
         {
-            public string Directory = string.Empty;
             public string SessionId = string.Empty;
             public long BaseSequence;
         }
 
-        // Source: Mod/ScMultiplayer/Modules/Session/ScMultiplayerClientEvents.cs:RegisterDownloadedWorld
+        private static string MarkerPath(string directory) =>
+            string.IsNullOrEmpty(directory)
+                ? string.Empty
+                : Storage.CombinePaths(directory, DownloadedMarkerFileName);
+
+        /// <summary>该目录是不是"下载来的世界"（世界目录里有标记文件）。</summary>
+        public bool IsDownloaded(string directory) =>
+            !string.IsNullOrEmpty(directory) && Storage.FileExists(MarkerPath(directory));
+
+        /// <summary>登记一个"下载来的世界"（写标记；没有会话标识，重连时按首次加入处理）。</summary>
         public void Register(string directory)
         {
             if (string.IsNullOrEmpty(directory)) return;
+            if (Storage.FileExists(MarkerPath(directory))) return;
             try
             {
-                List<DownloadedWorldEntry> entries = ReadRegistryEntries();
-                if (FindEntry(entries, directory) != null) return;
-                entries.Add(new DownloadedWorldEntry { Directory = directory });
-                WriteRegistryEntries(entries);
+                Storage.WriteAllText(MarkerPath(directory), "downloaded\n");
             }
             catch (Exception e)
             {
-                Log.Error("[SuMP] 登记下载世界失败（" + directory + "）：" + e.GetType().Name + " " + e.Message);
+                Log.Error("[SuMP] 标记下载世界失败（" + directory + "）：" + e.GetType().Name +
+                    " " + e.Message + " → 该目录不会被自动清理（下次清理时也不会认得它）");
             }
         }
 
         // 会话标识是"这份下载世界属于哪个主机会话"的登记（WorldBegin 的 append-only 字段）。
+        // **只放内存**：客户端不保存下载世界，重启后就不该再声称"我还拿着上一轮的会话"。
         public void RegisterSession(string directory, string sessionId, long baseSequence)
         {
             if (string.IsNullOrEmpty(directory)) return;
-            try
+            Register(directory);
+            m_sessionMemory[directory] = new SessionMemory
             {
-                List<DownloadedWorldEntry> entries = ReadRegistryEntries();
-                DownloadedWorldEntry entry = FindEntry(entries, directory);
-                if (entry == null)
-                {
-                    entry = new DownloadedWorldEntry { Directory = directory };
-                    entries.Add(entry);
-                }
-                entry.SessionId = (sessionId ?? string.Empty).Trim();
-                entry.BaseSequence = Math.Max(0L, baseSequence);
-                WriteRegistryEntries(entries);
-                Log.Information("[SuMP] 下载世界已登记会话：" + directory + " · session=" +
-                    (entry.SessionId.Length == 0 ? "(none)" : entry.SessionId) +
-                    " · base=" + entry.BaseSequence);
-            }
-            catch (Exception e)
-            {
-                // 明确失败：没有登记成功 ⇒ 之后的重连会按"没有会话标识"处理（整图重下），不静默。
-                Log.Error("[SuMP] 登记下载世界会话失败（" + directory + "）：" +
-                    e.GetType().Name + " " + e.Message + " → 之后的重连会按首次加入处理");
-            }
+                SessionId = (sessionId ?? string.Empty).Trim(),
+                BaseSequence = Math.Max(0L, baseSequence)
+            };
+            Log.Information("[SuMP] 下载世界会话（仅本次进程内）：" + directory + " · session=" +
+                (string.IsNullOrEmpty(sessionId) ? "(none)" : sessionId) +
+                " · base=" + Math.Max(0L, baseSequence));
         }
 
         public bool TryGetSession(string directory, out string sessionId, out long baseSequence)
@@ -214,97 +219,79 @@ namespace SuMultiplayer.Engine
             sessionId = string.Empty;
             baseSequence = 0L;
             if (string.IsNullOrEmpty(directory)) return false;
-            DownloadedWorldEntry entry = FindEntry(ReadRegistryEntries(), directory);
-            if (entry == null || string.IsNullOrEmpty(entry.SessionId)) return false;
-            sessionId = entry.SessionId;
-            baseSequence = entry.BaseSequence;
+            if (!m_sessionMemory.TryGetValue(directory, out SessionMemory memory) || memory == null)
+                return false;   // 重启 / 清过 = 没有会话 ⇒ 首次加入（整图重下）
+            if (string.IsNullOrEmpty(memory.SessionId)) return false;
+            sessionId = memory.SessionId;
+            baseSequence = memory.BaseSequence;
             return true;
         }
 
+        /// <summary>作废该世界的会话记忆（世界目录仍然保留到清理时删除）。</summary>
         public void ForgetSession(string directory)
         {
             if (string.IsNullOrEmpty(directory)) return;
-            try
-            {
-                List<DownloadedWorldEntry> entries = ReadRegistryEntries();
-                DownloadedWorldEntry entry = FindEntry(entries, directory);
-                if (entry == null) return;
-                entry.SessionId = string.Empty;
-                entry.BaseSequence = 0L;
-                WriteRegistryEntries(entries);
-            }
-            catch (Exception e)
-            {
-                Log.Error("[SuMP] 作废下载世界会话失败（" + directory + "）：" +
-                    e.GetType().Name + " " + e.Message + " → 旧会话可能仍留在登记表里，主机侧会再次判定");
-            }
+            m_sessionMemory.Remove(directory);
         }
 
-        private static DownloadedWorldEntry FindEntry(List<DownloadedWorldEntry> entries, string directory)
-        {
-            for (int i = 0; i < entries.Count; i++)
-            {
-                if (string.Equals(entries[i].Directory, directory, StringComparison.OrdinalIgnoreCase))
-                    return entries[i];
-            }
-            return null;
-        }
-
+        /// <summary>当前所有"下载来的世界"目录（= 世界里带标记文件的那些，含上次异常退出的残留）。</summary>
         public IReadOnlyList<string> Registered
         {
             get
             {
-                List<DownloadedWorldEntry> entries = ReadRegistryEntries();
-                var directories = new List<string>(entries.Count);
-                for (int i = 0; i < entries.Count; i++) directories.Add(entries[i].Directory);
+                var directories = new List<string>();
+                try
+                {
+                    ReadOnlyList<WorldInfo> infos = WorldsManager.WorldInfos;
+                    for (int i = 0; i < infos.Count; i++)
+                    {
+                        string directory = infos[i]?.DirectoryName;
+                        if (string.IsNullOrEmpty(directory)) continue;
+                        if (IsDownloaded(directory)) directories.Add(directory);
+                    }
+                }
+                catch (Exception e)
+                {
+                    Log.Error("[SuMP] 枚举下载世界失败：" + e.GetType().Name + " " + e.Message +
+                        " → 本次清理按空表处理（不会误删非下载世界）");
+                }
                 return directories;
             }
         }
 
-        // Source: Mod/ScMultiplayer/Modules/Session/ScMultiplayerClientEvents.cs:WriteDownloadedWorldRegistry
-        // 只保留 surviving 目录，但**已有条目的会话标识原样保留**（清世界不该把别的世界的会话标签弄丢）。
+        /// <summary>
+        /// 清理后对齐：不保留任何持久登记，只需要把"清理失败、但已经被判定不该留"的标记删掉。
+        /// </summary>
         public void SaveRegistry(IReadOnlyList<string> directories)
         {
             try
             {
-                List<DownloadedWorldEntry> current = ReadRegistryEntries();
-                var kept = new List<DownloadedWorldEntry>(directories?.Count ?? 0);
-                if (directories != null)
+                ReadOnlyList<WorldInfo> infos = WorldsManager.WorldInfos;
+                for (int i = 0; i < infos.Count; i++)
                 {
-                    for (int i = 0; i < directories.Count; i++)
+                    string directory = infos[i]?.DirectoryName;
+                    if (string.IsNullOrEmpty(directory)) continue;
+                    string path = MarkerPath(directory);
+                    if (!Storage.FileExists(path)) continue;
+                    bool kept = false;
+                    if (directories != null)
                     {
-                        string directory = directories[i];
-                        if (string.IsNullOrEmpty(directory)) continue;
-                        DownloadedWorldEntry entry = FindEntry(current, directory);
-                        kept.Add(entry ?? new DownloadedWorldEntry { Directory = directory });
+                        for (int j = 0; j < directories.Count; j++)
+                        {
+                            if (string.Equals(directories[j], directory, StringComparison.OrdinalIgnoreCase))
+                            {
+                                kept = true;
+                                break;
+                            }
+                        }
                     }
+                    if (!kept) Storage.DeleteFile(path);
                 }
-                WriteRegistryEntries(kept);
             }
             catch (Exception e)
             {
-                Log.Error("[SuMP] 写下载世界登记表失败：" + e.GetType().Name + " " + e.Message);
+                Log.Error("[SuMP] 对齐下载世界标记失败：" + e.GetType().Name + " " + e.Message);
             }
-        }
-
-        private static void WriteRegistryEntries(List<DownloadedWorldEntry> entries)
-        {
-            if (entries == null || entries.Count == 0)
-            {
-                if (Storage.FileExists(DownloadedWorldsRegistryPath))
-                    Storage.DeleteFile(DownloadedWorldsRegistryPath);
-                return;
-            }
-            var lines = new List<string>(entries.Count);
-            for (int i = 0; i < entries.Count; i++)
-            {
-                DownloadedWorldEntry entry = entries[i];
-                // 空会话标识也照写占位（列数固定，读的时候不会把目录当成会话）。
-                lines.Add((entry.SessionId ?? string.Empty) + "\t" +
-                    entry.BaseSequence.ToString(System.Globalization.CultureInfo.InvariantCulture) + "\t" +
-                    entry.Directory);
-            }
-            Storage.WriteAllText(DownloadedWorldsRegistryPath, string.Join("\n", lines));
         }
 
         // Source: Mod/ScMultiplayer/Modules/Session/ScMultiplayerClientEvents.cs:DeleteDownloadedWorldAndUnregister
@@ -314,6 +301,7 @@ namespace SuMultiplayer.Engine
             try
             {
                 WorldsManager.DeleteWorld(directory);
+                m_sessionMemory.Remove(directory);   // 下载世界删掉 = 会话记忆一起作废
                 return true;
             }
             catch (Exception e)
@@ -323,50 +311,6 @@ namespace SuMultiplayer.Engine
             }
         }
 
-        // Source: Mod/ScMultiplayer/Modules/Session/ScMultiplayerClientEvents.cs:ReadDownloadedWorldRegistry
-        private static List<DownloadedWorldEntry> ReadRegistryEntries()
-        {
-            var entries = new List<DownloadedWorldEntry>();
-            try
-            {
-                if (!Storage.FileExists(DownloadedWorldsRegistryPath)) return entries;
-                string text = Storage.ReadAllText(DownloadedWorldsRegistryPath);
-                foreach (string line in (text ?? string.Empty).Split('\n'))
-                {
-                    // Storage.WriteAllText 会写 UTF-8 BOM，BOM 不是 char.IsWhiteSpace，
-                    // 不剥掉的话第一行会变成 "\uFEFFdata:/Worlds/World"，删世界必然失败。
-                    string trimmed = line.Trim().TrimStart('\uFEFF');
-                    if (trimmed.Length == 0) continue;
-                    string[] parts = trimmed.Split('\t');
-                    if (parts.Length >= 3 &&
-                        long.TryParse(parts[1], System.Globalization.NumberStyles.Integer,
-                            System.Globalization.CultureInfo.InvariantCulture, out long baseSequence) &&
-                        parts[2].Trim().Length > 0)
-                    {
-                        entries.Add(new DownloadedWorldEntry
-                        {
-                            SessionId = parts[0].Trim(),
-                            BaseSequence = Math.Max(0L, baseSequence),
-                            Directory = parts[2].Trim()
-                        });
-                        continue;
-                    }
-                    if (parts.Length == 1)
-                    {
-                        // 旧格式（裸目录）：没有会话标识 —— 明确按"没有"处理，重连时整图重下。
-                        entries.Add(new DownloadedWorldEntry { Directory = trimmed });
-                        continue;
-                    }
-                    Log.Warning("[SuMP] 跳过无法识别的下载世界登记行（列数 " + parts.Length +
-                        "，既不是目录也不是 session\\tbase\\tdir）：" + trimmed);
-                }
-            }
-            catch (Exception e)
-            {
-                Log.Error("[SuMP] 读下载世界登记表失败：" + e.GetType().Name + " " + e.Message);
-            }
-            return entries;
-        }
     }
 
 }

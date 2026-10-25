@@ -158,6 +158,15 @@ namespace SuMultiplayer.Engine
                     consumedAny = true;
                     bool isChain = ConsumePendingChain(x, y, z, pressure, incendiary, noSound);
                     int blockValue = ReadCellValue(project, x, y, z);
+                    // Source: Survivalcraft/Game/SubsystemSky.cs:SubsystemSky.MakeLightningStrike:246-247
+                    // 引擎 AddExplosion 只有两个调用点（TryExplodeBlock:204 / SubsystemSky:247），
+                    // 唯一传 noExplosionSound:true 的是雷击，且压力恰为 19（80%）/ 39（20%）。
+                    // 雷击爆炸中心在被劈格子的**上一格**（num4+1）：block_value 改读被劈格子的
+                    // 原值（沙等），客户端用它复刻主机 MakeLightningStrike 的 BlockDebrisParticleSystem
+                    // （SubsystemSky.cs:249-255）。必须在 InvokeSimulate 之前读（破坏前原方块）。
+                    bool isLightning = !isChain && noSound && (pressure == 19f || pressure == 39f);
+                    if (isLightning)
+                        blockValue = ReadCellValue(project, x, y - 1, z);
                     int beforeCount = queue.Count;
                     InvokeSimulate(subsystem, x, y, z, pressure, incendiary);
                     playSound |= !noSound;
@@ -169,6 +178,9 @@ namespace SuMultiplayer.Engine
                     }
 
                     ClassifyBlock(blockValue, isChain, out int kind, out bool cosmeticOnly);
+                    // 雷击：ClassifyBlock 按被劈格值分类（沙→block），统一改标 Lightning
+                    //（客户端据此复刻碎屑粒子并跳过爆炸音；见 Protocol/explosion.proto 枚举注释）。
+                    if (isLightning) kind = ExplosionKinds.Lightning;
                     string chainKey = x + "," + y + "," + z + "," +
                         BitConverter.SingleToInt32Bits(pressure) + "," + (incendiary ? 1 : 0);
                     if (isChain && !chainKeysThisUpdate.Add(chainKey))

@@ -51,6 +51,7 @@ offset 16 : protobuf payload       （该 type 对应的消息字节）
 | `Protocol/terrain.proto` | 摘要上报、裁决、整块回传、格改动、追帧控制、客户端内存区块、重新核对 |
 | `Protocol/transfer.proto` | 世界清单 / 分片 / 结束 / 缺片 + 随机数状态表 |
 | `Protocol/worldinfo.proto` | 时间 / 天气 / 雾 / 闪电 / WorldSettings |
+| `Protocol/worldcontrol.proto` | 世界控制请求 / 回执（`WORLD_CONTROL_REQUEST = 112` / `WORLD_CONTROL_RESULT = 113`）：客户端创意四按钮（降水 / 雾 / 闪电 / 时间）不在本地执行，发请求由主机在权威世界按引擎同款调用落地；状态变化由既有 WorldInfo 快照广播生效，回执带最新降水/雾状态与时间档位供请求者显示提示。见 `Modules/WorldControlModule.cs` 与 `Engine/WorldControlEngine.cs` |
 | `Protocol/authority.proto` | 单元格编辑请求 / 裁决 |
 | `Protocol/position.proto` | 玩家位置 / 姿态单条与批 |
 | `Protocol/creature.proto` | 生物记录批 / 全量重发请求 |

@@ -47,6 +47,8 @@ namespace SuMultiplayer.Modules
         /// 否则会把刚建立的连接停掉，客户端永远收不到世界。只生效一次，且只在真正返回时置位。
         /// </summary>
         private bool m_preserveJoinOnNextPlayEnter;
+        /// <summary>Play 屏（地图列表）是否可见：只有可见时才持续做局域网房间探测。</summary>
+        private bool m_listVisible;
         private string m_roomWorldName = string.Empty;
         private string m_roomGameMode = string.Empty;
 
@@ -76,9 +78,9 @@ namespace SuMultiplayer.Modules
             if (!context.TryGetPort(out m_transportControl))
                 Log("没有拿到传输控制端口（地形模块缺失）→ 建房/加入都无法进行");
 
-            // 发现开启：Play 屏要把局域网里的房间显示成行。
+            // 发现按需开启：只有 Play 屏（地图列表）可见时才探测，
+            // 回主菜单/进世界后不再持续发探测包（用户口径：不在列表时不要刷新）。
             m_join.StageChanged += (from, to, detail) => Log("加入流程 " + from + " → " + to + "：" + detail);
-            StartDiscovery("模块上线");
         }
 
         /// <summary>
@@ -89,6 +91,11 @@ namespace SuMultiplayer.Modules
         private void StartDiscovery(string why)
         {
             if (m_beaconClient != null || IsHostingRoom) return;
+            if (!m_listVisible)
+            {
+                Log("暂不寻找房间（Play 屏不可见；进入地图列表时才开始探测）");
+                return;
+            }
             m_beaconClient = new RoomBeaconClient(m_config.DiscoveryPort);
             m_beaconClient.RoomFound += HandleRoomFound;
             if (m_beaconClient.Start())
@@ -173,7 +180,23 @@ namespace SuMultiplayer.Modules
             m_roomGameMode = string.Empty;
             m_transportControl?.StopChannel();
             Log("房间已关闭（发现应答与地图通道都已停）");
-            StartDiscovery("房间已关闭，重新寻找房间");
+            if (m_listVisible) StartDiscovery("房间已关闭，重新寻找房间");
+        }
+
+        /// <summary>Play 屏可见性（UI 在 Enter/Leave 调用）：不可见时停止一切房间探测。</summary>
+        public void SetListVisible(bool visible)
+        {
+            if (m_listVisible == visible) return;
+            m_listVisible = visible;
+            if (visible)
+            {
+                StartDiscovery("进入地图列表");
+                m_join.Discover(Environment.TickCount64);
+            }
+            else
+            {
+                StopDiscovery("离开地图列表（停止刷新）");
+            }
         }
 
         private RoomBeaconInfo BuildRoomInfo() => new RoomBeaconInfo
@@ -246,6 +269,25 @@ namespace SuMultiplayer.Modules
             StartDiscovery("回到世界列表");
         }
 
+        /// <summary>
+        /// 客户端被主机拒绝加入（HelloAck.rejected / 主机审批超时）：关闭通道、把加入流程打回 Idle。
+        /// 这不是正常"离开房间"：不写欢迎类日志，由组合根弹提示并显示拒绝原因；绝不自动重连。
+        /// </summary>
+        public void NotifyJoinRejected(string reason)
+        {
+            bool wasActive = m_transportControl?.IsChannelRunning == true || m_joinAnnounced;
+            m_transportControl?.StopChannel();
+            m_joinAnnounced = false;
+            m_preserveJoinOnNextPlayEnter = false;
+            SelectedAddress = null;
+            SelectedPort = 0;
+            m_profileStore?.Clear();
+            m_join.Reset(Environment.TickCount64);
+            Log("主机拒绝加入 → 通道已关闭，加入流程回到 Idle：" +
+                (string.IsNullOrEmpty(reason) ? "(主机未说明原因)" : reason) +
+                (wasActive ? string.Empty : "（当时通道未在运行）"));
+        }
+
         private void HandleRoomFound(RoomBeaconInfo info, string address)
         {
             long now = Environment.TickCount64;
@@ -260,6 +302,8 @@ namespace SuMultiplayer.Modules
                 MaxPlayers = info.MaxPlayers,
                 WorldName = info.WorldName,
                 GameMode = info.GameMode,
+                // 房间行的延迟：用探测→应答的 RTT（旧联机 mod 房间行同样显示 Ping；-1 = unknown）。
+                PingMs = info.PingMs,
                 LastSeenMs = now
             };
             bool isNew = FindByKey(entry.Key) == null;

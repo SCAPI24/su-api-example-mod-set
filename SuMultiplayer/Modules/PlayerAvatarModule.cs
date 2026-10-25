@@ -78,6 +78,12 @@ namespace SuMultiplayer.Modules
         private readonly NetworkAvatarSpawner m_spawner;
         private readonly SuMultiplayerPlayersXml m_records;
         private readonly LocalPlayerProfileStore m_profileStore;
+        /// <summary>
+        /// 本机资料缓存当前属于哪个世界目录。**客户端角色按世界隔离**（用户口径 2026-10-21）：
+        /// 换世界就清空本机资料缓存，下一张图不再把上一张图的角色外观当"我的资料"报给主机
+        /// （否则新世界不会弹创建角色，而是沿用旧名字/旧皮肤）。
+        /// </summary>
+        private string m_profileWorldDirectory = string.Empty;
         /// <summary>引擎皮肤资源端口（组合根注入；没有时自定义皮肤明确失败，不换成内置）。</summary>
         private readonly IPlayerSkinPort m_skinPort;
         /// <summary>玩家键 → 待建/重试中的本机角色（一个槽位一条）。</summary>
@@ -371,6 +377,9 @@ namespace SuMultiplayer.Modules
                     // 换了世界：旧世界的 PlayerData 已随 Project 销毁，必须丢掉引用。
                     Info("检测到 Project 更换：丢掉旧世界的联机角色引用（玩家端 " + m_spawner.Count +
                         " 个）；仍在挂起队列里的加入请求会照常在**新世界**里创建");
+                    // 角色记录表按"世界实例"重建（不能只按目录名判断）：世界被删后在同一目录
+                    // 名上重建时，旧记录绝不能漏进新世界（否则客户端会被当成已有角色、不弹创建界面）。
+                    m_records.OnProjectChanged();
                     m_spawner.ForgetAll();
                     m_roster.Clear();
                     m_appliedAvatarSignatures.Clear();
@@ -383,6 +392,25 @@ namespace SuMultiplayer.Modules
                     m_hostSlotSignatures.Clear();
                 }
                 m_project = project;
+                // 世界切换：客户端资料缓存按世界隔离（不同世界 = 不同文件夹，信息不迁移）。
+                // 同一世界内的重连不触发（Project 引用没变），主机分配资料会照常重新应用。
+                string newWorldDirectory = project?.FindSubsystem<SubsystemGameInfo>(false)
+                    ?.DirectoryName ?? string.Empty;
+                if (!string.Equals(newWorldDirectory, m_profileWorldDirectory,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    string previousWorldDirectory = m_profileWorldDirectory;
+                    m_profileWorldDirectory = newWorldDirectory;
+                    if (m_profileStore.HasProfile)
+                    {
+                        Info("世界切换（\"" + (previousWorldDirectory.Length == 0
+                                ? "(无世界)" : previousWorldDirectory) + "\" → \"" +
+                            (newWorldDirectory.Length == 0 ? "(无世界)" : newWorldDirectory) +
+                            "\"）→ 清空本机资料缓存：客户端角色按世界隔离，" +
+                            "换世界不再沿用上一张图的名字/外观（要角色由新世界主机分配或重新创建）");
+                        m_profileStore.Clear();
+                    }
+                }
                 m_hostAvatarCreated = false;
                 m_profilePromptShown = false;
                 m_reportedProblems.Clear();
@@ -3193,6 +3221,21 @@ namespace SuMultiplayer.Modules
         /// Source: ScMultiplayerWorldObjectHandlers.cs:481-484
         ///         （旧实现用 m_networkPlayerData.Values 排除网络化身来找"本机玩家"）
         /// </summary>
+        /// <inheritdoc />
+        public bool TryGetHelloProfileClaim(out PlayerProfileSnapshot profile)
+        {
+            profile = null;
+            PlayerProfileSnapshot stored = m_profileStore?.Profile;
+            if (stored == null || !stored.HasName) return false;
+            // 只有"这个资料刚在创建角色界面确认过"才允许在 Hello 里申报（旧联机 mod 的
+            // m_activeJoinHasPlayerProfile 口径）。host-record / host-roster / edit-player 都是
+            // 主机分配或房间内编辑的结果，不是"我要在新世界创建这个角色"，绝不能拿去让主机建记录。
+            if (!string.Equals(m_profileStore.Source, "character-screen", StringComparison.Ordinal))
+                return false;
+            profile = stored;
+            return true;
+        }
+
         public bool IsNetworkAvatar(PlayerData playerData) => m_spawner.Contains(playerData);
 
         /// <summary>

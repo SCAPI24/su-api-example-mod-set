@@ -44,6 +44,9 @@ namespace SuMultiplayer.Modules
         /// <summary>主机 Hello 资料闸门（联机角色模块在组合根里注入）。</summary>
         private IHelloProfileGate m_helloProfileGate;
 
+        /// <summary>加入审批决定器（组合根注入；null = 不做审批）。</summary>
+        private IJoinApprovalDecider m_joinApproval;
+
         private IModuleContext m_context;
         private TcpTerrainServer m_server;
         private TcpTerrainClient m_client;
@@ -87,6 +90,8 @@ namespace SuMultiplayer.Modules
         private readonly HashSet<string> m_reportedFrameProblems = new HashSet<string>(StringComparer.Ordinal);
         /// <summary>玩家点了"加入房间"：通道断了要按间隔重连（这是加入流程的一部分，不是兜底）。</summary>
         private bool m_wantClient;
+        /// <summary>主机丢失退出端口（组合根注册；null 时维持旧的按间隔重连语义）。</summary>
+        private IClientSessionExitPort m_clientExit;
         private string m_wantHost = string.Empty;
         private int m_wantPort;
         private int m_hostPort;
@@ -240,6 +245,20 @@ namespace SuMultiplayer.Modules
             if (m_host != null) m_host.ProfileGate = gate;
         }
 
+        /// <summary>
+        /// 组合根把"加入审批"决定器接到主机 Hello 之前（必须在任何玩家端连接之前）。
+        /// 决定器负责：自动同意（设置）或弹主机审批界面（Allow / Reject）；
+        /// 审批发生在角色记录/角色实体/世界传输之前，拒绝的连接不会在主机留下任何角色。
+        /// </summary>
+        public void SetJoinApproval(IJoinApprovalDecider decider)
+        {
+            m_joinApproval = decider;
+            if (m_host != null) m_host.JoinApproval = decider;
+        }
+
+        /// <summary>主机拒绝加入 / 审批超时（客户端收到 HelloAck.rejected）：上层据此提示玩家并中止加入。</summary>
+        public event Action<string> JoinRejected;
+
         /// <summary>本机资料存储（角色创建界面 / Hello 共用）。组合根创建后传入。</summary>
         public LocalPlayerProfileStore ProfileStore => m_profileStore;
 
@@ -378,6 +397,19 @@ namespace SuMultiplayer.Modules
                     "没有接上主机端动物位置来源（IHostCreatureCellSource）→ 实时地图的 animals[] " +
                     "会一直为空（请确认组合根注册了它；绝不拿客户端复制体顶替主机动物）");
             }
+            // 主机丢失退出端口：客户端在世界内通道死亡时退出联机房间（产品口径 2026-10-26：
+            // 主机掉线 / 重启 → 客户端退房回世界列表，绝不带旧状态自动连进新房间）。
+            if (context.TryGetPort(out IClientSessionExitPort clientExit) && clientExit != null)
+            {
+                m_clientExit = clientExit;
+            }
+            else
+            {
+                m_clientExit = null;
+                LogOnce("client-exit-no-port",
+                    "没有拿到主机丢失退出端口（IClientSessionExitPort）→ 客户端在世界内与主机失联时" +
+                    "只能维持旧的 5s 间隔重连（请确认组合根注册了 ClientSessionExit）");
+            }
             m_options.DefaultRadius = m_config.Radius;
             m_bridge.ChunkLoaded += HandleChunkLoaded;
             m_bridge.ChunkUnloaded += HandleChunkUnloaded;
@@ -413,6 +445,8 @@ namespace SuMultiplayer.Modules
                     messages: m_messages);
                 // 资料闸门（联机角色模块）：Hello 时决定"有没有角色记录 / 要不要先建角色"。
                 m_host.ProfileGate = m_helloProfileGate;
+                // 加入审批（组合根注入）：玩家端 join 必须主机同意（或设置自动同意）才继续握手。
+                m_host.JoinApproval = m_joinApproval;
                 // 会话标识：建房（房间会话开始）时生成一次，只存在内存里；主机重启 ⇒ 新标识 ⇒
                 // 客户端手里的世界被判过期 ⇒ 整图重下。绝不落盘（见 Terrain/SessionIdentity.cs）。
                 m_sessionId = SessionIdentity.NewSessionId();
@@ -507,6 +541,8 @@ namespace SuMultiplayer.Modules
                 m_clientSync.ClientChunkSetFailed += HandleClientChunkSetFailed;
                 // 断线重连：重连判定拒绝 / 追帧拒绝 / 追帧过程日志。拒绝是显式失败（不是静默降级）。
                 m_clientSync.RejoinRejected += HandleClientRejoinRejected;
+                // 主机明确拒绝加入（手动审批 Reject / 审批超时）：中止本次加入并提示玩家。
+                m_clientSync.JoinRejected += HandleClientJoinRejected;
                 m_clientSync.CatchUpRejected += HandleClientCatchUpRejected;
                 m_clientSync.CatchUpTrace += HandleClientCatchUpTrace;
                 m_clientSync.CatchUpProblem += HandleClientCatchUpProblem;
@@ -527,9 +563,12 @@ namespace SuMultiplayer.Modules
                     ? Math.Max(m_clientChangeSequence, storedBaseSequence)
                     : 0L;
                 m_clientSync.SetAppliedChangeSequence(lastApplied);
-                // 本机资料：角色创建界面写进 store 的优先，其次本机角色（PlayerData.Name），
-                // **绝不**用引擎固定显示名 "Android User" 顶替真实资料（PlayerIdentity.LocalName 已修正）。
-                PlayerProfileSnapshot localProfile = m_profileStore?.Profile;
+                // 本机资料：**只有本机刚完成"角色创建"时才申报**（旧联机 mod 的
+                // m_activeJoinHasPlayerProfile 口径）。主机分配过/缓存的资料不进 Hello ——
+                // 否则新世界会被当成"已有角色"直接建记录，不弹创建界面。
+                PlayerProfileSnapshot localProfile = null;
+                if (m_avatarLink == null || !m_avatarLink.TryGetHelloProfileClaim(out localProfile))
+                    localProfile = null;
                 string helloName = localProfile != null && localProfile.HasName
                     ? localProfile.Name
                     : PlayerIdentity.LocalName();
@@ -560,7 +599,10 @@ namespace SuMultiplayer.Modules
                     " · 依据：" + rejoinReason +
                     " · 世界传输：" + (alreadyHasWorld
                         ? "主机不重发整图，只按序号追帧（同会话）"
-                        : "等主机下发整图，收齐后导入并进入世界"));
+                        : "等主机下发整图，收齐后导入并进入世界") +
+                    (alreadyHasWorld
+                        ? string.Empty
+                        : " · 加入审批：首次加入先由主机决定（手动审批时需主机点 Allow）"));
                 return true;
             }
             catch (Exception e)
@@ -983,6 +1025,16 @@ namespace SuMultiplayer.Modules
                 m_client = null;
                 m_clientSync = null;
                 m_reconnectAttempts = 0;
+                // 2026-10-26 产品口径：主机掉线 / 重启 → 客户端退出联机房间，绝不带旧状态
+                // 自动连进新房间。只在"已在联机世界里"时退出（端口内判 GameScreen）；
+                // 加入流程中的重试（主机晚建房等）维持原样。
+                if (m_clientExit != null && m_clientExit.TryExitWorldOnHostLost(deadReason))
+                {
+                    m_wantClient = false;
+                    LogWarning("与主机的通道已失效：" + deadReason +
+                        " → 退出联机房间回到世界列表（不自动重连；重新加入需要再点房间）");
+                    return;
+                }
                 // 立刻尝试一次重连（失败时下面的重连分支按 5s 间隔继续试）：
                 // 恢复越快，主机侧那个角色"停住"的时间越短。
                 m_nextReconnectMs = (long)(tick.Now * 1000.0);
@@ -2397,6 +2449,20 @@ namespace SuMultiplayer.Modules
         ///   · 本版主机会在这条连接上直接下发整图（hostWillSendWorld=true）→ 保持连接等导入；
         ///   · 旧主机不带会话字段（hostWillSendWorld=false）→ 断开重连成首次加入，否则永远等不到世界。
         /// </summary>
+        /// <summary>
+        /// 主机拒绝加入（HelloAck.rejected）：**明确中止**，不再自动重连（只会再被拒一次）。
+        /// 上层（组合根）据此弹提示并回 Play 屏；主机侧没有建任何角色/记录/世界传输。
+        /// </summary>
+        private void HandleClientJoinRejected(int clientId, string reason)
+        {
+            string text = string.IsNullOrEmpty(reason) ? "(主机未说明原因)" : reason;
+            LogWarning("主机拒绝加入（clientId=" + clientId + "）：" + text +
+                " → 停止本次加入（不再自动重连），由上层提示玩家");
+            m_wantClient = false;
+            m_clientDropRequested = true;
+            JoinRejected?.Invoke(text);
+        }
+
         private void HandleClientRejoinRejected(string reason, bool hostWillSendWorld)
         {
             LogWarning("主机拒绝重连：" + reason + " → 作废下载世界的会话标识" +

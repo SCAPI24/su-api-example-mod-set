@@ -48,6 +48,10 @@ namespace SuMultiplayer.Engine
         private long m_weatherFieldFailures;
         private long m_settingsFieldFailures;
         private bool m_weatherFailureLogged;
+        /// <summary>天气对齐的"当前项目"与上次应用的起止状态（2026-10-26 翻转驱动修复用）。</summary>
+        private Project m_weatherProject;
+        private bool m_lastPrecipStarted;
+        private bool m_lastFogStarted;
 
         private int m_pendingRandomSeed;
         private Dictionary<string, long> m_pendingRandomStates;
@@ -377,24 +381,51 @@ namespace SuMultiplayer.Engine
         {
             SubsystemWeather weather = project.FindSubsystem<SubsystemWeather>(false);
             if (weather == null) return;
+            // 2026-10-26 修复"客户端雨/雾过渡一顿一顿"：不再每 2Hz 硬写强度 / 进度（500ms 一阶，
+            // 主机端却是每帧连续 ramp）。改为**状态翻转驱动**：翻转时写入与引擎 Manual 同款的
+            // 窗口（降水 ramp 1s、雾 ramp 3s，Source: SubsystemWeather.cs:159-181），连续推进交给
+            // SuSubsystemWeather 客户端副本的引擎同款 ramp 数学（UpdateClientVisualRamp）。
+            // 首次（换世界 / 加入）仍直接对齐一次强度值，中途加入不用从 0 慢慢爬。
+            bool first = !ReferenceEquals(m_weatherProject, project);
+            if (first) m_weatherProject = project;
+            bool precip = snapshot.PrecipitationStarted;
+            bool fog = snapshot.FogStarted;
+            if (!first && precip == m_lastPrecipStarted && fog == m_lastFogStarted)
+            {
+                return; // 状态没翻转：窗口与强度都不动，本地 ramp 连续推进
+            }
             double now = totalElapsed;
-            // 时间窗：客户端不推进 base.Update，IsXStarted 只由时间窗决定 ⇒ 用窗口把主机的 bool 复现。
-            double precipitationStart = snapshot.PrecipitationStarted ? now - 1.0 : double.PositiveInfinity;
-            double precipitationEnd = snapshot.PrecipitationStarted ? double.PositiveInfinity : now - 1.0;
-            double fogStart = snapshot.FogStarted ? now - 1.0 : double.PositiveInfinity;
-            double fogEnd = snapshot.FogStarted ? double.PositiveInfinity : now - 1.0;
             int failures = 0;
-            if (!SetMember(weather, "m_precipitationStartTime", precipitationStart, typeof(SubsystemWeather))) failures++;
-            if (!SetMember(weather, "m_precipitationEndTime", precipitationEnd, typeof(SubsystemWeather))) failures++;
-            if (!SetMember(weather, "m_precipitationRampTime", 1f, typeof(SubsystemWeather))) failures++;
-            if (!SetMember(weather, "PrecipitationIntensity", snapshot.PrecipitationIntensity, typeof(SubsystemWeather))) failures++;
-            if (!SetMember(weather, "m_fogStartTime", fogStart, typeof(SubsystemWeather))) failures++;
-            if (!SetMember(weather, "m_fogEndTime", fogEnd, typeof(SubsystemWeather))) failures++;
-            if (!SetMember(weather, "m_fogRampTime", 1f, typeof(SubsystemWeather))) failures++;
-            if (!SetMember(weather, "FogProgress", snapshot.FogProgress, typeof(SubsystemWeather))) failures++;
-            if (!SetMember(weather, "FogIntensity", snapshot.FogIntensity, typeof(SubsystemWeather))) failures++;
-            if (!SetMember(weather, "FogSeed", snapshot.FogSeed, typeof(SubsystemWeather))) failures++;
-            if (!SetMember(weather, "m_lightningIntensity", 0f, typeof(SubsystemWeather))) failures++;
+            if (first || precip != m_lastPrecipStarted)
+            {
+                if (!SetMember(weather, "m_precipitationRampTime", 1f, typeof(SubsystemWeather))) failures++;
+                if (precip)
+                {
+                    if (!SetMember(weather, "m_precipitationStartTime", now, typeof(SubsystemWeather))) failures++;
+                    if (!SetMember(weather, "m_precipitationEndTime", double.PositiveInfinity, typeof(SubsystemWeather))) failures++;
+                }
+                else if (!SetMember(weather, "m_precipitationEndTime", now + 1.0, typeof(SubsystemWeather))) failures++;
+                if (first && !SetMember(weather, "PrecipitationIntensity", snapshot.PrecipitationIntensity, typeof(SubsystemWeather))) failures++;
+            }
+            if (first || fog != m_lastFogStarted)
+            {
+                if (!SetMember(weather, "m_fogRampTime", 3f, typeof(SubsystemWeather))) failures++;
+                if (fog)
+                {
+                    if (!SetMember(weather, "m_fogStartTime", now, typeof(SubsystemWeather))) failures++;
+                    if (!SetMember(weather, "m_fogEndTime", double.PositiveInfinity, typeof(SubsystemWeather))) failures++;
+                }
+                else if (!SetMember(weather, "m_fogEndTime", now + 3.0, typeof(SubsystemWeather))) failures++;
+                if (first)
+                {
+                    if (!SetMember(weather, "FogIntensity", snapshot.FogIntensity, typeof(SubsystemWeather))) failures++;
+                    if (!SetMember(weather, "FogProgress", snapshot.FogProgress, typeof(SubsystemWeather))) failures++;
+                    if (!SetMember(weather, "FogSeed", snapshot.FogSeed, typeof(SubsystemWeather))) failures++;
+                }
+            }
+            if (first && !SetMember(weather, "m_lightningIntensity", 0f, typeof(SubsystemWeather))) failures++;
+            m_lastPrecipStarted = precip;
+            m_lastFogStarted = fog;
             m_weatherFieldFailures += failures;
             if (failures > 0 && !m_weatherFailureLogged)
             {

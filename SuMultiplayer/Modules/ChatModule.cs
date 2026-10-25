@@ -311,7 +311,7 @@ namespace SuMultiplayer.Modules
             {
                 MessageId = 0,
                 SenderClientId = -1,
-                SenderName = "系统",
+                SenderName = "System",
                 SenderIdentity = string.Empty,
                 Text = detail,
                 ServerTick = m_serverTick,

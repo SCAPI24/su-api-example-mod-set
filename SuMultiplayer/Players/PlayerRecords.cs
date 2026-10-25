@@ -322,6 +322,34 @@ namespace SuMultiplayer.Players
         }
 
         /// <summary>
+        /// 换 Project（换世界 / 删掉旧世界后在同一路径新建）时调用：
+        /// 先落盘当前世界的记录，再清空内存表并忘掉世界目录。
+        /// **不能只按目录字符串判断是否换世界**：世界被删掉后在同一个目录名上重新创建
+        /// （引擎的 New World 会复用 `data:/Worlds/World`），只比路径会让上一个世界的
+        /// 角色记录（名字/皮肤/统计/成就）漏进新世界 —— 客户端因此被当成"已有角色"，
+        /// 不弹创建角色界面。
+        /// </summary>
+        public void OnProjectChanged()
+        {
+            try
+            {
+                if (m_isHost && m_dirty) SaveIfDirty();
+            }
+            catch (Exception e)
+            {
+                m_diagnostics?.Warn(m_ownerId, "换世界前落盘角色记录失败：" + e.GetType().Name +
+                    " " + e.Message + "（内存表仍会清空，避免上一个世界的数据漏进新世界）");
+            }
+            m_records.Clear();
+            m_worldDirectory = string.Empty;
+            m_dirty = false;
+            m_isHost = false;
+            m_loadFailed = false;
+            SaveFailed = false;
+            m_hashRepairs = 0;
+        }
+
+        /// <summary>
         /// 世界目录变化时重新加载（同一个目录只加载一次）。
         /// Source: ScMultiplayerProfileHandlers.cs:126-271
         /// </summary>

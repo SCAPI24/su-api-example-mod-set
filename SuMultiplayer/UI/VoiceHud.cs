@@ -40,6 +40,11 @@ namespace SuMultiplayer.UI
         private const string IconGlyphName = "SuMPVoiceIconGlyph";
         private const string TalkName = "SuMPVoiceTalk";
 
+        /// <summary>聊天按钮 / 右侧按钮列（更多·飞行·潜行）的控件名：两者都是 Gui 画布的直系子控件
+        /// （ChatOverlay.cs 与 ComponentGui.cs:254 各自 Children.Find 非递归即中）。</summary>
+        private const string ChatButtonName = "SuMultiplayerChatButton";
+        private const string RightControlsName = "RightControlsContainer";
+
         /// <summary>SPEAKING 状态只进日志 / 计数：采样间隔 1 s（不是每帧更新控件）。</summary>
         private const int SpeakingLogIntervalMs = 1000;
 
@@ -557,12 +562,51 @@ namespace SuMultiplayer.UI
             // 显式位置生效后清掉 300 的 Margin：否则 measure 里还会按 2*Margin 撑大 desired，
             // 且 ArrangeChildWidgetInCell 的 `cell - 2*Margin` 正是把图标压成 0 高的那条路径。
             refs.Icon.Margin = Vector2.Zero;
-            var position = new Vector2(
-                guiSize.X - VoiceHudLayout.IconWidth,
-                guiSize.Y - VoiceHudLayout.IconMarginY - VoiceHudLayout.IconHeight);
+            // 2026-10-25 方案A：底部魔法常数（guiH - IconMarginY - IconHeight）在矮设计画布上
+            // 会把图标顶进**顶部锚定**的右侧按钮列（更多/飞行/潜行）——红米 Note 13R
+            // uiScale=1.0、Gui 设计高 ~478，实测 SuMPVoiceIcon(y 275~402) 撞潜行按钮
+            // (y 323~468)，潜行被挡到点不了。改为按真实 frame 定位：
+            //   1) 首选「聊天按钮正上方」（任何屏幕都严格成立的设计意图）；
+            //   2) 与右侧按钮列相交时退「聊天按钮同行左侧」；
+            //   3) 两者都不可用（无会话 / 聊天按钮未布局）才回旧的右下角公式，日志写明原因。
+            HudRect column = RectInGui(refs, RightControlsName);
+            HudRect chat = RectInGui(refs, ChatButtonName);
+            string mode;
+            Vector2 position;
+            if (!chat.IsEmpty)
+            {
+                position = new Vector2(guiSize.X - VoiceHudLayout.IconWidth,
+                    chat.Position.Y - VoiceHudLayout.IconGapY - VoiceHudLayout.IconHeight);
+                if (position.Y >= 0f && !IntersectsColumn(position, column))
+                {
+                    mode = "聊天按钮正上方";
+                }
+                else
+                {
+                    position = new Vector2(
+                        chat.Position.X - VoiceHudLayout.IconGapY - VoiceHudLayout.IconWidth,
+                        MathUtils.Max(chat.Position.Y, 0f));
+                    if (position.X >= 0f && !IntersectsColumn(position, column))
+                    {
+                        mode = "聊天按钮左侧（正上方会撞右侧按钮列）";
+                    }
+                    else
+                    {
+                        position = new Vector2(guiSize.X - VoiceHudLayout.IconWidth,
+                            guiSize.Y - VoiceHudLayout.IconMarginY - VoiceHudLayout.IconHeight);
+                        mode = "右下角旧公式（聊天按钮左右都放不下）";
+                    }
+                }
+            }
+            else
+            {
+                position = new Vector2(guiSize.X - VoiceHudLayout.IconWidth,
+                    guiSize.Y - VoiceHudLayout.IconMarginY - VoiceHudLayout.IconHeight);
+                mode = "右下角旧公式（聊天按钮不可见/未布局）";
+            }
             CanvasWidget.SetPosition(refs.Icon, position);
             string signature = guiSize.X.ToString("0.#", CultureInfo.InvariantCulture) + "x" +
-                guiSize.Y.ToString("0.#", CultureInfo.InvariantCulture);
+                guiSize.Y.ToString("0.#", CultureInfo.InvariantCulture) + "|" + mode;
             if (signature == refs.IconLayout) return;
             refs.IconLayout = signature;
             m_iconLayouts++;
@@ -570,8 +614,47 @@ namespace SuMultiplayer.UI
                 "[SuMP][ui] 语音图标显式位置：Gui=" + signature + " → icon@(" +
                 position.X.ToString("0.#", CultureInfo.InvariantCulture) + "," +
                 position.Y.ToString("0.#", CultureInfo.InvariantCulture) + ")，" +
-                "右下角 / 聊天按钮正上方（Margin=" + VoiceHudLayout.IconMarginY +
-                " 仅作设计值：引擎按 cell-2*Margin 夹高度，低高度视图会把图标压成 0）", 10000);
+                "右侧按钮列=" + column.Describe() + " 聊天按钮=" + chat.Describe(), 10000);
+        }
+
+        /// <summary>Gui 画布子树里同名控件的实时 frame（画布设计坐标，经 WidgetToScreen/ScreenToWidget
+        /// 换算）。递归查找：右侧按钮列在 Gui/ControlsContainer/ 之下，聊天按钮是 Gui 直系子。
+        /// 只认「已布局且可见」的控件——无会话时聊天按钮 IsVisible=false，不许拿旧 frame 定位。</summary>
+        private HudRect RectInGui(PanelRefs refs, string name)
+        {
+            Widget child = refs.Gui.Children.Find<Widget>(name, true);
+            if (child == null || !child.IsVisible || child.ActualSize.X <= 1f || child.ActualSize.Y <= 1f)
+            {
+                return default;
+            }
+            return new HudRect
+            {
+                Position = refs.Gui.ScreenToWidget(child.WidgetToScreen(Vector2.Zero)),
+                Size = child.ActualSize
+            };
+        }
+
+        private static bool IntersectsColumn(Vector2 iconPosition, in HudRect column)
+        {
+            if (column.IsEmpty) return false;
+            return iconPosition.X < column.Position.X + column.Size.X
+                && iconPosition.X + VoiceHudLayout.IconWidth > column.Position.X
+                && iconPosition.Y < column.Position.Y + column.Size.Y
+                && iconPosition.Y + VoiceHudLayout.IconHeight > column.Position.Y;
+        }
+
+        /// <summary>画布坐标系里的矩形（位置 + 尺寸）；IsEmpty 表示「不可用」（未布局 / 不存在）。</summary>
+        private struct HudRect
+        {
+            public Vector2 Position;
+            public Vector2 Size;
+            public bool IsEmpty => Size.X <= 1f || Size.Y <= 1f;
+            public string Describe() => IsEmpty
+                ? "(不可用)"
+                : "@(" + Position.X.ToString("0.#", CultureInfo.InvariantCulture) + "," +
+                  Position.Y.ToString("0.#", CultureInfo.InvariantCulture) + ") " +
+                  Size.X.ToString("0.#", CultureInfo.InvariantCulture) + "x" +
+                  Size.Y.ToString("0.#", CultureInfo.InvariantCulture);
         }
 
         /// <summary>

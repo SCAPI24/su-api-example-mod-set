@@ -332,8 +332,8 @@ namespace SuMultiplayer.Modules
         private readonly Action<string> m_warn;
         private readonly Func<double> m_clock;
         private readonly Func<int, bool> m_isExplicitViewForClient;
-        private readonly ClientViewSettings m_settings;
-        private readonly bool m_configured;
+        private ClientViewSettings m_settings;
+        private bool m_configured;
         private readonly ClientViewCounters m_counters = new ClientViewCounters();
         private readonly Dictionary<string, double> m_lastLogTime =
             new Dictionary<string, double>(StringComparer.Ordinal);
@@ -366,7 +366,36 @@ namespace SuMultiplayer.Modules
             m_configured = settings.Enabled;
         }
 
-        /// <summary>配置里是否启用了自动客户端分屏（默认 true；配错 = false）。</summary>
+        /// <summary>
+        /// 世界作用域重新配置（调试开关只在 &lt;世界目录&gt;/SuMultiplayerDebug.json 里）：
+        /// 关闭时立刻拆掉本端所有自动客户端分屏；解析失败 = 保持关闭并写清原因。
+        /// </summary>
+        public void ApplyConfiguration(bool enabled, string clientFilter)
+        {
+            if (m_shutdown) return;
+            if (!ClientViewSettings.TryParse(enabled, clientFilter,
+                    out ClientViewSettings settings, out string error))
+            {
+                bool hadViews = m_port.ViewCount > 0;
+                m_settings = ClientViewSettings.Disabled;
+                m_configured = false;
+                if (hadViews) DestroyEveryView("配置解析失败");
+                WarnRateLimited("config",
+                    "[SuMP][client-view] 配置解析失败，功能保持关闭：" + error);
+                return;
+            }
+            bool wasEnabled = m_configured;
+            m_settings = settings;
+            m_configured = settings.Enabled;
+            if (wasEnabled && !m_configured && m_port.ViewCount > 0)
+                DestroyEveryView("配置关闭 clientview=false");
+            if (!wasEnabled && m_configured)
+                InfoRateLimited("enable",
+                    "[SuMP][client-view] 自动客户端分屏已启用（世界调试配置）：" +
+                    (string.IsNullOrEmpty(clientFilter) ? "all" : clientFilter));
+        }
+
+        /// <summary>配置里是否启用了自动客户端分屏（**默认关闭**；只有世界调试配置显式打开才启用；配错 = false）。</summary>
         public bool IsConfigured => m_configured;
 
         public ClientViewSettings Settings => m_settings;

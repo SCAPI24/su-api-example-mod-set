@@ -677,9 +677,9 @@ namespace SuMultiplayer.Modules
         private readonly Action<string> m_info;
         private readonly Action<string> m_warn;
         private readonly Func<double> m_clock;
-        private readonly MirrorHostSettings m_settings;
-        private readonly bool m_configured;
-        private readonly string m_configError;
+        private MirrorHostSettings m_settings;
+        private bool m_configured;
+        private string m_configError;
         private readonly MirrorHostCounters m_counters = new MirrorHostCounters();
         private readonly Dictionary<string, double> m_lastLogTime =
             new Dictionary<string, double>(StringComparer.Ordinal);
@@ -721,6 +721,28 @@ namespace SuMultiplayer.Modules
 
         /// <summary>配置写错时保留的原因（未写错 = null）。</summary>
         public string ConfigError => m_configError;
+
+        /// <summary>
+        /// 应用**世界作用域**的调试配置（进世界 / 换世界时由组合根调用；默认关闭）。
+        /// 关闭时 Tick 会把本功能自动创建的角色全部移除（只删 auto 账本里的）。
+        /// </summary>
+        public void ApplyConfiguration(bool enabled, string namePrefixValue, string modeValue,
+            string explicitCharacterValue)
+        {
+            if (!MirrorHostSettings.TryParse(enabled, namePrefixValue, modeValue,
+                    explicitCharacterValue, out MirrorHostSettings settings, out string error))
+            {
+                m_settings = MirrorHostSettings.Disabled;
+                m_configured = false;
+                m_configError = error;
+                WarnRateLimited("config",
+                    "[SuMP][mirror-host] 世界调试配置解析失败，功能保持关闭：" + error);
+                return;
+            }
+            m_settings = settings;
+            m_configured = settings.Enabled;
+            m_configError = null;
+        }
 
         public MirrorHostSettings Settings => m_settings;
 

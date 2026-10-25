@@ -183,6 +183,9 @@ namespace SuMultiplayer.Engine
                     "explosion");
                 return;
             }
+            // 雷击是静音爆炸（noExplosionSound:true，SubsystemSky.cs:247）：主机没有播过
+            // Audio/Explosion*（雷声由 SubsystemSky 自己播），没有可登记的覆盖。
+            if (data.Kind == ExplosionKinds.Lightning) return;
             if (data.Pressure <= 0f) return;
             string sound;
             float minDistance;

@@ -1655,6 +1655,25 @@ namespace SuMultiplayer.Engine
     public sealed class SuSubsystemWeather : SubsystemWeather, IUpdateable
     {
         private bool m_clientPersistentTerrainHandlersDisabled;
+        private bool m_clientRampFaultLogged;
+
+        // ---- 客户端视觉推进的反射字段（引擎私有，静态缓存；Source: SubsystemWeather.cs:2-49） ----
+        private static readonly FieldInfo s_clientPrecipRamp = typeof(SubsystemWeather).GetField(
+            "m_precipitationRampTime", BindingFlags.NonPublic | BindingFlags.Instance);
+        private static readonly FieldInfo s_clientFogRamp = typeof(SubsystemWeather).GetField(
+            "m_fogRampTime", BindingFlags.NonPublic | BindingFlags.Instance);
+        private static readonly FieldInfo s_clientFogStart = typeof(SubsystemWeather).GetField(
+            "m_fogStartTime", BindingFlags.NonPublic | BindingFlags.Instance);
+        private static readonly FieldInfo s_clientFogEnd = typeof(SubsystemWeather).GetField(
+            "m_fogEndTime", BindingFlags.NonPublic | BindingFlags.Instance);
+        private static readonly FieldInfo s_clientPrecipIntensity = typeof(SubsystemWeather).GetField(
+            "<PrecipitationIntensity>k__BackingField", BindingFlags.NonPublic | BindingFlags.Instance);
+        private static readonly FieldInfo s_clientFogIntensity = typeof(SubsystemWeather).GetField(
+            "<FogIntensity>k__BackingField", BindingFlags.NonPublic | BindingFlags.Instance);
+        private static readonly FieldInfo s_clientFogProgress = typeof(SubsystemWeather).GetField(
+            "<FogProgress>k__BackingField", BindingFlags.NonPublic | BindingFlags.Instance);
+        private static readonly FieldInfo s_clientFogSeed = typeof(SubsystemWeather).GetField(
+            "<FogSeed>k__BackingField", BindingFlags.NonPublic | BindingFlags.Instance);
 
         void IUpdateable.Update(float dt)
         {
@@ -1662,9 +1681,80 @@ namespace SuMultiplayer.Engine
             {
                 DisableClientPersistentTerrainHandlers();
                 // 客户端天气状态由 WorldInfo 覆盖；这里绝不 base.Update（否则就是本地模拟）。
+                UpdateClientVisualRamp(dt);
                 return;
             }
             base.Update(dt);
+        }
+
+        /// <summary>
+        /// 2026-10-26 修复"客户端雨/雾过渡一顿一顿"：客户端不跑 base.Update，强度 / 雾进度
+        /// 此前由 2 Hz WorldInfo 快照硬写（500ms 一阶，主机端却是每帧连续 ramp）。
+        /// 现在快照只在**状态翻转**时写窗口（见 ClientReplicaEngine.ApplyWeather），
+        /// 连续推进由这里按引擎 Update 的同款数学完成（Source:
+        /// Survivalcraft/Game/SubsystemWeather.cs:378-391 / 494-505）：
+        /// 降水强度 ±dt/ramp；雾强度 ±dt/ramp、雾进度 += dt/(end-start)、FogSeed=Hash(start)。
+        /// 只做视觉：不选天气、不打雷、不改地形（那些仍是主机权威）。
+        /// </summary>
+        private void UpdateClientVisualRamp(float dt)
+        {
+            try
+            {
+                if (s_clientPrecipRamp == null || s_clientFogRamp == null ||
+                    s_clientFogStart == null || s_clientFogEnd == null ||
+                    s_clientPrecipIntensity == null || s_clientFogIntensity == null ||
+                    s_clientFogProgress == null || s_clientFogSeed == null)
+                {
+                    if (!m_clientRampFaultLogged)
+                    {
+                        m_clientRampFaultLogged = true;
+                        Log.Warning("[SuMP] 客户端天气视觉推进的字段反射绑定失败（引擎字段名变化？）" +
+                            " → 雨/雾过渡退回 2Hz 快照阶跃（只记录一次）");
+                    }
+                    return;
+                }
+                SubsystemGameInfo gameInfo = Project?.FindSubsystem<SubsystemGameInfo>(false);
+                if (gameInfo == null) return;
+                if (!gameInfo.WorldSettings.AreWeatherEffectsEnabled)
+                {
+                    s_clientPrecipIntensity.SetValue(this, 0f);
+                    s_clientFogIntensity.SetValue(this, 0f);
+                    return;
+                }
+                float precipRamp = (float)s_clientPrecipRamp.GetValue(this);
+                if (precipRamp > 0f)
+                {
+                    float precip = PrecipitationIntensity + (IsPrecipitationStarted ? dt : -dt) / precipRamp;
+                    s_clientPrecipIntensity.SetValue(this, MathUtils.Saturate(precip));
+                }
+                float fogRamp = (float)s_clientFogRamp.GetValue(this);
+                if (fogRamp > 0f)
+                {
+                    s_clientFogIntensity.SetValue(this, MathUtils.Saturate(
+                        FogIntensity + (IsFogStarted ? dt : -dt) / fogRamp));
+                    if (IsFogStarted)
+                    {
+                        double fogStart = (double)s_clientFogStart.GetValue(this);
+                        double fogEnd = (double)s_clientFogEnd.GetValue(this);
+                        if (fogEnd > fogStart)
+                        {
+                            s_clientFogProgress.SetValue(this,
+                                FogProgress + dt / (float)(fogEnd - fogStart));
+                        }
+                        s_clientFogSeed.SetValue(this,
+                            MathUtils.Hash((int)MathUtils.Remainder(fogStart, 1000000.0)));
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                if (!m_clientRampFaultLogged)
+                {
+                    m_clientRampFaultLogged = true;
+                    Log.Warning("[SuMP] 客户端天气视觉推进异常（" + e.GetType().Name + " " + e.Message +
+                        "）→ 本会话退回 2Hz 快照阶跃（只记录一次）");
+                }
+            }
         }
 
         /// <summary>

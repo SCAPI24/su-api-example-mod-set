@@ -1262,6 +1262,14 @@ namespace SuMultiplayer.Terrain
             public long HelloLastApplied;
             /// <summary>这次握手被判为首次加入的**明确原因**（写进 HelloAck，客户端据此写日志 / 作废旧会话）。</summary>
             public string RejoinReason = string.Empty;
+            /// <summary>加入审批：主机已同意（自动同意 或 主人点了 Allow）。</summary>
+            public bool JoinApproved;
+            /// <summary>加入审批：正在等主机决定（此期间**不建记录 / 不建角色 / 不下发世界 / 不回 HelloAck**）。</summary>
+            public bool ApprovalPending;
+            /// <summary>等待审批时暂存的 Hello（批准后按它继续走完整握手）。</summary>
+            public Hello PendingHello;
+            /// <summary>审批超时时刻（Environment.TickCount64 毫秒基准）。</summary>
+            public long ApprovalDeadlineMs;
             /// <summary>
             /// 主机没有这个身份的角色记录、Hello 也没带完整资料 → 这次握手**不下发世界**，
             /// 客户端必须先建角色再重新握手（旧 SCMP_PROFILE_REQUIRED 流程）。
@@ -1784,6 +1792,23 @@ namespace SuMultiplayer.Terrain
         public IHelloProfileGate ProfileGate { get; set; }
 
         /// <summary>
+        /// 加入审批决定器（由组合根注入；null = 不做审批）。
+        /// 有它时，玩家端 Hello 先走审批：手动审批 = 主机点 Allow/Reject；自动同意 = 直接放行。
+        /// 审批发生在资料闸门 / 角色记录 / 世界传输之前，拒绝的连接不会留下任何角色。
+        /// </summary>
+        public IJoinApprovalDecider JoinApproval { get; set; }
+
+        /// <summary>等待主机审批的上限（毫秒）：超时 = 明确拒绝（绝不"等不到就当同意"）。</summary>
+        public const long JoinApprovalTimeoutMs = 120000;
+
+        /// <summary>主机同意 clientId 的加入（审批界面的 Allow）。不是等待审批状态 = 忽略。</summary>
+        public void ApproveJoin(int clientId) => ResolveJoinApproval(clientId, true, string.Empty);
+
+        /// <summary>主机拒绝 clientId 的加入（审批界面的 Reject / 审批超时）。客户端收到 HelloAck.rejected。</summary>
+        public void RejectJoin(int clientId, string reason) =>
+            ResolveJoinApproval(clientId, false, reason ?? string.Empty);
+
+        /// <summary>
         /// 本次房间 / 会话标识（32 位十六进制，由上层在建房时生成；**绝不落盘**）。
         /// HelloAck 与 WorldBegin 世界清单都带它；客户端把它与下载世界登记在一起，
         /// 重连时发回 Hello —— 只有与会话一致才允许"不重发整图、只追帧"。
@@ -1995,6 +2020,9 @@ namespace SuMultiplayer.Terrain
             // 这一拍判定为"已经不可达"的玩家端（连接 Failed / 已关闭）：循环里只登记，
             // 出锁之后再抛 ClientLost —— 事件处理方要拆引擎实体（联机角色），不能在 m_gate 里做。
             List<KeyValuePair<int, string>> lost = null;
+            // 加入审批超时的连接（收尾在锁内做，日志出锁写）。
+            List<int> expiredApprovals = null;
+            List<string> expiredApprovalTraces = null;
             lock (m_gate)
             {
                 // ①' 按需单块加载（客户端上报的**边缘**块）：推进台账 —— 内容到位的**立刻裁决**（不用玩家移动），
@@ -2005,6 +2033,12 @@ namespace SuMultiplayer.Terrain
                 {
                     State state = pair.Value;
                     if (!state.WindowValid) RefreshWindow(state);
+                    // 加入审批超时：不让客户端无限等（主机没人点 Allow = 明确拒绝，绝不默认同意）。
+                    if (state.ApprovalPending && nowMs >= state.ApprovalDeadlineMs)
+                    {
+                        if (expiredApprovals == null) expiredApprovals = new List<int>();
+                        expiredApprovals.Add(state.Id);
+                    }
                     // ① 欠着裁决的上报：内容可用 → 真实主机摘要；还没好 → 限流重请 + 一行原因。
                     // 对端已经断了（没发 Bye 就断也一样）：这条线再也答不出去 —— 明确写一行，
                     // 并**保留在该身份的会话记录里**（重连后继续作答），免得对着一根断线每 5s 重请加载
@@ -2092,6 +2126,25 @@ namespace SuMultiplayer.Terrain
                         m_clients.Remove(lost[i].Key);
                     }
                 }
+                // ②b 加入审批超时的连接：发 HelloAck.rejected + 移除状态（锁内收尾）。
+                if (expiredApprovals != null)
+                {
+                    for (int i = 0; i < expiredApprovals.Count; i++)
+                    {
+                        if (!m_clients.TryGetValue(expiredApprovals[i], out State pending) ||
+                            !pending.ApprovalPending) continue;
+                        pending.ApprovalPending = false;
+                        pending.PendingHello = null;
+                        string reason = "主机审批超时（" + (JoinApprovalTimeoutMs / 1000) +
+                            " 秒内没有同意加入）";
+                        if (expiredApprovalTraces == null) expiredApprovalTraces = new List<string>();
+                        expiredApprovalTraces.Add("加入审批：clientId=" + pending.Id + "（" +
+                            DisplayName(pending) + "）→ 超时拒绝：" + reason);
+                        SendJoinRejectedLocked(pending, reason);
+                        ReleaseWindow(pending);
+                        m_clients.Remove(pending.Id);
+                    }
+                }
                 // ③ 断线重连追帧：按每帧预算把重放数据发出去，发完发 Barrier（有界，不顶穿帧）。
                 work += SendCatchUpBatchesLocked(nowMs);
             }
@@ -2099,6 +2152,11 @@ namespace SuMultiplayer.Terrain
             if (lost != null)
             {
                 for (int i = 0; i < lost.Count; i++) ClientLost?.Invoke(lost[i].Key, lost[i].Value);
+            }
+            if (expiredApprovalTraces != null)
+            {
+                for (int i = 0; i < expiredApprovalTraces.Count; i++)
+                    SessionTrace?.Invoke(expiredApprovalTraces[i]);
             }
             return work;
         }
@@ -2246,7 +2304,115 @@ namespace SuMultiplayer.Terrain
 
         private void OnFrame(ReceivedFrame frame) => m_messages.Dispatch(in frame);
 
+        /// <summary>
+        /// 入站 Hello 的第一层：**先审批，再握手**（旧联机 mod 的 join request 流程）。
+        /// 审批未通过时只记下这条连接，不产生任何角色/记录/世界传输副作用。
+        /// </summary>
         private void HandleHello(State state, Hello hello)
+        {
+            if (hello == null) return;
+            state.Kind = (ClientKind)(int)hello.Kind;
+            state.Name = hello.Name ?? string.Empty;
+            state.Identity = (hello.Identity ?? string.Empty).Trim();
+            // 同一次房间内的断线重连不重复弹审批：Hello 声明的下载世界会话与主机会话一致
+            // = 这个玩家本来就在这个房间里（旧联机 mod 的 rejoin grace 口径；重新"加入"才需要同意）。
+            bool claimedSameRoomRejoin = hello.AlreadyHasWorld &&
+                !string.IsNullOrEmpty(SessionId) &&
+                string.Equals((hello.ClientSessionId ?? string.Empty).Trim(), SessionId,
+                    StringComparison.Ordinal);
+            if (claimedSameRoomRejoin && state.Kind == ClientKind.Player)
+                state.JoinApproved = true;
+            if (state.Kind == ClientKind.Player && JoinApproval != null)
+            {
+                if (state.ApprovalPending)
+                {
+                    // 客户端在等待期间又发了 Hello（重试）：刷新待审批内容，不重复弹窗。
+                    state.PendingHello = hello;
+                    return;
+                }
+                if (!state.JoinApproved)
+                {
+                    if (JoinApproval.AutoApprove)
+                    {
+                        state.JoinApproved = true;
+                        SessionTrace?.Invoke("加入审批：clientId=" + state.Id + "（" + DisplayName(state) +
+                            "）→ 设置 autoapprovejoins=true，自动同意");
+                    }
+                    else
+                    {
+                        state.ApprovalPending = true;
+                        state.PendingHello = hello;
+                        state.ApprovalDeadlineMs = Environment.TickCount64 + JoinApprovalTimeoutMs;
+                        int clientId = state.Id;
+                        string name = state.Name;
+                        string identity = state.Identity;
+                        SessionTrace?.Invoke("加入审批：clientId=" + clientId + "（" + DisplayName(state) +
+                            "）等待主机决定（" + (JoinApprovalTimeoutMs / 1000) + " 秒超时）");
+                        JoinApproval.RequestDecision(clientId, name, identity,
+                            delegate (bool approved, string reason)
+                            {
+                                ResolveJoinApproval(clientId, approved, reason);
+                            });
+                        return;
+                    }
+                }
+            }
+            ContinueHello(state, hello);
+        }
+
+        /// <summary>
+        /// 加入审批的出口（UI 线程 / 超时调用）：同意 → 继续完整握手；拒绝 → HelloAck.rejected + 移除连接状态。
+        /// 每条连接只解决一次（重复调用 / 客户端已离开 = 忽略）。
+        /// </summary>
+        private void ResolveJoinApproval(int clientId, bool approved, string reason)
+        {
+            string trace;
+            lock (m_gate)
+            {
+                if (!m_clients.TryGetValue(clientId, out State state) || !state.ApprovalPending) return;
+                state.ApprovalPending = false;
+                if (approved)
+                {
+                    state.JoinApproved = true;
+                    Hello hello = state.PendingHello;
+                    state.PendingHello = null;
+                    trace = "加入审批：clientId=" + clientId + "（" + DisplayName(state) + "）→ 主机同意，继续握手";
+                    if (hello != null) ContinueHello(state, hello);
+                }
+                else
+                {
+                    state.PendingHello = null;
+                    trace = "加入审批：clientId=" + clientId + "（" + DisplayName(state) + "）→ 主机拒绝：" +
+                        (string.IsNullOrEmpty(reason) ? "(未说明原因)" : reason);
+                    SendJoinRejectedLocked(state,
+                        string.IsNullOrEmpty(reason) ? "主机拒绝了加入请求" : reason);
+                    ReleaseWindow(state);
+                    m_clients.Remove(clientId);
+                }
+            }
+            // 出锁再写日志（事件处理方可能碰引擎对象）。
+            SessionTrace?.Invoke(trace);
+        }
+
+        /// <summary>明确拒绝：给客户端 HelloAck.rejected + 原因（它据此中止加入并显示原因，而不是静默重试）。</summary>
+        private void SendJoinRejectedLocked(State state, string reason)
+        {
+            var ack = new HelloAck
+            {
+                Version = 1,
+                ClientId = state.Id,
+                Room = "SuMP-World",
+                Flags = 0,
+                MaxRadius = 20,
+                HostIdentity = Identity ?? string.Empty,
+                HostName = Name ?? string.Empty,
+                Rejected = true,
+                RejectReason = reason ?? string.Empty
+            };
+            m_server.TrySend(state.Id, MessageType.HelloAck, ack.ToByteArray());
+        }
+
+        private void ContinueHello(State state, Hello hello)
         {
             state.Kind = (ClientKind)(int)hello.Kind;
             state.Name = hello.Name ?? string.Empty;
@@ -4798,6 +4964,12 @@ namespace SuMultiplayer.Terrain
         public event Action<string, bool> RejoinRejected;
 
         /// <summary>
+        /// 主机拒绝加入（HelloAck.rejected + 原因；旧主机不会发这个字段 = 不会触发）。
+        /// 参数 (clientId, 原因)。上层必须**中止本次加入并显示原因**，不要再静默重连（重连只会再被拒一次）。
+        /// </summary>
+        public event Action<int, string> JoinRejected;
+
+        /// <summary>
         /// 追帧被主机明确拒绝（同会话握手通过后历史被裁剪）：客户端必须作废会话、断开重连成首次加入。
         /// </summary>
         public event Action<string> CatchUpRejected;
@@ -6035,6 +6207,12 @@ namespace SuMultiplayer.Terrain
         /// </summary>
         private void HandleHelloAck(HelloAck ack)
         {
+            // 主机拒绝加入（手动审批 Reject / 审批超时）：明确中止，绝不把这条 Ack 当成握手成功。
+            if (ack.Rejected)
+            {
+                JoinRejected?.Invoke(ack.ClientId, ack.RejectReason ?? string.Empty);
+                return;
+            }
             // 传输层 clientId：位置快照批用它认"本机玩家自己那一条"。
             LocalClientId = ack.ClientId;
             HostIdentity = ack.HostIdentity ?? string.Empty;

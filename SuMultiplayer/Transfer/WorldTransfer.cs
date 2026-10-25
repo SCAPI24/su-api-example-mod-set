@@ -299,6 +299,23 @@ namespace SuMultiplayer.Transfer
         /// <summary>已登记的目录（读登记文件；文件不存在就是空表）。</summary>
         IReadOnlyList<string> Registered { get; }
 
+        /// <summary>
+        /// 这个目录是不是"下载来的世界"（判定放在该世界目录自己的会话登记文件里）。
+        /// 默认实现 = 遍历 <see cref="Registered"/>；实现方可以给更便宜的查法。
+        /// </summary>
+        bool IsDownloaded(string directory)
+        {
+            if (string.IsNullOrEmpty(directory)) return false;
+            IReadOnlyList<string> registered = Registered;
+            if (registered == null) return false;
+            for (int i = 0; i < registered.Count; i++)
+            {
+                if (string.Equals(registered[i], directory, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+            return false;
+        }
+
         /// <summary>把登记表写回（只剩删不掉的那些；已有条目的会话标识原样保留）。</summary>
         void SaveRegistry(IReadOnlyList<string> directories);
 

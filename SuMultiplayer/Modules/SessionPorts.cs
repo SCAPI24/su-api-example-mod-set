@@ -33,6 +33,12 @@ namespace SuMultiplayer.Modules
         /// <summary>房间状态文本（给按钮信息弹窗）。</summary>
         string RoomSummary { get; }
 
+        /// <summary>
+        /// Play 屏（地图列表）当前是否可见：只有可见时才做局域网房间探测。
+        /// 用户口径（2026-10-21）：不在列表屏幕时不要持续刷新/探测（避免回主菜单还一直有发现流量）。
+        /// </summary>
+        void SetListVisible(bool visible) { }
+
         /// <summary>加入流程阶段文本（给 Play 屏的 BusyDialog）。</summary>
         string JoinStageText { get; }
 
@@ -71,6 +77,15 @@ namespace SuMultiplayer.Modules
     /// </summary>
     public interface IAvatarTerrainLink
     {
+        /// <summary>
+        /// 客户端 Hello 里可以上报的"本机角色资料"——**只在本机刚完成"角色创建"时**返回 true。
+        /// 旧联机 mod 的口径：Hello 带资料 = 用户刚刚在创建角色界面确认了角色（m_activeJoinHasPlayerProfile），
+        /// 主机据此建记录；反过来，主机分配过/缓存的资料**不能**再塞进 Hello，否则新世界会被
+        /// 当成"已有角色"直接建记录，不弹创建界面。
+        /// 返回 false = Hello.profile 留空（主机没有该身份记录时会回 profile_required，客户端弹创建界面）。
+        /// </summary>
+        bool TryGetHelloProfileClaim(out PlayerProfileSnapshot profile);
+
         /// <summary>
         /// 该 PlayerData 是不是联机角色（网络化身）。
         /// Source: Mod/ScMultiplayer/Modules/World/ScMultiplayerWorldObjectHandlers.cs:481-484
@@ -211,5 +226,23 @@ namespace SuMultiplayer.Modules
     {
         /// <summary>接上 / 断开联机角色视图（null = 断开：联机角色模块下线时调用）。</summary>
         void BindAvatarTerrainLink(IAvatarTerrainLink link);
+    }
+
+    /// <summary>
+    /// 客户端"主机丢失 → 退出联机房间"端口（实现 = Engine/ClientSessionExit.cs，组合根注册）。
+    ///
+    /// 产品口径（用户 2026-10-26）：主机掉线 / 重启后，客户端必须**退出房间**回到世界列表，
+    /// 绝不带着旧状态自动连进主机新建的房间。此前地形通道对断线按 5s 间隔无限重连，
+    /// 主机一重建房间，僵尸客户端立刻以旧身份挤进来。
+    /// 模块层不引用 Game：是否"已在联机世界里"由引擎侧判定（GameScreen）。
+    /// </summary>
+    public interface IClientSessionExitPort
+    {
+        /// <summary>
+        /// 与主机的通道死亡时调用。返回 true = 本端正在联机世界里（已登记退出：
+        /// 下一帧头部按引擎退世界路径回到 Play 屏，Play 屏 Enter 会自动 LeaveRoom）；
+        /// 返回 false = 当前不在世界里（加入流程中 / 其他屏）→ 调用方维持既有加入重试语义。
+        /// </summary>
+        bool TryExitWorldOnHostLost(string reason);
     }
 }

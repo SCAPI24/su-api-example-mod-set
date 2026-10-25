@@ -237,8 +237,8 @@ namespace SuMultiplayer.Modules
         private readonly Action<string> m_info;
         private readonly Action<string> m_warn;
         private readonly Func<double> m_clock;
-        private readonly bool m_configured;
-        private readonly DebugMirrorTarget m_configuredTarget;
+        private bool m_configured;
+        private DebugMirrorTarget m_configuredTarget;
         private readonly DebugMirrorCounters m_counters = new DebugMirrorCounters();
         private readonly Dictionary<string, double> m_lastLogTime =
             new Dictionary<string, double>(StringComparer.Ordinal);
@@ -273,6 +273,32 @@ namespace SuMultiplayer.Modules
             m_enabled = enabled;
         }
 
+        /// <summary>
+        /// 应用**世界作用域**的调试配置（进世界 / 换世界时由组合根调用；
+        /// 全局 SuMultiplayer.json 不再带调试镜像键）。配置关闭时才拆掉已有视图。
+        /// </summary>
+        public void ApplyConfiguration(string configValue)
+        {
+            if (!DebugMirrorTarget.TryParse(configValue, out DebugMirrorTarget target,
+                    out bool enabled, out string error))
+            {
+                if (m_port.IsAlive) DestroyMirror("世界调试配置解析失败");
+                m_configured = false;
+                m_configuredTarget = default;
+                m_requested = default;
+                m_enabled = false;
+                m_hasActiveTarget = false;
+                WarnRateLimited("config",
+                    "[SuMP][debug-mirror] 世界调试配置解析失败，功能保持关闭：" + error);
+                return;
+            }
+            m_configured = enabled;
+            m_configuredTarget = target;
+            m_requested = target;
+            m_enabled = enabled;
+            if (!enabled && m_port.IsAlive) DestroyMirror("世界调试配置关闭");
+        }
+
         /// <summary>配置里是否显式开启了调试镜像（默认 false）。</summary>
         public bool IsConfigured => m_configured;
 
@@ -301,7 +327,7 @@ namespace SuMultiplayer.Modules
             {
                 WarnRateLimited("hud-unavailable",
                     "[SuMP][debug-mirror] 配置 debugmirrorclient=false（默认）→ MIR 按钮不生效；" +
-                    "要启用请在 SuMultiplayer.json 写 \"debugmirrorclient\": true（或 <clientId>[#<slot>]）");
+                    "要启用请在该世界目录的 SuMultiplayerDebug.json 写 \"debugmirrorclient\": true（或 <clientId>[#<slot>]）");
                 return false;
             }
             if (!m_enabled)

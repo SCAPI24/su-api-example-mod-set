@@ -1,7 +1,9 @@
 # 调试镜像角色（mirrorcharacter）— 把 H3 的第三个分屏变成客户端当前的视角（第一 / 第三人称 / 轨道 / 固定视点）
 
 > 默认关闭。纯逻辑 = `Modules/DebugMirrorCharacterPorts.cs`；引擎动作 = `Engine/MirrorCharacterEngine.cs`。
-> 配置键在 `Engine/SyncConfig.cs`（`data:/Mods/SuMultiplayer.json`）。
+> 配置键在**世界目录**的 `SuMultiplayerDebug.json`（`Engine/DebugMirrorWorldSettings.cs`）。
+> 用户口径（2026-10-21）：调试镜像属于"这一张地图"，换世界 = 换文件 = 不沿用别的图的调试开关；
+> 全局 `Mods/SuMultiplayer.json` 只放机器级参数（端口 / 房间名 / 语音等），**不再有调试镜像键**。
 
 ## 配置键
 
@@ -227,11 +229,13 @@ replace 的相机切换另有内部计数 `m_deathCameraShown` / `m_deathCameraR
 本功能按引擎官方链路创建一个真实角色，再把它的相机绑到客户端当前的视角（第一 / 第三 / 轨道 /
 固定视点，`camera_mode` 同步），所以第三 / 第四分屏 = 客户端当前的视角 + 完整的本地角色表现。
 
-### 配置键
+### 配置键（全部在 `<世界目录>/SuMultiplayerDebug.json`，不存在 = 全关）
 
 | 键 | 值 | 说明 |
 |---|---|---|
-| `mirrorcharacterauto` | `true`（默认）/ `false` | 关闭 = 一个引擎调用都不发生（零影响） |
+| `mirrorcharacterauto` | `true` / **`false`（默认）** | 调试镜像宿主：为每个加入的客户端自动建一个真实本地角色当宿主。用户口径（2026-10-21）：**默认关闭**，正常联机不该因为有人加入就凭空多出角色/分屏；要调试时在**这一张地图**的 `SuMultiplayerDebug.json` 里显式打开 |
+| `clientview` | `true` / **`false`（默认）** | 调试：主机为每个加入的客户端自动开一个 camera-only 分屏显示其第一人称视角（实体不进 Project）。默认关闭；关闭时立刻拆除已有视图 |
+| `clientviewclient` | `all`（默认）/ `auto` / `first` / `<clientId>` | 自动客户端分屏只给哪些客户端开；写错 = 功能保持关闭 + 明确告警 |
 | `mirrorhostnameprefix` | 默认 `"Mirror"` | 自动角色名 = `<前缀>#<clientId>`，重名依次追加 `-2` / `-3`…；空 = 默认；带控制字符 / 超 16 字符 = 配置写错（功能关闭 + 明确告警） |
 | `mirrorcharacter` | 角色名 / 空 | **显式名字优先**：世界里已有该角色 → 直接用它当宿主（见下文"复用"）；手动创建的角色不会被归入 auto 账本 |
 | `mirrorcharactermode` | 空 / `replace`（默认）/ `copy` | `replace` = 该分屏显示客户端第一人称、宿主身体隐藏不可碰撞；`copy` = 逐拍复制客户端状态到宿主身上 |

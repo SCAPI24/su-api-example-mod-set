@@ -841,13 +841,8 @@ namespace SuMultiplayer.Modules
                 Log("没有世界存储适配器，无法判断当前世界是不是下载来的联机世界（不会建主机角色）");
                 return false;
             }
-            IReadOnlyList<string> registered = m_store.Registered;
-            for (int i = 0; i < registered.Count; i++)
-            {
-                if (string.Equals(registered[i], worldDirectory, StringComparison.OrdinalIgnoreCase))
-                    return true;
-            }
-            return false;
+            // 判定数据源 = 该世界目录自己的会话登记文件（不同世界不同文件夹，信息不迁移）。
+            return m_store.IsDownloaded(worldDirectory);
         }
 
         /// <summary>

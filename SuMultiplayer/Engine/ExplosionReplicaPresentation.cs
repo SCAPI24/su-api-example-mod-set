@@ -9,14 +9,19 @@ namespace SuMultiplayer.Engine
     /// <summary>
     /// 客户端爆炸**表现**（唯一允许的客户端反应）。
     ///
-    /// 允许：粒子（火焰 / 烟）、声音、镜头震动（ComponentBody.ApplyShaking）。
+    /// 允许：粒子（火焰 / 烟 / 方块碎屑）、声音、镜头震动（ComponentBody.ApplyShaking）。
     /// 禁止：任何地形写入、任何实体 / 可拾取物 / 投掷物生成、任何伤害 / 血量写入。
-    /// 这里没有引用 SubsystemTerrain / SubsystemPickables / SubsystemProjectiles /
-    /// ComponentHealth，靠类型系统把"客户端只表现"钉死。
+    /// 这里不引用 SubsystemPickables / SubsystemProjectiles / ComponentHealth；
+    /// SubsystemTerrain 仅以**只读**方式用于 BlockDebrisParticleSystem（构造器读光照、
+    /// Simulate 做射线检测，与引擎 BurnAwayEffectReplicaEngine 的 BurntDebris 同口径）。
     ///
     /// 视觉参数口径来自引擎的 <c>SubsystemExplosions.SimulateExplosion/PostprocessExplosions</c>：
     /// 事件里的 radius = 爆炸压力值；表现半径取 sqrt(pressure) 并夹紧（引擎压力场没有随事件下发，
     /// 不伪造逐格压力值，只按距离做平滑衰减）。
+    /// 雷击（ExplosionKinds.Lightning）：主机除了爆炸本身（1 格火团），还在被劈格子上挂
+    /// BlockDebrisParticleSystem（SubsystemSky.cs:249-255，125 粒方块同色碎屑）——
+    /// 事件 block_value 携带被劈格子的原值，这里原样复刻；且雷击是静音爆炸
+    /// （noExplosionSound:true，雷声走音频路径），不播 Audio/Explosion*。
     /// </summary>
     internal sealed class ExplosionReplicaPresentation
     {
@@ -37,6 +42,14 @@ namespace SuMultiplayer.Engine
                 return false;
             }
             SubsystemAudio audio = project.FindSubsystem<SubsystemAudio>(false);
+            // 雷击的碎屑粒子需要 SubsystemTerrain（构造器读光照、Simulate 做射线检测）；
+            // 缺地形必须**在添加任何粒子之前**失败（明确原因，不静默少一半表现）。
+            if (explosion.Kind == ExplosionKinds.Lightning &&
+                project.FindSubsystem<SubsystemTerrain>(false) == null)
+            {
+                reason = "no-terrain";
+                return false;
+            }
             if (explosion.CosmeticOnly || explosion.Kind == ExplosionKinds.Firework)
             {
                 if (!PresentFirework(explosion, particles, audio, out reason)) return false;
@@ -53,7 +66,9 @@ namespace SuMultiplayer.Engine
         {
             float pressure = explosion.Pressure;
             // 主机已经按 ExplosionVisualPolicy 换算好可视半径；压力只用于音量 / 震动强度。
-            float visualRadius = MathUtils.Clamp(explosion.Radius, 1f, 24f);
+            // 下限 0.5：距离 ≤ 0.5 只有中心格 → 闪电档只渲染 1 格火团（对齐主机实测；
+            // 周围一圈碎屑由投射物实体复制负责，见 ExplosionVisualPolicy 三调注释）。
+            float visualRadius = MathUtils.Clamp(explosion.Radius, 0.5f, 24f);
             var particleSystem = new ExplosionParticleSystem();
             int radius = (int)MathUtils.Ceiling(visualRadius);
             int cells = 0;
@@ -80,7 +95,16 @@ namespace SuMultiplayer.Engine
                 particleSystem.SetExplosionCell(new Point3(centerX, centerY, centerZ), 1f);
             particles.AddParticleSystem(particleSystem);
 
-            if (audio != null && pressure > 0f)
+            // Source: Survivalcraft/Game/SubsystemSky.cs:SubsystemSky.MakeLightningStrike:249-255
+            // 雷击：复刻主机挂在被劈格子上的方块碎屑粒子（block_value = 被劈格子的原值，
+            // 主机在消费前读好；事件位置恰好等于主机碎屑出生点 x+0.5/y+1.5/z+0.5）。
+            bool isLightning = explosion.Kind == ExplosionKinds.Lightning;
+            if (isLightning)
+                PresentLightningDebris(explosion, project, particles);
+
+            // 雷击是静音爆炸（noExplosionSound:true，SubsystemSky.cs:247）：主机不播
+            // Audio/Explosion*（雷声由 SubsystemSky 走自己的音频路径），客户端同样不播。
+            if (audio != null && pressure > 0f && !isLightning)
             {
                 string sound;
                 float minDistance;
@@ -107,6 +131,27 @@ namespace SuMultiplayer.Engine
                     if (strength > 0.01f) body.ApplyShaking(strength);
                 }
             }
+        }
+
+        /// <summary>
+        /// Source: Survivalcraft/Game/SubsystemSky.cs:SubsystemSky.MakeLightningStrike:249-255
+        /// 主机落雷时给被劈格子挂 <c>block.CreateDebrisParticleSystem(..., 2.5f)</c>
+        /// （125 粒方块同色碎屑，strength 2.5）。事件 block_value 由主机在破坏前读好
+        /// （被劈格子的原值）；值非空才生成（主机同款 num6 != 0 检查）——被劈到空气 /
+        /// 水面时两边一致地只有火团没有碎屑。只读地形（光照 / 射线），不写任何格。
+        /// </summary>
+        private static void PresentLightningDebris(in ExplosionEventData explosion, Project project,
+            SubsystemParticles particles)
+        {
+            int cellValue = (int)explosion.BlockValue;
+            int contents = global::Game.Terrain.ExtractContents(cellValue);
+            if (contents <= 0 || BlocksManager.Blocks == null ||
+                contents >= BlocksManager.Blocks.Length)
+                return;
+            SubsystemTerrain terrain = project.FindSubsystem<SubsystemTerrain>(false);
+            Block block = BlocksManager.Blocks[contents];
+            particles.AddParticleSystem(block.CreateDebrisParticleSystem(
+                terrain, explosion.Position, cellValue, 2.5f));
         }
 
         private static bool PresentFirework(in ExplosionEventData explosion,

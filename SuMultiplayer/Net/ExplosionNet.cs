@@ -18,47 +18,65 @@ namespace SuMultiplayer.Net
     /// </summary>
     public static class ExplosionKinds
     {
-        public const int Unspecified = 0;
-        public const int Block = 1;
-        public const int Chain = 2;
-        public const int Throwable = 3;
-        public const int Firework = 4;
-        public const int Keg = 5;
-        public const int Detonator = 6;
+    public const int Unspecified = 0;
+    public const int Block = 1;
+    public const int Chain = 2;
+    public const int Throwable = 3;
+    public const int Firework = 4;
+    public const int Keg = 5;
+    public const int Detonator = 6;
+    public const int Lightning = 7;
 
-        public static bool IsKnown(int kind) => kind >= Block && kind <= Detonator;
+    public static bool IsKnown(int kind) => kind >= Block && kind <= Lightning;
 
-        public static string Name(int kind)
+    public static string Name(int kind)
+    {
+        switch (kind)
         {
-            switch (kind)
-            {
-                case Block: return "block";
-                case Chain: return "chain";
-                case Throwable: return "throwable";
-                case Firework: return "firework";
-                case Keg: return "keg";
-                case Detonator: return "detonator";
-                default: return "kind-" + kind;
-            }
+            case Block: return "block";
+            case Chain: return "chain";
+            case Throwable: return "throwable";
+            case Firework: return "firework";
+            case Keg: return "keg";
+            case Detonator: return "detonator";
+            case Lightning: return "lightning";
+            default: return "kind-" + kind;
         }
+    }
     }
 
     /// <summary>
     /// 爆炸表现口径（主机与客户端共用，避免两边各算一套）：
-    ///   · radius = 由引擎压力换算的**可视半径**（格），夹紧 1..16；压力本身放在 ext 里，
+    ///   · radius = 由引擎压力换算的**可视半径**（格），夹紧 0.5..16；压力本身放在 ext 里，
     ///     客户端用它决定音量 / 镜头震动强度；
-    ///   · 引擎压力可以是数百（火药桶），可视半径按 sqrt 收窄，避免一次爆炸铺满整个视野。
+    ///   · 半径按引擎自己的扩散 / 粒子阈值标定（2026-10-26 修正）：引擎只给
+    ///     "单格压力 ≳1.5" 的格子布置爆炸粒子（SubsystemExplosions.cs:477-489，
+    ///     num5 = Saturate(单格压力/15 - 衰减)×rand(0.2,1) > 0.1），波前压力按
+    ///     p/(格数^0.66 + 5·max(环-7,0)) 稀释（SimulateExplosion:299）。
+    ///     用引擎已知毁伤半径标定 0.45·p^0.4：闪电 p=19→1.5 格（实测主机"只有一点"；
+    ///     旧公式 1.5·√p=6.5 格，客户端铺满整球 = "很大一个圆"的根因）、
+    ///     TNT p≈300→4 格、火药桶 p≈1500→8 格、p≥3000→11+ 格。
+    ///   · 2026-10-26 二调（用户实测反馈）：0.45·p^0.4 铺满整球后客户端仍比主机
+    ///     "多一圈"——引擎侧是阈值滤过的**稀疏**分布（外圈大量格子被 &gt;0.1 过滤），
+    ///     客户端实心球的等效半径天然偏大一圈 → 公式结果整体再减 1 格
+    ///     （最外一圈不再铺粒子）：闪电→1 格（下限钳住）、TNT→3 格、
+    ///     火药桶→6.6 格、p≥3000→10+ 格。
+    ///   · 2026-10-26 三调（用户实测反馈）：闪电档（p=19 → 公式 0.47）被下限钳回
+    ///     1 格半径 = 客户端铺了中心 + 6 邻格共 7 格火团；主机实测**只有中间一格火团**，
+    ///     周围一圈是**炸碎方块的碎屑投射物**（沙地上 = 沙块，由投射物实体复制下发）。
+    ///     → 下限 1 → 0.5：距离 ≤0.5 只有中心格，闪电档只渲染 1 格火，
+    ///     碎屑圈交给实体复制；中大压力档不受影响（p &gt; 27.5 公式结果本就 &gt; 1）。
     /// 这是表现口径，不是物理爆炸范围；物理范围始终由主机的 SubsystemExplosions 决定。
     /// </summary>
     public static class ExplosionVisualPolicy
     {
         public const float MaxRadius = 16f;
-        public const float MinRadius = 1f;
+        public const float MinRadius = 0.5f;
 
         public static float RadiusFromPressure(float pressure)
         {
             if (!ExplosionEventCodec.IsFinite(pressure) || pressure <= 0f) return MinRadius;
-            return MathUtils.Clamp(MathUtils.Sqrt(pressure) * 1.5f, MinRadius, MaxRadius);
+            return MathUtils.Clamp(0.45f * MathUtils.Pow(pressure, 0.4f) - 1f, MinRadius, MaxRadius);
         }
     }
 

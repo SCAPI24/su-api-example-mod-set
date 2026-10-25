@@ -408,7 +408,7 @@ namespace SuMultiplayer.UI
             m_input.Escape += OnInputEscape;
             m_inputRow.Children.Add(m_input);
 
-            m_sendButton = CreateButton("SuMultiplayerChatSendButton", "发送", 96f, 36f,
+            m_sendButton = CreateButton("SuMultiplayerChatSendButton", "Send", 96f, 36f,
                 new Color(122, 88, 44));
             m_sendButton.HorizontalAlignment = WidgetAlignment.Far;
             m_sendButton.VerticalAlignment = WidgetAlignment.Center;
@@ -419,16 +419,65 @@ namespace SuMultiplayer.UI
             m_input.ClickExempt = m_sendButton;
 
             // 触摸端的常驻入口：右下、快捷栏上方。桌面也同样可见（鼠标可点）。
-            m_chatButton = CreateButton("SuMultiplayerChatButton", "聊天", 76f, 56f,
+            // 纵向定位不依赖 Margin 排布：引擎把 Far/Far+Margin 的可用高度夹成
+            // cell - 2*Margin（ContainerWidget.ArrangeChildWidgetInCell），矮设计画布
+            // （红米 uiScale=1.0，Gui 设计高 ~478）下 478-2*236=6.1 → 按钮被压成 14px
+            // 薄片（2026-10-26 实测：只看得见"聊天"两个字、按钮点不了）。改为
+            // PositionChatButton 每帧按真实 frame 显式 SetPosition（与 VoiceHud 同款）。
+            m_chatButton = CreateButton("SuMultiplayerChatButton", "Chat", 76f, 56f,
                 new Color(122, 88, 44));
             m_chatButton.HorizontalAlignment = WidgetAlignment.Far;
             m_chatButton.VerticalAlignment = WidgetAlignment.Far;
-            m_chatButton.Margin = new Vector2(0f, 236f);
+            m_chatButton.Margin = new Vector2(0f, ChatButtonLiftY);
             m_chatButton.Font = m_font;
             m_chatButton.IsVisible = false;
+            m_guiCanvas = gui as CanvasWidget;
             gui.Children.Add(m_chatButton);
 
             IsAttached = true;
+        }
+
+        /// <summary>聊天按钮的设计抬升：距画布底部的间隙（快捷栏上方）。</summary>
+        private const float ChatButtonLiftY = 236f;
+        /// <summary>聊天按钮与右侧按钮列（更多/飞行/潜行，顶部锚定）底部的最小间隙。</summary>
+        private const float ChatButtonColumnGapY = 8f;
+        /// <summary>聊天按钮尺寸（与 CreateButton 的入参一致）。</summary>
+        private const float ChatButtonWidth = 76f;
+        private const float ChatButtonHeight = 56f;
+        /// <summary>上次写入的显式位置签名（尺寸或落点变化才重写 + 记一次日志）。</summary>
+        private string m_chatButtonLayout = string.Empty;
+        private CanvasWidget m_guiCanvas;
+
+        /// <summary>
+        /// 聊天按钮显式定位：右缘对齐；纵向取「设计抬升 236」与「右侧按钮列底部 + 间隙」的较大者
+        /// —— 常规屏幕维持原视觉（抬升 236 足够低），矮设计画布上让到按钮列下方，绝不叠上去。
+        /// 在会话 Tick 里每帧调用（签名不变时零开销）。
+        /// </summary>
+        private void PositionChatButton()
+        {
+            CanvasWidget canvas = m_guiCanvas;
+            if (canvas == null || m_chatButton == null) return;
+            Vector2 guiSize = canvas.ActualSize;
+            if (guiSize.X <= 0f || guiSize.Y <= 0f) return;
+            float top = guiSize.Y - ChatButtonLiftY - ChatButtonHeight;
+            ContainerWidget column = canvas.Children.Find<ContainerWidget>("RightControlsContainer", true);
+            if (column != null && column.IsVisible && column.ActualSize.Y > 1f)
+            {
+                Vector2 columnTopLeft = canvas.ScreenToWidget(column.WidgetToScreen(Vector2.Zero));
+                float columnBottom = columnTopLeft.Y + column.ActualSize.Y;
+                if (top < columnBottom + ChatButtonColumnGapY) top = columnBottom + ChatButtonColumnGapY;
+            }
+            if (top < 0f) top = 0f;
+            // 显式位置生效后清掉设计 Margin：否则 measure 仍按 cell-2*Margin 夹高度。
+            m_chatButton.Margin = Vector2.Zero;
+            CanvasWidget.SetPosition(m_chatButton, new Vector2(guiSize.X - ChatButtonWidth, top));
+            string signature = guiSize.X.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture) +
+                "x" + guiSize.Y.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture) +
+                "@" + top.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture);
+            if (signature == m_chatButtonLayout) return;
+            m_chatButtonLayout = signature;
+            m_logInfo?.Invoke("[SuMP][chat-ui] 聊天按钮显式位置：Gui=" + signature +
+                "（右下角，抬升 " + ChatButtonLiftY + " / 让开右侧按钮列）");
         }
 
         public GameWidget GameWidget => m_gameWidget;
@@ -454,6 +503,7 @@ namespace SuMultiplayer.UI
             }
 
             double now = Time.RealTime;
+            PositionChatButton();
             UpdateFeed(now);
             UpdateChatButton();
             UpdateSendButton();
@@ -719,7 +769,7 @@ namespace SuMultiplayer.UI
             m_inputRow.IsVisible = false;
             m_input.HasFocus = false;
             m_logInfo?.Invoke("[SuMP][chat-ui] 聊天输入：打开系统软键盘（确定 = 发送）");
-            Keyboard.ShowKeyboard("聊天", "输入消息（确定发送，取消返回游戏）", string.Empty,
+            Keyboard.ShowKeyboard("Chat", "Type a message (OK to send, Cancel to go back)", string.Empty,
                 false, OnNativeKeyboardAccepted, OnNativeKeyboardCanceled);
         }
 
@@ -1112,7 +1162,7 @@ namespace SuMultiplayer.UI
             }
             else if (m_hasFocus)
             {
-                fontBatch.QueueText("输入消息…", position, 0f, color * 0.55f,
+                fontBatch.QueueText("Type a message...", position, 0f, color * 0.55f,
                     TextAnchor.VerticalCenter, Vector2.One, Vector2.Zero);
             }
             fontBatch.TransformTriangles(GlobalTransform, vertexCount);

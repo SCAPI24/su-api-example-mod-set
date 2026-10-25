@@ -82,6 +82,8 @@ namespace SuMultiplayer.UI
             {
                 m_rooms?.LeaveRoom();
             }
+            // 只有这个屏幕可见时才做局域网房间探测；回主菜单/进世界后停止（不留后台发现流量）。
+            m_rooms?.SetListVisible(true);
             if (m_downloads != null) m_downloads.TryCleanup(out string cleanupNote);
             StartLocalScan();
         }
@@ -89,6 +91,7 @@ namespace SuMultiplayer.UI
         public override void Leave()
         {
             m_scanGeneration++;
+            m_rooms?.SetListVisible(false);
             HideJoinDialog();
             m_selectedKey = null;
             base.Leave();
@@ -124,7 +127,25 @@ namespace SuMultiplayer.UI
                         return;
                     }
                     m_localWorlds.Clear();
-                    m_localWorlds.AddRange(worlds);
+                    // 硬约束（用户口径 2026-10-21）：Play 屏列表里**绝不能出现下载来的世界**。
+                    // 正常路径是 Enter 时先 TryCleanup 再扫描（目录已删）；这里再按标记过滤一次，
+                    // 防止任何时序/删除失败让它以"一个几 MB 的真实地图"身份混进列表。
+                    int hiddenDownloads = 0;
+                    for (int i = 0; i < worlds.Count; i++)
+                    {
+                        string directory = worlds[i]?.DirectoryName;
+                        if (m_downloads != null && m_downloads.IsDownloadedWorld(directory))
+                        {
+                            hiddenDownloads++;
+                            continue;
+                        }
+                        m_localWorlds.Add(worlds[i]);
+                    }
+                    if (hiddenDownloads > 0)
+                    {
+                        global::Engine.Log.Warning("[SuMP][play] 本地列表发现 " + hiddenDownloads +
+                            " 个下载来的世界（应由清理删除；本帧先从列表隐藏，等下一轮清理）");
+                    }
                     m_totalWorldsSize = 0L;
                     for (int i = 0; i < m_localWorlds.Count; i++) m_totalWorldsSize += m_localWorlds[i].Size;
                 });
@@ -364,6 +385,13 @@ namespace SuMultiplayer.UI
         private void UpdateJoinDialog()
         {
             if (m_joinDialog == null) return;
+            // 被主机拒绝加入 / 加入被外部取消时，组合根会 HideAllDialogs 再弹提示：
+            // 这里发现 BusyDialog 已不在对话框栈里就丢弃引用，不再往已关闭的对话框写状态。
+            if (!DialogsManager.Dialogs.Contains(m_joinDialog))
+            {
+                m_joinDialog = null;
+                return;
+            }
             m_joinDialog.SmallMessage = m_rooms?.JoinStageText ?? string.Empty;
         }
 

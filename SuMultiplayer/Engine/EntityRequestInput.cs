@@ -164,6 +164,9 @@ namespace SuMultiplayer.Engine
                     }
                 }
             }
+            // 世界控制已改由 SuComponentGui（Injector 替换 ComponentGui）同帧拦截：
+            // 这里在 -10 抢点击会晚一帧（widget 的 IsClicked 每帧由 input.Click 现算），
+            // 实测导致客户端本地先执行一次（2026-10-26 双重爆炸根因）。
         }
     }
 }

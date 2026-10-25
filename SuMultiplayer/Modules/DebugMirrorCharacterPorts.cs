@@ -587,9 +587,9 @@ namespace SuMultiplayer.Modules
         private readonly Action<string> m_info;
         private readonly Action<string> m_warn;
         private readonly Func<double> m_clock;
-        private readonly MirrorCharacterSettings m_settings;
-        private readonly bool m_configured;
-        private readonly string m_configError;
+        private MirrorCharacterSettings m_settings;
+        private bool m_configured;
+        private string m_configError;
         private readonly MirrorCharacterCounters m_counters = new MirrorCharacterCounters();
         private readonly Dictionary<string, double> m_lastLogTime =
             new Dictionary<string, double>(StringComparer.Ordinal);
@@ -637,6 +637,37 @@ namespace SuMultiplayer.Modules
         /// <summary>配置写错时保留的原因（未写错 = null；状态行 / 报告用）。</summary>
         public string ConfigError => m_configError;
 
+        /// <summary>
+        /// 应用**世界作用域**的调试配置（进世界 / 换世界时由组合根调用）。
+        /// 旧配置若已绑定会先解绑（换角色名 / 换模式 / 关闭都必须先还原宿主）。
+        /// </summary>
+        public void ApplyConfiguration(string characterValue, string clientValue,
+            string modeValue)
+        {
+            if (!MirrorCharacterSettings.TryParse(characterValue, clientValue, modeValue,
+                    out MirrorCharacterSettings settings, out string error))
+            {
+                if (m_port.IsBound) Unbind("世界调试配置解析失败");
+                m_settings = MirrorCharacterSettings.Disabled;
+                m_configured = false;
+                m_configError = error;
+                WarnRateLimited("config",
+                    "[SuMP][mirror-character] 世界调试配置解析失败，功能保持关闭：" + error);
+                ResetAttemptGate();
+                return;
+            }
+            bool wasBound = m_port.IsBound;
+            bool changed = !m_configured ||
+                !string.Equals(m_settings.CharacterName, settings.CharacterName,
+                    StringComparison.Ordinal) ||
+                m_settings.Mode != settings.Mode;
+            if (wasBound && (!settings.Enabled || changed)) Unbind("世界调试配置变化");
+            m_settings = settings;
+            m_configured = settings.Enabled;
+            m_configError = null;
+            ResetAttemptGate();
+        }
+
         public MirrorCharacterCounters Counters => m_counters;
 
         public MirrorCharacterSettings Settings => m_settings;
@@ -672,7 +703,14 @@ namespace SuMultiplayer.Modules
         /// </summary>
         public void Tick(bool inWorld, bool hosting)
         {
-            if (!m_configured || m_shutdown) return;
+            if (m_shutdown) return;
+            if (!m_configured)
+            {
+                // 世界调试配置关闭：已绑定则先还原宿主（否则身体保持隐藏 / 相机停在旧目标）。
+                if (m_port.IsBound) Unbind("世界调试配置关闭");
+                ResetAttemptGate();
+                return;
+            }
             bool hostingNow = inWorld && hosting;
             if (!hostingNow)
             {

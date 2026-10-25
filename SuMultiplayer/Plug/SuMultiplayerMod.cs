@@ -11,6 +11,7 @@ using SuMultiplayer.Engine;
 using SuMultiplayer.Modules;
 using SuMultiplayer.Net;
 using SuMultiplayer.Players;
+using SuMultiplayer.Terrain;
 using SuMultiplayer.UI;
 using SuMultiplayer.Voice;
 
@@ -76,6 +77,11 @@ namespace SuMultiplayer
         /// <summary>方块使用 / 容器同步：引擎适配（客户端输入拦截 + 副本面板 / 主机权威库存）+ 网络模块。</summary>
         private ContainerReplicaEngine m_blockUseEngine;
         private BlockUseSyncModule m_blockUseModule;
+        /// <summary>世界控制：引擎适配（客户端四按钮拦截 + 主机权威执行 + 客户端提示）+ 网络模块。</summary>
+        private WorldControlEngine m_worldControlEngine;
+        private WorldControlModule m_worldControlModule;
+        /// <summary>主机丢失退出：客户端在世界内通道死亡时退房回世界列表（引擎侧端口）。</summary>
+        private ClientSessionExit m_clientSessionExit;
         /// <summary>家具设计 / 内容同步：引擎适配（主机权威设计表 + 客户端副本表）+ 网络模块。</summary>
         private FurnitureReplicaEngine m_furnitureEngine;
         private FurnitureSyncModule m_furnitureModule;
@@ -178,6 +184,23 @@ namespace SuMultiplayer
         /// </summary>
         private MirrorHostController m_mirrorHost;
         private MirrorHostEngine m_mirrorHostEngine;
+
+        /// <summary>
+        /// 当前世界的**调试镜像配置**（世界目录里的 SuMultiplayerDebug.json；换世界自动重读）。
+        /// 全局 SuMultiplayer.json 不再保存调试镜像开关（用户口径：调试只跟随一张地图）。
+        /// </summary>
+        private DebugMirrorWorldSettings m_debugMirrorWorldSettings =
+            DebugMirrorWorldSettings.None;
+        private Project m_debugMirrorSettingsProject;
+
+        /// <summary>
+        /// 当前世界的**联机行为设置**（世界目录里的 SuMultiplayerWorld.json；换世界自动重读）：
+        /// 目前只有 autoapprovejoins（是否自动同意加入）。默认手动审批。
+        /// </summary>
+        private volatile WorldJoinSettings m_worldJoinSettings = new WorldJoinSettings();
+        private Project m_worldJoinSettingsProject;
+        /// <summary>加入审批决定器（主机：手动弹 Allow/Reject，或按世界设置自动同意）。</summary>
+        private JoinApprovalUi m_joinApprovalUi;
         /// <summary>镜像宿主当前观察的 Project（换世界时补做一次"清理上一次会话留下的 auto 角色"）。</summary>
         private Project m_mirrorHostProject;
         /// <summary>本会话是否已经在当前世界里补做过清理（每个 Project 只做一次）。</summary>
@@ -352,6 +375,12 @@ namespace SuMultiplayer
                 engineModManager.ModParentField, engineModManager.ModParentMethod, diagnostics,
                 "block-use", m_reachGate);
             m_blockUseModule = new BlockUseSyncModule(m_blockUseEngine);
+            // 世界控制（创意四按钮：降水/雾/闪电/时间）：客户端把点击变成 WORLD_CONTROL_REQUEST，
+            // 主机在权威世界上按引擎同款调用执行；状态变化由既有 WorldInfo 快照（~2 Hz）广播生效，
+            // 回执让请求者显示与引擎一致的提示。客户端不本地执行（会被快照拉回）。
+            m_worldControlEngine = new WorldControlEngine(avatarSpawner, diagnostics,
+                "world-control");
+            m_worldControlModule = new WorldControlModule(m_worldControlEngine);
             // 家具设计 / 内容同步：主机的世界设计表是唯一权威；客户端的锤子 / 颜料桶只发请求，
             // 主机校验后安装设计并广播。客户端把记录装进**副本表**（不写存档、不进家具库）。
             m_furnitureEngine = new FurnitureReplicaEngine(avatarSpawner,
@@ -435,6 +464,11 @@ namespace SuMultiplayer
             // 主机 Hello 资料闸门 = 联机角色模块（它拥有角色记录与本地玩家）：
             // 没有记录且 Hello 没带完整资料 → profile_required，不下发世界。
             m_terrainModule.SetHelloProfileGate(m_avatarModule);
+            // 加入审批（旧联机 mod 的 join request）：玩家端必须先被主机同意（或世界设置自动同意）
+            // 才继续握手。拒绝时连接在"建角色记录/建角色实体/世界传输"之前就被移除。
+            m_joinApprovalUi = new JoinApprovalUi(this);
+            m_terrainModule.SetJoinApproval(m_joinApprovalUi);
+            m_terrainModule.JoinRejected += HandleJoinRejected;
 
             // 生物生成/同步：主机权威生成 + 按客户端区域分配；客户端只做复制。
             // 适配器同时是"客户端区域来源"（联机角色位置）与引擎侧生成子系统注入的持有者。
@@ -482,6 +516,9 @@ namespace SuMultiplayer
             // 世界传输模块要有 transport 能力才会启动。
             m_moduleHost.Register(m_terrainModule);
             m_moduleHost.RegisterPort<ITransportPort>(m_terrainModule.TransportPort);
+            // 主机丢失退出端口：客户端在世界内通道死亡时退房回世界列表（2026-10-26 产品口径）。
+            m_clientSessionExit = new ClientSessionExit();
+            m_moduleHost.RegisterPort<IClientSessionExitPort>(m_clientSessionExit);
             // 握手资料视图（主机/分配资料/是否要求先建角色 + 重新握手）：联机角色模块用它。
             m_moduleHost.RegisterPort<IPlayerProfileHandshakePort>(m_terrainModule.ProfileHandshakePort);
             // 实时地图 v9：主机端动物的只读位置来源（只枚举主机世界里的非玩家生物，
@@ -570,6 +607,10 @@ namespace SuMultiplayer
             m_moduleHost.Register(m_projectileHitModule);
             // 方块使用 / 容器同步：transport 硬依赖；消息处理在 Attach 里注册。
             m_moduleHost.Register(m_blockUseModule);
+            // 世界控制（创意四按钮）：transport 硬依赖；引擎端口先于模块注册
+            //（Attach 里就要拿到；客户端输入外壳的挂接由模块 Tick 驱动引擎 Pump）。
+            m_moduleHost.RegisterPort<IWorldControlPort>(m_worldControlEngine);
+            m_moduleHost.Register(m_worldControlModule);
             // 家具设计 / 内容同步：transport 硬依赖；消息处理在 Attach 里注册。
             m_moduleHost.Register(m_furnitureModule);
             // 可编辑方块内容同步：transport 硬依赖；消息处理在 Attach 里注册。
@@ -658,7 +699,8 @@ namespace SuMultiplayer
             m_debugMirrorClient = new DebugMirrorClient(avatarSpawner,
                 engineModManager.ModParentField, engineModManager.ModParentMethod, diagnostics,
                 "debug-mirror");
-            m_debugMirror = new DebugMirrorController(m_config.DebugMirrorClient,
+            // 世界作用域：先按"全关"构造，进世界时读 <世界目录>/SuMultiplayerDebug.json 再应用。
+            m_debugMirror = new DebugMirrorController(string.Empty,
                 m_debugMirrorClient,
                 message => Log.Information(message),
                 message => Log.Warning(message),
@@ -678,8 +720,8 @@ namespace SuMultiplayer
                 engineModManager.ModParentField, engineModManager.ModParentMethod, diagnostics);
             m_mirrorCharacterEngine.ViewFreezeProbe = m_vitalsEngine.TryGetAuthorityFreeze;
             m_moduleHost.RegisterPort<IViewCameraModePort>(m_mirrorCharacterEngine);
-            m_mirrorCharacter = new MirrorCharacterController(m_config.MirrorCharacter,
-                m_config.MirrorCharacterClient, m_config.MirrorCharacterMode,
+            m_mirrorCharacter = new MirrorCharacterController(string.Empty, string.Empty,
+                string.Empty,
                 m_mirrorCharacterEngine,
                 message => Log.Information(message),
                 message => Log.Warning(message),
@@ -697,10 +739,10 @@ namespace SuMultiplayer
                 new MirrorHostImmunityEngine(engineModManager.ModParentField, diagnostics),
                 diagnostics)
             {
-                NamePrefix = m_config.MirrorHostNamePrefix
+                NamePrefix = DebugMirrorWorldSettings.DefaultNamePrefix
             };
-            m_mirrorHost = new MirrorHostController(m_config.MirrorCharacterAuto,
-                m_config.MirrorHostNamePrefix, m_config.MirrorCharacterMode, m_config.MirrorCharacter,
+            m_mirrorHost = new MirrorHostController(false,
+                DebugMirrorWorldSettings.DefaultNamePrefix, string.Empty, string.Empty,
                 m_mirrorHostEngine,
                 message => Log.Information(message),
                 message => Log.Warning(message),
@@ -714,7 +756,9 @@ namespace SuMultiplayer
             // 已被 debugmirrorclient 实际镜像的客户端同理（显式配置优先）。
             m_clientViewEngine = new ClientViewEngine(avatarSpawner,
                 engineModManager.ModParentField, engineModManager.ModParentMethod, diagnostics);
-            m_clientView = new ClientViewController(m_config.ClientView, m_config.ClientViewClient,
+            // 自动客户端分屏是**调试功能**：默认关闭，只有 &lt;世界目录&gt;/SuMultiplayerDebug.json 里
+            // 显式写 clientview 才启用（用户口径 2026-10-21：正常加入时主机端不该默认多出屏幕）。
+            m_clientView = new ClientViewController(false, string.Empty,
                 m_clientViewEngine,
                 message => Log.Information(message),
                 message => Log.Warning(message),
@@ -819,15 +863,15 @@ namespace SuMultiplayer
             Log.Information("[SuMP] " + m_debugMirror.StatusLine() +
                 (m_debugMirror.IsConfigured
                     ? ""
-                    : "（debugmirrorclient 默认关闭；启用见 Mods/SuMultiplayer.json）"));
+                    : "（调试镜像默认关闭；在<世界目录>/SuMultiplayerDebug.json里显式打开）"));
             Log.Information("[SuMP] " + m_mirrorCharacter.StatusLine() +
                 (m_mirrorCharacter.IsConfigured
                     ? ""
-                    : "（mirrorcharacter 默认关闭；启用见 Mods/SuMultiplayer.json）"));
+                    : "（调试镜像角色默认关闭；在<世界目录>/SuMultiplayerDebug.json里显式打开）"));
             Log.Information("[SuMP] " + m_mirrorHost.StatusLine() +
                 (m_mirrorHost.IsConfigured
                     ? ""
-                    : "（mirrorcharacterauto 已关闭 / 配置写错）"));
+                    : "（镜像宿主默认关闭；在<世界目录>/SuMultiplayerDebug.json里显式打开）"));
             Log.Information("[SuMP] " + m_clientView.StatusLine() +
                 (m_clientView.IsConfigured
                     ? ""
@@ -992,6 +1036,14 @@ namespace SuMultiplayer
             // Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.Update（Drop 分支）
             modInjector.Register("Game.ComponentInput",
                 "SuMultiplayer.Engine.SuComponentInput");
+            // 世界控制（创意四按钮：降水/雾/闪电/时间）：替换 ComponentGui，在 base.Update
+            // （HandleInput 读四按钮）之前**同帧**采集意图发请求并消费标志。不能在
+            // ComponentInput(-10) 抢点击：widget 的 IsClicked 每帧由 input.Click 现算
+            //（ClickableWidget.Update），-10 读到的是上一帧残留 → 晚一帧且消费不掉当帧置位，
+            // 实测客户端本地会先执行一次（本地爆炸 + 复制事件 = 双份特效，2026-10-26）。
+            // 主机 / 非客户端没有 sink，纯粹透传 base.Update，行为与原版一致。
+            modInjector.Register("Game.ComponentGui",
+                "SuMultiplayer.Engine.SuComponentGui");
             // 全局主机声音中继：替换 SubsystemAudio，在 base.Update 排空 m_queuedSounds
             // 之前捕获新增条目（非虚 PlaySound 无法用派生外壳截获，见 Engine/RemoteActionAudioReplica.cs）。
             modInjector.Register("Game.SubsystemAudio",
@@ -1084,6 +1136,10 @@ namespace SuMultiplayer
             {
                 try
                 {
+                    // 主机丢失退出：模块 tick 只登记请求（避免在 tick 中途 DisposeProject），
+                    // 这里在帧头部真正执行（存盘 → 卸载世界 → 回 Play 屏 → LeaveRoom）。
+                    try { m_clientSessionExit?.DrainPendingExit(); }
+                    catch (Exception e) { NoteFrameStepFailure("client-session-exit", e); }
                     // 注意：**不能**在 Project == null 时跳过 tick —— 加入房间发生在主菜单。
                     // 需要世界的部分（地形泵）由 SuSubsystemTerrain.Update 自己驱动。
                     bool inWorld = GameManager.Project != null;
@@ -1119,6 +1175,15 @@ namespace SuMultiplayer
                     try { m_entityEngine?.CaptureUiDropInventorySnapshot(); }
                     catch (Exception e) { NoteFrameStepFailure("ui-drop-snapshot", e); }
 
+                    // 世界作用域的调试镜像配置：进世界 / 换世界时重读 <世界目录>/SuMultiplayerDebug.json，
+                    // 再把结果应用到三个调试镜像控制器（全局配置里不再有这些开关）。
+                    try { RefreshDebugMirrorWorldSettings(inWorld); }
+                    catch (Exception e) { NoteFrameStepFailure("debug-mirror-config", e); }
+
+                    // 世界作用域的联机设置（加入审批）：换世界重读；文件不存在 = 手动审批。
+                    try { RefreshWorldJoinSettings(inWorld); }
+                    catch (Exception e) { NoteFrameStepFailure("world-join-settings", e); }
+
                     // 调试镜像（debug-only）：先让控制器按"配置 / 主机 / 世界"状态创建或拆除
                     // 第 3 个分屏视图，再挂 MIR 小按钮。配置关闭时两者都不产生任何引擎对象；
                     // 离开房间 / 世界卸载 / 关闭开关都在控制器 Tick 里同步拆除。
@@ -1139,7 +1204,7 @@ namespace SuMultiplayer
                     // 否则两个控制器会抢同一个 MirrorCharacterEngine：显式控制器先绑定 → MirrorHost 侧
                     // TryBind 命中"幂等返回" → replace 的绑视图/隐藏身体动作从未执行（viewBound=0，
                     // 第三屏还是宿主自己的视角）。auto 关闭时才由显式 mirrorcharacter 驱动。
-                    bool mirrorHostOwnsEngine = m_config != null && m_config.MirrorCharacterAuto;
+                    bool mirrorHostOwnsEngine = m_debugMirrorWorldSettings.MirrorHostAuto;
                     if (!mirrorHostOwnsEngine)
                     {
                         try
@@ -1243,6 +1308,138 @@ namespace SuMultiplayer
         ///   ② 控制器按池计算 / 就绪 / 离开做创建、绑定、解绑、只删 auto 的清理。
         /// 同一帧只跑一次：ClientJoined 在模块 tick 里到达，控制器下一拍就能看到新客户端。
         /// </summary>
+        /// <summary>
+        /// 进世界 / 换世界时重读**该世界目录**的调试镜像配置（SuMultiplayerDebug.json），
+        /// 并应用到三个调试镜像控制器。换世界 = 换文件（不同世界互不沿用调试开关）。
+        /// </summary>
+        private void RefreshDebugMirrorWorldSettings(bool inWorld)
+        {
+            Project project = inWorld ? GameManager.Project : null;
+            if (ReferenceEquals(project, m_debugMirrorSettingsProject)) return;
+            m_debugMirrorSettingsProject = project;
+            if (project == null)
+            {
+                m_debugMirrorWorldSettings = DebugMirrorWorldSettings.None;
+                ApplyDebugMirrorWorldSettings("世界已卸载 → 调试镜像全关");
+                return;
+            }
+            string directory = project.FindSubsystem<SubsystemGameInfo>(false)?.DirectoryName ??
+                string.Empty;
+            m_debugMirrorWorldSettings = DebugMirrorWorldSettings.Load(directory, out string note);
+            ApplyDebugMirrorWorldSettings(note);
+        }
+
+        private void ApplyDebugMirrorWorldSettings(string note)
+        {
+            m_debugMirror?.ApplyConfiguration(m_debugMirrorWorldSettings.DebugMirrorClient);
+            m_mirrorCharacter?.ApplyConfiguration(m_debugMirrorWorldSettings.MirrorCharacter,
+                m_debugMirrorWorldSettings.MirrorCharacterClient,
+                m_debugMirrorWorldSettings.MirrorCharacterMode);
+            m_mirrorHost?.ApplyConfiguration(m_debugMirrorWorldSettings.MirrorHostAuto,
+                m_debugMirrorWorldSettings.MirrorHostNamePrefix,
+                m_debugMirrorWorldSettings.MirrorCharacterMode,
+                m_debugMirrorWorldSettings.MirrorCharacter);
+            if (m_mirrorHostEngine != null)
+                m_mirrorHostEngine.NamePrefix = m_debugMirrorWorldSettings.MirrorHostNamePrefix;
+            // 自动客户端分屏同属调试开关（世界文件），默认关闭；关闭时立刻拆掉已建的视图。
+            m_clientView?.ApplyConfiguration(m_debugMirrorWorldSettings.ClientView,
+                m_debugMirrorWorldSettings.ClientViewClient);
+            Log.Information("[SuMP] 世界调试配置（镜像/自动分屏）：" + note);
+        }
+
+        /// <summary>换世界时重读 &lt;世界目录&gt;/SuMultiplayerWorld.json（加入审批设置）。</summary>
+        private void RefreshWorldJoinSettings(bool inWorld)
+        {
+            Project project = inWorld ? GameManager.Project : null;
+            if (ReferenceEquals(project, m_worldJoinSettingsProject)) return;
+            m_worldJoinSettingsProject = project;
+            if (project == null)
+            {
+                m_worldJoinSettings = new WorldJoinSettings();
+                Log.Information("[SuMP] 加入审批：世界已卸载 → 回到默认（手动审批）");
+                return;
+            }
+            string directory = project.FindSubsystem<SubsystemGameInfo>(false)?.DirectoryName ??
+                string.Empty;
+            m_worldJoinSettings = WorldJoinSettings.Load(directory, out string note);
+            Log.Information("[SuMP] 加入审批配置：" + note);
+        }
+
+        /// <summary>
+        /// 客户端：主机拒绝加入（HelloAck.rejected / 审批超时）。关闭通道、回 Play 屏并显示原因，
+        /// 不再自动重连（重连只会被再拒一次）。主机侧此时没有建任何角色/记录/世界传输。
+        /// </summary>
+        private void HandleJoinRejected(string reason)
+        {
+            string text = string.IsNullOrEmpty(reason) ? "(主机未说明原因)" : reason;
+            Log.Warning("[SuMP][join-approval] 加入被主机拒绝：" + text + " → 回 Play 屏（不再自动重连）");
+            try { m_sessionModule?.NotifyJoinRejected(reason); }
+            catch (Exception e)
+            {
+                Log.Warning("[SuMP][join-approval] 重置加入流程失败：" + e.GetType().Name + " " +
+                    e.Message + "（通道可能仍在运行；请从 Play 屏重新加入）");
+            }
+            try
+            {
+                DialogsManager.HideAllDialogs();
+                DialogsManager.ShowDialog(null, new MessageDialog("Join Room",
+                    "The host declined your join request: " + text, "OK", null, null));
+            }
+            catch (Exception e)
+            {
+                Log.Warning("[SuMP][join-approval] 显示拒绝提示失败：" + e.GetType().Name + " " +
+                    e.Message + "（原因已写入日志：加入被拒绝）");
+            }
+        }
+
+        /// <summary>
+        /// 主机加入审批 UI：世界设置 autoapprovejoins=true 时直接放行；否则弹 Allow / Reject。
+        /// 审批决议由 Terrain 层按 clientId 落地（同意 = 继续握手；拒绝/超时 = HelloAck.rejected）。
+        /// </summary>
+        private sealed class JoinApprovalUi : IJoinApprovalDecider
+        {
+            private readonly SuMultiplayerMod m_owner;
+
+            public JoinApprovalUi(SuMultiplayerMod owner) { m_owner = owner; }
+
+            public bool AutoApprove => m_owner.m_worldJoinSettings.AutoApproveJoins;
+
+            public void RequestDecision(int clientId, string name, string identity,
+                Action<bool, string> decided)
+            {
+                string label = string.IsNullOrEmpty(name) ? ("client#" + clientId) : name;
+                string shortIdentity = string.IsNullOrEmpty(identity)
+                    ? "(no identity)"
+                    : identity.Substring(0, Math.Min(8, identity.Length));
+                Log.Information("[SuMP][join-approval] 等待主机决定：clientId=" + clientId +
+                    " · 名字=" + label + " · 身份=" + shortIdentity + "（Allow / Reject）");
+                // 引擎对话框只在主线程操作：网络帧回调里不能直接弹。
+                Dispatcher.Dispatch(delegate
+                {
+                    var dialog = new MessageDialog("Join Request",
+                        label + " (" + shortIdentity + ") wants to join this world." + "\n" +
+                        "Allow this player?",
+                        "Allow", "Reject",
+                        delegate (MessageDialogButton button)
+                        {
+                            if (button == MessageDialogButton.Button1)
+                            {
+                                Log.Information("[SuMP][join-approval] 主机同意加入：clientId=" +
+                                    clientId + " · " + label);
+                                decided(true, string.Empty);
+                            }
+                            else
+                            {
+                                Log.Information("[SuMP][join-approval] 主机拒绝加入：clientId=" +
+                                    clientId + " · " + label);
+                                decided(false, "主机拒绝了加入请求");
+                            }
+                        });
+                    DialogsManager.ShowDialog(null, dialog);
+                });
+            }
+        }
+
         private void TickMirrorHost(bool inWorld)
         {
             if (m_mirrorHost == null) return;

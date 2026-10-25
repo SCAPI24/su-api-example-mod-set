@@ -46,6 +46,15 @@ enum ExplosionKind {
   EXPLOSION_KIND_KEG = 5;
   // DetonatorBlock.
   EXPLOSION_KIND_DETONATOR = 6;
+  // Lightning strike.  Source: Survivalcraft/Game/SubsystemSky.cs:MakeLightningStrike
+  // -- the only no-sound AddExplosion caller in the engine (pressure 19 or 39,
+  // queued at the cell ABOVE the struck cell).  For this kind block_value carries
+  // the STRUCK cell's pre-destruction value (e.g. sand) so clients can replay the
+  // block-colored BlockDebrisParticleSystem the host's MakeLightningStrike spawns
+  // (SubsystemSky.cs:249-255); no explosion sound is played (host is silent, thunder
+  // arrives through the audio path).  Boundary: a strike into leaves spawns no
+  // explosion at all (SubsystemSky.cs:228-243), so no event and no debris.
+  EXPLOSION_KIND_LIGHTNING = 7;
 }
 
 // Source: Survivalcraft/Game/SubsystemExplosions.cs:SubsystemExplosions.AddExplosion
@@ -58,12 +67,15 @@ message ExplosionEvent {
   sump.position.Vec3 position = 3;
   // ExplosionKind.
   int32 kind = 4;
-  // Visual blast radius in cells (1..16), derived from the engine pressure at the
-  // charge centre by ExplosionVisualPolicy.  The raw pressure is carried in ext.
+  // Visual blast radius in cells (0.5..16), derived from the engine pressure at the
+  // charge centre by ExplosionVisualPolicy.  0.5 = fire on the centre cell only
+  // (lightning tier; the surrounding debris ring is block projectiles replicated by
+  // the entity domain, not fire).  The raw pressure is carried in ext.
   float radius = 5;
   // Cell value of the exploding block (0 for chain explosions whose cell was
   // already destroyed).  For fireworks this is the projectile item value with
-  // FireworksBlock data (shape / color / altitude / flickering).
+  // FireworksBlock data (shape / color / altitude / flickering).  For lightning
+  // strikes this is the STRUCK cell's pre-destruction value (debris burst source).
   uint32 block_value = 6;
   // true: presentation only.  Clients must not simulate terrain / entities / damage.
   bool cosmetic_only = 7;
