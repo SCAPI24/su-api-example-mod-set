@@ -29,6 +29,21 @@ namespace SuMultiplayer.Net
     {
         public PlayerPositionSnapshot(int serverTick, Vector3 position, Quaternion rotation,
             Vector3 velocity, Vector2 lookAngles, bool isCrouching, bool isFlying, bool isGrounded)
+            : this(serverTick, position, rotation, velocity, lookAngles, isCrouching, isFlying,
+                isGrounded, Vector3.Zero, hasMoveVelocity: false)
+        {
+        }
+
+        /// <param name="moveVelocity">
+        /// 客户端**移动时**的当前速度（本地碰撞解析前）：<c>body.Velocity - body.CollisionVelocityChange</c>。
+        /// <paramref name="velocity"/> 是碰撞后的结果（撞到生物时会被 InelasticCollision 反弹/清零），
+        /// 主机 avatar 用它推不动动物；主机把这个"移动速度"写进化身 body 的水平分量，才能用
+        /// 引擎原生物理把动物推动。Source: Survivalcraft/Game/ComponentBody.cs:Update
+        /// （CollisionVelocityChange = MoveWithCollision 后 - 前）。
+        /// </param>
+        public PlayerPositionSnapshot(int serverTick, Vector3 position, Quaternion rotation,
+            Vector3 velocity, Vector2 lookAngles, bool isCrouching, bool isFlying, bool isGrounded,
+            Vector3 moveVelocity, bool hasMoveVelocity)
         {
             ServerTick = serverTick;
             Position = position;
@@ -38,6 +53,23 @@ namespace SuMultiplayer.Net
             IsCrouching = isCrouching;
             IsFlying = isFlying;
             IsGrounded = isGrounded;
+            MoveVelocity = moveVelocity;
+            HasMoveVelocity = hasMoveVelocity;
+            StandingOnMount = false;
+        }
+
+        /// <summary>
+        /// 客户端**站在**可骑乘实体（船/坐骑）上（不是骑乘：StandingOnBody 是该实体）。
+        /// 主机远端化身要直接贴合客户端位置、速度清零，不能靠主机物理自己"走上船"——
+        /// 否则会卡在船壳边持续推船（实机：客户端取消乘船后船自己向前漂走）。
+        /// </summary>
+        public PlayerPositionSnapshot(int serverTick, Vector3 position, Quaternion rotation,
+            Vector3 velocity, Vector2 lookAngles, bool isCrouching, bool isFlying, bool isGrounded,
+            Vector3 moveVelocity, bool hasMoveVelocity, bool standingOnMount)
+            : this(serverTick, position, rotation, velocity, lookAngles, isCrouching, isFlying,
+                isGrounded, moveVelocity, hasMoveVelocity)
+        {
+            StandingOnMount = standingOnMount;
         }
 
         /// <summary>发送方自己的位置脉冲序号（旧 <c>client.Step</c>）。只用于丢弃陈旧快照与诊断。</summary>
@@ -46,6 +78,15 @@ namespace SuMultiplayer.Net
         public Vector3 Position { get; }
         public Quaternion Rotation { get; }
         public Vector3 Velocity { get; }
+        /// <summary>
+        /// 客户端**移动时**的当前速度（碰撞解析前）；只有客户端→主机的快照带本字段
+        /// （<see cref="HasMoveVelocity"/> = true）。主机→客户端的批不填（客户端不拿它覆盖主机化身）。
+        /// </summary>
+        public Vector3 MoveVelocity { get; }
+        public bool HasMoveVelocity { get; }
+
+        /// <summary>客户端站在可骑乘实体（船/坐骑）上：主机化身直接贴位置 + 速度清零。</summary>
+        public bool StandingOnMount { get; }
         /// <summary>俯仰/偏航（旧 <c>msg.LookAngles</c>；机身 yaw 在 <see cref="Rotation"/> 里）。</summary>
         public Vector2 LookAngles { get; }
         public bool IsCrouching { get; }
@@ -62,7 +103,9 @@ namespace SuMultiplayer.Net
             IsFiniteValue(Rotation.X) && IsFiniteValue(Rotation.Y) && IsFiniteValue(Rotation.Z) &&
             IsFiniteValue(Rotation.W) &&
             IsFiniteValue(Velocity.X) && IsFiniteValue(Velocity.Y) && IsFiniteValue(Velocity.Z) &&
-            IsFiniteValue(LookAngles.X) && IsFiniteValue(LookAngles.Y);
+            IsFiniteValue(LookAngles.X) && IsFiniteValue(LookAngles.Y) &&
+            (!HasMoveVelocity || (IsFiniteValue(MoveVelocity.X) && IsFiniteValue(MoveVelocity.Y) &&
+                IsFiniteValue(MoveVelocity.Z)));
 
         private static bool IsFiniteValue(float value) =>
             !float.IsNaN(value) && !float.IsInfinity(value);
@@ -123,6 +166,14 @@ namespace SuMultiplayer.Net
         public Vector3 Position;
         public Quaternion Rotation = Quaternion.Identity;
         public Vector3 Velocity;
+        /// <summary>
+        /// 客户端移动速度（碰撞解析前，2026-10-26 客户端推动物修复）。仅客户端→主机的快照携带；
+        /// 主机把它写进化身 body 的水平速度，主机端角色才能用引擎原生物理推动物。
+        /// </summary>
+        public Vector3 MoveVelocity;
+        public bool HasMoveVelocity;
+        /// <summary>客户端站在可骑乘实体（船/坐骑）上：主机化身直接贴位置 + 速度清零。</summary>
+        public bool StandingOnMount;
         public Vector2 LookAngles;
         public bool IsCrouching;
         public bool IsFlying;
@@ -156,6 +207,9 @@ namespace SuMultiplayer.Net
             Position = snapshot.Position;
             Rotation = snapshot.Rotation;
             Velocity = snapshot.Velocity;
+            MoveVelocity = snapshot.MoveVelocity;
+            HasMoveVelocity = snapshot.HasMoveVelocity;
+            StandingOnMount = snapshot.StandingOnMount;
             LookAngles = snapshot.LookAngles;
             IsCrouching = snapshot.IsCrouching;
             IsFlying = snapshot.IsFlying;
@@ -350,12 +404,25 @@ namespace SuMultiplayer.Net
                 error = "条目缺少 position/rotation/velocity/look_angles（协议要求四者都存在）";
                 return false;
             }
+            Vector3 moveVelocity = Vector3.Zero;
+            bool hasMoveVelocity = entry.HasMoveVelocity;
+            if (hasMoveVelocity)
+            {
+                if (entry.MoveVelocity == null)
+                {
+                    error = "条目声明 has_move_velocity 但缺少 move_velocity（协议要求成对出现）";
+                    return false;
+                }
+                moveVelocity = new Vector3(entry.MoveVelocity.X, entry.MoveVelocity.Y,
+                    entry.MoveVelocity.Z);
+            }
             snapshot = new PlayerPositionSnapshot(entry.ServerTick,
                 new Vector3(entry.Position.X, entry.Position.Y, entry.Position.Z),
                 new Quaternion(entry.Rotation.X, entry.Rotation.Y, entry.Rotation.Z, entry.Rotation.W),
                 new Vector3(entry.Velocity.X, entry.Velocity.Y, entry.Velocity.Z),
                 new Vector2(entry.LookAngles.X, entry.LookAngles.Y),
-                entry.IsCrouching, entry.IsFlying, entry.IsGrounded);
+                entry.IsCrouching, entry.IsFlying, entry.IsGrounded,
+                moveVelocity, hasMoveVelocity, entry.StandingOnMount);
             return true;
         }
 
@@ -372,6 +439,11 @@ namespace SuMultiplayer.Net
                     X = s.Rotation.X, Y = s.Rotation.Y, Z = s.Rotation.Z, W = s.Rotation.W
                 },
                 Velocity = new PP.Vec3 { X = s.Velocity.X, Y = s.Velocity.Y, Z = s.Velocity.Z },
+                MoveVelocity = s.HasMoveVelocity
+                    ? new PP.Vec3 { X = s.MoveVelocity.X, Y = s.MoveVelocity.Y, Z = s.MoveVelocity.Z }
+                    : null,
+                HasMoveVelocity = s.HasMoveVelocity,
+                StandingOnMount = s.StandingOnMount,
                 LookAngles = new PP.Vec2 { X = s.LookAngles.X, Y = s.LookAngles.Y },
                 IsCrouching = s.IsCrouching,
                 IsFlying = s.IsFlying,

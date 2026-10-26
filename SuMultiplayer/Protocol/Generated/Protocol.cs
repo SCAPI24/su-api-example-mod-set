@@ -70,7 +70,7 @@ namespace SuMultiplayer.Protocol {
             "ASgFEhAKCGNlbnRlcl96GAIgASgFEg4KBnJhZGl1cxgDIAEoBRILCgNleHQY",
             "ZCABKAwSJAoGY3VzdG9tGGUgASgLMhQuZ29vZ2xlLnByb3RvYnVmLkFueSJI",
             "CgNCeWUSDgoGcmVhc29uGAEgASgJEgsKA2V4dBhkIAEoDBIkCgZjdXN0b20Y",
-            "ZSABKAsyFC5nb29nbGUucHJvdG9idWYuQW55KqwSCgtNZXNzYWdlVHlwZRIc",
+            "ZSABKAsyFC5nb29nbGUucHJvdG9idWYuQW55KtASCgtNZXNzYWdlVHlwZRIc",
             "ChhNRVNTQUdFX1RZUEVfVU5TUEVDSUZJRUQQABIJCgVIRUxMTxABEg0KCUhF",
             "TExPX0FDSxACEhMKD0lOVEVSRVNUX1VQREFURRADEhcKE0NIVU5LX0RJR0VT",
             "VF9SRVBPUlQQBBIRCg1DSFVOS19WRVJESUNUEAUSEAoMQ0hVTktfUkVTWU5D",
@@ -122,8 +122,9 @@ namespace SuMultiplayer.Protocol {
             "VUVTVBBqEh0KGVBMQVlFUl9TRUxGX0RBTUFHRV9SRVNVTFQQaxIXChNQTEFZ",
             "RVJfUFJPRklMRV9TWU5DEGwSGAoUUExBWUVSX0VGRkVDVF9FVkVOVFMQbRIY",
             "ChRQUk9KRUNUSUxFX0hJVF9FVkVOVBBvEhkKFVdPUkxEX0NPTlRST0xfUkVR",
-            "VUVTVBBwEhgKFFdPUkxEX0NPTlRST0xfUkVTVUxUEHEiBAhuEG5CG0gBqgIW",
-            "U3VNdWx0aXBsYXllci5Qcm90b2NvbGIGcHJvdG8z"));
+            "VUVTVBBwEhgKFFdPUkxEX0NPTlRST0xfUkVTVUxUEHESEQoNTU9VTlRfUkVR",
+            "VUVTVBByEg8KC01PVU5UX1NUQVRFEHMiBAhuEG5CG0gBqgIWU3VNdWx0aXBs",
+            "YXllci5Qcm90b2NvbGIGcHJvdG8z"));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { global::Google.Protobuf.WellKnownTypes.AnyReflection.Descriptor, },
           new pbr::GeneratedClrTypeInfo(new[] {typeof(global::SuMultiplayer.Protocol.MessageType), }, null, new pbr::GeneratedClrTypeInfo[] {
@@ -647,6 +648,11 @@ namespace SuMultiplayer.Protocol {
     /// </summary>
     [pbr::OriginalName("WORLD_CONTROL_REQUEST")] WorldControlRequest = 112,
     [pbr::OriginalName("WORLD_CONTROL_RESULT")] WorldControlResult = 113,
+    /// <summary>
+    /// Mount replication (2026-10-26): riding horses / donkeys / boats.
+    /// </summary>
+    [pbr::OriginalName("MOUNT_REQUEST")] MountRequest = 114,
+    [pbr::OriginalName("MOUNT_STATE")] MountState = 115,
   }
 
   #endregion

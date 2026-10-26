@@ -102,6 +102,8 @@ namespace SuMultiplayer.Engine
         private long m_useIntentFailures;
         private long m_useIntentIgnoredNotInteractive;
         private long m_useIntentIgnoredPresentation;
+        /// <summary>手持物使用镜像（HAND_ITEM_USE）发出的请求数（2026-10-26 装鞍修复）。</summary>
+        private long m_handItemUseSent;
         private long m_inputInjectionMissing;
 
         private long m_hostUseAccepted;
@@ -322,6 +324,31 @@ namespace SuMultiplayer.Engine
             if (miner == null) return false;
             Ray3? ray = input.PlayerInput.Interact;
             if (!ray.HasValue) return false;
+            // 2026-10-26 装鞍（触屏）第二阶段修复：马鞍的 OnUse 目标是**实体**（马），不在方块射线上。
+            // 必须在"方块命中判定"之前接管：否则没有交互方块命中 → 本函数返回 false → 回落原生
+            // 本地 Use：客户端自己把马换成鞍马（鞍闪一下），下一拍主机生物同步把马换回来；同帧
+            // Hit 又镜像成攻击 → 马被扣血（实机症状）。与方块 OnUse 走同一条镜像链：
+            // HAND_ITEM_USE + 清 Interact/Hit，主机用请求者自己的 miner 跑引擎 Use(ray) 原链，
+            // 装鞍发生在主机正确世界，经生物同步镜像回所有端。
+            int heldContents = Game.Terrain.ExtractContents(miner.ActiveBlockValue);
+            // 2026-10-26 客户端放船同步修复：船和鞍一样是"手持物 OnUse 生成**实体**"，目标不在
+            // 方块射线上（水面/岸边不是交互方块）→ 必须在方块命中判定之前接管。否则回落原生
+            // 本地 Use：船只在放置客户端本地 AddEntity，主机/别的客户端都没有（实机症状）。
+            // 镜像 HAND_ITEM_USE 后由主机 miner.Use 生成权威船；船本身经生物复制链（CreatureWorldAdapter
+            // 现在同时复制 ComponentBoat）发给所有客户端。
+            // 2026-10-26 哨子修复：哨子的 OnUse 是"原地发声 + 召唤附近动物 + 消耗工具耐久"，
+            // **不依赖方方块/实体目标**（瞄准空气就是正常用法）。客户端本地执行只有自己听到声音
+            // （声音在客户端本机播，主机没有音频、其他端更收不到），动物召唤也只作用于本地副本
+            //（复制体的 ComponentBehavior/Summon 已被摘掉，实际连本地召唤都不发生）、耐久扣的是
+            // 本地预测库存。必须和鞍/船一样在方块命中判定前把这次 Use 交给主机执行，哨声再由
+            // 主机音频捕获链（RemoteAudioSyncModule 全局连续捕获）广播给 48m 内的所有端。
+            if (heldContents == SaddleBlock.Index || heldContents == BoatBlock.Index ||
+                heldContents == WhistleBlock.Index)
+            {
+                m_useIntents++;
+                if (TryMirrorHandItemUse(input, ray.Value, heldContents, miner)) m_handItemUseSent++;
+                return true;   // 输入已消费：绝不回落到本地 Use/攻击
+            }
             TerrainRaycastResult? hit;
             try
             {
@@ -361,12 +388,16 @@ namespace SuMultiplayer.Engine
                 return false;   // 告示牌编辑等纯本地 UI：不接管
             }
             int activeContents = Game.Terrain.ExtractContents(miner.ActiveBlockValue);
-            if (ActiveItemHasOnUse(terrain, activeContents))
+            if (ActiveItemHasOnUse(terrain, heldContents))
             {
-                // 手持物自身要消费这次右击（水桶 / 肥料 / 锤子 / 火柴 / 马鞍 / 哨子 ...）：
-                // 保持原生 Use 路径（既有地形/背包同步照旧），不把它换成"打开方块"。
-                m_useIntentIgnoredPresentation++;
-                return false;
+                // 手持物自身要消费这次右击（水桶 / 肥料 / 锤子 / 火柴 / 哨子 ...）。
+                // 2026-10-26 装鞍修复：马鞍的 OnUse 是**实体替换**（删普通马、建 _Saddled 马），
+                // 必须由主机执行（本地替换随后会被主机权威镜像清理，鞍瞬间消失，同帧 Hit 还会
+                // 攻击马）。其余手持物也走镜像（主机用请求者自己的 miner 跑引擎 Use(ray) 原链），
+                // 并同帧清 Interact + Hit（tap 的两个意图一起上交）。
+                m_useIntents++;
+                if (TryMirrorHandItemUse(input, ray.Value, heldContents, miner)) m_handItemUseSent++;
+                return true;   // 输入已消费：绝不回落到本地 Use/攻击
             }
             CellFace cellFace = hit.Value.CellFace;
             Vector3 direction = ray.Value.Direction;
@@ -407,6 +438,72 @@ namespace SuMultiplayer.Engine
                     "）→ 本次点击无效果（不本地执行交互），累计失败 " + m_useIntentFailures);
             }
             return true;
+        }
+
+        /// <summary>
+        /// 把一次"手持物 OnUse" tap 镜像成 HAND_ITEM_USE 请求，并清掉本帧 Interact + Hit
+        /// （2026-10-26 装鞍修复：马鞍的 OnUse 是实体替换，必须由主机执行；同帧 Hit 若漏出去
+        /// 就会被近战镜像成"攻击马"）。返回 false = 请求没发出去（已写明确原因）。
+        /// 主机侧执行：ContainerReplicaEngine.HandleHostUse 的 HandItemUse 分支，用**请求者自己的
+        /// miner** 跑引擎 Use(ray) 原链（ComponentPlayer.cs:153 同款）。
+        /// </summary>
+        private bool TryMirrorHandItemUse(ComponentInput input, Ray3 ray, int heldContents,
+            ComponentMiner miner)
+        {
+            Vector3 useDirection = ray.Direction;
+            if (useDirection.LengthSquared() < 1e-6f) useDirection = new Vector3(0f, 0f, 1f);
+            var handRequest = new BlockUseRequestData(0L, 0, 0, 0, 0, heldContents,
+                BlockUseActions.HandItemUse, ray.Position.X, ray.Position.Y, ray.Position.Z,
+                useDirection.X, useDirection.Y, useDirection.Z, hasReach: true,
+                reach: EngineReach.LocalReach());
+            bool submitted = false;
+            string reason = "request-sink-missing";
+            try
+            {
+                if (m_requestSink != null) submitted = m_requestSink.TrySubmitUse(in handRequest, out reason);
+            }
+            catch (Exception e)
+            {
+                submitted = false;
+                reason = "submit-exception-" + e.GetType().Name;
+            }
+            try
+            {
+                // PlayerInput 属性是只读（struct 副本）：清 Interact+Hit 必须写私有字段
+                var pi = input.PlayerInput;
+                pi.Interact = null;
+                pi.Hit = null;   // tap 的攻击意图一并上交（引擎单机：Use 命中挡 Hit）
+                Game.Program.ModManager?.ModParentField?.ModifyParentField(
+                    input, "m_playerInput", pi, typeof(ComponentInput));
+            }
+            catch (Exception e)
+            {
+                LogProblem("hand-use-input-clear", "清空 Interact/Hit 输入失败（" +
+                    e.GetType().Name + " " + e.Message + "）→ 引擎可能仍执行一次本地攻击（明确记录）");
+            }
+            if (submitted && miner != null)
+            {
+                // 2026-10-26 哨子手部动作修复：本地 Use 已不再执行（改由主机权威执行），但
+                // ComponentMiner.Poke 的抬手动画**只在本地角色上产生**，再由 PlayerAction 的
+                // Poke 边沿同步给其他端（AvatarActionBridge 采 PokingPhase）。不补这一下：
+                // 本机看不到抬手，其他端也收不到动作（实机：吹哨多端都没有手部动作）。
+                // Poke 只改 PokingPhase（纯表现），不产生任何游戏效果/声音，安全预测。
+                try
+                {
+                    miner.Poke(forceRestart: false);
+                }
+                catch (Exception e)
+                {
+                    LogProblem("hand-use-poke", "手持物镜像后补播抬手动画失败（" +
+                        e.GetType().Name + " " + e.Message + "）→ 动作已上交主机，只少一次手臂动画");
+                }
+            }
+            if (!submitted)
+            {
+                LogProblem("hand-use-submit", "手持物使用请求发送失败：" + reason +
+                    " → 本次点击无效果（明确失败，不本地装鞍/攻击）");
+            }
+            return submitted;
         }
 
         /// <summary>
@@ -908,6 +1005,56 @@ namespace SuMultiplayer.Engine
                 reason = "主机地形子系统不可用";
                 m_hostUseRejected++;
                 return false;
+            }
+            // 手持物使用（2026-10-26 装鞍修复）：马鞍 tap 马 = 手持物 OnUse。主机用**请求者
+            // 自己的 miner** 跑引擎 Use(ray) 原链（ComponentPlayer.cs:153 同款）——装鞍 =
+            // 实体替换（删普通马建 _Saddled 马），发生在主机正确世界，经生物同步镜像到所有端。
+            // 无目标方块格：x/y/z/face 未用。距离门：ray 起点必须就是请求者眼睛（≤2m），
+            // 与引擎 Hit/Interact 的命中点 ≤2m 门同口径。
+            if (request.Action == BlockUseActions.HandItemUse)
+            {
+                Vector3 rayPosition = new Vector3(request.RayX, request.RayY, request.RayZ);
+                Vector3 rayDirection = new Vector3(request.DirectionX, request.DirectionY,
+                    request.DirectionZ);
+                if (rayDirection.LengthSquared() < 1e-6f)
+                {
+                    reason = "hand-use-direction-zero";
+                    m_hostUseRejected++;
+                    return false;
+                }
+                Vector3 eye = player.ComponentBody.Position +
+                    new Vector3(0f, player.ComponentCreatureModel != null
+                        ? player.ComponentCreatureModel.EyePosition.Y - player.ComponentBody.Position.Y
+                        : 1.6f, 0f);
+                if (Vector3.Distance(rayPosition, player.ComponentBody.Position) > 2f)
+                {
+                    reason = "hand-use-ray-origin-too-far";
+                    m_hostUseRejected++;
+                    return false;
+                }
+                _ = eye;
+                bool used;
+                try
+                {
+                    used = miner.Use(new Ray3(rayPosition, Vector3.Normalize(rayDirection)));
+                }
+                catch (Exception e)
+                {
+                    reason = "hand-use-exception-" + e.GetType().Name + " " + e.Message;
+                    m_hostUseRejected++;
+                    LogProblem("hand-use-exception", "主机执行手持物使用异常：" + reason);
+                    return false;
+                }
+                if (!used)
+                {
+                    reason = "hand-use-not-handled";
+                    m_hostUseRejected++;
+                    return false;
+                }
+                m_hostUseAccepted++;
+                m_hostNativeInteractions++;
+                outcome = BlockUseHostOutcome.Native;
+                return true;
             }
             int x = request.X, y = request.Y, z = request.Z;
             if (!terrain.Terrain.IsCellValid(x, y, z))

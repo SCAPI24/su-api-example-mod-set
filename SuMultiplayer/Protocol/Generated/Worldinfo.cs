@@ -26,7 +26,7 @@ namespace SuMultiplayer.Protocol.WorldInfo {
           string.Concat(
             "Cg93b3JsZGluZm8ucHJvdG8SDnN1bXAud29ybGRpbmZvGhlnb29nbGUvcHJv",
             "dG9idWYvYW55LnByb3RvIioKDFdvcmxkU2V0dGluZxILCgNrZXkYASABKAkS",
-            "DQoFdmFsdWUYAiABKAkixwQKCVdvcmxkSW5mbxITCgtzZXJ2ZXJfdGljaxgB",
+            "DQoFdmFsdWUYAiABKAki/wQKCVdvcmxkSW5mbxITCgtzZXJ2ZXJfdGljaxgB",
             "IAEoBRIZChFpbml0aWFsX2dhbWVfdGltZRgCIAEoARIaChJ0aW1lX29mX2Rh",
             "eV9vZmZzZXQYAyABKAESHwoXdG90YWxfZWxhcHNlZF9nYW1lX3RpbWUYBCAB",
             "KAESGAoQdGltZV9vZl9kYXlfbW9kZRgFIAEoBRIdChVwcmVjaXBpdGF0aW9u",
@@ -38,14 +38,15 @@ namespace SuMultiplayer.Protocol.WorldInfo {
             "dG5pbmdfcmV2aXNpb24YECABKAUSGwoTd29ybGRfdGltZV9yZXZpc2lvbhgR",
             "IAEoAxIYChB0aW1lX2FjY2VsZXJhdGVkGBIgASgIEhMKC3RpbWVfZmFjdG9y",
             "GBMgASgCEi4KCHNldHRpbmdzGBQgAygLMhwuc3VtcC53b3JsZGluZm8uV29y",
-            "bGRTZXR0aW5nEgsKA2V4dBhkIAEoDBIkCgZjdXN0b20YZSABKAsyFC5nb29n",
-            "bGUucHJvdG9idWYuQW55QiVIAaoCIFN1TXVsdGlwbGF5ZXIuUHJvdG9jb2wu",
-            "V29ybGRJbmZvYgZwcm90bzM="));
+            "bGRTZXR0aW5nEhUKDWZvZ19yYW1wX3RpbWUYFSABKAISHwoXcHJlY2lwaXRh",
+            "dGlvbl9yYW1wX3RpbWUYFiABKAISCwoDZXh0GGQgASgMEiQKBmN1c3RvbRhl",
+            "IAEoCzIULmdvb2dsZS5wcm90b2J1Zi5BbnlCJUgBqgIgU3VNdWx0aXBsYXll",
+            "ci5Qcm90b2NvbC5Xb3JsZEluZm9iBnByb3RvMw=="));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { global::Google.Protobuf.WellKnownTypes.AnyReflection.Descriptor, },
           new pbr::GeneratedClrTypeInfo(null, null, new pbr::GeneratedClrTypeInfo[] {
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.WorldInfo.WorldSetting), global::SuMultiplayer.Protocol.WorldInfo.WorldSetting.Parser, new[]{ "Key", "Value" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.WorldInfo.WorldInfo), global::SuMultiplayer.Protocol.WorldInfo.WorldInfo.Parser, new[]{ "ServerTick", "InitialGameTime", "TimeOfDayOffset", "TotalElapsedGameTime", "TimeOfDayMode", "PrecipitationStarted", "PrecipitationIntensity", "FogStarted", "FogProgress", "FogIntensity", "FogSeed", "HasLightning", "LightningX", "LightningY", "LightningZ", "LightningRevision", "WorldTimeRevision", "TimeAccelerated", "TimeFactor", "Settings", "Ext", "Custom" }, null, null, null, null)
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.WorldInfo.WorldInfo), global::SuMultiplayer.Protocol.WorldInfo.WorldInfo.Parser, new[]{ "ServerTick", "InitialGameTime", "TimeOfDayOffset", "TotalElapsedGameTime", "TimeOfDayMode", "PrecipitationStarted", "PrecipitationIntensity", "FogStarted", "FogProgress", "FogIntensity", "FogSeed", "HasLightning", "LightningX", "LightningY", "LightningZ", "LightningRevision", "WorldTimeRevision", "TimeAccelerated", "TimeFactor", "Settings", "FogRampTime", "PrecipitationRampTime", "Ext", "Custom" }, null, null, null, null)
           }));
     }
     #endregion
@@ -345,6 +346,8 @@ namespace SuMultiplayer.Protocol.WorldInfo {
       timeAccelerated_ = other.timeAccelerated_;
       timeFactor_ = other.timeFactor_;
       settings_ = other.settings_.Clone();
+      fogRampTime_ = other.fogRampTime_;
+      precipitationRampTime_ = other.precipitationRampTime_;
       ext_ = other.ext_;
       custom_ = other.custom_ != null ? other.custom_.Clone() : null;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
@@ -595,6 +598,37 @@ namespace SuMultiplayer.Protocol.WorldInfo {
       get { return settings_; }
     }
 
+    /// <summary>Field number for the "fog_ramp_time" field.</summary>
+    public const int FogRampTimeFieldNumber = 21;
+    private float fogRampTime_;
+    /// <summary>
+    /// Weather ramp times from the HOST's SubsystemWeather (2026-10-26, append-only).
+    /// Clients previously hardcoded 3s/1s when a state flip arrived, which forced the
+    /// host's NATURAL weather ramp (tens of seconds) down to 3s on the client — fog
+    /// density then ramped an order of magnitude faster than the host and drifted.
+    /// Absent / 0 (old host) = fall back to the old hardcoded values.
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public float FogRampTime {
+      get { return fogRampTime_; }
+      set {
+        fogRampTime_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "precipitation_ramp_time" field.</summary>
+    public const int PrecipitationRampTimeFieldNumber = 22;
+    private float precipitationRampTime_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public float PrecipitationRampTime {
+      get { return precipitationRampTime_; }
+      set {
+        precipitationRampTime_ = value;
+      }
+    }
+
     /// <summary>Field number for the "ext" field.</summary>
     public const int ExtFieldNumber = 100;
     private pb::ByteString ext_ = pb::ByteString.Empty;
@@ -657,6 +691,8 @@ namespace SuMultiplayer.Protocol.WorldInfo {
       if (TimeAccelerated != other.TimeAccelerated) return false;
       if (!pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.Equals(TimeFactor, other.TimeFactor)) return false;
       if(!settings_.Equals(other.settings_)) return false;
+      if (!pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.Equals(FogRampTime, other.FogRampTime)) return false;
+      if (!pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.Equals(PrecipitationRampTime, other.PrecipitationRampTime)) return false;
       if (Ext != other.Ext) return false;
       if (!object.Equals(Custom, other.Custom)) return false;
       return Equals(_unknownFields, other._unknownFields);
@@ -686,6 +722,8 @@ namespace SuMultiplayer.Protocol.WorldInfo {
       if (TimeAccelerated != false) hash ^= TimeAccelerated.GetHashCode();
       if (TimeFactor != 0F) hash ^= pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.GetHashCode(TimeFactor);
       hash ^= settings_.GetHashCode();
+      if (FogRampTime != 0F) hash ^= pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.GetHashCode(FogRampTime);
+      if (PrecipitationRampTime != 0F) hash ^= pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.GetHashCode(PrecipitationRampTime);
       if (Ext.Length != 0) hash ^= Ext.GetHashCode();
       if (custom_ != null) hash ^= Custom.GetHashCode();
       if (_unknownFields != null) {
@@ -783,6 +821,14 @@ namespace SuMultiplayer.Protocol.WorldInfo {
         output.WriteFloat(TimeFactor);
       }
       settings_.WriteTo(output, _repeated_settings_codec);
+      if (FogRampTime != 0F) {
+        output.WriteRawTag(173, 1);
+        output.WriteFloat(FogRampTime);
+      }
+      if (PrecipitationRampTime != 0F) {
+        output.WriteRawTag(181, 1);
+        output.WriteFloat(PrecipitationRampTime);
+      }
       if (Ext.Length != 0) {
         output.WriteRawTag(162, 6);
         output.WriteBytes(Ext);
@@ -878,6 +924,14 @@ namespace SuMultiplayer.Protocol.WorldInfo {
         output.WriteFloat(TimeFactor);
       }
       settings_.WriteTo(ref output, _repeated_settings_codec);
+      if (FogRampTime != 0F) {
+        output.WriteRawTag(173, 1);
+        output.WriteFloat(FogRampTime);
+      }
+      if (PrecipitationRampTime != 0F) {
+        output.WriteRawTag(181, 1);
+        output.WriteFloat(PrecipitationRampTime);
+      }
       if (Ext.Length != 0) {
         output.WriteRawTag(162, 6);
         output.WriteBytes(Ext);
@@ -954,6 +1008,12 @@ namespace SuMultiplayer.Protocol.WorldInfo {
         size += 2 + 4;
       }
       size += settings_.CalculateSize(_repeated_settings_codec);
+      if (FogRampTime != 0F) {
+        size += 2 + 4;
+      }
+      if (PrecipitationRampTime != 0F) {
+        size += 2 + 4;
+      }
       if (Ext.Length != 0) {
         size += 2 + pb::CodedOutputStream.ComputeBytesSize(Ext);
       }
@@ -1030,6 +1090,12 @@ namespace SuMultiplayer.Protocol.WorldInfo {
         TimeFactor = other.TimeFactor;
       }
       settings_.Add(other.settings_);
+      if (other.FogRampTime != 0F) {
+        FogRampTime = other.FogRampTime;
+      }
+      if (other.PrecipitationRampTime != 0F) {
+        PrecipitationRampTime = other.PrecipitationRampTime;
+      }
       if (other.Ext.Length != 0) {
         Ext = other.Ext;
       }
@@ -1136,6 +1202,14 @@ namespace SuMultiplayer.Protocol.WorldInfo {
           }
           case 162: {
             settings_.AddEntriesFrom(input, _repeated_settings_codec);
+            break;
+          }
+          case 173: {
+            FogRampTime = input.ReadFloat();
+            break;
+          }
+          case 181: {
+            PrecipitationRampTime = input.ReadFloat();
             break;
           }
           case 802: {
@@ -1246,6 +1320,14 @@ namespace SuMultiplayer.Protocol.WorldInfo {
           }
           case 162: {
             settings_.AddEntriesFrom(ref input, _repeated_settings_codec);
+            break;
+          }
+          case 173: {
+            FogRampTime = input.ReadFloat();
+            break;
+          }
+          case 181: {
+            PrecipitationRampTime = input.ReadFloat();
             break;
           }
           case 802: {

@@ -46,6 +46,11 @@ namespace SuMultiplayer.Terrain
         public float FogProgress;
         public float FogIntensity;
         public int FogSeed;
+        /// <summary>主机 SubsystemWeather 的实际雾 ramp（秒；自然雾是几十秒级，手动雾 3s）。
+        /// 2026-10-26：客户端此前硬编码 3s，把自然雾的浓度推进加快了一个数量级（浓度漂移根因）。</summary>
+        public float FogRampTime;
+        /// <summary>主机降水 ramp（秒）；同上，客户端不再硬编码 1s。</summary>
+        public float PrecipitationRampTime;
         public bool HasLightning;
         public int LightningX;
         public int LightningY;
@@ -123,6 +128,8 @@ namespace SuMultiplayer.Terrain
                 PrecipitationStarted = snapshot.PrecipitationStarted,
                 PrecipitationIntensity = snapshot.PrecipitationIntensity,
                 FogStarted = snapshot.FogStarted,
+                FogRampTime = snapshot.FogRampTime,
+                PrecipitationRampTime = snapshot.PrecipitationRampTime,
                 FogProgress = snapshot.FogProgress,
                 FogIntensity = snapshot.FogIntensity,
                 FogSeed = snapshot.FogSeed,
@@ -195,6 +202,8 @@ namespace SuMultiplayer.Terrain
                 PrecipitationStarted = message.PrecipitationStarted,
                 PrecipitationIntensity = message.PrecipitationIntensity,
                 FogStarted = message.FogStarted,
+                FogRampTime = message.FogRampTime,
+                PrecipitationRampTime = message.PrecipitationRampTime,
                 FogProgress = message.FogProgress,
                 FogIntensity = message.FogIntensity,
                 FogSeed = message.FogSeed,

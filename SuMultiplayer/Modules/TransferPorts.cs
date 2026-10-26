@@ -24,6 +24,14 @@ namespace SuMultiplayer.Modules
         /// <summary>关闭本端持有的通道（退房 / 离开）。</summary>
         void StopChannel();
 
+        /// <summary>
+        /// 客户端**显式退房**时用：先向主机发 BYE（明确"我要走"，主机立即摘角色），
+        /// 等发送队列排空（最多约 150ms）再关通道。普通断线/闪退主机按宽限处理；
+        /// 只有这里发过 BYE 的才零宽限立即清理（2026-10-26 退房后角色留在地图修复）。
+        /// 主机端 / 未连接时等价于 <see cref="StopChannel"/>。
+        /// </summary>
+        void StopChannelWithBye(string reason);
+
         bool IsChannelRunning { get; }
 
         bool IsHosting { get; }

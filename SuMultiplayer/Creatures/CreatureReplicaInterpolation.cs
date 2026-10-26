@@ -82,14 +82,19 @@ namespace SuMultiplayer.Creatures
             public Vector3 Position;
             public Quaternion Rotation = Quaternion.Identity;
             public Vector3 Velocity;
+            /// <summary>主机 ComponentLocomotion.LookAngles（马/驴/骆驼被骑转向时的头部朝向）。</summary>
+            public Vector2 LookAngles;
             public double LastReceiveTime;
             public float EstimatedInterval = 0.1f;
 
             public bool PresentationInitialized;
             public Vector3 PresentationPosition;
             public Quaternion PresentationRotation = Quaternion.Identity;
+            public Vector2 PresentationLookAngles;
             public Vector3 SmoothedVelocity;
             public bool HasSmoothedVelocity;
+            /// <summary>本机玩家正在骑/站的坐骑：始终平滑插值，禁止"静止贴记录"快照。</summary>
+            public bool AlwaysSmooth;
         }
 
         private readonly Dictionary<int, State> m_states = new Dictionary<int, State>();
@@ -115,11 +120,13 @@ namespace SuMultiplayer.Creatures
                 Position = record.Position,
                 Rotation = record.Rotation,
                 Velocity = record.Velocity,
+                LookAngles = record.LookAngles,
                 LastReceiveTime = now,
                 EstimatedInterval = 0.1f,
                 PresentationInitialized = true,
                 PresentationPosition = record.Position,
                 PresentationRotation = record.Rotation,
+                PresentationLookAngles = record.LookAngles,
                 SmoothedVelocity = record.Velocity,
                 HasSmoothedVelocity = true
             };
@@ -157,6 +164,7 @@ namespace SuMultiplayer.Creatures
             state.Position = record.Position;
             state.Rotation = record.Rotation;
             state.Velocity = record.Velocity;
+            state.LookAngles = record.LookAngles;
             state.HasRecord = true;
             state.LastReceiveTime = now;
             return false;
@@ -227,9 +235,14 @@ namespace SuMultiplayer.Creatures
                 float rotationBlend = 1f - (float)Math.Exp(-RotationBlendRate * step);
                 state.PresentationRotation = Quaternion.Slerp(state.PresentationRotation,
                     state.Rotation, rotationBlend);
+                // 头部朝向同样平滑（否则马头会按快照节奏一小格一小格转）。
+                state.PresentationLookAngles = Vector2.Lerp(state.PresentationLookAngles,
+                    state.LookAngles, rotationBlend);
 
                 // 静止收敛：主机速度为 0 且误差已进入毫米级 → 精确落回记录位置（消除残余抖动）。
-                if (state.Velocity.LengthSquared() <= SettleVelocitySquared)
+                // 例外：本机玩家骑/站的坐骑必须**始终插值**——否则每来一条网络记录就贴一次
+                // 记录位置/姿态，第一人称相机就按网络频率"一顿一顿"（骑船/骑马实机）。
+                if (!state.AlwaysSmooth && state.Velocity.LengthSquared() <= SettleVelocitySquared)
                 {
                     Vector3 settleError = state.Position - state.PresentationPosition;
                     if (settleError.LengthSquared() <= SettleEpsilonMeters * SettleEpsilonMeters)
@@ -242,23 +255,32 @@ namespace SuMultiplayer.Creatures
 
         /// <summary>取某个复制体当前的表现位置/姿态/速度（供端口写进引擎身体）。</summary>
         public bool TryGetPresentation(int key, out Vector3 position, out Quaternion rotation,
-            out Vector3 velocity)
+            out Vector3 velocity, out Vector2 lookAngles)
         {
             position = Vector3.Zero;
             rotation = Quaternion.Identity;
             velocity = Vector3.Zero;
+            lookAngles = Vector2.Zero;
             if (!m_states.TryGetValue(key, out State state) || !state.HasRecord) return false;
             if (!state.PresentationInitialized)
             {
                 position = state.Position;
                 rotation = state.Rotation;
                 velocity = state.Velocity;
+                lookAngles = state.LookAngles;
                 return true;
             }
             position = state.PresentationPosition;
             rotation = state.PresentationRotation;
             velocity = state.HasSmoothedVelocity ? state.SmoothedVelocity : state.Velocity;
+            lookAngles = state.PresentationLookAngles;
             return true;
+        }
+
+        /// <summary>标记/取消"本机玩家骑乘或站立的坐骑"（始终平滑，不贴快照）。</summary>
+        public void SetAlwaysSmooth(int key, bool value)
+        {
+            if (m_states.TryGetValue(key, out State state)) state.AlwaysSmooth = value;
         }
 
         public void Remove(int key) => m_states.Remove(key);
@@ -280,6 +302,7 @@ namespace SuMultiplayer.Creatures
         {
             state.PresentationPosition = position;
             state.PresentationRotation = rotation;
+            state.PresentationLookAngles = state.LookAngles;
             state.SmoothedVelocity = state.Velocity;
             state.HasSmoothedVelocity = true;
             state.PresentationInitialized = true;

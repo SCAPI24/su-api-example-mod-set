@@ -1202,6 +1202,9 @@ namespace SuMultiplayer.Terrain
     /// </summary>
     public sealed class TerrainSyncHost
     {
+        /// <summary>加入审批中的客户端断开（Bye / 链路失效）：主机请求队列应清掉它的待决条目。</summary>
+        public event Action<int> PendingApprovalAborted;
+
         /// <summary>Hello 里"我已有角色记录 hash"的条数上限（4 本机角色 × 多端，余量充足）。</summary>
         private const int MaxKnownRecordHashes = 64;
 
@@ -1245,6 +1248,17 @@ namespace SuMultiplayer.Terrain
             /// </summary>
             public bool PendingMarksCleared;
             /// <summary>
+            /// 最近一次收到该连接**任何一帧**的主机时钟（Environment.TickCount64）。
+            /// 判活不能只看 TCP 状态：闪退 / 半开连接可以长期 TCP Connected（实测 4.5 分钟
+            /// 主机仍把死连接算在线、角色留在地图）。超过 PeerSilenceTimeoutMs 无帧 → 判失效。
+            /// </summary>
+            public long LastHeardMs;
+            /// <summary>本连接累计收到的入站帧数：只有"已经正常跑起来的玩家端"才做静默判死，
+            /// 避免把正在做世界传输 / 刚握手的连接误判（它们可能几十秒没有帧）。</summary>
+            public long InboundFrames;
+            /// <summary>判死原因（状态行 / 日志用；null = 正常）。</summary>
+            public string LostReason;
+            /// <summary>
             /// 这次握手是不是**同一端重连**（Hello 末尾追加字节 = 对端**此刻正在游玩**这个下载世界）。
             /// 本版起还要求**会话标识一致 + 上次应用序号仍在保留历史内**（见 HandleHello）；
             /// 只有它成立才不重发整图，缺字段 / 会话不一致 / 历史越界一律按首次加入处理。
@@ -1266,6 +1280,9 @@ namespace SuMultiplayer.Terrain
             public bool JoinApproved;
             /// <summary>加入审批：正在等主机决定（此期间**不建记录 / 不建角色 / 不下发世界 / 不回 HelloAck**）。</summary>
             public bool ApprovalPending;
+            /// <summary>主机点了 Later（稍后）：审批暂停计时，条目挂在请求队列里由 IF 按钮再处理。
+            /// 挂起期间不回 HelloAck、不建记录 / 角色 / 世界传输；恢复 = 重新弹出对话框起算超时。</summary>
+            public bool ApprovalHeld;
             /// <summary>等待审批时暂存的 Hello（批准后按它继续走完整握手）。</summary>
             public Hello PendingHello;
             /// <summary>审批超时时刻（Environment.TickCount64 毫秒基准）。</summary>
@@ -1611,17 +1628,23 @@ namespace SuMultiplayer.Terrain
 
         private void OnBye(MessageContext context, Bye message)
         {
+            string byeReason = "主动断开（Bye" +
+                (string.IsNullOrEmpty(message.Reason) ? "" : "：" + message.Reason) + "）";
             lock (m_gate)
             {
                 State state = GetOrCreateState(context.ClientId);
                 // 客户端主动走了：欠着的上报**明确写一行**（不是静默丢弃），并保留在该身份的
                 // 会话记录里（同一身份再回来时继续用真实主机摘要作答；房间结束才整体清）；
                 // 它在所有区块上的欠更新标记也一并去掉（"退出联机 → 它的标记全没了"）。
-                NoteSessionDeparture(state, "主动断开（Bye" +
-                    (string.IsNullOrEmpty(message.Reason) ? "" : "：" + message.Reason) + "）");
+                bool wasPending = state.ApprovalPending;
+                NoteSessionDeparture(state, byeReason);
                 ReleaseWindow(state);
                 m_clients.Remove(context.ClientId);
+                if (wasPending) PendingApprovalAborted?.Invoke(context.ClientId);
             }
+            // 2026-10-26 显式退房立即摘角色：Bye 是"我要走了"，不是普通断线，零宽限。
+            // 必须在锁外抛（处理方要拆引擎实体 / 广播，绝不能在 m_gate 里做）。
+            ClientLost?.Invoke(context.ClientId, byeReason);
         }
 
         /// <summary>
@@ -1747,6 +1770,13 @@ namespace SuMultiplayer.Terrain
         /// 本事件与 <see cref="ClientJoined"/> 成对：加入建角色、离开清角色。
         /// </summary>
         public event Action<int, string> ClientLost;
+
+        /// <summary>
+        /// 主机判活超时：连续这么久**一帧都没收到**就按失效处理（半开连接 / 闪退）。
+        /// 客户端在世界里位置 32Hz、动作有变化驱动，正常绝不会静默这么久；
+        /// 显式退房走 BYE 立即摘角色，不走这个超时（2026-10-26）。
+        /// </summary>
+        private const long PeerSilenceTimeoutMs = 30000;
 
         /// <summary>
         /// **身份会话记录的建立 / 重连复用**（一行一条，不是热路径）：参数是给上层写日志的整句。
@@ -2034,7 +2064,9 @@ namespace SuMultiplayer.Terrain
                     State state = pair.Value;
                     if (!state.WindowValid) RefreshWindow(state);
                     // 加入审批超时：不让客户端无限等（主机没人点 Allow = 明确拒绝，绝不默认同意）。
-                    if (state.ApprovalPending && nowMs >= state.ApprovalDeadlineMs)
+                    // Later 挂起的连接暂停计时（ApprovalHeld）：用户口径 = 挂起是明确决策，
+                    // 超时只对"弹着对话框没人管"的请求生效。
+                    if (state.ApprovalPending && !state.ApprovalHeld && nowMs >= state.ApprovalDeadlineMs)
                     {
                         if (expiredApprovals == null) expiredApprovals = new List<int>();
                         expiredApprovals.Add(state.Id);
@@ -2045,13 +2077,19 @@ namespace SuMultiplayer.Terrain
                     // （客户端主动 Bye 的那条路在 OnFrame 里）。
                     // 同一时刻把它在**所有区块**上的欠更新标记一并去掉（明确写一行；这正是
                     // "退出联机后它的标记全部消失、再进来又是全 0" 的链路失效分支）。
-                    if (!CanStillReachPeer(state))
+                    bool silent = state.InboundFrames >= 64 && state.LastHeardMs > 0 &&
+                        nowMs - state.LastHeardMs > PeerSilenceTimeoutMs;
+                    if (!CanStillReachPeer(state) || silent)
                     {
                         // 每个 state 只清一次（清完置位）：一个断掉但还留在表里的客户端不会每帧扫全表。
                         if (!state.PendingMarksCleared)
                         {
                             state.PendingMarksCleared = true;
-                            string gone = "连接已不可用（" + m_server.StateOf(state.Id) + "）";
+                            string gone = silent
+                                ? "超过 " + (PeerSilenceTimeoutMs / 1000) +
+                                    " 秒未收到任何帧（半开连接 / 闪退）"
+                                : "连接已不可用（" + m_server.StateOf(state.Id) + "）";
+                            state.LostReason = gone;
                             NoteSessionDeparture(state, gone);
                             // 这一端**再也不会回来了**（同一 clientId 不会重连）：把它从客户端表里摘掉，
                             // 否则状态行一直把死连接算成"客户端"（实机：clients=2 里有一个 4 小时前就断了），
@@ -2119,11 +2157,22 @@ namespace SuMultiplayer.Terrain
                 }
                 if (lost != null)
                 {
+                    List<int> abortedApprovals = null;
                     for (int i = 0; i < lost.Count; i++)
                     {
                         m_clients.TryGetValue(lost[i].Key, out State state);
-                        if (state != null) ReleaseWindow(state);
+                        if (state != null)
+                        {
+                            ReleaseWindow(state);
+                            if (state.ApprovalPending)
+                                (abortedApprovals ??= new List<int>()).Add(lost[i].Key);
+                        }
                         m_clients.Remove(lost[i].Key);
+                    }
+                    if (abortedApprovals != null)
+                    {
+                        for (int i = 0; i < abortedApprovals.Count; i++)
+                            PendingApprovalAborted?.Invoke(abortedApprovals[i]);
                     }
                 }
                 // ②b 加入审批超时的连接：发 HelloAck.rejected + 移除状态（锁内收尾）。
@@ -2135,8 +2184,7 @@ namespace SuMultiplayer.Terrain
                             !pending.ApprovalPending) continue;
                         pending.ApprovalPending = false;
                         pending.PendingHello = null;
-                        string reason = "主机审批超时（" + (JoinApprovalTimeoutMs / 1000) +
-                            " 秒内没有同意加入）";
+                        string reason = "The host did not approve your join request in time.";
                         if (expiredApprovalTraces == null) expiredApprovalTraces = new List<string>();
                         expiredApprovalTraces.Add("加入审批：clientId=" + pending.Id + "（" +
                             DisplayName(pending) + "）→ 超时拒绝：" + reason);
@@ -2302,7 +2350,22 @@ namespace SuMultiplayer.Terrain
             return false;
         }
 
-        private void OnFrame(ReceivedFrame frame) => m_messages.Dispatch(in frame);
+        private void OnFrame(ReceivedFrame frame)
+        {
+            // 任何一帧都算"对端还活着"：主机判活超时（PeerSilenceTimeoutMs）的基础。
+            // 闪退 / 半开连接可以长期保持 TCP Connected，旧版只查 server.StateOf 会把死连接
+            // 一直算在线（实测退房后 4.5 分钟角色仍在地图）。
+            lock (m_gate)
+            {
+                State heard = GetOrCreateState(frame.ClientId);
+                if (heard != null)
+                {
+                    heard.LastHeardMs = Environment.TickCount64;
+                    heard.InboundFrames++;
+                }
+            }
+            m_messages.Dispatch(in frame);
+        }
 
         /// <summary>
         /// 入站 Hello 的第一层：**先审批，再握手**（旧联机 mod 的 join request 流程）。
@@ -2364,30 +2427,47 @@ namespace SuMultiplayer.Terrain
         /// 加入审批的出口（UI 线程 / 超时调用）：同意 → 继续完整握手；拒绝 → HelloAck.rejected + 移除连接状态。
         /// 每条连接只解决一次（重复调用 / 客户端已离开 = 忽略）。
         /// </summary>
+        /// <summary>
+        /// 加入审批的出口（UI 线程 / 超时调用）：approved=true 同意继续握手；approved=false 拒绝；
+        /// <paramref name="approved"/>=true 且 reason=="hold" = Later（稍后）—— 挂起计时、条目
+        /// 留在请求队列。每条连接只解决一次（重复调用 / 客户端已离开 = 忽略）。
+        /// </summary>
         private void ResolveJoinApproval(int clientId, bool approved, string reason)
         {
             string trace;
+            bool held = approved && reason == "hold";
             lock (m_gate)
             {
                 if (!m_clients.TryGetValue(clientId, out State state) || !state.ApprovalPending) return;
-                state.ApprovalPending = false;
-                if (approved)
+                if (held)
                 {
-                    state.JoinApproved = true;
-                    Hello hello = state.PendingHello;
-                    state.PendingHello = null;
-                    trace = "加入审批：clientId=" + clientId + "（" + DisplayName(state) + "）→ 主机同意，继续握手";
-                    if (hello != null) ContinueHello(state, hello);
+                    // Later：保持 ApprovalPending（连接继续等待），暂停超时（ApprovalHeld）。
+                    state.ApprovalHeld = true;
+                    trace = "加入审批：clientId=" + clientId + " → 主机稍后（Later），审批暂停计时，" +
+                        "条目留在请求队列（IF 按钮可再处理）";
                 }
                 else
                 {
-                    state.PendingHello = null;
-                    trace = "加入审批：clientId=" + clientId + "（" + DisplayName(state) + "）→ 主机拒绝：" +
-                        (string.IsNullOrEmpty(reason) ? "(未说明原因)" : reason);
-                    SendJoinRejectedLocked(state,
-                        string.IsNullOrEmpty(reason) ? "主机拒绝了加入请求" : reason);
-                    ReleaseWindow(state);
-                    m_clients.Remove(clientId);
+                    state.ApprovalPending = false;
+                    state.ApprovalHeld = false;
+                    if (approved)
+                    {
+                        state.JoinApproved = true;
+                        Hello hello = state.PendingHello;
+                        state.PendingHello = null;
+                        trace = "加入审批：clientId=" + clientId + "（" + DisplayName(state) + "）→ 主机同意，继续握手";
+                        if (hello != null) ContinueHello(state, hello);
+                    }
+                    else
+                    {
+                        state.PendingHello = null;
+                        trace = "加入审批：clientId=" + clientId + "（" + DisplayName(state) + "）→ 主机拒绝：" +
+                            (string.IsNullOrEmpty(reason) ? "(未说明原因)" : reason);
+                        SendJoinRejectedLocked(state,
+                            string.IsNullOrEmpty(reason) ? "主机拒绝了加入请求" : reason);
+                        ReleaseWindow(state);
+                        m_clients.Remove(clientId);
+                    }
                 }
             }
             // 出锁再写日志（事件处理方可能碰引擎对象）。

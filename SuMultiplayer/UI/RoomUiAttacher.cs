@@ -28,6 +28,13 @@ namespace SuMultiplayer.UI
 
         private readonly IRoomBrowsePort m_rooms;
         private readonly IWorldReadyPort m_ready;
+        /// <summary>通用客户端事件请求队列（主机；null = 队列页不可用，IF 只显示房间信息）。</summary>
+        private readonly Requests.HostRequestQueue m_requestQueue;
+        /// <summary>"弹出最新请求"的动作（组合根注入 = JoinApprovalUi.ShowLatestJoinDialog；
+        /// 用委托避免 UI 层依赖 Plug 内部类型）。</summary>
+        private readonly Action m_showLatestRequest;
+        /// <summary>已弹出的请求队列对话框（防重复；关一个才允许开下一个）。</summary>
+        private MessageDialog m_queueDialog;
         private readonly List<BevelledButtonWidget> m_buttons = new List<BevelledButtonWidget>();
         /// <summary>
         /// 已经**消费过**当前这一次按下沿的按钮（见 <see cref="TryConsumeClick"/>）。
@@ -47,6 +54,14 @@ namespace SuMultiplayer.UI
         private readonly HashSet<BevelledButtonWidget> m_consumedClicks =
             new HashSet<BevelledButtonWidget>();
         private bool m_roomClosedOnLeave;
+        /// <summary>
+        /// 上一帧是否在游戏世界里。用于识别"**从世界退出**"（Project 变 null）：
+        /// 引擎游戏内退出走 GameMenuDialog → DisposeProject → SwitchScreen("MainMenu")，
+        /// **不进 Play 屏**，所以 SuPlayScreen.Enter 的 LeaveRoom 根本不会执行（实测客户端
+        /// 退房后 TCP 一直不断、主机 4.5 分钟仍看到角色留在地图）。
+        /// 只有"之前在世界里"才算退出，避免加入房间/加载世界期间（Project 还没建好）误退房。
+        /// </summary>
+        private bool m_wasInWorld;
 
         // 帧驱动计数：控件缺失 / 帧异常只计数 + 限流日志，绝不每帧抛到 Frame.Update。
         private long m_moreContentsMisses;
@@ -54,10 +69,13 @@ namespace SuMultiplayer.UI
         private readonly Dictionary<string, long> m_lastLogMs =
             new Dictionary<string, long>(StringComparer.Ordinal);
 
-        public RoomUiAttacher(IRoomBrowsePort rooms, IWorldReadyPort ready = null)
+        public RoomUiAttacher(IRoomBrowsePort rooms, IWorldReadyPort ready = null,
+            Requests.HostRequestQueue requestQueue = null, Action showLatestRequest = null)
         {
             m_rooms = rooms;
             m_ready = ready;
+            m_requestQueue = requestQueue;
+            m_showLatestRequest = showLatestRequest;
         }
 
         public void Tick()
@@ -82,16 +100,31 @@ namespace SuMultiplayer.UI
             {
                 m_buttons.Clear();
                 m_consumedClicks.Clear();
-                // 离开世界 = 房间的世界没了：把房间收掉，而不是留一个"房间还在但世界不在"的假状态。
-                if (m_rooms != null && m_rooms.IsHostingRoom && !m_roomClosedOnLeave)
+                // 离开世界 = 房间的世界没了，而不是留一个"房间还在但世界不在"的假状态。
+                //   · 主机：房间自动关闭；
+                //   · 客户端：**主动离开房间**（发 BYE + 关通道）。显式退房必须主动断连，
+                //     否则主机永远等不到 ClientLeft，角色会停在地图上（2026-10-26 实机）。
+                if (m_rooms != null && !m_roomClosedOnLeave && m_wasInWorld)
                 {
                     m_roomClosedOnLeave = true;
-                    m_rooms.CloseRoom();
-                    global::Engine.Log.Information("[SuMP][ui] 已离开世界 → 房间自动关闭");
+                    if (m_rooms.IsHostingRoom)
+                    {
+                        m_rooms.CloseRoom();
+                        global::Engine.Log.Information("[SuMP][ui] 已离开世界 → 房间自动关闭");
+                    }
+                    else if (m_rooms.IsClientInRoom)
+                    {
+                        // LeaveRoom 内部走 StopChannelWithBye：先发 BYE（主机零宽限摘角色）再关通道。
+                        m_rooms.LeaveRoom();
+                        global::Engine.Log.Information("[SuMP][ui] 客户端已退出世界 → 主动离开房间" +
+                            "（已发 BYE 并关闭通道，主机立即移除本机角色）");
+                    }
                 }
+                m_wasInWorld = false;
                 return;
             }
             m_roomClosedOnLeave = false;
+            m_wasInWorld = true;
 
             // 游戏内"整图重下"入口：主机重启 / 重连被拒绝后，主机会把**当前世界**整图发来；
             // Play 屏不在前台时它自己不会消费 IWorldReadyPort，这里补上同一个落点
@@ -252,7 +285,58 @@ namespace SuMultiplayer.UI
         {
             string summary = m_rooms?.RoomSummary ?? "Multiplayer module is not loaded";
             global::Engine.Log.Information("[SuMP][ui] IF：" + summary);
-            ShowDialog("Room", summary);
+            // 请求队列页（用户口径 2026-10-26）：房间信息下方按时间倒序列出待决请求；
+            // 队列非空时给一个 Latest request 按钮，点击弹出最新一条的三按钮审批对话框。
+            string queueText = string.Empty;
+            string button1 = null;
+            Action onButton1 = null;
+            Requests.HostRequestQueue queue = m_requestQueue;
+            if (queue != null)
+            {
+                System.Collections.Generic.List<Requests.HostRequestEntry> snapshot = queue.Snapshot();
+                if (snapshot.Count > 0)
+                {
+                    var lines = new System.Text.StringBuilder();
+                    for (int i = 0; i < snapshot.Count; i++)
+                    {
+                        Requests.HostRequestEntry e = snapshot[i];
+                        double age = Time.RealTime - e.CreatedSeconds;
+                        lines.Append("- ").Append(Requests.HostRequestKind.Name(e.Kind)).Append(": ")
+                             .Append(string.IsNullOrEmpty(e.Name) ? ("client#" + e.ClientId) : e.Name)
+                             .Append(" (").Append(age < 60 ? ((int)age + "s ago") : ((int)(age / 60) + "m ago"))
+                             .Append(")").AppendLine();
+                    }
+                    queueText = "Pending requests (newest first):" + Environment.NewLine + lines;
+                    button1 = "Latest request";
+                    onButton1 = ShowLatestRequest;
+                }
+            }
+            var dialog = new MessageDialog("Room", summary + (queueText.Length > 0
+                    ? Environment.NewLine + queueText
+                    : string.Empty),
+                button1 ?? "OK", null,
+                delegate (MessageDialogButton button)
+                {
+                    if (button == MessageDialogButton.Button1) onButton1?.Invoke();
+                });
+            m_queueDialog = dialog;
+            DialogsManager.ShowDialog(null, dialog);
+        }
+
+        /// <summary>弹出队列里最新一条请求的审批对话框；处理完（Allow/Reject）自动弹下一条。</summary>
+        private void ShowLatestRequest()
+        {
+            if (m_requestQueue == null) return;
+            if (m_requestQueue.Count == 0)
+            {
+                ShowDialog("Requests", "No pending requests.");
+                return;
+            }
+            // 关掉队列页再弹审批对话框（同一时刻一个对话框，避免遮挡）。
+            if (m_queueDialog != null && DialogsManager.Dialogs.Contains(m_queueDialog))
+                DialogsManager.HideDialog(m_queueDialog);
+            m_queueDialog = null;
+            m_showLatestRequest?.Invoke();
         }
 
         /// <summary>帧驱动计数（5 秒状态行 / 限流日志用）。</summary>

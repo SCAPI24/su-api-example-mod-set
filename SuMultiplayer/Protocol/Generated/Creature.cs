@@ -28,28 +28,31 @@ namespace SuMultiplayer.Protocol.Creature {
             "YnVmL2FueS5wcm90byIcCgRWZWMyEgkKAXgYASABKAISCQoBeRgCIAEoAiIn",
             "CgRWZWMzEgkKAXgYASABKAISCQoBeRgCIAEoAhIJCgF6GAMgASgCIjIKBFF1",
             "YXQSCQoBeBgBIAEoAhIJCgF5GAIgASgCEgkKAXoYAyABKAISCQoBdxgEIAEo",
-            "AiLoAQoOQ3JlYXR1cmVSZWNvcmQSLQoGYWN0aW9uGAEgASgOMh0uc3VtcC5j",
+            "AiLUAgoOQ3JlYXR1cmVSZWNvcmQSLQoGYWN0aW9uGAEgASgOMh0uc3VtcC5j",
             "cmVhdHVyZS5DcmVhdHVyZUFjdGlvbhILCgNrZXkYAiABKAUSFQoNdGVtcGxh",
             "dGVfbmFtZRgDIAEoCRIlCghwb3NpdGlvbhgEIAEoCzITLnN1bXAuY3JlYXR1",
             "cmUuVmVjMxIlCghyb3RhdGlvbhgFIAEoCzITLnN1bXAuY3JlYXR1cmUuUXVh",
             "dBIlCgh2ZWxvY2l0eRgGIAEoCzITLnN1bXAuY3JlYXR1cmUuVmVjMxIOCgZo",
-            "ZWFsdGgYByABKAIivAEKDUNyZWF0dXJlU3RhdGUSDwoHdmVyc2lvbhgBIAEo",
-            "DRITCgtzZXJ2ZXJfdGljaxgCIAEoBRINCgVmbGFncxgDIAEoDRITCgtzbmFw",
-            "c2hvdF9pZBgEIAEoBRIuCgdyZWNvcmRzGAUgAygLMh0uc3VtcC5jcmVhdHVy",
-            "ZS5DcmVhdHVyZVJlY29yZBILCgNleHQYZCABKAwSJAoGY3VzdG9tGGUgASgL",
-            "MhQuZ29vZ2xlLnByb3RvYnVmLkFueSJaChVDcmVhdHVyZVJlc3luY1JlcXVl",
-            "c3QSDgoGcmVhc29uGAEgASgJEgsKA2V4dBhkIAEoDBIkCgZjdXN0b20YZSAB",
-            "KAsyFC5nb29nbGUucHJvdG9idWYuQW55KmEKDkNyZWF0dXJlQWN0aW9uEhcK",
-            "E0NSRUFUVVJFX0FDVElPTl9BREQQABIaChZDUkVBVFVSRV9BQ1RJT05fVVBE",
-            "QVRFEAESGgoWQ1JFQVRVUkVfQUNUSU9OX1JFTU9WRRACQiRIAaoCH1N1TXVs",
-            "dGlwbGF5ZXIuUHJvdG9jb2wuQ3JlYXR1cmViBnByb3RvMw=="));
+            "ZWFsdGgYByABKAISFgoOc3Bhd25fcHJvZ3Jlc3MYCCABKAISEAoIYWN0aXZp",
+            "dHkYCSABKA0SFgoOc3Bhd25fZHVyYXRpb24YCiABKAISKAoLbG9va19hbmds",
+            "ZXMYCyABKAsyEy5zdW1wLmNyZWF0dXJlLlZlYzIivAEKDUNyZWF0dXJlU3Rh",
+            "dGUSDwoHdmVyc2lvbhgBIAEoDRITCgtzZXJ2ZXJfdGljaxgCIAEoBRINCgVm",
+            "bGFncxgDIAEoDRITCgtzbmFwc2hvdF9pZBgEIAEoBRIuCgdyZWNvcmRzGAUg",
+            "AygLMh0uc3VtcC5jcmVhdHVyZS5DcmVhdHVyZVJlY29yZBILCgNleHQYZCAB",
+            "KAwSJAoGY3VzdG9tGGUgASgLMhQuZ29vZ2xlLnByb3RvYnVmLkFueSJaChVD",
+            "cmVhdHVyZVJlc3luY1JlcXVlc3QSDgoGcmVhc29uGAEgASgJEgsKA2V4dBhk",
+            "IAEoDBIkCgZjdXN0b20YZSABKAsyFC5nb29nbGUucHJvdG9idWYuQW55KmEK",
+            "DkNyZWF0dXJlQWN0aW9uEhcKE0NSRUFUVVJFX0FDVElPTl9BREQQABIaChZD",
+            "UkVBVFVSRV9BQ1RJT05fVVBEQVRFEAESGgoWQ1JFQVRVUkVfQUNUSU9OX1JF",
+            "TU9WRRACQiRIAaoCH1N1TXVsdGlwbGF5ZXIuUHJvdG9jb2wuQ3JlYXR1cmVi",
+            "BnByb3RvMw=="));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { global::Google.Protobuf.WellKnownTypes.AnyReflection.Descriptor, },
           new pbr::GeneratedClrTypeInfo(new[] {typeof(global::SuMultiplayer.Protocol.Creature.CreatureAction), }, null, new pbr::GeneratedClrTypeInfo[] {
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Creature.Vec2), global::SuMultiplayer.Protocol.Creature.Vec2.Parser, new[]{ "X", "Y" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Creature.Vec3), global::SuMultiplayer.Protocol.Creature.Vec3.Parser, new[]{ "X", "Y", "Z" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Creature.Quat), global::SuMultiplayer.Protocol.Creature.Quat.Parser, new[]{ "X", "Y", "Z", "W" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Creature.CreatureRecord), global::SuMultiplayer.Protocol.Creature.CreatureRecord.Parser, new[]{ "Action", "Key", "TemplateName", "Position", "Rotation", "Velocity", "Health" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Creature.CreatureRecord), global::SuMultiplayer.Protocol.Creature.CreatureRecord.Parser, new[]{ "Action", "Key", "TemplateName", "Position", "Rotation", "Velocity", "Health", "SpawnProgress", "Activity", "SpawnDuration", "LookAngles" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Creature.CreatureState), global::SuMultiplayer.Protocol.Creature.CreatureState.Parser, new[]{ "Version", "ServerTick", "Flags", "SnapshotId", "Records", "Ext", "Custom" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Creature.CreatureResyncRequest), global::SuMultiplayer.Protocol.Creature.CreatureResyncRequest.Parser, new[]{ "Reason", "Ext", "Custom" }, null, null, null, null)
           }));
@@ -928,6 +931,10 @@ namespace SuMultiplayer.Protocol.Creature {
       rotation_ = other.rotation_ != null ? other.rotation_.Clone() : null;
       velocity_ = other.velocity_ != null ? other.velocity_.Clone() : null;
       health_ = other.health_;
+      spawnProgress_ = other.spawnProgress_;
+      activity_ = other.activity_;
+      spawnDuration_ = other.spawnDuration_;
+      lookAngles_ = other.lookAngles_ != null ? other.lookAngles_.Clone() : null;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
     }
 
@@ -1021,6 +1028,85 @@ namespace SuMultiplayer.Protocol.Creature {
       }
     }
 
+    /// <summary>Field number for the "spawn_progress" field.</summary>
+    public const int SpawnProgressFieldNumber = 8;
+    private float spawnProgress_;
+    /// <summary>
+    /// Seconds already elapsed of the creature's spawn fade-in (engine
+    /// ComponentSpawn.SpawnTime vs. host world clock; ComponentSpawn.SpawnDuration
+    /// is a fixed 2s).  Clients rewrite the local entity's SpawnTime so the
+    /// opacity ramp finishes exactly where the host's is — without this, every
+    /// replicated creature re-fades for 2s on arrival (egg-hatched animals looked
+    /// translucent far longer on clients than on the host).
+    /// 2026-10-26, append-only.  0/absent (old host) = legacy behavior.
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public float SpawnProgress {
+      get { return spawnProgress_; }
+      set {
+        spawnProgress_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "activity" field.</summary>
+    public const int ActivityFieldNumber = 9;
+    private uint activity_;
+    /// <summary>
+    /// Host-side activity flags (CreatureActivity: Moving=1, Aggro=2, Attacking=4, Fleeing=8,
+    /// Damaged=16).  Clients consume `Attacking` to drive ComponentCreatureModel.AttackOrder
+    /// (attack animation on replicas — the AI/behaviour updateables are removed client-side,
+    /// so without this the host-side bite is invisible on clients); the remaining bits are
+    /// kept for diagnostics.  0/absent (old host) = legacy behaviour.
+    /// 2026-10-26, append-only.
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public uint Activity {
+      get { return activity_; }
+      set {
+        activity_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "spawn_duration" field.</summary>
+    public const int SpawnDurationFieldNumber = 10;
+    private float spawnDuration_;
+    /// <summary>
+    /// Host ComponentSpawn.SpawnDuration (seconds). 0 = no fade-in (entities created by block
+    /// behaviours such as saddle/boat explicitly set 0), 2 = engine default for creature spawns.
+    /// Clients must copy this instead of assuming 2s: saddle swaps a live horse for a fresh
+    /// _Saddled entity (SubsystemSaddleBlockBehavior.cs:31 sets SpawnDuration=0) and the old
+    /// client logic forced a 2s fade -> the client saw a translucent horse while the host did not.
+    /// 2026-10-26, append-only.  0/absent (old host) = no fade.
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public float SpawnDuration {
+      get { return spawnDuration_; }
+      set {
+        spawnDuration_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "look_angles" field.</summary>
+    public const int LookAnglesFieldNumber = 11;
+    private global::SuMultiplayer.Protocol.Creature.Vec2 lookAngles_;
+    /// <summary>
+    /// Host ComponentLocomotion.LookAngles (head yaw/pitch).  For mounts this is what turns the
+    /// horse/donkey/camel head while steering (ComponentFourLeggedModel.Animate reads it), and the
+    /// client replicas have their ComponentLocomotion updateable removed, so without this field the
+    /// head never turns on clients.  Also used for general creature look. Additive, 0/absent = old.
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public global::SuMultiplayer.Protocol.Creature.Vec2 LookAngles {
+      get { return lookAngles_; }
+      set {
+        lookAngles_ = value;
+      }
+    }
+
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public override bool Equals(object other) {
@@ -1043,6 +1129,10 @@ namespace SuMultiplayer.Protocol.Creature {
       if (!object.Equals(Rotation, other.Rotation)) return false;
       if (!object.Equals(Velocity, other.Velocity)) return false;
       if (!pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.Equals(Health, other.Health)) return false;
+      if (!pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.Equals(SpawnProgress, other.SpawnProgress)) return false;
+      if (Activity != other.Activity) return false;
+      if (!pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.Equals(SpawnDuration, other.SpawnDuration)) return false;
+      if (!object.Equals(LookAngles, other.LookAngles)) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
 
@@ -1057,6 +1147,10 @@ namespace SuMultiplayer.Protocol.Creature {
       if (rotation_ != null) hash ^= Rotation.GetHashCode();
       if (velocity_ != null) hash ^= Velocity.GetHashCode();
       if (Health != 0F) hash ^= pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.GetHashCode(Health);
+      if (SpawnProgress != 0F) hash ^= pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.GetHashCode(SpawnProgress);
+      if (Activity != 0) hash ^= Activity.GetHashCode();
+      if (SpawnDuration != 0F) hash ^= pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.GetHashCode(SpawnDuration);
+      if (lookAngles_ != null) hash ^= LookAngles.GetHashCode();
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
       }
@@ -1103,6 +1197,22 @@ namespace SuMultiplayer.Protocol.Creature {
         output.WriteRawTag(61);
         output.WriteFloat(Health);
       }
+      if (SpawnProgress != 0F) {
+        output.WriteRawTag(69);
+        output.WriteFloat(SpawnProgress);
+      }
+      if (Activity != 0) {
+        output.WriteRawTag(72);
+        output.WriteUInt32(Activity);
+      }
+      if (SpawnDuration != 0F) {
+        output.WriteRawTag(85);
+        output.WriteFloat(SpawnDuration);
+      }
+      if (lookAngles_ != null) {
+        output.WriteRawTag(90);
+        output.WriteMessage(LookAngles);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
       }
@@ -1141,6 +1251,22 @@ namespace SuMultiplayer.Protocol.Creature {
         output.WriteRawTag(61);
         output.WriteFloat(Health);
       }
+      if (SpawnProgress != 0F) {
+        output.WriteRawTag(69);
+        output.WriteFloat(SpawnProgress);
+      }
+      if (Activity != 0) {
+        output.WriteRawTag(72);
+        output.WriteUInt32(Activity);
+      }
+      if (SpawnDuration != 0F) {
+        output.WriteRawTag(85);
+        output.WriteFloat(SpawnDuration);
+      }
+      if (lookAngles_ != null) {
+        output.WriteRawTag(90);
+        output.WriteMessage(LookAngles);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
       }
@@ -1171,6 +1297,18 @@ namespace SuMultiplayer.Protocol.Creature {
       }
       if (Health != 0F) {
         size += 1 + 4;
+      }
+      if (SpawnProgress != 0F) {
+        size += 1 + 4;
+      }
+      if (Activity != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt32Size(Activity);
+      }
+      if (SpawnDuration != 0F) {
+        size += 1 + 4;
+      }
+      if (lookAngles_ != null) {
+        size += 1 + pb::CodedOutputStream.ComputeMessageSize(LookAngles);
       }
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
@@ -1213,6 +1351,21 @@ namespace SuMultiplayer.Protocol.Creature {
       }
       if (other.Health != 0F) {
         Health = other.Health;
+      }
+      if (other.SpawnProgress != 0F) {
+        SpawnProgress = other.SpawnProgress;
+      }
+      if (other.Activity != 0) {
+        Activity = other.Activity;
+      }
+      if (other.SpawnDuration != 0F) {
+        SpawnDuration = other.SpawnDuration;
+      }
+      if (other.lookAngles_ != null) {
+        if (lookAngles_ == null) {
+          LookAngles = new global::SuMultiplayer.Protocol.Creature.Vec2();
+        }
+        LookAngles.MergeFrom(other.LookAngles);
       }
       _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
     }
@@ -1270,6 +1423,25 @@ namespace SuMultiplayer.Protocol.Creature {
             Health = input.ReadFloat();
             break;
           }
+          case 69: {
+            SpawnProgress = input.ReadFloat();
+            break;
+          }
+          case 72: {
+            Activity = input.ReadUInt32();
+            break;
+          }
+          case 85: {
+            SpawnDuration = input.ReadFloat();
+            break;
+          }
+          case 90: {
+            if (lookAngles_ == null) {
+              LookAngles = new global::SuMultiplayer.Protocol.Creature.Vec2();
+            }
+            input.ReadMessage(LookAngles);
+            break;
+          }
         }
       }
     #endif
@@ -1324,6 +1496,25 @@ namespace SuMultiplayer.Protocol.Creature {
           }
           case 61: {
             Health = input.ReadFloat();
+            break;
+          }
+          case 69: {
+            SpawnProgress = input.ReadFloat();
+            break;
+          }
+          case 72: {
+            Activity = input.ReadUInt32();
+            break;
+          }
+          case 85: {
+            SpawnDuration = input.ReadFloat();
+            break;
+          }
+          case 90: {
+            if (lookAngles_ == null) {
+              LookAngles = new global::SuMultiplayer.Protocol.Creature.Vec2();
+            }
+            input.ReadMessage(LookAngles);
             break;
           }
         }

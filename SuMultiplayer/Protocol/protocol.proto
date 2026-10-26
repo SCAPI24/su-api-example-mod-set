@@ -465,6 +465,10 @@ enum MessageType {
   // Append-only: new message ids 112/113, no existing id is renumbered.
   WORLD_CONTROL_REQUEST = 112;
   WORLD_CONTROL_RESULT = 113;
+
+  // Mount replication (2026-10-26): riding horses / donkeys / boats.
+  MOUNT_REQUEST = 114;
+  MOUNT_STATE = 115;
 }
 
 // Logical envelope metadata.  The current single-message transport puts these

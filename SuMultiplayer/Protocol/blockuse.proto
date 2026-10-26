@@ -29,6 +29,15 @@ option optimize_for = SPEED;
 enum BlockUseAction {
   BLOCK_USE_ACTION_INTERACT = 0;
   BLOCK_USE_ACTION_CLOSE = 1;
+  // 2026-10-26: hand-item use (the held item's block behaviors OnUse -- e.g. a
+  // saddle tapped on a horse).  The client's tap sets Interact+Hit on the same
+  // frame; without this action the Interact intent had no wire representation
+  // for entity targets, so every saddle tap degraded into a melee attack.
+  // Host executes ComponentMiner.Use(ray) on the CLAIMANT's own miner (engine
+  // native chain) -- saddle = entity swap replicated via creature sync.
+  // x/y/z/face are unused (0); contents carries the HELD item contents; ray
+  // carries the client's view ray.
+  BLOCK_USE_ACTION_HAND_ITEM_USE = 2;
 }
 
 // The engine component that owns the authoritative inventory. Ids (not class names)

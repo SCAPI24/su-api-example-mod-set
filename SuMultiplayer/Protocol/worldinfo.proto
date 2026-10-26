@@ -34,6 +34,13 @@ message WorldInfo {
   bool time_accelerated = 18;
   float time_factor = 19;
   repeated WorldSetting settings = 20;
+  // Weather ramp times from the HOST's SubsystemWeather (2026-10-26, append-only).
+  // Clients previously hardcoded 3s/1s when a state flip arrived, which forced the
+  // host's NATURAL weather ramp (tens of seconds) down to 3s on the client — fog
+  // density then ramped an order of magnitude faster than the host and drifted.
+  // Absent / 0 (old host) = fall back to the old hardcoded values.
+  float fog_ramp_time = 21;
+  float precipitation_ramp_time = 22;
   // Third-party extension points: see doc/message-protocol.md.
   bytes ext = 100;
   google.protobuf.Any custom = 101;

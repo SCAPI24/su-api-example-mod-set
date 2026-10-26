@@ -175,6 +175,26 @@ namespace SuMultiplayer.Modules
         private long m_createdClientAvatars;
         /// <summary>因为对端连接失效而摘掉的客户端角色数（状态行可见，实机排查用）。</summary>
         private long m_removedClientAvatars;
+        /// <summary>同身份顶替次数（新连接取代旧连接）。</summary>
+        private long m_identityTakeovers;
+        /// <summary>
+        /// 断线宽涨期（秒）：普通断线（网络掉线 / 闪退但主机还没判死）时角色**留在地图**一段时间，
+        /// 期间同身份重连会顶替；显式退房（BYE）零宽限立即摘除（2026-10-26 实机口径）。
+        /// 必须大于客户端 5s 自动重连间隔，留足重连时间。
+        /// </summary>
+        private const double DisconnectGraceSeconds = 20.0;
+
+        private sealed class DeferredLeaveEntry
+        {
+            public int ClientId;
+            public string Reason;
+            public double DueTime;
+        }
+
+        /// <summary>已判失效但还在宽限期里的客户端 → 到期才摘角色（重连/顶替时提前摘）。</summary>
+        private readonly Dictionary<int, DeferredLeaveEntry> m_deferredLeaves =
+            new Dictionary<int, DeferredLeaveEntry>();
+        private double m_lastTickNow;
         private long m_rejectedPeers;
         /// <summary>本端累计创建 / 更新 / 摘除的远端化身（主机与客户端都计入）。</summary>
         private long m_avatarsCreated;
@@ -369,6 +389,8 @@ namespace SuMultiplayer.Modules
         public void Tick(in ModuleTickContext tick)
         {
             if (!m_attached) return;
+            m_lastTickNow = tick.Now;
+            ProcessDeferredLeaves();
             Project project = GameManager.Project;
             if (!ReferenceEquals(project, m_project))
             {
@@ -508,13 +530,18 @@ namespace SuMultiplayer.Modules
             string recordKey = PlayerIdentity.RecordKey(trimmedIdentity, name, key.Slot);
             if (m_recordKeyOwner.TryGetValue(recordKey, out PlayerKey owner) && owner != key)
             {
-                m_rejectedPeers++;
-                Error("拒绝创建角色：clientId=" + clientId + " 的身份 " +
-                    PlayerIdentity.Describe(recordKey) + " 已经被玩家键 " + owner +
-                    " 占用（同一个身份+槽位只能有一个联机角色）；不建第二个角色（绝不静默合并）" +
-                    " —— 若对端其实是断线重连，说明它的旧连接还没被判失效（链路失效清理只在" +
-                    " TerrainSyncHost 每 tick 的可达性检查里做）");
-                return;
+                // 2026-10-26 同身份顶替：同一个 UserId 只可能是同一个人。新连接出现就意味着
+                // 旧连接已经失效（闪退 / 掉线但主机还没判死）。旧实现直接拒绝新角色，实机结果是
+                // 旧角色无人摘、新角色建不出来（幽灵角色 + 进不了房）。这里先摘旧角色、释放记录键，
+                // 再让新连接正常建角色（绝不静默合并两个角色）。
+                Warn("同身份顶替：clientId=" + clientId + "（名字 " + (name ?? string.Empty) +
+                    "）的身份 " + PlayerIdentity.Describe(recordKey) + " 仍归旧连接 clientId=" +
+                    owner.ClientId + "（旧连接未被判死 / 可能闪退）→ 立刻摘掉旧角色、释放记录键，" +
+                    "再为新连接建角色");
+                m_deferredLeaves.Remove(owner.ClientId);
+                m_identityTakeovers++;
+                RemoveClientAvatarsNow(owner.ClientId,
+                    "同身份顶替（新连接 clientId=" + clientId + "）", "同身份顶替");
             }
             m_recordKeyOwner[recordKey] = key;
             m_peerIdentities[clientId] = trimmedIdentity;
@@ -559,6 +586,52 @@ namespace SuMultiplayer.Modules
         private void HandleClientLeft(int clientId, string reason)
         {
             if (!m_attached) return;
+            // 显式退房（客户端发 BYE）= 零宽限立即摘；普通断线 = 保留 DisconnectGraceSeconds
+            // 让"只是断连 / 闪退重进"有机会同身份重连，避免角色被太早摘掉（用户口径 2026-10-26）。
+            bool explicitLeave = !string.IsNullOrEmpty(reason) &&
+                reason.Contains("Bye", StringComparison.Ordinal);
+            if (!explicitLeave)
+            {
+                m_deferredLeaves[clientId] = new DeferredLeaveEntry
+                {
+                    ClientId = clientId,
+                    Reason = reason,
+                    DueTime = m_lastTickNow + DisconnectGraceSeconds
+                };
+                Warn("玩家端 clientId=" + clientId + " 的通道已失效（" + (reason ?? string.Empty) +
+                    "）→ 角色保留 " + (int)DisconnectGraceSeconds + " 秒宽限（同身份重连会顶替；" +
+                    "显式退房发 BYE 才会立即摘除）");
+                return;
+            }
+            RemoveClientAvatarsNow(clientId, reason, "显式退房（BYE）");
+        }
+
+        /// <summary>宽限期到期 → 真正摘掉角色（普通断线路径的唯一摘除点）。</summary>
+        private void ProcessDeferredLeaves()
+        {
+            if (m_deferredLeaves.Count == 0) return;
+            List<int> expired = null;
+            foreach (KeyValuePair<int, DeferredLeaveEntry> pair in m_deferredLeaves)
+            {
+                if (m_lastTickNow < pair.Value.DueTime) continue;
+                if (expired == null) expired = new List<int>();
+                expired.Add(pair.Key);
+            }
+            if (expired == null) return;
+            for (int i = 0; i < expired.Count; i++)
+            {
+                int clientId = expired[i];
+                if (!m_deferredLeaves.TryGetValue(clientId, out DeferredLeaveEntry entry)) continue;
+                m_deferredLeaves.Remove(clientId);
+                RemoveClientAvatarsNow(clientId, entry.Reason,
+                    "断线宽限期到（" + (int)DisconnectGraceSeconds + " 秒未重连）");
+            }
+        }
+
+        private void RemoveClientAvatarsNow(int clientId, string reason, string why)
+        {
+            if (!m_attached) return;
+            m_deferredLeaves.Remove(clientId);
             m_peerIdentities.TryGetValue(clientId, out string identity);
             // 这个连接上的**所有槽位**：先抓记录落盘，再释放记录键，最后摘化身。
             var removedKeys = new List<PlayerKey>(PlayerKey.SlotCount);
@@ -608,7 +681,7 @@ namespace SuMultiplayer.Modules
             m_peerSlotCounts.Remove(clientId);
             m_slotsRegistered = CountRegisteredSlots();
             Warn("玩家端 clientId=" + clientId + " 的通道已失效（" + (reason ?? string.Empty) +
-                "）→ " + (removed
+                "）· " + (why ?? string.Empty) + " → " + (removed
                     ? "已把它的 " + Math.Max(1, removedKeys.Count) + " 个本机角色从世界里摘掉（否则它们会停在最后一个已应用的位置上，重连后还会多出来）"
                     : "本机没有它的联机角色（本来就没建起来，无需摘除）") +
                 (removedKeys.Count > 0
@@ -3857,6 +3930,11 @@ namespace SuMultiplayer.Modules
             "player-avatar: host-avatars=" + m_createdClientAvatars +
             " client-host-avatars=" + m_createdHostAvatars +
             " removed=" + m_removedClientAvatars +
+            " boatStandingSkips=" + (m_spawner?.BoatStandingSkips ?? 0) +
+            " standingMountFlag=" + (m_spawner?.StandingMountFlagSnaps ?? 0) +
+            " standingBodySnapshots=" + (m_spawner?.StandingBodySnapshots ?? 0) +
+            " deferred=" + m_deferredLeaves.Count +
+            " takeovers=" + m_identityTakeovers +
             " avatarsCreated=" + m_avatarsCreated +
             " avatarsUpdated=" + m_avatarsUpdated +
             " avatarsRemoved=" + m_avatarsRemoved +
@@ -3871,6 +3949,9 @@ namespace SuMultiplayer.Modules
             " posApply=" + m_spawner.RemotePositionsApplied +
             " posSkippedOwn=" + m_spawner.RemotePositionsSkippedOwn +
             " posSkipped=" + m_spawner.RemotePositionsSkipped +
+            // 2026-10-26 客户端推动物：客户端发出的"移动速度（碰撞前）"条数 / 主机写进化身 body 的次数。
+            " moveVelSent=" + m_spawner.MoveVelocitySent +
+            " moveVelApplied=" + m_spawner.MoveVelocityApplied +
             " slotsAnnounced=" + m_slotsAnnounced +
             " slotsRegistered=" + m_slotsRegistered +
             // Phase 2 客户端本机角色归一化：下载世界里的主机角色副本被摘掉了多少、

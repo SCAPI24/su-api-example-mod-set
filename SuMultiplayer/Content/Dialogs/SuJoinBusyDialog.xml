@@ -1,0 +1,15 @@
+<CanvasWidget xmlns="runtime-namespace:Game">
+
+  <CanvasWidget Size="600, 300" ClampToBounds="true" HorizontalAlignment="Center" VerticalAlignment="Center">
+    <BevelledRectangleWidget Style="{Styles/DialogArea}" />
+    <UniformSpacingPanelWidget Direction="Vertical" HorizontalAlignment="Center">
+      <StackPanelWidget Direction="Vertical" HorizontalAlignment="Center" VerticalAlignment="Center">
+        <LabelWidget Name="SuJoinBusyDialog.LargeLabel" Font="{Fonts/Pericles24}" Color="255, 255, 255" HorizontalAlignment="Center" VerticalAlignment="Near" Margin="10, 5"/>
+        <LabelWidget Name="SuJoinBusyDialog.SmallLabel" Font="{Fonts/Pericles18}" Color="128, 128, 128" HorizontalAlignment="Center" VerticalAlignment="Near" TextAnchor="HorizontalCenter" WordWrap="true" Margin="10, 5"/>
+      </StackPanelWidget>
+      <BusyBarWidget HorizontalAlignment="Center" VerticalAlignment="Center" LitBarColor="255, 255, 255" UnlitBarColor="64, 64, 64, 64"/>
+      <BevelledButtonWidget Name="SuJoinBusyDialog.Cancel" Style="{Styles/ButtonStyle_160x60}" Text="Cancel" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0, 10"/>
+    </UniformSpacingPanelWidget>
+  </CanvasWidget>
+
+</CanvasWidget>

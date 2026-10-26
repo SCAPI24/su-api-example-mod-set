@@ -238,7 +238,10 @@ namespace SuMultiplayer.Net
         Using = 4096,
         Eating = 8192,
         RowLeft = 16384,
-        RowRight = 32768
+        RowRight = 32768,
+        /// <summary>本帧骑在坐骑（马/驴/船）上（2026-10-26 乘骑复制；主机据此把骑手输入
+        /// 写进 SteedBehavior/Boat 的 Order，客户端据此停掉化身位置插值——由坐骑驱动）。</summary>
+        Riding = 65536
     }
 
     /// <summary>
@@ -344,7 +347,10 @@ namespace SuMultiplayer.Net
                 PlayerMotionFlags.Crouching | PlayerMotionFlags.Grounded | PlayerMotionFlags.OnFire |
                 PlayerMotionFlags.Hurt | PlayerMotionFlags.Aiming | PlayerMotionFlags.Attacking |
                 PlayerMotionFlags.Digging | PlayerMotionFlags.Using | PlayerMotionFlags.Eating |
-                PlayerMotionFlags.RowLeft | PlayerMotionFlags.RowRight))
+                PlayerMotionFlags.RowLeft | PlayerMotionFlags.RowRight |
+                // 2026-10-26 骑马无法控制修复：白名单漏了 0x10000=Riding → 主机把客户端
+                // 骑乘 motion 整包丢弃（实测 WARNING "动画状态位含未定义位：0x10000"）。
+                PlayerMotionFlags.Riding))
             {
                 error = "动画状态位含未定义位：0x" + message.Flags.ToString("X");
                 return false;

@@ -16,6 +16,18 @@ namespace SuMultiplayer.Engine
     }
 
     /// <summary>
+    /// 乘骑意图的接收方（实现方 = Engine/MountReplicaEngine.cs，2026-10-26）。
+    /// 返回 true = 乘骑边沿已采集并发为 MountRequest，本帧的
+    /// <c>m_mountButtonWidget.IsClicked / playerInput.ToggleMount</c> 已被消费
+    /// —— 原生 <c>ComponentGui.Update:582-589</c> 的本地 StartMounting/StartDismounting
+    /// 整段不执行。客户端**绝不**本地挂 ParentBody：化身是否骑上由主机的 MountState 决定。
+    /// </summary>
+    public interface IMountGuiSink
+    {
+        bool TryAcceptMount(ComponentGui gui, ComponentPlayer player);
+    }
+
+    /// <summary>
     /// <c>Game.ComponentGui</c> 的**薄外壳**（由组合根通过 SuAPI Injector 的类名映射注入：
     /// <c>Game.ComponentGui → SuMultiplayer.Engine.SuComponentGui</c>，与
     /// <c>SuComponentInput</c> 替换 <c>ComponentInput</c> 同款；不改引擎源码）。
@@ -38,12 +50,19 @@ namespace SuMultiplayer.Engine
     public sealed class SuComponentGui : ComponentGui, IUpdateable
     {
         private bool m_faultLogged;
+        private bool m_mountFaultLogged;
 
         /// <summary>
         /// 世界控制意图接收方（Engine/WorldControlEngine.cs 每帧写给本机客户端玩家）。
         /// null = 主机 / 非客户端 / 模块未上线：完全走原生行为。
         /// </summary>
         public IWorldControlGuiSink WorldControlSink { get; set; }
+
+        /// <summary>
+        /// 乘骑意图接收方（Engine/MountReplicaEngine.cs 每帧写给本机客户端玩家）。
+        /// null = 主机 / 非客户端 / 模块未上线：完全走原生行为。
+        /// </summary>
+        public IMountGuiSink MountSink { get; set; }
 
         void IUpdateable.Update(float dt)
         {
@@ -61,6 +80,23 @@ namespace SuMultiplayer.Engine
                         m_faultLogged = true;
                         Log.Error("[SuMP] 世界控制 GUI 拦截异常：" + e.GetType().Name + " " + e.Message +
                             " → 本帧按原生行为处理（客户端本地改动会被快照拉回；只记录一次）");
+                    }
+                }
+            }
+            IMountGuiSink mountSink = MountSink;
+            if (mountSink != null)
+            {
+                try
+                {
+                    mountSink.TryAcceptMount(this, Entity?.FindComponent<ComponentPlayer>());
+                }
+                catch (Exception e)
+                {
+                    if (!m_mountFaultLogged)
+                    {
+                        m_mountFaultLogged = true;
+                        Log.Error("[SuMP] 乘骑 GUI 拦截异常：" + e.GetType().Name + " " + e.Message +
+                            " → 本帧按原生行为处理（本机可能本地挂一次 ParentBody；只记录一次）");
                     }
                 }
             }

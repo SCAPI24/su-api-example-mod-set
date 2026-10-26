@@ -130,23 +130,9 @@ namespace SuMultiplayer.Engine
                     }
                 }
             }
-            IHitInputSink hitSink = HitSink;
-            if (hitSink != null && this.PlayerInput.Hit.HasValue)
-            {
-                try
-                {
-                    if (hitSink.TryAcceptHit(this, player)) m_hitAccepted = true;
-                }
-                catch (Exception e)
-                {
-                    if (!m_hitFaultLogged)
-                    {
-                        m_hitFaultLogged = true;
-                        Log.Error("[SuMP] 攻击输入拦截异常：" + e.GetType().Name + " " +
-                            e.Message + " → 本帧按原生行为处理（本机可能本地 roll 一次命中；只记录一次）");
-                    }
-                }
-            }
+            // 引擎语义（ComponentPlayer.cs:151-242）：同一帧的 tap 同时携带 Interact + Hit，
+            // **Use 优先**——手持物 OnUse 命中（马鞍装马）时 flag=true 挡住 Hit。镜像顺序必须
+            // 一致：UseSink 在 HitSink 之前，UseSink 消费掉使用意图时会连 Hit 一起清。
             IEntityUseInputSink useSink = UseSink;
             if (useSink != null && this.PlayerInput.Interact.HasValue)
             {
@@ -161,6 +147,23 @@ namespace SuMultiplayer.Engine
                         m_useFaultLogged = true;
                         Log.Error("[SuMP] 方块使用输入拦截异常：" + e.GetType().Name + " " +
                             e.Message + " → 本帧按原生行为处理（客户端可能本地执行一次交互；只记录一次）");
+                    }
+                }
+            }
+            IHitInputSink hitSink = HitSink;
+            if (hitSink != null && this.PlayerInput.Hit.HasValue)
+            {
+                try
+                {
+                    if (hitSink.TryAcceptHit(this, player)) m_hitAccepted = true;
+                }
+                catch (Exception e)
+                {
+                    if (!m_hitFaultLogged)
+                    {
+                        m_hitFaultLogged = true;
+                        Log.Error("[SuMP] 攻击输入拦截异常：" + e.GetType().Name + " " +
+                            e.Message + " → 本帧按原生行为处理（本机可能本地 roll 一次命中；只记录一次）");
                     }
                 }
             }

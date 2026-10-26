@@ -44,10 +44,15 @@ namespace SuMultiplayer.Net
     {
         public const int Interact = 0;
         public const int Close = 1;
+        /// <summary>手持物使用（2026-10-26）：马鞍 tap 马 = 手持物 OnUse，主机在
+        /// 请求者自己的 miner 上跑引擎 Use(ray) 原链。x/y/z/face 无意义（0），contents=手持物。</summary>
+        public const int HandItemUse = 2;
 
-        public static bool IsValid(int action) => action == Interact || action == Close;
+        public static bool IsValid(int action) =>
+            action == Interact || action == Close || action == HandItemUse;
 
-        public static string Name(int action) => action == Close ? "close" : "interact";
+        public static string Name(int action) =>
+            action == Close ? "close" : action == HandItemUse ? "hand-item-use" : "interact";
     }
 
     /// <summary>

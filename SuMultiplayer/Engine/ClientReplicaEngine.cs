@@ -242,6 +242,12 @@ namespace SuMultiplayer.Engine
             result.FogProgress = weather.FogProgress;
             result.FogIntensity = weather.FogIntensity;
             result.FogSeed = weather.FogSeed;
+            // 2026-10-26：把主机的**实际** ramp 带下来（自然雾几十秒级 ≠ 手动雾 3s）。
+            // 客户端翻转时写主机值，浓度推进速率与主机一致（此前硬编码 3s = 漂移根因）。
+            result.FogRampTime = Member(weather, "m_fogRampTime", typeof(SubsystemWeather)) is float fogRamp
+                ? MathF.Max(0.1f, fogRamp) : 3f;
+            result.PrecipitationRampTime = Member(weather, "m_precipitationRampTime",
+                typeof(SubsystemWeather)) is float precipRamp ? MathF.Max(0.1f, precipRamp) : 1f;
         }
 
         private void CaptureLightning(Project project, WorldInfoSnapshot result)
@@ -398,7 +404,10 @@ namespace SuMultiplayer.Engine
             int failures = 0;
             if (first || precip != m_lastPrecipStarted)
             {
-                if (!SetMember(weather, "m_precipitationRampTime", 1f, typeof(SubsystemWeather))) failures++;
+                // 2026-10-26：写主机的实际 ramp（0 = 旧主机，退回旧硬编码值）。
+                float precipRamp = snapshot.PrecipitationRampTime > 0f
+                    ? snapshot.PrecipitationRampTime : 1f;
+                if (!SetMember(weather, "m_precipitationRampTime", precipRamp, typeof(SubsystemWeather))) failures++;
                 if (precip)
                 {
                     if (!SetMember(weather, "m_precipitationStartTime", now, typeof(SubsystemWeather))) failures++;
@@ -409,7 +418,9 @@ namespace SuMultiplayer.Engine
             }
             if (first || fog != m_lastFogStarted)
             {
-                if (!SetMember(weather, "m_fogRampTime", 3f, typeof(SubsystemWeather))) failures++;
+                // 2026-10-26：写主机的实际 ramp（自然雾几十秒 ≠ 手动 3s；浓度漂移修复）。
+                float fogRamp = snapshot.FogRampTime > 0f ? snapshot.FogRampTime : 3f;
+                if (!SetMember(weather, "m_fogRampTime", fogRamp, typeof(SubsystemWeather))) failures++;
                 if (fog)
                 {
                     if (!SetMember(weather, "m_fogStartTime", now, typeof(SubsystemWeather))) failures++;

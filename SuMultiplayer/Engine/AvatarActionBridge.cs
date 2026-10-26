@@ -48,6 +48,11 @@ namespace SuMultiplayer.Engine
         private readonly Dictionary<int, bool> m_remoteDig = new Dictionary<int, bool>();
         private readonly HashSet<string> m_reportedOnce = new HashSet<string>(StringComparer.Ordinal);
 
+        /// <summary>
+        /// 骑乘跳跃边沿锁存截止时刻（Time.RealTime）。触摸 tap 可能只持续 1~2 帧，而 motion
+        /// 是 32Hz 变化驱动 → 不加锁存会漏跳（实机：连续点多次才跳一次）。
+        /// </summary>
+        private double m_rideJumpLatchUntil;
         private long m_signalsCaptured;
         private long m_inventoryCaptured;
         private long m_inventoryApplied;
@@ -159,6 +164,23 @@ namespace SuMultiplayer.Engine
             CaptureRowOrders(player, out bool rowLeft, out bool rowRight);
             signals.RowLeft = rowLeft;
             signals.RowRight = rowRight;
+            // Source: Survivalcraft/Game/ComponentRider.cs:ComponentRider.Mount（骑乘事实）
+            //         + ComponentPlayer.cs:126-133（骑手输入 → Steed/Boat Order 的原生桥）
+            ComponentRider rider = player.ComponentRider;
+            signals.Riding = rider?.Mount != null;
+            if (signals.Riding)
+            {
+                PlayerInput rideInput = player.ComponentInput?.PlayerInput ?? default(PlayerInput);
+                signals.RideTurn = rideInput.Move.X;
+                signals.RideForward = rideInput.Move.Z;
+                // 2026-10-26 骑马“点跳经常不跳”修复：motion 是 32Hz **变化驱动**发送的，
+                // 触摸 tap 的 Jump 可能只保持 1~2 帧，脉冲采样会整拍错过。这里把 Jump 边沿
+                // 锁存 150ms（≈4~5 个脉冲），保证至少一条 motion 携带 JumpOrder=1；主机据此
+                // 喂化身 PlayerInput.Jump，引擎原生 Steed 桥起跳。锁存到期自动回落。
+                double rideNow = Time.RealTime;
+                if (rideInput.Jump) m_rideJumpLatchUntil = rideNow + 0.15;
+                signals.RideJump = rideInput.Jump || rideNow < m_rideJumpLatchUntil;
+            }
             // Source: Survivalcraft/Game/ComponentPlayer.cs:ComponentPlayer.m_aim（nullable Ray3）
             CaptureAim(player, out bool aiming, out Vector3 aimOrigin, out Vector3 aimDirection);
             signals.Aiming = aiming;

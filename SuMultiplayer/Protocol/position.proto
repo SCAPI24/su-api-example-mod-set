@@ -40,6 +40,19 @@ message PlayerPosition {
   // single-character peer, so the old wire format is unchanged for slot 0.
   // (client_id, slot) is the stable player key (Players/PlayerKey.cs).
   uint32 slot = 10;
+  // Client -> host（2026-10-26，客户端推动物修复）：客户端**移动时**的当前速度。
+  // 取的是本地碰撞解析**之前**的移动速度（引擎 ComponentBody.Update 里
+  // CollisionVelocityChange = 碰撞后 - 碰撞前，所以 MoveVelocity = Velocity - CollisionVelocityChange）。
+  // 上面 velocity 字段是碰撞后的结果：客户端撞到生物时会被 InelasticCollision 反弹/清零，
+  // 主机 avatar 拿它永远推不动动物；主机把本字段写进化身 body 的水平速度，主机端角色才能
+  // 用引擎原生物理（质量 / 内联碰撞）把动物推动。
+  // Additive：has_move_velocity=false 时旧语义完全不变（主机 -> 客户端的批不填本字段）。
+  Vec3 move_velocity = 11;
+  bool has_move_velocity = 12;
+  // 客户端**站在**可骑乘实体（船/坐骑，而不是骑乘）上：主机远端化身必须直接贴合客户端
+  // 位置并清零速度，绝不能让它自己"走"上船（否则化身卡在船壳边持续推船 → 船自己漂走）。
+  // Additive：false = 旧语义。
+  bool standing_on_mount = 13;
   // Third-party extension points: see doc/message-protocol.md.
   bytes ext = 100;
   google.protobuf.Any custom = 101;

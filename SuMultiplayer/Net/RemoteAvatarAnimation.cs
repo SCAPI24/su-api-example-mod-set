@@ -22,6 +22,14 @@ namespace SuMultiplayer.Net
     /// </summary>
     public struct LocalPlayerSignals
     {
+        /// <summary>本帧骑在坐骑上（ComponentRider.Mount != null；乘骑复制用）。</summary>
+        public bool Riding;
+        /// <summary>骑乘时的横向输入（马 TurnOrder = playerInput.Move.X）。</summary>
+        public float RideTurn;
+        /// <summary>骑乘时的纵向输入（船 MoveOrder / 马 SpeedOrder 档 = playerInput.Move.Z）。</summary>
+        public float RideForward;
+        /// <summary>骑乘时的跳跃输入（马 JumpOrder）。</summary>
+        public bool RideJump;
         public bool InWorld;
         public float PokingPhase;
         public bool Digging;
@@ -227,6 +235,17 @@ namespace SuMultiplayer.Net
             if (signals.Eating && signals.PokingPhase > 0f) flags |= PlayerMotionFlags.Eating;
             if (signals.RowLeft) flags |= PlayerMotionFlags.RowLeft;
             if (signals.RowRight) flags |= PlayerMotionFlags.RowRight;
+            if (signals.Riding) flags |= PlayerMotionFlags.Riding;
+            if (signals.Riding)
+            {
+                // 骑乘时引擎不写 ComponentLocomotion 的 WalkOrder/TurnOrder（输入直接进
+                // Steed/Boat Order，见 ComponentPlayer.cs:126-133），motion 的常规字段全是 0；
+                // 主机 RidingInputResolver 读的正是 TurnOrder.X/WalkOrder.Y/JumpOrder，
+                // 这里把骑乘输入映射进去（2026-10-26 客户端骑马无法控制修复）。
+                return new PlayerMotionSnapshot(serverTick, flags, hasWalkOrder: true,
+                    new Vector2(0f, signals.RideForward), signals.RideJump ? 1f : 0f,
+                    new Vector2(signals.RideTurn, 0f), signals.Immersion, signals.ActiveSlotIndex);
+            }
             return new PlayerMotionSnapshot(serverTick, flags, signals.HasWalkOrder, signals.WalkOrder,
                 signals.JumpOrder, signals.TurnOrder, signals.Immersion, signals.ActiveSlotIndex);
         }
@@ -554,6 +573,25 @@ namespace SuMultiplayer.Net
         }
 
         /// <summary>该远端化身当前的动画状态（诊断/自检用）；false = 还没收到过状态。</summary>
+        /// <summary>
+        /// 乘骑控制桥（2026-10-26）：clientId 当前是否骑在坐骑上 + 骑手输入量。
+        /// 主机按它把输入写进 SteedBehavior / Boat 的 Order（与引擎 ComponentPlayer.cs:126-133
+        /// 原生桥同口径）；false = 没在骑 / 没收到过状态。
+        /// </summary>
+        public bool TryGetRidingInput(int clientId, out float turn, out float forward, out bool jump)
+        {
+            turn = 0f;
+            forward = 0f;
+            jump = false;
+            if (!m_entries.TryGetValue(clientId, out Entry entry) || !entry.HasMotion) return false;
+            PlayerMotionSnapshot motion = entry.Motion;
+            if (!motion.Has(PlayerMotionFlags.Riding)) return false;
+            turn = motion.TurnOrder.X;
+            forward = motion.WalkOrder.Y;
+            jump = motion.JumpOrder > 0.5f;
+            return true;
+        }
+
         public bool TryGetMotion(int clientId, out PlayerMotionSnapshot motion)
         {
             motion = default;

@@ -46,7 +46,13 @@ namespace SuMultiplayer.Creatures
         Fleeing = 8,
 
         /// <summary>最近 3 秒内掉过血（旧实现 metadata.HighPriorityUntil = now + 3.0）。</summary>
-        Damaged = 16
+        Damaged = 16,
+
+        /// <summary>
+        /// 正被玩家骑乘（2026-10-26 骑乘表现平滑：被骑的坐骑按 Priority 档 50ms 同步，
+        /// 客户端插值才不会出现"一小段一小段跳"；客户端表现层不使用该位）。
+        /// </summary>
+        Ridden = 32
     }
 
     /// <summary>
@@ -78,8 +84,39 @@ namespace SuMultiplayer.Creatures
         /// <summary>生命值；主机没有 ComponentHealth 时按 1（满血）发布。</summary>
         public float Health = 1f;
 
-        /// <summary>主机侧活动状态（选择同步频率用；不序列化，客户端只做插值）。</summary>
+        /// <summary>
+        /// 出生渐变已进行的秒数（引擎 ComponentSpawn.SpawnDuration 固定 2 秒）。
+        /// 主机发布 = 世界时钟 − SpawnTime；客户端建实体后把 SpawnTime 回写为
+        /// 自己的世界时钟 − 该值，透明度渐变与主机对齐（2026-10-26，蛋化动物修复）。
+        /// </summary>
+        public float SpawnProgress;
+
+        /// <summary>
+        /// 主机 ComponentSpawn.SpawnDuration（秒）。0 = 不渐变（马鞍/船等由行为创建的实体显式设 0），
+        /// 2 = 引擎默认生物出生渐变。客户端必须按它对齐透明度，不能假设固定 2s（2026-10-26 装鞍半透明修复）。
+        /// </summary>
+        public float SpawnDuration;
+
+        /// <summary>
+        /// 主机 ComponentLocomotion.LookAngles（头部朝向）。客户端复制体摘掉了
+        /// ComponentLocomotion 的 updateable，不同步的话马/驴/骆驼被骑转向时头不转
+        ///（2026-10-26 骑乘表现修复；也用于普通生物look）。
+        /// </summary>
+        public Vector2 LookAngles;
+
+        /// <summary>
+        /// 主机侧活动状态：既用于选择同步频率，也随 <c>CreatureRecord.activity</c> 下发 ——
+        /// 客户端用 <see cref="CreatureActivity.Attacking"/> 位驱动复制体的
+        /// <c>ComponentCreatureModel.AttackOrder</c>（AI/行为 updateable 在客户端被摘掉，
+        /// 不下发的话主机端的撕咬在客户端完全不可见；2026-10-26 修复）。
+        /// </summary>
         public CreatureActivity Activity;
+
+        /// <summary>wire 上允许的活动位（未知高位丢弃，避免把未来扩展误读成"正在攻击"）。</summary>
+        public const uint ActivityWireMask =
+            (uint)CreatureActivity.Moving | (uint)CreatureActivity.Aggro |
+            (uint)CreatureActivity.Attacking | (uint)CreatureActivity.Fleeing |
+            (uint)CreatureActivity.Damaged | (uint)CreatureActivity.Ridden;
 
         public CreatureStateRecord Clone() => new CreatureStateRecord
         {
@@ -90,6 +127,9 @@ namespace SuMultiplayer.Creatures
             Rotation = Rotation,
             Velocity = Velocity,
             Health = Health,
+            SpawnProgress = SpawnProgress,
+            SpawnDuration = SpawnDuration,
+            LookAngles = LookAngles,
             Activity = Activity
         };
     }
@@ -265,7 +305,12 @@ namespace SuMultiplayer.Creatures
                     {
                         X = record.Velocity.X, Y = record.Velocity.Y, Z = record.Velocity.Z
                     },
-                    Health = record.Health
+                    Health = record.Health,
+                    SpawnProgress = record.SpawnProgress,
+                    SpawnDuration = record.SpawnDuration,
+                    LookAngles = new PC.Vec2 { X = record.LookAngles.X, Y = record.LookAngles.Y },
+                    // 2026-10-26 客户端攻击动画修复：活动位随记录下发（客户端用 Attacking 驱动模型攻击动画）。
+                    Activity = (uint)record.Activity
                 };
                 message.Records.Add(wire);
             }
@@ -349,6 +394,22 @@ namespace SuMultiplayer.Creatures
                         wire.Rotation.Z, wire.Rotation.W);
                     record.Velocity = new Vector3(wire.Velocity.X, wire.Velocity.Y, wire.Velocity.Z);
                     record.Health = wire.Health;
+                    record.SpawnProgress = float.IsFinite(wire.SpawnProgress)
+                        ? System.Math.Max(0f, wire.SpawnProgress)
+                        : 0f;
+                    record.SpawnDuration = float.IsFinite(wire.SpawnDuration)
+                        ? System.Math.Clamp(wire.SpawnDuration, 0f, 60f)
+                        : 0f;
+                    record.LookAngles = wire.LookAngles == null
+                        ? Vector2.Zero
+                        : new Vector2(wire.LookAngles.X, wire.LookAngles.Y);
+                    if (!float.IsFinite(record.LookAngles.X) || !float.IsFinite(record.LookAngles.Y))
+                    {
+                        reason = "记录 key=" + record.Key + " 的 look_angles 含非有限数值";
+                        return false;
+                    }
+                    // 2026-10-26 客户端攻击动画修复：活动位（未知高位丢弃，避免未来扩展被误读成攻击）。
+                    record.Activity = (CreatureActivity)(wire.Activity & CreatureStateRecord.ActivityWireMask);
                     if (!IsFinite(record.Position) || !IsFinite(record.Rotation) ||
                         !IsFinite(record.Velocity) || !float.IsFinite(record.Health))
                     {

@@ -76,7 +76,10 @@ namespace SuMultiplayer.Creatures
         /// <summary>会把档位直接抬到 Priority 的活动标记。</summary>
         public const CreatureActivity PriorityActivityMask =
             CreatureActivity.Aggro | CreatureActivity.Attacking |
-            CreatureActivity.Fleeing | CreatureActivity.Damaged;
+            CreatureActivity.Fleeing | CreatureActivity.Damaged |
+            // 被骑乘的坐骑按 Priority（50ms）同步：客户端是插值表现，10Hz 档位会看出"一小段
+            // 一小段跳"，骑乘是玩家直接盯着看的对象（2026-10-26 骑乘平滑修复）。
+            CreatureActivity.Ridden;
 
         /// <summary>值变化判定用的 epsilon（位置 5 mm、速度 0.05 m/s、生命 0.001）。</summary>
         public const float PositionEpsilonSquared = 0.000025f;

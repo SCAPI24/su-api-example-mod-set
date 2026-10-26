@@ -38,7 +38,7 @@ namespace SuMultiplayer.UI
         private long m_totalWorldsSize;
         private int m_scanGeneration;
         private string m_selectedKey;
-        private BusyDialog m_joinDialog;
+        private SuJoinBusyDialog m_joinDialog;
 
         /// <summary>房间行模型：房间不是本地世界，绝不伪造成 WorldInfo 去骗引擎的世界列表。</summary>
         private sealed class RoomRow
@@ -359,8 +359,17 @@ namespace SuMultiplayer.UI
                 return;
             }
             HideJoinDialog();
-            m_joinDialog = new BusyDialog("Join Room",
-                "Connecting to " + entry.HostAddress + ":" + entry.Port + " ...");
+            // 2026-10-26：加 Cancel 的加入窗口（SuJoinBusyDialog）—— 状态行由 UpdateJoinDialog
+            // 按 JoinStatusText 每帧驱动（Connecting → Waiting+Ping → Downloading…）；
+            // Cancel = 中止加入（关通道、回 Idle），重新点加入 = 全程从头。
+            m_joinDialog = new SuJoinBusyDialog("Join Room",
+                "Connecting to " + entry.HostAddress + ":" + entry.Port + " ...",
+                delegate
+                {
+                    global::Engine.Log.Information("[SuMP][play] 加入窗口 Cancel → 中止加入流程");
+                    m_rooms?.CancelJoin();
+                    m_joinDialog = null;
+                });
             DialogsManager.ShowDialog(null, m_joinDialog);
             m_list.SelectedItem = null;
         }
@@ -392,13 +401,13 @@ namespace SuMultiplayer.UI
                 m_joinDialog = null;
                 return;
             }
-            m_joinDialog.SmallMessage = m_rooms?.JoinStageText ?? string.Empty;
+            m_joinDialog.SmallMessage = m_rooms?.JoinStatusText ?? string.Empty;
         }
 
         private void HideJoinDialog()
         {
             if (m_joinDialog == null) return;
-            DialogsManager.HideDialog(m_joinDialog);
+            m_joinDialog.CloseQuietly();
             m_joinDialog = null;
         }
 

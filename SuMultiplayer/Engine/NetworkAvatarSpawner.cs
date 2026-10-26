@@ -35,6 +35,16 @@ namespace SuMultiplayer.Engine
     /// </summary>
     public sealed class NetworkAvatarSpawner
     {
+        /// <summary>
+        /// 乘骑控制桥（2026-10-26）：clientId 是否在骑（out：turn/forward/jump 输入量）。
+        /// 实现 = 组合根把 RemoteAnimationAdapter.TryGetRidingInput 接进来。
+        /// null = 不桥接（主机本机玩家走引擎原生 ComponentPlayer 桥，不需要它）。
+        /// </summary>
+        public TryGetRidingInputDelegate RidingInputResolver { get; set; }
+
+        public delegate bool TryGetRidingInputDelegate(int clientId, out float turn,
+            out float forward, out bool jump);
+
         private readonly IModParentField m_parentField;
         private readonly IModParentMethod m_parentMethod;
         private readonly IModuleDiagnostics m_diagnostics;
@@ -638,11 +648,19 @@ namespace SuMultiplayer.Engine
                     // 客户端的"主机角色"是**远端**角色：本机不跑它的输入/移动/挖掘，
                     // 否则本地模拟会和主机的权威位置打架。
                     // Source: ScMultiplayerWorldObjectHandlers.cs:264-271
-                    if (!isHost && (updateable is ComponentPlayer || updateable is ComponentInput ||
-                        updateable is ComponentLocomotion || updateable is ComponentMiner))
+                    if (!isHost)
                     {
-                        subsystemUpdate.RemoveUpdateable(updateable);
+                        if (updateable is ComponentPlayer || updateable is ComponentInput ||
+                            updateable is ComponentLocomotion || updateable is ComponentMiner)
+                            subsystemUpdate.RemoveUpdateable(updateable);
+                        continue;
                     }
+                    // 主机化身：只摘掉 ComponentInput 的每帧刷新。它没有输入设备，每帧会把
+                    // PlayerInput 清零；而骑乘控制桥要把客户端输入写进 PlayerInput，让引擎
+                    // **原生** ComponentPlayer.Update 的 Steed/Boat Order 桥生效
+                    //（Source: ComponentPlayer.cs:126-133）。ComponentPlayer/Locomotion/Miner
+                    // 在主机保留（化身物理、表现、拾取都要）。
+                    if (updateable is ComponentInput) subsystemUpdate.RemoveUpdateable(updateable);
                 }
 
                 // ★ 关键：把网络角色的实体从 Project 的实体表里摘掉。
@@ -842,6 +860,10 @@ namespace SuMultiplayer.Engine
             m_updateLocationDriftSinceMs.Clear();
             m_reportedOnce.Clear();
             m_remotePositions.Clear();
+            // 玩家列表注入的事件订阅随会话结束解除；换世界后由下一次 Ensure 重新绑定新 Project。
+            UnbindComponentPlayersProjectEvents();
+            m_componentPlayersOwner = null;
+            m_componentPlayersList = null;
         }
 
         // ------------------------------------------------------- 地形兴趣（旧实现 MaintainRemoteTerrainLocations 整块）
@@ -1448,6 +1470,29 @@ namespace SuMultiplayer.Engine
         public long RemotePositionsSkippedOwn { get; private set; }
 
         /// <summary>
+        /// 客户端：位置快照里附带"移动速度（碰撞前）"的条数（2026-10-26 客户端推动物修复；
+        /// 诊断 / 实测用：客户端在走、主机应能看到这个数增长）。
+        /// </summary>
+        public long MoveVelocitySent { get; private set; }
+
+        /// <summary>
+        /// 主机：把客户端的"移动速度"写进化身 body 水平速度的次数（同上，实测推动物用）。
+        /// </summary>
+        public long MoveVelocityApplied { get; private set; }
+
+        /// <summary>客户端：站在船/可骑实体上时跳过"移动速度"上交的次数（船漂移修复验证用）。</summary>
+        public long StandingBodySnapshots { get; private set; }
+
+        /// <summary>主机：远端化身站在船/坐骑上、只同步位置速度清零的次数（船漂移修复验证用）。</summary>
+        public long BoatStandingSkips { get; private set; }
+
+        /// <summary>主机：按客户端快照显式标志 `standing_on_mount` 直接贴位置的次数（新链路验证用）。</summary>
+        public long StandingMountFlagSnaps { get; private set; }
+
+        /// <summary>化身被补回引擎玩家列表的次数（诊断 / 自检；2026-10-26 动物攻击修复）。</summary>
+        public long ComponentPlayersRestored => m_componentPlayersRestored;
+
+        /// <summary>
         /// 客户端：本机玩家的一份位置/姿态快照。
         /// Source: Mod/ScMultiplayer/Modules/Player/ScMultiplayerPlayerSync.cs:53-92
         ///         （本机玩家 = PlayersData 里不是网络化身的那一条；位置/旋转/速度/视线角同一份）
@@ -1497,7 +1542,9 @@ namespace SuMultiplayer.Engine
             int count = 0;
             for (int slot = 0; slot < localPlayers.Count; slot++)
             {
-                if (!TryCapturePlayerPosition(localPlayers[slot], serverTick,
+                // 客户端 → 主机：带上"移动速度（碰撞前）"——主机 avatar 用它作为物理速度推动物
+                // （2026-10-26，客户端推不动动物修复；详见 PlayerPositionSnapshot.MoveVelocity 注释）。
+                if (!TryCapturePlayerPosition(localPlayers[slot], serverTick, true,
                         out PlayerPositionSnapshot snapshot, out string slotReason))
                 {
                     ReportProblemOnce("position-local-slot:" + slot,
@@ -1507,6 +1554,7 @@ namespace SuMultiplayer.Engine
                 }
                 target.Add(new PlayerPositionEntry(new PlayerKey(0, slot), in snapshot));
                 count++;
+                MoveVelocitySent++;
             }
             return count;
         }
@@ -1552,7 +1600,9 @@ namespace SuMultiplayer.Engine
                 }
                 for (int slot = 0; slot < localPlayers.Count; slot++)
                 {
-                    if (!TryCapturePlayerPosition(localPlayers[slot], serverTick,
+                    // 主机 → 客户端：不填"移动速度"（客户端不拿它覆盖主机化身；主机本机玩家的
+                    // 推挤由主机世界原生物理负责，不需要回传意图）。
+                    if (!TryCapturePlayerPosition(localPlayers[slot], serverTick, false,
                             out PlayerPositionSnapshot localSnapshot, out string slotReason))
                     {
                         ReportProblemOnce("position-batch-local:" + slot,
@@ -1567,8 +1617,9 @@ namespace SuMultiplayer.Engine
             foreach (KeyValuePair<PlayerKey, PlayerData> item in m_avatars.ToArray())
             {
                 PlayerData playerData = item.Value;
-                if (!TryCapturePlayerPosition(playerData, serverTick, out PlayerPositionSnapshot snapshot,
-                    out string avatarReason))
+                // 主机 → 客户端：不填"移动速度"（同上，客户端侧不覆盖任何化身速度）。
+                if (!TryCapturePlayerPosition(playerData, serverTick, false,
+                    out PlayerPositionSnapshot snapshot, out string avatarReason))
                 {
                     ReportProblemOnce("position-batch-avatar:" + item.Key,
                         "联机角色 " + item.Key + " 的位置快照取不到（" + avatarReason +
@@ -1584,7 +1635,7 @@ namespace SuMultiplayer.Engine
         // Source: Mod/ScMultiplayer/Modules/Player/PlayerReadOnlyStateCapture.cs:12-32（TryCapture）
         //         + ScMultiplayerSupportTypes.cs:118-156（NetworkPlayerState 的位置字段）
         private bool TryCapturePlayerPosition(PlayerData playerData, int serverTick,
-            out PlayerPositionSnapshot snapshot, out string reason)
+            bool includeMoveVelocity, out PlayerPositionSnapshot snapshot, out string reason)
         {
             snapshot = default;
             ComponentPlayer player = playerData?.ComponentPlayer;
@@ -1606,13 +1657,33 @@ namespace SuMultiplayer.Engine
             //   蹲下 = TargetCrouchFactor > 0；飞行 = locomotion.IsCreativeFlyEnabled。
             bool isGrounded = body.StandingOnValue.HasValue &&
                 MathUtils.Abs(body.Velocity.Y) < 0.1f;
-            snapshot = new PlayerPositionSnapshot(serverTick, body.Position, body.Rotation, body.Velocity,
+            // 客户端移动时附上"当前移动速度"（碰撞解析前）：
+            //   ComponentBody.Update 里 CollisionVelocityChange = MoveWithCollision 之后 - 之前，
+            //   所以 body.Velocity - CollisionVelocityChange = 本帧碰撞前的移动速度（引擎现成字段，
+            //   不用反射）。Velocity 本身是碰撞后的结果：撞到生物时被 InelasticCollision 反弹/抵消，
+            //   主机 avatar 拿它推不动动物；这个"移动速度"让主机 avatar 用客户端碰撞前的真实速度
+            //   去跑主机物理（质量/内联碰撞），把动物推动。Y 一并带上、主机只用水平分量。
+            // 2026-10-26 客户端站在船上导致船自己漂走修复（客户端侧）：
+            // 站在船/动物等 **ComponentBody** 上时，玩家速度里混着"平台速度"（船被带着走）；
+            // 这不是玩家自己走出来的速度。若把它当移动速度/快照速度交给主机，主机化身会
+            // 带着这个速度去推船 → 船加速 → 平台速度更大 → 正反馈（实机：下船站在船上船自己向前漂）。
+            // 站在身体上时不带移动速度、快照速度清零（主机侧还有第二道闸，见 UpdateRemotePresentations）。
+            bool standingOnBody = body.StandingOnBody != null;
+            bool standingOnMount = body.StandingOnBody != null &&
+                body.StandingOnBody.Entity.FindComponent<ComponentMount>() != null;
+            if (standingOnBody) StandingBodySnapshots++;
+            Vector3 moveVelocity = includeMoveVelocity && !standingOnBody
+                ? body.Velocity - body.CollisionVelocityChange
+                : Vector3.Zero;
+            Vector3 snapshotVelocity = standingOnBody ? Vector3.Zero : body.Velocity;
+            snapshot = new PlayerPositionSnapshot(serverTick, body.Position, body.Rotation, snapshotVelocity,
                 locomotion.LookAngles, body.TargetCrouchFactor > 0f, locomotion.IsCreativeFlyEnabled,
-                isGrounded);
+                isGrounded, moveVelocity, includeMoveVelocity && !standingOnBody,
+                standingOnMount);
             // Source: PlayerReadOnlyStateCapture.cs:31（TryCapture 返回 snapshot.IsFinite）
             if (!snapshot.IsFinite)
             {
-                reason = "位置/旋转/速度/视线角含 NaN/Inf（引擎状态异常）";
+                reason = "位置/旋转/速度/视线角/移动速度含 NaN/Inf（引擎状态异常）";
                 snapshot = default;
                 return false;
             }
@@ -1653,13 +1724,14 @@ namespace SuMultiplayer.Engine
             double now = Time.RealTime;
             float arrivalAge = state.LastUpdateTime <= 0.0 ? 0f : (float)(now - state.LastUpdateTime);
             state.Apply(in snapshot, arrivalAge, now);
-            ApplyRemotePlayerPose(playerData, state);
+            ApplyRemotePlayerPose(playerData, state, key.ClientId);
             RemotePositionsApplied++;
         }
 
         // Source: Mod/ScMultiplayer/Modules/Network/ScMultiplayerMessageHandlers.cs:129-153
         //         （Handler 里"立刻"写进引擎的姿态字段：蹲下目标、视线角、创造飞行开关）
-        private void ApplyRemotePlayerPose(PlayerData playerData, RemotePlayerPositionState state)
+        private void ApplyRemotePlayerPose(PlayerData playerData, RemotePlayerPositionState state,
+            int riderClientId)
         {
             ComponentPlayer player = playerData?.ComponentPlayer;
             ComponentBody body = player?.ComponentBody;
@@ -1671,6 +1743,50 @@ namespace SuMultiplayer.Engine
             m_parentField.ModifyParentField(locomotion, "m_lookAngles", state.LookAngles,
                 typeof(ComponentLocomotion));
             locomotion.IsCreativeFlyEnabled = state.IsFlying;
+            // 乘骑控制桥（2026-10-26）：骑手在坐骑上时，把骑手输入写进坐骑的
+            // SteedBehavior / Boat 的 Order —— 与引擎 ComponentPlayer.cs:126-133 原生桥同口径。
+            // 坐骑是主机权威实体（生物 / 实体复制域），由主机物理驱动；骑手输入来自其客户端。
+            ComponentRider rider = player.ComponentRider;
+            if (RidingInputResolver != null)
+            {
+                float turn = 0f, forward = 0f;
+                bool jump = false;
+                bool dismounting = false;
+                if (rider?.Mount != null)
+                {
+                    // 2026-10-26 "靠岸下船瞬间船向前挪一点"修复：取消乘船的动画期间，
+                    // 引擎仍是挂载状态、ComponentPlayer.Update 仍会写 Boat/Steed 的 Order；
+                    // 若继续按客户端最后一点骑乘输入驱动，船会再多走一小步。下船动画期间
+                    // 一律不喂骑乘输入（Order=0），动画结束恢复正常。
+                    try
+                    {
+                        dismounting = m_parentField.GetParentField<bool>(rider,
+                            "m_isDismounting", typeof(ComponentRider));
+                    }
+                    catch (Exception)
+                    {
+                        dismounting = false;
+                    }
+                    if (!dismounting)
+                    {
+                        RidingInputResolver(riderClientId, out turn, out forward, out jump);
+                    }
+                }
+                // 主机化身：把骑乘输入写进化身的 ComponentInput.PlayerInput，让引擎**原生**
+                // ComponentPlayer.Update 的骑乘桥去驱动 Steed/Boat Order（ComponentPlayer.cs:126-133）。
+                // 不能直接写坐骑 Order：Order 每帧一次性消费（ComponentSteedBehavior.cs:58-68），
+                // 32Hz 快照节奏会漏帧；而且化身自己的 ComponentPlayer.Update 每帧会用空输入覆盖。
+                // 化身的 ComponentInput updateable 在主机已被摘掉（见创建流程），PlayerInput 会保留
+                // 到下一拍被这里重写。2026-10-26 客户端骑马无法控制修复。
+                ComponentInput input = player.ComponentInput;
+                if (input != null)
+                {
+                    PlayerInput pi = input.PlayerInput;
+                    pi.Move = new Vector3(turn, 0f, forward);
+                    pi.Jump = jump;
+                    m_parentField.ModifyParentField(input, "m_playerInput", pi, typeof(ComponentInput));
+                }
+            }
         }
 
         /// <summary>
@@ -1687,6 +1803,9 @@ namespace SuMultiplayer.Engine
         /// </summary>
         public void UpdateRemotePresentations(float deltaTime)
         {
+            // 必须放在最前面，且不受下面的 m_remotePositions 判空影响：引擎 UpdateComponentPlayers
+            // 在任意实体增删时都会清空重建列表，补回必须每帧执行（不是只在有远端位置时）。
+            EnsureAvatarsInComponentPlayers();
             if (m_remotePositions.Count == 0) return;
             float dt = MathUtils.Clamp(deltaTime, 0f, 0.1f);
             double now = Time.RealTime;
@@ -1700,16 +1819,62 @@ namespace SuMultiplayer.Engine
                 if (!m_avatars.TryGetValue(item.Key, out PlayerData playerData) ||
                     playerData?.ComponentPlayer?.ComponentBody == null)
                     continue;
+                // 骑乘中的化身由"父体=坐骑"驱动（引擎 ComponentBody.ParentBody）：位置/速度快照
+                // 只会和挂载打架（实机：观察端看到骑手不在马鞍上 / 站在马旁边）。旧实现有
+                // 骑乘跳过分支（:1086-1094），本重写版一直没移植；姿态/视线/骑乘输入在
+                // ApplyRemotePlayerPose 里照常应用。2026-10-26 其他客户端看不到 A 骑马修复。
+                ComponentRider mountedRider = playerData.ComponentPlayer.ComponentRider;
+                if (mountedRider != null && mountedRider.Mount != null) continue;
                 ComponentBody body = playerData.ComponentPlayer.ComponentBody;
                 ComponentLocomotion locomotion = playerData.ComponentPlayer.ComponentLocomotion;
                 // 旧 :1068-1076
                 body.IsGravityEnabled = !state.IsFlying;
                 body.IsGroundDragEnabled = !state.IsFlying;
+                // 2026-10-26 客户端站在船上导致船自己漂走修复（主机侧，第一道）：
+                // 客户端明确报告"我站在可骑乘实体（船/坐骑）上"时，化身**直接贴合**客户端位置、
+                // 旋转，速度清零。不能靠主机物理自己"走上船"：化身会卡在船壳边，带着追赶速度
+                // 持续碰撞推船（实机：c1 取消乘船后船自己向前漂走，主机/其他端都看得到）。
+                if (state.StandingOnMount)
+                {
+                    BoatStandingSkips++;
+                    StandingMountFlagSnaps++;
+                    body.Position = state.Position;
+                    body.Rotation = state.Rotation;
+                    body.Velocity = Vector3.Zero;
+                    continue;
+                }
+                // 第二道（兜底）：主机侧自己检测到化身已站在带 ComponentMount 的实体上。
+                // 客户端站在船上是"船带着人走"，它的快照速度 = 平台速度。若把这个速度当化身
+                // 期望速度喂回主机物理，化身会持续与船做非弹性碰撞把船推走；船一动客户端平台
+                // 速度更大 → 正反馈加速（实机观测：c1 站在船上，船从 -166.5 一路漂到 -158.7，
+                // 化身/玩家速度与船同速）。站在 ComponentMount 实体（船/坐骑）上时只同步位置，
+                // 速度强制零；人走下船/骑上坐骑后恢复常规链路。
+                if (body.StandingOnBody != null &&
+                    body.StandingOnBody.Entity.FindComponent<ComponentMount>() != null)
+                {
+                    BoatStandingSkips++;
+                    body.Position = state.Position;
+                    body.Rotation = state.Rotation;
+                    body.Velocity = Vector3.Zero;
+                    continue;
+                }
                 if (locomotion != null)
                 {
                     locomotion.IsCreativeFlyEnabled = state.IsFlying;
                     m_parentField.ModifyParentField(locomotion, "m_lookAngles", state.LookAngles,
                         typeof(ComponentLocomotion));
+                }
+                // 主机（2026-10-26，客户端推动物修复）：客户端"移动速度（碰撞前）"作为化身的
+                // **期望水平速度**。关键：必须走原来的"速度混合 + 位置追赶纠偏"链路——上一版在
+                // 循环末尾直接覆盖 body.Velocity，把 catch-up 纠偏一起丢掉了，化身被动物/地形碰撞
+                // 推歪后永远回不到客户端快照位置（实机：主机/别的客户端看到的位置与客户端真实
+                // 位置不一致、动物跑到角色背后、客户端觉得推不动）。竖直仍用快照速度。
+                Vector3 presentationVelocity = state.Velocity;
+                if (state.HasMoveVelocity)
+                {
+                    presentationVelocity.X = state.MoveVelocity.X;
+                    presentationVelocity.Z = state.MoveVelocity.Z;
+                    MoveVelocityApplied++;
                 }
                 float extrapolationTime = MathUtils.Min(state.EstimatedDelay,
                     RemotePlayerPositionState.RemoteExtrapolationLimit);
@@ -1730,7 +1895,7 @@ namespace SuMultiplayer.Engine
                     // 旧 :1108-1116：第一次 / 误差超过 3 格 → 直接对齐（旋转与速度一起），不平滑。
                     body.Position = state.Position;
                     body.Rotation = state.Rotation;
-                    body.Velocity = state.Velocity;
+                    body.Velocity = presentationVelocity;
                     state.PresentationInitialized = true;
                     continue;
                 }
@@ -1746,7 +1911,7 @@ namespace SuMultiplayer.Engine
                 float delayFactor = MathUtils.Saturate(state.EstimatedDelay / 0.2f);
                 Vector3 error = targetPosition - body.Position;
                 float deadZone = state.IsGrounded ? 0.2f : 0.1f;
-                Vector3 targetVelocity = state.Velocity;
+                Vector3 targetVelocity = presentationVelocity;
                 if (state.IsGrounded) targetVelocity.Y = 0f;
                 Vector3 desiredVelocity;
                 float blend;
@@ -1772,6 +1937,107 @@ namespace SuMultiplayer.Engine
                 body.Rotation = Quaternion.Slerp(body.Rotation, state.Rotation, 0.4f);
             }
         }
+
+        /// <summary>
+        /// 化身常驻引擎玩家列表（2026-10-26，动物攻击化身修复；**纯 mod，不动引擎**）。
+        ///
+        /// 根因：化身的 PlayerData 创建后就被移出 SubsystemPlayers.m_playersData（角色数据另存，
+        /// 不进 Project.xml），而引擎 UpdateComponentPlayers 在**每次实体增删**时都用 m_playersData
+        /// 清空重建 m_componentPlayers → 创建时手工补进去的化身立刻掉出玩家列表。
+        /// 引擎里 IsPlayer 只被 ComponentChaseBehavior.CollidedWithBody 使用，角色被判成"非玩家"
+        /// 时走非玩家分支：
+        ///   (flag2 &amp;&amp; GameMode &gt; Harmless) || (!flag2 &amp;&amp; (Category &amp; AutoChaseMask) != 0)
+        /// 玩家分支在 Creative / Harmless 下不还手（GameMode: Creative=0, Harmless=1, Survival=2…），
+        /// 非玩家分支只看 Category 是否命中 AutoChaseMask → 创造模式的化身被白熊等撞到会还手，
+        /// 而主机玩家不会（实测症状）。
+        ///
+        /// 修法：每帧把化身补回 m_componentPlayers（ModParentField 取 List 引用直接 Add）。
+        /// 与创建流程里的手工注入、旧版 SuSubsystemPickables 的拾取窗口注入同款先例（同一个字段）。
+        /// 副作用（已核对引擎全部 ComponentPlayers / IsPlayer 消费者）：
+        ///   · SubsystemPlayers.Save 只遍历 m_playersData → 世界存档不受影响（关键）；
+        ///   · SubsystemPickables 的拾取模拟、SubsystemSpawn 的区块 LastVisitedTime、
+        ///     SubsystemTime 的睡觉加速/菜单暂停 —— 都会把化身算作玩家（联机语义下正确；
+        ///     拾取模拟本来就需要化身常驻，见 8c2d172）；
+        ///   · 化身总追加在 m_playersData 之后 → ComponentPlayers[0] 仍是本机玩家（烟花等只看 [0]）；
+        ///   · 引擎重建（UpdateComponentPlayers）发生在 Project.EntityAdded/EntityRemoved 里：本方法
+        ///     同时订阅这两个事件，在子系统回调之后**同步**补回（不等下一帧），逐帧 Ensure 只作兜底。
+        ///     （实测：创造模式客户端推动物后，旧版的一帧空窗里白熊碰撞走非玩家分支咬人。）
+        /// 不采用"补进 m_playersData"：Save 会把化身 PlayerData 写进世界存档，Update/Dispose/
+        /// MaxPlayers/AddPlayerData 事件也都按本机玩家处理，加载时还会重建实体 —— 与"化身不落盘"冲突。
+        /// Source: Survivalcraft/Game/SubsystemPlayers.cs:IsPlayer / UpdateComponentPlayers / Save
+        ///         Survivalcraft/Game/ComponentChaseBehavior.cs:CollidedWithBody
+        /// </summary>
+        private void EnsureAvatarsInComponentPlayers()
+        {
+            if (m_avatars.Count == 0) return;
+            Project project = GameManager.Project;
+            if (m_componentPlayersList == null || project == null ||
+                !ReferenceEquals(project, m_componentPlayersOwner))
+            {
+                // Project 换新：重新拿当前 SubsystemPlayers 的 m_componentPlayers List 引用。
+                SubsystemPlayers players = project?.FindSubsystem<SubsystemPlayers>(false);
+                if (players == null) { m_componentPlayersList = null; return; }
+                try
+                {
+                    m_componentPlayersList = m_parentField.GetParentField<List<ComponentPlayer>>(
+                        players, "m_componentPlayers", typeof(SubsystemPlayers));
+                }
+                catch (Exception ex)
+                {
+                    // 反射失败 = 修复失效（化身又会被当成非玩家），必须留一条可定位的原因，不能静默。
+                    ReportProblemOnce("ensure-component-players-field",
+                        "拿不到 SubsystemPlayers.m_componentPlayers（反射失败）→ 化身不会被引擎当成玩家：" +
+                        ex.GetType().Name + " " + ex.Message);
+                    m_componentPlayersList = null;
+                    return;
+                }
+                if (m_componentPlayersList == null) return;
+                // 绑定当前 Project 的实体增删事件：引擎 UpdateComponentPlayers 就在这两个事件里
+                // 清空重建列表，本处理器在子系统回调之后同步补回化身，消除"重建后到下一帧 Ensure"
+                // 之间的一帧空窗（空窗内 IsPlayer(化身)=false → 碰撞攻击走非玩家分支，创造模式也会咬人）。
+                UnbindComponentPlayersProjectEvents();
+                m_componentPlayersOwner = project;
+                project.EntityAdded += OnComponentPlayersProjectEntityChanged;
+                project.EntityRemoved += OnComponentPlayersProjectEntityChanged;
+                m_componentPlayersEventsBound = true;
+            }
+            foreach (KeyValuePair<PlayerKey, PlayerData> pair in m_avatars)
+            {
+                ComponentPlayer player = pair.Value?.ComponentPlayer;
+                if (player == null || m_componentPlayersList.Contains(player)) continue;
+                m_componentPlayersList.Add(player);
+                m_componentPlayersRestored++;
+            }
+        }
+
+        /// <summary>
+        /// Project.EntityAdded/EntityRemoved 回调（在引擎子系统回调之后触发，此时
+        /// SubsystemPlayers.UpdateComponentPlayers 已经把化身清掉）→ 立刻补回玩家列表。
+        /// </summary>
+        private void OnComponentPlayersProjectEntityChanged(object sender, EntityAddRemoveEventArgs args) =>
+            EnsureAvatarsInComponentPlayers();
+
+        private void UnbindComponentPlayersProjectEvents()
+        {
+            if (m_componentPlayersEventsBound && m_componentPlayersOwner != null)
+            {
+                try
+                {
+                    m_componentPlayersOwner.EntityAdded -= OnComponentPlayersProjectEntityChanged;
+                    m_componentPlayersOwner.EntityRemoved -= OnComponentPlayersProjectEntityChanged;
+                }
+                catch (Exception)
+                {
+                    // 旧 Project 已释放：解绑失败不影响新世界重新绑定（只是清理旧订阅）。
+                }
+            }
+            m_componentPlayersEventsBound = false;
+        }
+
+        private List<ComponentPlayer> m_componentPlayersList;
+        private long m_componentPlayersRestored;
+        private Project m_componentPlayersOwner;
+        private bool m_componentPlayersEventsBound;
 
         /// <summary>丢掉某个联机角色的位置状态（旧 RemoveNetworkPlayer 里的 RemotePlayers.Remove）。</summary>
         private void ForgetRemotePosition(PlayerKey key) => m_remotePositions.Remove(key);

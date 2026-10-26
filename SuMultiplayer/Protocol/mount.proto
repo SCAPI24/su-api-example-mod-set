@@ -1,0 +1,61 @@
+syntax = "proto3";
+
+package sump.mount;
+
+option csharp_namespace = "SuMultiplayer.Protocol.Mount";
+option optimize_for = SPEED;
+
+import "position.proto";
+
+// ---------------------------------------------------------------------------
+// Mount replication (2026-10-26): riding horses / donkeys / boats.
+//
+// Authority split (same as everything else):
+//   * client : the Mount button edge (engine ComponentGui.ToggleMount path) is
+//     intercepted locally and sent as a MountRequest -- the client NEVER runs
+//     ComponentRider.StartMounting/StartDismounting on its own; its avatar is
+//     a mirror that attaches to the authoritative mount only when the host
+//     says so (MountState).
+//   * host   : validates (alive, occupancy, reach via the engine's own
+//     FindNearestMount after re-applying the claimant's body pose), runs the
+//     native rider calls, then answers the requester and every observer with
+//     MountState.
+//
+// Wire ids live in protocol.proto (append-only).
+// ---------------------------------------------------------------------------
+
+// Client -> host: the rider button was pressed.
+message MountRequest {
+  // Per-connection sequence, starts at 1, strictly increasing.
+  int64 sequence = 1;
+  // true = wants to mount (FindNearestMount), false = dismount current.
+  bool mount = 2;
+  // Client's hint: the network key of the creature / boat it aims at.
+  // 0 = "no idea" (the host re-runs FindNearestMount positionally anyway).
+  int32 mount_key = 3;
+  // The claimant's body pose at the button edge: FindNearestMount is
+  // position-sensitive, so the host re-applies this before selecting.
+  sump.position.Vec3 body_position = 4;
+  sump.position.Quat body_rotation = 5;
+  sump.position.Vec2 look_angles = 6;
+  bytes ext = 100;
+}
+
+// Host -> clients: authoritative mount outcome for one rider.
+message MountState {
+  // The rider's host transport id (0 = host player itself).
+  int32 rider_client_id = 1;
+  // Echo of the request sequence that produced this state (0 = host-native
+  // dismount, e.g. the rider was knocked off / dumped by the mount).
+  int64 sequence = 2;
+  // Host-side monotonically increasing per rider; clients drop stale ones.
+  int64 state_sequence = 3;
+  // MountStateKind.
+  int32 state = 4;
+  // Network key of the mount (creature / boat). 0 = none.
+  int32 mount_key = 5;
+  // Mount body pose at the transition (clients snap the rider alongside).
+  sump.position.Vec3 mount_position = 6;
+  sump.position.Quat mount_rotation = 7;
+  bytes ext = 100;
+}

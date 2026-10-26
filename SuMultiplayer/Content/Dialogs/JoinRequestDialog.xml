@@ -1,0 +1,26 @@
+<CanvasWidget xmlns="runtime-namespace:Game">
+
+  <CanvasWidget Size="640, 300" ClampToBounds="true" HorizontalAlignment="Center" VerticalAlignment="Center">
+    <BevelledRectangleWidget Style="{Styles/DialogArea}" />
+    <StackPanelWidget Direction="Vertical" HorizontalAlignment="Center" VerticalAlignment="Near" Margin="0, 15">
+
+      <LabelWidget Name="JoinRequestDialog.Title" Font="{Fonts/Pericles32}" Text="Join Request" HorizontalAlignment="Center"/>
+
+      <CanvasWidget Size="0, 8" />
+
+      <CanvasWidget Size="Infinity, 70">
+        <LabelWidget Name="JoinRequestDialog.Detail" Font="{Fonts/Pericles18}" Color="128, 128, 128" Text="" HorizontalAlignment="Center" TextAnchor="HorizontalCenter" WordWrap="true" Margin="40, 0"/>
+      </CanvasWidget>
+
+      <CanvasWidget Size="0, 15" />
+
+      <StackPanelWidget Direction="Horizontal" HorizontalAlignment="Center">
+        <BevelledButtonWidget Name="JoinRequestDialog.Allow" Style="{Styles/ButtonStyle_160x60}" Text="Allow" Margin="12, 0" />
+        <BevelledButtonWidget Name="JoinRequestDialog.Later" Style="{Styles/ButtonStyle_160x60}" Text="Later" Margin="12, 0" />
+        <BevelledButtonWidget Name="JoinRequestDialog.Reject" Style="{Styles/ButtonStyle_160x60}" Text="Reject" Margin="12, 0" />
+      </StackPanelWidget>
+
+    </StackPanelWidget>
+  </CanvasWidget>
+
+</CanvasWidget>

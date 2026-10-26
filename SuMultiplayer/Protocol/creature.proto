@@ -40,6 +40,33 @@ message CreatureRecord {
   Quat rotation = 5;
   Vec3 velocity = 6;
   float health = 7;
+  // Seconds already elapsed of the creature's spawn fade-in (engine
+  // ComponentSpawn.SpawnTime vs. host world clock; ComponentSpawn.SpawnDuration
+  // is a fixed 2s).  Clients rewrite the local entity's SpawnTime so the
+  // opacity ramp finishes exactly where the host's is — without this, every
+  // replicated creature re-fades for 2s on arrival (egg-hatched animals looked
+  // translucent far longer on clients than on the host).
+  // 2026-10-26, append-only.  0/absent (old host) = legacy behavior.
+  float spawn_progress = 8;
+  // Host-side activity flags (CreatureActivity: Moving=1, Aggro=2, Attacking=4, Fleeing=8,
+  // Damaged=16).  Clients consume `Attacking` to drive ComponentCreatureModel.AttackOrder
+  // (attack animation on replicas — the AI/behaviour updateables are removed client-side,
+  // so without this the host-side bite is invisible on clients); the remaining bits are
+  // kept for diagnostics.  0/absent (old host) = legacy behaviour.
+  // 2026-10-26, append-only.
+  uint32 activity = 9;
+  // Host ComponentSpawn.SpawnDuration (seconds). 0 = no fade-in (entities created by block
+  // behaviours such as saddle/boat explicitly set 0), 2 = engine default for creature spawns.
+  // Clients must copy this instead of assuming 2s: saddle swaps a live horse for a fresh
+  // _Saddled entity (SubsystemSaddleBlockBehavior.cs:31 sets SpawnDuration=0) and the old
+  // client logic forced a 2s fade -> the client saw a translucent horse while the host did not.
+  // 2026-10-26, append-only.  0/absent (old host) = no fade.
+  float spawn_duration = 10;
+  // Host ComponentLocomotion.LookAngles (head yaw/pitch).  For mounts this is what turns the
+  // horse/donkey/camel head while steering (ComponentFourLeggedModel.Animate reads it), and the
+  // client replicas have their ComponentLocomotion updateable removed, so without this field the
+  // head never turns on clients.  Also used for general creature look. Additive, 0/absent = old.
+  Vec2 look_angles = 11;
 }
 
 // Host -> client: creature state batch.

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Engine;
+using GameEntitySystem;
 
 namespace SuMultiplayer.Creatures
 {
@@ -53,6 +54,12 @@ namespace SuMultiplayer.Creatures
         /// Source: Mod/ScMultiplayer/Modules/Network/ScMultiplayerMessageHandlers.cs:EnsureRemoteAnimal
         /// </summary>
         bool TryCreateReplica(CreatureStateRecord record, out string reason);
+        /// <summary>乘骑复制（2026-10-26）：按网络 key 查本地复制体实体（没有返回 null）。</summary>
+        Entity GetReplicaEntity(int key);
+
+        /// <summary>乘骑复制（2026-10-26）：查某实体是不是本端生物复制体并给出它的网络 key。</summary>
+        bool TryGetReplicaKey(Entity entity, out int key, out string reason);
+
 
         /// <summary>
         /// 客户端：把主机记录里的**非表现层**状态写到已有复制体上（生命值、模板变化 → 换实体）。
@@ -66,7 +73,24 @@ namespace SuMultiplayer.Creatures
         /// body 不存在 / 已随 Project 销毁 → false + 原因（模块丢掉引用并请求全量）。
         /// </summary>
         bool TryApplyReplicaPresentation(int key, Vector3 position, Quaternion rotation,
-            Vector3 velocity, out string reason);
+            Vector3 velocity, Vector2 lookAngles, out string reason);
+
+        /// <summary>
+        /// 客户端复制体表现泵：由引擎侧注册为 SubsystemUpdate 的 IUpdateable（UpdateOrder
+        /// = Locomotion，早于 Body）。必须在世界更新内推进，而不是模块的 Frame.Update ——
+        /// 否则骑手父体跟随 / 相机（世界更新内）用上一帧马位姿、马网格用当帧位姿 → 骑乘时抖。
+        /// true = 引擎侧已接管每帧推进（模块 Tick 不要再推一次）。
+        /// </summary>
+        bool ExternalPresentationPump { get; }
+
+        /// <summary>模块注入的每帧表现推进（参数 = 引擎时钟秒, dt）。</summary>
+        Action<double, float> ReplicaPresentationPump { get; set; }
+
+        /// <summary>
+        /// 这个复制体是否就是**本机玩家当前骑乘/站立的坐骑**。是 → 表现层必须始终平滑插值，
+        /// 不能走"静止收敛直接贴记录"的快照分支（否则骑船/骑马时相机按网络记录频率一顿一顿）。
+        /// </summary>
+        bool IsLocalMountReplica(int key);
 
         /// <summary>客户端：删除指定 key 的复制体。</summary>
         bool TryRemoveReplica(int key, out string reason);

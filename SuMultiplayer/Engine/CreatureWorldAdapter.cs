@@ -38,12 +38,59 @@ namespace SuMultiplayer.Engine
         private SuSpawnSubsystem m_spawnSubsystem;
         private SuCreatureSpawnSubsystem m_creatureSpawnSubsystem;
         private bool m_clientReplicaMode;
+        /// <summary>
+        /// 客户端世界存档里自带的**非生物可骑乘实体**（目前只有船）在哪个 Project 上已经清理过。
+        /// 客户端下载的世界存档包含主机世界的船；主机现在也通过生物复制链下发权威船
+        ///（ComponentBoat），本地存档船如果不清理，进房后客户端会看到两条船（一条永不同步）。
+        /// 2026-10-26 实机：客户端进房后船显示为两个，主机端只有一个。
+        /// </summary>
+        private Project m_nativeMountSweepProject;
+        private long m_nativeMountsRemoved;
+        /// <summary>船副本每帧速度清零次数（骑船视野抖动修复验证用）。</summary>
+        private long m_boatReplicaVelocityZeroed;
+        /// <summary>被识别为"本机玩家骑/站坐骑"的复制体命中次数（始终平滑插值验证用）。</summary>
+        private long m_localMountReplicaHits;
+        /// <summary>
+        /// 客户端复制体**每帧表现泵**：挂在 SubsystemUpdate 上（UpdateOrder=Locomotion=1，
+        /// 早于 Body=2 / 相机 Views=200）。表现写在世界更新内，骑手父体跟随与相机才能吃到
+        /// 当帧马位姿；旧实现放在 Frame.Update（世界 tick 之后）→ 每帧差一帧 → 骑乘看马"抖"。
+        /// </summary>
+        private sealed class ReplicaPresentationUpdateable : IUpdateable
+        {
+            private readonly CreatureWorldAdapter m_owner;
+            public ReplicaPresentationUpdateable(CreatureWorldAdapter owner) { m_owner = owner; }
+            public UpdateOrder UpdateOrder => UpdateOrder.Locomotion;
+            public void Update(float dt) => m_owner.PumpReplicaPresentations(dt);
+        }
+
+        private ReplicaPresentationUpdateable m_presentationUpdateable;
+        private SubsystemUpdate m_presentationSubsystem;
+        private bool m_presentationAttached;
+
+        /// <summary>true = 引擎侧已接管每帧推进（模块 Tick 不要再推一次）。</summary>
+        public bool ExternalPresentationPump => m_presentationAttached;
+
+        /// <summary>模块注入的每帧表现推进（引擎时钟秒, dt）。</summary>
+        public Action<double, float> ReplicaPresentationPump { get; set; }
+
+        private void PumpReplicaPresentations(float dt)
+        {
+            Action<double, float> pump = ReplicaPresentationPump;
+            if (pump == null) return;
+            pump(global::Engine.Time.RealTime, dt);
+        }
         private bool m_missingSubsystemLogged;
         private double m_nextMaintainTime;
         private int m_maintainCursor;
 
         private readonly Dictionary<int, Entity> m_replicas = new Dictionary<int, Entity>();
         private readonly Dictionary<int, string> m_replicaTemplates = new Dictionary<int, string>();
+        /// <summary>
+        /// 客户端复制体最近一次活动位（2026-10-26 攻击动画修复）。TryApplyReplicaState 写入；
+        /// TryApplyReplicaPresentation 每帧用它驱动 ComponentCreatureModel.AttackOrder。
+        /// </summary>
+        private readonly Dictionary<int, CreatureActivity> m_replicaActivity =
+            new Dictionary<int, CreatureActivity>();
 
         // 主机：每只生物上一次被枚举时的状态（判断"在动 / 刚受伤"用；只影响同步频率，不上线）。
         private readonly Dictionary<object, HostCreatureActivityState> m_hostActivityStates =
@@ -51,6 +98,8 @@ namespace SuMultiplayer.Engine
         private readonly HashSet<object> m_seenHostTokens =
             new HashSet<object>(ReferenceEqualityComparer.Instance);
         private double m_now;
+        /// <summary>主机游戏时钟（TotalElapsedGameTime；出生渐变进度的口径，2026-10-26）。</summary>
+        private double m_gameTime;
 
         private long m_spawnedByMaintenance;
         private long m_restoredRecords;
@@ -89,6 +138,9 @@ namespace SuMultiplayer.Engine
         private long m_createExceptions;
         private long m_attachFailed;
         private long m_presentationApplied;
+        private long m_lookAngleWriteFailures;
+        /// <summary>客户端复制体被写入攻击动作的帧数（2026-10-26 攻击动画修复；实测看这个涨）。</summary>
+        private long m_attackAnimApplied;
         private long m_presentationFailed;
         private long m_removedTrimmed;
         private long m_entityLost;
@@ -151,6 +203,13 @@ namespace SuMultiplayer.Engine
             public Quaternion Rotation = Quaternion.Identity;
             public float Health = 1f;
             public double HighPriorityUntil;
+            /// <summary>
+            /// 攻击动作的"粘滞"截止时刻（2026-10-26 攻击动画修复）。主机 50Hz 扫描发生在
+            /// 世界更新之后：模型 Update 已经消费并把 AttackOrder / IsAttackHitMoment 复位，
+            /// 单帧采样只在攻击周期穿越命中点时偶尔看到 true。观察到了就保持一段时间，
+            /// 让客户端复制的攻击动画连续播完（停止攻击后最多多播 ≤1s = 收招）。
+            /// </summary>
+            public double AttackingUntil;
         }
 
         // ------------------------------------------------------------------ 生命周期 / 绑定
@@ -159,12 +218,15 @@ namespace SuMultiplayer.Engine
         {
             reason = string.Empty;
             m_now = now;
+            SubsystemGameInfo gameInfo = GameManager.Project?.FindSubsystem<SubsystemGameInfo>(false);
+            m_gameTime = gameInfo?.TotalElapsedGameTime ?? m_now;
             Project project = GameManager.Project;
             if (!ReferenceEquals(project, m_project))
             {
                 // Project 换新（整图重下 / 重进世界）：旧实体已经随旧 Project 销毁，只丢掉引用。
                 m_replicas.Clear();
                 m_replicaTemplates.Clear();
+                m_replicaActivity.Clear();
                 m_hostActivityStates.Clear();
                 m_seenHostTokens.Clear();
                 m_spawnSubsystem = null;
@@ -179,11 +241,91 @@ namespace SuMultiplayer.Engine
                 return false;
             }
             EnsureSubsystems(project, clientReplicaMode);
+            AttachPresentationPump(project, clientReplicaMode);
+            if (clientReplicaMode && !ReferenceEquals(project, m_nativeMountSweepProject))
+            {
+                m_nativeMountSweepProject = project;
+                SweepNativeMountDuplicates(project);
+            }
             if (!clientReplicaMode && m_replicas.Count > 0)
             {
                 RemoveAllReplicas("切换到非复制模式（主机 / 单机），清掉客户端复制体");
             }
             return true;
+        }
+
+        /// <summary>
+        /// 客户端复制体表现泵的挂载/摘除（世界更新内每帧推进；见 ReplicaPresentationUpdateable）。
+        /// 非客户端模式 / 换 Project 时摘掉，绝不留一个引用旧世界子系统的 updateable。
+        /// </summary>
+        private void AttachPresentationPump(Project project, bool clientReplicaMode)
+        {
+            if (!clientReplicaMode)
+            {
+                DetachPresentationPump();
+                return;
+            }
+            SubsystemUpdate update = project.FindSubsystem<SubsystemUpdate>(false);
+            if (update == null)
+            {
+                DetachPresentationPump();
+                if (!m_missingSubsystemLogged)
+                {
+                    m_missingSubsystemLogged = true;
+                    Warn("客户端没有 SubsystemUpdate → 复制体表现只能退回 Frame.Update 推进" +
+                        "（骑乘时可能有 1 帧抖动，明确记录不假装成功）");
+                }
+                return;
+            }
+            if (m_presentationAttached && ReferenceEquals(m_presentationSubsystem, update)) return;
+            DetachPresentationPump();
+            m_presentationSubsystem = update;
+            m_presentationUpdateable = new ReplicaPresentationUpdateable(this);
+            update.AddUpdateable(m_presentationUpdateable);
+            m_presentationAttached = true;
+        }
+
+        private void DetachPresentationPump()
+        {
+            if (!m_presentationAttached) return;
+            try { m_presentationSubsystem?.RemoveUpdateable(m_presentationUpdateable); } catch (Exception) { }
+            m_presentationAttached = false;
+            m_presentationSubsystem = null;
+            m_presentationUpdateable = null;
+        }
+
+        /// <summary>
+        /// 客户端进房（或换世界）时清掉**世界存档自带**的非生物载具（船）：它们是主机世界的
+        /// 旧副本，主机现在通过生物复制链下发权威船，本地副本必须删掉，否则世界里出现两条船
+        ///（本地那条不同步，实机 2026-10-26）。只删"不在复制体集合里、没人骑"的 ComponentBoat；
+        /// 普通动物由 TrimReplicasTo 里的 ComponentCreature 清理负责。
+        /// </summary>
+        private void SweepNativeMountDuplicates(Project project)
+        {
+            if (project == null) return;
+            var replicaEntities = new HashSet<Entity>();
+            foreach (KeyValuePair<int, Entity> pair in m_replicas)
+                if (pair.Value != null) replicaEntities.Add(pair.Value);
+            var entities = new List<Entity>();
+            foreach (Entity entity in project.Entities) entities.Add(entity);
+            int removed = 0;
+            for (int i = 0; i < entities.Count; i++)
+            {
+                Entity entity = entities[i];
+                if (entity == null || !entity.IsAddedToProject || entity.Project != project) continue;
+                if (replicaEntities.Contains(entity)) continue;
+                if (entity.FindComponent<ComponentBoat>() == null) continue;
+                ComponentMount mount = entity.FindComponent<ComponentMount>();
+                if (mount != null && mount.Rider != null) continue;
+                project.RemoveEntity(entity, disposeEntity: true);
+                removed++;
+                m_nativeMountsRemoved++;
+            }
+            if (removed > 0)
+            {
+                m_diagnostics?.Info("creature-spawn", "客户端清理了 " + removed +
+                    " 个世界存档里自带的可骑乘非生物实体（本地旧船副本；权威船由主机复制链下发，避免显示两条船）");
+            }
         }
 
         private void EnsureSubsystems(Project project, bool clientReplicaMode)
@@ -252,7 +394,12 @@ namespace SuMultiplayer.Engine
                 Entity entity = body?.Entity;
                 if (entity == null) continue;
                 ComponentCreature creature = entity.FindComponent<ComponentCreature>();
-                if (creature == null) continue;
+                // 2026-10-26 客户端放船同步修复：生物复制链同时承担"可骑乘非生物实体"（船）的复制。
+                // 船没有 ComponentCreature，但同样有 ComponentBody + ComponentMount；客户端需要
+                // 一个 body 来挂骑手/渲染。主机 key → 客户端的同一条分配 / 快照 / 裁剪链路直接复用，
+                // 无需再新增一套实体复制协议（船体位姿由主机物理驱动，客户端只表现）。
+                ComponentBoat boat = creature == null ? entity.FindComponent<ComponentBoat>() : null;
+                if (creature == null && boat == null) continue;
                 if (entity.FindComponent<ComponentPlayer>() != null) continue;
                 string template = entity.ValuesDictionary?.DatabaseObject?.Name;
                 if (string.IsNullOrWhiteSpace(template)) continue;
@@ -263,9 +410,10 @@ namespace SuMultiplayer.Engine
                     activityState = new HostCreatureActivityState();
                     m_hostActivityStates.Add(entity, activityState);
                 }
-                float health = creature.ComponentHealth != null ? creature.ComponentHealth.Health : 1f;
-                CreatureActivity activity = ComputeHostActivity(entity, creature, body, activityState,
-                    health, m_now);
+                float health = creature?.ComponentHealth != null ? creature.ComponentHealth.Health : 1f;
+                CreatureActivity activity = creature != null
+                    ? ComputeHostActivity(entity, creature, body, activityState, health, m_now)
+                    : ComputeBoatActivity(entity, body, activityState);
                 // 静止的生物速度常有重力/碰撞残余（位置一动不动、速度却在抖）。把它按 0 发布，
                 // 否则客户端会拿这份速度外推，静止的动物会往一个方向漂、下一帧再被拉回来。
                 // Source: Mod/ScMultiplayer/Modules/World/ScMultiplayerWorldSync.cs（静止拾取物同一处理）
@@ -292,6 +440,18 @@ namespace SuMultiplayer.Engine
                 record.Velocity = publishedVelocity;
                 record.Health = health;
                 record.Activity = activity;
+                // 出生渐变进度（蛋化动物透明度修复，2026-10-26）：
+                // ComponentSpawn.SpawnDuration 固定 2s，Opacity = (游戏时钟 − SpawnTime) / 2s。
+                // SpawnTime 是 TotalElapsedGameTime 口径 → 进度也必须用**游戏时钟**差值
+                //（不能用 m_now/RealTime——两个时钟差任意大，进度会是随机数）。
+                ComponentSpawn spawn = entity.FindComponent<ComponentSpawn>();
+                record.SpawnProgress = spawn == null
+                    ? 0f
+                    : MathUtils.Clamp((float)(m_gameTime - spawn.SpawnTime), 0f, 60f);
+                // 2026-10-26 装鞍半透明修复：把主机**真实** SpawnDuration 一起下发（鞍/船=0，生物=2s）。
+                record.SpawnDuration = spawn == null ? 0f : MathUtils.Clamp(spawn.SpawnDuration, 0f, 60f);
+                // 头部朝向（马/驴/骆驼被骑转向时头要转；客户端复制体没有 locomotion updateable）。
+                record.LookAngles = creature?.ComponentLocomotion?.LookAngles ?? Vector2.Zero;
                 count++;
             }
             if (count < target.Count) target.RemoveRange(count, target.Count - count);
@@ -309,6 +469,28 @@ namespace SuMultiplayer.Engine
             return count;
         }
 
+        /// <summary>
+        /// 主机：船的活动标记（只用于选同步档位）。船没有 AI/模型，只按位移/转向/速度判 Moving；
+        /// 不发布静止时的残余速度（同生物处理，避免客户端外推漂移）。
+        /// </summary>
+        private static CreatureActivity ComputeBoatActivity(Entity entity, ComponentBody body,
+            HostCreatureActivityState state)
+        {
+            bool positionMoved = !state.HasPrevious ||
+                Vector3.DistanceSquared(body.Position, state.Position) >
+                    PositionMovingEpsilonSquared;
+            bool rotationMoved = !state.HasPrevious ||
+                1f - MathUtils.Abs(Quaternion.Dot(body.Rotation, state.Rotation)) >
+                    RotationMovingThreshold;
+            bool velocityMoved = body.Velocity.LengthSquared() > 0.01f;
+            CreatureActivity activity = positionMoved || rotationMoved || velocityMoved
+                ? CreatureActivity.Moving
+                : CreatureActivity.None;
+            ComponentMount mount = entity?.FindComponent<ComponentMount>();
+            if (mount != null && mount.Rider != null) activity |= CreatureActivity.Ridden;
+            return activity;
+        }
+
         /// <summary>0.8° 的转向（1 - |dot| ≈ (θ/2)²）就算"在动"：原地转头也要按距离档平滑同步。</summary>
         private const float RotationMovingThreshold = 0.00005f;
 
@@ -318,7 +500,8 @@ namespace SuMultiplayer.Engine
         /// <summary>
         /// 计算一只生物的活动标记（决定同步档位）。逐条对应旧实现的判定：
         ///   · Aggro   ← ComponentChaseBehavior.IsActive && Target != null；
-        ///   · Attacking ← ComponentCreatureModel.AttackOrder / IsAttackHitMoment；
+        ///   · Attacking ← ComponentCreatureModel.AttackOrder / IsAttackHitMoment（采样点在模型
+        ///     Update 之后，单帧大概率已复位 → 用 1s 粘滞窗口保持，见 HostCreatureActivityState.AttackingUntil）；
         ///   · Fleeing ← 逃跑类 ComponentBehavior 处于激活状态；
         ///   · Damaged ← 生命值比上一次枚举低 0.001 以上，并把高优先级保持 3 秒
         ///               （旧实现 metadata.HighPriorityUntil = now + 3.0）；
@@ -343,8 +526,14 @@ namespace SuMultiplayer.Engine
 
             ComponentChaseBehavior chase = entity.FindComponent<ComponentChaseBehavior>();
             bool aggro = chase != null && chase.IsActive && chase.Target != null;
+            // 被玩家骑乘的坐骑抬到 Priority 档（50ms）：客户端看自己骑的马是最近距离、最显眼的
+            // 对象，10Hz 近距档在插值下能看出"一小段一小段"（2026-10-26 骑乘平滑修复）。
+            ComponentMount mount = entity.FindComponent<ComponentMount>();
+            bool ridden = mount != null && mount.Rider != null;
             ComponentCreatureModel model = creature.ComponentCreatureModel;
-            bool attacking = model != null && (model.AttackOrder || model.IsAttackHitMoment);
+            bool attackingNow = model != null && (model.AttackOrder || model.IsAttackHitMoment);
+            if (attackingNow) state.AttackingUntil = now + 1.0;
+            bool attacking = now < state.AttackingUntil;
             bool fleeing = false;
             foreach (ComponentBehavior behavior in entity.FindComponents<ComponentBehavior>())
             {
@@ -360,6 +549,7 @@ namespace SuMultiplayer.Engine
             if (attacking) activity |= CreatureActivity.Attacking;
             if (fleeing) activity |= CreatureActivity.Fleeing;
             if (damaged) activity |= CreatureActivity.Damaged;
+            if (ridden) activity |= CreatureActivity.Ridden;
             return activity;
         }
 
@@ -988,6 +1178,12 @@ namespace SuMultiplayer.Engine
         /// 不是复制体（玩家 / 方块实体 / 本地预测实体）返回 false 并写明原因；调用方把这类
         /// 命中按"打空"处理（不猜键、不本地扣血）。
         /// </summary>
+        /// <summary>乘骑复制（2026-10-26）：按网络 key 查本地复制体实体。</summary>
+        public Entity GetReplicaEntity(int key)
+        {
+            return key != 0 && m_replicas.TryGetValue(key, out Entity entity) ? entity : null;
+        }
+
         public bool TryGetReplicaKey(Entity entity, out int key, out string reason)
         {
             key = 0;
@@ -1068,6 +1264,28 @@ namespace SuMultiplayer.Engine
                 // 它往地下拉（位置每帧都会被表现层覆盖，但重力会让"当帧"看起来往下陷）。
                 body.IsGravityEnabled = false;
                 body.IsGroundDragEnabled = false;
+                // 2026-10-26 骑船客户端视角反复抖动修复：船副本只做表现，绝不能再跑**本地水体物理**。
+                // ComponentBody.Update 会在水里边给船叠加 WaterSwayAngle/WaterTurnSpeed 的旋转、
+                // 并按速度再积分一次位置；而表现层每帧又把姿态拉回主机记录 → 本地物理与网络姿态
+                // 互相拉扯，骑在船上的第一人称相机就会反复抖。船没有本地动画需要速度，直接冻结。
+                if (entity.FindComponent<ComponentCreature>() == null &&
+                    entity.FindComponent<ComponentMount>() != null)
+                {
+                    body.IsWaterDragEnabled = false;
+                    try
+                    {
+                        m_parentField.ModifyParentField(body, "<WaterSwayAngle>k__BackingField",
+                            0f, typeof(ComponentBody));
+                        m_parentField.ModifyParentField(body, "<WaterTurnSpeed>k__BackingField",
+                            0f, typeof(ComponentBody));
+                    }
+                    catch (Exception e)
+                    {
+                        LogThrottled("boat-water-physics",
+                            "船副本禁用本地水摇摆/水流转向失败（" + e.GetType().Name + " " +
+                            e.Message + "）→ 骑船时客户端视角可能抖动", 5000, error: true);
+                    }
+                }
                 project.AddEntity(entity);
                 m_createdRaw++;
                 // Source: Mod/ScMultiplayer/Modules/Network/ScMultiplayerMessageHandlers.cs:EnsureRemoteAnimal
@@ -1080,6 +1298,7 @@ namespace SuMultiplayer.Engine
                     {
                         if (updateable is ComponentBehavior || updateable is ComponentLocomotion ||
                             updateable is ComponentHealth || updateable is ComponentShapeshifter ||
+                            updateable is ComponentBoat || updateable is ComponentDamage ||
                             ReferenceEquals(updateable, spawn))
                         {
                             subsystemUpdate.RemoveUpdateable(updateable);
@@ -1087,6 +1306,7 @@ namespace SuMultiplayer.Engine
                     }
                 }
                 ApplyReplicaHealth(entity, record.Health);
+                ApplyReplicaSpawnProgress(entity, record.SpawnProgress, record.SpawnDuration);
                 // "AddEntity 返回了"不等于"世界/观察口真的能看到它"（桥、SubsystemBodies 都以
                 // Project 实体表 + body 注册为准）。这里当场校验，失败就明确失败并回滚 ——
                 // 不允许出现"适配器字典里有 20 个复制体、世界里 0 个"的静默状态。
@@ -1107,6 +1327,8 @@ namespace SuMultiplayer.Engine
                 }
                 m_replicas[record.Key] = entity;
                 m_replicaTemplates[record.Key] = template;
+                m_replicaActivity[record.Key] = record.Activity;
+                ApplyReplicaActivity(entity, record.Activity);
                 m_createdAttached++;
                 return true;
             }
@@ -1184,11 +1406,55 @@ namespace SuMultiplayer.Engine
             // 位置/姿态/速度**不在这里写**：收到记录就硬写 = 10 Hz 抖动（实测问题）。
             // 它们由 TryApplyReplicaPresentation 每帧按插值/外推结果驱动。
             ApplyReplicaHealth(entity, record.Health);
+            // 活动位（尤其 Attacking）随记录更新，表现层每帧据此驱动攻击动画（2026-10-26）。
+            m_replicaActivity[record.Key] = record.Activity;
+            ApplyReplicaActivity(entity, record.Activity);
             return true;
         }
 
+        /// <summary>
+        /// 出生渐变对齐 v2（2026-10-26，蛋化动物修复；v1 回写 SpawnTime 的方案有缺陷——
+        /// 两端 TotalElapsedGameTime 时钟不一致（客户端世界时钟落后主机一个传输时长），
+        /// 回写后 Opacity 反复跳变、动物一直半透明）。
+        /// v2：不回写绝对时刻，用引擎自己的语义——
+        ///   · progress ≥ SpawnDuration(2s)（绝大多数：已成熟）→ SpawnDuration = 0
+        ///     （ComponentCreatureModel.Opacity：Duration ≤ 0 = 恒 1，**绝不闪半透明**）；
+        ///   · 主机 SpawnDuration ≤ 0（马鞍/船等行为创建的实体显式设 0）→ 客户端也不渐变；
+        ///   · progress ≥ duration（已经渐变完）→ 0；
+        ///   · 否则 SpawnDuration = 主机值、SpawnTime = 本地游戏时钟 − progress —— 两端时钟不同，
+        ///     但 progress 是主机时钟差值，回推出本地 SpawnTime 后 Opacity 与主机一致。
+        /// 2026-10-26 装鞍半透明修复：v2 假设"引擎固定 2s 渐变"，而鞍马/船在 OnUse 里显式
+        /// SpawnDuration=0（SubsystemSaddleBlockBehavior.cs:31 / SubsystemBoatBlockBehavior.cs:35），
+        /// 于是主机不渐变、客户端被强行 2s 渐变（实机症状：装鞍后马半透明一下）。
+        /// SpawnDuration 是公开 setter；SpawnTime 是私有 setter，用 ModParentField 写 backing field。
+        /// </summary>
+        private void ApplyReplicaSpawnProgress(Entity entity, float spawnProgress, float spawnDuration)
+        {
+            ComponentSpawn spawn = entity.FindComponent<ComponentSpawn>();
+            if (spawn == null) return;
+            float duration = float.IsFinite(spawnDuration) ? MathUtils.Max(spawnDuration, 0f) : 0f;
+            if (duration <= 0f || spawnProgress >= duration)
+            {
+                spawn.SpawnDuration = 0f;
+                return;
+            }
+            spawn.SpawnDuration = duration;
+            double spawnTime = m_gameTime - spawnProgress;
+            try
+            {
+                m_parentField.ModifyParentField(spawn, "<SpawnTime>k__BackingField", spawnTime,
+                    typeof(ComponentSpawn));
+            }
+            catch (Exception e)
+            {
+                LogThrottled("spawn-time-bind",
+                    "写 ComponentSpawn.SpawnTime 失败（" + e.GetType().Name + " " + e.Message +
+                    "）→ 本复制体的出生渐变可能从本地时刻开始（记录一次）", 10000, error: true);
+            }
+        }
+
         public bool TryApplyReplicaPresentation(int key, Vector3 position, Quaternion rotation,
-            Vector3 velocity, out string reason)
+            Vector3 velocity, Vector2 lookAngles, out string reason)
         {
             reason = string.Empty;
             if (!float.IsFinite(position.X) || !float.IsFinite(position.Y) ||
@@ -1224,6 +1490,38 @@ namespace SuMultiplayer.Engine
             body.Position = position;
             body.Rotation = rotation;
             body.Velocity = velocity;
+            // 船副本（非生物 + ComponentMount）：位置/旋转已完全由主机记录驱动，速度不允许再
+            // 让本地 ComponentBody.Update 积分一次（否则骑手相机每帧"多走一点再被拉回"→抖动）。
+            if (entity.FindComponent<ComponentCreature>() == null &&
+                entity.FindComponent<ComponentMount>() != null)
+            {
+                body.Velocity = Vector3.Zero;
+                m_boatReplicaVelocityZeroed++;
+            }
+            // 头部朝向（2026-10-26）：马/驴/骆驼被骑转向时头要转；客户端复制体摘掉了
+            // ComponentLocomotion 的 updateable，只能把主机的 LookAngles 每帧写回。
+            ComponentLocomotion locomotion = entity.FindComponent<ComponentLocomotion>();
+            if (locomotion != null && float.IsFinite(lookAngles.X) && float.IsFinite(lookAngles.Y))
+            {
+                try
+                {
+                    m_parentField.ModifyParentField(locomotion, "m_lookAngles", lookAngles,
+                        typeof(ComponentLocomotion));
+                }
+                catch (Exception)
+                {
+                    if (m_lookAngleWriteFailures++ == 0)
+                    {
+                        LogThrottled("replica-look-bind",
+                            "写复制体 ComponentLocomotion.m_lookAngles 失败（版本不匹配？）→ " +
+                            "坐骑头部转向不会跟随（只记录一次）", 10000, error: true);
+                    }
+                }
+            }
+            // 攻击动画（2026-10-26）：复制体的 AI/行为 updateable 已摘掉，AttackOrder 只能由
+            // 主机的活动位驱动；每帧按最近一次活动位设置（不依赖状态更新频率）。
+            if (m_replicaActivity.TryGetValue(key, out CreatureActivity activity))
+                ApplyReplicaActivity(entity, activity);
             m_presentationApplied++;
             return true;
         }
@@ -1309,7 +1607,17 @@ namespace SuMultiplayer.Engine
                 Entity entity = entities[i];
                 if (entity == null || !entity.IsAddedToProject || entity.Project != project) continue;
                 if (replicaEntities.Contains(entity)) continue;
-                if (entity.FindComponent<ComponentCreature>() == null) continue;
+                if (entity.FindComponent<ComponentCreature>() == null)
+                {
+                    // 非生物载具（船）：本地存档副本同样要清（权威船由主机复制链下发）。
+                    if (entity.FindComponent<ComponentBoat>() == null) continue;
+                    ComponentMount nativeMount = entity.FindComponent<ComponentMount>();
+                    if (nativeMount != null && nativeMount.Rider != null) continue;
+                    project.RemoveEntity(entity, disposeEntity: true);
+                    removed++;
+                    m_nativeMountsRemoved++;
+                    continue;
+                }
                 if (entity.FindComponent<ComponentPlayer>() != null) continue;
                 project.RemoveEntity(entity, disposeEntity: true);
                 removed++;
@@ -1375,6 +1683,38 @@ namespace SuMultiplayer.Engine
             }
         }
 
+        /// <summary>
+        /// 这个 key 的复制体是否就是本机玩家当前骑乘/站立的坐骑（比较引擎实体引用）。
+        /// 骑/站坐骑时相机跟着它走，表现层必须始终平滑插值，不能静止贴记录。
+        /// </summary>
+        public bool IsLocalMountReplica(int key)
+        {
+            if (!m_replicas.TryGetValue(key, out Entity replica) || replica == null) return false;
+            SubsystemPlayers players = m_project?.FindSubsystem<SubsystemPlayers>(false);
+            if (players == null) return false;
+            for (int i = 0; i < players.ComponentPlayers.Count; i++)
+            {
+                ComponentPlayer player = players.ComponentPlayers[i];
+                if (player == null) continue;
+                if (m_avatars != null && player.PlayerData != null &&
+                    m_avatars.Contains(player.PlayerData)) continue;   // 远端化身不算本机
+                ComponentRider rider = player.ComponentRider;
+                if (rider?.Mount != null && ReferenceEquals(rider.Mount.Entity, replica))
+                {
+                    m_localMountReplicaHits++;
+                    return true;
+                }
+                ComponentBody body = player.ComponentBody;
+                if (body?.StandingOnBody != null &&
+                    ReferenceEquals(body.StandingOnBody.Entity, replica))
+                {
+                    m_localMountReplicaHits++;
+                    return true;
+                }
+            }
+            return false;
+        }
+
         private static bool TryGetLocalPlayerPosition(Project project, out Vector3 position)
         {
             position = Vector3.Zero;
@@ -1405,7 +1745,25 @@ namespace SuMultiplayer.Engine
             }
             m_replicas.Clear();
             m_replicaTemplates.Clear();
+            m_replicaActivity.Clear();
             m_diagnostics?.Info("creature-spawn", reason);
+        }
+
+        /// <summary>
+        /// 客户端复制体的攻击动画（2026-10-26 修复）。复制体创建时摘掉了 ComponentBehavior /
+        /// ComponentLocomotion 等 updateable，主机的 ComponentChaseBehavior 不会在客户端跑，
+        /// 所以模型不会自己进入攻击动作；主机 ComputeHostActivity 已把
+        /// "ComponentCreatureModel.AttackOrder || IsAttackHitMoment" 算成 Attacking 位随记录下发，
+        /// 这里写回复制体的 AttackOrder → 播放引擎原生攻击动画（客户端能看到动物扑咬）。
+        /// </summary>
+        private void ApplyReplicaActivity(Entity entity, CreatureActivity activity)
+        {
+            ComponentCreatureModel model = entity?.FindComponent<ComponentCreatureModel>();
+            if (model == null) return;
+            bool attacking = (activity & CreatureActivity.Attacking) != 0;
+            if (model.AttackOrder == attacking) return;
+            model.AttackOrder = attacking;
+            if (attacking) m_attackAnimApplied++;
         }
 
         private void ApplyReplicaHealth(Entity entity, float health)
@@ -1456,9 +1814,13 @@ namespace SuMultiplayer.Engine
             " createThrow=" + m_createExceptions +
             " attachFail=" + m_attachFailed +
             " presentation=" + m_presentationApplied +
+            " attackAnim=" + m_attackAnimApplied +
             " presentFail=" + m_presentationFailed +
             " removedTrimmed=" + m_removedTrimmed +
             " unassignedRemoved=" + m_unassignedRemoved +
+            " nativeMountsRemoved=" + m_nativeMountsRemoved +
+            " boatReplicaZeroVel=" + m_boatReplicaVelocityZeroed +
+            " mountReplica=" + m_localMountReplicaHits +
             " entityLost=" + m_entityLost +
             " keyMismatch=" + m_keyMismatch +
             " inRegion=" + m_replicasInRegion +

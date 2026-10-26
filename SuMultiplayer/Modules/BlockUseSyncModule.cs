@@ -573,7 +573,14 @@ namespace SuMultiplayer.Modules
 
             // 远程动作声音：只在这段同步执行期间打开捕获窗口（引擎方块行为在主机本端播放
             // 声音）。finally 保证动作抛异常时窗口也会关闭 —— 不允许泄漏捕获状态。
-            var anchor = new Vector3(request.X, request.Y, request.Z);
+            // 锚点：
+            //   · 方块交互 = 目标格坐标；
+            //   · 手持物使用（HAND_ITEM_USE，哨子/鞍/船…）= **请求者射线起点**（x/y/z 是 0 占位）。
+            // 2026-10-26 哨声只有主机听到修复：以前统一用 (0,0,0) 当锚点，声音事件位置在世界原点，
+            // 请求者/附近端按自己的听者位置裁剪时全部 >48m 被丢弃（只有主机本端原生播放能听到）。
+            Vector3 anchor = request.Action == BlockUseActions.HandItemUse
+                ? new Vector3(request.RayX, request.RayY, request.RayZ)
+                : new Vector3(request.X, request.Y, request.Z);
             m_remoteAudio?.BeginRemoteAction(clientId, anchor, "block-use");
             bool useAccepted;
             BlockUseHostOutcome useOutcome;

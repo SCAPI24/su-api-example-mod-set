@@ -212,8 +212,11 @@ namespace SuMultiplayer.Modules
 
         // ------------------------------------------------------------ 加入
 
+        private int m_joinPingMs = -1;
+
         public bool TryBeginJoin(RoomEntry entry, out string reason)
         {
+            m_joinPingMs = entry?.PingMs ?? -1;
             reason = null;
             if (entry == null)
             {
@@ -258,7 +261,9 @@ namespace SuMultiplayer.Modules
         {
             if (IsHostingRoom) CloseRoom();
             bool wasActive = m_transportControl?.IsChannelRunning == true || m_joinAnnounced;
-            m_transportControl?.StopChannel();
+            // 显式退房 = 先发 BYE（主机立即摘角色）再关通道；不能只 StopChannel（旧版实测
+            // 客户端退世界后 TCP 一直不断，主机 4.5 分钟仍看到角色留在地图）。
+            m_transportControl?.StopChannelWithBye("离开房间");
             m_joinAnnounced = false;
             m_preserveJoinOnNextPlayEnter = false;
             SelectedAddress = null;
@@ -405,6 +410,56 @@ namespace SuMultiplayer.Modules
         }
 
         public string JoinStageText => m_join.Stage.ToString();
+
+        /// <summary>
+        /// 加入窗口的状态行（用户口径 2026-10-26，英文 ASCII）：
+        ///   · 未收到主机任何回应 → "Connecting to the host…"；
+        ///   · 已连上（Requesting / AwaitingApproval）→ "Waiting for the host to approve your join
+        ///     request. (Ping: N ms)"，窗口保持存在；主机点 Later 后仍是这一态（主机未回应就是它）；
+        ///   · Downloading 起 → 沿用各阶段原文。
+        /// Ping 取发起加入时那条房间行的 RTT（-1 = unknown）。
+        /// </summary>
+        public string JoinStatusText
+        {
+            get
+            {
+                switch (m_join.Stage)
+                {
+                    case JoinStage.Discovering:
+                        return "Searching for rooms…";
+                    case JoinStage.Connecting:
+                        return "Connecting to the host…";
+                    case JoinStage.Requesting:
+                    case JoinStage.AwaitingApproval:
+                    {
+                        int ping = m_joinPingMs;
+                        return "Waiting for the host to approve your join request." +
+                            (ping >= 0 ? " (Ping: " + ping + " ms)" : string.Empty);
+                    }
+                    case JoinStage.Downloading:
+                        return "Downloading world…";
+                    case JoinStage.Importing:
+                        return "Importing world…";
+                    case JoinStage.AwaitingBarrier:
+                        return "Syncing with the host…";
+                    default:
+                        return m_join.Stage.ToString();
+                }
+            }
+        }
+
+        /// <summary>加入窗口的 Cancel（用户口径 2026-10-26）：中止加入 —— 关通道、加入流程回
+        /// Idle；再点加入 = 全程从头（发现 → 连接 → 审批 → 传输）。与 LeaveRoom 同一套收尾，
+        /// 但不重启发现（回 Play 屏由屏幕自己管理）。</summary>
+        public void CancelJoin()
+        {
+            if (!m_join.IsActive && m_transportControl?.IsChannelRunning != true) return;
+            m_transportControl?.StopChannel();
+            m_joinAnnounced = false;
+            m_preserveJoinOnNextPlayEnter = false;
+            m_join.Reset(Environment.TickCount64);
+            Log("加入被本机玩家取消（Cancel）→ 通道已关闭，加入流程回 Idle（可重新加入）");
+        }
 
         public string StatusLine()
         {

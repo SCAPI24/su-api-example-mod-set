@@ -101,6 +101,17 @@ namespace SuMultiplayer.Creatures
             public Quaternion Rotation = Quaternion.Identity;
             public Vector3 Velocity;
             public float Health = 1f;
+            /// <summary>
+            /// 上次发送时的生物活动位（2026-10-26 客户端攻击动画修复）：攻击/逃跑等**动画状态变化**
+            /// 不一定改变位置/朝向，光靠 ValuesDiffer 会等到心跳才发（实机：客户端看不到扑咬）。
+            /// </summary>
+            public CreatureActivity LastActivity;
+
+            /// <summary>
+            /// 上次发送时的头部朝向（马/驴/骆驼被骑转向时头要转）。人站住只转头时位置/朝向
+            /// 都不变，不比较它就只能等 1s 心跳 → 头会一段一段跳（2026-10-26）。
+            /// </summary>
+            public Vector2 LookAngles;
         }
 
         // 客户端：key → 最近一次权威记录（用于幂等更新 / 全量裁剪）。
@@ -266,6 +277,12 @@ namespace SuMultiplayer.Creatures
             m_attached = true;
             // 只用于"复制体是否真的落在本机玩家周围"的可见性对账（不改变主机 68m/26 的分配规则）。
             m_world.ConfigureClientRegion(m_options.RegionRadius);
+            // 客户端复制体表现每帧推进挂到引擎世界更新内（早于 Body / 相机）：
+            // 骑手父体跟随与相机吃当帧坐骑位姿，避免 Frame.Update 落后一帧造成的骑乘抖动。
+            m_world.ReplicaPresentationPump = delegate (double now, float deltaTime)
+            {
+                AdvanceReplicaPresentations(deltaTime, now);
+            };
             Info("生物同步模块就绪：主机权威生成 · 每客户端 " + m_options.PerClientLimit +
                 " 只 / " + m_options.RegionRadius + " 米区域 · 客户端只做复制（不跑本地随机生成）");
             if (m_regions == null)
@@ -471,8 +488,13 @@ namespace SuMultiplayer.Creatures
                         CreatureSyncCadence.HorizontalDistanceSquared(record.Position, clientPosition));
                     bool isNew = !known.Contains(key);
                     bool tierChanged = state.HasSent && state.Tier != tier;
-                    bool changed = state.HasSent && CreatureSyncCadence.ValuesDiffer(
-                        state.Position, state.Rotation, state.Velocity, state.Health, record);
+                    bool activityChanged = state.HasSent && state.LastActivity != record.Activity;
+                    bool lookChanged = state.HasSent &&
+                        (MathUtils.Abs(state.LookAngles.X - record.LookAngles.X) > 0.0087f ||
+                         MathUtils.Abs(state.LookAngles.Y - record.LookAngles.Y) > 0.0087f);
+                    bool changed = state.HasSent && (activityChanged || lookChanged ||
+                        CreatureSyncCadence.ValuesDiffer(state.Position, state.Rotation,
+                            state.Velocity, state.Health, record));
                     bool changeDue = !state.HasSent ||
                         nowMs - state.LastSendMs >= CreatureSyncCadence.IntervalMs(tier);
                     bool heartbeatDue = !state.HasSent || nowMs - state.LastSendMs >=
@@ -518,8 +540,13 @@ namespace SuMultiplayer.Creatures
                 }
                 CreatureSyncTier tier = CreatureSyncCadence.SelectTier(record.Activity,
                     CreatureSyncCadence.HorizontalDistanceSquared(record.Position, clientPosition));
-                bool changed = state.HasSent && CreatureSyncCadence.ValuesDiffer(
-                    state.Position, state.Rotation, state.Velocity, state.Health, record);
+                bool activityChanged = state.HasSent && state.LastActivity != record.Activity;
+                bool lookChanged = state.HasSent &&
+                    (MathUtils.Abs(state.LookAngles.X - record.LookAngles.X) > 0.0087f ||
+                     MathUtils.Abs(state.LookAngles.Y - record.LookAngles.Y) > 0.0087f);
+                bool changed = state.HasSent && (activityChanged || lookChanged ||
+                    CreatureSyncCadence.ValuesDiffer(state.Position, state.Rotation,
+                        state.Velocity, state.Health, record));
                 if (entry.Action == CreatureSyncAction.Add)
                 {
                     m_addsSent++;
@@ -537,6 +564,8 @@ namespace SuMultiplayer.Creatures
                 m_rateWindowSends++;
                 state.HasSent = true;
                 state.Tier = tier;
+                state.LastActivity = record.Activity;
+                state.LookAngles = record.LookAngles;
                 state.LastSendMs = nowMs;
                 state.Position = record.Position;
                 state.Rotation = record.Rotation;
@@ -779,7 +808,9 @@ namespace SuMultiplayer.Creatures
         {
             long nowMs = (long)(m_now * 1000.0);
             // 插值/外推**每帧**推进（不是每 100 ms）：这是客户端看起来平滑的唯一来源。
-            AdvanceReplicaPresentations(deltaTime);
+            // 引擎侧已把推进挂到世界更新内（SubsystemUpdate, Locomotion 前）时不要再推一次：
+            // 骑手父体跟随 / 相机都在世界更新内，Frame.Update 推进会差一帧（骑乘看马抖）。
+            if (!m_world.ExternalPresentationPump) AdvanceReplicaPresentations(deltaTime, m_now);
             if (nowMs - m_lastClientTrimMs < m_options.ClientTrimIntervalMs) return;
             m_lastClientTrimMs = nowMs;
             int removed = m_world.TrimReplicasTo(new HashSet<int>(m_replicas.Keys), out string reason);
@@ -802,11 +833,11 @@ namespace SuMultiplayer.Creatures
         /// 把插值器的表现位置/姿态/速度写进复制体。实体消失（模板重建 / 被清掉）→ 计数、
         /// 丢掉引用并请求全量，绝不留下一个卡住的复制体。
         /// </summary>
-        private void AdvanceReplicaPresentations(float deltaTime)
+        private void AdvanceReplicaPresentations(float deltaTime, double now)
         {
             if (m_replicas.Count == 0) return;
             m_snapEvents.Clear();
-            m_interpolation.Advance(m_now, deltaTime, m_snapEvents);
+            m_interpolation.Advance(now, deltaTime, m_snapEvents);
             for (int i = 0; i < m_snapEvents.Count; i++)
             {
                 CreatureSnapEvent snap = m_snapEvents[i];
@@ -821,10 +852,13 @@ namespace SuMultiplayer.Creatures
             {
                 int key = m_presentationKeys[i];
                 if (!m_replicas.ContainsKey(key)) continue;
+                // 本机玩家正在骑/站的坐骑始终平滑插值：否则静止收敛分支把坐骑每帧贴回
+                // 最新记录，骑乘相机就按网络记录频率一顿一顿（骑船/骑马实机 2026-10-26）。
+                m_interpolation.SetAlwaysSmooth(key, m_world.IsLocalMountReplica(key));
                 if (!m_interpolation.TryGetPresentation(key, out Vector3 position,
-                    out Quaternion rotation, out Vector3 velocity)) continue;
+                    out Quaternion rotation, out Vector3 velocity, out Vector2 lookAngles)) continue;
                 if (m_world.TryApplyReplicaPresentation(key, position, rotation, velocity,
-                    out string reason)) continue;
+                    lookAngles, out string reason)) continue;
                 m_presentationFailures++;
                 m_replicas.Remove(key);
                 m_interpolation.Remove(key);

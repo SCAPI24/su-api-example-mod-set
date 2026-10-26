@@ -28,25 +28,27 @@ namespace SuMultiplayer.Protocol.Position {
             "YnVmL2FueS5wcm90byIcCgRWZWMyEgkKAXgYASABKAISCQoBeRgCIAEoAiIn",
             "CgRWZWMzEgkKAXgYASABKAISCQoBeRgCIAEoAhIJCgF6GAMgASgCIjIKBFF1",
             "YXQSCQoBeBgBIAEoAhIJCgF5GAIgASgCEgkKAXoYAyABKAISCQoBdxgEIAEo",
-            "AiLWAgoOUGxheWVyUG9zaXRpb24SEQoJY2xpZW50X2lkGAEgASgFEhMKC3Nl",
+            "AiK4AwoOUGxheWVyUG9zaXRpb24SEQoJY2xpZW50X2lkGAEgASgFEhMKC3Nl",
             "cnZlcl90aWNrGAIgASgFEiUKCHBvc2l0aW9uGAMgASgLMhMuc3VtcC5wb3Np",
             "dGlvbi5WZWMzEiUKCHJvdGF0aW9uGAQgASgLMhMuc3VtcC5wb3NpdGlvbi5R",
             "dWF0EiUKCHZlbG9jaXR5GAUgASgLMhMuc3VtcC5wb3NpdGlvbi5WZWMzEigK",
             "C2xvb2tfYW5nbGVzGAYgASgLMhMuc3VtcC5wb3NpdGlvbi5WZWMyEhQKDGlz",
             "X2Nyb3VjaGluZxgHIAEoCBIRCglpc19mbHlpbmcYCCABKAgSEwoLaXNfZ3Jv",
-            "dW5kZWQYCSABKAgSDAoEc2xvdBgKIAEoDRILCgNleHQYZCABKAwSJAoGY3Vz",
-            "dG9tGGUgASgLMhQuZ29vZ2xlLnByb3RvYnVmLkFueSJ0Cg9QbGF5ZXJQb3Np",
-            "dGlvbnMSLgoHZW50cmllcxgBIAMoCzIdLnN1bXAucG9zaXRpb24uUGxheWVy",
-            "UG9zaXRpb24SCwoDZXh0GGQgASgMEiQKBmN1c3RvbRhlIAEoCzIULmdvb2ds",
-            "ZS5wcm90b2J1Zi5BbnlCJEgBqgIfU3VNdWx0aXBsYXllci5Qcm90b2NvbC5Q",
-            "b3NpdGlvbmIGcHJvdG8z"));
+            "dW5kZWQYCSABKAgSDAoEc2xvdBgKIAEoDRIqCg1tb3ZlX3ZlbG9jaXR5GAsg",
+            "ASgLMhMuc3VtcC5wb3NpdGlvbi5WZWMzEhkKEWhhc19tb3ZlX3ZlbG9jaXR5",
+            "GAwgASgIEhkKEXN0YW5kaW5nX29uX21vdW50GA0gASgIEgsKA2V4dBhkIAEo",
+            "DBIkCgZjdXN0b20YZSABKAsyFC5nb29nbGUucHJvdG9idWYuQW55InQKD1Bs",
+            "YXllclBvc2l0aW9ucxIuCgdlbnRyaWVzGAEgAygLMh0uc3VtcC5wb3NpdGlv",
+            "bi5QbGF5ZXJQb3NpdGlvbhILCgNleHQYZCABKAwSJAoGY3VzdG9tGGUgASgL",
+            "MhQuZ29vZ2xlLnByb3RvYnVmLkFueUIkSAGqAh9TdU11bHRpcGxheWVyLlBy",
+            "b3RvY29sLlBvc2l0aW9uYgZwcm90bzM="));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { global::Google.Protobuf.WellKnownTypes.AnyReflection.Descriptor, },
           new pbr::GeneratedClrTypeInfo(null, null, new pbr::GeneratedClrTypeInfo[] {
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Position.Vec2), global::SuMultiplayer.Protocol.Position.Vec2.Parser, new[]{ "X", "Y" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Position.Vec3), global::SuMultiplayer.Protocol.Position.Vec3.Parser, new[]{ "X", "Y", "Z" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Position.Quat), global::SuMultiplayer.Protocol.Position.Quat.Parser, new[]{ "X", "Y", "Z", "W" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Position.PlayerPosition), global::SuMultiplayer.Protocol.Position.PlayerPosition.Parser, new[]{ "ClientId", "ServerTick", "Position", "Rotation", "Velocity", "LookAngles", "IsCrouching", "IsFlying", "IsGrounded", "Slot", "Ext", "Custom" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Position.PlayerPosition), global::SuMultiplayer.Protocol.Position.PlayerPosition.Parser, new[]{ "ClientId", "ServerTick", "Position", "Rotation", "Velocity", "LookAngles", "IsCrouching", "IsFlying", "IsGrounded", "Slot", "MoveVelocity", "HasMoveVelocity", "StandingOnMount", "Ext", "Custom" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Position.PlayerPositions), global::SuMultiplayer.Protocol.Position.PlayerPositions.Parser, new[]{ "Entries", "Ext", "Custom" }, null, null, null, null)
           }));
     }
@@ -918,6 +920,9 @@ namespace SuMultiplayer.Protocol.Position {
       isFlying_ = other.isFlying_;
       isGrounded_ = other.isGrounded_;
       slot_ = other.slot_;
+      moveVelocity_ = other.moveVelocity_ != null ? other.moveVelocity_.Clone() : null;
+      hasMoveVelocity_ = other.hasMoveVelocity_;
+      standingOnMount_ = other.standingOnMount_;
       ext_ = other.ext_;
       custom_ = other.custom_ != null ? other.custom_.Clone() : null;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
@@ -1054,6 +1059,56 @@ namespace SuMultiplayer.Protocol.Position {
       }
     }
 
+    /// <summary>Field number for the "move_velocity" field.</summary>
+    public const int MoveVelocityFieldNumber = 11;
+    private global::SuMultiplayer.Protocol.Position.Vec3 moveVelocity_;
+    /// <summary>
+    /// Client -> host（2026-10-26，客户端推动物修复）：客户端**移动时**的当前速度。
+    /// 取的是本地碰撞解析**之前**的移动速度（引擎 ComponentBody.Update 里
+    /// CollisionVelocityChange = 碰撞后 - 碰撞前，所以 MoveVelocity = Velocity - CollisionVelocityChange）。
+    /// 上面 velocity 字段是碰撞后的结果：客户端撞到生物时会被 InelasticCollision 反弹/清零，
+    /// 主机 avatar 拿它永远推不动动物；主机把本字段写进化身 body 的水平速度，主机端角色才能
+    /// 用引擎原生物理（质量 / 内联碰撞）把动物推动。
+    /// Additive：has_move_velocity=false 时旧语义完全不变（主机 -> 客户端的批不填本字段）。
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public global::SuMultiplayer.Protocol.Position.Vec3 MoveVelocity {
+      get { return moveVelocity_; }
+      set {
+        moveVelocity_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "has_move_velocity" field.</summary>
+    public const int HasMoveVelocityFieldNumber = 12;
+    private bool hasMoveVelocity_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool HasMoveVelocity {
+      get { return hasMoveVelocity_; }
+      set {
+        hasMoveVelocity_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "standing_on_mount" field.</summary>
+    public const int StandingOnMountFieldNumber = 13;
+    private bool standingOnMount_;
+    /// <summary>
+    /// 客户端**站在**可骑乘实体（船/坐骑，而不是骑乘）上：主机远端化身必须直接贴合客户端
+    /// 位置并清零速度，绝不能让它自己"走"上船（否则化身卡在船壳边持续推船 → 船自己漂走）。
+    /// Additive：false = 旧语义。
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool StandingOnMount {
+      get { return standingOnMount_; }
+      set {
+        standingOnMount_ = value;
+      }
+    }
+
     /// <summary>Field number for the "ext" field.</summary>
     public const int ExtFieldNumber = 100;
     private pb::ByteString ext_ = pb::ByteString.Empty;
@@ -1106,6 +1161,9 @@ namespace SuMultiplayer.Protocol.Position {
       if (IsFlying != other.IsFlying) return false;
       if (IsGrounded != other.IsGrounded) return false;
       if (Slot != other.Slot) return false;
+      if (!object.Equals(MoveVelocity, other.MoveVelocity)) return false;
+      if (HasMoveVelocity != other.HasMoveVelocity) return false;
+      if (StandingOnMount != other.StandingOnMount) return false;
       if (Ext != other.Ext) return false;
       if (!object.Equals(Custom, other.Custom)) return false;
       return Equals(_unknownFields, other._unknownFields);
@@ -1125,6 +1183,9 @@ namespace SuMultiplayer.Protocol.Position {
       if (IsFlying != false) hash ^= IsFlying.GetHashCode();
       if (IsGrounded != false) hash ^= IsGrounded.GetHashCode();
       if (Slot != 0) hash ^= Slot.GetHashCode();
+      if (moveVelocity_ != null) hash ^= MoveVelocity.GetHashCode();
+      if (HasMoveVelocity != false) hash ^= HasMoveVelocity.GetHashCode();
+      if (StandingOnMount != false) hash ^= StandingOnMount.GetHashCode();
       if (Ext.Length != 0) hash ^= Ext.GetHashCode();
       if (custom_ != null) hash ^= Custom.GetHashCode();
       if (_unknownFields != null) {
@@ -1185,6 +1246,18 @@ namespace SuMultiplayer.Protocol.Position {
         output.WriteRawTag(80);
         output.WriteUInt32(Slot);
       }
+      if (moveVelocity_ != null) {
+        output.WriteRawTag(90);
+        output.WriteMessage(MoveVelocity);
+      }
+      if (HasMoveVelocity != false) {
+        output.WriteRawTag(96);
+        output.WriteBool(HasMoveVelocity);
+      }
+      if (StandingOnMount != false) {
+        output.WriteRawTag(104);
+        output.WriteBool(StandingOnMount);
+      }
       if (Ext.Length != 0) {
         output.WriteRawTag(162, 6);
         output.WriteBytes(Ext);
@@ -1243,6 +1316,18 @@ namespace SuMultiplayer.Protocol.Position {
         output.WriteRawTag(80);
         output.WriteUInt32(Slot);
       }
+      if (moveVelocity_ != null) {
+        output.WriteRawTag(90);
+        output.WriteMessage(MoveVelocity);
+      }
+      if (HasMoveVelocity != false) {
+        output.WriteRawTag(96);
+        output.WriteBool(HasMoveVelocity);
+      }
+      if (StandingOnMount != false) {
+        output.WriteRawTag(104);
+        output.WriteBool(StandingOnMount);
+      }
       if (Ext.Length != 0) {
         output.WriteRawTag(162, 6);
         output.WriteBytes(Ext);
@@ -1290,6 +1375,15 @@ namespace SuMultiplayer.Protocol.Position {
       }
       if (Slot != 0) {
         size += 1 + pb::CodedOutputStream.ComputeUInt32Size(Slot);
+      }
+      if (moveVelocity_ != null) {
+        size += 1 + pb::CodedOutputStream.ComputeMessageSize(MoveVelocity);
+      }
+      if (HasMoveVelocity != false) {
+        size += 1 + 1;
+      }
+      if (StandingOnMount != false) {
+        size += 1 + 1;
       }
       if (Ext.Length != 0) {
         size += 2 + pb::CodedOutputStream.ComputeBytesSize(Ext);
@@ -1350,6 +1444,18 @@ namespace SuMultiplayer.Protocol.Position {
       }
       if (other.Slot != 0) {
         Slot = other.Slot;
+      }
+      if (other.moveVelocity_ != null) {
+        if (moveVelocity_ == null) {
+          MoveVelocity = new global::SuMultiplayer.Protocol.Position.Vec3();
+        }
+        MoveVelocity.MergeFrom(other.MoveVelocity);
+      }
+      if (other.HasMoveVelocity != false) {
+        HasMoveVelocity = other.HasMoveVelocity;
+      }
+      if (other.StandingOnMount != false) {
+        StandingOnMount = other.StandingOnMount;
       }
       if (other.Ext.Length != 0) {
         Ext = other.Ext;
@@ -1429,6 +1535,21 @@ namespace SuMultiplayer.Protocol.Position {
           }
           case 80: {
             Slot = input.ReadUInt32();
+            break;
+          }
+          case 90: {
+            if (moveVelocity_ == null) {
+              MoveVelocity = new global::SuMultiplayer.Protocol.Position.Vec3();
+            }
+            input.ReadMessage(MoveVelocity);
+            break;
+          }
+          case 96: {
+            HasMoveVelocity = input.ReadBool();
+            break;
+          }
+          case 104: {
+            StandingOnMount = input.ReadBool();
             break;
           }
           case 802: {
@@ -1511,6 +1632,21 @@ namespace SuMultiplayer.Protocol.Position {
           }
           case 80: {
             Slot = input.ReadUInt32();
+            break;
+          }
+          case 90: {
+            if (moveVelocity_ == null) {
+              MoveVelocity = new global::SuMultiplayer.Protocol.Position.Vec3();
+            }
+            input.ReadMessage(MoveVelocity);
+            break;
+          }
+          case 96: {
+            HasMoveVelocity = input.ReadBool();
+            break;
+          }
+          case 104: {
+            StandingOnMount = input.ReadBool();
             break;
           }
           case 802: {

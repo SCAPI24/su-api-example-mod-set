@@ -56,6 +56,9 @@ namespace SuMultiplayer.Modules
         private readonly IPlayerInventoryStore m_store;
         private readonly Func<double> m_clock;
         private readonly RemoteAnimationAdapter m_adapter;
+
+        /// <summary>乘骑控制桥（2026-10-26）：组合根把它接到 NetworkAvatarSpawner.RidingInputResolver。</summary>
+        public RemoteAnimationAdapter AnimationAdapter { get; private set; }
         private readonly PlayerActionDetector m_detector = new PlayerActionDetector();
         private readonly List<int> m_presentationScratch = new List<int>();
 
@@ -164,6 +167,7 @@ namespace SuMultiplayer.Modules
             m_store = store;    // 客户端没有角色记录表：允许为空（只明确记录，不假装落盘）
             m_clock = clock ?? throw new ArgumentNullException(nameof(clock));
             m_adapter = new RemoteAnimationAdapter(clock);
+            AnimationAdapter = m_adapter;
             m_descriptor = new ModuleDescriptor("player-action", "角色动作 / 手持物 / 背包")
             {
                 // 硬依赖：传输（收发）与联机角色（远端化身表 + 本机玩家判定）都在同一条链上。

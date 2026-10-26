@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Engine;
 using GameEntitySystem;
+using Google.Protobuf;
 using SuMultiplayer.Engine;
 using SuMultiplayer.Net;
 using SuMultiplayer.Players;
@@ -92,6 +93,9 @@ namespace SuMultiplayer.Modules
         private bool m_wantClient;
         /// <summary>主机丢失退出端口（组合根注册；null 时维持旧的按间隔重连语义）。</summary>
         private IClientSessionExitPort m_clientExit;
+        /// <summary>显式退房 BYE 已发 / 发送失败（实测退房清理链路用）。</summary>
+        private long m_byeSent;
+        private long m_byeSendFailures;
         private string m_wantHost = string.Empty;
         private int m_wantPort;
         private int m_hostPort;
@@ -219,6 +223,7 @@ namespace SuMultiplayer.Modules
             public bool StartHostServer(int port, out string reason) => m_owner.StartHostServer(port, out reason);
             public bool ConnectTo(string host, int port, out string reason) => m_owner.ConnectTo(host, port, out reason);
             public void StopChannel() => m_owner.StopChannel();
+            public void StopChannelWithBye(string reason) => m_owner.StopChannelWithBye(reason);
             public bool IsChannelRunning => m_owner.m_server != null || m_owner.m_client != null;
             public bool IsHosting => m_owner.m_server != null;
             public int ConnectedPlayerCount => m_owner.CountPlayerPeers();
@@ -258,6 +263,9 @@ namespace SuMultiplayer.Modules
 
         /// <summary>主机拒绝加入 / 审批超时（客户端收到 HelloAck.rejected）：上层据此提示玩家并中止加入。</summary>
         public event Action<string> JoinRejected;
+
+        /// <summary>加入审批中的客户端断开（Bye / 链路失效）：主机清掉它在请求队列里的待决条目。</summary>
+        public event Action<int> PendingApprovalAborted;
 
         /// <summary>本机资料存储（角色创建界面 / Hello 共用）。组合根创建后传入。</summary>
         public LocalPlayerProfileStore ProfileStore => m_profileStore;
@@ -452,6 +460,7 @@ namespace SuMultiplayer.Modules
                 m_sessionId = SessionIdentity.NewSessionId();
                 m_host.SessionId = m_sessionId;
                 m_host.ClientJoined += HandleHostClientJoined;
+                m_host.PendingApprovalAborted += clientId => PendingApprovalAborted?.Invoke(clientId);
                 // 重连判定 / 追帧的明确日志（Terrain 层不写引擎日志，由这里照原样写一行）。
                 m_host.RejoinTrace += HandleHostRejoinTrace;
                 m_host.CatchUpTrace += HandleHostCatchUpTrace;
@@ -613,6 +622,42 @@ namespace SuMultiplayer.Modules
                 m_clientSync = null;
                 return false;
             }
+        }
+
+        /// <summary>
+        /// 客户端显式退房：先发 BYE 并等待发送队列排空（最多 150 ms），再关通道。
+        /// 主机 TerrainSyncHost 的 OnBye 会立刻抛 ClientLost → 联机角色模块**零宽限**摘角色
+        ///（普通断线走宽限保留，见 PlayerAvatarModule）。实测旧版退房后 TCP 一直不断，
+        /// 主机 4.5 分钟仍看到角色留在地图（2026-10-26）。
+        /// </summary>
+        internal void StopChannelWithBye(string reason)
+        {
+            if (m_client != null && m_client.IsAlive)
+            {
+                try
+                {
+                    var bye = new Bye { Reason = reason ?? string.Empty };
+                    if (m_client.TrySend(MessageType.Bye, bye.ToByteArray()))
+                    {
+                        // 必须等 BYE 真写出去再 Dispose，否则 socket 关闭会把排队中的行丢弃。
+                        m_client.WaitDrained(150);
+                        m_byeSent++;
+                    }
+                    else
+                    {
+                        m_byeSendFailures++;
+                        LogWarning("显式退房：BYE 发送失败（队列满/通道已坏）→ 直接关通道；" +
+                            "主机会按断线宽限保留角色，不会立即摘掉");
+                    }
+                }
+                catch (Exception e)
+                {
+                    m_byeSendFailures++;
+                    LogWarning("显式退房：BYE 发送异常（" + e.GetType().Name + " " + e.Message +
+                        "）→ 直接关通道");
+                }
+            }
+            StopChannel();
         }
 
         private void StopChannel()

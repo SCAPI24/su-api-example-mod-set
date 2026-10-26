@@ -54,14 +54,14 @@ namespace SuMultiplayer.Protocol {
             "LkNvbnRhaW5lcktpbmQioQEKDEZ1cm5hY2VTdGF0ZRIJCgF4GAEgASgFEgkK",
             "AXkYAiABKAUSCQoBehgDIAEoBRIQCghyZXZpc2lvbhgEIAEoBRISCgpoZWF0",
             "X2xldmVsGAUgASgCEhkKEXNtZWx0aW5nX3Byb2dyZXNzGAYgASgCEhsKE2Zp",
-            "cmVfdGltZV9yZW1haW5pbmcYByABKAISEgoKY2VsbF92YWx1ZRgIIAEoBSpL",
+            "cmVfdGltZV9yZW1haW5pbmcYByABKAISEgoKY2VsbF92YWx1ZRgIIAEoBSpv",
             "Cg5CbG9ja1VzZUFjdGlvbhIdChlCTE9DS19VU0VfQUNUSU9OX0lOVEVSQUNU",
-            "EAASGgoWQkxPQ0tfVVNFX0FDVElPTl9DTE9TRRABKp8BCg1Db250YWluZXJL",
-            "aW5kEhcKE0NPTlRBSU5FUl9LSU5EX05PTkUQABIhCh1DT05UQUlORVJfS0lO",
-            "RF9DUkFGVElOR19UQUJMRRABEhgKFENPTlRBSU5FUl9LSU5EX0NIRVNUEAIS",
-            "GgoWQ09OVEFJTkVSX0tJTkRfRlVSTkFDRRADEhwKGENPTlRBSU5FUl9LSU5E",
-            "X0RJU1BFTlNFUhAEQhtIAaoCFlN1TXVsdGlwbGF5ZXIuUHJvdG9jb2xiBnBy",
-            "b3RvMw=="));
+            "EAASGgoWQkxPQ0tfVVNFX0FDVElPTl9DTE9TRRABEiIKHkJMT0NLX1VTRV9B",
+            "Q1RJT05fSEFORF9JVEVNX1VTRRACKp8BCg1Db250YWluZXJLaW5kEhcKE0NP",
+            "TlRBSU5FUl9LSU5EX05PTkUQABIhCh1DT05UQUlORVJfS0lORF9DUkFGVElO",
+            "R19UQUJMRRABEhgKFENPTlRBSU5FUl9LSU5EX0NIRVNUEAISGgoWQ09OVEFJ",
+            "TkVSX0tJTkRfRlVSTkFDRRADEhwKGENPTlRBSU5FUl9LSU5EX0RJU1BFTlNF",
+            "UhAEQhtIAaoCFlN1TXVsdGlwbGF5ZXIuUHJvdG9jb2xiBnByb3RvMw=="));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { },
           new pbr::GeneratedClrTypeInfo(new[] {typeof(global::SuMultiplayer.Protocol.BlockUseAction), typeof(global::SuMultiplayer.Protocol.ContainerKind), }, null, new pbr::GeneratedClrTypeInfo[] {
@@ -84,6 +84,17 @@ namespace SuMultiplayer.Protocol {
   public enum BlockUseAction {
     [pbr::OriginalName("BLOCK_USE_ACTION_INTERACT")] Interact = 0,
     [pbr::OriginalName("BLOCK_USE_ACTION_CLOSE")] Close = 1,
+    /// <summary>
+    /// 2026-10-26: hand-item use (the held item's block behaviors OnUse -- e.g. a
+    /// saddle tapped on a horse).  The client's tap sets Interact+Hit on the same
+    /// frame; without this action the Interact intent had no wire representation
+    /// for entity targets, so every saddle tap degraded into a melee attack.
+    /// Host executes ComponentMiner.Use(ray) on the CLAIMANT's own miner (engine
+    /// native chain) -- saddle = entity swap replicated via creature sync.
+    /// x/y/z/face are unused (0); contents carries the HELD item contents; ray
+    /// carries the client's view ray.
+    /// </summary>
+    [pbr::OriginalName("BLOCK_USE_ACTION_HAND_ITEM_USE")] HandItemUse = 2,
   }
 
   /// <summary>

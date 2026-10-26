@@ -68,6 +68,8 @@ namespace SuMultiplayer
         /// <summary>爆炸同步：引擎适配（主机检测 / 客户端表现 / 请求执行）+ 网络模块（新文件，不碰别人的模块）。</summary>
         private ExplosionReplicaEngine m_explosionEngine;
         private ExplosionSyncModule m_explosionModule;
+        private MountReplicaEngine m_mountEngine;
+        private MountSyncModule m_mountModule;
         /// <summary>烧尽表现同步：主机 = 引擎 5 秒烧尽批次后广播；客户端 = 只放碎屑 / 嘶嘶声。</summary>
         private BurnAwayEffectReplicaEngine m_burnAwayEngine;
         private EffectsSyncModule m_burnAwayModule;
@@ -469,12 +471,54 @@ namespace SuMultiplayer
             m_joinApprovalUi = new JoinApprovalUi(this);
             m_terrainModule.SetJoinApproval(m_joinApprovalUi);
             m_terrainModule.JoinRejected += HandleJoinRejected;
+            // 加入审批中的客户端断开（Bye / 链路失效）：清掉它在请求队列里的待决条目。
+            m_terrainModule.PendingApprovalAborted += clientId =>
+            {
+                int removed = m_joinApprovalUi?.Queue.RemoveAllFor(clientId) ?? 0;
+                if (removed > 0)
+                    Log.Information("[SuMP][join-approval] clientId=" + clientId +
+                        " 断开 → 请求队列移除 " + removed + " 条待决条目");
+            };
 
             // 生物生成/同步：主机权威生成 + 按客户端区域分配；客户端只做复制。
             // 适配器同时是"客户端区域来源"（联机角色位置）与引擎侧生成子系统注入的持有者。
             m_creatureWorld = new CreatureWorldAdapter(engineModManager.ModParentField,
                 engineModManager.ModParentMethod, avatarSpawner, diagnostics);
+            // 乘骑控制桥：主机的化身骑乘状态（32Hz motion 的 Riding 位）驱动坐骑 Order。
+            avatarSpawner.RidingInputResolver = delegate (int mountClientId, out float turn,
+                out float forward, out bool jump)
+            {
+                turn = 0f;
+                forward = 0f;
+                jump = false;
+                RemoteAnimationAdapter ridingAdapter = m_actionModule?.AnimationAdapter;
+                return ridingAdapter != null &&
+                    ridingAdapter.TryGetRidingInput(mountClientId, out turn, out forward,
+                        out jump);
+            };
             m_creatureModule = new CreatureSpawnModule(m_creatureWorld, m_creatureWorld);
+            // 乘骑（2026-10-26）：客户端拦骑乘按钮边沿发 MountRequest；主机跑引擎原生
+            // FindNearestMount / StartMounting / StartDismounting（拒绝=Rejected），MountState
+            // 广播后所有端的化身镜像挂载。AvatarRiderResolver 用化身表解析 clientId→化身。
+            m_mountEngine = new MountReplicaEngine(engineModManager.ModParentField,
+                m_creatureWorld, diagnostics, "mount-sync")
+            {
+                AvatarRiderResolver = delegate (int clientId)
+                {
+                    if (avatarSpawner == null) return null;
+                    if (avatarSpawner.TryGet(clientId, out PlayerData data)) return data?.ComponentPlayer;
+                    return null;
+                }
+            };
+            m_mountModule = new MountSyncModule(m_mountEngine);
+            // 主机：MountState 的 mount_key 必须用主机分配的复制键（生物/船），客户端拿它解析坐骑副本。
+            // 旧实现在主机侧只查客户端复制表 → 键=0 → 其他客户端解析不到坐骑（实机：B 看不到 A 骑马）。
+            // Source: CreatureSpawnModule.TryGetHostCreatureKey（主机 m_keyByToken 键表）
+            m_mountEngine.HostKeyResolver = delegate (Entity entity)
+            {
+                if (m_creatureModule == null || entity == null) return 0;
+                return m_creatureModule.TryGetHostCreatureKey(entity, out int hostKey) ? hostKey : 0;
+            };
             // 近战攻击（主机权威）：主机决定命中 / 伤害 / 剩余生命并广播给攻击者 + 观测端；
             // 客户端只做预测表现（挥手 / 挥击声 / 红色命中标记），结果到达后确认或**显式回滚**。
             // 距离与交互 / 挖掘同一套语义：allowed = min(请求 reach + 0.5 m, meleereachmax, 引擎 reach)，
@@ -592,6 +636,8 @@ namespace SuMultiplayer
             m_moduleHost.Register(m_actionModule);
             // 爆炸同步：transport 硬依赖；消息处理在 Attach 里注册。
             m_moduleHost.Register(m_explosionModule);
+            // 乘骑同步：transport 硬依赖；消息处理在 Attach 里注册。
+            m_moduleHost.Register(m_mountModule);
             // 烧尽表现同步：transport 硬依赖；消息处理在 Attach 里注册。
             m_moduleHost.Register(m_burnAwayModule);
             m_moduleHost.Register(m_campfireModule);
@@ -672,7 +718,9 @@ namespace SuMultiplayer
             m_moduleHost.Register(m_uiStateModule);
             ModuleResolution resolution = m_moduleHost.Resolve("OnLoad");
 
-            m_uiAttacher = new RoomUiAttacher(m_sessionModule, m_transferModule.ReadyPort);
+            m_uiAttacher = new RoomUiAttacher(m_sessionModule, m_transferModule.ReadyPort,
+                m_joinApprovalUi?.Queue,
+                m_joinApprovalUi == null ? (Action)null : m_joinApprovalUi.ShowLatestJoinDialog);
             // 引擎 Edit Players（PlayerScreen）进入/退出钩子：名字/皮肤统一走引擎自己的编辑屏。
             // 进入抓快照、退出比较；主机广播改名后的本机角色，客户端按 (clientId, slot) 提交资料。
             m_editWatcher = new PlayerEditWatcher(avatarSpawner, engineModManager.ModParentField,
@@ -830,6 +878,9 @@ namespace SuMultiplayer
             Log.Information("[SuMP] " + m_statsModule.StatusLine());
             Log.Information("[SuMP] " + m_vitalsModule.StatusLine());
             Log.Information("[SuMP] " + m_meleeModule?.StatusLine());
+            // 2026-10-26：乘骑同步之前完全没有周期状态行（整轮测试只有 4 条日志，看不到
+            // present/applied/stale/MountKey 解析失败），骑马问题无法离线复盘。
+            Log.Information("[SuMP] " + m_mountModule?.StatusLine());
             Log.Information("[SuMP] " + m_statsPort.Describe());
             Log.Information("[SuMP] " + m_inventoryStore.StatusLine());
             Log.Information("[SuMP] " + m_explosionModule.StatusLine());
@@ -1155,6 +1206,11 @@ namespace SuMultiplayer
                     try { m_editWatcher?.Tick(); }
                     catch (Exception e) { NoteFrameStepFailure("edit-player", e); }
 
+                    // 乘骑：客户端把 MountSink 挂到本机玩家的 SuComponentGui（Project 换新重挂）。
+                    try { m_mountEngine?.Pump(m_sessionModule != null &&
+                        !m_sessionModule.IsHostingRoom && inWorld); }
+                    catch (Exception e) { NoteFrameStepFailure("mount-pump", e); }
+
                     try { m_uiAttacher?.Tick(); }
                     catch (Exception e) { NoteFrameStepFailure("room-ui", e); }
 
@@ -1399,6 +1455,9 @@ namespace SuMultiplayer
         private sealed class JoinApprovalUi : IJoinApprovalDecider
         {
             private readonly SuMultiplayerMod m_owner;
+            /// <summary>通用客户端事件请求队列（2026-10-26）：加入审批是第一个用户；
+            /// IF 按钮的队列页只认这个组件。加入请求不直接弹窗，先入队。</summary>
+            internal readonly Requests.HostRequestQueue Queue = new Requests.HostRequestQueue();
 
             public JoinApprovalUi(SuMultiplayerMod owner) { m_owner = owner; }
 
@@ -1411,28 +1470,55 @@ namespace SuMultiplayer
                 string shortIdentity = string.IsNullOrEmpty(identity)
                     ? "(no identity)"
                     : identity.Substring(0, Math.Min(8, identity.Length));
-                Log.Information("[SuMP][join-approval] 等待主机决定：clientId=" + clientId +
-                    " · 名字=" + label + " · 身份=" + shortIdentity + "（Allow / Reject）");
-                // 引擎对话框只在主线程操作：网络帧回调里不能直接弹。
+                // 入队（通用请求队列口径：同端重复 = 旧条目过期、新条目按新时间入队；
+                // 满 8 条 = 忽略新请求并立即按 busy 拒绝，客户端可稍后再发）。
+                bool enqueued = Queue.TryEnqueue(Requests.HostRequestKind.Join, clientId,
+                    label, shortIdentity, Time.RealTime, decided,
+                    out Requests.HostRequestEntry entry);
+                Log.Information("[SuMP][join-approval] 加入请求入队：" + clientId + " · " + label +
+                    " · 身份=" + shortIdentity + " → " + (enqueued
+                        ? "队列 " + Queue.Describe()
+                        : "队列已满（容量 " + Requests.HostRequestQueue.Capacity + "）→ 按 busy 拒绝"));
+                if (!enqueued)
+                {
+                    decided(false, "The host request queue is full; try again later.");
+                    return;
+                }
+                // 队列里的最新一条自动弹出对话框（同一时刻最多一个加入对话框；
+                // Later / Esc = 条目留队列，由 IF 按钮的队列页再处理）。
+                ShowLatestJoinDialog();
+            }
+
+            /// <summary>弹出队列里最新一条加入请求的三按钮对话框（Allow / Later / Reject）。</summary>
+            internal void ShowLatestJoinDialog()
+            {
+                Requests.HostRequestEntry entry = Queue.PeekLatest();
+                if (entry == null || entry.Kind != Requests.HostRequestKind.Join) return;
                 Dispatcher.Dispatch(delegate
                 {
-                    var dialog = new MessageDialog("Join Request",
-                        label + " (" + shortIdentity + ") wants to join this world." + "\n" +
-                        "Allow this player?",
-                        "Allow", "Reject",
-                        delegate (MessageDialogButton button)
+                    var dialog = new UI.JoinRequestDialog(
+                        entry.Name + " (" + entry.Identity + ") wants to join this world.",
+                        delegate (string kind)
                         {
-                            if (button == MessageDialogButton.Button1)
+                            if (kind == "Allow")
                             {
                                 Log.Information("[SuMP][join-approval] 主机同意加入：clientId=" +
-                                    clientId + " · " + label);
-                                decided(true, string.Empty);
+                                    entry.ClientId + " · " + entry.Name);
+                                Queue.Approve(entry.Id, string.Empty);
+                            }
+                            else if (kind == "Reject")
+                            {
+                                Log.Information("[SuMP][join-approval] 主机拒绝加入：clientId=" +
+                                    entry.ClientId + " · " + entry.Name);
+                                Queue.Reject(entry.Id, "主机拒绝了加入请求");
                             }
                             else
                             {
-                                Log.Information("[SuMP][join-approval] 主机拒绝加入：clientId=" +
-                                    clientId + " · " + label);
-                                decided(false, "主机拒绝了加入请求");
+                                // Later：条目留在队列（TerrainSync 暂停该连接的审批超时），
+                                // 由 IF 按钮的请求队列页随时再弹出。
+                                Log.Information("[SuMP][join-approval] 主机稍后处理：clientId=" +
+                                    entry.ClientId + " · " + entry.Name + "（条目留在队列）");
+                                Queue.Hold(entry.Id);
                             }
                         });
                     DialogsManager.ShowDialog(null, dialog);

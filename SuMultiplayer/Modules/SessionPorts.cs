@@ -42,6 +42,12 @@ namespace SuMultiplayer.Modules
         /// <summary>加入流程阶段文本（给 Play 屏的 BusyDialog）。</summary>
         string JoinStageText { get; }
 
+        /// <summary>加入窗口的状态行（英文；Connecting → Waiting+Ping → Downloading…）。</summary>
+        string JoinStatusText { get; }
+
+        /// <summary>加入窗口的 Cancel：中止加入（关通道、流程回 Idle；可重新加入）。</summary>
+        void CancelJoin();
+
         /// <summary>建房：主机必须在**正在游玩的世界里**调用（worldName 来自当前世界）。</summary>
         bool CreateRoom(string worldName, string gameMode, out string reason);
 
