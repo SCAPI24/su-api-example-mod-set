@@ -2691,6 +2691,9 @@ namespace SuMultiplayer.Terrain
                         Z = profileDecision.SpawnPosition.Z
                     }
                     : null,
+                HasAssignedState = profileDecision != null && profileDecision.HasPlacement,
+                AssignedIsFlying = profileDecision?.IsFlying == true,
+                AssignedIsCrouching = profileDecision?.IsCrouching == true,
                 // 主机会话标识 + 是否接受重连 + 当前改动水位 + 依据。
                 // 客户端据此：① 记住"主机当前会话"（下一次重连的判定）；② 收到拒绝时明确作废旧会话并重下整图。
                 SessionId = SessionId ?? string.Empty,
@@ -5241,6 +5244,13 @@ namespace SuMultiplayer.Terrain
         /// <summary>主机角色记录里的最后睡觉复活点（客户端 PlayerData.SpawnPosition）。</summary>
         public SuMultiplayer.Players.PlayerPlacement AssignedSpawnPosition { get; private set; }
 
+        /// <summary>HelloAck.has_assigned_state：角色退出前的飞行/蹲下状态可用。</summary>
+        public bool HasAssignedState { get; private set; }
+
+        public bool AssignedIsFlying { get; private set; }
+
+        public bool AssignedIsCrouching { get; private set; }
+
         /// <summary>
         /// 主机要求先创建角色（旧 SCMP_PROFILE_REQUIRED）：本连接**不会**收到世界，
         /// 调用方必须打开角色创建界面，完成后带 Hello.profile 重新握手。
@@ -6390,6 +6400,9 @@ namespace SuMultiplayer.Terrain
                 out assignedHasCharacter);
             AssignedSkinAssetPresent = ack.AssignedSkinAssetPresent;
             HasAssignedPlacement = ack.HasAssignedPlacement;
+            HasAssignedState = ack.HasAssignedState;
+            AssignedIsFlying = ack.AssignedIsFlying;
+            AssignedIsCrouching = ack.AssignedIsCrouching;
             AssignedPosition = ack.AssignedPosition != null
                 ? new SuMultiplayer.Players.PlayerPlacement(ack.AssignedPosition.X,
                     ack.AssignedPosition.Y, ack.AssignedPosition.Z)

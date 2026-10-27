@@ -768,6 +768,11 @@ namespace SuMultiplayer.Engine
                     "）→ 无头主机本帧无法建立虚拟监听者");
                 return;
             }
+            // 只在主机**没有任何本机监听者**（无头服务端）时才用客户端化身替换监听者表。
+            // 不能在主机有本机监听者时追加客户端：引擎按“最近监听者”做音量衰减，
+            // 追加后主机会听到客户端附近的动物声；而 RelayedSound 的锚点仍是 hosts[0]，
+            // 客户端反而拿不到正确的动物 idle 声音（实机：主机走远能听到猪叫，客户端在猪边听不到）。
+            // 客户端附近动物的 idle 声改由客户端复制体本地合成（CreatureWorldAdapter）。
             if (current.Count > 0) return;
             m_virtualListeners.Clear();
             int limit = 4;

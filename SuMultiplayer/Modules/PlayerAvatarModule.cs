@@ -248,6 +248,8 @@ namespace SuMultiplayer.Modules
 
         /// <summary>正在归一化的 Project（换世界 / 整图重下 = 换 Project → 重新归一化）。</summary>
         private Project m_normalizeProject;
+        /// <summary>客户端本机角色的临时状态（飞行等）已按“自己的角色”重置过的 Project。</summary>
+        private Project m_clientLocalStateResetProject;
         /// <summary>这个 Project 已经归一化完成（幂等：每个世界安装只做一次）。</summary>
         private bool m_normalizeApplied;
         /// <summary>幂等跳过已经记过一次（状态行只计一次，不随 tick 增长）。</summary>
@@ -992,6 +994,8 @@ namespace SuMultiplayer.Modules
                     if (!IsFiniteVector(recordSpawn) || recordSpawn == Vector3.Zero)
                         recordSpawn = recordPosition;
                     decision.HasPlacement = true;
+                    decision.IsFlying = record.IsCreativeFlying;
+                    decision.IsCrouching = record.IsCrouching;
                     decision.Position = new PlayerPlacement(recordPosition.X, recordPosition.Y,
                         recordPosition.Z);
                     decision.SpawnPosition = new PlayerPlacement(recordSpawn.X, recordSpawn.Y,
@@ -2880,6 +2884,41 @@ namespace SuMultiplayer.Modules
             // 客户端本地角色是下载世界里的新实体（Players 段是主机存档角色），不搬过去就会出生在
             // 主机角色旁边（实机 bug 2026-10-27）。
             ApplyAssignedPlacementOnce(project);
+            ApplyAssignedTransientStateOnce(project);
+        }
+
+        /// <summary>
+        /// 客户端：把主机角色记录里保存的“退出前状态”应用到本机角色（每个下载世界一次）。
+        /// 下载世界里的本机角色最初是主机存档角色副本，自带主机当时的 ComponentLocomotion；
+        /// 现在改为主机记录为准：飞行、蹲下都恢复成该角色自己的最后状态，乘骑不在此列。
+        /// </summary>
+        private void ApplyAssignedTransientStateOnce(Project project)
+        {
+            if (project == null || ReferenceEquals(project, m_clientLocalStateResetProject)) return;
+            var locals = new List<PlayerData>(PlayerKey.SlotCount);
+            if (!m_spawner.TryCollectLocalPlayers(project, locals, out _, out _) || locals.Count == 0)
+                return;
+            bool hasState = m_handshake != null && m_handshake.HasAssignedState;
+            bool any = false;
+            for (int i = 0; i < locals.Count; i++)
+            {
+                PlayerData playerData = locals[i];
+                ComponentPlayer player = playerData?.ComponentPlayer;
+                if (player == null) continue;
+                ComponentBody body = player.ComponentBody;
+                if (body != null)
+                    body.TargetCrouchFactor = hasState && m_handshake.AssignedIsCrouching ? 1f : 0f;
+                if (player.ComponentLocomotion != null)
+                    player.ComponentLocomotion.IsCreativeFlyEnabled =
+                        hasState && m_handshake.AssignedIsFlying;
+                any = true;
+            }
+            if (!any) return;
+            m_clientLocalStateResetProject = project;
+            Info("客户端本机角色状态已恢复：飞行=" +
+                (hasState && m_handshake.AssignedIsFlying ? "开" : "关") +
+                " · 蹲下=" + (hasState && m_handshake.AssignedIsCrouching ? "开" : "关") +
+                "（来自主机角色记录，下载世界副本状态不冒充本机）");
         }
 
         /// <summary>

@@ -53,6 +53,9 @@ message PlayerPosition {
   // 位置并清零速度，绝不能让它自己"走"上船（否则化身卡在船壳边持续推船 → 船自己漂走）。
   // Additive：false = 旧语义。
   bool standing_on_mount = 13;
+  // 客户端当前挂着的梯子 cell value（0 = 不在梯子上）。只在客户端 → 主机快照里填；
+  // 主机远端化身据此恢复 LadderValue，并在 true→false 时强制贴合一次位置（下梯子补正）。
+  int32 ladder_value = 15;
   // Third-party extension points: see doc/message-protocol.md.
   bytes ext = 100;
   google.protobuf.Any custom = 101;

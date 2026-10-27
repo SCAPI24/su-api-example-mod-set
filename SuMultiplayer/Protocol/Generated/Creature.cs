@@ -28,31 +28,31 @@ namespace SuMultiplayer.Protocol.Creature {
             "YnVmL2FueS5wcm90byIcCgRWZWMyEgkKAXgYASABKAISCQoBeRgCIAEoAiIn",
             "CgRWZWMzEgkKAXgYASABKAISCQoBeRgCIAEoAhIJCgF6GAMgASgCIjIKBFF1",
             "YXQSCQoBeBgBIAEoAhIJCgF5GAIgASgCEgkKAXoYAyABKAISCQoBdxgEIAEo",
-            "AiLUAgoOQ3JlYXR1cmVSZWNvcmQSLQoGYWN0aW9uGAEgASgOMh0uc3VtcC5j",
+            "AiL6AgoOQ3JlYXR1cmVSZWNvcmQSLQoGYWN0aW9uGAEgASgOMh0uc3VtcC5j",
             "cmVhdHVyZS5DcmVhdHVyZUFjdGlvbhILCgNrZXkYAiABKAUSFQoNdGVtcGxh",
             "dGVfbmFtZRgDIAEoCRIlCghwb3NpdGlvbhgEIAEoCzITLnN1bXAuY3JlYXR1",
             "cmUuVmVjMxIlCghyb3RhdGlvbhgFIAEoCzITLnN1bXAuY3JlYXR1cmUuUXVh",
             "dBIlCgh2ZWxvY2l0eRgGIAEoCzITLnN1bXAuY3JlYXR1cmUuVmVjMxIOCgZo",
             "ZWFsdGgYByABKAISFgoOc3Bhd25fcHJvZ3Jlc3MYCCABKAISEAoIYWN0aXZp",
             "dHkYCSABKA0SFgoOc3Bhd25fZHVyYXRpb24YCiABKAISKAoLbG9va19hbmds",
-            "ZXMYCyABKAsyEy5zdW1wLmNyZWF0dXJlLlZlYzIivAEKDUNyZWF0dXJlU3Rh",
-            "dGUSDwoHdmVyc2lvbhgBIAEoDRITCgtzZXJ2ZXJfdGljaxgCIAEoBRINCgVm",
-            "bGFncxgDIAEoDRITCgtzbmFwc2hvdF9pZBgEIAEoBRIuCgdyZWNvcmRzGAUg",
-            "AygLMh0uc3VtcC5jcmVhdHVyZS5DcmVhdHVyZVJlY29yZBILCgNleHQYZCAB",
-            "KAwSJAoGY3VzdG9tGGUgASgLMhQuZ29vZ2xlLnByb3RvYnVmLkFueSJaChVD",
-            "cmVhdHVyZVJlc3luY1JlcXVlc3QSDgoGcmVhc29uGAEgASgJEgsKA2V4dBhk",
-            "IAEoDBIkCgZjdXN0b20YZSABKAsyFC5nb29nbGUucHJvdG9idWYuQW55KmEK",
-            "DkNyZWF0dXJlQWN0aW9uEhcKE0NSRUFUVVJFX0FDVElPTl9BREQQABIaChZD",
-            "UkVBVFVSRV9BQ1RJT05fVVBEQVRFEAESGgoWQ1JFQVRVUkVfQUNUSU9OX1JF",
-            "TU9WRRACQiRIAaoCH1N1TXVsdGlwbGF5ZXIuUHJvdG9jb2wuQ3JlYXR1cmVi",
-            "BnByb3RvMw=="));
+            "ZXMYCyABKAsyEy5zdW1wLmNyZWF0dXJlLlZlYzISEgoKZmVlZF9vcmRlchgM",
+            "IAEoCBIQCghncm91bmRlZBgNIAEoCCK8AQoNQ3JlYXR1cmVTdGF0ZRIPCgd2",
+            "ZXJzaW9uGAEgASgNEhMKC3NlcnZlcl90aWNrGAIgASgFEg0KBWZsYWdzGAMg",
+            "ASgNEhMKC3NuYXBzaG90X2lkGAQgASgFEi4KB3JlY29yZHMYBSADKAsyHS5z",
+            "dW1wLmNyZWF0dXJlLkNyZWF0dXJlUmVjb3JkEgsKA2V4dBhkIAEoDBIkCgZj",
+            "dXN0b20YZSABKAsyFC5nb29nbGUucHJvdG9idWYuQW55IloKFUNyZWF0dXJl",
+            "UmVzeW5jUmVxdWVzdBIOCgZyZWFzb24YASABKAkSCwoDZXh0GGQgASgMEiQK",
+            "BmN1c3RvbRhlIAEoCzIULmdvb2dsZS5wcm90b2J1Zi5BbnkqYQoOQ3JlYXR1",
+            "cmVBY3Rpb24SFwoTQ1JFQVRVUkVfQUNUSU9OX0FERBAAEhoKFkNSRUFUVVJF",
+            "X0FDVElPTl9VUERBVEUQARIaChZDUkVBVFVSRV9BQ1RJT05fUkVNT1ZFEAJC",
+            "JEgBqgIfU3VNdWx0aXBsYXllci5Qcm90b2NvbC5DcmVhdHVyZWIGcHJvdG8z"));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { global::Google.Protobuf.WellKnownTypes.AnyReflection.Descriptor, },
           new pbr::GeneratedClrTypeInfo(new[] {typeof(global::SuMultiplayer.Protocol.Creature.CreatureAction), }, null, new pbr::GeneratedClrTypeInfo[] {
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Creature.Vec2), global::SuMultiplayer.Protocol.Creature.Vec2.Parser, new[]{ "X", "Y" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Creature.Vec3), global::SuMultiplayer.Protocol.Creature.Vec3.Parser, new[]{ "X", "Y", "Z" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Creature.Quat), global::SuMultiplayer.Protocol.Creature.Quat.Parser, new[]{ "X", "Y", "Z", "W" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Creature.CreatureRecord), global::SuMultiplayer.Protocol.Creature.CreatureRecord.Parser, new[]{ "Action", "Key", "TemplateName", "Position", "Rotation", "Velocity", "Health", "SpawnProgress", "Activity", "SpawnDuration", "LookAngles" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Creature.CreatureRecord), global::SuMultiplayer.Protocol.Creature.CreatureRecord.Parser, new[]{ "Action", "Key", "TemplateName", "Position", "Rotation", "Velocity", "Health", "SpawnProgress", "Activity", "SpawnDuration", "LookAngles", "FeedOrder", "Grounded" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Creature.CreatureState), global::SuMultiplayer.Protocol.Creature.CreatureState.Parser, new[]{ "Version", "ServerTick", "Flags", "SnapshotId", "Records", "Ext", "Custom" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Creature.CreatureResyncRequest), global::SuMultiplayer.Protocol.Creature.CreatureResyncRequest.Parser, new[]{ "Reason", "Ext", "Custom" }, null, null, null, null)
           }));
@@ -935,6 +935,8 @@ namespace SuMultiplayer.Protocol.Creature {
       activity_ = other.activity_;
       spawnDuration_ = other.spawnDuration_;
       lookAngles_ = other.lookAngles_ != null ? other.lookAngles_.Clone() : null;
+      feedOrder_ = other.feedOrder_;
+      grounded_ = other.grounded_;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
     }
 
@@ -1107,6 +1109,39 @@ namespace SuMultiplayer.Protocol.Creature {
       }
     }
 
+    /// <summary>Field number for the "feed_order" field.</summary>
+    public const int FeedOrderFieldNumber = 12;
+    private bool feedOrder_;
+    /// <summary>
+    /// 主机 ComponentCreatureModel.FeedOrder（吃东西动画）。客户端复制体的行为 updateable
+    /// 被摘掉后不会自己产生 FeedOrder，必须随记录下发；append-only。
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool FeedOrder {
+      get { return feedOrder_; }
+      set {
+        feedOrder_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "grounded" field.</summary>
+    public const int GroundedFieldNumber = 13;
+    private bool grounded_;
+    /// <summary>
+    /// 主机是否站在地形/实体上（ComponentBody.StandingOnValue/Body 有值）。
+    /// 客户端复制体不跑移动物理时不一定会自己算出 StandingOnValue，而四足模型
+    /// 只有 StandingOnValue.HasValue || ImmersionFactor>0 才画迈腿；必须下发。
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Grounded {
+      get { return grounded_; }
+      set {
+        grounded_ = value;
+      }
+    }
+
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public override bool Equals(object other) {
@@ -1133,6 +1168,8 @@ namespace SuMultiplayer.Protocol.Creature {
       if (Activity != other.Activity) return false;
       if (!pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.Equals(SpawnDuration, other.SpawnDuration)) return false;
       if (!object.Equals(LookAngles, other.LookAngles)) return false;
+      if (FeedOrder != other.FeedOrder) return false;
+      if (Grounded != other.Grounded) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
 
@@ -1151,6 +1188,8 @@ namespace SuMultiplayer.Protocol.Creature {
       if (Activity != 0) hash ^= Activity.GetHashCode();
       if (SpawnDuration != 0F) hash ^= pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.GetHashCode(SpawnDuration);
       if (lookAngles_ != null) hash ^= LookAngles.GetHashCode();
+      if (FeedOrder != false) hash ^= FeedOrder.GetHashCode();
+      if (Grounded != false) hash ^= Grounded.GetHashCode();
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
       }
@@ -1213,6 +1252,14 @@ namespace SuMultiplayer.Protocol.Creature {
         output.WriteRawTag(90);
         output.WriteMessage(LookAngles);
       }
+      if (FeedOrder != false) {
+        output.WriteRawTag(96);
+        output.WriteBool(FeedOrder);
+      }
+      if (Grounded != false) {
+        output.WriteRawTag(104);
+        output.WriteBool(Grounded);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
       }
@@ -1267,6 +1314,14 @@ namespace SuMultiplayer.Protocol.Creature {
         output.WriteRawTag(90);
         output.WriteMessage(LookAngles);
       }
+      if (FeedOrder != false) {
+        output.WriteRawTag(96);
+        output.WriteBool(FeedOrder);
+      }
+      if (Grounded != false) {
+        output.WriteRawTag(104);
+        output.WriteBool(Grounded);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
       }
@@ -1309,6 +1364,12 @@ namespace SuMultiplayer.Protocol.Creature {
       }
       if (lookAngles_ != null) {
         size += 1 + pb::CodedOutputStream.ComputeMessageSize(LookAngles);
+      }
+      if (FeedOrder != false) {
+        size += 1 + 1;
+      }
+      if (Grounded != false) {
+        size += 1 + 1;
       }
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
@@ -1366,6 +1427,12 @@ namespace SuMultiplayer.Protocol.Creature {
           LookAngles = new global::SuMultiplayer.Protocol.Creature.Vec2();
         }
         LookAngles.MergeFrom(other.LookAngles);
+      }
+      if (other.FeedOrder != false) {
+        FeedOrder = other.FeedOrder;
+      }
+      if (other.Grounded != false) {
+        Grounded = other.Grounded;
       }
       _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
     }
@@ -1442,6 +1509,14 @@ namespace SuMultiplayer.Protocol.Creature {
             input.ReadMessage(LookAngles);
             break;
           }
+          case 96: {
+            FeedOrder = input.ReadBool();
+            break;
+          }
+          case 104: {
+            Grounded = input.ReadBool();
+            break;
+          }
         }
       }
     #endif
@@ -1515,6 +1590,14 @@ namespace SuMultiplayer.Protocol.Creature {
               LookAngles = new global::SuMultiplayer.Protocol.Creature.Vec2();
             }
             input.ReadMessage(LookAngles);
+            break;
+          }
+          case 96: {
+            FeedOrder = input.ReadBool();
+            break;
+          }
+          case 104: {
+            Grounded = input.ReadBool();
             break;
           }
         }

@@ -64,6 +64,37 @@ namespace SuMultiplayer.Engine
         }
 
         private ReplicaPresentationUpdateable m_presentationUpdateable;
+        /// <summary>
+        /// 模型动画前的第二次写入：ComponentBody.Update（Body=2）会摩擦/重力改写客户端复制体的
+        /// Velocity，而四足/鸟类模型的移动动画读 body.Velocity；只在 Locomotion=1 写一次会被
+        /// Body 更新冲掉，客户端动物就“移动但腿不动”。本更新器在 CreatureModels-1 再写一次
+        /// 位置/速度，并把 AttackOrder/FeedOrder 放到模型 Update 之前（模型随后会消费复位）。
+        /// </summary>
+        private sealed class ReplicaAnimationUpdateable : IUpdateable
+        {
+            private readonly CreatureWorldAdapter m_owner;
+            public ReplicaAnimationUpdateable(CreatureWorldAdapter owner) { m_owner = owner; }
+            public UpdateOrder UpdateOrder => (UpdateOrder)((int)UpdateOrder.CreatureModels - 1);
+            public void Update(float dt) => m_owner.RefreshReplicaAnimationState(dt);
+        }
+
+        /// <summary>
+        /// 模型 Update 之后再写一次 MovementAnimationPhase。
+        /// 引擎模型的步态在 Update 中按 body.Velocity 计算；客户端复制体的 velocity 即使被我们
+        /// 在模型前恢复，仍会在某些物理/碰撞帧被清零，且慢速低于 0.2 阈值时模型主动把相位清零。
+        /// 这里用表现层真实位移独立推进相位，渲染阶段（AnimateCreature）直接使用该相位，
+        /// 不再依赖引擎对复制体速度的判定。
+        /// </summary>
+        private sealed class ReplicaPhaseUpdateable : IUpdateable
+        {
+            private readonly CreatureWorldAdapter m_owner;
+            public ReplicaPhaseUpdateable(CreatureWorldAdapter owner) { m_owner = owner; }
+            public UpdateOrder UpdateOrder => (UpdateOrder)((int)UpdateOrder.CreatureModels + 1);
+            public void Update(float dt) => m_owner.RefreshReplicaAnimationPhase(dt);
+        }
+
+        private ReplicaPhaseUpdateable m_phaseUpdateable;
+        private ReplicaAnimationUpdateable m_animationUpdateable;
         private SubsystemUpdate m_presentationSubsystem;
         private bool m_presentationAttached;
 
@@ -84,6 +115,24 @@ namespace SuMultiplayer.Engine
         private int m_maintainCursor;
 
         private readonly Dictionary<int, Entity> m_replicas = new Dictionary<int, Entity>();
+        /// <summary>每帧表现位置/速度（Body 更新后、模型更新前重写；只由 TryApplyReplicaPresentation 写）。</summary>
+        private sealed class ReplicaPresentationSnapshot
+        {
+            public Vector3 Position;
+            public Quaternion Rotation;
+            public Vector3 Velocity;
+        }
+        private readonly Dictionary<int, ReplicaPresentationSnapshot> m_replicaPresentation =
+            new Dictionary<int, ReplicaPresentationSnapshot>();
+        /// <summary>模型动画诊断用的上一帧表现位置（δ位置/δ时间 = 可见移动速度）。</summary>
+        private readonly Dictionary<int, Vector3> m_lastAnimationPosition = new Dictionary<int, Vector3>();
+        private readonly Dictionary<int, float> m_replicaAnimationPhase = new Dictionary<int, float>();
+        /// <summary>MovementAnimationPhase 自动属性 backing field（类型 → FieldInfo）。</summary>
+        private readonly Dictionary<Type, FieldInfo> m_movementPhaseFields = new Dictionary<Type, FieldInfo>();
+        private bool m_movementPhaseFieldLogged;
+        /// <summary>客户端复制体下一次允许合成 idle 叫声的时刻（Time.RealTime 口径）。</summary>
+        private readonly Dictionary<int, double> m_nextClientIdleSound = new Dictionary<int, double>();
+        private readonly global::Engine.Random m_clientIdleRandom = new global::Engine.Random();
         private readonly Dictionary<int, string> m_replicaTemplates = new Dictionary<int, string>();
         /// <summary>
         /// 客户端复制体最近一次活动位（2026-10-26 攻击动画修复）。TryApplyReplicaState 写入；
@@ -91,6 +140,12 @@ namespace SuMultiplayer.Engine
         /// </summary>
         private readonly Dictionary<int, CreatureActivity> m_replicaActivity =
             new Dictionary<int, CreatureActivity>();
+        /// <summary>客户端复制体最近一次 FeedOrder（模型每帧会消费复位，必须持续回写）。</summary>
+        private readonly Dictionary<int, bool> m_replicaFeedOrder = new Dictionary<int, bool>();
+        /// <summary>客户端复制体最近一次主机 grounded 状态（四足模型迈腿条件）。</summary>
+        private readonly Dictionary<int, bool> m_replicaGrounded = new Dictionary<int, bool>();
+        /// <summary>主机模型私有 m_feedFactor 的反射缓存（类型 → 字段；没有该模型的类型不缓存）。</summary>
+        private readonly Dictionary<Type, FieldInfo> m_feedFactorFields = new Dictionary<Type, FieldInfo>();
 
         // 主机：每只生物上一次被枚举时的状态（判断"在动 / 刚受伤"用；只影响同步频率，不上线）。
         private readonly Dictionary<object, HostCreatureActivityState> m_hostActivityStates =
@@ -226,6 +281,7 @@ namespace SuMultiplayer.Engine
                 // Project 换新（整图重下 / 重进世界）：旧实体已经随旧 Project 销毁，只丢掉引用。
                 m_replicas.Clear();
                 m_replicaTemplates.Clear();
+                m_nextClientIdleSound.Clear();
                 m_replicaActivity.Clear();
                 m_hostActivityStates.Clear();
                 m_seenHostTokens.Clear();
@@ -282,6 +338,10 @@ namespace SuMultiplayer.Engine
             m_presentationSubsystem = update;
             m_presentationUpdateable = new ReplicaPresentationUpdateable(this);
             update.AddUpdateable(m_presentationUpdateable);
+            m_animationUpdateable = new ReplicaAnimationUpdateable(this);
+            update.AddUpdateable(m_animationUpdateable);
+            m_phaseUpdateable = new ReplicaPhaseUpdateable(this);
+            update.AddUpdateable(m_phaseUpdateable);
             m_presentationAttached = true;
         }
 
@@ -289,9 +349,13 @@ namespace SuMultiplayer.Engine
         {
             if (!m_presentationAttached) return;
             try { m_presentationSubsystem?.RemoveUpdateable(m_presentationUpdateable); } catch (Exception) { }
+            try { m_presentationSubsystem?.RemoveUpdateable(m_animationUpdateable); } catch (Exception) { }
+            try { m_presentationSubsystem?.RemoveUpdateable(m_phaseUpdateable); } catch (Exception) { }
             m_presentationAttached = false;
             m_presentationSubsystem = null;
             m_presentationUpdateable = null;
+            m_animationUpdateable = null;
+            m_phaseUpdateable = null;
         }
 
         /// <summary>
@@ -452,6 +516,8 @@ namespace SuMultiplayer.Engine
                 record.SpawnDuration = spawn == null ? 0f : MathUtils.Clamp(spawn.SpawnDuration, 0f, 60f);
                 // 头部朝向（马/驴/骆驼被骑转向时头要转；客户端复制体没有 locomotion updateable）。
                 record.LookAngles = creature?.ComponentLocomotion?.LookAngles ?? Vector2.Zero;
+                record.FeedOrder = IsHostFeeding(creature?.ComponentCreatureModel);
+                record.Grounded = body.StandingOnValue.HasValue || body.StandingOnBody != null;
                 count++;
             }
             if (count < target.Count) target.RemoveRange(count, target.Count - count);
@@ -508,6 +574,42 @@ namespace SuMultiplayer.Engine
         ///   · Moving  ← 位置/朝向变化超过 epsilon，或速度超过 0.1 m/s。
         /// Source: Mod/ScMultiplayer/Modules/World/ScMultiplayerWorldSync.cs:SendAdaptiveAnimalUpdates
         /// </summary>
+        /// <summary>
+        /// 主机是否正在播放吃东西动画。
+        /// ComponentCreatureModel.FeedOrder 是**单帧命令**：行为在 Update 里置 true，
+        /// 模型 Update 末尾立刻复位 false；50Hz 扫描看到的几乎永远是 false（所以客户端
+        /// 一直没有吃东西动画）。四足/走禽模型把当前进食强度保存在私有 m_feedFactor
+        /// （2/s 上升、2/s 衰减），读它才是持久的“正在吃”状态。
+        /// </summary>
+        private bool IsHostFeeding(ComponentCreatureModel model)
+        {
+            if (model == null) return false;
+            if (model.FeedOrder) return true;
+            Type type = model.GetType();
+            if (!m_feedFactorFields.TryGetValue(type, out FieldInfo field))
+            {
+                field = null;
+                for (Type current = type; current != null && current != typeof(ComponentCreatureModel);
+                     current = current.BaseType)
+                {
+                    field = current.GetField("m_feedFactor",
+                        BindingFlags.Instance | BindingFlags.NonPublic);
+                    if (field != null) break;
+                }
+                m_feedFactorFields[type] = field;
+            }
+            if (field == null) return false;
+            try
+            {
+                object value = field.GetValue(model);
+                return value is float factor && factor > 0.05f;
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
+
         private CreatureActivity ComputeHostActivity(Entity entity, ComponentCreature creature,
             ComponentBody body, HostCreatureActivityState state, float health, double now)
         {
@@ -1328,6 +1430,9 @@ namespace SuMultiplayer.Engine
                 m_replicas[record.Key] = entity;
                 m_replicaTemplates[record.Key] = template;
                 m_replicaActivity[record.Key] = record.Activity;
+
+                m_replicaFeedOrder[record.Key] = record.FeedOrder;
+                m_replicaGrounded[record.Key] = record.Grounded;
                 ApplyReplicaActivity(entity, record.Activity);
                 m_createdAttached++;
                 return true;
@@ -1408,6 +1513,9 @@ namespace SuMultiplayer.Engine
             ApplyReplicaHealth(entity, record.Health);
             // 活动位（尤其 Attacking）随记录更新，表现层每帧据此驱动攻击动画（2026-10-26）。
             m_replicaActivity[record.Key] = record.Activity;
+
+                m_replicaFeedOrder[record.Key] = record.FeedOrder;
+                m_replicaGrounded[record.Key] = record.Grounded;
             ApplyReplicaActivity(entity, record.Activity);
             return true;
         }
@@ -1490,6 +1598,14 @@ namespace SuMultiplayer.Engine
             body.Position = position;
             body.Rotation = rotation;
             body.Velocity = velocity;
+            if (!m_replicaPresentation.TryGetValue(key, out ReplicaPresentationSnapshot presentation))
+            {
+                presentation = new ReplicaPresentationSnapshot();
+                m_replicaPresentation[key] = presentation;
+            }
+            presentation.Position = position;
+            presentation.Rotation = rotation;
+            presentation.Velocity = velocity;
             // 船副本（非生物 + ComponentMount）：位置/旋转已完全由主机记录驱动，速度不允许再
             // 让本地 ComponentBody.Update 积分一次（否则骑手相机每帧"多走一点再被拉回"→抖动）。
             if (entity.FindComponent<ComponentCreature>() == null &&
@@ -1522,8 +1638,183 @@ namespace SuMultiplayer.Engine
             // 主机的活动位驱动；每帧按最近一次活动位设置（不依赖状态更新频率）。
             if (m_replicaActivity.TryGetValue(key, out CreatureActivity activity))
                 ApplyReplicaActivity(entity, activity);
+            ComponentCreatureModel model = entity.FindComponent<ComponentCreatureModel>();
+            if (model != null && m_replicaFeedOrder.TryGetValue(key, out bool feedOrder))
+                model.FeedOrder = feedOrder;
+            if (m_clientReplicaMode)
+                TryPlayClientReplicaIdleSound(key, entity);
             m_presentationApplied++;
             return true;
+        }
+
+        /// <summary>
+        /// 客户端本地合成复制体的 idle 叫声。
+        ///
+        /// 为什么不在主机端中继：引擎音频队列只有“衰减后的音量”，没有声源位置；
+        /// 主机走远后猪叫在主机队列里可能低于可听阈值，或者只能用错误的主机锚点重投影
+        /// （实机：主机走远能听到猪叫，客户端站在猪边上却听不到）。客户端的复制体本身
+        /// 带有动物的 ComponentCreatureSounds（模板完整保留），直接让它按自己的位置
+        /// 播 idle 声音即可；不依赖主机音频队列，也不会回传网络。
+        /// </summary>
+        /// <summary>模型 Update 之前：把当帧表现位置/速度写回，并驱动模型命令。</summary>
+        private void RefreshReplicaAnimationState(float dt)
+        {
+            if (!m_clientReplicaMode || m_replicas.Count == 0) return;
+            foreach (KeyValuePair<int, Entity> pair in m_replicas)
+            {
+                Entity entity = pair.Value;
+                if (entity == null || !entity.IsAddedToProject ||
+                    !ReferenceEquals(entity.Project, m_project)) continue;
+                ComponentBody body = entity.FindComponent<ComponentBody>();
+                if (body == null) continue;
+                if (!m_replicaPresentation.TryGetValue(pair.Key, out ReplicaPresentationSnapshot presentation))
+                    continue;
+                body.Position = presentation.Position;
+                body.Rotation = presentation.Rotation;
+                body.Velocity = presentation.Velocity;
+                if (entity.FindComponent<ComponentCreature>() == null &&
+                    entity.FindComponent<ComponentMount>() != null)
+                {
+                    body.Velocity = Vector3.Zero;
+                }
+                ComponentCreatureModel model = entity.FindComponent<ComponentCreatureModel>();
+                if (model == null) continue;
+                if (m_replicaActivity.TryGetValue(pair.Key, out CreatureActivity activity))
+                    ApplyReplicaActivity(entity, activity);
+                if (m_replicaFeedOrder.TryGetValue(pair.Key, out bool feedOrder))
+                    model.FeedOrder = feedOrder;
+            }
+        }
+
+        private readonly Dictionary<Type, FieldInfo> m_standingFields = new Dictionary<Type, FieldInfo>();
+
+        private FieldInfo ResolveStandingField(Type type)
+        {
+            if (m_standingFields.TryGetValue(type, out FieldInfo cached)) return cached;
+            FieldInfo field = null;
+            for (Type current = type; current != null; current = current.BaseType)
+            {
+                field = current.GetField("<StandingOnValue>k__BackingField",
+                    BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+                if (field != null) break;
+            }
+            m_standingFields[type] = field;
+            return field;
+        }
+
+        private FieldInfo ResolveMovementPhaseField(Type type)
+        {
+            if (m_movementPhaseFields.TryGetValue(type, out FieldInfo cached)) return cached;
+            FieldInfo field = null;
+            for (Type current = type; current != null; current = current.BaseType)
+            {
+                field = current.GetField("<MovementAnimationPhase>k__BackingField",
+                    BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+                if (field != null) break;
+            }
+            if (field == null)
+            {
+                for (Type current = type; current != null; current = current.BaseType)
+                {
+                    foreach (FieldInfo candidate in current.GetFields(
+                        BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public))
+                    {
+                        if (candidate.Name.IndexOf("MovementAnimationPhase",
+                                StringComparison.Ordinal) >= 0)
+                        {
+                            field = candidate;
+                            break;
+                        }
+                    }
+                    if (field != null) break;
+                }
+            }
+            m_movementPhaseFields[type] = field;
+            return field;
+        }
+
+        /// <summary>模型 Update 之后推进/写回 MovementAnimationPhase（渲染前最后一步）。</summary>
+        private void RefreshReplicaAnimationPhase(float dt)
+        {
+            if (!m_clientReplicaMode || dt <= 0.0001f || m_replicas.Count == 0) return;
+            foreach (KeyValuePair<int, Entity> pair in m_replicas)
+            {
+                Entity entity = pair.Value;
+                if (entity == null || !entity.IsAddedToProject ||
+                    !ReferenceEquals(entity.Project, m_project)) continue;
+                if (!m_replicaPresentation.TryGetValue(pair.Key, out ReplicaPresentationSnapshot presentation))
+                    continue;
+                ComponentCreatureModel model = entity.FindComponent<ComponentCreatureModel>();
+                if (model == null) continue;
+                float speed = 0f;
+                if (m_lastAnimationPosition.TryGetValue(pair.Key, out Vector3 previous))
+                {
+                    Vector3 delta = presentation.Position - previous;
+                    speed = new Vector3(delta.X, 0f, delta.Z).Length() / dt;
+                }
+                m_lastAnimationPosition[pair.Key] = presentation.Position;
+                float phase = 0f;
+                if (speed > 0.02f)
+                {
+                    float step = MathUtils.Max(speed, 0.25f) * dt * 1.5f;
+                    m_replicaAnimationPhase.TryGetValue(pair.Key, out phase);
+                    phase = MathUtils.Remainder(phase + step, 1000f);
+                }
+                m_replicaAnimationPhase[pair.Key] = phase;
+                if (phase != 0f && m_replicaGrounded.TryGetValue(pair.Key, out bool grounded) && grounded)
+                {
+                    // 四足/走禽模型的 AnimateCreature 只有在
+                    // body.StandingOnValue.HasValue || body.ImmersionFactor > 0 时才计算腿部角度。
+                    // 客户端复制体被表现层直接写位置，物理不一定会自己算出 StandingOnValue；
+                    // 按主机 grounded 状态补一个合法的“站在地面”标记（只影响动画分支）。
+                    ComponentBody body = entity.FindComponent<ComponentBody>();
+                    if (body != null && !body.StandingOnValue.HasValue)
+                    {
+                        FieldInfo standingField = ResolveStandingField(body.GetType());
+                        try { standingField?.SetValue(body, 0); } catch (Exception) { }
+                    }
+                }
+                FieldInfo phaseField = ResolveMovementPhaseField(model.GetType());
+                if (phaseField == null) continue;
+                try
+                {
+                    phaseField.SetValue(model, phase);
+                    if (!m_movementPhaseFieldLogged)
+                    {
+                        m_movementPhaseFieldLogged = true;
+                        LogThrottled("movement-phase-write",
+                            "客户端动物迈腿：已写 MovementAnimationPhase backing field " +
+                            phaseField.DeclaringType?.Name + "." + phaseField.Name, 60000);
+                    }
+                }
+                catch (Exception e)
+                {
+                    LogThrottled("movement-phase-fail:" + e.GetType().Name,
+                        "写 MovementAnimationPhase 失败（" + e.GetType().Name + " " + e.Message +
+                        "）→ 客户端动物不会迈腿", 10000, error: true);
+                }
+            }
+        }
+
+        private void TryPlayClientReplicaIdleSound(int key, Entity entity)
+        {
+            if (entity == null || !entity.IsAddedToProject ||
+                !TryGetLocalPlayerPosition(m_project, out Vector3 localPosition)) return;
+            ComponentBody body = entity.FindComponent<ComponentBody>();
+            if (body == null) return;
+            if (Vector3.DistanceSquared(body.Position, localPosition) > 32f * 32f) return;
+            double now = Time.RealTime;
+            if (m_nextClientIdleSound.TryGetValue(key, out double due) && now < due) return;
+            m_nextClientIdleSound[key] = now + m_clientIdleRandom.Float(8f, 20f);
+            ComponentCreatureSounds sounds = entity.FindComponent<ComponentCreatureSounds>();
+            if (sounds == null) return;
+            try { sounds.PlayIdleSound(skipIfRecentlyPlayed: true); }
+            catch (Exception e)
+            {
+                LogThrottled("client-idle:" + e.GetType().Name,
+                    "客户端复制体 idle 叫声失败（" + e.GetType().Name + " " + e.Message +
+                    "）→ 该复制体本次不合成声音", 10000, error: true);
+            }
         }
 
         public bool TryRemoveReplica(int key, out string reason)
@@ -1536,6 +1827,12 @@ namespace SuMultiplayer.Engine
             }
             m_replicas.Remove(key);
             m_replicaTemplates.Remove(key);
+            m_replicaActivity.Remove(key);
+            m_replicaFeedOrder.Remove(key);
+            m_replicaGrounded.Remove(key);
+            m_replicaPresentation.Remove(key);
+            m_lastAnimationPosition.Remove(key);
+            m_replicaAnimationPhase.Remove(key);
             if (entity != null && entity.IsAddedToProject && entity.Project == m_project)
             {
                 m_project.RemoveEntity(entity, disposeEntity: true);
@@ -1577,6 +1874,12 @@ namespace SuMultiplayer.Engine
                 if (!m_replicas.TryGetValue(key, out Entity entity)) continue;
                 m_replicas.Remove(key);
                 m_replicaTemplates.Remove(key);
+                m_replicaActivity.Remove(key);
+                m_replicaFeedOrder.Remove(key);
+            m_replicaGrounded.Remove(key);
+                m_replicaPresentation.Remove(key);
+                m_lastAnimationPosition.Remove(key);
+            m_replicaAnimationPhase.Remove(key);
                 if (entity != null && entity.IsAddedToProject && entity.Project == project)
                 {
                     project.RemoveEntity(entity, disposeEntity: true);
@@ -1746,6 +2049,11 @@ namespace SuMultiplayer.Engine
             m_replicas.Clear();
             m_replicaTemplates.Clear();
             m_replicaActivity.Clear();
+            m_replicaFeedOrder.Clear();
+            m_replicaGrounded.Clear();
+            m_replicaPresentation.Clear();
+            m_lastAnimationPosition.Clear();
+            m_replicaAnimationPhase.Clear();
             m_diagnostics?.Info("creature-spawn", reason);
         }
 

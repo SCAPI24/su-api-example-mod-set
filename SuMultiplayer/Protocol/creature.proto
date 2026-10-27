@@ -67,6 +67,13 @@ message CreatureRecord {
   // client replicas have their ComponentLocomotion updateable removed, so without this field the
   // head never turns on clients.  Also used for general creature look. Additive, 0/absent = old.
   Vec2 look_angles = 11;
+  // 主机 ComponentCreatureModel.FeedOrder（吃东西动画）。客户端复制体的行为 updateable
+  // 被摘掉后不会自己产生 FeedOrder，必须随记录下发；append-only。
+  bool feed_order = 12;
+  // 主机是否站在地形/实体上（ComponentBody.StandingOnValue/Body 有值）。
+  // 客户端复制体不跑移动物理时不一定会自己算出 StandingOnValue，而四足模型
+  // 只有 StandingOnValue.HasValue || ImmersionFactor>0 才画迈腿；必须下发。
+  bool grounded = 13;
 }
 
 // Host -> client: creature state batch.

@@ -57,6 +57,8 @@ namespace SuMultiplayer.Players
         public float FireDuration;
         public Dictionary<int, float> Satiation = new Dictionary<int, float>();
         public bool IsCreativeFlying;
+        /// <summary>退出前是否蹲着（ComponentBody.TargetCrouchFactor &gt; 0）。重新加入时恢复。</summary>
+        public bool IsCrouching;
         public bool HasReceivedInitialItems = true;
         public bool InventoryWasCreative;
         public int ActiveSlotIndex;
@@ -598,6 +600,7 @@ namespace SuMultiplayer.Players
                 PlayerRecordCodec.ParseFloat((string)element.Attribute("LookY"))),
             FireDuration = PlayerRecordCodec.ParseFloat((string)element.Attribute("FireDuration")),
             IsCreativeFlying = PlayerRecordCodec.ParseBool((string)element.Attribute("CreativeFlying"), false),
+            IsCrouching = PlayerRecordCodec.ParseBool((string)element.Attribute("Crouching"), false),
             HasReceivedInitialItems = PlayerRecordCodec.ParseBool((string)element.Attribute("InitialItems"), true),
             InventoryWasCreative = PlayerRecordCodec.ParseBool((string)element.Attribute("CreativeInventory"), false),
             ActiveSlotIndex = (int?)element.Attribute("ActiveSlot") ?? 0,
@@ -734,6 +737,7 @@ namespace SuMultiplayer.Players
                 new XAttribute("LookY", PlayerRecordCodec.FormatFloat(record.LookAngles.Y)),
                 new XAttribute("FireDuration", PlayerRecordCodec.FormatFloat(record.FireDuration)),
                 new XAttribute("CreativeFlying", record.IsCreativeFlying),
+                new XAttribute("Crouching", record.IsCrouching),
                 new XAttribute("InitialItems", record.HasReceivedInitialItems),
                 new XAttribute("CreativeInventory", record.InventoryWasCreative),
                 new XAttribute("ActiveSlot", record.ActiveSlotIndex),

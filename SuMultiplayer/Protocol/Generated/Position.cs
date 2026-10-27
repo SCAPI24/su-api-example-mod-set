@@ -28,7 +28,7 @@ namespace SuMultiplayer.Protocol.Position {
             "YnVmL2FueS5wcm90byIcCgRWZWMyEgkKAXgYASABKAISCQoBeRgCIAEoAiIn",
             "CgRWZWMzEgkKAXgYASABKAISCQoBeRgCIAEoAhIJCgF6GAMgASgCIjIKBFF1",
             "YXQSCQoBeBgBIAEoAhIJCgF5GAIgASgCEgkKAXoYAyABKAISCQoBdxgEIAEo",
-            "AiK4AwoOUGxheWVyUG9zaXRpb24SEQoJY2xpZW50X2lkGAEgASgFEhMKC3Nl",
+            "AiLOAwoOUGxheWVyUG9zaXRpb24SEQoJY2xpZW50X2lkGAEgASgFEhMKC3Nl",
             "cnZlcl90aWNrGAIgASgFEiUKCHBvc2l0aW9uGAMgASgLMhMuc3VtcC5wb3Np",
             "dGlvbi5WZWMzEiUKCHJvdGF0aW9uGAQgASgLMhMuc3VtcC5wb3NpdGlvbi5R",
             "dWF0EiUKCHZlbG9jaXR5GAUgASgLMhMuc3VtcC5wb3NpdGlvbi5WZWMzEigK",
@@ -36,19 +36,19 @@ namespace SuMultiplayer.Protocol.Position {
             "X2Nyb3VjaGluZxgHIAEoCBIRCglpc19mbHlpbmcYCCABKAgSEwoLaXNfZ3Jv",
             "dW5kZWQYCSABKAgSDAoEc2xvdBgKIAEoDRIqCg1tb3ZlX3ZlbG9jaXR5GAsg",
             "ASgLMhMuc3VtcC5wb3NpdGlvbi5WZWMzEhkKEWhhc19tb3ZlX3ZlbG9jaXR5",
-            "GAwgASgIEhkKEXN0YW5kaW5nX29uX21vdW50GA0gASgIEgsKA2V4dBhkIAEo",
-            "DBIkCgZjdXN0b20YZSABKAsyFC5nb29nbGUucHJvdG9idWYuQW55InQKD1Bs",
-            "YXllclBvc2l0aW9ucxIuCgdlbnRyaWVzGAEgAygLMh0uc3VtcC5wb3NpdGlv",
-            "bi5QbGF5ZXJQb3NpdGlvbhILCgNleHQYZCABKAwSJAoGY3VzdG9tGGUgASgL",
-            "MhQuZ29vZ2xlLnByb3RvYnVmLkFueUIkSAGqAh9TdU11bHRpcGxheWVyLlBy",
-            "b3RvY29sLlBvc2l0aW9uYgZwcm90bzM="));
+            "GAwgASgIEhkKEXN0YW5kaW5nX29uX21vdW50GA0gASgIEhQKDGxhZGRlcl92",
+            "YWx1ZRgPIAEoBRILCgNleHQYZCABKAwSJAoGY3VzdG9tGGUgASgLMhQuZ29v",
+            "Z2xlLnByb3RvYnVmLkFueSJ0Cg9QbGF5ZXJQb3NpdGlvbnMSLgoHZW50cmll",
+            "cxgBIAMoCzIdLnN1bXAucG9zaXRpb24uUGxheWVyUG9zaXRpb24SCwoDZXh0",
+            "GGQgASgMEiQKBmN1c3RvbRhlIAEoCzIULmdvb2dsZS5wcm90b2J1Zi5BbnlC",
+            "JEgBqgIfU3VNdWx0aXBsYXllci5Qcm90b2NvbC5Qb3NpdGlvbmIGcHJvdG8z"));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { global::Google.Protobuf.WellKnownTypes.AnyReflection.Descriptor, },
           new pbr::GeneratedClrTypeInfo(null, null, new pbr::GeneratedClrTypeInfo[] {
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Position.Vec2), global::SuMultiplayer.Protocol.Position.Vec2.Parser, new[]{ "X", "Y" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Position.Vec3), global::SuMultiplayer.Protocol.Position.Vec3.Parser, new[]{ "X", "Y", "Z" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Position.Quat), global::SuMultiplayer.Protocol.Position.Quat.Parser, new[]{ "X", "Y", "Z", "W" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Position.PlayerPosition), global::SuMultiplayer.Protocol.Position.PlayerPosition.Parser, new[]{ "ClientId", "ServerTick", "Position", "Rotation", "Velocity", "LookAngles", "IsCrouching", "IsFlying", "IsGrounded", "Slot", "MoveVelocity", "HasMoveVelocity", "StandingOnMount", "Ext", "Custom" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Position.PlayerPosition), global::SuMultiplayer.Protocol.Position.PlayerPosition.Parser, new[]{ "ClientId", "ServerTick", "Position", "Rotation", "Velocity", "LookAngles", "IsCrouching", "IsFlying", "IsGrounded", "Slot", "MoveVelocity", "HasMoveVelocity", "StandingOnMount", "LadderValue", "Ext", "Custom" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Position.PlayerPositions), global::SuMultiplayer.Protocol.Position.PlayerPositions.Parser, new[]{ "Entries", "Ext", "Custom" }, null, null, null, null)
           }));
     }
@@ -923,6 +923,7 @@ namespace SuMultiplayer.Protocol.Position {
       moveVelocity_ = other.moveVelocity_ != null ? other.moveVelocity_.Clone() : null;
       hasMoveVelocity_ = other.hasMoveVelocity_;
       standingOnMount_ = other.standingOnMount_;
+      ladderValue_ = other.ladderValue_;
       ext_ = other.ext_;
       custom_ = other.custom_ != null ? other.custom_.Clone() : null;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
@@ -1109,6 +1110,22 @@ namespace SuMultiplayer.Protocol.Position {
       }
     }
 
+    /// <summary>Field number for the "ladder_value" field.</summary>
+    public const int LadderValueFieldNumber = 15;
+    private int ladderValue_;
+    /// <summary>
+    /// 客户端当前挂着的梯子 cell value（0 = 不在梯子上）。只在客户端 → 主机快照里填；
+    /// 主机远端化身据此恢复 LadderValue，并在 true→false 时强制贴合一次位置（下梯子补正）。
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int LadderValue {
+      get { return ladderValue_; }
+      set {
+        ladderValue_ = value;
+      }
+    }
+
     /// <summary>Field number for the "ext" field.</summary>
     public const int ExtFieldNumber = 100;
     private pb::ByteString ext_ = pb::ByteString.Empty;
@@ -1164,6 +1181,7 @@ namespace SuMultiplayer.Protocol.Position {
       if (!object.Equals(MoveVelocity, other.MoveVelocity)) return false;
       if (HasMoveVelocity != other.HasMoveVelocity) return false;
       if (StandingOnMount != other.StandingOnMount) return false;
+      if (LadderValue != other.LadderValue) return false;
       if (Ext != other.Ext) return false;
       if (!object.Equals(Custom, other.Custom)) return false;
       return Equals(_unknownFields, other._unknownFields);
@@ -1186,6 +1204,7 @@ namespace SuMultiplayer.Protocol.Position {
       if (moveVelocity_ != null) hash ^= MoveVelocity.GetHashCode();
       if (HasMoveVelocity != false) hash ^= HasMoveVelocity.GetHashCode();
       if (StandingOnMount != false) hash ^= StandingOnMount.GetHashCode();
+      if (LadderValue != 0) hash ^= LadderValue.GetHashCode();
       if (Ext.Length != 0) hash ^= Ext.GetHashCode();
       if (custom_ != null) hash ^= Custom.GetHashCode();
       if (_unknownFields != null) {
@@ -1258,6 +1277,10 @@ namespace SuMultiplayer.Protocol.Position {
         output.WriteRawTag(104);
         output.WriteBool(StandingOnMount);
       }
+      if (LadderValue != 0) {
+        output.WriteRawTag(120);
+        output.WriteInt32(LadderValue);
+      }
       if (Ext.Length != 0) {
         output.WriteRawTag(162, 6);
         output.WriteBytes(Ext);
@@ -1328,6 +1351,10 @@ namespace SuMultiplayer.Protocol.Position {
         output.WriteRawTag(104);
         output.WriteBool(StandingOnMount);
       }
+      if (LadderValue != 0) {
+        output.WriteRawTag(120);
+        output.WriteInt32(LadderValue);
+      }
       if (Ext.Length != 0) {
         output.WriteRawTag(162, 6);
         output.WriteBytes(Ext);
@@ -1384,6 +1411,9 @@ namespace SuMultiplayer.Protocol.Position {
       }
       if (StandingOnMount != false) {
         size += 1 + 1;
+      }
+      if (LadderValue != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeInt32Size(LadderValue);
       }
       if (Ext.Length != 0) {
         size += 2 + pb::CodedOutputStream.ComputeBytesSize(Ext);
@@ -1456,6 +1486,9 @@ namespace SuMultiplayer.Protocol.Position {
       }
       if (other.StandingOnMount != false) {
         StandingOnMount = other.StandingOnMount;
+      }
+      if (other.LadderValue != 0) {
+        LadderValue = other.LadderValue;
       }
       if (other.Ext.Length != 0) {
         Ext = other.Ext;
@@ -1550,6 +1583,10 @@ namespace SuMultiplayer.Protocol.Position {
           }
           case 104: {
             StandingOnMount = input.ReadBool();
+            break;
+          }
+          case 120: {
+            LadderValue = input.ReadInt32();
             break;
           }
           case 802: {
@@ -1647,6 +1684,10 @@ namespace SuMultiplayer.Protocol.Position {
           }
           case 104: {
             StandingOnMount = input.ReadBool();
+            break;
+          }
+          case 120: {
+            LadderValue = input.ReadInt32();
             break;
           }
           case 802: {

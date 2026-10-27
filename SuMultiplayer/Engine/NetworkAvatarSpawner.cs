@@ -1488,6 +1488,8 @@ namespace SuMultiplayer.Engine
 
         /// <summary>主机：按客户端快照显式标志 `standing_on_mount` 直接贴位置的次数（新链路验证用）。</summary>
         public long StandingMountFlagSnaps { get; private set; }
+        /// <summary>下梯子瞬间强制贴合远端的次数（诊断）。</summary>
+        public long LadderExitSnaps { get; private set; }
 
         /// <summary>化身被补回引擎玩家列表的次数（诊断 / 自检；2026-10-26 动物攻击修复）。</summary>
         public long ComponentPlayersRestored => m_componentPlayersRestored;
@@ -1676,10 +1678,11 @@ namespace SuMultiplayer.Engine
                 ? body.Velocity - body.CollisionVelocityChange
                 : Vector3.Zero;
             Vector3 snapshotVelocity = standingOnBody ? Vector3.Zero : body.Velocity;
+            int ladderValue = locomotion.LadderValue.HasValue ? locomotion.LadderValue.Value : 0;
             snapshot = new PlayerPositionSnapshot(serverTick, body.Position, body.Rotation, snapshotVelocity,
                 locomotion.LookAngles, body.TargetCrouchFactor > 0f, locomotion.IsCreativeFlyEnabled,
                 isGrounded, moveVelocity, includeMoveVelocity && !standingOnBody,
-                standingOnMount);
+                standingOnMount, ladderValue);
             // Source: PlayerReadOnlyStateCapture.cs:31（TryCapture 返回 snapshot.IsFinite）
             if (!snapshot.IsFinite)
             {
@@ -1743,6 +1746,18 @@ namespace SuMultiplayer.Engine
             m_parentField.ModifyParentField(locomotion, "m_lookAngles", state.LookAngles,
                 typeof(ComponentLocomotion));
             locomotion.IsCreativeFlyEnabled = state.IsFlying;
+            // 梯子姿态：远端的 LadderValue 是主机/其他客户端的只读快照；只恢复表现字段，
+            // 不让远端跑本地梯子逻辑（主机侧的 ComponentLocomotion Update 本来就被摘掉）。
+            try
+            {
+                m_parentField.ModifyParentField(locomotion, "<LadderValue>k__BackingField",
+                    state.LadderValue == 0 ? (object)null : state.LadderValue,
+                    typeof(ComponentLocomotion));
+            }
+            catch (Exception)
+            {
+                // 引擎字段变化时不给远端伪造梯子姿态；位置同步/强制贴合仍然继续。
+            }
             // 乘骑控制桥（2026-10-26）：骑手在坐骑上时，把骑手输入写进坐骑的
             // SteedBehavior / Boat 的 Order —— 与引擎 ComponentPlayer.cs:126-133 原生桥同口径。
             // 坐骑是主机权威实体（生物 / 实体复制域），由主机物理驱动；骑手输入来自其客户端。
@@ -1827,6 +1842,19 @@ namespace SuMultiplayer.Engine
                 if (mountedRider != null && mountedRider.Mount != null) continue;
                 ComponentBody body = playerData.ComponentPlayer.ComponentBody;
                 ComponentLocomotion locomotion = playerData.ComponentPlayer.ComponentLocomotion;
+                // 下梯子瞬间（远端快照 true→false）：跳过死区/平滑，直接落到客户端报告的落地点。
+                // 否则离开梯子的位移可能小于远端表现死区，主机/其他客户端会一直把化身画在梯子前，
+                // 直到玩家走出很大距离才被 3m 大误差强制对齐（实机 C1 问题）。
+                if (state.ForceLadderExitSnap)
+                {
+                    body.Position = state.Position;
+                    body.Rotation = state.Rotation;
+                    body.Velocity = Vector3.Zero;
+                    state.PresentationInitialized = true;
+                    state.ForceLadderExitSnap = false;
+                    LadderExitSnaps++;
+                    continue;
+                }
                 // 旧 :1068-1076
                 body.IsGravityEnabled = !state.IsFlying;
                 body.IsGroundDragEnabled = !state.IsFlying;
@@ -1861,6 +1889,18 @@ namespace SuMultiplayer.Engine
                 if (locomotion != null)
                 {
                     locomotion.IsCreativeFlyEnabled = state.IsFlying;
+            // 梯子姿态：远端的 LadderValue 是主机/其他客户端的只读快照；只恢复表现字段，
+            // 不让远端跑本地梯子逻辑（主机侧的 ComponentLocomotion Update 本来就被摘掉）。
+            try
+            {
+                m_parentField.ModifyParentField(locomotion, "<LadderValue>k__BackingField",
+                    state.LadderValue == 0 ? (object)null : state.LadderValue,
+                    typeof(ComponentLocomotion));
+            }
+            catch (Exception)
+            {
+                // 引擎字段变化时不给远端伪造梯子姿态；位置同步/强制贴合仍然继续。
+            }
                     m_parentField.ModifyParentField(locomotion, "m_lookAngles", state.LookAngles,
                         typeof(ComponentLocomotion));
                 }
@@ -2353,6 +2393,8 @@ namespace SuMultiplayer.Engine
                 m_parentField.ModifyParentField(player.ComponentLocomotion, "m_lookAngles",
                     record.LookAngles, typeof(ComponentLocomotion));
             }
+            if (player.ComponentBody != null)
+                player.ComponentBody.TargetCrouchFactor = record.IsCrouching ? 1f : 0f;
             bool creativeInventory = player.ComponentMiner?.Inventory is ComponentCreativeInventory;
             if (player.ComponentLocomotion != null)
                 player.ComponentLocomotion.IsCreativeFlyEnabled = creativeInventory && record.IsCreativeFlying;
@@ -2514,6 +2556,7 @@ namespace SuMultiplayer.Engine
                 Satiation = CapturePlayerSatiation(vitalStats),
                 IsCreativeFlying = globalCreative &&
                     player?.ComponentLocomotion?.IsCreativeFlyEnabled == true,
+                IsCrouching = player?.ComponentBody?.TargetCrouchFactor > 0f,
                 HasReceivedInitialItems = true,
                 Clothes = CaptureClothes(player)
             };

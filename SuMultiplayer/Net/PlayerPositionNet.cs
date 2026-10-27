@@ -72,6 +72,19 @@ namespace SuMultiplayer.Net
             StandingOnMount = standingOnMount;
         }
 
+        /// <summary>
+        /// 完整的梯子扩展构造：<paramref name="ladderValue"/> = 0 表示不在梯子上。
+        /// 旧构造保持 LadderValue=0，线上字段缺省也按 0 处理（旧客户端兼容）。
+        /// </summary>
+        public PlayerPositionSnapshot(int serverTick, Vector3 position, Quaternion rotation,
+            Vector3 velocity, Vector2 lookAngles, bool isCrouching, bool isFlying, bool isGrounded,
+            Vector3 moveVelocity, bool hasMoveVelocity, bool standingOnMount, int ladderValue)
+            : this(serverTick, position, rotation, velocity, lookAngles, isCrouching, isFlying,
+                isGrounded, moveVelocity, hasMoveVelocity, standingOnMount)
+        {
+            LadderValue = ladderValue;
+        }
+
         /// <summary>发送方自己的位置脉冲序号（旧 <c>client.Step</c>）。只用于丢弃陈旧快照与诊断。</summary>
         public int ServerTick { get; }
 
@@ -87,6 +100,8 @@ namespace SuMultiplayer.Net
 
         /// <summary>客户端站在可骑乘实体（船/坐骑）上：主机化身直接贴位置 + 速度清零。</summary>
         public bool StandingOnMount { get; }
+        /// <summary>客户端当前挂着的梯子 cell value；0 = 不在梯子上。</summary>
+        public int LadderValue { get; }
         /// <summary>俯仰/偏航（旧 <c>msg.LookAngles</c>；机身 yaw 在 <see cref="Rotation"/> 里）。</summary>
         public Vector2 LookAngles { get; }
         public bool IsCrouching { get; }
@@ -178,6 +193,11 @@ namespace SuMultiplayer.Net
         public bool IsCrouching;
         public bool IsFlying;
         public bool IsGrounded;
+        public int LadderValue;
+        /// <summary>上一份快照是否在梯子上：用于识别 true→false 的下梯瞬间。</summary>
+        public bool WasOnLadder;
+        /// <summary>下梯瞬间强制贴合一次位置，绕开 0.2m 死区造成的“站在梯前不动”。</summary>
+        public bool ForceLadderExitSnap;
 
         /// <summary>最近一次已应用的快照序号（旧 <c>state.ServerTick</c>，用于丢弃迟到/陈旧快照）。</summary>
         public int ServerTick = -1;
@@ -214,6 +234,10 @@ namespace SuMultiplayer.Net
             IsCrouching = snapshot.IsCrouching;
             IsFlying = snapshot.IsFlying;
             IsGrounded = snapshot.IsGrounded;
+            bool wasOnLadder = WasOnLadder;
+            LadderValue = snapshot.LadderValue;
+            WasOnLadder = LadderValue != 0;
+            if (wasOnLadder && !WasOnLadder) ForceLadderExitSnap = true;
             ServerTick = snapshot.ServerTick;
             float delaySample = MathUtils.Clamp(arrivalAge, 0f, RemoteDelaySampleLimit);
             EstimatedDelay = EstimatedDelay <= 0f
@@ -422,7 +446,7 @@ namespace SuMultiplayer.Net
                 new Vector3(entry.Velocity.X, entry.Velocity.Y, entry.Velocity.Z),
                 new Vector2(entry.LookAngles.X, entry.LookAngles.Y),
                 entry.IsCrouching, entry.IsFlying, entry.IsGrounded,
-                moveVelocity, hasMoveVelocity, entry.StandingOnMount);
+                moveVelocity, hasMoveVelocity, entry.StandingOnMount, entry.LadderValue);
             return true;
         }
 
@@ -447,7 +471,8 @@ namespace SuMultiplayer.Net
                 LookAngles = new PP.Vec2 { X = s.LookAngles.X, Y = s.LookAngles.Y },
                 IsCrouching = s.IsCrouching,
                 IsFlying = s.IsFlying,
-                IsGrounded = s.IsGrounded
+                IsGrounded = s.IsGrounded,
+                LadderValue = s.LadderValue
             };
         }
     }

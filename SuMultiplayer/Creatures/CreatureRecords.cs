@@ -103,6 +103,10 @@ namespace SuMultiplayer.Creatures
         ///（2026-10-26 骑乘表现修复；也用于普通生物look）。
         /// </summary>
         public Vector2 LookAngles;
+        /// <summary>主机 ComponentCreatureModel.FeedOrder（吃东西动画）。</summary>
+        public bool FeedOrder;
+        /// <summary>主机是否站在地形/实体上（客户端模型迈腿条件）。</summary>
+        public bool Grounded;
 
         /// <summary>
         /// 主机侧活动状态：既用于选择同步频率，也随 <c>CreatureRecord.activity</c> 下发 ——
@@ -130,6 +134,8 @@ namespace SuMultiplayer.Creatures
             SpawnProgress = SpawnProgress,
             SpawnDuration = SpawnDuration,
             LookAngles = LookAngles,
+            FeedOrder = FeedOrder,
+            Grounded = Grounded,
             Activity = Activity
         };
     }
@@ -310,7 +316,9 @@ namespace SuMultiplayer.Creatures
                     SpawnDuration = record.SpawnDuration,
                     LookAngles = new PC.Vec2 { X = record.LookAngles.X, Y = record.LookAngles.Y },
                     // 2026-10-26 客户端攻击动画修复：活动位随记录下发（客户端用 Attacking 驱动模型攻击动画）。
-                    Activity = (uint)record.Activity
+                    Activity = (uint)record.Activity,
+                    FeedOrder = record.FeedOrder,
+                    Grounded = record.Grounded
                 };
                 message.Records.Add(wire);
             }
@@ -410,6 +418,8 @@ namespace SuMultiplayer.Creatures
                     }
                     // 2026-10-26 客户端攻击动画修复：活动位（未知高位丢弃，避免未来扩展被误读成攻击）。
                     record.Activity = (CreatureActivity)(wire.Activity & CreatureStateRecord.ActivityWireMask);
+                    record.FeedOrder = wire.FeedOrder;
+                    record.Grounded = wire.Grounded;
                     if (!IsFinite(record.Position) || !IsFinite(record.Rotation) ||
                         !IsFinite(record.Velocity) || !float.IsFinite(record.Health))
                     {

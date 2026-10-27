@@ -185,6 +185,12 @@ namespace SuMultiplayer.Players
         /// <summary>角色记录里的最后睡觉复活点（客户端 PlayerData.SpawnPosition 用它）。</summary>
         public PlayerPlacement SpawnPosition;
 
+        /// <summary>角色退出前是否飞行（HelloAck.assigned_is_flying；客户端重新加入时恢复）。</summary>
+        public bool IsFlying;
+
+        /// <summary>角色退出前是否蹲着（HelloAck.assigned_is_crouching；客户端重新加入时恢复）。</summary>
+        public bool IsCrouching;
+
         /// <summary>明确原因（profile required / 资料无效 / 记录损坏…）。</summary>
         public string Reason;
     }

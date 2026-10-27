@@ -222,6 +222,9 @@ namespace SuMultiplayer.Modules
                 m_owner.ClientAssignedPosition;
             public SuMultiplayer.Players.PlayerPlacement AssignedSpawnPosition =>
                 m_owner.ClientAssignedSpawnPosition;
+            public bool HasAssignedState => m_owner.ClientHasAssignedState;
+            public bool AssignedIsFlying => m_owner.ClientAssignedIsFlying;
+            public bool AssignedIsCrouching => m_owner.ClientAssignedIsCrouching;
             public bool ReconnectClient(string reason) => m_owner.ReconnectClient(reason);
         }
 
@@ -2188,6 +2191,12 @@ namespace SuMultiplayer.Modules
 
         internal SuMultiplayer.Players.PlayerPlacement ClientAssignedSpawnPosition =>
             m_clientSync?.AssignedSpawnPosition ?? default(SuMultiplayer.Players.PlayerPlacement);
+
+        internal bool ClientHasAssignedState => m_clientSync?.HasAssignedState == true;
+
+        internal bool ClientAssignedIsFlying => m_clientSync?.AssignedIsFlying == true;
+
+        internal bool ClientAssignedIsCrouching => m_clientSync?.AssignedIsCrouching == true;
 
         internal bool ClientProfileRequired => m_clientSync?.ProfileRequired ?? false;
 

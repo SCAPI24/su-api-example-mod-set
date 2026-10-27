@@ -189,7 +189,14 @@ namespace SuMultiplayer.Creatures
                 // 上一条记录的外推点 P_n + v*(T + T/2) 与下一条的 P_{n+1} + v*(0 + T/2) 相等）。
                 float lead = state.EstimatedInterval * 0.5f;
                 float predictionTime = MathUtils.Min((float)age + lead, PredictionLimitSeconds);
-                Vector3 predictedPosition = state.Position + state.Velocity * predictionTime;
+                // 水平方向做速度外推；竖直方向**不外推速度**。
+                // 主机记录里偶尔会带一点竖直速度（例如动物踩到另一只动物、刚落地时的
+                // 碰撞分离速度），乘上半个快照间隔的外推量会在客户端放大成一次“跳起来”，
+                // 下一份记录又回到地面 → 上下反复跳。主机位置本身是正常的，竖直轴直接
+                // 跟随最近一份权威 Position.Y（仍用下面的 VerticalBlend 平滑），真实跳跃
+                // 由连续记录的 Y 抬高来表现，不会瞬移。
+                Vector3 predictedPosition = state.Position + new Vector3(
+                    state.Velocity.X * predictionTime, 0f, state.Velocity.Z * predictionTime);
 
                 if (!state.PresentationInitialized)
                 {
@@ -224,13 +231,27 @@ namespace SuMultiplayer.Creatures
                 float velocityBlend = 1f - (float)Math.Exp(-VelocityBlendRate * step);
                 state.SmoothedVelocity = Vector3.Lerp(state.SmoothedVelocity, desiredVelocity,
                     velocityBlend);
+                // 上台阶：先抬 Y 再走水平。否则本帧水平已经走进台阶格，而 Y 还在
+                // VerticalBlend 的插值路上，客户端会先看到动物穿进方块侧面、下一帧才出来。
+                // 只对“主机几乎无竖直速度、抬升不足 1.5m”的台阶/浅坡生效；真实跳跃
+                // （速度明显向上）仍走平滑，不会把弹跳变成瞬移。
+                float stepUp = predictedPosition.Y - state.PresentationPosition.Y;
+                bool risingStep = stepUp > 0.02f && stepUp <= 1.5f &&
+                    MathUtils.Abs(state.Velocity.Y) < 1.0f;
+                if (risingStep)
+                {
+                    state.PresentationPosition.Y = predictedPosition.Y;
+                }
                 state.PresentationPosition.X += state.SmoothedVelocity.X * step;
                 state.PresentationPosition.Z += state.SmoothedVelocity.Z * step;
 
                 // 竖直：直接跟外推轨迹（起跳/落地是离散冲量，不能当连续加速度外推）。
                 float verticalBlend = 1f - (float)Math.Exp(-VerticalBlendRate * step);
-                state.PresentationPosition.Y = MathUtils.Lerp(state.PresentationPosition.Y,
-                    predictedPosition.Y, verticalBlend);
+                if (!risingStep)
+                {
+                    state.PresentationPosition.Y = MathUtils.Lerp(state.PresentationPosition.Y,
+                        predictedPosition.Y, verticalBlend);
+                }
 
                 float rotationBlend = 1f - (float)Math.Exp(-RotationBlendRate * step);
                 state.PresentationRotation = Quaternion.Slerp(state.PresentationRotation,

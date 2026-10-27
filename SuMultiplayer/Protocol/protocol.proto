@@ -615,6 +615,10 @@ message HelloAck {
   bool has_assigned_placement = 19;
   PlayerPlacement assigned_position = 20;
   PlayerPlacement assigned_spawn_position = 21;
+  // 角色退出前的临时状态（重新加入时恢复；乘骑不在此列）。
+  bool has_assigned_state = 22;
+  bool assigned_is_crouching = 23;
+  bool assigned_is_flying = 24;
 
   bytes ext = 100;
   google.protobuf.Any custom = 101;

@@ -46,6 +46,15 @@ namespace SuMultiplayer.Modules
         /// <summary>角色记录里的最后睡觉复活点。</summary>
         SuMultiplayer.Players.PlayerPlacement AssignedSpawnPosition { get; }
 
+        /// <summary>HelloAck.has_assigned_state：角色退出前的飞行/蹲下状态可用。</summary>
+        bool HasAssignedState { get; }
+
+        /// <summary>角色退出前是否飞行。</summary>
+        bool AssignedIsFlying { get; }
+
+        /// <summary>角色退出前是否蹲着。</summary>
+        bool AssignedIsCrouching { get; }
+
         /// <summary>
         /// 角色创建完成 / 资料变化后**重新握手**（旧实现同样是重新 JoinGame）。
         /// 返回 false = 当前没有可重连的客户端通道（已明确记录，不假装重连成功）。
