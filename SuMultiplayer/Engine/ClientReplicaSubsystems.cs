@@ -1288,7 +1288,7 @@ namespace SuMultiplayer.Engine
             m_lastLoggedDiscardClears = m_fuseDiscardClears;
             m_lastLoggedDetonator = m_detonatorIgnitions;
             m_lastLoggedFailures = m_fuseTableFailures;
-            Log.Information("[SuMP] fuseCellCapture: 火药桶写格 " + m_fuseWrites +
+            ModLog.VerboseInfo("[SuMP] fuseCellCapture: 火药桶写格 " + m_fuseWrites +
                 " 次（data-only，剩余 tick 写入格子）· 熄火清位 " + m_fuseClears +
                 " 次 · 区块丢弃清位 " + m_fuseDiscardClears + " 次 · 起爆器点火 " +
                 m_detonatorIgnitions + " 次（DetonatorBlock 的 data 0..5 是挂载面、引擎无引信粒子 ⇒ " +
@@ -1380,11 +1380,18 @@ namespace SuMultiplayer.Engine
     public sealed class SuSubsystemDeciduousLeavesBlockBehavior :
         SubsystemDeciduousLeavesBlockBehavior
     {
+        // 引擎的 QueueLeafParticles 是 private；客户端只借它排队，不执行会改季相的
+        // UpdateTimeOfYear / CreateFallenLeaves。
+        private static MethodInfo s_queueLeafParticles;
+        private static bool s_queueLeafParticlesMissingLogged;
+
         public override void OnBlockGenerated(int value, int x, int y, int z, bool isLoaded)
         {
-            // 引擎这一支会改季相 data（applyImmediately:true → ChangeCell；否则排进
-            // SubsystemCellChangeQueue）：客户端不推进 → 不接住就会永久分歧。
-            if (!ReplicaGates.Allow(SubsystemTerrain, ReplicaMutationSource.DeciduousLeaves)) return;
+            if (!ReplicaGates.Allow(SubsystemTerrain, ReplicaMutationSource.DeciduousLeaves))
+            {
+                QueueLeafParticlesOnly(value, x, y, z);
+                return;
+            }
             base.OnBlockGenerated(value, x, y, z, isLoaded);
             // Source: Survivalcraft/Game/SubsystemDeciduousLeavesBlockBehavior.cs:OnBlockGenerated:62
             // （applyImmediately:true → ChangeCell）与 CreateFallenLeaves（QueueCellChange）
@@ -1393,10 +1400,51 @@ namespace SuMultiplayer.Engine
 
         public override void OnPoll(int value, int x, int y, int z, int pollPass)
         {
-            if (!ReplicaGates.Allow(SubsystemTerrain, ReplicaMutationSource.DeciduousLeaves)) return;
+            if (!ReplicaGates.Allow(SubsystemTerrain, ReplicaMutationSource.DeciduousLeaves))
+            {
+                QueueLeafParticlesOnly(value, x, y, z);
+                return;
+            }
             base.OnPoll(value, x, y, z, pollPass);
             // Source: Survivalcraft/Game/SubsystemDeciduousLeavesBlockBehavior.cs:OnPoll:68
             ReplicaGates.RescueEvolutionCells(SubsystemTerrain);
+        }
+
+        /// <summary>
+        /// 客户端：只调用引擎私有的 QueueLeafParticles（把叶子位置排进 m_leafParticles），
+        /// 不调用 UpdateTimeOfYear / CreateFallenLeaves（它们会写格）。
+        /// IUpdateable.Update 会照常消费队列并生成 LeavesParticleSystem。
+        /// </summary>
+        private void QueueLeafParticlesOnly(int value, int x, int y, int z)
+        {
+            if (s_queueLeafParticles == null)
+            {
+                s_queueLeafParticles = typeof(SubsystemDeciduousLeavesBlockBehavior)
+                    .GetMethod("QueueLeafParticles", BindingFlags.Instance | BindingFlags.NonPublic);
+            }
+            if (s_queueLeafParticles == null)
+            {
+                if (!s_queueLeafParticlesMissingLogged)
+                {
+                    s_queueLeafParticlesMissingLogged = true;
+                    Log.Warning("[SuMP] evergreen-leaves: 引擎 QueueLeafParticles 不可用 → " +
+                        "客户端秋季落叶粒子缺失（明确失败，不静默）");
+                }
+                return;
+            }
+            try
+            {
+                s_queueLeafParticles.Invoke(this, new object[] { value, x, y, z });
+            }
+            catch (Exception e)
+            {
+                if (!s_queueLeafParticlesMissingLogged)
+                {
+                    s_queueLeafParticlesMissingLogged = true;
+                    Log.Warning("[SuMP] evergreen-leaves: QueueLeafParticles 调用失败 → " +
+                        "客户端秋季落叶粒子缺失：" + e.GetType().Name + " " + e.Message);
+                }
+            }
         }
 
         // 引擎的 IUpdateable.Update 只推进落叶粒子（不改地形），客户端照常保留。
@@ -1656,6 +1704,7 @@ namespace SuMultiplayer.Engine
     {
         private bool m_clientPersistentTerrainHandlersDisabled;
         private bool m_clientRampFaultLogged;
+        private long m_lastFogStatusLogMs;
 
         // ---- 客户端视觉推进的反射字段（引擎私有，静态缓存；Source: SubsystemWeather.cs:2-49） ----
         private static readonly FieldInfo s_clientPrecipRamp = typeof(SubsystemWeather).GetField(
@@ -1732,6 +1781,15 @@ namespace SuMultiplayer.Engine
                 {
                     s_clientFogIntensity.SetValue(this, MathUtils.Saturate(
                         FogIntensity + (IsFogStarted ? dt : -dt) / fogRamp));
+                    long nowLog = (long)(Time.RealTime * 1000.0);
+                    if (nowLog - m_lastFogStatusLogMs >= 10000)
+                    {
+                        m_lastFogStatusLogMs = nowLog;
+                        ModLog.VerboseInfo("[SuMP][fog] 客户端雾状态：intensity=" +
+                            FogIntensity.ToString("F2") + " progress=" +
+                            FogProgress.ToString("F3") + " started=" + IsFogStarted +
+                            " ramp=" + fogRamp.ToString("F1"));
+                    }
                     if (IsFogStarted)
                     {
                         double fogStart = (double)s_clientFogStart.GetValue(this);
@@ -1741,8 +1799,9 @@ namespace SuMultiplayer.Engine
                             s_clientFogProgress.SetValue(this,
                                 FogProgress + dt / (float)(fogEnd - fogStart));
                         }
-                        s_clientFogSeed.SetValue(this,
-                            MathUtils.Hash((int)MathUtils.Remainder(fogStart, 1000000.0)));
+                        // FogSeed 必须保持主机快照值：本地按 client 自己的 fogStart 重算会让
+                        // 每端的雾密度随机因子不同（实机 C1 雾异常浓、其他端正常）。
+                        // 主机 WorldInfo 已在首帧 / 雾开始时写入 FogSeed。
                     }
                 }
             }
@@ -2165,7 +2224,7 @@ namespace SuMultiplayer.Engine
             m_isCollapseSupportBlock = typeof(SubsystemCollapsingBlockBehavior).GetMethod(
                 "IsCollapseSupportBlock", BindingFlags.Instance | BindingFlags.NonPublic);
             m_clientMotionHandlersDetached = true;
-            Log.Information("[SuMP] collapsing 客户端闸门：本地塌落 = " +
+            ModLog.VerboseInfo("[SuMP] collapsing 客户端闸门：本地塌落 = " +
                 "OnNeighborBlockChanged 拒绝 + 移动组落地订阅已摘" +
                 "（stopped=" + stopped.Removed + " collision=" + collision.Removed +
                 "）；引擎工作表 m_toMove=" +
@@ -2382,7 +2441,7 @@ namespace SuMultiplayer.Engine
             if (!m_pendingGeneratedReplayLogged)
             {
                 m_pendingGeneratedReplayLogged = true;
-                Log.Information("[SuMP] 营火表现：桥注入前生成的 " + replayed +
+                ModLog.VerboseInfo("[SuMP] 营火表现：桥注入前生成的 " + replayed +
                     " 格已按当前格子值重放（超出上限丢弃 " + dropped + " 格）");
             }
         }
@@ -2568,7 +2627,7 @@ namespace SuMultiplayer.Engine
             if (replayed > 0 && !m_replayLogged)
             {
                 m_replayLogged = true;
-                Log.Information("[SuMP] 熔炉火焰表现：桥注入前生成的 " + replayed +
+                ModLog.VerboseInfo("[SuMP] 熔炉火焰表现：桥注入前生成的 " + replayed +
                     " 格已按当前格子值重放（超出上限丢弃 " + m_pendingGeneratedDropped + " 格）");
             }
         }
@@ -2858,6 +2917,14 @@ namespace SuMultiplayer.Engine
 
         void IUpdateable.Update(float dt)
         {
+            // 客户端也要跑轮询驱动，否则 DeciduousLeavesBlockBehavior.OnPoll 永远不会被调用，
+            // 秋季落叶粒子无法排队。所有会改格的行为在各自 OnPoll 里已由 ReplicaGates 拦下；
+            // 这里只在客户端恢复“扫描/表现”本身，不恢复世界演化写格。
+            if (m_terrain is SuSubsystemTerrain shell && shell.ClientReplica)
+            {
+                base.Update(dt);
+                return;
+            }
             if (!ReplicaGates.Allow(m_terrain, ReplicaMutationSource.BlocksScanner)) return;
             base.Update(dt);
         }
@@ -3067,7 +3134,7 @@ namespace SuMultiplayer.Engine
             else
             {
                 shell.PistonState.NoteBaseSubscriptionsDetached(detached);
-                Log.Information("[SuMP] piston 客户端闸门：base 写格订阅已摘" +
+                ModLog.VerboseInfo("[SuMP] piston 客户端闸门：base 写格订阅已摘" +
                     "（Stopped=" + stopped.Removed + " CollidedWithTerrain=" + collision.Removed +
                     "，pistonBaseSubscriptionsDetached=" +
                     shell.PistonState.BaseSubscriptionsDetached +

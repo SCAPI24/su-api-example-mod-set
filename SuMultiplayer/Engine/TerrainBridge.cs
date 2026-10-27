@@ -572,6 +572,32 @@ namespace SuMultiplayer.Engine
         /// </summary>
         public IHostBlockDropSink HostBlockDrops { get; set; }
 
+        /// <summary>
+        /// 主机：方块被破坏时的**纯表现**出口（碎屑 / 落叶粒子）。null = 日志明确计数，不假装同步。
+        /// 由组合根注入 BlockEffectReplicaEngine；观察器只在本端为权威时调用。
+        /// </summary>
+        public IBlockEffectSink BlockEffects { get; set; }
+
+        /// <summary>
+        /// 当前正在落地的客户端编辑（0 = 主机本地挖掘）。观察器据此决定：
+        /// 客户端编辑 → 主机补建表现并排除请求者；主机本地 → 引擎已建表现，只广播。
+        /// </summary>
+        private int m_activeHostEditClientId;
+
+        public int ActiveHostEditClientId => m_activeHostEditClientId;
+
+        /// <summary>
+        /// 主机方块移除观察器入口（SuSubsystemBlockBehaviors 追加的 OnBlockRemoved 调用）。
+        /// 客户端不广播表现：客户端本地的方块破坏路径由引擎自己建粒子，远端表现由消息处理。
+        /// </summary>
+        public void NotifyHostBlockDestroyed(int x, int y, int z, int oldValue, int newValue)
+        {
+            if (ClientReplica) return;
+            IBlockEffectSink sink = BlockEffects;
+            if (sink == null) return;
+            sink.OnHostBlockDestroyed(x, y, z, oldValue, newValue, m_activeHostEditClientId);
+        }
+
         private bool m_hostDropSinkMissingLogged;
         private long m_lastDropPrepareLogMs;
         private const long DropPrepareLogIntervalMs = 5000;
@@ -662,6 +688,8 @@ namespace SuMultiplayer.Engine
                 }
             }
             int changeValue = plan != null ? plan.NewValue : requestedValue;
+            int previousEditClient = m_activeHostEditClientId;
+            m_activeHostEditClientId = clientId;
             try
             {
                 // Source: Survivalcraft/Game/SubsystemTerrain.cs:SubsystemTerrain.ChangeCell
@@ -671,6 +699,10 @@ namespace SuMultiplayer.Engine
             {
                 reason = e.GetType().Name + " " + e.Message;
                 return false;
+            }
+            finally
+            {
+                m_activeHostEditClientId = previousEditClient;
             }
             int value = subsystem.Terrain.GetCellValueFast(x, y, z);
             outcome.ResultContents = Game.Terrain.ExtractContents(value);

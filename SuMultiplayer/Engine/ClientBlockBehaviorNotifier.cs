@@ -190,7 +190,7 @@ namespace SuMultiplayer.Engine
             m_lastLogMs = nowMs;
             m_lastLoggedNotified = m_notified;
             m_lastLoggedDenied = m_deniedWrites;
-            Log.Information("[SuMP] " + Describe() +
+            ModLog.Info("[SuMP] " + Describe() +
                 (m_lastDeniedType == null ? "" :
                     " · lastDenied=" + m_lastDeniedType + "（" + m_lastDeniedReason + "）"));
         }

@@ -9,6 +9,7 @@ using System.Net.Sockets;
 using System.Reflection;
 using System.Text;
 using System.Threading;
+using SuMultiplayer.Engine;
 using SuMultiplayer.Session;
 
 namespace SuMultiplayer.Net
@@ -162,7 +163,7 @@ namespace SuMultiplayer.Net
                 }
                 catch (Exception error)
                 {
-                    global::Engine.Log.Information("[SuMP][catalog] ServerDns 源不可用：" + url +
+                    ModLog.Info("[catalog] ServerDns 源不可用：" + url +
                         " · " + error.Message);
                 }
             }
@@ -242,7 +243,7 @@ namespace SuMultiplayer.Net
                 m_endpoints.RemoveAll(endpoint => endpoint.Source == RoomSource.Directory);
                 m_endpoints.AddRange(valid);
             }
-            global::Engine.Log.Information("[SuMP][catalog] ServerDns 合并完成（" + source +
+            ModLog.Info("[catalog] ServerDns 合并完成（" + source +
                 "）：" + valid.Count + " 个服务地址");
         }
 
@@ -265,14 +266,14 @@ namespace SuMultiplayer.Net
                         RoomBeaconCodec.TryDecodeReply(reply, reply.Length, out info, out _))
                         ping = (int)(Environment.TickCount64 - nonce);
                     else if (!string.IsNullOrEmpty(proxyError))
-                        global::Engine.Log.Information("[SuMP][catalog] 代理 UDP 探测失败：" +
+                        ModLog.Info("[catalog] 代理 UDP 探测失败：" +
                             targetHost + " · " + proxyError);
                 }
                 else if (TryDirectProbe(targetHost, discoveryPort, probe, nonce, out info,
                         out ping, out string directError) == false &&
                     !string.IsNullOrEmpty(directError))
                 {
-                    global::Engine.Log.Information("[SuMP][catalog] 探测失败：" + targetHost +
+                    ModLog.Info("[catalog] 探测失败：" + targetHost +
                         " · " + directError);
                 }
                 m_results.Enqueue(new DirectoryProbeResult
@@ -286,7 +287,7 @@ namespace SuMultiplayer.Net
             }
             catch (Exception error)
             {
-                global::Engine.Log.Information("[SuMP][catalog] 探测异常：" + targetHost +
+                ModLog.Info("[catalog] 探测异常：" + targetHost +
                     " · " + error.Message);
                 m_results.Enqueue(new DirectoryProbeResult
                 {

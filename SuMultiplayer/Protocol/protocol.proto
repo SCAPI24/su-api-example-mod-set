@@ -476,6 +476,23 @@ enum MessageType {
   // 客户端在连接建立后每 500ms 发 Ping，主机原样回 Pong；加入窗口每帧读最新 RTT。
   PING = 117;
   PONG = 118;
+
+  // 方块破坏表现（碎屑 / 落叶粒子）。只同步表现，不改格；append-only。
+  BLOCK_DESTROY_EFFECT = 119;
+}
+
+// 主机 / 客户端：一格方块被破坏时的纯表现事件。
+// old_value / new_value 是引擎的完整 cell value（contents + data），
+// 客户端用 old_value 按引擎同口径重建 BlockDebrisParticleSystem / LeavesParticleSystem。
+message BlockDestroyEffect {
+  uint32 event_id = 1;
+  int32 x = 2;
+  int32 y = 3;
+  int32 z = 4;
+  uint32 old_value = 5;
+  uint32 new_value = 6;
+  // bit 0 = debris，bit 1 = leaf particles。
+  uint32 flags = 7;
 }
 
 // 客户端 -> 主机：轻量测速请求（不参与世界同步，审批等待期间也可用）。

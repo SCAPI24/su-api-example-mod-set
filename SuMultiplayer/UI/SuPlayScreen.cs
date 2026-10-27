@@ -411,11 +411,20 @@ namespace SuMultiplayer.UI
         private static string FormatRoomDisplayName(RoomEntry entry)
         {
             if (entry == null) return string.Empty;
-            // 旧联机 Mod 的房间行口径：ServerDns / 个人服务器在名称后补来源地址，便于区分同名房间。
-            // 例：Kaikai (Suceru.site) / Kaitlin (waiwai.com:2984)；LAN 行只显示房间名。
+            // 房间行首要显示**主机地图名**（必须与主机 Play 屏本地世界行一致）；
+            // 来源地址只作为括号补充：LAN 不加地址，ServerDns 加解析地址，
+            // 个人服务器加“用户名称 @ 地址”（离线时没有 WorldName 才回退名称）。
+            string mapName = !string.IsNullOrEmpty(entry.WorldName) ? entry.WorldName : entry.Name;
+            if (string.IsNullOrEmpty(mapName)) mapName = "(unnamed room)";
             if (entry.Source == RoomSource.Lan || string.IsNullOrEmpty(entry.DisplayAddress))
-                return entry.Name ?? string.Empty;
-            return (entry.Name ?? string.Empty) + " (" + entry.DisplayAddress + ")";
+                return mapName;
+            if (entry.Source == RoomSource.Personal)
+            {
+                string owner = string.IsNullOrEmpty(entry.Name) ? string.Empty : entry.Name + " @ ";
+                return mapName + " (" + owner + entry.DisplayAddress + ")";
+            }
+            // ServerDns / 显式端点：Ery Terstates (Suceru.site)
+            return mapName + " (" + entry.DisplayAddress + ")";
         }
 
         // Source: Mod/ScMultiplayer/Func/Screen/SuPlayScreen.cs:UpdateWorldItemWidget

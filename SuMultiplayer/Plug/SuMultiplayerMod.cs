@@ -78,6 +78,9 @@ namespace SuMultiplayer
         /// <summary>烧尽表现同步：主机 = 引擎 5 秒烧尽批次后广播；客户端 = 只放碎屑 / 嘶嘶声。</summary>
         private BurnAwayEffectReplicaEngine m_burnAwayEngine;
         private EffectsSyncModule m_burnAwayModule;
+        /// <summary>方块破坏表现：主机观察器按兴趣窗口广播碎屑/落叶粒子；客户端只重建粒子。</summary>
+        private BlockEffectReplicaEngine m_blockEffectEngine;
+        private BlockEffectSyncModule m_blockEffectModule;
         /// <summary>拾取物 / 投射物复制：引擎适配（主机抓取/执行拾取、客户端副本）+ 网络模块。</summary>
         private PickableReplicaEngine m_entityEngine;
         private EntityReplicationModule m_entityModule;
@@ -281,8 +284,9 @@ namespace SuMultiplayer
                     error.GetType().Name + " " + error.Message);
             }
             m_config = SyncConfig.Load(out string note);
+            ModLog.Configure(m_config.VerboseLog);
             ProxySettings.Load(out string proxyNote);
-            Log.Information("[SuMP][proxy] " + proxyNote);
+            ModLog.Info("[SuMP][proxy] " + proxyNote);
             // 交互距离上限（可配置，默认 16 m）：allowed = min(客户端 reach + 0.5 m, 本上限)。
             // 客户端声明 500 m 也只按上限放行并计数 reachClampedToServerMax。
             m_reachGate = new InteractionReachGate(m_config.MaxInteractionReach);
@@ -294,7 +298,7 @@ namespace SuMultiplayer
             // 角色创建屏的默认名字：按身份稳定键（UserId.dat）+ 本次会话盐摇**游戏内置名字表**，
             // 不再用共享的引擎 RNG 状态（否则两个客户端会摇到同一个名字）。日志走 [SuMP] 前缀。
             m_nameRoller = new CharacterNameRoller(
-                message => Log.Information("[SuMP] " + message),
+                message => ModLog.Info("[SuMP] " + message),
                 message => Log.Warning("[SuMP] " + message),
                 CharacterNameRoller.NewSessionSalt());
             m_terrainModule = new TerrainSyncModule(m_config, profileStore: profileStore);
@@ -404,6 +408,11 @@ namespace SuMultiplayer
             // 客户端只做表现（24 m 碎屑 / 16 m 声音，每批 15 / 4，限速）。
             m_burnAwayEngine = new BurnAwayEffectReplicaEngine(avatarSpawner, diagnostics, "effects-sync");
             m_burnAwayModule = new EffectsSyncModule(m_burnAwayEngine);
+            // 方块破坏表现（碎屑 / 秋季落叶粒子）：引擎 DestroyCell 的粒子不随 CellChange 下发，
+            // 观察器只上报表现，模块按每个客户端的兴趣窗口逐端投递；客户端只建粒子。
+            m_blockEffectEngine = new BlockEffectReplicaEngine();
+            m_terrainModule.Bridge.BlockEffects = m_blockEffectEngine;
+            m_blockEffectModule = new BlockEffectSyncModule(m_blockEffectEngine);
             // 营火熄灭火声：主机 = 营火外壳检测到"刚烧尽"后广播；客户端 = 限速后只播 Sizzles。
             m_campfireEngine = new CampfireEffectReplicaEngine(m_campfirePresenter,
                 diagnostics, "campfire-sync");
@@ -523,7 +532,7 @@ namespace SuMultiplayer
             {
                 int removed = m_joinApprovalUi?.Queue.RemoveAllFor(clientId) ?? 0;
                 if (removed > 0)
-                    Log.Information("[SuMP][join-approval] clientId=" + clientId +
+                    ModLog.Info("[SuMP][join-approval] clientId=" + clientId +
                         " 断开 → 请求队列移除 " + removed + " 条待决条目");
             };
 
@@ -691,6 +700,7 @@ namespace SuMultiplayer
             m_moduleHost.Register(m_mountModule);
             // 烧尽表现同步：transport 硬依赖；消息处理在 Attach 里注册。
             m_moduleHost.Register(m_burnAwayModule);
+            m_moduleHost.Register(m_blockEffectModule);
             m_moduleHost.Register(m_campfireModule);
             // 实体复制：transport 硬依赖；消息处理在 Attach 里注册。
             m_moduleHost.Register(m_entityModule);
@@ -781,7 +791,7 @@ namespace SuMultiplayer
                 {
                     m_avatarModule.OnEditScreenExited(enter, exit);
                 },
-                message => Log.Information("[SuMP] " + message),
+                message => ModLog.Info("[SuMP] " + message),
                 message => Log.Warning("[SuMP] " + message),
                 message => Log.Error("[SuMP] " + message));
             // UI 拖出到世界：引擎 ViewWidget.DragDrop 会先扣本地背包再本地 AddPickable
@@ -789,7 +799,7 @@ namespace SuMultiplayer
             // 在 DragDrop 之前把意图交给同一条 PickableDropRequest 链 —— 本地不扣、不生成。
             m_uiDropAttacher = new UiDropAttacher(m_entityEngine,
                 engineModManager.ModParentField,
-                message => Log.Information(message),
+                message => ModLog.Info(message),
                 message => Log.Warning(message));
             // 调试镜像（debug-only，默认关闭；配置键 debugmirrorclient）：
             //   纯逻辑 = Modules/DebugMirrorPorts.cs（配置闸门 / 目标选择 / 生命周期 / 限流日志 / 计数），
@@ -802,12 +812,12 @@ namespace SuMultiplayer
             // 世界作用域：先按"全关"构造，进世界时读 <世界目录>/SuMultiplayerDebug.json 再应用。
             m_debugMirror = new DebugMirrorController(string.Empty,
                 m_debugMirrorClient,
-                message => Log.Information(message),
+                message => ModLog.Info(message),
                 message => Log.Warning(message),
                 delegate { return Time.RealTime; });
             m_debugMirrorHud = new DebugMirrorHud(m_debugMirror,
                 delegate { return m_sessionModule != null && m_sessionModule.IsHostingRoom; },
-                message => Log.Information(message),
+                message => ModLog.Info(message),
                 message => Log.Warning(message));
             // 调试镜像角色（debug-only，默认关闭；配置键 mirrorcharacter / mirrorcharacterclient /
             //   mirrorcharactermode）：
@@ -823,7 +833,7 @@ namespace SuMultiplayer
             m_mirrorCharacter = new MirrorCharacterController(string.Empty, string.Empty,
                 string.Empty,
                 m_mirrorCharacterEngine,
-                message => Log.Information(message),
+                message => ModLog.Info(message),
                 message => Log.Warning(message),
                 delegate { return Time.RealTime; });
             // 镜像宿主（**调试功能，默认开启**；配置键 mirrorcharacterauto / mirrorhostnameprefix /
@@ -844,7 +854,7 @@ namespace SuMultiplayer
             m_mirrorHost = new MirrorHostController(false,
                 DebugMirrorWorldSettings.DefaultNamePrefix, string.Empty, string.Empty,
                 m_mirrorHostEngine,
-                message => Log.Information(message),
+                message => ModLog.Info(message),
                 message => Log.Warning(message),
                 delegate { return Time.RealTime; });
             // 自动客户端分屏（默认开启；配置键 clientview / clientviewclient）：
@@ -860,7 +870,7 @@ namespace SuMultiplayer
             // 显式写 clientview 才启用（用户口径 2026-10-21：正常加入时主机端不该默认多出屏幕）。
             m_clientView = new ClientViewController(false, string.Empty,
                 m_clientViewEngine,
-                message => Log.Information(message),
+                message => ModLog.Info(message),
                 message => Log.Warning(message),
                 delegate { return Time.RealTime; },
                 delegate (int clientId)
@@ -883,7 +893,7 @@ namespace SuMultiplayer
             // 聊天 HUD：底部消息流 + 暖色半透明面板（无蓝色）+ 回车/T 打开输入 +
             // 触摸端常驻“聊天”按钮。关闭输入时不拦截任何游戏输入。
             m_chatOverlay = new ChatOverlayAttacher(m_chatModule,
-                message => Log.Information(message),
+                message => ModLog.Info(message),
                 message => Log.Warning(message));
             // 自动化钩子：CmdBridge 通过反射读这个属性（本 Mod 不引用 CmdBridge）。
             // 与聊天 HUD 是同一个实例；输入 / 提交走 ChatModule 的同一条发送链。
@@ -918,68 +928,68 @@ namespace SuMultiplayer
                 return args;
             }, EventPriority.NORMAL);
 
-            Log.Information("[SuMP] " + ModIdentifier + " " + ModVersionText + " 已加载 · " + note);
-            Log.Information("[SuMP] " + m_config.Describe() + " · 模块 Active=" + resolution.Active +
+            ModLog.Info("[SuMP] " + ModIdentifier + " " + ModVersionText + " 已加载 · " + note);
+            ModLog.Info("[SuMP] " + m_config.Describe() + " · 模块 Active=" + resolution.Active +
                 " Unavailable=" + resolution.Unavailable + " Faulted=" + resolution.Faulted +
                 (resolution.EssentialComplete ? "" : " 必需能力缺失=" + string.Join(",", resolution.EssentialMissing)));
-            Log.Information("[SuMP] " + m_sessionModule.StatusLine());
-            Log.Information("[SuMP] " + m_transferModule.StatusLine());
-            Log.Information("[SuMP] " + m_terrainModule.StatusLine());
-            Log.Information("[SuMP] " + m_avatarModule.StatusLine());
-            Log.Information("[SuMP] " + m_actionModule.StatusLine());
-            Log.Information("[SuMP] " + m_statsModule.StatusLine());
-            Log.Information("[SuMP] " + m_vitalsModule.StatusLine());
-            Log.Information("[SuMP] " + m_meleeModule?.StatusLine());
+            ModLog.Info("[SuMP] " + m_sessionModule.StatusLine());
+            ModLog.Info("[SuMP] " + m_transferModule.StatusLine());
+            ModLog.Info("[SuMP] " + m_terrainModule.StatusLine());
+            ModLog.Info("[SuMP] " + m_avatarModule.StatusLine());
+            ModLog.Info("[SuMP] " + m_actionModule.StatusLine());
+            ModLog.Info("[SuMP] " + m_statsModule.StatusLine());
+            ModLog.Info("[SuMP] " + m_vitalsModule.StatusLine());
+            ModLog.Info("[SuMP] " + m_meleeModule?.StatusLine());
             // 2026-10-26：乘骑同步之前完全没有周期状态行（整轮测试只有 4 条日志，看不到
             // present/applied/stale/MountKey 解析失败），骑马问题无法离线复盘。
-            Log.Information("[SuMP] " + m_mountModule?.StatusLine());
-            Log.Information("[SuMP] " + m_statsPort.Describe());
-            Log.Information("[SuMP] " + m_inventoryStore.StatusLine());
-            Log.Information("[SuMP] " + m_explosionModule.StatusLine());
-            Log.Information("[SuMP] " + m_burnAwayModule.StatusLine());
-            Log.Information("[SuMP] " + m_campfireModule.StatusLine());
-            Log.Information("[SuMP] " + m_campfirePresenter.Describe() + " · " +
+            ModLog.Info("[SuMP] " + m_mountModule?.StatusLine());
+            ModLog.Info("[SuMP] " + m_statsPort.Describe());
+            ModLog.Info("[SuMP] " + m_inventoryStore.StatusLine());
+            ModLog.Info("[SuMP] " + m_explosionModule.StatusLine());
+            ModLog.Info("[SuMP] " + m_burnAwayModule.StatusLine());
+            ModLog.Info("[SuMP] " + m_campfireModule.StatusLine());
+            ModLog.Info("[SuMP] " + m_campfirePresenter.Describe() + " · " +
                 m_terrainModule.Bridge.BlockBehaviorNotify.Describe());
-            Log.Information("[SuMP] " + m_furnacePresenter.Describe());
-            Log.Information("[SuMP] " + m_entityModule.StatusLine());
-            Log.Information("[SuMP] " + m_blockUseModule.StatusLine());
-            Log.Information("[SuMP] " + m_furnitureModule.StatusLine());
-            Log.Information("[SuMP] " + m_editableModule.StatusLine());
-            Log.Information("[SuMP] " + m_remoteAudioModule.StatusLine());
-            Log.Information("[SuMP] " + m_ambientSoundModule.StatusLine());
-            Log.Information("[SuMP] " + m_ambientSoundEngine.Describe());
-            Log.Information("[SuMP] " + m_waterSplashModule.StatusLine());
-            Log.Information("[SuMP] " + m_projectileHitModule.StatusLine());
-            Log.Information("[SuMP] " + m_pistonModule.StatusLine());
-            Log.Information("[SuMP] " + m_entityEngine.Describe());
-            Log.Information("[SuMP] " + m_creatureModule.StatusLine());
-            Log.Information("[SuMP] " + m_creatureWorld.StatusLine());
-            Log.Information("[SuMP] " + m_authorityModule.StatusLine());
-            Log.Information("[SuMP] " + m_chatModule.StatusLine());
-            Log.Information("[SuMP] " + m_voiceModule.StatusLine());
-            Log.Information("[SuMP] 交互距离：serverMax=" +
+            ModLog.Info("[SuMP] " + m_furnacePresenter.Describe());
+            ModLog.Info("[SuMP] " + m_entityModule.StatusLine());
+            ModLog.Info("[SuMP] " + m_blockUseModule.StatusLine());
+            ModLog.Info("[SuMP] " + m_furnitureModule.StatusLine());
+            ModLog.Info("[SuMP] " + m_editableModule.StatusLine());
+            ModLog.Info("[SuMP] " + m_remoteAudioModule.StatusLine());
+            ModLog.Info("[SuMP] " + m_ambientSoundModule.StatusLine());
+            ModLog.Info("[SuMP] " + m_ambientSoundEngine.Describe());
+            ModLog.Info("[SuMP] " + m_waterSplashModule.StatusLine());
+            ModLog.Info("[SuMP] " + m_projectileHitModule.StatusLine());
+            ModLog.Info("[SuMP] " + m_pistonModule.StatusLine());
+            ModLog.Info("[SuMP] " + m_entityEngine.Describe());
+            ModLog.Info("[SuMP] " + m_creatureModule.StatusLine());
+            ModLog.Info("[SuMP] " + m_creatureWorld.StatusLine());
+            ModLog.Info("[SuMP] " + m_authorityModule.StatusLine());
+            ModLog.Info("[SuMP] " + m_chatModule.StatusLine());
+            ModLog.Info("[SuMP] " + m_voiceModule.StatusLine());
+            ModLog.Info("[SuMP] 交互距离：serverMax=" +
                 m_reachGate.ServerMaxMeters.ToString("0.##", CultureInfo.InvariantCulture) +
                 "m tolerance=" + InteractionReachGate.ToleranceMeters.ToString("0.##",
                     CultureInfo.InvariantCulture) + "m · " + m_reachGate.Counters.Describe());
-            Log.Information("[SuMP] " + m_nameRoller.StatusLine());
-            Log.Information("[SuMP] " + m_fusePresenter.Describe());
-            Log.Information("[SuMP] " + m_debugMirror.StatusLine() +
+            ModLog.Info("[SuMP] " + m_nameRoller.StatusLine());
+            ModLog.Info("[SuMP] " + m_fusePresenter.Describe());
+            ModLog.Info("[SuMP] " + m_debugMirror.StatusLine() +
                 (m_debugMirror.IsConfigured
                     ? ""
                     : "（调试镜像默认关闭；在<世界目录>/SuMultiplayerDebug.json里显式打开）"));
-            Log.Information("[SuMP] " + m_mirrorCharacter.StatusLine() +
+            ModLog.Info("[SuMP] " + m_mirrorCharacter.StatusLine() +
                 (m_mirrorCharacter.IsConfigured
                     ? ""
                     : "（调试镜像角色默认关闭；在<世界目录>/SuMultiplayerDebug.json里显式打开）"));
-            Log.Information("[SuMP] " + m_mirrorHost.StatusLine() +
+            ModLog.Info("[SuMP] " + m_mirrorHost.StatusLine() +
                 (m_mirrorHost.IsConfigured
                     ? ""
                     : "（镜像宿主默认关闭；在<世界目录>/SuMultiplayerDebug.json里显式打开）"));
-            Log.Information("[SuMP] " + m_clientView.StatusLine() +
+            ModLog.Info("[SuMP] " + m_clientView.StatusLine() +
                 (m_clientView.IsConfigured
                     ? ""
                     : "（clientview 已关闭 / 配置写错；默认 true）"));
-            Log.Information("[SuMP] " + m_uiStateModule.StatusLine() +
+            ModLog.Info("[SuMP] " + m_uiStateModule.StatusLine() +
                 " · unsupportedTypes=" + m_uiStateModule.DescribeUnsupported());
 
             // 引擎注入
@@ -1196,7 +1206,7 @@ namespace SuMultiplayer
                     return new object[] { false, null };
                 modInjector.Apply(database, "SuMultiplayer");
                 DatabaseApplied = true;
-                Log.Information("[SuMP] 引擎注入已应用（SubsystemTerrain 外壳 + 客户端副本闸门：水/岩浆/水下/水草/海参 + 火/草/植物/… + 活塞/电路）");
+                ModLog.Info("[SuMP] 引擎注入已应用（SubsystemTerrain 外壳 + 客户端副本闸门：水/岩浆/水下/水草/海参 + 火/草/植物/… + 活塞/电路）");
                 return new object[] { false, database };
             }, EventPriority.HIGHEST);
 
@@ -1242,7 +1252,7 @@ namespace SuMultiplayer
                         "没有找到 Loading 项 'Initialize SettingsCompatibilityScreen'：" +
                         "兼容性设置屏无法追加 Network Proxy 行");
                 }
-                Log.Information("[SuMP] Play 屏已替换；兼容性设置屏已追加 Network Proxy 行" +
+                ModLog.Info("[SuMP] Play 屏已替换；兼容性设置屏已追加 Network Proxy 行" +
                     "（代理配置 " + ProxySettings.SettingsPath + "）");
                 return args;
             }, EventPriority.HIGHEST);
@@ -1259,6 +1269,8 @@ namespace SuMultiplayer
                     // 注意：**不能**在 Project == null 时跳过 tick —— 加入房间发生在主菜单。
                     // 需要世界的部分（地形泵）由 SuSubsystemTerrain.Update 自己驱动。
                     bool inWorld = GameManager.Project != null;
+                    ModLog.SetRole(m_sessionModule != null && m_sessionModule.IsHostingRoom
+                        ? "Server" : "Client");
                     try
                     {
                         m_moduleHost?.Tick(new ModuleTickContext(m_frameIndex++, Time.RealTime,
@@ -1360,57 +1372,57 @@ namespace SuMultiplayer
                     if (nowMs - m_lastStatusMs >= 5000)
                     {
                         m_lastStatusMs = nowMs;
-                        Log.Information("[SuMP] " + m_sessionModule?.StatusLine());
-                        Log.Information("[SuMP] " + m_terrainModule?.StatusLine());
-                        Log.Information("[SuMP] " + m_avatarModule?.StatusLine());
-                        Log.Information("[SuMP] " + m_skinModule?.StatusLine());
-                        Log.Information("[SuMP] " + m_actionModule?.StatusLine());
-                        Log.Information("[SuMP] " + m_statsModule?.StatusLine());
-                        Log.Information("[SuMP] " + m_statsPort?.Describe());
-                        Log.Information("[SuMP] " + m_inventoryStore?.StatusLine());
-                        Log.Information("[SuMP] " + m_explosionModule?.StatusLine());
-                        Log.Information("[SuMP] " + m_burnAwayModule?.StatusLine());
-                        Log.Information("[SuMP] " + m_campfireModule?.StatusLine());
-                        Log.Information("[SuMP] " + m_campfirePresenter?.Describe() + " · " +
+                        ModLog.Info("[SuMP] " + m_sessionModule?.StatusLine());
+                        ModLog.Info("[SuMP] " + m_terrainModule?.StatusLine());
+                        ModLog.Info("[SuMP] " + m_avatarModule?.StatusLine());
+                        ModLog.Info("[SuMP] " + m_skinModule?.StatusLine());
+                        ModLog.Info("[SuMP] " + m_actionModule?.StatusLine());
+                        ModLog.Info("[SuMP] " + m_statsModule?.StatusLine());
+                        ModLog.Info("[SuMP] " + m_statsPort?.Describe());
+                        ModLog.Info("[SuMP] " + m_inventoryStore?.StatusLine());
+                        ModLog.Info("[SuMP] " + m_explosionModule?.StatusLine());
+                        ModLog.Info("[SuMP] " + m_burnAwayModule?.StatusLine());
+                        ModLog.Info("[SuMP] " + m_campfireModule?.StatusLine());
+                        ModLog.Info("[SuMP] " + m_campfirePresenter?.Describe() + " · " +
                             m_terrainModule?.Bridge.BlockBehaviorNotify.Describe());
-                        Log.Information("[SuMP] " + m_furnacePresenter?.Describe());
-                        Log.Information("[SuMP] " + m_entityModule?.StatusLine());
-                        Log.Information("[SuMP] " + m_blockUseModule?.StatusLine());
-                        Log.Information("[SuMP] " + m_furnitureModule?.StatusLine());
-                        Log.Information("[SuMP] " + m_editableModule?.StatusLine());
-                        Log.Information("[SuMP] " + m_remoteAudioModule?.StatusLine());
-                        Log.Information("[SuMP] " + m_ambientSoundModule?.StatusLine());
-                        Log.Information("[SuMP] " + m_voiceModule?.StatusLine());
-                        Log.Information("[SuMP] " + m_waterSplashModule?.StatusLine());
-                        Log.Information("[SuMP] " + m_projectileHitModule?.StatusLine());
-                        Log.Information("[SuMP] " + m_pistonModule?.StatusLine());
-                        Log.Information("[SuMP] " + m_creatureModule?.StatusLine());
-                        Log.Information("[SuMP] " + m_creatureWorld?.StatusLine());
-                        Log.Information("[SuMP] " + m_nameRoller?.StatusLine());
-                        Log.Information("[SuMP] 交互距离：serverMax=" +
+                        ModLog.Info("[SuMP] " + m_furnacePresenter?.Describe());
+                        ModLog.Info("[SuMP] " + m_entityModule?.StatusLine());
+                        ModLog.Info("[SuMP] " + m_blockUseModule?.StatusLine());
+                        ModLog.Info("[SuMP] " + m_furnitureModule?.StatusLine());
+                        ModLog.Info("[SuMP] " + m_editableModule?.StatusLine());
+                        ModLog.Info("[SuMP] " + m_remoteAudioModule?.StatusLine());
+                        ModLog.Info("[SuMP] " + m_ambientSoundModule?.StatusLine());
+                        ModLog.Info("[SuMP] " + m_voiceModule?.StatusLine());
+                        ModLog.Info("[SuMP] " + m_waterSplashModule?.StatusLine());
+                        ModLog.Info("[SuMP] " + m_projectileHitModule?.StatusLine());
+                        ModLog.Info("[SuMP] " + m_pistonModule?.StatusLine());
+                        ModLog.Info("[SuMP] " + m_creatureModule?.StatusLine());
+                        ModLog.Info("[SuMP] " + m_creatureWorld?.StatusLine());
+                        ModLog.Info("[SuMP] " + m_nameRoller?.StatusLine());
+                        ModLog.Info("[SuMP] 交互距离：serverMax=" +
                             m_reachGate.ServerMaxMeters.ToString("0.##",
                                 CultureInfo.InvariantCulture) + "m · " +
                             m_reachGate.Counters.Describe());
-                        Log.Information("[SuMP] " + m_fusePresenter?.Describe());
-                        Log.Information("[SuMP] ui-drop: installedDragHosts=" +
+                        ModLog.Info("[SuMP] " + m_fusePresenter?.Describe());
+                        ModLog.Info("[SuMP] ui-drop: installedDragHosts=" +
                             (m_uiDropAttacher?.InstalledCount ?? 0));
-                        Log.Information("[SuMP] HUD: " +
+                        ModLog.Info("[SuMP] HUD: " +
                             (m_voiceHud?.DescribeCounters() ?? "voice-hud=n/a") + " · " +
                             (m_uiAttacher?.DescribeCounters() ?? "room-ui=n/a") + " · " +
                             (m_voiceMuteTable?.DescribeCounters() ?? "vo=n/a") +
                             " · frameSteps=" + m_frameStepFailureTotal + " [" +
                             DescribeFrameStepCounters() + "]");
                         if (m_debugMirror != null && m_debugMirror.IsConfigured)
-                            Log.Information("[SuMP] " + m_debugMirror.StatusLine() + " · " +
+                            ModLog.Info("[SuMP] " + m_debugMirror.StatusLine() + " · " +
                                 (m_debugMirrorHud?.DescribeCounters() ?? "debug-mirror-ui=n/a"));
                         if (m_mirrorCharacter != null && m_mirrorCharacter.IsConfigured)
-                            Log.Information("[SuMP] " + m_mirrorCharacter.StatusLine());
+                            ModLog.Info("[SuMP] " + m_mirrorCharacter.StatusLine());
                         if (m_mirrorHost != null && m_mirrorHost.IsConfigured)
-                            Log.Information("[SuMP] " + m_mirrorHost.StatusLine());
+                            ModLog.Info("[SuMP] " + m_mirrorHost.StatusLine());
                         if (m_clientView != null && m_clientView.IsConfigured)
-                            Log.Information("[SuMP] " + m_clientView.StatusLine());
+                            ModLog.Info("[SuMP] " + m_clientView.StatusLine());
                         if (m_uiStateModule != null)
-                            Log.Information("[SuMP] " + m_uiStateModule.StatusLine() +
+                            ModLog.Info("[SuMP] " + m_uiStateModule.StatusLine() +
                                 " · unsupportedTypes=" + m_uiStateModule.DescribeUnsupported());
                     }
                 }
@@ -1465,7 +1477,7 @@ namespace SuMultiplayer
             // 自动客户端分屏同属调试开关（世界文件），默认关闭；关闭时立刻拆掉已建的视图。
             m_clientView?.ApplyConfiguration(m_debugMirrorWorldSettings.ClientView,
                 m_debugMirrorWorldSettings.ClientViewClient);
-            Log.Information("[SuMP] 世界调试配置（镜像/自动分屏）：" + note);
+            ModLog.Info("[SuMP] 世界调试配置（镜像/自动分屏）：" + note);
         }
 
         /// <summary>换世界时重读 &lt;世界目录&gt;/SuMultiplayerWorld.json（加入审批设置）。</summary>
@@ -1477,13 +1489,13 @@ namespace SuMultiplayer
             if (project == null)
             {
                 m_worldJoinSettings = new WorldJoinSettings();
-                Log.Information("[SuMP] 加入审批：世界已卸载 → 回到默认（手动审批）");
+                ModLog.Info("[SuMP] 加入审批：世界已卸载 → 回到默认（手动审批）");
                 return;
             }
             string directory = project.FindSubsystem<SubsystemGameInfo>(false)?.DirectoryName ??
                 string.Empty;
             m_worldJoinSettings = WorldJoinSettings.Load(directory, out string note);
-            Log.Information("[SuMP] 加入审批配置：" + note);
+            ModLog.Info("[SuMP] 加入审批配置：" + note);
         }
 
         /// <summary>
@@ -1540,7 +1552,7 @@ namespace SuMultiplayer
                 bool enqueued = Queue.TryEnqueue(Requests.HostRequestKind.Join, clientId,
                     label, shortIdentity, Time.RealTime, decided,
                     out Requests.HostRequestEntry entry);
-                Log.Information("[SuMP][join-approval] 加入请求入队：" + clientId + " · " + label +
+                ModLog.Info("[SuMP][join-approval] 加入请求入队：" + clientId + " · " + label +
                     " · 身份=" + shortIdentity + " → " + (enqueued
                         ? "队列 " + Queue.Describe()
                         : "队列已满（容量 " + Requests.HostRequestQueue.Capacity + "）→ 按 busy 拒绝"));
@@ -1567,13 +1579,13 @@ namespace SuMultiplayer
                         {
                             if (kind == "Allow")
                             {
-                                Log.Information("[SuMP][join-approval] 主机同意加入：clientId=" +
+                                ModLog.Info("[SuMP][join-approval] 主机同意加入：clientId=" +
                                     entry.ClientId + " · " + entry.Name);
                                 Queue.Approve(entry.Id, string.Empty);
                             }
                             else if (kind == "Reject")
                             {
-                                Log.Information("[SuMP][join-approval] 主机拒绝加入：clientId=" +
+                                ModLog.Info("[SuMP][join-approval] 主机拒绝加入：clientId=" +
                                     entry.ClientId + " · " + entry.Name);
                                 Queue.Reject(entry.Id, "主机拒绝了加入请求");
                             }
@@ -1581,7 +1593,7 @@ namespace SuMultiplayer
                             {
                                 // Later：条目留在队列（TerrainSync 暂停该连接的审批超时），
                                 // 由 IF 按钮的请求队列页随时再弹出。
-                                Log.Information("[SuMP][join-approval] 主机稍后处理：clientId=" +
+                                ModLog.Info("[SuMP][join-approval] 主机稍后处理：clientId=" +
                                     entry.ClientId + " · " + entry.Name + "（条目留在队列）");
                                 Queue.Hold(entry.Id);
                             }
@@ -1799,16 +1811,19 @@ namespace SuMultiplayer
             m_voiceAudio = null;
             m_voiceHud = null;
             m_voiceMuteTable = null;
-            Log.Information("[SuMP] " + ModIdentifier + " 已卸载");
+            ModLog.FlushAll();
+            ModLog.Info("[SuMP] " + ModIdentifier + " 已卸载");
         }
 
         /// <summary>模块日志出口：模块不直接依赖引擎日志。</summary>
         private sealed class GameDiagnostics : IModuleDiagnostics
         {
-            public void Info(string moduleId, string message) => Log.Information("[SuMP][" + moduleId + "] " + message);
-            public void Warn(string moduleId, string message) => Log.Warning("[SuMP][" + moduleId + "] " + message);
+            public void Info(string moduleId, string message) =>
+                ModLog.Info("[" + moduleId + "] " + message);
+            public void Warn(string moduleId, string message) =>
+                ModLog.Warn("[" + moduleId + "] " + message);
             public void Error(string moduleId, string message, Exception exception) =>
-                Log.Error("[SuMP][" + moduleId + "] " + message + (exception == null ? "" : " :: " + exception));
+                ModLog.Error("[" + moduleId + "] " + message, exception);
         }
     }
 }

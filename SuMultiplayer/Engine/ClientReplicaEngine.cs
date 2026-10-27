@@ -42,6 +42,7 @@ namespace SuMultiplayer.Engine
         private ClientRangeResolver m_rangeResolver;
         private double m_initialGameTime;
         private long m_worldInfoApplied;
+        private long m_lastHostWeatherLogMs;
         private int m_lastLightningRevision = -1;
         private int m_lastAppliedLightningRevision = -1;
         private string m_lastLightningPosition = string.Empty;
@@ -176,7 +177,7 @@ namespace SuMultiplayer.Engine
         private void MaybeLogDropSummary()
         {
             if (m_authority.Drops.TryTakeSummary(Environment.TickCount64, out string summary))
-                Log.Information(summary);
+                ModLog.VerboseInfo(summary);
         }
 
         public string EditStats => m_authority.Describe();
@@ -232,7 +233,7 @@ namespace SuMultiplayer.Engine
             return true;
         }
 
-        private static void CaptureWeather(Project project, WorldInfoSnapshot result)
+        private void CaptureWeather(Project project, WorldInfoSnapshot result)
         {
             SubsystemWeather weather = project.FindSubsystem<SubsystemWeather>(false);
             if (weather == null) return;
@@ -242,6 +243,15 @@ namespace SuMultiplayer.Engine
             result.FogProgress = weather.FogProgress;
             result.FogIntensity = weather.FogIntensity;
             result.FogSeed = weather.FogSeed;
+            long nowLog = Environment.TickCount64;
+            if (nowLog - m_lastHostWeatherLogMs >= 10000)
+            {
+                m_lastHostWeatherLogMs = nowLog;
+                ModLog.VerboseInfo("[SuMP][fog] 主机雾状态：intensity=" +
+                    weather.FogIntensity.ToString("F2") + " progress=" +
+                    weather.FogProgress.ToString("F3") + " started=" + weather.IsFogStarted +
+                    " seed=" + weather.FogSeed);
+            }
             // 2026-10-26：把主机的**实际** ramp 带下来（自然雾几十秒级 ≠ 手动雾 3s）。
             // 客户端翻转时写主机值，浓度推进速率与主机一致（此前硬编码 3s = 漂移根因）。
             result.FogRampTime = Member(weather, "m_fogRampTime", typeof(SubsystemWeather)) is float fogRamp
@@ -393,12 +403,24 @@ namespace SuMultiplayer.Engine
             // SuSubsystemWeather 客户端副本的引擎同款 ramp 数学（UpdateClientVisualRamp）。
             // 首次（换世界 / 加入）仍直接对齐一次强度值，中途加入不用从 0 慢慢爬。
             bool first = !ReferenceEquals(m_weatherProject, project);
-            if (first) m_weatherProject = project;
+            if (first)
+            {
+                m_weatherProject = project;
+                ModLog.VerboseInfo("[SuMP][fog] 客户端首次天气快照：started=" + snapshot.FogStarted +
+                    " intensity=" + snapshot.FogIntensity.ToString("F2") + " progress=" +
+                    snapshot.FogProgress.ToString("F3") + " ramp=" +
+                    snapshot.FogRampTime.ToString("F1") + " 本地 intensity=" +
+                    weather.FogIntensity.ToString("F2"));
+            }
             bool precip = snapshot.PrecipitationStarted;
             bool fog = snapshot.FogStarted;
             if (!first && precip == m_lastPrecipStarted && fog == m_lastFogStarted)
             {
-                return; // 状态没翻转：窗口与强度都不动，本地 ramp 连续推进
+                // 状态没翻转时本地 ramp 连续推进；但网络丢包 / 客户端中途加入若把雾强度
+                // 留在旧值，会表现为“只有 C1 雾很浓、其他端能看很远”。这里做低敏感度
+                // 对账：只有明显大于过渡误差才纠正，避免把 2Hz 快照重新变成每帧硬写。
+                ReconcileWeatherDrift(weather, snapshot, fog);
+                return;
             }
             double now = totalElapsed;
             int failures = 0;
@@ -425,8 +447,19 @@ namespace SuMultiplayer.Engine
                 {
                     if (!SetMember(weather, "m_fogStartTime", now, typeof(SubsystemWeather))) failures++;
                     if (!SetMember(weather, "m_fogEndTime", double.PositiveInfinity, typeof(SubsystemWeather))) failures++;
+                    // 客户端不能用自己的 fogStart 重算 FogSeed：那会让每端的雾密度随机因子不同。
+                    if (!SetMember(weather, "FogSeed", snapshot.FogSeed, typeof(SubsystemWeather)))
+                        failures++;
                 }
-                else if (!SetMember(weather, "m_fogEndTime", now + 3.0, typeof(SubsystemWeather))) failures++;
+                else
+                {
+                    if (!SetMember(weather, "m_fogEndTime", now + 3.0, typeof(SubsystemWeather)))
+                        failures++;
+                    // 状态已明确结束：本地强度必须立刻归零（客户端不跑 base.Update，
+                    // 不能指望本地 ramp 一定还能把旧浓度降下来）。
+                    if (!SetMember(weather, "FogIntensity", 0f, typeof(SubsystemWeather)))
+                        failures++;
+                }
                 if (first)
                 {
                     if (!SetMember(weather, "FogIntensity", snapshot.FogIntensity, typeof(SubsystemWeather))) failures++;
@@ -443,6 +476,68 @@ namespace SuMultiplayer.Engine
                 m_weatherFailureLogged = true;
                 Log.Warning("[SuMP] 客户端应用世界信息时有 " + failures +
                     " 个天气字段写入失败（引擎字段名变化？）→ 已计数，天气仍以主机下发为准");
+            }
+        }
+
+        /// <summary>
+        /// 状态未翻转时的雾/降水对账：客户端本地是连续 ramp，正常情况下与主机快照只差
+        /// 一点网络延迟；差异超过阈值才纠正。专门兜住 C1 中途加入 / 丢包导致雾强度长期停留在
+        /// 旧值（实机：C1 只能看到一棵树，其他端能看很远）。
+        /// </summary>
+        private void ReconcileWeatherDrift(SubsystemWeather weather, WorldInfoSnapshot snapshot,
+            bool fog)
+        {
+            int failures = 0;
+            if (!fog)
+            {
+                if (weather.FogIntensity > 0.01f)
+                {
+                    float local = weather.FogIntensity;
+                    if (!SetMember(weather, "FogIntensity", 0f, typeof(SubsystemWeather)))
+                        failures++;
+                    else
+                        ModLog.VerboseInfo("[SuMP][fog] 客户端雾对账：主机 fog=off，本地 " +
+                            local.ToString("F2") + " → 0");
+                }
+            }
+            else
+            {
+                float localFog = weather.FogIntensity;
+                float localProgress = weather.FogProgress;
+                if (MathF.Abs(localFog - snapshot.FogIntensity) > 0.01f)
+                {
+                    if (!SetMember(weather, "FogIntensity", snapshot.FogIntensity,
+                            typeof(SubsystemWeather))) failures++;
+                    else
+                        ModLog.VerboseInfo("[SuMP][fog] 客户端雾对账：本地 " + localFog.ToString("F2") +
+                            " → 主机 " + snapshot.FogIntensity.ToString("F2"));
+                }
+                if (weather.FogSeed != snapshot.FogSeed &&
+                    !SetMember(weather, "FogSeed", snapshot.FogSeed, typeof(SubsystemWeather)))
+                    failures++;
+                if (MathF.Abs(localProgress - snapshot.FogProgress) > 0.005f)
+                {
+                    if (!SetMember(weather, "FogProgress", snapshot.FogProgress,
+                            typeof(SubsystemWeather))) failures++;
+                    else
+                        ModLog.VerboseInfo("[SuMP][fog] 客户端雾进度对账：本地 " +
+                            localProgress.ToString("F3") + " → 主机 " +
+                            snapshot.FogProgress.ToString("F3"));
+                }
+            }
+            if (MathF.Abs(weather.PrecipitationIntensity - snapshot.PrecipitationIntensity) > 0.05f &&
+                !SetMember(weather, "PrecipitationIntensity", snapshot.PrecipitationIntensity,
+                    typeof(SubsystemWeather)))
+                failures++;
+            if (failures > 0)
+            {
+                m_weatherFieldFailures += failures;
+                if (!m_weatherFailureLogged)
+                {
+                    m_weatherFailureLogged = true;
+                    Log.Warning("[SuMP] 客户端雾/降水对账有 " + failures +
+                        " 个字段写入失败（引擎字段名变化？）→ 已计数");
+                }
             }
         }
 
@@ -537,7 +632,7 @@ namespace SuMultiplayer.Engine
             m_randomAppliedFields = applied;
             m_randomMissingFields = missing;
             m_randomApplyRuns++;
-            Log.Information("[SuMP] 随机数状态已应用（每个 Project 一次）：seed=" +
+            ModLog.VerboseInfo("[SuMP] 随机数状态已应用（每个 Project 一次）：seed=" +
                 m_pendingRandomSeed + " · 字段 " + applied + " · 主机表 " +
                 m_pendingRandomStates.Count + " · 缺失/只读 " + missing +
                 " · 第 " + m_randomApplyRuns + " 次");

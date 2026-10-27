@@ -330,7 +330,7 @@ namespace SuMultiplayer.Engine
             m_lastLoggedStale = m_state.StaleSwept;
             m_lastLoggedHostEvents = m_hostEvents;
             m_lastLoggedChunkForgets = m_chunkForgets;
-            Log.Information("[SuMP] " + Describe());
+            ModLog.Info("[SuMP] " + Describe());
         }
 
         private void LogProblemOnce(string message)

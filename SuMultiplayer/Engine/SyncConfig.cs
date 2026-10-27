@@ -29,7 +29,7 @@ namespace SuMultiplayer.Engine
     {
         public int Port = 26760;
         public int Radius = 3;
-        public bool VerboseLog = true;
+        public bool VerboseLog = false;
         /// <summary>主机侧是否把收到的客户端位置当作兴趣中心（实机 MVP 里两端各跑一个世界，故允许）。</summary>
         public bool TrustClientCenter = true;
 

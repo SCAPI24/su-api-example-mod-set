@@ -87,8 +87,8 @@ namespace SuMultiplayer.Session
         private readonly List<string> m_order = new List<string>();
         private string m_selectedKey;
 
-        /// <summary>超过这个时间没再被发现的房间视为离线（不立刻删除，便于"选择不跳"。</summary>
-        public int StaleMs { get; set; } = 15000;
+        /// <summary>超过这个时间没再被发现的房间视为离线（用户口径：5 秒）。</summary>
+        public int StaleMs { get; set; } = 5000;
 
         public int Count => m_entries.Count;
 

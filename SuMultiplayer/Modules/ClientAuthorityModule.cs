@@ -219,6 +219,9 @@ namespace SuMultiplayer.Modules
                             "；旧序号的回执不再匹配）");
                     }
                     m_lastLocalClientId = localClientId;
+                    // 新连接 = 新主机会话：主机的 WorldTimeRevision 可能从 1 重新开始。
+                    // 不复位副本会把所有新快照当成 stale 丢弃，天气/雾就永远停在下载世界里的旧值。
+                    if (m_weatherReplica.HasAuthoritative) m_weatherReplica.Reset();
                 }
             }
             else
@@ -518,7 +521,9 @@ namespace SuMultiplayer.Modules
                 " reverifyUnavailable=" + m_editReverifyUnavailable.ToString(CultureInfo.InvariantCulture) +
                 " captureIgnored=" + m_editCaptureIgnored.ToString(CultureInfo.InvariantCulture) +
                 " clientResets=" + m_clientResetCount.ToString(CultureInfo.InvariantCulture) +
-                " gate=" + (m_edit == null ? "n/a" : (m_edit.IsClientReplica ? "client" : "authority"));
+                " gate=" + (m_edit == null ? "n/a" : (m_edit.IsClientReplica ? "client" : "authority")) +
+                (m_weatherReplica.HasAuthoritative ? " · " + m_weatherReplica.Describe()
+                    : " · worldinfo=waiting");
         }
 
         private void NoteProblem(string message)

@@ -400,7 +400,7 @@ namespace SuMultiplayer.Engine
             m_lastFireSummarySkipped = skipped;
             m_lastFireSummaryDuplicates = duplicates;
             m_lastFireSummaryMs = now;
-            Log.Information("[SuMP] fireDataCapture: fireCellCaptured +" + deltaCaptured +
+            ModLog.Info("[SuMP] fireDataCapture: fireCellCaptured +" + deltaCaptured +
                 "（累计 " + captured + "） · fireCellSkipped +" + deltaSkipped + "（累计 " + skipped +
                 "） · fireCellDuplicates +" + deltaDuplicates + "（累计 " + duplicates + "） · 候选格 " +
                 m_captureState.FireCandidateCells + "（上限命中 " + m_captureState.FireCandidateCapHits +
@@ -491,7 +491,7 @@ namespace SuMultiplayer.Engine
             m_lastFuseSummarySkipped = skipped;
             m_lastFuseSummaryDuplicates = duplicates;
             m_lastFuseSummaryMs = now;
-            Log.Information("[SuMP] fuseDataCapture: fuseCellCaptured +" + deltaCaptured +
+            ModLog.Info("[SuMP] fuseDataCapture: fuseCellCaptured +" + deltaCaptured +
                 "（累计 " + captured + "） · fuseCellSkipped +" + deltaSkipped + "（累计 " + skipped +
                 "） · fuseCellDuplicates +" + deltaDuplicates + "（累计 " + duplicates + "） · 候选格 " +
                 m_captureState.FuseCandidateCells + "（上限命中 " + m_captureState.FuseCandidateCapHits +
@@ -523,7 +523,7 @@ namespace SuMultiplayer.Engine
             m_lastFluidSummarySkipped = skipped;
             m_lastFluidSummaryDuplicates = duplicates;
             m_lastFluidSummaryMs = now;
-            Log.Information("[SuMP] fluidDataCapture: fluidDataBroadcasts +" + deltaBroadcasts +
+            ModLog.Info("[SuMP] fluidDataCapture: fluidDataBroadcasts +" + deltaBroadcasts +
                 "（累计 " + broadcasts + "） · fluidDataSkipped +" + deltaSkipped + "（累计 " + skipped +
                 "） · fluidDataDuplicates +" + deltaDuplicates + "（累计 " + duplicates + "） · 候选格 " +
                 m_captureState.FluidCandidateCells + "（上限命中 " + m_captureState.FluidCandidateCapHits +
@@ -587,7 +587,7 @@ namespace SuMultiplayer.Engine
             m_lastEvolutionSummaryRescueCalls = calls;
             m_lastEvolutionSummaryDropped = dropped;
             m_lastEvolutionSummaryMs = now;
-            Log.Information("[SuMP] evolutionDataCapture: evolutionCellCaptured +" + deltaCaptured +
+            ModLog.Info("[SuMP] evolutionDataCapture: evolutionCellCaptured +" + deltaCaptured +
                 "（累计 " + captured + "） · evolutionCellDuplicates +" + deltaDuplicates +
                 "（累计 " + duplicates + "） · evolutionRescueCalls +" + deltaCalls +
                 "（累计 " + calls + "） · 待下发 " + m_captureState.PendingEvolutionCount +
@@ -637,7 +637,7 @@ namespace SuMultiplayer.Engine
             if (m_lastCoverageLogMs != 0 && now - m_lastCoverageLogMs < CoverageLogIntervalMs) return;
             m_coverageLoggedRole = role;
             m_lastCoverageLogMs = now;
-            Log.Information("[SuMP] replicaGates role=" +
+            ModLog.Info("[SuMP] replicaGates role=" +
                 (ClientReplica ? "client" : "authority") + " " +
                 ClientReplicaCoverage.DescribeAudit());
             string gaps = ClientReplicaCoverage.DescribeGaps();
@@ -650,6 +650,7 @@ namespace SuMultiplayer.Engine
 
         public long Frames => m_frames;
         public bool BridgeBound => m_bound;
+        private bool m_blockEffectObserverInstalled;
 
         // Source: Survivalcraft/Game/SubsystemTerrain.cs:SubsystemTerrain.Update
         void IUpdateable.Update(float dt)
@@ -715,6 +716,8 @@ namespace SuMultiplayer.Engine
             if (ClientReplica != bridge.ClientReplica) ClientReplica = bridge.ClientReplica;
             m_gate.ClientReplica = ClientReplica;
             MaybeLogReplicaCoverage();
+            if (!m_blockEffectObserverInstalled)
+                m_blockEffectObserverInstalled = BlockEffectObserverInstaller.TryInstall(this);
             // 客户端：先把上一帧遗留的待捕获格推进一次（读不到地形/区块未定稿/没有订阅者时才会遗留）。
             // 放在 TerrainUpdater.Update 之前：这一帧的引擎清表不会影响已交付的格子。
             if (ClientReplica) bridge.RetryDeferredClientEdits();

@@ -412,7 +412,9 @@ namespace SuMultiplayer.Modules
 
         public void Tick(in ModuleTickContext tick)
         {
-            long nowMs = (long)(tick.Now * 1000.0);
+            // RoomDirectory / m_join 的 LastSeen 全部用 Environment.TickCount64 写入；
+            // 这里必须用同一时间基，否则 LastSeen 看起来在未来，超时房间永远不会被清掉。
+            long nowMs = Environment.TickCount64;
             DrainServerCatalog(nowMs);
             if (m_beaconClient == null) return;
             int removed = m_directory.RemoveStale(nowMs);

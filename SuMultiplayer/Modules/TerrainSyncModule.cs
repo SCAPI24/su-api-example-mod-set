@@ -79,6 +79,11 @@ namespace SuMultiplayer.Modules
         private Project m_shellProject;
         private bool m_shellMissingLogged;
         private bool m_verbose;
+        // verbose 的区块生命周期日志限流：退出世界会在同一毫秒释放数百块，
+        // 每条 Flush 都会卡平板主线程。只保留每秒前 8 条，下一拍写省略计数摘要。
+        private long m_chunkLogSecond = -1;
+        private int m_chunkLogInSecond;
+        private int m_chunkLogSuppressed;
         /// <summary>
         /// 联机角色视图（由联机角色模块在 Attach 时接到传输端口上）。
         /// 地形模块靠它按**旧实现的规则**挑"本机玩家"（PlayersData 里不是网络化身的那一条）
@@ -1026,6 +1031,7 @@ namespace SuMultiplayer.Modules
         public void Tick(in ModuleTickContext tick)
         {
             if (!m_attached) return;
+            FlushChunkLogSuppression();
             WireShell();
             // 主线程泵：派发入站消息 + 产生区块加载/卸载事件。
             // 放在 tick（而不是 SuSubsystemTerrain.Update）是为了**主菜单也能跑**——
@@ -2305,21 +2311,52 @@ namespace SuMultiplayer.Modules
             return false;
         }
 
+        private bool AllowVerboseChunkLog()
+        {
+            long second = Environment.TickCount64 / 1000L;
+            if (second != m_chunkLogSecond)
+            {
+                if (m_chunkLogSuppressed > 0)
+                    Log("区块生命周期日志限流：上一秒省略 " + m_chunkLogSuppressed +
+                        " 条（退出世界 / 大批卸载时避免逐条 Flush 卡顿）");
+                m_chunkLogSecond = second;
+                m_chunkLogInSecond = 0;
+                m_chunkLogSuppressed = 0;
+            }
+            if (m_chunkLogInSecond < 8)
+            {
+                m_chunkLogInSecond++;
+                return true;
+            }
+            m_chunkLogSuppressed++;
+            return false;
+        }
+
+        private void FlushChunkLogSuppression()
+        {
+            if (m_chunkLogSuppressed <= 0) return;
+            Log("区块生命周期日志限流：本秒省略 " + m_chunkLogSuppressed +
+                " 条（退出世界 / 大批卸载时避免逐条 Flush 卡顿）");
+            m_chunkLogSuppressed = 0;
+        }
+
         private void HandleChunkAllocated(ChunkKey key)
         {
             // 客户端：块进入引擎内存（内容可能还没定稿）→ 实时地图的客户端线框集合（v8）。
             // 与"块加载完"分开：海洋 / 水面块会先出现在这里，内容定稿后才走 HandleChunkLoaded。
             m_clientSync?.OnMemoryChunkAllocated(key);
-            if (m_verbose) Log("区块分配（进入内存）" + key + "（内存区块 " + m_bridge.AllocatedCount +
-                " · 常驻 " + m_bridge.ResidentCount + "）");
+            if (m_verbose && AllowVerboseChunkLog())
+                Log("区块分配（进入内存）" + key + "（内存区块 " + m_bridge.AllocatedCount +
+                    " · 常驻 " + m_bridge.ResidentCount + "）");
         }
 
         private void HandleChunkFreed(ChunkKey key)
         {
             // 客户端：块被引擎释放（离开内存）→ 从实时地图线框集合里移除（v8）。
             m_clientSync?.OnMemoryChunkFreed(key);
-            if (m_verbose) Log("区块释放（离开内存）" + key + "（内存区块 " + m_bridge.AllocatedCount +
-                " · 常驻 " + m_bridge.ResidentCount + "）");
+            if (m_verbose && AllowVerboseChunkLog())
+                Log("区块释放（离开内存）" + key + "（内存区块 " + m_bridge.AllocatedCount +
+                    " · 常驻 " + m_bridge.ResidentCount + "）");
         }
 
         /// <summary>
@@ -2346,15 +2383,17 @@ namespace SuMultiplayer.Modules
         {
             // 客户端：块加载完 → 算一次摘要上报（这是唯一算摘要的时刻；与内存区块集合无关）
             if (m_clientSync != null) m_clientSync.OnChunkLoaded(key);
-            if (m_verbose) Log("区块加载（内容可用）" + key + "（常驻 " + m_bridge.ResidentCount +
-                " · 内存区块 " + m_bridge.AllocatedCount + "）");
+            if (m_verbose && AllowVerboseChunkLog())
+                Log("区块加载（内容可用）" + key + "（常驻 " + m_bridge.ResidentCount +
+                    " · 内存区块 " + m_bridge.AllocatedCount + "）");
         }
 
         private void HandleChunkUnloaded(ChunkKey key)
         {
             m_clientSync?.OnChunkUnloaded(key);
-            if (m_verbose) Log("区块内容不再可用 " + key + "（常驻 " + m_bridge.ResidentCount +
-                " · 内存区块 " + m_bridge.AllocatedCount + "；块仍在内存时方框保留）");
+            if (m_verbose && AllowVerboseChunkLog())
+                Log("区块内容不再可用 " + key + "（常驻 " + m_bridge.ResidentCount +
+                    " · 内存区块 " + m_bridge.AllocatedCount + "；块仍在内存时方框保留）");
         }
 
         private void HandleHostCellChanged(ChunkKey key, CellEdit edit)

@@ -413,7 +413,7 @@ namespace SuMultiplayer.Engine
             m_lastLoggedRemoved = m_state.Removed;
             m_lastLoggedStale = m_state.StaleSwept;
             m_lastLoggedSkippedChunk = m_skippedChunk;
-            Log.Information("[SuMP] " + Describe());
+            ModLog.Info("[SuMP] " + Describe());
         }
 
         private void LogProblemOnce(ref bool logged, string message)
