@@ -163,7 +163,15 @@ namespace SuMultiplayer.UI
             m_selectedKey = KeyOf(selected);
             bool isRoom = selected is RoomRow;
             Children.Find("Play").IsEnabled = selected != null;
-            Children.Find("Properties").IsEnabled = selected != null && !isRoom;
+            RoomRow personalRow = selected as RoomRow;
+            bool isPersonalRoom = personalRow != null &&
+                personalRow.Entry?.Source == RoomSource.Personal;
+            Children.Find("Properties").IsEnabled = selected != null && (!isRoom || isPersonalRoom);
+            // 右下角三点按钮的原文案是 "..."（Pak/Screens/PlayScreen.xml）。
+            // 只有选中个人服务器时才临时变成 "Remove"，其它情况必须还原成三点。
+            ButtonWidget propertiesButton = Children.Find<ButtonWidget>("Properties");
+            if (propertiesButton != null)
+                propertiesButton.Text = isPersonalRoom ? "Remove" : "...";
             if (Children.Find<ButtonWidget>("Play")?.IsClicked == true && selected != null)
                 ActivateWorld(selected);
             if (Children.Find<ButtonWidget>("NewWorld").IsClicked)
@@ -180,8 +188,28 @@ namespace SuMultiplayer.UI
                     m_list.SelectedItem = null;
                 }
             }
-            if (Children.Find<ButtonWidget>("Properties").IsClicked && selected is WorldInfo worldInfo)
-                ScreensManager.SwitchScreen("ModifyWorld", worldInfo.DirectoryName, worldInfo.WorldSettings);
+            if (Children.Find<ButtonWidget>("Properties").IsClicked)
+            {
+                if (selected is WorldInfo worldInfo)
+                {
+                    ScreensManager.SwitchScreen("ModifyWorld", worldInfo.DirectoryName,
+                        worldInfo.WorldSettings);
+                }
+                else if (isPersonalRoom && personalRow?.Entry != null)
+                {
+                    RoomEntry removing = personalRow.Entry;
+                    DialogsManager.ShowDialog(null, new MessageDialog("Remove Personal Server",
+                        "Remove \"" + removing.Name + " (" + removing.DisplayAddress + ")\"?",
+                        "Remove", "Cancel", delegate (MessageDialogButton button)
+                        {
+                            if (button != MessageDialogButton.Button1) return;
+                            if (!m_rooms.RemovePersonalServer(removing))
+                                ShowMessage("Remove Personal Server",
+                                    "The personal server could not be removed.");
+                            RebuildListIfNeeded();
+                        }));
+                }
+            }
             if (base.Input.Back || base.Input.Cancel || Children.Find<ButtonWidget>("TopBar.Back").IsClicked)
             {
                 ScreensManager.SwitchScreen("MainMenu");
@@ -308,7 +336,8 @@ namespace SuMultiplayer.UI
             {
                 // 房间行：名字 + 房间详情。**这一行必须全英文** —— Play 屏用的是游戏界面字体，
                 // 没有中文字形（中文会渲染成下划线），旧实现 SuPlayScreen 用的也是英文口径。
-                name.Text = string.IsNullOrEmpty(row.Entry?.Name) ? "(unnamed room)" : row.Entry.Name;
+                name.Text = string.IsNullOrEmpty(row.Entry?.Name) ? "(unnamed room)" :
+                    FormatRoomDisplayName(row.Entry);
                 details.Text = DescribeRoom(row.Entry);
                 return;
             }
@@ -379,16 +408,41 @@ namespace SuMultiplayer.UI
         /// 世界名 | 人数 | 模式 | 在线/服务（延迟）。**只用 ASCII**，中文会变成下划线。
         /// </summary>
         // Source: Mod/ScMultiplayer/Func/Screen/SuPlayScreen.cs:SuPlayScreen.UpdateWorldItemWidget
+        private static string FormatRoomDisplayName(RoomEntry entry)
+        {
+            if (entry == null) return string.Empty;
+            // 旧联机 Mod 的房间行口径：ServerDns / 个人服务器在名称后补来源地址，便于区分同名房间。
+            // 例：Kaikai (Suceru.site) / Kaitlin (waiwai.com:2984)；LAN 行只显示房间名。
+            if (entry.Source == RoomSource.Lan || string.IsNullOrEmpty(entry.DisplayAddress))
+                return entry.Name ?? string.Empty;
+            return (entry.Name ?? string.Empty) + " (" + entry.DisplayAddress + ")";
+        }
+
+        // Source: Mod/ScMultiplayer/Func/Screen/SuPlayScreen.cs:UpdateWorldItemWidget
+        // 旧格式：大小 | 日期 | 人数 | 游戏模式 | 环境模式 [| (版本)] [| Service/Online (Ping)]
         private static string DescribeRoom(RoomEntry entry)
         {
             if (entry == null) return string.Empty;
-            string world = string.IsNullOrEmpty(entry.WorldName) ? "(unknown world)" : entry.WorldName;
-            string players = entry.PlayerCount + "/" +
-                (entry.MaxPlayers > 0 ? entry.MaxPlayers.ToString() : "?") + " players";
+            if (entry.Source == RoomSource.Personal && !entry.Online)
+                return "Net World | Offline (Ping -)";
+            string size = entry.WorldSizeBytes > 0
+                ? DataSizeFormatter.Format(entry.WorldSizeBytes, 2)
+                : "-";
+            string date = entry.LastSaveTimeUtc > DateTime.MinValue
+                ? entry.LastSaveTimeUtc.ToLocalTime().ToString("dd MMM yyyy HH:mm")
+                : "-";
+            string players = entry.PlayerCount > 1
+                ? entry.PlayerCount + " players"
+                : entry.PlayerCount == 1 ? "1 player" : "-";
             string mode = string.IsNullOrEmpty(entry.GameMode) ? "-" : entry.GameMode;
+            string environment = string.IsNullOrEmpty(entry.EnvironmentMode) ? "-" : entry.EnvironmentMode;
+            string text = size + " | " + date + " | " + players + " | " + mode + " | " + environment;
+            if (!string.IsNullOrEmpty(entry.SerializationVersion) &&
+                !string.Equals(entry.SerializationVersion, VersionsManager.SerializationVersion,
+                    StringComparison.Ordinal))
+                text += " | (" + entry.SerializationVersion + ")";
             string ping = entry.PingMs >= 0 ? entry.PingMs + "ms" : "unknown";
-            return world + " | " + players + " | " + mode + " | " + entry.SourceLabel +
-                   " (Ping " + ping + ")";
+            return text + " | " + entry.SourceLabel + " (Ping " + ping + ")";
         }
 
         private void UpdateJoinDialog()

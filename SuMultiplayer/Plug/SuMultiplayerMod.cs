@@ -1,16 +1,19 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using Engine;
 using Game;
 using GameEntitySystem;
 using SuAPI;
+using SuAPICore;
 using TemplatesDatabase;
 using SuMultiplayer.Creatures;
 using SuMultiplayer.Engine;
 using SuMultiplayer.Modules;
 using SuMultiplayer.Net;
 using SuMultiplayer.Players;
+using SuMultiplayer.Session;
 using SuMultiplayer.Terrain;
 using SuMultiplayer.UI;
 using SuMultiplayer.Voice;
@@ -41,6 +44,8 @@ namespace SuMultiplayer
         private SessionModule m_sessionModule;
         private WorldTransferModule m_transferModule;
         private PlayerAvatarModule m_avatarModule;
+        /// <summary>主机权威复活点表同步（PLAYER_SPAWN=116，方案 B）。</summary>
+        private SpawnPointSyncModule m_spawnSyncModule;
         /// <summary>联机角色引擎适配器（统计模块要按 clientId 找本机 / 联机角色，UI 要定位本机玩家）。</summary>
         private NetworkAvatarSpawner m_avatarSpawner;
         /// <summary>统计 / 成就的引擎侧端口（本机 PlayerStats 读写 + 角色记录落盘）。</summary>
@@ -264,7 +269,20 @@ namespace SuMultiplayer
             m_eventBus = eventBus;
             m_injector = modInjector;
 
+            // 个人服务器（链接添加）入口：与旧 Mod 同一 SuAPI 内容提供商。
+            try
+            {
+                SuAPICore.SuFromLinkProviders.Subscribe(eventBus,
+                    new NetWorldFromLinkProvider());
+            }
+            catch (Exception error)
+            {
+                Log.Warning("[SuMP][personal] 注册 Add Net World From Link 失败：" +
+                    error.GetType().Name + " " + error.Message);
+            }
             m_config = SyncConfig.Load(out string note);
+            ProxySettings.Load(out string proxyNote);
+            Log.Information("[SuMP][proxy] " + proxyNote);
             // 交互距离上限（可配置，默认 16 m）：allowed = min(客户端 reach + 0.5 m, 本上限)。
             // 客户端声明 500 m 也只按上限放行并计数 reachClampedToServerMax。
             m_reachGate = new InteractionReachGate(m_config.MaxInteractionReach);
@@ -291,7 +309,21 @@ namespace SuMultiplayer
             // 引擎的熔炉火焰是 behavior 自己建的本地粒子，客户端不跑引擎 behavior → 必须单独表现。
             m_furnacePresenter = new FurnaceReplicaPresentation();
             m_terrainModule.Bridge.FurnacePresenter = m_furnacePresenter;
-            m_sessionModule = new SessionModule(m_config, profileStore);
+            m_sessionModule = new SessionModule(m_config, profileStore, delegate
+            {
+                // 旧 SuPlayScreen 行字段：大小 / 最后保存时间 / 环境模式 / 序列化版本。
+                // 主机/客户端都可能调用（只有主机建房时会真正发布），拿不到就返回未知。
+                SubsystemGameInfo info = GameManager.Project?.FindSubsystem<SubsystemGameInfo>(false);
+                if (info == null) return default(RoomWorldDetails);
+                WorldInfo world = WorldsManager.WorldInfos.FirstOrDefault(candidate =>
+                    string.Equals(candidate.DirectoryName, info.DirectoryName,
+                        StringComparison.OrdinalIgnoreCase));
+                return new RoomWorldDetails(
+                    world?.Size ?? 0L,
+                    world?.LastSaveTime ?? DateTime.MinValue,
+                    info.WorldSettings.EnvironmentBehaviorMode.ToString(),
+                    world?.SerializationVersion ?? VersionsManager.SerializationVersion);
+            });
             m_transferModule = new WorldTransferModule(m_config, m_engineWorldTransfer, m_engineWorldTransfer,
             m_engineWorldTransfer);
 
@@ -313,6 +345,14 @@ namespace SuMultiplayer
             m_avatarSpawner = avatarSpawner;
             m_avatarModule = new PlayerAvatarModule(avatarSpawner,
                 new SuMultiplayerPlayersXml("player-avatar", diagnostics), profileStore, m_skinStore);
+            // 世界导出前先把联机角色记录（客户端复活点）落盘，保证中途加入客户端下载到的
+            // SuMultiplayerPlayers.xml 带其他端最新 SpawnPosition；不影响原版 Project.xml 路径。
+            m_engineWorldTransfer.BeforeExport = delegate
+            {
+                bool saved = m_avatarModule.Records.SaveIfDirty();
+                if (!saved)
+                    Log.Warning("[SuMP] 世界导出前保存 SuMultiplayerPlayers.xml 失败（角色记录保持 dirty，后续重试）");
+            };
             // 统计 / 成就：统计只有玩家自己的那一端算得准 —— 每个玩家端把自己的 PlayerStats
             // 周期上报给主机，主机按**稳定身份**写进世界作用域角色记录（SuMultiplayerPlayers.xml）
             // 并判定成就；加入 / 重连时只把**本机身份**记录里的值写回本机 PlayerStats，
@@ -616,6 +656,10 @@ namespace SuMultiplayer
             m_moduleHost.Register(m_transferModule);
             // 联机角色模块要 transport + world.transfer 两个硬依赖，所以最后注册。
             m_moduleHost.Register(m_avatarModule);
+            // 复活点表：客户端角色记录（SuMultiplayerPlayers.xml）→ 主机权威表 → 全端镜像。
+            // 主机本地角色仍以 Project.xml 为权威，不写进联机角色文件。
+            m_spawnSyncModule = new SpawnPointSyncModule(m_avatarModule, delegate { return Time.RealTime; });
+            m_moduleHost.Register(m_spawnSyncModule);
             m_moduleHost.Register(new PlayerProfileModule(m_avatarModule, m_avatarModule, delegate { return Time.RealTime; })); // 资料运行时同步：PLAYER_PROFILE_SYNC=108（主机权威）
             // 自定义皮肤：记录端口由联机角色模块提供，引擎资源端口由 PlayerSkinStore 提供。
             // 模块硬依赖 transport + player.avatars，所以必须排在联机角色模块之后。
@@ -704,6 +748,7 @@ namespace SuMultiplayer
                 return m_terrainModule.TryGetClientRange(clientId, out centerChunkX,
                     out centerChunkZ, out radiusChunks);
             });
+            m_moduleHost.RegisterPort<IWorldSnapshotInvalidatorPort>(m_transferModule);
             m_moduleHost.RegisterPort<IWorldReadyPort>(m_transferModule.ReadyPort);
             // 下载世界端口也要注册：联机角色模块靠它判断"当前玩的是不是下载来的联机世界"
             // （客户端建主机角色的前提），拿不到就会明确拒绝建角色（不做 index 兜底）。
@@ -960,6 +1005,8 @@ namespace SuMultiplayer
                 "SuMultiplayer.Engine.SuSubsystemBucketBlockBehavior");
             modInjector.RegisterBlock(FurnitureBlock.Index, typeof(SuFurnitureBlock),
                 ModIdentifier);
+            // 指南针：无磁铁时按主机权威复活点表 + 最近手部位置选目标（三端同一点）。
+            modInjector.RegisterBlock(SuMultiplayer.Engine.CompassBlock.Index, typeof(SuMultiplayer.Engine.CompassBlock), ModIdentifier);
             // 生物生成：客户端 = 不跑原生随机生成（只做主机记录的复制）；主机 = 原生模型照常跑。
             // Source: Mod/ScMultiplayer/Func/Subsystem/SuSubsystemSpawn.cs
             // Source: Mod/ScMultiplayer/Func/Subsystem/SuSubsystemCreatureSpawn.cs
@@ -1185,7 +1232,18 @@ namespace SuMultiplayer
                     throw new InvalidOperationException(
                         "没有找到 Loading 项 'Initialize PlayScreen'：Play 屏无法替换，加入房间入口缺失");
                 }
-                Log.Information("[SuMP] Play 屏已替换：局域网房间会作为世界列表里的行出现（加入房间入口）");
+                if (!Game.LoadingManager.ReplaceItem("Initialize SettingsCompatibilityScreen", delegate
+                    {
+                        ScreensManager.AddScreen("SettingsCompatibility",
+                            new SuSettingsCompatibilityScreen());
+                    }))
+                {
+                    throw new InvalidOperationException(
+                        "没有找到 Loading 项 'Initialize SettingsCompatibilityScreen'：" +
+                        "兼容性设置屏无法追加 Network Proxy 行");
+                }
+                Log.Information("[SuMP] Play 屏已替换；兼容性设置屏已追加 Network Proxy 行" +
+                    "（代理配置 " + ProxySettings.SettingsPath + "）");
                 return args;
             }, EventPriority.HIGHEST);
 

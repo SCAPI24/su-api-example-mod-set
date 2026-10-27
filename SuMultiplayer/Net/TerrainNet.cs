@@ -717,14 +717,37 @@ namespace SuMultiplayer.Net
                     m_connectionCounted = false;
                     TransportDiagnostics.OnConnectionClosed();
                 }
-                m_tcp = new TcpClient { NoDelay = true };
-                TransportDiagnostics.OnSocketOpened();
-                m_socketCounted = true;
-                if (!m_tcp.ConnectAsync(m_host, m_port).Wait(timeoutMs))
+                bool useProxy = false;
+                string routeReason = null;
+                if (ProxyRouter.TryChooseTcp(m_host, m_port, out useProxy, out routeReason))
+                    global::Engine.Log.Information("[SuMP][proxy] 加入路由：" + m_host + ":" + m_port +
+                        " → " + (useProxy ? "代理" : "直连") + "（" + routeReason + "）");
+                if (useProxy)
                 {
-                    CloseSocket();
-                    SetState(ChannelState.Failed, "连接超时");
-                    return false;
+                    Socket proxied = Socks5Proxy.Connect(m_host, m_port, timeoutMs,
+                        out string proxyError);
+                    if (proxied == null)
+                    {
+                        CloseSocket();
+                        SetState(ChannelState.Failed, "代理连接失败：" + (proxyError ?? "未知"));
+                        return false;
+                    }
+                    m_tcp = new TcpClient { NoDelay = true };
+                    m_tcp.Client = proxied;
+                    TransportDiagnostics.OnSocketOpened();
+                    m_socketCounted = true;
+                }
+                else
+                {
+                    m_tcp = new TcpClient { NoDelay = true };
+                    TransportDiagnostics.OnSocketOpened();
+                    m_socketCounted = true;
+                    if (!m_tcp.ConnectAsync(m_host, m_port).Wait(timeoutMs))
+                    {
+                        CloseSocket();
+                        SetState(ChannelState.Failed, "连接超时");
+                        return false;
+                    }
                 }
                 m_stream = m_tcp.GetStream();
                 m_running = true;

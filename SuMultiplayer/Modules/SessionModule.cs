@@ -31,6 +31,9 @@ namespace SuMultiplayer.Modules
         private readonly SyncConfig m_config;
         /// <summary>本机资料存储（新加入 / 离开房间时清空：新世界必须重新走角色创建流程）。</summary>
         private readonly SuMultiplayer.Players.LocalPlayerProfileStore m_profileStore;
+        /// <summary>主机世界行的旧列表字段提供者（组合根注入；拿不到就用未知值）。</summary>
+        private readonly Func<RoomWorldDetails> m_worldDetails;
+        private Net.ServerCatalog m_serverCatalog;
         private readonly RoomDirectory m_directory = new RoomDirectory();
         private readonly JoinFlow m_join = new JoinFlow();
 
@@ -53,10 +56,12 @@ namespace SuMultiplayer.Modules
         private string m_roomGameMode = string.Empty;
 
         public SessionModule(SyncConfig config,
-            SuMultiplayer.Players.LocalPlayerProfileStore profileStore = null)
+            SuMultiplayer.Players.LocalPlayerProfileStore profileStore = null,
+            Func<RoomWorldDetails> worldDetails = null)
         {
             m_config = config ?? new SyncConfig();
             m_profileStore = profileStore;
+            m_worldDetails = worldDetails;
             m_descriptor = new ModuleDescriptor("session", "房间会话")
             {
                 ProvidesCapabilities = new[] { "session.rooms" },
@@ -96,6 +101,8 @@ namespace SuMultiplayer.Modules
                 Log("暂不寻找房间（Play 屏不可见；进入地图列表时才开始探测）");
                 return;
             }
+            m_serverCatalog = new Net.ServerCatalog(m_config.DiscoveryPort, m_config.Port);
+            m_serverCatalog.Start();
             m_beaconClient = new RoomBeaconClient(m_config.DiscoveryPort);
             m_beaconClient.RoomFound += HandleRoomFound;
             if (m_beaconClient.Start())
@@ -112,10 +119,14 @@ namespace SuMultiplayer.Modules
 
         private void StopDiscovery(string why)
         {
-            if (m_beaconClient == null) return;
-            m_beaconClient.RoomFound -= HandleRoomFound;
-            try { m_beaconClient.Dispose(); } catch (Exception) { }
-            m_beaconClient = null;
+            try { m_serverCatalog?.Dispose(); } catch (Exception) { }
+            m_serverCatalog = null;
+            if (m_beaconClient != null)
+            {
+                m_beaconClient.RoomFound -= HandleRoomFound;
+                try { m_beaconClient.Dispose(); } catch (Exception) { }
+                m_beaconClient = null;
+            }
             m_directory.Clear();
             m_lastLoggedCount = -1;
             Log("停止寻找房间（" + why + "）");
@@ -207,6 +218,10 @@ namespace SuMultiplayer.Modules
             MaxPlayers = m_config.MaxPlayers,
             WorldName = m_roomWorldName,
             GameMode = m_roomGameMode,
+            WorldSizeBytes = m_worldDetails?.Invoke().SizeBytes ?? 0,
+            LastSaveTimeUtc = m_worldDetails?.Invoke().LastSaveTimeUtc ?? DateTime.MinValue,
+            EnvironmentMode = m_worldDetails?.Invoke().EnvironmentMode ?? string.Empty,
+            SerializationVersion = m_worldDetails?.Invoke().SerializationVersion ?? string.Empty,
             Protocol = 1
         };
 
@@ -307,6 +322,11 @@ namespace SuMultiplayer.Modules
                 MaxPlayers = info.MaxPlayers,
                 WorldName = info.WorldName,
                 GameMode = info.GameMode,
+                WorldSizeBytes = info.WorldSizeBytes,
+                LastSaveTimeUtc = info.LastSaveTimeUtc,
+                EnvironmentMode = info.EnvironmentMode,
+                SerializationVersion = info.SerializationVersion,
+                Online = true,
                 // 房间行的延迟：用探测→应答的 RTT（旧联机 mod 房间行同样显示 Ping；-1 = unknown）。
                 PingMs = info.PingMs,
                 LastSeenMs = now
@@ -315,6 +335,60 @@ namespace SuMultiplayer.Modules
             m_directory.Upsert(entry, now);
             m_join.FoundRooms(m_directory.Count, now);
             if (isNew) Log("发现房间：" + entry.Describe() + "（来源 " + address + "）→ 已加入 Play 屏列表，点它加入");
+        }
+
+        private void DrainServerCatalog(long nowMs)
+        {
+            if (m_serverCatalog == null) return;
+            while (m_serverCatalog.TryDequeue(out DirectoryProbeResult result))
+            {
+                DirectoryEndpoint endpoint = result.Endpoint;
+                if (endpoint == null) continue;
+                RoomBeaconInfo info = result.Info;
+                bool personal = endpoint.Source == RoomSource.Personal;
+                if (info == null && !personal) continue;
+                var entry = new RoomEntry
+                {
+                    Key = endpoint.Key,
+                    Name = info == null || string.IsNullOrEmpty(info.RoomName)
+                        ? (personal ? endpoint.Name : endpoint.Host)
+                        : info.RoomName,
+                    HostAddress = result.TargetHost ?? endpoint.Host,
+                    Port = info?.Port ?? endpoint.FallbackGamePort,
+                    Source = endpoint.Source,
+                    DisplayAddress = endpoint.DisplayAddress,
+                    Online = info != null,
+                    Persistent = personal,
+                    PlayerCount = info?.Players ?? 0,
+                    MaxPlayers = info?.MaxPlayers ?? 0,
+                    WorldName = info?.WorldName ?? string.Empty,
+                    WorldSizeBytes = info?.WorldSizeBytes ?? 0,
+                    GameMode = info?.GameMode ?? string.Empty,
+                    EnvironmentMode = info?.EnvironmentMode ?? string.Empty,
+                    LastSaveTimeUtc = info?.LastSaveTimeUtc ?? DateTime.MinValue,
+                    SerializationVersion = info?.SerializationVersion ?? string.Empty,
+                    PingMs = result.PingMs,
+                    LastSeenMs = nowMs
+                };
+                bool isNew = FindByKey(entry.Key) == null;
+                m_directory.Upsert(entry, nowMs);
+                if (isNew)
+                    Log("发现服务房间：" + entry.Describe() + "（来源 " +
+                        (personal ? "个人服务器" : "ServerDns") + "）");
+            }
+        }
+
+        public bool RemovePersonalServer(RoomEntry entry)
+        {
+            if (entry == null || entry.Source != RoomSource.Personal) return false;
+            if (!Net.PersonalServers.Remove(entry.DisplayAddress, out string error))
+            {
+                Log("删除个人服务器失败：" + error);
+                return false;
+            }
+            m_directory.Remove(entry.Key);
+            Log("已删除个人服务器：" + entry.DisplayAddress);
+            return true;
         }
 
         private RoomEntry FindByKey(string key)
@@ -339,6 +413,7 @@ namespace SuMultiplayer.Modules
         public void Tick(in ModuleTickContext tick)
         {
             long nowMs = (long)(tick.Now * 1000.0);
+            DrainServerCatalog(nowMs);
             if (m_beaconClient == null) return;
             int removed = m_directory.RemoveStale(nowMs);
             if (removed > 0) Log("房间列表移除 " + removed + " 个超时条目（现在 " + m_directory.Count + " 个）");
@@ -431,21 +506,29 @@ namespace SuMultiplayer.Modules
                         return "Connecting to the host…";
                     case JoinStage.Requesting:
                     case JoinStage.AwaitingApproval:
-                    {
-                        int ping = m_joinPingMs;
                         return "Waiting for the host to approve your join request." +
-                            (ping >= 0 ? " (Ping: " + ping + " ms)" : string.Empty);
-                    }
+                            JoinPingSuffix();
                     case JoinStage.Downloading:
-                        return "Downloading world…";
+                        return "Downloading world…" + JoinPingSuffix();
                     case JoinStage.Importing:
-                        return "Importing world…";
+                        return "Importing world…" + JoinPingSuffix();
                     case JoinStage.AwaitingBarrier:
-                        return "Syncing with the host…";
+                        return "Syncing with the host…" + JoinPingSuffix();
                     default:
                         return m_join.Stage.ToString();
                 }
             }
+        }
+
+        /// <summary>
+        /// 加入窗口的实时 Ping：连接建立后每 500ms 一次 Ping/Pong；没有实时样本时回退到
+        /// 点房间时发现包的 RTT（旧行为），再没有就留空。
+        /// </summary>
+        private string JoinPingSuffix()
+        {
+            int live = m_transportControl?.LastRoundTripMs ?? -1;
+            int ping = live >= 0 ? live : m_joinPingMs;
+            return ping >= 0 ? " (Ping: " + ping + " ms)" : string.Empty;
         }
 
         /// <summary>加入窗口的 Cancel（用户口径 2026-10-26）：中止加入 —— 关通道、加入流程回

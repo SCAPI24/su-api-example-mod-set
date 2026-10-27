@@ -17,6 +17,14 @@ namespace SuMultiplayer.Net
         public int MaxPlayers = 8;
         public string WorldName = string.Empty;
         public string GameMode = string.Empty;
+        /// <summary>房间世界大小（旧 SuPlayScreen 行里的 DataSizeFormatter 字段；0 = 未知）。</summary>
+        public long WorldSizeBytes;
+        /// <summary>世界最后保存时间（UTC；DateTime.MinValue = 未知）。</summary>
+        public DateTime LastSaveTimeUtc = DateTime.MinValue;
+        /// <summary>环境模式（Living/…；旧列表行的 EnvironmentBehaviorMode）。</summary>
+        public string EnvironmentMode = string.Empty;
+        /// <summary>存档序列化版本（旧列表行版本不一致时显示）。</summary>
+        public string SerializationVersion = string.Empty;
         public byte Protocol = 1;
         /// <summary>
         /// 客户端测得的往返延迟（毫秒；-1 = 还没测到 / 对端不回显探测序号）。
@@ -85,7 +93,12 @@ namespace SuMultiplayer.Net
             {
                 ReplyToken, info.RoomName, info.HostName, info.Port.ToString(),
                 info.Players.ToString(), info.MaxPlayers.ToString(), info.WorldName,
-                info.GameMode, nonce.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                info.GameMode, nonce.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                info.WorldSizeBytes.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                (info.LastSaveTimeUtc == DateTime.MinValue ? "0" :
+                    info.LastSaveTimeUtc.Ticks.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+                info.EnvironmentMode ?? string.Empty,
+                info.SerializationVersion ?? string.Empty
             });
             return Encoding.UTF8.GetBytes(text);
         }
@@ -109,6 +122,12 @@ namespace SuMultiplayer.Net
                 WorldName = parts.Length > 6 ? parts[6] : string.Empty,
                 GameMode = parts.Length > 7 ? parts[7] : string.Empty
             };
+            if (parts.Length > 9 && long.TryParse(parts[9], out long sizeBytes))
+                info.WorldSizeBytes = Math.Max(0, sizeBytes);
+            if (parts.Length > 10 && long.TryParse(parts[10], out long saveTicks) && saveTicks > 0)
+                info.LastSaveTimeUtc = new DateTime(saveTicks, DateTimeKind.Utc);
+            if (parts.Length > 11) info.EnvironmentMode = parts[11];
+            if (parts.Length > 12) info.SerializationVersion = parts[12];
             // nonce 只用于算 RTT，由上层（RoomBeaconClient）在同一轮答复里折算成 PingMs。
             info.PingMs = -1;
             return true;

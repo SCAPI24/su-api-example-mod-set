@@ -66,6 +66,11 @@ namespace SuMultiplayer.Modules
         void LeaveRoom();
 
         /// <summary>
+        /// <summary>
+        /// 删除个人服务器（Source=Personal 的房间行）。返回 false = 不是个人服务器/删除失败。
+        /// </summary>
+        bool RemovePersonalServer(RoomEntry entry) => false;
+
         /// Play 屏 Enter 调用：true = 这次进入是"角色创建屏返回"的同一次加入，**不要** LeaveRoom。
         /// 只生效一次（由角色创建屏在返回前置位）。
         /// </summary>

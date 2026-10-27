@@ -39,7 +39,7 @@ namespace SuMultiplayer.Modules
     /// 本模块**不含静态状态**，也不直接引用别的模块内部：只从 <see cref="IModuleContext"/> 取端口。
     /// </summary>
     public sealed class PlayerAvatarModule : IMultiplayerModule, IAvatarTerrainLink, IHelloProfileGate,
-        IPlayerSkinRecordPort, IPlayerProfileAuthorityPort, IProfileSkinCatalog
+        IPlayerSkinRecordPort, IPlayerProfileAuthorityPort, IProfileSkinCatalog, ISpawnPointProvider
     {
         /// <summary>主机角色在**本机**通道里的槽位键（旧实现同样用 0）；它只是本机索引，不是身份。
         /// 位置快照批里"主机自己那一条"用的也是这个键（<c>NetworkAvatarSpawner.CapturePlayerPositionBatch</c>）。</summary>
@@ -1056,6 +1056,111 @@ namespace SuMultiplayer.Modules
                 DescribePlacement(new PlayerPlacement(captured.SpawnPosition.X,
                     captured.SpawnPosition.Y, captured.SpawnPosition.Z)) +
                 "（写 SuMultiplayerPlayers.xml，不写 Project.xml）");
+        }
+
+        // ---------------------------------------------------------------- 复活点表端口（ISpawnPointProvider）
+
+        /// <summary>
+        /// 主机：抓“主机本地角色 + 全部在线联机角色”的复活点表（PLAYER_SPAWN 的权威来源）。
+        /// 主机本地角色的 SpawnPosition 继续以 Project.xml 为权威，本方法只读运行期值。
+        /// 返回 -1 = 世界/角色暂不可用（调用方不能把 0 当成“全部离线”发删除）。
+        /// </summary>
+        public int CaptureOnlineSpawnPoints(List<OnlineSpawnPoint> target, out string reason)
+        {
+            reason = null;
+            if (target == null)
+            {
+                reason = "调用方没有给复活点表容器";
+                return -1;
+            }
+            target.Clear();
+            if (m_broadcast == null || !m_broadcast.IsHosting)
+            {
+                reason = "本端不是主机（复活点表只能由主机生成）";
+                return -1;
+            }
+            Project project = GameManager.Project;
+            if (project == null)
+            {
+                reason = "没有加载中的 Project（主机还没进入世界）";
+                return -1;
+            }
+            var localPlayers = new List<PlayerData>(PlayerKey.SlotCount);
+            if (!m_spawner.TryCollectLocalPlayers(project, localPlayers, out bool tooMany,
+                    out string localReason))
+            {
+                reason = "抓主机本地角色失败：" + (localReason ?? "未知");
+                return -1;
+            }
+            if (tooMany)
+                LogRateLimited("spawn-entries-local-too-many", localReason);
+            string localIdentity = PlayerIdentity.LocalIdentity();
+            for (int slot = 0; slot < localPlayers.Count; slot++)
+            {
+                PlayerData local = localPlayers[slot];
+                if (local == null || !IsFiniteVector(local.SpawnPosition)) continue;
+                target.Add(new OnlineSpawnPoint(new PlayerKey(0, slot), local.SpawnPosition,
+                    localIdentity));
+            }
+            foreach (PlayerKey key in m_spawner.Keys.ToArray())
+            {
+                if (!m_spawner.TryGet(key, out PlayerData playerData) || playerData == null)
+                    continue;
+                if (!IsFiniteVector(playerData.SpawnPosition)) continue;
+                m_peerIdentities.TryGetValue(key.ClientId, out string identity);
+                target.Add(new OnlineSpawnPoint(key, playerData.SpawnPosition, identity));
+            }
+            return target.Count;
+        }
+
+        /// <summary>
+        /// 客户端：把主机下发的复活点写入本机角色（clientId=本机通道编号）或远端化身。
+        /// 只改运行期 PlayerData.SpawnPosition；不写 Project.xml，也不写角色记录文件。
+        /// </summary>
+        public bool TryApplySpawnPoint(PlayerKey key, Vector3 spawnPosition, out string reason)
+        {
+            reason = null;
+            if (!key.IsValid)
+            {
+                reason = "复活点表的玩家键非法：" + key;
+                return false;
+            }
+            if (!IsFiniteVector(spawnPosition))
+            {
+                reason = "复活点为零或非有限值：" + spawnPosition;
+                return false;
+            }
+            Project project = GameManager.Project;
+            if (project == null)
+            {
+                reason = "没有加载中的 Project（世界还没就绪）";
+                return false;
+            }
+            int localClientId = m_transport?.LocalClientId ?? -1;
+            if (key.ClientId == localClientId)
+            {
+                var localPlayers = new List<PlayerData>(PlayerKey.SlotCount);
+                if (!m_spawner.TryCollectLocalPlayers(project, localPlayers, out _,
+                        out string collectReason))
+                {
+                    reason = "抓本机角色失败：" + (collectReason ?? "未知");
+                    return false;
+                }
+                if (key.Slot < 0 || key.Slot >= localPlayers.Count)
+                {
+                    reason = "本机只有 " + localPlayers.Count + " 个角色，没有槽位 " + key.Slot;
+                    return false;
+                }
+                localPlayers[key.Slot].SpawnPosition = spawnPosition;
+                return true;
+            }
+            if (!m_spawner.TryGet(key, out PlayerData remote) || remote == null)
+            {
+                reason = "本机还没有 " + key + " 的远端化身";
+                return false;
+            }
+            remote.SpawnPosition = spawnPosition;
+            return true;
         }
 
         /// <summary>主机自己的资料（HelloAck.host_profile）。</summary>

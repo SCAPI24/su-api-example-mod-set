@@ -18,6 +18,12 @@ namespace SuMultiplayer.Engine
     public sealed class EngineWorldTransfer : IWorldExportSource, IWorldImporter, IDownloadedWorldStore
     {
         /// <summary>
+        /// 导出世界前回调（组合根注入）：把 SuMultiplayerPlayers.xml 的脏记录（含客户端
+        /// SpawnPosition）先 SaveIfDirty()，保证中途加入的客户端下载包里带的是最新复活点。
+        /// 仅联机 Mod 使用；原版导出路径不依赖此项。
+        /// </summary>
+        public Action BeforeExport { get; set; }
+        /// <summary>
         /// 主机：导出**自己正在玩的那个世界**。
         ///
         /// 顺序照旧实现（WorldSnapshotFileCopier 的契约）：
@@ -44,6 +50,15 @@ namespace SuMultiplayer.Engine
             string temp = Storage.CombinePaths("data:/Temp", "sump-export-" + (Environment.TickCount & 0xFFFFFF));
             try
             {
+                // 先落联机角色记录（客户端复活点），再 SaveProject / 复制世界目录。
+                // 失败不静默：回调内部自己记录；这里仍继续原版导出路径。
+                try { BeforeExport?.Invoke(); }
+                catch (Exception hookError)
+                {
+                    reason = "导出前保存联机角色记录失败：" + hookError.GetType().Name + " " +
+                        hookError.Message;
+                    return false;
+                }
                 GameManager.SaveProject(waitForCompletion: true, showErrorDialog: false);
                 ExportedFiles = CopyDirectoryShared(info.DirectoryName, temp);
                 using var memory = new MemoryStream();

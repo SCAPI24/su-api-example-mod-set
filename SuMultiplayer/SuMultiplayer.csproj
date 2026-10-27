@@ -52,6 +52,7 @@
   </Target>
 
   <ItemGroup>
+    <EmbeddedResource Include="ServerDns.txt" LogicalName="SuMultiplayer.ServerDns.txt" />
     <PackageReference Include="Engine" Version="0.1.6" />
     <PackageReference Include="EntitySystem" Version="0.1.6" />
     <PackageReference Include="Survivalcraft" Version="0.1.6" />

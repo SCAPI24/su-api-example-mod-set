@@ -1,0 +1,4 @@
+# SuMultiplayer service discovery DNS list.
+# One host or host:discoveryPort per line.
+# Default discovery port comes from SuMultiplayer.json (26761).
+suceru.site

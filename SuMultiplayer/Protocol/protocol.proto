@@ -469,6 +469,23 @@ enum MessageType {
   // Mount replication (2026-10-26): riding horses / donkeys / boats.
   MOUNT_REQUEST = 114;
   MOUNT_STATE = 115;
+  // 2026-10-27：主机权威复活点表（全量快照/增量）。（append-only）
+  PLAYER_SPAWN = 116;
+
+  // 客户端加入状态行里的实时 Ping（append-only：117/118）。
+  // 客户端在连接建立后每 500ms 发 Ping，主机原样回 Pong；加入窗口每帧读最新 RTT。
+  PING = 117;
+  PONG = 118;
+}
+
+// 客户端 -> 主机：轻量测速请求（不参与世界同步，审批等待期间也可用）。
+message Ping {
+  uint64 nonce = 1;
+}
+
+// 主机 -> 客户端：原样带回 nonce；客户端用本地发送时刻算 RTT。
+message Pong {
+  uint64 nonce = 1;
 }
 
 // Logical envelope metadata.  The current single-message transport puts these
@@ -689,6 +706,37 @@ message InterestUpdate {
 message Bye {
   string reason = 1;
 
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}
+
+// ---------------------------------------------------------------------------
+// 复活点同步（PLAYER_SPAWN = 116，2026-10-27）
+//
+// 语义：每个角色的复活点由主机权威决定：
+//   · 主机本地角色（client_id=0, slot 0..3）：Project.xml 的 PlayerData.SpawnPosition；
+//   · 客户端角色：主机 SuMultiplayerPlayers.xml 角色记录的 SpawnPosition。
+// 主机把“在线角色”的复活点表发给所有端；客户端只读镜像，不反向上报。
+// 无磁铁时指南针按这张表 + 手部位置找最近目标（三端结果一致）。
+// full=true = 全量快照（新加入/重连），false = 增量（online=false 表示该角色已离线）。
+// ---------------------------------------------------------------------------
+message PlayerSpawnEntry {
+  int32 client_id = 1;
+  uint32 slot = 2;
+  bool online = 3;
+  float x = 4;
+  float y = 5;
+  float z = 6;
+  // 诊断用（身份键）；指南针/应用只依赖 client_id+slot。
+  string identity = 7;
+}
+
+message PlayerSpawnState {
+  bool full = 1;
+  uint32 revision = 2;
+  repeated PlayerSpawnEntry entries = 3;
+
+  // Third-party extension points: see doc/message-protocol.md.
   bytes ext = 100;
   google.protobuf.Any custom = 101;
 }

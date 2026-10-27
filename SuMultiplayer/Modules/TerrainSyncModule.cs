@@ -233,6 +233,7 @@ namespace SuMultiplayer.Modules
             public bool IsHosting => m_owner.m_server != null;
             public int ConnectedPlayerCount => m_owner.CountPlayerPeers();
             public string ChannelStateText => m_owner.ChannelStateText;
+            public int LastRoundTripMs => m_owner.m_clientSync?.RoundTripMs ?? -1;
         }
 
         public TerrainBridge Bridge => m_bridge;

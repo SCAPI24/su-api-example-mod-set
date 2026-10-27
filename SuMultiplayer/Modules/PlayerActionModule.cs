@@ -87,6 +87,14 @@ namespace SuMultiplayer.Modules
         private int m_sentInventoryActiveSlot = -1;
         private int m_localInventoryRevision;
         private int m_localInventoryVersion;
+        /// <summary>
+        /// 客户端：**主机下行**背包权威 revision 的已应用水位。必须与上行发送序号
+        /// <see cref="m_localInventoryRevision"/> 分开：上行序号按 32Hz 脉冲递增（即使没变化，
+        /// 先 ++ 再判 delta==null），挂机十几秒就会涨到几百；如果拿它判断主机 keyframe 是否
+        /// 陈旧，重连/退出重进后主机的 rev=1/2 会被永久丢掉，背包/手持物上传闸门永远打不开
+        /// （实机 C1 问题，2026-10-27）。
+        /// </summary>
+        private int m_localAuthorityInventoryRevision;
         private int m_localEquipmentRevision;
         /// <summary>
         /// 客户端：本机背包是否已经收到主机的权威关键帧。
@@ -311,13 +319,18 @@ namespace SuMultiplayer.Modules
                     {
                         Log("本机通道编号变化（" + m_lastLocalClientId + " → " + localClientId +
                             "）→ 背包/手持物上传暂停，等主机重新下发权威背包关键帧");
-                        m_localInventorySynchronized = false;
-                        m_hasSentMotion = false;
-                        m_hasSentHeldItem = false;
-                        m_sentInventoryValues = null;
-                        m_sentInventoryCounts = null;
-                        m_sentInventoryActiveSlot = -1;
                     }
+                    m_localInventorySynchronized = false;
+                    m_hasSentMotion = false;
+                    m_hasSentHeldItem = false;
+                    m_sentInventoryValues = null;
+                    m_sentInventoryCounts = null;
+                    m_sentInventoryActiveSlot = -1;
+                    // 新连接是新的序号空间：上行 revision/version 与下行权威水位都必须归零。
+                    // 旧客户端的下行水位不能拿来判断新连接的 keyframe（主机新 peer 从 rev=1 起）。
+                    m_localInventoryRevision = 0;
+                    m_localInventoryVersion = 0;
+                    m_localAuthorityInventoryRevision = 0;
                     m_lastLocalClientId = localClientId;
                 }
                 CaptureLocal();
@@ -866,9 +879,20 @@ namespace SuMultiplayer.Modules
             if (m_port.IsLocalSlot(localCandidate))
             {
                 // 本机玩家自己的背包：主机权威结果 → 对账（旧实现同样把权威背包应用到本机玩家）。
-                if (delta.Revision <= m_localInventoryRevision)
+                // 注意：这里只能比**主机下行权威水位**，不能比上行 32Hz 序号
+                // m_localInventoryRevision（挂机时它会被 ++ 到几百，重连后 keyframe rev=1/2
+                // 会被永久当成陈旧包丢弃；实机 C1 问题）。
+                if (delta.Revision <= m_localAuthorityInventoryRevision)
                 {
                     m_inventoryDropped++;
+                    if (delta.Full)
+                    {
+                        LogRateLimited("inventory-local-stale",
+                            "丢弃主机本机背包关键帧：rev=" + delta.Revision +
+                            " 不大于已应用权威 rev=" + m_localAuthorityInventoryRevision +
+                            "（只按下行权威水位判断，不是上行发送序号 " +
+                            m_localInventoryRevision + "）");
+                    }
                     return;
                 }
                 if (!m_port.TryApplyInventory(localCandidate, delta, out string reason))
@@ -877,7 +901,10 @@ namespace SuMultiplayer.Modules
                     NoteProblem("把主机的权威背包应用到本机玩家失败：" + reason);
                     return;
                 }
-                m_localInventoryRevision = delta.Revision;
+                m_localAuthorityInventoryRevision = delta.Revision;
+                // 上行发送序号只需保证不会低于已应用的主机权威序号（主机按此接受增量）。
+                if (delta.Revision > m_localInventoryRevision)
+                    m_localInventoryRevision = delta.Revision;
                 if (delta.InventoryVersion > m_localInventoryVersion)
                     m_localInventoryVersion = delta.InventoryVersion;
                 m_inventoryApplied++;

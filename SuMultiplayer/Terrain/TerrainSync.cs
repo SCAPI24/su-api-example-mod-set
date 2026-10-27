@@ -1589,11 +1589,25 @@ namespace SuMultiplayer.Terrain
                 new DelegateMessageHandler<PT.VerifyChunks>(OnVerifyChunksFromClient), MessageOwner);
             registry.Register((int)MessageType.Bye, Bye.Parser,
                 new DelegateMessageHandler<Bye>(OnBye), MessageOwner);
+            registry.Register((int)MessageType.Ping, Ping.Parser,
+                new DelegateMessageHandler<Ping>(OnPing), MessageOwner);
         }
 
         private void OnHello(MessageContext context, Hello message)
         {
             lock (m_gate) HandleHello(GetOrCreateState(context.ClientId), message);
+        }
+
+        /// <summary>
+        /// 加入等待期间的实时测速：客户端每 500ms 发 Ping，主机原样带回 nonce。
+        /// 审批尚未通过、还没有 State/Session 时也必须能回 Pong，所以这里不走锁、
+        /// 不碰角色/世界状态，只读 context.ClientId 发一帧。
+        /// </summary>
+        private void OnPing(MessageContext context, Ping message)
+        {
+            if (message == null) return;
+            var pong = new Pong { Nonce = message.Nonce };
+            m_server.TrySend(context.ClientId, MessageType.Pong, pong.ToByteArray());
         }
 
         private void OnInterest(MessageContext context, InterestUpdate message)
@@ -5160,6 +5174,8 @@ namespace SuMultiplayer.Terrain
                 new DelegateMessageHandler<PT.CatchUp>(OnCatchUp), MessageOwner);
             registry.Register((int)MessageType.VerifyChunks, PT.VerifyChunks.Parser,
                 new DelegateMessageHandler<PT.VerifyChunks>(OnVerifyRequest), MessageOwner);
+            registry.Register((int)MessageType.Pong, Pong.Parser,
+                new DelegateMessageHandler<Pong>(OnPong), MessageOwner);
         }
 
         private void OnHelloAck(MessageContext context, HelloAck message) => HandleHelloAck(message);
@@ -5176,6 +5192,14 @@ namespace SuMultiplayer.Terrain
 
         private void OnVerifyRequest(MessageContext context, PT.VerifyChunks message) =>
             HandleVerifyRequest(message);
+
+        private void OnPong(MessageContext context, Pong message)
+        {
+            if (message == null || message.Nonce != m_pingNonce || m_lastPingSentMs <= 0) return;
+            long rtt = Environment.TickCount64 - m_lastPingSentMs;
+            if (rtt < 0 || rtt > 5000) return;
+            RoundTripMs = (int)rtt;
+        }
 
         public int ViewRadius { get; private set; } = 2;
         public ChunkKey Center { get; private set; }
@@ -5863,8 +5887,25 @@ namespace SuMultiplayer.Terrain
         ///   ⑦ 队列持续饱和的限流原因行。
         /// 返回本帧**真正发出去**的上报条数（旧实现返回的也是条数，调用方语义不变）。
         /// </summary>
+        private const int PingIntervalMs = 500;
+        private long m_lastPingSentMs;
+        private ulong m_pingNonce;
+        /// <summary>最近一次 Ping/Pong 的 RTT；-1 = 还没有有效样本（旧主机不会回 Pong）。</summary>
+        public int RoundTripMs { get; private set; } = -1;
+
+        private void UpdatePing(long nowMs)
+        {
+            if (m_channel == null || !m_channel.IsAlive) return;
+            if (m_lastPingSentMs > 0 && nowMs - m_lastPingSentMs < PingIntervalMs) return;
+            m_pingNonce++;
+            var ping = new Ping { Nonce = m_pingNonce };
+            if (!m_channel.TrySend(MessageType.Ping, ping.ToByteArray())) return;
+            m_lastPingSentMs = nowMs;
+        }
+
         public int Tick()
         {
+            UpdatePing(Environment.TickCount64);
             m_digestsThisTick = 0;
             m_reportsThisTick = 0;
             m_resyncAppliedThisTick = 0;

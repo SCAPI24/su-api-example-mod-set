@@ -36,7 +36,8 @@ namespace SuMultiplayer.Modules
     ///
     /// 演示页标记：XFR05。
     /// </summary>
-    public sealed class WorldTransferModule : IMultiplayerModule, ISuMPMessageModule
+    public sealed class WorldTransferModule : IMultiplayerModule, ISuMPMessageModule,
+        IWorldSnapshotInvalidatorPort
     {
         /// <summary>世界导出重试间隔（主机还没进世界时属正常等待，不刷日志）。</summary>
         private const int ExportRetryMs = 2000;
@@ -93,6 +94,9 @@ namespace SuMultiplayer.Modules
         private int m_cachedRandomSeed;
         private Dictionary<string, long> m_cachedRandomStates =
             new Dictionary<string, long>(StringComparer.Ordinal);
+        /// <summary>复活点/角色记录变化后的世界缓存作废请求（发送世界途中不能半路清缓存，延迟到发送结束）。</summary>
+        private bool m_invalidateRequested;
+        private string m_invalidateReason = string.Empty;
         /// <summary>随机数状态端口（可为空：离线自检 / 未装配时明确写一行，不假装同步）。</summary>
         private IRandomStatePort m_rng;
         private bool m_rngMissingLogged;
@@ -705,9 +709,35 @@ namespace SuMultiplayer.Modules
             m_cachedRandomStates = new Dictionary<string, long>(StringComparer.Ordinal);
         }
 
+        /// <summary>
+        /// 请求作废当前会话缓存的世界快照：下一次客户端加入前重新导出，从而让下载包里带上
+        /// 最新的 SuMultiplayerPlayers.xml（其他端的远程复活点）。正在发送世界时延迟到发送结束。
+        /// </summary>
+        public void InvalidateWorldSnapshot(string reason)
+        {
+            if (m_cachedPak == null) return;
+            m_invalidateRequested = true;
+            m_invalidateReason = reason ?? string.Empty;
+            TryFlushWorldInvalidation();
+        }
+
+        private void TryFlushWorldInvalidation()
+        {
+            if (!m_invalidateRequested) return;
+            // 只挡“真正在发”的客户端；排队尚未开始发送时清缓存是安全的（下一 tick 会重新导出）。
+            if (m_activeSendClientId != 0) return;
+            m_invalidateRequested = false;
+            if (m_cachedPak == null) return;
+            ClearCachedWorld();
+            Log("世界快照缓存已作废（" + m_invalidateReason +
+                "）→ 下一次客户端加入时重新导出（导出前先保存联机角色记录）");
+            m_invalidateReason = string.Empty;
+        }
+
         public void Tick(in ModuleTickContext tick)
         {
             long nowMs = (long)(tick.Now * 1000.0);
+            TryFlushWorldInvalidation();
             // 通道被关掉（玩家离开房间 / 回到世界列表）→ 本模块的会话状态必须一起复位：
             // 否则再点一次房间行会被当成"已经收过了"，世界永远不会重新下载；
             // 主机侧不清缓存则会把上一次导出的世界当成这次的发出去。

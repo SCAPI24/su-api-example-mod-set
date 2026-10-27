@@ -3,6 +3,24 @@ using System.Collections.Generic;
 
 namespace SuMultiplayer.Session
 {
+    /// <summary>主机在房间发现应答里附带的旧列表行字段（大小/保存时间/环境/版本）。</summary>
+    public readonly struct RoomWorldDetails
+    {
+        public readonly long SizeBytes;
+        public readonly DateTime LastSaveTimeUtc;
+        public readonly string EnvironmentMode;
+        public readonly string SerializationVersion;
+
+        public RoomWorldDetails(long sizeBytes, DateTime lastSaveTimeUtc, string environmentMode,
+            string serializationVersion)
+        {
+            SizeBytes = sizeBytes;
+            LastSaveTimeUtc = lastSaveTimeUtc;
+            EnvironmentMode = environmentMode ?? string.Empty;
+            SerializationVersion = serializationVersion ?? string.Empty;
+        }
+    }
+
     /// <summary>房间来源：局域网广播 / 服务器目录 / 显式端点 / 个人网络世界。</summary>
     public enum RoomSource : byte
     {
@@ -20,6 +38,14 @@ namespace SuMultiplayer.Session
         public string HostAddress;
         public int Port;
         public RoomSource Source;
+        /// <summary>列表行名称后面括号里的来源地址：ServerDns 显示解析的 DNS 名，
+        /// 个人服务器显示用户填写的地址（含端口）。LAN 行留空。</summary>
+        public string DisplayAddress;
+        /// <summary>个人服务器/目录服务是否在线。离线个人服务器行保留在列表里（便于删除，
+        /// 旧实现显示 "Net World | Offline (Ping -)"）。</summary>
+        public bool Online = true;
+        /// <summary>离线也保留在列表里（个人服务器用；RoomDirectory 的 stale 清理会跳过它）。</summary>
+        public bool Persistent;
         public int PingMs = -1;
         public int PlayerCount;
         public int MaxPlayers;
@@ -27,6 +53,8 @@ namespace SuMultiplayer.Session
         public long WorldSizeBytes;
         public string GameMode;
         public string EnvironmentMode;
+        public DateTime LastSaveTimeUtc = DateTime.MinValue;
+        public string SerializationVersion = string.Empty;
         public long LastSeenMs;
         public bool ProtocolCompatible = true;
 
@@ -35,7 +63,8 @@ namespace SuMultiplayer.Session
         /// **必须用英文**：Play 屏是英文界面（Survivalcraft 的界面字体没有中文字形，
         /// 中文会渲染成下划线）。旧实现 SuPlayScreen 用的就是 "Online" / "Service"。
         /// </summary>
-        public string SourceLabel => Source == RoomSource.Lan ? "Online" : "Service";
+        public string SourceLabel => Source == RoomSource.Lan ? "LAN" :
+            Source == RoomSource.Personal ? (Online ? "Online" : "Offline") : "Service";
 
         public string Describe()
         {
@@ -94,6 +123,7 @@ namespace SuMultiplayer.Session
             var stale = new List<string>();
             foreach (KeyValuePair<string, RoomEntry> pair in m_entries)
             {
+                if (pair.Value.Persistent) continue;
                 if (nowMs - pair.Value.LastSeenMs > StaleMs) stale.Add(pair.Key);
             }
             if (stale.Count == 0) return 0;
@@ -123,6 +153,16 @@ namespace SuMultiplayer.Session
         public void SelectByKey(string key)
         {
             if (key != null && m_entries.ContainsKey(key)) m_selectedKey = key;
+        }
+
+        /// <summary>删除一个房间条目（个人服务器删除用）。</summary>
+        public bool Remove(string key)
+        {
+            if (string.IsNullOrEmpty(key) || !m_entries.Remove(key)) return false;
+            m_order.Remove(key);
+            if (string.Equals(m_selectedKey, key, StringComparison.Ordinal))
+                m_selectedKey = m_order.Count > 0 ? m_order[0] : null;
+            return true;
         }
 
         public void Clear()

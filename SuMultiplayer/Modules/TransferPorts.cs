@@ -40,6 +40,12 @@ namespace SuMultiplayer.Modules
         int ConnectedPlayerCount { get; }
 
         string ChannelStateText { get; }
+
+        /// <summary>
+        /// 客户端到主机的实时 RTT（Ping/Pong）；-1 = 还没有样本（主机端/旧主机/未连接）。
+        /// 加入窗口每帧读它，不能只显示点房间时的发现包 RTT。
+        /// </summary>
+        int LastRoundTripMs => -1;
     }
 
     /// <summary>
@@ -92,6 +98,16 @@ namespace SuMultiplayer.Modules
         /// 并把该世界的会话标识记为"最近一次 HelloAck 的主机会话"（下一次重连的判定依据）。
         /// </summary>
         void OnClientWorldInstalled(string worldDirectory, string sessionId, long baseSequence);
+    }
+
+    /// <summary>
+    /// 主机世界快照缓存作废端口（2026-10-27）：客户端角色记录/复活点变化，或新客户端加入时，
+    /// 下一次世界导出必须重新抓当前 SuMultiplayerPlayers.xml；否则中途加入的客户端下载到的
+    /// 还是旧缓存世界，缺少其他端最新的远程复活点。
+    /// </summary>
+    public interface IWorldSnapshotInvalidatorPort
+    {
+        void InvalidateWorldSnapshot(string reason);
     }
 
     /// <summary>
