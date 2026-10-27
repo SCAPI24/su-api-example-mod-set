@@ -334,6 +334,13 @@ namespace SuMultiplayer
             // 模块层不引用 Game。
             m_vitalsEngine = new PlayerVitalsReplica(avatarSpawner, engineModManager.ModParentField,
                 diagnostics, "player-vitals");
+            // 2026-10-27：主机上某角色睡醒（引擎 ComponentSleep.WakeUp 已写入最后睡觉位置）时，
+            // 立刻让联机角色模块把该角色记录（含复活点 SpawnPosition）落盘到
+            // SuMultiplayerPlayers.xml —— 不等 5 秒周期刷新，也不写 Project.xml。
+            m_vitalsEngine.AuthoritySpawnPointChanged = delegate (SuMultiplayer.Players.PlayerKey key)
+            {
+                m_avatarModule.NoteAuthoritySpawnPointChanged(key);
+            };
             m_vitalsModule = new PlayerVitalsModule(delegate { return Time.RealTime; });
             // 角色动作 / 手持物 / 背包：引擎适配层只读写远端化身与角色背包，
             // 纯逻辑（动作边沿 / 动画状态 / 背包增量）在 Modules/PlayerActionModule.cs 与 Net/ 里，

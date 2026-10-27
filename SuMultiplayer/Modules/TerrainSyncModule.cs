@@ -212,6 +212,11 @@ namespace SuMultiplayer.Modules
             public bool ProfileRequired => m_owner.ClientProfileRequired;
             public string ProfileRequiredReason => m_owner.ClientProfileRequiredReason;
             public bool AssignedSkinAssetPresent => m_owner.ClientAssignedSkinAssetPresent;
+            public bool HasAssignedPlacement => m_owner.ClientHasAssignedPlacement;
+            public SuMultiplayer.Players.PlayerPlacement AssignedPosition =>
+                m_owner.ClientAssignedPosition;
+            public SuMultiplayer.Players.PlayerPlacement AssignedSpawnPosition =>
+                m_owner.ClientAssignedSpawnPosition;
             public bool ReconnectClient(string reason) => m_owner.ReconnectClient(reason);
         }
 
@@ -2167,6 +2172,15 @@ namespace SuMultiplayer.Modules
 
         internal bool ClientAssignedSkinAssetPresent =>
             m_clientSync?.AssignedSkinAssetPresent == true;
+
+        internal bool ClientHasAssignedPlacement =>
+            m_clientSync?.HasAssignedPlacement == true;
+
+        internal SuMultiplayer.Players.PlayerPlacement ClientAssignedPosition =>
+            m_clientSync?.AssignedPosition ?? default(SuMultiplayer.Players.PlayerPlacement);
+
+        internal SuMultiplayer.Players.PlayerPlacement ClientAssignedSpawnPosition =>
+            m_clientSync?.AssignedSpawnPosition ?? default(SuMultiplayer.Players.PlayerPlacement);
 
         internal bool ClientProfileRequired => m_clientSync?.ProfileRequired ?? false;
 

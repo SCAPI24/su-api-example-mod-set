@@ -455,6 +455,13 @@ namespace SuMultiplayer.Engine
         private long m_avatarRespawnFailures;
         private long m_authoritySleepReads;
         private long m_authorityWakes;
+
+        /// <summary>
+        /// 主机：某个角色的睡眠复活点发生变化（引擎 WakeUp/Sleep 已执行）。由组合根接到
+        /// 联机角色模块，立刻把角色记录（含 SpawnPosition）写进 SuMultiplayerPlayers.xml。
+        /// 参数 = 该角色在主机的玩家键；null = 没接线（记录仍由 5 秒周期刷新兜底）。
+        /// </summary>
+        public Action<PlayerKey> AuthoritySpawnPointChanged { get; set; }
         private long m_authoritySleeps;
         private long m_sleepAuthoritySleepFailures;
         private long m_sleepLocalReverts;
@@ -4418,6 +4425,10 @@ namespace SuMultiplayer.Engine
             {
                 sleep.WakeUp();
                 m_authorityWakes++;
+                // 2026-10-27：主机引擎 WakeUp 已把该角色 PlayerData.SpawnPosition 写成
+                // 最后睡觉位置（ComponentSleep.cs:96-103）。立刻通知角色记录模块落盘，
+                // 不能等 5 秒周期抓取（复活点必须保证已写进 SuMultiplayerPlayers.xml）。
+                AuthoritySpawnPointChanged?.Invoke(key);
                 return true;
             }
             catch (Exception e)
@@ -4500,6 +4511,7 @@ namespace SuMultiplayer.Engine
                     return false;
                 }
                 m_authoritySleeps++;
+                AuthoritySpawnPointChanged?.Invoke(key);
                 return true;
             }
             catch (Exception e)

@@ -158,6 +158,13 @@ namespace SuMultiplayer.Modules
         private int m_hostSlotsCount;
         /// <summary>主机：最近一次整表广播的签名（避免重复刷）。</summary>
         private string m_lastRosterSignature = string.Empty;
+        /// <summary>
+        /// 客户端：HelloAck 的"本机角色重新进入位置"已经应用到的 Project（每个下载世界只做一次；
+        /// 重进地图 / 整图重下换 Project 会再应用一次）。null = 还没应用。
+        /// </summary>
+        private Project m_placementAppliedProject;
+        private long m_placementApplied;
+        private long m_placementPendingTicks;
 
         private IModuleContext m_context;
         private ITransportPort m_transport;
@@ -177,6 +184,8 @@ namespace SuMultiplayer.Modules
         private long m_removedClientAvatars;
         /// <summary>同身份顶替次数（新连接取代旧连接）。</summary>
         private long m_identityTakeovers;
+        /// <summary>因为睡醒/睡眠而立刻落盘角色记录（含复活点）的次数。</summary>
+        private long m_recordSpawnPointSaved;
         /// <summary>
         /// 断线宽涨期（秒）：普通断线（网络掉线 / 闪退但主机还没判死）时角色**留在地图**一段时间，
         /// 期间同身份重连会顶替；显式退房（BYE）零宽限立即摘除（2026-10-26 实机口径）。
@@ -592,6 +601,10 @@ namespace SuMultiplayer.Modules
                 reason.Contains("Bye", StringComparison.Ordinal);
             if (!explicitLeave)
             {
+                // 2026-10-27：宽限期间角色实体还活着，但**离线位置必须马上落盘**：
+                // 否则主机崩溃 / 宽限期内重进会读到上一次 5 秒刷新前的旧位置，
+                // 客户端再次进入就不会出现在"最后离线位置"。
+                CaptureClientRecordsNow(clientId, "断线宽限：先保存最后离线位置");
                 m_deferredLeaves[clientId] = new DeferredLeaveEntry
                 {
                     ClientId = clientId,
@@ -604,6 +617,31 @@ namespace SuMultiplayer.Modules
                 return;
             }
             RemoveClientAvatarsNow(clientId, reason, "显式退房（BYE）");
+        }
+
+        /// <summary>
+        /// 只把该连接的**角色记录抓一份落盘**，不摘化身、不释放记录键（宽限期间仍需保留）。
+        /// 断线第一时间调用：保证 SuMultiplayerPlayers.xml 里是该角色最后离线位置/复活点。
+        /// </summary>
+        private void CaptureClientRecordsNow(int clientId, string why)
+        {
+            int captured = 0;
+            foreach (KeyValuePair<string, PlayerKey> pair in m_recordKeyOwner.ToArray())
+            {
+                if (pair.Value.ClientId != clientId) continue;
+                m_records.TryGet(pair.Key, out NetworkPlayerRecord previous);
+                NetworkPlayerRecord record = CaptureForStorage(pair.Value, previous);
+                if (record == null) continue;
+                m_records.Put(pair.Key, record);
+                captured++;
+            }
+            if (captured > 0)
+            {
+                m_records.SaveIfDirty();
+                Warn("clientId=" + clientId + " 断线：已立刻保存 " + captured +
+                    " 份角色记录（最后离线位置 / 最后睡觉复活点已写 SuMultiplayerPlayers.xml）· " +
+                    (why ?? string.Empty));
+            }
         }
 
         /// <summary>宽限期到期 → 真正摘掉角色（普通断线路径的唯一摘除点）。</summary>
@@ -944,6 +982,21 @@ namespace SuMultiplayer.Modules
                 decision.Name = record.Name ?? string.Empty;
                 decision.Profile = recordProfile;
                 decision.AssignedSkinAssetPresent = HasStoredSkinAsset(record);
+                // 2026-10-27：把该客户端角色记录里的"最后离线位置 + 最后睡觉复活点"带给客户端。
+                // 客户端本地角色是下载世界里的新实体（Players 段是主机存档角色），不带上这份
+                // 记录位置就会出生在主机角色旁边（实机 bug）。
+                Vector3 recordPosition = record.Position;
+                Vector3 recordSpawn = record.SpawnPosition;
+                if (IsFiniteVector(recordPosition))
+                {
+                    if (!IsFiniteVector(recordSpawn) || recordSpawn == Vector3.Zero)
+                        recordSpawn = recordPosition;
+                    decision.HasPlacement = true;
+                    decision.Position = new PlayerPlacement(recordPosition.X, recordPosition.Y,
+                        recordPosition.Z);
+                    decision.SpawnPosition = new PlayerPlacement(recordSpawn.X, recordSpawn.Y,
+                        recordSpawn.Z);
+                }
                 decision.Reason = "已有角色记录（重连 / 老玩家）";
                 return decision;
             }
@@ -974,6 +1027,35 @@ namespace SuMultiplayer.Modules
             Info("身份 " + PlayerIdentity.Describe(recordKey) + " 首次加入 → 用 Hello.profile 建角色记录" +
                 "（名字 " + record.Name + " · 性别 " + record.PlayerClass + " · 皮肤 " + record.SkinName + "）");
             return decision;
+        }
+
+        /// <summary>位置是否可用于出生（有限值；Vector3.Zero 视为没有记录，不当作有效坐标）。</summary>
+        private static bool IsFiniteVector(Vector3 value) =>
+            !float.IsNaN(value.X) && !float.IsInfinity(value.X) &&
+            !float.IsNaN(value.Y) && !float.IsInfinity(value.Y) &&
+            !float.IsNaN(value.Z) && !float.IsInfinity(value.Z) &&
+            value != Vector3.Zero;
+
+        /// <summary>
+        /// 主机：某角色的睡眠复活点变了（引擎 ComponentSleep.WakeUp/Sleep 已写入
+        /// PlayerData.SpawnPosition）→ 立刻把该角色记录抓一份写进 SuMultiplayerPlayers.xml。
+        /// 记录里带 Position 与 SpawnPosition；**绝不写 Project.xml**。
+        /// </summary>
+        public void NoteAuthoritySpawnPointChanged(PlayerKey key)
+        {
+            if (!m_attached) return;
+            if (!m_spawner.TryGetRecordKey(key, out string recordKey)) return;
+            if (!m_records.TryGet(recordKey, out NetworkPlayerRecord previous)) return;
+            NetworkPlayerRecord captured = CaptureForStorage(key, previous);
+            if (captured == null) return;
+            m_records.Put(recordKey, captured);
+            m_records.SaveIfDirty();
+            m_recordSpawnPointSaved++;
+            Info("角色记录已保存最后睡觉复活点：玩家键 " + key + " · 记录键 " +
+                PlayerIdentity.Describe(recordKey) + " · 复活点 " +
+                DescribePlacement(new PlayerPlacement(captured.SpawnPosition.X,
+                    captured.SpawnPosition.Y, captured.SpawnPosition.Z)) +
+                "（写 SuMultiplayerPlayers.xml，不写 Project.xml）");
         }
 
         /// <summary>主机自己的资料（HelloAck.host_profile）。</summary>
@@ -2689,7 +2771,103 @@ namespace SuMultiplayer.Modules
             if (m_profileSendPending) SendLocalProfileIfChanged();
             // 本机槽位（分屏本机角色）集合：握手后 / 增删时上报，主机据此给每个槽位建一个化身。
             UpdateLocalSlotsAnnouncement();
+            // 最后应用"主机角色记录里的最后离线位置 + 复活点"：必须在归一化之后、本机角色存在时做。
+            // 客户端本地角色是下载世界里的新实体（Players 段是主机存档角色），不搬过去就会出生在
+            // 主机角色旁边（实机 bug 2026-10-27）。
+            ApplyAssignedPlacementOnce(project);
         }
+
+        /// <summary>
+        /// 客户端：按 HelloAck 携带的主机角色记录位置把**本机角色**放到最后离线位置，并把
+        /// <c>PlayerData.SpawnPosition</c> 设为该角色最后睡觉的复活点。
+        /// 解析/落点全部来自主机权威记录（SuMultiplayerPlayers.xml），不改 Project.xml。
+        /// </summary>
+        private void ApplyAssignedPlacementOnce(Project project)
+        {
+            if (project == null || ReferenceEquals(project, m_placementAppliedProject)) return;
+            if (m_handshake == null || !m_handshake.HasAssignedPlacement) return;
+            PlayerPlacement placement = m_handshake.AssignedPosition;
+            PlayerPlacement spawnPlacement = m_handshake.AssignedSpawnPosition;
+            if (!placement.IsFinite)
+            {
+                Info("主机下发的角色重新进入位置非法（非有限值）→ 保持引擎出生行为（不猜坐标）");
+                m_placementAppliedProject = project;
+                return;
+            }
+            Vector3 position = new Vector3(placement.X, placement.Y, placement.Z);
+            Vector3 spawnPosition = spawnPlacement.IsFinite
+                ? new Vector3(spawnPlacement.X, spawnPlacement.Y, spawnPlacement.Z)
+                : position;
+            var localPlayers = new List<PlayerData>(1);
+            if (!m_spawner.TryCollectLocalPlayers(project, localPlayers, out _, out string collectReason) ||
+                localPlayers.Count == 0)
+            {
+                m_placementPendingTicks++;
+                if (m_placementPendingTicks == 1 || m_placementPendingTicks % 50 == 0)
+                {
+                    Info("本机角色重新进入位置暂不能应用（" + (collectReason ?? "本机角色还没创建") +
+                        "）→ 继续等待本机角色 " + m_placementPendingTicks + " tick");
+                }
+                return;
+            }
+            PlayerData playerData = localPlayers[0];
+            ComponentPlayer player = playerData.ComponentPlayer;
+            ComponentBody body = player?.ComponentBody;
+            if (body == null)
+            {
+                // 引擎原生 PrepareSpawn → WaitForTerrain 可能等几秒；这期间 GameScreen 会用默认
+                // 相机画在下载世界的 GlobalSpawnPosition（主机进入地图的位置），玩家先看到主机
+                // 位置再瞬移（实机反馈 2026-10-27）。这里按旧实现立刻以 Respawn 模式出生本机角色，
+                // 让相机在**第一帧就挂到记录位置**，不等地形等待。
+                playerData.SpawnPosition = position;
+                if (!m_spawner.TrySpawnClientLocalPlayerNow(playerData, position, out string earlyReason))
+                {
+                    ErrorOnce("assigned-placement-early-spawn",
+                        "提前出生本机角色失败（" + (earlyReason ?? "未知") +
+                        "）；先保留 SpawnPosition，等引擎原生出生后再贴合");
+                    m_placementPendingTicks++;
+                    return;
+                }
+                player = playerData.ComponentPlayer;
+                body = player?.ComponentBody;
+                if (body == null)
+                {
+                    m_placementPendingTicks++;
+                    return;
+                }
+                Info("客户端本机角色已提前出生（不等原生 WaitForTerrain），出生位置=" +
+                    DescribePlacement(placement));
+            }
+            if (player.ComponentHealth != null && player.ComponentHealth.Health <= 0f)
+            {
+                // 刚进世界就是死亡态：等复活链路自己落点，不在这里和死亡流程抢位置。
+                m_placementPendingTicks++;
+                return;
+            }
+            try
+            {
+                body.Position = position;
+                body.Velocity = Vector3.Zero;
+                playerData.SpawnPosition = spawnPosition;
+                m_placementAppliedProject = project;
+                m_placementApplied++;
+                Info("本机角色已放到主机记录的最后离线位置 " + DescribePlacement(placement) +
+                    "（复活点 " + DescribePlacement(spawnPlacement.IsFinite ? spawnPlacement : placement) +
+                    "，来自主机的 SuMultiplayerPlayers.xml，不写 Project.xml）");
+            }
+            catch (Exception e)
+            {
+                ErrorOnce("assigned-placement:" + project.GetHashCode(),
+                    "应用主机记录的本机角色位置失败（" + e.GetType().Name + " " + e.Message +
+                    "）→ 本机角色停在引擎出生点（明确失败，不伪造位置）");
+                m_placementAppliedProject = project;
+            }
+        }
+
+        private static string DescribePlacement(PlayerPlacement placement) =>
+            "(" + placement.X.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) +
+            "," + placement.Y.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) +
+            "," + placement.Z.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) + ")";
 
         /// <summary>
         /// Phase 2：客户端把**下载世界带来的主机角色副本**从引擎里摘掉，只留下本设备真正操作的
@@ -3978,6 +4156,9 @@ namespace SuMultiplayer.Modules
             " rejected=" + m_rejectedPeers +
             // 主机分配资料：真正应用次数 / 因本机已有更新编辑而保留本机值的次数
             // （旧实现每帧重放分配快照，会把编辑屏的改名/换肤覆盖回去）。
+            " assignedPlacementApplied=" + m_placementApplied +
+            " assignedPlacementPendingTicks=" + m_placementPendingTicks +
+            " recordSpawnPointSaved=" + m_recordSpawnPointSaved +
             " assignedProfileApplied=" + m_assignedProfileApplied +
             " assignedProfileKeptLocal=" + m_assignedProfileKeptLocal +
             // 编辑玩家屏同步：进入/退出、重提资料、改名/换肤、主机广播、缺失资源、拒绝原因。

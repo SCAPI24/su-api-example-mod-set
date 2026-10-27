@@ -125,6 +125,33 @@ namespace SuMultiplayer.Players
     /// Source: Mod/ScMultiplayer/Modules/Player/ScMultiplayerPlayerHealthAndIngress.cs:941-961
     ///         （有记录 → 直接用记录；没有记录且没有完整资料 → SCMP_PROFILE_REQUIRED）
     /// </summary>
+    /// <summary>
+    /// 主机角色记录里的"重新进入位置"（位置 + 最后睡觉的复活点）。纯值，不依赖 Engine。
+    /// 由 HelloAck 的 assigned_position / assigned_spawn_position 携带；客户端在世界加载后
+    /// 把本机角色放到 Position，并把 SpawnPosition 设为最后睡觉的复活点。
+    /// </summary>
+    public readonly struct PlayerPlacement
+    {
+        public readonly float X;
+        public readonly float Y;
+        public readonly float Z;
+
+        public PlayerPlacement(float x, float y, float z)
+        {
+            X = x; Y = y; Z = z;
+        }
+
+        public bool IsFinite =>
+            !float.IsNaN(X) && !float.IsInfinity(X) &&
+            !float.IsNaN(Y) && !float.IsInfinity(Y) &&
+            !float.IsNaN(Z) && !float.IsInfinity(Z);
+
+        public override string ToString() =>
+            "(" + X.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) + "," +
+            Y.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) + "," +
+            Z.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) + ")";
+    }
+
     public sealed class HelloProfileDecision
     {
         /// <summary>true = 主机没有这个身份的角色记录、Hello 也没带完整资料 → 客户端必须先建角色。</summary>
@@ -148,6 +175,15 @@ namespace SuMultiplayer.Players
         /// false => 客户端在握手后显式上传（首次加入 / 记录缺资源时的显式重发）。
         /// </summary>
         public bool AssignedSkinAssetPresent;
+
+        /// <summary>true = 主机角色记录里有可用的重新进入位置（HelloAck.assigned_position）。</summary>
+        public bool HasPlacement;
+
+        /// <summary>角色记录里的最后离线位置（客户端把本机角色放到这里）。</summary>
+        public PlayerPlacement Position;
+
+        /// <summary>角色记录里的最后睡觉复活点（客户端 PlayerData.SpawnPosition 用它）。</summary>
+        public PlayerPlacement SpawnPosition;
 
         /// <summary>明确原因（profile required / 资料无效 / 记录损坏…）。</summary>
         public string Reason;

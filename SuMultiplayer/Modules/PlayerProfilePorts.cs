@@ -36,6 +36,17 @@ namespace SuMultiplayer.Modules
         bool AssignedSkinAssetPresent { get; }
 
         /// <summary>
+        /// HelloAck.has_assigned_placement：主机角色记录里有本机角色的重新进入位置。
+        /// </summary>
+        bool HasAssignedPlacement { get; }
+
+        /// <summary>角色记录里的最后离线位置。</summary>
+        SuMultiplayer.Players.PlayerPlacement AssignedPosition { get; }
+
+        /// <summary>角色记录里的最后睡觉复活点。</summary>
+        SuMultiplayer.Players.PlayerPlacement AssignedSpawnPosition { get; }
+
+        /// <summary>
         /// 角色创建完成 / 资料变化后**重新握手**（旧实现同样是重新 JoinGame）。
         /// 返回 false = 当前没有可重连的客户端通道（已明确记录，不假装重连成功）。
         /// </summary>

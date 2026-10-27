@@ -2101,6 +2101,49 @@ namespace SuMultiplayer.Engine
         public static PlayerSex ToPlayerSex(PlayerClass playerClass) =>
             playerClass == PlayerClass.Female ? PlayerSex.Female : PlayerSex.Male;
 
+        /// <summary>
+        /// 客户端：下载世界的本机 PlayerData 还没出生时，**立刻**以 Respawn 模式在本机目标位置建实体
+        /// 并切到 Playing —— 不等引擎原生 PrepareSpawn → WaitForTerrain 那几秒。
+        /// 为什么必须现在做：等待地形期间引擎会先用默认相机画在下载世界的 GlobalSpawnPosition
+        /// （主机进入地图的位置），玩家会先看到主机位置再瞬移（实机反馈 2026-10-27）。
+        /// Source: Mod/ScMultiplayer/Modules/Player/ScMultiplayerProfileHandlers.cs:1407-1469
+        ///         （ReplaceLocalPlayerData → InvokeClientPlaceholderPlayerSpawn）
+        /// </summary>
+        public bool TrySpawnClientLocalPlayerNow(PlayerData playerData, Vector3 position,
+            out string reason)
+        {
+            reason = null;
+            if (playerData == null)
+            {
+                reason = "本机 PlayerData 为空";
+                return false;
+            }
+            if (playerData.ComponentPlayer != null)
+            {
+                reason = "本机 PlayerData 已经有 ComponentPlayer，不需要提前出生";
+                return false;
+            }
+            try
+            {
+                playerData.SpawnPosition = position;
+                InvokeClientPlaceholderPlayerSpawn(playerData, position);
+                if (playerData.ComponentPlayer == null)
+                {
+                    reason = "调用 SpawnPlayer(Respawn) 之后 ComponentPlayer 仍为空";
+                    return false;
+                }
+                m_parentField.GetParentField<StateMachine>(playerData, "m_stateMachine",
+                    typeof(PlayerData)).TransitionTo("Playing");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                reason = "提前出生本机角色失败：" + ex.GetType().Name + " " + ex.Message;
+                m_diagnostics?.Error(m_ownerId, reason, ex);
+                return false;
+            }
+        }
+
         // Source: Survivalcraft/Game/PlayerData.cs:PlayerData.SpawnPlayer
         // Source: ScMultiplayerProfileHandlers.cs:92-106（InvokeClientPlaceholderPlayerSpawn）
         private void InvokeClientPlaceholderPlayerSpawn(PlayerData playerData, Vector3 position)

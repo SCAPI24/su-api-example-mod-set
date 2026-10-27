@@ -527,6 +527,17 @@ message Hello {
 }
 
 // Host -> client: handshake answer.
+// Host-recorded placement of the joining character's own record (append-only 2026-10-27).
+// The client local player is a fresh engine character created in the downloaded world
+// (whose Players section is the HOST's saved character), so without this it spawns at the
+// host's last save position. The host sends the character record's last offline position
+// (Position) and its own last-slept respawn anchor (SpawnPosition).
+message PlayerPlacement {
+  float x = 1;
+  float y = 2;
+  float z = 3;
+}
+
 message HelloAck {
   uint32 version = 1;
   int32 client_id = 2;
@@ -564,6 +575,12 @@ message HelloAck {
   bool rejected = 17;
   // Explicit reject reason (logged / shown by the client; empty = host did not explain).
   string reject_reason = 18;
+  // Host-recorded placement of the joining character (SuMultiplayerPlayers.xml record).
+  // has_assigned_placement=false => old host / first-time character / record without a valid
+  // position: the client keeps the engine spawn behaviour (nothing is guessed).
+  bool has_assigned_placement = 19;
+  PlayerPlacement assigned_position = 20;
+  PlayerPlacement assigned_spawn_position = 21;
 
   bytes ext = 100;
   google.protobuf.Any custom = 101;

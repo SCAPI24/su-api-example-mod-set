@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Engine;
 using SuMultiplayer.Net;
 using SuMultiplayer.Players;
 
@@ -2656,6 +2657,26 @@ namespace SuMultiplayer.Terrain
                 ProfileRequiredReason = state.ProfileRequiredReason ?? string.Empty,
                 // 主机角色记录里已有这个身份的自定义皮肤资源 → 客户端不用重新上传。
                 AssignedSkinAssetPresent = profileDecision?.AssignedSkinAssetPresent == true,
+                // 2026-10-27：把客户端角色记录里的"最后离线位置 + 最后睡觉复活点"随 HelloAck 下发。
+                // 客户端本地角色是下载世界里的新实体（Players 段是主机存档角色），不带上这份
+                // 记录位置就会出生在主机角色旁边（实机 bug）。
+                HasAssignedPlacement = profileDecision != null && profileDecision.HasPlacement,
+                AssignedPosition = profileDecision != null && profileDecision.HasPlacement
+                    ? new SuMultiplayer.Protocol.PlayerPlacement
+                    {
+                        X = profileDecision.Position.X,
+                        Y = profileDecision.Position.Y,
+                        Z = profileDecision.Position.Z
+                    }
+                    : null,
+                AssignedSpawnPosition = profileDecision != null && profileDecision.HasPlacement
+                    ? new SuMultiplayer.Protocol.PlayerPlacement
+                    {
+                        X = profileDecision.SpawnPosition.X,
+                        Y = profileDecision.SpawnPosition.Y,
+                        Z = profileDecision.SpawnPosition.Z
+                    }
+                    : null,
                 // 主机会话标识 + 是否接受重连 + 当前改动水位 + 依据。
                 // 客户端据此：① 记住"主机当前会话"（下一次重连的判定）；② 收到拒绝时明确作废旧会话并重下整图。
                 SessionId = SessionId ?? string.Empty,
@@ -5185,6 +5206,18 @@ namespace SuMultiplayer.Terrain
         public bool AssignedSkinAssetPresent { get; private set; }
 
         /// <summary>
+        /// HelloAck 里的本机角色重新进入位置（主机角色记录的最后离线位置 + 最后睡觉复活点）。
+        /// false = 旧主机 / 首次创建角色 / 记录里没有有效位置 → 保持引擎出生行为。
+        /// </summary>
+        public bool HasAssignedPlacement { get; private set; }
+
+        /// <summary>主机角色记录里的最后离线位置（客户端把本地角色放到这里）。</summary>
+        public SuMultiplayer.Players.PlayerPlacement AssignedPosition { get; private set; }
+
+        /// <summary>主机角色记录里的最后睡觉复活点（客户端 PlayerData.SpawnPosition）。</summary>
+        public SuMultiplayer.Players.PlayerPlacement AssignedSpawnPosition { get; private set; }
+
+        /// <summary>
         /// 主机要求先创建角色（旧 SCMP_PROFILE_REQUIRED）：本连接**不会**收到世界，
         /// 调用方必须打开角色创建界面，完成后带 Hello.profile 重新握手。
         /// </summary>
@@ -5351,6 +5384,10 @@ namespace SuMultiplayer.Terrain
             ProfileRequiredReason = string.Empty;
             HostProfile = null;
             AssignedProfile = null;
+            HasAssignedPlacement = false;
+            AssignedPosition = default(SuMultiplayer.Players.PlayerPlacement);
+            AssignedSpawnPosition = default(SuMultiplayer.Players.PlayerPlacement);
+            SuMultiplayer.Engine.ClientSpawnPlacement.Clear();
             m_helloClaimedRejoin = alreadyHasWorld;
             m_catchUpRequestAttempts = 0;
             m_catchUpRequestSentMs = 0L;
@@ -6311,6 +6348,31 @@ namespace SuMultiplayer.Terrain
                 out assignedClientId, out assignedIdentity, out assignedIsHost,
                 out assignedHasCharacter);
             AssignedSkinAssetPresent = ack.AssignedSkinAssetPresent;
+            HasAssignedPlacement = ack.HasAssignedPlacement;
+            AssignedPosition = ack.AssignedPosition != null
+                ? new SuMultiplayer.Players.PlayerPlacement(ack.AssignedPosition.X,
+                    ack.AssignedPosition.Y, ack.AssignedPosition.Z)
+                : default(SuMultiplayer.Players.PlayerPlacement);
+            AssignedSpawnPosition = ack.AssignedSpawnPosition != null
+                ? new SuMultiplayer.Players.PlayerPlacement(ack.AssignedSpawnPosition.X,
+                    ack.AssignedSpawnPosition.Y, ack.AssignedSpawnPosition.Z)
+                : default(SuMultiplayer.Players.PlayerPlacement);
+            // 下载世界导入后由 GameLoading 直接加载 Project.xml 的 Players 段；引擎第一次出生
+            // 前把这个位置交给 SuSubsystemPlayers.Load 预置，避免先出生在主机位置再瞬移。
+            if (ack.HasAssignedPlacement && ack.AssignedPosition != null)
+            {
+                Vector3 earlyPosition = new Vector3(ack.AssignedPosition.X,
+                    ack.AssignedPosition.Y, ack.AssignedPosition.Z);
+                Vector3 earlySpawn = ack.AssignedSpawnPosition != null
+                    ? new Vector3(ack.AssignedSpawnPosition.X, ack.AssignedSpawnPosition.Y,
+                        ack.AssignedSpawnPosition.Z)
+                    : earlyPosition;
+                SuMultiplayer.Engine.ClientSpawnPlacement.Set(earlyPosition, earlySpawn);
+            }
+            else
+            {
+                SuMultiplayer.Engine.ClientSpawnPlacement.Clear();
+            }
             // 主机要求先创建角色（旧 SCMP_PROFILE_REQUIRED）：本连接不会有世界。
             ProfileRequired = ack.ProfileRequired;
             ProfileRequiredReason = ack.ProfileRequiredReason ?? string.Empty;
