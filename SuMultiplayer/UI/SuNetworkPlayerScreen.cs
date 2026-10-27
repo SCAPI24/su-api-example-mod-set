@@ -133,14 +133,15 @@ namespace SuMultiplayer.UI
                 if (!CharacterSkinCatalog.TryReadCustomAsset(m_skinName,
                         out customAsset, out string assetReason))
                 {
+                    global::Engine.Log.Warning("[SuMP][skin] custom skin unavailable: " + m_skinName + " · " + assetReason);
                     ShowError("Custom skin unavailable",
-                        "无法使用自定义皮肤 \"" + m_skinName + "\"：\n" + assetReason);
+                        "Cannot use custom skin \"" + m_skinName + "\": invalid or unreadable skin file.");
                     return;
                 }
             }
             else if (!CharacterSkinsManager.IsBuiltIn(m_skinName))
             {
-                ShowError("Skin unavailable", "皮肤 \"" + m_skinName + "\" 不是可用的内置皮肤。");
+                ShowError("Skin unavailable", "Skin \"" + m_skinName + "\" is not an available built-in skin.");
                 return;
             }
             // 返回 Play 之前先让 Session 知道"这是同一次加入的继续"：
@@ -233,7 +234,7 @@ namespace SuMultiplayer.UI
             string[] skins = CharacterSkinCatalog.NamesForClass(m_playerClass, includeCustom: true);
             if (skins.Length == 0)
             {
-                ShowError("No skins", "本机没有可用的 " + m_playerClass + " 皮肤。");
+                ShowError("No skins", "No available " + m_playerClass + " skins on this device.");
                 return;
             }
             DialogsManager.ShowDialog(null, new ListSelectionDialog(

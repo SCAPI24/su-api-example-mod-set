@@ -119,7 +119,7 @@ namespace SuMultiplayer.Modules
             }
         }
 
-        public string StatusLine() => "聊天：" + Summary();
+        public string StatusLine() => "chat: " + Summary();
 
         // ================================================================= 生命周期
 
@@ -237,7 +237,7 @@ namespace SuMultiplayer.Modules
             {
                 // 客户端换了握手编号 = 重连 / 重新加入：旧会话的聊天绝不带过来。
                 ResetTransientState("客户端连接编号变化（重连）");
-                Log("聊天：客户端重连（clientId=" + m_lastLocalClientId + " → " +
+                Log("chat: 客户端重连（clientId=" + m_lastLocalClientId + " → " +
                     localClientId + "）→ 消息流 / 在途请求已清空，历史不重放");
                 m_wasInSession = inSession;
             }
@@ -726,7 +726,7 @@ namespace SuMultiplayer.Modules
             }
             m_peers[clientId] = new ChatPeer(sanitized,
                 ChatTextPolicy.SanitizeIdentity(identity));
-            Log("聊天：玩家端 " + clientId + " 加入（名字长度=" + sanitized.Length +
+            Log("chat: 玩家端 " + clientId + " 加入（名字长度=" + sanitized.Length +
                 (rejoin ? "，重连" : string.Empty) + "）");
         }
 
@@ -734,7 +734,7 @@ namespace SuMultiplayer.Modules
         {
             m_peers.Remove(clientId);
             m_rateLimiter.Remove(clientId);
-            Log("聊天：玩家端 " + clientId + " 离开（" + reason + "）→ 名册 / 限速状态已清");
+            Log("chat: 玩家端 " + clientId + " 离开（" + reason + "）→ 名册 / 限速状态已清");
         }
 
         /// <summary>

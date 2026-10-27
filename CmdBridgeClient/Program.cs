@@ -178,6 +178,9 @@ namespace CmdBridgeClient
                             ("maxElements", 256)));
                     case "ui":
                         return PrintUi(client, args);
+                    case "maps":
+                    case "worlds":
+                        return MapsCommand(client, args);
                     case "reachability":
                         return Print(client, "ui.reachability", null);
                     case "player":
@@ -938,13 +941,98 @@ namespace CmdBridgeClient
             return Print(client, "players.all", arguments);
         }
 
+        /// <summary>
+        /// 地图选择界面的语义扫描：把 obs.ui 的 WorldItem.Name / Details 配对，
+        /// 用详情里的 Ping/Online 判断"服务器房间"还是"本地世界"，并原样输出完整详情。
+        /// 这样不依赖 ui 表格的 24 字符截断，也不会再把本地地图当成联机房间。
+        /// </summary>
+        private static int MapsCommand(BridgeClient client, List<string> args)
+        {
+            JsonElement result = client.Send("obs.ui", Args(("all", true)), s_timeoutMs);
+            if (!result.TryGetProperty("elements", out JsonElement elements))
+            {
+                Console.WriteLine("maps: obs.ui 没有返回 elements");
+                return 1;
+            }
+            var rows = new Dictionary<string, MapRow>(StringComparer.Ordinal);
+            var order = new List<string>();
+            bool playEnabled = false;
+            foreach (JsonElement element in elements.EnumerateArray())
+            {
+                string name = GetText(element, "name");
+                string path = GetText(element, "path");
+                int slash = path.LastIndexOf('/');
+                string parent = slash >= 0 ? path.Substring(0, slash) : path;
+                if (name == "WorldItem.Name" || name == "WorldItem.Details")
+                {
+                    if (!rows.TryGetValue(parent, out MapRow row))
+                    {
+                        row = new MapRow();
+                        rows.Add(parent, row);
+                        order.Add(parent);
+                    }
+                    if (name == "WorldItem.Name") row.Name = GetText(element, "text");
+                    else row.Details = GetText(element, "text");
+                }
+                else if (name == "Play")
+                {
+                    playEnabled = element.TryGetProperty("enabled", out JsonElement enabled) &&
+                        enabled.ValueKind == JsonValueKind.True;
+                }
+            }
+            Console.WriteLine("maps: count=" + order.Count + " playEnabled=" + playEnabled);
+            for (int i = 0; i < order.Count; i++)
+            {
+                MapRow row = rows[order[i]];
+                string details = row.Details ?? string.Empty;
+                bool server = details.IndexOf("Ping ", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    details.IndexOf("LAN (", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    details.IndexOf("Online (", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    details.IndexOf("Service", StringComparison.OrdinalIgnoreCase) >= 0;
+                string col = server ? "server-room" : "local-world-or-unknown";
+                int ping = ExtractPing(details);
+                Console.WriteLine("[" + (i + 1) + "] name=\"" + row.Name + "\" kind=" + col +
+                    (ping >= 0 ? " ping=" + ping + "ms" : string.Empty));
+                Console.WriteLine("    details=" + details);
+            }
+            if (order.Count == 0)
+                Console.WriteLine("(no map rows; if on Play screen, wait for LAN discovery)");
+            return 0;
+        }
+
+        private sealed class MapRow
+        {
+            public string Name = string.Empty;
+            public string Details = string.Empty;
+        }
+
+        private static int ExtractPing(string details)
+        {
+            if (string.IsNullOrEmpty(details)) return -1;
+            int ping = details.IndexOf("Ping", StringComparison.OrdinalIgnoreCase);
+            if (ping < 0) return -1;
+            int start = ping + 4;
+            while (start < details.Length && !char.IsDigit(details[start])) start++;
+            int end = start;
+            while (end < details.Length && char.IsDigit(details[end])) end++;
+            return end > start && int.TryParse(details.Substring(start, end - start), out int value)
+                ? value : -1;
+        }
+
         private static int PrintUi(BridgeClient client, List<string> args)
         {
             var arguments = new Dictionary<string, object>(StringComparer.Ordinal);
+            // 默认输出完整 text：截断曾让操作者把服务器房间误判成本地世界。
+            // --compact 只是显式要求旧的一行截断显示；--full 保留为兼容参数。
+            bool compact = false;
             for (int i = 1; i < args.Count; i++)
             {
                 if (args[i] == "--all")
                     arguments["all"] = true;
+                else if (args[i] == "--compact")
+                    compact = true;
+                else if (args[i] == "--full")
+                    compact = false;
                 else if (args[i] == "--filter" && i + 1 < args.Count)
                     arguments["filter"] = args[++i];
                 else if (args[i] == "--max" && i + 1 < args.Count)
@@ -994,8 +1082,10 @@ namespace CmdBridgeClient
                         GetText(element, "id"),
                         GetText(element, "gameWidget"),
                         GetText(element, "type"),
-                        Truncate(GetText(element, "name"), 22),
-                        Truncate(GetText(element, "text"), 24),
+                        compact ? CompactName(GetText(element, "name"))
+                            : GetText(element, "name"),
+                        compact ? CompactText(GetText(element, "text"))
+                            : GetText(element, "text"),
                         FormatPoint(element, "clientPoint"),
                         state));
                 }
@@ -1073,12 +1163,15 @@ namespace CmdBridgeClient
                 : value.ToString();
         }
 
-        private static string Truncate(string value, int length)
-        {
-            if (string.IsNullOrEmpty(value))
-                return string.Empty;
-            return value.Length <= length ? value : value.Substring(0, length - 1) + "…";
-        }
+        private static string CompactName(string value) =>
+            string.IsNullOrEmpty(value) || value.Length <= 22
+                ? value ?? string.Empty
+                : value.Substring(0, 21) + "…[name truncated; use maps]";
+
+        private static string CompactText(string value) =>
+            string.IsNullOrEmpty(value) || value.Length <= 24
+                ? value ?? string.Empty
+                : value.Substring(0, 23) + "…[truncated; use maps or omit --compact]";
 
         private static void PrintHelp()
         {
@@ -1086,11 +1179,16 @@ namespace CmdBridgeClient
 
 观察（只读，无限）
   status                      屏幕/窗口/动画/布局状态
-  ui [--all] [--filter T] [--max N] [--gamewidget N]
+  ui [--all] [--compact] [--filter T] [--max N] [--gamewidget N]
                               当前界面元素（RootWidget + 当前屏 + 活动对话框；含坐标、text、
                               hittable、mounted、scope、clicked、laidOut、gameWidget）
+                              **默认输出完整 text**；--compact 才使用旧的 22/24 字符截断。
+                              不能用截断文本判断房间类型；地图界面优先用 maps。
                               分屏：每个视图各有一份同名 HUD 按钮，元素上的 gw 就是槽位号；
                               views 段列出每个视图的矩形/布局/输入设备/主视图
+  maps | worlds               地图选择界面语义扫描：配对 WorldItem.Name/Details，
+                              用完整详情里的 LAN/Ping/Online 判定 server-room，
+                              输出完整 details 与 ping；不依赖 ui 的截断文本
   reachability                可达性报告：哪些元素点不到、被谁挡住
   player                      玩家状态 + 当前按键意图 + 背包（只报第一个本地角色）
   players [--index N] [--max N] [--slots N]

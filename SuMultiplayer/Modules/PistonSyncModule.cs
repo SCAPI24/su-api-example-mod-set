@@ -143,7 +143,7 @@ namespace SuMultiplayer.Modules
 
         public string ModuleId => m_descriptor.Id;
 
-        public string StatusLine() => "移动组运动（活塞 / 塌落）：" + Summary() + " · " +
+        public string StatusLine() => "piston-sync: " + Summary() + " · " +
             m_port.Describe();
 
         public void Attach(IModuleContext context)

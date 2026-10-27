@@ -64,6 +64,7 @@ namespace SuMultiplayer.Modules
         private IMessageRegistryPort m_messages;
         private ITransportControlPort m_control;
         private IWorldSessionPort m_session;
+        private IWorldTransferBandwidthPort m_bandwidth;
         private WorldTransferHost m_host;
         private WorldTransferClient m_client;
         /// <summary>主机侧发送通道：把共享通道绑定到"这一次发送的目标 clientId"。</summary>
@@ -232,6 +233,7 @@ namespace SuMultiplayer.Modules
                 return;
             }
             m_session = session;
+            context.TryGetPort(out m_bandwidth);
             if (context.TryGetPort(out IMessageRegistryPort messages) && messages != null)
             {
                 m_messages = messages;
@@ -341,6 +343,7 @@ namespace SuMultiplayer.Modules
                 if (active == null || active.Aborted)
                 {
                     // 状态被别处清掉了（重连 / 离开）：丢弃已准备的整图，让位给队列里的下一个。
+                    m_bandwidth?.SetClientDownloading(m_activeSendClientId, false);
                     m_activeSendClientId = 0;
                     m_host.AbortPendingSend();
                 }
@@ -390,6 +393,7 @@ namespace SuMultiplayer.Modules
                 // 定向：这一条传输从 Begin 到 End 只发给这个 clientId（绝不发给"最后加入的那个"）。
                 m_sendChannel.TargetClientId = clientId;
                 m_activeSendClientId = clientId;
+                m_bandwidth?.SetClientDownloading(clientId, true);
                 send.Started = true;
                 send.LastProgressMs = nowMs;
                 send.LastProgressLogMs = nowMs;
@@ -522,6 +526,7 @@ namespace SuMultiplayer.Modules
             int total = m_host.ChunkCount;
             m_sends.Remove(send.ClientId);
             m_sendQueue.Remove(send.ClientId);
+            m_bandwidth?.SetClientDownloading(send.ClientId, false);
             m_activeSendClientId = 0;
             // pak 用完即弃（缓存 m_cachedPak 仍在：下一个客户端复用同一份快照，不重新导出）
             m_host.AbortPendingSend();
@@ -543,6 +548,7 @@ namespace SuMultiplayer.Modules
             m_sendQueue.Remove(send.ClientId);
             if (wasActive)
             {
+                m_bandwidth?.SetClientDownloading(send.ClientId, false);
                 m_activeSendClientId = 0;
                 m_host?.AbortPendingSend();
             }
@@ -573,6 +579,7 @@ namespace SuMultiplayer.Modules
             m_sendQueue.Remove(clientId);
             if (wasActive)
             {
+                m_bandwidth?.SetClientDownloading(clientId, false);
                 m_activeSendClientId = 0;
                 m_host?.AbortPendingSend();
             }
@@ -586,6 +593,7 @@ namespace SuMultiplayer.Modules
             m_sendQueue.Remove(clientId);
             if (m_activeSendClientId == clientId)
             {
+                m_bandwidth?.SetClientDownloading(clientId, false);
                 m_activeSendClientId = 0;
                 m_host?.AbortPendingSend();
                 Log("世界发送已取消 clientId=" + clientId + "（" + why + "）");
@@ -597,6 +605,8 @@ namespace SuMultiplayer.Modules
         {
             int count = m_sends.Count;
             if (m_activeSendClientId > 0 && !m_sends.ContainsKey(m_activeSendClientId)) count++;
+            if (m_activeSendClientId > 0)
+                m_bandwidth?.SetClientDownloading(m_activeSendClientId, false);
             m_sends.Clear();
             m_sendQueue.Clear();
             m_activeSendClientId = 0;
@@ -616,7 +626,7 @@ namespace SuMultiplayer.Modules
 
         private string ProgressText()
         {
-            if (m_host == null || m_host.ChunkCount <= 0) return "尚未开始";
+            if (m_host == null || m_host.ChunkCount <= 0) return "not started";
             return m_host.ChunksSent + "/" + m_host.ChunkCount + " 片";
         }
 

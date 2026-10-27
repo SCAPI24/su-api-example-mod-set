@@ -301,11 +301,11 @@ namespace SuMultiplayer.UI
             m_panelCreates++;
             m_iconCreates++;
             InfoRateLimited("voice-hud-create",
-                "[SuMP][ui] 语音 HUD 已挂到 GameWidget#" + gameWidget.GameWidgetIndex +
-                "（右下角语音图标 + 右上 TALK（仅 ptt）；状态行 / SPEAKING 行已删除）");
+                "[SuMP][ui] voice HUD attached to GameWidget#" + gameWidget.GameWidgetIndex +
+                " (bottom-right voice icon + top-right TALK ptt-only)");
             InfoRateLimited("voice-icon-create",
-                "[SuMP][ui] 语音图标已挂到 GameWidget#" + gameWidget.GameWidgetIndex +
-                " 右下角、聊天按钮正上方 · " + VoiceHudLayout.Describe());
+                "[SuMP][ui] voice icon attached to GameWidget#" + gameWidget.GameWidgetIndex +
+                " bottom-right, above chat button · " + VoiceHudLayout.Describe());
             return refs;
         }
 
@@ -695,7 +695,7 @@ namespace SuMultiplayer.UI
         private void InfoRateLimited(string key, string message, int intervalMs = 5000)
         {
             if (!ShouldLog(key, intervalMs)) return;
-            global::Engine.Log.Information(message + " · " + DescribeCounters());
+            SuMultiplayer.Engine.ModLog.Info(message + " · " + DescribeCounters());
         }
 
         /// <summary>同一个 key 在 intervalMs 内只允许写一行；计数器本身每帧都真实累加。</summary>
@@ -793,7 +793,7 @@ namespace SuMultiplayer.UI
                 m_uKey = Enum.Parse(keyType, "U");
                 m_isKeyDownOnce = downOnce;
                 m_keyboardReady = true;
-                global::Engine.Log.Information(
+                SuMultiplayer.Engine.ModLog.Info(
                     "[SuMP][voice] 快捷键：U = 语音 ON/OFF（边沿触发；文本框/对话框打开时忽略）；" +
                     "V 不绑定任何语音功能（可选 PTT 只剩 TALK 点按）");
             }

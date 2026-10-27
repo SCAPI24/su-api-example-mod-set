@@ -38,6 +38,7 @@ namespace SuMultiplayer.UI
         private long m_totalWorldsSize;
         private int m_scanGeneration;
         private string m_selectedKey;
+        private int m_lastLoggedRoomCount = -2;
         private SuJoinBusyDialog m_joinDialog;
 
         /// <summary>房间行模型：房间不是本地世界，绝不伪造成 WorldInfo 去骗引擎的世界列表。</summary>
@@ -155,7 +156,17 @@ namespace SuMultiplayer.UI
         public override void Update()
         {
             SyncRoomRows();
+            int roomCount = m_rooms?.Rooms?.Count ?? -1;
+            if (roomCount != m_lastLoggedRoomCount)
+            {
+                m_lastLoggedRoomCount = roomCount;
+                SuMultiplayer.Engine.ModLog.Info("[SuMP][play] room rows: rooms=" + roomCount +
+                    " roomRows=" + m_roomOrder.Count + " localWorlds=" + m_localWorlds.Count +
+                    " listItems=" + m_list.Items.Count);
+            }
             RebuildListIfNeeded();
+            // 不自动选中任何行：与原版 Play 屏一致，进入列表/出现房间时必须玩家自己点选。
+            // 只有玩家点击行后 ListPanelWidget 才会设置 SelectedItem，Play 按钮随之启用。
             UpdateTopBar();
             RefreshVisibleRows();
 
@@ -395,7 +406,7 @@ namespace SuMultiplayer.UI
                 "Connecting to " + entry.HostAddress + ":" + entry.Port + " ...",
                 delegate
                 {
-                    global::Engine.Log.Information("[SuMP][play] 加入窗口 Cancel → 中止加入流程");
+                    SuMultiplayer.Engine.ModLog.Info("[SuMP][play] join dialog Cancel -> join aborted");
                     m_rooms?.CancelJoin();
                     m_joinDialog = null;
                 });
@@ -495,7 +506,7 @@ namespace SuMultiplayer.UI
                 ShowMessage("Join Room", reason);
                 return;
             }
-            global::Engine.Log.Information("[SuMP][play] 进入下载来的世界：" + imported.WorldSettings.Name +
+            SuMultiplayer.Engine.ModLog.Info("[SuMP][play] entering downloaded world: " + imported.WorldSettings.Name +
                             "（" + imported.DirectoryName + "）");
             ScreensManager.SwitchScreen("GameLoading", imported, null);
         }

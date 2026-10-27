@@ -774,6 +774,19 @@ namespace SuMultiplayer.Modules
                 m_avatarsCreated++;
                 if (!string.IsNullOrEmpty(record.SkinName)) m_avatarAppearanceApplied++;
                 NetworkPlayerRecord captured = CaptureForStorage(peer.Key, record);
+                // 首次出生兜底：引擎 InitialNoIntro 在部分构建/游戏模式下没有留下可见衣服，
+                // 角色记录会是空衣服。这里用主机本机角色的衣服补一份，至少保证新角色不是裸体，
+                // 同时把补好的资料应用到主机侧化身，客户端随资料广播看到同一套。
+                if (captured != null && ClothesEmpty(captured.Clothes) &&
+                    m_spawner.TryCaptureLocalHostClothes(out int[][] hostClothes))
+                {
+                    captured.Clothes = hostClothes;
+                    record.Clothes = hostClothes;
+                    var rewardProfile = RecordToProfile(captured);
+                    if (!m_spawner.TryApplyRemoteProfile(peer.Key, rewardProfile,
+                            out bool mustRecreate, out string applyReason) && mustRecreate)
+                        Warn("初始衣服兜底应用失败（需要重建角色）：" + applyReason);
+                }
                 if (captured != null) m_records.Put(peer.RecordKey, captured);
                 m_records.SaveIfDirty();
                 m_pendingPeers.Remove(peer.Key);
@@ -1027,6 +1040,18 @@ namespace SuMultiplayer.Modules
             decision.HasCharacter = false;
             decision.Name = record.Name;
             decision.Profile = profile;
+            // 新建角色也必须把安全出生点带回 HelloAck：客户端下载世界时先按这个位置预置，
+            // 否则会先出生在下载世界的主机角色位置，一帧内推挤主机角色。
+            if (IsFiniteVector(record.Position))
+            {
+                Vector3 spawn = IsFiniteVector(record.SpawnPosition) && record.SpawnPosition != Vector3.Zero
+                    ? record.SpawnPosition
+                    : record.Position;
+                decision.HasPlacement = true;
+                decision.Position = new PlayerPlacement(record.Position.X, record.Position.Y,
+                    record.Position.Z);
+                decision.SpawnPosition = new PlayerPlacement(spawn.X, spawn.Y, spawn.Z);
+            }
             decision.Reason = "按客户端 Hello.profile 新建角色记录（首次加入）";
             Info("身份 " + PlayerIdentity.Describe(recordKey) + " 首次加入 → 用 Hello.profile 建角色记录" +
                 "（名字 " + record.Name + " · 性别 " + record.PlayerClass + " · 皮肤 " + record.SkinName + "）");
@@ -1479,7 +1504,8 @@ namespace SuMultiplayer.Modules
             else
             {
                 string before = RecordToProfile(record).Signature;
-                ApplyProfileToRecord(record, profile);
+                ApplyProfileToRecord(record, profile,
+                    preserveInitialClothes: !record.HasReceivedInitialItems);
                 m_records.Put(recordKey, record);
                 m_records.SaveIfDirty();
                 if (string.Equals(before, RecordToProfile(record).Signature, StringComparison.Ordinal) &&
@@ -2252,9 +2278,9 @@ namespace SuMultiplayer.Modules
                 (custom ? "（自定义 · " + skinHash.Length + " 字节哈希 · " + request.SkinAsset.Length +
                     "B 资源已缓存）" : "（内置）") +
                 " → 重新握手；主机建记录后广播，客户端随首次加入上传资源");
-            if (m_handshake == null || !m_handshake.ReconnectClient("角色创建完成"))
-                Error("角色创建完成后无法重新握手（没有可重连的客户端通道）→ 请从 Play 屏重新加入房间；" +
-                    "资料已保存在本机资料存储里，不会丢");
+            if (m_handshake == null || !m_handshake.SendProfileHello())
+                Error("角色创建完成后当前连接已不可用（可能被主机踢出 / 通道已断）→ " +
+                    "退出角色创建屏，请从 Play 屏重新加入房间；资料已保存在本机资料存储里，不会丢");
         }
 
         // ---------------------------------------------------------------- 编辑玩家屏（PlayerScreen）退出同步
@@ -3351,7 +3377,7 @@ namespace SuMultiplayer.Modules
 
         private static string DescribeRemovals(LocalPlayerNormalizePlan plan)
         {
-            if (plan == null || plan.Remove.Count == 0) return "无需移除";
+            if (plan == null || plan.Remove.Count == 0) return "nothing to remove";
             var parts = new List<string>(plan.Remove.Count);
             for (int i = 0; i < plan.Remove.Count; i++)
             {
@@ -3755,7 +3781,8 @@ namespace SuMultiplayer.Modules
         }
 
         // Source: ScMultiplayerProfileHandlers.cs:488-500（ApplyProfileToRecord）
-        private static void ApplyProfileToRecord(NetworkPlayerRecord record, PlayerProfileSnapshot profile)
+        private static void ApplyProfileToRecord(NetworkPlayerRecord record, PlayerProfileSnapshot profile,
+            bool preserveInitialClothes = false)
         {
             if (record == null || profile == null) return;
             record.NameConfirmed = true;
@@ -3774,7 +3801,11 @@ namespace SuMultiplayer.Modules
                     !SkinAssetPolicy.BytesEqual(record.SkinSha256, newHash))
                     record.SkinAsset = Array.Empty<byte>();
                 record.SkinSha256 = newHash;
-                record.Clothes = PlayerAppearance.CloneClothes(profile.Appearance.Clothes);
+                // 角色创建屏没有衣服（空数组）。首次加入还没走过引擎初始出生时，
+                // 不能用空衣服覆盖主机刚补好的初始衣服。
+                bool incomingEmpty = ClothesEmpty(profile.Appearance.Clothes);
+                if (!(preserveInitialClothes && incomingEmpty && !ClothesEmpty(record.Clothes)))
+                    record.Clothes = PlayerAppearance.CloneClothes(profile.Appearance.Clothes);
             }
         }
 
@@ -3845,16 +3876,40 @@ namespace SuMultiplayer.Modules
             return SkinAssetPolicy.BytesEqual(actual, record.SkinSha256);
         }
 
+        private static bool ClothesEmpty(int[][] clothes)
+        {
+            if (clothes == null) return true;
+            for (int i = 0; i < clothes.Length; i++)
+                if (clothes[i] != null && clothes[i].Length > 0) return false;
+            return true;
+        }
+
         // Source: ScMultiplayerProfileHandlers.cs:50-66（CreateInitialPlayerRecord）
-        private static NetworkPlayerRecord CreateInitialPlayerRecord(PlayerProfileSnapshot profile)
+        private NetworkPlayerRecord CreateInitialPlayerRecord(PlayerProfileSnapshot profile)
         {
             Project project = GameManager.Project;
             SubsystemPlayers players = project?.FindSubsystem<SubsystemPlayers>(false);
-            Vector3 position = players?.ComponentPlayers.FirstOrDefault()?.ComponentBody.Position ??
+            Vector3 hostPosition = players?.ComponentPlayers.FirstOrDefault()?.ComponentBody.Position ??
                 players?.GlobalSpawnPosition ?? Vector3.Zero;
-            string name = (profile?.Name ?? string.Empty).Trim();
+            // 首次加入的默认出生点：主机附近的安全落点，不是主机脚下。
+            // 先按名字稳定选方向，再让引擎 FindNoIntroSpawnPosition 做地形/碰撞修正。
+            string sourceName = profile?.Name ?? string.Empty;
+            int hash = 0;
+            for (int i = 0; i < sourceName.Length; i++) hash = hash * 31 + sourceName[i];
+            float angle = 2f * MathUtils.PI * ((uint)hash % 360u) / 360f;
+            Vector3 desired = hostPosition + 4f * new Vector3(
+                MathUtils.Cos(angle), 0f, MathUtils.Sin(angle));
+            Vector3 position = desired;
+            string spawnReason = null;
+            if (m_spawner != null &&
+                m_spawner.TryResolveInitialSpawnPosition(desired, out Vector3 safe, out spawnReason))
+                position = safe;
+            else
+                Info("首次角色出生点引擎搜索未成功（" + (spawnReason ?? "未知") +
+                    "）→ 使用主机附近 4m 的明确偏移点");
+            string name = sourceName.Trim();
             if (name.Length > 14) name = name.Substring(0, 14);
-            return new NetworkPlayerRecord
+            var record = new NetworkPlayerRecord
             {
                 Name = string.IsNullOrEmpty(name) ? "Player" : name,
                 PlayerClass = NetworkAvatarSpawner.ToPlayerClass(
@@ -3865,12 +3920,18 @@ namespace SuMultiplayer.Modules
                     : Array.Empty<byte>(),
                 Clothes = PlayerAppearance.CloneClothes(profile?.Appearance?.Clothes),
                 Position = position,
-                SpawnPosition = Vector3.Zero,
+                SpawnPosition = position,
                 Level = PlayerRecordCodec.DefaultLevel,
                 Health = PlayerRecordCodec.DefaultHealth,
                 HasReceivedInitialItems = false,
                 NameConfirmed = true
             };
+            // 角色创建屏不传衣服（空数组）；首次记录必须有可见初始衣服，
+            // 否则 HelloAck.assigned_profile 会把空衣服发给客户端，客户端就不会显示衣服。
+            if (ClothesEmpty(record.Clothes) &&
+                m_spawner != null && m_spawner.TryCaptureLocalHostClothes(out int[][] hostClothes))
+                record.Clothes = hostClothes;
+            return record;
         }
 
         /// <summary>
@@ -4246,6 +4307,39 @@ namespace SuMultiplayer.Modules
             m_downloadedWorlds = null;
             m_attached = false;
             Info("联机角色模块下线（" + reason + "）：只清理本模块自己的状态");
+        }
+
+        /// <summary>主机：当前在线玩家端列表（IF 设置容器用；只读快照）。</summary>
+        public System.Collections.Generic.IReadOnlyList<HostPeerInfo> CaptureHostPeers()
+        {
+            var result = new System.Collections.Generic.List<HostPeerInfo>();
+            if (m_spawner == null) return result;
+            var seen = new System.Collections.Generic.HashSet<int>();
+            foreach (PlayerKey key in m_spawner.Keys)
+            {
+                if (key.ClientId <= 0 || !seen.Add(key.ClientId)) continue;
+                PlayerProfileSnapshot profile = GetPeerProfile(key);
+                m_peerIdentities.TryGetValue(key.ClientId, out string identity);
+                result.Add(new HostPeerInfo
+                {
+                    ClientId = key.ClientId,
+                    Name = profile != null && profile.HasName ? profile.Name : ("client#" + key.ClientId),
+                    Identity = identity ?? string.Empty
+                });
+            }
+            // 已审批但还在角色创建屏（尚未建化身）的玩家端也必须能被主机看到 / 踢掉 / Ban。
+            foreach (PendingPeer peer in m_pendingPeers.Values)
+            {
+                int clientId = peer.Key.ClientId;
+                if (clientId <= 0 || !seen.Add(clientId)) continue;
+                result.Add(new HostPeerInfo
+                {
+                    ClientId = clientId,
+                    Name = string.IsNullOrWhiteSpace(peer.Name) ? ("client#" + clientId) : peer.Name,
+                    Identity = peer.Identity ?? string.Empty
+                });
+            }
+            return result;
         }
 
         public string StatusLine() =>

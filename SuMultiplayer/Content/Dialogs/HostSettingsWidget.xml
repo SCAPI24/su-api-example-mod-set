@@ -1,0 +1,24 @@
+<CanvasWidget xmlns="runtime-namespace:Game">
+  <CanvasWidget Name="HostSettingsWidget.Panel" Size="1180, 380" ClampToBounds="true" HorizontalAlignment="Center" VerticalAlignment="Center">
+    <RectangleWidget FillColor="0, 0, 0, 40" OutlineColor="128, 128, 128, 255" OutlineThickness="2" />
+    <ScrollPanelWidget Direction="Vertical" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="6, 6">
+      <StackPanelWidget Direction="Vertical" HorizontalAlignment="Center" VerticalAlignment="Center">
+        <LabelWidget Text="MULTIPLAYER SETTINGS" Color="255, 255, 255" HorizontalAlignment="Center" Margin="0, 6"/>
+        <StackPanelWidget Direction="Horizontal" HorizontalAlignment="Center" Margin="4, 4">
+          <BevelledButtonWidget Font="{Fonts/Pericles18}" Name="AutoHost" Size="360, 60" Text="AUTO HOST: OFF" Margin="4, 4"/>
+          <BevelledButtonWidget Font="{Fonts/Pericles18}" Name="AutoApprove" Size="360, 60" Text="AUTO APPROVE: OFF" Margin="4, 4"/>
+          <BevelledButtonWidget Font="{Fonts/Pericles18}" Name="BanKick" Size="360, 60" Text="BAN + KICK" Margin="4, 4"/>
+        </StackPanelWidget>
+        <StackPanelWidget Direction="Horizontal" HorizontalAlignment="Center" Margin="4, 4">
+          <BevelledButtonWidget Font="{Fonts/Pericles18}" Name="BanId" Size="360, 60" Text="BAN USER ID" Margin="4, 4"/>
+          <BevelledButtonWidget Font="{Fonts/Pericles18}" Name="Kick" Size="360, 60" Text="KICK (NO BAN)" Margin="4, 4"/>
+          <BevelledButtonWidget Font="{Fonts/Pericles18}" Name="RemoveBan" Size="360, 60" Text="REMOVE BAN" Margin="4, 4"/>
+        </StackPanelWidget>
+        <StackPanelWidget Direction="Horizontal" HorizontalAlignment="Center" Margin="4, 4">
+          <BevelledButtonWidget Font="{Fonts/Pericles18}" Name="ChangePort" Size="360, 60" Text="CHANGE HOST PORT" Margin="4, 4"/>
+          <BevelledButtonWidget Font="{Fonts/Pericles18}" Name="Close" Size="360, 60" Text="CLOSE" Margin="4, 4"/>
+        </StackPanelWidget>
+      </StackPanelWidget>
+    </ScrollPanelWidget>
+  </CanvasWidget>
+</CanvasWidget>

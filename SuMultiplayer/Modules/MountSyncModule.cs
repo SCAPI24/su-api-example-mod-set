@@ -1,10 +1,12 @@
 using System;
 using System.Collections.Generic;
-using Engine;
+using Engine;
+
 using SuMultiplayer.Engine;
 using SuMultiplayer.Net;
 using SuMultiplayer.Protocol;
-using PM = SuMultiplayer.Protocol.Mount;
+using PM = SuMultiplayer.Protocol.Mount;
+
 using Google.Protobuf;
 
 namespace SuMultiplayer.Modules
@@ -62,7 +64,7 @@ namespace SuMultiplayer.Modules
 
         public string ModuleId => m_descriptor.Id;
 
-        public string StatusLine() => "乘骑同步：req sent=" + m_requestsSent +
+        public string StatusLine() => "mount-sync: req sent=" + m_requestsSent +
             " sendFail=" + m_requestsSendFailed + " recv=" + m_requestsReceived +
             " dirErr=" + m_requestsRejectedDirection + " exec=" + m_executed + "/" + m_executeFailed +
             " state sent=" + m_statesSent + " recv=" + m_statesReceived +

@@ -237,7 +237,7 @@ namespace SuMultiplayer.Modules
 
         public string ModuleId => m_descriptor.Id;
 
-        public string StatusLine() => "方块使用：" + Summary() + " · " + m_port.Describe();
+        public string StatusLine() => "block-use: " + Summary() + " · " + m_port.Describe();
 
         // ---------------------------------------------------------------- IUiContainerCellPort
         // 客户端界面层镜像（Modules/UiStateSyncModule.cs）需要知道"哪个方块格子的库存"：
@@ -571,7 +571,7 @@ namespace SuMultiplayer.Modules
                 return;
             }
 
-            // 远程动作声音：只在这段同步执行期间打开捕获窗口（引擎方块行为在主机本端播放
+            // remote-audio: 只在这段同步执行期间打开捕获窗口（引擎方块行为在主机本端播放
             // 声音）。finally 保证动作抛异常时窗口也会关闭 —— 不允许泄漏捕获状态。
             // 锚点：
             //   · 方块交互 = 目标格坐标；

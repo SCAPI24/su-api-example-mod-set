@@ -122,7 +122,7 @@ namespace SuMultiplayer.Modules
             Log(Summary());
         }
 
-        public string StatusLine() => "方块破坏表现：" + Summary();
+        public string StatusLine() => "block-effect: " + Summary();
 
         private void OnHostBlockDestroyed(BlockDestroyEffectRecord record)
         {

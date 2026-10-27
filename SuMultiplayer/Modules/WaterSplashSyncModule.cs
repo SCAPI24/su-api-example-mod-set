@@ -105,7 +105,7 @@ namespace SuMultiplayer.Modules
 
         public string ModuleId => m_descriptor.Id;
 
-        public string StatusLine() => "水花表现：" + Summary() + " · " + m_port.Describe();
+        public string StatusLine() => "water-splash: " + Summary() + " · " + m_port.Describe();
 
         // 状态行 / 自检可读的精确计数（名字即需求里的计数名）。
         public long SplashEventSent => m_eventSent;
@@ -237,7 +237,7 @@ namespace SuMultiplayer.Modules
                 m_recvLimiter.Reset();
                 // 重连不补发：旧会话的水花留在上一会话，清掉待发队列。
                 m_pending.Clear();
-                Log("水花表现：连接已建立 → 去重闸门 / 限速已重置，待发水花已清空（不重放）");
+                Log("water-splash: 连接已建立 → 去重闸门 / 限速已重置，待发水花已清空（不重放）");
             }
             m_wasConnected = connected;
 

@@ -538,6 +538,83 @@ namespace SuMultiplayer.Engine
             playerData != null && m_avatars.Values.Any(item => ReferenceEquals(item, playerData));
 
         /// <summary>
+        /// 主机：把期望位置经引擎自己的出生点搜索修正为合法、无碰撞的落点。
+        /// 给首次加入的角色选主机附近的安全位置，避免与主机角色重叠。
+        /// </summary>
+        /// <summary>主机：取主机本机角色的衣服，作为新角色没有初始衣服时的可见兜底。</summary>
+        public bool TryCaptureLocalHostClothes(out int[][] clothes)
+        {
+            clothes = PlayerRecordCodec.CreateEmptyClothes();
+            Project project = GameManager.Project;
+            SubsystemPlayers players = project?.FindSubsystem<SubsystemPlayers>(false);
+            PlayerData host = players?.PlayersData.FirstOrDefault();
+            if (host?.ComponentPlayer == null) return false;
+            clothes = CaptureClothes(host.ComponentPlayer);
+            for (int i = 0; i < clothes.Length; i++)
+                if (clothes[i] != null && clothes[i].Length > 0) return true;
+            return false;
+        }
+
+        public bool TryResolveInitialSpawnPosition(Vector3 desired, out Vector3 position,
+            out string reason)
+        {
+            position = desired;
+            reason = null;
+            Project project = GameManager.Project;
+            SubsystemPlayers players = project?.FindSubsystem<SubsystemPlayers>(false);
+            PlayerData hostPlayer = players?.PlayersData.FirstOrDefault();
+            if (hostPlayer == null)
+            {
+                reason = "没有主机本机角色可供引擎出生点搜索";
+                return false;
+            }
+            try
+            {
+                Vector3 hostPosition = hostPlayer.ComponentPlayer?.ComponentBody?.Position ?? desired;
+                Vector3 fallback = desired;
+                bool hasFallback = false;
+                // 单点搜索可能返回贴着主机的最近合法点（实机 0.5m，视觉上就是重叠）；
+                // 多方向 / 多半径重试，优先选水平距离主机 >= 2.5m 的落点。
+                for (int ring = 0; ring < 3; ring++)
+                {
+                    float radius = 4f + ring * 2f;
+                    for (int i = 0; i < 8; i++)
+                    {
+                        float angle = 2f * MathUtils.PI * i / 8f;
+                        Vector3 candidate = hostPosition + radius * new Vector3(
+                            MathUtils.Cos(angle), 0f, MathUtils.Sin(angle));
+                        Vector3 result = m_parentMethod.InvokeParentMethod<Vector3>(hostPlayer,
+                            "FindNoIntroSpawnPosition", new[] { typeof(Vector3), typeof(bool) },
+                            candidate, false);
+                        if (result == Vector3.Zero) continue;
+                        fallback = result;
+                        hasFallback = true;
+                        Vector2 delta = new Vector2(result.X - hostPosition.X,
+                            result.Z - hostPosition.Z);
+                        if (delta.Length() >= 2.5f)
+                        {
+                            position = result;
+                            return true;
+                        }
+                    }
+                }
+                if (hasFallback)
+                {
+                    position = fallback;
+                    reason = "引擎只找到靠近主机的落点（所有候选均 < 2.5m）";
+                    return true;
+                }
+                reason = "引擎出生点搜索没有返回任何合法落点";
+                return false;
+            }
+            catch (Exception e)
+            {
+                reason = "引擎出生点搜索失败：" + e.GetType().Name + " " + e.Message;
+                return false;
+            }
+        }
+
+        /// <summary>
         /// 建一个联机角色实体。
         /// </summary>
         /// <param name="clientId">对端在本机通道里的编号（**只用于本机索引，不当身份**）。</param>
@@ -672,10 +749,19 @@ namespace SuMultiplayer.Engine
 
                 IInventory inventory = playerData.ComponentPlayer?.ComponentMiner?.Inventory;
                 ConfigureNetworkPlayerInventory(inventory);
-                RestorePlayerRecordInventory(inventory, record);
-                RestorePlayerRecordCrafting(
-                    playerData.ComponentPlayer?.Entity?.FindComponent<ComponentCraftingTable>(), record);
-                ApplyClothes(playerData.ComponentPlayer, record?.Clothes);
+                if (!initialSpawn)
+                {
+                    RestorePlayerRecordInventory(inventory, record);
+                    RestorePlayerRecordCrafting(
+                        playerData.ComponentPlayer?.Entity?.FindComponent<ComponentCraftingTable>(), record);
+                    ApplyClothes(playerData.ComponentPlayer, record?.Clothes);
+                }
+                else if (record != null)
+                {
+                    // 首次出生使用引擎 SpawnPlayer(InitialNoIntro) 自带的初始衣服/物品；
+                    // 新记录的背包/衣服是空的，不能再覆盖掉初始奖励。
+                    record.HasReceivedInitialItems = true;
+                }
                 ApplySkinMaterial(playerData, record?.SkinName, record?.SkinSha256);
                 if (record != null)
                 {
@@ -957,8 +1043,8 @@ namespace SuMultiplayer.Engine
                         out string localReason) || localPlayers.Count == 0)
                 {
                     ReportProblemOnce("terrain-locations-no-local-player",
-                        "找不到本机玩家（旧实现的规则：PlayersData 里不是联机角色的那一条）：" +
-                        localReason + " → 本机地形不会更新");
+                        "local player not found (PlayersData has no non-network avatar): " +
+                        localReason + " -> local terrain will not update");
                     return;
                 }
                 if (tooManyLocals)
@@ -980,7 +1066,7 @@ namespace SuMultiplayer.Engine
                     if (localPlayer.ComponentPlayer?.ComponentBody == null)
                     {
                         ReportProblemOnce("terrain-locations-local-body:" + slot,
-                            "本机玩家槽位 " + slot + " 还没有 ComponentBody → 这个本机角色的地形不会更新");
+                            "本机玩家槽位 " + slot + " has no ComponentBody yet -> this local player's terrain will not update");
                         continue;
                     }
                     terrain.TerrainUpdater.SetUpdateLocation(localPlayer.PlayerIndex,
@@ -2263,14 +2349,19 @@ namespace SuMultiplayer.Engine
             if (spawnModeType == null)
                 throw new MissingMemberException(typeof(PlayerData).FullName, "SpawnMode");
             object initialNoIntro = Enum.Parse(spawnModeType, "InitialNoIntro");
-            // Source: Survivalcraft/Game/PlayerData.cs:PlayerData.FindNoIntroSpawnPosition
-            // 先按"引擎玩家槽位"把临时角色摊在请求位置周围，再做引擎自己的碰撞/地形搜索，
-            // 并把结果留作重生锚点。
-            float angle = 2f * MathUtils.PI * ((playerData.PlayerIndex - 1) % 3) / 3f;
-            Vector3 desiredPosition = position + 3f * new Vector3(
-                MathUtils.Cos(angle), 0f, MathUtils.Sin(angle));
+            // position 已经由 CreateInitialPlayerRecord 选成主机附近的安全落点；
+            // 这里不再额外偏移，否则客户端 assigned_position 与该点不一致，仍可能重叠。
             Vector3 spawnPosition = m_parentMethod.InvokeParentMethod<Vector3>(playerData,
-                "FindNoIntroSpawnPosition", new[] { typeof(Vector3), typeof(bool) }, desiredPosition, false);
+                "FindNoIntroSpawnPosition", new[] { typeof(Vector3), typeof(bool) }, position, false);
+            // 引擎可能把落点收回到贴着主机的位置（视觉重叠）；既然 record.Position 已经是
+            // 主机附近的安全期望点，距离主机小于 1.5m 时坚持使用期望点。
+            SubsystemPlayers players = GameManager.Project?.FindSubsystem<SubsystemPlayers>(false);
+            Vector3 hostPosition = players?.ComponentPlayers.FirstOrDefault()?.ComponentBody?.Position ??
+                Vector3.Zero;
+            if (hostPosition != Vector3.Zero &&
+                new Vector2(spawnPosition.X - hostPosition.X,
+                    spawnPosition.Z - hostPosition.Z).Length() < 1.5f)
+                spawnPosition = position;
             playerData.SpawnPosition = spawnPosition;
             m_parentMethod.InvokeParentMethod(playerData, "SpawnPlayer",
                 new[] { typeof(Vector3), spawnModeType }, spawnPosition, initialNoIntro);

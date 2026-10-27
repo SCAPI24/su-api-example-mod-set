@@ -54,9 +54,9 @@ namespace SuMultiplayer.Engine
             GameManager.SaveProject(waitForCompletion: true, showErrorDialog: true);
             GameManager.DisposeProject();
             ScreensManager.SwitchScreen("Play");
+            // 游戏界面字体没有中文字形：底层 reason 只写日志，UI 只显示英文固定文案。
             DialogsManager.ShowDialog(null, new MessageDialog("Multiplayer",
-                "Connection to the host was lost. You have left the room.\nReason: " +
-                (string.IsNullOrEmpty(reason) ? "channel failed" : reason),
+                "Connection to the host was lost. You have left the room.",
                 "OK", null, null));
             return true;
         }

@@ -85,7 +85,7 @@ namespace SuMultiplayer.Modules
 
         public string ModuleId => m_descriptor.Id;
 
-        public string StatusLine() => "营火火声：" + Summary() + " · " + m_port.Describe();
+        public string StatusLine() => "campfire: " + Summary() + " · " + m_port.Describe();
 
         public void Attach(IModuleContext context)
         {

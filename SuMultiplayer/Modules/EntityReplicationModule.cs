@@ -333,7 +333,7 @@ namespace SuMultiplayer.Modules
         /// <summary>自检 / 控制台可读的计数器快照（实例对象，非静态）。</summary>
         public EntityReplicationCounters Counters => m_counters;
 
-        public string StatusLine() => "实体复制：" +
+        public string StatusLine() => "entity-replication: " +
             (m_hosting ? "主机权威" : "客户端副本") +
             " · 逐用户兴趣：deliveries=" + m_counters.EntityInterestDeliveries +
             " seedAdds=" + m_counters.EntitySeedAdds +

@@ -155,7 +155,7 @@ namespace SuMultiplayer.Modules
 
         public string ModuleId => m_descriptor.Id;
 
-        public string StatusLine() => "远程动作声音：" + Summary() + " · " + m_port.Describe();
+        public string StatusLine() => "remote-audio: " + Summary() + " · " + m_port.Describe();
 
         public bool IsAvailable => m_attached && m_port != null &&
             m_control != null && m_control.IsHosting;

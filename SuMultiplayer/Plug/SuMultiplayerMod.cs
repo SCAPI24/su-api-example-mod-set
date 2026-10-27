@@ -239,6 +239,8 @@ namespace SuMultiplayer
         private InteractionReachGate m_reachGate;
         private long m_frameIndex;
         private long m_lastStatusMs;
+        /// <summary>上一次帧循环看到的联机会话状态：用于在角色日志里写开始/结束边界。</summary>
+        private bool m_lastMultiplayerSessionActive;
 
         // 帧驱动分步隔离：任一步抛异常只计数 + 限流一行，本帧其后的步骤照常执行。
         // 之前是整块 try/catch：一个模块每帧抛异常会吞掉它后面的所有 HUD/模块 tick，
@@ -528,12 +530,10 @@ namespace SuMultiplayer
             m_terrainModule.SetJoinApproval(m_joinApprovalUi);
             m_terrainModule.JoinRejected += HandleJoinRejected;
             // 加入审批中的客户端断开（Bye / 链路失效）：清掉它在请求队列里的待决条目。
+            m_terrainModule.ClientJoinConnectionAborted += HandleClientJoinConnectionAborted;
             m_terrainModule.PendingApprovalAborted += clientId =>
             {
-                int removed = m_joinApprovalUi?.Queue.RemoveAllFor(clientId) ?? 0;
-                if (removed > 0)
-                    ModLog.Info("[SuMP][join-approval] clientId=" + clientId +
-                        " 断开 → 请求队列移除 " + removed + " 条待决条目");
+                m_joinApprovalUi?.HandlePendingApprovalAborted(clientId);
             };
 
             // 生物生成/同步：主机权威生成 + 按客户端区域分配；客户端只做复制。
@@ -627,6 +627,8 @@ namespace SuMultiplayer
             // 世界清单的会话标识 / 导出基线由地形模块提供（世界传输模块的硬依赖：
             // 没有它就不发世界，避免客户端拿到没有会话标签的世界、每次加入都整图重下）。
             m_moduleHost.RegisterPort<IWorldSessionPort>(m_terrainModule.WorldSessionPort);
+            m_moduleHost.RegisterPort<IWorldTransferBandwidthPort>(
+                m_terrainModule.WorldTransferBandwidthPort);
             m_moduleHost.RegisterPort<ITransportControlPort>(m_terrainModule.ControlPort);
             // 客户端权威模块的端口：世界信息广播 / 编辑超时回滚 / 编辑捕获与主机权威落地 / RNG 状态。
             m_moduleHost.RegisterPort<IPeerBroadcastPort>(m_terrainModule);
@@ -779,10 +781,31 @@ namespace SuMultiplayer
             m_uiStateModule = new UiStateSyncModule(m_uiStateReader, m_uiMirrorEngine);
             m_moduleHost.Register(m_uiStateModule);
             ModuleResolution resolution = m_moduleHost.Resolve("OnLoad");
+            // 单机 / 主菜单不跑联机模块的 Tick（不跟踪同步、不写周期状态日志）：
+            // session 仍要 Tick 以处理房间发现/创建/加入；terrain 仍要 Tick 以解除旧地形桥。
+            m_moduleHost.TickFilter = id =>
+                id == "session" || id == "terrain-sync" ||
+                (m_sessionModule != null && m_sessionModule.IsMultiplayerActive);
 
             m_uiAttacher = new RoomUiAttacher(m_sessionModule, m_transferModule.ReadyPort,
                 m_joinApprovalUi?.Queue,
-                m_joinApprovalUi == null ? (Action)null : m_joinApprovalUi.ShowLatestJoinDialog);
+                m_joinApprovalUi == null ? (Action)null : m_joinApprovalUi.ShowLatestJoinDialog,
+                delegate { return m_worldJoinSettings == null ? 0 : m_worldJoinSettings.HostPort; },
+                delegate { return m_worldJoinSettings != null &&
+                    m_worldJoinSettings.AutoHostCurrentWorld; },
+                delegate { return CaptureHostPeersForUi(); },
+                delegate { return CaptureBannedIdsForUi(); },
+                delegate (string identity, bool kick) { return BanIdentityForUi(identity, kick); },
+                delegate (string identity) { return UnbanIdentityForUi(identity); },
+                delegate (int clientId) { return KickPeerForUi(clientId); },
+                delegate (int port) { return ChangeHostPortForUi(port); },
+                delegate { return m_worldJoinSettings != null &&
+                    m_worldJoinSettings.AutoHostCurrentWorld; },
+                delegate { return m_worldJoinSettings != null &&
+                    m_worldJoinSettings.AutoApproveJoins; },
+                delegate (bool value) { return SetAutoHostForUi(value); },
+                delegate (bool value) { return SetAutoApproveForUi(value); },
+                delegate { return SaveWorldJoinSettingsForUi(); });
             // 引擎 Edit Players（PlayerScreen）进入/退出钩子：名字/皮肤统一走引擎自己的编辑屏。
             // 进入抓快照、退出比较；主机广播改名后的本机角色，客户端按 (clientId, slot) 提交资料。
             m_editWatcher = new PlayerEditWatcher(avatarSpawner, engineModManager.ModParentField,
@@ -1369,7 +1392,24 @@ namespace SuMultiplayer
                     // 周期性打一行各模块状态（组合根是唯一同时知道两个模块的地方，
                     // 模块之间不互相读状态）。实机排查全靠这几行。
                     long nowMs = (long)(Time.RealTime * 1000.0);
-                    if (nowMs - m_lastStatusMs >= 5000)
+                    // 单机 / 未建房 / 未加入时模块全在空转：周期状态行没有诊断价值，
+                    // 只会把 Game.log 和角色日志刷满（用户口径：没开房间不要有输出）。
+                    // 只有存在联机会话时才写；需要离线看空转状态时用 verbose 配置。
+                    bool multiplayerSessionActive = m_sessionModule != null &&
+                        m_sessionModule.IsMultiplayerActive;
+                    if (multiplayerSessionActive != m_lastMultiplayerSessionActive)
+                    {
+                        m_lastMultiplayerSessionActive = multiplayerSessionActive;
+                        // 边界标记必须落在正确的 host/client 角色日志里：此处再同步一次角色，
+                        // 避免建房发生在 SetRole 之后导致开始标记落进 Client 文件。
+                        ModLog.SetRole(m_sessionModule?.IsHostingRoom == true ? "Server" : "Client");
+                        ModLog.SessionMarker(multiplayerSessionActive
+                            ? "==== multiplayer session start (role=" +
+                                (m_sessionModule?.IsHostingRoom == true ? "host" : "client") + ") ===="
+                            : "==== multiplayer session end ====");
+                    }
+                    if (nowMs - m_lastStatusMs >= 5000 &&
+                        (multiplayerSessionActive || m_config.VerboseLog))
                     {
                         m_lastStatusMs = nowMs;
                         ModLog.Info("[SuMP] " + m_sessionModule?.StatusLine());
@@ -1498,13 +1538,135 @@ namespace SuMultiplayer
             ModLog.Info("[SuMP] 加入审批配置：" + note);
         }
 
+        private IReadOnlyList<HostPeerInfo> CaptureHostPeersForUi() =>
+            m_avatarModule?.CaptureHostPeers() ?? (IReadOnlyList<HostPeerInfo>)Array.Empty<HostPeerInfo>();
+
+        private IReadOnlyList<string> CaptureBannedIdsForUi() =>
+            m_worldJoinSettings?.BannedIdentities?.ToArray() ?? Array.Empty<string>();
+
+        private string SaveWorldJoinSettingsForUi()
+        {
+            string directory = m_worldJoinSettingsProject?
+                .FindSubsystem<SubsystemGameInfo>(false)?.DirectoryName ?? string.Empty;
+            if (string.IsNullOrEmpty(directory))
+                return "No world directory; multiplayer settings were not saved.";
+            bool saved = m_worldJoinSettings.Save(directory, out string note);
+            ModLog.Info("[SuMP][world-settings] " + note);
+            return saved ? "World multiplayer settings saved." :
+                "Saving world multiplayer settings failed; see the log.";
+        }
+
+        private string BanIdentityForUi(string identity, bool kick)
+        {
+            if (string.IsNullOrWhiteSpace(identity)) return "User ID is empty; cannot ban.";
+            string id = identity.Trim();
+            if (!m_worldJoinSettings.IsBanned(id))
+            {
+                m_worldJoinSettings.BannedIdentities.Add(id);
+                m_worldJoinSettings.Save(m_worldJoinSettingsProject?
+                    .FindSubsystem<SubsystemGameInfo>(false)?.DirectoryName ?? string.Empty,
+                    out _);
+            }
+            string kickNote = "Added to the ban list (the player is offline; not kicked).";
+            if (kick)
+            {
+                HostPeerInfo peer = CaptureHostPeersForUi()
+                    .FirstOrDefault(item => string.Equals(item.Identity, id,
+                        StringComparison.OrdinalIgnoreCase));
+                if (peer != null)
+                {
+                    string reason = "Session module is unavailable.";
+                    bool kicked = m_sessionModule != null &&
+                        m_sessionModule.TryKickClient(peer.ClientId, out reason);
+                    kickNote = kicked
+                        ? "Banned and kicked clientId=" + peer.ClientId
+                        : "Banned, but kicking failed: " + reason;
+                }
+            }
+            string saveNote = SaveWorldJoinSettingsForUi();
+            return kickNote + " · " + saveNote;
+        }
+
+        private string UnbanIdentityForUi(string identity)
+        {
+            if (string.IsNullOrWhiteSpace(identity)) return "User ID is empty.";
+            int removed = m_worldJoinSettings.BannedIdentities.RemoveAll(item =>
+                string.Equals(item, identity.Trim(), StringComparison.OrdinalIgnoreCase));
+            return (removed > 0 ? "Removed from the ban list: " + identity :
+                "This user ID is not in the ban list: " + identity) +
+                " | " + SaveWorldJoinSettingsForUi();
+        }
+
+        private string KickPeerForUi(int clientId)
+        {
+            if (m_sessionModule == null) return "Session module is unavailable.";
+            return m_sessionModule.TryKickClient(clientId, out string reason)
+                ? "Kicked clientId=" + clientId + " (not banned)."
+                : "Kick failed: " + reason;
+        }
+
+        private string ChangeHostPortForUi(int port)
+        {
+            m_worldJoinSettings.HostPort = port;
+            string saveNote = SaveWorldJoinSettingsForUi();
+            if (m_sessionModule == null || !m_sessionModule.IsHostingRoom)
+                return "Port saved: " + port + " (applies on the next room creation). | " + saveNote;
+            SubsystemGameInfo info = GameManager.Project?.FindSubsystem<SubsystemGameInfo>(false);
+            string worldName = info?.WorldSettings.Name ?? string.Empty;
+            string gameMode = info?.WorldSettings.GameMode.ToString() ?? string.Empty;
+            m_sessionModule.CloseRoom();
+            if (m_sessionModule.CreateRoom(worldName, gameMode, port, out string reason))
+                return "Port changed and room recreated: " + port + ". | " + saveNote;
+            return "Port saved, but recreating the room failed: " + reason + " | " + saveNote;
+        }
+
+        private string SetAutoHostForUi(bool value)
+        {
+            m_worldJoinSettings.AutoHostCurrentWorld = value;
+            return "Auto host = " + (value ? "on" : "off") + ". | " + SaveWorldJoinSettingsForUi();
+        }
+
+        private string SetAutoApproveForUi(bool value)
+        {
+            m_worldJoinSettings.AutoApproveJoins = value;
+            return "Auto approve joins = " + (value ? "on" : "off") + ". | " +
+                SaveWorldJoinSettingsForUi();
+        }
+
         /// <summary>
         /// 客户端：主机拒绝加入（HelloAck.rejected / 审批超时）。关闭通道、回 Play 屏并显示原因，
         /// 不再自动重连（重连只会被再拒一次）。主机侧此时没有建任何角色/记录/世界传输。
         /// </summary>
+        /// <summary>主机在角色创建阶段踢人 / Ban：关闭角色创建屏并回 Play，不自动重连。</summary>
+        private void HandleClientJoinConnectionAborted(string reason)
+        {
+            ModLog.Warn("[SuMP][join] 主机在角色创建阶段关闭连接：" + (reason ?? string.Empty) +
+                " → 取消本次加入");
+            try { m_sessionModule?.LeaveRoom(); } catch (Exception) { }
+            try
+            {
+                DialogsManager.HideAllDialogs();
+                if (ScreensManager.CurrentScreen is SuNetworkPlayerScreen)
+                    ScreensManager.SwitchScreen("Play");
+                DialogsManager.ShowDialog(null, new MessageDialog("Multiplayer",
+                    "The host closed the connection. Character creation was canceled.",
+                    "OK", null, null));
+            }
+            catch (Exception e)
+            {
+                ModLog.Warn("[SuMP][join] 退出角色创建屏失败：" + e.GetType().Name + " " + e.Message);
+            }
+        }
+
         private void HandleJoinRejected(string reason)
         {
-            string text = string.IsNullOrEmpty(reason) ? "(主机未说明原因)" : reason;
+            string text = string.IsNullOrEmpty(reason) ? "(host gave no reason)" : reason;
+            // 被 Ban 时把**本机用户 ID** 显示给玩家，便于让主机解 Ban（客户端没有主机菜单入口）。
+            if (text.IndexOf("ban", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                string own = PlayerIdentity.LocalIdentity() ?? string.Empty;
+                text += " | Your user ID: " + (own.Length == 0 ? "(unavailable)" : own);
+            }
             Log.Warning("[SuMP][join-approval] 加入被主机拒绝：" + text + " → 回 Play 屏（不再自动重连）");
             try { m_sessionModule?.NotifyJoinRejected(reason); }
             catch (Exception e)
@@ -1535,6 +1697,10 @@ namespace SuMultiplayer
             /// <summary>通用客户端事件请求队列（2026-10-26）：加入审批是第一个用户；
             /// IF 按钮的队列页只认这个组件。加入请求不直接弹窗，先入队。</summary>
             internal readonly Requests.HostRequestQueue Queue = new Requests.HostRequestQueue();
+            /// <summary>当前唯一打开的审批对话框；同一时刻最多一个，避免重连/排队时叠出多个同名框。</summary>
+            private UI.JoinRequestDialog m_activeDialog;
+            private long m_activeEntryId = -1;
+            private int m_activeClientId = -1;
 
             public JoinApprovalUi(SuMultiplayerMod owner) { m_owner = owner; }
 
@@ -1544,6 +1710,16 @@ namespace SuMultiplayer
                 Action<bool, string> decided)
             {
                 string label = string.IsNullOrEmpty(name) ? ("client#" + clientId) : name;
+                // Ban 在自动同意/入队之前裁决：被 Ban 的身份即使 autoApprove 打开也必须拒绝。
+                if (m_owner.m_worldJoinSettings != null &&
+                    m_owner.m_worldJoinSettings.IsBanned(identity))
+                {
+                    string bannedText = "Banned user ID: " + (identity ?? string.Empty);
+                    ModLog.Info("[SuMP][join-approval] 拒绝被 Ban 的用户：clientId=" + clientId +
+                        " · " + label + " · 用户ID=" + identity);
+                    decided(false, bannedText);
+                    return;
+                }
                 string shortIdentity = string.IsNullOrEmpty(identity)
                     ? "(no identity)"
                     : identity.Substring(0, Math.Min(8, identity.Length));
@@ -1569,37 +1745,81 @@ namespace SuMultiplayer
             /// <summary>弹出队列里最新一条加入请求的三按钮对话框（Allow / Later / Reject）。</summary>
             internal void ShowLatestJoinDialog()
             {
+                // 同一时刻只允许一个审批框：旧代码每次新请求都 ShowDialog，
+                // 客户端断线重连时会留下旧框，再叠一个新框（同一玩家两个提示）。
+                if (m_activeDialog != null && DialogsManager.Dialogs.Contains(m_activeDialog)) return;
+                m_activeDialog = null;
+                m_activeEntryId = -1;
+                m_activeClientId = -1;
                 Requests.HostRequestEntry entry = Queue.PeekLatest();
                 if (entry == null || entry.Kind != Requests.HostRequestKind.Join) return;
                 Dispatcher.Dispatch(delegate
                 {
+                    if (m_activeDialog != null && DialogsManager.Dialogs.Contains(m_activeDialog)) return;
                     var dialog = new UI.JoinRequestDialog(
                         entry.Name + " (" + entry.Identity + ") wants to join this world.",
                         delegate (string kind)
                         {
+                            ClearActiveDialog();
                             if (kind == "Allow")
                             {
                                 ModLog.Info("[SuMP][join-approval] 主机同意加入：clientId=" +
                                     entry.ClientId + " · " + entry.Name);
                                 Queue.Approve(entry.Id, string.Empty);
+                                Dispatcher.Dispatch(ShowLatestJoinDialog);
                             }
                             else if (kind == "Reject")
                             {
                                 ModLog.Info("[SuMP][join-approval] 主机拒绝加入：clientId=" +
                                     entry.ClientId + " · " + entry.Name);
-                                Queue.Reject(entry.Id, "主机拒绝了加入请求");
+                                Queue.Reject(entry.Id, "The host rejected the join request.");
+                                Dispatcher.Dispatch(ShowLatestJoinDialog);
                             }
                             else
                             {
-                                // Later：条目留在队列（TerrainSync 暂停该连接的审批超时），
-                                // 由 IF 按钮的请求队列页随时再弹出。
+                                // Later：条目留在队列；不自动重开同一个框，由 IF 队列页再处理。
                                 ModLog.Info("[SuMP][join-approval] 主机稍后处理：clientId=" +
                                     entry.ClientId + " · " + entry.Name + "（条目留在队列）");
                                 Queue.Hold(entry.Id);
                             }
                         });
+                    m_activeDialog = dialog;
+                    m_activeEntryId = entry.Id;
+                    m_activeClientId = entry.ClientId;
                     DialogsManager.ShowDialog(null, dialog);
                 });
+            }
+
+            /// <summary>
+            /// 加入审批中的连接断开：移除队列条目；如果当前打开的正是这个客户端的框，
+            /// 立即关掉它，避免旧框留在屏幕上、随后重连又弹出第二个同名框。
+            /// </summary>
+            internal void HandlePendingApprovalAborted(int clientId)
+            {
+                int removed = Queue.RemoveAllFor(clientId);
+                bool active = m_activeClientId == clientId &&
+                    m_activeDialog != null && DialogsManager.Dialogs.Contains(m_activeDialog);
+                if (active)
+                {
+                    Dispatcher.Dispatch(delegate
+                    {
+                        if (m_activeDialog != null && DialogsManager.Dialogs.Contains(m_activeDialog))
+                            DialogsManager.HideDialog(m_activeDialog);
+                        ClearActiveDialog();
+                        ShowLatestJoinDialog();
+                    });
+                }
+                if (removed > 0 || active)
+                    ModLog.Info("[SuMP][join-approval] clientId=" + clientId +
+                        " 断开 → 请求队列移除 " + removed + " 条待决条目" +
+                        (active ? "；已关闭对应的审批框" : string.Empty));
+            }
+
+            private void ClearActiveDialog()
+            {
+                m_activeDialog = null;
+                m_activeEntryId = -1;
+                m_activeClientId = -1;
             }
         }
 

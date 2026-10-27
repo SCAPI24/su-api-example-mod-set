@@ -51,6 +51,13 @@ namespace SuMultiplayer.Modules
         /// <summary>建房：主机必须在**正在游玩的世界里**调用（worldName 来自当前世界）。</summary>
         bool CreateRoom(string worldName, string gameMode, out string reason);
 
+        /// <summary>
+        /// 带端口设置建房：requestedPort=0 → 从旧版 51459 起扫描 10 个端口，占用则 +1；
+        /// requestedPort=1..65535 → 只用该端口，失败明确报错。
+        /// </summary>
+        bool CreateRoom(string worldName, string gameMode, int requestedPort, out string reason) =>
+            CreateRoom(worldName, gameMode, out reason);
+
         /// <summary>关掉房间（停止应答 + 关闭通道）。</summary>
         void CloseRoom();
 

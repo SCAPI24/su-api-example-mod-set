@@ -161,7 +161,7 @@ namespace SuMultiplayer.Modules
 
         public string ModuleId => m_descriptor.Id;
 
-        public string StatusLine() => "UI 镜像：" + Summary() + " · " + m_mirror.Describe();
+        public string StatusLine() => "ui-state: " + Summary() + " · " + m_mirror.Describe();
 
         public string DescribeUnsupported()
         {
@@ -203,7 +203,7 @@ namespace SuMultiplayer.Modules
             m_presentation = m_mirror as IUiMirrorTickPort;
             if (m_presentation == null)
             {
-                Log("UI 镜像：镜像端口没有每帧呈现能力（IUiMirrorTickPort）→ 第三屏的左侧按钮 / " +
+                Log("ui-state: 镜像端口没有每帧呈现能力（IUiMirrorTickPort）→ 第三屏的左侧按钮 / " +
                     "冒泡消息 / 覆盖文字不会跟随客户端（输入形态 / HUD / 打开的界面仍然镜像；" +
                     "明确原因，不是静默跳过）");
             }
@@ -276,11 +276,11 @@ namespace SuMultiplayer.Modules
                     try { m_mirror.ResetAll("reconnected"); }
                     catch (Exception e) { LogProblem("reset-reconnect", "重连清空镜像失败：" + Describe(e)); }
                     m_hostResets++;
-                    Log("UI 镜像：连接已建立（主机）→ 待客户端重新上报（每端首条快照都会重新施加）");
+                    Log("ui-state: 连接已建立（主机）→ 待客户端重新上报（每端首条快照都会重新施加）");
                 }
                 else
                 {
-                    Log("UI 镜像：连接已建立（客户端）→ 下一帧发送首条界面层快照");
+                    Log("ui-state: 连接已建立（客户端）→ 下一帧发送首条界面层快照");
                 }
             }
             else if (!connected && m_wasConnected)
@@ -291,7 +291,7 @@ namespace SuMultiplayer.Modules
                 try { m_mirror.ResetAll("disconnected"); }
                 catch (Exception e) { LogProblem("reset-disconnect", "断开清空镜像失败：" + Describe(e)); }
                 m_hostResets++;
-                Log("UI 镜像：连接断开 → 客户端发送快照 / 主机镜像状态已清空（重连后重建）");
+                Log("ui-state: 连接断开 → 客户端发送快照 / 主机镜像状态已清空（重连后重建）");
             }
             m_wasConnected = connected;
 
@@ -308,7 +308,7 @@ namespace SuMultiplayer.Modules
                         try { m_mirror.ResetAll("world-unloaded"); }
                         catch (Exception e) { LogProblem("reset-world", "世界卸载清空镜像失败：" + Describe(e)); }
                         m_hostResets++;
-                        Log("UI 镜像：世界已卸载 → 镜像状态已清空（重进世界后按客户端上报重建）");
+                        Log("ui-state: 世界已卸载 → 镜像状态已清空（重进世界后按客户端上报重建）");
                     }
                 }
                 else
@@ -332,7 +332,7 @@ namespace SuMultiplayer.Modules
                     try { m_mirror.ResetAll("not-hosting"); }
                     catch (Exception e) { LogProblem("reset-room-end", "离开房间清空镜像失败：" + Describe(e)); }
                     m_hostResets++;
-                    Log("UI 镜像：本端已不是主机（离开房间 / 房间结束）→ 镜像状态已清空");
+                    Log("ui-state: 本端已不是主机（离开房间 / 房间结束）→ 镜像状态已清空");
                 }
                 if (inWorld && connected)
                 {
@@ -380,7 +380,7 @@ namespace SuMultiplayer.Modules
             m_hostRevisions.Remove(clientId);
             try { m_mirror.ResetClient(clientId, rejoin ? "client-rejoined" : "client-joined"); }
             catch (Exception e) { LogProblem("reset-join:" + clientId, "客户端加入时清空镜像失败：" + Describe(e)); }
-            Log("UI 镜像：clientId=" + clientId + "（" + name + "）" +
+            Log("ui-state: clientId=" + clientId + "（" + name + "）" +
                 (rejoin ? "重连" : "加入") + " → 清掉它的已应用状态（下一条快照重新施加）");
         }
 
@@ -390,7 +390,7 @@ namespace SuMultiplayer.Modules
             m_hostRevisions.Remove(clientId);
             try { m_mirror.ResetClient(clientId, "client-left:" + reason); }
             catch (Exception e) { LogProblem("reset-leave:" + clientId, "客户端离开时清空镜像失败：" + Describe(e)); }
-            Log("UI 镜像：clientId=" + clientId + " 离开（" + reason + "）→ 清掉它的界面镜像");
+            Log("ui-state: clientId=" + clientId + " 离开（" + reason + "）→ 清掉它的界面镜像");
         }
 
         // ================================================================= 客户端：变化驱动 + 心跳

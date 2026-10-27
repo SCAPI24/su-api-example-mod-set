@@ -78,6 +78,13 @@ namespace SuMultiplayer.Modules
 
         public ICapabilityRegistry Capabilities => m_capabilities;
 
+        /// <summary>
+        /// 帧调度过滤：返回 false 的模块本帧不 Tick。
+        /// 单机 / 主菜单没有联机会话时，除 session/terrain 核心外全部暂停，
+        /// 这样联机模块不会在没有房间时运行同步检查或写周期状态日志。
+        /// </summary>
+        public Func<string, bool> TickFilter { get; set; }
+
         public event Action<ModuleStatusChange> StatusChanged;
 
         public event Action<string, bool> CapabilityChanged;
@@ -404,6 +411,7 @@ namespace SuMultiplayer.Modules
             foreach (Entry entry in m_entries)
             {
                 if (entry.State != ModuleState.Active) continue;
+                if (TickFilter != null && !TickFilter(entry.Descriptor.Id)) continue;
                 try
                 {
                     entry.Module.Tick(in tick);

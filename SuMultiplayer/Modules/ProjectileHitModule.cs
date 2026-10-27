@@ -86,7 +86,7 @@ namespace SuMultiplayer.Modules
 
         public string ModuleId => m_descriptor.Id;
 
-        public string StatusLine() => "投射物命中：" + Summary() + " · " + m_port.Describe();
+        public string StatusLine() => "projectile-hit: " + Summary() + " · " + m_port.Describe();
 
         public void Attach(IModuleContext context)
         {
@@ -159,7 +159,7 @@ namespace SuMultiplayer.Modules
             if (connected && !m_wasConnected)
             {
                 m_orderer.Reset();
-                Log("投射物命中：连接已建立 → 事件闸门已重置（旧会话的 event_id 不再复用）");
+                Log("projectile-hit: 连接已建立 → 事件闸门已重置（旧会话的 event_id 不再复用）");
             }
             m_wasConnected = connected;
             // 只有"主机 + 至少一个玩家端"才需要引擎做每帧命中捕获（单机 / 主机独自时省掉射线）。

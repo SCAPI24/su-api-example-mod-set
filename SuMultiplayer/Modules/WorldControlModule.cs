@@ -178,7 +178,7 @@ namespace SuMultiplayer.Modules
             }
         }
 
-        public string StatusLine() => "世界控制：" + Summary();
+        public string StatusLine() => "world-control: " + Summary();
 
         private string Summary() =>
             "client(submitted=" + m_submitted + " rateLimited=" + m_rateLimited +

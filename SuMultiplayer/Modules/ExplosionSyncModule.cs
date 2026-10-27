@@ -149,7 +149,7 @@ namespace SuMultiplayer.Modules
 
         public string ModuleId => m_descriptor.Id;
 
-        public string StatusLine() => "爆炸同步：" + Summary() + " · " + m_port.Describe();
+        public string StatusLine() => "explosion-sync: " + Summary() + " · " + m_port.Describe();
 
         public void Attach(IModuleContext context)
         {
@@ -250,7 +250,7 @@ namespace SuMultiplayer.Modules
                 m_lastRequestSequence.Clear();
                 m_recentResults.Clear();
                 m_nextRequestSequence = 0;
-                Log("爆炸同步：连接已建立 → 事件闸门 / 请求表已重置（旧会话的序号不再复用）");
+                Log("explosion-sync: 连接已建立 → 事件闸门 / 请求表已重置（旧会话的序号不再复用）");
             }
             m_wasConnected = connected;
             long nowMs = (long)(tick.Now * 1000.0);

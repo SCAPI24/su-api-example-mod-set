@@ -62,7 +62,7 @@ namespace SuMultiplayer.Engine
                     extended[original.Length] = observer;
                     arrays[i] = extended;
                 }
-                Log.Information("[SuMP][block-effect] 方块移除观察器已安装：" +
+                SuMultiplayer.Engine.ModLog.Info("[SuMP][block-effect] block-removal observer installed: " +
                     arrays.Length + " 个 contents 的 behavior 表已追加观察器");
                 return true;
             }

@@ -193,7 +193,7 @@ namespace SuMultiplayer.Modules
 
         public bool IsReplicaDesign(int designIndex) => m_store.Contains(designIndex);
 
-        public string StatusLine() => "家具同步：" + Summary() + " · " + m_port.Describe();
+        public string StatusLine() => "furniture-sync: " + Summary() + " · " + m_port.Describe();
 
         // ================================================================= 生命周期
 

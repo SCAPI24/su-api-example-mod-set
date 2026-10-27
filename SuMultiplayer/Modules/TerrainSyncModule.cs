@@ -48,6 +48,10 @@ namespace SuMultiplayer.Modules
         /// <summary>加入审批决定器（组合根注入；null = 不做审批）。</summary>
         private IJoinApprovalDecider m_joinApproval;
 
+        private readonly HashSet<int> m_clientsDownloadingWorld = new HashSet<int>();
+        private readonly BandwidthPortImpl m_bandwidthPort;
+        private long m_pausedBroadcastDrops;
+
         private IModuleContext m_context;
         private TcpTerrainServer m_server;
         private TcpTerrainClient m_client;
@@ -154,6 +158,7 @@ namespace SuMultiplayer.Modules
             m_profileStore = profileStore;
             m_port = new Port(this);
             m_control = new ControlPortImpl(this);
+            m_bandwidthPort = new BandwidthPortImpl(this);
             m_options = options ?? new TerrainSyncOptions();
             m_verbose = m_config.VerboseLog;
             m_messages = new MessageChannel(new MessageRegistry(), SendFromMessageLayer, "terrain-sync");
@@ -226,6 +231,7 @@ namespace SuMultiplayer.Modules
             public bool AssignedIsFlying => m_owner.ClientAssignedIsFlying;
             public bool AssignedIsCrouching => m_owner.ClientAssignedIsCrouching;
             public bool ReconnectClient(string reason) => m_owner.ReconnectClient(reason);
+            public bool SendProfileHello() => m_owner.SendProfileHelloOnCurrentConnection();
         }
 
         /// <summary>通道控制端口的实现：会话模块（UI 操作）通过它起停通道。</summary>
@@ -242,6 +248,8 @@ namespace SuMultiplayer.Modules
             public int ConnectedPlayerCount => m_owner.CountPlayerPeers();
             public string ChannelStateText => m_owner.ChannelStateText;
             public int LastRoundTripMs => m_owner.m_clientSync?.RoundTripMs ?? -1;
+            public bool DisconnectClient(int clientId, out string reason) =>
+                m_owner.DisconnectClient(clientId, out reason);
         }
 
         public TerrainBridge Bridge => m_bridge;
@@ -253,6 +261,41 @@ namespace SuMultiplayer.Modules
         public ITransportControlPort ControlPort => m_control;
         /// <summary>组合根把它注册给联机角色模块：握手资料（主机/分配/要求建角色）+ 重新握手。</summary>
         public IPlayerProfileHandshakePort ProfileHandshakePort => m_port;
+
+        /// <summary>带宽保护端口：世界传输期间暂停非地形广播。</summary>
+        public IWorldTransferBandwidthPort WorldTransferBandwidthPort => m_bandwidthPort;
+
+        private sealed class BandwidthPortImpl : IWorldTransferBandwidthPort
+        {
+            private readonly TerrainSyncModule m_owner;
+            public BandwidthPortImpl(TerrainSyncModule owner) { m_owner = owner; }
+            public void SetClientDownloading(int clientId, bool downloading) =>
+                m_owner.SetClientDownloading(clientId, downloading);
+            public bool IsClientDownloading(int clientId) =>
+                m_owner.IsClientDownloading(clientId);
+        }
+
+        private void SetClientDownloading(int clientId, bool downloading)
+        {
+            if (clientId <= 0) return;
+            bool changed = downloading
+                ? m_clientsDownloadingWorld.Add(clientId)
+                : m_clientsDownloadingWorld.Remove(clientId);
+            if (!changed) return;
+            if (downloading)
+                Log("带宽保护：clientId=" + clientId +
+                    " 正在下载世界 → 暂停非地形实时广播（World* 仍照常）");
+            else
+                Log("带宽保护：clientId=" + clientId +
+                    " 世界下载结束 → 恢复非地形实时广播（累计暂挂 " + m_pausedBroadcastDrops + " 条）");
+        }
+
+        private bool IsClientDownloading(int clientId) =>
+            clientId > 0 && m_clientsDownloadingWorld.Contains(clientId);
+
+        private static bool AllowedDuringWorldDownload(MessageType type) =>
+            type == MessageType.WorldBegin || type == MessageType.WorldChunk ||
+            type == MessageType.WorldEnd || type == MessageType.WorldMissing;
 
         /// <summary>
         /// 组合根在装配时把联机角色模块（它拥有角色记录与本地玩家）接到主机 Hello 闸门上。
@@ -280,6 +323,12 @@ namespace SuMultiplayer.Modules
 
         /// <summary>加入审批中的客户端断开（Bye / 链路失效）：主机清掉它在请求队列里的待决条目。</summary>
         public event Action<int> PendingApprovalAborted;
+
+        /// <summary>
+        /// 客户端在"等待主机建角色 / 角色创建界面"阶段连接被主机关闭（踢出 / Ban）。
+        /// 组合根据此退出角色创建屏回 Play，不显示成普通掉线重连。
+        /// </summary>
+        public event Action<string> ClientJoinConnectionAborted;
 
         /// <summary>本机资料存储（角色创建界面 / Hello 共用）。组合根创建后传入。</summary>
         public LocalPlayerProfileStore ProfileStore => m_profileStore;
@@ -465,6 +514,7 @@ namespace SuMultiplayer.Modules
                 m_hostPort = m_server.Port;
                 m_host = new TerrainSyncHost(m_bridge, m_server, m_options, attachToChannel: false,
                     messages: m_messages);
+                m_host.WorldDownloadPauseFilter = IsClientDownloading;
                 // 资料闸门（联机角色模块）：Hello 时决定"有没有角色记录 / 要不要先建角色"。
                 m_host.ProfileGate = m_helloProfileGate;
                 // 加入审批（组合根注入）：玩家端 join 必须主机同意（或设置自动同意）才继续握手。
@@ -529,6 +579,18 @@ namespace SuMultiplayer.Modules
             }
         }
 
+        private bool DisconnectClient(int clientId, out string reason)
+        {
+            if (m_server == null)
+            {
+                reason = "本端不是主机 / 通道未运行，无法踢人";
+                return false;
+            }
+            if (!m_server.DisconnectClient(clientId, out reason)) return false;
+            Log("主机断开玩家端 clientId=" + clientId + "（" + (reason ?? "主动踢出") + "）");
+            return true;
+        }
+
         private bool ConnectTo(string host, int port, out string reason)
         {
             reason = null;
@@ -543,6 +605,12 @@ namespace SuMultiplayer.Modules
         private bool StartClientOnce(out string reason)
         {
             reason = null;
+            // 新连接开始前清掉上一次加入的 drop 请求。旧实现里如果 JoinRejected 到达时
+            // m_client 已经是 null，DropClientConnection 会提前 return，把
+            // m_clientDropRequested=true 留到下一次加入；新连接一建立就被这个陈旧标志
+            // 立刻拆掉，主机看到的是同一玩家连续两个 clientId（旧审批框 + 新审批框）。
+            m_clientDropRequested = false;
+            m_clientDropReason = null;
             try
             {
                 m_client = new TcpTerrainClient(m_wantHost, m_wantPort);
@@ -758,6 +826,7 @@ namespace SuMultiplayer.Modules
             {
                 PeerInfo peer = peers[i];
                 if (!peer.Alive || peer.Kind != ClientKind.Player) continue;
+                if (IsClientDownloading(peer.Id)) continue;
                 if (peer.State != ChannelState.Connected && peer.State != ChannelState.Backpressured) continue;
                 if (m_server.TrySend(peer.Id, type, payload)) sent++;
             }
@@ -780,6 +849,7 @@ namespace SuMultiplayer.Modules
                 PeerInfo peer = peers[i];
                 if (peer.Id == excludeClientId) continue;
                 if (!peer.Alive || peer.Kind != ClientKind.Player) continue;
+                if (IsClientDownloading(peer.Id)) continue;
                 if (peer.State != ChannelState.Connected && peer.State != ChannelState.Backpressured) continue;
                 if (m_server.TrySend(peer.Id, type, payload)) sent++;
             }
@@ -803,6 +873,7 @@ namespace SuMultiplayer.Modules
             {
                 PeerInfo peer = peers[i];
                 if (!peer.Alive || peer.Kind != ClientKind.Player) continue;
+                if (IsClientDownloading(peer.Id)) continue;
                 if (peer.State != ChannelState.Connected && peer.State != ChannelState.Backpressured) continue;
                 players.Add(peer);
             }
@@ -836,6 +907,7 @@ namespace SuMultiplayer.Modules
                 ulong bit = 1UL << i;
                 if ((mask & bit) == 0UL) continue;
                 int clientId = roster[i].ClientId;
+                if (IsClientDownloading(clientId)) continue;
                 if (!IsConnectedPlayerPeer(peers, clientId)) continue;
                 if (!m_server.TrySend(clientId, type, payload)) continue;
                 deliveredMask |= bit;
@@ -1068,6 +1140,7 @@ namespace SuMultiplayer.Modules
                 // 断线瞬间把"上次应用序号 / 最近主机会话"留在模块里：新 TerrainSyncClient 不会从 0 重来，
                 // 重连 Hello 才能声明真实水位（否则主机会把整段历史都重放一遍）。
                 m_clientChangeSequence = m_clientSync?.LastAppliedChangeSequence ?? m_clientChangeSequence;
+                bool wasWaitingForProfile = m_clientSync?.ProfileRequired == true;
                 if (m_clientSync != null && !string.IsNullOrEmpty(m_clientSync.HostSessionId))
                     m_lastHostSessionId = m_clientSync.HostSessionId;
                 try { m_client.FrameReceived -= m_bridge.PostFrame; } catch (Exception) { }
@@ -1085,6 +1158,14 @@ namespace SuMultiplayer.Modules
                 m_client = null;
                 m_clientSync = null;
                 m_reconnectAttempts = 0;
+                if (wasWaitingForProfile)
+                {
+                    // 主机在建角色阶段明确关闭了连接（踢出 / Ban）：客户端不应再自动重连，
+                    // 由组合根关掉角色创建屏回 Play。
+                    m_wantClient = false;
+                    ClientJoinConnectionAborted?.Invoke(deadReason);
+                    return;
+                }
                 // 2026-10-26 产品口径：主机掉线 / 重启 → 客户端退出联机房间，绝不带旧状态
                 // 自动连进新房间。只在"已在联机世界里"时退出（端口内判 GameScreen）；
                 // 加入流程中的重试（主机晚建房等）维持原样。
@@ -1573,6 +1654,18 @@ namespace SuMultiplayer.Modules
         private void WireShell()
         {
             Project project = Game.GameManager.Project;
+            // 单机 / 未开房间：不注入地形桥，外壳保持原生 Update（不安装方块观察器、
+            // 不捕获格子）。只有主机已建房或客户端已加入后才注入。
+            if (m_host == null && m_client == null)
+            {
+                if (m_shell != null)
+                {
+                    try { m_shell.Bridge = null; } catch (Exception) { }
+                    m_shell = null;
+                }
+                m_shellProject = null;
+                return;
+            }
             if (m_shell != null && ReferenceEquals(m_shellProject, project)) return;
             // Project 换了（例如主机重启后客户端**整图重下**、GameLoading 重新加载世界）：
             // 旧外壳已经随旧 Project 销毁，必须解除旧注入并重新找新外壳 —— 否则新世界的地形永远不同步。
@@ -2090,6 +2183,11 @@ namespace SuMultiplayer.Modules
                     if (picked <= 0) return false;
                     m_hostClientId = picked;
                 }
+                if (IsClientDownloading(m_hostClientId) && !AllowedDuringWorldDownload(type))
+                {
+                    m_pausedBroadcastDrops++;
+                    return false;
+                }
                 return m_server.TrySend(m_hostClientId, type, payload);
             }
             // 死连接**明确失败**：不能只看"客户端对象还在"（实机故障：对端掉线后 TrySend 仍返回 true，
@@ -2118,6 +2216,11 @@ namespace SuMultiplayer.Modules
         {
             if (m_server == null) return false;
             if (!IsClientSendable(clientId)) return false;
+            if (IsClientDownloading(clientId) && !AllowedDuringWorldDownload(type))
+            {
+                m_pausedBroadcastDrops++;
+                return false;
+            }
             return m_server.TrySend(clientId, type, payload);
         }
 
@@ -2202,6 +2305,47 @@ namespace SuMultiplayer.Modules
 
         internal string ClientProfileRequiredReason =>
             m_clientSync?.ProfileRequiredReason ?? string.Empty;
+
+        /// <summary>
+        /// 角色创建完成：在当前连接上重发 Hello（带刚确认资料），不 StopChannel / 不重连。
+        /// 主机首次 Allow 仍有效，因此不会二次弹审批；主机随后建记录 / 发皮肤 / 传地图。
+        /// </summary>
+        private bool SendProfileHelloOnCurrentConnection()
+        {
+            if (m_wantClient && m_client != null && m_clientSync != null)
+            {
+                bool alreadyHasWorld = IsPlayingDownloadedWorld(out string rejoinReason,
+                    out string storedSessionId, out long storedBaseSequence);
+                long lastApplied = alreadyHasWorld
+                    ? Math.Max(m_clientChangeSequence, storedBaseSequence)
+                    : 0L;
+                m_clientSync.SetAppliedChangeSequence(lastApplied);
+                PlayerProfileSnapshot localProfile = null;
+                if (m_avatarLink == null || !m_avatarLink.TryGetHelloProfileClaim(out localProfile))
+                    localProfile = null;
+                string helloName = localProfile != null && localProfile.HasName
+                    ? localProfile.Name
+                    : PlayerIdentity.LocalName();
+                m_knownRecordScratch.Clear();
+                int knownRecords = m_avatarLink != null
+                    ? m_avatarLink.CaptureKnownRecordHashes(m_knownRecordScratch)
+                    : 0;
+                m_clientSync.SendHello(helloName, PlayerIdentity.LocalIdentity(),
+                    alreadyHasWorld,
+                    alreadyHasWorld ? storedSessionId : string.Empty,
+                    lastApplied, localProfile, m_knownRecordScratch);
+                Log("角色创建完成 → 在当前连接上重发 Hello（不重连、不重新审批）：" +
+                    "名字=" + (localProfile?.Name ?? helloName) +
+                    " · 资料=" + (localProfile != null ? "已携带" : "缺失") +
+                    " · 已知角色记录=" + knownRecords + " 条");
+                return true;
+            }
+            LogWarning("角色创建完成时当前客户端连接已不可用（wantClient=" + m_wantClient +
+                " · client=" + (m_client == null ? "null" : "connected") +
+                " · sync=" + (m_clientSync == null ? "null" : "ready") +
+                "）→ 不假装继续加入；请从 Play 屏重新加入房间");
+            return false;
+        }
 
         /// <summary>
         /// 角色创建完成 / 资料变化后重新握手（旧实现 SubmitPendingJoin → 新 JoinGame）。
@@ -2626,7 +2770,13 @@ namespace SuMultiplayer.Modules
         /// </summary>
         private void DropClientConnection()
         {
-            if (m_client == null) return;
+            if (m_client == null)
+            {
+                // 连接已经不在了也必须清掉待处理 drop，否则会污染下一次加入。
+                m_clientDropRequested = false;
+                m_clientDropReason = null;
+                return;
+            }
             string why = m_clientDropReason ?? "客户端要求重连";
             m_clientDropRequested = false;
             m_clientDropReason = null;
@@ -2960,7 +3110,7 @@ namespace SuMultiplayer.Modules
             if (m_wantClient)
                 return "terrain-sync: client 连接中 " + m_wantHost + ":" + m_wantPort +
                        "（第 " + m_reconnectAttempts + " 次重试）";
-            return "terrain-sync: 未开通道（等游戏内 CR / Play 屏点房间）";
+            return "terrain-sync: channel not open (waiting for CR / room click)";
         }
 
         private void Log(string message)

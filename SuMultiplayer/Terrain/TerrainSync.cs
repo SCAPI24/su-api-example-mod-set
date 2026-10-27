@@ -1324,6 +1324,14 @@ namespace SuMultiplayer.Terrain
         private readonly MessageChannel m_messages;
         private readonly TerrainSyncOptions m_options;
         private readonly Dictionary<int, State> m_clients = new Dictionary<int, State>();
+        /// <summary>
+        /// 首次加入审批通过后、客户端因"角色资料未创建"重新握手时，允许同一身份免二次审批的时间窗。
+        /// key = 身份原值；批准时仅对 profile-required 流程登记一次，第二个 Hello 消费后删除。
+        /// </summary>
+        private readonly Dictionary<string, long> m_profileHandshakeApprovals =
+            new Dictionary<string, long>(StringComparer.Ordinal);
+        /// <summary>角色创建后重新握手的免审批窗口（足够角色屏返回 + TCP 重连）。</summary>
+        private const long ProfileHandshakeApprovalMs = 120000;
 
         // ---- 按需单块加载（客户端上报的边缘块；**不放大**任何角色的兴趣半径 / 内容距离）----
         /// <summary>
@@ -1842,6 +1850,9 @@ namespace SuMultiplayer.Terrain
         /// 审批发生在资料闸门 / 角色记录 / 世界传输之前，拒绝的连接不会留下任何角色。
         /// </summary>
         public IJoinApprovalDecider JoinApproval { get; set; }
+
+        /// <summary>带宽保护：true = 该 clientId 正在下载世界，跳过非地形实时广播。</summary>
+        public Func<int, bool> WorldDownloadPauseFilter { get; set; }
 
         /// <summary>等待主机审批的上限（毫秒）：超时 = 明确拒绝（绝不"等不到就当同意"）。</summary>
         public const long JoinApprovalTimeoutMs = 120000;
@@ -2400,6 +2411,15 @@ namespace SuMultiplayer.Terrain
                     StringComparison.Ordinal);
             if (claimedSameRoomRejoin && state.Kind == ClientKind.Player)
                 state.JoinApproved = true;
+            // 首次加入已由主机点过 Allow，但客户端当时没有角色 → 打开角色创建屏 → 重新握手。
+            // 这是同一次加入的后续步骤，不应再弹第二次审批；只消费一次，不从"离开后重新加入"放行。
+            if (!state.JoinApproved && state.Kind == ClientKind.Player &&
+                TryConsumeProfileHandshakeApproval(state.Identity))
+            {
+                state.JoinApproved = true;
+                SessionTrace?.Invoke("加入审批：clientId=" + state.Id + "（" +
+                    DisplayName(state) + "）→ 角色创建完成后的同一次加入，复用首次 Allow，不重复审批");
+            }
             if (state.Kind == ClientKind.Player && JoinApproval != null)
             {
                 if (state.ApprovalPending)
@@ -2438,6 +2458,20 @@ namespace SuMultiplayer.Terrain
             ContinueHello(state, hello);
         }
 
+        /// <summary>消费首次审批为"角色创建后重新握手"登记的一次性免审批窗口。</summary>
+        private bool TryConsumeProfileHandshakeApproval(string identity)
+        {
+            string key = (identity ?? string.Empty).Trim();
+            if (key.Length == 0) return false;
+            lock (m_gate)
+            {
+                if (!m_profileHandshakeApprovals.TryGetValue(key, out long expiresAt))
+                    return false;
+                m_profileHandshakeApprovals.Remove(key);
+                return Environment.TickCount64 <= expiresAt;
+            }
+        }
+
         /// <summary>
         /// 加入审批的出口（UI 线程 / 超时调用）：同意 → 继续完整握手；拒绝 → HelloAck.rejected + 移除连接状态。
         /// 每条连接只解决一次（重复调用 / 客户端已离开 = 忽略）。
@@ -2472,6 +2506,15 @@ namespace SuMultiplayer.Terrain
                         state.PendingHello = null;
                         trace = "加入审批：clientId=" + clientId + "（" + DisplayName(state) + "）→ 主机同意，继续握手";
                         if (hello != null) ContinueHello(state, hello);
+                        // 只有"缺角色、要打开角色创建屏"的流程会在创建后重新握手；
+                        // 给同一身份登记一个一次性免审批窗口，避免第二次审批。
+                        if (state.ProfileRequired)
+                        {
+                            string identity = (state.Identity ?? string.Empty).Trim();
+                            if (identity.Length > 0)
+                                m_profileHandshakeApprovals[identity] =
+                                    Environment.TickCount64 + ProfileHandshakeApprovalMs;
+                        }
                     }
                     else
                     {
@@ -2479,7 +2522,9 @@ namespace SuMultiplayer.Terrain
                         trace = "加入审批：clientId=" + clientId + "（" + DisplayName(state) + "）→ 主机拒绝：" +
                             (string.IsNullOrEmpty(reason) ? "(未说明原因)" : reason);
                         SendJoinRejectedLocked(state,
-                            string.IsNullOrEmpty(reason) ? "主机拒绝了加入请求" : reason);
+                            string.IsNullOrEmpty(reason) ? "The host rejected the join request." : reason);
+                        string rejectedIdentity = (state.Identity ?? string.Empty).Trim();
+                        if (rejectedIdentity.Length > 0) m_profileHandshakeApprovals.Remove(rejectedIdentity);
                         ReleaseWindow(state);
                         m_clients.Remove(clientId);
                     }
@@ -4767,6 +4812,7 @@ namespace SuMultiplayer.Terrain
                 foreach (KeyValuePair<int, State> pair in m_clients)
                 {
                     if (pair.Value.Kind != ClientKind.Player) continue;
+                    if (WorldDownloadPauseFilter?.Invoke(pair.Key) == true) continue;
                     targets.Add(pair.Key);
                 }
             }
@@ -4791,6 +4837,7 @@ namespace SuMultiplayer.Terrain
                 foreach (KeyValuePair<int, State> pair in m_clients)
                 {
                     if (pair.Value.Kind != ClientKind.Player) continue;
+                    if (WorldDownloadPauseFilter?.Invoke(pair.Key) == true) continue;
                     targets.Add(pair.Key);
                 }
             }

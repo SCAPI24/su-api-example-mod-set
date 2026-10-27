@@ -138,7 +138,13 @@ namespace SuMultiplayer.Modules
         /// 建房：**只能在正在游玩的世界里调用**（worldName 来自当前世界）。
         /// 顺序：先开传输通道（失败就明确失败）→ 再开始应答发现探测。
         /// </summary>
-        public bool CreateRoom(string worldName, string gameMode, out string reason)
+        private int m_hostPort;
+        public int HostingPort => m_hostPort;
+
+        public bool CreateRoom(string worldName, string gameMode, out string reason) =>
+            CreateRoom(worldName, gameMode, m_config.Port, out reason);
+
+        public bool CreateRoom(string worldName, string gameMode, int requestedPort, out string reason)
         {
             reason = null;
             if (IsHostingRoom)
@@ -156,8 +162,39 @@ namespace SuMultiplayer.Modules
                 reason = "Cannot read the current world name; create a room from inside a world.";
                 return false;
             }
-            if (!m_transportControl.StartHostServer(m_config.Port, out reason)) return false;
-
+            int selectedPort = 0;
+            if (requestedPort == WorldJoinSettings.AutoPort)
+            {
+                for (int i = 0; i < WorldJoinSettings.AutoPortCount; i++)
+                {
+                    int candidate = WorldJoinSettings.AutoPortBase + i;
+                    if (m_transportControl.StartHostServer(candidate, out string attemptReason))
+                    {
+                        selectedPort = candidate;
+                        reason = null;
+                        break;
+                    }
+                    reason = attemptReason;
+                }
+                if (selectedPort == 0)
+                {
+                    reason = "Automatic port allocation failed (" + WorldJoinSettings.AutoPortBase +
+                        ".." + (WorldJoinSettings.AutoPortBase + WorldJoinSettings.AutoPortCount - 1) +
+                        " are all unavailable): " + reason;
+                    return false;
+                }
+            }
+            else
+            {
+                if (requestedPort < 1 || requestedPort > 65535)
+                {
+                    reason = "Invalid port " + requestedPort + " (0 = automatic, 1..65535 = explicit).";
+                    return false;
+                }
+                if (!m_transportControl.StartHostServer(requestedPort, out reason)) return false;
+                selectedPort = requestedPort;
+            }
+            m_hostPort = selectedPort;
             m_roomWorldName = worldName;
             m_roomGameMode = gameMode ?? string.Empty;
             m_beaconHost = new RoomBeaconHost(m_config.DiscoveryPort, BuildRoomInfo);
@@ -174,10 +211,21 @@ namespace SuMultiplayer.Modules
                 return false;
             }
             Log("房间已创建：名称「" + m_config.RoomName + "」· 世界「" + worldName + "」· 地图端口 " +
-                m_config.Port + " · 发现端口 " + m_config.DiscoveryPort + "（有人探测就应答，不周期广播）");
+                m_hostPort + " · 发现端口 " + m_config.DiscoveryPort + "（有人探测就应答，不周期广播）");
             // 主持期间不浏览房间：否则自己的房间会出现在自己的 Play 屏里。
             StopDiscovery("本机已在主持房间");
             return true;
+        }
+
+        /// <summary>主机：踢掉一个玩家端（Ban+踢出和仅踢出共用）。</summary>
+        public bool TryKickClient(int clientId, out string reason)
+        {
+            if (m_transportControl == null)
+            {
+                reason = "Transport module is unavailable.";
+                return false;
+            }
+            return m_transportControl.DisconnectClient(clientId, out reason);
         }
 
         public void CloseRoom()
@@ -189,6 +237,7 @@ namespace SuMultiplayer.Modules
             }
             m_roomWorldName = string.Empty;
             m_roomGameMode = string.Empty;
+            m_hostPort = 0;
             m_transportControl?.StopChannel();
             Log("房间已关闭（发现应答与地图通道都已停）");
             if (m_listVisible) StartDiscovery("房间已关闭，重新寻找房间");
@@ -213,7 +262,7 @@ namespace SuMultiplayer.Modules
         private RoomBeaconInfo BuildRoomInfo() => new RoomBeaconInfo
         {
             RoomName = m_config.RoomName,
-            Port = m_config.Port,
+            Port = m_hostPort,
             Players = 1 + (m_transportControl?.ConnectedPlayerCount ?? 0),
             MaxPlayers = m_config.MaxPlayers,
             WorldName = m_roomWorldName,
@@ -456,6 +505,15 @@ namespace SuMultiplayer.Modules
             (m_joinAnnounced || m_transportControl?.IsChannelRunning == true);
 
         /// <summary>
+        /// 是否已经进入联机流程：主持房间、已加入房间，或玩家已点击房间开始连接/下载
+        /// （Discovering 只是浏览房间列表，不算开始联机）。
+        /// 供 ModuleHost 的 TickFilter 使用：false 时除 session/terrain 核心外不 Tick。
+        /// </summary>
+        public bool IsMultiplayerActive =>
+            IsHostingRoom || IsClientInRoom ||
+            (m_join.Stage != JoinStage.Idle && m_join.Stage != JoinStage.Discovering);
+
+        /// <summary>
         /// 角色创建完成、即将返回 Play 屏：这一次 Enter 保留连接（不要 LeaveRoom）。
         /// 由角色创建屏在 SwitchScreen("Play") 之前调用；只生效一次。
         /// </summary>
@@ -480,7 +538,7 @@ namespace SuMultiplayer.Modules
                 // 用户可见（对话框）→ 只用 ASCII：界面字体没有中文字形，中文会变下划线。
                 if (!IsHostingRoom) return "This device is not hosting a room.";
                 return "Room \"" + m_config.RoomName + "\" | world \"" + m_roomWorldName +
-                       "\" | map port " + m_config.Port + " | players " +
+                       "\" | map port " + m_hostPort + " | players " +
                        (m_transportControl?.ConnectedPlayerCount ?? 0) + "/" + m_config.MaxPlayers +
                        " | channel " + (m_transportControl?.ChannelStateText ?? "none");
             }

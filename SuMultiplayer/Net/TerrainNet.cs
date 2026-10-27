@@ -510,6 +510,33 @@ namespace SuMultiplayer.Net
 
         public virtual ChannelState StateOf(int clientId) => Find(clientId)?.State ?? ChannelState.Disconnected;
 
+        /// <summary>
+        /// 主机主动断开一个玩家端。关掉 TCP 后由接收循环抛 ClientLeft，上层清理角色/记录。
+        /// 找不到该 clientId = 明确失败（已经被断开的连接不重复算成功）。
+        /// </summary>
+        public virtual bool DisconnectClient(int clientId, out string reason)
+        {
+            Peer peer = Find(clientId);
+            if (peer == null)
+            {
+                reason = "没有 clientId=" + clientId + " 的连接（可能已经断开）";
+                return false;
+            }
+            try
+            {
+                peer.ConnectionClosed = true;
+                peer.Tcp?.Close();
+                reason = null;
+                return true;
+            }
+            catch (Exception e)
+            {
+                reason = "关闭 clientId=" + clientId + " 失败（" + e.GetType().Name + " " +
+                    e.Message + "）";
+                return false;
+            }
+        }
+
         public virtual void SetPeerIdentity(int clientId, ClientKind kind, string name)
         {
             Peer peer = Find(clientId);

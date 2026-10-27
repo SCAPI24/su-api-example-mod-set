@@ -130,8 +130,8 @@ namespace SuMultiplayer.UI
                 moreContents.Children.Add(button);
                 m_counters.ButtonCreates++;
                 InfoRateLimited("vo-button-create",
-                    "[SuMP][ui] VO 语音静音按钮已挂到 GameWidget#" + gameWidgetIndex +
-                    " 的 MoreContents（与 CR 同排）");
+                    "[SuMP][ui] VO mute button attached to GameWidget#" + gameWidgetIndex +
+                    " MoreContents (same row as CR)");
                 return button;
             }
             catch (Exception e)
@@ -255,7 +255,7 @@ namespace SuMultiplayer.UI
         private void InfoRateLimited(string key, string message, int intervalMs = 10000)
         {
             if (!ShouldLog(key, intervalMs)) return;
-            global::Engine.Log.Information(message + " · " + DescribeCounters());
+            SuMultiplayer.Engine.ModLog.Info(message + " · " + DescribeCounters());
         }
 
         private bool ShouldLog(string key, int intervalMs)
@@ -521,7 +521,7 @@ namespace SuMultiplayer.UI
             m_dismissed = true;
             m_counters.CloseClicks++;
             DialogsManager.HideDialog(this);
-            global::Engine.Log.Information("[SuMP][ui] VOICE 静音表格已关闭 · " +
+            SuMultiplayer.Engine.ModLog.Info("[SuMP][ui] VOICE 静音表格已关闭 · " +
                 m_counters.Describe());
         }
 
@@ -530,7 +530,7 @@ namespace SuMultiplayer.UI
         {
             if (m_dismissed) return;
             Dismiss();
-            global::Engine.Log.Information("[SuMP][ui] VOICE 静音表格由所有者关闭：reason=" +
+            SuMultiplayer.Engine.ModLog.Info("[SuMP][ui] VOICE 静音表格由所有者关闭：reason=" +
                 (reason ?? "unknown"));
         }
 
@@ -565,7 +565,7 @@ namespace SuMultiplayer.UI
             long nowMs = (long)(Time.RealTime * 1000.0);
             if (m_lastLogMs.TryGetValue(key, out long last) && nowMs - last < intervalMs) return;
             m_lastLogMs[key] = nowMs;
-            global::Engine.Log.Information(message + " · " + m_counters.Describe());
+            SuMultiplayer.Engine.ModLog.Info(message + " · " + m_counters.Describe());
         }
     }
 }

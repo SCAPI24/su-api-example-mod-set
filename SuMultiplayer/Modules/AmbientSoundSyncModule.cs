@@ -110,7 +110,7 @@ namespace SuMultiplayer.Modules
 
         public string ModuleId => m_descriptor.Id;
 
-        public string StatusLine() => "环境音：" + Summary() + " · " + m_port.Describe();
+        public string StatusLine() => "ambient-sound: " + Summary() + " · " + m_port.Describe();
 
         // ================================================================= 生命周期
 
@@ -220,17 +220,17 @@ namespace SuMultiplayer.Modules
                     if (m_lastClientRevision == 0)
                     {
                         m_port.ResetClientVolumes("connected");
-                        Log("环境音：连接已建立 → 等待主机首条状态（旧会话音量已清零）");
+                        Log("ambient-sound: 连接已建立 → 等待主机首条状态（旧会话音量已清零）");
                     }
                     else
                     {
-                        Log("环境音：连接已建立且已收到首条音量（revision=" +
+                        Log("ambient-sound: 连接已建立且已收到首条音量（revision=" +
                             m_lastClientRevision + "）→ 保留本会话状态，等待后续变化");
                     }
                 }
                 else
                 {
-                    Log("环境音：连接已建立 → 所有玩家端将在本轮重新同步");
+                    Log("ambient-sound: 连接已建立 → 所有玩家端将在本轮重新同步");
                 }
             }
             else if (!connected && m_wasConnected)
@@ -242,11 +242,11 @@ namespace SuMultiplayer.Modules
                     m_clientFirstApplyLogged = false;
                     m_clientNoDataWarned = false;
                     m_port.ResetClientVolumes("disconnected");
-                    Log("环境音：连接断开 → 客户端三条循环清零 / 暂停");
+                    Log("ambient-sound: 连接断开 → 客户端三条循环清零 / 暂停");
                 }
                 else
                 {
-                    Log("环境音：连接断开 → 主机待发状态清空（重连后逐端重发）");
+                    Log("ambient-sound: 连接断开 → 主机待发状态清空（重连后逐端重发）");
                 }
             }
             m_wasConnected = connected;
@@ -282,14 +282,14 @@ namespace SuMultiplayer.Modules
         {
             m_lastSent.Remove(clientId);
             m_resyncs++;
-            Log("环境音：clientId=" + clientId + "（" + name + "）" +
+            Log("ambient-sound: clientId=" + clientId + "（" + name + "）" +
                 (rejoin ? "重连" : "加入") + " → 下一轮无条件重发该端音量（resync）");
         }
 
         private void OnClientLeft(int clientId, string reason)
         {
             m_lastSent.Remove(clientId);
-            Log("环境音：clientId=" + clientId + " 离开（" + reason + "）→ 清掉它的已发状态");
+            Log("ambient-sound: clientId=" + clientId + " 离开（" + reason + "）→ 清掉它的已发状态");
         }
 
         // ================================================================= 主机：5 Hz 逐端状态
@@ -360,7 +360,7 @@ namespace SuMultiplayer.Modules
             if (Send(clientId, AmbientVolumes.Zero, (long)(Time.RealTime * 1000.0)))
             {
                 LogProblem("zero:" + why + ":" + clientId,
-                    "环境音：clientId=" + clientId + " 因 " + why + " 无法计算 → 已下发 0 音量" +
+                    "ambient-sound: clientId=" + clientId + " 因 " + why + " 无法计算 → 已下发 0 音量" +
                     "（三条循环暂停，不保留旧音量）");
             }
         }
@@ -475,7 +475,7 @@ namespace SuMultiplayer.Modules
             if (!m_clientFirstApplyLogged)
             {
                 m_clientFirstApplyLogged = true;
-                Log("环境音：已收到主机首条音量 " + volumes.Describe() +
+                Log("ambient-sound: 已收到主机首条音量 " + volumes.Describe() +
                     " → 本机 SubsystemAmbientSounds 每帧施加");
             }
         }

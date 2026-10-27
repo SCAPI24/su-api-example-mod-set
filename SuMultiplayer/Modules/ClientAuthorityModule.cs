@@ -122,7 +122,7 @@ namespace SuMultiplayer.Modules
         }
 
         /// <summary>组合根周期打印的一行（可审计：世界信息 / 编辑请求 / 回滚 / 副本闸门）。</summary>
-        public string StatusLine() => "客户端权威：" + Summary();
+        public string StatusLine() => "client-authority: " + Summary();
 
         public void Attach(IModuleContext context)
         {

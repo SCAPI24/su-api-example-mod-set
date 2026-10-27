@@ -33,8 +33,27 @@ namespace SuMultiplayer.UI
         /// <summary>"弹出最新请求"的动作（组合根注入 = JoinApprovalUi.ShowLatestJoinDialog；
         /// 用委托避免 UI 层依赖 Plug 内部类型）。</summary>
         private readonly Action m_showLatestRequest;
+        private readonly Func<int> m_hostPort;
+        private readonly Func<bool> m_autoHost;
+        private readonly Func<IReadOnlyList<Modules.HostPeerInfo>> m_hostPeers;
+        private readonly Func<IReadOnlyList<string>> m_bannedIds;
+        private readonly Func<string, bool, string> m_banAndKick;
+        private readonly Func<string, string> m_unban;
+        private readonly Func<int, string> m_kick;
+        private readonly Func<int, string> m_changePort;
+        private readonly Func<bool> m_autoHostEnabled;
+        private readonly Func<bool> m_autoApproveEnabled;
+        private readonly Func<bool, string> m_setAutoHost;
+        private readonly Func<bool, string> m_setAutoApprove;
+        /// <summary>CR 建房成功后落盘世界联机设置（这是 SuMultiplayerWorld.xml 的创建时机）。</summary>
+        private readonly Func<string> m_saveWorldSettings;
+        private Project m_autoHostProject;
+        private bool m_autoHostAttempted;
         /// <summary>已弹出的请求队列对话框（防重复；关一个才允许开下一个）。</summary>
         private MessageDialog m_queueDialog;
+        /// <summary>主机设置容器（只允许主机打开；IF 再次点击要能把它关掉）。</summary>
+        private HostSettingsWidget m_settingsWidget;
+        private ComponentPlayer m_settingsOwner;
         private readonly List<BevelledButtonWidget> m_buttons = new List<BevelledButtonWidget>();
         /// <summary>
         /// 已经**消费过**当前这一次按下沿的按钮（见 <see cref="TryConsumeClick"/>）。
@@ -70,12 +89,37 @@ namespace SuMultiplayer.UI
             new Dictionary<string, long>(StringComparer.Ordinal);
 
         public RoomUiAttacher(IRoomBrowsePort rooms, IWorldReadyPort ready = null,
-            Requests.HostRequestQueue requestQueue = null, Action showLatestRequest = null)
+            Requests.HostRequestQueue requestQueue = null, Action showLatestRequest = null,
+            Func<int> hostPort = null, Func<bool> autoHost = null,
+            Func<IReadOnlyList<Modules.HostPeerInfo>> hostPeers = null,
+            Func<IReadOnlyList<string>> bannedIds = null,
+            Func<string, bool, string> banAndKick = null,
+            Func<string, string> unban = null,
+            Func<int, string> kick = null,
+            Func<int, string> changePort = null,
+            Func<bool> autoHostEnabled = null,
+            Func<bool> autoApproveEnabled = null,
+            Func<bool, string> setAutoHost = null,
+            Func<bool, string> setAutoApprove = null,
+            Func<string> saveWorldSettings = null)
         {
             m_rooms = rooms;
             m_ready = ready;
             m_requestQueue = requestQueue;
             m_showLatestRequest = showLatestRequest;
+            m_hostPort = hostPort;
+            m_autoHost = autoHost;
+            m_hostPeers = hostPeers;
+            m_bannedIds = bannedIds;
+            m_banAndKick = banAndKick;
+            m_unban = unban;
+            m_kick = kick;
+            m_changePort = changePort;
+            m_autoHostEnabled = autoHostEnabled;
+            m_autoApproveEnabled = autoApproveEnabled;
+            m_setAutoHost = setAutoHost;
+            m_setAutoApprove = setAutoApprove;
+            m_saveWorldSettings = saveWorldSettings;
         }
 
         public void Tick()
@@ -100,6 +144,8 @@ namespace SuMultiplayer.UI
             {
                 m_buttons.Clear();
                 m_consumedClicks.Clear();
+                m_settingsWidget = null;
+                m_settingsOwner = null;
                 // 离开世界 = 房间的世界没了，而不是留一个"房间还在但世界不在"的假状态。
                 //   · 主机：房间自动关闭；
                 //   · 客户端：**主动离开房间**（发 BYE + 关通道）。显式退房必须主动断连，
@@ -110,13 +156,13 @@ namespace SuMultiplayer.UI
                     if (m_rooms.IsHostingRoom)
                     {
                         m_rooms.CloseRoom();
-                        global::Engine.Log.Information("[SuMP][ui] 已离开世界 → 房间自动关闭");
+                        SuMultiplayer.Engine.ModLog.Info("[SuMP][ui] left world -> room closed automatically");
                     }
                     else if (m_rooms.IsClientInRoom)
                     {
                         // LeaveRoom 内部走 StopChannelWithBye：先发 BYE（主机零宽限摘角色）再关通道。
                         m_rooms.LeaveRoom();
-                        global::Engine.Log.Information("[SuMP][ui] 客户端已退出世界 → 主动离开房间" +
+                        SuMultiplayer.Engine.ModLog.Info("[SuMP][ui] client left world -> leaving room" +
                             "（已发 BYE 并关闭通道，主机立即移除本机角色）");
                     }
                 }
@@ -131,6 +177,7 @@ namespace SuMultiplayer.UI
             // （引擎原本的 GameLoading 入口，会自然 dispose 掉手里的过期 Project）。
             TryEnterRefreshedWorld();
 
+            TryAutoHost(project);
             SubsystemGameWidgets widgets = project.FindSubsystem<SubsystemGameWidgets>(false);
             if (widgets == null) return;
             ReadOnlyList<GameWidget> gameWidgets = widgets.GameWidgets;
@@ -163,12 +210,12 @@ namespace SuMultiplayer.UI
                 BevelledButtonWidget button =
                     moreContents.Children.Find<BevelledButtonWidget>(ButtonName, false);
                 if (button == null) button = CreateButton(moreContents, ButtonName, "CR",
-                    "CR 建房按钮已挂到 MoreContents（游戏内建房入口）");
+                    "CR create-room button attached to MoreContents");
                 if (button.Text != text) button.Text = text;
                 m_buttons.Add(button);
                 if (TryConsumeClick(button))
                 {
-                    if (showInfo) ShowRoomInfo();
+                    if (showInfo) ToggleRoomInfo();
                     else CreateRoom();
                 }
 
@@ -235,7 +282,7 @@ namespace SuMultiplayer.UI
                     directory + " / " + worldName + " → 无法在游戏内切换到新世界");
                 return;
             }
-            global::Engine.Log.Information("[SuMP][ui] 游戏内整图重下完成 → 进入主机的新世界：" +
+            SuMultiplayer.Engine.ModLog.Info("[SuMP][ui] 游戏内整图重下完成 → 进入主机的新世界：" +
                 imported.WorldSettings.Name + "（" + imported.DirectoryName + "）");
             ScreensManager.SwitchScreen("GameLoading", imported, null);
         }
@@ -259,6 +306,20 @@ namespace SuMultiplayer.UI
             return button;
         }
 
+        private void TryAutoHost(Project project)
+        {
+            if (m_autoHost == null || m_rooms == null || m_autoHost() != true) return;
+            if (m_rooms.IsHostingRoom || m_rooms.IsClientInRoom) return;
+            if (!ReferenceEquals(project, m_autoHostProject))
+            {
+                m_autoHostProject = project;
+                m_autoHostAttempted = false;
+            }
+            if (m_autoHostAttempted) return;
+            m_autoHostAttempted = true;
+            CreateRoom();
+        }
+
         private void CreateRoom()
         {
             if (m_rooms == null)
@@ -271,20 +332,71 @@ namespace SuMultiplayer.UI
                 ShowDialog("Create Room", reason);
                 return;
             }
-            if (!m_rooms.CreateRoom(worldName, gameMode, out string failReason))
+            int requestedPort = m_hostPort != null ? m_hostPort() : 0;
+            if (!m_rooms.CreateRoom(worldName, gameMode, requestedPort, out string failReason))
             {
                 global::Engine.Log.Error("[SuMP][ui] 建房失败：" + failReason);
                 ShowDialog("Create Room", failReason);
                 return;
             }
-            global::Engine.Log.Information("[SuMP][ui] CR：房间已创建（世界「" + worldName + "」）");
+            SuMultiplayer.Engine.ModLog.Info("[SuMP][ui] CR: room created (world \"" + worldName + "\")");
+            // 用户口径：SuMultiplayerWorld.xml 只在主机点 CR 建房时创建（或玩家修改联机设置时更新）。
+            string saveNote = m_saveWorldSettings?.Invoke();
+            if (!string.IsNullOrEmpty(saveNote)) ModLog.Info("[SuMP][ui] CR world settings: " + saveNote);
             ShowDialog("Create Room", m_rooms.RoomSummary);
+        }
+
+        /// <summary>
+        /// IF 按钮是开关：房间信息框 / 主机设置容器已经打开时再按 IF = 关闭，不叠新界面。
+        /// </summary>
+        private void ToggleRoomInfo()
+        {
+            if (CloseHostSettingsIfOpen()) return;
+            if (m_queueDialog != null && DialogsManager.Dialogs.Contains(m_queueDialog))
+            {
+                DialogsManager.HideDialog(m_queueDialog);
+                m_queueDialog = null;
+                return;
+            }
+            ShowRoomInfo();
+        }
+
+        private bool CloseHostSettingsIfOpen()
+        {
+            if (m_settingsOwner?.ComponentGui == null || m_settingsWidget == null)
+            {
+                m_settingsWidget = null;
+                m_settingsOwner = null;
+                return false;
+            }
+            if (!ReferenceEquals(m_settingsOwner.ComponentGui.ModalPanelWidget, m_settingsWidget))
+            {
+                m_settingsWidget = null;
+                m_settingsOwner = null;
+                return false;
+            }
+            m_settingsOwner.ComponentGui.ModalPanelWidget = null;
+            m_settingsWidget = null;
+            m_settingsOwner = null;
+            return true;
+        }
+
+        private void CloseHostSettings()
+        {
+            if (m_settingsOwner?.ComponentGui != null && m_settingsWidget != null &&
+                ReferenceEquals(m_settingsOwner.ComponentGui.ModalPanelWidget, m_settingsWidget))
+            {
+                m_settingsOwner.ComponentGui.ModalPanelWidget = null;
+            }
+            m_settingsWidget = null;
+            m_settingsOwner = null;
         }
 
         private void ShowRoomInfo()
         {
+            bool hosting = m_rooms?.IsHostingRoom == true;
             string summary = m_rooms?.RoomSummary ?? "Multiplayer module is not loaded";
-            global::Engine.Log.Information("[SuMP][ui] IF：" + summary);
+            SuMultiplayer.Engine.ModLog.Info("[SuMP][ui] IF: " + summary);
             // 请求队列页（用户口径 2026-10-26）：房间信息下方按时间倒序列出待决请求；
             // 队列非空时给一个 Latest request 按钮，点击弹出最新一条的三按钮审批对话框。
             string queueText = string.Empty;
@@ -311,15 +423,144 @@ namespace SuMultiplayer.UI
                     onButton1 = ShowLatestRequest;
                 }
             }
+            // 设置容器只属于主机；客户端只读房间信息，设置入口后续由 GM mod 提供。
+            string button1Text = hosting ? (button1 ?? "Settings") : (button1 ?? "OK");
+            string button2Text = hosting ? (button1 == null ? null : "Settings") : null;
             var dialog = new MessageDialog("Room", summary + (queueText.Length > 0
                     ? Environment.NewLine + queueText
                     : string.Empty),
-                button1 ?? "OK", null,
+                button1Text, button2Text,
                 delegate (MessageDialogButton button)
                 {
-                    if (button == MessageDialogButton.Button1) onButton1?.Invoke();
+                    if (button == MessageDialogButton.Button1)
+                    {
+                        if (button1 != null) onButton1?.Invoke();
+                        else if (hosting) ShowHostSettingsMenu();
+                    }
+                    else if (button == MessageDialogButton.Button2 && hosting)
+                    {
+                        ShowHostSettingsMenu();
+                    }
                 });
             m_queueDialog = dialog;
+            DialogsManager.ShowDialog(null, dialog);
+        }
+
+        private static void ShowResult(string title, string result) =>
+            DialogsManager.ShowDialog(null, new MessageDialog(title,
+                string.IsNullOrEmpty(result) ? "(done)" : result, "OK", null, null));
+
+        private void ShowHostSettingsMenu()
+        {
+            // 设置界面只属于主机；客户端不允许从 IF 打开（后续由 GM mod 提供控制入口）。
+            if (m_rooms?.IsHostingRoom != true) return;
+            if (CloseHostSettingsIfOpen()) return;
+            ComponentPlayer localPlayer = null;
+            SubsystemPlayers players = GameManager.Project?.FindSubsystem<SubsystemPlayers>(false);
+            if (players != null)
+            {
+                for (int i = 0; i < players.ComponentPlayers.Count; i++)
+                {
+                    if (players.ComponentPlayers[i]?.ComponentGui == null) continue;
+                    localPlayer = players.ComponentPlayers[i];
+                    break;
+                }
+            }
+            if (localPlayer == null)
+            {
+                ShowResult("Multiplayer settings", "No local player (cannot open settings).");
+                return;
+            }
+            var settings = new HostSettingsWidget(
+                m_autoHostEnabled, m_autoApproveEnabled,
+                delegate
+                {
+                    ShowResult("Auto host", m_setAutoHost?.Invoke(
+                        m_autoHostEnabled?.Invoke() != true));
+                },
+                delegate
+                {
+                    ShowResult("Auto approve", m_setAutoApprove?.Invoke(
+                        m_autoApproveEnabled?.Invoke() != true));
+                },
+                delegate { SelectPeer(true); },
+                BanUserId,
+                delegate { SelectPeer(false); },
+                SelectBan,
+                EditHostPort,
+                CloseHostSettings);
+            m_settingsOwner = localPlayer;
+            m_settingsWidget = settings;
+            localPlayer.ComponentGui.ModalPanelWidget = settings;
+            SuMultiplayer.Engine.ModLog.Info("[SuMP][ui] IF settings container opened (button grid)");
+        }
+
+        private void SelectPeer(bool ban)
+        {
+            IReadOnlyList<Modules.HostPeerInfo> peers = m_hostPeers?.Invoke();
+            if (peers == null || peers.Count == 0)
+            {
+                ShowResult("Players", "No connected players.");
+                return;
+            }
+            var dialog = new ListSelectionDialog(ban ? "Ban + kick player" : "Kick player",
+                peers, 48f, value =>
+                {
+                    var peer = (Modules.HostPeerInfo)value;
+                    return peer.Name + " (" + peer.Identity + ") · client " + peer.ClientId;
+                }, delegate (object selected)
+                {
+                    var peer = (Modules.HostPeerInfo)selected;
+                    ShowResult(ban ? "Ban + kick" : "Kick",
+                        ban ? m_banAndKick?.Invoke(peer.Identity, true) : m_kick?.Invoke(peer.ClientId));
+                });
+            DialogsManager.ShowDialog(null, dialog);
+        }
+
+        private void BanUserId()
+        {
+            DialogsManager.ShowDialog(null, new TextBoxDialog("Ban user ID", string.Empty, 64,
+                text =>
+                {
+                    string id = (text ?? string.Empty).Trim();
+                    if (id.Length == 0)
+                    {
+                        ShowResult("Ban user ID", "User ID is empty.");
+                        return;
+                    }
+                    ShowResult("Ban user ID", m_banAndKick?.Invoke(id, false) ??
+                        "Ban handler unavailable.");
+                }));
+        }
+
+        private void SelectBan()
+        {
+            IReadOnlyList<string> bans = m_bannedIds?.Invoke();
+            if (bans == null || bans.Count == 0)
+            {
+                ShowResult("Remove Ban", "Ban list is empty.");
+                return;
+            }
+            var dialog = new ListSelectionDialog("Remove Ban", bans, 48f,
+                value => value.ToString(), selected =>
+                    ShowResult("Remove Ban", m_unban?.Invoke(selected as string ?? string.Empty)));
+            DialogsManager.ShowDialog(null, dialog);
+        }
+
+        private void EditHostPort()
+        {
+            int current = m_hostPort != null ? m_hostPort() : 0;
+            var dialog = new TextBoxDialog("Host port (0 = auto 51459..51468)",
+                current.ToString(), 5, text =>
+                {
+                    if (!int.TryParse((text ?? string.Empty).Trim(), out int port) ||
+                        port < 0 || port > 65535)
+                    {
+                        ShowResult("Host port", "Invalid port: " + text);
+                        return;
+                    }
+                    ShowResult("Host port", m_changePort?.Invoke(port) ?? "Port handler unavailable.");
+                });
             DialogsManager.ShowDialog(null, dialog);
         }
 
@@ -354,7 +595,7 @@ namespace SuMultiplayer.UI
         private void InfoRateLimited(string key, string message, int intervalMs = 5000)
         {
             if (!ShouldLog(key, intervalMs)) return;
-            global::Engine.Log.Information(message + " · " + DescribeCounters());
+            SuMultiplayer.Engine.ModLog.Info(message + " · " + DescribeCounters());
         }
 
         private bool ShouldLog(string key, int intervalMs)

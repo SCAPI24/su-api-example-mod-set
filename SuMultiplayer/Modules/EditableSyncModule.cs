@@ -114,7 +114,7 @@ namespace SuMultiplayer.Modules
 
         public string ModuleId => m_descriptor.Id;
 
-        public string StatusLine() => "可编辑方块内容：" + Summary() + " · " + m_port.Describe();
+        public string StatusLine() => "editable: " + Summary() + " · " + m_port.Describe();
 
         /// <summary>一条在途提交：超时后要能对玩家说明是哪一格、哪一种内容。</summary>
         private readonly struct PendingRequest

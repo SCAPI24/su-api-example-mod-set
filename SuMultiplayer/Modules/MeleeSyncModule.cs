@@ -176,7 +176,7 @@ namespace SuMultiplayer.Modules
             " meleeLocalOverflow=" + m_localOverflow +
             " · " + m_combatTelemetry.Describe();
 
-        public string StatusLine() => "近战攻击：" + Summary() + " · " + m_port.Describe();
+        public string StatusLine() => "melee: " + Summary() + " · " + m_port.Describe();
 
         // ---------------------------------------------------------------- 生命周期
 

@@ -3711,7 +3711,7 @@ namespace SuMultiplayer.Modules
                   " fails={apply:" + m_applyFailures + " decode:" + m_decodeFailures +
                   " suppress:" + m_suppressFailures +
                   " result:" + m_respawnResultSendFailures + "}";
-            return "玩家生命/体征同步[" + (hosting ? "host" : "client") + "]：" + counters +
+            return "player-vitals[" + (hosting ? "host" : "client") + "]：" + counters +
                 " " + SleepStatusCounters() + " " + FeedbackStatusCounters() +
                 " · " + (m_port != null ? m_port.Describe() : "端口未接");
         }

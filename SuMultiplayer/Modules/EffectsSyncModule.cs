@@ -106,7 +106,7 @@ namespace SuMultiplayer.Modules
 
         public string ModuleId => m_descriptor.Id;
 
-        public string StatusLine() => "烧尽表现：" + Summary() + " · " + m_port.Describe();
+        public string StatusLine() => "effects: " + Summary() + " · " + m_port.Describe();
 
         public void Attach(IModuleContext context)
         {
@@ -175,7 +175,7 @@ namespace SuMultiplayer.Modules
             {
                 m_orderer.Reset();
                 m_rateLimiter.Reset();
-                Log("烧尽表现：连接已建立 → 事件闸门 / 限速已重置（旧会话的 event_id 不再复用）");
+                Log("effects: 连接已建立 → 事件闸门 / 限速已重置（旧会话的 event_id 不再复用）");
             }
             m_wasConnected = connected;
             long nowMs = (long)(tick.Now * 1000.0);

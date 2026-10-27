@@ -3,6 +3,14 @@ using SuMultiplayer.Players;
 
 namespace SuMultiplayer.Modules
 {
+    /// <summary>主机 UI 用的在线玩家端条目（clientId / 名字 / 身份，身份是不可逆 UserId）。</summary>
+    public sealed class HostPeerInfo
+    {
+        public int ClientId;
+        public string Name = string.Empty;
+        public string Identity = string.Empty;
+    }
+
     /// <summary>
     /// 客户端**握手资料视图**：由地形模块（唯一收到 HelloAck 的模块）提供，
     /// 联机角色模块只通过这个端口读取"主机资料 / 主机分给我的资料 / 是否要求先建角色"，
@@ -60,5 +68,12 @@ namespace SuMultiplayer.Modules
         /// 返回 false = 当前没有可重连的客户端通道（已明确记录，不假装重连成功）。
         /// </summary>
         bool ReconnectClient(string reason);
+
+        /// <summary>
+        /// 角色创建完成：**不重连**，在当前仍然存活的客户端连接上重发一次 Hello，
+        /// 携带刚确认的资料。主机保留首次 Allow，不会二次审批；随后主机建记录 / 发皮肤资源 / 传地图。
+        /// 返回 false = 当前连接已不可用（主机踢出 / 通道已死），必须回 Play 重新加入。
+        /// </summary>
+        bool SendProfileHello();
     }
 }

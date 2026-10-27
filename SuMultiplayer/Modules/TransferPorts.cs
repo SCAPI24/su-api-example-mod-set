@@ -46,6 +46,9 @@ namespace SuMultiplayer.Modules
         /// 加入窗口每帧读它，不能只显示点房间时的发现包 RTT。
         /// </summary>
         int LastRoundTripMs => -1;
+
+        /// <summary>主机：断开指定玩家端（Ban+踢出 / 仅踢出）。返回 false 必须写清原因。</summary>
+        bool DisconnectClient(int clientId, out string reason) { reason = "此传输不支持踢人"; return false; }
     }
 
     /// <summary>
@@ -119,5 +122,15 @@ namespace SuMultiplayer.Modules
         void Publish(string directory, string worldName);
 
         bool TryTake(out string directory, out string worldName);
+    }
+
+    /// <summary>
+    /// 带宽保护：世界传输模块在向某个客户端发送整图期间，通知地形模块暂停该客户端的
+    /// 非地形实时广播。WorldBegin/WorldChunk/WorldEnd/WorldMissing 不受影响。
+    /// </summary>
+    public interface IWorldTransferBandwidthPort
+    {
+        void SetClientDownloading(int clientId, bool downloading);
+        bool IsClientDownloading(int clientId);
     }
 }
