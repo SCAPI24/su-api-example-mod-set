@@ -245,6 +245,9 @@ enum MessageType {
   FURNITURE_DESIGN_STATE = 79;
   FURNITURE_DESIGN_SYNC_REQUEST = 80;
   FURNITURE_CONTENT_STATE = 81;
+  FURNITURE_LIBRARY_REQUEST = 120;
+  FURNITURE_LIBRARY_RESULT = 121;
+  FURNITURE_POLICY_STATE = 122;
 
   // Multiplayer chat (chat.proto), append-only: 82..84 are new ids, no
   // existing id is renumbered.

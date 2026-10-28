@@ -28,6 +28,12 @@ namespace SuMultiplayer.Engine
 
         public bool AutoHostCurrentWorld;
         public bool AutoApproveJoins;
+        /// <summary>是否允许客户端删集合时由主机 GC 集合内未使用设计（每张地图默认 false）。</summary>
+        public bool AllowClientFurnitureDelete;
+        /// <summary>是否允许客户端导入家具（默认 false）。</summary>
+        public bool AllowFurnitureImport;
+        /// <summary>是否允许客户端导出家具包（默认 false）。</summary>
+        public bool AllowFurnitureExport;
         /// <summary>0 = 自动分配（旧版 51459 起 10 个）；1..65535 = 指定端口。</summary>
         public int HostPort;
         public readonly List<string> BannedIdentities = new List<string>();
@@ -47,6 +53,9 @@ namespace SuMultiplayer.Engine
         public string Describe() =>
             "autoHost=" + (AutoHostCurrentWorld ? "on" : "off") +
             " autoApprove=" + (AutoApproveJoins ? "on" : "off") +
+            " allowClientFurnitureDelete=" + (AllowClientFurnitureDelete ? "on" : "off") +
+            " allowFurnitureImport=" + (AllowFurnitureImport ? "on" : "off") +
+            " allowFurnitureExport=" + (AllowFurnitureExport ? "on" : "off") +
             " port=" + (HostPort == AutoPort
                 ? "auto(" + AutoPortBase + ".." + (AutoPortBase + AutoPortCount - 1) + ")"
                 : HostPort.ToString()) +
@@ -107,6 +116,9 @@ namespace SuMultiplayer.Engine
                 var root = new XElement("SuMultiplayerWorld",
                     new XElement("AutoHostCurrentWorld", AutoHostCurrentWorld),
                     new XElement("AutoApproveJoins", AutoApproveJoins),
+                    new XElement("AllowClientFurnitureDelete", AllowClientFurnitureDelete),
+                    new XElement("AllowFurnitureImport", AllowFurnitureImport),
+                    new XElement("AllowFurnitureExport", AllowFurnitureExport),
                     new XElement("HostPort", HostPort));
                 var bans = new XElement("Banned");
                 for (int i = 0; i < BannedIdentities.Count; i++)
@@ -142,6 +154,12 @@ namespace SuMultiplayer.Engine
             }
             ApplyBool(root, "AutoHostCurrentWorld", value => settings.AutoHostCurrentWorld = value, problems);
             ApplyBool(root, "AutoApproveJoins", value => settings.AutoApproveJoins = value, problems);
+            ApplyBool(root, "AllowClientFurnitureDelete",
+                value => settings.AllowClientFurnitureDelete = value, problems);
+            ApplyBool(root, "AllowFurnitureImport",
+                value => settings.AllowFurnitureImport = value, problems);
+            ApplyBool(root, "AllowFurnitureExport",
+                value => settings.AllowFurnitureExport = value, problems);
             XElement port = root.Element("HostPort");
             if (port == null)
             {

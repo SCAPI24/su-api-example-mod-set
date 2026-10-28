@@ -60,6 +60,8 @@ namespace SuMultiplayer.Engine
         private SuFurnitureBlock m_furnitureBlock;
         private IFurnitureDesignRequestSink m_sink;
         private bool m_clientReplica;
+        private bool m_allowFurnitureExport;
+        private bool m_allowFurnitureImport;
         private bool m_adopted;
         private bool m_shellMissingLogged;
         private bool m_designArrayMissingLogged;
@@ -114,6 +116,8 @@ namespace SuMultiplayer.Engine
 
         public void Pump()
         {
+            if (m_clientReplica && (!m_allowFurnitureExport || !m_allowFurnitureImport))
+                FilterFurniturePolicyMenus();
             Project project = GameManager.Project;
             if (!ReferenceEquals(project, m_project))
             {
@@ -526,6 +530,11 @@ namespace SuMultiplayer.Engine
                 return Reject(in request, reason, out result, out reason);
             }
             bool duplicate = !ReferenceEquals(added, design);
+            // 新设计刚生成家具物品时，物品扫描器可能还没扫到它；引擎 GC 判据是
+            // m_terrainUseCount>0 或扫描到的家具物品，否则会在下一拍把设计删掉
+            // （实机：客户端新建家具显示约 0.1s 后消失，主机日志 designRemoved=1）。
+            // 与客户端副本一样先标记"在用"；家具落格/物品扫描后由引擎正常接管。
+            ProtectFromGarbageCollection(added);
             m_hostInstalled++;
 
             // Source: ScanDesign —— 非创造模式销毁源方块；创造模式源方块保留。
@@ -1000,12 +1009,388 @@ namespace SuMultiplayer.Engine
                 target.Add(ToRecord(design, i));
                 ProtectFromGarbageCollection(design);
             }
-            // 客户端只保留"未分类"设计：集合来自存档，若保留会被 FurnitureInventoryPanel 的
-            // 集合操作 / 导出路径当成客户端自己的库。设计与集合都不落盘（Save 写空）。
-            ClearClientFurnitureSets();
+            // 集合与设计一起作为**会话副本**保留：它们来自主机地图（或主机同步），
+            // 客户端可以正常显示/拖动家具集；Save 仍写空，退出即丢弃，不会污染本地库。
+            // 不要在这里清空集合：DeleteFurnitureSet 会把设计的 FurnitureSet 置空，
+            // 面板仍持有旧集合引用时会表现为"新集合和原有家具一起消失"（实机缺陷）。
             m_adopted = true;
-            Log("客户端接管已加载的家具设计 " + target.Count + " 条为会话副本（集合已清空，Save 写空）");
+            Log("客户端接管已加载的家具设计 " + target.Count + " 条为会话副本（集合保留，Save 写空）");
             return true;
+        }
+
+        public bool CaptureHostSets(List<FurnitureSetRecord> target, out string reason)
+        {
+            reason = null;
+            if (m_clientReplica || m_behavior == null)
+            {
+                reason = m_clientReplica ? "not-host" : "furniture-table-unavailable";
+                return false;
+            }
+            try
+            {
+                List<FurnitureSet> sets = m_parentField.GetParentField<List<FurnitureSet>>(
+                    m_behavior, "m_furnitureSets", typeof(SubsystemFurnitureBlockBehavior));
+                if (target != null)
+                {
+                    target.Clear();
+                    if (sets != null)
+                        for (int i = 0; i < sets.Count; i++)
+                        {
+                            FurnitureSet set = sets[i];
+                            if (set == null) continue;
+                            target.Add(new FurnitureSetRecord(set.Name, set.ImportedFrom));
+                        }
+                }
+                return true;
+            }
+            catch (Exception error)
+            {
+                reason = "capture-host-sets:" + error.GetType().Name + ":" + error.Message;
+                return false;
+            }
+        }
+
+        public bool TryCaptureClientLibrary(List<FurnitureDesignRecord> designs,
+            List<FurnitureSetRecord> sets, out string reason)
+        {
+            reason = null;
+            if (!m_clientReplica || m_behavior == null || m_designs == null)
+            {
+                reason = "not-client";
+                return false;
+            }
+            try
+            {
+                if (designs != null)
+                {
+                    designs.Clear();
+                    for (int i = 0; i < m_designs.Length; i++)
+                    {
+                        FurnitureDesign design = m_designs[i];
+                        if (design == null) continue;
+                        designs.Add(ToRecord(design, i));
+                    }
+                }
+                if (sets != null)
+                {
+                    sets.Clear();
+                    List<FurnitureSet> engineSets = m_parentField.GetParentField<List<FurnitureSet>>(
+                        m_behavior, "m_furnitureSets", typeof(SubsystemFurnitureBlockBehavior));
+                    if (engineSets != null)
+                        for (int i = 0; i < engineSets.Count; i++)
+                        {
+                            FurnitureSet set = engineSets[i];
+                            if (set == null) continue;
+                            sets.Add(new FurnitureSetRecord(set.Name, set.ImportedFrom));
+                        }
+                }
+                return true;
+            }
+            catch (Exception error)
+            {
+                reason = "capture-client-library:" + error.GetType().Name + ":" + error.Message;
+                return false;
+            }
+        }
+
+        public bool TryApplyClientLibrary(int clientId, IReadOnlyList<FurnitureDesignRecord> designs,
+            IReadOnlyList<FurnitureSetRecord> sets, bool replaceSets,
+            IReadOnlyList<int> deletedDesignCandidates, bool allowClientDelete,
+            List<FurnitureDesignRecord> installed, List<int> removedDesigns, out string reason)
+        {
+            reason = null;
+            if (m_clientReplica || m_project == null || m_behavior == null ||
+                m_subsystemTerrain?.Terrain == null)
+            {
+                reason = m_clientReplica ? "not-host" : "world-unavailable";
+                return false;
+            }
+            designs = designs ?? Array.Empty<FurnitureDesignRecord>();
+            sets = sets ?? Array.Empty<FurnitureSetRecord>();
+            if (designs.Count > FurnitureDesignStore.MaxDesigns ||
+                sets.Count > FurnitureDesignStore.MaxDesigns)
+            {
+                reason = "library-too-large";
+                return false;
+            }
+            installed?.Clear();
+            List<FurnitureSet> engineSets;
+            try
+            {
+                engineSets = m_parentField.GetParentField<List<FurnitureSet>>(m_behavior,
+                    "m_furnitureSets", typeof(SubsystemFurnitureBlockBehavior));
+            }
+            catch (Exception error)
+            {
+                reason = "furniture-sets:" + error.GetType().Name + ":" + error.Message;
+                return false;
+            }
+            if (engineSets == null)
+            {
+                reason = "furniture-sets-unavailable";
+                return false;
+            }
+            var setByName = new Dictionary<string, FurnitureSet>(StringComparer.Ordinal);
+            var requestedNames = new HashSet<string>(StringComparer.Ordinal);
+            for (int i = 0; i < sets.Count; i++)
+            {
+                FurnitureSetRecord requested = sets[i];
+                if (requested != null && !string.IsNullOrEmpty(requested.Name))
+                    requestedNames.Add(requested.Name);
+            }
+            for (int i = 0; i < engineSets.Count; i++)
+            {
+                FurnitureSet existing = engineSets[i];
+                if (existing == null || string.IsNullOrEmpty(existing.Name)) continue;
+                if (replaceSets && !requestedNames.Contains(existing.Name)) continue;
+                if (!setByName.ContainsKey(existing.Name)) setByName[existing.Name] = existing;
+            }
+            if (replaceSets)
+            {
+                var removeSets = new List<FurnitureSet>();
+                for (int i = 0; i < engineSets.Count; i++)
+                {
+                    FurnitureSet existing = engineSets[i];
+                    if (existing != null && !requestedNames.Contains(existing.Name))
+                        removeSets.Add(existing);
+                }
+                for (int i = 0; i < removeSets.Count; i++)
+                    m_behavior.DeleteFurnitureSet(removeSets[i]);
+            }
+            int createdSets = 0;
+            for (int i = 0; i < sets.Count; i++)
+            {
+                FurnitureSetRecord incoming = sets[i];
+                if (incoming == null || string.IsNullOrEmpty(incoming.Name)) continue;
+                if (!FurnitureDesignCodec.TryValidateSetName(incoming.Name, out string nameError))
+                {
+                    reason = "set-name:" + nameError;
+                    return false;
+                }
+                if (setByName.ContainsKey(incoming.Name)) continue;
+                FurnitureSet created = m_behavior.NewFurnitureSet(incoming.Name,
+                    incoming.ImportedFrom ?? string.Empty);
+                if (created == null)
+                {
+                    reason = "set-create-failed:" + incoming.Name;
+                    return false;
+                }
+                setByName[created.Name] = created;
+                createdSets++;
+            }
+            if (replaceSets)
+            {
+                var ordered = new List<FurnitureSet>(engineSets.Count);
+                for (int i = 0; i < sets.Count; i++)
+                {
+                    FurnitureSetRecord requested = sets[i];
+                    if (requested == null || string.IsNullOrEmpty(requested.Name)) continue;
+                    if (setByName.TryGetValue(requested.Name, out FurnitureSet found) &&
+                        !ordered.Contains(found))
+                        ordered.Add(found);
+                }
+                for (int i = 0; i < engineSets.Count; i++)
+                    if (engineSets[i] != null && !ordered.Contains(engineSets[i]))
+                        ordered.Add(engineSets[i]);
+                engineSets.Clear();
+                engineSets.AddRange(ordered);
+            }
+            int accepted = 0;
+            var sourceToHost = new Dictionary<int, FurnitureDesign>();
+            var createdDesigns = new List<KeyValuePair<FurnitureDesign, int>>();
+            for (int i = 0; i < designs.Count; i++)
+            {
+                FurnitureDesignRecord record = designs[i];
+                if (!FurnitureDesignCodec.TryValidateRecord(record, BlockCount, out string recordError))
+                {
+                    reason = "library-record:" + recordError;
+                    return false;
+                }
+                FurnitureDesign candidate;
+                try
+                {
+                    candidate = new FurnitureDesign(m_subsystemTerrain);
+                    candidate.Name = record.Name;
+                    candidate.InteractionMode = (FurnitureInteractionMode)record.InteractionMode;
+                    int[] values = new int[record.ValueCount];
+                    for (int v = 0; v < values.Length; v++)
+                        values[v] = FurnitureDesignHash.StripLight(record.GetValue(v));
+                    candidate.SetValues(record.Resolution, values);
+                }
+                catch (Exception error)
+                {
+                    reason = "library-design:" + record.Index + ":" + error.GetType().Name + ":" +
+                        error.Message;
+                    return false;
+                }
+                FurnitureDesign hostDesign = m_behavior.FindMatchingDesign(candidate);
+                if (hostDesign == null)
+                {
+                    hostDesign = m_behavior.TryAddDesign(candidate);
+                    if (hostDesign == null)
+                    {
+                        reason = "design-limit";
+                        return false;
+                    }
+                    ProtectFromGarbageCollection(hostDesign);
+                    m_hostInstalled++;
+                    createdDesigns.Add(new KeyValuePair<FurnitureDesign, int>(hostDesign,
+                        record.LinkedIndex));
+                }
+                sourceToHost[record.Index] = hostDesign;
+                if (!string.IsNullOrEmpty(record.FurnitureSet))
+                {
+                    if (!setByName.TryGetValue(record.FurnitureSet, out FurnitureSet targetSet))
+                    {
+                        targetSet = m_behavior.NewFurnitureSet(record.FurnitureSet, string.Empty);
+                        if (targetSet == null)
+                        {
+                            reason = "set-create-failed:" + record.FurnitureSet;
+                            return false;
+                        }
+                        setByName[targetSet.Name] = targetSet;
+                        createdSets++;
+                    }
+                    m_behavior.AddToFurnitureSet(hostDesign, targetSet);
+                }
+                else if (hostDesign.FurnitureSet != null)
+                {
+                    // 客户端把设计拖到 Uncategorized：上传记录 set 为空，必须清掉主机归属；
+                    // 只在 targetSet != null 时赋值会把主机记录继续留在原集合，广播后又拉回去。
+                    hostDesign.FurnitureSet = null;
+                }
+                accepted++;
+                if (installed != null)
+                {
+                    FurnitureDesignRecord hostRecord = ToRecord(hostDesign, hostDesign.Index);
+                    if (!installed.Exists(item => item != null && item.Index == hostRecord.Index))
+                        installed.Add(hostRecord);
+                }
+            }
+            for (int i = 0; i < createdDesigns.Count; i++)
+            {
+                FurnitureDesign design = createdDesigns[i].Key;
+                int linked = createdDesigns[i].Value;
+                if (linked < 0 || !sourceToHost.TryGetValue(linked, out FurnitureDesign target))
+                    continue;
+                design.LinkedDesign = target;
+            }
+            if (allowClientDelete && deletedDesignCandidates != null &&
+                deletedDesignCandidates.Count > 0)
+            {
+                // 主机权威 GC：只处理客户端报告"随集合删除"的候选，先清掉我们自己的
+                // 防 GC 标记，再让引擎按世界方块 / 家具物品引用判定。仍在用的设计会保留
+                // 为 Uncategorized；没用的设计被 GC，并把 removed 索引广播给所有端。
+                for (int i = 0; i < deletedDesignCandidates.Count; i++)
+                {
+                    int index = deletedDesignCandidates[i];
+                    FurnitureDesign design = m_behavior.GetDesign(index);
+                    if (design == null || design.FurnitureSet != null) continue;
+                    try
+                    {
+                        m_parentField.ModifyParentField(design, "m_terrainUseCount", 0,
+                            typeof(FurnitureDesign));
+                    }
+                    catch (Exception error)
+                    {
+                        LogProblem("gc-candidate:" + error.GetType().Name,
+                            "清候选设计 GC 标记失败 index=" + index + "：" +
+                            error.GetType().Name + " " + error.Message);
+                        continue;
+                    }
+                    m_behavior.GarbageCollectDesigns();
+                    if (m_behavior.GetDesign(index) == null)
+                        if (removedDesigns != null) removedDesigns.Add(index);
+                }
+            }
+            LogProblem("library-merge", "合并客户端 clientId=" + clientId +
+                " 上传家具库：designs=" + designs.Count + " sets=" + sets.Count +
+                " accepted=" + accepted + " newSets=" + createdSets);
+            return true;
+        }
+
+        private FurnitureSet EnsureClientSet(string name)
+        {
+            if (string.IsNullOrEmpty(name) || m_behavior == null) return null;
+            try
+            {
+                List<FurnitureSet> sets = m_parentField.GetParentField<List<FurnitureSet>>(
+                    m_behavior, "m_furnitureSets", typeof(SubsystemFurnitureBlockBehavior));
+                if (sets != null)
+                {
+                    for (int i = 0; i < sets.Count; i++)
+                    {
+                        FurnitureSet existing = sets[i];
+                        if (existing != null && string.Equals(existing.Name, name,
+                                StringComparison.Ordinal))
+                            return existing;
+                    }
+                }
+                return m_behavior.NewFurnitureSet(name, string.Empty);
+            }
+            catch (Exception error)
+            {
+                LogProblem("set-client:" + error.GetType().Name,
+                    "客户端创建会话家具集失败 " + name + "：" + error.GetType().Name + " " +
+                    error.Message);
+                return null;
+            }
+        }
+
+        public bool ApplyHostSets(IReadOnlyList<FurnitureSetRecord> sets, out string reason)
+        {
+            reason = null;
+            if (!m_clientReplica || m_behavior == null)
+            {
+                reason = "not-client";
+                return false;
+            }
+            try
+            {
+                List<FurnitureSet> engineSets = m_parentField.GetParentField<List<FurnitureSet>>(
+                    m_behavior, "m_furnitureSets", typeof(SubsystemFurnitureBlockBehavior));
+                if (engineSets == null)
+                {
+                    reason = "furniture-sets-unavailable";
+                    return false;
+                }
+                var wanted = new HashSet<string>(StringComparer.Ordinal);
+                if (sets != null)
+                    for (int i = 0; i < sets.Count; i++)
+                        if (sets[i] != null && !string.IsNullOrEmpty(sets[i].Name))
+                            wanted.Add(sets[i].Name);
+                // 主机没有的会话集合删掉（含本地新建成功上传前的旧集合，由 pending 流程保护）。
+                var copy = new List<FurnitureSet>(engineSets);
+                for (int i = 0; i < copy.Count; i++)
+                {
+                    FurnitureSet existing = copy[i];
+                    if (existing == null || string.IsNullOrEmpty(existing.Name)) continue;
+                    if (!wanted.Contains(existing.Name)) m_behavior.DeleteFurnitureSet(existing);
+                }
+                var ordered = new List<FurnitureSet>(engineSets.Count);
+                if (sets != null)
+                    for (int i = 0; i < sets.Count; i++)
+                    {
+                        FurnitureSetRecord record = sets[i];
+                        if (record == null || string.IsNullOrEmpty(record.Name)) continue;
+                        FurnitureSet target = EnsureClientSet(record.Name);
+                        if (target == null) continue;
+                        if (!string.IsNullOrEmpty(record.ImportedFrom))
+                            target.ImportedFrom = record.ImportedFrom;
+                        if (!ordered.Contains(target)) ordered.Add(target);
+                    }
+                for (int i = 0; i < engineSets.Count; i++)
+                    if (engineSets[i] != null && !ordered.Contains(engineSets[i]))
+                        ordered.Add(engineSets[i]);
+                engineSets.Clear();
+                engineSets.AddRange(ordered);
+                return true;
+            }
+            catch (Exception error)
+            {
+                reason = "apply-host-sets:" + error.GetType().Name + ":" + error.Message;
+                return false;
+            }
         }
 
         private int CountClientFurnitureSets()
@@ -1075,6 +1460,8 @@ namespace SuMultiplayer.Engine
                     typeof(FurnitureDesign));
                 ProtectFromGarbageCollection(design);
                 m_designs[record.Index] = design;
+                FurnitureSet replicaSet = EnsureClientSet(record.FurnitureSet);
+                if (replicaSet != null) design.FurnitureSet = replicaSet;
                 m_replicaLinks[record.Index] = record.LinkedIndex;
                 ResolveReplicaLinks();
                 m_replicaInstalled++;
@@ -1127,24 +1514,9 @@ namespace SuMultiplayer.Engine
             List<int> reinstalled)
         {
             if (records == null || m_designs == null) return 0;
-            if (m_clientReplica)
-            {
-                // 客户端的家具套装不同步（且 Save 写空）：每秒清掉本地套装。
-                // 否则玩家可以把副本设计拖进本地套装再导出成
-                // FurniturePacksManager 的 .scfpack（那就是“保存到别处”）。
-                int sets = CountClientFurnitureSets();
-                if (sets > 0)
-                {
-                    m_clientSetsCleared += sets;
-                    ClearClientFurnitureSets();
-                    LogProblem("sets-cleared",
-                        "客户端家具套装 " + sets +
-                        " 个已清空（多人家具套装不同步 / 不写存档 / 不导出）");
-                }
-                ComponentFurnitureInventory inventory = FindLocalFurnitureInventory(out _);
-                if (inventory != null && inventory.FurnitureSet != null)
-                    inventory.FurnitureSet = null;
-            }
+            // 客户端集合是会话副本：保留，供玩家正常新建/拖动/查看；Save 写空即可。
+            // 旧实现每秒 ClearClientFurnitureSets + 把 inventory.FurnitureSet 置 null，
+            // 会删掉玩家刚拖入的集合、并让面板停在已删除集合上显示为空。
             int count = 0;
             for (int i = 0; i < records.Count; i++)
             {
@@ -1168,6 +1540,16 @@ namespace SuMultiplayer.Engine
                 else
                 {
                     ProtectFromGarbageCollection(existing);
+                    FurnitureSet replicaSet = EnsureClientSet(record.FurnitureSet);
+                    if (replicaSet != null)
+                    {
+                        if (!ReferenceEquals(existing.FurnitureSet, replicaSet))
+                            existing.FurnitureSet = replicaSet;
+                    }
+                    else if (existing.FurnitureSet != null)
+                    {
+                        existing.FurnitureSet = null;
+                    }
                 }
             }
             ResolveReplicaLinks();
@@ -1273,6 +1655,65 @@ namespace SuMultiplayer.Engine
 
         // ================================================================= 客户端：家具库存 / 消息
 
+        public void SetFurniturePolicy(bool allowImport, bool allowExport)
+        {
+            m_allowFurnitureImport = allowImport;
+            m_allowFurnitureExport = allowExport;
+        }
+
+        /// <summary>
+        /// 按主机策略裁剪客户端家具菜单（不替换 FurnitureInventoryPanel）：
+        ///   · Furniture Set Action → Export To Content
+        ///   · Add Furniture Set → Import From Content
+        /// </summary>
+        private void FilterFurniturePolicyMenus()
+        {
+            try
+            {
+                ReadOnlyList<Dialog> dialogs = DialogsManager.Dialogs;
+                for (int i = 0; i < dialogs.Count; i++)
+                {
+                    if (!(dialogs[i] is ListSelectionDialog dialog)) continue;
+                    LabelWidget title = dialog.Children.Find<LabelWidget>(
+                        "ListSelectionDialog.Title", false);
+                    if (title == null) continue;
+                    string removeText = null;
+                    if (!m_allowFurnitureExport &&
+                        string.Equals(title.Text, "Furniture Set Action", StringComparison.Ordinal))
+                        removeText = "Export To Content";
+                    else if (!m_allowFurnitureImport &&
+                        string.Equals(title.Text, "Add Furniture Set", StringComparison.Ordinal))
+                        removeText = "Import From Content";
+                    if (removeText == null) continue;
+                    ListPanelWidget list = dialog.Children.Find<ListPanelWidget>(
+                        "ListSelectionDialog.List", false);
+                    if (list == null) continue;
+                    List<object> items = m_parentField.GetParentField<List<object>>(list,
+                        "m_items", typeof(ListPanelWidget));
+                    if (items == null) continue;
+                    bool removed = false;
+                    for (int n = items.Count - 1; n >= 0; n--)
+                    {
+                        if (!(items[n] is Tuple<string, Action> option)) continue;
+                        if (!string.Equals(option.Item1, removeText,
+                                StringComparison.Ordinal)) continue;
+                        items.RemoveAt(n);
+                        removed = true;
+                    }
+                    if (!removed) continue;
+                    m_parentField.ModifyParentField(list, "m_widgetsDirty", true,
+                        typeof(ListPanelWidget));
+                    m_parentField.ModifyParentField(list, "m_selectedItemIndex",
+                        (int?)null, typeof(ListPanelWidget));
+                }
+            }
+            catch (Exception error)
+            {
+                LogProblem("export-menu:" + error.GetType().Name,
+                    "过滤家具导出菜单失败：" + error.GetType().Name + " " + error.Message);
+            }
+        }
+
         public bool TryRefreshFurnitureInventory(out int slotCount, out string reason)
         {
             slotCount = 0;
@@ -1284,6 +1725,7 @@ namespace SuMultiplayer.Engine
                 inventory.FillSlots();
                 slotCount = inventory.SlotsCount;
                 m_inventoryRefreshed++;
+                RefreshOpenFurniturePanel(inventory);
                 return true;
             }
             catch (Exception error)
@@ -1368,6 +1810,42 @@ namespace SuMultiplayer.Engine
                 return null;
             }
             return inventory;
+        }
+
+        private void RefreshOpenFurniturePanel(ComponentFurnitureInventory inventory)
+        {
+            ComponentPlayer player = FindLocalPlayer(out _);
+            if (player == null || !(player.GuiWidget is ContainerWidget root)) return;
+            if (inventory?.FurnitureSet != null && m_behavior != null &&
+                !m_behavior.FurnitureSets.Contains(inventory.FurnitureSet))
+                inventory.FurnitureSet = null;
+            RefreshFurniturePanelWidget(root);
+        }
+
+        private bool RefreshFurniturePanelWidget(ContainerWidget parent)
+        {
+            if (parent == null) return false;
+            foreach (Widget child in parent.Children)
+            {
+                if (child is FurnitureInventoryPanel panel)
+                {
+                    try
+                    {
+                        m_parentField.ModifyParentField(panel, "m_populateNeeded", true,
+                            typeof(FurnitureInventoryPanel));
+                        return true;
+                    }
+                    catch (Exception error)
+                    {
+                        LogProblem("panel-refresh:" + error.GetType().Name,
+                            "刷新家具面板失败：" + error.GetType().Name + " " + error.Message);
+                        return false;
+                    }
+                }
+                if (child is ContainerWidget container && RefreshFurniturePanelWidget(container))
+                    return true;
+            }
+            return false;
         }
 
         private ComponentPlayer FindLocalPlayer(out string reason)

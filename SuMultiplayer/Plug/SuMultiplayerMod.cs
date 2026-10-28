@@ -445,7 +445,13 @@ namespace SuMultiplayer
             // 主机校验后安装设计并广播。客户端把记录装进**副本表**（不写存档、不进家具库）。
             m_furnitureEngine = new FurnitureReplicaEngine(avatarSpawner,
                 engineModManager.ModParentField, diagnostics, "furniture-sync", m_reachGate);
-            m_furnitureModule = new FurnitureSyncModule(m_furnitureEngine);
+            m_furnitureModule = new FurnitureSyncModule(m_furnitureEngine,
+                delegate { return m_worldJoinSettings != null &&
+                    m_worldJoinSettings.AllowClientFurnitureDelete; },
+                delegate { return m_worldJoinSettings != null &&
+                    m_worldJoinSettings.AllowFurnitureImport; },
+                delegate { return m_worldJoinSettings != null &&
+                    m_worldJoinSettings.AllowFurnitureExport; });
             // 可编辑方块内容（真值表 188 / 内存条 186）：对话框 OK 的提交在客户端只改本地副本
             // （引擎事实），主机永远看不到 —— 外壳接管 OnEditBlock，提交变成 EDITABLE_EDIT_REQUEST，
             // 主机校验并落地权威内容后广播 EDITABLE_STATE；客户端只把权威内容写进副本。
@@ -805,6 +811,15 @@ namespace SuMultiplayer
                     m_worldJoinSettings.AutoApproveJoins; },
                 delegate (bool value) { return SetAutoHostForUi(value); },
                 delegate (bool value) { return SetAutoApproveForUi(value); },
+                delegate { return m_worldJoinSettings != null &&
+                    m_worldJoinSettings.AllowClientFurnitureDelete; },
+                delegate (bool value) { return SetAllowClientFurnitureDeleteForUi(value); },
+                delegate { return m_worldJoinSettings != null &&
+                    m_worldJoinSettings.AllowFurnitureImport; },
+                delegate (bool value) { return SetAllowFurnitureImportForUi(value); },
+                delegate { return m_worldJoinSettings != null &&
+                    m_worldJoinSettings.AllowFurnitureExport; },
+                delegate (bool value) { return SetAllowFurnitureExportForUi(value); },
                 delegate { return SaveWorldJoinSettingsForUi(); });
             // 引擎 Edit Players（PlayerScreen）进入/退出钩子：名字/皮肤统一走引擎自己的编辑屏。
             // 进入抓快照、退出比较；主机广播改名后的本机角色，客户端按 (clientId, slot) 提交资料。
@@ -1630,6 +1645,27 @@ namespace SuMultiplayer
         {
             m_worldJoinSettings.AutoApproveJoins = value;
             return "Auto approve joins = " + (value ? "on" : "off") + ". | " +
+                SaveWorldJoinSettingsForUi();
+        }
+
+        private string SetAllowClientFurnitureDeleteForUi(bool value)
+        {
+            m_worldJoinSettings.AllowClientFurnitureDelete = value;
+            return "Allow client furniture delete = " + (value ? "on" : "off") + ". | " +
+                SaveWorldJoinSettingsForUi();
+        }
+
+        private string SetAllowFurnitureImportForUi(bool value)
+        {
+            m_worldJoinSettings.AllowFurnitureImport = value;
+            return "Allow furniture import = " + (value ? "on" : "off") + ". | " +
+                SaveWorldJoinSettingsForUi();
+        }
+
+        private string SetAllowFurnitureExportForUi(bool value)
+        {
+            m_worldJoinSettings.AllowFurnitureExport = value;
+            return "Allow furniture export = " + (value ? "on" : "off") + ". | " +
                 SaveWorldJoinSettingsForUi();
         }
 

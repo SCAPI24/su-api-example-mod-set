@@ -141,6 +141,13 @@ message FurnitureDesignSyncRequest {
   string reason = 2;
 }
 
+// A furniture set as authored by the host. Design -> set membership is carried
+// by FurnitureDesignRecord.furniture_set; this list preserves host order.
+message FurnitureSetRecord {
+  string name = 1;
+  string imported_from = 2;
+}
+
 // Host -> client: authoritative furniture inventory contents = every design
 // index currently in the host's design table plus its content hash.
 // designs added since the previous state = put, removed = take.
@@ -150,4 +157,44 @@ message FurnitureContentState {
   string reason = 3;
   repeated int32 design_indices = 4 [packed = true];
   repeated sfixed64 design_hashes = 5 [packed = true];
+  // Full ordered set list. Membership is carried by design records.
+  repeated FurnitureSetRecord sets = 6;
+}
+
+// Client -> host: upload locally imported furniture designs and local set
+// edits. The host validates every record, assigns authoritative indices,
+// creates missing sets and broadcasts the result. It never deletes host
+// designs merely because they are absent from this upload.
+message FurnitureLibraryRequest {
+  int64 sequence = 1;
+  repeated FurnitureDesignRecord designs = 2;
+  repeated FurnitureSetRecord sets = 3;
+  string reason = 4;
+  // true = the ordered set list is the client's desired full list (rename/delete/
+  // move included). The host applies it last-writer-wins; designs are only
+  // affected through the design records in this request.
+  bool replace_sets = 5;
+  // Designs that belonged to a set the client just deleted. The host decides:
+  // allow client furniture delete = host-authoritative GC of unused candidates;
+  // otherwise the designs stay as uncategorized.
+  repeated int32 deleted_designs = 6 [packed = true];
+  // true = at least one design is a local import (host applies the world's
+  // allow-furniture-import policy); set-only edits are not imports.
+  bool is_import = 7;
+}
+
+message FurnitureLibraryResult {
+  int64 sequence = 1;
+  bool accepted = 2;
+  string reason = 3;
+  int32 installed = 4;
+  int32 created_sets = 5;
+}
+
+// Host -> client: world furniture policy used by the client UI (export menu)
+// and for diagnostics. Import itself is enforced authoritatively by the host
+// when handling FurnitureLibraryRequest.
+message FurniturePolicyState {
+  bool allow_import = 1;
+  bool allow_export = 2;
 }

@@ -102,6 +102,18 @@ namespace SuMultiplayer.Modules
             out FurnitureDesignResultData result, out FurnitureDesignRecord installed,
             out string reason);
 
+        /// <summary>
+        /// 主机：合并客户端上传的本地家具库（导入的家具包 / 客户端集合编辑）。
+        /// 主机忽略客户端索引，按内容去重后分配权威索引；集合按名创建并落地成员关系。
+        /// </summary>
+        bool TryApplyClientLibrary(int clientId, IReadOnlyList<FurnitureDesignRecord> designs,
+            IReadOnlyList<FurnitureSetRecord> sets, bool replaceSets,
+            IReadOnlyList<int> deletedDesignCandidates, bool allowClientDelete,
+            List<FurnitureDesignRecord> installed, List<int> removedDesigns, out string reason);
+
+        /// <summary>主机：抓当前集合表（内容状态下发用）。</summary>
+        bool CaptureHostSets(List<FurnitureSetRecord> target, out string reason);
+
         // ------------------------------------------------------------------ 客户端
 
         /// <summary>
@@ -109,6 +121,16 @@ namespace SuMultiplayer.Modules
         /// 返回条数；失败时 reason 必有值（不猜空表）。
         /// </summary>
         bool TryAdoptClientLibrary(List<FurnitureDesignRecord> target, out string reason);
+
+        /// <summary>客户端：抓当前引擎设计表 + 集合，作为待上传的本地库快照。</summary>
+        bool TryCaptureClientLibrary(List<FurnitureDesignRecord> designs,
+            List<FurnitureSetRecord> sets, out string reason);
+
+        /// <summary>客户端：按主机内容状态重建会话集合列表（不落盘）。</summary>
+        bool ApplyHostSets(IReadOnlyList<FurnitureSetRecord> sets, out string reason);
+
+        /// <summary>客户端：应用主机世界策略（导入/导出菜单是否允许）。</summary>
+        void SetFurniturePolicy(bool allowImport, bool allowExport);
 
         /// <summary>按主机索引把一条记录装进引擎设计表槽位（不调用 TryAddDesign，不写存档）。</summary>
         bool TryInstallReplica(FurnitureDesignRecord record, out string reason);

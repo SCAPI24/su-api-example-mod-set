@@ -15,8 +15,8 @@
           <BevelledButtonWidget Font="{Fonts/Pericles18}" Name="RemoveBan" Size="360, 60" Text="REMOVE BAN" Margin="4, 4"/>
         </StackPanelWidget>
         <StackPanelWidget Direction="Horizontal" HorizontalAlignment="Center" Margin="4, 4">
-          <BevelledButtonWidget Font="{Fonts/Pericles18}" Name="ChangePort" Size="360, 60" Text="CHANGE HOST PORT" Margin="4, 4"/>
-          <BevelledButtonWidget Font="{Fonts/Pericles18}" Name="Close" Size="360, 60" Text="CLOSE" Margin="4, 4"/>
+          <BevelledButtonWidget Font="{Fonts/Pericles18}" Name="Advanced" Size="760, 60" Text="ADVANCED SETTINGS..." Margin="4, 4"/>
+          <BevelledButtonWidget Font="{Fonts/Pericles18}" Name="Close" Size="760, 60" Text="CLOSE" Margin="4, 4"/>
         </StackPanelWidget>
       </StackPanelWidget>
     </ScrollPanelWidget>

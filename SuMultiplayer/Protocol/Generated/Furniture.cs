@@ -48,13 +48,25 @@ namespace SuMultiplayer.Protocol {
             "ZGVzaWducxgEIAMoCzIkLnN1bXAucHJvdG9jb2wuRnVybml0dXJlRGVzaWdu",
             "UmVjb3JkEhsKD3JlbW92ZWRfaW5kaWNlcxgFIAMoBUICEAEiRAoaRnVybml0",
             "dXJlRGVzaWduU3luY1JlcXVlc3QSFgoOa25vd25fcmV2aXNpb24YASABKAUS",
-            "DgoGcmVhc29uGAIgASgJIn4KFUZ1cm5pdHVyZUNvbnRlbnRTdGF0ZRIQCghy",
-            "ZXZpc2lvbhgBIAEoBRIMCgRmdWxsGAIgASgIEg4KBnJlYXNvbhgDIAEoCRIa",
-            "Cg5kZXNpZ25faW5kaWNlcxgEIAMoBUICEAESGQoNZGVzaWduX2hhc2hlcxgF",
-            "IAMoEEICEAEqcgoRRnVybml0dXJlRGVzaWduT3ASHgoaRlVSTklUVVJFX0RF",
-            "U0lHTl9PUF9DUkVBVEUQABIdChlGVVJOSVRVUkVfREVTSUdOX09QX1BBSU5U",
-            "EAESHgoaRlVSTklUVVJFX0RFU0lHTl9PUF9SRU5BTUUQAkIbSAGqAhZTdU11",
-            "bHRpcGxheWVyLlByb3RvY29sYgZwcm90bzM="));
+            "DgoGcmVhc29uGAIgASgJIjkKEkZ1cm5pdHVyZVNldFJlY29yZBIMCgRuYW1l",
+            "GAEgASgJEhUKDWltcG9ydGVkX2Zyb20YAiABKAkirwEKFUZ1cm5pdHVyZUNv",
+            "bnRlbnRTdGF0ZRIQCghyZXZpc2lvbhgBIAEoBRIMCgRmdWxsGAIgASgIEg4K",
+            "BnJlYXNvbhgDIAEoCRIaCg5kZXNpZ25faW5kaWNlcxgEIAMoBUICEAESGQoN",
+            "ZGVzaWduX2hhc2hlcxgFIAMoEEICEAESLwoEc2V0cxgGIAMoCzIhLnN1bXAu",
+            "cHJvdG9jb2wuRnVybml0dXJlU2V0UmVjb3JkIukBChdGdXJuaXR1cmVMaWJy",
+            "YXJ5UmVxdWVzdBIQCghzZXF1ZW5jZRgBIAEoAxI1CgdkZXNpZ25zGAIgAygL",
+            "MiQuc3VtcC5wcm90b2NvbC5GdXJuaXR1cmVEZXNpZ25SZWNvcmQSLwoEc2V0",
+            "cxgDIAMoCzIhLnN1bXAucHJvdG9jb2wuRnVybml0dXJlU2V0UmVjb3JkEg4K",
+            "BnJlYXNvbhgEIAEoCRIUCgxyZXBsYWNlX3NldHMYBSABKAgSGwoPZGVsZXRl",
+            "ZF9kZXNpZ25zGAYgAygFQgIQARIRCglpc19pbXBvcnQYByABKAgidQoWRnVy",
+            "bml0dXJlTGlicmFyeVJlc3VsdBIQCghzZXF1ZW5jZRgBIAEoAxIQCghhY2Nl",
+            "cHRlZBgCIAEoCBIOCgZyZWFzb24YAyABKAkSEQoJaW5zdGFsbGVkGAQgASgF",
+            "EhQKDGNyZWF0ZWRfc2V0cxgFIAEoBSJCChRGdXJuaXR1cmVQb2xpY3lTdGF0",
+            "ZRIUCgxhbGxvd19pbXBvcnQYASABKAgSFAoMYWxsb3dfZXhwb3J0GAIgASgI",
+            "KnIKEUZ1cm5pdHVyZURlc2lnbk9wEh4KGkZVUk5JVFVSRV9ERVNJR05fT1Bf",
+            "Q1JFQVRFEAASHQoZRlVSTklUVVJFX0RFU0lHTl9PUF9QQUlOVBABEh4KGkZV",
+            "Uk5JVFVSRV9ERVNJR05fT1BfUkVOQU1FEAJCG0gBqgIWU3VNdWx0aXBsYXll",
+            "ci5Qcm90b2NvbGIGcHJvdG8z"));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { },
           new pbr::GeneratedClrTypeInfo(new[] {typeof(global::SuMultiplayer.Protocol.FurnitureDesignOp), }, null, new pbr::GeneratedClrTypeInfo[] {
@@ -63,7 +75,11 @@ namespace SuMultiplayer.Protocol {
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.FurnitureDesignResult), global::SuMultiplayer.Protocol.FurnitureDesignResult.Parser, new[]{ "Sequence", "Accepted", "Reason", "DesignIndex", "ContentHash", "Duplicate", "Revision", "PickableSpawned" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.FurnitureDesignState), global::SuMultiplayer.Protocol.FurnitureDesignState.Parser, new[]{ "Revision", "Full", "Reason", "Designs", "RemovedIndices" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.FurnitureDesignSyncRequest), global::SuMultiplayer.Protocol.FurnitureDesignSyncRequest.Parser, new[]{ "KnownRevision", "Reason" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.FurnitureContentState), global::SuMultiplayer.Protocol.FurnitureContentState.Parser, new[]{ "Revision", "Full", "Reason", "DesignIndices", "DesignHashes" }, null, null, null, null)
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.FurnitureSetRecord), global::SuMultiplayer.Protocol.FurnitureSetRecord.Parser, new[]{ "Name", "ImportedFrom" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.FurnitureContentState), global::SuMultiplayer.Protocol.FurnitureContentState.Parser, new[]{ "Revision", "Full", "Reason", "DesignIndices", "DesignHashes", "Sets" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.FurnitureLibraryRequest), global::SuMultiplayer.Protocol.FurnitureLibraryRequest.Parser, new[]{ "Sequence", "Designs", "Sets", "Reason", "ReplaceSets", "DeletedDesigns", "IsImport" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.FurnitureLibraryResult), global::SuMultiplayer.Protocol.FurnitureLibraryResult.Parser, new[]{ "Sequence", "Accepted", "Reason", "Installed", "CreatedSets" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.FurniturePolicyState), global::SuMultiplayer.Protocol.FurniturePolicyState.Parser, new[]{ "AllowImport", "AllowExport" }, null, null, null, null)
           }));
     }
     #endregion
@@ -2453,6 +2469,245 @@ namespace SuMultiplayer.Protocol {
   }
 
   /// <summary>
+  /// A furniture set as authored by the host. Design -> set membership is carried
+  /// by FurnitureDesignRecord.furniture_set; this list preserves host order.
+  /// </summary>
+  [global::System.Diagnostics.DebuggerDisplayAttribute("{ToString(),nq}")]
+  public sealed partial class FurnitureSetRecord : pb::IMessage<FurnitureSetRecord>
+  #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      , pb::IBufferMessage
+  #endif
+  {
+    private static readonly pb::MessageParser<FurnitureSetRecord> _parser = new pb::MessageParser<FurnitureSetRecord>(() => new FurnitureSetRecord());
+    private pb::UnknownFieldSet _unknownFields;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pb::MessageParser<FurnitureSetRecord> Parser { get { return _parser; } }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pbr::MessageDescriptor Descriptor {
+      get { return global::SuMultiplayer.Protocol.FurnitureReflection.Descriptor.MessageTypes[5]; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    pbr::MessageDescriptor pb::IMessage.Descriptor {
+      get { return Descriptor; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public FurnitureSetRecord() {
+      OnConstruction();
+    }
+
+    partial void OnConstruction();
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public FurnitureSetRecord(FurnitureSetRecord other) : this() {
+      name_ = other.name_;
+      importedFrom_ = other.importedFrom_;
+      _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public FurnitureSetRecord Clone() {
+      return new FurnitureSetRecord(this);
+    }
+
+    /// <summary>Field number for the "name" field.</summary>
+    public const int NameFieldNumber = 1;
+    private string name_ = "";
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string Name {
+      get { return name_; }
+      set {
+        name_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "imported_from" field.</summary>
+    public const int ImportedFromFieldNumber = 2;
+    private string importedFrom_ = "";
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string ImportedFrom {
+      get { return importedFrom_; }
+      set {
+        importedFrom_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override bool Equals(object other) {
+      return Equals(other as FurnitureSetRecord);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Equals(FurnitureSetRecord other) {
+      if (ReferenceEquals(other, null)) {
+        return false;
+      }
+      if (ReferenceEquals(other, this)) {
+        return true;
+      }
+      if (Name != other.Name) return false;
+      if (ImportedFrom != other.ImportedFrom) return false;
+      return Equals(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override int GetHashCode() {
+      int hash = 1;
+      if (Name.Length != 0) hash ^= Name.GetHashCode();
+      if (ImportedFrom.Length != 0) hash ^= ImportedFrom.GetHashCode();
+      if (_unknownFields != null) {
+        hash ^= _unknownFields.GetHashCode();
+      }
+      return hash;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override string ToString() {
+      return pb::JsonFormatter.ToDiagnosticString(this);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void WriteTo(pb::CodedOutputStream output) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      output.WriteRawMessage(this);
+    #else
+      if (Name.Length != 0) {
+        output.WriteRawTag(10);
+        output.WriteString(Name);
+      }
+      if (ImportedFrom.Length != 0) {
+        output.WriteRawTag(18);
+        output.WriteString(ImportedFrom);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(output);
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
+      if (Name.Length != 0) {
+        output.WriteRawTag(10);
+        output.WriteString(Name);
+      }
+      if (ImportedFrom.Length != 0) {
+        output.WriteRawTag(18);
+        output.WriteString(ImportedFrom);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(ref output);
+      }
+    }
+    #endif
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int CalculateSize() {
+      int size = 0;
+      if (Name.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(Name);
+      }
+      if (ImportedFrom.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(ImportedFrom);
+      }
+      if (_unknownFields != null) {
+        size += _unknownFields.CalculateSize();
+      }
+      return size;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(FurnitureSetRecord other) {
+      if (other == null) {
+        return;
+      }
+      if (other.Name.Length != 0) {
+        Name = other.Name;
+      }
+      if (other.ImportedFrom.Length != 0) {
+        ImportedFrom = other.ImportedFrom;
+      }
+      _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(pb::CodedInputStream input) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      input.ReadRawMessage(this);
+    #else
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
+            break;
+          case 10: {
+            Name = input.ReadString();
+            break;
+          }
+          case 18: {
+            ImportedFrom = input.ReadString();
+            break;
+          }
+        }
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalMergeFrom(ref pb::ParseContext input) {
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
+            break;
+          case 10: {
+            Name = input.ReadString();
+            break;
+          }
+          case 18: {
+            ImportedFrom = input.ReadString();
+            break;
+          }
+        }
+      }
+    }
+    #endif
+
+  }
+
+  /// <summary>
   /// Host -> client: authoritative furniture inventory contents = every design
   /// index currently in the host's design table plus its content hash.
   /// designs added since the previous state = put, removed = take.
@@ -2472,7 +2727,7 @@ namespace SuMultiplayer.Protocol {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::SuMultiplayer.Protocol.FurnitureReflection.Descriptor.MessageTypes[5]; }
+      get { return global::SuMultiplayer.Protocol.FurnitureReflection.Descriptor.MessageTypes[6]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -2497,6 +2752,7 @@ namespace SuMultiplayer.Protocol {
       reason_ = other.reason_;
       designIndices_ = other.designIndices_.Clone();
       designHashes_ = other.designHashes_.Clone();
+      sets_ = other.sets_.Clone();
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
     }
 
@@ -2564,6 +2820,20 @@ namespace SuMultiplayer.Protocol {
       get { return designHashes_; }
     }
 
+    /// <summary>Field number for the "sets" field.</summary>
+    public const int SetsFieldNumber = 6;
+    private static readonly pb::FieldCodec<global::SuMultiplayer.Protocol.FurnitureSetRecord> _repeated_sets_codec
+        = pb::FieldCodec.ForMessage(50, global::SuMultiplayer.Protocol.FurnitureSetRecord.Parser);
+    private readonly pbc::RepeatedField<global::SuMultiplayer.Protocol.FurnitureSetRecord> sets_ = new pbc::RepeatedField<global::SuMultiplayer.Protocol.FurnitureSetRecord>();
+    /// <summary>
+    /// Full ordered set list. Membership is carried by design records.
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public pbc::RepeatedField<global::SuMultiplayer.Protocol.FurnitureSetRecord> Sets {
+      get { return sets_; }
+    }
+
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public override bool Equals(object other) {
@@ -2584,6 +2854,7 @@ namespace SuMultiplayer.Protocol {
       if (Reason != other.Reason) return false;
       if(!designIndices_.Equals(other.designIndices_)) return false;
       if(!designHashes_.Equals(other.designHashes_)) return false;
+      if(!sets_.Equals(other.sets_)) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
 
@@ -2596,6 +2867,7 @@ namespace SuMultiplayer.Protocol {
       if (Reason.Length != 0) hash ^= Reason.GetHashCode();
       hash ^= designIndices_.GetHashCode();
       hash ^= designHashes_.GetHashCode();
+      hash ^= sets_.GetHashCode();
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
       }
@@ -2628,6 +2900,7 @@ namespace SuMultiplayer.Protocol {
       }
       designIndices_.WriteTo(output, _repeated_designIndices_codec);
       designHashes_.WriteTo(output, _repeated_designHashes_codec);
+      sets_.WriteTo(output, _repeated_sets_codec);
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
       }
@@ -2652,6 +2925,7 @@ namespace SuMultiplayer.Protocol {
       }
       designIndices_.WriteTo(ref output, _repeated_designIndices_codec);
       designHashes_.WriteTo(ref output, _repeated_designHashes_codec);
+      sets_.WriteTo(ref output, _repeated_sets_codec);
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
       }
@@ -2673,6 +2947,7 @@ namespace SuMultiplayer.Protocol {
       }
       size += designIndices_.CalculateSize(_repeated_designIndices_codec);
       size += designHashes_.CalculateSize(_repeated_designHashes_codec);
+      size += sets_.CalculateSize(_repeated_sets_codec);
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
       }
@@ -2696,6 +2971,7 @@ namespace SuMultiplayer.Protocol {
       }
       designIndices_.Add(other.designIndices_);
       designHashes_.Add(other.designHashes_);
+      sets_.Add(other.sets_);
       _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
     }
 
@@ -2737,6 +3013,10 @@ namespace SuMultiplayer.Protocol {
             designHashes_.AddEntriesFrom(input, _repeated_designHashes_codec);
             break;
           }
+          case 50: {
+            sets_.AddEntriesFrom(input, _repeated_sets_codec);
+            break;
+          }
         }
       }
     #endif
@@ -2776,6 +3056,1005 @@ namespace SuMultiplayer.Protocol {
           case 42:
           case 41: {
             designHashes_.AddEntriesFrom(ref input, _repeated_designHashes_codec);
+            break;
+          }
+          case 50: {
+            sets_.AddEntriesFrom(ref input, _repeated_sets_codec);
+            break;
+          }
+        }
+      }
+    }
+    #endif
+
+  }
+
+  /// <summary>
+  /// Client -> host: upload locally imported furniture designs and local set
+  /// edits. The host validates every record, assigns authoritative indices,
+  /// creates missing sets and broadcasts the result. It never deletes host
+  /// designs merely because they are absent from this upload.
+  /// </summary>
+  [global::System.Diagnostics.DebuggerDisplayAttribute("{ToString(),nq}")]
+  public sealed partial class FurnitureLibraryRequest : pb::IMessage<FurnitureLibraryRequest>
+  #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      , pb::IBufferMessage
+  #endif
+  {
+    private static readonly pb::MessageParser<FurnitureLibraryRequest> _parser = new pb::MessageParser<FurnitureLibraryRequest>(() => new FurnitureLibraryRequest());
+    private pb::UnknownFieldSet _unknownFields;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pb::MessageParser<FurnitureLibraryRequest> Parser { get { return _parser; } }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pbr::MessageDescriptor Descriptor {
+      get { return global::SuMultiplayer.Protocol.FurnitureReflection.Descriptor.MessageTypes[7]; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    pbr::MessageDescriptor pb::IMessage.Descriptor {
+      get { return Descriptor; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public FurnitureLibraryRequest() {
+      OnConstruction();
+    }
+
+    partial void OnConstruction();
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public FurnitureLibraryRequest(FurnitureLibraryRequest other) : this() {
+      sequence_ = other.sequence_;
+      designs_ = other.designs_.Clone();
+      sets_ = other.sets_.Clone();
+      reason_ = other.reason_;
+      replaceSets_ = other.replaceSets_;
+      deletedDesigns_ = other.deletedDesigns_.Clone();
+      isImport_ = other.isImport_;
+      _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public FurnitureLibraryRequest Clone() {
+      return new FurnitureLibraryRequest(this);
+    }
+
+    /// <summary>Field number for the "sequence" field.</summary>
+    public const int SequenceFieldNumber = 1;
+    private long sequence_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public long Sequence {
+      get { return sequence_; }
+      set {
+        sequence_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "designs" field.</summary>
+    public const int DesignsFieldNumber = 2;
+    private static readonly pb::FieldCodec<global::SuMultiplayer.Protocol.FurnitureDesignRecord> _repeated_designs_codec
+        = pb::FieldCodec.ForMessage(18, global::SuMultiplayer.Protocol.FurnitureDesignRecord.Parser);
+    private readonly pbc::RepeatedField<global::SuMultiplayer.Protocol.FurnitureDesignRecord> designs_ = new pbc::RepeatedField<global::SuMultiplayer.Protocol.FurnitureDesignRecord>();
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public pbc::RepeatedField<global::SuMultiplayer.Protocol.FurnitureDesignRecord> Designs {
+      get { return designs_; }
+    }
+
+    /// <summary>Field number for the "sets" field.</summary>
+    public const int SetsFieldNumber = 3;
+    private static readonly pb::FieldCodec<global::SuMultiplayer.Protocol.FurnitureSetRecord> _repeated_sets_codec
+        = pb::FieldCodec.ForMessage(26, global::SuMultiplayer.Protocol.FurnitureSetRecord.Parser);
+    private readonly pbc::RepeatedField<global::SuMultiplayer.Protocol.FurnitureSetRecord> sets_ = new pbc::RepeatedField<global::SuMultiplayer.Protocol.FurnitureSetRecord>();
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public pbc::RepeatedField<global::SuMultiplayer.Protocol.FurnitureSetRecord> Sets {
+      get { return sets_; }
+    }
+
+    /// <summary>Field number for the "reason" field.</summary>
+    public const int ReasonFieldNumber = 4;
+    private string reason_ = "";
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string Reason {
+      get { return reason_; }
+      set {
+        reason_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "replace_sets" field.</summary>
+    public const int ReplaceSetsFieldNumber = 5;
+    private bool replaceSets_;
+    /// <summary>
+    /// true = the ordered set list is the client's desired full list (rename/delete/
+    /// move included). The host applies it last-writer-wins; designs are only
+    /// affected through the design records in this request.
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool ReplaceSets {
+      get { return replaceSets_; }
+      set {
+        replaceSets_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "deleted_designs" field.</summary>
+    public const int DeletedDesignsFieldNumber = 6;
+    private static readonly pb::FieldCodec<int> _repeated_deletedDesigns_codec
+        = pb::FieldCodec.ForInt32(50);
+    private readonly pbc::RepeatedField<int> deletedDesigns_ = new pbc::RepeatedField<int>();
+    /// <summary>
+    /// Designs that belonged to a set the client just deleted. The host decides:
+    /// allow client furniture delete = host-authoritative GC of unused candidates;
+    /// otherwise the designs stay as uncategorized.
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public pbc::RepeatedField<int> DeletedDesigns {
+      get { return deletedDesigns_; }
+    }
+
+    /// <summary>Field number for the "is_import" field.</summary>
+    public const int IsImportFieldNumber = 7;
+    private bool isImport_;
+    /// <summary>
+    /// true = at least one design is a local import (host applies the world's
+    /// allow-furniture-import policy); set-only edits are not imports.
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool IsImport {
+      get { return isImport_; }
+      set {
+        isImport_ = value;
+      }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override bool Equals(object other) {
+      return Equals(other as FurnitureLibraryRequest);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Equals(FurnitureLibraryRequest other) {
+      if (ReferenceEquals(other, null)) {
+        return false;
+      }
+      if (ReferenceEquals(other, this)) {
+        return true;
+      }
+      if (Sequence != other.Sequence) return false;
+      if(!designs_.Equals(other.designs_)) return false;
+      if(!sets_.Equals(other.sets_)) return false;
+      if (Reason != other.Reason) return false;
+      if (ReplaceSets != other.ReplaceSets) return false;
+      if(!deletedDesigns_.Equals(other.deletedDesigns_)) return false;
+      if (IsImport != other.IsImport) return false;
+      return Equals(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override int GetHashCode() {
+      int hash = 1;
+      if (Sequence != 0L) hash ^= Sequence.GetHashCode();
+      hash ^= designs_.GetHashCode();
+      hash ^= sets_.GetHashCode();
+      if (Reason.Length != 0) hash ^= Reason.GetHashCode();
+      if (ReplaceSets != false) hash ^= ReplaceSets.GetHashCode();
+      hash ^= deletedDesigns_.GetHashCode();
+      if (IsImport != false) hash ^= IsImport.GetHashCode();
+      if (_unknownFields != null) {
+        hash ^= _unknownFields.GetHashCode();
+      }
+      return hash;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override string ToString() {
+      return pb::JsonFormatter.ToDiagnosticString(this);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void WriteTo(pb::CodedOutputStream output) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      output.WriteRawMessage(this);
+    #else
+      if (Sequence != 0L) {
+        output.WriteRawTag(8);
+        output.WriteInt64(Sequence);
+      }
+      designs_.WriteTo(output, _repeated_designs_codec);
+      sets_.WriteTo(output, _repeated_sets_codec);
+      if (Reason.Length != 0) {
+        output.WriteRawTag(34);
+        output.WriteString(Reason);
+      }
+      if (ReplaceSets != false) {
+        output.WriteRawTag(40);
+        output.WriteBool(ReplaceSets);
+      }
+      deletedDesigns_.WriteTo(output, _repeated_deletedDesigns_codec);
+      if (IsImport != false) {
+        output.WriteRawTag(56);
+        output.WriteBool(IsImport);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(output);
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
+      if (Sequence != 0L) {
+        output.WriteRawTag(8);
+        output.WriteInt64(Sequence);
+      }
+      designs_.WriteTo(ref output, _repeated_designs_codec);
+      sets_.WriteTo(ref output, _repeated_sets_codec);
+      if (Reason.Length != 0) {
+        output.WriteRawTag(34);
+        output.WriteString(Reason);
+      }
+      if (ReplaceSets != false) {
+        output.WriteRawTag(40);
+        output.WriteBool(ReplaceSets);
+      }
+      deletedDesigns_.WriteTo(ref output, _repeated_deletedDesigns_codec);
+      if (IsImport != false) {
+        output.WriteRawTag(56);
+        output.WriteBool(IsImport);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(ref output);
+      }
+    }
+    #endif
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int CalculateSize() {
+      int size = 0;
+      if (Sequence != 0L) {
+        size += 1 + pb::CodedOutputStream.ComputeInt64Size(Sequence);
+      }
+      size += designs_.CalculateSize(_repeated_designs_codec);
+      size += sets_.CalculateSize(_repeated_sets_codec);
+      if (Reason.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(Reason);
+      }
+      if (ReplaceSets != false) {
+        size += 1 + 1;
+      }
+      size += deletedDesigns_.CalculateSize(_repeated_deletedDesigns_codec);
+      if (IsImport != false) {
+        size += 1 + 1;
+      }
+      if (_unknownFields != null) {
+        size += _unknownFields.CalculateSize();
+      }
+      return size;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(FurnitureLibraryRequest other) {
+      if (other == null) {
+        return;
+      }
+      if (other.Sequence != 0L) {
+        Sequence = other.Sequence;
+      }
+      designs_.Add(other.designs_);
+      sets_.Add(other.sets_);
+      if (other.Reason.Length != 0) {
+        Reason = other.Reason;
+      }
+      if (other.ReplaceSets != false) {
+        ReplaceSets = other.ReplaceSets;
+      }
+      deletedDesigns_.Add(other.deletedDesigns_);
+      if (other.IsImport != false) {
+        IsImport = other.IsImport;
+      }
+      _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(pb::CodedInputStream input) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      input.ReadRawMessage(this);
+    #else
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
+            break;
+          case 8: {
+            Sequence = input.ReadInt64();
+            break;
+          }
+          case 18: {
+            designs_.AddEntriesFrom(input, _repeated_designs_codec);
+            break;
+          }
+          case 26: {
+            sets_.AddEntriesFrom(input, _repeated_sets_codec);
+            break;
+          }
+          case 34: {
+            Reason = input.ReadString();
+            break;
+          }
+          case 40: {
+            ReplaceSets = input.ReadBool();
+            break;
+          }
+          case 50:
+          case 48: {
+            deletedDesigns_.AddEntriesFrom(input, _repeated_deletedDesigns_codec);
+            break;
+          }
+          case 56: {
+            IsImport = input.ReadBool();
+            break;
+          }
+        }
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalMergeFrom(ref pb::ParseContext input) {
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
+            break;
+          case 8: {
+            Sequence = input.ReadInt64();
+            break;
+          }
+          case 18: {
+            designs_.AddEntriesFrom(ref input, _repeated_designs_codec);
+            break;
+          }
+          case 26: {
+            sets_.AddEntriesFrom(ref input, _repeated_sets_codec);
+            break;
+          }
+          case 34: {
+            Reason = input.ReadString();
+            break;
+          }
+          case 40: {
+            ReplaceSets = input.ReadBool();
+            break;
+          }
+          case 50:
+          case 48: {
+            deletedDesigns_.AddEntriesFrom(ref input, _repeated_deletedDesigns_codec);
+            break;
+          }
+          case 56: {
+            IsImport = input.ReadBool();
+            break;
+          }
+        }
+      }
+    }
+    #endif
+
+  }
+
+  [global::System.Diagnostics.DebuggerDisplayAttribute("{ToString(),nq}")]
+  public sealed partial class FurnitureLibraryResult : pb::IMessage<FurnitureLibraryResult>
+  #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      , pb::IBufferMessage
+  #endif
+  {
+    private static readonly pb::MessageParser<FurnitureLibraryResult> _parser = new pb::MessageParser<FurnitureLibraryResult>(() => new FurnitureLibraryResult());
+    private pb::UnknownFieldSet _unknownFields;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pb::MessageParser<FurnitureLibraryResult> Parser { get { return _parser; } }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pbr::MessageDescriptor Descriptor {
+      get { return global::SuMultiplayer.Protocol.FurnitureReflection.Descriptor.MessageTypes[8]; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    pbr::MessageDescriptor pb::IMessage.Descriptor {
+      get { return Descriptor; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public FurnitureLibraryResult() {
+      OnConstruction();
+    }
+
+    partial void OnConstruction();
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public FurnitureLibraryResult(FurnitureLibraryResult other) : this() {
+      sequence_ = other.sequence_;
+      accepted_ = other.accepted_;
+      reason_ = other.reason_;
+      installed_ = other.installed_;
+      createdSets_ = other.createdSets_;
+      _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public FurnitureLibraryResult Clone() {
+      return new FurnitureLibraryResult(this);
+    }
+
+    /// <summary>Field number for the "sequence" field.</summary>
+    public const int SequenceFieldNumber = 1;
+    private long sequence_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public long Sequence {
+      get { return sequence_; }
+      set {
+        sequence_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "accepted" field.</summary>
+    public const int AcceptedFieldNumber = 2;
+    private bool accepted_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Accepted {
+      get { return accepted_; }
+      set {
+        accepted_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "reason" field.</summary>
+    public const int ReasonFieldNumber = 3;
+    private string reason_ = "";
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string Reason {
+      get { return reason_; }
+      set {
+        reason_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "installed" field.</summary>
+    public const int InstalledFieldNumber = 4;
+    private int installed_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int Installed {
+      get { return installed_; }
+      set {
+        installed_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "created_sets" field.</summary>
+    public const int CreatedSetsFieldNumber = 5;
+    private int createdSets_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int CreatedSets {
+      get { return createdSets_; }
+      set {
+        createdSets_ = value;
+      }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override bool Equals(object other) {
+      return Equals(other as FurnitureLibraryResult);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Equals(FurnitureLibraryResult other) {
+      if (ReferenceEquals(other, null)) {
+        return false;
+      }
+      if (ReferenceEquals(other, this)) {
+        return true;
+      }
+      if (Sequence != other.Sequence) return false;
+      if (Accepted != other.Accepted) return false;
+      if (Reason != other.Reason) return false;
+      if (Installed != other.Installed) return false;
+      if (CreatedSets != other.CreatedSets) return false;
+      return Equals(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override int GetHashCode() {
+      int hash = 1;
+      if (Sequence != 0L) hash ^= Sequence.GetHashCode();
+      if (Accepted != false) hash ^= Accepted.GetHashCode();
+      if (Reason.Length != 0) hash ^= Reason.GetHashCode();
+      if (Installed != 0) hash ^= Installed.GetHashCode();
+      if (CreatedSets != 0) hash ^= CreatedSets.GetHashCode();
+      if (_unknownFields != null) {
+        hash ^= _unknownFields.GetHashCode();
+      }
+      return hash;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override string ToString() {
+      return pb::JsonFormatter.ToDiagnosticString(this);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void WriteTo(pb::CodedOutputStream output) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      output.WriteRawMessage(this);
+    #else
+      if (Sequence != 0L) {
+        output.WriteRawTag(8);
+        output.WriteInt64(Sequence);
+      }
+      if (Accepted != false) {
+        output.WriteRawTag(16);
+        output.WriteBool(Accepted);
+      }
+      if (Reason.Length != 0) {
+        output.WriteRawTag(26);
+        output.WriteString(Reason);
+      }
+      if (Installed != 0) {
+        output.WriteRawTag(32);
+        output.WriteInt32(Installed);
+      }
+      if (CreatedSets != 0) {
+        output.WriteRawTag(40);
+        output.WriteInt32(CreatedSets);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(output);
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
+      if (Sequence != 0L) {
+        output.WriteRawTag(8);
+        output.WriteInt64(Sequence);
+      }
+      if (Accepted != false) {
+        output.WriteRawTag(16);
+        output.WriteBool(Accepted);
+      }
+      if (Reason.Length != 0) {
+        output.WriteRawTag(26);
+        output.WriteString(Reason);
+      }
+      if (Installed != 0) {
+        output.WriteRawTag(32);
+        output.WriteInt32(Installed);
+      }
+      if (CreatedSets != 0) {
+        output.WriteRawTag(40);
+        output.WriteInt32(CreatedSets);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(ref output);
+      }
+    }
+    #endif
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int CalculateSize() {
+      int size = 0;
+      if (Sequence != 0L) {
+        size += 1 + pb::CodedOutputStream.ComputeInt64Size(Sequence);
+      }
+      if (Accepted != false) {
+        size += 1 + 1;
+      }
+      if (Reason.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(Reason);
+      }
+      if (Installed != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeInt32Size(Installed);
+      }
+      if (CreatedSets != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeInt32Size(CreatedSets);
+      }
+      if (_unknownFields != null) {
+        size += _unknownFields.CalculateSize();
+      }
+      return size;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(FurnitureLibraryResult other) {
+      if (other == null) {
+        return;
+      }
+      if (other.Sequence != 0L) {
+        Sequence = other.Sequence;
+      }
+      if (other.Accepted != false) {
+        Accepted = other.Accepted;
+      }
+      if (other.Reason.Length != 0) {
+        Reason = other.Reason;
+      }
+      if (other.Installed != 0) {
+        Installed = other.Installed;
+      }
+      if (other.CreatedSets != 0) {
+        CreatedSets = other.CreatedSets;
+      }
+      _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(pb::CodedInputStream input) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      input.ReadRawMessage(this);
+    #else
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
+            break;
+          case 8: {
+            Sequence = input.ReadInt64();
+            break;
+          }
+          case 16: {
+            Accepted = input.ReadBool();
+            break;
+          }
+          case 26: {
+            Reason = input.ReadString();
+            break;
+          }
+          case 32: {
+            Installed = input.ReadInt32();
+            break;
+          }
+          case 40: {
+            CreatedSets = input.ReadInt32();
+            break;
+          }
+        }
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalMergeFrom(ref pb::ParseContext input) {
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
+            break;
+          case 8: {
+            Sequence = input.ReadInt64();
+            break;
+          }
+          case 16: {
+            Accepted = input.ReadBool();
+            break;
+          }
+          case 26: {
+            Reason = input.ReadString();
+            break;
+          }
+          case 32: {
+            Installed = input.ReadInt32();
+            break;
+          }
+          case 40: {
+            CreatedSets = input.ReadInt32();
+            break;
+          }
+        }
+      }
+    }
+    #endif
+
+  }
+
+  /// <summary>
+  /// Host -> client: world furniture policy used by the client UI (export menu)
+  /// and for diagnostics. Import itself is enforced authoritatively by the host
+  /// when handling FurnitureLibraryRequest.
+  /// </summary>
+  [global::System.Diagnostics.DebuggerDisplayAttribute("{ToString(),nq}")]
+  public sealed partial class FurniturePolicyState : pb::IMessage<FurniturePolicyState>
+  #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      , pb::IBufferMessage
+  #endif
+  {
+    private static readonly pb::MessageParser<FurniturePolicyState> _parser = new pb::MessageParser<FurniturePolicyState>(() => new FurniturePolicyState());
+    private pb::UnknownFieldSet _unknownFields;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pb::MessageParser<FurniturePolicyState> Parser { get { return _parser; } }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pbr::MessageDescriptor Descriptor {
+      get { return global::SuMultiplayer.Protocol.FurnitureReflection.Descriptor.MessageTypes[9]; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    pbr::MessageDescriptor pb::IMessage.Descriptor {
+      get { return Descriptor; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public FurniturePolicyState() {
+      OnConstruction();
+    }
+
+    partial void OnConstruction();
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public FurniturePolicyState(FurniturePolicyState other) : this() {
+      allowImport_ = other.allowImport_;
+      allowExport_ = other.allowExport_;
+      _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public FurniturePolicyState Clone() {
+      return new FurniturePolicyState(this);
+    }
+
+    /// <summary>Field number for the "allow_import" field.</summary>
+    public const int AllowImportFieldNumber = 1;
+    private bool allowImport_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool AllowImport {
+      get { return allowImport_; }
+      set {
+        allowImport_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "allow_export" field.</summary>
+    public const int AllowExportFieldNumber = 2;
+    private bool allowExport_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool AllowExport {
+      get { return allowExport_; }
+      set {
+        allowExport_ = value;
+      }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override bool Equals(object other) {
+      return Equals(other as FurniturePolicyState);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Equals(FurniturePolicyState other) {
+      if (ReferenceEquals(other, null)) {
+        return false;
+      }
+      if (ReferenceEquals(other, this)) {
+        return true;
+      }
+      if (AllowImport != other.AllowImport) return false;
+      if (AllowExport != other.AllowExport) return false;
+      return Equals(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override int GetHashCode() {
+      int hash = 1;
+      if (AllowImport != false) hash ^= AllowImport.GetHashCode();
+      if (AllowExport != false) hash ^= AllowExport.GetHashCode();
+      if (_unknownFields != null) {
+        hash ^= _unknownFields.GetHashCode();
+      }
+      return hash;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override string ToString() {
+      return pb::JsonFormatter.ToDiagnosticString(this);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void WriteTo(pb::CodedOutputStream output) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      output.WriteRawMessage(this);
+    #else
+      if (AllowImport != false) {
+        output.WriteRawTag(8);
+        output.WriteBool(AllowImport);
+      }
+      if (AllowExport != false) {
+        output.WriteRawTag(16);
+        output.WriteBool(AllowExport);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(output);
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
+      if (AllowImport != false) {
+        output.WriteRawTag(8);
+        output.WriteBool(AllowImport);
+      }
+      if (AllowExport != false) {
+        output.WriteRawTag(16);
+        output.WriteBool(AllowExport);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(ref output);
+      }
+    }
+    #endif
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int CalculateSize() {
+      int size = 0;
+      if (AllowImport != false) {
+        size += 1 + 1;
+      }
+      if (AllowExport != false) {
+        size += 1 + 1;
+      }
+      if (_unknownFields != null) {
+        size += _unknownFields.CalculateSize();
+      }
+      return size;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(FurniturePolicyState other) {
+      if (other == null) {
+        return;
+      }
+      if (other.AllowImport != false) {
+        AllowImport = other.AllowImport;
+      }
+      if (other.AllowExport != false) {
+        AllowExport = other.AllowExport;
+      }
+      _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(pb::CodedInputStream input) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      input.ReadRawMessage(this);
+    #else
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
+            break;
+          case 8: {
+            AllowImport = input.ReadBool();
+            break;
+          }
+          case 16: {
+            AllowExport = input.ReadBool();
+            break;
+          }
+        }
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalMergeFrom(ref pb::ParseContext input) {
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
+            break;
+          case 8: {
+            AllowImport = input.ReadBool();
+            break;
+          }
+          case 16: {
+            AllowExport = input.ReadBool();
             break;
           }
         }

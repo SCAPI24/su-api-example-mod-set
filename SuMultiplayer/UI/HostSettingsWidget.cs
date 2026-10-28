@@ -20,7 +20,7 @@ namespace SuMultiplayer.UI
         private readonly Action m_banId;
         private readonly Action m_kick;
         private readonly Action m_removeBan;
-        private readonly Action m_changePort;
+        private readonly Action m_advanced;
         private readonly Action m_close;
         private readonly BevelledButtonWidget m_autoHostButton;
         private readonly BevelledButtonWidget m_autoApproveButton;
@@ -31,8 +31,8 @@ namespace SuMultiplayer.UI
         private float m_lastPanelWidth = -1f;
 
         public HostSettingsWidget(Func<bool> autoHost, Func<bool> autoApprove,
-            Action setAutoHost, Action setAutoApprove, Action banKick, Action banId,
-            Action kick, Action removeBan, Action changePort, Action close)
+            Action setAutoHost, Action setAutoApprove, Action advanced,
+            Action banKick, Action banId, Action kick, Action removeBan, Action close)
         {
             m_autoHost = autoHost;
             m_autoApprove = autoApprove;
@@ -42,7 +42,7 @@ namespace SuMultiplayer.UI
             m_banId = banId;
             m_kick = kick;
             m_removeBan = removeBan;
-            m_changePort = changePort;
+            m_advanced = advanced;
             m_close = close;
             XElement node = ContentManager.Get<XElement>("Mod/Dialogs/HostSettingsWidget");
             LoadChildren(this, node);
@@ -63,7 +63,7 @@ namespace SuMultiplayer.UI
             };
             m_row3 = new[]
             {
-                Children.Find<BevelledButtonWidget>("ChangePort"),
+                Children.Find<BevelledButtonWidget>("Advanced"),
                 Children.Find<BevelledButtonWidget>("Close")
             };
         }
@@ -80,7 +80,7 @@ namespace SuMultiplayer.UI
             if (Children.Find<BevelledButtonWidget>("BanId").IsClicked) m_banId?.Invoke();
             if (Children.Find<BevelledButtonWidget>("Kick").IsClicked) m_kick?.Invoke();
             if (Children.Find<BevelledButtonWidget>("RemoveBan").IsClicked) m_removeBan?.Invoke();
-            if (Children.Find<BevelledButtonWidget>("ChangePort").IsClicked) m_changePort?.Invoke();
+            if (Children.Find<BevelledButtonWidget>("Advanced").IsClicked) m_advanced?.Invoke();
             if (Children.Find<BevelledButtonWidget>("Close").IsClicked) m_close?.Invoke();
         }
 

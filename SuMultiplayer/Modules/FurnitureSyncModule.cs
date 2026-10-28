@@ -76,6 +76,15 @@ namespace SuMultiplayer.Modules
         private readonly ModuleDescriptor m_descriptor;
         private readonly IFurniturePort m_port;
         private readonly Func<double> m_clock;
+        private readonly Func<bool> m_allowClientFurnitureDelete;
+        private readonly Func<bool> m_allowFurnitureImport;
+        private readonly Func<bool> m_allowFurnitureExport;
+        private bool m_policyKnown;
+        private bool m_lastAllowImport;
+        private bool m_lastAllowExport;
+        private readonly HashSet<string> m_previousClientSetNames =
+            new HashSet<string>(StringComparer.Ordinal);
+        private readonly List<int> m_deletedDesignCandidates = new List<int>(8);
         private readonly FurnitureDesignStore m_store = new FurnitureDesignStore();
         private readonly Dictionary<long, PendingDesignRequest> m_pending =
             new Dictionary<long, PendingDesignRequest>();
@@ -92,6 +101,24 @@ namespace SuMultiplayer.Modules
         private readonly List<FurnitureDesignRecord> m_publishUpserts =
             new List<FurnitureDesignRecord>(8);
         private readonly List<int> m_publishRemoved = new List<int>(8);
+        private readonly List<FurnitureDesignRecord> m_clientLibraryDesigns =
+            new List<FurnitureDesignRecord>(64);
+        private readonly List<FurnitureSetRecord> m_clientLibrarySets =
+            new List<FurnitureSetRecord>(16);
+        private readonly List<FurnitureDesignRecord> m_libraryUploadDesigns =
+            new List<FurnitureDesignRecord>(16);
+        private readonly List<FurnitureSetRecord> m_libraryUploadSets =
+            new List<FurnitureSetRecord>(16);
+        private readonly List<FurnitureSetRecord> m_hostSetCapture =
+            new List<FurnitureSetRecord>(16);
+        private long m_lastLibrarySignature;
+        private long m_lastLibrarySetHash;
+        private bool m_libraryUploadPending;
+        private long m_librarySequence;
+        private long m_libraryUploadStartedMs;
+        private long m_nextLibraryScanMs;
+        private long m_hostSetsFingerprint;
+        private long m_nextHostSetPollMs;
         private readonly List<int> m_contentIndices = new List<int>(MaxHostDesigns);
         private readonly List<long> m_contentHashes = new List<long>(MaxHostDesigns);
         private readonly List<int> m_leakRemoved = new List<int>(8);
@@ -100,6 +127,9 @@ namespace SuMultiplayer.Modules
         private readonly StringBuilder m_builder = new StringBuilder(512);
 
         private IModuleContext m_context;
+        private IPeerBroadcastPort m_broadcast;
+        private readonly List<PlayerPeerUser> m_peerScratch = new List<PlayerPeerUser>(8);
+        private readonly List<int> m_onlineScratch = new List<int>(8);
         private ITransportPort m_transport;
         private ITransportControlPort m_control;
         private IMessageRegistryPort m_messages;
@@ -162,9 +192,14 @@ namespace SuMultiplayer.Modules
         private long m_contentRefreshed;
         private long m_contentRefreshFailed;
 
-        public FurnitureSyncModule(IFurniturePort port, Func<double> clock = null)
+        public FurnitureSyncModule(IFurniturePort port, Func<bool> allowClientFurnitureDelete = null,
+            Func<bool> allowFurnitureImport = null, Func<bool> allowFurnitureExport = null,
+            Func<double> clock = null)
         {
             m_port = port ?? throw new ArgumentNullException(nameof(port));
+            m_allowClientFurnitureDelete = allowClientFurnitureDelete;
+            m_allowFurnitureImport = allowFurnitureImport;
+            m_allowFurnitureExport = allowFurnitureExport;
             m_clock = clock != null ? clock : new Func<double>(delegate { return Time.RealTime; });
             m_descriptor = new ModuleDescriptor("furniture-sync", "家具设计 / 内容同步（主机权威）")
             {
@@ -211,6 +246,7 @@ namespace SuMultiplayer.Modules
                     "家具同步不启用（不猜方向）");
                 return;
             }
+            context.TryGetPort(out m_broadcast);
             if (context.TryGetPort(out m_messages) && m_messages != null)
             {
                 m_messages.Registry.RegisterModule(this);
@@ -247,6 +283,15 @@ namespace SuMultiplayer.Modules
             registry.Register((int)MessageType.FurnitureDesignSyncRequest,
                 P.FurnitureDesignSyncRequest.Parser,
                 new DelegateMessageHandler<P.FurnitureDesignSyncRequest>(OnSyncRequest), ModuleId);
+            registry.Register((int)MessageType.FurnitureLibraryRequest,
+                P.FurnitureLibraryRequest.Parser,
+                new DelegateMessageHandler<P.FurnitureLibraryRequest>(OnLibraryRequest), ModuleId);
+            registry.Register((int)MessageType.FurnitureLibraryResult,
+                P.FurnitureLibraryResult.Parser,
+                new DelegateMessageHandler<P.FurnitureLibraryResult>(OnLibraryResult), ModuleId);
+            registry.Register((int)MessageType.FurniturePolicyState,
+                P.FurniturePolicyState.Parser,
+                new DelegateMessageHandler<P.FurniturePolicyState>(OnPolicyState), ModuleId);
         }
 
         public void Detach(ModuleDetachReason reason)
@@ -340,6 +385,7 @@ namespace SuMultiplayer.Modules
             }
             if (nowMs < m_nextHostPollMs) return;
             m_nextHostPollMs = nowMs + HostPollIntervalMs;
+            BroadcastPolicyIfChanged();
             if (!m_port.TryCaptureHostFingerprint(out long fingerprint, out int count,
                     out string reason))
             {
@@ -347,8 +393,71 @@ namespace SuMultiplayer.Modules
                     "主机抓不到家具设计表指纹（" + reason + "）→ 本拍不广播（客户端仍会按请求做全量同步）");
                 return;
             }
-            if (fingerprint == m_hostFingerprint && count == m_hostDesignCount) return;
-            PublishHostDesignChanges(nowMs, "fingerprint-change");
+            if (fingerprint != m_hostFingerprint || count != m_hostDesignCount)
+                PublishHostDesignChanges(nowMs, "fingerprint-change");
+            if (nowMs >= m_nextHostSetPollMs)
+            {
+                m_nextHostSetPollMs = nowMs + HostPollIntervalMs;
+                m_hostSetCapture.Clear();
+                if (m_port.CaptureHostSets(m_hostSetCapture, out string setReason))
+                {
+                    long setHash = HashSets(m_hostSetCapture);
+                    if (setHash != m_hostSetsFingerprint)
+                    {
+                        m_hostSetsFingerprint = setHash;
+                        PublishHostSetChanges();
+                    }
+                }
+                else
+                {
+                    LogProblem("host-set-poll:" + ReasonCode(setReason),
+                        "主机抓取家具集合失败（" + setReason + "）→ 本拍不广播集合");
+                }
+            }
+        }
+
+        private static long HashSets(IReadOnlyList<FurnitureSetRecord> sets)
+        {
+            unchecked
+            {
+                long hash = 1469598103934665603L;
+                if (sets != null)
+                    for (int i = 0; i < sets.Count; i++)
+                    {
+                        FurnitureSetRecord set = sets[i];
+                        if (set == null) continue;
+                        string text = (set.Name ?? string.Empty) + "" +
+                            (set.ImportedFrom ?? string.Empty);
+                        for (int c = 0; c < text.Length; c++)
+                        {
+                            hash ^= text[c];
+                            hash *= 1099511628211L;
+                        }
+                    }
+                return hash;
+            }
+        }
+
+        private void PublishHostSetChanges()
+        {
+            var recipients = new List<int>(m_syncedClients);
+            CollectOnlinePlayers(m_onlineScratch);
+            for (int i = 0; i < m_onlineScratch.Count; i++)
+                if (recipients.IndexOf(m_onlineScratch[i]) < 0) recipients.Add(m_onlineScratch[i]);
+            for (int i = 0; i < recipients.Count; i++)
+            {
+                int clientId = recipients[i];
+                if (!m_transport.IsClientSendable(clientId)) continue;
+                if (!m_syncedClients.Contains(clientId))
+                {
+                    SendFullSnapshot(clientId, "set-change-baseline");
+                    continue;
+                }
+                if (!SendContentTo(clientId, full: false, "set-change"))
+                    LogProblem("set-content:" + clientId,
+                        "家具集合变化内容状态发送失败（clientId=" + clientId + "）");
+            }
+            Log("主机家具集合表变化 → 已广播 sets=" + m_hostSetCapture.Count);
         }
 
         private bool TryCaptureHostBaseline(long nowMs)
@@ -465,6 +574,12 @@ namespace SuMultiplayer.Modules
                 }
             }
 
+            if (nowMs >= m_nextLibraryScanMs)
+            {
+                m_nextLibraryScanMs = nowMs + 1000;
+                ScanClientLibrary();
+            }
+
             if (nowMs >= m_nextLeakSweepMs)
             {
                 m_nextLeakSweepMs = nowMs + LeakSweepIntervalMs;
@@ -473,6 +588,210 @@ namespace SuMultiplayer.Modules
         }
 
         // ================================================================= 主机：客户端加入 / 同步
+
+        /// <summary>主机：当前所有在线玩家端（不按兴趣窗口过滤；家具设计是全局状态）。</summary>
+        private void CollectOnlinePlayers(List<int> target)
+        {
+            target.Clear();
+            if (m_broadcast == null) return;
+            m_peerScratch.Clear();
+            m_broadcast.CapturePlayerUsers(m_peerScratch);
+            for (int i = 0; i < m_peerScratch.Count; i++)
+            {
+                int id = m_peerScratch[i].ClientId;
+                if (id > 0 && !target.Contains(id)) target.Add(id);
+            }
+        }
+
+        private void OnLibraryRequest(MessageContext context, P.FurnitureLibraryRequest message)
+        {
+            if (!IsHosting)
+            {
+                LogProblem("library-on-client", "客户端收到了 FurnitureLibraryRequest（方向错误）→ 丢弃");
+                return;
+            }
+            int clientId = context.ClientId;
+            if (clientId <= 0 || context.Type != MessageType.FurnitureLibraryRequest)
+            {
+                LogProblem("library-source", "FurnitureLibraryRequest 来源非法（clientId=" + clientId +
+                    "）→ 拒绝");
+                SendLibraryResult(clientId, message.Sequence, false, "source", 0, 0);
+                return;
+            }
+            var designs = new List<FurnitureDesignRecord>(message.Designs.Count);
+            var sets = new List<FurnitureSetRecord>(message.Sets.Count);
+            for (int i = 0; i < message.Designs.Count; i++)
+            {
+                if (!FurnitureDesignCodec.TryFromProto(message.Designs[i],
+                        out FurnitureDesignRecord record, out string recordError))
+                {
+                    LogProblem("library-record", "家具库上传记录非法（" + recordError + "）→ 整条拒绝");
+                    SendLibraryResult(clientId, message.Sequence, false, recordError, 0, 0);
+                    return;
+                }
+                designs.Add(record);
+            }
+            for (int i = 0; i < message.Sets.Count; i++)
+            {
+                P.FurnitureSetRecord set = message.Sets[i];
+                if (set == null || string.IsNullOrEmpty(set.Name)) continue;
+                if (!FurnitureDesignCodec.TryValidateSetName(set.Name, out string setError))
+                {
+                    SendLibraryResult(clientId, message.Sequence, false, "set-name:" + setError, 0, 0);
+                    return;
+                }
+                sets.Add(new FurnitureSetRecord(set.Name, set.ImportedFrom));
+            }
+            var candidates = new List<int>(message.DeletedDesigns.Count);
+            for (int i = 0; i < message.DeletedDesigns.Count; i++)
+            {
+                int index = message.DeletedDesigns[i];
+                if (FurnitureDesignStore.IsValidIndex(index) && !candidates.Contains(index))
+                    candidates.Add(index);
+            }
+            if (message.IsImport && m_allowFurnitureImport?.Invoke() != true)
+            {
+                m_designRejected++;
+                LogProblem("import-disabled", "主机设置不允许客户端导入家具（clientId=" + clientId +
+                    "）→ 拒绝本次导入");
+                SendLibraryResult(clientId, message.Sequence, false, "import-disabled", 0, 0);
+                return;
+            }
+            var installed = new List<FurnitureDesignRecord>(designs.Count);
+            var removedDesigns = new List<int>(candidates.Count);
+            bool allowDelete = m_allowClientFurnitureDelete?.Invoke() == true;
+            if (!m_port.TryApplyClientLibrary(clientId, designs, sets, message.ReplaceSets,
+                    candidates, allowDelete, installed, removedDesigns,
+                    out string mergeReason))
+            {
+                m_designRejected++;
+                LogProblem("library-merge:" + ReasonCode(mergeReason),
+                    "客户端家具库上传被主机拒绝（" + mergeReason + "）");
+                SendLibraryResult(clientId, message.Sequence, false, mergeReason, 0, 0);
+                return;
+            }
+            int revision = NextRevision();
+            for (int i = 0; i < installed.Count; i++)
+                m_lastHostRecords[installed[i].Index] = installed[i];
+            for (int i = 0; i < removedDesigns.Count; i++)
+                m_lastHostRecords.Remove(removedDesigns[i]);
+            // 先回执：客户端收到 accepted 后才会把 pending 清掉并接受随后的集合内容表；
+            // 反过来发会让客户端把这次上传前的主机集合表当成权威，删掉刚建的本地集合。
+            SendLibraryResult(clientId, message.Sequence, true, string.Empty, installed.Count, 0);
+            var recipients = new List<int>(m_syncedClients);
+            CollectOnlinePlayers(m_onlineScratch);
+            for (int i = 0; i < m_onlineScratch.Count; i++)
+                if (recipients.IndexOf(m_onlineScratch[i]) < 0) recipients.Add(m_onlineScratch[i]);
+            for (int i = 0; i < recipients.Count; i++)
+            {
+                int target = recipients[i];
+                if (!m_transport.IsClientSendable(target)) continue;
+                if (!m_syncedClients.Contains(target))
+                {
+                    SendFullSnapshot(target, "library-baseline");
+                    continue;
+                }
+                if (installed.Count > 0 || removedDesigns.Count > 0)
+                    SendDesignBatchesTo(target, installed, removedDesigns, revision, "library");
+                if (!SendContentTo(target, full: false, "library"))
+                    LogProblem("library-content:" + target,
+                        "家具库上传后内容状态发送失败（clientId=" + target + "）");
+            }
+            m_hostFingerprint = 0;
+            m_nextHostSetPollMs = 0;
+            Log("主机合并客户端 clientId=" + clientId + " 家具库：designs=" +
+                message.Designs.Count + " sets=" + message.Sets.Count + " installed=" +
+                installed.Count + " deletedCandidates=" + candidates.Count + " gcRemoved=" +
+                removedDesigns.Count + " allowDelete=" + allowDelete + " rev=" + revision);
+        }
+
+        private void BroadcastPolicyIfChanged()
+        {
+            bool allowImport = m_allowFurnitureImport?.Invoke() == true;
+            bool allowExport = m_allowFurnitureExport?.Invoke() == true;
+            if (m_policyKnown && allowImport == m_lastAllowImport &&
+                allowExport == m_lastAllowExport) return;
+            m_policyKnown = true;
+            m_lastAllowImport = allowImport;
+            m_lastAllowExport = allowExport;
+            var players = new List<int>(m_syncedClients);
+            CollectOnlinePlayers(m_onlineScratch);
+            for (int i = 0; i < m_onlineScratch.Count; i++)
+                if (players.IndexOf(m_onlineScratch[i]) < 0) players.Add(m_onlineScratch[i]);
+            for (int i = 0; i < players.Count; i++) SendPolicyTo(players[i]);
+        }
+
+        private void SendPolicyTo(int clientId)
+        {
+            if (m_transport == null || clientId <= 0) return;
+            var policy = new P.FurniturePolicyState
+            {
+                AllowImport = m_allowFurnitureImport?.Invoke() == true,
+                AllowExport = m_allowFurnitureExport?.Invoke() == true
+            };
+            if (!m_transport.TrySendTo(clientId, MessageType.FurniturePolicyState,
+                    policy.ToByteArray()))
+                LogProblem("policy-send:" + clientId,
+                    "FurniturePolicyState 发送失败（clientId=" + clientId + "）");
+        }
+
+        private void OnPolicyState(MessageContext context, P.FurniturePolicyState message)
+        {
+            if (IsHosting)
+            {
+                LogProblem("policy-on-host", "主机收到了 FurniturePolicyState（方向错误）→ 丢弃");
+                return;
+            }
+            m_port.SetFurniturePolicy(message.AllowImport, message.AllowExport);
+            Log("客户端应用主机家具策略：import=" + message.AllowImport +
+                " export=" + message.AllowExport);
+        }
+
+        private void OnLibraryResult(MessageContext context, P.FurnitureLibraryResult message)
+        {
+            if (IsHosting)
+            {
+                LogProblem("library-result-on-host",
+                    "主机收到了 FurnitureLibraryResult（方向错误）→ 丢弃");
+                return;
+            }
+            m_libraryUploadPending = false;
+            if (!message.Accepted)
+            {
+                LogProblem("library-rejected", "主机拒绝客户端家具库上传：seq=" +
+                    message.Sequence + " reason=" + (message.Reason ?? string.Empty));
+                if (string.Equals(message.Reason, "import-disabled", StringComparison.Ordinal))
+                {
+                    m_port.TryShowClientMessage(
+                        "Furniture import is disabled by the host for this world.");
+                    // 导入被主机拒绝：本地可能已经留下一个导入集合；请求主机全量，
+                    // 用主机权威集合表把不属于主机的本地集合清掉。
+                    m_nextSyncRequestMs = 0;
+                    RequestFullSync("import-disabled");
+                }
+                return;
+            }
+            Log("客户端家具库上传已接受：seq=" + message.Sequence + " installed=" +
+                message.Installed + " newSets=" + message.CreatedSets);
+        }
+
+        private void SendLibraryResult(int clientId, long sequence, bool accepted, string reason,
+            int installed, int createdSets)
+        {
+            if (m_transport == null || clientId <= 0) return;
+            var result = new P.FurnitureLibraryResult
+            {
+                Sequence = sequence,
+                Accepted = accepted,
+                Reason = reason ?? string.Empty,
+                Installed = installed,
+                CreatedSets = createdSets
+            };
+            if (!m_transport.TrySendTo(clientId, MessageType.FurnitureLibraryResult,
+                    result.ToByteArray()))
+                LogProblem("library-result-send:" + clientId,
+                    "FurnitureLibraryResult 发送失败（clientId=" + clientId + "）");
+        }
 
         private void HandleClientJoined(int clientId, string name, string identity, bool rejoin)
         {
@@ -570,6 +889,7 @@ namespace SuMultiplayer.Modules
                     return;
             }
             SendContentTo(clientId, full: true, reason + " content");
+            SendPolicyTo(clientId);
             m_syncedClients.Add(clientId);
             m_hostFingerprint = fingerprint;
             m_hostDesignCount = count;
@@ -627,23 +947,30 @@ namespace SuMultiplayer.Modules
             foreach (KeyValuePair<int, FurnitureDesignRecord> item in current)
                 m_lastHostRecords[item.Key] = item.Value;
 
-            if (m_syncedClients.Count > 0)
+            // 家具设计是**全局状态**：不按 chunk 兴趣窗口，在线玩家端全部要收。
+            // 尚未完成全量同步的端先补全量，避免它只收到增量而没有基线。
+            var recipients = new List<int>(m_syncedClients);
+            CollectOnlinePlayers(m_onlineScratch);
+            for (int i = 0; i < m_onlineScratch.Count; i++)
+                if (recipients.IndexOf(m_onlineScratch[i]) < 0) recipients.Add(m_onlineScratch[i]);
+            for (int i = 0; i < recipients.Count; i++)
             {
-                var peers = new List<int>(m_syncedClients);
-                for (int i = 0; i < peers.Count; i++)
+                int clientId = recipients[i];
+                if (!m_transport.IsClientSendable(clientId))
                 {
-                    int clientId = peers[i];
-                    if (!m_transport.IsClientSendable(clientId))
-                    {
-                        m_syncedClients.Remove(clientId);
-                        LogProblem("peer-gone:" + clientId, "clientId=" + clientId +
-                            " 已不可发送 → 移出已同步集合（重连后重新全量同步）");
-                        continue;
-                    }
-                    SendDesignBatchesTo(clientId, m_publishUpserts, m_publishRemoved, revision,
-                        "change");
-                    SendContentTo(clientId, full: false, "change");
+                    m_syncedClients.Remove(clientId);
+                    LogProblem("peer-gone:" + clientId, "clientId=" + clientId +
+                        " 已不可发送 → 移出已同步集合（重连后重新全量同步）");
+                    continue;
                 }
+                if (!m_syncedClients.Contains(clientId))
+                {
+                    SendFullSnapshot(clientId, "global-change-baseline");
+                    continue;
+                }
+                SendDesignBatchesTo(clientId, m_publishUpserts, m_publishRemoved, revision,
+                    "change");
+                SendContentTo(clientId, full: false, "change");
             }
 
             m_designApplied += m_publishUpserts.Count;
@@ -795,10 +1122,19 @@ namespace SuMultiplayer.Modules
                 SendDesignStateTo(clientId, new[] { installed }, null, revision, full: false,
                     "request");
                 var peers = new List<int>(m_syncedClients);
+                CollectOnlinePlayers(m_onlineScratch);
+                for (int i = 0; i < m_onlineScratch.Count; i++)
+                    if (m_onlineScratch[i] != clientId && peers.IndexOf(m_onlineScratch[i]) < 0)
+                        peers.Add(m_onlineScratch[i]);
                 for (int i = 0; i < peers.Count; i++)
                 {
                     if (peers[i] == clientId) continue;
                     if (!m_transport.IsClientSendable(peers[i])) continue;
+                    if (!m_syncedClients.Contains(peers[i]))
+                    {
+                        SendFullSnapshot(peers[i], "global-request-baseline");
+                        continue;
+                    }
                     SendDesignStateTo(peers[i], new[] { installed }, null, revision,
                         full: false, "request-broadcast");
                 }
@@ -807,6 +1143,7 @@ namespace SuMultiplayer.Modules
                 {
                     if (peers[i] == clientId) continue;
                     if (!m_transport.IsClientSendable(peers[i])) continue;
+                    if (!m_syncedClients.Contains(peers[i])) continue;
                     SendContentTo(peers[i], full: false, "request-broadcast");
                 }
             }
@@ -1090,6 +1427,9 @@ namespace SuMultiplayer.Modules
                     "家具设计状态与本地副本冲突 " + applied.Conflict +
                     " 条 → 按主机内容覆盖（冲突计数 " + m_designStateConflict + "）");
             }
+            // 集合归属 / 设计变化要立即刷新已打开的家具面板；
+            // 否则客户端 B 要重新打开界面才看得到 A 拖进集合的改动。
+            m_contentRefreshFurnitureInventory();
             Log("客户端应用家具设计状态 rev=" + state.Revision +
                 (state.Full ? " full" : " delta") + " added=" + applied.Added +
                 " updated=" + applied.Updated + " duplicate=" + applied.Duplicate +
@@ -1153,6 +1493,12 @@ namespace SuMultiplayer.Modules
                     "客户端副本表里有 " + reconciled.Extra +
                     " 条主机内容表没有的家具设计 → 已回滚移除（rollback 计数 " +
                     m_contentRolledBack + "）");
+            }
+            if (!m_libraryUploadPending && (content.Full || content.Sets.Count > 0))
+            {
+                if (!m_port.ApplyHostSets(content.Sets, out string setApplyReason))
+                    LogProblem("host-sets-apply:" + ReasonCode(setApplyReason),
+                        "客户端应用主机家具集合失败（" + setApplyReason + "）");
             }
             m_contentMissing += reconciled.Missing;
             if (reconciled.Missing > 0)
@@ -1218,6 +1564,137 @@ namespace SuMultiplayer.Modules
                 reason + "）");
         }
 
+        private void ScanClientLibrary()
+        {
+            if (!m_port.IsWorldReady || m_libraryUploadPending) return;
+            m_clientLibraryDesigns.Clear();
+            m_clientLibrarySets.Clear();
+            if (!m_port.TryCaptureClientLibrary(m_clientLibraryDesigns, m_clientLibrarySets,
+                    out string reason))
+            {
+                LogProblem("client-library-capture:" + ReasonCode(reason),
+                    "抓取客户端家具库失败（" + reason + "）→ 本拍不上传");
+                return;
+            }
+            long signature = HashLibrary(m_clientLibraryDesigns, m_clientLibrarySets);
+            if (signature == m_lastLibrarySignature) return;
+            m_deletedDesignCandidates.Clear();
+            var currentSetNames = new HashSet<string>(StringComparer.Ordinal);
+            for (int i = 0; i < m_clientLibrarySets.Count; i++)
+                if (m_clientLibrarySets[i] != null && !string.IsNullOrEmpty(m_clientLibrarySets[i].Name))
+                    currentSetNames.Add(m_clientLibrarySets[i].Name);
+            if (m_previousClientSetNames.Count > 0)
+            {
+                foreach (string removedSet in m_previousClientSetNames)
+                {
+                    if (currentSetNames.Contains(removedSet)) continue;
+                    foreach (FurnitureDesignRecord record in m_store.SnapshotSorted())
+                    {
+                        if (!string.Equals(record.FurnitureSet, removedSet,
+                                StringComparison.Ordinal))
+                            continue;
+                        m_deletedDesignCandidates.Add(record.Index);
+                    }
+                }
+            }
+            m_previousClientSetNames.Clear();
+            foreach (string name in currentSetNames) m_previousClientSetNames.Add(name);
+            m_libraryUploadDesigns.Clear();
+            for (int i = 0; i < m_clientLibraryDesigns.Count; i++)
+            {
+                FurnitureDesignRecord local = m_clientLibraryDesigns[i];
+                if (m_store.TryGet(local.Index, out FurnitureDesignRecord host) &&
+                    host.SameDesign(local))
+                    continue;
+                m_libraryUploadDesigns.Add(local);
+            }
+            // 集合名 / 集合成员关系变化：即使设计内容相同，Changed 记录已被 SameDesign 捕获；
+            // 空集合则靠 sets 列表上报。
+            long setHash = HashSets(m_clientLibrarySets);
+            if (m_libraryUploadDesigns.Count == 0 && m_deletedDesignCandidates.Count == 0 &&
+                setHash == m_lastLibrarySetHash) return;
+            m_librarySequence++;
+            bool isImport = false;
+            for (int i = 0; i < m_libraryUploadDesigns.Count; i++)
+            {
+                FurnitureDesignRecord local = m_libraryUploadDesigns[i];
+                // 集合归属变化（拖进/拖出集合）不算导入；只有内容本身在主机表中
+                // 找不到对应设计时才按导入处理。
+                if (!m_store.TryGet(local.Index, out FurnitureDesignRecord host) ||
+                    !host.SameDesignExceptSet(local))
+                    isImport = true;
+            }
+            var request = new P.FurnitureLibraryRequest
+            {
+                Sequence = m_librarySequence,
+                Reason = "client-library",
+                ReplaceSets = true,
+                IsImport = isImport
+            };
+            for (int i = 0; i < m_libraryUploadDesigns.Count; i++)
+                request.Designs.Add(FurnitureDesignCodec.ToProto(m_libraryUploadDesigns[i]));
+            for (int i = 0; i < m_deletedDesignCandidates.Count; i++)
+                request.DeletedDesigns.Add(m_deletedDesignCandidates[i]);
+            for (int i = 0; i < m_clientLibrarySets.Count; i++)
+            {
+                FurnitureSetRecord set = m_clientLibrarySets[i];
+                if (set == null || string.IsNullOrEmpty(set.Name)) continue;
+                request.Sets.Add(new P.FurnitureSetRecord
+                {
+                    Name = set.Name,
+                    ImportedFrom = set.ImportedFrom ?? string.Empty
+                });
+            }
+            byte[] payload = request.ToByteArray();
+            if (payload.Length > FurnitureDesignCodec.MaxPayloadBytes)
+            {
+                LogProblem("client-library-payload:" + payload.Length,
+                    "客户端家具库上传载荷 " + payload.Length + " 字节超限 → 本次不上传（导入家具过大）");
+                return;
+            }
+            if (!m_transport.TrySend(MessageType.FurnitureLibraryRequest, payload))
+            {
+                LogProblem("client-library-send", "客户端家具库上传发送失败 → 下个周期重试");
+                return;
+            }
+            m_lastLibrarySignature = signature;
+            m_lastLibrarySetHash = setHash;
+            m_libraryUploadPending = true;
+            m_libraryUploadStartedMs = (long)(m_clock?.Invoke() * 1000.0 ?? 0.0);
+            Log("客户端上传家具库：designs=" + m_libraryUploadDesigns.Count +
+                " sets=" + m_clientLibrarySets.Count + " seq=" + m_librarySequence);
+        }
+
+        private static long HashLibrary(IReadOnlyList<FurnitureDesignRecord> designs,
+            IReadOnlyList<FurnitureSetRecord> sets)
+        {
+            unchecked
+            {
+                long hash = 1469598103934665603L;
+                for (int i = 0; i < designs.Count; i++)
+                {
+                    FurnitureDesignRecord d = designs[i];
+                    if (d == null) continue;
+                    hash = FurnitureDesignHash.Mix(hash, d.Index);
+                    hash = FurnitureDesignHash.Mix(hash, (int)(d.ContentHash ^ (d.ContentHash >> 32)));
+                }
+                if (sets != null)
+                    for (int i = 0; i < sets.Count; i++)
+                    {
+                        FurnitureSetRecord set = sets[i];
+                        if (set == null) continue;
+                        string text = (set.Name ?? string.Empty) + "" +
+                            (set.ImportedFrom ?? string.Empty);
+                        for (int c = 0; c < text.Length; c++)
+                        {
+                            hash ^= text[c];
+                            hash *= 1099511628211L;
+                        }
+                    }
+                return hash;
+            }
+        }
+
         private void SweepClientLibrary(long nowMs)
         {
             m_reinstalled.Clear();
@@ -1232,6 +1709,12 @@ namespace SuMultiplayer.Modules
                     " 条被引擎 GC / 其它路径清掉 → 已按主机记录重装");
             }
             m_leakRemoved.Clear();
+            if (m_libraryUploadPending)
+            {
+                // 本地上传的导入设计暂存于引擎表，等主机广播/回执后再扫除；
+                // 提前扫掉会让玩家刚导入的家具在主机合并前消失。
+                return;
+            }
             int removed = m_port.SweepClientLibraryLeaks(m_store.Indices, m_leakRemoved);
             if (removed > 0)
             {
@@ -1330,8 +1813,12 @@ namespace SuMultiplayer.Modules
                 m_contentIndices.Add(sorted[i].Index);
                 m_contentHashes.Add(sorted[i].ContentHash);
             }
+            m_hostSetCapture.Clear();
+            if (!m_port.CaptureHostSets(m_hostSetCapture, out string setReason))
+                LogProblem("host-sets:" + ReasonCode(setReason),
+                    "主机抓取家具集合失败（" + setReason + "）→ 本次内容表只发设计");
             var content = new FurnitureContentData(m_hostRevision, full, reason,
-                m_contentIndices, m_contentHashes);
+                m_contentIndices, m_contentHashes, m_hostSetCapture);
             if (!FurnitureDesignCodec.TryEncodeContent(content,
                     out P.FurnitureContentState encoded, out string error))
             {

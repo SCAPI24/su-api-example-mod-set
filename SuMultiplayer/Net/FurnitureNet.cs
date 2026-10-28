@@ -144,13 +144,15 @@ namespace SuMultiplayer.Net
     public sealed class FurnitureContentData
     {
         public FurnitureContentData(int revision, bool full, string reason,
-            IReadOnlyList<int> indices, IReadOnlyList<long> hashes)
+            IReadOnlyList<int> indices, IReadOnlyList<long> hashes,
+            IReadOnlyList<FurnitureSetRecord> sets = null)
         {
             Revision = revision;
             Full = full;
             Reason = reason ?? string.Empty;
             Indices = indices ?? Array.Empty<int>();
             Hashes = hashes ?? Array.Empty<long>();
+            Sets = sets ?? Array.Empty<FurnitureSetRecord>();
         }
 
         public int Revision { get; }
@@ -158,6 +160,7 @@ namespace SuMultiplayer.Net
         public string Reason { get; }
         public IReadOnlyList<int> Indices { get; }
         public IReadOnlyList<long> Hashes { get; }
+        public IReadOnlyList<FurnitureSetRecord> Sets { get; }
 
         public string Describe() =>
             "rev=" + Revision + (Full ? " full" : " delta") + " designs=" + Indices.Count +
@@ -214,6 +217,35 @@ namespace SuMultiplayer.Net
                 if (c > '\u007f' || (!char.IsLetterOrDigit(c) && c != ' '))
                 {
                     reason = "name-char:" + ((int)c).ToString(CultureInfo.InvariantCulture);
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// 家具集合名规则（不是设计名）：引擎 FurnitureSet.Name 只做 20 字符截断，
+        /// 导入家具包 / 旧内容允许标点（实机导入名含 '@'，用设计名规则会把整个上传拒绝）。
+        /// </summary>
+        public static bool TryValidateSetName(string name, out string reason)
+        {
+            reason = null;
+            if (name == null)
+            {
+                reason = "set-name-null";
+                return false;
+            }
+            if (name.Length > MaxNameLength)
+            {
+                reason = "set-name-too-long:" + name.Length;
+                return false;
+            }
+            for (int i = 0; i < name.Length; i++)
+            {
+                char c = name[i];
+                if (c < ' ' || c == '')
+                {
+                    reason = "set-name-char:" + ((int)c).ToString(CultureInfo.InvariantCulture);
                     return false;
                 }
             }
@@ -775,6 +807,16 @@ namespace SuMultiplayer.Net
             };
             encoded.DesignIndices.AddRange(content.Indices);
             encoded.DesignHashes.AddRange(content.Hashes);
+            for (int i = 0; i < content.Sets.Count; i++)
+            {
+                FurnitureSetRecord set = content.Sets[i];
+                if (set == null || string.IsNullOrEmpty(set.Name)) continue;
+                encoded.Sets.Add(new P.FurnitureSetRecord
+                {
+                    Name = set.Name,
+                    ImportedFrom = set.ImportedFrom ?? string.Empty
+                });
+            }
             message = encoded;
             return true;
         }
@@ -809,9 +851,21 @@ namespace SuMultiplayer.Net
                     return false;
                 }
             }
+            var sets = new List<FurnitureSetRecord>(message.Sets.Count);
+            for (int i = 0; i < message.Sets.Count; i++)
+            {
+                P.FurnitureSetRecord set = message.Sets[i];
+                if (set == null || string.IsNullOrEmpty(set.Name)) continue;
+                if (!TryValidateSetName(set.Name, out string setError))
+                {
+                    reason = "content-set-name:" + setError;
+                    return false;
+                }
+                sets.Add(new FurnitureSetRecord(set.Name, set.ImportedFrom));
+            }
             content = new FurnitureContentData(message.Revision, message.Full,
                 message.Reason ?? string.Empty, message.DesignIndices.ToArray(),
-                message.DesignHashes.ToArray());
+                message.DesignHashes.ToArray(), sets);
             return true;
         }
 

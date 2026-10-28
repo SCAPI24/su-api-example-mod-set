@@ -43,8 +43,14 @@ namespace SuMultiplayer.UI
         private readonly Func<int, string> m_changePort;
         private readonly Func<bool> m_autoHostEnabled;
         private readonly Func<bool> m_autoApproveEnabled;
+        private readonly Func<bool> m_allowFurnitureDeleteEnabled;
+        private readonly Func<bool> m_allowFurnitureImportEnabled;
+        private readonly Func<bool> m_allowFurnitureExportEnabled;
         private readonly Func<bool, string> m_setAutoHost;
         private readonly Func<bool, string> m_setAutoApprove;
+        private readonly Func<bool, string> m_setAllowFurnitureDelete;
+        private readonly Func<bool, string> m_setAllowFurnitureImport;
+        private readonly Func<bool, string> m_setAllowFurnitureExport;
         /// <summary>CR 建房成功后落盘世界联机设置（这是 SuMultiplayerWorld.xml 的创建时机）。</summary>
         private readonly Func<string> m_saveWorldSettings;
         private Project m_autoHostProject;
@@ -101,6 +107,12 @@ namespace SuMultiplayer.UI
             Func<bool> autoApproveEnabled = null,
             Func<bool, string> setAutoHost = null,
             Func<bool, string> setAutoApprove = null,
+            Func<bool> allowFurnitureDeleteEnabled = null,
+            Func<bool, string> setAllowFurnitureDelete = null,
+            Func<bool> allowFurnitureImportEnabled = null,
+            Func<bool, string> setAllowFurnitureImport = null,
+            Func<bool> allowFurnitureExportEnabled = null,
+            Func<bool, string> setAllowFurnitureExport = null,
             Func<string> saveWorldSettings = null)
         {
             m_rooms = rooms;
@@ -119,6 +131,12 @@ namespace SuMultiplayer.UI
             m_autoApproveEnabled = autoApproveEnabled;
             m_setAutoHost = setAutoHost;
             m_setAutoApprove = setAutoApprove;
+            m_allowFurnitureDeleteEnabled = allowFurnitureDeleteEnabled;
+            m_setAllowFurnitureDelete = setAllowFurnitureDelete;
+            m_allowFurnitureImportEnabled = allowFurnitureImportEnabled;
+            m_setAllowFurnitureImport = setAllowFurnitureImport;
+            m_allowFurnitureExportEnabled = allowFurnitureExportEnabled;
+            m_setAllowFurnitureExport = setAllowFurnitureExport;
             m_saveWorldSettings = saveWorldSettings;
         }
 
@@ -483,11 +501,11 @@ namespace SuMultiplayer.UI
                     ShowResult("Auto approve", m_setAutoApprove?.Invoke(
                         m_autoApproveEnabled?.Invoke() != true));
                 },
+                delegate { OpenAdvancedHostSettings(); },
                 delegate { SelectPeer(true); },
                 BanUserId,
                 delegate { SelectPeer(false); },
                 SelectBan,
-                EditHostPort,
                 CloseHostSettings);
             m_settingsOwner = localPlayer;
             m_settingsWidget = settings;
@@ -545,6 +563,74 @@ namespace SuMultiplayer.UI
                 value => value.ToString(), selected =>
                     ShowResult("Remove Ban", m_unban?.Invoke(selected as string ?? string.Empty)));
             DialogsManager.ShowDialog(null, dialog);
+        }
+
+        /// <summary>
+        /// IF 二级菜单：主设置只保留六个常用按钮，低频的客户端删除权限 / 改端口
+        /// 放进 ADVANCED，避免长文本在 1180 宽按钮里重叠（实机截图 2026-10-29）。
+        /// </summary>
+        private void OpenAdvancedHostSettings()
+        {
+            var options = new List<Tuple<string, Action>>
+            {
+                new Tuple<string, Action>(
+                    "ALLOW CLIENT FURNITURE DELETE: " +
+                    (m_allowFurnitureDeleteEnabled?.Invoke() == true ? "ON" : "OFF"),
+                    ConfirmToggleAllowFurnitureDelete),
+                new Tuple<string, Action>(
+                    "ALLOW CLIENT FURNITURE IMPORT: " +
+                    (m_allowFurnitureImportEnabled?.Invoke() == true ? "ON" : "OFF"),
+                    delegate
+                    {
+                        ConfirmFurniturePolicy("Client Furniture Import",
+                            "Allow clients to import furniture packs into this world?",
+                            m_allowFurnitureImportEnabled, m_setAllowFurnitureImport);
+                    }),
+                new Tuple<string, Action>(
+                    "ALLOW CLIENT FURNITURE EXPORT: " +
+                    (m_allowFurnitureExportEnabled?.Invoke() == true ? "ON" : "OFF"),
+                    delegate
+                    {
+                        ConfirmFurniturePolicy("Client Furniture Export",
+                            "Allow clients to export furniture packs from this world?",
+                            m_allowFurnitureExportEnabled, m_setAllowFurnitureExport);
+                    }),
+                new Tuple<string, Action>("CHANGE HOST PORT", EditHostPort)
+            };
+            DialogsManager.ShowDialog(m_settingsOwner?.GuiWidget,
+                new ListSelectionDialog("Advanced Multiplayer Settings", options, 64f,
+                    item => ((Tuple<string, Action>)item).Item1,
+                    item => ((Tuple<string, Action>)item).Item2()));
+        }
+
+        private void ConfirmFurniturePolicy(string title, string question, Func<bool> getter,
+            Func<bool, string> setter)
+        {
+            bool next = getter?.Invoke() != true;
+            DialogsManager.ShowDialog(m_settingsOwner?.GuiWidget,
+                new MessageDialog(title, question, next ? "ALLOW" : "DISALLOW", "Cancel",
+                    delegate(MessageDialogButton button)
+                    {
+                        if (button != MessageDialogButton.Button1) return;
+                        ShowResult(title, setter?.Invoke(next) ?? "Setting handler unavailable.");
+                    }));
+        }
+
+        private void ConfirmToggleAllowFurnitureDelete()
+        {
+            bool next = m_allowFurnitureDeleteEnabled?.Invoke() != true;
+            string detail = next
+                ? "Allow clients to delete furniture sets and let the host GC unused designs?"
+                : "Stop allowing clients to GC designs when they delete furniture sets?";
+            DialogsManager.ShowDialog(m_settingsOwner?.GuiWidget,
+                new MessageDialog("Client Furniture Delete", detail, "OK", "Cancel",
+                    delegate(MessageDialogButton button)
+                    {
+                        if (button != MessageDialogButton.Button1) return;
+                        ShowResult("Client furniture delete",
+                            m_setAllowFurnitureDelete?.Invoke(next) ??
+                            "Setting handler unavailable.");
+                    }));
         }
 
         private void EditHostPort()

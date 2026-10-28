@@ -84,6 +84,24 @@ namespace SuMultiplayer.Furniture
         public bool SameDesign(FurnitureDesignRecord other) =>
             other != null && other.ContentHash == ContentHash;
 
+        /// <summary>
+        /// 内容是否相同但忽略集合归属。用于区分“导入新家具”（内容不同）和
+        /// “把已有家具拖进/拖出集合”（只有 FurnitureSet 变化，不是导入）。
+        /// </summary>
+        public bool SameDesignExceptSet(FurnitureDesignRecord other)
+        {
+            if (other == null) return false;
+            if (Resolution != other.Resolution ||
+                InteractionMode != other.InteractionMode ||
+                LinkedIndex != other.LinkedIndex ||
+                !string.Equals(Name, other.Name, StringComparison.Ordinal) ||
+                ValueCount != other.ValueCount)
+                return false;
+            for (int i = 0; i < m_values.Length; i++)
+                if (m_values[i] != other.m_values[i]) return false;
+            return true;
+        }
+
         public string Describe() =>
             "#" + Index.ToString(CultureInfo.InvariantCulture) + " " +
             (string.IsNullOrEmpty(Name) ? "<default>" : Name) + " res=" +
@@ -357,6 +375,22 @@ namespace SuMultiplayer.Furniture
         }
 
         public static bool IsValidIndex(int index) => index >= 0 && index < MaxDesigns;
+    }
+
+    /// <summary>一条家具集合的纯值形态（成员关系由设计的 FurnitureSet 名表示）。</summary>
+    public sealed class FurnitureSetRecord
+    {
+        public FurnitureSetRecord(string name, string importedFrom)
+        {
+            Name = name ?? string.Empty;
+            ImportedFrom = importedFrom ?? string.Empty;
+        }
+
+        public string Name { get; }
+        public string ImportedFrom { get; }
+
+        public string Describe() =>
+            string.IsNullOrEmpty(ImportedFrom) ? Name : Name + " <" + ImportedFrom + ">";
     }
 
     /// <summary>
