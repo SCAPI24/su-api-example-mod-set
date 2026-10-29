@@ -144,6 +144,11 @@ namespace SuMultiplayer.Engine
         private readonly Dictionary<int, bool> m_replicaFeedOrder = new Dictionary<int, bool>();
         /// <summary>客户端复制体最近一次主机 grounded 状态（四足模型迈腿条件）。</summary>
         private readonly Dictionary<int, bool> m_replicaGrounded = new Dictionary<int, bool>();
+        /// <summary>客户端复制体最近一次主机钻沙状态与最大深度（鱼钻沙表现）。</summary>
+        private readonly Dictionary<int, bool> m_replicaDigIn = new Dictionary<int, bool>();
+        private readonly Dictionary<int, float> m_replicaMaxDigIn = new Dictionary<int, float>();
+        /// <summary>客户端复制体最近一次主机离水挣扎状态（鱼 BendOrder 表现）。</summary>
+        private readonly Dictionary<int, bool> m_replicaBend = new Dictionary<int, bool>();
         /// <summary>主机模型私有 m_feedFactor 的反射缓存（类型 → 字段；没有该模型的类型不缓存）。</summary>
         private readonly Dictionary<Type, FieldInfo> m_feedFactorFields = new Dictionary<Type, FieldInfo>();
 
@@ -518,6 +523,7 @@ namespace SuMultiplayer.Engine
                 record.LookAngles = creature?.ComponentLocomotion?.LookAngles ?? Vector2.Zero;
                 record.FeedOrder = IsHostFeeding(creature?.ComponentCreatureModel);
                 record.Grounded = body.StandingOnValue.HasValue || body.StandingOnBody != null;
+                CaptureFishBehavior(entity, record);
                 count++;
             }
             if (count < target.Count) target.RemoveRange(count, target.Count - count);
@@ -533,6 +539,49 @@ namespace SuMultiplayer.Engine
             }
             if (count == 0) reason = "世界里当前没有非玩家生物";
             return count;
+        }
+
+        /// <summary>
+        /// 主机：抓鱼类的两个次级行为边沿。
+        ///   · ComponentDigInMudBehavior 的状态机进入 "DigIn" = 钻沙；
+        ///   · ComponentFishOutOfWaterBehavior 进入 "Jump" = 离水挣扎。
+        /// 这两个布尔不在实体主状态里，客户端复制体又不跑行为 updateable，必须单独下发。
+        /// </summary>
+        private void CaptureFishBehavior(Entity entity, CreatureStateRecord record)
+        {
+            record.IsDigIn = false;
+            record.MaxDigIn = 0f;
+            record.IsBend = false;
+            ComponentDigInMudBehavior digIn = entity.FindComponent<ComponentDigInMudBehavior>();
+            if (digIn != null)
+            {
+                try
+                {
+                    StateMachine machine = m_parentField.GetParentField<StateMachine>(digIn,
+                        "m_stateMachine", typeof(ComponentDigInMudBehavior));
+                    record.IsDigIn = machine != null && machine.CurrentState == "DigIn";
+                    record.MaxDigIn = m_parentField.GetParentField<float>(digIn,
+                        "m_maxDigInDepth", typeof(ComponentDigInMudBehavior));
+                }
+                catch (Exception)
+                {
+                    // 版本差异时保持 false/0，动画不显示但主流程不受影响。
+                }
+            }
+            ComponentFishOutOfWaterBehavior outOfWater =
+                entity.FindComponent<ComponentFishOutOfWaterBehavior>();
+            if (outOfWater != null)
+            {
+                try
+                {
+                    StateMachine machine = m_parentField.GetParentField<StateMachine>(outOfWater,
+                        "m_stateMachine", typeof(ComponentFishOutOfWaterBehavior));
+                    record.IsBend = machine != null && machine.CurrentState == "Jump";
+                }
+                catch (Exception)
+                {
+                }
+            }
         }
 
         /// <summary>
@@ -1433,6 +1482,9 @@ namespace SuMultiplayer.Engine
 
                 m_replicaFeedOrder[record.Key] = record.FeedOrder;
                 m_replicaGrounded[record.Key] = record.Grounded;
+                m_replicaDigIn[record.Key] = record.IsDigIn;
+                m_replicaMaxDigIn[record.Key] = record.MaxDigIn;
+                m_replicaBend[record.Key] = record.IsBend;
                 ApplyReplicaActivity(entity, record.Activity);
                 m_createdAttached++;
                 return true;
@@ -1516,6 +1568,9 @@ namespace SuMultiplayer.Engine
 
                 m_replicaFeedOrder[record.Key] = record.FeedOrder;
                 m_replicaGrounded[record.Key] = record.Grounded;
+            m_replicaDigIn[record.Key] = record.IsDigIn;
+            m_replicaMaxDigIn[record.Key] = record.MaxDigIn;
+            m_replicaBend[record.Key] = record.IsBend;
             ApplyReplicaActivity(entity, record.Activity);
             return true;
         }
@@ -1683,6 +1738,7 @@ namespace SuMultiplayer.Engine
                     ApplyReplicaActivity(entity, activity);
                 if (m_replicaFeedOrder.TryGetValue(pair.Key, out bool feedOrder))
                     model.FeedOrder = feedOrder;
+                ApplyReplicaFishAnimation(pair.Key, entity);
             }
         }
 
@@ -1731,6 +1787,27 @@ namespace SuMultiplayer.Engine
             }
             m_movementPhaseFields[type] = field;
             return field;
+        }
+
+        /// <summary>
+        /// 客户端：把主机下发的鱼钻沙/离水挣扎状态写到 ComponentFishModel。
+        /// 必须在模型 Update 之前写；模型 Update 末尾会把 BendOrder/DigInOrder 复位。
+        /// </summary>
+        private void ApplyReplicaFishAnimation(int key, Entity entity)
+        {
+            ComponentFishModel fish = entity.FindComponent<ComponentFishModel>();
+            if (fish == null) return;
+            if (m_replicaDigIn.TryGetValue(key, out bool digIn))
+            {
+                float depth = m_replicaMaxDigIn.TryGetValue(key, out float max) ? max : 0.072f;
+                fish.DigInOrder = digIn ? depth : 0f;
+            }
+            if (m_replicaBend.TryGetValue(key, out bool bend))
+            {
+                fish.BendOrder = bend
+                    ? 1.5f * MathUtils.Sin((float)(m_now * 9.0))
+                    : (float?)null;
+            }
         }
 
         /// <summary>模型 Update 之后推进/写回 MovementAnimationPhase（渲染前最后一步）。</summary>
@@ -2080,13 +2157,35 @@ namespace SuMultiplayer.Engine
             if (componentHealth == null) return;
             try
             {
+                float oldHealth = componentHealth.Health;
                 float value = MathUtils.Saturate(health);
                 m_parentField.ModifyParentField(componentHealth, "<Health>k__BackingField", value,
                     typeof(ComponentHealth));
                 m_parentField.ModifyParentField(componentHealth, "m_lastHealth", value,
                     typeof(ComponentHealth));
-                m_parentField.ModifyParentField(componentHealth, "<HealthChange>k__BackingField", 0f,
-                    typeof(ComponentHealth));
+                // 主机端 ComponentHealth.Update 会写 HealthChange，客户端复制体的
+                // ComponentHealth.Update 被摘掉；这里自己补上下降边沿，让模型 Update
+                // 的 m_injuryColorFactor 逻辑和死亡粒子有输入。
+                float change = value - oldHealth;
+                m_parentField.ModifyParentField(componentHealth,
+                    "<HealthChange>k__BackingField", change, typeof(ComponentHealth));
+                if (change < -0.0001f)
+                {
+                    ComponentCreatureModel model = entity.FindComponent<ComponentCreatureModel>();
+                    if (model != null)
+                    {
+                        try
+                        {
+                            m_parentField.ModifyParentField(model, "m_injuryColorFactor", 1f,
+                                typeof(ComponentCreatureModel));
+                        }
+                        catch (Exception)
+                        {
+                        }
+                    }
+                    if (value <= 0f && oldHealth > 0f)
+                        SpawnReplicaDeathParticles(entity);
+                }
             }
             catch (Exception e)
             {
@@ -2095,6 +2194,29 @@ namespace SuMultiplayer.Engine
                     "复制体生命值写入失败（位置/姿态仍按主机记录同步；累计 " +
                     m_healthApplyFailures + " 次）：" + e.GetType().Name + " " + e.Message,
                     5000, error: true);
+            }
+        }
+
+        /// <summary>
+        /// 主机 ComponentHealth.Update 在 Health==0 时创建 KillParticleSystem；
+        /// 客户端复制体不跑 ComponentHealth.Update，死亡瞬间在复制体位置补一次同款粒子。
+        /// </summary>
+        private void SpawnReplicaDeathParticles(Entity entity)
+        {
+            try
+            {
+                Project project = entity?.Project;
+                ComponentBody body = entity?.FindComponent<ComponentBody>();
+                SubsystemParticles particles = project?.FindSubsystem<SubsystemParticles>(false);
+                SubsystemTerrain terrain = project?.FindSubsystem<SubsystemTerrain>(false);
+                if (body == null || particles == null || terrain?.Terrain == null) return;
+                Vector3 position = body.Position + new Vector3(0f, body.StanceBoxSize.Y / 2f, 0f);
+                particles.AddParticleSystem(new KillParticleSystem(terrain, position,
+                    body.StanceBoxSize.X));
+            }
+            catch (Exception)
+            {
+                // 死亡粒子是纯表现，失败不影响复制体已经被删除/尸体状态。
             }
         }
 

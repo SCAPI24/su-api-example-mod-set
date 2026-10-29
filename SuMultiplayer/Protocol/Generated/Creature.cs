@@ -28,7 +28,7 @@ namespace SuMultiplayer.Protocol.Creature {
             "YnVmL2FueS5wcm90byIcCgRWZWMyEgkKAXgYASABKAISCQoBeRgCIAEoAiIn",
             "CgRWZWMzEgkKAXgYASABKAISCQoBeRgCIAEoAhIJCgF6GAMgASgCIjIKBFF1",
             "YXQSCQoBeBgBIAEoAhIJCgF5GAIgASgCEgkKAXoYAyABKAISCQoBdxgEIAEo",
-            "AiL6AgoOQ3JlYXR1cmVSZWNvcmQSLQoGYWN0aW9uGAEgASgOMh0uc3VtcC5j",
+            "AiKyAwoOQ3JlYXR1cmVSZWNvcmQSLQoGYWN0aW9uGAEgASgOMh0uc3VtcC5j",
             "cmVhdHVyZS5DcmVhdHVyZUFjdGlvbhILCgNrZXkYAiABKAUSFQoNdGVtcGxh",
             "dGVfbmFtZRgDIAEoCRIlCghwb3NpdGlvbhgEIAEoCzITLnN1bXAuY3JlYXR1",
             "cmUuVmVjMxIlCghyb3RhdGlvbhgFIAEoCzITLnN1bXAuY3JlYXR1cmUuUXVh",
@@ -36,23 +36,25 @@ namespace SuMultiplayer.Protocol.Creature {
             "ZWFsdGgYByABKAISFgoOc3Bhd25fcHJvZ3Jlc3MYCCABKAISEAoIYWN0aXZp",
             "dHkYCSABKA0SFgoOc3Bhd25fZHVyYXRpb24YCiABKAISKAoLbG9va19hbmds",
             "ZXMYCyABKAsyEy5zdW1wLmNyZWF0dXJlLlZlYzISEgoKZmVlZF9vcmRlchgM",
-            "IAEoCBIQCghncm91bmRlZBgNIAEoCCK8AQoNQ3JlYXR1cmVTdGF0ZRIPCgd2",
-            "ZXJzaW9uGAEgASgNEhMKC3NlcnZlcl90aWNrGAIgASgFEg0KBWZsYWdzGAMg",
-            "ASgNEhMKC3NuYXBzaG90X2lkGAQgASgFEi4KB3JlY29yZHMYBSADKAsyHS5z",
-            "dW1wLmNyZWF0dXJlLkNyZWF0dXJlUmVjb3JkEgsKA2V4dBhkIAEoDBIkCgZj",
-            "dXN0b20YZSABKAsyFC5nb29nbGUucHJvdG9idWYuQW55IloKFUNyZWF0dXJl",
-            "UmVzeW5jUmVxdWVzdBIOCgZyZWFzb24YASABKAkSCwoDZXh0GGQgASgMEiQK",
-            "BmN1c3RvbRhlIAEoCzIULmdvb2dsZS5wcm90b2J1Zi5BbnkqYQoOQ3JlYXR1",
-            "cmVBY3Rpb24SFwoTQ1JFQVRVUkVfQUNUSU9OX0FERBAAEhoKFkNSRUFUVVJF",
-            "X0FDVElPTl9VUERBVEUQARIaChZDUkVBVFVSRV9BQ1RJT05fUkVNT1ZFEAJC",
-            "JEgBqgIfU3VNdWx0aXBsYXllci5Qcm90b2NvbC5DcmVhdHVyZWIGcHJvdG8z"));
+            "IAEoCBIQCghncm91bmRlZBgNIAEoCBIRCglpc19kaWdfaW4YDiABKAgSEgoK",
+            "bWF4X2RpZ19pbhgPIAEoAhIPCgdpc19iZW5kGBAgASgIIrwBCg1DcmVhdHVy",
+            "ZVN0YXRlEg8KB3ZlcnNpb24YASABKA0SEwoLc2VydmVyX3RpY2sYAiABKAUS",
+            "DQoFZmxhZ3MYAyABKA0SEwoLc25hcHNob3RfaWQYBCABKAUSLgoHcmVjb3Jk",
+            "cxgFIAMoCzIdLnN1bXAuY3JlYXR1cmUuQ3JlYXR1cmVSZWNvcmQSCwoDZXh0",
+            "GGQgASgMEiQKBmN1c3RvbRhlIAEoCzIULmdvb2dsZS5wcm90b2J1Zi5Bbnki",
+            "WgoVQ3JlYXR1cmVSZXN5bmNSZXF1ZXN0Eg4KBnJlYXNvbhgBIAEoCRILCgNl",
+            "eHQYZCABKAwSJAoGY3VzdG9tGGUgASgLMhQuZ29vZ2xlLnByb3RvYnVmLkFu",
+            "eSphCg5DcmVhdHVyZUFjdGlvbhIXChNDUkVBVFVSRV9BQ1RJT05fQUREEAAS",
+            "GgoWQ1JFQVRVUkVfQUNUSU9OX1VQREFURRABEhoKFkNSRUFUVVJFX0FDVElP",
+            "Tl9SRU1PVkUQAkIkSAGqAh9TdU11bHRpcGxheWVyLlByb3RvY29sLkNyZWF0",
+            "dXJlYgZwcm90bzM="));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { global::Google.Protobuf.WellKnownTypes.AnyReflection.Descriptor, },
           new pbr::GeneratedClrTypeInfo(new[] {typeof(global::SuMultiplayer.Protocol.Creature.CreatureAction), }, null, new pbr::GeneratedClrTypeInfo[] {
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Creature.Vec2), global::SuMultiplayer.Protocol.Creature.Vec2.Parser, new[]{ "X", "Y" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Creature.Vec3), global::SuMultiplayer.Protocol.Creature.Vec3.Parser, new[]{ "X", "Y", "Z" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Creature.Quat), global::SuMultiplayer.Protocol.Creature.Quat.Parser, new[]{ "X", "Y", "Z", "W" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Creature.CreatureRecord), global::SuMultiplayer.Protocol.Creature.CreatureRecord.Parser, new[]{ "Action", "Key", "TemplateName", "Position", "Rotation", "Velocity", "Health", "SpawnProgress", "Activity", "SpawnDuration", "LookAngles", "FeedOrder", "Grounded" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Creature.CreatureRecord), global::SuMultiplayer.Protocol.Creature.CreatureRecord.Parser, new[]{ "Action", "Key", "TemplateName", "Position", "Rotation", "Velocity", "Health", "SpawnProgress", "Activity", "SpawnDuration", "LookAngles", "FeedOrder", "Grounded", "IsDigIn", "MaxDigIn", "IsBend" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Creature.CreatureState), global::SuMultiplayer.Protocol.Creature.CreatureState.Parser, new[]{ "Version", "ServerTick", "Flags", "SnapshotId", "Records", "Ext", "Custom" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::SuMultiplayer.Protocol.Creature.CreatureResyncRequest), global::SuMultiplayer.Protocol.Creature.CreatureResyncRequest.Parser, new[]{ "Reason", "Ext", "Custom" }, null, null, null, null)
           }));
@@ -937,6 +939,9 @@ namespace SuMultiplayer.Protocol.Creature {
       lookAngles_ = other.lookAngles_ != null ? other.lookAngles_.Clone() : null;
       feedOrder_ = other.feedOrder_;
       grounded_ = other.grounded_;
+      isDigIn_ = other.isDigIn_;
+      maxDigIn_ = other.maxDigIn_;
+      isBend_ = other.isBend_;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
     }
 
@@ -1142,6 +1147,49 @@ namespace SuMultiplayer.Protocol.Creature {
       }
     }
 
+    /// <summary>Field number for the "is_dig_in" field.</summary>
+    public const int IsDigInFieldNumber = 14;
+    private bool isDigIn_;
+    /// <summary>
+    /// 主机 ComponentDigInMudBehavior / ComponentFishModel 的钻沙表现。
+    /// is_dig_in = 当前状态机处于 "DigIn"；max_dig_in = m_maxDigInDepth。
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool IsDigIn {
+      get { return isDigIn_; }
+      set {
+        isDigIn_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "max_dig_in" field.</summary>
+    public const int MaxDigInFieldNumber = 15;
+    private float maxDigIn_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public float MaxDigIn {
+      get { return maxDigIn_; }
+      set {
+        maxDigIn_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "is_bend" field.</summary>
+    public const int IsBendFieldNumber = 16;
+    private bool isBend_;
+    /// <summary>
+    /// 主机 ComponentFishOutOfWaterBehavior 的离水挣扎表现（状态机 "Jump"）。
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool IsBend {
+      get { return isBend_; }
+      set {
+        isBend_ = value;
+      }
+    }
+
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public override bool Equals(object other) {
@@ -1170,6 +1218,9 @@ namespace SuMultiplayer.Protocol.Creature {
       if (!object.Equals(LookAngles, other.LookAngles)) return false;
       if (FeedOrder != other.FeedOrder) return false;
       if (Grounded != other.Grounded) return false;
+      if (IsDigIn != other.IsDigIn) return false;
+      if (!pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.Equals(MaxDigIn, other.MaxDigIn)) return false;
+      if (IsBend != other.IsBend) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
 
@@ -1190,6 +1241,9 @@ namespace SuMultiplayer.Protocol.Creature {
       if (lookAngles_ != null) hash ^= LookAngles.GetHashCode();
       if (FeedOrder != false) hash ^= FeedOrder.GetHashCode();
       if (Grounded != false) hash ^= Grounded.GetHashCode();
+      if (IsDigIn != false) hash ^= IsDigIn.GetHashCode();
+      if (MaxDigIn != 0F) hash ^= pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.GetHashCode(MaxDigIn);
+      if (IsBend != false) hash ^= IsBend.GetHashCode();
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
       }
@@ -1260,6 +1314,18 @@ namespace SuMultiplayer.Protocol.Creature {
         output.WriteRawTag(104);
         output.WriteBool(Grounded);
       }
+      if (IsDigIn != false) {
+        output.WriteRawTag(112);
+        output.WriteBool(IsDigIn);
+      }
+      if (MaxDigIn != 0F) {
+        output.WriteRawTag(125);
+        output.WriteFloat(MaxDigIn);
+      }
+      if (IsBend != false) {
+        output.WriteRawTag(128, 1);
+        output.WriteBool(IsBend);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
       }
@@ -1322,6 +1388,18 @@ namespace SuMultiplayer.Protocol.Creature {
         output.WriteRawTag(104);
         output.WriteBool(Grounded);
       }
+      if (IsDigIn != false) {
+        output.WriteRawTag(112);
+        output.WriteBool(IsDigIn);
+      }
+      if (MaxDigIn != 0F) {
+        output.WriteRawTag(125);
+        output.WriteFloat(MaxDigIn);
+      }
+      if (IsBend != false) {
+        output.WriteRawTag(128, 1);
+        output.WriteBool(IsBend);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
       }
@@ -1370,6 +1448,15 @@ namespace SuMultiplayer.Protocol.Creature {
       }
       if (Grounded != false) {
         size += 1 + 1;
+      }
+      if (IsDigIn != false) {
+        size += 1 + 1;
+      }
+      if (MaxDigIn != 0F) {
+        size += 1 + 4;
+      }
+      if (IsBend != false) {
+        size += 2 + 1;
       }
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
@@ -1433,6 +1520,15 @@ namespace SuMultiplayer.Protocol.Creature {
       }
       if (other.Grounded != false) {
         Grounded = other.Grounded;
+      }
+      if (other.IsDigIn != false) {
+        IsDigIn = other.IsDigIn;
+      }
+      if (other.MaxDigIn != 0F) {
+        MaxDigIn = other.MaxDigIn;
+      }
+      if (other.IsBend != false) {
+        IsBend = other.IsBend;
       }
       _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
     }
@@ -1517,6 +1613,18 @@ namespace SuMultiplayer.Protocol.Creature {
             Grounded = input.ReadBool();
             break;
           }
+          case 112: {
+            IsDigIn = input.ReadBool();
+            break;
+          }
+          case 125: {
+            MaxDigIn = input.ReadFloat();
+            break;
+          }
+          case 128: {
+            IsBend = input.ReadBool();
+            break;
+          }
         }
       }
     #endif
@@ -1598,6 +1706,18 @@ namespace SuMultiplayer.Protocol.Creature {
           }
           case 104: {
             Grounded = input.ReadBool();
+            break;
+          }
+          case 112: {
+            IsDigIn = input.ReadBool();
+            break;
+          }
+          case 125: {
+            MaxDigIn = input.ReadFloat();
+            break;
+          }
+          case 128: {
+            IsBend = input.ReadBool();
             break;
           }
         }

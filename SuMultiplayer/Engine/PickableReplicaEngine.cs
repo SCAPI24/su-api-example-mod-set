@@ -1816,6 +1816,29 @@ namespace SuMultiplayer.Engine
             if (!TryResolveHostAim(player, request.Direction, out Vector3 direction,
                     out reason))
                 return false;
+            Vector3 throwOrigin = hostOrigin;
+            Vector3 throwDirection = direction;
+            if (request.Kind == ProjectileFireKinds.Throwable)
+            {
+                // 投掷物（蛋、雪球等）对落点最敏感：客户端瞄准点是在它自己的
+                // 视角/位置上算出的，而主机远端化身的 EyePosition / EyeRotation
+                // 可能比客户端慢一拍。这里在距离/方向容差内采用请求的
+                // origin+direction，避免蛋落到偏离瞄准点很远的位置。
+                Vector3 requestedOrigin = request.Origin;
+                Vector3 requestedDirection = request.Direction;
+                if (float.IsFinite(requestedOrigin.X) && float.IsFinite(requestedOrigin.Y) &&
+                    float.IsFinite(requestedOrigin.Z) &&
+                    Vector3.DistanceSquared(requestedOrigin, hostOrigin) <= 4f)
+                {
+                    throwOrigin = requestedOrigin;
+                }
+                if (requestedDirection.LengthSquared() > 0.25f)
+                {
+                    requestedDirection = Vector3.Normalize(requestedDirection);
+                    if (Vector3.Dot(requestedDirection, direction) >= 0.5f)
+                        throwDirection = requestedDirection;
+                }
+            }
             Block block = ResolveBlock(itemValue);
             if (block == null)
             {
@@ -1831,8 +1854,8 @@ namespace SuMultiplayer.Engine
             {
                 case ProjectileFireKinds.Throwable:
                     if (!TryFireThrowable(player, inventory, slot, itemValue, block,
-                            direction, out spawned, out firstPosition, out firstVelocity,
-                            out reason))
+                            throwOrigin, throwDirection, out spawned, out firstPosition,
+                            out firstVelocity, out reason))
                         return false;
                     break;
                 case ProjectileFireKinds.Bow:
@@ -1870,7 +1893,7 @@ namespace SuMultiplayer.Engine
         /// 先 FireProjectile（null = 被地形挡住 → 明确拒绝、不扣道具），成功后扣 1 个。
         /// </summary>
         private bool TryFireThrowable(ComponentPlayer player, IInventory inventory, int slot,
-            int itemValue, Block block, Vector3 direction, out int spawned,
+            int itemValue, Block block, Vector3 origin, Vector3 direction, out int spawned,
             out Vector3 firstPosition, out Vector3 firstVelocity, out string reason)
         {
             spawned = 0;
@@ -1889,8 +1912,6 @@ namespace SuMultiplayer.Engine
                 return false;
             }
             ComponentBody body = player.ComponentBody;
-            ComponentCreatureModel model = player.ComponentCreatureModel;
-            Vector3 origin = model.EyePosition + body.Matrix.Right * 0.4f;
             float speed = block.ProjectileSpeed;
             if (player.ComponentLevel != null)
                 speed *= 0.5f * (player.ComponentLevel.StrengthFactor - 1f) + 1f;
@@ -3170,6 +3191,24 @@ namespace SuMultiplayer.Engine
             if (replica?.Projectile == null) return;
             Projectile projectile = replica.Projectile;
             projectile.ToRemove = true;
+            // 蛋壳碎裂：主机 SubsystemProjectiles 在命中时用
+            // block.CreateDebrisParticleSystem 生成白色壳屑；客户端复制体不跑命中，
+            // 在收到蛋投射物移除时补一次同款碎屑（只表现，不写格 / 不生成实体）。
+            if (global::Game.Terrain.ExtractContents(projectile.Value) == 118)
+            {
+                try
+                {
+                    Block block = BlocksManager.Blocks[118];
+                    SubsystemParticles particles = m_project?.FindSubsystem<SubsystemParticles>(false);
+                    SubsystemTerrain terrain = m_project?.FindSubsystem<SubsystemTerrain>(false);
+                    if (block != null && particles != null && terrain?.Terrain != null)
+                        particles.AddParticleSystem(block.CreateDebrisParticleSystem(terrain,
+                            projectile.Position, projectile.Value, 1f));
+                }
+                catch (Exception)
+                {
+                }
+            }
             if (projectile.TrailParticleSystem != null)
             {
                 try

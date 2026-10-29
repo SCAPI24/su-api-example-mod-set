@@ -74,6 +74,12 @@ message CreatureRecord {
   // 客户端复制体不跑移动物理时不一定会自己算出 StandingOnValue，而四足模型
   // 只有 StandingOnValue.HasValue || ImmersionFactor>0 才画迈腿；必须下发。
   bool grounded = 13;
+  // 主机 ComponentDigInMudBehavior / ComponentFishModel 的钻沙表现。
+  // is_dig_in = 当前状态机处于 "DigIn"；max_dig_in = m_maxDigInDepth。
+  bool is_dig_in = 14;
+  float max_dig_in = 15;
+  // 主机 ComponentFishOutOfWaterBehavior 的离水挣扎表现（状态机 "Jump"）。
+  bool is_bend = 16;
 }
 
 // Host -> client: creature state batch.

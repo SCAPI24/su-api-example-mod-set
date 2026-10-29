@@ -107,6 +107,12 @@ namespace SuMultiplayer.Creatures
         public bool FeedOrder;
         /// <summary>主机是否站在地形/实体上（客户端模型迈腿条件）。</summary>
         public bool Grounded;
+        /// <summary>主机 ComponentDigInMudBehavior 是否处于 "DigIn" 状态（鱼钻沙表现）。</summary>
+        public bool IsDigIn;
+        /// <summary>主机 m_maxDigInDepth（客户端钻沙时用它设置 ComponentFishModel.DigInOrder）。</summary>
+        public float MaxDigIn;
+        /// <summary>主机 ComponentFishOutOfWaterBehavior 是否处于 "Jump" 状态（鱼离水挣扎）。</summary>
+        public bool IsBend;
 
         /// <summary>
         /// 主机侧活动状态：既用于选择同步频率，也随 <c>CreatureRecord.activity</c> 下发 ——
@@ -136,6 +142,9 @@ namespace SuMultiplayer.Creatures
             LookAngles = LookAngles,
             FeedOrder = FeedOrder,
             Grounded = Grounded,
+            IsDigIn = IsDigIn,
+            MaxDigIn = MaxDigIn,
+            IsBend = IsBend,
             Activity = Activity
         };
     }
@@ -318,7 +327,10 @@ namespace SuMultiplayer.Creatures
                     // 2026-10-26 客户端攻击动画修复：活动位随记录下发（客户端用 Attacking 驱动模型攻击动画）。
                     Activity = (uint)record.Activity,
                     FeedOrder = record.FeedOrder,
-                    Grounded = record.Grounded
+                    Grounded = record.Grounded,
+                    IsDigIn = record.IsDigIn,
+                    MaxDigIn = record.MaxDigIn,
+                    IsBend = record.IsBend
                 };
                 message.Records.Add(wire);
             }
@@ -420,6 +432,10 @@ namespace SuMultiplayer.Creatures
                     record.Activity = (CreatureActivity)(wire.Activity & CreatureStateRecord.ActivityWireMask);
                     record.FeedOrder = wire.FeedOrder;
                     record.Grounded = wire.Grounded;
+                    record.IsDigIn = wire.IsDigIn;
+                    record.MaxDigIn = float.IsFinite(wire.MaxDigIn)
+                        ? MathUtils.Clamp(wire.MaxDigIn, 0f, 10f) : 0f;
+                    record.IsBend = wire.IsBend;
                     if (!IsFinite(record.Position) || !IsFinite(record.Rotation) ||
                         !IsFinite(record.Velocity) || !float.IsFinite(record.Health))
                     {
