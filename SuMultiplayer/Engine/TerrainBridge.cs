@@ -676,6 +676,19 @@ namespace SuMultiplayer.Engine
             // 放置值必须保持客户端提交的 face/rotation 低位；物品 data id 的
             // 异步回写不能再覆盖整个 data 字段。
             int requestedValue = Game.Terrain.MakeBlockValue(contents, 0, data);
+            // Button / Switch 的电压存在物品 data 的高位；引擎 GetPlacementValue
+            // 只把脸面写进 data，会丢掉电压。主机放置时用远端背包当前物品值把
+            // 电压位补回来，同时保留客户端请求的脸面/拉杆位。
+            if (oldContents == 0 && HostPlacementItemData != null &&
+                (contents == ButtonBlock.Index || contents == SwitchBlock.Index) &&
+                HostPlacementItemData(clientId, contents, out int hostItemData))
+            {
+                int requestData = Game.Terrain.ExtractData(requestedValue);
+                int mergedData = contents == ButtonBlock.Index
+                    ? (requestData & 0x7) | (hostItemData & ~0x7)
+                    : (requestData & 0xF) | (hostItemData & ~0xF);
+                requestedValue = Game.Terrain.MakeBlockValue(contents, 0, mergedData);
+            }
             int placedItemDataId = -1;
             if (oldContents == 0 && HostPlacementItemData != null &&
                 HostPlacementItemData(clientId, contents, out int placementDataId))

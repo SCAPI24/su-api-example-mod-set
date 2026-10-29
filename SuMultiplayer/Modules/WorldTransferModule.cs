@@ -150,8 +150,16 @@ namespace SuMultiplayer.Modules
             if (m_control?.IsHosting != true || m_host == null) return;
             if (context.ClientId != m_activeSendClientId)
             {
-                LogWarning("clientId=" + context.ClientId + " 请求缺片，但它不是当前传输目标（目标=" +
-                    m_activeSendClientId + "）→ 忽略（不把分片发给别的连接）");
+                // 重连时客户端可能先在“旧 Project 还在”的瞬间判定 alreadyHasWorld=true，
+                // 主机因此跳过整图；随后旧世界卸载，客户端开始请求缺片却没有任何传输目标。
+                // 这时把它重新排进整图队列，而不是永远忽略它。
+                if (QueueFullSendFor(context.ClientId, "无活动传输的缺片请求（重连后世界缺失）"))
+                    LogWarning("clientId=" + context.ClientId +
+                        " 请求缺片时没有传输目标 → 已重新排队整图（不把分片发给别的连接）");
+                else
+                    LogWarning("clientId=" + context.ClientId +
+                        " 请求缺片，但它不是当前传输目标（目标=" + m_activeSendClientId +
+                        "）→ 已排队/正在发则忽略");
                 return;
             }
             int sent = m_host.Resend(message.Indexes);
@@ -163,21 +171,26 @@ namespace SuMultiplayer.Modules
         private void OnWorldBegin(MessageContext context, PTransfer.WorldBegin message)
         {
             // 主机自己不收世界包（只有客户端会收到 World*）。
-            if (m_client == null || m_control?.IsHosting == true) return;
+            // 只按“有没有客户端接收器”判断；不能再因为本端旧 hosting 标志而丢弃
+            // WorldBegin（退房后重连时旧 hosting 标志可能还没清，世界就会永远等不到）。
+            if (m_client == null) return;
             m_sessionActive = true;
+            // 新的 WorldBegin = 新的一次接收。上一局可能已经装过一次世界，
+            // InstalledOnce 若还是 true，Install() 会直接 return，世界永远进不去。
+            InstalledOnce = false;
             if (m_client.HandleBegin(message))
                 Log("收到世界信息：" + m_client.WorldName + " · " + m_client.Total + " 片，开始接收");
         }
 
         private void OnWorldChunk(MessageContext context, PTransfer.WorldChunk message)
         {
-            if (m_client == null || m_control?.IsHosting == true) return;
+            if (m_client == null) return;
             m_client.HandleChunk(message);
         }
 
         private void OnWorldEnd(MessageContext context, PTransfer.WorldEnd message)
         {
-            if (m_client == null || m_control?.IsHosting == true) return;
+            if (m_client == null) return;
             m_lastEndMs = Environment.TickCount64;
             if (m_client.Complete) return;          // 已收齐：重复 End 直接忽略
             if (m_client.HandleEnd(message, m_lastEndMs))
@@ -267,6 +280,30 @@ namespace SuMultiplayer.Modules
         ///     只取消它自己残留的待发状态；**绝不动别的客户端正在进行的传输**；
         ///   · 非 rejoin ⇒ 不变量②：这一次加入进发送队列，恰好发送一次整图。
         /// </summary>
+        /// <summary>
+        /// 把一个“需要整图但当前没有发送状态”的客户端重新放进发送队列。
+        /// 返回 true = 本次新排入；false = 已有活动/排队传输。
+        /// </summary>
+        private bool QueueFullSendFor(int clientId, string why)
+        {
+            if (m_control?.IsHosting != true || clientId <= 0) return false;
+            if (m_activeSendClientId == clientId || m_sendQueue.Contains(clientId)) return false;
+            if (m_sends.TryGetValue(clientId, out SendState existing))
+            {
+                if (!existing.Aborted && (existing.Started && !existing.EndSent))
+                    return false;
+                m_sends.Remove(clientId);
+            }
+            var send = new SendState { ClientId = clientId, ClientName = "clientId=" + clientId };
+            m_sends[clientId] = send;
+            m_sendQueue.Add(clientId);
+            Log("世界传输：clientId=" + clientId + " 重新排队整图（" + why + "）" +
+                (m_activeSendClientId > 0
+                    ? "；当前正在发 clientId=" + m_activeSendClientId
+                    : "；队列第 " + m_sendQueue.Count + " 位"));
+            return true;
+        }
+
         private void HandleClientJoined(int clientId, string name, string identity, bool rejoin)
         {
             if (rejoin)
@@ -817,6 +854,7 @@ namespace SuMultiplayer.Modules
         {
             m_sessionActive = false;
             InstalledOnce = false;
+            m_client?.Reset();
             m_lastEndMs = 0;
             int aborted = ClearAllSends();
             // 会话复位 = 上一次准备的整图作废：新会话必须重新导出，绝不能把旧 pak 当成这一次的发出去。

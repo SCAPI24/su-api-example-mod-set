@@ -555,6 +555,29 @@ namespace SuMultiplayer.Transfer
         /// <summary>随机数状态区解码失败的原因（空 = 正常 / 旧主机没有该区）。</summary>
         public string RandomStateProblem { get; private set; } = string.Empty;
 
+        /// <summary>
+        /// 离开房间 / 通道关闭时清掉“上一局世界传输”的接收状态。
+        /// 不重置的话，重新加入时 Complete/Active 仍停在上一局，新的 WorldBegin
+        /// 可能被旧状态挡住，客户端就永远停在加入界面。
+        /// </summary>
+        public void Reset()
+        {
+            m_receiver = null;
+            m_transferId = 0;
+            m_worldName = string.Empty;
+            m_directoryName = string.Empty;
+            m_missingRequestedMs = 0L;
+            Assembled = null;
+            Complete = false;
+            Active = false;
+            Error = null;
+            SessionId = string.Empty;
+            BaseSequence = 0L;
+            RandomSeed = 0;
+            RandomStates = new Dictionary<string, long>(StringComparer.Ordinal);
+            RandomStateProblem = string.Empty;
+        }
+
         public bool HandleBegin(PTransfer.WorldBegin message)
         {
             if (message == null) return false;
