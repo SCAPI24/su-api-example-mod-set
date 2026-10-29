@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 using Engine;
 using Game;
 using SuMultiplayer.Net;
@@ -185,6 +186,120 @@ namespace SuMultiplayer.Engine
             m_lastProblemMs[key] = nowMs;
             Log.Warning("[SuMP] 真值表：" + message);
         }
+
+        public override bool OnEditInventoryItem(IInventory inventory, int slotIndex,
+            ComponentPlayer componentPlayer)
+        {
+            EditableItemBridge bridge =
+                (SubsystemTerrain as SuSubsystemTerrain)?.Bridge?.EditableItems;
+            Log.Information("[SuMP][editable-item] inventory edit entry kind=" +
+                EditableKinds.Name(EditableKinds.TruthTable) + " bridge=" +
+                (bridge != null) + " client=" + ReplicaGates.IsClient(SubsystemTerrain) +
+                " slot=" + slotIndex);
+            if (bridge == null) return base.OnEditInventoryItem(inventory, slotIndex, componentPlayer);
+            if (inventory == null || componentPlayer == null || slotIndex < 0 ||
+                slotIndex >= inventory.SlotsCount || inventory.GetSlotCount(slotIndex) <= 0)
+                return true;
+            int value = inventory.GetSlotValue(slotIndex);
+            if (Game.Terrain.ExtractContents(value) != Contents) return true;
+            int itemDataId = Game.Terrain.ExtractData(value);
+            TruthTableData current = GetItemData(itemDataId);
+            byte[] baseData = EditableEngineContent.EncodeTruthTable(current ?? new TruthTableData());
+            var draft = current != null ? (TruthTableData)current.Copy() : new TruthTableData();
+            DialogsManager.ShowDialog(componentPlayer.GuiWidget,
+                new EditTruthTableDialog(draft, delegate (bool accepted)
+                {
+                    if (!accepted) return;
+                    byte[] desired = EditableEngineContent.EncodeTruthTable(draft);
+                    if (ReplicaGates.IsClient(SubsystemTerrain))
+                    {
+                        if (!bridge.SubmitClientItemEdit(EditableKinds.TruthTable, inventory,
+                                slotIndex, componentPlayer, value, baseData, desired,
+                                out string reason))
+                            componentPlayer.ComponentGui?.DisplaySmallMessage(
+                                "Truth table item edit rejected: " + reason, Color.White,
+                                blinking: true, playNotificationSound: false);
+                        else
+                            bridge.ApplyClientOptimisticItemAtExistingId(EditableKinds.TruthTable,
+                                Game.Terrain.ExtractData(value), desired);
+                        return;
+                    }
+                    bridge.TryApplyHostLocalItemEdit(EditableKinds.TruthTable, inventory, slotIndex,
+                        value, desired, out _, out _, out string hostReason);
+                    if (!string.IsNullOrEmpty(hostReason))
+                        LogProblem("item-host", hostReason);
+                }));
+            return true;
+        }
+
+        private static readonly FieldInfo s_truthItemData =
+            typeof(SubsystemEditableItemBehavior<TruthTableData>).GetField("m_itemsData",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+
+        private Dictionary<int, TruthTableData> TruthItemData() =>
+            s_truthItemData?.GetValue(this) as Dictionary<int, TruthTableData>;
+
+        public Dictionary<int, string> CaptureNetworkItemData()
+        {
+            var result = new Dictionary<int, string>();
+            Dictionary<int, TruthTableData> items = TruthItemData();
+            if (items == null) return result;
+            foreach (KeyValuePair<int, TruthTableData> item in items)
+                result[item.Key] = item.Value?.SaveString() ?? string.Empty;
+            return result;
+        }
+
+        public Dictionary<int, byte[]> CaptureNetworkItemDataBytes()
+        {
+            var result = new Dictionary<int, byte[]>();
+            Dictionary<int, TruthTableData> items = TruthItemData();
+            if (items == null) return result;
+            foreach (KeyValuePair<int, TruthTableData> item in items)
+                result[item.Key] = EditableEngineContent.EncodeTruthTable(item.Value);
+            return result;
+        }
+
+        public int StoreNetworkItemDataBytes(byte[] payload)
+        {
+            if (!EditableEngineContent.TryDecodeTruthTable(payload, out TruthTableData data,
+                    out _)) return -1;
+            return StoreItemDataAtUniqueId(data);
+        }
+
+        public bool StoreNetworkItemDataAtId(byte[] payload, int dataId)
+        {
+            if (dataId <= 0 || dataId >= 1000) return false;
+            if (!EditableEngineContent.TryDecodeTruthTable(payload, out TruthTableData data,
+                    out _)) return false;
+            Dictionary<int, TruthTableData> items = TruthItemData();
+            if (items == null) return false;
+            items[dataId] = data;
+            return true;
+        }
+
+        public void ApplyNetworkItemDataBytes(int dataId, byte[] payload)
+        {
+            Dictionary<int, TruthTableData> items = TruthItemData();
+            if (items == null || dataId < 0 || dataId >= 1000) return;
+            if (EditableEngineContent.TryDecodeTruthTable(payload, out TruthTableData data,
+                    out _)) items[dataId] = data;
+        }
+
+        public int StoreNetworkItemData(string payload)
+        {
+            var data = new TruthTableData();
+            data.LoadString(payload ?? string.Empty);
+            return StoreItemDataAtUniqueId(data);
+        }
+
+        public void ApplyNetworkItemData(int dataId, string payload)
+        {
+            Dictionary<int, TruthTableData> items = TruthItemData();
+            if (items == null || dataId < 0 || dataId >= 1000) return;
+            var data = new TruthTableData();
+            data.LoadString(payload ?? string.Empty);
+            items[dataId] = data;
+        }
     }
 
     /// <summary>
@@ -346,6 +461,121 @@ namespace SuMultiplayer.Engine
                 return;
             m_lastProblemMs[key] = nowMs;
             Log.Warning("[SuMP] 内存条：" + message);
+
         }
+
+        public override bool OnEditInventoryItem(IInventory inventory, int slotIndex,
+            ComponentPlayer componentPlayer)
+        {
+            EditableItemBridge bridge =
+                (SubsystemTerrain as SuSubsystemTerrain)?.Bridge?.EditableItems;
+            Log.Information("[SuMP][editable-item] inventory edit entry kind=" +
+                EditableKinds.Name(EditableKinds.MemoryBank) + " bridge=" +
+                (bridge != null) + " client=" + ReplicaGates.IsClient(SubsystemTerrain) +
+                " slot=" + slotIndex);
+            if (bridge == null) return base.OnEditInventoryItem(inventory, slotIndex, componentPlayer);
+            if (inventory == null || componentPlayer == null || slotIndex < 0 ||
+                slotIndex >= inventory.SlotsCount || inventory.GetSlotCount(slotIndex) <= 0)
+                return true;
+            int value = inventory.GetSlotValue(slotIndex);
+            if (Game.Terrain.ExtractContents(value) != Contents) return true;
+            int itemDataId = Game.Terrain.ExtractData(value);
+            MemoryBankData current = GetItemData(itemDataId);
+            byte[] baseData = EditableEngineContent.EncodeMemoryBank(current ?? new MemoryBankData());
+            var draft = current != null ? (MemoryBankData)current.Copy() : new MemoryBankData();
+            DialogsManager.ShowDialog(componentPlayer.GuiWidget,
+                new EditMemoryBankDialog(draft, delegate
+                {
+                    byte[] desired = EditableEngineContent.EncodeMemoryBank(draft);
+                    if (ReplicaGates.IsClient(SubsystemTerrain))
+                    {
+                        if (!bridge.SubmitClientItemEdit(EditableKinds.MemoryBank, inventory,
+                                slotIndex, componentPlayer, value, baseData, desired,
+                                out string reason))
+                            componentPlayer.ComponentGui?.DisplaySmallMessage(
+                                "Memory bank item edit rejected: " + reason, Color.White,
+                                blinking: true, playNotificationSound: false);
+                        else
+                            bridge.ApplyClientOptimisticItemAtExistingId(EditableKinds.MemoryBank,
+                                Game.Terrain.ExtractData(value), desired);
+                        return;
+                    }
+                    bridge.TryApplyHostLocalItemEdit(EditableKinds.MemoryBank, inventory, slotIndex,
+                        value, desired, out _, out _, out string hostReason);
+                    if (!string.IsNullOrEmpty(hostReason))
+                        LogProblem("item-host", hostReason);
+                }));
+            return true;
+        }
+
+        private static readonly FieldInfo s_memoryItemData =
+            typeof(SubsystemEditableItemBehavior<MemoryBankData>).GetField("m_itemsData",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+
+        private Dictionary<int, MemoryBankData> MemoryItemData() =>
+            s_memoryItemData?.GetValue(this) as Dictionary<int, MemoryBankData>;
+
+        public Dictionary<int, string> CaptureNetworkItemData()
+        {
+            var result = new Dictionary<int, string>();
+            Dictionary<int, MemoryBankData> items = MemoryItemData();
+            if (items == null) return result;
+            foreach (KeyValuePair<int, MemoryBankData> item in items)
+                result[item.Key] = item.Value?.SaveString() ?? string.Empty;
+            return result;
+        }
+
+        public Dictionary<int, byte[]> CaptureNetworkItemDataBytes()
+        {
+            var result = new Dictionary<int, byte[]>();
+            Dictionary<int, MemoryBankData> items = MemoryItemData();
+            if (items == null) return result;
+            foreach (KeyValuePair<int, MemoryBankData> item in items)
+                result[item.Key] = EditableEngineContent.EncodeMemoryBank(item.Value);
+            return result;
+        }
+
+        public int StoreNetworkItemDataBytes(byte[] payload)
+        {
+            if (!EditableEngineContent.TryDecodeMemoryBank(payload, out MemoryBankData data,
+                    out _)) return -1;
+            return StoreItemDataAtUniqueId(data);
+        }
+
+        public bool StoreNetworkItemDataAtId(byte[] payload, int dataId)
+        {
+            if (dataId <= 0 || dataId >= 1000) return false;
+            if (!EditableEngineContent.TryDecodeMemoryBank(payload, out MemoryBankData data,
+                    out _)) return false;
+            Dictionary<int, MemoryBankData> items = MemoryItemData();
+            if (items == null) return false;
+            items[dataId] = data;
+            return true;
+        }
+
+        public void ApplyNetworkItemDataBytes(int dataId, byte[] payload)
+        {
+            Dictionary<int, MemoryBankData> items = MemoryItemData();
+            if (items == null || dataId < 0 || dataId >= 1000) return;
+            if (EditableEngineContent.TryDecodeMemoryBank(payload, out MemoryBankData data,
+                    out _)) items[dataId] = data;
+        }
+
+        public int StoreNetworkItemData(string payload)
+        {
+            var data = new MemoryBankData();
+            data.LoadString(payload ?? string.Empty);
+            return StoreItemDataAtUniqueId(data);
+        }
+
+        public void ApplyNetworkItemData(int dataId, string payload)
+        {
+            Dictionary<int, MemoryBankData> items = MemoryItemData();
+            if (items == null || dataId < 0 || dataId >= 1000) return;
+            var data = new MemoryBankData();
+            data.LoadString(payload ?? string.Empty);
+            items[dataId] = data;
+        }
+
     }
 }

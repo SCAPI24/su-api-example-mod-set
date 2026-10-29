@@ -97,3 +97,45 @@ message EditableState {
   // Bounded engine content (16 / 257 bytes; see EditableKind above).
   bytes data = 7;
 }
+
+// Host -> client: authoritative item-content registry (m_itemsData).
+// Truth table / memory bank items carry data ids in their terrain data bits;
+// the payload lives in this registry, not in the inventory message.
+message EditableItemEntry {
+  EditableKind kind = 1;
+  int32 data_id = 2;
+  bytes data = 3;
+}
+
+message EditableItemState {
+  int32 revision = 1;
+  bool full = 2;
+  repeated EditableItemEntry entries = 3;
+}
+
+// Client -> host: request the full registry after joining / reconnecting.
+message EditableItemSyncRequest {
+  int32 known_revision = 1;
+  string reason = 2;
+}
+
+// Client -> host: edit the payload of an editable item in the player's active
+// inventory (the dialog already updated a local draft only).
+message EditableItemEditRequest {
+  int64 sequence = 1;
+  EditableKind kind = 2;
+  int32 slot_index = 3;
+  // Full item value the client observed before opening the dialog.
+  int32 expected_value = 4;
+  bytes base_data = 5;
+  bytes data = 6;
+}
+
+message EditableItemEditResult {
+  int64 sequence = 1;
+  bool accepted = 2;
+  string reason = 3;
+  int32 data_id = 4;
+  // Authoritative item value (terrain value including the host data id).
+  int32 authoritative_value = 5;
+}

@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Reflection;
 using Engine;
 using Game;
+using GameEntitySystem;
 using TemplatesDatabase;
 using SuMultiplayer.Modules;
 using SuMultiplayer.Net;
@@ -1674,6 +1675,24 @@ namespace SuMultiplayer.Engine
         /// </summary>
         public ExplosionReplicaEngine Replica { get; set; }
 
+        /// <summary>
+        /// 客户端本地炸弹投掷物的表：SubsystemBombBlockBehavior.Update 每 0.1s 对表内
+        /// 投掷物调用 TryExplodeBlock；客户端的队列虽然会被清掉，但 AddExplosion 在
+        /// **入队前**就 ApplyBodiesShaking —— 结果本地投掷物每 0.1s 给摄像机叠加一次震动，
+        /// 表现成爆炸后镜头一直晃。客户端不跑这条本地爆炸路径，只收主机的爆炸事件。
+        /// </summary>
+        private static readonly FieldInfo s_bombProjectiles = typeof(SubsystemBombBlockBehavior)
+            .GetField("m_projectiles", BindingFlags.NonPublic | BindingFlags.Instance);
+
+        private static void ClearClientBombProjectiles(Project project)
+        {
+            if (project == null || s_bombProjectiles == null) return;
+            SubsystemBombBlockBehavior behavior =
+                project.FindSubsystem<SubsystemBombBlockBehavior>(false);
+            if (behavior == null) return;
+            if (s_bombProjectiles.GetValue(behavior) is IDictionary projectiles) projectiles.Clear();
+        }
+
         void IUpdateable.Update(float dt)
         {
             SubsystemTerrain terrain = base.Project.FindSubsystem<SubsystemTerrain>(false);
@@ -1681,6 +1700,7 @@ namespace SuMultiplayer.Engine
             {
                 ReplicaGates.ClearTable(terrain, this, "m_queuedExplosions",
                     typeof(SubsystemExplosions));
+                ClearClientBombProjectiles(base.Project);
                 return;
             }
             // 主机：由适配器复刻 base.Update 的队列消费循环，逐实例上报（含链式爆炸）。

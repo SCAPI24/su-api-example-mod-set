@@ -471,7 +471,10 @@ namespace SuMultiplayer.Engine
             }
             var key = new CellKey(x, y, z, request.Kind);
             int hostRevision = GetRevision(m_hostRevisions, key);
-            if (!EditableCodec.SameUserContent(request.Kind, current, request.BaseData))
+            bool baselineMismatch = hostRevision == 0 && request.BaseRevision == 0 &&
+                !EditableCodec.SameUserContent(request.Kind, current, request.BaseData);
+            if (!EditableCodec.SameUserContent(request.Kind, current, request.BaseData) &&
+                !baselineMismatch)
             {
                 reason = "stale-content: 主机内容已变化（主机 rev=" + hostRevision + "，请求 baseRev=" +
                     request.BaseRevision + "，主机=" +
@@ -487,8 +490,25 @@ namespace SuMultiplayer.Engine
                 m_hostRejected++;
                 return false;
             }
-            // 玩家只编辑 Data；内存条 LastOutput 是主机运行期状态，落地时保留主机当前值。
-            byte[] merged = EditableCodec.MergeUserContent(request.Kind, request.Data, current);
+            byte[] merged;
+            if (baselineMismatch)
+            {
+                // 刚加入/首次打开时客户端副本的方块内容可能尚未同步；此时主机 rev 仍是 0，
+                // 说明主机侧没有并发编辑。用“用户改动的 nibble 覆盖、未改动 nibble 保留主机”
+                // 的三方合并消除误拒绝，同时不丢掉主机原有内容。
+                LogProblem("baseline-mismatch",
+                    "可编辑内容首次 base 不一致：主机 rev=0，按用户改动合并（" +
+                    EditableKinds.Name(request.Kind) + " @" + x + "," + y + "," + z + "）");
+                // 客户端还没拿到主机初始内容时，它看到的对话框就是权威结果；
+                // 直接采用客户端提交的完整 Data，避免“合并后仍是主机旧内容”导致
+                // 用户确认后被还原。
+                merged = request.Data != null ? (byte[])request.Data.Clone() : null;
+            }
+            else
+            {
+                // 玩家只编辑 Data；内存条 LastOutput 是主机运行期状态，落地时保留主机当前值。
+                merged = EditableCodec.MergeUserContent(request.Kind, request.Data, current);
+            }
             if (!host.ApplyContent(x, y, z, contents, merged, hostAuthoritative: true,
                     out string applyReason))
             {
@@ -504,6 +524,61 @@ namespace SuMultiplayer.Engine
             m_hostApplied++;
             Log("主机落地可编辑内容 clientId=" + clientId + " " + state.Describe());
             return true;
+        }
+
+        private static byte[] MergeBaselineMismatch(int kind, byte[] current, byte[] baseData,
+            byte[] desired)
+        {
+            int length = Math.Min(current?.Length ?? 0, desired?.Length ?? 0);
+            var merged = new byte[length];
+            for (int i = 0; i < length; i++)
+            {
+                bool userChanged = baseData == null || i >= baseData.Length ||
+                    baseData[i] != desired[i];
+                merged[i] = userChanged ? desired[i] : current[i];
+            }
+            return merged;
+        }
+
+        /// <summary>
+        /// 主机放置可编辑方块后，把该格的权威内容广播给附近客户端。
+        /// 放置只经 CellChange，不走 EDITABLE_EDIT_REQUEST；不补这一步，其它客户端
+        /// 的副本里没有这座方块的内容，看到就是 00。
+        /// </summary>
+        public bool PublishPlacedBlock(int x, int y, int z, int contents)
+        {
+            int kind = contents == EditableKinds.BlockContents(EditableKinds.TruthTable)
+                ? EditableKinds.TruthTable
+                : contents == EditableKinds.BlockContents(EditableKinds.MemoryBank)
+                    ? EditableKinds.MemoryBank : -1;
+            if (kind < 0) return false;
+            if (!TryCaptureEditableState(x, y, z, kind, out EditableStateData captured,
+                    out string reason))
+            {
+                LogProblem("placed-state:" + reason, "放置方块内容广播失败 @" + x + "," + y + "," +
+                    z + "：" + reason);
+                return false;
+            }
+            var key = new CellKey(x, y, z, kind);
+            int revision = GetRevision(m_hostRevisions, key) + 1;
+            SetRevision(m_hostRevisions, key, revision, "host-placed");
+            var state = new EditableStateData(x, y, z, captured.Contents, kind, revision,
+                captured.Data);
+            Action<EditableStateData> handler = HostStateChanged;
+            if (handler == null) return false;
+            try
+            {
+                handler(state);
+                m_broadcastEvents++;
+                return true;
+            }
+            catch (Exception e)
+            {
+                m_broadcastFaults++;
+                LogProblem("placed-state-handler", "放置方块内容广播回调异常（" +
+                    e.GetType().Name + " " + e.Message + "）@" + x + "," + y + "," + z);
+                return false;
+            }
         }
 
         public bool TryCaptureEditableState(int x, int y, int z, int kind,

@@ -552,6 +552,7 @@ namespace SuMultiplayer.Engine
                     }
                     PlayerKey localKey = new PlayerKey(0, slot);
                     float localLevel = ReadCapturedLevel(locals[slot], localKey);
+                    ExtinguishHostPlayerInWater(player);
                     target.Add(CaptureOne(localKey, player, localLevel));
                     count++;
                 }
@@ -581,6 +582,7 @@ namespace SuMultiplayer.Engine
                 }
                 bool dead = player.ComponentHealth.Health <= 0f;
                 float level = ReadHostAuthorityLevel(key, playerData, player, dead);
+                ExtinguishHostPlayerInWater(player);
                 target.Add(CaptureOne(key, player, level));
                 count++;
             }
@@ -3527,6 +3529,28 @@ namespace SuMultiplayer.Engine
             if (playerData == null) return 0f;
             float level = playerData.Level;
             return PlayerLevelCapture.TryCapture(level, out float captured, out _) ? captured : 0f;
+        }
+
+        /// <summary>
+        /// 主机权威水中熄火：远端化身的主机侧 ComponentBody 不总是完整推进，
+        /// ImmersionFactor 可能滞后；直接按身体中心所在格判断 WaterBlock，主动灭火。
+        /// 下一拍 vitals 快照的 FireDuration=0 会让客户端同步熄灭/收粒子。
+        /// </summary>
+        private void ExtinguishHostPlayerInWater(ComponentPlayer player)
+        {
+            ComponentOnFire fire = player?.Entity?.FindComponent<ComponentOnFire>();
+            ComponentBody body = player?.ComponentBody;
+            if (fire == null || !fire.IsOnFire || body == null) return;
+            Project project = GameManager.Project;
+            SubsystemTerrain terrain = project?.FindSubsystem<SubsystemTerrain>(false);
+            if (terrain?.Terrain == null) return;
+            int x = global::Game.Terrain.ToCell(body.Position.X);
+            int y = global::Game.Terrain.ToCell(body.Position.Y + 0.5f);
+            int z = global::Game.Terrain.ToCell(body.Position.Z);
+            int contents = terrain.Terrain.GetCellContents(x, y, z);
+            if (contents > 0 && contents < BlocksManager.Blocks.Length &&
+                BlocksManager.Blocks[contents] is WaterBlock)
+                fire.Extinguish();
         }
 
         private PlayerVitalsSnapshot CaptureOne(PlayerKey key, ComponentPlayer player,

@@ -1,0 +1,51 @@
+syntax = "proto3";
+
+package sump.protocol;
+
+option csharp_namespace = "SuMultiplayer.Protocol";
+option optimize_for = SPEED;
+
+// Sign text/colour/url is world-scoped state stored by SubsystemSignBlockBehavior
+// in its private m_textsByPoint dictionary; it is not terrain cell data.
+// The host is authoritative; clients send changed records and receive the full
+// authoritative snapshot. Snapshot messages are idempotent and full (the sign
+// table is small compared with terrain).
+
+message SignRecord {
+  int32 x = 1;
+  int32 y = 2;
+  int32 z = 3;
+  // Exactly 4 lines; empty string = blank line.
+  repeated string lines = 4;
+  // Exactly 4 packed Color values (Color.PackedValue).
+  repeated uint32 colors = 5;
+  // Optional link/url (may be empty).
+  string url = 6;
+}
+
+// Host -> clients: complete authoritative sign table (full = true).
+message SignState {
+  int32 revision = 1;
+  bool full = 2;
+  repeated SignRecord signs = 3;
+  string reason = 4;
+}
+
+// Client -> host: "send me the sign table" (join / reconnect / resync).
+message SignSyncRequest {
+  int32 known_revision = 1;
+  string reason = 2;
+}
+
+// Client -> host: local edits (dialog OK already wrote the client replica).
+message SignEditRequest {
+  int64 sequence = 1;
+  repeated SignRecord signs = 2;
+  string reason = 3;
+}
+
+message SignEditResult {
+  int64 sequence = 1;
+  bool accepted = 2;
+  string reason = 3;
+}

@@ -297,6 +297,7 @@ namespace SuMultiplayer.Engine
                         "客户端武器本地预测的投射物会被清除（开火必须由主机创建）");
                 }
                 Replica?.CullForeignClientProjectiles();
+                DriveClientProjectileTrails(terrain);
                 return;
             }
             // 主机：窗口内新增的 WaterSplashParticleSystem 由 WaterSplashReplicaEngine
@@ -317,5 +318,34 @@ namespace SuMultiplayer.Engine
                 hitSink?.EndHostHitCapture();
             }
         }
+        /// <summary>
+        /// 客户端不跑 base.Update，因此原版 SubsystemProjectiles 里"把 TrailParticleSystem
+        /// 加入 SubsystemParticles 并更新位置"的两步也不会发生。这里替客户端驱动
+        /// 炸弹等投射物的尾迹（只表现，不推进投射物物理）。
+        /// </summary>
+        private void DriveClientProjectileTrails(SubsystemTerrain terrain)
+        {
+            if (terrain?.Project == null) return;
+            SubsystemParticles particles = terrain.Project.FindSubsystem<SubsystemParticles>(false);
+            if (particles == null) return;
+            foreach (Projectile projectile in Projectiles)
+            {
+                if (projectile == null || projectile.TrailParticleSystem == null) continue;
+                if (projectile.TrailParticleSystem is ParticleSystemBase system &&
+                    !particles.ContainsParticleSystem(system))
+                    particles.AddParticleSystem(system);
+                Vector3 offset = projectile.TrailOffset;
+                if (offset != Vector3.Zero)
+                {
+                    float rotationLength = projectile.Rotation.Length();
+                    if (rotationLength > 1e-5f)
+                        offset = Vector3.TransformNormal(offset,
+                            Matrix.CreateFromAxisAngle(projectile.Rotation / rotationLength,
+                                rotationLength));
+                }
+                projectile.TrailParticleSystem.Position = projectile.Position + offset;
+            }
+        }
+
     }
 }

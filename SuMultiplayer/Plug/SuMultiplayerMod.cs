@@ -95,6 +95,12 @@ namespace SuMultiplayer
         /// <summary>家具设计 / 内容同步：引擎适配（主机权威设计表 + 客户端副本表）+ 网络模块。</summary>
         private FurnitureReplicaEngine m_furnitureEngine;
         private FurnitureSyncModule m_furnitureModule;
+        /// <summary>标牌板子系统：主机权威文本表 + 客户端差异上传 + 全量快照。</summary>
+        private SignSyncEngine m_signEngine;
+        private SignSyncModule m_signModule;
+        /// <summary>可编辑物品内容（真值表 / 内存条 m_itemsData）。</summary>
+        private EditableItemBridge m_editableItemBridge;
+        private EditableItemSyncModule m_editableItemModule;
         /// <summary>
         /// 可编辑方块内容（真值表 / 内存条）：引擎适配层（客户端对话框提交 → 请求；
         /// 主机校验 + 落地权威内容 + 广播）+ 网络模块。组合根把适配层挂到
@@ -426,6 +432,8 @@ namespace SuMultiplayer
             // 客户端编辑销毁方块 → 主机补生成掉落：地形桥在 ChangeCell 前后调用这个引擎端口
             // （先 GetDropValues + OnItemHarvested，再 AddPickable），掉落者拿到 1.5s 拾取免疫窗口。
             m_terrainModule.Bridge.HostBlockDrops = m_entityEngine;
+            m_terrainModule.Bridge.HostPlacementItemData = ResolveHostPlacementItemData;
+            m_terrainModule.Bridge.HostPlacedBlockData = CopyPlacedItemDataToBlock;
             m_entityModule = new EntityReplicationModule(m_entityEngine, m_actionBridge,
                 m_inventoryStore);
             // 方块使用 / 容器：客户端在 ComponentPlayer.Update 之前拦下 Interact（不本地执行），
@@ -452,6 +460,11 @@ namespace SuMultiplayer
                     m_worldJoinSettings.AllowFurnitureImport; },
                 delegate { return m_worldJoinSettings != null &&
                     m_worldJoinSettings.AllowFurnitureExport; });
+            m_signEngine = new SignSyncEngine(avatarSpawner, engineModManager.ModParentField,
+                diagnostics);
+            m_signModule = new SignSyncModule(m_signEngine);
+            m_editableItemBridge = new EditableItemBridge(avatarSpawner);
+            m_editableItemModule = new EditableItemSyncModule(m_editableItemBridge);
             // 可编辑方块内容（真值表 188 / 内存条 186）：对话框 OK 的提交在客户端只改本地副本
             // （引擎事实），主机永远看不到 —— 外壳接管 OnEditBlock，提交变成 EDITABLE_EDIT_REQUEST，
             // 主机校验并落地权威内容后广播 EDITABLE_STATE；客户端只把权威内容写进副本。
@@ -463,6 +476,7 @@ namespace SuMultiplayer
             m_editableModule = new EditableSyncModule(m_editableBridge);
             // 外壳通过 SubsystemTerrain → Bridge 找适配层（与营火 / 活塞表现同一注入方式）。
             m_terrainModule.Bridge.EditableBlocks = m_editableBridge;
+            m_terrainModule.Bridge.EditableItems = m_editableItemBridge;
             // 远程动作声音：客户端点开关 / 按钮 / 拉杆时，方块行为由主机用远端玩家的
             // ComponentMiner 执行，SubsystemAudio 只在主机播放（SwitchElectricElement.cs:27,
             // SubsystemDoorBlockBehavior.cs:24, SubsystemCampfireBlockBehavior.cs:209/213）。
@@ -728,6 +742,8 @@ namespace SuMultiplayer
             m_moduleHost.Register(m_worldControlModule);
             // 家具设计 / 内容同步：transport 硬依赖；消息处理在 Attach 里注册。
             m_moduleHost.Register(m_furnitureModule);
+            m_moduleHost.Register(m_signModule);
+            m_moduleHost.Register(m_editableItemModule);
             // 可编辑方块内容同步：transport 硬依赖；消息处理在 Attach 里注册。
             m_moduleHost.Register(m_editableModule);
             // 活塞运动表现同步：transport 硬依赖；消息处理在 Attach 里注册。
@@ -2048,6 +2064,7 @@ namespace SuMultiplayer
                     m_terrainModule.Bridge.FurnacePresenter = null;
                     m_terrainModule.Bridge.PistonPresenter = null;
                     m_terrainModule.Bridge.EditableBlocks = null;
+                    m_terrainModule.Bridge.EditableItems = null;
                 }
             }
             catch (Exception)
@@ -2081,5 +2098,53 @@ namespace SuMultiplayer
             public void Error(string moduleId, string message, Exception exception) =>
                 ModLog.Error("[" + moduleId + "] " + message, exception);
         }
+        /// <summary>
+        /// 客户端放置方块时用主机远端背包的当前物品值覆盖请求 data id：
+        /// 物品编辑是异步 result，放置可能先到；旧 data id 在主机可能已没有 payload。
+        /// </summary>
+        private void CopyPlacedItemDataToBlock(int x, int y, int z, int contents, int itemDataId)
+        {
+            if (m_editableItemBridge == null) return;
+            bool copied = m_editableItemBridge.TryCopyItemDataToBlock(x, y, z, contents,
+                itemDataId, out string reason);
+            if (!string.IsNullOrEmpty(reason))
+                Log.Information("[SuMP][editable-item] 放置方块内容复制失败 @" +
+                    x + "," + y + "," + z + " contents=" + contents + " dataId=" +
+                    itemDataId + "：" + reason);
+            if (copied)
+                m_editableBridge?.PublishPlacedBlock(x, y, z, contents);
+        }
+
+        private bool ResolveHostPlacementItemData(int clientId, int contents, out int data)
+        {
+            data = 0;
+            if (m_avatarSpawner == null ||
+                !m_avatarSpawner.TryGet(clientId, out PlayerData playerData))
+                return false;
+            IInventory inventory = playerData?.ComponentPlayer?.ComponentMiner?.Inventory;
+            if (inventory == null) return false;
+            int slot = inventory.ActiveSlotIndex;
+            if (slot >= 0 && slot < inventory.SlotsCount && inventory.GetSlotCount(slot) > 0)
+            {
+                int activeValue = inventory.GetSlotValue(slot);
+                if (global::Game.Terrain.ExtractContents(activeValue) == contents)
+                {
+                    data = global::Game.Terrain.ExtractData(activeValue);
+                    return true;
+                }
+            }
+            // 活跃槽同步偶尔比放置请求慢一拍：从背包里找同 contents 的物品，
+            // 用它的权威 data id（仍只替换 data 高位，不动 face/rotation）。
+            for (int i = 0; i < inventory.SlotsCount; i++)
+            {
+                if (inventory.GetSlotCount(i) <= 0) continue;
+                int value = inventory.GetSlotValue(i);
+                if (global::Game.Terrain.ExtractContents(value) != contents) continue;
+                data = global::Game.Terrain.ExtractData(value);
+                return true;
+            }
+            return false;
+        }
+
     }
 }

@@ -129,6 +129,9 @@ namespace SuMultiplayer.Engine
         /// </summary>
         public EditableBlockBridge EditableBlocks { get; set; }
 
+        /// <summary>真值表 / 内存条背包物品内容（m_itemsData）。</summary>
+        public EditableItemBridge EditableItems { get; set; }
+
         /// <summary>
         /// 客户端方块行为通知的单一漏斗（presentation-only；镜像 ChangeCell 的
         /// OnBlockRemoved / OnBlockAdded / OnBlockModified 派发规则）。
@@ -573,6 +576,27 @@ namespace SuMultiplayer.Engine
         public IHostBlockDropSink HostBlockDrops { get; set; }
 
         /// <summary>
+        /// 主机放置方块时解析“客户端当前手持物品的权威 data id”。
+        /// 客户端物品编辑与放置是两条异步请求；如果放置请求里带的是旧 data id，
+        /// 主机用自己远端背包槽位的当前值覆盖，避免放下一个没有 payload 的 0。
+        /// 返回 false = 不是放置 / 背包不可用，保持请求原值。
+        /// </summary>
+        public delegate bool HostPlacementItemDataResolver(int clientId, int contents,
+            out int data);
+
+        public HostPlacementItemDataResolver HostPlacementItemData { get; set; }
+
+        /// <summary>
+        /// 主机放置可编辑方块后，把物品 data id 对应的 payload 复制进主机 block data 表。
+        /// 客户端放置走 CellEditRequest，不经过引擎 OnItemPlaced；不补这一步，方块
+        /// 被挖掉时 OnItemHarvested 找不到 block data，掉落物就没有内容。
+        /// </summary>
+        public delegate void HostPlacedBlockDataHandler(int x, int y, int z, int contents,
+            int itemDataId);
+
+        public HostPlacedBlockDataHandler HostPlacedBlockData { get; set; }
+
+        /// <summary>
         /// 主机：方块被破坏时的**纯表现**出口（碎屑 / 落叶粒子）。null = 日志明确计数，不假装同步。
         /// 由组合根注入 BlockEffectReplicaEngine；观察器只在本端为权威时调用。
         /// </summary>
@@ -649,7 +673,13 @@ namespace SuMultiplayer.Engine
                 return false;
             }
             int oldContents = Game.Terrain.ExtractContents(oldValue);
+            // 放置值必须保持客户端提交的 face/rotation 低位；物品 data id 的
+            // 异步回写不能再覆盖整个 data 字段。
             int requestedValue = Game.Terrain.MakeBlockValue(contents, 0, data);
+            int placedItemDataId = -1;
+            if (oldContents == 0 && HostPlacementItemData != null &&
+                HostPlacementItemData(clientId, contents, out int placementDataId))
+                placedItemDataId = placementDataId;
             // "销毁"= 旧格非空气、且请求要把 contents 改成别的。data-only 改动不算销毁。
             bool destroying = EditDropPolicy.DestroysOldBlock(oldContents, contents);
             HostBlockDropPlan plan = null;
@@ -705,6 +735,8 @@ namespace SuMultiplayer.Engine
                 m_activeHostEditClientId = previousEditClient;
             }
             int value = subsystem.Terrain.GetCellValueFast(x, y, z);
+            if (placedItemDataId >= 0)
+                HostPlacedBlockData?.Invoke(x, y, z, contents, placedItemDataId);
             outcome.ResultContents = Game.Terrain.ExtractContents(value);
             outcome.ResultData = Game.Terrain.ExtractData(value);
             outcome.ResultDiffersFromRequest = value != requestedValue;

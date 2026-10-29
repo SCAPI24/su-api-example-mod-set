@@ -2489,9 +2489,28 @@ namespace SuMultiplayer.Engine
                 LastUpdateTime = Time.RealTime
             };
             ApplyProjectileTarget(replica, state);
+            EnsureClientBombTrail(projectile, state.Value);
             m_clientProjectiles[state.Id] = replica;
             m_replicasCreated++;
             return true;
+        }
+
+        /// <summary>
+        /// 客户端炸弹投射物的燃烧/烟雾尾迹。引擎的 SubsystemBombBlockBehavior.ScanProjectile
+        /// 会在 ProjectileAdded 时挂 SmokeTrailParticleSystem；复制体如果没走到那条路径，
+        /// 客户端就看不到炸弹飞行时的燃烧效果。这里在复制体创建时补挂同款尾迹。
+        /// </summary>
+        private void EnsureClientBombTrail(Projectile projectile, int value)
+        {
+            if (projectile == null) return;
+            int contents = global::Game.Terrain.ExtractContents(value);
+            if (contents <= 0 || BlocksManager.Blocks == null ||
+                contents >= BlocksManager.Blocks.Length) return;
+            Block block = BlocksManager.Blocks[contents];
+            if (!(block is BombBlock) && !(block is IncendiaryBombBlock)) return;
+            // 客户端用跟随炸弹的火焰引线尾迹；主机仍由原版 BombBlockBehavior 表现。
+            m_projectiles.AddTrail(projectile, new Vector3(0f, 0.25f, 0.1f),
+                new BombFuseTrailParticleSystem(projectile));
         }
 
         private static void ApplyProjectileTarget(ClientProjectileReplica replica,
