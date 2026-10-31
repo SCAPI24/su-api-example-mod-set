@@ -11,8 +11,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Engine" Version="0.1.7" />
-    <PackageReference Include="EntitySystem" Version="0.1.7" />
-    <PackageReference Include="Survivalcraft" Version="0.1.7" />
+    <PackageReference Include="Engine" Version="0.1.7.0" />
+    <PackageReference Include="EntitySystem" Version="0.1.7.0" />
+    <PackageReference Include="Survivalcraft" Version="0.1.7.0" />
   </ItemGroup>
 </Project>

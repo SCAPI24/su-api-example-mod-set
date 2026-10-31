@@ -27,9 +27,9 @@
 
   <!-- 引擎核心三件套：改为 NuGet 包（原为 Engine/EntitySystem/Survivalcraft 工程引用） -->
   <ItemGroup>
-    <PackageReference Include="Engine" Version="0.1.7" />
-    <PackageReference Include="EntitySystem" Version="0.1.7" />
-    <PackageReference Include="Survivalcraft" Version="0.1.7" />
+    <PackageReference Include="Engine" Version="0.1.7.0" />
+    <PackageReference Include="EntitySystem" Version="0.1.7.0" />
+    <PackageReference Include="Survivalcraft" Version="0.1.7.0" />
   </ItemGroup>
 
   <ItemGroup>
@@ -41,7 +41,7 @@
     <!-- SuAPICore 是游戏内置 Mod：从制品库源 cnb-nuget（nuget.cnb.cool/suceru.cb/SuAPICore）取包，
          构建时复制到 bin 以便 Obfuscar 解析其接口/基类成员；
          打 .scmod 时只取 ScMultiplayer.dll + Comms.dll，绝不把 SuAPICore.dll 放进 Lib/ -->
-    <PackageReference Include="SuAPICore" Version="0.1.7" />
+    <PackageReference Include="SuAPICore" Version="0.1.7.0" />
   </ItemGroup>
 
   <ItemGroup>

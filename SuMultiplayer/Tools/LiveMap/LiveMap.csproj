@@ -28,6 +28,6 @@
   <ItemGroup>
     <PackageReference Include="Google.Protobuf" Version="3.28.3" />
     <!-- TransportDiagnostics 的 Engine.Log 依赖（只用于工具进程的传输统计日志） -->
-    <PackageReference Include="Engine" Version="0.1.6" />
+    <PackageReference Include="Engine" Version="0.1.7.0" />
   </ItemGroup>
 </Project>

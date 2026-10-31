@@ -28,6 +28,6 @@
              Exclude="..\..\..\Net\TransportPort.cs" />
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="Engine" Version="0.1.6" />
+    <PackageReference Include="Engine" Version="0.1.7.0" />
   </ItemGroup>
 </Project>

@@ -39,6 +39,6 @@
   <ItemGroup>
     <!-- PlayerPositionNet.cs 用引擎的 Vector3/Quaternion/Vector2/MathUtils。
          版本与 mod 的 PackageReference 一致（cnb-nuget 源）。 -->
-    <PackageReference Include="Engine" Version="0.1.6" />
+    <PackageReference Include="Engine" Version="0.1.7.0" />
   </ItemGroup>
 </Project>

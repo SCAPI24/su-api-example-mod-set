@@ -15,7 +15,7 @@
 
 1. **.NET SDK**：8.0.402+（`global.json` 要求，允许向上滚动；PATH 上的 SDK 10 也能编译 `net8.0` 目标）。
    检查：`dotnet --version`。
-2. **NuGet 源 `cnb-nuget`**：C# 套件的 `Engine 0.1.6` 包与 mod 同源（`PackageReference`，不依赖手工构建过 mod）。
+2. **NuGet 源 `cnb-nuget`**：C# 套件的 `Engine 0.1.7.0` 包与 mod 同源（`PackageReference`，不依赖手工构建过 mod）。
    只需配置一次：
    ```bash
    dotnet nuget add source https://nuget.cnb.cool/suceru.cb/SuAPICore/-/packages/v3/index.json --name cnb-nuget

@@ -76,8 +76,8 @@
 
 | 包 | 版本 | 说明 |
 |---|---|---|
-| Engine / EntitySystem / Survivalcraft | 0.1.6 | cnb-nuget 制品库 |
-| SuAPICore | 0.1.6 | IMod / ModInjector |
+| Engine / EntitySystem / Survivalcraft | 0.1.7.0 | cnb-nuget 制品库 |
+| SuAPICore | 0.1.7.0 | IMod / ModInjector |
 
 `SuEventBus` 是中间件工程（`../SuEventBus`），随包打进 `Lib/SuEventBus.dll`；`ModInfo.xml` 里声明了对它的依赖。
 

@@ -8,9 +8,9 @@
   <!-- 引擎依赖改为从 CNB NuGet 制品库引用，不再 ProjectReference 引擎源码。
        源为全局 NuGet 源 cnb-nuget。包版本需与 ModInfo.xml 的 APIVersion 对应。 -->
   <ItemGroup>
-    <PackageReference Include="Engine" Version="0.1.6.0" />
-    <PackageReference Include="EntitySystem" Version="0.1.6.0" />
-    <PackageReference Include="Survivalcraft" Version="0.1.6.0" />
+    <PackageReference Include="Engine" Version="0.1.7.0" />
+    <PackageReference Include="EntitySystem" Version="0.1.7.0" />
+    <PackageReference Include="Survivalcraft" Version="0.1.7.0" />
   </ItemGroup>
 
   <!-- Obfuscar 需要引擎 DLL 与 Mod DLL 同时位于 bin\<Config>\net8.0。
