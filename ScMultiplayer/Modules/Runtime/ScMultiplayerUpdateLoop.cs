@@ -1372,11 +1372,9 @@ namespace ScMultiplayer
                 return;
             }
 
-            // Source: Engine/Engine/Input/Keyboard.cs:Keyboard.KeyPressHandler
-            // Windows IMEs commit a candidate as multiple characters in one frame.
-            TextBoxDialog dialog = OperatingSystem.IsWindows()
-                ? new WindowsTalkDialog("Talk", "", 125, SendTalkMessage)
-                : new TextBoxDialog("Talk", "", 125, SendTalkMessage);
+            // Source: Survivalcraft/Game/TextBoxWidget.cs:TextBoxWidget.Update
+            // 引擎层已消费 IME 整串上屏文本，各平台统一使用原版 TextBoxDialog。
+            TextBoxDialog dialog = new TextBoxDialog("Talk", "", 125, SendTalkMessage);
 
             void SendTalkMessage(string text)
             {

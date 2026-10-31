@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <LangVersion>latest</LangVersion>
     <ImplicitUsings>disable</ImplicitUsings>
     <Nullable>disable</Nullable>
@@ -11,8 +11,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Engine" Version="0.1.6" />
-    <PackageReference Include="EntitySystem" Version="0.1.6" />
-    <PackageReference Include="Survivalcraft" Version="0.1.6" />
+    <PackageReference Include="Engine" Version="0.1.7" />
+    <PackageReference Include="EntitySystem" Version="0.1.7" />
+    <PackageReference Include="Survivalcraft" Version="0.1.7" />
   </ItemGroup>
 </Project>

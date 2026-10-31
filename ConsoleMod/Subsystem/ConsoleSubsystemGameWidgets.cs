@@ -298,8 +298,7 @@ namespace ConsoleMod
                 m_justToggled = false;
                 if (IsWindows)
                 {
-                    KeyboardInput.DeletePressed = false;
-                    KeyboardInput.GetInput(); // Drain stale chars accumulated before console opened
+                    Keyboard.AcquireEnteredText(); // Drain stale chars accumulated before console opened
                 }
                 return;
             }
@@ -379,8 +378,6 @@ namespace ConsoleMod
             {
                 if (m_cursorPos < m_inputText.Length)
                     m_inputText.Remove(m_cursorPos, 1);
-                if (IsWindows)
-                    KeyboardInput.DeletePressed = false;
                 return;
             }
 
@@ -392,8 +389,6 @@ namespace ConsoleMod
                     m_inputText.Remove(m_cursorPos - 1, 1);
                     m_cursorPos--;
                 }
-                if (IsWindows)
-                    KeyboardInput.DeletePressed = false;
                 return;
             }
 
@@ -443,10 +438,10 @@ namespace ConsoleMod
                 return;
             }
 
-            // Character input (Windows: via KeyboardInput.GetInput; Android: via ShowKeyboard dialog)
+            // Character input (Windows: Engine ACQUIRE queue; Android: via ShowKeyboard dialog)
             if (IsWindows)
             {
-                string inputChars = KeyboardInput.GetInput();
+                string inputChars = Keyboard.AcquireEnteredText();
                 if (!string.IsNullOrEmpty(inputChars))
                 {
                     m_historyIndex = -1;

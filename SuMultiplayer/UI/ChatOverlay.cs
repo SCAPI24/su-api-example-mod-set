@@ -25,9 +25,8 @@ namespace SuMultiplayer.UI
     ///   · 触摸端常驻一个 "聊天" 按钮（右下、快捷栏上方），点它打开输入。
     ///
     /// 输入路径（引擎自己的做法，不破坏 Android 软键盘）：
-    ///   · Windows / 桌面：HUD 输入控件自己读 <c>WidgetInput.LastChar / LastKey</c>
-    ///     （与 <c>TextBoxWidget.Update</c> 同一条路径），并挂
-    ///     <see cref="SuAPITextInput"/> 的 IME 采集器解决中文一次上屏多字；
+    ///   · Windows / 桌面：HUD 输入控件直接消费 <c>Keyboard.AcquireEnteredText()</c>
+    ///     的整串 IME 上屏文本（与 <c>TextBoxWidget.Update</c> 同一条路径），
     ///     输入期间每帧 <c>Keyboard.Clear()</c>，让 WASD / T（引擎的昼夜切换）等
     ///     游戏键不落到角色身上 —— 关闭时绝不调用，T/E 等正常交给游戏；
     ///   · Android / 触摸：直接走 <see cref="Keyboard.ShowKeyboard"/>（引擎原生
@@ -278,7 +277,6 @@ namespace SuMultiplayer.UI
         private readonly Color m_panelFill = new Color(32, 24, 16, 176);
         private readonly Color m_panelOutline = new Color(138, 104, 62, 200);
         private BitmapFont m_font;
-        private IDisposable m_imeLease;
         private string m_feedSignature = string.Empty;
         private bool m_inputOpen;
         private bool m_nativeKeyboardOpen;
@@ -688,19 +686,6 @@ namespace SuMultiplayer.UI
             m_inputRow.IsVisible = true;
             DrainPendingKeyboardInput();
             m_input.HasFocus = true;
-            if (!automation)
-            {
-                try
-                {
-                    m_imeLease = SuAPITextInput.Attach(m_input, holdImeContext: true);
-                }
-                catch (Exception e)
-                {
-                    m_logWarn?.Invoke("[SuMP][chat-ui] 聊天输入挂 IME 采集器失败（" +
-                        e.GetType().Name + " " + e.Message + "）→ 仅单字符输入；中文 IME 可能丢字" +
-                        "（这是显式的降级，不是正常路径）");
-                }
-            }
             m_logInfo?.Invoke(automation
                 ? "[SuMP][chat-ui] 聊天输入已由自动化打开（HUD 内联输入，不弹软键盘）"
                 : "[SuMP][chat-ui] 聊天输入已打开（回车发送 / Esc 取消）");
@@ -836,16 +821,6 @@ namespace SuMultiplayer.UI
             if (m_input == null) return;
             m_inputRow.IsVisible = false;
             m_input.HasFocus = false;
-            if (m_imeLease != null)
-            {
-                try { m_imeLease.Dispose(); }
-                catch (Exception e)
-                {
-                    m_logWarn?.Invoke("[SuMP][chat-ui] 释放 IME 租约失败：" + e.GetType().Name +
-                        " " + e.Message);
-                }
-                m_imeLease = null;
-            }
             m_nativeKeyboardOpen = false;
             if (clearText) m_input.Text = string.Empty;
             m_input.CaretPosition = 0;
@@ -858,8 +833,7 @@ namespace SuMultiplayer.UI
             // 与 TextBoxWidget 相同的"打开 / 关闭时排空"：启动以来的积压字符绝不能灌进
             // 刚打开的输入框；按住的方向键也必须在交还游戏输入前清掉。
             // Source: Survivalcraft/Game/TextBoxWidget.cs:TextBoxWidget.HasFocus
-            KeyboardInput.GetInput();
-            KeyboardInput.DeletePressed = false;
+            Keyboard.AcquireEnteredText();
             Keyboard.Clear();
         }
 
@@ -902,13 +876,9 @@ namespace SuMultiplayer.UI
     /// <summary>
     /// HUD 内联文本输入控件。
     ///
-    /// 它刻意提供与引擎 <c>TextBoxWidget</c> 同名的公开属性（Text / CaretPosition /
-    /// MaximumLength / HasFocus），这样 <see cref="SuAPITextInput.Attach"/> 的
-    /// <c>TextBoxAccessor</c> 能直接接管它（SuAPITextInput 通过反射读这几个属性，
-    /// 注释见 EntitySystem/SuAPICore/SuAPITextInput.cs:TextBoxAccessor）。
-    ///
-    /// 按键处理与 <c>TextBoxWidget.Update</c> 完全同源：LastChar 单字符、LastKey 的
-    /// Backspace/Delete/Left/Right/Home/End/Enter/Escape，处理后 <c>Input.Clear()</c>。
+    /// 按键处理与 <c>TextBoxWidget.Update</c> 同源：先消费
+    /// <c>Keyboard.AcquireEnteredText()</c> 的整串 IME 上屏文本，再处理 LastChar /
+    /// LastKey 的 Backspace/Delete/Left/Right/Home/End/Enter/Escape，处理后 <c>Input.Clear()</c>。
     /// 额外做的一步：输入期间每帧 <c>Keyboard.Clear()</c>，让 WASD / T 等游戏键
     /// 不落到角色上（关闭输入后不再调用，正常游戏输入完全不受影响）。
     /// </summary>
@@ -1000,11 +970,10 @@ namespace SuMultiplayer.UI
                 }
             }
 
-            // 1) IME 一次上屏的整串（SuAPITextInput 的采集器通常已先处理并清空这里；
-            //    没挂上采集器时这一段仍然能拿到整串，避免中文连打丢字）。
-            if (KeyboardInput.Chars.Count > 0)
+            // 1) IME 一次上屏的整串（Engine 帧内队列，与 TextBoxWidget 走同一条路径）。
+            string committed = Keyboard.AcquireEnteredText();
+            if (!string.IsNullOrEmpty(committed))
             {
-                string committed = KeyboardInput.GetInput();
                 InsertPrintable(committed);
                 input.Clear();
             }
