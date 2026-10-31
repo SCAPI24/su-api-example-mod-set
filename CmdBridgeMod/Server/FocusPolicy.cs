@@ -492,9 +492,21 @@ namespace CmdBridgeMod
                 EnsureCursorGuardInstalled();
 
                 bool detached = IsDetached;
+                //mod 用户 2026-11-01：真实鼠标与软鼠标分离控制。
+                // Auto 模式下“真实失焦”= 用户没有接入焦点：不调用应用焦点（不伪造 Window 活跃），
+                // 也不把真实鼠标接入引擎；只保留软光标 + 虚拟注入通道（与 Windows 实现对齐）。
+                // 显式 focus.detach 仍保留原来的虚拟焦点（AI/后台脚本需要引擎以为窗口活跃）。
+                bool naturalFocusWhenUnfocused = OperatingSystem.IsLinux() && m_mode == FocusMode.Auto;
                 if (detached)
                 {
-                    ForceEngineActive();
+                    if (naturalFocusWhenUnfocused)
+                    {
+                        RestoreEngineFocus();
+                    }
+                    else
+                    {
+                        ForceEngineActive();
+                    }
                     CutRealMouse();
                 }
                 else
@@ -507,11 +519,21 @@ namespace CmdBridgeMod
                 if (detached != m_detachedLastFrame)
                 {
                     m_detachedLastFrame = detached;
-                    m_lastNote = detached
-                        ? "detached: engine treats the window as active, real mouse is cut off"
-                        : "attached: engine focus is natural, real input merged with injected";
+                    if (!detached)
+                    {
+                        m_lastNote = "attached: engine focus is natural, real input merged with injected";
+                    }
+                    else if (naturalFocusWhenUnfocused)
+                    {
+                        m_lastNote = "detached: engine focus left natural, real mouse not merged (soft cursor only)";
+                    }
+                    else
+                    {
+                        m_lastNote = "detached: engine treats the window as active, real mouse is cut off";
+                    }
                     Log.Information("[CmdBridge] focus policy -> " + m_lastNote);
                 }
+                //..mod
             }
             catch (Exception exception)
             {
