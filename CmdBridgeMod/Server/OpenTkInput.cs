@@ -246,10 +246,21 @@ namespace CmdBridgeMod
                     m_cursorVisibleProperty = type.GetProperty("CursorVisible");
                     m_cursorGrabbedProperty = type.GetProperty("CursorGrabbed");
                 }
+                // X11 的 OpenTK CursorVisible setter 每次赋值都会 Ungrab/Grab + warp 指针；
+                // 失焦期间每帧重复设置会把系统指针反复拉回游戏窗口（表现为鼠标移不出去）。
+                // 只在值确实需要变化时设置一次。
                 if (m_cursorVisibleProperty != null && m_cursorVisibleProperty.CanWrite)
-                    m_cursorVisibleProperty.SetValue(gameWindow, true);
+                {
+                    object currentVisible = m_cursorVisibleProperty.GetValue(gameWindow);
+                    if (!Equals(currentVisible, true))
+                        m_cursorVisibleProperty.SetValue(gameWindow, true);
+                }
                 if (m_cursorGrabbedProperty != null && m_cursorGrabbedProperty.CanWrite)
-                    m_cursorGrabbedProperty.SetValue(gameWindow, false);
+                {
+                    object currentGrabbed = m_cursorGrabbedProperty.GetValue(gameWindow);
+                    if (!Equals(currentGrabbed, false))
+                        m_cursorGrabbedProperty.SetValue(gameWindow, false);
+                }
             }
             catch (Exception)
             {
