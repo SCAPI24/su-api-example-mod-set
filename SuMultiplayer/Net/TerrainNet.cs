@@ -215,6 +215,16 @@ namespace SuMultiplayer.Net
     /// <summary>通道统计（用于页面与断言：发送 = 接收 + 在途，丢弃恒为 0）。</summary>
     public sealed class ChannelStats
     {
+        private sealed class TypeCounters
+        {
+            public long FramesSent;
+            public long BytesSent;
+            public long FramesReceived;
+            public long BytesReceived;
+        }
+
+        private readonly TypeCounters[] m_byType = new TypeCounters[2000];
+
         public long FramesSent;
         public long FramesReceived;
         public long BytesSent;
@@ -224,9 +234,107 @@ namespace SuMultiplayer.Net
         public long SendQueueHigh;
         public long Dropped;              // 设计上恒为 0
 
+        public void RecordSent(MessageType type, int bytes)
+        {
+            Interlocked.Increment(ref FramesSent);
+            Interlocked.Add(ref BytesSent, bytes);
+            TypeCounters counters = GetTypeCounters(type);
+            if (counters == null) return;
+            Interlocked.Increment(ref counters.FramesSent);
+            Interlocked.Add(ref counters.BytesSent, bytes);
+        }
+
+        public void RecordReceived(MessageType type, int bytes)
+        {
+            Interlocked.Increment(ref FramesReceived);
+            Interlocked.Add(ref BytesReceived, bytes);
+            TypeCounters counters = GetTypeCounters(type);
+            if (counters == null) return;
+            Interlocked.Increment(ref counters.FramesReceived);
+            Interlocked.Add(ref counters.BytesReceived, bytes);
+        }
+
+        private TypeCounters GetTypeCounters(MessageType type)
+        {
+            int id = (ushort)type;
+            if (id <= 0 || id >= m_byType.Length) return null;
+            TypeCounters counters = Volatile.Read(ref m_byType[id]);
+            if (counters != null) return counters;
+            var created = new TypeCounters();
+            return Interlocked.CompareExchange(ref m_byType[id], created, null) ?? created;
+        }
+
+        public void RecordBackpressure() => Interlocked.Increment(ref BackpressureEvents);
+
+        public void RecordProtocolViolation() => Interlocked.Increment(ref ProtocolViolations);
+
+        public void ObserveSendQueue(long count)
+        {
+            long current = Interlocked.Read(ref SendQueueHigh);
+            while (count > current)
+            {
+                long observed = Interlocked.CompareExchange(ref SendQueueHigh, count, current);
+                if (observed == current) return;
+                current = observed;
+            }
+        }
+
+        public long ReadFramesSent() => Interlocked.Read(ref FramesSent);
+        public long ReadFramesReceived() => Interlocked.Read(ref FramesReceived);
+        public long ReadBytesSent() => Interlocked.Read(ref BytesSent);
+        public long ReadBytesReceived() => Interlocked.Read(ref BytesReceived);
+        public long ReadBackpressureEvents() => Interlocked.Read(ref BackpressureEvents);
+        public long ReadProtocolViolations() => Interlocked.Read(ref ProtocolViolations);
+        public long ReadSendQueueHigh() => Interlocked.Read(ref SendQueueHigh);
+
+        public MessageTypeTrafficSnapshot[] SnapshotByMessageType(int maximum = 32)
+        {
+            var snapshot = new List<MessageTypeTrafficSnapshot>(32);
+            for (ushort id = 1; id < m_byType.Length; id++)
+            {
+                TypeCounters counters = Volatile.Read(ref m_byType[id]);
+                if (counters == null) continue;
+                snapshot.Add(new MessageTypeTrafficSnapshot(id,
+                    Interlocked.Read(ref counters.FramesSent),
+                    Interlocked.Read(ref counters.BytesSent),
+                    Interlocked.Read(ref counters.FramesReceived),
+                    Interlocked.Read(ref counters.BytesReceived)));
+            }
+            snapshot.Sort((a, b) =>
+            {
+                long aBytes = a.BytesSent + a.BytesReceived;
+                long bBytes = b.BytesSent + b.BytesReceived;
+                return bBytes.CompareTo(aBytes);
+            });
+            int count = Math.Max(0, Math.Min(maximum, snapshot.Count));
+            if (count != snapshot.Count) snapshot.RemoveRange(count, snapshot.Count - count);
+            return snapshot.ToArray();
+        }
+
         public override string ToString() =>
-            "sent=" + FramesSent + " recv=" + FramesReceived + " bytes=" + BytesSent + "/" + BytesReceived +
-            " backpressure=" + BackpressureEvents + " violations=" + ProtocolViolations + " dropped=" + Dropped;
+            "sent=" + ReadFramesSent() + " recv=" + ReadFramesReceived() +
+            " bytes=" + ReadBytesSent() + "/" + ReadBytesReceived() +
+            " backpressure=" + ReadBackpressureEvents() + " violations=" +
+            ReadProtocolViolations() + " dropped=" + Dropped;
+    }
+
+    public readonly struct MessageTypeTrafficSnapshot
+    {
+        public MessageTypeTrafficSnapshot(ushort typeId, long framesSent, long bytesSent,
+            long framesReceived, long bytesReceived)
+        {
+            TypeId = typeId;
+            FramesSent = framesSent;
+            BytesSent = bytesSent;
+            FramesReceived = framesReceived;
+            BytesReceived = bytesReceived;
+        }
+
+        public ushort TypeId { get; }
+        public long FramesSent { get; }
+        public long BytesSent { get; }
+        public long FramesReceived { get; }
+        public long BytesReceived { get; }
     }
 
     public readonly struct ReceivedFrame
@@ -260,9 +368,15 @@ namespace SuMultiplayer.Net
 
         private readonly struct SendFrame
         {
-            public SendFrame(byte[] buffer, int length) { Buffer = buffer; Length = length; }
+            public SendFrame(byte[] buffer, int length, MessageType type)
+            {
+                Buffer = buffer;
+                Length = length;
+                Type = type;
+            }
             public byte[] Buffer { get; }
             public int Length { get; }
+            public MessageType Type { get; }
         }
 
         private sealed class Peer
@@ -399,7 +513,7 @@ namespace SuMultiplayer.Net
                     }
                     if (!TerrainFrame.TryReadHeader(header, 0, out int len, out long seq, out MessageType type))
                     {
-                        peer.Stats.ProtocolViolations++;
+                        peer.Stats.RecordProtocolViolation();
                         Fail(peer, "协议违规（帧头非法）"); return;
                     }
                     byte[] payload = len == 0 ? Array.Empty<byte>() : new byte[len];
@@ -407,14 +521,13 @@ namespace SuMultiplayer.Net
                     {
                         Fail(peer, "负载截断"); return;
                     }
-                    peer.Stats.FramesReceived++;
-                    peer.Stats.BytesReceived += TerrainFrame.HeaderBytes + len;
+                    peer.Stats.RecordReceived(type, TerrainFrame.HeaderBytes + len);
                     peer.LastReceivedSequence = seq;
                     if (peer.IsCircuit)
                     {
                         if (type == MessageType.CircuitAttach || type == MessageType.CircuitAttached)
                         {
-                            peer.Stats.ProtocolViolations++;
+                            peer.Stats.RecordProtocolViolation();
                             Fail(peer, "附属电路通道握手帧重复");
                             return;
                         }
@@ -425,7 +538,7 @@ namespace SuMultiplayer.Net
                             CircuitFrameReceived?.Invoke(primaryClientId, received));
                     }
                     else if (peer.LastReceivedSequence == seq &&
-                        peer.Stats.FramesReceived == 1 && type == MessageType.CircuitAttach)
+                        peer.Stats.ReadFramesReceived() == 1 && type == MessageType.CircuitAttach)
                     {
                         peer.IsCircuit = true;
                         if (!await TryAttachCircuitAsync(peer, seq, payload).ConfigureAwait(false))
@@ -435,7 +548,7 @@ namespace SuMultiplayer.Net
                     {
                         if (type == MessageType.CircuitAttach || type == MessageType.CircuitAttached)
                         {
-                            peer.Stats.ProtocolViolations++;
+                            peer.Stats.RecordProtocolViolation();
                             Fail(peer, "附属电路握手帧只能作为连接首帧");
                             return;
                         }
@@ -508,8 +621,7 @@ namespace SuMultiplayer.Net
             try
             {
                 await peer.Stream.WriteAsync(frame, 0, frame.Length).ConfigureAwait(false);
-                peer.Stats.FramesSent++;
-                peer.Stats.BytesSent += frame.Length;
+                peer.Stats.RecordSent(MessageType.CircuitAttached, frame.Length);
             }
             catch (Exception e)
             {
@@ -554,8 +666,7 @@ namespace SuMultiplayer.Net
                     try
                     {
                         await peer.Stream.WriteAsync(frame.Buffer, 0, frame.Length).ConfigureAwait(false);
-                        peer.Stats.FramesSent++;
-                        peer.Stats.BytesSent += frame.Length;
+                        peer.Stats.RecordSent(frame.Type, frame.Length);
                         lock (peer.SendQueue)
                         {
                             if (peer.SendQueue.Count < m_queueCapacity && peer.State == ChannelState.Backpressured)
@@ -596,8 +707,8 @@ namespace SuMultiplayer.Net
                     full = !dead && peer.SendQueue.Count >= m_queueCapacity;
                     if (!dead && !full)
                     {
-                        peer.SendQueue.Enqueue(new SendFrame(frame, length));
-                        peer.Stats.SendQueueHigh = Math.Max(peer.Stats.SendQueueHigh, peer.SendQueue.Count);
+                        peer.SendQueue.Enqueue(new SendFrame(frame, length, type));
+                        peer.Stats.ObserveSendQueue(peer.SendQueue.Count);
                         peer.SendSignal.Release();
                         enqueued = true;
                     }
@@ -607,8 +718,8 @@ namespace SuMultiplayer.Net
                 {
                     lock (peer.SendQueue)
                     {
-                        peer.Stats.BackpressureEvents++;
-                        peer.Stats.SendQueueHigh = Math.Max(peer.Stats.SendQueueHigh, peer.SendQueue.Count);
+                        peer.Stats.RecordBackpressure();
+                        peer.Stats.ObserveSendQueue(peer.SendQueue.Count);
                     }
                     SetPeerState(peer, ChannelState.Backpressured, "发送队列已满（显式背压）");
                     return false;
@@ -698,9 +809,8 @@ namespace SuMultiplayer.Net
                     full = !dead && peer.SendQueue.Count >= m_queueCapacity;
                     if (!dead && !full)
                     {
-                        peer.SendQueue.Enqueue(new SendFrame(frame, length));
-                        peer.Stats.SendQueueHigh = Math.Max(peer.Stats.SendQueueHigh,
-                            peer.SendQueue.Count);
+                        peer.SendQueue.Enqueue(new SendFrame(frame, length, type));
+                        peer.Stats.ObserveSendQueue(peer.SendQueue.Count);
                         peer.SendSignal.Release();
                         enqueued = true;
                     }
@@ -708,7 +818,7 @@ namespace SuMultiplayer.Net
                 if (dead) return false;
                 if (full)
                 {
-                    peer.Stats.BackpressureEvents++;
+                    peer.Stats.RecordBackpressure();
                     SetPeerState(peer, ChannelState.Backpressured, "发送队列已满（显式背压）");
                     return false;
                 }
@@ -736,6 +846,22 @@ namespace SuMultiplayer.Net
         }
 
         public virtual ChannelStats StatsOf(int clientId) => Find(clientId)?.Stats;
+
+        public virtual ChannelStats CircuitStatsOf(int primaryClientId)
+        {
+            lock (m_gate)
+                return m_circuitPeers.TryGetValue(primaryClientId, out Peer peer) &&
+                    peer.Alive && peer.IsCircuit ? peer.Stats : null;
+        }
+
+        public virtual ChannelState CircuitStateOf(int primaryClientId)
+        {
+            lock (m_gate)
+                return m_circuitPeers.TryGetValue(primaryClientId, out Peer peer) &&
+                    peer.Alive && peer.IsCircuit ? peer.State : ChannelState.Disconnected;
+        }
+
+        public virtual ClientKind? KindOf(int clientId) => Find(clientId)?.Kind;
 
         public virtual ChannelState StateOf(int clientId) => Find(clientId)?.State ?? ChannelState.Disconnected;
 
@@ -1004,9 +1130,15 @@ namespace SuMultiplayer.Net
 
         private readonly struct SendFrame
         {
-            public SendFrame(byte[] buffer, int length) { Buffer = buffer; Length = length; }
+            public SendFrame(byte[] buffer, int length, MessageType type)
+            {
+                Buffer = buffer;
+                Length = length;
+                Type = type;
+            }
             public byte[] Buffer { get; }
             public int Length { get; }
+            public MessageType Type { get; }
         }
 
         /// <summary>给派生的内存传输（自检用）留的无 socket 构造。</summary>
@@ -1196,7 +1328,7 @@ namespace SuMultiplayer.Net
                     }
                     if (!TerrainFrame.TryReadHeader(header, 0, out int len, out long seq, out MessageType type))
                     {
-                        Stats.ProtocolViolations++;
+                        Stats.RecordProtocolViolation();
                         SetState(ChannelState.Failed, "协议违规"); return;
                     }
                     byte[] payload = len == 0 ? Array.Empty<byte>() : new byte[len];
@@ -1204,8 +1336,7 @@ namespace SuMultiplayer.Net
                     {
                         SetState(ChannelState.Failed, "负载截断"); return;
                     }
-                    Stats.FramesReceived++;
-                    Stats.BytesReceived += TerrainFrame.HeaderBytes + len;
+                    Stats.RecordReceived(type, TerrainFrame.HeaderBytes + len);
                     if (m_circuitMode)
                     {
                         if (type == MessageType.CircuitAttached)
@@ -1213,7 +1344,7 @@ namespace SuMultiplayer.Net
                             CircuitAttached response = CircuitAttached.Parser.ParseFrom(payload);
                             if (response.PrimaryClientId != m_circuitPrimaryClientId)
                             {
-                                Stats.ProtocolViolations++;
+                                Stats.RecordProtocolViolation();
                                 m_circuitAttachReason = "attached-primary-mismatch";
                                 SetState(ChannelState.Failed, m_circuitAttachReason);
                                 return;
@@ -1234,7 +1365,7 @@ namespace SuMultiplayer.Net
                         }
                         if (!m_circuitAttached || type == MessageType.CircuitAttach)
                         {
-                            Stats.ProtocolViolations++;
+                            Stats.RecordProtocolViolation();
                             m_circuitAttachReason = "circuit-frame-before-accepted";
                             SetState(ChannelState.Failed, m_circuitAttachReason);
                             return;
@@ -1246,7 +1377,7 @@ namespace SuMultiplayer.Net
                     {
                         if (type == MessageType.CircuitAttach || type == MessageType.CircuitAttached)
                         {
-                            Stats.ProtocolViolations++;
+                            Stats.RecordProtocolViolation();
                             SetState(ChannelState.Failed, "unexpected-circuit-transport-frame");
                             return;
                         }
@@ -1284,8 +1415,7 @@ namespace SuMultiplayer.Net
                     try
                     {
                         await m_stream.WriteAsync(frame.Buffer, 0, frame.Length).ConfigureAwait(false);
-                        Stats.FramesSent++;
-                        Stats.BytesSent += frame.Length;
+                        Stats.RecordSent(frame.Type, frame.Length);
                         lock (m_sendQueue)
                         {
                             if (m_sendQueue.Count < m_queueCapacity && State == ChannelState.Backpressured)
@@ -1333,9 +1463,11 @@ namespace SuMultiplayer.Net
                 {
                     dead = !m_running;
                     full = !dead && m_sendQueue.Count >= m_queueCapacity;
+                    if (!dead) Stats.ObserveSendQueue(m_sendQueue.Count);
                     if (!dead && !full)
                     {
-                        m_sendQueue.Enqueue(new SendFrame(frame, length));
+                        m_sendQueue.Enqueue(new SendFrame(frame, length, type));
+                        Stats.ObserveSendQueue(m_sendQueue.Count);
                         m_sendWake.Release();
                         enqueued = true;
                     }
@@ -1343,7 +1475,7 @@ namespace SuMultiplayer.Net
                 if (dead) return false;
                 if (full)
                 {
-                    Stats.BackpressureEvents++;
+                    Stats.RecordBackpressure();
                     SetState(ChannelState.Backpressured, "发送队列已满（显式背压）");
                     return false;
                 }
@@ -1380,9 +1512,11 @@ namespace SuMultiplayer.Net
                 {
                     dead = !m_running;
                     full = !dead && m_sendQueue.Count >= m_queueCapacity;
+                    if (!dead) Stats.ObserveSendQueue(m_sendQueue.Count);
                     if (!dead && !full)
                     {
-                        m_sendQueue.Enqueue(new SendFrame(frame, length));
+                        m_sendQueue.Enqueue(new SendFrame(frame, length, type));
+                        Stats.ObserveSendQueue(m_sendQueue.Count);
                         m_sendWake.Release();
                         enqueued = true;
                     }
@@ -1390,7 +1524,7 @@ namespace SuMultiplayer.Net
                 if (dead) return false;
                 if (full)
                 {
-                    Stats.BackpressureEvents++;
+                    Stats.RecordBackpressure();
                     SetState(ChannelState.Backpressured, "发送队列已满（显式背压）");
                     return false;
                 }

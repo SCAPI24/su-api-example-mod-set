@@ -61,6 +61,32 @@ canvas.map{display:block;background:#fff;outline:1px solid var(--line)}
 .tile{background:var(--tint);border:1px solid var(--line);border-radius:var(--r2);padding:9px 11px}
 .tile b{display:block;font-family:var(--mono);font-size:18px;color:var(--cy)}
 .tile span{display:block;font-size:11.5px;color:var(--tx3)}
+.telemetry-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:10px}
+.telemetry-block{min-width:0;border-top:1px solid var(--line);padding-top:10px}
+.telemetry-block h4{margin:0 0 4px;font-size:13px;color:var(--tx2)}
+.telemetry-block .sub{margin-bottom:6px}
+.telemetry-table-wrap{width:100%;overflow-x:auto}
+.telemetry-table-wrap table{min-width:640px}
+.telemetry-table-wrap table.compact{width:100%;min-width:0;table-layout:fixed}
+.telemetry-table-wrap td{vertical-align:top}
+#telemetryWorkBody td:first-child,#telemetryClientBody td:first-child{overflow-wrap:anywhere}
+#telemetryWorkBody td:nth-child(n+2),#telemetryClientBody td:nth-child(n+2){overflow-wrap:anywhere}
+#telemetryWorkBody td:first-child{width:45%}
+#telemetryWorkBody td:nth-child(2){width:27%;white-space:nowrap}
+#telemetryWorkBody td:nth-child(3){width:28%;white-space:nowrap}
+#telemetryClientBody td:first-child{width:27%}
+#telemetryClientBody td:nth-child(2){width:21%}
+#telemetryClientBody td:nth-child(3){width:15%}
+#telemetryClientBody td:nth-child(4){width:25%}
+#telemetryClientBody td:nth-child(5){width:12%;white-space:nowrap}
+#telemetryClientCircuitBody td{overflow-wrap:anywhere}
+.telemetry-rate{color:var(--cy);white-space:nowrap}
+.telemetry-unavailable{color:var(--tx3)}
+.telemetry-warn{color:#8a5c00}
+.telemetry-detail{min-width:180px}
+.telemetry-detail summary{cursor:pointer;color:var(--cy);white-space:nowrap}
+.telemetry-detail table{min-width:480px;margin-top:6px;font-size:11px}
+.telemetry-detail th,.telemetry-detail td{padding:4px 6px}
 table{width:100%;border-collapse:collapse;font-size:12.4px;margin-top:8px}
 thead th{background:var(--tint2);text-align:left;padding:6px 9px;font-weight:700;color:#25344f;border-bottom:1px solid var(--line2);font-size:11.8px;white-space:nowrap}
 tbody td{padding:5px 9px;border-bottom:1px solid var(--line)}
@@ -68,6 +94,7 @@ tbody tr:nth-child(even){background:var(--tint)}
 td.mono,.mono{font-family:var(--mono);font-size:11.6px}
 .num{text-align:right;font-family:var(--mono)}
 footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--line);font-size:12px;color:var(--tx3)}
+@media (max-width:760px){.telemetry-grid{grid-template-columns:minmax(0,1fr)}}
 @media (max-width:1100px){.wrap{padding:12px 12px 48px}}
 @media print{.topbar{display:none}.pane{break-inside:avoid;box-shadow:none}}
 </style>
@@ -122,6 +149,34 @@ footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--line);font-si
   </div>
 
   <div class="pane" id="LM03" style="margin-top:14px">
+    <h3>传输与运行负载<span class="chip" id="telemetryChip">等待监控数据</span></h3>
+    <div class="sub">速率由相邻 telemetry 累计计数与采样时间计算；显示 — 表示主机工具尚未提供该字段。客户端 CPU / 帧时是主机最近收到的客户端样本，不是浏览器本机测量。</div>
+    <div class="tiles" id="telemetryHostTiles"></div>
+    <div class="telemetry-grid">
+      <section class="telemetry-block">
+        <h4>同步工作量</h4>
+        <div class="telemetry-table-wrap"><table class="compact"><thead><tr><th>模块 / 计数</th><th>累计 / 当前</th><th>每秒 / 耗时</th></tr></thead><tbody id="telemetryWorkBody"><tr><td colspan="3" class="mono telemetry-unavailable">监控数据不可用</td></tr></tbody></table></div>
+      </section>
+      <section class="telemetry-block">
+        <h4>客户端运行负载</h4>
+        <div class="telemetry-table-wrap"><table class="compact"><thead><tr><th>客户端</th><th>CPU</th><th>更新率</th><th>帧均 / 峰值</th><th>Age</th></tr></thead><tbody id="telemetryClientBody"><tr><td colspan="5" class="mono telemetry-unavailable">客户端运行样本不可用</td></tr></tbody></table></div>
+      </section>
+      <section class="telemetry-block" style="grid-column:1/-1">
+        <h4>客户端电路修复</h4>
+        <div class="telemetry-table-wrap"><table class="compact"><thead><tr><th>客户端</th><th>计数</th><th>累计</th><th>每秒</th></tr></thead><tbody id="telemetryClientCircuitBody"><tr><td colspan="4" class="mono telemetry-unavailable">客户端电路遥测不可用</td></tr></tbody></table></div>
+      </section>
+      <section class="telemetry-block" style="grid-column:1/-1">
+        <h4>TCP 传输</h4>
+        <div class="telemetry-table-wrap"><table><thead><tr><th>连接</th><th>状态</th><th>已发送</th><th>发送速率</th><th>已接收</th><th>接收速率</th><th>帧 / 秒（出 / 入）</th><th>背压</th><th>队列高水位</th><th>协议错误</th><th>消息明细</th></tr></thead><tbody id="telemetryPeerBody"><tr><td colspan="11" class="mono telemetry-unavailable">连接统计不可用</td></tr></tbody></table></div>
+      </section>
+      <section class="telemetry-block" style="grid-column:1/-1">
+        <h4>同步模块耗时</h4>
+        <div class="telemetry-table-wrap"><table><thead><tr><th>实例 / 模块</th><th>调用 / 秒</th><th>耗时 / 秒</th><th>平均耗时 / 次</th><th>最大耗时</th></tr></thead><tbody id="telemetryModuleBody"><tr><td colspan="5" class="mono telemetry-unavailable">模块耗时统计不可用</td></tr></tbody></table></div>
+      </section>
+    </div>
+  </div>
+
+  <div class="pane" id="LM04" style="margin-top:14px">
     <h3>数据契约与用法</h3>
     <table>
       <thead><tr><th>怎么跑起来</th></tr></thead>
@@ -143,6 +198,7 @@ footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--line);font-si
         <tr><td><span class="mono">animals[]</span> = <span class="mono">[{ x, y, z }, …]</span>（v9）：<b>仅主机端生物、仅位置</b>（没有名字 / id / 状态）。页面把每只画成一个<b>黑色实心圆点</b>（半径约 2–3 px、随缩放轻微变化）：<b>不显示名字、不显示坐标、不响应选中、不画标签 / 连线</b>，与角色标记（彩色 + 名字/坐标）明确区分；客户端不贡献动物。<span class="mono">counts.animals</span> = 主机端动物数量（页面只做对照，以 <span class="mono">animals[]</span> 条数为准）；缺字段 → 不画动物并在图例里明说；条目的 x / z 不是有限数 → 该条不画并计数报警（绝不猜坐标）</td></tr>
         <tr><td><span class="mono">payloadVersion</span> = <span class="mono">10</span>：LiveMap 线上的载荷版本（只追加字段，不重排旧字段）。页面按 v10 读字段（<b>v10 = 新增 <span class="mono">players[]</span> 逐角色槽位清单（<span class="mono">key</span>=clientId:slot / <span class="mono">slot</span> / <span class="mono">stableKey</span> / <span class="mono">host</span>），于是主机槽位 0..3 与每个联机化身的 (clientId,slot) 都能画出来</b>；v8 = 每个客户端头部 <span class="mono">currentLoaded</span> 且 <span class="mono">clients[].chunks</span> = 客户端当前内存区块；<b>v9 = 新增 <span class="mono">animals[]</span>（主机端动物位置，仅 x/y/z）与 <span class="mono">counts.animals</span></b>；v9 = 新增 <span class="mono">animals[]</span>；v5 = 每个 <span class="mono">chunks[]</span> 记录末尾追加 <span class="mono">n</span>；v6 = watched / players / clients 条目追加 <span class="mono">key</span>；v7 = 每条 <span class="mono">clients[].chunks</span> 条目末尾追加 <span class="mono">s</span>，页面输出为 <span class="mono">[cx,cz,s]</span>；v8 = <b>每个客户端头部记录末尾追加 <span class="mono">currentLoaded</span></b>，且 <span class="mono">clients[].chunks</span> 的含义改为<b>客户端当前内存区块</b>（卸载即消失））；版本不符 / <span class="mono">decodeFailures &gt; 0</span> 时在图例与统计面板里明确报警，不猜字段含义。<b>缺字段（旧版主机/工具）时页面明说不画</b>：没有 <span class="mono">players</span> → 坐标一栏写「未知」；没有 <span class="mono">clients</span> → 不画客户端线框；<span class="mono">clients[].chunks</span> 的条目没有第三项 <span class="mono">s</span> → 这些块不画线框（不猜状态）；没有 <span class="mono">currentLoaded</span>（旧版 v7 feed）→ 完整性退回按 <span class="mono">reported</span> 判定并在图例里明说；没有 <span class="mono">chunks[].n</span> → 不画数字；没有 <span class="mono">key</span> → 选角退回 <span class="mono">id</span>（旧版行为）；没有 <span class="mono">animals</span> → 不画动物并在图例里说明</td></tr>
         <tr><td><span class="mono">counts</span> = 工具统计：<span class="mono">chunks / columns / players（= 角色槽位数，v10）/ hostPlayers（主机自己的槽位数）/ clientChunks</span> 之外还有 <span class="mono">pendingMarks</span>（<span class="mono">chunks[].n &gt; 0</span> 的区块数）与 <span class="mono">pendingClients</span>（各块 <span class="mono">n</span> 之和）；页面只做对照，不据此画地形</td></tr>
+        <tr><td><span class="mono">telemetry</span>（附加诊断对象，不属于冻结的地图载荷）：含 <span class="mono">sampleId / sampledAtMs</span>、主机与客户端 <span class="mono">hostRuntime / peers[].clientRuntime</span>（CPU、游戏更新率、帧时间、模块 calls/totalMs/maxMs）、<span class="mono">circuit</span> / <span class="mono">terrain</span> 累计计数（电路含哈希不一致、修复入队、各快照原因与捕获失败）、逐客户端 <span class="mono">peers[].clientCircuit</span> 电路捕获 / 请求 / 应用计数、<span class="mono">peers[].primary / circuit</span> TCP 计数与 <span class="mono">messageTypes[]</span>，以及工具连接 <span class="mono">monitorTransport</span>。页面根据两个有效采样时间的累计计数差计算 /s；首个样本显示「等待下一采样」，计数回退时重新建立基线；字段缺失、采样时间无效或没有在线客户端时明确显示「不可用」，不估算</td></tr>
         <tr><td>覆盖范围 = <span class="mono">bounds</span> ∪ <span class="mono">chunks</span> ∪ <span class="mono">clients[].chunks</span> ∪ <span class="mono">players[].cell</span> —— 但每一项都先按<b>当前视图作用域</b>裁剪：主机视图取主机 ∪ 全部完整客户端的并集与全部角色位置（于是能看到分开的区域块），客户端视图只取该客户端自己的区块与它自己的位置（<span class="mono">bounds</span> 与其它角色都不并进来）</td></tr>
         <tr><td><span class="mono">center.cell</span> 缺失（null）时，退回到所选角色的区块中心 <span class="mono">chunk*16 + 8</span>（并在图例与统计里标注「坐标未知，按区块中心画」）</td></tr>
         <tr><td>颜色表按<b>游戏方块 id</b>（<span class="mono">Survivalcraft/Game/*Block.cs</span> 的 <span class="mono">Index</span>）校正，覆盖常见方块；<b>未收录的 id 一律中性灰</b>并在图例里标「未知方块 id」（<b>不再用哈希色相兜底</b> —— 那会把雪原画成青色、把未知方块冒充成水）。水（id 18）另有独立的「水域」色阶。整片区域可能上万列，因此按 <span class="mono">(id, 高度档)</span> 批量填充、不做逐列描边，一次样本只画一次（不跟动画帧）</td></tr>
@@ -1588,6 +1644,476 @@ footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--line);font-si
   }
 
   /* ---------- 统计面板 ---------- */
+  var telemetryRateHistory = Object.create(null);
+  var lastTelemetrySampleToken = null, lastTelemetryReceivedAt = 0;
+  function finiteMetric(value) {
+    if (typeof value === "number") return isFinite(value);
+    return typeof value === "string" && /^\d+$/.test(value) &&
+      Number.isSafeInteger(Number(value));
+  }
+  function metricValue(value, digits) {
+    if (!finiteMetric(value)) return "不可用";
+    var d = (typeof digits === "number") ? digits : 1;
+    return Number(value).toFixed(d);
+  }
+  function formatBytes(value) {
+    if (!finiteMetric(value)) return "不可用";
+    var n = Math.max(0, value), unit = "B", divisor = 1;
+    if (n >= 1024 * 1024) { unit = "MiB"; divisor = 1024 * 1024; }
+    else if (n >= 1024) { unit = "KiB"; divisor = 1024; }
+    return (n / divisor).toFixed(divisor === 1 ? 0 : 2) + " " + unit;
+  }
+  function formatByteRate(value) {
+    if (!finiteMetric(value)) return "不可用";
+    var n = Math.max(0, value), unit = "B/s", divisor = 1;
+    if (n >= 1024 * 1024) { unit = "MiB/s"; divisor = 1024 * 1024; }
+    else if (n >= 1024) { unit = "KiB/s"; divisor = 1024; }
+    return (n / divisor).toFixed(divisor === 1 ? 0 : 2) + " " + unit;
+  }
+  function formatCounterRate(telemetry, value, rates, name, formatter) {
+    if (!finiteMetric(value)) return "不可用";
+    if (!telemetry || !finiteMetric(telemetry.sampledAtMs)) return "采样时间不可用";
+    if (rates && finiteMetric(rates[name])) return formatter(rates[name]);
+    return "等待下一采样";
+  }
+  function telemetryCounterRates(key, telemetry, counters) {
+    var at = telemetry && Number(telemetry.sampledAtMs);
+    if (!finiteMetric(at)) return null;
+    var current = {};
+    Object.keys(counters || {}).forEach(function (name) {
+      var value = counters[name];
+      current[name] = finiteMetric(value) ? Number(value) : null;
+    });
+    var previous = telemetryRateHistory[key];
+    if (!previous) {
+      telemetryRateHistory[key] = { at: at, sampleId: telemetry.sampleId, counters: current, rates: null };
+      return null;
+    }
+    if (at <= previous.at) return previous.rates;
+    var elapsed = (at - previous.at) / 1000;
+    var rates = {};
+    Object.keys(current).forEach(function (name) {
+      var nowValue = current[name], oldValue = previous.counters[name];
+      rates[name] = finiteMetric(nowValue) && finiteMetric(oldValue) && nowValue >= oldValue && elapsed > 0
+        ? (nowValue - oldValue) / elapsed : null;
+    });
+    telemetryRateHistory[key] = { at: at, sampleId: telemetry.sampleId, counters: current, rates: rates };
+    return rates;
+  }
+  function unavailableRow(colspan, message) {
+    return "<tr><td colspan='" + colspan + "' class='mono telemetry-unavailable'>" + esc(message || "监控数据不可用") + "</td></tr>";
+  }
+  function runtimeSummary(runtime) {
+    if (!runtime || typeof runtime !== "object") return ["不可用", "不可用", "不可用 / 不可用"];
+    var cpuParts = [];
+    if (runtime.cpuAvailable === true && finiteMetric(runtime.cpuOneCorePercent)) cpuParts.push(metricValue(runtime.cpuOneCorePercent, 1) + "% 单核");
+    if (runtime.cpuAvailable === true && finiteMetric(runtime.cpuTotalPercent)) cpuParts.push(metricValue(runtime.cpuTotalPercent, 2) + "% 总量");
+    var cpu = cpuParts.length ? cpuParts.join(" · ") : "不可用";
+    var update = finiteMetric(runtime.gameUpdateHz) ? metricValue(runtime.gameUpdateHz, 1) + " Hz" : "不可用";
+    var frame = (finiteMetric(runtime.frameTimeAvgMs) ? metricValue(runtime.frameTimeAvgMs, 1) : "不可用") +
+      " / " + (finiteMetric(runtime.frameTimeMaxMs) ? metricValue(runtime.frameTimeMaxMs, 1) : "不可用") + " ms";
+    return [cpu, update, frame];
+  }
+  function renderTelemetry(state) {
+    var chip = $("telemetryChip"), hostTiles = $("telemetryHostTiles");
+    var workBody = $("telemetryWorkBody"), clientBody = $("telemetryClientBody");
+    var clientCircuitBody = $("telemetryClientCircuitBody");
+    var peerBody = $("telemetryPeerBody"), moduleBody = $("telemetryModuleBody");
+    if (!chip || !hostTiles || !workBody || !clientBody || !peerBody || !moduleBody) return;
+    var telemetry = state && state.telemetry;
+    if (!telemetry || typeof telemetry !== "object") {
+      chip.textContent = "遥测字段不可用";
+      hostTiles.innerHTML = [
+        { v: "不可用", s: "主机 CPU（telemetry.hostRuntime）" },
+        { v: "不可用", s: "主机游戏更新率" },
+        { v: "不可用", s: "主机帧均 / 峰值" },
+        { v: "不可用", s: "采样间隔" }
+      ].map(function (x) { return "<div class='tile'><b>" + esc(x.v) + "</b><span>" + esc(x.s) + "</span></div>"; }).join("");
+      workBody.innerHTML = unavailableRow(3, "主机 Mod / LiveMap 工具尚未提供 telemetry 数据");
+      clientBody.innerHTML = unavailableRow(5, "客户端运行样本不可用");
+      if (clientCircuitBody) clientCircuitBody.innerHTML = unavailableRow(4, "客户端电路遥测不可用");
+      peerBody.innerHTML = unavailableRow(11, "连接统计不可用");
+      moduleBody.innerHTML = unavailableRow(5, "模块耗时统计不可用");
+      return;
+    }
+    var sampledAt = telemetry.sampledAtMs;
+    var sampleToken = finiteMetric(sampledAt) ? String(sampledAt) :
+      (telemetry.sampleId !== undefined ? String(telemetry.sampleId) : null);
+    if (sampleToken !== null && sampleToken !== lastTelemetrySampleToken) {
+      lastTelemetrySampleToken = sampleToken;
+      lastTelemetryReceivedAt = Date.now();
+    }
+    chip.textContent = "样本 " + (telemetry.sampleId === undefined ? "不可用" : String(telemetry.sampleId)) +
+      " · age " + (lastTelemetryReceivedAt ? Math.max(0, Date.now() - lastTelemetryReceivedAt) + " ms" : "不可用") +
+      (finiteMetric(sampledAt) ? " · 采样时间有效" : " · 采样时间不可用");
+
+    var host = telemetry.hostRuntime;
+    var hostCpuParts = [];
+    if (host && host.cpuAvailable === true && finiteMetric(host.cpuOneCorePercent)) hostCpuParts.push(metricValue(host.cpuOneCorePercent, 1) + "% 单核");
+    if (host && host.cpuAvailable === true && finiteMetric(host.cpuTotalPercent)) hostCpuParts.push(metricValue(host.cpuTotalPercent, 2) + "% 总量");
+    var hostCpu = hostCpuParts.length ? hostCpuParts.join(" · ") : "不可用";
+    var hostUpdate = host && finiteMetric(host.gameUpdateHz) ? metricValue(host.gameUpdateHz, 1) + " Hz" : "不可用";
+    var hostFrame = host
+      ? (finiteMetric(host.frameTimeAvgMs) ? metricValue(host.frameTimeAvgMs, 1) : "不可用") +
+        " / " + (finiteMetric(host.frameTimeMaxMs) ? metricValue(host.frameTimeMaxMs, 1) : "不可用") + " ms"
+      : "不可用";
+    var processorText = host && finiteMetric(host.processorCount) ? String(host.processorCount) : "不可用";
+    hostTiles.innerHTML = [
+      { v: hostCpu, s: "主机进程 CPU" },
+      { v: hostUpdate, s: "主机游戏更新率" },
+      { v: hostFrame, s: "主机帧时间均值 / 峰值" },
+      { v: processorText, s: "主机逻辑处理器" }
+    ].map(function (x) { return "<div class='tile'><b>" + esc(x.v) + "</b><span>" + esc(x.s) + "</span></div>"; }).join("");
+
+    var rows = [];
+    var circuit = telemetry.circuit;
+    if (circuit && typeof circuit === "object") {
+      var cr = telemetryCounterRates("circuit", telemetry, {
+        rounds: circuit.rounds, scopeChunks: circuit.scopeChunks, snapshotChunks: circuit.snapshotChunks,
+        snapshotElements: circuit.snapshotElements, snapshotParts: circuit.snapshotParts,
+        deltaStates: circuit.deltaStates, sendFailures: circuit.sendFailures,
+        sevenSegmentStates: circuit.sevenSegmentStates,
+        clientScopeRequests: circuit.clientScopeRequests, clientScopeChunks: circuit.clientScopeChunks,
+        clientSnapshotParts: circuit.clientSnapshotParts, clientSnapshotsApplied: circuit.clientSnapshotsApplied,
+        clientStatesApplied: circuit.clientStatesApplied, clientApplyFailures: circuit.clientApplyFailures,
+        clientHashReports: circuit.clientHashReports, clientHashChunks: circuit.clientHashChunks,
+        clientWatermarkExpired: circuit.clientWatermarkExpired,
+        hashMismatchesObserved: circuit.hashMismatchesObserved,
+        hashRepairChunksQueued: circuit.hashRepairChunksQueued,
+        repairAckHashMismatches: circuit.repairAckHashMismatches,
+        repairAckChunksQueued: circuit.repairAckChunksQueued,
+        snapshotRequestChunks: circuit.snapshotRequestChunks,
+        needsFullSnapshotChunksQueued: circuit.needsFullSnapshotChunksQueued,
+        snapshotsInitialScope: circuit.snapshotsInitialScope,
+        snapshotsHashRepair: circuit.snapshotsHashRepair,
+        snapshotsRepairAckRepair: circuit.snapshotsRepairAckRepair,
+        snapshotsClientRequest: circuit.snapshotsClientRequest,
+        snapshotsNeedsFullRecovery: circuit.snapshotsNeedsFullRecovery,
+        snapshotsPauseBarrier: circuit.snapshotsPauseBarrier,
+        snapshotsTopologyChange: circuit.snapshotsTopologyChange,
+        snapshotsSendFailureRecovery: circuit.snapshotsSendFailureRecovery,
+        snapshotSendFailures: circuit.snapshotSendFailures,
+        hostBatchCaptureFailures: circuit.hostBatchCaptureFailures,
+        hostBatchCaptureChunksFailed: circuit.hostBatchCaptureChunksFailed,
+        requestedSnapshotCaptureFailures: circuit.requestedSnapshotCaptureFailures
+      });
+      function countRow(label, field, value, rate, unit) {
+        var rateText = formatCounterRate(telemetry, value, cr, rate, function (v) {
+          return metricValue(v, 1) + " " + unit;
+        });
+        rows.push("<tr><td class='mono'>Circuit · " + esc(label) + "</td><td class='num'>" +
+          (finiteMetric(value) ? esc(String(value)) : "不可用") + "</td><td class='num telemetry-rate'>" +
+          esc(rateText) + "</td></tr>");
+      }
+      countRow("rounds", "rounds", circuit.rounds, "rounds", "/s");
+      countRow("scopeChunks", "scopeChunks", circuit.scopeChunks, "scopeChunks", "/s");
+      countRow("snapshotChunks", "snapshotChunks", circuit.snapshotChunks, "snapshotChunks", "/s");
+      countRow("snapshotElements", "snapshotElements", circuit.snapshotElements, "snapshotElements", "/s");
+      countRow("snapshotParts", "snapshotParts", circuit.snapshotParts, "snapshotParts", "/s");
+      countRow("deltaStates", "deltaStates", circuit.deltaStates, "deltaStates", "/s");
+      countRow("sevenSegmentStates", "sevenSegmentStates", circuit.sevenSegmentStates, "sevenSegmentStates", "/s");
+      countRow("sendFailures", "sendFailures", circuit.sendFailures, "sendFailures", "/s");
+      countRow("clientScopeRequests", "clientScopeRequests", circuit.clientScopeRequests, "clientScopeRequests", "/s");
+      countRow("clientScopeChunks", "clientScopeChunks", circuit.clientScopeChunks, "clientScopeChunks", "/s");
+      countRow("clientSnapshotParts", "clientSnapshotParts", circuit.clientSnapshotParts, "clientSnapshotParts", "/s");
+      countRow("clientSnapshotsApplied", "clientSnapshotsApplied", circuit.clientSnapshotsApplied, "clientSnapshotsApplied", "/s");
+      countRow("clientStatesApplied", "clientStatesApplied", circuit.clientStatesApplied, "clientStatesApplied", "/s");
+      countRow("clientApplyFailures", "clientApplyFailures", circuit.clientApplyFailures, "clientApplyFailures", "/s");
+      countRow("clientHashReports", "clientHashReports", circuit.clientHashReports, "clientHashReports", "/s");
+      countRow("clientHashChunks", "clientHashChunks", circuit.clientHashChunks, "clientHashChunks", "/s");
+      countRow("clientWatermarkExpired", "clientWatermarkExpired", circuit.clientWatermarkExpired, "clientWatermarkExpired", "/s");
+      countRow("哈希不一致（主机观察）", "hashMismatchesObserved", circuit.hashMismatchesObserved, "hashMismatchesObserved", "/s");
+      countRow("哈希修复区块入队", "hashRepairChunksQueued", circuit.hashRepairChunksQueued, "hashRepairChunksQueued", "/s");
+      countRow("修复回执哈希不一致", "repairAckHashMismatches", circuit.repairAckHashMismatches, "repairAckHashMismatches", "/s");
+      countRow("修复回执后区块入队", "repairAckChunksQueued", circuit.repairAckChunksQueued, "repairAckChunksQueued", "/s");
+      countRow("客户端请求快照区块", "snapshotRequestChunks", circuit.snapshotRequestChunks, "snapshotRequestChunks", "/s");
+      countRow("全量快照区块入队", "needsFullSnapshotChunksQueued", circuit.needsFullSnapshotChunksQueued, "needsFullSnapshotChunksQueued", "/s");
+      countRow("快照原因 · 初始订阅", "snapshotsInitialScope", circuit.snapshotsInitialScope, "snapshotsInitialScope", "/s");
+      countRow("快照原因 · 哈希修复", "snapshotsHashRepair", circuit.snapshotsHashRepair, "snapshotsHashRepair", "/s");
+      countRow("快照原因 · 修复回执不一致", "snapshotsRepairAckRepair", circuit.snapshotsRepairAckRepair, "snapshotsRepairAckRepair", "/s");
+      countRow("快照原因 · 客户端请求", "snapshotsClientRequest", circuit.snapshotsClientRequest, "snapshotsClientRequest", "/s");
+      countRow("快照原因 · 全量恢复", "snapshotsNeedsFullRecovery", circuit.snapshotsNeedsFullRecovery, "snapshotsNeedsFullRecovery", "/s");
+      countRow("快照原因 · 睡眠屏障", "snapshotsPauseBarrier", circuit.snapshotsPauseBarrier, "snapshotsPauseBarrier", "/s");
+      countRow("快照原因 · 拓扑变化", "snapshotsTopologyChange", circuit.snapshotsTopologyChange, "snapshotsTopologyChange", "/s");
+      countRow("快照原因 · 发送失败恢复", "snapshotsSendFailureRecovery", circuit.snapshotsSendFailureRecovery, "snapshotsSendFailureRecovery", "/s");
+      countRow("快照发送失败", "snapshotSendFailures", circuit.snapshotSendFailures, "snapshotSendFailures", "/s");
+      countRow("主机批量捕获失败", "hostBatchCaptureFailures", circuit.hostBatchCaptureFailures, "hostBatchCaptureFailures", "/s");
+      countRow("主机批量捕获失败区块", "hostBatchCaptureChunksFailed", circuit.hostBatchCaptureChunksFailed, "hostBatchCaptureChunksFailed", "/s");
+      countRow("请求快照捕获失败", "requestedSnapshotCaptureFailures", circuit.requestedSnapshotCaptureFailures, "requestedSnapshotCaptureFailures", "/s");
+      rows.push("<tr><td class='mono'>Circuit · attachedPeers</td><td class='num'>" +
+        (finiteMetric(circuit.attachedPeers) ? esc(String(circuit.attachedPeers)) : "不可用") +
+        "</td><td class='telemetry-unavailable'>当前数量</td></tr>");
+      rows.push("<tr><td class='mono'>Circuit · clientSimulationEnabled</td><td colspan='2'>" +
+        (typeof circuit.clientSimulationEnabled === "boolean" ? (circuit.clientSimulationEnabled ? "true" : "false") : "不可用") +
+        "</td></tr>");
+    } else {
+      rows.push(unavailableRow(3, "Circuit 计数不可用"));
+    }
+    var terrain = telemetry.terrain;
+    if (terrain && typeof terrain === "object") {
+      var tr = telemetryCounterRates("terrain", telemetry, {
+        digestReports: terrain.digestReports,
+        cellChangesBroadcast: terrain.cellChangesBroadcast,
+        cellChangeRepairs: terrain.cellChangeRepairs, resyncBytes: terrain.resyncBytes,
+        verifyRequestsSent: terrain.verifyRequestsSent,
+        verifyRequestSendFailures: terrain.verifyRequestSendFailures
+      });
+      [
+        ["digestReports", terrain.digestReports, "digestReports", "/s"],
+        ["cellChangesBroadcast", terrain.cellChangesBroadcast, "cellChangesBroadcast", "/s"],
+        ["cellChangeRepairs", terrain.cellChangeRepairs, "cellChangeRepairs", "/s"],
+        ["resyncBytes", terrain.resyncBytes, "resyncBytes", "B/s"],
+        ["verifyRequestsSent", terrain.verifyRequestsSent, "verifyRequestsSent", "/s"],
+        ["verifyRequestSendFailures", terrain.verifyRequestSendFailures, "verifyRequestSendFailures", "/s"]
+      ].forEach(function (metric) {
+        var val = metric[0] === "resyncBytes" ? formatBytes(metric[1]) :
+          (finiteMetric(metric[1]) ? String(metric[1]) : "不可用");
+        var rate = formatCounterRate(telemetry, metric[1], tr, metric[2], function (v) {
+          return metric[0] === "resyncBytes" ? formatByteRate(v) : metricValue(v, 1) + " " + metric[3];
+        });
+        rows.push("<tr><td class='mono'>Terrain · " + esc(metric[0]) + "</td><td class='num'>" +
+          esc(val) + "</td><td class='num telemetry-rate'>" + esc(rate) + "</td></tr>");
+      });
+      [
+        ["pendingReports", terrain.pendingReports],
+        ["pendingMarks", terrain.pendingMarks],
+        ["pendingClients", terrain.pendingClients]
+      ].forEach(function (metric) {
+        rows.push("<tr><td class='mono'>Terrain · " + esc(metric[0]) + "</td><td class='num'>" +
+          (finiteMetric(metric[1]) ? esc(String(metric[1])) : "不可用") +
+          "</td><td class='telemetry-unavailable'>当前数量</td></tr>");
+      });
+      [
+        ["reportsPerSecond", terrain.reportsPerSecond],
+        ["mismatchPerSecond", terrain.mismatchPerSecond],
+        ["resyncReceivedPerSecond", terrain.resyncReceivedPerSecond],
+        ["resyncAppliedPerSecond", terrain.resyncAppliedPerSecond]
+      ].forEach(function (metric) {
+        rows.push("<tr><td class='mono'>Terrain · " + esc(metric[0]) + "</td><td class='num'>" +
+          (finiteMetric(metric[1]) ? esc(metricValue(metric[1], 1) + "/s") : "不可用") +
+          "</td><td class='telemetry-unavailable'>主机报告的当前速率</td></tr>");
+      });
+    } else {
+      rows.push(unavailableRow(3, "Terrain 计数不可用"));
+    }
+    var monitor = telemetry.monitorTransport;
+    if (monitor && typeof monitor === "object") {
+      var mr = telemetryCounterRates("monitorTransport", telemetry, {
+        bytesSent: monitor.bytesSent, bytesReceived: monitor.bytesReceived,
+        framesSent: monitor.framesSent, framesReceived: monitor.framesReceived
+      });
+      var monitorTypes = Array.isArray(monitor.messageTypes) ? monitor.messageTypes : [];
+      var monitorDetail = monitorTypes.length ? "<details class='telemetry-detail'><summary>" +
+        monitorTypes.length + " 类</summary><table><thead><tr><th>消息</th><th>出帧</th><th>出字节</th><th>入帧</th><th>入字节</th></tr></thead><tbody>" +
+        monitorTypes.map(function (type) {
+          return "<tr><td class='mono'>" + esc(type.name || ("type " + type.typeId)) + " (#" +
+            esc(String(type.typeId)) + ")</td><td class='num'>" +
+            (finiteMetric(type.framesSent) ? esc(String(type.framesSent)) : "不可用") + "</td><td class='num'>" +
+            esc(formatBytes(type.bytesSent)) + "</td><td class='num'>" +
+            (finiteMetric(type.framesReceived) ? esc(String(type.framesReceived)) : "不可用") +
+            "</td><td class='num'>" + esc(formatBytes(type.bytesReceived)) + "</td></tr>";
+        }).join("") + "</tbody></table></details>" : "不可用";
+      rows.push("<tr><td class='mono'>LiveMap Debug 连接</td><td class='num'>" +
+        esc(formatBytes(monitor.bytesSent)) + " 出 / " + esc(formatBytes(monitor.bytesReceived)) + " 入</td><td class='num telemetry-rate'>" +
+        esc(formatCounterRate(telemetry, monitor.bytesSent, mr, "bytesSent", formatByteRate)) + " 出 / " +
+        esc(formatCounterRate(telemetry, monitor.bytesReceived, mr, "bytesReceived", formatByteRate)) + " 入 · " +
+        esc(formatCounterRate(telemetry, monitor.framesSent, mr, "framesSent", function (v) { return metricValue(v, 1) + " 帧/s"; })) +
+        " 出帧 / " + esc(formatCounterRate(telemetry, monitor.framesReceived, mr, "framesReceived", function (v) { return metricValue(v, 1) + " 帧/s"; })) + " 入帧<br>" + monitorDetail + "</td></tr>");
+    } else {
+      rows.push("<tr><td class='mono'>LiveMap Debug 连接</td><td class='telemetry-unavailable'>不可用</td><td class='telemetry-unavailable'>不可用</td></tr>");
+    }
+    var liveMapRates = telemetryCounterRates("liveMap", telemetry, {
+      liveMapRequests: telemetry.liveMapRequests,
+      liveMapBytesSent: telemetry.liveMapBytesSent,
+      liveMapFramesSent: telemetry.liveMapFramesSent
+    });
+    rows.push("<tr><td class='mono'>LiveMap 快照</td><td class='num'>请求 " +
+      (finiteMetric(telemetry.liveMapRequests) ? esc(String(telemetry.liveMapRequests)) : "不可用") +
+      " · " + (finiteMetric(telemetry.liveMapChunks) ? esc(String(telemetry.liveMapChunks)) : "不可用") + " 块 / " +
+      (finiteMetric(telemetry.liveMapBatches) ? esc(String(telemetry.liveMapBatches)) : "不可用") + " 批</td><td class='num telemetry-rate'>" +
+      esc(formatCounterRate(telemetry, telemetry.liveMapRequests, liveMapRates, "liveMapRequests", function (v) { return metricValue(v, 2) + " 请求/s"; })) +
+      " · 构建 " + (finiteMetric(telemetry.liveMapBuildMs) ? esc(metricValue(telemetry.liveMapBuildMs, 2) + " ms") : "不可用") + "</td></tr>");
+    if (circuit && typeof circuit === "object") {
+      rows.push("<tr><td class='mono'>Circuit · HostSync 最近窗口</td><td class='num'>" +
+        (finiteMetric(circuit.hostSyncWindowCalls) ? esc(String(circuit.hostSyncWindowCalls)) + " calls" : "不可用") +
+        "</td><td class='num'>" +
+        (finiteMetric(circuit.hostSyncWindowMs) ? esc(metricValue(circuit.hostSyncWindowMs, 2)) + " ms total" : "不可用") +
+        " · peak " + (finiteMetric(circuit.hostSyncWindowMaxMs) ? esc(metricValue(circuit.hostSyncWindowMaxMs, 2)) + " ms" : "不可用") + "</td></tr>");
+    }
+    workBody.innerHTML = rows.join("");
+
+    var peers = Array.isArray(telemetry.peers) ? telemetry.peers : null;
+    function peerLabel(peer) {
+      var label = peer.clientId === undefined ? "clientId 不可用" : "clientId=" + peer.clientId;
+      if (peer.name) label += " · " + peer.name;
+      if (peer.key) label += " · " + peer.key;
+      return label;
+    }
+    var clientRows = [];
+    var clientCircuitRows = [];
+    var peerRows = [];
+    function appendPeerChannel(peer, channel, channelName) {
+      if (!channel || typeof channel !== "object") {
+        peerRows.push("<tr><td>" + esc(peerLabel(peer)) + " · " + channelName +
+          "</td><td class='telemetry-unavailable'>不可用</td><td class='telemetry-unavailable'>不可用</td><td class='telemetry-unavailable'>不可用</td><td class='telemetry-unavailable'>不可用</td><td class='telemetry-unavailable'>不可用</td><td class='telemetry-unavailable'>不可用</td><td>不可用</td><td>不可用</td><td>不可用</td><td>不可用</td></tr>");
+        return;
+      }
+      var key = "peer:" + String(peer.key || peer.clientId) + ":" + channelName;
+      var rates = telemetryCounterRates(key, telemetry, {
+        bytesSent: channel.bytesSent, bytesReceived: channel.bytesReceived,
+        framesSent: channel.framesSent, framesReceived: channel.framesReceived,
+        backpressureEvents: channel.backpressureEvents
+      });
+      var rateSent = formatCounterRate(telemetry, channel.bytesSent, rates, "bytesSent", formatByteRate);
+      var rateRecv = formatCounterRate(telemetry, channel.bytesReceived, rates, "bytesReceived", formatByteRate);
+      var frameRate = formatCounterRate(telemetry, channel.framesSent, rates, "framesSent", function (v) {
+        return metricValue(v, 1);
+      }) + " / " + formatCounterRate(telemetry, channel.framesReceived, rates, "framesReceived", function (v) {
+        return metricValue(v, 1);
+      });
+      var messageTypes = Array.isArray(channel.messageTypes) ? channel.messageTypes : null;
+      var detail = "不可用";
+      if (messageTypes) {
+        var sorted = messageTypes.map(function (type) {
+          var typeKey = key + ":message:" + String(type.id);
+          return { type: type, rates: telemetryCounterRates(typeKey, telemetry, {
+            framesSent: type.framesSent, bytesSent: type.bytesSent,
+            framesReceived: type.framesReceived, bytesReceived: type.bytesReceived
+          }) };
+        }).sort(function (a, b) {
+          var aRate = a.rates && finiteMetric(a.rates.bytesSent) && finiteMetric(a.rates.bytesReceived)
+            ? a.rates.bytesSent + a.rates.bytesReceived : (Number(a.type.bytesSent) || 0) + (Number(a.type.bytesReceived) || 0);
+          var bRate = b.rates && finiteMetric(b.rates.bytesSent) && finiteMetric(b.rates.bytesReceived)
+            ? b.rates.bytesSent + b.rates.bytesReceived : (Number(b.type.bytesSent) || 0) + (Number(b.type.bytesReceived) || 0);
+          return bRate - aRate;
+        });
+        detail = "<details class='telemetry-detail'><summary>" + messageTypes.length + " 类</summary><table><thead><tr><th>消息</th><th>出帧</th><th>出帧/s</th><th>出字节</th><th>出速率</th><th>入帧</th><th>入帧/s</th><th>入字节</th><th>入速率</th></tr></thead><tbody>" +
+          sorted.map(function (entry) {
+            var type = entry.type, typeRates = entry.rates;
+            return "<tr><td class='mono'>" + esc(type.name || ("type " + type.id)) + " (#" +
+              esc(type.id === undefined ? "?" : String(type.id)) + ")</td><td class='num'>" +
+              (finiteMetric(type.framesSent) ? esc(String(type.framesSent)) : "不可用") + "</td><td class='num telemetry-rate'>" +
+              esc(formatCounterRate(telemetry, type.framesSent, typeRates, "framesSent", function (v) { return metricValue(v, 1); })) +
+              "</td><td class='num'>" + esc(formatBytes(type.bytesSent)) + "</td><td class='num telemetry-rate'>" +
+              esc(formatCounterRate(telemetry, type.bytesSent, typeRates, "bytesSent", formatByteRate)) +
+              "</td><td class='num'>" + (finiteMetric(type.framesReceived) ? esc(String(type.framesReceived)) : "不可用") +
+              "</td><td class='num telemetry-rate'>" +
+              esc(formatCounterRate(telemetry, type.framesReceived, typeRates, "framesReceived", function (v) { return metricValue(v, 1); })) +
+              "</td><td class='num'>" + esc(formatBytes(type.bytesReceived)) + "</td><td class='num telemetry-rate'>" +
+              esc(formatCounterRate(telemetry, type.bytesReceived, typeRates, "bytesReceived", formatByteRate)) +
+              "</td></tr>";
+          }).join("") + "</tbody></table></details>";
+      }
+      peerRows.push("<tr><td>" + esc(peer.name || peer.key || ("clientId=" + peer.clientId)) + " · " + channelName +
+        "</td><td class='mono'>" + (channel.state === undefined ? "不可用" : esc(String(channel.state))) +
+        "</td><td class='num'>" + esc(formatBytes(channel.bytesSent)) + "</td><td class='num telemetry-rate'>" + esc(rateSent) +
+        "</td><td class='num'>" + esc(formatBytes(channel.bytesReceived)) + "</td><td class='num telemetry-rate'>" + esc(rateRecv) +
+        "</td><td class='num telemetry-rate'>" + esc(frameRate) + "</td><td class='num'>" +
+        (finiteMetric(channel.backpressureEvents) ? esc(String(channel.backpressureEvents)) : "不可用") +
+        (finiteMetric(channel.backpressureEvents) ? " · " + esc(formatCounterRate(telemetry, channel.backpressureEvents, rates,
+          "backpressureEvents", function (v) { return metricValue(v, 2) + "/s"; })) : "") +
+        "</td><td class='num'>" + (finiteMetric(channel.sendQueueHigh) ? esc(String(channel.sendQueueHigh)) : "不可用") +
+        "</td><td class='num'>" + (finiteMetric(channel.protocolViolations) ? esc(String(channel.protocolViolations)) : "不可用") +
+        "</td><td>" + detail + "</td></tr>");
+    }
+    if (peers) {
+      peers.forEach(function (peer) {
+        var rt = runtimeSummary(peer.clientRuntime);
+        clientRows.push("<tr><td>" + esc(peerLabel(peer)) + "</td><td class='num'>" +
+          esc(rt[0]) + "</td><td class='num'>" + esc(rt[1]) + "</td><td class='num'>" + esc(rt[2]) +
+          "</td><td class='num'>" + (finiteMetric(peer.runtimeAgeMs) ? esc(String(peer.runtimeAgeMs)) + " ms" : "不可用") + "</td></tr>");
+        appendPeerChannel(peer, peer.primary, "主连接");
+        appendPeerChannel(peer, peer.circuit, "电路连接");
+        var clientCircuit = peer.clientCircuit;
+        var clientCircuitLabel = peer.name || peer.key || ("clientId=" + peer.clientId);
+        if (clientCircuit && typeof clientCircuit === "object") {
+          var clientCircuitKey = "peer:" + String(peer.key || peer.clientId) + ":circuitCounters";
+          var clientCircuitRates = telemetryCounterRates(clientCircuitKey, telemetry, {
+            hashCaptureFailures: clientCircuit.hashCaptureFailures,
+            hashCaptureChunksSkipped: clientCircuit.hashCaptureChunksSkipped,
+            hashReportsSent: clientCircuit.hashReportsSent,
+            hashChunksSent: clientCircuit.hashChunksSent,
+        scopeRequestsSent: clientCircuit.scopeRequestsSent,
+        scopeRequestChunksSent: clientCircuit.scopeRequestChunksSent,
+            snapshotPartsReceived: clientCircuit.snapshotPartsReceived,
+            snapshotsApplied: clientCircuit.snapshotsApplied,
+            statesApplied: clientCircuit.statesApplied,
+            applyFailures: clientCircuit.applyFailures,
+            watermarkExpired: clientCircuit.watermarkExpired,
+            snapshotTimeouts: clientCircuit.snapshotTimeouts
+          });
+          [
+            ["哈希捕获失败", "hashCaptureFailures"],
+            ["跳过哈希区块", "hashCaptureChunksSkipped"],
+            ["哈希报告发送", "hashReportsSent"],
+            ["哈希区块报告", "hashChunksSent"],
+            ["范围请求", "scopeRequestsSent"],
+            ["范围请求区块", "scopeRequestChunksSent"],
+            ["收到快照分片", "snapshotPartsReceived"],
+            ["应用快照", "snapshotsApplied"],
+            ["应用电路状态", "statesApplied"],
+            ["应用失败", "applyFailures"],
+            ["水位过期", "watermarkExpired"],
+            ["快照超时", "snapshotTimeouts"]
+          ].forEach(function (metric) {
+            var value = clientCircuit[metric[1]];
+            var rate = formatCounterRate(telemetry, value, clientCircuitRates, metric[1], function (v) {
+              return metricValue(v, 1) + "/s";
+            });
+            clientCircuitRows.push("<tr><td>" + esc(clientCircuitLabel) + "</td><td class='mono'>" +
+              esc(metric[0]) + "</td><td class='num'>" + (finiteMetric(value) ? esc(String(value)) : "不可用") +
+              "</td><td class='num telemetry-rate'>" + esc(rate) + "</td></tr>");
+          });
+        } else {
+          clientCircuitRows.push("<tr><td>" + esc(clientCircuitLabel) + "</td><td colspan='3' class='telemetry-unavailable'>客户端电路遥测不可用</td></tr>");
+        }
+      });
+    }
+    clientBody.innerHTML = peers && peers.length ? clientRows.join("") : unavailableRow(5, peers ? "当前没有在线客户端" : "客户端遥测不可用");
+    if (clientCircuitBody) clientCircuitBody.innerHTML = clientCircuitRows.length
+      ? clientCircuitRows.join("")
+      : unavailableRow(4, peers ? "当前没有在线客户端" : "客户端电路遥测不可用");
+    peerBody.innerHTML = peerRows.length ? peerRows.join("") : unavailableRow(11, peers ? "当前没有在线客户端连接" : "连接统计不可用");
+
+    var modules = host && Array.isArray(host.modules) ? host.modules : null;
+    var moduleRows = [];
+    function addRuntimeModules(runtime, instanceKey, instanceLabel) {
+      var runtimeModules = runtime && Array.isArray(runtime.modules) ? runtime.modules : null;
+      if (!runtimeModules) {
+        moduleRows.push("<tr><td class='mono'>" + esc(instanceLabel) + "</td><td colspan='4' class='telemetry-unavailable'>模块计时不可用</td></tr>");
+        return;
+      }
+      if (!runtimeModules.length) {
+        moduleRows.push("<tr><td class='mono'>" + esc(instanceLabel) + "</td><td colspan='4' class='telemetry-unavailable'>没有报告模块样本</td></tr>");
+        return;
+      }
+      runtimeModules.forEach(function (module) {
+        var moduleRates = telemetryCounterRates("module:" + instanceKey + ":" + String(module.id), telemetry, {
+          calls: module.calls, totalMs: module.totalMs
+        });
+        var callsRate = !finiteMetric(module.calls) ? "不可用" :
+          (!finiteMetric(telemetry.sampledAtMs) ? "采样时间不可用" :
+            (moduleRates && finiteMetric(moduleRates.calls) ? metricValue(moduleRates.calls, 2) + "/s" : "等待下一采样"));
+        var msRate = !finiteMetric(module.totalMs) ? "不可用" :
+          (!finiteMetric(telemetry.sampledAtMs) ? "采样时间不可用" :
+            (moduleRates && finiteMetric(moduleRates.totalMs) ? metricValue(moduleRates.totalMs, 1) + " ms/s" : "等待下一采样"));
+        var avg = moduleRates && finiteMetric(moduleRates.calls) && moduleRates.calls > 0 && finiteMetric(moduleRates.totalMs)
+          ? metricValue(moduleRates.totalMs / moduleRates.calls, 3) + " ms"
+          : (!finiteMetric(module.calls) || !finiteMetric(module.totalMs) ? "不可用" :
+            (!finiteMetric(telemetry.sampledAtMs) ? "采样时间不可用" : "等待下一采样"));
+        moduleRows.push("<tr><td class='mono'>" + esc(instanceLabel + " · " + (module.id || "未知模块")) + "</td><td class='num telemetry-rate'>" +
+          esc(callsRate) + "</td><td class='num telemetry-rate'>" + esc(msRate) + "</td><td class='num telemetry-rate'>" +
+          esc(avg) + "</td><td class='num'>" + (finiteMetric(module.maxMs) ? esc(metricValue(module.maxMs, 2) + " ms") : "不可用") + "</td></tr>");
+      });
+    }
+    addRuntimeModules(host, "host", "主机");
+    if (peers) peers.forEach(function (peer) {
+      addRuntimeModules(peer.clientRuntime, "peer:" + String(peer.key || peer.clientId),
+        peer.name || peer.key || ("clientId=" + peer.clientId));
+    });
+    moduleBody.innerHTML = moduleRows.length ? moduleRows.join("") : unavailableRow(5, "模块耗时统计不可用");
+  }
+
   function renderStats(state, sel, who) {
     var t = $("tiles"), body = $("statBody");
     if (!t || !body) return;
@@ -1841,6 +2367,7 @@ footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--line);font-si
       draw(state);
       syncSelect(state, sel);
       renderStats(state, sel, who);
+      renderTelemetry(state);
       var key = (sel ? sel.key : "-") + "@" + cellScale;
       if (drawStats.frame && key !== lastFrameKey) {
         lastFrameKey = key;

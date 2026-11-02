@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
+using System.Threading;
 using Google.Protobuf;
 using SuMultiplayer.Join;
 using SuMultiplayer.Net;
@@ -345,12 +346,24 @@ namespace SuMultiplayer.Transfer
     /// </summary>
     public sealed class WorldTransferHost
     {
+        private static int s_transferIdSeed = Environment.TickCount & 0x7FFFFFFF;
         private readonly ITransferChannel m_channel;
         private byte[] m_pak;
         private int m_chunkCount;
         private int m_chunkBytes;
         private int m_transferId;
         private int m_nextIndex;
+
+        private static int NextTransferId()
+        {
+            int id;
+            do
+            {
+                id = Interlocked.Increment(ref s_transferIdSeed) & 0x7FFFFFFF;
+            }
+            while (id == 0);
+            return id;
+        }
         public string WorldName { get; private set; } = string.Empty;
         public int ChunksPerTick { get; set; } = 8;
         public long ChunksSent { get; private set; }
@@ -369,7 +382,7 @@ namespace SuMultiplayer.Transfer
             m_chunkBytes = Math.Max(1024, Math.Min(chunkBytes, TerrainFrame.MaxPayloadBytes - 64));
             m_chunkCount = WorldTransferReceiver.PlanChunkCount(m_pak.Length, m_chunkBytes);
             m_nextIndex = 0;
-            m_transferId = Environment.TickCount & 0x7FFFFFF;
+            m_transferId = NextTransferId();
             ChunksSent = 0;
             BytesSent = 0;
             WorldName = worldName ?? string.Empty;
@@ -415,7 +428,7 @@ namespace SuMultiplayer.Transfer
             m_chunkBytes = Math.Max(1024, Math.Min(chunkBytes, TerrainFrame.MaxPayloadBytes - 64));
             m_chunkCount = WorldTransferReceiver.PlanChunkCount(m_pak.Length, m_chunkBytes);
             m_nextIndex = 0;
-            m_transferId = Environment.TickCount & 0x7FFFFFF;
+            m_transferId = NextTransferId();
             // 进度计数属于**这一次传输**：多客户端时主机用同一个实例一条一条发，
             // 计数必须跟着 Prepare 归零，否则第二个客户端的进度/完成判定会带着上一个客户端的数。
             ChunksSent = 0;
@@ -436,7 +449,7 @@ namespace SuMultiplayer.Transfer
         public void Restart()
         {
             m_nextIndex = 0;
-            m_transferId = (Environment.TickCount & 0x7FFFFFF) ^ 0x5A5A;
+            m_transferId = NextTransferId();
         }
 
         /// <summary>
@@ -529,10 +542,12 @@ namespace SuMultiplayer.Transfer
         private string m_worldName = string.Empty;
         private string m_directoryName = string.Empty;
         private long m_missingRequestedMs;
+        private bool m_endReceived;
 
         public WorldTransferClient(ITransferChannel channel) { m_channel = channel; }
 
         public bool Active { get; private set; }
+        public int TransferId => m_transferId;
         public string WorldName => m_worldName;
         public string DirectoryName => m_directoryName;
         /// <summary>世界清单里的主机会话标识（旧主机 / 缺字段 = 空串；空 = 不能声明"同一会话"）。</summary>
@@ -567,6 +582,7 @@ namespace SuMultiplayer.Transfer
             m_worldName = string.Empty;
             m_directoryName = string.Empty;
             m_missingRequestedMs = 0L;
+            m_endReceived = false;
             Assembled = null;
             Complete = false;
             Active = false;
@@ -594,6 +610,7 @@ namespace SuMultiplayer.Transfer
             RandomStateProblem = string.Empty;
             m_receiver = new WorldTransferReceiver(chunks, chunkBytes);
             m_receiver.MaxChunkBytes = chunkBytes;
+            m_endReceived = false;
             Assembled = null;
             Complete = false;
             Error = null;
@@ -616,7 +633,8 @@ namespace SuMultiplayer.Transfer
         /// </summary>
         public bool HandleEnd(PTransfer.WorldEnd message, long nowMs)
         {
-            if (m_receiver == null) return false;
+            if (m_receiver == null || message == null || message.TransferId != m_transferId) return false;
+            m_endReceived = true;
             if (Assembled == null)
             {
                 Assembled = m_receiver.Assemble();
@@ -628,7 +646,6 @@ namespace SuMultiplayer.Transfer
             }
             Complete = true;
             Active = false;
-            _ = message;
             _ = nowMs;
             return true;
         }
@@ -636,7 +653,7 @@ namespace SuMultiplayer.Transfer
         /// <summary>缺片就请主机重发（限流）。返回请求数量。</summary>
         public int RequestMissing(long nowMs)
         {
-            if (m_receiver == null || m_receiver.IsComplete) return 0;
+            if (m_receiver == null || m_receiver.IsComplete || !m_endReceived) return 0;
             if (nowMs - m_missingRequestedMs < 1000) return 0;
             m_missingRequestedMs = nowMs;
             List<int> missing = m_receiver.MissingChunks(256);

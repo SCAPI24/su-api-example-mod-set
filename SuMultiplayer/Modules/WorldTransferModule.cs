@@ -81,6 +81,8 @@ namespace SuMultiplayer.Modules
         private readonly List<int> m_sendQueue = new List<int>();
         /// <summary>主机侧：此刻正在发送的 clientId（0 = 没有）。</summary>
         private int m_activeSendClientId;
+        /// <summary>每个客户端最近完成的传输 id，用于识别 End 后的缺片请求与过期请求。</summary>
+        private readonly Dictionary<int, int> m_completedTransferIds = new Dictionary<int, int>();
         private long m_lastExportAttemptMs = long.MinValue / 2;
         private long m_lastExportFailureLogMs = long.MinValue / 2;
         private string m_lastExportFailure = string.Empty;
@@ -142,30 +144,41 @@ namespace SuMultiplayer.Modules
         }
 
         /// <summary>
-        /// 客户端报告缺片 → 主机按索引重发。只在"这个客户端正是当前传输目标"时重发；
-        /// 其它连接（或多个客户端排队时）明确忽略并限流写一行，绝不把分片串给别的连接。
+        /// 客户端报告缺片 → 活动传输按索引重发；已完成传输按同一 clientId 排队重发整图。
+        /// 旧 transferId 明确丢弃，不能把迟到的旧请求误判为重连后世界缺失。
         /// </summary>
         private void OnWorldMissing(MessageContext context, PTransfer.WorldMissing message)
         {
             if (m_control?.IsHosting != true || m_host == null) return;
-            if (context.ClientId != m_activeSendClientId)
+            if (context.ClientId == m_activeSendClientId)
             {
-                // 重连时客户端可能先在“旧 Project 还在”的瞬间判定 alreadyHasWorld=true，
-                // 主机因此跳过整图；随后旧世界卸载，客户端开始请求缺片却没有任何传输目标。
-                // 这时把它重新排进整图队列，而不是永远忽略它。
-                if (QueueFullSendFor(context.ClientId, "无活动传输的缺片请求（重连后世界缺失）"))
-                    LogWarning("clientId=" + context.ClientId +
-                        " 请求缺片时没有传输目标 → 已重新排队整图（不把分片发给别的连接）");
-                else
-                    LogWarning("clientId=" + context.ClientId +
-                        " 请求缺片，但它不是当前传输目标（目标=" + m_activeSendClientId +
-                        "）→ 已排队/正在发则忽略");
+                SendState active = FindSend(context.ClientId);
+                if (active == null || active.EndSent || active.TransferId != message.TransferId)
+                {
+                    LogWarning("clientId=" + context.ClientId + " 的缺片请求 transferId=" +
+                        message.TransferId + " 与活动传输不匹配（当前=" +
+                        (active?.TransferId ?? 0) + "）→ 丢弃过期请求");
+                    return;
+                }
+                int resent = m_host.Resend(message.Indexes);
+                if (resent > 0)
+                    Log("clientId=" + context.ClientId + " 请求缺片 " + message.Indexes.Count +
+                        " 片（transferId=" + message.TransferId + "）→ 已重发 " + resent + " 片");
                 return;
             }
-            int sent = m_host.Resend(message.Indexes);
-            if (sent > 0)
-                Log("clientId=" + context.ClientId + " 请求缺片 " + message.Indexes.Count +
-                    " 片 → 已重发 " + sent + " 片");
+            if (m_completedTransferIds.TryGetValue(context.ClientId, out int completedId) &&
+                completedId == message.TransferId)
+            {
+                if (QueueFullSendFor(context.ClientId,
+                    "客户端在完整 End 后仍缺片（transferId=" + message.TransferId + "）"))
+                {
+                    LogWarning("clientId=" + context.ClientId + " 的已完成传输仍有缺片（transferId=" +
+                        message.TransferId + "）→ 按当前主机世界重新排队整图");
+                }
+                return;
+            }
+            LogWarning("clientId=" + context.ClientId + " 的缺片请求 transferId=" + message.TransferId +
+                " 不属于活动或最近完成的传输 → 丢弃过期请求");
         }
 
         private void OnWorldBegin(MessageContext context, PTransfer.WorldBegin message)
@@ -297,6 +310,7 @@ namespace SuMultiplayer.Modules
             var send = new SendState { ClientId = clientId, ClientName = "clientId=" + clientId };
             m_sends[clientId] = send;
             m_sendQueue.Add(clientId);
+            m_completedTransferIds.Remove(clientId);
             Log("世界传输：clientId=" + clientId + " 重新排队整图（" + why + "）" +
                 (m_activeSendClientId > 0
                     ? "；当前正在发 clientId=" + m_activeSendClientId
@@ -306,6 +320,7 @@ namespace SuMultiplayer.Modules
 
         private void HandleClientJoined(int clientId, string name, string identity, bool rejoin)
         {
+            m_completedTransferIds.Remove(clientId);
             if (rejoin)
             {
                 // 对端明说"我已经有过这个世界"（断线重连）：**绝不能**再发一遍整图 ——
@@ -359,6 +374,7 @@ namespace SuMultiplayer.Modules
         private void HandleClientLeft(int clientId, string reason)
         {
             if (m_control?.IsHosting != true) return;
+            m_completedTransferIds.Remove(clientId);
             string detail = CancelSendFor(clientId);
             if (detail.Length == 0) return;   // 它没有待发的世界（已发完 / 从未进发送队列）
             Log("世界发送已中止 clientId=" + clientId + "（" + reason + "）：" + detail +
@@ -427,6 +443,8 @@ namespace SuMultiplayer.Modules
                 }
                 m_sendQueue.RemoveAt(0);
                 m_host.Restart();
+                send.TransferId = m_host.TransferId;
+                m_completedTransferIds.Remove(clientId);
                 // 定向：这一条传输从 Begin 到 End 只发给这个 clientId（绝不发给"最后加入的那个"）。
                 m_sendChannel.TargetClientId = clientId;
                 m_activeSendClientId = clientId;
@@ -561,6 +579,8 @@ namespace SuMultiplayer.Modules
         {
             int chunks = (int)m_host.ChunksSent;
             int total = m_host.ChunkCount;
+            if (send.TransferId != 0)
+                m_completedTransferIds[send.ClientId] = send.TransferId;
             m_sends.Remove(send.ClientId);
             m_sendQueue.Remove(send.ClientId);
             m_bandwidth?.SetClientDownloading(send.ClientId, false);
@@ -613,6 +633,7 @@ namespace SuMultiplayer.Modules
             else detail = "已开始但未完成";
             if (send != null) send.Aborted = true;
             m_sends.Remove(clientId);
+            m_completedTransferIds.Remove(clientId);
             m_sendQueue.Remove(clientId);
             if (wasActive)
             {
@@ -627,6 +648,7 @@ namespace SuMultiplayer.Modules
         private void RemoveSend(int clientId, string why)
         {
             m_sends.Remove(clientId);
+            m_completedTransferIds.Remove(clientId);
             m_sendQueue.Remove(clientId);
             if (m_activeSendClientId == clientId)
             {
@@ -646,6 +668,7 @@ namespace SuMultiplayer.Modules
                 m_bandwidth?.SetClientDownloading(m_activeSendClientId, false);
             m_sends.Clear();
             m_sendQueue.Clear();
+            m_completedTransferIds.Clear();
             m_activeSendClientId = 0;
             m_host?.AbortPendingSend();
             return count;
@@ -803,7 +826,7 @@ namespace SuMultiplayer.Modules
                     !m_client.Complete && !InstalledOnce)
                 {
                     // 缺片补齐后再组装一次（End 已经到过）
-                    m_client.HandleEnd(new PTransfer.WorldEnd { TransferId = 0, Ok = true }, nowMs);
+                    m_client.HandleEnd(new PTransfer.WorldEnd { TransferId = m_client.TransferId, Ok = true }, nowMs);
                     if (m_client.Complete) Install();
                 }
             }
@@ -932,6 +955,7 @@ namespace SuMultiplayer.Modules
         {
             public int ClientId;
             public string ClientName = string.Empty;
+            public int TransferId;
             /// <summary>已经 Prepare + 发过 Begin（这一条传输已经开始）。</summary>
             public bool Started;
             public bool BeginSent;

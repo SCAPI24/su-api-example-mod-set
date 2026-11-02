@@ -90,7 +90,7 @@ namespace SuMultiplayer.Protocol {
             "EhAKCGlkZW50aXR5GAcgASgJIpcBChBQbGF5ZXJTcGF3blN0YXRlEgwKBGZ1",
             "bGwYASABKAgSEAoIcmV2aXNpb24YAiABKA0SMAoHZW50cmllcxgDIAMoCzIf",
             "LnN1bXAucHJvdG9jb2wuUGxheWVyU3Bhd25FbnRyeRILCgNleHQYZCABKAwS",
-            "JAoGY3VzdG9tGGUgASgLMhQuZ29vZ2xlLnByb3RvYnVmLkFueSqwGAoLTWVz",
+            "JAoGY3VzdG9tGGUgASgLMhQuZ29vZ2xlLnByb3RvYnVmLkFueSroGAoLTWVz",
             "c2FnZVR5cGUSHAoYTUVTU0FHRV9UWVBFX1VOU1BFQ0lGSUVEEAASCQoFSEVM",
             "TE8QARINCglIRUxMT19BQ0sQAhITCg9JTlRFUkVTVF9VUERBVEUQAxIXChND",
             "SFVOS19ESUdFU1RfUkVQT1JUEAQSEQoNQ0hVTktfVkVSRElDVBAFEhAKDENI",
@@ -160,8 +160,9 @@ namespace SuMultiplayer.Protocol {
             "Uk9MX1JFUVVFU1QQcBIYChRXT1JMRF9DT05UUk9MX1JFU1VMVBBxEhEKDU1P",
             "VU5UX1JFUVVFU1QQchIPCgtNT1VOVF9TVEFURRBzEhAKDFBMQVlFUl9TUEFX",
             "ThB0EggKBFBJTkcQdRIICgRQT05HEHYSGAoUQkxPQ0tfREVTVFJPWV9FRkZF",
-            "Q1QQdyIECG4QbkIbSAGqAhZTdU11bHRpcGxheWVyLlByb3RvY29sYgZwcm90",
-            "bzM="));
+            "Q1QQdxIdChhDTElFTlRfUlVOVElNRV9URUxFTUVUUlkQkQESFwoSTElWRV9N",
+            "QVBfVEVMRU1FVFJZEJIBIgQIbhBuQhtIAaoCFlN1TXVsdGlwbGF5ZXIuUHJv",
+            "dG9jb2xiBnByb3RvMw=="));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { global::Google.Protobuf.WellKnownTypes.AnyReflection.Descriptor, },
           new pbr::GeneratedClrTypeInfo(new[] {typeof(global::SuMultiplayer.Protocol.MessageType), }, null, new pbr::GeneratedClrTypeInfo[] {
@@ -740,6 +741,11 @@ namespace SuMultiplayer.Protocol {
     /// 方块破坏表现（碎屑 / 落叶粒子）。只同步表现，不改格；append-only。
     /// </summary>
     [pbr::OriginalName("BLOCK_DESTROY_EFFECT")] BlockDestroyEffect = 119,
+    /// <summary>
+    /// Low-rate performance reporting and LiveMap telemetry. Diagnostic only.
+    /// </summary>
+    [pbr::OriginalName("CLIENT_RUNTIME_TELEMETRY")] ClientRuntimeTelemetry = 145,
+    [pbr::OriginalName("LIVE_MAP_TELEMETRY")] LiveMapTelemetry = 146,
   }
 
   #endregion

@@ -19,7 +19,31 @@ namespace SuMultiplayer.Engine
         private const int MaximumDelayHistoryEntries = 300;
         private const int MaximumScheduledSteps = 10000;
 
+        private sealed class DelayHistoryComparer : IComparer<KeyValuePair<int, float>>
+        {
+            public int Compare(KeyValuePair<int, float> left,
+                KeyValuePair<int, float> right) => left.Key.CompareTo(right.Key);
+        }
+
+        private sealed class ScheduledVoltageComparer : IComparer<CircuitScheduledVoltage>
+        {
+            public int Compare(CircuitScheduledVoltage left, CircuitScheduledVoltage right)
+            {
+                int result = left.RemainingSteps.CompareTo(right.RemainingSteps);
+                return result != 0 ? result : left.VoltageLevel.CompareTo(right.VoltageLevel);
+            }
+        }
+
+        private static readonly IComparer<KeyValuePair<int, float>> s_delayHistoryComparer =
+            new DelayHistoryComparer();
+        private static readonly IComparer<CircuitScheduledVoltage> s_scheduledVoltageComparer =
+            new ScheduledVoltageComparer();
+
         private readonly IModParentField m_parentField;
+        private readonly List<KeyValuePair<int, float>> m_delayHistoryScratch =
+            new List<KeyValuePair<int, float>>(MaximumDelayHistoryEntries);
+        private readonly List<CircuitScheduledVoltage> m_scheduledVoltageScratch =
+            new List<CircuitScheduledVoltage>(MaximumDelayHistoryEntries);
         private long m_sevenSegmentCaptures;
         private long m_sevenSegmentApplies;
         private string m_lastSevenSegmentCapture = "none";
@@ -173,6 +197,96 @@ namespace SuMultiplayer.Engine
                 error = "Circuit multi-chunk capture failed: " + ex.Message;
                 return false;
             }
+        }
+
+        // Source: Mod/SuMultiplayer/Modules/CircuitSyncModule.cs:CircuitSyncModule.SendClientHashes
+        // Capture the electric element table once, while isolating element failures to their chunk.
+        public bool CaptureChunksBestEffort(SubsystemElectricity subsystem, IList<ChunkKey> chunks,
+            IDictionary<ChunkKey, List<CircuitElementState>> statesByChunk,
+            IDictionary<ChunkKey, string> chunkErrors, out string error)
+        {
+            if (subsystem == null) throw new ArgumentNullException(nameof(subsystem));
+            if (chunks == null) throw new ArgumentNullException(nameof(chunks));
+            if (statesByChunk == null) throw new ArgumentNullException(nameof(statesByChunk));
+            if (chunkErrors == null) throw new ArgumentNullException(nameof(chunkErrors));
+            statesByChunk.Clear();
+            chunkErrors.Clear();
+            error = null;
+
+            try
+            {
+                foreach (ChunkKey chunk in chunks)
+                    if (!statesByChunk.ContainsKey(chunk))
+                        statesByChunk.Add(chunk, new List<CircuitElementState>());
+
+                foreach (ElectricElement element in GetElements(subsystem))
+                {
+                    if (element is PistonElectricElement) continue;
+                    if (element is WireDomainElectricElement)
+                    {
+                        foreach (CellFace wireFace in element.CellFaces)
+                        {
+                            ChunkKey key = new ChunkKey(wireFace.X >> 4, wireFace.Z >> 4);
+                            if (!statesByChunk.TryGetValue(key, out List<CircuitElementState> states) ||
+                                chunkErrors.ContainsKey(key)) continue;
+                            try
+                            {
+                                states.Add(CaptureElement(subsystem, element, wireFace));
+                            }
+                            catch (Exception captureError)
+                            {
+                                MarkChunkCaptureFailure(key, states, chunkErrors, captureError);
+                            }
+                        }
+                        continue;
+                    }
+
+                    CellFace face;
+                    try
+                    {
+                        face = GetStableCellFace(element);
+                    }
+                    catch (Exception faceError)
+                    {
+                        error = "Circuit element location capture failed: " + faceError.Message;
+                        statesByChunk.Clear();
+                        return false;
+                    }
+                    ChunkKey elementChunk = new ChunkKey(face.X >> 4, face.Z >> 4);
+                    if (!statesByChunk.TryGetValue(elementChunk,
+                            out List<CircuitElementState> elementStates) ||
+                        chunkErrors.ContainsKey(elementChunk)) continue;
+                    try
+                    {
+                        elementStates.Add(CaptureElement(subsystem, element, face));
+                    }
+                    catch (Exception captureError)
+                    {
+                        MarkChunkCaptureFailure(elementChunk, elementStates, chunkErrors,
+                            captureError);
+                    }
+                }
+
+                foreach (KeyValuePair<ChunkKey, List<CircuitElementState>> pair in statesByChunk)
+                    if (!chunkErrors.ContainsKey(pair.Key))
+                        pair.Value.Sort(CompareStates);
+                return true;
+            }
+            catch (Exception captureError)
+            {
+                statesByChunk.Clear();
+                chunkErrors.Clear();
+                error = "Circuit best-effort multi-chunk capture failed: " + captureError.Message;
+                return false;
+            }
+        }
+
+        private static void MarkChunkCaptureFailure(ChunkKey key,
+            List<CircuitElementState> states, IDictionary<ChunkKey, string> errors,
+            Exception captureError)
+        {
+            states.Clear();
+            errors[key] = "Circuit chunk " + key + " capture failed: " + captureError.Message;
         }
 
         // Source: Survivalcraft/Game/SubsystemElectricity.cs:SubsystemElectricity.m_electricElements
@@ -456,34 +570,105 @@ namespace SuMultiplayer.Engine
             uint hash = FnvOffsetBasis;
             foreach (CircuitElementState state in states.OrderBy(item => item.X)
                 .ThenBy(item => item.Y).ThenBy(item => item.Z).ThenBy(item => item.MountingFace))
+                HashState(ref hash, state, scheduledVoltagesAreSorted: false);
+            return hash;
+        }
+
+        // Source: CircuitStateCodec.CaptureChunk and CircuitStateCodec.CaptureChunksBestEffort
+        // Captures sort states and scheduled voltages by the exact keys used by ComputeHash.
+        public uint ComputeCapturedHash(IList<CircuitElementState> states)
+        {
+            if (states == null) throw new ArgumentNullException(nameof(states));
+            uint hash = FnvOffsetBasis;
+            CircuitElementState previous = null;
+            for (int i = 0; i < states.Count; i++)
             {
-                if (state == null) throw new ArgumentException("Circuit states cannot contain null.", nameof(states));
-                Hash(ref hash, state.X);
-                Hash(ref hash, state.Y);
-                Hash(ref hash, state.Z);
-                Hash(ref hash, unchecked((int)state.MountingFace));
-                Hash(ref hash, unchecked((int)state.ElementType));
-                Hash(ref hash, state.VoltageLevel);
-                Hash(ref hash, unchecked((int)state.Flags));
-                Hash(ref hash, state.AuxiliaryVoltageLevel);
-                Hash(ref hash, unchecked((int)state.RuntimeState));
-                Hash(ref hash, unchecked((int)(state.RuntimeState >> 32)));
-                Hash(ref hash, unchecked((int)state.AuxiliaryState));
-                Hash(ref hash, unchecked((int)(state.AuxiliaryState >> 32)));
-                Hash(ref hash, unchecked((int)state.ButtonPhase));
-                Hash(ref hash, unchecked((int)state.ButtonRemainingSteps));
-                Hash(ref hash, unchecked((int)state.RelatedSequence));
-                Hash(ref hash, state.OutputVoltageLevels.Count);
-                foreach (int output in state.OutputVoltageLevels) Hash(ref hash, output);
-                Hash(ref hash, state.ScheduledVoltages.Count);
-                foreach (CircuitScheduledVoltage scheduled in state.ScheduledVoltages
-                    .OrderBy(item => item.RemainingSteps).ThenBy(item => item.VoltageLevel))
-                {
-                    Hash(ref hash, unchecked((int)scheduled.RemainingSteps));
-                    Hash(ref hash, scheduled.VoltageLevel);
-                }
+                CircuitElementState state = states[i];
+                if (state == null)
+                    throw new ArgumentException("Circuit states cannot contain null.", nameof(states));
+                if (previous != null && CompareStates(previous, state) > 0)
+                    throw new InvalidOperationException(
+                        "Captured circuit states are not sorted by coordinate and mounting face.");
+                HashState(ref hash, state, scheduledVoltagesAreSorted: true);
+                previous = state;
             }
             return hash;
+        }
+
+        private static void HashState(ref uint hash, CircuitElementState state,
+            bool scheduledVoltagesAreSorted)
+        {
+            if (state == null)
+                throw new ArgumentException("Circuit states cannot contain null.");
+            Hash(ref hash, state.X);
+            Hash(ref hash, state.Y);
+            Hash(ref hash, state.Z);
+            Hash(ref hash, unchecked((int)state.MountingFace));
+            Hash(ref hash, unchecked((int)state.ElementType));
+            Hash(ref hash, state.VoltageLevel);
+            Hash(ref hash, unchecked((int)state.Flags));
+            Hash(ref hash, state.AuxiliaryVoltageLevel);
+            Hash(ref hash, unchecked((int)state.RuntimeState));
+            Hash(ref hash, unchecked((int)(state.RuntimeState >> 32)));
+            Hash(ref hash, unchecked((int)state.AuxiliaryState));
+            Hash(ref hash, unchecked((int)(state.AuxiliaryState >> 32)));
+            Hash(ref hash, unchecked((int)state.ButtonPhase));
+            Hash(ref hash, unchecked((int)state.ButtonRemainingSteps));
+            Hash(ref hash, unchecked((int)state.RelatedSequence));
+            Hash(ref hash, state.OutputVoltageLevels.Count);
+            foreach (int output in state.OutputVoltageLevels) Hash(ref hash, output);
+            Hash(ref hash, state.ScheduledVoltages.Count);
+            if (scheduledVoltagesAreSorted)
+            {
+                CircuitScheduledVoltage previous = null;
+                foreach (CircuitScheduledVoltage scheduled in state.ScheduledVoltages)
+                {
+                    if (previous != null && s_scheduledVoltageComparer.Compare(
+                            previous, scheduled) > 0)
+                        throw new InvalidOperationException(
+                            "Captured circuit scheduled voltages are not sorted by remaining steps and voltage.");
+                    HashScheduledVoltage(ref hash, scheduled);
+                    previous = scheduled;
+                }
+            }
+            else
+            {
+                foreach (CircuitScheduledVoltage scheduled in state.ScheduledVoltages
+                    .OrderBy(item => item.RemainingSteps).ThenBy(item => item.VoltageLevel))
+                    HashScheduledVoltage(ref hash, scheduled);
+            }
+        }
+
+        private void CaptureScheduledVoltages(Dictionary<int, float> history, int circuitStep,
+            Google.Protobuf.Collections.RepeatedField<CircuitScheduledVoltage> target)
+        {
+            m_delayHistoryScratch.Clear();
+            foreach (KeyValuePair<int, float> item in history)
+                if (item.Key >= circuitStep)
+                    m_delayHistoryScratch.Add(item);
+            m_delayHistoryScratch.Sort(s_delayHistoryComparer);
+
+            m_scheduledVoltageScratch.Clear();
+            int count = Math.Min(MaximumDelayHistoryEntries, m_delayHistoryScratch.Count);
+            for (int i = 0; i < count; i++)
+            {
+                KeyValuePair<int, float> item = m_delayHistoryScratch[i];
+                m_scheduledVoltageScratch.Add(new CircuitScheduledVoltage
+                {
+                    RemainingSteps = (uint)MathUtils.Clamp(
+                        item.Key - circuitStep, 0, MaximumScheduledSteps),
+                    VoltageLevel = QuantizeVoltage(item.Value)
+                });
+            }
+            m_scheduledVoltageScratch.Sort(s_scheduledVoltageComparer);
+            target.Add(m_scheduledVoltageScratch);
+        }
+
+        private static void HashScheduledVoltage(ref uint hash,
+            CircuitScheduledVoltage scheduled)
+        {
+            Hash(ref hash, unchecked((int)scheduled.RemainingSteps));
+            Hash(ref hash, scheduled.VoltageLevel);
         }
 
         // Source: Survivalcraft/Game/SubsystemElectricity.cs:SubsystemElectricity.m_electricElements
@@ -496,10 +681,7 @@ namespace SuMultiplayer.Engine
             // PistonElectricElement is simulated by SubsystemPistonBlockBehavior and
             // intentionally has no circuit snapshot representation. Filter it before
             // any state capture path can reach EnsureSupportedType.
-            return elements.Keys.Where(item => !(item is PistonElectricElement))
-                .OrderBy(item => GetStableCellFace(item).X)
-                .ThenBy(item => GetStableCellFace(item).Y).ThenBy(item => GetStableCellFace(item).Z)
-                .ThenBy(item => GetStableCellFace(item).Face).ToArray();
+            return elements.Keys.Where(item => !(item is PistonElectricElement)).ToArray();
         }
 
         // Source: Mod/ScMultiplayer/Func/Circuit/CircuitSynchronizer.cs:CircuitSynchronizer.TryCaptureState
@@ -565,16 +747,8 @@ namespace SuMultiplayer.Engine
                         "m_voltagesHistory", typeof(BaseDelayGateElectricElement));
                     if (history == null)
                         throw new InvalidOperationException("BaseDelayGateElectricElement.m_voltagesHistory is null.");
-                    foreach (KeyValuePair<int, float> item in history
-                        .Where(item => item.Key >= subsystem.CircuitStep)
-                        .OrderBy(item => item.Key).Take(MaximumDelayHistoryEntries))
-                    {
-                        state.ScheduledVoltages.Add(new CircuitScheduledVoltage
-                        {
-                            RemainingSteps = (uint)MathUtils.Clamp(item.Key - subsystem.CircuitStep, 0, MaximumScheduledSteps),
-                            VoltageLevel = QuantizeVoltage(item.Value)
-                        });
-                    }
+                    CaptureScheduledVoltages(history, subsystem.CircuitStep,
+                        state.ScheduledVoltages);
                 }
             }
 

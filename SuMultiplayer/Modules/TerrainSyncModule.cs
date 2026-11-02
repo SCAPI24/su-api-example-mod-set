@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.Linq;
 using Engine;
 using GameEntitySystem;
 using Google.Protobuf;
@@ -9,6 +11,7 @@ using SuMultiplayer.Players;
 using SuMultiplayer.Terrain;
 
 using SuMultiplayer.Protocol;
+using SuMultiplayer.Protocol.Telemetry;
 using PP = SuMultiplayer.Protocol.Position;
 
 namespace SuMultiplayer.Modules
@@ -51,7 +54,23 @@ namespace SuMultiplayer.Modules
 
         private readonly HashSet<int> m_clientsDownloadingWorld = new HashSet<int>();
         private readonly BandwidthPortImpl m_bandwidthPort;
+        private readonly RuntimeTelemetrySampler m_runtimeTelemetry = new RuntimeTelemetrySampler();
         private long m_pausedBroadcastDrops;
+        private RuntimeSample m_hostRuntimeSample;
+        private Func<List<ModuleTickSample>> m_moduleTickMetricsProvider;
+        private Func<CircuitSyncSample> m_circuitTelemetryProvider;
+        private Func<ClientCircuitSample> m_clientCircuitTelemetryProvider;
+        private long m_liveTelemetrySampleId;
+
+        private sealed class PeerRuntimeRecord
+        {
+            public RuntimeSample Sample;
+            public ClientCircuitSample Circuit;
+            public long ReceivedAtMs;
+        }
+
+        private readonly Dictionary<int, PeerRuntimeRecord> m_peerRuntimeSamples =
+            new Dictionary<int, PeerRuntimeRecord>();
 
         private IModuleContext m_context;
         private TcpTerrainServer m_server;
@@ -78,6 +97,10 @@ namespace SuMultiplayer.Modules
         /// <summary>实际发出的 InterestUpdate 条数（含握手前重发）。</summary>
         private long m_interestSends;
         private long m_lastReportMs;
+        private long m_liveMapBuildMs;
+        private int m_liveMapChunkCount;
+        private int m_liveMapBatchCount;
+        private long m_liveMapRequests;
         /// <summary>上一次上报兴趣的时刻（秒，Time.RealTime 口径）。</summary>
         private double m_lastInterestSeconds;
         private long m_nextReconnectMs;
@@ -423,6 +446,15 @@ namespace SuMultiplayer.Modules
         /// <summary>组合根注册给第三方模块的端口（Registry + Sender）。</summary>
         public IMessageRegistryPort MessagePort => m_messages;
 
+        public void SetModuleTickMetricsProvider(Func<List<ModuleTickSample>> provider) =>
+            m_moduleTickMetricsProvider = provider;
+
+        public void SetCircuitTelemetryProvider(Func<CircuitSyncSample> provider) =>
+            m_circuitTelemetryProvider = provider;
+
+        public void SetClientCircuitTelemetryProvider(Func<ClientCircuitSample> provider) =>
+            m_clientCircuitTelemetryProvider = provider;
+
         private const string ModuleMessageOwner = "terrain-sync-module";
 
         /// <summary>
@@ -448,6 +480,10 @@ namespace SuMultiplayer.Modules
                 new DelegateMessageHandler<PP.PlayerPositions>(OnPlayerPosition), ModuleMessageOwner);
             registry.Register((int)MessageType.PlayerPositions, PP.PlayerPositions.Parser,
                 new DelegateMessageHandler<PP.PlayerPositions>(OnPlayerPositions), ModuleMessageOwner);
+            registry.Register((int)MessageType.ClientRuntimeTelemetry,
+                ClientRuntimeTelemetry.Parser,
+                new DelegateMessageHandler<ClientRuntimeTelemetry>(OnClientRuntimeTelemetry),
+                ModuleMessageOwner);
             // live-map 请求是冻结的原始格式（网页 feed 不能变），走原始处理器。
             registry.RegisterRaw(MessageType.MapRequest, OnMapRequest, ModuleMessageOwner);
             m_messages.Problem += HandleMessageProblem;
@@ -495,6 +531,170 @@ namespace SuMultiplayer.Modules
             m_avatarLink.OnClientInterestRadiusReported(context.ClientId, reportedRadius);
         }
 
+        private void OnClientRuntimeTelemetry(MessageContext context,
+            ClientRuntimeTelemetry message)
+        {
+            if (message == null || m_server == null ||
+                m_server.KindOf(context.ClientId) != ClientKind.Player) return;
+            if (message.Runtime == null && message.Circuit == null) return;
+            m_peerRuntimeSamples[context.ClientId] = new PeerRuntimeRecord
+            {
+                Sample = message.Runtime?.Clone(),
+                Circuit = message.Circuit?.Clone(),
+                ReceivedAtMs = Environment.TickCount64
+            };
+        }
+
+        private void UpdateRuntimeTelemetry(in ModuleTickContext tick)
+        {
+            if (m_server == null && m_client == null) return;
+            long nowMs = (long)(tick.Now * 1000.0);
+            if (!m_runtimeTelemetry.TrySample(nowMs, tick.DeltaTime, out RuntimeSample sample))
+                return;
+            if (m_moduleTickMetricsProvider != null)
+                sample.Modules.Add(m_moduleTickMetricsProvider());
+            if (m_server != null)
+            {
+                m_hostRuntimeSample = sample;
+                return;
+            }
+            if (m_client == null || !m_client.IsAlive) return;
+            var report = new ClientRuntimeTelemetry { Runtime = sample };
+            if (m_clientCircuitTelemetryProvider != null)
+                report.Circuit = m_clientCircuitTelemetryProvider();
+            if (!m_client.TrySend(MessageType.ClientRuntimeTelemetry, report.ToByteArray()))
+                LogRateLimited("runtime-telemetry-send-failed",
+                    "本机运行时遥测发送失败（主连接背压或失效）", 5000);
+        }
+
+        private LiveTelemetry BuildLiveTelemetry(int monitorClientId)
+        {
+            var telemetry = new LiveTelemetry
+            {
+                SampleId = (ulong)++m_liveTelemetrySampleId,
+                SampledAtMs = (ulong)Environment.TickCount64,
+                LiveMapRequests = (ulong)Math.Max(0, m_liveMapRequests),
+                LiveMapBuildMs = (float)m_liveMapBuildMs,
+                LiveMapChunks = (uint)Math.Max(0, m_liveMapChunkCount),
+                LiveMapBatches = (uint)Math.Max(0, m_liveMapBatchCount)
+            };
+            if (m_hostRuntimeSample != null)
+                telemetry.HostRuntime = m_hostRuntimeSample.Clone();
+            if (m_circuitTelemetryProvider != null)
+                telemetry.Circuit = m_circuitTelemetryProvider();
+            TerrainHostSnapshot hostSnapshot = m_host?.GetSnapshot();
+            if (m_host != null)
+            {
+                telemetry.Terrain = new TerrainSyncSample
+                {
+                    DigestReports = (ulong)Math.Max(0, hostSnapshot.DigestReports),
+                    CellChangesBroadcast = (ulong)Math.Max(0, hostSnapshot.CellChangesBroadcast),
+                    CellChangeRepairs = (ulong)Math.Max(0, hostSnapshot.CellChangeRepairs),
+                    ResyncBytes = (ulong)Math.Max(0, hostSnapshot.ResyncBytes),
+                    PendingReports = (uint)Math.Max(0, hostSnapshot.PendingReports),
+                    PendingMarks = (uint)Math.Max(0, hostSnapshot.PendingMarks),
+                    PendingClients = (uint)Math.Max(0, hostSnapshot.PendingClients),
+                    VerifyRequestsSent = (ulong)Math.Max(0, hostSnapshot.VerifyRequestsSent),
+                    VerifyRequestSendFailures = (ulong)Math.Max(0,
+                        hostSnapshot.VerifyRequestSendFailures)
+                };
+            }
+            if (m_clientSync != null)
+            {
+                TerrainClientSnapshot snapshot = m_clientSync.GetSnapshot();
+                telemetry.Terrain = new TerrainSyncSample
+                {
+                    ReportsPerSecond = (ulong)Math.Max(0, snapshot.ReportsPerSecond),
+                    MismatchPerSecond = (ulong)Math.Max(0, snapshot.MismatchPerSecond),
+                    ResyncReceivedPerSecond = (ulong)Math.Max(0,
+                        snapshot.ResyncReceivedPerSecond),
+                    ResyncAppliedPerSecond = (ulong)Math.Max(0,
+                        snapshot.ResyncAppliedPerSecond)
+                };
+            }
+
+            if (m_host != null && m_server != null)
+            {
+                var liveIds = new HashSet<int>();
+                foreach (ClientView client in hostSnapshot.Clients)
+                {
+                    if (client.Kind != ClientKind.Player) continue;
+                    liveIds.Add(client.Id);
+                    var peer = new PeerSample
+                    {
+                        ClientId = client.Id,
+                        Key = client.StableKey ?? string.Empty,
+                        Name = client.Name ?? string.Empty,
+                        Primary = BuildChannelSample(m_server.StatsOf(client.Id),
+                            m_server.StateOf(client.Id)),
+                        Circuit = BuildChannelSample(m_server.CircuitStatsOf(client.Id),
+                            m_server.CircuitStateOf(client.Id))
+                    };
+                    if (m_peerRuntimeSamples.TryGetValue(client.Id,
+                            out PeerRuntimeRecord runtime))
+                    {
+                        if (runtime.Sample != null)
+                            peer.ClientRuntime = runtime.Sample.Clone();
+                        if (runtime.Circuit != null)
+                            peer.ClientCircuit = runtime.Circuit.Clone();
+                        peer.RuntimeAgeMs = (ulong)Math.Max(0,
+                            Environment.TickCount64 - runtime.ReceivedAtMs);
+                    }
+                    telemetry.Peers.Add(peer);
+                }
+                foreach (int staleId in m_peerRuntimeSamples.Keys
+                    .Where(id => !liveIds.Contains(id)).ToArray())
+                    m_peerRuntimeSamples.Remove(staleId);
+                if (m_server.KindOf(monitorClientId) == ClientKind.Debug)
+                {
+                    ChannelStats monitorStats = m_server.StatsOf(monitorClientId);
+                    telemetry.MonitorTransport = BuildChannelSample(monitorStats,
+                        m_server.StateOf(monitorClientId));
+                    if (monitorStats != null)
+                    {
+                    foreach (MessageTypeTrafficSnapshot entry in
+                        monitorStats.SnapshotByMessageType())
+                        {
+                            if (entry.TypeId != (ushort)MessageType.MapState) continue;
+                            telemetry.LiveMapFramesSent = (ulong)Math.Max(0, entry.FramesSent);
+                            telemetry.LiveMapBytesSent = (ulong)Math.Max(0, entry.BytesSent);
+                            break;
+                        }
+                    }
+                }
+            }
+            return telemetry;
+        }
+
+        private static ChannelSample BuildChannelSample(ChannelStats stats, ChannelState state)
+        {
+            if (stats == null) return new ChannelSample { State = "disconnected" };
+            var result = new ChannelSample
+            {
+                State = state.ToString(),
+                FramesSent = (ulong)Math.Max(0, stats.ReadFramesSent()),
+                BytesSent = (ulong)Math.Max(0, stats.ReadBytesSent()),
+                FramesReceived = (ulong)Math.Max(0, stats.ReadFramesReceived()),
+                BytesReceived = (ulong)Math.Max(0, stats.ReadBytesReceived()),
+                BackpressureEvents = (ulong)Math.Max(0, stats.ReadBackpressureEvents()),
+                ProtocolViolations = (ulong)Math.Max(0, stats.ReadProtocolViolations()),
+                SendQueueHigh = (ulong)Math.Max(0, stats.ReadSendQueueHigh())
+            };
+            foreach (MessageTypeTrafficSnapshot entry in stats.SnapshotByMessageType())
+            {
+                result.MessageTypes.Add(new MessageTypeTraffic
+                {
+                    TypeId = entry.TypeId,
+                    Name = ((MessageType)entry.TypeId).ToString(),
+                    FramesSent = (ulong)Math.Max(0, entry.FramesSent),
+                    BytesSent = (ulong)Math.Max(0, entry.BytesSent),
+                    FramesReceived = (ulong)Math.Max(0, entry.FramesReceived),
+                    BytesReceived = (ulong)Math.Max(0, entry.BytesReceived)
+                });
+            }
+            return result;
+        }
+
         private void OnPlayerPosition(MessageContext context, PP.PlayerPositions message)
         {
             if (m_server == null || !IsPlayerPeer(context.ClientId)) return;
@@ -511,6 +711,8 @@ namespace SuMultiplayer.Modules
 
         private void OnMapRequest(MessageContext context, byte[] payload)
         {
+            if (m_server?.KindOf(context.ClientId) == ClientKind.Debug)
+                m_liveMapRequests++;
             LiveMapCodec.DecodeRequest(payload, out int mapRadius, out bool mapAll,
                 out bool hasRequestedCenter, out int requestedChunkX, out int requestedChunkZ);
             SendLiveMap(context.ClientId, mapRadius, mapAll, hasRequestedCenter, requestedChunkX,
@@ -1220,6 +1422,7 @@ namespace SuMultiplayer.Modules
         public void Tick(in ModuleTickContext tick)
         {
             if (!m_attached) return;
+            UpdateRuntimeTelemetry(tick);
             FlushChunkLogSuppression();
             WireShell();
             // 主线程泵：派发入站消息 + 产生区块加载/卸载事件。
@@ -1914,6 +2117,7 @@ namespace SuMultiplayer.Modules
                 if (m_liveMapSnapshotId <= 0) m_liveMapSnapshotId = 1;
 
                 long started = nowMs;
+                long buildStartedTicks = Stopwatch.GetTimestamp();
                 LiveMapSnapshot snapshot = BuildLiveMap(all, hasCell, cellX, cellY, cellZ,
                     centerChunkX, centerChunkZ, radius);
                 List<byte[]> batches;
@@ -1943,6 +2147,10 @@ namespace SuMultiplayer.Modules
                         "在线玩家端过多或已加载区块过多）");
                     return;
                 }
+                m_liveMapBuildMs = (long)((Stopwatch.GetTimestamp() - buildStartedTicks) * 1000.0 /
+                    Stopwatch.Frequency);
+                m_liveMapChunkCount = snapshot.Chunks.Count;
+                m_liveMapBatchCount = batches.Count;
                 m_liveMapBatches = batches;
                 if (m_verbose)
                 {
@@ -1962,10 +2170,16 @@ namespace SuMultiplayer.Modules
                         snapshot.ClientChunks.Count + " 条" +
                         " · 角色槽位 " + snapshot.Players.Count + " 个" +
                         " · 欠更新标块 " + pendingMarks + "（客户端 " + pendingClients + "）" +
-                        " · 构建 " + ((long)(Time.RealTime * 1000.0) - started) + " ms");
+                        " · 构建 " + m_liveMapBuildMs + " ms");
                 }
             }
 
+            bool isDebugPeer = m_server.KindOf(clientId) == ClientKind.Debug;
+            if (isDebugPeer)
+            {
+                LiveTelemetry telemetry = BuildLiveTelemetry(clientId);
+                m_server.TrySend(clientId, MessageType.LiveMapTelemetry, telemetry.ToByteArray());
+            }
             for (int i = 0; i < m_liveMapBatches.Count; i++)
             {
                 if (m_server.TrySend(clientId, MessageType.MapState, m_liveMapBatches[i])) continue;

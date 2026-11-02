@@ -508,6 +508,10 @@ enum MessageType {
 
   // 方块破坏表现（碎屑 / 落叶粒子）。只同步表现，不改格；append-only。
   BLOCK_DESTROY_EFFECT = 119;
+
+  // Low-rate performance reporting and LiveMap telemetry. Diagnostic only.
+  CLIENT_RUNTIME_TELEMETRY = 145;
+  LIVE_MAP_TELEMETRY = 146;
 }
 
 // 主机 / 客户端：一格方块被破坏时的纯表现事件。

@@ -360,6 +360,7 @@ namespace SuMultiplayer.Modules
         private long m_deathApplied;
         private long m_respawnApplied;
         private long m_clientLocalSimDisabled;
+        private long m_nextLocalSimRestoreRetryMs;
         private long m_notReadyDrops;
         private long m_decodeFailures;
         private long m_suppressNew;
@@ -677,11 +678,14 @@ namespace SuMultiplayer.Modules
 
             if (hosting) TickHost(nowMs, tick.DeltaTime);
             else if (connected && inWorld) TickClient(nowMs, tick.DeltaTime);
-            else if (inWorld && !hosting && m_port != null)
+            else if (!hosting && m_port != null &&
+                (inWorld || (!connected && m_clientLocalSimDisabled > 0)) &&
+                Environment.TickCount64 >= m_nextLocalSimRestoreRetryMs)
             {
                 // 没有可跟随的主机（断线 / 还没进世界）：本机角色必须恢复自己的模拟，
-                // 否则离开房间后角色永远不动 / 不掉血。
-                TryEnableLocalSimulation("没有主机可跟随");
+                // 否则离开房间后角色永远不动 / 不掉血。恢复可能要等 SubsystemUpdate
+                // 应用完排队移除，离开世界期间也保留重试。
+                TryEnableLocalSimulation(connected ? "没有主机可跟随" : "与主机断开");
             }
             LogSummaryIfDue(nowMs);
         }
@@ -3334,6 +3338,7 @@ namespace SuMultiplayer.Modules
             if (m_clientLocalSimDisabled == 0) return;
             if (!m_port.EnableLocalSimulation(out string reason))
             {
+                m_nextLocalSimRestoreRetryMs = Environment.TickCount64 + 250;
                 Problem("local-sim-enable", "恢复本机角色的生命 / 体征模拟失败（" + why + "）：" +
                     (reason ?? "端口没有给原因"));
                 return;
@@ -3341,6 +3346,7 @@ namespace SuMultiplayer.Modules
             if (m_clientLocalSimDisabled > 0)
                 Info("已恢复本机角色的生命 / 体征 / 睡眠 / 病程 / 火焰模拟（" + why + "）");
             m_clientLocalSimDisabled = 0;
+            m_nextLocalSimRestoreRetryMs = 0;
             m_worldReady = false;
         }
 

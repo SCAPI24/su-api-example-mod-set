@@ -103,6 +103,9 @@ namespace SuMultiplayer.Modules
             out string error);
         bool TryCaptureChunks(IList<ChunkKey> keys,
             IDictionary<ChunkKey, List<CircuitElementState>> target, out string error);
+        bool TryCaptureChunksBestEffort(IList<ChunkKey> keys,
+            IDictionary<ChunkKey, List<CircuitElementState>> target,
+            IDictionary<ChunkKey, string> chunkErrors, out string error);
         bool Apply(CircuitElementState state, int hostStep, out string error);
         bool AlignClientCircuitStep(int hostStep, bool restoreAuthoritativeStates,
             out string error);
@@ -110,6 +113,7 @@ namespace SuMultiplayer.Modules
             out string error);
         void SetDeterministicRandomSeed(uint seed, bool hostAuthority);
         uint ComputeHash(IEnumerable<CircuitElementState> states);
+        uint ComputeCapturedHash(IList<CircuitElementState> states);
         bool TryGetCellValue(int x, int y, int z, out int value);
         string DescribeDiagnostics();
         void Pump();

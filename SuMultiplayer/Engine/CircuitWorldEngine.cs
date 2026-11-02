@@ -275,6 +275,49 @@ namespace SuMultiplayer.Engine
             return m_codec.CaptureChunks(electricity, keys, target, out error);
         }
 
+        // Source: Mod/SuMultiplayer/Engine/CircuitStateCodec.cs:CircuitStateCodec.CaptureChunksBestEffort
+        public bool TryCaptureChunksBestEffort(IList<ChunkKey> keys,
+            IDictionary<ChunkKey, List<CircuitElementState>> target,
+            IDictionary<ChunkKey, string> chunkErrors, out string error)
+        {
+            EnsureMainThread(nameof(TryCaptureChunksBestEffort));
+            if (keys == null) throw new ArgumentNullException(nameof(keys));
+            if (target == null) throw new ArgumentNullException(nameof(target));
+            if (chunkErrors == null) throw new ArgumentNullException(nameof(chunkErrors));
+            target.Clear();
+            chunkErrors.Clear();
+            error = null;
+
+            Project project = GameManager.Project;
+            SubsystemTerrain terrain = project?.FindSubsystem<SubsystemTerrain>(false);
+            if (terrain?.Terrain == null)
+                return Fail("Terrain subsystem is unavailable.", out error);
+            var readyChunks = new List<ChunkKey>(keys.Count);
+            foreach (ChunkKey key in keys)
+            {
+                TerrainChunk chunk = terrain.Terrain.GetChunkAtCoords(key.X, key.Z);
+                if (chunk == null || !ChunkContentStages.IsContentValid((int)chunk.State))
+                {
+                    chunkErrors[key] = "Circuit chunk " + key +
+                        " is not loaded with valid contents.";
+                    continue;
+                }
+                readyChunks.Add(key);
+            }
+
+            if (readyChunks.Count == 0) return true;
+            SubsystemElectricity electricity = project.FindSubsystem<SubsystemElectricity>(false);
+            if (electricity == null)
+                return Fail("SubsystemElectricity is unavailable.", out error);
+            if (!m_codec.CaptureChunksBestEffort(electricity, readyChunks, target,
+                    chunkErrors, out error))
+            {
+                target.Clear();
+                return false;
+            }
+            return true;
+        }
+
         // Source: Mod/SuMultiplayer/Engine/CircuitStateCodec.cs:CircuitStateCodec.CaptureChunkTopology
         public bool TryCaptureChunkTopology(ChunkKey key, List<CircuitElementState> target,
             out string error)
@@ -472,6 +515,12 @@ namespace SuMultiplayer.Engine
         {
             EnsureMainThread(nameof(ComputeHash));
             return m_codec.ComputeHash(states);
+        }
+
+        public uint ComputeCapturedHash(IList<CircuitElementState> states)
+        {
+            EnsureMainThread(nameof(ComputeCapturedHash));
+            return m_codec.ComputeCapturedHash(states);
         }
 
         public void SetDeterministicRandomSeed(uint seed, bool hostAuthority)

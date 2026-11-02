@@ -469,6 +469,10 @@ namespace SuMultiplayer
                     return CircuitRandomSequence.SeedFromSessionId(
                         m_terrainModule.CurrentSessionId);
                 });
+            m_terrainModule.SetModuleTickMetricsProvider(m_moduleHost.SnapshotTickMetrics);
+            m_terrainModule.SetCircuitTelemetryProvider(m_circuitModule.SnapshotTelemetry);
+            m_terrainModule.SetClientCircuitTelemetryProvider(
+                m_circuitModule.SnapshotClientTelemetry);
             CircuitSyncDebugAutomation = new CircuitSyncDebugAutomation(m_circuitModule);
             m_blockUseEngine.SetUseInputSinkOverride(m_circuitPresentation);
             // 世界控制（创意四按钮：降水/雾/闪电/时间）：客户端把点击变成 WORLD_CONTROL_REQUEST，
@@ -870,7 +874,8 @@ namespace SuMultiplayer
                 delegate { return m_worldJoinSettings != null &&
                     m_worldJoinSettings.AllowFurnitureExport; },
                 delegate (bool value) { return SetAllowFurnitureExportForUi(value); },
-                delegate { return SaveWorldJoinSettingsForUi(); });
+                delegate { return SaveWorldJoinSettingsForUi(); },
+                m_transferModule.DownloadedWorldPort);
             // 引擎 Edit Players（PlayerScreen）进入/退出钩子：名字/皮肤统一走引擎自己的编辑屏。
             // 进入抓快照、退出比较；主机广播改名后的本机角色，客户端按 (clientId, slot) 提交资料。
             m_editWatcher = new PlayerEditWatcher(avatarSpawner, engineModManager.ModParentField,

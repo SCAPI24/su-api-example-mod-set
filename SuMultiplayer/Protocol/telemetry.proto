@@ -1,0 +1,154 @@
+syntax = "proto3";
+
+package sump.telemetry;
+
+option csharp_namespace = "SuMultiplayer.Protocol.Telemetry";
+option optimize_for = SPEED;
+
+message RuntimeSample {
+  uint64 sampled_at_ms = 1;
+  bool cpu_available = 2;
+  float cpu_one_core_percent = 3;
+  float cpu_total_percent = 4;
+  uint32 processor_count = 5;
+  float game_update_hz = 6;
+  float frame_time_avg_ms = 7;
+  float frame_time_max_ms = 8;
+  repeated ModuleTickSample modules = 9;
+  uint32 module_sample_every = 10;
+}
+
+message ModuleTickSample {
+  string id = 1;
+  uint64 calls = 2;
+  float total_ms = 3;
+  float max_ms = 4;
+}
+
+message MessageTypeTraffic {
+  uint32 type_id = 1;
+  string name = 2;
+  uint64 frames_sent = 3;
+  uint64 bytes_sent = 4;
+  uint64 frames_received = 5;
+  uint64 bytes_received = 6;
+}
+
+message ChannelSample {
+  string state = 1;
+  uint64 frames_sent = 2;
+  uint64 bytes_sent = 3;
+  uint64 frames_received = 4;
+  uint64 bytes_received = 5;
+  uint64 backpressure_events = 6;
+  uint64 protocol_violations = 7;
+  uint64 send_queue_high = 8;
+  repeated MessageTypeTraffic message_types = 9;
+}
+
+message PeerSample {
+  int32 client_id = 1;
+  string key = 2;
+  string name = 3;
+  RuntimeSample client_runtime = 4;
+  uint64 runtime_age_ms = 5;
+  ChannelSample primary = 6;
+  ChannelSample circuit = 7;
+  ClientCircuitSample client_circuit = 8;
+}
+
+message CircuitSyncSample {
+  uint64 rounds = 1;
+  uint64 attached_peers = 2;
+  uint64 scope_chunks = 3;
+  uint64 seven_segment_states = 4;
+  uint64 snapshot_chunks = 5;
+  uint64 snapshot_elements = 6;
+  uint64 snapshot_parts = 7;
+  uint64 delta_states = 8;
+  uint64 send_failures = 9;
+  uint64 client_scope_requests = 10;
+  uint64 client_scope_chunks = 11;
+  uint64 client_snapshot_parts = 12;
+  uint64 client_snapshots_applied = 13;
+  uint64 client_states_applied = 14;
+  uint64 client_apply_failures = 15;
+  uint64 client_hash_reports = 16;
+  uint64 client_hash_chunks = 17;
+  uint64 client_watermark_expired = 18;
+  bool client_simulation_enabled = 19;
+  uint64 host_sync_window_calls = 20;
+  float host_sync_window_ms = 21;
+  float host_sync_window_max_ms = 22;
+  uint64 hash_mismatches_observed = 23;
+  uint64 hash_repair_chunks_queued = 24;
+  uint64 repair_ack_hash_mismatches = 25;
+  uint64 repair_ack_chunks_queued = 26;
+  uint64 snapshot_request_chunks = 27;
+  uint64 needs_full_snapshot_chunks_queued = 28;
+  uint64 snapshots_initial_scope = 29;
+  uint64 snapshots_hash_repair = 30;
+  uint64 snapshots_repair_ack_repair = 31;
+  uint64 snapshots_client_request = 32;
+  uint64 snapshots_needs_full_recovery = 33;
+  uint64 snapshots_pause_barrier = 34;
+  uint64 snapshots_topology_change = 35;
+  uint64 snapshots_send_failure_recovery = 36;
+  uint64 snapshot_send_failures = 37;
+  uint64 host_batch_capture_failures = 38;
+  uint64 requested_snapshot_capture_failures = 39;
+  uint64 host_batch_capture_chunks_failed = 40;
+}
+
+message ClientCircuitSample {
+  uint64 hash_capture_failures = 1;
+  uint64 hash_capture_chunks_skipped = 2;
+  uint64 hash_reports_sent = 3;
+  uint64 hash_chunks_sent = 4;
+  uint64 scope_requests_sent = 5;
+  uint64 scope_request_chunks_sent = 6;
+  uint64 snapshot_parts_received = 7;
+  uint64 snapshots_applied = 8;
+  uint64 states_applied = 9;
+  uint64 apply_failures = 10;
+  uint64 watermark_expired = 11;
+  uint64 snapshot_timeouts = 12;
+}
+
+message TerrainSyncSample {
+  uint64 digest_reports = 1;
+  uint64 cell_changes_broadcast = 2;
+  uint64 cell_change_repairs = 3;
+  uint64 resync_bytes = 4;
+  uint64 reports_per_second = 5;
+  uint64 mismatch_per_second = 6;
+  uint64 resync_received_per_second = 7;
+  uint64 resync_applied_per_second = 8;
+  uint64 verify_requests_sent = 9;
+  uint64 verify_request_send_failures = 10;
+  uint32 pending_reports = 11;
+  uint32 pending_marks = 12;
+  uint32 pending_clients = 13;
+}
+
+message LiveTelemetry {
+  uint64 sample_id = 1;
+  uint64 sampled_at_ms = 2;
+  RuntimeSample host_runtime = 3;
+  CircuitSyncSample circuit = 4;
+  TerrainSyncSample terrain = 5;
+  repeated PeerSample peers = 6;
+  float live_map_build_ms = 7;
+  uint32 live_map_chunks = 8;
+  uint32 live_map_batches = 9;
+  uint64 live_map_bytes_sent = 10;
+  uint64 live_map_frames_sent = 11;
+  uint64 live_map_requests = 12;
+  ChannelSample monitor_transport = 13;
+}
+
+// Client -> host: low-rate local process and game-update performance sample.
+message ClientRuntimeTelemetry {
+  RuntimeSample runtime = 1;
+  ClientCircuitSample circuit = 2;
+}

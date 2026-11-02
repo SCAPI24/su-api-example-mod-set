@@ -28,6 +28,7 @@ namespace SuMultiplayer.UI
 
         private readonly IRoomBrowsePort m_rooms;
         private readonly IWorldReadyPort m_ready;
+        private readonly IDownloadedWorldPort m_downloads;
         /// <summary>通用客户端事件请求队列（主机；null = 队列页不可用，IF 只显示房间信息）。</summary>
         private readonly Requests.HostRequestQueue m_requestQueue;
         /// <summary>"弹出最新请求"的动作（组合根注入 = JoinApprovalUi.ShowLatestJoinDialog；
@@ -113,10 +114,12 @@ namespace SuMultiplayer.UI
             Func<bool, string> setAllowFurnitureImport = null,
             Func<bool> allowFurnitureExportEnabled = null,
             Func<bool, string> setAllowFurnitureExport = null,
-            Func<string> saveWorldSettings = null)
+            Func<string> saveWorldSettings = null,
+            IDownloadedWorldPort downloads = null)
         {
             m_rooms = rooms;
             m_ready = ready;
+            m_downloads = downloads;
             m_requestQueue = requestQueue;
             m_showLatestRequest = showLatestRequest;
             m_hostPort = hostPort;
@@ -164,6 +167,15 @@ namespace SuMultiplayer.UI
                 m_consumedClicks.Clear();
                 m_settingsWidget = null;
                 m_settingsOwner = null;
+                // Source: Survivalcraft/Game/GameLoadingScreen.cs:GameLoadingScreen.Update
+                // GameLoading disposes the old Project before loading the imported client world.
+                if (m_wasInWorld && m_rooms?.IsClientInRoom == true &&
+                    ScreensManager.CurrentScreen is GameLoadingScreen)
+                {
+                    InfoRateLimited("client-world-replacement",
+                        "[SuMP][ui] 客户端世界正在由 GameLoading 替换 → 暂不退房，保留主机连接");
+                    return;
+                }
                 // 离开世界 = 房间的世界没了，而不是留一个"房间还在但世界不在"的假状态。
                 //   · 主机：房间自动关闭；
                 //   · 客户端：**主动离开房间**（发 BYE + 关通道）。显式退房必须主动断连，
@@ -290,6 +302,7 @@ namespace SuMultiplayer.UI
         {
             if (m_ready == null) return;
             if (!(ScreensManager.CurrentScreen is GameScreen)) return;
+            if (ScreensManager.IsAnimating) return;
             if (!m_ready.TryTake(out string directory, out string worldName)) return;
             WorldsManager.UpdateWorldsList();
             WorldInfo imported = EngineWorldTransfer.FindImported(directory);
@@ -334,6 +347,20 @@ namespace SuMultiplayer.UI
                 m_autoHostAttempted = false;
             }
             if (m_autoHostAttempted) return;
+            if (!TryGetCurrentWorldDownloadStatus(out bool downloaded, out string reason))
+            {
+                WarnRateLimited("autohost-world-check", "[SuMP][ui] 无法确认当前世界是否为下载副本：" +
+                    reason + " → 自动建房停止");
+                m_autoHostAttempted = true;
+                return;
+            }
+            if (downloaded)
+            {
+                WarnRateLimited("autohost-downloaded-world",
+                    "[SuMP][ui] 当前世界是主机下发的下载副本 → 禁止自动建房");
+                m_autoHostAttempted = true;
+                return;
+            }
             m_autoHostAttempted = true;
             CreateRoom();
         }
@@ -343,6 +370,17 @@ namespace SuMultiplayer.UI
             if (m_rooms == null)
             {
                 ShowDialog("Create Room", "Multiplayer module is not loaded; cannot create a room.");
+                return;
+            }
+            if (!TryGetCurrentWorldDownloadStatus(out bool downloaded, out string worldCheckReason))
+            {
+                ShowDialog("Create Room", "Cannot verify whether the current world is a downloaded client copy: " +
+                    worldCheckReason);
+                return;
+            }
+            if (downloaded)
+            {
+                ShowDialog("Create Room", "A world downloaded from another host cannot be hosted as a new room.");
                 return;
             }
             if (!TryDescribeCurrentWorld(out string worldName, out string gameMode, out string reason))
@@ -362,6 +400,34 @@ namespace SuMultiplayer.UI
             string saveNote = m_saveWorldSettings?.Invoke();
             if (!string.IsNullOrEmpty(saveNote)) ModLog.Info("[SuMP][ui] CR world settings: " + saveNote);
             ShowDialog("Create Room", m_rooms.RoomSummary);
+        }
+
+        // Source: Mod/SuMultiplayer/Modules/WorldTransferModule.cs:WorldTransferModule.IsDownloadedWorld
+        private bool TryGetCurrentWorldDownloadStatus(out bool downloaded, out string reason)
+        {
+            downloaded = false;
+            reason = null;
+            if (m_downloads == null)
+            {
+                reason = "downloaded-world registry is unavailable";
+                return false;
+            }
+            WorldInfo worldInfo = GameManager.WorldInfo;
+            if (worldInfo == null || string.IsNullOrEmpty(worldInfo.DirectoryName))
+            {
+                reason = "the current world's directory is unavailable";
+                return false;
+            }
+            try
+            {
+                downloaded = m_downloads.IsDownloadedWorld(worldInfo.DirectoryName);
+                return true;
+            }
+            catch (Exception e)
+            {
+                reason = e.GetType().Name + " " + e.Message;
+                return false;
+            }
         }
 
         /// <summary>

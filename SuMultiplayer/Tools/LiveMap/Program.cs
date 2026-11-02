@@ -1,13 +1,16 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Net;
 using System.Text;
 using System.Threading;
+using Google.Protobuf;
 using SuMultiplayer.Net;
 using SuMultiplayer.Terrain;
 
 using SuMultiplayer.Protocol;
+using SuMultiplayer.Protocol.Telemetry;
 namespace SuMPLiveMap
 {
     /// <summary>
@@ -40,6 +43,9 @@ namespace SuMPLiveMap
         /// <summary>解包失败（版本不匹配 / 载荷坏了）的计数与只报一次的原因。</summary>
         private static long s_decodeFailures;
         private static string s_decodeFailureReason = string.Empty;
+        private static LiveTelemetry s_telemetry;
+        private static readonly JsonFormatter s_telemetryFormatter =
+            new JsonFormatter(new JsonFormatter.Settings(true));
         /// <summary>
         /// 「居中角色」的选择 = **身份稳定键**（不是 clientId）：主机 = <see cref="LiveMapCodec.HostKey"/>，
         /// 玩家端 = 该身份的稳定键。玩家端重连后 clientId 会变、稳定键不变，所以选择不会被断掉。
@@ -143,16 +149,34 @@ namespace SuMPLiveMap
                 return;
             }
             client.FrameReceived += OnFrame;
-            // Hello 字段顺序与 TerrainSyncClient.SendHello 一致，只有 kind 是 Debug（只读，不参与权威）
-            var hello = new PayloadWriter();
-            hello.Byte((byte)ClientKind.Debug).Text("LiveMap").Byte(1).Byte(1).Int32(s_radius);
-            client.TrySend(MessageType.Hello, hello.ToArray());
+            var hello = new Hello
+            {
+                Kind = (uint)ClientKind.Debug,
+                Name = "LiveMap",
+                ProtocolVersion = 1,
+                ProtocolRevision = 1,
+                Radius = s_radius
+            };
+            client.TrySend(MessageType.Hello, hello.ToByteArray());
             s_client = client;
             Log("已连上房间 " + s_host + ":" + s_port + "（kind=Debug，只读）");
         }
 
         private static void OnFrame(ReceivedFrame frame)
         {
+            if (frame.Type == MessageType.LiveMapTelemetry)
+            {
+                try
+                {
+                    LiveTelemetry telemetry = LiveTelemetry.Parser.ParseFrom(frame.Payload);
+                    lock (s_gate) s_telemetry = telemetry;
+                }
+                catch (InvalidProtocolBufferException error)
+                {
+                    Log("LiveMap telemetry decode failed: " + error.Message);
+                }
+                return;
+            }
             if (frame.Type != MessageType.MapState) return;
             if (!LiveMapCodec.TryDecodeBatch(frame.Payload, out LiveMapBatch batch))
             {
@@ -292,14 +316,10 @@ namespace SuMPLiveMap
                     }
                     body = "{\"selected\":\"" + Escape(s_selectedCenterKey) + "\"}";
                 }
-                else if (path == "/")
+                else if (path == "/" || path == "/live-map.html")
                 {
                     contentType = "text/html; charset=utf-8";
-                    body = "<!DOCTYPE html><meta charset=\"utf-8\"><title>SuMP LiveMap</title>" +
-                        "<body style=\"font-family:system-ui;padding:24px\">" +
-                        "<h2>实时地图桥在运行</h2>" +
-                        "<p>数据口：<code>/state</code>（JSON）</p>" +
-                        "<p>请打开 <code>Mod/SuMultiplayer/doc/live-map.html</code>。</p></body>";
+                    body = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "live-map.html"));
                 }
                 else
                 {
@@ -352,6 +372,7 @@ namespace SuMPLiveMap
             long dropped;
             long decodeFailures;
             string decodeReason;
+            LiveTelemetry telemetry;
             lock (s_gate)
             {
                 snapshot = s_snapshot;
@@ -360,6 +381,7 @@ namespace SuMPLiveMap
                 dropped = s_droppedPartial;
                 decodeFailures = s_decodeFailures;
                 decodeReason = s_decodeFailureReason;
+                telemetry = s_telemetry?.Clone();
             }
 
             var sb = new StringBuilder(512 * 1024);
@@ -372,6 +394,9 @@ namespace SuMPLiveMap
             sb.Append(",\"payloadVersion\":").Append(LiveMapCodec.Version);
             sb.Append(",\"decodeFailures\":").Append(decodeFailures);
             sb.Append(",\"decodeFailureReason\":\"").Append(Escape(decodeReason)).Append('"');
+            sb.Append(",\"telemetry\":");
+            if (telemetry == null) sb.Append("null");
+            else sb.Append(s_telemetryFormatter.Format(telemetry));
             sb.Append(",\"view\":\"")
               .Append(snapshot != null && snapshot.View == LiveMapView.All ? "all" : "window").Append('"');
             sb.Append(",\"radius\":").Append(snapshot?.ChunkRadius ?? s_radius);

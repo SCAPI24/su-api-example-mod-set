@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using SuMultiplayer.Protocol.Telemetry;
 
 namespace SuMultiplayer.Modules
 {
@@ -54,6 +56,9 @@ namespace SuMultiplayer.Modules
             public int ConsecutiveFaults;
             public long LastFaultMs;
             public int Order;
+            public long TickSampledCalls;
+            public long TickSampledElapsed;
+            public long TickSampledMax;
         }
 
         private readonly IModuleDiagnostics m_diagnostics;
@@ -64,7 +69,9 @@ namespace SuMultiplayer.Modules
         private readonly Dictionary<string, Entry> m_byId = new Dictionary<string, Entry>(StringComparer.Ordinal);
         private readonly CapabilityRegistry m_capabilities;
         private int m_orderCounter;
+        private long m_tickSampleIndex;
         private bool m_disposed;
+        private const int ModuleTickSampleEvery = 4;
 
         public ModuleHost(IModuleDiagnostics diagnostics)
         {
@@ -407,11 +414,13 @@ namespace SuMultiplayer.Modules
         public void Tick(in ModuleTickContext tick)
         {
             ThrowIfDisposed();
+            bool sample = (++m_tickSampleIndex % ModuleTickSampleEvery) == 0;
             List<Entry> faulted = null;
             foreach (Entry entry in m_entries)
             {
                 if (entry.State != ModuleState.Active) continue;
                 if (TickFilter != null && !TickFilter(entry.Descriptor.Id)) continue;
+                long start = sample ? Stopwatch.GetTimestamp() : 0;
                 try
                 {
                     entry.Module.Tick(in tick);
@@ -429,6 +438,16 @@ namespace SuMultiplayer.Modules
                         (faulted ?? (faulted = new List<Entry>())).Add(entry);
                     }
                 }
+                finally
+                {
+                    if (sample)
+                    {
+                        long elapsed = Stopwatch.GetTimestamp() - start;
+                        entry.TickSampledCalls++;
+                        entry.TickSampledElapsed += elapsed;
+                        if (elapsed > entry.TickSampledMax) entry.TickSampledMax = elapsed;
+                    }
+                }
             }
             if (faulted == null) return;
             // 先遍历完再改状态：保证本帧其它模块照常运行
@@ -439,6 +458,26 @@ namespace SuMultiplayer.Modules
                 DetachEntry(entry, ModuleDetachReason.Faulted);
             }
             Resolve("fault-cascade");   // 依赖它的模块会在这一轮变成 Unavailable / 降级
+        }
+
+        public List<ModuleTickSample> SnapshotTickMetrics()
+        {
+            var result = new List<ModuleTickSample>();
+            double scale = ModuleTickSampleEvery * 1000.0 / Stopwatch.Frequency;
+            foreach (Entry entry in m_entries)
+            {
+                long calls = entry.TickSampledCalls;
+                if (calls <= 0) continue;
+                result.Add(new ModuleTickSample
+                {
+                    Id = entry.Descriptor.Id,
+                    Calls = (ulong)(calls * ModuleTickSampleEvery),
+                    TotalMs = (float)(entry.TickSampledElapsed * scale),
+                    MaxMs = (float)(entry.TickSampledMax * 1000.0 / Stopwatch.Frequency)
+                });
+            }
+            result.Sort((a, b) => b.TotalMs.CompareTo(a.TotalMs));
+            return result;
         }
 
         // ------------------------------------------------------------------
