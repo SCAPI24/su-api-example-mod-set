@@ -1370,6 +1370,9 @@ namespace SuMultiplayer
                     }
                     catch (Exception e) { NoteFrameStepFailure("module-host", e); }
 
+                    try { m_circuitWorld?.NormalizeClientSleepTime(); }
+                    catch (Exception e) { NoteFrameStepFailure("client-sleep-time", e); }
+
                     // 编辑玩家屏（PlayerScreen）进入/退出钩子：只比较 ScreensManager.CurrentScreen
                     // 的引用；退出那一帧抓快照并同步名字/皮肤（不轮询玩家资料）。
                     try { m_editWatcher?.Tick(); }

@@ -30,6 +30,9 @@ namespace SuMultiplayer.Engine
 
         // 临时缓冲，避免每帧分配
         private readonly List<Point3> m_capture = new List<Point3>(1024);
+        private readonly HashSet<Point3> m_clientCircuitCaptureBaseline = new HashSet<Point3>();
+        private readonly List<Point3> m_clientCircuitWrites = new List<Point3>();
+        public long ClientCircuitCellsSuppressed { get; private set; }
         /// <summary>流体捕获窗口的复用缓冲（一次 Update 的格子，窗口关闭时并回引擎改动表）。</summary>
         private readonly List<HostCellCapture.FluidCapturedCell> m_fluidCaptured =
             new List<HostCellCapture.FluidCapturedCell>(512);
@@ -622,6 +625,40 @@ namespace SuMultiplayer.Engine
             m_gate.ClientReplica = ClientReplica;
             m_gate.CircuitPaused = CircuitSimulationPauseSignal.IsPaused;
             return m_gate.Allow(source);
+        }
+
+        // Source: Survivalcraft/Game/SubsystemElectricity.cs:SubsystemElectricity.Update
+        public void RunClientCircuitSimulation(Action simulation)
+        {
+            if (simulation == null) throw new ArgumentNullException(nameof(simulation));
+            if (!ClientReplica)
+            {
+                simulation();
+                return;
+            }
+            if (!EnsureModifiedCellsBound())
+                throw new InvalidOperationException(
+                    "Client circuit simulation cannot run without the terrain modified-cell table.");
+
+            m_clientCircuitCaptureBaseline.Clear();
+            foreach (Point3 cell in m_modifiedCells.Keys)
+                m_clientCircuitCaptureBaseline.Add(cell);
+            try
+            {
+                simulation();
+            }
+            finally
+            {
+                m_clientCircuitWrites.Clear();
+                foreach (Point3 cell in m_modifiedCells.Keys)
+                    if (!m_clientCircuitCaptureBaseline.Contains(cell))
+                        m_clientCircuitWrites.Add(cell);
+                for (int i = 0; i < m_clientCircuitWrites.Count; i++)
+                    m_modifiedCells.Remove(m_clientCircuitWrites[i]);
+                ClientCircuitCellsSuppressed += m_clientCircuitWrites.Count;
+                m_clientCircuitWrites.Clear();
+                m_clientCircuitCaptureBaseline.Clear();
+            }
         }
 
         /// <summary>

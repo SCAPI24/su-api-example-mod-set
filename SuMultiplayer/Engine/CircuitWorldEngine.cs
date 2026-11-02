@@ -26,6 +26,7 @@ namespace SuMultiplayer.Engine
         private readonly int m_mainThreadId;
         private Project m_project;
         private bool m_topologyDirty = true;
+        private bool m_clientSleepScaleFailureLogged;
         private sealed class AuthoritativeState
         {
             public CircuitElementState State;
@@ -55,6 +56,51 @@ namespace SuMultiplayer.Engine
             {
                 EnsureMainThread(nameof(IsClientReplica));
                 return m_terrainBridge.ClientReplica;
+            }
+        }
+
+        // Source: Survivalcraft/Game/SubsystemTime.cs:SubsystemTime.NextFrame
+        // Source: Survivalcraft/Game/SubsystemUpdate.cs:SubsystemUpdate.Update
+        public bool IsWorldAccelerated
+        {
+            get
+            {
+                EnsureMainThread(nameof(IsWorldAccelerated));
+                Project project = GameManager.Project;
+                SubsystemTime time = project?.FindSubsystem<SubsystemTime>(false);
+                SubsystemUpdate update = project?.FindSubsystem<SubsystemUpdate>(false);
+                return time != null && time.FixedTimeStep.HasValue &&
+                    update != null && update.UpdatesPerFrame > 1;
+            }
+        }
+
+        // Source: Survivalcraft/Game/SubsystemTime.cs:SubsystemTime.NextFrame
+        // Source: Survivalcraft/Game/SubsystemUpdate.cs:SubsystemUpdate.Update
+        public void NormalizeClientSleepTime()
+        {
+            EnsureMainThread(nameof(NormalizeClientSleepTime));
+            if (!m_terrainBridge.ClientReplica) return;
+            Project project = GameManager.Project;
+            SubsystemTime time = project?.FindSubsystem<SubsystemTime>(false);
+            if (time == null || !time.FixedTimeStep.HasValue ||
+                time.GameTimeFactor == 0f) return;
+
+            float fixedStep = time.FixedTimeStep.Value;
+            float frameDuration = Time.FrameDuration;
+            if (fixedStep <= 0f || frameDuration <= 0f ||
+                float.IsNaN(frameDuration) || float.IsInfinity(frameDuration))
+                return;
+            try
+            {
+                m_parentField.ModifyParentField(time, "GameTimeFactor",
+                    frameDuration / fixedStep, typeof(SubsystemTime));
+            }
+            catch (Exception error)
+            {
+                if (m_clientSleepScaleFailureLogged) return;
+                m_clientSleepScaleFailureLogged = true;
+                Log.Warning("[SuMP] Client sleep time scaling could not be normalized: " +
+                    error.GetType().Name + ": " + error.Message);
             }
         }
 
@@ -275,6 +321,69 @@ namespace SuMultiplayer.Engine
                 };
             }
             return applied;
+        }
+
+        public bool AlignClientCircuitStep(int hostStep, bool restoreAuthoritativeStates,
+            out string error)
+        {
+            EnsureMainThread(nameof(AlignClientCircuitStep));
+            error = null;
+            if (hostStep < 0)
+                return Fail("Host circuit step must be non-negative.", out error);
+            if (!m_terrainBridge.ClientReplica)
+                return Fail("Only a client replica can align its circuit step.", out error);
+
+            SubsystemElectricity electricity = GameManager.Project?
+                .FindSubsystem<SubsystemElectricity>(false);
+            if (electricity == null)
+                return Fail("SubsystemElectricity is unavailable.", out error);
+            try
+            {
+                if (!restoreAuthoritativeStates)
+                    m_authoritativeStates.Clear();
+                ClearClientSimulationSchedule(electricity);
+                m_parentField.ModifyParentField(electricity, "CircuitStep", hostStep,
+                    typeof(SubsystemElectricity));
+                m_parentField.ModifyParentField(electricity, "FrameStartCircuitStep", hostStep,
+                    typeof(SubsystemElectricity));
+                m_parentField.ModifyParentField(electricity, "m_remainingSimulationTime", 0f,
+                    typeof(SubsystemElectricity));
+                if (restoreAuthoritativeStates)
+                {
+                    SubsystemTerrain terrainSubsystem = GameManager.Project?
+                        .FindSubsystem<SubsystemTerrain>(false);
+                    Game.Terrain terrain = terrainSubsystem?.Terrain;
+                    foreach (KeyValuePair<string, AuthoritativeState> pair in
+                        m_authoritativeStates.ToArray())
+                    {
+                        CircuitElementState state = pair.Value.State;
+                        TerrainChunk chunk = terrain?.GetChunkAtCell(state.X, state.Z);
+                        if (chunk == null ||
+                            !ChunkContentStages.IsContentValid((int)chunk.State))
+                        {
+                            m_authoritativeStates.Remove(pair.Key);
+                            continue;
+                        }
+                        if (electricity.GetElectricElement(state.X, state.Y,
+                                state.Z, (int)state.MountingFace) == null)
+                        {
+                            m_authoritativeStates.Remove(pair.Key);
+                            continue;
+                        }
+                        if (!m_codec.Apply(electricity, pair.Value.State, hostStep,
+                                out string applyError))
+                            return Fail("Client circuit step alignment could not restore " +
+                                pair.Key + ": " + applyError, out error);
+                        pair.Value.HostStep = hostStep;
+                    }
+                }
+                return true;
+            }
+            catch (Exception e)
+            {
+                return Fail("Client circuit step alignment failed: " + e.GetType().Name +
+                    ": " + e.Message, out error);
+            }
         }
 
         // Source: Survivalcraft/Game/SubsystemElectricity.cs:SubsystemElectricity.UpdateElectricElements

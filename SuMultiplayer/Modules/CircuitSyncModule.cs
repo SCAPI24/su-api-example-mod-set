@@ -12,6 +12,7 @@ using System.Linq;
 namespace SuMultiplayer.Modules
 {
     // Source: Survivalcraft/Game/SubsystemElectricity.cs:SubsystemElectricity.Update
+    // Source: Survivalcraft/Game/SubsystemTime.cs:SubsystemTime.NextFrame
     // Source: Mod/ScMultiplayer/Func/Circuit/CircuitSynchronizer.cs:CircuitSynchronizer
     public sealed class CircuitSyncModule : IMultiplayerModule
     {
@@ -49,6 +50,7 @@ namespace SuMultiplayer.Modules
             // complete snapshot at the host's paused step before it can hold
             // that step as authoritative.
             public bool LastPaused;
+            public bool AccelerationResumePending;
             public bool PauseBarrierActive;
             public bool PauseBarrierComplete;
             public int PauseBarrierStep;
@@ -150,6 +152,7 @@ namespace SuMultiplayer.Modules
         private readonly Dictionary<ChunkKey, AppliedBoundary> m_clientChunkBoundaries =
             new Dictionary<ChunkKey, AppliedBoundary>();
         private readonly HashSet<ChunkKey> m_clientRequestedScope = new HashSet<ChunkKey>();
+        private readonly HashSet<ChunkKey> m_clientInitializedScope = new HashSet<ChunkKey>();
         private readonly List<CircuitOperationResult> m_deferredOperationResults =
             new List<CircuitOperationResult>();
         private readonly List<CircuitEvent> m_deferredEvents = new List<CircuitEvent>();
@@ -173,6 +176,11 @@ namespace SuMultiplayer.Modules
         private int m_timelineGeneration;
         private bool m_hasConfiguredRandomSeed;
         private bool m_randomSeedAuthority;
+        private bool m_clientClockInitialized;
+        private bool m_clientClockPaused;
+        private bool m_clientClockAccelerated;
+        private bool m_clientResumePending;
+        private bool m_hostWasAccelerated;
         private uint m_configuredRandomSeed;
         private CircuitClock m_pendingClock;
         private bool m_debugPauseRequested;
@@ -210,7 +218,10 @@ namespace SuMultiplayer.Modules
             " parts=" + m_clientSnapshotPartsReceived + " applied=" +
             m_clientSnapshotsApplied + "/" + m_clientStatesApplied + " applyFail=" +
             m_clientApplyFailures + " hashes=" + m_clientHashReportsSent + "/" +
-            m_clientHashChunksSent + " watermarkExpired=" + m_clientWatermarkExpired + ")" +
+            m_clientHashChunksSent + " watermarkExpired=" + m_clientWatermarkExpired +
+            " circuitStep=" + CircuitSimulationPauseSignal.ClientHostStep +
+            " circuitSim=" + CircuitSimulationPauseSignal.ClientSimulationEnabled +
+            " accelerated=" + CircuitSimulationPauseSignal.ClientAccelerated + ")" +
             " debugPaused=" + m_debugPauseRequested +
             " " + m_world.DescribeDiagnostics();
 
@@ -270,6 +281,13 @@ namespace SuMultiplayer.Modules
             m_transport.PeerDetached += HandlePeerDetached;
             m_presentation.SetCircuitRequestSink(SubmitOperation);
             m_sessionId = m_transport.SessionId;
+            m_clientClockInitialized = false;
+            m_clientClockPaused = false;
+            m_clientClockAccelerated = false;
+            m_clientResumePending = false;
+            m_hostWasAccelerated = false;
+            m_clientInitializedScope.Clear();
+            CircuitSimulationPauseSignal.ClearClientClock();
             // The host owns the circuit epoch. A client must wait for the first
             // CircuitClock instead of inventing a local epoch, including after a
             // reconnect where the previous host session may have been discarded.
@@ -303,7 +321,13 @@ namespace SuMultiplayer.Modules
                 m_snapshotAssemblies.Clear();
                 m_clientChunkBoundaries.Clear();
                 m_clientRequestedScope.Clear();
+                m_clientInitializedScope.Clear();
                 m_pendingClock = null;
+                m_clientClockInitialized = false;
+                m_clientClockPaused = false;
+                m_clientClockAccelerated = false;
+                m_clientResumePending = false;
+                CircuitSimulationPauseSignal.ClearClientClock();
                 m_presentation.DetachPresentation();
             }
             if (!m_wasCircuitAttached && circuitAttached)
@@ -332,6 +356,7 @@ namespace SuMultiplayer.Modules
                     m_nextHashMs = nowMs + HashIntervalMs;
                 }
             }
+            UpdateClientSimulationClock();
         }
 
         public void Detach(ModuleDetachReason reason)
@@ -352,6 +377,7 @@ namespace SuMultiplayer.Modules
             m_snapshotAssemblies.Clear();
             m_clientChunkBoundaries.Clear();
             m_clientRequestedScope.Clear();
+            m_clientInitializedScope.Clear();
             m_deferredOperationResults.Clear();
             m_deferredEvents.Clear();
             m_peers.Clear();
@@ -366,7 +392,13 @@ namespace SuMultiplayer.Modules
             m_debugPauseStep = int.MinValue;
             m_debugPauseStates.Clear();
             m_pendingClock = null;
+            m_clientClockInitialized = false;
+            m_clientClockPaused = false;
+            m_clientClockAccelerated = false;
+            m_clientResumePending = false;
+            m_hostWasAccelerated = false;
             CircuitSimulationPauseSignal.Set(false);
+            CircuitSimulationPauseSignal.ClearClientClock();
         }
 
         private void HostSync(long nowMs)
@@ -416,6 +448,9 @@ namespace SuMultiplayer.Modules
                 m_randomSeedAuthority = true;
             }
             m_lastCircuitStep = step;
+            bool accelerated = m_world.IsWorldAccelerated;
+            bool accelerationEnded = m_hostWasAccelerated && !accelerated;
+            m_hostWasAccelerated = accelerated;
             m_transport.CopyAttachedPeerIds(m_peers);
             if (m_peers.Count == 0) return;
 
@@ -424,6 +459,9 @@ namespace SuMultiplayer.Modules
                 if (!m_transport.IsHostCircuitAttached(clientId)) continue;
                 m_hostAttachedPeers++;
                 PeerState peer = GetPeerState(clientId);
+                if (accelerationEnded)
+                    peer.AccelerationResumePending = true;
+                bool resumeSyncComplete = true;
                 m_chunks.Clear();
                 m_transport.CopyClientChunkScope(clientId, m_chunks);
                 if (m_chunks.Count > MaximumInterestChunks)
@@ -451,7 +489,8 @@ namespace SuMultiplayer.Modules
                     TimeOfDayOffset = dayOffset,
                     TimelineGeneration = m_timelineGeneration,
                     RandomSeed = randomSeed,
-                    Paused = paused
+                    Paused = paused,
+                    Accelerated = accelerated || peer.AccelerationResumePending
                 };
                 AddPayload(batch, MessageType.CircuitClock, clockMessage);
 
@@ -477,6 +516,7 @@ namespace SuMultiplayer.Modules
                     if (!capturedStates.TryGetValue(chunk, out List<CircuitElementState> captured))
                     {
                         Warn("Host circuit batch capture omitted " + chunk + ".");
+                        resumeSyncComplete = false;
                         continue;
                     }
                     if (paused && peer.PauseBarrierActive &&
@@ -503,7 +543,10 @@ namespace SuMultiplayer.Modules
                             TrackPauseBarrierSnapshot(peer, chunk, step, snapshotId, nowMs);
                         }
                         else
+                        {
                             peer.NeedsFullSnapshot.Add(chunk);
+                            resumeSyncComplete = false;
+                        }
                         continue;
                     }
 
@@ -517,7 +560,10 @@ namespace SuMultiplayer.Modules
                             TrackPauseBarrierSnapshot(peer, chunk, step, snapshotId, nowMs);
                         }
                         else
+                        {
                             peer.NeedsFullSnapshot.Add(chunk);
+                            resumeSyncComplete = false;
+                        }
                     }
                     else
                     {
@@ -550,6 +596,7 @@ namespace SuMultiplayer.Modules
                         peer.NeedsFullSnapshot.Add(pair.Key);
                         peer.SnapshotBoundaries.Remove(pendingSnapshotIds[pair.Key]);
                         RemovePauseBarrierSnapshot(peer, pendingSnapshotIds[pair.Key], pair.Key);
+                        resumeSyncComplete = false;
                         continue;
                     }
                     bool appended = true;
@@ -561,6 +608,7 @@ namespace SuMultiplayer.Modules
                             peer.SnapshotBoundaries.Remove(pendingSnapshotIds[pair.Key]);
                             RemovePauseBarrierSnapshot(peer, pendingSnapshotIds[pair.Key], pair.Key);
                             appended = false;
+                            resumeSyncComplete = false;
                             break;
                         }
                     }
@@ -568,10 +616,22 @@ namespace SuMultiplayer.Modules
                         TrackPauseBarrierSnapshot(peer, pair.Key, step,
                             pendingSnapshotIds[pair.Key], nowMs);
                 }
+                bool releaseAcceleration = peer.AccelerationResumePending &&
+                    resumeSyncComplete && peer.NeedsFullSnapshot.Count == 0;
+                if (releaseAcceleration)
+                {
+                    for (int i = batch.Payloads.Count - 1; i >= 0; i--)
+                        if ((MessageType)batch.Payloads[i].MessageType == MessageType.CircuitClock)
+                            batch.Payloads.RemoveAt(i);
+                    CircuitClock resumedClock = clockMessage.Clone();
+                    resumedClock.Accelerated = false;
+                    AddPayload(batch, MessageType.CircuitClock, resumedClock);
+                }
                 if (batch.Payloads.Count > 0 && !SendBatch(clientId, batch))
                 {
                     m_hostSendFailures++;
                     Warn("Circuit sync batch send failed for client " + clientId + ".");
+                    resumeSyncComplete = false;
                     foreach (ChunkKey chunk in changedStates.Keys)
                     {
                         peer.NeedsFullSnapshot.Add(chunk);
@@ -582,6 +642,8 @@ namespace SuMultiplayer.Modules
                         }
                     }
                 }
+                else if (releaseAcceleration)
+                    peer.AccelerationResumePending = false;
                 if (paused)
                 {
                     ExpirePauseBarrierSnapshots(peer, nowMs);
@@ -816,6 +878,8 @@ namespace SuMultiplayer.Modules
             {
                 m_clientScopeRequested = false;
                 m_clientRequestedScope.Clear();
+                m_clientInitializedScope.Clear();
+                UpdateClientSimulationClock();
                 return;
             }
 
@@ -837,19 +901,24 @@ namespace SuMultiplayer.Modules
                 m_clientRequestedScope.Clear();
                 foreach (ChunkKey key in m_chunks)
                     m_clientRequestedScope.Add(key);
+                m_clientInitializedScope.RemoveWhere(key => !m_clientRequestedScope.Contains(key));
+                UpdateClientSimulationClock();
                 return;
             }
             if (SendHost(MessageType.CircuitSnapshotRequest, request.ToByteArray()))
             {
                 m_clientScopeRequested = true;
+                if (replaceScope) m_clientInitializedScope.Clear();
                 m_clientRequestedScope.Clear();
                 foreach (ChunkKey key in m_chunks)
                     m_clientRequestedScope.Add(key);
+                m_clientInitializedScope.RemoveWhere(key => !m_clientRequestedScope.Contains(key));
                 m_clientScopeRequests++;
                 m_clientScopeChunks += request.Chunks.Count;
             }
             else
                 Warn("Initial circuit snapshot request could not be queued.");
+            UpdateClientSimulationClock();
         }
 
         private bool ClientScopeChanged()
@@ -1472,6 +1541,8 @@ namespace SuMultiplayer.Modules
             long nowMs = (long)(m_clock() * 1000.0);
             foreach (SnapshotAssembly assembly in m_snapshotAssemblies.Values.ToArray())
             {
+                if (m_transport?.IsClient == true && !m_clientClockInitialized)
+                    continue;
                 if (assembly.Parts.Count != assembly.PartCount ||
                     appliedSequence < assembly.RequiredTerrainSequence)
                 {
@@ -1549,6 +1620,8 @@ namespace SuMultiplayer.Modules
                     m_clientChunkBoundaries[key] = new AppliedBoundary(assembly.HostStep,
                         assembly.RequiredTerrainSequence, assembly.EventSequence,
                         assembly.TimelineGeneration);
+                    if (assembly.Full)
+                        m_clientInitializedScope.Add(key);
                     m_clientSnapshotsApplied++;
                     m_clientStatesApplied += states.Count;
                     uint snapshotSequence = unchecked((uint)assembly.EventSequence);
@@ -1564,23 +1637,34 @@ namespace SuMultiplayer.Modules
                 }
                 m_snapshotAssemblies.Remove(assembly.SnapshotId);
             }
+            UpdateClientSimulationClock();
         }
 
         private void ApplyClock(CircuitClock message)
         {
             if (message == null) return;
+            bool wasClientCircuitStopped = m_clientClockPaused ||
+                m_clientClockAccelerated;
             if (!m_transport.IsHosting && m_epoch == 0)
                 m_epoch = message.Epoch;
             if (message.Epoch != m_epoch || message.TimelineGeneration < m_timelineGeneration ||
                 (message.TimelineGeneration == m_timelineGeneration &&
                     message.HostCircuitStep < m_lastCircuitStep)) return;
-            if (message.TimelineGeneration > m_timelineGeneration)
+            bool timelineChanged = message.TimelineGeneration > m_timelineGeneration;
+            if (timelineChanged)
             {
                 m_pendingOperations.Clear();
                 m_deferredOperationResults.Clear();
                 m_deferredEvents.Clear();
                 m_snapshotAssemblies.Clear();
                 m_clientChunkBoundaries.Clear();
+                m_clientInitializedScope.Clear();
+                m_clientClockInitialized = false;
+                m_clientClockPaused = false;
+                m_clientClockAccelerated = false;
+                m_clientResumePending = false;
+                CircuitSimulationPauseSignal.SetClientClock(false,
+                    message.HostCircuitStep, message.Paused, message.Accelerated);
                 m_presentation.DetachPresentation();
                 m_clientScopeRequested = false;
             }
@@ -1596,7 +1680,28 @@ namespace SuMultiplayer.Modules
                     Warn("Authoritative circuit clock apply failed: " + error);
                 return;
             }
-            CircuitSimulationPauseSignal.Set(message.Paused);
+            if (m_transport.IsClient && (!m_clientClockInitialized || timelineChanged))
+            {
+                if (!m_world.AlignClientCircuitStep(message.HostCircuitStep, false,
+                        out string alignError))
+                {
+                    Warn("Client circuit clock alignment failed: " + alignError);
+                    return;
+                }
+                m_clientClockInitialized = true;
+            }
+            if (m_transport.IsClient)
+            {
+                m_clientClockPaused = message.Paused;
+                m_clientClockAccelerated = message.Accelerated;
+                if (!timelineChanged && wasClientCircuitStopped &&
+                    !m_clientClockPaused && !m_clientClockAccelerated)
+                    m_clientResumePending = true;
+                CircuitSimulationPauseSignal.SetClientClock(false,
+                    message.HostCircuitStep, message.Paused, message.Accelerated);
+            }
+            else
+                CircuitSimulationPauseSignal.Set(message.Paused);
             m_lastCircuitStep = message.HostCircuitStep;
             m_timelineGeneration = message.TimelineGeneration;
             if (!m_hasConfiguredRandomSeed || m_configuredRandomSeed != message.RandomSeed ||
@@ -1607,6 +1712,7 @@ namespace SuMultiplayer.Modules
                 m_hasConfiguredRandomSeed = true;
                 m_randomSeedAuthority = false;
             }
+            UpdateClientSimulationClock();
             // A clock only advances the host timeline. It does not advance the
             // state actually installed in any client chunk. Keep each chunk's
             // applied boundary unchanged until its snapshot or event has been
@@ -1797,6 +1903,58 @@ namespace SuMultiplayer.Modules
 
         private void HandlePeerDetached(int clientId, string reason) => m_peerStates.Remove(clientId);
 
+        private void UpdateClientSimulationClock()
+        {
+            if (m_transport?.IsClient != true || !m_clientClockInitialized ||
+                !m_transport.IsClientCircuitAttached || !m_clientScopeRequested ||
+                !m_world.IsReady)
+            {
+                if (m_transport?.IsClient == true)
+                    CircuitSimulationPauseSignal.SetClientClock(false,
+                        m_lastCircuitStep, m_clientClockPaused, m_clientClockAccelerated);
+                return;
+            }
+
+            m_chunks.Clear();
+            int loadedCount = m_world.CopyLoadedChunks(m_chunks);
+            bool scopeReady = loadedCount > 0 && loadedCount <= MaximumInterestChunks &&
+                m_clientRequestedScope.SetEquals(m_chunks);
+            long terrainSequence = m_appliedTerrainSequence();
+            if (scopeReady)
+            {
+                foreach (ChunkKey chunk in m_clientRequestedScope)
+                {
+                    if (!m_clientInitializedScope.Contains(chunk) ||
+                        HasPendingSnapshotForChunk(chunk) ||
+                        !m_clientChunkBoundaries.TryGetValue(chunk,
+                            out AppliedBoundary boundary) ||
+                        boundary.TimelineGeneration != m_timelineGeneration ||
+                        boundary.TerrainSequence > terrainSequence)
+                    {
+                        scopeReady = false;
+                        break;
+                    }
+                }
+            }
+
+            bool stopped = m_clientClockPaused || m_clientClockAccelerated;
+            if (scopeReady && m_clientResumePending && !stopped)
+            {
+                if (!m_world.AlignClientCircuitStep(m_lastCircuitStep, true,
+                        out string error))
+                {
+                    Warn("Client circuit resume alignment failed: " + error);
+                    scopeReady = false;
+                }
+                else
+                    m_clientResumePending = false;
+            }
+
+            CircuitSimulationPauseSignal.SetClientClock(
+                scopeReady && !stopped && !m_clientResumePending,
+                m_lastCircuitStep, m_clientClockPaused, m_clientClockAccelerated);
+        }
+
         private void ResetForSessionChange()
         {
             string current = m_transport.SessionId ?? string.Empty;
@@ -1817,6 +1975,13 @@ namespace SuMultiplayer.Modules
             m_lastCircuitStep = 0;
             m_clientScopeRequested = false;
             m_wasCircuitAttached = false;
+            m_clientClockInitialized = false;
+            m_clientClockPaused = false;
+            m_clientClockAccelerated = false;
+            m_clientResumePending = false;
+            m_hostWasAccelerated = false;
+            m_clientInitializedScope.Clear();
+            CircuitSimulationPauseSignal.ClearClientClock();
             m_peerStates.Clear();
             m_pendingOperations.Clear();
             m_snapshotAssemblies.Clear();

@@ -303,14 +303,17 @@ namespace SuMultiplayer.Engine
                 int z = baseZ + edit.Z;
                 int value = Game.Terrain.MakeBlockValue(edit.Contents, 0, edit.Data);
                 int oldValue = terrain.GetCellValueFast(x, edit.Y, z);
+                int oldValueWithoutLight = Game.Terrain.ReplaceLight(oldValue, 0);
                 terrain.SetCellValueFast(x, edit.Y, z, value);
+                if (ClientReplica && oldValueWithoutLight != value)
+                    NotifyElectricTopologyChanged(oldValueWithoutLight, value, x, edit.Y, z);
                 // 客户端补发方块行为通知（单一漏斗）：SetCellValueFast 绕过 ChangeCell，不补就
                 // 没有 OnBlockAdded/Removed/Modified → 营火/火把等 behavior 自己维护的粒子永远陈旧。
                 // 只派发纯表现行为；会写格 / 生成实体的行为被拒绝并计数（mutation-denied）。
                 // 与 ChangeCell 同一比较口径：光照位不参与"是否变化"（ChangeCell 先 ReplaceLight(0)）。
-                if (ClientReplica && Game.Terrain.ReplaceLight(oldValue, 0) != value)
+                if (ClientReplica && oldValueWithoutLight != value)
                     BlockBehaviorNotify.Notify(subsystem, oldValue, value, x, edit.Y, z);
-                if (ClientReplica && oldValue != value)
+                if (ClientReplica && oldValueWithoutLight != value)
                     ReplicaCellApplied?.Invoke(key, edit);
             }
             AppliedCells += edits.Count;
@@ -329,6 +332,40 @@ namespace SuMultiplayer.Engine
             // Source: Survivalcraft/Game/SubsystemTerrain.cs:SubsystemTerrain.ChangeCell
             m_subsystem?.TerrainUpdater?.DowngradeChunkNeighborhoodState(chunk.Coords, 1,
                 TerrainChunkState.InvalidLight, forceGeometryRegeneration: false);
+        }
+
+        // Source: Survivalcraft/Game/SubsystemElectricBlockBehavior.cs:OnBlockAdded/OnBlockRemoved/OnBlockModified
+        private void NotifyElectricTopologyChanged(int oldValue, int newValue, int x, int y, int z)
+        {
+            Block[] blocks = BlocksManager.Blocks;
+            if (blocks == null)
+                throw new InvalidOperationException(
+                    "Block database is unavailable while applying an authoritative electric cell.");
+            int oldContents = Game.Terrain.ExtractContents(oldValue);
+            int newContents = Game.Terrain.ExtractContents(newValue);
+            if (oldContents >= blocks.Length || newContents >= blocks.Length)
+                throw new InvalidOperationException(
+                    "Block contents are outside the loaded block database while applying an authoritative electric cell.");
+
+            bool oldIsElectric = blocks[oldContents] is IElectricElementBlock;
+            bool newIsElectric = blocks[newContents] is IElectricElementBlock;
+            if (!oldIsElectric && !newIsElectric) return;
+
+            SubsystemElectricity electricity = GameManager.Project?
+                .FindSubsystem<SubsystemElectricity>(false);
+            if (electricity == null)
+                throw new InvalidOperationException(
+                    "SubsystemElectricity is unavailable while applying an authoritative electric cell.");
+
+            if (oldContents == newContents)
+            {
+                electricity.OnElectricElementBlockModified(x, y, z);
+                return;
+            }
+            if (oldIsElectric)
+                electricity.OnElectricElementBlockRemoved(x, y, z);
+            if (newIsElectric)
+                electricity.OnElectricElementBlockAdded(x, y, z);
         }
 
         /// <summary>

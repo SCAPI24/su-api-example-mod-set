@@ -242,6 +242,7 @@ namespace SuMultiplayer.Engine
                 EnsureSupportedType(element);
 
                 int currentStep = subsystem.CircuitStep;
+                int stateBaseStep = Math.Max(currentStep, hostStep);
                 ClearScheduledSimulation(subsystem, element);
 
                 if (element is BatteryElectricElement)
@@ -283,7 +284,7 @@ namespace SuMultiplayer.Engine
                     history.Clear();
                     foreach (CircuitScheduledVoltage scheduled in state.ScheduledVoltages)
                     {
-                        int step = checked(currentStep + (int)scheduled.RemainingSteps);
+                        int step = checked(stateBaseStep + (int)scheduled.RemainingSteps);
                         history[step] = scheduled.VoltageLevel / 15f;
                     }
                 }
@@ -322,9 +323,17 @@ namespace SuMultiplayer.Engine
                     m_lastSevenSegmentApply = DescribeSevenSegmentState(element, state);
                 }
 
-                // Client replicas never execute the circuit solver. Keeping a scheduled
-                // element here would allow a role transition or a transient gate race to
-                // run one local step and create a false low-to-high edge.
+                uint remainingSteps = state.NextSimulationSteps;
+                if (IsButton(element) && state.ButtonPhase != 0 &&
+                    state.ButtonRemainingSteps > 0)
+                    remainingSteps = state.ButtonRemainingSteps;
+                if (remainingSteps > int.MaxValue)
+                    throw new InvalidOperationException(
+                        "Next circuit simulation step is outside the Int32 range.");
+                if (remainingSteps > 0)
+                    subsystem.QueueElectricElementForSimulation(element,
+                        checked(stateBaseStep + (int)remainingSteps));
+
                 return true;
             }
             catch (Exception ex)
@@ -341,8 +350,8 @@ namespace SuMultiplayer.Engine
         // Source: Survivalcraft/Game/LedElectricElement.cs:Simulate
         // Source: Survivalcraft/Game/MulticoloredLedElectricElement.cs:Simulate
         // Source: Mod/ScMultiplayer/Func/Circuit/CircuitSynchronizer.cs:CircuitSynchronizer.QueueSnapshotPresentationRefresh
-        // Client replicas do not run SubsystemElectricity.Update, so glow caches must be
-        // refreshed directly after applying the host voltage.
+        // Snapshot application refreshes glow caches immediately; the client solver is
+        // separately paused during host fast-forward and bounded by the host step.
         private void RefreshPresentation(ElectricElement element, int voltageLevel)
         {
             int level = MathUtils.Clamp(voltageLevel, 0, 15);

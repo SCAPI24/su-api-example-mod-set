@@ -13,17 +13,45 @@ using PA = SuMultiplayer.Protocol.Authority;
 namespace SuMultiplayer.Terrain
 {
     /// <summary>
-    /// Circuit-only debug pause signal. It is independent of
-    /// SubsystemTime.GameTimeFactor and never opens the main-menu pause path.
+    /// Circuit clock controls. They are independent of SubsystemTime.GameTimeFactor
+    /// and never open the main-menu pause path.
     /// </summary>
     public static class CircuitSimulationPauseSignal
     {
         private static int s_paused;
+        private static int s_clientSimulationEnabled;
+        private static int s_clientHostStep;
+        private static int s_clientAccelerated;
 
         public static bool IsPaused => Volatile.Read(ref s_paused) != 0;
 
+        public static bool ClientSimulationEnabled =>
+            Volatile.Read(ref s_clientSimulationEnabled) != 0;
+
+        public static int ClientHostStep => Volatile.Read(ref s_clientHostStep);
+
+        public static bool ClientAccelerated =>
+            Volatile.Read(ref s_clientAccelerated) != 0;
+
         public static void Set(bool paused) =>
             Volatile.Write(ref s_paused, paused ? 1 : 0);
+
+        public static void SetClientClock(bool enabled, int hostStep, bool paused,
+            bool accelerated)
+        {
+            Volatile.Write(ref s_clientHostStep, hostStep);
+            Volatile.Write(ref s_paused, paused ? 1 : 0);
+            Volatile.Write(ref s_clientAccelerated, accelerated ? 1 : 0);
+            Volatile.Write(ref s_clientSimulationEnabled, enabled ? 1 : 0);
+        }
+
+        public static void ClearClientClock()
+        {
+            Volatile.Write(ref s_clientSimulationEnabled, 0);
+            Volatile.Write(ref s_clientHostStep, 0);
+            Volatile.Write(ref s_clientAccelerated, 0);
+            Volatile.Write(ref s_paused, 0);
+        }
     }
 
     /// <summary>

@@ -17,6 +17,7 @@ message CircuitClock {
   int32 timeline_generation = 7;
   bool paused = 8;
   uint32 random_seed = 9;
+  bool accelerated = 10;
   bytes ext = 100;
   google.protobuf.Any custom = 101;
 }

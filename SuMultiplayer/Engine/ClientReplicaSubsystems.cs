@@ -1647,17 +1647,98 @@ namespace SuMultiplayer.Engine
     }
 
     // =====================================================================================
-    // 电路：客户端不跑电路求解（活塞 / 分配器 / 门 / LED 的落地都由主机算，结果经 CellChange 下发）。
+    // 电路：睡眠快进时客户端只应用主机状态；恢复后按主机 CircuitStep 上限本地求解。
     // Source: Survivalcraft/Game/SubsystemElectricity.cs:SubsystemElectricity.Update
     // =====================================================================================
 
     public sealed class SuSubsystemElectricity : SubsystemElectricity, IUpdateable
     {
+        // Source: Survivalcraft/Game/SubsystemTime.cs:SubsystemTime.NextFrame
+        // Source: Survivalcraft/Game/SubsystemUpdate.cs:SubsystemUpdate.Update
+        private sealed class ClientSleepUpdateLimiter : IUpdateable
+        {
+            private readonly SuSubsystemElectricity m_owner;
+
+            public ClientSleepUpdateLimiter(SuSubsystemElectricity owner) =>
+                m_owner = owner;
+
+            public UpdateOrder UpdateOrder => UpdateOrder.Reset;
+
+            public void Update(float dt)
+            {
+                if (!ReplicaGates.IsClient(m_owner.SubsystemTerrain)) return;
+                SubsystemUpdate update = m_owner.Project?.FindSubsystem<SubsystemUpdate>(false);
+                if (update != null && update.UpdatesPerFrame > 1)
+                    update.UpdatesPerFrame = 1;
+            }
+        }
+
+        private readonly ClientSleepUpdateLimiter m_clientSleepUpdateLimiter;
+        private readonly Action m_clientCircuitSimulation;
+        private int m_clientCircuitTargetStep;
+        private bool m_clientCircuitSimulationFaulted;
+
+        public SuSubsystemElectricity()
+        {
+            m_clientSleepUpdateLimiter = new ClientSleepUpdateLimiter(this);
+            m_clientCircuitSimulation = AdvanceClientCircuitToTarget;
+        }
+
+        protected override void Load(ValuesDictionary valuesDictionary)
+        {
+            base.Load(valuesDictionary);
+            SubsystemUpdate update = base.Project?.FindSubsystem<SubsystemUpdate>(false);
+            if (update == null)
+                throw new InvalidOperationException(
+                    "SubsystemUpdate is unavailable; client sleep acceleration cannot be limited.");
+            update.AddUpdateable(m_clientSleepUpdateLimiter);
+        }
+
         void IUpdateable.Update(float dt)
         {
+            if (ReplicaGates.IsClient(SubsystemTerrain))
+            {
+                if (m_clientCircuitSimulationFaulted) return;
+                if (!CircuitSimulationPauseSignal.ClientSimulationEnabled ||
+                    CircuitSimulationPauseSignal.IsPaused ||
+                    CircuitSimulationPauseSignal.ClientAccelerated)
+                    return;
+                int targetStep = CircuitSimulationPauseSignal.ClientHostStep;
+                if (CircuitStep >= targetStep) return;
+                if (!(SubsystemTerrain is SuSubsystemTerrain terrain))
+                    throw new InvalidOperationException(
+                        "Client circuit simulation requires SuSubsystemTerrain write filtering.");
+                m_clientCircuitTargetStep = targetStep;
+                try
+                {
+                    terrain.RunClientCircuitSimulation(m_clientCircuitSimulation);
+                }
+                catch (Exception error)
+                {
+                    m_clientCircuitSimulationFaulted = true;
+                    Log.Error("[SuMP] Client circuit simulation stopped after a failure: " +
+                        error.GetType().Name + ": " + error.Message);
+                }
+                return;
+            }
             if (CircuitSimulationPauseSignal.IsPaused) return;
             if (!ReplicaGates.Allow(SubsystemTerrain, ReplicaMutationSource.Electricity)) return;
             base.Update(dt);
+        }
+
+        private void AdvanceClientCircuitToTarget()
+        {
+            while (CircuitStep < m_clientCircuitTargetStep)
+            {
+                int stepBudget = m_clientCircuitTargetStep - CircuitStep;
+                int stepBeforeUpdate = CircuitStep;
+                base.Update(stepBudget >= 10 ? 0.1f : 0.01f);
+                int stepsAdvanced = CircuitStep - stepBeforeUpdate;
+                if (stepsAdvanced == 0) return;
+                if (stepsAdvanced > stepBudget)
+                    throw new InvalidOperationException(
+                        "Client circuit solver advanced beyond the latest host circuit step.");
+            }
         }
     }
 

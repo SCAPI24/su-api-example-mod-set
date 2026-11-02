@@ -90,6 +90,7 @@ namespace SuMultiplayer.Modules
     public interface ICircuitWorldPort
     {
         bool IsClientReplica { get; }
+        bool IsWorldAccelerated { get; }
         bool IsReady { get; }
         bool TryGetClock(out int circuitStep, out double totalElapsedGameTime,
             out double timeOfDayOffset, out bool paused, out string error);
@@ -103,6 +104,8 @@ namespace SuMultiplayer.Modules
         bool TryCaptureChunks(IList<ChunkKey> keys,
             IDictionary<ChunkKey, List<CircuitElementState>> target, out string error);
         bool Apply(CircuitElementState state, int hostStep, out string error);
+        bool AlignClientCircuitStep(int hostStep, bool restoreAuthoritativeStates,
+            out string error);
         bool ApplyClock(double totalElapsedGameTime, double timeOfDayOffset,
             out string error);
         void SetDeterministicRandomSeed(uint seed, bool hostAuthority);
