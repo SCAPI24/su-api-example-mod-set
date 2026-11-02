@@ -1324,6 +1324,8 @@ namespace SuMultiplayer.Terrain
         private readonly MessageChannel m_messages;
         private readonly TerrainSyncOptions m_options;
         private readonly Dictionary<int, State> m_clients = new Dictionary<int, State>();
+        /// <summary>组合根绑定的附属电路 TCP ticket 签发器。</summary>
+        public Func<int, byte[]> CircuitTicketProvider { get; set; }
         /// <summary>
         /// 首次加入审批通过后、客户端因"角色资料未创建"重新握手时，允许同一身份免二次审批的时间窗。
         /// key = 身份原值；批准时仅对 profile-required 流程登记一次，第二个 Hello 消费后删除。
@@ -1555,6 +1557,7 @@ namespace SuMultiplayer.Terrain
         /// 拒绝与汇总按 10s），这里只负责抛给组合根写日志 —— 不在热路径逐条打印。
         /// </summary>
         public event Action<string> OnDemandTrace;
+        public event Action<string> CircuitTicketProblem;
 
         /// <summary>主线程泵入口：处理一帧入站消息。</summary>
         public void ProcessFrame(in ReceivedFrame frame) => OnFrame(frame);
@@ -1585,6 +1588,10 @@ namespace SuMultiplayer.Terrain
             registry.UnregisterOwner(MessageOwner);
             registry.Register((int)MessageType.Hello, Hello.Parser,
                 new DelegateMessageHandler<Hello>(OnHello), MessageOwner);
+            registry.Register((int)MessageType.CircuitTicketRequest,
+                PT.CircuitTicketRequest.Parser,
+                new DelegateMessageHandler<PT.CircuitTicketRequest>(OnCircuitTicketRequest),
+                MessageOwner);
             registry.Register((int)MessageType.InterestUpdate, InterestUpdate.Parser,
                 new DelegateMessageHandler<InterestUpdate>(OnInterest), MessageOwner);
             registry.Register((int)MessageType.ChunkDigestReport, PT.ChunkDigestReport.Parser,
@@ -1604,6 +1611,58 @@ namespace SuMultiplayer.Terrain
         private void OnHello(MessageContext context, Hello message)
         {
             lock (m_gate) HandleHello(GetOrCreateState(context.ClientId), message);
+        }
+
+        private void OnCircuitTicketRequest(MessageContext context,
+            PT.CircuitTicketRequest message)
+        {
+            State state;
+            lock (m_gate)
+            {
+                if (message == null || context.ClientId <= 0 || CircuitTicketProvider == null ||
+                    !m_clients.TryGetValue(context.ClientId, out state) ||
+                    state.Kind != ClientKind.Player || state.Session == null ||
+                    state.ApprovalPending || state.ProfileRequired)
+                {
+                    SendCircuitTicketError(context.ClientId, message?.RequestId ?? 0UL,
+                        "player-primary-session-not-ready");
+                    return;
+                }
+            }
+            try
+            {
+                byte[] ticket = CircuitTicketProvider(context.ClientId);
+                if (ticket == null || ticket.Length != 32)
+                    throw new InvalidOperationException("电路 ticket 长度无效");
+                var response = new PT.CircuitTicketResponse
+                {
+                    RequestId = message.RequestId,
+                    Ticket = Google.Protobuf.ByteString.CopyFrom(ticket)
+                };
+                if (!m_server.TrySend(context.ClientId,
+                        MessageType.CircuitTicketResponse, response.ToByteArray()))
+                    CircuitTicketProblem?.Invoke("CircuitTicketResponse 发送失败（clientId=" +
+                        context.ClientId + "）");
+            }
+            catch (Exception e)
+            {
+                SendCircuitTicketError(context.ClientId, message.RequestId,
+                    e.GetType().Name + ": " + e.Message);
+                CircuitTicketProblem?.Invoke("电路 ticket 签发失败（clientId=" +
+                    context.ClientId + "，" + e.GetType().Name + "）");
+            }
+        }
+
+        private void SendCircuitTicketError(int clientId, ulong requestId, string reason)
+        {
+            if (clientId <= 0) return;
+            var response = new PT.CircuitTicketResponse
+            {
+                RequestId = requestId,
+                Error = reason ?? "unknown-ticket-error"
+            };
+            m_server.TrySend(clientId, MessageType.CircuitTicketResponse,
+                response.ToByteArray());
         }
 
         /// <summary>
@@ -1739,6 +1798,22 @@ namespace SuMultiplayer.Terrain
             }
         }
 
+        public int CaptureClientMemoryChunks(int clientId, List<ChunkKey> target)
+        {
+            if (target == null) return 0;
+            target.Clear();
+            lock (m_gate)
+            {
+                if (!m_clients.TryGetValue(clientId, out State state) || state.Session == null ||
+                    state.Session.CurrentClientId != clientId ||
+                    !ReferenceEquals(CurrentStateOf(state.Session), state))
+                    return 0;
+                target.AddRange(state.Session.MemoryChunks);
+            }
+            target.Sort((a, b) => a.X != b.X ? a.X.CompareTo(b.X) : a.Z.CompareTo(b.Z));
+            return target.Count;
+        }
+
         /// <summary>
         /// 这条连接的**稳定用户键**（userid 派生，见 <see cref="PlayerSessionKeys"/>）。
         ///
@@ -1870,6 +1945,10 @@ namespace SuMultiplayer.Terrain
         /// 重连时发回 Hello —— 只有与会话一致才允许"不重发整图、只追帧"。
         /// </summary>
         public string SessionId { get; set; } = string.Empty;
+        public string MultiplayerModVersion { get; set; } = string.Empty;
+        public uint MultiplayerProtocolVersion { get; set; }
+        public string MultiplayerProtocolHash { get; set; } = string.Empty;
+        public string MultiplayerBuildFingerprint { get; set; } = string.Empty;
 
         /// <summary>主机当前改动序号（世界清单的导出基线；没有主机 = 0）。</summary>
         public long CurrentChangeSequence
@@ -2403,6 +2482,34 @@ namespace SuMultiplayer.Terrain
             state.Kind = (ClientKind)(int)hello.Kind;
             state.Name = hello.Name ?? string.Empty;
             state.Identity = (hello.Identity ?? string.Empty).Trim();
+            if (state.Kind == ClientKind.Player)
+            {
+                // Source: ScMultiplayer/Message/Message.cs:Message.IsProtocolCompatible
+                bool hostMetadataValid = MultiplayerModCompatibility.IsCompatible(
+                    MultiplayerModVersion, MultiplayerProtocolVersion, MultiplayerProtocolHash,
+                    MultiplayerBuildFingerprint);
+                bool clientCompatible = MultiplayerModCompatibility.IsCompatible(
+                    hello.MultiplayerModVersion, hello.MultiplayerProtocolVersion,
+                    hello.MultiplayerProtocolHash, hello.MultiplayerBuildFingerprint);
+                if (!hostMetadataValid || !clientCompatible)
+                {
+                    string hostCompatibility = MultiplayerModCompatibility.Describe(
+                        MultiplayerModVersion, MultiplayerProtocolVersion, MultiplayerProtocolHash,
+                        MultiplayerBuildFingerprint);
+                    string clientCompatibility = MultiplayerModCompatibility.Describe(
+                        hello.MultiplayerModVersion, hello.MultiplayerProtocolVersion,
+                        hello.MultiplayerProtocolHash, hello.MultiplayerBuildFingerprint);
+                    string rejection = "Join rejected by SuMultiplayer compatibility check: " +
+                        (hostMetadataValid ? string.Empty : "host metadata is invalid; ") +
+                        "host=" + hostCompatibility + "; client=" + clientCompatibility;
+                    SendJoinRejectedLocked(state, rejection);
+                    ReleaseWindow(state);
+                    m_clients.Remove(state.Id);
+                    SessionTrace?.Invoke("加入拒绝：clientId=" + state.Id + " name=" +
+                        DisplayName(state) + " 原因=" + rejection);
+                    return;
+                }
+            }
             // 同一次房间内的断线重连不重复弹审批：Hello 声明的下载世界会话与主机会话一致
             // = 这个玩家本来就在这个房间里（旧联机 mod 的 rejoin grace 口径；重新"加入"才需要同意）。
             bool claimedSameRoomRejoin = hello.AlreadyHasWorld &&
@@ -2746,6 +2853,22 @@ namespace SuMultiplayer.Terrain
                 HeadSequence = head,
                 RejoinReason = state.RejoinReason ?? string.Empty
             };
+            if (state.Kind == ClientKind.Player && !state.ProfileRequired &&
+                CircuitTicketProvider != null)
+            {
+                try
+                {
+                    byte[] ticket = CircuitTicketProvider(state.Id);
+                    if (ticket == null || ticket.Length != 32)
+                        throw new InvalidOperationException("电路 ticket 长度无效");
+                    ack.CircuitTicket = Google.Protobuf.ByteString.CopyFrom(ticket);
+                }
+                catch (Exception e)
+                {
+                    CircuitTicketProblem?.Invoke("HelloAck 电路 ticket 签发失败（clientId=" +
+                        state.Id + "，" + e.GetType().Name + "）");
+                }
+            }
             m_server.TrySend(state.Id, MessageType.HelloAck, ack.ToByteArray());
         }
 
@@ -4947,6 +5070,7 @@ namespace SuMultiplayer.Terrain
         private int m_clientChunkFullPartIndex;
         /// <summary>本连接内整集序号（从 1 递增；主机按它拼分片）。</summary>
         private int m_clientChunkFullSetId;
+        private ulong m_circuitTicketRequestId;
         /// <summary>每条消息复用的一批条目（避免每帧分配）。</summary>
         private readonly List<ClientChunkEntry> m_clientChunkEntryBuffer =
             new List<ClientChunkEntry>(ClientChunkSetCodec.MaxEntriesPerMessage);
@@ -5214,6 +5338,10 @@ namespace SuMultiplayer.Terrain
             registry.UnregisterOwner(MessageOwner);
             registry.Register((int)MessageType.HelloAck, HelloAck.Parser,
                 new DelegateMessageHandler<HelloAck>(OnHelloAck), MessageOwner);
+            registry.Register((int)MessageType.CircuitTicketResponse,
+                PT.CircuitTicketResponse.Parser,
+                new DelegateMessageHandler<PT.CircuitTicketResponse>(OnCircuitTicketResponse),
+                MessageOwner);
             registry.Register((int)MessageType.ChunkVerdict, PT.ChunkVerdict.Parser,
                 new DelegateMessageHandler<PT.ChunkVerdict>(OnVerdict), MessageOwner);
             registry.Register((int)MessageType.ChunkResync, PT.ChunkResync.Parser,
@@ -5229,6 +5357,27 @@ namespace SuMultiplayer.Terrain
         }
 
         private void OnHelloAck(MessageContext context, HelloAck message) => HandleHelloAck(message);
+
+        private void OnCircuitTicketResponse(MessageContext context,
+            PT.CircuitTicketResponse message)
+        {
+            if (message == null || message.RequestId == 0 ||
+                message.RequestId != m_circuitTicketRequestId) return;
+            if (!string.IsNullOrEmpty(message.Error))
+            {
+                CircuitTicketError = message.Error;
+                CircuitTicket = Array.Empty<byte>();
+                return;
+            }
+            if (message.Ticket == null || message.Ticket.Length != 32)
+            {
+                CircuitTicketError = "host-returned-invalid-circuit-ticket";
+                CircuitTicket = Array.Empty<byte>();
+                return;
+            }
+            CircuitTicket = message.Ticket.ToByteArray();
+            CircuitTicketError = string.Empty;
+        }
 
         private void OnVerdict(MessageContext context, PT.ChunkVerdict message) => HandleVerdict(message);
 
@@ -5254,6 +5403,28 @@ namespace SuMultiplayer.Terrain
         public int ViewRadius { get; private set; } = 2;
         public ChunkKey Center { get; private set; }
         public bool Handshaken { get; private set; }
+        public string MultiplayerModVersion { get; set; } = string.Empty;
+        public uint MultiplayerProtocolVersion { get; set; }
+        public string MultiplayerProtocolHash { get; set; } = string.Empty;
+        public string MultiplayerBuildFingerprint { get; set; } = string.Empty;
+
+        public byte[] CircuitTicket { get; private set; } = Array.Empty<byte>();
+        public string CircuitTicketError { get; private set; } = string.Empty;
+
+        public bool RequestCircuitTicket()
+        {
+            if (!Handshaken || !m_channel.IsAlive) return false;
+            m_circuitTicketRequestId++;
+            if (m_circuitTicketRequestId == 0) m_circuitTicketRequestId = 1;
+            CircuitTicket = Array.Empty<byte>();
+            CircuitTicketError = string.Empty;
+            var request = new PT.CircuitTicketRequest
+            {
+                RequestId = m_circuitTicketRequestId
+            };
+            return m_channel.TrySend(MessageType.CircuitTicketRequest,
+                request.ToByteArray());
+        }
 
         /// <summary>HelloAck 里收到的主机身份（UserId.dat）。未握手 / 旧构建 = 空串。</summary>
         public string HostIdentity { get; private set; } = string.Empty;
@@ -5434,6 +5605,10 @@ namespace SuMultiplayer.Terrain
                 // 本机身份（UserId.dat）：空值也照样写（明确表示"身份不可用"，不是字段缺失）。
                 Identity = identity ?? string.Empty,
                 AlreadyHasWorld = alreadyHasWorld,
+                MultiplayerModVersion = MultiplayerModVersion ?? string.Empty,
+                MultiplayerProtocolVersion = MultiplayerProtocolVersion,
+                MultiplayerProtocolHash = MultiplayerProtocolHash ?? string.Empty,
+                MultiplayerBuildFingerprint = MultiplayerBuildFingerprint ?? string.Empty,
                 // 下载世界的会话标识 + 上次应用的改动序号。
                 ClientSessionId = clientSessionId ?? string.Empty,
                 LastAppliedSequence = Math.Max(0L, lastAppliedChangeSequence),
@@ -6430,6 +6605,12 @@ namespace SuMultiplayer.Terrain
             }
             // 传输层 clientId：位置快照批用它认"本机玩家自己那一条"。
             LocalClientId = ack.ClientId;
+            CircuitTicket = ack.CircuitTicket != null && ack.CircuitTicket.Length == 32
+                ? ack.CircuitTicket.ToByteArray()
+                : Array.Empty<byte>();
+            CircuitTicketError = CircuitTicket.Length == 0
+                ? "host-did-not-issue-circuit-ticket"
+                : string.Empty;
             HostIdentity = ack.HostIdentity ?? string.Empty;
             HostName = ack.HostName ?? string.Empty;
             int hostClientId = -1;

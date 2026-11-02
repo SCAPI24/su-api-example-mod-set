@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Reflection;
 using System.Text;
+using System.Threading;
 using Engine;
 using SuMultiplayer.Net;
 
@@ -11,6 +12,20 @@ using PA = SuMultiplayer.Protocol.Authority;
 
 namespace SuMultiplayer.Terrain
 {
+    /// <summary>
+    /// Circuit-only debug pause signal. It is independent of
+    /// SubsystemTime.GameTimeFactor and never opens the main-menu pause path.
+    /// </summary>
+    public static class CircuitSimulationPauseSignal
+    {
+        private static int s_paused;
+
+        public static bool IsPaused => Volatile.Read(ref s_paused) != 0;
+
+        public static void Set(bool paused) =>
+            Volatile.Write(ref s_paused, paused ? 1 : 0);
+    }
+
     /// <summary>
     /// "客户端只是副本"的纯策略层（**不依赖引擎**，P:\tmp\tsverify 直接编译本文件做真实 TCP 自检）。
     ///
@@ -110,6 +125,9 @@ namespace SuMultiplayer.Terrain
         /// <summary>本端是不是"联机客户端副本"。由模块在角色确定后每帧写入。</summary>
         public bool ClientReplica { get; set; }
 
+        /// <summary>Freezes only the circuit solver for debug synchronization.</summary>
+        public bool CircuitPaused { get; set; }
+
         public long Allowed => m_allowed;
         public long Denied => m_denied;
         public bool AnythingDenied => m_denied > 0;
@@ -117,6 +135,14 @@ namespace SuMultiplayer.Terrain
         /// <summary>引擎侧更新在**改任何格子之前**调用；返回 false = 本帧不要推进模拟。</summary>
         public bool Allow(ReplicaMutationSource source)
         {
+            if (CircuitPaused && source == ReplicaMutationSource.Electricity)
+            {
+                int pausedIndex = (int)source;
+                if (pausedIndex >= 0 && pausedIndex < m_suppressed.Length)
+                    m_suppressed[pausedIndex]++;
+                m_denied++;
+                return false;
+            }
             if (!ClientReplica)
             {
                 m_allowed++;

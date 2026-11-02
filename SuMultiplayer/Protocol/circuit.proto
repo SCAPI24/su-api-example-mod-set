@@ -1,0 +1,191 @@
+syntax = "proto3";
+
+package sump.circuit;
+
+option csharp_namespace = "SuMultiplayer.Protocol.Circuit";
+option optimize_for = SPEED;
+
+import "google/protobuf/any.proto";
+
+message CircuitClock {
+  uint32 epoch = 1;
+  int32 host_circuit_step = 2;
+  int32 last_event_sequence = 3;
+  int64 terrain_sequence = 4;
+  double total_elapsed_game_time = 5;
+  double time_of_day_offset = 6;
+  int32 timeline_generation = 7;
+  bool paused = 8;
+  uint32 random_seed = 9;
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}
+
+enum CircuitOperation {
+  CIRCUIT_OPERATION_UNSPECIFIED = 0;
+  CIRCUIT_OPERATION_BUTTON_PRESS = 1;
+  CIRCUIT_OPERATION_SWITCH = 2;
+  CIRCUIT_OPERATION_ROTATE = 3;
+  CIRCUIT_OPERATION_FURNITURE_SWITCH = 4;
+}
+
+message CircuitEventRequest {
+  uint64 request_id = 1;
+  int32 client_circuit_step = 2;
+  int32 x = 3;
+  int32 y = 4;
+  int32 z = 5;
+  uint32 mounting_face = 6;
+  CircuitOperation operation = 7;
+  uint32 value = 8;
+  float ray_x = 9;
+  float ray_y = 10;
+  float ray_z = 11;
+  float direction_x = 12;
+  float direction_y = 13;
+  float direction_z = 14;
+  float reach = 15;
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}
+
+message CircuitEvent {
+  uint32 sequence = 1;
+  int32 host_circuit_step = 2;
+  int32 x = 3;
+  int32 y = 4;
+  int32 z = 5;
+  uint32 mounting_face = 6;
+  CircuitOperation operation = 7;
+  uint32 value = 8;
+  int64 required_terrain_sequence = 9;
+}
+
+message CircuitEventBatch {
+  uint32 epoch = 1;
+  int32 host_circuit_step = 2;
+  uint32 first_sequence = 3;
+  repeated CircuitEvent events = 4;
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}
+
+message CircuitScheduledVoltage {
+  uint32 remaining_steps = 1;
+  sint32 voltage_level = 2;
+}
+
+message CircuitElementState {
+  int32 x = 1;
+  int32 y = 2;
+  int32 z = 3;
+  uint32 mounting_face = 4;
+  uint32 element_type = 5;
+  sint32 voltage_level = 6;
+  uint32 flags = 7;
+  sint32 auxiliary_voltage_level = 8;
+  sint64 runtime_state = 9;
+  sint64 auxiliary_state = 10;
+  uint32 next_simulation_steps = 11;
+  repeated CircuitScheduledVoltage scheduled_voltages = 12;
+  repeated sint32 output_voltage_levels = 13;
+  uint32 button_phase = 14;
+  uint32 button_remaining_steps = 15;
+  uint32 related_sequence = 16;
+}
+
+message CircuitSnapshotRequest {
+  uint32 epoch = 1;
+  uint64 request_id = 2;
+  repeated CircuitChunkKey chunks = 3;
+  bool replace_scope = 4;
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}
+
+message CircuitSnapshotPart {
+  uint32 epoch = 1;
+  uint64 snapshot_id = 2;
+  int32 host_circuit_step = 3;
+  int32 chunk_x = 4;
+  int32 chunk_z = 5;
+  uint32 part_index = 6;
+  uint32 part_count = 7;
+  bool full = 8;
+  repeated CircuitElementState elements = 9;
+  int64 required_terrain_sequence = 10;
+  int32 last_event_sequence = 11;
+  int32 timeline_generation = 12;
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}
+
+message CircuitChunkHash {
+  int32 chunk_x = 1;
+  int32 chunk_z = 2;
+  uint32 hash = 3;
+}
+
+message CircuitHashReport {
+  uint32 epoch = 1;
+  int32 host_circuit_step = 2;
+  int64 terrain_sequence = 3;
+  repeated CircuitChunkHash chunks = 4;
+  int32 last_event_sequence = 5;
+  int32 timeline_generation = 6;
+  bytes ext = 100;
+  google.protobuf.Any custom = 101;
+}
+
+message CircuitRepairBarrier {
+  uint32 epoch = 1;
+  uint64 snapshot_id = 2;
+  int32 host_circuit_step = 3;
+  int32 chunk_x = 4;
+  int32 chunk_z = 5;
+  uint32 part_count = 6;
+  string reason = 7;
+}
+
+message CircuitRepairApplied {
+  uint32 epoch = 1;
+  uint64 snapshot_id = 2;
+  int32 chunk_x = 3;
+  int32 chunk_z = 4;
+  uint32 state_hash = 5;
+  int64 terrain_sequence = 6;
+  int32 last_event_sequence = 7;
+  int32 timeline_generation = 8;
+}
+
+message CircuitOperationResult {
+  uint64 request_id = 1;
+  bool accepted = 2;
+  string reason = 3;
+  uint32 sequence = 4;
+  int32 host_circuit_step = 5;
+  int32 x = 6;
+  int32 y = 7;
+  int32 z = 8;
+  uint32 cell_value = 9;
+  uint32 epoch = 10;
+  int64 required_terrain_sequence = 11;
+  int32 timeline_generation = 12;
+  bool has_cell_value = 13;
+}
+
+message CircuitChunkKey {
+  int32 x = 1;
+  int32 z = 2;
+}
+
+message CircuitPayload {
+  uint32 message_type = 1;
+  bytes payload = 2;
+}
+
+message CircuitSyncBatch {
+  uint32 epoch = 1;
+  int32 host_circuit_step = 2;
+  repeated CircuitPayload payloads = 3;
+}

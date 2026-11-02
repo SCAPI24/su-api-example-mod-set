@@ -25,7 +25,7 @@ namespace SuMultiplayer.Modules
     /// 无静态状态；引擎类型全部在 <see cref="IBlockUsePort"/> 实现里。
     /// </summary>
     public sealed class BlockUseSyncModule : IMultiplayerModule, ISuMPMessageModule,
-        IBlockUseRequestSink, IUiContainerCellPort
+        IBlockUseRequestSink, IUiContainerCellPort, ICircuitUseAuthorityPort
     {
         private const int SummaryLogMs = 10000;
         private const int ProblemLogMs = 5000;
@@ -490,6 +490,40 @@ namespace SuMultiplayer.Modules
                 }
             }
             return true;
+        }
+
+        public bool TryExecuteCircuitUse(int clientId, in BlockUseRequestData request,
+            out string reason)
+        {
+            reason = null;
+            if (clientId <= 0)
+            {
+                reason = "invalid-circuit-client-id";
+                return false;
+            }
+            if (m_port == null || m_control == null || !m_control.IsHosting)
+            {
+                reason = "circuit-use-authority-not-host";
+                return false;
+            }
+            Vector3 anchor = new Vector3(request.X, request.Y, request.Z);
+            m_remoteAudio?.BeginRemoteAction(clientId, anchor, "circuit-use");
+            try
+            {
+                if (!m_port.TryExecuteUse(clientId, in request,
+                        out BlockUseHostOutcome outcome, out reason))
+                    return false;
+                if (outcome == null || outcome.Kind != BlockUseTargetKind.Native)
+                {
+                    reason = "circuit-interaction-did-not-use-native-block-behavior";
+                    return false;
+                }
+                return true;
+            }
+            finally
+            {
+                m_remoteAudio?.EndRemoteAction(clientId, "circuit-use");
+            }
         }
 
         private void SendCloseRequest(ContainerKey key)

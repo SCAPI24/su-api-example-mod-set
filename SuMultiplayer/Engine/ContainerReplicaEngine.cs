@@ -83,6 +83,7 @@ namespace SuMultiplayer.Engine
         private bool m_clientReplica;
         private IBlockUseRequestSink m_requestSink;
         private SuComponentInput m_useInput;
+        private IEntityUseInputSink m_useInputOverride;
         private ModFieldRef<ComponentInput, PlayerInput> m_inputRef;
 
         private ContainerKey? m_viewKey;
@@ -204,6 +205,9 @@ namespace SuMultiplayer.Engine
 
         public void SetRequestSink(IBlockUseRequestSink sink) => m_requestSink = sink;
 
+        public void SetUseInputSinkOverride(IEntityUseInputSink sink) =>
+            m_useInputOverride = sink;
+
         public string Describe() =>
             "blockUse(intents=" + m_useIntents + " submitted=" + m_useIntentSubmitted +
             " failed=" + m_useIntentFailures + " ignoredNotInteractive=" +
@@ -254,7 +258,7 @@ namespace SuMultiplayer.Engine
                         m_inputRef = m_parentField.BindFieldRef<ComponentInput, PlayerInput>(
                             "m_playerInput");
                     }
-                    shell.UseSink = this;
+                    shell.UseSink = m_useInputOverride ?? this;
                     return;
                 }
                 if (input != null && !m_inputInjectionLogged)
@@ -305,7 +309,8 @@ namespace SuMultiplayer.Engine
         private void DetachUseInput()
         {
             if (m_useInput == null) return;
-            if (ReferenceEquals(m_useInput.UseSink, this)) m_useInput.UseSink = null;
+            IEntityUseInputSink installed = m_useInputOverride ?? this;
+            if (ReferenceEquals(m_useInput.UseSink, installed)) m_useInput.UseSink = null;
             m_useInput = null;
         }
 

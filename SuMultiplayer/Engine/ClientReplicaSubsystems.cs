@@ -1655,6 +1655,7 @@ namespace SuMultiplayer.Engine
     {
         void IUpdateable.Update(float dt)
         {
+            if (CircuitSimulationPauseSignal.IsPaused) return;
             if (!ReplicaGates.Allow(SubsystemTerrain, ReplicaMutationSource.Electricity)) return;
             base.Update(dt);
         }

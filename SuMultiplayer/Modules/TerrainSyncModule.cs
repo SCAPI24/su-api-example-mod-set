@@ -36,6 +36,7 @@ namespace SuMultiplayer.Modules
         private readonly TerrainBridge m_bridge = new TerrainBridge();
         private readonly MessageChannel m_messages;
         private readonly Port m_port;
+        private readonly CircuitTransportPortImpl m_circuitPort;
         private readonly ControlPortImpl m_control;
         /// <summary>
         /// 本机资料存储（组合根创建并注入；角色创建界面写它、Hello 读它）。
@@ -55,6 +56,14 @@ namespace SuMultiplayer.Modules
         private IModuleContext m_context;
         private TcpTerrainServer m_server;
         private TcpTerrainClient m_client;
+        private TcpTerrainClient m_circuitClient;
+        private readonly HashSet<int> m_circuitPeerIds = new HashSet<int>();
+        private Action<int, ReceivedFrame> m_circuitFrameArrived;
+        private Action<int> m_circuitPeerAttached;
+        private Action<int, string> m_circuitPeerDetached;
+        private long m_nextCircuitConnectMs;
+        private bool m_circuitTicketRequested;
+        private long m_circuitTicketRequestSentMs;
         private TerrainSyncHost m_host;
         private TerrainSyncClient m_clientSync;
         private ChunkKey m_lastCenter;
@@ -157,6 +166,7 @@ namespace SuMultiplayer.Modules
             m_config = config ?? new SyncConfig();
             m_profileStore = profileStore;
             m_port = new Port(this);
+            m_circuitPort = new CircuitTransportPortImpl(this);
             m_control = new ControlPortImpl(this);
             m_bandwidthPort = new BandwidthPortImpl(this);
             m_options = options ?? new TerrainSyncOptions();
@@ -234,6 +244,73 @@ namespace SuMultiplayer.Modules
             public bool SendProfileHello() => m_owner.SendProfileHelloOnCurrentConnection();
         }
 
+        private sealed class CircuitTransportPortImpl : ICircuitTransportPort
+        {
+            private readonly TerrainSyncModule m_owner;
+            public CircuitTransportPortImpl(TerrainSyncModule owner) { m_owner = owner; }
+            public bool IsHosting => m_owner.m_server != null && m_owner.m_host != null;
+            public bool IsClient => m_owner.m_clientSync != null;
+            public bool IsClientCircuitAttached => m_owner.m_circuitClient?.IsCircuitAttached == true;
+            public int LocalClientId => m_owner.m_clientSync?.LocalClientId ?? -1;
+            public string SessionId => m_owner.CurrentSessionId;
+            public long TerrainSequence => m_owner.CurrentCircuitTerrainSequence;
+            public event Action<int, ReceivedFrame> FrameArrived
+            {
+                add { m_owner.m_circuitFrameArrived += value; }
+                remove { m_owner.m_circuitFrameArrived -= value; }
+            }
+            public event Action<int> PeerAttached
+            {
+                add { m_owner.m_circuitPeerAttached += value; }
+                remove { m_owner.m_circuitPeerAttached -= value; }
+            }
+            public event Action<int, string> PeerDetached
+            {
+                add { m_owner.m_circuitPeerDetached += value; }
+                remove { m_owner.m_circuitPeerDetached -= value; }
+            }
+            public bool TrySendTo(int clientId, MessageType type, byte[] payload) =>
+                m_owner.m_server != null &&
+                m_owner.m_server.TrySendCircuit(clientId, type, payload);
+            public bool TrySendHost(MessageType type, byte[] payload) =>
+                m_owner.m_circuitClient != null &&
+                m_owner.m_circuitClient.TrySendCircuit(type, payload);
+            public bool TryCreateHostTicket(int clientId, out byte[] ticket)
+            {
+                ticket = null;
+                if (m_owner.m_server == null) return false;
+                try
+                {
+                    ticket = m_owner.m_server.CreateCircuitTicket(clientId);
+                    return ticket != null && ticket.Length == 32;
+                }
+                catch (Exception error)
+                {
+                    m_owner.LogWarning("电路连接 ticket 创建失败（clientId=" + clientId + "，" +
+                        error.GetType().Name + " " + error.Message + "）");
+                    return false;
+                }
+            }
+            public bool IsHostCircuitAttached(int clientId) =>
+                m_owner.m_server != null && m_owner.m_server.IsCircuitAttached(clientId);
+            public int CopyClientChunkScope(int clientId, List<ChunkKey> target) =>
+                m_owner.m_host != null
+                    ? m_owner.m_host.CaptureClientMemoryChunks(clientId, target)
+                    : ClearCircuitScope(target);
+            public void CopyAttachedPeerIds(List<int> target)
+            {
+                target.Clear();
+                foreach (int clientId in m_owner.m_circuitPeerIds) target.Add(clientId);
+                target.Sort();
+            }
+
+            private static int ClearCircuitScope(List<ChunkKey> target)
+            {
+                target?.Clear();
+                return 0;
+            }
+        }
+
         /// <summary>通道控制端口的实现：会话模块（UI 操作）通过它起停通道。</summary>
         private sealed class ControlPortImpl : ITransportControlPort
         {
@@ -255,6 +332,7 @@ namespace SuMultiplayer.Modules
         public TerrainBridge Bridge => m_bridge;
         /// <summary>组合根用它注册端口（模块自己不注册，避免模块间互相注册的隐式耦合）。</summary>
         public ITransportPort TransportPort => m_port;
+        public ICircuitTransportPort CircuitTransportPort => m_circuitPort;
         /// <summary>组合根把它注册给世界传输模块：世界清单的会话标识 / 导出基线由这里提供。</summary>
         public IWorldSessionPort WorldSessionPort => m_port;
         /// <summary>组合根把它交给会话模块（UI 操作 → 起停通道）。</summary>
@@ -507,13 +585,26 @@ namespace SuMultiplayer.Modules
             }
             try
             {
+                string localProtocolHash = MultiplayerModCompatibility.ProtocolHash;
+                string localBuildFingerprint = MultiplayerModCompatibility.BuildFingerprint;
                 m_server = new TcpTerrainServer(port);
                 // 网络线程 → 主线程：只入队，不碰引擎（引擎读写都在 Pump 里）
                 m_server.FrameReceived += m_bridge.PostFrame;
+                m_server.CircuitFrameReceived += HandleCircuitFrame;
+                m_server.CircuitPeerAttached += HandleCircuitPeerAttached;
+                m_server.CircuitPeerDetached += HandleCircuitPeerDetached;
                 m_server.Start();
                 m_hostPort = m_server.Port;
+                Log("room-host-listening-success mapPort=" + m_hostPort +
+                    " source=game-world");
                 m_host = new TerrainSyncHost(m_bridge, m_server, m_options, attachToChannel: false,
                     messages: m_messages);
+                m_host.MultiplayerModVersion = MultiplayerModCompatibility.ModVersion;
+                m_host.MultiplayerProtocolVersion = MultiplayerModCompatibility.ProtocolVersion;
+                m_host.MultiplayerProtocolHash = localProtocolHash;
+                m_host.MultiplayerBuildFingerprint = localBuildFingerprint;
+                m_host.CircuitTicketProvider = m_server.CreateCircuitTicket;
+                m_host.CircuitTicketProblem += HandleCircuitTicketProblem;
                 m_host.WorldDownloadPauseFilter = IsClientDownloading;
                 // 资料闸门（联机角色模块）：Hello 时决定"有没有角色记录 / 要不要先建角色"。
                 m_host.ProfileGate = m_helloProfileGate;
@@ -571,7 +662,18 @@ namespace SuMultiplayer.Modules
             {
                 reason = e.GetType().Name + " " + e.Message + "（端口 " + port + "）";
                 Log("主机通道打开失败：" + reason);
-                try { m_server?.Dispose(); } catch (Exception) { }
+                try
+                {
+                    if (m_server != null)
+                    {
+                        m_server.FrameReceived -= m_bridge.PostFrame;
+                        m_server.CircuitFrameReceived -= HandleCircuitFrame;
+                        m_server.CircuitPeerAttached -= HandleCircuitPeerAttached;
+                        m_server.CircuitPeerDetached -= HandleCircuitPeerDetached;
+                        m_server.Dispose();
+                    }
+                }
+                catch (Exception) { }
                 m_server = null;
                 m_host = null;
                 m_sessionId = string.Empty;
@@ -611,6 +713,7 @@ namespace SuMultiplayer.Modules
             // 立刻拆掉，主机看到的是同一玩家连续两个 clientId（旧审批框 + 新审批框）。
             m_clientDropRequested = false;
             m_clientDropReason = null;
+            DisposeCircuitClient("primary-reconnect");
             try
             {
                 m_client = new TcpTerrainClient(m_wantHost, m_wantPort);
@@ -621,9 +724,14 @@ namespace SuMultiplayer.Modules
                     m_client = null;
                     return false;
                 }
+                Log("player-primary-connected host=" + m_wantHost + " port=" + m_wantPort);
                 m_client.FrameReceived += m_bridge.PostFrame;
                 m_clientSync = new TerrainSyncClient(m_bridge, m_client, m_options, attachToChannel: false,
                     messages: m_messages);
+                m_clientSync.MultiplayerModVersion = MultiplayerModCompatibility.ModVersion;
+                m_clientSync.MultiplayerProtocolVersion = MultiplayerModCompatibility.ProtocolVersion;
+                m_clientSync.MultiplayerProtocolHash = MultiplayerModCompatibility.ProtocolHash;
+                m_clientSync.MultiplayerBuildFingerprint = MultiplayerModCompatibility.BuildFingerprint;
                 // 客户端同步的"明确原因行"（每帧预算队列饱和 / 回传载荷解码失败）：
                 // Terrain 层不写引擎日志，由模块照原样写一行（事件本身已限流）。
                 m_clientSync.Saturated += HandleClientQueueSaturated;
@@ -745,7 +853,11 @@ namespace SuMultiplayer.Modules
         private void StopChannel()
         {
             m_wantClient = false;
+            DisposeCircuitClient("channel-stopped");
             try { if (m_server != null) m_server.FrameReceived -= m_bridge.PostFrame; } catch (Exception) { }
+            try { if (m_server != null) m_server.CircuitFrameReceived -= HandleCircuitFrame; } catch (Exception) { }
+            try { if (m_server != null) m_server.CircuitPeerAttached -= HandleCircuitPeerAttached; } catch (Exception) { }
+            try { if (m_server != null) m_server.CircuitPeerDetached -= HandleCircuitPeerDetached; } catch (Exception) { }
             try { if (m_client != null) m_client.FrameReceived -= m_bridge.PostFrame; } catch (Exception) { }
             try { if (m_clientSync != null) m_clientSync.Saturated -= HandleClientQueueSaturated; } catch (Exception) { }
             try { if (m_clientSync != null) m_clientSync.DecodeFailed -= HandleClientDecodeFailed; } catch (Exception) { }
@@ -772,6 +884,7 @@ namespace SuMultiplayer.Modules
             try { if (m_host != null) m_host.SessionProblem -= HandleHostSessionProblem; } catch (Exception) { }
             try { if (m_host != null) m_host.ClientChunkSetTrace -= HandleHostClientChunkTrace; } catch (Exception) { }
             try { if (m_host != null) m_host.ClientChunkSetProblem -= HandleHostClientChunkProblem; } catch (Exception) { }
+            try { if (m_host != null) m_host.CircuitTicketProblem -= HandleCircuitTicketProblem; } catch (Exception) { }
             try { m_server?.Dispose(); } catch (Exception) { }
             try { m_client?.Dispose(); } catch (Exception) { }
             m_server = null;
@@ -779,6 +892,7 @@ namespace SuMultiplayer.Modules
             m_host = null;
             m_clientSync = null;
             m_hostClientId = 0;
+            m_circuitPeerIds.Clear();
             m_hostPort = 0;
             m_hasCenter = false;
             m_lastRadius = 0;
@@ -1112,6 +1226,9 @@ namespace SuMultiplayer.Modules
             // 放在 tick（而不是 SuSubsystemTerrain.Update）是为了**主菜单也能跑**——
             // 加入房间、握手都在菜单阶段发生，那时没有 Project、没有子系统 Update。
             m_bridge.Pump(m_shell);
+            // 附属电路连接在它自己的网络队列上收帧；只在这里把事件派发到同步模块。
+            m_server?.PumpCircuitEvents();
+            m_circuitClient?.PumpCircuitEvents();
             // 架构决定：**主机唯一权威，客户端是副本**。角色一变就同步到桥与引擎外壳：
             //   · 客户端（m_client != null）：引擎侧停止所有会改地形的世界模拟，
             //     并把本地写入捕获成编辑请求（见 Engine/ClientReplicaSubsystems.cs）；
@@ -1133,6 +1250,7 @@ namespace SuMultiplayer.Modules
             // 主机侧的联机角色停在最后一个已应用的位置上一动不动（且两端都不写任何日志）。
             if (m_client != null && !m_client.IsAlive)
             {
+                DisposeCircuitClient("primary-link-lost");
                 string deadReason = m_client.State + "（" + m_client.StateDetail +
                     "，已收 " + m_client.Stats.FramesReceived + " 帧）";
                 LogWarning("与主机的通道已失效：" + deadReason + " → 拆掉这条连接，按 5s 间隔重连" +
@@ -1200,6 +1318,7 @@ namespace SuMultiplayer.Modules
                     m_lastHostSessionId = m_clientSync.HostSessionId;
                 // 兴趣上报（含"握手前重发"）统一在 UpdateInterest 里做，这里不再另发一份。
             }
+            UpdateCircuitClientConnection(tick.Now);
             UpdatePlayerPositionSync(tick);
             Report(tick.Now);
         }
@@ -2253,6 +2372,8 @@ namespace SuMultiplayer.Modules
             // 是不是**重连**（对端 Hello 里说自己已经有过这个世界）：世界传输据此不再重发整图。
             // 握手刚写完 state，所以这里查得到；非玩家端上面已经 return。
             bool rejoin = m_host != null && m_host.WasRejoin(clientId);
+            Log("player-peer-joined clientId=" + clientId + " name=" + (name ?? string.Empty) +
+                " mode=" + (rejoin ? "rejoin" : "first-join"));
             m_clientJoined?.Invoke(clientId, name, identity ?? string.Empty, rejoin);
         }
 
@@ -2264,10 +2385,173 @@ namespace SuMultiplayer.Modules
         /// </summary>
         private void HandleHostClientLost(int clientId, string reason)
         {
+            if (m_server != null)
+                m_server.DisconnectCircuitClient(clientId, reason ?? "primary-peer-lost");
+            HandleCircuitPeerDetached(clientId, reason ?? "primary-peer-lost");
             LogWarning("玩家端 clientId=" + clientId + " 的通道已失效：" + reason +
                 " → 清理它的联机角色（角色不再更新位置）并停止把它算作在线客户端；" +
                 "对端若重连，会作为新连接重新握手并重建角色");
             m_clientLeft?.Invoke(clientId, reason ?? string.Empty);
+        }
+
+        private void HandleCircuitFrame(int primaryClientId, ReceivedFrame frame) =>
+            m_circuitFrameArrived?.Invoke(primaryClientId, frame);
+
+        private void HandleClientCircuitFrame(ReceivedFrame frame) =>
+            m_circuitFrameArrived?.Invoke(0, frame);
+
+        private void HandleCircuitPeerAttached(int clientId)
+        {
+            if (clientId <= 0) return;
+            if (m_circuitPeerIds.Add(clientId)) m_circuitPeerAttached?.Invoke(clientId);
+        }
+
+        private void HandleCircuitPeerDetached(int clientId, string reason)
+        {
+            if (clientId <= 0) return;
+            if (m_circuitPeerIds.Remove(clientId))
+                m_circuitPeerDetached?.Invoke(clientId, reason ?? string.Empty);
+        }
+
+        private void HandleClientCircuitAttachCompleted(bool accepted, string reason)
+        {
+            if (accepted)
+            {
+                m_circuitTicketRequested = false;
+                m_circuitTicketRequestSentMs = 0L;
+                Log("附属电路 TCP 已通过 ticket 绑定到本机玩家连接");
+            }
+            else
+            {
+                LogWarning("附属电路 TCP 被主机拒绝（" +
+                    (string.IsNullOrEmpty(reason) ? "未说明原因" : reason) +
+                    "）→ 请求新 ticket 后重连");
+                DisposeCircuitClient("attach-rejected:" + reason);
+                m_nextCircuitConnectMs = 0L;
+                RequestFreshCircuitTicket((long)(Time.RealTime * 1000.0));
+            }
+        }
+
+        private void HandleCircuitTicketProblem(string reason) =>
+            LogWarning(reason ?? "电路 ticket 处理失败");
+
+        private void UpdateCircuitClientConnection(double now)
+        {
+            if (m_client == null || m_clientSync == null || !m_client.IsAlive ||
+                !m_clientSync.Handshaken)
+            {
+                if (m_circuitClient != null) DisposeCircuitClient("primary-not-ready");
+                m_circuitTicketRequested = false;
+                m_circuitTicketRequestSentMs = 0L;
+                return;
+            }
+
+            long nowMs = (long)(now * 1000.0);
+            if (m_circuitClient != null && !m_circuitClient.IsAlive)
+            {
+                string failure = m_circuitClient.State + " (" +
+                    m_circuitClient.StateDetail + ")";
+                DisposeCircuitClient("circuit-link-lost:" + failure);
+                LogWarning("附属电路 TCP 失效（" + failure +
+                    "）→ 通过主连接申请新 ticket 并重连");
+                m_nextCircuitConnectMs = nowMs;
+                RequestFreshCircuitTicket(nowMs);
+                return;
+            }
+
+            if (m_circuitClient != null) return;
+            if (m_circuitTicketRequested)
+            {
+                if (m_clientSync.CircuitTicket.Length == 32)
+                {
+                    m_circuitTicketRequested = false;
+                    m_circuitTicketRequestSentMs = 0L;
+                }
+                else if (m_clientSync.CircuitTicketError.Length > 0)
+                {
+                    LogWarning("主机没有提供可用电路 ticket（" +
+                        m_clientSync.CircuitTicketError + "）");
+                    m_circuitTicketRequested = false;
+                    m_circuitTicketRequestSentMs = 0L;
+                    m_nextCircuitConnectMs = nowMs + 5000;
+                    return;
+                }
+                else if (m_circuitTicketRequestSentMs > 0 &&
+                    nowMs - m_circuitTicketRequestSentMs >= 5000)
+                {
+                    m_circuitTicketRequested = false;
+                    m_circuitTicketRequestSentMs = 0L;
+                    m_nextCircuitConnectMs = nowMs + 1000;
+                    return;
+                }
+                else return;
+            }
+            if (nowMs < m_nextCircuitConnectMs) return;
+            byte[] ticket = m_clientSync.CircuitTicket;
+            if (ticket == null || ticket.Length != 32)
+            {
+                if (string.IsNullOrEmpty(m_clientSync.CircuitTicketError))
+                    RequestFreshCircuitTicket(nowMs);
+                else
+                    LogOnce("circuit-ticket-missing",
+                        "主机的 HelloAck 没有签发电路连接 ticket → 电路同步不可用（不改走主连接）");
+                if (!string.IsNullOrEmpty(m_clientSync.CircuitTicketError))
+                    m_nextCircuitConnectMs = nowMs + 5000;
+                return;
+            }
+
+            var circuit = new TcpTerrainClient(m_wantHost, m_wantPort);
+            circuit.CircuitFrameReceived += HandleClientCircuitFrame;
+            circuit.CircuitAttachCompleted += HandleClientCircuitAttachCompleted;
+            if (!circuit.ConnectCircuit(m_clientSync.LocalClientId, ticket, 3000))
+            {
+                string reason = circuit.State + " (" + circuit.StateDetail + ")";
+                circuit.CircuitFrameReceived -= HandleClientCircuitFrame;
+                circuit.CircuitAttachCompleted -= HandleClientCircuitAttachCompleted;
+                circuit.Dispose();
+                m_nextCircuitConnectMs = nowMs + 1000;
+                LogWarning("附属电路 TCP 连接失败（" + reason +
+                    "）→ 通过主连接申请新 ticket 后重试");
+                m_nextCircuitConnectMs = nowMs;
+                RequestFreshCircuitTicket(nowMs);
+                return;
+            }
+            m_circuitClient = circuit;
+            m_nextCircuitConnectMs = nowMs + 1000;
+        }
+
+        private void RequestFreshCircuitTicket(long nowMs)
+        {
+            if (m_clientSync == null || !m_clientSync.Handshaken || m_circuitTicketRequested ||
+                nowMs < m_nextCircuitConnectMs) return;
+            m_circuitTicketRequested = true;
+            if (m_clientSync.RequestCircuitTicket())
+            {
+                m_circuitTicketRequestSentMs = nowMs;
+                m_nextCircuitConnectMs = nowMs + 1000;
+            }
+            else
+            {
+                m_circuitTicketRequested = false;
+                m_circuitTicketRequestSentMs = 0L;
+                m_nextCircuitConnectMs = nowMs + 1000;
+                LogWarning("主连接发送 CircuitTicketRequest 失败（通道不可用或显式背压）");
+            }
+        }
+
+        private void DisposeCircuitClient(string reason)
+        {
+            TcpTerrainClient client = m_circuitClient;
+            m_circuitClient = null;
+            if (client == null) return;
+            client.CircuitFrameReceived -= HandleClientCircuitFrame;
+            client.CircuitAttachCompleted -= HandleClientCircuitAttachCompleted;
+            try { client.Dispose(); }
+            catch (Exception e)
+            {
+                LogWarning("关闭附属电路 TCP 失败（" + (reason ?? string.Empty) + "，" +
+                    e.GetType().Name + "）");
+            }
         }
 
         /// <summary>客户端侧：HelloAck 收到的主机身份 / 名字（未握手 = 空）。</summary>
@@ -2676,10 +2960,14 @@ namespace SuMultiplayer.Modules
         // ------------------------------------------------------------ 断线重连：追帧 / 会话
 
         /// <summary>主机当前会话标识（不是主机 = 空串）。世界传输模块通过 IWorldSessionPort 读它。</summary>
-        internal string CurrentSessionId => m_server != null ? (m_sessionId ?? string.Empty) : string.Empty;
+        internal string CurrentSessionId => m_server != null
+            ? (m_sessionId ?? string.Empty)
+            : (m_clientSync?.HostSessionId ?? m_lastHostSessionId ?? string.Empty);
 
         /// <summary>主机当前改动水位（不是主机 = 0）。世界清单的导出基线取这里。</summary>
         internal long CurrentChangeSequence => m_host?.CurrentChangeSequence ?? 0L;
+        internal long CurrentCircuitTerrainSequence => m_host?.CurrentChangeSequence ??
+            m_clientSync?.LastAppliedChangeSequence ?? 0L;
 
         /// <summary>
         /// 客户端：下载世界已导入完成（WorldTransferModule.Install → IWorldSessionPort）。
@@ -2770,6 +3058,7 @@ namespace SuMultiplayer.Modules
         /// </summary>
         private void DropClientConnection()
         {
+            DisposeCircuitClient("client-drop");
             if (m_client == null)
             {
                 // 连接已经不在了也必须清掉待处理 drop，否则会污染下一次加入。

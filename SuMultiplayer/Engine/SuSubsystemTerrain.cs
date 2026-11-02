@@ -620,6 +620,7 @@ namespace SuMultiplayer.Engine
         public bool AllowSimulation(ReplicaMutationSource source)
         {
             m_gate.ClientReplica = ClientReplica;
+            m_gate.CircuitPaused = CircuitSimulationPauseSignal.IsPaused;
             return m_gate.Allow(source);
         }
 
@@ -715,6 +716,7 @@ namespace SuMultiplayer.Engine
             // 瞬时是旧实例，捕获/下发也不会走错分支。
             if (ClientReplica != bridge.ClientReplica) ClientReplica = bridge.ClientReplica;
             m_gate.ClientReplica = ClientReplica;
+            m_gate.CircuitPaused = CircuitSimulationPauseSignal.IsPaused;
             MaybeLogReplicaCoverage();
             if (!m_blockEffectObserverInstalled)
                 m_blockEffectObserverInstalled = BlockEffectObserverInstaller.TryInstall(this);

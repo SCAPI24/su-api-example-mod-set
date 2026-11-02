@@ -210,6 +210,9 @@ namespace SuMultiplayer.Modules
                 reason = bindReason;
                 return false;
             }
+            Log("room-created-success source=game-world name=" + m_config.RoomName +
+                " world=" + worldName + " mapPort=" + m_hostPort +
+                " discoveryPort=" + m_config.DiscoveryPort);
             Log("房间已创建：名称「" + m_config.RoomName + "」· 世界「" + worldName + "」· 地图端口 " +
                 m_hostPort + " · 发现端口 " + m_config.DiscoveryPort + "（有人探测就应答，不周期广播）");
             // 主持期间不浏览房间：否则自己的房间会出现在自己的 Play 屏里。

@@ -1,0 +1,543 @@
+using Engine;
+using Game;
+using GameEntitySystem;
+using SuAPI;
+using SuMultiplayer.Modules;
+using SuMultiplayer.Protocol.Circuit;
+using SuMultiplayer.Terrain;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+
+namespace SuMultiplayer.Engine
+{
+    /// <summary>
+    /// Connects circuit synchronization to the live game project. All calls are restricted to
+    /// the thread that creates this adapter.
+    /// </summary>
+    public sealed class CircuitWorldEngine : ICircuitWorldPort
+    {
+        private readonly TerrainBridge m_terrainBridge;
+        private readonly CircuitStateCodec m_codec;
+        private readonly IModParentField m_parentField;
+        private readonly IModParentMethod m_parentMethod;
+        private readonly CircuitUseInputSink m_interactionPresentation;
+        private readonly int m_mainThreadId;
+        private Project m_project;
+        private bool m_topologyDirty = true;
+        private sealed class AuthoritativeState
+        {
+            public CircuitElementState State;
+            public int HostStep;
+        }
+        private readonly Dictionary<string, AuthoritativeState> m_authoritativeStates =
+            new Dictionary<string, AuthoritativeState>(StringComparer.Ordinal);
+
+        // Source: Mod/SuMultiplayer/Engine/CircuitStateCodec.cs:CircuitStateCodec.CaptureChunk
+        public CircuitWorldEngine(TerrainBridge terrainBridge, CircuitStateCodec codec,
+            IModParentField parentField, IModParentMethod parentMethod,
+            CircuitUseInputSink interactionPresentation)
+        {
+            m_terrainBridge = terrainBridge ?? throw new ArgumentNullException(nameof(terrainBridge));
+            m_codec = codec ?? throw new ArgumentNullException(nameof(codec));
+            m_parentField = parentField ?? throw new ArgumentNullException(nameof(parentField));
+            m_parentMethod = parentMethod ?? throw new ArgumentNullException(nameof(parentMethod));
+            m_interactionPresentation = interactionPresentation ??
+                throw new ArgumentNullException(nameof(interactionPresentation));
+            m_mainThreadId = Thread.CurrentThread.ManagedThreadId;
+            m_terrainBridge.ReplicaCellApplied += HandleReplicaCellApplied;
+        }
+
+        public bool IsClientReplica
+        {
+            get
+            {
+                EnsureMainThread(nameof(IsClientReplica));
+                return m_terrainBridge.ClientReplica;
+            }
+        }
+
+        public bool IsReady
+        {
+            get
+            {
+                EnsureMainThread(nameof(IsReady));
+                Project project = GameManager.Project;
+                return project != null &&
+                    project.FindSubsystem<SubsystemElectricity>(false) != null &&
+                    project.FindSubsystem<SubsystemTerrain>(false)?.Terrain != null &&
+                    project.FindSubsystem<SubsystemGameInfo>(false) != null &&
+                    project.FindSubsystem<SubsystemTimeOfDay>(false) != null;
+            }
+        }
+
+        public event Action<ChunkKey, CellEdit> HostCellChanged
+        {
+            add
+            {
+                EnsureMainThread(nameof(HostCellChanged));
+                m_terrainBridge.HostCellChanged += value;
+            }
+            remove
+            {
+                EnsureMainThread(nameof(HostCellChanged));
+                m_terrainBridge.HostCellChanged -= value;
+            }
+        }
+
+        public event Action<ChunkKey, CellEdit> ReplicaCellApplied
+        {
+            add
+            {
+                EnsureMainThread(nameof(ReplicaCellApplied));
+                m_replicaCellApplied += value;
+            }
+            remove
+            {
+                EnsureMainThread(nameof(ReplicaCellApplied));
+                m_replicaCellApplied -= value;
+            }
+        }
+
+        private Action<ChunkKey, CellEdit> m_replicaCellApplied;
+
+        // Source: Survivalcraft/Game/SubsystemElectricity.cs:SubsystemElectricity.CircuitStep
+        // Source: Survivalcraft/Game/SubsystemGameInfo.cs:SubsystemGameInfo.TotalElapsedGameTime
+        // Source: Survivalcraft/Game/SubsystemTimeOfDay.cs:SubsystemTimeOfDay.TimeOfDayOffset
+        public bool TryGetClock(out int circuitStep, out double totalElapsedGameTime,
+            out double timeOfDayOffset, out bool paused, out string error)
+        {
+            EnsureMainThread(nameof(TryGetClock));
+            circuitStep = 0;
+            totalElapsedGameTime = 0;
+            timeOfDayOffset = 0;
+            paused = false;
+            error = null;
+
+            Project project = GameManager.Project;
+            if (project == null)
+                return Fail("Current game project is unavailable.", out error);
+            SubsystemElectricity electricity = project.FindSubsystem<SubsystemElectricity>(false);
+            SubsystemGameInfo gameInfo = project.FindSubsystem<SubsystemGameInfo>(false);
+            SubsystemTime time = project.FindSubsystem<SubsystemTime>(false);
+            SubsystemTimeOfDay timeOfDay = project.FindSubsystem<SubsystemTimeOfDay>(false);
+            if (electricity == null || gameInfo == null || time == null || timeOfDay == null)
+                return Fail("Circuit or world clock subsystem is unavailable.", out error);
+
+            circuitStep = electricity.CircuitStep;
+            totalElapsedGameTime = gameInfo.TotalElapsedGameTime;
+            timeOfDayOffset = timeOfDay.TimeOfDayOffset;
+            paused = time.GameTimeFactor == 0f;
+            return true;
+        }
+
+        // Source: Survivalcraft/Game/Terrain.cs:Terrain.AllocatedChunks
+        // Source: Mod/SuMultiplayer/Engine/TerrainBridge.cs:TerrainBridge.HasContents
+        public int CopyLoadedChunks(List<ChunkKey> target)
+        {
+            EnsureMainThread(nameof(CopyLoadedChunks));
+            if (target == null) throw new ArgumentNullException(nameof(target));
+            target.Clear();
+
+            Project project = GameManager.Project;
+            SubsystemTerrain subsystemTerrain = project?.FindSubsystem<SubsystemTerrain>(false);
+            Game.Terrain terrain = subsystemTerrain?.Terrain;
+            if (terrain == null)
+                throw new InvalidOperationException("Terrain subsystem is unavailable.");
+
+            TerrainChunk[] chunks = terrain.AllocatedChunks;
+            for (int i = 0; i < chunks.Length; i++)
+            {
+                TerrainChunk chunk = chunks[i];
+                if (chunk == null || !ChunkContentStages.IsContentValid((int)chunk.State))
+                    continue;
+                target.Add(new ChunkKey(chunk.Coords.X, chunk.Coords.Y));
+            }
+            return target.Count;
+        }
+
+        // Source: Survivalcraft/Game/TerrainChunk.cs:TerrainChunk.State
+        public bool IsChunkReady(ChunkKey key)
+        {
+            EnsureMainThread(nameof(IsChunkReady));
+            Project project = GameManager.Project;
+            TerrainChunk chunk = project?.FindSubsystem<SubsystemTerrain>(false)?.Terrain
+                ?.GetChunkAtCoords(key.X, key.Z);
+            return chunk != null && ChunkContentStages.IsContentValid((int)chunk.State);
+        }
+
+        // Source: Survivalcraft/Game/SubsystemElectricity.cs:SubsystemElectricity.GetElectricElement
+        public bool AreElementsReady(IList<CircuitElementState> states)
+        {
+            EnsureMainThread(nameof(AreElementsReady));
+            if (states == null) throw new ArgumentNullException(nameof(states));
+            Project project = GameManager.Project;
+            SubsystemElectricity electricity = project?.FindSubsystem<SubsystemElectricity>(false);
+            if (electricity == null) return false;
+            foreach (CircuitElementState state in states)
+            {
+                if (state == null || state.MountingFace > 5 ||
+                    electricity.GetElectricElement(state.X, state.Y, state.Z,
+                        (int)state.MountingFace) == null)
+                    return false;
+            }
+            return true;
+        }
+
+        // Source: Mod/SuMultiplayer/Engine/CircuitStateCodec.cs:CircuitStateCodec.CaptureChunk
+        public bool TryCaptureChunk(ChunkKey key, List<CircuitElementState> target,
+            out string error)
+        {
+            EnsureMainThread(nameof(TryCaptureChunk));
+            if (target == null) throw new ArgumentNullException(nameof(target));
+            target.Clear();
+            error = null;
+
+            Project project = GameManager.Project;
+            SubsystemTerrain terrain = project?.FindSubsystem<SubsystemTerrain>(false);
+            TerrainChunk chunk = terrain?.Terrain?.GetChunkAtCoords(key.X, key.Z);
+            if (chunk == null || !ChunkContentStages.IsContentValid((int)chunk.State))
+                return Fail("Circuit chunk " + key + " is not loaded with valid contents.",
+                    out error);
+            SubsystemElectricity electricity = project.FindSubsystem<SubsystemElectricity>(false);
+            if (electricity == null)
+                return Fail("SubsystemElectricity is unavailable.", out error);
+            return m_codec.CaptureChunk(electricity, key.X, key.Z, target, out error);
+        }
+
+        public bool TryCaptureChunks(IList<ChunkKey> keys,
+            IDictionary<ChunkKey, List<CircuitElementState>> target, out string error)
+        {
+            EnsureMainThread(nameof(TryCaptureChunks));
+            if (keys == null) throw new ArgumentNullException(nameof(keys));
+            if (target == null) throw new ArgumentNullException(nameof(target));
+            Project project = GameManager.Project;
+            SubsystemTerrain terrain = project?.FindSubsystem<SubsystemTerrain>(false);
+            if (terrain?.Terrain == null)
+                return Fail("Terrain subsystem is unavailable.", out error);
+            foreach (ChunkKey key in keys)
+            {
+                TerrainChunk chunk = terrain.Terrain.GetChunkAtCoords(key.X, key.Z);
+                if (chunk == null || !ChunkContentStages.IsContentValid((int)chunk.State))
+                    return Fail("Circuit chunk " + key + " is not loaded with valid contents.",
+                        out error);
+            }
+            SubsystemElectricity electricity = project.FindSubsystem<SubsystemElectricity>(false);
+            if (electricity == null)
+                return Fail("SubsystemElectricity is unavailable.", out error);
+            return m_codec.CaptureChunks(electricity, keys, target, out error);
+        }
+
+        // Source: Mod/SuMultiplayer/Engine/CircuitStateCodec.cs:CircuitStateCodec.CaptureChunkTopology
+        public bool TryCaptureChunkTopology(ChunkKey key, List<CircuitElementState> target,
+            out string error)
+        {
+            EnsureMainThread(nameof(TryCaptureChunkTopology));
+            if (target == null) throw new ArgumentNullException(nameof(target));
+            target.Clear();
+            error = null;
+
+            Project project = GameManager.Project;
+            SubsystemTerrain terrain = project?.FindSubsystem<SubsystemTerrain>(false);
+            TerrainChunk chunk = terrain?.Terrain?.GetChunkAtCoords(key.X, key.Z);
+            if (chunk == null || !ChunkContentStages.IsContentValid((int)chunk.State))
+                return Fail("Circuit chunk " + key + " is not loaded with valid contents.",
+                    out error);
+            SubsystemElectricity electricity = project.FindSubsystem<SubsystemElectricity>(false);
+            if (electricity == null)
+                return Fail("SubsystemElectricity is unavailable.", out error);
+            return m_codec.CaptureChunkTopology(electricity, key.X, key.Z, target, out error);
+        }
+
+        // Source: Mod/SuMultiplayer/Engine/CircuitStateCodec.cs:CircuitStateCodec.Apply
+        public bool Apply(CircuitElementState state, int hostStep, out string error)
+        {
+            EnsureMainThread(nameof(Apply));
+            error = null;
+            if (!m_terrainBridge.ClientReplica)
+                return Fail("Circuit runtime state may only be applied to a client replica.",
+                    out error);
+            if (state == null)
+                return Fail("Circuit state is null.", out error);
+
+            Project project = GameManager.Project;
+            SubsystemElectricity electricity = project?.FindSubsystem<SubsystemElectricity>(false);
+            if (electricity == null)
+                return Fail("SubsystemElectricity is unavailable.", out error);
+            bool applied = m_codec.Apply(electricity, state, hostStep, out error);
+            if (applied)
+            {
+                m_authoritativeStates[GetElementIdentity(state)] = new AuthoritativeState
+                {
+                    State = state.Clone(),
+                    HostStep = hostStep
+                };
+            }
+            return applied;
+        }
+
+        // Source: Survivalcraft/Game/SubsystemElectricity.cs:SubsystemElectricity.UpdateElectricElements
+        public string ReconcileSnapshot(ChunkKey key, IList<CircuitElementState> expected,
+            int hostStep)
+        {
+            EnsureMainThread(nameof(ReconcileSnapshot));
+            if (expected == null) return "Snapshot state list is null.";
+            if (!m_terrainBridge.ClientReplica)
+                return "Full snapshot reconciliation is only valid on a client replica.";
+
+            Pump();
+            var local = new List<CircuitElementState>();
+            if (!TryCaptureChunkTopology(key, local, out string captureError))
+                return "Client topology capture failed: " + captureError;
+
+            var localTypes = new Dictionary<string, uint>(local.Count, StringComparer.Ordinal);
+            foreach (CircuitElementState state in local)
+            {
+                string identity = GetElementIdentity(state);
+                if (!localTypes.TryAdd(identity, state.ElementType))
+                    return "Client topology contains a duplicate circuit element at " + identity + ".";
+            }
+            if (expected.Count != localTypes.Count)
+                return "Client topology element count " + localTypes.Count +
+                    " does not match host snapshot count " + expected.Count + ".";
+
+            foreach (CircuitElementState state in expected)
+            {
+                string identity = GetElementIdentity(state);
+                if (!localTypes.TryGetValue(identity, out uint localType) ||
+                    localType != state.ElementType)
+                    return "Client topology does not match host snapshot at " + identity + ".";
+            }
+            RemoveCachedStatesForChunk(key);
+            foreach (CircuitElementState state in expected)
+                if (!Apply(state, hostStep, out string applyError)) return applyError;
+            return null;
+        }
+
+        private static string GetElementIdentity(CircuitElementState state) =>
+            state.X + ":" + state.Y + ":" + state.Z + ":" + state.MountingFace;
+
+        // Source: Survivalcraft/Game/SubsystemGameInfo.cs:SubsystemGameInfo.TotalElapsedGameTime
+        // Source: Survivalcraft/Game/SubsystemTimeOfDay.cs:SubsystemTimeOfDay.TimeOfDayOffset
+        // Source: EntitySystem/SuAPI/IModParentField.cs:IModParentField.ModifyParentField
+        public bool ApplyClock(double totalElapsedGameTime, double timeOfDayOffset,
+            out string error)
+        {
+            EnsureMainThread(nameof(ApplyClock));
+            error = null;
+            if (!m_terrainBridge.ClientReplica)
+                return Fail("World clock may only be applied to a client replica.", out error);
+            if (double.IsNaN(totalElapsedGameTime) || double.IsInfinity(totalElapsedGameTime) ||
+                double.IsNaN(timeOfDayOffset) || double.IsInfinity(timeOfDayOffset))
+                return Fail("World clock values must be finite.", out error);
+
+            Project project = GameManager.Project;
+            SubsystemGameInfo gameInfo = project?.FindSubsystem<SubsystemGameInfo>(false);
+            SubsystemTimeOfDay timeOfDay = project?.FindSubsystem<SubsystemTimeOfDay>(false);
+            if (gameInfo == null || timeOfDay == null)
+                return Fail("World clock subsystem is unavailable.", out error);
+
+            try
+            {
+                m_parentField.ModifyParentField(gameInfo, "<TotalElapsedGameTime>k__BackingField",
+                    totalElapsedGameTime, typeof(SubsystemGameInfo));
+                if (gameInfo.TotalElapsedGameTime != totalElapsedGameTime)
+                    return Fail("SubsystemGameInfo.TotalElapsedGameTime did not accept the host value.",
+                        out error);
+
+                timeOfDay.TimeOfDayOffset = timeOfDayOffset;
+                if (timeOfDay.TimeOfDayOffset != timeOfDayOffset)
+                    return Fail("SubsystemTimeOfDay.TimeOfDayOffset did not accept the host value.",
+                        out error);
+                return true;
+            }
+            catch (Exception e)
+            {
+                return Fail("World clock apply failed: " + e.GetType().Name + ": " + e.Message,
+                    out error);
+            }
+        }
+
+        public uint ComputeHash(IEnumerable<CircuitElementState> states)
+        {
+            EnsureMainThread(nameof(ComputeHash));
+            return m_codec.ComputeHash(states);
+        }
+
+        public void SetDeterministicRandomSeed(uint seed, bool hostAuthority)
+        {
+            EnsureMainThread(nameof(SetDeterministicRandomSeed));
+            CircuitRandomSequence.Configure(seed, hostAuthority);
+        }
+
+        // Source: Survivalcraft/Game/Terrain.cs:Terrain.GetCellValue
+        public bool TryGetCellValue(int x, int y, int z, out int value)
+        {
+            EnsureMainThread(nameof(TryGetCellValue));
+            value = 0;
+            Project project = GameManager.Project;
+            Game.Terrain terrain = project?.FindSubsystem<SubsystemTerrain>(false)?.Terrain;
+            if (terrain == null || !terrain.IsCellValid(x, y, z)) return false;
+            TerrainChunk chunk = terrain.GetChunkAtCell(x, z);
+            if (chunk == null || !ChunkContentStages.IsContentValid((int)chunk.State))
+                return false;
+            value = terrain.GetCellValueFast(x, y, z);
+            return true;
+        }
+
+        public string DescribeDiagnostics()
+        {
+            EnsureMainThread(nameof(DescribeDiagnostics));
+            return m_codec.DescribeDiagnostics();
+        }
+
+        // Source: Mod/SuMultiplayer/Engine/TerrainBridge.cs:TerrainBridge.ApplyCells
+        // Source: Mod/SuMultiplayer/Engine/CircuitUseInputSink.ApplyAuthoritativeCell
+        private void HandleReplicaCellApplied(ChunkKey key, CellEdit edit)
+        {
+            EnsureMainThread(nameof(HandleReplicaCellApplied));
+            m_topologyDirty = true;
+            int x = key.X * 16 + edit.X;
+            int y = edit.Y;
+            int z = key.Z * 16 + edit.Z;
+            // A terrain stream can apply many non-circuit cells in the same chunk
+            // while a rejoined client is rebuilding its replica. Invalidating the
+            // whole chunk here discards authoritative LED/display states that are
+            // still valid and leaves them dark until another full repair arrives.
+            // Only the edited cell can have had its electric element replaced.
+            RemoveCachedStatesForCell(x, y, z);
+            if (!TryGetCellValue(x, y, z, out int value))
+                throw new InvalidOperationException("Applied replica cell is unavailable at (" +
+                    x + "," + y + "," + z + ").");
+            for (int face = 0; face < 6; face++)
+                m_interactionPresentation.ApplyAuthoritativeCell(x, y, z, face,
+                    value);
+            m_replicaCellApplied?.Invoke(key, edit);
+        }
+
+        public void Pump()
+        {
+            EnsureMainThread(nameof(Pump));
+            if (!m_terrainBridge.ClientReplica)
+            {
+                m_authoritativeStates.Clear();
+                m_topologyDirty = true;
+                m_project = null;
+                return;
+            }
+            Project project = GameManager.Project;
+            if (!ReferenceEquals(m_project, project))
+            {
+                m_project = project;
+                m_authoritativeStates.Clear();
+                m_topologyDirty = true;
+            }
+            if (!m_topologyDirty)
+            {
+                RefreshCachedSevenSegmentPresentations(project);
+                return;
+            }
+            SubsystemElectricity electricity = project?.FindSubsystem<SubsystemElectricity>(false);
+            if (electricity == null) return;
+            try
+            {
+                m_parentMethod.InvokeParentMethod(electricity, "UpdateElectricElements",
+                    Type.EmptyTypes);
+                ClearClientSimulationSchedule(electricity);
+                ReapplyAuthoritativeStates(electricity);
+                m_topologyDirty = false;
+                RefreshCachedSevenSegmentPresentations(project);
+            }
+            catch (Exception error)
+            {
+                throw new InvalidOperationException("Client electric topology refresh failed without running circuit simulation.",
+                    error);
+            }
+        }
+
+        private void RefreshCachedSevenSegmentPresentations(Project project)
+        {
+            if (project == null || m_authoritativeStates.Count == 0) return;
+            SubsystemElectricity electricity = project.FindSubsystem<SubsystemElectricity>(false);
+            if (electricity == null) return;
+            uint sevenSegmentType = CircuitStateCodec.SevenSegmentTypeCode;
+            foreach (AuthoritativeState authoritative in m_authoritativeStates.Values)
+            {
+                if (authoritative?.State == null || authoritative.State.ElementType != sevenSegmentType)
+                    continue;
+                if (!m_codec.RefreshSevenSegmentPresentation(electricity, authoritative.State,
+                        out string error))
+                    throw new InvalidOperationException(error);
+            }
+        }
+
+        private void ReapplyAuthoritativeStates(SubsystemElectricity electricity)
+        {
+            foreach (KeyValuePair<string, AuthoritativeState> pair in
+                m_authoritativeStates.ToArray())
+            {
+                CircuitElementState state = pair.Value.State;
+                ElectricElement element = state.MountingFace <= 5
+                    ? electricity.GetElectricElement(state.X, state.Y, state.Z,
+                        (int)state.MountingFace)
+                    : null;
+                if (element == null)
+                {
+                    m_authoritativeStates.Remove(pair.Key);
+                    continue;
+                }
+                if (!m_codec.Apply(electricity, state, pair.Value.HostStep,
+                    out string error))
+                    throw new InvalidOperationException(
+                        "Client authoritative circuit state replay failed for " +
+                        pair.Key + ": " + error);
+            }
+        }
+
+        private void RemoveCachedStatesForChunk(ChunkKey key)
+        {
+            foreach (KeyValuePair<string, AuthoritativeState> pair in
+                m_authoritativeStates.Where(item =>
+                    (item.Value.State.X >> 4) == key.X &&
+                    (item.Value.State.Z >> 4) == key.Z).ToArray())
+                m_authoritativeStates.Remove(pair.Key);
+        }
+
+        // Source: Mod/SuMultiplayer/Engine/CircuitWorldEngine.cs:HandleReplicaCellApplied
+        private void RemoveCachedStatesForCell(int x, int y, int z)
+        {
+            foreach (KeyValuePair<string, AuthoritativeState> pair in
+                m_authoritativeStates.Where(item =>
+                    item.Value.State.X == x && item.Value.State.Y == y &&
+                    item.Value.State.Z == z).ToArray())
+                m_authoritativeStates.Remove(pair.Key);
+        }
+
+        // Source: Survivalcraft/Game/SubsystemElectricity.cs:m_futureSimulateLists
+        // Source: Survivalcraft/Game/SubsystemElectricity.cs:m_nextStepSimulateList
+        private void ClearClientSimulationSchedule(SubsystemElectricity electricity)
+        {
+            var future = m_parentField.GetParentField<object>(electricity,
+                "m_futureSimulateLists", typeof(SubsystemElectricity));
+            if (!(future is System.Collections.IDictionary futureDictionary))
+                throw new InvalidOperationException(
+                    "SubsystemElectricity.m_futureSimulateLists is unavailable on the client replica.");
+            futureDictionary.Clear();
+            m_parentField.ModifyParentField(electricity, "m_nextStepSimulateList", null,
+                typeof(SubsystemElectricity));
+        }
+
+        private void EnsureMainThread(string operation)
+        {
+            if (Thread.CurrentThread.ManagedThreadId != m_mainThreadId)
+                throw new InvalidOperationException(operation + " must run on the circuit world main thread.");
+        }
+
+        private static bool Fail(string message, out string error)
+        {
+            error = message;
+            return false;
+        }
+    }
+}

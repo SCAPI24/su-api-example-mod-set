@@ -2,9 +2,13 @@ using System;
 using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
+using System.Security.Cryptography;
+using System.Collections.Concurrent;
 using System.Threading;
 using System.Threading.Tasks;
+using Google.Protobuf;
 using SuMultiplayer.Protocol;
+using SuMultiplayer.Protocol.Terrain;
 
 namespace SuMultiplayer.Net
 {
@@ -248,6 +252,12 @@ namespace SuMultiplayer.Net
     /// </summary>
     public class TcpTerrainServer : IDisposable
     {
+        private sealed class CircuitTicket
+        {
+            public int PrimaryClientId;
+            public long ExpiresAtMs;
+        }
+
         private readonly struct SendFrame
         {
             public SendFrame(byte[] buffer, int length) { Buffer = buffer; Length = length; }
@@ -269,11 +279,18 @@ namespace SuMultiplayer.Net
             public readonly ChannelStats Stats = new ChannelStats();
             public long LastReceivedSequence = -1;
             public bool ConnectionClosed;
+            public bool IsCircuit;
+            public int PrimaryClientId;
         }
 
         private readonly TcpListener m_listener;
         private readonly List<Peer> m_peers = new List<Peer>();
         private readonly object m_gate = new object();
+        private readonly Dictionary<string, CircuitTicket> m_circuitTickets =
+            new Dictionary<string, CircuitTicket>(StringComparer.Ordinal);
+        private readonly Dictionary<int, Peer> m_circuitPeers = new Dictionary<int, Peer>();
+        private readonly ConcurrentQueue<Action> m_circuitCallbacks =
+            new ConcurrentQueue<Action>();
         private readonly int m_queueCapacity;
         private int m_nextClientId = 1;
         private volatile bool m_running;
@@ -304,6 +321,10 @@ namespace SuMultiplayer.Net
         /// <summary>收到一帧（在 async 接收循环的续体上回调；上层只应入队，不在这里碰引擎）。</summary>
         public event Action<ReceivedFrame> FrameReceived;
         public event Action<int, ChannelState, string> PeerStateChanged;
+        public event Action<int, ReceivedFrame> CircuitFrameReceived;
+        public event Action<int> CircuitPeerAttached;
+        public event Action<int, string> CircuitPeerDetached;
+        public event Action<int, ChannelState, string> CircuitPeerStateChanged;
 
         /// <summary>派生传输（自检的内存实现）用它把帧交给订阅者，走的是同一个事件契约。</summary>
         protected void RaiseFrameReceived(ReceivedFrame frame) => FrameReceived?.Invoke(frame);
@@ -389,11 +410,120 @@ namespace SuMultiplayer.Net
                     peer.Stats.FramesReceived++;
                     peer.Stats.BytesReceived += TerrainFrame.HeaderBytes + len;
                     peer.LastReceivedSequence = seq;
-                    RaiseFrameReceived(new ReceivedFrame(peer.Id, seq, type, payload));
+                    if (peer.IsCircuit)
+                    {
+                        if (type == MessageType.CircuitAttach || type == MessageType.CircuitAttached)
+                        {
+                            peer.Stats.ProtocolViolations++;
+                            Fail(peer, "附属电路通道握手帧重复");
+                            return;
+                        }
+                        int primaryClientId = peer.PrimaryClientId;
+                        ReceivedFrame received = new ReceivedFrame(primaryClientId,
+                            seq, type, payload);
+                        m_circuitCallbacks.Enqueue(() =>
+                            CircuitFrameReceived?.Invoke(primaryClientId, received));
+                    }
+                    else if (peer.LastReceivedSequence == seq &&
+                        peer.Stats.FramesReceived == 1 && type == MessageType.CircuitAttach)
+                    {
+                        peer.IsCircuit = true;
+                        if (!await TryAttachCircuitAsync(peer, seq, payload).ConfigureAwait(false))
+                            return;
+                    }
+                    else
+                    {
+                        if (type == MessageType.CircuitAttach || type == MessageType.CircuitAttached)
+                        {
+                            peer.Stats.ProtocolViolations++;
+                            Fail(peer, "附属电路握手帧只能作为连接首帧");
+                            return;
+                        }
+                        RaiseFrameReceived(new ReceivedFrame(peer.Id, seq, type, payload));
+                    }
                 }
             }
             catch (Exception e) { Fail(peer, e.GetType().Name); }
             finally { TransportDiagnostics.ReturnBuffer(header); }
+        }
+
+        private async Task<bool> TryAttachCircuitAsync(Peer peer, long sequence, byte[] payload)
+        {
+            int primaryClientId = 0;
+            bool accepted = false;
+            string reason = string.Empty;
+            try
+            {
+                CircuitAttach request = CircuitAttach.Parser.ParseFrom(payload ?? Array.Empty<byte>());
+                primaryClientId = request.PrimaryClientId;
+                if (primaryClientId <= 0 || request.Ticket == null || request.Ticket.IsEmpty)
+                {
+                    reason = "invalid-attach";
+                }
+                else
+                {
+                    string ticketKey = Convert.ToBase64String(request.Ticket.ToByteArray());
+                    lock (m_gate)
+                    {
+                        RemoveExpiredCircuitTicketsLocked(Environment.TickCount64);
+                        if (!m_circuitTickets.TryGetValue(ticketKey, out CircuitTicket ticket))
+                        {
+                            reason = "ticket-invalid-or-expired";
+                        }
+                        else
+                        {
+                            m_circuitTickets.Remove(ticketKey);
+                            Peer primary = FindLocked(primaryClientId);
+                            if (ticket.PrimaryClientId != primaryClientId)
+                                reason = "ticket-client-mismatch";
+                            else if (primary == null || !primary.Alive || primary.IsCircuit ||
+                                primary.Kind != ClientKind.Player)
+                                reason = "primary-player-unavailable";
+                            else if (m_circuitPeers.ContainsKey(primaryClientId))
+                                reason = "circuit-channel-already-attached";
+                            else
+                            {
+                                accepted = true;
+                                peer.IsCircuit = true;
+                                peer.PrimaryClientId = primaryClientId;
+                                m_circuitPeers.Add(primaryClientId, peer);
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                reason = "attach-malformed:" + e.GetType().Name;
+            }
+
+            var response = new CircuitAttached
+            {
+                PrimaryClientId = primaryClientId,
+                Accepted = accepted,
+                Reason = reason
+            };
+            byte[] responsePayload = response.ToByteArray();
+            byte[] frame = TerrainFrame.Encode(sequence, MessageType.CircuitAttached, responsePayload);
+            try
+            {
+                await peer.Stream.WriteAsync(frame, 0, frame.Length).ConfigureAwait(false);
+                peer.Stats.FramesSent++;
+                peer.Stats.BytesSent += frame.Length;
+            }
+            catch (Exception e)
+            {
+                Fail(peer, "电路附属握手回执发送失败:" + e.GetType().Name);
+                return false;
+            }
+
+            if (!accepted)
+            {
+                Fail(peer, "电路附属握手拒绝:" + reason);
+                return false;
+            }
+            m_circuitCallbacks.Enqueue(() => CircuitPeerAttached?.Invoke(primaryClientId));
+            return true;
         }
 
         private async Task SendLoopAsync(Peer peer)
@@ -492,17 +622,116 @@ namespace SuMultiplayer.Net
             }
         }
 
+        public virtual byte[] CreateCircuitTicket(int primaryClientId)
+        {
+            lock (m_gate)
+            {
+                Peer primary = FindLocked(primaryClientId);
+                if (primary == null || !primary.Alive || primary.IsCircuit ||
+                    primary.Kind != ClientKind.Player)
+                    throw new InvalidOperationException("无法为不存在或非玩家主连接签发电路 ticket");
+                RemoveExpiredCircuitTicketsLocked(Environment.TickCount64);
+                byte[] bytes = new byte[32];
+                using (RandomNumberGenerator rng = RandomNumberGenerator.Create())
+                    rng.GetBytes(bytes);
+                string ticket = Convert.ToBase64String(bytes);
+                m_circuitTickets.Add(ticket, new CircuitTicket
+                {
+                    PrimaryClientId = primaryClientId,
+                    ExpiresAtMs = Environment.TickCount64 + 30000
+                });
+                return bytes;
+            }
+        }
+
+        public void PumpCircuitEvents()
+        {
+            while (m_circuitCallbacks.TryDequeue(out Action callback)) callback();
+        }
+
+        public virtual bool TrySendCircuit(int primaryClientId, MessageType type, byte[] payload)
+        {
+            Peer peer;
+            lock (m_gate)
+                m_circuitPeers.TryGetValue(primaryClientId, out peer);
+            if (peer == null || !peer.Alive || !peer.IsCircuit) return false;
+            return Enqueue(peer, type, payload);
+        }
+
+        public virtual bool IsCircuitAttached(int primaryClientId)
+        {
+            lock (m_gate)
+                return m_circuitPeers.TryGetValue(primaryClientId, out Peer peer) &&
+                    peer.Alive && peer.IsCircuit;
+        }
+
+        public virtual bool DisconnectCircuitClient(int primaryClientId, string reason)
+        {
+            Peer peer;
+            lock (m_gate)
+            {
+                if (!m_circuitPeers.TryGetValue(primaryClientId, out peer)) return false;
+                m_circuitPeers.Remove(primaryClientId);
+            }
+            m_circuitCallbacks.Enqueue(() => CircuitPeerDetached?.Invoke(primaryClientId,
+                reason ?? "host-disconnected"));
+            Fail(peer, reason ?? "host-disconnected");
+            return true;
+        }
+
+        private bool Enqueue(Peer peer, MessageType type, byte[] payload)
+        {
+            if (peer == null || !peer.Alive) return false;
+            payload = payload ?? Array.Empty<byte>();
+            long sequence = Interlocked.Increment(ref m_sendSequence);
+            TerrainFrame.Validate(type, payload);
+            int length = TerrainFrame.HeaderBytes + payload.Length;
+            byte[] frame = TransportDiagnostics.RentBuffer(length);
+            bool enqueued = false;
+            try
+            {
+                TerrainFrame.EncodeTo(frame, sequence, type, payload);
+                bool dead, full;
+                lock (peer.SendQueue)
+                {
+                    dead = !peer.Alive;
+                    full = !dead && peer.SendQueue.Count >= m_queueCapacity;
+                    if (!dead && !full)
+                    {
+                        peer.SendQueue.Enqueue(new SendFrame(frame, length));
+                        peer.Stats.SendQueueHigh = Math.Max(peer.Stats.SendQueueHigh,
+                            peer.SendQueue.Count);
+                        peer.SendSignal.Release();
+                        enqueued = true;
+                    }
+                }
+                if (dead) return false;
+                if (full)
+                {
+                    peer.Stats.BackpressureEvents++;
+                    SetPeerState(peer, ChannelState.Backpressured, "发送队列已满（显式背压）");
+                    return false;
+                }
+                return true;
+            }
+            finally
+            {
+                if (!enqueued) TransportDiagnostics.ReturnBuffer(frame);
+            }
+        }
+
         public virtual PeerInfo[] ListPeers()
         {
             lock (m_gate)
             {
-                var list = new PeerInfo[m_peers.Count];
+                var list = new List<PeerInfo>(m_peers.Count);
                 for (int i = 0; i < m_peers.Count; i++)
                 {
                     Peer p = m_peers[i];
-                    list[i] = new PeerInfo(p.Id, p.Kind, p.Name, p.State, p.Alive, p.Stats);
+                    if (!p.IsCircuit)
+                        list.Add(new PeerInfo(p.Id, p.Kind, p.Name, p.State, p.Alive, p.Stats));
                 }
-                return list;
+                return list.ToArray();
             }
         }
 
@@ -526,6 +755,7 @@ namespace SuMultiplayer.Net
             {
                 peer.ConnectionClosed = true;
                 peer.Tcp?.Close();
+                CloseCircuitForPrimary(clientId, "primary-disconnected");
                 reason = null;
                 return true;
             }
@@ -554,12 +784,68 @@ namespace SuMultiplayer.Net
             return null;
         }
 
+        private Peer FindLocked(int clientId)
+        {
+            for (int i = 0; i < m_peers.Count; i++)
+                if (m_peers[i].Id == clientId) return m_peers[i];
+            return null;
+        }
+
+        private void RemoveExpiredCircuitTicketsLocked(long nowMs)
+        {
+            List<string> expired = null;
+            foreach (KeyValuePair<string, CircuitTicket> pair in m_circuitTickets)
+            {
+                if (pair.Value.ExpiresAtMs > nowMs) continue;
+                if (expired == null) expired = new List<string>();
+                expired.Add(pair.Key);
+            }
+            if (expired == null) return;
+            for (int i = 0; i < expired.Count; i++) m_circuitTickets.Remove(expired[i]);
+        }
+
+        private void CloseCircuitForPrimary(int primaryClientId, string reason)
+        {
+            Peer circuit = null;
+            lock (m_gate)
+            {
+                m_circuitPeers.TryGetValue(primaryClientId, out circuit);
+                if (circuit != null) m_circuitPeers.Remove(primaryClientId);
+                RemoveTicketsForPrimaryLocked(primaryClientId);
+            }
+            if (circuit != null)
+            {
+                m_circuitCallbacks.Enqueue(() => CircuitPeerDetached?.Invoke(primaryClientId, reason));
+                Fail(circuit, reason);
+            }
+        }
+
+        private void RemoveTicketsForPrimaryLocked(int primaryClientId)
+        {
+            List<string> remove = null;
+            foreach (KeyValuePair<string, CircuitTicket> pair in m_circuitTickets)
+            {
+                if (pair.Value.PrimaryClientId != primaryClientId) continue;
+                if (remove == null) remove = new List<string>();
+                remove.Add(pair.Key);
+            }
+            if (remove == null) return;
+            for (int i = 0; i < remove.Count; i++) m_circuitTickets.Remove(remove[i]);
+        }
+
         /// <summary>状态变化的唯一入口（派生传输不改这一处，直接复用）。</summary>
         private void SetPeerState(Peer peer, ChannelState state, string detail)
         {
             if (peer.State == state) return;
             peer.State = state;
-            RaisePeerStateChanged(peer.Id, state, detail);
+            if (peer.IsCircuit)
+            {
+                int primaryClientId = peer.PrimaryClientId;
+                m_circuitCallbacks.Enqueue(() => CircuitPeerStateChanged?.Invoke(
+                    primaryClientId, state, detail));
+            }
+            else
+                RaisePeerStateChanged(peer.Id, state, detail);
         }
 
         private void Fail(Peer peer, string detail)
@@ -571,6 +857,26 @@ namespace SuMultiplayer.Net
             peer.SendSignal.Release();
             DrainSendQueue(peer);
             if (!peer.ConnectionClosed) { peer.ConnectionClosed = true; TransportDiagnostics.OnConnectionClosed(); }
+            if (peer.IsCircuit)
+            {
+                bool removed;
+                lock (m_gate)
+                {
+                    removed = m_circuitPeers.TryGetValue(peer.PrimaryClientId, out Peer current) &&
+                        ReferenceEquals(current, peer);
+                    if (removed) m_circuitPeers.Remove(peer.PrimaryClientId);
+                }
+                if (removed)
+                {
+                    int primaryClientId = peer.PrimaryClientId;
+                    m_circuitCallbacks.Enqueue(() =>
+                        CircuitPeerDetached?.Invoke(primaryClientId, detail));
+                }
+            }
+            else
+            {
+                CloseCircuitForPrimary(peer.Id, "primary-disconnected:" + detail);
+            }
         }
 
         /// <summary>把队列里还没发出去的池化帧全部归还（断开 / 关闭时调用，避免池泄漏）。</summary>
@@ -648,6 +954,12 @@ namespace SuMultiplayer.Net
                 peer.SendSignal.Release();
                 DrainSendQueue(peer);
                 if (!peer.ConnectionClosed) { peer.ConnectionClosed = true; TransportDiagnostics.OnConnectionClosed(); }
+                if (peer.IsCircuit)
+                {
+                    int primaryClientId = peer.PrimaryClientId;
+                    m_circuitCallbacks.Enqueue(() => CircuitPeerDetached?.Invoke(
+                        primaryClientId, "server-disposed"));
+                }
             }
         }
     }
@@ -683,6 +995,12 @@ namespace SuMultiplayer.Net
         private volatile bool m_running;
         private bool m_connectionCounted;
         private bool m_socketCounted;
+        private volatile bool m_circuitMode;
+        private volatile bool m_circuitAttached;
+        private int m_circuitPrimaryClientId;
+        private string m_circuitAttachReason = string.Empty;
+        private readonly ConcurrentQueue<Action> m_circuitCallbacks =
+            new ConcurrentQueue<Action>();
 
         private readonly struct SendFrame
         {
@@ -709,7 +1027,11 @@ namespace SuMultiplayer.Net
         public ChannelStats Stats { get; } = new ChannelStats();
         public virtual ChannelState State { get; protected set; } = ChannelState.Disconnected;
         public event Action<ReceivedFrame> FrameReceived;
+        public event Action<ReceivedFrame> CircuitFrameReceived;
         public event Action<ChannelState, string> StateChanged;
+        public event Action<bool, string> CircuitAttachCompleted;
+        public bool IsCircuitAttached => m_circuitAttached && IsAlive;
+        public string CircuitAttachReason => m_circuitAttachReason;
 
         /// <summary>派生传输（自检的内存实现）用它把帧交给订阅者。</summary>
         protected void RaiseFrameReceived(ReceivedFrame frame) => FrameReceived?.Invoke(frame);
@@ -735,6 +1057,15 @@ namespace SuMultiplayer.Net
 
         public virtual bool Connect(int timeoutMs = 3000)
         {
+            return ConnectInternal(timeoutMs, false, 0);
+        }
+
+        private bool ConnectInternal(int timeoutMs, bool circuitMode, int primaryClientId)
+        {
+            m_circuitMode = false;
+            m_circuitAttached = false;
+            m_circuitPrimaryClientId = circuitMode ? primaryClientId : 0;
+            m_circuitAttachReason = string.Empty;
             try
             {
                 // 同一个对象重复 Connect 时先关掉旧 socket（旧实现会把它丢掉 → socket 泄漏）。
@@ -777,6 +1108,11 @@ namespace SuMultiplayer.Net
                     }
                 }
                 m_stream = m_tcp.GetStream();
+                // Set the transport mode before starting ReceiveLoopAsync. The server can
+                // reply with CircuitAttached immediately after the attach frame; if the
+                // receive loop starts in normal mode it rejects that frame and loses the
+                // circuit channel before ConnectCircuit can switch the flag.
+                m_circuitMode = circuitMode;
                 m_running = true;
                 TransportDiagnostics.OnConnectionCreated();
                 m_connectionCounted = true;
@@ -791,6 +1127,48 @@ namespace SuMultiplayer.Net
                 SetState(ChannelState.Failed, e.GetType().Name);
                 return false;
             }
+        }
+
+        public virtual bool ConnectCircuit(int primaryClientId, byte[] ticket,
+            int timeoutMs = 3000)
+        {
+            if (primaryClientId <= 0 || ticket == null || ticket.Length == 0)
+            {
+                m_circuitAttachReason = "invalid-primary-or-ticket";
+                return false;
+            }
+            if (!ConnectInternal(timeoutMs, true, primaryClientId)) return false;
+            if (!AttachCircuit(primaryClientId, ticket))
+            {
+                m_circuitAttachReason = "attach-send-failed";
+                Dispose();
+                return false;
+            }
+            return true;
+        }
+
+        public virtual bool AttachCircuit(int primaryClientId, byte[] ticket)
+        {
+            if (!IsAlive || primaryClientId <= 0 || ticket == null || ticket.Length == 0)
+            {
+                m_circuitAttachReason = "not-connected-or-invalid-attach";
+                return false;
+            }
+            m_circuitMode = true;
+            m_circuitPrimaryClientId = primaryClientId;
+            m_circuitAttached = false;
+            m_circuitAttachReason = string.Empty;
+            var request = new CircuitAttach
+            {
+                PrimaryClientId = primaryClientId,
+                Ticket = ByteString.CopyFrom(ticket)
+            };
+            return TrySend(MessageType.CircuitAttach, request.ToByteArray());
+        }
+
+        public void PumpCircuitEvents()
+        {
+            while (m_circuitCallbacks.TryDequeue(out Action callback)) callback();
         }
 
         private void CloseSocket()
@@ -828,7 +1206,52 @@ namespace SuMultiplayer.Net
                     }
                     Stats.FramesReceived++;
                     Stats.BytesReceived += TerrainFrame.HeaderBytes + len;
-                    RaiseFrameReceived(new ReceivedFrame(0, seq, type, payload));
+                    if (m_circuitMode)
+                    {
+                        if (type == MessageType.CircuitAttached)
+                        {
+                            CircuitAttached response = CircuitAttached.Parser.ParseFrom(payload);
+                            if (response.PrimaryClientId != m_circuitPrimaryClientId)
+                            {
+                                Stats.ProtocolViolations++;
+                                m_circuitAttachReason = "attached-primary-mismatch";
+                                SetState(ChannelState.Failed, m_circuitAttachReason);
+                                return;
+                            }
+                            m_circuitAttached = response.Accepted;
+                            m_circuitAttachReason = response.Reason ?? string.Empty;
+                            bool accepted = response.Accepted;
+                            string attachReason = m_circuitAttachReason;
+                            m_circuitCallbacks.Enqueue(() =>
+                                CircuitAttachCompleted?.Invoke(accepted, attachReason));
+                            if (!response.Accepted)
+                            {
+                                SetState(ChannelState.Failed,
+                                    "circuit-attach-rejected:" + m_circuitAttachReason);
+                                return;
+                            }
+                            continue;
+                        }
+                        if (!m_circuitAttached || type == MessageType.CircuitAttach)
+                        {
+                            Stats.ProtocolViolations++;
+                            m_circuitAttachReason = "circuit-frame-before-accepted";
+                            SetState(ChannelState.Failed, m_circuitAttachReason);
+                            return;
+                        }
+                        ReceivedFrame received = new ReceivedFrame(0, seq, type, payload);
+                        m_circuitCallbacks.Enqueue(() => CircuitFrameReceived?.Invoke(received));
+                    }
+                    else
+                    {
+                        if (type == MessageType.CircuitAttach || type == MessageType.CircuitAttached)
+                        {
+                            Stats.ProtocolViolations++;
+                            SetState(ChannelState.Failed, "unexpected-circuit-transport-frame");
+                            return;
+                        }
+                        RaiseFrameReceived(new ReceivedFrame(0, seq, type, payload));
+                    }
                 }
             }
             catch (Exception e) { SetState(ChannelState.Failed, e.GetType().Name); }
@@ -894,7 +1317,8 @@ namespace SuMultiplayer.Net
         {
             // 死连接不假装"发成功"：Failed/Disconnected 之后入队只会越堆越多，
             // 调用方的 posSent 会继续涨而主机永远收不到（实机故障就是这样静默的）。
-            if (!IsAlive) return false;
+            if (!IsAlive || m_circuitMode &&
+                (type != MessageType.CircuitAttach || m_circuitAttached)) return false;
             payload = payload ?? Array.Empty<byte>();
             long sequence = Interlocked.Increment(ref m_sendSequence);
             TerrainFrame.Validate(type, payload);          // 先校验再借缓冲（非法负载不占池）
@@ -932,6 +1356,52 @@ namespace SuMultiplayer.Net
             }
         }
 
+        public virtual bool TrySendCircuit(MessageType type, byte[] payload)
+        {
+            if (!IsCircuitAttached || type == MessageType.CircuitAttach ||
+                type == MessageType.CircuitAttached) return false;
+            return TrySendCore(type, payload);
+        }
+
+        private bool TrySendCore(MessageType type, byte[] payload)
+        {
+            if (!IsAlive) return false;
+            payload = payload ?? Array.Empty<byte>();
+            long sequence = Interlocked.Increment(ref m_sendSequence);
+            TerrainFrame.Validate(type, payload);
+            int length = TerrainFrame.HeaderBytes + payload.Length;
+            byte[] frame = TransportDiagnostics.RentBuffer(length);
+            bool enqueued = false;
+            try
+            {
+                TerrainFrame.EncodeTo(frame, sequence, type, payload);
+                bool dead, full;
+                lock (m_sendQueue)
+                {
+                    dead = !m_running;
+                    full = !dead && m_sendQueue.Count >= m_queueCapacity;
+                    if (!dead && !full)
+                    {
+                        m_sendQueue.Enqueue(new SendFrame(frame, length));
+                        m_sendWake.Release();
+                        enqueued = true;
+                    }
+                }
+                if (dead) return false;
+                if (full)
+                {
+                    Stats.BackpressureEvents++;
+                    SetState(ChannelState.Backpressured, "发送队列已满（显式背压）");
+                    return false;
+                }
+                return true;
+            }
+            finally
+            {
+                if (!enqueued) TransportDiagnostics.ReturnBuffer(frame);
+            }
+        }
+
         protected virtual void SetState(ChannelState state, string detail)
         {
             if (State == state) return;
@@ -956,6 +1426,7 @@ namespace SuMultiplayer.Net
         public virtual void Dispose()
         {
             m_running = false;
+            m_circuitAttached = false;
             CloseSocket();
             m_sendWake.Release();
             DrainSendQueue();

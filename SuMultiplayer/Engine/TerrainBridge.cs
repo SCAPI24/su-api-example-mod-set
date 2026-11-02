@@ -162,6 +162,8 @@ namespace SuMultiplayer.Engine
         public event Action<ReceivedFrame> FrameArrived;
         /// <summary>主机侧权威改动（已捕获，尚未下发）。</summary>
         public event Action<ChunkKey, CellEdit> HostCellChanged;
+        /// <summary>客户端通过既有主机 CellChange / chunk resync 落地后的权威格值。</summary>
+        public event Action<ChunkKey, CellEdit> ReplicaCellApplied;
         /// <summary>
         /// 客户端侧捕获到的**本地地形写入**（主线程）。架构上客户端只允许主机改地形，
         /// 所以这些写入必须变成 CellEditRequest 交给主机审批（Part B）。
@@ -308,6 +310,8 @@ namespace SuMultiplayer.Engine
                 // 与 ChangeCell 同一比较口径：光照位不参与"是否变化"（ChangeCell 先 ReplaceLight(0)）。
                 if (ClientReplica && Game.Terrain.ReplaceLight(oldValue, 0) != value)
                     BlockBehaviorNotify.Notify(subsystem, oldValue, value, x, edit.Y, z);
+                if (ClientReplica && oldValue != value)
+                    ReplicaCellApplied?.Invoke(key, edit);
             }
             AppliedCells += edits.Count;
             AppliedBatches++;

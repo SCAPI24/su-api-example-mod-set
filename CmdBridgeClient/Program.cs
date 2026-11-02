@@ -224,6 +224,15 @@ namespace CmdBridgeClient
                         return AiCommand(client, args);
                     case "commands":
                         return Print(client, "cmd.list", null);
+                    case "circuit":
+                        Require(args.Count >= 2, "circuit status|pause|resume");
+                        if (string.Equals(args[1], "status", StringComparison.OrdinalIgnoreCase))
+                            return Print(client, "circuit.status", null);
+                        if (string.Equals(args[1], "pause", StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(args[1], "resume", StringComparison.OrdinalIgnoreCase))
+                            return Print(client, "circuit.pause", Args(
+                                ("paused", string.Equals(args[1], "pause", StringComparison.OrdinalIgnoreCase))));
+                        throw new ArgumentException("circuit status|pause|resume");
 
                     // 进世界：循环驱动服务端 `act.enter`（主菜单 → 世界列表 → 创建/加载 → 角色界面 → 游戏）
                     case "enter":
@@ -1247,6 +1256,8 @@ namespace CmdBridgeClient
   chat.cancel                 关闭聊天输入并清空缓冲区（等价按 Esc）
   raw <command> k=v ...       直接下发任意命令
   commands                    列出内建命令与各 Mod 注册的扩展命令
+  circuit status              电路同步调试状态（不改变游戏时间）
+  circuit pause|resume       设置/清除电路同步暂停信号（仅主机调试）
   enter [--row N|--world 名字] [--settle ms] [--steps N]
                               自动进世界：主菜单 → 世界列表 → 创建/加载 →
                               **角色创建/选择界面** → 进入游戏（服务端 act.enter 的分步驱动）

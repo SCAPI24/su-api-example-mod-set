@@ -257,6 +257,24 @@ enum MessageType {
   EDITABLE_ITEM_EDIT_REQUEST = 129;
   EDITABLE_ITEM_EDIT_RESULT = 130;
 
+  // Circuit channel transport handshake (terrain.proto). These frames are
+  // consumed by TcpTerrainServer/TcpTerrainClient and never enter MessageChannel.
+  // Append-only: 131 / 132 are new ids; existing ids remain stable.
+  CIRCUIT_ATTACH = 131;
+  CIRCUIT_ATTACHED = 132;
+  CIRCUIT_CLOCK = 133;
+  CIRCUIT_EVENT_REQUEST = 134;
+  CIRCUIT_EVENT_BATCH = 135;
+  CIRCUIT_SNAPSHOT_REQUEST = 136;
+  CIRCUIT_SNAPSHOT_PART = 137;
+  CIRCUIT_HASH_REPORT = 138;
+  CIRCUIT_REPAIR_BARRIER = 139;
+  CIRCUIT_REPAIR_APPLIED = 140;
+  CIRCUIT_OPERATION_RESULT = 141;
+  CIRCUIT_SYNC_BATCH = 142;
+  CIRCUIT_TICKET_REQUEST = 143;
+  CIRCUIT_TICKET_RESPONSE = 144;
+
   // Multiplayer chat (chat.proto), append-only: 82..84 are new ids, no
   // existing id is renumbered.
   // Client -> host request, host -> all clients accepted line, host -> sender
@@ -565,6 +583,11 @@ message Hello {
   // its current per-record hashes and only re-sends the changed records on rejoin.
   // Empty = first join / old client => full backfill (no behavior change).
   repeated KnownRecordHash known_records = 11;
+  // SuMultiplayer compatibility metadata: mod version, wire schema hash, and loaded assembly MVID fingerprint.
+  string multiplayer_mod_version = 12;
+  uint32 multiplayer_protocol_version = 13;
+  string multiplayer_protocol_hash = 14;
+  string multiplayer_build_fingerprint = 15;
 
   // Third-party extension points: see doc/message-protocol.md.
   bytes ext = 100;
@@ -630,6 +653,9 @@ message HelloAck {
   bool has_assigned_state = 22;
   bool assigned_is_crouching = 23;
   bool assigned_is_flying = 24;
+  // One-time ticket for the separately queued circuit TCP socket. Empty means
+  // the host declined or could not issue a circuit channel ticket.
+  bytes circuit_ticket = 25;
 
   bytes ext = 100;
   google.protobuf.Any custom = 101;

@@ -87,6 +87,10 @@ namespace SuMultiplayer
         /// <summary>方块使用 / 容器同步：引擎适配（客户端输入拦截 + 副本面板 / 主机权威库存）+ 网络模块。</summary>
         private ContainerReplicaEngine m_blockUseEngine;
         private BlockUseSyncModule m_blockUseModule;
+        private CircuitUseInputSink m_circuitPresentation;
+        private CircuitStateCodec m_circuitCodec;
+        private CircuitWorldEngine m_circuitWorld;
+        private CircuitSyncModule m_circuitModule;
         /// <summary>世界控制：引擎适配（客户端四按钮拦截 + 主机权威执行 + 客户端提示）+ 网络模块。</summary>
         private WorldControlEngine m_worldControlEngine;
         private WorldControlModule m_worldControlModule;
@@ -264,6 +268,9 @@ namespace SuMultiplayer
         /// 组合根创建、随模块卸载置 null；无静态可变状态。
         /// </summary>
         public ChatAutomation ChatAutomation { get; private set; }
+
+        /// <summary>CmdBridge 调试钩子：仅控制电路同步暂停信号，不改变游戏时间。</summary>
+        public CircuitSyncDebugAutomation CircuitSyncDebugAutomation { get; private set; }
 
         public string Name => ModIdentifier;
         public string Version => ModVersionText;
@@ -443,6 +450,27 @@ namespace SuMultiplayer
                 engineModManager.ModParentField, engineModManager.ModParentMethod, diagnostics,
                 "block-use", m_reachGate);
             m_blockUseModule = new BlockUseSyncModule(m_blockUseEngine);
+            // Source: Survivalcraft/Game/ComponentMiner.cs:ComponentMiner.Interact
+            // Source: Mod/ScMultiplayer/Func/Circuit/CircuitSynchronizer.cs:CircuitSynchronizer
+            m_circuitPresentation = new CircuitUseInputSink(
+                engineModManager.ModParentField, avatarSpawner)
+            {
+                Fallback = m_blockUseEngine
+            };
+            m_circuitCodec = new CircuitStateCodec(engineModManager.ModParentField);
+            m_circuitWorld = new CircuitWorldEngine(m_terrainModule.Bridge, m_circuitCodec,
+                engineModManager.ModParentField, engineModManager.ModParentMethod,
+                m_circuitPresentation);
+            m_circuitModule = new CircuitSyncModule(m_circuitWorld, m_circuitPresentation,
+                delegate { return m_terrainModule.CurrentCircuitTerrainSequence; },
+                reconcileSnapshot: m_circuitWorld.ReconcileSnapshot,
+                randomSeed: delegate
+                {
+                    return CircuitRandomSequence.SeedFromSessionId(
+                        m_terrainModule.CurrentSessionId);
+                });
+            CircuitSyncDebugAutomation = new CircuitSyncDebugAutomation(m_circuitModule);
+            m_blockUseEngine.SetUseInputSinkOverride(m_circuitPresentation);
             // 世界控制（创意四按钮：降水/雾/闪电/时间）：客户端把点击变成 WORLD_CONTROL_REQUEST，
             // 主机在权威世界上按引擎同款调用执行；状态变化由既有 WorldInfo 快照（~2 Hz）广播生效，
             // 回执让请求者显示与引擎一致的提示。客户端不本地执行（会被快照拉回）。
@@ -668,6 +696,11 @@ namespace SuMultiplayer
             m_moduleHost.RegisterPort<IRoomBrowsePort>(m_sessionModule);
             // 消息层（类型 id ↔ 解析器/处理器 + 第三方发送器）：内置模块与第三方模块共用同一个注册表。
             m_moduleHost.RegisterPort<IMessageRegistryPort>(m_terrainModule.MessagePort);
+            m_moduleHost.RegisterPort<ICircuitTransportPort>(m_terrainModule.CircuitTransportPort);
+            m_moduleHost.RegisterPort<ICircuitWorldPort>(m_circuitWorld);
+            m_moduleHost.RegisterPort<ICircuitPresentationPort>(m_circuitPresentation);
+            m_moduleHost.RegisterPort<ICircuitInteractionHostPort>(m_circuitPresentation);
+            m_moduleHost.RegisterPort<ICircuitUseAuthorityPort>(m_blockUseModule);
             // 活塞运动的"玩家端在哪 / 兴趣半径多大"只读视图（远处端不发，避免无用的本地集合）。
             m_moduleHost.RegisterPort<IPistonPeerViewportPort>(m_pistonEngine);
             // 远程动作声音：引擎适配（捕获 / 播放）与中继模块（协议 / 距离 / 限速）各一个端口；
@@ -736,6 +769,7 @@ namespace SuMultiplayer
             m_moduleHost.Register(m_projectileHitModule);
             // 方块使用 / 容器同步：transport 硬依赖；消息处理在 Attach 里注册。
             m_moduleHost.Register(m_blockUseModule);
+            m_moduleHost.Register(m_circuitModule);
             // 世界控制（创意四按钮）：transport 硬依赖；引擎端口先于模块注册
             //（Attach 里就要拿到；客户端输入外壳的挂接由模块 Tick 驱动引擎 Pump）。
             m_moduleHost.RegisterPort<IWorldControlPort>(m_worldControlEngine);
@@ -989,6 +1023,7 @@ namespace SuMultiplayer
             ModLog.Info("[SuMP] " + m_sessionModule.StatusLine());
             ModLog.Info("[SuMP] " + m_transferModule.StatusLine());
             ModLog.Info("[SuMP] " + m_terrainModule.StatusLine());
+            ModLog.Info("[SuMP] " + m_circuitModule.StatusLine());
             ModLog.Info("[SuMP] " + m_avatarModule.StatusLine());
             ModLog.Info("[SuMP] " + m_actionModule.StatusLine());
             ModLog.Info("[SuMP] " + m_statsModule.StatusLine());
@@ -1069,6 +1104,9 @@ namespace SuMultiplayer
                 "SuMultiplayer.Engine.SuSubsystemBucketBlockBehavior");
             modInjector.RegisterBlock(FurnitureBlock.Index, typeof(SuFurnitureBlock),
                 ModIdentifier);
+            // Source: Survivalcraft/Game/RandomGeneratorBlock.cs:RandomGeneratorBlock.CreateElectricElement
+            modInjector.RegisterBlock(Game.RandomGeneratorBlock.Index,
+                typeof(SuMultiplayer.Engine.RandomGeneratorBlock), ModIdentifier);
             // 指南针：无磁铁时按主机权威复活点表 + 最近手部位置选目标（三端同一点）。
             modInjector.RegisterBlock(SuMultiplayer.Engine.CompassBlock.Index, typeof(SuMultiplayer.Engine.CompassBlock), ModIdentifier);
             // 生物生成：客户端 = 不跑原生随机生成（只做主机记录的复制）；主机 = 原生模型照常跑。
@@ -1445,6 +1483,7 @@ namespace SuMultiplayer
                         m_lastStatusMs = nowMs;
                         ModLog.Info("[SuMP] " + m_sessionModule?.StatusLine());
                         ModLog.Info("[SuMP] " + m_terrainModule?.StatusLine());
+                        ModLog.Info("[SuMP] " + m_circuitModule?.StatusLine());
                         ModLog.Info("[SuMP] " + m_avatarModule?.StatusLine());
                         ModLog.Info("[SuMP] " + m_skinModule?.StatusLine());
                         ModLog.Info("[SuMP] " + m_actionModule?.StatusLine());
@@ -1929,6 +1968,7 @@ namespace SuMultiplayer
             try
             {
                 ChatAutomation = null;
+                CircuitSyncDebugAutomation = null;
                 m_editWatcher = null;
                 // 客户端界面层镜像先下线：趁分屏视图还在把挂上去的面板摘掉、恢复视图原值
                 // （输入形态 / HUD 可见），随后再拆视图本身。
@@ -2027,6 +2067,7 @@ namespace SuMultiplayer
                 m_campfireModule?.Detach(ModuleDetachReason.HostShutdown);
                 m_campfireEngine?.Shutdown();
                 m_entityModule?.Detach(ModuleDetachReason.HostShutdown);
+                m_circuitModule?.Detach(ModuleDetachReason.HostShutdown);
                 m_blockUseModule?.Detach(ModuleDetachReason.HostShutdown);
                 m_furnitureModule?.Detach(ModuleDetachReason.HostShutdown);
                 m_furnitureEngine?.Shutdown();
@@ -2037,6 +2078,7 @@ namespace SuMultiplayer
                 m_waterSplashEngine?.Shutdown();
                 m_projectileHitModule?.Detach(ModuleDetachReason.HostShutdown);
                 m_projectileHitEngine?.Shutdown();
+                m_blockUseEngine?.SetUseInputSinkOverride(null);
                 m_blockUseEngine?.SetRequestSink(null);
                 m_editableModule?.Detach(ModuleDetachReason.HostShutdown);
                 m_editableBridge?.SetRequestSink(null);

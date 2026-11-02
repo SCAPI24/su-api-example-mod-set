@@ -54,6 +54,7 @@ namespace CmdBridgeMod
             "obs.world.blocks", "obs.world.entities", "obs.world.time", "obs.messages", "obs.chat",
             "obs.dialogs",
             "obs.waitfor", "ui.elements", "ui.reachability",
+            "circuit.pause", "circuit.status",
             // 调试/验收用的"凭空塞一条聊天"（只进观察层队列，不发网络消息、不碰游戏状态）
             "dev.chat.inject",
             // SuMultiplayer 聊天注入（反射 SuMultiplayerMod.ChatAutomation）：
@@ -276,6 +277,18 @@ namespace CmdBridgeMod
                     return OnGameThread(SelfTest);
                 case "obs.waitfor":
                     return WaitForConditions(request);
+                case "circuit.status":
+                    return OnGameThread(() => SuCircuitSyncDebug.Resolve().Status());
+                case "circuit.pause":
+                    return OnGameThread(() =>
+                    {
+                        if (!request.TryGetBoolean("paused", out bool paused))
+                            throw new BridgeCommandException("invalid_argument",
+                                "circuit.pause requires paused=true or paused=false.");
+                        SuCircuitSyncDebug debug = SuCircuitSyncDebug.Resolve();
+                        debug.SetPaused(paused);
+                        return debug.Status();
+                    });
 
                 // ---------------------------------------------------------- 动作（输入层）
                 case "act.look":
